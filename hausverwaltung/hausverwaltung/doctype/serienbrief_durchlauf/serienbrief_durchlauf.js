@@ -583,12 +583,29 @@ const hv_open_iteration_picker = (frm) => {
 	let dialog;
 	const handleSelection = (selected) => {
 		const names = (selected || []).map((r) => r.name || r);
-		if ((frm.doc.iteration_objekte || []).length) {
-			frm.clear_table("iteration_objekte");
-			frm.refresh_field("iteration_objekte");
+		if (!names.length) {
+			dialog?.dialog.hide();
+			return;
 		}
-		hv_add_iteration_rows(frm, names);
-		dialog?.dialog.hide();
+		const existing = (frm.doc.iteration_objekte || []).filter((r) => r.objekt);
+		const hasVariableValues = existing.some((r) => r.variablen_werte);
+		const doReplace = () => {
+			if (existing.length) {
+				frm.clear_table("iteration_objekte");
+				frm.refresh_field("iteration_objekte");
+			}
+			hv_add_iteration_rows(frm, names);
+			dialog?.dialog.hide();
+		};
+		if (hasVariableValues) {
+			frappe.confirm(
+				__("Es gibt bereits Objekte mit gesetzten Variablen-Werten. Auswahl ersetzen?"),
+				doReplace,
+				() => {}
+			);
+		} else {
+			doReplace();
+		}
 	};
 
 	dialog = new frappe.ui.form.MultiSelectDialog({

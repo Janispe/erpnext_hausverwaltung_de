@@ -3004,6 +3004,8 @@ def generate_pdf(
 	recreate_documents: int | str = 0,
 ) -> str:
 	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
+	if not frappe.has_permission("Serienbrief Durchlauf", "read", doc):
+		raise frappe.PermissionError
 	recreate_flag = bool(int(recreate_documents or 0))
 	return doc.generate_pdf_file(
 		print_format=print_format,
@@ -3014,6 +3016,8 @@ def generate_pdf(
 @frappe.whitelist()
 def generate_html(docname: str) -> str:
 	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
+	if not frappe.has_permission("Serienbrief Durchlauf", "read", doc):
+		raise frappe.PermissionError
 	return doc.generate_html_file()
 
 
