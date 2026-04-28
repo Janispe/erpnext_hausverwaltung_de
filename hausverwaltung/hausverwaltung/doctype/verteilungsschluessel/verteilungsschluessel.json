@@ -1,0 +1,78 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-07-03 18:26:22.297633",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "betriebskostenart",
+  "verteilt_ueber",
+  "\u00fcberschreiben_pr\u00fcfen",
+  "\u00fcberschreiben",
+  "gesamt_haus",
+  "anteil_dieser_wohnung"
+ ],
+ "fields": [
+  {
+   "fieldname": "betriebskostenart",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Betriebskostenart",
+   "options": "Betriebskostenart",
+   "read_only": 1
+  },
+  {
+   "fieldname": "\u00fcberschreiben",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "\u00dcberschreiben"
+  },
+  {
+   "default": "0",
+   "fieldname": "\u00fcberschreiben_pr\u00fcfen",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "\u00dcberschreiben"
+  },
+  {
+   "fieldname": "gesamt_haus",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "is_virtual": 1,
+   "label": "Gesamt Haus",
+   "read_only": 1
+  },
+  {
+   "fieldname": "anteil_dieser_wohnung",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "is_virtual": 1,
+   "label": "Anteil dieser Wohnung"
+  },
+  {
+   "default": "test",
+   "fieldname": "verteilt_ueber",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "is_virtual": 1,
+   "label": "Verteilt \u00fcber",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-07-15 21:58:58.978029",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Verteilungsschluessel",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -1,0 +1,323 @@
+{
+ "actions": [],
+ "autoname": "format:{wohnung} Mietvertrag: {von}",
+ "creation": "2025-06-13 01:36:16.093431",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "details_section",
+  "wohnung",
+  "immobilie",
+  "von",
+  "bis",
+  "mieterwechsel",
+  "kunde",
+  "mieter",
+  "personen",
+  "bevorzugter_versandweg",
+  "status",
+  "miete_tab",
+  "miete",
+  "section_break_oxpt",
+  "staffelmiete_erzeugen",
+  "column_break_limy",
+  "section_break_eezj",
+  "miete_pro_qm",
+  "bk_vorauszahlung_ytd_bezahlt",
+  "betriebskosten",
+  "heizkosten",
+  "untermietzuschlag",
+  "bruttomiete",
+  "konten_tab",
+  "kautionskonto",
+  "kontoverbindungen",
+  "tab_3_tab",
+  "notizen_section",
+  "notizen",
+  "kaution_tab",
+  "kaution",
+  "kaution_notizen",
+  "festbetraege_tab",
+  "festbetraege",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "details_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "wohnung",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Wohnung",
+   "options": "Wohnung",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "wohnung.immobilie",
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Immobilie",
+   "options": "Immobilie",
+   "read_only": 1
+  },
+  {
+   "fieldname": "von",
+   "fieldtype": "Date",
+   "label": "Von"
+  },
+  {
+   "fieldname": "bis",
+   "allow_on_submit": 1,
+   "fieldtype": "Date",
+   "label": "Bis"
+  },
+  {
+   "fieldname": "mieterwechsel",
+   "fieldtype": "Link",
+   "label": "Mieterwechsel",
+   "options": "Mieterwechsel"
+  },
+  {
+   "fieldname": "mieter",
+   "allow_on_submit": 1,
+   "fieldtype": "Table",
+   "label": "Mieter",
+   "options": "Vertragspartner"
+  },
+  {
+   "fieldname": "personen",
+   "allow_on_submit": 1,
+   "fieldtype": "Table",
+   "label": "Anzahl Personen",
+   "options": "MietvertragPersonen"
+  },
+  {
+   "fieldname": "miete_tab",
+   "fieldtype": "Tab Break",
+   "label": "Miete"
+  },
+  {
+   "fieldname": "miete",
+   "allow_on_submit": 1,
+   "fieldtype": "Table",
+   "label": "Miete",
+   "options": "Staffelmiete"
+  },
+  {
+   "fieldname": "section_break_oxpt",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "staffelmiete_erzeugen",
+   "allow_on_submit": 1,
+   "fieldtype": "Button",
+   "label": "Staffelmiete erzeugen"
+  },
+  {
+   "fieldname": "column_break_limy",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_eezj",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "miete_pro_qm",
+   "fieldtype": "Float",
+   "is_virtual": 1,
+   "label": "Miete pro qm",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bk_vorauszahlung_ytd_bezahlt",
+   "fieldtype": "Currency",
+   "is_virtual": 1,
+   "label": "Betriebskostenvorauszahlung (YTD) bezahlt",
+   "read_only": 1
+  },
+  {
+   "fieldname": "betriebskosten",
+   "allow_on_submit": 1,
+   "fieldtype": "Table",
+   "label": "Betriebskosten",
+   "options": "Staffelmiete"
+  },
+  {
+   "fieldname": "heizkosten",
+   "allow_on_submit": 1,
+   "fieldtype": "Table",
+   "label": "Heizkosten",
+   "options": "Staffelmiete"
+  },
+  {
+   "fieldname": "untermietzuschlag",
+   "allow_on_submit": 1,
+   "fieldtype": "Table",
+   "label": "Untermietzuschlag",
+   "options": "Staffelmiete"
+  },
+  {
+   "fieldname": "bruttomiete",
+   "fieldtype": "Currency",
+   "is_virtual": 1,
+   "label": "Bruttomiete",
+   "read_only": 1
+  },
+  {
+   "fieldname": "kaution",
+   "allow_on_submit": 1,
+   "fieldtype": "Table",
+   "label": "Kaution",
+   "options": "Staffelmiete"
+  },
+  {
+   "fieldname": "tab_3_tab",
+   "fieldtype": "Tab Break",
+   "label": "Notizen"
+  },
+  {
+   "fieldname": "notizen_section",
+   "fieldtype": "Section Break",
+   "label": "Notizen"
+  },
+  {
+   "fieldname": "notizen",
+   "allow_on_submit": 1,
+   "fieldtype": "Long Text",
+   "label": "Notizen"
+  },
+  {
+   "fieldname": "kunde",
+   "fieldtype": "Link",
+   "label": "Mieter",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "konten_tab",
+   "fieldtype": "Tab Break",
+   "label": "Konten"
+  },
+  {
+   "fieldname": "kautionskonto",
+   "allow_on_submit": 1,
+   "fieldtype": "Link",
+   "label": "Kautionskonto",
+   "options": "Bank Account"
+  },
+  {
+   "fieldname": "kontoverbindungen",
+   "allow_on_submit": 1,
+   "fieldtype": "Table",
+   "label": "Kontoverbindungen",
+   "options": "Mietvertragkontoverknuepfung"
+  },
+  {
+   "fieldname": "bevorzugter_versandweg",
+   "allow_on_submit": 1,
+   "fieldtype": "Select",
+   "label": "Bevorzugter Versandweg",
+   "options": "Email\nPost"
+  },
+  {
+   "fieldname": "kaution_tab",
+   "fieldtype": "Tab Break",
+   "label": "Kaution"
+  },
+  {
+   "fieldname": "kaution_notizen",
+   "allow_on_submit": 1,
+   "fieldtype": "Small Text",
+   "label": "Kautions Notizen"
+  },
+  {
+   "fieldname": "festbetraege_tab",
+   "fieldtype": "Tab Break",
+   "label": "Festbeträge"
+  },
+  {
+   "fieldname": "festbetraege",
+   "fieldtype": "Table",
+   "label": "Betriebskosten-Festbeträge",
+   "options": "Betriebskosten Festbetrag"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_preview": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "L\u00e4uft\nVergangenheit\nZukunft",
+   "read_only": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Mietvertrag",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-01-12 17:40:07.036829",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Mietvertrag",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter",
+   "select": 1,
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Green",
+   "title": "L\u00e4uft"
+  },
+  {
+   "color": "Gray",
+   "title": "Vergangenheit"
+  },
+  {
+   "color": "Blue",
+   "title": "In der Zukunft"
+  }
+ ],
+ "track_changes": 1
+}

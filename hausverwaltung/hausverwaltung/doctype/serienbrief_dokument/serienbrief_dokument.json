@@ -1,0 +1,149 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:SBDOC-{YYYY}-{#####}",
+ "creation": "2026-01-20 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "is_submittable": 1,
+ "field_order": [
+  "durchlauf_section",
+  "durchlauf",
+  "vorlage",
+  "kategorie",
+  "iteration_doctype",
+  "objekt",
+  "title",
+  "date",
+  "generated_on",
+  "html_section",
+  "html",
+  "snapshot_section",
+  "generated_pdf_file",
+  "variablen_werte"
+ ],
+ "fields": [
+  {
+   "fieldname": "durchlauf_section",
+   "fieldtype": "Section Break",
+   "label": "Durchlauf"
+  },
+  {
+   "fieldname": "durchlauf",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Serienbrief Durchlauf",
+   "options": "Serienbrief Durchlauf",
+   "reqd": 1
+  },
+  {
+   "fieldname": "vorlage",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Vorlage",
+   "options": "Serienbrief Vorlage",
+   "read_only": 1
+  },
+  {
+   "fieldname": "kategorie",
+   "fieldtype": "Link",
+   "label": "Kategorie",
+   "options": "Serienbrief Kategorie",
+   "read_only": 1
+  },
+  {
+   "fieldname": "iteration_doctype",
+   "fieldtype": "Link",
+   "label": "Iterations-Doctype",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "objekt",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Objekt",
+   "options": "iteration_doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Titel",
+   "read_only": 1
+  },
+  {
+   "default": "Today",
+   "fieldname": "date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Datum",
+   "read_only": 1
+  },
+  {
+   "default": "Now",
+   "fieldname": "generated_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Erzeugt am",
+   "read_only": 1
+  },
+  {
+   "fieldname": "html_section",
+   "fieldtype": "Section Break",
+   "label": "HTML"
+  },
+  {
+   "fieldname": "html",
+   "fieldtype": "Code",
+   "label": "HTML",
+   "options": "HTML",
+   "read_only": 1
+  },
+  {
+   "fieldname": "snapshot_section",
+   "fieldtype": "Section Break",
+   "label": "Snapshot"
+  },
+  {
+   "fieldname": "generated_pdf_file",
+   "fieldtype": "Attach",
+   "label": "Generiertes PDF",
+   "read_only": 1
+  },
+  {
+   "fieldname": "variablen_werte",
+   "fieldtype": "Small Text",
+   "label": "Variablenwerte",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-01-20 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Serienbrief Dokument",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "cancel": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

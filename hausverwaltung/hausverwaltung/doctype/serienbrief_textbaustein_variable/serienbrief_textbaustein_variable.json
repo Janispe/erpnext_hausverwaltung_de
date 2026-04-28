@@ -1,0 +1,73 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2024-01-01 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "variable",
+  "variable_type",
+  "reference_doctype",
+  "label",
+  "preview_default",
+  "beschreibung"
+ ],
+ "fields": [
+  {
+   "fieldname": "variable",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Variablenname",
+   "reqd": 1
+  },
+  {
+   "default": "Text",
+   "fieldname": "variable_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Typ",
+   "options": "Text\nDoctype\nDoctype Liste",
+   "reqd": 0
+  },
+  {
+   "depends_on": "eval:doc.variable_type && doc.variable_type != 'Text'",
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Doctype",
+   "mandatory_depends_on": "eval:doc.variable_type && doc.variable_type != 'Text'",
+   "options": "DocType",
+   "reqd": 0
+  },
+  {
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label"
+  },
+  {
+   "fieldname": "preview_default",
+   "fieldtype": "Data",
+   "label": "Vorschau-Wert",
+   "description": "Wird nur in der Split-Vorschau verwendet, um einen Beispielwert anzuzeigen."
+  },
+  {
+   "fieldname": "beschreibung",
+   "fieldtype": "Small Text",
+   "label": "Beschreibung"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2024-01-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Serienbrief Textbaustein Variable",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

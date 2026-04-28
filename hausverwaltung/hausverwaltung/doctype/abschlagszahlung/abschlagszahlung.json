@@ -1,0 +1,259 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:AZ-{YYYY}-{#####}",
+ "creation": "2025-12-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bezeichnung",
+  "status",
+  "stammdaten_section",
+  "company",
+  "lieferant",
+  "vertragsnummer",
+  "column_break_1",
+  "immobilie",
+  "wohnung",
+  "bemerkung",
+  "betrag_section",
+  "betrag",
+  "zahlungsweg_section",
+  "bank_account",
+  "reference_no",
+  "plan_section",
+  "plan_vorbelegen_btn",
+  "plan"
+ ],
+ "fields": [
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "label": "Bezeichnung",
+   "reqd": 1
+  },
+  {
+   "default": "Läuft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Läuft\nAbgerechnet\nVergangenheit",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1,
+   "description": "Wird automatisch berechnet: Läuft = offene Plan-Zeilen ohne Jahresabrechnung. Abgerechnet = Jahresabrechnung erstellt. Vergangenheit = alle Plan-Zeilen vergangen ohne Jahresabrechnung."
+  },
+  {
+   "fieldname": "stammdaten_section",
+   "fieldtype": "Section Break",
+   "label": "Stammdaten"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "lieferant",
+   "fieldtype": "Link",
+   "label": "Lieferant",
+   "options": "Supplier",
+   "reqd": 1
+  },
+  {
+   "fieldname": "vertragsnummer",
+   "fieldtype": "Data",
+   "label": "Vertrags-/Mieternr."
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "label": "Immobilie",
+   "options": "Immobilie"
+  },
+  {
+   "fieldname": "wohnung",
+   "fieldtype": "Link",
+   "label": "Wohnung",
+   "options": "Wohnung"
+  },
+  {
+   "fieldname": "bemerkung",
+   "fieldtype": "Small Text",
+   "label": "Bemerkung"
+  },
+  {
+   "fieldname": "betrag_section",
+   "fieldtype": "Section Break",
+   "label": "Default-Betrag"
+  },
+  {
+   "fieldname": "betrag",
+   "fieldtype": "Currency",
+   "label": "Default-Betrag",
+   "description": "Wird vom Plan-Vorbelegen-Dialog vorgeschlagen. Pro Plan-Zeile editierbar."
+  },
+  {
+   "fieldname": "zahlungsweg_section",
+   "fieldtype": "Section Break",
+   "label": "Zahlungsweg"
+  },
+  {
+   "fieldname": "bank_account",
+   "fieldtype": "Link",
+   "label": "Bankkonto",
+   "options": "Bank Account",
+   "reqd": 1
+  },
+  {
+   "fieldname": "reference_no",
+   "fieldtype": "Data",
+   "label": "Referenz-Nr. (optional)"
+  },
+  {
+   "fieldname": "plan_section",
+   "fieldtype": "Section Break",
+   "label": "Zahlungsplan"
+  },
+  {
+   "fieldname": "plan_vorbelegen_btn",
+   "fieldtype": "Button",
+   "label": "Plan vorbelegen"
+  },
+  {
+   "fieldname": "plan",
+   "fieldtype": "Table",
+   "label": "Plan",
+   "options": "Abschlagszahlung Plan"
+  },
+  {
+   "fieldname": "ja_purchase_invoice",
+   "fieldtype": "Link",
+   "label": "Erstellte Eingangsrechnung",
+   "options": "Purchase Invoice",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "ja_differenz",
+   "fieldtype": "Currency",
+   "label": "Differenz",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "ja_status",
+   "fieldtype": "Data",
+   "label": "Ergebnis",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "kostenart",
+   "fieldtype": "Link",
+   "label": "Kostenart (umlagefähig)",
+   "options": "Betriebskostenart",
+   "hidden": 1
+  },
+  {
+   "fieldname": "kostenart_nicht_umlagefaehig",
+   "fieldtype": "Link",
+   "label": "Kostenart (nicht umlagefähig)",
+   "options": "Kostenart nicht umlagefaehig",
+   "hidden": 1
+  },
+  {
+   "fieldname": "expense_account",
+   "fieldtype": "Link",
+   "label": "Aufwandskonto",
+   "options": "Account",
+   "hidden": 1
+  },
+  {
+   "fieldname": "cost_center",
+   "fieldtype": "Link",
+   "label": "Kostenstelle",
+   "options": "Cost Center",
+   "hidden": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "Artikel",
+   "options": "Item",
+   "hidden": 1
+  },
+  {
+   "fieldname": "ja_von",
+   "fieldtype": "Date",
+   "label": "Abrechnungszeitraum von",
+   "hidden": 1
+  },
+  {
+   "fieldname": "ja_bis",
+   "fieldtype": "Date",
+   "label": "Abrechnungszeitraum bis",
+   "hidden": 1
+  },
+  {
+   "fieldname": "ja_betrag",
+   "fieldtype": "Currency",
+   "label": "Jahresrechnungsbetrag",
+   "hidden": 1
+  },
+  {
+   "fieldname": "ja_rechnungsnr",
+   "fieldtype": "Data",
+   "label": "Rechnungsnummer",
+   "hidden": 1
+  },
+  {
+   "fieldname": "ja_rechnungsdatum",
+   "fieldtype": "Date",
+   "label": "Rechnungsdatum",
+   "hidden": 1
+  },
+  {
+   "fieldname": "ja_wertstellungsdatum",
+   "fieldtype": "Date",
+   "label": "Wertstellungsdatum",
+   "hidden": 1,
+   "description": "Leistungszeitraum-Datum für die Kostenzuordnung. Muss zwischen ja_von und ja_bis liegen."
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-04-27 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Abschlagszahlung",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "show_name_in_global_search": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "bezeichnung",
+ "track_changes": 1
+}

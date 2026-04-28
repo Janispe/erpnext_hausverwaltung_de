@@ -1,0 +1,46 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-07-03 15:43:52.553710",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "feld",
+  "operator",
+  "wert"
+ ],
+ "fields": [
+  {
+   "fieldname": "feld",
+   "fieldtype": "Link",
+   "label": "Feld",
+   "options": "DocField"
+  },
+  {
+   "fieldname": "operator",
+   "fieldtype": "Select",
+   "label": "Operator",
+   "options": "enth\u00e4lt\nenth\u00e4lt nicht\n==\n!="
+  },
+  {
+   "fieldname": "wert",
+   "fieldtype": "Data",
+   "label": "Wert"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-07-03 17:43:30.069726",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Bedingung",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

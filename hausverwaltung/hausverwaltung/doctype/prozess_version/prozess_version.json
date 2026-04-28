@@ -1,0 +1,119 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:version_key",
+ "creation": "2026-02-19 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "runtime_doctype",
+  "version_key",
+  "titel",
+  "is_active",
+  "gueltig_ab",
+  "gueltig_bis",
+  "beschreibung",
+  "schritte",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "runtime_doctype",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Runtime Doctype",
+   "options": "DocType",
+   "reqd": 1
+  },
+  {
+   "fieldname": "version_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Version Key",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "titel",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Titel",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Aktiv"
+  },
+  {
+   "fieldname": "gueltig_ab",
+   "fieldtype": "Date",
+   "label": "Gueltig ab"
+  },
+  {
+   "fieldname": "gueltig_bis",
+   "fieldtype": "Date",
+   "label": "Gueltig bis"
+  },
+  {
+   "fieldname": "beschreibung",
+   "fieldtype": "Small Text",
+   "label": "Beschreibung"
+  },
+  {
+   "fieldname": "schritte",
+   "fieldtype": "Table",
+   "label": "Schritte",
+   "options": "Prozess Schritt"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Prozess Version",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 0,
+ "links": [],
+ "modified": "2026-02-19 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Prozess Version",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

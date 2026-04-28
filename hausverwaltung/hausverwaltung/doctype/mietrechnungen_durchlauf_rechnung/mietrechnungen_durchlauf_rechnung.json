@@ -1,0 +1,82 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-02-06 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "sales_invoice",
+  "typ",
+  "mietvertrag",
+  "wohnung",
+  "kunde",
+  "betrag",
+  "posting_date"
+ ],
+ "fields": [
+  {
+   "fieldname": "sales_invoice",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Sales Invoice",
+   "options": "Sales Invoice",
+   "reqd": 1
+  },
+  {
+   "fieldname": "typ",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Typ",
+   "options": "Miete\nBetriebskosten\nHeizkosten",
+   "reqd": 1
+  },
+  {
+   "fieldname": "mietvertrag",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Mietvertrag",
+   "options": "Mietvertrag"
+  },
+  {
+   "fieldname": "wohnung",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Wohnung",
+   "options": "Wohnung"
+  },
+  {
+   "fieldname": "kunde",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Mieter",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "betrag",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Betrag"
+  },
+  {
+   "fieldname": "posting_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Posting Date"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-02-06 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Mietrechnungen Durchlauf Rechnung",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

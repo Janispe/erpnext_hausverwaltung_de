@@ -1,0 +1,112 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2025-09-02 19:08:01.266711",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bank_account",
+  "csv_file",
+  "delimiter",
+  "encoding",
+  "info",
+  "sb_preview",
+  "rows",
+  "section_break_bhsn",
+  "cb_preview",
+  "status",
+  "column_break_wlsf"
+ ],
+ "fields": [
+  {
+   "fieldname": "bank_account",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Bankkonto",
+   "options": "Bank Account",
+   "reqd": 1
+  },
+  {
+   "fieldname": "csv_file",
+   "fieldtype": "Attach",
+   "in_list_view": 1,
+   "label": "CSV-Datei",
+   "reqd": 1
+  },
+  {
+   "default": ";",
+   "fieldname": "delimiter",
+   "fieldtype": "Select",
+   "label": "Trennzeichen",
+   "options": ",\n;"
+  },
+  {
+   "default": "auto",
+   "fieldname": "encoding",
+   "fieldtype": "Select",
+   "label": "Kodierung",
+   "options": "auto\nutf-8\nlatin-1"
+  },
+  {
+   "fieldname": "info",
+   "fieldtype": "HTML",
+   "label": "Hinweis"
+  },
+  {
+   "fieldname": "sb_preview",
+   "fieldtype": "Section Break",
+   "label": "Vorschau"
+  },
+  {
+   "fieldname": "rows",
+   "fieldtype": "Table",
+   "label": "Zeilen",
+   "options": "Bankauszug Import Row"
+  },
+  {
+   "fieldname": "cb_preview",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Data",
+   "label": "Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_bhsn",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "column_break_wlsf",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "links": [],
+ "modified": "2025-09-04 20:09:51.109484",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Bankauszug Import",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Accounts User",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

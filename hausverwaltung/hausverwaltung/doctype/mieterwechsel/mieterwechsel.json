@@ -1,0 +1,340 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:MW-{YYYY}-{#####}",
+ "creation": "2026-02-17 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status",
+  "orchestrator_backend",
+  "temporal_workflow_id",
+  "temporal_run_id",
+  "temporal_last_error",
+  "temporal_synced_at",
+  "started_at",
+  "completed_at",
+  "progress_html",
+  "blocker_hinweise_html",
+  "section_basis",
+  "prozess_typ",
+  "prozess_version",
+  "prozess_version_label",
+  "wohnung",
+  "alter_mietvertrag",
+  "neuer_mietvertrag",
+  "auszugsdatum",
+  "einzugsdatum",
+  "quelle_doctype",
+  "quelle_name",
+  "section_aufgaben",
+  "aufgaben",
+  "section_pruefung",
+  "neue_adresse_altmieter_erfasst",
+  "zaehler_geprueft",
+  "zaehlerstaende_eingetragen",
+  "section_dokumente",
+  "abnahmeformular_file",
+  "abnahmeformular_paperless_link",
+  "mietvertrag_unterschrieben_file",
+  "mietvertrag_paperless_link",
+  "section_bypass",
+  "bypass_freigabe",
+  "bypass_begruendung",
+  "bypass_freigegeben_von",
+  "bypass_freigegeben_am",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "default": "Entwurf",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_preview": 1,
+   "label": "Status",
+   "options": "Entwurf\nIn Bearbeitung\nWartet auf Unterlagen\nAbschlusspruefung\nAbgeschlossen\nAbgeschlossen (Bypass)",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "local",
+   "fieldname": "orchestrator_backend",
+   "fieldtype": "Select",
+   "label": "Orchestrator Backend",
+   "options": "local\ntemporal",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "temporal_workflow_id",
+   "fieldtype": "Data",
+   "label": "Temporal Workflow ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "temporal_run_id",
+   "fieldtype": "Data",
+   "label": "Temporal Run ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "temporal_last_error",
+   "fieldtype": "Small Text",
+   "label": "Temporal Last Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "temporal_synced_at",
+   "fieldtype": "Datetime",
+   "label": "Temporal Synced At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "completed_at",
+   "fieldtype": "Datetime",
+   "label": "Completed At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "progress_html",
+   "fieldtype": "HTML",
+   "label": "Fortschritt"
+  },
+  {
+   "fieldname": "blocker_hinweise_html",
+   "fieldtype": "HTML",
+   "label": "Blocker"
+  },
+  {
+   "fieldname": "section_basis",
+   "fieldtype": "Section Break",
+   "label": "Basisdaten"
+  },
+  {
+   "default": "Mieterwechsel",
+   "fieldname": "prozess_typ",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Prozess-Typ",
+   "options": "Mieterwechsel\nErstvermietung",
+   "reqd": 1
+  },
+  {
+   "fieldname": "prozess_version",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Prozessversion",
+   "options": "Prozess Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "prozess_version_label",
+   "fieldtype": "Data",
+   "label": "Prozessversion Label",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wohnung",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Wohnung",
+   "options": "Wohnung",
+   "reqd": 1
+  },
+  {
+   "fieldname": "alter_mietvertrag",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Alter Mietvertrag",
+   "options": "Mietvertrag"
+  },
+  {
+   "fieldname": "neuer_mietvertrag",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Neuer Mietvertrag",
+   "options": "Mietvertrag",
+   "reqd": 1
+  },
+  {
+   "fieldname": "auszugsdatum",
+   "fieldtype": "Date",
+   "label": "Auszugsdatum",
+   "reqd": 1
+  },
+  {
+   "fieldname": "einzugsdatum",
+   "fieldtype": "Date",
+   "label": "Einzugsdatum",
+   "reqd": 1
+  },
+  {
+   "fieldname": "quelle_doctype",
+   "fieldtype": "Data",
+   "label": "Quelle Doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "quelle_name",
+   "fieldtype": "Data",
+   "label": "Quelle Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_aufgaben",
+   "fieldtype": "Section Break",
+   "label": "Aufgaben"
+  },
+  {
+   "fieldname": "aufgaben",
+   "fieldtype": "Table",
+   "label": "Aufgaben",
+   "options": "Prozess Aufgabe"
+  },
+  {
+   "fieldname": "section_pruefung",
+   "fieldtype": "Section Break",
+   "hidden": 1,
+   "label": "Pflichtpruefungen"
+  },
+  {
+   "default": "0",
+   "fieldname": "neue_adresse_altmieter_erfasst",
+   "fieldtype": "Check",
+   "label": "Neue Adresse Altmieter erfasst"
+  },
+  {
+   "default": "0",
+   "fieldname": "zaehler_geprueft",
+   "fieldtype": "Check",
+   "label": "Zaehler geprueft"
+  },
+  {
+   "default": "0",
+   "fieldname": "zaehlerstaende_eingetragen",
+   "fieldtype": "Check",
+   "label": "Zaehlerstaende eingetragen"
+  },
+  {
+   "fieldname": "section_dokumente",
+   "fieldtype": "Section Break",
+   "hidden": 1,
+   "label": "Dokumente"
+  },
+  {
+   "fieldname": "abnahmeformular_file",
+   "fieldtype": "Attach",
+   "label": "Abnahmeformular (PDF)"
+  },
+  {
+   "fieldname": "abnahmeformular_paperless_link",
+   "fieldtype": "Small Text",
+   "label": "Abnahmeformular Paperless Link",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mietvertrag_unterschrieben_file",
+   "fieldtype": "Attach",
+   "label": "Mietvertrag unterschrieben (PDF)"
+  },
+  {
+   "fieldname": "mietvertrag_paperless_link",
+   "fieldtype": "Small Text",
+   "label": "Mietvertrag Paperless Link",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_bypass",
+   "fieldtype": "Section Break",
+   "label": "Bypass"
+  },
+  {
+   "default": "0",
+   "fieldname": "bypass_freigabe",
+   "fieldtype": "Check",
+   "label": "Bypass freigegeben"
+  },
+  {
+   "fieldname": "bypass_begruendung",
+   "fieldtype": "Small Text",
+   "label": "Bypass Begruendung"
+  },
+  {
+   "fieldname": "bypass_freigegeben_von",
+   "fieldtype": "Link",
+   "label": "Bypass freigegeben von",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bypass_freigegeben_am",
+   "fieldtype": "Datetime",
+   "label": "Bypass freigegeben am",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Mieterwechsel",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-02-17 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Mieterwechsel",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "select": 1,
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter",
+   "select": 1,
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

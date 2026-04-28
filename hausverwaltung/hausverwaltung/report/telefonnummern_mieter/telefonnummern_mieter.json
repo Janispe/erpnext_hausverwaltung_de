@@ -1,0 +1,86 @@
+{
+ "add_total_row": 0,
+ "add_translate_data": 0,
+ "columns": [
+  {
+   "fieldname": "wohnung",
+   "fieldtype": "Link",
+   "label": "Wohnung",
+   "options": "Wohnung",
+   "width": 220
+  },
+  {
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "label": "Immobilie",
+   "options": "Immobilie",
+   "width": 220
+  },
+  {
+   "fieldname": "gebaeudeteil",
+   "fieldtype": "Data",
+   "label": "Gebäudeteil",
+   "width": 90
+  },
+  {
+   "fieldname": "mieter",
+   "fieldtype": "Data",
+   "label": "Mieter",
+   "width": 320
+  },
+  {
+   "fieldname": "telefonnummern",
+   "fieldtype": "Data",
+   "label": "Telefonnummern",
+   "width": 280
+  }
+ ],
+ "creation": "2025-06-15 01:40:08.723226",
+ "disabled": 0,
+ "docstatus": 0,
+ "doctype": "Report",
+ "filters": [
+  {
+   "default": "",
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "label": "immobilie",
+   "mandatory": 0,
+   "options": "Immobilie",
+   "wildcard_filter": 0
+  },
+  {
+   "default": 0,
+   "fieldname": "pro_wohnung",
+   "fieldtype": "Check",
+   "label": "Pro Wohnung gruppieren",
+   "mandatory": 0
+  }
+ ],
+ "idx": 1,
+ "is_standard": "Yes",
+ "letter_head": "test",
+ "letterhead": null,
+ "modified": "2025-06-16 21:17:14.713559",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Telefonnummern Mieter",
+ "owner": "Administrator",
+ "prepared_report": 0,
+ "query": "",
+ "ref_doctype": "Mietvertrag",
+ "report_name": "Telefonnummern Mieter",
+ "report_script": "",
+ "report_type": "Script Report",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Hausverwalter"
+  },
+  {
+   "role": "Hausverwalter (Buchung)"
+  }
+ ],
+ "timeout": 0}

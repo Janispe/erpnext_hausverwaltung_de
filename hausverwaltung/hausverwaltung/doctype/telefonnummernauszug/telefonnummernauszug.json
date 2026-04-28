@@ -1,0 +1,133 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:TEL-{stichtag}-{####}",
+ "creation": "2026-04-25 00:00:00.000000",
+ "default_print_format": "TelefonnummernauszugDruckformat",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_break_kopf",
+  "titel",
+  "stichtag",
+  "column_break_kopf",
+  "immobilie",
+  "anzahl_eintraege",
+  "section_break_bemerkung",
+  "bemerkung",
+  "section_break_eintraege",
+  "eintraege"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_break_kopf",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "titel",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Titel",
+   "description": "Wird automatisch aus Stichtag (und Immobilie) gebildet, falls leer."
+  },
+  {
+   "default": "Today",
+   "fieldname": "stichtag",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Stichtag",
+   "reqd": 1,
+   "description": "Datum, zu dem aktive Mietverhältnisse bestimmt werden."
+  },
+  {
+   "fieldname": "column_break_kopf",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Immobilie",
+   "options": "Immobilie",
+   "description": "Optional. Leer = alle Immobilien."
+  },
+  {
+   "fieldname": "anzahl_eintraege",
+   "fieldtype": "Int",
+   "label": "Anzahl Einträge",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_bemerkung",
+   "fieldtype": "Section Break",
+   "collapsible": 1,
+   "label": "Bemerkung"
+  },
+  {
+   "fieldname": "bemerkung",
+   "fieldtype": "Small Text",
+   "label": "Bemerkung"
+  },
+  {
+   "fieldname": "section_break_eintraege",
+   "fieldtype": "Section Break",
+   "label": "Einträge"
+  },
+  {
+   "fieldname": "eintraege",
+   "fieldtype": "Table",
+   "label": "Einträge",
+   "options": "Telefonnummernauszug Eintrag"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-04-25 23:59:59.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Telefonnummernauszug",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter (Buchung)",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

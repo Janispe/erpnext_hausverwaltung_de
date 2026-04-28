@@ -1,0 +1,173 @@
+<style type="text/css">
+	@page {
+		size: A4;
+		margin: 8mm;
+	}
+
+	body {
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+		font-size: 9pt;
+		color: #111;
+	}
+
+	.header {
+		margin: 0 0 6mm;
+	}
+
+	.title {
+		font-weight: 700;
+		font-size: 11pt;
+	}
+
+	.sub {
+		color: #555;
+		font-size: 8pt;
+		margin-top: 1mm;
+	}
+
+	.items {
+		width: 100%;
+	}
+
+	.group {
+		break-inside: avoid;
+		margin: 0 0 2mm;
+		padding-top: 1mm;
+		font-weight: 700;
+		font-size: 9pt;
+	}
+
+	.item {
+		break-inside: avoid;
+		margin: 0 0 2mm;
+	}
+
+	.wohnung {
+		font-weight: 700;
+	}
+
+	.line {
+		line-height: 1.2;
+	}
+
+	.sep {
+		color: #888;
+		padding: 0 1mm;
+	}
+
+	table {
+		width: 100%;
+		border-collapse: collapse;
+	}
+
+	td,
+	th {
+		vertical-align: top;
+		padding: 1mm 1.5mm;
+	}
+
+	thead th {
+		font-size: 8pt;
+		color: #555;
+		text-align: left;
+		border-bottom: 0.3mm solid #ddd;
+	}
+
+	tbody tr {
+		border-bottom: 0.2mm solid #eee;
+	}
+
+	tr.group-row td {
+		border-bottom: 0;
+		padding-top: 2mm;
+		padding-bottom: 0.5mm;
+		font-weight: 700;
+	}
+
+	tr.immobilie-row td {
+		border-bottom: 0;
+		padding-top: 3mm;
+		padding-bottom: 1mm;
+		font-weight: 700;
+		font-size: 10pt;
+	}
+</style>
+
+<div class="header">
+	<div class="title">{%= __("Telefonnummern Mieter") %}</div>
+	<div class="sub">
+		{%= frappe.datetime.now_datetime() %}
+		{% if(filters.immobilie) { %}
+			<span class="sep">·</span>{%= __("Immobilie") %}: {%= filters.immobilie %}
+		{% } %}
+		{% if(filters.pro_wohnung) { %}
+			<span class="sep">·</span>{%= __("Gruppiert pro Wohnung") %}
+		{% } %}
+	</div>
+</div>
+
+<div class="items">
+	{% var esc = function(v) { return frappe.utils.escape_html(String(v || "")); }; %}
+	{% var last_immobilie = ""; %}
+	{% var last_gebaeudeteil = ""; %}
+	<table>
+		<thead>
+			<tr>
+				<th style="width: 22%">{%= __("Wohnung") %}</th>
+				<th style="width: 38%">{%= __("Mieter") %}</th>
+				<th style="width: 40%">{%= __("Telefonnummern") %}</th>
+			</tr>
+		</thead>
+		<tbody>
+			{% for(var i=0, l=data.length; i<l; i++) { %}
+				{% var row = data[i] || {}; %}
+				{% var immobilie = (row.immobilie || ""); %}
+				{% if(!filters.immobilie && immobilie && immobilie !== last_immobilie) { last_immobilie = immobilie; last_gebaeudeteil = ""; %}
+					<tr class="immobilie-row">
+						<td colspan="3">{%= esc(immobilie) %}</td>
+					</tr>
+				{% } %}
+
+				{% var gebaeudeteil = (row.gebaeudeteil || ""); %}
+				{% var gebaeudeteil_label = gebaeudeteil || __("Ohne Gebäudeteil"); %}
+				{% if(gebaeudeteil_label && gebaeudeteil_label !== last_gebaeudeteil) { last_gebaeudeteil = gebaeudeteil_label; %}
+					<tr class="group-row">
+						<td colspan="3">{%= esc(gebaeudeteil_label) %}</td>
+					</tr>
+				{% } %}
+
+				<tr class="item">
+					<td class="wohnung">{%= esc(row.wohnung) %}</td>
+					{% if(filters.pro_wohnung) { %}
+						{% var names = String(row.mieter || "").split("\\n"); %}
+						{% var phones = String(row.telefonnummern || "").split("\\n"); %}
+						{% var ln = Math.max(names.length, phones.length); %}
+						<td>
+							{% for(var j=0; j<ln; j++) { %}
+								{% var name = (names[j] || "").trim(); %}
+								{% var phone = (phones[j] || "").trim(); %}
+								{% if(!name && !phone) { continue; } %}
+								<div class="line">
+									{% if(name) { %}{%= esc(name) %}{% } else { %}&nbsp;{% } %}
+								</div>
+							{% } %}
+						</td>
+						<td>
+							{% for(var j=0; j<ln; j++) { %}
+								{% var name = (names[j] || "").trim(); %}
+								{% var phone = (phones[j] || "").trim(); %}
+								{% if(!name && !phone) { continue; } %}
+								<div class="line">
+									{% if(phone) { %}{%= esc(phone) %}{% } else { %}&nbsp;{% } %}
+								</div>
+							{% } %}
+						</td>
+					{% } else { %}
+						<td>{%= esc(row.mieter) %}</td>
+						<td>{%= esc(row.telefonnummern) %}</td>
+					{% } %}
+				</tr>
+			{% } %}
+		</tbody>
+	</table>
+</div>

@@ -1,0 +1,74 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-04-18 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "idx_in_report",
+  "bezeichnung",
+  "einnahmen",
+  "ausgaben",
+  "saldo",
+  "indent",
+  "ist_summe"
+ ],
+ "fields": [
+  {
+   "fieldname": "idx_in_report",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Position"
+  },
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Bezeichnung"
+  },
+  {
+   "fieldname": "einnahmen",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Einnahmen"
+  },
+  {
+   "fieldname": "ausgaben",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Ausgaben"
+  },
+  {
+   "fieldname": "saldo",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Saldo"
+  },
+  {
+   "fieldname": "indent",
+   "fieldtype": "Int",
+   "label": "Indent"
+  },
+  {
+   "fieldname": "ist_summe",
+   "fieldtype": "Check",
+   "label": "Ist Summe"
+  }
+ ],
+ "grid_page_length": 100,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-18 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Einnahmen Ueberschuss Rechnung Position",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
+

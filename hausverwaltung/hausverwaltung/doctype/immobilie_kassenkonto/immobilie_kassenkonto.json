@@ -1,0 +1,41 @@
+{
+ "actions": [],
+ "creation": "2026-04-23 20:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "konto",
+  "ist_hauptkonto"
+ ],
+ "fields": [
+  {
+   "fieldname": "konto",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Konto",
+   "options": "Account",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "ist_hauptkonto",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Hauptkonto"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-23 20:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Immobilie Kassenkonto",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
+

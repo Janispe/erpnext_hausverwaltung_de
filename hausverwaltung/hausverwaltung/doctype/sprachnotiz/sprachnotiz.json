@@ -1,0 +1,194 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:SPN-{YYYY}-{#####}",
+ "creation": "2026-04-01 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status_section",
+  "status",
+  "orchestrator_backend",
+  "aufgenommen_von",
+  "aufgenommen_am",
+  "sprache",
+  "audio_file",
+  "player_html",
+  "transkript_fehler",
+  "temporal_workflow_id",
+  "temporal_run_id",
+  "temporal_last_error",
+  "temporal_synced_at",
+  "reference_section",
+  "bezug_doctype",
+  "bezug_name",
+  "content_section",
+  "kurzfassung",
+  "transkript_volltext",
+  "segmente"
+ ],
+ "fields": [
+  {
+   "fieldname": "status_section",
+   "fieldtype": "Section Break",
+   "label": "Status"
+  },
+  {
+   "default": "Neu",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Neu\nAudio gespeichert\nTranskription laeuft\nTeilweise verarbeitet\nFertig\nFehler",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "local",
+   "fieldname": "orchestrator_backend",
+   "fieldtype": "Select",
+   "label": "Orchestrator Backend",
+   "options": "local\ntemporal",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "aufgenommen_von",
+   "fieldtype": "Link",
+   "label": "Aufgenommen von",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "aufgenommen_am",
+   "fieldtype": "Datetime",
+   "label": "Aufgenommen am",
+   "read_only": 1
+  },
+  {
+   "default": "de",
+   "fieldname": "sprache",
+   "fieldtype": "Data",
+   "label": "Sprache"
+  },
+  {
+   "fieldname": "audio_file",
+   "fieldtype": "Attach",
+   "label": "Audio-Datei",
+   "read_only": 1
+  },
+  {
+   "fieldname": "player_html",
+   "fieldtype": "HTML",
+   "label": "Player"
+  },
+  {
+   "fieldname": "transkript_fehler",
+   "fieldtype": "Small Text",
+   "label": "Verarbeitungsfehler",
+   "read_only": 1
+  },
+  {
+   "fieldname": "temporal_workflow_id",
+   "fieldtype": "Data",
+   "label": "Temporal Workflow ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "temporal_run_id",
+   "fieldtype": "Data",
+   "label": "Temporal Run ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "temporal_last_error",
+   "fieldtype": "Small Text",
+   "label": "Temporal Last Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "temporal_synced_at",
+   "fieldtype": "Datetime",
+   "label": "Temporal Synced At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reference_section",
+   "fieldtype": "Section Break",
+   "label": "Referenz"
+  },
+  {
+   "fieldname": "bezug_doctype",
+   "fieldtype": "Link",
+   "label": "Bezug Doctype",
+   "options": "DocType"
+  },
+  {
+   "fieldname": "bezug_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Bezug Name",
+   "options": "bezug_doctype"
+  },
+  {
+   "fieldname": "content_section",
+   "fieldtype": "Section Break",
+   "label": "Inhalt"
+  },
+  {
+   "fieldname": "kurzfassung",
+   "fieldtype": "Text Editor",
+   "label": "Kurzfassung",
+   "read_only": 1
+  },
+  {
+   "fieldname": "transkript_volltext",
+   "fieldtype": "Long Text",
+   "label": "Transkript",
+   "read_only": 1
+  },
+  {
+   "fieldname": "segmente",
+   "fieldtype": "Table",
+   "label": "Segmente",
+   "options": "Sprachnotiz Segment"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-04-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Sprachnotiz",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -1,0 +1,52 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-07-03 17:40:56.700169",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "name1",
+  "text_html",
+  "link_auty",
+  "sichtbar_wenn"
+ ],
+ "fields": [
+  {
+   "fieldname": "link_auty",
+   "fieldtype": "Link",
+   "label": "Anlagen Datei",
+   "options": "File"
+  },
+  {
+   "fieldname": "name1",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Name"
+  },
+  {
+   "fieldname": "sichtbar_wenn",
+   "fieldtype": "Code",
+   "label": "Bedingung"
+  },
+  {
+   "fieldname": "text_html",
+   "fieldtype": "HTML Editor",
+   "label": "Html"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-07-03 18:04:29.869189",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "TextBaustein",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

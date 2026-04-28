@@ -1,0 +1,270 @@
+{
+ "actions": [],
+ "autoname": "field:bezeichnung",
+ "creation": "2025-06-12 18:20:16.311989",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bezeichnung",
+  "adresse",
+  "adresse_titel",
+  "immobilien_id",
+  "gesamtwohnflaeche",
+  "column_break_vvhf",
+  "section_break_slfs",
+  "gebaut_am",
+  "erworben_am",
+  "eigentumer",
+  "section_break_ykwc",
+  "kostenstelle",
+  "bankkonten",
+  "kassenkonten",
+  "konto",
+  "kassenkonto",
+  "handwerker_section",
+  "hausmeister",
+  "gruppierung_tab",
+  "gruppierung_section",
+  "is_group",
+  "parent_immobilie",
+  "old_parent",
+  "lft",
+  "rgt",
+  "steuerliche_angaben_tab",
+  "section_break_steuerliche_angaben",
+  "objekt",
+  "grundsteuer_nummer",
+  "betriebsnummer",
+  "steuernummer_lohnsteuer",
+  "vbg_unternehmensnummer"
+ ],
+ "fields": [
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Bezeichnung",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "column_break_vvhf",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "adresse",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Adresse",
+   "options": "Address",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fetch_from": "adresse.address_title",
+   "fetch_if_empty": 1,
+   "fieldname": "adresse_titel",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Adresse (Titel)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_slfs",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "gebaut_am",
+   "fieldtype": "Date",
+   "label": "Gebaut am "
+  },
+  {
+   "fieldname": "erworben_am",
+   "fieldtype": "Date",
+   "label": "Erworben am "
+  },
+  {
+   "fieldname": "section_break_steuerliche_angaben",
+   "fieldtype": "Section Break",
+   "label": "Steuerliche Angaben"
+  },
+  {
+   "fieldname": "objekt",
+   "fieldtype": "Data",
+   "label": "Objekt"
+  },
+  {
+   "fieldname": "eigentumer",
+   "fieldtype": "Table",
+   "label": "Eigent\u00fcmer",
+   "options": "Immobilie Eigentumer"
+  },
+  {
+   "fieldname": "grundsteuer_nummer",
+   "fieldtype": "Data",
+   "label": "Grundsteuer-Nummer"
+  },
+  {
+   "fieldname": "betriebsnummer",
+   "fieldtype": "Data",
+   "label": "Betriebsnummer"
+  },
+  {
+   "fieldname": "steuernummer_lohnsteuer",
+   "fieldtype": "Data",
+   "label": "Steuernummer f\u00fcr Lohnsteuer / Feststellungsbescheid"
+  },
+  {
+   "fieldname": "vbg_unternehmensnummer",
+   "fieldtype": "Data",
+   "label": "VBG Unternehmensnummer (ab 01.01.2023)"
+  },
+  {
+   "fieldname": "section_break_ykwc",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "kostenstelle",
+   "fieldtype": "Link",
+   "label": "Kostenstelle",
+   "options": "Cost Center"
+  },
+  {
+   "fieldname": "bankkonten",
+   "fieldtype": "Table",
+   "label": "Bankkonten",
+   "options": "Immobilie Bankkonto"
+  },
+  {
+   "fieldname": "kassenkonten",
+   "fieldtype": "Table",
+   "label": "Kassenkonten",
+   "options": "Immobilie Kassenkonto"
+  },
+  {
+   "fieldname": "konto",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Bankkonto",
+   "no_copy": 1,
+   "options": "Account"
+  },
+  {
+   "fieldname": "handwerker_section",
+   "fieldtype": "Section Break",
+   "label": "Hausmeister"
+  },
+  {
+   "fieldname": "hausmeister",
+   "fieldtype": "Link",
+   "label": "Hausmeister",
+   "options": "Contact"
+  },
+  {
+   "fieldname": "immobilien_id",
+   "fieldtype": "Int",
+   "label": "ID"
+  },
+  {
+   "fieldname": "gesamtwohnflaeche",
+   "fieldtype": "Float",
+   "is_virtual": 1,
+   "label": "Gesamtwohnfläche (m²)",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "kassenkonto",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Kassenkonto",
+   "no_copy": 1,
+   "options": "Account"
+  },
+  {
+   "fieldname": "gruppierung_tab",
+   "fieldtype": "Tab Break",
+   "label": "Gruppierung"
+  },
+  {
+   "fieldname": "gruppierung_section",
+   "fieldtype": "Section Break",
+   "label": "Baumstruktur"
+  },
+  {
+   "fieldname": "lft",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Left",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "rgt",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Right",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_group",
+   "fieldtype": "Check",
+   "label": "Is Group"
+  },
+  {
+   "fieldname": "old_parent",
+   "fieldtype": "Link",
+   "label": "Old Parent",
+   "options": "Immobilie"
+  },
+  {
+   "fieldname": "parent_immobilie",
+   "fieldtype": "Link",
+   "ignore_user_permissions": 1,
+   "label": "Parent Immobilie",
+   "options": "Immobilie"
+  },
+  {
+   "fieldname": "steuerliche_angaben_tab",
+   "fieldtype": "Tab Break",
+   "label": "Steuerliche Angaben"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_tree": 1,
+ "links": [],
+ "modified": "2025-12-20 19:47:44.682129",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Immobilie",
+ "naming_rule": "By fieldname",
+ "nsm_parent_field": "parent_immobilie",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "search_fields": "adresse_titel,objekt,adresse,immobilien_id",
+ "show_name_in_global_search": 1,
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "adresse_titel",
+ "track_changes": 1
+}

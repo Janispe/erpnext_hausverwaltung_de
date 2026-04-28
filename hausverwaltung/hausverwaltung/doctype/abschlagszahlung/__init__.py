@@ -1,0 +1,2 @@
+"""Abschlagszahlung DocType."""
+

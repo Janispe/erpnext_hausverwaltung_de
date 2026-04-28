@@ -1,0 +1,91 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-04-01 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "start_ms",
+  "end_ms",
+  "sprecher_label",
+  "text",
+  "ist_task_vorschlag",
+  "task_titel_vorschlag",
+  "task_beschreibung_vorschlag",
+  "zugeordnetes_todo",
+  "zugeordnete_aufgabe"
+ ],
+ "fields": [
+  {
+   "fieldname": "start_ms",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Start (ms)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "end_ms",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Ende (ms)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sprecher_label",
+   "fieldtype": "Data",
+   "label": "Sprecher",
+   "read_only": 1
+  },
+  {
+   "fieldname": "text",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Text",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ist_task_vorschlag",
+   "fieldtype": "Check",
+   "label": "Task-Vorschlag",
+   "read_only": 1
+  },
+  {
+   "fieldname": "task_titel_vorschlag",
+   "fieldtype": "Data",
+   "label": "Task-Titel Vorschlag",
+   "read_only": 1
+  },
+  {
+   "fieldname": "task_beschreibung_vorschlag",
+   "fieldtype": "Small Text",
+   "label": "Task-Beschreibung Vorschlag",
+   "read_only": 1
+  },
+  {
+   "fieldname": "zugeordnetes_todo",
+   "fieldtype": "Link",
+   "label": "Zugeordnetes ToDo",
+   "options": "ToDo"
+  },
+  {
+   "fieldname": "zugeordnete_aufgabe",
+   "fieldtype": "Link",
+   "label": "Zugeordnete Aufgabe",
+   "options": "Prozess Aufgabe"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Sprachnotiz Segment",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

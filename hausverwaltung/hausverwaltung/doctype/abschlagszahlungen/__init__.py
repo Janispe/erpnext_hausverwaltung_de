@@ -1,0 +1,2 @@
+"""Abschlagszahlungen (Batch) DocType."""
+

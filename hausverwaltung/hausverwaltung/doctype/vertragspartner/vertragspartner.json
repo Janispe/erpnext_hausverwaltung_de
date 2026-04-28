@@ -1,0 +1,61 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-06-13 01:39:03.768365",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "mieter",
+  "rolle",
+  "eingezogen",
+  "ausgezogen"
+ ],
+ "fields": [
+  {
+   "fieldname": "mieter",
+   "allow_on_submit": 1,
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Mieter",
+   "options": "Contact",
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "rolle",
+   "allow_on_submit": 1,
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Rolle",
+   "options": "Hauptmieter\nUntermieter\nAusgezogen"
+  },
+  {
+   "fieldname": "eingezogen",
+   "allow_on_submit": 1,
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Eingezogen"
+  },
+  {
+   "fieldname": "ausgezogen",
+   "allow_on_submit": 1,
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Ausgezogen"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-07-19 18:51:43.745672",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Vertragspartner",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

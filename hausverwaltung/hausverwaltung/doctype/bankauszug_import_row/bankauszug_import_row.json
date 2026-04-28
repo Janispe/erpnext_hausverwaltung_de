@@ -1,0 +1,158 @@
+{
+ "actions": [],
+ "creation": "2025-09-02 19:16:45.857971",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "buchungstag",
+  "betrag",
+  "richtung",
+  "iban",
+  "party_type",
+  "party",
+  "aktionen",
+  "prepare_customer",
+  "prepare_supplier",
+  "prepare_bank_account",
+  "auftraggeber",
+  "verwendungszweck",
+  "currency",
+  "bank_transaction",
+  "reference",
+  "row_status",
+  "error"
+ ],
+ "fields": [
+  {
+   "fieldname": "buchungstag",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Buchungstag",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "betrag",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Betrag",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "richtung",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Richtung",
+   "options": "Eingang\nAusgang",
+   "read_only": 1
+  },
+  {
+   "fieldname": "iban",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "IBAN",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "party_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Party Typ",
+   "options": "\nCustomer\nSupplier\nEigentuemer",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "party",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Party",
+   "options": "party_type",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "aktionen",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Aktionen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "prepare_customer",
+   "fieldtype": "Button",
+   "label": "Mieter erstellen"
+  },
+  {
+   "fieldname": "prepare_supplier",
+   "fieldtype": "Button",
+   "label": "Lieferant erstellen"
+  },
+  {
+   "fieldname": "prepare_bank_account",
+   "fieldtype": "Button",
+   "label": "Bankkonto erstellen"
+  },
+  {
+   "fieldname": "auftraggeber",
+   "fieldtype": "Data",
+   "label": "Auftraggeber / Empf\u00e4nger",
+   "read_only": 1
+  },
+  {
+   "fieldname": "verwendungszweck",
+   "fieldtype": "Small Text",
+   "label": "Verwendungszweck",
+   "read_only": 1
+  },
+  {
+   "fieldname": "currency",
+   "fieldtype": "Data",
+   "label": "W\u00e4hrung",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bank_transaction",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Bank Transaction",
+   "options": "Bank Transaction",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reference",
+   "fieldtype": "Link",
+   "label": "Referenz",
+   "options": "Bank Transaction",
+   "read_only": 1
+  },
+  {
+   "fieldname": "row_status",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Data",
+   "label": "Fehler",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2025-09-04 20:25:21.863246",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Bankauszug Import Row",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

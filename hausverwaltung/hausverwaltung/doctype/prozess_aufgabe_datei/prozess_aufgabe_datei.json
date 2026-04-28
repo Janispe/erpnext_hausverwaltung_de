@@ -1,0 +1,105 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:PAF-{#####}",
+ "creation": "2026-02-19 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "prozess_doctype",
+  "prozess_name",
+  "aufgabe_row_name",
+  "file_url",
+  "paperless_status",
+  "paperless_link",
+  "paperless_error"
+ ],
+ "fields": [
+  {
+   "fieldname": "prozess_doctype",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Prozess Doctype",
+   "options": "DocType",
+   "reqd": 1
+  },
+  {
+   "fieldname": "prozess_name",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Prozess Name",
+   "options": "prozess_doctype",
+   "reqd": 1
+  },
+  {
+   "fieldname": "aufgabe_row_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Aufgabe Row Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "file_url",
+   "fieldtype": "Attach",
+   "label": "Datei"
+  },
+  {
+   "default": "Offen",
+   "fieldname": "paperless_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Paperless Status",
+   "options": "Offen\nExportiert\nFehler",
+   "reqd": 1
+  },
+  {
+   "fieldname": "paperless_link",
+   "fieldtype": "Small Text",
+   "label": "Paperless Link",
+   "read_only": 1
+  },
+  {
+   "fieldname": "paperless_error",
+   "fieldtype": "Small Text",
+   "label": "Paperless Fehler",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-02-19 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Prozess Aufgabe Datei",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

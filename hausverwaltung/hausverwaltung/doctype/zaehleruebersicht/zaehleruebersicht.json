@@ -1,0 +1,46 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-07-18 16:28:39.129424",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "z\u00e4hler",
+  "stand",
+  "typ"
+ ],
+ "fields": [
+  {
+   "fieldname": "z\u00e4hler",
+   "fieldtype": "Link",
+   "label": "Z\u00e4hler",
+   "options": "Zaehler"
+  },
+  {
+   "fieldname": "typ",
+   "fieldtype": "Link",
+   "label": "Typ",
+   "options": "Zaehlertyp"
+  },
+  {
+   "fieldname": "stand",
+   "fieldtype": "Data",
+   "label": "Stand"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-07-18 16:33:51.608024",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Zaehleruebersicht",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -1,0 +1,193 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format: {wohnung} {ab}",
+ "creation": "2025-06-19 22:21:41.111386",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "vorheriger_zustand",
+  "column_break_esbo",
+  "folgender_zustand",
+  "section_break_juff",
+  "wohnung",
+  "ab",
+  "section_break_htdx",
+  "gr\u00f6\u00dfe",
+  "anzahl_zimmer",
+  "betriebskostenabrechnung_durch_vermieter",
+  "heizkostenabrechnung_durch_vermieter",
+  "bad",
+  "mietspiegelkategorie",
+  "merkmalpunkte",
+  "wohnung_aktiv_genutzt",
+  "schl\u00fcssel_tab",
+  "section_break_zustand",
+  "zustand_bool",
+  "zustand_float",
+  "zustand_int",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "gr\u00f6\u00dfe",
+   "fieldtype": "Float",
+   "in_preview": 1,
+   "label": "Gr\u00f6\u00dfe (m\u00b2)",
+   "non_negative": 1,
+   "precision": "2"
+  },
+  {
+   "fieldname": "anzahl_zimmer",
+   "fieldtype": "Float",
+   "in_preview": 1,
+   "label": "Anzahl Zimmer",
+   "non_negative": 1,
+   "precision": "1"
+  },
+  {
+   "default": "0",
+   "fieldname": "betriebskostenabrechnung_durch_vermieter",
+   "fieldtype": "Check",
+   "label": "Betriebskostenabrechnung durch Vermieter"
+  },
+  {
+   "default": "0",
+   "fieldname": "heizkostenabrechnung_durch_vermieter",
+   "fieldtype": "Check",
+   "label": "Heizkostenabrechnung durch Vermieter"
+  },
+  {
+   "fieldname": "bad",
+   "fieldtype": "Select",
+   "label": "Bad",
+   "options": "Mit Fenster\nOhne Fenster"
+  },
+  {
+   "fieldname": "wohnung",
+   "fieldtype": "Link",
+   "in_preview": 1,
+   "label": "Wohnung",
+   "options": "Wohnung",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ab",
+   "fieldtype": "Date",
+   "label": "ab",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_htdx",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "mietspiegelkategorie",
+   "fieldtype": "Int",
+   "label": "Mietspiegelkategorie"
+  },
+  {
+   "default": "0",
+   "description": "-4 bis 4",
+   "fieldname": "merkmalpunkte",
+   "fieldtype": "Int",
+   "label": "Merkmalpunkte"
+  },
+  {
+   "fieldname": "vorheriger_zustand",
+   "fieldtype": "Link",
+   "is_virtual": 1,
+   "label": "Vorheriger Zustand",
+   "options": "Wohnungszustand"
+  },
+  {
+   "fieldname": "column_break_esbo",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "folgender_zustand",
+   "fieldtype": "Link",
+   "is_virtual": 1,
+   "label": "Folgender Zustand",
+   "options": "Wohnungszustand"
+  },
+  {
+   "fieldname": "section_break_juff",
+   "fieldtype": "Section Break"
+  },
+  {
+   "default": "true",
+   "fieldname": "wohnung_aktiv_genutzt",
+   "fieldtype": "Check",
+   "label": "Wohnung aktiv genutzt"
+  },
+  {
+   "fieldname": "schl\u00fcssel_tab",
+   "fieldtype": "Tab Break",
+   "label": "Schl\u00fcssel"
+  },
+  {
+   "fieldname": "section_break_zustand",
+   "fieldtype": "Section Break",
+   "label": "Zustandsschl\u00fcssel"
+  },
+  {
+   "fieldname": "zustand_bool",
+   "fieldtype": "Table",
+   "label": "Zustand (Boolean)",
+   "options": "ZustandsschluesselBooleanRow"
+  },
+  {
+   "fieldname": "zustand_float",
+   "fieldtype": "Table",
+   "label": "Zustand (Gleitkommazahl)",
+   "options": "ZustandsschluesselFloatRow"
+  },
+  {
+   "fieldname": "zustand_int",
+   "fieldtype": "Table",
+   "label": "Zustand (Nat\u00fcrliche Zahl)",
+   "options": "ZustandsschluesselIntRow"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Wohnungszustand",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-04-22 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Wohnungszustand",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "show_preview_popup": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

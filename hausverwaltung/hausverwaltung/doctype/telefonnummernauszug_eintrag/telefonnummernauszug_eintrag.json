@@ -1,0 +1,82 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-04-25 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "immobilie",
+  "gebaeudeteil",
+  "wohnung",
+  "mieter_name",
+  "rolle",
+  "telefon",
+  "mobil"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Immobilie",
+   "options": "Immobilie"
+  },
+  {
+   "columns": 1,
+   "fieldname": "gebaeudeteil",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Gebäudeteil"
+  },
+  {
+   "columns": 2,
+   "fieldname": "wohnung",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Wohnung",
+   "options": "Wohnung"
+  },
+  {
+   "columns": 3,
+   "fieldname": "mieter_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Mieter"
+  },
+  {
+   "fieldname": "rolle",
+   "fieldtype": "Data",
+   "label": "Rolle"
+  },
+  {
+   "columns": 2,
+   "fieldname": "telefon",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Telefon"
+  },
+  {
+   "columns": 2,
+   "fieldname": "mobil",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Mobil"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-25 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Telefonnummernauszug Eintrag",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -1,0 +1,9 @@
+Account Name,Parent Account,Account Number,Parent Account Number,Is Group,Account Type,Root Type,Account Currency
+Application of Funds (Assets),,,,1,,Asset,EUR
+Sources of Funds (Liabilities),,,,1,,Liability,EUR
+Equity,,,,1,,Equity,EUR
+Expenses,,,,1,,Expense,EUR
+Income,,,,1,,Income,EUR
+Umlagefähig,Expenses,,,1,,,EUR
+Nicht Umlagefähig,Expenses,,,1,,,EUR
+Mieterforderungen,Application of Funds (Assets),1300,,1,,,EUR

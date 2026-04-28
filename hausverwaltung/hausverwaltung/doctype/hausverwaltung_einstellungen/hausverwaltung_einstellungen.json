@@ -1,0 +1,154 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-02-06 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "speech_section",
+  "speech_to_text_backend",
+  "default_transcript_language",
+  "whisper_model_size",
+  "whisper_initial_prompt",
+  "recording_max_minutes",
+  "ollama_section",
+  "ollama_enabled",
+  "ollama_base_url",
+  "ollama_model",
+  "ollama_timeout_seconds",
+  "writeoff_section",
+  "abschreibungskonto_forderungen",
+  "income_section",
+  "income_accounts",
+  "abschlagszahlung_section",
+  "bankimport_abschlag_toleranz_tage"
+ ],
+ "fields": [
+  {
+   "fieldname": "speech_section",
+   "fieldtype": "Section Break",
+   "label": "Sprachnotizen"
+  },
+  {
+   "default": "faster_whisper",
+   "fieldname": "speech_to_text_backend",
+   "fieldtype": "Select",
+   "label": "Speech-to-Text Backend",
+   "options": "faster_whisper",
+   "reqd": 1
+  },
+  {
+   "default": "de",
+   "fieldname": "default_transcript_language",
+   "fieldtype": "Data",
+   "label": "Standard-Sprache"
+  },
+  {
+   "default": "medium",
+   "fieldname": "whisper_model_size",
+   "fieldtype": "Data",
+   "label": "Whisper Modell"
+  },
+  {
+   "description": "Zusätzliche Begriffe als Kontext-Hinweis für Whisper (Eigennamen, Fachbegriffe). Max. ~240 Tokens, Immobilien- und Mieternamen werden automatisch ergänzt.",
+   "fieldname": "whisper_initial_prompt",
+   "fieldtype": "Small Text",
+   "label": "Whisper Kontext-Hinweis"
+  },
+  {
+   "default": "20",
+   "fieldname": "recording_max_minutes",
+   "fieldtype": "Int",
+   "label": "Max. Aufnahmedauer (Minuten)"
+  },
+  {
+   "fieldname": "ollama_section",
+   "fieldtype": "Section Break",
+   "label": "Ollama"
+  },
+  {
+   "default": "0",
+   "fieldname": "ollama_enabled",
+   "fieldtype": "Check",
+   "label": "Ollama aktiv"
+  },
+  {
+   "description": "Remote-URL deines PCs, z.B. http://192.168.178.10:11434",
+   "fieldname": "ollama_base_url",
+   "fieldtype": "Data",
+   "label": "Ollama Base URL"
+  },
+  {
+   "fieldname": "ollama_model",
+   "fieldtype": "Data",
+   "label": "Ollama Modell"
+  },
+  {
+   "default": "30",
+   "fieldname": "ollama_timeout_seconds",
+   "fieldtype": "Int",
+   "label": "Ollama Timeout (Sekunden)"
+  },
+  {
+   "fieldname": "writeoff_section",
+   "fieldtype": "Section Break",
+   "label": "Abschreibungen"
+  },
+  {
+   "description": "Aufwandskonto, auf das offene Forderungen aus Sales Invoices per Journal Entry abgeschrieben werden.",
+   "fieldname": "abschreibungskonto_forderungen",
+   "fieldtype": "Link",
+   "label": "Abschreibungskonto Forderungen",
+   "options": "Account",
+   "reqd": 1
+  },
+  {
+   "fieldname": "income_section",
+   "fieldtype": "Section Break",
+   "label": "Erlöskonten"
+  },
+  {
+   "fieldname": "income_accounts",
+   "fieldtype": "Table",
+   "label": "Erlöskonten pro Company",
+   "options": "Hausverwaltung Erloeskonten"
+  },
+  {
+   "fieldname": "abschlagszahlung_section",
+   "fieldtype": "Section Break",
+   "label": "Abschlagszahlungen"
+  },
+  {
+   "default": "7",
+   "description": "Maximale Differenz zwischen Plan-Fälligkeitsdatum und Bank-Buchungsdatum für ein Auto-Match.",
+   "fieldname": "bankimport_abschlag_toleranz_tage",
+   "fieldtype": "Int",
+   "label": "Bankimport: Abschlag-Match Toleranz Tage"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-02-06 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Hausverwaltung Einstellungen",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

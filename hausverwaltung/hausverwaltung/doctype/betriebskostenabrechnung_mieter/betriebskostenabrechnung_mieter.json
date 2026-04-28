@@ -1,0 +1,267 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-06-18 02:25:28.772926",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "_section",
+  "datum",
+  "von",
+  "bis",
+  "mieter",
+  "mietvertrag",
+  "customer",
+  "wohnung",
+  "immobilien_abrechnung",
+  "section_break_immobilie",
+  "kostenuebersicht",
+  "immobilien_kosten",
+  "größe",
+  "abrechnung",
+  "gesamtkosten",
+  "vorrauszahlungen",
+  "differenz",
+  "verschickt",
+  "abrechnung_ausgeglichen",
+  "sales_invoice",
+  "credit_note",
+  "consolidation_journal_entry",
+  "amended_from",
+  "wohnungszustand",
+  "tab_2_tab",
+  "schlüssel_section",
+  "bool_schlüssel",
+  "int_schlüssel",
+  "float_schlüssel"
+ ],
+ "fields": [
+  {
+   "fieldname": "_section",
+   "fieldtype": "Section Break",
+   "label": " "
+  },
+  {
+   "fieldname": "datum",
+   "fieldtype": "Date",
+   "label": "Datum",
+   "read_only": 1
+  },
+  {
+   "fieldname": "von",
+   "fieldtype": "Date",
+   "label": "Von",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bis",
+   "fieldtype": "Date",
+   "label": "Bis",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mieter",
+   "fieldtype": "Table",
+   "label": "Mieter",
+   "options": "Vertragspartner",
+   "read_only": 1
+  },
+  {
+   "fieldname": "größe",
+   "fieldtype": "Float",
+   "label": "Größe",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mietvertrag",
+   "fieldtype": "Link",
+   "label": "Mietvertrag",
+   "options": "Mietvertrag",
+   "read_only": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Mieter",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wohnung",
+   "fieldtype": "Link",
+   "label": "Wohnung",
+   "options": "Wohnung",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "immobilien_abrechnung",
+   "fieldtype": "Link",
+   "label": "Abrechnung (Immobilie)",
+   "options": "Betriebskostenabrechnung Immobilie",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_immobilie",
+   "fieldtype": "Section Break",
+   "label": "Immobilienkosten"
+  },
+  {
+   "fieldname": "kostenuebersicht",
+   "fieldtype": "HTML",
+   "label": "Kostenuebersicht",
+   "read_only": 1
+  },
+  {
+   "fieldname": "immobilien_kosten",
+   "fieldtype": "Table",
+   "label": "Kosten aus Immobilienabrechnung",
+   "options": "Abrechnungsposten",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gesamtkosten",
+   "fieldtype": "Float",
+   "is_virtual": 1,
+   "label": "Gesamtkosten",
+   "read_only": 1
+  },
+  {
+   "fieldname": "vorrauszahlungen",
+   "fieldtype": "Float",
+   "label": "Vorrauszahlungen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "differenz",
+   "fieldtype": "Float",
+   "is_virtual": 1,
+   "label": "Differenz",
+   "read_only": 1
+  },
+  {
+   "fieldname": "abrechnung",
+   "fieldtype": "Table",
+   "label": "Abrechnung",
+   "options": "Abrechnungsposten",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "default": "0",
+   "fieldname": "verschickt",
+   "fieldtype": "Check",
+   "label": "Verschickt"
+  },
+  {
+   "default": "0",
+   "fieldname": "abrechnung_ausgeglichen",
+   "fieldtype": "Check",
+   "label": "Abrechnung ausgeglichen",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "sales_invoice",
+   "fieldtype": "Link",
+   "label": "Nachzahlung (Rechnung)",
+   "options": "Sales Invoice",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "credit_note",
+   "fieldtype": "Link",
+   "label": "Guthaben (Gutschrift)",
+   "options": "Sales Invoice",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "consolidation_journal_entry",
+   "fieldtype": "Link",
+   "label": "Konsolidierung JE",
+   "options": "Journal Entry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Betriebskostenabrechnung Mieter",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "wohnungszustand",
+   "fieldtype": "Link",
+   "label": "Wohnungszustand",
+   "options": "Wohnungszustand",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tab_2_tab",
+   "fieldtype": "Tab Break",
+   "label": "Schlüssel"
+  },
+  {
+   "fieldname": "schlüssel_section",
+   "fieldtype": "Section Break",
+   "label": "Schlüssel"
+  },
+  {
+   "fieldname": "bool_schlüssel",
+   "fieldtype": "Table",
+   "label": "Bool Schlüssel",
+   "options": "ZustandsschluesselBooleanRow",
+   "read_only": 1
+  },
+  {
+   "fieldname": "int_schlüssel",
+   "fieldtype": "Table",
+   "label": "Int Schlüssel",
+   "options": "ZustandsschluesselIntRow",
+   "read_only": 1
+  },
+  {
+   "fieldname": "float_schlüssel",
+   "fieldtype": "Table",
+   "label": "Float Schlüssel",
+   "options": "ZustandsschluesselFloatRow",
+   "read_only": 1
+  }
+ ],
+ "autoname": "format:{mieter}-{wohnung}-{von}-{bis}",
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2025-12-13 16:22:42.276474",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Betriebskostenabrechnung Mieter",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 0,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "cancel": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -1,0 +1,78 @@
+{
+ "add_total_row": 1,
+ "add_translate_data": 0,
+ "columns": [],
+ "creation": "2025-08-15 16:37:17.704917",
+ "disabled": 0,
+ "docstatus": 0,
+ "doctype": "Report",
+ "filters": [
+  {
+   "fieldname": "account",
+   "fieldtype": "Link",
+   "label": "Konto",
+   "mandatory": 0,
+   "options": "Account",
+   "wildcard_filter": 0
+  },
+  {
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "label": "Immobilie",
+   "mandatory": 1,
+   "options": "Immobilie",
+   "wildcard_filter": 0
+  },
+  {
+   "fieldname": "from_date",
+   "fieldtype": "Date",
+   "label": "Von",
+   "mandatory": 1,
+   "wildcard_filter": 0
+  },
+  {
+   "fieldname": "to_date",
+   "fieldtype": "Date",
+   "label": "Bis",
+   "mandatory": 1,
+   "wildcard_filter": 0
+  }
+ ],
+ "idx": 0,
+ "is_standard": "Yes",
+ "letterhead": null,
+ "modified": "2026-04-21 16:26:40.197882",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "EUR Query",
+ "owner": "Administrator",
+ "prepared_report": 0,
+ "query": "SELECT\n    q.konto            AS \"Konto:Link/Account\",\n    q.konto_name       AS \"Kontoname:Data\",\n    CASE\n        WHEN acc.root_type = 'Income' THEN 'Einnahmen'\n        WHEN acc.root_type = 'Expense' AND EXISTS (\n            SELECT 1\n            FROM `tabAccount` grp\n            WHERE grp.company = acc.company\n              AND grp.is_group = 1\n              AND grp.account_name = 'Umlagef\u00e4hig'\n              AND acc.lft BETWEEN grp.lft AND grp.rgt\n        ) THEN 'Umlagef\u00e4hig'\n        WHEN acc.root_type = 'Expense' THEN 'Nicht umlagef\u00e4hig'\n        ELSE acc.root_type\n    END               AS \"Kategorie:Data\",\n    SUM(q.betrag)      AS \"Betrag (cash):Currency/EUR\"\nFROM (\n\n    /* A) DIREKTE GL-ZUORDNUNG: Beleg enth\u00e4lt Bank/Kasse-Konto + P&L */\n    SELECT\n        gle.account                             AS konto,\n        acc.account_name                        AS konto_name,\n        /* P&L-Logik: Income positiv, Expense negativ */\n        SUM(gle.credit - gle.debit)             AS betrag\n    FROM `tabGL Entry` gle\n    JOIN `tabAccount` acc ON acc.name = gle.account\n    WHERE gle.docstatus = 1\n      AND gle.posting_date BETWEEN %(from_date)s AND %(to_date)s\n      AND acc.is_group = 0\n      AND acc.root_type IN ('Expense','Income')\n      AND EXISTS (\n          SELECT 1\n          FROM `tabGL Entry` g2\n          WHERE g2.voucher_no = gle.voucher_no\n            AND g2.voucher_type = gle.voucher_type\n            AND g2.account     = %(account)s\n            AND g2.docstatus   = 1\n            AND g2.posting_date BETWEEN %(from_date)s AND %(to_date)s\n      )\n    GROUP BY gle.account, acc.account_name\n\n    UNION ALL\n\n    /* B1) PAYMENT ENTRY -> PURCHASE INVOICE (Ausgaben = negativ) */\n    SELECT\n        pii.expense_account                     AS konto,\n        acc.account_name                        AS konto_name,\n        -SUM(\n            per.allocated_amount * pii.base_amount\n            / NULLIF(pi.base_grand_total, 0)\n        )                                       AS betrag\n    FROM `tabPayment Entry` pe\n    JOIN `tabPayment Entry Reference` per\n         ON per.parent = pe.name\n        AND per.reference_doctype = 'Purchase Invoice'\n    JOIN `tabPurchase Invoice` pi\n         ON pi.name = per.reference_name\n    JOIN `tabPurchase Invoice Item` pii\n         ON pii.parent = pi.name\n    JOIN `tabAccount` acc\n         ON acc.name = pii.expense_account\n    WHERE pe.docstatus = 1\n      AND pe.posting_date BETWEEN %(from_date)s AND %(to_date)s\n      /* Nur PE, deren GL das angegebene Konto enth\u00e4lt */\n      AND EXISTS (\n          SELECT 1\n          FROM `tabGL Entry` g2\n          WHERE g2.voucher_no = pe.name\n            AND g2.voucher_type = 'Payment Entry'\n            AND g2.account     = %(account)s\n            AND g2.docstatus   = 1\n            AND g2.posting_date BETWEEN %(from_date)s AND %(to_date)s\n      )\n    GROUP BY pii.expense_account, acc.account_name\n\n    UNION ALL\n\n    /* B2) PAYMENT ENTRY -> SALES INVOICE (Einnahmen = positiv) */\n    SELECT\n        sii.income_account                      AS konto,\n        acc.account_name                        AS konto_name,\n        SUM(\n            per.allocated_amount * sii.base_amount\n            / NULLIF(si.base_grand_total, 0)\n        )                                       AS betrag\n    FROM `tabPayment Entry` pe\n    JOIN `tabPayment Entry Reference` per\n         ON per.parent = pe.name\n        AND per.reference_doctype = 'Sales Invoice'\n    JOIN `tabSales Invoice` si\n         ON si.name = per.reference_name\n    JOIN `tabSales Invoice Item` sii\n         ON sii.parent = si.name\n    JOIN `tabAccount` acc\n         ON acc.name = sii.income_account\n    WHERE pe.docstatus = 1\n      AND pe.posting_date BETWEEN %(from_date)s AND %(to_date)s\n      AND EXISTS (\n          SELECT 1\n          FROM `tabGL Entry` g2\n          WHERE g2.voucher_no = pe.name\n            AND g2.voucher_type = 'Payment Entry'\n            AND g2.account     = %(account)s\n            AND g2.docstatus   = 1\n            AND g2.posting_date BETWEEN %(from_date)s AND %(to_date)s\n      )\n    GROUP BY sii.income_account, acc.account_name\n\n    UNION ALL\n\n    /* C1) JOURNAL ENTRY -> PURCHASE INVOICE (Ausgaben = negativ, wenn nur Kreditoren ausgeglichen werden) */\n    SELECT\n        pii.expense_account                     AS konto,\n        acc.account_name                        AS konto_name,\n        -SUM(\n            (gle.debit - gle.credit) * pii.base_amount\n            / NULLIF(pi.base_grand_total, 0)\n        )                                       AS betrag\n    FROM `tabGL Entry` gle\n    JOIN `tabPurchase Invoice` pi\n         ON pi.name = gle.against_voucher\n    JOIN `tabPurchase Invoice Item` pii\n         ON pii.parent = pi.name\n    JOIN `tabAccount` acc\n         ON acc.name = pii.expense_account\n    WHERE gle.docstatus = 1\n      AND gle.posting_date BETWEEN %(from_date)s AND %(to_date)s\n      AND gle.voucher_type = 'Journal Entry'\n      AND gle.against_voucher_type = 'Purchase Invoice'\n      AND EXISTS (\n          SELECT 1\n          FROM `tabGL Entry` g2\n          WHERE g2.voucher_no = gle.voucher_no\n            AND g2.voucher_type = 'Journal Entry'\n            AND g2.account     = %(account)s\n            AND g2.docstatus   = 1\n            AND g2.posting_date BETWEEN %(from_date)s AND %(to_date)s\n      )\n    GROUP BY pii.expense_account, acc.account_name\n\n    UNION ALL\n\n    /* C2) JOURNAL ENTRY -> SALES INVOICE (Einnahmen = positiv, wenn nur Debitoren ausgeglichen werden) */\n    SELECT\n        sii.income_account                      AS konto,\n        acc.account_name                        AS konto_name,\n        SUM(\n            (gle.credit - gle.debit) * sii.base_amount\n            / NULLIF(si.base_grand_total, 0)\n        )                                       AS betrag\n    FROM `tabGL Entry` gle\n    JOIN `tabSales Invoice` si\n         ON si.name = gle.against_voucher\n    JOIN `tabSales Invoice Item` sii\n         ON sii.parent = si.name\n    JOIN `tabAccount` acc\n         ON acc.name = sii.income_account\n    WHERE gle.docstatus = 1\n      AND gle.posting_date BETWEEN %(from_date)s AND %(to_date)s\n      AND gle.voucher_type = 'Journal Entry'\n      AND gle.against_voucher_type = 'Sales Invoice'\n      AND EXISTS (\n          SELECT 1\n          FROM `tabGL Entry` g2\n          WHERE g2.voucher_no = gle.voucher_no\n            AND g2.voucher_type = 'Journal Entry'\n            AND g2.account     = %(account)s\n            AND g2.docstatus   = 1\n            AND g2.posting_date BETWEEN %(from_date)s AND %(to_date)s\n      )\n    GROUP BY sii.income_account, acc.account_name\n\n\n\n    UNION ALL\n\n    /* D) BANK-JE (Debitorenzahlung) -> Abgrenzungs-JEs im selben Monat (Cash-Basis) */\n    SELECT\n        pl.account AS konto,\n        acc_pl.account_name AS konto_name,\n        SUM(paid.paid_amount * pl.pl_amount / NULLIF(month_tot.month_total, 0)) AS betrag\n    FROM (\n        /* Zahlung: JE mit Bankkonto + Debitorenkonto (Receivable) */\n        SELECT\n            g.voucher_no AS payment_voucher,\n            g.posting_date AS payment_date,\n            g.account AS receivable_account,\n            (g.credit - g.debit) AS paid_amount\n        FROM `tabGL Entry` g\n        JOIN `tabAccount` a\n             ON a.name = g.account\n            AND a.account_type = 'Receivable'\n        WHERE g.docstatus = 1\n          AND g.voucher_type = 'Journal Entry'\n          AND g.posting_date BETWEEN %(from_date)s AND %(to_date)s\n          AND (g.credit - g.debit) > 0\n          AND EXISTS (\n              SELECT 1\n              FROM `tabGL Entry` b\n              WHERE b.docstatus = 1\n                AND b.voucher_type = g.voucher_type\n                AND b.voucher_no = g.voucher_no\n                AND b.account = %(account)s\n                AND b.posting_date BETWEEN %(from_date)s AND %(to_date)s\n          )\n    ) AS paid\n    JOIN (\n        /* Abgrenzung: JE ohne Bankkonto, aber mit Debitor-DEBIT im selben Monat */\n        SELECT\n            g.voucher_no AS accrual_voucher,\n            g.account AS receivable_account,\n            DATE_FORMAT(g.posting_date, '%%Y-%%m') AS ym\n        FROM `tabGL Entry` g\n        JOIN `tabAccount` a\n             ON a.name = g.account\n            AND a.account_type = 'Receivable'\n        WHERE g.docstatus = 1\n          AND g.voucher_type = 'Journal Entry'\n          AND g.posting_date BETWEEN %(from_date)s AND %(to_date)s\n          AND (g.debit - g.credit) > 0\n          AND NOT EXISTS (\n              SELECT 1\n              FROM `tabGL Entry` bb\n              WHERE bb.docstatus = 1\n                AND bb.voucher_type = g.voucher_type\n                AND bb.voucher_no = g.voucher_no\n                AND bb.account = %(account)s\n          )\n        GROUP BY g.voucher_no, g.account, DATE_FORMAT(g.posting_date, '%%Y-%%m')\n    ) AS accrual\n      ON accrual.receivable_account = paid.receivable_account\n     AND accrual.ym = DATE_FORMAT(paid.payment_date, '%%Y-%%m')\n    JOIN (\n        /* P&L-Anteil je Abgrenzungs-JE */\n        SELECT\n            gle.voucher_no AS accrual_voucher,\n            gle.account,\n            SUM(gle.credit - gle.debit) AS pl_amount\n        FROM `tabGL Entry` gle\n        JOIN `tabAccount` acc ON acc.name = gle.account\n        WHERE gle.docstatus = 1\n          AND gle.voucher_type = 'Journal Entry'\n          AND gle.posting_date BETWEEN %(from_date)s AND %(to_date)s\n          AND acc.is_group = 0\n          AND acc.root_type IN ('Income', 'Expense')\n        GROUP BY gle.voucher_no, gle.account\n    ) AS pl\n      ON pl.accrual_voucher = accrual.accrual_voucher\n    JOIN (\n        /* Monatssumme je Debitorenkonto (Summe P&L = Debitor-DEBIT in Abgrenzung) */\n        SELECT\n            g.account AS receivable_account,\n            DATE_FORMAT(g.posting_date, '%%Y-%%m') AS ym,\n            SUM(v.pl_total) AS month_total\n        FROM (\n            SELECT\n                g.voucher_no,\n                g.account,\n                g.posting_date\n            FROM `tabGL Entry` g\n            JOIN `tabAccount` a\n                 ON a.name = g.account\n                AND a.account_type = 'Receivable'\n            WHERE g.docstatus = 1\n              AND g.voucher_type = 'Journal Entry'\n              AND g.posting_date BETWEEN %(from_date)s AND %(to_date)s\n              AND (g.debit - g.credit) > 0\n              AND NOT EXISTS (\n                  SELECT 1\n                  FROM `tabGL Entry` bb\n                  WHERE bb.docstatus = 1\n                    AND bb.voucher_type = g.voucher_type\n                    AND bb.voucher_no = g.voucher_no\n                    AND bb.account = %(account)s\n              )\n            GROUP BY g.voucher_no, g.account, g.posting_date\n        ) g\n        JOIN (\n            SELECT\n                gle.voucher_no,\n                SUM(gle.credit - gle.debit) AS pl_total\n            FROM `tabGL Entry` gle\n            JOIN `tabAccount` acc ON acc.name = gle.account\n            WHERE gle.docstatus = 1\n              AND gle.voucher_type = 'Journal Entry'\n              AND gle.posting_date BETWEEN %(from_date)s AND %(to_date)s\n              AND acc.is_group = 0\n              AND acc.root_type IN ('Income', 'Expense')\n            GROUP BY gle.voucher_no\n        ) v ON v.voucher_no = g.voucher_no\n        GROUP BY g.account, DATE_FORMAT(g.posting_date, '%%Y-%%m')\n    ) AS month_tot\n      ON month_tot.receivable_account = paid.receivable_account\n     AND month_tot.ym = DATE_FORMAT(paid.payment_date, '%%Y-%%m')\n    JOIN `tabAccount` acc_pl ON acc_pl.name = pl.account\n    GROUP BY pl.account, acc_pl.account_name\n\n) AS q\nJOIN `tabAccount` acc ON acc.name = q.konto\nGROUP BY q.konto, q.konto_name, `Kategorie:Data`\nORDER BY FIELD(`Kategorie:Data`, 'Einnahmen', 'Umlagef\u00e4hig', 'Nicht umlagef\u00e4hig'), q.konto_name;\n",
+ "ref_doctype": "Account",
+ "report_name": "EUR Query",
+ "report_type": "Query Report",
+ "roles": [
+  {
+   "role": "Accounts User"
+  },
+  {
+   "role": "Auditor"
+  },
+  {
+   "role": "Sales User"
+  },
+  {
+   "role": "Purchase User"
+  },
+  {
+   "role": "Accounts Manager"
+  },
+  {
+   "role": "Hausverwalter"
+  },
+  {
+   "role": "Hausverwalter (Buchung)"
+  }
+ ],
+ "timeout": 0
+}

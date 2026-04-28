@@ -1,0 +1,194 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:EMD-{YYYY}-{#####}",
+ "creation": "2025-12-20 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status_section",
+  "status",
+  "orchestrator_backend",
+  "temporal_workflow_id",
+  "temporal_run_id",
+  "temporal_last_error",
+  "temporal_synced_at",
+  "send_after",
+  "communication",
+  "email_queue",
+  "queued_on",
+  "sent_on",
+  "last_send_error",
+  "content_section",
+  "recipients",
+  "cc",
+  "bcc",
+  "subject",
+  "message",
+  "reference_section",
+  "reference_doctype",
+  "reference_name"
+ ],
+ "fields": [
+  {
+   "fieldname": "status_section",
+   "fieldtype": "Section Break",
+   "label": "Status"
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Draft\nQueued\nSent\nCancelled",
+   "reqd": 1
+  },
+  {
+   "default": "local",
+   "fieldname": "orchestrator_backend",
+   "fieldtype": "Select",
+   "label": "Orchestrator Backend",
+   "options": "local\ntemporal",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "temporal_workflow_id",
+   "fieldtype": "Data",
+   "label": "Temporal Workflow ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "temporal_run_id",
+   "fieldtype": "Data",
+   "label": "Temporal Run ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "temporal_last_error",
+   "fieldtype": "Small Text",
+   "label": "Temporal Last Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "temporal_synced_at",
+   "fieldtype": "Datetime",
+   "label": "Temporal Synced At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "send_after",
+   "fieldtype": "Datetime",
+   "label": "Senden nach"
+  },
+  {
+   "fieldname": "communication",
+   "fieldtype": "Link",
+   "label": "Communication",
+   "options": "Communication",
+   "read_only": 1
+  },
+  {
+   "fieldname": "email_queue",
+   "fieldtype": "Link",
+   "label": "Email Queue",
+   "options": "Email Queue",
+   "read_only": 1
+  },
+  {
+   "fieldname": "queued_on",
+   "fieldtype": "Datetime",
+   "label": "In Queue am",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sent_on",
+   "fieldtype": "Datetime",
+   "label": "Gesendet am",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_send_error",
+   "fieldtype": "Small Text",
+   "label": "Letzter Sendefehler",
+   "read_only": 1
+  },
+  {
+   "fieldname": "content_section",
+   "fieldtype": "Section Break",
+   "label": "Inhalt"
+  },
+  {
+   "fieldname": "recipients",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Empfänger",
+   "description": "Komma- oder Semikolon-separiert"
+  },
+  {
+   "fieldname": "cc",
+   "fieldtype": "Small Text",
+   "label": "CC"
+  },
+  {
+   "fieldname": "bcc",
+   "fieldtype": "Small Text",
+   "label": "BCC"
+  },
+  {
+   "fieldname": "subject",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Betreff"
+  },
+  {
+   "fieldname": "message",
+   "fieldtype": "Text Editor",
+   "label": "Nachricht"
+  },
+  {
+   "fieldname": "reference_section",
+   "fieldtype": "Section Break",
+   "label": "Referenz"
+  },
+  {
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "label": "Referenz-Doctype",
+   "options": "DocType"
+  },
+  {
+   "fieldname": "reference_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Referenz-Dokument",
+   "options": "reference_doctype"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-12-20 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Email Entwurf",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

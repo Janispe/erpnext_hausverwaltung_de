@@ -1,0 +1,147 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:MRDL-{YYYY}-{#####}",
+ "creation": "2026-02-06 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "company",
+  "monat",
+  "jahr",
+  "started_at",
+  "finished_at",
+  "status",
+  "created_miete",
+  "created_bk",
+  "created_heiz",
+  "skipped_count",
+  "created_total",
+  "user",
+  "rechnungen",
+  "skips"
+ ],
+ "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "monat",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Monat",
+   "options": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12",
+   "reqd": 1
+  },
+  {
+   "fieldname": "jahr",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Jahr",
+   "reqd": 1
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Started At",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "finished_at",
+   "fieldtype": "Datetime",
+   "label": "Finished At",
+   "read_only": 1
+  },
+  {
+   "default": "Running",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Running\nCompleted\nFailed"
+  },
+  {
+   "fieldname": "created_miete",
+   "fieldtype": "Int",
+   "label": "Created Miete",
+   "read_only": 1
+  },
+  {
+   "fieldname": "created_bk",
+   "fieldtype": "Int",
+   "label": "Created BK",
+   "read_only": 1
+  },
+  {
+   "fieldname": "created_heiz",
+   "fieldtype": "Int",
+   "label": "Created Heiz",
+   "read_only": 1
+  },
+  {
+   "fieldname": "skipped_count",
+   "fieldtype": "Int",
+   "label": "Skipped Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "created_total",
+   "fieldtype": "Int",
+   "label": "Created Total",
+   "read_only": 1
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rechnungen",
+   "fieldtype": "Table",
+   "label": "Rechnungen",
+   "options": "Mietrechnungen Durchlauf Rechnung"
+  },
+  {
+   "fieldname": "skips",
+   "fieldtype": "Table",
+   "label": "Skips",
+   "options": "Mietrechnungen Durchlauf Skip"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 0,
+ "links": [],
+ "modified": "2026-02-06 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Mietrechnungen Durchlauf",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

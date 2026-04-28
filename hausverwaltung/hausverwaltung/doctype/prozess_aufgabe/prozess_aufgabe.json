@@ -1,0 +1,173 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-02-17 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "aufgabe",
+  "title",
+  "task_type",
+  "handler_key",
+  "step_key",
+  "parent_step_key",
+  "verantwortlich",
+  "faellig_am",
+  "status",
+  "pflicht",
+  "erfuellt",
+  "erfuellt_am",
+  "erfuellt_von",
+  "config_json",
+  "konfig_snapshot_json",
+  "result_json",
+  "mapping_flag",
+  "todo"
+ ],
+ "fields": [
+  {
+   "fieldname": "aufgabe",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Aufgabe",
+   "reqd": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Title",
+   "read_only": 1
+  },
+  {
+   "default": "manual_check",
+   "fieldname": "task_type",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Task Type",
+   "options": "manual_check\nfile_upload\npython_action\nprint_document\npaperless_export\nemail_draft",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "handler_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Handler Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "step_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Step Key"
+  },
+  {
+   "fieldname": "parent_step_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Parent Step Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "verantwortlich",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Verantwortlich",
+   "options": "User"
+  },
+  {
+   "fieldname": "faellig_am",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Faellig am"
+  },
+  {
+   "default": "Offen",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Offen\nIn Arbeit\nErledigt"
+  },
+  {
+   "default": "1",
+   "fieldname": "pflicht",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Pflicht"
+  },
+  {
+   "default": "0",
+   "fieldname": "erfuellt",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Erfuellt",
+   "read_only": 1
+  },
+  {
+   "fieldname": "erfuellt_am",
+   "fieldtype": "Datetime",
+   "label": "Erfuellt am",
+   "read_only": 1
+  },
+  {
+   "fieldname": "erfuellt_von",
+   "fieldtype": "Link",
+   "label": "Erfuellt von",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "config_json",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Config JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "konfig_snapshot_json",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Konfig Snapshot JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "result_json",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Result JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mapping_flag",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Mapping Flag",
+   "options": "\nneue_adresse_altmieter_erfasst\nzaehler_geprueft\nzaehlerstaende_eingetragen\nabnahmeformular_file\nmietvertrag_unterschrieben_file"
+  },
+  {
+   "fieldname": "todo",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "ToDo",
+   "options": "ToDo",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-02-17 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Prozess Aufgabe",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

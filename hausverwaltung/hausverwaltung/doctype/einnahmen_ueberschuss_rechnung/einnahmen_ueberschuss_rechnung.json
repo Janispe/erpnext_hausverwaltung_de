@@ -1,0 +1,172 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "hash",
+ "creation": "2026-04-18 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "titel",
+  "company",
+  "immobilie",
+  "from_date",
+  "to_date",
+  "umlage_method",
+  "include_non_euer_accounts",
+  "show_bank_check",
+  "report_hinweis",
+  "section_break_totals",
+  "summe_einnahmen",
+  "summe_ausgaben",
+  "ueberschuss",
+  "section_break_positionen",
+  "positionen_vorschau",
+  "positionen",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "titel",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Titel",
+   "read_only": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Immobilie",
+   "options": "Immobilie"
+  },
+  {
+   "fieldname": "from_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Von",
+   "reqd": 1
+  },
+  {
+   "fieldname": "to_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Bis",
+   "reqd": 1
+  },
+  {
+   "default": "Kontenstruktur",
+   "fieldname": "umlage_method",
+   "fieldtype": "Select",
+   "label": "Umlagefaehig trennen ueber",
+   "options": "Kontenstruktur\nKostenarten",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "include_non_euer_accounts",
+   "fieldtype": "Check",
+   "label": "Nicht-EUER Konten anzeigen"
+  },
+  {
+   "default": "0",
+   "fieldname": "show_bank_check",
+   "fieldtype": "Check",
+   "label": "Bank/Kasse Abgleich anzeigen"
+  },
+  {
+   "fieldname": "report_hinweis",
+   "fieldtype": "Small Text",
+   "label": "Hinweis",
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_totals",
+   "fieldtype": "Section Break",
+   "label": "Summen"
+  },
+  {
+   "fieldname": "summe_einnahmen",
+   "fieldtype": "Currency",
+   "label": "Summe Einnahmen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "summe_ausgaben",
+   "fieldtype": "Currency",
+   "label": "Summe Ausgaben",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ueberschuss",
+   "fieldtype": "Currency",
+   "label": "Ueberschuss / Verlust",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_positionen",
+   "fieldtype": "Section Break",
+   "label": "Positionen"
+  },
+  {
+   "fieldname": "positionen_vorschau",
+   "fieldtype": "HTML",
+   "label": "Vorschau",
+   "read_only": 1
+  },
+  {
+   "fieldname": "positionen",
+   "fieldtype": "Table",
+   "label": "Positionen",
+   "options": "Einnahmen Ueberschuss Rechnung Position",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Einnahmen Ueberschuss Rechnung",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "grid_page_length": 100,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-04-18 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Einnahmen Ueberschuss Rechnung",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "titel"
+}

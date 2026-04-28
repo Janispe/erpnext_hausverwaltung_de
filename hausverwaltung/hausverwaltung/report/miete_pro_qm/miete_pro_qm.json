@@ -1,0 +1,108 @@
+{
+ "add_total_row": 0,
+ "add_translate_data": 0,
+ "columns": [
+  {
+   "fieldname": "wohnung",
+   "fieldtype": "Data",
+   "label": "Wohnung",
+   "width": 180
+  },
+  {
+   "fieldname": "gr\u00f6\u00dfe",
+   "fieldtype": "Float",
+   "label": "Gr\u00f6\u00dfe",
+   "width": 90
+  },
+  {
+   "fieldname": "miete",
+   "fieldtype": "Currency",
+   "label": "Nettokaltmiete",
+   "width": 140,
+   "options": "\u20ac"
+  },
+  {
+   "fieldname": "miete_pro_qm",
+   "fieldtype": "Currency",
+   "label": "Nettokaltmiete pro m²",
+   "width": 160,
+   "options": "\u20ac"
+  },
+  {
+   "fieldname": "betriebskosten",
+   "fieldtype": "Currency",
+   "label": "Betriebskosten",
+   "width": 130,
+   "options": "\u20ac"
+  },
+  {
+   "fieldname": "heizkosten",
+   "fieldtype": "Currency",
+   "label": "Heizkosten",
+   "width": 120,
+   "options": "\u20ac"
+  },
+  {
+   "fieldname": "untermietzuschlag",
+   "fieldtype": "Currency",
+   "label": "Untermietzuschlag",
+   "width": 150,
+   "options": "\u20ac"
+  },
+  {
+   "fieldname": "bruttomiete",
+   "fieldtype": "Currency",
+   "label": "Bruttomiete",
+   "width": 130,
+   "options": "\u20ac"
+  },
+  {
+   "fieldname": "bruttomiete_pro_qm",
+   "fieldtype": "Currency",
+   "label": "Bruttomiete pro m²",
+   "width": 160,
+   "options": "\u20ac"
+  }
+ ],
+ "creation": "2025-06-14 20:33:47.368283",
+ "disabled": 0,
+ "docstatus": 0,
+ "doctype": "Report",
+ "filters": [
+  {
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "label": "immobilie",
+   "mandatory": 1,
+   "options": "Immobilie",
+   "wildcard_filter": 0
+  }
+ ],
+ "idx": 0,
+ "is_standard": "Yes",
+ "letter_head": "test",
+ "letterhead": null,
+ "modified": "2025-06-16 21:17:07.753830",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Miete pro qm",
+ "owner": "Administrator",
+ "prepared_report": 0,
+ "query": "SELECT\n    wohnung,\n    `gr\u00f6\u00dfe`,\n    miete,\n    ROUND(miete / NULLIF(`gr\u00f6\u00dfe`, 0), 2) AS miete_pro_qm,\n    betriebskosten,\n    heizkosten,\n    untermietzuschlag,\n    (miete + betriebskosten + heizkosten + untermietzuschlag) AS bruttomiete,\n    ROUND((miete + betriebskosten + heizkosten + untermietzuschlag) / NULLIF(`gr\u00f6\u00dfe`, 0), 2) AS bruttomiete_pro_qm\nFROM (\nSELECT\n    w.name AS wohnung,\n    COALESCE(sm_miete.miete, 0) AS miete,\n    wz.`gr\u00f6\u00dfe`,\n    COALESCE(sm_bk.miete, 0) AS betriebskosten,\n    COALESCE(sm_hk.miete, 0) AS heizkosten,\n    COALESCE(sm_um.miete, 0) AS untermietzuschlag\nFROM\n    `tabMietvertrag` mv\nJOIN\n    `tabWohnung` w ON mv.wohnung = w.name\nLEFT JOIN\n    `tabStaffelmiete` sm_miete ON sm_miete.name = (\n        SELECT sm2.name\n        FROM `tabStaffelmiete` sm2\n        WHERE sm2.parent = mv.name\n            AND sm2.parenttype = 'Mietvertrag'\n            AND sm2.parentfield = 'miete'\n            AND sm2.von <= CURDATE()\n        ORDER BY sm2.von DESC, sm2.idx DESC, sm2.name DESC\n        LIMIT 1\n    )\nLEFT JOIN\n    `tabStaffelmiete` sm_bk ON sm_bk.name = (\n        SELECT sm2.name\n        FROM `tabStaffelmiete` sm2\n        WHERE sm2.parent = mv.name\n            AND sm2.parenttype = 'Mietvertrag'\n            AND sm2.parentfield = 'betriebskosten'\n            AND sm2.von <= CURDATE()\n        ORDER BY sm2.von DESC, sm2.idx DESC, sm2.name DESC\n        LIMIT 1\n    )\nLEFT JOIN\n    `tabStaffelmiete` sm_hk ON sm_hk.name = (\n        SELECT sm2.name\n        FROM `tabStaffelmiete` sm2\n        WHERE sm2.parent = mv.name\n            AND sm2.parenttype = 'Mietvertrag'\n            AND sm2.parentfield = 'heizkosten'\n            AND sm2.von <= CURDATE()\n        ORDER BY sm2.von DESC, sm2.idx DESC, sm2.name DESC\n        LIMIT 1\n    )\nLEFT JOIN\n    `tabStaffelmiete` sm_um ON sm_um.name = (\n        SELECT sm2.name\n        FROM `tabStaffelmiete` sm2\n        WHERE sm2.parent = mv.name\n            AND sm2.parenttype = 'Mietvertrag'\n            AND sm2.parentfield = 'untermietzuschlag'\n            AND sm2.von <= CURDATE()\n        ORDER BY sm2.von DESC, sm2.idx DESC, sm2.name DESC\n        LIMIT 1\n    )\nJOIN\n    `tabWohnungszustand` wz ON wz.name = (\n        SELECT wz2.name\n        FROM `tabWohnungszustand` wz2\n        WHERE wz2.wohnung = w.name\n            AND wz2.ab <= CURDATE()\n        ORDER BY wz2.ab DESC, wz2.modified DESC, wz2.name DESC\n        LIMIT 1\n    )\nWHERE\n    w.immobilie = %(immobilie)s\n    AND (mv.von IS NULL OR mv.von <= CURDATE())\n    AND (mv.bis IS NULL OR mv.bis >= CURDATE())\n) base\nUNION ALL\nSELECT\n    'Summe' AS wohnung,\n    SUM(`gr\u00f6\u00dfe`) AS `gr\u00f6\u00dfe`,\n    SUM(miete) AS miete,\n    ROUND(SUM(miete) / NULLIF(SUM(`gr\u00f6\u00dfe`), 0), 2) AS miete_pro_qm,\n    SUM(betriebskosten) AS betriebskosten,\n    SUM(heizkosten) AS heizkosten,\n    SUM(untermietzuschlag) AS untermietzuschlag,\n    (SUM(miete) + SUM(betriebskosten) + SUM(heizkosten) + SUM(untermietzuschlag)) AS bruttomiete,\n    ROUND((SUM(miete) + SUM(betriebskosten) + SUM(heizkosten) + SUM(untermietzuschlag)) / NULLIF(SUM(`gr\u00f6\u00dfe`), 0), 2) AS bruttomiete_pro_qm\nFROM (\nSELECT\n    w.name AS wohnung,\n    COALESCE(sm_miete.miete, 0) AS miete,\n    wz.`gr\u00f6\u00dfe`,\n    COALESCE(sm_bk.miete, 0) AS betriebskosten,\n    COALESCE(sm_hk.miete, 0) AS heizkosten,\n    COALESCE(sm_um.miete, 0) AS untermietzuschlag\nFROM\n    `tabMietvertrag` mv\nJOIN\n    `tabWohnung` w ON mv.wohnung = w.name\nLEFT JOIN\n    `tabStaffelmiete` sm_miete ON sm_miete.name = (\n        SELECT sm2.name\n        FROM `tabStaffelmiete` sm2\n        WHERE sm2.parent = mv.name\n            AND sm2.parenttype = 'Mietvertrag'\n            AND sm2.parentfield = 'miete'\n            AND sm2.von <= CURDATE()\n        ORDER BY sm2.von DESC, sm2.idx DESC, sm2.name DESC\n        LIMIT 1\n    )\nLEFT JOIN\n    `tabStaffelmiete` sm_bk ON sm_bk.name = (\n        SELECT sm2.name\n        FROM `tabStaffelmiete` sm2\n        WHERE sm2.parent = mv.name\n            AND sm2.parenttype = 'Mietvertrag'\n            AND sm2.parentfield = 'betriebskosten'\n            AND sm2.von <= CURDATE()\n        ORDER BY sm2.von DESC, sm2.idx DESC, sm2.name DESC\n        LIMIT 1\n    )\nLEFT JOIN\n    `tabStaffelmiete` sm_hk ON sm_hk.name = (\n        SELECT sm2.name\n        FROM `tabStaffelmiete` sm2\n        WHERE sm2.parent = mv.name\n            AND sm2.parenttype = 'Mietvertrag'\n            AND sm2.parentfield = 'heizkosten'\n            AND sm2.von <= CURDATE()\n        ORDER BY sm2.von DESC, sm2.idx DESC, sm2.name DESC\n        LIMIT 1\n    )\nLEFT JOIN\n    `tabStaffelmiete` sm_um ON sm_um.name = (\n        SELECT sm2.name\n        FROM `tabStaffelmiete` sm2\n        WHERE sm2.parent = mv.name\n            AND sm2.parenttype = 'Mietvertrag'\n            AND sm2.parentfield = 'untermietzuschlag'\n            AND sm2.von <= CURDATE()\n        ORDER BY sm2.von DESC, sm2.idx DESC, sm2.name DESC\n        LIMIT 1\n    )\nJOIN\n    `tabWohnungszustand` wz ON wz.name = (\n        SELECT wz2.name\n        FROM `tabWohnungszustand` wz2\n        WHERE wz2.wohnung = w.name\n            AND wz2.ab <= CURDATE()\n        ORDER BY wz2.ab DESC, wz2.modified DESC, wz2.name DESC\n        LIMIT 1\n    )\nWHERE\n    w.immobilie = %(immobilie)s\n    AND (mv.von IS NULL OR mv.von <= CURDATE())\n    AND (mv.bis IS NULL OR mv.bis >= CURDATE())\n) base\nORDER BY (wohnung='Summe'), wohnung",
+ "ref_doctype": "Mietvertrag",
+ "report_name": "Miete pro qm",
+ "report_script": "",
+ "report_type": "Query Report",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Hausverwalter"
+  },
+  {
+   "role": "Hausverwalter (Buchung)"
+  }
+ ],
+ "timeout": 0
+}

@@ -1,0 +1,48 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2024-01-01 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "wohnung",
+  "mieter",
+  "anzeigename"
+ ],
+ "fields": [
+  {
+   "fieldname": "wohnung",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Wohnung",
+   "options": "Wohnung"
+  },
+  {
+   "fieldname": "mieter",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Mieter",
+   "options": "Contact"
+  },
+  {
+   "fieldname": "anzeigename",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Anzeigename"
+  }
+ ],
+ "grid_page_length": 20,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2024-01-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Serienbrief Empfaenger",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

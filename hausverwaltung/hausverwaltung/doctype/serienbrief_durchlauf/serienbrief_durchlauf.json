@@ -1,0 +1,112 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:SBDL-{YYYY}-{#####}",
+ "creation": "2024-01-01 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "is_submittable": 1,
+ "issingle": 0,
+ "field_order": [
+  "title",
+  "kategorie",
+  "iteration_doctype",
+  "iteration_objekte",
+  "vorlage",
+  "vorlagen_variablen_section",
+  "vorlagen_variablen_html",
+  "date",
+  "variablen_werte"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Titel",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "kategorie",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "reqd": 1,
+   "label": "Kategorie",
+   "options": "Serienbrief Kategorie"
+  },
+  {
+   "fieldname": "iteration_doctype",
+   "fieldtype": "Link",
+   "label": "Iterations-Doctype",
+   "options": "DocType"
+  },
+  {
+   "fieldname": "iteration_objekte",
+   "fieldtype": "Table",
+   "label": "Iterations-Objekte",
+   "options": "Serienbrief Iterationsobjekt"
+  },
+  {
+   "fieldname": "vorlage",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Vorlage",
+   "options": "Serienbrief Vorlage",
+   "reqd": 1
+  },
+  {
+   "fieldname": "vorlagen_variablen_section",
+   "fieldtype": "Section Break",
+   "label": "Vorlagen-Variablen"
+  },
+  {
+   "fieldname": "vorlagen_variablen_html",
+   "fieldtype": "HTML",
+   "label": "Vorlagen-Variablen"
+  },
+  {
+   "default": "Today",
+   "fieldname": "date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Datum",
+   "reqd": 1
+  },
+  {
+   "fieldname": "variablen_werte",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Variablenwerte"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2024-01-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Serienbrief Durchlauf",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "cancel": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

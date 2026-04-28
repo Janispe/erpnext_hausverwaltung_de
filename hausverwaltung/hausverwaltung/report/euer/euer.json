@@ -1,0 +1,21 @@
+{
+  "doctype": "Report",
+  "name": "euer",
+  "module": "Hausverwaltung",
+  "ref_doctype": "Bank Account",
+  "report_type": "Script Report",
+  "is_query_report": 0,
+  "is_standard": "Yes",
+  "roles": [
+    {
+      "role": "Hausverwalter"
+    },
+    {
+      "role": "Hausverwalter (Buchung)"
+    },
+    {
+      "role": "System Manager"
+    }
+  ],
+  "disabled": 0
+}

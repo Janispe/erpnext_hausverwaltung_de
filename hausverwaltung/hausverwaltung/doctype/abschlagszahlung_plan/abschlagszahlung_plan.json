@@ -1,0 +1,65 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-04-27 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "faelligkeitsdatum",
+  "betrag",
+  "payment_entry",
+  "gebucht_am",
+  "bemerkung"
+ ],
+ "fields": [
+  {
+   "fieldname": "faelligkeitsdatum",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Fälligkeitsdatum",
+   "reqd": 1
+  },
+  {
+   "fieldname": "betrag",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Betrag",
+   "reqd": 1
+  },
+  {
+   "fieldname": "payment_entry",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Payment Entry",
+   "options": "Payment Entry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gebucht_am",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Gebucht am",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bemerkung",
+   "fieldtype": "Data",
+   "label": "Bemerkung"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-27 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Abschlagszahlung Plan",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

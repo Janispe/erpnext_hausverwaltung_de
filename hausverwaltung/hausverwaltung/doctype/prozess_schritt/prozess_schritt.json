@@ -1,0 +1,154 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-02-19 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "reihenfolge",
+  "step_key",
+  "parent_step_key",
+  "titel",
+  "task_type",
+  "handler_key",
+  "pflicht",
+  "sichtbar_fuer_prozess_typ",
+  "sichtbar_wenn",
+  "freigabe_wenn",
+  "mapping_flag",
+  "dokument_typ_tag",
+  "print_format",
+  "config_json",
+  "konfig_json",
+  "standard_verantwortlich_rolle",
+  "default_faelligkeit_tage"
+ ],
+ "fields": [
+  {
+   "fieldname": "reihenfolge",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Reihenfolge"
+  },
+  {
+   "fieldname": "step_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Step Key",
+   "reqd": 1
+  },
+  {
+   "fieldname": "parent_step_key",
+   "fieldtype": "Data",
+   "label": "Parent Step Key"
+  },
+  {
+   "fieldname": "titel",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Titel",
+   "reqd": 1
+  },
+  {
+   "default": "manual_check",
+   "fieldname": "task_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Task Type",
+   "options": "manual_check\nfile_upload\npython_action\nprint_document\npaperless_export\nemail_draft",
+   "reqd": 1
+  },
+  {
+   "fieldname": "handler_key",
+   "fieldtype": "Data",
+   "label": "Handler Key"
+  },
+  {
+   "default": "1",
+   "fieldname": "pflicht",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Pflicht"
+  },
+  {
+   "default": "Beide",
+   "fieldname": "sichtbar_fuer_prozess_typ",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Sichtbar fuer Prozess-Typ",
+   "options": "Mieterwechsel\nErstvermietung\nBeide",
+   "reqd": 1
+  },
+  {
+   "fieldname": "sichtbar_wenn",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Sichtbar Wenn",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "freigabe_wenn",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Freigabe Wenn",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "mapping_flag",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Mapping Flag",
+   "options": "\nneue_adresse_altmieter_erfasst\nzaehler_geprueft\nzaehlerstaende_eingetragen\nabnahmeformular_file\nmietvertrag_unterschrieben_file"
+  },
+  {
+   "fieldname": "dokument_typ_tag",
+   "fieldtype": "Data",
+   "label": "Dokument Typ Tag"
+  },
+  {
+   "fieldname": "print_format",
+   "fieldtype": "Link",
+   "label": "Print Format",
+   "options": "Print Format"
+  },
+  {
+   "fieldname": "config_json",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Config JSON",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "konfig_json",
+   "fieldtype": "Code",
+   "label": "Konfig JSON",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "standard_verantwortlich_rolle",
+   "fieldtype": "Link",
+   "label": "Standard Verantwortlich Rolle",
+   "options": "Role"
+  },
+  {
+   "fieldname": "default_faelligkeit_tage",
+   "fieldtype": "Int",
+   "label": "Default Faelligkeit Tage"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-02-19 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Prozess Schritt",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

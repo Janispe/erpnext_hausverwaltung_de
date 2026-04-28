@@ -1,0 +1,67 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-04-19 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "wohnung",
+  "betriebskostenart",
+  "betrag",
+  "verteilt_nach",
+  "schluessel"
+ ],
+ "fields": [
+  {
+   "fieldname": "wohnung",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Wohnung",
+   "options": "Wohnung",
+   "read_only": 1
+  },
+  {
+   "fieldname": "betriebskostenart",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Betriebskostenart",
+   "options": "Betriebskostenart",
+   "read_only": 1
+  },
+  {
+   "fieldname": "verteilt_nach",
+   "fieldtype": "Data",
+   "label": "Verteilt nach",
+   "read_only": 1
+  },
+  {
+   "fieldname": "schluessel",
+   "fieldtype": "Link",
+   "label": "Schluessel",
+   "options": "Zustandsschluessel",
+   "read_only": 1
+  },
+  {
+   "fieldname": "betrag",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Betrag",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 100,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-19 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Betriebskostenabrechnung Immobilie Detail",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

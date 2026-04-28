@@ -1,0 +1,173 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:{immobilie} von {von} bis {bis}",
+ "creation": "2025-09-08 14:24:02.329504",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_break_b1o3",
+  "immobilie",
+  "von",
+  "bis",
+  "nachzahlung_faellig_am",
+  "stichtag",
+  "section_break_mieter",
+  "mieter_abrechnungen",
+  "section_break_summary",
+  "kosten_pro_art",
+  "gesamtkosten",
+  "gesamt_vorauszahlungen",
+  "gesamt_differenz",
+  "zaehler_summen",
+  "tab_break_verteilungsdetails",
+  "section_break_verteilungsdetails",
+  "verteilungsbasis",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_break_b1o3",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Immobilie",
+   "options": "Immobilie",
+   "reqd": 1
+  },
+  {
+   "fieldname": "von",
+   "fieldtype": "Date",
+   "label": "Von",
+   "reqd": 1
+  },
+  {
+   "fieldname": "bis",
+   "fieldtype": "Date",
+   "label": "Bis",
+   "reqd": 1
+  },
+  {
+   "fieldname": "nachzahlung_faellig_am",
+   "fieldtype": "Date",
+   "label": "Fällig am (Nachzahlung)",
+   "reqd": 1
+  },
+  {
+   "description": "Optional. Wenn leer, wird das Ende des Abrechnungszeitraums (Bis) als Stichtag verwendet.",
+   "fieldname": "stichtag",
+   "fieldtype": "Date",
+   "label": "Stichtag"
+  },
+  {
+   "fieldname": "section_break_mieter",
+   "fieldtype": "Section Break",
+   "label": "Mieterabrechnungen"
+  },
+  {
+   "fieldname": "mieter_abrechnungen",
+   "fieldtype": "Table",
+   "is_virtual": 1,
+   "label": "Mieterabrechnungen",
+   "options": "Betriebskostenabrechnung Immobilie Mieter",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_summary",
+   "fieldtype": "Section Break",
+   "label": "Summen"
+  },
+  {
+   "fieldname": "kosten_pro_art",
+   "fieldtype": "Table",
+   "label": "Kosten pro Art",
+   "options": "Abrechnungsposten",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gesamtkosten",
+   "fieldtype": "Float",
+   "label": "Gesamtkosten",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gesamt_vorauszahlungen",
+   "fieldtype": "Float",
+   "label": "Gesamt Vorauszahlungen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gesamt_differenz",
+   "fieldtype": "Float",
+   "label": "Gesamt Differenz",
+   "read_only": 1
+  },
+  {
+   "fieldname": "zaehler_summen",
+   "fieldtype": "Table",
+   "label": "Zähler Summen",
+   "options": "Zaehler Summen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tab_break_verteilungsdetails",
+   "fieldtype": "Tab Break",
+   "label": "Verteilungsdetails"
+  },
+  {
+   "fieldname": "section_break_verteilungsdetails",
+   "fieldtype": "Section Break",
+   "label": "Wohnflächen"
+  },
+  {
+   "fieldname": "verteilungsbasis",
+   "fieldtype": "HTML",
+   "label": "Verteilungsbasis",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Betriebskostenabrechnung Immobilie",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2025-12-13 16:26:37.228124",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Betriebskostenabrechnung Immobilie",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "cancel": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -1,0 +1,240 @@
+{
+ "actions": [],
+ "autoname": "format:{immobilie} | {gebaeudeteil} | {name__lage_in_der_immobilie}",
+ "creation": "2025-06-12 18:45:24.824402",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "name__lage_in_der_immobilie",
+  "immobilie",
+  "immobilie_knoten",
+  "gebaeudeteil",
+  "id",
+  "paperless_tag",
+  "section_break_hlnu",
+  "aktueller_mietvertrag",
+  "bk_vorauszahlung_ytd_bezahlt",
+  "aktuelle_zaehler",
+  "section_break_shze",
+  "aktueller_zustand",
+  "betriebskostenabrechnung_durch_vermieter",
+  "heizkostenabrechnung_durch_vermieter",
+  "status",
+  "column_break_nvtz",
+  "zustand_einrichten__ver\u00e4ndern",
+  "mietvertraege_tab",
+  "section_break_mietvertraege",
+  "mietvertraege_alle",
+  "notizen_tab",
+  "long_text_mthg",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "name__lage_in_der_immobilie",
+   "fieldtype": "Data",
+   "label": "Name / Lage in der Immobilie"
+  },
+  {
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Immobilie",
+   "options": "Immobilie",
+   "set_only_once": 1
+  },
+  {
+   "description": "Optionaler Knoten innerhalb der Immobilie (z.B. Vorderhaus/Hinterhaus/Seitenfl\u00fcgel) f\u00fcr getrennte Auswertungen.",
+   "fieldname": "immobilie_knoten",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Immobilie (Knoten)",
+   "options": "Immobilie"
+  },
+  {
+   "fieldname": "gebaeudeteil",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Geb\u00e4udeteil"
+  },
+  {
+   "fieldname": "notizen_tab",
+   "fieldtype": "Tab Break",
+   "label": "Notizen"
+  },
+  {
+   "fieldname": "long_text_mthg",
+   "fieldtype": "Long Text"
+  },
+  {
+   "fieldname": "aktueller_zustand",
+   "fieldtype": "Link",
+   "is_virtual": 1,
+   "label": "Aktueller Zustand",
+   "options": "Wohnungszustand",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "betriebskostenabrechnung_durch_vermieter",
+   "fieldtype": "Check",
+   "is_virtual": 1,
+   "label": "Betriebskostenabrechnung durch Vermieter",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "heizkostenabrechnung_durch_vermieter",
+   "fieldtype": "Check",
+   "is_virtual": 1,
+   "label": "Heizkostenabrechnung durch Vermieter",
+   "read_only": 1
+  },
+  {
+   "fieldname": "aktueller_mietvertrag",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "is_virtual": 1,
+   "label": "Aktueller Mietvertrag",
+   "options": "Mietvertrag",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bk_vorauszahlung_ytd_bezahlt",
+   "fieldtype": "Currency",
+   "is_virtual": 1,
+   "label": "Betriebskostenvorauszahlung (YTD) bezahlt",
+   "read_only": 1
+  },
+  {
+   "fieldname": "aktuelle_zaehler",
+   "fieldtype": "HTML",
+   "label": "Aktuelle Z\u00e4hler"
+  },
+  {
+   "fieldname": "section_break_shze",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "column_break_nvtz",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "zustand_einrichten__ver\u00e4ndern",
+   "fieldtype": "Button",
+   "label": "Zustand Einrichten / Ver\u00e4ndern"
+  },
+  {
+   "fieldname": "mietvertraege_tab",
+   "fieldtype": "Tab Break",
+   "label": "Mietvertr\u00e4ge"
+  },
+  {
+   "fieldname": "section_break_mietvertraege",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "mietvertraege_alle",
+   "fieldtype": "Table",
+   "is_virtual": 1,
+   "label": "Alle Mietvertr\u00e4ge",
+   "options": "Wohnung Mietvertrag Uebersicht",
+   "read_only": 1
+  },
+  {
+   "fieldname": "id",
+   "fieldtype": "Int",
+   "label": "ID",
+   "read_only": 1
+  },
+  {
+   "description": "Optionaler Tag-Name in Paperless NGX f\u00fcr die Suche.",
+   "fieldname": "paperless_tag",
+   "fieldtype": "Data",
+   "label": "Paperless-Tag"
+  },
+  {
+   "fieldname": "section_break_hlnu",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Wohnung",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Vermietet\nLeerstehend\nInaktiv(z.b Zusammengelegt)"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [
+  {
+   "group": "TestGruppe",
+   "link_doctype": "Mietvertrag",
+   "link_fieldname": "wohnung"
+  }
+ ],
+ "modified": "2026-01-13 15:16:48.349235",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Wohnung",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter",
+   "select": 1,
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Green",
+   "title": "Vermietet"
+  },
+  {
+   "color": "Red",
+   "title": "Leerstehend"
+  },
+  {
+   "color": "Gray",
+   "title": "Inaktiv(z.b Zusammengelegt)"
+  }
+ ]
+}
