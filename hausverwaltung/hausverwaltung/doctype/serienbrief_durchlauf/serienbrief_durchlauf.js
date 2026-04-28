@@ -559,6 +559,16 @@ const hv_add_iteration_rows = (frm, names) => {
 	}
 };
 
+const hv_get_iteration_setters = (doctype) => {
+	if (doctype === "Mietvertrag") {
+		return { status: "Läuft", immobilie: "" };
+	}
+	if (doctype === "Wohnung") {
+		return { status: "", immobilie: "" };
+	}
+	return {};
+};
+
 const hv_open_iteration_picker = (frm) => {
 	if (!frm.doc.iteration_doctype) {
 		frappe.msgprint({
@@ -583,7 +593,7 @@ const hv_open_iteration_picker = (frm) => {
 
 	dialog = new frappe.ui.form.MultiSelectDialog({
 		doctype: frm.doc.iteration_doctype,
-		setters: {},
+		setters: hv_get_iteration_setters(frm.doc.iteration_doctype),
 		add_filters_group: 1,
 		get_query() {
 			return {};

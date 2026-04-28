@@ -213,6 +213,16 @@ const hv_sbd_on_vorlage_change = (dialog, state) => {
 	});
 };
 
+const hv_sbd_get_iteration_setters = (doctype) => {
+	if (doctype === "Mietvertrag") {
+		return { status: "Läuft", immobilie: "" };
+	}
+	if (doctype === "Wohnung") {
+		return { status: "", immobilie: "" };
+	}
+	return {};
+};
+
 const hv_sbd_open_iteration_picker = (dialog, state) => {
 	const iter_dt = dialog.get_value("iteration_doctype");
 	if (!iter_dt) {
@@ -221,14 +231,15 @@ const hv_sbd_open_iteration_picker = (dialog, state) => {
 	}
 	const current = (state.names || []).slice();
 
-	new frappe.ui.form.MultiSelectDialog({
+	const picker = new frappe.ui.form.MultiSelectDialog({
 		doctype: iter_dt,
 		target: dialog,
-		setters: {},
+		setters: hv_sbd_get_iteration_setters(iter_dt),
 		add_filters_group: 1,
 		action(selections) {
 			const unique = Array.from(new Set([...current, ...selections]));
 			hv_sbd_set_iteration_objects(dialog, state, unique);
+			picker.dialog.hide();
 		},
 	});
 };
