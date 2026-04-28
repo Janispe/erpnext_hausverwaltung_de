@@ -6,7 +6,7 @@ context("API Permissions Smoke", () => {
 	before(() => {
 		cy.login();
 		cy.visit("/app");
-		cy.get("body").should("have.attr", "data-ajax-state", "complete");
+		cy.window({ timeout: 30000 }).its("frappe").should("exist");
 	});
 
 	const expectNo500 = (res) => {
@@ -33,16 +33,17 @@ context("API Permissions Smoke", () => {
 			}).then(expectNo500);
 		});
 
-		it("get_task_detail: kein 500", () => {
+		it("get_task_detail: kein 500 mit gültiger Signatur", () => {
 			cy.api_post(`${MIETERWECHSEL}.get_task_detail`, {
 				docname: "NONEXISTENT-MW-999",
-				task_name: "noop",
+				aufgabe_row_name: "NONEXISTENT-ROW",
 			}).then(expectNo500);
 		});
 
 		it("approve_bypass: hv-User darf nicht (System Manager only)", () => {
 			cy.api_post(`${MIETERWECHSEL}.approve_bypass`, {
 				docname: "NONEXISTENT-MW-999",
+				reason: "test",
 			}).then((res) => {
 				expectNo500(res);
 				expect(res.status, "approve_bypass darf nicht 200 sein für hv").to.not.eq(200);

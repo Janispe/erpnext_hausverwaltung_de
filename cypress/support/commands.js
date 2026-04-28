@@ -110,19 +110,19 @@ Cypress.Commands.add("get_list", (doctype, fields = [], filters = []) => {
 Cypress.Commands.add("go_to_list", (doctype) => {
 	const route = doctype.toLowerCase().replace(/ /g, "-");
 	cy.visit(`/app/${route}`);
-	cy.get("body").should("have.attr", "data-ajax-state", "complete");
+	cy.get(".frappe-list", { timeout: 30000 }).should("exist");
 });
 
 Cypress.Commands.add("new_form", (doctype) => {
 	const route = doctype.toLowerCase().replace(/ /g, "-");
 	cy.visit(`/app/${route}/new`);
-	cy.get("body").should("have.attr", "data-ajax-state", "complete");
+	cy.window({ timeout: 30000 }).its("cur_frm").should("exist");
 });
 
 Cypress.Commands.add("open_doc", (doctype, name) => {
 	const route = doctype.toLowerCase().replace(/ /g, "-");
 	cy.visit(`/app/${route}/${encodeURIComponent(name)}`);
-	cy.get("body").should("have.attr", "data-ajax-state", "complete");
+	cy.window({ timeout: 30000 }).its("cur_frm").should("exist");
 });
 
 // ── Form helpers ───────────────────────────────────────────────
@@ -153,8 +153,10 @@ Cypress.Commands.add("fill_field", (fieldname, value, fieldtype = "Data") => {
 
 Cypress.Commands.add("save", () => {
 	cy.intercept("/api/method/frappe.desk.form.save.savedocs").as("save_call");
-	cy.get(`.page-container:visible button[data-label="Save"]`).click({ force: true });
-	cy.wait("@save_call");
+	cy.window().then((win) => {
+		win.cur_frm.save();
+	});
+	cy.wait("@save_call", { timeout: 60000 });
 });
 
 // ── Dialog helpers ─────────────────────────────────────────────
@@ -205,21 +207,19 @@ Cypress.Commands.add("click_custom_button", (group, label) => {
 // ── API Helper für Permission-Tests ────────────────────────────
 
 Cypress.Commands.add("api_post", (method, body = {}, opts = {}) => {
-	return cy
-		.window()
-		.its("frappe.csrf_token")
-		.then((csrf_token) => {
-			return cy.request({
-				method: "POST",
-				url: `/api/method/${method}`,
-				body,
-				headers: {
-					Accept: "application/json",
-					"Content-Type": "application/json",
-					"X-Frappe-CSRF-Token": csrf_token,
-				},
-				failOnStatusCode: false,
-				...opts,
-			});
+	return cy.window().then((win) => {
+		const csrf_token = (win.frappe && win.frappe.csrf_token) || "token";
+		return cy.request({
+			method: "POST",
+			url: `/api/method/${method}`,
+			body,
+			headers: {
+				Accept: "application/json",
+				"Content-Type": "application/json",
+				"X-Frappe-CSRF-Token": csrf_token,
+			},
+			failOnStatusCode: false,
+			...opts,
 		});
+	});
 });

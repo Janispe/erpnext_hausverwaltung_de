@@ -5,7 +5,7 @@ context("Betriebskostenabrechnung Immobilie", () => {
 	before(() => {
 		cy.login();
 		cy.visit("/app");
-		cy.get("body").should("have.attr", "data-ajax-state", "complete");
+		cy.window({ timeout: 30000 }).its("frappe").should("exist");
 	});
 
 	it("Listenansicht öffnet", () => {
@@ -16,7 +16,7 @@ context("Betriebskostenabrechnung Immobilie", () => {
 	it("Neu-Form öffnet ohne Fehler", () => {
 		cy.new_form("Betriebskostenabrechnung Immobilie");
 		cy.window().its("cur_frm").should("not.be.null");
-		cy.get("body").should("not.contain", "Internal Server Error");
+		cy.get(".error-message:visible").should("not.exist");
 	});
 
 	context("Submitted Doc: Versand-Dialog", () => {
@@ -59,9 +59,9 @@ context("Betriebskostenabrechnung Immobilie", () => {
 		];
 
 		methods.forEach((m) => {
-			it(`${m}: kein 500 für nonexistent doc`, () => {
+			it(`${m}: nonexistent doc → kein 200`, () => {
 				cy.api_post(`${API_BASE}.${m}`, { docname: "NONEXISTENT-BKI-999" }).then((res) => {
-					expect(res.status).to.not.eq(500);
+					expect(res.status).to.not.eq(200);
 				});
 			});
 		});

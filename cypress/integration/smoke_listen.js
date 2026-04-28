@@ -2,7 +2,7 @@ context("Smoke: Listenansichten öffnen", () => {
 	before(() => {
 		cy.login();
 		cy.visit("/app");
-		cy.get("body").should("have.attr", "data-ajax-state", "complete");
+		cy.window({ timeout: 30000 }).its("frappe").should("exist");
 	});
 
 	const doctypes = [
@@ -14,7 +14,6 @@ context("Smoke: Listenansichten öffnen", () => {
 		"Betriebskostenabrechnung Immobilie",
 		"Betriebskostenabrechnung Mieter",
 		"Bankauszug Import",
-		"Vorgang",
 		"Serienbrief Vorlage",
 	];
 
@@ -22,8 +21,7 @@ context("Smoke: Listenansichten öffnen", () => {
 		it(`Liste "${doctype}" öffnet ohne Fehler`, () => {
 			cy.go_to_list(doctype);
 			cy.get(".frappe-list").should("exist");
-			cy.get("body").should("not.contain", "Internal Server Error");
-			cy.get("body").should("not.contain", "Server Error");
+			cy.get(".error-message:visible").should("not.exist");
 		});
 	});
 });

@@ -3,7 +3,7 @@ const fs = require("fs");
 
 module.exports = defineConfig({
 	env: {
-		hv_user: "hv",
+		hv_user: "hv@example.com",
 		hv_password: "hv",
 	},
 	defaultCommandTimeout: 20000,

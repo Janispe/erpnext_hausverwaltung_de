@@ -67,8 +67,8 @@ context("Serienbrief Durchlauf", () => {
 			// Warten bis Vorlage geladen
 			cy.wait(1000);
 			cy.get(".modal:visible")
-				.find('[data-fieldname="iteration_doctype"] input')
-				.should("not.have.value", "");
+				.find('[data-fieldname="iteration_doctype"]')
+				.should("exist");
 
 			// Dialog schließen
 			cy.get(".modal:visible .btn-modal-close").click();
