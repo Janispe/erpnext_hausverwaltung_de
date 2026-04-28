@@ -134,6 +134,7 @@ after_migrate = [
 	"hausverwaltung.install.ensure_sales_invoice_written_off_status",
 	"hausverwaltung.install.ensure_tax_features_disabled",
 	"hausverwaltung.install.ensure_eingabequelle_fields",
+	"hausverwaltung.install.ensure_auto_repeat_for_purchase_invoice",
 ]
 # NOTE: We intentionally do not run bootstrap on every migrate.
 # If you ever need to re-apply defaults on an existing site, run `./bootstrap_site.sh`.
@@ -211,6 +212,12 @@ doc_events = {
 	},
 	"Dunning": {
 		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.sync_serienbrief_vorlage_from_dunning_type",
+	},
+	"Purchase Invoice": {
+		# Auto Repeat setzt nur Pflicht-Date-Felder. bill_date, due_date und
+		# custom_wertstellungsdatum müssen wir manuell mit dem Schedule
+		# mitziehen.
+		"on_recurring": "hausverwaltung.hausverwaltung.overrides.purchase_invoice_recurring.shift_dates_for_recurring",
 	},
 }
 

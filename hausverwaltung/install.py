@@ -276,6 +276,37 @@ def ensure_euer_print_format_default() -> None:
     _ensure_euer_print_format_default(reason="hook")
 
 
+def ensure_auto_repeat_for_purchase_invoice() -> None:
+    """Aktiviert Frappes ``Auto Repeat`` für Eingangsrechnungen.
+
+    Damit erscheint im Eingangsrechnungs-Menü „Auto Repeat" und Purchase Invoice
+    taucht im Reference-Doctype-Dropdown auf. Wird hauptsächlich für
+    wiederkehrende Personalzahlungen (Gehälter, SV-Beiträge, Lohnsteuer) genutzt.
+
+    Idempotent — `make_property_setter` no-opt bei bereits gesetztem Wert.
+    """
+    try:
+        from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+        make_property_setter(
+            "Purchase Invoice",
+            "",
+            "allow_auto_repeat",
+            "1",
+            "Check",
+            for_doctype=True,
+        )
+        frappe.clear_cache(doctype="Purchase Invoice")
+    except Exception:
+        try:
+            frappe.log_error(
+                frappe.get_traceback(),
+                "hausverwaltung allow_auto_repeat property setter failed",
+            )
+        except Exception:
+            pass
+
+
 def ensure_sales_invoice_written_off_status() -> None:
     _ensure_sales_invoice_written_off_status(reason="hook")
 
