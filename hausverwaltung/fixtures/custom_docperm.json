@@ -788,7 +788,7 @@
  {
   "doctype": "Custom DocPerm",
   "name": "admin_3f596336b4",
-  "parent": "Abschlagszahlung",
+  "parent": "Zahlungsplan",
   "role": "Administrator",
   "permlevel": 0,
   "if_owner": 0,

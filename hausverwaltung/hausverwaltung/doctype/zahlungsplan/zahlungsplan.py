@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import frappe
 from frappe.model.document import Document
-from frappe.utils import add_months, cstr, getdate, nowdate
+from frappe.utils import add_months, cstr, flt, getdate, now_datetime, nowdate
 
 from hausverwaltung.hausverwaltung.utils.buchung import (
 	DEFAULT_SERVICE_ITEM_CODE,
@@ -18,11 +18,28 @@ RHYTHMUS_MONTHS: dict[str, int] = {
 	"Jährlich": 12,
 }
 
+MODUS_ABSCHLAGSPLAN = "Abschlagsplan"
+MODUS_ZAHLUNGSPLAN = "Zahlungsplan"
 
-class Abschlagszahlung(Document):
+
+class Zahlungsplan(Document):
 	def validate(self):
+		# Backward-compat: existing records ohne modus bekommen Default
+		if not self.get("modus"):
+			self.modus = MODUS_ABSCHLAGSPLAN
+
 		if self.get("betrag") not in (None, "") and float(self.betrag) < 0:
 			frappe.throw("Der Default-Betrag darf nicht negativ sein.")
+
+		# Modus-spezifische Validierung
+		if self.modus == MODUS_ZAHLUNGSPLAN:
+			if flt(self.get("vor_systemstart_bezahlt")) > 0:
+				frappe.throw(
+					"Im Modus 'Zahlungsplan' werden Plan-Zeilen direkt als "
+					"Eingangsrechnungen gebucht. Eine Vorzahlung vor Systemstart "
+					"hat hier keine Auswirkung — bitte das Feld leeren oder zu "
+					"'Abschlagsplan' wechseln."
+				)
 
 		# Server-side defaults: if user (or API) didn't fill these, derive from immobilie/kostenart.
 		# JS already does this on field change, but this is the fallback for programmatic creation.
@@ -114,9 +131,17 @@ class Abschlagszahlung(Document):
 	):
 		"""Create a Purchase Invoice for the annual bill and reconcile advance Payment Entries against it.
 
+		Nur für Modus = Abschlagsplan sinnvoll.
+
 		Dialog values are persisted on the doc so they show up as defaults next time.
 		"""
 		self.check_permission("write")
+
+		if self.modus != MODUS_ABSCHLAGSPLAN:
+			frappe.throw(
+				f"Jahresabrechnung ist nur für Modus '{MODUS_ABSCHLAGSPLAN}' verfügbar. "
+				f"Aktueller Modus: '{self.modus}'."
+			)
 
 		updates = {
 			"ja_von": ja_von,
@@ -228,8 +253,10 @@ class Abschlagszahlung(Document):
 			from erpnext.accounts.utils import reconcile_against_document
 			reconcile_against_document(entry_list, skip_ref_details_update_for_pe=True)
 
-		# 4. Calculate result
-		differenz = float(self.ja_betrag) - summe_abschlaege
+		# 4. Calculate result, considering vor_systemstart_bezahlt as virtual prepayment
+		vorzahlung = flt(self.get("vor_systemstart_bezahlt"))
+		summe_anzahlungen = summe_abschlaege + vorzahlung
+		differenz = float(self.ja_betrag) - summe_anzahlungen
 		if differenz > 0.01:
 			status = f"Nachzahlung: {differenz:,.2f} EUR"
 		elif differenz < -0.01:
@@ -251,6 +278,67 @@ class Abschlagszahlung(Document):
 			"differenz": differenz,
 			"reconciled_count": len(pe_names),
 			"summe_abschlaege": summe_abschlaege,
+			"vor_systemstart_bezahlt": vorzahlung,
+			"summe_anzahlungen": summe_anzahlungen,
+		}
+
+	@frappe.whitelist()
+	def create_due_purchase_invoices(self) -> dict:
+		"""Modus=Zahlungsplan: erzeuge PIs für alle fälligen Plan-Zeilen ohne PI.
+
+		Idempotent: Plan-Zeilen mit existierendem (und nicht-storniertem) ``purchase_invoice``
+		werden übersprungen.
+		"""
+		self.check_permission("write")
+
+		if self.modus != MODUS_ZAHLUNGSPLAN:
+			frappe.throw(
+				f"Auto-Eingangsrechnungs-Erzeugung ist nur für Modus '{MODUS_ZAHLUNGSPLAN}' verfügbar. "
+				f"Aktueller Modus: '{self.modus}'."
+			)
+
+		today_d = getdate(nowdate())
+		created: list[str] = []
+		errors: list[dict] = []
+		skipped = 0
+
+		for row in self.get("plan") or []:
+			if not row.get("faelligkeitsdatum"):
+				skipped += 1
+				continue
+			if getdate(row.faelligkeitsdatum) > today_d:
+				skipped += 1
+				continue
+			# Idempotenz: bereits eine gültige PI verknüpft?
+			existing_pi = row.get("purchase_invoice")
+			if existing_pi and frappe.db.exists("Purchase Invoice", existing_pi):
+				skipped += 1
+				continue
+
+			try:
+				pi = _create_purchase_invoice_for_plan_row(self, row)
+				row.db_set("purchase_invoice", pi.name, update_modified=False)
+				row.db_set("pi_erstellt_am", now_datetime(), update_modified=False)
+				row.db_set("pi_fehler", None, update_modified=False)
+				created.append(pi.name)
+			except Exception as exc:
+				errors.append({"row": row.idx, "error": str(exc)})
+				try:
+					row.db_set("pi_fehler", str(exc)[:1000], update_modified=False)
+				except Exception:
+					pass
+				frappe.log_error(
+					frappe.get_traceback(),
+					f"Zahlungsplan {self.name} Zeile {row.idx}: PI-Erzeugung fehlgeschlagen",
+				)
+
+		self.db_set("pi_letzter_lauf", now_datetime(), update_modified=False)
+		frappe.db.commit()
+
+		return {
+			"created": created,
+			"errors": errors,
+			"skipped_count": skipped,
 		}
 
 
@@ -266,16 +354,34 @@ def _compute_status(doc) -> str:
 
 
 def update_statuses_for_list():
-	"""Daily entrypoint: recompute status across all Abschlagszahlungen (handles time transitions)."""
-	names = frappe.get_all("Abschlagszahlung", pluck="name")
+	"""Daily entrypoint: recompute status across all Zahlungspläne (handles time transitions)."""
+	names = frappe.get_all("Zahlungsplan", pluck="name")
 	for name in names:
 		try:
-			doc = frappe.get_doc("Abschlagszahlung", name)
+			doc = frappe.get_doc("Zahlungsplan", name)
 			new_status = _compute_status(doc)
 			if doc.get("status") != new_status:
 				doc.db_set("status", new_status, update_modified=False)
 		except Exception:
-			frappe.log_error(frappe.get_traceback(), f"Abschlagszahlung Status-Update: {name}")
+			frappe.log_error(frappe.get_traceback(), f"Zahlungsplan Status-Update: {name}")
+
+
+def create_due_purchase_invoices_global():
+	"""Daily scheduler-entrypoint: erzeuge fällige PIs für alle aktiven Zahlungspläne (Modus=Zahlungsplan)."""
+	names = frappe.get_all(
+		"Zahlungsplan",
+		filters={"modus": MODUS_ZAHLUNGSPLAN, "status": ["!=", "Abgerechnet"]},
+		pluck="name",
+	)
+	for name in names:
+		try:
+			doc = frappe.get_doc("Zahlungsplan", name)
+			doc.create_due_purchase_invoices()
+		except Exception:
+			frappe.log_error(
+				frappe.get_traceback(),
+				f"Zahlungsplan Auto-PI Lauf: {name}",
+			)
 
 
 def _resolve_bank_account_for_immobilie(immobilie: str) -> str | None:
@@ -352,7 +458,7 @@ def get_defaults_for_konto(konto: str | None = None) -> dict:
 	return {}
 
 
-def _create_payment_entry_for_plan_row(doc: Abschlagszahlung, row: Document, posting_date_override=None):
+def _create_payment_entry_for_plan_row(doc: Zahlungsplan, row: Document, posting_date_override=None):
 	"""Build, insert and submit a supplier advance Payment Entry for a single plan row.
 
 	posting_date_override allows callers (e.g. bank import auto-match) to use the actual
@@ -405,6 +511,38 @@ def _create_payment_entry_for_plan_row(doc: Abschlagszahlung, row: Document, pos
 	return pe
 
 
+def _create_purchase_invoice_for_plan_row(doc: Zahlungsplan, row: Document):
+	"""Modus=Zahlungsplan: erzeuge eine eigene Purchase Invoice für eine Plan-Zeile.
+
+	Nutzt die gleichen Felder/Defaults wie ``_create_jahresabrechnung_pi`` — das
+	Wertstellungsdatum wird auf das Fälligkeitsdatum der Plan-Zeile gesetzt.
+	"""
+	if not doc.get("company"):
+		frappe.throw("Bitte eine Company auswählen.")
+	if not doc.get("lieferant"):
+		frappe.throw("Bitte einen Lieferanten auswählen.")
+
+	amount = float(row.betrag)
+	if amount <= 0:
+		frappe.throw(f"Plan-Zeile {row.idx}: Betrag muss positiv sein.")
+
+	posting_date = getdate(row.faelligkeitsdatum)
+	bemerkung_extra = (row.get("bemerkung") or "").strip()
+	remarks = _build_remarks(doc) + f" | Plan-Zeile {row.idx}"
+	if bemerkung_extra:
+		remarks += f" | {bemerkung_extra}"
+
+	pi = _build_purchase_invoice(
+		doc=doc,
+		amount=amount,
+		posting_date=posting_date,
+		bill_no=None,
+		wertstellungsdatum=posting_date,
+		remarks=remarks,
+	)
+	return pi
+
+
 def _doctype_has_field(doctype: str, fieldname: str) -> bool:
 	try:
 		return bool(frappe.get_meta(doctype).get_field(fieldname))
@@ -427,7 +565,7 @@ def _get_company_default(company: str, fieldname: str):
 		return None
 
 
-def _get_from_immobilie(doc: Abschlagszahlung, fieldname: str):
+def _get_from_immobilie(doc: Zahlungsplan, fieldname: str):
 	immobilie = doc.get("immobilie")
 	if not immobilie:
 		return None
@@ -454,7 +592,7 @@ def _resolve_kostenart_source(doc) -> tuple[str | None, str | None]:
 	return None, None
 
 
-def _get_item_code_from_kostenart(doc: Abschlagszahlung):
+def _get_item_code_from_kostenart(doc: Zahlungsplan):
 	doctype, name = _resolve_kostenart_source(doc)
 	if not (doctype and name):
 		return None
@@ -466,7 +604,7 @@ def _get_item_code_from_kostenart(doc: Abschlagszahlung):
 	return None
 
 
-def _get_expense_account_from_kostenart(doc: Abschlagszahlung):
+def _get_expense_account_from_kostenart(doc: Zahlungsplan):
 	doctype, name = _resolve_kostenart_source(doc)
 	if not (doctype and name):
 		return None
@@ -487,7 +625,7 @@ def _set_payable_account_if_available(pi: Document, company: str):
 		return
 
 
-def _build_remarks(doc: Abschlagszahlung) -> str:
+def _build_remarks(doc: Zahlungsplan) -> str:
 	parts = []
 	if doc.get("bezeichnung"):
 		parts.append(cstr(doc.get("bezeichnung")))
@@ -497,10 +635,10 @@ def _build_remarks(doc: Abschlagszahlung) -> str:
 		parts.append(f"Immobilie: {doc.get('immobilie')}")
 	if doc.get("wohnung"):
 		parts.append(f"Wohnung: {doc.get('wohnung')}")
-	return " | ".join(parts) or f"Abschlagszahlung ({DEFAULT_SERVICE_ITEM_CODE})"
+	return " | ".join(parts) or f"Zahlungsplan ({DEFAULT_SERVICE_ITEM_CODE})"
 
 
-def _resolve_pi_fields(doc: Abschlagszahlung):
+def _resolve_pi_fields(doc: Zahlungsplan):
 	"""Resolve item_code, expense_account, cost_center using the existing fallback chains."""
 	item_code = doc.get("item_code") or _get_item_code_from_kostenart(doc) or ensure_default_service_item()
 	expense_account = doc.get("expense_account") or _get_expense_account_from_kostenart(doc) or _get_from_immobilie(doc, "konto")
@@ -514,31 +652,52 @@ def _resolve_pi_fields(doc: Abschlagszahlung):
 	return item_code, expense_account, cost_center
 
 
-def _create_jahresabrechnung_pi(doc: Abschlagszahlung):
-	"""Create and submit a Purchase Invoice for the annual bill."""
+def _build_purchase_invoice(
+	*,
+	doc: Zahlungsplan,
+	amount: float,
+	posting_date,
+	bill_no: str | None,
+	wertstellungsdatum,
+	remarks: str,
+):
+	"""Shared PI-Builder für Jahresabrechnung und einzelne Plan-Zeilen-Rechnungen."""
 	item_code, expense_account, cost_center = _resolve_pi_fields(doc)
 
-	posting_date = doc.get("ja_rechnungsdatum") or nowdate()
 	pi = frappe.new_doc("Purchase Invoice")
 	pi.update({
 		"company": doc.company,
 		"supplier": doc.lieferant,
 		"posting_date": posting_date,
 		"bill_date": posting_date,
-		"bill_no": doc.get("ja_rechnungsnr"),
-		"remarks": _build_remarks(doc) + f" | Jahresabrechnung {doc.ja_von} - {doc.ja_bis}",
+		"bill_no": bill_no,
+		"remarks": remarks,
 	})
-	wertstellung = doc.get("ja_wertstellungsdatum") or doc.get("ja_bis")
-	if wertstellung:
-		_set_if_field(pi, "custom_wertstellungsdatum", wertstellung)
+	if wertstellungsdatum:
+		_set_if_field(pi, "custom_wertstellungsdatum", wertstellungsdatum)
 	_set_payable_account_if_available(pi, doc.company)
 	pi.append("items", {
 		"item_code": item_code,
 		"qty": 1,
-		"rate": float(doc.ja_betrag),
+		"rate": float(amount),
 		"expense_account": expense_account,
 		"cost_center": cost_center,
 	})
 	pi.insert(ignore_permissions=True)
 	pi.submit()
 	return pi
+
+
+def _create_jahresabrechnung_pi(doc: Zahlungsplan):
+	"""Create and submit a Purchase Invoice for the annual bill."""
+	posting_date = doc.get("ja_rechnungsdatum") or nowdate()
+	wertstellung = doc.get("ja_wertstellungsdatum") or doc.get("ja_bis")
+	remarks = _build_remarks(doc) + f" | Jahresabrechnung {doc.ja_von} - {doc.ja_bis}"
+	return _build_purchase_invoice(
+		doc=doc,
+		amount=float(doc.ja_betrag),
+		posting_date=posting_date,
+		bill_no=doc.get("ja_rechnungsnr"),
+		wertstellungsdatum=wertstellung,
+		remarks=remarks,
+	)

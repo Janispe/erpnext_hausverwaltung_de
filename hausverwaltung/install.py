@@ -1252,7 +1252,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
             {"label": "Eingangsrechnung", "link_type": "DocType", "link_to": "Purchase Invoice"},
             # Ausgangsrechnung = Mieter-/Kundenrechnung (Sales Invoice)
             {"label": "Ausgangsrechnung", "link_type": "DocType", "link_to": "Sales Invoice"},
-            {"label": "Abschlagszahlung", "link_type": "DocType", "link_to": "Abschlagszahlung"},
+            {"label": "Abschlagsplan/Zahlungsplan", "link_type": "DocType", "link_to": "Zahlungsplan"},
             {"label": "Zahlungsabgleich", "link_type": "DocType", "link_to": "Payment Reconciliation"},
             {"label": "Noch offene Rechnungen und Forderungen", "link_type": "Report", "link_to": "Noch offene Rechnungen und Forderungen"},
             {"label": "Mahnung", "link_type": "DocType", "link_to": "Dunning"},

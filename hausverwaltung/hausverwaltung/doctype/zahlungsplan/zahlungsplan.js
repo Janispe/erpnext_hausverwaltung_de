@@ -111,17 +111,28 @@ function openJaDialog(frm) {
 		primary_action(values) {
 			frm.call("jahresabrechnung_erstellen", values).then((r) => {
 				if (r && r.message) {
+					const msg = r.message;
+					const vorzahlung = parseFloat(msg.vor_systemstart_bezahlt || 0);
+					let body = __(
+						"Eingangsrechnung: {0}<br>Verrechnete Abschläge: {1}<br>Summe Abschläge: {2}",
+						[
+							msg.purchase_invoice,
+							msg.reconciled_count,
+							format_currency(msg.summe_abschlaege),
+						]
+					);
+					if (vorzahlung) {
+						body += "<br>" + __("+ Vorzahlung (vor Systemstart): {0}", [
+							format_currency(vorzahlung),
+						]);
+						body += "<br>" + __("Summe Anzahlungen: {0}", [
+							format_currency(msg.summe_anzahlungen),
+						]);
+					}
+					body += "<br>" + __("Ergebnis: {0}", [msg.status]);
 					frappe.msgprint({
 						title: __("Jahresabrechnung erstellt"),
-						message: __(
-							"Eingangsrechnung: {0}<br>Verrechnete Abschläge: {1}<br>Summe Abschläge: {2}<br>Ergebnis: {3}",
-							[
-								r.message.purchase_invoice,
-								r.message.reconciled_count,
-								format_currency(r.message.summe_abschlaege),
-								r.message.status,
-							]
-						),
+						message: body,
 						indicator: "green",
 					});
 				}
@@ -138,7 +149,7 @@ function openJaDialog(frm) {
 			dialog.set_value("kostenart_nicht_umlagefaehig", null);
 		}
 		frappe.call({
-			method: "hausverwaltung.hausverwaltung.doctype.abschlagszahlung.abschlagszahlung.get_defaults_for_kostenart",
+			method: "hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.get_defaults_for_kostenart",
 			args: { kostenart: v },
 		}).then((r) => {
 			if (r && r.message) {
@@ -157,7 +168,7 @@ function openJaDialog(frm) {
 			dialog.set_value("kostenart", null);
 		}
 		frappe.call({
-			method: "hausverwaltung.hausverwaltung.doctype.abschlagszahlung.abschlagszahlung.get_defaults_for_kostenart",
+			method: "hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.get_defaults_for_kostenart",
 			args: { kostenart_nicht_umlagefaehig: v },
 		}).then((r) => {
 			if (r && r.message) {
@@ -174,7 +185,7 @@ function openJaDialog(frm) {
 		if (!v) return;
 		if (dialog.get_value("kostenart") || dialog.get_value("kostenart_nicht_umlagefaehig")) return;
 		frappe.call({
-			method: "hausverwaltung.hausverwaltung.doctype.abschlagszahlung.abschlagszahlung.get_defaults_for_konto",
+			method: "hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.get_defaults_for_konto",
 			args: { konto: v },
 		}).then((r) => {
 			if (r && r.message) {
@@ -189,7 +200,42 @@ function openJaDialog(frm) {
 	dialog.show();
 }
 
-frappe.ui.form.on("Abschlagszahlung", {
+function runCreateDuePurchaseInvoices(frm) {
+	if (frm.is_dirty()) {
+		frappe.msgprint(__("Bitte zuerst speichern."));
+		return;
+	}
+	frappe.call({
+		doc: frm.doc,
+		method: "create_due_purchase_invoices",
+		freeze: true,
+		freeze_message: __("Eingangsrechnungen werden erzeugt …"),
+	}).then((r) => {
+		const msg = (r && r.message) || {};
+		const created = (msg.created || []).length;
+		const errors = (msg.errors || []).length;
+		const skipped = msg.skipped_count || 0;
+		let title = __("Fällige Eingangsrechnungen erstellt");
+		let body = __("Erstellt: {0}", [created]);
+		if (skipped) body += __(", übersprungen: {0}", [skipped]);
+		if (errors) {
+			body += __(", Fehler: {0}", [errors]);
+			const err_preview = (msg.errors || [])
+				.slice(0, 5)
+				.map((e) => `Zeile ${e.row}: ${e.error}`)
+				.join("<br>");
+			if (err_preview) body += `<br><br>${err_preview}`;
+		}
+		frappe.msgprint({
+			title: title,
+			message: body,
+			indicator: errors ? "orange" : "green",
+		});
+		frm.reload_doc();
+	});
+}
+
+frappe.ui.form.on("Zahlungsplan", {
 	refresh(frm) {
 		if (frm.doc.ja_status) {
 			let color = "blue";
@@ -202,9 +248,17 @@ frappe.ui.form.on("Abschlagszahlung", {
 			);
 		}
 
-		if (!frm.is_new()) {
+		if (frm.is_new()) return;
+
+		const modus = frm.doc.modus || "Abschlagsplan";
+
+		if (modus === "Abschlagsplan") {
 			frm.add_custom_button(__("Jahresabrechnung erstellen"), () =>
 				openJaDialog(frm)
+			);
+		} else if (modus === "Zahlungsplan") {
+			frm.add_custom_button(__("Fällige Eingangsrechnungen erstellen"), () =>
+				runCreateDuePurchaseInvoices(frm)
 			);
 		}
 	},
@@ -212,7 +266,7 @@ frappe.ui.form.on("Abschlagszahlung", {
 	immobilie(frm) {
 		if (!frm.doc.immobilie) return;
 		frappe.call({
-			method: "hausverwaltung.hausverwaltung.doctype.abschlagszahlung.abschlagszahlung.get_defaults_for_immobilie",
+			method: "hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.get_defaults_for_immobilie",
 			args: { immobilie: frm.doc.immobilie },
 		}).then((r) => applyDefaults(frm, r && r.message));
 	},

@@ -2,6 +2,7 @@
 # Patches added in this section will be executed before doctypes are migrated
 # Read docs to understand patches: https://frappeframework.com/docs/v14/user/en/database-migrations
 hausverwaltung.hausverwaltung.patches.post_model_sync.convert_betriebskosten_festbetrag_to_child_table
+hausverwaltung.hausverwaltung.patches.post_model_sync.rename_abschlagszahlung_to_zahlungsplan
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
@@ -34,3 +35,4 @@ hausverwaltung.hausverwaltung.patches.post_model_sync.add_eingabequelle_to_invoi
 hausverwaltung.hausverwaltung.patches.post_model_sync.remove_zukuenftige_abschlagszahlungen_report
 hausverwaltung.hausverwaltung.patches.post_model_sync.remove_jahresabrechnung_log_doctype
 hausverwaltung.hausverwaltung.patches.post_model_sync.init_abschlagszahlung_status_v2
+hausverwaltung.hausverwaltung.patches.post_model_sync.set_default_modus_for_zahlungsplan

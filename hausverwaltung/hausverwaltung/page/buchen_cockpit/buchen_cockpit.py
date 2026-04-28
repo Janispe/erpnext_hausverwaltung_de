@@ -714,7 +714,7 @@ def get_cockpit_overview(limit: int = 10) -> dict:
         )
 
     abschlaege = frappe.get_all(
-        "Abschlagszahlung",
+        "Zahlungsplan",
         filters={"status": "Läuft"},
         fields=["name", "bezeichnung", "lieferant", "betrag"],
         order_by="modified desc",

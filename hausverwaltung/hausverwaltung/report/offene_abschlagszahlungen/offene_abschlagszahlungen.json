@@ -39,7 +39,7 @@
  "name": "Offene Abschlagszahlungen",
  "owner": "Administrator",
  "prepared_report": 0,
- "ref_doctype": "Abschlagszahlung",
+ "ref_doctype": "Zahlungsplan",
  "report_name": "Offene Abschlagszahlungen",
  "report_type": "Script Report",
  "roles": [

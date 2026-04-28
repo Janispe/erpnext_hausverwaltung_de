@@ -35,8 +35,8 @@ def execute(filters=None):
             az.lieferant AS lieferant,
             az.immobilie AS immobilie,
             az.wohnung AS wohnung
-        FROM `tabAbschlagszahlung Plan` p
-        INNER JOIN `tabAbschlagszahlung` az ON az.name = p.parent
+        FROM `tabZahlungsplan Zeile` p
+        INNER JOIN `tabZahlungsplan` az ON az.name = p.parent
         WHERE {where}
         ORDER BY p.faelligkeitsdatum ASC, az.name ASC
         """,
@@ -153,10 +153,10 @@ def get_columns():
             "width": 160,
         },
         {
-            "label": "Abschlagszahlung",
+            "label": "Zahlungsplan",
             "fieldname": "abschlagszahlung",
             "fieldtype": "Link",
-            "options": "Abschlagszahlung",
+            "options": "Zahlungsplan",
             "width": 150,
         },
         {

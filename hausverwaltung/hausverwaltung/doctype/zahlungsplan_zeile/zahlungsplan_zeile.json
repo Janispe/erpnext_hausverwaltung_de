@@ -10,6 +10,9 @@
   "betrag",
   "payment_entry",
   "gebucht_am",
+  "purchase_invoice",
+  "pi_erstellt_am",
+  "pi_fehler",
   "bemerkung"
  ],
  "fields": [
@@ -33,7 +36,8 @@
    "in_list_view": 1,
    "label": "Payment Entry",
    "options": "Payment Entry",
-   "read_only": 1
+   "read_only": 1,
+   "description": "Nur bei Modus=Abschlagsplan: Anzahlung an den Lieferanten."
   },
   {
    "fieldname": "gebucht_am",
@@ -41,6 +45,28 @@
    "in_list_view": 1,
    "label": "Gebucht am",
    "read_only": 1
+  },
+  {
+   "fieldname": "purchase_invoice",
+   "fieldtype": "Link",
+   "label": "Eingangsrechnung",
+   "options": "Purchase Invoice",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "Nur bei Modus=Zahlungsplan: pro Plan-Zeile erzeugte Eingangsrechnung."
+  },
+  {
+   "fieldname": "pi_erstellt_am",
+   "fieldtype": "Datetime",
+   "label": "PI erstellt am",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pi_fehler",
+   "fieldtype": "Small Text",
+   "label": "PI-Fehler",
+   "read_only": 1,
+   "description": "Bei fehlgeschlagener Auto-PI-Erzeugung steht hier der Fehlertext."
   },
   {
    "fieldname": "bemerkung",
@@ -52,10 +78,10 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-04-27 00:00:00.000000",
+ "modified": "2026-04-28 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
- "name": "Abschlagszahlung Plan",
+ "name": "Zahlungsplan Zeile",
  "owner": "Administrator",
  "permissions": [],
  "row_format": "Dynamic",

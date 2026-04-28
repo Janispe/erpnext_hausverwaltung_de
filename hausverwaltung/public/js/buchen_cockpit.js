@@ -771,7 +771,7 @@ hausverwaltung.buchen_cockpit.mount = ($container) => {
 		const action = $(event.currentTarget).data("action");
 		if (action === "eingang") hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog();
 		else if (action === "ausgang") hausverwaltung.buchen_cockpit.open_mieterrechnung_dialog();
-		else if (action === "abschlag") frappe.new_doc("Abschlagszahlung");
+		else if (action === "abschlag") frappe.new_doc("Zahlungsplan");
 	});
 
 	const format_currency = (value) => {
@@ -842,7 +842,7 @@ hausverwaltung.buchen_cockpit.mount = ($container) => {
 					"abs",
 					data.active_abschlagszahlungen,
 					(row) => {
-						const link = `/app/abschlagszahlung/${encodeURIComponent(row.name)}`;
+						const link = `/app/zahlungsplan/${encodeURIComponent(row.name)}`;
 						return `
 							<div class="hv-cockpit-row">
 								<span>

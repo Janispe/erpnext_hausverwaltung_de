@@ -233,7 +233,8 @@ scheduler_events = {
 		"1 0 * * *": [
 			"hausverwaltung.hausverwaltung.doctype.mietvertrag.mietvertrag.update_statuses_for_list",
 			"hausverwaltung.hausverwaltung.doctype.wohnung.wohnung.update_statuses_for_list",
-			"hausverwaltung.hausverwaltung.doctype.abschlagszahlung.abschlagszahlung.update_statuses_for_list",
+			"hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.update_statuses_for_list",
+			"hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.create_due_purchase_invoices_global",
 		],
 	},
 }

@@ -86,8 +86,8 @@
   {
    "fieldname": "abschlagszahlung",
    "fieldtype": "Link",
-   "label": "Abschlagszahlung",
-   "options": "Abschlagszahlung",
+   "label": "Zahlungsplan",
+   "options": "Zahlungsplan",
    "read_only": 1
   },
   {

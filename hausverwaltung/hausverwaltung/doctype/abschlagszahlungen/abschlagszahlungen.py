@@ -21,7 +21,7 @@ class Abschlagszahlungen(Document):
 
 		for row in rows:
 			try:
-				is_existing = bool(row.get("abschlagszahlung")) and frappe.db.exists("Abschlagszahlung", row.abschlagszahlung)
+				is_existing = bool(row.get("abschlagszahlung")) and frappe.db.exists("Zahlungsplan", row.abschlagszahlung)
 				az = _upsert_abschlagszahlung_from_row(self, row)
 				row.abschlagszahlung = az.name
 				row.last_error = None
@@ -50,7 +50,7 @@ def _upsert_abschlagszahlung_from_row(parent: Abschlagszahlungen, row: Document)
 		frappe.throw("Bitte eine Company auswählen.")
 
 	payload = {
-		"doctype": "Abschlagszahlung",
+		"doctype": "Zahlungsplan",
 		"company": parent.company,
 		"bezeichnung": row.get("bezeichnung"),
 		"lieferant": row.get("lieferant"),
@@ -63,8 +63,8 @@ def _upsert_abschlagszahlung_from_row(parent: Abschlagszahlungen, row: Document)
 		"reference_no": row.get("reference_no"),
 	}
 
-	if row.get("abschlagszahlung") and frappe.db.exists("Abschlagszahlung", row.abschlagszahlung):
-		az = frappe.get_doc("Abschlagszahlung", row.abschlagszahlung)
+	if row.get("abschlagszahlung") and frappe.db.exists("Zahlungsplan", row.abschlagszahlung):
+		az = frappe.get_doc("Zahlungsplan", row.abschlagszahlung)
 		az.update(payload)
 		az.save(ignore_permissions=True)
 		return az

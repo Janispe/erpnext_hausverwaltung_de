@@ -1,12 +1,13 @@
 {
  "actions": [],
  "allow_rename": 1,
- "autoname": "format:AZ-{YYYY}-{#####}",
+ "autoname": "format:ZP-{YYYY}-{#####}",
  "creation": "2025-12-21 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "bezeichnung",
+  "modus",
   "status",
   "stammdaten_section",
   "company",
@@ -21,9 +22,14 @@
   "zahlungsweg_section",
   "bank_account",
   "reference_no",
+  "vorzahlung_section",
+  "vor_systemstart_bezahlt",
+  "vor_systemstart_bemerkung",
   "plan_section",
   "plan_vorbelegen_btn",
-  "plan"
+  "plan",
+  "auto_pi_section",
+  "pi_letzter_lauf"
  ],
  "fields": [
   {
@@ -31,6 +37,17 @@
    "fieldtype": "Data",
    "label": "Bezeichnung",
    "reqd": 1
+  },
+  {
+   "fieldname": "modus",
+   "fieldtype": "Select",
+   "label": "Modus",
+   "options": "Abschlagsplan\nZahlungsplan",
+   "default": "Abschlagsplan",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Abschlagsplan: Plan-Zeilen sind Anzahlungen, am Jahresende eine Gesamt-Eingangsrechnung (Stadtwerke, Heizöl). Zahlungsplan: pro Plan-Zeile eine eigene Eingangsrechnung (Wartungsverträge, Versicherungsraten)."
   },
   {
    "default": "Läuft",
@@ -117,9 +134,30 @@
    "label": "Referenz-Nr. (optional)"
   },
   {
+   "fieldname": "vorzahlung_section",
+   "fieldtype": "Section Break",
+   "label": "Vorzahlungen vor System-Einführung",
+   "depends_on": "eval:doc.modus=='Abschlagsplan'",
+   "description": "Nur für Abschlagsplan: historisch gezahlte Beträge, die nicht im System als Payment Entries erfasst sind. Werden bei der Jahresabrechnung mit verrechnet."
+  },
+  {
+   "fieldname": "vor_systemstart_bezahlt",
+   "fieldtype": "Currency",
+   "label": "Bereits bezahlt (vor Systemstart)",
+   "default": 0,
+   "depends_on": "eval:doc.modus=='Abschlagsplan'",
+   "description": "Summe historischer Anzahlungen aus Zeit vor System-Einführung."
+  },
+  {
+   "fieldname": "vor_systemstart_bemerkung",
+   "fieldtype": "Small Text",
+   "label": "Bemerkung zur Vorzahlung",
+   "depends_on": "eval:doc.modus=='Abschlagsplan' && doc.vor_systemstart_bezahlt"
+  },
+  {
    "fieldname": "plan_section",
    "fieldtype": "Section Break",
-   "label": "Zahlungsplan"
+   "label": "Plan"
   },
   {
    "fieldname": "plan_vorbelegen_btn",
@@ -130,7 +168,22 @@
    "fieldname": "plan",
    "fieldtype": "Table",
    "label": "Plan",
-   "options": "Abschlagszahlung Plan"
+   "options": "Zahlungsplan Zeile"
+  },
+  {
+   "fieldname": "auto_pi_section",
+   "fieldtype": "Section Break",
+   "label": "Auto-Eingangsrechnungen",
+   "depends_on": "eval:doc.modus=='Zahlungsplan'",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "pi_letzter_lauf",
+   "fieldtype": "Datetime",
+   "label": "Letzter Auto-Lauf",
+   "read_only": 1,
+   "depends_on": "eval:doc.modus=='Zahlungsplan'",
+   "description": "Wann der Scheduler zuletzt fällige Eingangsrechnungen für diesen Plan erzeugt hat."
   },
   {
    "fieldname": "ja_purchase_invoice",
@@ -230,10 +283,10 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-27 00:00:00.000000",
+ "modified": "2026-04-28 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
- "name": "Abschlagszahlung",
+ "name": "Zahlungsplan",
  "owner": "Administrator",
  "permissions": [
   {
