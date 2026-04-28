@@ -1064,6 +1064,20 @@ _HAUSVERWALTER_EXTRA_DOCTYPE_PERMS: tuple[tuple[str, dict], ...] = (
     ("Dunning Type", {"read": 1}),
     ("Bank Account", {"read": 1, "write": 1, "create": 1}),
     ("Cost Center", {"read": 1}),
+    # Buchhaltungs-Belege — werden vom Mietrechnungen Durchlauf, Bankauszug Import,
+    # manueller Erfassung und Auto-Match-Pipeline angelegt.
+    ("Sales Invoice", {"read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1, "amend": 1, "print": 1, "email": 1}),
+    ("Purchase Invoice", {"read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1, "amend": 1, "print": 1, "email": 1}),
+    ("Payment Entry", {"read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1, "amend": 1, "print": 1, "email": 1}),
+    ("Bank Transaction", {"read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1, "print": 1}),
+    # Stammdaten für Sales/Purchase Invoice
+    ("Item", {"read": 1, "write": 1, "create": 1}),
+    ("Item Group", {"read": 1}),
+    ("Supplier", {"read": 1, "write": 1, "create": 1}),
+    ("Supplier Group", {"read": 1}),
+    ("Customer Group", {"read": 1}),
+    ("UOM", {"read": 1}),
+    ("Tax Withholding Category", {"read": 1}),
 )
 
 

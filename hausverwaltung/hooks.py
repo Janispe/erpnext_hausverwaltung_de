@@ -33,6 +33,7 @@ app_include_js = [
 	"/assets/hausverwaltung/js/serienbrief_durchlauf_dialog.js",
 	"/assets/hausverwaltung/js/sales_invoice_writeoff.js",
 	"/assets/hausverwaltung/js/buchen_cockpit.js",
+	"/assets/hausverwaltung/js/immobilie_report_filter.js",
 ]
 
 # include js, css files in header of web template
@@ -218,6 +219,11 @@ doc_events = {
 		# custom_wertstellungsdatum müssen wir manuell mit dem Schedule
 		# mitziehen.
 		"on_recurring": "hausverwaltung.hausverwaltung.overrides.purchase_invoice_recurring.shift_dates_for_recurring",
+	},
+	"Account": {
+		# Bei jedem neuen Blatt-Konto unter "Nicht Umlagefähig" automatisch
+		# eine Kostenart-Eintrag mit Default-Artikel anlegen.
+		"after_insert": "hausverwaltung.hausverwaltung.utils.kostenart_konto.auto_create_kostenart_on_account_insert",
 	},
 }
 

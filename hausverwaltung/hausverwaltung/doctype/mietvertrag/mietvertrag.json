@@ -39,7 +39,9 @@
   "kaution_notizen",
   "festbetraege_tab",
   "festbetraege",
-  "amended_from"
+  "amended_from",
+  "test",
+  "tab_7_tab"
  ],
  "fields": [
   {
@@ -69,8 +71,8 @@
    "label": "Von"
   },
   {
-   "fieldname": "bis",
    "allow_on_submit": 1,
+   "fieldname": "bis",
    "fieldtype": "Date",
    "label": "Bis"
   },
@@ -81,15 +83,15 @@
    "options": "Mieterwechsel"
   },
   {
-   "fieldname": "mieter",
    "allow_on_submit": 1,
+   "fieldname": "mieter",
    "fieldtype": "Table",
    "label": "Mieter",
    "options": "Vertragspartner"
   },
   {
-   "fieldname": "personen",
    "allow_on_submit": 1,
+   "fieldname": "personen",
    "fieldtype": "Table",
    "label": "Anzahl Personen",
    "options": "MietvertragPersonen"
@@ -100,8 +102,8 @@
    "label": "Miete"
   },
   {
-   "fieldname": "miete",
    "allow_on_submit": 1,
+   "fieldname": "miete",
    "fieldtype": "Table",
    "label": "Miete",
    "options": "Staffelmiete"
@@ -111,8 +113,8 @@
    "fieldtype": "Section Break"
   },
   {
-   "fieldname": "staffelmiete_erzeugen",
    "allow_on_submit": 1,
+   "fieldname": "staffelmiete_erzeugen",
    "fieldtype": "Button",
    "label": "Staffelmiete erzeugen"
   },
@@ -139,22 +141,22 @@
    "read_only": 1
   },
   {
-   "fieldname": "betriebskosten",
    "allow_on_submit": 1,
+   "fieldname": "betriebskosten",
    "fieldtype": "Table",
    "label": "Betriebskosten",
    "options": "Staffelmiete"
   },
   {
-   "fieldname": "heizkosten",
    "allow_on_submit": 1,
+   "fieldname": "heizkosten",
    "fieldtype": "Table",
    "label": "Heizkosten",
    "options": "Staffelmiete"
   },
   {
-   "fieldname": "untermietzuschlag",
    "allow_on_submit": 1,
+   "fieldname": "untermietzuschlag",
    "fieldtype": "Table",
    "label": "Untermietzuschlag",
    "options": "Staffelmiete"
@@ -167,8 +169,8 @@
    "read_only": 1
   },
   {
-   "fieldname": "kaution",
    "allow_on_submit": 1,
+   "fieldname": "kaution",
    "fieldtype": "Table",
    "label": "Kaution",
    "options": "Staffelmiete"
@@ -184,8 +186,8 @@
    "label": "Notizen"
   },
   {
-   "fieldname": "notizen",
    "allow_on_submit": 1,
+   "fieldname": "notizen",
    "fieldtype": "Long Text",
    "label": "Notizen"
   },
@@ -202,22 +204,22 @@
    "label": "Konten"
   },
   {
-   "fieldname": "kautionskonto",
    "allow_on_submit": 1,
+   "fieldname": "kautionskonto",
    "fieldtype": "Link",
    "label": "Kautionskonto",
    "options": "Bank Account"
   },
   {
-   "fieldname": "kontoverbindungen",
    "allow_on_submit": 1,
+   "fieldname": "kontoverbindungen",
    "fieldtype": "Table",
    "label": "Kontoverbindungen",
    "options": "Mietvertragkontoverknuepfung"
   },
   {
-   "fieldname": "bevorzugter_versandweg",
    "allow_on_submit": 1,
+   "fieldname": "bevorzugter_versandweg",
    "fieldtype": "Select",
    "label": "Bevorzugter Versandweg",
    "options": "Email\nPost"
@@ -228,23 +230,25 @@
    "label": "Kaution"
   },
   {
-   "fieldname": "kaution_notizen",
    "allow_on_submit": 1,
+   "fieldname": "kaution_notizen",
    "fieldtype": "Small Text",
    "label": "Kautions Notizen"
   },
   {
    "fieldname": "festbetraege_tab",
    "fieldtype": "Tab Break",
-   "label": "Festbeträge"
+   "label": "Festbetr\u00e4ge"
   },
   {
+   "allow_on_submit": 1,
    "fieldname": "festbetraege",
    "fieldtype": "Table",
-   "label": "Betriebskosten-Festbeträge",
+   "label": "Betriebskosten-Festbetr\u00e4ge",
    "options": "Betriebskosten Festbetrag"
   },
   {
+   "allow_on_submit": 1,
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
@@ -252,8 +256,7 @@
    "in_standard_filter": 1,
    "label": "Status",
    "options": "L\u00e4uft\nVergangenheit\nZukunft",
-   "read_only": 1,
-   "allow_on_submit": 1
+   "read_only": 1
   },
   {
    "fieldname": "amended_from",
@@ -264,17 +267,27 @@
    "print_hide": 1,
    "read_only": 1,
    "search_index": 1
+  },
+  {
+   "fieldname": "test",
+   "fieldtype": "Small Text",
+   "label": "test"
+  },
+  {
+   "fieldname": "tab_7_tab",
+   "fieldtype": "Tab Break",
+   "label": "Tab 7"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-01-12 17:40:07.036829",
+ "modified": "2026-04-28 16:40:00.000000",
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
  "name": "Mietvertrag",
- "naming_rule": "Expression",
+ "naming_rule": "Expression (old style)",
  "owner": "Administrator",
  "permissions": [
   {
@@ -290,6 +303,23 @@
    "write": 1
   },
   {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter (Buchung)",
+   "select": 1,
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
    "create": 1,
    "email": 1,
    "export": 1,
@@ -299,7 +329,16 @@
    "role": "Hausverwalter",
    "select": 1,
    "share": 1,
+   "submit": 1,
    "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Agent Readonly API",
+   "select": 1
   }
  ],
  "row_format": "Dynamic",

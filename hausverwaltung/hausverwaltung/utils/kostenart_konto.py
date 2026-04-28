@@ -52,6 +52,79 @@ def assert_konto_unique(*, konto: str | None, doctype: str, name: str | None) ->
 		)
 
 
+def auto_create_kostenart_on_account_insert(doc, method=None) -> None:
+	"""Account-after_insert-Hook: legt automatisch eine ``Kostenart nicht
+	umlagefaehig`` für neu erstellte Blatt-Konten unter „Nicht Umlagefähig" an.
+
+	Greift bei:
+	- Manuellem Anlegen via UI
+	- COA-Import (jede neue Account-Row triggert after_insert)
+	- Programmatisch erzeugte Konten
+
+	Idempotent — überspringt Konten die schon irgendwo als Kostenart erfasst sind.
+	Keine Hard-Fails — Fehler werden geloggt aber blockieren nicht den Account-Insert.
+	"""
+	try:
+		if not doc or doc.get("is_group"):
+			return
+		if doc.get("root_type") and doc.root_type != "Expense":
+			return
+		if not _account_is_under_parent(doc, NICHT_UMLAGEFAEHIG_PARENT):
+			return
+		# Schon erfasst?
+		if frappe.db.exists(KOSTENART_NICHT_UL_DOCTYPE, {"konto": doc.name}):
+			return
+		if frappe.db.exists(BK_DOCTYPE, {"konto": doc.name}):
+			return
+
+		from hausverwaltung.hausverwaltung.utils.buchung import ensure_default_service_item
+		try:
+			artikel = ensure_default_service_item()
+		except Exception:
+			artikel = None
+
+		frappe.get_doc(
+			{
+				"doctype": KOSTENART_NICHT_UL_DOCTYPE,
+				"name1": doc.get("account_name") or doc.name,
+				"konto": doc.name,
+				"artikel": artikel,
+			}
+		).insert(ignore_permissions=True)
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"Auto-Kostenart-Anlage fehlgeschlagen ({getattr(doc, 'name', '?')})",
+		)
+
+
+def _account_is_under_parent(account_doc, parent_account_name: str) -> bool:
+	"""Prüft ob ein Account ein Nachfahre eines bestimmten Gruppen-Kontos ist.
+
+	Geht den ``parent_account``-Pfad nach oben statt lft/rgt zu nutzen — robuster
+	bei ``after_insert``, weil NestedSet-Felder dort noch nicht zwingend final
+	gesetzt sind.
+	"""
+	if not account_doc:
+		return False
+	current_parent_name = account_doc.get("parent_account")
+	visited: set[str] = set()
+	while current_parent_name and current_parent_name not in visited:
+		visited.add(current_parent_name)
+		parent = frappe.db.get_value(
+			"Account",
+			current_parent_name,
+			["account_name", "is_group", "parent_account"],
+			as_dict=True,
+		)
+		if not parent:
+			return False
+		if parent.is_group and parent.account_name == parent_account_name:
+			return True
+		current_parent_name = parent.parent_account
+	return False
+
+
 @frappe.whitelist()
 def create_kostenarten_for_nicht_umlagefaehig_accounts(
 	company: str,
@@ -76,7 +149,7 @@ def create_kostenarten_for_nicht_umlagefaehig_accounts(
 	"""
 	from hausverwaltung.hausverwaltung.utils.buchung import ensure_default_service_item
 
-	# Parent-Knoten suchen (NestedSet → lft/rgt → finde Nachfahren)
+	# Parent-Knoten suchen
 	parent = frappe.db.get_value(
 		"Account",
 		{"company": company, "account_name": parent_account_name, "is_group": 1},
@@ -91,17 +164,33 @@ def create_kostenarten_for_nicht_umlagefaehig_accounts(
 			"reason": f"Gruppe '{parent_account_name}' nicht gefunden für Company '{company}'",
 		}
 
-	leaves = frappe.get_all(
-		"Account",
-		filters={
-			"company": company,
-			"is_group": 0,
-			"lft": [">", parent.lft],
-			"rgt": ["<", parent.rgt],
-		},
-		fields=["name", "account_name", "account_number"],
-		order_by="account_number asc, account_name asc",
-	)
+	# Bevorzuge NestedSet-Filter wenn lft/rgt gesetzt sind, sonst Fallback auf
+	# rekursiven parent_account-Walk (nach frischem Bulk-Insert sind lft/rgt
+	# evtl. noch nicht aktualisiert).
+	if parent.get("lft") is not None and parent.get("rgt") is not None:
+		leaves = frappe.get_all(
+			"Account",
+			filters={
+				"company": company,
+				"is_group": 0,
+				"lft": [">", parent.lft],
+				"rgt": ["<", parent.rgt],
+			},
+			fields=["name", "account_name", "account_number"],
+			order_by="account_number asc, account_name asc",
+		)
+	else:
+		# Fallback: alle Accounts laden und per parent_account-Walk filtern
+		all_accounts = frappe.get_all(
+			"Account",
+			filters={"company": company, "is_group": 0},
+			fields=["name", "account_name", "account_number", "parent_account"],
+			order_by="account_number asc, account_name asc",
+		)
+		leaves = [
+			a for a in all_accounts
+			if _account_is_under_parent(a, parent_account_name)
+		]
 
 	if artikel is None:
 		try:
