@@ -1,0 +1,12 @@
+{
+	"name": "hausverwaltung",
+	"private": true,
+	"scripts": {
+		"cy:open": "cypress open",
+		"cy:run": "cypress run"
+	},
+	"devDependencies": {
+		"cypress": "^13.17.0",
+		"@testing-library/cypress": "^10.0.0"
+	}
+}
