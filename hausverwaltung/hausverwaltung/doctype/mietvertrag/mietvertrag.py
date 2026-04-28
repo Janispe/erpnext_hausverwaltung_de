@@ -192,11 +192,24 @@ class Mietvertrag(Document):
 			pass
 		else:
 			partner = self.mieter[0].mieter if self.mieter else ""
-			contact_name = frappe.db.get_value("Contact", partner, "first_name") if partner else ""
+			# Nachname für die technische ID, Vor+Nachname für die Anzeige
+			contact = (
+				frappe.db.get_value("Contact", partner, ["first_name", "last_name"], as_dict=True)
+				if partner
+				else None
+			) or {}
+			first_name = (contact.get("first_name") or "").strip()
+			last_name = (contact.get("last_name") or "").strip()
+			# Fallback wenn last_name fehlt (z.B. nur ein Name im Contact)
+			id_nachname = last_name or first_name or self.name
+			display_name = " ".join(p for p in [first_name, last_name] if p) or self.name
+
 			cust_id = customer_utils.build_customer_id(
-				self.wohnung or "", str(self.von or ""), contact_name or self.name
+				self.wohnung or "", str(self.von or ""), id_nachname
 			)
-			customer = customer_utils.get_or_create_customer(cust_id, customer_name=contact_name or self.name)
+			customer = customer_utils.get_or_create_customer(
+				cust_id, customer_name=display_name
+			)
 			self.db_set("kunde", customer, update_modified=False)
 
 		if not (self.mieterwechsel or "").strip() and _is_system_manager():

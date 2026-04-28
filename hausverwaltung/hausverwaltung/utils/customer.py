@@ -62,12 +62,47 @@ def get_or_create_customer_group() -> str:
 
 
 def build_customer_id(wohnlabel: str, von_date: str, nachname: str) -> str:
-	"""Generiert eine neutrale, kollisionssichere technische Customer-ID."""
-	_ = (wohnlabel, von_date, nachname)
-	while True:
-		candidate = f"MIETER-{uuid.uuid4().hex[:10].upper()}"
+	"""Generiert eine sprechende Customer-ID im Schema ``{wohnung} Mieter: {nachname}``.
+
+	Parallel zum Mietvertrag-Naming (``{wohnung} Mietvertrag: {von}``) — gleiche
+	Wohnung als Prefix, anderer Begriff. Bei Kollision (selbe Wohnung + selber
+	Nachname) wird ein numerischer Suffix angehängt: ``... (2)``, ``... (3)``.
+
+	Fallback (wenn weder Wohnung noch Nachname bekannt): zufällige UUID-ID.
+
+	Args:
+	    wohnlabel: Wohnungs-Name (z.B. "Kirchhof | VH | EG links").
+	    von_date: Wird aktuell nicht verwendet — bleibt für Backward-Compat im Signaturen.
+	    nachname: Nachname des Mieters (oder Vorname als Fallback).
+	"""
+	_ = von_date  # Backward-Compat-Parameter, aktuell ungenutzt
+	wohn = (wohnlabel or "").strip()
+	nm = (nachname or "").strip()
+
+	if wohn and nm:
+		base = f"{wohn} Mieter: {nm}"
+	elif wohn:
+		base = f"{wohn} Mieter"
+	elif nm:
+		base = f"Mieter: {nm}"
+	else:
+		# Weder Wohnung noch Nachname — Fallback auf altes UUID-Schema
+		while True:
+			candidate = f"MIETER-{uuid.uuid4().hex[:10].upper()}"
+			if not frappe.db.exists("Customer", candidate, cache=False):
+				return candidate
+
+	if not frappe.db.exists("Customer", base, cache=False):
+		return base
+
+	# Kollisionsauflösung: gleiche Wohnung + gleicher Nachname → numerisches Suffix
+	for n in range(2, 100):
+		candidate = f"{base} ({n})"
 		if not frappe.db.exists("Customer", candidate, cache=False):
 			return candidate
+
+	# Notfall-Fallback: random Suffix
+	return f"{base} {uuid.uuid4().hex[:6].upper()}"
 
 
 def get_or_create_customer(

@@ -135,6 +135,24 @@ def import_chart_of_accounts(
             import_coa(file_url, company)
             result["imported"] = True
 
+            # Nach erfolgreichem Import: Pro Blatt-Konto unter "Nicht Umlagefähig"
+            # eine Kostenart-Eintrag mit Default-Artikel anlegen. Idempotent.
+            try:
+                from hausverwaltung.hausverwaltung.utils.kostenart_konto import (
+                    create_kostenarten_for_nicht_umlagefaehig_accounts,
+                )
+                kostenart_result = create_kostenarten_for_nicht_umlagefaehig_accounts(company=company)
+                result["kostenarten_nicht_umlagefaehig"] = {
+                    "created": len(kostenart_result.get("created", [])),
+                    "skipped": len(kostenart_result.get("skipped", [])),
+                    "total_leaves": kostenart_result.get("total_leaves", 0),
+                }
+            except Exception:
+                frappe.log_error(
+                    frappe.get_traceback(),
+                    "COA-Import: Auto-Anlage Kostenart nicht umlagefaehig fehlgeschlagen",
+                )
+
         frappe.db.commit()
     finally:
         # Only clean up File if we created it here
