@@ -1,6 +1,7 @@
 Customer,Debitor (Mieter)
 Customers,Debitoren (Mieter)
 Customer Name,Debitor-Name
+Customer Type,Debitor-Typ
 Customer Group,Debitorengruppe
 Customer Groups,Debitorengruppen
 Eigentuemer,Eigentümer

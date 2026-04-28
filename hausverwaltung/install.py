@@ -1256,6 +1256,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
             {"label": "Zahlungsabgleich", "link_type": "DocType", "link_to": "Payment Reconciliation"},
             {"label": "Noch offene Rechnungen und Forderungen", "link_type": "Report", "link_to": "Noch offene Rechnungen und Forderungen"},
             {"label": "Mahnung", "link_type": "DocType", "link_to": "Dunning"},
+            {"label": "Buchungssatz (Journal Entry)", "link_type": "DocType", "link_to": "Journal Entry"},
             {"label": "Kontenplan", "link_type": "DocType", "link_to": "Account"},
         ],
     },
@@ -1313,6 +1314,8 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         "icon": "setting-gear",
         "links": [
             {"label": "Hausverwaltung Einstellungen", "link_type": "DocType", "link_to": "Hausverwaltung Einstellungen"},
+            {"label": "Kostenart (umlagefähig)", "link_type": "DocType", "link_to": "Betriebskostenart"},
+            {"label": "Kostenart (nicht umlagefähig)", "link_type": "DocType", "link_to": "Kostenart nicht umlagefaehig"},
         ],
     },
 ]
