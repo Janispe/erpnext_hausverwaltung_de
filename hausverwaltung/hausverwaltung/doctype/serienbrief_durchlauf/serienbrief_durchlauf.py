@@ -2611,6 +2611,15 @@ _GLOBAL_STANDARD_PATHS: dict[str, dict[str, str]] = {
 		"Address": "adresse",
 		"Contact": "hausmeister",
 	},
+	# BK Mieter: spiegelt die Mietvertrag-Pfade über das verknüpfte mietvertrag-Feld
+	"Betriebskostenabrechnung Mieter": {
+		"Mietvertrag": "mietvertrag",
+		"Wohnung": "wohnung",
+		"Immobilie": "wohnung.immobilie",
+		"Address": "wohnung.immobilie.adresse",
+		"Contact": "mietvertrag.mieter.mieter",
+		"Vertragspartner": "mietvertrag.mieter",
+	},
 }
 
 

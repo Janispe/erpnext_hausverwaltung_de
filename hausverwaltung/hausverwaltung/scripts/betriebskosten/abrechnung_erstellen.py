@@ -122,6 +122,7 @@ def _ensure_item_with_income(item_code: str, item_name: str, company: Optional[s
     it.item_group = "All Item Groups"
     it.is_sales_item = 1
     it.maintain_stock = 0
+    it.stock_uom = "Nos"
     if company:
         inc = _find_income_account(company)
         if inc:
@@ -544,6 +545,7 @@ def _ensure_item(code: str, name: Optional[str] = None) -> str:
     item.item_group = "All Item Groups"
     item.is_sales_item = 1
     item.maintain_stock = 0
+    item.stock_uom = "Nos"
     item.insert(ignore_permissions=True)
     return code
 
@@ -605,9 +607,15 @@ def _make_sales_invoice(
     si.customer = customer
     if company:
         si.company = company
-    # Fälligkeit: 3 Wochen nach Buchung; Payment Terms Templates bewusst ignorieren
+    # Fälligkeit: 3 Wochen nach Buchung; Payment Terms Templates bewusst ignorieren.
+    # set_posting_time=1 verhindert, dass ERPNext posting_date auf "heute" zurücksetzt
+    # (siehe transaction_base.py) — sonst wäre due_date inkonsistent mit posting_date.
     si.posting_date = post_date
-    if due_date:
+    si.set_posting_time = 1
+    if is_return:
+        # Guthaben/Credit Notes sind sofort fällig — keine 21-Tage-Frist sinnvoll.
+        si.due_date = post_date
+    elif due_date:
         si.due_date = getdate(due_date)
     else:
         si.due_date = post_date + timedelta(days=21)
