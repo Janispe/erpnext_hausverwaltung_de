@@ -738,10 +738,24 @@ hausverwaltung.serienbrief.mount_vorlagen_browser = ($container, opts = {}) => {
 	});
 
 	// Template-Klick: rechts wird die Vorschau geladen.
+	// Wichtig: zuerst auf <a>-Klicks lauschen um Frappes globalen Link-Handler
+	// zuvorzukommen. Sonst kann es passieren dass Frappe das Form öffnet bevor
+	// wir preventDefault aufrufen.
+	listWrapper.on("click", ".hv-template-main a", (event) => {
+		event.preventDefault();
+		event.stopPropagation();
+		const item = $(event.currentTarget).closest(".hv-template-item");
+		const name = decodeURIComponent((item.data("name") || "").toString());
+		if (!name) return;
+		const row = currentTemplates.find((tpl) => tpl.name === name);
+		if (row) renderTemplatePreview(row);
+	});
+
 	listWrapper.on("click", ".hv-template-item", (event) => {
 		if ($(event.target).closest(".hv-template-action").length) return;
 		if ($(event.target).closest("a").length) {
-			event.preventDefault();
+			// Bereits durch den a-Handler oben behandelt
+			return;
 		}
 		const name = decodeURIComponent(($(event.currentTarget).data("name") || "").toString());
 		if (!name) return;

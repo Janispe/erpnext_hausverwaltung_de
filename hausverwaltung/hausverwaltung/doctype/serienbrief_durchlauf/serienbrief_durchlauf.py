@@ -1657,6 +1657,12 @@ class SerienbriefDurchlauf(Document):
 			return None
 
 		mieter_doctype = self._get_mieter_doctype()
+		# `frappe.get_doc` ruft bei DoesNotExist intern `frappe.throw` →
+		# `msgprint` auf, was eine Toast-Nachricht in die Response einfügt
+		# (auch wenn die Exception danach gefangen wird). Daher Existenz vorher
+		# explizit prüfen, damit kein "X Y nicht gefunden"-Popup leakt.
+		if not frappe.db.exists(mieter_doctype, row.mieter):
+			return None
 		try:
 			return frappe.get_doc(mieter_doctype, row.mieter)
 		except frappe.DoesNotExistError:
@@ -1664,6 +1670,10 @@ class SerienbriefDurchlauf(Document):
 
 	def _load_doc(self, doctype: str, name: str | None):
 		if not name:
+			return None
+		# Existenz-Check vor get_doc, sonst leakt frappe.throw eine msgprint-
+		# Toast in die Response (siehe Kommentar in _load_mieter).
+		if not frappe.db.exists(doctype, name):
 			return None
 		try:
 			return frappe.get_doc(doctype, name)
@@ -1732,13 +1742,20 @@ class SerienbriefDurchlauf(Document):
 				meta = frappe.get_meta(self.iteration_doctype)
 				field = meta.get_field("mieter")
 				if field and field.options:
-					target = field.options
+					# Tabellen-Feld (z.B. Mietvertrag.mieter → Vertragspartner) ist
+					# NICHT der Doctype, der in row.mieter landet — dort steht der
+					# Customer-Docname (siehe row_data.setdefault("mieter", customer_name)
+					# in _build_iteration_empfaenger_row). Daher bei Tabellen-Feldern
+					# auf den Customer/Mieter-Doctype zurückfallen.
+					if field.fieldtype == "Link":
+						target = field.options
 			except Exception:
 				pass
 
-		# When the iteration doctype has no `mieter` link (e.g. Dunning carries
-		# `customer` instead), fall back to whatever DocType actually exists. We
-		# prefer the legacy "Mieter" if it's installed, otherwise "Customer".
+		# Fallback: bei Iteration-Doctypes ohne direktes Link-Feld `mieter`
+		# (Mietvertrag, Dunning, Sales Invoice, …) ist der Empfänger der
+		# Customer/Debitor — wir bevorzugen das Legacy-DocType "Mieter" wenn
+		# installiert, sonst "Customer".
 		if not target:
 			if frappe.db.exists("DocType", "Mieter"):
 				target = "Mieter"

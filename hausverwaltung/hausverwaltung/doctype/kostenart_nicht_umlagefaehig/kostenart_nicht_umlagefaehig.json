@@ -1,6 +1,7 @@
 {
  "actions": [],
  "allow_rename": 1,
+ "autoname": "field:name1",
  "creation": "2025-08-16 21:17:06.306338",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -13,7 +14,9 @@
   {
    "fieldname": "name1",
    "fieldtype": "Data",
-   "label": "Name"
+   "label": "Name",
+   "reqd": 1,
+   "unique": 1
   },
   {
    "fieldname": "konto",
@@ -32,10 +35,11 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-08-17 14:53:18.296316",
+ "modified": "2026-04-28 17:30:00.000000",
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
  "name": "Kostenart nicht umlagefaehig",
+ "naming_rule": "By fieldname",
  "owner": "Administrator",
  "permissions": [
   {
@@ -54,5 +58,6 @@
  "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "title_field": "name1"
 }
