@@ -61,6 +61,8 @@ def _upsert_abschlagszahlung_from_row(parent: Abschlagszahlungen, row: Document)
 		"betrag": row.get("betrag"),
 		"bank_account": row.get("bank_account") or parent.get("bank_account"),
 		"reference_no": row.get("reference_no"),
+		"kostenart": row.get("kostenart"),
+		"kostenart_nicht_umlagefaehig": row.get("kostenart_nicht_umlagefaehig"),
 	}
 
 	if row.get("abschlagszahlung") and frappe.db.exists("Zahlungsplan", row.abschlagszahlung):

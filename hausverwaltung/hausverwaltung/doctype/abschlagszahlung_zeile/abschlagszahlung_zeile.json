@@ -10,6 +10,8 @@
   "lieferant",
   "immobilie",
   "wohnung",
+  "kostenart",
+  "kostenart_nicht_umlagefaehig",
   "betrag",
   "bank_account",
   "reference_no",
@@ -48,6 +50,19 @@
    "in_list_view": 1,
    "label": "Wohnung",
    "options": "Wohnung"
+  },
+  {
+   "fieldname": "kostenart",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Kostenart",
+   "options": "Betriebskostenart"
+  },
+  {
+   "fieldname": "kostenart_nicht_umlagefaehig",
+   "fieldtype": "Link",
+   "label": "Kostenart (nicht umlagefähig)",
+   "options": "Kostenart nicht umlagefaehig"
   },
   {
    "columns": 1,

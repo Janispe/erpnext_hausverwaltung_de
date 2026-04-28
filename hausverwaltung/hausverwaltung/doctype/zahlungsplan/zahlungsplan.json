@@ -25,6 +25,12 @@
   "vorzahlung_section",
   "vor_systemstart_bezahlt",
   "vor_systemstart_bemerkung",
+  "buchung_section",
+  "kostenart",
+  "kostenart_nicht_umlagefaehig",
+  "buchung_column",
+  "expense_account",
+  "cost_center",
   "plan_section",
   "plan_vorbelegen_btn",
   "plan",
@@ -208,32 +214,39 @@
    "hidden": 1
   },
   {
+   "fieldname": "buchung_section",
+   "fieldtype": "Section Break",
+   "label": "Buchung & Konten",
+   "description": "Werden bei Bedarf aus Kostenart oder Immobilie vorbefüllt. Manuelle Eingabe überschreibt die Automatik."
+  },
+  {
    "fieldname": "kostenart",
    "fieldtype": "Link",
    "label": "Kostenart (umlagefähig)",
-   "options": "Betriebskostenart",
-   "hidden": 1
+   "options": "Betriebskostenart"
   },
   {
    "fieldname": "kostenart_nicht_umlagefaehig",
    "fieldtype": "Link",
    "label": "Kostenart (nicht umlagefähig)",
-   "options": "Kostenart nicht umlagefaehig",
-   "hidden": 1
+   "options": "Kostenart nicht umlagefaehig"
+  },
+  {
+   "fieldname": "buchung_column",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "expense_account",
    "fieldtype": "Link",
    "label": "Aufwandskonto",
    "options": "Account",
-   "hidden": 1
+   "description": "Manuelle Vorgabe. Leer = Kette: Kostenart → Immobilien-Konto → Company-Default."
   },
   {
    "fieldname": "cost_center",
    "fieldtype": "Link",
    "label": "Kostenstelle",
-   "options": "Cost Center",
-   "hidden": 1
+   "options": "Cost Center"
   },
   {
    "fieldname": "item_code",
