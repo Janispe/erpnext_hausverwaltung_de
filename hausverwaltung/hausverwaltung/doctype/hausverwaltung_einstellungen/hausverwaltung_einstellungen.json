@@ -21,7 +21,9 @@
   "income_section",
   "income_accounts",
   "abschlagszahlung_section",
-  "bankimport_abschlag_toleranz_tage"
+  "bankimport_abschlag_toleranz_tage",
+  "bankimport_section",
+  "bankimport_start_datum"
  ],
  "fields": [
   {
@@ -124,6 +126,17 @@
    "fieldname": "bankimport_abschlag_toleranz_tage",
    "fieldtype": "Int",
    "label": "Bankimport: Abschlag-Match Toleranz Tage"
+  },
+  {
+   "fieldname": "bankimport_section",
+   "fieldtype": "Section Break",
+   "label": "Bankauszug Import"
+  },
+  {
+   "fieldname": "bankimport_start_datum",
+   "fieldtype": "Date",
+   "label": "Bank-Transaktionen erstellen ab",
+   "description": "Beim Erstellen aus dem Bankauszug Import werden CSV-Zeilen mit Buchungstag VOR diesem Datum übersprungen. Nützlich wenn die CSV-Historie weiter zurück geht als der ERP-Start. Leer = keine Begrenzung."
   }
  ],
  "index_web_pages_for_search": 1,

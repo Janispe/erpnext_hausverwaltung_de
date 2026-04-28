@@ -751,9 +751,22 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
             "warning": warning,
         }
 
+    # Globaler Cutoff aus Hausverwaltung Einstellungen — CSV-Zeilen mit
+    # buchungstag VOR diesem Datum werden übersprungen.
+    bankimport_start_datum = None
+    try:
+        cutoff_raw = frappe.db.get_single_value(
+            "Hausverwaltung Einstellungen", "bankimport_start_datum"
+        )
+        if cutoff_raw:
+            bankimport_start_datum = getdate(cutoff_raw)
+    except Exception:
+        bankimport_start_datum = None
+
     created = []
     errors = []
     created_without_party = 0
+    skipped_before_cutoff = 0
     auto_matched = []
     auto_match_failed = []
     from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
@@ -819,6 +832,12 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
         if row.bank_transaction:
             row.db_set("row_status", "schon vorhanden")
             row.db_set("reference", row.bank_transaction)
+            continue
+
+        # Globaler Cutoff: Buchungen vor dem konfigurierten Start-Datum überspringen
+        if bankimport_start_datum and row.buchungstag and getdate(row.buchungstag) < bankimport_start_datum:
+            skipped_before_cutoff += 1
+            row.db_set("row_status", "vor Start-Datum")
             continue
 
         try:
@@ -938,16 +957,22 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
             errors.append({"row": row.name, "error": str(e)})
 
     doc.reload()
-    doc.status = (
-        f"Erstellt: {len(created)}, Zugeordnet: {len(auto_matched)}, "
-        f"Fehler: {len(errors)}"
-    )
+    status_parts = [
+        f"Erstellt: {len(created)}",
+        f"Zugeordnet: {len(auto_matched)}",
+        f"Fehler: {len(errors)}",
+    ]
+    if skipped_before_cutoff:
+        status_parts.insert(1, f"Übersprungen (vor Start): {skipped_before_cutoff}")
+    doc.status = ", ".join(status_parts)
     _refresh_saldo_fields(doc)
     doc.save()
     return {
         "created": created,
         "errors": errors,
         "created_without_party": created_without_party,
+        "skipped_before_cutoff": skipped_before_cutoff,
+        "cutoff_date": str(bankimport_start_datum) if bankimport_start_datum else None,
         "auto_matched": auto_matched,
         "auto_match_failed": auto_match_failed,
         "warning": warning if warning and bool(int(allow_missing_party or 0)) else None,

@@ -400,12 +400,18 @@ function _buildCreateSummary(msg) {
   const auto_matched = msg.auto_matched || [];
   const auto_match_failed = msg.auto_match_failed || [];
   const created_without_party = msg.created_without_party || 0;
+  const skipped_before_cutoff = msg.skipped_before_cutoff || 0;
+  const cutoff_date = msg.cutoff_date || null;
   let summary = __('Erstellt: {0}', [created.length]);
   if (auto_matched.length) summary += ', ' + __('Auto-zugeordnet: {0}', [auto_matched.length]);
   const not_matched = created.length - auto_matched.length;
   if (created.length && not_matched > 0) summary += ', ' + __('manuell zuzuordnen: {0}', [not_matched]);
+  if (skipped_before_cutoff) summary += ', ' + __('vor Start-Datum übersprungen: {0}', [skipped_before_cutoff]);
   if (errors.length) summary += ', ' + __('Fehler: {0}', [errors.length]);
   if (created_without_party) summary += ', ' + __('ohne Party: {0}', [created_without_party]);
+  if (cutoff_date && skipped_before_cutoff) {
+    summary += '<br><span style="font-size:11px; color:#888;">' + __('Start-Datum: {0} (Hausverwaltung Einstellungen)', [cutoff_date]) + '</span>';
+  }
   return summary;
 }
 
