@@ -40,7 +40,20 @@ class Telefonnummernauszug(Document):
 		return f"Telefonliste {monat_jahr}"
 
 	def get_grouped_eintraege(self) -> list[dict]:
-		"""Einträge nach (Immobilie, Gebäudeteil, Wohnung) gruppieren — eine Druckzeile pro Wohnung."""
+		"""Einträge nach Wohnung gruppieren — eine Druckzeile pro Wohnung."""
+		# Wohnungs-IDs einmal pro Wohnungs-Name nachladen, da das Child-DocType
+		# die ID selbst nicht speichert.
+		wohnungs_namen = {row.wohnung for row in (self.eintraege or []) if row.wohnung}
+		wohnung_id_map: dict[str, int | None] = {}
+		if wohnungs_namen:
+			id_rows = frappe.get_all(
+				"Wohnung",
+				filters={"name": ("in", list(wohnungs_namen))},
+				fields=["name", "id"],
+			)
+			for r in id_rows:
+				wohnung_id_map[r["name"]] = r.get("id")
+
 		groups: list[dict] = []
 		current_key = None
 		for row in self.eintraege or []:
@@ -55,6 +68,7 @@ class Telefonnummernauszug(Document):
 						"immobilie": row.immobilie or "",
 						"gebaeudeteil": (row.gebaeudeteil or "").strip(),
 						"wohnung": row.wohnung or "",
+						"wohnung_id": wohnung_id_map.get(row.wohnung),
 						"mieter": [],
 					}
 				)
@@ -67,6 +81,16 @@ class Telefonnummernauszug(Document):
 					"mobil": row.mobil or "",
 				}
 			)
+
+		# Numerisch nach Wohnungs-ID sortieren (Wohnungen ohne ID hinten dran)
+		def _sort_key(g):
+			wid = g.get("wohnung_id")
+			try:
+				return (int(wid) if wid is not None else 999999, g.get("wohnung") or "")
+			except (TypeError, ValueError):
+				return (999999, g.get("wohnung") or "")
+
+		groups.sort(key=_sort_key)
 		return groups
 
 
@@ -104,6 +128,7 @@ def _query_eintraege(stichtag: str, immobilie: str | None) -> list[dict]:
 		f"""
 		SELECT
 			mv.wohnung AS wohnung,
+			w.id AS wohnung_id,
 			w.immobilie AS immobilie,
 			w.gebaeudeteil AS gebaeudeteil,
 			w.name__lage_in_der_immobilie AS lage_in_der_immobilie,
@@ -128,6 +153,7 @@ def _query_eintraege(stichtag: str, immobilie: str | None) -> list[dict]:
 		WHERE
 			{" AND ".join(conditions)}
 		ORDER BY
+			w.id,
 			mv.wohnung,
 			vp.idx
 		""",
@@ -145,15 +171,17 @@ def _query_eintraege(stichtag: str, immobilie: str | None) -> list[dict]:
 		if row.get("telefon") and row.get("mobil") and row["telefon"] == row["mobil"]:
 			row["mobil"] = None
 
-	rows.sort(
-		key=lambda r: (
-			(r.get("immobilie") or ""),
-			GEBAEUDETEIL_ORDER.get((r.get("gebaeudeteil") or "").strip().upper(), 99),
-			(r.get("wohnung") or ""),
-			int(r.get("mieter_idx") or 0),
-		)
-	)
+	# Sortierung: primär nach numerischer Wohnungs-ID (Custom-Feld), dann Mieter-Reihenfolge.
+	# Wohnungen ohne ID landen am Ende.
+	def _sort_key(r):
+		wid = r.get("wohnung_id")
+		try:
+			wid_int = int(wid) if wid is not None else 999999
+		except (TypeError, ValueError):
+			wid_int = 999999
+		return (wid_int, (r.get("wohnung") or ""), int(r.get("mieter_idx") or 0))
 
+	rows.sort(key=_sort_key)
 	return rows
 
 
