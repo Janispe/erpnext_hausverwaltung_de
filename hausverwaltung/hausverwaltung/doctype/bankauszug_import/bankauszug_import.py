@@ -372,6 +372,63 @@ def _parse_decimal(x: str) -> float:
         return 0.0
 
 
+def _find_existing_bank_transaction(
+    *,
+    bank_account: str,
+    buchungstag,
+    betrag: float,
+    richtung: Optional[str],
+    iban: Optional[str] = None,
+) -> Optional[str]:
+    """Findet eine bereits existierende Bank Transaction die zu den gegebenen
+    CSV-Werten passt. Match-Strategie:
+
+    1. Bank-Konto + Datum + Betrag (Eingang/Ausgang) — Pflicht
+    2. Wenn IBAN vorhanden: zusätzlich ``bank_party_iban`` als Filter (sehr stark)
+    3. Wenn keine IBAN: nimmt erste Match (genügend bei einer Kontoinhaberin
+       mit überschaubarem Buchungs-Volumen pro Tag).
+
+    Returns Name der BT oder None.
+    """
+    if not bank_account or not buchungstag or not betrag:
+        return None
+    try:
+        meta = frappe.get_meta("Bank Transaction")
+        fieldnames = {d.fieldname for d in meta.fields}
+    except Exception:
+        return None
+
+    filters: Dict[str, Any] = {"bank_account": bank_account, "docstatus": ["<", 2]}
+
+    # Datum
+    for date_field in ("date", "posting_date", "transaction_date"):
+        if date_field in fieldnames:
+            filters[date_field] = buchungstag
+            break
+
+    # Betrag
+    abs_betrag = abs(flt(betrag))
+    if "deposit" in fieldnames and "withdrawal" in fieldnames:
+        if richtung == "Eingang":
+            filters["deposit"] = abs_betrag
+        else:
+            filters["withdrawal"] = abs_betrag
+    elif "amount" in fieldnames:
+        signed = abs_betrag if richtung == "Eingang" else -abs_betrag
+        filters["amount"] = signed
+
+    # IBAN als Verfeinerung (wenn vorhanden) — verhindert False-Positives
+    iban_norm = _normalize_iban(iban)
+    if iban_norm and "bank_party_iban" in fieldnames:
+        filters["bank_party_iban"] = iban_norm
+
+    try:
+        existing = frappe.get_all("Bank Transaction", filters=filters, pluck="name", limit=1)
+        return existing[0] if existing else None
+    except Exception:
+        return None
+
+
 def _extract_csv_kontostand(possible: list) -> Optional[float]:
     """Sucht in einer CSV-Vorzeile nach 'Letzter Kontostand' und gibt den Betrag zurück.
 
@@ -510,6 +567,21 @@ def parse_csv(docname: str) -> Dict[str, Any]:
             error = error or "Betrag fehlt"
     # IBAN ist hilfreich, aber nicht immer vorhanden (z.B. Bargeld). Kein Hard-Error.
 
+        # Bereits importierte BT erkennen — direkt beim Parsen, damit der User
+        # in der Vorschau sofort sieht welche Zeilen schon im System sind.
+        existing_bt = None
+        existing_status = None
+        if doc.bank_account and parsed_date and betrag and not error:
+            existing_bt = _find_existing_bank_transaction(
+                bank_account=doc.bank_account,
+                buchungstag=parsed_date,
+                betrag=betrag,
+                richtung=richtung,
+                iban=iban,
+            )
+            if existing_bt:
+                existing_status = "schon vorhanden"
+
         rows.append({
             "doctype": "Bankauszug Import Row",
             "buchungstag": parsed_date,
@@ -522,6 +594,9 @@ def parse_csv(docname: str) -> Dict[str, Any]:
             "verwendungszweck": verwendungszweck,
             "currency": waehrung,
             "error": error,
+            "bank_transaction": existing_bt,
+            "reference": existing_bt,
+            "row_status": existing_status,
         })
 
     # replace child table
@@ -798,31 +873,13 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
         return False
 
     def find_duplicate(row_doc):
-        # Try to find an existing Bank Transaction with same date, amount, bank_account and description
-        filters = {"bank_account": doc.bank_account}
-        # date field could be 'date' or 'posting_date' or 'transaction_date'
-        for date_field in ("date", "posting_date", "transaction_date"):
-            if date_field in fieldnames:
-                filters[date_field] = row_doc.buchungstag
-                break
-        # amount could be 'amount' or 'deposit/withdrawal'
-        if "amount" in fieldnames:
-            filters["amount"] = flt(row_doc.betrag if row_doc.richtung == "Eingang" else -abs(row_doc.betrag))
-        elif "deposit" in fieldnames and "withdrawal" in fieldnames:
-            if row_doc.richtung == "Eingang":
-                filters["deposit"] = flt(row_doc.betrag)
-                filters["withdrawal"] = 0
-            else:
-                filters["withdrawal"] = flt(row_doc.betrag)
-                filters["deposit"] = 0
-        # description
-        if "description" in fieldnames:
-            filters["description"] = row_doc.verwendungszweck or row_doc.auftraggeber
-        try:
-            existing = frappe.get_all("Bank Transaction", filters=filters, pluck="name", limit=1)
-            return existing[0] if existing else None
-        except Exception:
-            return None
+        return _find_existing_bank_transaction(
+            bank_account=doc.bank_account,
+            buchungstag=row_doc.buchungstag,
+            betrag=row_doc.betrag,
+            richtung=row_doc.richtung,
+            iban=row_doc.iban,
+        )
 
     for row in doc.rows:
         if row.error:
