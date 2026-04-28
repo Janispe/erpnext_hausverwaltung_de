@@ -1264,7 +1264,6 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         "icon": "money-coins-1",
         "links": [
             {"label": "Import Bank CSV", "link_type": "DocType", "link_to": "Bankauszug Import"},
-            {"label": "Abgleich mit der Bank", "link_type": "DocType", "link_to": "Bank Reconciliation Tool"},
             {"label": "Bankkonto", "link_type": "DocType", "link_to": "Bank Account"},
         ],
     },
