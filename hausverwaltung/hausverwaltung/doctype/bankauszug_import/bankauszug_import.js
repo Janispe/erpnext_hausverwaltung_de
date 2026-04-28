@@ -16,9 +16,11 @@ frappe.ui.form.on('Bankauszug Import', {
       frm.add_custom_button('CSV parsen', () => parse_csv(frm), 'Aktionen');
       frm.add_custom_button('Bank Transaktionen erstellen', () => create_transactions(frm), 'Aktionen');
       frm.add_custom_button('Party in Bank Transactions neu zuordnen (alle)', () => relink_parties(frm), 'Aktionen');
+      frm.add_custom_button('Saldo neu prüfen', () => refresh_saldo(frm), 'Aktionen');
       frm.add_custom_button('Nur Problemzeilen', () => applyRowFilter(frm, 'problems'), 'Filter');
       frm.add_custom_button('Nur ohne Party', () => applyRowFilter(frm, 'missing_party'), 'Filter');
       frm.add_custom_button('Nur ohne Bank Transaction', () => applyRowFilter(frm, 'missing_bank_transaction'), 'Filter');
+      frm.add_custom_button('Nur ohne Zahlung', () => applyRowFilter(frm, 'missing_payment'), 'Filter');
       frm.add_custom_button('Nur Kunde', () => applyRowFilter(frm, 'customer'), 'Filter');
       frm.add_custom_button('Nur Lieferant', () => applyRowFilter(frm, 'supplier'), 'Filter');
       frm.add_custom_button('Nur Eigentümer', () => applyRowFilter(frm, 'eigentuemer'), 'Filter');
@@ -346,6 +348,33 @@ function _renderAllRowStatus(frm) {
   });
 }
 
+function refresh_saldo(frm) {
+  frappe.call({
+    method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.refresh_saldo',
+    args: { docname: frm.doc.name },
+    freeze: true,
+    freeze_message: __('Saldo wird neu berechnet…'),
+  }).then((r) => {
+    const m = (r && r.message) || {};
+    const fmt = (v) => frappe.format(parseFloat(v || 0), { fieldtype: 'Currency' });
+    const diff = parseFloat(m.saldo_differenz || 0);
+    const indicator = Math.abs(diff) < 0.01 ? 'green' : 'red';
+    const status = Math.abs(diff) < 0.01 ? __('passt') : __('Differenz {0}', [fmt(diff)]);
+    frappe.msgprint({
+      title: __('Saldo-Vergleich'),
+      message: __('Stichtag: {0}<br>Saldo laut Bank: <b>{1}</b><br>Saldo laut ERP: <b>{2}</b><br>Differenz: <b>{3}</b> ({4})', [
+        m.saldo_datum || '-',
+        fmt(m.saldo_laut_csv),
+        fmt(m.saldo_laut_erp),
+        fmt(diff),
+        status,
+      ]),
+      indicator,
+    });
+    frm.reload_doc();
+  });
+}
+
 function parse_csv(frm) {
   if (!frm.doc.csv_file) {
     frappe.msgprint('Bitte zuerst eine CSV-Datei hochladen.');
@@ -363,6 +392,21 @@ function parse_csv(frm) {
       }
     }
   });
+}
+
+function _buildCreateSummary(msg) {
+  const created = msg.created || [];
+  const errors = msg.errors || [];
+  const auto_matched = msg.auto_matched || [];
+  const auto_match_failed = msg.auto_match_failed || [];
+  const created_without_party = msg.created_without_party || 0;
+  let summary = __('Erstellt: {0}', [created.length]);
+  if (auto_matched.length) summary += ', ' + __('Auto-zugeordnet: {0}', [auto_matched.length]);
+  const not_matched = created.length - auto_matched.length;
+  if (created.length && not_matched > 0) summary += ', ' + __('manuell zuzuordnen: {0}', [not_matched]);
+  if (errors.length) summary += ', ' + __('Fehler: {0}', [errors.length]);
+  if (created_without_party) summary += ', ' + __('ohne Party: {0}', [created_without_party]);
+  return summary;
 }
 
 function create_transactions(frm) {
@@ -397,12 +441,7 @@ function create_transactions(frm) {
       frappe.confirm(confirmHtml, () => {
         runCreate(true).then((res2) => {
           frm.reload_doc();
-          const msg2 = (res2 && res2.message) || {};
-          const { created = [], errors = [], created_without_party = 0 } = msg2;
-          let summary = `Erstellt: ${created.length}`;
-          if (errors.length) summary += `, Fehler: ${errors.length}`;
-          if (created_without_party) summary += `, Ohne Party: ${created_without_party}`;
-          frappe.msgprint(summary);
+          frappe.msgprint(_buildCreateSummary((res2 && res2.message) || {}));
         }).catch((err) => {
           let details = '';
           try {
@@ -418,11 +457,7 @@ function create_transactions(frm) {
     }
 
     frm.reload_doc();
-    const { created = [], errors = [], created_without_party = 0 } = msg;
-    let summary = `Erstellt: ${created.length}`;
-    if (errors.length) summary += `, Fehler: ${errors.length}`;
-    if (created_without_party) summary += `, Ohne Party: ${created_without_party}`;
-    frappe.msgprint(summary);
+    frappe.msgprint(_buildCreateSummary(msg));
   }).catch((err) => {
     let details = '';
     try {
@@ -442,15 +477,23 @@ function rowMatchesFilter(row, mode, phase) {
   if (mode === 'missing_bank_transaction') {
     return !(row.bank_transaction || row.reference);
   }
+  if (mode === 'missing_payment') {
+    // Zeile hat eine Bank Transaction, aber noch keine Zahlung/Buchung verknüpft
+    const hasBT = !!(row.bank_transaction || row.reference);
+    const hasVoucher = !!(row.payment_entry || row.journal_entry);
+    return hasBT && !hasVoucher;
+  }
   if (mode === 'problems') {
     // Phase 1: Probleme = fehlende Partei (das ist hier der Hauptfokus).
-    // Phase 2/done: Probleme = failed-Status, Error, oder noch ohne Bank-Transaktion.
+    // Phase 2/done: Probleme = failed-Status, Error, oder noch ohne Bank-Transaktion,
+    // ODER BT da aber noch keine Zahlung/Buchung zugeordnet (offene Reconciliation).
     if (phase === 'phase1') {
       return !(row.party_type && row.party);
     }
     if (row.row_status === 'failed') return true;
     if ((row.error || '').toString().trim()) return true;
     if (!(row.bank_transaction || row.reference)) return true;
+    if ((row.bank_transaction || row.reference) && !(row.payment_entry || row.journal_entry)) return true;
     return false;
   }
   if (mode === 'customer')   return row.party_type === 'Customer';
@@ -497,6 +540,7 @@ function applyRowFilter(frm, mode) {
   const filterLabels = {
     missing_party:               { label: __('Zeilen ohne Party'),                indicator: 'orange' },
     missing_bank_transaction:    { label: __('Zeilen ohne Bank Transaction'),     indicator: 'orange' },
+    missing_payment:             { label: __('Zeilen ohne Zahlung'),              indicator: 'orange' },
     problems:                    { label: __('Problemzeilen'),                    indicator: visible ? 'orange' : 'green' },
     customer:                    { label: __('Kunde-Zeilen'),                     indicator: 'green' },
     supplier:                    { label: __('Lieferant-Zeilen'),                 indicator: 'blue' },
@@ -685,6 +729,25 @@ function _openRowActions(frm, row) {
   const customerClass = !isAusgang ? 'btn-primary' : 'btn-default';
   const supplierClass =  isAusgang ? 'btn-primary' : 'btn-default';
 
+  const hasBT = !!row.bank_transaction;
+  const alreadyReconciled = !!row.payment_entry || !!row.journal_entry;
+  const showReconcileSection = hasBT && !alreadyReconciled;
+
+  const reconcileSectionHtml = showReconcileSection
+    ? `
+      <div style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.04em; margin:14px 0 6px 0;">${__('Bank Transaction zuordnen')}</div>
+      <div class="hv-row-action-buttons" style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="button" class="btn btn-primary" data-hv-action="match_invoices" style="flex:1 1 0; min-width:160px;">${__('Rechnungen zuordnen')}</button>
+        <button type="button" class="btn btn-default" data-hv-action="standalone_payment" style="flex:1 1 0; min-width:160px;">${__('Zahlung erstellen')}</button>
+        <button type="button" class="btn btn-default" data-hv-action="journal_entry" style="flex:1 1 0; min-width:160px;">${__('Buchungssatz erstellen')}</button>
+      </div>
+    `
+    : '';
+
+  const reconciledNoticeHtml = alreadyReconciled
+    ? `<div style="margin-top:14px; padding:8px 10px; background:#e6f7ec; border-radius:4px; font-size:12px; color:#15803d;">${__('Bereits zugeordnet')}: ${escape(row.payment_entry || row.journal_entry)}</div>`
+    : '';
+
   const ctxHtml = `
     <div class="hv-row-context" style="margin-bottom:14px; padding:10px 12px; background:#f6f6f7; border-radius:4px; font-size:12px; line-height:1.6;">
       <div><strong>${__('Buchungstag')}:</strong> ${fmtDate(row.buchungstag)} &nbsp; • &nbsp; <strong>${__('Richtung')}:</strong> ${escape(row.richtung)} &nbsp; • &nbsp; <strong>${__('Betrag')}:</strong> ${fmtCurrency(row.betrag)}</div>
@@ -704,6 +767,8 @@ function _openRowActions(frm, row) {
       <button type="button" class="btn btn-default" data-hv-action="supplier" style="flex:1 1 0; min-width:160px;">${__('Lieferant erstellen')}</button>
       <button type="button" class="btn btn-default" data-hv-action="bank_account" style="flex:1 1 0; min-width:160px;">${__('Bankkonto erstellen')}</button>
     </div>
+    ${reconcileSectionHtml}
+    ${reconciledNoticeHtml}
   `;
 
   const d = new frappe.ui.Dialog({
@@ -720,6 +785,339 @@ function _openRowActions(frm, row) {
   d.$wrapper.find('[data-hv-action="customer"]').on('click', () => { d.hide(); _prepareCustomer(frm, row); });
   d.$wrapper.find('[data-hv-action="supplier"]').on('click', () => { d.hide(); _prepareSupplier(frm, row); });
   d.$wrapper.find('[data-hv-action="bank_account"]').on('click', () => { d.hide(); _prepareBankAccount(frm, row); });
+  d.$wrapper.find('[data-hv-action="match_invoices"]').on('click', () => { d.hide(); _openMatchInvoicesDialog(frm, row); });
+  d.$wrapper.find('[data-hv-action="standalone_payment"]').on('click', () => { d.hide(); _openStandalonePaymentDialog(frm, row); });
+  d.$wrapper.find('[data-hv-action="journal_entry"]').on('click', () => { d.hide(); _openJournalEntryDialog(frm, row); });
+}
+
+// =============================================================================
+// Manual Reconciliation Dialogs (Phase A)
+// =============================================================================
+
+function _openMatchInvoicesDialog(frm, row) {
+  if (!row.party_type || !row.party) {
+    frappe.msgprint(__('Bitte zuerst eine Party (Mieter/Lieferant) zuweisen.'));
+    return;
+  }
+
+  frappe.call({
+    method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.get_open_invoices_for_row',
+    args: { docname: frm.doc.name, row_name: row.name },
+    freeze: true,
+    freeze_message: __('Lade offene Rechnungen…'),
+  }).then((r) => {
+    const data = (r && r.message) || {};
+    const invoices = data.invoices || [];
+    const target = parseFloat(data.target_amount || row.betrag || 0);
+
+    if (!invoices.length) {
+      frappe.msgprint({
+        title: __('Keine offenen Rechnungen'),
+        message: __('Für {0} {1} sind keine offenen Rechnungen vorhanden. Nutze „Zahlung erstellen" für eine Vorauszahlung oder „Buchungssatz erstellen" für eine direkte GL-Buchung.', [row.party_type, row.party]),
+      });
+      return;
+    }
+
+    const fmt = (v) => frappe.format(v, { fieldtype: 'Currency' });
+    const fmtDate = (v) => (v ? frappe.datetime.str_to_user(v) : '-');
+
+    const rowsHtml = invoices.map((inv) => {
+      const outstanding = parseFloat(inv.outstanding_amount).toFixed(2);
+      const safeName = frappe.utils.escape_html(inv.name);
+      const linkPath = data.invoice_doctype.toLowerCase().replace(/ /g, '-');
+      return `
+        <tr>
+          <td style="padding:4px 8px;"><input type="checkbox" class="hv-inv-cb" data-name="${safeName}" data-outstanding="${outstanding}"></td>
+          <td style="padding:4px 8px;"><a href="/app/${linkPath}/${encodeURIComponent(inv.name)}" target="_blank">${safeName}</a></td>
+          <td style="padding:4px 8px; text-align:right; color:#888;">${fmt(inv.outstanding_amount)}</td>
+          <td style="padding:4px 8px;">
+            <input type="number" class="hv-inv-amount form-control input-sm" step="0.01" min="0" max="${outstanding}"
+              data-name="${safeName}" data-outstanding="${outstanding}" disabled
+              style="width:120px; text-align:right;" placeholder="0,00">
+          </td>
+          <td style="padding:4px 8px; white-space:nowrap;">${fmtDate(inv.posting_date)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const html = `
+      <div style="margin-bottom:10px; padding:8px 10px; background:#f6f6f7; border-radius:4px; font-size:12px;">
+        <strong>${__('Bank-Betrag')}:</strong> ${fmt(target)} &nbsp;•&nbsp;
+        <strong>${__('Party')}:</strong> ${frappe.utils.escape_html(row.party)} (${frappe.utils.escape_html(row.party_type)})
+      </div>
+      <table style="width:100%; border-collapse:collapse; font-size:12px;">
+        <thead>
+          <tr style="background:#f6f6f7;">
+            <th style="padding:4px 8px; width:30px;"></th>
+            <th style="padding:4px 8px; text-align:left;">${__('Rechnung')}</th>
+            <th style="padding:4px 8px; text-align:right;">${__('Offen')}</th>
+            <th style="padding:4px 8px; text-align:left;">${__('Zuweisen')}</th>
+            <th style="padding:4px 8px; text-align:left;">${__('Datum')}</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <div style="margin-top:6px; font-size:11px; color:#888;">
+        ${__('Tipp: Häkchen aktiviert die Zeile und füllt den maximal noch passenden Betrag vor — den kannst du anpassen, um Teilzahlungen abzubilden.')}
+      </div>
+      <div class="hv-match-summary" style="margin-top:14px; padding:10px 12px; background:#fff7ed; border:1px solid #fed7aa; border-radius:4px; font-size:13px; line-height:1.7;">
+        <div><strong>${__('Summe ausgewählt')}:</strong> <span class="hv-sum"></span></div>
+        <div><strong>${__('Bank-Betrag')}:</strong> ${fmt(target)}</div>
+        <div><strong>${__('Differenz')}:</strong> <span class="hv-diff"></span> <span class="hv-diff-note" style="margin-left:8px; font-style:italic;"></span></div>
+      </div>
+      <div style="margin-top:10px;">
+        <label style="font-size:12px;">
+          <input type="checkbox" class="hv-leftover-cb">
+          ${__('Restbetrag als Vorauszahlung verbuchen (bleibt am Mieter/Lieferant als offenes Guthaben)')}
+        </label>
+      </div>
+    `;
+
+    const d = new frappe.ui.Dialog({
+      title: __('Rechnungen zuordnen — Zeile {0}', [row.idx]),
+      size: 'large',
+      fields: [{ fieldtype: 'HTML', fieldname: 'body', options: html }],
+      primary_action_label: __('Zuordnen'),
+      primary_action() {
+        const allocations = [];
+        let allocSum = 0;
+        d.$wrapper.find('.hv-inv-cb:checked').each(function () {
+          const name = $(this).attr('data-name');
+          const amountInput = d.$wrapper.find('.hv-inv-amount[data-name="' + name + '"]');
+          const allocated = parseFloat(amountInput.val()) || 0;
+          if (allocated <= 0) return;  // Skip zero allocations
+          const outstanding = parseFloat(amountInput.attr('data-outstanding')) || 0;
+          if (allocated > outstanding + 0.01) {
+            frappe.msgprint(__('Zuweisung für {0} ({1}) übersteigt offenen Betrag ({2}).', [
+              name, frappe.format(allocated, { fieldtype: 'Currency' }), frappe.format(outstanding, { fieldtype: 'Currency' }),
+            ]));
+            allocations.length = 0;  // Abort
+            return false;
+          }
+          allocations.push({ name, allocated_amount: allocated });
+          allocSum += allocated;
+        });
+        if (!allocations.length) {
+          frappe.msgprint(__('Bitte mindestens eine Rechnung mit Betrag > 0 auswählen.'));
+          return;
+        }
+        const leftover = d.$wrapper.find('.hv-leftover-cb').is(':checked') ? 1 : 0;
+        d.disable_primary_action();
+        frappe.call({
+          method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.manually_reconcile_row',
+          args: {
+            docname: frm.doc.name,
+            row_name: row.name,
+            invoice_names: JSON.stringify(allocations),
+            leftover_as_advance: leftover,
+          },
+          freeze: true,
+          freeze_message: __('Zuordnung wird gebucht…'),
+        }).then((res) => {
+          const msg = (res && res.message) || {};
+          frappe.show_alert({
+            message: __('Zugeordnet: {0} ({1} Rechnung(en))', [msg.payment_entry, (msg.invoices || []).length]),
+            indicator: 'green',
+          });
+          d.hide();
+          frm.reload_doc();
+        }).catch(() => {
+          d.enable_primary_action();
+        });
+      },
+    });
+
+    d.show();
+
+    // Live-Sum-Update + Auto-Fill bei Checkbox-Aktivierung
+    const recalc = () => {
+      let sum = 0;
+      d.$wrapper.find('.hv-inv-cb:checked').each(function () {
+        const name = $(this).attr('data-name');
+        const input = d.$wrapper.find('.hv-inv-amount[data-name="' + name + '"]');
+        sum += parseFloat(input.val()) || 0;
+      });
+      const diff = target - sum;
+      // Wichtig: .html() (nicht .text()), weil frappe.format() HTML zurückgibt
+      d.$wrapper.find('.hv-sum').html(fmt(sum));
+      d.$wrapper.find('.hv-diff').html(fmt(diff));
+      const note = d.$wrapper.find('.hv-diff-note');
+      const leftoverCb = d.$wrapper.find('.hv-leftover-cb');
+      const primary = d.$wrapper.find('.modal-footer .btn-primary');
+      if (Math.abs(diff) < 0.01) {
+        note.css('color', '#15803d').text(__('exakt'));
+        primary.prop('disabled', false);
+      } else if (diff > 0) {
+        note.css('color', '#92400e').text(leftoverCb.is(':checked') ? __('wird als Vorauszahlung verbucht') : __('Restbetrag offen'));
+        primary.prop('disabled', !leftoverCb.is(':checked'));
+      } else {
+        note.css('color', '#dc3545').text(__('Auswahl übersteigt Bank-Betrag'));
+        primary.prop('disabled', true);
+      }
+    };
+
+    // Checkbox-Toggle: Input enablen/disablen, beim Aktivieren Beträge auto-füllen
+    d.$wrapper.on('change', '.hv-inv-cb', function () {
+      const name = $(this).attr('data-name');
+      const input = d.$wrapper.find('.hv-inv-amount[data-name="' + name + '"]');
+      if (this.checked) {
+        input.prop('disabled', false);
+        // Auto-Fill: noch fehlender Restbetrag bis target, aber max. outstanding der Zeile
+        let currentSum = 0;
+        d.$wrapper.find('.hv-inv-cb:checked').each(function () {
+          if ($(this).attr('data-name') === name) return;
+          const otherInput = d.$wrapper.find('.hv-inv-amount[data-name="' + $(this).attr('data-name') + '"]');
+          currentSum += parseFloat(otherInput.val()) || 0;
+        });
+        const remaining = Math.max(0, target - currentSum);
+        const outstanding = parseFloat(input.attr('data-outstanding')) || 0;
+        const fillAmount = Math.min(outstanding, remaining);
+        input.val(fillAmount.toFixed(2));
+        input.focus().select();
+      } else {
+        input.prop('disabled', true);
+        input.val('');
+      }
+      recalc();
+    });
+    d.$wrapper.on('input', '.hv-inv-amount', recalc);
+    d.$wrapper.on('change', '.hv-leftover-cb', recalc);
+    recalc();
+  });
+}
+
+function _openStandalonePaymentDialog(frm, row) {
+  const fmt = (v) => frappe.format(v, { fieldtype: 'Currency' });
+
+  const d = new frappe.ui.Dialog({
+    title: __('Zahlung erstellen — Zeile {0}', [row.idx]),
+    fields: [
+      {
+        fieldtype: 'HTML',
+        fieldname: 'header',
+        options: `<div style="margin-bottom:10px; font-size:12px; color:#666;">
+          ${__('Erstellt ein Payment Entry über den vollen Bank-Betrag')} <strong>${fmt(row.betrag)}</strong>
+          ${__('— ohne Verknüpfung zu einer Rechnung. Bleibt als Guthaben/Verbindlichkeit am Mieter/Lieferant offen.')}
+        </div>`,
+      },
+      {
+        fieldtype: 'Select',
+        fieldname: 'party_type',
+        label: __('Party Typ'),
+        options: 'Customer\nSupplier',
+        default: row.party_type || (row.richtung === 'Ausgang' ? 'Supplier' : 'Customer'),
+        reqd: 1,
+      },
+      {
+        fieldtype: 'Dynamic Link',
+        fieldname: 'party',
+        label: __('Party'),
+        options: 'party_type',
+        default: row.party || '',
+        reqd: 1,
+      },
+      {
+        fieldtype: 'Small Text',
+        fieldname: 'remarks',
+        label: __('Bemerkung'),
+        default: row.verwendungszweck || row.auftraggeber || '',
+      },
+    ],
+    primary_action_label: __('Buchen'),
+    primary_action(values) {
+      d.disable_primary_action();
+      frappe.call({
+        method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.create_standalone_payment_for_row',
+        args: {
+          docname: frm.doc.name,
+          row_name: row.name,
+          party_type: values.party_type,
+          party: values.party,
+          remarks: values.remarks || '',
+        },
+        freeze: true,
+        freeze_message: __('Zahlung wird gebucht…'),
+      }).then((res) => {
+        const msg = (res && res.message) || {};
+        frappe.show_alert({
+          message: __('Payment Entry erstellt: {0}', [msg.payment_entry]),
+          indicator: 'green',
+        });
+        d.hide();
+        frm.reload_doc();
+      }).catch(() => {
+        d.enable_primary_action();
+      });
+    },
+  });
+  d.show();
+}
+
+function _openJournalEntryDialog(frm, row) {
+  const fmt = (v) => frappe.format(v, { fieldtype: 'Currency' });
+  const isEingang = row.richtung === 'Eingang';
+
+  const d = new frappe.ui.Dialog({
+    title: __('Buchungssatz erstellen — Zeile {0}', [row.idx]),
+    fields: [
+      {
+        fieldtype: 'HTML',
+        fieldname: 'header',
+        options: `<div style="margin-bottom:10px; font-size:12px; color:#666;">
+          ${__('Erstellt einen Journal Entry')} <strong>${fmt(row.betrag)}</strong> ${isEingang ? __('(Bank Soll, Konto Haben)') : __('(Bank Haben, Konto Soll)')}.
+          ${__('Für Bankgebühren, Eigentümer-Entnahmen, manuelle Korrekturen.')}
+        </div>`,
+      },
+      {
+        fieldtype: 'Link',
+        fieldname: 'account',
+        label: __('Gegenkonto'),
+        options: 'Account',
+        reqd: 1,
+        description: __('z.B. Geldverkehrskosten, Privatentnahmen, sonstiger Aufwand/Ertrag.'),
+      },
+      {
+        fieldtype: 'Link',
+        fieldname: 'cost_center',
+        label: __('Kostenstelle'),
+        options: 'Cost Center',
+        description: __('Standardmäßig die Kostenstelle der Immobilie zum Bankkonto. Überschreibbar.'),
+      },
+      {
+        fieldtype: 'Small Text',
+        fieldname: 'remarks',
+        label: __('Bemerkung'),
+        default: row.verwendungszweck || row.auftraggeber || '',
+      },
+    ],
+    primary_action_label: __('Buchen'),
+    primary_action(values) {
+      d.disable_primary_action();
+      frappe.call({
+        method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.create_journal_entry_for_row',
+        args: {
+          docname: frm.doc.name,
+          row_name: row.name,
+          account: values.account,
+          cost_center: values.cost_center || '',
+          remarks: values.remarks || '',
+        },
+        freeze: true,
+        freeze_message: __('Buchungssatz wird gebucht…'),
+      }).then((res) => {
+        const msg = (res && res.message) || {};
+        frappe.show_alert({
+          message: __('Buchungssatz erstellt: {0}', [msg.journal_entry]),
+          indicator: 'green',
+        });
+        d.hide();
+        frm.reload_doc();
+      }).catch(() => {
+        d.enable_primary_action();
+      });
+    },
+  });
+  d.show();
 }
 
 function _assignExistingParty(frm, row, partyType) {
@@ -774,6 +1172,15 @@ function _assignExistingParty(frm, row, partyType) {
     },
   });
   d.show();
+
+  // Kostenstelle aus der Immobilie der BT vorbelegen (User kann überschreiben)
+  frappe.call({
+    method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.get_expected_cost_center_for_row',
+    args: { docname: frm.doc.name, row_name: row.name },
+  }).then((r) => {
+    const cc = r && r.message && r.message.cost_center;
+    if (cc) d.set_value('cost_center', cc);
+  });
 }
 
 frappe.ui.form.on('Bankauszug Import Row', {

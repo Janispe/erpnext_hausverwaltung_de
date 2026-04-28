@@ -19,6 +19,9 @@
   "verwendungszweck",
   "currency",
   "bank_transaction",
+  "payment_entry",
+  "journal_entry",
+  "auto_match_message",
   "reference",
   "row_status",
   "error"
@@ -120,6 +123,29 @@
    "in_list_view": 1,
    "label": "Bank Transaction",
    "options": "Bank Transaction",
+   "read_only": 1
+  },
+  {
+   "fieldname": "payment_entry",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Payment Entry",
+   "options": "Payment Entry",
+   "read_only": 1,
+   "description": "Falls beim Erstellen eine offene Rechnung exakt zugeordnet wurde, steht hier das Payment Entry."
+  },
+  {
+   "fieldname": "journal_entry",
+   "fieldtype": "Link",
+   "label": "Buchungssatz",
+   "options": "Journal Entry",
+   "read_only": 1,
+   "description": "Falls die Bank Transaction per Journal Entry gegen ein GL-Konto gebucht wurde (z.B. Bankgebühren)."
+  },
+  {
+   "fieldname": "auto_match_message",
+   "fieldtype": "Small Text",
+   "label": "Auto-Match-Hinweis",
    "read_only": 1
   },
   {

@@ -10,6 +10,12 @@
   "delimiter",
   "encoding",
   "info",
+  "saldo_section",
+  "saldo_laut_csv",
+  "saldo_datum",
+  "saldo_cb",
+  "saldo_laut_erp",
+  "saldo_differenz",
   "sb_preview",
   "rows",
   "section_break_bhsn",
@@ -51,6 +57,45 @@
    "fieldname": "info",
    "fieldtype": "HTML",
    "label": "Hinweis"
+  },
+  {
+   "fieldname": "saldo_section",
+   "fieldtype": "Section Break",
+   "label": "Kontostand-Abgleich",
+   "collapsible": 1,
+   "description": "Vergleich des Banksaldos laut CSV mit dem aus den GL-Buchungen errechneten Saldo. Wird beim CSV-Parsen automatisch ermittelt."
+  },
+  {
+   "fieldname": "saldo_laut_csv",
+   "fieldtype": "Currency",
+   "label": "Saldo laut Bank (CSV)",
+   "read_only": 1,
+   "description": "Letzter Kontostand aus der Postbank-CSV — also das was laut Bank auf dem Konto sein sollte."
+  },
+  {
+   "fieldname": "saldo_datum",
+   "fieldtype": "Date",
+   "label": "Saldo-Stichtag",
+   "read_only": 1,
+   "description": "Letzter Buchungstag laut CSV. Stichtag für den Vergleich."
+  },
+  {
+   "fieldname": "saldo_cb",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "saldo_laut_erp",
+   "fieldtype": "Currency",
+   "label": "Saldo laut ERP",
+   "read_only": 1,
+   "description": "GL-Saldo des Bankkontos zum Stichtag (aus allen verbuchten Belegen)."
+  },
+  {
+   "fieldname": "saldo_differenz",
+   "fieldtype": "Currency",
+   "label": "Differenz (CSV − ERP)",
+   "read_only": 1,
+   "description": "0 = passt. Positiv = ERP fehlt Geld (nicht verbuchte Eingänge). Negativ = ERP hat zu viel verbucht."
   },
   {
    "fieldname": "sb_preview",

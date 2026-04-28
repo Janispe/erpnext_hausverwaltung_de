@@ -361,6 +361,35 @@ def _map_headers(headers: List[str]) -> Dict[str, int]:
     return idx
 
 
+def _parse_decimal(x: str) -> float:
+    """Wandelt deutsche Zahlenformate (1.234,56) in float um. 0.0 bei Fehler."""
+    if not x:
+        return 0.0
+    x = x.replace(".", "").replace(",", ".").replace(" ", "")
+    try:
+        return float(x)
+    except Exception:
+        return 0.0
+
+
+def _extract_csv_kontostand(possible: list) -> Optional[float]:
+    """Sucht in einer CSV-Vorzeile nach 'Letzter Kontostand' und gibt den Betrag zurück.
+
+    Postbank-Format: ``Letzter Kontostand;;;;14.619,26;EUR`` — der Betrag steht
+    in einer der hinteren Spalten. Wir nehmen die erste numerisch parsbare.
+    """
+    if not possible:
+        return None
+    first = _normalize_header(possible[0]).lower()
+    if "kontostand" not in first:
+        return None
+    for cell in possible[1:]:
+        val = _parse_decimal(str(cell))
+        if val:
+            return val
+    return None
+
+
 @frappe.whitelist()
 def parse_csv(docname: str) -> Dict[str, Any]:
     doc = frappe.get_doc("Bankauszug Import", docname)
@@ -369,12 +398,19 @@ def parse_csv(docname: str) -> Dict[str, Any]:
     delimiter = _sniff_delimiter(sample, doc.delimiter)
     reader = csv.reader(io.StringIO(text), delimiter=delimiter)
 
-    # Find the actual header row: skip bank preamble until a row contains required headers
+    # Find the actual header row: skip bank preamble until a row contains required headers.
+    # Während wir die Preamble lesen, schnappen wir uns auch den 'Letzter Kontostand'-Wert.
     header_map = {}
     headers = None
+    csv_kontostand: Optional[float] = None
     for possible in reader:
         # skip empty or 1-col lines like "Umsätze" or date range
         if not possible or (len(possible) == 1 and not possible[0].strip()):
+            continue
+        # Kontostand erkennen, bevor wir bei der eigentlichen Header-Zeile abbrechen
+        ks = _extract_csv_kontostand(possible)
+        if ks is not None:
+            csv_kontostand = ks
             continue
         # Normalize and try mapping
         tmp_map = _map_headers(possible)
@@ -493,8 +529,16 @@ def parse_csv(docname: str) -> Dict[str, Any]:
     for r in rows:
         doc.append("rows", r)
     doc.status = f"{len(rows)} Zeilen geladen"
+
+    # Saldo-Felder aus CSV: 'Letzter Kontostand' + spätestes Buchungsdatum als Stichtag
+    if csv_kontostand is not None:
+        doc.saldo_laut_csv = csv_kontostand
+    parsed_dates = [r.get("buchungstag") for r in rows if r.get("buchungstag")]
+    if parsed_dates:
+        doc.saldo_datum = max(parsed_dates)
+
     doc.save()
-    return {"rows": rows, "count": len(rows)}
+    return {"rows": rows, "count": len(rows), "saldo_laut_csv": csv_kontostand}
 
 
 @frappe.whitelist()
@@ -710,6 +754,11 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
     created = []
     errors = []
     created_without_party = 0
+    auto_matched = []
+    auto_match_failed = []
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+        auto_match_bank_transaction,
+    )
 
     # get meta and field names to be version-safe
     meta = frappe.get_meta("Bank Transaction")
@@ -852,6 +901,36 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
             row.db_set("row_status", "success")
             row.db_set("reference", bt.name)
             created.append(bt.name)
+
+            # Auto-Match: versuche, exakt passende offene Rechnungen zu
+            # finden und ein Payment Entry anzulegen. Schlägt der Match
+            # fehl (kein/mehrdeutig/Teilbetrag), bleibt die BT unreconciled
+            # und der User klickt manuell.
+            try:
+                match_result = auto_match_bank_transaction(bt.name)
+                if match_result.get("matched"):
+                    row.db_set("payment_entry", match_result.get("payment_entry"))
+                    row.db_set("auto_match_message", match_result.get("message"))
+                    auto_matched.append(bt.name)
+                else:
+                    row.db_set("auto_match_message", match_result.get("message"))
+                    if match_result.get("reason") not in ("no_party", "wrong_direction_for_customer", "wrong_direction_for_supplier"):
+                        # Diagnose-Info für die Liste — kein "Fehler" im engeren Sinne
+                        auto_match_failed.append({
+                            "row": row.name,
+                            "bank_transaction": bt.name,
+                            "reason": match_result.get("reason"),
+                        })
+            except Exception as match_exc:
+                # Match-Fehler sollen den Import nicht abbrechen.
+                frappe.log_error(
+                    frappe.get_traceback(),
+                    f"Bankauszug Import: Auto-Match fehlgeschlagen für {bt.name}",
+                )
+                try:
+                    row.db_set("auto_match_message", f"Auto-Match-Fehler: {match_exc}")
+                except Exception:
+                    pass
         except Exception as e:
             frappe.log_error(frappe.get_traceback(), "Bankauszug Import: create error")
             row.db_set("error", str(e))
@@ -859,11 +938,351 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
             errors.append({"row": row.name, "error": str(e)})
 
     doc.reload()
-    doc.status = f"Erstellt: {len(created)}, Fehler: {len(errors)}"
+    doc.status = (
+        f"Erstellt: {len(created)}, Zugeordnet: {len(auto_matched)}, "
+        f"Fehler: {len(errors)}"
+    )
+    _refresh_saldo_fields(doc)
     doc.save()
     return {
         "created": created,
         "errors": errors,
         "created_without_party": created_without_party,
+        "auto_matched": auto_matched,
+        "auto_match_failed": auto_match_failed,
         "warning": warning if warning and bool(int(allow_missing_party or 0)) else None,
     }
+
+
+def _refresh_saldo_fields(doc) -> None:
+    """Berechnet ``saldo_laut_erp`` und ``saldo_differenz`` für das Bankkonto
+    zum Stichtag ``saldo_datum``. Wenn keine Vergleichsdaten da sind, no-op.
+    """
+    if not doc.get("bank_account") or not doc.get("saldo_datum"):
+        return
+    try:
+        gl_account = frappe.db.get_value("Bank Account", doc.bank_account, "account")
+        if not gl_account:
+            return
+        # get_balance_on liefert vorzeichenbehaftet; bei Bank-Konten ist Soll-Saldo positiv
+        from erpnext.accounts.utils import get_balance_on
+        balance = flt(get_balance_on(account=gl_account, date=doc.saldo_datum))
+        doc.saldo_laut_erp = balance
+        if doc.get("saldo_laut_csv") is not None:
+            doc.saldo_differenz = flt(doc.saldo_laut_csv) - balance
+    except Exception:
+        frappe.log_error(
+            frappe.get_traceback(),
+            f"Bankauszug Import: Saldo-Berechnung fehlgeschlagen ({doc.name})",
+        )
+
+
+@frappe.whitelist()
+def refresh_saldo(docname: str) -> Dict[str, Any]:
+    """Manueller Refresh nach manueller Reconciliation o.ä.
+
+    Liest den GL-Saldo neu und vergleicht mit dem CSV-Wert. Erlaubt Mama nach
+    manuellen Zuordnungen schnell zu prüfen, ob der ERP-Saldo jetzt zum Bank-
+    Saldo passt — ohne Neuparsen der CSV.
+    """
+    doc = frappe.get_doc("Bankauszug Import", docname)
+    if not frappe.has_permission("Bankauszug Import", "write", doc=doc):
+        frappe.throw("Keine Berechtigung.")
+    _refresh_saldo_fields(doc)
+    doc.save(ignore_permissions=True)
+    return {
+        "saldo_laut_csv": doc.get("saldo_laut_csv"),
+        "saldo_laut_erp": doc.get("saldo_laut_erp"),
+        "saldo_differenz": doc.get("saldo_differenz"),
+        "saldo_datum": doc.get("saldo_datum"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Manual reconciliation endpoints (Phase A)
+#
+# Pro Bankauszug-Import-Zeile, deren Bank Transaction nicht auto-gematcht
+# wurde, kann der User direkt in der Tabelle weiterarbeiten ohne ins
+# ERPNext Bank Reconciliation Tool zu wechseln.
+# ---------------------------------------------------------------------------
+
+
+def _row_with_unreconciled_bt(docname: str, row_name: str) -> Tuple[Document, Document, Document]:
+    """Lädt (doc, row, bt). Wirft, wenn Zeile keine BT hat oder bereits reconciled ist."""
+    doc = frappe.get_doc("Bankauszug Import", docname)
+    if not frappe.has_permission("Bankauszug Import", "write", doc=doc):
+        frappe.throw("Keine Berechtigung zum Bearbeiten dieses Bankauszug Imports.")
+
+    row = _get_row_by_name(doc, row_name)
+    bt_name = getattr(row, "bank_transaction", None)
+    if not bt_name:
+        frappe.throw(
+            "Diese Zeile hat noch keine Bank Transaction. Bitte zuerst "
+            "'Bank Transaktionen erstellen' ausführen."
+        )
+    if getattr(row, "payment_entry", None) or getattr(row, "journal_entry", None):
+        frappe.throw(
+            "Zeile ist bereits einem Beleg zugeordnet "
+            f"({getattr(row, 'payment_entry', None) or getattr(row, 'journal_entry', None)})."
+        )
+
+    bt = frappe.get_doc("Bank Transaction", bt_name)
+    if bt.get("payment_entries"):
+        frappe.throw(
+            "Bank Transaction ist bereits reconciled — bitte vorher die "
+            "verknüpften Belege prüfen."
+        )
+    return doc, row, bt
+
+
+@frappe.whitelist()
+def get_expected_cost_center_for_row(docname: str, row_name: str) -> Dict[str, Any]:
+    """Liefert die erwartete Kostenstelle (aus Immobilie via Bank Account) für die Zeile.
+
+    Wird vom Frontend genutzt, um z.B. den JE-Dialog mit der Kostenstelle vorzubelegen.
+    """
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+        _resolve_expected_cost_center_for_bt,
+    )
+
+    doc = frappe.get_doc("Bankauszug Import", docname)
+    if not frappe.has_permission("Bankauszug Import", "read", doc=doc):
+        frappe.throw("Keine Berechtigung.")
+    row = _get_row_by_name(doc, row_name)
+    bt_name = getattr(row, "bank_transaction", None)
+    if not bt_name:
+        return {"cost_center": None}
+    try:
+        bt = frappe.get_doc("Bank Transaction", bt_name)
+    except Exception:
+        return {"cost_center": None}
+    return {"cost_center": _resolve_expected_cost_center_for_bt(bt)}
+
+
+@frappe.whitelist()
+def get_open_invoices_for_row(docname: str, row_name: str) -> Dict[str, Any]:
+    """Listet offene Rechnungen für die Party einer Bankauszug-Zeile.
+
+    Returns:
+        {
+          invoice_doctype: "Sales Invoice"|"Purchase Invoice"|None,
+          invoices: [{name, outstanding_amount, posting_date, remarks}],
+          target_amount: float,  # Bank-Betrag der Zeile
+        }
+    """
+    doc = frappe.get_doc("Bankauszug Import", docname)
+    if not frappe.has_permission("Bankauszug Import", "read", doc=doc):
+        frappe.throw("Keine Berechtigung.")
+
+    row = _get_row_by_name(doc, row_name)
+    if not row.get("party_type") or not row.get("party"):
+        return {"invoice_doctype": None, "invoices": [], "target_amount": flt(row.betrag)}
+
+    if row.party_type == "Customer":
+        invoice_doctype = "Sales Invoice"
+        party_field = "customer"
+    elif row.party_type == "Supplier":
+        invoice_doctype = "Purchase Invoice"
+        party_field = "supplier"
+    else:
+        return {"invoice_doctype": None, "invoices": [], "target_amount": flt(row.betrag)}
+
+    invoices = frappe.get_all(
+        invoice_doctype,
+        filters={
+            party_field: row.party,
+            "docstatus": 1,
+            "outstanding_amount": [">", 0.001],
+        },
+        fields=["name", "outstanding_amount", "posting_date", "remarks", "grand_total"],
+        order_by="posting_date asc",
+        limit=200,
+    )
+    return {
+        "invoice_doctype": invoice_doctype,
+        "invoices": invoices,
+        "target_amount": flt(row.betrag),
+    }
+
+
+@frappe.whitelist()
+def manually_reconcile_row(
+    docname: str,
+    row_name: str,
+    invoice_names: str,
+    leftover_as_advance: int = 0,
+) -> Dict[str, Any]:
+    """Erstellt Payment Entry mit Allocations gegen die ausgewählten Rechnungen.
+
+    Args:
+        invoice_names: JSON-Array oder kommaseparierte Liste der Rechnungs-Namen.
+        leftover_as_advance: Wenn 1 und Auswahl-Summe < BT-Betrag, bleibt der Rest
+            als ``unallocated_amount`` am PE (Vorauszahlung am Mieter).
+    """
+    import json as _json
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+        create_payment_entry_for_invoices,
+        reconcile_voucher_with_bt,
+    )
+
+    doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
+
+    # invoice_names parsen — drei akzeptierte Formate:
+    #   1. JSON-Array von Objekten: [{"name": "SINV-1", "allocated_amount": 500}, ...] (UI sendet das)
+    #   2. JSON-Array von Strings: ["SINV-1", "SINV-2"] (gibt Vollbetrag jeder Rechnung)
+    #   3. Kommaseparierte Liste: "SINV-1,SINV-2" (Legacy)
+    parsed = None
+    try:
+        if invoice_names and invoice_names.strip().startswith("["):
+            parsed = _json.loads(invoice_names)
+    except Exception:
+        parsed = None
+
+    if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+        # Format 1: explizite Allocations
+        items = [{"name": p.get("name"), "allocated_amount": flt(p.get("allocated_amount"))} for p in parsed]
+    elif isinstance(parsed, list):
+        # Format 2: nur Namen, kein Betrag → später Vollbetrag verwenden
+        items = [{"name": n, "allocated_amount": None} for n in parsed]
+    else:
+        # Format 3: CSV
+        items = [{"name": n.strip(), "allocated_amount": None} for n in (invoice_names or "").split(",") if n.strip()]
+
+    if not items:
+        frappe.throw("Bitte mindestens eine Rechnung auswählen.")
+
+    if row.party_type == "Customer":
+        invoice_doctype = "Sales Invoice"
+    elif row.party_type == "Supplier":
+        invoice_doctype = "Purchase Invoice"
+    else:
+        frappe.throw(f"Party-Typ '{row.party_type}' nicht unterstützt für manuelle Zuordnung.")
+
+    # Rechnungen einzeln laden, um aktuelle outstanding_amount zu prüfen.
+    # Allocation pro Rechnung: explizit aus Frontend (falls gesetzt) sonst Vollbetrag.
+    invoices = []
+    for item in items:
+        inv_name = item["name"]
+        inv = frappe.db.get_value(
+            invoice_doctype,
+            inv_name,
+            ["name", "outstanding_amount", "posting_date"],
+            as_dict=True,
+        )
+        if not inv:
+            frappe.throw(f"Rechnung {inv_name} nicht gefunden.")
+        if flt(inv.outstanding_amount) <= 0:
+            frappe.throw(f"Rechnung {inv_name} hat keinen offenen Betrag mehr.")
+        # Allocation festlegen: Frontend-Wert hat Vorrang, sonst voller outstanding_amount
+        explicit_alloc = item.get("allocated_amount")
+        if explicit_alloc is not None and explicit_alloc > 0:
+            if flt(explicit_alloc) > flt(inv.outstanding_amount) + 0.01:
+                frappe.throw(
+                    f"Zuweisung für {inv_name} ({explicit_alloc:.2f} €) übersteigt "
+                    f"offenen Betrag ({flt(inv.outstanding_amount):.2f} €)."
+                )
+            inv["allocated_amount"] = flt(explicit_alloc)
+        invoices.append(inv)
+
+    target_amount = flt(row.betrag)
+    pe = create_payment_entry_for_invoices(
+        bt=bt,
+        invoices=invoices,
+        invoice_doctype=invoice_doctype,
+        target_amount=target_amount,
+        leftover_as_advance=bool(int(leftover_as_advance or 0)),
+    )
+
+    reconcile_voucher_with_bt(bt, "Payment Entry", pe.name, target_amount)
+
+    row.db_set("payment_entry", pe.name)
+    row.db_set(
+        "auto_match_message",
+        f"Manuell zugeordnet: {len(invoices)} Rechnung(en), {target_amount:.2f} €"
+        + (" (mit Vorauszahlung)" if int(leftover_as_advance or 0) else ""),
+    )
+
+    return {
+        "ok": True,
+        "payment_entry": pe.name,
+        "invoices": [i.name for i in invoices],
+    }
+
+
+@frappe.whitelist()
+def create_standalone_payment_for_row(
+    docname: str,
+    row_name: str,
+    party_type: Optional[str] = None,
+    party: Optional[str] = None,
+    remarks: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Standalone Payment Entry: kompletter BT-Betrag als unallocated.
+
+    Wird z.B. genutzt wenn ein Mieter eine Vorauszahlung tätigt und die
+    zugehörige Rechnung erst später erstellt wird. Der PE bleibt komplett
+    unallocated und kann später manuell auf eine konkrete Rechnung verteilt
+    werden.
+    """
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+        create_standalone_payment_entry,
+        reconcile_voucher_with_bt,
+    )
+
+    doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
+
+    pe = create_standalone_payment_entry(
+        bt=bt,
+        party_type=party_type or row.get("party_type"),
+        party=party or row.get("party"),
+        remarks=remarks,
+    )
+    target_amount = flt(row.betrag)
+    reconcile_voucher_with_bt(bt, "Payment Entry", pe.name, target_amount)
+
+    row.db_set("payment_entry", pe.name)
+    row.db_set(
+        "auto_match_message",
+        f"Manuell verbucht: Standalone Payment Entry über {target_amount:.2f} € (unallocated)",
+    )
+    return {"ok": True, "payment_entry": pe.name}
+
+
+@frappe.whitelist()
+def create_journal_entry_for_row(
+    docname: str,
+    row_name: str,
+    account: str,
+    cost_center: Optional[str] = None,
+    remarks: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Journal Entry: Bank-Konto vs. übergebenes GL-Konto.
+
+    Eingang (deposit > 0): Bank Soll, account Haben.
+    Ausgang (withdrawal > 0): Bank Haben, account Soll.
+
+    Use-Case: Bankgebühren, Eigentümer-Entnahmen, manuelle Korrekturen ohne
+    Party-Bezug.
+    """
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+        create_journal_entry_for_bt,
+        reconcile_voucher_with_bt,
+    )
+
+    doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
+
+    je = create_journal_entry_for_bt(
+        bt=bt,
+        account=account,
+        cost_center=cost_center,
+        remarks=remarks,
+    )
+    target_amount = flt(row.betrag)
+    reconcile_voucher_with_bt(bt, "Journal Entry", je.name, target_amount)
+
+    row.db_set("journal_entry", je.name)
+    row.db_set(
+        "auto_match_message",
+        f"Buchungssatz: {target_amount:.2f} € gegen {account}",
+    )
+    return {"ok": True, "journal_entry": je.name}
