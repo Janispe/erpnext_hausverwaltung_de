@@ -137,6 +137,7 @@ after_migrate = [
 	"hausverwaltung.install.ensure_tax_features_disabled",
 	"hausverwaltung.install.ensure_eingabequelle_fields",
 	"hausverwaltung.install.ensure_auto_repeat_for_purchase_invoice",
+	"hausverwaltung.hausverwaltung.utils.bank_account_naming.sync_all_immobilie_bank_account_names",
 ]
 # NOTE: We intentionally do not run bootstrap on every migrate.
 # If you ever need to re-apply defaults on an existing site, run `./bootstrap_site.sh`.
@@ -195,6 +196,11 @@ override_doctype_class = {
 # Hook on document methods and events
 
 doc_events = {
+	"Bank Account": {
+		"before_naming": "hausverwaltung.hausverwaltung.utils.bank_account_naming.set_immobilie_bank_account_name",
+		"before_validate": "hausverwaltung.hausverwaltung.utils.bank_account_naming.set_immobilie_bank_account_name",
+		"on_update": "hausverwaltung.hausverwaltung.utils.bank_account_naming.rename_bank_account_after_save",
+	},
 	"Communication": {
 		"after_insert": "hausverwaltung.hausverwaltung.integrations.paperless.enqueue_paperless_export"
 	},
@@ -207,6 +213,9 @@ doc_events = {
 		"on_submit": "hausverwaltung.hausverwaltung.doctype.wohnung.wohnung.update_wohnung_status_from_mietvertrag",
 		"on_cancel": "hausverwaltung.hausverwaltung.doctype.wohnung.wohnung.update_wohnung_status_from_mietvertrag",
 		"on_trash": "hausverwaltung.hausverwaltung.doctype.wohnung.wohnung.update_wohnung_status_from_mietvertrag",
+	},
+	"Immobilie": {
+		"on_update": "hausverwaltung.hausverwaltung.utils.bank_account_naming.sync_bank_account_names_for_immobilie",
 	},
 	"Wohnungszustand": {
 		"after_insert": "hausverwaltung.hausverwaltung.doctype.wohnung.wohnung.update_wohnung_status_from_zustand",

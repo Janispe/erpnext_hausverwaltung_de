@@ -17,8 +17,9 @@ from frappe import _
 from frappe.contacts.doctype.address.address import get_default_address
 from frappe.model.document import Document
 from frappe.utils import cstr, format_date, today
-from frappe.utils.pdf import get_pdf
 from frappe.utils.jinja import get_jenv
+
+from hausverwaltung.hausverwaltung.utils.pdf_engine import render_pdf as get_pdf
 
 from hausverwaltung.hausverwaltung.utils.jinja_source_sanitizer import sanitize_richtext_jinja_source
 from hausverwaltung.hausverwaltung.utils.serienbrief_pdf_form import read_file_url_bytes
