@@ -39,6 +39,16 @@ frappe.query_reports["Mieterkonto"] = {
 		},
 	],
 
+	onload: function (report) {
+		frappe.require("/assets/hausverwaltung/js/date_range_presets.js", () => {
+			window.hausverwaltung?.date_presets?.attach_to_query_report(report, {
+				from_field: "from_date",
+				to_field: "to_date",
+				include_gesamt: false,
+			});
+		});
+	},
+
 	formatter: function (value, row, column, data, default_formatter) {
 		value = default_formatter(value, row, column, data);
 		if (column.fieldname === "art" && data?.art) {

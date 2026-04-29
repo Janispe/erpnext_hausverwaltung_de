@@ -92,5 +92,16 @@ frappe.ui.form.on("Einnahmen Ueberschuss Rechnung", {
 		}
 		toggleAdminOnlyFields(frm);
 		renderPositionen(frm);
+
+		frappe.require("/assets/hausverwaltung/js/date_range_presets.js", () => {
+			const presets = window.hausverwaltung && window.hausverwaltung.date_presets;
+			if (presets) {
+				presets.attach_to_form(frm, {
+					from_field: "from_date",
+					to_field: "to_date",
+					include_gesamt: false,
+				});
+			}
+		});
 	},
 });

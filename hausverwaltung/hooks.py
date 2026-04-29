@@ -34,6 +34,7 @@ app_include_js = [
 	"/assets/hausverwaltung/js/sales_invoice_writeoff.js",
 	"/assets/hausverwaltung/js/buchen_cockpit.js",
 	"/assets/hausverwaltung/js/immobilie_report_filter.js",
+	"/assets/hausverwaltung/js/date_range_presets.js",
 ]
 
 # include js, css files in header of web template
@@ -196,6 +197,9 @@ override_doctype_class = {
 doc_events = {
 	"Communication": {
 		"after_insert": "hausverwaltung.hausverwaltung.integrations.paperless.enqueue_paperless_export"
+	},
+	"Contact": {
+		"on_update": "hausverwaltung.hausverwaltung.doctype.mietvertrag.mietvertrag.sync_names_for_contact",
 	},
 	"Mietvertrag": {
 		"after_insert": "hausverwaltung.hausverwaltung.doctype.wohnung.wohnung.update_wohnung_status_from_mietvertrag",

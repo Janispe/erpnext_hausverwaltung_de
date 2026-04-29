@@ -72,6 +72,14 @@ def _get_mieter_und_vertrag(wohnung: str) -> tuple[list[dict], str | None]:
 	return tenants, vertrag_name
 
 
+def _wohnung_sort_key(whg: dict) -> tuple[int, str]:
+	"""Sortiert Wohnungen: EG zuerst, danach nach ID (name)."""
+	lage = (whg.get("name__lage_in_der_immobilie") or "").strip().lower()
+	first_token = lage.split()[0] if lage else ""
+	is_eg = first_token in {"eg", "erdgeschoss", "erdgeschoß"}
+	return (0 if is_eg else 1, whg.get("name") or "")
+
+
 def _gebaeudeteil_from_lage(lage: str | None) -> str | None:
 	from hausverwaltung.hausverwaltung.utils.gebaeudeteil import normalize_gebaeudeteil_to_standard
 
@@ -109,13 +117,24 @@ def get_tree_data(scope: str | None = None):
 			fields=["name", "adresse_titel"],
 			order_by="adresse_titel asc",
 		)
-		# Nur unsere Standard-Knoten anzeigen (VH/SF/HH)
-		allowed_suffixes = (" - VH", " - SF", " - HH")
+		# Nur unsere Standard-Knoten anzeigen (VH/SF/HH) in fester Reihenfolge
+		knoten_order = {" - VH": 0, " - SF": 1, " - HH": 2}
+
+		def _knoten_sort_key(k: dict) -> tuple[int, str]:
+			up = (k.get("adresse_titel") or "").strip().upper()
+			for suffix, rank in knoten_order.items():
+				if up.endswith(suffix):
+					return (rank, up)
+			return (99, up)
+
 		knoten = [
 			k
 			for k in knoten
-			if ((k.get("adresse_titel") or "").strip().upper().endswith(allowed_suffixes))
+			if any(
+				(k.get("adresse_titel") or "").strip().upper().endswith(s) for s in knoten_order
+			)
 		]
+		knoten.sort(key=_knoten_sort_key)
 
 		teile_list: list[dict] = []
 		for k in knoten:
@@ -135,6 +154,7 @@ def get_tree_data(scope: str | None = None):
 				fields=["name", "name__lage_in_der_immobilie"],
 				order_by="name asc",
 			)
+			wohnungen_raw.sort(key=_wohnung_sort_key)
 			wohnungen: list[dict] = []
 			for whg in wohnungen_raw:
 				tenants, vertrag_name = _get_mieter_und_vertrag(whg.name)
@@ -158,6 +178,7 @@ def get_tree_data(scope: str | None = None):
 			fields=["name", "gebaeudeteil", "name__lage_in_der_immobilie"],
 			order_by="name asc",
 		)
+		wohnungen_raw.sort(key=_wohnung_sort_key)
 		if wohnungen_raw:
 			teile_fallback: dict[str, list[dict]] = {}
 			for whg in wohnungen_raw:
@@ -177,12 +198,15 @@ def get_tree_data(scope: str | None = None):
 						"mietvertrag": vertrag_name,
 					}
 				)
-			def _sort_key(label: str) -> tuple[int, str]:
-				clean = (label or "").strip().lower()
-				is_eg = clean in {"eg", "erdgeschoss", "erdgeschoß"}
-				return (0 if is_eg else 1, clean)
+			teil_rank = {"VH": 0, "SF": 1, "HH": 2}
 
-			for key, wohnungen in sorted(teile_fallback.items(), key=lambda kv: _sort_key(kv[0])):
+			def _teil_sort_key(label: str) -> tuple[int, str]:
+				clean = (label or "").strip()
+				return (teil_rank.get(clean.upper(), 99), clean.lower())
+
+			for key, wohnungen in sorted(
+				teile_fallback.items(), key=lambda kv: _teil_sort_key(kv[0])
+			):
 				teile_list.append({"name": key, "wohnungen": wohnungen})
 
 		result.append(

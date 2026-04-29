@@ -3,6 +3,7 @@ import frappe
 import re
 from frappe import _
 from frappe.model.document import Document
+from frappe.model.rename_doc import rename_doc
 from frappe.utils import getdate, today, get_first_day
 from urllib.parse import urlencode
 
@@ -15,9 +16,8 @@ from hausverwaltung.hausverwaltung.doctype.wohnung.wohnung import (
 )
 from hausverwaltung.hausverwaltung.integrations.paperless import PaperlessConfig
 from hausverwaltung.hausverwaltung.utils.mieter_name import (
-	get_contact_last_name,
-	pick_preferred_mieter_contact,
-	sanitize_name_part,
+	get_hauptmieter_display_name,
+	get_hauptmieter_last_names,
 )
 
 
@@ -44,7 +44,7 @@ class Mietvertrag(Document):
 			row.idx = idx
 
 	def autoname(self) -> None:
-		"""Name contracts as: Haus-Code | VH/HH/SF | Lage | ab: <von>.
+		"""Name contracts as: Haus-Code | VH/HH/SF | Lage | ab: <von> - Nachnamen.
 
 		Important: The "Haus-Code" includes the Immobilie-ID (if present) to avoid
 		collisions across multiple buildings that share the same initial letter.
@@ -53,73 +53,12 @@ class Mietvertrag(Document):
 			# Keep Frappe's default "Amended from" naming behavior.
 			return
 
-		wohnung_name = (getattr(self, "wohnung", None) or "").strip()
-		von = getattr(self, "von", None)
-		if not wohnung_name or not von:
+		base_name = _build_mietvertrag_base_name(self)
+		if not base_name:
 			# Fall back to DocType autoname ("format:...") if required fields are missing.
 			return
 
-		wohnung = frappe.db.get_value(
-			"Wohnung",
-			wohnung_name,
-			["immobilie", "gebaeudeteil", "name__lage_in_der_immobilie"],
-			as_dict=True,
-		) or {}
-		immobilie_name = (wohnung.get("immobilie") or "").strip()
-		immobilie = (
-			frappe.db.get_value(
-				"Immobilie",
-				immobilie_name,
-				["objekt", "adresse_titel", "name", "immobilien_id"],
-				as_dict=True,
-			)
-			if immobilie_name
-			else {}
-		) or {}
-
-		haus_src = (immobilie.get("objekt") or immobilie.get("adresse_titel") or immobilie.get("name") or "").strip()
-		haus_initial = _first_letter(haus_src)
-		try:
-			immobilien_id = int(immobilie.get("immobilien_id") or 0) or None
-		except Exception:
-			immobilien_id = None
-		if immobilien_id:
-			haus_initial = f"{haus_initial}{immobilien_id}" if haus_initial else str(immobilien_id)
-
-		gebaeudeteil = _normalize_gebaeudeteil(
-			(wohnung.get("gebaeudeteil") or "").strip() or (wohnung.get("name__lage_in_der_immobilie") or "").strip()
-		)
-		lage = _lage_ohne_gebaeudeteil((wohnung.get("name__lage_in_der_immobilie") or "").strip())
-
-		von_str = ""
-		try:
-			von_str = getdate(von).strftime("%Y-%m-%d")
-		except Exception:
-			von_str = str(von)
-
-		haus_initial = _sanitize_name_part(haus_initial)
-		gebaeudeteil = _sanitize_name_part(gebaeudeteil)
-		lage = _sanitize_name_part(lage)
-		von_str = _sanitize_name_part(von_str)
-
-		# Tab-aligned columns: pipes tend to land on consistent tab stops (useful in monospace/exports).
-		base_name = f"{haus_initial}\t| {gebaeudeteil}\t| {lage}\t| ab: {von_str}".strip()
-		if not base_name:
-			return
-
-		mieter_contact = pick_preferred_mieter_contact(getattr(self, "mieter", None))
-		last_name = sanitize_name_part(get_contact_last_name(mieter_contact))
-		if last_name:
-			base_name = f"{base_name} - {last_name}"
-
-		candidate = base_name
-		suffix = 1
-		# `frappe.db.exists` can be cached within a request; disable cache to avoid
-		# stale results during bulk imports.
-		while frappe.db.exists("Mietvertrag", candidate, cache=False):
-			suffix += 1
-			candidate = f"{base_name}-{suffix}"
-		self.name = candidate
+		self.name = _unique_docname("Mietvertrag", _with_hauptmieter_suffix(base_name, self.mieter))
 
 	def _staffelbetrag_am(self, staffeln: list, stichtag) -> float:
 		"""Return last applicable `miete` value from a Staffelmiete table for a given date."""
@@ -189,24 +128,10 @@ class Mietvertrag(Document):
 	def after_insert(self) -> None:
 		"""Create a Customer automatically after inserting the contract."""
 		if self.kunde:
-			pass
+			self._sync_customer_name()
 		else:
-			partner = self.mieter[0].mieter if self.mieter else ""
-			# Nachname für die technische ID, Vor+Nachname für die Anzeige
-			contact = (
-				frappe.db.get_value("Contact", partner, ["first_name", "last_name"], as_dict=True)
-				if partner
-				else None
-			) or {}
-			first_name = (contact.get("first_name") or "").strip()
-			last_name = (contact.get("last_name") or "").strip()
-			# Fallback wenn last_name fehlt (z.B. nur ein Name im Contact)
-			id_nachname = last_name or first_name or self.name
-			display_name = " ".join(p for p in [first_name, last_name] if p) or self.name
-
-			cust_id = customer_utils.build_customer_id(
-				self.wohnung or "", str(self.von or ""), id_nachname
-			)
+			cust_id = _build_customer_docname(self)
+			display_name = get_hauptmieter_display_name(self.mieter) or self.name
 			customer = customer_utils.get_or_create_customer(
 				cust_id, customer_name=display_name
 			)
@@ -219,6 +144,77 @@ class Mietvertrag(Document):
 					frappe.session.user
 				),
 			)
+
+	def on_update(self) -> None:
+		"""Keep Mietvertrag and linked Customer names aligned with Wohnung + Hauptmieter."""
+		if getattr(self.flags, "hv_syncing_names", False):
+			return
+		self.flags.hv_syncing_names = True
+		try:
+			self._sync_customer_name()
+			self._sync_mietvertrag_name()
+		finally:
+			self.flags.hv_syncing_names = False
+
+	def _sync_customer_name(self) -> str | None:
+		"""Rename/create the linked Customer to the current expected tenant name."""
+		target = _build_customer_docname(self)
+		display_name = get_hauptmieter_display_name(self.mieter) or target
+		if not target:
+			return None
+
+		current = (self.kunde or "").strip()
+		if not current:
+			customer = customer_utils.get_or_create_customer(target, customer_name=display_name)
+			self.db_set("kunde", customer, update_modified=False)
+			self.kunde = customer
+			return customer
+
+		if not frappe.db.exists("Customer", current):
+			customer = customer_utils.get_or_create_customer(target, customer_name=display_name)
+			self.db_set("kunde", customer, update_modified=False)
+			self.kunde = customer
+			return customer
+
+		final_target = _unique_docname("Customer", target, current_name=current)
+		if final_target != current:
+			final_target = rename_doc(
+				"Customer",
+				current,
+				final_target,
+				force=True,
+				merge=False,
+				show_alert=False,
+				ignore_permissions=True,
+			)
+			self.kunde = final_target
+
+		if frappe.db.get_value("Customer", final_target, "customer_name") != display_name:
+			frappe.db.set_value("Customer", final_target, "customer_name", display_name, update_modified=False)
+		return final_target
+
+	def _sync_mietvertrag_name(self) -> str | None:
+		"""Rename this contract if Wohnung/date/Hauptmieter changed after creation."""
+		base_name = _build_mietvertrag_base_name(self)
+		if not base_name:
+			return None
+
+		current = (self.name or "").strip()
+		target = _unique_docname("Mietvertrag", _with_hauptmieter_suffix(base_name, self.mieter), current_name=current)
+		if not target or target == current:
+			return current
+
+		new_name = rename_doc(
+			"Mietvertrag",
+			current,
+			target,
+			force=True,
+			merge=False,
+			show_alert=False,
+			ignore_permissions=True,
+		)
+		self.name = new_name
+		return new_name
 
 	def validate(self) -> None:
 		"""Ensure that contacts are valid and validate 'Gesamter Zeitraum' in staffelmiete."""
@@ -378,6 +374,109 @@ class Mietvertrag(Document):
 			return 0.0
 
 
+def _build_mietvertrag_base_name(doc: object) -> str:
+	wohnung_name = (getattr(doc, "wohnung", None) or "").strip()
+	von = getattr(doc, "von", None)
+	if not wohnung_name or not von:
+		return ""
+
+	wohnung = frappe.db.get_value(
+		"Wohnung",
+		wohnung_name,
+		["immobilie", "gebaeudeteil", "name__lage_in_der_immobilie"],
+		as_dict=True,
+	) or {}
+	immobilie_name = (wohnung.get("immobilie") or "").strip()
+	immobilie = (
+		frappe.db.get_value(
+			"Immobilie",
+			immobilie_name,
+			["objekt", "adresse_titel", "name", "immobilien_id"],
+			as_dict=True,
+		)
+		if immobilie_name
+		else {}
+	) or {}
+
+	haus_src = (immobilie.get("objekt") or immobilie.get("adresse_titel") or immobilie.get("name") or "").strip()
+	haus_initial = _first_letter(haus_src)
+	try:
+		immobilien_id = int(immobilie.get("immobilien_id") or 0) or None
+	except Exception:
+		immobilien_id = None
+	if immobilien_id:
+		haus_initial = f"{haus_initial}{immobilien_id}" if haus_initial else str(immobilien_id)
+
+	gebaeudeteil = _normalize_gebaeudeteil(
+		(wohnung.get("gebaeudeteil") or "").strip() or (wohnung.get("name__lage_in_der_immobilie") or "").strip()
+	)
+	lage = _lage_ohne_gebaeudeteil((wohnung.get("name__lage_in_der_immobilie") or "").strip())
+
+	try:
+		von_str = getdate(von).strftime("%Y-%m-%d")
+	except Exception:
+		von_str = str(von)
+
+	haus_initial = _sanitize_name_part(haus_initial)
+	gebaeudeteil = _sanitize_name_part(gebaeudeteil)
+	lage = _sanitize_name_part(lage)
+	von_str = _sanitize_name_part(von_str)
+
+	# Tab-aligned columns: pipes tend to land on consistent tab stops (useful in monospace/exports).
+	return f"{haus_initial}\t| {gebaeudeteil}\t| {lage}\t| ab: {von_str}".strip()
+
+
+def _with_hauptmieter_suffix(base_name: str, rows: object) -> str:
+	base = (base_name or "").strip()
+	if not base:
+		return ""
+
+	last_names = get_hauptmieter_last_names(rows)
+	if not last_names:
+		return base
+	return f"{base} - {', '.join(last_names)}"
+
+
+def _build_customer_docname(doc: object) -> str:
+	last_names = get_hauptmieter_last_names(getattr(doc, "mieter", None))
+	nachname = ", ".join(last_names) or (getattr(doc, "name", None) or "")
+	return customer_utils.build_customer_id(
+		getattr(doc, "wohnung", None) or "",
+		str(getattr(doc, "von", None) or ""),
+		nachname,
+	)
+
+
+def _unique_docname(doctype: str, base_name: str, current_name: str | None = None) -> str:
+	base = (base_name or "").strip()
+	if not base:
+		return ""
+
+	current = (current_name or "").strip()
+	if current and base == current:
+		return current
+
+	if not frappe.db.exists(doctype, base, cache=False):
+		return base
+
+	if current:
+		try:
+			existing = frappe.db.get_value(doctype, base, "name", cache=False)
+		except TypeError:
+			existing = frappe.db.get_value(doctype, base, "name")
+		if existing == current:
+			return current
+
+	for n in range(2, 1000):
+		candidate = f"{base} ({n})"
+		if candidate == current:
+			return current
+		if not frappe.db.exists(doctype, candidate, cache=False):
+			return candidate
+
+	return f"{base} {frappe.generate_hash(length=6).upper()}"
+
+
 def _compute_status_value(von: object, bis: object) -> str:
 	current = getdate(today())
 	if von:
@@ -432,6 +531,37 @@ def update_statuses_for_list() -> dict:
 			frappe.db.set_value("Mietvertrag", row["name"], values, update_modified=False)
 			updated += 1
 	return {"updated": updated}
+
+
+def sync_names_for_contact(doc, method: str | None = None) -> None:
+	"""Refresh linked Mietvertrag/Customer names when a tenant Contact changes."""
+	_ = method
+	contact = (getattr(doc, "name", None) or "").strip()
+	if not contact:
+		return
+
+	rows = frappe.get_all(
+		"Vertragspartner",
+		filters={
+			"parenttype": "Mietvertrag",
+			"mieter": contact,
+		},
+		fields=["parent"],
+		limit=0,
+	)
+	for row in rows:
+		parent = (row.get("parent") or "").strip()
+		if not parent or not frappe.db.exists("Mietvertrag", parent):
+			continue
+		try:
+			mv = frappe.get_doc("Mietvertrag", parent)
+			mv._sync_customer_name()
+			mv._sync_mietvertrag_name()
+		except Exception:
+			frappe.log_error(
+				title="Mietvertrag Naming Sync fehlgeschlagen",
+				message=frappe.get_traceback(),
+			)
 
 
 @frappe.whitelist()

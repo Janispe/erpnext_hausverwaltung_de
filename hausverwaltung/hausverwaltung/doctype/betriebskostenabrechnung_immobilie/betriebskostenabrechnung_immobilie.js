@@ -358,6 +358,19 @@ frappe.ui.form.on("Betriebskostenabrechnung Immobilie", {
 		ensure_dispatch_button(frm);
 		// Frappe kann nach refresh noch Toolbar/Header neu rendern (Buttons verschwinden sonst).
 		setTimeout(() => ensure_dispatch_button(frm), 0);
+
+		if (frm.is_new()) {
+			frappe.require("/assets/hausverwaltung/js/date_range_presets.js", () => {
+				const presets = window.hausverwaltung && window.hausverwaltung.date_presets;
+				if (presets) {
+					presets.attach_to_form(frm, {
+						from_field: "von",
+						to_field: "bis",
+						include_gesamt: false,
+					});
+				}
+			});
+		}
 	},
 	bis(frm) {
 		set_default_due_date(frm);
