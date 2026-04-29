@@ -1059,7 +1059,12 @@ _HAUSVERWALTER_EXTRA_DOCTYPE_PERMS: tuple[tuple[str, dict], ...] = (
     ("Accounts Settings", {"read": 1}),
     ("GL Entry", {"read": 1}),
     ("Journal Entry", {"read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1, "print": 1, "email": 1}),
-    ("Customer", {"read": 1, "write": 1, "create": 1}),
+    # Customer: kein "create" — Debitoren werden automatisch beim Mietvertrag-
+    # Anlegen erzeugt (über hausverwaltung.utils.customer.get_or_create_customer
+    # mit ignore_permissions=True). Manuelles Anlegen über die Mieter-Liste ist
+    # daher nicht erlaubt. "create": 0 ist explizit, damit die Sync-Funktion ein
+    # eventuell vorhandenes create=1 in der DB überschreibt.
+    ("Customer", {"read": 1, "write": 1, "create": 0}),
     ("Dunning", {"read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1, "print": 1, "email": 1}),
     ("Dunning Type", {"read": 1}),
     ("Bank Account", {"read": 1, "write": 1, "create": 1}),

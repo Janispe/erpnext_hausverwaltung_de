@@ -33,6 +33,13 @@ function add_paperless_button(frm) {
 		return;
 	}
 
+	// Paperless-Integration ist noch nicht final — nur System Manager sehen den
+	// Button. Hausverwalter (und alle anderen) bekommen ihn nicht angezeigt.
+	const roles = (frappe.user_roles || []);
+	if (!roles.includes('System Manager')) {
+		return;
+	}
+
 	frm.add_custom_button(__('Paperless NGX'), () => {
 		frappe.call({
 			method: 'hausverwaltung.hausverwaltung.doctype.wohnung.wohnung.get_paperless_link',

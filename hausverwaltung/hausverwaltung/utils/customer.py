@@ -114,6 +114,11 @@ def get_or_create_customer(
 
 	Die Buchung läuft über ein Sammelkonto Debitoren (Company.default_receivable_account);
 	pro Customer wird kein eigenes Konto gepinnt.
+
+	Der ``cust_id``-Parameter (typischerweise von ``build_customer_id`` —
+	Schema ``{wohnung} Mieter: {nachname}``) wird als Doc-Name erzwungen,
+	auch wenn ``Selling Settings.cust_master_name`` auf "Naming Series" steht.
+	Die ``customer_name``-Anzeige bleibt der Personen-/Familienname.
 	"""
 	customer_name = (customer_name or cust_id or "").strip() or cust_id
 
@@ -124,16 +129,19 @@ def get_or_create_customer(
 
 	group = get_or_create_customer_group()
 
-	doc = {
-		"doctype": "Customer",
-		"customer_name": customer_name,
-		"customer_type": "Individual",
-		"customer_group": group,
-	}
+	doc = frappe.new_doc("Customer")
+	doc.customer_name = customer_name
+	doc.customer_type = "Individual"
+	doc.customer_group = group
 	if company:
-		doc["company"] = company
-	return (
-		frappe.get_doc(doc)
-		.insert()
-		.name
-	)
+		doc.company = company
+	# cust_id (z. B. "Kirchhof | VH | EG links Mieter: Otto") als Doc-Name erzwingen.
+	# `flags.name_set` verhindert, dass Frappes autoname-Logik ihn überschreibt
+	# (relevant wenn Selling Settings.cust_master_name = "Naming Series").
+	doc.name = cust_id
+	doc.flags.name_set = True
+	# ignore_permissions: Hausverwalter hat KEIN create-Recht auf Customer
+	# (Customers werden ausschließlich über diese Funktion erzeugt — kein
+	# manuelles Anlegen über die Customer-Liste).
+	doc.insert(ignore_permissions=True)
+	return doc.name

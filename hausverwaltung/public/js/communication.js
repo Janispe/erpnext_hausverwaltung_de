@@ -4,6 +4,13 @@ frappe.ui.form.on('Communication', {
 			return;
 		}
 
+		// Paperless-Integration ist noch nicht final — nur System Manager sehen
+		// die Buttons. Hausverwalter (und alle anderen) bekommen sie nicht angezeigt.
+		const roles = (frappe.user_roles || []);
+		if (!roles.includes('System Manager')) {
+			return;
+		}
+
 	frm.add_custom_button(__('Nach Paperless exportieren'), () => {
 		frappe.call({
 			method: 'hausverwaltung.hausverwaltung.integrations.paperless.trigger_manual_paperless_export',

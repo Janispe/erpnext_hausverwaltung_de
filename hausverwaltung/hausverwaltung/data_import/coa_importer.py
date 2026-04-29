@@ -27,6 +27,57 @@ from erpnext.accounts.doctype.chart_of_accounts_importer.chart_of_accounts_impor
 )
 
 
+def _strip_duplicate_account_number_prefix(account_name: str | None, account_number: str | None) -> str:
+    """Return account_name without a repeated leading account_number prefix."""
+    account_name = (account_name or "").strip()
+    account_number = (account_number or "").strip()
+    prefix = f"{account_number} - "
+
+    if account_number and account_name.startswith(prefix):
+        return account_name[len(prefix) :].strip()
+
+    return account_name
+
+
+def _cleanup_duplicate_numbered_account_names(company: str) -> list[dict[str, str]]:
+    """Fix freshly imported accounts like ``1300 - 1300 - Name - HP``.
+
+    ERPNext stores account numbers separately and also includes them in the
+    Account document name. Some imports can leave the same number in
+    ``account_name`` too; rename through ERPNext so links/defaults stay valid.
+    """
+    from erpnext.accounts.doctype.account.account import update_account_number
+
+    fixed: list[dict[str, str]] = []
+    accounts = frappe.get_all(
+        "Account",
+        filters={"company": company},
+        fields=["name", "account_name", "account_number"],
+        order_by="lft desc",
+    )
+
+    for account in accounts:
+        account_number = account.get("account_number")
+        old_account_name = account.get("account_name")
+        new_account_name = _strip_duplicate_account_number_prefix(old_account_name, account_number)
+
+        if not account_number or new_account_name == (old_account_name or "").strip():
+            continue
+
+        old_name = account.get("name")
+        new_name = update_account_number(old_name, new_account_name, account_number) or old_name
+        fixed.append(
+            {
+                "old_name": old_name,
+                "new_name": new_name,
+                "account_name": new_account_name,
+                "account_number": account_number,
+            }
+        )
+
+    return fixed
+
+
 def _create_file_doc_from_path(path: str) -> frappe.model.document.Document:
     """Create a File doctype from a local path and return the inserted doc.
 
@@ -134,6 +185,10 @@ def import_chart_of_accounts(
             # Run the actual import. This will clear existing accounts for the company.
             import_coa(file_url, company)
             result["imported"] = True
+            fixed_accounts = _cleanup_duplicate_numbered_account_names(company)
+            result["fixed_duplicate_account_number_prefixes"] = len(fixed_accounts)
+            if fixed_accounts:
+                result["fixed_accounts"] = fixed_accounts
 
             # Nach erfolgreichem Import: Pro Blatt-Konto unter "Nicht Umlagefähig"
             # eine Kostenart-Eintrag mit Default-Artikel anlegen. Idempotent.

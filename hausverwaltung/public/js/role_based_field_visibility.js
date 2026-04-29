@@ -2,7 +2,7 @@
 	const HAUSVERWALTER_ROLES = ["Hausverwalter", "Hausverwalter (Buchung)"];
 	const ADMIN_ROLES = ["System Manager"];
 	const HIDDEN_FIELDS_BY_DOCTYPE = {
-		Customer: ["tax_category", "tax_id", "tax_withholding_category"],
+		Customer: ["tax_category", "tax_id", "tax_withholding_category", "gender"],
 		"Sales Invoice": [
 			"tax_id",
 			"company_tax_id",
