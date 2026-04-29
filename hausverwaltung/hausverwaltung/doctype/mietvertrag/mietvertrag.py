@@ -268,13 +268,16 @@ class Mietvertrag(Document):
 		is_new_doc = bool(self.is_new())
 		mieterwechsel_name = (self.mieterwechsel or "").strip()
 
-		if is_new_doc and not mieterwechsel_name and not _is_system_manager():
-			frappe.throw(
-				_(
-					"Neue Mietvertraege duerfen nur ueber einen Mieterwechsel-Prozess (Mieterwechsel/Erstvermietung) angelegt werden. "
-					"Bitte den Prozess starten und den Vertrag darueber erzeugen."
-				)
-			)
+		# TEMPORÄR DEAKTIVIERT: Manuelle Mietvertrags-Anlage durch Hausverwalter
+		# wieder erlaubt (auf Nutzerwunsch). Zum Reaktivieren der Mieterwechsel-
+		# Pflicht: den nachfolgenden Block einkommentieren.
+		# if is_new_doc and not mieterwechsel_name and not _is_system_manager():
+		# 	frappe.throw(
+		# 		_(
+		# 			"Neue Mietvertraege duerfen nur ueber einen Mieterwechsel-Prozess (Mieterwechsel/Erstvermietung) angelegt werden. "
+		# 			"Bitte den Prozess starten und den Vertrag darueber erzeugen."
+		# 		)
+		# 	)
 
 		if not mieterwechsel_name:
 			return

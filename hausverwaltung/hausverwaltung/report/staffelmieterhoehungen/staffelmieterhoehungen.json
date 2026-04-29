@@ -1,0 +1,135 @@
+{
+ "add_total_row": 0,
+ "add_translate_data": 0,
+ "columns": [
+  {
+   "fieldname": "von",
+   "fieldtype": "Date",
+   "label": "Datum Erhöhung",
+   "width": 120
+  },
+  {
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "label": "Immobilie",
+   "options": "Immobilie",
+   "width": 160
+  },
+  {
+   "fieldname": "wohnung",
+   "fieldtype": "Link",
+   "label": "Wohnung",
+   "options": "Wohnung",
+   "width": 220
+  },
+  {
+   "fieldname": "mietvertrag",
+   "fieldtype": "Link",
+   "label": "Mietvertrag",
+   "options": "Mietvertrag",
+   "width": 260
+  },
+  {
+   "fieldname": "kunde",
+   "fieldtype": "Link",
+   "label": "Mieter",
+   "options": "Customer",
+   "width": 200
+  },
+  {
+   "fieldname": "alte_miete",
+   "fieldtype": "Currency",
+   "label": "Alte Miete",
+   "options": "€",
+   "width": 110
+  },
+  {
+   "fieldname": "neue_miete",
+   "fieldtype": "Currency",
+   "label": "Neue Miete",
+   "options": "€",
+   "width": 110
+  },
+  {
+   "fieldname": "differenz_eur",
+   "fieldtype": "Currency",
+   "label": "± €",
+   "options": "€",
+   "width": 100
+  },
+  {
+   "fieldname": "differenz_pct",
+   "fieldtype": "Percent",
+   "label": "± %",
+   "width": 90
+  }
+ ],
+ "creation": "2026-04-29 02:30:00.000000",
+ "disabled": 0,
+ "docstatus": 0,
+ "doctype": "Report",
+ "filters": [
+  {
+   "fieldname": "von_datum",
+   "fieldtype": "Date",
+   "label": "Erhöhung von",
+   "default": "frappe.datetime.add_months(frappe.datetime.get_today(), -3)",
+   "wildcard_filter": 0
+  },
+  {
+   "fieldname": "bis_datum",
+   "fieldtype": "Date",
+   "label": "Erhöhung bis",
+   "default": "frappe.datetime.add_months(frappe.datetime.get_today(), 12)",
+   "wildcard_filter": 0
+  },
+  {
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "label": "Immobilie",
+   "options": "Immobilie",
+   "wildcard_filter": 0
+  },
+  {
+   "fieldname": "nur_erhoehungen",
+   "fieldtype": "Check",
+   "label": "Nur Erhöhungen (keine Senkungen)",
+   "default": "1",
+   "wildcard_filter": 0
+  },
+  {
+   "fieldname": "nur_aktive_vertraege",
+   "fieldtype": "Check",
+   "label": "Nur aktive Mietverträge",
+   "default": "1",
+   "wildcard_filter": 0
+  }
+ ],
+ "idx": 0,
+ "is_standard": "Yes",
+ "letter_head": null,
+ "letterhead": null,
+ "modified": "2026-04-29 02:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Staffelmieterhoehungen",
+ "owner": "Administrator",
+ "prepared_report": 0,
+ "query": "WITH staffeln AS (\n    SELECT\n        sm.parent       AS mietvertrag,\n        sm.von          AS von,\n        sm.miete        AS neue_miete,\n        LAG(sm.miete) OVER (\n            PARTITION BY sm.parent\n            ORDER BY sm.von, sm.idx\n        ) AS alte_miete\n    FROM `tabStaffelmiete` sm\n    WHERE sm.parenttype = 'Mietvertrag'\n      AND sm.parentfield = 'miete'\n)\nSELECT\n    s.von                               AS von,\n    w.immobilie                         AS immobilie,\n    mv.wohnung                          AS wohnung,\n    s.mietvertrag                       AS mietvertrag,\n    mv.kunde                            AS kunde,\n    s.alte_miete                        AS alte_miete,\n    s.neue_miete                        AS neue_miete,\n    (s.neue_miete - s.alte_miete)       AS differenz_eur,\n    ROUND((s.neue_miete - s.alte_miete) / NULLIF(s.alte_miete, 0) * 100, 2) AS differenz_pct\nFROM staffeln s\nJOIN `tabMietvertrag` mv ON mv.name = s.mietvertrag\nJOIN `tabWohnung`     w  ON w.name  = mv.wohnung\nWHERE s.alte_miete IS NOT NULL\n  AND s.neue_miete IS NOT NULL\n  AND s.von BETWEEN %(von_datum)s AND %(bis_datum)s\n  AND ( IFNULL(%(immobilie)s, '') = '' OR w.immobilie = %(immobilie)s )\n  AND ( %(nur_erhoehungen)s = 0 OR s.neue_miete > s.alte_miete )\n  AND ( %(nur_aktive_vertraege)s = 0 OR (\n        (mv.von IS NULL OR mv.von <= CURDATE())\n        AND (mv.bis IS NULL OR mv.bis >= CURDATE())\n  ) )\nORDER BY s.von, w.immobilie, mv.wohnung",
+ "ref_doctype": "Mietvertrag",
+ "report_name": "Staffelmieterhoehungen",
+ "report_script": "",
+ "report_type": "Query Report",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Hausverwalter"
+  },
+  {
+   "role": "Hausverwalter (Buchung)"
+  }
+ ],
+ "timeout": 0
+}
