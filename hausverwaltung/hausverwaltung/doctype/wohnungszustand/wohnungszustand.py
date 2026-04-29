@@ -1,9 +1,21 @@
 import frappe
+from frappe import _
 from frappe.model.document import Document
 from frappe.utils import add_days, nowdate
 
 
 class Wohnungszustand(Document):
+	def validate(self):
+		self.validate_merkmalpunkte()
+
+	def validate_merkmalpunkte(self):
+		value = self.get("merkmalpunkte")
+		if value is None:
+			return
+		value = int(value or 0)
+		if value < -5 or value > 5:
+			frappe.throw(_("Merkmalpunkte müssen zwischen -5 und 5 liegen."))
+
 	@property
 	def vorheriger_zustand(self):
 		if not self.wohnung or not self.ab:

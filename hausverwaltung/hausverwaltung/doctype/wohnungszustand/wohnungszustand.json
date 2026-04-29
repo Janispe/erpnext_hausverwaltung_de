@@ -19,6 +19,8 @@
   "betriebskostenabrechnung_durch_vermieter",
   "heizkostenabrechnung_durch_vermieter",
   "bad",
+  "balkon",
+  "warmwasseraufbereitung",
   "mietspiegelkategorie",
   "merkmalpunkte",
   "wohnung_aktiv_genutzt",
@@ -65,6 +67,18 @@
    "options": "Mit Fenster\nOhne Fenster"
   },
   {
+   "default": "0",
+   "fieldname": "balkon",
+   "fieldtype": "Check",
+   "label": "Balkon"
+  },
+  {
+   "fieldname": "warmwasseraufbereitung",
+   "fieldtype": "Select",
+   "label": "Warmwasseraufbereitung",
+   "options": "\nDurchlauferhitzer"
+  },
+  {
    "fieldname": "wohnung",
    "fieldtype": "Link",
    "in_preview": 1,
@@ -89,7 +103,7 @@
   },
   {
    "default": "0",
-   "description": "-4 bis 4",
+   "description": "-5 bis 5",
    "fieldname": "merkmalpunkte",
    "fieldtype": "Int",
    "label": "Merkmalpunkte"
