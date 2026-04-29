@@ -628,6 +628,21 @@ const hv_open_iteration_picker = (frm) => {
 		dialog.set_secondary_action_label(__("Abbrechen"));
 		dialog.set_secondary_action(() => dialog.hide());
 	}
+
+	// Picker auf 92vw stretchen (Frappe-Default ist 800px → schneidet
+	// Mietvertrag-Anzeigenamen ab). Mehrfach setzen wegen async DOM/Animation.
+	const _hv_widen_picker = () => {
+		const $modal = (dialog.dialog || dialog).$wrapper;
+		if (!$modal) return;
+		const $dlg = $modal.find(".modal-dialog");
+		if (!$dlg.length) return;
+		$dlg.css({ "max-width": "92vw", width: "92vw" });
+		$modal.find(".modal-body, .multiselect-list").css({ "max-width": "100%" });
+	};
+	_hv_widen_picker();
+	[0, 50, 150, 300, 600].forEach((d) => setTimeout(_hv_widen_picker, d));
+	const $w = (dialog.dialog || dialog).$wrapper;
+	if ($w) $w.on("shown.bs.modal", _hv_widen_picker);
 };
 
 const hv_apply_template_requirements = (frm, requirements) => {
