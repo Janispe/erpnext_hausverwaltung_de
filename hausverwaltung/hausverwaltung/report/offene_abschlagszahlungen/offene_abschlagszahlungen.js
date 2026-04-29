@@ -21,6 +21,15 @@ frappe.query_reports["Offene Abschlagszahlungen"] = {
 			"default": frappe.datetime.add_months(frappe.datetime.get_today(), 12)
 		}
 	],
+	"onload": function (report) {
+		frappe.require("/assets/hausverwaltung/js/date_range_presets.js", () => {
+			window.hausverwaltung?.date_presets?.attach_to_query_report(report, {
+				from_field: "von",
+				to_field: "bis",
+				include_gesamt: false,
+			});
+		});
+	},
 	"formatter": function (value, row, column, data, default_formatter) {
 		value = default_formatter(value, row, column, data);
 		if (data && column.fieldname === "status" && data.status === "Überfällig") {

@@ -440,11 +440,15 @@ def _with_hauptmieter_suffix(base_name: str, rows: object) -> str:
 def _build_customer_docname(doc: object) -> str:
 	last_names = get_hauptmieter_last_names(getattr(doc, "mieter", None))
 	nachname = ", ".join(last_names) or (getattr(doc, "name", None) or "")
-	return customer_utils.build_customer_id(
-		getattr(doc, "wohnung", None) or "",
-		str(getattr(doc, "von", None) or ""),
-		nachname,
-	)
+	wohn = (getattr(doc, "wohnung", None) or "").strip()
+	nm = (nachname or "").strip()
+	if wohn and nm:
+		return f"{wohn} Mieter: {nm}"
+	if wohn:
+		return f"{wohn} Mieter"
+	if nm:
+		return f"Mieter: {nm}"
+	return ""
 
 
 def _unique_docname(doctype: str, base_name: str, current_name: str | None = None) -> str:

@@ -125,6 +125,14 @@ frappe.query_reports["Noch offene Rechnungen und Forderungen"] = {
 				on_success: () => frappe.query_report.refresh(),
 			});
 		});
+
+		frappe.require("/assets/hausverwaltung/js/date_range_presets.js", () => {
+			window.hausverwaltung?.date_presets?.attach_to_query_report(report, {
+				from_field: "von_faelligkeit",
+				to_field: "bis_faelligkeit",
+				include_gesamt: true,
+			});
+		});
 	},
 
 	formatter: function (value, row, column, data, default_formatter) {
