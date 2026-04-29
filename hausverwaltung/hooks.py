@@ -136,6 +136,7 @@ after_migrate = [
 	"hausverwaltung.install.ensure_sales_invoice_written_off_status",
 	"hausverwaltung.install.ensure_tax_features_disabled",
 	"hausverwaltung.install.ensure_eingabequelle_fields",
+	"hausverwaltung.install.ensure_contact_phone_dienstlich_field",
 	"hausverwaltung.install.ensure_auto_repeat_for_purchase_invoice",
 	"hausverwaltung.hausverwaltung.utils.bank_account_naming.sync_all_immobilie_bank_account_names",
 ]

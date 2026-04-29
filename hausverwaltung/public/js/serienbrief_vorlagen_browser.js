@@ -451,6 +451,9 @@ hausverwaltung.serienbrief.mount_vorlagen_browser = ($container, opts = {}) => {
 
 	const renderTemplates = (templates) => {
 		const folderHtml = buildFolderList(currentFolders);
+		const currentCategoryTitle = currentChain.length
+			? currentChain[currentChain.length - 1].title
+			: "";
 		const hasTemplates = !!(templates && templates.length);
 		if (!hasTemplates && !folderHtml) {
 			listWrapper.html(`<div class="hv-vorlagenbaum-empty">${__("Keine Vorlagen gefunden.")}</div>`);
@@ -463,7 +466,8 @@ hausverwaltung.serienbrief.mount_vorlagen_browser = ($container, opts = {}) => {
 				const category = frappe.utils.escape_html(row.kategorie || "");
 				const note = row.description ? frappe.utils.escape_html(row.description) : "";
 				const modified = row.modified ? frappe.datetime.str_to_user(row.modified) : "";
-				const metaParts = [category, modified].filter((val) => val);
+				const showCategory = row.kategorie && row.kategorie !== currentCategoryTitle;
+				const metaParts = [showCategory ? category : "", modified].filter((val) => val);
 				const meta = metaParts.length ? metaParts.join(" · ") : "";
 				const dataName = encodeURIComponent(row.name || "");
 				const dataTitle = frappe.utils.escape_html(row.title || row.name);

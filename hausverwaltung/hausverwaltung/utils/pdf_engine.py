@@ -41,6 +41,13 @@ def render_pdf(html: str, options: dict[str, Any] | None = None) -> bytes:
 	"""
 	if _resolve_pdf_generator() == "chrome":
 		try:
+			# Workaround für Frappe-Bug, der Chrome-Footer-Pages crashen lässt
+			# (s. frappe_chrome_footer_patch). Patch ist idempotent.
+			from hausverwaltung.hausverwaltung.utils.frappe_chrome_footer_patch import (
+				apply as apply_chrome_footer_patch,
+			)
+			apply_chrome_footer_patch()
+
 			from frappe.utils.pdf import get_chrome_pdf
 
 			return get_chrome_pdf(

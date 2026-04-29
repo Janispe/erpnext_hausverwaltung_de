@@ -1100,9 +1100,9 @@ class SerienbriefDurchlauf(Document):
 		custom_css = """
 			@page {
 				size: A4;
-				/* margin-bottom 30mm: reserviert Platz für den
-				   ``Pfad im System (Footer)``-Baustein (position: fixed). */
-				margin: 20mm 20mm 30mm 25mm;
+				/* margin-bottom 40mm: reserviert Platz für den Page-Footer
+				   (``<div id="footer-html">``) + großzügigen Abstand zum Brief. */
+				margin: 20mm 20mm 40mm 25mm;
 			}
 			body,
 			.serienbrief-root,
@@ -1189,10 +1189,9 @@ class SerienbriefDurchlauf(Document):
 			"page-size": "A4",
 			"margin-top": "20mm",
 			"margin-right": "20mm",
-			# 30mm bottom: reserviert Platz für den ``Pfad im System (Footer)``-
-			# Baustein, der per ``position: fixed; bottom: 0.8cm`` in den
-			# unteren Margin-Bereich gerendert wird.
-			"margin-bottom": "30mm",
+			# 40mm bottom: reserviert Platz für den Page-Footer (Pfad im System)
+			# + großzügigen Abstand zwischen Brieftext-Ende und Footer-Trennlinie.
+			"margin-bottom": "40mm",
 			"margin-left": "25mm",
 		}
 

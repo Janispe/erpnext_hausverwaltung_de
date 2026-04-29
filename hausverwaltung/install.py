@@ -46,9 +46,9 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
         css = """
 			@page {
 				size: A4;
-				/* margin-bottom 30mm: reserviert Platz für den
-				   ``Pfad im System (Footer)``-Baustein (position: fixed). */
-				margin: 20mm 20mm 30mm 25mm;
+				/* margin-bottom 40mm: reserviert Platz für den Page-Footer
+				   (``<div id="footer-html">``) + großzügigen Abstand zum Brief. */
+				margin: 20mm 20mm 40mm 25mm;
 			}
 			body,
 			.serienbrief-root,
@@ -148,12 +148,15 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 				margin-bottom: 0;
 			}
         """
-        # Footer-Block als echter Frappe-Page-Footer (id="footer-html"):
-        # Chrome rendert das auf jeder Seite unten und reserviert dafür Platz
-        # über das `@page margin-bottom`. Der Inhalt wird dynamisch aus dem
-        # Vorlage-Doc und seiner Kategorie-Hierarchie berechnet.
+        # Echter Frappe-Page-Footer via ``<div id="footer-html">`` — Chrome
+        # rendert das auf jeder Seite am Page-Boden und reserviert dafür Platz
+        # via ``@page margin-bottom``. Den Frappe-Bug, der die Footer-Page mit
+        # falschem ``marginBottom`` crashed, fängt unser Patch ab
+        # (siehe ``hausverwaltung/__init__.py`` -> frappe_chrome_footer_patch).
+        # Inhalt wird in ``<p>`` verpackt, damit ``.wrapper`` eine messbare
+        # Höhe bekommt (sonst paperHeight=0 -> Chrome Error).
         footer_html = """
-<div id="footer-html" style="font-size: 8.5pt; color: #a0a8b3; text-align: center; font-family: Arial, sans-serif; padding-top: 4px; border-top: 1px solid #e6ebf1; margin: 0 2cm;">
+<div id="footer-html" style="padding: 6px 0 8px; border-top: 1px solid #e6ebf1; font-size: 8pt; color: #a0a8b3; text-align: center; font-family: Arial, sans-serif; line-height: 1.4;">
 {%- set vorlage_name = doc.vorlage if doc and doc.vorlage else None -%}
 {%- if vorlage_name and frappe.db.exists("Serienbrief Vorlage", vorlage_name) -%}
 {%- set vorlage_doc = frappe.get_cached_doc("Serienbrief Vorlage", vorlage_name) -%}
@@ -282,6 +285,33 @@ def _ensure_company_account_defaults(*, reason: str) -> None:
 
 def ensure_eingabequelle_fields() -> None:
     _ensure_eingabequelle_fields(reason="hook")
+
+
+def ensure_contact_phone_dienstlich_field() -> None:
+    _ensure_contact_phone_dienstlich_field(reason="hook")
+
+
+def _ensure_contact_phone_dienstlich_field(*, reason: str) -> None:
+    try:
+        from hausverwaltung.hausverwaltung.patches.post_model_sync.add_dienstlich_to_contact_phone import (
+            execute,
+        )
+
+        execute()
+        try:
+            frappe.clear_cache(doctype="Contact Phone")
+            frappe.clear_cache(doctype="Contact")
+            frappe.db.commit()
+        except Exception:
+            pass
+    except Exception:
+        try:
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"hausverwaltung Contact Phone Dienstlich field setup failed ({reason})",
+            )
+        except Exception:
+            pass
 
 
 def _ensure_eingabequelle_fields(*, reason: str) -> None:
