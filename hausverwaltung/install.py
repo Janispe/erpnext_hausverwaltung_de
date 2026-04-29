@@ -22,6 +22,7 @@ def after_install() -> None:
     _ensure_agent_readonly_user(reason="after_install")
     _ensure_currency_symbol_on_right(reason="after_install")
     _ensure_main_cost_center_disabled(reason="after_install")
+    _ensure_company_account_defaults(reason="after_install")
     _ensure_dunning_serienbrief_link_fields(reason="after_install")
     _ensure_serienbrief_print_format_link_field(reason="after_install")
     _ensure_serienbrief_dokument_print_format(reason="after_install")
@@ -214,6 +215,43 @@ def after_migrate() -> None:
     _ensure_eingabequelle_fields(reason="after_migrate")
     _ensure_currency_symbol_on_right(reason="after_migrate")
     _ensure_main_cost_center_disabled(reason="after_migrate")
+    _ensure_company_account_defaults(reason="after_migrate")
+
+
+def ensure_company_account_defaults() -> None:
+    _ensure_company_account_defaults(reason="hook")
+
+
+def _ensure_company_account_defaults(*, reason: str) -> None:
+    """Setzt Company-Pflicht-Default-Konten (Round Off + Stock Received But Not Billed).
+
+    Ohne diese Defaults blockiert ERPNext z. B. das Buchen von Eingangsrechnungen
+    aus dem Buchungs-Cockpit mit "Bitte Standardwert für ... in Unternehmen
+    Hausverwaltung Peters setzen". Die Helper aus sample_data sind generisch und
+    funktionieren auch für Production-Companies.
+    """
+    try:
+        from hausverwaltung.hausverwaltung.data_import.sample.sample_data import (
+            _ensure_round_off_account,
+            _ensure_srbnb_account,
+        )
+
+        companies = frappe.get_all("Company", pluck="name")
+        for company in companies:
+            try:
+                # Round Off zuerst — Company.save schlägt sonst beim SRBNB-Setzen fehl
+                _ensure_round_off_account(company, cost_center=None)
+                _ensure_srbnb_account(company)
+            except Exception as exc:
+                frappe.log_error(
+                    frappe.get_traceback(),
+                    f"hausverwaltung Company defaults für {company} fehlgeschlagen ({reason}): {exc}",
+                )
+    except Exception:
+        frappe.log_error(
+            frappe.get_traceback(),
+            f"hausverwaltung Company defaults sync fehlgeschlagen ({reason})",
+        )
 
 
 def ensure_eingabequelle_fields() -> None:
@@ -1072,6 +1110,12 @@ _HAUSVERWALTER_EXTRA_DOCTYPE_PERMS: tuple[tuple[str, dict], ...] = (
     # neue Banken legen Admins an. Ohne read antwortet Frappe mit "Nicht gefunden"
     # auf dem Bank-Account-Form, weil das Link-Feld die Bank nicht laden kann.
     ("Bank", {"read": 1}),
+    # Contact + Address: zentrale Stammdaten für Mieter/Lieferanten. Hausverwalter
+    # muss read/write/create können — Mieter-Telefon/E-Mail ändern, neuen Contact
+    # für neuen Mieter über get_or_create_contact anlegen, Adresse pflegen. delete
+    # bewusst NICHT erlaubt (zu gefährlich, zerstört verlinkte Belege).
+    ("Contact", {"read": 1, "write": 1, "create": 1}),
+    ("Address", {"read": 1, "write": 1, "create": 1}),
     ("Cost Center", {"read": 1}),
     # Buchhaltungs-Belege — werden vom Mietrechnungen Durchlauf, Bankauszug Import,
     # manueller Erfassung und Auto-Match-Pipeline angelegt.
