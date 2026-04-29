@@ -1068,6 +1068,10 @@ _HAUSVERWALTER_EXTRA_DOCTYPE_PERMS: tuple[tuple[str, dict], ...] = (
     ("Dunning", {"read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1, "print": 1, "email": 1}),
     ("Dunning Type", {"read": 1}),
     ("Bank Account", {"read": 1, "write": 1, "create": 1}),
+    # Bank: read reicht — wird beim Bank-Account-Anlegen aus dem BIC abgeleitet,
+    # neue Banken legen Admins an. Ohne read antwortet Frappe mit "Nicht gefunden"
+    # auf dem Bank-Account-Form, weil das Link-Feld die Bank nicht laden kann.
+    ("Bank", {"read": 1}),
     ("Cost Center", {"read": 1}),
     # Buchhaltungs-Belege — werden vom Mietrechnungen Durchlauf, Bankauszug Import,
     # manueller Erfassung und Auto-Match-Pipeline angelegt.
