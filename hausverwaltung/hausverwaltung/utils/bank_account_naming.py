@@ -43,6 +43,8 @@ def rename_bank_account_after_save(doc, method: str | None = None) -> None:
 
 def sync_all_immobilie_bank_account_names() -> None:
 	"""Rename all company Bank Accounts that can be mapped to an Immobilie."""
+	sync_all_immobilie_gl_bank_account_names()
+
 	for row in frappe.get_all(
 		"Bank Account",
 		filters={"is_company_account": 1, "account": ["is", "set"]},
@@ -66,6 +68,8 @@ def sync_all_immobilie_bank_account_names() -> None:
 
 def sync_bank_account_names_for_immobilie(doc, method: str | None = None) -> None:
 	"""Refresh Bank Account names when an Immobilie's linked GL accounts change."""
+	sync_gl_bank_account_names_for_immobilie(doc)
+
 	accounts = [row.get("konto") for row in (doc.get("bankkonten") or []) if row.get("konto")]
 	if not accounts:
 		return
@@ -89,6 +93,81 @@ def sync_bank_account_names_for_immobilie(doc, method: str | None = None) -> Non
 				title=f"Bank Account Naming Sync für Immobilie fehlgeschlagen: {doc.name}",
 				message=frappe.get_traceback(),
 			)
+
+
+def sync_all_immobilie_gl_bank_account_names() -> None:
+	"""Rename GL bank accounts linked from Immobilie.bankkonten."""
+	rows = frappe.get_all(
+		"Immobilie Bankkonto",
+		filters={"parenttype": "Immobilie", "konto": ["is", "set"]},
+		fields=["parent", "konto"],
+		order_by="parent asc, idx asc",
+		limit_page_length=0,
+	)
+	_sync_gl_bank_account_rows(rows)
+
+
+def sync_gl_bank_account_names_for_immobilie(doc, method: str | None = None) -> None:
+	rows = [
+		{"parent": doc.name, "konto": row.get("konto")}
+		for row in (doc.get("bankkonten") or [])
+		if row.get("konto")
+	]
+	_sync_gl_bank_account_rows(rows)
+
+
+def _sync_gl_bank_account_rows(rows: list[dict]) -> None:
+	for row in rows or []:
+		immobilie = (row.get("parent") or "").strip()
+		account = (row.get("konto") or "").strip()
+		if not immobilie or not account:
+			continue
+
+		try:
+			_sync_gl_bank_account_name(account, immobilie)
+		except Exception:
+			frappe.log_error(
+				title=f"GL-Bankkonto Naming Sync fehlgeschlagen: {account}",
+				message=frappe.get_traceback(),
+			)
+
+
+def _sync_gl_bank_account_name(account: str, immobilie: str) -> str | None:
+	row = frappe.db.get_value(
+		"Account",
+		account,
+		["name", "account_name", "account_number", "account_type", "is_group"],
+		as_dict=True,
+	)
+	if not row or row.get("is_group") or row.get("account_type") != "Bank":
+		return None
+
+	old_account_name = (row.get("account_name") or "").strip()
+	new_account_name = _desired_gl_bank_account_name(old_account_name, immobilie)
+	if not new_account_name or new_account_name == old_account_name:
+		return row.get("name")
+
+	from erpnext.accounts.doctype.account.account import update_account_number
+
+	return update_account_number(
+		row.get("name"),
+		new_account_name,
+		row.get("account_number"),
+	)
+
+
+def _desired_gl_bank_account_name(account_name: str, immobilie: str) -> str | None:
+	immo = (immobilie or "").strip()
+	if not immo:
+		return None
+
+	name = (account_name or "Bank").strip()
+	if immo.lower() in name.lower():
+		return name
+
+	if name.lower().startswith("bank"):
+		return f"Bank {immo}{name[4:]}".strip()
+	return f"{name} {immo}".strip()
 
 
 def get_desired_account_name(doc) -> str | None:
