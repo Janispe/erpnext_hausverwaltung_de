@@ -312,7 +312,7 @@ class Mietvertrag(Document):
 
 	@property
 	def bruttomiete(self) -> float:
-		"""Aktuelle Bruttomiete (Kaltmiete + BK + HK + Untermietzuschlag)."""
+		"""Aktuelle Bruttomiete (Nettokaltmiete + BK + HK + Untermietzuschlag)."""
 		stichtag = self._bruttomiete_stichtag()
 		return float(
 			(self._staffelbetrag_am(self.miete, stichtag) or 0.0)

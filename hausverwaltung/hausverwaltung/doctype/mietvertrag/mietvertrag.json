@@ -101,13 +101,13 @@
   {
    "fieldname": "miete_tab",
    "fieldtype": "Tab Break",
-   "label": "Miete"
+   "label": "Nettokaltmiete"
   },
   {
    "allow_on_submit": 1,
    "fieldname": "miete",
    "fieldtype": "Table",
-   "label": "Miete",
+   "label": "Nettokaltmiete",
    "options": "Staffelmiete"
   },
   {
@@ -132,7 +132,7 @@
    "fieldname": "miete_pro_qm",
    "fieldtype": "Float",
    "is_virtual": 1,
-   "label": "Miete pro qm",
+   "label": "Nettokaltmiete pro qm",
    "read_only": 1
   },
   {

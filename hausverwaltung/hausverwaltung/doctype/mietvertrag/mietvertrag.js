@@ -21,6 +21,7 @@ frappe.ui.form.on("Mietvertrag", {
 		console.log("✅ mietvertrag.js wurde geladen");
 
 		update_bruttomiete(frm);
+		rename_staffelmiete_miete_column(frm, "miete", "Nettokaltmiete");
 		hide_staffelmiete_art_column(frm, "kaution");
 		rename_staffelmiete_miete_column(frm, "kaution", "Betrag");
 		ensure_staffel_highlight_css();
