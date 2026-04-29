@@ -46,7 +46,9 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
         css = """
 			@page {
 				size: A4;
-				margin: 20mm 20mm 20mm 25mm;
+				/* margin-bottom 30mm: reserviert Platz für den
+				   ``Pfad im System (Footer)``-Baustein (position: fixed). */
+				margin: 20mm 20mm 30mm 25mm;
 			}
 			body,
 			.serienbrief-root,
@@ -146,11 +148,35 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 				margin-bottom: 0;
 			}
         """
+        # Footer-Block als echter Frappe-Page-Footer (id="footer-html"):
+        # Chrome rendert das auf jeder Seite unten und reserviert dafür Platz
+        # über das `@page margin-bottom`. Der Inhalt wird dynamisch aus dem
+        # Vorlage-Doc und seiner Kategorie-Hierarchie berechnet.
+        footer_html = """
+<div id="footer-html" style="font-size: 8.5pt; color: #a0a8b3; text-align: center; font-family: Arial, sans-serif; padding-top: 4px; border-top: 1px solid #e6ebf1; margin: 0 2cm;">
+{%- set vorlage_name = doc.vorlage if doc and doc.vorlage else None -%}
+{%- if vorlage_name and frappe.db.exists("Serienbrief Vorlage", vorlage_name) -%}
+{%- set vorlage_doc = frappe.get_cached_doc("Serienbrief Vorlage", vorlage_name) -%}
+{%- set ns = namespace(current=vorlage_doc.kategorie, chain=[]) -%}
+{%- for _ in range(20) -%}
+{%- if ns.current -%}
+{%- set kat_doc = frappe.get_cached_doc("Serienbrief Kategorie", ns.current) -%}
+{%- set ns.chain = ns.chain + [kat_doc.title or ns.current] -%}
+{%- set ns.current = kat_doc.parent_serienbrief_kategorie -%}
+{%- endif -%}
+{%- endfor -%}
+{%- set pfad_parts = (ns.chain | reverse | list) + [vorlage_doc.title or vorlage_name] -%}
+{{ pfad_parts | join(" / ") }}
+{%- endif -%}
+</div>
+"""
+
         html = f"""<style>{css}</style>
 {{% if doc.docstatus == 0 %}}
 <div class="hv-draft-watermark-layer"><div class="hv-draft-watermark">DRAFT</div></div>
 {{% endif %}}
-{{{{ (doc.html or '') | safe }}}}"""
+{{{{ (doc.html or '') | safe }}}}
+{footer_html}"""
 
         if frappe.db.exists("Print Format", name):
             doc = frappe.get_doc("Print Format", name)

@@ -133,7 +133,7 @@ def _query_eintraege(stichtag: str, immobilie: str | None) -> list[dict]:
 			w.gebaeudeteil AS gebaeudeteil,
 			w.name__lage_in_der_immobilie AS lage_in_der_immobilie,
 			COALESCE(
-				NULLIF(TRIM(CONCAT_WS(' ', c.first_name, c.last_name)), ''),
+				NULLIF(TRIM(CONCAT_WS(' ', c.last_name, c.first_name)), ''),
 				vp.mieter
 			) AS mieter_name,
 			vp.rolle AS rolle,

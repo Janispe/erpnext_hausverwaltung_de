@@ -27,7 +27,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Rolle",
-   "options": "Hauptmieter\nUntermieter\nAusgezogen"
+   "options": "Hauptmieter\nUntermieter\nBetreuer\nAusgezogen"
   },
   {
    "fieldname": "eingezogen",

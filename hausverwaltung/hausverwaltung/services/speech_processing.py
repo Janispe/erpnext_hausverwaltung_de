@@ -168,7 +168,7 @@ def _collect_mieter_names() -> list[str]:
 		return []
 	names: list[str] = []
 	for c in contacts:
-		parts = [p for p in (c.get("first_name"), c.get("last_name")) if p]
+		parts = [p for p in (c.get("last_name"), c.get("first_name")) if p]
 		full = " ".join(str(p).strip() for p in parts if str(p).strip())
 		if full and full not in names:
 			names.append(full)

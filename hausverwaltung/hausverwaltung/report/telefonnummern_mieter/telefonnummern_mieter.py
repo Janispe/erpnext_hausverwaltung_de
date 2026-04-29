@@ -51,7 +51,7 @@ def execute(filters=None):
                 GROUP_CONCAT(
                     CONCAT(
                         COALESCE(
-                            NULLIF(TRIM(CONCAT_WS(' ', c.first_name, c.last_name)), ''),
+                            NULLIF(TRIM(CONCAT_WS(' ', c.last_name, c.first_name)), ''),
                             vp.mieter
                         ),
                         CASE
@@ -118,7 +118,7 @@ def execute(filters=None):
                 w.name__lage_in_der_immobilie AS lage_in_der_immobilie,
                 CONCAT(
                     COALESCE(
-                        NULLIF(TRIM(CONCAT_WS(' ', c.first_name, c.last_name)), ''),
+                        NULLIF(TRIM(CONCAT_WS(' ', c.last_name, c.first_name)), ''),
                         vp.mieter
                     ),
                     CASE

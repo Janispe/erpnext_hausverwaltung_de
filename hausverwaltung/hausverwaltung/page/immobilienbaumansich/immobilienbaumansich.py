@@ -61,7 +61,10 @@ def _get_mieter_und_vertrag(wohnung: str) -> tuple[list[dict], str | None]:
 	for row in partner:
 		first = row.get("first_name") or ""
 		last = row.get("last_name") or ""
-		label = f"{first} {last}".strip() or row.get("contact") or ""
+		if last and first:
+			label = f"{last}, {first}"
+		else:
+			label = (last or first).strip() or row.get("contact") or ""
 		tenants.append(
 			{
 				"contact": row.get("contact"),

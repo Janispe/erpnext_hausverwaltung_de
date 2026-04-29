@@ -116,18 +116,18 @@ def get_contact_last_name(contact_name: str | None) -> str:
 
 
 def get_contact_display_name(contact_name: str | None) -> str:
-	"""Return a readable Contact name with first and last name when available."""
+	"""Return a readable Contact name as 'last first' when available."""
 	contact = (contact_name or "").strip()
 	if not contact:
 		return ""
 
 	try:
-		row = frappe.db.get_value("Contact", contact, ["first_name", "last_name"], as_dict=True)
+		row = frappe.db.get_value("Contact", contact, ["last_name", "first_name"], as_dict=True)
 	except Exception:
 		row = None
 
 	if row:
-		parts = [(row.get("first_name") or "").strip(), (row.get("last_name") or "").strip()]
+		parts = [(row.get("last_name") or "").strip(), (row.get("first_name") or "").strip()]
 		display = " ".join(part for part in parts if part)
 		if display:
 			return display
