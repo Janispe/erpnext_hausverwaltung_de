@@ -59,7 +59,7 @@
   },
   {
    "fieldname": "differenz_pct",
-   "fieldtype": "Percent",
+   "fieldtype": "Float",
    "label": "± %",
    "width": 90
   }
@@ -115,11 +115,11 @@
  "name": "Staffelmieterhoehungen",
  "owner": "Administrator",
  "prepared_report": 0,
- "query": "WITH staffeln AS (\n    SELECT\n        sm.parent       AS mietvertrag,\n        sm.von          AS von,\n        sm.miete        AS neue_miete,\n        LAG(sm.miete) OVER (\n            PARTITION BY sm.parent\n            ORDER BY sm.von, sm.idx\n        ) AS alte_miete\n    FROM `tabStaffelmiete` sm\n    WHERE sm.parenttype = 'Mietvertrag'\n      AND sm.parentfield = 'miete'\n)\nSELECT\n    s.von                               AS von,\n    w.immobilie                         AS immobilie,\n    mv.wohnung                          AS wohnung,\n    s.mietvertrag                       AS mietvertrag,\n    mv.kunde                            AS kunde,\n    s.alte_miete                        AS alte_miete,\n    s.neue_miete                        AS neue_miete,\n    (s.neue_miete - s.alte_miete)       AS differenz_eur,\n    ROUND((s.neue_miete - s.alte_miete) / NULLIF(s.alte_miete, 0) * 100, 2) AS differenz_pct\nFROM staffeln s\nJOIN `tabMietvertrag` mv ON mv.name = s.mietvertrag\nJOIN `tabWohnung`     w  ON w.name  = mv.wohnung\nWHERE s.alte_miete IS NOT NULL\n  AND s.neue_miete IS NOT NULL\n  AND s.von BETWEEN %(von_datum)s AND %(bis_datum)s\n  AND ( IFNULL(%(immobilie)s, '') = '' OR w.immobilie = %(immobilie)s )\n  AND ( %(nur_erhoehungen)s = 0 OR s.neue_miete > s.alte_miete )\n  AND ( %(nur_aktive_vertraege)s = 0 OR (\n        (mv.von IS NULL OR mv.von <= CURDATE())\n        AND (mv.bis IS NULL OR mv.bis >= CURDATE())\n  ) )\nORDER BY s.von, w.immobilie, mv.wohnung",
+ "query": "",
  "ref_doctype": "Mietvertrag",
  "report_name": "Staffelmieterhoehungen",
  "report_script": "",
- "report_type": "Query Report",
+ "report_type": "Script Report",
  "roles": [
   {
    "role": "System Manager"

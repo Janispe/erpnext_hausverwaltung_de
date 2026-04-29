@@ -307,6 +307,12 @@ hausverwaltung.serienbrief.mount_vorlagen_browser = ($container, opts = {}) => {
 				<div class="hv-vorlagenbaum-toolbar">
 					<input type="text" class="form-control input-sm hv-filter"
 						placeholder="${__("Titel oder Notiz filtern")}">
+					<select class="form-control input-sm hv-sort" title="${__("Sortierung")}">
+						<option value="modified_desc">${__("Zuletzt geändert ↓")}</option>
+						<option value="modified_asc">${__("Zuletzt geändert ↑")}</option>
+						<option value="title_asc">${__("Titel A–Z")}</option>
+						<option value="title_desc">${__("Titel Z–A")}</option>
+					</select>
 					<button class="btn btn-sm btn-default hv-fulltext-search">${__("Volltextsuche")}</button>
 					<div class="hv-vorlagenbaum-toolbar-actions">
 						${backBtnPickerHtml}
@@ -323,6 +329,7 @@ hausverwaltung.serienbrief.mount_vorlagen_browser = ($container, opts = {}) => {
 
 	const listWrapper = layout.find(".hv-template-list");
 	const filterInput = layout.find(".hv-filter");
+	const sortSelect = layout.find(".hv-sort");
 	const breadcrumbWrapper = layout.find(".hv-breadcrumb");
 	const backFolderBtn = layout.find(".hv-back-folder");
 	const addFolderBtn = layout.find(".hv-add-folder");
@@ -523,18 +530,55 @@ hausverwaltung.serienbrief.mount_vorlagen_browser = ($container, opts = {}) => {
 		listWrapper.html(`${folderHtml}${templateHtml}`);
 	};
 
+	const HV_SORT_STORAGE_KEY = "hv-vorlagenbaum-sort";
+	const HV_SORT_VALUES = new Set(["modified_desc", "modified_asc", "title_asc", "title_desc"]);
+
+	const getStoredSort = () => {
+		try {
+			const stored = window.localStorage?.getItem(HV_SORT_STORAGE_KEY);
+			if (stored && HV_SORT_VALUES.has(stored)) return stored;
+		} catch (e) {
+			// localStorage nicht verfügbar
+		}
+		return "modified_desc";
+	};
+
+	const sortTemplates = (rows) => {
+		const mode = sortSelect.val() || "modified_desc";
+		const collator = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
+		const titleOf = (r) => (r.title || r.name || "").toString();
+		const modifiedOf = (r) => (r.modified || "").toString();
+		const sorted = [...rows];
+		switch (mode) {
+			case "title_asc":
+				sorted.sort((a, b) => collator.compare(titleOf(a), titleOf(b)));
+				break;
+			case "title_desc":
+				sorted.sort((a, b) => collator.compare(titleOf(b), titleOf(a)));
+				break;
+			case "modified_asc":
+				sorted.sort((a, b) => modifiedOf(a).localeCompare(modifiedOf(b)));
+				break;
+			case "modified_desc":
+			default:
+				sorted.sort((a, b) => modifiedOf(b).localeCompare(modifiedOf(a)));
+				break;
+		}
+		return sorted;
+	};
+
+	sortSelect.val(getStoredSort());
+
 	const applyFilter = () => {
 		const query = (filterInput.val() || "").toString().trim().toLowerCase();
-		if (!query) {
-			renderTemplates(currentTemplates);
-			return;
-		}
-		const filtered = currentTemplates.filter((row) => {
-			const title = (row.title || row.name || "").toString().toLowerCase();
-			const note = (row.description || "").toString().toLowerCase();
-			return title.includes(query) || note.includes(query);
-		});
-		renderTemplates(filtered);
+		const base = query
+			? currentTemplates.filter((row) => {
+					const title = (row.title || row.name || "").toString().toLowerCase();
+					const note = (row.description || "").toString().toLowerCase();
+					return title.includes(query) || note.includes(query);
+				})
+			: currentTemplates;
+		renderTemplates(sortTemplates(base));
 	};
 
 	const clearPreview = (message) => {
@@ -628,6 +672,14 @@ hausverwaltung.serienbrief.mount_vorlagen_browser = ($container, opts = {}) => {
 	};
 
 	filterInput.on("input", applyFilter);
+	sortSelect.on("change", () => {
+		try {
+			window.localStorage?.setItem(HV_SORT_STORAGE_KEY, sortSelect.val() || "modified_desc");
+		} catch (e) {
+			// localStorage nicht verfügbar
+		}
+		applyFilter();
+	});
 	fulltextBtn.on("click", () => {
 		if (is_picker && on_template_pick) {
 			hv_browser_open_fulltext_dialog(on_template_pick);

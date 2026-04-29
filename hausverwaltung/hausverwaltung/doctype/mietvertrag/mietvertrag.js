@@ -22,6 +22,7 @@ frappe.ui.form.on("Mietvertrag", {
 
 		update_bruttomiete(frm);
 		hide_staffelmiete_art_column(frm, "kaution");
+		rename_staffelmiete_miete_column(frm, "kaution", "Betrag");
 		ensure_staffel_highlight_css();
 		highlight_current_staffeln(frm);
 
@@ -121,10 +122,58 @@ frappe.ui.form.on("Mietvertrag", {
 function hide_staffelmiete_art_column(frm, tableFieldname) {
 	const field = frm.get_field && frm.get_field(tableFieldname);
 	const grid = field && field.grid;
+	if (!grid) return;
+
+	// Default-Wert "Gesamter Zeitraum" auf jeder neuen Kaution-Row erzwingen,
+	// damit auch ohne sichtbares Feld konsistente Daten landen.
+	if (typeof grid.update_docfield_property === "function") {
+		grid.update_docfield_property("art", "hidden", 1);
+		grid.update_docfield_property("art", "in_list_view", 0);
+		grid.update_docfield_property("art", "default", "Gesamter Zeitraum");
+	}
+
+	// Feld komplett aus dem Grid-Model entfernen — nur dann verschwindet auch
+	// die Datenzelle (nicht nur der Header). docfields/meta filtern.
+	const removeArtField = function (arr) {
+		if (!Array.isArray(arr)) return arr;
+		return arr.filter(function (df) {
+			return !(df && df.fieldname === "art");
+		});
+	};
+	if (grid.docfields) grid.docfields = removeArtField(grid.docfields);
+	if (grid.meta && grid.meta.fields) {
+		grid.meta.fields = removeArtField(grid.meta.fields);
+	}
+	if (Array.isArray(grid.visible_columns)) {
+		grid.visible_columns = grid.visible_columns.filter(function (col) {
+			return !(col && col[0] && col[0].fieldname === "art");
+		});
+	}
+	if (grid.fields_map && grid.fields_map.art) {
+		delete grid.fields_map.art;
+	}
+
+	frm.refresh_field(tableFieldname);
+	if (typeof grid.refresh === "function") grid.refresh();
+}
+
+function rename_staffelmiete_miete_column(frm, tableFieldname, newLabel) {
+	const field = frm.get_field && frm.get_field(tableFieldname);
+	const grid = field && field.grid;
 	if (!grid || typeof grid.update_docfield_property !== "function") return;
 
-	grid.update_docfield_property("art", "in_list_view", 0);
+	grid.update_docfield_property("miete", "label", newLabel);
+	if (Array.isArray(grid.docfields)) {
+		grid.docfields.forEach(function (df) {
+			if (df && df.fieldname === "miete") {
+				df.label = newLabel;
+			}
+		});
+	}
 	frm.refresh_field(tableFieldname);
+	if (typeof grid.refresh === "function") {
+		grid.refresh();
+	}
 }
 
 frappe.ui.form.on("Staffelmiete", {
@@ -228,6 +277,13 @@ function add_paperless_button(frm) {
 
 function add_mieterwechsel_start_button_from_mietvertrag(frm) {
 	if (frm.is_new()) {
+		return;
+	}
+
+	// Mieterwechsel-Workflow ist noch nicht final — nur System Manager sieht den
+	// Button. Hausverwalter (und alle anderen) bekommen ihn nicht angezeigt.
+	const roles = (frappe.user_roles || []);
+	if (!roles.includes("System Manager")) {
 		return;
 	}
 

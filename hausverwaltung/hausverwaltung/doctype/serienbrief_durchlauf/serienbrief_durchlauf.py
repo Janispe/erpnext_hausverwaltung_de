@@ -1315,6 +1315,12 @@ class SerienbriefDurchlauf(Document):
 			if value:
 				row_data.setdefault(df.fieldname, value)
 
+		# Mietvertrag-Name merken, damit wir die Mieter-Tabelle (Vertragspartner →
+		# Contact) für den Anzeigenamen heranziehen können.
+		mietvertrag_name: str | None = None
+		if iteration_doctype == "Mietvertrag":
+			mietvertrag_name = iteration_doc.name
+
 		# When the iteration doc only knows about a Customer (e.g. Dunning) but
 		# not the Mieter/Wohnung directly, derive both via the active Mietvertrag.
 		# Without this, mieter/immobilie context vars stay empty and any letterhead
@@ -1343,17 +1349,22 @@ class SerienbriefDurchlauf(Document):
 					mv = []
 				if mv:
 					row_data.setdefault("wohnung", mv[0].get("wohnung"))
+					if not mietvertrag_name:
+						mietvertrag_name = mv[0].get("name")
 				row_data.setdefault("mieter", customer_name)
 
-		# For docs that are bound to a Customer (Dunning, Sales Invoice, …) prefer
-		# the customer's display name over the doc's own name like "DUNN-04-26-00003".
-		display_name = (
-			getattr(iteration_doc, "anzeigename", None)
-			or getattr(iteration_doc, "title", None)
-			or getattr(iteration_doc, "customer_name", None)
-			or getattr(iteration_doc, "kunden_name", None)
-			or getattr(iteration_doc, "name", None)
-		)
+		# Bevorzugter Anzeigename: aus der Mieter-Tabelle des Mietvertrags
+		# (Vertragspartner → Contact). Nur wenn die leer ist, fällt es auf die
+		# Doc-Felder bzw. den technischen Mietvertrag-Namen zurück.
+		display_name = self._resolve_mieter_names_from_vertrag(mietvertrag_name)
+		if not display_name:
+			display_name = (
+				getattr(iteration_doc, "anzeigename", None)
+				or getattr(iteration_doc, "title", None)
+				or getattr(iteration_doc, "customer_name", None)
+				or getattr(iteration_doc, "kunden_name", None)
+				or getattr(iteration_doc, "name", None)
+			)
 		if display_name:
 			row_data["anzeigename"] = display_name
 
@@ -1844,6 +1855,38 @@ class SerienbriefDurchlauf(Document):
 				return value
 
 		return cstr(getattr(doc, "title", "")).strip()
+
+	def _resolve_mieter_names_from_vertrag(self, mietvertrag_name: str | None) -> str:
+		"""Personen-Anzeigename aus der ``mieter``-Tabelle eines Mietvertrags
+		(Vertragspartner → Contact). Ausgezogene Mieter werden ignoriert."""
+		if not mietvertrag_name:
+			return ""
+		try:
+			rows = frappe.db.sql(
+				"""
+				SELECT vp.mieter
+				FROM `tabVertragspartner` vp
+				WHERE vp.parent = %(mv)s
+				  AND vp.parenttype = 'Mietvertrag'
+				  AND vp.parentfield = 'mieter'
+				  AND COALESCE(vp.rolle, '') != 'Ausgezogen'
+				ORDER BY vp.idx
+				""",
+				{"mv": mietvertrag_name},
+				as_dict=True,
+			)
+		except Exception:
+			return ""
+		names: list[str] = []
+		for row in rows:
+			contact_name = cstr(row.get("mieter")).strip()
+			if not contact_name:
+				continue
+			contact_doc = self._load_doc("Contact", contact_name)
+			person = self._guess_person_name(contact_doc)
+			if person and person not in names:
+				names.append(person)
+		return " und ".join(names)
 
 	def _format_plz_ort(self, plz: str, ort: str) -> str:
 		parts = [plz, ort]

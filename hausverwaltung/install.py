@@ -1646,14 +1646,38 @@ def ensure_hausverwalter_desktop_icon_visibility() -> None:
             pass
 
 
+_HAUSVERWALTER_EXTRA_REPORTS = (
+    # ERPNext-Standard-Reports die Hausverwalter für tägliche Buchhaltung brauchen.
+    # Werden zusätzlich zu Module='Hausverwaltung'-Reports freigeschaltet.
+    "General Ledger",
+    "Trial Balance",
+    "Accounts Receivable",
+    "Accounts Receivable Summary",
+    "Accounts Payable",
+    "Accounts Payable Summary",
+    "Bank Reconciliation Statement",
+    "Bank Clearance Summary",
+    "Cash Flow",
+    "Balance Sheet",
+    "Profit and Loss Statement",
+    "Sales Register",
+    "Purchase Register",
+)
+
+
 def _ensure_hausverwalter_report_roles(*, reason: str) -> None:
-    """Ensure Hausverwaltung reports remain visible to Hausverwalter roles."""
+    """Ensure Hausverwaltung + Standard-Buchhaltungs-Reports für Hausverwalter sichtbar."""
     try:
-        report_names = frappe.get_all(
+        hv_reports = frappe.get_all(
             "Report",
             filters={"module": "Hausverwaltung", "disabled": 0},
             pluck="name",
         )
+        # Plus ERPNext-Standard-Reports (falls auf der Site installiert).
+        extra_reports = [
+            r for r in _HAUSVERWALTER_EXTRA_REPORTS if frappe.db.exists("Report", r)
+        ]
+        report_names = list(dict.fromkeys(list(hv_reports) + extra_reports))
         target_roles = ("Hausverwalter", "Hausverwalter (Buchung)")
 
         for report_name in report_names:
