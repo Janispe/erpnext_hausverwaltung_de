@@ -23,7 +23,11 @@
   "abschlagszahlung_section",
   "bankimport_abschlag_toleranz_tage",
   "bankimport_section",
-  "bankimport_start_datum"
+  "bankimport_start_datum",
+  "ui_section",
+  "picker_modal_width_vw",
+  "serienbrief_pdf_skip_dialog",
+  "serienbrief_pdf_default_format"
  ],
  "fields": [
   {
@@ -137,6 +141,33 @@
    "fieldtype": "Date",
    "label": "Bank-Transaktionen erstellen ab",
    "description": "Beim Erstellen aus dem Bankauszug Import werden CSV-Zeilen mit Buchungstag VOR diesem Datum übersprungen. Nützlich wenn die CSV-Historie weiter zurück geht als der ERP-Start. Leer = keine Begrenzung."
+  },
+  {
+   "fieldname": "ui_section",
+   "fieldtype": "Section Break",
+   "label": "UI"
+  },
+  {
+   "default": "92",
+   "fieldname": "picker_modal_width_vw",
+   "fieldtype": "Int",
+   "label": "Picker-Modal-Breite (% Viewport)",
+   "description": "Breite der Auswahl-Dialoge (z.B. \"Mietvertrag auswählen\" beim Serienbrief Durchlauf) in Prozent der Browser-Breite. Default 92 (= 92vw). Frappe-Default ist ca. 50% (800px). 0 oder leer = Frappe-Default."
+  },
+  {
+   "default": "1",
+   "fieldname": "serienbrief_pdf_skip_dialog",
+   "fieldtype": "Check",
+   "label": "PDF-Erzeugen-Dialog überspringen",
+   "description": "Wenn aktiv, wird beim Klick auf \"PDF erzeugen\" im Serienbrief Durchlauf der Format-Auswahl-Dialog übersprungen und direkt das Default-Format genutzt."
+  },
+  {
+   "default": "Serienbrief Dokument",
+   "fieldname": "serienbrief_pdf_default_format",
+   "fieldtype": "Link",
+   "options": "Print Format",
+   "label": "Default Print Format für Serienbrief-PDF",
+   "description": "Print Format, das beim PDF-Erzeugen verwendet wird (mit oder ohne übersprungenen Dialog)."
   }
  ],
  "index_web_pages_for_search": 1,

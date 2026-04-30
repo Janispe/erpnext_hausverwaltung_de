@@ -315,8 +315,31 @@ const hv_render_template_variables_table = (frm, requirements) => {
 		});
 };
 
+const _hv_run_pdf_generation = (frm, printFormat) => {
+	frappe.call({
+		method: "hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf.generate_pdf",
+		args: { docname: frm.doc.name, print_format: printFormat },
+		freeze: true,
+		freeze_message: __("PDF wird erzeugt …"),
+	}).then((r) => {
+		if (r.message) {
+			window.open(r.message);
+		}
+	});
+};
+
 const trigger_serienbrief_pdf = (frm) => {
 	if (!hv_ensure_iteration_objects(frm)) {
+		return;
+	}
+
+	// Setting aus Hausverwaltung Einstellungen lesen (siehe extend_bootinfo)
+	const ui = (frappe.boot && frappe.boot.hv_ui) || {};
+	const skipDialog = !!ui.serienbrief_pdf_skip_dialog;
+	const defaultFormat = ui.serienbrief_pdf_default_format || "Serienbrief Dokument";
+
+	if (skipDialog && defaultFormat) {
+		_hv_run_pdf_generation(frm, defaultFormat);
 		return;
 	}
 
@@ -329,7 +352,7 @@ const trigger_serienbrief_pdf = (frm) => {
 				label: __("Print Format"),
 				options: "Print Format",
 				reqd: 1,
-				default: "Serienbrief Dokument",
+				default: defaultFormat,
 				description: __("Jedes Serienbrief Dokument wird mit diesem Print Format gedruckt und danach gemergt."),
 				get_query: () => ({
 					filters: {
@@ -346,16 +369,7 @@ const trigger_serienbrief_pdf = (frm) => {
 				return;
 			}
 			dialog.hide();
-			frappe.call({
-				method: "hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf.generate_pdf",
-				args: { docname: frm.doc.name, print_format: printFormat },
-				freeze: true,
-				freeze_message: __("PDF wird erzeugt …"),
-			}).then((r) => {
-				if (r.message) {
-					window.open(r.message);
-				}
-			});
+			_hv_run_pdf_generation(frm, printFormat);
 		},
 	});
 
@@ -629,20 +643,10 @@ const hv_open_iteration_picker = (frm) => {
 		dialog.set_secondary_action(() => dialog.hide());
 	}
 
-	// Picker auf 92vw stretchen (Frappe-Default ist 800px → schneidet
-	// Mietvertrag-Anzeigenamen ab). Mehrfach setzen wegen async DOM/Animation.
-	const _hv_widen_picker = () => {
-		const $modal = (dialog.dialog || dialog).$wrapper;
-		if (!$modal) return;
-		const $dlg = $modal.find(".modal-dialog");
-		if (!$dlg.length) return;
-		$dlg.css({ "max-width": "92vw", width: "92vw" });
-		$modal.find(".modal-body, .multiselect-list").css({ "max-width": "100%" });
-	};
-	_hv_widen_picker();
-	[0, 50, 150, 300, 600].forEach((d) => setTimeout(_hv_widen_picker, d));
-	const $w = (dialog.dialog || dialog).$wrapper;
-	if ($w) $w.on("shown.bs.modal", _hv_widen_picker);
+	// Picker stretchen — Breite kommt aus Hausverwaltung Einstellungen.
+	if (window.hausverwaltung?.ui?.widen_modal) {
+		window.hausverwaltung.ui.widen_modal(dialog.dialog || dialog);
+	}
 };
 
 const hv_apply_template_requirements = (frm, requirements) => {

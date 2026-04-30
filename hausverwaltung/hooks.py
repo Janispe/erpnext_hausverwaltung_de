@@ -27,6 +27,7 @@ app_license = "mit"
 # include js, css files in header of desk.html
 # app_include_css = "/assets/hausverwaltung/css/hausverwaltung.css"
 app_include_js = [
+	"/assets/hausverwaltung/js/ui_helpers.js",
 	"/assets/hausverwaltung/js/payment_reconciliation_shortcut.js",
 	"/assets/hausverwaltung/js/role_based_field_visibility.js",
 	"/assets/hausverwaltung/js/serienbrief_vorlagen_browser.js",

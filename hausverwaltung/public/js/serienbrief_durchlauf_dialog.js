@@ -243,23 +243,9 @@ const hv_sbd_open_iteration_picker = (dialog, state) => {
 		},
 	});
 
-	// Frappe's MultiSelectDialog ist standardmäßig 800px — bei
-	// Mietverträgen wird der Anzeigename (Wohnung + Mieter + Datum) abgeschnitten.
-	// Modal nutzt jetzt 92% Viewport-Breite (auf großen Screens bis ~1700px).
-	const _hv_widen_picker = () => {
-		const $modal = picker.dialog && picker.dialog.$wrapper;
-		if (!$modal) return false;
-		const $dlg = $modal.find(".modal-dialog");
-		if (!$dlg.length) return false;
-		$dlg.css({ "max-width": "92vw", width: "92vw" });
-		// Auch die Tabelle innen darf wachsen
-		$modal.find(".modal-body, .multiselect-list").css({ "max-width": "100%" });
-		return true;
-	};
-	_hv_widen_picker();
-	[0, 50, 150, 300, 600].forEach((d) => setTimeout(_hv_widen_picker, d));
-	if (picker.dialog && picker.dialog.$wrapper) {
-		picker.dialog.$wrapper.on("shown.bs.modal", _hv_widen_picker);
+	// Picker-Modal stretchen — Breite kommt aus Hausverwaltung Einstellungen.
+	if (window.hausverwaltung?.ui?.widen_modal) {
+		window.hausverwaltung.ui.widen_modal(picker.dialog || picker);
 	}
 };
 
