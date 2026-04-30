@@ -13,6 +13,7 @@
   "column_break_kopf",
   "immobilie",
   "anzahl_eintraege",
+  "nach_hauptmieter_nachname_sortieren",
   "section_break_bemerkung",
   "bemerkung",
   "section_break_eintraege",
@@ -56,6 +57,13 @@
    "fieldtype": "Int",
    "label": "Anzahl Einträge",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Wenn aktiv, werden die Wohnungen nach dem Nachnamen des ersten Hauptmieters sortiert.",
+   "fieldname": "nach_hauptmieter_nachname_sortieren",
+   "fieldtype": "Check",
+   "label": "Nach erstem Hauptmieter-Nachnamen sortieren"
   },
   {
    "fieldname": "section_break_bemerkung",

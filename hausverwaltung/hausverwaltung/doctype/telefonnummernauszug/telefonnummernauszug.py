@@ -1,7 +1,7 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import getdate, today
+from frappe.utils import cint, getdate, today
 
 from hausverwaltung.hausverwaltung.utils.gebaeudeteil import split_lage_gebaeudeteil
 
@@ -82,19 +82,24 @@ class Telefonnummernauszug(Document):
 				}
 			)
 
-		# Numerisch nach Wohnungs-ID sortieren (Wohnungen ohne ID hinten dran)
 		def _sort_key(g):
 			wid = g.get("wohnung_id")
 			try:
-				return (int(wid) if wid is not None else 999999, g.get("wohnung") or "")
+				wohnung_key = (int(wid) if wid is not None else 999999, g.get("wohnung") or "")
 			except (TypeError, ValueError):
-				return (999999, g.get("wohnung") or "")
+				wohnung_key = (999999, g.get("wohnung") or "")
+
+			if cint(getattr(self, "nach_hauptmieter_nachname_sortieren", 0)):
+				return (_first_hauptmieter_name(g.get("mieter") or []), *wohnung_key)
+			return wohnung_key
 
 		groups.sort(key=_sort_key)
 		return groups
 
 
-def _query_eintraege(stichtag: str, immobilie: str | None) -> list[dict]:
+def _query_eintraege(
+	stichtag: str, immobilie: str | None, nach_hauptmieter_nachname_sortieren: bool = False
+) -> list[dict]:
 	contact_phone_expr = "NULLIF(c.phone, '')"
 	try:
 		if frappe.db.table_exists("Contact Phone"):
@@ -136,6 +141,7 @@ def _query_eintraege(stichtag: str, immobilie: str | None) -> list[dict]:
 				NULLIF(TRIM(CONCAT_WS(', ', c.last_name, c.first_name)), ''),
 				vp.mieter
 			) AS mieter_name,
+			NULLIF(TRIM(c.last_name), '') AS mieter_nachname,
 			vp.rolle AS rolle,
 			NULLIF(TRIM({contact_phone_expr}), '') AS telefon,
 			NULLIF(TRIM(c.mobile_no), '') AS mobil,
@@ -171,30 +177,76 @@ def _query_eintraege(stichtag: str, immobilie: str | None) -> list[dict]:
 		if row.get("telefon") and row.get("mobil") and row["telefon"] == row["mobil"]:
 			row["mobil"] = None
 
-	# Sortierung: primär nach numerischer Wohnungs-ID (Custom-Feld), dann Mieter-Reihenfolge.
-	# Wohnungen ohne ID landen am Ende.
+	wohnung_sort_map = _hauptmieter_sort_map(rows) if nach_hauptmieter_nachname_sortieren else {}
+
 	def _sort_key(r):
 		wid = r.get("wohnung_id")
 		try:
 			wid_int = int(wid) if wid is not None else 999999
 		except (TypeError, ValueError):
 			wid_int = 999999
-		return (wid_int, (r.get("wohnung") or ""), int(r.get("mieter_idx") or 0))
+		wohnung_key = (wid_int, (r.get("wohnung") or ""))
+		if nach_hauptmieter_nachname_sortieren:
+			key = _wohnung_key(r)
+			return (
+				wohnung_sort_map.get(key) or _normalize_sort_value(r.get("mieter_nachname") or r.get("mieter_name")),
+				*wohnung_key,
+				int(r.get("mieter_idx") or 0),
+			)
+		return (*wohnung_key, int(r.get("mieter_idx") or 0))
 
 	rows.sort(key=_sort_key)
 	return rows
 
 
+def _wohnung_key(row: dict) -> tuple[str, str, str]:
+	return (
+		row.get("immobilie") or "",
+		(row.get("gebaeudeteil") or "").strip(),
+		row.get("wohnung") or "",
+	)
+
+
+def _normalize_sort_value(value: str | None) -> str:
+	return (value or "").strip().casefold() or "\uffff"
+
+
+def _hauptmieter_sort_map(rows: list[dict]) -> dict[tuple[str, str, str], str]:
+	sort_map: dict[tuple[str, str, str], tuple[int, str]] = {}
+	for row in rows:
+		if (row.get("rolle") or "").strip() != "Hauptmieter":
+			continue
+		key = _wohnung_key(row)
+		sort_value = _normalize_sort_value(row.get("mieter_nachname") or row.get("mieter_name"))
+		idx = int(row.get("mieter_idx") or 0)
+		current = sort_map.get(key)
+		if current is None or idx < current[0]:
+			sort_map[key] = (idx, sort_value)
+	return {key: value for key, (_idx, value) in sort_map.items()}
+
+
+def _first_hauptmieter_name(mieter: list[dict]) -> str:
+	for row in mieter:
+		if (row.get("rolle") or "").strip() == "Hauptmieter":
+			return _normalize_sort_value(row.get("name"))
+	return _normalize_sort_value(mieter[0].get("name") if mieter else None)
+
+
 @frappe.whitelist()
-def erstelle_und_lade(stichtag: str, immobilie: str | None = None) -> dict:
+def erstelle_und_lade(
+	stichtag: str, immobilie: str | None = None, nach_hauptmieter_nachname_sortieren: int = 0
+) -> dict:
 	"""Legt einen neuen Telefonnummernauszug an und lädt die Einträge sofort."""
 	doc = frappe.new_doc("Telefonnummernauszug")
 	doc.stichtag = getdate(stichtag).isoformat()
 	if immobilie:
 		doc.immobilie = immobilie
+	doc.nach_hauptmieter_nachname_sortieren = cint(nach_hauptmieter_nachname_sortieren)
 	doc.insert()
 
-	rows = _query_eintraege(doc.stichtag, doc.immobilie or None)
+	rows = _query_eintraege(
+		doc.stichtag, doc.immobilie or None, cint(doc.nach_hauptmieter_nachname_sortieren)
+	)
 	for row in rows:
 		doc.append(
 			"eintraege",
@@ -217,7 +269,9 @@ def erstelle_und_lade(stichtag: str, immobilie: str | None = None) -> dict:
 def lade_eintraege(name: str) -> dict:
 	doc = frappe.get_doc("Telefonnummernauszug", name)
 	stichtag = getdate(doc.stichtag or today()).isoformat()
-	rows = _query_eintraege(stichtag, doc.immobilie or None)
+	rows = _query_eintraege(
+		stichtag, doc.immobilie or None, cint(doc.nach_hauptmieter_nachname_sortieren)
+	)
 
 	doc.set("eintraege", [])
 	for row in rows:
