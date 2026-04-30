@@ -214,6 +214,21 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
             ).insert(ignore_permissions=True)
 
         try:
+            if frappe.db.exists("DocType", "Hausverwaltung Einstellungen"):
+                current = frappe.db.get_single_value(
+                    "Hausverwaltung Einstellungen",
+                    "serienbrief_pdf_default_format",
+                )
+                if not current:
+                    frappe.db.set_single_value(
+                        "Hausverwaltung Einstellungen",
+                        "serienbrief_pdf_default_format",
+                        name,
+                    )
+        except Exception:
+            pass
+
+        try:
             frappe.db.commit()
         except Exception:
             pass

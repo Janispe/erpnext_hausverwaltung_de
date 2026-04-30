@@ -162,7 +162,6 @@
    "description": "Wenn aktiv, wird beim Klick auf \"PDF erzeugen\" im Serienbrief Durchlauf der Format-Auswahl-Dialog übersprungen und direkt das Default-Format genutzt."
   },
   {
-   "default": "Serienbrief Dokument",
    "fieldname": "serienbrief_pdf_default_format",
    "fieldtype": "Link",
    "options": "Print Format",
