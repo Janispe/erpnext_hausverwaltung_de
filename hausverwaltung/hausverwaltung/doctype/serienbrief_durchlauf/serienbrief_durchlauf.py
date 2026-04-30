@@ -585,6 +585,7 @@ class SerienbriefDurchlauf(Document):
 		bank_info = self._resolve_bank_info(immobilie_doc)
 		vz_slots = self._resolve_vorauszahlungen(iteration_doc, letter_date)
 		wohnung_zustand = self._resolve_wohnungszustand(wohnungs_doc)
+		mietvertrag_doc = self._resolve_mietvertrag(iteration_doc)
 
 		# Mieter wohnt in der gemieteten Wohnung — wenn keine eigene Adresse am
 		# Customer/Mieter hinterlegt ist, ist die Wohnungs-(Immobilien-)Adresse die
@@ -667,6 +668,8 @@ class SerienbriefDurchlauf(Document):
 			vorauszahlung_4_netto=vz_slots.get("vorauszahlung_4", ""),
 			wohnung_groesse=wohnung_zustand.get("groesse", ""),
 			wohnung_anzahl_zimmer=wohnung_zustand.get("anzahl_zimmer", ""),
+			mietvertrag=mietvertrag_doc,
+			mietvertrag_doc=mietvertrag_doc,
 			iteration_objekt=iteration_doc,
 			iteration_doc=iteration_doc,
 			# ``doc`` als Alias für ``iteration_doc`` — viele bestehende
@@ -1893,6 +1896,26 @@ class SerienbriefDurchlauf(Document):
 			return {}
 
 		return self._address_dict_from_name(address_name)
+
+	def _resolve_mietvertrag(self, iteration_doc):
+		"""Liefert den Mietvertrag NUR wenn er eindeutig zur Iteration gehört.
+
+		- Iteration ist selbst ein Mietvertrag → diesen
+		- Iteration hat ein ``mietvertrag``-Link-Attribut (z.B. BK Mieter,
+		  Dunning) → den verlinkten Mietvertrag
+
+		KEIN Wohnung.aktueller_mietvertrag-Fallback: bei einer Wohnung-Iteration
+		ist nicht klar, welcher Mietvertrag relevant ist (kann ein historischer
+		sein). Lieber StrictUndefined-Crash als falscher Mietvertrag im Brief.
+		"""
+		if iteration_doc is None:
+			return None
+		if getattr(iteration_doc, "doctype", None) == "Mietvertrag":
+			return iteration_doc
+		mv_link = getattr(iteration_doc, "mietvertrag", None)
+		if mv_link:
+			return self._load_doc("Mietvertrag", mv_link)
+		return None
 
 	def _resolve_wohnungszustand(self, wohnungs_doc) -> Dict[str, str]:
 		"""Liefert ``groesse`` (m²) + ``anzahl_zimmer`` aus dem aktuellen
