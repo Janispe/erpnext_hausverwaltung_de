@@ -320,9 +320,17 @@ const hv_vorlage_extract_inline_blocks = (content) => {
 const hv_vorlage_sync_textbausteine_from_content = (frm) => {
 	const content = hv_get_live_template_source(frm);
 	const blockNames = hv_vorlage_extract_inline_blocks(content);
-	const keep = new Set(blockNames);
 	const currentRows = Array.isArray(frm.doc.textbausteine) ? frm.doc.textbausteine : [];
 
+	// Wichtig: Wenn der Content KEINE Inline-Token-Referenzen hat
+	// (`{{ baustein("X") }}`), sind wir im Listen-Modus — die Tabelle ist
+	// dort die alleinige Wahrheit. Auf gar keinen Fall die ganze Tabelle
+	// leerräumen, nur weil der Inline-Sync nichts gefunden hat.
+	if (blockNames.length === 0) {
+		return;
+	}
+
+	const keep = new Set(blockNames);
 	let changed = false;
 
 	// Remove rows that are not referenced in the template text anymore.
@@ -639,6 +647,17 @@ const HV_VORLAGE_SKIP_TYPES = new Set([
 	"Attach Image",
 ]);
 
+const HV_VORLAGE_SKIP_LINK_TARGETS = new Set([
+	"DocType",
+	"DocField",
+	"DocPerm",
+	"DocType Action",
+	"DocType Link",
+	"DocType State",
+	"DocType Layout",
+	"DocType Layout Field",
+]);
+
 const hv_scrub = (value) => {
 	if (!value) return "";
 	if (frappe.model && typeof frappe.model.scrub === "function") {
@@ -667,10 +686,12 @@ const hv_vorlage_is_template_value_type = (valueType) =>
 const hv_vorlage_doctype_exists = async (doctype) => {
 	if (!doctype) return false;
 	try {
-		// `frappe.db.exists` returns truthy on exists; avoids 404 "DocType ... not found"
-		// that `with_doctype` would trigger.
-		const exists = await frappe.db.exists("DocType", doctype);
-		return Boolean(exists);
+		const r = await frappe.call({
+			method: "hausverwaltung.hausverwaltung.utils.serienbrief_placeholder_picker.doctype_exists",
+			args: { doctype },
+			quiet: true,
+		});
+		return Boolean(r.message);
 	} catch (e) {
 		return false;
 	}
@@ -726,6 +747,7 @@ const hv_vorlage_build_tree_nodes = async (
 		if (
 			df.fieldtype === "Link" &&
 			df.options &&
+			!HV_VORLAGE_SKIP_LINK_TARGETS.has(df.options) &&
 			visited &&
 			!visited.has(df.options) &&
 			depth < maxDepth
@@ -844,7 +866,9 @@ const hv_vorlage_build_iteration_tree = async (iterationDoctype) => {
 		}
 
 		if (df.fieldtype === "Link" && df.options) {
-			const targetMeta = await hv_vorlage_load_meta(df.options);
+			const targetMeta = HV_VORLAGE_SKIP_LINK_TARGETS.has(df.options)
+				? null
+				: await hv_vorlage_load_meta(df.options);
 			if (targetMeta) {
 				const childNodes = await hv_vorlage_build_tree_nodes(
 					df.fieldname,
@@ -2053,7 +2077,11 @@ const hv_find_paths = async (startNodes, targetDoctype, maxDepth = 3) => {
 		}
 
 		meta.fields.forEach((df) => {
-			if (df.fieldtype === "Link" && df.options) {
+			if (
+				df.fieldtype === "Link" &&
+				df.options &&
+				!HV_VORLAGE_SKIP_LINK_TARGETS.has(df.options)
+			) {
 				const nextPath = [...current.path, df.fieldname];
 				queue.push({ path: nextPath, doctype: df.options });
 				return;
@@ -2103,7 +2131,11 @@ const hv_collect_reachable_doctypes = async (startNodes, maxDepth = 3) => {
 		}
 
 		meta.fields.forEach((df) => {
-			if ((df.fieldtype === "Link" || df.fieldtype === "Table") && df.options) {
+			if (
+				(df.fieldtype === "Link" || df.fieldtype === "Table") &&
+				df.options &&
+				!(df.fieldtype === "Link" && HV_VORLAGE_SKIP_LINK_TARGETS.has(df.options))
+			) {
 				found.add(df.options);
 				const nextPath = [...current.path, df.fieldname];
 				queue.push({ path: nextPath, doctype: df.options });

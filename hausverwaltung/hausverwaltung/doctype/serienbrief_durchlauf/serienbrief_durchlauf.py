@@ -44,17 +44,72 @@ class _IterationEmpfaengerRow:
 		return dict(self._data)
 
 
+_NONE_ATTR_RE = re.compile(r"^'None' has no attribute '([^']+)'$")
+_OBJ_ATTR_RE = re.compile(r"^'([^']+) object' has no attribute '([^']+)'$")
+_VAR_UNDEFINED_RE = re.compile(r"^'([^']+)' is undefined$")
+
+
+def _humanize_jinja_error(raw: str) -> str:
+	"""Übersetzt häufige Jinja-Fehlerarten in für Hausverwalter lesbare Hinweise.
+
+	Strict-Rendering-Fehler bestehen meist aus einer kurzen englischen
+	Phrase (``'None' has no attribute 'first_name'``). Wir mappen die
+	bekannten Muster auf eine Diagnose plus Hinweis, wo das Datum fehlt —
+	damit klar ist, welcher Datensatz gepflegt werden muss.
+	"""
+	raw = raw.strip()
+	m = _NONE_ATTR_RE.match(raw)
+	if m:
+		field = m.group(1)
+		return _(
+			"Feld <code>{0}</code> kann nicht gelesen werden — der vorgelagerte "
+			"Datensatz ist leer. Bitte prüfen, ob z.B. <strong>Mieter</strong>, "
+			"<strong>Eigentümer</strong>, <strong>Wohnung</strong> oder "
+			"<strong>Mietvertrag</strong> korrekt verknüpft sind."
+		).format(field)
+	m = _OBJ_ATTR_RE.match(raw)
+	if m:
+		obj_path, field = m.group(1), m.group(2)
+		# Doctype-Klassenname aus dem Modul-Pfad extrahieren
+		doctype = obj_path.rsplit(".", 1)[-1] if "." in obj_path else obj_path
+		return _(
+			"Feld <code>{0}</code> existiert nicht im DocType "
+			"<strong>{1}</strong>. Vorlage referenziert ein nicht vorhandenes "
+			"Feld — bitte Vorlage korrigieren."
+		).format(field, doctype)
+	m = _VAR_UNDEFINED_RE.match(raw)
+	if m:
+		var = m.group(1)
+		return _(
+			"Variable <code>{0}</code> ist nicht definiert. Die Vorlage "
+			"erwartet einen Wert, der vom System nicht bereitgestellt wird "
+			"(Mapping-Lücke oder Tippfehler in der Vorlage)."
+		).format(var)
+	return frappe.utils.escape_html(raw)
+
+
 def _render_serienbrief_template(template: str, context: Dict[str, Any]) -> str:
-	"""Render templates for Serienbrief with clearer errors for missing fields."""
+	"""Render templates for Serienbrief with clearer errors for missing fields.
+
+	Verwendet ``StrictUndefined`` statt Frappes Default ``ChainableUndefined``,
+	damit fehlende Variablen sofort als Fehler erscheinen — sonst landet
+	``{{ no such element: ... }}`` als Literal-Text im gerenderten PDF.
+	"""
+	from jinja2 import StrictUndefined
+
 	if not template:
 		return ""
 	if ".__" in template:
 		frappe.throw(_("Illegal template"))
+	# Frappes get_jenv() liefert eine Environment mit ChainableUndefined.
+	# Wir clonen sie + überschreiben undefined → StrictUndefined.
+	jenv = get_jenv().overlay(undefined=StrictUndefined)
 	try:
-		return get_jenv().from_string(template).render(context)
+		return jenv.from_string(template).render(context)
 	except UndefinedError as exc:
 		raw = str(exc) or _("Ein benötigtes Feld fehlt.")
-		msg = _("Fehlendes Feld im Serienbrief: {0}").format(frappe.utils.escape_html(raw))
+		human = _humanize_jinja_error(raw)
+		msg = _("Fehlendes Feld im Serienbrief: {0}").format(human)
 		frappe.throw(title=_("Serienbrief Fehler"), msg=msg)
 	except TemplateError:
 		frappe.throw(
@@ -511,6 +566,12 @@ class SerienbriefDurchlauf(Document):
 		letter_date = self.date or today()
 
 		iteration_doc = getattr(row, "_iteration_doc", None)
+		# Virtuelle Felder über onload triggern (z.B. BK Mieter.differenz). Idempotent.
+		if iteration_doc is not None:
+			try:
+				iteration_doc.run_method("onload")
+			except Exception:
+				pass
 		if not getattr(row, "wohnung", None) and getattr(iteration_doc, "doctype", "") == "Wohnung":
 			row.wohnung = iteration_doc.name
 
@@ -520,6 +581,10 @@ class SerienbriefDurchlauf(Document):
 		mieter_doc = self._load_mieter(row)
 		mieter_address = self._extract_address(self._get_mieter_doctype(), row.mieter)
 		immobilie_address = self._extract_immobilie_address(immobilie_doc)
+		eigentuemer_doc, eigentuemer_address = self._resolve_eigentuemer(immobilie_doc)
+		bank_info = self._resolve_bank_info(immobilie_doc)
+		vz_slots = self._resolve_vorauszahlungen(iteration_doc, letter_date)
+		wohnung_zustand = self._resolve_wohnungszustand(wohnungs_doc)
 
 		# Mieter wohnt in der gemieteten Wohnung — wenn keine eigene Adresse am
 		# Customer/Mieter hinterlegt ist, ist die Wohnungs-(Immobilien-)Adresse die
@@ -577,8 +642,37 @@ class SerienbriefDurchlauf(Document):
 			immobilie_ort=immobilie_address.get("city", ""),
 			immobilie_plz_ort=immobilie_address.get("plz_ort", ""),
 			immobilie_adresse=immobilie_address.get("display", ""),
+			eigentuemer=eigentuemer_doc,
+			eigentuemer_doc=eigentuemer_doc,
+			eigentuemer_address=eigentuemer_address,
+			eigentuemer_strasse=eigentuemer_address.get("street", ""),
+			eigentuemer_plz=eigentuemer_address.get("zip", ""),
+			eigentuemer_ort=eigentuemer_address.get("city", ""),
+			eigentuemer_plz_ort=eigentuemer_address.get("plz_ort", ""),
+			eigentuemer_adresse=eigentuemer_address.get("display", ""),
+			eigentuemer_saldo="",
+			bank_name=bank_info.get("bank_name", ""),
+			bank_iban=bank_info.get("iban", ""),
+			bank_bic=bank_info.get("bic", ""),
+			bank_blz=bank_info.get("blz", ""),
+			bank_konto=bank_info.get("konto", ""),
+			bank_kto_inhaber=bank_info.get("kto_inhaber", ""),
+			vorauszahlung_1=vz_slots.get("vorauszahlung_1", ""),
+			vorauszahlung_2=vz_slots.get("vorauszahlung_2", ""),
+			vorauszahlung_3=vz_slots.get("vorauszahlung_3", ""),
+			vorauszahlung_4=vz_slots.get("vorauszahlung_4", ""),
+			vorauszahlung_1_netto=vz_slots.get("vorauszahlung_1", ""),
+			vorauszahlung_2_netto=vz_slots.get("vorauszahlung_2", ""),
+			vorauszahlung_3_netto=vz_slots.get("vorauszahlung_3", ""),
+			vorauszahlung_4_netto=vz_slots.get("vorauszahlung_4", ""),
+			wohnung_groesse=wohnung_zustand.get("groesse", ""),
+			wohnung_anzahl_zimmer=wohnung_zustand.get("anzahl_zimmer", ""),
 			iteration_objekt=iteration_doc,
 			iteration_doc=iteration_doc,
+			# ``doc`` als Alias für ``iteration_doc`` — viele bestehende
+			# Textbausteine schreiben ``{%- set doc = doc or iteration_doc -%}``,
+			# was mit StrictUndefined schon beim Lesen von ``doc`` crashed.
+			doc=iteration_doc,
 		)
 
 		# Convenience alias: allow templates to access the iteration doc via its scrubbed DocType name
@@ -1692,9 +1786,18 @@ class SerienbriefDurchlauf(Document):
 		if not frappe.db.exists(doctype, name):
 			return None
 		try:
-			return frappe.get_doc(doctype, name)
+			doc = frappe.get_doc(doctype, name)
 		except frappe.DoesNotExistError:
 			return None
+		# ``onload`` füllt virtuelle Felder (z.B. ``Betriebskostenabrechnung
+		# Mieter.differenz``) — Frappe's get_doc ruft onload nur in UI-Pfaden
+		# auf, deswegen hier explizit triggern, sonst fehlen die berechneten
+		# Werte beim Render.
+		try:
+			doc.run_method("onload")
+		except Exception:
+			pass
+		return doc
 
 	def _load_address_doc(self, link_doctype: str | None, link_name: str | None):
 		if not link_doctype or not link_name:
@@ -1790,6 +1893,167 @@ class SerienbriefDurchlauf(Document):
 			return {}
 
 		return self._address_dict_from_name(address_name)
+
+	def _resolve_wohnungszustand(self, wohnungs_doc) -> Dict[str, str]:
+		"""Liefert ``groesse`` (m²) + ``anzahl_zimmer`` aus dem aktuellen
+		Wohnungszustand der Wohnung.
+
+		Pfad: ``Wohnung.aktueller_zustand → Wohnungszustand``. Wenn der
+		Wohnungszustand nicht gepflegt ist, leere Strings — die Vorlage
+		crashed dann mit der humanisierten Fehlermeldung.
+		"""
+		out: Dict[str, str] = {"groesse": "", "anzahl_zimmer": ""}
+		if not wohnungs_doc:
+			return out
+		zustand_name = cstr(getattr(wohnungs_doc, "aktueller_zustand", None) or "").strip()
+		if not zustand_name:
+			return out
+		try:
+			zustand = frappe.get_doc("Wohnungszustand", zustand_name)
+		except frappe.DoesNotExistError:
+			return out
+		groesse = zustand.get("größe") or zustand.get("groesse")
+		if groesse:
+			# m² als formatierte Zahl mit Komma als Dezimaltrenner
+			try:
+				out["groesse"] = f"{float(groesse):.2f}".replace(".", ",")
+			except (TypeError, ValueError):
+				out["groesse"] = cstr(groesse)
+		anz = zustand.get("anzahl_zimmer")
+		if anz is not None:
+			out["anzahl_zimmer"] = cstr(anz)
+		return out
+
+	def _resolve_vorauszahlungen(self, iteration_doc, ref_date) -> Dict[str, str]:
+		"""Liefert ``vorauszahlung_1``..``_4`` als formatierte EUR-Beträge.
+
+		Quelle: ``Mietvertrag.festbetraege`` (Child-Table ``Betriebskosten Festbetrag``)
+		gefiltert nach Gültigkeit zum ``ref_date``. Sortiert nach ``idx`` (= Slot-
+		Reihenfolge in der UI), sodass `vorauszahlung_1` der erste Eintrag ist
+		(typisch BK), `vorauszahlung_2` der zweite (typisch HK) usw.
+
+		Wenn ``iteration_doc`` kein Mietvertrag ist, versuchen wir den Mietvertrag
+		via ``mietvertrag``-Attribut zu finden (z.B. von BK Mieter).
+		"""
+		from frappe.utils import fmt_money, getdate
+
+		out: Dict[str, str] = {}
+		if not iteration_doc:
+			return out
+
+		mv_doc = None
+		if getattr(iteration_doc, "doctype", None) == "Mietvertrag":
+			mv_doc = iteration_doc
+		else:
+			mv_name = getattr(iteration_doc, "mietvertrag", None)
+			if mv_name:
+				mv_doc = self._load_doc("Mietvertrag", mv_name)
+		if not mv_doc:
+			return out
+
+		rows = list(mv_doc.get("festbetraege") or [])
+		if not rows:
+			return out
+
+		ref_d = getdate(ref_date) if ref_date else None
+		valid_rows = []
+		for r in rows:
+			vd = getdate(r.gueltig_von) if r.gueltig_von else None
+			bd = getdate(r.gueltig_bis) if r.gueltig_bis else None
+			if ref_d:
+				if vd and vd > ref_d:
+					continue
+				if bd and bd < ref_d:
+					continue
+			valid_rows.append(r)
+		valid_rows.sort(key=lambda r: int(getattr(r, "idx", 0) or 0))
+
+		for slot, row in enumerate(valid_rows[:4], start=1):
+			betrag = float(getattr(row, "betrag", 0) or 0)
+			out[f"vorauszahlung_{slot}"] = fmt_money(betrag, currency="EUR")
+		return out
+
+	def _resolve_bank_info(self, immobilie_doc) -> Dict[str, str]:
+		"""Resolve Bank-Daten der Immobilie über das Hauptkonto.
+
+		Chain: ``Immobilie.bankkonten[Hauptkonto].konto`` → ``Account``-Doc.
+		Account ist eine GL-Account, die optional über ``bank_account``-Link
+		auf ein ``Bank Account``-Doc zeigt — dort liegen IBAN + BIC.
+
+		Templates referenzieren ``{{ bank_iban }}``, ``{{ bank_bic }}`` etc. —
+		fehlende Werte sind leere Strings (kein UndefinedError).
+		"""
+		empty = {
+			"bank_name": "",
+			"iban": "",
+			"bic": "",
+			"blz": "",
+			"konto": "",
+			"kto_inhaber": "",
+		}
+		if not immobilie_doc:
+			return empty
+		rows = list(immobilie_doc.get("bankkonten") or [])
+		if not rows:
+			return empty
+		# Hauptkonto bevorzugen, sonst erstes Konto
+		hauptkonto_row = next(
+			(r for r in rows if int(getattr(r, "ist_hauptkonto", 0) or 0) == 1),
+			rows[0],
+		)
+		account_name = cstr(getattr(hauptkonto_row, "konto", None) or "").strip()
+		if not account_name:
+			return empty
+		try:
+			account_doc = frappe.get_doc("Account", account_name)
+		except frappe.DoesNotExistError:
+			return empty
+
+		bank_account_name = cstr(account_doc.get("bank_account") or "").strip()
+		out = dict(empty)
+		out["konto"] = account_name
+		if not bank_account_name:
+			# Account ohne Bank-Account-Link: Account-Name als Konto-Bezeichnung
+			out["bank_name"] = cstr(account_doc.get("account_name") or account_name)
+			return out
+		try:
+			bank_acc = frappe.get_doc("Bank Account", bank_account_name)
+		except frappe.DoesNotExistError:
+			return out
+
+		out["bank_name"] = cstr(bank_acc.get("bank") or bank_acc.get("account_name") or "")
+		out["iban"] = cstr(bank_acc.get("iban") or "")
+		out["bic"] = cstr(bank_acc.get("branch_code") or bank_acc.get("swift_number") or "")
+		out["blz"] = cstr(bank_acc.get("branch_code") or "")
+		out["kto_inhaber"] = cstr(bank_acc.get("account_name") or "")
+		return out
+
+	def _resolve_eigentuemer(self, immobilie_doc) -> tuple[Any, Dict[str, str]]:
+		"""Resolve den (ersten) Eigentümer-Contact einer Immobilie + dessen Adresse.
+
+		Eigentümer hängt in der Child-Tabelle ``eigentumer`` der Immobilie als
+		Link auf ``Contact``. Templates referenzieren ``{{ eigentuemer.first_name }}``
+		etc. — wenn keiner gepflegt ist, geben wir ein leeres frappe._dict zurück,
+		damit Jinja im strict_variables-Mode nicht crashed.
+		"""
+		empty = frappe._dict({
+			"first_name": "", "last_name": "", "full_name": "",
+			"salutation": "", "email_id": "", "phone": "",
+		})
+		if not immobilie_doc:
+			return empty, {}
+		rows = list(immobilie_doc.get("eigentumer") or [])
+		if not rows:
+			return empty, {}
+		contact_name = cstr(getattr(rows[0], "contact", None) or "").strip()
+		if not contact_name:
+			return empty, {}
+		try:
+			contact_doc = frappe.get_doc("Contact", contact_name)
+		except frappe.DoesNotExistError:
+			return empty, {}
+		address = self._extract_address("Contact", contact_name)
+		return contact_doc, address
 
 	def _extract_immobilie_address(self, immobilie_doc) -> Dict[str, str]:
 		if not immobilie_doc:

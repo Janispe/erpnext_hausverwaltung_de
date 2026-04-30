@@ -26,7 +26,7 @@ PLACEHOLDER_MAPPING = {
     "B-Anrede1": "{{ (mieter.salutation or mieter.anrede or '') }}",
     "B-Anrede2": "",
     "B-Brief_Anrede1": "{{ (mieter.salutation or mieter.anrede or '') }}",
-    "B_Brief_Anrede2": "",
+    "B-Brief_Anrede2": "",
     "B-Briefanrede+Name": "{{ ((mieter.salutation or mieter.anrede or '') ~ ' ' ~ (mieter.last_name or '')) }}",
     # Alle Vertragspartner im Mietvertrag (z.B. für Adresse/Anredezeile)
     # Hinweis: `baustein()` wird beim Serienbrief-Rendern in den Jinja-Kontext injiziert.
@@ -38,7 +38,10 @@ PLACEHOLDER_MAPPING = {
     "B-Einzug": "{{ mietvertrag.von }}",
     "B-Auszug": "{{ mietvertrag.bis }}",
     "B-Vertr_Abschl": "{{ mietvertrag.creation }}",
-    "B-Anteil1": "{{ mietvertrag.anteil }}",
+    # `B-Anteil1` ist die Wohnungsgröße in m² — kommt aus dem aktuellen
+    # Wohnungszustand (``wohnung.aktueller_zustand → Wohnungszustand.größe``).
+    # Wird im Render-Context als ``wohnung_groesse`` aufgelöst.
+    "B-Anteil1": "{{ wohnung_groesse }}",
 
     # Vorauszahlungen / Saldo
     "B-VZ1": "{{ vorauszahlung_1 }}",
@@ -89,16 +92,37 @@ PLACEHOLDER_MAPPING = {
     "Verw.-Zusatz": "{{ verwalter.zusatz if verwalter is defined and verwalter else '' }}",
 
     # === WOHNUNG ===
-    "Whg-Bez": "{{ wohnung.name }}",
-    "Whg-Art": "{{ wohnung.art }}",
-    "Whg-Nr": "{{ wohnung.nummer }}",
+    # Hinweis: Das `Wohnung`-Doctype hat kein Feld `art` oder `nummer`. Wir
+    # rendern stattdessen die sprechende Bezeichnung (`name__lage_in_der_immobilie`,
+    # mit Fallback auf den Doc-Namen) und unterdrücken `Whg-Art`/`Whg-Nr` —
+    # WinCASA-Mandanten haben in Mama's Bestand ausschließlich Wohnungen.
+    "Whg-Bez": "{{ wohnung.name__lage_in_der_immobilie or wohnung.name }}",
+    "Whg-Art": "",
+    "Whg-Nr": "{{ wohnung.name }}",
 
     # === HAUS / IMMOBILIE ===
+    # Adress-Felder kommen aus dem Serienbrief-Render-Context
+    # (siehe ``_build_context`` in serienbrief_durchlauf.py).
     "H-Bezeichnung": "{{ immobilie.name }}",
-    "H-Nummer": "{{ immobilie.nummer }}",
-    "H-Strasse": "{{ immobilie.address_line1 }}",
-    "H-PLZ_Ort": "{{ (immobilie.pincode or '') + ' ' + (immobilie.city or '') }}",
-    "H-Bank_(1)": "{{ immobilie.bank }}",
+    "H-Bez": "{{ immobilie.name }}",
+    "H-Nummer": "{{ immobilie.name }}",
+    "H-Strasse": "{{ immobilie_strasse }}",
+    "H-PLZ_Ort": "{{ immobilie_plz_ort }}",
+    # Bank-Felder werden im Render-Context aus
+    # ``immobilie.bankkonten[Hauptkonto] → Account → Bank Account``
+    # vorab als ``bank_*``-Keys aufgelöst (siehe ``_resolve_bank_info``).
+    "H-Bank_(1)": "{{ bank_name }}",
+    "H-IBAN_(1)": "{{ bank_iban }}",
+    "H-BIC_(1)": "{{ bank_bic }}",
+    "H-BLZ_(1)": "{{ bank_blz }}",
+    "H-Konto_(1)": "{{ bank_konto }}",
+    "H-Kto_Inhaber_(1)": "{{ bank_kto_inhaber }}",
+
+    # === VORAUSZAHLUNGEN — Suffix-Varianten (Word liefert teils «B-VZ1_Netto») ===
+    "B-VZ1_Netto": "{{ vorauszahlung_1_netto }}",
+    "B-VZ2_Netto": "{{ vorauszahlung_2_netto }}",
+    "B-VZ3_Netto": "{{ vorauszahlung_3_netto }}",
+    "B-VZ4_Netto": "{{ vorauszahlung_4_netto }}",
 
     # === SYSTEM ===
     "Systemdatum": "{{ frappe.utils.formatdate(frappe.utils.nowdate(), 'dd.MM.yyyy') }}",
@@ -108,6 +132,35 @@ PLACEHOLDER_MAPPING = {
 def get_mapping():
     """Gibt das Platzhalter-Mapping zurück."""
     return PLACEHOLDER_MAPPING
+
+
+_TOKEN_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_GUILLEMET_TOKEN_RE = re.compile(r"«([^»]*?)»", re.DOTALL)
+_MOJIBAKE_TOKEN_RE = re.compile(r"Â«([^»]*?)Â»", re.DOTALL)
+
+
+def _normalize_word_tokens(html: str) -> str:
+	"""Entfernt HTML-Tags innerhalb von ``«…»``-Token-Sequenzen.
+
+	Word-HTML splittet Mergefield-Tokens oft über mehrere ``<span>``-Tags
+	auf — z.B. ``«<span>Whg</span>-Art»`` statt ``«Whg-Art»``. Damit das
+	folgende ``str.replace()``-Mapping greift, packen wir den Token-Inhalt
+	wieder zu einem zusammenhängenden Plain-Text zusammen.
+	"""
+	if not html:
+		return html
+
+	def _strip(m):
+		inner = _TOKEN_HTML_TAG_RE.sub("", m.group(1))
+		return f"«{inner}»"
+
+	def _strip_mojibake(m):
+		inner = _TOKEN_HTML_TAG_RE.sub("", m.group(1))
+		return f"Â«{inner}Â»"
+
+	out = _GUILLEMET_TOKEN_RE.sub(_strip, html)
+	out = _MOJIBAKE_TOKEN_RE.sub(_strip_mojibake, out)
+	return out
 
 
 def replace_placeholders(text: str, mapping: dict = None) -> str:
@@ -124,9 +177,15 @@ def replace_placeholders(text: str, mapping: dict = None) -> str:
     if mapping is None:
         mapping = PLACEHOLDER_MAPPING
 
-    result = text
+    # Schritt 1: HTML-Tags innerhalb von Tokens zusammenfassen, sodass
+    # `«<span>Whg</span>-Art»` als `«Whg-Art»` matchbar wird.
+    result = _normalize_word_tokens(text)
 
-    for old_placeholder, new_jinja in mapping.items():
+    # Schritt 2: Längere Tokens zuerst ersetzen (sonst frisst z.B. "B-VZ1"
+    # den Anfang von "B-VZ1_Netto" auf und zurück bleibt "{{ … }}_Netto").
+    sorted_items = sorted(mapping.items(), key=lambda kv: -len(kv[0]))
+
+    for old_placeholder, new_jinja in sorted_items:
         # Varianten mit verschiedenen Encodings
         patterns = [
             f"«{old_placeholder}»",  # Normal

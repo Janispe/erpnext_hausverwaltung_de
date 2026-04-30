@@ -23,3 +23,11 @@ def get_serienbrief_placeholder_picker_js() -> str:
 
 	return _read_picker_source()
 
+
+@frappe.whitelist()
+def doctype_exists(doctype: str | None) -> bool:
+	"""Check DocType existence without requiring direct DocType read permission."""
+
+	if not doctype:
+		return False
+	return bool(frappe.db.exists("DocType", str(doctype).strip()))
