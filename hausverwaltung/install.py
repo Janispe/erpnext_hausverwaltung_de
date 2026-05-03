@@ -1446,6 +1446,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
             {"label": "Kontostand alle Konten", "link_type": "Report", "link_to": "Kontostand alle Konten"},
             {"label": "Mieten Übersicht", "link_type": "Report", "link_to": "Miete pro qm"},
             {"label": "Staffelmieterhöhungen", "link_type": "Report", "link_to": "Staffelmieterhoehungen"},
+            {"label": "Staffelmieten Übersicht", "link_type": "Report", "link_to": "Staffelmieten Uebersicht"},
         ],
     },
     {
