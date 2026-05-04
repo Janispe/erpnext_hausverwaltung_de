@@ -7,6 +7,7 @@ from frappe.utils import getdate
 
 
 BK_ITEM_CODE = "Betriebskosten"
+HK_ITEM_CODE = "Heizkosten"
 
 MONEY_QUANT = Decimal("0.01")
 
@@ -108,10 +109,17 @@ def _customer_segments_for_wohnung(wohnung: str, from_date: Optional[str | date]
 	return segments
 
 
-def _bk_invoice_names_for_wohnung(wohnung: str, from_date: Optional[str | date], to_date: Optional[str | date]) -> List[str]:
+def _bk_invoice_names_for_wohnung(
+	wohnung: str,
+	from_date: Optional[str | date],
+	to_date: Optional[str | date],
+	item_code: str = BK_ITEM_CODE,
+) -> List[str]:
 	"""Liefert alle Sales Invoice Namen (docstatus=1) für die Wohnung über Mieter/Verträge.
 
-	Filter: Artikel 'Betriebskosten' UND (OR über (customer & effektives Datum in Segment)).
+	Filter: gewünschter Artikel-Code UND (OR über (customer & effektives Datum in Segment)).
+	Default ``item_code`` ist ``BK_ITEM_CODE`` (Backward-Compat); für HK
+	``HK_ITEM_CODE`` übergeben.
 	"""
 	eff = _invoice_effective_date_expr("si")
 	segments = _customer_segments_for_wohnung(wohnung, from_date, to_date)
@@ -119,7 +127,7 @@ def _bk_invoice_names_for_wohnung(wohnung: str, from_date: Optional[str | date],
 		return []
 
 	ors: List[str] = []
-	params: Dict[str, Any] = {"bk": BK_ITEM_CODE}
+	params: Dict[str, Any] = {"bk": item_code}
 	for i, seg in enumerate(segments):
 		c = seg["customer"]
 		f = seg.get("start")
@@ -147,10 +155,16 @@ def _bk_invoice_names_for_wohnung(wohnung: str, from_date: Optional[str | date],
 	return [r[0] for r in frappe.db.sql(sql, params)]
 
 
-def get_bk_expected_sum(wohnung: str, from_date: Optional[str | date] = None, to_date: Optional[str | date] = None) -> float:
-	"""Summe der erwarteten BK-Vorauszahlungen über Rechnungen (via Mieter/Verträge).
+def get_bk_expected_sum(
+	wohnung: str,
+	from_date: Optional[str | date] = None,
+	to_date: Optional[str | date] = None,
+	item_code: str = BK_ITEM_CODE,
+) -> float:
+	"""Summe der erwarteten Vorauszahlungen über Rechnungen (via Mieter/Verträge).
 
-	- Sales Invoices (docstatus=1), Artikel 'Betriebskosten'.
+	- Sales Invoices (docstatus=1), gewünschter ``item_code`` (Default
+	  ``BK_ITEM_CODE``; für HK ``HK_ITEM_CODE`` übergeben).
 	- Effektives Datum = Wertstellung oder Posting.
 	- OR‑Filter über (customer & Zeitraum je Vertrag der Wohnung).
 	"""
@@ -160,7 +174,7 @@ def get_bk_expected_sum(wohnung: str, from_date: Optional[str | date] = None, to
 		return 0.0
 
 	ors: List[str] = []
-	params: Dict[str, Any] = {"bk": BK_ITEM_CODE}
+	params: Dict[str, Any] = {"bk": item_code}
 	for i, seg in enumerate(segments):
 		c = seg["customer"]
 		f = seg.get("start")
@@ -197,13 +211,19 @@ def get_bk_expected_sum(wohnung: str, from_date: Optional[str | date] = None, to
 	return _as_money(total)
 
 
-def get_bk_paid_sum(wohnung: str, from_date: Optional[str | date] = None, to_date: Optional[str | date] = None) -> float:
-	"""Summe der tatsächlich geleisteten Zahlungen für BK-Rechnungen (via Mieter/Verträge).
+def get_bk_paid_sum(
+	wohnung: str,
+	from_date: Optional[str | date] = None,
+	to_date: Optional[str | date] = None,
+	item_code: str = BK_ITEM_CODE,
+) -> float:
+	"""Summe der tatsächlich geleisteten Zahlungen für Rechnungen (via Mieter/Verträge).
 
 	- Payment Entries (docstatus=1, payment_type='Receive').
 	- Zahlungen im Zeitraum per Zahlungs‑Wertstellung (Fallback Posting).
-	- Nur der Anteil der Zahlung, der auf BK‑Positionen der Rechnung entfällt, wird gezählt
-	  (proportionaler Anteil: Sum(BK net) / Sum(alle net) je Rechnung).
+	- Nur der Anteil der Zahlung, der auf den gewünschten ``item_code``-Positionen
+	  der Rechnung entfällt, wird gezählt (proportionaler Anteil:
+	  Sum(item net) / Sum(alle net) je Rechnung).
 	"""
 	eff = _payment_effective_date_expr("pe")
 	fd, td = _date_range(from_date, to_date)
@@ -220,7 +240,7 @@ def get_bk_paid_sum(wohnung: str, from_date: Optional[str | date] = None, to_dat
 		"si.customer IN %(customers)s",
 		"EXISTS (SELECT 1 FROM `tabSales Invoice Item` sii WHERE sii.parent = si.name AND sii.item_code = %(bk)s)",
 	]
-	params: Dict[str, Any] = {"customers": tuple(customers), "bk": BK_ITEM_CODE}
+	params: Dict[str, Any] = {"customers": tuple(customers), "bk": item_code}
 	if fd and td:
 		where.append(f"{eff} BETWEEN %(fd)s AND %(td)s")
 		params.update({"fd": fd, "td": td})
@@ -257,15 +277,18 @@ def get_bk_paid_sum_for_period_invoices(
 	wohnung: str,
 	from_date: Optional[str | date] = None,
 	to_date: Optional[str | date] = None,
+	item_code: str = BK_ITEM_CODE,
 ) -> float:
-	"""Summe der bezahlten BK-Anteile für Rechnungen mit Wertstellung im Zeitraum.
+	"""Summe der bezahlten Anteile für Rechnungen mit Wertstellung im Zeitraum.
 
 	Fachregel:
-	- Relevant sind BK-Rechnungen, deren effektives Rechnungsdatum im Abrechnungszeitraum liegt.
-	- Von diesen Rechnungen wird nur der tatsächlich per Payment Entry zugeordnete BK-Anteil gezählt.
+	- Relevant sind Rechnungen mit dem gewünschten ``item_code``, deren effektives
+	  Rechnungsdatum im Abrechnungszeitraum liegt.
+	- Von diesen Rechnungen wird nur der tatsächlich per Payment Entry zugeordnete
+	  Anteil dieser Position gezählt.
 	- Das Zahlungsdatum selbst spielt keine Rolle.
 	"""
-	names = _bk_invoice_names_for_wohnung(wohnung, from_date, to_date)
+	names = _bk_invoice_names_for_wohnung(wohnung, from_date, to_date, item_code=item_code)
 	if not names:
 		return 0.0
 
@@ -294,13 +317,18 @@ def get_bk_paid_sum_for_period_invoices(
 		  AND si.docstatus = 1
 		  AND si.name IN %(names)s
 	"""
-	val = frappe.db.sql(sql, {"bk": BK_ITEM_CODE, "names": tuple(names)})[0][0]
+	val = frappe.db.sql(sql, {"bk": item_code, "names": tuple(names)})[0][0]
 	return _as_money(_to_decimal(val))
 
 
-def get_bk_invoice_details(wohnung: str, from_date: Optional[str | date] = None, to_date: Optional[str | date] = None) -> List[Dict[str, Any]]:
-	"""Details je BK-Rechnung (Name, effektives Datum, Netto BK-Betrag, Outstanding), via Mieter/Verträge."""
-	names = _bk_invoice_names_for_wohnung(wohnung, from_date, to_date)
+def get_bk_invoice_details(
+	wohnung: str,
+	from_date: Optional[str | date] = None,
+	to_date: Optional[str | date] = None,
+	item_code: str = BK_ITEM_CODE,
+) -> List[Dict[str, Any]]:
+	"""Details je Rechnung (Name, effektives Datum, Netto-Betrag der item_code-Position, Outstanding), via Mieter/Verträge."""
+	names = _bk_invoice_names_for_wohnung(wohnung, from_date, to_date, item_code=item_code)
 	if not names:
 		return []
 	eff = _invoice_effective_date_expr("si")
@@ -318,7 +346,7 @@ def get_bk_invoice_details(wohnung: str, from_date: Optional[str | date] = None,
 		GROUP BY si.name
 		ORDER BY effective_date ASC, si.name ASC
 	"""
-	rows = frappe.db.sql(sql, {"names": tuple(names), "bk": BK_ITEM_CODE}, as_dict=True)
+	rows = frappe.db.sql(sql, {"names": tuple(names), "bk": item_code}, as_dict=True)
 	# cast types
 	for r in rows:
 		r["bk_amount"] = _as_money(_to_decimal(r.get("bk_amount")))
@@ -375,13 +403,19 @@ def _clip_to_contract_range(mv: Dict[str, Any], from_date: Optional[str | date],
 	return (start.strftime("%Y-%m-%d") if start else None, end.strftime("%Y-%m-%d") if end else None)
 
 
-def calc_bk_vorauszahlungen(mietvertrag: str, from_date: Optional[str | date], to_date: Optional[str | date]) -> Dict[str, Any]:
-	"""Kompatibilitäts-Funktion: Ermittelt erwartete/geleistete BK‑Vorauszahlungen für einen Mietvertrag.
+def _calc_vorauszahlungen(
+	mietvertrag: str,
+	from_date: Optional[str | date],
+	to_date: Optional[str | date],
+	item_code: str,
+) -> Dict[str, Any]:
+	"""Generische Vorauszahlungs-Berechnung über einen Item-Code.
 
 	- Ermittelt die zugehörige Wohnung und Vertragslaufzeit.
 	- Schneidet den angefragten Zeitraum an die Vertragslaufzeit an.
-	- Nutzt die per‑Wohnung Logik:
-	  Rechnungs-Wertstellung bestimmt die Periode, gezählt wird nur bezahlter BK-Anteil.
+	- Nutzt die per-Wohnung-Logik:
+	  Rechnungs-Wertstellung bestimmt die Periode, gezählt wird nur bezahlter
+	  Anteil der jeweiligen Item-Code-Position.
 	Rückgabe: { expected_total, actual_total }
 	"""
 	mv = frappe.db.get_value("Mietvertrag", mietvertrag, ["wohnung", "von", "bis"], as_dict=True)
@@ -396,6 +430,23 @@ def calc_bk_vorauszahlungen(mietvertrag: str, from_date: Optional[str | date], t
 		# kein Überlapp mit Vertragszeitraum
 		return {"expected_total": 0.0, "actual_total": 0.0}
 
-	expected = _quantize_money(_to_decimal(get_bk_expected_sum(whg, fd, td)))
-	paid = _quantize_money(_to_decimal(get_bk_paid_sum_for_period_invoices(whg, fd, td)))
+	expected = _quantize_money(_to_decimal(get_bk_expected_sum(whg, fd, td, item_code=item_code)))
+	paid = _quantize_money(_to_decimal(get_bk_paid_sum_for_period_invoices(whg, fd, td, item_code=item_code)))
 	return {"expected_total": _as_money(expected), "actual_total": _as_money(paid)}
+
+
+def calc_bk_vorauszahlungen(mietvertrag: str, from_date: Optional[str | date], to_date: Optional[str | date]) -> Dict[str, Any]:
+	"""Ermittelt erwartete/geleistete BK-Vorauszahlungen für einen Mietvertrag."""
+	return _calc_vorauszahlungen(mietvertrag, from_date, to_date, item_code=BK_ITEM_CODE)
+
+
+def calc_hk_vorauszahlungen(mietvertrag: str, from_date: Optional[str | date], to_date: Optional[str | date]) -> Dict[str, Any]:
+	"""Ermittelt erwartete/geleistete HK-Vorauszahlungen für einen Mietvertrag.
+
+	Identisches Verfahren wie ``calc_bk_vorauszahlungen``, nur mit Item-Code
+	``Heizkosten`` statt ``Betriebskosten``. Quelle sind die monatlichen
+	Mietrechnungen — die Heizkosten-Position pro Rechnung wird per
+	``custom_wertstellungsdatum`` (= Leistungszeitraum) dem Abrechnungs-
+	zeitraum zugeordnet, und nur tatsächlich bezahlter Anteil zählt.
+	"""
+	return _calc_vorauszahlungen(mietvertrag, from_date, to_date, item_code=HK_ITEM_CODE)

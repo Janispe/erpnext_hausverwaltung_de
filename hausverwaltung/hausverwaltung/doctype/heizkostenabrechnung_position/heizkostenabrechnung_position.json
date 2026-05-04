@@ -1,0 +1,104 @@
+{
+ "actions": [],
+ "creation": "2026-04-30 05:30:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "mietvertrag",
+  "customer",
+  "wohnung",
+  "vorauszahlungen",
+  "kosten_gesamt",
+  "differenz",
+  "heizkostenabrechnung_mieter",
+  "child_docstatus"
+ ],
+ "fields": [
+  {
+   "fieldname": "mietvertrag",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Mietvertrag",
+   "options": "Mietvertrag",
+   "read_only": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Mieter",
+   "options": "Customer",
+   "read_only": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "wohnung",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Wohnung",
+   "options": "Wohnung",
+   "read_only": 1,
+   "columns": 2
+  },
+  {
+   "description": "Vorbefüllt aus den Mietrechnungen (tatsächlich bezahlt im Zeitraum). Editierbar im Mieter-Doc, nicht hier.",
+   "fieldname": "vorauszahlungen",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Vorauszahlung",
+   "precision": "2",
+   "read_only": 1,
+   "columns": 1
+  },
+  {
+   "description": "Heizkosten-Gesamtbetrag aus der Wärmedienst-Abrechnung (vor Vorauszahlungs-Verrechnung).",
+   "fieldname": "kosten_gesamt",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Kosten gesamt",
+   "precision": "2",
+   "columns": 1
+  },
+  {
+   "description": "Kosten gesamt − Vorauszahlung. Positiv = Nachzahlung, negativ = Guthaben.",
+   "fieldname": "differenz",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Differenz",
+   "precision": "2",
+   "read_only": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "heizkostenabrechnung_mieter",
+   "fieldtype": "Link",
+   "in_list_view": 0,
+   "label": "Mieter-Abrechnung",
+   "options": "Heizkostenabrechnung Mieter",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "child_docstatus",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Child docstatus",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-30 05:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Heizkostenabrechnung Position",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

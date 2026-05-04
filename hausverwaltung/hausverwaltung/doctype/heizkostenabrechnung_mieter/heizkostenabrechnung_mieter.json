@@ -1,0 +1,307 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "Prompt",
+ "creation": "2026-04-30 04:30:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "stammdaten_section",
+  "mietvertrag",
+  "customer",
+  "column_break_stamm",
+  "wohnung",
+  "immobilie",
+  "zeitraum_section",
+  "von",
+  "bis",
+  "column_break_zeitraum",
+  "datum",
+  "waermedienst_section",
+  "waermedienst",
+  "waermedienst_referenz",
+  "column_break_dienst",
+  "pdf_anhang",
+  "betraege_section",
+  "vorauszahlungen_ist",
+  "vorauszahlungen_soll",
+  "column_break_betrag",
+  "vorauszahlungen",
+  "kosten_gesamt",
+  "differenz",
+  "abrechnung_ausgeglichen",
+  "verschickt",
+  "verknuepfungen_section",
+  "heizkostenabrechnung_immobilie",
+  "sales_invoice",
+  "credit_note",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "stammdaten_section",
+   "fieldtype": "Section Break",
+   "label": "Stammdaten"
+  },
+  {
+   "fieldname": "mietvertrag",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Mietvertrag",
+   "options": "Mietvertrag",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "mietvertrag.kunde",
+   "fetch_if_empty": 1,
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Mieter (Customer)",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_stamm",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "mietvertrag.wohnung",
+   "fetch_if_empty": 1,
+   "fieldname": "wohnung",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Wohnung",
+   "options": "Wohnung",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "wohnung.immobilie",
+   "fetch_if_empty": 1,
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Immobilie",
+   "options": "Immobilie",
+   "read_only": 1
+  },
+  {
+   "fieldname": "zeitraum_section",
+   "fieldtype": "Section Break",
+   "label": "Abrechnungszeitraum"
+  },
+  {
+   "fieldname": "von",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Von",
+   "reqd": 1
+  },
+  {
+   "fieldname": "bis",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Bis",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_zeitraum",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Today",
+   "fieldname": "datum",
+   "fieldtype": "Date",
+   "label": "Belegdatum"
+  },
+  {
+   "fieldname": "waermedienst_section",
+   "fieldtype": "Section Break",
+   "label": "Wärmedienst"
+  },
+  {
+   "fieldname": "waermedienst",
+   "fieldtype": "Link",
+   "label": "Wärmedienst (Lieferant)",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "waermedienst_referenz",
+   "fieldtype": "Data",
+   "label": "Abrechnungs-Nr. beim Wärmedienst"
+  },
+  {
+   "fieldname": "column_break_dienst",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "pdf_anhang",
+   "fieldtype": "Attach",
+   "label": "Mieter-Auszug (PDF)"
+  },
+  {
+   "fieldname": "betraege_section",
+   "fieldtype": "Section Break",
+   "label": "Beträge"
+  },
+  {
+   "description": "Tatsächlich gezahlt im Zeitraum (Heizkosten-Position aus Mietrechnungen, gefiltert via Wertstellungsdatum).",
+   "fieldname": "vorauszahlungen_ist",
+   "fieldtype": "Float",
+   "is_virtual": 1,
+   "label": "Vorauszahlungen IST",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "description": "Laut Mietrechnungen erwartete Heizkosten-Vorauszahlung im Zeitraum.",
+   "fieldname": "vorauszahlungen_soll",
+   "fieldtype": "Float",
+   "is_virtual": 1,
+   "label": "Vorauszahlungen SOLL",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_betrag",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Wird beim Mietvertrag-Wechsel oder Zeitraum-Änderung mit IST vorbefüllt — kann übersteuert werden, falls der Wärmedienst einen anderen Wert ausweist.",
+   "fieldname": "vorauszahlungen",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Vorauszahlungen (Abrechnung)",
+   "options": "EUR"
+  },
+  {
+   "description": "Heizkosten-Gesamtbetrag aus der Wärmedienst-Abrechnung (vor Vorauszahlungs-Verrechnung).",
+   "fieldname": "kosten_gesamt",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Kosten gesamt (Wärmedienst)",
+   "precision": "2",
+   "reqd": 1
+  },
+  {
+   "description": "Kosten gesamt − Vorauszahlungen. Positiv = Nachzahlung, negativ = Guthaben.",
+   "fieldname": "differenz",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "is_virtual": 1,
+   "label": "Differenz",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "abrechnung_ausgeglichen",
+   "fieldtype": "Check",
+   "label": "Ausgeglichen",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "default": "0",
+   "fieldname": "verschickt",
+   "fieldtype": "Check",
+   "label": "Verschickt"
+  },
+  {
+   "fieldname": "verknuepfungen_section",
+   "fieldtype": "Section Break",
+   "label": "Verknüpfte Belege"
+  },
+  {
+   "allow_on_submit": 1,
+   "description": "Wird beim Bulk-Anlegen über die Sammel-Abrechnung gesetzt. Manuell angelegte HK-Mieter haben dieses Feld leer.",
+   "fieldname": "heizkostenabrechnung_immobilie",
+   "fieldtype": "Link",
+   "label": "Sammel-Abrechnung (Immobilie)",
+   "options": "Heizkostenabrechnung Immobilie",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "sales_invoice",
+   "fieldtype": "Link",
+   "label": "Sales Invoice (Nachzahlung)",
+   "options": "Sales Invoice",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "credit_note",
+   "fieldtype": "Link",
+   "label": "Credit Note (Guthaben)",
+   "options": "Sales Invoice",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Heizkostenabrechnung Mieter",
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-04-30 04:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Heizkostenabrechnung Mieter",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "cancel": 1,
+   "submit": 1,
+   "amend": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter (Buchung)",
+   "share": 1,
+   "cancel": 1,
+   "submit": 1,
+   "amend": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter",
+   "share": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

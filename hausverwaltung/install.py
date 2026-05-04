@@ -1423,6 +1423,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         "icon": "accounting",
         "links": [
             {"label": "Betriebskostenabrechnung erstellen", "link_type": "DocType", "link_to": "Betriebskostenabrechnung Immobilie"},
+            {"label": "Heizkostenabrechnung erstellen", "link_type": "DocType", "link_to": "Heizkostenabrechnung Immobilie"},
             {"label": "Betriebskosten Art", "link_type": "DocType", "link_to": "Betriebskostenart"},
         ],
     },
