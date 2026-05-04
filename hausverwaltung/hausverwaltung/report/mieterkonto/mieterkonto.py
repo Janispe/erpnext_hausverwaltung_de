@@ -23,9 +23,17 @@ CATEGORY_LABELS = {
 }
 ITEM_CATEGORY_MAP = {
 	"Miete": "miete",
+	"Untermietzuschlag": "miete",
+	"Garage/Stellplatz": "miete",
 	"Betriebskosten": "betriebskosten",
 	"Heizkosten": "heizkosten",
 	"Guthaben/Nachzahlungen": "guthaben_nachzahlungen",
+	# BK-Settlement-Items (aus Betriebskostenabrechnung Mieter)
+	"BK Nachzahlung": "guthaben_nachzahlungen",
+	"BK Guthaben": "guthaben_nachzahlungen",
+	# HK-Settlement-Items (aus Heizkostenabrechnung Mieter)
+	"HK Nachzahlung": "guthaben_nachzahlungen",
+	"HK Guthaben": "guthaben_nachzahlungen",
 }
 TOLERANCE = 0.01
 
