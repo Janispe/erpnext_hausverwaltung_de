@@ -351,6 +351,34 @@ class Mietvertrag(Document):
 				return None
 		return None
 
+	def get_trennstreifen_context(self) -> dict:
+		"""Render-Context für das Trennstreifen Print Format."""
+		from hausverwaltung.hausverwaltung.utils.mieter_name import get_hauptmieter_contacts
+		from hausverwaltung.hausverwaltung.utils import trennstreifen as ts
+
+		hauptmieter = get_hauptmieter_display_name(self.mieter)
+		contacts = get_hauptmieter_contacts(self.mieter)
+		kontakte = ts.get_contact_kontakte(contacts[0]) if contacts else {}
+
+		wohnung_info = ts.get_wohnung_adresse(self.wohnung)
+		qr_url = frappe.utils.get_url(f"/app/mietvertrag/{self.name}")
+
+		return {
+			"hauptmieter": hauptmieter,
+			"wohnung_adresse": wohnung_info["adresse"],
+			"wohnung_gebaeudeteil": wohnung_info["gebaeudeteil"],
+			"wohnung_lage": wohnung_info["lage"],
+			"von": self.von,
+			"bis": self.bis,
+			"telefon": kontakte.get("telefon", ""),
+			"mobil": kontakte.get("mobil", ""),
+			"email": kontakte.get("email", ""),
+			"vormieter": ts.get_vormieter_display_name(
+				self.wohnung, self.von, exclude=self.name
+			),
+			"qr_data_url": ts.make_qr_data_url(qr_url),
+		}
+
 	@property
 	def bk_vorauszahlung_ytd_bezahlt(self) -> float:
 		"""Summe der in diesem Kalenderjahr gezahlten Betriebskostenvorauszahlungen (YTD).
