@@ -2,6 +2,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt
 from hausverwaltung.hausverwaltung.utils.immobilie_accounts import get_immobilie_account_map
+from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
 
 def execute(filters=None):
     filters = filters or {}
@@ -12,6 +13,7 @@ def execute(filters=None):
     chart = None
     summary = None
 
+    enrich_link_titles(data, cols)
     return cols, data, message, chart, summary
 
 def get_columns(f):

@@ -11,6 +11,7 @@ from frappe.utils import flt, getdate, nowdate
 from hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff import (
 	is_receivable_writeoff_journal_entry,
 )
+from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
 
 
 CATEGORIES = ("miete", "betriebskosten", "heizkosten", "guthaben_nachzahlungen")
@@ -58,7 +59,9 @@ def execute(filters=None):
 	transactions.sort(key=_transaction_sort_key)
 
 	rows, summary_totals = _build_rows(transactions, filters)
-	return _get_columns(filters), rows, None, None, _get_report_summary(summary_totals)
+	columns = _get_columns(filters)
+	enrich_link_titles(rows, columns)
+	return columns, rows, None, None, _get_report_summary(summary_totals)
 
 
 def _validate_filters(filters):

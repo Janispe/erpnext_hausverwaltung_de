@@ -1,6 +1,8 @@
 import frappe
 from frappe.utils import add_months, flt, getdate, today
 
+from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
+
 
 def execute(filters=None):
     filters = frappe._dict(filters or {})
@@ -95,7 +97,9 @@ def execute(filters=None):
             },
         ]
 
-    return get_columns(), rows, None, summary
+    columns = get_columns()
+    enrich_link_titles(rows, columns)
+    return columns, rows, None, summary
 
 
 def get_columns():

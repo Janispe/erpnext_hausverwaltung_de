@@ -1,6 +1,7 @@
 import frappe
 
 from hausverwaltung.hausverwaltung.utils.gebaeudeteil import split_lage_gebaeudeteil
+from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
 
 
 def execute(filters=None):
@@ -213,4 +214,5 @@ def execute(filters=None):
         },
     ]
 
+    enrich_link_titles(data, columns)
     return columns, data

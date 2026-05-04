@@ -14,13 +14,17 @@ from __future__ import annotations
 import frappe
 from frappe import _
 
+from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
+
 
 COLUMNS = [
 	{"fieldname": "von", "fieldtype": "Date", "label": _("Datum Erhöhung"), "width": 120},
 	{"fieldname": "immobilie", "fieldtype": "Link", "options": "Immobilie", "label": _("Immobilie"), "width": 160},
 	{"fieldname": "wohnung", "fieldtype": "Link", "options": "Wohnung", "label": _("Wohnung"), "width": 220},
-	{"fieldname": "mietvertrag", "fieldtype": "Link", "options": "Mietvertrag", "label": _("Mietvertrag"), "width": 260},
-	{"fieldname": "kunde", "fieldtype": "Link", "options": "Customer", "label": _("Mieter"), "width": 200},
+	# Mieter-Name als Label, Klick öffnet aber den Mietvertrag (= dort steht
+	# die Staffelmiete). ``mietvertrag_name`` wird im SQL aus tabCustomer
+	# gezogen — der globale link_title_hook zeigt das als Anzeige.
+	{"fieldname": "mietvertrag", "fieldtype": "Link", "options": "Mietvertrag", "label": _("Mieter"), "width": 240},
 	{"fieldname": "alte_miete", "fieldtype": "Currency", "options": "€", "label": _("Alte Miete"), "width": 110},
 	{"fieldname": "neue_miete", "fieldtype": "Currency", "options": "€", "label": _("Neue Miete"), "width": 110},
 	{"fieldname": "differenz_eur", "fieldtype": "Currency", "options": "€", "label": _("± €"), "width": 100},
@@ -81,7 +85,7 @@ def execute(filters: dict | None = None):
 			w.immobilie                         AS immobilie,
 			mv.wohnung                          AS wohnung,
 			s.mietvertrag                       AS mietvertrag,
-			mv.kunde                            AS kunde,
+			c.customer_name                     AS mietvertrag_name,
 			s.alte_miete                        AS alte_miete,
 			s.neue_miete                        AS neue_miete,
 			(s.neue_miete - s.alte_miete)       AS differenz_eur,
@@ -89,6 +93,7 @@ def execute(filters: dict | None = None):
 		FROM staffeln s
 		JOIN `tabMietvertrag` mv ON mv.name = s.mietvertrag
 		JOIN `tabWohnung`     w  ON w.name  = mv.wohnung
+		LEFT JOIN `tabCustomer` c ON c.name  = mv.kunde
 		WHERE s.alte_miete IS NOT NULL
 		  AND s.neue_miete IS NOT NULL
 		  {where_clause}
@@ -96,4 +101,5 @@ def execute(filters: dict | None = None):
 	"""
 
 	rows = frappe.db.sql(query, params, as_dict=True)
+	enrich_link_titles(rows, COLUMNS)
 	return COLUMNS, rows

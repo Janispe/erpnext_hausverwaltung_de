@@ -23,14 +23,21 @@ from typing import Any
 import frappe
 from frappe import _
 
+from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
+
 
 def _build_columns(max_future_slots: int) -> list[dict[str, Any]]:
 	cols: list[dict[str, Any]] = [
 		{
+			# Spalte zeigt den Mieter-Namen als Label, Klick öffnet aber den
+			# Mietvertrag (= dort stehen die Staffeln). ``mietvertrag_name``
+			# wird im Backend pro Row mit ``customer_name`` befüllt — der
+			# globale link_title_hook (siehe public/js/link_title_hook.js)
+			# pickt das auf und zeigt's als Anzeige-Text.
 			"fieldname": "mietvertrag",
 			"fieldtype": "Link",
 			"options": "Mietvertrag",
-			"label": _("Mietvertrag"),
+			"label": _("Mieter"),
 			"width": 240,
 		},
 		{
@@ -46,13 +53,6 @@ def _build_columns(max_future_slots: int) -> list[dict[str, Any]]:
 			"options": "Wohnung",
 			"label": _("Wohnung"),
 			"width": 200,
-		},
-		{
-			"fieldname": "kunde",
-			"fieldtype": "Link",
-			"options": "Customer",
-			"label": _("Mieter"),
-			"width": 180,
 		},
 		{
 			"fieldname": "aktuelle_miete",
@@ -148,10 +148,12 @@ def execute(filters: dict | None = None):
 			sm.idx          AS idx,
 			mv.wohnung      AS wohnung,
 			mv.kunde        AS kunde,
+			c.customer_name AS kunde_anzeige,
 			w.immobilie     AS immobilie
 		FROM `tabStaffelmiete` sm
 		JOIN `tabMietvertrag` mv ON mv.name = sm.parent
 		JOIN `tabWohnung`     w  ON w.name  = mv.wohnung
+		LEFT JOIN `tabCustomer` c ON c.name = mv.kunde
 		WHERE {where_clause}
 		ORDER BY sm.parent, sm.von, sm.idx
 		""",
@@ -169,6 +171,11 @@ def execute(filters: dict | None = None):
 			mv,
 			{
 				"mietvertrag": mv,
+				# ``mietvertrag_name`` wird vom JS-Hook als Anzeigetext der
+				# Mietvertrag-Link-Spalte genutzt — wir setzen ihn auf den
+				# sauberen Customer-Namen, damit der Mieter-Name als Label
+				# erscheint (Klick öffnet aber den Mietvertrag mit Staffeln).
+				"mietvertrag_name": r.get("kunde_anzeige") or r.get("kunde"),
 				"wohnung": r["wohnung"],
 				"kunde": r["kunde"],
 				"immobilie": r["immobilie"],
@@ -253,4 +260,9 @@ def execute(filters: dict | None = None):
 	result.sort(key=_sort_key)
 
 	columns = _build_columns(max_future_slots)
+	# Universelle Anreicherung: für alle Link-Spalten (kunde, mietvertrag,
+	# wohnung, immobilie) wird der ``title_field``-Wert der Ziel-Doctype als
+	# ``<fieldname>_name`` in jede Row eingebaut. Frappe rendert dann das
+	# Title statt der ID — Klick öffnet weiterhin die ID.
+	enrich_link_titles(result, columns)
 	return columns, result

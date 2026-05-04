@@ -4,6 +4,8 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, add_months, cint, flt, get_first_day, get_last_day, getdate
 
+from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
+
 INVOICE_TYPES = ("Miete", "Betriebskosten", "Heizkosten")
 ITEM_CODE_BY_TYP = {
     "Miete": "Miete",
@@ -88,7 +90,9 @@ def execute(filters=None):
                 )
 
     rows.sort(key=lambda r: (r.get("monat") or "", r.get("wohnung") or "", r.get("mietvertrag") or "", r.get("typ") or ""))
-    return get_columns(), rows
+    columns = get_columns()
+    enrich_link_titles(rows, columns)
+    return columns, rows
 
 
 def get_columns():

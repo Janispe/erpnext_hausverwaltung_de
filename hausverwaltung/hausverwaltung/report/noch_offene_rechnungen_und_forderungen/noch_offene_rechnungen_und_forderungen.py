@@ -3,6 +3,7 @@ from frappe import _
 from frappe.utils import flt, getdate, nowdate
 
 from erpnext.accounts.report.accounts_receivable.accounts_receivable import ReceivablePayableReport
+from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
 from hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff import (
 	PARTLY_PAID_AND_WRITTEN_OFF_STATUS,
 	WRITTEN_OFF_STATUS,
@@ -21,7 +22,9 @@ def execute(filters=None):
 		rows.extend(_get_rows_for_mode(filters, report_mode))
 
 	rows.sort(key=lambda row: _sort_key(row, filters))
-	return _get_columns(), rows
+	columns = _get_columns()
+	enrich_link_titles(rows, columns)
+	return columns, rows
 
 
 def _get_rows_for_mode(filters, mode):
