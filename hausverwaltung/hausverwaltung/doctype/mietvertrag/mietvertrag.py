@@ -365,6 +365,7 @@ class Mietvertrag(Document):
 
 		return {
 			"hauptmieter": hauptmieter,
+			"wohnung_id": wohnung_info["id"],
 			"wohnung_adresse": wohnung_info["adresse"],
 			"wohnung_gebaeudeteil": wohnung_info["gebaeudeteil"],
 			"wohnung_lage": wohnung_info["lage"],
@@ -374,6 +375,9 @@ class Mietvertrag(Document):
 			"mobil": kontakte.get("mobil", ""),
 			"email": kontakte.get("email", ""),
 			"vormieter": ts.get_vormieter_display_name(
+				self.wohnung, self.von, exclude=self.name
+			),
+			"nachmieter": ts.get_nachmieter_display_name(
 				self.wohnung, self.von, exclude=self.name
 			),
 			"qr_data_url": ts.make_qr_data_url(qr_url),

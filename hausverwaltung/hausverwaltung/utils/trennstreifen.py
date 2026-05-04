@@ -39,10 +39,46 @@ def get_vormieter_display_name(
 	if not rows:
 		return ""
 
-	prev_name = rows[0].get("name")
+	return _hauptmieter_for_mietvertrag(rows[0].get("name"))
+
+
+def get_nachmieter_display_name(
+	wohnung: str | None,
+	von: object,
+	exclude: str | None = None,
+) -> str:
+	"""Display name of the Hauptmieter of the next Mietvertrag for the same Wohnung.
+
+	Picks the contract with the smallest `von > von` (excluding `exclude` if given).
+	Returns empty string when no successor contract exists.
+	"""
+	wohnung_name = (wohnung or "").strip()
+	if not wohnung_name or not von:
+		return ""
+
+	conditions = ["wohnung = %(wohnung)s", "von IS NOT NULL", "von > %(von)s", "docstatus != 2"]
+	params: dict = {"wohnung": wohnung_name, "von": von}
+	if exclude:
+		conditions.append("name != %(exclude)s")
+		params["exclude"] = exclude
+
+	rows = frappe.db.sql(
+		f"SELECT name FROM `tabMietvertrag` WHERE {' AND '.join(conditions)} ORDER BY von ASC LIMIT 1",
+		params,
+		as_dict=True,
+	)
+	if not rows:
+		return ""
+
+	return _hauptmieter_for_mietvertrag(rows[0].get("name"))
+
+
+def _hauptmieter_for_mietvertrag(mietvertrag_name: str | None) -> str:
+	if not mietvertrag_name:
+		return ""
 	mieter_rows = frappe.get_all(
 		"Vertragspartner",
-		filters={"parenttype": "Mietvertrag", "parent": prev_name},
+		filters={"parenttype": "Mietvertrag", "parent": mietvertrag_name},
 		fields=["mieter", "rolle"],
 		order_by="idx asc",
 	)
@@ -132,7 +168,7 @@ def get_wohnung_adresse(wohnung_name: str | None) -> dict:
 	wohnung = frappe.db.get_value(
 		"Wohnung",
 		name,
-		["immobilie", "gebaeudeteil", "name__lage_in_der_immobilie"],
+		["immobilie", "gebaeudeteil", "name__lage_in_der_immobilie", "id"],
 		as_dict=True,
 	) or {}
 
@@ -151,4 +187,5 @@ def get_wohnung_adresse(wohnung_name: str | None) -> dict:
 		"adresse": adresse,
 		"gebaeudeteil": (wohnung.get("gebaeudeteil") or "").strip(),
 		"lage": (wohnung.get("name__lage_in_der_immobilie") or "").strip(),
+		"id": wohnung.get("id"),
 	}
