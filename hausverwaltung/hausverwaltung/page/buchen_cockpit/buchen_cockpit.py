@@ -12,6 +12,7 @@ from typing import Any
 
 import frappe
 from frappe.utils import add_days, cstr, getdate, nowdate
+from frappe.utils.file_manager import save_file
 
 from hausverwaltung.hausverwaltung.utils.buchung import ensure_default_service_item
 
@@ -541,6 +542,8 @@ def create_purchase_invoice(**kwargs) -> dict:
 
     pi.insert(ignore_permissions=True)
 
+    _attach_source_file(pi, kwargs.get("attached_file_url"))
+
     submit_doc_raw = kwargs.get("submit_doc", 1)
     submit_flag = (
         bool(int(submit_doc_raw))
@@ -557,6 +560,31 @@ def create_purchase_invoice(**kwargs) -> dict:
             f"Eingangsrechnung {pi.name} wurde als Entwurf gespeichert.", alert=True
         )
     return {"name": pi.name, "submitted": submit_flag}
+
+
+def _attach_source_file(pi, file_url: str | None) -> None:
+    """Hängt das Quell-PDF aus der LLM-Extraktion an die Purchase Invoice an.
+
+    Pattern aus integrations/paperless.py:1031.
+    """
+    if not file_url:
+        return
+    file_name = frappe.db.get_value("File", {"file_url": file_url}, "name")
+    if not file_name:
+        return
+    file_doc = frappe.get_doc("File", file_name)
+    try:
+        content = file_doc.get_content()
+    except Exception:
+        return
+    save_file(
+        file_doc.file_name,
+        content,
+        "Purchase Invoice",
+        pi.name,
+        is_private=1,
+        df=None,
+    )
 
 
 @frappe.whitelist()
@@ -675,6 +703,38 @@ def create_sales_invoice(**kwargs) -> dict:
     else:
         frappe.msgprint(f"Rechnung {si.name} wurde als Entwurf gespeichert.", alert=True)
     return {"name": si.name, "submitted": submit_flag}
+
+
+# ---------------------------------------------------------------------------
+# LLM-basierte Rechnungsextraktion
+# ---------------------------------------------------------------------------
+
+
+@frappe.whitelist()
+def extract_invoice_from_file(file_url: str) -> dict:
+    """Liest ein hochgeladenes PDF und liefert Vorschläge zum Vorbefüllen des
+    Eingangsrechnungs-Dialogs.
+
+    Frontend ruft das nach dem Upload, vor dem Öffnen des PI-Dialogs.
+    """
+    from hausverwaltung.hausverwaltung.services.invoice_extraction import (
+        extract_from_file_url,
+    )
+    from hausverwaltung.hausverwaltung.services.mistral_client import (
+        MistralPermanentError,
+        MistralTransientError,
+    )
+
+    if not (file_url or "").strip():
+        frappe.throw("Bitte eine PDF-Datei hochladen.")
+    try:
+        return extract_from_file_url(file_url)
+    except MistralPermanentError as exc:
+        frappe.throw(str(exc))
+    except MistralTransientError as exc:
+        frappe.throw(
+            f"Mistral-Aufruf fehlgeschlagen, bitte später erneut versuchen: {exc}"
+        )
 
 
 # ---------------------------------------------------------------------------

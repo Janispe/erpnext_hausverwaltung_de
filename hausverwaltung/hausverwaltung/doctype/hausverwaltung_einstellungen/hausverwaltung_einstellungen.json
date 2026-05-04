@@ -16,6 +16,14 @@
   "ollama_base_url",
   "ollama_model",
   "ollama_timeout_seconds",
+  "mistral_section",
+  "mistral_enabled",
+  "mistral_api_key",
+  "mistral_base_url",
+  "mistral_text_model",
+  "mistral_vision_model",
+  "mistral_timeout_seconds",
+  "mistral_vision_fallback",
   "writeoff_section",
   "abschreibungskonto_forderungen",
   "income_section",
@@ -94,6 +102,57 @@
    "fieldname": "ollama_timeout_seconds",
    "fieldtype": "Int",
    "label": "Ollama Timeout (Sekunden)"
+  },
+  {
+   "fieldname": "mistral_section",
+   "fieldtype": "Section Break",
+   "label": "Mistral (Cloud)"
+  },
+  {
+   "default": "0",
+   "fieldname": "mistral_enabled",
+   "fieldtype": "Check",
+   "label": "Mistral aktiv",
+   "description": "Aktiviert PDF-Rechnungsanalyse via Mistral Cloud (EU). Erfordert API-Key."
+  },
+  {
+   "fieldname": "mistral_api_key",
+   "fieldtype": "Password",
+   "label": "Mistral API-Key",
+   "description": "API-Key aus console.mistral.ai. Wird verschlüsselt gespeichert."
+  },
+  {
+   "default": "https://api.mistral.ai/v1",
+   "fieldname": "mistral_base_url",
+   "fieldtype": "Data",
+   "label": "Mistral Base URL"
+  },
+  {
+   "default": "mistral-small-latest",
+   "fieldname": "mistral_text_model",
+   "fieldtype": "Data",
+   "label": "Mistral Text-Modell",
+   "description": "Modell für Text-PDFs (z.B. mistral-small-latest, mistral-large-latest)."
+  },
+  {
+   "default": "pixtral-large-latest",
+   "fieldname": "mistral_vision_model",
+   "fieldtype": "Data",
+   "label": "Mistral Vision-Modell",
+   "description": "Modell für Bild-/Scan-PDFs (z.B. pixtral-large-latest)."
+  },
+  {
+   "default": "30",
+   "fieldname": "mistral_timeout_seconds",
+   "fieldtype": "Int",
+   "label": "Mistral Timeout (Sekunden)"
+  },
+  {
+   "default": "1",
+   "fieldname": "mistral_vision_fallback",
+   "fieldtype": "Check",
+   "label": "Vision-Fallback bei Scans",
+   "description": "Wenn pypdf keinen Text findet, Bild rendern und Vision-Modell nutzen."
   },
   {
    "fieldname": "writeoff_section",

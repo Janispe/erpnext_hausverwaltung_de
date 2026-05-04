@@ -359,6 +359,11 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 	const stored_draft = hv_draft_load(HV_DRAFT_KEY_PI);
 	const has_explicit_defaults = !!(opts && (opts.lieferant || opts.positionen));
 
+	// Attached source file (vom PDF-Analyse-Flow): an dialog hängen, submit liest's wieder ab.
+	if (opts && opts._attached_file) {
+		dialog._hv_attached_file = opts._attached_file;
+	}
+
 	dialog.show();
 
 	if (has_explicit_defaults) {
@@ -375,6 +380,10 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		show_draft_banner(dialog, stored_draft, HV_DRAFT_KEY_PI);
 	}
 
+	if (opts && (opts._confidence || opts._warnings || opts._used_vision)) {
+		apply_extraction_hints(dialog, opts);
+	}
+
 	apply_eingabemodus(dialog);
 
 	dialog.add_custom_action(
@@ -385,6 +394,47 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 
 	return dialog;
 };
+
+function apply_extraction_hints(dialog, opts) {
+	const conf = opts._confidence || {};
+	const FIELD_MAP = {
+		lieferant: "lieferant",
+		rechnungsdatum: "rechnungsdatum",
+		wertstellungsdatum: "wertstellungsdatum",
+		bill_no: "rechnungsname",
+	};
+	Object.keys(FIELD_MAP).forEach((key) => {
+		const value = conf[key];
+		if (value === undefined || value === null) return;
+		const target = FIELD_MAP[key];
+		if (!dialog.fields_dict[target]) return;
+		const score = Number(value) || 0;
+		let note = "";
+		if (score >= 0.9) note = `✓ ${__("Mistral sicher")} (${score.toFixed(2)})`;
+		else if (score >= 0.7) note = `~ ${__("Mistral plausibel")} (${score.toFixed(2)})`;
+		else note = `⚠ ${__("Mistral unsicher — bitte prüfen")} (${score.toFixed(2)})`;
+		dialog.fields_dict[target].df.description = note;
+		dialog.fields_dict[target].refresh();
+	});
+
+	const warnings = opts._warnings || [];
+	if (warnings.length || opts._used_vision) {
+		const lines = [];
+		if (opts._used_vision) {
+			lines.push(__("Vision-Modell genutzt (Scan ohne Text-Layer)."));
+		}
+		warnings.forEach((w) => lines.push(w));
+		const $banner = $(
+			`<div class="hv-cockpit-draft-banner" style="background: #fff8e1; border-color: #ffd54f;">
+				<div><strong>${__("Hinweise zur Extraktion")}</strong></div>
+				<ul style="margin: 4px 0 0 18px; padding: 0;">
+					${lines.map((l) => `<li>${frappe.utils.escape_html(l)}</li>`).join("")}
+				</ul>
+			</div>`
+		);
+		dialog.$body.prepend($banner);
+	}
+}
 
 function apply_eingabemodus(dialog) {
 	const grid = dialog.fields_dict.positionen && dialog.fields_dict.positionen.grid;
@@ -489,6 +539,7 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 				referenz: values.referenz,
 				positionen: JSON.stringify(rows),
 				submit_doc: submit_doc ? 1 : 0,
+				attached_file_url: dialog._hv_attached_file || null,
 			},
 		})
 		.then((r) => {
@@ -714,6 +765,60 @@ function submit_mieterrechnung(dialog, values, submit_doc = true) {
 }
 
 // ---------------------------------------------------------------------------
+// Dialog: PDF-Analyse → vorgefüllter Eingangsrechnungs-Dialog
+// ---------------------------------------------------------------------------
+
+hausverwaltung.buchen_cockpit.open_extract_dialog = () => {
+	const dialog = new frappe.ui.Dialog({
+		title: __("PDF-Rechnung analysieren"),
+		fields: [
+			{
+				fieldtype: "Attach",
+				fieldname: "pdf_file",
+				label: __("PDF-Datei"),
+				reqd: 1,
+				description: __(
+					"Lade die Eingangsrechnung als PDF hoch. Mistral schlägt anschließend Lieferant, Positionen und Kostenarten vor."
+				),
+			},
+		],
+		primary_action_label: __("Analysieren"),
+		primary_action(values) {
+			if (!values.pdf_file) return;
+			dialog.disable_primary_action();
+			frappe
+				.call({
+					method: `${HV_COCKPIT_API}.extract_invoice_from_file`,
+					args: { file_url: values.pdf_file },
+					freeze: true,
+					freeze_message: __("Analysiere PDF mit Mistral..."),
+				})
+				.then((r) => {
+					const data = (r && r.message) || null;
+					if (!data) return;
+					dialog.hide();
+					hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog({
+						lieferant: data.fields && data.fields.lieferant,
+						rechnungsdatum: data.fields && data.fields.rechnungsdatum,
+						wertstellungsdatum: data.fields && data.fields.wertstellungsdatum,
+						rechnungsname: data.fields && data.fields.rechnungsname,
+						positionen: data.positionen || [],
+						_confidence: data.confidence || {},
+						_warnings: data.warnings || [],
+						_attached_file: values.pdf_file,
+						_used_vision: !!data.used_vision,
+					});
+				})
+				.catch((err) => {
+					console.error("PDF-Analyse fehlgeschlagen", err);
+				})
+				.finally(() => dialog.enable_primary_action());
+		},
+	});
+	dialog.show();
+};
+
+// ---------------------------------------------------------------------------
 // Cockpit page mount
 // ---------------------------------------------------------------------------
 
@@ -749,6 +854,16 @@ hausverwaltung.buchen_cockpit.mount = ($container) => {
 						${__("Strom, Gas, Wasser — einmal einrichten, läuft automatisch.")}
 					</div>
 				</div>
+				<div class="hv-cockpit-tile" data-action="extract">
+					<div class="hv-cockpit-tile-title">
+						<i class="fa fa-file-pdf-o"></i> ${__("PDF analysieren")}
+					</div>
+					<div class="hv-cockpit-tile-desc">
+						${__(
+							"PDF hochladen — Mistral schlägt Lieferant, Positionen und Kostenarten vor."
+						)}
+					</div>
+				</div>
 			</div>
 			<div class="hv-cockpit-columns">
 				<div class="hv-cockpit-section" data-section="pi">
@@ -780,6 +895,7 @@ hausverwaltung.buchen_cockpit.mount = ($container) => {
 		if (action === "eingang") hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog();
 		else if (action === "ausgang") hausverwaltung.buchen_cockpit.open_mieterrechnung_dialog();
 		else if (action === "abschlag") frappe.new_doc("Zahlungsplan");
+		else if (action === "extract") hausverwaltung.buchen_cockpit.open_extract_dialog();
 	});
 
 	const format_currency = (value) => {
