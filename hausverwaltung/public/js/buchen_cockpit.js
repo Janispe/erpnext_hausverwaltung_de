@@ -367,6 +367,13 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 	if (opts && opts._lieferant_neu) {
 		dialog._hv_lieferant_neu = opts._lieferant_neu;
 	}
+	// Aus dem Bulk-Wizard heraus geöffnet → Vorschlag-Name + Callback merken.
+	if (opts && opts._vorschlag_name) {
+		dialog._hv_vorschlag_name = opts._vorschlag_name;
+	}
+	if (opts && typeof opts._after_book === "function") {
+		dialog._hv_after_book = opts._after_book;
+	}
 
 	dialog.show();
 
@@ -659,6 +666,7 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 				positionen: JSON.stringify(rows),
 				submit_doc: submit_doc ? 1 : 0,
 				attached_file_url: dialog._hv_attached_file || null,
+				vorschlag_name: dialog._hv_vorschlag_name || null,
 			},
 		})
 		.then((r) => {
@@ -672,7 +680,18 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 					: __("Eingangsrechnung {0} als Entwurf gespeichert.", [name]),
 				indicator: "green",
 			});
-			frappe.set_route("Form", "Purchase Invoice", name);
+			// Wenn der Dialog aus dem Bulk-Wizard heraus geöffnet wurde:
+			// Callback ausführen (Wizard refresht und springt zum nächsten Eintrag),
+			// nicht aufs PI-Formular wegnavigieren.
+			if (typeof dialog._hv_after_book === "function") {
+				try {
+					dialog._hv_after_book(name);
+				} catch (e) {
+					console.error(e);
+				}
+			} else {
+				frappe.set_route("Form", "Purchase Invoice", name);
+			}
 		})
 		.finally(() => dialog.enable_primary_action());
 }
@@ -939,6 +958,393 @@ hausverwaltung.buchen_cockpit.open_extract_dialog = () => {
 };
 
 // ---------------------------------------------------------------------------
+// Bulk-Upload + Wizard
+// ---------------------------------------------------------------------------
+
+hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Sammel-PDF-Upload"),
+		size: "large",
+		fields: [
+			{
+				fieldtype: "HTML",
+				fieldname: "info",
+				options: `
+					<p style="margin-bottom: 14px;">
+						${__(
+							"Lade hier mehrere Eingangsrechnungen als PDF hoch. Sie werden im Hintergrund analysiert; danach führt dich ein Wizard durch jeden Vorschlag."
+						)}
+					</p>
+				`,
+			},
+			{
+				fieldtype: "HTML",
+				fieldname: "uploader_target",
+				options: `<div class="hv-bulk-uploader-target"></div>`,
+			},
+			{
+				fieldtype: "HTML",
+				fieldname: "list",
+				options: `<div class="hv-bulk-uploaded-list" style="margin-top: 10px; font-size: 13px;"></div>`,
+			},
+		],
+		primary_action_label: __("Analysieren starten"),
+		primary_action() {
+			const urls = (dialog._hv_uploaded_urls || []).filter(Boolean);
+			if (!urls.length) {
+				frappe.msgprint({
+					message: __("Bitte zuerst mindestens eine PDF hochladen."),
+					indicator: "orange",
+				});
+				return;
+			}
+			dialog.disable_primary_action();
+			frappe
+				.call({
+					method: `${HV_COCKPIT_API}.bulk_create_vorschlaege`,
+					args: { file_urls: JSON.stringify(urls) },
+					freeze: true,
+					freeze_message: __("Lege Vorschläge an..."),
+				})
+				.then((r) => {
+					const res = (r && r.message) || {};
+					if (!res.session_id) return;
+					dialog.hide();
+					hausverwaltung.buchen_cockpit.open_bulk_wizard(res.session_id);
+				})
+				.finally(() => dialog.enable_primary_action());
+		},
+	});
+	dialog._hv_uploaded_urls = [];
+	dialog.show();
+
+	// Frappe FileUploader inline einhängen — Multiple aktiv.
+	const $target = dialog.$body.find(".hv-bulk-uploader-target");
+	const $list = dialog.$body.find(".hv-bulk-uploaded-list");
+	const render_list = () => {
+		const urls = dialog._hv_uploaded_urls || [];
+		if (!urls.length) {
+			$list.html(`<div style="color: var(--text-muted, #666);">${__("Noch keine Datei hochgeladen.")}</div>`);
+			return;
+		}
+		$list.html(
+			`<strong>${__("Bereit zur Analyse:")} ${urls.length}</strong><ul style="margin: 6px 0 0 18px; padding: 0;">${urls
+				.map(
+					(u) =>
+						`<li>${frappe.utils.escape_html(u.split("/").pop() || u)}</li>`
+				)
+				.join("")}</ul>`
+		);
+	};
+	render_list();
+
+	new frappe.ui.FileUploader({
+		wrapper: $target.get(0),
+		method: "frappe.handler.upload_file",
+		allow_multiple: 1,
+		on_success(file_doc) {
+			if (!file_doc || !file_doc.file_url) return;
+			dialog._hv_uploaded_urls = dialog._hv_uploaded_urls || [];
+			dialog._hv_uploaded_urls.push(file_doc.file_url);
+			render_list();
+		},
+	});
+};
+
+hausverwaltung.buchen_cockpit.open_bulk_wizard = (session_id) => {
+	const wizard = new frappe.ui.Dialog({
+		title: __("Buchungs-Wizard"),
+		size: "large",
+		fields: [
+			{
+				fieldtype: "HTML",
+				fieldname: "wizard_body",
+				options: `<div class="hv-wizard-body"></div>`,
+			},
+		],
+		primary_action_label: __("Buchen"),
+		primary_action() {
+			const cur = wizard._hv_current_vorschlag;
+			if (!cur) return;
+			open_pi_dialog_from_vorschlag(cur, () => {
+				// Nach erfolgreicher PI-Erstellung: Liste neu laden, nächsten Eintrag anzeigen.
+				wizard._hv_force_refresh = true;
+				render();
+			});
+		},
+		secondary_action_label: __("Überspringen"),
+		secondary_action() {
+			const cur = wizard._hv_current_vorschlag;
+			if (!cur) return;
+			frappe
+				.call({
+					method: `${HV_COCKPIT_API}.mark_vorschlag_skipped`,
+					args: { name: cur.name },
+				})
+				.then(() => {
+					wizard._hv_force_refresh = true;
+					render();
+				});
+		},
+	});
+	wizard._hv_session_id = session_id;
+	wizard._hv_state = null;
+	wizard._hv_current_vorschlag = null;
+	wizard._hv_force_refresh = false;
+	wizard._hv_poll_timer = null;
+
+	const fetch_status = () => {
+		return frappe
+			.call({
+				method: `${HV_COCKPIT_API}.get_session_status`,
+				args: { session_id },
+			})
+			.then((r) => (r && r.message) || null);
+	};
+
+	const render = () => {
+		fetch_status().then((state) => {
+			wizard._hv_state = state;
+			if (!state) return;
+			const vs = state.vorschlaege || [];
+			// Aktueller Eintrag = erster mit Status "Ready". Wenn keiner, zeige Übersicht.
+			const next_ready = vs.find((v) => v.status === "Ready");
+			wizard._hv_current_vorschlag = next_ready || null;
+
+			const $body = wizard.$body.find(".hv-wizard-body");
+			$body.html(render_html(state, next_ready));
+			wizard.set_primary_action(__("Buchen"));
+			if (next_ready) {
+				wizard.enable_primary_action();
+			} else {
+				wizard.disable_primary_action();
+			}
+			schedule_next_poll(state);
+		});
+	};
+
+	const schedule_next_poll = (state) => {
+		if (wizard._hv_poll_timer) {
+			clearTimeout(wizard._hv_poll_timer);
+			wizard._hv_poll_timer = null;
+		}
+		const stats = state.stats || {};
+		const has_pending = (stats.pending || 0) + (stats.processing || 0) > 0;
+		if (has_pending && wizard.is_visible !== false) {
+			wizard._hv_poll_timer = setTimeout(render, 2500);
+		}
+	};
+
+	const render_html = (state, current) => {
+		const vs = state.vorschlaege || [];
+		const stats = state.stats || {};
+		const total = stats.total || 0;
+		const open = (stats.pending || 0) + (stats.processing || 0);
+		const ready = stats.ready || 0;
+		const booked = stats.booked || 0;
+		const skipped = stats.skipped || 0;
+		const errored = stats.error || 0;
+		const done_index = vs.findIndex((v) => v.name === (current && current.name));
+		const position_text = current
+			? __("Vorschlag {0} von {1}", [done_index + 1, total])
+			: __("Übersicht");
+
+		const status_pill = (s) => {
+			const map = {
+				Pending: ["#888", __("wartend")],
+				Processing: ["#1976d2", __("läuft")],
+				Ready: ["#2e7d32", __("bereit")],
+				Booked: ["#558b2f", __("gebucht")],
+				Skipped: ["#9e9e9e", __("übersprungen")],
+				Error: ["#c62828", __("Fehler")],
+			};
+			const [color, label] = map[s] || ["#666", s];
+			return `<span style="background: ${color}; color: #fff; padding: 1px 7px; border-radius: 9px; font-size: 11px;">${label}</span>`;
+		};
+
+		const summary_block = (() => {
+			if (!current) {
+				if (open > 0) {
+					return `
+						<div style="text-align: center; padding: 30px; color: var(--text-muted, #666);">
+							<i class="fa fa-spinner fa-spin"></i>
+							${__("Analyse läuft im Hintergrund...")} (${open} ${__("offen")})
+						</div>
+					`;
+				}
+				return `
+					<div style="text-align: center; padding: 30px; color: var(--text-muted, #2e7d32);">
+						<i class="fa fa-check-circle"></i> ${__("Alle Vorschläge bearbeitet.")}
+						<div style="margin-top: 10px; font-size: 12px;">
+							${booked} ${__("gebucht")}, ${skipped} ${__("übersprungen")}, ${errored} ${__("mit Fehler")}.
+						</div>
+					</div>
+				`;
+			}
+			const sum = current.extracted_summary || {};
+			const conf_avg = sum.confidence_avg
+				? `<span style="color: ${
+						sum.confidence_avg >= 0.85 ? "#2e7d32" : sum.confidence_avg >= 0.65 ? "#f57f17" : "#c62828"
+				  };">${(sum.confidence_avg * 100).toFixed(0)}%</span>`
+				: "–";
+			return `
+				<div style="border: 1px solid var(--border-color, #e0e0e0); padding: 14px; border-radius: 8px;">
+					<div style="font-weight: 600; font-size: 14px; margin-bottom: 8px;">
+						<i class="fa fa-file-pdf-o"></i> ${frappe.utils.escape_html(current.original_filename || "")}
+					</div>
+					<table style="width: 100%; font-size: 13px; border-collapse: collapse;">
+						<tr>
+							<td style="padding: 3px 8px 3px 0; color: var(--text-muted, #666); width: 30%;">${__("Lieferant")}:</td>
+							<td>
+								${frappe.utils.escape_html(sum.lieferant || sum.llm_lieferant || "–")}
+								${
+									!sum.lieferant && sum.llm_lieferant
+										? `<span style="font-size: 11px; color: #c62828;"> (${__("nicht in Stammdaten")})</span>`
+										: ""
+								}
+							</td>
+						</tr>
+						<tr>
+							<td style="padding: 3px 8px 3px 0; color: var(--text-muted, #666);">${__("Datum")}:</td>
+							<td>${frappe.utils.escape_html(sum.datum || "–")}</td>
+						</tr>
+						<tr>
+							<td style="padding: 3px 8px 3px 0; color: var(--text-muted, #666);">${__("Positionen")}:</td>
+							<td>${sum.position_count || 0} (${__("Summe")}: ${format_currency(sum.betrag_gesamt || 0, "EUR", 2)})</td>
+						</tr>
+						<tr>
+							<td style="padding: 3px 8px 3px 0; color: var(--text-muted, #666);">${__("Confidence Ø")}:</td>
+							<td>${conf_avg}</td>
+						</tr>
+						${
+							sum.warning_count
+								? `<tr><td style="padding: 3px 8px 3px 0; color: #f57f17;">${__("Hinweise")}:</td><td>${sum.warning_count}</td></tr>`
+								: ""
+						}
+					</table>
+				</div>
+			`;
+		})();
+
+		const overview_rows = vs
+			.map((v) => {
+				const s = (v.extracted_summary || {});
+				const lf = s.lieferant || s.llm_lieferant || "–";
+				const is_current = current && v.name === current.name;
+				const is_reactivatable = v.status === "Skipped" || v.status === "Error";
+				const row_style = [
+					is_current ? "background: #e3f2fd;" : "",
+					is_reactivatable ? "cursor: pointer;" : "",
+				].join(" ");
+				const title = is_reactivatable
+					? __("Klicken zum Reaktivieren")
+					: "";
+				return `
+					<tr style="${row_style}" data-name="${frappe.utils.escape_html(v.name)}" data-reactivatable="${
+					is_reactivatable ? 1 : 0
+				}" title="${title}">
+						<td style="padding: 4px 6px;">${frappe.utils.escape_html(v.original_filename || "")}</td>
+						<td style="padding: 4px 6px;">${frappe.utils.escape_html(lf)}</td>
+						<td style="padding: 4px 6px; text-align: right;">${
+							s.betrag_gesamt ? format_currency(s.betrag_gesamt, "EUR", 2) : "–"
+						}</td>
+						<td style="padding: 4px 6px;">${status_pill(v.status)}</td>
+					</tr>
+				`;
+			})
+			.join("");
+
+		return `
+			<div style="display: flex; gap: 16px;">
+				<div style="flex: 1.4;">
+					<div style="font-size: 13px; color: var(--text-muted, #666); margin-bottom: 8px;">${position_text}</div>
+					${summary_block}
+					${
+						current && current.error_message
+							? `<div style="margin-top: 8px; padding: 8px; background: #ffebee; border-radius: 6px; font-size: 12px; color: #c62828;">${frappe.utils.escape_html(
+									current.error_message
+							  )}</div>`
+							: ""
+					}
+				</div>
+				<div style="flex: 1; max-height: 320px; overflow-y: auto; border: 1px solid var(--border-color, #e0e0e0); border-radius: 8px; padding: 6px;">
+					<div style="font-size: 11px; color: var(--text-muted, #666); margin-bottom: 4px; padding: 2px 4px;">
+						${total} ${__("gesamt")} · ${ready} ${__("bereit")} · ${open} ${__("offen")} · ${booked} ${__("gebucht")} · ${skipped} ${__("skipped")} · ${errored} ${__("Fehler")}
+					</div>
+					<table style="width: 100%; font-size: 12px; border-collapse: collapse;">
+						<thead>
+							<tr style="border-bottom: 1px solid var(--border-color, #e0e0e0); color: var(--text-muted, #666);">
+								<th style="text-align: left; padding: 3px 6px;">${__("Datei")}</th>
+								<th style="text-align: left; padding: 3px 6px;">${__("Lieferant")}</th>
+								<th style="text-align: right; padding: 3px 6px;">${__("Betrag")}</th>
+								<th style="text-align: left; padding: 3px 6px;">${__("Status")}</th>
+							</tr>
+						</thead>
+						<tbody>${overview_rows}</tbody>
+					</table>
+				</div>
+			</div>
+		`;
+	};
+
+	wizard.show();
+	render();
+
+	// Klick auf Skipped/Error-Zeile in der rechten Liste → reaktivieren.
+	wizard.$body.on("click", "tr[data-reactivatable='1']", (event) => {
+		const name = $(event.currentTarget).data("name");
+		if (!name) return;
+		frappe
+			.call({
+				method: `${HV_COCKPIT_API}.reactivate_vorschlag`,
+				args: { name },
+			})
+			.then(() => {
+				frappe.show_alert({
+					message: __("Vorschlag {0} reaktiviert.", [name]),
+					indicator: "blue",
+				});
+				render();
+			});
+	});
+
+	wizard.$wrapper.on("hidden.bs.modal", () => {
+		if (wizard._hv_poll_timer) {
+			clearTimeout(wizard._hv_poll_timer);
+			wizard._hv_poll_timer = null;
+		}
+	});
+};
+
+function open_pi_dialog_from_vorschlag(vorschlag, on_done) {
+	frappe
+		.call({
+			method: `${HV_COCKPIT_API}.get_vorschlag_full`,
+			args: { name: vorschlag.name },
+		})
+		.then((r) => {
+			const full = (r && r.message) || null;
+			if (!full || !full.data) return;
+			const data = full.data;
+			const opts = {
+				lieferant: data.fields && data.fields.lieferant,
+				rechnungsdatum: data.fields && data.fields.rechnungsdatum,
+				wertstellungsdatum: data.fields && data.fields.wertstellungsdatum,
+				rechnungsname: data.fields && data.fields.rechnungsname,
+				positionen: data.positionen || [],
+				_confidence: data.confidence || {},
+				_warnings: data.warnings || [],
+				_attached_file: full.file_url,
+				_used_vision: !!data.used_vision,
+				_lieferant_neu: data.lieferant_neu || null,
+				_vorschlag_name: vorschlag.name,
+				_after_book: on_done,
+			};
+			hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog(opts);
+		});
+}
+
+// ---------------------------------------------------------------------------
 // Cockpit page mount
 // ---------------------------------------------------------------------------
 
@@ -984,6 +1390,16 @@ hausverwaltung.buchen_cockpit.mount = ($container) => {
 						)}
 					</div>
 				</div>
+				<div class="hv-cockpit-tile" data-action="bulk">
+					<div class="hv-cockpit-tile-title">
+						<i class="fa fa-files-o"></i> ${__("Sammel-Upload")}
+					</div>
+					<div class="hv-cockpit-tile-desc">
+						${__(
+							"Mehrere PDFs auf einmal — Wizard führt dich Schritt für Schritt durch alle Vorschläge."
+						)}
+					</div>
+				</div>
 			</div>
 			<div class="hv-cockpit-columns">
 				<div class="hv-cockpit-section" data-section="pi">
@@ -1016,6 +1432,7 @@ hausverwaltung.buchen_cockpit.mount = ($container) => {
 		else if (action === "ausgang") hausverwaltung.buchen_cockpit.open_mieterrechnung_dialog();
 		else if (action === "abschlag") frappe.new_doc("Zahlungsplan");
 		else if (action === "extract") hausverwaltung.buchen_cockpit.open_extract_dialog();
+		else if (action === "bulk") hausverwaltung.buchen_cockpit.open_bulk_upload_dialog();
 	});
 
 	const format_currency = (value) => {

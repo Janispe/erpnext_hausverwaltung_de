@@ -1,0 +1,117 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:BV-{YYYY}-{#####}",
+ "creation": "2026-05-04 21:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "session_id",
+  "original_filename",
+  "file_url",
+  "column_break_1",
+  "status",
+  "linked_purchase_invoice",
+  "section_break_extraction",
+  "extracted_data",
+  "section_break_error",
+  "error_message"
+ ],
+ "fields": [
+  {
+   "fieldname": "session_id",
+   "fieldtype": "Data",
+   "label": "Session ID",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "original_filename",
+   "fieldtype": "Data",
+   "label": "Dateiname",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "file_url",
+   "fieldtype": "Attach",
+   "label": "PDF-Datei",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Pending\nProcessing\nReady\nBooked\nSkipped\nError",
+   "default": "Pending",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "linked_purchase_invoice",
+   "fieldtype": "Link",
+   "options": "Purchase Invoice",
+   "label": "Verknüpfte Eingangsrechnung",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "section_break_extraction",
+   "fieldtype": "Section Break",
+   "label": "LLM-Extraktion"
+  },
+  {
+   "fieldname": "extracted_data",
+   "fieldtype": "Long Text",
+   "label": "Extrahierte Daten (JSON)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_error",
+   "fieldtype": "Section Break",
+   "label": "Fehler"
+  },
+  {
+   "fieldname": "error_message",
+   "fieldtype": "Small Text",
+   "label": "Fehlermeldung",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-05-04 21:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Buchungs Vorschlag",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "write": 1,
+   "role": "Accounts User"
+  }
+ ],
+ "search_fields": "session_id,original_filename,status",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

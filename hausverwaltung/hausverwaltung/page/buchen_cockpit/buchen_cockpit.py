@@ -562,6 +562,13 @@ def create_purchase_invoice(**kwargs) -> dict:
 
     _attach_source_file(pi, kwargs.get("attached_file_url"))
 
+    vorschlag_name = (kwargs.get("vorschlag_name") or "").strip()
+    if vorschlag_name:
+        from hausverwaltung.hausverwaltung.services.bulk_extraction import (
+            link_vorschlag_to_pi,
+        )
+        link_vorschlag_to_pi(vorschlag_name, pi.name)
+
     submit_doc_raw = kwargs.get("submit_doc", 1)
     submit_flag = (
         bool(int(submit_doc_raw))
