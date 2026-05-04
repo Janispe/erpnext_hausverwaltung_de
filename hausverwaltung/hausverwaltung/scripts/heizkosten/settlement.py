@@ -29,6 +29,7 @@ from frappe.utils import cstr
 
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen import (
 	MONEY_QUANT,
+	_cost_center_for_abrechnung_doc,
 	_ensure_item_with_income,
 	_get_customer_for_mietvertrag,
 	_get_default_company,
@@ -68,6 +69,7 @@ def create_hk_settlement_documents(abrechnung: str) -> dict:
 	# (Customer, Receivable Account, Items mit Income Defaults).
 	_run_settlement_selfcheck(doc)
 	company = _get_default_company()
+	cost_center = _cost_center_for_abrechnung_doc(doc)
 
 	# Items idempotent anlegen (HK Nachzahlung / HK Guthaben)
 	code_nach = _ensure_item_with_income("HK Nachzahlung", "Heizkosten Nachzahlung", company)
@@ -85,6 +87,8 @@ def create_hk_settlement_documents(abrechnung: str) -> dict:
 				is_return=0,
 				do_submit=True,
 				company=company,
+				cost_center=cost_center,
+				wohnung=doc.wohnung,
 			)
 		except Exception as e:
 			frappe.throw(f"HK-Nachzahlung konnte nicht erstellt werden: {e}")
@@ -100,6 +104,8 @@ def create_hk_settlement_documents(abrechnung: str) -> dict:
 				is_return=1,
 				do_submit=True,
 				company=company,
+				cost_center=cost_center,
+				wohnung=doc.wohnung,
 			)
 		except Exception as e:
 			frappe.throw(f"HK-Guthaben konnte nicht erstellt werden: {e}")

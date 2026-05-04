@@ -81,6 +81,44 @@ def _immobilie_von_wohnung(wohnung: str) -> Optional[str]:
     except Exception:
         return None
 
+
+def _has_field(doctype: str, fieldname: str) -> bool:
+    try:
+        return bool(frappe.get_meta(doctype).get_field(fieldname))
+    except Exception:
+        return False
+
+
+def _cost_center_for_wohnung(wohnung: Optional[str]) -> Optional[str]:
+    if not wohnung:
+        return None
+    immobilie = _immobilie_von_wohnung(wohnung)
+    if not immobilie:
+        return None
+    try:
+        return frappe.get_cached_value("Immobilie", immobilie, "kostenstelle")
+    except Exception:
+        return None
+
+
+def _cost_center_for_abrechnung_doc(doc) -> Optional[str]:
+    cost_center = doc.get("cost_center") if hasattr(doc, "get") else None
+    if cost_center:
+        return cost_center
+
+    immobilie = doc.get("immobilie") if hasattr(doc, "get") else None
+    if immobilie:
+        try:
+            cost_center = frappe.get_cached_value("Immobilie", immobilie, "kostenstelle")
+        except Exception:
+            cost_center = None
+        if cost_center:
+            return cost_center
+
+    wohnung = doc.get("wohnung") if hasattr(doc, "get") else None
+    return _cost_center_for_wohnung(wohnung)
+
+
 def _get_default_company() -> Optional[str]:
     try:
         d = frappe.defaults.get_defaults() or {}
@@ -601,6 +639,8 @@ def _make_sales_invoice(
     do_submit: bool = True,
     company: Optional[str] = None,
     due_date: Optional[str] = None,
+    cost_center: Optional[str] = None,
+    wohnung: Optional[str] = None,
 ) -> str:
     post_date = getdate(posting_date)
     si = frappe.new_doc("Sales Invoice")
@@ -631,7 +671,17 @@ def _make_sales_invoice(
         # ERPNext returns expect negative qty with positive rate (unless negative rates are allowed)
         qty = -1
         rate = abs(rate)
-    si.append("items", {"item_code": item_code, "qty": qty, "rate": rate})
+    if cost_center and _has_field("Sales Invoice", "cost_center"):
+        si.cost_center = cost_center
+    if wohnung and _has_field("Sales Invoice", "wohnung"):
+        si.set("wohnung", wohnung)
+
+    item_row = {"item_code": item_code, "qty": qty, "rate": rate}
+    if cost_center:
+        item_row["cost_center"] = cost_center
+    if wohnung and _has_field("Sales Invoice Item", "wohnung"):
+        item_row["wohnung"] = wohnung
+    si.append("items", item_row)
     si.insert(ignore_permissions=True)
     if do_submit:
         si.submit()
@@ -723,6 +773,7 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
     # Selfcheck: wirf Fehler, wenn Setup unvollständig
     _run_settlement_selfcheck(doc)
     company = _get_default_company()
+    cost_center = _cost_center_for_abrechnung_doc(doc)
     # Sicherstellen: Artikel existieren und haben Income Account Defaults
     code_nach = _ensure_item_with_income("BK Nachzahlung", "Betriebskosten Nachzahlung", company)
     code_guth = _ensure_item_with_income("BK Guthaben", "Betriebskosten Guthaben", company)
@@ -759,6 +810,8 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
                 do_submit=True,
                 company=company,
                 due_date=due_date or None,
+                cost_center=cost_center,
+                wohnung=wohnung,
             )
         except Exception as e:
             frappe.throw(f"Nachzahlung konnte nicht erstellt werden: {e}")
@@ -770,7 +823,17 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
         applied = min(total_out_bk, diff_abs)
         base_amount = _quantize_money(diff_abs - applied) if diff_abs > applied else Decimal("0")
         try:
-            new_doc_name = _make_sales_invoice(customer, posting_date, code_guth, base_amount, is_return=1, do_submit=True, company=company)
+            new_doc_name = _make_sales_invoice(
+                customer,
+                posting_date,
+                code_guth,
+                base_amount,
+                is_return=1,
+                do_submit=True,
+                company=company,
+                cost_center=cost_center,
+                wohnung=wohnung,
+            )
         except Exception as e:
             frappe.throw(f"Guthaben konnte nicht erstellt werden: {e}")
         new_doc_is_return = 1
