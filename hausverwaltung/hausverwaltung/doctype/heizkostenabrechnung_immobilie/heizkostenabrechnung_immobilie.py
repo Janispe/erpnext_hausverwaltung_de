@@ -108,6 +108,10 @@ class HeizkostenabrechnungImmobilie(Document):
 		2. Vergleiche ``row.kosten_gesamt`` mit dem Wert im Mieter-Doc
 		3. Wenn unverändert → Skip (alte SI bleibt)
 		4. Wenn geändert:
+		   - **Pre-flight**: prüft ob die alte SI/CN schon eine Payment-
+		     Allokation hat — wenn ja, wird die ganze Korrektur abgebrochen
+		     (atomar) mit klarer Liste der betroffenen Mieter und Hinweis auf
+		     manuelles Vorgehen.
 		   - Alte Mieter-Abrechnung canceln (storniert alte SI via on_cancel)
 		   - Neue Mieter-Abrechnung mit identischen Stammdaten + neuem
 		     ``kosten_gesamt`` anlegen + submitten (= neue SI via on_submit)
@@ -117,6 +121,11 @@ class HeizkostenabrechnungImmobilie(Document):
 		— das JS liest sie nach dem Save und zeigt einen Toast.
 		"""
 		summary = self.flags._correction_summary
+
+		# 1) Pass 1 — Diff identifizieren + Pre-flight Payment-Check
+		to_correct: list[dict] = []  # geänderte Rows die korrigiert werden müssen
+		paid_blockers: list[dict] = []  # Rows mit bereits bezahlter SI
+
 		for row in self.mieter_positionen or []:
 			old_name = (row.heizkostenabrechnung_mieter or "").strip()
 			if not old_name:
@@ -125,8 +134,7 @@ class HeizkostenabrechnungImmobilie(Document):
 				old_doc = frappe.get_doc("Heizkostenabrechnung Mieter", old_name)
 			except frappe.DoesNotExistError:
 				continue
-			# Nur submittete Mieter-Docs werden hier verarbeitet — Drafts würden
-			# normalerweise gar nicht in einem submitteten Parent vorkommen.
+			# Nur submittete Mieter-Docs werden hier verarbeitet
 			if int(old_doc.docstatus or 0) != 1:
 				continue
 
@@ -136,7 +144,72 @@ class HeizkostenabrechnungImmobilie(Document):
 				summary["unchanged"] += 1
 				continue
 
-			# Diff erkannt → cancel old + insert+submit new
+			# Diff erkannt → Payment-Check für die zugehörige(n) SI/CN
+			si_name = (old_doc.get("sales_invoice") or "").strip()
+			cn_name = (old_doc.get("credit_note") or "").strip()
+			paid_refs: list[dict] = []
+			for ref_name in (si_name, cn_name):
+				if not ref_name:
+					continue
+				allocations = _get_payment_allocations(ref_name)
+				if allocations:
+					paid_refs.extend(allocations)
+
+			if paid_refs:
+				paid_blockers.append(
+					{
+						"row": row,
+						"old_doc": old_doc,
+						"customer": old_doc.customer,
+						"old_kosten": old_kosten,
+						"new_kosten": new_kosten,
+						"si": si_name,
+						"cn": cn_name,
+						"allocations": paid_refs,
+					}
+				)
+			else:
+				to_correct.append(
+					{
+						"row": row,
+						"old_doc": old_doc,
+						"old_kosten": old_kosten,
+						"new_kosten": new_kosten,
+					}
+				)
+
+		# 2) Wenn irgendein paid blocker → throw, ganze Korrektur abbrechen
+		if paid_blockers:
+			lines = [
+				"<strong>Korrektur nicht möglich — folgende Mieter haben bereits Zahlungen verbucht:</strong><br>"
+			]
+			for b in paid_blockers:
+				alloc_sum = sum(a["allocated_amount"] for a in b["allocations"])
+				pe_names = ", ".join(sorted({a["payment_entry"] for a in b["allocations"]}))
+				lines.append(
+					f"• <strong>{frappe.utils.escape_html(b['customer'])}</strong>: "
+					f"alte Rechnung <code>{b['si'] or b['cn']}</code> "
+					f"hat {alloc_sum:.2f} € allokiert "
+					f"(Payment Entry: {frappe.utils.escape_html(pe_names)}). "
+					f"Änderung {b['old_kosten']:.2f} → {b['new_kosten']:.2f} € blockiert."
+				)
+			lines.append(
+				"<br><br><em>So beheben:</em> Im jeweiligen Payment Entry die Zuordnung zu dieser "
+				"Sales Invoice rausnehmen (oder Payment Entry stornieren), dann die Korrektur "
+				"erneut speichern."
+			)
+			frappe.throw(
+				msg="<br>".join(lines),
+				title="Korrektur blockiert: Zahlungen vorhanden",
+			)
+
+		# 3) Pass 2 — keine Blocker, jetzt die geänderten Rows wirklich korrigieren
+		for entry in to_correct:
+			row = entry["row"]
+			old_doc = entry["old_doc"]
+			old_kosten = entry["old_kosten"]
+			new_kosten = entry["new_kosten"]
+			old_name = old_doc.name
 			try:
 				old_doc.flags.allow_cancel_via_head = True
 				old_doc.flags.ignore_permissions = True
@@ -379,6 +452,46 @@ class HeizkostenabrechnungImmobilie(Document):
 		self.summe_kosten = round(kosten, 2)
 		self.summe_vorauszahlungen = round(vor, 2)
 		self.summe_differenz = round(kosten - vor, 2)
+
+
+# ============================================================================
+# Module-level helpers
+# ============================================================================
+
+
+def _get_payment_allocations(sales_invoice_name: str) -> List[Dict[str, Any]]:
+	"""Liefert alle submittete Payment-Entry-Allokationen für eine Sales Invoice.
+
+	Wird vom Pre-flight-Check der Korrektur-Logik genutzt: wenn diese Funktion
+	Rows liefert, kann die SI nicht ohne weiteres canceled werden — der HV
+	muss erst die Allokation manuell auflösen.
+	"""
+	if not sales_invoice_name:
+		return []
+	rows = frappe.db.sql(
+		"""
+		SELECT
+			pe.name AS payment_entry,
+			per.allocated_amount AS allocated_amount,
+			pe.posting_date AS posting_date
+		FROM `tabPayment Entry Reference` per
+		JOIN `tabPayment Entry` pe ON pe.name = per.parent
+		WHERE per.reference_doctype = 'Sales Invoice'
+		  AND per.reference_name = %(name)s
+		  AND pe.docstatus = 1
+		""",
+		{"name": sales_invoice_name},
+		as_dict=True,
+	)
+	return [
+		{
+			"payment_entry": r["payment_entry"],
+			"allocated_amount": float(r["allocated_amount"] or 0),
+			"posting_date": r["posting_date"],
+		}
+		for r in rows
+		if float(r["allocated_amount"] or 0) > 0.005
+	]
 
 
 # ============================================================================
