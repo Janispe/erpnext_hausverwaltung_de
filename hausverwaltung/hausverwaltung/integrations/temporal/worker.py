@@ -6,6 +6,9 @@ from concurrent.futures import ThreadPoolExecutor
 from temporalio.worker import Worker
 
 from hausverwaltung.hausverwaltung.integrations.temporal.activities.email_actions import dispatch_email_action
+from hausverwaltung.hausverwaltung.integrations.temporal.activities.invoice_extraction_actions import (
+	extract_invoice_activity,
+)
 from hausverwaltung.hausverwaltung.integrations.temporal.activities.process_actions import dispatch_process_action
 from hausverwaltung.hausverwaltung.integrations.temporal.activities.speech_actions import (
 	dispatch_speech_action_activity,
@@ -13,6 +16,9 @@ from hausverwaltung.hausverwaltung.integrations.temporal.activities.speech_actio
 from hausverwaltung.hausverwaltung.integrations.temporal.client import get_temporal_client
 from hausverwaltung.hausverwaltung.integrations.temporal.config import get_temporal_settings
 from hausverwaltung.hausverwaltung.integrations.temporal.site_context import get_default_site
+from hausverwaltung.hausverwaltung.integrations.temporal.workflows.bulk_invoice_workflow import (
+	BulkInvoiceExtractionWorkflow,
+)
 from hausverwaltung.hausverwaltung.integrations.temporal.workflows.email_workflow import EmailWorkflow
 from hausverwaltung.hausverwaltung.integrations.temporal.workflows.process_workflow import ProcessWorkflow
 from hausverwaltung.hausverwaltung.integrations.temporal.workflows.speech_workflow import SpeechWorkflow
@@ -28,8 +34,12 @@ async def _run_workers() -> None:
 	process_worker = Worker(
 		client,
 		task_queue=settings.task_queue_process,
-		workflows=[ProcessWorkflow, SpeechWorkflow],
-		activities=[dispatch_process_action, dispatch_speech_action_activity],
+		workflows=[ProcessWorkflow, SpeechWorkflow, BulkInvoiceExtractionWorkflow],
+		activities=[
+			dispatch_process_action,
+			dispatch_speech_action_activity,
+			extract_invoice_activity,
+		],
 		activity_executor=activity_executor,
 	)
 	email_worker = Worker(

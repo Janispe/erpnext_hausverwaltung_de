@@ -24,6 +24,7 @@
   "mistral_vision_model",
   "mistral_timeout_seconds",
   "mistral_vision_fallback",
+  "mistral_force_vision",
   "blz_section",
   "blz_datei_url",
   "writeoff_section",
@@ -155,6 +156,13 @@
    "fieldtype": "Check",
    "label": "Vision-Fallback bei Scans",
    "description": "Wenn pypdf keinen Text findet, Bild rendern und Vision-Modell nutzen."
+  },
+  {
+   "default": "0",
+   "fieldname": "mistral_force_vision",
+   "fieldtype": "Check",
+   "label": "Vision immer nutzen (PDF-native)",
+   "description": "Skip pypdf-Text-Extraktion komplett, schicke immer das gerenderte PDF-Bild ans Vision-Modell. Robuster bei Tabellen-Layouts und Encoding-Problemen, aber langsamer und größerer Token-Verbrauch."
   },
   {
    "fieldname": "blz_section",

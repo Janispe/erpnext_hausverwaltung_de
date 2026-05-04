@@ -736,6 +736,92 @@ def create_sales_invoice(**kwargs) -> dict:
 
 
 @frappe.whitelist()
+def upload_invoice_pdf() -> dict:
+    """Idempotenter Datei-Upload für den Cockpit + Duplicate-Status.
+
+    Wird vom Frappe-FileUploader via ``method=...upload_invoice_pdf`` aufgerufen.
+    Frappe's ``handler.upload_file`` liest die Datei schon vorher in
+    ``frappe.local.uploaded_file`` und ``frappe.local.uploaded_filename`` —
+    wir greifen darauf zu, NICHT auf ``frappe.request.files`` (Stream ist
+    bereits konsumiert zu dem Zeitpunkt).
+
+    Verhalten:
+    - Berechnet den content_hash (SHA-1, identisch zur Frappe-Konvention).
+    - Wenn die Datei bereits in tabFile liegt: existing file_url zurückgeben
+      (kein Re-Upload — umgeht den Frappe-pypika-RecursionError beim Standard-Duplicate-Path).
+    - Sucht zusätzlich Buchungs Vorschläge zu dieser file_url und liefert deren
+      Status — das Frontend zeigt darauf basierend einen Duplicate-Dialog.
+    """
+    import hashlib
+
+    from frappe.utils.file_manager import save_file
+
+    content = getattr(frappe.local, "uploaded_file", None)
+    filename = getattr(frappe.local, "uploaded_filename", None) or "upload.pdf"
+    if not content:
+        frappe.throw("Hochgeladene Datei ist leer.")
+    content_hash = hashlib.sha1(content).hexdigest()
+
+    existing_file = frappe.db.get_value(
+        "File",
+        {"content_hash": content_hash},
+        ["name", "file_url", "file_name"],
+        as_dict=True,
+    )
+    if existing_file:
+        file_url = existing_file.file_url
+        file_name = existing_file.file_name
+        is_new_file = False
+    else:
+        file_doc = save_file(
+            filename,
+            content,
+            "",
+            "",
+            is_private=1,
+        )
+        file_url = file_doc.file_url
+        file_name = file_doc.file_name
+        is_new_file = True
+
+    existing_vorschlag = _lookup_vorschlag_by_file_url(file_url)
+
+    # `doctype: "File"` ist erforderlich, sonst verwirft Frappes FileUploader.vue:601
+    # die Response und ruft on_success mit `null` auf.
+    return {
+        "doctype": "File",
+        "file_url": file_url,
+        "file_name": file_name,
+        "is_new_file": is_new_file,
+        "existing_vorschlag": existing_vorschlag,
+    }
+
+
+def _lookup_vorschlag_by_file_url(file_url: str) -> dict | None:
+    """Findet den jüngsten Buchungs Vorschlag zu einer file_url (alle Status).
+
+    Liefert {name, status, linked_purchase_invoice, session_id, original_filename}
+    oder None.
+    """
+    if not file_url:
+        return None
+    rows = frappe.get_all(
+        "Buchungs Vorschlag",
+        filters={"file_url": file_url},
+        fields=[
+            "name",
+            "status",
+            "linked_purchase_invoice",
+            "session_id",
+            "original_filename",
+        ],
+        order_by="creation desc",
+        limit_page_length=1,
+    )
+    return dict(rows[0]) if rows else None
+
+
+@frappe.whitelist()
 def extract_invoice_from_file(file_url: str) -> dict:
     """Liest ein hochgeladenes PDF und liefert Vorschläge zum Vorbefüllen des
     Eingangsrechnungs-Dialogs.

@@ -31,6 +31,13 @@ def bulk_create_vorschlaege(file_urls) -> dict:
 	"""Erstellt für jede File-URL einen Buchungs Vorschlag und queued den Worker.
 
 	file_urls kann Liste oder JSON-String einer Liste sein (Frappe-Convention).
+
+	Idempotent: existing aktive Vorschläge (Pending/Processing/Ready) für eine
+	URL werden wiederverwendet statt dupliziert. Die Duplicate-Detection beim
+	Upload erkennt fertige (Booked/Skipped/Error) Vorschläge separat über den
+	Frontend-Dialog — wenn diese URL trotzdem hier landet, ist das die
+	"Trotzdem nochmal analysieren"-Aktion → der alte Vorschlag wurde bereits
+	auf Skipped gesetzt, neuer wird sauber angelegt.
 	"""
 	if isinstance(file_urls, str):
 		try:
@@ -50,6 +57,19 @@ def bulk_create_vorschlaege(file_urls) -> dict:
 		url = (raw_url or "").strip()
 		if not url:
 			continue
+		# Idempotenz: aktiver Vorschlag für diese URL?
+		existing = frappe.get_all(
+			"Buchungs Vorschlag",
+			filters={
+				"file_url": url,
+				"status": ["in", ("Pending", "Processing", "Ready")],
+			},
+			fields=["name"],
+			limit_page_length=1,
+		)
+		if existing:
+			vorschlag_names.append(existing[0]["name"])
+			continue
 		filename = url.rsplit("/", 1)[-1]
 		v = frappe.new_doc("Buchungs Vorschlag")
 		v.session_id = session_id
@@ -58,18 +78,69 @@ def bulk_create_vorschlaege(file_urls) -> dict:
 		v.status = "Pending"
 		v.insert(ignore_permissions=True)
 		vorschlag_names.append(v.name)
-		frappe.enqueue(
-			"hausverwaltung.hausverwaltung.services.bulk_extraction.process_vorschlag",
-			queue="long",
-			timeout=300,
-			vorschlag_name=v.name,
-		)
+		_dispatch_vorschlag_worker(v.name)
 	frappe.db.commit()
 	return {
 		"session_id": session_id,
 		"vorschlag_names": vorschlag_names,
 		"count": len(vorschlag_names),
 	}
+
+
+def _dispatch_vorschlag_worker(vorschlag_name: str) -> None:
+	"""Startet die Extraktion entweder als Temporal-Workflow (wenn aktiviert
+	für 'Buchungs Vorschlag') oder als simpler frappe.enqueue-Job (Fallback).
+
+	Temporal-Pfad gibt automatisches Retry mit exponential backoff bei
+	TransientError (Mistral-Timeout, Ollama down). frappe.enqueue ist
+	one-shot — Fehler bleibt im Status, User reaktiviert manuell.
+	"""
+	from hausverwaltung.hausverwaltung.integrations.temporal.config import (
+		is_temporal_enabled_for_doctype,
+	)
+
+	if is_temporal_enabled_for_doctype("Buchungs Vorschlag"):
+		try:
+			_start_temporal_extraction(vorschlag_name)
+			return
+		except Exception:
+			# Wenn Temporal-Start failt (Worker down, Connection-Issue etc.):
+			# fallback auf frappe.enqueue, damit der Job nicht verloren ist.
+			frappe.log_error(
+				frappe.get_traceback(),
+				f"Temporal-Start für {vorschlag_name} fehlgeschlagen — Fallback enqueue",
+			)
+	frappe.enqueue(
+		"hausverwaltung.hausverwaltung.services.bulk_extraction.process_vorschlag",
+		queue="long",
+		timeout=300,
+		vorschlag_name=vorschlag_name,
+	)
+
+
+def _start_temporal_extraction(vorschlag_name: str) -> None:
+	"""Startet den BulkInvoiceExtractionWorkflow asynchron.
+
+	Synchroner Wrapper um den async Temporal-Client. Wir starten und vergessen
+	(fire-and-forget) — der Workflow-Status wird via DB-Updates des
+	Buchungs Vorschlag sichtbar, der Wizard polled wie bisher.
+	"""
+	import asyncio
+
+	from hausverwaltung.hausverwaltung.integrations.temporal.client import get_temporal_client
+	from hausverwaltung.hausverwaltung.integrations.temporal.config import get_temporal_settings
+
+	async def _start():
+		client = await get_temporal_client()
+		settings = get_temporal_settings()
+		await client.start_workflow(
+			"HausverwaltungBulkInvoiceExtractionWorkflow",
+			args=[vorschlag_name, frappe.session.user or "Administrator"],
+			id=f"bulk-invoice-{vorschlag_name}",
+			task_queue=settings.task_queue_process,
+		)
+
+	asyncio.run(_start())
 
 
 def process_vorschlag(vorschlag_name: str) -> None:
@@ -269,12 +340,7 @@ def reactivate_vorschlag(name: str) -> dict:
 		v.error_message = ""
 		v.save(ignore_permissions=True)
 		frappe.db.commit()
-		frappe.enqueue(
-			"hausverwaltung.hausverwaltung.services.bulk_extraction.process_vorschlag",
-			queue="long",
-			timeout=300,
-			vorschlag_name=v.name,
-		)
+		_dispatch_vorschlag_worker(v.name)
 		return {"name": v.name, "status": v.status}
 	return {"name": v.name, "status": v.status}
 

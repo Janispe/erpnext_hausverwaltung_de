@@ -76,22 +76,79 @@ def _load_suppliers_for_prompt() -> list[str]:
 
 
 def _read_pdf_text(content: bytes) -> str:
+	"""Extrahiert Text aus PDF mit Layout-Berücksichtigung.
+
+	PyMuPDF im 'blocks'-Modus liefert Text-Blöcke mit ihren BBox-Koordinaten —
+	wir sortieren räumlich (oben→unten, links→rechts) und gruppieren Blöcke,
+	die in derselben horizontalen Zeile liegen, mit Tab-Trennern. Das macht
+	Tabellen ('Position\\tMenge\\tBezeichnung\\t...\\t1\\t2,00 Stk.\\tJunkers...')
+	für das LLM lesbar.
+
+	pypdf bleibt als Fallback für PDFs, die fitz nicht parsen kann.
+	"""
+	# 1) PyMuPDF blocks-mode — primär.
+	try:
+		import fitz
+
+		try:
+			doc = fitz.open(stream=content, filetype="pdf")
+		except Exception:
+			doc = None
+		if doc is not None:
+			page_texts: list[str] = []
+			for page in doc:
+				try:
+					blocks = page.get_text("blocks") or []
+				except Exception:
+					blocks = []
+				# blocks: (x0, y0, x1, y1, "text", block_no, block_type)
+				text_blocks = [b for b in blocks if len(b) >= 5 and (b[6] if len(b) > 6 else 0) == 0]
+				# Sortieren oben→unten, dann links→rechts (mit Toleranz für gleiche Zeile).
+				text_blocks.sort(key=lambda b: (round(float(b[1]) / 6) * 6, float(b[0])))
+				lines: list[str] = []
+				current_y = None
+				current_row: list[str] = []
+				for b in text_blocks:
+					y0 = float(b[1])
+					text = (b[4] or "").strip()
+					if not text:
+						continue
+					if current_y is None or abs(y0 - current_y) <= 6:
+						current_row.append(text)
+						current_y = y0 if current_y is None else current_y
+					else:
+						if current_row:
+							lines.append("\t".join(current_row))
+						current_row = [text]
+						current_y = y0
+				if current_row:
+					lines.append("\t".join(current_row))
+				if lines:
+					page_texts.append("\n".join(lines))
+			doc.close()
+			joined = "\n\n".join(page_texts).strip()
+			if joined:
+				return joined
+	except Exception:
+		pass
+
+	# 2) pypdf als Fallback.
 	try:
 		from pypdf import PdfReader
 	except Exception as exc:
 		raise mistral_client.MistralPermanentError(
-			"pypdf ist nicht installiert."
+			"Weder pymupdf noch pypdf sind installiert."
 		) from exc
 	reader = PdfReader(io.BytesIO(content))
-	parts: list[str] = []
+	parts2: list[str] = []
 	for page in reader.pages:
 		try:
 			text = page.extract_text() or ""
 		except Exception:
 			text = ""
 		if text.strip():
-			parts.append(text)
-	return "\n".join(parts).strip()
+			parts2.append(text)
+	return "\n".join(parts2).strip()
 
 
 def _render_pdf_first_page_png(content: bytes) -> bytes:
@@ -115,129 +172,47 @@ def _render_pdf_first_page_png(content: bytes) -> bytes:
 
 
 SYSTEM_PROMPT_BASE = (
-	"Du bist ein Buchhaltungs-Assistent für eine deutsche Hausverwaltung. "
-	"Du extrahierst aus einer Eingangsrechnung strukturierte Daten und ordnest jede "
-	"Position einer Kostenart aus der angegebenen Liste zu. Antworte ausschließlich "
-	"als gültiges JSON nach folgendem Schema und ohne zusätzlichen Text:\n\n"
+	"Du extrahierst aus einer deutschen Eingangsrechnung strukturierte Daten und "
+	"antwortest ausschliesslich als JSON nach folgendem Schema (keine Listen, "
+	"keine Beispiele, kein zusaetzlicher Text):\n"
 	"{\n"
-	'  "lieferant_name": "string (Firmenname des Rechnungsstellers, exakt aus Lieferanten-Liste wenn möglich)",\n'
+	'  "lieferant_name": "Firma im Briefkopf des Rechnungsstellers (NICHT die Empfaenger-Adresse)",\n'
 	'  "lieferant_confidence": 0.0,\n'
-	'  "lieferant_iban": "DE12 3456 ... oder null (IBAN aus Briefkopf/Fußzeile)",\n'
+	'  "lieferant_iban": "IBAN des Lieferanten oder null",\n'
 	'  "lieferant_steuer_id": "USt-IdNr (DE...) oder Steuernummer oder null",\n'
-	'  "lieferant_strasse": "Straße + Hausnummer aus dem Lieferanten-Briefkopf oder null",\n'
-	'  "lieferant_plz": "Postleitzahl 5-stellig oder null",\n'
-	'  "lieferant_ort": "Ort/Stadt oder null",\n'
-	'  "lieferant_land": "Land (default Deutschland) oder null",\n'
+	'  "lieferant_strasse": "Strasse + Hausnummer (Briefkopf) oder null",\n'
+	'  "lieferant_plz": "5-stellige PLZ oder null",\n'
+	'  "lieferant_ort": "Ort oder null",\n'
+	'  "lieferant_land": "Land oder Deutschland",\n'
 	'  "rechnungsdatum": "YYYY-MM-DD oder null",\n'
 	'  "rechnungsdatum_confidence": 0.0,\n'
-	'  "wertstellungsdatum": "YYYY-MM-DD oder null (= Leistungszeitraum-Beginn '
-	'oder Hauptdatum bei Versorger-Abrechnungen)",\n'
+	'  "wertstellungsdatum": "YYYY-MM-DD oder null (Leistungszeitraum-Beginn / Verbrauchszeitraum / Abrechnungsperiode)",\n'
 	'  "wertstellungsdatum_confidence": 0.0,\n'
 	'  "bill_no": "Rechnungsnummer oder null",\n'
 	'  "bill_no_confidence": 0.0,\n'
+	'  "immobilie_hinweis": "Strassenname oder Adresse der gemieteten/verwalteten Immobilie aus dem Rechnungstext oder null (z.B. \\"Wilhelmshavener Str. 31\\", \\"Gropiusstr. 12\\"). NICHT die Adresse des Lieferanten oder die Empfaenger-Adresse der Hausverwaltung.",\n'
 	'  "positionen": [\n'
-	"    {\n"
-	'      "betrag": 123.45,\n'
-	'      "beschreibung": "kurze Beschreibung der Leistung",\n'
-	'      "kostenart_vorschlag": "Name aus der Kostenart-Liste oder null wenn unsicher",\n'
-	'      "umlagefaehig": "Betriebskostenart oder Kostenart nicht umlagefaehig oder null",\n'
-	'      "kostenart_confidence": 0.0\n'
-	"    }\n"
+	'    {"betrag": 123.45, "beschreibung": "kurze Beschreibung der Leistung"}\n'
 	"  ]\n"
-	"}\n\n"
+	"}\n"
 	"Regeln:\n"
-	"- confidence-Werte sind Floats zwischen 0.0 und 1.0. 0.95+ = sicher, 0.7-0.9 = "
-	"plausibel, <0.7 = unsicher.\n"
-	"- Wenn ein Feld nicht eindeutig bestimmt werden kann, setze null + niedrige Confidence.\n"
-	"- Beträge immer als Float in EUR ohne Währungssymbol. Brutto bevorzugen wenn USt ausgewiesen.\n"
-	"- Bei wenigen kleinen Positionen (< 5): jede einzeln. Bei langer Liste oder "
-	"  einer Sammelrechnung: zu max. 3-5 Positionen aggregieren mit zusammenfassender Beschreibung.\n"
-	"- Datumsangaben in ISO-Format YYYY-MM-DD. Eingaben können in DE-Format vorliegen "
-	"  (z.B. '12.04.2026', '12. April 2026', '12.4.2026') — immer in YYYY-MM-DD umwandeln.\n"
-	"- 'wertstellungsdatum' = Leistungszeitraum-Beginn (Felder: 'Leistungszeitraum', "
-	"  'Verbrauchszeitraum', 'Abrechnungszeitraum'). Wenn nicht vorhanden, null.\n"
-	"- 'lieferant_name': Wenn ein Eintrag aus der Lieferanten-Liste plausibel passt, gib "
-	"  diesen Eintrag EXAKT zurück. Sonst gib den Namen wie auf der Rechnung an.\n"
-	"- 'kostenart_vorschlag' MUSS exakt einem Namen aus der Kostenart-Liste entsprechen "
-	"  (Groß-/Kleinschreibung beachten) oder null sein.\n"
-	"- 'umlagefaehig' muss zur gewählten Kostenart passen (Liste sagt 'Betriebskostenart' "
-	"  oder 'Kostenart nicht umlagefaehig').\n"
-	"- 'lieferant_iban': nur die echte Lieferanten-IBAN, NICHT die IBAN des Empfängers/Mandanten. "
-	"  Format wie auf der Rechnung übernehmen, Whitespace ist ok.\n"
-	"- 'lieferant_steuer_id': USt-IdNr (beginnt mit Länderkürzel, z.B. 'DE123456789') bevorzugt; "
-	"  falls nicht vorhanden, Steuernummer (z.B. '12/345/67890').\n"
-	"- 'lieferant_strasse'/'lieferant_plz'/'lieferant_ort'/'lieferant_land': aus dem Briefkopf "
-	"  des Rechnungsstellers, NICHT die Empfänger-Adresse.\n"
-	"\n"
-	"Beispiel 1 — Stromabrechnung von Vattenfall, einfacher Allgemeinstrom-Posten:\n"
-	"Eingabe: 'Vattenfall Europe Sales GmbH, Chausseestraße 23, 10115 Berlin ... "
-	"USt-IdNr DE123456789 ... IBAN DE89 3704 0044 0532 0130 00 ... "
-	"Rechnungs-Nr. VS-2026-998877 ... Rechnungsdatum 14.03.2026 ... "
-	"Verbrauchszeitraum 01.01.2026 - 31.01.2026 ... "
-	"Allgemeinstrom Treppenhaus 156,40 EUR brutto'\n"
-	"Ausgabe: {\"lieferant_name\": \"Vattenfall Europe Sales GmbH\", \"lieferant_confidence\": 0.95, "
-	"\"lieferant_iban\": \"DE89 3704 0044 0532 0130 00\", \"lieferant_steuer_id\": \"DE123456789\", "
-	"\"lieferant_strasse\": \"Chausseestraße 23\", \"lieferant_plz\": \"10115\", "
-	"\"lieferant_ort\": \"Berlin\", \"lieferant_land\": \"Deutschland\", "
-	"\"rechnungsdatum\": \"2026-03-14\", \"rechnungsdatum_confidence\": 1.0, "
-	"\"wertstellungsdatum\": \"2026-01-01\", \"wertstellungsdatum_confidence\": 0.9, "
-	"\"bill_no\": \"VS-2026-998877\", \"bill_no_confidence\": 0.95, "
-	"\"positionen\": [{\"betrag\": 156.40, \"beschreibung\": \"Allgemeinstrom Treppenhaus\", "
-	"\"kostenart_vorschlag\": \"Allgemeinstrom\", \"umlagefaehig\": \"Betriebskostenart\", "
-	"\"kostenart_confidence\": 0.92}]}\n"
-	"\n"
-	"Beispiel 2 — Handwerker-Rechnung ohne IBAN, zwei Positionen:\n"
-	"Eingabe: 'Maler Schmidt GmbH, Hauptstr. 5, 12345 Musterstadt ... Steuernr. 12/345/67890 ... "
-	"Rg.-Nr. 2026-117 ... 22. April 2026 ... "
-	"Pos 1: Renovierung Treppenhaus EG 1.250,00 ... Pos 2: Streichen Wohnung 4.OG li 850,00'\n"
-	"Ausgabe: {\"lieferant_name\": \"Maler Schmidt GmbH\", \"lieferant_confidence\": 0.9, "
-	"\"lieferant_iban\": null, \"lieferant_steuer_id\": \"12/345/67890\", "
-	"\"lieferant_strasse\": \"Hauptstr. 5\", \"lieferant_plz\": \"12345\", "
-	"\"lieferant_ort\": \"Musterstadt\", \"lieferant_land\": \"Deutschland\", "
-	"\"rechnungsdatum\": \"2026-04-22\", \"rechnungsdatum_confidence\": 1.0, "
-	"\"wertstellungsdatum\": null, \"wertstellungsdatum_confidence\": 0.0, "
-	"\"bill_no\": \"2026-117\", \"bill_no_confidence\": 0.9, "
-	"\"positionen\": [{\"betrag\": 1250.00, \"beschreibung\": \"Renovierung Treppenhaus EG\", "
-	"\"kostenart_vorschlag\": \"Schönheitsreparaturen\", \"umlagefaehig\": \"Betriebskostenart\", "
-	"\"kostenart_confidence\": 0.7}, "
-	"{\"betrag\": 850.00, \"beschreibung\": \"Streichen Wohnung 4.OG li\", "
-	"\"kostenart_vorschlag\": \"Instandhaltung Wohnungen\", \"umlagefaehig\": \"Kostenart nicht umlagefaehig\", "
-	"\"kostenart_confidence\": 0.65}]}\n"
+	"- DE-Datum (12.04.2026, 12. April 2026, 12.4.2026) zu YYYY-MM-DD umwandeln.\n"
+	"- Beträge als Float in EUR (Brutto bevorzugen). Beschreibung kurz.\n"
+	"- confidence: Float 0.0-1.0 (1.0 = sicher).\n"
+	"- Auch bei einer einzigen Position: positionen muss eine Liste sein.\n"
+	"- 'immobilie_hinweis': suche im Beschreibungstext / Verwendungszweck nach einer "
+	"  Strassenadresse, die nicht Lieferant und nicht Empfaenger (Hausverwaltung) ist. "
+	"  Bei Versorger-Rechnungen ist es oft die 'Lieferadresse' / 'Verbrauchsstelle'. "
+	"  Format wie auf der Rechnung uebernehmen, null wenn nicht erkennbar.\n"
 )
 
 
-def _format_kostenarten_block(kostenarten: list[dict]) -> str:
-	lines = [f"- {k['name']} ({k['umlagefaehig']})" for k in kostenarten]
-	return "\n".join(lines)
+def _build_user_prompt(invoice_text: str) -> str:
+	return f"Rechnungstext:\n{invoice_text}\n"
 
 
-def _format_suppliers_block(suppliers: list[str]) -> str:
-	if not suppliers:
-		return "(keine Lieferanten-Stammdaten verfügbar)"
-	return "\n".join(f"- {name}" for name in suppliers)
-
-
-def _build_user_prompt(invoice_text: str, kostenarten: list[dict], suppliers: list[str]) -> str:
-	return (
-		"Verfügbare Lieferanten (Stammdaten — bevorzugt einen Eintrag aus dieser Liste "
-		"als 'lieferant_name' verwenden, wenn er zur Rechnung passt):\n"
-		f"{_format_suppliers_block(suppliers)}\n\n"
-		"Verfügbare Kostenarten:\n"
-		f"{_format_kostenarten_block(kostenarten)}\n\n"
-		"Rechnungstext:\n"
-		f"{invoice_text}\n"
-	)
-
-
-def _build_vision_user_prompt(kostenarten: list[dict], suppliers: list[str]) -> str:
-	return (
-		"Analysiere das Bild der Eingangsrechnung und extrahiere die Daten.\n\n"
-		"Verfügbare Lieferanten (bevorzugt einen Eintrag aus dieser Liste als "
-		"'lieferant_name' verwenden, wenn er passt):\n"
-		f"{_format_suppliers_block(suppliers)}\n\n"
-		"Verfügbare Kostenarten:\n"
-		f"{_format_kostenarten_block(kostenarten)}\n"
-	)
+def _build_vision_user_prompt() -> str:
+	return "Analysiere das Bild der Eingangsrechnung und extrahiere die Daten."
 
 
 def _exact_supplier_lookup(name: str) -> str | None:
@@ -282,6 +257,86 @@ def _fuzzy_supplier_lookup(name: str) -> str | None:
 				best_name = c["name"]
 	if best_score >= SUPPLIER_FUZZY_THRESHOLD:
 		return best_name
+	return None
+
+
+KOSTENART_FUZZY_THRESHOLD = 0.55
+
+
+def _fuzzy_kostenart_lookup(beschreibung: str, kostenarten: list[dict]) -> dict | None:
+	"""Findet die best-passende Kostenart anhand der LLM-Beschreibung via fuzzy-Match.
+
+	Liefert {name, umlagefaehig, score} oder None bei Score unter Threshold.
+	Keine LLM-Anfrage nötig — die Kostenarten-Liste belastet den Prompt nicht mehr.
+	"""
+	if not beschreibung:
+		return None
+	target = beschreibung.lower().strip()
+	best_score = 0.0
+	best = None
+	for k in kostenarten:
+		score = SequenceMatcher(None, target, k["name"].lower().strip()).ratio()
+		# Bonus wenn ein Wort der Kostenart im Description-Text vorkommt.
+		first_word = k["name"].lower().split()[0] if k["name"] else ""
+		if first_word and len(first_word) >= 4 and first_word in target:
+			score = max(score, 0.7)
+		if score > best_score:
+			best_score = score
+			best = k
+	if best and best_score >= KOSTENART_FUZZY_THRESHOLD:
+		return {
+			"name": best["name"],
+			"umlagefaehig": best["umlagefaehig"],
+			"score": round(best_score, 2),
+		}
+	return None
+
+
+IMMOBILIE_FUZZY_THRESHOLD = 0.55
+
+
+def _fuzzy_immobilie_lookup(hinweis: str) -> dict | None:
+	"""Mappt einen LLM-Adress-Hinweis auf eine Immobilie + deren Kostenstelle.
+
+	Nutzt fuzzy-match auf Immobilie.name UND Immobilie.adresse_titel. Beide sind
+	üblicherweise Straßennamen (z.B. "Wilhelmshavener", "Gropiusstr."). Bonus
+	wenn der Immobilien-Name als Substring im Hinweis vorkommt — das ist sehr
+	zuverlässig, weil die Hausverwaltung ihre Immobilien meist nach Straße
+	benennt und Rechnungen die Straße irgendwo erwähnen.
+
+	Liefert {name, kostenstelle, score} oder None bei zu schwachem Match.
+	"""
+	if not hinweis:
+		return None
+	target = hinweis.lower().strip()
+	rows = frappe.get_all(
+		"Immobilie",
+		filters={"kostenstelle": ["is", "set"]},
+		fields=["name", "adresse_titel", "kostenstelle"],
+		limit_page_length=500,
+	)
+	best_score = 0.0
+	best = None
+	for r in rows:
+		for candidate in (r.get("name"), r.get("adresse_titel")):
+			if not candidate:
+				continue
+			cand_lower = candidate.lower().strip()
+			score = SequenceMatcher(None, target, cand_lower).ratio()
+			# Substring-Bonus: wenn der Immobilien-Name (oder ein Hauptwort davon)
+			# direkt im Hinweis vorkommt, sind wir sehr sicher.
+			first_word = cand_lower.split(".")[0].split()[0] if cand_lower else ""
+			if first_word and len(first_word) >= 5 and first_word in target:
+				score = max(score, 0.85)
+			if score > best_score:
+				best_score = score
+				best = r
+	if best and best_score >= IMMOBILIE_FUZZY_THRESHOLD:
+		return {
+			"name": best["name"],
+			"kostenstelle": best["kostenstelle"],
+			"score": round(best_score, 2),
+		}
 	return None
 
 
@@ -359,22 +414,26 @@ def extract_from_file_url(file_url: str) -> dict:
 	if isinstance(content, str):
 		content = content.encode("utf-8", errors="replace")
 
-	# 2. Text extrahieren.
-	pdf_text = _read_pdf_text(content)
+	# 2. Text extrahieren — bei force_vision skippen.
+	force_vision = mistral_client.is_force_vision_enabled()
+	pdf_text = "" if force_vision else _read_pdf_text(content)
 	used_vision = False
 
 	kostenarten = _load_kostenarten_for_prompt()
 	suppliers = _load_suppliers_for_prompt()
 
-	# 3. Vision-Fallback wenn Text leer/zu kurz.
-	if (
+	# 3. Vision-Strategie:
+	#    - force_vision: immer Vision-Modell, kein pypdf-Pfad.
+	#    - sonst: Text-Pfad bevorzugt; Vision-Fallback nur wenn Text leer/zu kurz UND erlaubt.
+	use_vision = force_vision or (
 		len(pdf_text) < MIN_TEXT_LENGTH_FOR_TEXT_MODEL
 		and mistral_client.is_vision_fallback_enabled()
-	):
+	)
+	if use_vision:
 		image_bytes = _render_pdf_first_page_png(content)
 		extracted = mistral_client.complete_vision_json(
 			system=SYSTEM_PROMPT_BASE,
-			user_prompt=_build_vision_user_prompt(kostenarten, suppliers),
+			user_prompt=_build_vision_user_prompt(),
 			image_bytes=image_bytes,
 		)
 		used_vision = True
@@ -385,7 +444,7 @@ def extract_from_file_url(file_url: str) -> dict:
 	else:
 		extracted = mistral_client.complete_json(
 			system=SYSTEM_PROMPT_BASE,
-			user=_build_user_prompt(pdf_text, kostenarten, suppliers),
+			user=_build_user_prompt(pdf_text),
 		)
 
 	# 4. Post-Processing — Lieferant.
@@ -399,10 +458,25 @@ def extract_from_file_url(file_url: str) -> dict:
 			f"Lieferant '{llm_lieferant}' nicht in den Stammdaten gefunden — bitte manuell wählen oder anlegen."
 		)
 
-	# 5. Kostenstelle aus History.
-	default_kostenstelle = _most_common_cost_center_for_supplier(matched_supplier or "") if matched_supplier else None
+	# 5. Kostenstelle: erst über die im PDF-Text genannte Immobilie versuchen
+	#    (zuverlässiger), dann Fallback auf häufigste Kostenstelle der letzten
+	#    PIs des Lieferanten.
+	immobilie_hinweis = str(extracted.get("immobilie_hinweis") or "").strip()
+	matched_immobilie = _fuzzy_immobilie_lookup(immobilie_hinweis) if immobilie_hinweis else None
+	if matched_immobilie:
+		default_kostenstelle = matched_immobilie["kostenstelle"]
+	elif matched_supplier:
+		default_kostenstelle = _most_common_cost_center_for_supplier(matched_supplier)
+	else:
+		default_kostenstelle = None
+	if immobilie_hinweis and not matched_immobilie:
+		warnings.append(
+			f"Immobilie-Hinweis '{immobilie_hinweis[:50]}' konnte nicht auf eine Immobilie gemappt werden — "
+			"bitte Kostenstelle manuell prüfen."
+		)
 
-	# 6. Positionen normalisieren.
+	# 6. Positionen normalisieren — Kostenart wird backend-side via fuzzy-Match
+	#    aus der Beschreibung abgeleitet, damit das LLM nicht mit Listen überfrachtet wird.
 	positionen_out: list[dict] = []
 	for raw_pos in extracted.get("positionen") or []:
 		if not isinstance(raw_pos, dict):
@@ -415,22 +489,19 @@ def extract_from_file_url(file_url: str) -> dict:
 		if betrag_f is None:
 			continue
 
-		llm_kostenart = str(raw_pos.get("kostenart_vorschlag") or "").strip()
-		validated = _validate_kostenart(llm_kostenart, kostenarten)
+		beschreibung = str(raw_pos.get("beschreibung") or "").strip()
 
+		# Kostenart NICHT automatisch zuordnen — Fuzzy-Match war zu unzuverlässig
+		# (z.B. "Reparaturen Sammelwartung" → "Wartung Rauchabzugsanlage").
+		# User wählt im Eingangsrechnungs-Dialog manuell aus dem Dropdown.
 		pos = {
 			"betrag": betrag_f,
-			"beschreibung": str(raw_pos.get("beschreibung") or "").strip(),
-			"kostenart": validated["name"] if validated else "",
-			"umlagefaehig": validated["umlagefaehig"] if validated else "",
+			"beschreibung": beschreibung,
+			"kostenart": "",
+			"umlagefaehig": "",
 			"kostenstelle": default_kostenstelle or "",
-			"_confidence": _coerce_confidence(raw_pos.get("kostenart_confidence")),
+			"_confidence": 0.0,
 		}
-		# Beschreibung hilfreich als 'kostenart' für UI, falls keine Validierung griff:
-		if llm_kostenart and not validated:
-			warnings.append(
-				f"Kostenart-Vorschlag '{llm_kostenart}' ist nicht in den Stammdaten — bitte manuell wählen."
-			)
 		positionen_out.append(pos)
 
 	# 7. Confidence-Sammlung für Header-Felder.

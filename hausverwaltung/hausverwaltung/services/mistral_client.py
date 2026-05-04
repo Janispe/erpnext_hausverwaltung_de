@@ -61,9 +61,21 @@ def is_vision_fallback_enabled() -> bool:
 	return int(getattr(settings, "mistral_vision_fallback", 0) or 0) == 1
 
 
+def is_force_vision_enabled() -> bool:
+	"""Wenn aktiv: pypdf-Text-Pfad komplett überspringen, immer Vision-Modell nutzen."""
+	settings = _get_settings()
+	return int(getattr(settings, "mistral_force_vision", 0) or 0) == 1
+
+
 def _api_key() -> str:
-	# Password-Felder werden in Frappe verschlüsselt gespeichert; get_decrypted_password
-	# ist der dokumentierte Weg, den Klartext zu lesen.
+	"""Gibt den Klartext-API-Key zurück.
+
+	Hinweis: Wenn man die Settings via bench-execute / Skript ändert, sollte
+	man ``set_mistral_api_key`` benutzen oder vor dem ``settings.save()`` den
+	Password-Wert vorher lesen und nach save neu setzen — sonst landet das
+	Feld als NULL in der DB. (Frappe-Forms im UI behalten Password-Felder
+	korrekt; nur skripted save() ist betroffen.)
+	"""
 	try:
 		key = get_decrypted_password(
 			"Hausverwaltung Einstellungen",
@@ -74,6 +86,26 @@ def _api_key() -> str:
 	except Exception:
 		key = None
 	return str(key or "").strip()
+
+
+@frappe.whitelist()
+def set_mistral_api_key(value: str) -> dict:
+	"""Setzt den Mistral API-Key direkt im verschlüsselten Storage.
+
+	Geht am Doc-Lifecycle vorbei und überschreibt nur das Password-Feld —
+	robust gegen das ``settings.save()``-Reset-Problem.
+	"""
+	from frappe.utils.password import set_encrypted_password
+
+	clean = (value or "").strip()
+	set_encrypted_password(
+		"Hausverwaltung Einstellungen",
+		"Hausverwaltung Einstellungen",
+		clean,
+		"mistral_api_key",
+	)
+	frappe.db.commit()
+	return {"ok": True, "length": len(clean)}
 
 
 def _base_url() -> str:
