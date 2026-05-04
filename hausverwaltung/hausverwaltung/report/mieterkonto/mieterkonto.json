@@ -38,10 +38,18 @@
    "wildcard_filter": 0
   },
   {
-   "default": "0",
+   "default": "1",
    "fieldname": "show_invoice_details",
    "fieldtype": "Check",
-   "label": "Rechnungsspalten anzeigen",
+   "label": "Soll nach Miete/BK/HK aufteilen",
+   "mandatory": 0,
+   "wildcard_filter": 0
+  },
+  {
+   "default": "0",
+   "fieldname": "show_writeoff_columns",
+   "fieldtype": "Check",
+   "label": "Abschreibungsspalten anzeigen",
    "mandatory": 0,
    "wildcard_filter": 0
   }

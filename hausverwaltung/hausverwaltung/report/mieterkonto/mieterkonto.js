@@ -33,7 +33,13 @@ frappe.query_reports["Mieterkonto"] = {
 		},
 		{
 			fieldname: "show_invoice_details",
-			label: __("Rechnungsspalten anzeigen"),
+			label: __("Soll nach Miete/BK/HK aufteilen"),
+			fieldtype: "Check",
+			default: 1,
+		},
+		{
+			fieldname: "show_writeoff_columns",
+			label: __("Abschreibungsspalten anzeigen"),
 			fieldtype: "Check",
 			default: 0,
 		},

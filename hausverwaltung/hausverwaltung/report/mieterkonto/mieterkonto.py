@@ -6,7 +6,7 @@ from typing import Any
 
 import frappe
 from frappe import _
-from frappe.utils import flt, getdate, nowdate
+from frappe.utils import cint, flt, getdate, nowdate
 
 from hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff import (
 	is_receivable_writeoff_journal_entry,
@@ -56,6 +56,7 @@ class InvoiceInfo:
 
 def execute(filters=None):
 	filters = frappe._dict(filters or {})
+	_apply_defaults(filters)
 	_validate_filters(filters)
 
 	invoices = _get_invoices(filters)
@@ -69,7 +70,12 @@ def execute(filters=None):
 	rows, summary_totals = _build_rows(transactions, filters)
 	columns = _get_columns(filters)
 	enrich_link_titles(rows, columns)
-	return columns, rows, None, None, _get_report_summary(summary_totals)
+	return columns, rows, None, None, _get_report_summary(summary_totals, filters)
+
+
+def _apply_defaults(filters):
+	filters.show_invoice_details = cint(filters.get("show_invoice_details", 1))
+	filters.show_writeoff_columns = cint(filters.get("show_writeoff_columns", 0))
 
 
 def _validate_filters(filters):
@@ -343,6 +349,8 @@ def _build_rows(transactions: list[dict[str, Any]], filters) -> tuple[list[dict[
 		row = _transaction_to_row(transaction, balance)
 		if not filters.get("show_invoice_details"):
 			row = _hide_invoice_detail_columns(row)
+		if not filters.get("show_writeoff_columns"):
+			row = _hide_writeoff_columns(row)
 		rows.append(row)
 
 	if not rows and abs(balance) > TOLERANCE:
@@ -418,6 +426,13 @@ def _hide_invoice_detail_columns(row: dict[str, Any]) -> dict[str, Any]:
 	return row
 
 
+def _hide_writeoff_columns(row: dict[str, Any]) -> dict[str, Any]:
+	for category in CATEGORIES:
+		row.pop(f"abgeschrieben_{category}", None)
+	row.pop("abgeschrieben_summe", None)
+	return row
+
+
 def _transaction_sort_key(transaction: dict[str, Any]):
 	return (
 		transaction["date"],
@@ -431,7 +446,7 @@ def _get_currency(company: str) -> str | None:
 	return frappe.db.get_value("Company", company, "default_currency")
 
 
-def _get_report_summary(totals: dict[str, Any]) -> list[dict[str, Any]]:
+def _get_report_summary(totals: dict[str, Any], filters) -> list[dict[str, Any]]:
 	all_totals = totals["all"]
 	period_totals = totals["period"]
 	currency = all_totals.get("currency") or period_totals.get("currency")
@@ -440,7 +455,7 @@ def _get_report_summary(totals: dict[str, Any]) -> list[dict[str, Any]]:
 	paid_all = all_totals["paid"]
 	written_off_all = all_totals["written_off"]
 	invoice_all = all_totals["invoice"]
-	return [
+	summary = [
 		{
 			"value": all_totals["balance"],
 			"indicator": "Red" if flt(all_totals["balance"]) > TOLERANCE else "Green",
@@ -452,13 +467,6 @@ def _get_report_summary(totals: dict[str, Any]) -> list[dict[str, Any]]:
 			"value": sum(flt(paid_period.get(category)) for category in CATEGORIES),
 			"indicator": "Green",
 			"label": _("Bezahlt im Zeitraum"),
-			"datatype": "Currency",
-			"currency": currency,
-		},
-		{
-			"value": sum(flt(written_off_period.get(category)) for category in CATEGORIES),
-			"indicator": "Orange",
-			"label": _("Abgeschrieben im Zeitraum"),
 			"datatype": "Currency",
 			"currency": currency,
 		},
@@ -491,6 +499,18 @@ def _get_report_summary(totals: dict[str, Any]) -> list[dict[str, Any]]:
 			"currency": currency,
 		},
 	]
+	if filters.get("show_writeoff_columns"):
+		summary.insert(
+			2,
+			{
+				"value": sum(flt(written_off_period.get(category)) for category in CATEGORIES),
+				"indicator": "Orange",
+				"label": _("Abgeschrieben im Zeitraum"),
+				"datatype": "Currency",
+				"currency": currency,
+			},
+		)
+	return summary
 
 
 def _open_category_amount(totals: dict[str, Any], category: str) -> float:
@@ -542,17 +562,20 @@ def _get_columns(filters):
 			)
 		)
 	for category in CATEGORIES:
-		columns.append(
-			_currency_column(
-				_("{0} abgeschrieben").format(CATEGORY_LABELS[category]),
-				f"abgeschrieben_{category}",
+		if filters.get("show_writeoff_columns"):
+			columns.append(
+				_currency_column(
+					_("{0} abgeschrieben").format(CATEGORY_LABELS[category]),
+					f"abgeschrieben_{category}",
+				)
 			)
-		)
+
+	columns.append(_currency_column(_("Bezahlt gesamt"), "bezahlt_summe"))
+	if filters.get("show_writeoff_columns"):
+		columns.append(_currency_column(_("Abgeschrieben gesamt"), "abgeschrieben_summe"))
 
 	columns.extend(
 		[
-			_currency_column(_("Bezahlt gesamt"), "bezahlt_summe"),
-			_currency_column(_("Abgeschrieben gesamt"), "abgeschrieben_summe"),
 			_currency_column(_("Kontostand"), "kontostand", width=125),
 			{"label": _("Fällig am"), "fieldname": "faellig_am", "fieldtype": "Date", "width": 100},
 			{"label": _("Status"), "fieldname": "status", "fieldtype": "Data", "width": 150},
