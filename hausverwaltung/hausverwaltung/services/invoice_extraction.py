@@ -122,6 +122,12 @@ SYSTEM_PROMPT_BASE = (
 	"{\n"
 	'  "lieferant_name": "string (Firmenname des Rechnungsstellers, exakt aus Lieferanten-Liste wenn möglich)",\n'
 	'  "lieferant_confidence": 0.0,\n'
+	'  "lieferant_iban": "DE12 3456 ... oder null (IBAN aus Briefkopf/Fußzeile)",\n'
+	'  "lieferant_steuer_id": "USt-IdNr (DE...) oder Steuernummer oder null",\n'
+	'  "lieferant_strasse": "Straße + Hausnummer aus dem Lieferanten-Briefkopf oder null",\n'
+	'  "lieferant_plz": "Postleitzahl 5-stellig oder null",\n'
+	'  "lieferant_ort": "Ort/Stadt oder null",\n'
+	'  "lieferant_land": "Land (default Deutschland) oder null",\n'
 	'  "rechnungsdatum": "YYYY-MM-DD oder null",\n'
 	'  "rechnungsdatum_confidence": 0.0,\n'
 	'  "wertstellungsdatum": "YYYY-MM-DD oder null (= Leistungszeitraum-Beginn '
@@ -156,12 +162,23 @@ SYSTEM_PROMPT_BASE = (
 	"  (Groß-/Kleinschreibung beachten) oder null sein.\n"
 	"- 'umlagefaehig' muss zur gewählten Kostenart passen (Liste sagt 'Betriebskostenart' "
 	"  oder 'Kostenart nicht umlagefaehig').\n"
+	"- 'lieferant_iban': nur die echte Lieferanten-IBAN, NICHT die IBAN des Empfängers/Mandanten. "
+	"  Format wie auf der Rechnung übernehmen, Whitespace ist ok.\n"
+	"- 'lieferant_steuer_id': USt-IdNr (beginnt mit Länderkürzel, z.B. 'DE123456789') bevorzugt; "
+	"  falls nicht vorhanden, Steuernummer (z.B. '12/345/67890').\n"
+	"- 'lieferant_strasse'/'lieferant_plz'/'lieferant_ort'/'lieferant_land': aus dem Briefkopf "
+	"  des Rechnungsstellers, NICHT die Empfänger-Adresse.\n"
 	"\n"
 	"Beispiel 1 — Stromabrechnung von Vattenfall, einfacher Allgemeinstrom-Posten:\n"
-	"Eingabe: 'Vattenfall Europe Sales GmbH ... Rechnungs-Nr. VS-2026-998877 ... "
-	"Rechnungsdatum 14.03.2026 ... Verbrauchszeitraum 01.01.2026 - 31.01.2026 ... "
+	"Eingabe: 'Vattenfall Europe Sales GmbH, Chausseestraße 23, 10115 Berlin ... "
+	"USt-IdNr DE123456789 ... IBAN DE89 3704 0044 0532 0130 00 ... "
+	"Rechnungs-Nr. VS-2026-998877 ... Rechnungsdatum 14.03.2026 ... "
+	"Verbrauchszeitraum 01.01.2026 - 31.01.2026 ... "
 	"Allgemeinstrom Treppenhaus 156,40 EUR brutto'\n"
 	"Ausgabe: {\"lieferant_name\": \"Vattenfall Europe Sales GmbH\", \"lieferant_confidence\": 0.95, "
+	"\"lieferant_iban\": \"DE89 3704 0044 0532 0130 00\", \"lieferant_steuer_id\": \"DE123456789\", "
+	"\"lieferant_strasse\": \"Chausseestraße 23\", \"lieferant_plz\": \"10115\", "
+	"\"lieferant_ort\": \"Berlin\", \"lieferant_land\": \"Deutschland\", "
 	"\"rechnungsdatum\": \"2026-03-14\", \"rechnungsdatum_confidence\": 1.0, "
 	"\"wertstellungsdatum\": \"2026-01-01\", \"wertstellungsdatum_confidence\": 0.9, "
 	"\"bill_no\": \"VS-2026-998877\", \"bill_no_confidence\": 0.95, "
@@ -169,10 +186,14 @@ SYSTEM_PROMPT_BASE = (
 	"\"kostenart_vorschlag\": \"Allgemeinstrom\", \"umlagefaehig\": \"Betriebskostenart\", "
 	"\"kostenart_confidence\": 0.92}]}\n"
 	"\n"
-	"Beispiel 2 — Handwerker-Rechnung mit zwei Positionen, eine nicht umlegbar:\n"
-	"Eingabe: 'Maler Schmidt GmbH ... Rg.-Nr. 2026-117 ... 22. April 2026 ... "
+	"Beispiel 2 — Handwerker-Rechnung ohne IBAN, zwei Positionen:\n"
+	"Eingabe: 'Maler Schmidt GmbH, Hauptstr. 5, 12345 Musterstadt ... Steuernr. 12/345/67890 ... "
+	"Rg.-Nr. 2026-117 ... 22. April 2026 ... "
 	"Pos 1: Renovierung Treppenhaus EG 1.250,00 ... Pos 2: Streichen Wohnung 4.OG li 850,00'\n"
 	"Ausgabe: {\"lieferant_name\": \"Maler Schmidt GmbH\", \"lieferant_confidence\": 0.9, "
+	"\"lieferant_iban\": null, \"lieferant_steuer_id\": \"12/345/67890\", "
+	"\"lieferant_strasse\": \"Hauptstr. 5\", \"lieferant_plz\": \"12345\", "
+	"\"lieferant_ort\": \"Musterstadt\", \"lieferant_land\": \"Deutschland\", "
 	"\"rechnungsdatum\": \"2026-04-22\", \"rechnungsdatum_confidence\": 1.0, "
 	"\"wertstellungsdatum\": null, \"wertstellungsdatum_confidence\": 0.0, "
 	"\"bill_no\": \"2026-117\", \"bill_no_confidence\": 0.9, "
@@ -423,7 +444,20 @@ def extract_from_file_url(file_url: str) -> dict:
 		if conf and conf < 0.7:
 			warnings.append(f"{fname}: niedrige Confidence ({conf:.2f}) — bitte prüfen.")
 
-	# 8. Result.
+	# 8. Wenn kein Match: Block mit Vorschlagsdaten für Quick-Create-Dialog liefern.
+	lieferant_neu: dict | None = None
+	if llm_lieferant and not matched_supplier:
+		lieferant_neu = {
+			"supplier_name": llm_lieferant,
+			"iban": str(extracted.get("lieferant_iban") or "").strip(),
+			"tax_id": str(extracted.get("lieferant_steuer_id") or "").strip(),
+			"strasse": str(extracted.get("lieferant_strasse") or "").strip(),
+			"plz": str(extracted.get("lieferant_plz") or "").strip(),
+			"ort": str(extracted.get("lieferant_ort") or "").strip(),
+			"land": str(extracted.get("lieferant_land") or "").strip() or "Deutschland",
+		}
+
+	# 9. Result.
 	return {
 		"fields": {
 			"lieferant": matched_supplier or "",
@@ -437,4 +471,5 @@ def extract_from_file_url(file_url: str) -> dict:
 		"used_vision": used_vision,
 		"raw_text": (pdf_text or "")[:MAX_RAW_TEXT_RETURN],
 		"llm_lieferant": llm_lieferant,
+		"lieferant_neu": lieferant_neu,
 	}

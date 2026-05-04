@@ -363,6 +363,10 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 	if (opts && opts._attached_file) {
 		dialog._hv_attached_file = opts._attached_file;
 	}
+	// Lieferanten-Vorschlagsdaten aus der LLM-Extraktion (für Quick-Create-Button).
+	if (opts && opts._lieferant_neu) {
+		dialog._hv_lieferant_neu = opts._lieferant_neu;
+	}
 
 	dialog.show();
 
@@ -434,6 +438,121 @@ function apply_extraction_hints(dialog, opts) {
 		);
 		dialog.$body.prepend($banner);
 	}
+
+	// Quick-Create-Button für unbekannte Lieferanten — sichtbar wenn das LLM einen
+	// Vorschlag gemacht hat aber kein Match in den Stammdaten gefunden wurde.
+	if (opts._lieferant_neu && opts._lieferant_neu.supplier_name) {
+		const lf = dialog.fields_dict.lieferant;
+		if (lf && lf.$wrapper) {
+			const $btn = $(
+				`<button type="button" class="btn btn-xs btn-secondary hv-quick-create-supplier" style="margin-top: 4px;">
+					+ ${__("Lieferant '{0}' anlegen", [
+						frappe.utils.escape_html(opts._lieferant_neu.supplier_name),
+					])}
+				</button>`
+			);
+			lf.$wrapper.find(".hv-quick-create-supplier").remove();
+			lf.$wrapper.append($btn);
+			$btn.on("click", () => open_supplier_quick_create(dialog, opts._lieferant_neu));
+		}
+	}
+}
+
+const HV_DE_COUNTRY_MAP = {
+	"Deutschland": "Germany",
+	"Österreich": "Austria",
+	"Oesterreich": "Austria",
+	"Schweiz": "Switzerland",
+};
+
+function open_supplier_quick_create(parent_dialog, prefill) {
+	const default_group = "Services";
+	const default_country = HV_DE_COUNTRY_MAP[prefill.land] || prefill.land || "Germany";
+	const qc = new frappe.ui.Dialog({
+		title: __("Lieferant aus Vorschlag anlegen"),
+		fields: [
+			{
+				fieldtype: "Data",
+				fieldname: "supplier_name",
+				label: __("Lieferantenname"),
+				reqd: 1,
+				default: prefill.supplier_name || "",
+			},
+			{
+				fieldtype: "Link",
+				fieldname: "supplier_group",
+				label: __("Lieferantengruppe"),
+				options: "Supplier Group",
+				reqd: 1,
+				default: default_group,
+			},
+			{
+				fieldtype: "Link",
+				fieldname: "country",
+				label: __("Land"),
+				options: "Country",
+				default: default_country,
+			},
+			{ fieldtype: "Section Break", label: __("Steuer / Zahlung") },
+			{
+				fieldtype: "Data",
+				fieldname: "tax_id",
+				label: __("USt-IdNr / Steuernummer"),
+				default: prefill.tax_id || "",
+			},
+			{
+				fieldtype: "Data",
+				fieldname: "iban",
+				label: __("IBAN"),
+				default: prefill.iban || "",
+				description: __(
+					"Wird als Notiz im Lieferanten gespeichert. Bank Account legst du nachträglich auf der Lieferanten-Seite an."
+				),
+			},
+			{ fieldtype: "Section Break", label: __("Adresse") },
+			{
+				fieldtype: "Data",
+				fieldname: "strasse",
+				label: __("Straße + Hausnummer"),
+				default: prefill.strasse || "",
+			},
+			{ fieldtype: "Column Break" },
+			{
+				fieldtype: "Data",
+				fieldname: "plz",
+				label: __("PLZ"),
+				default: prefill.plz || "",
+			},
+			{ fieldtype: "Column Break" },
+			{
+				fieldtype: "Data",
+				fieldname: "ort",
+				label: __("Ort"),
+				default: prefill.ort || "",
+			},
+		],
+		primary_action_label: __("Anlegen"),
+		primary_action(values) {
+			qc.disable_primary_action();
+			frappe
+				.call({
+					method: `${HV_COCKPIT_API}.create_supplier_from_extraction`,
+					args: values,
+				})
+				.then((r) => {
+					const created = r && r.message;
+					if (!created || !created.name) return;
+					qc.hide();
+					parent_dialog.set_value("lieferant", created.name);
+					frappe.show_alert({
+						message: __("Lieferant {0} angelegt.", [created.name]),
+						indicator: "green",
+					});
+				})
+				.finally(() => qc.enable_primary_action());
+		},
+	});
+	qc.show();
 }
 
 function apply_eingabemodus(dialog) {
@@ -807,6 +926,7 @@ hausverwaltung.buchen_cockpit.open_extract_dialog = () => {
 						_warnings: data.warnings || [],
 						_attached_file: values.pdf_file,
 						_used_vision: !!data.used_vision,
+						_lieferant_neu: data.lieferant_neu || null,
 					});
 				})
 				.catch((err) => {

@@ -24,6 +24,8 @@
   "mistral_vision_model",
   "mistral_timeout_seconds",
   "mistral_vision_fallback",
+  "blz_section",
+  "blz_datei_url",
   "writeoff_section",
   "abschreibungskonto_forderungen",
   "income_section",
@@ -153,6 +155,17 @@
    "fieldtype": "Check",
    "label": "Vision-Fallback bei Scans",
    "description": "Wenn pypdf keinen Text findet, Bild rendern und Vision-Modell nutzen."
+  },
+  {
+   "fieldname": "blz_section",
+   "fieldtype": "Section Break",
+   "label": "Bundesbank Bankleitzahlen"
+  },
+  {
+   "fieldname": "blz_datei_url",
+   "fieldtype": "Data",
+   "label": "BLZ-Datei URL (optional)",
+   "description": "Wenn leer: aktuelle URL wird automatisch von der Bundesbank-Seite ermittelt. Setze nur, wenn das Auto-Discovery scheitert."
   },
   {
    "fieldname": "writeoff_section",

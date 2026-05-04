@@ -20,6 +20,24 @@ from hausverwaltung.hausverwaltung.utils.buchung import ensure_default_service_i
 EINGABEQUELLE_EINGANG = "Vereinfachte Buchung"
 EINGABEQUELLE_AUSGANG = "Vereinfachte Mieterrechnung"
 
+# Mapping deutscher → englischer Ländernamen für die ERPNext-Country-Tabelle.
+# Wir nehmen die häufigsten DACH/EU-Länder, das Frontend tippt sonst sowieso
+# Englisch dank Country-Link-Autocomplete.
+_DE_COUNTRY_MAP = {
+    "Deutschland": "Germany",
+    "Österreich": "Austria",
+    "Oesterreich": "Austria",
+    "Schweiz": "Switzerland",
+    "Niederlande": "Netherlands",
+    "Belgien": "Belgium",
+    "Frankreich": "France",
+    "Italien": "Italy",
+    "Spanien": "Spain",
+    "Polen": "Poland",
+    "Tschechien": "Czech Republic",
+    "Dänemark": "Denmark",
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers (shared between PI and SI creation)
@@ -735,6 +753,149 @@ def extract_invoice_from_file(file_url: str) -> dict:
         frappe.throw(
             f"Mistral-Aufruf fehlgeschlagen, bitte später erneut versuchen: {exc}"
         )
+
+
+@frappe.whitelist()
+def create_supplier_from_extraction(**kwargs) -> dict:
+    """Legt einen neuen Lieferanten + ggf. Adresse aus den LLM-Vorschlagsdaten an.
+
+    Aufrufer (Cockpit-JS) übergibt die im Quick-Create-Dialog ggf. korrigierten Werte.
+
+    Expected kwargs:
+        supplier_name: required
+        supplier_group: required (Frontend liefert default)
+        country: optional (default Deutschland)
+        tax_id: optional
+        iban: optional — wird ans Feld supplier_details als Notiz gehängt,
+              da Bank-Account-Erstellung eine Bank-Doc voraussetzt.
+        strasse, plz, ort: optional — ergeben einen Address-Doc, wenn alle drei da sind.
+    """
+    supplier_name = (kwargs.get("supplier_name") or "").strip()
+    if not supplier_name:
+        frappe.throw("Bitte einen Lieferantennamen angeben.")
+    if frappe.db.exists("Supplier", {"supplier_name": supplier_name}):
+        frappe.throw(f"Lieferant '{supplier_name}' existiert bereits.")
+    supplier_group = (kwargs.get("supplier_group") or "").strip()
+    if not supplier_group:
+        frappe.throw("Bitte eine Lieferantengruppe wählen.")
+    country = (kwargs.get("country") or "Germany").strip() or "Germany"
+    country = _DE_COUNTRY_MAP.get(country, country)
+    if not frappe.db.exists("Country", country):
+        # Defensiver Fallback — wenn der Country-Name keiner gültigen Option entspricht,
+        # auf den ERPNext-Standard "Germany" zurückfallen.
+        country = "Germany"
+    tax_id = (kwargs.get("tax_id") or "").strip()
+    iban = (kwargs.get("iban") or "").strip()
+    strasse = (kwargs.get("strasse") or "").strip()
+    plz = (kwargs.get("plz") or "").strip()
+    ort = (kwargs.get("ort") or "").strip()
+
+    supplier = frappe.new_doc("Supplier")
+    supplier.supplier_name = supplier_name
+    supplier.supplier_group = supplier_group
+    supplier.country = country
+    if tax_id:
+        supplier.tax_id = tax_id
+    details_lines = []
+    if iban:
+        details_lines.append(f"IBAN: {iban}")
+        details_lines.append("(Bitte über das Supplier-Formular einen Bank Account mit dieser IBAN anlegen.)")
+    if details_lines:
+        supplier.supplier_details = "\n".join(details_lines)
+    supplier.insert(ignore_permissions=True)
+
+    address_name: str | None = None
+    if strasse and plz and ort:
+        address = frappe.new_doc("Address")
+        address.address_title = supplier.name
+        address.address_type = "Billing"
+        address.address_line1 = strasse
+        address.pincode = plz
+        address.city = ort
+        address.country = country
+        address.append(
+            "links",
+            {"link_doctype": "Supplier", "link_name": supplier.name},
+        )
+        address.insert(ignore_permissions=True)
+        address_name = address.name
+        # Frappe pflegt supplier_primary_address über einen Hook bei Adress-Save —
+        # falls nicht greift, setzen wir's defensiv.
+        try:
+            frappe.db.set_value(
+                "Supplier", supplier.name, "supplier_primary_address", address_name
+            )
+        except Exception:
+            pass
+
+    bank_account_name = _try_create_bank_account_for_supplier(supplier.name, iban)
+
+    return {
+        "name": supplier.name,
+        "supplier_name": supplier.supplier_name,
+        "address_name": address_name,
+        "bank_account_name": bank_account_name,
+        "iban_stored_as_note": bool(iban) and not bank_account_name,
+    }
+
+
+def _try_create_bank_account_for_supplier(
+    supplier_name: str, iban: str
+) -> str | None:
+    """Versucht Bank + Bank Account aus IBAN zu erzeugen.
+
+    Liefert den Bank-Account-Namen bei Erfolg oder None wenn:
+    - keine IBAN
+    - keine deutsche IBAN (nur DE-Lookup unterstützt)
+    - BLZ nicht in der Lookup-Tabelle
+    - Pflege-Fehler (defensiv: keine Exceptions, IBAN bleibt dann nur als Notiz)
+    """
+    from hausverwaltung.hausverwaltung.services.blz_lookup import lookup_iban
+
+    if not iban:
+        return None
+    info = lookup_iban(iban)
+    if not info:
+        return None
+    bank_name = info["bank_name"] or f"Bank {info['blz']}"
+    try:
+        bank_doc_name = _ensure_bank_doc(bank_name, info.get("bic") or "")
+    except Exception:
+        return None
+    try:
+        ba = frappe.new_doc("Bank Account")
+        ba.account_name = f"{supplier_name} - {bank_name}"
+        ba.bank = bank_doc_name
+        ba.iban = iban
+        kontonr = info.get("kontonummer") or ""
+        if kontonr:
+            ba.bank_account_no = kontonr
+        ba.party_type = "Supplier"
+        ba.party = supplier_name
+        ba.is_company_account = 0
+        ba.insert(ignore_permissions=True)
+        # Auch als default_bank_account auf Supplier setzen.
+        try:
+            frappe.db.set_value(
+                "Supplier", supplier_name, "default_bank_account", ba.name
+            )
+        except Exception:
+            pass
+        return ba.name
+    except Exception:
+        return None
+
+
+def _ensure_bank_doc(bank_name: str, bic: str = "") -> str:
+    """Get-or-create für Bank-DocType. Idempotent."""
+    if frappe.db.exists("Bank", bank_name):
+        return bank_name
+    bank = frappe.new_doc("Bank")
+    bank.bank_name = bank_name
+    if bic:
+        bank.swift_number = bic
+    bank.insert(ignore_permissions=True)
+    return bank.name
 
 
 # ---------------------------------------------------------------------------
