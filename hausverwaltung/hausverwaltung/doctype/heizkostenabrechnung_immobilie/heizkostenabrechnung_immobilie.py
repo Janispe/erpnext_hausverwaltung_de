@@ -595,6 +595,58 @@ def create_mieter_drafts(name: str) -> Dict[str, Any]:
 
 
 @frappe.whitelist()
+def create_with_drafts(
+	immobilie: str,
+	von: str,
+	bis: str,
+	waermedienst: str | None = None,
+	waermedienst_referenz: str | None = None,
+	datum: str | None = None,
+) -> Dict[str, Any]:
+	"""Wizard-Helper: legt eine neue ``Heizkostenabrechnung Immobilie`` an
+	UND ruft direkt ``create_mieter_drafts`` auf — in einem Schritt.
+
+	Reduziert die Tipp-/Klick-Hürde für den Hausverwalter: er füllt nur die
+	Pflichtfelder im Wizard-Dialog aus und landet sofort im fertig befüllten
+	Doc, in dem nur noch ``kosten_gesamt`` pro Mieter eingetragen werden muss.
+
+	Args:
+		immobilie: Name der Immobilie (Pflicht)
+		von: Periode-Start YYYY-MM-DD (Pflicht)
+		bis: Periode-Ende YYYY-MM-DD (Pflicht)
+		waermedienst: Lieferant-Name (optional)
+		waermedienst_referenz: Sammel-Abrechnungs-Nr (optional)
+		datum: Belegdatum (optional, default = bis)
+
+	Returns: ``{name, drafts_created, drafts_skipped, no_wohnung}``
+	"""
+	if not (immobilie and von and bis):
+		frappe.throw("Immobilie + Von + Bis sind Pflichtfelder.")
+
+	parent = frappe.new_doc("Heizkostenabrechnung Immobilie")
+	parent.immobilie = immobilie
+	parent.von = von
+	parent.bis = bis
+	parent.datum = datum or bis
+	if waermedienst:
+		parent.waermedienst = waermedienst
+	if waermedienst_referenz:
+		parent.waermedienst_referenz = waermedienst_referenz
+	parent.insert(ignore_permissions=True)
+	frappe.db.commit()
+
+	# Direkt im Anschluss die Mieter-Drafts erzeugen
+	res = create_mieter_drafts(parent.name)
+
+	return {
+		"name": parent.name,
+		"drafts_created": len(res["created"]),
+		"drafts_skipped": len(res["skipped"]),
+		"no_wohnung": res["no_wohnung"],
+	}
+
+
+@frappe.whitelist()
 def submit_all_pending(name: str) -> Dict[str, Any]:
 	"""Submittet alle noch nicht-submitteten Mieter-Children einzeln.
 
