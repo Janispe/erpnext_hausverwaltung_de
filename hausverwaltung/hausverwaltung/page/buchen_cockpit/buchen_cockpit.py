@@ -411,11 +411,11 @@ def create_purchase_invoice(**kwargs) -> dict:
     Expected kwargs:
         lieferant: Supplier name (required)
         rechnungsdatum: ISO date (defaults to today)
+        wertstellungsdatum: ISO date (Leistungszeitraum, optional) — landet in custom_wertstellungsdatum
         rechnungsname: free-form invoice number / label
         referenz: optional reference
         positionen: list of dicts with keys
-            betrag, konto, kostenstelle, umlagefaehig, kostenart,
-            wohnung (optional), zahldatum (optional), wertstellungsdatum (optional)
+            betrag, konto, kostenstelle, umlagefaehig, kostenart, wohnung (optional)
     """
     supplier = kwargs.get("lieferant")
     if not supplier:
@@ -491,10 +491,6 @@ def create_purchase_invoice(**kwargs) -> dict:
             desc_parts.append(f"Typ: {row.get('umlagefaehig')}")
         if row.get("kostenart"):
             desc_parts.append(f"Kostenart: {row.get('kostenart')}")
-        if row.get("zahldatum"):
-            desc_parts.append(f"Zahldatum: {row.get('zahldatum')}")
-        if row.get("wertstellungsdatum"):
-            desc_parts.append(f"Wertstellungsdatum: {row.get('wertstellungsdatum')}")
         description = "; ".join(desc_parts) or (kwargs.get("rechnungsname") or kwargs.get("referenz") or "Ausgabe")
 
         item_code = (
@@ -536,6 +532,10 @@ def create_purchase_invoice(**kwargs) -> dict:
 
     pi.set("items", items)
 
+    wertstellungsdatum = kwargs.get("wertstellungsdatum")
+    if wertstellungsdatum and _has_field("Purchase Invoice", "custom_wertstellungsdatum"):
+        pi.custom_wertstellungsdatum = getdate(wertstellungsdatum)
+
     if _has_field("Purchase Invoice", "hv_eingabequelle"):
         pi.hv_eingabequelle = EINGABEQUELLE_EINGANG
 
@@ -567,6 +567,7 @@ def create_sales_invoice(**kwargs) -> dict:
         mietvertrag: Mietvertrag name (required)
         rechnungsdatum: ISO date (defaults to today)
         faellig_am: ISO date (defaults to posting + 21 days)
+        wertstellungsdatum: ISO date (Leistungszeitraum, optional) — landet in custom_wertstellungsdatum
         rechnungsname: free-form label
         referenz: optional reference
         positionen: list of dicts with keys
@@ -644,6 +645,10 @@ def create_sales_invoice(**kwargs) -> dict:
     })
     si.set("payment_terms_template", None)
     si.set("payment_schedule", [])
+
+    wertstellungsdatum = kwargs.get("wertstellungsdatum")
+    if wertstellungsdatum and _has_field("Sales Invoice", "custom_wertstellungsdatum"):
+        si.custom_wertstellungsdatum = getdate(wertstellungsdatum)
 
     if wohnung and _has_field("Sales Invoice", "wohnung"):
         si.set("wohnung", wohnung)

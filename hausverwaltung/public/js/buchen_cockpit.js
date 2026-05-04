@@ -201,6 +201,13 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			default: frappe.datetime.get_today(),
 			reqd: 1,
 		},
+		{ fieldtype: "Column Break" },
+		{
+			fieldtype: "Date",
+			fieldname: "wertstellungsdatum",
+			label: __("Wertstellungsdatum"),
+			description: __("Leistungszeitraum (wird in custom_wertstellungsdatum gespeichert)."),
+		},
 		{ fieldtype: "Section Break" },
 		{
 			fieldtype: "Data",
@@ -326,16 +333,6 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 						"Nur nötig bei Betriebskostenart mit Verteilung 'Einzeln'."
 					),
 				},
-				{
-					fieldtype: "Date",
-					fieldname: "zahldatum",
-					label: __("Zahldatum"),
-				},
-				{
-					fieldtype: "Date",
-					fieldname: "wertstellungsdatum",
-					label: __("Wertstellungsdatum"),
-				},
 			],
 		},
 	];
@@ -367,6 +364,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 	if (has_explicit_defaults) {
 		if (opts.lieferant) dialog.set_value("lieferant", opts.lieferant);
 		if (opts.rechnungsdatum) dialog.set_value("rechnungsdatum", opts.rechnungsdatum);
+		if (opts.wertstellungsdatum) dialog.set_value("wertstellungsdatum", opts.wertstellungsdatum);
 		if (opts.rechnungsname) dialog.set_value("rechnungsname", opts.rechnungsname);
 		if (opts.referenz) dialog.set_value("referenz", opts.referenz);
 		if (opts.positionen && opts.positionen.length) {
@@ -486,6 +484,7 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 			args: {
 				lieferant: values.lieferant,
 				rechnungsdatum: values.rechnungsdatum,
+				wertstellungsdatum: values.wertstellungsdatum,
 				rechnungsname: values.rechnungsname,
 				referenz: values.referenz,
 				positionen: JSON.stringify(rows),
@@ -564,6 +563,13 @@ hausverwaltung.buchen_cockpit.open_mieterrechnung_dialog = (opts = {}) => {
 			fieldname: "faellig_am",
 			label: __("Fällig am"),
 			default: frappe.datetime.add_days(frappe.datetime.get_today(), 21),
+		},
+		{ fieldtype: "Column Break" },
+		{
+			fieldtype: "Date",
+			fieldname: "wertstellungsdatum",
+			label: __("Wertstellungsdatum"),
+			description: __("Leistungszeitraum (wird in custom_wertstellungsdatum gespeichert)."),
 		},
 		{ fieldtype: "Section Break" },
 		{
@@ -647,6 +653,7 @@ hausverwaltung.buchen_cockpit.open_mieterrechnung_dialog = (opts = {}) => {
 		if (opts.mietvertrag) dialog.set_value("mietvertrag", opts.mietvertrag);
 		if (opts.rechnungsdatum) dialog.set_value("rechnungsdatum", opts.rechnungsdatum);
 		if (opts.faellig_am) dialog.set_value("faellig_am", opts.faellig_am);
+		if (opts.wertstellungsdatum) dialog.set_value("wertstellungsdatum", opts.wertstellungsdatum);
 		if (opts.rechnungsname) dialog.set_value("rechnungsname", opts.rechnungsname);
 		if (opts.referenz) dialog.set_value("referenz", opts.referenz);
 		if (opts.positionen && opts.positionen.length) {
@@ -683,6 +690,7 @@ function submit_mieterrechnung(dialog, values, submit_doc = true) {
 				mietvertrag: values.mietvertrag,
 				rechnungsdatum: values.rechnungsdatum,
 				faellig_am: values.faellig_am,
+				wertstellungsdatum: values.wertstellungsdatum,
 				rechnungsname: values.rechnungsname,
 				referenz: values.referenz,
 				positionen: JSON.stringify(rows),
