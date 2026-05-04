@@ -41,6 +41,7 @@ def _get_mieter_und_vertrag(wohnung: str) -> tuple[list[dict], str | None]:
             c.name AS contact,
             c.first_name,
             c.last_name,
+            vp.rolle AS rolle,
             COALESCE(
                 NULLIF(c.phone, ''),
                 NULLIF(c.mobile_no, '')
@@ -65,22 +66,62 @@ def _get_mieter_und_vertrag(wohnung: str) -> tuple[list[dict], str | None]:
 			label = f"{last}, {first}"
 		else:
 			label = (last or first).strip() or row.get("contact") or ""
+		# Untermieter mit „U:"-Prefix kennzeichnen, damit auf einen Blick
+		# klar ist welche Rolle der Mieter im Vertrag hat (Hauptmieter
+		# bleibt ohne Prefix, Betreuer ebenfalls — falls relevant ggf.
+		# später erweitern).
+		rolle = (row.get("rolle") or "").strip()
+		if rolle == "Untermieter":
+			label = f"U: {label}"
 		tenants.append(
 			{
 				"contact": row.get("contact"),
 				"label": label,
 				"telefon": row.get("telefon") or "—",
+				"rolle": rolle,
 			}
 		)
 	return tenants, vertrag_name
 
 
-def _wohnung_sort_key(whg: dict) -> tuple[int, str]:
-	"""Sortiert Wohnungen: EG zuerst, danach nach ID (name)."""
-	lage = (whg.get("name__lage_in_der_immobilie") or "").strip().lower()
-	first_token = lage.split()[0] if lage else ""
-	is_eg = first_token in {"eg", "erdgeschoss", "erdgeschoß"}
-	return (0 if is_eg else 1, whg.get("name") or "")
+def _wohnung_sort_key(whg: dict) -> tuple[int, int, str]:
+	"""Sortiert Wohnungen natürlich nach Geschoss + Lage.
+
+	- Geschoss-Reihenfolge: UG < EG < 1.OG < 2.OG < … < DG (Dachgeschoss)
+	- Innerhalb eines Geschosses: links < mitte < rechts < (Sonstiges)
+	- Fallback: Wohnungs-Name (id)
+
+	Wichtig: ``name__lage_in_der_immobilie`` enthält oft den Gebäudeteil mit
+	Komma-Prefix (z.B. „Vorderhaus, EG links"). Wir splitten am letzten
+	Komma und werten nur den Geschoss-Teil aus.
+	"""
+	lage_raw = (whg.get("name__lage_in_der_immobilie") or "").strip()
+	if "," in lage_raw:
+		lage_raw = lage_raw.rsplit(",", 1)[1].strip()
+	tokens = lage_raw.lower().split()
+	first = tokens[0] if tokens else ""
+	second = tokens[1] if len(tokens) > 1 else ""
+
+	# Geschoss-Rang
+	if first in {"ug", "untergeschoss", "untergeschoß", "kg", "kellergeschoss", "kellergeschoß"}:
+		floor_rank = -1
+	elif first in {"eg", "erdgeschoss", "erdgeschoß"}:
+		floor_rank = 0
+	elif first in {"dg", "dachgeschoss", "dachgeschoß"}:
+		floor_rank = 99
+	elif first.endswith(".og"):
+		# „1.og", „2.og", …
+		try:
+			floor_rank = int(first.removesuffix(".og"))
+		except ValueError:
+			floor_rank = 50
+	else:
+		floor_rank = 50  # Unbekannt: in die Mitte
+
+	# Lage innerhalb Geschoss
+	side_rank = {"links": 0, "mitte": 1, "rechts": 2}.get(second, 3)
+
+	return (floor_rank, side_rank, whg.get("name") or "")
 
 
 def _gebaeudeteil_from_lage(lage: str | None) -> str | None:
