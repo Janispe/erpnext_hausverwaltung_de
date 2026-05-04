@@ -23,6 +23,26 @@ from typing import Any
 import frappe
 
 
+# Transaktionale Doctypes wo die Doc-ID (z.B. ``ACC-SINV-2026-25510``) der
+# semantisch wichtige Identifier ist — der ``title_field`` ist dort meist nur
+# eine historische Customer-Name-Kopie. Diese Doctypes werden vom Helper
+# übersprungen, sonst landen Personennamen statt Beleg-Nummern in den Spalten.
+TRANSACTIONAL_DOCTYPES_NO_ENRICH = frozenset({
+	"Sales Invoice",
+	"Purchase Invoice",
+	"Payment Entry",
+	"Journal Entry",
+	"Delivery Note",
+	"Sales Order",
+	"Purchase Order",
+	"Purchase Receipt",
+	"Stock Entry",
+	"Quotation",
+	"Material Request",
+	"Dunning",
+})
+
+
 def enrich_link_titles(
 	rows: list[dict[str, Any]] | None,
 	columns: list[dict[str, Any]] | None,
@@ -63,6 +83,9 @@ def enrich_link_titles(
 		fieldname = col.get("fieldname")
 		target = col.get("options")
 		if not (fieldname and target):
+			continue
+		# Transaktionale Doctypes: ID ist der relevante Identifier — Skip
+		if target in TRANSACTIONAL_DOCTYPES_NO_ENRICH:
 			continue
 		try:
 			meta = frappe.get_meta(target)

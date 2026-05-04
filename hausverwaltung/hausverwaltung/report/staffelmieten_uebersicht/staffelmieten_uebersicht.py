@@ -85,12 +85,6 @@ def _build_columns(max_future_slots: int) -> list[dict[str, Any]]:
 			"label": _("Offene Staffeln"),
 			"width": 110,
 		},
-		{
-			"fieldname": "status",
-			"fieldtype": "Data",
-			"label": _("Status"),
-			"width": 220,
-		},
 	]
 	# Dynamische Slot-Spalten — paarweise (Datum / Miete) für KÜNFTIGE
 	# Staffeln. Vergangene Staffeln werden nicht als Spalten angezeigt

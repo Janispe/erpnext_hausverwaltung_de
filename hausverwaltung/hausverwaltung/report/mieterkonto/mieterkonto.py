@@ -206,6 +206,11 @@ def _build_invoice_transactions(invoices: dict[str, InvoiceInfo]) -> list[dict[s
 				"art": "Rechnung",
 				"belegart": "Sales Invoice",
 				"belegnummer": invoice.name,
+				# ``rechnung`` ist intern als Sort-Schlüssel — Rechnung +
+				# zugehörige Zahlung sollen pro Datum zusammen erscheinen
+				# (siehe ``_transaction_sort_key``). Wird nicht mehr in die
+				# Output-Row geschrieben (Spalte wurde entfernt, weil sie für
+				# Rechnungs-Zeilen redundant zur ``belegnummer`` war).
 				"rechnung": invoice.name,
 				"beschreibung": invoice.remarks or _("Rechnung"),
 				"due_date": invoice.due_date,
@@ -385,7 +390,6 @@ def _transaction_to_row(transaction: dict[str, Any], balance: float) -> dict[str
 		"art": transaction["art"],
 		"belegart": transaction["belegart"],
 		"belegnummer": transaction["belegnummer"],
-		"rechnung": transaction["rechnung"],
 		"beschreibung": transaction["beschreibung"],
 		"faellig_am": transaction.get("due_date"),
 		"status": transaction.get("status"),
@@ -520,13 +524,6 @@ def _get_columns(filters):
 			"fieldtype": "Dynamic Link",
 			"options": "belegart",
 			"width": 180,
-		},
-		{
-			"label": _("Rechnung"),
-			"fieldname": "rechnung",
-			"fieldtype": "Link",
-			"options": "Sales Invoice",
-			"width": 170,
 		},
 		{"label": _("Beschreibung"), "fieldname": "beschreibung", "fieldtype": "Data", "width": 240},
 	]

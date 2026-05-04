@@ -20,17 +20,46 @@
 	if (!frappe || !frappe.form || !frappe.form.formatters || !frappe.form.formatters.Link) return;
 	window.__hv_link_title_hook_installed = true;
 
+	// Transaktionale Doctypes: hier ist die Doc-ID (z.B. ACC-SINV-…) der
+	// semantisch wichtige Identifier. Frappe-/ERPNext-seitig ist der
+	// title_field oft eine historische Customer-Name-Kopie, die im Bestand
+	// abweichen kann (= verwirrend). Für diese Doctypes unterdrücken wir
+	// die Title-Anzeige aktiv: alles was Frappe/das Backend in den Cache
+	// geschrieben hat, wird vor dem Render rausgelöscht, sodass die ID als
+	// Label gerendert wird.
+	const NO_TITLE_DOCTYPES = new Set([
+		"Sales Invoice",
+		"Purchase Invoice",
+		"Payment Entry",
+		"Journal Entry",
+		"Delivery Note",
+		"Sales Order",
+		"Purchase Order",
+		"Purchase Receipt",
+		"Stock Entry",
+		"Quotation",
+		"Material Request",
+		"Dunning",
+	]);
+
 	const orig_link_formatter = frappe.form.formatters.Link;
 
 	frappe.form.formatters.Link = function (value, docfield, options, doc) {
-		// Vor dem Original-Formatter: ggfs. ``<fieldname>_name`` aus der Row in
-		// den globalen Link-Title-Cache übernehmen. Der Original-Formatter
-		// rendert dann den Title als Label, mit Klick-Through zur ID.
 		try {
-			if (doc && docfield && value) {
-				const target = docfield._options || docfield.options;
+			const target = docfield && (docfield._options || docfield.options);
+
+			if (target && NO_TITLE_DOCTYPES.has(target)) {
+				// Cached Title für transaktionale Doctypes wegnehmen,
+				// damit der Original-Formatter die ID als Label rendert.
+				if (frappe._link_titles && value) {
+					delete frappe._link_titles[target + "::" + value];
+				}
+			} else if (doc && docfield && value && target) {
+				// Nicht-transaktional: ``<fieldname>_name`` aus der Row in
+				// den Cache übernehmen. Der Original-Formatter zeigt dann
+				// den Title als Label, Klick öffnet die ID.
 				const title_key = docfield.fieldname + "_name";
-				if (target && doc[title_key] && frappe.utils && frappe.utils.add_link_title) {
+				if (doc[title_key] && frappe.utils && frappe.utils.add_link_title) {
 					frappe.utils.add_link_title(target, value, doc[title_key]);
 				}
 			}
