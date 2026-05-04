@@ -64,20 +64,150 @@ class HeizkostenabrechnungImmobilie(Document):
 		self.set_onload("can_manual_cancel", self._can_manual_cancel())
 
 	def before_save(self) -> None:
-		"""Sync die Tabellen-Werte zurück in die HK-Mieter-Docs.
+		"""Save eines Draft-Parents (docstatus=0): Tabellen-Werte in die
+		verlinkten HK-Mieter-Drafts zurück synchronisieren.
 
-		- Nur Rows die mit einem existierenden HK Mieter Doc verknüpft sind
-		  (``heizkostenabrechnung_mieter`` gesetzt) UND deren Doc noch im
-		  Entwurf (docstatus=0) ist, werden zurückgeschrieben.
-		- Submittete Rows sind read-only — Edits werden ignoriert (UI sollte
-		  das ohnehin verhindern; defensiv prüfen wir hier nochmal).
+		Für submittete Parents wird stattdessen ``before_update_after_submit``
+		aufgerufen (Frappe-Lifecycle), das die Diff-only Korrektur fährt.
 		"""
-		if not self.is_new():
-			self._sync_table_to_children()
-		# Differenz pro Row neu berechnen für die UI (auch für reine Anzeige)
+		if self.is_new():
+			return
+		# Korrektur-Summary für Frontend-Toast initialisieren
+		self.flags._correction_summary = {"unchanged": 0, "replaced": [], "errors": []}
+		self._sync_table_to_children()
+		# Differenz pro Row + Summen neu berechnen
 		for row in self.mieter_positionen or []:
 			row.differenz = round(float(row.kosten_gesamt or 0) - float(row.vorauszahlungen or 0), 2)
 		self._recompute_summen()
+
+	def before_update_after_submit(self) -> None:
+		"""Save eines submitteten Parents: Diff-only Korrektur.
+
+		Für jede Tabellen-Row, deren ``kosten_gesamt`` sich vom verlinkten
+		HK-Mieter-Doc unterscheidet, wird die alte Mieter-Abrechnung
+		storniert (= alte SI cancel) und eine neue erstellt + submittet
+		(= neue SI). Unveränderte Rows bleiben unangetastet.
+
+		Wird von Frappe automatisch beim ``save()`` eines Docs mit
+		``docstatus=1`` aufgerufen — Voraussetzung: das geänderte Feld hat
+		``allow_on_submit=1`` (siehe ``mieter_positionen.kosten_gesamt``).
+		"""
+		# Korrektur-Summary für Frontend-Toast initialisieren
+		self.flags._correction_summary = {"unchanged": 0, "replaced": [], "errors": []}
+		self._apply_corrections_from_table()
+		# Differenz pro Row + Summen neu berechnen
+		for row in self.mieter_positionen or []:
+			row.differenz = round(float(row.kosten_gesamt or 0) - float(row.vorauszahlungen or 0), 2)
+		self._recompute_summen()
+
+	def _apply_corrections_from_table(self) -> None:
+		"""Diff-only Korrektur-Workflow für submittete Parents.
+
+		Pro Tabellen-Row:
+		1. Lade aktuelle Mieter-Abrechnung (verlinkt via ``row.heizkostenabrechnung_mieter``)
+		2. Vergleiche ``row.kosten_gesamt`` mit dem Wert im Mieter-Doc
+		3. Wenn unverändert → Skip (alte SI bleibt)
+		4. Wenn geändert:
+		   - Alte Mieter-Abrechnung canceln (storniert alte SI via on_cancel)
+		   - Neue Mieter-Abrechnung mit identischen Stammdaten + neuem
+		     ``kosten_gesamt`` anlegen + submitten (= neue SI via on_submit)
+		   - Tabellen-Link auf die neue Mieter-Abrechnung umbiegen
+
+		Ergebnis-Counter werden in ``self.flags._correction_summary`` abgelegt
+		— das JS liest sie nach dem Save und zeigt einen Toast.
+		"""
+		summary = self.flags._correction_summary
+		for row in self.mieter_positionen or []:
+			old_name = (row.heizkostenabrechnung_mieter or "").strip()
+			if not old_name:
+				continue
+			try:
+				old_doc = frappe.get_doc("Heizkostenabrechnung Mieter", old_name)
+			except frappe.DoesNotExistError:
+				continue
+			# Nur submittete Mieter-Docs werden hier verarbeitet — Drafts würden
+			# normalerweise gar nicht in einem submitteten Parent vorkommen.
+			if int(old_doc.docstatus or 0) != 1:
+				continue
+
+			new_kosten = float(row.kosten_gesamt or 0)
+			old_kosten = float(old_doc.kosten_gesamt or 0)
+			if abs(new_kosten - old_kosten) < 0.005:
+				summary["unchanged"] += 1
+				continue
+
+			# Diff erkannt → cancel old + insert+submit new
+			try:
+				old_doc.flags.allow_cancel_via_head = True
+				old_doc.flags.ignore_permissions = True
+				old_doc.cancel()  # storniert old SI/CN via on_cancel
+
+				new_doc = frappe.new_doc("Heizkostenabrechnung Mieter")
+				new_doc.mietvertrag = old_doc.mietvertrag
+				new_doc.customer = old_doc.customer
+				new_doc.wohnung = old_doc.wohnung
+				new_doc.immobilie = old_doc.immobilie
+				new_doc.von = old_doc.von
+				new_doc.bis = old_doc.bis
+				new_doc.datum = old_doc.datum
+				new_doc.waermedienst = old_doc.waermedienst
+				new_doc.waermedienst_referenz = old_doc.waermedienst_referenz
+				new_doc.vorauszahlungen = old_doc.vorauszahlungen  # bleibt
+				new_doc.kosten_gesamt = new_kosten  # NEU
+				new_doc.heizkostenabrechnung_immobilie = self.name
+				new_doc.insert(ignore_permissions=True)
+				new_doc.submit()  # erzeugt neue SI/CN via on_submit
+
+				# Tabellen-Link umbiegen auf den neuen Doc
+				row.heizkostenabrechnung_mieter = new_doc.name
+				row.child_docstatus = 1
+				summary["replaced"].append(
+					{
+						"old": old_name,
+						"new": new_doc.name,
+						"customer": old_doc.customer,
+						"old_kosten": old_kosten,
+						"new_kosten": new_kosten,
+					}
+				)
+			except Exception as e:
+				summary["errors"].append({"row": old_name, "error": str(e)[:300]})
+
+	def on_update_after_submit(self) -> None:
+		"""Wird nach Save eines submitteten Docs aufgerufen — wir nutzen das,
+		um dem Frontend per ``msgprint`` ein Korrektur-Summary anzuzeigen.
+		"""
+		summary = getattr(self.flags, "_correction_summary", None)
+		if not summary:
+			return
+		replaced = summary.get("replaced") or []
+		errors = summary.get("errors") or []
+		if not replaced and not errors:
+			return  # Nichts geändert → kein Toast
+		lines = []
+		if replaced:
+			lines.append(
+				f"<strong>{len(replaced)} Mieter neu fakturiert:</strong>"
+			)
+			for r in replaced[:20]:
+				delta = r["new_kosten"] - r["old_kosten"]
+				sign = "+" if delta > 0 else ""
+				lines.append(
+					f"• {r['customer']}: {r['old_kosten']:.2f} € → {r['new_kosten']:.2f} € "
+					f"({sign}{delta:.2f} €) "
+					f"[alt: {r['old']} canceled, neu: {r['new']}]"
+				)
+			if len(replaced) > 20:
+				lines.append(f"… und {len(replaced) - 20} weitere")
+		if errors:
+			lines.append(f"<br><strong style='color:red'>{len(errors)} Fehler:</strong>")
+			for e in errors[:10]:
+				lines.append(f"• {e['row']}: {e['error']}")
+		frappe.msgprint(
+			msg="<br>".join(lines),
+			title="Korrektur angewandt",
+			indicator="orange" if errors else "green",
+		)
 
 	def before_submit(self) -> None:
 		"""Vor dem Submit: stelle sicher dass alle Mieter-Children submittet
@@ -150,12 +280,20 @@ class HeizkostenabrechnungImmobilie(Document):
 			return False
 
 	def _get_children(self, status_filter: str = "all") -> List[Dict[str, Any]]:
-		"""Lade Mieter-Children. status_filter: 'all' / 'open' / 'submitted'."""
+		"""Lade Mieter-Children. status_filter: 'all' / 'open' / 'submitted'.
+
+		Gecancelte Children (docstatus=2) werden grundsätzlich ausgeblendet —
+		bei Korrekturen werden alte Docs storniert und neue submitted, die
+		Tabelle soll immer nur den aktuellen Stand zeigen.
+		"""
 		filters: Dict[str, Any] = {"heizkostenabrechnung_immobilie": self.name}
 		if status_filter == "open":
 			filters["docstatus"] = 0
 		elif status_filter == "submitted":
 			filters["docstatus"] = 1
+		else:
+			# "all" → 0 oder 1, NICHT 2
+			filters["docstatus"] = ["!=", 2]
 		return frappe.get_all(
 			"Heizkostenabrechnung Mieter",
 			filters=filters,

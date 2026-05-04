@@ -53,7 +53,8 @@
    "columns": 1
   },
   {
-   "description": "Heizkosten-Gesamtbetrag aus der Wärmedienst-Abrechnung (vor Vorauszahlungs-Verrechnung).",
+   "allow_on_submit": 1,
+   "description": "Heizkosten-Gesamtbetrag aus der Wärmedienst-Abrechnung (vor Vorauszahlungs-Verrechnung). Auch nach Submit editierbar — beim Speichern wird für geänderte Werte die alte Sales Invoice storniert und eine neue erstellt.",
    "fieldname": "kosten_gesamt",
    "fieldtype": "Float",
    "in_list_view": 1,

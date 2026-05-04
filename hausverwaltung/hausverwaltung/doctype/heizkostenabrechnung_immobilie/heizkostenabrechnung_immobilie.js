@@ -9,18 +9,15 @@
 // Tabellen-Verhalten:
 // - `vorauszahlungen`, `customer`, `wohnung`, `mietvertrag` sind read-only
 //   (kommen aus den Mietrechnungen / Mietvertrag-Stammdaten).
-// - `kosten_gesamt` ist editierbar — aber nur wenn `child_docstatus = 0`
-//   (also der zugehörige HK Mieter Doc noch im Entwurf). Bei submitteten
-//   Children ist die Row gelockt.
+// - `kosten_gesamt` ist immer editierbar — auch bei submitteten Parents/Children.
+//   Bei submitteten Parents triggert ein Save automatisch die Diff-only
+//   Korrektur: für geänderte Werte werden alte SIs storniert und neue erstellt.
 // - `differenz` wird live mitberechnet bei Edit von `kosten_gesamt`.
 
 frappe.ui.form.on("Heizkostenabrechnung Immobilie", {
 	refresh(frm) {
 		_add_buttons(frm);
-		_lock_submitted_rows(frm);
-	},
-	mieter_positionen_on_form_rendered(frm) {
-		_lock_submitted_rows(frm);
+		_show_correction_banner(frm);
 	},
 });
 
@@ -60,27 +57,14 @@ function _add_buttons(frm) {
 	}
 }
 
-function _lock_submitted_rows(frm) {
-	// Frappe-Grid: pro Row prüfen ob child_docstatus !== 0; wenn submittet → Felder
-	// auf read-only stellen via grid.get_field per Row-Index.
-	const grid = frm.fields_dict.mieter_positionen?.grid;
-	if (!grid) return;
-	(frm.doc.mieter_positionen || []).forEach((row, idx) => {
-		const docstatus = parseInt(row.child_docstatus || 0);
-		if (docstatus !== 0) {
-			// Submitted oder Cancelled → kosten_gesamt sperren
-			const editable = grid.is_editable;
-			const grid_row = grid.grid_rows?.[idx];
-			if (grid_row && grid_row.docfields) {
-				grid_row.docfields.forEach((df) => {
-					if (df.fieldname === "kosten_gesamt") {
-						df.read_only = 1;
-					}
-				});
-				grid_row.refresh();
-			}
-		}
-	});
+function _show_correction_banner(frm) {
+	// Auf submitteten Parents zeigt ein Hinweis-Banner, dass Werte-Korrekturen
+	// in der Tabelle automatisch alte Sales Invoices stornieren + neue erstellen.
+	if (frm.is_new() || frm.doc.docstatus !== 1) return;
+	frm.dashboard.set_headline_alert(
+		`<div>${__("Diese Abrechnung ist submittet. Du kannst die Spalte <strong>Kosten gesamt</strong> in der Tabelle weiter bearbeiten — beim Speichern werden für geänderte Werte die alten Sales Invoices storniert und neue erstellt (Diff-only).")}</div>`,
+		"blue",
+	);
 }
 
 function _create_drafts(frm) {

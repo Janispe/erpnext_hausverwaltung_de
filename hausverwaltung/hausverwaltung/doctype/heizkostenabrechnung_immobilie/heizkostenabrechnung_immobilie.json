@@ -110,7 +110,8 @@
    "label": "Mieter-Positionen"
   },
   {
-   "description": "Pro Mieter eine Zeile: Vorauszahlung wird automatisch aus den Mietrechnungen befüllt, Kosten gesamt vom Wärmedienst eintragen. Beim Save werden die Werte zurück in die HK-Mieter-Belege synchronisiert.",
+   "allow_on_submit": 1,
+   "description": "Pro Mieter eine Zeile: Vorauszahlung wird automatisch aus den Mietrechnungen befüllt, Kosten gesamt vom Wärmedienst eintragen. Beim Save werden die Werte zurück in die HK-Mieter-Belege synchronisiert. Auch nach Submit kann die Spalte 'Kosten gesamt' editiert werden — beim Speichern werden für geänderte Zeilen die alten Sales Invoices storniert und neue erstellt (Diff-only).",
    "fieldname": "mieter_positionen",
    "fieldtype": "Table",
    "label": "Mieter-Positionen",
