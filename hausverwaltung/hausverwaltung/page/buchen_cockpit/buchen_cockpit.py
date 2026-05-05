@@ -12,7 +12,6 @@ from typing import Any
 
 import frappe
 from frappe.utils import add_days, cstr, getdate, nowdate
-from frappe.utils.file_manager import save_file
 
 from hausverwaltung.hausverwaltung.utils.buchung import ensure_default_service_item
 
@@ -594,26 +593,34 @@ def create_purchase_invoice(**kwargs) -> dict:
 def _attach_source_file(pi, file_url: str | None) -> None:
     """Hängt das Quell-PDF aus der LLM-Extraktion an die Purchase Invoice an.
 
-    Pattern aus integrations/paperless.py:1031.
+    Wir legen NICHT die Datei neu auf disk (würde Frappe's File.get_content() +
+    save_file() durchlaufen — beides hat denselben Binary-Encoding-Bug, den
+    upload_invoice_pdf umgeht). Stattdessen erzeugen wir nur einen weiteren
+    File-Doc-Record, der auf die existierende file_url zeigt und die
+    Attach-Verknüpfung zur PI trägt. Disk bleibt unangetastet, kein Mojibake.
     """
     if not file_url:
         return
     file_name = frappe.db.get_value("File", {"file_url": file_url}, "name")
     if not file_name:
         return
-    file_doc = frappe.get_doc("File", file_name)
-    try:
-        content = file_doc.get_content()
-    except Exception:
-        return
-    save_file(
-        file_doc.file_name,
-        content,
-        "Purchase Invoice",
-        pi.name,
-        is_private=1,
-        df=None,
-    )
+    src = frappe.get_doc("File", file_name)
+    attach = frappe.get_doc({
+        "doctype": "File",
+        "file_name": src.file_name,
+        "file_url": src.file_url,
+        "is_private": src.is_private,
+        "file_size": src.file_size,
+        "content_hash": src.content_hash,
+        "folder": "Home/Attachments",
+        "attached_to_doctype": "Purchase Invoice",
+        "attached_to_name": pi.name,
+    })
+    # `copy_from_existing_file` skippt before_insert das save_file/get_content-
+    # Re-Encoding-Pattern (siehe upload_invoice_pdf für Hintergrund).
+    attach.flags.copy_from_existing_file = True
+    attach.flags.ignore_permissions = True
+    attach.insert()
 
 
 @frappe.whitelist()
