@@ -26,6 +26,7 @@
   "vor_systemstart_bezahlt",
   "vor_systemstart_bemerkung",
   "buchung_section",
+  "kostenart_typ",
   "kostenart",
   "kostenart_nicht_umlagefaehig",
   "buchung_column",
@@ -220,16 +221,27 @@
    "description": "Werden bei Bedarf aus Kostenart oder Immobilie vorbefüllt. Manuelle Eingabe überschreibt die Automatik."
   },
   {
+   "fieldname": "kostenart_typ",
+   "fieldtype": "Select",
+   "label": "Kostenart-Typ",
+   "options": "\numlegbar\nnicht umlegbar",
+   "description": "Steuert welche Kostenart-Liste verwendet wird (umlegbar = Betriebskostenart, nicht umlegbar = Kostenart nicht umlagefähig)."
+  },
+  {
    "fieldname": "kostenart",
    "fieldtype": "Link",
    "label": "Kostenart (umlagefähig)",
-   "options": "Betriebskostenart"
+   "options": "Betriebskostenart",
+   "depends_on": "eval:doc.kostenart_typ === 'umlegbar'",
+   "mandatory_depends_on": "eval:doc.kostenart_typ === 'umlegbar'"
   },
   {
    "fieldname": "kostenart_nicht_umlagefaehig",
    "fieldtype": "Link",
    "label": "Kostenart (nicht umlagefähig)",
-   "options": "Kostenart nicht umlagefaehig"
+   "options": "Kostenart nicht umlagefaehig",
+   "depends_on": "eval:doc.kostenart_typ === 'nicht umlegbar'",
+   "mandatory_depends_on": "eval:doc.kostenart_typ === 'nicht umlegbar'"
   },
   {
    "fieldname": "buchung_column",

@@ -271,6 +271,18 @@ frappe.ui.form.on("Zahlungsplan", {
 		}).then((r) => applyDefaults(frm, r && r.message));
 	},
 
+	kostenart_typ(frm) {
+		// Beim Wechsel das andere Kostenart-Feld leeren — sonst bleibt ein
+		// nicht passender Link am Doc und der Validate-Hook wirft
+		// "beides gesetzt".
+		const typ = frm.doc.kostenart_typ;
+		if (typ === "umlegbar" && frm.doc.kostenart_nicht_umlagefaehig) {
+			frm.set_value("kostenart_nicht_umlagefaehig", null);
+		} else if (typ === "nicht umlegbar" && frm.doc.kostenart) {
+			frm.set_value("kostenart", null);
+		}
+	},
+
 	plan_vorbelegen_btn(frm) {
 		if (frm.is_dirty()) {
 			frappe.msgprint(

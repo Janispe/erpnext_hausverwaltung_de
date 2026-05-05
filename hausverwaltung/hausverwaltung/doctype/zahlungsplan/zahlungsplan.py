@@ -49,6 +49,23 @@ class Zahlungsplan(Document):
 			if not self.get("cost_center"):
 				self.cost_center = _get_from_immobilie(self, "kostenstelle")
 
+		# Kostenart-Typ als Single-Source-of-Truth: das andere Feld leeren, damit
+		# beim Wechsel kein altes Link bleibt. Auto-Detect für Records ohne typ
+		# (Legacy / API-erstellt) — wenn genau eines der Felder gesetzt ist,
+		# leiten wir typ daraus ab.
+		typ = (self.get("kostenart_typ") or "").strip()
+		if typ == "umlegbar":
+			if self.get("kostenart_nicht_umlagefaehig"):
+				self.kostenart_nicht_umlagefaehig = None
+		elif typ == "nicht umlegbar":
+			if self.get("kostenart"):
+				self.kostenart = None
+		elif not typ:
+			if self.get("kostenart") and not self.get("kostenart_nicht_umlagefaehig"):
+				self.kostenart_typ = "umlegbar"
+			elif self.get("kostenart_nicht_umlagefaehig") and not self.get("kostenart"):
+				self.kostenart_typ = "nicht umlegbar"
+
 		if self.get("kostenart") and self.get("kostenart_nicht_umlagefaehig"):
 			frappe.throw(
 				"Bitte entweder 'Kostenart (umlagefähig)' oder 'Kostenart (nicht umlagefähig)' setzen, nicht beides."
