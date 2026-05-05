@@ -1261,7 +1261,11 @@ class SerienbriefDurchlauf(Document):
 				page-break-after: auto;
 			}
 			.serienbrief-page p {
-				margin: 0 0 8px 0;
+				/* Kein Default-margin — siehe install.py (gleiches Stylesheet
+				   wird beim ensure_serienbrief_print_format auch in der DB
+				   gespeichert). Direkt aufeinanderfolgende <p> rendern kompakt;
+				   Leerzeilen kommen durch <p>&nbsp;</p> zustande (line-height). */
+				margin: 0;
 				line-height: 1.4;
 			}
 			.serienbrief-block {

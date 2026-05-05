@@ -138,7 +138,11 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 				page-break-after: auto;
 			}
 			.serienbrief-page p {
-				margin: 0 0 8px 0;
+				/* Kein Default-margin — direkt aufeinanderfolgende <p> rendern
+				   kompakt (z.B. Adressblöcke). Leerzeilen werden durch ein
+				   leeres <p>&nbsp;</p> erzeugt, das line-height-Höhe bekommt.
+				   So entspricht das PDF-Layout dem Quill-Editor-Verhalten. */
+				margin: 0;
 				line-height: 1.4;
 			}
 			.serienbrief-block {

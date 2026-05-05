@@ -82,6 +82,13 @@ def _wrap_preview_html(body_html: str) -> str:
 			min-height: 260mm;
 			padding: 0;
 		}
+		/* Konsistent zur Print-CSS (siehe install.py, serienbrief_durchlauf.py):
+		   Kein Default-margin auf <p>, sodass aufeinanderfolgende Zeilen kompakt
+		   rendern (z.B. Adressblöcke). Leerzeilen kommen durch <p>&nbsp;</p>. */
+		.serienbrief-page p {
+			margin: 0;
+			line-height: 1.4;
+		}
 		.serienbrief-block {
 			margin-bottom: 12px;
 		}
