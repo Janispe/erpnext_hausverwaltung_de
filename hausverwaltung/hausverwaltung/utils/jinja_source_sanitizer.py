@@ -16,6 +16,20 @@ _QUILL_CONTENTEDITABLE_JINJA_SPAN_RE = re.compile(
 
 # Common invisible characters inserted by rich-text editors around placeholders.
 _RICH_TEXT_INVISIBLE_CHARS_RE = re.compile(r"[\ufeff\u200b]")
+
+# Matches a <p> whose visible content is only whitespace \u2014 including content
+# nested in styled spans like ``<p><span style="color:rgb(0,0,0)"> </span></p>``
+# that Quill produces when pressing Enter with active formatting. Without an
+# &nbsp; the line-box collapses (CSS strips leading/trailing whitespace at
+# inline-block boundaries) and the empty line vanishes, while ``<p><br></p>``
+# or ``<p>&nbsp;</p>`` reliably render at line-height. Replace with the
+# canonical ``<p>&nbsp;</p>`` so PDF render and preview match consistently.
+_WHITESPACE_ONLY_P_RE = re.compile(
+	r"<p\b([^>]*)>"
+	r"(?:\s|&nbsp;|<br\s*/?>|<span\b[^>]*>(?:\s|&nbsp;)*</span>)*"
+	r"</p>",
+	re.IGNORECASE,
+)
 _PLACEHOLDER_ONLY_PARAGRAPH_RE = re.compile(
 	r"<p\b[^>]*>[\s\ufeff\u200b]*"
 	r"(\{\{\s*(?:baustein|textbaustein)\(\s*(['\"])(.*?)\2\s*\)\s*\}\})"
@@ -120,6 +134,23 @@ def unwrap_placeholder_only_paragraphs(source: str) -> str:
 	return _PLACEHOLDER_ONLY_PARAGRAPH_RE.sub(lambda m: m.group(1), source)
 
 
+def normalize_whitespace_only_paragraphs(source: str) -> str:
+	"""Replace whitespace-only <p>...</p> with the canonical ``<p>&nbsp;</p>``.
+
+	Quill blank lines created with active inline formatting end up as
+	``<p><span style="..."> </span></p>`` (single regular space in a styled span).
+	CSS whitespace-collapsing trims that to zero height, so the blank line
+	disappears in PDF/HTML render. Both ``<p><br></p>`` (Quill default) and
+	``<p>&nbsp;</p>`` render at line-height; we standardize on ``&nbsp;`` to
+	keep the output deterministic across preview and Durchlauf-render pipelines.
+	"""
+
+	if not source or "<p" not in source:
+		return source or ""
+
+	return _WHITESPACE_ONLY_P_RE.sub(r"<p\1>&nbsp;</p>", source)
+
+
 def strip_quill_editor_wrapper(source: str) -> str:
 	"""Strip a top-level Quill `ql-editor` wrapper div.
 
@@ -147,4 +178,5 @@ def sanitize_richtext_jinja_source(source: str) -> str:
 	# Remove invisible chars that commonly surround placeholders; they can affect rendering in PDFs.
 	clean = _RICH_TEXT_INVISIBLE_CHARS_RE.sub("", clean)
 	clean = strip_quill_editor_wrapper(clean)
+	clean = normalize_whitespace_only_paragraphs(clean)
 	return normalize_jinja_html_entities(clean)
