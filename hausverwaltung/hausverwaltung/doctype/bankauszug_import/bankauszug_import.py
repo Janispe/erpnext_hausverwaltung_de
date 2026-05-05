@@ -458,14 +458,16 @@ def _find_existing_bank_transaction(
     betrag: float,
     richtung: Optional[str],
     iban: Optional[str] = None,
+    verwendungszweck: Optional[str] = None,
 ) -> Optional[str]:
     """Findet eine bereits existierende Bank Transaction die zu den gegebenen
     CSV-Werten passt. Match-Strategie:
 
     1. Bank-Konto + Datum + Betrag (Eingang/Ausgang) — Pflicht
     2. Wenn IBAN vorhanden: zusätzlich ``bank_party_iban`` als Filter (sehr stark)
-    3. Wenn keine IBAN: nimmt erste Match (genügend bei einer Kontoinhaberin
-       mit überschaubarem Buchungs-Volumen pro Tag).
+    3. Wenn ein Verwendungszweck vorhanden ist: bei mehreren oder abweichend
+       beschriebenen Treffern nur eine Bank Transaction mit gleichem
+       Verwendungszweck akzeptieren.
 
     Returns Name der BT oder None.
     """
@@ -502,8 +504,35 @@ def _find_existing_bank_transaction(
         filters["bank_party_iban"] = iban_norm
 
     try:
-        existing = frappe.get_all("Bank Transaction", filters=filters, pluck="name", limit=1)
-        return existing[0] if existing else None
+        fields = ["name"]
+        if "description" in fieldnames:
+            fields.append("description")
+        existing = frappe.get_all(
+            "Bank Transaction",
+            filters=filters,
+            fields=fields,
+            limit=50,
+            order_by="creation asc",
+        )
+        if not existing:
+            return None
+
+        purpose = (verwendungszweck or "").strip()
+        if purpose and "description" in fieldnames:
+            exact = [
+                row
+                for row in existing
+                if (row.get("description") or "").strip() == purpose
+            ]
+            if exact:
+                return exact[0].get("name")
+
+            # Same date/amount/IBAN but different purpose: this is not a
+            # duplicate. Example: two monthly rents posted on the same day.
+            if len(existing) > 1 or (existing[0].get("description") or "").strip():
+                return None
+
+        return existing[0].get("name")
     except Exception:
         return None
 
@@ -657,6 +686,7 @@ def parse_csv(docname: str) -> Dict[str, Any]:
                 betrag=betrag,
                 richtung=richtung,
                 iban=iban,
+                verwendungszweck=verwendungszweck,
             )
             if existing_bt:
                 existing_status = "schon vorhanden"
@@ -966,6 +996,7 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
             betrag=row_doc.betrag,
             richtung=row_doc.richtung,
             iban=row_doc.iban,
+            verwendungszweck=row_doc.verwendungszweck,
         )
 
     for row in doc.rows:
@@ -974,8 +1005,9 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
             row.db_set("row_status", "failed")
             continue
         if row.bank_transaction:
-            row.db_set("row_status", "schon vorhanden")
             row.db_set("reference", row.bank_transaction)
+            if not row.row_status:
+                row.db_set("row_status", "schon vorhanden")
             continue
 
         # Globaler Cutoff: Buchungen vor dem konfigurierten Start-Datum überspringen
@@ -1022,6 +1054,7 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
             # description/currency
             set_if_exists(bt, "description", row.verwendungszweck or row.auftraggeber)
             set_if_exists(bt, "currency", row.currency or "EUR")
+            set_if_exists(bt, "bank_party_name", row.auftraggeber)
             # transaction_type if present
             if "transaction_type" in fieldnames:
                 bt.transaction_type = "Deposit" if row.richtung == "Eingang" else "Withdrawal"

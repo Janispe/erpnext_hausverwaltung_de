@@ -208,6 +208,70 @@ class TestBankauszugImport(FrappeTestCase):
         self.assertEqual(row.party_type, "Customer")
         self.assertEqual(row.party, "CUST-1")
 
+    def test_find_existing_bank_transaction_rejects_same_amount_different_purpose(self):
+        meta = type(
+            "M",
+            (),
+            {
+                "fields": [
+                    type("F", (), {"fieldname": "date"})(),
+                    type("F", (), {"fieldname": "deposit"})(),
+                    type("F", (), {"fieldname": "withdrawal"})(),
+                    type("F", (), {"fieldname": "bank_party_iban"})(),
+                    type("F", (), {"fieldname": "description"})(),
+                ]
+            },
+        )()
+
+        with patch.object(bi.frappe, "get_meta", return_value=meta), \
+             patch.object(
+                 bi.frappe,
+                 "get_all",
+                 return_value=[{"name": "BT-1", "description": "Neue Gesamtmiete, Mai 2026"}],
+             ):
+            res = bi._find_existing_bank_transaction(
+                bank_account="BANK-1",
+                buchungstag="2026-04-10",
+                betrag=625,
+                richtung="Eingang",
+                iban="DE77100900002807151005",
+                verwendungszweck="Neue Gesamtmiete, April 2026",
+            )
+
+        self.assertIsNone(res)
+
+    def test_find_existing_bank_transaction_accepts_same_purpose(self):
+        meta = type(
+            "M",
+            (),
+            {
+                "fields": [
+                    type("F", (), {"fieldname": "date"})(),
+                    type("F", (), {"fieldname": "deposit"})(),
+                    type("F", (), {"fieldname": "withdrawal"})(),
+                    type("F", (), {"fieldname": "bank_party_iban"})(),
+                    type("F", (), {"fieldname": "description"})(),
+                ]
+            },
+        )()
+
+        with patch.object(bi.frappe, "get_meta", return_value=meta), \
+             patch.object(
+                 bi.frappe,
+                 "get_all",
+                 return_value=[{"name": "BT-1", "description": "Neue Gesamtmiete, April 2026"}],
+             ):
+            res = bi._find_existing_bank_transaction(
+                bank_account="BANK-1",
+                buchungstag="2026-04-10",
+                betrag=625,
+                richtung="Eingang",
+                iban="DE77100900002807151005",
+                verwendungszweck="Neue Gesamtmiete, April 2026",
+            )
+
+        self.assertEqual(res, "BT-1")
+
     def test_relink_all_overwrites_existing_bt_party(self):
         row = self._FakeRow(name="ROW-B", iban="DE2")
         row.bank_transaction = "BT-2"
@@ -477,6 +541,40 @@ class TestBankauszugImport(FrappeTestCase):
 
         self.assertIn("created", res)
         self.assertEqual(res["errors"], [])
+
+    def test_create_bank_transactions_preserves_existing_row_status(self):
+        row = self._FakeRow(name="ROW-L2", iban="DE15")
+        row.bank_transaction = "BT-L2"
+        row.reference = None
+        row.row_status = "success"
+        row.db_updates = {}
+        doc = self._FakeDoc("IMP-L2", [row])
+        doc.bank_account = "BANK-1"
+        doc.rows = [row]
+
+        class _BankAccount:
+            is_company_account = 1
+
+        def _db_set(fieldname, value):
+            row.db_updates[fieldname] = value
+            setattr(row, fieldname, value)
+
+        row.db_set = _db_set
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(bi.frappe, "get_cached_doc", return_value=_BankAccount()), \
+             patch.object(bi.frappe.db, "get_single_value", return_value=None), \
+             patch.object(bi, "_build_missing_party_warning_payload", return_value=None), \
+             patch.object(bi, "_refresh_saldo_fields", return_value=None), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.auto_match_bank_transaction",
+                 return_value={"matched": False},
+             ):
+            bi.create_bank_transactions("IMP-L2")
+
+        self.assertEqual(row.row_status, "success")
+        self.assertNotIn("row_status", row.db_updates)
+        self.assertEqual(row.reference, "BT-L2")
 
     def test_block_message_contains_row_details(self):
         row = self._FakeRow(name="ROW-M1", iban="", verwendungszweck="Test")
