@@ -68,6 +68,10 @@ frappe.ui.form.on("Mietvertrag", {
 		});
 	},
 
+	staffelmiete_erzeugen(frm) {
+		open_staffelmiete_generate_dialog(frm);
+	},
+
 	von(frm) {
 		update_bruttomiete(frm);
 	},
@@ -324,6 +328,90 @@ function add_mieterkonto_button_from_mietvertrag(frm) {
 			to_date: frm.doc.bis || frappe.datetime.get_today(),
 		});
 	}, __("Accounting"));
+}
+
+function open_staffelmiete_generate_dialog(frm) {
+	const existing = frm.doc.miete || [];
+	const last_row = existing.length ? existing[existing.length - 1] : null;
+
+	const default_start = last_row && last_row.von
+		? frappe.datetime.add_months(last_row.von, 12)
+		: (frm.doc.von || frappe.datetime.get_today());
+	const default_start_amount = last_row ? flt(last_row.miete) : 0;
+
+	const d = new frappe.ui.Dialog({
+		title: __("Staffelmieten erzeugen"),
+		fields: [
+			{
+				fieldtype: "Date",
+				fieldname: "startdatum",
+				label: __("Startdatum"),
+				reqd: 1,
+				default: default_start,
+			},
+			{
+				fieldtype: "Currency",
+				fieldname: "startbetrag",
+				label: __("Startbetrag"),
+				reqd: 1,
+				default: default_start_amount,
+			},
+			{
+				fieldtype: "Currency",
+				fieldname: "erhoehung",
+				label: __("Erhöhung pro Staffel (€)"),
+				reqd: 1,
+				default: 0,
+			},
+			{
+				fieldtype: "Int",
+				fieldname: "intervall_monate",
+				label: __("Erhöhungszeitraum (Monate)"),
+				reqd: 1,
+				default: 12,
+			},
+			{
+				fieldtype: "Int",
+				fieldname: "anzahl",
+				label: __("Anzahl Staffeln"),
+				reqd: 1,
+				default: 5,
+			},
+		],
+		primary_action_label: __("Erzeugen"),
+		primary_action(values) {
+			const anzahl = cint(values.anzahl);
+			const intervall = cint(values.intervall_monate);
+			const start_amount = flt(values.startbetrag);
+			const step = flt(values.erhoehung);
+
+			if (anzahl < 1) {
+				frappe.msgprint(__("Anzahl Staffeln muss mindestens 1 sein."));
+				return;
+			}
+			if (intervall < 1) {
+				frappe.msgprint(__("Erhöhungszeitraum muss mindestens 1 Monat sein."));
+				return;
+			}
+
+			for (let i = 0; i < anzahl; i++) {
+				const von = i === 0
+					? values.startdatum
+					: frappe.datetime.add_months(values.startdatum, intervall * i);
+				const row = frm.add_child("miete");
+				row.von = von;
+				row.miete = start_amount + step * i;
+				row.art = "Monatlich";
+			}
+
+			sort_staffel_table_by_von(frm, "miete");
+			frm.refresh_field("miete");
+			update_bruttomiete(frm);
+			highlight_current_staffeln(frm);
+			d.hide();
+		},
+	});
+	d.show();
 }
 
 function sort_staffel_table_by_von(frm, tableFieldname) {
