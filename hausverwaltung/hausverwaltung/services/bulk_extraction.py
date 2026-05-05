@@ -309,6 +309,48 @@ def mark_vorschlag_skipped(name: str) -> dict:
 
 
 @frappe.whitelist()
+def delete_vorschlag(name: str, also_delete_file: int = 0) -> dict:
+	"""Löscht einen Buchungs Vorschlag dauerhaft.
+
+	- Booked-Vorschläge werden NICHT gelöscht (sie sind über
+	  ``linked_purchase_invoice`` mit einer PI verknüpft).
+	- ``also_delete_file=1``: zusätzlich das verknüpfte File-Doc löschen,
+	  aber nur wenn kein anderer Vorschlag noch auf die Datei verweist.
+	"""
+	v = frappe.get_doc("Buchungs Vorschlag", name)
+	if v.status == "Booked":
+		frappe.throw(
+			"Bereits gebuchter Vorschlag kann nicht gelöscht werden — bitte zuerst die verknüpfte Eingangsrechnung stornieren."
+		)
+	file_url = v.file_url
+	frappe.delete_doc("Buchungs Vorschlag", name, force=1, ignore_permissions=True)
+
+	deleted_file = False
+	if int(also_delete_file or 0) and file_url:
+		# Nur löschen wenn KEIN anderer Vorschlag mehr auf die Datei zeigt.
+		others = frappe.get_all(
+			"Buchungs Vorschlag",
+			filters={"file_url": file_url},
+			limit_page_length=1,
+		)
+		if not others:
+			try:
+				file_names = frappe.get_all(
+					"File",
+					filters={"file_url": file_url},
+					pluck="name",
+				)
+				for fname in file_names:
+					frappe.delete_doc("File", fname, force=1, ignore_permissions=True)
+					deleted_file = True
+			except Exception:
+				pass
+
+	frappe.db.commit()
+	return {"name": name, "deleted_file": deleted_file}
+
+
+@frappe.whitelist()
 def reactivate_vorschlag(name: str) -> dict:
 	"""Holt einen Skipped- oder Error-Vorschlag zurück in den Wizard.
 
@@ -362,6 +404,89 @@ def link_vorschlag_to_pi(vorschlag_name: str, pi_name: str) -> None:
 		frappe.db.commit()
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "BulkExtraction: link to PI failed")
+
+
+@frappe.whitelist()
+def list_vorschlaege(
+	status: str | None = None,
+	session_id: str | None = None,
+	sort_by: str = "creation",
+	sort_order: str = "desc",
+	limit: int = 200,
+) -> dict:
+	"""Gefilterte/sortierte Liste für die Buchungs-Inbox-Page.
+
+	Args:
+		status: einzelner Status (Pending/Processing/Ready/Booked/Skipped/Error)
+		        ODER 'open' (= Pending+Processing+Ready) ODER None = alle.
+		session_id: Filter auf eine konkrete Session (BS-…) oder None.
+		sort_by: Feldname (creation, status, original_filename).
+		sort_order: 'asc' oder 'desc'.
+		limit: max. Anzahl Zeilen.
+	"""
+	allowed_sort_fields = {"creation", "status", "original_filename", "session_id"}
+	if sort_by not in allowed_sort_fields:
+		sort_by = "creation"
+	sort_order = "asc" if (sort_order or "").lower() == "asc" else "desc"
+
+	filters: dict = {}
+	if status:
+		clean = status.strip()
+		if clean.lower() == "open":
+			filters["status"] = ["in", ("Pending", "Processing", "Ready")]
+		elif clean.lower() != "alle":
+			filters["status"] = clean
+	if session_id:
+		filters["session_id"] = session_id
+
+	rows = frappe.get_all(
+		"Buchungs Vorschlag",
+		filters=filters,
+		fields=[
+			"name",
+			"session_id",
+			"original_filename",
+			"file_url",
+			"status",
+			"linked_purchase_invoice",
+			"extracted_data",
+			"creation",
+		],
+		order_by=f"{sort_by} {sort_order}",
+		limit_page_length=int(limit or 200),
+	)
+
+	# Distinct Sessions für Dropdown — sortiert nach jüngstem Vorschlag pro Session.
+	all_sessions = frappe.db.sql(
+		"""
+		SELECT session_id
+		FROM `tabBuchungs Vorschlag`
+		WHERE session_id IS NOT NULL AND session_id != ''
+		GROUP BY session_id
+		ORDER BY MAX(creation) DESC
+		LIMIT 50
+		""",
+		as_dict=True,
+	)
+
+	out_rows: list[dict] = []
+	for r in rows:
+		summary = _summarize_extraction(r.get("extracted_data") or "")
+		out_rows.append({
+			"name": r["name"],
+			"session_id": r["session_id"],
+			"original_filename": r["original_filename"],
+			"file_url": r["file_url"],
+			"status": r["status"],
+			"linked_purchase_invoice": r["linked_purchase_invoice"],
+			"creation": str(r["creation"]),
+			"extracted_summary": summary,
+		})
+	return {
+		"rows": out_rows,
+		"sessions": [s["session_id"] for s in all_sessions if s.get("session_id")],
+		"count": len(out_rows),
+	}
 
 
 @frappe.whitelist()

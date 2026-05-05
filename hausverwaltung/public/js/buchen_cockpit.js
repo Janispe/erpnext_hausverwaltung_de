@@ -186,6 +186,12 @@ const hv_apply_row_defaults = (dialog, fieldname, defaults) => {
 // ---------------------------------------------------------------------------
 
 hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
+	// Date-Defaults aus opts ableiten — wenn aus dem Wizard/Inbox-Flow vorgefüllt,
+	// werden sie als default ins field-Schema gepackt (kein nachträgliches
+	// set_value nötig → kein Datepicker-onChange-Loop).
+	const _default_rechnungsdatum = opts.rechnungsdatum || frappe.datetime.get_today();
+	const _default_wertstellungsdatum = opts.wertstellungsdatum || "";
+
 	const fields = [
 		{
 			fieldtype: "Link",
@@ -193,13 +199,14 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			label: __("Lieferant"),
 			options: "Supplier",
 			reqd: 1,
+			default: opts.lieferant || "",
 		},
 		{ fieldtype: "Column Break" },
 		{
 			fieldtype: "Date",
 			fieldname: "rechnungsdatum",
 			label: __("Rechnungsdatum"),
-			default: frappe.datetime.get_today(),
+			default: _default_rechnungsdatum,
 			reqd: 1,
 		},
 		{ fieldtype: "Column Break" },
@@ -207,6 +214,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			fieldtype: "Date",
 			fieldname: "wertstellungsdatum",
 			label: __("Wertstellungsdatum"),
+			default: _default_wertstellungsdatum,
 			description: __("Leistungszeitraum (wird in custom_wertstellungsdatum gespeichert)."),
 		},
 		{ fieldtype: "Section Break" },
@@ -379,9 +387,9 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 	dialog.show();
 
 	if (has_explicit_defaults) {
-		if (opts.lieferant) dialog.set_value("lieferant", opts.lieferant);
-		if (opts.rechnungsdatum) dialog.set_value("rechnungsdatum", opts.rechnungsdatum);
-		if (opts.wertstellungsdatum) dialog.set_value("wertstellungsdatum", opts.wertstellungsdatum);
+		// Lieferant + Datum + Wertstellungsdatum sind bereits als field-default
+		// ins Schema gepackt → KEIN set_value für diese Felder hier (würde sonst
+		// bei Date-Fields einen onChange-Loop im Frappe-Datepicker triggern).
 		if (opts.rechnungsname) dialog.set_value("rechnungsname", opts.rechnungsname);
 		if (opts.referenz) dialog.set_value("referenz", opts.referenz);
 		if (opts.positionen && opts.positionen.length) {
@@ -409,24 +417,33 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 
 function apply_extraction_hints(dialog, opts) {
 	const conf = opts._confidence || {};
+	// NUR Text-Felder bekommen Pills — Date-Fields werden NICHT angefasst
+	// (Frappes Datepicker reagiert empfindlich auf DOM-Manipulationen während
+	// der Setup-Phase und kann in einen Endlos-Loop kommen).
 	const FIELD_MAP = {
 		lieferant: "lieferant",
-		rechnungsdatum: "rechnungsdatum",
-		wertstellungsdatum: "wertstellungsdatum",
 		bill_no: "rechnungsname",
 	};
 	Object.keys(FIELD_MAP).forEach((key) => {
 		const value = conf[key];
 		if (value === undefined || value === null) return;
 		const target = FIELD_MAP[key];
-		if (!dialog.fields_dict[target]) return;
+		const field = dialog.fields_dict[target];
+		if (!field || !field.$wrapper) return;
 		const score = Number(value) || 0;
-		let note = "";
-		if (score >= 0.9) note = `✓ ${__("Mistral sicher")} (${score.toFixed(2)})`;
-		else if (score >= 0.7) note = `~ ${__("Mistral plausibel")} (${score.toFixed(2)})`;
-		else note = `⚠ ${__("Mistral unsicher — bitte prüfen")} (${score.toFixed(2)})`;
-		dialog.fields_dict[target].df.description = note;
-		dialog.fields_dict[target].refresh();
+		const color = score >= 0.9 ? "#2e7d32" : score >= 0.7 ? "#f57f17" : "#c62828";
+		const label =
+			score >= 0.9
+				? __("sicher")
+				: score >= 0.7
+				? __("plausibel")
+				: __("unsicher");
+		field.$wrapper.find(".hv-confidence-pill").remove();
+		field.$wrapper.find(".clearfix, .control-label").first().append(
+			`<span class="hv-confidence-pill" style="background:${color};color:#fff;padding:1px 6px;border-radius:8px;font-size:10px;margin-left:6px;font-weight:normal;">
+				${label} ${(score * 100).toFixed(0)}%
+			</span>`
+		);
 	});
 
 	const warnings = opts._warnings || [];
@@ -1011,7 +1028,7 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 					const res = (r && r.message) || {};
 					if (!res.session_id) return;
 					dialog.hide();
-					hausverwaltung.buchen_cockpit.open_bulk_wizard(res.session_id);
+					frappe.set_route("buchungs_inbox", { session_id: res.session_id });
 				})
 				.finally(() => dialog.enable_primary_action());
 		},
@@ -1139,8 +1156,8 @@ function open_duplicate_dialog(file_doc, parent_dialog, render_list_fn) {
 		existing.session_id
 	) {
 		d.add_custom_action(
-			__("Bestehenden Wizard öffnen"),
-			close_and(() => hausverwaltung.buchen_cockpit.open_bulk_wizard(existing.session_id)),
+			__("In Inbox öffnen"),
+			close_and(() => frappe.set_route("buchungs_inbox", { session_id: existing.session_id })),
 			"btn-primary"
 		);
 	} else if (status === "Skipped" || status === "Error") {
@@ -1209,302 +1226,8 @@ function _discard_and_reanalyze(vorschlag_name, file_url, parent_dialog, render_
 }
 
 hausverwaltung.buchen_cockpit.open_bulk_wizard = (session_id) => {
-	const wizard = new frappe.ui.Dialog({
-		title: __("Buchungs-Wizard"),
-		size: "large",
-		fields: [
-			{
-				fieldtype: "HTML",
-				fieldname: "wizard_body",
-				options: `<div class="hv-wizard-body"></div>`,
-			},
-		],
-		primary_action_label: __("Buchen"),
-		primary_action() {
-			const cur = wizard._hv_current_vorschlag;
-			if (!cur) return;
-			open_pi_dialog_from_vorschlag(cur, () => {
-				// Nach erfolgreicher PI-Erstellung: Liste neu laden, nächsten Eintrag anzeigen.
-				wizard._hv_force_refresh = true;
-				render();
-			});
-		},
-		secondary_action_label: __("Überspringen"),
-		secondary_action() {
-			const cur = wizard._hv_current_vorschlag;
-			if (!cur) return;
-			frappe
-				.call({
-					method: `${HV_BULK_API}.mark_vorschlag_skipped`,
-					args: { name: cur.name },
-				})
-				.then(() => {
-					wizard._hv_force_refresh = true;
-					render();
-				});
-		},
-	});
-	wizard._hv_session_id = session_id;
-	wizard._hv_state = null;
-	wizard._hv_current_vorschlag = null;
-	wizard._hv_force_refresh = false;
-	wizard._hv_poll_timer = null;
-	wizard._hv_full_cache = {}; // vorschlag_name → full extracted data
-
-	const fetch_status = () => {
-		return frappe
-			.call({
-				method: `${HV_BULK_API}.get_session_status`,
-				args: { session_id },
-			})
-			.then((r) => (r && r.message) || null);
-	};
-
-	const render = () => {
-		fetch_status().then((state) => {
-			wizard._hv_state = state;
-			if (!state) return;
-			const vs = state.vorschlaege || [];
-			// Aktueller Eintrag = erster mit Status "Ready". Wenn keiner, zeige Übersicht.
-			const next_ready = vs.find((v) => v.status === "Ready");
-			wizard._hv_current_vorschlag = next_ready || null;
-
-			// Volldaten für Detail-Block laden (cache pro vorschlag_name).
-			if (next_ready && !wizard._hv_full_cache[next_ready.name]) {
-				wizard._hv_full_cache[next_ready.name] = "loading";
-				frappe
-					.call({
-						method: `${HV_BULK_API}.get_vorschlag_full`,
-						args: { name: next_ready.name },
-					})
-					.then((r) => {
-						const full = (r && r.message) || null;
-						wizard._hv_full_cache[next_ready.name] = full;
-						// Re-render damit Detail-Block jetzt gefüllt ist.
-						const $body = wizard.$body.find(".hv-wizard-body");
-						$body.html(render_html(state, next_ready));
-					})
-					.catch(() => {
-						delete wizard._hv_full_cache[next_ready.name];
-					});
-			}
-
-			const $body = wizard.$body.find(".hv-wizard-body");
-			$body.html(render_html(state, next_ready));
-			wizard.set_primary_action(__("Buchen"));
-			if (next_ready) {
-				wizard.enable_primary_action();
-			} else {
-				wizard.disable_primary_action();
-			}
-			schedule_next_poll(state);
-		});
-	};
-
-	const schedule_next_poll = (state) => {
-		if (wizard._hv_poll_timer) {
-			clearTimeout(wizard._hv_poll_timer);
-			wizard._hv_poll_timer = null;
-		}
-		const stats = state.stats || {};
-		const has_pending = (stats.pending || 0) + (stats.processing || 0) > 0;
-		if (has_pending && wizard.is_visible !== false) {
-			wizard._hv_poll_timer = setTimeout(render, 2500);
-		}
-	};
-
-	const render_html = (state, current) => {
-		const vs = state.vorschlaege || [];
-		const stats = state.stats || {};
-		const total = stats.total || 0;
-		const open = (stats.pending || 0) + (stats.processing || 0);
-		const ready = stats.ready || 0;
-		const booked = stats.booked || 0;
-		const skipped = stats.skipped || 0;
-		const errored = stats.error || 0;
-		const done_index = vs.findIndex((v) => v.name === (current && current.name));
-		const position_text = current
-			? __("Vorschlag {0} von {1}", [done_index + 1, total])
-			: __("Übersicht");
-
-		const status_pill = (s) => {
-			const map = {
-				Pending: ["#888", __("wartend")],
-				Processing: ["#1976d2", __("läuft")],
-				Ready: ["#2e7d32", __("bereit")],
-				Booked: ["#558b2f", __("gebucht")],
-				Skipped: ["#9e9e9e", __("übersprungen")],
-				Error: ["#c62828", __("Fehler")],
-			};
-			const [color, label] = map[s] || ["#666", s];
-			return `<span style="background: ${color}; color: #fff; padding: 1px 7px; border-radius: 9px; font-size: 11px;">${label}</span>`;
-		};
-
-		const summary_block = (() => {
-			if (!current) {
-				if (open > 0) {
-					return `
-						<div style="text-align: center; padding: 30px; color: var(--text-muted, #666);">
-							<i class="fa fa-spinner fa-spin"></i>
-							${__("Analyse läuft im Hintergrund...")} (${open} ${__("offen")})
-						</div>
-					`;
-				}
-				return `
-					<div style="text-align: center; padding: 30px; color: var(--text-muted, #2e7d32);">
-						<i class="fa fa-check-circle"></i> ${__("Alle Vorschläge bearbeitet.")}
-						<div style="margin-top: 10px; font-size: 12px;">
-							${booked} ${__("gebucht")}, ${skipped} ${__("übersprungen")}, ${errored} ${__("mit Fehler")}.
-						</div>
-					</div>
-				`;
-			}
-			const sum = current.extracted_summary || {};
-			const conf_avg = sum.confidence_avg
-				? `<span style="color: ${
-						sum.confidence_avg >= 0.85 ? "#2e7d32" : sum.confidence_avg >= 0.65 ? "#f57f17" : "#c62828"
-				  };">${(sum.confidence_avg * 100).toFixed(0)}%</span>`
-				: "–";
-			return `
-				<div style="border: 1px solid var(--border-color, #e0e0e0); padding: 14px; border-radius: 8px;">
-					<div style="font-weight: 600; font-size: 14px; margin-bottom: 8px;">
-						<i class="fa fa-file-pdf-o"></i> ${frappe.utils.escape_html(current.original_filename || "")}
-					</div>
-					<table style="width: 100%; font-size: 13px; border-collapse: collapse;">
-						<tr>
-							<td style="padding: 3px 8px 3px 0; color: var(--text-muted, #666); width: 30%;">${__("Lieferant")}:</td>
-							<td>
-								${frappe.utils.escape_html(sum.lieferant || sum.llm_lieferant || "–")}
-								${
-									!sum.lieferant && sum.llm_lieferant
-										? `<span style="font-size: 11px; color: #c62828;"> (${__("nicht in Stammdaten")})</span>`
-										: ""
-								}
-							</td>
-						</tr>
-						<tr>
-							<td style="padding: 3px 8px 3px 0; color: var(--text-muted, #666);">${__("Datum")}:</td>
-							<td>${frappe.utils.escape_html(sum.datum || "–")}</td>
-						</tr>
-						<tr>
-							<td style="padding: 3px 8px 3px 0; color: var(--text-muted, #666);">${__("Positionen")}:</td>
-							<td>${sum.position_count || 0} (${__("Summe")}: ${format_currency(sum.betrag_gesamt || 0, "EUR", 2)})</td>
-						</tr>
-						<tr>
-							<td style="padding: 3px 8px 3px 0; color: var(--text-muted, #666);">${__("Confidence Ø")}:</td>
-							<td>${conf_avg}</td>
-						</tr>
-						${
-							sum.warning_count
-								? `<tr><td style="padding: 3px 8px 3px 0; color: #f57f17;">${__("Hinweise")}:</td><td>${sum.warning_count}</td></tr>`
-								: ""
-						}
-					</table>
-				</div>
-			`;
-		})();
-
-		const overview_rows = vs
-			.map((v) => {
-				const s = (v.extracted_summary || {});
-				const lf = s.lieferant || s.llm_lieferant || "–";
-				const is_current = current && v.name === current.name;
-				const is_reactivatable = v.status === "Skipped" || v.status === "Error";
-				const row_style = [
-					is_current ? "background: #e3f2fd;" : "",
-					is_reactivatable ? "cursor: pointer;" : "",
-				].join(" ");
-				const title = is_reactivatable
-					? __("Klicken zum Reaktivieren")
-					: "";
-				return `
-					<tr style="${row_style}" data-name="${frappe.utils.escape_html(v.name)}" data-reactivatable="${
-					is_reactivatable ? 1 : 0
-				}" title="${title}">
-						<td style="padding: 4px 6px;">${frappe.utils.escape_html(v.original_filename || "")}</td>
-						<td style="padding: 4px 6px;">${frappe.utils.escape_html(lf)}</td>
-						<td style="padding: 4px 6px; text-align: right;">${
-							s.betrag_gesamt ? format_currency(s.betrag_gesamt, "EUR", 2) : "–"
-						}</td>
-						<td style="padding: 4px 6px;">${status_pill(v.status)}</td>
-					</tr>
-				`;
-			})
-			.join("");
-
-		// Detail-Block (nur wenn Volldaten geladen sind).
-		const full_data =
-			current && wizard._hv_full_cache[current.name] !== "loading"
-				? wizard._hv_full_cache[current.name]
-				: null;
-		const detail_block =
-			current && full_data && full_data.data
-				? _render_extraction_details(full_data.data)
-				: current
-				? `<div style="margin-top: 10px; color: var(--text-muted, #666); font-size: 12px;"><i class="fa fa-spinner fa-spin"></i> ${__("Lade Detail-Werte...")}</div>`
-				: "";
-
-		return `
-			<div style="display: flex; gap: 16px;">
-				<div style="flex: 1.4; max-height: 480px; overflow-y: auto;">
-					<div style="font-size: 13px; color: var(--text-muted, #666); margin-bottom: 8px;">${position_text}</div>
-					${summary_block}
-					${
-						current && current.error_message
-							? `<div style="margin-top: 8px; padding: 8px; background: #ffebee; border-radius: 6px; font-size: 12px; color: #c62828;">${frappe.utils.escape_html(
-									current.error_message
-							  )}</div>`
-							: ""
-					}
-					${detail_block}
-				</div>
-				<div style="flex: 1; max-height: 480px; overflow-y: auto; border: 1px solid var(--border-color, #e0e0e0); border-radius: 8px; padding: 6px;">
-					<div style="font-size: 11px; color: var(--text-muted, #666); margin-bottom: 4px; padding: 2px 4px;">
-						${total} ${__("gesamt")} · ${ready} ${__("bereit")} · ${open} ${__("offen")} · ${booked} ${__("gebucht")} · ${skipped} ${__("skipped")} · ${errored} ${__("Fehler")}
-					</div>
-					<table style="width: 100%; font-size: 12px; border-collapse: collapse;">
-						<thead>
-							<tr style="border-bottom: 1px solid var(--border-color, #e0e0e0); color: var(--text-muted, #666);">
-								<th style="text-align: left; padding: 3px 6px;">${__("Datei")}</th>
-								<th style="text-align: left; padding: 3px 6px;">${__("Lieferant")}</th>
-								<th style="text-align: right; padding: 3px 6px;">${__("Betrag")}</th>
-								<th style="text-align: left; padding: 3px 6px;">${__("Status")}</th>
-							</tr>
-						</thead>
-						<tbody>${overview_rows}</tbody>
-					</table>
-				</div>
-			</div>
-		`;
-	};
-
-	wizard.show();
-	render();
-
-	// Klick auf Skipped/Error-Zeile in der rechten Liste → reaktivieren.
-	wizard.$body.on("click", "tr[data-reactivatable='1']", (event) => {
-		const name = $(event.currentTarget).data("name");
-		if (!name) return;
-		frappe
-			.call({
-				method: `${HV_BULK_API}.reactivate_vorschlag`,
-				args: { name },
-			})
-			.then(() => {
-				frappe.show_alert({
-					message: __("Vorschlag {0} reaktiviert.", [name]),
-					indicator: "blue",
-				});
-				render();
-			});
-	});
-
-	wizard.$wrapper.on("hidden.bs.modal", () => {
-		if (wizard._hv_poll_timer) {
-			clearTimeout(wizard._hv_poll_timer);
-			wizard._hv_poll_timer = null;
-		}
-	});
+	// Backwards-Compat-Alias — Wizard ersetzt durch Buchungs-Inbox-Page.
+	frappe.set_route("buchungs_inbox", { session_id });
 };
 
 function _conf_color(score) {
@@ -1884,7 +1607,7 @@ hausverwaltung.buchen_cockpit.mount = ($container) => {
 	layout.on("click", "[data-resume-session]", (event) => {
 		event.preventDefault();
 		const session_id = $(event.currentTarget).data("resume-session");
-		if (session_id) hausverwaltung.buchen_cockpit.open_bulk_wizard(session_id);
+		if (session_id) frappe.set_route("buchungs_inbox", { session_id });
 	});
 
 	refresh_overview();

@@ -756,7 +756,26 @@ def upload_invoice_pdf() -> dict:
 
     from frappe.utils.file_manager import save_file
 
-    content = getattr(frappe.local, "uploaded_file", None)
+    # Frappe's Standard-save_file()-Pipeline hat einen Bug bei Binary-Files:
+    # File.get_content() decoded die bytes via FILE_ENCODING_OPTIONS zu str
+    # (utf-8/windows-1252), dann encoded write_file() das wieder als utf-8 —
+    # was die binary PDF-Magic-Bytes (>=0x80) durch Doppel-Encoding zerstört.
+    # Wir umgehen das, indem wir die Datei direkt auf disk schreiben und das
+    # File-Doc nur mit Metadaten erzeugen (kein content-Field, kein get_content).
+    files = getattr(frappe.request, "files", None) if frappe.request else None
+    content: bytes | None = None
+    if files and "file" in files:
+        file_obj = files["file"]
+        try:
+            file_obj.stream.seek(0)
+            content = file_obj.stream.read()
+        except Exception:
+            content = None
+    if not content:
+        content = getattr(frappe.local, "uploaded_file", None)
+        if isinstance(content, str):
+            content = content.encode("latin-1", errors="replace")
+
     filename = getattr(frappe.local, "uploaded_filename", None) or "upload.pdf"
     if not content:
         frappe.throw("Hochgeladene Datei ist leer.")
@@ -773,14 +792,39 @@ def upload_invoice_pdf() -> dict:
         file_name = existing_file.file_name
         is_new_file = False
     else:
-        file_doc = save_file(
-            filename,
-            content,
-            "",
-            "",
-            is_private=1,
+        # Direkt auf disk schreiben + minimales File-Doc — umgeht den
+        # Frappe-Decode-Encode-Bug bei Binary-Files (siehe Kommentar oben).
+        from frappe.core.doctype.file.utils import generate_file_name
+        from frappe.utils.file_manager import get_files_path
+        import os as _os
+
+        target_dir = get_files_path(is_private=1)
+        frappe.create_folder(target_dir)
+        safe_name = generate_file_name(
+            name=filename,
+            suffix=content_hash[-6:],
+            is_private=True,
         )
-        file_url = file_doc.file_url
+        full_path = _os.path.join(target_dir, safe_name)
+        with open(full_path, "wb") as f:
+            f.write(content)
+
+        file_url = f"/private/files/{safe_name}"
+        file_doc = frappe.get_doc({
+            "doctype": "File",
+            "file_name": safe_name,
+            "file_url": file_url,
+            "is_private": 1,
+            "file_size": len(content),
+            "content_hash": content_hash,
+            "folder": "Home",
+            # `flags.copy_from_existing_file` umgeht in before_insert das
+            # save_file()/get_content()-Re-Encoding-Pattern. Wir haben die
+            # Datei oben schon korrekt geschrieben.
+        })
+        file_doc.flags.copy_from_existing_file = True
+        file_doc.flags.ignore_permissions = True
+        file_doc.insert()
         file_name = file_doc.file_name
         is_new_file = True
 

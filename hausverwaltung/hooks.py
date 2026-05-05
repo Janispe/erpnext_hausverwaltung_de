@@ -35,6 +35,7 @@ app_include_js = [
 	"/assets/hausverwaltung/js/serienbrief_durchlauf_dialog.js",
 	"/assets/hausverwaltung/js/sales_invoice_writeoff.js",
 	"/assets/hausverwaltung/js/buchen_cockpit.js",
+	"/assets/hausverwaltung/js/buchungs_inbox.js",
 	"/assets/hausverwaltung/js/immobilie_report_filter.js",
 	"/assets/hausverwaltung/js/date_range_presets.js",
 ]

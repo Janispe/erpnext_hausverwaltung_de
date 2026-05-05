@@ -1,0 +1,18 @@
+{
+ "content": null,
+ "creation": "2026-05-05 00:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Page",
+ "idx": 0,
+ "modified": "2026-05-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "buchungs_inbox",
+ "owner": "Administrator",
+ "page_name": "buchungs_inbox",
+ "roles": [],
+ "script": null,
+ "standard": "Yes",
+ "style": null,
+ "system_page": 0
+}
