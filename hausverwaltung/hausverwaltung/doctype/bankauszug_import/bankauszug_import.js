@@ -196,6 +196,8 @@ function _ensureRowActionsStyles() {
     .grid-row.editable-row .grid-static-col[data-fieldname="aktionen"] .field-area { display: none !important; }
     .grid-row .grid-static-col[data-fieldname="aktionen"] { padding-top: 4px; padding-bottom: 4px; }
     .hv-row-actions-btn { white-space: nowrap; }
+    .grid-row.hv-row-click-opens-actions .grid-static-col:not(.grid-row-check):not([data-fieldname="idx"]):not([data-fieldname="aktionen"]),
+    .grid-row .data-row.hv-row-click-opens-actions .grid-static-col:not(.grid-row-check):not([data-fieldname="idx"]):not([data-fieldname="aktionen"]) { cursor: pointer; }
 
     /* Status-Pill: auch im Edit-Mode sichtbar halten. */
     .grid-row .grid-static-col[data-fieldname="row_status"] .static-area { display: inline-block !important; }
@@ -222,16 +224,81 @@ function _installRowActionsRenderer(frm) {
   // would be gone before a click handler ever fires. Stopping propagation here
   // also prevents the row from switching to edit mode.
   if (!frm.__hv_row_actions_bound) {
-    const handler = function (ev) {
+    const openActionsFromGridRow = function (ev, rowElement) {
       ev.preventDefault();
       ev.stopPropagation();
       if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
-      const $row = $(this).closest('.grid-row');
+      const $row = $(rowElement).closest('.grid-row');
       const cdn = $row.attr('data-name');
       if (!cdn) return false;
       const row = frappe.get_doc('Bankauszug Import Row', cdn);
       if (row) _openRowActions(frm, row);
       return false;
+    };
+
+    const shouldOpenActionsFromCell = function (ev, cellElement) {
+      const $cell = $(cellElement);
+      if ($cell.is('[data-fieldname="aktionen"], [data-fieldname="idx"], .grid-row-check')) return false;
+      if ($(ev.target).closest('button, .btn, a, input, select, textarea, [role="button"], .grid-row-check').length) return false;
+      return !!$cell.closest('.grid-row[data-name]').attr('data-name');
+    };
+
+    const captureRowClick = function (ev) {
+      const cell = ev.target && ev.target.closest && ev.target.closest('.grid-static-col');
+      if (!cell) return;
+      if (!frm.fields_dict.rows.$wrapper.get(0).contains(cell)) return;
+      if (!shouldOpenActionsFromCell(ev, cell)) return;
+      openActionsFromGridRow(ev, cell);
+    };
+
+    const wrapperEl = frm.fields_dict.rows.$wrapper.get(0);
+    if (wrapperEl) {
+      wrapperEl.addEventListener('mousedown', captureRowClick, true);
+      wrapperEl.addEventListener('click', captureRowClick, true);
+    }
+    if (!window.__hv_bankauszug_row_actions_capture_bound) {
+      document.addEventListener('mousedown', function (ev) {
+        const activeFrm = window.cur_frm;
+        if (!activeFrm || activeFrm.doctype !== 'Bankauszug Import') return;
+        const rowsField = activeFrm.fields_dict && activeFrm.fields_dict.rows;
+        const wrapper = rowsField && rowsField.$wrapper && rowsField.$wrapper.get(0);
+        if (!wrapper) return;
+        const cell = ev.target && ev.target.closest && ev.target.closest('.grid-static-col');
+        if (!cell || !wrapper.contains(cell)) return;
+        const $cell = $(cell);
+        if ($cell.is('[data-fieldname="aktionen"], [data-fieldname="idx"], .grid-row-check')) return;
+        if ($(ev.target).closest('button, .btn, a, input, select, textarea, [role="button"], .grid-row-check').length) return;
+        const rowElement = cell.closest('.grid-row[data-name]');
+        const cdn = rowElement && rowElement.getAttribute('data-name');
+        if (!cdn) return;
+        const row = frappe.get_doc('Bankauszug Import Row', cdn);
+        if (!row) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+        _openRowActions(activeFrm, row);
+      }, true);
+      document.addEventListener('click', function (ev) {
+        const activeFrm = window.cur_frm;
+        if (!activeFrm || activeFrm.doctype !== 'Bankauszug Import') return;
+        const rowsField = activeFrm.fields_dict && activeFrm.fields_dict.rows;
+        const wrapper = rowsField && rowsField.$wrapper && rowsField.$wrapper.get(0);
+        if (!wrapper) return;
+        const cell = ev.target && ev.target.closest && ev.target.closest('.grid-static-col');
+        if (!cell || !wrapper.contains(cell)) return;
+        const $cell = $(cell);
+        if ($cell.is('[data-fieldname="aktionen"], [data-fieldname="idx"], .grid-row-check')) return;
+        if ($(ev.target).closest('button, .btn, a, input, select, textarea, [role="button"], .grid-row-check').length) return;
+        if (!cell.closest('.grid-row[data-name]')) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+      }, true);
+      window.__hv_bankauszug_row_actions_capture_bound = true;
+    }
+
+    const handler = function (ev) {
+      return openActionsFromGridRow(ev, this);
     };
     // mousedown fires the dialog and stops Frappe's edit-mode trigger.
     frm.fields_dict.rows.$wrapper.on('mousedown', '.hv-row-actions-btn', handler);
@@ -240,6 +307,18 @@ function _installRowActionsRenderer(frm) {
     frm.fields_dict.rows.$wrapper.on('mousedown', '.grid-static-col[data-fieldname="aktionen"]', handler);
     // Suppress the trailing click as well so nothing else reacts to it.
     frm.fields_dict.rows.$wrapper.on('click', '.hv-row-actions-btn, .grid-static-col[data-fieldname="aktionen"]', function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+      return false;
+    });
+
+    frm.fields_dict.rows.$wrapper.on('mousedown', '.grid-row.hv-row-click-opens-actions .grid-static-col', function (ev) {
+      if (!shouldOpenActionsFromCell(ev, this)) return;
+      return openActionsFromGridRow(ev, this);
+    });
+    frm.fields_dict.rows.$wrapper.on('click', '.grid-row.hv-row-click-opens-actions .grid-static-col', function (ev) {
+      if (!shouldOpenActionsFromCell(ev, this)) return;
       ev.preventDefault();
       ev.stopPropagation();
       if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
@@ -273,6 +352,8 @@ function _renderAllRowActions(frm) {
   if (!grid || !Array.isArray(grid.grid_rows)) return;
   grid.grid_rows.forEach((gridRow) => {
     if (!gridRow || !gridRow.row) return;
+    gridRow.row.addClass('hv-row-click-opens-actions');
+    gridRow.row.closest('.grid-row[data-name]').addClass('hv-row-click-opens-actions');
     const $cell = gridRow.row.find('[data-fieldname="aktionen"] .static-area');
     const $target = $cell.length ? $cell : gridRow.row.find('[data-fieldname="aktionen"]');
     if (!$target.length) return;
