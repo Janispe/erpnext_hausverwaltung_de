@@ -507,7 +507,11 @@ class SerienbriefDurchlauf(Document):
 			for page in self._render_segments_preview_pages(segments):
 				pages.append(f'<div class="serienbrief-page">{page}</div>')
 
-		return self._wrap_html("\n".join(pages))
+		# paged_polyfill=True aktiviert paged.js in der Browser-Vorschau.
+		# Damit paginiert die Vorschau real nach @page-Regeln (statt als eine
+		# lange HTML-Scroll-Seite zu rendern) und stimmt mit dem späteren PDF
+		# in Seitenzahl + Page-Breaks überein.
+		return self._wrap_html("\n".join(pages), paged_polyfill=True)
 
 	def _store_document_pdf(self, dokument_doc, content: bytes) -> str:
 		safe_title = _scrub_value(dokument_doc.title or dokument_doc.name or "serienbrief-dokument")
@@ -1197,9 +1201,12 @@ class SerienbriefDurchlauf(Document):
 		custom_css = """
 			@page {
 				size: A4;
-				/* margin-bottom 40mm: reserviert Platz für den Page-Footer
-				   (``<div id="footer-html">``) + großzügigen Abstand zum Brief. */
-				margin: 20mm 20mm 40mm 25mm;
+				/* margin-bottom 25mm: identisch zu install.py-Print-Format und
+				   ``_default_pdf_options`` — Footer ist nur ~12mm hoch, mehr
+				   Margin würde zu unnötigen Page-Breaks führen.
+				   (Diese drei Stellen müssen synchron bleiben — siehe
+				   install.py + _default_pdf_options.) */
+				margin: 20mm 20mm 25mm 25mm;
 			}
 			body,
 			.serienbrief-root,
@@ -1290,21 +1297,34 @@ class SerienbriefDurchlauf(Document):
 			"page-size": "A4",
 			"margin-top": "20mm",
 			"margin-right": "20mm",
-			# 40mm bottom: reserviert Platz für den Page-Footer (Pfad im System)
-			# + großzügigen Abstand zwischen Brieftext-Ende und Footer-Trennlinie.
-			"margin-bottom": "40mm",
+			# 25mm bottom: identisch zur Print-Format @page-Regel in install.py.
+			# Footer ist nur ~12mm hoch, 25mm gibt schmalen Sicherheitsabstand,
+			# ohne Whitespace am Page-Ende der vermehrt zu unnötigen Page-Breaks führt.
+			# (Diese Werte müssen mit install.py:_ensure_serienbrief_dokument_print_format
+			# synchron bleiben, sonst weicht der finale Durchlauf-PDF von der
+			# Vorlagen-Preview ab.)
+			"margin-bottom": "25mm",
 			"margin-left": "25mm",
 		}
 
 	def _wrap_html_fragment(self, body_html: str) -> str:
 		return f'<div class="serienbrief-root">{body_html}</div>'
 
-	def _wrap_html(self, body_html: str) -> str:
+	def _wrap_html(self, body_html: str, paged_polyfill: bool = False) -> str:
+		# paged_polyfill: nur in Browser-Previews aktivieren, NICHT in der
+		# Chrome-PDF-Pipeline — Chrome paginiert nativ via @page, paged.js
+		# würde dort doppelt paginieren oder das Layout durcheinanderbringen.
+		paged_script = (
+			'<script src="/assets/hausverwaltung/js/lib/paged.polyfill.js" defer></script>'
+			if paged_polyfill
+			else ""
+		)
 		return f"""<!DOCTYPE html>
 <html>
 	<head>
 		<meta charset="utf-8">
 		<style>{self._default_css()}</style>
+		{paged_script}
 	</head>
 	<body>
 		{body_html}

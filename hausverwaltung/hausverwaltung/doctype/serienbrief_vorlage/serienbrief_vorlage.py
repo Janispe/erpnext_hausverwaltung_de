@@ -70,7 +70,41 @@ def _get_template_template_source(template_doc) -> str:
 	return sanitize_richtext_jinja_source(cstr(getattr(template_doc, "content", "")).strip())
 
 
-def _wrap_preview_html(body_html: str) -> str:
+def _build_pfad_footer_html(template_doc) -> str:
+	"""Baut die gleiche Pfad-Zeile wie der Print-Format-Footer aus install.py.
+
+	Format: ``Kategorie / Subkategorie / ... / Vorlagentitel`` — wird in der
+	HTML-Preview unten angezeigt, damit das visuelle Layout dem späteren PDF
+	entspricht. Ohne template_doc oder ohne Kategorie/Titel: leerer String.
+	"""
+	if not template_doc:
+		return ""
+	chain: list[str] = []
+	current = cstr(getattr(template_doc, "kategorie", "") or "").strip()
+	for _ in range(20):
+		if not current:
+			break
+		try:
+			kat = frappe.get_cached_doc("Serienbrief Kategorie", current)
+		except frappe.DoesNotExistError:
+			break
+		title = cstr(getattr(kat, "title", "") or current)
+		chain.append(title)
+		current = cstr(getattr(kat, "parent_serienbrief_kategorie", "") or "").strip()
+	chain.reverse()
+	tail = cstr(getattr(template_doc, "title", "") or "").strip()
+	if tail:
+		chain.append(tail)
+	if not chain:
+		return ""
+	return (
+		'<div class="hv-preview-pfad-footer">'
+		+ frappe.utils.escape_html(" / ".join(chain))
+		+ "</div>"
+	)
+
+
+def _wrap_preview_html(body_html: str, template_doc=None) -> str:
 	styles = """
 		body {
 			font-family: "Arial", "Helvetica", sans-serif;
@@ -108,7 +142,21 @@ def _wrap_preview_html(body_html: str) -> str:
 			margin: 10px 0;
 			font-size: 9.5pt;
 		}
+		/* Pfad-Footer: gleicher Style wie der PDF-Footer aus install.py
+		   (footer_html), damit Vorschau und PDF visuell übereinstimmen. */
+		.hv-preview-pfad-footer {
+			margin-top: 24px;
+			padding: 6px 0 8px;
+			border-top: 1px solid #e6ebf1;
+			font-size: 8pt;
+			color: #a0a8b3;
+			text-align: center;
+			font-family: Arial, Helvetica, sans-serif;
+			line-height: 1.4;
+		}
 	"""
+
+	pfad_html = _build_pfad_footer_html(template_doc)
 
 	return f"""<!DOCTYPE html>
 <html>
@@ -118,6 +166,7 @@ def _wrap_preview_html(body_html: str) -> str:
 	</head>
 	<body>
 		<div class="serienbrief-page">{body_html}</div>
+		{pfad_html}
 	</body>
 </html>"""
 
@@ -405,9 +454,13 @@ def _preview_defaults_for_block(block_doc) -> Dict[str, str]:
 	return defaults
 
 
-def _wrap_with_serienbrief_dokument_print_format(body_html: str) -> str:
+def _wrap_with_serienbrief_dokument_print_format(body_html: str, template_doc=None) -> str:
 	"""Wrap preview HTML with the Serienbrief Dokument print format so the split preview
 	matches the rendering users will see in the generated PDF.
+
+	Wenn ``template_doc`` übergeben wird, fließt ihr Name als ``doc.vorlage`` in das
+	tmp_doc — sonst rendert der Print-Format-Footer leer (das Footer-Jinja prüft
+	``doc.vorlage and frappe.db.exists("Serienbrief Vorlage", ...)``).
 	"""
 	try:
 		pf_html = frappe.db.get_value("Print Format", "Serienbrief Dokument", "html") or ""
@@ -437,7 +490,13 @@ def _wrap_with_serienbrief_dokument_print_format(body_html: str) -> str:
 <body><div class="print-format">{page_wrapped}</div></body>
 </html>"""
 
-	tmp_doc = frappe._dict({"docstatus": 0, "html": page_wrapped, "name": "VORSCHAU"})
+	vorlage_name = cstr(getattr(template_doc, "name", "") or "").strip() if template_doc else ""
+	tmp_doc = frappe._dict({
+		"docstatus": 0,
+		"html": page_wrapped,
+		"name": "VORSCHAU",
+		"vorlage": vorlage_name or None,
+	})
 	try:
 		rendered_pf = frappe.render_template(pf_html, {"doc": tmp_doc})
 	except Exception:
@@ -527,7 +586,7 @@ def _build_raw_template_html(template_doc) -> str:
 	if inline_mode:
 		if not standard_html:
 			return ""
-		return _wrap_preview_html(standard_html)
+		return _wrap_preview_html(standard_html, template_doc=template_doc)
 
 	blocks: list[str] = []
 
@@ -558,7 +617,7 @@ def _build_raw_template_html(template_doc) -> str:
 	if not html_blocks:
 		return ""
 
-	return _wrap_preview_html("\n".join(html_blocks))
+	return _wrap_preview_html("\n".join(html_blocks), template_doc=template_doc)
 
 
 def _build_split_preview_html(template_doc) -> str:
@@ -651,7 +710,7 @@ def render_template_preview_pdf(
 		body = _build_split_preview_html(doc)
 		if not body:
 			frappe.throw(_("Die Vorlage enthält keinen Inhalt."))
-		html = _wrap_with_serienbrief_dokument_print_format(body)
+		html = _wrap_with_serienbrief_dokument_print_format(body, template_doc=doc)
 	else:
 		html = _build_raw_template_html(doc)
 		if not html:

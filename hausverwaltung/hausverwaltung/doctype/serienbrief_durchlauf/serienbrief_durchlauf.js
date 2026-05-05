@@ -21,8 +21,11 @@ const hv_get_preview_ui = (frm) => {
 
 	const body = $('<div class="frappe-card-body"></div>').appendTo(card);
 	const status = $('<div class="text-muted small hv-preview-status"></div>').appendTo(body);
+	// allow-scripts ist nötig, damit paged.js im Preview-iframe laufen kann
+	// (paginiert HTML serverseitig via @page-CSS, sodass Vorschau und finales
+	// PDF dieselbe Seitenzahl ergeben).
 	const frame = $(
-		'<iframe class="hv-preview-frame" sandbox="allow-same-origin" style="width:100%;min-height:520px;border:1px solid var(--border-color);border-radius:6px;background:#fff;"></iframe>'
+		'<iframe class="hv-preview-frame" sandbox="allow-same-origin allow-scripts" style="width:100%;min-height:520px;border:1px solid var(--border-color);border-radius:6px;background:#fff;"></iframe>'
 	).appendTo(body);
 
 	// Nach Iterations-Grid einfügen, sonst ans Ende
