@@ -8,7 +8,6 @@ hausverwaltung.serienbrief.open_new_durchlauf_dialog = (prefill = {}) => {
 			names: [], // ausgewählte Iteration-Objekt-Namen
 			variables: [], // [{ key, label, variable_type }]
 			values: {}, // { [objectName]: { [key]: { value, path } } }
-			preview_request_id: 0,
 		};
 
 	const dialog = new frappe.ui.Dialog({
@@ -45,7 +44,6 @@ hausverwaltung.serienbrief.open_new_durchlauf_dialog = (prefill = {}) => {
 					reqd: 1,
 					default: frappe.datetime.get_today(),
 				},
-				{ fieldtype: "HTML", fieldname: "template_preview" },
 				{ fieldtype: "Section Break" },
 			{
 				label: __("Iterations-Doctype"),
@@ -71,7 +69,6 @@ hausverwaltung.serienbrief.open_new_durchlauf_dialog = (prefill = {}) => {
 		dialog.__hv_state = state;
 		hv_sbd_render_iteration_summary(dialog, state);
 		hv_sbd_render_variables_table(dialog, state);
-		hv_sbd_render_template_preview_shell(dialog);
 		dialog.show();
 
 	if (prefill.vorlage) dialog.set_value("vorlage", prefill.vorlage);
@@ -104,10 +101,8 @@ const hv_sbd_on_vorlage_change = (dialog, state) => {
 			state.variables = [];
 			state.values = {};
 			hv_sbd_render_variables_table(dialog, state);
-			hv_sbd_clear_template_preview(dialog, state);
 			return;
 		}
-		hv_sbd_load_template_preview(dialog, state, v);
 		frappe.db
 		.get_value("Serienbrief Vorlage", v, ["title", "kategorie", "haupt_verteil_objekt"])
 		.then((r) => {
@@ -120,69 +115,6 @@ const hv_sbd_on_vorlage_change = (dialog, state) => {
 			hv_sbd_set_iteration_objects(dialog, state, []);
 			hv_sbd_load_template_variables(dialog, state);
 		});
-	};
-
-	const hv_sbd_render_template_preview_shell = (dialog) => {
-		const field = dialog.get_field("template_preview");
-		if (!field) return;
-		field.$wrapper.html(`
-			<div class="hv-sbd-preview" style="border:1px solid var(--border-color,#d9d9d9);border-radius:8px;overflow:hidden;background:#fff;">
-				<div class="hv-sbd-preview-title" style="padding:10px 12px;border-bottom:1px solid var(--border-color,#eee);font-weight:600;">
-					${__("Vorschau")}
-				</div>
-				<div class="hv-sbd-preview-status text-muted small" style="padding:8px 12px;border-bottom:1px solid var(--border-color,#eee);">
-					${__("Wähle eine Vorlage, um die PDF-Vorschau zu laden.")}
-				</div>
-				<iframe class="hv-sbd-preview-frame" title="${__("Serienbrief Vorschau")}" style="width:100%;min-height:520px;border:0;background:#fff;"></iframe>
-			</div>
-		`);
-	};
-
-	const hv_sbd_clear_template_preview = (dialog, state, message) => {
-		state.preview_request_id += 1;
-		const field = dialog.get_field("template_preview");
-		if (!field) return;
-		field.$wrapper.find(".hv-sbd-preview-title").text(__("Vorschau"));
-		field.$wrapper
-			.find(".hv-sbd-preview-status")
-			.text(message || __("Wähle eine Vorlage, um die PDF-Vorschau zu laden."));
-		field.$wrapper.find(".hv-sbd-preview-frame").removeAttr("src");
-	};
-
-	const hv_sbd_load_template_preview = (dialog, state, template) => {
-		const field = dialog.get_field("template_preview");
-		if (!field || !template) return;
-		const requestId = ++state.preview_request_id;
-		field.$wrapper.find(".hv-sbd-preview-title").text(template);
-		field.$wrapper.find(".hv-sbd-preview-status").text(__("Lade Vorschau..."));
-		field.$wrapper.find(".hv-sbd-preview-frame").removeAttr("src");
-
-		frappe
-			.call({
-				method: "hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.render_template_preview_pdf",
-				args: { template, split_preview: 1 },
-				quiet: true,
-			})
-			.then((r) => {
-				if (requestId !== state.preview_request_id) return;
-				const pdfBase64 = r?.message?.pdf_base64 || r?.message?.pdf || r?.message;
-				if (!pdfBase64) {
-					field.$wrapper.find(".hv-sbd-preview-status").text(__("Keine PDF-Vorschau verfügbar."));
-					return;
-				}
-				field.$wrapper
-					.find(".hv-sbd-preview-frame")
-					.attr("src", `data:application/pdf;base64,${pdfBase64}`);
-				field.$wrapper.find(".hv-sbd-preview-status").text("");
-			})
-			.catch((err) => {
-				if (requestId !== state.preview_request_id) return;
-				const message =
-					err?._server_messages ||
-					err?.message ||
-					__("Vorschau konnte nicht geladen werden.");
-				field.$wrapper.find(".hv-sbd-preview-status").text(message);
-			});
 	};
 
 	const hv_sbd_load_template_variables = (dialog, state) => {
@@ -236,12 +168,19 @@ const hv_sbd_open_iteration_picker = (dialog, state) => {
 		target: dialog,
 		setters: hv_sbd_get_iteration_setters(iter_dt),
 		add_filters_group: 1,
+		primary_action_label: __("Übernehmen"),
 		action(selections) {
 			const unique = Array.from(new Set([...current, ...selections]));
 			hv_sbd_set_iteration_objects(dialog, state, unique);
 			picker.dialog.hide();
 		},
 	});
+
+	// "Make {Doctype}"-Secondary-Button (z.B. "Mietvertrag machen") aus dem
+	// MultiSelectDialog-Default verstecken — im Serienbrief-Flow soll der User
+	// keinen neuen Mietvertrag/etc. anlegen, nur auswählen. Frappe hardcoded
+	// den Button im Constructor; nachträglich ausblenden ist der einzige Weg.
+	picker.dialog.get_secondary_btn().addClass("hide");
 
 	// Picker-Modal stretchen — Breite kommt aus Hausverwaltung Einstellungen.
 	if (window.hausverwaltung?.ui?.widen_modal) {
@@ -340,8 +279,11 @@ const hv_sbd_render_variables_table = (dialog, state) => {
 		})
 		.join("");
 
+	// max-height + overflow-y/x kappt vertikales Wachstum, sodass das Modal
+	// nicht bei jeder zusätzlichen Iterations-Zeile neu zentriert / vergrößert
+	// wird. Analog zu iteration_objects_summary (240px max).
 	field.$wrapper.html(`
-		<div class="table-responsive">
+		<div class="table-responsive" style="max-height: 50vh; overflow-y: auto; overflow-x: auto;">
 			<table class="table table-bordered table-sm">
 				<thead>
 					<tr>
