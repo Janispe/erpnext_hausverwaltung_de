@@ -1006,8 +1006,12 @@ hausverwaltung.buchen_cockpit.open_mieterrechnung_dialog = (opts = {}) => {
 					fieldname: "artikel",
 					label: __("Artikel"),
 					options: "Item",
-					in_list_view: 1,
-					columns: 2,
+					// Aus der Inline-Tabelle ausgeblendet — Backend fällt auf den
+					// Default-Service-Artikel zurück (ensure_default_service_item).
+					// Über "Edit Row" einzelner Zeilen weiterhin änderbar, falls
+					// gezielt ein anderer Artikel gewählt werden soll.
+					in_list_view: 0,
+					description: __("Optional — Backend nutzt den Default-Service-Artikel, wenn leer."),
 				},
 				{
 					fieldtype: "Link",

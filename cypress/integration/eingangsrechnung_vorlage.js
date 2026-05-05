@@ -124,18 +124,23 @@ context("Eingangsrechnung Vorlage — Buchungs-Cockpit", () => {
 	});
 
 	after(() => {
-		cy.call("frappe.client.get_list", {
-			doctype: "Eingangsrechnung Vorlage",
-			filters: { name: VORLAGE_TITEL },
-			limit_page_length: 1,
-		}).then((r) => {
-			if ((r.message || []).length) {
-				cy.call("frappe.client.delete", {
-					doctype: "Eingangsrechnung Vorlage",
-					name: VORLAGE_TITEL,
+		// Best-effort cleanup. Wenn der Test-User keine delete-Permission hat
+		// (kann bei frischen Migrates vorkommen), bleibt die Vorlage liegen —
+		// kein Test-Failure, weil das nicht der Test-Subject ist.
+		cy.window()
+			.its("frappe.csrf_token")
+			.then((csrf_token) => {
+				cy.request({
+					method: "POST",
+					url: "/api/method/frappe.client.delete",
+					body: { doctype: "Eingangsrechnung Vorlage", name: VORLAGE_TITEL },
+					headers: {
+						"Content-Type": "application/json",
+						"X-Frappe-CSRF-Token": csrf_token,
+					},
+					failOnStatusCode: false,
 				});
-			}
-		});
+			});
 	});
 
 	it("[1/3] Vorlage erscheint in der DocType-Listenansicht", () => {
