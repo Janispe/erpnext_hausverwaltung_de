@@ -159,6 +159,85 @@ def _get_or_create_party_bank_account(*, party_type: str, party: str, iban: Opti
     return doc.name, True
 
 
+def _get_contract_contact_for_customer(mietvertrag: Document, customer: str) -> Optional[str]:
+    contacts = [
+        (getattr(row, "mieter", None) or "").strip()
+        for row in (mietvertrag.get("mieter") or [])
+        if (getattr(row, "mieter", None) or "").strip()
+    ]
+    if not contacts:
+        return None
+
+    linked_contacts = frappe.get_all(
+        "Dynamic Link",
+        filters={
+            "parenttype": "Contact",
+            "parent": ("in", contacts),
+            "link_doctype": "Customer",
+            "link_name": customer,
+        },
+        pluck="parent",
+        limit=2,
+    )
+    if len(linked_contacts) == 1:
+        return linked_contacts[0]
+
+    if len(contacts) == 1:
+        return contacts[0]
+
+    return None
+
+
+def _link_customer_bank_account_to_mietvertraege(customer: str, bank_account: Optional[str]) -> Dict[str, Any]:
+    if not customer or not bank_account:
+        return {"updated": 0, "unchanged": 0, "errors": []}
+
+    rows = frappe.get_all(
+        "Mietvertrag",
+        filters={
+            "kunde": customer,
+            "docstatus": ("<", 2),
+        },
+        fields=["name"],
+        limit=0,
+        order_by="modified desc",
+    )
+
+    updated = 0
+    unchanged = 0
+    errors = []
+    for row in rows:
+        mv_name = row.get("name")
+        if not mv_name:
+            continue
+        try:
+            mv = frappe.get_doc("Mietvertrag", mv_name)
+            if any(
+                (getattr(link, "bankkonto", None) or "") == bank_account
+                for link in (mv.get("kontoverbindungen") or [])
+            ):
+                unchanged += 1
+                continue
+
+            mv.append(
+                "kontoverbindungen",
+                {
+                    "bankkonto": bank_account,
+                    "kontakt": _get_contract_contact_for_customer(mv, customer),
+                },
+            )
+            mv.save(ignore_permissions=True)
+            updated += 1
+        except Exception as exc:
+            errors.append({"mietvertrag": mv_name, "error": str(exc)})
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"Bankauszug Import: Bankkonto-Link zu Mietvertrag fehlgeschlagen ({mv_name})",
+            )
+
+    return {"updated": updated, "unchanged": unchanged, "errors": errors}
+
+
 def _get_row_by_name(doc: Document, row_name: str) -> Document:
     for row in doc.get("rows") or []:
         if row.name == row_name:
@@ -640,6 +719,9 @@ def create_party_and_bank_for_row(
         party=party,
         iban=row.iban,
     )
+    mietvertrag_links = {}
+    if party_type == "Customer" and bank_account:
+        mietvertrag_links = _link_customer_bank_account_to_mietvertraege(party, bank_account)
 
     row.party_type = party_type
     row.party = party
@@ -653,6 +735,7 @@ def create_party_and_bank_for_row(
         "party_created": party_created,
         "bank_account": bank_account,
         "bank_account_created": bank_created,
+        "mietvertrag_links": mietvertrag_links,
     }
 
 
@@ -748,6 +831,10 @@ def apply_party_to_row_and_relink(
                 party_type=party_type, party=party, iban=iban_for_link
             )
             bank_account_info = {"bank_account": ba_name, "created": ba_created}
+            if party_type == "Customer" and ba_name:
+                bank_account_info["mietvertrag_links"] = _link_customer_bank_account_to_mietvertraege(
+                    party, ba_name
+                )
         except Exception as exc:
             bank_account_info = {"error": str(exc)}
 

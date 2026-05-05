@@ -59,12 +59,19 @@ class TestBankauszugImport(FrappeTestCase):
         with patch.object(bi.frappe, "get_doc", return_value=doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi, "_create_party_if_missing", return_value=("Max Mustermann", True)), \
-             patch.object(bi, "_get_or_create_party_bank_account", return_value=("BA-1", True)):
+             patch.object(bi, "_get_or_create_party_bank_account", return_value=("BA-1", True)), \
+             patch.object(
+                 bi,
+                 "_link_customer_bank_account_to_mietvertraege",
+                 return_value={"updated": 1, "unchanged": 0, "errors": []},
+             ) as link_contract:
             res = bi.create_party_and_bank_for_row("IMP-1", "ROW-1", "Customer", None)
 
         self.assertEqual(res["party_type"], "Customer")
         self.assertEqual(res["party"], "Max Mustermann")
         self.assertEqual(res["bank_account"], "BA-1")
+        self.assertEqual(res["mietvertrag_links"]["updated"], 1)
+        link_contract.assert_called_once_with("Max Mustermann", "BA-1")
         self.assertTrue(res["party_created"])
         self.assertTrue(res["bank_account_created"])
         self.assertEqual(row.party_type, "Customer")
@@ -85,6 +92,70 @@ class TestBankauszugImport(FrappeTestCase):
         self.assertEqual(row.party_type, "Supplier")
         self.assertEqual(row.party, "Miete Januar")
 
+    def test_link_customer_bank_account_adds_missing_mietvertrag_kontoverbindung(self):
+        class _FakePartner:
+            mieter = "CONTACT-1"
+
+        class _FakeMietvertrag:
+            def __init__(self):
+                self.name = "MV-1"
+                self.kontoverbindungen = []
+                self.mieter = [_FakePartner()]
+                self.saved = False
+                self.ignore_permissions = None
+
+            def get(self, key):
+                return getattr(self, key)
+
+            def append(self, key, value):
+                self.kontoverbindungen.append(type("Link", (), value)())
+
+            def save(self, ignore_permissions=False):
+                self.saved = True
+                self.ignore_permissions = ignore_permissions
+
+        mv = _FakeMietvertrag()
+
+        def _get_all(doctype, **kwargs):
+            if doctype == "Mietvertrag":
+                return [{"name": "MV-1"}]
+            if doctype == "Dynamic Link":
+                return ["CONTACT-1"]
+            raise AssertionError("unexpected doctype")
+
+        with patch.object(bi.frappe, "get_all", side_effect=_get_all), \
+             patch.object(bi.frappe, "get_doc", return_value=mv):
+            res = bi._link_customer_bank_account_to_mietvertraege("CUST-1", "BA-1")
+
+        self.assertEqual(res["updated"], 1)
+        self.assertEqual(res["unchanged"], 0)
+        self.assertEqual(mv.kontoverbindungen[0].bankkonto, "BA-1")
+        self.assertEqual(mv.kontoverbindungen[0].kontakt, "CONTACT-1")
+        self.assertTrue(mv.saved)
+        self.assertTrue(mv.ignore_permissions)
+
+    def test_link_customer_bank_account_skips_existing_mietvertrag_kontoverbindung(self):
+        class _FakeLink:
+            bankkonto = "BA-1"
+
+        class _FakeMietvertrag:
+            name = "MV-1"
+            kontoverbindungen = [_FakeLink()]
+            mieter = []
+
+            def get(self, key):
+                return getattr(self, key)
+
+            def save(self, ignore_permissions=False):
+                raise AssertionError("unchanged contract should not be saved")
+
+        with patch.object(bi.frappe, "get_all", return_value=[{"name": "MV-1"}]), \
+             patch.object(bi.frappe, "get_doc", return_value=_FakeMietvertrag()):
+            res = bi._link_customer_bank_account_to_mietvertraege("CUST-1", "BA-1")
+
+        self.assertEqual(res["updated"], 0)
+        self.assertEqual(res["unchanged"], 1)
+
     def test_create_party_requires_valid_party_type(self):
         row = self._FakeRow(name="ROW-3", auftraggeber="Test")
         doc = self._FakeDoc("IMP-3", [row])
@@ -95,7 +166,7 @@ class TestBankauszugImport(FrappeTestCase):
         with patch.object(bi.frappe, "get_doc", return_value=doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe, "throw", side_effect=_throw):
-            with self.assertRaisesRegex(Exception, "Party Typ muss Customer oder Supplier sein."):
+            with self.assertRaisesRegex(Exception, "Party Typ muss Mieter oder Supplier sein."):
                 bi.create_party_and_bank_for_row("IMP-3", "ROW-3", "Employee", None)
 
     def test_create_party_requires_name_if_no_fallback(self):
