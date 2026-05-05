@@ -23,6 +23,7 @@ User kann manuell zuordnen.
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from typing import Any
 
@@ -31,6 +32,20 @@ from frappe.utils import flt, getdate
 
 
 _TOLERANCE = 0.01
+
+_RENT_ITEM_LABELS = {
+	"Miete": "Miete",
+	"Betriebskosten": "BK VZ",
+	"Heizkosten": "HK VZ",
+	"BK Nachzahlung": "BK Nachzahlung",
+	"BK Guthaben": "BK Guthaben",
+}
+
+_RENT_TYPE_LABELS = {
+	"Miete": "Miete",
+	"Betriebskosten": "BK VZ",
+	"Heizkosten": "HK VZ",
+}
 
 
 def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
@@ -293,6 +308,89 @@ def _resolve_expected_cost_center_for_bt(bt) -> str | None:
 	return None
 
 
+def _get_value(row, key):
+	return row.get(key) if hasattr(row, "get") else getattr(row, key, None)
+
+
+def _month_label(value) -> str | None:
+	if not value:
+		return None
+	try:
+		d = getdate(value)
+		return f"{d.month:02d}/{d.year}"
+	except Exception:
+		return None
+
+
+def _label_from_invoice_remarks(remarks: str | None) -> tuple[str | None, str | None]:
+	text = str(remarks or "")
+	type_match = re.search(r"\[TYPE:([^\]]+)\]", text)
+	month_match = re.search(r"(\d{2}/\d{4})", text)
+	if not type_match:
+		return None, month_match.group(1) if month_match else None
+	return _RENT_TYPE_LABELS.get(type_match.group(1).strip()), month_match.group(1) if month_match else None
+
+
+def _build_customer_payment_remarks(*, invoices, invoice_doctype: str) -> str | None:
+	if invoice_doctype != "Sales Invoice":
+		return None
+
+	invoice_names = [str(_get_value(inv, "name") or "").strip() for inv in invoices]
+	invoice_names = [name for name in invoice_names if name]
+	if not invoice_names:
+		return None
+
+	invoice_rows = {
+		row.name: row
+		for row in frappe.get_all(
+			"Sales Invoice",
+			filters={"name": ["in", invoice_names]},
+			fields=["name", "posting_date", "remarks"],
+		)
+	}
+	item_rows = frappe.get_all(
+		"Sales Invoice Item",
+		filters={"parent": ["in", invoice_names], "parenttype": "Sales Invoice"},
+		fields=["parent", "item_code", "description", "idx"],
+		order_by="parent asc, idx asc",
+	)
+	items_by_invoice: dict[str, list] = defaultdict(list)
+	for item in item_rows:
+		items_by_invoice[item.parent].append(item)
+
+	parts: list[str] = []
+	seen: set[str] = set()
+	for inv in invoices:
+		invoice_name = str(_get_value(inv, "name") or "").strip()
+		if not invoice_name:
+			continue
+		invoice_row = invoice_rows.get(invoice_name)
+		posting_date = _get_value(inv, "posting_date") or _get_value(invoice_row, "posting_date")
+		month = _month_label(posting_date)
+		remark_label, remark_month = _label_from_invoice_remarks(_get_value(invoice_row, "remarks"))
+		month = remark_month or month
+
+		labels = []
+		for item in items_by_invoice.get(invoice_name, []):
+			label = _RENT_ITEM_LABELS.get(str(item.item_code or "").strip())
+			if label:
+				labels.append(label)
+		if not labels and remark_label:
+			labels.append(remark_label)
+		if not labels:
+			continue
+
+		for label in labels:
+			part = f"{label} {month}" if month else label
+			if part not in seen:
+				parts.append(part)
+				seen.add(part)
+
+	if not parts:
+		return None
+	return "Zahlung: " + "; ".join(parts)
+
+
 def create_payment_entry_for_invoices(
 	*,
 	bt,
@@ -356,6 +454,14 @@ def create_payment_entry_for_invoices(
 			"reference_date": bt.date,
 		}
 	)
+	custom_remarks = _build_customer_payment_remarks(
+		invoices=invoices,
+		invoice_doctype=invoice_doctype,
+	)
+	if custom_remarks:
+		if pe.meta.get_field("custom_remarks"):
+			pe.custom_remarks = 1
+		pe.remarks = custom_remarks
 	if cost_center and pe.meta.get_field("cost_center"):
 		pe.cost_center = cost_center
 
