@@ -184,16 +184,26 @@ def _allocate_amount(amount: float, base_amounts: dict[str, float]) -> dict[str,
 		frappe.throw(_("Betrag kann nicht auf Artikelkategorien verteilt werden."))
 
 	allocated = {category: 0.0 for category in CATEGORIES}
-	remaining = flt(amount)
 	non_zero_categories = [
 		category for category in CATEGORIES if abs(flt(base_amounts.get(category))) > TOLERANCE
 	]
+
+	# Fast-Path für Single-Category-Sales-Invoices (= Standardfall seit
+	# SPLITNR-Grouping-Off im Importer): exakter Per-Kategorie-Betrag,
+	# keine Proportional-Approximation nötig.
+	if len(non_zero_categories) == 1:
+		allocated[non_zero_categories[0]] = flt(amount, 2)
+		return allocated
+
+	# Mehrere Kategorien (kombinierte Pre-Fix-Legacy-Sales-Invoice oder
+	# Cutover-Belege): Proportional-Split als Annäherung — die echte
+	# WinCASA-Per-Position-Allokation ist nach Re-Import nicht mehr nötig.
+	remaining = flt(amount)
 	for category in non_zero_categories[:-1]:
 		share = abs(flt(base_amounts.get(category))) / total
 		allocated[category] = flt(amount * share, 2)
 		remaining -= allocated[category]
-	if non_zero_categories:
-		allocated[non_zero_categories[-1]] = flt(remaining, 2)
+	allocated[non_zero_categories[-1]] = flt(remaining, 2)
 	return allocated
 
 
