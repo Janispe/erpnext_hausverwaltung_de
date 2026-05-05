@@ -32,16 +32,20 @@ function add_ausgezogen_zeitraum_button(listview) {
 			title: __("Ausgezogen im Zeitraum"),
 			fields: [
 				{
+					fieldname: "presets_html",
+					fieldtype: "HTML",
+				},
+				{
 					fieldname: "from_date",
 					fieldtype: "Date",
-					label: __("Von"),
+					label: __("Ausgezogen von"),
 					default: defaultFromDate,
 					reqd: 1,
 				},
 				{
 					fieldname: "to_date",
 					fieldtype: "Date",
-					label: __("Bis"),
+					label: __("Ausgezogen bis"),
 					default: defaultToDate,
 					reqd: 1,
 				},
@@ -75,5 +79,25 @@ function add_ausgezogen_zeitraum_button(listview) {
 		});
 
 		dialog.show();
+		render_ausgezogen_presets(dialog);
+	});
+}
+
+function render_ausgezogen_presets(dialog) {
+	const presets_api = window.hausverwaltung && window.hausverwaltung.date_presets;
+	const presets_field = dialog.get_field("presets_html");
+	if (!presets_api || !presets_field || !presets_field.$wrapper) return;
+
+	const $outer = $(
+		`<div style="margin:0 0 8px;"><div style="font-size:11px; color:#8d99a6; margin-bottom:4px;">${__("Schnellauswahl:")}</div><div class="hv-date-presets-target" style="display:flex; flex-wrap:wrap; gap:4px;"></div></div>`
+	);
+	presets_field.$wrapper.empty().append($outer);
+
+	presets_api.render_buttons($outer.find(".hv-date-presets-target"), {
+		include_gesamt: false,
+		on_select(range) {
+			dialog.set_value("from_date", range.from);
+			dialog.set_value("to_date", range.to);
+		},
 	});
 }
