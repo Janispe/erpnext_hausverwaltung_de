@@ -93,6 +93,9 @@ function open_print_dialog(report, as_pdf) {
 		false,
 		(print_settings) => {
 			print_settings.orientation = "Landscape";
+			// Filter (Mieter / Zeitraum / Firma) als Subtitle oben mitdrucken,
+			// damit der Auszug ohne Bildschirm-Kontext lesbar ist.
+			print_settings.include_filters = 1;
 			if (!print_settings.pick_columns) {
 				print_settings.columns = MIETERKONTO_PRINT_COLUMNS.filter((fieldname) =>
 					report.columns?.some((column) => column.fieldname === fieldname)
