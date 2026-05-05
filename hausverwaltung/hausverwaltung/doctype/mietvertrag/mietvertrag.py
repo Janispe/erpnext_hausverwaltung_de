@@ -361,6 +361,7 @@ class Mietvertrag(Document):
 		kontakte = ts.get_contact_kontakte(contacts[0]) if contacts else {}
 
 		wohnung_info = ts.get_wohnung_adresse(self.wohnung)
+		vormieter_info = ts.get_vormieter_info(self.wohnung, self.von, exclude=self.name)
 		qr_url = frappe.utils.get_url(f"/app/mietvertrag/{self.name}")
 
 		return {
@@ -374,9 +375,8 @@ class Mietvertrag(Document):
 			"telefon": kontakte.get("telefon", ""),
 			"mobil": kontakte.get("mobil", ""),
 			"email": kontakte.get("email", ""),
-			"vormieter": ts.get_vormieter_display_name(
-				self.wohnung, self.von, exclude=self.name
-			),
+			"vormieter": vormieter_info["name"],
+			"vormieter_zeitraum": vormieter_info["zeitraum"],
 			"nachmieter": ts.get_nachmieter_display_name(
 				self.wohnung, self.von, exclude=self.name
 			),

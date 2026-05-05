@@ -7,6 +7,10 @@ from typing import Optional
 import frappe
 
 from hausverwaltung.hausverwaltung.utils.mieter_name import get_hauptmieter_display_name
+from hausverwaltung.hausverwaltung.utils.gebaeudeteil import (
+	normalize_gebaeudeteil_to_standard,
+	split_lage_gebaeudeteil,
+)
 
 
 def get_vormieter_display_name(
@@ -19,9 +23,18 @@ def get_vormieter_display_name(
 	Picks the contract with the largest `bis < von` (excluding `exclude` if given).
 	Returns empty string when no prior contract exists.
 	"""
+	return get_vormieter_info(wohnung, von, exclude=exclude).get("name", "")
+
+
+def get_vormieter_info(
+	wohnung: str | None,
+	von: object,
+	exclude: str | None = None,
+) -> dict:
+	"""Name and Mietzeitraum of the most recent prior Mietvertrag for the same Wohnung."""
 	wohnung_name = (wohnung or "").strip()
 	if not wohnung_name or not von:
-		return ""
+		return {"name": "", "von": None, "bis": None, "zeitraum": ""}
 
 	# Explicit SQL — Frappe's `["<", date]` filter wraps `bis` in COALESCE(bis, '0001-01-01'),
 	# which would let NULL-bis rows match `bis < <future-date>`. We need a strict bis < von.
@@ -32,14 +45,30 @@ def get_vormieter_display_name(
 		params["exclude"] = exclude
 
 	rows = frappe.db.sql(
-		f"SELECT name FROM `tabMietvertrag` WHERE {' AND '.join(conditions)} ORDER BY bis DESC LIMIT 1",
+		f"SELECT name, von, bis FROM `tabMietvertrag` WHERE {' AND '.join(conditions)} ORDER BY bis DESC LIMIT 1",
 		params,
 		as_dict=True,
 	)
 	if not rows:
-		return ""
+		return {"name": "", "von": None, "bis": None, "zeitraum": ""}
 
-	return _hauptmieter_for_mietvertrag(rows[0].get("name"))
+	row = rows[0]
+	return {
+		"name": _hauptmieter_for_mietvertrag(row.get("name")),
+		"von": row.get("von"),
+		"bis": row.get("bis"),
+		"zeitraum": _format_zeitraum(row.get("von"), row.get("bis")),
+	}
+
+
+def _format_zeitraum(von: object, bis: object) -> str:
+	if not von and not bis:
+		return ""
+	start = frappe.utils.formatdate(von) if von else ""
+	end = frappe.utils.formatdate(bis) if bis else ""
+	if start and end:
+		return f"{start} - {end}"
+	return start or end
 
 
 def get_nachmieter_display_name(
@@ -183,9 +212,17 @@ def get_wohnung_adresse(wohnung_name: str | None) -> dict:
 		) or {}
 		adresse = (imm.get("adresse_titel") or imm.get("bezeichnung") or "").strip()
 
+	gebaeudeteil = normalize_gebaeudeteil_to_standard(wohnung.get("gebaeudeteil"))
+	lage = (wohnung.get("name__lage_in_der_immobilie") or "").strip()
+	teil_from_lage, lage_without_teil = split_lage_gebaeudeteil(lage)
+	if not gebaeudeteil:
+		gebaeudeteil = teil_from_lage
+	if teil_from_lage and lage_without_teil:
+		lage = lage_without_teil
+
 	return {
 		"adresse": adresse,
-		"gebaeudeteil": (wohnung.get("gebaeudeteil") or "").strip(),
-		"lage": (wohnung.get("name__lage_in_der_immobilie") or "").strip(),
+		"gebaeudeteil": gebaeudeteil or "",
+		"lage": lage,
 		"id": wohnung.get("id"),
 	}

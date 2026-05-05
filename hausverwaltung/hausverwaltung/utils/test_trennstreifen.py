@@ -5,7 +5,9 @@ from frappe.tests.utils import FrappeTestCase
 
 from hausverwaltung.hausverwaltung.utils.trennstreifen import (
 	get_contact_kontakte,
+	get_wohnung_adresse,
 	get_vormieter_display_name,
+	get_vormieter_info,
 	make_qr_data_url,
 )
 
@@ -17,7 +19,7 @@ class TestVormieterLookup(FrappeTestCase):
 		def fake_sql(query, params, as_dict=False):
 			captured["query"] = query
 			captured["params"] = params
-			return [{"name": "MV-PREV-2"}]
+			return [{"name": "MV-PREV-2", "von": "2025-01-01", "bis": "2026-04-30"}]
 
 		def fake_get_all(doctype, **kwargs):
 			return [{"mieter": "CONTACT-A", "rolle": "Hauptmieter"}]
@@ -67,6 +69,25 @@ class TestVormieterLookup(FrappeTestCase):
 		self.assertEqual(get_vormieter_display_name("WOHNUNG-1", None), "")
 		self.assertEqual(get_vormieter_display_name("", "2026-05-01"), "")
 
+	def test_returns_period_for_latest_prior_contract(self):
+		def fake_sql(query, params, as_dict=False):
+			return [{"name": "MV-PREV-2", "von": "2025-01-01", "bis": "2026-04-30"}]
+
+		with patch(
+			"hausverwaltung.hausverwaltung.utils.trennstreifen.frappe.db.sql",
+			side_effect=fake_sql,
+		), patch(
+			"hausverwaltung.hausverwaltung.utils.trennstreifen._hauptmieter_for_mietvertrag",
+			return_value="Mustermann Max",
+		), patch(
+			"hausverwaltung.hausverwaltung.utils.trennstreifen.frappe.utils.formatdate",
+			side_effect=lambda value: value,
+		):
+			result = get_vormieter_info("WOHNUNG-1", "2026-05-01")
+
+		self.assertEqual(result["name"], "Mustermann Max")
+		self.assertEqual(result["zeitraum"], "2025-01-01 - 2026-04-30")
+
 
 class TestContactKontakte(FrappeTestCase):
 	def test_picks_primary_phone_mobile_email(self):
@@ -110,6 +131,28 @@ class TestContactKontakte(FrappeTestCase):
 	def test_empty_input_returns_empty_dict(self):
 		result = get_contact_kontakte("")
 		self.assertEqual(result, {"telefon": "", "mobil": "", "email": ""})
+
+
+class TestWohnungAdresse(FrappeTestCase):
+	def test_normalizes_gebaeudeteil_from_lage_prefix(self):
+		def fake_get_value(doctype, name, fields, as_dict=False):
+			if doctype == "Wohnung":
+				return {
+					"immobilie": "IMM-1",
+					"gebaeudeteil": None,
+					"name__lage_in_der_immobilie": "Hinterhaus, 4. OG re",
+					"id": 7,
+				}
+			return {"adresse_titel": "Kirchhofstr.", "bezeichnung": ""}
+
+		with patch(
+			"hausverwaltung.hausverwaltung.utils.trennstreifen.frappe.db.get_value",
+			side_effect=fake_get_value,
+		):
+			result = get_wohnung_adresse("WOHNUNG-1")
+
+		self.assertEqual(result["gebaeudeteil"], "HH")
+		self.assertEqual(result["lage"], "4. OG re")
 
 
 class TestMakeQrDataUrl(FrappeTestCase):
