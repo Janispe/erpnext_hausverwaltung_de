@@ -11,8 +11,13 @@ from frappe.exceptions import DuplicateEntryError
 from frappe.model.document import Document
 from frappe.utils import cint, cstr
 from frappe.utils.jinja import get_jenv
-from frappe.utils.pdf import get_pdf
 from jinja2 import Undefined
+
+# Wrapper, der Print-Settings → pdf_generator respektiert (Chrome bzw. wkhtmltopdf).
+# Muss derselbe sein wie im Serienbrief Durchlauf-Render, damit die Vorlagen-Preview
+# pixel-für-pixel zur finalen PDF passt — frappe.utils.pdf.get_pdf ist hardcoded auf
+# wkhtmltopdf und würde Spacing/Footer/Paged-Media anders rendern.
+from hausverwaltung.hausverwaltung.utils.pdf_engine import render_pdf as get_pdf
 from markupsafe import Markup, escape
 
 from hausverwaltung.hausverwaltung.utils.jinja_source_sanitizer import sanitize_richtext_jinja_source
@@ -323,6 +328,11 @@ def _split_preview_context() -> Dict[str, Any]:
 		"serienbrief_titel": "Beispiel Serienbrief",
 		"datum": "31.12.2024",
 		"datum_iso": "2024-12-31",
+		# Pro-Durchlauf manuell zu setzende Frist (z.B. Modernisierungs-Antwortbogen).
+		# Der Antwortfrist-Platzhalter wirft beim echten Render einen Fehler, wenn
+		# `frist` fehlt — im Form-Live-Preview wollen wir aber kein Throw, sondern
+		# einen sichtbaren Beispielwert.
+		"frist": "31.12.2024",
 		"empfaenger": empfaenger,
 		"empfaenger_data": empfaenger,
 		"empfaenger_anzeigename": "Hausverwaltung",
@@ -404,6 +414,14 @@ def _wrap_with_serienbrief_dokument_print_format(body_html: str) -> str:
 	except Exception:
 		pf_html = ""
 
+	# Muss zum echten PDF-Render-Pfad passen: dort wird der Body in
+	# ``<div class="serienbrief-page">`` gehüllt, weil die Print-Format-CSS
+	# margins/line-height nur an ``.serienbrief-page p`` bindet (siehe install.py
+	# und serienbrief_durchlauf._render_segments_pdf_bytes). Ohne diesen Wrapper
+	# erbt die Preview Browser-Default-<p>-Margins und sieht weiter gespreizt
+	# aus als das gerenderte PDF.
+	page_wrapped = f'<div class="serienbrief-page">{body_html}</div>'
+
 	preview_styles = """
 		.hv-preview-field {
 			background: #fff2a8;
@@ -416,14 +434,14 @@ def _wrap_with_serienbrief_dokument_print_format(body_html: str) -> str:
 		return f"""<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><style>{preview_styles}</style></head>
-<body><div class="print-format">{body_html}</div></body>
+<body><div class="print-format">{page_wrapped}</div></body>
 </html>"""
 
-	tmp_doc = frappe._dict({"docstatus": 0, "html": body_html, "name": "VORSCHAU"})
+	tmp_doc = frappe._dict({"docstatus": 0, "html": page_wrapped, "name": "VORSCHAU"})
 	try:
 		rendered_pf = frappe.render_template(pf_html, {"doc": tmp_doc})
 	except Exception:
-		rendered_pf = body_html
+		rendered_pf = page_wrapped
 
 	return f"""<!DOCTYPE html>
 <html>
