@@ -25,6 +25,9 @@
   "mistral_timeout_seconds",
   "mistral_vision_fallback",
   "mistral_force_vision",
+  "mistral_ocr_enabled",
+  "mistral_ocr_model",
+  "mistral_ocr_annotations",
   "blz_section",
   "blz_datei_url",
   "writeoff_section",
@@ -163,6 +166,27 @@
    "fieldtype": "Check",
    "label": "Vision immer nutzen (PDF-native)",
    "description": "Skip pypdf-Text-Extraktion komplett, schicke immer das gerenderte PDF-Bild ans Vision-Modell. Robuster bei Tabellen-Layouts und Encoding-Problemen, aber langsamer und größerer Token-Verbrauch."
+  },
+  {
+   "default": "1",
+   "fieldname": "mistral_ocr_enabled",
+   "fieldtype": "Check",
+   "label": "Document AI / OCR-Fallback (Mistral Cloud)",
+   "description": "Wenn PyMuPDF keinen Text findet (Scan), die PDF an Mistral's OCR-Endpoint (Document AI) schicken — alle Seiten, strukturierter Markdown-Output, deutlich besser als Pixtral first-page-only. Hat keinen Effekt bei Ollama-Endpunkten."
+  },
+  {
+   "default": "mistral-ocr-latest",
+   "fieldname": "mistral_ocr_model",
+   "fieldtype": "Data",
+   "label": "Mistral OCR-Modell",
+   "description": "Mistral Document AI Modell (z.B. mistral-ocr-latest)."
+  },
+  {
+   "default": "0",
+   "fieldname": "mistral_ocr_annotations",
+   "fieldtype": "Check",
+   "label": "OCR Single-Call mit Annotations",
+   "description": "Wenn an: bei Scans macht der OCR-Endpoint OCR + Felder-Extraktion in einem Call (document_annotation_format). Spart einen Roundtrip + Kosten. Trade-off: weniger Prompt-Engineering-Kontrolle. Hat keinen Effekt wenn OCR aus oder Ollama-Endpoint."
   },
   {
    "fieldname": "blz_section",

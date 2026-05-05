@@ -21,6 +21,7 @@ DEFAULT_MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
 DEFAULT_MISTRAL_TIMEOUT_SECONDS = 30
 DEFAULT_TEXT_MODEL = "mistral-small-latest"
 DEFAULT_VISION_MODEL = "pixtral-large-latest"
+DEFAULT_OCR_MODEL = "mistral-ocr-latest"
 
 
 class MistralError(RuntimeError):
@@ -121,6 +122,32 @@ def _text_model() -> str:
 def _vision_model() -> str:
 	settings = _get_settings()
 	return _setting_str(settings, "mistral_vision_model", DEFAULT_VISION_MODEL) or DEFAULT_VISION_MODEL
+
+
+def _ocr_model() -> str:
+	settings = _get_settings()
+	return _setting_str(settings, "mistral_ocr_model", DEFAULT_OCR_MODEL) or DEFAULT_OCR_MODEL
+
+
+def is_ocr_enabled() -> bool:
+	settings = _get_settings()
+	return int(getattr(settings, "mistral_ocr_enabled", 0) or 0) == 1
+
+
+def is_ocr_annotations_enabled() -> bool:
+	"""Wenn aktiv: OCR-Endpoint extrahiert Felder direkt mit
+	`document_annotation_format` (= Single-Call). Sonst: zweistufig
+	(OCR → Markdown → mistral-small mit Prompt)."""
+	settings = _get_settings()
+	return int(getattr(settings, "mistral_ocr_annotations", 0) or 0) == 1
+
+
+def is_mistral_cloud() -> bool:
+	"""OCR Document AI gibt es nur über Mistral's Cloud-Endpoint —
+	bei Ollama oder anderen lokalen OpenAI-kompatiblen Servern existiert
+	der `/v1/ocr`-Pfad nicht.
+	"""
+	return "mistral.ai" in _base_url().lower()
 
 
 def _timeout() -> int:
@@ -276,4 +303,153 @@ def complete_vision_json(
 	except json.JSONDecodeError as exc:
 		raise MistralTransientError(
 			f"Mistral-Vision lieferte kein gültiges JSON: {exc}; raw={raw[:500]}"
+		) from exc
+
+
+def run_ocr(pdf_bytes: bytes, *, timeout: int | None = None) -> str:
+	"""Mistral Document AI: PDF → Markdown aller Seiten konkatenated.
+
+	Schickt die PDF base64-encoded als data-URL an `/v1/ocr`. Der OCR-Endpoint
+	verarbeitet alle Seiten nativ (kein Rendering nötig) und gibt strukturierten
+	Markdown-Text zurück, der dann durch den normalen Text-Extraktions-Prompt
+	läuft. Pricing: ~$1 pro 1000 Seiten, sehr schnell.
+
+	Voraussetzungen:
+	- Mistral Cloud-Endpoint (nicht Ollama — siehe `is_mistral_cloud`)
+	- Gültiger API-Key
+	"""
+	ensure_configured()
+	if not is_mistral_cloud():
+		raise MistralPermanentError(
+			"OCR / Document AI gibt es nur über Mistral Cloud (mistral.ai). "
+			"Bei Ollama-Endpunkten bitte deaktiviert lassen."
+		)
+	resolved_timeout = timeout or _timeout()
+	encoded = base64.b64encode(pdf_bytes).decode("ascii")
+	body = {
+		"model": _ocr_model(),
+		"document": {
+			"type": "document_url",
+			"document_url": f"data:application/pdf;base64,{encoded}",
+		},
+	}
+	headers = {
+		"Content-Type": "application/json",
+		"Accept": "application/json",
+	}
+	api_key = _api_key()
+	if api_key:
+		headers["Authorization"] = f"Bearer {api_key}"
+	url = f"{_base_url()}/ocr"
+	try:
+		response = requests.post(url, headers=headers, json=body, timeout=resolved_timeout)
+	except requests.Timeout as exc:
+		raise MistralTransientError(f"Mistral-OCR-Timeout nach {resolved_timeout}s.") from exc
+	except requests.ConnectionError as exc:
+		raise MistralTransientError(f"Mistral-OCR-Endpunkt nicht erreichbar: {exc}") from exc
+	except requests.RequestException as exc:
+		raise MistralTransientError(f"Mistral-OCR-Aufruf fehlgeschlagen: {exc}") from exc
+
+	if response.status_code in (429, 502, 503, 504):
+		raise MistralTransientError(
+			f"Mistral-OCR antwortete mit {response.status_code}: {response.text[:500]}"
+		)
+	if response.status_code == 401:
+		raise MistralPermanentError("Mistral API-Key ungültig (401).")
+	if response.status_code >= 400:
+		raise MistralPermanentError(
+			f"Mistral-OCR-Fehler {response.status_code}: {response.text[:500]}"
+		)
+	try:
+		payload = response.json()
+	except ValueError as exc:
+		raise MistralTransientError(f"Mistral-OCR Antwort kein JSON: {exc}") from exc
+	pages = payload.get("pages") or []
+	parts = [(p.get("markdown") or "").strip() for p in pages if isinstance(p, dict)]
+	return "\n\n".join(p for p in parts if p).strip()
+
+
+def run_ocr_with_annotations(
+	pdf_bytes: bytes,
+	*,
+	json_schema: dict,
+	schema_name: str = "Extraction",
+	timeout: int | None = None,
+) -> dict:
+	"""Mistral Document AI Single-Call: OCR + strukturierte Felder-Extraktion
+	in einem Request via `document_annotation_format`.
+
+	`json_schema`: ein gültiges JSON-Schema (Object-Type) das die zu
+	extrahierenden Felder beschreibt. Mistral füllt es vom OCR-Output.
+
+	Returns: das extrahierte Dict (gemäß Schema). Markdown ist hier nicht von
+	Interesse — wenn man beides braucht, separat `run_ocr` aufrufen.
+	"""
+	ensure_configured()
+	if not is_mistral_cloud():
+		raise MistralPermanentError(
+			"OCR-Annotations gibt es nur über Mistral Cloud (mistral.ai)."
+		)
+	resolved_timeout = timeout or _timeout()
+	encoded = base64.b64encode(pdf_bytes).decode("ascii")
+	body = {
+		"model": _ocr_model(),
+		"document": {
+			"type": "document_url",
+			"document_url": f"data:application/pdf;base64,{encoded}",
+		},
+		"document_annotation_format": {
+			"type": "json_schema",
+			"json_schema": {
+				"name": schema_name,
+				"schema": json_schema,
+				"strict": False,
+			},
+		},
+	}
+	headers = {
+		"Content-Type": "application/json",
+		"Accept": "application/json",
+	}
+	api_key = _api_key()
+	if api_key:
+		headers["Authorization"] = f"Bearer {api_key}"
+	url = f"{_base_url()}/ocr"
+	try:
+		response = requests.post(url, headers=headers, json=body, timeout=resolved_timeout)
+	except requests.Timeout as exc:
+		raise MistralTransientError(f"Mistral-OCR-Timeout nach {resolved_timeout}s.") from exc
+	except requests.ConnectionError as exc:
+		raise MistralTransientError(f"Mistral-OCR-Endpunkt nicht erreichbar: {exc}") from exc
+	except requests.RequestException as exc:
+		raise MistralTransientError(f"Mistral-OCR-Aufruf fehlgeschlagen: {exc}") from exc
+
+	if response.status_code in (429, 502, 503, 504):
+		raise MistralTransientError(
+			f"Mistral-OCR antwortete mit {response.status_code}: {response.text[:500]}"
+		)
+	if response.status_code == 401:
+		raise MistralPermanentError("Mistral API-Key ungültig (401).")
+	if response.status_code >= 400:
+		raise MistralPermanentError(
+			f"Mistral-OCR-Annotation-Fehler {response.status_code}: {response.text[:500]}"
+		)
+	try:
+		payload = response.json()
+	except ValueError as exc:
+		raise MistralTransientError(f"Mistral-OCR Antwort kein JSON: {exc}") from exc
+
+	# Annotation steckt unter `document_annotation` als JSON-String.
+	raw = payload.get("document_annotation")
+	if not raw:
+		raise MistralTransientError(
+			"Mistral-OCR-Response ohne document_annotation (Schema evtl. abgelehnt)."
+		)
+	if isinstance(raw, dict):
+		return raw
+	try:
+		return json.loads(raw)
+	except (TypeError, json.JSONDecodeError) as exc:
+		raise MistralTransientError(
+			f"Mistral-OCR-Annotation kein gültiges JSON: {exc}; raw={str(raw)[:300]}"
 		) from exc

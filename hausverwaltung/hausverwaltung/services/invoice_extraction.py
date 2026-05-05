@@ -35,6 +35,71 @@ MAX_RAW_TEXT_RETURN = 4000
 MAX_PROMPT_INVOICE_TEXT_CHARS = 14000
 
 
+# JSON-Schema für Mistral Document AI Annotations (Single-Call OCR + Felder).
+# Spiegelt die Felder die unser bestehender Text-Pfad-Prompt produziert.
+# Descriptions sind so geschrieben, dass das Modell die wichtigsten Regeln
+# kennt (Unterschied Rechnungs-/Leistungsdatum, Lieferant ohne Adresse etc.).
+OCR_ANNOTATION_SCHEMA: dict = {
+	"type": "object",
+	"properties": {
+		"lieferant_name": {
+			"type": "string",
+			"description": "Firmenname des Rechnungsstellers OHNE Adresse, OHNE 'Inh.'/'i.A.'-Zusätze. GmbH/AG/KG-Suffix erhalten.",
+		},
+		"lieferant_confidence": {
+			"type": "number",
+			"description": "0..1 Confidence dass der Lieferant korrekt erkannt wurde.",
+		},
+		"lieferant_iban": {"type": "string", "description": "IBAN des Lieferanten falls vorhanden, sonst leer."},
+		"lieferant_steuer_id": {"type": "string", "description": "Steuer-ID/USt-IdNr falls vorhanden, sonst leer."},
+		"lieferant_strasse": {"type": "string", "description": "Strasse + Hausnummer des Lieferanten."},
+		"lieferant_plz": {"type": "string", "description": "Postleitzahl des Lieferanten."},
+		"lieferant_ort": {"type": "string", "description": "Ort des Lieferanten."},
+		"lieferant_land": {"type": "string", "description": "Land des Lieferanten — Default 'Deutschland' wenn deutsche Adresse."},
+		"rechnungsdatum": {
+			"type": "string",
+			"description": "Rechnungsdatum im Format YYYY-MM-DD (das Datum AUF der Rechnung neben 'Rechnungsdatum'/'Datum').",
+		},
+		"rechnungsdatum_confidence": {"type": "number", "description": "0..1 Confidence."},
+		"wertstellungsdatum": {
+			"type": "string",
+			"description": "LEISTUNGSDATUM im Format YYYY-MM-DD — wann wurde die Leistung erbracht. NICHT identisch mit Rechnungsdatum, oft als 'Leistungsdatum', 'Lieferdatum', 'erledigt am', 'Wartung am' formuliert. Bei Wartungsrechnungen das Datum der Durchführung. Leer wenn nicht eindeutig.",
+		},
+		"wertstellungsdatum_confidence": {"type": "number", "description": "0..1 Confidence."},
+		"bill_no": {
+			"type": "string",
+			"description": "Rechnungsnummer / Bill No / Belegnummer wie auf der Rechnung gedruckt.",
+		},
+		"bill_no_confidence": {"type": "number", "description": "0..1 Confidence."},
+		"immobilie_hinweis": {
+			"type": "string",
+			"description": "Adress-Hinweis welche Immobilie/Wohnung/Objekt die Leistung betrifft (z.B. 'Wilhelmshavener Str. 31', 'Objekt: Frau Scherer DG'). Leer wenn keine Immobilien-Zuordnung erkennbar.",
+		},
+		"positionen": {
+			"type": "array",
+			"description": "Einzel-Positionen der Rechnung mit Brutto-Betrag.",
+			"items": {
+				"type": "object",
+				"properties": {
+					"betrag": {
+						"type": "number",
+						"description": "Brutto-Betrag der Position in EUR (Punkt als Dezimaltrenner, kein Währungssymbol).",
+					},
+					"beschreibung": {
+						"type": "string",
+						"description": "Kurze Beschreibung der Position (max. 1 Zeile).",
+					},
+				},
+			},
+		},
+		"remarks_vorschlag": {
+			"type": "string",
+			"description": "1-3 Saetze (max 250 Zeichen): Verwendungszweck/Auftragskontext (was wurde gemacht, wofür, ggf. Wohnung/Mieter, ggf. Verbrauchszeitraum). Leer wenn keine sinnvolle Zusammenfassung möglich.",
+		},
+	},
+}
+
+
 def _load_kostenarten_for_prompt() -> list[dict]:
 	"""Liefert die buchbaren Kostenarten als Liste mit Typ-Hinweis.
 
@@ -493,34 +558,79 @@ def extract_from_file_url(file_url: str) -> dict:
 	force_vision = mistral_client.is_force_vision_enabled()
 	pdf_text = "" if force_vision else _read_pdf_text(content)
 	used_vision = False
+	used_ocr = False
 
 	kostenarten = _load_kostenarten_for_prompt()
 	suppliers = _load_suppliers_for_prompt()
 
-	# 3. Vision-Strategie:
-	#    - force_vision: immer Vision-Modell, kein pypdf-Pfad.
-	#    - sonst: Text-Pfad bevorzugt; Vision-Fallback nur wenn Text leer/zu kurz UND erlaubt.
-	use_vision = force_vision or (
-		len(pdf_text) < MIN_TEXT_LENGTH_FOR_TEXT_MODEL
-		and mistral_client.is_vision_fallback_enabled()
-	)
-	if use_vision:
-		image_bytes = _render_pdf_first_page_png(content)
-		extracted = mistral_client.complete_vision_json(
-			system=SYSTEM_PROMPT_BASE,
-			user_prompt=_build_vision_user_prompt(),
-			image_bytes=image_bytes,
+	# 3. Extraktions-Strategie (Fallback-Reihenfolge):
+	#    a) force_vision   → direkt Vision-Pfad (Pixtral)
+	#    b) PyMuPDF-Text   → Text-Pfad (mistral-small-latest etc.)
+	#    c) Text zu kurz UND OCR+Cloud:
+	#       c1) wenn ocr_annotations on:  Document AI Single-Call (OCR + Felder)
+	#       c2) sonst:                    OCR → Markdown → Text-Pfad mit Markdown
+	#    d) Text immer noch zu kurz UND vision_fallback on: Pixtral first-page
+	#    e) sonst Fehler.
+	extracted = None
+	text_too_short = len(pdf_text) < MIN_TEXT_LENGTH_FOR_TEXT_MODEL
+
+	if (
+		not force_vision
+		and text_too_short
+		and mistral_client.is_ocr_enabled()
+		and mistral_client.is_mistral_cloud()
+	):
+		if mistral_client.is_ocr_annotations_enabled():
+			# Single-Call: OCR + Annotations in einem Request.
+			try:
+				extracted = mistral_client.run_ocr_with_annotations(
+					content,
+					json_schema=OCR_ANNOTATION_SCHEMA,
+					schema_name="RechnungsExtraktion",
+				)
+				used_ocr = True
+				text_too_short = False
+				# pdf_text bleibt leer — annotation-Pfad liefert nur Felder, nicht das Markdown.
+			except mistral_client.MistralError as exc:
+				frappe.log_error(
+					f"Mistral-OCR-Annotations fehlgeschlagen, Fallback auf 2-Stufen-OCR: {exc}",
+					"InvoiceExtraction",
+				)
+		if extracted is None:
+			# Klassisch: OCR → Markdown → Text-Pfad
+			try:
+				ocr_text = mistral_client.run_ocr(content)
+				if ocr_text and len(ocr_text) >= MIN_TEXT_LENGTH_FOR_TEXT_MODEL:
+					pdf_text = ocr_text
+					used_ocr = True
+					text_too_short = False
+			except mistral_client.MistralError as exc:
+				frappe.log_error(
+					f"Mistral-OCR-Fallback fehlgeschlagen, weiter mit Vision/Text: {exc}",
+					"InvoiceExtraction",
+				)
+
+	if extracted is None:
+		use_vision = force_vision or (
+			text_too_short and mistral_client.is_vision_fallback_enabled()
 		)
-		used_vision = True
-	elif len(pdf_text) < MIN_TEXT_LENGTH_FOR_TEXT_MODEL:
-		raise mistral_client.MistralPermanentError(
-			"Aus dem PDF konnte kein Text extrahiert werden und der Vision-Fallback ist deaktiviert."
-		)
-	else:
-		extracted = mistral_client.complete_json(
-			system=SYSTEM_PROMPT_BASE,
-			user=_build_user_prompt(pdf_text),
-		)
+		if use_vision:
+			image_bytes = _render_pdf_first_page_png(content)
+			extracted = mistral_client.complete_vision_json(
+				system=SYSTEM_PROMPT_BASE,
+				user_prompt=_build_vision_user_prompt(),
+				image_bytes=image_bytes,
+			)
+			used_vision = True
+		elif text_too_short:
+			raise mistral_client.MistralPermanentError(
+				"Aus dem PDF konnte kein Text extrahiert werden — weder PyMuPDF, OCR noch Vision-Fallback haben gegriffen."
+			)
+		else:
+			extracted = mistral_client.complete_json(
+				system=SYSTEM_PROMPT_BASE,
+				user=_build_user_prompt(pdf_text),
+			)
 
 	# 4. Post-Processing — Lieferant.
 	llm_lieferant = str(extracted.get("lieferant_name") or "").strip()
@@ -621,6 +731,7 @@ def extract_from_file_url(file_url: str) -> dict:
 		"confidence": confidence_map,
 		"warnings": warnings,
 		"used_vision": used_vision,
+		"used_ocr": used_ocr,
 		"raw_text": (pdf_text or "")[:MAX_RAW_TEXT_RETURN],
 		"llm_lieferant": llm_lieferant,
 		"lieferant_neu": lieferant_neu,

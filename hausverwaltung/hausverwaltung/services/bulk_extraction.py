@@ -351,6 +351,32 @@ def delete_vorschlag(name: str, also_delete_file: int = 0) -> dict:
 
 
 @frappe.whitelist()
+def reprocess_vorschlag(name: str) -> dict:
+	"""Erzwingt eine komplette Neu-Extraktion: Status zurück auf Pending,
+	extrahierte Daten + Fehlermeldung weggeworfen, Worker neu queuet.
+
+	Für Booked-Vorschläge nicht erlaubt — die PI ist verlinkt, da müsste
+	man zuerst stornieren. Für Ready/Pending/Processing/Skipped/Error OK.
+
+	Use-Case: nach Wechsel des LLM-Anbieters (Ollama → Mistral) bestehende
+	Vorschläge neu durchjagen, ohne sie löschen + erneut hochladen zu müssen.
+	"""
+	v = frappe.get_doc("Buchungs Vorschlag", name)
+	if v.status == "Booked":
+		frappe.throw(
+			"Bereits gebuchter Vorschlag kann nicht neu analysiert werden — "
+			"bitte zuerst die verknüpfte Eingangsrechnung stornieren."
+		)
+	v.status = "Pending"
+	v.extracted_data = ""
+	v.error_message = ""
+	v.save(ignore_permissions=True)
+	frappe.db.commit()
+	_dispatch_vorschlag_worker(v.name)
+	return {"name": v.name, "status": v.status}
+
+
+@frappe.whitelist()
 def reactivate_vorschlag(name: str) -> dict:
 	"""Holt einen Skipped- oder Error-Vorschlag zurück in den Wizard.
 

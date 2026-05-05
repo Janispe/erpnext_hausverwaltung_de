@@ -532,6 +532,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		const can_book = row.status === "Ready";
 		const can_skip = ["Pending", "Processing", "Ready"].includes(row.status);
 		const can_reactivate = ["Skipped", "Error"].includes(row.status);
+		const can_reprocess = row.status !== "Booked";
 		const can_delete = row.status !== "Booked";
 
 		const file_url = row.file_url || (full && full.file_url) || "";
@@ -582,6 +583,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 					<button class="btn-book btn-primary" ${can_book ? "" : "disabled"}>${__("Buchen")}</button>
 					<button class="btn-skip" ${can_skip ? "" : "disabled"}>${__("Überspringen")}</button>
 					<button class="btn-reactivate" ${can_reactivate ? "" : "disabled"}>${__("Reaktivieren")}</button>
+					<button class="btn-reprocess" title="${__("Komplett neu durchs LLM jagen — bisherige Felder werden überschrieben.")}" ${can_reprocess ? "" : "disabled"}>↻ ${__("Neu analysieren")}</button>
 					<button class="btn-delete" style="color:#c62828; border-color:#c62828;" ${can_delete ? "" : "disabled"}>${__("Löschen")}</button>
 				</div>
 			</div>
@@ -610,6 +612,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		$detail.find(".btn-book").off("click").on("click", () => _do_book(row));
 		$detail.find(".btn-skip").off("click").on("click", () => _do_skip(row));
 		$detail.find(".btn-reactivate").off("click").on("click", () => _do_reactivate(row));
+		$detail.find(".btn-reprocess").off("click").on("click", () => _do_reprocess(row));
 		$detail.find(".btn-delete").off("click").on("click", () => _do_delete(row));
 	};
 
@@ -675,6 +678,27 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				delete state.full_cache[row.name];
 				refresh_list();
 			});
+	};
+
+	const _do_reprocess = (row) => {
+		frappe.confirm(
+			__("Vorschlag <b>{0}</b> komplett neu durchs LLM jagen? Bisherige extrahierte Felder werden überschrieben.", [
+				frappe.utils.escape_html(row.original_filename || row.name),
+			]),
+			() => {
+				frappe
+					.call({
+						method: `${HV_INBOX_API}.reprocess_vorschlag`,
+						args: { name: row.name },
+						freeze: true,
+						freeze_message: __("Starte Neu-Extraktion..."),
+					})
+					.then(() => {
+						delete state.full_cache[row.name];
+						refresh_list();
+					});
+			}
+		);
 	};
 
 	const _do_delete = (row) => {
@@ -793,6 +817,10 @@ function _hv_render_extraction_details(data) {
 		</table>
 	`;
 
+	const positionen_summe = positionen.reduce(
+		(acc, p) => acc + (parseFloat(p.betrag) || 0),
+		0
+	);
 	const positionen_table = positionen.length
 		? `
 			<div style="margin-top:12px; font-weight:600; font-size:12px;">${__("Positionen ({0})", [positionen.length])}</div>
@@ -823,6 +851,13 @@ function _hv_render_extraction_details(data) {
 						)
 						.join("")}
 				</tbody>
+				<tfoot>
+					<tr style="border-top:2px solid #999; font-weight:600;">
+						<td style="padding:5px 6px;">${__("Summe")}</td>
+						<td style="padding:5px 6px; text-align:right;">${_hv_format_currency(positionen_summe)}</td>
+						<td colspan="2"></td>
+					</tr>
+				</tfoot>
 			</table>
 		`
 		: `<div style="margin-top:12px; padding:8px; background:#ffebee; border-radius:6px; font-size:12px; color:#c62828;">
