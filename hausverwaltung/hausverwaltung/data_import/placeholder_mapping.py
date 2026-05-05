@@ -126,6 +126,10 @@ PLACEHOLDER_MAPPING = {
 
     # === SYSTEM ===
     "Systemdatum": "{{ frappe.utils.formatdate(frappe.utils.nowdate(), 'dd.MM.yyyy') }}",
+    # Vom User pro Durchlauf manuell zu setzendes Datum (z.B. Modernisierungs-
+    # Antwortfrist). Fallback-Hinweistext wenn nicht gesetzt, damit der Brief
+    # nicht silent leer bleibt.
+    "Antwortfrist": "{% if frist is defined and frist %}{{ frist }}{% else %}[Frist eintragen]{% endif %}",
 }
 
 
