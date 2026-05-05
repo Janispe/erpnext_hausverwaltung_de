@@ -2337,16 +2337,13 @@ refresh(frm) {
 	append_placeholder_panel(frm);
 	hv_vorlage_sync_textbausteine_from_content(frm);
 	hv_vorlage_toggle_block_position_ui(frm);
+	// Textbausteine-Tabelle: für System Manager standardmäßig sichtbar,
+	// für reguläre Hausverwalter ausgeblendet (UI-Declutter — die kuratierte
+	// Pflege der Bausteinliste ist Admin-Aufgabe).
+	frm._hv_show_textbausteine_table = !hv_is_restricted_hausverwalter();
 	hv_vorlage_toggle_textbausteine_table(frm);
 	hv_apply_editor_access_mode(frm);
 	hv_update_block_requirements(frm);
-	if (!frm._hv_textbausteine_toggle_added) {
-		frm._hv_textbausteine_toggle_added = true;
-		frm.add_custom_button(__("Textbausteine anzeigen/ausblenden"), () => {
-			frm._hv_show_textbausteine_table = !frm._hv_show_textbausteine_table;
-			hv_vorlage_toggle_textbausteine_table(frm);
-		});
-	}
 	frm.add_custom_button(__("In Serienbrief laden"), () => {
 		if (frm.is_new()) {
 			frappe.msgprint({
