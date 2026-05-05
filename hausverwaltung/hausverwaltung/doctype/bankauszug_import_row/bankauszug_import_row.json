@@ -137,6 +137,7 @@
   {
    "fieldname": "journal_entry",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "Buchungssatz",
    "options": "Journal Entry",
    "read_only": 1,

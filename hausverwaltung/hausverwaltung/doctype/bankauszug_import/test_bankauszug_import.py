@@ -602,6 +602,46 @@ class TestBankauszugImport(FrappeTestCase):
         self.assertNotIn("row_status", row.db_updates)
         self.assertEqual(row.reference, "BT-L2")
 
+    def test_create_journal_entry_for_row_sets_journal_entry_and_success_status(self):
+        row = self._FakeRow(name="ROW-JE", iban="DE16")
+        row.bank_transaction = "BT-JE"
+        row.betrag = 12.34
+        row.journal_entry = None
+        row.payment_entry = None
+        row.db_updates = {}
+
+        def _db_set(fieldname, value):
+            row.db_updates[fieldname] = value
+            setattr(row, fieldname, value)
+
+        row.db_set = _db_set
+        bt = type("BT", (), {"name": "BT-JE"})()
+        je = type("JE", (), {"name": "JE-1"})()
+
+        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(object(), row, bt)), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.create_journal_entry_for_bt",
+                 return_value=je,
+             ) as create_je, \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_voucher_with_bt",
+                 return_value=None,
+             ) as reconcile:
+            res = bi.create_journal_entry_for_row(
+                "IMP-JE",
+                "ROW-JE",
+                "6300 - Hausmeister-Vergütung - HP",
+                None,
+                "Test JE",
+            )
+
+        self.assertEqual(res["journal_entry"], "JE-1")
+        self.assertEqual(row.journal_entry, "JE-1")
+        self.assertEqual(row.row_status, "success")
+        self.assertIn("Buchungssatz", row.auto_match_message)
+        create_je.assert_called_once()
+        reconcile.assert_called_once_with(bt, "Journal Entry", "JE-1", 12.34)
+
     def test_block_message_contains_row_details(self):
         row = self._FakeRow(name="ROW-M1", iban="", verwendungszweck="Test")
         doc = self._FakeDoc("IMP-M", [row])

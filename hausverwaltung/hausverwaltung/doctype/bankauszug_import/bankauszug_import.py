@@ -1406,6 +1406,7 @@ def manually_reconcile_row(
     reconcile_voucher_with_bt(bt, "Payment Entry", pe.name, target_amount)
 
     row.db_set("payment_entry", pe.name)
+    row.db_set("row_status", "success")
     row.db_set(
         "auto_match_message",
         f"Manuell zugeordnet: {len(invoices)} Rechnung(en), {target_amount:.2f} €"
@@ -1451,6 +1452,7 @@ def create_standalone_payment_for_row(
     reconcile_voucher_with_bt(bt, "Payment Entry", pe.name, target_amount)
 
     row.db_set("payment_entry", pe.name)
+    row.db_set("row_status", "success")
     row.db_set(
         "auto_match_message",
         f"Manuell verbucht: Standalone Payment Entry über {target_amount:.2f} € (unallocated)",
@@ -1491,6 +1493,7 @@ def create_journal_entry_for_row(
     reconcile_voucher_with_bt(bt, "Journal Entry", je.name, target_amount)
 
     row.db_set("journal_entry", je.name)
+    row.db_set("row_status", "success")
     row.db_set(
         "auto_match_message",
         f"Buchungssatz: {target_amount:.2f} € gegen {account}",
