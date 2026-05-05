@@ -176,15 +176,27 @@ const hv_sbd_open_iteration_picker = (dialog, state) => {
 		},
 	});
 
+	// In neueren Frappe-Versionen ist `picker` selbst der Dialog (kein
+	// .dialog-Wrapper mehr). Frühere Versionen hatten `picker.dialog`. Wir
+	// nehmen den ersten der beiden, der existiert — sonst würde
+	// get_secondary_btn() throwen und widen_modal() darunter nie laufen.
+	const inner = picker.dialog || picker;
+
 	// "Make {Doctype}"-Secondary-Button (z.B. "Mietvertrag machen") aus dem
 	// MultiSelectDialog-Default verstecken — im Serienbrief-Flow soll der User
 	// keinen neuen Mietvertrag/etc. anlegen, nur auswählen. Frappe hardcoded
 	// den Button im Constructor; nachträglich ausblenden ist der einzige Weg.
-	picker.dialog.get_secondary_btn().addClass("hide");
+	if (inner && typeof inner.get_secondary_btn === "function") {
+		try {
+			inner.get_secondary_btn().addClass("hide");
+		} catch (e) {
+			/* ignore — Button-Hide ist kosmetisch */
+		}
+	}
 
 	// Picker-Modal stretchen — Breite kommt aus Hausverwaltung Einstellungen.
 	if (window.hausverwaltung?.ui?.widen_modal) {
-		window.hausverwaltung.ui.widen_modal(picker.dialog || picker);
+		window.hausverwaltung.ui.widen_modal(inner);
 	}
 };
 
