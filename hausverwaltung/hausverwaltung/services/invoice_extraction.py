@@ -77,17 +77,17 @@ OCR_ANNOTATION_SCHEMA: dict = {
 		},
 		"positionen": {
 			"type": "array",
-			"description": "Einzel-Positionen der Rechnung mit Brutto-Betrag.",
+			"description": "GENAU EIN Eintrag mit der Gesamtsumme der Rechnung in Brutto (inkl. MwSt). Keine Einzelpositionen aufdroeseln — wir buchen die Rechnung als einen Posten.",
 			"items": {
 				"type": "object",
 				"properties": {
 					"betrag": {
 						"type": "number",
-						"description": "Brutto-Betrag der Position in EUR (Punkt als Dezimaltrenner, kein Währungssymbol).",
+						"description": "Rechnungs-GESAMTSUMME in EUR brutto (inkl. MwSt) — der Endbetrag, den der Empfaenger zahlt. Punkt als Dezimaltrenner, kein Waehrungssymbol.",
 					},
 					"beschreibung": {
 						"type": "string",
-						"description": "Kurze Beschreibung der Position (max. 1 Zeile).",
+						"description": "Kurze Zusammenfassung der Leistung (max. 1 Zeile).",
 					},
 				},
 			},
@@ -264,14 +264,13 @@ SYSTEM_PROMPT_BASE = (
 	'  "immobilie_hinweis": "Strassenname oder Adresse der gemieteten/verwalteten Immobilie aus dem Rechnungstext oder null (z.B. \\"Wilhelmshavener Str. 31\\", \\"Gropiusstr. 12\\"). NICHT die Adresse des Lieferanten oder die Empfaenger-Adresse der Hausverwaltung.",\n'
 	'  "remarks_vorschlag": "kurze Anmerkung (1-3 Saetze) mit Verwendungszweck/Auftragskontext fuer die Buchung — was wurde gemacht, fuer welche Wohnungen/Mieter, ggf. Verbrauchszeitraum",\n'
 	'  "positionen": [\n'
-	'    {"betrag": 123.45, "beschreibung": "kurze Beschreibung der Leistung"}\n'
+	'    {"betrag": 123.45, "beschreibung": "kurze Zusammenfassung der Leistung"}\n'
 	"  ]\n"
 	"}\n"
 	"Regeln:\n"
 	"- DE-Datum (12.04.2026, 12. April 2026, 12.4.2026) zu YYYY-MM-DD umwandeln.\n"
-	"- Beträge als Float in EUR (Brutto bevorzugen). Beschreibung kurz.\n"
+	"- positionen MUSS GENAU EINEN Eintrag enthalten: die Rechnungs-GESAMTSUMME in EUR brutto (inkl. MwSt) — also der Endbetrag, den der Empfaenger zahlt. Einzel-Positionsliste aus der Rechnung NICHT aufdroeseln.\n"
 	"- confidence: Float 0.0-1.0 (1.0 = sicher).\n"
-	"- Auch bei einer einzigen Position: positionen muss eine Liste sein.\n"
 	"- 'immobilie_hinweis': suche im Beschreibungstext / Verwendungszweck nach einer "
 	"  Strassenadresse, die nicht Lieferant und nicht Empfaenger (Hausverwaltung) ist. "
 	"  Bei Versorger-Rechnungen ist es oft die 'Lieferadresse' / 'Verbrauchsstelle'. "
