@@ -236,6 +236,11 @@ doc_events = {
 		# custom_wertstellungsdatum müssen wir manuell mit dem Schedule
 		# mitziehen.
 		"on_recurring": "hausverwaltung.hausverwaltung.overrides.purchase_invoice_recurring.shift_dates_for_recurring",
+		# Buchungs-Vorschlag synchron halten:
+		# - on_cancel: stornierte PI → Vorschlag zurück auf Ready (taucht wieder in der Inbox auf)
+		# - on_submit: Amendment → Vorschlag von alter (stornierter) PI auf neue relinken
+		"on_submit": "hausverwaltung.hausverwaltung.services.bulk_extraction.on_purchase_invoice_submit",
+		"on_cancel": "hausverwaltung.hausverwaltung.services.bulk_extraction.on_purchase_invoice_cancel",
 	},
 	"Account": {
 		# Bei jedem neuen Blatt-Konto unter "Nicht Umlagefähig" automatisch

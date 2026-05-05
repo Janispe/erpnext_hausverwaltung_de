@@ -128,14 +128,24 @@ def _timeout() -> int:
 	return max(5, _setting_int(settings, "mistral_timeout_seconds", DEFAULT_MISTRAL_TIMEOUT_SECONDS))
 
 
+def _is_local_endpoint() -> bool:
+	"""Heuristik: zeigt mistral_base_url auf einen lokalen OpenAI-kompatiblen
+	Server (Ollama, vLLM, LM Studio etc.)? Diese brauchen keinen API-Key.
+	"""
+	url = _base_url().lower()
+	return any(token in url for token in ("localhost", "127.0.0.1", "172.17.", "host.docker", "ollama", ":11434"))
+
+
 def ensure_configured() -> None:
 	if not is_enabled():
 		raise MistralPermanentError(
-			"Mistral ist nicht aktiviert. Bitte in 'Hausverwaltung Einstellungen' aktivieren."
+			"LLM ist nicht aktiviert. Bitte in 'Hausverwaltung Einstellungen' aktivieren."
 		)
-	if not _api_key():
+	# Lokale OpenAI-kompatible Server (Ollama etc.) brauchen keinen API-Key —
+	# nur Mistral Cloud / OpenAI Cloud verlangt einen.
+	if not _is_local_endpoint() and not _api_key():
 		raise MistralPermanentError(
-			"Mistral API-Key fehlt. Bitte in 'Hausverwaltung Einstellungen' eintragen."
+			"API-Key fehlt für Cloud-LLM. Bitte in 'Hausverwaltung Einstellungen' eintragen."
 		)
 
 
@@ -147,10 +157,12 @@ def _post_chat(messages: list[dict], *, model: str, response_json: bool, timeout
 	if response_json:
 		body["response_format"] = {"type": "json_object"}
 	headers = {
-		"Authorization": f"Bearer {_api_key()}",
 		"Content-Type": "application/json",
 		"Accept": "application/json",
 	}
+	api_key = _api_key()
+	if api_key:
+		headers["Authorization"] = f"Bearer {api_key}"
 	url = f"{_base_url()}/chat/completions"
 	try:
 		response = requests.post(url, headers=headers, json=body, timeout=timeout)

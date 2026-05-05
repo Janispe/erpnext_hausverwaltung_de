@@ -432,7 +432,7 @@ def create_purchase_invoice(**kwargs) -> dict:
         rechnungsdatum: ISO date (defaults to today)
         wertstellungsdatum: ISO date (Leistungszeitraum, optional) — landet in custom_wertstellungsdatum
         rechnungsname: free-form invoice number / label
-        referenz: optional reference
+        remarks: optional Notiz / Verwendungszweck (landet in pi.remarks)
         positionen: list of dicts with keys
             betrag, konto, kostenstelle, umlagefaehig, kostenart, wohnung (optional)
     """
@@ -451,18 +451,22 @@ def create_purchase_invoice(**kwargs) -> dict:
         )
 
     posting_date = kwargs.get("rechnungsdatum") or nowdate()
-    bill_no = kwargs.get("rechnungsname") or kwargs.get("referenz")
+    bill_no = kwargs.get("rechnungsname")
 
     service_item_code = ensure_default_service_item()
 
     pi = frappe.new_doc("Purchase Invoice")
+    user_remarks = (kwargs.get("remarks") or "").strip()
+    remarks_lines = ["Erfasst über Buchungs-Cockpit"]
+    if user_remarks:
+        remarks_lines.append(user_remarks)
     pi.update({
         "company": company,
         "supplier": supplier,
         "posting_date": posting_date,
         "bill_date": posting_date,
         "bill_no": bill_no,
-        "remarks": f"Erfasst über Buchungs-Cockpit | Referenz: {kwargs.get('referenz') or ''}",
+        "remarks": "\n".join(remarks_lines),
     })
 
     payable_account = _get_payable_account(company=company, supplier=supplier)
@@ -510,7 +514,7 @@ def create_purchase_invoice(**kwargs) -> dict:
             desc_parts.append(f"Typ: {row.get('umlagefaehig')}")
         if row.get("kostenart"):
             desc_parts.append(f"Kostenart: {row.get('kostenart')}")
-        description = "; ".join(desc_parts) or (kwargs.get("rechnungsname") or kwargs.get("referenz") or "Ausgabe")
+        description = "; ".join(desc_parts) or kwargs.get("rechnungsname") or "Ausgabe"
 
         item_code = (
             kostenart_info.get("artikel")

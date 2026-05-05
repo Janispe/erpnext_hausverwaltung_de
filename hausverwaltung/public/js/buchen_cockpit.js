@@ -223,11 +223,15 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			fieldname: "rechnungsname",
 			label: __("Rechnungsname / Bill No."),
 		},
-		{ fieldtype: "Column Break" },
+		{ fieldtype: "Section Break" },
 		{
-			fieldtype: "Data",
-			fieldname: "referenz",
-			label: __("Referenz"),
+			fieldtype: "Small Text",
+			fieldname: "remarks",
+			label: __("Anmerkungen"),
+			default: opts.remarks || "",
+			description: __(
+				"Verwendungszweck / Notiz — landet im Bemerkungs-Feld der Eingangsrechnung."
+			),
 		},
 		{ fieldtype: "Section Break", label: __("Positionen") },
 		{
@@ -391,7 +395,6 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		// ins Schema gepackt → KEIN set_value für diese Felder hier (würde sonst
 		// bei Date-Fields einen onChange-Loop im Frappe-Datepicker triggern).
 		if (opts.rechnungsname) dialog.set_value("rechnungsname", opts.rechnungsname);
-		if (opts.referenz) dialog.set_value("referenz", opts.referenz);
 		if (opts.positionen && opts.positionen.length) {
 			dialog.fields_dict.positionen.df.data = opts.positionen;
 			dialog.fields_dict.positionen.grid.refresh();
@@ -680,7 +683,7 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 				rechnungsdatum: values.rechnungsdatum,
 				wertstellungsdatum: values.wertstellungsdatum,
 				rechnungsname: values.rechnungsname,
-				referenz: values.referenz,
+				remarks: values.remarks,
 				positionen: JSON.stringify(rows),
 				submit_doc: submit_doc ? 1 : 0,
 				attached_file_url: dialog._hv_attached_file || null,
@@ -1028,7 +1031,20 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 					const res = (r && r.message) || {};
 					if (!res.session_id) return;
 					dialog.hide();
-					frappe.set_route("buchungs_inbox", { session_id: res.session_id });
+					// KEINE Session-Filterung — sonst verschwinden alle anderen
+					// Vorschläge bis zum manuellen Filter-Wechsel. Die neuen
+					// landen mit Status=Pending und sind automatisch im
+					// Default-"open"-Filter sichtbar.
+					const route = frappe.get_route() || [];
+					if (
+						route[0] === "buchungs_inbox"
+						&& hausverwaltung.buchungs_inbox
+						&& typeof hausverwaltung.buchungs_inbox._refresh === "function"
+					) {
+						hausverwaltung.buchungs_inbox._refresh();
+					} else {
+						frappe.set_route("buchungs_inbox");
+					}
 				})
 				.finally(() => dialog.enable_primary_action());
 		},

@@ -113,7 +113,7 @@ def _dispatch_vorschlag_worker(vorschlag_name: str) -> None:
 	frappe.enqueue(
 		"hausverwaltung.hausverwaltung.services.bulk_extraction.process_vorschlag",
 		queue="long",
-		timeout=300,
+		timeout=600,
 		vorschlag_name=vorschlag_name,
 	)
 
@@ -404,6 +404,52 @@ def link_vorschlag_to_pi(vorschlag_name: str, pi_name: str) -> None:
 		frappe.db.commit()
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "BulkExtraction: link to PI failed")
+
+
+def on_purchase_invoice_cancel(doc, method=None):
+	"""doc_events-Hook für 'Purchase Invoice' on_cancel.
+
+	Setzt einen verknüpften Buchungs Vorschlag zurück auf 'Ready', sodass er
+	wieder im Default-Filter der Inbox auftaucht. linked_purchase_invoice
+	bleibt absichtlich erhalten — ein anschließender Amend-Submit findet den
+	Vorschlag darüber und relink-t ihn auf die neue PI (siehe
+	on_purchase_invoice_submit).
+	"""
+	try:
+		name = frappe.db.get_value(
+			"Buchungs Vorschlag",
+			{"linked_purchase_invoice": doc.name, "status": "Booked"},
+			"name",
+		)
+		if name:
+			frappe.db.set_value("Buchungs Vorschlag", name, "status", "Ready")
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "BulkExtraction: PI cancel sync failed")
+
+
+def on_purchase_invoice_submit(doc, method=None):
+	"""doc_events-Hook für 'Purchase Invoice' on_submit.
+
+	Wenn diese PI ein Amendment ist (``amended_from`` gesetzt), übernimm den
+	zuvor verknüpften Buchungs Vorschlag von der stornierten Vorgänger-PI:
+	linked_purchase_invoice → neue PI, status → Booked.
+	"""
+	if not getattr(doc, "amended_from", None):
+		return
+	try:
+		name = frappe.db.get_value(
+			"Buchungs Vorschlag",
+			{"linked_purchase_invoice": doc.amended_from},
+			"name",
+		)
+		if name:
+			frappe.db.set_value(
+				"Buchungs Vorschlag",
+				name,
+				{"linked_purchase_invoice": doc.name, "status": "Booked"},
+			)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "BulkExtraction: PI amend relink failed")
 
 
 @frappe.whitelist()

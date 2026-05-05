@@ -27,6 +27,12 @@ MIN_TEXT_LENGTH_FOR_TEXT_MODEL = 80
 SUPPLIER_FUZZY_THRESHOLD = 0.8
 SUPPLIER_LIST_MAX = 500
 MAX_RAW_TEXT_RETURN = 4000
+# Rechnungs-PDFs mit vielen Seiten (z.B. Wartung/Reparaturen mit langer
+# Positions-Liste) können mehrere zehntausend Zeichen produzieren — der Mistral-
+# Call läuft dann in den Timeout. Die wirklich relevanten Daten (Header +
+# erste Positionen + Summe) stehen normalerweise auf den ersten 1-2 Seiten,
+# daher harte Kappung.
+MAX_PROMPT_INVOICE_TEXT_CHARS = 14000
 
 
 def _load_kostenarten_for_prompt() -> list[dict]:
@@ -191,6 +197,7 @@ SYSTEM_PROMPT_BASE = (
 	'  "bill_no": "Rechnungsnummer oder null",\n'
 	'  "bill_no_confidence": 0.0,\n'
 	'  "immobilie_hinweis": "Strassenname oder Adresse der gemieteten/verwalteten Immobilie aus dem Rechnungstext oder null (z.B. \\"Wilhelmshavener Str. 31\\", \\"Gropiusstr. 12\\"). NICHT die Adresse des Lieferanten oder die Empfaenger-Adresse der Hausverwaltung.",\n'
+	'  "remarks_vorschlag": "kurze Anmerkung (1-3 Saetze) mit Verwendungszweck/Auftragskontext fuer die Buchung — was wurde gemacht, fuer welche Wohnungen/Mieter, ggf. Verbrauchszeitraum",\n'
 	'  "positionen": [\n'
 	'    {"betrag": 123.45, "beschreibung": "kurze Beschreibung der Leistung"}\n'
 	"  ]\n"
@@ -204,10 +211,22 @@ SYSTEM_PROMPT_BASE = (
 	"  Strassenadresse, die nicht Lieferant und nicht Empfaenger (Hausverwaltung) ist. "
 	"  Bei Versorger-Rechnungen ist es oft die 'Lieferadresse' / 'Verbrauchsstelle'. "
 	"  Format wie auf der Rechnung uebernehmen, null wenn nicht erkennbar.\n"
+	"- 'remarks_vorschlag': fasse den Verwendungszweck zusammen (Beispiele: "
+	"  'Wartung Heizung VH+HH, Brennerdichtungen erneuert', 'Allgemeinstrom Verbrauchszeitraum 01-03/2026', "
+	"  'Reparatur Wasserrohrbruch Wohnung 2.OG'). 1-3 Saetze, max. 250 Zeichen, "
+	"  null wenn keine sinnvolle Zusammenfassung moeglich.\n"
 )
 
 
 def _build_user_prompt(invoice_text: str) -> str:
+	# Schutz gegen Timeout bei langen mehrseitigen PDFs — Header + erste
+	# Positionen reichen normalerweise. Wenn der Cut greift, hängen wir einen
+	# Hinweis dran, damit das Modell weiß dass die Liste evtl. unvollständig ist.
+	if len(invoice_text) > MAX_PROMPT_INVOICE_TEXT_CHARS:
+		invoice_text = (
+			invoice_text[:MAX_PROMPT_INVOICE_TEXT_CHARS]
+			+ "\n[...Text abgeschnitten — restliche Seiten ausgelassen.]"
+		)
 	return f"Rechnungstext:\n{invoice_text}\n"
 
 
@@ -232,6 +251,62 @@ def _exact_supplier_lookup(name: str) -> str | None:
 	if frappe.db.exists("Supplier", {"name": name, "disabled": 0}):
 		return name
 	return None
+
+
+def _normalize_supplier_token(s: str) -> str:
+	"""Lowercase, Punctuation entfernt, Whitespace collapsed — fürs Token-Matching."""
+	import re
+
+	s = (s or "").lower().strip()
+	s = re.sub(r"[.,;:!?\(\)\"']", " ", s)
+	s = re.sub(r"\s+", " ", s)
+	return s
+
+
+def _prefix_supplier_lookup(name: str) -> str | None:
+	"""Mappt LLM-Output auf einen Supplier, wenn die kürzere Variante als
+	Token-Präfix oder -Suffix in der längeren enthalten ist.
+
+	Beispiele:
+	- LLM='Rida Facility Service Hohenzollerndamm 182', DB='Rida Facility Service' → Match.
+	- LLM='Rida Facility Service', DB='Rida Facility Service Hohenzollerndamm 182' → Match.
+	- LLM='Manfred Stobbe GmbH', DB='Manfred Stobbe' → Match.
+
+	Längster gemeinsamer Token-Anker gewinnt — vermeidet z.B. dass 'Berlin GmbH'
+	fälschlich einem Supplier 'Berlin' zugeordnet wird, wenn auch 'Berlin GmbH'
+	existiert. Anker unter 6 Zeichen werden ignoriert (zu fehleranfällig: 'AG').
+	"""
+	if not name:
+		return None
+	norm = _normalize_supplier_token(name)
+	if not norm:
+		return None
+	candidates = frappe.get_all(
+		"Supplier",
+		filters={"disabled": 0},
+		fields=["name", "supplier_name"],
+		limit_page_length=2000,
+	)
+	best_name = None
+	best_len = 0
+	for c in candidates:
+		for field in (c.get("supplier_name"), c.get("name")):
+			db_norm = _normalize_supplier_token(field)
+			if not db_norm or len(db_norm) < 6:
+				continue
+			if norm == db_norm:
+				return c["name"]
+			# Kürzeren als Token-Anker im längeren suchen — egal in welche
+			# Richtung. Kein Match mitten im String (zu fehleranfällig: 'Bau'
+			# in 'Hausbau').
+			short_norm, long_norm = (norm, db_norm) if len(norm) <= len(db_norm) else (db_norm, norm)
+			if len(short_norm) < 6:
+				continue
+			if long_norm.startswith(short_norm + " ") or long_norm.endswith(" " + short_norm):
+				if len(short_norm) > best_len:
+					best_name = c["name"]
+					best_len = len(short_norm)
+	return best_name
 
 
 def _fuzzy_supplier_lookup(name: str) -> str | None:
@@ -451,7 +526,11 @@ def extract_from_file_url(file_url: str) -> dict:
 	llm_lieferant = str(extracted.get("lieferant_name") or "").strip()
 	# Wenn das Modell exakt einen Eintrag aus der Stammdaten-Liste zurückgegeben hat,
 	# matchen wir direkt — sonst Fuzzy-Match als Fallback.
-	matched_supplier = _exact_supplier_lookup(llm_lieferant) or _fuzzy_supplier_lookup(llm_lieferant)
+	matched_supplier = (
+		_exact_supplier_lookup(llm_lieferant)
+		or _prefix_supplier_lookup(llm_lieferant)
+		or _fuzzy_supplier_lookup(llm_lieferant)
+	)
 	warnings: list[str] = []
 	if llm_lieferant and not matched_supplier:
 		warnings.append(
@@ -529,12 +608,14 @@ def extract_from_file_url(file_url: str) -> dict:
 		}
 
 	# 9. Result.
+	llm_remarks = str(extracted.get("remarks_vorschlag") or "").strip()
 	return {
 		"fields": {
 			"lieferant": matched_supplier or "",
 			"rechnungsdatum": _coerce_iso_date(extracted.get("rechnungsdatum")) or "",
 			"wertstellungsdatum": _coerce_iso_date(extracted.get("wertstellungsdatum")) or "",
 			"rechnungsname": str(extracted.get("bill_no") or "").strip(),
+			"remarks": llm_remarks[:250],
 		},
 		"positionen": positionen_out,
 		"confidence": confidence_map,

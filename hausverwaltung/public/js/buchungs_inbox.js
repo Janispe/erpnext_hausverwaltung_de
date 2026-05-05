@@ -184,9 +184,9 @@ const _hv_inbox_ensure_styles = () => {
 
 const _STATUS_COLOR = {
 	Pending: "#888",
-	Processing: "#1976d2",
-	Ready: "#2e7d32",
-	Booked: "#558b2f",
+	Processing: "#7b1fa2",
+	Ready: "#1976d2",
+	Booked: "#2e7d32",
 	Skipped: "#9e9e9e",
 	Error: "#c62828",
 };
@@ -220,17 +220,39 @@ const _hv_conf_pill = (s) => {
 	return `<span style="background:${_hv_conf_color(s)};color:#fff;padding:1px 6px;border-radius:8px;font-size:10px;margin-left:4px;">${pct}%</span>`;
 };
 
+const HV_INBOX_PREFS_KEY = "hv_buchungs_inbox_prefs";
+
+const _hv_inbox_load_prefs = () => {
+	try {
+		const raw = localStorage.getItem(HV_INBOX_PREFS_KEY);
+		return raw ? JSON.parse(raw) : {};
+	} catch (e) {
+		return {};
+	}
+};
+
+const _hv_inbox_save_prefs = (prefs) => {
+	try {
+		localStorage.setItem(HV_INBOX_PREFS_KEY, JSON.stringify(prefs));
+	} catch (e) {
+		/* SafeStorage voll / Privacy-Mode → still */
+	}
+};
+
 hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 	_hv_inbox_ensure_styles();
 	options = options || {};
 
+	// Status + Sort werden über Reloads via localStorage persistiert.
+	// session_id NICHT — die kommt immer frisch aus Route-Options.
+	const prefs = _hv_inbox_load_prefs();
 	const state = {
 		filters: {
-			status: options.status || "open",
+			status: options.status || prefs.status || "open",
 			session_id: options.session_id || "",
 		},
-		sort_by: "creation",
-		sort_order: "desc",
+		sort_by: prefs.sort_by || "creation",
+		sort_order: prefs.sort_order || "desc",
 		rows: [],
 		sessions: [],
 		selected_name: null,
@@ -238,6 +260,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		poll_timer: null,
 		poll_paused: false, // pausieren wenn modaler Buchen-Dialog offen
 		current_pdf_url: null, // letzte gerenderte PDF-URL — für Re-Render-Vermeidung
+		refresh_seq: 0, // monoton steigend, gegen stale-overwrite bei parallelen refresh_list
 	};
 
 	const layout = $(`
@@ -288,8 +311,11 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 
 	$container.empty().append(layout);
 
-	// Filter-Initialisierung
+	// Filter-Initialisierung — incl. wiederhergestellter Sort-Auswahl
 	layout.find('select[data-filter="status"]').val(state.filters.status);
+	layout
+		.find('select[data-filter="sort"]')
+		.val(`${state.sort_by} ${state.sort_order}`);
 
 	// Event-Handlers
 	layout.on("change", "select[data-filter]", (event) => {
@@ -303,6 +329,12 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		} else {
 			state.filters[key] = val;
 		}
+		// Status + Sort persistieren (Session bleibt bewusst route-getrieben).
+		_hv_inbox_save_prefs({
+			status: state.filters.status,
+			sort_by: state.sort_by,
+			sort_order: state.sort_order,
+		});
 		refresh_list();
 	});
 
@@ -325,6 +357,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 	});
 
 	const refresh_list = () => {
+		const my_seq = ++state.refresh_seq;
 		frappe
 			.call({
 				method: `${HV_INBOX_API}.list_vorschlaege`,
@@ -337,8 +370,26 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				},
 			})
 			.then((r) => {
+				// Stale-Response verwerfen (z.B. Polling-Fetch der zurückkommt
+				// nachdem der User schon den Filter gewechselt und eine neue
+				// Anfrage rausgeschickt hat).
+				if (my_seq !== state.refresh_seq) return;
 				const data = (r && r.message) || { rows: [], sessions: [] };
-				state.rows = data.rows || [];
+				const new_rows = data.rows || [];
+
+				// Cache-Invalidation: wenn sich der Status eines Vorschlags
+				// geändert hat (z.B. Worker fertig: Processing → Ready), den
+				// gecachten full-Eintrag wegwerfen, damit render_detail ihn neu
+				// fetcht. Sonst zeigt das Detail-Pane ewig "Worker noch nicht fertig".
+				const prev_status = {};
+				for (const r0 of state.rows) prev_status[r0.name] = r0.status;
+				for (const r1 of new_rows) {
+					if (prev_status[r1.name] && prev_status[r1.name] !== r1.status) {
+						delete state.full_cache[r1.name];
+					}
+				}
+
+				state.rows = new_rows;
 				state.sessions = data.sessions || [];
 				_update_session_dropdown();
 				if (
@@ -366,6 +417,53 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		$sel.html(options.join(""));
 		$sel.val(current);
 	};
+
+	// Externer Hook: erlaubt Aufrufern (Cockpit "Analysieren starten",
+	// Router-Change-Listener) die Inbox auf neue Route-Options zu rebooten,
+	// ohne dass der User F5 drücken muss.
+	hausverwaltung.buchungs_inbox._apply_route_options = (route_options) => {
+		if (!route_options || !Object.keys(route_options).length) return;
+		if (route_options.session_id !== undefined) {
+			state.filters.session_id = route_options.session_id || "";
+			const $sel = layout.find('select[data-filter="session_id"]');
+			if (
+				route_options.session_id
+				&& !$sel.find(`option[value="${route_options.session_id}"]`).length
+			) {
+				$sel.append(
+					`<option value="${frappe.utils.escape_html(route_options.session_id)}">${frappe.utils.escape_html(route_options.session_id)}</option>`
+				);
+			}
+			$sel.val(state.filters.session_id);
+		}
+		if (route_options.status !== undefined) {
+			state.filters.status = route_options.status;
+			layout.find('select[data-filter="status"]').val(state.filters.status);
+		}
+		state.selected_name = null;
+		refresh_list();
+	};
+
+	// Same-page-Navigation: wenn set_route("buchungs_inbox", {...}) feuert
+	// während wir bereits gemounted sind, läuft on_page_load NICHT erneut.
+	// Listener auf Router-Change picked die neuen route_options auf.
+	if (
+		!hausverwaltung.buchungs_inbox._router_bound
+		&& frappe.router
+		&& typeof frappe.router.on === "function"
+	) {
+		hausverwaltung.buchungs_inbox._router_bound = true;
+		frappe.router.on("change", () => {
+			const route = frappe.get_route() || [];
+			if (route[0] !== "buchungs_inbox") return;
+			const opts = frappe.route_options;
+			if (!opts || !Object.keys(opts).length) return;
+			frappe.route_options = null;
+			if (typeof hausverwaltung.buchungs_inbox._apply_route_options === "function") {
+				hausverwaltung.buchungs_inbox._apply_route_options(opts);
+			}
+		});
+	}
 
 	const render_list = () => {
 		const $list = layout.find(".hv-inbox-list");
@@ -437,16 +535,6 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		const can_delete = row.status !== "Booked";
 
 		const file_url = row.file_url || (full && full.file_url) || "";
-		const pdf_iframe = file_url
-			? `<embed src="${frappe.utils.escape_html(file_url)}" type="application/pdf"
-				style="width:100%; height:100%; min-height:60vh; border:0;"
-				title="${__("PDF-Vorschau")}" />
-			   <a href="${frappe.utils.escape_html(file_url)}" target="_blank"
-			      style="display:block; padding:6px 8px; font-size:11px; color:#666;
-			             text-align:center; border-top:1px solid var(--border-color, #e0e0e0);">
-			      ${__("Original-PDF in neuem Tab öffnen")} ↗
-			   </a>`
-			: `<div class="hv-inbox-detail-empty">${__("Keine PDF-Datei verknüpft.")}</div>`;
 
 		// PDF-Container vor dem html()-Replace detachen — wenn die file_url gleich
 		// bleibt (gleicher Vorschlag selektiert + Polling-Tick), recyceln wir den
@@ -454,6 +542,23 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		// durch wiederholtes Re-Init des PDF-Plugins.
 		const $existing_pdf_pane = $detail.find(".hv-inbox-pdf").detach();
 		const keep_pdf = $existing_pdf_pane.length > 0 && state.current_pdf_url === file_url;
+
+		// Wichtig: wenn wir recyceln, KEIN frisches <embed> in die neue HTML
+		// einbauen — sonst startet der Browser einen neuen Download (sichtbarer
+		// Reload-Flicker alle Polling-Ticks). Stattdessen leerer Placeholder
+		// der gleich durch die detached Pane ersetzt wird.
+		const pdf_iframe = keep_pdf
+			? ""
+			: file_url
+				? `<embed src="${frappe.utils.escape_html(file_url)}" type="application/pdf"
+					style="width:100%; height:100%; min-height:60vh; border:0;"
+					title="${__("PDF-Vorschau")}" />
+				   <a href="${frappe.utils.escape_html(file_url)}" target="_blank"
+				      style="display:block; padding:6px 8px; font-size:11px; color:#666;
+				             text-align:center; border-top:1px solid var(--border-color, #e0e0e0);">
+				      ${__("Original-PDF in neuem Tab öffnen")} ↗
+				   </a>`
+				: `<div class="hv-inbox-detail-empty">${__("Keine PDF-Datei verknüpft.")}</div>`;
 
 		const linked_pi_link = row.linked_purchase_invoice
 			? `<a href="/app/purchase-invoice/${encodeURIComponent(row.linked_purchase_invoice)}" target="_blank">${frappe.utils.escape_html(row.linked_purchase_invoice)}</a>`
@@ -525,6 +630,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 			rechnungsdatum: data.fields && data.fields.rechnungsdatum,
 			wertstellungsdatum: data.fields && data.fields.wertstellungsdatum,
 			rechnungsname: data.fields && data.fields.rechnungsname,
+			remarks: data.fields && data.fields.remarks,
 			positionen: data.positionen || [],
 			_confidence: data.confidence || {},
 			_warnings: data.warnings || [],
@@ -643,6 +749,10 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		}
 	};
 
+	// Externer Refresh-Hook: erlaubt z.B. dem Cockpit-Bulk-Upload, die Inbox
+	// neu zu laden ohne den Session-Filter zu aktivieren.
+	hausverwaltung.buchungs_inbox._refresh = () => refresh_list();
+
 	// Initial-Load
 	refresh_list();
 };
@@ -674,6 +784,12 @@ function _hv_render_extraction_details(data) {
 				<td>${frappe.utils.escape_html(fields.wertstellungsdatum || "–")} ${_hv_conf_pill(conf.wertstellungsdatum)}</td></tr>
 			<tr><td style="color:#666; padding:2px 8px 2px 0;">${__("Rechnungs-Nr.")}</td>
 				<td>${frappe.utils.escape_html(fields.rechnungsname || "–")} ${_hv_conf_pill(conf.bill_no)}</td></tr>
+			${
+				fields.remarks
+					? `<tr><td style="color:#666; padding:2px 8px 2px 0; vertical-align:top;">${__("Anmerkungen")}</td>
+						<td style="white-space:pre-wrap;">${frappe.utils.escape_html(fields.remarks)}</td></tr>`
+					: ""
+			}
 		</table>
 	`;
 
