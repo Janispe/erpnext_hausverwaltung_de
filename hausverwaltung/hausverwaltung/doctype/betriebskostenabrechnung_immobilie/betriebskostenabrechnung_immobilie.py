@@ -110,10 +110,13 @@ class BetriebskostenabrechnungImmobilie(Document):
 		for whg, arts in matrix.items():
 			for art, betrag in (arts or {}).items():
 				per_art[art] = per_art.get(art, 0.0) + float(betrag or 0)
-		# Tabelle setzen
+		# Tabelle setzen — gruppierte Reihenfolge (Wasser, Heizung, …) statt
+		# rein alphabetisch, damit Mieter-Abrechnungen lesbarer werden.
+		from hausverwaltung.hausverwaltung.utils.bk_sort import sort_key
+
 		self.set("kosten_pro_art", [])
 		total_costs = 0.0
-		for art, betrag in sorted(per_art.items()):
+		for art, betrag in sorted(per_art.items(), key=lambda item: sort_key(item[0])):
 			amount = round(float(betrag or 0), 2)
 			total_costs += amount
 			self.append("kosten_pro_art", {"betriebskostenart": art, "betrag": amount})

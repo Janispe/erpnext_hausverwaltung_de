@@ -96,6 +96,31 @@ const _get_basis_totals = async (frm) => {
 	}
 };
 
+// Group/Index-Lookup einmal vom Server holen — gleiche Quelle wie Python-Sort
+// (utils.bk_sort.BK_SORT_GROUPS), damit UI und PDF die identische Reihenfolge
+// haben.
+let _bk_sort_keys_cache = null;
+const _get_bk_sort_keys = async () => {
+	if (_bk_sort_keys_cache !== null) return _bk_sort_keys_cache;
+	try {
+		const res = await frappe.call({
+			method: "hausverwaltung.hausverwaltung.utils.bk_sort.get_sort_keys",
+		});
+		_bk_sort_keys_cache = (res && res.message) || {};
+	} catch (e) {
+		_bk_sort_keys_cache = {};
+	}
+	return _bk_sort_keys_cache;
+};
+
+const _bk_sort_compare = (sort_keys) => (a, b) => {
+	const ka = sort_keys[a] || ["99_unsortiert", 0];
+	const kb = sort_keys[b] || ["99_unsortiert", 0];
+	if (ka[0] !== kb[0]) return ka[0].localeCompare(kb[0]);
+	if (ka[1] !== kb[1]) return ka[1] - kb[1];
+	return (a || "").localeCompare(b || "");
+};
+
 const render_kostenuebersicht = async (frm) => {
 	const field = frm.fields_dict?.kostenuebersicht;
 	if (!field) {
@@ -104,9 +129,10 @@ const render_kostenuebersicht = async (frm) => {
 
 	const immobilien = frm.doc?.immobilien_kosten || [];
 	const abrechnung = frm.doc?.abrechnung || [];
+	const sort_keys = await _get_bk_sort_keys();
 	const arts = Array.from(
 		new Set([..._collect_art_names(immobilien), ..._collect_art_names(abrechnung)])
-	).sort((a, b) => (a || "").localeCompare(b || ""));
+	).sort(_bk_sort_compare(sort_keys));
 
 	if (!arts.length) {
 		frm.set_df_property("kostenuebersicht", "options", "<p>Keine Abrechnungsposten vorhanden.</p>");

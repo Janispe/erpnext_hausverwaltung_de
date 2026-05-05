@@ -180,7 +180,9 @@ class BetriebskostenabrechnungMieter(Document):
 		accumulate(immobilien_items, "immobilie")
 		accumulate(getattr(self, "abrechnung", []) or [], "wohnung")
 
-		return [combined[key] for key in sorted(combined)]
+		from hausverwaltung.hausverwaltung.utils.bk_sort import sort_key
+
+		return [combined[key] for key in sorted(combined, key=sort_key)]
 
 
 @frappe.whitelist()
@@ -211,6 +213,11 @@ def get_immobilien_kosten(name: str) -> List[Dict[str, object]]:
 			"betriebskostenart": row.get("betriebskostenart"),
 			"betrag": amount,
 		})
+	# Auch hier gruppiert sortieren — wirkt rückwirkend für bestehende BKs,
+	# bei denen kosten_pro_art noch alphabetisch persistiert wurde.
+	from hausverwaltung.hausverwaltung.utils.bk_sort import sort_key
+
+	rows.sort(key=lambda r: sort_key(r["betriebskostenart"]))
 	return rows
 
 
