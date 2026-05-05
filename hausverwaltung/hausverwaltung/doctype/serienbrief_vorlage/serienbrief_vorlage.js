@@ -238,7 +238,7 @@ const hv_ensure_placeholder_editor_ready = (frm, retries = 12) => {
 
 		api.ensure_for_control(control);
 		hv_vorlage_upgrade_inline_placeholders(frm);
-		hv_bind_live_preview_to_quill(frm);
+		hv_bind_split_preview_to_quill(frm);
 	});
 };
 
@@ -1723,225 +1723,14 @@ const hv_toggle_split_preview = (frm) => {
 	hv_set_split_preview_enabled(frm, !frm._hv_split_preview_enabled, { immediate: true });
 };
 
-const hv_open_live_preview_tab = (frm) => {
-	if (frm._hv_live_preview && !frm._hv_live_preview.closed) {
-		frm._hv_live_preview.focus();
-		return;
-	}
-
-	const win = window.open("", "hv_live_preview");
-	if (!win) {
-		frappe.msgprint({
-			title: __("Popup blockiert"),
-			message: __("Bitte erlaube Popups, um die Live-Vorschau zu öffnen."),
-			indicator: "orange",
-		});
-		return;
-	}
-
-	frm._hv_live_preview = win;
-
-	const shell = `<!DOCTYPE html>
-<html>
-<head>
-	<meta charset="utf-8">
-	<title>Serienbrief Vorschau (PDF)</title>
-	<style>
-		body { margin: 0; font-family: "Arial", "Helvetica", sans-serif; background: #f8f9fa; }
-		#hv-preview-status { padding: 8px 12px; font-size: 12px; color: #555; }
-		#hv-preview-frame { width: 100%; height: calc(100vh - 28px); border: 0; background: #fff; }
-	</style>
-</head>
-<body>
-	<div id="hv-preview-status">Lade Vorschau …</div>
-	<iframe id="hv-preview-frame"></iframe>
-	<script>
-		const status = document.getElementById("hv-preview-status");
-		const frame = document.getElementById("hv-preview-frame");
-		const channel = "BroadcastChannel" in window ? new BroadcastChannel("hv_live_preview") : null;
-		window.__hv_live_preview_initialized = true;
-		let lastTs = null;
-		const readStorage = () => {
-			try {
-				const ts = localStorage.getItem("hv_live_preview_ts");
-				if (!ts || ts === lastTs) return;
-				lastTs = ts;
-				const storedStatus = localStorage.getItem("hv_live_preview_status");
-				const storedPdf = localStorage.getItem("hv_live_preview_pdf");
-				if (storedStatus !== null) {
-					status.textContent = storedStatus;
-				}
-				if (storedPdf) {
-					frame.src = storedPdf;
-				}
-			} catch (e) {
-				// ignore storage errors
-			}
-		};
-		if (channel) {
-			channel.onmessage = (event) => {
-				const data = event.data || {};
-				if (typeof data.status === "string") {
-					status.textContent = data.status;
-				}
-				if (typeof data.pdf === "string") {
-					frame.src = data.pdf;
-				}
-			};
-		}
-		setInterval(readStorage, 1000);
-		readStorage();
-		window.addEventListener("message", (event) => {
-			const data = event.data || {};
-			if (data.source !== "hv_live_preview") return;
-			if (typeof data.status === "string") {
-				status.textContent = data.status;
-			}
-			if (typeof data.pdf === "string") {
-				frame.src = data.pdf;
-			}
-		});
-	</script>
-</body>
-</html>`;
-
-	try {
-		if (!win.__hv_live_preview_initialized) {
-			win.document.open();
-			win.document.write(shell);
-			win.document.close();
-		}
-	} catch (e) {
-		// ignore cross-window access issues
-	}
-
-	hv_send_live_preview(frm, { immediate: true });
-
-	if (frm._hv_live_preview_interval) {
-		clearInterval(frm._hv_live_preview_interval);
-	}
-	frm._hv_live_preview_interval = setInterval(() => {
-		hv_send_live_preview(frm);
-	}, 1500);
-};
-
-const hv_try_update_live_preview_window = (win, payload) => {
-	try {
-		const doc = win.document;
-		const status = doc?.getElementById?.("hv-preview-status");
-		const frame = doc?.getElementById?.("hv-preview-frame");
-		if (!status || !frame) return false;
-		if (typeof payload.status === "string") {
-			status.textContent = payload.status;
-		}
-		if (typeof payload.pdf === "string") {
-			frame.src = payload.pdf;
-		}
-		return true;
-	} catch (e) {
-		return false;
-	}
-};
-
-const hv_store_live_preview_payload = (payload) => {
-	try {
-		if (typeof payload.status === "string") {
-			localStorage.setItem("hv_live_preview_status", payload.status);
-		}
-		if (typeof payload.pdf === "string") {
-			localStorage.setItem("hv_live_preview_pdf", payload.pdf);
-		}
-		localStorage.setItem("hv_live_preview_ts", String(Date.now()));
-	} catch (e) {
-		// ignore storage errors
-	}
-};
-
-const hv_post_live_preview = (frm, payload) => {
-	hv_store_live_preview_payload(payload);
-	if (!frm._hv_live_preview_channel && "BroadcastChannel" in window) {
-		frm._hv_live_preview_channel = new BroadcastChannel("hv_live_preview");
-	}
-	if (frm._hv_live_preview_channel) {
-		frm._hv_live_preview_channel.postMessage(payload);
-	}
-	const win = frm._hv_live_preview;
-	if (!win || win.closed) return;
-	if (hv_try_update_live_preview_window(win, payload)) return;
-	win.postMessage({ source: "hv_live_preview", ...payload }, "*");
-};
-
-const hv_send_live_preview = (frm, { immediate } = {}) => {
-	if (!frm._hv_live_preview || frm._hv_live_preview.closed) return;
-	if (!immediate && frm._hv_live_preview_loading) return;
-
-	const signature = hv_get_preview_signature(frm);
-	if (!immediate && signature && signature === frm._hv_preview_last_sig) {
-		return;
-	}
-	frm._hv_preview_last_sig = signature;
-
-	frm._hv_live_preview_loading = true;
-	hv_post_live_preview(frm, { status: __("Lade Vorschau …") });
-
-	const request = frappe
-		.call({
-			method: "hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.render_template_preview_pdf",
-			args: { template_doc: hv_get_live_template_doc(frm) },
-			quiet: true,
-		})
-		.then((r) => {
-			const pdfBase64 = r?.message?.pdf_base64 || r?.message?.pdf || r?.message;
-			if (!pdfBase64) {
-				hv_post_live_preview(frm, { status: __("Keine PDF-Vorschau verfügbar.") });
-				return;
-			}
-			const dataUrl = `data:application/pdf;base64,${pdfBase64}`;
-			hv_post_live_preview(frm, { pdf: dataUrl, status: "" });
-		})
-		.catch((err) => {
-			const message = hv_extract_call_error_message(err) || __("Vorschau konnte nicht geladen werden.");
-			hv_post_live_preview(frm, { status: message });
-		});
-	hv_attach_finally(request, () => {
-		frm._hv_live_preview_loading = false;
-	});
-};
-
-const hv_schedule_live_preview = (frm) => {
-	if (!frm._hv_live_preview || frm._hv_live_preview.closed) return;
-	if (frm._hv_live_preview_timeout) {
-		clearTimeout(frm._hv_live_preview_timeout);
-	}
-	frm._hv_live_preview_timeout = setTimeout(() => hv_send_live_preview(frm), 600);
-};
-
-const hv_get_preview_signature = (frm) => {
-	try {
-		return JSON.stringify({
-			content_type: (frm.doc.content_type || "").trim() || "Textbaustein (Rich Text)",
-			content: hv_get_live_content(frm),
-			html_content: hv_get_live_field_value(frm, "html_content"),
-			jinja_content: hv_get_live_field_value(frm, "jinja_content"),
-			content_position: frm.doc.content_position || "",
-			haupt_verteil_objekt: frm.doc.haupt_verteil_objekt || "",
-			textbausteine: (frm.doc.textbausteine || []).map((r) => r.baustein || ""),
-			variables: (frm.doc.variables || []).map((r) => [r.variable, r.variable_type, r.label]),
-		});
-	} catch (e) {
-		return "";
-	}
-};
-
-const hv_bind_live_preview_to_quill = (frm) => {
-	if (frm._hv_live_preview_quill_bound) return;
+const hv_bind_split_preview_to_quill = (frm) => {
+	if (frm._hv_split_preview_quill_bound) return;
 	const control = frm.get_field("content");
 	const quill = control?.quill || control?.editor;
 	if (!quill || typeof quill.on !== "function") return;
-	frm._hv_live_preview_quill_bound = true;
+	frm._hv_split_preview_quill_bound = true;
 	quill.on("text-change", (_delta, _old, source) => {
 		if (source === "api") return;
-		hv_schedule_live_preview(frm);
 		hv_schedule_split_preview(frm);
 	});
 	// Upgrade {{ … }} tokens to atomic badges only when the editor loses focus,
@@ -2636,14 +2425,12 @@ refresh(frm) {
 		frm.add_custom_button(__("Vorlage kopieren"), () => hv_open_copy_dialog(frm));
 	}
 	frm.add_custom_button(__("Vorlage anzeigen (ohne Felder)"), () => hv_render_template_preview(frm));
-	frm.add_custom_button(__("Live-Vorschau (Tab)"), () => hv_open_live_preview_tab(frm));
 	frm.add_custom_button(__("Split-Vorschau"), () => hv_toggle_split_preview(frm));
 	hv_set_split_preview_enabled(frm, true, { immediate: true });
 },
 	after_save(frm) {
 		hv_ensure_placeholder_editor_ready(frm);
 		hv_update_block_requirements(frm);
-		hv_send_live_preview(frm);
 		hv_update_split_preview(frm, { immediate: true });
 	},
 content(frm) {
@@ -2657,36 +2444,30 @@ content(frm) {
 		hv_vorlage_sync_textbausteine_from_content(frm);
 	}, 250);
 	hv_vorlage_toggle_block_position_ui(frm);
-	hv_schedule_live_preview(frm);
 	hv_schedule_split_preview(frm);
 },
 content_type(frm) {
 	hv_vorlage_toggle_block_position_ui(frm);
 	hv_vorlage_sync_textbausteine_from_content(frm);
 	hv_apply_editor_access_mode(frm);
-	hv_schedule_live_preview(frm);
 	hv_schedule_split_preview(frm);
 },
 html_content(frm) {
 	hv_vorlage_sync_textbausteine_from_content(frm);
-	hv_schedule_live_preview(frm);
 	hv_schedule_split_preview(frm);
 },
 jinja_content(frm) {
 	hv_vorlage_sync_textbausteine_from_content(frm);
-	hv_schedule_live_preview(frm);
 	hv_schedule_split_preview(frm);
 },
 	textbausteine_on_form_rendered(frm) {
 		hv_update_block_requirements(frm);
 		hv_vorlage_toggle_block_position_ui(frm);
 		hv_vorlage_toggle_textbausteine_table(frm);
-		hv_schedule_live_preview(frm);
 		hv_schedule_split_preview(frm);
 },
 haupt_verteil_objekt(frm) {
 	frm._hv_placeholder_groups_cache = {};
-	hv_schedule_live_preview(frm);
 	hv_schedule_split_preview(frm);
 },
 });
@@ -2694,7 +2475,6 @@ haupt_verteil_objekt(frm) {
 frappe.ui.form.on("Serienbrief Vorlagenbaustein", {
 	baustein(frm) {
 		hv_update_block_requirements(frm);
-		hv_schedule_live_preview(frm);
 		hv_schedule_split_preview(frm);
 	},
 });
@@ -2702,17 +2482,14 @@ frappe.ui.form.on("Serienbrief Vorlagenbaustein", {
 frappe.ui.form.on("Serienbrief Vorlage Variable", {
 	variable(frm) {
 		frm._hv_placeholder_groups_cache = {};
-		hv_schedule_live_preview(frm);
 		hv_schedule_split_preview(frm);
 	},
 	variable_type(frm) {
 		frm._hv_placeholder_groups_cache = {};
-		hv_schedule_live_preview(frm);
 		hv_schedule_split_preview(frm);
 	},
 	label(frm) {
 		frm._hv_placeholder_groups_cache = {};
-		hv_schedule_live_preview(frm);
 		hv_schedule_split_preview(frm);
 	},
 });
