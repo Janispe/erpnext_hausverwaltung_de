@@ -5,6 +5,7 @@ from frappe.tests.utils import FrappeTestCase
 
 from hausverwaltung.hausverwaltung.utils.trennstreifen import (
 	get_contact_kontakte,
+	get_mietvertrag_qr_url,
 	get_wohnung_adresse,
 	get_vormieter_display_name,
 	get_vormieter_info,
@@ -164,3 +165,31 @@ class TestMakeQrDataUrl(FrappeTestCase):
 	def test_empty_input_returns_empty_string(self):
 		self.assertEqual(make_qr_data_url(""), "")
 		self.assertEqual(make_qr_data_url(None), "")
+
+
+class TestMietvertragQrUrl(FrappeTestCase):
+	def test_uses_configured_base_url_and_encodes_name(self):
+		with patch(
+			"hausverwaltung.hausverwaltung.utils.trennstreifen.frappe.db.get_single_value",
+			return_value="http://hausverwaltung.tailnet.ts.net:8080/",
+		):
+			url = get_mietvertrag_qr_url("K2\t| \t| 3. OG links\t| ab: 2025-08-16 - Kupsch")
+
+		self.assertEqual(
+			url,
+			"http://hausverwaltung.tailnet.ts.net:8080/app/mietvertrag/"
+			"K2%09%7C%20%09%7C%203.%20OG%20links%09%7C%20ab%3A%202025-08-16%20-%20Kupsch",
+		)
+
+	def test_empty_base_url_disables_qr_url(self):
+		with patch(
+			"hausverwaltung.hausverwaltung.utils.trennstreifen.frappe.db.get_single_value",
+			return_value="",
+		), patch(
+			"hausverwaltung.hausverwaltung.utils.trennstreifen.frappe.utils.get_url",
+			return_value="http://current.test/app/mietvertrag/MV-1",
+		) as get_url:
+			url = get_mietvertrag_qr_url("MV-1")
+
+		self.assertEqual(url, "")
+		get_url.assert_not_called()

@@ -362,7 +362,7 @@ class Mietvertrag(Document):
 
 		wohnung_info = ts.get_wohnung_adresse(self.wohnung)
 		vormieter_info = ts.get_vormieter_info(self.wohnung, self.von, exclude=self.name)
-		qr_url = frappe.utils.get_url(f"/app/mietvertrag/{self.name}")
+		qr_url = ts.get_mietvertrag_qr_url(self.name)
 
 		return {
 			"hauptmieter": hauptmieter,

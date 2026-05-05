@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 from typing import Optional
+from urllib.parse import quote
 
 import frappe
 
@@ -180,6 +181,35 @@ def make_qr_data_url(url: str, *, scale: int = 3, quiet_zone: int = 0) -> str:
 		qr.png(buf, scale=scale, quiet_zone=quiet_zone)
 		b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 		return f"data:image/png;base64,{b64}"
+	except Exception:
+		return ""
+
+
+def get_mietvertrag_qr_url(mietvertrag_name: str | None) -> str:
+	"""Return the URL encoded in Mietvertrag separator QR codes.
+
+	If configured, use the private base URL from Hausverwaltung Einstellungen
+	(e.g. a Tailscale MagicDNS URL). If it is empty, no QR code is rendered.
+	"""
+	name = (mietvertrag_name or "").strip()
+	if not name:
+		return ""
+
+	path = f"/app/mietvertrag/{quote(name, safe='')}"
+	base_url = _get_trennstreifen_qr_base_url()
+	if not base_url:
+		return ""
+	return f"{base_url.rstrip('/')}{path}"
+
+
+def _get_trennstreifen_qr_base_url() -> str:
+	try:
+		return (
+			frappe.db.get_single_value(
+				"Hausverwaltung Einstellungen", "trennstreifen_qr_base_url"
+			)
+			or ""
+		).strip()
 	except Exception:
 		return ""
 

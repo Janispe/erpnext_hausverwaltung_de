@@ -38,6 +38,8 @@
   "bankimport_abschlag_toleranz_tage",
   "bankimport_section",
   "bankimport_start_datum",
+  "trennstreifen_section",
+  "trennstreifen_qr_base_url",
   "ui_section",
   "picker_modal_width_vw",
   "serienbrief_pdf_skip_dialog",
@@ -245,6 +247,17 @@
    "fieldtype": "Date",
    "label": "Bank-Transaktionen erstellen ab",
    "description": "Beim Erstellen aus dem Bankauszug Import werden CSV-Zeilen mit Buchungstag VOR diesem Datum übersprungen. Nützlich wenn die CSV-Historie weiter zurück geht als der ERP-Start. Leer = keine Begrenzung."
+  },
+  {
+   "fieldname": "trennstreifen_section",
+   "fieldtype": "Section Break",
+   "label": "Trennstreifen"
+  },
+  {
+   "description": "Basis-URL fuer QR-Codes auf Trennstreifen, z.B. eine Tailscale/MagicDNS-Adresse wie http://hausverwaltung.tailnet.ts.net:8080. Leer = keinen QR-Code drucken.",
+   "fieldname": "trennstreifen_qr_base_url",
+   "fieldtype": "Data",
+   "label": "Trennstreifen QR Base URL"
   },
   {
    "fieldname": "ui_section",
