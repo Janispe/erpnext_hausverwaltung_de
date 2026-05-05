@@ -637,6 +637,8 @@ class TestBankauszugImport(FrappeTestCase):
 
         self.assertEqual(res["journal_entry"], "JE-1")
         self.assertEqual(row.journal_entry, "JE-1")
+        self.assertEqual(row.payment_document_type, "Journal Entry")
+        self.assertEqual(row.payment_document, "JE-1")
         self.assertEqual(row.row_status, "success")
         self.assertIn("Buchungssatz", row.auto_match_message)
         create_je.assert_called_once()

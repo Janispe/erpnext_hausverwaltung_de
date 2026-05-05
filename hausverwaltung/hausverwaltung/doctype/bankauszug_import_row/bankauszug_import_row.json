@@ -19,6 +19,8 @@
   "verwendungszweck",
   "currency",
   "bank_transaction",
+  "payment_document_type",
+  "payment_document",
   "payment_entry",
   "journal_entry",
   "auto_match_message",
@@ -126,9 +128,24 @@
    "read_only": 1
   },
   {
+   "fieldname": "payment_document_type",
+   "fieldtype": "Select",
+   "label": "Zahlungstyp",
+   "options": "\nPayment Entry\nJournal Entry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "payment_document",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Zahlung",
+   "options": "payment_document_type",
+   "read_only": 1,
+   "description": "Gemeinsamer Zahlungsbeleg der Zeile, entweder Payment Entry oder Buchungssatz."
+  },
+  {
    "fieldname": "payment_entry",
    "fieldtype": "Link",
-   "in_list_view": 1,
    "label": "Payment Entry",
    "options": "Payment Entry",
    "read_only": 1,
@@ -137,7 +154,6 @@
   {
    "fieldname": "journal_entry",
    "fieldtype": "Link",
-   "in_list_view": 1,
    "label": "Buchungssatz",
    "options": "Journal Entry",
    "read_only": 1,

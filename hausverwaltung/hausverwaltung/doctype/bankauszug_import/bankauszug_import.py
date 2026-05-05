@@ -280,6 +280,11 @@ def _get_row_bank_transaction_name(row: Document) -> Optional[str]:
         return None
 
 
+def _set_row_payment_document(row: Document, payment_document_type: str, payment_document: str) -> None:
+    row.db_set("payment_document_type", payment_document_type)
+    row.db_set("payment_document", payment_document)
+
+
 def _resolve_row_party_for_validation(row: Document) -> Optional[Tuple[str, str]]:
     return _resolve_row_party(row)
 
@@ -1114,6 +1119,7 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
                 match_result = auto_match_bank_transaction(bt.name)
                 if match_result.get("matched"):
                     row.db_set("payment_entry", match_result.get("payment_entry"))
+                    _set_row_payment_document(row, "Payment Entry", match_result.get("payment_entry"))
                     row.db_set("auto_match_message", match_result.get("message"))
                     auto_matched.append(bt.name)
                 else:
@@ -1406,6 +1412,7 @@ def manually_reconcile_row(
     reconcile_voucher_with_bt(bt, "Payment Entry", pe.name, target_amount)
 
     row.db_set("payment_entry", pe.name)
+    _set_row_payment_document(row, "Payment Entry", pe.name)
     row.db_set("row_status", "success")
     row.db_set(
         "auto_match_message",
@@ -1452,6 +1459,7 @@ def create_standalone_payment_for_row(
     reconcile_voucher_with_bt(bt, "Payment Entry", pe.name, target_amount)
 
     row.db_set("payment_entry", pe.name)
+    _set_row_payment_document(row, "Payment Entry", pe.name)
     row.db_set("row_status", "success")
     row.db_set(
         "auto_match_message",
@@ -1493,6 +1501,7 @@ def create_journal_entry_for_row(
     reconcile_voucher_with_bt(bt, "Journal Entry", je.name, target_amount)
 
     row.db_set("journal_entry", je.name)
+    _set_row_payment_document(row, "Journal Entry", je.name)
     row.db_set("row_status", "success")
     row.db_set(
         "auto_match_message",
