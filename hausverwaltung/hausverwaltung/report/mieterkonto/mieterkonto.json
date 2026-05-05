@@ -39,17 +39,9 @@
   },
   {
    "default": "1",
-   "fieldname": "show_invoice_details",
+   "fieldname": "show_kategorien",
    "fieldtype": "Check",
-   "label": "Soll nach Miete/BK/HK aufteilen",
-   "mandatory": 0,
-   "wildcard_filter": 0
-  },
-  {
-   "default": "0",
-   "fieldname": "show_writeoff_columns",
-   "fieldtype": "Check",
-   "label": "Abschreibungsspalten anzeigen",
+   "label": "Aufteilung nach Miete/BK/HK/Guthaben",
    "mandatory": 0,
    "wildcard_filter": 0
   }

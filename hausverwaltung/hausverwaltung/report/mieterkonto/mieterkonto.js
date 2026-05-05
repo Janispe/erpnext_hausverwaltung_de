@@ -32,16 +32,10 @@ frappe.query_reports["Mieterkonto"] = {
 			default: frappe.datetime.get_today(),
 		},
 		{
-			fieldname: "show_invoice_details",
-			label: __("Soll nach Miete/BK/HK aufteilen"),
+			fieldname: "show_kategorien",
+			label: __("Aufteilung nach Miete/BK/HK/Guthaben"),
 			fieldtype: "Check",
 			default: 1,
-		},
-		{
-			fieldname: "show_writeoff_columns",
-			label: __("Abschreibungsspalten anzeigen"),
-			fieldtype: "Check",
-			default: 0,
 		},
 	],
 
@@ -66,13 +60,16 @@ frappe.query_reports["Mieterkonto"] = {
 		value = default_formatter(value, row, column, data);
 		if (column.fieldname === "art" && data?.art) {
 			const indicator = {
-				Rechnung: "blue",
+				Forderung: "blue",
 				Zahlung: "green",
 				Abschreibung: "orange",
 				Gutschrift: "gray",
 				Eröffnung: "gray",
 			}[data.art] || "gray";
 			return `<span class="indicator-pill ${indicator}">${__(data.art)}</span>`;
+		}
+		if (data?.is_total_row || data?.is_opening_row) {
+			return `<strong>${value || ""}</strong>`;
 		}
 		return value;
 	},
@@ -83,13 +80,12 @@ const MIETERKONTO_PRINT_COLUMNS = [
 	"art",
 	"belegnummer",
 	"beschreibung",
-	"soll_miete",
-	"soll_betriebskosten",
-	"soll_heizkosten",
-	"bezahlt_summe",
+	"betrag_miete",
+	"betrag_betriebskosten",
+	"betrag_heizkosten",
+	"betrag_guthaben_nachzahlungen",
+	"betrag_summe",
 	"kontostand",
-	"faellig_am",
-	"status",
 ];
 
 function open_print_dialog(report, as_pdf) {

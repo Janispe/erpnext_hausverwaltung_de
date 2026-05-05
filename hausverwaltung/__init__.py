@@ -16,3 +16,16 @@ except Exception:
 	# Defensiv: falls der Import beim allerersten Setup (vor Migrate) fehlschlägt,
 	# nicht den ganzen App-Boot sprengen. Beim nächsten Boot greift er.
 	pass
+
+
+# Workaround für Frappes report_to_pdf (Query-Report PDF-Export). Der nutzt
+# hardcoded wkhtmltopdf, das in unserem Docker-Setup nicht an die Asset-CSS
+# rankommt → ConnectionRefused. Wir leiten auf Chrome um.
+try:
+	from hausverwaltung.hausverwaltung.utils.frappe_report_pdf_patch import (
+		apply as _apply_report_pdf_patch,
+	)
+
+	_apply_report_pdf_patch()
+except Exception:
+	pass

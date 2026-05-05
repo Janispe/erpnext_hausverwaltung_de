@@ -19,7 +19,7 @@ CATEGORY_LABELS = {
 	"miete": "Miete",
 	"betriebskosten": "BK",
 	"heizkosten": "HK",
-	"guthaben_nachzahlungen": "Guthaben/Nachzahlungen",
+	"guthaben_nachzahlungen": "G/N",
 }
 ITEM_CATEGORY_MAP = {
 	"Miete": "miete",
@@ -74,8 +74,7 @@ def execute(filters=None):
 
 
 def _apply_defaults(filters):
-	filters.show_invoice_details = cint(filters.get("show_invoice_details", 1))
-	filters.show_writeoff_columns = cint(filters.get("show_writeoff_columns", 0))
+	filters.show_kategorien = cint(filters.get("show_kategorien", 1))
 
 
 def _validate_filters(filters):
@@ -209,7 +208,7 @@ def _build_invoice_transactions(invoices: dict[str, InvoiceInfo]) -> list[dict[s
 			{
 				"date": getdate(invoice.posting_date),
 				"sort_order": 10,
-				"art": "Rechnung",
+				"art": "Forderung",
 				"belegart": "Sales Invoice",
 				"belegnummer": invoice.name,
 				# ``rechnung`` ist intern als Sort-Schlüssel — Rechnung +
@@ -263,6 +262,7 @@ def _build_settlement_transactions(
 			],
 			order_by="posting_date asc, creation asc, name asc",
 		)
+		voucher_remarks = _fetch_voucher_remarks(rows)
 		for row in rows:
 			invoice = invoices.get(row.against_voucher_no)
 			if not invoice or row.voucher_no == invoice.name:
@@ -292,7 +292,12 @@ def _build_settlement_transactions(
 					"belegart": row.voucher_type,
 					"belegnummer": row.voucher_no,
 					"rechnung": invoice.name,
-					"beschreibung": _get_settlement_description(row, invoice.name, is_writeoff),
+					"beschreibung": _get_settlement_description(
+					row,
+					invoice,
+					is_writeoff,
+					voucher_remarks.get((row.voucher_type, row.voucher_no)),
+				),
 					"due_date": invoice.due_date,
 					"status": invoice.status,
 					"currency": invoice.currency,
@@ -310,10 +315,70 @@ def _chunks(values: list[str], size: int):
 		yield values[index : index + size]
 
 
-def _get_settlement_description(row, invoice_name: str, is_writeoff: bool) -> str:
-	if is_writeoff:
-		return _("Abschreibung zu {0}").format(invoice_name)
-	return _("{0} zu {1}").format(_get_voucher_label(row.voucher_type), invoice_name)
+def _get_settlement_description(
+	row,
+	invoice,
+	is_writeoff: bool,
+	voucher_info: dict | None = None,
+) -> str:
+	# Wenn der Beleg eine User-Anmerkung hat: NUR die zeigen (keine
+	# "Zahlung zu ACC-SINV-..."-Vorrede — wirkt sonst doppelt mit der
+	# Belegnummer-Spalte). Sonst Default-Label "Zahlung zu <Rechnung>"
+	# damit der Bezug zur Forderung nicht verloren geht.
+	suffix = _build_voucher_suffix(row.voucher_type, voucher_info or {})
+	if suffix:
+		return suffix
+	label = _("Abschreibung") if is_writeoff else _get_voucher_label(row.voucher_type)
+	return _("{0} zu {1}").format(label, invoice.name)
+
+
+def _build_voucher_suffix(voucher_type: str, info: dict) -> str:
+	"""Baut den User-Anmerkungs-Suffix für die Beschreibungs-Spalte.
+
+	Payment Entry: nur dann anzeigen wenn `remarks` echt user-getippt ist —
+	Frappes Auto-Pattern beginnt mit 'Amount ', das filtern wir raus.
+
+	Journal Entry / Sales Invoice (Gutschrift): direkt das Remark-Feld.
+	"""
+	if voucher_type == "Payment Entry":
+		remark = (info.get("remarks") or "").strip()
+		if remark and not remark.lower().startswith("amount "):
+			return remark
+		return ""
+	return (info.get("user_remark") or info.get("remarks") or "").strip()
+
+
+# Welche Felder pro Voucher-Type für die Beschreibung relevant sind.
+_VOUCHER_INFO_FIELDS = {
+	"Payment Entry": ["remarks"],
+	"Journal Entry": ["user_remark"],
+	"Sales Invoice": ["remarks"],  # bei Gutschriften
+}
+
+
+def _fetch_voucher_remarks(payment_ledger_rows) -> dict[tuple[str, str], dict]:
+	"""Bulk-fetch der relevanten Beleg-Felder pro (voucher_type, voucher_no).
+
+	Eine separate Query pro Voucher-Type — vermeidet N+1-Queries bei vielen
+	Zahlungen pro Mieter.
+	"""
+	from collections import defaultdict
+
+	names_by_type: dict[str, set[str]] = defaultdict(set)
+	for row in payment_ledger_rows:
+		if row.voucher_type in _VOUCHER_INFO_FIELDS:
+			names_by_type[row.voucher_type].add(row.voucher_no)
+
+	out: dict[tuple[str, str], dict] = {}
+	for voucher_type, names in names_by_type.items():
+		fields = ["name"] + _VOUCHER_INFO_FIELDS[voucher_type]
+		for r in frappe.get_all(
+			voucher_type,
+			filters={"name": ("in", list(names))},
+			fields=fields,
+		):
+			out[(voucher_type, r["name"])] = dict(r)
+	return out
 
 
 def _get_voucher_label(voucher_type: str | None) -> str:
@@ -331,6 +396,8 @@ def _build_rows(transactions: list[dict[str, Any]], filters) -> tuple[list[dict[
 	balance = 0.0
 	all_totals = _new_totals()
 	period_totals = _new_totals()
+	opening_added = False
+	currency_seen: str | None = None
 
 	for transaction in transactions:
 		if transaction["date"] > filters.to_date:
@@ -338,23 +405,34 @@ def _build_rows(transactions: list[dict[str, Any]], filters) -> tuple[list[dict[
 		if transaction["date"] < filters.from_date:
 			balance += flt(transaction["delta"])
 			_accumulate_totals(all_totals, transaction)
+			if transaction.get("currency"):
+				currency_seen = transaction["currency"]
 			continue
 
-		if not rows and abs(balance) > TOLERANCE:
-			rows.append(_opening_row(filters, balance, transaction.get("currency")))
+		# Erste in-period-Transaktion → Anfangsbestand davor einblenden
+		# (immer, auch bei Saldo 0 — die User wollen die Eröffnung als Anker sehen).
+		if not opening_added:
+			rows.append(_opening_row(filters, balance, transaction.get("currency") or currency_seen))
+			opening_added = True
 
 		balance += flt(transaction["delta"])
 		_accumulate_totals(all_totals, transaction)
 		_accumulate_totals(period_totals, transaction)
+		if transaction.get("currency"):
+			currency_seen = transaction["currency"]
 		row = _transaction_to_row(transaction, balance)
-		if not filters.get("show_invoice_details"):
-			row = _hide_invoice_detail_columns(row)
-		if not filters.get("show_writeoff_columns"):
-			row = _hide_writeoff_columns(row)
+		if not filters.get("show_kategorien"):
+			row = _hide_kategorien_columns(row)
 		rows.append(row)
 
-	if not rows and abs(balance) > TOLERANCE:
-		rows.append(_opening_row(filters, balance, _get_currency(filters.company)))
+	# Gar keine Bewegung im Zeitraum, aber Vorperiode hat Saldo aufgebaut →
+	# trotzdem Eröffnung zeigen, damit der Bericht nicht leer wirkt.
+	if not opening_added and abs(balance) > TOLERANCE:
+		rows.append(_opening_row(filters, balance, currency_seen or _get_currency(filters.company)))
+
+	# Summenzeile am Ende (nur wenn überhaupt Bewegungen im Zeitraum waren).
+	if any(not r.get("is_opening_row") for r in rows):
+		rows.append(_total_row(rows, balance, filters))
 
 	all_totals["balance"] = flt(balance, 2)
 	return rows, {"all": all_totals, "period": period_totals}
@@ -386,10 +464,36 @@ def _opening_row(filters, balance: float, currency: str | None) -> dict[str, Any
 	return {
 		"datum": filters.from_date,
 		"art": "Eröffnung",
-		"beschreibung": _("Saldo vor Zeitraum"),
+		"beschreibung": _("Anfangsbestand"),
 		"kontostand": flt(balance, 2),
 		"waehrung": currency or _get_currency(filters.company),
+		"is_opening_row": 1,
 	}
+
+
+def _total_row(rows: list[dict[str, Any]], balance: float, filters) -> dict[str, Any]:
+	"""Letzte Zeile mit Spalten-Summen über alle in-period-Transaktionen +
+	finalem Kontostand. Zeile wird im JS-Formatter fett dargestellt."""
+	total: dict[str, Any] = {
+		"datum": filters.to_date,
+		"art": "",
+		"beschreibung": _("Σ Zeitraum"),
+		"kontostand": flt(balance, 2),
+		"is_total_row": 1,
+	}
+	# Nur über die echten Transaktions-Zeilen summieren — Opening und vorherige
+	# Total-Zeilen ausnehmen.
+	tx_rows = [r for r in rows if not r.get("is_opening_row") and not r.get("is_total_row")]
+	for category in CATEGORIES:
+		total[f"betrag_{category}"] = flt(
+			sum(flt(r.get(f"betrag_{category}")) for r in tx_rows), 2
+		)
+	total["betrag_summe"] = flt(
+		sum(flt(r.get("betrag_summe")) for r in tx_rows), 2
+	)
+	if not filters.get("show_kategorien"):
+		total = _hide_kategorien_columns(total)
+	return total
 
 
 def _transaction_to_row(transaction: dict[str, Any], balance: float) -> dict[str, Any]:
@@ -404,32 +508,28 @@ def _transaction_to_row(transaction: dict[str, Any], balance: float) -> dict[str
 		"kontostand": flt(balance, 2),
 		"waehrung": transaction.get("currency"),
 	}
-	for prefix, source in (
-		("soll", transaction.get("invoice_amounts") or {}),
-		("bezahlt", transaction.get("paid_amounts") or {}),
-		("abgeschrieben", transaction.get("written_off_amounts") or {}),
-	):
-		for category in CATEGORIES:
-			row[f"{prefix}_{category}"] = flt(source.get(category), 2)
-
-	row["soll_summe"] = sum(flt(row.get(f"soll_{category}")) for category in CATEGORIES)
-	row["bezahlt_summe"] = sum(flt(row.get(f"bezahlt_{category}")) for category in CATEGORIES)
-	row["abgeschrieben_summe"] = sum(
-		flt(row.get(f"abgeschrieben_{category}")) for category in CATEGORIES
+	# Signed per-category Spalte: +Soll (Rechnung), -Bezahlt (Zahlung),
+	# -Abgeschrieben. Pro Transaktion ist nur eine Quelle ≠ 0, das Vorzeichen
+	# fällt also natürlich richtig raus. Die "Art"-Pille (Rechnung/Zahlung/
+	# Abschreibung) sagt zusätzlich was es ist.
+	invoice = transaction.get("invoice_amounts") or {}
+	paid = transaction.get("paid_amounts") or {}
+	written_off = transaction.get("written_off_amounts") or {}
+	for category in CATEGORIES:
+		row[f"betrag_{category}"] = flt(
+			flt(invoice.get(category)) - flt(paid.get(category)) - flt(written_off.get(category)),
+			2,
+		)
+	row["betrag_summe"] = flt(
+		sum(flt(row.get(f"betrag_{category}")) for category in CATEGORIES),
+		2,
 	)
 	return row
 
 
-def _hide_invoice_detail_columns(row: dict[str, Any]) -> dict[str, Any]:
+def _hide_kategorien_columns(row: dict[str, Any]) -> dict[str, Any]:
 	for category in CATEGORIES:
-		row.pop(f"soll_{category}", None)
-	return row
-
-
-def _hide_writeoff_columns(row: dict[str, Any]) -> dict[str, Any]:
-	for category in CATEGORIES:
-		row.pop(f"abgeschrieben_{category}", None)
-	row.pop("abgeschrieben_summe", None)
+		row.pop(f"betrag_{category}", None)
 	return row
 
 
@@ -499,11 +599,14 @@ def _get_report_summary(totals: dict[str, Any], filters) -> list[dict[str, Any]]
 			"currency": currency,
 		},
 	]
-	if filters.get("show_writeoff_columns"):
+	# Abgeschrieben-Card nur einblenden wenn im Zeitraum überhaupt was
+	# abgeschrieben wurde — sonst Lärm.
+	written_off_total = sum(flt(written_off_period.get(category)) for category in CATEGORIES)
+	if abs(written_off_total) > TOLERANCE:
 		summary.insert(
 			2,
 			{
-				"value": sum(flt(written_off_period.get(category)) for category in CATEGORIES),
+				"value": written_off_total,
 				"indicator": "Orange",
 				"label": _("Abgeschrieben im Zeitraum"),
 				"datatype": "Currency",
@@ -537,57 +640,28 @@ def _get_columns(filters):
 	columns = [
 		{"label": _("Datum"), "fieldname": "datum", "fieldtype": "Date", "width": 100},
 		{"label": _("Art"), "fieldname": "art", "fieldtype": "Data", "width": 105},
-		{"label": _("Belegart"), "fieldname": "belegart", "fieldtype": "Data", "width": 120},
 		{
+			# Dynamic Link liest belegart aus dem Row-Dict — Spalte muss nicht
+			# sichtbar sein, das Feld reicht.
 			"label": _("Belegnummer"),
 			"fieldname": "belegnummer",
 			"fieldtype": "Dynamic Link",
 			"options": "belegart",
 			"width": 180,
 		},
-		{"label": _("Beschreibung"), "fieldname": "beschreibung", "fieldtype": "Data", "width": 240},
+		{"label": _("Beschreibung"), "fieldname": "beschreibung", "fieldtype": "Data", "width": 280},
 	]
 
-	if filters.get("show_invoice_details"):
+	# Pro Kategorie eine signed Spalte: positiv = Forderung, negativ =
+	# Zahlung/Abschreibung. Die "Art"-Pille zeigt zusätzlich was es ist.
+	if filters.get("show_kategorien"):
 		for category in CATEGORIES:
-			columns.append(_currency_column(_("Soll {0}").format(CATEGORY_LABELS[category]), f"soll_{category}"))
-	else:
-		columns.append(_currency_column(_("Soll"), "soll_summe"))
-
-	for category in CATEGORIES:
-		columns.append(
-			_currency_column(
-				_("{0} bezahlt").format(CATEGORY_LABELS[category]),
-				f"bezahlt_{category}",
-			)
-		)
-	for category in CATEGORIES:
-		if filters.get("show_writeoff_columns"):
 			columns.append(
-				_currency_column(
-					_("{0} abgeschrieben").format(CATEGORY_LABELS[category]),
-					f"abgeschrieben_{category}",
-				)
+				_currency_column(CATEGORY_LABELS[category], f"betrag_{category}")
 			)
+	columns.append(_currency_column(_("Summe"), "betrag_summe"))
 
-	columns.append(_currency_column(_("Bezahlt gesamt"), "bezahlt_summe"))
-	if filters.get("show_writeoff_columns"):
-		columns.append(_currency_column(_("Abgeschrieben gesamt"), "abgeschrieben_summe"))
-
-	columns.extend(
-		[
-			_currency_column(_("Kontostand"), "kontostand", width=125),
-			{"label": _("Fällig am"), "fieldname": "faellig_am", "fieldtype": "Date", "width": 100},
-			{"label": _("Status"), "fieldname": "status", "fieldtype": "Data", "width": 150},
-			{
-				"label": _("Währung"),
-				"fieldname": "waehrung",
-				"fieldtype": "Link",
-				"options": "Currency",
-				"width": 80,
-			},
-		]
-	)
+	columns.append(_currency_column(_("Kontostand"), "kontostand", width=125))
 	return columns
 
 
