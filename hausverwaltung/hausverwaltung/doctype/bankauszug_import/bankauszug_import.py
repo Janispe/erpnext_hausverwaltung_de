@@ -38,7 +38,11 @@ def _normalize_iban(value: Optional[str]) -> Optional[str]:
 
 
 def _get_party_by_iban(iban: Optional[str]) -> Optional[Tuple[str, str]]:
-    """Resolve (party_type, party) from an IBAN via `Bank Account`."""
+    """Resolve (party_type, party) from an IBAN via `Bank Account`.
+
+    If the same IBAN points to multiple different parties, keep the row
+    unresolved so phase 1 can be decided manually.
+    """
     iban_norm = _normalize_iban(iban)
     if not iban_norm:
         return None
@@ -49,9 +53,13 @@ def _get_party_by_iban(iban: Optional[str]) -> Optional[Tuple[str, str]]:
         fields=["party_type", "party"],
         limit=50,
     )
-    for c in candidates:
-        if c.get("party") and c.get("party_type") in SUPPORTED_PARTY_TYPES:
-            return (c["party_type"], c["party"])
+    parties = {
+        (c["party_type"], c["party"])
+        for c in candidates
+        if c.get("party") and c.get("party_type") in SUPPORTED_PARTY_TYPES
+    }
+    if len(parties) == 1:
+        return next(iter(parties))
     return None
 
 

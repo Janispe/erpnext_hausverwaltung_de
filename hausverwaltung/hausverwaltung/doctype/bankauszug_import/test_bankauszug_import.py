@@ -53,6 +53,32 @@ class TestBankauszugImport(FrappeTestCase):
             self.values[fieldname] = value
             setattr(self, fieldname, value)
 
+    def test_get_party_by_iban_returns_single_unique_party(self):
+        with patch.object(
+            bi.frappe,
+            "get_all",
+            return_value=[
+                {"party_type": "Customer", "party": "CUST-1"},
+                {"party_type": "Customer", "party": "CUST-1"},
+            ],
+        ):
+            res = bi._get_party_by_iban("DE123")
+
+        self.assertEqual(res, ("Customer", "CUST-1"))
+
+    def test_get_party_by_iban_leaves_ambiguous_parties_unresolved(self):
+        with patch.object(
+            bi.frappe,
+            "get_all",
+            return_value=[
+                {"party_type": "Customer", "party": "CUST-1"},
+                {"party_type": "Customer", "party": "CUST-2"},
+            ],
+        ):
+            res = bi._get_party_by_iban("DE123")
+
+        self.assertIsNone(res)
+
     def test_create_party_and_bank_for_row_updates_row_and_returns_payload(self):
         row = self._FakeRow(name="ROW-1", auftraggeber="Max Mustermann", iban="DE123")
         doc = self._FakeDoc("IMP-1", [row])
