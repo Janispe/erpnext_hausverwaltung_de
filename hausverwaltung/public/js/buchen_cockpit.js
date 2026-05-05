@@ -924,60 +924,6 @@ function submit_mieterrechnung(dialog, values, submit_doc = true) {
 }
 
 // ---------------------------------------------------------------------------
-// Dialog: PDF-Analyse → vorgefüllter Eingangsrechnungs-Dialog
-// ---------------------------------------------------------------------------
-
-hausverwaltung.buchen_cockpit.open_extract_dialog = () => {
-	const dialog = new frappe.ui.Dialog({
-		title: __("PDF-Rechnung analysieren"),
-		fields: [
-			{
-				fieldtype: "Attach",
-				fieldname: "pdf_file",
-				label: __("PDF-Datei"),
-				reqd: 1,
-				description: __(
-					"Lade die Eingangsrechnung als PDF hoch. Mistral schlägt anschließend Lieferant, Positionen und Kostenarten vor."
-				),
-			},
-		],
-		primary_action_label: __("Analysieren"),
-		primary_action(values) {
-			if (!values.pdf_file) return;
-			dialog.disable_primary_action();
-			frappe
-				.call({
-					method: `${HV_COCKPIT_API}.extract_invoice_from_file`,
-					args: { file_url: values.pdf_file },
-					freeze: true,
-					freeze_message: __("Analysiere PDF mit Mistral..."),
-				})
-				.then((r) => {
-					const data = (r && r.message) || null;
-					if (!data) return;
-					dialog.hide();
-					hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog({
-						lieferant: data.fields && data.fields.lieferant,
-						rechnungsdatum: data.fields && data.fields.rechnungsdatum,
-						wertstellungsdatum: data.fields && data.fields.wertstellungsdatum,
-						rechnungsname: data.fields && data.fields.rechnungsname,
-						positionen: data.positionen || [],
-						_confidence: data.confidence || {},
-						_warnings: data.warnings || [],
-						_attached_file: values.pdf_file,
-						_used_vision: !!data.used_vision,
-						_lieferant_neu: data.lieferant_neu || null,
-					});
-				})
-				.catch((err) => {
-					console.error("PDF-Analyse fehlgeschlagen", err);
-				})
-				.finally(() => dialog.enable_primary_action());
-		},
-	});
-	dialog.show();
-};
-
 // ---------------------------------------------------------------------------
 // Bulk-Upload + Wizard
 // ---------------------------------------------------------------------------
@@ -1445,23 +1391,13 @@ hausverwaltung.buchen_cockpit.mount = ($container) => {
 						${__("Strom, Gas, Wasser — einmal einrichten, läuft automatisch.")}
 					</div>
 				</div>
-				<div class="hv-cockpit-tile" data-action="extract">
-					<div class="hv-cockpit-tile-title">
-						<i class="fa fa-file-pdf-o"></i> ${__("PDF analysieren")}
-					</div>
-					<div class="hv-cockpit-tile-desc">
-						${__(
-							"PDF hochladen — Mistral schlägt Lieferant, Positionen und Kostenarten vor."
-						)}
-					</div>
-				</div>
 				<div class="hv-cockpit-tile" data-action="bulk">
 					<div class="hv-cockpit-tile-title">
-						<i class="fa fa-files-o"></i> ${__("Sammel-Upload")}
+						<i class="fa fa-files-o"></i> ${__("PDF-Upload")}
 					</div>
 					<div class="hv-cockpit-tile-desc">
 						${__(
-							"Mehrere PDFs auf einmal — Wizard führt dich Schritt für Schritt durch alle Vorschläge."
+							"Eine oder mehrere PDFs hochladen — landen in der Buchungs-Inbox mit LLM-Vorschlägen für Lieferant, Positionen und Kostenarten."
 						)}
 					</div>
 				</div>
@@ -1502,7 +1438,6 @@ hausverwaltung.buchen_cockpit.mount = ($container) => {
 		if (action === "eingang") hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog();
 		else if (action === "ausgang") hausverwaltung.buchen_cockpit.open_mieterrechnung_dialog();
 		else if (action === "abschlag") frappe.new_doc("Zahlungsplan");
-		else if (action === "extract") hausverwaltung.buchen_cockpit.open_extract_dialog();
 		else if (action === "bulk") hausverwaltung.buchen_cockpit.open_bulk_upload_dialog();
 	});
 
