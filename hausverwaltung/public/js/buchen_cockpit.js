@@ -181,6 +181,165 @@ const hv_apply_row_defaults = (dialog, fieldname, defaults) => {
 	});
 };
 
+// Lädt eine Eingangsrechnung Vorlage und füllt damit den Cockpit-Dialog.
+// Wenn der Dialog schon Daten enthält, wird vorher per frappe.confirm rückgefragt.
+const hv_apply_vorlage = (dialog, vorlage_name) => {
+	if (!vorlage_name) return;
+
+	const apply = () => {
+		frappe.call({
+			method: `${HV_COCKPIT_API}.load_vorlage_for_cockpit`,
+			args: { name: vorlage_name },
+			callback: (r) => {
+				const data = r && r.message;
+				if (!data) return;
+
+				// Suppress-Flag verhindert, dass apply_eingabemodus aus set_value-
+				// onchange-Microtasks die kostenart-Werte unserer Zeilen löscht.
+				dialog._hv_suppress_kostenart_clear = true;
+
+				dialog.set_value("lieferant", data.lieferant || "");
+				dialog.set_value("remarks", data.remarks || "");
+				dialog.set_value("eingabemodus", data.eingabemodus || "Kostenart");
+				apply_eingabemodus(dialog);
+
+				const grid_field = dialog.fields_dict.positionen;
+				const fresh_rows = () =>
+					(data.positionen || []).map((row) => ({ ...row }));
+
+				if (grid_field && grid_field.grid) {
+					grid_field.df.data = fresh_rows();
+					grid_field.grid.refresh();
+				}
+
+				// "Aus Vorlage" zurücksetzen, damit ein erneutes Auswählen derselben
+				// Vorlage später wieder als onchange registriert wird.
+				if (dialog.fields_dict.aus_vorlage) {
+					dialog.fields_dict.aus_vorlage.set_value("");
+				}
+
+				// Belt-and-suspenders gegen jede async-Race, die wir nicht antizipiert
+				// haben (Frappe set_value-Promises, Grid-Render-Hooks, etc.):
+				// Nach 50ms / 250ms erneut prüfen, ob kostenart noch passt — wenn nicht,
+				// re-apply. Im Erfolgsfall sind die Re-Sets No-ops.
+				const _reapply_if_lost = () => {
+					if (!grid_field || !grid_field.grid) return;
+					const current = (grid_field.grid.df.data || []).filter((r) => r);
+					const expected = data.positionen || [];
+					if (current.length !== expected.length) return;
+					let changed = false;
+					expected.forEach((exp, i) => {
+						const row = current[i];
+						if (!row) return;
+						if (exp.kostenart && row.kostenart !== exp.kostenart) {
+							row.kostenart = exp.kostenart;
+							changed = true;
+						}
+						if (exp.betriebskostenart && row.betriebskostenart !== exp.betriebskostenart) {
+							row.betriebskostenart = exp.betriebskostenart;
+							changed = true;
+						}
+						if (exp.kostenart_nicht_ul && row.kostenart_nicht_ul !== exp.kostenart_nicht_ul) {
+							row.kostenart_nicht_ul = exp.kostenart_nicht_ul;
+							changed = true;
+						}
+					});
+					if (changed) grid_field.grid.refresh();
+				};
+				setTimeout(_reapply_if_lost, 50);
+				setTimeout(_reapply_if_lost, 250);
+
+				// Flag erst NACH allen Microtasks zurücksetzen.
+				setTimeout(() => {
+					delete dialog._hv_suppress_kostenart_clear;
+				}, 500);
+
+				frappe.show_alert({
+					message: __('Vorlage „{0}" übernommen.', [data.titel || vorlage_name]),
+					indicator: "green",
+				});
+			},
+		});
+	};
+
+	const has_existing_data = (() => {
+		try {
+			const v = dialog.get_values(true) || {};
+			if (v.lieferant || (v.remarks || "").trim()) return true;
+			const rows = (dialog.fields_dict.positionen && dialog.fields_dict.positionen.grid &&
+				(dialog.fields_dict.positionen.grid.data || dialog.fields_dict.positionen.df.data)) || [];
+			return rows.some((r) => r && (r.kostenart || r.betrag || r.kostenstelle));
+		} catch (e) {
+			return false;
+		}
+	})();
+
+	if (has_existing_data) {
+		frappe.confirm(
+			__("Bestehende Eingaben werden überschrieben. Vorlage trotzdem anwenden?"),
+			apply,
+			() => {
+				if (dialog.fields_dict.aus_vorlage) {
+					dialog.fields_dict.aus_vorlage.set_value("");
+				}
+			}
+		);
+	} else {
+		apply();
+	}
+};
+
+// Öffnet einen Sub-Dialog, der den aktuellen Cockpit-Stand als Eingangsrechnung Vorlage speichert.
+const hv_save_as_vorlage = (parent_dialog) => {
+	const values = parent_dialog.get_values(true) || {};
+	if (!values.lieferant) {
+		frappe.msgprint(__("Bitte zuerst einen Lieferanten auswählen."));
+		return;
+	}
+	const positionen = (parent_dialog.fields_dict.positionen &&
+		(parent_dialog.fields_dict.positionen.grid.data ||
+			parent_dialog.fields_dict.positionen.df.data)) || [];
+	if (!positionen.length) {
+		frappe.msgprint(__("Bitte zuerst mindestens eine Position erfassen."));
+		return;
+	}
+
+	const sub_dialog = new frappe.ui.Dialog({
+		title: __("Als Vorlage speichern"),
+		fields: [
+			{
+				fieldtype: "Data",
+				fieldname: "titel",
+				label: __("Titel"),
+				reqd: 1,
+				description: __("Eindeutiger Name der Vorlage — wird beim späteren Auswählen angezeigt."),
+			},
+		],
+		primary_action_label: __("Speichern"),
+		primary_action(sub_values) {
+			frappe.call({
+				method: `${HV_COCKPIT_API}.save_vorlage_from_cockpit`,
+				args: {
+					titel: sub_values.titel,
+					lieferant: values.lieferant,
+					eingabemodus: values.eingabemodus || "Kostenart",
+					remarks: values.remarks || "",
+					positionen: JSON.stringify(positionen),
+				},
+				callback: (r) => {
+					if (!r || !r.message) return;
+					sub_dialog.hide();
+					frappe.show_alert({
+						message: __('Vorlage „{0}" gespeichert.', [r.message.titel]),
+						indicator: "green",
+					});
+				},
+			});
+		},
+	});
+	sub_dialog.show();
+};
+
 // ---------------------------------------------------------------------------
 // Dialog: Eingangsrechnung (Purchase Invoice)
 // ---------------------------------------------------------------------------
@@ -193,6 +352,19 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 	const _default_wertstellungsdatum = opts.wertstellungsdatum || "";
 
 	const fields = [
+		{
+			fieldtype: "Link",
+			fieldname: "aus_vorlage",
+			label: __("Aus Vorlage übernehmen"),
+			options: "Eingangsrechnung Vorlage",
+			get_query: () => ({ filters: { disabled: 0 } }),
+			description: __("Optional — füllt Lieferant, Kostenarten und Anmerkungen aus einer gespeicherten Vorlage. Beträge anschließend pro Position anpassen."),
+			onchange() {
+				const value = dialog.get_value("aus_vorlage");
+				if (value) hv_apply_vorlage(dialog, value);
+			},
+		},
+		{ fieldtype: "Section Break" },
 		{
 			fieldtype: "Link",
 			fieldname: "lieferant",
@@ -415,6 +587,12 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		"btn-secondary"
 	);
 
+	dialog.add_custom_action(
+		__("Als Vorlage speichern"),
+		() => hv_save_as_vorlage(dialog),
+		"btn-secondary"
+	);
+
 	return dialog;
 };
 
@@ -583,9 +761,15 @@ function open_supplier_quick_create(parent_dialog, prefill) {
 	qc.show();
 }
 
-function apply_eingabemodus(dialog) {
+function apply_eingabemodus(dialog, opts = {}) {
 	const grid = dialog.fields_dict.positionen && dialog.fields_dict.positionen.grid;
 	if (!grid) return;
+	// `clear_existing` lässt sich per opts überschreiben oder per
+	// `dialog._hv_suppress_kostenart_clear` Flag (überlebt async onchange-Microtasks).
+	let clear_existing = opts.clear_existing !== false;
+	if (dialog._hv_suppress_kostenart_clear) {
+		clear_existing = false;
+	}
 	const mode = dialog.get_value("eingabemodus") || "Kostenart";
 	const is_konto = mode === "Konto";
 	grid.update_docfield_property(
@@ -600,11 +784,12 @@ function apply_eingabemodus(dialog) {
 			? __("Konto direkt wählen — Kostenart wird automatisch zugeordnet.")
 			: __("Kostenart-Stammdatum wählen.")
 	);
-	// Bereits eingetragene Werte sind nach Mode-Wechsel nicht mehr passend → Spalte leeren.
-	const data = (grid.df && grid.df.data) || [];
-	data.forEach((row) => {
-		if (row) row.kostenart = "";
-	});
+	if (clear_existing) {
+		const data = (grid.df && grid.df.data) || [];
+		data.forEach((row) => {
+			if (row) row.kostenart = "";
+		});
+	}
 	grid.refresh();
 }
 

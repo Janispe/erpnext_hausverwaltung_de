@@ -1392,6 +1392,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
             {"label": "Buchungs-Cockpit", "link_type": "Page", "link_to": "buchen_cockpit"},
             # Eingangsrechnung = Lieferantenrechnung (Purchase Invoice)
             {"label": "Eingangsrechnung", "link_type": "DocType", "link_to": "Purchase Invoice"},
+            {"label": "Eingangsrechnung Vorlage", "link_type": "DocType", "link_to": "Eingangsrechnung Vorlage"},
             # Ausgangsrechnung = Mieter-/Kundenrechnung (Sales Invoice)
             {"label": "Ausgangsrechnung", "link_type": "DocType", "link_to": "Sales Invoice"},
             {"label": "Abschlagsplan/Zahlungsplan", "link_type": "DocType", "link_to": "Zahlungsplan"},

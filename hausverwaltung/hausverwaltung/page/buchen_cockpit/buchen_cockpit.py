@@ -624,6 +624,140 @@ def _attach_source_file(pi, file_url: str | None) -> None:
 
 
 @frappe.whitelist()
+def save_vorlage_from_cockpit(**kwargs) -> dict:
+    """Persistiert den aktuellen Cockpit-Dialog-State als Eingangsrechnung Vorlage.
+
+    Erwartete kwargs (vom Cockpit-Dialog):
+        titel: Pflicht — eindeutiger Vorlagentitel
+        lieferant: Supplier (Pflicht)
+        eingabemodus: "Kostenart" | "Konto"
+        remarks: Standard-Anmerkungen (optional)
+        positionen: Liste mit Dialog-Row-Dicts (kostenart, typ, kostenstelle, konto, wohnung, betrag)
+    """
+    titel = (kwargs.get("titel") or "").strip()
+    if not titel:
+        frappe.throw("Bitte einen Titel für die Vorlage angeben.")
+
+    lieferant = kwargs.get("lieferant")
+    if not lieferant:
+        frappe.throw("Bitte einen Lieferanten auswählen.")
+
+    rows = _parse_rows(kwargs.get("positionen"))
+    if not rows:
+        frappe.throw("Es sind keine Positionen erfasst.")
+
+    doc = frappe.new_doc("Eingangsrechnung Vorlage")
+    doc.update({
+        "titel": titel,
+        "lieferant": lieferant,
+        "eingabemodus": kwargs.get("eingabemodus") or "Kostenart",
+        "standard_remarks": (kwargs.get("remarks") or "").strip() or None,
+    })
+
+    for idx, row in enumerate(rows, start=1):
+        typ = "nicht umlegbar" if row.get("typ") == "nicht umlegbar" else "umlegbar"
+        bk_name: str | None = None
+        nul_name: str | None = None
+
+        raw_kostenart = (row.get("kostenart") or "").strip()
+        if raw_kostenart:
+            info = _resolve_kostenart_name(raw_kostenart)
+            if info:
+                dt, name = info
+                if dt == "Betriebskostenart":
+                    bk_name = name
+                else:
+                    nul_name = name
+            else:
+                frappe.throw(
+                    f"Position {idx}: Kostenart '{raw_kostenart}' konnte nicht aufgelöst werden."
+                )
+        else:
+            # Legacy-Picker (verstecktes Link-Feld) als Fallback
+            bk_name = row.get("betriebskostenart") or None
+            nul_name = row.get("kostenart_nicht_ul") or None
+
+        if typ == "umlegbar" and not bk_name:
+            frappe.throw(
+                f"Position {idx}: Für 'umlegbar' wird eine Betriebskostenart benötigt."
+            )
+        if typ == "nicht umlegbar" and not nul_name:
+            frappe.throw(
+                f"Position {idx}: Für 'nicht umlegbar' wird eine Kostenart (nicht umlegbar) benötigt."
+            )
+
+        # Defensive: konsistenten Zustand herstellen — die andere Seite muss leer sein,
+        # damit der validate-Hook im Parent nicht throwt.
+        if typ == "umlegbar":
+            nul_name = None
+        else:
+            bk_name = None
+
+        try:
+            betrag_default = float(row.get("betrag") or 0) or None
+        except (TypeError, ValueError):
+            betrag_default = None
+
+        doc.append("positionen", {
+            "typ": typ,
+            "betriebskostenart": bk_name,
+            "kostenart_nicht_ul": nul_name,
+            "kostenstelle": row.get("kostenstelle"),
+            "konto": row.get("konto") or None,
+            "wohnung": row.get("wohnung") or None,
+            "betrag_default": betrag_default,
+        })
+
+    doc.insert()
+    frappe.db.commit()
+    return {"name": doc.name, "titel": doc.titel}
+
+
+@frappe.whitelist()
+def load_vorlage_for_cockpit(name: str) -> dict:
+    """Liefert eine Eingangsrechnung Vorlage in Cockpit-Dialog-Form.
+
+    Konvertiert die persistierte Struktur zurück in die Felder, die der Dialog
+    (open_eingangsrechnung_dialog) erwartet — insbesondere wird der
+    `kostenart`-Autocomplete-String aus dem passenden Link-Feld rekonstruiert.
+    """
+    if not name:
+        frappe.throw("Vorlage-Name fehlt.")
+
+    doc = frappe.get_doc("Eingangsrechnung Vorlage", name)
+    if doc.get("disabled"):
+        frappe.throw(f"Vorlage '{name}' ist deaktiviert.")
+
+    positionen: list[dict] = []
+    for row in doc.get("positionen") or []:
+        typ = row.get("typ") or "umlegbar"
+        if typ == "umlegbar":
+            kostenart = row.get("betriebskostenart") or ""
+        else:
+            kostenart = row.get("kostenart_nicht_ul") or ""
+
+        positionen.append({
+            "typ": typ,
+            "kostenart": kostenart,
+            "betriebskostenart": row.get("betriebskostenart") or "",
+            "kostenart_nicht_ul": row.get("kostenart_nicht_ul") or "",
+            "kostenstelle": row.get("kostenstelle") or "",
+            "konto": row.get("konto") or "",
+            "wohnung": row.get("wohnung") or "",
+            "betrag": float(row.get("betrag_default") or 0) or None,
+        })
+
+    return {
+        "name": doc.name,
+        "titel": doc.titel,
+        "lieferant": doc.lieferant,
+        "eingabemodus": doc.eingabemodus or "Kostenart",
+        "remarks": doc.standard_remarks or "",
+        "positionen": positionen,
+    }
+
+
+@frappe.whitelist()
 def create_sales_invoice(**kwargs) -> dict:
     """Create and submit a Sales Invoice from the Buchungs-Cockpit tool.
 
