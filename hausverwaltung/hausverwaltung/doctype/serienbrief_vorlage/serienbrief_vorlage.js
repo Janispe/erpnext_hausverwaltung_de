@@ -1743,52 +1743,6 @@ const hv_bind_split_preview_to_quill = (frm) => {
 	hv_start_split_preview_polling(frm);
 };
 
-const hv_render_template_preview = (frm) => {
-	const hasBlocks = Array.isArray(frm.doc.textbausteine) && frm.doc.textbausteine.length > 0;
-	const standardText = hv_get_live_template_source(frm).trim();
-	const hasStandardText = Boolean(standardText);
-	if (!hasBlocks && !hasStandardText) {
-		frappe.msgprint({
-			message: __("Bitte fügen Sie zunächst Standardtext oder Textbausteine hinzu."),
-			title: __("Keine Inhalte"),
-			indicator: "orange",
-		});
-		return;
-	}
-
-	frappe
-		.call({
-			method: "hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.render_template_preview_pdf",
-			args: { template_doc: hv_get_live_template_doc(frm) },
-			freeze: true,
-			freeze_message: __("PDF wird erzeugt …"),
-		})
-		.then((r) => {
-			const pdfBase64 = r.message?.pdf_base64 || r.message?.pdf || r.message;
-			if (!pdfBase64) {
-				frappe.msgprint({
-					message: __("Es konnte kein PDF erzeugt werden."),
-					title: __("Keine Vorschau"),
-					indicator: "orange",
-				});
-				return;
-			}
-			const filename = r.message?.filename || "vorlage-preview.pdf";
-			const dataUrl = `data:application/pdf;base64,${pdfBase64}`;
-			const win = window.open(dataUrl, "_blank");
-			if (!win) {
-				// Fallback: Download-Link triggern, falls Popup blockiert ist
-				const link = document.createElement("a");
-				link.href = dataUrl;
-				link.download = filename;
-				link.style.display = "none";
-				document.body.appendChild(link);
-				link.click();
-				document.body.removeChild(link);
-			}
-		});
-};
-
 const hv_get_start_nodes = (frm) => {
 	const base = frm._hv_requirements_data?.haupt_verteil_objekt;
 	const links = frm._hv_requirements_data?.empfaenger_links || [];
@@ -2424,7 +2378,6 @@ refresh(frm) {
 	if (!frm.is_new()) {
 		frm.add_custom_button(__("Vorlage kopieren"), () => hv_open_copy_dialog(frm));
 	}
-	frm.add_custom_button(__("Vorlage anzeigen (ohne Felder)"), () => hv_render_template_preview(frm));
 	frm.add_custom_button(__("Split-Vorschau"), () => hv_toggle_split_preview(frm));
 	hv_set_split_preview_enabled(frm, true, { immediate: true });
 },
