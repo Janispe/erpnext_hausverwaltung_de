@@ -35,7 +35,7 @@ frappe.query_reports["Noch offene Rechnungen und Forderungen"] = {
 			fieldname: "bis_faelligkeit",
 			label: __("Bis Fälligkeit"),
 			fieldtype: "Date",
-			description: __("Leer lassen → Stichtag heute (zeigt was jetzt noch offen ist)."),
+			description: __("Leer lassen → keine obere Schranke. Stichtag ist immer heute."),
 		},
 		{
 			fieldname: "party",

@@ -34,10 +34,12 @@ def _get_rows_for_mode(filters, mode):
 	if not _filters_apply_to_mode(filters, account_type):
 		return []
 
-	# Stichtag für Outstanding-Berechnung: wenn ``bis_faelligkeit`` leer ist,
-	# nutzen wir heute → zeigt was *jetzt* noch offen ist (ohne due-date-Filter
-	# bekommt der User damit alle historisch noch ungeklärten Rechnungen).
-	report_date = filters.bis_faelligkeit or getdate(nowdate())
+	# Stichtag für Outstanding-Berechnung ist immer heute. ``bis_faelligkeit``
+	# ist ein Filter aufs due_date (siehe ``_filter_and_map_rows``) und darf
+	# NICHT als Stichtag verwendet werden — sonst ignoriert ERPNext alle
+	# GL-Entries nach ``bis_faelligkeit`` und Rechnungen aus späteren Perioden
+	# fehlen komplett im Report.
+	report_date = getdate(nowdate())
 	erpnext_filters = frappe._dict(
 		{
 			"company": filters.company,
