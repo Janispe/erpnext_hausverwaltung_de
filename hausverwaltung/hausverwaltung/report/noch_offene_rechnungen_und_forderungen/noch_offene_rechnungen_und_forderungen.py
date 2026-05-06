@@ -40,6 +40,17 @@ def _get_rows_for_mode(filters, mode):
 	# GL-Entries nach ``bis_faelligkeit`` und Rechnungen aus späteren Perioden
 	# fehlen komplett im Report.
 	report_date = getdate(nowdate())
+
+	# ``cost_center`` bewusst NICHT durchreichen: ERPNext filtert auf
+	# ``gl_entry.cost_center``. Bei historisch importierten Sales/Purchase
+	# Invoices war der Header-cost_center leer und damit auch die zugehörige
+	# Receivable-/Payable-GL-Zeile — diese Forderungen wären für den Filter
+	# unsichtbar. Auf Item-Ebene ist die Kostenstelle dagegen flächendeckend
+	# gepflegt; wir matchen sie selbst in ``_filter_and_map_rows``. Eine
+	# einmalige Backfill-Patch (``patches/post_model_sync/
+	# backfill_invoice_cost_center.py``) hat die Bestandsdaten bereits
+	# nachgezogen — der Item-Match bleibt aber als Defense-in-Depth für
+	# künftige Imports und für theoretische Multi-Kostenstellen-Rechnungen.
 	erpnext_filters = frappe._dict(
 		{
 			"company": filters.company,
@@ -50,7 +61,6 @@ def _get_rows_for_mode(filters, mode):
 			"party_type": party_type,
 			"party": filters.get("party"),
 			"party_account": filters.get("party_account"),
-			"cost_center": filters.get("cost_center"),
 		}
 	)
 
@@ -165,6 +175,8 @@ def _filter_and_map_rows(source_rows, filters, mode):
 	show_settled = bool(filters.get("show_settled"))
 	show_written_off = bool(filters.get("show_written_off"))
 	voucher_type = filters.get("voucher_type")
+	cost_center_filter = filters.get("cost_center")
+	invoice_cc_map = _resolve_invoice_cost_centers(source_rows)
 
 	for row in source_rows or []:
 		row = frappe._dict(row)
@@ -180,6 +192,10 @@ def _filter_and_map_rows(source_rows, filters, mode):
 			continue
 
 		if voucher_type and row.get("voucher_type") != voucher_type:
+			continue
+
+		row_ccs = _row_cost_centers(row, invoice_cc_map)
+		if cost_center_filter and cost_center_filter not in row_ccs:
 			continue
 
 		outstanding = flt(row.get("outstanding"))
@@ -213,13 +229,72 @@ def _filter_and_map_rows(source_rows, filters, mode):
 				"bezahlt": row.get("paid"),
 				"offen": outstanding,
 				"alter_tage": row.get("age"),
-				"kostenstelle": row.get("cost_center"),
+				"kostenstelle": _format_cost_centers(row_ccs) or row.get("cost_center"),
 				"waehrung": row.get("currency"),
 				"can_write_off": _can_write_off_row(row, mode, outstanding, invoice_status),
 			}
 		)
 
 	return rows
+
+
+def _resolve_invoice_cost_centers(source_rows):
+	"""Sammelt Header- und Item-Kostenstellen für alle Sales/Purchase Invoice-
+	Vouchers in ``source_rows``.
+
+	Liefert ``dict[(voucher_type, voucher_no), set[str]]``. Wird genutzt, um
+	den Kostenstellen-Filter selbst auszuwerten — siehe Begründung in
+	``_get_rows_for_mode``.
+	"""
+	by_type = {"Sales Invoice": set(), "Purchase Invoice": set()}
+	for row in source_rows or []:
+		vtype = (row or {}).get("voucher_type")
+		vno = (row or {}).get("voucher_no")
+		if vtype in by_type and vno:
+			by_type[vtype].add(vno)
+
+	cc_map = {}
+	for vtype, names in by_type.items():
+		if not names:
+			continue
+		names_list = list(names)
+		for name, cc in frappe.get_all(
+			vtype,
+			filters={"name": ["in", names_list]},
+			fields=["name", "cost_center"],
+			as_list=True,
+		):
+			if cc:
+				cc_map.setdefault((vtype, name), set()).add(cc)
+		for parent, cc in frappe.get_all(
+			f"{vtype} Item",
+			filters={"parent": ["in", names_list]},
+			fields=["parent", "cost_center"],
+			as_list=True,
+		):
+			if cc:
+				cc_map.setdefault((vtype, parent), set()).add(cc)
+	return cc_map
+
+
+def _row_cost_centers(row, invoice_cc_map):
+	vtype = row.get("voucher_type")
+	if vtype in ("Sales Invoice", "Purchase Invoice"):
+		ccs = set(invoice_cc_map.get((vtype, row.get("voucher_no")), ()))
+		if row.get("cost_center"):
+			ccs.add(row.get("cost_center"))
+		return ccs
+	if row.get("cost_center"):
+		return {row.get("cost_center")}
+	return set()
+
+
+def _format_cost_centers(cost_centers):
+	if not cost_centers:
+		return None
+	if len(cost_centers) == 1:
+		return next(iter(cost_centers))
+	return ", ".join(sorted(cost_centers))
 
 
 def _get_payment_direction(mode, outstanding):
