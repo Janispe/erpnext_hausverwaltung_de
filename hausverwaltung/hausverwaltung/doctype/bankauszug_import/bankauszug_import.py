@@ -203,15 +203,14 @@ def _get_or_create_party_bank_account(*, party_type: str, party: str, iban: Opti
                 bank_doc.is_company_account = 0
             bank_doc.save(ignore_permissions=True)
             return bank_doc.name, False
-        if bank.get("party") and bank.get("party_type") and (
-            bank.get("party_type") != party_type or bank.get("party") != party
-        ):
-            frappe.throw(
-                f"IBAN {iban_norm} ist bereits {bank.get('party_type')} {bank.get('party')} zugeordnet "
-                f"({bank.get('name')})."
-            )
         if bank.get("party_type") == party_type and bank.get("party") == party:
             return bank.get("name"), False
+    # Wenn die IBAN bereits einer ANDEREN Party (Customer ↔ Supplier oder
+    # Customer ↔ Customer) zugeordnet ist, legen wir bewusst einen ZWEITEN
+    # Bank Account für die neue Party an. Dadurch sieht ``_get_party_by_iban``
+    # mehrere Treffer und gibt None zurück → künftige Imports landen ohne
+    # Auto-Zuordnung in der manuellen Phase, der User entscheidet pro Zeile.
+    # Use-Case: gleiche IBAN bezahlt mal als Lieferant, mal als Mieter.
 
     doc = frappe.get_doc(
         {
