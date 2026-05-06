@@ -1524,18 +1524,24 @@ def create_standalone_payment_for_row(
 def create_journal_entry_for_row(
     docname: str,
     row_name: str,
-    account: str,
+    account: Optional[str] = None,
     cost_center: Optional[str] = None,
     remarks: Optional[str] = None,
+    splits: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Journal Entry: Bank-Konto vs. übergebenes GL-Konto.
+    """Journal Entry: Bank-Konto vs. ein oder mehrere Gegenkonten.
 
-    Eingang (deposit > 0): Bank Soll, account Haben.
-    Ausgang (withdrawal > 0): Bank Haben, account Soll.
+    Eingang: Bank Soll, Gegenkonten Haben.
+    Ausgang: Bank Haben, Gegenkonten Soll.
 
-    Use-Case: Bankgebühren, Eigentümer-Entnahmen, manuelle Korrekturen ohne
-    Party-Bezug.
+    ``splits`` (JSON-Array oder Liste): ``[{account, cost_center?, amount}, ...]``.
+    Summe muss dem BT-Betrag entsprechen. Wenn ``splits`` leer ist, wird der
+    Single-Account-Modus mit ``account`` + ``cost_center`` genutzt.
+
+    Use-Case: Bankgebühren, Eigentümer-Entnahmen, manuelle Korrekturen — und
+    Splits wie „Hauptbetrag + Bankgebühr in einem Vorgang".
     """
+    import json as _json
     from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
         create_journal_entry_for_bt,
         reconcile_voucher_with_bt,
@@ -1543,10 +1549,23 @@ def create_journal_entry_for_row(
 
     doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
 
+    parsed_splits = None
+    if splits:
+        if isinstance(splits, str):
+            try:
+                parsed_splits = _json.loads(splits)
+            except Exception:
+                frappe.throw("Ungültiges Splits-Format (kein gültiges JSON).")
+        else:
+            parsed_splits = splits
+        if not isinstance(parsed_splits, list) or not parsed_splits:
+            frappe.throw("Splits muss eine nicht-leere Liste sein.")
+
     je = create_journal_entry_for_bt(
         bt=bt,
         account=account,
         cost_center=cost_center,
+        splits=parsed_splits,
         remarks=remarks,
     )
     target_amount = flt(row.betrag)
@@ -1555,9 +1574,13 @@ def create_journal_entry_for_row(
     row.db_set("journal_entry", je.name)
     _set_row_payment_document(row, "Journal Entry", je.name)
     row.db_set("row_status", "success")
-    row.db_set(
-        "auto_match_message",
-        f"Buchungssatz: {target_amount:.2f} € gegen {account}",
-    )
+    if parsed_splits:
+        accs = ", ".join((s.get("account") or "") for s in parsed_splits)
+        message = (
+            f"Buchungssatz: {target_amount:.2f} € auf {len(parsed_splits)} Konten ({accs})"
+        )
+    else:
+        message = f"Buchungssatz: {target_amount:.2f} € gegen {account}"
+    row.db_set("auto_match_message", message)
     _recompute_doc_status(docname)
     return {"ok": True, "journal_entry": je.name}

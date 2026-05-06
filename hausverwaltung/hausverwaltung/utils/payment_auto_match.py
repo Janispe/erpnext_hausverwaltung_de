@@ -575,11 +575,15 @@ def create_standalone_payment_entry(*, bt, party_type=None, party=None, remarks=
 	return pe
 
 
-def create_journal_entry_for_bt(*, bt, account, cost_center=None, remarks=None):
-	"""Buchungssatz: Bank-Konto vs. übergebenes GL-Konto.
+def create_journal_entry_for_bt(*, bt, account=None, cost_center=None, splits=None, remarks=None):
+	"""Buchungssatz: Bank-Konto vs. ein oder mehrere Gegenkonten.
 
-	Eingang (deposit > 0): Bank Soll, account Haben.
-	Ausgang (withdrawal > 0): Bank Haben, account Soll.
+	Eingang (deposit > 0): Bank Soll, Gegenkonten Haben.
+	Ausgang (withdrawal > 0): Bank Haben, Gegenkonten Soll.
+
+	``splits``: Liste von ``{account, cost_center?, amount}``. Summe muss dem
+	Bank-Betrag entsprechen. Wenn ``splits`` None ist, fällt der Aufruf auf den
+	Single-Account-Modus zurück (``account`` + ``cost_center`` mit Vollbetrag).
 	"""
 	deposit = flt(bt.deposit)
 	withdrawal = flt(bt.withdrawal)
@@ -594,16 +598,38 @@ def create_journal_entry_for_bt(*, bt, account, cost_center=None, remarks=None):
 			"Bank Transaction hat keinen eindeutigen Betrag (deposit + withdrawal nicht klar)."
 		)
 
-	if not account:
-		frappe.throw("Bitte ein Gegenkonto angeben.")
-	if not frappe.db.exists("Account", account):
-		frappe.throw(f"Konto '{account}' existiert nicht.")
-
 	company, bank_account_doc = _resolve_company_and_bank_account(bt)
+	default_cc = _resolve_expected_cost_center_for_bt(bt)
 
-	# Cost Center — wenn der Aufrufer keine angegeben hat, automatisch aus der
-	# Immobilie der Bank-Transaction ableiten.
-	resolved_cc = cost_center or _resolve_expected_cost_center_for_bt(bt)
+	if splits:
+		normalized = []
+		for s in splits:
+			acc = (s.get("account") or "").strip()
+			if not acc:
+				frappe.throw("Split-Zeile ohne Konto.")
+			if not frappe.db.exists("Account", acc):
+				frappe.throw(f"Konto '{acc}' existiert nicht.")
+			amt = flt(s.get("amount"))
+			if amt <= 0:
+				frappe.throw(f"Split für {acc}: Betrag muss > 0 sein.")
+			cc = (s.get("cost_center") or "").strip() or default_cc
+			normalized.append({"account": acc, "cost_center": cc, "amount": amt})
+		total_split = sum(s["amount"] for s in normalized)
+		if abs(total_split - amount) > 0.01:
+			frappe.throw(
+				f"Split-Summe ({total_split:.2f} €) stimmt nicht mit Bank-Betrag "
+				f"({amount:.2f} €) überein."
+			)
+	else:
+		if not account:
+			frappe.throw("Bitte ein Gegenkonto angeben.")
+		if not frappe.db.exists("Account", account):
+			frappe.throw(f"Konto '{account}' existiert nicht.")
+		normalized = [{
+			"account": account,
+			"cost_center": cost_center or default_cc,
+			"amount": amount,
+		}]
 
 	je = frappe.new_doc("Journal Entry")
 	je.update(
@@ -617,25 +643,28 @@ def create_journal_entry_for_bt(*, bt, account, cost_center=None, remarks=None):
 		}
 	)
 
-	# Bank-Seite
+	# Bank-Seite (Gesamtbetrag in einer Zeile)
 	bank_row = {
 		"account": bank_account_doc.account,
-		"cost_center": resolved_cc,
-	}
-	# Gegen-Seite
-	other_row = {
-		"account": account,
-		"cost_center": resolved_cc,
+		"cost_center": default_cc,
 	}
 	if direction == "in":
 		bank_row["debit_in_account_currency"] = amount
-		other_row["credit_in_account_currency"] = amount
 	else:
 		bank_row["credit_in_account_currency"] = amount
-		other_row["debit_in_account_currency"] = amount
-
 	je.append("accounts", bank_row)
-	je.append("accounts", other_row)
+
+	# Gegen-Seite (eine Zeile pro Split)
+	for s in normalized:
+		other_row = {
+			"account": s["account"],
+			"cost_center": s["cost_center"],
+		}
+		if direction == "in":
+			other_row["credit_in_account_currency"] = s["amount"]
+		else:
+			other_row["debit_in_account_currency"] = s["amount"]
+		je.append("accounts", other_row)
 
 	je.insert(ignore_permissions=True)
 	je.submit()

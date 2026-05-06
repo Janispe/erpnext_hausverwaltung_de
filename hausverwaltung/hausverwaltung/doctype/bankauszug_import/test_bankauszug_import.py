@@ -644,6 +644,56 @@ class TestBankauszugImport(FrappeTestCase):
         create_je.assert_called_once()
         reconcile.assert_called_once_with(bt, "Journal Entry", "JE-1", 12.34)
 
+    def test_create_journal_entry_for_row_with_splits_passes_list_to_backend(self):
+        import json as _json
+
+        row = self._FakeRow(name="ROW-JE-SPLIT", iban="DE16")
+        row.bank_transaction = "BT-JE-SPLIT"
+        row.betrag = 305.00
+        row.journal_entry = None
+        row.payment_entry = None
+        row.db_updates = {}
+
+        def _db_set(fieldname, value):
+            row.db_updates[fieldname] = value
+            setattr(row, fieldname, value)
+
+        row.db_set = _db_set
+        bt = type("BT", (), {"name": "BT-JE-SPLIT"})()
+        je = type("JE", (), {"name": "JE-SPLIT-1"})()
+
+        splits_payload = _json.dumps([
+            {"account": "4400 - Mieteinnahmen - HP", "cost_center": "Haus A - HP", "amount": 300.0},
+            {"account": "4490 - Saeumniszuschlag - HP", "cost_center": "Haus A - HP", "amount": 5.0},
+        ])
+
+        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(object(), row, bt)), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.create_journal_entry_for_bt",
+                 return_value=je,
+             ) as create_je, \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_voucher_with_bt",
+                 return_value=None,
+             ) as reconcile:
+            res = bi.create_journal_entry_for_row(
+                "IMP-JE-SPLIT",
+                "ROW-JE-SPLIT",
+                splits=splits_payload,
+            )
+
+        self.assertEqual(res["journal_entry"], "JE-SPLIT-1")
+        self.assertEqual(row.journal_entry, "JE-SPLIT-1")
+        self.assertEqual(row.row_status, "success")
+        self.assertIn("Buchungssatz", row.auto_match_message)
+        self.assertIn("2 Konten", row.auto_match_message)
+        # Backend muss die geparste Liste bekommen, nicht den JSON-String
+        kwargs = create_je.call_args.kwargs
+        self.assertIsInstance(kwargs.get("splits"), list)
+        self.assertEqual(len(kwargs["splits"]), 2)
+        self.assertEqual(kwargs["splits"][0]["amount"], 300.0)
+        reconcile.assert_called_once_with(bt, "Journal Entry", "JE-SPLIT-1", 305.0)
+
     def test_block_message_contains_row_details(self):
         row = self._FakeRow(name="ROW-M1", iban="", verwendungszweck="Test")
         doc = self._FakeDoc("IMP-M", [row])

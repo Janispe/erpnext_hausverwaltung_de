@@ -1178,33 +1178,41 @@ function _openStandalonePaymentDialog(frm, row) {
 function _openJournalEntryDialog(frm, row) {
   const fmt = (v) => frappe.format(v, { fieldtype: 'Currency' });
   const isEingang = row.richtung === 'Eingang';
+  const target = parseFloat(row.betrag) || 0;
+
+  const html = `
+    <div style="margin-bottom:10px; font-size:12px; color:#666;">
+      ${__('Erstellt einen Journal Entry')} <strong>${fmt(target)}</strong>
+      ${isEingang ? __('(Bank Soll, Gegenkonten Haben)') : __('(Bank Haben, Gegenkonten Soll)')}.
+      ${__('Mehrere Zeilen erlaubt — z.B. Hauptbetrag + Bankgebühr in einem Vorgang.')}
+    </div>
+    <table class="table table-sm" style="margin-bottom:6px;">
+      <thead>
+        <tr>
+          <th style="width:42%;">${__('Gegenkonto')}</th>
+          <th style="width:30%;">${__('Kostenstelle')}</th>
+          <th style="width:18%; text-align:right;">${__('Betrag')}</th>
+          <th style="width:10%;"></th>
+        </tr>
+      </thead>
+      <tbody class="hv-je-rows"></tbody>
+    </table>
+    <div style="margin-bottom:10px; display:flex; gap:6px;">
+      <button type="button" class="btn btn-xs btn-default hv-je-add">+ ${__('Zeile')}</button>
+      <button type="button" class="btn btn-xs btn-default hv-je-fill-rest">${__('Restbetrag in letzter Zeile')}</button>
+    </div>
+    <div class="hv-je-summary" style="margin-top:8px; padding:10px 12px; background:#fff7ed; border:1px solid #fed7aa; border-radius:4px; font-size:13px; line-height:1.7;">
+      <div><strong>${__('Summe Splits')}:</strong> <span class="hv-sum"></span></div>
+      <div><strong>${__('Bank-Betrag')}:</strong> ${fmt(target)}</div>
+      <div><strong>${__('Differenz')}:</strong> <span class="hv-diff"></span> <span class="hv-diff-note" style="margin-left:8px; font-style:italic;"></span></div>
+    </div>
+  `;
 
   const d = new frappe.ui.Dialog({
     title: __('Buchungssatz erstellen — Zeile {0}', [row.idx]),
+    size: 'large',
     fields: [
-      {
-        fieldtype: 'HTML',
-        fieldname: 'header',
-        options: `<div style="margin-bottom:10px; font-size:12px; color:#666;">
-          ${__('Erstellt einen Journal Entry')} <strong>${fmt(row.betrag)}</strong> ${isEingang ? __('(Bank Soll, Konto Haben)') : __('(Bank Haben, Konto Soll)')}.
-          ${__('Für Bankgebühren, Eigentümer-Entnahmen, manuelle Korrekturen.')}
-        </div>`,
-      },
-      {
-        fieldtype: 'Link',
-        fieldname: 'account',
-        label: __('Gegenkonto'),
-        options: 'Account',
-        reqd: 1,
-        description: __('z.B. Geldverkehrskosten, Privatentnahmen, sonstiger Aufwand/Ertrag.'),
-      },
-      {
-        fieldtype: 'Link',
-        fieldname: 'cost_center',
-        label: __('Kostenstelle'),
-        options: 'Cost Center',
-        description: __('Standardmäßig die Kostenstelle der Immobilie zum Bankkonto. Überschreibbar.'),
-      },
+      { fieldtype: 'HTML', fieldname: 'body', options: html },
       {
         fieldtype: 'Small Text',
         fieldname: 'remarks',
@@ -1214,14 +1222,18 @@ function _openJournalEntryDialog(frm, row) {
     ],
     primary_action_label: __('Buchen'),
     primary_action(values) {
+      const splits = collectSplits();
+      if (!splits.ok) {
+        frappe.msgprint(splits.error);
+        return;
+      }
       d.disable_primary_action();
       frappe.call({
         method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.create_journal_entry_for_row',
         args: {
           docname: frm.doc.name,
           row_name: row.name,
-          account: values.account,
-          cost_center: values.cost_center || '',
+          splits: JSON.stringify(splits.list),
           remarks: values.remarks || '',
         },
         freeze: true,
@@ -1239,7 +1251,132 @@ function _openJournalEntryDialog(frm, row) {
       });
     },
   });
+
   d.show();
+
+  const $rows = d.$wrapper.find('.hv-je-rows');
+  const splitControls = []; // { tr, accountControl, costCenterControl, amountInput }
+  let defaultCostCenter = '';
+
+  const recalc = () => {
+    let sum = 0;
+    splitControls.forEach((sc) => {
+      sum += parseFloat(sc.amountInput.val()) || 0;
+    });
+    const diff = target - sum;
+    d.$wrapper.find('.hv-sum').html(fmt(sum));
+    d.$wrapper.find('.hv-diff').html(fmt(diff));
+    const note = d.$wrapper.find('.hv-diff-note');
+    const primary = d.$wrapper.find('.modal-footer .btn-primary');
+    if (Math.abs(diff) < 0.01) {
+      note.css('color', '#15803d').text(__('exakt'));
+      primary.prop('disabled', false);
+    } else if (diff > 0) {
+      note.css('color', '#92400e').text(__('Restbetrag offen'));
+      primary.prop('disabled', true);
+    } else {
+      note.css('color', '#dc3545').text(__('Summe übersteigt Bank-Betrag'));
+      primary.prop('disabled', true);
+    }
+  };
+
+  const collectSplits = () => {
+    const list = [];
+    for (const sc of splitControls) {
+      const acc = (sc.accountControl.get_value && sc.accountControl.get_value()) || '';
+      const amt = parseFloat(sc.amountInput.val()) || 0;
+      if (!acc && amt <= 0) continue; // Leere Zeile überspringen
+      if (!acc) {
+        return { ok: false, error: __('Zeile ohne Konto.') };
+      }
+      if (amt <= 0) {
+        return { ok: false, error: __('Zeile {0}: Betrag muss > 0 sein.', [acc]) };
+      }
+      const cc = (sc.costCenterControl.get_value && sc.costCenterControl.get_value()) || '';
+      list.push({ account: acc, cost_center: cc || null, amount: amt });
+    }
+    if (!list.length) {
+      return { ok: false, error: __('Bitte mindestens eine Zeile mit Konto und Betrag erfassen.') };
+    }
+    const sum = list.reduce((s, x) => s + x.amount, 0);
+    if (Math.abs(sum - target) > 0.01) {
+      return {
+        ok: false,
+        error: __('Summe ({0}) stimmt nicht mit Bank-Betrag ({1}) überein.', [fmt(sum), fmt(target)]),
+      };
+    }
+    return { ok: true, list };
+  };
+
+  const addSplitRow = ({ account = '', cost_center = '', amount = '' } = {}) => {
+    const tr = $(`
+      <tr>
+        <td class="hv-je-account-cell"></td>
+        <td class="hv-je-cc-cell"></td>
+        <td><input type="number" step="0.01" min="0" class="form-control input-sm hv-je-amount" style="text-align:right;"></td>
+        <td style="text-align:right;"><button type="button" class="btn btn-xs btn-default hv-je-remove" title="${__('Zeile entfernen')}">&times;</button></td>
+      </tr>
+    `);
+    $rows.append(tr);
+
+    const accountControl = frappe.ui.form.make_control({
+      df: { fieldtype: 'Link', options: 'Account', placeholder: __('Konto') },
+      parent: tr.find('.hv-je-account-cell').get(0),
+      render_input: true,
+    });
+    accountControl.refresh_input && accountControl.refresh_input();
+    if (account) accountControl.set_value(account);
+
+    const costCenterControl = frappe.ui.form.make_control({
+      df: { fieldtype: 'Link', options: 'Cost Center', placeholder: __('Kostenstelle') },
+      parent: tr.find('.hv-je-cc-cell').get(0),
+      render_input: true,
+    });
+    costCenterControl.refresh_input && costCenterControl.refresh_input();
+    const initialCc = cost_center || defaultCostCenter;
+    if (initialCc) costCenterControl.set_value(initialCc);
+
+    const amountInput = tr.find('.hv-je-amount');
+    if (amount !== '' && amount !== null && amount !== undefined) amountInput.val(amount);
+
+    amountInput.on('input', recalc);
+
+    tr.find('.hv-je-remove').on('click', () => {
+      const idx = splitControls.findIndex((sc) => sc.tr.is(tr));
+      if (idx >= 0) splitControls.splice(idx, 1);
+      tr.remove();
+      if (!splitControls.length) addSplitRow({ amount: target });
+      recalc();
+    });
+
+    splitControls.push({ tr, accountControl, costCenterControl, amountInput });
+    recalc();
+    return splitControls[splitControls.length - 1];
+  };
+
+  d.$wrapper.find('.hv-je-add').on('click', () => addSplitRow());
+  d.$wrapper.find('.hv-je-fill-rest').on('click', () => {
+    if (!splitControls.length) return;
+    let sum = 0;
+    for (let i = 0; i < splitControls.length - 1; i++) {
+      sum += parseFloat(splitControls[i].amountInput.val()) || 0;
+    }
+    const rest = target - sum;
+    const last = splitControls[splitControls.length - 1];
+    last.amountInput.val(rest > 0 ? rest.toFixed(2) : 0);
+    recalc();
+  });
+
+  // Erste Zeile mit Vollbetrag, Kostenstelle aus Immobilie der BT vorbelegen
+  frappe.call({
+    method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.get_expected_cost_center_for_row',
+    args: { docname: frm.doc.name, row_name: row.name },
+  }).then((r) => {
+    defaultCostCenter = (r && r.message && r.message.cost_center) || '';
+    addSplitRow({ amount: target });
+  }).catch(() => {
+    addSplitRow({ amount: target });
+  });
 }
 
 function _assignExistingParty(frm, row, partyType) {
