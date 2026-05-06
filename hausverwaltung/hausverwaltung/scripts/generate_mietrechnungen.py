@@ -256,7 +256,12 @@ def _invoice_exists(customer: str, von: date, mv_name: str, typ: str) -> bool:
     )
     if not parent_names:
         return False
-    item_code = "Miete" if typ == "Miete" else ("Betriebskosten" if typ == "Betriebskosten" else "Heizkosten")
+    item_code = {
+        "Miete": "Miete",
+        "Betriebskosten": "Betriebskosten",
+        "Heizkosten": "Heizkosten",
+        "Untermietzuschlag": "Untermietzuschlag",
+    }.get(typ, typ)
     child = frappe.get_all(
         "Sales Invoice Item",
         filters={"parent": ("in", parent_names), "item_code": item_code},
@@ -382,7 +387,7 @@ def generate_miet_und_bk_rechnungen(
     income_accounts = get_hv_income_accounts(company)
     ensure_rent_items(company=company)
 
-    created = {"Miete": 0, "Betriebskosten": 0, "Heizkosten": 0}
+    created = {"Miete": 0, "Betriebskosten": 0, "Heizkosten": 0, "Untermietzuschlag": 0}
     skipped = []
     skipped_details = []
 
@@ -639,6 +644,61 @@ def generate_miet_und_bk_rechnungen(
                         betrag=betrag_heiz,
                         posting_date=datum,
                     )
+
+            # Untermietzuschlag (nur wenn Staffel-Eintrag UND Erlöskonto konfiguriert)
+            betrag_umz = _staffelbetrag(v.name, "untermietzuschlag", datum)
+            umz_account = income_accounts.get("Untermietzuschlag")
+            if betrag_umz <= 0:
+                # Kein UMZ-Eintrag oder Betrag 0 → still & leise. Mietverträge
+                # ohne UMZ sind der Normalfall, kein Skip-Logging nötig.
+                pass
+            elif not umz_account:
+                add_skip(
+                    reason="kein_umz_konto",
+                    mietvertrag=v.name,
+                    wohnung=v.wohnung,
+                    typ="Untermietzuschlag",
+                    betrag=betrag_umz,
+                    message=(
+                        f"{v.name}: Untermietzuschlag {betrag_umz:.2f} € nicht abgerechnet — "
+                        "Erlöskonto Untermietzuschlag in Hausverwaltung Einstellungen pflegen."
+                    ),
+                )
+            elif _invoice_exists(kunde, datum, v.name, "Untermietzuschlag"):
+                add_skip(
+                    reason="rechnung_existiert",
+                    mietvertrag=v.name,
+                    wohnung=v.wohnung,
+                    typ="Untermietzuschlag",
+                    betrag=betrag_umz,
+                    message=f"{v.name}: Untermietzuschlag bereits vorhanden",
+                )
+            else:
+                remark = f"[TYPE:Untermietzuschlag] [MV:{v.name}] {monat_str}"
+                desc = f"Untermietzuschlag {monat_str} Wohnung {v.wohnung}"
+                sinv_name = _create_invoice(
+                    kunde,
+                    datum,
+                    "Untermietzuschlag",
+                    desc,
+                    betrag_umz,
+                    umz_account,
+                    kst,
+                    remark,
+                    v.wohnung,
+                    company,
+                )
+                if sinv_name:
+                    created["Untermietzuschlag"] += 1
+                    add_created(
+                        sales_invoice=sinv_name,
+                        typ="Untermietzuschlag",
+                        mietvertrag=v.name,
+                        wohnung=v.wohnung,
+                        kunde=kunde,
+                        betrag=betrag_umz,
+                        posting_date=datum,
+                    )
     except Exception:
         if durchlauf_doc:
             durchlauf_doc.status = "Failed"
@@ -652,6 +712,7 @@ def generate_miet_und_bk_rechnungen(
         durchlauf_doc.created_miete = created.get("Miete", 0)
         durchlauf_doc.created_bk = created.get("Betriebskosten", 0)
         durchlauf_doc.created_heiz = created.get("Heizkosten", 0)
+        durchlauf_doc.created_umz = created.get("Untermietzuschlag", 0)
         durchlauf_doc.created_total = sum(created.values())
         durchlauf_doc.skipped_count = len(skipped_details)
         durchlauf_doc.save(ignore_permissions=True)

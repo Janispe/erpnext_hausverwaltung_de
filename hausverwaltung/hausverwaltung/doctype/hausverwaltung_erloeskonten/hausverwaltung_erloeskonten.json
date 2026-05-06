@@ -9,7 +9,8 @@
   "company",
   "miete_income_account",
   "bk_income_account",
-  "hk_income_account"
+  "hk_income_account",
+  "umz_income_account"
  ],
  "fields": [
   {
@@ -43,6 +44,14 @@
    "label": "Erlöskonto Heizkosten",
    "options": "Account",
    "reqd": 1
+  },
+  {
+   "fieldname": "umz_income_account",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Erlöskonto Untermietzuschlag",
+   "options": "Account",
+   "description": "Optional. Wenn leer, werden bei der Sollstellung keine Untermietzuschlag-Rechnungen erstellt (Mietverträge mit UMZ-Staffelzeilen werden mit Hinweis übersprungen)."
   }
  ],
  "index_web_pages_for_search": 1,

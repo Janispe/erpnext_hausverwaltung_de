@@ -86,10 +86,11 @@ function show_mietrechnungen_dialog() {
             ? `<div class="mt-2"><a class="btn btn-xs btn-primary" onclick="frappe.set_route('Form','Mietrechnungen Durchlauf','${esc(run_id)}')">Durchlauf öffnen</a></div>`
             : "";
           frappe.msgprint(
-            __("{0} Miete, {1} BK, {2} Heiz für {3} erstellt. Übersprungen: {4}{5}{6}", [
+            __("{0} Miete, {1} BK, {2} Heiz, {3} UMZ für {4} erstellt. Übersprungen: {5}{6}{7}", [
               created.Miete || 0,
               created.Betriebskosten || 0,
               created.Heizkosten || 0,
+              created.Untermietzuschlag || 0,
               month_label,
               skipped,
               detail_html,

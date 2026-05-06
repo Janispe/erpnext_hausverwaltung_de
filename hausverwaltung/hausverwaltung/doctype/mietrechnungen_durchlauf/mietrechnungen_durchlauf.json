@@ -15,6 +15,7 @@
   "created_miete",
   "created_bk",
   "created_heiz",
+  "created_umz",
   "skipped_count",
   "created_total",
   "user",
@@ -83,6 +84,12 @@
    "fieldname": "created_heiz",
    "fieldtype": "Int",
    "label": "Created Heiz",
+   "read_only": 1
+  },
+  {
+   "fieldname": "created_umz",
+   "fieldtype": "Int",
+   "label": "Created UMZ",
    "read_only": 1
   },
   {

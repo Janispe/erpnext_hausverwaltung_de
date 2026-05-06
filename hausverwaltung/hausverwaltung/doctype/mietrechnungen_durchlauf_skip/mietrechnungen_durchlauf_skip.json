@@ -19,7 +19,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Reason",
-   "options": "kein_kunde\nbetrag_0\nrechnung_existiert",
+   "options": "kein_kunde\nbetrag_0\nrechnung_existiert\nkein_umz_konto",
    "reqd": 1
   },
   {
@@ -27,7 +27,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Typ",
-   "options": "Miete\nBetriebskosten\nHeizkosten"
+   "options": "Miete\nBetriebskosten\nHeizkosten\nUntermietzuschlag"
   },
   {
    "fieldname": "mietvertrag",

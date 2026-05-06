@@ -91,7 +91,14 @@ def get_hv_income_accounts(company: str) -> Dict[str, str]:
 		"Betriebskosten": getattr(row, "bk_income_account", None),
 		"Heizkosten": getattr(row, "hk_income_account", None),
 	}
-	missing = [k for k, v in mapping.items() if not v]
+	# Untermietzuschlag ist optional — leeres Feld bedeutet "diese Site rechnet
+	# keine UMZ ab", die Sollstellungs-Logik überspringt UMZ-Zeilen dann mit
+	# einem dezenten Skip-Hinweis statt zu werfen.
+	umz_account = getattr(row, "umz_income_account", None)
+	if umz_account:
+		mapping["Untermietzuschlag"] = umz_account
+
+	missing = [k for k, v in mapping.items() if not v and k != "Untermietzuschlag"]
 	if missing:
 		frappe.throw(
 			_(
