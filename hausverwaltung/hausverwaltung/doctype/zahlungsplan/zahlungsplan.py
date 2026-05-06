@@ -419,6 +419,80 @@ def _resolve_bank_account_for_immobilie(immobilie: str) -> str | None:
 	return None
 
 
+def link_payment_entry_to_abschlagsplan_row(
+	*,
+	supplier: str,
+	posting_date,
+	amount: float,
+	payment_entry: str,
+	tolerance_days: int = 15,
+	tolerance_amount: float = 0.01,
+) -> dict | None:
+	"""Find a matching Abschlagsplan plan row for a freshly-created advance PE.
+
+	Searches active Abschlagspläne for the given supplier (modus=Abschlagsplan,
+	status != Abgerechnet) and links the PE to the closest unlinked plan row
+	whose ``faelligkeitsdatum`` is within ``tolerance_days`` of ``posting_date``
+	and whose ``betrag`` matches ``amount`` within ``tolerance_amount``.
+
+	Returns ``{plan, row_idx, faelligkeitsdatum, betrag}`` if linked, else None.
+	No-op (returns None) when no Abschlagsplan exists, no matching row is
+	found, or multiple rows tie on date difference — the user can still link
+	manually in the plan tab.
+	"""
+	if not supplier or not payment_entry or amount is None:
+		return None
+	target_date = getdate(posting_date) if posting_date else None
+	target_amount = float(amount)
+
+	plans = frappe.get_all(
+		"Zahlungsplan",
+		filters={
+			"lieferant": supplier,
+			"modus": MODUS_ABSCHLAGSPLAN,
+			"status": ["!=", "Abgerechnet"],
+		},
+		pluck="name",
+	)
+	if not plans:
+		return None
+
+	candidates = []
+	for plan_name in plans:
+		plan = frappe.get_doc("Zahlungsplan", plan_name)
+		for row in plan.get("plan") or []:
+			if row.get("payment_entry"):
+				continue
+			row_betrag = flt(row.get("betrag"))
+			if abs(row_betrag - target_amount) > tolerance_amount:
+				continue
+			row_date = getdate(row.faelligkeitsdatum) if row.get("faelligkeitsdatum") else None
+			if target_date and row_date:
+				delta = abs((row_date - target_date).days)
+				if delta > tolerance_days:
+					continue
+			else:
+				delta = 9999
+			candidates.append((delta, plan, row))
+
+	if not candidates:
+		return None
+	candidates.sort(key=lambda c: c[0])
+	# Tie-break: wenn die zwei besten Kandidaten gleich nah dran sind, lieber
+	# nichts verlinken — der User soll bewusst entscheiden.
+	if len(candidates) > 1 and candidates[0][0] == candidates[1][0]:
+		return None
+
+	_, plan, row = candidates[0]
+	row.db_set("payment_entry", payment_entry, update_modified=False)
+	return {
+		"plan": plan.name,
+		"row_idx": row.idx,
+		"faelligkeitsdatum": str(row.faelligkeitsdatum) if row.get("faelligkeitsdatum") else None,
+		"betrag": flt(row.get("betrag")),
+	}
+
+
 @frappe.whitelist()
 def get_defaults_for_immobilie(immobilie: str | None = None) -> dict:
 	"""Return derived defaults (bank_account, cost_center) for a given Immobilie. Used by the form."""

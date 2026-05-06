@@ -1620,10 +1620,12 @@ def create_standalone_payment_for_row(
 
     doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
 
+    effective_party_type = party_type or row.get("party_type")
+    effective_party = party or row.get("party")
     pe = create_standalone_payment_entry(
         bt=bt,
-        party_type=party_type or row.get("party_type"),
-        party=party or row.get("party"),
+        party_type=effective_party_type,
+        party=effective_party,
         remarks=remarks,
     )
     target_amount = flt(row.betrag)
@@ -1632,10 +1634,36 @@ def create_standalone_payment_for_row(
     row.db_set("payment_entry", pe.name)
     _set_row_payment_document(row, "Payment Entry", pe.name)
     row.db_set("row_status", "success")
-    row.db_set(
-        "auto_match_message",
-        f"Manuell verbucht: Standalone Payment Entry über {target_amount:.2f} € (unallocated)",
-    )
+
+    # Bei Lieferanten-Auszahlungen mit aktivem Abschlagsplan: PE direkt mit
+    # passender Plan-Zeile verknüpfen, damit Mama nicht hinterher manuell
+    # verlinken muss. Year-End-Reconciliation funktioniert weiter über
+    # unallocated_amount, ist also unabhängig von dieser Verknüpfung.
+    abschlag_match = None
+    if effective_party_type == "Supplier" and effective_party:
+        try:
+            from hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan import (
+                link_payment_entry_to_abschlagsplan_row,
+            )
+            abschlag_match = link_payment_entry_to_abschlagsplan_row(
+                supplier=effective_party,
+                posting_date=row.get("buchungstag"),
+                amount=target_amount,
+                payment_entry=pe.name,
+            )
+        except Exception:
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"Bankauszug Import: Abschlagsplan-Verknüpfung fehlgeschlagen ({docname}/{row.name})",
+            )
+
+    msg = f"Manuell verbucht: Standalone Payment Entry über {target_amount:.2f} € (unallocated)"
+    if abschlag_match:
+        msg += (
+            f" · verlinkt mit Abschlagsplan {abschlag_match['plan']} "
+            f"Zeile {abschlag_match['row_idx']} ({abschlag_match['faelligkeitsdatum']})"
+        )
+    row.db_set("auto_match_message", msg)
     _recompute_doc_status(docname)
     _refresh_and_persist_saldo(docname)
     return {"ok": True, "payment_entry": pe.name}
