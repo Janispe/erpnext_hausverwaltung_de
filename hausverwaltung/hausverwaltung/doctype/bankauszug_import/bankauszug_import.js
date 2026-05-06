@@ -1186,20 +1186,25 @@ function _openJournalEntryDialog(frm, row) {
       ${isEingang ? __('(Bank Soll, Gegenkonten Haben)') : __('(Bank Haben, Gegenkonten Soll)')}.
       ${__('Mehrere Zeilen erlaubt — z.B. Hauptbetrag + Bankgebühr in einem Vorgang.')}
     </div>
-    <table class="table table-sm" style="margin-bottom:6px;">
+    <table class="table table-sm" style="margin-bottom:6px; table-layout:fixed;">
+      <colgroup>
+        <col style="width:42%;">
+        <col style="width:30%;">
+        <col style="width:20%;">
+        <col style="width:8%;">
+      </colgroup>
       <thead>
         <tr>
-          <th style="width:42%;">${__('Gegenkonto')}</th>
-          <th style="width:30%;">${__('Kostenstelle')}</th>
-          <th style="width:18%; text-align:right;">${__('Betrag')}</th>
-          <th style="width:10%;"></th>
+          <th>${__('Gegenkonto')}</th>
+          <th>${__('Kostenstelle')}</th>
+          <th style="text-align:right;">${__('Betrag')}</th>
+          <th></th>
         </tr>
       </thead>
       <tbody class="hv-je-rows"></tbody>
     </table>
-    <div style="margin-bottom:10px; display:flex; gap:6px;">
+    <div style="margin-bottom:10px;">
       <button type="button" class="btn btn-xs btn-default hv-je-add">+ ${__('Zeile')}</button>
-      <button type="button" class="btn btn-xs btn-default hv-je-fill-rest">${__('Restbetrag in letzter Zeile')}</button>
     </div>
     <div class="hv-je-summary" style="margin-top:8px; padding:10px 12px; background:#fff7ed; border:1px solid #fed7aa; border-radius:4px; font-size:13px; line-height:1.7;">
       <div><strong>${__('Summe Splits')}:</strong> <span class="hv-sum"></span></div>
@@ -1355,17 +1360,6 @@ function _openJournalEntryDialog(frm, row) {
   };
 
   d.$wrapper.find('.hv-je-add').on('click', () => addSplitRow());
-  d.$wrapper.find('.hv-je-fill-rest').on('click', () => {
-    if (!splitControls.length) return;
-    let sum = 0;
-    for (let i = 0; i < splitControls.length - 1; i++) {
-      sum += parseFloat(splitControls[i].amountInput.val()) || 0;
-    }
-    const rest = target - sum;
-    const last = splitControls[splitControls.length - 1];
-    last.amountInput.val(rest > 0 ? rest.toFixed(2) : 0);
-    recalc();
-  });
 
   // Erste Zeile mit Vollbetrag, Kostenstelle aus Immobilie der BT vorbelegen
   frappe.call({
