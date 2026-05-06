@@ -192,6 +192,7 @@ def _get_or_create_party_bank_account(*, party_type: str, party: str, iban: Opti
         fields=["name", "is_company_account", "party_type", "party"],
         limit=50,
     )
+    party_lower = (party or "").lower()
     for bank in existing:
         if bank.get("is_company_account"):
             frappe.throw(f"IBAN {iban_norm} ist bereits einem Firmen-Bankkonto zugeordnet ({bank.get('name')}).")
@@ -203,7 +204,14 @@ def _get_or_create_party_bank_account(*, party_type: str, party: str, iban: Opti
                 bank_doc.is_company_account = 0
             bank_doc.save(ignore_permissions=True)
             return bank_doc.name, False
-        if bank.get("party_type") == party_type and bank.get("party") == party:
+        # Case-insensitive vergleichen: Frappe-Link-Felder speichern den
+        # tatsächlichen Doc-Namen (z.B. "BERLINER WASSERBETRIEBE"), während
+        # der Caller den Namen in beliebiger Casing übergeben kann
+        # ("Berliner Wasserbetriebe"). Beide referenzieren die gleiche Party.
+        if (
+            bank.get("party_type") == party_type
+            and (bank.get("party") or "").lower() == party_lower
+        ):
             return bank.get("name"), False
     # Wenn die IBAN bereits einer ANDEREN Party (Customer ↔ Supplier oder
     # Customer ↔ Customer) zugeordnet ist, legen wir bewusst einen ZWEITEN
@@ -212,11 +220,22 @@ def _get_or_create_party_bank_account(*, party_type: str, party: str, iban: Opti
     # Auto-Zuordnung in der manuellen Phase, der User entscheidet pro Zeile.
     # Use-Case: gleiche IBAN bezahlt mal als Lieferant, mal als Mieter.
 
+    # Bank Account Name = ``account_name + " - " + bank``. Frappe vergleicht
+    # Namen case-insensitiv (utf8mb4_unicode_ci). Wenn schon ein Datensatz
+    # mit kollidierendem Namen existiert, hängen wir die letzten 4 IBAN-
+    # Zeichen an, um Eindeutigkeit zu erzwingen.
+    bank_name = _get_default_bank()
+    account_name = f"Konto {party}"
+    candidate_pk = f"{account_name} - {bank_name}"
+    if frappe.db.exists("Bank Account", candidate_pk):
+        suffix = iban_norm[-4:] if iban_norm else ""
+        if suffix:
+            account_name = f"Konto {party} ({suffix})"
     doc = frappe.get_doc(
         {
             "doctype": "Bank Account",
-            "account_name": f"Konto {party}",
-            "bank": _get_default_bank(),
+            "account_name": account_name,
+            "bank": bank_name,
             "iban": iban_norm,
             "is_company_account": 0,
             "party_type": party_type,
