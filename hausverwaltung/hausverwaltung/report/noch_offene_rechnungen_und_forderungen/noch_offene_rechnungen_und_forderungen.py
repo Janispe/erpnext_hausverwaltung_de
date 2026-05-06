@@ -34,10 +34,14 @@ def _get_rows_for_mode(filters, mode):
 	if not _filters_apply_to_mode(filters, account_type):
 		return []
 
+	# Stichtag für Outstanding-Berechnung: wenn ``bis_faelligkeit`` leer ist,
+	# nutzen wir heute → zeigt was *jetzt* noch offen ist (ohne due-date-Filter
+	# bekommt der User damit alle historisch noch ungeklärten Rechnungen).
+	report_date = filters.bis_faelligkeit or getdate(nowdate())
 	erpnext_filters = frappe._dict(
 		{
 			"company": filters.company,
-			"report_date": filters.bis_faelligkeit,
+			"report_date": report_date,
 			"ageing_based_on": "Due Date",
 			"calculate_ageing_with": "Report Date",
 			"range": "30, 60, 90, 120",
@@ -83,13 +87,25 @@ def _validate_filters(filters):
 	if not filters.get("company"):
 		frappe.throw(_("Bitte eine Firma wählen."))
 
-	if not filters.get("von_faelligkeit") or not filters.get("bis_faelligkeit"):
-		frappe.throw(_("Bitte Von Fälligkeit und Bis Fälligkeit wählen."))
+	# Beide Datums-Filter sind optional. Leer = kein Lower- bzw. Upper-Bound auf
+	# due_date. Wenn ``bis_faelligkeit`` leer ist, nutzen wir heute als Stichtag
+	# (= "was ist gerade noch offen"). Wenn nur ``von_faelligkeit`` leer ist,
+	# kein Lower-Bound (zeigt also alle historischen Treffer mit).
+	if filters.get("von_faelligkeit"):
+		filters.von_faelligkeit = getdate(filters.von_faelligkeit)
+	else:
+		filters.von_faelligkeit = None
 
-	filters.von_faelligkeit = getdate(filters.von_faelligkeit)
-	filters.bis_faelligkeit = getdate(filters.bis_faelligkeit)
+	if filters.get("bis_faelligkeit"):
+		filters.bis_faelligkeit = getdate(filters.bis_faelligkeit)
+	else:
+		filters.bis_faelligkeit = None
 
-	if filters.von_faelligkeit > filters.bis_faelligkeit:
+	if (
+		filters.von_faelligkeit
+		and filters.bis_faelligkeit
+		and filters.von_faelligkeit > filters.bis_faelligkeit
+	):
 		frappe.throw(_("Von Fälligkeit darf nicht nach Bis Fälligkeit liegen."))
 
 	zahlungsrichtung = filters.get("zahlungsrichtung")
@@ -156,7 +172,9 @@ def _filter_and_map_rows(source_rows, filters, mode):
 			continue
 
 		due_date = getdate(due_date)
-		if due_date < filters.von_faelligkeit or due_date > filters.bis_faelligkeit:
+		if filters.von_faelligkeit and due_date < filters.von_faelligkeit:
+			continue
+		if filters.bis_faelligkeit and due_date > filters.bis_faelligkeit:
 			continue
 
 		if voucher_type and row.get("voucher_type") != voucher_type:
