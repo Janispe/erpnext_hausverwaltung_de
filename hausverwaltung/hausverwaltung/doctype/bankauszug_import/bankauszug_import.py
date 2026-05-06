@@ -687,6 +687,82 @@ def _extract_csv_kontostand_closing(raw: list) -> Optional[Tuple[float, Optional
     return betrag, datum_iso
 
 
+def reextract_saldo_from_csv(doc) -> Dict[str, Any]:
+    """Liest Saldo + Datum aus der CSV erneut, ohne Rows anzufassen.
+
+    Nutzbar von Patches, die historische Bankauszug-Imports nachträglich
+    korrigieren wollen, die mit dem alten (falschen) Parser angelegt wurden
+    und als ``saldo_laut_csv`` den Eröffnungssaldo statt den Schluss-Saldo
+    halten.
+
+    Returns ``{closing, opening, datum, applied}``. ``applied=False`` wenn
+    keine CSV-Datei verlinkt ist oder die Datei nicht gelesen werden kann.
+    """
+    if not doc.get("csv_file"):
+        return {"applied": False, "reason": "no_csv_file"}
+    try:
+        text = _decode_file(doc.csv_file, doc.encoding)
+    except Exception as exc:
+        return {"applied": False, "reason": f"decode_error: {exc}"}
+    delimiter = _sniff_delimiter(text[:2048], doc.delimiter)
+    reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+
+    csv_opening: Optional[float] = None
+    csv_closing: Optional[float] = None
+    csv_closing_datum: Optional[str] = None
+    header_seen = False
+    latest_buchungstag: Optional[str] = None
+
+    for raw in reader:
+        if not raw or (len(raw) == 1 and not raw[0].strip()):
+            continue
+        if not header_seen:
+            ks = _extract_csv_kontostand_opening(raw)
+            if ks is not None:
+                csv_opening = ks
+                continue
+            tmp_map = _map_headers(raw)
+            if "buchungstag" in tmp_map and (
+                "betrag" in tmp_map or "soll" in tmp_map or "haben" in tmp_map
+            ):
+                header_seen = True
+                header_map = tmp_map
+                continue
+        else:
+            closing = _extract_csv_kontostand_closing(raw)
+            if closing is not None:
+                csv_closing, csv_closing_datum = closing
+                break
+            # Buchungstag mitschneiden für Fallback-Datum
+            i = header_map.get("buchungstag")
+            if i is not None and i < len(raw) and raw[i].strip():
+                cell = raw[i].strip()
+                for fmt in ("%d.%m.%Y", "%d.%m.%y"):
+                    try:
+                        d = datetime.strptime(cell, fmt).date().isoformat()
+                        if (latest_buchungstag is None) or d > latest_buchungstag:
+                            latest_buchungstag = d
+                        break
+                    except Exception:
+                        continue
+
+    saldo_value = csv_closing if csv_closing is not None else csv_opening
+    if saldo_value is None:
+        return {"applied": False, "reason": "no_kontostand_found"}
+
+    doc.saldo_laut_csv = saldo_value
+    if csv_closing_datum:
+        doc.saldo_datum = csv_closing_datum
+    elif latest_buchungstag and not doc.get("saldo_datum"):
+        doc.saldo_datum = latest_buchungstag
+    return {
+        "applied": True,
+        "closing": csv_closing,
+        "opening": csv_opening,
+        "datum": csv_closing_datum,
+    }
+
+
 @frappe.whitelist()
 def parse_csv(docname: str) -> Dict[str, Any]:
     doc = frappe.get_doc("Bankauszug Import", docname)
