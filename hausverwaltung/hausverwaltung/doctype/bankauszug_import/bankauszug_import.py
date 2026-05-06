@@ -27,6 +27,58 @@ class BankauszugImport(Document):
         # update info and clear rows if file changed
         pass
 
+    def onload(self):
+        # Status beim Öffnen aus aktuellem Zeilen-Stand neu berechnen, damit
+        # ältere Dokumente (deren Status zur Bulk-Create-Zeit eingefroren wurde)
+        # die aktuelle Phase im Header zeigen.
+        try:
+            new_status = _recompute_doc_status(self.name)
+            self.status = new_status
+        except Exception:
+            pass
+
+
+def _recompute_doc_status(docname: str) -> str:
+    """Phasen-Status aus dem aktuellen Zeilen-Stand berechnen und persistieren.
+
+    Wird nach jeder Zeilen-Mutation aufgerufen (Parse, Bulk-BT-Erstellung,
+    manuelle Reconciliation), damit der User immer den aktuellen Fortschritt
+    im Header sieht — nicht nur den Snapshot der letzten Bulk-Aktion.
+    """
+    rows = frappe.get_all(
+        "Bankauszug Import Row",
+        filters={"parent": docname, "parenttype": "Bankauszug Import"},
+        fields=["party_type", "party", "bank_transaction", "payment_entry", "journal_entry", "row_status"],
+    )
+    total = len(rows)
+    if not total:
+        status = "Keine Zeilen geladen"
+    else:
+        with_party = sum(1 for r in rows if r.get("party_type") and r.get("party"))
+        with_bt = sum(1 for r in rows if r.get("bank_transaction"))
+        with_voucher = sum(1 for r in rows if r.get("payment_entry") or r.get("journal_entry"))
+        failed = sum(1 for r in rows if (r.get("row_status") or "") == "failed")
+
+        # Phasen-Logik hängt am bank_transaction, nicht am Party-Count: Zeilen
+        # ohne Party können trotzdem als Journal Entry verbucht werden (z.B.
+        # Bankgebühren), und wenn alle BTs erzeugt sind ist die Party-Phase
+        # vorbei — egal wie viele Parties leer sind.
+        if with_bt < total:
+            if with_party < total:
+                status = f"Phase 1: {with_party}/{total} Parteien zugeordnet"
+            else:
+                status = f"Phase 2: {with_bt}/{total} Bank-Transaktionen — {total - with_bt} bereit zum Buchen"
+        elif with_voucher < total:
+            status = f"Phase 3: {with_voucher}/{total} Belege zugeordnet — {total - with_voucher} offen"
+        else:
+            status = f"Abgeschlossen: {total} Zeilen verbucht"
+
+        if failed:
+            status += f" · Fehler: {failed}"
+
+    frappe.db.set_value("Bankauszug Import", docname, "status", status, update_modified=False)
+    return status
+
 
 def _normalize_iban(value: Optional[str]) -> Optional[str]:
     if not value:
@@ -725,7 +777,6 @@ def parse_csv(docname: str) -> Dict[str, Any]:
     doc.set("rows", [])
     for r in rows:
         doc.append("rows", r)
-    doc.status = f"{len(rows)} Zeilen geladen"
 
     # Saldo-Felder aus CSV: 'Letzter Kontostand' + spätestes Buchungsdatum als Stichtag
     if csv_kontostand is not None:
@@ -735,6 +786,7 @@ def parse_csv(docname: str) -> Dict[str, Any]:
         doc.saldo_datum = max(parsed_dates)
 
     doc.save()
+    _recompute_doc_status(doc.name)
     return {"rows": rows, "count": len(rows), "saldo_laut_csv": csv_kontostand}
 
 
@@ -771,6 +823,7 @@ def create_party_and_bank_for_row(
     if getattr(row, "error", None):
         row.error = None
     doc.save(ignore_permissions=True)
+    _recompute_doc_status(doc.name)
 
     return {
         "party_type": party_type,
@@ -835,6 +888,8 @@ def relink_parties_for_all_rows(docname: str, overwrite: int = 1) -> Dict[str, A
 
     if row_updates:
         doc.save(ignore_permissions=True)
+
+    _recompute_doc_status(docname)
 
     return {
         "processed": processed,
@@ -927,6 +982,8 @@ def apply_party_to_row_and_relink(
             doc.save(ignore_permissions=True)
     except Exception:
         pass
+
+    _recompute_doc_status(docname)
 
     return {
         "row": row.name,
@@ -1148,16 +1205,9 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
             errors.append({"row": row.name, "error": str(e)})
 
     doc.reload()
-    status_parts = [
-        f"Erstellt: {len(created)}",
-        f"Zugeordnet: {len(auto_matched)}",
-        f"Fehler: {len(errors)}",
-    ]
-    if skipped_before_cutoff:
-        status_parts.insert(1, f"Übersprungen (vor Start): {skipped_before_cutoff}")
-    doc.status = ", ".join(status_parts)
     _refresh_saldo_fields(doc)
     doc.save()
+    _recompute_doc_status(doc.name)
     return {
         "created": created,
         "errors": errors,
@@ -1419,6 +1469,7 @@ def manually_reconcile_row(
         f"Manuell zugeordnet: {len(invoices)} Rechnung(en), {target_amount:.2f} €"
         + (" (mit Vorauszahlung)" if int(leftover_as_advance or 0) else ""),
     )
+    _recompute_doc_status(docname)
 
     return {
         "ok": True,
@@ -1465,6 +1516,7 @@ def create_standalone_payment_for_row(
         "auto_match_message",
         f"Manuell verbucht: Standalone Payment Entry über {target_amount:.2f} € (unallocated)",
     )
+    _recompute_doc_status(docname)
     return {"ok": True, "payment_entry": pe.name}
 
 
@@ -1507,4 +1559,5 @@ def create_journal_entry_for_row(
         "auto_match_message",
         f"Buchungssatz: {target_amount:.2f} € gegen {account}",
     )
+    _recompute_doc_status(docname)
     return {"ok": True, "journal_entry": je.name}

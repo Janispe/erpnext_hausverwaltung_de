@@ -59,11 +59,16 @@ frappe.ui.form.on('Bankauszug Import', {
 function _computePhase(frm) {
   const rows = frm.doc.rows || [];
   if (!rows.length) return 'empty';
-  const allHaveParty = rows.every(r => r.party_type && r.party);
-  const allHaveBT    = rows.every(r => r.bank_transaction || r.reference);
-  if (allHaveBT)     return 'done';
-  if (allHaveParty)  return 'phase2';
-  return 'phase1';
+  const allHaveParty   = rows.every(r => r.party_type && r.party);
+  const allHaveBT      = rows.every(r => r.bank_transaction || r.reference);
+  const allHaveVoucher = rows.every(r => r.payment_entry || r.journal_entry);
+  // Phasen-Logik hängt am bank_transaction, nicht am Party-Count: Zeilen
+  // ohne Party können trotzdem als Journal Entry verbucht werden.
+  if (!allHaveBT) {
+    return allHaveParty ? 'phase2' : 'phase1';
+  }
+  if (!allHaveVoucher) return 'phase3';
+  return 'done';
 }
 
 function _renderInfoBanner(frm) {
@@ -73,6 +78,8 @@ function _renderInfoBanner(frm) {
   const withoutParty = total - withParty;
   const withBT    = rows.filter(r => r.bank_transaction || r.reference).length;
   const withoutBT = total - withBT;
+  const withVoucher    = rows.filter(r => r.payment_entry || r.journal_entry).length;
+  const withoutVoucher = total - withVoucher;
   const eingang   = rows.filter(r => r.richtung === 'Eingang').length;
   const ausgang   = rows.filter(r => r.richtung === 'Ausgang').length;
   const kunde     = rows.filter(r => r.party_type === 'Customer'    && r.party).length;
@@ -87,8 +94,9 @@ function _renderInfoBanner(frm) {
 
   // Phase-Header
   const phaseStyles = {
-    phase1: { bg: '#fff4e5', fg: '#92400e', border: '#fdba74', icon: '①', title: __('Phase 1 von 2 — Parties zuordnen') },
-    phase2: { bg: '#e6f0ff', fg: '#0c4a8b', border: '#7eb1ed', icon: '②', title: __('Phase 2 von 2 — Bank-Transaktionen erstellen') },
+    phase1: { bg: '#fff4e5', fg: '#92400e', border: '#fdba74', icon: '①', title: __('Phase 1 von 3 — Parties zuordnen') },
+    phase2: { bg: '#e6f0ff', fg: '#0c4a8b', border: '#7eb1ed', icon: '②', title: __('Phase 2 von 3 — Bank-Transaktionen erstellen') },
+    phase3: { bg: '#fef3c7', fg: '#854d0e', border: '#fcd34d', icon: '③', title: __('Phase 3 von 3 — Belege zuordnen') },
     done:   { bg: '#e6f7ec', fg: '#15803d', border: '#86efac', icon: '✓', title: __('Abgeschlossen — alle Zeilen gebucht') },
     empty:  { bg: '#f6f6f7', fg: '#52525b', border: '#d4d4d8', icon: '◐', title: __('Noch keine Zeilen geladen') },
   };
@@ -118,6 +126,15 @@ function _renderInfoBanner(frm) {
       + `</div>`
       + `<div style="margin-top:2px; font-size:11px; color:${cfg.fg}; opacity:0.85;">${__('Oben rechts „Bank-Transaktionen erstellen" klicken.')}</div>`
       + `</div>`;
+  } else if (phase === 'phase3') {
+    header = `<div style="background:${cfg.bg}; border:1px solid ${cfg.border}; border-radius:6px; padding:12px 16px; margin-bottom:10px;">`
+      + `<div style="font-size:14px; color:${cfg.fg}; font-weight:600;">${cfg.icon} ${cfg.title}</div>`
+      + `<div style="margin-top:4px; font-size:12px; color:${cfg.fg};">`
+      +   `<strong>${withVoucher}</strong> ${__('von')} <strong>${total}</strong> ${__('Belege zugeordnet')} – `
+      +   `<strong>${withoutVoucher}</strong> ${__('offen.')}`
+      + `</div>`
+      + `<div style="margin-top:2px; font-size:11px; color:${cfg.fg}; opacity:0.85;">${__('Klick auf „⋯ Aktionen" in einer Zeile ohne Zahlung, um Payment Entry oder Journal Entry zuzuordnen.')}</div>`
+      + `</div>`;
   } else if (phase === 'done') {
     header = `<div style="background:${cfg.bg}; border:1px solid ${cfg.border}; border-radius:6px; padding:12px 16px; margin-bottom:10px;">`
       + `<div style="font-size:14px; color:${cfg.fg}; font-weight:600;">${cfg.icon} ${cfg.title}</div>`
@@ -137,10 +154,17 @@ function _renderInfoBanner(frm) {
     if (kunde)     pills += pill('green',  __('{0} Kunde', [kunde]));
     if (lieferant) pills += pill('blue',   __('{0} Lieferant', [lieferant]));
     if (eigent)    pills += pill('purple', __('{0} Eigentümer', [eigent]));
-    if (success)   pills += pill('green',  __('{0} ✓ erstellt', [success]));
     if (vorhanden) pills += pill('gray',   __('{0} bereits vorhanden', [vorhanden]));
     if (failed)    pills += pill('red',    __('{0} Fehler', [failed]));
-    if (withoutBT && phase === 'phase2') pills += pill('orange', __('{0} bereit zum Buchen', [withoutBT]));
+    if (phase === 'phase2') {
+      if (withoutBT) pills += pill('orange', __('{0} bereit zum Buchen', [withoutBT]));
+      if (success)   pills += pill('green',  __('{0} ✓ erstellt', [success]));
+    } else if (phase === 'phase3') {
+      if (withVoucher)    pills += pill('green',  __('{0} ✓ verbucht', [withVoucher]));
+      if (withoutVoucher) pills += pill('orange', __('{0} offen', [withoutVoucher]));
+    } else if (phase === 'done') {
+      if (success) pills += pill('green', __('{0} ✓ verbucht', [success]));
+    }
   }
   pills += '</div>';
 
@@ -371,6 +395,17 @@ function _renderAllRowActions(frm) {
 function _computeRowStatusPill(row, phase) {
   const colorMap = { green: '#28a745', red: '#dc3545', gray: '#8d99a6', orange: '#f59f00', blue: '#1f75cb' };
   const v = (row.row_status || '').toString().trim();
+  const hasBT      = !!(row.bank_transaction || row.reference);
+  const hasVoucher = !!(row.payment_entry || row.journal_entry);
+
+  // In Phase 3 / done unterscheiden wir „BT erstellt, aber kein Beleg" vs.
+  // „komplett verbucht" — sonst zeigen wir alle row_status='success' Zeilen
+  // als grün/„Erstellt", obwohl der Reconciliation-Schritt noch fehlt.
+  if ((phase === 'phase3' || phase === 'done') && hasBT) {
+    if (hasVoucher) return { color: colorMap.green,  label: __('✓ Verbucht') };
+    return            { color: colorMap.orange, label: __('○ Beleg fehlt') };
+  }
+
   const map = {
     'success':         { color: colorMap.green, label: __('✓ Erstellt') },
     'failed':          { color: colorMap.red,   label: __('✗ Fehler') },
@@ -383,7 +418,7 @@ function _computeRowStatusPill(row, phase) {
       ? { color: colorMap.green, label: __('✓ Zugeordnet') }
       : { color: colorMap.red,   label: __('✗ Nicht zugeordnet') };
   }
-  // phase2 / done
+  // phase2
   return (row.party_type && row.party)
     ? { color: colorMap.blue,   label: __('• Bereit') }
     : { color: colorMap.orange, label: __('• Ohne Party') };
