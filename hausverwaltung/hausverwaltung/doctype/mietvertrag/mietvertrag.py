@@ -454,8 +454,7 @@ def _build_mietvertrag_base_name(doc: object) -> str:
 	lage = _sanitize_name_part(lage)
 	von_str = _sanitize_name_part(von_str)
 
-	# Tab-aligned columns: pipes tend to land on consistent tab stops (useful in monospace/exports).
-	return f"{haus_initial}\t| {gebaeudeteil}\t| {lage}\t| ab: {von_str}".strip()
+	return f"{haus_initial} | {gebaeudeteil} | {lage} | ab: {von_str}".strip()
 
 
 def _with_hauptmieter_suffix(base_name: str, rows: object) -> str:
@@ -463,7 +462,8 @@ def _with_hauptmieter_suffix(base_name: str, rows: object) -> str:
 	if not base:
 		return ""
 
-	last_names = get_hauptmieter_last_names(rows)
+	last_names = [_sanitize_name_part(name) for name in get_hauptmieter_last_names(rows)]
+	last_names = [name for name in last_names if name]
 	if not last_names:
 		return base
 	return f"{base} - {', '.join(last_names)}"
@@ -511,6 +511,53 @@ def _unique_docname(doctype: str, base_name: str, current_name: str | None = Non
 			return candidate
 
 	return f"{base} {frappe.generate_hash(length=6).upper()}"
+
+
+def normalize_existing_mietvertrag_names() -> dict[str, int]:
+	"""Rename legacy Mietvertrag DocNames that contain control separators."""
+	renamed = 0
+	skipped = 0
+	rows = frappe.get_all(
+		"Mietvertrag",
+		filters={"name": ["like", "%\t%"]},
+		fields=["name"],
+		limit=0,
+	)
+	for row in rows:
+		current = (row.get("name") or "").strip()
+		if not current or not frappe.db.exists("Mietvertrag", current):
+			skipped += 1
+			continue
+
+		try:
+			doc = frappe.get_doc("Mietvertrag", current)
+			base_name = _build_mietvertrag_base_name(doc)
+			target = _unique_docname(
+				"Mietvertrag",
+				_with_hauptmieter_suffix(base_name, doc.mieter),
+				current_name=current,
+			)
+			if not target or target == current:
+				skipped += 1
+				continue
+			rename_doc(
+				"Mietvertrag",
+				current,
+				target,
+				force=True,
+				merge=False,
+				show_alert=False,
+				ignore_permissions=True,
+			)
+			renamed += 1
+		except Exception:
+			skipped += 1
+			frappe.log_error(
+				title="Mietvertrag Legacy-Name Normalisierung fehlgeschlagen",
+				message=frappe.get_traceback(),
+			)
+
+	return {"renamed": renamed, "skipped": skipped}
 
 
 def _compute_status_value(von: object, bis: object) -> str:

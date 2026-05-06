@@ -123,6 +123,7 @@ after_migrate = [
 	"hausverwaltung.install.sync_hausverwalter_permissions",
 	"hausverwaltung.install.ensure_desk_custom_permissions",
 	"hausverwaltung.install.ensure_hausverwalter_extra_permissions",
+	"hausverwaltung.install.ensure_mietvertrag_docnames_are_normalized",
 	"hausverwaltung.install.ensure_hausverwalter_blocked_modules",
 	"hausverwaltung.install.ensure_hausverwaltung_workspace_layout",
 	"hausverwaltung.install.ensure_hausverwaltung_sidebar",

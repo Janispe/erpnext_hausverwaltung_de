@@ -1172,6 +1172,7 @@ _HAUSVERWALTER_EXTRA_DOCTYPE_PERMS: tuple[tuple[str, dict], ...] = (
     ("Payment Reconciliation", {"read": 1, "write": 1, "create": 1}),
     ("Account", {"read": 1, "write": 1, "create": 1}),
     ("Accounts Settings", {"read": 1}),
+    ("Print Format", {"read": 1}),
     ("GL Entry", {"read": 1}),
     ("Journal Entry", {"read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1, "print": 1, "email": 1}),
     # Customer: kein "create" — Debitoren werden automatisch beim Mietvertrag-
@@ -1258,6 +1259,25 @@ def _ensure_hausverwalter_extra_permissions(*, reason: str) -> None:
 
 def ensure_hausverwalter_extra_permissions() -> None:
     _ensure_hausverwalter_extra_permissions(reason="hook")
+
+
+def ensure_mietvertrag_docnames_are_normalized() -> None:
+    """Rename legacy Mietvertrag records whose DocNames contain tab separators."""
+    try:
+        from hausverwaltung.hausverwaltung.doctype.mietvertrag.mietvertrag import (
+            normalize_existing_mietvertrag_names,
+        )
+
+        normalize_existing_mietvertrag_names()
+        frappe.db.commit()
+    except Exception:
+        try:
+            frappe.log_error(
+                frappe.get_traceback(),
+                "hausverwaltung Mietvertrag DocName normalization failed",
+            )
+        except Exception:
+            pass
 
 
 # Modules that should NOT appear as Workspace Sidebars for Hausverwalter users.
