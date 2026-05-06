@@ -316,6 +316,7 @@ def _create_invoice(
     remark: str,
     wohnung: str | None,
     company: str,
+    mietabrechnung_id: str | None = None,
 ) -> str:
     if betrag <= 0:
         return ""
@@ -355,6 +356,8 @@ def _create_invoice(
     if wohnung and not _has_field("Sales Invoice", "wohnung"):
         frappe.throw('Feld "wohnung" existiert nicht auf Sales Invoice (Accounting Dimension nicht zugewiesen). Admin bescheid sagen!!!')
     sinv.set("wohnung", wohnung)
+    if mietabrechnung_id and _has_field("Sales Invoice", "mietabrechnung_id"):
+        sinv.set("mietabrechnung_id", mietabrechnung_id)
     frappe.msgprint("Mietrechnung erfolgreich erstellt!")
     # Auch auf Positionsebene setzen, wenn Feld existiert
     try:
@@ -505,6 +508,11 @@ def generate_miet_und_bk_rechnungen(
             betrag_bk = _staffelbetrag(v.name, "betriebskosten", datum)
             betrag_heiz = _staffelbetrag(v.name, "heizkosten", datum)
 
+            # Mietabrechnungs-ID koppelt die getrennten SIs (Miete/BK/HK/UMZ)
+            # eines Mietvertrag-Monats für die Display-Aggregation in
+            # Mieterkonto und Hauptbuch HV.
+            mietabrechnung_id = f"{v.name}|{datum.strftime('%m/%Y')}"
+
             monat_str = datum.strftime("%m/%Y")
 
             # Miete
@@ -540,6 +548,7 @@ def generate_miet_und_bk_rechnungen(
                     remark,
                     v.wohnung,
                     company,
+                    mietabrechnung_id=mietabrechnung_id,
                 )
                 if sinv_name:
                     created["Miete"] += 1
@@ -586,6 +595,7 @@ def generate_miet_und_bk_rechnungen(
                     remark,
                     v.wohnung,
                     company,
+                    mietabrechnung_id=mietabrechnung_id,
                 )
                 if sinv_name:
                     created["Betriebskosten"] += 1
@@ -632,6 +642,7 @@ def generate_miet_und_bk_rechnungen(
                     remark,
                     v.wohnung,
                     company,
+                    mietabrechnung_id=mietabrechnung_id,
                 )
                 if sinv_name:
                     created["Heizkosten"] += 1
@@ -687,6 +698,7 @@ def generate_miet_und_bk_rechnungen(
                     remark,
                     v.wohnung,
                     company,
+                    mietabrechnung_id=mietabrechnung_id,
                 )
                 if sinv_name:
                     created["Untermietzuschlag"] += 1

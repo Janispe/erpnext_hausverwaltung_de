@@ -21,10 +21,113 @@ def execute(filters=None):
 	for report_mode in _get_report_modes(mode):
 		rows.extend(_get_rows_for_mode(filters, report_mode))
 
+	if filters.get("gruppieren_pro_monat", 1):
+		rows = _group_rows_by_mietabrechnung(rows)
+
 	rows.sort(key=lambda row: _sort_key(row, filters))
 	columns = _get_columns()
 	enrich_link_titles(rows, columns)
 	return columns, rows
+
+
+def _group_rows_by_mietabrechnung(rows):
+	"""Aggregiert Sales-Invoice-Rows derselben Mietabrechnung zu einer Zeile.
+
+	Bucket-Schlüssel: (mietabrechnung_id, party, party_account). Die zugehörige
+	Sammel-Zahlung (Payment Entry) erscheint hier ohnehin nicht, weil der Report
+	pro Voucher (SI/PE/JE) eine Row liefert — Payment-Entry-Rows haben keine
+	mietabrechnung_id und werden nicht aggregiert.
+
+	Beträge werden summiert; Status worst-case (Overdue → ein Member Overdue);
+	Belegnummer = erste SI als Drill-Down-Link, "(+N)" in Belegart.
+	"""
+	if not rows:
+		return rows
+
+	si_rows_by_no = {
+		row.get("belegnummer"): row
+		for row in rows
+		if row.get("belegart") == "Sales Invoice" and row.get("belegnummer")
+	}
+	if not si_rows_by_no:
+		return rows
+
+	mab_map = {}
+	if frappe.db.has_column("Sales Invoice", "mietabrechnung_id"):
+		for r in frappe.get_all(
+			"Sales Invoice",
+			filters={"name": ("in", list(si_rows_by_no.keys()))},
+			fields=["name", "mietabrechnung_id"],
+		):
+			value = (r.get("mietabrechnung_id") or "").strip()
+			if value:
+				mab_map[r["name"]] = value
+
+	if not mab_map:
+		return rows
+
+	# Bucket Aggregat-Members; Pass-through für alles ohne mab_id.
+	out = []
+	buckets: dict[tuple, dict] = {}
+	bucket_position: dict[tuple, int] = {}
+
+	def _worst_status(a, b):
+		# "Overdue" dominiert; sonst beibehalten was schon drin ist.
+		order = {None: 0, "Paid": 1, "Partly Paid": 2, "Unpaid": 3, "Overdue": 4}
+		return a if order.get(a, 0) >= order.get(b, 0) else b
+
+	for row in rows:
+		mab = mab_map.get(row.get("belegnummer")) if row.get("belegart") == "Sales Invoice" else None
+		if not mab:
+			out.append(row)
+			continue
+
+		key = (mab, row.get("party"), row.get("party_account"))
+		if key not in buckets:
+			merged = dict(row)
+			merged["_member_count"] = 1
+			merged["_member_voucher_nos"] = [row.get("belegnummer")]
+			# Aggregat verlinkt weiterhin die erste Member-SI (Dynamic Link OK).
+			buckets[key] = merged
+			bucket_position[key] = len(out)
+			out.append(merged)
+		else:
+			merged = buckets[key]
+			merged["rechnungsbetrag"] = flt(merged.get("rechnungsbetrag")) + flt(row.get("rechnungsbetrag"))
+			merged["bezahlt"] = flt(merged.get("bezahlt")) + flt(row.get("bezahlt"))
+			merged["offen"] = flt(merged.get("offen")) + flt(row.get("offen"))
+			# Worst-Case-Verbindlichkeit: ältestes Fälligkeitsdatum, höchstes Alter.
+			if row.get("faellig_am") and (
+				not merged.get("faellig_am") or row["faellig_am"] < merged["faellig_am"]
+			):
+				merged["faellig_am"] = row["faellig_am"]
+			if row.get("alter_tage") and (row["alter_tage"] or 0) > (merged.get("alter_tage") or 0):
+				merged["alter_tage"] = row["alter_tage"]
+			merged["status"] = _worst_status(merged.get("status"), row.get("status"))
+			merged["zahlungsrichtung"] = _zahlungsrichtung_after_merge(merged)
+			merged["can_write_off"] = max(
+				int(merged.get("can_write_off") or 0),
+				int(row.get("can_write_off") or 0),
+			)
+			merged["_member_count"] += 1
+			merged["_member_voucher_nos"].append(row.get("belegnummer"))
+
+	# Aggregate finalisieren: Zähler-Hinweis in der Belegart-Spalte.
+	for merged in buckets.values():
+		count = merged.pop("_member_count", 1)
+		voucher_nos = merged.pop("_member_voucher_nos", [])
+		if count > 1:
+			# In der Belegart-Spalte: "Sales Invoice (×4)". Beleg­nummer-Spalte
+			# behält den Dynamic-Link auf die erste SI.
+			merged["belegart"] = f"{merged.get('belegart')} (×{count})"
+
+	return out
+
+
+def _zahlungsrichtung_after_merge(merged):
+	# Aggregation läuft nur über Sales Invoices (Forderungen-Mode); zur Sicherheit
+	# nehmen wir trotzdem `art` aus dem gemergten Row.
+	return _get_payment_direction(merged.get("art") or "Forderungen", flt(merged.get("offen")))
 
 
 def _get_rows_for_mode(filters, mode):

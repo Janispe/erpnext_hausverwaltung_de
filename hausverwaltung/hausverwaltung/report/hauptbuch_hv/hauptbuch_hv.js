@@ -76,5 +76,11 @@ frappe.query_reports["Hauptbuch HV"] = {
 			label: __("Stornierte anzeigen"),
 			fieldtype: "Check",
 		},
+		{
+			fieldname: "mietlauf_zusammenfassen",
+			label: __("Mietabrechnungs-Buchungen pro Monat zusammenfassen"),
+			fieldtype: "Check",
+			default: 1,
+		},
 	],
 };

@@ -37,6 +37,12 @@ frappe.query_reports["Mieterkonto"] = {
 			fieldtype: "Check",
 			default: 1,
 		},
+		{
+			fieldname: "gruppieren_pro_monat",
+			label: __("Mietabrechnung pro Monat zusammenfassen"),
+			fieldtype: "Check",
+			default: 1,
+		},
 	],
 
 	onload: function (report) {

@@ -109,6 +109,13 @@ frappe.query_reports["Noch offene Rechnungen und Forderungen"] = {
 			default: 0,
 			on_change: () => frappe.query_report.refresh(),
 		},
+		{
+			fieldname: "gruppieren_pro_monat",
+			label: __("Mietabrechnung pro Monat zusammenfassen"),
+			fieldtype: "Check",
+			default: 1,
+			on_change: () => frappe.query_report.refresh(),
+		},
 	],
 
 	onload: function (report) {

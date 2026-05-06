@@ -82,6 +82,14 @@
    "label": "Stornierte anzeigen",
    "mandatory": 0,
    "wildcard_filter": 0
+  },
+  {
+   "default": "1",
+   "fieldname": "mietlauf_zusammenfassen",
+   "fieldtype": "Check",
+   "label": "Mietabrechnungs-Buchungen pro Monat zusammenfassen",
+   "mandatory": 0,
+   "wildcard_filter": 0
   }
  ],
  "idx": 0,

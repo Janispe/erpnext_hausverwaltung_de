@@ -44,6 +44,14 @@
    "label": "Aufteilung nach Miete/BK/HK/Guthaben",
    "mandatory": 0,
    "wildcard_filter": 0
+  },
+  {
+   "default": "1",
+   "fieldname": "gruppieren_pro_monat",
+   "fieldtype": "Check",
+   "label": "Mietabrechnung pro Monat zusammenfassen",
+   "mandatory": 0,
+   "wildcard_filter": 0
   }
  ],
  "idx": 0,

@@ -52,6 +52,11 @@ class InvoiceInfo:
 	cost_center: str | None
 	remarks: str | None
 	category_amounts: dict[str, float] = field(default_factory=dict)
+	mietabrechnung_id: str | None = None
+	# Wenn diese InvoiceInfo eine Aggregat-Gruppe ist: Original-SI-Namen.
+	# Solo-Invoices haben `[name]`. Wird beim Settlement-Lookup gebraucht,
+	# weil PLE gegen die echten SI-Namen läuft.
+	member_invoices: list[str] = field(default_factory=list)
 
 
 def execute(filters=None):
@@ -59,12 +64,16 @@ def execute(filters=None):
 	_apply_defaults(filters)
 	_validate_filters(filters)
 
-	invoices = _get_invoices(filters)
-	if not invoices:
+	raw_invoices = _get_invoices(filters)
+	if not raw_invoices:
 		return _get_columns(filters), [], None, None, _get_empty_summary()
 
-	transactions = _build_invoice_transactions(invoices)
-	transactions.extend(_build_settlement_transactions(invoices, filters))
+	display_invoices = (
+		_group_invoices(raw_invoices) if filters.gruppieren_pro_monat else raw_invoices
+	)
+
+	transactions = _build_invoice_transactions(display_invoices)
+	transactions.extend(_build_settlement_transactions(display_invoices, raw_invoices, filters))
 	transactions.sort(key=_transaction_sort_key)
 
 	rows, summary_totals = _build_rows(transactions, filters)
@@ -75,6 +84,7 @@ def execute(filters=None):
 
 def _apply_defaults(filters):
 	filters.show_kategorien = cint(filters.get("show_kategorien", 1))
+	filters.gruppieren_pro_monat = cint(filters.get("gruppieren_pro_monat", 1))
 
 
 def _validate_filters(filters):
@@ -113,6 +123,7 @@ def _get_invoices(filters) -> dict[str, InvoiceInfo]:
 			"status",
 			"cost_center",
 			"remarks",
+			"mietabrechnung_id",
 		],
 		order_by="posting_date asc, name asc",
 	)
@@ -132,9 +143,93 @@ def _get_invoices(filters) -> dict[str, InvoiceInfo]:
 			cost_center=row.cost_center,
 			remarks=row.remarks,
 			category_amounts=_get_invoice_category_amounts(row.name, flt(row.grand_total)),
+			mietabrechnung_id=row.get("mietabrechnung_id"),
+			member_invoices=[row.name],
 		)
 		invoices[info.name] = info
 	return invoices
+
+
+def _group_invoices(invoices: dict[str, InvoiceInfo]) -> dict[str, InvoiceInfo]:
+	"""Aggregiert SIs mit gleicher `mietabrechnung_id` zu einer Gruppe.
+
+	SIs ohne `mietabrechnung_id` (manuelle, Settlement-, Cutover-SIs) bleiben
+	als Solo-Gruppen mit Original-Namen als Key.
+	"""
+	groups: dict[str, list[InvoiceInfo]] = {}
+	order: list[str] = []
+	for inv in invoices.values():
+		key = inv.mietabrechnung_id or inv.name
+		if key not in groups:
+			groups[key] = []
+			order.append(key)
+		groups[key].append(inv)
+
+	result: dict[str, InvoiceInfo] = {}
+	for key in order:
+		members = groups[key]
+		if len(members) == 1 and members[0].name == key:
+			# Solo, identisch zu heute.
+			result[key] = members[0]
+			continue
+		result[key] = _merge_invoices(key, members)
+	return result
+
+
+def _merge_invoices(group_key: str, members: list[InvoiceInfo]) -> InvoiceInfo:
+	"""Fasst mehrere SIs einer Mietabrechnung zu einer Anzeige-Gruppe zusammen."""
+	# Posting/Due/Currency: deterministisch über die früheste SI ankern.
+	by_date = sorted(members, key=lambda m: (m.posting_date or 0, m.name))
+	anchor = by_date[0]
+
+	merged_categories = {category: 0.0 for category in CATEGORIES}
+	for m in members:
+		for category, amount in m.category_amounts.items():
+			merged_categories[category] = merged_categories.get(category, 0.0) + flt(amount)
+
+	# Status worst-case: Overdue dominiert; sonst Unpaid wenn nicht alle Paid.
+	statuses = {m.status for m in members}
+	if "Overdue" in statuses:
+		merged_status = "Overdue"
+	elif statuses == {"Paid"}:
+		merged_status = "Paid"
+	else:
+		merged_status = next((s for s in ("Partly Paid", "Unpaid") if s in statuses), anchor.status)
+
+	# Beschreibung: kategorien-Liste aus den Items, plus "+N weitere"-Hinweis.
+	category_labels_in_group = sorted(
+		{
+			CATEGORY_LABELS[cat]
+			for cat, amt in merged_categories.items()
+			if abs(flt(amt)) > TOLERANCE
+		}
+	)
+	monat = anchor.posting_date.strftime("%m/%Y") if anchor.posting_date else ""
+	mv_part = group_key.split("|", 1)[0] if "|" in group_key else ""
+	header = f"Mietabrechnung {monat}".strip()
+	if category_labels_in_group:
+		header += f" ({' + '.join(category_labels_in_group)})"
+	if mv_part:
+		header += f" – {mv_part}"
+	if len(members) > 1:
+		header += f" (+{len(members) - 1} weitere)"
+
+	return InvoiceInfo(
+		name=anchor.name,  # für Drill-Down: Belegnummer-Spalte zeigt erste SI
+		posting_date=anchor.posting_date,
+		due_date=anchor.due_date,
+		customer=anchor.customer,
+		debit_to=anchor.debit_to,
+		currency=anchor.currency,
+		grand_total=sum(flt(m.grand_total) for m in members),
+		outstanding_amount=sum(flt(m.outstanding_amount) for m in members),
+		status=merged_status,
+		cost_center=anchor.cost_center,
+		remarks=header,
+		category_amounts=_round_amounts(merged_categories),
+		mietabrechnung_id=group_key,
+		member_invoices=[m.name for m in members],
+	)
 
 
 def _get_invoice_category_amounts(invoice_name: str, grand_total: float) -> dict[str, float]:
@@ -241,14 +336,28 @@ def _build_invoice_transactions(invoices: dict[str, InvoiceInfo]) -> list[dict[s
 
 
 def _build_settlement_transactions(
-	invoices: dict[str, InvoiceInfo],
+	display_invoices: dict[str, InvoiceInfo],
+	raw_invoices: dict[str, InvoiceInfo],
 	filters,
 ) -> list[dict[str, Any]]:
-	invoice_names = list(invoices)
+	# PLE referenziert echte SI-Namen — bei Gruppen müssen wir die
+	# Member-SIs in die Query schicken und Treffer zur Gruppe zurückmappen.
+	member_to_group: dict[str, InvoiceInfo] = {}
+	for grp in display_invoices.values():
+		for member in grp.member_invoices or [grp.name]:
+			member_to_group[member] = grp
+
+	invoice_names = list(member_to_group)
 	if not invoice_names:
 		return []
 
-	transactions = []
+	# Bundle-Schlüssel: (date, voucher_type, voucher_no, group_key, is_writeoff).
+	# Innerhalb eines Bundles werden Beträge SUMMIERT — kein proportionaler
+	# Split nötig, weil jede Member-SI eine Single-Category-Allokation hat.
+	bundles: dict[tuple, dict[str, Any]] = {}
+	bundle_order: list[tuple] = []
+	voucher_remarks_all: dict = {}
+
 	for chunk in _chunks(invoice_names, 500):
 		rows = frappe.get_all(
 			"Payment Ledger Entry",
@@ -272,10 +381,14 @@ def _build_settlement_transactions(
 			],
 			order_by="posting_date asc, creation asc, name asc",
 		)
-		voucher_remarks = _fetch_voucher_remarks(rows)
+		voucher_remarks_all.update(_fetch_voucher_remarks(rows))
 		for row in rows:
-			invoice = invoices.get(row.against_voucher_no)
-			if not invoice or row.voucher_no == invoice.name:
+			group = member_to_group.get(row.against_voucher_no)
+			if not group:
+				continue
+			# PLE eines Vouchers gegen sich selbst (z.B. SI's eigener Saldo-PLE):
+			# nur skippen wenn voucher_no == group's eigene Anzeige-Identität.
+			if row.voucher_no in (group.member_invoices or [group.name]):
 				continue
 
 			amount = flt(row.amount)
@@ -287,37 +400,59 @@ def _build_settlement_transactions(
 				and amount < 0
 				and is_receivable_writeoff_journal_entry(
 					row.voucher_no,
-					receivable_account=invoice.debit_to,
+					receivable_account=group.debit_to,
 				)
 			)
-			is_credit_note = row.voucher_type == "Sales Invoice"
+			# Allokation pro Member-SI ist Single-Category — `raw_invoices` enthält
+			# die Original-Per-SI-Categories, auch wenn `display_invoices` schon
+			# zur Gruppe gemerged wurde.
+			member_invoice = raw_invoices.get(row.against_voucher_no, group)
 			reduction = abs(amount) if amount < 0 else -abs(amount)
-			allocated = _allocate_amount(reduction, invoice.category_amounts)
+			allocated = _allocate_amount(reduction, member_invoice.category_amounts)
 
-			transactions.append(
-				{
+			bundle_key = (
+				getdate(row.posting_date),
+				row.voucher_type,
+				row.voucher_no,
+				group.mietabrechnung_id or group.name,
+				bool(is_writeoff),
+			)
+			bundle = bundles.get(bundle_key)
+			if bundle is None:
+				bundle = {
 					"date": getdate(row.posting_date),
 					"sort_order": 30 if is_writeoff else 20,
-					"art": "Abschreibung" if is_writeoff else ("Gutschrift" if is_credit_note else "Zahlung"),
+					"art": "Abschreibung" if is_writeoff else (
+						"Gutschrift" if row.voucher_type == "Sales Invoice" else "Zahlung"
+					),
 					"belegart": row.voucher_type,
 					"belegnummer": row.voucher_no,
-					"rechnung": invoice.name,
+					"rechnung": group.name,
 					"beschreibung": _get_settlement_description(
-					row,
-					invoice,
-					is_writeoff,
-					voucher_remarks.get((row.voucher_type, row.voucher_no)),
-				),
-					"due_date": invoice.due_date,
-					"status": invoice.status,
-					"currency": invoice.currency,
+						row,
+						group,
+						is_writeoff,
+						voucher_remarks_all.get((row.voucher_type, row.voucher_no)),
+					),
+					"due_date": group.due_date,
+					"status": group.status,
+					"currency": group.currency,
 					"invoice_amounts": {},
-					"paid_amounts": {} if is_writeoff else allocated,
-					"written_off_amounts": allocated if is_writeoff else {},
-					"delta": -sum(allocated.values()),
+					"paid_amounts": {category: 0.0 for category in CATEGORIES},
+					"written_off_amounts": {category: 0.0 for category in CATEGORIES},
+					"delta": 0.0,
 				}
-			)
-	return transactions
+				bundles[bundle_key] = bundle
+				bundle_order.append(bundle_key)
+
+			target_key = "written_off_amounts" if is_writeoff else "paid_amounts"
+			for category in CATEGORIES:
+				bundle[target_key][category] = flt(
+					bundle[target_key][category] + flt(allocated.get(category)), 2
+				)
+			bundle["delta"] = flt(bundle["delta"] - sum(allocated.values()), 2)
+
+	return [bundles[key] for key in bundle_order]
 
 
 def _chunks(values: list[str], size: int):
