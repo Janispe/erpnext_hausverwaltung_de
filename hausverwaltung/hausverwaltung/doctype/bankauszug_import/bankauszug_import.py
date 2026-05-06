@@ -36,6 +36,14 @@ class BankauszugImport(Document):
             self.status = new_status
         except Exception:
             pass
+        # Saldo neu berechnen, damit nach nachträglichen Buchungen / Cancels der
+        # angezeigte ERP-Saldo immer aktuell ist (Stale-Bug ohne manuellen Klick
+        # auf "Saldo neu prüfen").
+        try:
+            _refresh_saldo_fields(self)
+            _persist_saldo_fields(self)
+        except Exception:
+            pass
 
 
 def _recompute_doc_status(docname: str) -> str:
@@ -602,22 +610,63 @@ def _find_existing_bank_transaction(
         return None
 
 
-def _extract_csv_kontostand(possible: list) -> Optional[float]:
-    """Sucht in einer CSV-Vorzeile nach 'Letzter Kontostand' und gibt den Betrag zurück.
+def _extract_csv_kontostand_opening(possible: list) -> Optional[float]:
+    """Eröffnungssaldo aus der Preamble — Postbank: ``Letzter Kontostand;;;;33.797,61;EUR``.
 
-    Postbank-Format: ``Letzter Kontostand;;;;14.619,26;EUR`` — der Betrag steht
-    in einer der hinteren Spalten. Wir nehmen die erste numerisch parsbare.
+    "Letzter Kontostand" in Postbank-Sprech bedeutet: *der zuletzt bekannte
+    Saldo bevor diese Periode begann* — also der Eröffnungssaldo. Wird nur als
+    Fallback verwendet, falls die Footer-Zeile fehlt.
     """
     if not possible:
         return None
     first = _normalize_header(possible[0]).lower()
-    if "kontostand" not in first:
+    if "letzter kontostand" not in first:
         return None
     for cell in possible[1:]:
         val = _parse_decimal(str(cell))
         if val:
             return val
     return None
+
+
+def _extract_csv_kontostand_closing(raw: list) -> Optional[Tuple[float, Optional[str]]]:
+    """Schluss-Saldo aus der Footer-Zeile — Postbank: ``Kontostand;5.5.2026;;;45.235,83;EUR``.
+
+    Erste Spalte ist exakt ``Kontostand`` (ohne Präfix). Eine der nachfolgenden
+    Spalten enthält das Stichtags-Datum (dd.mm.yyyy), eine andere den Betrag.
+    Liefert ``(betrag, datum_iso)`` oder ``None`` wenn die Zeile nicht passt.
+    """
+    if not raw:
+        return None
+    first = _normalize_header(raw[0]).lower()
+    # Genauer Match: nur "Kontostand" allein, NICHT "Letzter Kontostand" o.Ä.
+    if first != "kontostand":
+        return None
+    datum_iso: Optional[str] = None
+    betrag: Optional[float] = None
+    for cell in raw[1:]:
+        s = str(cell).strip()
+        if not s:
+            continue
+        # Erst Datum versuchen — sonst parst _parse_decimal "5.5.2026" als 552026.
+        if datum_iso is None:
+            parsed_date = None
+            for fmt in ("%d.%m.%Y", "%d.%m.%y"):
+                try:
+                    parsed_date = datetime.strptime(s, fmt).date()
+                    break
+                except Exception:
+                    continue
+            if parsed_date is not None:
+                datum_iso = parsed_date.isoformat()
+                continue
+        if betrag is None:
+            val = _parse_decimal(s)
+            if val:
+                betrag = val
+    if betrag is None:
+        return None
+    return betrag, datum_iso
 
 
 @frappe.whitelist()
@@ -629,18 +678,19 @@ def parse_csv(docname: str) -> Dict[str, Any]:
     reader = csv.reader(io.StringIO(text), delimiter=delimiter)
 
     # Find the actual header row: skip bank preamble until a row contains required headers.
-    # Während wir die Preamble lesen, schnappen wir uns auch den 'Letzter Kontostand'-Wert.
+    # In der Preamble steht oft ein "Letzter Kontostand" — das ist Postbank-Sprech
+    # für den Eröffnungssaldo, nicht den Schluss-Saldo. Wir merken ihn nur als
+    # Fallback; den echten Schluss-Saldo holen wir aus der Footer-Zeile.
     header_map = {}
     headers = None
-    csv_kontostand: Optional[float] = None
+    csv_opening: Optional[float] = None
     for possible in reader:
         # skip empty or 1-col lines like "Umsätze" or date range
         if not possible or (len(possible) == 1 and not possible[0].strip()):
             continue
-        # Kontostand erkennen, bevor wir bei der eigentlichen Header-Zeile abbrechen
-        ks = _extract_csv_kontostand(possible)
+        ks = _extract_csv_kontostand_opening(possible)
         if ks is not None:
-            csv_kontostand = ks
+            csv_opening = ks
             continue
         # Normalize and try mapping
         tmp_map = _map_headers(possible)
@@ -652,6 +702,8 @@ def parse_csv(docname: str) -> Dict[str, Any]:
             break
     if not headers:
         frappe.throw("CSV muss mindestens eine Betrags-Spalte (Betrag/Soll/Haben) enthalten.")
+    csv_closing: Optional[float] = None
+    csv_closing_datum: Optional[str] = None
 
     # Validate other required fields (IBAN is optional in some lines, don't hard-fail here)
     rows = []
@@ -659,8 +711,11 @@ def parse_csv(docname: str) -> Dict[str, Any]:
     for raw in reader:
         if not any(raw):
             continue
-        # Stop at footer lines like "Kontostand"
-        if raw and _normalize_header(raw[0]).lower().startswith("kontostand"):
+        # Footer-Zeile "Kontostand;<datum>;;;<betrag>;EUR" = Schluss-Saldo. Wert
+        # mitnehmen, dann Daten-Loop beenden.
+        closing = _extract_csv_kontostand_closing(raw)
+        if closing is not None:
+            csv_closing, csv_closing_datum = closing
             break
         def getcol(key, default=""):
             i = header_map.get(key)
@@ -778,16 +833,24 @@ def parse_csv(docname: str) -> Dict[str, Any]:
     for r in rows:
         doc.append("rows", r)
 
-    # Saldo-Felder aus CSV: 'Letzter Kontostand' + spätestes Buchungsdatum als Stichtag
-    if csv_kontostand is not None:
-        doc.saldo_laut_csv = csv_kontostand
-    parsed_dates = [r.get("buchungstag") for r in rows if r.get("buchungstag")]
-    if parsed_dates:
-        doc.saldo_datum = max(parsed_dates)
+    # Saldo-Felder aus CSV. Reihenfolge:
+    #   1. Footer "Kontostand;<datum>;;;<betrag>" = echter Schluss-Saldo (bevorzugt).
+    #   2. Preamble "Letzter Kontostand" = Eröffnungssaldo, nur als Fallback wenn
+    #      Footer fehlt — besser als nichts, ist aber semantisch der Anfangswert
+    #      und wird zu einer Differenz gegen den ERP-Saldo führen.
+    saldo_value = csv_closing if csv_closing is not None else csv_opening
+    if saldo_value is not None:
+        doc.saldo_laut_csv = saldo_value
+    if csv_closing_datum:
+        doc.saldo_datum = csv_closing_datum
+    else:
+        parsed_dates = [r.get("buchungstag") for r in rows if r.get("buchungstag")]
+        if parsed_dates:
+            doc.saldo_datum = max(parsed_dates)
 
     doc.save()
     _recompute_doc_status(doc.name)
-    return {"rows": rows, "count": len(rows), "saldo_laut_csv": csv_kontostand}
+    return {"rows": rows, "count": len(rows), "saldo_laut_csv": saldo_value}
 
 
 @frappe.whitelist()
@@ -1220,6 +1283,44 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
     }
 
 
+def _persist_saldo_fields(doc) -> None:
+    """Schreibt aktualisierte Saldo-Werte ohne ``modified``-Timestamp zu ändern.
+
+    Genutzt von ``onload`` und nach Voucher-Erstellungen, damit Listenansicht
+    und Reports konsistente Zahlen sehen, ohne dass jede Form-Anzeige als
+    "Änderung" gezählt wird.
+    """
+    for field in ("saldo_laut_erp", "saldo_differenz", "saldo_datum"):
+        value = doc.get(field)
+        if value is None:
+            continue
+        try:
+            frappe.db.set_value(
+                "Bankauszug Import", doc.name, field, value, update_modified=False,
+            )
+        except Exception:
+            # Best-effort: stale Werte in der DB sind keine Katastrophe.
+            pass
+
+
+def _refresh_and_persist_saldo(docname: str) -> None:
+    """Lädt das Doc, rechnet Saldo neu und persistiert ohne ``modified``-Bump.
+
+    Aufrufstelle: am Ende jeder Whitelist-Funktion, die Voucher erzeugt
+    (Payment Entry, Journal Entry) — damit der Saldo sofort den neuen
+    GL-Stand widerspiegelt, statt erst nach manuellem "Saldo neu prüfen".
+    """
+    try:
+        doc = frappe.get_doc("Bankauszug Import", docname)
+        _refresh_saldo_fields(doc)
+        _persist_saldo_fields(doc)
+    except Exception:
+        frappe.log_error(
+            frappe.get_traceback(),
+            f"Bankauszug Import: Saldo-Refresh nach Voucher fehlgeschlagen ({docname})",
+        )
+
+
 def _refresh_saldo_fields(doc) -> None:
     """Berechnet ``saldo_laut_erp`` und ``saldo_differenz`` für das Bankkonto
     zum Stichtag ``saldo_datum``. Wenn keine Vergleichsdaten da sind, no-op.
@@ -1470,6 +1571,7 @@ def manually_reconcile_row(
         + (" (mit Vorauszahlung)" if int(leftover_as_advance or 0) else ""),
     )
     _recompute_doc_status(docname)
+    _refresh_and_persist_saldo(docname)
 
     return {
         "ok": True,
@@ -1517,6 +1619,7 @@ def create_standalone_payment_for_row(
         f"Manuell verbucht: Standalone Payment Entry über {target_amount:.2f} € (unallocated)",
     )
     _recompute_doc_status(docname)
+    _refresh_and_persist_saldo(docname)
     return {"ok": True, "payment_entry": pe.name}
 
 
@@ -1583,4 +1686,5 @@ def create_journal_entry_for_row(
         message = f"Buchungssatz: {target_amount:.2f} € gegen {account}"
     row.db_set("auto_match_message", message)
     _recompute_doc_status(docname)
+    _refresh_and_persist_saldo(docname)
     return {"ok": True, "journal_entry": je.name}
