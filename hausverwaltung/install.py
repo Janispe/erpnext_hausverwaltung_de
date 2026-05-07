@@ -153,6 +153,19 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 			.serienbrief-block:last-child {
 				margin-bottom: 0;
 			}
+			/* Frappes ``printview.html`` injiziert eine Action-Bar
+			   (.action-banner mit „Drucken"/„PDF herunterladen"). Die
+			   ``.print-hide``-Regel dafür liegt in ``print.bundle.css`` —
+			   die holt Chrome während der PDF-Erzeugung nicht zuverlässig
+			   nach (Asset-Fetch gegen den Host scheitert je nach Stack).
+			   Hier inline doppeln, damit der Banner im PDF garantiert
+			   verschwindet, in der Browser-Vorschau aber sichtbar bleibt. */
+			@media print {
+				.print-hide,
+				.action-banner {
+					display: none !important;
+				}
+			}
         """
         # Echter Frappe-Page-Footer via ``<div id="footer-html">`` — Chrome
         # rendert das auf jeder Seite am Page-Boden und reserviert dafür Platz
