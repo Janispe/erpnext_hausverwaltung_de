@@ -82,17 +82,36 @@ def _migrate_text_to_placeholder_tokens(text: str) -> tuple[str, int]:
 	return new_text, count
 
 
-def _ensure_variable(doc, variable: str, label: str, reference_doctype: str) -> bool:
-	"""Idempotent: Variable mit Doctype-Reference ergänzen, falls nicht vorhanden."""
+def _ensure_variable(
+	doc,
+	variable: str,
+	label: str,
+	reference_doctype: str,
+	variable_type: str = "Doctype",
+) -> bool:
+	"""Idempotent: Variable mit Doctype-Reference ergänzen, falls nicht vorhanden.
+
+	Wenn schon eine Variable mit dem Namen existiert (egal welcher Typ),
+	wird sie auf den geforderten Typ + reference_doctype upgegradet, falls
+	abweichend.
+	"""
 	for row in doc.get("variables") or []:
-		if (row.variable or "").strip() == variable:
-			return False
+		if (row.variable or "").strip() != variable:
+			continue
+		changed = False
+		if (row.variable_type or "").strip() != variable_type:
+			row.variable_type = variable_type
+			changed = True
+		if (row.reference_doctype or "").strip() != reference_doctype:
+			row.reference_doctype = reference_doctype
+			changed = True
+		return changed
 	doc.append(
 		"variables",
 		{
 			"variable": variable,
 			"label": label,
-			"variable_type": "Doctype",
+			"variable_type": variable_type,
 			"reference_doctype": reference_doctype,
 		},
 	)
@@ -128,15 +147,16 @@ def _ensure_standardpfad(doc, startobjekt: str, mapping: dict[str, str]) -> bool
 
 
 def _patch_baustein(name: str, *, html_content: str | None = None, body_replacements: list[tuple[str, str]] | None = None,
-                    variables: list[tuple[str, str, str]] | None = None,
+                    variables: list[tuple[str, str, str, str]] | None = None,
                     standardpfade: list[tuple[str, dict[str, str]]] | None = None) -> bool:
+	"""variables-Tuple: ``(variable, label, reference_doctype, variable_type)``."""
 	if not frappe.db.exists("Serienbrief Textbaustein", name):
 		return False
 	doc = frappe.get_doc("Serienbrief Textbaustein", name)
 	changed = False
 
-	for variable, label, ref_dt in (variables or []):
-		if _ensure_variable(doc, variable, label, ref_dt):
+	for variable, label, ref_dt, var_type in (variables or []):
+		if _ensure_variable(doc, variable, label, ref_dt, variable_type=var_type):
 			changed = True
 
 	for startobjekt, mapping in (standardpfade or []):
@@ -165,7 +185,7 @@ def execute() -> None:
 	_patch_baustein(
 		"Bankverbindung Immobilie",
 		html_content=BANKVERBINDUNG_BODY,
-		variables=[("immobilie", "Immobilie", "Immobilie")],
+		variables=[("immobilie", "Immobilie", "Immobilie", "Doctype")],
 		standardpfade=[("Mietvertrag", {"immobilie": "objekt.wohnung.immobilie"})],
 	)
 
@@ -173,18 +193,70 @@ def execute() -> None:
 	_patch_baustein(
 		"MieterAnredeNameAlle",
 		html_content=MIETER_ANREDE_BODY,
-		variables=[("mietvertrag", "Mietvertrag", "Mietvertrag")],
+		variables=[("mietvertrag", "Mietvertrag", "Mietvertrag", "Doctype")],
 		standardpfade=[
 			("Mietvertrag", {"mietvertrag": "__self__"}),
 			("Betriebskostenabrechnung Mieter", {"mietvertrag": "objekt.mietvertrag"}),
 		],
 	)
 
-	# 3) BK-Abrechnung-Einleitung / -Schluss — alten ``set objekt``-Hack
-	#    durch die deklarierte Block-Variable ersetzen.
-	for name in ("BK-Abrechnung-Einleitung", "BK-Abrechnung-Schluss"):
+	# 3) Briefkopf — Empfänger-Adresse + Mieter-Liste pro Iterations-Doctype.
+	#    ``var`` ist eine Doctype-Liste (Vertragspartner), ``Address`` das
+	#    Briefanschrift-Adress-Doc.
+	_patch_baustein(
+		"Briefkopf",
+		variables=[
+			("var", "Empfänger-Liste", "Contact", "Doctype Liste"),
+			("Address", "Briefanschrift", "Address", "Doctype"),
+		],
+		standardpfade=[
+			("Mietvertrag", {
+				"var": "objekt.mieter",
+				"address": "objekt.kunde.briefanschrift",
+			}),
+			("Betriebskostenabrechnung Mieter", {
+				"var": "objekt.mietvertrag.mieter",
+				"address": "objekt.mietvertrag.kunde.briefanschrift",
+			}),
+			("Dunning", {"address": "objekt.kunde.briefanschrift"}),
+		],
+	)
+
+	# 4) Unterschrift — Vertragspartner-Liste pro Iterations-Doctype.
+	_patch_baustein(
+		"Unterschrift",
+		variables=[("var", "Unterschrift-Liste", "Contact", "Doctype Liste")],
+		standardpfade=[
+			("Mietvertrag", {"var": "objekt.mieter"}),
+			("Betriebskostenabrechnung Mieter", {"var": "objekt.mietvertrag.mieter"}),
+		],
+	)
+
+	# 5) Miethistorie — Mietvertrag-Variable + Body-Anpassung.
+	_patch_baustein(
+		"Miethistorie",
+		variables=[("mietvertrag", "Mietvertrag", "Mietvertrag", "Doctype")],
+		standardpfade=[("Mietvertrag", {"mietvertrag": "__self__"})],
+		body_replacements=[
+			("{% set mv = objekt or objekt %}", "{% set mv = mietvertrag %}"),
+		],
+	)
+
+	# 6) BK-Abrechnung-Einleitung / -Schluss / -Posten — Variable +
+	#    Standardpfad + alten ``set objekt``-Hack ersetzen.
+	for name in ("BK-Abrechnung-Einleitung", "BK-Abrechnung-Schluss", "Betriebskostenabrechnungsposten"):
 		_patch_baustein(
 			name,
+			variables=[(
+				"betriebskostenabrechnung_mieter",
+				"BK Mieter",
+				"Betriebskostenabrechnung Mieter",
+				"Doctype",
+			)],
+			standardpfade=[(
+				"Betriebskostenabrechnung Mieter",
+				{"betriebskostenabrechnung_mieter": "__self__"},
+			)],
 			body_replacements=[
 				(
 					"{%- set objekt = objekt or objekt or objekt -%}",
@@ -192,15 +264,6 @@ def execute() -> None:
 				),
 			],
 		)
-
-	# 4) Miethistorie — alten ``set mv``-Hack durch die deklarierte
-	#    Block-Variable ersetzen.
-	_patch_baustein(
-		"Miethistorie",
-		body_replacements=[
-			("{% set mv = objekt or objekt %}", "{% set mv = mietvertrag %}"),
-		],
-	)
 
 	# 5) Token-Migration für alle Vorlagen + Bausteine — reine Pfade
 	#    auf ``{{$ ... $}}`` umschreiben.
