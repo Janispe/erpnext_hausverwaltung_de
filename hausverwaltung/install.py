@@ -391,6 +391,70 @@ def ensure_euer_print_format_default() -> None:
     _ensure_euer_print_format_default(reason="hook")
 
 
+def ensure_mietabrechnung_id_backfilled() -> None:
+    """Trägt ``mietabrechnung_id`` auf submitted Sales Invoices nach.
+
+    Idempotent: Im Steady-State (alle SIs getaggt) ist die Filter-Query leer
+    und der Hook ist ein No-Op. Self-Healing für neu importierte SIs und
+    für den Migrate-Race, bei dem das Custom Field noch nicht synchronisiert
+    war als der Backfill-Patch lief.
+
+    Phase 1: ``[MV:<X>] MM/YYYY``-Marker im ``remarks`` parsen.
+    Phase 2: Aktiver Mietvertrag über (Kunde, posting_date, optional Wohnung).
+    """
+    try:
+        if not frappe.db.has_column("Sales Invoice", "mietabrechnung_id"):
+            return
+
+        import re
+        from hausverwaltung.hausverwaltung.utils.mietabrechnung import (
+            build_mietabrechnung_id,
+            resolve_mietabrechnung_id,
+        )
+
+        marker_re = re.compile(r"\[MV:([^\]]+)\]\s+(\d{2}/\d{4})")
+
+        candidates = frappe.get_all(
+            "Sales Invoice",
+            filters={
+                "docstatus": 1,
+                "is_return": 0,
+                "mietabrechnung_id": ("in", ["", None]),
+            },
+            fields=["name", "remarks", "customer", "posting_date", "wohnung"],
+        )
+        if not candidates:
+            return
+
+        for sinv in candidates:
+            value = None
+            remarks = sinv.get("remarks") or ""
+            match = marker_re.search(str(remarks))
+            if match:
+                mv_name = match.group(1).strip()
+                month, year = match.group(2).split("/")
+                value = build_mietabrechnung_id(mv_name, frappe.utils.getdate(f"{year}-{month}-01"))
+            if not value:
+                value = resolve_mietabrechnung_id(
+                    customer=sinv.get("customer"),
+                    posting_date=sinv.get("posting_date"),
+                    wohnung=sinv.get("wohnung"),
+                )
+            if value:
+                frappe.db.set_value(
+                    "Sales Invoice",
+                    sinv.name,
+                    "mietabrechnung_id",
+                    value,
+                    update_modified=False,
+                )
+    except Exception:
+        try:
+            frappe.log_error(frappe.get_traceback(), "ensure_mietabrechnung_id_backfilled")
+        except Exception:
+            pass
+
+
 def ensure_auto_repeat_for_purchase_invoice() -> None:
     """Aktiviert Frappes ``Auto Repeat`` für Eingangsrechnungen.
 
