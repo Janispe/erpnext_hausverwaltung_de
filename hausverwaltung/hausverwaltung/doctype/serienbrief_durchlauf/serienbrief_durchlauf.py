@@ -88,12 +88,29 @@ def _humanize_jinja_error(raw: str) -> str:
 	return frappe.utils.escape_html(raw)
 
 
+def _strict_finalize(value):
+	"""Jinja ``finalize``-Hook: wirft, wenn ein Expression-Wert ``None`` ist.
+
+	``StrictUndefined`` fängt nur *undefined* Variablen ab — ein DocType-Feld
+	mit Wert ``None`` (z.B. ``mieter.first_name`` auf einem Customer ohne
+	First-Name) ist *defined* und würde sonst als Literal ``"None"`` ins PDF
+	rendern. Hier prüfen wir den finalen Output-Wert; conditional-Pfade
+	(``{% if x %}``) sind nicht betroffen, weil Jinja ``finalize`` nur auf
+	Expression-Outputs anwendet.
+	"""
+	if value is None:
+		raise UndefinedError("Wert ist None")
+	return value
+
+
 def _render_serienbrief_template(template: str, context: Dict[str, Any]) -> str:
 	"""Render templates for Serienbrief with clearer errors for missing fields.
 
 	Verwendet ``StrictUndefined`` statt Frappes Default ``ChainableUndefined``,
 	damit fehlende Variablen sofort als Fehler erscheinen — sonst landet
 	``{{ no such element: ... }}`` als Literal-Text im gerenderten PDF.
+	Zusätzlich wirft ``_strict_finalize`` bei ``None``-Werten, damit kein
+	wörtliches "None" ins PDF rutscht.
 	"""
 	from jinja2 import StrictUndefined
 
@@ -103,7 +120,7 @@ def _render_serienbrief_template(template: str, context: Dict[str, Any]) -> str:
 		frappe.throw(_("Illegal template"))
 	# Frappes get_jenv() liefert eine Environment mit ChainableUndefined.
 	# Wir clonen sie + überschreiben undefined → StrictUndefined.
-	jenv = get_jenv().overlay(undefined=StrictUndefined)
+	jenv = get_jenv().overlay(undefined=StrictUndefined, finalize=_strict_finalize)
 	try:
 		return jenv.from_string(template).render(context)
 	except UndefinedError as exc:
