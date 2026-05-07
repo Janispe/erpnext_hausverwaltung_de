@@ -1395,8 +1395,13 @@ def _persist_saldo_fields(doc) -> None:
     Genutzt von ``onload`` und nach Voucher-Erstellungen, damit Listenansicht
     und Reports konsistente Zahlen sehen, ohne dass jede Form-Anzeige als
     "Änderung" gezählt wird.
+
+    ``saldo_laut_csv`` muss mit drin sein, weil ``reextract_saldo_from_csv``
+    (Patch-Helfer) ihn nur in-memory setzt und auf diese Funktion zum
+    Persistieren angewiesen ist. Für ``onload`` und nach Voucher-Erstellung
+    ist das ein No-op (der Wert ändert sich dort nicht), schadet aber nichts.
     """
-    for field in ("saldo_laut_erp", "saldo_differenz", "saldo_datum"):
+    for field in ("saldo_laut_csv", "saldo_laut_erp", "saldo_differenz", "saldo_datum"):
         value = doc.get(field)
         if value is None:
             continue
