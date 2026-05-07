@@ -1226,7 +1226,19 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
             verwendungszweck=row_doc.verwendungszweck,
         )
 
-    for row in doc.rows:
+    # Älteste Bank-Zeilen zuerst verarbeiten: damit beim anschließenden
+    # Auto-Match (FIFO über offene Rechnungen, älteste zuerst) eine alte
+    # Bank-Zahlung auch eine alte offene Rechnung erwischt — und nicht eine
+    # spätere Bank-Zahlung der älteren Rechnung „dazwischenfunkt". Sekundär
+    # nach idx (= CSV-Reihenfolge), um stabil zu bleiben.
+    sorted_rows = sorted(
+        doc.rows,
+        key=lambda r: (
+            getdate(r.buchungstag) if r.buchungstag else getdate("9999-12-31"),
+            r.idx,
+        ),
+    )
+    for row in sorted_rows:
         if row.error:
             errors.append({"row": row.name, "error": row.error})
             row.db_set("row_status", "failed")
