@@ -113,11 +113,30 @@ function show_mietrechnungen_dialog() {
   dlg.show();
 }
 
+function run_pruefung(frm) {
+  frappe.require("/assets/hausverwaltung/js/sollstellung_check.js", () => {
+    frappe.call({
+      method: "hausverwaltung.hausverwaltung.scripts.check_mietrechnungen.pruefe_durchlauf",
+      args: { durchlauf: frm.doc.name },
+      freeze: true,
+      freeze_message: __("Prüfe Sollstellungen..."),
+      callback: (r) => {
+        if (r.exc || !r.message) return;
+        window.hausverwaltung.sollstellung_check.show_durchlauf(r.message);
+      },
+    });
+  });
+}
+
 frappe.ui.form.on("Mietrechnungen Durchlauf", {
   refresh(frm) {
     if (frm.is_new() && !frm.__run_dialog_opened) {
       frm.__run_dialog_opened = true;
       show_mietrechnungen_dialog();
+      return;
+    }
+    if (!frm.is_new()) {
+      frm.add_custom_button(__("Beträge prüfen"), () => run_pruefung(frm));
     }
   },
 });
