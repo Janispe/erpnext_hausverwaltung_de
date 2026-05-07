@@ -450,16 +450,48 @@ def _render_split_preview_source(source: str, extra_context: Dict[str, Any] | No
 	return env.from_string(sanitized).render(ctx)
 
 
-def _preview_defaults_for_block(block_doc) -> Dict[str, str]:
+def _preview_defaults_for_block(block_doc, base_context: Dict[str, Any] | None = None) -> Dict[str, Any]:
 	"""Collect per-block preview defaults keyed by variable name.
 
-	The values are plain strings; the Jinja finalize wrapper will add the yellow span.
+	1. Doctype-Variablen mit Standardpfad werden gegen den ``base_context``
+	   (= Split-Preview-Mock) aufgelöst — analog zum echten Render-Pfad.
+	   Damit landet ``mietvertrag`` als Mock-Mietvertrag im Block-Context,
+	   ohne dass der User pro Vorlage Preview-Defaults pflegen muss.
+	2. ``preview_default``-Werte aus den Variablen-Rows als Text-Fallback.
 	"""
-	defaults: Dict[str, str] = {}
+	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+		_get_block_default_path_map,
+		_resolve_value_path,
+	)
+
+	defaults: Dict[str, Any] = {}
+
+	# Standardpfade des Bausteins für den aktuellen Iterations-Doctype
+	# (im Preview ist das immer „Mietvertrag", weil _split_preview_context
+	# einen SplitPreviewMietvertrag als objekt hat).
+	if base_context is not None:
+		path_map = _get_block_default_path_map(block_doc, "Mietvertrag")
+		for row in block_doc.get("variables") or []:
+			varname = cstr(getattr(row, "variable", "") or "").strip()
+			variable_type = cstr(getattr(row, "variable_type", None) or "").strip() or "Text"
+			if not varname or variable_type == "Text":
+				continue
+			path = (
+				cstr(path_map.get(varname) or "").strip()
+				or cstr(path_map.get(getattr(row, "reference_doctype", None)) or "").strip()
+				or "__self__"
+			)
+			try:
+				value = _resolve_value_path(path, base_context)
+			except Exception:
+				value = None
+			if value is not None:
+				defaults[varname] = value
+
 	for row in block_doc.get("variables") or []:
 		varname = cstr(getattr(row, "variable", "") or "").strip()
 		preview = cstr(getattr(row, "preview_default", "") or "").strip()
-		if varname and preview:
+		if varname and preview and varname not in defaults:
 			defaults[varname] = preview
 	return defaults
 
@@ -655,7 +687,7 @@ def _build_split_preview_html(template_doc) -> str:
 		source = _get_block_template_source(block_doc).strip()
 		if not source:
 			return ""
-		defaults = _preview_defaults_for_block(block_doc)
+		defaults = _preview_defaults_for_block(block_doc, base_context=_split_preview_context())
 		rendered = _render_split_preview_source(source, extra_context=defaults)
 		return f'<div class="serienbrief-block" data-block="{cstr(block_doc.name)}">{rendered}</div>'
 
