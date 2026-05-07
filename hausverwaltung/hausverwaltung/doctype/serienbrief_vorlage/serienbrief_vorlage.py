@@ -409,35 +409,45 @@ def _split_preview_context() -> Dict[str, Any]:
 
 
 def _render_split_preview_html(html: str) -> str:
+	"""Render with ``StrictUndefined`` als root-undefined, sodass eine im
+	Context fehlende Variable (Tippfehler in der Vorlage) sofort einen
+	Fehler wirft. Sub-Attribute auf den Beispiel-Klassen (SplitPreviewContact,
+	SplitPreviewAddress, …) bleiben über deren ``__getattr__`` SplitPreview-
+	Undefined und werden vom finalize-Hook als gelb hervorgehobener
+	Beispielwert gerendert. Fehler werden bewusst NICHT geschluckt — sie
+	sollen in der Live-Preview als Status-Meldung sichtbar sein.
+	"""
+	from jinja2 import StrictUndefined
+
 	if not html:
 		return html
-	try:
-		env = get_jenv().overlay(
-			undefined=SplitPreviewUndefined, finalize=_split_preview_finalize_value
-		)
-		sanitized = sanitize_richtext_jinja_source(html)
-		return env.from_string(sanitized).render(_split_preview_context())
-	except Exception:
-		return html
+	env = get_jenv().overlay(
+		undefined=StrictUndefined, finalize=_split_preview_finalize_value
+	)
+	sanitized = sanitize_richtext_jinja_source(html)
+	return env.from_string(sanitized).render(_split_preview_context())
 
 
 def _render_split_preview_source(source: str, extra_context: Dict[str, Any] | None = None) -> str:
 	"""Render a single Jinja source (baustein or standard text) with the split preview context,
 	optionally overlayed with preview defaults for the currently-rendered block.
+
+	Strict-Mode: Root-Variablen, die nicht im Context vorkommen, werfen sofort.
+	Beispielwerte für definierte Sub-Attribute kommen weiter aus den
+	SplitPreview-Klassen (siehe ``_render_split_preview_html``).
 	"""
+	from jinja2 import StrictUndefined
+
 	if not source:
 		return source
-	try:
-		env = get_jenv().overlay(
-			undefined=SplitPreviewUndefined, finalize=_split_preview_finalize_value
-		)
-		ctx = _split_preview_context()
-		if extra_context:
-			ctx.update(extra_context)
-		sanitized = sanitize_richtext_jinja_source(source)
-		return env.from_string(sanitized).render(ctx)
-	except Exception:
-		return source
+	env = get_jenv().overlay(
+		undefined=StrictUndefined, finalize=_split_preview_finalize_value
+	)
+	ctx = _split_preview_context()
+	if extra_context:
+		ctx.update(extra_context)
+	sanitized = sanitize_richtext_jinja_source(source)
+	return env.from_string(sanitized).render(ctx)
 
 
 def _preview_defaults_for_block(block_doc) -> Dict[str, str]:
@@ -523,7 +533,12 @@ def _split_preview_finalize_value(value) -> Markup | str:
 	# joined ``<br/>`` address strings — into literal ``&lt;br/&gt;`` in the
 	# preview. Leaving the value raw mirrors the real render flow.
 	if value is None:
-		return ""
+		# Konsistent zum Durchlauf-finalize: ``None`` ist kein gültiger Render-
+		# Output (sonst würde wörtlich „None" im PDF stehen). Wirft einen
+		# UndefinedError, der die Live-Preview als Status-Meldung anzeigt.
+		from jinja2 import UndefinedError
+
+		raise UndefinedError("Wert ist None")
 	if isinstance(value, SplitPreviewUndefined):
 		value = str(value)
 	if isinstance(value, Markup):
