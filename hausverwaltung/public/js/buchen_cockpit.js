@@ -499,6 +499,9 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 					options: "Cost Center",
 					in_list_view: 1,
 					columns: 2,
+					get_query: () => ({
+						query: `${HV_COCKPIT_API}.toplevel_kostenstelle_query`,
+					}),
 				},
 				{
 					fieldtype: "Link",

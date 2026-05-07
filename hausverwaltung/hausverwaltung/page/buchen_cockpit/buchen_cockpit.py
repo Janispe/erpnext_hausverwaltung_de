@@ -271,6 +271,35 @@ def eligible_konten_query(doctype, txt, searchfield, start, page_len, filters):
     )
 
 
+@frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
+def toplevel_kostenstelle_query(doctype, txt, searchfield, start, page_len, filters):
+    """Custom Link-Query: liefert nur Cost Centers, die einer Top-Level-
+    Immobilie (parent_immobilie leer) als ``kostenstelle`` zugeordnet sind.
+
+    Sub-Immobilien (Gebäudeteile HH/VH/SF) werden ausgeblendet, damit Buchungen
+    nur auf Gebäude-Ebene möglich sind. Wird im Buchungs-Cockpit und im
+    Zahlungsplan-Formular für die Kostenstellen-Auswahl verwendet.
+    """
+    return frappe.db.sql(
+        """
+        SELECT DISTINCT i.kostenstelle
+        FROM `tabImmobilie` i
+        WHERE (i.parent_immobilie IS NULL OR i.parent_immobilie = '')
+          AND i.kostenstelle IS NOT NULL
+          AND i.kostenstelle != ''
+          AND i.kostenstelle LIKE %(txt)s
+        ORDER BY i.kostenstelle
+        LIMIT %(start)s, %(page_len)s
+        """,
+        {
+            "txt": f"%{txt or ''}%",
+            "start": int(start or 0),
+            "page_len": int(page_len or 20),
+        },
+    )
+
+
 def _get_kostenart_details(row: dict) -> dict | None:
     """Resolve konto/artikel from whichever Kostenart-DocType the row references.
 

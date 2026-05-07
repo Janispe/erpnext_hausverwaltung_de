@@ -55,6 +55,9 @@ function openJaDialog(frm) {
 				label: __("Kostenstelle"),
 				options: "Cost Center",
 				default: frm.doc.cost_center || null,
+				get_query: () => ({
+					query: "hausverwaltung.hausverwaltung.page.buchen_cockpit.buchen_cockpit.toplevel_kostenstelle_query",
+				}),
 			},
 			{
 				fieldname: "item_code",
@@ -236,6 +239,17 @@ function runCreateDuePurchaseInvoices(frm) {
 }
 
 frappe.ui.form.on("Zahlungsplan", {
+	setup(frm) {
+		const toplevel_immobilie = () => ({
+			filters: { parent_immobilie: ["in", ["", null]] },
+		});
+		const toplevel_kostenstelle = () => ({
+			query: "hausverwaltung.hausverwaltung.page.buchen_cockpit.buchen_cockpit.toplevel_kostenstelle_query",
+		});
+		frm.set_query("immobilie", toplevel_immobilie);
+		frm.set_query("cost_center", toplevel_kostenstelle);
+	},
+
 	refresh(frm) {
 		if (frm.doc.ja_status) {
 			let color = "blue";
