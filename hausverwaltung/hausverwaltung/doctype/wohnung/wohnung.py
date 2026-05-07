@@ -132,6 +132,20 @@ class Wohnung(Document):
 		return z[0].name if z else None
 
 	@property
+	def zustand_aktuell(self):
+		"""Aktueller Wohnungszustand-Doc (im Gegensatz zu ``aktueller_zustand``,
+		das nur den Namen liefert). Damit funktioniert der Pfad-Drill-Down im
+		Serienbrief-Resolver: ``objekt.wohnung.zustand_aktuell.größe``.
+		"""
+		name = self.aktueller_zustand
+		if not name:
+			return None
+		try:
+			return frappe.get_cached_doc("Wohnungszustand", name)
+		except frappe.DoesNotExistError:
+			return None
+
+	@property
 	def betriebskostenabrechnung_durch_vermieter(self) -> int:
 		z = self.aktueller_zustand
 		if not z:

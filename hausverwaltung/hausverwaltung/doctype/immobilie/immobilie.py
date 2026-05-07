@@ -1,5 +1,6 @@
 import frappe
 from frappe.model.document import Document
+from frappe.utils import cstr
 from hausverwaltung.hausverwaltung.doctype.wohnung.wohnung import STATUS_INAKTIV
 from hausverwaltung.hausverwaltung.utils.immobilie_accounts import get_immobilie_account_map
 
@@ -20,6 +21,59 @@ class Immobilie(Document):
 		if not self.name:
 			return 0.0
 		return _sum_gesamtwohnflaeche(self.name)
+
+	@property
+	def bank_konto(self):
+		"""Hauptkonto-Bank-Account-Doc der Immobilie. Liefert das Frappe
+		``Bank Account``-Doc (mit iban/bic/bank/account_name) oder None.
+
+		Pfad-Vorlage: ``{{ objekt.wohnung.immobilie.bank_konto.iban }}``.
+		"""
+		rows = list(self.get("bankkonten") or [])
+		if not rows:
+			return None
+		haupt = next(
+			(r for r in rows if int(getattr(r, "ist_hauptkonto", 0) or 0) == 1),
+			rows[0],
+		)
+		account_name = cstr(getattr(haupt, "konto", None) or "").strip()
+		if not account_name:
+			return None
+		try:
+			account = frappe.get_cached_doc("Account", account_name)
+		except frappe.DoesNotExistError:
+			return None
+		bank_account_name = cstr(account.get("bank_account") or "").strip()
+		if not bank_account_name:
+			# Konsistent zur Strict-Architektur: Account ohne Bank-Account-Link
+			# (z.B. nicht durchgepflegtes Privatkonto) liefert None. Vorlagen
+			# werfen damit explizit, statt leere IBAN-Felder ins PDF zu
+			# rendern. Bei legitimen Kassenkonten muss die Vorlage Conditional
+			# schreiben oder andere Daten-Pfade nutzen.
+			return None
+		try:
+			return frappe.get_cached_doc("Bank Account", bank_account_name)
+		except frappe.DoesNotExistError:
+			return None
+
+	@property
+	def eigentuemer(self):
+		"""Erster Eigentümer-Contact-Doc der Immobilie. Liefert das Contact-Doc
+		oder None.
+
+		Pfad-Vorlage: ``{{ objekt.wohnung.immobilie.eigentuemer.first_name }}``,
+		``{{ objekt.wohnung.immobilie.eigentuemer.address.address_line1 }}``.
+		"""
+		rows = list(self.get("eigentumer") or [])
+		if not rows:
+			return None
+		contact_name = cstr(getattr(rows[0], "contact", None) or "").strip()
+		if not contact_name:
+			return None
+		try:
+			return frappe.get_cached_doc("Contact", contact_name)
+		except frappe.DoesNotExistError:
+			return None
 
 
 def _sum_gesamtwohnflaeche(immobilie: str) -> float:

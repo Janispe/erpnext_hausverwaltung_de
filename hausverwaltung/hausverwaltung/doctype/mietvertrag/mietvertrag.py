@@ -322,6 +322,49 @@ class Mietvertrag(Document):
 		)
 
 	@property
+	def hauptmieter_name(self) -> str:
+		"""Anzeigename aller Hauptmieter aus ``mieter[]`` (Vertragspartner →
+		Contact, Rolle = Hauptmieter). Mehrere → Komma-getrennt.
+
+		Pfad-Vorlage: ``{{ objekt.hauptmieter_name }}``.
+		"""
+		return get_hauptmieter_display_name(self.mieter) or ""
+
+	@property
+	def vorauszahlung_slots(self) -> list:
+		"""Aktive Festbetrag-Vorauszahlungen zum heutigen Datum, sortiert nach
+		``idx``. Werte als formatierte EUR-Strings (z.B. „1.234,56 €").
+
+		1-basierte Indizierung — ``vorauszahlung_slots[1]`` ist der erste
+		Slot (Slot 0 ist None-Padding). Nicht belegte Slots geben einen leeren
+		String zurück, damit Vorlagen mit ``{{ objekt.vorauszahlung_slots[3] }}``
+		nicht im Strict-Mode crashen, wenn der Mietvertrag nur 2 Slots hat.
+
+		Pfad-Vorlage: ``{{ objekt.vorauszahlung_slots[1] }}``.
+		"""
+		from frappe.utils import fmt_money
+
+		rows = list(self.get("festbetraege") or [])
+		valid: list = []
+		if rows:
+			ref_date = getdate(today())
+			for r in rows:
+				vd = getdate(r.gueltig_von) if r.gueltig_von else None
+				bd = getdate(r.gueltig_bis) if r.gueltig_bis else None
+				if vd and vd > ref_date:
+					continue
+				if bd and bd < ref_date:
+					continue
+				valid.append(r)
+			valid.sort(key=lambda r: int(getattr(r, "idx", 0) or 0))
+
+		# 1-basiert: Slot 0 ist None-Padding, danach mind. 4 Slots als leere
+		# Strings vorhalten, damit Vorlagen-Pfade auf nicht belegte Slots
+		# nicht in Strict-Mode crashen (None würde via _strict_finalize werfen).
+		formatted = [fmt_money(float(r.betrag or 0), currency="EUR") for r in valid]
+		return [None] + formatted + [""] * max(0, 4 - len(formatted))
+
+	@property
 	def miete_pro_qm(self) -> float | None:
 		"""Aktuelle Nettokaltmiete pro Quadratmeter."""
 		if not self.wohnung:

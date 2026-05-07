@@ -6,43 +6,80 @@ import frappe
 from frappe.utils import cstr
 
 
+# Reihenfolge ist relevant: längere/spezifischere Tokens VOR kürzeren stehen,
+# damit z.B. ``mieter_strasse`` ersetzt wird bevor ``mieter`` greift.
 FIELD_REPLACEMENTS = {
-	"doc": "objekt",
-	"iteration_doc": "objekt",
-	"iteration_objekt": "objekt",
-	"serienbrief_titel": "serienbrief.titel",
-	"empfaenger_index": "serienbrief.index",
-	"empfaenger_count": "serienbrief.count",
-	"empfaenger_anzeigename": "empfaenger.anzeigename",
-	"mieter_name": "empfaenger.mieter_name",
+	# Mieter (zuerst die spezifischen Composite-Tokens, dann der bare-Token)
 	"mieter_strasse": "empfaenger.strasse",
+	"mieter_plz_ort": "empfaenger.plz_ort",
 	"mieter_plz": "empfaenger.plz",
 	"mieter_ort": "empfaenger.ort",
-	"mieter_plz_ort": "empfaenger.plz_ort",
 	"mieter_adresse": "empfaenger.adresse",
+	"mieter_name": "empfaenger.mieter_name",
+	"mieter_doc": "objekt.kunde",
+	"mieter": "objekt.kunde",
+	# Wohnung
+	"wohnung_groesse": "objekt.wohnung.zustand_aktuell.größe",
+	"wohnung_anzahl_zimmer": "objekt.wohnung.zustand_aktuell.anzahl_zimmer",
+	"wohnung_bezeichnung": "objekt.wohnung.name__lage_in_der_immobilie",
+	"wohnung_doc": "objekt.wohnung",
+	"wohnung": "objekt.wohnung",
+	# Immobilie — Adresse + composite via Address-Properties (plz_ort/adresse)
+	"immobilie_strasse": "objekt.wohnung.immobilie.address.address_line1",
+	"immobilie_plz_ort": "objekt.wohnung.immobilie.address.plz_ort",
+	"immobilie_plz": "objekt.wohnung.immobilie.address.pincode",
+	"immobilie_ort": "objekt.wohnung.immobilie.address.city",
+	"immobilie_adresse": "objekt.wohnung.immobilie.address.adresse",
+	"immobilie_doc": "objekt.wohnung.immobilie",
+	"immobilie": "objekt.wohnung.immobilie",
+	# Eigentümer (= Contact-Doc auf Immobilie)
+	"eigentuemer_strasse": "objekt.wohnung.immobilie.eigentuemer.address.address_line1",
+	"eigentuemer_plz_ort": "objekt.wohnung.immobilie.eigentuemer.address.plz_ort",
+	"eigentuemer_plz": "objekt.wohnung.immobilie.eigentuemer.address.pincode",
+	"eigentuemer_ort": "objekt.wohnung.immobilie.eigentuemer.address.city",
+	"eigentuemer_adresse": "objekt.wohnung.immobilie.eigentuemer.address.adresse",
+	"eigentuemer_doc": "objekt.wohnung.immobilie.eigentuemer",
+	"eigentuemer": "objekt.wohnung.immobilie.eigentuemer",
+	# Bank-Daten (Hauptkonto der Immobilie via Bank Account-Doc)
+	"bank_iban": "objekt.wohnung.immobilie.bank_konto.iban",
+	"bank_bic": "objekt.wohnung.immobilie.bank_konto.bic",
+	"bank_blz": "objekt.wohnung.immobilie.bank_konto.branch_code",
+	"bank_kto_inhaber": "objekt.wohnung.immobilie.bank_konto.account_name",
+	"bank_konto": "objekt.wohnung.immobilie.bank_konto.account_name",
+	"bank_name": "objekt.wohnung.immobilie.bank_konto.bank",
+	# Vorauszahlungen — 1-basierter Slot-Index via Property-Liste
+	"vorauszahlung_1_netto": "objekt.vorauszahlung_slots[1]",
+	"vorauszahlung_2_netto": "objekt.vorauszahlung_slots[2]",
+	"vorauszahlung_3_netto": "objekt.vorauszahlung_slots[3]",
+	"vorauszahlung_4_netto": "objekt.vorauszahlung_slots[4]",
+	"vorauszahlung_1": "objekt.vorauszahlung_slots[1]",
+	"vorauszahlung_2": "objekt.vorauszahlung_slots[2]",
+	"vorauszahlung_3": "objekt.vorauszahlung_slots[3]",
+	"vorauszahlung_4": "objekt.vorauszahlung_slots[4]",
+	# Mietvertrag-Aliase
+	"mietvertrag_doc": "objekt",
+	"mietvertrag": "objekt",
+	# Run-Metadaten
+	"empfaenger_anzeigename": "empfaenger.anzeigename",
+	"empfaenger_index": "serienbrief.index",
+	"empfaenger_count": "serienbrief.count",
+	"serienbrief_titel": "serienbrief.titel",
+	# Generic ``doc`` / ``iteration_doc`` zuletzt — andere Replacements könnten
+	# Token enthalten, die ``doc`` als Substring haben (haben sie aktuell nicht,
+	# aber Reihenfolge ist verteidigbar).
+	"iteration_objekt": "objekt",
+	"iteration_doc": "objekt",
+	"doc": "objekt",
 }
 
+# Tokens, deren Verbleiben nach der Migration verdächtig ist und ge-loggt
+# werden soll — typischerweise weil der Vorlagen-Schreiber sie in
+# nicht-Standard-Konstruktionen verwendet hat (z.B. ``mieter|some_filter``).
 LEGACY_ROOTS = {
-	"mieter",
-	"mieter_doc",
-	"wohnung",
-	"wohnung_doc",
-	"immobilie",
-	"immobilie_doc",
-	"eigentuemer",
-	"eigentuemer_doc",
-	"mietvertrag",
-	"mietvertrag_doc",
-	"bank_name",
-	"bank_iban",
-	"bank_bic",
-	"bank_blz",
-	"bank_konto",
-	"bank_kto_inhaber",
-	"vorauszahlung_1",
-	"vorauszahlung_2",
-	"vorauszahlung_3",
-	"vorauszahlung_4",
+	"empfaenger_data",
+	"wohnung_bezeichnung",
+	"immobilie_bezeichnung",
+	"eigentuemer_saldo",
 }
 
 
@@ -58,7 +95,13 @@ def _replace_known_roots(source: str | None) -> tuple[str | None, bool]:
 		return source, False
 	updated = source
 	for old, new in FIELD_REPLACEMENTS.items():
-		updated = re.sub(rf"\b{re.escape(old)}\b", new, updated)
+		# (?<![\w.]): vor dem Token darf weder ein Wort-Char noch ein Punkt
+		# stehen — verhindert dass z.B. ``objekt.mieter[0]`` zu
+		# ``objekt.objekt.kunde[0]`` umgeschrieben wird, wenn der Replacer
+		# ``mieter`` als Root-Token ersetzt.
+		# \b nach dem Token: matched nur ganze Wörter, also greift
+		# ``mieter`` nicht in ``mieter_strasse``.
+		updated = re.sub(rf"(?<![\w.]){re.escape(old)}\b", new, updated)
 	return updated, updated != source
 
 

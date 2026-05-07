@@ -195,6 +195,10 @@ after_migrate = [
 override_doctype_class = {
 	"Payment Entry": "hausverwaltung.hausverwaltung.overrides.payment_entry.CustomPaymentEntry",
 	"Sales Invoice": "hausverwaltung.hausverwaltung.overrides.sales_invoice.CustomSalesInvoice",
+	# composite Properties (plz_ort / adresse) für Serienbrief-Pfade
+	"Address": "hausverwaltung.hausverwaltung.overrides.address.Address",
+	# briefanschrift-Property mit Wohnung-Fallback (Mieter ohne eigene Adresse)
+	"Customer": "hausverwaltung.hausverwaltung.overrides.customer.Customer",
 }
 
 # Document Events

@@ -72,6 +72,20 @@ def _humanize_jinja_error(raw: str) -> str:
 		obj_path, field = m.group(1), m.group(2)
 		# Doctype-Klassenname aus dem Modul-Pfad extrahieren
 		doctype = obj_path.rsplit(".", 1)[-1] if "." in obj_path else obj_path
+		# Spezialfall: ``DocType str`` heißt der Pfad ist auf einem
+		# Link-Feld-String steckengeblieben — in Jinja wird ein Link-Feld
+		# als Name (String) zurückgegeben, nicht als Sub-Doc. Lösung:
+		# Platzhalter-Notation ``{{$ ... $}}`` nutzen, dann löst der
+		# Resolver Link-Felder automatisch zu Sub-Docs auf.
+		if doctype == "str":
+			return _(
+				"Im Vorlagen-Body wird ein Pfad geschrieben, der ein Link-Feld "
+				"durchläuft (z.B. <code>objekt.wohnung.{0}</code>). Jinja kann "
+				"diese Link-Felder nicht automatisch auflösen — der Wert kommt "
+				"als Text-Name zurück. Lösung: den Token in Platzhalter-Notation "
+				"umschreiben (<code>{{$ objekt.wohnung.{0} $}}</code>), oder "
+				"das Feld als Variable mit Pfad in der Vorlage deklarieren."
+			).format(field)
 		return _(
 			"Feld <code>{0}</code> existiert nicht im DocType "
 			"<strong>{1}</strong>. Vorlage referenziert ein nicht vorhandenes "
@@ -103,6 +117,51 @@ def _strict_finalize(value):
 	return value
 
 
+# Spezial-Notation für Platzhalter, die durch den Pfad-Resolver vor dem
+# Jinja-Rendering aufgelöst werden: ``{{$ objekt.wohnung.immobilie.name $}}``.
+# Eindeutig getrennt von Jinja-Tokens (``{{ ... }}``), die Logik, Filter und
+# Variable-Referenzen enthalten — kein Heuristik-Raten mehr.
+_PLACEHOLDER_TOKEN_RE = re.compile(
+	r"\{\{\$\s*([a-zA-Z_][\w]*(?:\[\d+\])?(?:\.[a-zA-Z_][\w]*(?:\[\d+\])?)*)\s*\$\}\}"
+)
+
+
+def _preprocess_simple_paths(template: str, context: Dict[str, Any]) -> str:
+	"""Löst Platzhalter-Tokens ``{{$ pfad $}}`` via :func:`_resolve_value_path`
+	vor dem Jinja-Rendering auf und ersetzt sie durch den Wert.
+
+	Damit kann der Vorlagen-Autor zwischen zwei Notationen wählen:
+
+	* ``{{$ objekt.wohnung.immobilie.name $}}`` — **Platzhalter**, wird
+	  mechanisch durch den Resolver aufgelöst; Iterationsobjekt + Variablen
+	  als Roots, Link-Felder navigieren automatisch.
+	* ``{{ wohnung.einheit }}`` — **Jinja**, normale Variable / Logik /
+	  Filter / Conditionals; läuft durch das Jinja-Render-Environment.
+
+	Wenn der Resolver scheitert (z.B. None), bleibt der Token im Body —
+	dann wirft Jinja eine klare Fehlermeldung.
+	"""
+	if not template or "{{$" not in template:
+		return template
+
+	def _replace(match: "re.Match[str]") -> str:
+		path = match.group(1)
+		# Resolver-Exceptions (z.B. „Feld X existiert nicht im DocType str")
+		# propagieren — das sind klare Pfad-Fehler, die der User sehen soll.
+		value = _resolve_value_path(path, context)
+		if value is None:
+			frappe.throw(
+				_("Platzhalter <code>{{$ {0} $}}</code> konnte nicht aufgelöst werden: der Pfad liefert <strong>None</strong>. Bitte Daten prüfen oder den Pfad korrigieren.").format(path),
+				title=_("Serienbrief Fehler"),
+			)
+		# Document/Dict-ähnliches → Doc-Name (analog Frappe-Default).
+		if hasattr(value, "doctype") and getattr(value, "name", None):
+			return cstr(value.name)
+		return cstr(value)
+
+	return _PLACEHOLDER_TOKEN_RE.sub(_replace, template)
+
+
 def _render_serienbrief_template(template: str, context: Dict[str, Any]) -> str:
 	"""Render templates for Serienbrief with clearer errors for missing fields.
 
@@ -111,6 +170,10 @@ def _render_serienbrief_template(template: str, context: Dict[str, Any]) -> str:
 	``{{ no such element: ... }}`` als Literal-Text im gerenderten PDF.
 	Zusätzlich wirft ``_strict_finalize`` bei ``None``-Werten, damit kein
 	wörtliches "None" ins PDF rutscht.
+
+	Vor dem Jinja-Rendering werden simple Pfad-Tokens via
+	:func:`_preprocess_simple_paths` aufgelöst — damit funktionieren tiefe
+	Pfade ohne deklarierte Variable.
 	"""
 	from jinja2 import StrictUndefined
 
@@ -118,6 +181,8 @@ def _render_serienbrief_template(template: str, context: Dict[str, Any]) -> str:
 		return ""
 	if ".__" in template:
 		frappe.throw(_("Illegal template"))
+	# Pfad-Pre-Processing: simple {{ x.y.z }}-Tokens via Resolver auflösen.
+	template = _preprocess_simple_paths(template, context)
 	# Frappes get_jenv() liefert eine Environment mit ChainableUndefined.
 	# Wir clonen sie + überschreiben undefined → StrictUndefined.
 	jenv = get_jenv().overlay(undefined=StrictUndefined, finalize=_strict_finalize)
@@ -761,8 +826,12 @@ class SerienbriefDurchlauf(Document):
 		return base if counts[base] == 1 else f"{base}_{counts[base]}"
 
 	def _build_block_context(self, base_context: Dict[str, Any], block_doc, block_row, block_key: str) -> frappe._dict:
+		# Block-Context ist strict: nur globale Werte + deklarierte Variablen.
+		# ``objekt`` wird bewusst NICHT vererbt — Bausteine müssen ihre Daten
+		# über Variablen + Standardpfade deklarieren. So bleibt der Body sauber
+		# (``{{ kunde.X }}``, ``{{ immobilie.Y }}``) und es gibt keine versteckte
+		# Magic über mehrstufige Link-Field-Pfade in Jinja.
 		block_context = frappe._dict(
-			objekt=base_context.get("objekt"),
 			datum=base_context.get("datum"),
 			datum_iso=base_context.get("datum_iso"),
 			empfaenger=base_context.get("empfaenger"),
@@ -770,7 +839,7 @@ class SerienbriefDurchlauf(Document):
 			outputs=base_context.get("outputs") or frappe._dict(),
 			baustein=frappe._dict(key=block_key, name=getattr(block_doc, "name", None), title=getattr(block_doc, "title", None)),
 		)
-		self._apply_block_variables(block_context, block_doc, block_row)
+		self._apply_block_variables(block_context, base_context, block_doc, block_row)
 		return block_context
 
 	def _publish_block_outputs(
@@ -978,7 +1047,7 @@ class SerienbriefDurchlauf(Document):
 
 		return block_doc.text_content or ""
 
-	def _apply_block_variables(self, context: Dict[str, Any], block_doc, block_row) -> None:
+	def _apply_block_variables(self, context: Dict[str, Any], base_context: Dict[str, Any], block_doc, block_row) -> None:
 		variable_defs = block_doc.get("variables") or []
 		if not variable_defs:
 			return
@@ -986,6 +1055,14 @@ class SerienbriefDurchlauf(Document):
 		block_title = block_doc.title or block_doc.name
 		value_mapping = _parse_variable_values(getattr(block_row, "variablen_werte", None))
 		path_mapping = _parse_mapping(getattr(block_row, "pfad_zuordnung", None))
+		# Default-Pfade aus ``block_doc.standardpfade`` für den aktuellen
+		# Iterations-Doctype. Damit kann ein Baustein einmal pro Iterations-
+		# Doctype einen Standard hinterlegen, statt dass jede einbettende
+		# Vorlage ihn manuell setzen muss.
+		iteration_doctype = cstr(getattr(self, "iteration_doctype", None) or "").strip()
+		default_paths: dict[str, str] = (
+			_get_block_default_path_map(block_doc, iteration_doctype) if iteration_doctype else {}
+		)
 		missing: list[str] = []
 
 		for variable in variable_defs:
@@ -1004,12 +1081,17 @@ class SerienbriefDurchlauf(Document):
 					cstr(path_mapping.get(key) or "").strip()
 					or cstr(path_mapping.get(raw_key) or "").strip()
 					or cstr(path_mapping.get(getattr(variable, "reference_doctype", None)) or "").strip()
-					or ("__self__" if getattr(context.get("objekt"), "doctype", None) == cstr(getattr(variable, "reference_doctype", None) or "").strip() else key)
+					or cstr(default_paths.get(key) or "").strip()
+					or cstr(default_paths.get(raw_key) or "").strip()
+					or cstr(default_paths.get(getattr(variable, "reference_doctype", None)) or "").strip()
+					or ("__self__" if iteration_doctype == cstr(getattr(variable, "reference_doctype", None) or "").strip() else key)
 				)
 
 			resolved = None
 			if path:
-				resolved = _resolve_value_path(path, context)
+				# Pfade werden gegen den Parent-Context (mit ``objekt``)
+				# aufgelöst, nicht gegen den strict Block-Context.
+				resolved = _resolve_value_path(path, base_context)
 				if resolved is None:
 					frappe.throw(
 						_("Pfad {0} für Variable {1} im Baustein {2} konnte nicht aufgelöst werden.").format(
@@ -1048,11 +1130,13 @@ class SerienbriefDurchlauf(Document):
 
 		template_title = template.title or template.name
 		mapping = _parse_variable_values(getattr(template, "variablen_werte", None))
+		path_mapping = _parse_mapping(getattr(template, "pfad_zuordnung", None))
+
+		iteration_doctype = cstr(getattr(self, "iteration_doctype", None) or "").strip()
 
 		for variable in variable_defs:
 			variable_type = cstr(getattr(variable, "variable_type", None) or "").strip() or "Text"
-			if variable_type not in {"String", "Zahl", "Bool", "Datum", "Text"}:
-				continue
+			is_text_like = variable_type in {"String", "Zahl", "Bool", "Datum", "Text"}
 
 			raw_key = cstr(getattr(variable, "variable", None) or getattr(variable, "label", None) or "")
 			key = frappe.scrub(raw_key) if raw_key else ""
@@ -1062,6 +1146,14 @@ class SerienbriefDurchlauf(Document):
 			entry = mapping.get(key) or {}
 			path = cstr(entry.get("path") or "").strip()
 			value = entry.get("value")
+			if not is_text_like:
+				# Doctype / Doctype Liste: Pfad analog zu Bausteinen
+				path = (
+					cstr(path_mapping.get(key) or "").strip()
+					or cstr(path_mapping.get(raw_key) or "").strip()
+					or cstr(path_mapping.get(getattr(variable, "reference_doctype", None)) or "").strip()
+					or ("__self__" if iteration_doctype == cstr(getattr(variable, "reference_doctype", None) or "").strip() else "")
+				)
 
 			resolved = None
 			if path:
@@ -1080,9 +1172,15 @@ class SerienbriefDurchlauf(Document):
 				# _verify_template_variables_resolved raises afterwards if it's still missing.
 				continue
 
-			if "werte" not in context["serienbrief"]:
-				context["serienbrief"]["werte"] = frappe._dict()
-			context["serienbrief"]["werte"][key] = resolved
+			if is_text_like:
+				# Text-Variablen unter ``serienbrief.werte`` (Backwards-Compat).
+				if "werte" not in context["serienbrief"]:
+					context["serienbrief"]["werte"] = frappe._dict()
+				context["serienbrief"]["werte"][key] = resolved
+			else:
+				# Doctype-Variablen top-level (analog Bausteine: Body schreibt
+				# ``{{ wohnung.X }}`` statt ``{{ werte.wohnung.X }}``).
+				context[key] = resolved
 
 	def _apply_serienbrief_template_variables(
 		self, context: Dict[str, Any], template, row=None
@@ -1098,8 +1196,7 @@ class SerienbriefDurchlauf(Document):
 
 		for variable in variable_defs:
 			variable_type = cstr(getattr(variable, "variable_type", None) or "").strip() or "Text"
-			if variable_type not in {"String", "Zahl", "Bool", "Datum", "Text"}:
-				continue
+			is_text_like = variable_type in {"String", "Zahl", "Bool", "Datum", "Text"}
 
 			raw_key = cstr(getattr(variable, "variable", None) or getattr(variable, "label", None) or "")
 			key = frappe.scrub(raw_key) if raw_key else ""
@@ -1126,9 +1223,12 @@ class SerienbriefDurchlauf(Document):
 			if resolved is None:
 				continue
 
-			if "werte" not in context["serienbrief"]:
-				context["serienbrief"]["werte"] = frappe._dict()
-			context["serienbrief"]["werte"][key] = resolved
+			if is_text_like:
+				if "werte" not in context["serienbrief"]:
+					context["serienbrief"]["werte"] = frappe._dict()
+				context["serienbrief"]["werte"][key] = resolved
+			else:
+				context[key] = resolved
 
 	def _verify_template_variables_resolved(self, context: Dict[str, Any], template) -> None:
 		variable_defs = template.get("variables") or []
@@ -1140,16 +1240,21 @@ class SerienbriefDurchlauf(Document):
 
 		for variable in variable_defs:
 			variable_type = cstr(getattr(variable, "variable_type", None) or "").strip() or "Text"
-			if variable_type not in {"String", "Zahl", "Bool", "Datum", "Text"}:
-				continue
+			is_text_like = variable_type in {"String", "Zahl", "Bool", "Datum", "Text"}
 
 			raw_key = cstr(getattr(variable, "variable", None) or getattr(variable, "label", None) or "")
 			key = frappe.scrub(raw_key) if raw_key else ""
 			if not key:
 				continue
 
-			if (context.get("serienbrief") or {}).get("werte", {}).get(key) not in (None, ""):
-				continue
+			if is_text_like:
+				# Text unter ``serienbrief.werte``.
+				if (context.get("serienbrief") or {}).get("werte", {}).get(key) not in (None, ""):
+					continue
+			else:
+				# Doctype-Variablen top-level.
+				if context.get(key) not in (None, ""):
+					continue
 
 			label = getattr(variable, "label", None) or raw_key or key
 			missing.append(f"{label} (<code>{{{{ {key} }}}}</code>)")
@@ -1744,7 +1849,22 @@ def _serialize_overview_value(value: Any, max_items: int = 5) -> dict[str, Any]:
 
 
 class _LinkResolvingRow:
-	"""Proxy für Child-Tabellen-Zeilen, der Link-Felder automatisch auflöst."""
+	"""Lazy-Wrapper, der bei jedem Attribut-Zugriff Link-Felder automatisch zu
+	Sub-Docs auflöst — analog zur Logik im :func:`_resolve_value_path`-Resolver,
+	nur on-demand bei Jinja-``getattr`` statt eager beim String-Pfad-Splitting.
+
+	Damit funktionieren tiefe Pfade wie ``{{ objekt.wohnung.immobilie.name }}``
+	im Vorlagen-Body ohne dass jede Variable einzeln deklariert werden muss.
+	Sub-Docs werden rekursiv weiter gewrappt; Child-Tables liefern eine Liste
+	gewrappter Zeilen; ``.address`` an einem Dynamic-Link-Doctype liefert das
+	Default-Address-Doc (analog zur Resolver-Address-Magic).
+
+	String-Vergleiche bleiben funktional, weil ``__str__``/``__eq__`` an den
+	Doc-Namen delegieren — ``{{ wohnung == "WHN-007" }}`` liefert weiter True.
+	"""
+
+	__slots__ = ("_source", "_meta")
+
 	def __init__(self, source: Any):
 		object.__setattr__(self, "_source", source)
 		meta = None
@@ -1758,19 +1878,67 @@ class _LinkResolvingRow:
 
 	def __getattr__(self, key: str):
 		source = object.__getattribute__(self, "_source")
-		value = _dig_attr(source, key)
 		meta = object.__getattribute__(self, "_meta")
+
+		# Address-Magic: ``.address`` an einem Adress-fähigen DocType lädt das
+		# Default-Address-Doc (Frappe Dynamic-Link).
+		if (
+			key == "address"
+			and getattr(source, "doctype", None) in _ADDRESS_TARGET_DOCTYPES
+			and getattr(source, "name", None)
+		):
+			addr_name = get_default_address(source.doctype, source.name)
+			if addr_name:
+				try:
+					return _LinkResolvingRow(frappe.get_cached_doc("Address", addr_name))
+				except frappe.DoesNotExistError:
+					return None
+			return None
+
+		value = _dig_attr(source, key)
+
 		if meta:
 			df = meta.get_field(key)
-			if df and df.fieldtype == "Link" and df.options and isinstance(value, str):
+			if df and df.fieldtype == "Link" and df.options and isinstance(value, str) and value:
 				try:
-					return frappe.get_cached_doc(df.options, value)
+					return _LinkResolvingRow(frappe.get_cached_doc(df.options, value))
 				except Exception:
 					return value
+			if df and df.fieldtype == "Table" and isinstance(value, (list, tuple)):
+				return [_LinkResolvingRow(row) if _is_document_like(row) else row for row in value]
+
+		# Sub-Docs/Dicts auch wrappen, damit Properties die Sub-Docs liefern
+		# (z.B. ``Mietvertrag.mieter`` als Vertragspartner-Liste) auch noch
+		# tiefer aufgelöst werden können.
+		if _is_document_like(value):
+			return _LinkResolvingRow(value)
 		return value
 
-	def __getitem__(self, key: str):
-		return self.__getattr__(key)
+	def __getitem__(self, key: Any):
+		# String-Key: wie Attribut-Lookup. Int: Index in Source (wenn iterable).
+		if isinstance(key, int):
+			source = object.__getattribute__(self, "_source")
+			if isinstance(source, (list, tuple)):
+				return source[key]
+		return self.__getattr__(str(key))
+
+	def __iter__(self):
+		source = object.__getattribute__(self, "_source")
+		if isinstance(source, (list, tuple)):
+			for item in source:
+				yield _LinkResolvingRow(item) if _is_document_like(item) else item
+		else:
+			# Für Doc-Wrapper Iteration über Felder geben — wie Frappe Document.
+			yield from iter(source)
+
+	def get(self, key: str, default: Any = None) -> Any:
+		# ``.get(key)`` wie auf einem Dict — manche Bausteine schreiben
+		# ``mietvertrag.get("größe")`` für Felder mit Sonderzeichen.
+		try:
+			value = self.__getattr__(key)
+		except AttributeError:
+			return default
+		return default if value is None else value
 
 	def as_dict(self):
 		source = object.__getattribute__(self, "_source")
@@ -1782,6 +1950,28 @@ class _LinkResolvingRow:
 		if isinstance(source, dict):
 			return dict(source)
 		return {}
+
+	def __str__(self):
+		# String-Vergleiche und f-strings sollen weiter den Doc-Namen liefern
+		# (so dass z.B. ``{{ wohnung == "WHN-007" }}`` und
+		# ``{{ "/" ~ wohnung }}`` weiter wie auf einem Frappe-Doc funktionieren).
+		source = object.__getattribute__(self, "_source")
+		return str(getattr(source, "name", source) or "")
+
+	def __eq__(self, other):
+		if isinstance(other, _LinkResolvingRow):
+			other = object.__getattribute__(other, "_source")
+		return str(self) == str(other) if isinstance(other, str) else (
+			object.__getattribute__(self, "_source") == other
+		)
+
+	def __hash__(self):
+		return hash(str(self))
+
+	def __bool__(self):
+		# Doc-Wrapper truthy, leere Listen/Dicts via Source-Verhalten.
+		source = object.__getattribute__(self, "_source")
+		return bool(source)
 
 	def __repr__(self):
 		source = object.__getattribute__(self, "_source")
@@ -1821,10 +2011,33 @@ def _dig_attr(source: Any, key: str) -> Any:
 	return getattr(source, key, None)
 
 
+_BRACKET_INDEX_RE = re.compile(r"^([^\[\]]+)((?:\[\d+\])+)$")
+_BRACKET_INDEX_PARTS_RE = re.compile(r"\[(\d+)\]")
+
+# DocTypes mit Frappe-Dynamic-Link-Adressen: ``address`` als Pfad-Schritt
+# wird automatisch zum Default-Address-Doc aufgelöst, sodass Vorlagen
+# ``{{ objekt.kunde.address.address_line1 }}`` schreiben können statt
+# ``frappe.get_doc("Address", get_default_address("Customer", ...))``.
+_ADDRESS_TARGET_DOCTYPES = {"Customer", "Immobilie", "Wohnung", "Contact", "Supplier"}
+
+
 def _resolve_value_path(path: str, context: Dict[str, Any]) -> Any:
 	raw_segments = [seg.strip() for seg in cstr(path).split(".") if seg.strip()]
 	if not raw_segments:
 		return None
+
+	# Bracket-Indices als separate Pfad-Schritte expandieren —
+	# ``vorauszahlung_slots[1]`` wird ``["vorauszahlung_slots", "1"]``.
+	# Mehrfach-Indices (``foo[0][1]``) werden flach gelegt.
+	expanded: list[str] = []
+	for seg in raw_segments:
+		match = _BRACKET_INDEX_RE.match(seg)
+		if match:
+			expanded.append(match.group(1))
+			expanded.extend(_BRACKET_INDEX_PARTS_RE.findall(match.group(2)))
+		else:
+			expanded.append(seg)
+	raw_segments = expanded
 
 	preserve_list = False
 	if raw_segments and raw_segments[-1].endswith("[]"):
@@ -1863,10 +2076,17 @@ def _resolve_value_path(path: str, context: Dict[str, Any]) -> Any:
 		return child_list[0], False
 
 	def resolve_from_root(root: Any) -> Any:
+		# Wrapper auspacken — der String-Pfad-Resolver arbeitet intern mit
+		# rohen Frappe-Docs. Der Wrapper ist nur für Jinja-``getattr`` da.
+		if isinstance(root, _LinkResolvingRow):
+			root = object.__getattribute__(root, "_source")
 		current: Any = root
 		idx = 0
 		while idx < len(segments):
 			segment = segments[idx]
+
+			if isinstance(current, _LinkResolvingRow):
+				current = object.__getattribute__(current, "_source")
 
 			if isinstance(current, dict):
 				current = current.get(segment)
@@ -1878,6 +2098,17 @@ def _resolve_value_path(path: str, context: Dict[str, Any]) -> Any:
 				continue
 
 			if isinstance(current, (list, tuple)):
+				# Numerischer Step direkt als Index — relevant für Properties
+				# wie ``Mietvertrag.vorauszahlung_slots[1]``, wo das Property
+				# eine Python-Liste statt einer DocType-Tabelle liefert.
+				if segment.isdigit():
+					i = int(segment)
+					current = current[i] if 0 <= i < len(current) else None
+					if current is None:
+						return None
+					idx += 1
+					continue
+
 				if preserve_list and idx == len(segments) - 1:
 					return current
 				lookahead = segments[idx + 1] if idx + 1 < len(segments) else None
@@ -1888,6 +2119,23 @@ def _resolve_value_path(path: str, context: Dict[str, Any]) -> Any:
 				idx += 1
 				if consumed_numeric:
 					idx += 1
+				continue
+
+			# Adress-Magic: ``address`` als Pfad-Schritt an einem Adress-fähigen
+			# DocType lädt transparent das Default-Address-Doc via Frappe-
+			# Dynamic-Link-Resolver. Damit funktioniert
+			# ``{{ objekt.kunde.address.address_line1 }}`` ohne dass jeder
+			# DocType ein Custom-Adress-Feld bekommt.
+			if (
+				segment == "address"
+				and getattr(current, "doctype", None) in _ADDRESS_TARGET_DOCTYPES
+				and getattr(current, "name", None)
+			):
+				addr_name = get_default_address(current.doctype, current.name)
+				current = frappe.get_cached_doc("Address", addr_name) if addr_name else None
+				if current is None:
+					return None
+				idx += 1
 				continue
 
 			# Follow Link/Table fields using DocType meta so Pfade aus dem Wizard funktionieren.
@@ -2440,7 +2688,7 @@ def get_serienbrief_assignments(
 			if block_name:
 				try:
 					block_doc = frappe.get_cached_doc("Serienbrief Textbaustein", block_name)
-					serienbrief._apply_block_variables(block_context, block_doc, block_row)
+					serienbrief._apply_block_variables(block_context, context, block_doc, block_row)
 				except Exception:
 					pass
 

@@ -8,6 +8,7 @@
  "field_order": [
   "output_name",
   "output_type",
+  "reference_doctype",
   "label",
   "value_path",
   "provider",
@@ -28,6 +29,15 @@
    "in_list_view": 1,
    "label": "Typ",
    "options": "String\nZahl\nBool\nDatum\nDoctype\nDoctype Liste"
+  },
+  {
+   "depends_on": "eval:doc.output_type && (doc.output_type == 'Doctype' || doc.output_type == 'Doctype Liste')",
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Doctype",
+   "mandatory_depends_on": "eval:doc.output_type && (doc.output_type == 'Doctype' || doc.output_type == 'Doctype Liste')",
+   "options": "DocType"
   },
   {
    "fieldname": "label",

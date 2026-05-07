@@ -8,6 +8,7 @@
  "field_order": [
   "variable",
   "variable_type",
+  "reference_doctype",
   "label",
   "beschreibung"
  ],
@@ -20,12 +21,21 @@
    "reqd": 1
   },
   {
-   "default": "String",
+   "default": "Text",
    "fieldname": "variable_type",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Typ",
-   "options": "String\nZahl\nBool\nDatum"
+   "options": "Text\nDoctype\nDoctype Liste\nString\nZahl\nBool\nDatum"
+  },
+  {
+   "depends_on": "eval:doc.variable_type && (doc.variable_type == 'Doctype' || doc.variable_type == 'Doctype Liste')",
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Doctype",
+   "mandatory_depends_on": "eval:doc.variable_type && (doc.variable_type == 'Doctype' || doc.variable_type == 'Doctype Liste')",
+   "options": "DocType"
   },
   {
    "fieldname": "label",
@@ -42,7 +52,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2024-01-01 00:00:00.000000",
+ "modified": "2026-05-08 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
  "name": "Serienbrief Vorlage Variable",
