@@ -27,6 +27,7 @@ class SerienbriefVorlage(Document):
 	def validate(self):
 		content_type = (getattr(self, "content_type", "") or "").strip() or "Textbaustein (Rich Text)"
 		self.content_type = content_type
+		self._ensure_baustein_keys()
 		if content_type == "HTML + Jinja":
 			self.html_content = cstr(getattr(self, "html_content", "") or "")
 			self.jinja_content = cstr(getattr(self, "jinja_content", "") or "")
@@ -36,6 +37,20 @@ class SerienbriefVorlage(Document):
 		# from being persisted. This keeps templates stable across print/PDF rendering.
 		if getattr(self, "content", None):
 			self.content = sanitize_richtext_jinja_source(cstr(self.content))
+
+	def _ensure_baustein_keys(self):
+		seen: dict[str, int] = {}
+		for row in self.get("textbausteine") or []:
+			block_name = cstr(getattr(row, "baustein", None) or "").strip()
+			if not block_name:
+				continue
+			current = cstr(getattr(row, "baustein_key", None) or "").strip()
+			if current:
+				seen[current] = seen.get(current, 0) + 1
+				continue
+			base = frappe.scrub(block_name) or "baustein"
+			seen[base] = seen.get(base, 0) + 1
+			row.baustein_key = base if seen[base] == 1 else f"{base}_{seen[base]}"
 
 
 def _get_block_template_source(block_doc) -> str:
@@ -368,43 +383,28 @@ def _split_preview_context() -> Dict[str, Any]:
 	empfaenger = frappe._dict(
 		name="Hausverwaltung",
 		anzeigename="Hausverwaltung",
+		mieter_name="Erika Mustermann",
 		strasse=address.address_line1,
 		plz=address.pincode,
 		ort=address.city,
+		plz_ort=f"{address.pincode} {address.city}",
 		adresse=f"{address.address_line1}, {address.pincode} {address.city}",
 	)
 	return {
-		"serienbrief_titel": "Beispiel Serienbrief",
+		"objekt": mietvertrag,
 		"datum": "31.12.2024",
 		"datum_iso": "2024-12-31",
-		# Pro-Durchlauf manuell zu setzende Frist (z.B. Modernisierungs-Antwortbogen).
-		# Der Antwortfrist-Platzhalter wirft beim echten Render einen Fehler, wenn
-		# `frist` fehlt — im Form-Live-Preview wollen wir aber kein Throw, sondern
-		# einen sichtbaren Beispielwert.
-		"frist": "31.12.2024",
 		"empfaenger": empfaenger,
-		"empfaenger_data": empfaenger,
-		"empfaenger_anzeigename": "Hausverwaltung",
-		"mieter_name": "Erika Mustermann",
-		"mieter_strasse": address.address_line1,
-		"mieter_plz": address.pincode,
-		"mieter_ort": address.city,
-		"mieter_plz_ort": f"{address.pincode} {address.city}",
-		"mieter_adresse": f"{address.address_line1}, {address.pincode} {address.city}",
-		"immobilie_strasse": address.address_line1,
-		"immobilie_plz": address.pincode,
-		"immobilie_ort": address.city,
-		"immobilie_plz_ort": f"{address.pincode} {address.city}",
-		"immobilie_adresse": f"{address.address_line1}, {address.pincode} {address.city}",
-		"baustein": lambda name=None: f"Beispielbaustein {cstr(name or '').strip()}",
-		"textbaustein": lambda name=None: f"Beispielbaustein {cstr(name or '').strip()}",
-		"var": [frappe._dict(mieter=kontakt), frappe._dict(mieter=kontakt)],
-		"address": address,
-		"mietvertrag": mietvertrag,
-		"iteration_doc": mietvertrag,
-		"mieter": kontakt,
-		"wohnung": wohnung,
-		"frappe": SplitPreviewFrappeProxy(),
+		"serienbrief": frappe._dict(
+			titel="Beispiel Serienbrief",
+			title="Beispiel Serienbrief",
+			name="VORSCHAU",
+			index=1,
+			count=1,
+			durchlauf_name="VORSCHAU",
+			werte=frappe._dict(frist="31.12.2024"),
+		),
+		"outputs": frappe._dict(),
 	}
 
 

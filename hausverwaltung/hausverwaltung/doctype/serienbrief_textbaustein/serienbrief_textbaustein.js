@@ -666,7 +666,6 @@ const hv_build_tree_nodes = async (baseKey, baseLabel, meta, visited, depth, max
 };
 
 const hv_collect_reference_groups = async (frm) => {
-	const refs = frm.doc.reference_doctypes || [];
 	const variables = frm.doc.variables || [];
 	const groups = [];
 
@@ -701,33 +700,6 @@ const hv_collect_reference_groups = async (frm) => {
 			groups.push({
 				key,
 				label: row.label || row.variable || refDoctype,
-				tree,
-			});
-		}
-	}
-
-	// Fallback: alte Referenz-Doctype-Tabelle (wird auf dem DocType inzwischen verborgen).
-	for (const ref of refs) {
-		if (!ref.reference_doctype) continue;
-		const key = hv_scrub(ref.context_variable || ref.reference_doctype || "");
-		if (!key || groups.some((g) => g.key === key)) continue;
-
-		const meta = await hv_load_meta(ref.reference_doctype);
-		if (!meta) continue;
-
-		const tree = await hv_build_tree_nodes(
-			key,
-			ref.reference_doctype,
-			meta,
-			new Set([ref.reference_doctype]),
-			0,
-			2
-		);
-
-		if (tree.length) {
-			groups.push({
-				key,
-				label: ref.reference_doctype,
 				tree,
 			});
 		}
@@ -1176,23 +1148,6 @@ const hv_get_reference_requirements = (frm) => {
 			});
 		});
 
-	// Fallback: legacy reference_doctypes
-	(frm.doc.reference_doctypes || [])
-		.filter((row) => row.reference_doctype)
-		.forEach((row) => {
-			const fieldname = hv_scrub(row.context_variable || row.reference_doctype || "");
-			if (!fieldname || requirements.some((req) => req.fieldname === fieldname)) return;
-			const useName = row.name && !String(row.name).startsWith("new");
-			const req_key = useName ? row.name : row.reference_doctype || fieldname;
-			requirements.push({
-				fieldname,
-				doctype: row.reference_doctype,
-				label: row.reference_doctype,
-				source,
-				req_key,
-			});
-		});
-
 	return requirements;
 };
 
@@ -1435,10 +1390,6 @@ frappe.ui.form.on("Serienbrief Textbaustein", {
 			window.setTimeout(() => hv_attach_pdf_mapping_path_pickers(frm), 0)
 		);
 	},
-	reference_doctypes_on_form_rendered(frm) {
-		hv_render_placeholder_panels(frm);
-		hv_update_standardpfade_labels(frm);
-	},
 	variables_on_form_rendered(frm) {
 		hv_render_placeholder_panels(frm);
 	},
@@ -1447,12 +1398,6 @@ frappe.ui.form.on("Serienbrief Textbaustein", {
 	},
 	pdf_field_mappings_on_form_rendered(frm) {
 		window.setTimeout(() => hv_attach_pdf_mapping_path_pickers(frm), 0);
-	},
-});
-
-frappe.ui.form.on("Serienbrief Textbaustein Referenz", {
-	reference_doctype(frm) {
-		hv_render_placeholder_panels(frm);
 	},
 });
 

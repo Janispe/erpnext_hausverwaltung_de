@@ -7,6 +7,7 @@
  "engine": "InnoDB",
  "field_order": [
   "baustein",
+  "baustein_key",
   "anforderungen",
   "pfad_zuordnung",
   "variablen_werte"
@@ -19,6 +20,13 @@
    "label": "Baustein",
    "options": "Serienbrief Textbaustein",
    "reqd": 1
+  },
+  {
+   "description": "Stabiler Schlüssel für Outputs dieses Bausteins, z.B. zahlungshistorie_1.",
+   "fieldname": "baustein_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Baustein-Key"
   },
   {
    "fieldname": "anforderungen",

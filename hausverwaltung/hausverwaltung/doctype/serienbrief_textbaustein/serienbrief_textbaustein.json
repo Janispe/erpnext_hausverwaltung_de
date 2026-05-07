@@ -17,7 +17,7 @@
   "pdf_flatten",
   "pdf_field_mappings",
   "variables",
-  "reference_doctypes",
+  "outputs",
   "standardpfade",
   "notizen_tab",
   "description"
@@ -102,11 +102,10 @@
    "options": "Serienbrief Textbaustein Variable"
   },
   {
-   "fieldname": "reference_doctypes",
+   "fieldname": "outputs",
    "fieldtype": "Table",
-   "hidden": 1,
-   "label": "Referenz Doctypes",
-   "options": "Serienbrief Textbaustein Referenz"
+   "label": "Outputs",
+   "options": "Serienbrief Textbaustein Output"
   },
   {
    "fieldname": "standardpfade",

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
+import importlib
 import os
 import re
 import uuid
-from collections import defaultdict
 from io import BytesIO
 from typing import Any, Dict, List
 
@@ -252,8 +252,6 @@ class SerienbriefDurchlauf(Document):
 		if not empfaenger_rows:
 			frappe.throw(_("Bitte fügen Sie mindestens ein Iterations-Objekt hinzu."))
 
-		self._validate_required_fields(template_requirements, empfaenger_rows)
-
 		has_blocks = bool(template.get("textbausteine"))
 		has_content = bool(_get_template_template_source(template).strip())
 		if not has_blocks and not has_content:
@@ -495,8 +493,6 @@ class SerienbriefDurchlauf(Document):
 		if not empfaenger_rows:
 			frappe.throw(_("Bitte fügen Sie mindestens ein Iterations-Objekt hinzu."))
 
-		self._validate_required_fields(template_requirements, empfaenger_rows)
-
 		has_blocks = bool(template.get("textbausteine"))
 		has_content = bool(_get_template_template_source(template).strip())
 		if not has_blocks and not has_content:
@@ -581,9 +577,6 @@ class SerienbriefDurchlauf(Document):
 		total: int | None = None,
 		strict_variables: bool = True,
 	) -> Dict[str, Any]:
-		requirements = requirements or {}
-		required_fields = requirements.get("required_fields") or []
-		auto_fields = requirements.get("auto_fields") or []
 		letter_date = self.date or today()
 
 		iteration_doc = getattr(row, "_iteration_doc", None)
@@ -602,11 +595,6 @@ class SerienbriefDurchlauf(Document):
 		mieter_doc = self._load_mieter(row)
 		mieter_address = self._extract_address(self._get_mieter_doctype(), row.mieter)
 		immobilie_address = self._extract_immobilie_address(immobilie_doc)
-		eigentuemer_doc, eigentuemer_address = self._resolve_eigentuemer(immobilie_doc)
-		bank_info = self._resolve_bank_info(immobilie_doc)
-		vz_slots = self._resolve_vorauszahlungen(iteration_doc, letter_date)
-		wohnung_zustand = self._resolve_wohnungszustand(wohnungs_doc)
-		mietvertrag_doc = self._resolve_mietvertrag(iteration_doc)
 
 		# Mieter wohnt in der gemieteten Wohnung — wenn keine eigene Adresse am
 		# Customer/Mieter hinterlegt ist, ist die Wohnungs-(Immobilien-)Adresse die
@@ -616,160 +604,41 @@ class SerienbriefDurchlauf(Document):
 			mieter_address = immobilie_address
 
 		mieter_name = row.anzeigename or self._guess_person_name(mieter_doc)
-		wohnung_bezeichnung = ""
-		if wohnungs_doc:
-			wohnung_bezeichnung = (
-				getattr(wohnungs_doc, "name__lage_in_der_immobilie", None) or wohnungs_doc.name or ""
-			)
-
-		immobilie_bezeichnung = ""
-		if immobilie_doc:
-			immobilie_bezeichnung = (
-				immobilie_address.get("title")
-				or immobilie_address.get("street")
-				or cstr(getattr(immobilie_doc, "adresse", None) or "")
-				or immobilie_doc.name
-				or ""
-			)
-
 		empfaenger_data = row.as_dict() if hasattr(row, "as_dict") else {}
 
 		context = frappe._dict(
-			serienbrief_doc=self,
-			serienbrief=self,
-			serienbrief_titel=self.title,
+			objekt=iteration_doc,
 			datum=format_date(letter_date),
 			datum_iso=letter_date,
-			empfaenger=row,
-			empfaenger_data=empfaenger_data,
-			empfaenger_index=index,
-			empfaenger_anzeigename=row.anzeigename,
-			empfaenger_count=total if total is not None else 0,
-			wohnung=wohnungs_doc,
-			wohnung_doc=wohnungs_doc,
-			wohnung_bezeichnung=wohnung_bezeichnung,
-			immobilie=immobilie_doc,
-			immobilie_doc=immobilie_doc,
-			immobilie_bezeichnung=immobilie_bezeichnung,
-			mieter=mieter_doc,
-			mieter_doc=mieter_doc,
-			mieter_name=mieter_name or "",
-			mieter_strasse=mieter_address.get("street", ""),
-			mieter_plz=mieter_address.get("zip", ""),
-			mieter_ort=mieter_address.get("city", ""),
-			mieter_plz_ort=mieter_address.get("plz_ort", ""),
-			mieter_adresse=mieter_address.get("display", ""),
-			immobilie_strasse=immobilie_address.get("street", ""),
-			immobilie_plz=immobilie_address.get("zip", ""),
-			immobilie_ort=immobilie_address.get("city", ""),
-			immobilie_plz_ort=immobilie_address.get("plz_ort", ""),
-			immobilie_adresse=immobilie_address.get("display", ""),
-			eigentuemer=eigentuemer_doc,
-			eigentuemer_doc=eigentuemer_doc,
-			eigentuemer_address=eigentuemer_address,
-			eigentuemer_strasse=eigentuemer_address.get("street", ""),
-			eigentuemer_plz=eigentuemer_address.get("zip", ""),
-			eigentuemer_ort=eigentuemer_address.get("city", ""),
-			eigentuemer_plz_ort=eigentuemer_address.get("plz_ort", ""),
-			eigentuemer_adresse=eigentuemer_address.get("display", ""),
-			eigentuemer_saldo="",
-			bank_name=bank_info.get("bank_name", ""),
-			bank_iban=bank_info.get("iban", ""),
-			bank_bic=bank_info.get("bic", ""),
-			bank_blz=bank_info.get("blz", ""),
-			bank_konto=bank_info.get("konto", ""),
-			bank_kto_inhaber=bank_info.get("kto_inhaber", ""),
-			vorauszahlung_1=vz_slots.get("vorauszahlung_1", ""),
-			vorauszahlung_2=vz_slots.get("vorauszahlung_2", ""),
-			vorauszahlung_3=vz_slots.get("vorauszahlung_3", ""),
-			vorauszahlung_4=vz_slots.get("vorauszahlung_4", ""),
-			vorauszahlung_1_netto=vz_slots.get("vorauszahlung_1", ""),
-			vorauszahlung_2_netto=vz_slots.get("vorauszahlung_2", ""),
-			vorauszahlung_3_netto=vz_slots.get("vorauszahlung_3", ""),
-			vorauszahlung_4_netto=vz_slots.get("vorauszahlung_4", ""),
-			wohnung_groesse=wohnung_zustand.get("groesse", ""),
-			wohnung_anzahl_zimmer=wohnung_zustand.get("anzahl_zimmer", ""),
-			mietvertrag=mietvertrag_doc,
-			mietvertrag_doc=mietvertrag_doc,
-			iteration_objekt=iteration_doc,
-			iteration_doc=iteration_doc,
-			# ``doc`` als Alias für ``iteration_doc`` — viele bestehende
-			# Textbausteine schreiben ``{%- set doc = doc or iteration_doc -%}``,
-			# was mit StrictUndefined schon beim Lesen von ``doc`` crashed.
-			doc=iteration_doc,
+			empfaenger=frappe._dict(
+				empfaenger_data,
+				name=getattr(row, "iteration_objekt", None) or getattr(row, "objekt", None) or "",
+				anzeigename=row.anzeigename,
+				mieter_name=mieter_name or "",
+				strasse=mieter_address.get("street", ""),
+				plz=mieter_address.get("zip", ""),
+				ort=mieter_address.get("city", ""),
+				plz_ort=mieter_address.get("plz_ort", ""),
+				adresse=mieter_address.get("display", ""),
+			),
+			serienbrief=frappe._dict(
+				titel=self.title,
+				title=self.title,
+				name=self.name,
+				index=index,
+				count=total if total is not None else 0,
+				durchlauf_name=self.name,
+				werte=frappe._dict(),
+			),
+			outputs=frappe._dict(),
 		)
 
-		# Convenience alias: allow templates to access the iteration doc via its scrubbed DocType name
-		# (e.g. `betriebskostenabrechnung_mieter`) without requiring an explicit reference entry.
-		if iteration_doc and getattr(iteration_doc, "doctype", None):
-			iteration_key = frappe.scrub(iteration_doc.doctype)
-			if iteration_key and iteration_key not in context:
-				context[iteration_key] = iteration_doc
-			iteration_doc_key = f"{iteration_key}_doc"
-			if iteration_key and iteration_doc_key not in context:
-				context[iteration_doc_key] = iteration_doc
-
-		self._append_reference_context(context, required_fields, row)
-		self._append_auto_reference_context(context, auto_fields, row, requirements)
 		if template:
 			self._apply_template_variables(context, template)
 			self._apply_serienbrief_template_variables(context, template, row)
 			if strict_variables:
 				self._verify_template_variables_resolved(context, template)
 		return context
-
-	def _append_reference_context(
-		self,
-		context: Dict[str, Any],
-		required_fields: List[Dict[str, Any]] | None,
-		row,
-	) -> None:
-		if not required_fields:
-			return
-
-		for requirement in required_fields:
-			context_key = requirement.get("fieldname")
-			if not context_key or context_key in context:
-				continue
-
-			row_fieldname = requirement.get("row_fieldname") or context_key
-			link_value = getattr(row, row_fieldname, None)
-			if not link_value:
-				continue
-
-			ref_doctype = requirement.get("doctype")
-			doc = self._load_doc(ref_doctype, link_value)
-			if doc:
-				context[context_key] = doc
-				if not requirement.get("is_list"):
-					context[f"{context_key}_doc"] = doc
-
-	def _append_auto_reference_context(
-		self,
-		context: Dict[str, Any],
-		auto_fields: List[Dict[str, Any]] | None,
-		row,
-		requirements: Dict[str, Any] | None = None,
-	) -> None:
-		if not auto_fields:
-			return
-
-		for requirement in auto_fields:
-			context_key = requirement.get("fieldname")
-			if not context_key or context_key in context:
-				continue
-
-			value = self._resolve_auto_reference(
-				requirement,
-				row,
-				requirements,
-				context=context,
-				as_list=bool(requirement.get("is_list")),
-			)
-			if value:
-				context[context_key] = value
-				if not requirement.get("is_list") and getattr(value, "doctype", None):
-					context[f"{context_key}_doc"] = value
 
 	def _render_template_content(self, template, context: Dict[str, Any]) -> list[Dict[str, Any]]:
 		"""Render die Vorlage in Segmenten: html und pdf."""
@@ -781,6 +650,7 @@ class SerienbriefDurchlauf(Document):
 		)
 		inline_pdf_segments: dict[str, Dict[str, Any]] = {}
 		inline_re = re.compile(r"__HV_PDF_BLOCK_([A-Za-z0-9_\\-]+)__")
+		block_counts: dict[str, int] = {}
 
 		def _render_inline_textbaustein(block_name: str | None = None) -> Markup:
 			name = cstr(block_name).strip()
@@ -792,7 +662,6 @@ class SerienbriefDurchlauf(Document):
 			except frappe.DoesNotExistError:
 				return Markup("")
 
-			block_context = frappe._dict(context)
 			block_row = next(
 				(
 					row
@@ -801,10 +670,11 @@ class SerienbriefDurchlauf(Document):
 				),
 				None,
 			)
-			if block_row:
-				self._apply_block_variables(block_context, block_doc, block_row)
+			block_key = self._get_block_key(block_doc, block_row, block_counts)
+			block_context = self._build_block_context(context, block_doc, block_row, block_key)
 
 			segment = self._render_block_segment(block_doc, block_context)
+			self._publish_block_outputs(context, block_context, block_doc, block_key)
 			if not segment:
 				return Markup("")
 			if segment.get("type") == "html":
@@ -818,7 +688,9 @@ class SerienbriefDurchlauf(Document):
 		context["textbaustein"] = _render_inline_textbaustein
 
 		segments: list[Dict[str, Any]] = []
-		if standard_text:
+		def render_standard() -> None:
+			if not standard_text:
+				return
 			rendered_standard = _render_serienbrief_template(standard_text, context)
 			if inline_mode:
 				last = 0
@@ -849,13 +721,16 @@ class SerienbriefDurchlauf(Document):
 					{
 						"type": "html",
 						"html": f'<div class="serienbrief-block serienbrief-content">{rendered_standard}</div>',
-					}
-				)
+						}
+					)
 
 		if inline_mode:
+			render_standard()
 			return segments
 
-		block_segments: list[Dict[str, Any]] = []
+		if content_position == "Vor Bausteinen":
+			render_standard()
+
 		for block_row in template.get("textbausteine") or []:
 			if not getattr(block_row, "baustein", None):
 				continue
@@ -865,16 +740,87 @@ class SerienbriefDurchlauf(Document):
 			except frappe.DoesNotExistError:
 				frappe.throw(_("Der Textbaustein {0} existiert nicht mehr.").format(block_row.baustein))
 
-			block_context = frappe._dict(context)
-			self._apply_block_variables(block_context, block_doc, block_row)
+			block_key = self._get_block_key(block_doc, block_row, block_counts)
+			block_context = self._build_block_context(context, block_doc, block_row, block_key)
 			segment = self._render_block_segment(block_doc, block_context)
-			if not segment:
-				continue
-			block_segments.append(segment)
+			self._publish_block_outputs(context, block_context, block_doc, block_key)
+			if segment:
+				segments.append(segment)
 
-		if content_position == "Vor Bausteinen":
-			return segments + block_segments
-		return block_segments + segments
+		if content_position != "Vor Bausteinen":
+			render_standard()
+
+		return segments
+
+	def _get_block_key(self, block_doc, block_row=None, counts: dict[str, int] | None = None) -> str:
+		explicit = cstr(getattr(block_row, "baustein_key", None) or "").strip() if block_row else ""
+		base = frappe.scrub(explicit or getattr(block_doc, "name", None) or "baustein") or "baustein"
+		if counts is None:
+			return base
+		counts[base] = counts.get(base, 0) + 1
+		return base if counts[base] == 1 else f"{base}_{counts[base]}"
+
+	def _build_block_context(self, base_context: Dict[str, Any], block_doc, block_row, block_key: str) -> frappe._dict:
+		block_context = frappe._dict(
+			objekt=base_context.get("objekt"),
+			datum=base_context.get("datum"),
+			datum_iso=base_context.get("datum_iso"),
+			empfaenger=base_context.get("empfaenger"),
+			serienbrief=base_context.get("serienbrief"),
+			outputs=base_context.get("outputs") or frappe._dict(),
+			baustein=frappe._dict(key=block_key, name=getattr(block_doc, "name", None), title=getattr(block_doc, "title", None)),
+		)
+		self._apply_block_variables(block_context, block_doc, block_row)
+		return block_context
+
+	def _publish_block_outputs(
+		self,
+		base_context: Dict[str, Any],
+		block_context: Dict[str, Any],
+		block_doc,
+		block_key: str,
+	) -> None:
+		output_defs = getattr(block_doc, "outputs", None) or block_doc.get("outputs") or []
+		if not output_defs:
+			return
+
+		outputs = base_context.get("outputs")
+		if outputs is None:
+			outputs = frappe._dict()
+			base_context["outputs"] = outputs
+		if block_key not in outputs or outputs.get(block_key) is None:
+			outputs[block_key] = frappe._dict()
+
+		for output in output_defs:
+			raw_key = cstr(getattr(output, "output_name", None) or getattr(output, "label", None) or "").strip()
+			key = frappe.scrub(raw_key) if raw_key else ""
+			if not key:
+				continue
+			value = self._resolve_block_output_value(output, block_context)
+			if value is None:
+				continue
+			outputs[block_key][key] = value
+
+	def _resolve_block_output_value(self, output, block_context: Dict[str, Any]) -> Any:
+		provider = cstr(getattr(output, "provider", None) or "").strip()
+		if provider:
+			module_name, _, func_name = provider.rpartition(".")
+			if not module_name or not func_name:
+				frappe.throw(_("Ungültiger Output-Provider {0}.").format(frappe.bold(provider)))
+			try:
+				func = getattr(importlib.import_module(module_name), func_name)
+				return func(block_context, output)
+			except Exception:
+				frappe.throw(
+					_("Output-Provider {0} konnte nicht ausgeführt werden:<br>{1}").format(
+						frappe.bold(provider), frappe.utils.escape_html(frappe.get_traceback())
+					)
+				)
+
+		path = cstr(getattr(output, "value_path", None) or "").strip()
+		if not path:
+			return None
+		return _resolve_value_path(path, block_context)
 
 	def _render_segments_preview_html(self, segments: list[Dict[str, Any]]) -> str:
 		html_parts: list[str] = []
@@ -1038,22 +984,28 @@ class SerienbriefDurchlauf(Document):
 			return
 
 		block_title = block_doc.title or block_doc.name
-		mapping = _parse_variable_values(getattr(block_row, "variablen_werte", None))
+		value_mapping = _parse_variable_values(getattr(block_row, "variablen_werte", None))
+		path_mapping = _parse_mapping(getattr(block_row, "pfad_zuordnung", None))
 		missing: list[str] = []
 
 		for variable in variable_defs:
 			variable_type = cstr(getattr(variable, "variable_type", None) or "").strip() or "Text"
-			if variable_type != "Text":
-				continue
 
 			raw_key = cstr(getattr(variable, "variable", None) or getattr(variable, "label", None) or "")
 			key = frappe.scrub(raw_key) if raw_key else ""
 			if not key:
 				continue
 
-			entry = mapping.get(key) or {}
+			entry = value_mapping.get(key) or {}
 			path = cstr(entry.get("path") or "").strip()
 			value = entry.get("value")
+			if variable_type != "Text":
+				path = (
+					cstr(path_mapping.get(key) or "").strip()
+					or cstr(path_mapping.get(raw_key) or "").strip()
+					or cstr(path_mapping.get(getattr(variable, "reference_doctype", None)) or "").strip()
+					or ("__self__" if getattr(context.get("objekt"), "doctype", None) == cstr(getattr(variable, "reference_doctype", None) or "").strip() else key)
+				)
 
 			resolved = None
 			if path:
@@ -1075,9 +1027,9 @@ class SerienbriefDurchlauf(Document):
 
 			context[key] = resolved
 
-			if "block_variables" not in context:
-				context["block_variables"] = {}
-			context["block_variables"][key] = resolved
+			if "inputs" not in context["baustein"]:
+				context["baustein"]["inputs"] = {}
+			context["baustein"]["inputs"][key] = resolved
 
 		if missing:
 			frappe.throw(
@@ -1128,10 +1080,9 @@ class SerienbriefDurchlauf(Document):
 				# _verify_template_variables_resolved raises afterwards if it's still missing.
 				continue
 
-			context[key] = resolved
-			if "template_variables" not in context:
-				context["template_variables"] = {}
-			context["template_variables"][key] = resolved
+			if "werte" not in context["serienbrief"]:
+				context["serienbrief"]["werte"] = frappe._dict()
+			context["serienbrief"]["werte"][key] = resolved
 
 	def _apply_serienbrief_template_variables(
 		self, context: Dict[str, Any], template, row=None
@@ -1175,10 +1126,9 @@ class SerienbriefDurchlauf(Document):
 			if resolved is None:
 				continue
 
-			context[key] = resolved
-			if "template_variables" not in context:
-				context["template_variables"] = {}
-			context["template_variables"][key] = resolved
+			if "werte" not in context["serienbrief"]:
+				context["serienbrief"]["werte"] = frappe._dict()
+			context["serienbrief"]["werte"][key] = resolved
 
 	def _verify_template_variables_resolved(self, context: Dict[str, Any], template) -> None:
 		variable_defs = template.get("variables") or []
@@ -1198,7 +1148,7 @@ class SerienbriefDurchlauf(Document):
 			if not key:
 				continue
 
-			if context.get(key) not in (None, ""):
+			if (context.get("serienbrief") or {}).get("werte", {}).get(key) not in (None, ""):
 				continue
 
 			label = getattr(variable, "label", None) or raw_key or key
@@ -1518,116 +1468,6 @@ class SerienbriefDurchlauf(Document):
 
 		return row
 
-	def _validate_required_fields(self, requirements: Dict[str, Any], empfaenger_rows: list[Any]) -> None:
-		missing_fields = requirements.get("missing_fields") or []
-		if missing_fields:
-			lines = [
-				self._format_requirement_debug(req, include_path_source=True) for req in missing_fields
-			]
-			frappe.throw(
-				_(
-					"Die Vorlage benötigt zusätzliche Felder im Iterations-Doctype {0}:<br>{1}<br><br>"
-					"Hinweis: Entweder ein passendes Feld im Iterations-Doctype ergänzen (z.B. Link/Child-Tabelle), "
-					"oder im Template/Block einen Pfad (Pfad-Zuordnung/Standardpfade) hinterlegen."
-				).format(frappe.bold(self.iteration_doctype or ""), "<br>".join(lines))
-			)
-
-		required_fields = requirements.get("required_fields") or []
-		auto_fields = requirements.get("auto_fields") or []
-
-		missing_rows: list[tuple[int, list[Dict[str, Any]]]] = []
-		for idx, row in enumerate(empfaenger_rows, start=1):
-			row_missing = [
-				req
-				for req in required_fields
-				if not getattr(row, (req.get("row_fieldname") or req.get("fieldname") or ""), None)
-			]
-			if row_missing:
-				missing_rows.append((idx, row_missing))
-
-		if missing_rows:
-			lines = []
-			for row_index, row_requirements in missing_rows:
-				labels = ", ".join(self._format_requirement_label(req) for req in row_requirements)
-				lines.append(f"{row_index}. {labels}")
-
-			frappe.throw(
-				_(
-					"Bitte ergänzen Sie die fehlenden Felder für die Iterations-Objekte:<br>{0}"
-				).format("<br>".join(lines))
-			)
-
-		if auto_fields:
-			auto_missing: list[tuple[int, list[Dict[str, Any]]]] = []
-			for idx, row in enumerate(empfaenger_rows, start=1):
-				row_missing = [
-					req
-					for req in auto_fields
-					if not self._resolve_auto_reference(
-						req, row, requirements, as_list=bool(req.get("is_list"))
-					)
-				]
-				if row_missing:
-					auto_missing.append((idx, row_missing))
-
-			if auto_missing:
-				lines = []
-				for row_index, row_requirements in auto_missing:
-					labels = ", ".join(self._format_requirement_label(req) for req in row_requirements)
-					lines.append(f"{row_index}. {labels}")
-
-				frappe.throw(
-					_("Automatische Quellen konnten für einige Iterations-Objekte nicht ermittelt werden:<br>{0}").format(
-						"<br>".join(lines)
-					)
-				)
-
-	def _format_requirement_label(self, requirement: Dict[str, Any]) -> str:
-		label = cstr(requirement.get("label") or requirement.get("fieldname") or "")
-		parts: list[str] = []
-
-		source = cstr(requirement.get("source") or "")
-		if source:
-			parts.append(source)
-
-		path = requirement.get("path")
-		if path:
-			parts.append(cstr(path))
-
-		if parts:
-			return f"{label} ({', '.join(parts)})"
-		return label
-
-	def _format_requirement_debug(self, requirement: Dict[str, Any], include_path_source: bool = False) -> str:
-		label = cstr(requirement.get("label") or requirement.get("fieldname") or "")
-		context_key = cstr(requirement.get("fieldname") or "").strip()
-		row_fieldname = cstr(requirement.get("row_fieldname") or requirement.get("fieldname") or "").strip()
-		target_doctype = cstr(requirement.get("doctype") or "").strip()
-		source = cstr(requirement.get("source") or "").strip()
-		path = cstr(requirement.get("path") or "").strip()
-		is_list = bool(requirement.get("is_list"))
-		path_source = cstr(requirement.get("path_source") or "").strip()
-
-		parts: list[str] = []
-		if source:
-			parts.append(_("Quelle: {0}").format(source))
-		if context_key:
-			parts.append(_("Kontextvariable: {0}").format(frappe.bold(context_key)))
-		if row_fieldname and row_fieldname != context_key:
-			parts.append(_("Feld im Iterations-Doctype: {0}").format(frappe.bold(row_fieldname)))
-		if target_doctype:
-			parts.append(_("Doctype: {0}").format(frappe.bold(target_doctype)))
-		if is_list:
-			parts.append(_("Typ: Liste"))
-		if path:
-			parts.append(_("Pfad: {0}").format(frappe.bold(path)))
-		if include_path_source and path_source:
-			parts.append(_("Pfad-Quelle: {0}").format(path_source))
-
-		if parts:
-			return f"{label} ({' · '.join(parts)})"
-		return label
-
 	def _get_iteration_link_field_map(self, iteration_doctype: str | None = None) -> Dict[str, str]:
 		if iteration_doctype and hasattr(self, "_iteration_link_field_map_cache"):
 			cache = getattr(self, "_iteration_link_field_map_cache")  # type: ignore[attr-defined]
@@ -1643,168 +1483,6 @@ class SerienbriefDurchlauf(Document):
 		mapping = {cstr(df.options): df.fieldname for df in meta.fields if df.fieldtype == "Link" and df.options}
 		self._iteration_link_field_map_cache = {"_doctype": iteration_doctype, "mapping": mapping}  # type: ignore[attr-defined]
 		return mapping
-
-	def _resolve_auto_reference(
-		self,
-		reference: Dict[str, Any],
-		row,
-		requirements: Dict[str, Any] | None,
-		context: Dict[str, Any] | None = None,
-		as_list: bool = False,
-	):
-		path = cstr(reference.get("path") or "").strip()
-		if not path:
-			return None
-		if path == "__self__":
-			iteration_doc = getattr(row, "_iteration_doc", None) or self._load_doc(
-				self.iteration_doctype, getattr(row, "objekt", None)
-			)
-			if not iteration_doc:
-				return None
-			return [iteration_doc] if as_list else iteration_doc
-
-		segments = [seg.strip() for seg in path.split(".") if seg.strip()]
-		if not segments:
-			return None
-
-		context = context or {}
-		if not self.iteration_doctype:
-			return None
-
-		current_doc = getattr(row, "_iteration_doc", None) or self._load_doc(self.iteration_doctype, getattr(row, "objekt", None))
-		current_doctype = self.iteration_doctype
-		if not current_doc:
-			return None
-
-		def load_meta(doctype: str):
-			try:
-				return frappe.get_meta(doctype)
-			except Exception:
-				return None
-
-		def pick_child_row(child_list: list[Any], lookahead: str | None = None):
-			if not child_list:
-				return None
-			# Wenn eine Zahl folgt, wird diese als Index interpretiert
-			if lookahead is not None and lookahead.isdigit():
-				idx = int(lookahead)
-				if 0 <= idx < len(child_list):
-					return child_list[idx], True
-			# Sonst nimm die erste Zeile mit einem Wert im Lookahead-Feld (falls gesetzt), sonst die erste Zeile
-			if lookahead:
-				for item in child_list:
-					if getattr(item, lookahead, None):
-						return item, False
-			return child_list[0], False
-
-		def hydrate_child_list(child_list: list[Any], target_doctype: str | None):
-			"""Return a list suitable for Jinja templates.
-
-			When `target_doctype` is set, try to resolve Link fields in each child row that
-			point to that DocType and expose them directly (e.g. `row.mieter.first_name`).
-			"""
-			if not as_list:
-				return child_list
-			if not child_list:
-				return []
-			target = cstr(target_doctype or "").strip()
-			if not target:
-				return child_list
-
-			wrapped: list[Any] = []
-			for item in child_list:
-				try:
-					child_doctype = getattr(item, "doctype", None)
-					if not child_doctype:
-						wrapped.append(item)
-						continue
-					meta = load_meta(child_doctype)
-					if not meta:
-						wrapped.append(item)
-						continue
-
-					data = item.as_dict() if hasattr(item, "as_dict") else {}
-					for df in meta.fields:
-						if df.fieldtype != "Link" or not df.options or cstr(df.options) != target:
-							continue
-						link_value = getattr(item, df.fieldname, None)
-						if not link_value:
-							continue
-						doc = self._load_doc(target, link_value)
-						if not doc:
-							continue
-						data[df.fieldname] = doc
-						data[f"{df.fieldname}_doc"] = doc
-
-					wrapped.append(frappe._dict(data))
-				except Exception:
-					wrapped.append(item)
-			return wrapped
-
-		idx = 0
-		while idx < len(segments):
-			segment = segments[idx]
-			meta = load_meta(current_doctype)
-			if not meta:
-				return None
-
-			df = meta.get_field(segment)
-			if not df:
-				return None
-
-			if df.fieldtype == "Link" and df.options:
-				link_value = getattr(current_doc, segment, None)
-				if not link_value:
-					return None
-				current_doctype = df.options
-				current_doc = self._load_doc(current_doctype, link_value)
-				if not current_doc:
-					return None
-				idx += 1
-				continue
-
-			if df.fieldtype == "Table" and df.options:
-				child_list = getattr(current_doc, segment, None) or []
-				if idx == len(segments) - 1:
-					if as_list:
-						return hydrate_child_list(child_list, reference.get("doctype"))
-					# Fallback: wie bisher erste passende Zeile
-					child_row, _consumed_numeric = pick_child_row(child_list, None)
-					return child_row
-
-				# Spezialfall: Liste soll über eine Child-Tabelle iterieren, der nächste Pfad-Segment ist ein Link
-				# zum Ziel-Doctype (z.B. `mieter.mieter` -> Vertragspartner rows mit Link `mieter` auf Contact).
-				# Dann gib direkt die Child-Rows zurück, aber mit "hydratisierten" Link-Dokumenten.
-				if as_list:
-					target = cstr(reference.get("doctype") or "").strip()
-					next_seg = segments[idx + 1] if idx + 1 < len(segments) else None
-					if target and next_seg:
-						child_meta = load_meta(df.options)
-						child_df = child_meta.get_field(next_seg) if child_meta else None
-						if child_df and child_df.fieldtype == "Link" and cstr(child_df.options) == target:
-							return hydrate_child_list(child_list, target)
-
-				lookahead = segments[idx + 1] if idx + 1 < len(segments) else None
-				child_row, consumed_numeric = pick_child_row(child_list, lookahead)
-				if not child_row:
-					return None
-				current_doc = child_row
-				current_doctype = df.options
-				idx += 1
-				if consumed_numeric:
-					idx += 1
-				continue
-
-			return None
-
-		if as_list:
-			if current_doc is None:
-				return None
-			if isinstance(current_doc, list):
-				return current_doc
-			return [current_doc]
-
-		return current_doc
 
 	def _load_mieter(self, row):
 		if not row.mieter:
@@ -1842,58 +1520,6 @@ class SerienbriefDurchlauf(Document):
 		except Exception:
 			pass
 		return doc
-
-	def _load_address_doc(self, link_doctype: str | None, link_name: str | None):
-		if not link_doctype or not link_name:
-			return None
-
-		address_name = get_default_address(link_doctype, link_name)
-		if not address_name:
-			return None
-
-		try:
-			return frappe.get_doc("Address", address_name)
-		except frappe.DoesNotExistError:
-			return None
-
-	def _load_immobilie_address_doc(self, immobilie, fallback_from_row=None):
-		immobilie_name = getattr(immobilie, "name", None) if immobilie else None
-		if not immobilie_name and isinstance(immobilie, str):
-			immobilie_name = immobilie
-
-		if not immobilie_name and fallback_from_row:
-			wohnung_name = getattr(fallback_from_row, "wohnung", None)
-			if wohnung_name:
-				wohnung_doc = self._load_doc("Wohnung", wohnung_name)
-				immobilie_name = getattr(wohnung_doc, "immobilie", None) if wohnung_doc else None
-
-		if not immobilie_name:
-			return None
-
-		try:
-			immobilie_doc = (
-				immobilie
-				if getattr(immobilie, "doctype", None) == "Immobilie"
-				else frappe.get_doc("Immobilie", immobilie_name)
-			)
-		except frappe.DoesNotExistError:
-			return None
-
-		address_link = cstr(immobilie_doc.get("adresse")).strip()
-		if address_link:
-			try:
-				return frappe.get_doc("Address", address_link)
-			except frappe.DoesNotExistError:
-				pass
-
-		address_name = get_default_address("Immobilie", immobilie_doc.name)
-		if not address_name:
-			return None
-
-		try:
-			return frappe.get_doc("Address", address_name)
-		except frappe.DoesNotExistError:
-			return None
 
 	def _get_mieter_doctype(self) -> str:
 		if hasattr(self, "_mieter_doctype_cache"):
@@ -1937,187 +1563,6 @@ class SerienbriefDurchlauf(Document):
 			return {}
 
 		return self._address_dict_from_name(address_name)
-
-	def _resolve_mietvertrag(self, iteration_doc):
-		"""Liefert den Mietvertrag NUR wenn er eindeutig zur Iteration gehört.
-
-		- Iteration ist selbst ein Mietvertrag → diesen
-		- Iteration hat ein ``mietvertrag``-Link-Attribut (z.B. BK Mieter,
-		  Dunning) → den verlinkten Mietvertrag
-
-		KEIN Wohnung.aktueller_mietvertrag-Fallback: bei einer Wohnung-Iteration
-		ist nicht klar, welcher Mietvertrag relevant ist (kann ein historischer
-		sein). Lieber StrictUndefined-Crash als falscher Mietvertrag im Brief.
-		"""
-		if iteration_doc is None:
-			return None
-		if getattr(iteration_doc, "doctype", None) == "Mietvertrag":
-			return iteration_doc
-		mv_link = getattr(iteration_doc, "mietvertrag", None)
-		if mv_link:
-			return self._load_doc("Mietvertrag", mv_link)
-		return None
-
-	def _resolve_wohnungszustand(self, wohnungs_doc) -> Dict[str, str]:
-		"""Liefert ``groesse`` (m²) + ``anzahl_zimmer`` aus dem aktuellen
-		Wohnungszustand der Wohnung.
-
-		Pfad: ``Wohnung.aktueller_zustand → Wohnungszustand``. Wenn der
-		Wohnungszustand nicht gepflegt ist, leere Strings — die Vorlage
-		crashed dann mit der humanisierten Fehlermeldung.
-		"""
-		out: Dict[str, str] = {"groesse": "", "anzahl_zimmer": ""}
-		if not wohnungs_doc:
-			return out
-		zustand_name = cstr(getattr(wohnungs_doc, "aktueller_zustand", None) or "").strip()
-		if not zustand_name:
-			return out
-		try:
-			zustand = frappe.get_doc("Wohnungszustand", zustand_name)
-		except frappe.DoesNotExistError:
-			return out
-		groesse = zustand.get("größe") or zustand.get("groesse")
-		if groesse:
-			# m² als formatierte Zahl mit Komma als Dezimaltrenner
-			try:
-				out["groesse"] = f"{float(groesse):.2f}".replace(".", ",")
-			except (TypeError, ValueError):
-				out["groesse"] = cstr(groesse)
-		anz = zustand.get("anzahl_zimmer")
-		if anz is not None:
-			out["anzahl_zimmer"] = cstr(anz)
-		return out
-
-	def _resolve_vorauszahlungen(self, iteration_doc, ref_date) -> Dict[str, str]:
-		"""Liefert ``vorauszahlung_1``..``_4`` als formatierte EUR-Beträge.
-
-		Quelle: ``Mietvertrag.festbetraege`` (Child-Table ``Betriebskosten Festbetrag``)
-		gefiltert nach Gültigkeit zum ``ref_date``. Sortiert nach ``idx`` (= Slot-
-		Reihenfolge in der UI), sodass `vorauszahlung_1` der erste Eintrag ist
-		(typisch BK), `vorauszahlung_2` der zweite (typisch HK) usw.
-
-		Wenn ``iteration_doc`` kein Mietvertrag ist, versuchen wir den Mietvertrag
-		via ``mietvertrag``-Attribut zu finden (z.B. von BK Mieter).
-		"""
-		from frappe.utils import fmt_money, getdate
-
-		out: Dict[str, str] = {}
-		if not iteration_doc:
-			return out
-
-		mv_doc = None
-		if getattr(iteration_doc, "doctype", None) == "Mietvertrag":
-			mv_doc = iteration_doc
-		else:
-			mv_name = getattr(iteration_doc, "mietvertrag", None)
-			if mv_name:
-				mv_doc = self._load_doc("Mietvertrag", mv_name)
-		if not mv_doc:
-			return out
-
-		rows = list(mv_doc.get("festbetraege") or [])
-		if not rows:
-			return out
-
-		ref_d = getdate(ref_date) if ref_date else None
-		valid_rows = []
-		for r in rows:
-			vd = getdate(r.gueltig_von) if r.gueltig_von else None
-			bd = getdate(r.gueltig_bis) if r.gueltig_bis else None
-			if ref_d:
-				if vd and vd > ref_d:
-					continue
-				if bd and bd < ref_d:
-					continue
-			valid_rows.append(r)
-		valid_rows.sort(key=lambda r: int(getattr(r, "idx", 0) or 0))
-
-		for slot, row in enumerate(valid_rows[:4], start=1):
-			betrag = float(getattr(row, "betrag", 0) or 0)
-			out[f"vorauszahlung_{slot}"] = fmt_money(betrag, currency="EUR")
-		return out
-
-	def _resolve_bank_info(self, immobilie_doc) -> Dict[str, str]:
-		"""Resolve Bank-Daten der Immobilie über das Hauptkonto.
-
-		Chain: ``Immobilie.bankkonten[Hauptkonto].konto`` → ``Account``-Doc.
-		Account ist eine GL-Account, die optional über ``bank_account``-Link
-		auf ein ``Bank Account``-Doc zeigt — dort liegen IBAN + BIC.
-
-		Templates referenzieren ``{{ bank_iban }}``, ``{{ bank_bic }}`` etc. —
-		fehlende Werte sind leere Strings (kein UndefinedError).
-		"""
-		empty = {
-			"bank_name": "",
-			"iban": "",
-			"bic": "",
-			"blz": "",
-			"konto": "",
-			"kto_inhaber": "",
-		}
-		if not immobilie_doc:
-			return empty
-		rows = list(immobilie_doc.get("bankkonten") or [])
-		if not rows:
-			return empty
-		# Hauptkonto bevorzugen, sonst erstes Konto
-		hauptkonto_row = next(
-			(r for r in rows if int(getattr(r, "ist_hauptkonto", 0) or 0) == 1),
-			rows[0],
-		)
-		account_name = cstr(getattr(hauptkonto_row, "konto", None) or "").strip()
-		if not account_name:
-			return empty
-		try:
-			account_doc = frappe.get_doc("Account", account_name)
-		except frappe.DoesNotExistError:
-			return empty
-
-		bank_account_name = cstr(account_doc.get("bank_account") or "").strip()
-		out = dict(empty)
-		out["konto"] = account_name
-		if not bank_account_name:
-			# Account ohne Bank-Account-Link: Account-Name als Konto-Bezeichnung
-			out["bank_name"] = cstr(account_doc.get("account_name") or account_name)
-			return out
-		try:
-			bank_acc = frappe.get_doc("Bank Account", bank_account_name)
-		except frappe.DoesNotExistError:
-			return out
-
-		out["bank_name"] = cstr(bank_acc.get("bank") or bank_acc.get("account_name") or "")
-		out["iban"] = cstr(bank_acc.get("iban") or "")
-		out["bic"] = cstr(bank_acc.get("branch_code") or bank_acc.get("swift_number") or "")
-		out["blz"] = cstr(bank_acc.get("branch_code") or "")
-		out["kto_inhaber"] = cstr(bank_acc.get("account_name") or "")
-		return out
-
-	def _resolve_eigentuemer(self, immobilie_doc) -> tuple[Any, Dict[str, str]]:
-		"""Resolve den (ersten) Eigentümer-Contact einer Immobilie + dessen Adresse.
-
-		Eigentümer hängt in der Child-Tabelle ``eigentumer`` der Immobilie als
-		Link auf ``Contact``. Templates referenzieren ``{{ eigentuemer.first_name }}``
-		etc. — wenn keiner gepflegt ist, geben wir ein leeres frappe._dict zurück,
-		damit Jinja im strict_variables-Mode nicht crashed.
-		"""
-		empty = frappe._dict({
-			"first_name": "", "last_name": "", "full_name": "",
-			"salutation": "", "email_id": "", "phone": "",
-		})
-		if not immobilie_doc:
-			return empty, {}
-		rows = list(immobilie_doc.get("eigentumer") or [])
-		if not rows:
-			return empty, {}
-		contact_name = cstr(getattr(rows[0], "contact", None) or "").strip()
-		if not contact_name:
-			return empty, {}
-		try:
-			contact_doc = frappe.get_doc("Contact", contact_name)
-		except frappe.DoesNotExistError:
-			return empty, {}
-		address = self._extract_address("Contact", contact_name)
-		return contact_doc, address
 
 	def _extract_immobilie_address(self, immobilie_doc) -> Dict[str, str]:
 		if not immobilie_doc:
@@ -2388,9 +1833,17 @@ def _resolve_value_path(path: str, context: Dict[str, Any]) -> Any:
 		if not raw_segments[-1]:
 			return None
 
-	segments = raw_segments
+	if raw_segments[0] == "__self__":
+		raw_segments[0] = "objekt"
+
+	allowed_roots = {"objekt", "empfaenger", "serienbrief", "outputs", "datum", "datum_iso"}
+	has_explicit_root = raw_segments[0] in allowed_roots or (
+		isinstance(context, dict) and raw_segments[0] in context
+	)
+	root_name = raw_segments[0] if has_explicit_root else "objekt"
+	segments = raw_segments[1:] if has_explicit_root else raw_segments
 	if not segments:
-		return None
+		return context.get(root_name) if isinstance(context, dict) else None
 
 	def pick_child_row(child_list: list[Any], lookahead: str | None = None) -> tuple[Any | None, bool]:
 		"""Pick a child row from a child table. Returns (row, consumed_numeric)."""
@@ -2483,21 +1936,12 @@ def _resolve_value_path(path: str, context: Dict[str, Any]) -> Any:
 
 		return current
 
-	primary = resolve_from_root(context)
+	root = context.get(root_name) if isinstance(context, dict) else None
+	primary = resolve_from_root(root)
 	if preserve_list and isinstance(primary, (list, tuple)):
 		return _wrap_preserved_list(list(primary))
 	if primary is not None:
 		return primary
-
-	if isinstance(context, dict):
-		for alt_root in (context.get("iteration_doc"), context.get("iteration_objekt")):
-			if alt_root is None:
-				continue
-			alt_value = resolve_from_root(alt_root)
-			if alt_value is not None:
-				if preserve_list and isinstance(alt_value, (list, tuple)):
-					return _wrap_preserved_list(list(alt_value))
-				return alt_value
 
 	return None
 
@@ -2507,290 +1951,30 @@ def _collect_template_requirements(template, base_doctype: str | None = None) ->
 	if not base_doctype:
 		frappe.throw(_("Bitte hinterlegen Sie ein Haupt-Verteil-Objekt in der Vorlage."))
 
-	meta = frappe.get_meta(base_doctype)
-	grid_fields = {df.fieldname: df for df in meta.fields}
-	link_fields_by_doctype = {cstr(df.options): df for df in meta.fields if df.fieldtype == "Link" and df.options}
-
-	references, block_requirements = _extract_template_reference_fields(
-		template, grid_fields, link_fields_by_doctype, base_doctype=base_doctype
-	)
-
-	grouped: dict[str, list[Dict[str, Any]]] = defaultdict(list)
-	for reference in references:
-		if not reference.get("fieldname"):
-			continue
-		grouped[reference["fieldname"]].append(reference)
-
-	required_fields: list[Dict[str, Any]] = []
-	auto_fields: list[Dict[str, Any]] = []
-	missing_fields: list[Dict[str, Any]] = []
-	template_requirements: list[Dict[str, Any]] = []
-	template_requirements_seen: set[str] = set()
-
-	for fieldname, refs in grouped.items():
-		manual_refs = [r for r in refs if not r.get("resolved_in_template")]
-		use_refs = manual_refs or refs
-		base = use_refs[0]
-
-		row_fieldname = base.get("row_fieldname") or fieldname
-		docfield = grid_fields.get(row_fieldname)
-		label = (
-			docfield.label
-			if docfield
-			else base.get("field_label")
-			or base.get("label")
-			or fieldname.replace("_", " ").title()
-		)
-
-		entry = {
-			"fieldname": fieldname,
-			"row_fieldname": row_fieldname,
-			"doctype": base.get("doctype"),
-			"label": label,
-			"is_list": bool(base.get("is_list")),
-			"source": ", ".join(
-				sorted({cstr(r.get("source") or "") for r in use_refs if r.get("source")})
-			),
-			"resolved_via_default": base.get("resolved_via_default"),
-			"path_source": base.get("path_source"),
-		}
-
-		if not manual_refs and base.get("path"):
-			entry["path"] = base.get("path")
-			auto_fields.append(entry)
-			continue
-
-		required_fields.append(entry)
-		if not docfield:
-			missing_fields.append(entry)
-
-	for ref in references:
-		if ref.get("origin") != "template_variable":
-			continue
-		req_key = cstr(ref.get("req_key") or "").strip()
-		if not req_key or req_key in template_requirements_seen:
-			continue
-		template_requirements_seen.add(req_key)
-		template_requirements.append(
-			{
-				"fieldname": ref.get("fieldname"),
-				"doctype": ref.get("doctype"),
-				"label": ref.get("label") or ref.get("fieldname"),
-				"req_key": ref.get("req_key"),
-				"is_list": bool(ref.get("is_list")),
-				"source": ref.get("source"),
-				"path": ref.get("path"),
-				"resolved_in_template": ref.get("resolved_in_template"),
-				"resolved_via_default": ref.get("resolved_via_default"),
-				"path_source": ref.get("path_source"),
-			}
-		)
-
-	empfaenger_links = [
-		{"fieldname": df.fieldname, "doctype": df.options, "label": df.label or df.fieldname}
-		for df in meta.fields
-		if df.fieldtype == "Link" and df.options
-	]
-
 	template_variables = _collect_template_variables(template)
 	template_variable_defaults = _parse_variable_values(getattr(template, "variablen_werte", None))
 	block_variables = _collect_block_variables(template)
 	pdf_block_mappings = _collect_pdf_block_mappings(template)
 
 	return {
-		"required_fields": required_fields,
-		"auto_fields": auto_fields,
-		"missing_fields": missing_fields,
-		"block_requirements": block_requirements,
-		"template_requirements": template_requirements,
+		"required_fields": [],
+		"auto_fields": [],
+		"missing_fields": [],
+		"block_requirements": _collect_block_input_requirements(template, base_doctype),
+		"template_requirements": [],
 		"template_variables": template_variables,
 		"template_variable_defaults": template_variable_defaults,
 		"block_variables": block_variables,
 		"pdf_block_mappings": pdf_block_mappings,
 		"haupt_verteil_objekt": template.get("haupt_verteil_objekt"),
-		"empfaenger_links": empfaenger_links,
+		"empfaenger_links": [],
 	}
 
 
-def _extract_template_reference_fields(
-	template,
-	grid_fields=None,
-	link_fields_by_doctype=None,
-	base_doctype: str | None = None,
-) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]]]:
-	references: list[Dict[str, Any]] = []
+
+def _collect_block_input_requirements(template, base_doctype: str | None = None) -> list[Dict[str, Any]]:
 	block_requirements: list[Dict[str, Any]] = []
-	grid_fields = grid_fields or {}
-	link_fields_by_doctype = link_fields_by_doctype or {}
-	global_default_mapping = _get_global_default_path_map(base_doctype)
-	template_mapping = _parse_mapping(getattr(template, "pfad_zuordnung", None))
-
-	table_fields_by_doctype: dict[str, Any] = {}
-	table_fields: list[Any] = []
-	if base_doctype:
-		try:
-			meta = frappe.get_meta(base_doctype)
-		except Exception:
-			meta = None
-		if meta:
-			for df in meta.fields:
-				if df.fieldtype == "Table" and df.options and cstr(df.options):
-					table_fields_by_doctype.setdefault(cstr(df.options), df)
-					table_fields.append(df)
-
-	def resolve_field(doctype: str, suggested: str | None = None) -> tuple[str, str | None, bool]:
-		link_df = link_fields_by_doctype.get(doctype)
-		if link_df:
-			return link_df.fieldname, link_df.label, True
-
-		if suggested:
-			return suggested, None, False
-
-		return frappe.scrub(doctype), None, False
-
-	def pick_mapping_value(mapping: dict[str, Any] | None, req_key: str, reference=None):
-		if not mapping:
-			return None
-
-		keys = [
-			req_key,
-			cstr(reference.get("reference_doctype") if isinstance(reference, dict) else getattr(reference, "reference_doctype", None) or ""),
-			cstr(reference.get("context_variable") if isinstance(reference, dict) else getattr(reference, "context_variable", None) or ""),
-			cstr(reference.get("fieldname") if isinstance(reference, dict) else ""),
-		]
-
-		for key in keys:
-			if not key:
-				continue
-			value = mapping.get(key)
-			if value not in (None, ""):
-				return value
-
-		return None
-
-	if template.get("haupt_verteil_objekt"):
-		fieldname, field_label, _has_direct_link = resolve_field(template.haupt_verteil_objekt)
-		path = None
-		path_source = None
-		if base_doctype and template.haupt_verteil_objekt == base_doctype:
-			# The iteration doc itself is already available in the context (e.g. `mietvertrag`).
-			path = "__self__"
-			path_source = "self"
-		references.append(
-			{
-				"fieldname": fieldname,
-				"doctype": template.haupt_verteil_objekt,
-				"source": _("Vorlage"),
-				"label": field_label or template.haupt_verteil_objekt,
-				"field_label": field_label,
-				"req_key": f"template::{template.get('name') or 'vorlage'}::{fieldname}",
-				"path": path,
-				"resolved_in_template": bool(path),
-				"resolved_via_default": bool(path),
-				"path_source": path_source,
-			}
-		)
-
-	for variable in template.get("variables") or []:
-		variable_type = cstr(getattr(variable, "variable_type", None) or "").strip() or "Text"
-		if variable_type not in {"Doctype", "Doctype Liste"}:
-			continue
-		ref_doctype = cstr(getattr(variable, "reference_doctype", None) or "").strip()
-		if not ref_doctype:
-			continue
-
-		context_variable = cstr(
-			getattr(variable, "variable", None)
-			or getattr(variable, "label", None)
-			or ref_doctype
-			or ""
-		).strip()
-		fieldname = frappe.scrub(context_variable or ref_doctype)
-		if not fieldname:
-			continue
-
-		rowname = cstr(getattr(variable, "name", None) or "").strip()
-		use_rowname = bool(rowname and not rowname.startswith("new"))
-		req_key = rowname if use_rowname else ref_doctype or fieldname
-		is_list = variable_type == "Doctype Liste"
-
-		row_fieldname, row_field_label, has_direct_link = resolve_field(ref_doctype, fieldname)
-		direct_path = row_fieldname if has_direct_link else None
-		if base_doctype and ref_doctype == base_doctype:
-			direct_path = "__self__"
-
-		if is_list:
-			table_df = table_fields_by_doctype.get(ref_doctype)
-			if table_df and getattr(table_df, "fieldname", None):
-				direct_path = table_df.fieldname
-				row_fieldname = table_df.fieldname
-				row_field_label = getattr(table_df, "label", None)
-			if not direct_path and table_fields:
-				for candidate in table_fields:
-					child_dt = cstr(getattr(candidate, "options", None) or "").strip()
-					if not child_dt:
-						continue
-					try:
-						child_meta = frappe.get_meta(child_dt)
-					except Exception:
-						child_meta = None
-					if not child_meta:
-						continue
-					match = next(
-						(
-							df
-							for df in child_meta.fields
-							if df.fieldtype == "Link"
-							and cstr(getattr(df, "options", None) or "").strip() == ref_doctype
-						),
-						None,
-					)
-					if not match:
-						continue
-					direct_path = candidate.fieldname
-					row_fieldname = candidate.fieldname
-					row_field_label = getattr(candidate, "label", None)
-					break
-
-		spec = {
-			"reference_doctype": ref_doctype,
-			"context_variable": context_variable,
-			"fieldname": fieldname,
-		}
-
-		path_from_template = pick_mapping_value(template_mapping, req_key, spec)
-		path_from_global = (
-			None if path_from_template else pick_mapping_value(global_default_mapping, req_key, spec)
-		)
-		path_from_direct = None if (path_from_template or path_from_global) else direct_path
-		path = path_from_template or path_from_global or path_from_direct
-		path_source = (
-			"template"
-			if path_from_template
-			else "global_default"
-			if path_from_global
-			else "direct"
-			if path_from_direct
-			else ""
-		)
-
-		references.append(
-			{
-				"fieldname": fieldname,
-				"row_fieldname": row_fieldname,
-				"field_label": row_field_label,
-				"doctype": ref_doctype,
-				"source": _("Vorlage"),
-				"label": getattr(variable, "label", None) or context_variable or ref_doctype,
-				"req_key": req_key,
-				"is_list": is_list,
-				"resolved_in_template": bool(path),
-				"resolved_via_default": path_source in {"global_default", "direct"},
-				"path_source": path_source,
-				"path": path,
-				"origin": "template_variable",
-			}
-		)
+	link_fields_by_doctype, table_fields_by_doctype, table_fields = _get_mapping_meta(base_doctype)
 
 	for row in template.get("textbausteine") or []:
 		if not getattr(row, "baustein", None):
@@ -2803,25 +1987,17 @@ def _extract_template_reference_fields(
 
 		mapping = _parse_mapping(row.get("pfad_zuordnung"))
 		default_mapping = _get_block_default_path_map(block_doc, base_doctype)
-
 		block_refs: list[Dict[str, Any]] = []
-		legacy_refs = block_doc.get("reference_doctypes") or []
-		legacy_by_key: dict[tuple[str, str], Any] = {}
-		for legacy in legacy_refs:
-			dt = cstr(getattr(legacy, "reference_doctype", None) or "").strip()
-			cv = cstr(getattr(legacy, "context_variable", None) or dt).strip()
-			key = (dt, frappe.scrub(cv or dt))
-			if dt and key not in legacy_by_key:
-				legacy_by_key[key] = legacy
 
-		reference_specs: list[dict[str, Any]] = []
 		for variable in block_doc.get("variables") or []:
 			variable_type = cstr(getattr(variable, "variable_type", None) or "").strip() or "Text"
-			if variable_type == "Text":
+			if variable_type not in {"Doctype", "Doctype Liste"}:
 				continue
+
 			ref_doctype = cstr(getattr(variable, "reference_doctype", None) or "").strip()
 			if not ref_doctype:
 				continue
+
 			context_variable = cstr(
 				getattr(variable, "variable", None)
 				or getattr(variable, "label", None)
@@ -2831,128 +2007,62 @@ def _extract_template_reference_fields(
 			fieldname = frappe.scrub(context_variable or ref_doctype)
 			if not fieldname:
 				continue
+
 			rowname = cstr(getattr(variable, "name", None) or "").strip()
-			use_rowname = bool(rowname and not rowname.startswith("new"))
-			req_key = rowname if use_rowname else ref_doctype or fieldname
-
-			legacy = legacy_by_key.get((ref_doctype, fieldname))
-			if legacy and getattr(legacy, "name", None):
-				req_key = cstr(legacy.name)
-
-			reference_specs.append(
-				{
-					"reference_doctype": ref_doctype,
-					"context_variable": context_variable,
-					"fieldname": fieldname,
-					"req_key": req_key,
-					"is_list": variable_type == "Doctype Liste",
-				}
+			req_key = rowname if rowname and not rowname.startswith("new") else ref_doctype or fieldname
+			is_list = variable_type == "Doctype Liste"
+			row_fieldname, row_field_label, has_direct_link = _resolve_direct_input_field(
+				ref_doctype,
+				fieldname,
+				base_doctype,
+				link_fields_by_doctype,
+				table_fields_by_doctype,
+				table_fields,
+				is_list=is_list,
 			)
 
-		# Fallback: legacy reference_doctypes
-		for legacy in legacy_refs:
-			ref_doctype = cstr(getattr(legacy, "reference_doctype", None) or "").strip()
-			context_variable = cstr(getattr(legacy, "context_variable", None) or ref_doctype or "").strip()
-			fieldname = frappe.scrub(context_variable or ref_doctype)
-			if not ref_doctype or not fieldname:
-				continue
-			if any(spec.get("reference_doctype") == ref_doctype and spec.get("fieldname") == fieldname for spec in reference_specs):
-				continue
-			req_key = cstr(getattr(legacy, "name", None) or ref_doctype or fieldname)
-			reference_specs.append(
-				{
-					"reference_doctype": ref_doctype,
-					"context_variable": context_variable,
-					"fieldname": fieldname,
-					"req_key": req_key,
-					"is_list": False,
-				}
-			)
-
-		for spec in reference_specs:
-			ref_doctype = spec["reference_doctype"]
-			fieldname = spec["fieldname"]
-			req_key = spec["req_key"]
-			is_list = bool(spec.get("is_list"))
-
-			row_fieldname, row_field_label, has_direct_link = resolve_field(ref_doctype, fieldname)
 			direct_path = row_fieldname if has_direct_link else None
 			if base_doctype and ref_doctype == base_doctype:
 				direct_path = "__self__"
-			if is_list:
-				table_df = table_fields_by_doctype.get(ref_doctype)
-				if table_df and getattr(table_df, "fieldname", None):
-					direct_path = table_df.fieldname
-					row_fieldname = table_df.fieldname
-					row_field_label = getattr(table_df, "label", None)
-				if not direct_path and table_fields:
-					# Indirect list: base has a Table whose child has a Link to the desired DocType.
-					for candidate in table_fields:
-						child_dt = cstr(getattr(candidate, "options", None) or "").strip()
-						if not child_dt:
-							continue
-						try:
-							child_meta = frappe.get_meta(child_dt)
-						except Exception:
-							child_meta = None
-						if not child_meta:
-							continue
-						match = next(
-							(
-								df
-								for df in child_meta.fields
-								if df.fieldtype == "Link"
-								and cstr(getattr(df, "options", None) or "").strip() == ref_doctype
-							),
-							None,
-						)
-						if not match:
-							continue
-						direct_path = candidate.fieldname
-						row_fieldname = candidate.fieldname
-						row_field_label = getattr(candidate, "label", None)
-						break
 
-			path_from_template = pick_mapping_value(mapping, req_key, spec)
-			path_from_default = pick_mapping_value(default_mapping, req_key, spec) if default_mapping else None
-			path_from_global = (
-				None
-				if path_from_template or path_from_default
-				else pick_mapping_value(global_default_mapping, req_key, spec)
-			)
-			path_from_direct = None if (path_from_template or path_from_default or path_from_global) else direct_path
-			path = path_from_template or path_from_default or path_from_global or path_from_direct
+			spec = {
+				"reference_doctype": ref_doctype,
+				"context_variable": context_variable,
+				"fieldname": fieldname,
+			}
+			path_from_template = _pick_mapping_value(mapping, req_key, spec)
+			path_from_default = _pick_mapping_value(default_mapping, req_key, spec) if default_mapping else None
+			path_from_direct = None if (path_from_template or path_from_default) else direct_path
+			path = path_from_template or path_from_default or path_from_direct
 			path_source = (
 				"template"
 				if path_from_template
 				else "default"
 				if path_from_default
-				else "global_default"
-				if path_from_global
 				else "direct"
 				if path_from_direct
 				else ""
 			)
 
-			entry = {
-				"fieldname": fieldname,
-				"row_fieldname": row_fieldname,
-				"field_label": row_field_label,
-				"doctype": ref_doctype,
-				"source": block_doc.title or block_doc.name,
-				"label": row_field_label or ref_doctype,
-				"block": block_doc.name,
-				"block_title": block_doc.title or block_doc.name,
-				"block_rowname": row.name,
-				"req_key": req_key,
-				"is_list": is_list,
-				"resolved_in_template": bool(path),
-				"resolved_via_default": path_source in {"default", "global_default", "direct"},
-				"path_source": path_source,
-				"path": path,
-			}
-			block_refs.append(entry)
-			references.append(entry)
+			block_refs.append(
+				{
+					"fieldname": fieldname,
+					"row_fieldname": row_fieldname,
+					"field_label": row_field_label,
+					"doctype": ref_doctype,
+					"source": block_doc.title or block_doc.name,
+					"label": getattr(variable, "label", None) or row_field_label or ref_doctype,
+					"block": block_doc.name,
+					"block_title": block_doc.title or block_doc.name,
+					"block_rowname": row.name,
+					"req_key": req_key,
+					"is_list": is_list,
+					"resolved_in_template": bool(path),
+					"resolved_via_default": path_source in {"default", "direct"},
+					"path_source": path_source,
+					"path": path,
+				}
+			)
 
 		if block_refs:
 			block_requirements.append(
@@ -2962,79 +2072,98 @@ def _extract_template_reference_fields(
 					"rowname": row.name,
 					"requirements": block_refs,
 				}
-		)
+			)
 
-	return references, block_requirements
-
-
-_GLOBAL_STANDARD_PATHS: dict[str, dict[str, str]] = {
-	# Von Wohnung zu den üblichen Verknüpfungen
-	"Wohnung": {
-		"Immobilie": "immobilie",
-		"Address": "immobilie.adresse",
-		"Contact": "immobilie.hausmeister",
-	},
-	# Mietvertrag liefert Wohnung und erste(r) Vertragspartner als Contact
-	"Mietvertrag": {
-		"Wohnung": "wohnung",
-		"Immobilie": "wohnung.immobilie",
-		"Address": "wohnung.immobilie.adresse",
-		"Contact": "mieter.mieter",
-		"Vertragspartner": "mieter",
-	},
-	# Immobilie direkt
-	"Immobilie": {
-		"Address": "adresse",
-		"Contact": "hausmeister",
-	},
-	# BK Mieter: spiegelt die Mietvertrag-Pfade über das verknüpfte mietvertrag-Feld
-	"Betriebskostenabrechnung Mieter": {
-		"Mietvertrag": "mietvertrag",
-		"Wohnung": "wohnung",
-		"Immobilie": "wohnung.immobilie",
-		"Address": "wohnung.immobilie.adresse",
-		"Contact": "mietvertrag.mieter.mieter",
-		"Vertragspartner": "mietvertrag.mieter",
-	},
-}
+	return block_requirements
 
 
-def _get_global_default_path_map(base_doctype: str | None = None) -> dict[str, str]:
-	"""Globale Standardpfade je Start-Doctype, falls Vorlage und Baustein nichts vorgeben."""
+def _get_mapping_meta(base_doctype: str | None = None):
+	link_fields_by_doctype: dict[str, Any] = {}
+	table_fields_by_doctype: dict[str, Any] = {}
+	table_fields: list[Any] = []
 
 	if not base_doctype:
-		return {}
-
-	settings_mapping = _get_settings_global_path_map(base_doctype)
-	if settings_mapping:
-		return settings_mapping
-
-	return _GLOBAL_STANDARD_PATHS.get(base_doctype, {})
-
-
-def _get_settings_global_path_map(base_doctype: str | None = None) -> dict[str, str]:
-	"""Load globale Pfade aus Serienbrief Einstellungen (falls gepflegt)."""
-
-	if not base_doctype:
-		return {}
+		return link_fields_by_doctype, table_fields_by_doctype, table_fields
 
 	try:
-		settings = frappe.get_cached_doc("Serienbrief Einstellungen")
+		meta = frappe.get_meta(base_doctype)
 	except Exception:
-		return {}
+		return link_fields_by_doctype, table_fields_by_doctype, table_fields
 
-	rows = getattr(settings, "standardpfade", None) or []
-	fallback: dict[str, str] | None = None
+	link_fields_by_doctype = {cstr(df.options): df for df in meta.fields if df.fieldtype == "Link" and df.options}
+	for df in meta.fields:
+		if df.fieldtype == "Table" and df.options and cstr(df.options):
+			table_fields_by_doctype.setdefault(cstr(df.options), df)
+			table_fields.append(df)
 
-	for row in rows:
-		startobjekt = cstr(getattr(row, "startobjekt", None) or "").strip()
-		mapping = _parse_mapping(getattr(row, "pfad_zuordnung", None))
-		if startobjekt and startobjekt == base_doctype and mapping:
-			return mapping
-		if not startobjekt and mapping:
-			fallback = mapping
+	return link_fields_by_doctype, table_fields_by_doctype, table_fields
 
-	return fallback or {}
+
+def _resolve_direct_input_field(
+	ref_doctype: str,
+	fieldname: str,
+	base_doctype: str | None,
+	link_fields_by_doctype: dict[str, Any],
+	table_fields_by_doctype: dict[str, Any],
+	table_fields: list[Any],
+	*,
+	is_list: bool = False,
+) -> tuple[str, str | None, bool]:
+	link_df = link_fields_by_doctype.get(ref_doctype)
+	if link_df:
+		return link_df.fieldname, link_df.label, True
+
+	if base_doctype and ref_doctype == base_doctype:
+		return fieldname, None, True
+
+	if is_list:
+		table_df = table_fields_by_doctype.get(ref_doctype)
+		if table_df and getattr(table_df, "fieldname", None):
+			return table_df.fieldname, getattr(table_df, "label", None), True
+
+		for candidate in table_fields:
+			child_dt = cstr(getattr(candidate, "options", None) or "").strip()
+			if not child_dt:
+				continue
+			try:
+				child_meta = frappe.get_meta(child_dt)
+			except Exception:
+				continue
+
+			match = next(
+				(
+					df
+					for df in child_meta.fields
+					if df.fieldtype == "Link"
+					and cstr(getattr(df, "options", None) or "").strip() == ref_doctype
+				),
+				None,
+			)
+			if match:
+				return candidate.fieldname, getattr(candidate, "label", None), True
+
+	return fieldname, None, False
+
+
+def _pick_mapping_value(mapping: dict[str, Any] | None, req_key: str, reference=None):
+	if not mapping:
+		return None
+
+	keys = [
+		req_key,
+		cstr(reference.get("reference_doctype") if isinstance(reference, dict) else getattr(reference, "reference_doctype", None) or ""),
+		cstr(reference.get("context_variable") if isinstance(reference, dict) else getattr(reference, "context_variable", None) or ""),
+		cstr(reference.get("fieldname") if isinstance(reference, dict) else ""),
+	]
+
+	for key in keys:
+		if not key:
+			continue
+		value = mapping.get(key)
+		if value not in (None, ""):
+			return value
+
+	return None
 
 
 def _get_block_default_path_map(block_doc, base_doctype: str | None = None) -> dict[str, str]:
