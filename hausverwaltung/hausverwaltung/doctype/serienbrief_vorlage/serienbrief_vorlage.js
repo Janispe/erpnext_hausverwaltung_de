@@ -1711,7 +1711,15 @@ const hv_update_split_preview = (frm, { immediate } = {}) => {
 		hv_init_split_preview(frm);
 		if (!frm._hv_split_preview) return;
 	}
-	if (!immediate && frm._hv_split_preview_loading) return;
+	// Queue-Pattern: wenn schon ein Render läuft, NICHT verwerfen, sondern
+	// merken — beim Abschluss prüft das ``finally`` ob die Signature sich
+	// inzwischen geändert hat und triggert dann einen neuen Render. So
+	// läuft nie mehr als ein Chrome-PDF-Render parallel (das war die
+	// OOM-Quelle: aufgestaute Chrome-Instanzen im Backend).
+	if (frm._hv_split_preview_loading) {
+		frm._hv_split_preview_pending = true;
+		return;
+	}
 	const signature = hv_get_split_preview_signature(frm);
 	if (!immediate && signature && signature === frm._hv_split_preview_sig) {
 		return;
@@ -1719,6 +1727,7 @@ const hv_update_split_preview = (frm, { immediate } = {}) => {
 	frm._hv_split_preview_sig = signature;
 
 	frm._hv_split_preview_loading = true;
+	frm._hv_split_preview_pending = false;
 	hv_set_split_preview_status(frm, __("Lade Vorschau …"));
 
 	const templateDoc = hv_get_live_template_doc(frm);
@@ -1754,6 +1763,13 @@ const hv_update_split_preview = (frm, { immediate } = {}) => {
 		});
 	hv_attach_finally(request, () => {
 		frm._hv_split_preview_loading = false;
+		// Queue-Drain: hat sich während des Renders was geändert, jetzt
+		// einen neuen Render auslösen (Signature-Check verhindert
+		// unnötige Round-Trips wenn nichts neues vorliegt).
+		if (frm._hv_split_preview_pending) {
+			frm._hv_split_preview_pending = false;
+			hv_update_split_preview(frm);
+		}
 	});
 };
 
@@ -1775,14 +1791,12 @@ const hv_schedule_split_preview = (frm) => {
 };
 
 const hv_start_split_preview_polling = (frm) => {
-	if (!frm._hv_split_preview_enabled) return;
-	if (frm._hv_split_preview_interval) return;
-	// Backup-Polling: prüft Signature und rendert nur, wenn sich wirklich
-	// etwas geändert hat. Fängt Edge-Cases ab, wenn Quill-Events nicht im
-	// Debounce landen.
-	frm._hv_split_preview_interval = setInterval(() => {
-		hv_update_split_preview(frm);
-	}, HV_SPLIT_PREVIEW_POLL_MS);
+	// Polling deaktiviert — die Queue (pending-Flag in
+	// hv_update_split_preview) drained automatisch jede Änderung, sobald
+	// der laufende Render fertig ist. Doppelte Trigger-Quellen
+	// (Debounce + Polling) waren OOM-Risiko, weil Chrome-PDF-Renders im
+	// Backend nicht beliebig parallelisierbar sind.
+	return;
 };
 
 const hv_get_split_preview_signature = (frm) => {
