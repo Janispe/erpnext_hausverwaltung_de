@@ -565,6 +565,9 @@ def create_standalone_payment_entry(*, bt, party_type=None, party=None, remarks=
 			"reference_no": bt.reference_number or bt.name,
 			"reference_date": bt.date,
 			"remarks": remarks or bt.description or None,
+			# Sonst überschreibt Payment Entry.set_remarks() unseren Verwendungs-
+			# zweck nach dem Insert mit "Betrag EUR X bezahlt an Y …".
+			"custom_remarks": 1,
 		}
 	)
 	if cost_center and pe.meta.get_field("cost_center"):
@@ -632,6 +635,10 @@ def create_journal_entry_for_bt(*, bt, account=None, cost_center=None, splits=No
 		}]
 
 	je = frappe.new_doc("Journal Entry")
+	# ``remark`` (= GL-Entry-Remarks-Quelle) explizit setzen und ``custom_remark``
+	# aktivieren — sonst überschreibt Journal Entry.create_remarks() unseren
+	# Verwendungszweck mit "Reference #<cheque_no> dated <date>".
+	bt_remark = remarks or bt.description or ""
 	je.update(
 		{
 			"voucher_type": "Bank Entry",
@@ -639,7 +646,9 @@ def create_journal_entry_for_bt(*, bt, account=None, cost_center=None, splits=No
 			"posting_date": bt.date,
 			"cheque_no": bt.reference_number or bt.name,
 			"cheque_date": bt.date,
-			"user_remark": remarks or bt.description or "",
+			"user_remark": bt_remark,
+			"remark": bt_remark,
+			"custom_remark": 1,
 		}
 	)
 
