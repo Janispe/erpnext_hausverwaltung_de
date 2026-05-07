@@ -1187,6 +1187,7 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
     created_without_party = 0
     skipped_before_cutoff = 0
     auto_matched = []
+    auto_abschlag_matched = []
     auto_match_failed = []
     from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
         auto_match_bank_transaction,
@@ -1350,6 +1351,39 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
                     auto_matched.append(bt.name)
                 else:
                     row.db_set("auto_match_message", match_result.get("message"))
+                    if (
+                        row.get("richtung") == "Ausgang"
+                        and row.get("party_type") == "Supplier"
+                        and match_result.get("reason") in ("no_open_invoices", "no_matching_cost_center")
+                    ):
+                        try:
+                            candidate_payload = get_abschlagsplan_candidates_for_row(doc.name, row.name)
+                            auto_tolerance = int(candidate_payload.get("auto_tolerance_days") or 0)
+                            strict_candidates = [
+                                c for c in candidate_payload.get("candidates", [])
+                                if c.get("delta_days") is None or c.get("delta_days") <= auto_tolerance
+                            ]
+                            if len(strict_candidates) == 1:
+                                abschlag_result = assign_abschlagsplan_row(
+                                    doc.name,
+                                    row.name,
+                                    strict_candidates[0].get("row_name"),
+                                    remarks=row.get("verwendungszweck") or row.get("auftraggeber") or None,
+                                )
+                                row.db_set(
+                                    "auto_match_message",
+                                    (
+                                        f"Abschlag automatisch zugeordnet: "
+                                        f"{abschlag_result.get('zahlungsplan')} Zeile {abschlag_result.get('row_idx')}"
+                                    ),
+                                )
+                                auto_abschlag_matched.append(bt.name)
+                                continue
+                        except Exception:
+                            frappe.log_error(
+                                frappe.get_traceback(),
+                                f"Bankauszug Import: Abschlagsplan-Auto-Zuordnung fehlgeschlagen für {bt.name}",
+                            )
                     if match_result.get("reason") not in ("no_party", "wrong_direction_for_customer", "wrong_direction_for_supplier"):
                         # Diagnose-Info für die Liste — kein "Fehler" im engeren Sinne
                         auto_match_failed.append({
@@ -1384,6 +1418,7 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
         "skipped_before_cutoff": skipped_before_cutoff,
         "cutoff_date": str(bankimport_start_datum) if bankimport_start_datum else None,
         "auto_matched": auto_matched,
+        "auto_abschlag_matched": auto_abschlag_matched,
         "auto_match_failed": auto_match_failed,
         "warning": warning if warning and bool(int(allow_missing_party or 0)) else None,
     }
@@ -1584,6 +1619,106 @@ def get_open_invoices_for_row(docname: str, row_name: str) -> Dict[str, Any]:
 
 
 @frappe.whitelist()
+def get_abschlagsplan_candidates_for_row(docname: str, row_name: str) -> dict[str, Any]:
+    """Listet offene Abschlagsplan-Zeilen für eine Supplier-Ausgangszeile.
+
+    Die Kandidaten sind bewusst Plan-Zeilen, keine Rechnungen: der spätere
+    Beleg ist ein unallocated Supplier Payment Entry, der an die Zeile gehängt
+    und erst bei der Jahresabrechnung verrechnet wird.
+    """
+    from hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan import (
+        MODUS_ABSCHLAGSPLAN,
+        _get_abschlag_tolerance_days,
+    )
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+        _resolve_expected_cost_center_for_bt,
+    )
+
+    doc = frappe.get_doc("Bankauszug Import", docname)
+    if not frappe.has_permission("Bankauszug Import", "read", doc=doc):
+        frappe.throw("Keine Berechtigung.")
+
+    row = _get_row_by_name(doc, row_name)
+    if row.get("richtung") != "Ausgang" or row.get("party_type") != "Supplier" or not row.get("party"):
+        return {"candidates": [], "target_amount": flt(row.get("betrag")), "reason": "not_supplier_outgoing"}
+
+    bt_name = _get_row_bank_transaction_name(row)
+    if not bt_name:
+        return {"candidates": [], "target_amount": flt(row.get("betrag")), "reason": "no_bank_transaction"}
+
+    bt = frappe.get_doc("Bank Transaction", bt_name)
+    target_amount = flt(row.get("betrag"))
+    target_date = getdate(row.get("buchungstag")) if row.get("buchungstag") else None
+    tolerance_days = _get_abschlag_tolerance_days()
+    manual_window_days = max(tolerance_days, 45)
+    expected_cc = _resolve_expected_cost_center_for_bt(bt)
+    bank_account = getattr(bt, "bank_account", None)
+
+    rows = frappe.db.sql(
+        """
+        SELECT
+            p.name AS row_name,
+            p.idx AS row_idx,
+            p.faelligkeitsdatum,
+            p.betrag,
+            p.bemerkung,
+            az.name AS zahlungsplan,
+            az.bezeichnung,
+            az.company,
+            az.lieferant,
+            az.immobilie,
+            az.wohnung,
+            az.bank_account,
+            az.cost_center
+        FROM `tabZahlungsplan Zeile` p
+        INNER JOIN `tabZahlungsplan` az ON az.name = p.parent
+        WHERE
+            az.modus = %(modus)s
+            AND az.status != 'Abgerechnet'
+            AND az.lieferant = %(supplier)s
+            AND (p.payment_entry IS NULL OR p.payment_entry = '')
+        ORDER BY p.faelligkeitsdatum ASC, az.name ASC, p.idx ASC
+        """,
+        {"modus": MODUS_ABSCHLAGSPLAN, "supplier": row.party},
+        as_dict=True,
+    )
+
+    candidates = []
+    for item in rows:
+        if abs(flt(item.get("betrag")) - target_amount) > 0.01:
+            continue
+        if bank_account and item.get("bank_account") and item.get("bank_account") != bank_account:
+            continue
+        if expected_cc and item.get("cost_center") and item.get("cost_center") != expected_cc:
+            continue
+
+        row_date = getdate(item.get("faelligkeitsdatum")) if item.get("faelligkeitsdatum") else None
+        delta_days = abs((row_date - target_date).days) if row_date and target_date else None
+        item["delta_days"] = delta_days
+        item["bank_account_match"] = bool(bank_account and item.get("bank_account") == bank_account)
+        item["cost_center_match"] = bool(expected_cc and item.get("cost_center") == expected_cc)
+        candidates.append(item)
+
+    candidates.sort(
+        key=lambda c: (
+            0 if c.get("bank_account_match") else 1,
+            0 if c.get("cost_center_match") else 1,
+            c.get("delta_days") if c.get("delta_days") is not None else 9999,
+            c.get("faelligkeitsdatum") or "9999-12-31",
+        )
+    )
+    return {
+        "candidates": candidates,
+        "target_amount": target_amount,
+        "target_date": str(target_date) if target_date else None,
+        "bank_account": bank_account,
+        "expected_cost_center": expected_cc,
+        "auto_tolerance_days": tolerance_days,
+        "manual_window_days": manual_window_days,
+    }
+
+
+@frappe.whitelist()
 def manually_reconcile_row(
     docname: str,
     row_name: str,
@@ -1692,6 +1827,86 @@ def manually_reconcile_row(
 
 
 @frappe.whitelist()
+def assign_abschlagsplan_row(
+    docname: str,
+    row_name: str,
+    plan_row_name: str,
+    remarks: str | None = None,
+) -> dict[str, Any]:
+    """Bucht eine Supplier-Bankausgangszeile als Anzahlung und verlinkt sie zur Abschlagsplan-Zeile."""
+    from hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan import MODUS_ABSCHLAGSPLAN
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+        _resolve_expected_cost_center_for_bt,
+        create_standalone_payment_entry,
+        reconcile_voucher_with_bt,
+    )
+
+    _doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
+    if row.get("richtung") != "Ausgang" or row.get("party_type") != "Supplier" or not row.get("party"):
+        frappe.throw("Abschlagsplan-Zuordnung ist nur für Lieferanten-Ausgänge möglich.")
+
+    plan_row = frappe.db.get_value(
+        "Zahlungsplan Zeile",
+        plan_row_name,
+        ["name", "parent", "idx", "faelligkeitsdatum", "betrag", "payment_entry"],
+        as_dict=True,
+    )
+    if not plan_row:
+        frappe.throw("Abschlagsplan-Zeile nicht gefunden.")
+    if plan_row.get("payment_entry"):
+        frappe.throw("Diese Abschlagsplan-Zeile ist bereits bezahlt.")
+
+    plan = frappe.get_doc("Zahlungsplan", plan_row.parent)
+    if plan.get("modus") != MODUS_ABSCHLAGSPLAN:
+        frappe.throw("Die ausgewählte Zeile gehört nicht zu einem Abschlagsplan.")
+    if plan.get("status") == "Abgerechnet":
+        frappe.throw("Der ausgewählte Abschlagsplan ist bereits abgerechnet.")
+    if plan.get("lieferant") != row.get("party"):
+        frappe.throw("Lieferant der Bankzeile passt nicht zum Abschlagsplan.")
+    if abs(flt(plan_row.get("betrag")) - flt(row.get("betrag"))) > 0.01:
+        frappe.throw("Betrag der Bankzeile passt nicht zur Abschlagsplan-Zeile.")
+    if getattr(bt, "bank_account", None) and plan.get("bank_account") and plan.bank_account != bt.bank_account:
+        frappe.throw("Bankkonto der Bankzeile passt nicht zum Abschlagsplan.")
+
+    expected_cc = _resolve_expected_cost_center_for_bt(bt)
+    if expected_cc and plan.get("cost_center") and plan.cost_center != expected_cc:
+        frappe.throw("Kostenstelle der Bankzeile passt nicht zum Abschlagsplan.")
+
+    pe = create_standalone_payment_entry(
+        bt=bt,
+        party_type="Supplier",
+        party=row.party,
+        remarks=remarks or row.get("verwendungszweck") or row.get("auftraggeber") or None,
+    )
+    target_amount = flt(row.betrag)
+    reconcile_voucher_with_bt(bt, "Payment Entry", pe.name, target_amount)
+
+    row.db_set("payment_entry", pe.name)
+    _set_row_payment_document(row, "Payment Entry", pe.name)
+    row.db_set("row_status", "success")
+    plan_row_doc = frappe.get_doc("Zahlungsplan Zeile", plan_row.name)
+    plan_row_doc.db_set("payment_entry", pe.name, update_modified=False)
+    plan_row_doc.db_set("bank_transaction", bt.name, update_modified=False)
+    if row.get("buchungstag"):
+        plan_row_doc.db_set("gebucht_am", getdate(row.buchungstag), update_modified=False)
+    row.db_set(
+        "auto_match_message",
+        f"Abschlag zugeordnet: {plan.name} Zeile {plan_row.idx}, {target_amount:.2f} €",
+    )
+    _recompute_doc_status(docname)
+    _refresh_and_persist_saldo(docname)
+
+    return {
+        "ok": True,
+        "payment_entry": pe.name,
+        "bank_transaction": bt.name,
+        "zahlungsplan": plan.name,
+        "row_idx": plan_row.idx,
+        "plan_row": plan_row.name,
+    }
+
+
+@frappe.whitelist()
 def create_standalone_payment_for_row(
     docname: str,
     row_name: str,
@@ -1743,6 +1958,7 @@ def create_standalone_payment_for_row(
                 posting_date=row.get("buchungstag"),
                 amount=target_amount,
                 payment_entry=pe.name,
+                bank_transaction=bt.name,
             )
         except Exception:
             frappe.log_error(

@@ -9,6 +9,7 @@
   "faelligkeitsdatum",
   "betrag",
   "payment_entry",
+  "bank_transaction",
   "gebucht_am",
   "purchase_invoice",
   "pi_erstellt_am",
@@ -38,6 +39,15 @@
    "options": "Payment Entry",
    "read_only": 1,
    "description": "Nur bei Modus=Abschlagsplan: Anzahlung an den Lieferanten."
+  },
+  {
+   "fieldname": "bank_transaction",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Bank Transaction",
+   "options": "Bank Transaction",
+   "read_only": 1,
+   "description": "Bankbuchung, aus der die Zahlung im Bankauszug Import entstanden ist."
   },
   {
    "fieldname": "gebucht_am",

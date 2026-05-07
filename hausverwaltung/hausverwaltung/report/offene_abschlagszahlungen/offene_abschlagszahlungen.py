@@ -16,6 +16,7 @@ def execute(filters=None):
 
     conditions = [
         "az.status != 'Abgerechnet'",
+        "az.modus = 'Abschlagsplan'",
         "p.payment_entry IS NULL",
         "p.faelligkeitsdatum BETWEEN %(from_date)s AND %(to_date)s",
     ]

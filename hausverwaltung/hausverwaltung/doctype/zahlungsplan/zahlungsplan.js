@@ -132,6 +132,11 @@ function openJaDialog(frm) {
 							format_currency(msg.summe_anzahlungen),
 						]);
 					}
+					if (msg.unlinked_count) {
+						body += "<br>" + __("Nicht verlinkte Plan-Zeilen im Zeitraum: {0}", [
+							msg.unlinked_count,
+						]);
+					}
 					body += "<br>" + __("Ergebnis: {0}", [msg.status]);
 					frappe.msgprint({
 						title: __("Jahresabrechnung erstellt"),

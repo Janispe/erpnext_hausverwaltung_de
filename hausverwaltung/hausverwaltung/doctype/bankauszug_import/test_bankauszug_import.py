@@ -2,6 +2,7 @@
 
 from unittest.mock import patch
 
+import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from hausverwaltung.hausverwaltung.doctype.bankauszug_import import bankauszug_import as bi
@@ -25,6 +26,9 @@ class TestBankauszugImport(FrappeTestCase):
             self.error = error
             self.party_type = None
             self.party = None
+
+        def get(self, key, default=None):
+            return getattr(self, key, default)
 
     class _FakeDoc:
         def __init__(self, name: str, rows):
@@ -601,6 +605,159 @@ class TestBankauszugImport(FrappeTestCase):
         self.assertEqual(row.row_status, "success")
         self.assertNotIn("row_status", row.db_updates)
         self.assertEqual(row.reference, "BT-L2")
+
+    def test_get_abschlagsplan_candidates_filters_and_sorts_plan_rows(self):
+        row = self._FakeRow(name="ROW-ABS", iban="DE16")
+        row.richtung = "Ausgang"
+        row.party_type = "Supplier"
+        row.party = "SUP-1"
+        row.betrag = 120.0
+        row.buchungstag = "2026-05-05"
+        row.bank_transaction = "BT-ABS"
+        doc = self._FakeDoc("IMP-ABS", [row])
+        bt = type("BT", (), {"name": "BT-ABS", "bank_account": "BA-1"})()
+
+        sql_rows = [
+            {
+                "row_name": "ROW-FAR",
+                "row_idx": 3,
+                "faelligkeitsdatum": "2026-08-01",
+                "betrag": 120.0,
+                "zahlungsplan": "ZP-FAR",
+                "bank_account": "BA-1",
+                "cost_center": "CC-1",
+            },
+            {
+                "row_name": "ROW-BANK-MISMATCH",
+                "row_idx": 2,
+                "faelligkeitsdatum": "2026-05-05",
+                "betrag": 120.0,
+                "zahlungsplan": "ZP-BAD",
+                "bank_account": "BA-2",
+                "cost_center": "CC-1",
+            },
+            {
+                "row_name": "ROW-OK",
+                "row_idx": 1,
+                "faelligkeitsdatum": "2026-05-06",
+                "betrag": 120.0,
+                "zahlungsplan": "ZP-OK",
+                "bank_account": "BA-1",
+                "cost_center": "CC-1",
+            },
+        ]
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Transaction":
+                return bt
+            raise AssertionError("unexpected doctype")
+
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(bi.frappe.db, "sql", return_value=sql_rows), \
+             patch(
+                 "hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan._get_abschlag_tolerance_days",
+                 return_value=7,
+             ), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match._resolve_expected_cost_center_for_bt",
+                 return_value="CC-1",
+             ):
+            res = bi.get_abschlagsplan_candidates_for_row("IMP-ABS", "ROW-ABS")
+
+        self.assertEqual([c["row_name"] for c in res["candidates"]], ["ROW-OK", "ROW-FAR"])
+        self.assertEqual(res["candidates"][0]["delta_days"], 1)
+
+    def test_assign_abschlagsplan_row_creates_payment_and_marks_plan_row(self):
+        row = self._FakeRow(name="ROW-ASSIGN", iban="DE17", verwendungszweck="Abschlag")
+        row.richtung = "Ausgang"
+        row.party_type = "Supplier"
+        row.party = "SUP-1"
+        row.betrag = 120.0
+        row.buchungstag = "2026-05-05"
+        row.payment_entry = None
+        row.journal_entry = None
+        row.db_updates = {}
+
+        def _row_db_set(fieldname, value):
+            row.db_updates[fieldname] = value
+            setattr(row, fieldname, value)
+
+        row.db_set = _row_db_set
+        doc = self._FakeDoc("IMP-ASSIGN", [row])
+        bt = type("BT", (), {"name": "BT-ASSIGN", "bank_account": "BA-1"})()
+        pe = type("PE", (), {"name": "PE-ASSIGN"})()
+        plan_row = frappe._dict({
+            "name": "PLAN-ROW-1",
+            "parent": "ZP-1",
+            "idx": 4,
+            "faelligkeitsdatum": "2026-05-05",
+            "betrag": 120.0,
+            "payment_entry": None,
+        })
+
+        class _Plan:
+            name = "ZP-1"
+            bank_account = "BA-1"
+            cost_center = "CC-1"
+
+            def get(self, key, default=None):
+                return {
+                    "modus": "Abschlagsplan",
+                    "status": "Läuft",
+                    "lieferant": "SUP-1",
+                    "bank_account": "BA-1",
+                    "cost_center": "CC-1",
+                }.get(key, default)
+
+        class _PlanRowDoc:
+            def __init__(self):
+                self.db_updates = {}
+
+            def db_set(self, fieldname, value, update_modified=False):
+                self.db_updates[fieldname] = value
+                setattr(self, fieldname, value)
+
+        plan_row_doc = _PlanRowDoc()
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Zahlungsplan":
+                return _Plan()
+            if doctype == "Zahlungsplan Zeile":
+                return plan_row_doc
+            raise AssertionError("unexpected doctype")
+
+        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(doc, row, bt)), \
+             patch.object(bi.frappe.db, "get_value", return_value=plan_row), \
+             patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match._resolve_expected_cost_center_for_bt",
+                 return_value="CC-1",
+             ), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.create_standalone_payment_entry",
+                 return_value=pe,
+             ) as create_pe, \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_voucher_with_bt",
+             ) as reconcile, \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch.object(bi, "_refresh_and_persist_saldo"):
+            res = bi.assign_abschlagsplan_row("IMP-ASSIGN", "ROW-ASSIGN", "PLAN-ROW-1")
+
+        create_pe.assert_called_once()
+        reconcile.assert_called_once_with(bt, "Payment Entry", "PE-ASSIGN", 120.0)
+        self.assertEqual(row.payment_entry, "PE-ASSIGN")
+        self.assertEqual(row.payment_document_type, "Payment Entry")
+        self.assertEqual(row.payment_document, "PE-ASSIGN")
+        self.assertEqual(row.row_status, "success")
+        self.assertEqual(plan_row_doc.payment_entry, "PE-ASSIGN")
+        self.assertEqual(plan_row_doc.bank_transaction, "BT-ASSIGN")
+        self.assertEqual(str(plan_row_doc.gebucht_am), "2026-05-05")
+        self.assertEqual(res["zahlungsplan"], "ZP-1")
 
     def test_create_journal_entry_for_row_sets_journal_entry_and_success_status(self):
         row = self._FakeRow(name="ROW-JE", iban="DE16")

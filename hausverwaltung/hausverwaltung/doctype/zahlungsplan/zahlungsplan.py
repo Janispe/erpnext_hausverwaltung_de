@@ -209,25 +209,39 @@ class Zahlungsplan(Document):
 		# 1. Create and submit Purchase Invoice
 		pi = _create_jahresabrechnung_pi(self)
 
-		# 2. Find unreconciled advance Payment Entries in the period
+		# 2. Find unreconciled advance Payment Entries linked to this plan.
 		payable_account = frappe.db.get_value("Company", self.company, "default_payable_account")
 		if not payable_account:
 			frappe.throw("In der Company ist kein 'default_payable_account' hinterlegt.")
 
-		pes = frappe.get_all(
-			"Payment Entry",
-			filters={
-				"party_type": "Supplier",
-				"party": self.lieferant,
-				"payment_type": "Pay",
-				"company": self.company,
-				"docstatus": 1,
-				"posting_date": ["between", [self.ja_von, self.ja_bis]],
-				"unallocated_amount": [">", 0],
-			},
-			fields=["name", "paid_amount", "unallocated_amount", "posting_date"],
-			order_by="posting_date asc",
-		)
+		pes = []
+		unlinked_abschlagsplan_rows = []
+		for row in self.get("plan") or []:
+			row_date = getdate(row.faelligkeitsdatum) if row.get("faelligkeitsdatum") else None
+			if row_date and (row_date < getdate(self.ja_von) or row_date > getdate(self.ja_bis)):
+				continue
+			if not row.get("payment_entry"):
+				unlinked_abschlagsplan_rows.append(row.idx)
+				continue
+			pe = frappe.db.get_value(
+				"Payment Entry",
+				row.payment_entry,
+				["name", "paid_amount", "unallocated_amount", "posting_date", "party_type", "party", "payment_type", "company", "docstatus"],
+				as_dict=True,
+			)
+			if not pe:
+				continue
+			if (
+				pe.docstatus != 1
+				or pe.party_type != "Supplier"
+				or pe.party != self.lieferant
+				or pe.payment_type != "Pay"
+				or pe.company != self.company
+				or flt(pe.unallocated_amount) <= 0
+			):
+				continue
+			pes.append(pe)
+		pes.sort(key=lambda pe: getdate(pe.posting_date) if pe.posting_date else getdate(self.ja_von))
 
 		# 3. Reconcile advances against PI
 		remaining = float(self.ja_betrag)
@@ -297,6 +311,8 @@ class Zahlungsplan(Document):
 			"summe_abschlaege": summe_abschlaege,
 			"vor_systemstart_bezahlt": vorzahlung,
 			"summe_anzahlungen": summe_anzahlungen,
+			"unlinked_count": len(unlinked_abschlagsplan_rows),
+			"unlinked_rows": unlinked_abschlagsplan_rows,
 		}
 
 	@frappe.whitelist()
@@ -419,13 +435,26 @@ def _resolve_bank_account_for_immobilie(immobilie: str) -> str | None:
 	return None
 
 
+def _get_abschlag_tolerance_days(default: int = 7) -> int:
+	try:
+		value = frappe.db.get_single_value(
+			"Hausverwaltung Einstellungen", "bankimport_abschlag_toleranz_tage"
+		)
+		if value is not None and int(value) >= 0:
+			return int(value)
+	except Exception:
+		pass
+	return default
+
+
 def link_payment_entry_to_abschlagsplan_row(
 	*,
 	supplier: str,
 	posting_date,
 	amount: float,
 	payment_entry: str,
-	tolerance_days: int = 15,
+	bank_transaction: str | None = None,
+	tolerance_days: int | None = None,
 	tolerance_amount: float = 0.01,
 ) -> dict | None:
 	"""Find a matching Abschlagsplan plan row for a freshly-created advance PE.
@@ -444,6 +473,8 @@ def link_payment_entry_to_abschlagsplan_row(
 		return None
 	target_date = getdate(posting_date) if posting_date else None
 	target_amount = float(amount)
+	if tolerance_days is None:
+		tolerance_days = _get_abschlag_tolerance_days()
 
 	plans = frappe.get_all(
 		"Zahlungsplan",
@@ -485,9 +516,14 @@ def link_payment_entry_to_abschlagsplan_row(
 
 	_, plan, row = candidates[0]
 	row.db_set("payment_entry", payment_entry, update_modified=False)
+	if bank_transaction:
+		row.db_set("bank_transaction", bank_transaction, update_modified=False)
+	if target_date:
+		row.db_set("gebucht_am", target_date, update_modified=False)
 	return {
 		"plan": plan.name,
 		"row_idx": row.idx,
+		"row_name": row.name,
 		"faelligkeitsdatum": str(row.faelligkeitsdatum) if row.get("faelligkeitsdatum") else None,
 		"betrag": flt(row.get("betrag")),
 	}

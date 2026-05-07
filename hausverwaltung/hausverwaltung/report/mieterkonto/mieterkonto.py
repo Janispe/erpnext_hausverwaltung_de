@@ -739,7 +739,7 @@ def _get_report_summary(totals: dict[str, Any], filters) -> list[dict[str, Any]]
 		{
 			"value": _open_category_amount(all_totals, "guthaben_nachzahlungen"),
 			"indicator": "Blue",
-			"label": _("Guthaben/Nachzahlungen offen"),
+			"label": _("G/N offen"),
 			"datatype": "Currency",
 			"currency": currency,
 		},

@@ -854,12 +854,14 @@ function _openRowActions(frm, row) {
   const hasBT = !!row.bank_transaction;
   const alreadyReconciled = !!row.payment_entry || !!row.journal_entry;
   const showReconcileSection = hasBT && !alreadyReconciled;
+  const showAbschlagAction = showReconcileSection && row.richtung === 'Ausgang' && row.party_type === 'Supplier' && row.party;
 
   const reconcileSectionHtml = showReconcileSection
     ? `
       <div style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.04em; margin:14px 0 6px 0;">${__('Bank Transaction zuordnen')}</div>
       <div class="hv-row-action-buttons" style="display:flex; gap:8px; flex-wrap:wrap;">
         <button type="button" class="btn btn-primary" data-hv-action="match_invoices" style="flex:1 1 0; min-width:160px;">${__('Rechnungen zuordnen')}</button>
+        ${showAbschlagAction ? `<button type="button" class="btn btn-primary" data-hv-action="match_abschlag" style="flex:1 1 0; min-width:160px;">${__('Abschlag zuordnen')}</button>` : ''}
         <button type="button" class="btn btn-default" data-hv-action="standalone_payment" style="flex:1 1 0; min-width:160px;">${__('Zahlung erstellen')}</button>
         <button type="button" class="btn btn-default" data-hv-action="journal_entry" style="flex:1 1 0; min-width:160px;">${__('Buchungssatz erstellen')}</button>
       </div>
@@ -908,6 +910,7 @@ function _openRowActions(frm, row) {
   d.$wrapper.find('[data-hv-action="supplier"]').on('click', () => { d.hide(); _prepareSupplier(frm, row); });
   d.$wrapper.find('[data-hv-action="bank_account"]').on('click', () => { d.hide(); _prepareBankAccount(frm, row); });
   d.$wrapper.find('[data-hv-action="match_invoices"]').on('click', () => { d.hide(); _openMatchInvoicesDialog(frm, row); });
+  d.$wrapper.find('[data-hv-action="match_abschlag"]').on('click', () => { d.hide(); _openAbschlagDialog(frm, row); });
   d.$wrapper.find('[data-hv-action="standalone_payment"]').on('click', () => { d.hide(); _openStandalonePaymentDialog(frm, row); });
   d.$wrapper.find('[data-hv-action="journal_entry"]').on('click', () => { d.hide(); _openJournalEntryDialog(frm, row); });
 }
@@ -1105,6 +1108,119 @@ function _openMatchInvoicesDialog(frm, row) {
     d.$wrapper.on('input', '.hv-inv-amount', recalc);
     d.$wrapper.on('change', '.hv-leftover-cb', recalc);
     recalc();
+  });
+}
+
+function _openAbschlagDialog(frm, row) {
+  if (row.richtung !== 'Ausgang' || row.party_type !== 'Supplier' || !row.party) {
+    frappe.msgprint(__('Abschlagsplan-Zuordnung ist nur für Lieferanten-Ausgänge möglich.'));
+    return;
+  }
+
+  frappe.call({
+    method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.get_abschlagsplan_candidates_for_row',
+    args: { docname: frm.doc.name, row_name: row.name },
+    freeze: true,
+    freeze_message: __('Lade offene Abschlagsplan-Zeilen…'),
+  }).then((r) => {
+    const data = (r && r.message) || {};
+    const candidates = data.candidates || [];
+    const target = parseFloat(data.target_amount || row.betrag || 0);
+    const fmt = (v) => frappe.format(v, { fieldtype: 'Currency' });
+    const fmtDate = (v) => (v ? frappe.datetime.str_to_user(v) : '-');
+    const escape = (v) => frappe.utils.escape_html(v || '-');
+
+    if (!candidates.length) {
+      frappe.msgprint({
+        title: __('Keine passende Abschlagsplan-Zeile'),
+        message: __('Es wurde keine offene Abschlagsplan-Zeile mit gleichem Lieferanten und Betrag gefunden. Prüfe Betrag, Bankkonto, Kostenstelle und Fälligkeitsdatum.'),
+      });
+      return;
+    }
+
+    const rowsHtml = candidates.map((c, idx) => {
+      const safeRow = frappe.utils.escape_html(c.row_name);
+      const delta = c.delta_days === null || c.delta_days === undefined ? '-' : `${c.delta_days} ${__('Tage')}`;
+      const badges = [
+        c.bank_account_match ? __('Bankkonto') : '',
+        c.cost_center_match ? __('Kostenstelle') : '',
+      ].filter(Boolean).join(' · ');
+      return `
+        <tr>
+          <td style="padding:4px 8px;"><input type="radio" name="hv-abschlag-row" class="hv-abschlag-radio" value="${safeRow}" ${idx === 0 ? 'checked' : ''}></td>
+          <td style="padding:4px 8px;"><a href="/app/zahlungsplan/${encodeURIComponent(c.zahlungsplan)}" target="_blank">${escape(c.zahlungsplan)}</a></td>
+          <td style="padding:4px 8px;">${escape(c.bezeichnung)}</td>
+          <td style="padding:4px 8px; text-align:right;">${fmt(c.betrag)}</td>
+          <td style="padding:4px 8px; white-space:nowrap;">${fmtDate(c.faelligkeitsdatum)}</td>
+          <td style="padding:4px 8px; text-align:right; color:#888;">${delta}</td>
+          <td style="padding:4px 8px;">${escape(c.immobilie)}</td>
+          <td style="padding:4px 8px;">${escape(badges)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const html = `
+      <div style="margin-bottom:10px; padding:8px 10px; background:#f6f6f7; border-radius:4px; font-size:12px;">
+        <strong>${__('Bank-Betrag')}:</strong> ${fmt(target)} &nbsp;•&nbsp;
+        <strong>${__('Lieferant')}:</strong> ${escape(row.party)} &nbsp;•&nbsp;
+        <strong>${__('Buchungstag')}:</strong> ${fmtDate(row.buchungstag)}
+      </div>
+      <table style="width:100%; border-collapse:collapse; font-size:12px;">
+        <thead>
+          <tr style="background:#f6f6f7;">
+            <th style="padding:4px 8px; width:30px;"></th>
+            <th style="padding:4px 8px; text-align:left;">${__('Zahlungsplan')}</th>
+            <th style="padding:4px 8px; text-align:left;">${__('Bezeichnung')}</th>
+            <th style="padding:4px 8px; text-align:right;">${__('Betrag')}</th>
+            <th style="padding:4px 8px; text-align:left;">${__('Fällig')}</th>
+            <th style="padding:4px 8px; text-align:right;">${__('Abstand')}</th>
+            <th style="padding:4px 8px; text-align:left;">${__('Immobilie')}</th>
+            <th style="padding:4px 8px; text-align:left;">${__('Treffer')}</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <div style="margin-top:10px; font-size:12px; color:#666;">
+        ${__('Es wird ein Payment Entry ohne Rechnung erstellt, mit der Bank Transaction abgeglichen und an die gewählte Abschlagsplan-Zeile gehängt.')}
+      </div>
+    `;
+
+    const d = new frappe.ui.Dialog({
+      title: __('Abschlag zuordnen — Zeile {0}', [row.idx]),
+      size: 'large',
+      fields: [{ fieldtype: 'HTML', fieldname: 'body', options: html }],
+      primary_action_label: __('Zuordnen'),
+      primary_action() {
+        const selected = d.$wrapper.find('.hv-abschlag-radio:checked').val();
+        if (!selected) {
+          frappe.msgprint(__('Bitte eine Abschlagsplan-Zeile auswählen.'));
+          return;
+        }
+        d.disable_primary_action();
+        frappe.call({
+          method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.assign_abschlagsplan_row',
+          args: {
+            docname: frm.doc.name,
+            row_name: row.name,
+            plan_row_name: selected,
+            remarks: row.verwendungszweck || row.auftraggeber || '',
+          },
+          freeze: true,
+          freeze_message: __('Abschlag wird gebucht…'),
+        }).then((res) => {
+          const msg = (res && res.message) || {};
+          frappe.show_alert({
+            message: __('Abschlag zugeordnet: {0} Zeile {1}', [msg.zahlungsplan, msg.row_idx]),
+            indicator: 'green',
+          });
+          d.hide();
+          frm.reload_doc();
+        }).catch(() => {
+          d.enable_primary_action();
+        });
+      },
+    });
+    d.show();
   });
 }
 
