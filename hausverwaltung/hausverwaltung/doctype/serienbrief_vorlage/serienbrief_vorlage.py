@@ -829,6 +829,14 @@ def render_template_preview_pdf(
 	elif split_preview:
 		body = _build_split_preview_html(doc)
 		mode = "split_preview"
+		# Gelbe Hervorhebung der Beispielwerte (passt zur Optik im Quill-
+		# Editor, siehe ``_split_preview_finalize_value``). Wird nur in
+		# Modus B injiziert — Modus A rendert echte Daten ohne Markup.
+		if body:
+			body = (
+				'<style>.hv-preview-field{background:#fff2a8;'
+				'border-radius:2px;padding:0 2px;}</style>' + body
+			)
 	else:
 		body = _build_raw_template_html(doc)
 		if not body:

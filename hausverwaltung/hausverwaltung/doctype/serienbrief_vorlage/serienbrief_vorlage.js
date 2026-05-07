@@ -1757,20 +1757,32 @@ const hv_update_split_preview = (frm, { immediate } = {}) => {
 	});
 };
 
+// Debounce 5s nach letzter Eingabe — Modus A geht durch frappe.get_print mit
+// Chrome-PDF und ist ~0.5s schwerer als die alte HTML-Preview, deswegen lieber
+// weniger oft rendern als bei jedem Tastendruck.
+const HV_SPLIT_PREVIEW_DEBOUNCE_MS = 5000;
+const HV_SPLIT_PREVIEW_POLL_MS = 5000;
+
 const hv_schedule_split_preview = (frm) => {
 	if (!frm._hv_split_preview_enabled) return;
 	if (frm._hv_split_preview_timeout) {
 		clearTimeout(frm._hv_split_preview_timeout);
 	}
-	frm._hv_split_preview_timeout = setTimeout(() => hv_update_split_preview(frm), 600);
+	frm._hv_split_preview_timeout = setTimeout(
+		() => hv_update_split_preview(frm),
+		HV_SPLIT_PREVIEW_DEBOUNCE_MS
+	);
 };
 
 const hv_start_split_preview_polling = (frm) => {
 	if (!frm._hv_split_preview_enabled) return;
 	if (frm._hv_split_preview_interval) return;
+	// Backup-Polling: prüft Signature und rendert nur, wenn sich wirklich
+	// etwas geändert hat. Fängt Edge-Cases ab, wenn Quill-Events nicht im
+	// Debounce landen.
 	frm._hv_split_preview_interval = setInterval(() => {
 		hv_update_split_preview(frm);
-	}, 1200);
+	}, HV_SPLIT_PREVIEW_POLL_MS);
 };
 
 const hv_get_split_preview_signature = (frm) => {
