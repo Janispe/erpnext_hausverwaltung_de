@@ -901,7 +901,9 @@ def render_template_preview_pdf(
 	if not body:
 		frappe.throw(_("Die Vorlage enthält keinen Inhalt."))
 
-	pdf_bytes = _render_through_serienbrief_dokument_print_format(body, doc, docstatus=0)
+	# docstatus=1 → kein DRAFT-Watermark im Preview. Doc ist ephemer, wird
+	# nie gespeichert; das ist nur für die Print-Pipeline-Wahrnehmung.
+	pdf_bytes = _render_through_serienbrief_dokument_print_format(body, doc, docstatus=1)
 	filename = f"vorlage-preview-{frappe.scrub(doc.name or doc.title or 'vorlage')}.pdf"
 	return {
 		"pdf_base64": base64.b64encode(pdf_bytes).decode("utf-8"),
