@@ -698,30 +698,160 @@ def _build_split_preview_html(template_doc) -> str:
 	return "\n".join(html_blocks)
 
 
+def _preview_pdf_options() -> Dict[str, str]:
+	# Muss synchron zu SerienbriefDurchlauf._default_pdf_options bleiben — der
+	# Final-Pfad nutzt exakt diese Werte. Abweichung würde Margins/Page-Breaks
+	# der Preview vom Durchlauf-PDF entfernen.
+	return {
+		"page-size": "A4",
+		"margin-top": "20mm",
+		"margin-right": "20mm",
+		"margin-bottom": "25mm",
+		"margin-left": "25mm",
+	}
+
+
+def _render_through_serienbrief_dokument_print_format(
+	body_html: str, template_doc, docstatus: int = 0
+) -> bytes:
+	"""Wickelt einen vorgerenderten HTML-Body durch genau dieselbe Print-Format-
+	Pipeline, die der Serienbrief Durchlauf für das finale PDF nutzt:
+	``frappe.get_print("Serienbrief Dokument", doc=ephemeral, as_pdf=True,
+	pdf_options=...)``. Damit kommen Page-Footer (mit Frappe-Footer-Patch),
+	DRAFT-Watermark, ``@page``-Margins und CSS aus derselben Quelle wie im
+	echten Durchlauf — Preview ist pixelgleich (außer PDF-Form-Bausteinen,
+	siehe ``_render_segments_via_durchlauf``).
+	"""
+	page_wrapped = f'<div class="serienbrief-page">{body_html}</div>'
+	# ``serienbrief-root`` setzt das Print-Format-CSS — Klasse muss vorhanden
+	# sein, sonst greift die Schrift-/Margin-Regel aus install.py nicht.
+	fragment = f'<div class="serienbrief-root">{page_wrapped}</div>'
+
+	ephemeral = frappe.new_doc("Serienbrief Dokument")
+	ephemeral.html = fragment
+	ephemeral.vorlage = template_doc.name if template_doc else None
+	ephemeral.docstatus = int(docstatus or 0)
+
+	return frappe.get_print(
+		"Serienbrief Dokument",
+		None,
+		print_format="Serienbrief Dokument",
+		as_pdf=True,
+		doc=ephemeral,
+		pdf_options=_preview_pdf_options(),
+	)
+
+
+def _render_segments_via_durchlauf(
+	template_doc, iteration_doctype: str, iteration_name: str
+) -> str:
+	"""Baut für genau einen Empfänger den HTML-Body über den echten
+	SerienbriefDurchlauf-Render-Pfad: ``_get_empfaenger_rows`` → ``_build_context``
+	→ ``_render_template_content`` → ``_render_segments_preview_html``. Das
+	Resultat ist ein HTML-Fragment, das anschließend durch
+	``_render_through_serienbrief_dokument_print_format`` zum finalen PDF wird.
+
+	Caveat: PDF-Form-Bausteine landen in der Preview als gestrichelter
+	``serienbrief-pdf-placeholder``, nicht als echte PDF-Pages — der Final-Pfad
+	merged dort echte PDF-Bytes via ``_render_dokument_hybrid_print_pdf``, was
+	einen persistierten ``Serienbrief Dokument`` mit ``generated_pdf_file``
+	voraussetzt. Für die Live-Preview ist der Platzhalter ausreichend.
+	"""
+	from frappe.utils import today
+
+	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+		_collect_template_requirements,
+	)
+
+	if not frappe.db.exists(iteration_doctype, iteration_name):
+		frappe.throw(
+			_("Iterationsobjekt {0} {1} existiert nicht.").format(iteration_doctype, iteration_name)
+		)
+
+	durchlauf = frappe.new_doc("Serienbrief Durchlauf")
+	durchlauf.title = f"Vorschau: {template_doc.title or template_doc.name}"
+	durchlauf.vorlage = template_doc.name
+	durchlauf.date = today()
+	durchlauf.iteration_doctype = iteration_doctype
+	durchlauf.append(
+		"iteration_objekte",
+		{"iteration_doctype": iteration_doctype, "objekt": iteration_name},
+	)
+
+	rows = durchlauf._get_empfaenger_rows()
+	if not rows:
+		frappe.throw(_("Empfänger konnte nicht aus {0} ermittelt werden.").format(iteration_name))
+
+	requirements = _collect_template_requirements(template_doc, iteration_doctype)
+
+	# strict_variables=False: Live-Preview soll auch laufen, wenn die Vorlage
+	# noch nicht fertig konfiguriert ist (fehlende Variablen werden im Final-
+	# Render geprüft). Sichtbar bleibt der unaufgelöste Platzhalter.
+	context = durchlauf._build_context(
+		rows[0],
+		index=1,
+		requirements=requirements,
+		template=template_doc,
+		total=1,
+		strict_variables=False,
+	)
+
+	segments = durchlauf._render_template_content(template_doc, context)
+	if not segments:
+		frappe.throw(_("Vorlage produzierte kein Render-Output."))
+
+	return durchlauf._render_segments_preview_html(segments)
+
+
 @frappe.whitelist()
 def render_template_preview_pdf(
 	template: str | None = None,
 	template_doc: Dict[str, Any] | None = None,
 	split_preview: bool | None = None,
+	iteration_doctype: str | None = None,
+	iteration_objekt: str | None = None,
 ) -> Dict[str, str]:
 	doc = _load_template_doc(template, template_doc)
 
-	if split_preview:
+	iter_dt = (
+		cstr(iteration_doctype or "").strip()
+		or cstr(getattr(doc, "haupt_verteil_objekt", "") or "").strip()
+	)
+	iter_name = cstr(iteration_objekt or "").strip()
+
+	mode: str
+	# Modus A: 1:1-Render mit echtem Empfänger über den Durchlauf-Pfad.
+	# Modus B: Split-Preview mit Beispielwerten, aber durch dieselbe Print-
+	# Format-Pipeline gewickelt (Footer/Watermark/Margins identisch).
+	if iter_dt and iter_name:
+		body = _render_segments_via_durchlauf(doc, iter_dt, iter_name)
+		mode = "durchlauf"
+	elif split_preview:
 		body = _build_split_preview_html(doc)
+		mode = "split_preview"
+	else:
+		body = _build_raw_template_html(doc)
 		if not body:
 			frappe.throw(_("Die Vorlage enthält keinen Inhalt."))
-		html = _wrap_with_serienbrief_dokument_print_format(body, template_doc=doc)
-	else:
-		html = _build_raw_template_html(doc)
-		if not html:
-			frappe.throw(_("Die Vorlage enthält keinen Inhalt."))
+		# Raw-Modus bleibt der alte CSS-Wrap (kein Print-Format) — wird über
+		# den ``Vorlage drucken``-Button aufgerufen, nicht im Live-Preview.
+		pdf_bytes = get_pdf(body)
+		filename = f"vorlage-preview-{frappe.scrub(doc.name or doc.title or 'vorlage')}.pdf"
+		return {
+			"pdf_base64": base64.b64encode(pdf_bytes).decode("utf-8"),
+			"filename": filename,
+			"mode": "raw",
+		}
 
-	pdf_bytes = get_pdf(html)
+	if not body:
+		frappe.throw(_("Die Vorlage enthält keinen Inhalt."))
+
+	pdf_bytes = _render_through_serienbrief_dokument_print_format(body, doc, docstatus=0)
 	filename = f"vorlage-preview-{frappe.scrub(doc.name or doc.title or 'vorlage')}.pdf"
-
 	return {
 		"pdf_base64": base64.b64encode(pdf_bytes).decode("utf-8"),
 		"filename": filename,
+		"mode": mode,
 	}
 
 

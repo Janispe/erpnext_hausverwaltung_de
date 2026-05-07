@@ -1514,6 +1514,30 @@ const hv_ensure_split_preview_styles = () => {
 			color: #666;
 			border-bottom: 1px solid var(--gray-200);
 		}
+		.hv-split-selector {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			padding: 6px 10px;
+			border-bottom: 1px solid var(--gray-200);
+			background: var(--gray-50, #fafafa);
+			font-size: 12px;
+		}
+		.hv-split-selector .hv-preview-selector-label {
+			color: #666;
+		}
+		.hv-split-selector .hv-preview-selector-current {
+			font-weight: 600;
+			color: #222;
+			margin-right: auto;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+		.hv-split-selector .btn {
+			padding: 2px 8px;
+			line-height: 1.4;
+		}
 		@media (max-width: 1200px) {
 			.hv-split-row {
 				flex-direction: column;
@@ -1538,13 +1562,16 @@ const hv_init_split_preview = (frm) => {
 	const split = $('<div class="hv-split-row"></div>');
 	const editorHost = $('<div class="hv-split-editor"></div>');
 	const previewHost = $('<div class="hv-split-preview"></div>');
+	const selectorBar = $('<div class="hv-split-selector"></div>');
 	const status = $('<div class="hv-split-status text-muted small"></div>').text(__("Lade Vorschau …"));
 	const iframe = $('<iframe title="Serienbrief Vorschau"></iframe>');
 
 	layoutWrapper.before(split);
 	split.append(editorHost, previewHost);
 	editorHost.append(layoutWrapper);
-	previewHost.append(status, iframe);
+	previewHost.append(selectorBar, status, iframe);
+
+	hv_build_preview_selector(frm, selectorBar);
 
 	const syncHeight = () => {
 		const rect = split.get(0)?.getBoundingClientRect?.();
@@ -1581,11 +1608,95 @@ const hv_init_split_preview = (frm) => {
 		split,
 		editorHost,
 		previewHost,
+		selectorBar,
 		status,
 		iframe,
 		observer,
 	};
 	syncHeight();
+};
+
+const hv_build_preview_selector = (frm, host) => {
+	host.empty();
+	const iterDoctype = (frm.doc.haupt_verteil_objekt || "").trim();
+
+	const label = $('<span class="hv-preview-selector-label"></span>').text(__("Empfänger:"));
+	const indicator = $('<span class="hv-preview-selector-current"></span>');
+	const selectBtn = $('<button type="button" class="btn btn-xs btn-default hv-preview-selector-btn"></button>').text(
+		__("Wählen…")
+	);
+	const clearBtn = $('<button type="button" class="btn btn-xs btn-default hv-preview-selector-clear"></button>').text(
+		__("Beispieldaten")
+	);
+
+	const updateIndicator = () => {
+		const sel = frm._hv_preview_iter_name;
+		if (sel) {
+			indicator.text(sel);
+			clearBtn.show();
+		} else {
+			indicator.text(__("Beispieldaten"));
+			clearBtn.hide();
+		}
+	};
+
+	selectBtn.on("click", () => {
+		const currentDoctype = (frm.doc.haupt_verteil_objekt || "").trim();
+		if (!currentDoctype) {
+			frappe.msgprint({
+				title: __("Hauptverteilobjekt fehlt"),
+				message: __(
+					"Setze zuerst das Hauptverteilobjekt auf der Vorlage, damit die Vorschau einen passenden Empfänger laden kann."
+				),
+				indicator: "orange",
+			});
+			return;
+		}
+		frappe.prompt(
+			[
+				{
+					label: currentDoctype,
+					fieldname: "iteration_objekt",
+					fieldtype: "Link",
+					options: currentDoctype,
+					reqd: 1,
+				},
+			],
+			(values) => {
+				frm._hv_preview_iter_doctype = currentDoctype;
+				frm._hv_preview_iter_name = values.iteration_objekt;
+				updateIndicator();
+				hv_update_split_preview(frm, { immediate: true });
+			},
+			__("Empfänger für Vorschau wählen"),
+			__("Übernehmen")
+		);
+	});
+
+	clearBtn.on("click", () => {
+		frm._hv_preview_iter_doctype = null;
+		frm._hv_preview_iter_name = null;
+		updateIndicator();
+		hv_update_split_preview(frm, { immediate: true });
+	});
+
+	host.append(label, indicator, selectBtn, clearBtn);
+
+	// Wenn ``haupt_verteil_objekt`` gewechselt wird, ist die alte Auswahl
+	// nicht mehr gültig — der ausgewählte Mietvertrag passt z.B. nicht zu
+	// einem ``BK Mieter``-Iterationslauf.
+	if (frm._hv_preview_iter_doctype && frm._hv_preview_iter_doctype !== iterDoctype) {
+		frm._hv_preview_iter_doctype = null;
+		frm._hv_preview_iter_name = null;
+	}
+
+	updateIndicator();
+};
+
+const hv_refresh_preview_selector = (frm) => {
+	const host = frm._hv_split_preview?.selectorBar;
+	if (!host) return;
+	hv_build_preview_selector(frm, host);
 };
 
 const hv_set_split_preview_status = (frm, message) => {
@@ -1612,10 +1723,16 @@ const hv_update_split_preview = (frm, { immediate } = {}) => {
 
 	const templateDoc = hv_get_live_template_doc(frm);
 
+	const args = { template_doc: templateDoc, split_preview: 1 };
+	if (frm._hv_preview_iter_doctype && frm._hv_preview_iter_name) {
+		args.iteration_doctype = frm._hv_preview_iter_doctype;
+		args.iteration_objekt = frm._hv_preview_iter_name;
+	}
+
 	const request = frappe
 		.call({
 			method: "hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.render_template_preview_pdf",
-			args: { template_doc: templateDoc, split_preview: 1 },
+			args,
 			quiet: true,
 		})
 		.then((r) => {
@@ -1667,6 +1784,7 @@ const hv_get_split_preview_signature = (frm) => {
 			haupt_verteil_objekt: frm.doc.haupt_verteil_objekt || "",
 			textbausteine: (frm.doc.textbausteine || []).map((r) => r.baustein || ""),
 			variables: (frm.doc.variables || []).map((r) => [r.variable, r.variable_type, r.label]),
+			preview_iter: `${frm._hv_preview_iter_doctype || ""}::${frm._hv_preview_iter_name || ""}`,
 		});
 	} catch (e) {
 		return "";
@@ -2418,6 +2536,11 @@ jinja_content(frm) {
 },
 haupt_verteil_objekt(frm) {
 	frm._hv_placeholder_groups_cache = {};
+	// Beim Wechsel des Iterations-Doctypes ist eine vorher ausgewählte
+	// Empfänger-Auswahl ungültig (z.B. ein Mietvertrag passt nicht zu
+	// einem ``BK Mieter``-Lauf). hv_build_preview_selector erkennt den
+	// Mismatch und setzt die Auswahl zurück; das Refresh hier zieht das UI nach.
+	hv_refresh_preview_selector(frm);
 	hv_schedule_split_preview(frm);
 },
 });
