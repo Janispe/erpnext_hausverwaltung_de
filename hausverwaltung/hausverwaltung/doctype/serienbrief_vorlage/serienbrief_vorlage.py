@@ -328,11 +328,35 @@ class SplitPreviewAddress:
 		return True
 
 
+class SplitPreviewVertragspartner:
+	"""Mock-Row für ``Mietvertrag.mieter[]``-Childs. Die ``kontakt``-Property
+	auf dem echten Vertragspartner-DocType liefert das Contact-Doc — der
+	Mock muss das spiegeln, damit Bausteine wie ``MieterAnredeNameAlle``
+	im Live-Preview Beispiel-Personen rendern statt einer leeren Liste.
+	"""
+
+	def __init__(self, kontakt: SplitPreviewContact):
+		self.doctype = "Vertragspartner"
+		self.name = "VP-0001"
+		self.mieter = kontakt  # Link-Feld → im Mock direkt das Contact-Doc
+		self.kontakt = kontakt  # Property auf dem echten Vertragspartner
+		self.rolle = "Hauptmieter"
+
+	def __getattr__(self, name):
+		return SplitPreviewUndefined(name=f"Vertragspartner.{name}")
+
+	def __getitem__(self, key):
+		return SplitPreviewUndefined(name=f"Vertragspartner.{key}")
+
+	def __bool__(self) -> bool:
+		return True
+
+
 class SplitPreviewMietvertrag:
 	def __init__(self, kontakt: SplitPreviewContact):
 		self.doctype = "Mietvertrag"
 		self.name = "MV-0001"
-		self.mieter = [frappe._dict(mieter=kontakt), frappe._dict(mieter=kontakt)]
+		self.mieter = [SplitPreviewVertragspartner(kontakt)]
 		self.anteil = 75
 
 	def __getattr__(self, name):
