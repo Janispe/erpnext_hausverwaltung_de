@@ -71,6 +71,13 @@ class Zahlungsplan(Document):
 				"Bitte entweder 'Kostenart (umlagefähig)' oder 'Kostenart (nicht umlagefähig)' setzen, nicht beides."
 			)
 
+		if not (self.get("kostenart") or self.get("kostenart_nicht_umlagefaehig")):
+			frappe.throw(
+				"Bitte eine Kostenart angeben — entweder 'Kostenart (umlagefähig)' oder "
+				"'Kostenart (nicht umlagefähig)'. Ohne Kostenart kann beim automatischen "
+				"Erzeugen einer Eingangsrechnung kein korrektes Aufwandskonto bestimmt werden."
+			)
+
 		if self.get("kostenart") or self.get("kostenart_nicht_umlagefaehig"):
 			if not self.get("expense_account"):
 				self.expense_account = _get_expense_account_from_kostenart(self)
@@ -768,10 +775,8 @@ def _build_remarks(doc: Zahlungsplan) -> str:
 def _resolve_pi_fields(doc: Zahlungsplan):
 	"""Resolve item_code, expense_account, cost_center using the existing fallback chains."""
 	item_code = doc.get("item_code") or _get_item_code_from_kostenart(doc) or ensure_default_service_item()
-	expense_account = doc.get("expense_account") or _get_expense_account_from_kostenart(doc) or _get_from_immobilie(doc, "konto")
+	expense_account = doc.get("expense_account") or _get_expense_account_from_kostenart(doc)
 	cost_center = doc.get("cost_center") or _get_from_immobilie(doc, "kostenstelle") or _get_company_default(doc.company, "cost_center")
-	if not expense_account and doc.get("immobilie"):
-		frappe.throw("Für die Immobilie ist kein Haupt-Bankkonto hinterlegt.")
 	if not expense_account:
 		expense_account = _get_company_default(doc.company, "default_expense_account")
 	if not expense_account:
