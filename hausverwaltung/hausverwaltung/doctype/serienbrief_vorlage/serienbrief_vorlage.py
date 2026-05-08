@@ -352,33 +352,86 @@ class SplitPreviewVertragspartner:
 		return True
 
 
-class SplitPreviewMietvertrag:
-	def __init__(self, kontakt: SplitPreviewContact):
-		self.doctype = "Mietvertrag"
-		self.name = "MV-0001"
-		self.mieter = [SplitPreviewVertragspartner(kontakt)]
-		self.anteil = 75
+class SplitPreviewBankAccount:
+	"""Mock-Stand-In für ein Frappe ``Bank Account``-Doc. Echter
+	``Immobilie.bank_konto``-Property liefert in Prod ein solches Doc;
+	der Mock spiegelt account_name/iban/bank, damit Bausteine wie
+	``Bankverbindung Immobilie`` im Live-Preview Beispielwerte rendern.
+	"""
+
+	def __init__(self):
+		self.doctype = "Bank Account"
+		self.name = "BANK-0001"
+		self.account_name = "Beispielkonto Hausverwaltung"
+		self.iban = "DE12 3456 7890 1234 5678 90"
+		self.bank = "Beispielbank"
+		self.bic = "EXAMPLDEXXX"
 
 	def __getattr__(self, name):
-		return SplitPreviewUndefined(name=f"Mietvertrag.{name}")
+		return SplitPreviewUndefined(name=f"Bank Account.{name}")
 
 	def __getitem__(self, key):
-		return SplitPreviewUndefined(name=f"Mietvertrag.{key}")
+		return SplitPreviewUndefined(name=f"Bank Account.{key}")
+
+	def __bool__(self) -> bool:
+		return True
+
+
+class SplitPreviewImmobilie:
+	"""Mock-Immobilie. ``bank_konto`` und ``eigentuemer`` spiegeln die
+	echten Properties auf dem ``Immobilie``-DocType — damit Vorlagen-
+	Pfade wie ``objekt.wohnung.immobilie.bank_konto.iban`` und
+	``...immobilie.eigentuemer.last_name`` im Live-Preview funktionieren.
+	"""
+
+	def __init__(self, kontakt: SplitPreviewContact, address: SplitPreviewAddress):
+		self.doctype = "Immobilie"
+		self.name = "IMMO-0001"
+		self.adresse_titel = "Beispiel-Immobilie"
+		self.bank_konto = SplitPreviewBankAccount()
+		self.eigentuemer = kontakt
+		self.address = address
+
+	def __getattr__(self, name):
+		return SplitPreviewUndefined(name=f"Immobilie.{name}")
+
+	def __getitem__(self, key):
+		return SplitPreviewUndefined(name=f"Immobilie.{key}")
 
 	def __bool__(self) -> bool:
 		return True
 
 
 class SplitPreviewWohnung:
-	def __init__(self):
+	def __init__(self, immobilie: "SplitPreviewImmobilie | None" = None):
 		self.doctype = "Wohnung"
 		self.name = "Wohnung 1.OG links"
+		self.immobilie = immobilie
 
 	def __getattr__(self, name):
 		return SplitPreviewUndefined(name=f"Wohnung.{name}")
 
 	def __getitem__(self, key):
 		return SplitPreviewUndefined(name=f"Wohnung.{key}")
+
+	def __bool__(self) -> bool:
+		return True
+
+
+class SplitPreviewMietvertrag:
+	def __init__(self, kontakt: SplitPreviewContact, wohnung: SplitPreviewWohnung):
+		self.doctype = "Mietvertrag"
+		self.name = "MV-0001"
+		self.mieter = [SplitPreviewVertragspartner(kontakt)]
+		self.anteil = 75
+		self.wohnung = wohnung
+		self.kunde = kontakt
+
+	def __getattr__(self, name):
+		return SplitPreviewUndefined(name=f"Mietvertrag.{name}")
+
+	def __getitem__(self, key):
+		return SplitPreviewUndefined(name=f"Mietvertrag.{key}")
 
 	def __bool__(self) -> bool:
 		return True
@@ -402,8 +455,9 @@ class SplitPreviewFrappeProxy:
 def _split_preview_context() -> Dict[str, Any]:
 	kontakt = SplitPreviewContact()
 	address = SplitPreviewAddress()
-	mietvertrag = SplitPreviewMietvertrag(kontakt)
-	wohnung = SplitPreviewWohnung()
+	immobilie = SplitPreviewImmobilie(kontakt, address)
+	wohnung = SplitPreviewWohnung(immobilie)
+	mietvertrag = SplitPreviewMietvertrag(kontakt, wohnung)
 	empfaenger = frappe._dict(
 		name="Hausverwaltung",
 		anzeigename="Hausverwaltung",

@@ -2173,6 +2173,14 @@ def _resolve_value_path(path: str, context: Dict[str, Any]) -> Any:
 						link_value = getattr(current, segment, None)
 						if not link_value:
 							return None
+						# Wenn der Wert bereits ein Doc-Stand-In ist (eigene
+						# Properties wie ``Mietvertrag.kunde`` als Doc, oder
+						# Live-Preview-Mock wie ``SplitPreviewWohnung``),
+						# direkt durchreichen statt nochmal nachzuladen.
+						if not isinstance(link_value, str) and getattr(link_value, "doctype", None):
+							current = link_value
+							idx += 1
+							continue
 						try:
 							current = frappe.get_cached_doc(df.options, link_value)
 						except Exception:
