@@ -1,0 +1,105 @@
+from datetime import date
+from unittest import TestCase
+from unittest.mock import patch
+
+from hausverwaltung.hausverwaltung.report.noch_offene_rechnungen_und_forderungen.noch_offene_rechnungen_und_forderungen import (
+	_group_rows_by_mietabrechnung,
+)
+
+
+def _row(
+	voucher_no: str,
+	amount: float,
+	*,
+	party: str = "MIETER-A",
+	party_account: str = "1410 - Forderungen - HV",
+) -> dict:
+	return {
+		"art": "Forderungen",
+		"zahlungsrichtung": "Geld bekommen",
+		"status": "Unpaid",
+		"party_type": "Customer",
+		"faellig_am": date(2025, 11, 3),
+		"buchungsdatum": date(2025, 11, 1),
+		"party": party,
+		"party_account": party_account,
+		"belegart": "Sales Invoice",
+		"belegnummer": voucher_no,
+		"rechnungsbetrag": amount,
+		"bezahlt": 0.0,
+		"offen": amount,
+		"alter_tage": 5,
+		"kostenstelle": None,
+		"waehrung": "EUR",
+		"can_write_off": 1,
+	}
+
+
+class TestNochOffeneForderungenAggregation(TestCase):
+	def _patch_invoice_lookup(self, mab_mapping: dict[str, str], item_mapping: dict[str, str]):
+		def fake_get_all(doctype, filters=None, fields=None, **kwargs):
+			names_filter = (filters or {}).get("name") or (filters or {}).get("parent")
+			if names_filter and names_filter[0] == "in":
+				wanted = names_filter[1]
+			else:
+				wanted = list(mab_mapping)
+
+			if doctype == "Sales Invoice":
+				return [
+					{"name": name, "mietabrechnung_id": mab_mapping.get(name)}
+					for name in wanted
+					if name in mab_mapping
+				]
+
+			if doctype == "Sales Invoice Item":
+				return [
+					{
+						"parent": name,
+						"item_code": item_mapping[name],
+						"amount": 100.0,
+						"base_amount": 100.0,
+					}
+					for name in wanted
+					if name in item_mapping
+				]
+
+			return []
+
+		return [
+			patch(
+				"hausverwaltung.hausverwaltung.report.noch_offene_rechnungen_und_forderungen.noch_offene_rechnungen_und_forderungen.frappe.get_all",
+				side_effect=fake_get_all,
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.report.noch_offene_rechnungen_und_forderungen.noch_offene_rechnungen_und_forderungen.frappe.db.has_column",
+				return_value=True,
+			),
+		]
+
+	def test_gn_invoice_with_same_mietabrechnung_id_stays_separate(self):
+		mab = "MV-2025-001|11/2025"
+		rows = [
+			_row("SI-Miete", 500.0),
+			_row("SI-BK", 120.0),
+			_row("SI-GN", 75.0),
+		]
+		patches = self._patch_invoice_lookup(
+			{"SI-Miete": mab, "SI-BK": mab, "SI-GN": mab},
+			{"SI-Miete": "Miete", "SI-BK": "Betriebskosten", "SI-GN": "BK Nachzahlung"},
+		)
+		for p in patches:
+			p.start()
+		try:
+			out = _group_rows_by_mietabrechnung(rows)
+		finally:
+			for p in patches:
+				p.stop()
+
+		self.assertEqual(len(out), 2)
+		self.assertEqual(out[0]["belegnummer"], "SI-Miete")
+		self.assertEqual(out[0]["belegart"], "Sales Invoice (×2)")  # noqa: RUF001
+		self.assertAlmostEqual(out[0]["rechnungsbetrag"], 620.0)
+		self.assertAlmostEqual(out[0]["offen"], 620.0)
+		self.assertEqual(out[1]["belegnummer"], "SI-GN")
+		self.assertEqual(out[1]["belegart"], "Sales Invoice")
+		self.assertAlmostEqual(out[1]["rechnungsbetrag"], 75.0)

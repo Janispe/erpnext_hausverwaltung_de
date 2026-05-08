@@ -8,11 +8,10 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, getdate, nowdate
 
+from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
 from hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff import (
 	is_receivable_writeoff_journal_entry,
 )
-from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
-
 
 CATEGORIES = ("miete", "betriebskosten", "heizkosten", "guthaben_nachzahlungen")
 CATEGORY_LABELS = {
@@ -154,12 +153,13 @@ def _group_invoices(invoices: dict[str, InvoiceInfo]) -> dict[str, InvoiceInfo]:
 	"""Aggregiert SIs mit gleicher `mietabrechnung_id` zu einer Gruppe.
 
 	SIs ohne `mietabrechnung_id` (manuelle, Settlement-, Cutover-SIs) bleiben
-	als Solo-Gruppen mit Original-Namen als Key.
+	als Solo-Gruppen mit Original-Namen als Key. G/N-SIs bleiben ebenfalls
+	einzeln, damit Guthaben/Nachzahlungen nicht in der Monatsmiete verschwinden.
 	"""
 	groups: dict[str, list[InvoiceInfo]] = {}
 	order: list[str] = []
 	for inv in invoices.values():
-		key = inv.mietabrechnung_id or inv.name
+		key = inv.name if _is_guthaben_nachzahlung_invoice(inv) else (inv.mietabrechnung_id or inv.name)
 		if key not in groups:
 			groups[key] = []
 			order.append(key)
@@ -174,6 +174,10 @@ def _group_invoices(invoices: dict[str, InvoiceInfo]) -> dict[str, InvoiceInfo]:
 			continue
 		result[key] = _merge_invoices(key, members)
 	return result
+
+
+def _is_guthaben_nachzahlung_invoice(invoice: InvoiceInfo) -> bool:
+	return abs(flt((invoice.category_amounts or {}).get("guthaben_nachzahlungen"))) > TOLERANCE
 
 
 def _merge_invoices(group_key: str, members: list[InvoiceInfo]) -> InvoiceInfo:
@@ -210,7 +214,7 @@ def _merge_invoices(group_key: str, members: list[InvoiceInfo]) -> InvoiceInfo:
 	if category_labels_in_group:
 		header += f" ({' + '.join(category_labels_in_group)})"
 	if mv_part:
-		header += f" – {mv_part}"
+		header += f" - {mv_part}"
 	if len(members) > 1:
 		header += f" (+{len(members) - 1} weitere)"
 
@@ -697,9 +701,6 @@ def _get_report_summary(totals: dict[str, Any], filters) -> list[dict[str, Any]]
 	currency = all_totals.get("currency") or period_totals.get("currency")
 	paid_period = period_totals["paid"]
 	written_off_period = period_totals["written_off"]
-	paid_all = all_totals["paid"]
-	written_off_all = all_totals["written_off"]
-	invoice_all = all_totals["invoice"]
 	summary = [
 		{
 			"value": all_totals["balance"],

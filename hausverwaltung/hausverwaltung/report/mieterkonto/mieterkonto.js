@@ -42,6 +42,7 @@ frappe.query_reports["Mieterkonto"] = {
 			label: __("Mietabrechnung pro Monat zusammenfassen"),
 			fieldtype: "Check",
 			default: 1,
+			description: __("G/N-Zeilen bleiben immer separat."),
 		},
 	],
 

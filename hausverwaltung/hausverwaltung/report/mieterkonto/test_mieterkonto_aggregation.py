@@ -1,6 +1,5 @@
 from datetime import date
-
-from frappe.tests.utils import FrappeTestCase
+from unittest import TestCase
 
 from hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto import (
 	CATEGORIES,
@@ -38,7 +37,7 @@ def _make_invoice(
 	)
 
 
-class TestGroupInvoices(FrappeTestCase):
+class TestGroupInvoices(TestCase):
 	def test_four_sis_same_id_collapse_to_one_group(self):
 		mab = "MV-2025-001|11/2025"
 		invoices = {
@@ -81,6 +80,65 @@ class TestGroupInvoices(FrappeTestCase):
 		self.assertAlmostEqual(group.category_amounts["miete"], 530.0)
 		self.assertAlmostEqual(group.category_amounts["betriebskosten"], 120.0)
 		self.assertAlmostEqual(group.category_amounts["heizkosten"], 80.0)
+
+	def test_gn_invoice_with_same_id_stays_separate(self):
+		mab = "MV-2025-001|11/2025"
+		invoices = {
+			"SI-Miete": _make_invoice(
+				"SI-Miete",
+				mab_id=mab,
+				grand_total=500.0,
+				categories={"miete": 500.0},
+			),
+			"SI-BK": _make_invoice(
+				"SI-BK",
+				mab_id=mab,
+				grand_total=120.0,
+				categories={"betriebskosten": 120.0},
+			),
+			"SI-GN": _make_invoice(
+				"SI-GN",
+				mab_id=mab,
+				grand_total=75.0,
+				categories={"guthaben_nachzahlungen": 75.0},
+			),
+		}
+
+		groups = _group_invoices(invoices)
+		self.assertEqual(len(groups), 2)
+		self.assertEqual(set(groups[mab].member_invoices), {"SI-Miete", "SI-BK"})
+		self.assertEqual(groups["SI-GN"].member_invoices, ["SI-GN"])
+		self.assertAlmostEqual(groups[mab].category_amounts["guthaben_nachzahlungen"], 0.0)
+		self.assertAlmostEqual(groups["SI-GN"].category_amounts["guthaben_nachzahlungen"], 75.0)
+
+	def test_multiple_gn_invoices_with_same_id_stay_separate(self):
+		mab = "MV-2025-001|11/2025"
+		invoices = {
+			"SI-Miete": _make_invoice(
+				"SI-Miete",
+				mab_id=mab,
+				grand_total=500.0,
+				categories={"miete": 500.0},
+			),
+			"SI-GN-1": _make_invoice(
+				"SI-GN-1",
+				mab_id=mab,
+				grand_total=75.0,
+				categories={"guthaben_nachzahlungen": 75.0},
+			),
+			"SI-GN-2": _make_invoice(
+				"SI-GN-2",
+				mab_id=mab,
+				grand_total=-25.0,
+				categories={"guthaben_nachzahlungen": -25.0},
+			),
+		}
+
+		groups = _group_invoices(invoices)
+		self.assertEqual(len(groups), 3)
+		self.assertEqual(groups[mab].member_invoices, ["SI-Miete"])
+		self.assertEqual(groups["SI-GN-1"].member_invoices, ["SI-GN-1"])
+		self.assertEqual(groups["SI-GN-2"].member_invoices, ["SI-GN-2"])
 
 	def test_different_ids_yield_separate_groups(self):
 		invoices = {

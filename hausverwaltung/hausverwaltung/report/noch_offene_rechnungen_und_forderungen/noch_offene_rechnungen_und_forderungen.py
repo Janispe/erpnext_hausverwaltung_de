@@ -1,8 +1,9 @@
 import frappe
+from erpnext.accounts.report.accounts_receivable.accounts_receivable import ReceivablePayableReport
 from frappe import _
 from frappe.utils import flt, getdate, nowdate
 
-from erpnext.accounts.report.accounts_receivable.accounts_receivable import ReceivablePayableReport
+from hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto import ITEM_CATEGORY_MAP
 from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
 from hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff import (
 	PARTLY_PAID_AND_WRITTEN_OFF_STATUS,
@@ -33,7 +34,8 @@ def execute(filters=None):
 def _group_rows_by_mietabrechnung(rows):
 	"""Aggregiert Sales-Invoice-Rows derselben Mietabrechnung zu einer Zeile.
 
-	Bucket-Schlüssel: (mietabrechnung_id, party, party_account). Die zugehörige
+	Bucket-Schlüssel: (mietabrechnung_id, party, party_account). G/N-SIs bleiben
+	einzeln und werden nicht in die Monatsmiete gemischt. Die zugehörige
 	Sammel-Zahlung (Payment Entry) erscheint hier ohnehin nicht, weil der Report
 	pro Voucher (SI/PE/JE) eine Row liefert — Payment-Entry-Rows haben keine
 	mietabrechnung_id und werden nicht aggregiert.
@@ -66,6 +68,8 @@ def _group_rows_by_mietabrechnung(rows):
 	if not mab_map:
 		return rows
 
+	gn_invoice_names = _resolve_guthaben_nachzahlung_invoice_names(si_rows_by_no)
+
 	# Bucket Aggregat-Members; Pass-through für alles ohne mab_id.
 	out = []
 	buckets: dict[tuple, dict] = {}
@@ -78,7 +82,7 @@ def _group_rows_by_mietabrechnung(rows):
 
 	for row in rows:
 		mab = mab_map.get(row.get("belegnummer")) if row.get("belegart") == "Sales Invoice" else None
-		if not mab:
+		if not mab or row.get("belegnummer") in gn_invoice_names:
 			out.append(row)
 			continue
 
@@ -115,13 +119,31 @@ def _group_rows_by_mietabrechnung(rows):
 	# Aggregate finalisieren: Zähler-Hinweis in der Belegart-Spalte.
 	for merged in buckets.values():
 		count = merged.pop("_member_count", 1)
-		voucher_nos = merged.pop("_member_voucher_nos", [])
+		merged.pop("_member_voucher_nos", None)
 		if count > 1:
-			# In der Belegart-Spalte: "Sales Invoice (×4)". Beleg­nummer-Spalte
+			# In der Belegart-Spalte: "Sales Invoice (x4)". Beleg­nummer-Spalte
 			# behält den Dynamic-Link auf die erste SI.
-			merged["belegart"] = f"{merged.get('belegart')} (×{count})"
+			merged["belegart"] = f"{merged.get('belegart')} (×{count})"  # noqa: RUF001
 
 	return out
+
+
+def _resolve_guthaben_nachzahlung_invoice_names(si_rows_by_no):
+	invoice_names = list(si_rows_by_no)
+	if not invoice_names:
+		return set()
+
+	gn_names = set()
+	for item in frappe.get_all(
+		"Sales Invoice Item",
+		filters={"parent": ("in", invoice_names)},
+		fields=["parent", "item_code", "amount", "base_amount"],
+	):
+		if ITEM_CATEGORY_MAP.get(item.get("item_code")) != "guthaben_nachzahlungen":
+			continue
+		if abs(flt(item.get("base_amount") or item.get("amount"))) > OUTSTANDING_TOLERANCE:
+			gn_names.add(item.get("parent"))
+	return gn_names
 
 
 def _zahlungsrichtung_after_merge(merged):

@@ -114,6 +114,7 @@ frappe.query_reports["Noch offene Rechnungen und Forderungen"] = {
 			label: __("Mietabrechnung pro Monat zusammenfassen"),
 			fieldtype: "Check",
 			default: 1,
+			description: __("G/N-Zeilen bleiben immer separat."),
 			on_change: () => frappe.query_report.refresh(),
 		},
 	],
