@@ -36,6 +36,24 @@ def apply() -> None:
 		if getattr(self, "footer_page", None) is not None:
 			self.footer_page.options["marginBottom"] = 0
 			self.footer_page.options["marginTop"] = 0
+
+			# Bug 3: Frappe misst die ``.wrapper``-Höhe der Footer-Page über
+			# ``getBoxModel`` und nutzt sie als ``paperHeight`` der Footer-
+			# Page. Bei Multi-Line-Footer-Inhalt (z.B. Bankverbindung +
+			# Pfad-Zeile) misst Chrome die Höhe zu klein zurück, sodass die
+			# zweite Zeile abgeschnitten wird. Mindesthöhe von 60px (~16mm)
+			# erzwingen, damit zweizeilige Footer komplett sichtbar bleiben.
+			min_footer_height_px = 60
+			if getattr(self, "footer_height", 0) < min_footer_height_px:
+				self.footer_height = min_footer_height_px
+				try:
+					footer_height_in = convert_uom(
+						float(min_footer_height_px), "px", "in", only_number=True
+					)
+					self.footer_page.options["paperHeight"] = footer_height_in
+				except Exception:
+					import frappe as _f
+					_f.log_error(_f.get_traceback(), "frappe_chrome_footer_patch min height")
 		if getattr(self, "header_page", None) is not None:
 			self.header_page.options["marginBottom"] = 0
 			self.header_page.options["marginTop"] = 0

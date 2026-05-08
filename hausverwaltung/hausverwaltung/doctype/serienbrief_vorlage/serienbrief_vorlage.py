@@ -888,11 +888,14 @@ def _preview_pdf_options() -> Dict[str, str]:
 	# Muss synchron zu SerienbriefDurchlauf._default_pdf_options bleiben — der
 	# Final-Pfad nutzt exakt diese Werte. Abweichung würde Margins/Page-Breaks
 	# der Preview vom Durchlauf-PDF entfernen.
+	# margin-bottom 30mm reserviert Platz für 2-Zeilen-Footer (Bankverbindung
+	# + Pfad). Bei 25mm wurde die zweite Zeile abgeschnitten, weil ein langer
+	# IBAN/Account-Name die Bankverbindung schon umbrechen lässt.
 	return {
 		"page-size": "A4",
 		"margin-top": "20mm",
 		"margin-right": "20mm",
-		"margin-bottom": "25mm",
+		"margin-bottom": "30mm",
 		"margin-left": "25mm",
 	}
 
