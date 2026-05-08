@@ -14,6 +14,7 @@ class Immobilie(Document):
 
 		_validate_account_rows(self, "bankkonten", "Bankkonto")
 		_validate_account_rows(self, "kassenkonten", "Kassenkonto")
+		self.haupt_bank_account = _resolve_primary_bank_account_name(self)
 
 	@property
 	def gesamtwohnflaeche(self) -> float:
@@ -27,6 +28,11 @@ class Immobilie(Document):
 		"""Hauptkonto-Bank-Account-Doc der Immobilie. Liefert das Frappe
 		``Bank Account``-Doc (mit iban/bic/bank/account_name) oder None.
 
+		ERPNext v16 verknüpft vom ``Bank Account`` über ``account`` auf den
+		GL-Account. Die Immobilie speichert fachlich den GL-Account in der
+		Child-Table ``bankkonten``; diese Property löst daraus den sichtbaren
+		Bank-Account für Serienbriefe auf.
+
 		Pfad-Vorlage: ``{{ objekt.wohnung.immobilie.bank_konto.iban }}``.
 		"""
 		rows = list(self.get("bankkonten") or [])
@@ -39,17 +45,11 @@ class Immobilie(Document):
 		account_name = cstr(getattr(haupt, "konto", None) or "").strip()
 		if not account_name:
 			return None
-		try:
-			account = frappe.get_cached_doc("Account", account_name)
-		except frappe.DoesNotExistError:
-			return None
-		bank_account_name = cstr(account.get("bank_account") or "").strip()
+		bank_account_name = _get_bank_account_for_gl_account(account_name)
 		if not bank_account_name:
-			# Konsistent zur Strict-Architektur: Account ohne Bank-Account-Link
-			# (z.B. nicht durchgepflegtes Privatkonto) liefert None. Vorlagen
-			# werfen damit explizit, statt leere IBAN-Felder ins PDF zu
-			# rendern. Bei legitimen Kassenkonten muss die Vorlage Conditional
-			# schreiben oder andere Daten-Pfade nutzen.
+			# Konsistent zur Strict-Architektur: GL-Account ohne passenden
+			# Bank-Account-Datensatz liefert None. Vorlagen werfen damit
+			# explizit, statt leere IBAN-Felder ins PDF zu rendern.
 			return None
 		try:
 			return frappe.get_cached_doc("Bank Account", bank_account_name)
@@ -118,6 +118,34 @@ def _validate_account_rows(doc: Document, fieldname: str, label: str) -> None:
 
 	if len(primary_accounts) > 1:
 		frappe.throw(f"Es darf nur ein Haupt-{label.lower()} gesetzt sein.")
+
+
+def _resolve_primary_bank_account_name(doc: Document) -> str | None:
+	rows = list(doc.get("bankkonten") or [])
+	if not rows:
+		return None
+	haupt = next(
+		(r for r in rows if int(getattr(r, "ist_hauptkonto", 0) or 0) == 1),
+		rows[0],
+	)
+	account_name = cstr(getattr(haupt, "konto", None) or "").strip()
+	if not account_name:
+		return None
+	return _get_bank_account_for_gl_account(account_name)
+
+
+def _get_bank_account_for_gl_account(account_name: str | None) -> str | None:
+	account = cstr(account_name or "").strip()
+	if not account:
+		return None
+	rows = frappe.get_all(
+		"Bank Account",
+		filters={"account": account, "disabled": 0},
+		fields=["name"],
+		order_by="is_default desc, creation asc",
+		limit=1,
+	)
+	return cstr(rows[0].get("name") if rows else "").strip() or None
 
 
 def get_immobilie_bank_accounts(immobilie: str) -> list[str]:

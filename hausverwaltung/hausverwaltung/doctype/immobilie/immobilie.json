@@ -18,6 +18,7 @@
   "section_break_ykwc",
   "kostenstelle",
   "bankkonten",
+  "haupt_bank_account",
   "kassenkonten",
   "konto",
   "kassenkonto",
@@ -135,6 +136,14 @@
    "fieldtype": "Table",
    "label": "Bankkonten",
    "options": "Immobilie Bankkonto"
+  },
+  {
+   "fieldname": "haupt_bank_account",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Haupt-Bankkonto",
+   "options": "Bank Account",
+   "read_only": 1
   },
   {
    "fieldname": "kassenkonten",
