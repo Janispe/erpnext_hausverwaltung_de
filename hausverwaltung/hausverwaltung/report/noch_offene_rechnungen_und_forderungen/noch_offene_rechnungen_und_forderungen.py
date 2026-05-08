@@ -307,7 +307,11 @@ def _filter_and_map_rows(source_rows, filters, mode):
 	for row in source_rows or []:
 		row = frappe._dict(row)
 
-		due_date = row.get("due_date")
+		# Fallback auf posting_date für Vouchers ohne due_date (Journal Entries
+		# und unallokierte Payment Entries / Vorauszahlungen). Sonst würden
+		# diese komplett aus dem Report ausgefiltert, obwohl sie offene
+		# Forderungen/Verbindlichkeiten darstellen.
+		due_date = row.get("due_date") or row.get("posting_date")
 		if not due_date:
 			continue
 
