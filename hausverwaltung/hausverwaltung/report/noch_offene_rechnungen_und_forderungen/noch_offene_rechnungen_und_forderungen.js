@@ -117,6 +117,13 @@ frappe.query_reports["Noch offene Rechnungen und Forderungen"] = {
 			description: __("G/N-Zeilen bleiben immer separat."),
 			on_change: () => frappe.query_report.refresh(),
 		},
+		{
+			fieldname: "show_aktion",
+			label: __("Abschreiben-Aktion zeigen"),
+			fieldtype: "Check",
+			default: 0,
+			on_change: () => frappe.query_report.refresh(),
+		},
 	],
 
 	onload: function (report) {
@@ -155,14 +162,6 @@ frappe.query_reports["Noch offene Rechnungen und Forderungen"] = {
 			const indicator =
 				label === "Geld bekommen" ? "green" : label === "Ausgeglichen" ? "gray" : "orange";
 			return `<span class="indicator-pill ${indicator}">${__(label)}</span>`;
-		}
-		if (column.fieldname === "status") {
-			const label = data?.status || "";
-			if (!label) return "";
-			if (["Abgeschrieben", "Teilweise bezahlt und abgeschrieben"].includes(label)) {
-				return `<span class="indicator-pill blue">${__(label)}</span>`;
-			}
-			return default_formatter(value, row, column, data);
 		}
 		return default_formatter(value, row, column, data);
 	},

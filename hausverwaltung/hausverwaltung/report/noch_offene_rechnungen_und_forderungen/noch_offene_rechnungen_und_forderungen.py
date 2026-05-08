@@ -26,7 +26,7 @@ def execute(filters=None):
 		rows = _group_rows_by_mietabrechnung(rows)
 
 	rows.sort(key=lambda row: _sort_key(row, filters))
-	columns = _get_columns()
+	columns = _get_columns(filters)
 	enrich_link_titles(rows, columns)
 	return columns, rows
 
@@ -302,6 +302,7 @@ def _filter_and_map_rows(source_rows, filters, mode):
 	voucher_type = filters.get("voucher_type")
 	cost_center_filter = filters.get("cost_center")
 	invoice_cc_map = _resolve_invoice_cost_centers(source_rows)
+	remarks_map = _resolve_voucher_remarks(source_rows)
 
 	for row in source_rows or []:
 		row = frappe._dict(row)
@@ -356,6 +357,7 @@ def _filter_and_map_rows(source_rows, filters, mode):
 				"alter_tage": row.get("age"),
 				"kostenstelle": _format_cost_centers(row_ccs) or row.get("cost_center"),
 				"waehrung": row.get("currency"),
+				"bemerkungen": remarks_map.get((row.get("voucher_type"), row.get("voucher_no"))),
 				"can_write_off": _can_write_off_row(row, mode, outstanding, invoice_status),
 			}
 		)
@@ -400,6 +402,38 @@ def _resolve_invoice_cost_centers(source_rows):
 			if cc:
 				cc_map.setdefault((vtype, parent), set()).add(cc)
 	return cc_map
+
+
+def _resolve_voucher_remarks(source_rows):
+	"""Lädt das Remarks-Feld pro Voucher, in einem Batch pro Belegart."""
+	by_type: dict[str, set[str]] = {}
+	for row in source_rows or []:
+		vtype = (row or {}).get("voucher_type")
+		vno = (row or {}).get("voucher_no")
+		if vtype and vno:
+			by_type.setdefault(vtype, set()).add(vno)
+
+	remark_field = {
+		"Sales Invoice": "remarks",
+		"Purchase Invoice": "remarks",
+		"Payment Entry": "remarks",
+		"Journal Entry": "user_remark",
+	}
+
+	out: dict[tuple, str] = {}
+	for vtype, names in by_type.items():
+		field = remark_field.get(vtype)
+		if not field or not names:
+			continue
+		for name, remark in frappe.get_all(
+			vtype,
+			filters={"name": ["in", list(names)]},
+			fields=["name", field],
+			as_list=True,
+		):
+			if remark:
+				out[(vtype, name)] = remark
+	return out
 
 
 def _row_cost_centers(row, invoice_cc_map):
@@ -484,71 +518,94 @@ def _can_write_off_row(row, mode, outstanding, invoice_status=None):
 	return 1
 
 
-def _get_columns():
-	return [
-		{"label": _("Aktion"), "fieldname": "aktion", "fieldtype": "HTML", "width": 110},
-		{"label": _("Fällig am"), "fieldname": "faellig_am", "fieldtype": "Date", "width": 100},
-		{"label": _("Buchungsdatum"), "fieldname": "buchungsdatum", "fieldtype": "Date", "width": 110},
-		{"label": _("Art"), "fieldname": "art", "fieldtype": "Data", "width": 100},
-		{"label": _("Richtung"), "fieldname": "zahlungsrichtung", "fieldtype": "Data", "width": 130},
-		{"label": _("Status"), "fieldname": "status", "fieldtype": "Data", "width": 150},
-		{"label": _("Party Type"), "fieldname": "party_type", "fieldtype": "Data", "hidden": 1},
-		{
-			"label": _("Partei"),
-			"fieldname": "party",
-			"fieldtype": "Dynamic Link",
-			"options": "party_type",
-			"width": 240,
-		},
-		{
-			"label": _("Konto"),
-			"fieldname": "party_account",
-			"fieldtype": "Link",
-			"options": "Account",
-			"width": 220,
-		},
-		{"label": _("Belegart"), "fieldname": "belegart", "fieldtype": "Data", "width": 120},
-		{
-			"label": _("Belegnummer"),
-			"fieldname": "belegnummer",
-			"fieldtype": "Dynamic Link",
-			"options": "belegart",
-			"width": 190,
-		},
-		{
-			"label": _("Rechnungsbetrag"),
-			"fieldname": "rechnungsbetrag",
-			"fieldtype": "Currency",
-			"options": "waehrung",
-			"width": 130,
-		},
-		{
-			"label": _("Bezahlt"),
-			"fieldname": "bezahlt",
-			"fieldtype": "Currency",
-			"options": "waehrung",
-			"width": 120,
-		},
-		{
-			"label": _("Offen"),
-			"fieldname": "offen",
-			"fieldtype": "Currency",
-			"options": "waehrung",
-			"width": 120,
-		},
-		{"label": _("Alter Tage"), "fieldname": "alter_tage", "fieldtype": "Int", "width": 90},
-		{
-			"label": _("Kostenstelle"),
-			"fieldname": "kostenstelle",
-			"fieldtype": "Link",
-			"options": "Cost Center",
-			"width": 160,
-		},
-		{
-			"label": _("Währung"),
-			"fieldname": "waehrung",
-			"fieldtype": "Link",
-			"options": "Currency",
-			"width": 80,
-		},
-	]
+def _get_columns(filters):
+	mode = filters.get("mode") or "Forderungen"
+	columns = []
+
+	if filters.get("show_aktion"):
+		columns.append(
+			{"label": _("Aktion"), "fieldname": "aktion", "fieldtype": "HTML", "width": 110}
+		)
+
+	columns.extend(
+		[
+			{"label": _("Buchungsdatum"), "fieldname": "buchungsdatum", "fieldtype": "Date", "width": 110},
+			{
+				"label": _("Rechnungsbetrag"),
+				"fieldname": "rechnungsbetrag",
+				"fieldtype": "Currency",
+				"options": "waehrung",
+				"width": 130,
+			},
+			{
+				"label": _("Bezahlt"),
+				"fieldname": "bezahlt",
+				"fieldtype": "Currency",
+				"options": "waehrung",
+				"width": 120,
+			},
+			{
+				"label": _("Offen"),
+				"fieldname": "offen",
+				"fieldtype": "Currency",
+				"options": "waehrung",
+				"width": 120,
+			},
+		]
+	)
+
+	if mode == "Beides":
+		columns.append({"label": _("Art"), "fieldname": "art", "fieldtype": "Data", "width": 100})
+
+	columns.extend(
+		[
+			{"label": _("Richtung"), "fieldname": "zahlungsrichtung", "fieldtype": "Data", "width": 130},
+			{"label": _("Party Type"), "fieldname": "party_type", "fieldtype": "Data", "hidden": 1},
+			{
+				"label": _("Partei"),
+				"fieldname": "party",
+				"fieldtype": "Dynamic Link",
+				"options": "party_type",
+				"width": 240,
+			},
+			{
+				"label": _("Konto"),
+				"fieldname": "party_account",
+				"fieldtype": "Link",
+				"options": "Account",
+				"width": 220,
+			},
+			{"label": _("Belegart"), "fieldname": "belegart", "fieldtype": "Data", "hidden": 1},
+			{
+				"label": _("Belegnummer"),
+				"fieldname": "belegnummer",
+				"fieldtype": "Dynamic Link",
+				"options": "belegart",
+				"width": 190,
+			},
+			{
+				"label": _("Bemerkungen"),
+				"fieldname": "bemerkungen",
+				"fieldtype": "Small Text",
+				"width": 240,
+			},
+			{"label": _("Alter Tage"), "fieldname": "alter_tage", "fieldtype": "Int", "width": 90},
+			{
+				"label": _("Kostenstelle"),
+				"fieldname": "kostenstelle",
+				"fieldtype": "Link",
+				"options": "Cost Center",
+				"width": 160,
+			},
+			{
+				"label": _("Währung"),
+				"fieldname": "waehrung",
+				"fieldtype": "Link",
+				"options": "Currency",
+				"width": 80,
+			},
+			{"label": _("Fällig am"), "fieldname": "faellig_am", "fieldtype": "Date", "width": 100},
+		]
+	)
+
+	return columns
