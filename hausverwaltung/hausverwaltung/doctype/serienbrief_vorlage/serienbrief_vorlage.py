@@ -352,6 +352,32 @@ class SplitPreviewVertragspartner:
 		return True
 
 
+class SplitPreviewBank:
+	"""Mock-Bank — wird vom Resolver als Sub-Doc des ``Bank Account.bank``-
+	Link-Felds erkannt, damit kein Frappe-DoesNotExistError-Modal aufploppt
+	wenn jemand ``bank_konto.bank`` schreibt. ``__str__`` liefert den Namen,
+	sodass Vorlagen-Pfade ``{{$ ... .bank $}}`` weiterhin „Beispielbank"
+	rendern.
+	"""
+
+	def __init__(self):
+		self.doctype = "Bank"
+		self.name = "Beispielbank"
+		self.bank_name = "Beispielbank"
+
+	def __getattr__(self, name):
+		return SplitPreviewUndefined(name=f"Bank.{name}")
+
+	def __getitem__(self, key):
+		return SplitPreviewUndefined(name=f"Bank.{key}")
+
+	def __bool__(self) -> bool:
+		return True
+
+	def __str__(self) -> str:
+		return self.name
+
+
 class SplitPreviewBankAccount:
 	"""Mock-Stand-In für ein Frappe ``Bank Account``-Doc. Echter
 	``Immobilie.bank_konto``-Property liefert in Prod ein solches Doc;
@@ -364,7 +390,11 @@ class SplitPreviewBankAccount:
 		self.name = "BANK-0001"
 		self.account_name = "Beispielkonto Hausverwaltung"
 		self.iban = "DE12 3456 7890 1234 5678 90"
-		self.bank = "Beispielbank"
+		# ``bank`` ist auf dem echten Bank Account ein Link auf Bank — als
+		# Doc-Stand-In, sodass der Resolver es nicht als Link-String behandelt
+		# und kein DoesNotExistError-Modal triggert. ``__str__`` liefert
+		# trotzdem „Beispielbank" für die Body-Anzeige.
+		self.bank = SplitPreviewBank()
 		self.bic = "EXAMPLDEXXX"
 
 	def __getattr__(self, name):
