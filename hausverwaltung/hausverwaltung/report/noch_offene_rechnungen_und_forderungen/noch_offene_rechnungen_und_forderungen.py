@@ -559,7 +559,6 @@ def _get_columns(filters):
 
 	columns.extend(
 		[
-			{"label": _("Richtung"), "fieldname": "zahlungsrichtung", "fieldtype": "Data", "width": 130},
 			{"label": _("Party Type"), "fieldname": "party_type", "fieldtype": "Data", "hidden": 1},
 			{
 				"label": _("Partei"),
@@ -569,12 +568,19 @@ def _get_columns(filters):
 				"width": 240,
 			},
 			{
+				"label": _("Bemerkungen"),
+				"fieldname": "bemerkungen",
+				"fieldtype": "Small Text",
+				"width": 240,
+			},
+			{
 				"label": _("Konto"),
 				"fieldname": "party_account",
 				"fieldtype": "Link",
 				"options": "Account",
 				"width": 220,
 			},
+			{"label": _("Richtung"), "fieldname": "zahlungsrichtung", "fieldtype": "Data", "width": 130},
 			{"label": _("Belegart"), "fieldname": "belegart", "fieldtype": "Data", "hidden": 1},
 			{
 				"label": _("Belegnummer"),
@@ -582,12 +588,6 @@ def _get_columns(filters):
 				"fieldtype": "Dynamic Link",
 				"options": "belegart",
 				"width": 190,
-			},
-			{
-				"label": _("Bemerkungen"),
-				"fieldname": "bemerkungen",
-				"fieldtype": "Small Text",
-				"width": 240,
 			},
 			{"label": _("Alter Tage"), "fieldname": "alter_tage", "fieldtype": "Int", "width": 90},
 			{
