@@ -101,11 +101,15 @@ doctype_list_js = {
 # Jinja
 # ----------
 
-# add methods and filters to jinja environment
-# jinja = {
-# 	"methods": "hausverwaltung.utils.jinja_methods",
-# 	"filters": "hausverwaltung.utils.jinja_filters"
-# }
+jinja = {
+	"methods": [
+		# Footer-Helper für Serienbrief-Print-Format: rendert die Bankverbindungs-
+		# Zeile, wenn die Vorlage den Baustein „Bankverbindung Immobilie"
+		# referenziert. Aufruf im Footer-HTML als
+		# ``get_footer_bankverbindung_html(doc)``.
+		"hausverwaltung.hausverwaltung.utils.serienbrief_footer.get_footer_bankverbindung_html",
+	],
+}
 
 # Boot
 # ----------

@@ -918,14 +918,22 @@ def _render_through_serienbrief_dokument_print_format(
 	ephemeral.vorlage = template_doc.name if template_doc else None
 	ephemeral.docstatus = int(docstatus or 0)
 
-	return frappe.get_print(
-		"Serienbrief Dokument",
-		None,
-		print_format="Serienbrief Dokument",
-		as_pdf=True,
-		doc=ephemeral,
-		pdf_options=_preview_pdf_options(),
-	)
+	# Flag für Footer-Helper: er rendert im Live-Preview ein Mock-Snippet
+	# (analog zur SplitPreview-Beispielwert-Optik), statt den echten
+	# Resolver gegen Mock-Daten laufen zu lassen.
+	previous_flag = frappe.flags.get("hv_serienbrief_split_preview")
+	frappe.flags.hv_serienbrief_split_preview = True
+	try:
+		return frappe.get_print(
+			"Serienbrief Dokument",
+			None,
+			print_format="Serienbrief Dokument",
+			as_pdf=True,
+			doc=ephemeral,
+			pdf_options=_preview_pdf_options(),
+		)
+	finally:
+		frappe.flags.hv_serienbrief_split_preview = previous_flag
 
 
 def _render_segments_via_durchlauf(

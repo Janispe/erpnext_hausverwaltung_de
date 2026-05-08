@@ -174,8 +174,20 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
         # (siehe ``hausverwaltung/__init__.py`` -> frappe_chrome_footer_patch).
         # Inhalt wird in ``<p>`` verpackt, damit ``.wrapper`` eine messbare
         # Höhe bekommt (sonst paperHeight=0 -> Chrome Error).
+        # Footer rendert zwei Zeilen:
+        #  1. (oben) Bankverbindung — nur wenn die Vorlage den Baustein
+        #     „Bankverbindung Immobilie" einbindet. Helper liefert sonst
+        #     leeren String.
+        #  2. (unten) Kategorien-Pfad der Vorlage.
+        # Die Bankverbindungs-Zeile rendert aus den Standardpfaden des
+        # Bausteins gegen das Iterationsobjekt — siehe
+        # ``hausverwaltung.utils.serienbrief_footer``.
         footer_html = """
 <div id="footer-html" style="padding: 6px 0 8px; border-top: 1px solid #e6ebf1; font-size: 8pt; color: #a0a8b3; text-align: center; font-family: Arial, sans-serif; line-height: 1.4;">
+{%- set bank_html = get_footer_bankverbindung_html(doc) -%}
+{%- if bank_html -%}
+<div style="margin-bottom: 2px;">{{ bank_html | safe }}</div>
+{%- endif -%}
 {%- set vorlage_name = doc.vorlage if doc and doc.vorlage else None -%}
 {%- if vorlage_name and frappe.db.exists("Serienbrief Vorlage", vorlage_name) -%}
 {%- set vorlage_doc = frappe.get_cached_doc("Serienbrief Vorlage", vorlage_name) -%}
@@ -188,7 +200,7 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 {%- endif -%}
 {%- endfor -%}
 {%- set pfad_parts = (ns.chain | reverse | list) + [vorlage_doc.title or vorlage_name] -%}
-{{ pfad_parts | join(" / ") }}
+<div>{{ pfad_parts | join(" / ") }}</div>
 {%- endif -%}
 </div>
 """

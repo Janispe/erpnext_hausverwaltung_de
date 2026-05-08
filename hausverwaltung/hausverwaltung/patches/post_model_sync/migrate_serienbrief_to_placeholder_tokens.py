@@ -42,12 +42,12 @@ _RAW_PATH_RE = re.compile(
 
 # === Baustein-Bodies (deklarativ neu) ====================================
 
-BANKVERBINDUNG_BODY = """\
-{%- if not immobilie.bank_konto -%}
-{{ frappe.throw("Bankverbindung-Baustein: Immobilie " ~ immobilie.name ~ " hat kein Hauptkonto mit Bank-Account-Link — bitte unter Immobilie ▸ Bankkonten ein Hauptkonto pflegen, dessen Account einen verknüpften Bank-Account hat.") }}
-{%- endif -%}
-<p>Bankverbindung: {{ immobilie.bank_konto.account_name }} · IBAN {{ immobilie.bank_konto.iban }} · {{ immobilie.bank_konto.bank }}</p>
-"""
+# Body bewusst leer (Marker-Kommentar): die Bankverbindung wird vom Page-
+# Footer (siehe ``utils.serienbrief_footer.get_footer_bankverbindung_html``)
+# auf jeder Seite gerendert, nicht im Brief-Hauptteil. Der Baustein dient
+# nur noch als Marker — die Existenz des Bausteins in der Vorlage signalisiert
+# dem Footer, dass die Bankverbindungs-Zeile aktiviert werden soll.
+BANKVERBINDUNG_BODY = "<!-- Bankverbindung wird im Page-Footer gerendert -->"
 
 MIETER_ANREDE_BODY = """\
 {%- macro _person_line(p) -%}
