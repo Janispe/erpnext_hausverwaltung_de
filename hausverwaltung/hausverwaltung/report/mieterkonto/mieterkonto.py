@@ -34,6 +34,19 @@ ITEM_CATEGORY_MAP = {
 	"HK Nachzahlung": "guthaben_nachzahlungen",
 	"HK Guthaben": "guthaben_nachzahlungen",
 }
+# Account-Name-Substring → Kategorie (für Stand-alone-JE-Buchungen ohne
+# SI-Bezug, z.B. nachgebuchte Mahngebühren auf Mieterforderungen). Match
+# läuft case-sensitive über `Substring in account.lower()`.
+ACCOUNT_CATEGORY_MAP = {
+	"miete": "miete",
+	"garage/stellpl": "miete",
+	"untermiet": "miete",
+	"betriebskosten": "betriebskosten",
+	"heizkosten": "heizkosten",
+	"heizkostenvorauszahlung": "heizkosten",
+	"guthaben/nachzahlungen": "guthaben_nachzahlungen",
+	"mahnungen": "guthaben_nachzahlungen",
+}
 TOLERANCE = 0.01
 
 
@@ -64,7 +77,8 @@ def execute(filters=None):
 	_validate_filters(filters)
 
 	raw_invoices = _get_invoices(filters)
-	if not raw_invoices:
+	standalone_transactions = _build_standalone_receivable_transactions(raw_invoices, filters)
+	if not raw_invoices and not standalone_transactions:
 		return _get_columns(filters), [], None, None, _get_empty_summary()
 
 	display_invoices = (
@@ -73,6 +87,9 @@ def execute(filters=None):
 
 	transactions = _build_invoice_transactions(display_invoices)
 	transactions.extend(_build_settlement_transactions(display_invoices, raw_invoices, filters))
+	# Stand-alone Receivable-Bewegungen (JE/PE auf Mieterforderungen ohne
+	# SI-Referenz) — z.B. nachgebuchte Mahngebühren oder Korrektur-JEs.
+	transactions.extend(standalone_transactions)
 	transactions.sort(key=_transaction_sort_key)
 
 	rows, summary_totals = _build_rows(transactions, filters)
@@ -457,6 +474,190 @@ def _build_settlement_transactions(
 			bundle["delta"] = flt(bundle["delta"] - sum(allocated.values()), 2)
 
 	return [bundles[key] for key in bundle_order]
+
+
+def _build_standalone_receivable_transactions(
+	raw_invoices: dict[str, InvoiceInfo],
+	filters,
+) -> list[dict[str, Any]]:
+	"""Stand-alone JE/PE-Bewegungen auf Mieterforderungs-Konto, die NICHT
+	über eine Sales Invoice abgedeckt sind (z.B. nachgebuchte Mahngebühren).
+
+	Bisher tauchen solche Buchungen weder im Forderungs- noch im Settlement-
+	Pfad auf, weil beide rechnungs-zentriert sind. Hier laden wir GL Entries
+	auf den Receivable-Konten dieses Mieters, filtern Vouchers raus, die
+	bereits über SI/Settlement repräsentiert sind, und kategorisieren über
+	das Gegenkonto (BK / HK / G+N / Miete).
+	"""
+	receivable_accounts: set[str] = {inv.debit_to for inv in raw_invoices.values() if inv.debit_to}
+	if not receivable_accounts:
+		# Fallback: alle aktiven Receivable-Konten dieser Company. Damit
+		# bekommen wir auch dann etwas, wenn der Mieter (noch) keine SI hat,
+		# aber direkte JE-Buchungen.
+		receivable_accounts = {
+			row["name"]
+			for row in frappe.get_all(
+				"Account",
+				filters={
+					"company": filters.company,
+					"account_type": "Receivable",
+					"is_group": 0,
+					"disabled": 0,
+				},
+				fields=["name"],
+			)
+		}
+	if not receivable_accounts:
+		return []
+
+	# Bereits über SI/Settlement repräsentierte Vouchers — die hier nicht
+	# nochmal als Stand-alone-Zeile zeigen (sonst doppelt).
+	covered_voucher_keys: set[tuple[str, str]] = set()
+	for invoice in raw_invoices.values():
+		covered_voucher_keys.add(("Sales Invoice", invoice.name))
+
+	gle_rows = frappe.get_all(
+		"GL Entry",
+		filters={
+			"account": ("in", list(receivable_accounts)),
+			"party_type": "Customer",
+			"party": filters.customer,
+			"is_cancelled": 0,
+			"posting_date": ("<=", filters.to_date),
+		},
+		fields=[
+			"posting_date",
+			"voucher_type",
+			"voucher_no",
+			"against_voucher_type",
+			"against_voucher",
+			"debit",
+			"credit",
+			"account",
+			"remarks",
+		],
+		order_by="posting_date asc, creation asc",
+	)
+
+	# Vouchers, deren Settlement bereits über PLE läuft (PE/JE gegen eine
+	# unserer SIs): filtern wir hier raus.
+	for row in gle_rows:
+		if (
+			row.against_voucher_type == "Sales Invoice"
+			and row.against_voucher
+			and row.against_voucher in raw_invoices
+		):
+			covered_voucher_keys.add((row.voucher_type, row.voucher_no))
+
+	# Pro stand-alone Voucher: Gegenkonto(s) ermitteln, Kategorie ableiten.
+	standalone_voucher_keys: set[tuple[str, str]] = set()
+	for row in gle_rows:
+		key = (row.voucher_type, row.voucher_no)
+		if key in covered_voucher_keys:
+			continue
+		standalone_voucher_keys.add(key)
+
+	if not standalone_voucher_keys:
+		return []
+
+	offset_accounts = _fetch_offset_accounts(standalone_voucher_keys, receivable_accounts)
+	voucher_remarks = _fetch_voucher_remarks(
+		[frappe._dict(voucher_type=k[0], voucher_no=k[1]) for k in standalone_voucher_keys]
+	)
+
+	transactions: list[dict[str, Any]] = []
+	for row in gle_rows:
+		key = (row.voucher_type, row.voucher_no)
+		if key not in standalone_voucher_keys:
+			continue
+
+		debit = flt(row.debit)
+		credit = flt(row.credit)
+		net_charge = debit - credit  # >0: neue Forderung, <0: Tilgung
+		if abs(net_charge) <= TOLERANCE:
+			continue
+
+		category = _categorize_offset_accounts(offset_accounts.get(key, set()))
+		amounts = {cat: 0.0 for cat in CATEGORIES}
+		amounts[category] = abs(net_charge)
+		amounts = _round_amounts(amounts)
+
+		is_charge = net_charge > 0
+		info = voucher_remarks.get(key, {})
+		default_label = (
+			_("Forderung") if is_charge else _get_voucher_label(row.voucher_type)
+		)
+		description = (
+			_build_voucher_suffix(row.voucher_type, info)
+			or default_label
+		)
+
+		transactions.append(
+			{
+				"date": getdate(row.posting_date),
+				"sort_order": 15 if is_charge else 25,
+				"art": "Forderung" if is_charge else "Zahlung",
+				"belegart": row.voucher_type,
+				"belegnummer": row.voucher_no,
+				"rechnung": row.voucher_no,
+				"beschreibung": description,
+				"due_date": getdate(row.posting_date),
+				"status": None,
+				"currency": _get_currency(filters.company),
+				"invoice_amounts": amounts if is_charge else {cat: 0.0 for cat in CATEGORIES},
+				"paid_amounts": {cat: 0.0 for cat in CATEGORIES} if is_charge else amounts,
+				"written_off_amounts": {cat: 0.0 for cat in CATEGORIES},
+				"delta": net_charge,
+			}
+		)
+
+	return transactions
+
+
+def _fetch_offset_accounts(
+	voucher_keys: set[tuple[str, str]],
+	receivable_accounts: set[str],
+) -> dict[tuple[str, str], set[str]]:
+	"""Pro (voucher_type, voucher_no): Gegenkonto-Set (alle nicht-Receivable-
+	Buchungszeilen aus den GL Entries des Vouchers).
+
+	Wird genutzt, um Stand-alone-Vouchers nach BK/HK/G+N/Miete zu kategorisieren.
+	"""
+	if not voucher_keys:
+		return {}
+	# Gruppiert pro voucher_type für effizientere Bulk-Queries
+	by_type: dict[str, set[str]] = defaultdict(set)
+	for vt, vn in voucher_keys:
+		by_type[vt].add(vn)
+
+	out: dict[tuple[str, str], set[str]] = defaultdict(set)
+	for voucher_type, names in by_type.items():
+		gle_rows = frappe.get_all(
+			"GL Entry",
+			filters={
+				"voucher_type": voucher_type,
+				"voucher_no": ("in", list(names)),
+				"is_cancelled": 0,
+			},
+			fields=["voucher_no", "account"],
+		)
+		for row in gle_rows:
+			if row.account in receivable_accounts:
+				continue
+			out[(voucher_type, row.voucher_no)].add(row.account)
+	return out
+
+
+def _categorize_offset_accounts(accounts: set[str]) -> str:
+	"""Wählt die Kategorie aus dem Gegenkonto-Set. Erstes match aus
+	ACCOUNT_CATEGORY_MAP gewinnt. Fallback: guthaben_nachzahlungen
+	(Sammelposten für nicht klar zuordenbare Forderungs-Bewegungen)."""
+	for account in accounts:
+		account_lc = (account or "").lower()
+		for substr, category in ACCOUNT_CATEGORY_MAP.items():
+			if substr in account_lc:
+				return category
+	return "guthaben_nachzahlungen"
 
 
 def _chunks(values: list[str], size: int):
