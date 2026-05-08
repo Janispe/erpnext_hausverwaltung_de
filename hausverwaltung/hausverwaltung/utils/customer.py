@@ -62,11 +62,11 @@ def get_or_create_customer_group() -> str:
 
 
 def build_customer_id(wohnlabel: str, von_date: str, nachname: str) -> str:
-	"""Generiert eine sprechende Customer-ID im Schema ``{wohnung} Mieter: {nachname}``.
+	"""Generiert eine sprechende Customer-ID im Schema ``{nachname} - {wohnung}``.
 
-	Parallel zum Mietvertrag-Naming (``{wohnung} Mietvertrag: {von}``) — gleiche
-	Wohnung als Prefix, anderer Begriff. Bei Kollision (selbe Wohnung + selber
-	Nachname) wird ein numerischer Suffix angehängt: ``... (2)``, ``... (3)``.
+	Nachname zuerst, damit Listen-/Report-Sortierung alphabetisch nach Mieter
+	läuft. Bei Kollision (selber Nachname + selbe Wohnung) wird ein
+	numerischer Suffix angehängt: ``... (2)``, ``... (3)``.
 
 	Fallback (wenn weder Wohnung noch Nachname bekannt): zufällige UUID-ID.
 
@@ -80,11 +80,11 @@ def build_customer_id(wohnlabel: str, von_date: str, nachname: str) -> str:
 	nm = (nachname or "").strip()
 
 	if wohn and nm:
-		base = f"{wohn} Mieter: {nm}"
+		base = f"{nm} - {wohn}"
 	elif wohn:
-		base = f"{wohn} Mieter"
+		base = wohn
 	elif nm:
-		base = f"Mieter: {nm}"
+		base = nm
 	else:
 		# Weder Wohnung noch Nachname — Fallback auf altes UUID-Schema
 		while True:

@@ -518,11 +518,11 @@ def _build_customer_docname(doc: object) -> str:
 	wohn = (getattr(doc, "wohnung", None) or "").strip()
 	nm = (nachname or "").strip()
 	if wohn and nm:
-		return f"{wohn} Mieter: {nm}"
+		return f"{nm} - {wohn}"
 	if wohn:
-		return f"{wohn} Mieter"
+		return wohn
 	if nm:
-		return f"Mieter: {nm}"
+		return nm
 	return ""
 
 

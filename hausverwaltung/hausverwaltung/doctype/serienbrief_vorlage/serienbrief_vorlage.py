@@ -898,7 +898,13 @@ def _preview_pdf_options() -> Dict[str, str]:
 
 
 def _render_through_serienbrief_dokument_print_format(
-	body_html: str, template_doc, docstatus: int = 0
+	body_html: str,
+	template_doc,
+	docstatus: int = 0,
+	*,
+	iteration_doctype: str | None = None,
+	iteration_name: str | None = None,
+	is_mock: bool = False,
 ) -> bytes:
 	"""Wickelt einen vorgerenderten HTML-Body durch genau dieselbe Print-Format-
 	Pipeline, die der Serienbrief Durchlauf für das finale PDF nutzt:
@@ -907,6 +913,12 @@ def _render_through_serienbrief_dokument_print_format(
 	DRAFT-Watermark, ``@page``-Margins und CSS aus derselben Quelle wie im
 	echten Durchlauf — Preview ist pixelgleich (außer PDF-Form-Bausteinen,
 	siehe ``_render_segments_via_durchlauf``).
+
+	``iteration_doctype`` / ``iteration_name``: optional, werden am ephemeren
+	Doc gesetzt, damit der Footer-Helper das Iterationsobjekt resolven kann.
+	``is_mock``: True für Live-Preview mit SplitPreview-Mocks — setzt das
+	``hv_serienbrief_split_preview``-Flag, sodass der Footer-Helper ein
+	Mock-Snippet rendert statt echten Resolver gegen Mocks zu jagen.
 	"""
 	page_wrapped = f'<div class="serienbrief-page">{body_html}</div>'
 	# ``serienbrief-root`` setzt das Print-Format-CSS — Klasse muss vorhanden
@@ -917,12 +929,14 @@ def _render_through_serienbrief_dokument_print_format(
 	ephemeral.html = fragment
 	ephemeral.vorlage = template_doc.name if template_doc else None
 	ephemeral.docstatus = int(docstatus or 0)
+	if iteration_doctype:
+		ephemeral.iteration_doctype = iteration_doctype
+	if iteration_name:
+		ephemeral.objekt = iteration_name
 
-	# Flag für Footer-Helper: er rendert im Live-Preview ein Mock-Snippet
-	# (analog zur SplitPreview-Beispielwert-Optik), statt den echten
-	# Resolver gegen Mock-Daten laufen zu lassen.
 	previous_flag = frappe.flags.get("hv_serienbrief_split_preview")
-	frappe.flags.hv_serienbrief_split_preview = True
+	if is_mock:
+		frappe.flags.hv_serienbrief_split_preview = True
 	try:
 		return frappe.get_print(
 			"Serienbrief Dokument",
@@ -933,7 +947,8 @@ def _render_through_serienbrief_dokument_print_format(
 			pdf_options=_preview_pdf_options(),
 		)
 	finally:
-		frappe.flags.hv_serienbrief_split_preview = previous_flag
+		if is_mock:
+			frappe.flags.hv_serienbrief_split_preview = previous_flag
 
 
 def _render_segments_via_durchlauf(
@@ -1050,7 +1065,16 @@ def render_template_preview_pdf(
 
 	# docstatus=1 → kein DRAFT-Watermark im Preview. Doc ist ephemer, wird
 	# nie gespeichert; das ist nur für die Print-Pipeline-Wahrnehmung.
-	pdf_bytes = _render_through_serienbrief_dokument_print_format(body, doc, docstatus=1)
+	# is_mock=True nur im Split-Preview-Modus; im Durchlauf-Modus läuft der
+	# Footer-Helper mit echten Iterationsobjekt-Daten.
+	pdf_bytes = _render_through_serienbrief_dokument_print_format(
+		body,
+		doc,
+		docstatus=1,
+		iteration_doctype=iter_dt if mode == "durchlauf" else None,
+		iteration_name=iter_name if mode == "durchlauf" else None,
+		is_mock=(mode == "split_preview"),
+	)
 	filename = f"vorlage-preview-{frappe.scrub(doc.name or doc.title or 'vorlage')}.pdf"
 	return {
 		"pdf_base64": base64.b64encode(pdf_bytes).decode("utf-8"),
