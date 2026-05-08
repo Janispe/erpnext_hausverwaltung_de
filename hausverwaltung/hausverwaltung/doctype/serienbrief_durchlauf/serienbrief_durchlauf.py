@@ -1853,11 +1853,14 @@ class _LinkResolvingRow:
 	Sub-Docs auflöst — analog zur Logik im :func:`_resolve_value_path`-Resolver,
 	nur on-demand bei Jinja-``getattr`` statt eager beim String-Pfad-Splitting.
 
-	Damit funktionieren tiefe Pfade wie ``{{ objekt.wohnung.immobilie.name }}``
-	im Vorlagen-Body ohne dass jede Variable einzeln deklariert werden muss.
-	Sub-Docs werden rekursiv weiter gewrappt; Child-Tables liefern eine Liste
-	gewrappter Zeilen; ``.address`` an einem Dynamic-Link-Doctype liefert das
-	Default-Address-Doc (analog zur Resolver-Address-Magic).
+	Der Wrapper wird bewusst für aufgelöste Listen-Inputs aus ``[]``-Mapping-
+	Pfaden verwendet. Tiefe Datenpfade im Body laufen offiziell über
+	``{{$ objekt.wohnung.immobilie.name $}}`` und damit über
+	:func:`_resolve_value_path`; Root-``objekt`` wird nicht pauschal als
+	``_LinkResolvingRow`` in den Jinja-Kontext gelegt. Sub-Docs werden rekursiv
+	weiter gewrappt; Child-Tables liefern eine Liste gewrappter Zeilen;
+	``.address`` an einem Dynamic-Link-Doctype liefert das Default-Address-Doc
+	(analog zur Resolver-Address-Magic).
 
 	String-Vergleiche bleiben funktional, weil ``__str__``/``__eq__`` an den
 	Doc-Namen delegieren — ``{{ wohnung == "WHN-007" }}`` liefert weiter True.
@@ -2014,10 +2017,10 @@ def _dig_attr(source: Any, key: str) -> Any:
 _BRACKET_INDEX_RE = re.compile(r"^([^\[\]]+)((?:\[\d+\])+)$")
 _BRACKET_INDEX_PARTS_RE = re.compile(r"\[(\d+)\]")
 
-# DocTypes mit Frappe-Dynamic-Link-Adressen: ``address`` als Pfad-Schritt
-# wird automatisch zum Default-Address-Doc aufgelöst, sodass Vorlagen
-# ``{{ objekt.kunde.address.address_line1 }}`` schreiben können statt
-# ``frappe.get_doc("Address", get_default_address("Customer", ...))``.
+# DocTypes mit Frappe-Dynamic-Link-Adressen: ``address`` als Resolver-
+# Pfad-Schritt wird automatisch zum Default-Address-Doc aufgelöst, sodass
+# Datenplatzhalter ``{{$ objekt.kunde.address.address_line1 $}}`` schreiben
+# können statt ``frappe.get_doc("Address", get_default_address(...))``.
 _ADDRESS_TARGET_DOCTYPES = {"Customer", "Immobilie", "Wohnung", "Contact", "Supplier"}
 
 

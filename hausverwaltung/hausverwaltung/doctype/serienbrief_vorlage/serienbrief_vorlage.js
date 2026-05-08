@@ -6,6 +6,8 @@ const HV_VORLAGE_BASE_PLACEHOLDERS = [
 	{ label: __("Datum (ISO)"), value: "{{ datum_iso }}" },
 ];
 
+const hv_vorlage_data_placeholder = (path) => `{{$ ${path} $}}`;
+
 const hv_vorlage_require_placeholder_picker = () =>
 	new Promise((resolve) => {
 		const assetPath = "/assets/hausverwaltung/js/serienbrief_placeholder_picker.js";
@@ -738,7 +740,7 @@ const hv_vorlage_build_tree_nodes = async (
 		// Leaf für das Feld selbst
 		nodes.push({
 			label: `${baseLabel}: ${label}`,
-			placeholder: `{{ ${baseKey}.${df.fieldname} }}`,
+			placeholder: hv_vorlage_data_placeholder(`${baseKey}.${df.fieldname}`),
 			type,
 			children: [],
 		});
@@ -757,7 +759,7 @@ const hv_vorlage_build_tree_nodes = async (
 				continue;
 			}
 
-			const targetKey = hv_scrub(df.options);
+			const targetKey = `${baseKey}.${df.fieldname}`;
 			const childVisited = new Set(visited);
 			childVisited.add(df.options);
 
@@ -773,7 +775,7 @@ const hv_vorlage_build_tree_nodes = async (
 			if (childNodes.length) {
 				nodes.push({
 					label: `${label} → ${df.options}`,
-					placeholder: `{{ ${targetKey}.name }}`,
+					placeholder: hv_vorlage_data_placeholder(`${targetKey}.name`),
 					type: "Link",
 					children: childNodes,
 				});
@@ -825,7 +827,7 @@ const hv_vorlage_build_iteration_tree = async (iterationDoctype) => {
 	const nodes = [
 		{
 			label: __("Name"),
-			placeholder: "{{ iteration_doc.name }}",
+			placeholder: hv_vorlage_data_placeholder("objekt.name"),
 			type: "Name",
 			children: [],
 		},
@@ -850,7 +852,9 @@ const hv_vorlage_build_iteration_tree = async (iterationDoctype) => {
 				const childType = hv_vorlage_format_field_type(cdf);
 				children.push({
 					label: `${childLabel} [0]`,
-					placeholder: `{{ iteration_doc.${df.fieldname}[0].${cdf.fieldname} }}`,
+					placeholder: hv_vorlage_data_placeholder(
+						`objekt.${df.fieldname}[0].${cdf.fieldname}`
+					),
 					type: childType,
 					children: [],
 				});
@@ -858,7 +862,6 @@ const hv_vorlage_build_iteration_tree = async (iterationDoctype) => {
 
 			nodes.push({
 				label: `${label} (${__("Tabelle")})`,
-				placeholder: `{{ iteration_doc.${df.fieldname} }}`,
 				type: df.options ? `Table → ${df.options}` : "Table",
 				children,
 			});
@@ -871,7 +874,7 @@ const hv_vorlage_build_iteration_tree = async (iterationDoctype) => {
 				: await hv_vorlage_load_meta(df.options);
 			if (targetMeta) {
 				const childNodes = await hv_vorlage_build_tree_nodes(
-					df.fieldname,
+					`objekt.${df.fieldname}`,
 					df.options,
 					targetMeta,
 					new Set([df.options]),
@@ -881,7 +884,7 @@ const hv_vorlage_build_iteration_tree = async (iterationDoctype) => {
 				if (childNodes.length) {
 					nodes.push({
 						label: `${label} → ${df.options}`,
-						placeholder: `{{ ${df.fieldname}.name }}`,
+						placeholder: hv_vorlage_data_placeholder(`objekt.${df.fieldname}.name`),
 						type: "Link",
 						children: childNodes,
 					});
@@ -891,7 +894,7 @@ const hv_vorlage_build_iteration_tree = async (iterationDoctype) => {
 
 		nodes.push({
 			label,
-			placeholder: `{{ iteration_doc.${df.fieldname} }}`,
+			placeholder: hv_vorlage_data_placeholder(`objekt.${df.fieldname}`),
 			type,
 			children: [],
 		});
@@ -1893,12 +1896,12 @@ const hv_get_start_nodes = (frm) => {
 	const nodes = [];
 
 	if (base) {
-		// Start direkt beim Iterations-Doctype, damit auch eigene Felder/Child-Tabellen erreicht werden.
+		// Start direkt beim offiziellen Iterationsobjekt-Root.
 		nodes.push({
-			fieldname: "iteration_doc",
+			fieldname: "objekt",
 			doctype: base,
 			label: base,
-			path: ["iteration_doc"],
+			path: ["objekt"],
 		});
 	}
 
@@ -1907,7 +1910,7 @@ const hv_get_start_nodes = (frm) => {
 			fieldname: link.fieldname,
 			doctype: link.doctype,
 			label: link.label || link.fieldname,
-			path: [link.fieldname],
+			path: ["objekt", link.fieldname],
 		});
 	});
 

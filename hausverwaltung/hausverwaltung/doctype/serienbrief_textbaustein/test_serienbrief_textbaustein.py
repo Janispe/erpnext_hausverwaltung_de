@@ -58,6 +58,33 @@ def _mietvertrag(miete=None, betriebskosten=None, heizkosten=None):
 
 
 class TestSerienbriefTextbaustein(FrappeTestCase):
+	def test_placeholder_token_resolves_objekt_root(self):
+		rendered = _render_serienbrief_template(
+			"Aktenzeichen {{$ objekt.name $}}",
+			{"objekt": frappe._dict(doctype="Mietvertrag", name="MV-TEST-001")},
+		)
+
+		self.assertEqual(rendered, "Aktenzeichen MV-TEST-001")
+
+	def test_placeholder_token_resolves_numeric_list_index(self):
+		context = {
+			"objekt": frappe._dict(
+				doctype="Mietvertrag",
+				mieter=[
+					frappe._dict(
+						doctype="Vertragspartner",
+						kontakt=frappe._dict(doctype="Contact", last_name="Mustermann"),
+					)
+				],
+			)
+		}
+		rendered = _render_serienbrief_template(
+			"Name {{$ objekt.mieter[0].kontakt.last_name $}}",
+			context,
+		)
+
+		self.assertEqual(rendered, "Name Mustermann")
+
 	def test_miethistorie_renders_segments_and_open_end(self):
 		mv = _mietvertrag(
 			miete=[
@@ -87,4 +114,3 @@ class TestSerienbriefTextbaustein(FrappeTestCase):
 		mv = _mietvertrag()
 		rendered = _render_miethistorie({"mietvertrag": mv, "iteration_objekt": None})
 		self.assertIn("Keine Miethistorie vorhanden.", rendered)
-

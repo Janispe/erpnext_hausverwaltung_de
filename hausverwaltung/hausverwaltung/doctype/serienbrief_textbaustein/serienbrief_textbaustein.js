@@ -145,13 +145,17 @@ const hv_parse_mapping = (raw) => {
 	}
 };
 
+const hv_data_placeholder = (path) => `{{$ ${path} $}}`;
+
 const hv_placeholder_to_value_path = (placeholder) => {
 	const raw = (placeholder == null ? "" : String(placeholder)).trim();
 	if (!raw) {
 		return null;
 	}
 
-	const match = raw.match(/^\{\{\s*([^{}]+?)\s*\}\}$/);
+	const match =
+		raw.match(/^\{\{\$\s*([^{}]+?)\s*\$\}\}$/) ||
+		raw.match(/^\{\{\s*([^{}]+?)\s*\}\}$/);
 	if (!match) {
 		return null;
 	}
@@ -161,7 +165,17 @@ const hv_placeholder_to_value_path = (placeholder) => {
 		return null;
 	}
 
-	const normalized = expr.replace(/\[(\d+)\]/g, ".$1").trim();
+	let normalized = expr.trim();
+	if (normalized === "iteration_doc" || normalized === "doc" || normalized === "iteration_objekt") {
+		normalized = "objekt";
+	} else if (normalized.startsWith("iteration_doc.")) {
+		normalized = `objekt.${normalized.slice("iteration_doc.".length)}`;
+	} else if (normalized.startsWith("doc.")) {
+		normalized = `objekt.${normalized.slice("doc.".length)}`;
+	} else if (normalized.startsWith("iteration_objekt.")) {
+		normalized = `objekt.${normalized.slice("iteration_objekt.".length)}`;
+	}
+
 	if (!normalized || normalized.startsWith(".") || normalized.endsWith(".")) {
 		return null;
 	}
@@ -174,8 +188,11 @@ const hv_placeholder_to_value_path = (placeholder) => {
 		return null;
 	}
 
-	const normalizedForCheck = normalized.replace(/\[\]/g, "");
-	if (!normalizedForCheck || !/^[A-Za-z0-9_.]+$/.test(normalizedForCheck)) {
+	const normalizedForCheck = normalized.replace(/\[\]/g, "").replace(/\[\d+\]/g, "");
+	if (
+		!normalizedForCheck ||
+		!/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(normalizedForCheck)
+	) {
 		return null;
 	}
 
@@ -500,10 +517,10 @@ const hv_get_start_nodes_for_startobjekt = async (startobjekt) => {
 
 	const nodes = [
 		{
-			fieldname: "iteration_doc",
+			fieldname: "objekt",
 			doctype: startobjekt,
 			label: startobjekt,
-			path: ["iteration_doc"],
+			path: ["objekt"],
 		},
 	];
 
@@ -514,7 +531,7 @@ const hv_get_start_nodes_for_startobjekt = async (startobjekt) => {
 				fieldname: df.fieldname,
 				doctype: df.options,
 				label: df.label || df.fieldname,
-				path: [df.fieldname],
+				path: ["objekt", df.fieldname],
 			});
 		}
 	});
@@ -566,7 +583,6 @@ const hv_build_tree_nodes = async (baseKey, baseLabel, meta, visited, depth, max
 		if ((df.fieldtype === "Table" || df.fieldtype === "Table MultiSelect") && df.options) {
 			nodes.push({
 				label: `${baseLabel}: ${label} (${__("Liste")})`,
-				placeholder: `{{ ${baseKey}.${df.fieldname}[] }}`,
 				type: __("Tabelle"),
 				children: [],
 			});
@@ -621,7 +637,7 @@ const hv_build_tree_nodes = async (baseKey, baseLabel, meta, visited, depth, max
 		// Immer einen Leaf für das eigentliche Feld
 		nodes.push({
 			label: `${baseLabel}: ${label}`,
-			placeholder: `{{ ${baseKey}.${df.fieldname} }}`,
+			placeholder: hv_data_placeholder(`${baseKey}.${df.fieldname}`),
 			type,
 			children: [],
 		});
@@ -654,7 +670,7 @@ const hv_build_tree_nodes = async (baseKey, baseLabel, meta, visited, depth, max
 			if (childNodes.length) {
 				nodes.push({
 					label: `${label} → ${df.options}`,
-					placeholder: `{{ ${targetKey} }}`,
+					placeholder: hv_data_placeholder(`${targetKey}.name`),
 					type: "Link",
 					children: childNodes,
 				});
