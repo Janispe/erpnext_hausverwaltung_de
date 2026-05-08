@@ -66,6 +66,14 @@ class TestSerienbriefTextbaustein(FrappeTestCase):
 
 		self.assertEqual(rendered, "Aktenzeichen MV-TEST-001")
 
+	def test_placeholder_token_allows_spaces_around_marker(self):
+		rendered = _render_serienbrief_template(
+			"Aktenzeichen {{ $ objekt.name $ }}",
+			{"objekt": frappe._dict(doctype="Mietvertrag", name="MV-TEST-001")},
+		)
+
+		self.assertEqual(rendered, "Aktenzeichen MV-TEST-001")
+
 	def test_placeholder_token_resolves_numeric_list_index(self):
 		context = {
 			"objekt": frappe._dict(

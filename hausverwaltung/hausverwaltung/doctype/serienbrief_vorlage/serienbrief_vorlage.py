@@ -440,16 +440,27 @@ def _render_split_preview_html(html: str) -> str:
 	Undefined und werden vom finalize-Hook als gelb hervorgehobener
 	Beispielwert gerendert. Fehler werden bewusst NICHT geschluckt — sie
 	sollen in der Live-Preview als Status-Meldung sichtbar sein.
+
+	``{{$ pfad $}}``-Tokens werden vor Jinja durch den Resolver aufgelöst;
+	bei Mock-Lücken liefert der Fallback einen gelb hervorgehobenen
+	Beispielwert.
 	"""
 	from jinja2 import StrictUndefined
+	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+		_preprocess_simple_paths,
+	)
 
 	if not html:
 		return html
 	env = get_jenv().overlay(
 		undefined=StrictUndefined, finalize=_split_preview_finalize_value
 	)
+	ctx = _split_preview_context()
 	sanitized = sanitize_richtext_jinja_source(html)
-	return env.from_string(sanitized).render(_split_preview_context())
+	preprocessed = _preprocess_simple_paths(
+		sanitized, ctx, on_unresolvable=_split_preview_token_fallback
+	)
+	return env.from_string(preprocessed).render(ctx)
 
 
 def _render_split_preview_source(source: str, extra_context: Dict[str, Any] | None = None) -> str:
@@ -459,8 +470,16 @@ def _render_split_preview_source(source: str, extra_context: Dict[str, Any] | No
 	Strict-Mode: Root-Variablen, die nicht im Context vorkommen, werfen sofort.
 	Beispielwerte für definierte Sub-Attribute kommen weiter aus den
 	SplitPreview-Klassen (siehe ``_render_split_preview_html``).
+
+	Vor dem Jinja-Rendering werden ``{{$ pfad $}}``-Platzhalter durch den
+	Resolver aufgelöst — analog zum echten Render-Pfad. Bei nicht
+	auflösbaren Pfaden (Mock-Lücken) liefert der Fallback einen
+	Beispielwert mit gelbem Highlight, statt die Vorschau abzubrechen.
 	"""
 	from jinja2 import StrictUndefined
+	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+		_preprocess_simple_paths,
+	)
 
 	if not source:
 		return source
@@ -471,7 +490,19 @@ def _render_split_preview_source(source: str, extra_context: Dict[str, Any] | No
 	if extra_context:
 		ctx.update(extra_context)
 	sanitized = sanitize_richtext_jinja_source(source)
-	return env.from_string(sanitized).render(ctx)
+	preprocessed = _preprocess_simple_paths(
+		sanitized, ctx, on_unresolvable=_split_preview_token_fallback
+	)
+	return env.from_string(preprocessed).render(ctx)
+
+
+def _split_preview_token_fallback(path: str, exc: Exception | None) -> str:
+	"""Im Live-Preview: Token mit nicht-auflösbarem Pfad durch einen
+	Beispielwert mit gelbem Highlight ersetzen — konsistent zur
+	SplitPreviewUndefined-Optik.
+	"""
+	preview_value = _preview_value_from_path(path)
+	return f'<span class="hv-preview-field">{preview_value}</span>'
 
 
 def _preview_defaults_for_block(block_doc, base_context: Dict[str, Any] | None = None) -> Dict[str, Any]:

@@ -31,7 +31,7 @@ _SIMPLE_PATH_RE = re.compile(
 	r"([a-zA-Z_][\w]*(?:\[\d+\])?(?:\.[a-zA-Z_][\w]*(?:\[\d+\])?)+)"
 	r"\s*\}\}"
 )
-_PLACEHOLDER_PATH_RE = re.compile(r"\{\{\$\s*([^{}]+?)\s*\$\}\}")
+_PLACEHOLDER_PATH_RE = re.compile(r"\{\{\s*\$\s*([^{}]+?)\s*\$\s*\}\}")
 _MIGRATABLE_BODY_ROOTS = {"iteration_doc", "iteration_objekt", "doc", "objekt"}
 _RAW_PATH_RE = re.compile(
 	r"^(?:iteration_doc|iteration_objekt|doc)(?:\[\d+\])?"

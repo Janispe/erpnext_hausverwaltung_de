@@ -11,7 +11,7 @@ from typing import Any, Dict, List
 import frappe
 from bs4 import BeautifulSoup
 from PyPDF2 import PdfMerger, PdfReader, PdfWriter
-from jinja2 import TemplateError, UndefinedError
+from jinja2 import TemplateError, Undefined, UndefinedError
 from markupsafe import Markup
 from frappe import _
 from frappe.contacts.doctype.address.address import get_default_address
@@ -122,11 +122,16 @@ def _strict_finalize(value):
 # Eindeutig getrennt von Jinja-Tokens (``{{ ... }}``), die Logik, Filter und
 # Variable-Referenzen enthalten — kein Heuristik-Raten mehr.
 _PLACEHOLDER_TOKEN_RE = re.compile(
-	r"\{\{\$\s*([a-zA-Z_][\w]*(?:\[\d+\])?(?:\.[a-zA-Z_][\w]*(?:\[\d+\])?)*)\s*\$\}\}"
+	r"\{\{\s*\$\s*([a-zA-Z_][\w]*(?:\[\d+\])?(?:\.[a-zA-Z_][\w]*(?:\[\d+\])?)*)\s*\$\s*\}\}"
 )
 
 
-def _preprocess_simple_paths(template: str, context: Dict[str, Any]) -> str:
+def _preprocess_simple_paths(
+	template: str,
+	context: Dict[str, Any],
+	*,
+	on_unresolvable: "callable | None" = None,
+) -> str:
 	"""Löst Platzhalter-Tokens ``{{$ pfad $}}`` via :func:`_resolve_value_path`
 	vor dem Jinja-Rendering auf und ersetzt sie durch den Wert.
 
@@ -138,22 +143,33 @@ def _preprocess_simple_paths(template: str, context: Dict[str, Any]) -> str:
 	* ``{{ wohnung.einheit }}`` — **Jinja**, normale Variable / Logik /
 	  Filter / Conditionals; läuft durch das Jinja-Render-Environment.
 
-	Wenn der Resolver scheitert (z.B. None), bleibt der Token im Body —
-	dann wirft Jinja eine klare Fehlermeldung.
+	``on_unresolvable``: optionaler Fallback-Callback ``(path, exc) -> str``,
+	der bei Resolver-Exception oder None statt ``frappe.throw`` aufgerufen
+	wird. Im Live-Preview-Pfad wird das genutzt, um Tokens mit fehlenden
+	Mock-Daten durch Beispielwerte zu ersetzen, statt die Vorschau abzubrechen.
 	"""
-	if not template or "{{$" not in template:
+	if not template or "$" not in template:
 		return template
 
 	def _replace(match: "re.Match[str]") -> str:
 		path = match.group(1)
-		# Resolver-Exceptions (z.B. „Feld X existiert nicht im DocType str")
-		# propagieren — das sind klare Pfad-Fehler, die der User sehen soll.
-		value = _resolve_value_path(path, context)
+		try:
+			value = _resolve_value_path(path, context)
+		except Exception as exc:
+			if on_unresolvable is not None:
+				return on_unresolvable(path, exc)
+			# Resolver-Exceptions (z.B. „Feld X existiert nicht im DocType str")
+			# propagieren — das sind klare Pfad-Fehler, die der User sehen soll.
+			raise
 		if value is None:
+			if on_unresolvable is not None:
+				return on_unresolvable(path, None)
 			frappe.throw(
 				_("Platzhalter <code>{{$ {0} $}}</code> konnte nicht aufgelöst werden: der Pfad liefert <strong>None</strong>. Bitte Daten prüfen oder den Pfad korrigieren.").format(path),
 				title=_("Serienbrief Fehler"),
 			)
+		if isinstance(value, Undefined) and on_unresolvable is not None:
+			return on_unresolvable(path, None)
 		# Document/Dict-ähnliches → Doc-Name (analog Frappe-Default).
 		if hasattr(value, "doctype") and getattr(value, "name", None):
 			return cstr(value.name)
