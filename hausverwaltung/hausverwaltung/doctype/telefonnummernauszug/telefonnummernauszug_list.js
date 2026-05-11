@@ -41,6 +41,13 @@ const open_neue_liste_dialog = () => {
 				description: __("Optional. Leer = alle Immobilien."),
 			},
 			{
+				fieldname: "gebaeudeteil",
+				fieldtype: "Select",
+				label: __("Gebäudeteil"),
+				options: "\nVH\nSF\nHH",
+				description: __("Optional. Leer = alle Gebäudeteile."),
+			},
+			{
 				fieldname: "nach_hauptmieter_nachname_sortieren",
 				fieldtype: "Check",
 				label: __("Nach erstem Hauptmieter-Nachnamen sortieren"),
@@ -57,6 +64,7 @@ const open_neue_liste_dialog = () => {
 				args: {
 					stichtag: values.stichtag,
 					immobilie: values.immobilie || null,
+					gebaeudeteil: values.gebaeudeteil || null,
 					nach_hauptmieter_nachname_sortieren:
 						values.nach_hauptmieter_nachname_sortieren ? 1 : 0,
 				},

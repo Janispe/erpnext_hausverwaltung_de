@@ -3,7 +3,10 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, getdate, today
 
-from hausverwaltung.hausverwaltung.utils.gebaeudeteil import split_lage_gebaeudeteil
+from hausverwaltung.hausverwaltung.utils.gebaeudeteil import (
+	normalize_gebaeudeteil_to_standard,
+	split_lage_gebaeudeteil,
+)
 
 
 GEBAEUDETEIL_ORDER = {"VH": 0, "SF": 1, "HH": 2}
@@ -36,7 +39,8 @@ class Telefonnummernauszug(Document):
 		d = getdate(self.stichtag)
 		monat_jahr = f"{GERMAN_MONTHS[d.month]} {d.year}"
 		if self.immobilie:
-			return f"Telefonliste {monat_jahr} – {self.immobilie}"
+			suffix = f" ({self.gebaeudeteil})" if self.gebaeudeteil else ""
+			return f"Telefonliste {monat_jahr} – {self.immobilie}{suffix}"
 		return f"Telefonliste {monat_jahr}"
 
 	def get_grouped_eintraege(self) -> list[dict]:
@@ -98,7 +102,10 @@ class Telefonnummernauszug(Document):
 
 
 def _query_eintraege(
-	stichtag: str, immobilie: str | None, nach_hauptmieter_nachname_sortieren: bool = False
+	stichtag: str,
+	immobilie: str | None,
+	gebaeudeteil: str | None = None,
+	nach_hauptmieter_nachname_sortieren: bool = False,
 ) -> list[dict]:
 	contact_phone_expr = "NULLIF(c.phone, '')"
 	try:
@@ -177,6 +184,15 @@ def _query_eintraege(
 		if row.get("telefon") and row.get("mobil") and row["telefon"] == row["mobil"]:
 			row["mobil"] = None
 
+	if gebaeudeteil:
+		target = normalize_gebaeudeteil_to_standard(gebaeudeteil)
+		if target:
+			rows = [
+				r
+				for r in rows
+				if normalize_gebaeudeteil_to_standard(r.get("gebaeudeteil")) == target
+			]
+
 	wohnung_sort_map = _hauptmieter_sort_map(rows) if nach_hauptmieter_nachname_sortieren else {}
 
 	def _sort_key(r):
@@ -234,18 +250,26 @@ def _first_hauptmieter_name(mieter: list[dict]) -> str:
 
 @frappe.whitelist()
 def erstelle_und_lade(
-	stichtag: str, immobilie: str | None = None, nach_hauptmieter_nachname_sortieren: int = 0
+	stichtag: str,
+	immobilie: str | None = None,
+	gebaeudeteil: str | None = None,
+	nach_hauptmieter_nachname_sortieren: int = 0,
 ) -> dict:
 	"""Legt einen neuen Telefonnummernauszug an und lädt die Einträge sofort."""
 	doc = frappe.new_doc("Telefonnummernauszug")
 	doc.stichtag = getdate(stichtag).isoformat()
 	if immobilie:
 		doc.immobilie = immobilie
+	if gebaeudeteil:
+		doc.gebaeudeteil = gebaeudeteil
 	doc.nach_hauptmieter_nachname_sortieren = cint(nach_hauptmieter_nachname_sortieren)
 	doc.insert()
 
 	rows = _query_eintraege(
-		doc.stichtag, doc.immobilie or None, cint(doc.nach_hauptmieter_nachname_sortieren)
+		doc.stichtag,
+		doc.immobilie or None,
+		doc.gebaeudeteil or None,
+		cint(doc.nach_hauptmieter_nachname_sortieren),
 	)
 	for row in rows:
 		doc.append(
@@ -270,7 +294,10 @@ def lade_eintraege(name: str) -> dict:
 	doc = frappe.get_doc("Telefonnummernauszug", name)
 	stichtag = getdate(doc.stichtag or today()).isoformat()
 	rows = _query_eintraege(
-		stichtag, doc.immobilie or None, cint(doc.nach_hauptmieter_nachname_sortieren)
+		stichtag,
+		doc.immobilie or None,
+		doc.gebaeudeteil or None,
+		cint(doc.nach_hauptmieter_nachname_sortieren),
 	)
 
 	doc.set("eintraege", [])

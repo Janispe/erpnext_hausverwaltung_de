@@ -12,6 +12,7 @@
   "stichtag",
   "column_break_kopf",
   "immobilie",
+  "gebaeudeteil",
   "anzahl_eintraege",
   "nach_hauptmieter_nachname_sortieren",
   "section_break_bemerkung",
@@ -51,6 +52,13 @@
    "label": "Immobilie",
    "options": "Immobilie",
    "description": "Optional. Leer = alle Immobilien."
+  },
+  {
+   "fieldname": "gebaeudeteil",
+   "fieldtype": "Select",
+   "label": "Gebäudeteil",
+   "options": "\nVH\nSF\nHH",
+   "description": "Optional. Leer = alle Gebäudeteile."
   },
   {
    "fieldname": "anzahl_eintraege",
