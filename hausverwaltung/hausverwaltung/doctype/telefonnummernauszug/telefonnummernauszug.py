@@ -39,8 +39,7 @@ class Telefonnummernauszug(Document):
 		d = getdate(self.stichtag)
 		monat_jahr = f"{GERMAN_MONTHS[d.month]} {d.year}"
 		if self.immobilie:
-			suffix = f" ({self.gebaeudeteil})" if self.gebaeudeteil else ""
-			return f"Telefonliste {monat_jahr} – {self.immobilie}{suffix}"
+			return f"Telefonliste {monat_jahr} – {self.immobilie}"
 		return f"Telefonliste {monat_jahr}"
 
 	def get_grouped_eintraege(self) -> list[dict]:
@@ -86,6 +85,9 @@ class Telefonnummernauszug(Document):
 				}
 			)
 
+		nach_gebaeudeteil = cint(getattr(self, "nach_gebaeudeteil_sortieren", 0))
+		nach_nachname = cint(getattr(self, "nach_hauptmieter_nachname_sortieren", 0))
+
 		def _sort_key(g):
 			wid = g.get("wohnung_id")
 			try:
@@ -93,9 +95,13 @@ class Telefonnummernauszug(Document):
 			except (TypeError, ValueError):
 				wohnung_key = (999999, g.get("wohnung") or "")
 
-			if cint(getattr(self, "nach_hauptmieter_nachname_sortieren", 0)):
-				return (_first_hauptmieter_name(g.get("mieter") or []), *wohnung_key)
-			return wohnung_key
+			parts: list = []
+			if nach_gebaeudeteil:
+				parts.append(_gebaeudeteil_sort_index(g.get("gebaeudeteil")))
+			if nach_nachname:
+				parts.append(_first_hauptmieter_name(g.get("mieter") or []))
+			parts.extend(wohnung_key)
+			return tuple(parts)
 
 		groups.sort(key=_sort_key)
 		return groups
@@ -104,8 +110,8 @@ class Telefonnummernauszug(Document):
 def _query_eintraege(
 	stichtag: str,
 	immobilie: str | None,
-	gebaeudeteil: str | None = None,
 	nach_hauptmieter_nachname_sortieren: bool = False,
+	nach_gebaeudeteil_sortieren: bool = False,
 ) -> list[dict]:
 	contact_phone_expr = "NULLIF(c.phone, '')"
 	try:
@@ -184,15 +190,6 @@ def _query_eintraege(
 		if row.get("telefon") and row.get("mobil") and row["telefon"] == row["mobil"]:
 			row["mobil"] = None
 
-	if gebaeudeteil:
-		target = normalize_gebaeudeteil_to_standard(gebaeudeteil)
-		if target:
-			rows = [
-				r
-				for r in rows
-				if normalize_gebaeudeteil_to_standard(r.get("gebaeudeteil")) == target
-			]
-
 	wohnung_sort_map = _hauptmieter_sort_map(rows) if nach_hauptmieter_nachname_sortieren else {}
 
 	def _sort_key(r):
@@ -202,17 +199,27 @@ def _query_eintraege(
 		except (TypeError, ValueError):
 			wid_int = 999999
 		wohnung_key = (wid_int, (r.get("wohnung") or ""))
+		mieter_idx = int(r.get("mieter_idx") or 0)
+
+		parts: list = []
+		if nach_gebaeudeteil_sortieren:
+			parts.append(_gebaeudeteil_sort_index(r.get("gebaeudeteil")))
 		if nach_hauptmieter_nachname_sortieren:
 			key = _wohnung_key(r)
-			return (
-				wohnung_sort_map.get(key) or _normalize_sort_value(r.get("mieter_nachname") or r.get("mieter_name")),
-				*wohnung_key,
-				int(r.get("mieter_idx") or 0),
+			parts.append(
+				wohnung_sort_map.get(key)
+				or _normalize_sort_value(r.get("mieter_nachname") or r.get("mieter_name"))
 			)
-		return (*wohnung_key, int(r.get("mieter_idx") or 0))
+		parts.extend([*wohnung_key, mieter_idx])
+		return tuple(parts)
 
 	rows.sort(key=_sort_key)
 	return rows
+
+
+def _gebaeudeteil_sort_index(value: str | None) -> int:
+	teil = normalize_gebaeudeteil_to_standard(value)
+	return GEBAEUDETEIL_ORDER.get(teil, 99) if teil else 99
 
 
 def _wohnung_key(row: dict) -> tuple[str, str, str]:
@@ -252,24 +259,23 @@ def _first_hauptmieter_name(mieter: list[dict]) -> str:
 def erstelle_und_lade(
 	stichtag: str,
 	immobilie: str | None = None,
-	gebaeudeteil: str | None = None,
 	nach_hauptmieter_nachname_sortieren: int = 0,
+	nach_gebaeudeteil_sortieren: int = 0,
 ) -> dict:
 	"""Legt einen neuen Telefonnummernauszug an und lädt die Einträge sofort."""
 	doc = frappe.new_doc("Telefonnummernauszug")
 	doc.stichtag = getdate(stichtag).isoformat()
 	if immobilie:
 		doc.immobilie = immobilie
-	if gebaeudeteil:
-		doc.gebaeudeteil = gebaeudeteil
 	doc.nach_hauptmieter_nachname_sortieren = cint(nach_hauptmieter_nachname_sortieren)
+	doc.nach_gebaeudeteil_sortieren = cint(nach_gebaeudeteil_sortieren)
 	doc.insert()
 
 	rows = _query_eintraege(
 		doc.stichtag,
 		doc.immobilie or None,
-		doc.gebaeudeteil or None,
 		cint(doc.nach_hauptmieter_nachname_sortieren),
+		cint(doc.nach_gebaeudeteil_sortieren),
 	)
 	for row in rows:
 		doc.append(
@@ -296,8 +302,8 @@ def lade_eintraege(name: str) -> dict:
 	rows = _query_eintraege(
 		stichtag,
 		doc.immobilie or None,
-		doc.gebaeudeteil or None,
 		cint(doc.nach_hauptmieter_nachname_sortieren),
+		cint(getattr(doc, "nach_gebaeudeteil_sortieren", 0)),
 	)
 
 	doc.set("eintraege", [])

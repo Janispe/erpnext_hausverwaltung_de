@@ -12,8 +12,8 @@
   "stichtag",
   "column_break_kopf",
   "immobilie",
-  "gebaeudeteil",
   "anzahl_eintraege",
+  "nach_gebaeudeteil_sortieren",
   "nach_hauptmieter_nachname_sortieren",
   "section_break_bemerkung",
   "bemerkung",
@@ -54,17 +54,17 @@
    "description": "Optional. Leer = alle Immobilien."
   },
   {
-   "fieldname": "gebaeudeteil",
-   "fieldtype": "Select",
-   "label": "Gebäudeteil",
-   "options": "\nVH\nSF\nHH",
-   "description": "Optional. Leer = alle Gebäudeteile."
-  },
-  {
    "fieldname": "anzahl_eintraege",
    "fieldtype": "Int",
    "label": "Anzahl Einträge",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Wenn aktiv, werden die Wohnungen zuerst nach Gebäudeteil (VH → SF → HH) gruppiert.",
+   "fieldname": "nach_gebaeudeteil_sortieren",
+   "fieldtype": "Check",
+   "label": "Nach Gebäudeteil sortieren"
   },
   {
    "default": "0",

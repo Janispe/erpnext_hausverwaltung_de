@@ -41,11 +41,12 @@ const open_neue_liste_dialog = () => {
 				description: __("Optional. Leer = alle Immobilien."),
 			},
 			{
-				fieldname: "gebaeudeteil",
-				fieldtype: "Select",
-				label: __("Gebäudeteil"),
-				options: "\nVH\nSF\nHH",
-				description: __("Optional. Leer = alle Gebäudeteile."),
+				fieldname: "nach_gebaeudeteil_sortieren",
+				fieldtype: "Check",
+				label: __("Nach Gebäudeteil sortieren"),
+				description: __(
+					"Wohnungen zuerst nach Gebäudeteil gruppieren (VH → SF → HH)."
+				),
 			},
 			{
 				fieldname: "nach_hauptmieter_nachname_sortieren",
@@ -64,9 +65,10 @@ const open_neue_liste_dialog = () => {
 				args: {
 					stichtag: values.stichtag,
 					immobilie: values.immobilie || null,
-					gebaeudeteil: values.gebaeudeteil || null,
 					nach_hauptmieter_nachname_sortieren:
 						values.nach_hauptmieter_nachname_sortieren ? 1 : 0,
+					nach_gebaeudeteil_sortieren:
+						values.nach_gebaeudeteil_sortieren ? 1 : 0,
 				},
 				freeze: true,
 				freeze_message: __("Liste wird erstellt…"),
