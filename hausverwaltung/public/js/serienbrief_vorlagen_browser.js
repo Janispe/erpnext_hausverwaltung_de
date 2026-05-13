@@ -11,6 +11,14 @@
 
 frappe.provide("hausverwaltung.serienbrief");
 
+// Frappe rendert die Listenansicht /app/serienbrief-vorlage zuerst und ruft
+// erst danach den Redirect in serienbrief_vorlage_list.js auf — sichtbar als
+// Flackern der Workspace-Sidebar links. `frappe.re_route` greift im Router
+// VOR dem Render (siehe frappe/public/js/frappe/router.js#route), springt
+// also direkt zum Vorlagenbaum, ohne die List-View überhaupt zu mounten.
+frappe.re_route = frappe.re_route || {};
+frappe.re_route["serienbrief-vorlage"] = "serienbrief_vorlagenbaum";
+
 const HV_BROWSER_STYLE_ID = "hv-serienbrief-vorlagen-browser-styles";
 
 const hv_browser_ensure_styles = () => {
