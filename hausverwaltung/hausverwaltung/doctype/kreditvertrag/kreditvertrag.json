@@ -1,0 +1,266 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:KV-{YYYY}-{#####}",
+ "creation": "2026-05-13 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bezeichnung",
+  "status",
+  "stammdaten_section",
+  "company",
+  "lieferant",
+  "vertragsnummer",
+  "column_break_stamm",
+  "immobilie",
+  "bemerkung",
+  "konten_section",
+  "bank_account",
+  "darlehenskonto",
+  "column_break_konten",
+  "zinsaufwandskonto",
+  "cost_center",
+  "konditionen_section",
+  "anfangs_restschuld",
+  "laufzeit_start",
+  "column_break_konditionen",
+  "laufzeit_ende",
+  "match_tolerance_days",
+  "plausibilitaet_section",
+  "aktuelle_restschuld",
+  "gl_saldo_darlehenskonto",
+  "column_break_plausibilitaet",
+  "restschuld_abweichung",
+  "plan_section",
+  "plan_vorbelegen_btn",
+  "plan_csv_import_btn",
+  "plan"
+ ],
+ "fields": [
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Bezeichnung",
+   "reqd": 1
+  },
+  {
+   "default": "Aktiv",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Aktiv\nAbgelöst\nVergangenheit",
+   "read_only": 1,
+   "description": "Wird automatisch berechnet: Aktiv = offene Raten oder Restschuld > 0. Abgelöst = alle Raten gebucht und Restschuld ≈ 0. Vergangenheit = keine offenen Raten mehr, aber Restschuld > 0 (zu klären)."
+  },
+  {
+   "fieldname": "stammdaten_section",
+   "fieldtype": "Section Break",
+   "label": "Stammdaten"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "lieferant",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Lieferant (Bank)",
+   "options": "Supplier",
+   "reqd": 1,
+   "description": "Die kreditgebende Bank — wird auch als Party auf der Darlehens-Soll-Zeile im Buchungssatz gesetzt (für GL-Auswertung, kein offener-Posten-Ausgleich)."
+  },
+  {
+   "fieldname": "vertragsnummer",
+   "fieldtype": "Data",
+   "label": "Vertragsnummer"
+  },
+  {
+   "fieldname": "column_break_stamm",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Immobilie",
+   "options": "Immobilie"
+  },
+  {
+   "fieldname": "bemerkung",
+   "fieldtype": "Small Text",
+   "label": "Bemerkung"
+  },
+  {
+   "fieldname": "konten_section",
+   "fieldtype": "Section Break",
+   "label": "Konten"
+  },
+  {
+   "fieldname": "bank_account",
+   "fieldtype": "Link",
+   "label": "Bankkonto",
+   "options": "Bank Account",
+   "reqd": 1,
+   "description": "Quelle der Raten-Zahlung. Bank Transaction.bank_account muss damit übereinstimmen für Auto-Match."
+  },
+  {
+   "fieldname": "darlehenskonto",
+   "fieldtype": "Link",
+   "label": "Darlehenskonto",
+   "options": "Account",
+   "reqd": 1,
+   "description": "Verbindlichkeits-GL-Konto (root_type=Liability, account_type leer — NICHT Payable). Wird bei jeder Rate um Tilgung + Sondertilgung belastet."
+  },
+  {
+   "fieldname": "column_break_konten",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "zinsaufwandskonto",
+   "fieldtype": "Link",
+   "label": "Zinsaufwandskonto",
+   "options": "Account",
+   "reqd": 1,
+   "description": "Aufwandskonto (root_type=Expense), das den Zinsanteil jeder Rate aufnimmt."
+  },
+  {
+   "fieldname": "cost_center",
+   "fieldtype": "Link",
+   "label": "Kostenstelle",
+   "options": "Cost Center",
+   "description": "Default-Kostenstelle für JE-Zeilen. Wird aus Immobilie vorbelegt."
+  },
+  {
+   "fieldname": "konditionen_section",
+   "fieldtype": "Section Break",
+   "label": "Konditionen"
+  },
+  {
+   "fieldname": "anfangs_restschuld",
+   "fieldtype": "Currency",
+   "label": "Anfangs-Restschuld",
+   "reqd": 1,
+   "description": "Fachliche Restschuld zu Beginn der Plan-Pflege (z.B. Stand bei System-Einführung — NICHT zwingend die Original-Kreditsumme)."
+  },
+  {
+   "fieldname": "laufzeit_start",
+   "fieldtype": "Date",
+   "label": "Laufzeit von"
+  },
+  {
+   "fieldname": "column_break_konditionen",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "laufzeit_ende",
+   "fieldtype": "Date",
+   "label": "Laufzeit bis"
+  },
+  {
+   "default": "7",
+   "fieldname": "match_tolerance_days",
+   "fieldtype": "Int",
+   "label": "Match-Toleranz (Tage)",
+   "description": "Datums-Toleranz für den Auto-Match aus dem Bankimport (|Fälligkeit - Buchungsdatum| <= n Tage)."
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "plausibilitaet_section",
+   "fieldtype": "Section Break",
+   "label": "Plausibilität"
+  },
+  {
+   "fieldname": "aktuelle_restschuld",
+   "fieldtype": "Currency",
+   "label": "Aktuelle Restschuld (berechnet)",
+   "read_only": 1,
+   "description": "Anfangs-Restschuld − Summe aus Tilgung + Sondertilgung der bereits gebuchten Raten."
+  },
+  {
+   "fieldname": "gl_saldo_darlehenskonto",
+   "fieldtype": "Currency",
+   "label": "GL-Saldo Darlehenskonto",
+   "read_only": 1,
+   "description": "Aktueller Bilanz-Saldo des Darlehenskontos (Σcredit − Σdebit für Liability)."
+  },
+  {
+   "fieldname": "column_break_plausibilitaet",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "restschuld_abweichung",
+   "fieldtype": "Currency",
+   "label": "Abweichung",
+   "read_only": 1,
+   "description": "Berechnete Restschuld − GL-Saldo. Sollte ≈ 0 sein. Bei größerer Abweichung warnt das Dashboard."
+  },
+  {
+   "fieldname": "plan_section",
+   "fieldtype": "Section Break",
+   "label": "Tilgungsplan"
+  },
+  {
+   "fieldname": "plan_vorbelegen_btn",
+   "fieldtype": "Button",
+   "label": "Plan vorbelegen (Annuität)"
+  },
+  {
+   "fieldname": "plan_csv_import_btn",
+   "fieldtype": "Button",
+   "label": "CSV importieren"
+  },
+  {
+   "fieldname": "plan",
+   "fieldtype": "Table",
+   "label": "Raten",
+   "options": "Kreditrate"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-05-13 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Kreditvertrag",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Hausverwalter"
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Hausverwalter (Buchung)",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "show_name_in_global_search": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "bezeichnung",
+ "track_changes": 1
+}

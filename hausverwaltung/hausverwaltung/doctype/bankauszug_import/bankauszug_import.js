@@ -855,6 +855,8 @@ function _openRowActions(frm, row) {
   const alreadyReconciled = !!row.payment_entry || !!row.journal_entry;
   const showReconcileSection = hasBT && !alreadyReconciled;
   const showAbschlagAction = showReconcileSection && row.richtung === 'Ausgang' && row.party_type === 'Supplier' && row.party;
+  // Kreditrate funktioniert auch ohne erkannte Party — Match läuft über Bankkonto+Betrag+Datum
+  const showKreditAction = showReconcileSection && row.richtung === 'Ausgang';
 
   const reconcileSectionHtml = showReconcileSection
     ? `
@@ -862,6 +864,7 @@ function _openRowActions(frm, row) {
       <div class="hv-row-action-buttons" style="display:flex; gap:8px; flex-wrap:wrap;">
         <button type="button" class="btn btn-primary" data-hv-action="match_invoices" style="flex:1 1 0; min-width:160px;">${__('Rechnungen zuordnen')}</button>
         ${showAbschlagAction ? `<button type="button" class="btn btn-primary" data-hv-action="match_abschlag" style="flex:1 1 0; min-width:160px;">${__('Abschlag zuordnen')}</button>` : ''}
+        ${showKreditAction ? `<button type="button" class="btn btn-default" data-hv-action="match_kredit" style="flex:1 1 0; min-width:160px;">${__('Kreditrate zuordnen')}</button>` : ''}
         <button type="button" class="btn btn-default" data-hv-action="standalone_payment" style="flex:1 1 0; min-width:160px;">${__('Zahlung erstellen')}</button>
         <button type="button" class="btn btn-default" data-hv-action="journal_entry" style="flex:1 1 0; min-width:160px;">${__('Buchungssatz erstellen')}</button>
       </div>
@@ -911,8 +914,120 @@ function _openRowActions(frm, row) {
   d.$wrapper.find('[data-hv-action="bank_account"]').on('click', () => { d.hide(); _prepareBankAccount(frm, row); });
   d.$wrapper.find('[data-hv-action="match_invoices"]').on('click', () => { d.hide(); _openMatchInvoicesDialog(frm, row); });
   d.$wrapper.find('[data-hv-action="match_abschlag"]').on('click', () => { d.hide(); _openAbschlagDialog(frm, row); });
+  d.$wrapper.find('[data-hv-action="match_kredit"]').on('click', () => { d.hide(); _openKreditrateDialog(frm, row); });
   d.$wrapper.find('[data-hv-action="standalone_payment"]').on('click', () => { d.hide(); _openStandalonePaymentDialog(frm, row); });
   d.$wrapper.find('[data-hv-action="journal_entry"]').on('click', () => { d.hide(); _openJournalEntryDialog(frm, row); });
+}
+
+function _openKreditrateDialog(frm, row) {
+  frappe.call({
+    method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.get_open_kreditraten_for_row',
+    args: { docname: frm.doc.name, row_name: row.name },
+    freeze: true,
+    freeze_message: __('Suche offene Kreditraten…'),
+  }).then((r) => {
+    const data = (r && r.message) || {};
+    const candidates = data.candidates || [];
+
+    const fmt = (v) => frappe.format(v, { fieldtype: 'Currency' });
+    const fmtDate = (v) => (v ? frappe.datetime.str_to_user(v) : '-');
+    const escape = (v) => frappe.utils.escape_html(v || '');
+
+    if (!candidates.length) {
+      frappe.msgprint({
+        title: __('Keine passende Kreditrate'),
+        message: __(
+          'Keine offene Rate gefunden für Bankkonto {0}, Betrag {1} (Toleranz pro Kreditvertrag). Bitte Kreditvertrag/Rate manuell anlegen oder Tilgungsplan ergänzen.',
+          [escape(data.bank_account), fmt(data.amount)]
+        ),
+      });
+      return;
+    }
+
+    const rowsHtml = candidates.map((c) => {
+      const safeKv = escape(c.kreditvertrag);
+      const safeRow = escape(c.row_name);
+      return `
+        <tr>
+          <td style="padding:4px 8px;">
+            <input type="radio" name="hv-kredit-pick" class="hv-kredit-cb"
+              data-kreditvertrag="${safeKv}" data-rate-name="${safeRow}">
+          </td>
+          <td style="padding:4px 8px;">
+            <a href="/app/kreditvertrag/${encodeURIComponent(c.kreditvertrag)}" target="_blank">${safeKv}</a>
+            <span style="color:#888;"> · Zeile ${c.row_idx}</span>
+          </td>
+          <td style="padding:4px 8px; white-space:nowrap;">${fmtDate(c.faelligkeitsdatum)}</td>
+          <td style="padding:4px 8px; text-align:right;">${fmt(c.gesamtbetrag)}</td>
+          <td style="padding:4px 8px; text-align:right; color:#888;">${c.delta_days} ${__('Tage')}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const html = `
+      <div style="margin-bottom:10px; padding:8px 10px; background:#f6f6f7; border-radius:4px; font-size:12px;">
+        <strong>${__('Bank-Betrag')}:</strong> ${fmt(data.amount)} &nbsp;•&nbsp;
+        <strong>${__('Buchungstag')}:</strong> ${fmtDate(data.posting_date)} &nbsp;•&nbsp;
+        <strong>${__('Bankkonto')}:</strong> ${escape(data.bank_account)}
+        ${data.supplier ? `&nbsp;•&nbsp; <strong>${__('Lieferant')}:</strong> ${escape(data.supplier)}` : ''}
+      </div>
+      <table style="width:100%; border-collapse:collapse; font-size:12px;">
+        <thead>
+          <tr style="background:#f6f6f7;">
+            <th style="padding:4px 8px; width:30px;"></th>
+            <th style="padding:4px 8px; text-align:left;">${__('Kreditvertrag')}</th>
+            <th style="padding:4px 8px; text-align:left;">${__('Fälligkeit')}</th>
+            <th style="padding:4px 8px; text-align:right;">${__('Betrag')}</th>
+            <th style="padding:4px 8px; text-align:right;">${__('Δ Tage')}</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <div style="margin-top:6px; font-size:11px; color:#888;">
+        ${__('Beim Übernehmen wird ein Journal Entry mit Zins-/Tilgungs-Split erzeugt und die Bank Transaction direkt verknüpft.')}
+      </div>
+    `;
+
+    const d = new frappe.ui.Dialog({
+      title: __('Kreditrate zuordnen — Zeile {0}', [row.idx]),
+      size: 'large',
+      fields: [{ fieldtype: 'HTML', fieldname: 'body', options: html }],
+      primary_action_label: __('Buchen'),
+      primary_action() {
+        const picked = d.$wrapper.find('.hv-kredit-cb:checked');
+        if (!picked.length) {
+          frappe.msgprint(__('Bitte eine Rate auswählen.'));
+          return;
+        }
+        const kreditvertrag = picked.attr('data-kreditvertrag');
+        const rate_name = picked.attr('data-rate-name');
+        d.disable_primary_action();
+        frappe.call({
+          method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.assign_kreditrate_to_bank_row',
+          args: {
+            docname: frm.doc.name,
+            row_name: row.name,
+            kreditvertrag,
+            rate_name,
+          },
+          freeze: true,
+          freeze_message: __('Buchung wird erstellt…'),
+        }).then((res) => {
+          const msg = (res && res.message) || {};
+          frappe.show_alert({
+            message: __('Kreditrate gebucht: {0} → {1}', [
+              msg.kreditvertrag,
+              msg.journal_entry,
+            ]),
+            indicator: 'green',
+          });
+          d.hide();
+          frm.reload_doc();
+        }).catch(() => d.enable_primary_action());
+      },
+    });
+    d.show();
+  });
 }
 
 // =============================================================================

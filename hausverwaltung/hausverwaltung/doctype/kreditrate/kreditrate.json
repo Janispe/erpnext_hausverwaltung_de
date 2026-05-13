@@ -1,0 +1,108 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-05-13 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "faelligkeitsdatum",
+  "zinsanteil",
+  "tilgungsanteil",
+  "sondertilgung",
+  "gesamtbetrag",
+  "restschuld_nach",
+  "journal_entry",
+  "bank_transaction",
+  "gebucht_am",
+  "bemerkung"
+ ],
+ "fields": [
+  {
+   "fieldname": "faelligkeitsdatum",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Fälligkeit",
+   "reqd": 1
+  },
+  {
+   "fieldname": "zinsanteil",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Zins",
+   "default": "0"
+  },
+  {
+   "fieldname": "tilgungsanteil",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Tilgung",
+   "default": "0"
+  },
+  {
+   "fieldname": "sondertilgung",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Sondertilgung",
+   "default": "0"
+  },
+  {
+   "fieldname": "gesamtbetrag",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Gesamt",
+   "read_only": 1,
+   "description": "Zinsanteil + Tilgungsanteil + Sondertilgung. Wird beim Speichern aus den Komponenten berechnet."
+  },
+  {
+   "fieldname": "restschuld_nach",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Restschuld nach",
+   "read_only": 1,
+   "description": "Restschuld nach dieser Rate, basierend auf Anfangs-Restschuld und allen vorhergehenden Raten (sortiert nach Datum)."
+  },
+  {
+   "fieldname": "journal_entry",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Buchungssatz",
+   "options": "Journal Entry",
+   "read_only": 1,
+   "description": "Verlinkt, sobald die Rate gegen eine Bank-Transaktion gebucht wurde. Idempotenz-Marker für Auto-Match."
+  },
+  {
+   "fieldname": "bank_transaction",
+   "fieldtype": "Link",
+   "label": "Bank Transaction",
+   "options": "Bank Transaction",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gebucht_am",
+   "fieldtype": "Date",
+   "label": "Gebucht am",
+   "read_only": 1,
+   "description": "Echtes Buchungsdatum aus der Bank Transaction (kann von Fälligkeit abweichen)."
+  },
+  {
+   "fieldname": "bemerkung",
+   "fieldtype": "Data",
+   "label": "Bemerkung"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-05-13 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Kreditrate",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

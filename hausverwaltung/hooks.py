@@ -257,6 +257,11 @@ doc_events = {
 		# eine Kostenart-Eintrag mit Default-Artikel anlegen.
 		"after_insert": "hausverwaltung.hausverwaltung.utils.kostenart_konto.auto_create_kostenart_on_account_insert",
 	},
+	"Journal Entry": {
+		# Bei Storno eines Journal Entry, der zu einer Kreditrate gehört:
+		# Rate zurücksetzen + Bank-Transaction-Reconciliation entkoppeln.
+		"on_cancel": "hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag.on_journal_entry_cancel",
+	},
 }
 
 # Scheduled Tasks
@@ -273,6 +278,7 @@ scheduler_events = {
 			"hausverwaltung.hausverwaltung.doctype.wohnung.wohnung.update_statuses_for_list",
 			"hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.update_statuses_for_list",
 			"hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.create_due_purchase_invoices_global",
+			"hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag.update_statuses_for_list",
 		],
 		# Bundesbank BLZ-Datei wird quartalsweise veröffentlicht — wir prüfen am
 		# 5. jedes Monats um 03:23 (Bundesbank veröffentlicht meist am 1.).

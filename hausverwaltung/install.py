@@ -1552,6 +1552,13 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         ],
     },
     {
+        "label": "Finanzierung",
+        "icon": "branch",
+        "links": [
+            {"label": "Kreditverträge", "link_type": "DocType", "link_to": "Kreditvertrag"},
+        ],
+    },
+    {
         "label": "Serienbriefe",
         "icon": "mail",
         "links": [

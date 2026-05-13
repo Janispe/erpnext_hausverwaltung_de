@@ -1188,6 +1188,7 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
     skipped_before_cutoff = 0
     auto_matched = []
     auto_abschlag_matched = []
+    auto_kredit_matched = []
     auto_match_failed = []
     from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
         auto_match_bank_transaction,
@@ -1351,6 +1352,51 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
                     auto_matched.append(bt.name)
                 else:
                     row.db_set("auto_match_message", match_result.get("message"))
+
+                    # Kreditraten-Match: vor dem Abschlagsplan-Fallback. Greift bei
+                    # Ausgängen — Supplier ist optional (kann auch ohne Party matchen,
+                    # solange Bankkonto + Betrag + Datum eindeutig sind).
+                    if row.get("richtung") == "Ausgang":
+                        try:
+                            from hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag import (
+                                link_bank_transaction_to_kreditvertrag_rate,
+                            )
+                            kredit_result = link_bank_transaction_to_kreditvertrag_rate(
+                                bank_account=bt.bank_account,
+                                posting_date=bt.date,
+                                amount=row.get("betrag"),
+                                bank_transaction=bt.name,
+                                supplier=row.get("party") if row.get("party_type") == "Supplier" else None,
+                            )
+                            if kredit_result and kredit_result.get("match_count") == 1:
+                                je_name = kredit_result["journal_entry"]
+                                row.db_set("journal_entry", je_name)
+                                _set_row_payment_document(row, "Journal Entry", je_name)
+                                row.db_set("row_status", "success")
+                                row.db_set(
+                                    "auto_match_message",
+                                    (
+                                        f"Kreditrate automatisch gebucht: "
+                                        f"{kredit_result['kreditvertrag']} Zeile {kredit_result['row_idx']} "
+                                        f"({kredit_result['gesamtbetrag']:.2f} €) → {je_name}"
+                                    ),
+                                )
+                                auto_kredit_matched.append(bt.name)
+                                continue
+                            elif kredit_result and kredit_result.get("match_count", 0) > 1:
+                                row.db_set(
+                                    "auto_match_message",
+                                    (
+                                        f"{kredit_result['match_count']} mögliche Kreditraten — "
+                                        "bitte manuell zuordnen (Aktion 'Kreditrate zuordnen')."
+                                    ),
+                                )
+                        except Exception:
+                            frappe.log_error(
+                                frappe.get_traceback(),
+                                f"Bankauszug Import: Kredit-Match fehlgeschlagen für {bt.name}",
+                            )
+
                     if (
                         row.get("richtung") == "Ausgang"
                         and row.get("party_type") == "Supplier"
@@ -1419,6 +1465,7 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
         "cutoff_date": str(bankimport_start_datum) if bankimport_start_datum else None,
         "auto_matched": auto_matched,
         "auto_abschlag_matched": auto_abschlag_matched,
+        "auto_kredit_matched": auto_kredit_matched,
         "auto_match_failed": auto_match_failed,
         "warning": warning if warning and bool(int(allow_missing_party or 0)) else None,
     }
@@ -2043,3 +2090,87 @@ def create_journal_entry_for_row(
     _recompute_doc_status(docname)
     _refresh_and_persist_saldo(docname)
     return {"ok": True, "journal_entry": je.name}
+
+
+# ---------------------------------------------------------------------------
+# Kreditvertrag-Match (manuelle Fallback-Aktion)
+# ---------------------------------------------------------------------------
+
+
+@frappe.whitelist()
+def get_open_kreditraten_for_row(docname: str, row_name: str) -> Dict[str, Any]:
+    """Liefert die Kandidatenliste offener Kreditraten für eine Bankimport-Zeile.
+
+    Server holt sich Bankkonto/Buchungsdatum/Betrag/Supplier selbst aus
+    Row + Bank Transaction — UI übergibt nur docname + row_name (verhindert
+    Parameter-Drift zwischen UI und Server-Match).
+    """
+    from hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag import (
+        get_open_rates_for_match,
+    )
+
+    doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
+
+    supplier = row.get("party") if row.get("party_type") == "Supplier" else None
+    candidates = get_open_rates_for_match(
+        bank_account=bt.bank_account,
+        posting_date=bt.date,
+        amount=row.get("betrag"),
+        supplier=supplier,
+    )
+    return {
+        "bank_account": bt.bank_account,
+        "bank_transaction": bt.name,
+        "posting_date": str(bt.date),
+        "amount": flt(row.betrag),
+        "supplier": supplier,
+        "candidates": candidates,
+    }
+
+
+@frappe.whitelist()
+def assign_kreditrate_to_bank_row(
+    docname: str,
+    row_name: str,
+    kreditvertrag: str,
+    rate_name: str,
+) -> Dict[str, Any]:
+    """Manuelle Zuordnung: erzeugt JE für die ausgewählte Rate und verlinkt alles.
+
+    Wird vom „Kreditrate zuordnen"-Dialog im Bankimport gerufen. Server
+    leitet alle Match-Parameter aus der Row/BT ab (UI darf nicht überschreiben).
+    """
+    from hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag import (
+        assign_kreditrate,
+    )
+
+    doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
+
+    result = assign_kreditrate(
+        kreditvertrag=kreditvertrag,
+        rate_name=rate_name,
+        bank_account=bt.bank_account,
+        posting_date=bt.date,
+        amount=row.get("betrag"),
+        bank_transaction=bt.name,
+    )
+
+    je_name = result["journal_entry"]
+    row.db_set("journal_entry", je_name)
+    _set_row_payment_document(row, "Journal Entry", je_name)
+    row.db_set("row_status", "success")
+    row.db_set(
+        "auto_match_message",
+        (
+            f"Kreditrate manuell gebucht: {result['kreditvertrag']} "
+            f"Zeile {result['row_idx']} → {je_name}"
+        ),
+    )
+    _recompute_doc_status(docname)
+    _refresh_and_persist_saldo(docname)
+    return {
+        "ok": True,
+        "journal_entry": je_name,
+        "kreditvertrag": result["kreditvertrag"],
+        "row_idx": result["row_idx"],
+    }
