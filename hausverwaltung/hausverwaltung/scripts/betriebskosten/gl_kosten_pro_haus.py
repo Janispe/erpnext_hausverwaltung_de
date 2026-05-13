@@ -26,9 +26,15 @@ from frappe.utils import getdate, cstr
 
 
 def _konto_zu_kostenart_map() -> Dict[str, str]:
-    """Konto -> Betriebskostenart (nur Einträge mit Konto)."""
+    """Konto -> Betriebskostenart (nur Einträge mit Konto, Kategorie 'Betriebskosten').
+
+    Heizkosten-Kostenarten werden bewusst ausgefiltert: ihre Umlage erfolgt
+    außerhalb dieses BK-Allocators (über die Heizkostenabrechnung Immobilie).
+    """
     rows = frappe.get_all(
-        "Betriebskostenart", fields=["name", "konto"], filters={}
+        "Betriebskostenart",
+        fields=["name", "konto"],
+        filters={"kategorie": "Betriebskosten"},
     )
     return {r.konto: r.name for r in rows if r.konto}
 

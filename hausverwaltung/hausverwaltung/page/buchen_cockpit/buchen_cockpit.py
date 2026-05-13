@@ -347,7 +347,7 @@ def _get_kostenart_details(row: dict) -> dict | None:
         match = _find_kostenart_for_konto(row["konto"])
         if not match:
             frappe.throw(
-                f"Konto „{row['konto']}“ ist weder als Betriebskostenart noch als "
+                f"Konto „{row['konto']}“ ist weder als umlagefähige Kostenart noch als "
                 f"Kostenart nicht umlagefaehig hinterlegt. Bitte zuerst ein Stammdatum "
                 f"anlegen, das dieses Konto referenziert."
             )
@@ -568,7 +568,7 @@ def create_purchase_invoice(**kwargs) -> dict:
         if _row_requires_wohnung(row, verteilung_cache):
             if not row.get("wohnung"):
                 frappe.throw(
-                    f"Position {idx}: Betriebskostenart '{row.get('kostenart')}' ist auf 'Einzeln' "
+                    f"Position {idx}: Umlagefähige Kostenart '{row.get('kostenart')}' ist auf 'Einzeln' "
                     "verteilt — bitte eine Wohnung auswählen."
                 )
             if not _has_field("Purchase Invoice Item", "wohnung"):
@@ -708,7 +708,7 @@ def save_vorlage_from_cockpit(**kwargs) -> dict:
 
         if typ == "umlegbar" and not bk_name:
             frappe.throw(
-                f"Position {idx}: Für 'umlegbar' wird eine Betriebskostenart benötigt."
+                f"Position {idx}: Für 'umlegbar' wird eine umlagefähige Kostenart benötigt."
             )
         if typ == "nicht umlegbar" and not nul_name:
             frappe.throw(

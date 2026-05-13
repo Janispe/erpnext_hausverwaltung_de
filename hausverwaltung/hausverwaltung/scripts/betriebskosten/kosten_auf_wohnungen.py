@@ -178,10 +178,12 @@ def _betriebsarten_map() -> Dict[str, dict]:
     """Map Betriebskostenart → {verteilung, schluessel}.
 
     Achtung: Doc.name == Name (name1) laut Autoname.
+    Filtert Heizkosten-Kategorie aus — die werden nicht über diesen Allocator umgelegt.
     """
     rows = frappe.get_all(
         "Betriebskostenart",
         fields=["name", "verteilung", "schlüssel"],
+        filters={"kategorie": "Betriebskosten"},
     )
     return {r.name: {"verteilung": r.verteilung, "schluessel": r.get("schlüssel") or r.get("schluessel")}
             for r in rows}
@@ -386,7 +388,7 @@ def allocate_kosten_auf_wohnungen(
             continue
 
         if verteilung.lower() in {"bewohner", "verbrauch", "formel"}:
-            frappe.throw(f"Verteilungsart '{verteilung}' für Betriebskostenart {kostenart} ist noch nicht implementiert.")
+            frappe.throw(f"Verteilungsart '{verteilung}' für umlagefähige Kostenart {kostenart} ist noch nicht implementiert.")
 
         if verteilung.lower() == "festbetrag":
             continue
@@ -406,12 +408,12 @@ def allocate_kosten_auf_wohnungen(
                 weights[w] = _to_decimal(_flaeche_qm(w, cstr(stichtag)))
         elif verteilung.lower() == "schlüssel" or verteilung.lower() == "schluessel":
             if not schluessel:
-                frappe.throw(f"Betriebskostenart {kostenart} hat keine Schlüssel‑Definition.")
+                frappe.throw(f"Umlagefähige Kostenart {kostenart} hat keine Schlüssel‑Definition.")
             for w in whg_list:
                 weights[w] = _to_decimal(_schluesselwert(w, cstr(stichtag), schluessel))
         else:
             # Unbekannt → Fehler
-            frappe.throw(f"Unbekannte Verteilungsart '{verteilung}' für Betriebskostenart {kostenart}.")
+            frappe.throw(f"Unbekannte Verteilungsart '{verteilung}' für umlagefähige Kostenart {kostenart}.")
 
         total_weight = sum((v for v in weights.values() if v is not None), Decimal("0"))
         if total_weight <= Decimal("0"):

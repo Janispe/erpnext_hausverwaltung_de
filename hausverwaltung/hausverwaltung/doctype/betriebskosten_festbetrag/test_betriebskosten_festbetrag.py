@@ -93,3 +93,21 @@ class TestBetriebskostenFestbetrag(unittest.TestCase):
 			lambda value: value,
 		):
 			doc.validate()  # Soll nicht werfen
+
+	def test_validate_allows_heizkosten_kategorie(self):
+		doc = self._doc(
+			doctype="Betriebskosten Festbetrag",
+			name="TEST-HK",
+			parent="MV-1",
+			betriebskostenart="Fernwärme",
+			gueltig_von="2025-01-01",
+			gueltig_bis="2025-12-31",
+		)
+		with patch(
+			"hausverwaltung.hausverwaltung.doctype.betriebskosten_festbetrag.betriebskosten_festbetrag.frappe",
+			self._fake_frappe(),
+		), patch(
+			"hausverwaltung.hausverwaltung.doctype.betriebskosten_festbetrag.betriebskosten_festbetrag._",
+			lambda value: value,
+		):
+			doc.validate()

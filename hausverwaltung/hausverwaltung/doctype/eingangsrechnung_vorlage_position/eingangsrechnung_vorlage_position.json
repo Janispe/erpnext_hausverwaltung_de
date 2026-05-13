@@ -8,6 +8,7 @@
  "field_order": [
   "typ",
   "betriebskostenart",
+  "kategorie",
   "kostenart_nicht_ul",
   "kostenstelle",
   "konto",
@@ -29,9 +30,18 @@
    "fieldname": "betriebskostenart",
    "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Betriebskostenart (umlegbar)",
+   "label": "Umlagefähige Kostenart",
    "mandatory_depends_on": "eval:doc.typ == 'umlegbar'",
    "options": "Betriebskostenart"
+  },
+  {
+   "depends_on": "eval:doc.typ == 'umlegbar'",
+   "fetch_from": "betriebskostenart.kategorie",
+   "fieldname": "kategorie",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Kategorie",
+   "read_only": 1
   },
   {
    "depends_on": "eval:doc.typ == 'nicht umlegbar'",
@@ -58,7 +68,7 @@
    "options": "Account"
   },
   {
-   "description": "Pflicht bei Betriebskostenart mit Verteilung 'Einzeln'.",
+   "description": "Pflicht bei umlagefähiger Kostenart mit Verteilung 'Einzeln'.",
    "fieldname": "wohnung",
    "fieldtype": "Link",
    "label": "Wohnung",

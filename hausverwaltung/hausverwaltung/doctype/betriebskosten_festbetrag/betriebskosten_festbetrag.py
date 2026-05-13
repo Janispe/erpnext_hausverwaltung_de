@@ -31,5 +31,5 @@ class BetriebskostenFestbetrag(Document):
 				continue
 			if sibling.gueltig_von <= self.gueltig_bis and sibling.gueltig_bis >= self.gueltig_von:
 				frappe.throw(
-					_("Für diesen Mietvertrag und diese Betriebskostenart existiert bereits ein überlappender Festbetrag.")
+					_("Für diesen Mietvertrag und diese Kostenart existiert bereits ein überlappender Festbetrag.")
 				)

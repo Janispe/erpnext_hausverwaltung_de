@@ -18,7 +18,7 @@
    "fieldname": "betriebskostenart",
    "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Betriebskostenart",
+   "label": "Umlagefähige Kostenart",
    "options": "Betriebskostenart",
    "read_only": 1
   },

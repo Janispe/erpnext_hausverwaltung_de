@@ -225,12 +225,12 @@
    "fieldtype": "Select",
    "label": "Kostenart-Typ",
    "options": "\numlegbar\nnicht umlegbar",
-   "description": "Steuert welche Kostenart-Liste verwendet wird (umlegbar = Betriebskostenart, nicht umlegbar = Kostenart nicht umlagefähig)."
+   "description": "Steuert welche Kostenart-Liste verwendet wird (umlegbar = Umlagefähige Kostenart, nicht umlegbar = Kostenart nicht umlagefähig)."
   },
   {
    "fieldname": "kostenart",
    "fieldtype": "Link",
-   "label": "Kostenart (umlagefähig)",
+   "label": "Umlagefähige Kostenart",
    "options": "Betriebskostenart",
    "depends_on": "eval:doc.kostenart_typ === 'umlegbar'",
    "mandatory_depends_on": "eval:doc.kostenart_typ === 'umlegbar'"

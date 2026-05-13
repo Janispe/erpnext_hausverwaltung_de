@@ -13,10 +13,11 @@
  ],
  "fields": [
   {
+   "description": "Heizkosten-Kostenarten können hier als Festbetrag gepflegt werden; sie werden nicht in der Betriebskostenabrechnung verteilt.",
    "fieldname": "betriebskostenart",
    "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Betriebskostenart",
+   "label": "Umlagefähige Kostenart",
    "options": "Betriebskostenart",
    "reqd": 1
   },

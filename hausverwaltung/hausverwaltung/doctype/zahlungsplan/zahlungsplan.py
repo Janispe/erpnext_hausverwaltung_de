@@ -68,12 +68,12 @@ class Zahlungsplan(Document):
 
 		if self.get("kostenart") and self.get("kostenart_nicht_umlagefaehig"):
 			frappe.throw(
-				"Bitte entweder 'Kostenart (umlagefähig)' oder 'Kostenart (nicht umlagefähig)' setzen, nicht beides."
+				"Bitte entweder 'Umlagefähige Kostenart' oder 'Kostenart (nicht umlagefähig)' setzen, nicht beides."
 			)
 
 		if not (self.get("kostenart") or self.get("kostenart_nicht_umlagefaehig")):
 			frappe.throw(
-				"Bitte eine Kostenart angeben — entweder 'Kostenart (umlagefähig)' oder "
+				"Bitte eine Kostenart angeben — entweder 'Umlagefähige Kostenart' oder "
 				"'Kostenart (nicht umlagefähig)'. Ohne Kostenart kann beim automatischen "
 				"Erzeugen einer Eingangsrechnung kein korrektes Aufwandskonto bestimmt werden."
 			)

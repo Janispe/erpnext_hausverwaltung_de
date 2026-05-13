@@ -518,7 +518,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 					in_list_view: 1,
 					columns: 2,
 					description: __(
-						"Nur nötig bei Betriebskostenart mit Verteilung 'Einzeln'."
+						"Nur nötig bei umlagefähiger Kostenart mit Verteilung 'Einzeln'."
 					),
 				},
 			],

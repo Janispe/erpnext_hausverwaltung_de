@@ -391,7 +391,7 @@ def create_bk_abrechnung_wohnung(
         for row in (
             frappe.get_all(
                 "Betriebskostenart",
-                filters={"verteilung": "Festbetrag"},
+                filters={"verteilung": "Festbetrag", "kategorie": "Betriebskosten"},
                 fields=["name"],
                 limit_page_length=0,
             )

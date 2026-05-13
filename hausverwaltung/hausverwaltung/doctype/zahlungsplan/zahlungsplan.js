@@ -30,7 +30,7 @@ function openJaDialog(frm) {
 			{
 				fieldname: "kostenart",
 				fieldtype: "Link",
-				label: __("Kostenart (umlagefähig)"),
+				label: __("Umlagefähige Kostenart"),
 				options: "Betriebskostenart",
 				default: frm.doc.kostenart || null,
 			},

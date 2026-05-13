@@ -1548,7 +1548,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         "links": [
             {"label": "Betriebskostenabrechnung erstellen", "link_type": "DocType", "link_to": "Betriebskostenabrechnung Immobilie"},
             {"label": "Heizkostenabrechnung erstellen", "link_type": "DocType", "link_to": "Heizkostenabrechnung Immobilie"},
-            {"label": "Betriebskosten Art", "link_type": "DocType", "link_to": "Betriebskostenart"},
+            {"label": "Umlagefähige Kostenart", "link_type": "DocType", "link_to": "Betriebskostenart"},
         ],
     },
     {
@@ -1581,7 +1581,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         "icon": "setting-gear",
         "links": [
             {"label": "Hausverwaltung Einstellungen", "link_type": "DocType", "link_to": "Hausverwaltung Einstellungen"},
-            {"label": "Kostenart (umlagefähig)", "link_type": "DocType", "link_to": "Betriebskostenart"},
+            {"label": "Umlagefähige Kostenart", "link_type": "DocType", "link_to": "Betriebskostenart"},
             {"label": "Kostenart (nicht umlagefähig)", "link_type": "DocType", "link_to": "Kostenart nicht umlagefaehig"},
         ],
     },

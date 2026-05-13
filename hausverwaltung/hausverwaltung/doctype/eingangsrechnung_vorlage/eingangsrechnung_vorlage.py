@@ -18,7 +18,7 @@ class EingangsrechnungVorlage(Document):
 			if typ == "umlegbar":
 				if not bk:
 					frappe.throw(
-						_("Position {0}: Betriebskostenart ist Pflicht für 'umlegbar'.").format(idx)
+						_("Position {0}: Umlagefähige Kostenart ist Pflicht für 'umlegbar'.").format(idx)
 					)
 				if nul:
 					frappe.throw(
@@ -36,7 +36,7 @@ class EingangsrechnungVorlage(Document):
 				if bk:
 					frappe.throw(
 						_(
-							"Position {0}: 'Betriebskostenart' darf nicht gesetzt sein, wenn Typ = nicht umlegbar."
+							"Position {0}: 'Umlagefähige Kostenart' darf nicht gesetzt sein, wenn Typ = nicht umlegbar."
 						).format(idx)
 					)
 			else:

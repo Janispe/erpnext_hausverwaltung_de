@@ -47,7 +47,7 @@ def assert_konto_unique(*, konto: str | None, doctype: str, name: str | None) ->
 	if conflict:
 		frappe.throw(
 			f"Konto „{konto}“ ist bereits in {other_doctype} „{conflict}“ hinterlegt. "
-			f"Ein Konto kann entweder umlagefähig (Betriebskostenart) oder nicht "
+			f"Ein Konto kann entweder umlagefähig (Umlagefähige Kostenart) oder nicht "
 			f"umlagefähig sein, nicht beides."
 		)
 
