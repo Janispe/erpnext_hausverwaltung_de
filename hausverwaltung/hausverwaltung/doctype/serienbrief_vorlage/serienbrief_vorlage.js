@@ -805,19 +805,6 @@ const hv_vorlage_get_requirements = async (frm) => {
 	}
 };
 
-const hv_vorlage_get_mieter_doctype = async (iterationDoctype) => {
-	if (!iterationDoctype) {
-		return "Contact";
-	}
-	try {
-		const meta = await hv_vorlage_load_meta(iterationDoctype);
-		const df = meta?.get_field ? meta.get_field("mieter") : null;
-		return (df?.options || "").trim() || "Contact";
-	} catch (e) {
-		return "Contact";
-	}
-};
-
 const hv_vorlage_build_iteration_tree = async (iterationDoctype) => {
 	const meta = await hv_vorlage_load_meta(iterationDoctype);
 	if (!meta || !meta.fields) {
@@ -968,39 +955,6 @@ const hv_vorlage_get_placeholder_groups = async (frm) => {
 				label: `${__("Iterationsobjekt")}: ${iterationDoctype}`,
 				tree,
 			});
-		}
-	}
-
-	// Kontext-Doctypes (typisch im Serienbrief-Kontext vorhanden)
-	if (iterationDoctype) {
-		const mieterDoctype = await hv_vorlage_get_mieter_doctype(iterationDoctype);
-		const ctx = [
-			{ key: "wohnung", label: __("Wohnung"), doctype: "Wohnung" },
-			{ key: "immobilie", label: __("Immobilie"), doctype: "Immobilie" },
-			{ key: "mieter", label: __("Mieter"), doctype: mieterDoctype },
-		];
-
-		for (const entry of ctx) {
-			if (!(await hv_vorlage_doctype_exists(entry.doctype))) {
-				continue;
-			}
-			const meta = await hv_vorlage_load_meta(entry.doctype);
-			if (!meta) continue;
-			const tree = await hv_vorlage_build_tree_nodes(
-				entry.key,
-				entry.doctype,
-				meta,
-				new Set([entry.doctype]),
-				0,
-				2
-			);
-			if (tree.length) {
-				groups.push({
-					key: `__ctx_${entry.key}`,
-					label: `${__("Kontext")}: ${entry.label} (${entry.doctype})`,
-					tree,
-				});
-			}
 		}
 	}
 
