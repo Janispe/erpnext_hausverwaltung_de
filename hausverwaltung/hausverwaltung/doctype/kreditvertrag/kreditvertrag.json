@@ -29,9 +29,11 @@
   "match_tolerance_days",
   "plausibilitaet_section",
   "aktuelle_restschuld",
-  "gl_saldo_darlehenskonto",
+  "plan_getilgt",
+  "gl_getilgt",
   "column_break_plausibilitaet",
   "restschuld_abweichung",
+  "gl_saldo_darlehenskonto",
   "plan_section",
   "plan_vorbelegen_btn",
   "plan_csv_import_btn",
@@ -185,11 +187,18 @@
    "description": "Anfangs-Restschuld − Summe aus Tilgung + Sondertilgung der bereits gebuchten Raten."
   },
   {
-   "fieldname": "gl_saldo_darlehenskonto",
+   "fieldname": "plan_getilgt",
    "fieldtype": "Currency",
-   "label": "GL-Saldo Darlehenskonto",
+   "label": "Getilgt laut Plan",
    "read_only": 1,
-   "description": "Aktueller Bilanz-Saldo des Darlehenskontos (Σcredit − Σdebit für Liability)."
+   "description": "Summe Tilgung + Sondertilgung der bereits gebuchten Raten."
+  },
+  {
+   "fieldname": "gl_getilgt",
+   "fieldtype": "Currency",
+   "label": "Getilgt laut Buchhaltung",
+   "read_only": 1,
+   "description": "Summe der Soll-Buchungen auf dem Darlehenskonto aus den verlinkten Buchungssätzen dieses Kreditvertrags."
   },
   {
    "fieldname": "column_break_plausibilitaet",
@@ -200,7 +209,14 @@
    "fieldtype": "Currency",
    "label": "Abweichung",
    "read_only": 1,
-   "description": "Berechnete Restschuld − GL-Saldo. Sollte ≈ 0 sein. Bei größerer Abweichung warnt das Dashboard."
+   "description": "Getilgt laut Plan − Getilgt laut Buchhaltung. Sollte ≈ 0 sein. Weicht es ab, wurde ein Buchungssatz nach dem Buchen verändert oder eine Rate nachträglich editiert."
+  },
+  {
+   "fieldname": "gl_saldo_darlehenskonto",
+   "fieldtype": "Currency",
+   "label": "GL-Saldo Darlehenskonto (Info)",
+   "read_only": 1,
+   "description": "Gesamt-Bilanzsaldo des Darlehenskontos (alle Kredite auf diesem Konto zusammen). Nur Info — bei geteiltem Konto nicht pro Kredit aussagekräftig."
   },
   {
    "fieldname": "plan_section",

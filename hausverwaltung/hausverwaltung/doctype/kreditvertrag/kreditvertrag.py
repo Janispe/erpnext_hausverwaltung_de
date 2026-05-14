@@ -117,17 +117,63 @@ class Kreditvertrag(Document):
 			row.restschuld_nach = restschuld
 
 	def _compute_plausibilitaet(self):
-		# Aktuelle Restschuld = Anfangs-Restschuld − Tilgung+Sondertilgung der GEBUCHTEN Raten
-		gebuchte_tilgung = Decimal("0")
+		"""Plausibilitäts-Felder berechnen.
+
+		Der **Plan** ist die fachliche Quelle (``plan_getilgt`` →
+		``aktuelle_restschuld``). Die Buchhaltung wird dagegen geprüft:
+		``gl_getilgt`` summiert die Soll-Buchungen auf dem Darlehenskonto
+		**nur über die JEs, die via Plan-Zeilen verlinkt sind** — damit ist
+		der Check pro Kreditvertrag korrekt, auch wenn mehrere Kredite
+		dasselbe GL-Konto teilen.
+
+		``restschuld_abweichung = plan_getilgt − gl_getilgt`` (SOLL ≈ 0).
+		Eine Abweichung bedeutet: ein verlinkter JE wurde nach dem Buchen
+		verändert oder eine Rate nachträglich editiert.
+
+		``gl_saldo_darlehenskonto`` (Gesamt-Konto-Saldo) bleibt erhalten,
+		ist aber nur noch Info — bei geteiltem Konto nicht pro Kredit
+		aussagekräftig.
+		"""
+		# Plan-Seite: Σ(tilgung + sondertilgung) der gebuchten Raten + verlinkte JE-Namen
+		plan_getilgt = Decimal("0")
+		linked_je_names: list[str] = []
 		for row in self.get("plan") or []:
 			if row.get("journal_entry"):
-				gebuchte_tilgung += Decimal(str(flt(row.tilgungsanteil))) + Decimal(
+				plan_getilgt += Decimal(str(flt(row.tilgungsanteil))) + Decimal(
 					str(flt(row.sondertilgung))
 				)
-		aktuelle = Decimal(str(flt(self.anfangs_restschuld))) - gebuchte_tilgung
-		self.aktuelle_restschuld = float(aktuelle)
+				linked_je_names.append(row.journal_entry)
 
-		# GL-Saldo des Darlehenskontos (Liability = credit - debit)
+		aktuelle = Decimal(str(flt(self.anfangs_restschuld))) - plan_getilgt
+		self.aktuelle_restschuld = float(aktuelle)
+		self.plan_getilgt = float(plan_getilgt)
+
+		# GL-Seite: Σ debit auf dem Darlehenskonto — NUR über die verlinkten JEs
+		# dieses Kreditvertrags (shared-account-safe).
+		gl_getilgt = 0.0
+		if self.darlehenskonto and self.company and linked_je_names:
+			row = frappe.db.sql(
+				"""
+				SELECT COALESCE(SUM(debit), 0) AS getilgt
+				FROM `tabGL Entry`
+				WHERE account = %(account)s
+				  AND company = %(company)s
+				  AND voucher_type = 'Journal Entry'
+				  AND voucher_no IN %(je_names)s
+				  AND is_cancelled = 0
+				""",
+				{
+					"account": self.darlehenskonto,
+					"company": self.company,
+					"je_names": tuple(linked_je_names),
+				},
+				as_dict=True,
+			)
+			gl_getilgt = flt(row[0].getilgt) if row else 0.0
+		self.gl_getilgt = gl_getilgt
+		self.restschuld_abweichung = float(plan_getilgt) - gl_getilgt
+
+		# GL-Saldo des gesamten Darlehenskontos (Liability = credit − debit) — nur Info.
 		gl_saldo = 0.0
 		if self.darlehenskonto and self.company:
 			row = frappe.db.sql(
@@ -143,7 +189,6 @@ class Kreditvertrag(Document):
 			)
 			gl_saldo = flt(row[0].saldo) if row else 0.0
 		self.gl_saldo_darlehenskonto = gl_saldo
-		self.restschuld_abweichung = float(aktuelle) - gl_saldo
 
 	def _compute_status(self):
 		rows = self.get("plan") or []
@@ -432,6 +477,8 @@ def update_statuses_for_list():
 				doc.db_set("status", doc.status, update_modified=False)
 			# Plausibilitäts-Felder aktualisieren (für Dashboard-Indicator)
 			doc.db_set("aktuelle_restschuld", doc.aktuelle_restschuld, update_modified=False)
+			doc.db_set("plan_getilgt", doc.plan_getilgt, update_modified=False)
+			doc.db_set("gl_getilgt", doc.gl_getilgt, update_modified=False)
 			doc.db_set("gl_saldo_darlehenskonto", doc.gl_saldo_darlehenskonto, update_modified=False)
 			doc.db_set("restschuld_abweichung", doc.restschuld_abweichung, update_modified=False)
 		except Exception:
@@ -831,14 +878,16 @@ def _recompute_parent_plausibilitaet(kreditvertrag_name: str) -> None:
 	"""Lädt den Kreditvertrag neu und persistiert die Plausibilitäts-Felder + Status.
 
 	Wird nach Buchen/Storno aufgerufen, damit aktuelle_restschuld,
-	gl_saldo_darlehenskonto, restschuld_abweichung und status nicht bis zum
-	nächsten Save oder Scheduler-Lauf stale bleiben.
+	plan_getilgt, gl_getilgt, gl_saldo_darlehenskonto, restschuld_abweichung
+	und status nicht bis zum nächsten Save oder Scheduler-Lauf stale bleiben.
 	"""
 	try:
 		kv = frappe.get_doc("Kreditvertrag", kreditvertrag_name)
 		kv._compute_plausibilitaet()
 		kv._compute_status()
 		kv.db_set("aktuelle_restschuld", kv.aktuelle_restschuld, update_modified=False)
+		kv.db_set("plan_getilgt", kv.plan_getilgt, update_modified=False)
+		kv.db_set("gl_getilgt", kv.gl_getilgt, update_modified=False)
 		kv.db_set("gl_saldo_darlehenskonto", kv.gl_saldo_darlehenskonto, update_modified=False)
 		kv.db_set("restschuld_abweichung", kv.restschuld_abweichung, update_modified=False)
 		kv.db_set("status", kv.status, update_modified=False)

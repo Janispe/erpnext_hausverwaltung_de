@@ -562,6 +562,67 @@ class TestKreditvertragIntegration(unittest.TestCase):
 			kv.plan_csv_import(file_url="/files/does-not-exist-12345.csv", mode="extend")
 		self.assertIn("nicht gefunden", str(ctx.exception).lower())
 
+	# ------------------------------------------------------------------
+	# Plausibilität — Plan-Tilgung vs. verlinkte JE-Tilgung
+	# ------------------------------------------------------------------
+
+	def _book_rate(self, kv, rate):
+		"""Erzeugt einen JE für die Rate und verlinkt ihn (wie der Bankimport)."""
+		je = _create_journal_entry_for_rate(kv, rate, posting_date=rate.faelligkeitsdatum)
+		rate.db_set("journal_entry", je.name, update_modified=False)
+		return je
+
+	def test_plausibilitaet_geteiltes_darlehenskonto(self):
+		"""Zwei Kreditverträge auf DEMSELBEN Darlehenskonto: gl_getilgt jedes
+		Vertrags zählt nur seine eigenen verlinkten JEs — nicht die des anderen."""
+		kv_a = self._make_kv(anfangs_restschuld=10_000.0, zins=50, tilgung=200, sondertilgung=0)
+		kv_b = self._make_kv(anfangs_restschuld=20_000.0, zins=80, tilgung=300, sondertilgung=0)
+		# beide nutzen self.darlehenskonto (gleiches Konto)
+		self.assertEqual(kv_a.darlehenskonto, kv_b.darlehenskonto)
+
+		self._book_rate(kv_a, kv_a.plan[0])  # Tilgung 200
+		self._book_rate(kv_b, kv_b.plan[0])  # Tilgung 300
+
+		kv_a.reload()
+		kv_b.reload()
+		kv_a._compute_plausibilitaet()
+		kv_b._compute_plausibilitaet()
+
+		# Jeder Vertrag sieht nur seine eigene Tilgung
+		self.assertAlmostEqual(kv_a.plan_getilgt, 200.0, places=2)
+		self.assertAlmostEqual(kv_a.gl_getilgt, 200.0, places=2)
+		self.assertAlmostEqual(kv_a.restschuld_abweichung, 0.0, places=2)
+
+		self.assertAlmostEqual(kv_b.plan_getilgt, 300.0, places=2)
+		self.assertAlmostEqual(kv_b.gl_getilgt, 300.0, places=2)
+		self.assertAlmostEqual(kv_b.restschuld_abweichung, 0.0, places=2)
+
+		# Der Whole-Account-Saldo trägt dagegen BEIDE Kredite (500 Soll gesamt) —
+		# darum ist er nur Info und nicht der Wächter.
+		self.assertNotAlmostEqual(kv_a.gl_getilgt, abs(kv_a.gl_saldo_darlehenskonto), places=2)
+
+	def test_plausibilitaet_abweichung_null_nach_normaler_buchung(self):
+		"""Nach normaler Buchung stimmen Plan-Tilgung und GL-Tilgung überein."""
+		kv = self._make_kv(anfangs_restschuld=5_000.0, zins=10, tilgung=100, sondertilgung=50)
+		self._book_rate(kv, kv.plan[0])
+		kv.reload()
+		kv._compute_plausibilitaet()
+		# Tilgung + Sondertilgung = 150
+		self.assertAlmostEqual(kv.plan_getilgt, 150.0, places=2)
+		self.assertAlmostEqual(kv.gl_getilgt, 150.0, places=2)
+		self.assertAlmostEqual(kv.restschuld_abweichung, 0.0, places=2)
+		self.assertAlmostEqual(kv.aktuelle_restschuld, 4_850.0, places=2)
+
+	def test_plausibilitaet_ohne_gebuchte_raten(self):
+		"""KV mit nur ungebuchten Raten: keine SQL-IN-()-Exception, alles 0."""
+		kv = self._make_kv(anfangs_restschuld=8_000.0)
+		# Default-Rate ist ungebucht (kein journal_entry)
+		kv._compute_plausibilitaet()
+		self.assertAlmostEqual(kv.plan_getilgt, 0.0, places=2)
+		self.assertAlmostEqual(kv.gl_getilgt, 0.0, places=2)
+		self.assertAlmostEqual(kv.restschuld_abweichung, 0.0, places=2)
+		self.assertAlmostEqual(kv.aktuelle_restschuld, 8_000.0, places=2)
+
 
 if __name__ == "__main__":
 	unittest.main()

@@ -159,25 +159,38 @@ function renderRestschuldIndicator(frm) {
 	if (frm.is_new()) return;
 	const abweichung = parseFloat(frm.doc.restschuld_abweichung || 0);
 	const aktuelle = parseFloat(frm.doc.aktuelle_restschuld || 0);
-	const gl = parseFloat(frm.doc.gl_saldo_darlehenskonto || 0);
+	const planGetilgt = parseFloat(frm.doc.plan_getilgt || 0);
+	const glGetilgt = parseFloat(frm.doc.gl_getilgt || 0);
+	const glSaldo = parseFloat(frm.doc.gl_saldo_darlehenskonto || 0);
 
-	// Restschuld-Indicator immer anzeigen
+	// Restschuld + beide Tilgungs-Seiten anzeigen
 	frm.dashboard.add_indicator(
 		__("Restschuld berechnet: {0}", [format_currency(aktuelle)]),
 		"blue"
 	);
 	frm.dashboard.add_indicator(
-		__("GL-Saldo Darlehen: {0}", [format_currency(gl)]),
+		__("Getilgt laut Plan: {0}", [format_currency(planGetilgt)]),
+		"blue"
+	);
+	frm.dashboard.add_indicator(
+		__("Getilgt laut Buchhaltung: {0}", [format_currency(glGetilgt)]),
+		"blue"
+	);
+	// Gesamt-Konto-Saldo — reine Info (bei geteiltem Konto Summe aller Kredite)
+	frm.dashboard.add_indicator(
+		__("GL-Saldo Konto (alle Kredite): {0}", [format_currency(glSaldo)]),
 		"blue"
 	);
 
 	if (Math.abs(abweichung) > 1.0) {
 		frm.dashboard.add_indicator(
-			__("Abweichung: {0} — bitte Eröffnungsbuchung prüfen", [format_currency(abweichung)]),
+			__("Abweichung Plan ↔ Buchhaltung: {0} — Buchungssatz nach Buchung verändert?", [
+				format_currency(abweichung),
+			]),
 			"red"
 		);
 	} else {
-		frm.dashboard.add_indicator(__("Restschuld ↔ GL stimmig"), "green");
+		frm.dashboard.add_indicator(__("Plan ↔ Buchhaltung stimmig"), "green");
 	}
 }
 
