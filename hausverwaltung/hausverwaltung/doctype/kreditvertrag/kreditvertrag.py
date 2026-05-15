@@ -34,6 +34,7 @@ class Kreditvertrag(Document):
 	def validate(self):
 		self._validate_kontotypen()
 		self._validate_zeilen()
+		self._validate_keine_doppelverlinkung()
 		self._sort_plan_and_reindex()
 		self._compute_zeilen_summen()
 		self._compute_restschuld_nach()
@@ -74,6 +75,70 @@ class Kreditvertrag(Document):
 				frappe.throw(
 					f"Zinsaufwandskonto '{self.zinsaufwandskonto}' hat root_type '{rt}', erwartet 'Expense'."
 				)
+
+	def _validate_keine_doppelverlinkung(self):
+		"""Verhindert dass derselbe JE mehrfach mit Kreditraten verknüpft ist.
+
+		Auf einem geteilten ``darlehenskonto`` (z.B. ``2000 - Darlehenstilgung Jürgen
+		Peters - HP``, das alle 3 Wilhelmshavener-Kreditverträge nutzen) würde ein
+		doppelt verlinkter JE in ``gl_getilgt`` beider Verträge auftauchen →
+		Doppelzählung der Tilgung. Gleiches Risiko gilt für ``journal_entry_zins``
+		auf einem geteilten Zinsaufwandskonto.
+
+		Zwei Stufen:
+		1. **In-Memory**: Im aktuellen, noch nicht persistierten Doc darf kein JE
+		   in zwei verschiedenen Plan-Zeilen referenziert sein (auch nicht über
+		   Tilg-Feld + Zins-Feld). Wird vor der SQL-Stufe geprüft, weil DB diese
+		   Konflikte noch nicht sieht.
+		2. **DB**: kein JE darf in einer Kreditrate eines anderen Vertrags hängen.
+
+		Beide Stufen lösen ``frappe.throw`` aus.
+		"""
+		# Stufe 1: In-Memory-Konflikte (selbes Doc, selbe Save-Operation)
+		seen: dict[str, tuple] = {}
+		for row in self.get("plan") or []:
+			for field in ("journal_entry", "journal_entry_zins"):
+				je_name = row.get(field)
+				if not je_name:
+					continue
+				if je_name in seen:
+					prev_idx, prev_field = seen[je_name]
+					frappe.throw(
+						f"JE '{je_name}' ist mehrfach im selben Vertrag verlinkt: "
+						f"Plan-Zeile {prev_idx} ({prev_field}) und Plan-Zeile "
+						f"{row.idx} ({field}). Bitte einen der beiden Verweise "
+						"entfernen — Doppelzählung würde `gl_getilgt` verfälschen."
+					)
+				seen[je_name] = (row.idx, field)
+
+		# Stufe 2: Konflikte gegen andere Verträge / persistierte Zeilen
+		for row in self.get("plan") or []:
+			for field in ("journal_entry", "journal_entry_zins"):
+				je_name = row.get(field)
+				if not je_name:
+					continue
+				other = frappe.db.sql(
+					"""
+					SELECT name, parent
+					FROM `tabKreditrate`
+					WHERE (journal_entry = %(je)s OR journal_entry_zins = %(je)s)
+					  AND (parent != %(parent)s OR name != %(row_name)s)
+					LIMIT 1
+					""",
+					{
+						"je": je_name,
+						"parent": self.name or "",
+						"row_name": row.name or "",
+					},
+					as_dict=True,
+				)
+				if other:
+					frappe.throw(
+						f"Plan-Zeile {row.idx} ({field}): JE '{je_name}' ist bereits in "
+						f"Kreditrate '{other[0].name}' (Vertrag '{other[0].parent}') "
+						"verknüpft. Doppelverlinkung würde Doppelzählung in `gl_getilgt` "
+						"erzeugen — bitte den anderen Verweis vorher entfernen."
+					)
 
 	def _validate_zeilen(self):
 		seen_dates: set[str] = set()

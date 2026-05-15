@@ -13,6 +13,7 @@
   "gesamtbetrag",
   "restschuld_nach",
   "journal_entry",
+  "journal_entry_zins",
   "bank_transaction",
   "gebucht_am",
   "bemerkung"
@@ -68,8 +69,14 @@
    "in_list_view": 1,
    "label": "Buchungssatz",
    "options": "Journal Entry",
-   "read_only": 1,
-   "description": "Verlinkt, sobald die Rate gegen eine Bank-Transaktion gebucht wurde. Idempotenz-Marker für Auto-Match."
+   "description": "Verlinkt durch Auto-Match (Bankimport) oder manuelle Pflege. Geht in den Plausi-Check `gl_getilgt` ein. Bei manueller Pflege prüft validate(), dass derselbe JE nicht in einer anderen Kreditrate verlinkt ist."
+  },
+  {
+   "fieldname": "journal_entry_zins",
+   "fieldtype": "Link",
+   "label": "Buchungssatz (Zins)",
+   "options": "Journal Entry",
+   "description": "Optionaler Link auf einen separaten Zins-Buchungssatz, wenn Zins und Tilgung als zwei JEs gebucht wurden (z.B. bei historischen Importen). Informativ — nicht im Plausi-Check enthalten. Manuelle Pflege erlaubt."
   },
   {
    "fieldname": "bank_transaction",
