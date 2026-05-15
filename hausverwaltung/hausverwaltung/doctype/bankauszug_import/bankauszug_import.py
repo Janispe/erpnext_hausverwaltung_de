@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 import frappe
 from frappe.model.document import Document
+from frappe.model.naming import make_autoname
 from frappe.utils import flt, getdate
 
 
@@ -23,9 +24,31 @@ SUPPORTED_PARTY_TYPES = ("Customer", "Supplier", "Eigentuemer")
 
 
 class BankauszugImport(Document):
+    def autoname(self):
+        """Generiert einen sprechenden Namen aus Bank-Nr + Datumsrange + Counter.
+
+        Wenn Rows beim Insert bereits vorhanden sind:
+        ``BAI-{bank_no}-{YYYYMMDD}-{YYYYMMDD}-{####}``
+
+        Im aktuellen CSV-Flow sind Rows bei ``autoname()`` meist noch leer
+        (``parse_csv()`` läuft nach dem Insert). Dann fällt der Name bewusst
+        auf ``BAI-{bank_no}-{####}`` zurück; der Zeitraum landet zuverlässig
+        im ``title``.
+        """
+        bank_no = self._bank_account_number() or "XXXX"
+        date_from, date_to = self._row_date_range()
+        if date_from and date_to:
+            prefix = f"BAI-{bank_no}-{date_from:%Y%m%d}-{date_to:%Y%m%d}"
+        else:
+            prefix = f"BAI-{bank_no}"
+        self.name = make_autoname(f"{prefix}-.####")
+
     def before_save(self):
         # update info and clear rows if file changed
         pass
+
+    def validate(self):
+        self._compute_title()
 
     def onload(self):
         # Status beim Öffnen aus aktuellem Zeilen-Stand neu berechnen, damit
@@ -45,6 +68,100 @@ class BankauszugImport(Document):
         except Exception:
             pass
 
+    # ------------------------------------------------------------------
+    # Title + Naming-Helper
+    # ------------------------------------------------------------------
+
+    def _compute_title(self):
+        """Setzt ``self.title`` aus Bank-Label + Datumsrange + Anzahl + Immobilie."""
+        bank_label = self._bank_account_label() or "?"
+        date_from, date_to = self._row_date_range()
+        n_rows = len(self.get("rows") or [])
+        immobilie = self._eindeutige_immobilie()
+
+        parts = [bank_label]
+        if date_from and date_to:
+            if date_from == date_to:
+                parts.append(f"{date_from:%d.%m.%Y}")
+            elif date_from.year == date_to.year:
+                parts.append(f"{date_from:%d.%m.}–{date_to:%d.%m.%Y}")  # noqa: RUF001
+            else:
+                parts.append(f"{date_from:%d.%m.%Y}–{date_to:%d.%m.%Y}")  # noqa: RUF001
+        if n_rows:
+            parts.append(f"{n_rows} {'Buchung' if n_rows == 1 else 'Buchungen'}")
+        if immobilie:
+            parts.append(immobilie)
+        self.title = " · ".join(parts)
+
+    def _bank_account_number(self) -> Optional[str]:
+        """``"1812"`` / ``"1804"`` etc — aus dem GL-Account des Bank Accounts."""
+        if not self.bank_account:
+            return None
+        gl_account = frappe.db.get_value("Bank Account", self.bank_account, "account")
+        if not gl_account:
+            return None
+        return frappe.db.get_value("Account", gl_account, "account_number")
+
+    def _bank_account_label(self) -> Optional[str]:
+        """``"Wilhelmshavener (1812)"`` — Kombination aus Bezeichnung + Nr.
+
+        Der Bank Account hat keine ``bezeichnung``, aber sein ``name`` ist
+        meist sprechend (``"Wilhelmshavener - Postbank, Ndl Deutsche Bank"``).
+        Wir nehmen den Teil vor `` - ``.
+        """
+        if not self.bank_account:
+            return None
+        short = (self.bank_account or "").split(" - ", 1)[0].strip() or self.bank_account
+        bank_no = self._bank_account_number()
+        if bank_no:
+            return f"{short} ({bank_no})"
+        return short
+
+    def _row_date_range(self) -> Tuple[Optional[Any], Optional[Any]]:
+        """``MIN/MAX buchungstag`` aus ``self.rows``."""
+        dates = [
+            getdate(r.buchungstag)
+            for r in (self.get("rows") or [])
+            if r.get("buchungstag")
+        ]
+        if not dates:
+            return (None, None)
+        return (min(dates), max(dates))
+
+    def _eindeutige_immobilie(self) -> Optional[str]:
+        """Reverse-Lookup: Immobilie, deren ``haupt_bank_account`` (Link auf
+        Bank Account) oder ``bankkonten``-Tabelle (Link auf GL-Konto über
+        ``konto``) diesen Bank Account enthält.
+
+        Nur wenn EXAKT eine Immobilie matched — bei 0 oder mehreren wird
+        ``None`` zurückgegeben, damit der Titel nicht falsch zuordnet.
+        """
+        if not self.bank_account:
+            return None
+
+        from_haupt = frappe.get_all(
+            "Immobilie",
+            filters={"haupt_bank_account": self.bank_account},
+            pluck="name",
+        )
+
+        # Child-Tabelle `Immobilie Bankkonto.konto` ist Link auf GL-Account
+        # (nicht Bank Account). Wir bridgen via Bank Account.account.
+        gl_account = frappe.db.get_value("Bank Account", self.bank_account, "account")
+        from_child = []
+        if gl_account:
+            from_child = frappe.get_all(
+                "Immobilie Bankkonto",
+                filters={"konto": gl_account},
+                fields=["parent"],
+                distinct=True,
+            )
+
+        candidates = set(from_haupt) | {c.get("parent") for c in from_child if c.get("parent")}
+        if len(candidates) == 1:
+            return next(iter(candidates))
+        return None
+
 
 def _recompute_doc_status(docname: str) -> str:
     """Phasen-Status aus dem aktuellen Zeilen-Stand berechnen und persistieren.
@@ -61,11 +178,13 @@ def _recompute_doc_status(docname: str) -> str:
     total = len(rows)
     if not total:
         status = "Keine Zeilen geladen"
+        offene_buchungen = 0
     else:
         with_party = sum(1 for r in rows if r.get("party_type") and r.get("party"))
         with_bt = sum(1 for r in rows if r.get("bank_transaction"))
         with_voucher = sum(1 for r in rows if r.get("payment_entry") or r.get("journal_entry"))
         failed = sum(1 for r in rows if (r.get("row_status") or "") == "failed")
+        offene_buchungen = total - with_voucher
 
         # Phasen-Logik hängt am bank_transaction, nicht am Party-Count: Zeilen
         # ohne Party können trotzdem als Journal Entry verbucht werden (z.B.
@@ -77,14 +196,19 @@ def _recompute_doc_status(docname: str) -> str:
             else:
                 status = f"Phase 2: {with_bt}/{total} Bank-Transaktionen — {total - with_bt} bereit zum Buchen"
         elif with_voucher < total:
-            status = f"Phase 3: {with_voucher}/{total} Belege zugeordnet — {total - with_voucher} offen"
+            status = f"Phase 3: {with_voucher}/{total} Belege zugeordnet — {offene_buchungen} offen"
         else:
             status = f"Abgeschlossen: {total} Zeilen verbucht"
 
         if failed:
             status += f" · Fehler: {failed}"
 
-    frappe.db.set_value("Bankauszug Import", docname, "status", status, update_modified=False)
+    frappe.db.set_value(
+        "Bankauszug Import",
+        docname,
+        {"status": status, "offene_buchungen": offene_buchungen},
+        update_modified=False,
+    )
     return status
 
 

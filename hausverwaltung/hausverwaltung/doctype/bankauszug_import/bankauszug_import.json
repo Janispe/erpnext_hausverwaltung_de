@@ -1,10 +1,10 @@
 {
  "actions": [],
- "autoname": "hash",
  "creation": "2025-09-02 19:08:01.266711",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "title",
   "bank_account",
   "csv_file",
   "delimiter",
@@ -21,13 +21,23 @@
   "section_break_bhsn",
   "cb_preview",
   "status",
+  "offene_buchungen",
   "column_break_wlsf"
  ],
  "fields": [
   {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Anzeige-Titel",
+   "read_only": 1,
+   "hidden": 1,
+   "description": "Wird im validate() berechnet aus Bank Account + Datums-Range + ggf. Immobilie. Nicht manuell editieren."
+  },
+  {
    "fieldname": "bank_account",
    "fieldtype": "Link",
    "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Bankkonto",
    "options": "Bank Account",
    "reqd": 1
@@ -116,7 +126,18 @@
    "fieldname": "status",
    "fieldtype": "Data",
    "label": "Status",
-   "read_only": 1
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "offene_buchungen",
+   "fieldtype": "Int",
+   "label": "Offene Buchungen",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Anzahl Zeilen ohne Payment Entry oder Journal Entry. Wird in _recompute_doc_status() berechnet."
   },
   {
    "fieldname": "section_break_bhsn",
@@ -132,8 +153,9 @@
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
  "name": "Bankauszug Import",
- "naming_rule": "Random",
+ "naming_rule": "By script",
  "owner": "Administrator",
+ "title_field": "title",
  "permissions": [
   {
    "create": 1,
