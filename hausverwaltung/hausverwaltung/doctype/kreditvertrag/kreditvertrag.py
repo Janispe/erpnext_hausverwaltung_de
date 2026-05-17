@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from decimal import Decimal
 from typing import Optional
 
 import frappe
 from frappe.model.document import Document
+from frappe.model.naming import make_autoname
 from frappe.utils import add_months, cint, flt, getdate, now_datetime, nowdate
 
 
@@ -30,8 +32,43 @@ RESTSCHULD_EPSILON = 0.01
 MAX_PLAN_ROWS = 600
 
 
+def _normalize_vertragsnummer(value: str) -> str:
+	"""Macht eine Data-Vertragsnummer URL-/Name-fähig.
+
+	Nur ``A-Z a-z 0-9`` erlauben, alles andere → ``-`` zusammengefasst, Trim
+	an den Enden. Leerer Input und nur-Sonderzeichen ergeben ``""``.
+	"""
+	if not value:
+		return ""
+	return re.sub(r"[^A-Za-z0-9]+", "-", value).strip("-")
+
+
 class Kreditvertrag(Document):
+	def autoname(self):
+		"""``KV-{vertragsnummer-norm}-{Auszahlungsjahr}-{####}`` mit graceful fallbacks.
+
+		- voll: ``KV-1-2020-0001``
+		- ohne Vertragsnummer: ``KV-2020-0001``
+		- ohne Auszahlungsdatum: ``KV-1-0001``
+		- ohne beides: ``KV-0001``
+
+		Wichtig: ``laufzeit_start`` ist beim Insert oft noch ein ISO-String
+		(Frappe konvertiert Date-Felder erst beim Save). Daher ``getdate()``
+		zwingend vor ``.year``.
+		"""
+		nr = _normalize_vertragsnummer(self.vertragsnummer or "")
+		start = getdate(self.laufzeit_start) if self.laufzeit_start else None
+		parts = ["KV"]
+		if nr:
+			parts.append(nr)
+		if start:
+			parts.append(str(start.year))
+		prefix = "-".join(parts)
+		self.name = make_autoname(f"{prefix}-.####")
+
 	def validate(self):
+		# bezeichnung zuerst auto-fillen, damit nachgelagerte Logik den Wert sieht
+		self._auto_fill_bezeichnung()
 		self._validate_kontotypen()
 		self._validate_zeilen()
 		self._validate_keine_doppelverlinkung()
@@ -40,6 +77,40 @@ class Kreditvertrag(Document):
 		self._compute_restschuld_nach()
 		self._compute_plausibilitaet()
 		self._compute_status()
+
+	def _auto_fill_bezeichnung(self):
+		"""Generiert ``bezeichnung`` aus Lieferant + Immobilie + Vertragsnummer + Start.
+
+		Nur wenn das Feld leer ist — manuell gesetzte oder vom Importer
+		geschriebene Werte bleiben unangetastet.
+
+		Lieferant-Name: ``Supplier.supplier_name`` (lesbar), Fallback auf
+		``self.lieferant`` (Link-Wert).
+		"""
+		if (self.bezeichnung or "").strip():
+			return
+		lieferant_name = "Darlehen"
+		if self.lieferant:
+			supplier_name = frappe.db.get_value("Supplier", self.lieferant, "supplier_name")
+			lieferant_name = supplier_name or self.lieferant
+		immobilie_label = ""
+		if self.immobilie:
+			immobilie_label = (
+				frappe.db.get_value("Immobilie", self.immobilie, "bezeichnung")
+				or self.immobilie
+			)
+		parts = [f"Darlehen {lieferant_name}"]
+		if immobilie_label:
+			parts.append(f"– {immobilie_label}")  # noqa: RUF001
+		vn = (self.vertragsnummer or "").strip()
+		if vn or self.laufzeit_start:
+			inner = []
+			if vn:
+				inner.append(f"Vertrag {vn}")
+			if self.laufzeit_start:
+				inner.append(f"Auszahlung {getdate(self.laufzeit_start):%d.%m.%Y}")
+			parts.append(f"({', '.join(inner)})")
+		self.bezeichnung = " ".join(parts)
 
 	# ------------------------------------------------------------------
 	# Validation Helpers
@@ -263,6 +334,17 @@ class Kreditvertrag(Document):
 			for r in rows
 		)
 		aktuelle = flt(self.aktuelle_restschuld)
+
+		# Counter + nächste Fälligkeit (Listen-Felder).
+		# `naechste_faelligkeit` umfasst auch überfällige offene Raten — im Alltag
+		# ist das genau, was im Listen-View sichtbar sein muss.
+		self.offene_raten = sum(1 for r in rows if not r.get("journal_entry"))
+		open_dates = sorted(
+			getdate(r.faelligkeitsdatum)
+			for r in rows
+			if not r.get("journal_entry") and r.get("faelligkeitsdatum")
+		)
+		self.naechste_faelligkeit = open_dates[0] if open_dates else None
 
 		if rows and not has_open_rates and abs(aktuelle) <= RESTSCHULD_EPSILON:
 			self.status = STATUS_ABGELOEST
@@ -546,6 +628,9 @@ def update_statuses_for_list():
 			doc.db_set("gl_getilgt", doc.gl_getilgt, update_modified=False)
 			doc.db_set("gl_saldo_darlehenskonto", doc.gl_saldo_darlehenskonto, update_modified=False)
 			doc.db_set("restschuld_abweichung", doc.restschuld_abweichung, update_modified=False)
+			# Listen-Felder: Counter + nächste Fälligkeit
+			doc.db_set("offene_raten", doc.offene_raten, update_modified=False)
+			doc.db_set("naechste_faelligkeit", doc.naechste_faelligkeit, update_modified=False)
 		except Exception:
 			frappe.log_error(
 				frappe.get_traceback(),
@@ -956,6 +1041,9 @@ def _recompute_parent_plausibilitaet(kreditvertrag_name: str) -> None:
 		kv.db_set("gl_saldo_darlehenskonto", kv.gl_saldo_darlehenskonto, update_modified=False)
 		kv.db_set("restschuld_abweichung", kv.restschuld_abweichung, update_modified=False)
 		kv.db_set("status", kv.status, update_modified=False)
+		# Listen-Felder: nach BT-Match/Storno sofort sichtbar machen
+		kv.db_set("offene_raten", kv.offene_raten, update_modified=False)
+		kv.db_set("naechste_faelligkeit", kv.naechste_faelligkeit, update_modified=False)
 	except Exception:
 		frappe.log_error(
 			frappe.get_traceback(),

@@ -1,13 +1,15 @@
 {
  "actions": [],
  "allow_rename": 1,
- "autoname": "format:KV-{YYYY}-{#####}",
  "creation": "2026-05-13 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
+ "naming_rule": "By script",
  "field_order": [
   "bezeichnung",
   "status",
+  "offene_raten",
+  "naechste_faelligkeit",
   "stammdaten_section",
   "company",
   "lieferant",
@@ -45,7 +47,7 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Bezeichnung",
-   "reqd": 1
+   "description": "Wird in validate() automatisch aus Lieferant + Immobilie + Vertragsnummer + Auszahlungsdatum berechnet, wenn leer. Manuell gesetzte Texte bleiben unverändert."
   },
   {
    "default": "Aktiv",
@@ -57,6 +59,23 @@
    "options": "Aktiv\nAbgelöst\nVergangenheit",
    "read_only": 1,
    "description": "Wird automatisch berechnet: Aktiv = offene Raten oder Restschuld > 0. Abgelöst = alle Raten gebucht und Restschuld ≈ 0. Vergangenheit = keine offenen Raten mehr, aber Restschuld > 0 (zu klären)."
+  },
+  {
+   "fieldname": "offene_raten",
+   "fieldtype": "Int",
+   "label": "Offene Raten",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Anzahl Plan-Raten ohne journal_entry. Wird in _compute_status() berechnet."
+  },
+  {
+   "fieldname": "naechste_faelligkeit",
+   "fieldtype": "Date",
+   "label": "Nächste Fälligkeit",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "Fälligkeitsdatum der nächsten offenen Plan-Rate — auch wenn überfällig (Datum < heute). Leer, wenn alle Raten gebucht sind."
   },
   {
    "fieldname": "stammdaten_section",
@@ -209,6 +228,7 @@
    "fieldtype": "Currency",
    "label": "Abweichung",
    "read_only": 1,
+   "in_list_view": 1,
    "description": "Getilgt laut Plan − Getilgt laut Buchhaltung. Sollte ≈ 0 sein. Weicht es ab, wurde ein Buchungssatz nach dem Buchen verändert oder eine Rate nachträglich editiert."
   },
   {
