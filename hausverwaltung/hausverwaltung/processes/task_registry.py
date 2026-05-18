@@ -196,23 +196,21 @@ class PrintDocumentTaskHandler(BaseTaskHandler):
 			frappe.throw(_("Aufgabentyp print_document erfordert print_format."))
 
 	def seed_detail(self, context: TaskHandlerContext, doc: Document, task_row, config: dict) -> None:
-		detail = ensure_print_detail(context, doc.name, task_row.name)
-		if not (detail.print_format or "").strip():
-			detail.print_format = (config.get("print_format") or "").strip()
-			detail.save(ignore_permissions=True)
+		print_format = (config.get("print_format") or "").strip()
+		ensure_print_detail(context, doc.name, task_row.name, print_format=print_format)
 
 	def is_fulfilled(self, context: TaskHandlerContext, doc: Document, task_row) -> TaskCheckResult:
-		detail = ensure_print_detail(context, doc.name, task_row.name)
+		detail = ensure_print_detail(
+			context, doc.name, task_row.name, print_format=_print_format_from_row(task_row)
+		)
 		has_pdf = bool((detail.generated_file_url or "").strip())
 		confirmed = bool(detail.manuell_abgeheftet)
 		return TaskCheckResult(fulfilled=has_pdf and confirmed, meta={"has_pdf": has_pdf, "confirmed": confirmed})
 
 	def generate_pdf(self, context: TaskHandlerContext, doc: Document, task_row) -> dict:
-		detail = ensure_print_detail(context, doc.name, task_row.name)
-		print_format = (detail.print_format or "").strip()
-		if not print_format:
-			config = extract_task_config(task_row)
-			print_format = (config.get("print_format") or "").strip()
+		row_pf = _print_format_from_row(task_row)
+		detail = ensure_print_detail(context, doc.name, task_row.name, print_format=row_pf)
+		print_format = (detail.print_format or "").strip() or row_pf
 		if not print_format:
 			frappe.throw(_("Print Format fehlt fuer diese Druckaufgabe."))
 
@@ -228,7 +226,9 @@ class PrintDocumentTaskHandler(BaseTaskHandler):
 		return {"file_url": file_doc.file_url, "detail": detail.name}
 
 	def confirm_filed(self, context: TaskHandlerContext, doc: Document, task_row, confirmed: int) -> dict:
-		detail = ensure_print_detail(context, doc.name, task_row.name)
+		detail = ensure_print_detail(
+			context, doc.name, task_row.name, print_format=_print_format_from_row(task_row)
+		)
 		is_confirmed = int(confirmed or 0) == 1
 		detail.manuell_abgeheftet = 1 if is_confirmed else 0
 		if is_confirmed:
@@ -241,7 +241,9 @@ class PrintDocumentTaskHandler(BaseTaskHandler):
 		return {"confirmed": bool(is_confirmed), "detail": detail.name}
 
 	def get_detail_ref(self, context: TaskHandlerContext, doc: Document, task_row) -> dict:
-		detail = ensure_print_detail(context, doc.name, task_row.name)
+		detail = ensure_print_detail(
+			context, doc.name, task_row.name, print_format=_print_format_from_row(task_row)
+		)
 		return {"doctype": detail.doctype, "name": detail.name}
 
 
@@ -291,7 +293,13 @@ def ensure_file_detail(context: TaskHandlerContext, docname: str, aufgabe_row_na
 	return detail
 
 
-def ensure_print_detail(context: TaskHandlerContext, docname: str, aufgabe_row_name: str):
+def ensure_print_detail(
+	context: TaskHandlerContext,
+	docname: str,
+	aufgabe_row_name: str,
+	*,
+	print_format: str = "",
+):
 	doctype = (context.print_detail_doctype or "").strip()
 	doctype_field = (context.print_detail_doctype_field or "").strip()
 	name_field = (context.print_detail_name_field or "").strip()
@@ -306,16 +314,22 @@ def ensure_print_detail(context: TaskHandlerContext, docname: str, aufgabe_row_n
 	if name:
 		return frappe.get_doc(doctype, name)
 
-	detail = frappe.get_doc(
-		{
-			"doctype": doctype,
-			doctype_field: (context.runtime_doctype or "").strip(),
-			name_field: docname,
-			"aufgabe_row_name": aufgabe_row_name,
-		}
-	)
+	payload = {
+		"doctype": doctype,
+		doctype_field: (context.runtime_doctype or "").strip(),
+		name_field: docname,
+		"aufgabe_row_name": aufgabe_row_name,
+	}
+	pf = (print_format or "").strip()
+	if pf:
+		payload["print_format"] = pf
+	detail = frappe.get_doc(payload)
 	detail.insert(ignore_permissions=True, ignore_links=True)
 	return detail
+
+
+def _print_format_from_row(task_row) -> str:
+	return (extract_task_config(task_row).get("print_format") or "").strip()
 
 
 def _default_tag_builder(doc: Document, variant: str) -> list[str]:

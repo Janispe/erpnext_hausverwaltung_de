@@ -39,9 +39,12 @@
    "reqd": 1
   },
   {
+   "description": "DEPRECATED — Abhaengigkeiten werden in Prozess Version > Abhaengigkeiten verwaltet (schritt_kanten). Dieses Feld wird in einer späteren Phase entfernt.",
    "fieldname": "parent_step_key",
    "fieldtype": "Data",
-   "label": "Parent Step Key"
+   "hidden": 1,
+   "label": "Parent Step Key (Deprecated)",
+   "read_only": 1
   },
   {
    "fieldname": "titel",

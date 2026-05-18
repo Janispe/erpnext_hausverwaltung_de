@@ -12,6 +12,7 @@
   "handler_key",
   "step_key",
   "parent_step_key",
+  "depends_on_json",
   "verantwortlich",
   "faellig_am",
   "status",
@@ -64,10 +65,20 @@
    "label": "Step Key"
   },
   {
+   "description": "DEPRECATED — siehe depends_on_json.",
    "fieldname": "parent_step_key",
    "fieldtype": "Data",
    "hidden": 1,
-   "label": "Parent Step Key",
+   "label": "Parent Step Key (Deprecated)",
+   "read_only": 1
+  },
+  {
+   "default": "[]",
+   "description": "JSON-Snapshot der Vorgaenger-step_keys aus Prozess Version > Abhaengigkeiten (zur Seed-Zeit eingefroren).",
+   "fieldname": "depends_on_json",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Depends-On (JSON Snapshot)",
    "read_only": 1
   },
   {

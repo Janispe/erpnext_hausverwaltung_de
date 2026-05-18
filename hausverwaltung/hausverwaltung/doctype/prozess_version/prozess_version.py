@@ -44,6 +44,8 @@ class ProzessVersion(Document):
 		return config
 
 	def _normalize_rows(self) -> None:
+		import graphlib
+
 		runtime_config = self._get_runtime_config()
 		seen_keys: set[str] = set()
 		for idx, row in enumerate(self.get("schritte") or [], start=1):
@@ -69,6 +71,46 @@ class ProzessVersion(Document):
 				context=runtime_config.task_handler_context,
 			)
 			handler.validate_config(row)
+
+		# Edge-Validierung (DAG-Kanten in schritt_kanten)
+		seen_edges: set[tuple[str, str]] = set()
+		for edge in self.get("schritt_kanten") or []:
+			sk = (edge.step_key or "").strip()
+			dep = (edge.depends_on_step_key or "").strip()
+			if not sk or not dep:
+				frappe.throw(_("Kante braucht step_key UND depends_on_step_key."))
+			if sk not in seen_keys:
+				frappe.throw(_("Kante referenziert unbekannten Schritt: {0}").format(sk))
+			if dep not in seen_keys:
+				frappe.throw(_("Kante referenziert unbekannten Vorgaenger-Schritt: {0}").format(dep))
+			if sk == dep:
+				frappe.throw(_("Schritt kann nicht von sich selbst abhaengen: {0}").format(sk))
+			edge_key = (sk, dep)
+			if edge_key in seen_edges:
+				frappe.throw(_("Doppelte Kante: {0} haengt mehrfach von {1} ab.").format(sk, dep))
+			seen_edges.add(edge_key)
+
+		# Cycle-Detection ueber kombinierten Edge-Set (neue Kanten + legacy parent_step_key)
+		edges_combined: dict[str, list[str]] = {}
+		for edge in self.get("schritt_kanten") or []:
+			sk = (edge.step_key or "").strip()
+			dep = (edge.depends_on_step_key or "").strip()
+			if sk and dep:
+				edges_combined.setdefault(sk, []).append(dep)
+		for row in self.get("schritte") or []:
+			sk = (row.step_key or "").strip()
+			legacy = (row.parent_step_key or "").strip()
+			if sk and legacy and legacy not in edges_combined.get(sk, []):
+				edges_combined.setdefault(sk, []).append(legacy)
+		ts = graphlib.TopologicalSorter()
+		for sk in seen_keys:
+			ts.add(sk, *edges_combined.get(sk, []))
+		try:
+			ts.prepare()
+		except graphlib.CycleError as e:
+			cycle_path = " -> ".join(e.args[1]) if len(e.args) > 1 else str(e)
+			frappe.throw(_("Zyklus in Schritt-Abhaengigkeiten: {0}").format(cycle_path))
+
 		if self.get("schritte"):
 			self.set("schritte", sorted(self.get("schritte"), key=lambda r: int(r.reihenfolge or 0)))
 

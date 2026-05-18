@@ -605,16 +605,47 @@ class ProcessEngine:
 		return CompletionCheckResult(blockers=blockers, warnings=warnings)
 
 	def _is_task_unlocked(self, doc: Document, row) -> bool:
-		parent_key = (getattr(row, "parent_step_key", None) or "").strip()
-		if not parent_key:
+		rows = doc.get(self.config.task_fieldname) or []
+		by_key = {(getattr(r, "step_key", None) or "").strip(): r for r in rows if (getattr(r, "step_key", None) or "").strip()}
+		target = (getattr(row, "step_key", None) or "").strip()
+		if not target:
 			return True
-		by_key = {(getattr(item, "step_key", None) or "").strip(): item for item in doc.get(self.config.task_fieldname) or []}
-		parent_row = by_key.get(parent_key)
-		if not parent_row:
-			return True
-		if not bool(getattr(parent_row, "erfuellt", 0)):
-			return False
-		return self._is_task_unlocked(doc, parent_row)
+
+		visited: set[str] = set()
+		stack: list[str] = [target]
+		while stack:
+			node = stack.pop()
+			if node in visited:
+				continue
+			visited.add(node)
+			node_row = by_key.get(node)
+			if node_row is None:
+				continue
+			raw = (getattr(node_row, "depends_on_json", "") or "").strip()
+			try:
+				deps = json.loads(raw) if raw else []
+			except (ValueError, TypeError):
+				frappe.log_error(
+					title="Prozess: depends_on_json defekt",
+					message=f"Doc {doc.doctype} {doc.name}, Step {node}, raw={raw!r}",
+				)
+				return False
+			if not isinstance(deps, list):
+				return False
+			legacy_parent = (getattr(node_row, "parent_step_key", "") or "").strip()
+			if legacy_parent and legacy_parent not in deps:
+				deps = deps + [legacy_parent]
+			for d in deps:
+				d_stripped = (d or "").strip()
+				if not d_stripped:
+					continue
+				parent_row = by_key.get(d_stripped)
+				if parent_row is None:
+					continue
+				if not bool(getattr(parent_row, "erfuellt", 0)):
+					return False
+				stack.append(d_stripped)
+		return True
 
 	def _get_active_process_version(self, process_type: str | None) -> dict | None:
 		typ = (process_type or "").strip() or self.config.default_process_type
@@ -705,6 +736,29 @@ class ProcessEngine:
 			],
 			order_by="reihenfolge asc, idx asc",
 		)
+
+		# Edges der Version laden (DAG-Topologie aus Prozess Schritt Kante)
+		edges = frappe.get_all(
+			"Prozess Schritt Kante",
+			filters={"parent": version_name, "parenttype": self.config.process_version_doctype},
+			fields=["step_key", "depends_on_step_key"],
+		)
+		deps_by_step: dict[str, list[str]] = {}
+		for e in edges or []:
+			sk = (e.get("step_key") or "").strip()
+			dep = (e.get("depends_on_step_key") or "").strip()
+			if not sk or not dep:
+				continue
+			deps_by_step.setdefault(sk, []).append(dep)
+
+		# Pass 1: sichtbare step_keys vorab bestimmen, damit Pass 2 Deps darauf filtern kann
+		visible_step_keys: set[str] = {
+			(step.get("step_key") or "").strip()
+			for step in steps or []
+			if self._step_visible(step.get("sichtbar_fuer_prozess_typ"), process_type)
+			and (step.get("step_key") or "").strip()
+		}
+
 		rows = []
 		for step in steps or []:
 			if not self._step_visible(step.get("sichtbar_fuer_prozess_typ"), process_type):
@@ -721,6 +775,14 @@ class ProcessEngine:
 			cfg = extract_task_config(frappe._dict(step))
 			self.config.task_handler_registry.get_handler(handler_key=handler_key, task_type=task_type, context=self.config.task_handler_context).validate_config(frappe._dict(step))
 			config_json = dump_task_config(cfg)
+
+			step_key = (step.get("step_key") or "").strip()
+			legacy_parent = (step.get("parent_step_key") or "").strip()
+			raw_deps = list(deps_by_step.get(step_key, []))
+			if legacy_parent and legacy_parent not in raw_deps:
+				raw_deps.append(legacy_parent)
+			# Filtere Deps auf nur-sichtbare Steps (sonst blockieren Prozess-Varianten an unsichtbaren Steps)
+			deps = list(dict.fromkeys(d for d in raw_deps if d in visible_step_keys))
 			rows.append(
 				{
 					"aufgabe": (step.get("titel") or "").strip(),
@@ -729,8 +791,9 @@ class ProcessEngine:
 					"pflicht": 1 if step.get("pflicht") else 0,
 					"task_type": task_type,
 					"handler_key": handler_key,
-					"step_key": (step.get("step_key") or "").strip(),
-					"parent_step_key": (step.get("parent_step_key") or "").strip(),
+					"step_key": step_key,
+					"parent_step_key": legacy_parent,
+					"depends_on_json": json.dumps(deps),
 					"mapping_flag": (step.get("mapping_flag") or "").strip(),
 					"konfig_snapshot_json": config_json,
 					"config_json": config_json,

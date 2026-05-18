@@ -14,6 +14,7 @@
   "gueltig_bis",
   "beschreibung",
   "schritte",
+  "schritt_kanten",
   "amended_from"
  ],
  "fields": [
@@ -67,6 +68,13 @@
    "fieldtype": "Table",
    "label": "Schritte",
    "options": "Prozess Schritt"
+  },
+  {
+   "description": "Gerichtete Kanten: <step_key> haengt von <depends_on_step_key> ab. AND-Semantik bei mehreren Kanten auf denselben Schritt.",
+   "fieldname": "schritt_kanten",
+   "fieldtype": "Table",
+   "label": "Abhaengigkeiten",
+   "options": "Prozess Schritt Kante"
   },
   {
    "fieldname": "amended_from",
