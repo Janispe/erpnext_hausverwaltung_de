@@ -7,6 +7,7 @@
  "engine": "InnoDB",
  "field_order": [
   "runtime_doctype",
+  "prozess_typ",
   "version_key",
   "titel",
   "is_active",
@@ -26,6 +27,16 @@
    "label": "Runtime Doctype",
    "options": "DocType",
    "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.runtime_doctype===\"Prozess Instanz\"",
+   "description": "Bei runtime_doctype=Prozess Instanz: welcher Prozess Typ diese Version definiert.",
+   "fieldname": "prozess_typ",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Prozess Typ",
+   "mandatory_depends_on": "eval:doc.runtime_doctype===\"Prozess Instanz\"",
+   "options": "Prozess Typ"
   },
   {
    "fieldname": "version_key",

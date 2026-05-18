@@ -278,36 +278,57 @@ class Mietvertrag(Document):
 		if not mieterwechsel_name:
 			return
 
-		mw = frappe.db.get_value(
-			"Mieterwechsel",
-			mieterwechsel_name,
-			["name", "wohnung", "prozess_typ", "einzugsdatum", "neuer_mietvertrag"],
-			as_dict=True,
-		)
-		if not mw:
+		# Phase 4c: Mieterwechsel ist jetzt eine Prozess Instanz mit prozess_typ-Feld
+		# und domain-Daten in payload_json (statt nativen Feldern).
+		import json as _json
+
+		if not frappe.db.exists("Prozess Instanz", mieterwechsel_name):
 			frappe.throw(_("Der referenzierte Mieterwechsel '{0}' existiert nicht.").format(mieterwechsel_name))
 
-		prozess_typ = (mw.get("prozess_typ") or "").strip()
-		if prozess_typ not in {"Mieterwechsel", "Erstvermietung"}:
-			frappe.throw(_("Der referenzierte Mieterwechsel '{0}' ist kein Mieterwechsel/Erstvermietung.").format(mieterwechsel_name))
+		pi = frappe.db.get_value(
+			"Prozess Instanz",
+			mieterwechsel_name,
+			["name", "prozess_typ", "payload_json"],
+			as_dict=True,
+		)
+		if not pi:
+			frappe.throw(_("Der referenzierte Mieterwechsel '{0}' existiert nicht.").format(mieterwechsel_name))
 
-		if (mw.get("wohnung") or "").strip() != (self.wohnung or "").strip():
-			frappe.throw(_("Mietvertrag und Mieterwechsel muessen auf dieselbe Wohnung verweisen."))
-
-		einzugsdatum = mw.get("einzugsdatum")
-		if self.von and einzugsdatum and getdate(self.von) != getdate(einzugsdatum):
+		prozess_typ_name = (pi.get("prozess_typ") or "").strip()
+		# Akzeptiere nur Prozess-Instanzen vom Typ 'mieterwechsel' (heute beide Varianten
+		# Mieterwechsel + Erstvermietung leben unter diesem Typ).
+		if prozess_typ_name != "mieterwechsel":
 			frappe.throw(
-				_(
-					"Vertragsbeginn ({0}) muss dem Einzugsdatum des Mieterwechsels ({1}) entsprechen."
-				).format(self.von, einzugsdatum)
+				_("Der referenzierte Prozess '{0}' ist kein Mieterwechsel-Prozess (typ={1}).").format(
+					mieterwechsel_name, prozess_typ_name
+				)
 			)
 
-		linked_new = (mw.get("neuer_mietvertrag") or "").strip()
+		try:
+			payload = _json.loads(pi.get("payload_json") or "{}")
+		except (ValueError, TypeError):
+			payload = {}
+		if not isinstance(payload, dict):
+			payload = {}
+
+		mw_wohnung = (payload.get("wohnung") or "").strip()
+		if mw_wohnung != (self.wohnung or "").strip():
+			frappe.throw(_("Mietvertrag und Mieterwechsel muessen auf dieselbe Wohnung verweisen."))
+
+		einzugsdatum = payload.get("einzugsdatum")
+		if self.von and einzugsdatum and getdate(self.von) != getdate(einzugsdatum):
+			frappe.throw(
+				_("Vertragsbeginn ({0}) muss dem Einzugsdatum des Mieterwechsels ({1}) entsprechen.").format(
+					self.von, einzugsdatum
+				)
+			)
+
+		linked_new = (payload.get("neuer_mietvertrag") or "").strip()
 		if linked_new and linked_new != (self.name or "").strip():
 			frappe.throw(
-				_(
-					"Der Mieterwechsel verweist bereits auf einen anderen neuen Mietvertrag ({0})."
-				).format(linked_new)
+				_("Der Mieterwechsel verweist bereits auf einen anderen neuen Mietvertrag ({0}).").format(
+					linked_new
+				)
 			)
 
 	@property

@@ -136,16 +136,16 @@ def add_to_boot(bootinfo) -> None:
 	Desk-Boot-Payload. process_triggers.js liest das beim App-Init und registriert
 	dynamisch fuer jeden Source-Doctype einen refresh-Hook.
 
-	Damit muss kein einzelner Quell-Doctype-JS mehr attach_to_form() aufrufen —
-	das Design wird komplett datengetrieben."""
+	Wichtig: nutzt _iter_triggers() (das BEIDE Quellen iteriert — Code-defined
+	via _PROCESS_RUNTIMES UND DB-defined via aktive Prozess Typen). Sonst waeren
+	nach Phase 4c keine Buttons mehr sichtbar, weil _PROCESS_RUNTIMES leer ist."""
 	try:
 		ensure_process_runtimes_registered()
 		source_doctypes = sorted(
 			{
-				(t.source_doctype or "").strip()
-				for cfg in _PROCESS_RUNTIMES.values()
-				for t in (cfg.triggers or ())
-				if (t.source_doctype or "").strip()
+				(trigger.source_doctype or "").strip()
+				for _target_doctype, trigger in _iter_triggers()
+				if (trigger.source_doctype or "").strip()
 			}
 		)
 		bootinfo["hausverwaltung_process_source_doctypes"] = source_doctypes

@@ -48,6 +48,10 @@ def _upsert_version(*, version_key: str, titel: str, steps: list[dict], is_activ
 def execute() -> None:
 	if not frappe.db.exists("DocType", "Prozess Version"):
 		return
+	# Phase 4c: Mieterwechsel-DocType existiert nach Cutover nicht mehr.
+	# Frische Installs sollen keine Versions mit runtime_doctype="Mieterwechsel" anlegen.
+	if not frappe.db.exists("DocType", "Mieterwechsel"):
+		return
 
 	steps = [
 		{"titel": "Neuer Vertrag angelegt", "pflicht": 1},

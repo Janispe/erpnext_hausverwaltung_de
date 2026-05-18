@@ -48,15 +48,32 @@ class MieterwechselFlagTaskHandler(BaseTaskHandler):
 		}:
 			frappe.throw(_("Unbekanntes target_field fuer Mieterwechsel python_action: {0}").format(target_field))
 
+	def _read_flag(self, doc: Document, target_field: str):
+		"""Liest target_field aus payload_json (Prozess Instanz) ODER nativem
+		Feld (Backward-Compat fuer alte Mieterwechsel-Doctypes — heute nur noch
+		theoretisch, nach Phase 4c-Cutover ausschliesslich payload)."""
+		if hasattr(doc, "payload") and callable(doc.payload):
+			return doc.payload(target_field)
+		return doc.get(target_field)
+
+	def _write_flag(self, doc: Document, target_field: str, value) -> None:
+		if hasattr(doc, "payload_set") and callable(doc.payload_set):
+			doc.payload_set(target_field, value)
+			return
+		doc.set(target_field, value)
+
 	def is_fulfilled(self, context: TaskHandlerContext, doc: Document, task_row) -> TaskCheckResult:
 		config = extract_task_config(task_row)
 		target_field = (config.get("target_field") or getattr(task_row, "mapping_flag", None) or "").strip()
-		return TaskCheckResult(fulfilled=bool(doc.get(target_field)), meta={"target_field": target_field})
+		return TaskCheckResult(
+			fulfilled=bool(self._read_flag(doc, target_field)),
+			meta={"target_field": target_field},
+		)
 
 	def run_action(self, context: TaskHandlerContext, doc: Document, task_row, payload: dict | None = None) -> dict:
 		config = extract_task_config(task_row)
 		target_field = (config.get("target_field") or getattr(task_row, "mapping_flag", None) or "").strip()
-		doc.set(target_field, 1)
+		self._write_flag(doc, target_field, 1)
 		task_row.result_json = frappe.as_json({"target_field": target_field, "executed": True})
 		task_row.status = "Erledigt"
 		doc.save(ignore_permissions=True)
@@ -64,7 +81,19 @@ class MieterwechselFlagTaskHandler(BaseTaskHandler):
 
 
 def _is_erstvermietung(doc: Document) -> bool:
+	"""Phase 4c: variant lebt jetzt in payload_json. Trigger setzt 'variant'
+	auf 'mieterwechsel' (default) oder 'erstvermietung'."""
+	if hasattr(doc, "payload") and callable(doc.payload):
+		return (doc.payload("variant") or "").strip() == "erstvermietung"
+	# Backward-Compat falls jemand die Funktion mit altem Mieterwechsel-Doc aufruft
 	return (doc.get("prozess_typ") or "").strip() == PROZESS_TYP_ERSTVERMIETUNG
+
+
+def _doc_field(doc: Document, key: str, default=None):
+	"""Liest aus payload_json (Prozess Instanz) oder nativer Doc-Property."""
+	if hasattr(doc, "payload") and callable(doc.payload):
+		return doc.payload(key, default)
+	return doc.get(key) or default
 
 
 def _get_contract_data(contract_name: str | None) -> dict:
@@ -74,41 +103,50 @@ def _get_contract_data(contract_name: str | None) -> dict:
 
 
 def validate_contract_consistency(doc: Document) -> None:
-	if not doc.wohnung:
+	wohnung = _doc_field(doc, "wohnung")
+	if not wohnung:
 		return
-	old_data = _get_contract_data(doc.alter_mietvertrag)
-	new_data = _get_contract_data(doc.neuer_mietvertrag)
+	alter = _doc_field(doc, "alter_mietvertrag")
+	neuer = _doc_field(doc, "neuer_mietvertrag")
+	auszug = _doc_field(doc, "auszugsdatum")
+	einzug = _doc_field(doc, "einzugsdatum")
+	old_data = _get_contract_data(alter)
+	new_data = _get_contract_data(neuer)
 	if not _is_erstvermietung(doc) and not old_data:
 		frappe.throw(_("Alter Mietvertrag wurde nicht gefunden."))
 	if not new_data:
 		frappe.throw(_("Neuer Mietvertrag wurde nicht gefunden."))
-	if old_data and old_data.get("wohnung") != doc.wohnung:
+	if old_data and old_data.get("wohnung") != wohnung:
 		frappe.throw(_("Alter Mietvertrag gehoert nicht zur ausgewaehlten Wohnung."))
-	if new_data.get("wohnung") != doc.wohnung:
+	if new_data.get("wohnung") != wohnung:
 		frappe.throw(_("Neuer Mietvertrag gehoert nicht zur ausgewaehlten Wohnung."))
-	if doc.auszugsdatum and doc.einzugsdatum and getdate(doc.auszugsdatum) > getdate(doc.einzugsdatum):
+	if auszug and einzug and getdate(auszug) > getdate(einzug):
 		frappe.throw(_("Auszugsdatum darf nicht nach Einzugsdatum liegen."))
 
 
 def apply_contract_end_to_old_contract(doc: Document) -> None:
 	if _is_erstvermietung(doc):
 		return
-	if not doc.alter_mietvertrag or not doc.auszugsdatum:
+	alter = _doc_field(doc, "alter_mietvertrag")
+	auszug = _doc_field(doc, "auszugsdatum")
+	if not alter or not auszug:
 		return
-	contract_end = frappe.db.get_value("Mietvertrag", doc.alter_mietvertrag, "bis")
-	target = getdate(doc.auszugsdatum)
+	contract_end = frappe.db.get_value("Mietvertrag", alter, "bis")
+	target = getdate(auszug)
 	if contract_end and getdate(contract_end) == target:
 		return
-	frappe.db.set_value("Mietvertrag", doc.alter_mietvertrag, "bis", target, update_modified=False)
+	frappe.db.set_value("Mietvertrag", alter, "bis", target, update_modified=False)
 
 
 def get_completion_blockers(doc: Document) -> list[str]:
 	blockers: list[str] = []
-	if not _is_erstvermietung(doc) and doc.alter_mietvertrag and doc.einzugsdatum:
-		old_end = frappe.db.get_value("Mietvertrag", doc.alter_mietvertrag, "bis")
+	alter = _doc_field(doc, "alter_mietvertrag")
+	einzug = _doc_field(doc, "einzugsdatum")
+	if not _is_erstvermietung(doc) and alter and einzug:
+		old_end = frappe.db.get_value("Mietvertrag", alter, "bis")
 		if not old_end:
 			blockers.append(_("Beim alten Mietvertrag fehlt das Enddatum."))
-		elif getdate(old_end) > getdate(doc.einzugsdatum):
+		elif getdate(old_end) > getdate(einzug):
 			blockers.append(_("Enddatum des alten Mietvertrags darf nicht nach Einzugsdatum liegen."))
 	return blockers
 
@@ -212,10 +250,27 @@ ProcessPluginRegistry.register_payload_builder(
 )
 
 
+# Phase 4c: Mieterwechsel-Doctype geloescht. get_mieterwechsel_runtime existiert
+# noch fuer Backward-Compat (alte Patches/Tests koennten es importieren), aber
+# registriert KEINEN ProcessRuntimeConfig mehr. Die Mieterwechsel-Domain-Logik
+# lebt jetzt ausschliesslich als Plugin-Registry-Eintraege + dem
+# Prozess Typ "mieterwechsel"-Doc, das via Migration-Patch angelegt wird.
+
 _RUNTIME: ProcessRuntimeConfig | None = None
 
 
-def get_mieterwechsel_runtime() -> ProcessRuntimeConfig:
+def get_mieterwechsel_runtime() -> ProcessRuntimeConfig | None:
+	"""DEPRECATED nach Phase 4c. Returnt None — die Mieterwechsel-Logik lebt jetzt
+	als Plugin-Eintraege + UI-Doc 'Prozess Typ:mieterwechsel'. Bleibt als
+	Funktion erhalten, damit ensure_process_runtimes_registered() weiterhin
+	importieren kann ohne ImportError."""
+	return None
+
+
+def _legacy_register_unused():
+	"""Ungenutzt — bleibt als Doku-Referenz, was hier vor Phase 4c stand.
+	Tagbuilder, Trigger-Functions und Plugin-Registrierungen oben sind weiter
+	aktiv ueber den Prozess Typ 'mieterwechsel' (siehe Migration-Patch)."""
 	global _RUNTIME
 	if _RUNTIME:
 		return _RUNTIME

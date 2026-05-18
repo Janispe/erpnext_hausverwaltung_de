@@ -78,10 +78,11 @@
    "label": "Bis"
   },
   {
+   "description": "Verweis auf die Prozess Instanz (Mieterwechsel oder Erstvermietung), aus der dieser Mietvertrag entstanden ist.",
    "fieldname": "mieterwechsel",
    "fieldtype": "Link",
-   "label": "Mieterwechsel",
-   "options": "Mieterwechsel",
+   "label": "Mieterwechsel-Prozess",
+   "options": "Prozess Instanz",
    "hidden": 1
   },
   {

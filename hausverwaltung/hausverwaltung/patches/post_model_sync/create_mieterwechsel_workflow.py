@@ -115,6 +115,10 @@ def _upsert_workflow() -> None:
 
 
 def execute() -> None:
+	# Phase 4c: Mieterwechsel-DocType gibt's nicht mehr — Patch ist No-Op auf
+	# frischen Installs. Auf Bestands-Sites lief er bereits.
+	if not frappe.db.exists("DocType", DOCTYPE):
+		return
 	_ensure_workflow_states()
 	_ensure_workflow_actions()
 	_upsert_workflow()

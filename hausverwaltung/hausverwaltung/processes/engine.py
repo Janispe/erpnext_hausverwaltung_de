@@ -94,6 +94,11 @@ class ProcessRuntimeConfig:
 	update_hooks: tuple[Callable[[Document], None], ...] = ()
 	completion_blockers: tuple[Callable[[Document], list[str]], ...] = ()
 	triggers: tuple[ProcessTrigger, ...] = ()
+	# Phase 4: zusaetzlicher Version-Filter fuer datengetriebene Prozesse.
+	# Wenn gesetzt (z.B. "mieterwechsel"), filtert _get_active_process_version
+	# zusaetzlich nach Prozess Version.prozess_typ. Sonst werden Versionen nur
+	# nach runtime_doctype gefiltert.
+	process_typ_filter: str | None = None
 
 
 _PROCESS_RUNTIMES: dict[str, ProcessRuntimeConfig] = {}
@@ -244,6 +249,7 @@ def get_runtime_config_for_typ(prozess_typ_name: str) -> ProcessRuntimeConfig | 
 		update_hooks=update_hooks,
 		completion_blockers=completion_blockers,
 		triggers=triggers,
+		process_typ_filter=prozess_typ_name,
 	)
 
 
@@ -845,6 +851,11 @@ class ProcessEngine:
 		if runtime_field:
 			filters[runtime_field] = self.config.doctype
 			fields.append(runtime_field)
+		# Phase 4: bei Prozess Instanz zusaetzlich nach prozess_typ filtern, sonst
+		# wuerden alle Versionen verschiedener Prozess-Typen kollidieren.
+		if (self.config.process_typ_filter or "").strip():
+			filters["prozess_typ"] = self.config.process_typ_filter
+			fields.append("prozess_typ")
 		version_type_field = (self.config.process_version_type_fieldname or "").strip()
 		if version_type_field:
 			filters[version_type_field] = ("in", [typ, self.config.both_process_type])
