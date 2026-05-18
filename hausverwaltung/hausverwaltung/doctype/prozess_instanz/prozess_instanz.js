@@ -367,9 +367,25 @@ function _render_progress_graph(frm) {
 			nodes,
 			edges,
 			status_by_step,
-			on_click: (stepKey) => _scroll_to_task_row(frm, stepKey),
+			on_click: (stepKey) => _on_graph_node_click(frm, stepKey),
 		});
 	});
+}
+
+function _on_graph_node_click(frm, step_key) {
+	// Bei create_linked_doc-Tasks (offen + freigegeben) direkt den Anlege-Dialog.
+	// Sonst nur scroll zur Row in der Aufgaben-Tabelle.
+	const row = (frm.doc.aufgaben || []).find(
+		(r) => (r.step_key || "").trim() === step_key
+	);
+	if (!row) return;
+	const status = (row.status || "").trim();
+	const locked = row.pflicht && !_is_task_unlocked_client(frm, row);
+	if ((row.task_type || "") === "create_linked_doc" && status !== "Erledigt" && !locked) {
+		_open_create_linked_dialog(frm, row.name);
+		return;
+	}
+	_scroll_to_task_row(frm, step_key);
 }
 
 function _scroll_to_task_row(frm, step_key) {
