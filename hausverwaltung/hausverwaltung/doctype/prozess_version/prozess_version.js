@@ -243,9 +243,30 @@ function _render_dag_preview(frm) {
 		.join("");
 	field.$wrapper.html(`
 		${errors_html}
+		<div class="dag-graph-container" style="margin: 8px 0 12px 0;"></div>
 		<table class="table table-condensed table-bordered" style="margin-top:8px;">
 			<thead><tr><th>${__("Step-Key")}</th><th>${__("Titel")}</th><th>${__("Haengt ab von")}</th></tr></thead>
 			<tbody>${rows}</tbody>
 		</table>
 	`);
+
+	// Mermaid-Graph oberhalb der Tabelle (lazy via frappe.require)
+	const nodes = schritte
+		.map((s) => ({
+			step_key: (s.step_key || "").trim(),
+			titel: s.titel || s.step_key,
+			pflicht: !!s.pflicht,
+		}))
+		.filter((n) => n.step_key);
+	const edges = kanten
+		.map((k) => ({
+			from: (k.depends_on_step_key || "").trim(),
+			to: (k.step_key || "").trim(),
+		}))
+		.filter((e) => e.from && e.to);
+	frappe.require("/assets/hausverwaltung/js/dag_mermaid.js", () => {
+		const container = field.$wrapper.find(".dag-graph-container").get(0);
+		if (!container) return;
+		window.hausverwaltung.dag.renderDag({ container, nodes, edges });
+	});
 }

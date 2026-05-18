@@ -2,6 +2,7 @@
 // 5a — Payload-Form-Renderer (dynamische Controls statt JSON-Textarea)
 // 5b — Per-Task-Action-Buttons (PDF, Paperless, Python-Action, ...)
 // 5c — create_linked_doc Dialog-Flow
+// Phase 6 — Progress-Graph (Mermaid) im progress_html-Feld
 
 frappe.ui.form.on("Prozess Instanz", {
 	async refresh(frm) {
@@ -16,6 +17,7 @@ frappe.ui.form.on("Prozess Instanz", {
 		await _render_payload_form(frm);
 		_render_task_action_panel(frm);
 		_wire_task_actions(frm);
+		_render_progress_graph(frm);
 	},
 	prozess_typ(frm) {
 		_render_payload_form(frm);
@@ -23,11 +25,15 @@ frappe.ui.form.on("Prozess Instanz", {
 });
 
 frappe.ui.form.on("Prozess Aufgabe", {
+	// Action-Panel + Graph zusammen aktualisieren — sonst zeigt der Graph alten Status
+	// bis zum naechsten reload_doc().
 	status(frm) {
 		_render_task_action_panel(frm);
+		_render_progress_graph(frm);
 	},
 	erfuellt(frm) {
 		_render_task_action_panel(frm);
+		_render_progress_graph(frm);
 	},
 });
 
@@ -298,4 +304,87 @@ async function _open_create_linked_dialog(frm, row_name) {
 		},
 	});
 	dialog.show();
+}
+
+// ==================== Phase 6: Progress-Graph (Mermaid) ====================
+
+function _render_progress_graph(frm) {
+	const field = frm.get_field("progress_html");
+	if (!field) return;
+	const rows = frm.doc.aufgaben || [];
+	if (!rows.length) {
+		field.$wrapper.html(`<p class="text-muted">${__("Keine Aufgaben.")}</p>`);
+		return;
+	}
+	const nodes = rows
+		.map((r) => ({
+			step_key: (r.step_key || "").trim(),
+			titel: r.aufgabe || r.step_key,
+			pflicht: !!r.pflicht,
+		}))
+		.filter((n) => n.step_key);
+	const edges = [];
+	for (const r of rows) {
+		const sk = (r.step_key || "").trim();
+		let deps = [];
+		try {
+			deps = JSON.parse(r.depends_on_json || "[]");
+		} catch (e) {
+			deps = [];
+		}
+		for (const d of deps || []) {
+			const dep = (d || "").trim();
+			if (sk && dep) edges.push({ from: dep, to: sk });
+		}
+	}
+	const status_by_step = {};
+	for (const r of rows) {
+		const sk = (r.step_key || "").trim();
+		if (!sk) continue;
+		const status = (r.status || "").trim();
+		if (status === "Erledigt") status_by_step[sk] = "done";
+		else if (r.pflicht && !_is_task_unlocked_client(frm, r)) status_by_step[sk] = "locked";
+		else if (status === "In Arbeit") status_by_step[sk] = "wip";
+		else status_by_step[sk] = "open";
+	}
+
+	const legend = `<div class="text-muted" style="margin-top:6px; font-size:0.85em;">
+		<span style="display:inline-block;width:10px;height:10px;background:#17a2b8;margin-right:4px;vertical-align:middle;"></span>${__("Offen")}
+		<span style="display:inline-block;width:10px;height:10px;background:#ffc107;margin:0 4px 0 12px;vertical-align:middle;"></span>${__("In Arbeit")}
+		<span style="display:inline-block;width:10px;height:10px;background:#28a745;margin:0 4px 0 12px;vertical-align:middle;"></span>${__("Erledigt")}
+		<span style="display:inline-block;width:10px;height:10px;background:#adb5bd;margin:0 4px 0 12px;vertical-align:middle;"></span>${__("Vorgaenger offen")}
+	</div>`;
+
+	field.$wrapper.html(
+		`<div class="progress-graph-container" style="margin-top:8px;"></div>${legend}`
+	);
+
+	frappe.require("/assets/hausverwaltung/js/dag_mermaid.js", () => {
+		const container = field.$wrapper.find(".progress-graph-container").get(0);
+		if (!container) return;
+		window.hausverwaltung.dag.renderDag({
+			container,
+			nodes,
+			edges,
+			status_by_step,
+			on_click: (stepKey) => _scroll_to_task_row(frm, stepKey),
+		});
+	});
+}
+
+function _scroll_to_task_row(frm, step_key) {
+	const fld = frm.get_field("aufgaben");
+	if (!fld || !fld.grid) return;
+	const grid = fld.grid;
+	const row = (frm.doc.aufgaben || []).find((r) => (r.step_key || "").trim() === step_key);
+	if (!row) return;
+	try {
+		grid.toggle_view(row.name, true);
+	} catch (e) {
+		// Falls Grid noch nicht initialisiert: Scroll-only-Fallback
+	}
+	const $row = grid.$wrapper.find(`[data-name="${row.name}"]`);
+	if ($row.length) {
+		$row[0].scrollIntoView({ behavior: "smooth", block: "center" });
+	}
 }
