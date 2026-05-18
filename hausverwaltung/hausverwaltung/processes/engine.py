@@ -108,8 +108,150 @@ def get_process_runtime_config(doctype: str) -> ProcessRuntimeConfig | None:
 	return _PROCESS_RUNTIMES.get((doctype or "").strip())
 
 
+# === Plugin-Registry fuer datengetriebene Prozess-Typen (Phase 4) ===
+#
+# Domain-Code registriert hier seine Validator/Hook/Handler-Funktionen unter
+# einem stabilen plugin_key. Prozess Typ-Docs waehlen via Prozess Plugin Reference
+# welche aktiv sind. Damit kann Mutter Prozesstypen via UI definieren, ohne dass
+# komplexe Domain-Logik in JSONLogic ausgedrueckt werden muss.
+
+
+class ProcessPluginRegistry:
+	_validators: dict[str, Callable[[Document], None]] = {}
+	_update_hooks: dict[str, Callable[[Document], None]] = {}
+	_completion_blockers: dict[str, Callable[[Document], list[str]]] = {}
+	_custom_handlers: dict[str, Any] = {}  # BaseTaskHandler instances
+	_payload_builders: dict[str, Callable[[Document], dict]] = {}
+
+	@classmethod
+	def register_validator(cls, key: str, fn: Callable[[Document], None]) -> None:
+		cls._validators[key] = fn
+
+	@classmethod
+	def register_update_hook(cls, key: str, fn: Callable[[Document], None]) -> None:
+		cls._update_hooks[key] = fn
+
+	@classmethod
+	def register_completion_blocker(cls, key: str, fn: Callable[[Document], list[str]]) -> None:
+		cls._completion_blockers[key] = fn
+
+	@classmethod
+	def register_custom_handler(cls, key: str, handler) -> None:
+		cls._custom_handlers[key] = handler
+
+	@classmethod
+	def register_payload_builder(cls, key: str, fn: Callable[[Document], dict]) -> None:
+		cls._payload_builders[key] = fn
+
+	@classmethod
+	def list_keys(cls, kind: str) -> list[str]:
+		mapping = {
+			"validator": cls._validators,
+			"update_hook": cls._update_hooks,
+			"completion_blocker": cls._completion_blockers,
+			"custom_handler": cls._custom_handlers,
+			"payload_builder": cls._payload_builders,
+		}
+		return sorted(mapping.get(kind, {}).keys())
+
+
+def _make_jinja_payload_builder(template_str: str) -> Callable[[Document], dict]:
+	"""Erzeugt einen payload_builder, der ein Jinja2-Template gegen src auswertet
+	und JSON parst. Template muss ein JSON-Objekt zurueckgeben."""
+	template = (template_str or "").strip()
+
+	def builder(src: Document) -> dict:
+		if not template:
+			return {}
+		try:
+			result_str = frappe.render_template(template, {"src": src, "frappe": frappe})
+			data = json.loads(result_str)
+			if isinstance(data, dict):
+				return data
+		except Exception:
+			frappe.log_error(
+				title="ProcessTrigger: Jinja-Payload-Template-Fehler",
+				message=frappe.get_traceback(),
+			)
+		return {}
+
+	return builder
+
+
+def get_runtime_config_for_typ(prozess_typ_name: str) -> ProcessRuntimeConfig | None:
+	"""Baut zur Laufzeit eine ProcessRuntimeConfig aus einem Prozess Typ-Doc.
+	Plugins werden aus ProcessPluginRegistry aufgeloest (Code-defined)."""
+	if not prozess_typ_name:
+		return None
+	if not frappe.db.exists("Prozess Typ", prozess_typ_name):
+		return None
+	typ = frappe.get_cached_doc("Prozess Typ", prozess_typ_name)
+	if not bool(typ.is_active):
+		return None
+
+	def lookup(plugin_refs, registry: dict, kind: str):
+		keys = [(r.plugin_key or "").strip() for r in (plugin_refs or [])]
+		keys = [k for k in keys if k]
+		missing = [k for k in keys if k not in registry]
+		if missing:
+			frappe.log_error(
+				title=f"Prozess Typ {prozess_typ_name}: {kind}-Plugin(s) nicht registriert",
+				message=f"Missing: {missing}",
+			)
+		return tuple(registry[k] for k in keys if k in registry)
+
+	validators = lookup(typ.validators, ProcessPluginRegistry._validators, "validator")
+	update_hooks = lookup(typ.update_hooks, ProcessPluginRegistry._update_hooks, "update_hook")
+	completion_blockers = lookup(
+		typ.completion_blockers, ProcessPluginRegistry._completion_blockers, "completion_blocker"
+	)
+	custom_handlers_dict = {}
+	for r in typ.custom_task_handlers or []:
+		k = (r.plugin_key or "").strip()
+		if k and k in ProcessPluginRegistry._custom_handlers:
+			custom_handlers_dict[k] = ProcessPluginRegistry._custom_handlers[k]
+
+	triggers = tuple(
+		ProcessTrigger(
+			key=(t.key or "").strip(),
+			source_doctype=(t.source_doctype or "").strip(),
+			button_label=(t.button_label or "").strip(),
+			button_group=(t.button_group or "Workflow").strip() or "Workflow",
+			payload_builder=_make_jinja_payload_builder(t.payload_template or ""),
+		)
+		for t in (typ.triggers or [])
+	)
+
+	return ProcessRuntimeConfig(
+		doctype="Prozess Instanz",
+		process_version_doctype="Prozess Version",
+		process_step_doctype="Prozess Schritt",
+		default_process_type=(typ.default_process_type or typ.name).strip(),
+		process_version_runtime_fieldname="runtime_doctype",
+		process_version_type_fieldname=None,
+		both_process_type="Beide",
+		task_handler_context=TaskHandlerContext(
+			runtime_doctype="Prozess Instanz",
+			file_detail_doctype="Prozess Aufgabe Datei",
+			file_detail_doctype_field="prozess_doctype",
+			file_detail_name_field="prozess_name",
+			print_detail_doctype="Prozess Aufgabe Druck",
+			print_detail_doctype_field="prozess_doctype",
+			print_detail_name_field="prozess_name",
+			custom_handlers=custom_handlers_dict,
+		),
+		validators=validators,
+		update_hooks=update_hooks,
+		completion_blockers=completion_blockers,
+		triggers=triggers,
+	)
+
+
 class BaseProcessDocument(Document):
 	def _engine(self) -> "ProcessEngine":
+		# Switch fuer datengetriebenen generischen Prozess Instanz Doctype
+		if self.doctype == "Prozess Instanz":
+			return ProcessEngine.for_instance(self)
 		return ProcessEngine.for_doctype(self.doctype)
 
 	def before_insert(self) -> None:
@@ -134,10 +276,36 @@ class ProcessEngine:
 
 	@classmethod
 	def for_doctype(cls, doctype: str) -> "ProcessEngine":
+		# Prozess Instanz hat kein einzelnes Doctype-weites Config — pro Instanz
+		# wird der ProcessTyp gelesen. Aufrufer muss for_instance() oder
+		# for_doctype_and_docname() nutzen.
+		if (doctype or "").strip() == "Prozess Instanz":
+			frappe.throw(
+				_("Prozess Instanz ist datengetrieben — nutze ProcessEngine.for_instance(doc) oder for_doctype_and_docname(doctype, docname).")
+			)
 		config = get_process_runtime_config(doctype)
 		if not config:
 			frappe.throw(_("Kein Process Runtime fuer Doctype registriert: {0}").format(doctype))
 		return cls(config)
+
+	@classmethod
+	def for_instance(cls, doc: Document) -> "ProcessEngine":
+		"""Engine fuer ein Prozess Instanz-Doc, Config kommt aus doc.prozess_typ."""
+		prozess_typ = (doc.get("prozess_typ") or "").strip()
+		if not prozess_typ:
+			frappe.throw(_("Prozess Instanz ohne prozess_typ — kein Runtime-Config moeglich."))
+		config = get_runtime_config_for_typ(prozess_typ)
+		if not config:
+			frappe.throw(_("Prozess Typ '{0}' existiert nicht oder ist inaktiv.").format(prozess_typ))
+		return cls(config)
+
+	@classmethod
+	def for_doctype_and_docname(cls, doctype: str, docname: str) -> "ProcessEngine":
+		"""Convenience: API-Whitelist-Methoden haben oft nur (doctype, docname)."""
+		if (doctype or "").strip() == "Prozess Instanz":
+			doc = frappe.get_doc(doctype, docname)
+			return cls.for_instance(doc)
+		return cls.for_doctype(doctype)
 
 	def before_insert(self, doc: Document) -> None:
 		self._ensure_orchestrator_backend_default(doc)

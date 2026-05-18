@@ -1,0 +1,154 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:name1",
+ "creation": "2026-05-18 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "name1",
+  "label",
+  "is_active",
+  "beschreibung",
+  "default_process_type",
+  "section_triggers",
+  "triggers",
+  "section_payload",
+  "payload_field_specs",
+  "section_plugins",
+  "validators",
+  "update_hooks",
+  "completion_blockers",
+  "custom_task_handlers"
+ ],
+ "fields": [
+  {
+   "description": "Snake-case, eindeutig. Z.B. 'mieterwechsel', 'rechnungsfreigabe'.",
+   "fieldname": "name1",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Aktiv"
+  },
+  {
+   "fieldname": "beschreibung",
+   "fieldtype": "Small Text",
+   "label": "Beschreibung"
+  },
+  {
+   "description": "Default-Wert fuer prozess_typ-Feld der Instanz (heute z.B. 'Mieterwechsel' oder 'Erstvermietung').",
+   "fieldname": "default_process_type",
+   "fieldtype": "Data",
+   "label": "Default Process Type"
+  },
+  {
+   "fieldname": "section_triggers",
+   "fieldtype": "Section Break",
+   "label": "Trigger (Wo kann der Prozess gestartet werden?)"
+  },
+  {
+   "description": "Pro Source-Doctype + Button-Variante eine Zeile. Generiert automatisch Buttons auf den Source-Doctype-Forms.",
+   "fieldname": "triggers",
+   "fieldtype": "Table",
+   "label": "Trigger",
+   "options": "Prozess Trigger Definition"
+  },
+  {
+   "fieldname": "section_payload",
+   "fieldtype": "Section Break",
+   "label": "Payload-Felder (Was speichert eine Instanz?)"
+  },
+  {
+   "description": "Type-spezifische Felder, die als JSON in payload_json einer Prozess Instanz gespeichert werden. Reine Schema-Beschreibung fuer den UI-Renderer.",
+   "fieldname": "payload_field_specs",
+   "fieldtype": "Table",
+   "label": "Payload-Felder",
+   "options": "Prozess Field Spec"
+  },
+  {
+   "fieldname": "section_plugins",
+   "fieldtype": "Section Break",
+   "label": "Plugin-Auswahl (Welche Code-Logik wird aktiv?)"
+  },
+  {
+   "description": "Python-Validatoren, die beim Save laufen. Plugin-Keys werden im Code via ProcessPluginRegistry.register_validator() registriert.",
+   "fieldname": "validators",
+   "fieldtype": "Table",
+   "label": "Validatoren",
+   "options": "Prozess Plugin Reference"
+  },
+  {
+   "description": "Side-Effect-Funktionen, die beim Save nach Validation laufen.",
+   "fieldname": "update_hooks",
+   "fieldtype": "Table",
+   "label": "Update-Hooks",
+   "options": "Prozess Plugin Reference"
+  },
+  {
+   "description": "Funktionen, die zusaetzliche Bedingungen fuer den Prozess-Abschluss pruefen.",
+   "fieldname": "completion_blockers",
+   "fieldtype": "Table",
+   "label": "Completion-Blockers",
+   "options": "Prozess Plugin Reference"
+  },
+  {
+   "description": "Domain-spezifische Task-Handler (z.B. fuer mapping_flag-aehnliche Aktionen).",
+   "fieldname": "custom_task_handlers",
+   "fieldtype": "Table",
+   "label": "Custom Task Handlers",
+   "options": "Prozess Plugin Reference"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-05-18 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Prozess Typ",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

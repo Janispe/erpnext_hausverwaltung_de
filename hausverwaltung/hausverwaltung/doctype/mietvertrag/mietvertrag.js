@@ -47,9 +47,6 @@ frappe.ui.form.on("Mietvertrag", {
 		}
 
 		add_paperless_button(frm);
-		if (window.hausverwaltung && window.hausverwaltung.process_triggers) {
-			window.hausverwaltung.process_triggers.attach_to_form(frm);
-		}
 		add_mieterkonto_button_from_mietvertrag(frm);
 
 		frm.add_custom_button(__("Staffelmieten sortieren"), async () => {

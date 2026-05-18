@@ -41,6 +41,11 @@ app_include_js = [
 	"/assets/hausverwaltung/js/process_triggers.js",
 ]
 
+# Per-Session Bootinfo: liefert process_triggers.js die Liste der Source-Doctypes
+# mit registrierten ProcessTriggern, damit Buttons automatisch ohne explizites
+# attach_to_form() pro Quell-Doctype-JS erscheinen.
+boot_session = "hausverwaltung.hausverwaltung.processes.triggers.add_to_boot"
+
 # include js, css files in header of web template
 # web_include_css = "/assets/hausverwaltung/css/hausverwaltung.css"
 # web_include_js = "/assets/hausverwaltung/js/hausverwaltung.js"

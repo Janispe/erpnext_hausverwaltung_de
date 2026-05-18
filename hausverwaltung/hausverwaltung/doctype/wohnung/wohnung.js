@@ -2,9 +2,6 @@ frappe.ui.form.on('Wohnung', {
 	refresh(frm) {
 		add_paperless_button(frm);
 		add_zaehler_zuordnen_button(frm);
-		if (window.hausverwaltung && window.hausverwaltung.process_triggers) {
-			window.hausverwaltung.process_triggers.attach_to_form(frm);
-		}
 		render_aktuelle_zaehler(frm);
 		load_mietvertraege(frm);
 	},

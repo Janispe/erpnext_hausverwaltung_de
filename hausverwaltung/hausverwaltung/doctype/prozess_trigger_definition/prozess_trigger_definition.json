@@ -1,0 +1,75 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-05-18 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "key",
+  "source_doctype",
+  "button_label",
+  "button_group",
+  "payload_template",
+  "visibility_when"
+ ],
+ "fields": [
+  {
+   "description": "Stabiler ID innerhalb des Source-Doctypes (zusammen mit source_doctype eindeutig).",
+   "fieldname": "key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Key",
+   "reqd": 1
+  },
+  {
+   "fieldname": "source_doctype",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Quell-Doctype",
+   "options": "DocType",
+   "reqd": 1
+  },
+  {
+   "fieldname": "button_label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Button-Label",
+   "reqd": 1
+  },
+  {
+   "default": "Workflow",
+   "fieldname": "button_group",
+   "fieldtype": "Data",
+   "label": "Button-Gruppe"
+  },
+  {
+   "description": "Jinja2-Template. Verfuegbare Variablen: src (Source-Doc), frappe. Muss ein JSON-Objekt zurueckgeben, z.B.: {{ {\"wohnung\": src.wohnung, \"alter_mietvertrag\": src.name} | tojson }}",
+   "fieldname": "payload_template",
+   "fieldtype": "Code",
+   "label": "Payload-Template (Jinja2)",
+   "options": "Jinja"
+  },
+  {
+   "description": "Optional: JSONLogic-Expression, wann der Button sichtbar sein soll. Leer = immer sichtbar.",
+   "fieldname": "visibility_when",
+   "fieldtype": "Code",
+   "label": "Sichtbar wenn (JSONLogic)",
+   "options": "JSON"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-05-18 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Prozess Trigger Definition",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}

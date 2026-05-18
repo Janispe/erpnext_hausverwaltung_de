@@ -63,4 +63,30 @@
 	}
 
 	window.hausverwaltung.process_triggers = { attach_to_form };
+
+	// Self-Registration: haengt fuer jeden Source-Doctype aus frappe.boot ein
+	// refresh-Hook ein, der attach_to_form aufruft. Damit muss kein Source-
+	// Doctype-JS mehr explizit attach_to_form() rufen.
+	//
+	// Race-Safety: zweifacher Aufruf — sofort UND nach after_ajax — mit Set-Dedup.
+	// Sofort ist wichtig wenn der User direkt auf einem Form landet und unser
+	// JS-Modul gerade noch vor dem Form-Render lief; after_ajax greift, falls
+	// frappe.boot beim ersten Aufruf noch leer war.
+	const _registered_doctypes = new Set();
+
+	function _register_process_trigger_forms() {
+		const source_doctypes = (frappe.boot || {}).hausverwaltung_process_source_doctypes || [];
+		for (const dt of source_doctypes) {
+			if (!dt || _registered_doctypes.has(dt)) continue;
+			_registered_doctypes.add(dt);
+			frappe.ui.form.on(dt, "refresh", (frm) => {
+				window.hausverwaltung?.process_triggers?.attach_to_form(frm);
+			});
+		}
+	}
+
+	_register_process_trigger_forms();
+	if (typeof frappe.after_ajax === "function") {
+		frappe.after_ajax(_register_process_trigger_forms);
+	}
 })();

@@ -8,9 +8,11 @@ from .engine import (
 	BaseProcessDocument,
 	CompletionCheckResult,
 	ProcessEngine,
+	ProcessPluginRegistry,
 	ProcessRuntimeConfig,
 	ProcessTrigger,
 	get_process_runtime_config,
+	get_runtime_config_for_typ,
 	register_process_runtime,
 )
 
@@ -39,9 +41,11 @@ __all__ = [
 	"BaseProcessDocument",
 	"CompletionCheckResult",
 	"ProcessEngine",
+	"ProcessPluginRegistry",
 	"ProcessRuntimeConfig",
 	"ProcessTrigger",
 	"ensure_process_runtimes_registered",
 	"get_process_runtime_config",
+	"get_runtime_config_for_typ",
 	"register_process_runtime",
 ]

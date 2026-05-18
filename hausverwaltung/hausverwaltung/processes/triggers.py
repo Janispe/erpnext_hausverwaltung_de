@@ -20,29 +20,54 @@ def _build_trigger_id(source_doctype: str, key: str) -> str:
 
 
 def _iter_triggers() -> list[tuple[str, ProcessTrigger]]:
-	"""Iteriert alle Triggers ueber alle registrierten Runtimes und validiert
-	Uniqueness pro (source_doctype, key). Returns (target_doctype, trigger)."""
+	"""Iteriert alle Triggers ueber:
+	1. Code-registrierte Runtimes in _PROCESS_RUNTIMES (Mieterwechsel, ...).
+	2. DB-defined Prozess Typen (Phase 4) — fuer jeden aktiven Prozess Typ wird
+	   via get_runtime_config_for_typ() die Config aufgebaut und deren Triggers
+	   in den Result-Set aufgenommen. Target-Doctype ist hier immer 'Prozess Instanz'.
+
+	Validiert Uniqueness pro (source_doctype, key). Returns (target_doctype, trigger)."""
+	from hausverwaltung.hausverwaltung.processes.engine import get_runtime_config_for_typ
+
 	seen: dict[tuple[str, str], str] = {}
 	result: list[tuple[str, ProcessTrigger]] = []
+
+	def _add(target_doctype: str, trigger: ProcessTrigger, source_label: str) -> None:
+		source = (trigger.source_doctype or "").strip()
+		key = (trigger.key or "").strip()
+		if not source or not key:
+			frappe.throw(
+				_("ProcessTrigger braucht source_doctype UND key. Source: {0}").format(source_label)
+			)
+		dedup_key = (source, key)
+		if dedup_key in seen:
+			frappe.throw(
+				_(
+					"Doppelter Trigger-Key '{0}' fuer Quell-Doctype '{1}' "
+					"(in '{2}' und '{3}'). Trigger-Keys muessen pro Source-Doctype eindeutig sein."
+				).format(key, source, seen[dedup_key], source_label)
+			)
+		seen[dedup_key] = source_label
+		result.append((target_doctype, trigger))
+
+	# Pfad 1: Code-registrierte Triggers
 	for target_doctype, config in _PROCESS_RUNTIMES.items():
 		for trigger in config.triggers or ():
-			source = (trigger.source_doctype or "").strip()
-			key = (trigger.key or "").strip()
-			if not source or not key:
-				frappe.throw(
-					_("ProcessTrigger braucht source_doctype UND key. Doctype: {0}").format(target_doctype)
-				)
-			dedup_key = (source, key)
-			if dedup_key in seen:
-				frappe.throw(
-					_(
-						"Doppelter Trigger-Key '{0}' fuer Quell-Doctype '{1}' "
-						"(in '{2}' und '{3}'). ProcessTrigger.key muss innerhalb "
-						"desselben source_doctype eindeutig sein."
-					).format(key, source, seen[dedup_key], target_doctype)
-				)
-			seen[dedup_key] = target_doctype
-			result.append((target_doctype, trigger))
+			_add(target_doctype, trigger, f"code:{target_doctype}")
+
+	# Pfad 2: DB-defined Triggers via aktive Prozess Typen
+	if frappe.db.exists("DocType", "Prozess Typ"):
+		try:
+			typ_names = frappe.get_all("Prozess Typ", filters={"is_active": 1}, pluck="name")
+		except Exception:
+			typ_names = []
+		for typ_name in typ_names or []:
+			cfg = get_runtime_config_for_typ(typ_name)
+			if not cfg:
+				continue
+			for trigger in cfg.triggers or ():
+				_add("Prozess Instanz", trigger, f"db:Prozess Typ '{typ_name}'")
+
 	return result
 
 
@@ -104,6 +129,32 @@ def get_triggers_for_source(source_doctype: str, source_name: str | None = None)
 			}
 		)
 	return result
+
+
+def add_to_boot(bootinfo) -> None:
+	"""Schreibt die Liste der Source-Doctypes mit registrierten Triggers in den
+	Desk-Boot-Payload. process_triggers.js liest das beim App-Init und registriert
+	dynamisch fuer jeden Source-Doctype einen refresh-Hook.
+
+	Damit muss kein einzelner Quell-Doctype-JS mehr attach_to_form() aufrufen —
+	das Design wird komplett datengetrieben."""
+	try:
+		ensure_process_runtimes_registered()
+		source_doctypes = sorted(
+			{
+				(t.source_doctype or "").strip()
+				for cfg in _PROCESS_RUNTIMES.values()
+				for t in (cfg.triggers or ())
+				if (t.source_doctype or "").strip()
+			}
+		)
+		bootinfo["hausverwaltung_process_source_doctypes"] = source_doctypes
+	except Exception:
+		frappe.log_error(
+			title="hausverwaltung process triggers boot failed",
+			message=frappe.get_traceback(),
+		)
+		bootinfo["hausverwaltung_process_source_doctypes"] = []
 
 
 @frappe.whitelist()
