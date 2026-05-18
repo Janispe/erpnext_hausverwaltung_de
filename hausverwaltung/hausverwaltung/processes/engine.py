@@ -127,6 +127,7 @@ class ProcessPluginRegistry:
 	_completion_blockers: dict[str, Callable[[Document], list[str]]] = {}
 	_custom_handlers: dict[str, Any] = {}  # BaseTaskHandler instances
 	_payload_builders: dict[str, Callable[[Document], dict]] = {}
+	_tag_builders: dict[str, Callable[[Document, str], list[str]]] = {}
 
 	@classmethod
 	def register_validator(cls, key: str, fn: Callable[[Document], None]) -> None:
@@ -149,6 +150,11 @@ class ProcessPluginRegistry:
 		cls._payload_builders[key] = fn
 
 	@classmethod
+	def register_tag_builder(cls, key: str, fn: Callable[[Document, str], list[str]]) -> None:
+		"""Tag-Builder fuer PaperlessExport/PrintDocument-Tasks: signature (doc, variant) -> list[str]."""
+		cls._tag_builders[key] = fn
+
+	@classmethod
 	def list_keys(cls, kind: str) -> list[str]:
 		mapping = {
 			"validator": cls._validators,
@@ -156,6 +162,7 @@ class ProcessPluginRegistry:
 			"completion_blocker": cls._completion_blockers,
 			"custom_handler": cls._custom_handlers,
 			"payload_builder": cls._payload_builders,
+			"tag_builder": cls._tag_builders,
 		}
 		return sorted(mapping.get(kind, {}).keys())
 
@@ -185,7 +192,18 @@ def _make_jinja_payload_builder(template_str: str) -> Callable[[Document], dict]
 
 def get_runtime_config_for_typ(prozess_typ_name: str) -> ProcessRuntimeConfig | None:
 	"""Baut zur Laufzeit eine ProcessRuntimeConfig aus einem Prozess Typ-Doc.
-	Plugins werden aus ProcessPluginRegistry aufgeloest (Code-defined)."""
+	Plugins werden aus ProcessPluginRegistry aufgeloest (Code-defined).
+
+	KRITISCH: ProcessPluginRegistry wird beim Import der Domain-Definitions-Module
+	befuellt (z.B. processes/definitions/mieterwechsel.py). In einem frischen
+	Web-Worker-Request muss der Import zwingend vorher erfolgen, sonst sind
+	Validators/Hooks/Handlers leer und Prozess Instanzen wuerden ohne Mieterwechsel-
+	Validierung gespeichert. Darum: ensure_process_runtimes_registered() am
+	Anfang — idempotent und billig (Modul-Level-Cache)."""
+	# Lazy import vermeidet Circular zwischen engine.py und processes/__init__.py
+	from hausverwaltung.hausverwaltung.processes import ensure_process_runtimes_registered
+
+	ensure_process_runtimes_registered()
 	if not prozess_typ_name:
 		return None
 	if not frappe.db.exists("Prozess Typ", prozess_typ_name):
@@ -216,6 +234,11 @@ def get_runtime_config_for_typ(prozess_typ_name: str) -> ProcessRuntimeConfig | 
 		if k and k in ProcessPluginRegistry._custom_handlers:
 			custom_handlers_dict[k] = ProcessPluginRegistry._custom_handlers[k]
 
+	# Tag-Builder (single, optional) — per Prozess Typ. Default = None faellt
+	# auf _default_tag_builder in PaperlessExportTaskHandler/PrintDocumentTaskHandler.
+	tag_builder_key = (typ.get("tag_builder_plugin_key") or "").strip()
+	tag_builder_fn = ProcessPluginRegistry._tag_builders.get(tag_builder_key) if tag_builder_key else None
+
 	triggers = tuple(
 		ProcessTrigger(
 			key=(t.key or "").strip(),
@@ -243,6 +266,7 @@ def get_runtime_config_for_typ(prozess_typ_name: str) -> ProcessRuntimeConfig | 
 			print_detail_doctype="Prozess Aufgabe Druck",
 			print_detail_doctype_field="prozess_doctype",
 			print_detail_name_field="prozess_name",
+			tag_builder=tag_builder_fn,
 			custom_handlers=custom_handlers_dict,
 		),
 		validators=validators,

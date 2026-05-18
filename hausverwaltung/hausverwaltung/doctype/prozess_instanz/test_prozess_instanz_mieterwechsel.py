@@ -14,8 +14,6 @@ import uuid
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from hausverwaltung.hausverwaltung.processes import ensure_process_runtimes_registered
-
 
 PROZESS_TYP = "mieterwechsel"
 
@@ -28,7 +26,10 @@ class TestProzessInstanzMieterwechsel(FrappeTestCase):
 		}
 		frappe.conf.hv_temporal_enabled = False
 		frappe.conf.hv_temporal_enabled_doctypes = ""
-		ensure_process_runtimes_registered()
+		# Bewusst KEIN expliziter ensure_process_runtimes_registered()-Call hier —
+		# der Production-Pfad (get_runtime_config_for_typ) muss das selbst
+		# sicherstellen, sonst maskiert der Test echte Bugs (siehe Phase-4c
+		# Review-Finding "Plugins lautlos leer in frischen Requests").
 
 	def tearDown(self):
 		for k, v in self._temporal_backup.items():
@@ -117,6 +118,42 @@ class TestProzessInstanzMieterwechsel(FrappeTestCase):
 		self.assertEqual(doc.payload("wohnung"), w.name)
 		self.assertEqual(doc.payload("alter_mietvertrag"), alt.name)
 		self.assertIsNone(doc.payload("nonexistent"))
+
+	def test_get_runtime_config_self_registers_plugins(self):
+		"""Regression: get_runtime_config_for_typ muss auch in einem 'frischen'
+		Request mit leerer Registry die Mieterwechsel-Plugins laden. Verhindert
+		den frueher beobachteten Bug 'Validatoren werden nicht aufgerufen'."""
+		from hausverwaltung.hausverwaltung.processes.engine import (
+			ProcessPluginRegistry,
+			get_runtime_config_for_typ,
+		)
+
+		# Registry temporaer leeren — simuliert frischen Web-Worker
+		backups = {
+			"validators": dict(ProcessPluginRegistry._validators),
+			"update_hooks": dict(ProcessPluginRegistry._update_hooks),
+			"completion_blockers": dict(ProcessPluginRegistry._completion_blockers),
+			"custom_handlers": dict(ProcessPluginRegistry._custom_handlers),
+			"tag_builders": dict(ProcessPluginRegistry._tag_builders),
+		}
+		ProcessPluginRegistry._validators.clear()
+		ProcessPluginRegistry._update_hooks.clear()
+		ProcessPluginRegistry._completion_blockers.clear()
+		ProcessPluginRegistry._custom_handlers.clear()
+		ProcessPluginRegistry._tag_builders.clear()
+		try:
+			cfg = get_runtime_config_for_typ(PROZESS_TYP)
+			self.assertIsNotNone(cfg)
+			# Validator wurde durch Self-Registration nachgeladen
+			self.assertGreaterEqual(len(cfg.validators), 1, "validate_contract_consistency fehlt")
+			# Custom-Handler ebenfalls
+			self.assertIn("mieterwechsel.set_flag", cfg.task_handler_context.custom_handlers)
+		finally:
+			ProcessPluginRegistry._validators.update(backups["validators"])
+			ProcessPluginRegistry._update_hooks.update(backups["update_hooks"])
+			ProcessPluginRegistry._completion_blockers.update(backups["completion_blockers"])
+			ProcessPluginRegistry._custom_handlers.update(backups["custom_handlers"])
+			ProcessPluginRegistry._tag_builders.update(backups["tag_builders"])
 
 	def test_validator_rejects_inconsistent_contract(self):
 		"""validate_contract_consistency (Plugin) wirft bei Wohnungs-Mismatch."""

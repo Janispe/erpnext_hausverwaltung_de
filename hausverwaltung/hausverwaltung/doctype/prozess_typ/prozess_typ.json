@@ -19,7 +19,8 @@
   "validators",
   "update_hooks",
   "completion_blockers",
-  "custom_task_handlers"
+  "custom_task_handlers",
+  "tag_builder_plugin_key"
  ],
  "fields": [
   {
@@ -112,6 +113,12 @@
    "fieldtype": "Table",
    "label": "Custom Task Handlers",
    "options": "Prozess Plugin Reference"
+  },
+  {
+   "description": "Optional: Plugin-Key des Tag-Builders fuer Paperless-Export und Print-Tasks. Signatur (doc, variant) -> list[str]. Default = generischer Tag-Builder.",
+   "fieldname": "tag_builder_plugin_key",
+   "fieldtype": "Data",
+   "label": "Tag-Builder (Plugin-Key)"
   }
  ],
  "grid_page_length": 50,

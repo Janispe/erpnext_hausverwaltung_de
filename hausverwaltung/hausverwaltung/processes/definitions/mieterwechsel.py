@@ -152,11 +152,16 @@ def get_completion_blockers(doc: Document) -> list[str]:
 
 
 def build_default_tags(doc: Document, variant: str) -> list[str]:
-	mv_old = _get_contract_data(doc.alter_mietvertrag)
-	mv_new = _get_contract_data(doc.neuer_mietvertrag)
+	# Phase 4c: doc ist jetzt Prozess Instanz mit domain-Daten in payload_json.
+	# _doc_field unterstuetzt beide Pfade.
+	alter = _doc_field(doc, "alter_mietvertrag")
+	neuer = _doc_field(doc, "neuer_mietvertrag")
+	w_name = _doc_field(doc, "wohnung")
+	mv_old = _get_contract_data(alter)
+	mv_new = _get_contract_data(neuer)
 	wohnung = frappe.db.get_value(
 		"Wohnung",
-		doc.wohnung,
+		w_name,
 		["immobilie", "name__lage_in_der_immobilie", "name", "paperless_tag"],
 		as_dict=True,
 	) or {}
@@ -247,6 +252,10 @@ ProcessPluginRegistry.register_payload_builder(
 )
 ProcessPluginRegistry.register_payload_builder(
 	"mieterwechsel.payload_erstvermietung_from_wohnung", trigger_payload_erstvermietung_from_wohnung
+)
+# Tag-Builder fuer Paperless-Export-Tasks (Phase 4c — payload-aware refactored)
+ProcessPluginRegistry.register_tag_builder(
+	"mieterwechsel.build_tags", build_default_tags
 )
 
 

@@ -58,6 +58,7 @@ def _ensure_prozess_typ_exists() -> None:
 	typ.label = "Mieterwechsel"
 	typ.is_active = 1
 	typ.default_process_type = "Mieterwechsel"
+	typ.tag_builder_plugin_key = "mieterwechsel.build_tags"
 	typ.beschreibung = (
 		"Wohnungs-Mieterwechsel oder Erstvermietung. Domain-Validatoren via Plugin-Registry."
 	)
