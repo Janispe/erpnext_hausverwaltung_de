@@ -2,7 +2,9 @@ frappe.ui.form.on('Wohnung', {
 	refresh(frm) {
 		add_paperless_button(frm);
 		add_zaehler_zuordnen_button(frm);
-		add_mieterwechsel_start_button_from_wohnung(frm);
+		if (window.hausverwaltung && window.hausverwaltung.process_triggers) {
+			window.hausverwaltung.process_triggers.attach_to_form(frm);
+		}
 		render_aktuelle_zaehler(frm);
 		load_mietvertraege(frm);
 	},
@@ -101,42 +103,6 @@ function add_zaehler_zuordnen_button(frm) {
 			__('Zuordnen')
 		);
 	}, __('Zähler'));
-}
-
-function add_mieterwechsel_start_button_from_wohnung(frm) {
-	if (frm.is_new()) {
-		return;
-	}
-
-	frm.add_custom_button(__('Mieterwechsel starten'), () => {
-		frappe.prompt(
-			[
-				{
-					fieldname: 'prozess_typ',
-					fieldtype: 'Select',
-					label: __('Prozess-Typ'),
-					options: 'Mieterwechsel\nErstvermietung',
-					default: 'Mieterwechsel',
-					reqd: 1
-				}
-			],
-			(values) => {
-				const isErstvermietung = (values.prozess_typ || '').trim() === 'Erstvermietung';
-				const payload = {
-					prozess_typ: values.prozess_typ,
-					wohnung: frm.doc.name,
-					quelle_doctype: 'Wohnung',
-					quelle_name: frm.doc.name,
-				};
-				if (isErstvermietung) {
-					payload.neue_adresse_altmieter_erfasst = 1;
-				}
-				frappe.new_doc('Mieterwechsel', payload);
-			},
-			__('Mieterwechsel starten'),
-			__('Starten')
-		);
-	}, __('Workflow'));
 }
 
 function render_aktuelle_zaehler(frm) {

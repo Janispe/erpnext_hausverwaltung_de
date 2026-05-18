@@ -38,6 +38,7 @@ app_include_js = [
 	"/assets/hausverwaltung/js/buchungs_inbox.js",
 	"/assets/hausverwaltung/js/immobilie_report_filter.js",
 	"/assets/hausverwaltung/js/date_range_presets.js",
+	"/assets/hausverwaltung/js/process_triggers.js",
 ]
 
 # include js, css files in header of web template

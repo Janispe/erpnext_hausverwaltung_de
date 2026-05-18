@@ -54,6 +54,26 @@ class CompletionCheckResult:
 	warnings: list[str]
 
 
+def _default_payload_builder(_src: Document) -> dict:
+	return {}
+
+
+@dataclass(frozen=True)
+class ProcessTrigger:
+	"""Deklariert einen 'Prozess starten'-Button auf einem Quell-Doctype.
+
+	Trigger-ID ist intern f"{source_doctype}::{key}". Der Key muss innerhalb
+	desselben Quell-Doctypes eindeutig sein (validiert beim Registry-Lookup).
+	"""
+
+	key: str
+	source_doctype: str
+	button_label: str
+	button_group: str = "Workflow"
+	payload_builder: Callable[[Document], dict] = _default_payload_builder
+	visibility_check: Callable[[Document], bool] | None = None
+
+
 @dataclass(frozen=True)
 class ProcessRuntimeConfig:
 	doctype: str
@@ -73,6 +93,7 @@ class ProcessRuntimeConfig:
 	validators: tuple[Callable[[Document], None], ...] = ()
 	update_hooks: tuple[Callable[[Document], None], ...] = ()
 	completion_blockers: tuple[Callable[[Document], list[str]], ...] = ()
+	triggers: tuple[ProcessTrigger, ...] = ()
 
 
 _PROCESS_RUNTIMES: dict[str, ProcessRuntimeConfig] = {}

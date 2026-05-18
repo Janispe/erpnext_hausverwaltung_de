@@ -7,7 +7,11 @@ from frappe.utils import getdate
 
 from hausverwaltung.hausverwaltung.doctype.mietvertrag.mietvertrag import _build_mietvertrag_tag_name
 from hausverwaltung.hausverwaltung.doctype.wohnung.wohnung import _build_paperless_tag_name
-from hausverwaltung.hausverwaltung.processes.engine import ProcessRuntimeConfig, register_process_runtime
+from hausverwaltung.hausverwaltung.processes.engine import (
+	ProcessRuntimeConfig,
+	ProcessTrigger,
+	register_process_runtime,
+)
 from hausverwaltung.hausverwaltung.processes.task_registry import (
 	BaseTaskHandler,
 	TASK_TYPE_MANUAL_CHECK,
@@ -144,6 +148,37 @@ def build_default_tags(doc: Document, variant: str) -> list[str]:
 			)
 		)
 	return [tag for tag in tags if (tag or "").strip()]
+def trigger_payload_from_mietvertrag(src: Document) -> dict:
+	return {
+		"prozess_typ": PROZESS_TYP_MIETERWECHSEL,
+		"wohnung": src.get("wohnung"),
+		"alter_mietvertrag": src.name,
+		"auszugsdatum": src.get("bis"),
+		"einzugsdatum": src.get("bis"),
+		"quelle_doctype": "Mietvertrag",
+		"quelle_name": src.name,
+	}
+
+
+def trigger_payload_mieterwechsel_from_wohnung(src: Document) -> dict:
+	return {
+		"prozess_typ": PROZESS_TYP_MIETERWECHSEL,
+		"wohnung": src.name,
+		"quelle_doctype": "Wohnung",
+		"quelle_name": src.name,
+	}
+
+
+def trigger_payload_erstvermietung_from_wohnung(src: Document) -> dict:
+	return {
+		"prozess_typ": PROZESS_TYP_ERSTVERMIETUNG,
+		"wohnung": src.name,
+		"neue_adresse_altmieter_erfasst": 1,
+		"quelle_doctype": "Wohnung",
+		"quelle_name": src.name,
+	}
+
+
 _RUNTIME: ProcessRuntimeConfig | None = None
 
 
@@ -173,6 +208,26 @@ def get_mieterwechsel_runtime() -> ProcessRuntimeConfig:
 			validators=(validate_contract_consistency,),
 			update_hooks=(apply_contract_end_to_old_contract,),
 			completion_blockers=(get_completion_blockers,),
+			triggers=(
+				ProcessTrigger(
+					key="mieterwechsel_from_mietvertrag",
+					source_doctype="Mietvertrag",
+					button_label="Mieterwechsel starten",
+					payload_builder=trigger_payload_from_mietvertrag,
+				),
+				ProcessTrigger(
+					key="mieterwechsel_from_wohnung",
+					source_doctype="Wohnung",
+					button_label="Mieterwechsel starten",
+					payload_builder=trigger_payload_mieterwechsel_from_wohnung,
+				),
+				ProcessTrigger(
+					key="erstvermietung_from_wohnung",
+					source_doctype="Wohnung",
+					button_label="Erstvermietung starten",
+					payload_builder=trigger_payload_erstvermietung_from_wohnung,
+				),
+			),
 		)
 	)
 	return _RUNTIME

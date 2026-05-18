@@ -47,7 +47,9 @@ frappe.ui.form.on("Mietvertrag", {
 		}
 
 		add_paperless_button(frm);
-		add_mieterwechsel_start_button_from_mietvertrag(frm);
+		if (window.hausverwaltung && window.hausverwaltung.process_triggers) {
+			window.hausverwaltung.process_triggers.attach_to_form(frm);
+		}
 		add_mieterkonto_button_from_mietvertrag(frm);
 
 		frm.add_custom_button(__("Staffelmieten sortieren"), async () => {
@@ -298,31 +300,6 @@ function add_paperless_button(frm) {
 			}
 		});
 	}, __('Paperless'));
-}
-
-function add_mieterwechsel_start_button_from_mietvertrag(frm) {
-	if (frm.is_new()) {
-		return;
-	}
-
-	// Mieterwechsel-Workflow ist noch nicht final — nur System Manager sieht den
-	// Button. Hausverwalter (und alle anderen) bekommen ihn nicht angezeigt.
-	const roles = (frappe.user_roles || []);
-	if (!roles.includes("System Manager")) {
-		return;
-	}
-
-	frm.add_custom_button(__("Mieterwechsel starten"), () => {
-		frappe.new_doc("Mieterwechsel", {
-			prozess_typ: "Mieterwechsel",
-			wohnung: frm.doc.wohnung || undefined,
-			alter_mietvertrag: frm.doc.name,
-			auszugsdatum: frm.doc.bis || undefined,
-			einzugsdatum: frm.doc.bis || undefined,
-			quelle_doctype: "Mietvertrag",
-			quelle_name: frm.doc.name,
-		});
-	}, __("Workflow"));
 }
 
 function add_mieterkonto_button_from_mietvertrag(frm) {
