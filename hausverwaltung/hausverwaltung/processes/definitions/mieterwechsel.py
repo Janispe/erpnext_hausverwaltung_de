@@ -8,6 +8,7 @@ from frappe.utils import getdate
 from hausverwaltung.hausverwaltung.doctype.mietvertrag.mietvertrag import _build_mietvertrag_tag_name
 from hausverwaltung.hausverwaltung.doctype.wohnung.wohnung import _build_paperless_tag_name
 from hausverwaltung.hausverwaltung.processes.engine import (
+	ProcessPluginRegistry,
 	ProcessRuntimeConfig,
 	ProcessTrigger,
 	register_process_runtime,
@@ -177,6 +178,38 @@ def trigger_payload_erstvermietung_from_wohnung(src: Document) -> dict:
 		"quelle_doctype": "Wohnung",
 		"quelle_name": src.name,
 	}
+
+
+# === Phase 4b: Plugin-Registrierung ===
+# Domain-Funktionen werden hier unter stabilen plugin_key in der globalen
+# ProcessPluginRegistry verfuegbar gemacht. Ein Prozess Typ-Doc kann diese
+# via Prozess Plugin Reference im UI selektieren. Die selben Funktionen bleiben
+# fuer den Code-defined Mieterwechsel-Doctype direkt im _PROCESS_RUNTIMES-Eintrag
+# (siehe get_mieterwechsel_runtime unten), damit Phase 1/2/3/3.5 unveraendert
+# weiterlaufen.
+
+ProcessPluginRegistry.register_validator(
+	"mieterwechsel.contract_consistency", validate_contract_consistency
+)
+ProcessPluginRegistry.register_update_hook(
+	"mieterwechsel.apply_contract_end", apply_contract_end_to_old_contract
+)
+ProcessPluginRegistry.register_completion_blocker(
+	"mieterwechsel.completion_blockers", get_completion_blockers
+)
+ProcessPluginRegistry.register_custom_handler(
+	"mieterwechsel.set_flag", MieterwechselFlagTaskHandler()
+)
+# Payload-Builder fuer DB-defined Trigger (Phase 4c-Vorbereitung)
+ProcessPluginRegistry.register_payload_builder(
+	"mieterwechsel.payload_from_mietvertrag", trigger_payload_from_mietvertrag
+)
+ProcessPluginRegistry.register_payload_builder(
+	"mieterwechsel.payload_mieterwechsel_from_wohnung", trigger_payload_mieterwechsel_from_wohnung
+)
+ProcessPluginRegistry.register_payload_builder(
+	"mieterwechsel.payload_erstvermietung_from_wohnung", trigger_payload_erstvermietung_from_wohnung
+)
 
 
 _RUNTIME: ProcessRuntimeConfig | None = None

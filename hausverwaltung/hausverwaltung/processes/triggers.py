@@ -158,6 +158,23 @@ def add_to_boot(bootinfo) -> None:
 
 
 @frappe.whitelist()
+def get_available_plugin_keys(kind: str) -> list[str]:
+	"""Liste der im Code registrierten Plugin-Keys einer bestimmten Art.
+	Verwendet vom Prozess Plugin Reference-Form, um plugin_key als Autocomplete
+	statt Free-Text-Input anzubieten.
+
+	kind: 'validator' | 'update_hook' | 'completion_blocker' | 'custom_handler' | 'payload_builder'
+	"""
+	from hausverwaltung.hausverwaltung.processes.engine import ProcessPluginRegistry
+
+	ensure_process_runtimes_registered()
+	allowed = {"validator", "update_hook", "completion_blocker", "custom_handler", "payload_builder"}
+	if kind not in allowed:
+		return []
+	return ProcessPluginRegistry.list_keys(kind)
+
+
+@frappe.whitelist()
 def build_trigger_payload(trigger_id: str, source_name: str) -> dict:
 	"""Ruft trigger.payload_builder(source_doc) und gibt das Dict zurueck.
 	Frontend verwendet das fuer frappe.new_doc(target_doctype, payload)."""
