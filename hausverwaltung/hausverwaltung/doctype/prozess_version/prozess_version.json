@@ -15,6 +15,7 @@
   "beschreibung",
   "schritte",
   "schritt_kanten",
+  "dag_preview_html",
   "amended_from"
  ],
  "fields": [
@@ -75,6 +76,11 @@
    "fieldtype": "Table",
    "label": "Abhaengigkeiten",
    "options": "Prozess Schritt Kante"
+  },
+  {
+   "fieldname": "dag_preview_html",
+   "fieldtype": "HTML",
+   "label": "DAG-Uebersicht"
   },
   {
    "fieldname": "amended_from",

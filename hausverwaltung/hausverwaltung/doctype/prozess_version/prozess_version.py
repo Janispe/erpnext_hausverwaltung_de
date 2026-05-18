@@ -21,11 +21,129 @@ def _ensure_runtime_registered(runtime_doctype: str):
 		get_mieterwechsel_runtime()
 
 
+_LOCKED_SCALAR_FIELDS = (
+	"version_key",      # autoname-Field, Umbenennung einer aktiven Version waere katastrophal
+	"runtime_doctype",  # Re-Targeting auf anderen Doctype = stiller Identitaetswechsel
+	"titel",
+	"beschreibung",
+	"gueltig_ab",
+	"gueltig_bis",
+)
+
+
 class ProzessVersion(Document):
 	def validate(self) -> None:
+		# Active-Lock zuerst: bei aktiven Versionen soll die schreibgeschuetzt-Botschaft
+		# Vorrang haben vor anderen Validierungs-Fehlern (z.B. unregistriertem Runtime-
+		# Doctype), denn dem User soll die zentrale Aussage "diese Version ist locked"
+		# sofort sichtbar werden, statt einer technischen Sekundaer-Fehlermeldung.
+		self._enforce_active_immutability()
 		self._validate_runtime_doctype()
 		self._normalize_rows()
 		self._validate_active_uniqueness()
+
+	def _enforce_active_immutability(self) -> None:
+		if self.is_new():
+			return
+		before = self.get_doc_before_save()
+		if not before:
+			return
+		was_active = bool(before.get("is_active"))
+		is_active_now = bool(self.is_active)
+		diffs = self._compute_content_diffs(before)
+
+		# Fall 1: Aktivierungs-Uebergang (0 -> 1) muss separat von Content-Edits sein
+		if not was_active and is_active_now:
+			if diffs:
+				frappe.throw(
+					_(
+						"Aktivierung muss separat erfolgen: bitte erst die Aenderungen "
+						"[{0}] speichern, dann in einem zweiten Save aktivieren."
+					).format(", ".join(diffs))
+				)
+			return
+
+		# Fall 2: Deaktivierungs-Uebergang (1 -> 0) muss separat von Content-Edits sein.
+		# Sonst koennte man eine aktive Version mutieren und gleichzeitig deaktivieren,
+		# was die History/Audit-Aussage "diese Form war einmal aktiv" verfaelscht.
+		if was_active and not is_active_now:
+			if diffs:
+				frappe.throw(
+					_(
+						"Deaktivierung muss separat erfolgen: bitte zuerst diese Aenderungen "
+						"rueckgaengig machen [{0}], dann in einem zweiten Save deaktivieren."
+					).format(", ".join(diffs))
+				)
+			return
+
+		# Fall 3: bleibt inaktiv (0 -> 0)
+		if not was_active and not is_active_now:
+			return
+
+		# Fall 4: bleibt aktiv (1 -> 1) Content-Lock greift
+		if not diffs:
+			return
+		frappe.throw(
+			_(
+				"Aktive Prozess-Versionen sind schreibgeschuetzt. "
+				"Aenderungen an [{0}] sind nur via 'Bearbeiten als neue Version' moeglich."
+			).format(", ".join(diffs))
+		)
+
+	def _compute_content_diffs(self, before) -> list[str]:
+		diffs: list[str] = []
+		for field in _LOCKED_SCALAR_FIELDS:
+			if (before.get(field) or "") != (self.get(field) or ""):
+				diffs.append(field)
+		if self._schritte_fingerprint(before) != self._schritte_fingerprint(self):
+			diffs.append("schritte")
+		if self._kanten_fingerprint(before) != self._kanten_fingerprint(self):
+			diffs.append("schritt_kanten")
+		return diffs
+
+	@staticmethod
+	def _schritte_fingerprint(doc) -> tuple:
+		"""Fingerprint nimmt RAW-Source-Felder, NICHT das von _normalize_rows
+		abgeleitete config_json. Begruendung: _enforce_active_immutability laeuft
+		VOR _normalize_rows, config_json ist daher im aktuellen Save noch stale.
+		Wenn ein neues Source-Feld auf Prozess Schritt ergaenzt wird, muss es hier mit."""
+		rows = []
+		for s in doc.get("schritte") or []:
+			rows.append(
+				(
+					(s.get("step_key") or "").strip(),
+					(s.get("titel") or "").strip(),
+					(s.get("task_type") or "").strip(),
+					(s.get("handler_key") or "").strip(),
+					int(s.get("pflicht") or 0),
+					(s.get("sichtbar_fuer_prozess_typ") or "").strip(),
+					(s.get("dokument_typ_tag") or "").strip(),
+					(s.get("print_format") or "").strip(),
+					(s.get("mapping_flag") or "").strip(),
+					(s.get("standard_verantwortlich_rolle") or "").strip(),
+					int(s.get("default_faelligkeit_tage") or 0),
+					int(s.get("reihenfolge") or 0),
+					(s.get("konfig_json") or "").strip(),
+					(s.get("sichtbar_wenn") or "").strip(),
+					(s.get("freigabe_wenn") or "").strip(),
+					# Deprecated, aber Engine liest es weiterhin als dual-read Fallback.
+					# Solange dual-read aktiv ist, muss es im Fingerprint gesperrt sein.
+					(s.get("parent_step_key") or "").strip(),
+				)
+			)
+		return tuple(sorted(rows))
+
+	@staticmethod
+	def _kanten_fingerprint(doc) -> tuple:
+		rows = []
+		for k in doc.get("schritt_kanten") or []:
+			rows.append(
+				(
+					(k.get("step_key") or "").strip(),
+					(k.get("depends_on_step_key") or "").strip(),
+				)
+			)
+		return tuple(sorted(rows))
 
 	def _validate_runtime_doctype(self):
 		runtime_doctype = (self.runtime_doctype or "").strip()
@@ -140,6 +258,31 @@ def duplicate_version(name: str, new_version_key: str | None = None, new_titel: 
 	new_doc.titel = (new_titel or "").strip() or f"{src.titel} (Kopie)"
 	new_doc.insert(ignore_permissions=False)
 	return new_doc.name
+
+
+@frappe.whitelist()
+def get_activation_preview(name: str) -> dict:
+	doc = frappe.get_doc("Prozess Version", name)
+	doc.check_permission("read")
+	currently_active = frappe.get_all(
+		"Prozess Version",
+		filters={
+			"is_active": 1,
+			"runtime_doctype": (doc.runtime_doctype or "").strip(),
+			"name": ("!=", doc.name),
+		},
+		fields=["name", "titel", "version_key"],
+		limit=1,
+	)
+	return {
+		"version_name": doc.name,
+		"version_titel": doc.titel,
+		"version_key": doc.version_key,
+		"schritt_count": len(doc.schritte or []),
+		"kanten_count": len(doc.schritt_kanten or []),
+		"runtime_doctype": doc.runtime_doctype,
+		"currently_active": currently_active[0] if currently_active else None,
+	}
 
 
 @frappe.whitelist()
