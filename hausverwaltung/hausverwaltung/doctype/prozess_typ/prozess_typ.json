@@ -13,8 +13,6 @@
   "default_process_type",
   "section_triggers",
   "triggers",
-  "section_payload",
-  "payload_field_specs",
   "section_plugins",
   "validators",
   "update_hooks",
@@ -68,18 +66,6 @@
    "fieldtype": "Table",
    "label": "Trigger",
    "options": "Prozess Trigger Definition"
-  },
-  {
-   "fieldname": "section_payload",
-   "fieldtype": "Section Break",
-   "label": "Payload-Felder (Was speichert eine Instanz?)"
-  },
-  {
-   "description": "Type-spezifische Felder, die als JSON in payload_json einer Prozess Instanz gespeichert werden. Reine Schema-Beschreibung fuer den UI-Renderer.",
-   "fieldname": "payload_field_specs",
-   "fieldtype": "Table",
-   "label": "Payload-Felder",
-   "options": "Prozess Field Spec"
   },
   {
    "fieldname": "section_plugins",

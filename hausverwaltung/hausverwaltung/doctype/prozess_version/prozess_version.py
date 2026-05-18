@@ -45,6 +45,10 @@ class ProzessVersion(Document):
 	def _enforce_active_immutability(self) -> None:
 		if self.is_new():
 			return
+		# Migration-Patches (z.B. move_payload_specs_to_version) muessen
+		# Specs nachtraeglich auf aktive Versionen kopieren koennen.
+		if getattr(self.flags, "from_migration", False):
+			return
 		before = self.get_doc_before_save()
 		if not before:
 			return
@@ -99,7 +103,28 @@ class ProzessVersion(Document):
 			diffs.append("schritte")
 		if self._kanten_fingerprint(before) != self._kanten_fingerprint(self):
 			diffs.append("schritt_kanten")
+		if self._field_specs_fingerprint(before) != self._field_specs_fingerprint(self):
+			diffs.append("payload_field_specs")
 		return diffs
+
+	@staticmethod
+	def _field_specs_fingerprint(doc) -> tuple:
+		"""Phase 7: payload_field_specs sind pro Version eingefroren, identisch
+		zum schritte/kanten-Lock. Schema-Aenderungen erfordern eine neue Version."""
+		rows = []
+		for s in doc.get("payload_field_specs") or []:
+			rows.append(
+				(
+					(s.get("fieldname") or "").strip(),
+					(s.get("label") or "").strip(),
+					(s.get("fieldtype") or "").strip(),
+					(s.get("options") or "").strip(),
+					int(s.get("reqd") or 0),
+					int(s.get("in_list_view") or 0),
+					(s.get("description") or "").strip(),
+				)
+			)
+		return tuple(sorted(rows))
 
 	@staticmethod
 	def _schritte_fingerprint(doc) -> tuple:

@@ -4,7 +4,9 @@ frappe.ui.form.on("Prozess Version", {
 			return;
 		}
 
-		// Must match _LOCKED_SCALAR_FIELDS in prozess_version.py (+ Child-Tables)
+		// Must match _LOCKED_SCALAR_FIELDS in prozess_version.py (+ Child-Tables).
+		// payload_field_specs ist seit Phase 7 ein Pro-Version-Schema und
+		// ebenfalls gelockt — siehe _field_specs_fingerprint.
 		const locked_fields = [
 			"version_key",
 			"runtime_doctype",
@@ -12,6 +14,7 @@ frappe.ui.form.on("Prozess Version", {
 			"beschreibung",
 			"gueltig_ab",
 			"gueltig_bis",
+			"payload_field_specs",
 			"schritte",
 			"schritt_kanten",
 		];

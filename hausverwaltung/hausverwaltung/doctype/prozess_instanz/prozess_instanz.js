@@ -22,6 +22,10 @@ frappe.ui.form.on("Prozess Instanz", {
 	prozess_typ(frm) {
 		_render_payload_form(frm);
 	},
+	prozess_version(frm) {
+		// Phase 7: Specs leben pro Version, daher auch bei version-change re-rendern.
+		_render_payload_form(frm);
+	},
 });
 
 frappe.ui.form.on("Prozess Aufgabe", {
@@ -42,7 +46,8 @@ frappe.ui.form.on("Prozess Aufgabe", {
 async function _render_payload_form(frm) {
 	const field = frm.get_field("payload_form_html");
 	if (!field) return;
-	if (!frm.doc.prozess_typ) {
+	// Phase 7: ohne typ UND ohne version koennen wir nichts holen.
+	if (!frm.doc.prozess_typ && !frm.doc.prozess_version) {
 		field.$wrapper.html("");
 		return;
 	}
@@ -50,7 +55,12 @@ async function _render_payload_form(frm) {
 	try {
 		const r = await frappe.call({
 			method: "hausverwaltung.hausverwaltung.processes.triggers.get_payload_field_specs",
-			args: { prozess_typ: frm.doc.prozess_typ },
+			args: {
+				// Phase 7: Specs leben pro Version. prozess_typ als Fallback fuer
+				// new-doc-Form vor dem ersten Save (Server faellt auf aktive Version).
+				prozess_version: frm.doc.prozess_version || "",
+				prozess_typ: frm.doc.prozess_typ || "",
+			},
 		});
 		specs = r.message || [];
 	} catch (err) {

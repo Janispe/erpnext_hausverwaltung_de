@@ -14,6 +14,8 @@
   "gueltig_ab",
   "gueltig_bis",
   "beschreibung",
+  "section_payload_specs",
+  "payload_field_specs",
   "schritte",
   "schritt_kanten",
   "dag_preview_html",
@@ -74,6 +76,18 @@
    "fieldname": "beschreibung",
    "fieldtype": "Small Text",
    "label": "Beschreibung"
+  },
+  {
+   "fieldname": "section_payload_specs",
+   "fieldtype": "Section Break",
+   "label": "Payload-Felder (Was speichert eine Instanz?)"
+  },
+  {
+   "description": "Type-spezifische Felder, die als JSON in payload_json einer Prozess Instanz gespeichert werden. Reine Schema-Beschreibung fuer den UI-Renderer. Pro Version eingefroren — neue Version fuer Schema-Aenderungen.",
+   "fieldname": "payload_field_specs",
+   "fieldtype": "Table",
+   "label": "Payload-Felder",
+   "options": "Prozess Field Spec"
   },
   {
    "fieldname": "schritte",

@@ -158,17 +158,27 @@ def add_to_boot(bootinfo) -> None:
 
 
 @frappe.whitelist()
-def get_payload_field_specs(prozess_typ: str) -> list[dict]:
-	"""Liefert die payload_field_specs eines Prozess-Typs fuer den JS-Renderer.
+def get_payload_field_specs(
+	prozess_version: str | None = None, prozess_typ: str | None = None
+) -> list[dict]:
+	"""Liefert die payload_field_specs einer Prozess-Version fuer den JS-Renderer.
 
-	Verwendet vom Prozess Instanz-Form (5a): rendert dynamisch native
-	Frappe-Controls aus diesen Specs anstelle der payload_json-Textarea.
+	Phase 7: Specs leben jetzt pro Version, nicht mehr auf dem Typ. Wenn
+	`prozess_version` fehlt (new-doc-Form vor erstem Save), fallen wir auf
+	die aktive Version des Typs zurueck — gleiches UX-Verhalten wie vorher.
 	"""
 	ensure_process_runtimes_registered()
-	if not prozess_typ or not frappe.db.exists("Prozess Typ", prozess_typ):
+	version_name = (prozess_version or "").strip()
+	if not version_name and prozess_typ:
+		version_name = frappe.db.get_value(
+			"Prozess Version",
+			{"prozess_typ": (prozess_typ or "").strip(), "is_active": 1},
+			"name",
+		) or ""
+	if not version_name or not frappe.db.exists("Prozess Version", version_name):
 		return []
-	typ = frappe.get_cached_doc("Prozess Typ", prozess_typ)
-	if not typ.has_permission("read"):
+	version = frappe.get_cached_doc("Prozess Version", version_name)
+	if not version.has_permission("read"):
 		return []
 	return [
 		{
@@ -179,7 +189,7 @@ def get_payload_field_specs(prozess_typ: str) -> list[dict]:
 			"reqd": int(s.reqd or 0),
 			"description": (s.description or "").strip(),
 		}
-		for s in (typ.payload_field_specs or [])
+		for s in (version.payload_field_specs or [])
 		if (s.fieldname or "").strip()
 	]
 

@@ -898,11 +898,12 @@ class ProcessEngine:
 		"""
 		if doc.doctype != "Prozess Instanz":
 			return []
-		prozess_typ_name = (doc.get("prozess_typ") or "").strip()
-		if not prozess_typ_name or not frappe.db.exists("Prozess Typ", prozess_typ_name):
+		# Phase 7: Specs leben pro Version, nicht mehr auf dem Typ.
+		version_name = (doc.get(self.config.process_version_fieldname) or "").strip()
+		if not version_name or not frappe.db.exists("Prozess Version", version_name):
 			return []
-		typ = frappe.get_cached_doc("Prozess Typ", prozess_typ_name)
-		reqd_specs = [s for s in (typ.payload_field_specs or []) if int(s.reqd or 0)]
+		version = frappe.get_cached_doc("Prozess Version", version_name)
+		reqd_specs = [s for s in (version.payload_field_specs or []) if int(s.reqd or 0)]
 		if not reqd_specs:
 			return []
 		task_filled_fields = self._task_filled_payload_fields(doc)
