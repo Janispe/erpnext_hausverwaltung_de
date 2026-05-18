@@ -64,3 +64,51 @@ def dispatch_workflow_action(
 	return ProcessEngine.for_doctype_and_docname("Prozess Instanz", docname).dispatch_workflow_action(
 		docname, action, payload_json=payload_json, timeout_seconds=timeout_seconds
 	)
+
+
+@frappe.whitelist()
+def get_create_linked_dialog_fields(docname: str, row_name: str) -> list[dict]:
+	"""Liefert die Dialog-Field-Definitionen fuer eine create_linked_doc-Aufgabe.
+
+	Single Source of Truth: `dialog_fields` aus der Task-Config. Wir raten nichts
+	aus Target-Doctype-Meta — weil Pflicht-Logik in Frappe oft an depends_on/
+	Domain-Validatoren haengt und nicht zuverlaessig ableitbar ist.
+
+	prefill_mapping-Jinja-Templates werden gegen das aktuelle payload_json + doc
+	ausgewertet und als `default`-Werte in die Field-Defs gemerged.
+	"""
+	import json as _json
+
+	doc = frappe.get_doc("Prozess Instanz", docname)
+	# write statt read: der Dialog fuehrt zu einer Aenderung an der Prozess Instanz
+	doc.check_permission("write")
+	row = next((r for r in (doc.aufgaben or []) if r.name == row_name), None)
+	if not row:
+		frappe.throw(f"Task-Row '{row_name}' nicht gefunden.")
+	try:
+		config = _json.loads(row.config_json or "{}")
+	except (ValueError, TypeError):
+		config = {}
+	if not isinstance(config, dict):
+		config = {}
+	dialog_fields = list(config.get("dialog_fields") or [])
+	prefill = config.get("prefill_mapping") or {}
+	try:
+		payload = _json.loads(doc.payload_json or "{}")
+		if not isinstance(payload, dict):
+			payload = {}
+	except (ValueError, TypeError):
+		payload = {}
+	rendered_defaults: dict = {}
+	for k, v in prefill.items():
+		if isinstance(v, str) and "{{" in v:
+			rendered = frappe.render_template(v, {"payload": payload, "doc": doc})
+			val = (rendered or "").strip()
+			rendered_defaults[k] = val or None
+		else:
+			rendered_defaults[k] = v
+	for fld in dialog_fields:
+		fn = fld.get("fieldname")
+		if fn and fn in rendered_defaults and rendered_defaults[fn] is not None:
+			fld["default"] = rendered_defaults[fn]
+	return dialog_fields

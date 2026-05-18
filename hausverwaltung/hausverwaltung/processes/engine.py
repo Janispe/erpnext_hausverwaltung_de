@@ -12,6 +12,7 @@ from frappe.utils import add_days, get_datetime, getdate, now_datetime, today
 from hausverwaltung.hausverwaltung.integrations.temporal.adapters.process_adapter import (
 	ACTION_BYPASS_COMPLETE,
 	ACTION_CONFIRM_PRINT_TASK,
+	ACTION_CREATE_LINKED_DOC,
 	ACTION_EXPORT_FILE_TASK,
 	ACTION_GENERATE_PRINT_TASK,
 	ACTION_RUN_PYTHON_TASK,
@@ -26,6 +27,7 @@ from hausverwaltung.hausverwaltung.integrations.temporal.orchestrator import (
 	ensure_workflow_started,
 )
 from hausverwaltung.hausverwaltung.processes.task_registry import (
+	TASK_TYPE_CREATE_LINKED_DOC,
 	TASK_TYPE_MANUAL_CHECK,
 	TASK_TYPE_PAPERLESS_EXPORT,
 	TASK_TYPE_PRINT_DOCUMENT,
@@ -583,25 +585,41 @@ class ProcessEngine:
 			doc.save(ignore_permissions=True)
 			res = {"status": target_status}
 		elif action == ACTION_EXPORT_FILE_TASK:
+			self._require_task_unlocked(doc, row, action)
 			res = handler.export(self.config.task_handler_context, doc, row) or {}
 			doc.reload()
 			doc.flags.from_temporal_activity = True
 			doc.save(ignore_permissions=True)
 		elif action == ACTION_GENERATE_PRINT_TASK:
+			self._require_task_unlocked(doc, row, action)
 			res = handler.generate_pdf(self.config.task_handler_context, doc, row) or {}
 			doc.reload()
 			doc.flags.from_temporal_activity = True
 			doc.save(ignore_permissions=True)
 		elif action == ACTION_CONFIRM_PRINT_TASK:
+			self._require_task_unlocked(doc, row, action)
 			res = handler.confirm_filed(self.config.task_handler_context, doc, row, int(payload.get("confirmed") or 0)) or {}
 			doc.reload()
 			doc.flags.from_temporal_activity = True
 			doc.save(ignore_permissions=True)
 		elif action == ACTION_RUN_PYTHON_TASK:
+			self._require_task_unlocked(doc, row, action)
 			res = handler.run_action(self.config.task_handler_context, doc, row, payload) or {}
 			doc.reload()
 			doc.flags.from_temporal_activity = True
 			doc.save(ignore_permissions=True)
+		elif action == ACTION_CREATE_LINKED_DOC:
+			# Phase 5c: erstellt linked doc + schreibt Name in payload_json + Task auf Erledigt.
+			# Task-Type-Guard: nur create_linked_doc-Tasks haben die Methode.
+			if (row.task_type or "").strip() != TASK_TYPE_CREATE_LINKED_DOC:
+				frappe.throw(_("Aktion 'create_linked_doc' ist nur fuer create_linked_doc-Aufgaben verfuegbar."))
+			self._require_task_unlocked(doc, row, action)
+			res = handler.create_linked_doc(
+				self.config.task_handler_context, doc, row,
+				user_values=payload.get("user_values") or {},
+			) or {}
+			doc.reload()
+			doc.flags.from_temporal_activity = True
 		else:
 			frappe.throw(f"Unbekannte Task-Aktion: {action}")
 		return res
@@ -674,6 +692,50 @@ class ProcessEngine:
 			(version.get("version_key") or version.get("titel") or "").strip(),
 		)
 		self._seed_tasks_from_process_version(doc)
+
+	def _require_task_unlocked(self, doc: Document, row, action: str) -> None:
+		"""Wirft, wenn die Task durch offene Pflicht-Vorgaenger gesperrt ist.
+
+		Schuetzt alle side-effect Task-Actions (export/generate/confirm/run/create_linked)
+		vor Aufrufen via API/Temporal/stale UI vor offenen DAG-Vorgaengern. Status-
+		Umschalter haben ihren eigenen Guard im set_task_status-Branch."""
+		if row.pflicht and not self._is_task_unlocked(doc, row):
+			frappe.throw(_("Aufgabe ist noch nicht freigegeben (Aktion '{0}').").format(action))
+
+	def _task_filled_payload_fields(self, doc: Document) -> set[str]:
+		"""Sammelt payload-fieldnames, die durch create_linked_doc-Tasks der aktiven
+		Version befuellt werden. Wird in _validate_payload_required_fields als
+		Ausnahme-Liste verwendet."""
+		import json as _json
+
+		filled: set[str] = set()
+		version_name = (doc.get(self.config.process_version_fieldname) or "").strip()
+		if not version_name or not frappe.db.exists("Prozess Version", version_name):
+			return filled
+		try:
+			version = frappe.get_cached_doc("Prozess Version", version_name)
+		except Exception:
+			return filled
+		for schritt in (version.get("schritte") or []):
+			if (schritt.get("task_type") or "").strip() != TASK_TYPE_CREATE_LINKED_DOC:
+				continue
+			# Nur Pflicht-Schritte zaehlen — ein optionaler create_linked_doc-Schritt
+			# darf nicht heimlich die reqd-Pflicht aus dem Completion-Blocker raushebeln.
+			if not int(schritt.get("pflicht") or 0):
+				continue
+			raw = (schritt.get("konfig_json") or schritt.get("config_json") or "").strip()
+			if not raw:
+				continue
+			try:
+				cfg = _json.loads(raw)
+			except (ValueError, TypeError):
+				continue
+			if not isinstance(cfg, dict):
+				continue
+			field = (cfg.get("store_in_payload_field") or "").strip()
+			if field:
+				filled.add(field)
+		return filled
 
 	def _validate_version_lock(self, doc: Document) -> None:
 		self._validate_selected_process_version(doc)
@@ -819,9 +881,40 @@ class ProcessEngine:
 				blockers.append(_("Pflichtaufgabe fachlich nicht erfuellt: {0}").format(row.aufgabe))
 			if row.pflicht and not self._is_task_unlocked(doc, row):
 				blockers.append(_("Pflichtaufgabe noch nicht freigegeben: {0}").format(row.aufgabe))
+		blockers.extend(self._payload_required_blockers(doc))
 		for fn in self.config.completion_blockers:
 			blockers.extend(fn(doc))
 		return CompletionCheckResult(blockers=blockers, warnings=warnings)
+
+	def _payload_required_blockers(self, doc: Document) -> list[str]:
+		"""Completion-Blocker fuer reqd-markierte Payload-Specs.
+
+		Bewusst NICHT in validate() — Pattern wie Mieterwechsel-Domain-Validator:
+		strikte Pflichten erst beim Abschluss-Versuch, weil viele reqd-Felder
+		erst im Lauf des Prozesses (z.B. ueber create_linked_doc-Tasks) befuellt
+		werden. Felder, die durch create_linked_doc-Tasks befuellt werden, sind
+		ausgenommen — der Task selbst ist Pflichtaufgabe, das Pflicht-Bit wandert
+		dort hin.
+		"""
+		if doc.doctype != "Prozess Instanz":
+			return []
+		prozess_typ_name = (doc.get("prozess_typ") or "").strip()
+		if not prozess_typ_name or not frappe.db.exists("Prozess Typ", prozess_typ_name):
+			return []
+		typ = frappe.get_cached_doc("Prozess Typ", prozess_typ_name)
+		reqd_specs = [s for s in (typ.payload_field_specs or []) if int(s.reqd or 0)]
+		if not reqd_specs:
+			return []
+		task_filled_fields = self._task_filled_payload_fields(doc)
+		blockers: list[str] = []
+		for s in reqd_specs:
+			fn = (s.fieldname or "").strip()
+			if not fn or fn in task_filled_fields:
+				continue
+			val = doc.payload(fn) if hasattr(doc, "payload") else None
+			if val in (None, "", 0):
+				blockers.append(_("Pflichtfeld fehlt im Payload: {0}").format(s.label or fn))
+		return blockers
 
 	def _is_task_unlocked(self, doc: Document, row) -> bool:
 		rows = doc.get(self.config.task_fieldname) or []

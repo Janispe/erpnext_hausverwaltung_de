@@ -158,6 +158,33 @@ def add_to_boot(bootinfo) -> None:
 
 
 @frappe.whitelist()
+def get_payload_field_specs(prozess_typ: str) -> list[dict]:
+	"""Liefert die payload_field_specs eines Prozess-Typs fuer den JS-Renderer.
+
+	Verwendet vom Prozess Instanz-Form (5a): rendert dynamisch native
+	Frappe-Controls aus diesen Specs anstelle der payload_json-Textarea.
+	"""
+	ensure_process_runtimes_registered()
+	if not prozess_typ or not frappe.db.exists("Prozess Typ", prozess_typ):
+		return []
+	typ = frappe.get_cached_doc("Prozess Typ", prozess_typ)
+	if not typ.has_permission("read"):
+		return []
+	return [
+		{
+			"fieldname": (s.fieldname or "").strip(),
+			"label": (s.label or "").strip() or s.fieldname,
+			"fieldtype": (s.fieldtype or "Data").strip(),
+			"options": (s.options or "").strip(),
+			"reqd": int(s.reqd or 0),
+			"description": (s.description or "").strip(),
+		}
+		for s in (typ.payload_field_specs or [])
+		if (s.fieldname or "").strip()
+	]
+
+
+@frappe.whitelist()
 def get_available_plugin_keys(kind: str) -> list[str]:
 	"""Liste der im Code registrierten Plugin-Keys einer bestimmten Art.
 	Verwendet vom Prozess Plugin Reference-Form, um plugin_key als Autocomplete

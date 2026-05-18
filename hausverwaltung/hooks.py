@@ -69,6 +69,7 @@ doctype_js = {
 	"Immobilie": "hausverwaltung/doctype/immobilie/immobilie.js",
 	"Journal Entry": "public/js/journal_entry.js",
 	"Payment Entry": "public/js/payment_entry.js",
+	"Prozess Instanz": "hausverwaltung/doctype/prozess_instanz/prozess_instanz.js",
 	"Prozess Version": "hausverwaltung/doctype/prozess_version/prozess_version.js",
 	"Purchase Invoice": "public/js/purchase_invoice.js",
 	"Sales Invoice": "public/js/sales_invoice.js",

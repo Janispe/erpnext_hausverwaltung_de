@@ -18,6 +18,7 @@ TASK_TYPE_PYTHON_ACTION = "python_action"
 TASK_TYPE_PRINT_DOCUMENT = "print_document"
 TASK_TYPE_PAPERLESS_EXPORT = "paperless_export"
 TASK_TYPE_EMAIL_DRAFT = "email_draft"
+TASK_TYPE_CREATE_LINKED_DOC = "create_linked_doc"
 
 SUPPORTED_TASK_TYPES = (
 	TASK_TYPE_MANUAL_CHECK,
@@ -26,6 +27,7 @@ SUPPORTED_TASK_TYPES = (
 	TASK_TYPE_PRINT_DOCUMENT,
 	TASK_TYPE_PAPERLESS_EXPORT,
 	TASK_TYPE_EMAIL_DRAFT,
+	TASK_TYPE_CREATE_LINKED_DOC,
 )
 
 
@@ -247,6 +249,78 @@ class PrintDocumentTaskHandler(BaseTaskHandler):
 		return {"doctype": detail.doctype, "name": detail.name}
 
 
+class CreateLinkedDocTaskHandler(BaseTaskHandler):
+	"""Phase 5c: Aufgabe „Neuen Vertrag anlegen"-artig.
+
+	Konfig (config_json bzw. konfig_snapshot_json):
+	  - target_doctype: Ziel-DocType (z.B. "Mietvertrag")
+	  - store_in_payload_field: payload_json-Key, in den der neue Doc-Name geschrieben wird
+	  - dialog_fields: Liste von Field-Defs fuer den Erstellungs-Dialog (Single Source of Truth)
+	  - prefill_mapping: Jinja-Template pro Field, ausgewertet gegen {payload, doc}
+	"""
+
+	task_type = TASK_TYPE_CREATE_LINKED_DOC
+
+	def validate_config(self, step_or_task) -> None:
+		config = extract_task_config(step_or_task)
+		if not (config.get("target_doctype") or "").strip():
+			frappe.throw(_("create_linked_doc erfordert target_doctype in der Konfig."))
+		if not (config.get("store_in_payload_field") or "").strip():
+			frappe.throw(_("create_linked_doc erfordert store_in_payload_field in der Konfig."))
+
+	def is_fulfilled(self, context: TaskHandlerContext, doc: Document, task_row) -> TaskCheckResult:
+		config = extract_task_config(task_row)
+		field = (config.get("store_in_payload_field") or "").strip()
+		if hasattr(doc, "payload") and callable(doc.payload):
+			value = doc.payload(field)
+		else:
+			value = doc.get(field)
+		return TaskCheckResult(fulfilled=bool(value), meta={"value": value, "field": field})
+
+	def create_linked_doc(self, context: TaskHandlerContext, doc: Document, task_row, user_values: dict | None = None) -> dict:
+		"""Erstellt target_doc mit user_values + Pre-Fill aus Payload."""
+		import json as _json
+
+		config = extract_task_config(task_row)
+		target_doctype = (config.get("target_doctype") or "").strip()
+		field = (config.get("store_in_payload_field") or "").strip()
+		prefill_template = config.get("prefill_mapping") or {}
+		if not target_doctype or not field:
+			frappe.throw(_("create_linked_doc-Task ist nicht korrekt konfiguriert."))
+
+		# Pre-Fill via Jinja-Eval gegen doc.payload
+		payload: dict = {}
+		raw_payload = getattr(doc, "payload_json", None)
+		if raw_payload:
+			try:
+				parsed = _json.loads(raw_payload)
+				if isinstance(parsed, dict):
+					payload = parsed
+			except (ValueError, TypeError):
+				pass
+		prefilled: dict = {}
+		for k, v_template in prefill_template.items():
+			if isinstance(v_template, str) and "{{" in v_template:
+				rendered = frappe.render_template(v_template, {"payload": payload, "doc": doc})
+				prefilled[k] = (rendered or "").strip() or None
+			else:
+				prefilled[k] = v_template
+
+		new_doc_data = {**prefilled, **(user_values or {})}
+		new_doc_data["doctype"] = target_doctype
+		new_doc = frappe.get_doc(new_doc_data).insert(ignore_permissions=False)
+
+		# Zurueckschreiben in payload + Task auf Erledigt
+		if hasattr(doc, "payload_set") and callable(doc.payload_set):
+			doc.payload_set(field, new_doc.name)
+		else:
+			doc.set(field, new_doc.name)
+		task_row.status = "Erledigt"
+		task_row.result_json = frappe.as_json({"created": new_doc.name})
+		doc.save(ignore_permissions=True)
+		return {"created_doctype": target_doctype, "created_name": new_doc.name}
+
+
 class TaskHandlerRegistry:
 	def __init__(self):
 		self._handlers = {
@@ -254,6 +328,7 @@ class TaskHandlerRegistry:
 			TASK_TYPE_PYTHON_ACTION: PythonActionTaskHandler(),
 			TASK_TYPE_PAPERLESS_EXPORT: PaperlessExportTaskHandler(),
 			TASK_TYPE_PRINT_DOCUMENT: PrintDocumentTaskHandler(),
+			TASK_TYPE_CREATE_LINKED_DOC: CreateLinkedDocTaskHandler(),
 		}
 
 	def get_handler(self, *, handler_key: str | None = None, task_type: str | None = None, context: TaskHandlerContext | None = None) -> BaseTaskHandler:

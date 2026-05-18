@@ -103,6 +103,13 @@ def _get_contract_data(contract_name: str | None) -> dict:
 
 
 def validate_contract_consistency(doc: Document) -> None:
+	"""Validator: nur konsistenz-checken was gesetzt ist.
+
+	Beim ersten Save (frisch via 'Mieterwechsel starten'-Trigger) hat der User
+	in der Regel nur alter_mietvertrag/wohnung, weil der neue Vertrag erst im
+	Lauf des Prozesses entsteht. Strenge Pflichten ('Neuer Mietvertrag muss
+	existieren', 'Auszugsdatum muss gesetzt sein') wandern in den
+	Completion-Blocker — die feuern erst beim 'Abschluss'-Versuch."""
 	wohnung = _doc_field(doc, "wohnung")
 	if not wohnung:
 		return
@@ -110,16 +117,20 @@ def validate_contract_consistency(doc: Document) -> None:
 	neuer = _doc_field(doc, "neuer_mietvertrag")
 	auszug = _doc_field(doc, "auszugsdatum")
 	einzug = _doc_field(doc, "einzugsdatum")
-	old_data = _get_contract_data(alter)
-	new_data = _get_contract_data(neuer)
-	if not _is_erstvermietung(doc) and not old_data:
-		frappe.throw(_("Alter Mietvertrag wurde nicht gefunden."))
-	if not new_data:
-		frappe.throw(_("Neuer Mietvertrag wurde nicht gefunden."))
-	if old_data and old_data.get("wohnung") != wohnung:
-		frappe.throw(_("Alter Mietvertrag gehoert nicht zur ausgewaehlten Wohnung."))
-	if new_data.get("wohnung") != wohnung:
-		frappe.throw(_("Neuer Mietvertrag gehoert nicht zur ausgewaehlten Wohnung."))
+
+	# Nur pruefen wenn Felder GESETZT sind — leere Felder sind beim Save erlaubt.
+	if alter:
+		old_data = _get_contract_data(alter)
+		if not old_data:
+			frappe.throw(_("Alter Mietvertrag '{0}' wurde nicht gefunden.").format(alter))
+		if old_data.get("wohnung") != wohnung:
+			frappe.throw(_("Alter Mietvertrag gehoert nicht zur ausgewaehlten Wohnung."))
+	if neuer:
+		new_data = _get_contract_data(neuer)
+		if not new_data:
+			frappe.throw(_("Neuer Mietvertrag '{0}' wurde nicht gefunden.").format(neuer))
+		if new_data.get("wohnung") != wohnung:
+			frappe.throw(_("Neuer Mietvertrag gehoert nicht zur ausgewaehlten Wohnung."))
 	if auszug and einzug and getdate(auszug) > getdate(einzug):
 		frappe.throw(_("Auszugsdatum darf nicht nach Einzugsdatum liegen."))
 

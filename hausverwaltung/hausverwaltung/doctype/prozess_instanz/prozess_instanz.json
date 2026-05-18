@@ -27,12 +27,14 @@
   "prozess_version",
   "prozess_version_label",
   "section_payload",
+  "payload_form_html",
   "payload_json",
   "section_quelle",
   "quelle_doctype",
   "quelle_name",
   "section_aufgaben",
   "aufgaben",
+  "task_actions_html",
   "section_bypass",
   "bypass_freigabe",
   "bypass_begruendung",
@@ -67,7 +69,8 @@
   {"fetch_from": "prozess_version.titel", "fieldname": "prozess_version_label", "fieldtype": "Data", "label": "Version-Label", "read_only": 1},
 
   {"fieldname": "section_payload", "fieldtype": "Section Break", "label": "Daten"},
-  {"description": "Type-spezifische Daten als JSON-Dict. Schema laut Prozess Typ > Payload-Felder.", "fieldname": "payload_json", "fieldtype": "Long Text", "label": "Payload (JSON)"},
+  {"fieldname": "payload_form_html", "fieldtype": "HTML", "label": "Payload-Felder"},
+  {"description": "Type-spezifische Daten als JSON-Dict. Schema laut Prozess Typ > Payload-Felder. JS rendert Form-Felder darueber; dieses Feld ist standardmaessig versteckt.", "fieldname": "payload_json", "fieldtype": "Long Text", "label": "Payload (JSON)"},
 
   {"fieldname": "section_quelle", "fieldtype": "Section Break", "label": "Quelle", "collapsible": 1},
   {"fieldname": "quelle_doctype", "fieldtype": "Data", "label": "Quelle Doctype", "read_only": 1},
@@ -75,6 +78,7 @@
 
   {"fieldname": "section_aufgaben", "fieldtype": "Section Break", "label": "Aufgaben"},
   {"fieldname": "aufgaben", "fieldtype": "Table", "options": "Prozess Aufgabe", "label": "Aufgaben"},
+  {"fieldname": "task_actions_html", "fieldtype": "HTML", "label": "Aufgaben-Aktionen"},
 
   {"fieldname": "section_bypass", "fieldtype": "Section Break", "label": "Bypass", "collapsible": 1},
   {"default": "0", "fieldname": "bypass_freigabe", "fieldtype": "Check", "label": "Bypass-Freigabe"},

@@ -59,7 +59,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Task Type",
-   "options": "manual_check\nfile_upload\npython_action\nprint_document\npaperless_export\nemail_draft",
+   "options": "manual_check\nfile_upload\npython_action\nprint_document\npaperless_export\nemail_draft\ncreate_linked_doc",
    "reqd": 1
   },
   {
