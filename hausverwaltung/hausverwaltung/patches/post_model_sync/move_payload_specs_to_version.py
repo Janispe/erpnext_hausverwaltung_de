@@ -2,7 +2,10 @@
 verschoben. Dieser Patch kopiert die existierenden Typ-Specs einmalig auf
 alle Versionen des Typs.
 
-Idempotent:
+Idempotent + robust:
+- Liest Specs direkt aus tabProzess Field Spec (umgeht das Meta-Feld auf
+  Prozess Typ, das im selben Commit gedroppt wird). Frappe loescht beim
+  Schema-Sync nur die Field-Definition, NICHT die Daten in der Child-Tabelle.
 - Wenn eine Version bereits Specs hat, wird sie uebersprungen.
 - Wenn Typ keine Specs hat, gibt's nichts zu kopieren.
 - Bei zweitem Migrate-Lauf: alle Versionen haben Specs → No-op.
@@ -16,14 +19,6 @@ import frappe
 
 
 def execute():
-	# Frappe-Schema-Sync hat das Feld auf Prozess Version schon angelegt.
-	# Wenn das Feld auf Typ noch existiert, koennen wir kopieren. Andernfalls
-	# (z.B. nach Schema-Drop) wurde der Patch in einer vorherigen Migration
-	# schon erledigt und wir sind fertig.
-	typ_meta = frappe.get_meta("Prozess Typ")
-	if not typ_meta.get_field("payload_field_specs"):
-		return
-
 	# Save auf Prozess Version triggert _validate_runtime_doctype — Runtime
 	# fuer "Prozess Instanz" muss registriert sein.
 	from hausverwaltung.hausverwaltung.processes import ensure_process_runtimes_registered
@@ -39,9 +34,16 @@ def execute():
 
 	typen = frappe.get_all("Prozess Typ", pluck="name")
 	for typ_name in typen:
-		typ = frappe.get_doc("Prozess Typ", typ_name)
-		specs = typ.get("payload_field_specs") or []
-		if not specs:
+		# Specs DIREKT aus der Child-Tabelle lesen — das Meta-Feld auf Prozess
+		# Typ wurde im selben Phase-7-Commit entfernt, aber die Daten in
+		# tabProzess Field Spec bleiben bestehen.
+		legacy_specs = frappe.get_all(
+			"Prozess Field Spec",
+			filters={"parent": typ_name, "parenttype": "Prozess Typ"},
+			fields=["fieldname", "label", "fieldtype", "options", "reqd", "in_list_view", "description"],
+			order_by="idx",
+		)
+		if not legacy_specs:
 			continue
 		versions = frappe.get_all(
 			"Prozess Version",
@@ -52,17 +54,17 @@ def execute():
 			v = frappe.get_doc("Prozess Version", v_name)
 			if v.get("payload_field_specs"):
 				continue  # bereits migriert
-			for s in specs:
+			for s in legacy_specs:
 				v.append(
 					"payload_field_specs",
 					{
-						"fieldname": s.fieldname,
-						"label": s.label,
-						"fieldtype": s.fieldtype,
-						"options": s.options,
-						"reqd": s.reqd,
-						"in_list_view": getattr(s, "in_list_view", 0),
-						"description": s.description,
+						"fieldname": s["fieldname"],
+						"label": s["label"],
+						"fieldtype": s["fieldtype"],
+						"options": s["options"],
+						"reqd": s["reqd"],
+						"in_list_view": s.get("in_list_view") or 0,
+						"description": s["description"],
 					},
 				)
 			v.flags.from_migration = True

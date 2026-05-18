@@ -98,6 +98,28 @@ def execute():
 		for k in (v2.get("schritt_kanten") or [])
 	]
 
+	# Phase 7: payload_field_specs leben pro Version. v2 hat sie ueblicherweise
+	# vom move_payload_specs_to_version-Patch bekommen. Falls v2 leer ist
+	# (fresh install ohne legacy typ-specs), fallen wir auf die Mieterwechsel-
+	# Seed-Konstante zurueck — Single Source of Truth.
+	v3_specs = [
+		{
+			"fieldname": s.fieldname,
+			"label": s.label,
+			"fieldtype": s.fieldtype,
+			"options": s.options,
+			"reqd": s.reqd,
+			"in_list_view": getattr(s, "in_list_view", 0),
+			"description": s.description,
+		}
+		for s in (v2.get("payload_field_specs") or [])
+	]
+	if not v3_specs:
+		from hausverwaltung.hausverwaltung.processes.definitions.mieterwechsel_seed_data import (
+			MIETERWECHSEL_PAYLOAD_FIELD_SPECS,
+		)
+		v3_specs = list(MIETERWECHSEL_PAYLOAD_FIELD_SPECS)
+
 	# Phase-2-Active-Lock laesst nur eine aktive Version pro runtime_doctype zu.
 	# Erst v2 deaktivieren, dann v3 als aktiv anlegen.
 	if v2.is_active:
@@ -115,6 +137,7 @@ def execute():
 			"is_active": 1,
 			"schritte": v3_schritte,
 			"schritt_kanten": v3_kanten,
+			"payload_field_specs": v3_specs,
 		}
 	)
 	v3.insert(ignore_permissions=True)

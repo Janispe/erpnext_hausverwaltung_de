@@ -42,11 +42,18 @@ def _drop_legacy_mieterwechsel_doctype() -> None:
 
 
 def _ensure_prozess_typ_exists() -> None:
+	# Phase 7: payload_field_specs lebt jetzt auf Prozess Version, nicht mehr auf Typ.
+	# Defensiv pruefen ob das Feld noch existiert (bestehende Sites mit Daten in
+	# tabProzess Field Spec/parenttype=Prozess Typ) — auf fresh installs ist das
+	# Feld weg und Schreiben wuerde fehlschlagen bzw. silently dropped.
+	typ_has_payload_specs = bool(frappe.get_meta("Prozess Typ").get_field("payload_field_specs"))
+
 	if frappe.db.exists("Prozess Typ", PROZESS_TYP_NAME):
 		# bereits angelegt, ueberschreiben mit aktueller Konfig
 		typ = frappe.get_doc("Prozess Typ", PROZESS_TYP_NAME)
 		typ.set("triggers", [])
-		typ.set("payload_field_specs", [])
+		if typ_has_payload_specs:
+			typ.set("payload_field_specs", [])
 		typ.set("validators", [])
 		typ.set("update_hooks", [])
 		typ.set("completion_blockers", [])
@@ -129,18 +136,16 @@ def _ensure_prozess_typ_exists() -> None:
 		},
 	)
 
-	# Payload-Feld-Specs — Mieterwechsel-spezifische Felder die in payload_json leben
-	for spec in [
-		{"fieldname": "wohnung", "label": "Wohnung", "fieldtype": "Link", "options": "Wohnung", "reqd": 1, "in_list_view": 1},
-		{"fieldname": "alter_mietvertrag", "label": "Alter Mietvertrag", "fieldtype": "Link", "options": "Mietvertrag", "reqd": 0},
-		{"fieldname": "neuer_mietvertrag", "label": "Neuer Mietvertrag", "fieldtype": "Link", "options": "Mietvertrag", "reqd": 1},
-		{"fieldname": "auszugsdatum", "label": "Auszugsdatum", "fieldtype": "Date", "reqd": 1},
-		{"fieldname": "einzugsdatum", "label": "Einzugsdatum", "fieldtype": "Date", "reqd": 1},
-		{"fieldname": "neue_adresse_altmieter_erfasst", "label": "Neue Adresse Altmieter erfasst", "fieldtype": "Check"},
-		{"fieldname": "zaehler_geprueft", "label": "Zaehler geprueft", "fieldtype": "Check"},
-		{"fieldname": "zaehlerstaende_eingetragen", "label": "Zaehlerstaende eingetragen", "fieldtype": "Check"},
-	]:
-		typ.append("payload_field_specs", spec)
+	# Payload-Feld-Specs — Mieterwechsel-spezifische Felder die in payload_json leben.
+	# Phase 7: nur noch fuer bestehende Sites relevant (typ-Feld existiert noch).
+	# Auf fresh installs ist das Feld weg und die Specs werden in v3-Patch direkt
+	# auf der Version geseeded.
+	if typ_has_payload_specs:
+		from hausverwaltung.hausverwaltung.processes.definitions.mieterwechsel_seed_data import (
+			MIETERWECHSEL_PAYLOAD_FIELD_SPECS,
+		)
+		for spec in MIETERWECHSEL_PAYLOAD_FIELD_SPECS:
+			typ.append("payload_field_specs", spec)
 
 	# Plugin-References — verweisen auf in ProcessPluginRegistry registrierte Keys
 	typ.append("validators", {"plugin_key": "mieterwechsel.contract_consistency"})
