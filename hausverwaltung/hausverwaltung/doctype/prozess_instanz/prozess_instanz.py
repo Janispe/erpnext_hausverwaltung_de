@@ -104,6 +104,14 @@ def get_create_linked_dialog_fields(docname: str, row_name: str) -> list[dict]:
 		if isinstance(v, str) and "{{" in v:
 			rendered = frappe.render_template(v, {"payload": payload, "doc": doc})
 			val = (rendered or "").strip()
+			# Jinja-Artefakte filtern, damit das nicht als Default auf Form-Fields
+			# landet und z.B. den Date-Picker mit "undefined, NaN" verwirrt:
+			#   - "None"      → payload[key] war Python None
+			#   - "null" / "undefined" → JS-Artefakte
+			#   - String enthaelt "{{" → Frappe's render_template gibt bei fehlendem
+			#     dict-key einen unrenderten Platzhalter zurueck
+			if val.lower() in ("none", "null", "undefined") or "{{" in val:
+				val = ""
 			rendered_defaults[k] = val or None
 		else:
 			rendered_defaults[k] = v
