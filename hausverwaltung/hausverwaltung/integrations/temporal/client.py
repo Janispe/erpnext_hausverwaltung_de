@@ -1,16 +1,8 @@
-from __future__ import annotations
+"""Phase 8 Stufe 1b Re-Export: client wohnt jetzt in
+process_engine.process_engine.integrations.temporal.client.
 
-from hausverwaltung.hausverwaltung.integrations.temporal.config import get_temporal_settings
-
-try:
-	from temporalio.client import Client
-except Exception:  # pragma: no cover - runtime dependency guard
-	Client = None  # type: ignore[assignment]
-
-
-async def get_temporal_client() -> Client:
-	if Client is None:
-		raise RuntimeError("temporalio package is not installed")
-
-	settings = get_temporal_settings()
-	return await Client.connect(settings.address, namespace=settings.namespace)
+Dieses Modul existiert nur damit bestehende Imports
+`from hausverwaltung.hausverwaltung.integrations.temporal.client import ...`
+weiter laufen. Neuer Code sollte direkt aus process_engine importieren.
+"""
+from process_engine.process_engine.integrations.temporal.client import *  # noqa: F401,F403

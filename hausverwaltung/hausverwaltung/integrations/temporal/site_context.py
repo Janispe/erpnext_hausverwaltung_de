@@ -1,33 +1,8 @@
-from __future__ import annotations
+"""Phase 8 Stufe 1b Re-Export: site_context wohnt jetzt in
+process_engine.process_engine.integrations.temporal.site_context.
 
-import os
-from contextlib import contextmanager
-
-import frappe
-
-
-
-def get_default_site() -> str:
-	return (
-		(os.environ.get("HV_TEMPORAL_SITE") or "").strip()
-		or (os.environ.get("SITE_NAME") or "").strip()
-		or "frontend"
-	)
-
-
-@contextmanager
-def activate_site(site: str | None = None):
-	site_name = (site or "").strip() or get_default_site()
-	frappe.init(site=site_name)
-	frappe.connect()
-	try:
-		yield site_name
-		try:
-			frappe.db.commit()
-		except Exception:
-			pass
-	finally:
-		try:
-			frappe.destroy()
-		except Exception:
-			pass
+Dieses Modul existiert nur damit bestehende Imports
+`from hausverwaltung.hausverwaltung.integrations.temporal.site_context import ...`
+weiter laufen. Neuer Code sollte direkt aus process_engine importieren.
+"""
+from process_engine.process_engine.integrations.temporal.site_context import *  # noqa: F401,F403
