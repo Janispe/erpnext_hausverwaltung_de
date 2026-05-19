@@ -8,7 +8,9 @@ app_license = "mit"
 # Apps
 # ------------------
 
-# required_apps = []
+# Phase 8 Stufe 1a: Process Engine ist eigenstaendige App. Frappe liest
+# required_apps aus hooks.py (NICHT aus pyproject.toml).
+required_apps = ["process_engine"]
 
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
