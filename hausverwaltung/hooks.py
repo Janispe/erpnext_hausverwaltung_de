@@ -43,13 +43,8 @@ app_include_js = [
 ]
 
 # Phase 8 Stufe 1a: boot_session-Hook lebt jetzt in process_engine/hooks.py.
-
-# Phase 8 Stufe 1a: Hook fuer Process-Runtime-Registrierung.
-# Mieterwechsel-Definition lebt bis Stufe 2 noch in hausverwaltung; ab dann
-# wandert dieser Eintrag nach hausverwaltung_peters.
-process_engine_runtimes = [
-	"hausverwaltung.hausverwaltung.processes.definitions.mieterwechsel.get_mieterwechsel_runtime",
-]
+# Phase 8 Stufe 2: process_engine_runtimes wandert nach hausverwaltung_peters
+# (Mieterwechsel-Definition lebt jetzt dort).
 
 # include js, css files in header of web template
 # web_include_css = "/assets/hausverwaltung/css/hausverwaltung.css"
