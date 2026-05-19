@@ -40,8 +40,9 @@ app_include_js = [
 	"/assets/hausverwaltung/js/buchungs_inbox.js",
 	"/assets/hausverwaltung/js/immobilie_report_filter.js",
 	"/assets/hausverwaltung/js/date_range_presets.js",
-	# Phase 8 Stufe 1a: process_triggers.js lebt jetzt in process_engine.
-	"/assets/process_engine/js/process_triggers.js",
+	# Phase 8 Stufe 1a: process_triggers.js wird ueber process_engine/hooks.py
+	# eingebunden (siehe app_include_js dort) — required_apps stellt sicher,
+	# dass process_engine vor hausverwaltung geladen wird.
 ]
 
 # Phase 8 Stufe 1a: boot_session-Hook lebt jetzt in process_engine/hooks.py.
