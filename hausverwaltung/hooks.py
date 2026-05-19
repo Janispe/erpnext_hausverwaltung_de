@@ -49,6 +49,18 @@ app_include_js = [
 # Phase 8 Stufe 2: process_engine_runtimes wandert nach hausverwaltung_peters
 # (Mieterwechsel-Definition lebt jetzt dort).
 
+# Phase 8 Review-Fixes 3: Email-Workflow-Dispatcher. Loest den verbleibenden
+# harten orchestrator → email_workflow-Import in process_engine auf.
+process_engine_workflow_dispatchers = [
+	"hausverwaltung.hausverwaltung.integrations.temporal.workflow_dispatchers.get_email_workflow_dispatcher",
+]
+
+# Phase 8 Review-Fixes 3: Paperless-Export-Handler. Loest den harten
+# paperless-Import in process_engine.task_registry auf.
+process_engine_paperless_export_handler = [
+	"hausverwaltung.hausverwaltung.integrations.paperless.export_attachment_to_paperless",
+]
+
 # include js, css files in header of web template
 # web_include_css = "/assets/hausverwaltung/css/hausverwaltung.css"
 # web_include_js = "/assets/hausverwaltung/js/hausverwaltung.js"
