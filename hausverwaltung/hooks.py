@@ -38,13 +38,18 @@ app_include_js = [
 	"/assets/hausverwaltung/js/buchungs_inbox.js",
 	"/assets/hausverwaltung/js/immobilie_report_filter.js",
 	"/assets/hausverwaltung/js/date_range_presets.js",
-	"/assets/hausverwaltung/js/process_triggers.js",
+	# Phase 8 Stufe 1a: process_triggers.js lebt jetzt in process_engine.
+	"/assets/process_engine/js/process_triggers.js",
 ]
 
-# Per-Session Bootinfo: liefert process_triggers.js die Liste der Source-Doctypes
-# mit registrierten ProcessTriggern, damit Buttons automatisch ohne explizites
-# attach_to_form() pro Quell-Doctype-JS erscheinen.
-boot_session = "hausverwaltung.hausverwaltung.processes.triggers.add_to_boot"
+# Phase 8 Stufe 1a: boot_session-Hook lebt jetzt in process_engine/hooks.py.
+
+# Phase 8 Stufe 1a: Hook fuer Process-Runtime-Registrierung.
+# Mieterwechsel-Definition lebt bis Stufe 2 noch in hausverwaltung; ab dann
+# wandert dieser Eintrag nach hausverwaltung_peters.
+process_engine_runtimes = [
+	"hausverwaltung.hausverwaltung.processes.definitions.mieterwechsel.get_mieterwechsel_runtime",
+]
 
 # include js, css files in header of web template
 # web_include_css = "/assets/hausverwaltung/css/hausverwaltung.css"
@@ -69,8 +74,7 @@ doctype_js = {
 	"Immobilie": "hausverwaltung/doctype/immobilie/immobilie.js",
 	"Journal Entry": "public/js/journal_entry.js",
 	"Payment Entry": "public/js/payment_entry.js",
-	"Prozess Instanz": "hausverwaltung/doctype/prozess_instanz/prozess_instanz.js",
-	"Prozess Version": "hausverwaltung/doctype/prozess_version/prozess_version.js",
+	# Phase 8 Stufe 1a: Prozess-DocType-JS lebt jetzt in process_engine/hooks.py.
 	"Purchase Invoice": "public/js/purchase_invoice.js",
 	"Sales Invoice": "public/js/sales_invoice.js",
 	"Supplier": "public/js/supplier.js",

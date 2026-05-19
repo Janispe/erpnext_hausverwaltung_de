@@ -1,4 +1,13 @@
-from .engine import (
+"""Phase 8 Stufe 1a (Uebergang): die Engine wohnt jetzt in
+`process_engine.process_engine.processes`. Dieses Modul ist ein duenner
+Re-Export-Wrapper, damit bestehende hausverwaltung-Imports
+(`from hausverwaltung.hausverwaltung.processes import ...`) weiterhin laufen,
+bis Stufe 2 (Mieterwechsel nach peters) die letzten Verbraucher umgestellt
+hat.
+
+Nach Stufe 2 kann dieses Modul komplett entfernt werden.
+"""
+from process_engine.process_engine.processes import (
 	BACKEND_LOCAL,
 	BACKEND_TEMPORAL,
 	STATUS_ABGESCHLOSSEN,
@@ -11,25 +20,11 @@ from .engine import (
 	ProcessPluginRegistry,
 	ProcessRuntimeConfig,
 	ProcessTrigger,
+	ensure_process_runtimes_registered,
 	get_process_runtime_config,
 	get_runtime_config_for_typ,
 	register_process_runtime,
 )
-
-
-def ensure_process_runtimes_registered() -> None:
-	"""Importiert alle Runtime-Definitionsmodule, damit register_process_runtime()
-	in jedem Web-Worker-Prozess garantiert aufgerufen wurde. Sonst koennte
-	_PROCESS_RUNTIMES je nach Import-Reihenfolge leer sein.
-
-	Idempotent: register_process_runtime ueberschreibt nur, und get_*_runtime
-	hat einen Cache am _RUNTIME-Modul-Level.
-	"""
-	from hausverwaltung.hausverwaltung.processes.definitions.mieterwechsel import get_mieterwechsel_runtime
-
-	get_mieterwechsel_runtime()
-	# Future: weitere Definitions hier ergaenzen (eigentuemerwechsel, mahnwesen, ...)
-
 
 __all__ = [
 	"BACKEND_LOCAL",
