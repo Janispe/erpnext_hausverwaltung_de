@@ -105,6 +105,292 @@ class TestParseAmount(unittest.TestCase):
 		self.assertEqual(_parse_amount("1.234,56 €"), 1234.56)
 		self.assertEqual(_parse_amount("123 EUR"), 123.0)
 
+	def test_space_thousands(self):
+		self.assertEqual(_parse_amount("6 786,82"), 6786.82)
+
+
+class TestLoanMatchHints(unittest.TestCase):
+	def test_extracts_contract_number_and_split_from_reference(self):
+		hints = kv_mod._extract_loan_match_hints(
+			"LEISTUNGEN PER 30.04.2026, IBAN DE94100400000863751405, "
+			"AZ 7626440021, IN EUR: Tilgung 6786,82 Zinsen 3858,29"
+		)
+
+		self.assertEqual(hints["vertragsnummer"], "7626440021")
+		self.assertAlmostEqual(hints["tilgungsanteil"], 6786.82)
+		self.assertAlmostEqual(hints["zinsanteil"], 3858.29)
+
+	def test_extracts_contract_number_without_comma(self):
+		hints = kv_mod._extract_loan_match_hints(
+			"Darlehensnr 7626440021 Tilgung 6786,82 Zinsen 3858,29"
+		)
+
+		self.assertEqual(hints["vertragsnummer"], "7626440021")
+		self.assertAlmostEqual(hints["tilgungsanteil"], 6786.82)
+		self.assertAlmostEqual(hints["zinsanteil"], 3858.29)
+
+	def test_candidate_rates_prefers_reference_contract_and_split(self):
+		def row(name, zins, tilgung):
+			item = SimpleNamespace(
+				name=name,
+				idx=1,
+				faelligkeitsdatum=datetime.date(2026, 4, 30),
+				zinsanteil=zins,
+				tilgungsanteil=tilgung,
+				sondertilgung=0,
+				gesamtbetrag=zins + tilgung,
+				journal_entry=None,
+			)
+			item.get = lambda key, default=None: getattr(item, key, default)
+			return item
+
+		def kv(name, vertragsnummer, plan_row):
+			doc = SimpleNamespace(
+				name=name,
+				vertragsnummer=vertragsnummer,
+				lieferant="Commerzbank",
+				match_tolerance_days=7,
+				bank_account="BA-8090",
+				_plan=[plan_row],
+			)
+			doc.get = (
+				lambda key, default=None: doc._plan
+				if key == "plan"
+				else getattr(doc, key, default)
+			)
+			return doc
+
+		docs = {
+			"KV-1": kv("KV-1", "7626440021", row("R-1", 3858.29, 6786.82)),
+			"KV-2": kv("KV-2", "OTHER", row("R-2", 3000.00, 7645.11)),
+		}
+
+		with patch.object(kv_mod.frappe, "get_all", return_value=["KV-1", "KV-2"]), \
+			patch.object(kv_mod.frappe, "get_doc", side_effect=lambda _doctype, name: docs[name]):
+			candidates = kv_mod._candidate_rates(
+				bank_account="BA-8090",
+				amount=10645.11,
+				posting_date=datetime.date(2026, 4, 30),
+				reference_text="AZ 7626440021, IN EUR: Tilgung 6786,82 Zinsen 3858,29",
+			)
+
+		self.assertEqual(len(candidates), 1)
+		self.assertEqual(candidates[0]["kreditvertrag"], "KV-1")
+		self.assertTrue(candidates[0]["vertragsnummer_match"])
+		self.assertTrue(candidates[0]["split_match"])
+
+	def test_candidate_rates_keeps_amount_date_match_when_az_does_not_match(self):
+		def row(name, zins, tilgung):
+			item = SimpleNamespace(
+				name=name,
+				idx=1,
+				faelligkeitsdatum=datetime.date(2026, 4, 30),
+				zinsanteil=zins,
+				tilgungsanteil=tilgung,
+				sondertilgung=0,
+				gesamtbetrag=zins + tilgung,
+				journal_entry=None,
+			)
+			item.get = lambda key, default=None: getattr(item, key, default)
+			return item
+
+		kv = SimpleNamespace(
+			name="KV-1",
+			vertragsnummer="",
+			lieferant="Commerzbank",
+			match_tolerance_days=7,
+			bank_account="BA-8090",
+			_plan=[row("R-1", 3858.29, 6786.82)],
+		)
+		kv.get = lambda key, default=None: kv._plan if key == "plan" else getattr(kv, key, default)
+
+		with patch.object(kv_mod.frappe, "get_all", return_value=["KV-1"]), \
+			patch.object(kv_mod.frappe, "get_doc", return_value=kv):
+			candidates = kv_mod._candidate_rates(
+				bank_account="BA-8090",
+				amount=10645.11,
+				posting_date=datetime.date(2026, 4, 30),
+				reference_text="AZ 9999999999 Tilgung 6786,82 Zinsen 3858,29",
+			)
+
+		self.assertEqual(len(candidates), 1)
+		self.assertEqual(candidates[0]["kreditvertrag"], "KV-1")
+		self.assertFalse(candidates[0]["vertragsnummer_match"])
+
+	def _fake_row(
+		self,
+		*,
+		name="ROW-1",
+		faelligkeitsdatum=datetime.date(2026, 4, 30),
+		zinsanteil=0,
+		tilgungsanteil=0,
+		sondertilgung=0,
+		journal_entry=None,
+	):
+		row = SimpleNamespace(
+			name=name,
+			idx=1,
+			faelligkeitsdatum=faelligkeitsdatum,
+			zinsanteil=zinsanteil,
+			tilgungsanteil=tilgungsanteil,
+			sondertilgung=sondertilgung,
+			gesamtbetrag=zinsanteil + tilgungsanteil + sondertilgung,
+			journal_entry=journal_entry,
+		)
+		row.get = lambda key, default=None: getattr(row, key, default)
+		return row
+
+	def _fake_kv(self, plan=None):
+		kv = SimpleNamespace(
+			name="KV-1",
+			bank_account="BA-8090",
+			vertragsnummer="7626440021",
+			lieferant="Commerzbank",
+			_plan=list(plan or []),
+			saved=False,
+		)
+
+		def get(key, default=None):
+			if key == "plan":
+				return kv._plan
+			return getattr(kv, key, default)
+
+		def append(key, data):
+			self.assertEqual(key, "plan")
+			row = self._fake_row(
+				name="NEW-ROW",
+				faelligkeitsdatum=data["faelligkeitsdatum"],
+				zinsanteil=data["zinsanteil"],
+				tilgungsanteil=data["tilgungsanteil"],
+				sondertilgung=data["sondertilgung"],
+			)
+			row.idx = len(kv._plan) + 1
+			kv._plan.append(row)
+			return row
+
+		def save(ignore_permissions=False):
+			kv.saved = True
+			kv.save_ignore_permissions = ignore_permissions
+
+		kv.get = get
+		kv.append = append
+		kv.save = save
+		return kv
+
+	def test_statement_rate_is_created_when_no_period_row_exists(self):
+		kv = self._fake_kv()
+		db = SimpleNamespace(savepoint=MagicMock(), rollback=MagicMock())
+
+		with patch.object(kv_mod.frappe, "db", db), \
+			patch.object(kv_mod.frappe, "get_all", return_value=["KV-1"]), \
+			patch.object(kv_mod.frappe, "get_doc", return_value=kv), \
+			patch.object(
+				kv_mod,
+				"_book_rate_row_and_reconcile",
+				return_value={"journal_entry": "JE-1"},
+			) as book:
+			result = kv_mod._create_or_book_rate_from_statement(
+				bank_account="BA-8090",
+				posting_date=datetime.date(2026, 4, 30),
+				amount=10645.11,
+				bank_transaction="BT-1",
+				reference_text="AZ 7626440021, IN EUR: Tilgung 6786,82 Zinsen 3858,29",
+			)
+
+		self.assertTrue(result["created_from_statement"])
+		self.assertEqual(result["journal_entry"], "JE-1")
+		self.assertTrue(kv.saved)
+		self.assertEqual(len(kv._plan), 1)
+		self.assertAlmostEqual(kv._plan[0].zinsanteil, 3858.29)
+		self.assertAlmostEqual(kv._plan[0].tilgungsanteil, 6786.82)
+		book.assert_called_once()
+
+	def test_statement_rate_blocks_when_future_plan_rows_exist(self):
+		kv = self._fake_kv(
+			[
+				self._fake_row(
+					faelligkeitsdatum=datetime.date(2026, 5, 31),
+					zinsanteil=3000,
+					tilgungsanteil=7000,
+				)
+			]
+		)
+		db = SimpleNamespace(savepoint=MagicMock(), rollback=MagicMock())
+
+		with patch.object(kv_mod.frappe, "db", db), \
+			patch.object(kv_mod.frappe, "get_all", return_value=["KV-1"]), \
+			patch.object(kv_mod.frappe, "get_doc", return_value=kv), \
+			patch.object(kv_mod, "_book_rate_row_and_reconcile") as book:
+			result = kv_mod._create_or_book_rate_from_statement(
+				bank_account="BA-8090",
+				posting_date=datetime.date(2026, 4, 30),
+				amount=10645.11,
+				bank_transaction="BT-1",
+				reference_text="AZ 7626440021, IN EUR: Tilgung 6786,82 Zinsen 3858,29",
+			)
+
+		self.assertTrue(result["blocked"])
+		self.assertEqual(result["reason"], "future_plan_rows")
+		self.assertFalse(kv.saved)
+		book.assert_not_called()
+
+	def test_statement_rate_blocks_when_period_row_differs(self):
+		kv = self._fake_kv(
+			[
+				self._fake_row(
+					faelligkeitsdatum=datetime.date(2026, 4, 15),
+					zinsanteil=3000,
+					tilgungsanteil=7000,
+				)
+			]
+		)
+		db = SimpleNamespace(savepoint=MagicMock(), rollback=MagicMock())
+
+		with patch.object(kv_mod.frappe, "db", db), \
+			patch.object(kv_mod.frappe, "get_all", return_value=["KV-1"]), \
+			patch.object(kv_mod.frappe, "get_doc", return_value=kv), \
+			patch.object(kv_mod, "_book_rate_row_and_reconcile") as book:
+			result = kv_mod._create_or_book_rate_from_statement(
+				bank_account="BA-8090",
+				posting_date=datetime.date(2026, 4, 30),
+				amount=10645.11,
+				bank_transaction="BT-1",
+				reference_text="AZ 7626440021, IN EUR: Tilgung 6786,82 Zinsen 3858,29",
+			)
+
+		self.assertTrue(result["blocked"])
+		self.assertEqual(result["reason"], "period_rate_mismatch")
+		self.assertFalse(kv.saved)
+		book.assert_not_called()
+
+	def test_statement_rate_books_existing_exact_period_row(self):
+		row = self._fake_row(
+			faelligkeitsdatum=datetime.date(2026, 4, 15),
+			zinsanteil=3858.29,
+			tilgungsanteil=6786.82,
+		)
+		kv = self._fake_kv([row])
+
+		with patch.object(kv_mod.frappe, "get_all", return_value=["KV-1"]), \
+			patch.object(kv_mod.frappe, "get_doc", return_value=kv), \
+			patch.object(
+				kv_mod,
+				"_book_rate_row_and_reconcile",
+				return_value={"journal_entry": "JE-1"},
+			) as book:
+			result = kv_mod._create_or_book_rate_from_statement(
+				bank_account="BA-8090",
+				posting_date=datetime.date(2026, 4, 30),
+				amount=10645.11,
+				bank_transaction="BT-1",
+				reference_text="AZ 7626440021, IN EUR: Tilgung 6786,82 Zinsen 3858,29",
+			)
+
+		self.assertFalse(result["created_from_statement"])
+		self.assertEqual(result["row_name"], row.name)
+		self.assertFalse(kv.saved)
+		book.assert_called_once()
+
 
 class TestComputeRestschuld(unittest.TestCase):
 	def test_restschuld_nach_chain(self):

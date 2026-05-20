@@ -746,6 +746,7 @@ def _candidate_rates(
 	posting_date,
 	tolerance_amount: float = 0.01,
 	supplier: Optional[str] = None,
+	reference_text: Optional[str] = None,
 ) -> list[dict]:
 	"""Sucht offene, betrags- und datumsnahe Kreditraten.
 
@@ -762,6 +763,7 @@ def _candidate_rates(
 
 	target_amount = abs(flt(amount))
 	target_date = getdate(posting_date) if posting_date else None
+	hints = _extract_loan_match_hints(reference_text)
 
 	# Immer alle Kreditverträge am Bankkonto laden — Supplier ist Soft-Filter.
 	kv_names = frappe.get_all(
@@ -795,12 +797,31 @@ def _candidate_rates(
 					"row_idx": row.idx,
 					"faelligkeitsdatum": row.faelligkeitsdatum,
 					"gesamtbetrag": flt(row.gesamtbetrag),
+					"zinsanteil": flt(row.zinsanteil),
+					"tilgungsanteil": flt(row.tilgungsanteil),
+					"sondertilgung": flt(row.sondertilgung),
 					"delta_days": delta,
 					"supplier_match": bool(supplier and kv.lieferant == supplier),
+					"vertragsnummer_match": bool(
+						hints.get("vertragsnummer")
+						and _normalize_match_token(kv.get("vertragsnummer"))
+						== hints["vertragsnummer"]
+					),
+					"split_match": _loan_split_matches(row, hints, tolerance_amount),
 					"_kv_doc": kv,
 					"_row_doc": row,
 				}
 			)
+
+	if hints.get("vertragsnummer"):
+		contract_matches = [c for c in candidates if c["vertragsnummer_match"]]
+		if contract_matches:
+			candidates = contract_matches
+
+	if hints.get("zinsanteil") is not None or hints.get("tilgungsanteil") is not None:
+		split_matches = [c for c in candidates if c["split_match"]]
+		if split_matches:
+			candidates = split_matches
 
 	# Soft-Filter: wenn Supplier auf der Bankzeile erkannt UND mindestens ein
 	# Kandidat mit passendem Supplier existiert, schließen wir die anderen aus.
@@ -822,6 +843,7 @@ def link_bank_transaction_to_kreditvertrag_rate(
 	amount: float,
 	bank_transaction: str,
 	supplier: Optional[str] = None,
+	reference_text: Optional[str] = None,
 ) -> Optional[dict]:
 	"""Auto-Match-Hook für Bankauszug Import.
 
@@ -834,6 +856,7 @@ def link_bank_transaction_to_kreditvertrag_rate(
 		amount=amount,
 		posting_date=posting_date,
 		supplier=supplier,
+		reference_text=reference_text,
 	)
 
 	def _serialize(cs):
@@ -845,22 +868,66 @@ def link_bank_transaction_to_kreditvertrag_rate(
 				"faelligkeitsdatum": str(c["faelligkeitsdatum"]),
 				"gesamtbetrag": c["gesamtbetrag"],
 				"delta_days": c["delta_days"],
+				"vertragsnummer_match": c.get("vertragsnummer_match"),
+				"split_match": c.get("split_match"),
 			}
 			for c in cs
 		]
 
 	if len(candidates) != 1:
+		statement_result = _create_or_book_rate_from_statement(
+			bank_account=bank_account,
+			posting_date=posting_date,
+			amount=amount,
+			bank_transaction=bank_transaction,
+			supplier=supplier,
+			reference_text=reference_text,
+		)
+		if statement_result:
+			return statement_result
 		return {"match_count": len(candidates), "candidates": _serialize(candidates)}
 
 	best = candidates[0]
 	kv: Kreditvertrag = best["_kv_doc"]
 	rate_row: Document = best["_row_doc"]
 
+	result = _book_rate_row_and_reconcile(
+		kv=kv,
+		rate_row=rate_row,
+		posting_date=posting_date,
+		amount=amount,
+		bank_transaction=bank_transaction,
+		savepoint_name="kv_match",
+	)
+	result.update(
+		{
+			"match_count": 1,
+			"kreditvertrag": kv.name,
+			"row_name": rate_row.name,
+			"row_idx": rate_row.idx,
+			"faelligkeitsdatum": str(rate_row.faelligkeitsdatum),
+			"gesamtbetrag": flt(rate_row.gesamtbetrag),
+			"created_from_statement": False,
+		}
+	)
+	return result
+
+
+def _book_rate_row_and_reconcile(
+	*,
+	kv: "Kreditvertrag",
+	rate_row: Document,
+	posting_date,
+	amount: float,
+	bank_transaction: str,
+	savepoint_name: str,
+	create_savepoint: bool = True,
+) -> dict:
 	# Savepoint um JE+Reconcile+Link: wenn nach JE-Submit etwas fehlschlägt,
 	# rollen wir auf den Savepoint zurück und cancel'n den JE. So bleiben
 	# keine verwaisten Buchungen liegen.
-	savepoint_name = "kv_match"
-	frappe.db.savepoint(savepoint_name)
+	if create_savepoint:
+		frappe.db.savepoint(savepoint_name)
 	je = None
 	try:
 		# Beim Auto-Match ist die Bank Transaction der natürliche cheque_no
@@ -897,14 +964,173 @@ def link_bank_transaction_to_kreditvertrag_rate(
 	_recompute_parent_plausibilitaet(kv.name)
 
 	return {
-		"match_count": 1,
-		"kreditvertrag": kv.name,
-		"row_name": rate_row.name,
-		"row_idx": rate_row.idx,
-		"faelligkeitsdatum": str(rate_row.faelligkeitsdatum),
-		"gesamtbetrag": flt(rate_row.gesamtbetrag),
 		"journal_entry": je.name,
 	}
+
+
+def _create_or_book_rate_from_statement(
+	*,
+	bank_account: str,
+	posting_date,
+	amount: float,
+	bank_transaction: str,
+	supplier: Optional[str] = None,
+	reference_text: Optional[str] = None,
+	tolerance_amount: float = 0.01,
+) -> Optional[dict]:
+	hints = _extract_loan_match_hints(reference_text)
+	if not _loan_hints_are_complete(hints):
+		return None
+
+	contracts = _find_kreditvertraege_for_statement(
+		bank_account=bank_account,
+		vertragsnummer=hints["vertragsnummer"],
+		supplier=supplier,
+	)
+	if len(contracts) != 1:
+		return None
+
+	target_amount = abs(flt(amount))
+	if abs((flt(hints["zinsanteil"]) + flt(hints["tilgungsanteil"])) - target_amount) > tolerance_amount:
+		return {
+			"match_count": 0,
+			"blocked": True,
+			"reason": "statement_split_amount_mismatch",
+			"message": (
+				"Zins-/Tilgungs-Split aus dem Kontoauszug passt nicht zum Bankbetrag "
+				f"({flt(hints['zinsanteil']) + flt(hints['tilgungsanteil']):.2f} != "
+				f"{target_amount:.2f})."
+			),
+		}
+
+	kv: Kreditvertrag = contracts[0]
+	target_date = getdate(posting_date)
+	open_period_rows = [
+		row
+		for row in kv.get("plan") or []
+		if not row.get("journal_entry") and _same_month(row.get("faelligkeitsdatum"), target_date)
+	]
+	exact_period_rows = [
+		row
+		for row in open_period_rows
+		if _loan_split_matches(row, hints, tolerance_amount)
+		and abs(abs(flt(row.gesamtbetrag)) - target_amount) <= tolerance_amount
+	]
+
+	if len(exact_period_rows) == 1:
+		rate_row = exact_period_rows[0]
+		result = _book_rate_row_and_reconcile(
+			kv=kv,
+			rate_row=rate_row,
+			posting_date=posting_date,
+			amount=amount,
+			bank_transaction=bank_transaction,
+			savepoint_name="kv_statement_existing",
+		)
+		result.update(
+			{
+				"match_count": 1,
+				"kreditvertrag": kv.name,
+				"row_name": rate_row.name,
+				"row_idx": rate_row.idx,
+				"faelligkeitsdatum": str(rate_row.faelligkeitsdatum),
+				"gesamtbetrag": flt(rate_row.gesamtbetrag),
+				"created_from_statement": False,
+			}
+		)
+		return result
+
+	if len(exact_period_rows) > 1:
+		return {
+			"match_count": 0,
+			"blocked": True,
+			"reason": "multiple_period_rates",
+			"kreditvertrag": kv.name,
+			"message": "Mehrere passende Kreditraten im Zeitraum - bitte manuell prüfen.",
+		}
+
+	if open_period_rows:
+		return {
+			"match_count": 0,
+			"blocked": True,
+			"reason": "period_rate_mismatch",
+			"kreditvertrag": kv.name,
+			"message": (
+				"Offene Kreditrate im Zeitraum vorhanden, aber Betrag/Split weicht "
+				"vom Kontoauszug ab - bitte Kreditvertrag prüfen."
+			),
+		}
+
+	if any(
+		not row.get("journal_entry")
+		and row.get("faelligkeitsdatum")
+		and getdate(row.get("faelligkeitsdatum")) > target_date
+		for row in kv.get("plan") or []
+	):
+		return {
+			"match_count": 0,
+			"blocked": True,
+			"reason": "future_plan_rows",
+			"kreditvertrag": kv.name,
+			"message": (
+				"Kreditrate nicht automatisch angelegt, weil zukünftige Planzeilen "
+				"vorhanden sind - bitte Kreditvertrag prüfen."
+			),
+		}
+
+	if any(
+		row.get("faelligkeitsdatum") and getdate(row.get("faelligkeitsdatum")) == target_date
+		for row in kv.get("plan") or []
+	):
+		return {
+			"match_count": 0,
+			"blocked": True,
+			"reason": "date_rate_exists",
+			"kreditvertrag": kv.name,
+			"message": (
+				"Kreditrate am Buchungstag ist bereits im Vertrag vorhanden - "
+				"bitte Kreditvertrag prüfen."
+			),
+		}
+
+	savepoint_name = "kv_statement_create"
+	frappe.db.savepoint(savepoint_name)
+	try:
+		rate_row = kv.append(
+			"plan",
+			{
+				"faelligkeitsdatum": target_date,
+				"zinsanteil": flt(hints["zinsanteil"]),
+				"tilgungsanteil": flt(hints["tilgungsanteil"]),
+				"sondertilgung": 0,
+			},
+		)
+		kv.save(ignore_permissions=True)
+		result = _book_rate_row_and_reconcile(
+			kv=kv,
+			rate_row=rate_row,
+			posting_date=posting_date,
+			amount=amount,
+			bank_transaction=bank_transaction,
+			savepoint_name=savepoint_name,
+			create_savepoint=False,
+		)
+	except Exception:
+		frappe.db.rollback(save_point=savepoint_name)
+		raise
+
+	result.update(
+		{
+			"match_count": 1,
+			"kreditvertrag": kv.name,
+			"row_name": rate_row.name,
+			"row_idx": rate_row.idx,
+			"faelligkeitsdatum": str(rate_row.faelligkeitsdatum),
+			"gesamtbetrag": flt(rate_row.gesamtbetrag),
+			"created_from_statement": True,
+		}
+	)
+	return result
 
 
 def get_open_rates_for_match(
@@ -912,6 +1138,7 @@ def get_open_rates_for_match(
 	posting_date,
 	amount: float,
 	supplier: Optional[str] = None,
+	reference_text: Optional[str] = None,
 ) -> list[dict]:
 	"""Liefert eine Kandidatenliste für den manuellen Match-Dialog.
 
@@ -924,6 +1151,7 @@ def get_open_rates_for_match(
 		amount=amount,
 		posting_date=posting_date,
 		supplier=supplier,
+		reference_text=reference_text,
 	)
 	return [
 		{
@@ -933,6 +1161,8 @@ def get_open_rates_for_match(
 			"faelligkeitsdatum": str(c["faelligkeitsdatum"]),
 			"gesamtbetrag": c["gesamtbetrag"],
 			"delta_days": c["delta_days"],
+			"vertragsnummer_match": c.get("vertragsnummer_match"),
+			"split_match": c.get("split_match"),
 		}
 		for c in candidates
 	]
@@ -1192,5 +1422,103 @@ def _parse_amount(raw, allow_empty: bool = False) -> float:
 	elif "," in s:
 		s = s.replace(".", "").replace(",", ".")
 	# Vorzeichen behalten (Minus, EUR-Symbol entfernen)
-	s = s.replace("€", "").replace("EUR", "").strip()
+	s = s.replace("€", "").replace("EUR", "").replace(" ", "").strip()
 	return float(s)
+
+
+def _normalize_match_token(value: Optional[str]) -> str:
+	return re.sub(r"[^0-9A-Za-z]+", "", str(value or "")).upper()
+
+
+def _extract_loan_match_hints(reference_text: Optional[str]) -> dict:
+	"""Extrahiert stabile Kredit-Hinweise aus Bank-Verwendungszwecken.
+
+	Beispiel Postbank/Commerzbank:
+	``AZ 7626440021, IN EUR: Tilgung 6786,82 Zinsen 3858,29``
+	"""
+	text = str(reference_text or "")
+	if not text.strip():
+		return {}
+
+	hints: dict = {}
+	az_match = re.search(
+		r"\b(?:AZ|Aktenzeichen|Darlehen(?:s)?nr\.?|Vertrag(?:s)?nr\.?)"
+		r"\s*[:#-]?\s*([0-9A-Za-z][0-9A-Za-z./_-]*)",
+		text,
+		re.IGNORECASE,
+	)
+	if az_match:
+		token = _normalize_match_token(az_match.group(1).split(",")[0])
+		if token:
+			hints["vertragsnummer"] = token
+
+	for key, fieldname in (("zins(?:en)?", "zinsanteil"), ("tilgung", "tilgungsanteil")):
+		match = re.search(
+			rf"\b{key}\b\s*[:=]?\s*"
+			rf"([-+]?\d{{1,3}}(?:[.\s]\d{{3}})*(?:,\d{{2}})|[-+]?\d+(?:[,.]\d{{2}})?)",
+			text,
+			re.IGNORECASE,
+		)
+		if match:
+			try:
+				hints[fieldname] = _parse_amount(match.group(1), allow_empty=True)
+			except Exception:
+				pass
+
+	return hints
+
+
+def _loan_split_matches(row: Document, hints: dict, tolerance_amount: float) -> bool:
+	if hints.get("zinsanteil") is not None and abs(
+		flt(row.zinsanteil) - flt(hints["zinsanteil"])
+	) > tolerance_amount:
+		return False
+	if hints.get("tilgungsanteil") is not None and abs(
+		(flt(row.tilgungsanteil) + flt(row.sondertilgung)) - flt(hints["tilgungsanteil"])
+	) > tolerance_amount:
+		return False
+	return True
+
+
+def _loan_hints_are_complete(hints: dict) -> bool:
+	return bool(
+		hints.get("vertragsnummer")
+		and hints.get("zinsanteil") is not None
+		and hints.get("tilgungsanteil") is not None
+	)
+
+
+def _same_month(value, target_date) -> bool:
+	if not value or not target_date:
+		return False
+	left = getdate(value)
+	right = getdate(target_date)
+	return left.year == right.year and left.month == right.month
+
+
+def _find_kreditvertraege_for_statement(
+	*,
+	bank_account: str,
+	vertragsnummer: str,
+	supplier: Optional[str] = None,
+) -> list["Kreditvertrag"]:
+	if not bank_account or not vertragsnummer:
+		return []
+
+	target = _normalize_match_token(vertragsnummer)
+	kv_names = frappe.get_all(
+		"Kreditvertrag",
+		filters={"bank_account": bank_account},
+		pluck="name",
+	)
+	matches = []
+	for kv_name in kv_names:
+		kv = frappe.get_doc("Kreditvertrag", kv_name)
+		if _normalize_match_token(kv.get("vertragsnummer")) == target:
+			matches.append(kv)
+
+	if supplier:
+		supplier_matches = [kv for kv in matches if kv.get("lieferant") == supplier]
+		if supplier_matches:
+			return supplier_matches
+	return matches

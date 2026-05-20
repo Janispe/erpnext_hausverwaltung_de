@@ -184,6 +184,7 @@ def _recompute_doc_status(docname: str) -> str:
         with_bt = sum(1 for r in rows if r.get("bank_transaction"))
         with_voucher = sum(1 for r in rows if r.get("payment_entry") or r.get("journal_entry"))
         failed = sum(1 for r in rows if (r.get("row_status") or "") == "failed")
+        needs_review = sum(1 for r in rows if (r.get("row_status") or "") == "needs_review")
         offene_buchungen = total - with_voucher
 
         # Phasen-Logik hängt am bank_transaction, nicht am Party-Count: Zeilen
@@ -202,6 +203,8 @@ def _recompute_doc_status(docname: str) -> str:
 
         if failed:
             status += f" · Fehler: {failed}"
+        if needs_review:
+            status += f" · Prüfung: {needs_review}"
 
     frappe.db.set_value(
         "Bankauszug Import",
@@ -1491,21 +1494,47 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
                                 amount=row.get("betrag"),
                                 bank_transaction=bt.name,
                                 supplier=row.get("party") if row.get("party_type") == "Supplier" else None,
+                                reference_text=row.get("verwendungszweck"),
                             )
                             if kredit_result and kredit_result.get("match_count") == 1:
                                 je_name = kredit_result["journal_entry"]
                                 row.db_set("journal_entry", je_name)
                                 _set_row_payment_document(row, "Journal Entry", je_name)
                                 row.db_set("row_status", "success")
-                                row.db_set(
-                                    "auto_match_message",
-                                    (
+                                if kredit_result.get("created_from_statement"):
+                                    kredit_message = (
+                                        f"Kreditrate aus Kontoauszug angelegt und gebucht: "
+                                        f"{kredit_result['kreditvertrag']} Zeile {kredit_result['row_idx']} "
+                                        f"→ {je_name}"
+                                    )
+                                else:
+                                    kredit_message = (
                                         f"Kreditrate automatisch gebucht: "
                                         f"{kredit_result['kreditvertrag']} Zeile {kredit_result['row_idx']} "
                                         f"({kredit_result['gesamtbetrag']:.2f} €) → {je_name}"
-                                    ),
+                                    )
+                                row.db_set(
+                                    "auto_match_message",
+                                    kredit_message,
                                 )
                                 auto_kredit_matched.append(bt.name)
+                                continue
+                            elif kredit_result and kredit_result.get("blocked"):
+                                blocked_message = (
+                                    kredit_result.get("message")
+                                    or "Kreditrate nicht automatisch gebucht — bitte prüfen."
+                                )
+                                row.db_set("row_status", "needs_review")
+                                row.db_set(
+                                    "auto_match_message",
+                                    blocked_message,
+                                )
+                                auto_match_failed.append({
+                                    "row": row.name,
+                                    "bank_transaction": bt.name,
+                                    "reason": kredit_result.get("reason") or "kreditrate_blocked",
+                                    "message": blocked_message,
+                                })
                                 continue
                             elif kredit_result and kredit_result.get("match_count", 0) > 1:
                                 row.db_set(
@@ -2241,6 +2270,7 @@ def get_open_kreditraten_for_row(docname: str, row_name: str) -> Dict[str, Any]:
         posting_date=bt.date,
         amount=row.get("betrag"),
         supplier=supplier,
+        reference_text=row.get("verwendungszweck"),
     )
     return {
         "bank_account": bt.bank_account,
