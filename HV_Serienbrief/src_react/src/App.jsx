@@ -4,12 +4,19 @@ import { Navigator } from "./components/Navigator.jsx";
 import { Editor } from "./components/Editor.jsx";
 import { Sidebar } from "./components/Sidebar.jsx";
 import { PdfMaximized } from "./components/PdfMaximized.jsx";
-import { CURRENT_TEMPLATE, SAMPLE_RECIPIENTS, TEMPLATE_TREE } from "./data.js";
-import { loadTree, loadTemplate, saveTemplate, embedded } from "./api.js";
+import { CURRENT_TEMPLATE, TEMPLATE_TREE } from "./data.js";
+import {
+  loadTree, loadTemplate, saveTemplate,
+  loadPlaceholders, loadBausteine, loadRecipients, renderPreview,
+  embedded,
+} from "./api.js";
+
+// Sentinel-Empfänger „Beispielwerte" (kein echter Datensatz → Split-Preview).
+const BEISPIEL = { id: null, label: "Beispielwerte" };
 
 export const App = () => {
   const [template, setTemplate] = useState(() => CURRENT_TEMPLATE);
-  const [recipient, setRecipient] = useState(() => SAMPLE_RECIPIENTS[0]);
+  const [recipient, setRecipient] = useState(BEISPIEL);
   const [tab, setTab] = useState("preview");
   const [dirty, setDirty] = useState(false);
   const [title, setTitle] = useState(template.title);
@@ -21,7 +28,16 @@ export const App = () => {
   const [tree, setTree] = useState(() => TEMPLATE_TREE);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [placeholders, setPlaceholders] = useState([]);
+  const [bausteine, setBausteine] = useState([]);
+  const [recipients, setRecipients] = useState([]);
+  const [previewPdf, setPreviewPdf] = useState("");
+  const [previewMode, setPreviewMode] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
   const contentRef = useRef(null); // Zugriff auf den editierbaren HTML-Inhalt (getHtml)
+
+  const changeRecipient = useCallback((r) => setRecipient(r || BEISPIEL), []);
 
   // Resize handle for the right sidebar — drag left edge horizontally
   const onResizeStart = useCallback((e) => {
@@ -92,10 +108,6 @@ export const App = () => {
 
   const insertPlaceholder = useCallback((token) => insertItem({ kind: "chip", token }), [insertItem]);
   const insertBaustein = useCallback((name) => insertItem({ kind: "baustein", name }), [insertItem]);
-  const removeBaustein = useCallback((name) => {
-    setTemplate(prev => ({ ...prev, blocks: prev.blocks.filter(b => !(b.type === "baustein" && b.name === name)) }));
-    setDirty(true);
-  }, []);
 
   // Vorlage auswählen. Eingebettet → echtes HTML aus der DB nachladen.
   // Standalone (Prototyp) → Demo-/Stub-Inhalt wie gehabt.
@@ -179,6 +191,45 @@ export const App = () => {
     }
   };
 
+  // Sidebar-Daten einmalig laden (echt eingebettet, sonst Mock-Fallback).
+  useEffect(() => {
+    loadPlaceholders().then(r => setPlaceholders(r.groups || [])).catch(() => {});
+    loadBausteine().then(r => setBausteine(r.items || [])).catch(() => {});
+    loadRecipients().then(r => setRecipients(r.items || [])).catch(() => {});
+  }, []);
+
+  const searchRecipients = useCallback((q) => {
+    loadRecipients(template.haupt_verteil_objekt, q)
+      .then(r => setRecipients(r.items || [])).catch(() => {});
+  }, [template.haupt_verteil_objekt]);
+
+  // PDF-Vorschau (gespeicherter Stand). Mit Empfänger → echte Daten, sonst Beispiel.
+  const refreshPreview = useCallback(async () => {
+    if (!embedded || !template.id) return;
+    setPreviewLoading(true);
+    setPreviewError("");
+    try {
+      const res = await renderPreview({
+        templateName: template.id,
+        hauptVerteilObjekt: template.haupt_verteil_objekt,
+        recipientId: recipient && recipient.id,
+      });
+      setPreviewPdf(res.pdf_base64 || "");
+      setPreviewMode(res.mode || "");
+    } catch (e) {
+      setPreviewError((e && e.message) || String(e));
+      setPreviewPdf("");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [template.id, template.haupt_verteil_objekt, recipient]);
+
+  // Automatisch rendern, wenn der Vorschau-Tab aktiv ist und sich Vorlage oder
+  // Empfänger ändert (nur eingebettet).
+  useEffect(() => {
+    if (embedded && tab === "preview" && template.id) refreshPreview();
+  }, [tab, template.id, recipient, refreshPreview]);
+
   return (
     <div className="app">
       <header className="topbar">
@@ -234,10 +285,18 @@ export const App = () => {
           onTab={setTab}
           template={template}
           recipient={recipient}
-          onChangeRecipient={setRecipient}
+          recipients={recipients}
+          placeholders={placeholders}
+          bausteine={bausteine}
+          onChangeRecipient={changeRecipient}
+          onSearchRecipients={searchRecipients}
+          previewPdf={previewPdf}
+          previewLoading={previewLoading}
+          previewError={previewError}
+          previewMode={previewMode}
+          onRefreshPreview={refreshPreview}
           onInsertPlaceholder={insertPlaceholder}
           onInsertBaustein={insertBaustein}
-          onRemoveBaustein={removeBaustein}
           onMaximizePreview={() => setPdfMaximized(true)}
           onResizeStart={onResizeStart}
         />
@@ -254,15 +313,25 @@ export const App = () => {
               <button className="btn ghost icon" onClick={() => setRecipientPickerOpen(false)}><Icon name="x" size={14}/></button>
             </div>
             <div className="modal-body">
-              {SAMPLE_RECIPIENTS.map(r => (
+              <div
+                className={`recipient-row ${!recipient.id ? "active" : ""}`}
+                onClick={() => { changeRecipient(null); setRecipientPickerOpen(false); }}
+              >
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 500, fontSize: 13 }}>Beispielwerte</div>
+                  <div style={{ fontSize: 11, color: "var(--text-faint)" }}>Vorschau mit Musterdaten (kein echter Empfänger)</div>
+                </div>
+                {!recipient.id && <Icon name="check" size={14}/>}
+              </div>
+              {recipients.map(r => (
                 <div
                   key={r.id}
                   className={`recipient-row ${r.id === recipient.id ? "active" : ""}`}
-                  onClick={() => { setRecipient(r); setRecipientPickerOpen(false); }}
+                  onClick={() => { changeRecipient(r); setRecipientPickerOpen(false); }}
                 >
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 500, fontSize: 13 }}>{r.label}</div>
-                    <div style={{ fontSize: 11, color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>{r.id} · Mahnstufe {r.values.mahnstufe} · Saldo {r.values.saldo}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>{r.id}</div>
                   </div>
                   {r.id === recipient.id && <Icon name="check" size={14}/>}
                 </div>
@@ -276,7 +345,11 @@ export const App = () => {
         <PdfMaximized
           template={template}
           recipient={recipient}
-          onChangeRecipient={setRecipient}
+          recipients={recipients}
+          pdfBase64={previewPdf}
+          loading={previewLoading}
+          onChangeRecipient={changeRecipient}
+          onRefresh={refreshPreview}
           onClose={() => setPdfMaximized(false)}
         />
       )}

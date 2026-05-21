@@ -9,7 +9,7 @@ import frappe
 from frappe import _
 from frappe.exceptions import DuplicateEntryError
 from frappe.model.document import Document
-from frappe.utils import cint, cstr, pretty_date
+from frappe.utils import cint, cstr, pretty_date, strip_html_tags
 from frappe.utils.jinja import get_jenv
 from jinja2 import Undefined
 
@@ -1383,6 +1383,17 @@ def get_editor_template(name: str | None = None) -> Dict[str, Any]:
 
 	can_write = 1 if frappe.has_permission("Serienbrief Vorlage", "write", doc=doc.name) else 0
 
+	variables = [
+		{
+			"variable": v.variable,
+			"label": v.label or v.variable,
+			"type": v.variable_type,
+			"beschreibung": v.beschreibung,
+		}
+		for v in (doc.variables or [])
+		if getattr(v, "variable", None)
+	]
+
 	return {
 		"id": doc.name,
 		"title": doc.title,
@@ -1395,6 +1406,7 @@ def get_editor_template(name: str | None = None) -> Dict[str, Any]:
 		"modified": pretty_date(doc.modified),
 		"modified_by": doc.modified_by,
 		"can_write": can_write,
+		"variables": variables,
 	}
 
 
@@ -1418,3 +1430,151 @@ def save_editor_template(name: str | None = None, html: str | None = None) -> Di
 	doc.save()
 
 	return {"id": doc.name, "modified": pretty_date(doc.modified)}
+
+
+def _baustein_preview(text: str, limit: int = 160) -> str:
+	plain = re.sub(r"\s+", " ", strip_html_tags(cstr(text or ""))).strip()
+	return plain[:limit] + ("…" if len(plain) > limit else "")
+
+
+@frappe.whitelist()
+def get_editor_bausteine() -> Dict[str, Any]:
+	"""Alle Textbausteine für die Bausteine-Sidebar (Name = Insert-Key über
+	{{ baustein("Name") }}, da autoname = title)."""
+	if not frappe.has_permission("Serienbrief Textbaustein", "read"):
+		frappe.throw(_("Keine Berechtigung, Textbausteine zu lesen."), frappe.PermissionError)
+
+	rows = frappe.get_all(
+		"Serienbrief Textbaustein",
+		fields=["name", "title", "description", "content_type", "text_content"],
+		order_by="title asc",
+	)
+	items = [
+		{
+			"name": r.name,
+			"title": r.title or r.name,
+			"description": r.description or "",
+			"preview": _baustein_preview(r.text_content),
+		}
+		for r in rows
+	]
+	return {"items": items}
+
+
+# Präfix → Sidebar-Icon (Icon.jsx-Namen); Default "tag".
+_PLACEHOLDER_ICONS = {
+	"mieter": "user",
+	"objekt": "user",
+	"empfaenger": "user",
+	"eigentuemer": "user",
+	"verwalter": "building",
+	"wohnung": "door",
+	"immobilie": "door",
+	"mietvertrag": "euro",
+	"saldo": "euro",
+	"datum": "calendar",
+	"bankkonto": "credit-card",
+}
+
+
+@frappe.whitelist()
+def get_editor_placeholders() -> Dict[str, Any]:
+	"""Echter Platzhalter-Katalog: distinkte {{ tokens }}, gemined aus dem Inhalt
+	aller Vorlagen, gruppiert nach Präfix und nach Häufigkeit sortiert. So sind
+	es garantiert tatsächlich genutzte Platzhalter (kein theoretischer Meta-Baum)."""
+	if not frappe.has_permission("Serienbrief Vorlage", "read"):
+		frappe.throw(_("Keine Berechtigung, Serienbrief Vorlagen zu lesen."), frappe.PermissionError)
+
+	rows = frappe.get_all(
+		"Serienbrief Vorlage",
+		filters={"docstatus": ["<", 2]},
+		fields=["content", "html_content"],
+	)
+	# Haupt-Token-Format der App ist {{$ pfad $}}; daneben einfache {{ pfad }}.
+	custom_re = re.compile(r"\{\{\$\s*(.+?)\s*\$\}\}", re.S)
+	std_re = re.compile(r"\{\{\s*([^{}$][^{}]*?)\s*\}\}", re.S)
+	simple_re = re.compile(r"^[A-Za-z_][\w.\[\]]*$")  # Feldpfade, keine Ausdrücke
+
+	# pfad → {token, label, count}; {{$ $}} ist kanonisch und überschreibt {{ }}.
+	items: Dict[str, Dict[str, Any]] = {}
+
+	def add(path: str, token: str, is_custom: bool):
+		entry = items.get(path)
+		if entry is None:
+			items[path] = {"token": token, "label": path, "count": 1}
+		else:
+			entry["count"] += 1
+			if is_custom:
+				entry["token"] = token
+
+	for r in rows:
+		for src in (r.content, r.html_content):
+			if not src:
+				continue
+			for match in custom_re.finditer(src):
+				path = match.group(1).strip()
+				if simple_re.match(path):
+					add(path, f"{{{{$ {path} $}}}}", True)
+			for match in std_re.finditer(src):
+				inner = match.group(1).strip()
+				if not inner or "baustein(" in inner or "textbaustein(" in inner:
+					continue
+				if not simple_re.match(inner):
+					continue
+				add(inner, f"{{{{ {inner} }}}}", False)
+
+	groups: Dict[str, List[Dict[str, Any]]] = {}
+	for path, entry in items.items():
+		prefix = re.split(r"[.\[]", path, 1)[0]
+		groups.setdefault(prefix, []).append(entry)
+
+	out = []
+	for key in sorted(groups):
+		group_items = sorted(groups[key], key=lambda it: (-it["count"], it["label"]))
+		out.append(
+			{
+				"key": key,
+				"label": key,
+				"icon": _PLACEHOLDER_ICONS.get(key, "tag"),
+				"items": group_items,
+			}
+		)
+	return {"groups": out, "total": len(items)}
+
+
+@frappe.whitelist()
+def get_editor_recipients(
+	doctype: str | None = None, query: str | None = None, limit: int = 25
+) -> Dict[str, Any]:
+	"""Echte Empfänger (z. B. Mietverträge) für den Vorschau-Empfänger-Picker."""
+	dt = (doctype or "Mietvertrag").strip()
+	if not frappe.db.exists("DocType", dt):
+		return {"items": [], "doctype": dt}
+	if not frappe.has_permission(dt, "read"):
+		frappe.throw(_("Keine Berechtigung, {0} zu lesen.").format(dt), frappe.PermissionError)
+
+	meta = frappe.get_meta(dt)
+	title_field = meta.get_title_field()
+	fields = ["name"]
+	if title_field and title_field != "name":
+		fields.append(title_field)
+
+	q = (query or "").strip()
+	or_filters = None
+	if q:
+		or_filters = [["name", "like", f"%{q}%"]]
+		if title_field and title_field != "name":
+			or_filters.append([title_field, "like", f"%{q}%"])
+
+	rows = frappe.get_list(
+		dt,
+		fields=fields,
+		or_filters=or_filters,
+		limit=cint(limit) or 25,
+		order_by="modified desc",
+	)
+	items = []
+	for r in rows:
+		label = r.get(title_field) if title_field and title_field != "name" else None
+		items.append({"id": r["name"], "label": label or r["name"]})
+	return {"items": items, "doctype": dt}

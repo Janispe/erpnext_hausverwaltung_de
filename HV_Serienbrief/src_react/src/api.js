@@ -3,7 +3,13 @@
 // (npm run dev) fallen sie auf die Mock-Daten aus data.js zurück.
 
 import { rpc, isEmbedded } from "./bridge.js";
-import { TEMPLATE_TREE, CURRENT_TEMPLATE } from "./data.js";
+import {
+	TEMPLATE_TREE,
+	CURRENT_TEMPLATE,
+	PLACEHOLDER_GROUPS,
+	TEXT_BAUSTEINE,
+	SAMPLE_RECIPIENTS,
+} from "./data.js";
 
 export const embedded = isEmbedded();
 
@@ -48,4 +54,47 @@ export async function saveTemplate(id, html) {
 		return { id, modified: "gerade eben (Demo)", mock: true };
 	}
 	return await rpc("save", { name: id, html });
+}
+
+// Bausteine (Serienbrief Textbaustein) für die Bausteine-Sidebar.
+export async function loadBausteine() {
+	if (!embedded) {
+		return {
+			items: TEXT_BAUSTEINE.map((b) => ({
+				name: b.name,
+				title: b.name,
+				description: b.desc || "",
+				preview: (b.preview || "").replace(/\n+/g, " · "),
+			})),
+		};
+	}
+	return await rpc("bausteine");
+}
+
+// Platzhalter-Katalog (gemined aus echten Vorlagen).
+export async function loadPlaceholders() {
+	if (!embedded) return { groups: PLACEHOLDER_GROUPS };
+	return await rpc("placeholders");
+}
+
+// Echte Empfänger (z. B. Mietverträge) für den Vorschau-Picker.
+export async function loadRecipients(doctype, query) {
+	if (!embedded) {
+		return { items: SAMPLE_RECIPIENTS.map((r) => ({ id: r.id, label: r.label })), doctype: "Mietvertrag" };
+	}
+	return await rpc("recipients", { doctype: doctype || "", query: query || "" });
+}
+
+// PDF-Vorschau rendern. Mit Empfänger → echte Daten (Durchlauf-Pfad, gespeicherte
+// Vorlage); ohne → Split-Preview mit Beispielwerten. Gibt { pdf_base64, mode }.
+export async function renderPreview({ templateName, hauptVerteilObjekt, recipientId }) {
+	if (!embedded) return { pdf_base64: "", mode: "mock" };
+	const params = { template: templateName };
+	if (recipientId && hauptVerteilObjekt) {
+		params.iteration_doctype = hauptVerteilObjekt;
+		params.iteration_objekt = recipientId;
+	} else {
+		params.split_preview = 1;
+	}
+	return await rpc("preview", params);
 }

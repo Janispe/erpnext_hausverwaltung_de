@@ -12,10 +12,15 @@
 const PREFIX_GROUP = {
 	mieter: "mieter",
 	hauptmieter: "mieter",
+	empfaenger: "mieter",
+	kunde: "mieter",
+	objekt: "vertrag",
+	eigentuemer: "verwalter",
 	verwalter: "verwalter",
 	wohnung: "wohnung",
 	immobilie: "wohnung",
 	mietvertrag: "vertrag",
+	dunning: "vertrag",
 	saldo: "vertrag",
 	saldo_betrag: "vertrag",
 	kaltmiete: "vertrag",
@@ -59,12 +64,17 @@ export function decorateTemplateHtml(html) {
 		chip(m.trim(), "baustein", `⧉&nbsp;${escapeHtml(name)}`)
 	);
 
-	// 2) Generische Platzhalter: {{ ... }} → farbiger Chip nach Präfix
+	// 2) Custom-Platzhalter {{$ pfad $}} (Haupt-Token-Format) → Chip, zeigt den Pfad
+	out = out.replace(/\{\{\$\s*(.+?)\s*\$\}\}/g, (m, inner) =>
+		chip(m.trim(), groupForToken(inner), escapeHtml(inner.trim()))
+	);
+
+	// 3) Generische Platzhalter: {{ ... }} → farbiger Chip nach Präfix
 	out = out.replace(/\{\{([^}]+)\}\}/g, (m, inner) =>
 		chip(m.trim(), groupForToken(inner), escapeHtml(m.trim()))
 	);
 
-	// 3) Logik-Tags: {% if ... %} / {% endif %} → dezenter Jinja-Marker
+	// 4) Logik-Tags: {% if ... %} / {% endif %} → dezenter Jinja-Marker
 	out = out.replace(
 		/\{%([^%]*)%\}/g,
 		(m) =>

@@ -365,36 +365,41 @@ const EditorToolbar = ({ onInsert, exec, disabled }) => {
 // =========================
 // Sanity Status Row — shown above the editor, summarizes the preview situation
 // =========================
-const SanityStatusRow = ({ recipient, onPickRecipient, onMaximizePreview }) => {
+const SanityStatusRow = ({ recipient, real, onPickRecipient, onMaximizePreview }) => {
   const v = recipient?.values || {};
   const mahnstufe2 = v.mahnstufe === "2";
+  const label = (recipient?.label || "Beispielwerte").split("—")[0].trim();
 
   return (
     <div className="sanity-row">
       <button className="sanity-recipient" onClick={onPickRecipient} title="Empfänger wechseln">
         <Icon name="user" size={13}/>
         <span className="sanity-recipient-label">Vorschau-Empfänger</span>
-        <span className="sanity-recipient-value">{recipient.label.split("—")[0].trim()}</span>
+        <span className="sanity-recipient-value">{label}</span>
         <Icon name="chevron-down" size={11}/>
       </button>
 
-      <div className="sanity-stats">
-        <span className="sanity-badge ok">
-          <Icon name="check" size={11}/> 28/28 Platzhalter aufgelöst
-        </span>
-        {mahnstufe2 ? (
-          <span className="sanity-badge warn">
-            <Icon name="branch" size={11}/> Mahnstufe-2-Klausel aktiv
+      {/* Mock-Statistiken nur im Prototyp-Modus; bei echten Vorlagen irreführend. */}
+      {!real && (
+        <div className="sanity-stats">
+          <span className="sanity-badge ok">
+            <Icon name="check" size={11}/> 28/28 Platzhalter aufgelöst
           </span>
-        ) : (
+          {mahnstufe2 ? (
+            <span className="sanity-badge warn">
+              <Icon name="branch" size={11}/> Mahnstufe-2-Klausel aktiv
+            </span>
+          ) : (
+            <span className="sanity-badge muted">
+              <Icon name="branch" size={11}/> Mahnstufe-2-Klausel inaktiv
+            </span>
+          )}
           <span className="sanity-badge muted">
-            <Icon name="branch" size={11}/> Mahnstufe-2-Klausel inaktiv
+            <Icon name="block" size={11}/> 2 Bausteine eingebettet
           </span>
-        )}
-        <span className="sanity-badge muted">
-          <Icon name="block" size={11}/> 2 Bausteine eingebettet
-        </span>
-      </div>
+        </div>
+      )}
+      {real && <div style={{ flex: 1 }}/>}
 
       <button className="sanity-action" onClick={onMaximizePreview} title="PDF-Vorschau vergrößern">
         <Icon name="play" size={12}/>
@@ -473,7 +478,7 @@ export const Editor = ({ template, recipient, loading, canWrite, contentRef, onD
 
   return (
     <main className="center">
-      <SanityStatusRow recipient={recipient} onPickRecipient={onPickRecipient} onMaximizePreview={onMaximizePreview}/>
+      <SanityStatusRow recipient={recipient} real={hasHtml} onPickRecipient={onPickRecipient} onMaximizePreview={onMaximizePreview}/>
       <EditorToolbar onInsert={() => openSlash()} exec={editable ? exec : null} disabled={!editable}/>
 
       <div className="editor-scroll" ref={editorRef}>

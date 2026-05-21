@@ -15,11 +15,15 @@
 
 // Erlaubte Aktionen → whitelisted Backend-Methoden. Das iframe kann ausschließlich
 // diese kurzen Aktions-Namen auslösen, keine beliebigen Methoden.
+const HV_SB = "hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.";
 const RPC_ACTIONS = {
-	tree: "hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.get_editor_tree",
-	template:
-		"hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.get_editor_template",
-	save: "hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.save_editor_template",
+	tree: HV_SB + "get_editor_tree",
+	template: HV_SB + "get_editor_template",
+	save: HV_SB + "save_editor_template",
+	bausteine: HV_SB + "get_editor_bausteine",
+	placeholders: HV_SB + "get_editor_placeholders",
+	recipients: HV_SB + "get_editor_recipients",
+	preview: HV_SB + "render_template_preview_pdf",
 };
 
 frappe.pages["serienbrief_editor"].on_page_load = function (wrapper) {
