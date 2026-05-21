@@ -1381,6 +1381,8 @@ def get_editor_template(name: str | None = None) -> Dict[str, Any]:
 			frappe.db.get_value("Serienbrief Kategorie", doc.kategorie, "title") or doc.kategorie
 		)
 
+	can_write = 1 if frappe.has_permission("Serienbrief Vorlage", "write", doc=doc.name) else 0
+
 	return {
 		"id": doc.name,
 		"title": doc.title,
@@ -1392,4 +1394,27 @@ def get_editor_template(name: str | None = None) -> Dict[str, Any]:
 		"html": html,
 		"modified": pretty_date(doc.modified),
 		"modified_by": doc.modified_by,
+		"can_write": can_write,
 	}
+
+
+@frappe.whitelist()
+def save_editor_template(name: str | None = None, html: str | None = None) -> Dict[str, Any]:
+	"""Editor-Inhalt zurück in die Vorlage schreiben (content bzw. html_content je
+	nach content_type). validate() sanitisiert Rich-Text automatisch."""
+	template_name = (name or "").strip()
+	if not template_name:
+		frappe.throw(_("Bitte eine Vorlage angeben."))
+
+	if not frappe.has_permission("Serienbrief Vorlage", "write", doc=template_name):
+		frappe.throw(_("Keine Berechtigung, die Vorlage zu bearbeiten."), frappe.PermissionError)
+
+	doc = frappe.get_doc("Serienbrief Vorlage", template_name)
+	new_html = cstr(html or "")
+	if doc.content_type == "HTML + Jinja":
+		doc.html_content = new_html
+	else:
+		doc.content = new_html
+	doc.save()
+
+	return {"id": doc.name, "modified": pretty_date(doc.modified)}

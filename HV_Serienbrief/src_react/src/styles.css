@@ -1528,6 +1528,11 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
 }
 /* Container für das gerenderte Vorlagen-HTML — erbt die Paper-Typografie */
 .rendered-html { color: inherit; }
+/* Bearbeitbarer Zustand: dezente Fokus-Markierung, Token-Chips als Cursor-Default */
+.rendered-html.editable { outline: none; min-height: 400px; }
+.rendered-html.editable:focus { outline: none; }
+.rendered-html.editable:focus-within { box-shadow: none; }
+.rendered-html.editable [contenteditable="false"] { cursor: default; user-select: all; }
 .rendered-html p { margin: 0 0 8px; min-height: 1.4em; }
 .rendered-html h1, .rendered-html h2, .rendered-html h3 {
   font-family: var(--font-sans);

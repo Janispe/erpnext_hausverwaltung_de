@@ -1,11 +1,11 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { Icon } from "./components/Icon.jsx";
 import { Navigator } from "./components/Navigator.jsx";
 import { Editor } from "./components/Editor.jsx";
 import { Sidebar } from "./components/Sidebar.jsx";
 import { PdfMaximized } from "./components/PdfMaximized.jsx";
 import { CURRENT_TEMPLATE, SAMPLE_RECIPIENTS, TEMPLATE_TREE } from "./data.js";
-import { loadTree, loadTemplate, embedded } from "./api.js";
+import { loadTree, loadTemplate, saveTemplate, embedded } from "./api.js";
 
 export const App = () => {
   const [template, setTemplate] = useState(() => CURRENT_TEMPLATE);
@@ -20,6 +20,8 @@ export const App = () => {
   const [resizing, setResizing] = useState(false);
   const [tree, setTree] = useState(() => TEMPLATE_TREE);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const contentRef = useRef(null); // Zugriff auf den editierbaren HTML-Inhalt (getHtml)
 
   // Resize handle for the right sidebar — drag left edge horizontally
   const onResizeStart = useCallback((e) => {
@@ -147,9 +149,19 @@ export const App = () => {
     return () => { cancelled = true; };
   }, [onTemplateSelect]);
 
-  const save = () => {
-    setDirty(false);
-    // little visual flash
+  const save = async () => {
+    if (!template.canWrite || !dirty || saving) return;
+    const html = contentRef.current ? contentRef.current.getHtml() : (template.htmlContent || "");
+    setSaving(true);
+    try {
+      const res = await saveTemplate(template.id, html);
+      setDirty(false);
+      setTemplate(prev => ({ ...prev, modified: res.modified || prev.modified }));
+    } catch (e) {
+      alert("Speichern fehlgeschlagen: " + ((e && e.message) || e));
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -176,8 +188,8 @@ export const App = () => {
           )}
         </div>
 
-        <button className="btn" onClick={save} disabled={!dirty}>
-          <Icon name="save" size={14}/> Speichern
+        <button className="btn" onClick={save} disabled={!dirty || !template.canWrite || saving} title={!template.canWrite ? "Keine Schreibberechtigung" : ""}>
+          <Icon name="save" size={14}/> {saving ? "Speichert …" : "Speichern"}
         </button>
         <button className="btn ghost"><Icon name="copy" size={14}/> Kopieren</button>
         <button className="btn primary">
@@ -195,6 +207,9 @@ export const App = () => {
           template={template}
           recipient={recipient}
           loading={loadingTemplate}
+          canWrite={!!template.canWrite}
+          contentRef={contentRef}
+          onDirty={() => setDirty(true)}
           onInsertItem={insertItem}
           onPickRecipient={() => setRecipientPickerOpen(true)}
           onMaximizePreview={() => setPdfMaximized(true)}

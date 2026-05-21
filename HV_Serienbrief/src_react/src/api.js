@@ -33,10 +33,19 @@ export async function loadTemplate(id) {
 		content_position: t.content_position,
 		modified: t.modified,
 		modified_by: t.modified_by,
+		canWrite: !!t.can_write,
 		// Echte Vorlagen liefern HTML statt des Block-Modells. Der Editor rendert
-		// htmlContent read-only (mit Chip-Dekoration), wenn gesetzt.
+		// htmlContent (mit Chip-Dekoration), editierbar wenn canWrite.
 		htmlContent: t.html || "",
 		blocks: [],
 		mock: false,
 	};
+}
+
+// Editierten Inhalt zurück in die Vorlage speichern. Gibt { id, modified } zurück.
+export async function saveTemplate(id, html) {
+	if (!embedded) {
+		return { id, modified: "gerade eben (Demo)", mock: true };
+	}
+	return await rpc("save", { name: id, html });
 }

@@ -19,6 +19,7 @@ const RPC_ACTIONS = {
 	tree: "hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.get_editor_tree",
 	template:
 		"hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.get_editor_template",
+	save: "hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.save_editor_template",
 };
 
 frappe.pages["serienbrief_editor"].on_page_load = function (wrapper) {

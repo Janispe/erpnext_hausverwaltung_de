@@ -1,14 +1,37 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useMemo, forwardRef, useImperativeHandle } from "react";
 import { Icon } from "./Icon.jsx";
 import { PLACEHOLDER_GROUPS, SNIPPETS, TEXT_BAUSTEINE } from "../data.js";
-import { decorateTemplateHtml } from "../htmlDecorate.js";
+import { decorateTemplateHtml, serializeEditableHtml } from "../htmlDecorate.js";
 
-// Read-only-Anzeige echter Vorlagen: das HTML aus der DB, mit Chip-dekorierten
+// Anzeige/Bearbeitung echter Vorlagen: das HTML aus der DB, mit Chip-dekorierten
 // Jinja-Tokens. Wird statt des Block-Modells gerendert, wenn htmlContent gesetzt ist.
-const RenderedHtml = ({ html }) => {
-  const decorated = useMemo(() => decorateTemplateHtml(html), [html]);
-  return <div className="rendered-html" dangerouslySetInnerHTML={{ __html: decorated }} />;
-};
+//
+// Uncontrolled: innerHTML wird nur gesetzt, wenn sich `html` (= andere Vorlage)
+// ändert — nicht bei jedem Tastendruck, sonst springt der Cursor. Die DOM ist
+// während des Editierens die Quelle der Wahrheit; getHtml() serialisiert sie
+// beim Speichern zurück (Chips → Roh-Tokens).
+const RenderedHtml = forwardRef(({ html, editable, onDirty }, ref) => {
+  const elRef = useRef(null);
+
+  useImperativeHandle(ref, () => ({
+    getHtml: () => serializeEditableHtml(elRef.current),
+  }), []);
+
+  useEffect(() => {
+    if (elRef.current) elRef.current.innerHTML = decorateTemplateHtml(html);
+  }, [html]);
+
+  return (
+    <div
+      ref={elRef}
+      className={`rendered-html ${editable ? "editable" : ""}`}
+      contentEditable={editable || undefined}
+      suppressContentEditableWarning
+      spellCheck={false}
+      onInput={() => onDirty && onDirty()}
+    />
+  );
+});
 
 // Find which placeholder-group a token belongs to (for chip color & tooltip)
 const tokenGroup = (token) => {
@@ -245,30 +268,46 @@ const SlashMenu = ({ open, x, y, query, onClose, onPick }) => {
 // =========================
 // Editor Toolbar
 // =========================
-const EditorToolbar = ({ onInsert }) => {
+const EditorToolbar = ({ onInsert, exec, disabled }) => {
+  // execCommand-Buttons: onMouseDown verhindert den Fokuswechsel, damit die
+  // Auswahl im contenteditable erhalten bleibt; der Klick formatiert sie dann.
+  const cmd = (command, value) => ({
+    onMouseDown: (e) => e.preventDefault(),
+    onClick: () => exec && exec(command, value),
+    disabled,
+  });
   return (
     <div className="editor-toolbar">
       <div className="tool-group">
-        <select className="block-style-select" defaultValue="Fließtext">
+        <select
+          className="block-style-select"
+          defaultValue="Fließtext"
+          disabled={disabled}
+          onMouseDown={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const map = { "Fließtext": "p", "Überschrift 1": "h1", "Überschrift 2": "h2" };
+            exec && exec("formatBlock", map[e.target.value] || "p");
+          }}
+        >
           <option>Fließtext</option>
           <option>Überschrift 1</option>
           <option>Überschrift 2</option>
         </select>
       </div>
       <div className="tool-group">
-        <button className="tool-btn" title="Fett"><Icon name="bold"/></button>
-        <button className="tool-btn" title="Kursiv"><Icon name="italic"/></button>
-        <button className="tool-btn" title="Unterstrichen"><Icon name="underline"/></button>
+        <button className="tool-btn" title="Fett" {...cmd("bold")}><Icon name="bold"/></button>
+        <button className="tool-btn" title="Kursiv" {...cmd("italic")}><Icon name="italic"/></button>
+        <button className="tool-btn" title="Unterstrichen" {...cmd("underline")}><Icon name="underline"/></button>
       </div>
       <div className="tool-group">
-        <button className="tool-btn active" title="Links"><Icon name="align-left"/></button>
-        <button className="tool-btn" title="Zentriert"><Icon name="align-center"/></button>
-        <button className="tool-btn" title="Rechts"><Icon name="align-right"/></button>
+        <button className="tool-btn" title="Links" {...cmd("justifyLeft")}><Icon name="align-left"/></button>
+        <button className="tool-btn" title="Zentriert" {...cmd("justifyCenter")}><Icon name="align-center"/></button>
+        <button className="tool-btn" title="Rechts" {...cmd("justifyRight")}><Icon name="align-right"/></button>
       </div>
       <div className="tool-group">
-        <button className="tool-btn" title="Liste"><Icon name="list"/></button>
-        <button className="tool-btn" title="Nummerierte Liste"><Icon name="list-ordered"/></button>
-        <button className="tool-btn" title="Link"><Icon name="link"/></button>
+        <button className="tool-btn" title="Liste" {...cmd("insertUnorderedList")}><Icon name="list"/></button>
+        <button className="tool-btn" title="Nummerierte Liste" {...cmd("insertOrderedList")}><Icon name="list-ordered"/></button>
+        <button className="tool-btn" title="Link" disabled={disabled} onMouseDown={(e)=>e.preventDefault()} onClick={() => { const u = prompt("Link-URL:"); if (u) exec && exec("createLink", u); }}><Icon name="link"/></button>
       </div>
       <div style={{ flex: 1 }}/>
       <div className="tool-group" style={{ borderRight: "none" }}>
@@ -327,8 +366,15 @@ const SanityStatusRow = ({ recipient, onPickRecipient, onMaximizePreview }) => {
 // =========================
 // Editor (Paper)
 // =========================
-export const Editor = ({ template, recipient, loading, onInsertItem, onPickRecipient, onMaximizePreview }) => {
+export const Editor = ({ template, recipient, loading, canWrite, contentRef, onDirty, onInsertItem, onPickRecipient, onMaximizePreview }) => {
   const hasHtml = typeof template.htmlContent === "string" && template.htmlContent.length > 0;
+  const editable = hasHtml && !!canWrite;
+  // Formatierung der aktuellen Auswahl im contenteditable (deprecated, aber für
+  // einfache Rich-Text-Edits robust genug). Markiert anschließend als dirty.
+  const exec = (command, value) => {
+    try { document.execCommand(command, false, value); } catch (e) {}
+    onDirty && onDirty();
+  };
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashPos, setSlashPos] = useState({ x: 0, y: 0 });
   const [slashQuery, setSlashQuery] = useState("");
@@ -375,7 +421,7 @@ export const Editor = ({ template, recipient, loading, onInsertItem, onPickRecip
   useEffect(() => {
     const onKey = (e) => {
       if (slashOpen) return;
-      if (e.key === "/" && (e.target?.tagName !== "INPUT") && (e.target?.tagName !== "TEXTAREA")) {
+      if (e.key === "/" && !e.target?.isContentEditable && (e.target?.tagName !== "INPUT") && (e.target?.tagName !== "TEXTAREA")) {
         e.preventDefault();
         openSlash();
       }
@@ -387,7 +433,7 @@ export const Editor = ({ template, recipient, loading, onInsertItem, onPickRecip
   return (
     <main className="center">
       <SanityStatusRow recipient={recipient} onPickRecipient={onPickRecipient} onMaximizePreview={onMaximizePreview}/>
-      <EditorToolbar onInsert={() => openSlash()}/>
+      <EditorToolbar onInsert={() => openSlash()} exec={editable ? exec : null} disabled={!editable}/>
 
       <div className="editor-scroll" ref={editorRef}>
         <div
@@ -399,7 +445,7 @@ export const Editor = ({ template, recipient, loading, onInsertItem, onPickRecip
           {loading ? (
             <div className="editor-loading">Vorlage wird geladen …</div>
           ) : hasHtml ? (
-            <RenderedHtml html={template.htmlContent}/>
+            <RenderedHtml ref={contentRef} html={template.htmlContent} editable={editable} onDirty={onDirty}/>
           ) : (
             (template.blocks || []).map((b, i) => (
               <Block key={i} block={b} recipient={recipient}/>
@@ -412,7 +458,9 @@ export const Editor = ({ template, recipient, loading, onInsertItem, onPickRecip
           )}
           {!loading && hasHtml && (
             <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px dashed var(--border)", color: "var(--text-faint)", fontSize: 12, textAlign: "center" }}>
-              Echte Vorlage · read-only Vorschau · Bearbeiten &amp; Speichern folgt im nächsten Schritt.
+              {editable
+                ? "Echte Vorlage · bearbeitbar · Platzhalter-Chips sind ein Stück (als Ganzes löschbar). Speichern oben rechts."
+                : "Echte Vorlage · read-only (keine Schreibberechtigung)."}
             </div>
           )}
         </div>
