@@ -132,7 +132,8 @@ const PlaceholderPane = ({ groups, onInsert }) => {
       ...g,
       items: g.items.filter(it =>
         (it.label || "").toLowerCase().includes(query) ||
-        (it.token || "").toLowerCase().includes(query)
+        (it.token || "").toLowerCase().includes(query) ||
+        (it.hint || "").toLowerCase().includes(query)
       ),
     })).filter(g => g.items.length > 0);
   }, [q, groups]);
@@ -149,7 +150,7 @@ const PlaceholderPane = ({ groups, onInsert }) => {
           <span className="icon-left"><Icon name="search" size={13}/></span>
           <input className="ph-search-input" placeholder="Platzhalter suchen…" value={q} onChange={e => setQ(e.target.value)}/>
         </div>
-        <div className="ph-hint">Aus den vorhandenen Vorlagen · Klicken zum Einfügen · Zahl = Häufigkeit</div>
+        <div className="ph-hint">Felder des Objekts (objekt.*) + genutzte Platzhalter · Klicken zum Einfügen · Zahl = Häufigkeit</div>
       </div>
 
       {filtered.map(g => (
@@ -170,10 +171,10 @@ const PlaceholderPane = ({ groups, onInsert }) => {
             >
               <span style={{ color: "var(--text-faint)", paddingTop: 2 }}><Icon name="drag" size={12}/></span>
               <div className="ph-text">
-                <div className="ph-label">{it.label}</div>
+                <div className="ph-label">{it.hint || it.label}</div>
                 <span className="ph-token">{it.token}</span>
               </div>
-              {it.count != null && <div className="ph-insert" title={`${it.count}× verwendet`}>{it.count}</div>}
+              {it.count > 0 && <div className="ph-insert" title={`${it.count}× in Vorlagen verwendet`}>{it.count}</div>}
             </div>
           ))}
         </div>

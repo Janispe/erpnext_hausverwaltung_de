@@ -1477,31 +1477,42 @@ _PLACEHOLDER_ICONS = {
 }
 
 
-@frappe.whitelist()
-def get_editor_placeholders() -> Dict[str, Any]:
-	"""Echter Platzhalter-Katalog: distinkte {{ tokens }}, gemined aus dem Inhalt
-	aller Vorlagen, gruppiert nach Präfix und nach Häufigkeit sortiert. So sind
-	es garantiert tatsächlich genutzte Platzhalter (kein theoretischer Meta-Baum)."""
-	if not frappe.has_permission("Serienbrief Vorlage", "read"):
-		frappe.throw(_("Keine Berechtigung, Serienbrief Vorlagen zu lesen."), frappe.PermissionError)
+# Layout-/Nicht-Wert-Feldtypen, die keine Platzhalter ergeben.
+_SKIP_FIELDTYPES = {
+	"Section Break",
+	"Column Break",
+	"Tab Break",
+	"HTML",
+	"Button",
+	"Heading",
+	"Fold",
+	"Table",
+	"Table MultiSelect",
+	"Image",
+	"Geolocation",
+	"Signature",
+	"Barcode",
+}
 
+
+def _mine_template_tokens() -> Dict[str, Dict[str, Any]]:
+	"""Distinkte, tatsächlich verwendete Platzhalter-Pfade aus allen Vorlagen.
+	Haupt-Format {{$ pfad $}} (kanonisch) + einfache {{ pfad }}. → pfad → entry."""
 	rows = frappe.get_all(
 		"Serienbrief Vorlage",
 		filters={"docstatus": ["<", 2]},
 		fields=["content", "html_content"],
 	)
-	# Haupt-Token-Format der App ist {{$ pfad $}}; daneben einfache {{ pfad }}.
 	custom_re = re.compile(r"\{\{\$\s*(.+?)\s*\$\}\}", re.S)
 	std_re = re.compile(r"\{\{\s*([^{}$][^{}]*?)\s*\}\}", re.S)
-	simple_re = re.compile(r"^[A-Za-z_][\w.\[\]]*$")  # Feldpfade, keine Ausdrücke
+	simple_re = re.compile(r"^[A-Za-z_][\w.\[\]]*$")
 
-	# pfad → {token, label, count}; {{$ $}} ist kanonisch und überschreibt {{ }}.
 	items: Dict[str, Dict[str, Any]] = {}
 
 	def add(path: str, token: str, is_custom: bool):
 		entry = items.get(path)
 		if entry is None:
-			items[path] = {"token": token, "label": path, "count": 1}
+			items[path] = {"token": token, "label": path, "count": 1, "hint": ""}
 		else:
 			entry["count"] += 1
 			if is_custom:
@@ -1522,15 +1533,52 @@ def get_editor_placeholders() -> Dict[str, Any]:
 				if not simple_re.match(inner):
 					continue
 				add(inner, f"{{{{ {inner} }}}}", False)
+	return items
+
+
+@frappe.whitelist()
+def get_editor_placeholders(doctype: str | None = None) -> Dict[str, Any]:
+	"""Platzhalter-Katalog, abgeleitet aus dem Haupt-Verteil-Objekt (= ``objekt``):
+	dessen direkte Felder aus der Doctype-Meta + die tatsächlich in Vorlagen
+	verwendeten Pfade (mit Häufigkeit). Token-Format {{$ objekt.feld $}}."""
+	if not frappe.has_permission("Serienbrief Vorlage", "read"):
+		frappe.throw(_("Keine Berechtigung, Serienbrief Vorlagen zu lesen."), frappe.PermissionError)
+
+	dt = (doctype or "Mietvertrag").strip()
+	items = _mine_template_tokens()
+
+	# Direkte Felder von ``objekt`` (= haupt_verteil_objekt) aus der Meta ableiten.
+	if dt and frappe.db.exists("DocType", dt):
+		meta = frappe.get_meta(dt)
+		for df in meta.fields:
+			if not getattr(df, "fieldname", None) or df.fieldtype in _SKIP_FIELDTYPES:
+				continue
+			path = f"objekt.{df.fieldname}"
+			label_hint = _(df.label) if getattr(df, "label", None) else ""
+			entry = items.get(path)
+			if entry is None:
+				items[path] = {
+					"token": f"{{{{$ {path} $}}}}",
+					"label": path,
+					"count": 0,
+					"hint": label_hint,
+				}
+			elif label_hint and not entry.get("hint"):
+				entry["hint"] = label_hint
 
 	groups: Dict[str, List[Dict[str, Any]]] = {}
 	for path, entry in items.items():
 		prefix = re.split(r"[.\[]", path, 1)[0]
 		groups.setdefault(prefix, []).append(entry)
 
+	# Gruppen-Reihenfolge: objekt zuerst, dann nach Häufigkeit/Name.
+	def group_rank(key: str) -> tuple:
+		return (0 if key == "objekt" else 1, key)
+
 	out = []
-	for key in sorted(groups):
-		group_items = sorted(groups[key], key=lambda it: (-it["count"], it["label"]))
+	for key in sorted(groups, key=group_rank):
+		# verwendete (count>0) zuerst nach Häufigkeit, dann ungenutzte alphabetisch
+		group_items = sorted(groups[key], key=lambda it: (0 if it["count"] else 1, -it["count"], it["label"]))
 		out.append(
 			{
 				"key": key,
@@ -1539,7 +1587,7 @@ def get_editor_placeholders() -> Dict[str, Any]:
 				"items": group_items,
 			}
 		)
-	return {"groups": out, "total": len(items)}
+	return {"groups": out, "total": len(items), "doctype": dt}
 
 
 @frappe.whitelist()

@@ -191,12 +191,16 @@ export const App = () => {
     }
   };
 
-  // Sidebar-Daten einmalig laden (echt eingebettet, sonst Mock-Fallback).
+  // Template-unabhängige Sidebar-Daten einmalig laden.
   useEffect(() => {
-    loadPlaceholders().then(r => setPlaceholders(r.groups || [])).catch(() => {});
     loadBausteine().then(r => setBausteine(r.items || [])).catch(() => {});
     loadRecipients().then(r => setRecipients(r.items || [])).catch(() => {});
   }, []);
+
+  // Platzhalter aus dem objekt (haupt_verteil_objekt) der aktuellen Vorlage ableiten.
+  useEffect(() => {
+    loadPlaceholders(template.haupt_verteil_objekt).then(r => setPlaceholders(r.groups || [])).catch(() => {});
+  }, [template.haupt_verteil_objekt]);
 
   const searchRecipients = useCallback((q) => {
     loadRecipients(template.haupt_verteil_objekt, q)

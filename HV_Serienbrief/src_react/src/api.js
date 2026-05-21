@@ -71,10 +71,10 @@ export async function loadBausteine() {
 	return await rpc("bausteine");
 }
 
-// Platzhalter-Katalog (gemined aus echten Vorlagen).
-export async function loadPlaceholders() {
+// Platzhalter-Katalog, abgeleitet aus dem objekt (haupt_verteil_objekt) + Nutzung.
+export async function loadPlaceholders(doctype) {
 	if (!embedded) return { groups: PLACEHOLDER_GROUPS };
-	return await rpc("placeholders");
+	return await rpc("placeholders", { doctype: doctype || "" });
 }
 
 // Echte Empfänger (z. B. Mietverträge) für den Vorschau-Picker.

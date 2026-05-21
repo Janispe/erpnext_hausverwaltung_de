@@ -55,34 +55,32 @@ function chip(rawToken, group, displayText) {
 	);
 }
 
+// EIN kombinierter Durchlauf über alle Token-Typen. Wichtig: ein einzelner
+// String.replace() re-scannt seinen eigenen Ersetzungstext NICHT — so können die
+// {{ }} in den data-token-Attributen der erzeugten Chips nicht von einem späteren
+// Durchlauf erneut gematcht werden (das hatte das Chip-HTML zerstört).
+// Reihenfolge der Alternativen: baustein vor generisch (beide {{ }}); {{$ $}} vor generisch.
+const TOKEN_RE =
+	/\{\{\s*baustein\(\s*["']([^"']+)["']\s*\)\s*\}\}|\{\{\$\s*([\s\S]+?)\s*\$\}\}|\{\{([^}]+)\}\}|\{%([^%]*)%\}/g;
+
 export function decorateTemplateHtml(html) {
 	if (!html) return "";
-	let out = html;
-
-	// 1) Baustein-Aufrufe: {{ baustein("Name") }} → eigener Baustein-Chip
-	out = out.replace(/\{\{\s*baustein\(\s*["']([^"']+)["']\s*\)\s*\}\}/g, (m, name) =>
-		chip(m.trim(), "baustein", `⧉&nbsp;${escapeHtml(name)}`)
-	);
-
-	// 2) Custom-Platzhalter {{$ pfad $}} (Haupt-Token-Format) → Chip, zeigt den Pfad
-	out = out.replace(/\{\{\$\s*(.+?)\s*\$\}\}/g, (m, inner) =>
-		chip(m.trim(), groupForToken(inner), escapeHtml(inner.trim()))
-	);
-
-	// 3) Generische Platzhalter: {{ ... }} → farbiger Chip nach Präfix
-	out = out.replace(/\{\{([^}]+)\}\}/g, (m, inner) =>
-		chip(m.trim(), groupForToken(inner), escapeHtml(m.trim()))
-	);
-
-	// 4) Logik-Tags: {% if ... %} / {% endif %} → dezenter Jinja-Marker
-	out = out.replace(
-		/\{%([^%]*)%\}/g,
-		(m) =>
+	return html.replace(TOKEN_RE, (m, bausteinName, customInner, genericInner, jinjaInner) => {
+		if (bausteinName !== undefined) {
+			return chip(m.trim(), "baustein", `⧉&nbsp;${escapeHtml(bausteinName)}`);
+		}
+		if (customInner !== undefined) {
+			return chip(m.trim(), groupForToken(customInner), escapeHtml(customInner.trim()));
+		}
+		if (genericInner !== undefined) {
+			return chip(m.trim(), groupForToken(genericInner), escapeHtml(m.trim()));
+		}
+		// {% ... %}
+		return (
 			`<span class="jinja-token" data-token="${escapeAttr(m.trim())}"` +
 			` contenteditable="false">${escapeHtml(m.trim())}</span>`
-	);
-
-	return out;
+		);
+	});
 }
 
 // Editierten contenteditable-DOM zurück in speicherbares HTML wandeln:
