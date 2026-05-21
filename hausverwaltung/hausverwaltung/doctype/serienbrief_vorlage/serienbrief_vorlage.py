@@ -9,7 +9,7 @@ import frappe
 from frappe import _
 from frappe.exceptions import DuplicateEntryError
 from frappe.model.document import Document
-from frappe.utils import cint, cstr
+from frappe.utils import cint, cstr, pretty_date
 from frappe.utils.jinja import get_jenv
 from jinja2 import Undefined
 
@@ -1300,3 +1300,96 @@ def _build_snippet(text: str, query: str, context: int = 60) -> str | None:
 	if end < len(text):
 		snippet = f"{snippet} ..."
 	return snippet
+
+
+# ---------------------------------------------------------------------------
+# Read-only-Endpunkte für den neuen React-Serienbrief-Editor (Beta).
+# Liefern den Vorlagen-Baum und einen einzelnen Vorlagen-Inhalt. Werden vom
+# iframe-UI über die postMessage-Bridge (page/serienbrief_editor) aufgerufen.
+# ---------------------------------------------------------------------------
+
+
+@frappe.whitelist()
+def get_editor_tree() -> Dict[str, Any]:
+	"""Kategorien (flach, nach Titel sortiert) mit ihren direkt zugeordneten
+	Vorlagen — Datenquelle für den Navigator-Baum im React-Editor."""
+	if not frappe.has_permission("Serienbrief Vorlage", "read"):
+		frappe.throw(_("Keine Berechtigung, Serienbrief Vorlagen zu lesen."), frappe.PermissionError)
+
+	categories = frappe.get_all(
+		"Serienbrief Kategorie",
+		fields=["name", "title"],
+		order_by="title asc",
+	)
+
+	templates = frappe.get_all(
+		"Serienbrief Vorlage",
+		filters={"docstatus": ["<", 2]},
+		fields=["name", "title", "kategorie", "modified"],
+		order_by="title asc",
+	)
+
+	by_cat: Dict[str, List[Dict[str, str]]] = {}
+	for t in templates:
+		by_cat.setdefault(t.kategorie or "", []).append(
+			{"id": t.name, "title": t.title, "modified": pretty_date(t.modified)}
+		)
+
+	groups: List[Dict[str, Any]] = []
+	for cat in categories:
+		items = by_cat.get(cat.name, [])
+		if not items:
+			continue
+		groups.append(
+			{"key": cat.name, "label": cat.title or cat.name, "count": len(items), "templates": items}
+		)
+
+	uncategorized = by_cat.get("", [])
+	if uncategorized:
+		groups.append(
+			{
+				"key": "__none__",
+				"label": _("Ohne Ordner"),
+				"count": len(uncategorized),
+				"templates": uncategorized,
+			}
+		)
+
+	return {"groups": groups, "total": len(templates)}
+
+
+@frappe.whitelist()
+def get_editor_template(name: str | None = None) -> Dict[str, Any]:
+	"""Einzelne Vorlage für die Anzeige im React-Editor (read-only)."""
+	template_name = (name or "").strip()
+	if not template_name:
+		frappe.throw(_("Bitte eine Vorlage angeben."))
+
+	if not frappe.has_permission("Serienbrief Vorlage", "read", doc=template_name):
+		frappe.throw(_("Keine Berechtigung, die Vorlage zu lesen."), frappe.PermissionError)
+
+	doc = frappe.get_doc("Serienbrief Vorlage", template_name)
+
+	if doc.content_type == "HTML + Jinja":
+		html = doc.html_content or ""
+	else:
+		html = doc.content or ""
+
+	kategorie_label = ""
+	if doc.kategorie:
+		kategorie_label = (
+			frappe.db.get_value("Serienbrief Kategorie", doc.kategorie, "title") or doc.kategorie
+		)
+
+	return {
+		"id": doc.name,
+		"title": doc.title,
+		"kategorie": doc.kategorie,
+		"kategorie_label": kategorie_label,
+		"haupt_verteil_objekt": doc.haupt_verteil_objekt,
+		"content_type": doc.content_type,
+		"content_position": doc.content_position,
+		"html": html,
+		"modified": pretty_date(doc.modified),
+		"modified_by": doc.modified_by,
+	}

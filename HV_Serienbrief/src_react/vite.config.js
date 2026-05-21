@@ -3,6 +3,10 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  // Frappe serves apps/hausverwaltung/hausverwaltung/public/ under /assets/hausverwaltung/.
+  // The build is copied to public/serienbrief_editor/, so emitted asset URLs must be
+  // prefixed accordingly. Override with HV_BASE=./ for fully standalone hosting.
+  base: process.env.HV_BASE || "/assets/hausverwaltung/serienbrief_editor/",
   build: {
     outDir: "dist",
     emptyOutDir: true,

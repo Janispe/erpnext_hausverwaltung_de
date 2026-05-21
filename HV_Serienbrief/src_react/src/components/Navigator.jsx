@@ -1,11 +1,22 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { Icon } from "./Icon.jsx";
 import { TEMPLATE_TREE } from "../data.js";
 
-export const Navigator = ({ currentId, onSelect, collapsed, onToggleCollapse }) => {
-  const tree = TEMPLATE_TREE;
+export const Navigator = ({ tree: propTree, currentId, onSelect, collapsed, onToggleCollapse }) => {
+  const tree = (propTree && propTree.length) ? propTree : TEMPLATE_TREE;
   const [query, setQuery] = useState("");
-  const [openKeys, setOpenKeys] = useState(() => new Set(tree.filter(c => c.pinned || c.templates.some(t => t.current)).map(c => c.key)));
+  const [openKeys, setOpenKeys] = useState(() => new Set());
+
+  // Gruppe der aktuell ausgewählten Vorlage automatisch aufklappen (bzw. erste).
+  useEffect(() => {
+    const grp = tree.find(c => c.templates.some(t => t.id === currentId));
+    setOpenKeys(prev => {
+      const next = new Set(prev);
+      if (grp) next.add(grp.key);
+      else if (tree[0]) next.add(tree[0].key);
+      return next;
+    });
+  }, [currentId, tree]);
 
   const toggle = (k) => {
     setOpenKeys(prev => {

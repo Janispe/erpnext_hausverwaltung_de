@@ -1,6 +1,14 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import { Icon } from "./Icon.jsx";
 import { PLACEHOLDER_GROUPS, SNIPPETS, TEXT_BAUSTEINE } from "../data.js";
+import { decorateTemplateHtml } from "../htmlDecorate.js";
+
+// Read-only-Anzeige echter Vorlagen: das HTML aus der DB, mit Chip-dekorierten
+// Jinja-Tokens. Wird statt des Block-Modells gerendert, wenn htmlContent gesetzt ist.
+const RenderedHtml = ({ html }) => {
+  const decorated = useMemo(() => decorateTemplateHtml(html), [html]);
+  return <div className="rendered-html" dangerouslySetInnerHTML={{ __html: decorated }} />;
+};
 
 // Find which placeholder-group a token belongs to (for chip color & tooltip)
 const tokenGroup = (token) => {
@@ -319,7 +327,8 @@ const SanityStatusRow = ({ recipient, onPickRecipient, onMaximizePreview }) => {
 // =========================
 // Editor (Paper)
 // =========================
-export const Editor = ({ template, recipient, onInsertItem, onPickRecipient, onMaximizePreview }) => {
+export const Editor = ({ template, recipient, loading, onInsertItem, onPickRecipient, onMaximizePreview }) => {
+  const hasHtml = typeof template.htmlContent === "string" && template.htmlContent.length > 0;
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashPos, setSlashPos] = useState({ x: 0, y: 0 });
   const [slashQuery, setSlashQuery] = useState("");
@@ -387,12 +396,25 @@ export const Editor = ({ template, recipient, onInsertItem, onPickRecipient, onM
           onDragLeave={onDragLeave}
           onDrop={onDrop}
         >
-          {template.blocks.map((b, i) => (
-            <Block key={i} block={b} recipient={recipient}/>
-          ))}
-          <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px dashed var(--border)", color: "var(--text-faint)", fontSize: 12, textAlign: "center" }}>
-            Tippe <span className="kbd">/</span> für Platzhalter, Snippets oder Bausteine — oder ziehe aus der rechten Seitenleiste.
-          </div>
+          {loading ? (
+            <div className="editor-loading">Vorlage wird geladen …</div>
+          ) : hasHtml ? (
+            <RenderedHtml html={template.htmlContent}/>
+          ) : (
+            (template.blocks || []).map((b, i) => (
+              <Block key={i} block={b} recipient={recipient}/>
+            ))
+          )}
+          {!loading && !hasHtml && (
+            <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px dashed var(--border)", color: "var(--text-faint)", fontSize: 12, textAlign: "center" }}>
+              Tippe <span className="kbd">/</span> für Platzhalter, Snippets oder Bausteine — oder ziehe aus der rechten Seitenleiste.
+            </div>
+          )}
+          {!loading && hasHtml && (
+            <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px dashed var(--border)", color: "var(--text-faint)", fontSize: 12, textAlign: "center" }}>
+              Echte Vorlage · read-only Vorschau · Bearbeiten &amp; Speichern folgt im nächsten Schritt.
+            </div>
+          )}
         </div>
       </div>
 

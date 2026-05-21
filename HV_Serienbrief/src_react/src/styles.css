@@ -1506,3 +1506,48 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   border-left-color: var(--primary);
   color: var(--primary-hover);
 }
+
+/* =========================
+   Echte Vorlagen (read-only HTML aus der DB)
+   ========================= */
+.chip[data-group="baustein"] {
+  background: #ece9fb;
+  color: #4b3fa3;
+}
+/* Jinja-Logik-Tags ({% if %} / {% endif %}) — dezent, als Code-Marker */
+.jinja-token {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px dashed var(--border-strong);
+  white-space: nowrap;
+}
+/* Container für das gerenderte Vorlagen-HTML — erbt die Paper-Typografie */
+.rendered-html { color: inherit; }
+.rendered-html p { margin: 0 0 8px; min-height: 1.4em; }
+.rendered-html h1, .rendered-html h2, .rendered-html h3 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  margin: 18px 0 12px;
+}
+.rendered-html h1 { font-size: 19px; }
+.rendered-html h2 { font-size: 17px; }
+.rendered-html h3 { font-size: 15px; }
+.rendered-html img { max-width: 100%; height: auto; }
+.rendered-html table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+.rendered-html td, .rendered-html th { border: 1px solid var(--border); padding: 4px 8px; }
+.rendered-html a { color: var(--primary); }
+
+.editor-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+  color: var(--text-muted);
+  font-size: 13px;
+}

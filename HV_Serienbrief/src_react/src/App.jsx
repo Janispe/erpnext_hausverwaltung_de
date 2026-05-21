@@ -1,10 +1,11 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { Icon } from "./components/Icon.jsx";
 import { Navigator } from "./components/Navigator.jsx";
 import { Editor } from "./components/Editor.jsx";
 import { Sidebar } from "./components/Sidebar.jsx";
 import { PdfMaximized } from "./components/PdfMaximized.jsx";
 import { CURRENT_TEMPLATE, SAMPLE_RECIPIENTS, TEMPLATE_TREE } from "./data.js";
+import { loadTree, loadTemplate, embedded } from "./api.js";
 
 export const App = () => {
   const [template, setTemplate] = useState(() => CURRENT_TEMPLATE);
@@ -17,6 +18,8 @@ export const App = () => {
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(420);
   const [resizing, setResizing] = useState(false);
+  const [tree, setTree] = useState(() => TEMPLATE_TREE);
+  const [loadingTemplate, setLoadingTemplate] = useState(false);
 
   // Resize handle for the right sidebar — drag left edge horizontally
   const onResizeStart = useCallback((e) => {
@@ -77,9 +80,35 @@ export const App = () => {
     setDirty(true);
   }, []);
 
-  const onTemplateSelect = useCallback((id) => {
-    // For the prototype we keep the current template — but show a hint
-    // Could swap content per id; we'll just update title for visual feedback
+  // Vorlage auswählen. Eingebettet → echtes HTML aus der DB nachladen.
+  // Standalone (Prototyp) → Demo-/Stub-Inhalt wie gehabt.
+  const onTemplateSelect = useCallback(async (id) => {
+    if (embedded) {
+      setLoadingTemplate(true);
+      try {
+        const t = await loadTemplate(id);
+        setTemplate(t);
+        setTitle(t.title);
+        setDirty(false);
+      } catch (e) {
+        setTemplate({
+          id,
+          title: "Fehler beim Laden",
+          kategorie: "",
+          haupt_verteil_objekt: "",
+          blocks: [
+            { type: "h2", inlines: [{ type: "text", value: "Vorlage konnte nicht geladen werden" }] },
+            { type: "p", inlines: [{ type: "text", value: String(e && e.message || e) }] },
+          ],
+        });
+        setTitle("Fehler beim Laden");
+      } finally {
+        setLoadingTemplate(false);
+      }
+      return;
+    }
+
+    // Prototyp-Modus: Stub für visuelles Feedback
     const allTemplates = TEMPLATE_TREE.flatMap(c => c.templates);
     const t = allTemplates.find(x => x.id === id);
     if (!t) return;
@@ -87,7 +116,6 @@ export const App = () => {
       setTemplate(CURRENT_TEMPLATE);
       setTitle(CURRENT_TEMPLATE.title);
     } else {
-      // Build a stub template for visual feedback
       setTemplate({
         ...CURRENT_TEMPLATE,
         id,
@@ -101,6 +129,23 @@ export const App = () => {
     }
     setDirty(false);
   }, []);
+
+  // Beim Start: echten Vorlagen-Baum laden; eingebettet zusätzlich die erste
+  // Vorlage automatisch öffnen, damit die Mitte nicht mit Mock-Inhalt startet.
+  useEffect(() => {
+    let cancelled = false;
+    loadTree()
+      .then(({ groups }) => {
+        if (cancelled || !groups || !groups.length) return;
+        setTree(groups);
+        if (embedded) {
+          const first = groups.flatMap(g => g.templates)[0];
+          if (first) onTemplateSelect(first.id);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [onTemplateSelect]);
 
   const save = () => {
     setDirty(false);
@@ -145,10 +190,11 @@ export const App = () => {
         className={`main ${resizing ? "resizing" : ""}`}
         style={{ gridTemplateColumns: `${navCollapsed ? "44px" : "260px"} 1fr ${sidebarWidth}px` }}
       >
-        <Navigator currentId={template.id} onSelect={onTemplateSelect} collapsed={navCollapsed} onToggleCollapse={() => setNavCollapsed(c => !c)}/>
+        <Navigator tree={tree} currentId={template.id} onSelect={onTemplateSelect} collapsed={navCollapsed} onToggleCollapse={() => setNavCollapsed(c => !c)}/>
         <Editor
           template={template}
           recipient={recipient}
+          loading={loadingTemplate}
           onInsertItem={insertItem}
           onPickRecipient={() => setRecipientPickerOpen(true)}
           onMaximizePreview={() => setPdfMaximized(true)}
