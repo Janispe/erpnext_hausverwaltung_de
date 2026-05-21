@@ -12,14 +12,53 @@ import { decorateTemplateHtml, serializeEditableHtml } from "../htmlDecorate.js"
 // beim Speichern zurück (Chips → Roh-Tokens).
 const RenderedHtml = forwardRef(({ html, editable, onDirty }, ref) => {
   const elRef = useRef(null);
+  const savedRange = useRef(null);
+
+  // Letzte Cursor-Position im editierbaren Bereich merken — ein Klick auf
+  // Sidebar/Toolbar entzieht den Fokus, beim Einfügen stellen wir sie wieder her.
+  const saveSelection = () => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (elRef.current && elRef.current.contains(range.commonAncestorContainer)) {
+      savedRange.current = range.cloneRange();
+    }
+  };
 
   useImperativeHandle(ref, () => ({
     getHtml: () => serializeEditableHtml(elRef.current),
-  }), []);
+    // Token (Platzhalter/Baustein/Snippet) als dekorierten Chip an den Cursor.
+    insertToken: (rawText) => {
+      const el = elRef.current;
+      if (!el || !rawText) return;
+      el.focus();
+      const sel = window.getSelection();
+      if (savedRange.current && el.contains(savedRange.current.commonAncestorContainer)) {
+        sel.removeAllRanges();
+        sel.addRange(savedRange.current);
+      } else {
+        const r = document.createRange();
+        r.selectNodeContents(el);
+        r.collapse(false); // ans Ende
+        sel.removeAllRanges();
+        sel.addRange(r);
+      }
+      document.execCommand("insertHTML", false, decorateTemplateHtml(rawText) + " ");
+      saveSelection();
+      onDirty && onDirty();
+    },
+  }), [onDirty]);
 
   useEffect(() => {
     if (elRef.current) elRef.current.innerHTML = decorateTemplateHtml(html);
   }, [html]);
+
+  useEffect(() => {
+    if (!editable) return;
+    const handler = () => saveSelection();
+    document.addEventListener("selectionchange", handler);
+    return () => document.removeEventListener("selectionchange", handler);
+  }, [editable]);
 
   return (
     <div
@@ -29,6 +68,8 @@ const RenderedHtml = forwardRef(({ html, editable, onDirty }, ref) => {
       suppressContentEditableWarning
       spellCheck={false}
       onInput={() => onDirty && onDirty()}
+      onKeyUp={saveSelection}
+      onMouseUp={saveSelection}
     />
   );
 });

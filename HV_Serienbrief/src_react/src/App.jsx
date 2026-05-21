@@ -43,9 +43,24 @@ export const App = () => {
     window.addEventListener("mouseup", onUp);
   }, [sidebarWidth]);
 
-  // Insert a chip / snippet / baustein "at cursor" — for the prototype, append
-  // to the last paragraph block (or append a new block).
+  // Insert a chip / snippet / baustein "at cursor".
   const insertItem = useCallback((item) => {
+    // Echte Vorlage (HTML-Editor): als dekorierter Chip an die Cursor-Position.
+    const isRealEditable = embedded && template.canWrite &&
+      typeof template.htmlContent === "string" && template.htmlContent.length > 0;
+    if (isRealEditable && contentRef.current && contentRef.current.insertToken) {
+      let raw = "";
+      if (item.kind === "chip") raw = item.token;
+      else if (item.kind === "baustein") raw = `{{ baustein("${item.name}") }}`;
+      else if (item.kind === "snippet") raw = item.snippet.value;
+      if (raw) {
+        contentRef.current.insertToken(raw);
+        setDirty(true);
+      }
+      return;
+    }
+
+    // Prototyp/Mock: Block-Modell mutieren.
     setTemplate(prev => {
       const blocks = [...prev.blocks];
       if (item.kind === "chip") {
@@ -73,7 +88,7 @@ export const App = () => {
       return { ...prev, blocks };
     });
     setDirty(true);
-  }, []);
+  }, [template]);
 
   const insertPlaceholder = useCallback((token) => insertItem({ kind: "chip", token }), [insertItem]);
   const insertBaustein = useCallback((name) => insertItem({ kind: "baustein", name }), [insertItem]);
