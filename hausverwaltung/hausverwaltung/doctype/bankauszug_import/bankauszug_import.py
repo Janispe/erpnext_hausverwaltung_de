@@ -2259,6 +2259,9 @@ def get_open_kreditraten_for_row(docname: str, row_name: str) -> Dict[str, Any]:
     Parameter-Drift zwischen UI und Server-Match).
     """
     from hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag import (
+        _extract_loan_match_hints,
+        _find_kreditvertraege_for_statement,
+        _loan_hints_are_complete,
         get_open_rates_for_match,
     )
 
@@ -2272,6 +2275,24 @@ def get_open_kreditraten_for_row(docname: str, row_name: str) -> Dict[str, Any]:
         supplier=supplier,
         reference_text=row.get("verwendungszweck"),
     )
+
+    # Statement-Hint: kann die Rate direkt aus dem Verwendungszweck angelegt werden?
+    # Fall: keine vorhandene Planrate, aber "AZ … Tilgung X Zinsen Y" steht im
+    # Verwendungszweck UND genau ein Kreditvertrag (Bankkonto + Vertragsnummer=AZ)
+    # passt. Dann kann der Dialog die Rate anlegen+buchen (statement-getrieben).
+    statement_hints = _extract_loan_match_hints(row.get("verwendungszweck"))
+    can_create_from_statement = False
+    statement_kreditvertrag = None
+    if row.get("richtung") == "Ausgang" and _loan_hints_are_complete(statement_hints):
+        contracts = _find_kreditvertraege_for_statement(
+            bank_account=bt.bank_account,
+            vertragsnummer=statement_hints["vertragsnummer"],
+            supplier=supplier,
+        )
+        if len(contracts) == 1:
+            can_create_from_statement = True
+            statement_kreditvertrag = contracts[0].name
+
     return {
         "bank_account": bt.bank_account,
         "bank_transaction": bt.name,
@@ -2279,6 +2300,9 @@ def get_open_kreditraten_for_row(docname: str, row_name: str) -> Dict[str, Any]:
         "amount": flt(row.betrag),
         "supplier": supplier,
         "candidates": candidates,
+        "statement_hints": statement_hints,
+        "can_create_from_statement": can_create_from_statement,
+        "kreditvertrag": statement_kreditvertrag,
     }
 
 
@@ -2327,4 +2351,73 @@ def assign_kreditrate_to_bank_row(
         "journal_entry": je_name,
         "kreditvertrag": result["kreditvertrag"],
         "row_idx": result["row_idx"],
+    }
+
+
+@frappe.whitelist()
+def book_kreditrate_from_statement_for_row(docname: str, row_name: str) -> Dict[str, Any]:
+    """Legt eine Kreditrate aus dem Kontoauszug-Verwendungszweck an und bucht sie.
+
+    Für den Fall, dass noch keine Planrate existiert (z.B. Darlehen ohne erfassten
+    Tilgungsplan): nutzt den Statement-Hint (AZ + Tilgung + Zinsen). Bei genau
+    einem passenden Vertrag (Bankkonto + Vertragsnummer=AZ) legt
+    ``link_bank_transaction_to_kreditvertrag_rate`` die Rate an, erzeugt den JE mit
+    Zins-/Tilgungs-Split und reconciled die Bank Transaction (inkl. Savepoint-
+    Rollback). Spiegelt die Logik des Auto-Match-Loops in ``create_bank_transactions``
+    für eine einzelne, bereits importierte Zeile.
+    """
+    from hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag import (
+        link_bank_transaction_to_kreditvertrag_rate,
+    )
+
+    doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
+    if row.get("richtung") != "Ausgang":
+        frappe.throw("Kreditraten-Buchung ist nur für Ausgänge möglich.")
+
+    result = link_bank_transaction_to_kreditvertrag_rate(
+        bank_account=bt.bank_account,
+        posting_date=bt.date,
+        amount=row.get("betrag"),
+        bank_transaction=bt.name,
+        supplier=row.get("party") if row.get("party_type") == "Supplier" else None,
+        reference_text=row.get("verwendungszweck"),
+    )
+
+    if result and result.get("match_count") == 1:
+        je_name = result["journal_entry"]
+        row.db_set("journal_entry", je_name)
+        _set_row_payment_document(row, "Journal Entry", je_name)
+        row.db_set("row_status", "success")
+        if result.get("created_from_statement"):
+            msg = (
+                f"Kreditrate aus Kontoauszug angelegt und gebucht: "
+                f"{result['kreditvertrag']} Zeile {result['row_idx']} → {je_name}"
+            )
+        else:
+            msg = (
+                f"Kreditrate gebucht: {result['kreditvertrag']} "
+                f"Zeile {result['row_idx']} → {je_name}"
+            )
+        row.db_set("auto_match_message", msg)
+        _recompute_doc_status(docname)
+        _refresh_and_persist_saldo(docname)
+        return {
+            "ok": True,
+            "journal_entry": je_name,
+            "kreditvertrag": result["kreditvertrag"],
+            "row_idx": result["row_idx"],
+            "created_from_statement": bool(result.get("created_from_statement")),
+        }
+
+    # Kein eindeutiges Ergebnis (blocked / 0 / >1 Treffer) — kein Throw, damit der
+    # Dialog die Begründung anzeigen kann.
+    message = (result.get("message") if result else None) or (
+        "Keine eindeutige Kreditrate aus dem Kontoauszug ableitbar — bitte "
+        "Kreditvertrag (Vertragsnummer = AZ) und Verwendungszweck prüfen."
+    )
+    return {
+        "ok": False,
+        "blocked": bool(result and result.get("blocked")),
+        "match_count": (result.get("match_count") if result else 0) or 0,
+        "message": message,
     }

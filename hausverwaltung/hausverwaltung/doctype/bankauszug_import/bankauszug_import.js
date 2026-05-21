@@ -934,6 +934,66 @@ function _openKreditrateDialog(frm, row) {
     const escape = (v) => frappe.utils.escape_html(v || '');
 
     if (!candidates.length) {
+      // Keine vorhandene Planrate — aber evtl. aus dem Verwendungszweck anlegbar
+      // (Darlehen ohne erfassten Tilgungsplan: "AZ … Tilgung X Zinsen Y").
+      if (data.can_create_from_statement) {
+        const h = data.statement_hints || {};
+        const cd = new frappe.ui.Dialog({
+          title: __('Rate aus Kontoauszug anlegen — Zeile {0}', [row.idx]),
+          fields: [{
+            fieldtype: 'HTML',
+            fieldname: 'body',
+            options: `
+              <div style="font-size:12px;">
+                <p>${__('Keine offene Planrate gefunden. Aus dem Verwendungszweck kann eine Kreditrate für folgenden Vertrag angelegt und gebucht werden:')}</p>
+                <table style="width:100%; border-collapse:collapse;">
+                  <tr><td style="padding:3px 8px; color:#888;">${__('Kreditvertrag')}</td>
+                      <td style="padding:3px 8px;"><a href="/app/kreditvertrag/${encodeURIComponent(data.kreditvertrag || '')}" target="_blank">${escape(data.kreditvertrag)}</a></td></tr>
+                  <tr><td style="padding:3px 8px; color:#888;">${__('Vertragsnummer (AZ)')}</td>
+                      <td style="padding:3px 8px;">${escape(h.vertragsnummer)}</td></tr>
+                  <tr><td style="padding:3px 8px; color:#888;">${__('Zinsanteil')}</td>
+                      <td style="padding:3px 8px; text-align:right;">${fmt(h.zinsanteil)}</td></tr>
+                  <tr><td style="padding:3px 8px; color:#888;">${__('Tilgungsanteil')}</td>
+                      <td style="padding:3px 8px; text-align:right;">${fmt(h.tilgungsanteil)}</td></tr>
+                  <tr style="border-top:1px solid #ddd;"><td style="padding:3px 8px;"><strong>${__('Summe (Bank-Betrag)')}</strong></td>
+                      <td style="padding:3px 8px; text-align:right;"><strong>${fmt(data.amount)}</strong></td></tr>
+                </table>
+                <div style="margin-top:6px; font-size:11px; color:#888;">
+                  ${__('Es wird ein Journal Entry mit Zins-/Tilgungs-Split erzeugt und die Bank Transaction direkt verknüpft.')}
+                </div>
+              </div>`,
+          }],
+          primary_action_label: __('Anlegen & buchen'),
+          primary_action() {
+            cd.disable_primary_action();
+            frappe.call({
+              method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.book_kreditrate_from_statement_for_row',
+              args: { docname: frm.doc.name, row_name: row.name },
+              freeze: true,
+              freeze_message: __('Buchung wird erstellt…'),
+            }).then((res) => {
+              const m = (res && res.message) || {};
+              if (m.ok) {
+                frappe.show_alert({
+                  message: __('Kreditrate gebucht: {0} → {1}', [m.kreditvertrag, m.journal_entry]),
+                  indicator: 'green',
+                });
+                cd.hide();
+                frm.reload_doc();
+              } else {
+                frappe.msgprint({
+                  title: __('Nicht gebucht'),
+                  message: m.message || __('Buchung aus Kontoauszug nicht möglich.'),
+                  indicator: 'orange',
+                });
+                cd.enable_primary_action();
+              }
+            }).catch(() => cd.enable_primary_action());
+          },
+        });
+        cd.show();
+        return;
+      }
       frappe.msgprint({
         title: __('Keine passende Kreditrate'),
         message: __(
