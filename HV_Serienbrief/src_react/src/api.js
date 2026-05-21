@@ -71,10 +71,21 @@ export async function loadBausteine() {
 	return await rpc("bausteine");
 }
 
-// Platzhalter-Katalog, abgeleitet aus dem objekt (haupt_verteil_objekt) + Nutzung.
-export async function loadPlaceholders(doctype) {
-	if (!embedded) return { groups: PLACEHOLDER_GROUPS };
-	return await rpc("placeholders", { doctype: doctype || "" });
+// Voller Platzhalter-Baum (Parität zum alten Formular-Picker): Gruppen mit
+// rekursivem Feld-Baum, abgeleitet aus dem Iterationsobjekt + Variablen + Referenzen.
+export async function loadPlaceholderTree(name) {
+	if (!embedded) {
+		// Mock: flache Gruppen in Baum-Form überführen
+		return {
+			groups: PLACEHOLDER_GROUPS.map((g) => ({
+				key: g.key,
+				label: g.label,
+				icon: g.icon,
+				tree: g.items.map((it) => ({ label: it.label, token: it.token, type: "", children: [] })),
+			})),
+		};
+	}
+	return await rpc("placeholder_tree", { name: name || "" });
 }
 
 // Echte Empfänger (z. B. Mietverträge) für den Vorschau-Picker.

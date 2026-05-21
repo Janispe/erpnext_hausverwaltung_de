@@ -7,7 +7,7 @@ import { PdfMaximized } from "./components/PdfMaximized.jsx";
 import { CURRENT_TEMPLATE, TEMPLATE_TREE } from "./data.js";
 import {
   loadTree, loadTemplate, saveTemplate,
-  loadPlaceholders, loadBausteine, loadRecipients, renderPreview,
+  loadPlaceholderTree, loadBausteine, loadRecipients, renderPreview,
   embedded,
 } from "./api.js";
 
@@ -197,10 +197,10 @@ export const App = () => {
     loadRecipients().then(r => setRecipients(r.items || [])).catch(() => {});
   }, []);
 
-  // Platzhalter aus dem objekt (haupt_verteil_objekt) der aktuellen Vorlage ableiten.
+  // Platzhalter-Baum der aktuellen Vorlage laden (Objekt-Felder + Variablen + Referenzen).
   useEffect(() => {
-    loadPlaceholders(template.haupt_verteil_objekt).then(r => setPlaceholders(r.groups || [])).catch(() => {});
-  }, [template.haupt_verteil_objekt]);
+    loadPlaceholderTree(template.id).then(r => setPlaceholders(r.groups || [])).catch(() => {});
+  }, [template.id]);
 
   const searchRecipients = useCallback((q) => {
     loadRecipients(template.haupt_verteil_objekt, q)

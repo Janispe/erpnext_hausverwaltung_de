@@ -21,7 +21,7 @@ const RPC_ACTIONS = {
 	template: HV_SB + "get_editor_template",
 	save: HV_SB + "save_editor_template",
 	bausteine: HV_SB + "get_editor_bausteine",
-	placeholders: HV_SB + "get_editor_placeholders",
+	placeholder_tree: HV_SB + "get_editor_placeholder_tree",
 	recipients: HV_SB + "get_editor_recipients",
 	preview: HV_SB + "render_template_preview_pdf",
 };

@@ -120,28 +120,75 @@ const PreviewPane = ({ template, recipient, recipients, onChangeRecipient, onSea
 };
 
 // =========================
-// Placeholder pane (echt)
+// Placeholder pane — rekursiver Baum (Parität zum alten Formular-Picker)
 // =========================
+const nodeMatches = (n, q) =>
+  (n.label || "").toLowerCase().includes(q) || (n.token || "").toLowerCase().includes(q);
+
+function filterNodes(nodes, q) {
+  if (!q) return nodes || [];
+  const out = [];
+  for (const n of nodes || []) {
+    const kids = filterNodes(n.children, q);
+    if (nodeMatches(n, q) || kids.length) out.push({ ...n, children: kids });
+  }
+  return out;
+}
+
+export function countTokens(nodes) {
+  let c = 0;
+  for (const n of nodes || []) {
+    if (n.token) c++;
+    c += countTokens(n.children);
+  }
+  return c;
+}
+
+const TreeNode = ({ node, depth, onInsert, expandAll }) => {
+  const [open, setOpen] = useState(false);
+  const hasChildren = (node.children || []).length > 0;
+  const isOpen = expandAll || open;
+  return (
+    <div className="ph-tree-node">
+      <div className="ph-tree-row" style={{ paddingLeft: 6 + depth * 14 }}>
+        {hasChildren ? (
+          <span className="ph-tree-chev" onClick={() => setOpen(o => !o)}>
+            <Icon name="chevron-right" size={11} style={{ transform: isOpen ? "rotate(90deg)" : "none" }}/>
+          </span>
+        ) : (
+          <span className="ph-tree-chev spacer"/>
+        )}
+        <span
+          className="ph-tree-label"
+          draggable={!!node.token}
+          onDragStart={node.token ? (e) => {
+            e.dataTransfer.setData("application/json", JSON.stringify({ kind: "placeholder", token: node.token }));
+            e.dataTransfer.effectAllowed = "copy";
+          } : undefined}
+          onClick={() => (node.token ? onInsert(node.token) : hasChildren && setOpen(o => !o))}
+          title={node.token ? `Einfügen: ${node.token}` : node.label}
+        >
+          {node.label}
+          {node.token && <span className="ph-tree-token">{node.token}</span>}
+        </span>
+        {node.token && (
+          <button className="ph-tree-insert" onClick={() => onInsert(node.token)} title="Einfügen">+</button>
+        )}
+      </div>
+      {hasChildren && isOpen && (node.children || []).map((c, i) => (
+        <TreeNode key={i} node={c} depth={depth + 1} onInsert={onInsert} expandAll={expandAll}/>
+      ))}
+    </div>
+  );
+};
+
 const PlaceholderPane = ({ groups, onInsert }) => {
   const [q, setQ] = useState("");
-
-  const filtered = useMemo(() => {
-    const query = q.trim().toLowerCase();
-    if (!query) return groups;
-    return groups.map(g => ({
-      ...g,
-      items: g.items.filter(it =>
-        (it.label || "").toLowerCase().includes(query) ||
-        (it.token || "").toLowerCase().includes(query) ||
-        (it.hint || "").toLowerCase().includes(query)
-      ),
-    })).filter(g => g.items.length > 0);
-  }, [q, groups]);
-
-  const onDragStart = (e, token) => {
-    e.dataTransfer.setData("application/json", JSON.stringify({ kind: "placeholder", token }));
-    e.dataTransfer.effectAllowed = "copy";
-  };
+  const query = q.trim().toLowerCase();
+  const filtered = useMemo(
+    () => (groups || []).map(g => ({ ...g, tree: filterNodes(g.tree, query) })).filter(g => (g.tree || []).length),
+    [groups, query]
+  );
 
   return (
     <div className="ph-pane">
@@ -150,7 +197,7 @@ const PlaceholderPane = ({ groups, onInsert }) => {
           <span className="icon-left"><Icon name="search" size={13}/></span>
           <input className="ph-search-input" placeholder="Platzhalter suchen…" value={q} onChange={e => setQ(e.target.value)}/>
         </div>
-        <div className="ph-hint">Felder des Objekts (objekt.*) + genutzte Platzhalter · Klicken zum Einfügen · Zahl = Häufigkeit</div>
+        <div className="ph-hint">Felder des Objekts (rekursiv) + Variablen · Klicken oder Ziehen zum Einfügen</div>
       </div>
 
       {filtered.map(g => (
@@ -158,30 +205,16 @@ const PlaceholderPane = ({ groups, onInsert }) => {
           <div className="ph-group-title">
             <Icon name={g.icon || "tag"} size={12}/>
             <span>{g.label}</span>
-            <span className="ph-group-count">{g.items.length}</span>
+            <span className="ph-group-count">{countTokens(g.tree)}</span>
           </div>
-          {g.items.map((it, i) => (
-            <div
-              key={i}
-              className="ph-item"
-              draggable
-              onDragStart={e => onDragStart(e, it.token)}
-              onClick={() => onInsert(it.token)}
-              title={`Klicken zum Einfügen: ${it.token}`}
-            >
-              <span style={{ color: "var(--text-faint)", paddingTop: 2 }}><Icon name="drag" size={12}/></span>
-              <div className="ph-text">
-                <div className="ph-label">{it.hint || it.label}</div>
-                <span className="ph-token">{it.token}</span>
-              </div>
-              {it.count > 0 && <div className="ph-insert" title={`${it.count}× in Vorlagen verwendet`}>{it.count}</div>}
-            </div>
+          {(g.tree || []).map((n, i) => (
+            <TreeNode key={i} node={n} depth={0} onInsert={onInsert} expandAll={!!query}/>
           ))}
         </div>
       ))}
 
       {filtered.length === 0 && (
-        <div className="empty-hint" style={{ marginTop: 24 }}>Keine Platzhalter für „{q}".</div>
+        <div className="empty-hint" style={{ marginTop: 24 }}>Keine Platzhalter{query ? ` für „${q}"` : ""}.</div>
       )}
     </div>
   );
@@ -277,7 +310,7 @@ export const Sidebar = ({
   previewPdf, previewLoading, previewError, previewMode, onRefreshPreview,
   onInsertPlaceholder, onInsertBaustein, onMaximizePreview, onResizeStart,
 }) => {
-  const phCount = (placeholders || []).reduce((n, g) => n + g.items.length, 0);
+  const phCount = (placeholders || []).reduce((n, g) => n + countTokens(g.tree), 0);
   const bsCount = (bausteine || []).length;
   const varCount = (template.variables || []).length;
 

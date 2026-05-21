@@ -1477,117 +1477,208 @@ _PLACEHOLDER_ICONS = {
 }
 
 
-# Layout-/Nicht-Wert-Feldtypen, die keine Platzhalter ergeben.
-_SKIP_FIELDTYPES = {
+# Platzhalter-Baum (Parität zum alten Formular-Picker in serienbrief_vorlage.js).
+# Feldtypen ohne Platzhalter-Wert bzw. Link-Ziele, in die nicht verzweigt wird.
+_TREE_SKIP_TYPES = {
+	"Table",
+	"Table MultiSelect",
 	"Section Break",
 	"Column Break",
 	"Tab Break",
-	"HTML",
-	"Button",
-	"Heading",
 	"Fold",
-	"Table",
-	"Table MultiSelect",
+	"Button",
+	"HTML",
 	"Image",
-	"Geolocation",
-	"Signature",
-	"Barcode",
+	"Attach",
+	"Attach Image",
+}
+_TREE_SKIP_LINK_TARGETS = {
+	"DocType",
+	"DocField",
+	"DocPerm",
+	"DocType Action",
+	"DocType Link",
+	"DocType State",
+	"DocType Layout",
+	"DocType Layout Field",
 }
 
 
-def _mine_template_tokens() -> Dict[str, Dict[str, Any]]:
-	"""Distinkte, tatsächlich verwendete Platzhalter-Pfade aus allen Vorlagen.
-	Haupt-Format {{$ pfad $}} (kanonisch) + einfache {{ pfad }}. → pfad → entry."""
-	rows = frappe.get_all(
-		"Serienbrief Vorlage",
-		filters={"docstatus": ["<", 2]},
-		fields=["content", "html_content"],
-	)
-	custom_re = re.compile(r"\{\{\$\s*(.+?)\s*\$\}\}", re.S)
-	std_re = re.compile(r"\{\{\s*([^{}$][^{}]*?)\s*\}\}", re.S)
-	simple_re = re.compile(r"^[A-Za-z_][\w.\[\]]*$")
+def _ph(path: str) -> str:
+	return f"{{{{$ {path} $}}}}"
 
-	items: Dict[str, Dict[str, Any]] = {}
 
-	def add(path: str, token: str, is_custom: bool):
-		entry = items.get(path)
-		if entry is None:
-			items[path] = {"token": token, "label": path, "count": 1, "hint": ""}
-		else:
-			entry["count"] += 1
-			if is_custom:
-				entry["token"] = token
+def _safe_meta(doctype: str):
+	try:
+		return frappe.get_meta(doctype)
+	except Exception:
+		return None
 
-	for r in rows:
-		for src in (r.content, r.html_content):
-			if not src:
+
+def _build_tree_nodes(base_key, base_label, meta, visited, depth, max_depth):
+	"""Rekursive Feld-Knoten (Link-Felder verzweigen bis max_depth). Mirror von
+	hv_vorlage_build_tree_nodes im Formular-JS."""
+	nodes = []
+	for df in meta.fields:
+		if not getattr(df, "fieldname", None) or df.fieldtype in _TREE_SKIP_TYPES:
+			continue
+		label = df.label or df.fieldname
+		nodes.append(
+			{"label": f"{base_label}: {label}", "token": _ph(f"{base_key}.{df.fieldname}"),
+			 "type": df.fieldtype, "children": []}
+		)
+		if (
+			df.fieldtype == "Link"
+			and df.options
+			and df.options not in _TREE_SKIP_LINK_TARGETS
+			and df.options not in visited
+			and depth < max_depth
+		):
+			target_meta = _safe_meta(df.options)
+			if not target_meta:
 				continue
-			for match in custom_re.finditer(src):
-				path = match.group(1).strip()
-				if simple_re.match(path):
-					add(path, f"{{{{$ {path} $}}}}", True)
-			for match in std_re.finditer(src):
-				inner = match.group(1).strip()
-				if not inner or "baustein(" in inner or "textbaustein(" in inner:
-					continue
-				if not simple_re.match(inner):
-					continue
-				add(inner, f"{{{{ {inner} }}}}", False)
-	return items
+			target_key = f"{base_key}.{df.fieldname}"
+			child_nodes = _build_tree_nodes(
+				target_key, df.options, target_meta, visited | {df.options}, depth + 1, max_depth
+			)
+			if child_nodes:
+				nodes.append(
+					{"label": f"{label} → {df.options}", "token": _ph(f"{target_key}.name"),
+					 "type": "Link", "children": child_nodes}
+				)
+	return nodes
+
+
+def _build_iteration_tree(dt):
+	"""Baum für das Iterationsobjekt (Root = ``objekt``). Mirror von
+	hv_vorlage_build_iteration_tree. Pro Doctype gecached (Tiefe-2-Rekursion ist
+	teuer), Invalidierung über bench clear-cache."""
+	cache = frappe.cache()
+	cache_key = f"hv_editor_ph_tree:{dt}"
+	cached = cache.get_value(cache_key)
+	if cached:
+		try:
+			return json.loads(cached)
+		except Exception:
+			pass
+
+	meta = _safe_meta(dt)
+	if not meta:
+		return []
+	nodes = [{"label": _("Name"), "token": _ph("objekt.name"), "type": "Name", "children": []}]
+	for df in meta.fields:
+		if not getattr(df, "fieldname", None) or df.fieldtype in _TREE_SKIP_TYPES:
+			continue
+		label = df.label or df.fieldname
+		if df.fieldtype == "Link" and df.options and df.options not in _TREE_SKIP_LINK_TARGETS:
+			target_meta = _safe_meta(df.options)
+			if target_meta:
+				child_nodes = _build_tree_nodes(
+					f"objekt.{df.fieldname}", df.options, target_meta, {df.options}, 0, 2
+				)
+				if child_nodes:
+					nodes.append(
+						{"label": f"{label} → {df.options}", "token": _ph(f"objekt.{df.fieldname}.name"),
+						 "type": "Link", "children": child_nodes}
+					)
+		nodes.append(
+			{"label": label, "token": _ph(f"objekt.{df.fieldname}"), "type": df.fieldtype, "children": []}
+		)
+
+	try:
+		cache.set_value(cache_key, json.dumps(nodes))
+	except Exception:
+		pass
+	return nodes
 
 
 @frappe.whitelist()
-def get_editor_placeholders(doctype: str | None = None) -> Dict[str, Any]:
-	"""Platzhalter-Katalog, abgeleitet aus dem Haupt-Verteil-Objekt (= ``objekt``):
-	dessen direkte Felder aus der Doctype-Meta + die tatsächlich in Vorlagen
-	verwendeten Pfade (mit Häufigkeit). Token-Format {{$ objekt.feld $}}."""
+def get_editor_placeholder_tree(name: str | None = None) -> Dict[str, Any]:
+	"""Voller Platzhalter-Baum wie im alten Formular-Picker: Gruppen Allgemein,
+	Vorlagen-Variablen, Iterationsobjekt (rekursiver Feld-Baum) und Referenz
+	(aus den Vorlagen-/Baustein-Anforderungen)."""
 	if not frappe.has_permission("Serienbrief Vorlage", "read"):
 		frappe.throw(_("Keine Berechtigung, Serienbrief Vorlagen zu lesen."), frappe.PermissionError)
 
-	dt = (doctype or "Mietvertrag").strip()
-	items = _mine_template_tokens()
+	doc = None
+	template_name = (name or "").strip()
+	if template_name and frappe.db.exists("Serienbrief Vorlage", template_name):
+		doc = frappe.get_doc("Serienbrief Vorlage", template_name)
 
-	# Direkte Felder von ``objekt`` (= haupt_verteil_objekt) aus der Meta ableiten.
+	dt = (getattr(doc, "haupt_verteil_objekt", None) or "Mietvertrag").strip() if doc else "Mietvertrag"
+
+	groups: List[Dict[str, Any]] = [
+		{
+			"key": "allgemein",
+			"label": _("Allgemein"),
+			"icon": "calendar",
+			"tree": [
+				{"label": _("Datum (formatiert)"), "token": "{{ datum }}", "type": "", "children": []},
+				{"label": _("Datum (ISO)"), "token": "{{ datum_iso }}", "type": "", "children": []},
+			],
+		}
+	]
+
+	# Vorlagen-Variablen
+	if doc:
+		var_nodes = [
+			{"label": v.label or v.variable, "token": f"{{{{ {frappe.scrub(v.variable)} }}}}",
+			 "type": v.variable_type or "", "children": []}
+			for v in (doc.variables or [])
+			if getattr(v, "variable", None)
+		]
+		if var_nodes:
+			groups.append(
+				{"key": "variablen", "label": _("Vorlagen-Variablen"), "icon": "tag", "tree": var_nodes}
+			)
+
+	# Iterationsobjekt (objekt)
 	if dt and frappe.db.exists("DocType", dt):
-		meta = frappe.get_meta(dt)
-		for df in meta.fields:
-			if not getattr(df, "fieldname", None) or df.fieldtype in _SKIP_FIELDTYPES:
+		tree = _build_iteration_tree(dt)
+		if tree:
+			groups.append(
+				{"key": "objekt", "label": f"{_('Iterationsobjekt')}: {dt}", "icon": "user", "tree": tree}
+			)
+
+	# Referenz-Felder aus Anforderungen (Bausteine/Vorlage)
+	if doc:
+		try:
+			from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+				get_template_requirements,
+			)
+
+			requirements = get_template_requirements(template=doc.name) or {}
+		except Exception:
+			requirements = {}
+		refs = [*(requirements.get("required_fields") or []), *(requirements.get("auto_fields") or [])]
+		seen = set()
+		for ref in refs:
+			ref_dt = str((ref or {}).get("doctype") or "").strip()
+			fieldname = str((ref or {}).get("fieldname") or "").strip()
+			if not ref_dt or not fieldname:
 				continue
-			path = f"objekt.{df.fieldname}"
-			label_hint = _(df.label) if getattr(df, "label", None) else ""
-			entry = items.get(path)
-			if entry is None:
-				items[path] = {
-					"token": f"{{{{$ {path} $}}}}",
-					"label": path,
-					"count": 0,
-					"hint": label_hint,
+			is_list = bool((ref or {}).get("is_list"))
+			signature = f"{fieldname}::{ref_dt}::{'list' if is_list else 'single'}"
+			if signature in seen or not frappe.db.exists("DocType", ref_dt):
+				continue
+			seen.add(signature)
+			ref_meta = _safe_meta(ref_dt)
+			if not ref_meta:
+				continue
+			tree_key = f"{fieldname}[0]" if is_list else fieldname
+			ref_tree = _build_tree_nodes(tree_key, ref_dt, ref_meta, {ref_dt}, 0, 2)
+			if not ref_tree:
+				continue
+			groups.append(
+				{
+					"key": f"ref_{signature}",
+					"label": f"{_('Referenz')}: {(ref or {}).get('label') or fieldname} ({ref_dt})",
+					"icon": "tag",
+					"tree": ref_tree,
 				}
-			elif label_hint and not entry.get("hint"):
-				entry["hint"] = label_hint
+			)
 
-	groups: Dict[str, List[Dict[str, Any]]] = {}
-	for path, entry in items.items():
-		prefix = re.split(r"[.\[]", path, 1)[0]
-		groups.setdefault(prefix, []).append(entry)
-
-	# Gruppen-Reihenfolge: objekt zuerst, dann nach Häufigkeit/Name.
-	def group_rank(key: str) -> tuple:
-		return (0 if key == "objekt" else 1, key)
-
-	out = []
-	for key in sorted(groups, key=group_rank):
-		# verwendete (count>0) zuerst nach Häufigkeit, dann ungenutzte alphabetisch
-		group_items = sorted(groups[key], key=lambda it: (0 if it["count"] else 1, -it["count"], it["label"]))
-		out.append(
-			{
-				"key": key,
-				"label": key,
-				"icon": _PLACEHOLDER_ICONS.get(key, "tag"),
-				"items": group_items,
-			}
-		)
-	return {"groups": out, "total": len(items), "doctype": dt}
+	return {"groups": groups, "doctype": dt}
 
 
 @frappe.whitelist()
