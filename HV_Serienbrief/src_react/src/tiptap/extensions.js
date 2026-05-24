@@ -19,7 +19,6 @@ import TextAlign from "@tiptap/extension-text-align";
 import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
 import TextStyle from "@tiptap/extension-text-style";
-import Color from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
 import Superscript from "@tiptap/extension-superscript";
 import Subscript from "@tiptap/extension-subscript";
@@ -210,10 +209,12 @@ export const HvTableHeader = TableHeader.extend({
 	},
 });
 
-// font-size erhalten (kommt im aktuellen Bestand nicht vor, aber Vorsorge gegen künftige
-// Imports/Paste; hängt als Attribut am textStyle-Mark).
-const FontSize = Extension.create({
-	name: "hvFontSize",
+// TextStyle-Zusätze: Schriftgröße + Textfarbe (ersetzt @tiptap/extension-color, weil wir die
+// Farbe mit !important rendern müssen). Grund: Frappes Print-Bundle hat im PDF-Render eine
+// globale Regel `@media print { *,*:before,*:after { color:#000 !important } }`, die jede
+// Inline-Farbe ohne !important überschreibt. Inline-!important schlägt das universelle !important.
+const TextStyleExtras = Extension.create({
+	name: "hvTextStyleExtras",
 	addGlobalAttributes() {
 		return [
 			{
@@ -224,6 +225,12 @@ const FontSize = Extension.create({
 						parseHTML: (el) => el.style.fontSize || null,
 						renderHTML: (attrs) =>
 							attrs.fontSize ? { style: `font-size: ${attrs.fontSize}` } : {},
+					},
+					color: {
+						default: null,
+						parseHTML: (el) => (el.style.color ? el.style.color : null),
+						renderHTML: (attrs) =>
+							attrs.color ? { style: `color: ${attrs.color} !important` } : {},
 					},
 				},
 			},
@@ -239,6 +246,14 @@ const FontSize = Extension.create({
 				() =>
 				({ chain }) =>
 					chain().setMark("textStyle", { fontSize: null }).removeEmptyTextStyle().run(),
+			setColor:
+				(color) =>
+				({ chain }) =>
+					chain().setMark("textStyle", { color }).run(),
+			unsetColor:
+				() =>
+				({ chain }) =>
+					chain().setMark("textStyle", { color: null }).removeEmptyTextStyle().run(),
 		};
 	},
 });
@@ -252,11 +267,10 @@ export function buildExtensions() {
 		Underline,
 		Superscript,
 		Subscript,
-		FontSize,
 		TextAlign.configure({ types: ["heading", "paragraph"] }),
 		Link.configure({ openOnClick: false, autolink: false }),
 		TextStyle,
-		Color,
+		TextStyleExtras,
 		Highlight.configure({ multicolor: true }),
 		Image.configure({ inline: false, allowBase64: false }),
 		Table.configure({ resizable: true }),
