@@ -1706,6 +1706,12 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   opacity: 0.85;
 }
 
+/* Jinja-Knoten sind per Doppelklick editierbar -> klickbar signalisieren */
+.tiptap-surface .jinja-block,
+.tiptap-surface .jinja-token { cursor: pointer; }
+.tiptap-surface .jinja-block:hover,
+.tiptap-surface .jinja-token:hover { outline: 1px solid var(--primary); outline-offset: 1px; }
+
 /* Block-Level-Jinja ({% if %}/{% for %} als eigene Zeile zwischen Blöcken) */
 .tiptap-surface .jinja-block {
   display: block;

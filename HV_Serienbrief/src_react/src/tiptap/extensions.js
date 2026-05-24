@@ -39,6 +39,54 @@ function bausteinLabel(token) {
 	return m ? m[1] : token || "";
 }
 
+// NodeView für die (atomaren) Jinja-Knoten: Doppelklick öffnet einen Prompt zum Bearbeiten des
+// Ausdrucks (z. B. BEDINGUNG -> mahnstufe == "2"). Serialisierung läuft weiter über renderHTML.
+function makeJinjaNodeView(tag, className, kind) {
+	return ({ node, editor, getPos }) => {
+		let current = node;
+		const dom = document.createElement(tag);
+		dom.className = className;
+		dom.setAttribute("data-hv-kind", kind);
+		dom.textContent = node.attrs.token;
+		dom.title = "Doppelklick: Jinja-Ausdruck bearbeiten";
+		dom.addEventListener("dblclick", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			if (!editor.isEditable) return;
+			const next = window.prompt(
+				'Jinja-Ausdruck bearbeiten (z. B. {% if mahnstufe == "2" %}):',
+				current.attrs.token
+			);
+			if (next == null) return;
+			const token = next.trim();
+			if (!/^\{%[\s\S]*%\}$/.test(token)) {
+				window.alert("Der Ausdruck muss mit {% beginnen und mit %} enden.");
+				return;
+			}
+			const pos = typeof getPos === "function" ? getPos() : null;
+			if (pos == null) return;
+			editor
+				.chain()
+				.focus()
+				.command(({ tr }) => {
+					tr.setNodeMarkup(pos, undefined, { ...current.attrs, token });
+					return true;
+				})
+				.run();
+		});
+		return {
+			dom,
+			update: (updated) => {
+				if (updated.type.name !== current.type.name) return false;
+				current = updated;
+				dom.textContent = updated.attrs.token;
+				return true;
+			},
+			ignoreMutation: () => true,
+		};
+	};
+}
+
 const tokenAttr = {
 	default: "",
 	parseHTML: (el) => el.getAttribute("data-hv-token") || el.getAttribute("data-token") || "",
@@ -129,6 +177,9 @@ export const JinjaInlineNode = Node.create({
 			node.attrs.token,
 		];
 	},
+	addNodeView() {
+		return makeJinjaNodeView("span", "jinja-token", "jinja-inline");
+	},
 });
 
 export const JinjaBlockNode = Node.create({
@@ -148,6 +199,9 @@ export const JinjaBlockNode = Node.create({
 			mergeAttributes(HTMLAttributes, { class: "jinja-block", "data-hv-kind": "jinja-block" }),
 			node.attrs.token,
 		];
+	},
+	addNodeView() {
+		return makeJinjaNodeView("div", "jinja-block", "jinja-block");
 	},
 });
 
