@@ -161,20 +161,26 @@ export const BausteinNode = Node.create({
 			dom.className = "chip baustein-chip";
 			dom.setAttribute("data-hv-kind", "baustein");
 			dom.setAttribute("data-group", "baustein");
-			dom.title = "Doppelklick: Input-Pfade konfigurieren";
-			dom.textContent = "\u29C9 " + bausteinLabel(node.attrs.token);
-			dom.addEventListener("dblclick", (e) => {
+			dom.title = "Klick: Details / Input-Pfade";
+			dom.textContent = "\u29C9 " + bausteinLabel(node.attrs.token) + " \u25BE";
+			dom.addEventListener("click", (e) => {
 				e.preventDefault();
 				e.stopPropagation();
 				const name = bausteinLabel(node.attrs.token);
-				if (name) window.dispatchEvent(new CustomEvent("hv-baustein-mapping", { detail: { name } }));
+				if (!name) return;
+				const rect = dom.getBoundingClientRect();
+				window.dispatchEvent(
+					new CustomEvent("hv-baustein-popover", {
+						detail: { name, rect: { left: rect.left, bottom: rect.bottom, top: rect.top } },
+					})
+				);
 			});
 			return {
 				dom,
 				ignoreMutation: () => true,
 				update: (updated) => {
 					if (updated.type.name !== "hvBaustein") return false;
-					dom.textContent = "\u29C9 " + bausteinLabel(updated.attrs.token);
+					dom.textContent = "\u29C9 " + bausteinLabel(updated.attrs.token) + " \u25BE";
 					return true;
 				},
 			};

@@ -5,6 +5,7 @@ import { Editor } from "./components/Editor.jsx";
 import { Sidebar } from "./components/Sidebar.jsx";
 import { PdfMaximized } from "./components/PdfMaximized.jsx";
 import { PfadMappingModal } from "./components/PfadMappingModal.jsx";
+import { BausteinPopover } from "./components/BausteinPopover.jsx";
 import { CURRENT_TEMPLATE, TEMPLATE_TREE } from "./data.js";
 import {
   loadTree, loadTemplate, saveTemplate,
@@ -42,6 +43,7 @@ export const App = () => {
   // Pro-Baustein Input-Pfad-Overrides { "<Baustein>": { "<Variable>": "<Pfad>" } }
   const [bausteinPaths, setBausteinPaths] = useState({});
   const [mappingBaustein, setMappingBaustein] = useState(null);
+  const [popoverBaustein, setPopoverBaustein] = useState(null); // { baustein, rect }
   const contentRef = useRef(null); // Zugriff auf den editierbaren HTML-Inhalt (getHtml)
 
   const changeRecipient = useCallback((r) => setRecipient(r || BEISPIEL), []);
@@ -208,16 +210,17 @@ export const App = () => {
     return out;
   }, [placeholders]);
 
-  // Baustein-Chip im Editor doppelgeklickt -> Pfad-Mapping-Modal öffnen.
+  // Baustein-Chip im Editor geklickt -> Detail-Popover (Inputs/Outputs) aufklappen.
   useEffect(() => {
-    const onMap = (e) => {
+    const onPop = (e) => {
       const name = e.detail && e.detail.name;
       if (!name) return;
-      const bs = (bausteine || []).find((b) => b.name === name);
-      setMappingBaustein(bs || { name, title: name, inputs: [], outputs: [], standardpfade: [] });
+      const bs = (bausteine || []).find((b) => b.name === name) ||
+        { name, title: name, inputs: [], outputs: [], standardpfade: [] };
+      setPopoverBaustein({ baustein: bs, rect: e.detail.rect });
     };
-    window.addEventListener("hv-baustein-mapping", onMap);
-    return () => window.removeEventListener("hv-baustein-mapping", onMap);
+    window.addEventListener("hv-baustein-popover", onPop);
+    return () => window.removeEventListener("hv-baustein-popover", onPop);
   }, [bausteine]);
 
   const searchRecipients = useCallback((q) => {
@@ -363,6 +366,20 @@ export const App = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {popoverBaustein && (
+        <BausteinPopover
+          baustein={popoverBaustein.baustein}
+          hauptVerteilObjekt={template.haupt_verteil_objekt}
+          overrides={bausteinPaths[popoverBaustein.baustein.name] || {}}
+          rect={popoverBaustein.rect}
+          onClose={() => setPopoverBaustein(null)}
+          onEditMapping={() => {
+            setMappingBaustein(popoverBaustein.baustein);
+            setPopoverBaustein(null);
+          }}
+        />
       )}
 
       {mappingBaustein && (
