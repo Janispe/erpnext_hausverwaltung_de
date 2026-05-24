@@ -144,10 +144,31 @@ export function countTokens(nodes) {
   return c;
 }
 
-const TreeNode = ({ node, depth, onInsert, expandAll }) => {
+const TreeNode = ({ node, depth, onInsert, expandAll, tokenTransform }) => {
   const [open, setOpen] = useState(false);
+  const [idx, setIdx] = useState(1); // 1-basiert; welches Child-Element
   const hasChildren = (node.children || []).length > 0;
   const isOpen = expandAll || open;
+  const isTable = node.type === "Tabelle";
+  const xform = tokenTransform || ((t) => t);
+
+  // Für Kinder einer Tabelle: [0] -> [idx-1] (gewähltes Element).
+  const childTransform = isTable ? (t) => xform(t).replace("[0]", `[${idx - 1}]`) : xform;
+  const effToken = node.token ? xform(node.token) : "";
+
+  // "Schleife über alle": Loop-Gerüst aus den Kindern ableiten.
+  const insertLoop = () => {
+    const childTok = (node.children || []).map((c) => c.token).find(Boolean) || "";
+    const m = /\{\{\$\s*(.+?)\[0\]\./.exec(childTok);
+    if (!m) return;
+    const listPath = m[1]; // z.B. objekt.mieter
+    const firstField =
+      (node.children || [])
+        .map((c) => (/\[0\]\.(\w+)/.exec(c.token || "") || [])[1])
+        .find((f) => f && f !== "name") || "name";
+    onInsert(`{% for eintrag in ${listPath} %}\n{{ eintrag.${firstField} }}\n{% endfor %}`);
+  };
+
   return (
     <div className="ph-tree-node">
       <div className="ph-tree-row" style={{ paddingLeft: 6 + depth * 14 }}>
@@ -160,23 +181,38 @@ const TreeNode = ({ node, depth, onInsert, expandAll }) => {
         )}
         <span
           className="ph-tree-label"
-          draggable={!!node.token}
-          onDragStart={node.token ? (e) => {
-            e.dataTransfer.setData("application/json", JSON.stringify({ kind: "placeholder", token: node.token }));
+          draggable={!!effToken}
+          onDragStart={effToken ? (e) => {
+            e.dataTransfer.setData("application/json", JSON.stringify({ kind: "placeholder", token: effToken }));
             e.dataTransfer.effectAllowed = "copy";
           } : undefined}
-          onClick={() => (node.token ? onInsert(node.token) : hasChildren && setOpen(o => !o))}
-          title={node.token ? `Einfügen: ${node.token}` : node.label}
+          onClick={() => (effToken ? onInsert(effToken) : hasChildren && setOpen(o => !o))}
+          title={effToken ? `Einfügen: ${effToken}` : node.label}
         >
           {node.label}
           {node.type && <span className="ph-tree-token ph-tree-type">{node.type}</span>}
         </span>
-        {node.token && (
-          <button className="ph-tree-insert" onClick={() => onInsert(node.token)} title="Einfügen">+</button>
+        {isTable && (
+          <span className="ph-table-tools" onClick={(e) => e.stopPropagation()}>
+            <input
+              className="ph-idx-input"
+              type="number"
+              min={1}
+              value={idx}
+              title="Welches Element (1 = erstes)"
+              onChange={(e) => setIdx(Math.max(1, parseInt(e.target.value, 10) || 1))}
+            />
+            <button className="ph-loop-btn" onClick={insertLoop} title="Schleife über alle Zeilen einfügen">
+              ↻ alle
+            </button>
+          </span>
+        )}
+        {effToken && (
+          <button className="ph-tree-insert" onClick={() => onInsert(effToken)} title="Einfügen">+</button>
         )}
       </div>
       {hasChildren && isOpen && (node.children || []).map((c, i) => (
-        <TreeNode key={i} node={c} depth={depth + 1} onInsert={onInsert} expandAll={expandAll}/>
+        <TreeNode key={i} node={c} depth={depth + 1} onInsert={onInsert} expandAll={expandAll} tokenTransform={childTransform}/>
       ))}
     </div>
   );

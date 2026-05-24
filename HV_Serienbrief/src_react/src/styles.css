@@ -2158,3 +2158,17 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   border-radius: 3px;
   text-transform: none;
 }
+
+/* Platzhalter-Baum: Child-Tabellen-Werkzeuge (Index + Schleife) */
+.ph-table-tools { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+.ph-idx-input {
+  width: 34px; font-size: 11px; padding: 1px 3px;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text-2);
+  text-align: center;
+}
+.ph-loop-btn {
+  font-size: 10.5px; padding: 1px 6px; border: 1px solid var(--border);
+  border-radius: 4px; background: var(--surface-hover, #f0efea); color: var(--primary-hover, #1f73b7);
+  cursor: pointer; white-space: nowrap;
+}
+.ph-loop-btn:hover { border-color: var(--primary); }
