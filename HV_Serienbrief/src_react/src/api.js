@@ -45,6 +45,8 @@ export async function loadTemplate(id) {
 		htmlContent: t.html || "",
 		// Pro-Baustein Input-Pfad-Overrides: { "<Baustein>": { "<Variable>": "<Pfad>" } }
 		bausteinPaths: t.baustein_pfade || {},
+		// Vorlagen-Variablen (Definition + Wert/Pfad), im Editor bearbeitbar.
+		variables: t.variables || [],
 		blocks: [],
 		mock: false,
 	};
@@ -52,7 +54,7 @@ export async function loadTemplate(id) {
 
 // Editierten Inhalt zurück in die Vorlage speichern. Gibt { id, modified } zurück.
 // bausteinPaths = Pro-Baustein Input-Pfad-Overrides (werden als JSON gespeichert).
-export async function saveTemplate(id, html, bausteinPaths) {
+export async function saveTemplate(id, html, bausteinPaths, variables) {
 	if (!embedded) {
 		return { id, modified: "gerade eben (Demo)", mock: true };
 	}
@@ -60,6 +62,7 @@ export async function saveTemplate(id, html, bausteinPaths) {
 		name: id,
 		html,
 		baustein_pfade: JSON.stringify(bausteinPaths || {}),
+		variables: JSON.stringify(variables || []),
 	});
 }
 

@@ -275,27 +275,106 @@ const BausteinePane = ({ items, onInsert }) => {
 };
 
 // =========================
-// Variables pane (echt, read-only)
+// Variables pane (editierbar: anlegen/löschen, Typ + Wert/Pfad)
 // =========================
-const VariablesPane = ({ variables, onInsert }) => {
+const VAR_TYPES = ["Text", "String", "Zahl", "Bool", "Datum", "Doctype", "Doctype Liste"];
+const isDoctypeType = (t) => t === "Doctype" || t === "Doctype Liste";
+
+const VariablesPane = ({ variables, onChange, onInsert, placeholderPaths }) => {
   const vars = variables || [];
+  const update = (i, patch) =>
+    onChange && onChange(vars.map((v, idx) => (idx === i ? { ...v, ...patch } : v)));
+  const remove = (i) => onChange && onChange(vars.filter((_, idx) => idx !== i));
+  const add = () =>
+    onChange &&
+    onChange([
+      ...vars,
+      { variable: "", type: "Text", label: "", reference_doctype: "", value: "", path: "" },
+    ]);
+
   return (
     <div className="var-pane">
       <div style={{ marginBottom: 10, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
-        Vorlagen-Variablen dieser Vorlage. Im Editor als Platzhalter einfügbar; Bearbeiten der Definition erfolgt (noch) im Formular.
+        Vorlagen-Variablen: anlegen, Typ + Wert (Text) bzw. Pfad (Doctype) setzen. Im Brief via{" "}
+        <code>{"{{ name }}"}</code> nutzbar. Speichern oben rechts.
       </div>
-      {vars.length === 0 && (
-        <div className="empty-hint">Keine Variablen in dieser Vorlage.</div>
-      )}
-      {vars.map((v, i) => (
-        <div key={i} className="var-row" onClick={() => onInsert && onInsert(`{{ ${v.variable} }}`)} title={`Einfügen: {{ ${v.variable} }}`} style={{ cursor: "pointer" }}>
-          <div className="var-name-wrap">
-            <div className="var-name">{v.variable}</div>
-            {(v.label || v.beschreibung) && <div className="var-desc">{v.label || v.beschreibung}</div>}
+      <datalist id="hv-var-path-suggestions">
+        {(placeholderPaths || []).map((p, i) => (
+          <option key={i} value={p.path}>{p.type ? `${p.path} · ${p.type}` : p.path}</option>
+        ))}
+      </datalist>
+
+      {vars.map((v, i) => {
+        const dt = isDoctypeType(v.type);
+        return (
+          <div key={i} className="var-edit-row">
+            <div className="var-edit-head">
+              <input
+                className="var-edit-name"
+                placeholder="variablen_name"
+                value={v.variable || ""}
+                onChange={(e) => update(i, { variable: e.target.value })}
+                spellCheck={false}
+              />
+              <select
+                className="var-edit-type"
+                value={v.type || "Text"}
+                onChange={(e) => update(i, { type: e.target.value })}
+              >
+                {VAR_TYPES.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+              <button className="var-edit-del" title="Variable löschen" onClick={() => remove(i)}>
+                <Icon name="x" size={12} />
+              </button>
+            </div>
+
+            {dt ? (
+              <>
+                <input
+                  className="var-edit-sub"
+                  placeholder="Referenz-Doctype (z. B. Immobilie)"
+                  value={v.reference_doctype || ""}
+                  onChange={(e) => update(i, { reference_doctype: e.target.value })}
+                  spellCheck={false}
+                />
+                <input
+                  className="var-edit-sub var-edit-path"
+                  list="hv-var-path-suggestions"
+                  placeholder="Pfad, z. B. objekt.wohnung.immobilie"
+                  value={v.path || ""}
+                  onChange={(e) => update(i, { path: e.target.value })}
+                  spellCheck={false}
+                />
+              </>
+            ) : (
+              <input
+                className="var-edit-sub"
+                placeholder="Wert"
+                value={v.value || ""}
+                onChange={(e) => update(i, { value: e.target.value })}
+              />
+            )}
+
+            <div className="var-edit-actions">
+              <button
+                className="var-insert-btn"
+                disabled={!v.variable}
+                onClick={() => onInsert && onInsert(`{{ ${v.variable} }}`)}
+                title="In den Brief einfügen"
+              >
+                <Icon name="tag" size={11} /> einfügen
+              </button>
+            </div>
           </div>
-          <div className="var-type">{v.type || "—"}</div>
-        </div>
-      ))}
+        );
+      })}
+
+      {vars.length === 0 && <div className="empty-hint">Noch keine Variablen.</div>}
+      <button className="var-add-btn" onClick={add}>
+        <Icon name="plus" size={12} /> Variable hinzufügen
+      </button>
     </div>
   );
 };
@@ -309,10 +388,11 @@ export const Sidebar = ({
   onChangeRecipient, onSearchRecipients,
   previewPdf, previewLoading, previewError, previewMode, onRefreshPreview,
   onInsertPlaceholder, onInsertBaustein, onMaximizePreview, onResizeStart,
+  variables, placeholderPaths, onVariablesChange,
 }) => {
   const phCount = (placeholders || []).reduce((n, g) => n + countTokens(g.tree), 0);
   const bsCount = (bausteine || []).length;
-  const varCount = (template.variables || []).length;
+  const varCount = (variables || []).length;
 
   return (
     <aside className="sidebar">
@@ -340,7 +420,14 @@ export const Sidebar = ({
         )}
         {tab === "placeholders" && <PlaceholderPane groups={placeholders || []} onInsert={onInsertPlaceholder}/>}
         {tab === "bausteine" && <BausteinePane items={bausteine || []} onInsert={onInsertBaustein}/>}
-        {tab === "variables" && <VariablesPane variables={template.variables} onInsert={onInsertPlaceholder}/>}
+        {tab === "variables" && (
+          <VariablesPane
+            variables={variables}
+            onChange={onVariablesChange}
+            onInsert={onInsertPlaceholder}
+            placeholderPaths={placeholderPaths}
+          />
+        )}
       </div>
     </aside>
   );

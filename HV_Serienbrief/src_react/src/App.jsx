@@ -44,6 +44,8 @@ export const App = () => {
   const [bausteinPaths, setBausteinPaths] = useState({});
   const [mappingBaustein, setMappingBaustein] = useState(null);
   const [popoverBaustein, setPopoverBaustein] = useState(null); // { baustein, rect }
+  // Vorlagen-Variablen (Definition + Wert/Pfad), im Editor bearbeitbar.
+  const [variables, setVariables] = useState([]);
   const contentRef = useRef(null); // Zugriff auf den editierbaren HTML-Inhalt (getHtml)
 
   const changeRecipient = useCallback((r) => setRecipient(r || BEISPIEL), []);
@@ -97,6 +99,7 @@ export const App = () => {
         setTemplate(t);
         setTitle(t.title);
         setBausteinPaths(t.bausteinPaths || {});
+        setVariables(t.variables || []);
         setDirty(false);
       } catch (e) {
         setTemplate({
@@ -173,7 +176,7 @@ export const App = () => {
     }
     setSaving(true);
     try {
-      const res = await saveTemplate(template.id, html, bausteinPaths);
+      const res = await saveTemplate(template.id, html, bausteinPaths, variables);
       setDirty(false);
       setTemplate(prev => ({ ...prev, modified: res.modified || prev.modified }));
     } catch (e) {
@@ -326,6 +329,9 @@ export const App = () => {
           onInsertBaustein={insertBaustein}
           onMaximizePreview={() => setPdfMaximized(true)}
           onResizeStart={onResizeStart}
+          variables={variables}
+          placeholderPaths={placeholderPaths}
+          onVariablesChange={(v) => { setVariables(v); setDirty(true); }}
         />
       </div>
 

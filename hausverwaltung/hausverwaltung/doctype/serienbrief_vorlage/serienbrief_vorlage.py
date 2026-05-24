@@ -1383,16 +1383,28 @@ def get_editor_template(name: str | None = None) -> Dict[str, Any]:
 
 	can_write = 1 if frappe.has_permission("Serienbrief Vorlage", "write", doc=doc.name) else 0
 
-	variables = [
-		{
-			"variable": v.variable,
-			"label": v.label or v.variable,
-			"type": v.variable_type,
-			"beschreibung": v.beschreibung,
-		}
-		for v in (doc.variables or [])
-		if getattr(v, "variable", None)
-	]
+	# Werte (Text-Typen) + Pfade (Doctype-Typen) zu den Variablen-Definitionen mergen,
+	# damit der Editor sie anzeigen/bearbeiten kann. variablen_werte = {key:{value,path}},
+	# pfad_zuordnung = {key:path}; key = scrub(variable).
+	werte = _parse_path_mapping(doc.get("variablen_werte"))
+	pfade = _parse_path_mapping(doc.get("pfad_zuordnung"))
+	variables = []
+	for v in doc.variables or []:
+		if not getattr(v, "variable", None):
+			continue
+		key = frappe.scrub(v.variable)
+		entry = werte.get(key) if isinstance(werte.get(key), dict) else {}
+		variables.append(
+			{
+				"variable": v.variable,
+				"label": v.label or v.variable,
+				"type": v.variable_type,
+				"reference_doctype": getattr(v, "reference_doctype", None),
+				"beschreibung": v.beschreibung,
+				"value": (entry or {}).get("value") if entry else (werte.get(key) if not isinstance(werte.get(key), dict) else None),
+				"path": pfade.get(key) or ((entry or {}).get("path") if entry else None),
+			}
+		)
 
 	return {
 		"id": doc.name,
@@ -1412,13 +1424,21 @@ def get_editor_template(name: str | None = None) -> Dict[str, Any]:
 	}
 
 
+_VARIABLE_TEXT_TYPES = {"Text", "String", "Zahl", "Bool", "Datum"}
+
+
 @frappe.whitelist()
 def save_editor_template(
-	name: str | None = None, html: str | None = None, baustein_pfade: str | None = None
+	name: str | None = None,
+	html: str | None = None,
+	baustein_pfade: str | None = None,
+	variables: str | None = None,
 ) -> Dict[str, Any]:
 	"""Editor-Inhalt zurück in die Vorlage schreiben (content bzw. html_content je
 	nach content_type). validate() sanitisiert Rich-Text automatisch.
-	baustein_pfade (JSON) = Pro-Baustein Input-Pfad-Overrides für inline Bausteine."""
+	baustein_pfade (JSON) = Pro-Baustein Input-Pfad-Overrides für inline Bausteine.
+	variables (JSON-Array) = Variablen-Definitionen inkl. Wert (Text) / Pfad (Doctype);
+	rebaut die variables-Child-Tabelle + variablen_werte + pfad_zuordnung."""
 	template_name = (name or "").strip()
 	if not template_name:
 		frappe.throw(_("Bitte eine Vorlage angeben."))
@@ -1436,6 +1456,38 @@ def save_editor_template(
 		# normalisiert als JSON-String ablegen (nur Dicts akzeptieren)
 		parsed = _parse_path_mapping(baustein_pfade)
 		doc.inline_baustein_pfade = frappe.as_json(parsed) if parsed else ""
+	if variables is not None:
+		defs = frappe.parse_json(variables)
+		if isinstance(defs, list):
+			rows, werte, pfade = [], {}, {}
+			for d in defs:
+				if not isinstance(d, dict):
+					continue
+				vname = cstr(d.get("variable")).strip()
+				if not vname:
+					continue
+				vtype = cstr(d.get("variable_type") or d.get("type") or "Text").strip() or "Text"
+				rows.append(
+					{
+						"variable": vname,
+						"variable_type": vtype,
+						"reference_doctype": d.get("reference_doctype") or None,
+						"label": d.get("label") or None,
+						"beschreibung": d.get("beschreibung") or None,
+					}
+				)
+				key = frappe.scrub(vname)
+				if vtype in _VARIABLE_TEXT_TYPES:
+					val = d.get("value")
+					if val not in (None, ""):
+						werte[key] = {"value": val}
+				else:
+					p = cstr(d.get("path")).strip()
+					if p:
+						pfade[key] = p
+			doc.set("variables", rows)
+			doc.variablen_werte = frappe.as_json(werte) if werte else ""
+			doc.pfad_zuordnung = frappe.as_json(pfade) if pfade else ""
 	doc.save()
 
 	return {"id": doc.name, "modified": pretty_date(doc.modified)}

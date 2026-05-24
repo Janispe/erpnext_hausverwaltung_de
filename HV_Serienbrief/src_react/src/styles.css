@@ -2105,3 +2105,45 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   gap: 5px;
 }
 .bp-mapping-btn:hover { background: #245649; }
+/* Variablen-Tab: editierbare Zeilen */
+.var-edit-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  margin-bottom: 8px;
+  background: var(--surface);
+}
+.var-edit-head { display: flex; gap: 6px; align-items: center; }
+.var-edit-name {
+  flex: 1; min-width: 0;
+  font-family: var(--font-mono); font-size: 12px;
+  padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg);
+}
+.var-edit-type {
+  font-size: 11.5px; padding: 4px 4px; border: 1px solid var(--border);
+  border-radius: 4px; background: var(--bg); color: var(--text-2);
+}
+.var-edit-del {
+  width: 24px; height: 24px; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--text-faint);
+}
+.var-edit-del:hover { background: var(--warn-50, #fdf3e7); color: var(--danger, #c0392b); }
+.var-edit-sub {
+  width: 100%; box-sizing: border-box; margin-top: 6px;
+  font-size: 12px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg);
+}
+.var-edit-path { font-family: var(--font-mono); font-size: 11.5px; }
+.var-edit-actions { margin-top: 6px; display: flex; justify-content: flex-end; }
+.var-insert-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; padding: 2px 8px; border: 1px solid var(--border);
+  border-radius: 4px; background: var(--surface-hover); color: var(--text-2); cursor: pointer;
+}
+.var-insert-btn:disabled { opacity: 0.5; cursor: default; }
+.var-add-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; padding: 5px 10px; border: 1px dashed var(--border-strong, #c9c5b8);
+  border-radius: 6px; background: transparent; color: var(--text-2); cursor: pointer; width: 100%; justify-content: center;
+}
+.var-add-btn:hover { background: var(--surface-hover); color: var(--text); }
