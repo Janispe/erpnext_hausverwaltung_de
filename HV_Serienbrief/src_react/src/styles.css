@@ -2147,3 +2147,14 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   border-radius: 6px; background: transparent; color: var(--text-2); cursor: pointer; width: 100%; justify-content: center;
 }
 .var-add-btn:hover { background: var(--surface-hover); color: var(--text); }
+
+/* Platzhalter-Baum: Typ-Anzeige (statt Pfad) — dezent, nicht monospace */
+.ph-tree-type {
+  font-family: var(--font-sans) !important;
+  font-size: 10px;
+  color: var(--text-faint);
+  background: var(--surface-hover, #f0efea);
+  padding: 0 5px;
+  border-radius: 3px;
+  text-transform: none;
+}

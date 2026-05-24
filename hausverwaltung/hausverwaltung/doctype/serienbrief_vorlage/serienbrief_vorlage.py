@@ -1697,14 +1697,48 @@ def _safe_meta(doctype: str):
 		return None
 
 
+def _build_child_table_nodes(base_key: str, child_dt: str) -> List[Dict[str, Any]]:
+	"""Felder eines Child-Doctypes als Blatt-Knoten (erstes Element, ``base_key`` endet
+	auf ``[0]``). Flach (keine weitere Rekursion), damit der Baum nicht explodiert."""
+	cmeta = _safe_meta(child_dt)
+	if not cmeta:
+		return []
+	out: List[Dict[str, Any]] = [
+		{"label": _("Name"), "token": _ph(f"{base_key}.name"), "type": "Name", "children": []}
+	]
+	for df in cmeta.fields:
+		if not getattr(df, "fieldname", None) or df.fieldtype in _TREE_SKIP_TYPES:
+			continue
+		out.append(
+			{
+				"label": df.label or df.fieldname,
+				"token": _ph(f"{base_key}.{df.fieldname}"),
+				"type": df.fieldtype,
+				"children": [],
+			}
+		)
+	return out
+
+
 def _build_tree_nodes(base_key, base_label, meta, visited, depth, max_depth):
 	"""Rekursive Feld-Knoten (Link-Felder verzweigen bis max_depth). Mirror von
 	hv_vorlage_build_tree_nodes im Formular-JS."""
 	nodes = []
 	for df in meta.fields:
-		if not getattr(df, "fieldname", None) or df.fieldtype in _TREE_SKIP_TYPES:
+		if not getattr(df, "fieldname", None):
 			continue
 		label = df.label or df.fieldname
+		# Child-Tabelle: aufklappbarer „[erstes]"-Knoten (flach).
+		if df.fieldtype in ("Table", "Table MultiSelect") and df.options:
+			child_nodes = _build_child_table_nodes(f"{base_key}.{df.fieldname}[0]", df.options)
+			if child_nodes:
+				nodes.append(
+					{"label": f"{label} [erstes] → {df.options}", "token": "", "type": "Tabelle",
+					 "children": child_nodes}
+				)
+			continue
+		if df.fieldtype in _TREE_SKIP_TYPES:
+			continue
 		nodes.append(
 			{"label": f"{base_label}: {label}", "token": _ph(f"{base_key}.{df.fieldname}"),
 			 "type": df.fieldtype, "children": []}
@@ -1749,9 +1783,25 @@ def _build_iteration_tree(dt):
 		return []
 	nodes = [{"label": _("Name"), "token": _ph("objekt.name"), "type": "Name", "children": []}]
 	for df in meta.fields:
-		if not getattr(df, "fieldname", None) or df.fieldtype in _TREE_SKIP_TYPES:
+		if not getattr(df, "fieldname", None):
 			continue
 		label = df.label or df.fieldname
+		# Child-Tabellen: aufklappbarer Knoten, dessen Felder das erste Element ansprechen
+		# (objekt.feld[0].kindfeld). Der Tabellen-Knoten selbst ist kein Wert (kein Token).
+		if df.fieldtype in ("Table", "Table MultiSelect") and df.options:
+			child_nodes = _build_child_table_nodes(f"objekt.{df.fieldname}[0]", df.options)
+			if child_nodes:
+				nodes.append(
+					{
+						"label": f"{label} [erstes] → {df.options}",
+						"token": "",
+						"type": "Tabelle",
+						"children": child_nodes,
+					}
+				)
+			continue
+		if df.fieldtype in _TREE_SKIP_TYPES:
+			continue
 		if df.fieldtype == "Link" and df.options and df.options not in _TREE_SKIP_LINK_TARGETS:
 			target_meta = _safe_meta(df.options)
 			if target_meta:

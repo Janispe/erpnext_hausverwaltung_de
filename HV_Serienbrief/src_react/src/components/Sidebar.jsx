@@ -169,7 +169,7 @@ const TreeNode = ({ node, depth, onInsert, expandAll }) => {
           title={node.token ? `Einfügen: ${node.token}` : node.label}
         >
           {node.label}
-          {node.token && <span className="ph-tree-token">{node.token}</span>}
+          {node.type && <span className="ph-tree-token ph-tree-type">{node.type}</span>}
         </span>
         {node.token && (
           <button className="ph-tree-insert" onClick={() => onInsert(node.token)} title="Einfügen">+</button>
