@@ -11,7 +11,7 @@
 
 const CLIENT = "hv-serienbrief";
 const HOST = "hv-serienbrief-host";
-const TIMEOUT_MS = 20000;
+const TIMEOUT_MS = 60000; // PDF-Vorschau via Chrome kann beim Kaltstart länger dauern
 
 let _seq = 0;
 const _pending = new Map();

@@ -86,8 +86,39 @@ frappe.pages["serienbrief_editor"].on_page_load = function (wrapper) {
 		frappe
 			.call({ method, args: msg.params || {} })
 			.then((r) => reply({ ok: true, data: r.message }))
-			.catch((e) => reply({ ok: false, error: (e && e.message) || String(e) }));
+			.catch((e) => reply({ ok: false, error: extractError(e) }));
 	};
+
+	// Aus einem fehlgeschlagenen frappe.call eine lesbare Meldung ziehen — sonst landet
+	// im iframe nur "[object Object]". Frappe legt Server-Fehler je nach Pfad an
+	// verschiedenen Stellen ab.
+	function extractError(e) {
+		if (!e) return __("Unbekannter Fehler");
+		if (typeof e === "string") return e;
+		if (e.message) return e.message;
+		const sm = e._server_messages || (e.responseJSON && e.responseJSON._server_messages);
+		if (sm) {
+			try {
+				return JSON.parse(sm)
+					.map((m) => {
+						try {
+							return JSON.parse(m).message;
+						} catch (_) {
+							return m;
+						}
+					})
+					.join("; ");
+			} catch (_) {
+				return String(sm);
+			}
+		}
+		if (e.responseJSON && e.responseJSON.exception) return e.responseJSON.exception;
+		try {
+			return JSON.stringify(e);
+		} catch (_) {
+			return String(e);
+		}
+	}
 
 	window.addEventListener("message", onMessage);
 
