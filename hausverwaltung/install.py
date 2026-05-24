@@ -153,6 +153,23 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 			.serienbrief-block:last-child {
 				margin-bottom: 0;
 			}
+			/* Frappes print.bundle.css erzwingt im PDF ``*{color:#000!important}`` und
+			   färbt damit auch verschachtelte Elemente (z.B. <strong> in einem farbigen
+			   <span>) schwarz — der TipTap-Editor schreibt die Farbe als
+			   ``color: … !important`` auf den <span>, das <strong> darin würde aber direkt
+			   vom universellen Reset getroffen. Diese Regel lässt Formatierungs-Elemente
+			   die Farbe ihres farbigen Eltern-Elements erben (Spezifität schlägt ``*``). */
+			[style*="color"] strong,
+			[style*="color"] b,
+			[style*="color"] em,
+			[style*="color"] i,
+			[style*="color"] u,
+			[style*="color"] span,
+			[style*="color"] a,
+			[style*="color"] sup,
+			[style*="color"] sub {
+				color: inherit !important;
+			}
 			/* Frappes ``printview.html`` injiziert eine Action-Bar
 			   (.action-banner mit „Drucken"/„PDF herunterladen"). Die
 			   ``.print-hide``-Regel dafür liegt in ``print.bundle.css`` —
