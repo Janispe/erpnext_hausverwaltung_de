@@ -96,6 +96,26 @@ export async function loadRecipients(doctype, query) {
 	return await rpc("recipients", { doctype: doctype || "", query: query || "" });
 }
 
+// Bild in den Frappe-File-Store hochladen, gibt die /files/…-URL zurück. Base64 nur im
+// Transit; gespeichert wird die URL (kein Base64-Bloat in der Vorlage). Standalone → null
+// (Editor fällt dann auf URL-Eingabe zurück).
+export async function uploadImage(file, templateName) {
+	if (!embedded) return null;
+	const dataUrl = await new Promise((resolve, reject) => {
+		const r = new FileReader();
+		r.onload = () => resolve(r.result);
+		r.onerror = reject;
+		r.readAsDataURL(file);
+	});
+	const base64 = String(dataUrl).split(",")[1] || "";
+	const res = await rpc("upload_image", {
+		filename: file.name,
+		content_base64: base64,
+		template: templateName || "",
+	});
+	return res && res.file_url;
+}
+
 // PDF-Vorschau rendern. Mit Empfänger → echte Daten (Durchlauf-Pfad, gespeicherte
 // Vorlage); ohne → Split-Preview mit Beispielwerten. Gibt { pdf_base64, mode }.
 export async function renderPreview({ templateName, hauptVerteilObjekt, recipientId }) {

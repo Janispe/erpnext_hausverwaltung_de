@@ -1432,6 +1432,87 @@ def save_editor_template(name: str | None = None, html: str | None = None) -> Di
 	return {"id": doc.name, "modified": pretty_date(doc.modified)}
 
 
+# Erlaubte Raster-Bildformate, erkannt an Magic-Bytes (SVG bewusst NICHT — XSS-Risiko, da
+# das Bild später von Chrome im PDF-Render geladen wird). (sig_prefix, extension).
+_IMAGE_SIGNATURES = (
+	(b"\x89PNG\r\n\x1a\n", "png"),
+	(b"\xff\xd8\xff", "jpg"),
+	(b"GIF87a", "gif"),
+	(b"GIF89a", "gif"),
+)
+_MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+def _detect_image_ext(content: bytes) -> str | None:
+	for sig, ext in _IMAGE_SIGNATURES:
+		if content.startswith(sig):
+			return ext
+	# WebP: "RIFF"...."WEBP"
+	if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+		return "webp"
+	return None
+
+
+@frappe.whitelist()
+def upload_editor_image(
+	filename: str | None = None,
+	content_base64: str | None = None,
+	template: str | None = None,
+) -> Dict[str, str]:
+	"""Bild aus dem React-Editor in den Frappe-File-Store legen, gibt die /files/…-URL zurück.
+
+	Base64 nur im Transit; gespeichert wird die URL (kein Base64-Bloat in der Vorlage,
+	Chrome holt das Bild beim PDF-Render serverseitig über die public URL). Gehärtet:
+	doc-spezifische Schreibrechte, Magic-Byte-MIME-Prüfung (nur Raster, kein SVG),
+	Größenlimit, an die Vorlage angehängt.
+	"""
+	# Berechtigung: doc-spezifisch, wenn eine Vorlage angegeben ist; sonst generisch.
+	template_name = (template or "").strip()
+	if template_name:
+		if not frappe.has_permission("Serienbrief Vorlage", "write", doc=template_name):
+			frappe.throw(_("Keine Berechtigung, diese Vorlage zu bearbeiten."), frappe.PermissionError)
+	elif not frappe.has_permission("Serienbrief Vorlage", "write"):
+		frappe.throw(_("Keine Berechtigung, Bilder hochzuladen."), frappe.PermissionError)
+
+	raw = (content_base64 or "").strip()
+	if not raw:
+		frappe.throw(_("Kein Bildinhalt übergeben."))
+	# evtl. Data-URL-Präfix (data:image/png;base64,…) abschneiden
+	if raw.lower().startswith("data:") and "," in raw:
+		raw = raw.split(",", 1)[1]
+	try:
+		content = base64.b64decode(raw, validate=True)
+	except Exception:
+		frappe.throw(_("Ungültiger Bildinhalt."))
+
+	if len(content) > _MAX_IMAGE_BYTES:
+		frappe.throw(_("Bild zu groß (max. {0} MB).").format(_MAX_IMAGE_BYTES // (1024 * 1024)))
+
+	ext = _detect_image_ext(content)
+	if not ext:
+		frappe.throw(_("Nicht unterstütztes Bildformat (erlaubt: PNG, JPG, GIF, WebP)."))
+
+	# Dateiname säubern und Endung an das erkannte Format angleichen.
+	base_name = cstr(filename or "bild")
+	base_name = re.sub(r"[^\w.\-]+", "_", base_name).rsplit(".", 1)[0][:80] or "bild"
+	fname = f"{base_name}.{ext}"
+
+	file_doc = frappe.get_doc(
+		{
+			"doctype": "File",
+			"file_name": fname,
+			# public: Chrome muss das Bild beim PDF-Render ohne Auth laden können.
+			"is_private": 0,
+			"content": content,
+			# An die Vorlage hängen (Tracking/Cleanup), wenn vorhanden.
+			"attached_to_doctype": "Serienbrief Vorlage" if template_name else None,
+			"attached_to_name": template_name or None,
+		}
+	)
+	file_doc.save(ignore_permissions=True)
+	return {"file_url": file_doc.file_url, "file_name": file_doc.file_name}
+
+
 def _baustein_preview(text: str, limit: int = 160) -> str:
 	plain = re.sub(r"\s+", " ", strip_html_tags(cstr(text or ""))).strip()
 	return plain[:limit] + ("…" if len(plain) > limit else "")

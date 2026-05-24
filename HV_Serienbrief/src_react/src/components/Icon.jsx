@@ -75,6 +75,16 @@ export const Icon = ({ name, size = 16, ...props }) => {
       return <svg {...common}><path d="M12 5v14M5 12h14"/></svg>;
     case "drag":
       return <svg {...common}><circle cx="9" cy="6" r="1" fill="currentColor"/><circle cx="9" cy="12" r="1" fill="currentColor"/><circle cx="9" cy="18" r="1" fill="currentColor"/><circle cx="15" cy="6" r="1" fill="currentColor"/><circle cx="15" cy="12" r="1" fill="currentColor"/><circle cx="15" cy="18" r="1" fill="currentColor"/></svg>;
+    case "table":
+      return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 10h18M3 15h18M9 4v16M15 4v16"/></svg>;
+    case "image":
+      return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m4 18 5-5 4 4 3-3 4 4"/></svg>;
+    case "palette":
+      return <svg {...common}><path d="M12 3a9 9 0 1 0 0 18 2 2 0 0 0 2-2c0-1-1-1.5-1-2.5 0-.8.7-1.5 1.5-1.5H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8Z"/><circle cx="7.5" cy="11.5" r="1" fill="currentColor"/><circle cx="11" cy="7.5" r="1" fill="currentColor"/><circle cx="16" cy="9.5" r="1" fill="currentColor"/></svg>;
+    case "highlight":
+      return <svg {...common}><path d="m9 11 6 6-2 2H5l4-4Z"/><path d="m13 7 4 4 3-3a2 2 0 0 0 0-3l-1-1a2 2 0 0 0-3 0Z"/></svg>;
+    case "repeat":
+      return <svg {...common}><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>;
     default:
       return <svg {...common}><circle cx="12" cy="12" r="9"/></svg>;
   }

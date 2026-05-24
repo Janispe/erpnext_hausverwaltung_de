@@ -8,8 +8,9 @@ import { CURRENT_TEMPLATE, TEMPLATE_TREE } from "./data.js";
 import {
   loadTree, loadTemplate, saveTemplate,
   loadPlaceholderTree, loadBausteine, loadRecipients, renderPreview,
-  embedded,
+  uploadImage, embedded,
 } from "./api.js";
+import { validateJinjaBalance } from "./tiptap/validateJinja.js";
 
 // Sentinel-Empfänger „Beispielwerte" (kein echter Datensatz → Split-Preview).
 const BEISPIEL = { id: null, label: "Beispielwerte" };
@@ -35,6 +36,8 @@ export const App = () => {
   const [previewMode, setPreviewMode] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
+  // Token-Erhalt-Check beim Laden: null = sicher, sonst { lost, added } -> Speichern blockiert.
+  const [editorSafety, setEditorSafety] = useState(null);
   const contentRef = useRef(null); // Zugriff auf den editierbaren HTML-Inhalt (getHtml)
 
   const changeRecipient = useCallback((r) => setRecipient(r || BEISPIEL), []);
@@ -59,52 +62,21 @@ export const App = () => {
     window.addEventListener("mouseup", onUp);
   }, [sidebarWidth]);
 
-  // Insert a chip / snippet / baustein "at cursor".
+  // Insert a chip / snippet / baustein "at cursor" — immer über den TipTap-Editor (contentRef).
+  // Guard: keine Mutation bei fehlender Schreibberechtigung oder unsicherer (read-only) Vorlage.
   const insertItem = useCallback((item) => {
-    // Echte Vorlage (HTML-Editor): als dekorierter Chip an die Cursor-Position.
-    const isRealEditable = embedded && template.canWrite &&
-      typeof template.htmlContent === "string" && template.htmlContent.length > 0;
-    if (isRealEditable && contentRef.current && contentRef.current.insertToken) {
-      let raw = "";
-      if (item.kind === "chip") raw = item.token;
-      else if (item.kind === "baustein") raw = `{{ baustein("${item.name}") }}`;
-      else if (item.kind === "snippet") raw = item.snippet.value;
-      if (raw) {
-        contentRef.current.insertToken(raw);
-        setDirty(true);
-      }
-      return;
+    if (!template.canWrite || editorSafety) return;
+    const api = contentRef.current;
+    if (!api || !api.insertToken) return;
+    let raw = "";
+    if (item.kind === "chip") raw = item.token;
+    else if (item.kind === "baustein") raw = `{{ baustein("${item.name}") }}`;
+    else if (item.kind === "snippet") raw = item.snippet.value;
+    if (raw) {
+      api.insertToken(raw);
+      setDirty(true);
     }
-
-    // Prototyp/Mock: Block-Modell mutieren.
-    setTemplate(prev => {
-      const blocks = [...prev.blocks];
-      if (item.kind === "chip") {
-        const last = blocks[blocks.length - 1];
-        if (last?.type === "p") {
-          last.inlines = [...last.inlines, { type: "text", value: " " }, { type: "chip", token: item.token }];
-        } else {
-          blocks.push({ type: "p", inlines: [{ type: "chip", token: item.token }] });
-        }
-      } else if (item.kind === "baustein") {
-        blocks.push({ type: "baustein", name: item.name });
-      } else if (item.kind === "snippet") {
-        // Insert a sample jinja-if block to visualize the snippet
-        if (item.snippet.key.startsWith("if")) {
-          blocks.push({
-            type: "jinja-if",
-            condition: item.snippet.key === "if-eq" ? 'FELD == "WERT"' : 'BEDINGUNG',
-            thenBlocks: [{ type: "p", inlines: [{ type: "text", value: "Inhalt der Bedingung …" }] }],
-          });
-        } else {
-          // fallback — append as text marker
-          blocks.push({ type: "p", inlines: [{ type: "text", value: item.snippet.value }] });
-        }
-      }
-      return { ...prev, blocks };
-    });
-    setDirty(true);
-  }, [template]);
+  }, [template.canWrite, editorSafety]);
 
   const insertPlaceholder = useCallback((token) => insertItem({ kind: "chip", token }), [insertItem]);
   const insertBaustein = useCallback((name) => insertItem({ kind: "baustein", name }), [insertItem]);
@@ -125,10 +97,8 @@ export const App = () => {
           title: "Fehler beim Laden",
           kategorie: "",
           haupt_verteil_objekt: "",
-          blocks: [
-            { type: "h2", inlines: [{ type: "text", value: "Vorlage konnte nicht geladen werden" }] },
-            { type: "p", inlines: [{ type: "text", value: String(e && e.message || e) }] },
-          ],
+          canWrite: false,
+          htmlContent: `<h2>Vorlage konnte nicht geladen werden</h2><p>${String((e && e.message) || e)}</p>`,
         });
         setTitle("Fehler beim Laden");
       } finally {
@@ -149,10 +119,7 @@ export const App = () => {
         ...CURRENT_TEMPLATE,
         id,
         title: t.title,
-        blocks: [
-          { type: "h2", inlines: [{ type: "text", value: t.title }] },
-          { type: "p", inlines: [{ type: "text", value: 'Diese Vorlage ist im Prototyp nicht hinterlegt. Wechsel zurück zu „1. Mahnung" für die volle Demo.' }] },
-        ],
+        htmlContent: `<h2>${t.title}</h2><p>Diese Vorlage ist im Prototyp nicht hinterlegt. Wechsel zurück zu „1. Mahnung" für die volle Demo.</p>`,
       });
       setTitle(t.title);
     }
@@ -178,7 +145,25 @@ export const App = () => {
 
   const save = async () => {
     if (!template.canWrite || !dirty || saving) return;
+    // Harte Sperre: Vorlage round-trippt nicht verlustfrei (Token-Erhalt-Check beim Laden).
+    if (editorSafety) {
+      alert(
+        "Speichern blockiert: Diese Vorlage enthält Strukturen, die der Editor nicht verlustfrei " +
+        "abbilden kann (z. B. ein nicht unterstützter Schleifen-/Tabellen-Aufbau).\n\n" +
+        "Verlorene Tokens: " + Object.keys(editorSafety.lost || {}).join(", ") +
+        "\n\nBitte diese Vorlage vorerst im klassischen Formular bearbeiten."
+      );
+      return;
+    }
     const html = contentRef.current ? contentRef.current.getHtml() : (template.htmlContent || "");
+    // Jinja-Balance-Warnung (nicht blockierend).
+    const bal = validateJinjaBalance(html);
+    if (!bal.ok) {
+      const proceed = confirm(
+        "Mögliche Jinja-Probleme:\n\n" + bal.errors.join("\n") + "\n\nTrotzdem speichern?"
+      );
+      if (!proceed) return;
+    }
     setSaving(true);
     try {
       const res = await saveTemplate(template.id, html);
@@ -283,6 +268,8 @@ export const App = () => {
           onInsertItem={insertItem}
           onPickRecipient={() => setRecipientPickerOpen(true)}
           onMaximizePreview={() => setPdfMaximized(true)}
+          onImageUpload={embedded ? (file) => uploadImage(file, template.id) : null}
+          onSafety={setEditorSafety}
         />
         <Sidebar
           tab={tab}
