@@ -205,6 +205,57 @@ export const JinjaBlockNode = Node.create({
 	},
 });
 
+// Feld-Referenz INNERHALB einer Bedingung (bare identifier, z. B. mieter.anrede — NICHT {{ }}).
+// Serialisiert über data-hv-name zu seinem nackten Namen.
+export const FieldNode = Node.create({
+	name: "hvField",
+	inline: true,
+	group: "inline",
+	atom: true,
+	selectable: true,
+	addAttributes() {
+		return {
+			name: {
+				default: "",
+				parseHTML: (el) => el.getAttribute("data-hv-name") || "",
+				renderHTML: (attrs) => ({ "data-hv-name": attrs.name }),
+			},
+			group: {
+				default: "mieter",
+				parseHTML: (el) => el.getAttribute("data-group") || "mieter",
+				renderHTML: (attrs) => ({ "data-group": attrs.group }),
+			},
+		};
+	},
+	parseHTML() {
+		return [{ tag: 'span[data-hv-kind="field"]' }];
+	},
+	renderHTML({ node, HTMLAttributes }) {
+		return [
+			"span",
+			mergeAttributes(HTMLAttributes, { class: "chip field-chip", "data-hv-kind": "field" }),
+			node.attrs.name,
+		];
+	},
+});
+
+// Inline-editierbarer {% if %}-Block: Inhalt = Bedingungsausdruck (Text + Feld-Chips).
+// Serialisiert zu {% if <ausdruck> %}. Das zugehörige {% endif %} bleibt ein eigener
+// (atomarer) hvJinjaBlock; der bedingte Text steht normal dazwischen.
+export const IfNode = Node.create({
+	name: "hvIf",
+	group: "block",
+	content: "inline*",
+	defining: true,
+	selectable: true,
+	parseHTML() {
+		return [{ tag: 'div[data-hv-kind="if"]' }];
+	},
+	renderHTML({ HTMLAttributes }) {
+		return ["div", mergeAttributes(HTMLAttributes, { class: "jinja-if-block", "data-hv-kind": "if" }), 0];
+	},
+});
+
 // Tabellen-Zeile mit optionalem Loop-Ausdruck (Schleife als Zeilen-Attribut).
 export const HvTableRow = TableRow.extend({
 	addAttributes() {
@@ -333,6 +384,8 @@ export function buildExtensions() {
 		HvTableCell,
 		PlaceholderNode,
 		BausteinNode,
+		FieldNode,
+		IfNode,
 		JinjaInlineNode,
 		JinjaBlockNode,
 	];

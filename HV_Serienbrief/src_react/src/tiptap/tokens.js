@@ -126,14 +126,61 @@ function isBlockContext(el) {
 	return okSide(prev) && okSide(next);
 }
 
-// Schritt 2a: inline-Jinja-Spans, die in Wahrheit Block-Level sind, zu Block-Divs befördern.
+// "Einfacher" Bedingungsausdruck: nur Bezeichner/Operatoren/Literale – keine Funktionsaufrufe,
+// Filter oder Set-Konstrukte. Komplexe Ausdrücke (z. B. frappe.get_value(...), | selectattr)
+// bleiben atomar, damit nichts kaputtgeht.
+function isSimpleExpr(expr) {
+	return !/[(|{}]/.test(expr);
+}
+
+const EXPR_KEYWORDS = new Set([
+	"and", "or", "not", "in", "is", "none", "true", "false", "None", "True", "False",
+]);
+
+// Bedingungsausdruck verlustfrei in HTML partitionieren: Feld-Bezeichner -> Chip-Span,
+// alles andere (Operatoren, Literale, Leerzeichen) -> escaped Text. Konkatenation ergibt
+// exakt den Originalausdruck wieder (Round-Trip-Garantie).
+function decorateExpr(expr) {
+	const re = /[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*/g;
+	let out = "";
+	let last = 0;
+	let m;
+	while ((m = re.exec(expr)) !== null) {
+		const id = m[0];
+		const start = m.index;
+		const after = expr[start + id.length];
+		if (EXPR_KEYWORDS.has(id) || after === "(") continue; // Keyword/Funktion -> als Text lassen
+		out += escapeHtml(expr.slice(last, start));
+		out +=
+			`<span data-hv-kind="field" data-group="${escapeAttr(groupForToken(id))}"` +
+			` data-hv-name="${escapeAttr(id)}">${escapeHtml(id)}</span>`;
+		last = start + id.length;
+	}
+	out += escapeHtml(expr.slice(last));
+	return out;
+}
+
+// Schritt 2a: inline-Jinja-Spans, die in Wahrheit Block-Level sind, hochstufen.
+// {% if EINFACH %} -> editierbarer hvIf-Block (Feld-Chips); alles andere -> atomarer jinja-block.
+// Nur schlichte Delimiter (kein {%- / -%} Whitespace-Control) -> die bleiben atomar, sonst
+// ginge die Trim-Semantik beim Zurückschreiben verloren.
+const IF_RE = /^\{%\s*if\s+([\s\S]+?)\s*%\}$/;
 function promoteBlockJinja(root, doc) {
 	const spans = Array.from(root.querySelectorAll('span[data-hv-kind="jinja-inline"]'));
 	for (const s of spans) {
 		if (!isBlockContext(s)) continue;
+		const token = s.getAttribute("data-hv-token") || "";
+		const ifm = IF_RE.exec(token);
+		if (ifm && isSimpleExpr(ifm[1])) {
+			const div = doc.createElement("div");
+			div.setAttribute("data-hv-kind", "if");
+			div.innerHTML = decorateExpr(ifm[1]);
+			s.replaceWith(div);
+			continue;
+		}
 		const div = doc.createElement("div");
 		div.setAttribute("data-hv-kind", "jinja-block");
-		div.setAttribute("data-hv-token", s.getAttribute("data-hv-token") || "");
+		div.setAttribute("data-hv-token", token);
 		s.replaceWith(div);
 	}
 }
@@ -187,6 +234,24 @@ export function decorateForTiptap(html) {
 	return doc.body.innerHTML;
 }
 
+// Inhalt eines hvIf-Blocks zum Bedingungsausdruck zusammensetzen: Feld-Chips -> bare name,
+// Text -> Text. Verlustfreie Umkehr von decorateExpr.
+function exprFromNodes(nodes) {
+	let s = "";
+	for (const n of nodes) {
+		if (n.nodeType === 3) {
+			s += n.textContent;
+		} else if (n.nodeType === 1) {
+			if (n.getAttribute && n.getAttribute("data-hv-kind") === "field") {
+				s += n.getAttribute("data-hv-name") || "";
+			} else {
+				s += n.textContent || "";
+			}
+		}
+	}
+	return s.trim();
+}
+
 // Öffentlich: TipTap-getHTML() -> DB-HTML mit rohen Tokens.
 // Sentinel-Strategie, damit rohe Tokens NICHT HTML-escaped werden.
 const S_OPEN = "\uE000HVTOK";
@@ -213,13 +278,24 @@ export function serializeToTokens(html) {
 		else tr.parentNode.appendChild(close);
 	});
 
-	// 2) Block-Jinja-Divs -> roher Token (als Text-Sentinel)
+	// 2) hvIf-Blöcke -> {% if <ausdruck> %}. Ausdruck = Inhalt (Feld-Chips -> bare name, Text -> Text).
+	doc.querySelectorAll('[data-hv-kind="if"]').forEach((el) => {
+		const expr = exprFromNodes(el.childNodes);
+		el.replaceWith(doc.createTextNode(sentinel(`{% if ${expr} %}`)));
+	});
+
+	// 3) Block-Jinja-Divs -> roher Token (als Text-Sentinel)
 	doc.querySelectorAll('[data-hv-kind="jinja-block"]').forEach((el) => {
 		const raw = el.getAttribute("data-hv-token") || "";
 		el.replaceWith(doc.createTextNode(sentinel(raw)));
 	});
 
-	// 3) Alle übrigen Token-Träger (neu data-hv-token + legacy data-token) -> roher Token
+	// 4) Verbliebene Feld-Chips (z. B. außerhalb einer Bedingung) -> bare name
+	doc.querySelectorAll('[data-hv-kind="field"]').forEach((el) => {
+		el.replaceWith(doc.createTextNode(sentinel(el.getAttribute("data-hv-name") || "")));
+	});
+
+	// 5) Alle übrigen Token-Träger (neu data-hv-token + legacy data-token) -> roher Token
 	doc.querySelectorAll("[data-hv-token],[data-token]").forEach((el) => {
 		const raw = el.getAttribute("data-hv-token") || el.getAttribute("data-token") || "";
 		el.replaceWith(doc.createTextNode(sentinel(raw)));

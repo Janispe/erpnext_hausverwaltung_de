@@ -1706,6 +1706,35 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   opacity: 0.85;
 }
 
+/* Inline-editierbarer if-Block: Bedingung mit Feld-Chips + frei tippbarem Rest */
+.tiptap-surface .jinja-if-block {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.9;
+  background: rgba(31, 115, 183, 0.06);
+  border-left: 3px solid var(--primary);
+  border-radius: 0 4px 4px 0;
+  padding: 5px 10px 5px 12px;
+  margin: 8px 0;
+}
+.tiptap-surface .jinja-if-block::before {
+  content: "wenn ";
+  color: var(--primary);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  margin-right: 4px;
+  user-select: none;
+}
+.tiptap-surface .jinja-if-block .field-chip {
+  font-style: normal;
+}
+/* Operator-Buttons (nur sichtbar wenn Cursor im if-Block) */
+.op-group { background: rgba(31, 115, 183, 0.06); border-radius: var(--radius-sm); padding-left: 4px; }
+.op-btn { width: auto; min-width: 26px; padding: 0 7px; font-size: 12px; font-weight: 600; font-family: var(--font-mono); color: var(--primary-hover); }
+
 /* Jinja-Knoten sind per Doppelklick editierbar -> klickbar signalisieren */
 .tiptap-surface .jinja-block,
 .tiptap-surface .jinja-token { cursor: pointer; }

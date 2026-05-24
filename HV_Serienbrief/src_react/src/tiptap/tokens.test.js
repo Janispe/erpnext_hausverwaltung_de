@@ -90,6 +90,27 @@ describe("Token-Round-Trip", () => {
 	});
 });
 
+describe("if-Bedingungen (inline hvIf)", () => {
+	it("einfache truthy-Bedingung", () => {
+		const out = expectTokensPreserved("<p>a</p>\n{% if first %}\n<p>x</p>\n{% endif %}\n<p>b</p>");
+		expect(out).toContain("{% if first %}");
+		expect(out).toContain("{% endif %}");
+	});
+	it("dotted field truthy", () => {
+		const out = expectTokensPreserved("<p>a</p>\n{% if objekt.von %}\n<p>x</p>\n{% endif %}");
+		expect(out).toContain("{% if objekt.von %}");
+	});
+	it("Vergleich == bleibt erhalten (Feld-Chip + Text)", () => {
+		const out = expectTokensPreserved('<p>a</p>\n{% if mahnstufe == "2" %}\n<p>x</p>\n{% endif %}');
+		expect(out).toContain('{% if mahnstufe == "2" %}');
+	});
+	it("komplexer Ausdruck/set bleibt atomar und erhalten", () => {
+		expectTokensPreserved(
+			'<p>a</p>\n{% set x = frappe.db.get_value("Y", n) %}\n{% if x %}\n<p>x</p>\n{% endif %}'
+		);
+	});
+});
+
 describe("validateJinjaBalance", () => {
 	it("balanciert", () => {
 		expect(validateJinjaBalance("{% if a %}x{% endif %}").ok).toBe(true);

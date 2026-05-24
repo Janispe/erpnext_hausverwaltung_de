@@ -19,7 +19,10 @@ function insertRawToken(editor, raw) {
 		if (/^\{\{\s*baustein\(/.test(t)) node = { type: "hvBaustein", attrs: { token: t } };
 		else if (t.startsWith("{{")) {
 			const inner = (/\{\{\s*([\s\S]+?)\s*\}\}/.exec(t) || [])[1] || "";
-			node = { type: "hvPlaceholder", attrs: { token: t, group: groupForToken(inner) } };
+			// In einer Bedingung: bare Feld-Chip (mieter.anrede) statt {{ }}.
+			node = editor.isActive("hvIf")
+				? { type: "hvField", attrs: { name: inner, group: groupForToken(inner) } }
+				: { type: "hvPlaceholder", attrs: { token: t, group: groupForToken(inner) } };
 		} else node = { type: "hvJinjaInline", attrs: { token: t } };
 	}
 	if (node) editor.chain().focus().insertContent(node).run();
@@ -159,6 +162,18 @@ const EditorToolbar = ({ editor, disabled, onInsert, onImage }) => {
 	const isA = (name, attrs) => !!editor && editor.isActive(name, attrs);
 	const chain = () => editor.chain().focus();
 	const inTable = isA("table");
+	const inIf = isA("hvIf");
+	const insertOp = (txt) => chain().insertContent(txt).run();
+	const OPS = [
+		["=", " == ", "ist gleich"],
+		["≠", " != ", "ist ungleich"],
+		[">", " > ", "größer als"],
+		["<", " < ", "kleiner als"],
+		["und", " and ", "und"],
+		["oder", " or ", "oder"],
+		["nicht", "not ", "nicht / negieren"],
+		["enthält", " in ", "enthält / in"],
+	];
 	const blockValue = isA("heading", { level: 1 })
 		? "Überschrift 1"
 		: isA("heading", { level: 2 })
@@ -298,6 +313,22 @@ const EditorToolbar = ({ editor, disabled, onInsert, onImage }) => {
 					</TBtn>
 				)}
 			</div>
+			{inIf && (
+				<div className="tool-group op-group" title="Operatoren für die Bedingung">
+					{OPS.map(([label, txt, tip]) => (
+						<button
+							key={label}
+							className="tool-btn op-btn"
+							title={tip}
+							disabled={!can}
+							onMouseDown={(e) => e.preventDefault()}
+							onClick={() => insertOp(txt)}
+						>
+							{label}
+						</button>
+					))}
+				</div>
+			)}
 			<div style={{ flex: 1 }} />
 			<div className="tool-group" style={{ borderRight: "none" }}>
 				<button className="tool-btn tool-btn-wide primary-tool" onClick={onInsert} title="Einfügen / Slash-Commander" disabled={!can}>
