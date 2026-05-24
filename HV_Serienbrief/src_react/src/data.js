@@ -301,8 +301,8 @@ export const TEMPLATE_TREE = [
   },
 ];
 
-// The "1. Mahnung" template content — uses our placeholder format
-// Mixed: prose + chips + a Jinja conditional + a baustein() call
+// Demo-Vorlage "1. Mahnung" im DB-Format (rohe Jinja-Tokens) – nur für Standalone-Dev
+// (npm run dev). Dogfoodt: Ausrichtung, Marks, Baustein, Platzhalter, Tabellen-Loop, if-Block.
 export const CURRENT_TEMPLATE = {
   id: "t-001",
   title: "1. Mahnung",
@@ -312,101 +312,24 @@ export const CURRENT_TEMPLATE = {
   content_position: "Nach Bausteinen",
   modified: "21.05.2026 14:32",
   modified_by: "j.peters@example.de",
-  // Content is an array of blocks: paragraphs of inline nodes.
-  // Each inline node: {type: 'text', value: '...'} OR {type: 'chip', token: '{{ ... }}'} OR {type: 'baustein', name: '...'}
-  blocks: [
-    {
-      type: "p",
-      align: "right",
-      inlines: [
-        { type: "text", value: "München, " },
-        { type: "chip", token: "{{ datum }}" },
-      ],
-    },
-    { type: "p", inlines: [{ type: "text", value: "" }] },
-    {
-      type: "p",
-      inlines: [
-        { type: "chip", token: "{{ mieter.anrede }}" },
-        { type: "text", value: " " },
-        { type: "chip", token: "{{ mieter.vorname }}" },
-        { type: "text", value: " " },
-        { type: "chip", token: "{{ mieter.nachname }}" },
-      ],
-    },
-    {
-      type: "p",
-      inlines: [{ type: "chip", token: "{{ mieter.strasse }}" }],
-    },
-    {
-      type: "p",
-      inlines: [{ type: "chip", token: "{{ mieter.plz_ort }}" }],
-    },
-    { type: "p", inlines: [{ type: "text", value: "" }] },
-    {
-      type: "h2",
-      inlines: [
-        { type: "text", value: "Zahlungserinnerung — Mietvertrag " },
-        { type: "chip", token: "{{ wohnung.bezeichnung }}" },
-      ],
-    },
-    { type: "p", inlines: [{ type: "text", value: "" }] },
-    {
-      type: "baustein",
-      name: "Anrede formal",
-    },
-    { type: "p", inlines: [{ type: "text", value: "" }] },
-    {
-      type: "p",
-      inlines: [
-        { type: "text", value: "auf dem Mietkonto Ihrer Wohnung " },
-        { type: "chip", token: "{{ wohnung.bezeichnung }}" },
-        { type: "text", value: " in der " },
-        { type: "chip", token: "{{ immobilie.bezeichnung }}" },
-        { type: "text", value: " ist aktuell ein offener Saldo in Höhe von " },
-        { type: "chip", token: "{{ saldo }}", emphasis: true },
-        { type: "text", value: " ausgewiesen." },
-      ],
-    },
-    { type: "p", inlines: [{ type: "text", value: "" }] },
-    {
-      type: "p",
-      inlines: [
-        { type: "text", value: "Wir bitten Sie höflich, den fälligen Betrag bis spätestens " },
-        { type: "chip", token: "{{ stichtag }}" },
-        { type: "text", value: " (Frist: " },
-        { type: "chip", token: "{{ frist_tage }}" },
-        { type: "text", value: " Tage) auf unser Konto zu überweisen." },
-      ],
-    },
-    { type: "p", inlines: [{ type: "text", value: "" }] },
-    {
-      type: "jinja-if",
-      condition: 'mahnstufe == "2"',
-      thenBlocks: [
-        {
-          type: "p",
-          inlines: [
-            {
-              type: "text",
-              value: "Da es sich um die zweite Mahnung handelt, erheben wir eine Mahngebühr in Höhe von 5,00 €.",
-            },
-          ],
-        },
-      ],
-    },
-    { type: "p", inlines: [{ type: "text", value: "" }] },
-    {
-      type: "p",
-      inlines: [
-        { type: "text", value: "Sollten Sie den Betrag bereits überwiesen haben, betrachten Sie dieses Schreiben bitte als gegenstandslos." },
-      ],
-    },
-    { type: "p", inlines: [{ type: "text", value: "" }] },
-    {
-      type: "baustein",
-      name: "Unterschrift Verwalter",
-    },
-  ],
+  canWrite: true,
+  htmlContent: `<p style="text-align: right">M\u00fcnchen, {{ datum }}</p>
+<p>{{ mieter.anrede }} {{ mieter.vorname }} {{ mieter.nachname }}</p>
+<p>{{ mieter.strasse }}</p>
+<p>{{ mieter.plz_ort }}</p>
+<h2>Zahlungserinnerung \u2014 Mietvertrag {{ wohnung.bezeichnung }}</h2>
+<div>{{ baustein("Anrede formal") }}</div>
+<p>auf dem Mietkonto Ihrer Wohnung {{ wohnung.bezeichnung }} in der {{ immobilie.bezeichnung }} ist aktuell ein offener Saldo in H\u00f6he von <strong>{{ saldo }}</strong> ausgewiesen.</p>
+<p>Die offenen Posten im Einzelnen:</p>
+<table><thead><tr><th>Rechnung</th><th>F\u00e4llig</th><th style="text-align: right">Offen</th></tr></thead><tbody>
+{% for row in payments %}
+<tr><td>{{ row.sales_invoice }}</td><td>{{ row.due_date }}</td><td style="text-align: right">{{ row.outstanding }}</td></tr>
+{% endfor %}
+</tbody></table>
+<p>Wir bitten Sie h\u00f6flich, den f\u00e4lligen Betrag bis sp\u00e4testens {{ stichtag }} (Frist: {{ frist_tage }} Tage) zu \u00fcberweisen.</p>
+{% if mahnstufe == "2" %}
+<p>Da es sich um die zweite Mahnung handelt, erheben wir eine Mahngeb\u00fchr in H\u00f6he von 5,00 \u20ac.</p>
+{% endif %}
+<p>Sollten Sie den Betrag bereits \u00fcberwiesen haben, betrachten Sie dieses Schreiben bitte als gegenstandslos.</p>
+<div>{{ baustein("Unterschrift Verwalter") }}</div>`,
 };
-

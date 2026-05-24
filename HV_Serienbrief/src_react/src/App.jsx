@@ -1,14 +1,23 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { Icon } from "./components/Icon.jsx";
 import { Navigator } from "./components/Navigator.jsx";
 import { Editor } from "./components/Editor.jsx";
 import { Sidebar } from "./components/Sidebar.jsx";
 import { PdfMaximized } from "./components/PdfMaximized.jsx";
-import { CURRENT_TEMPLATE, SAMPLE_RECIPIENTS, TEMPLATE_TREE } from "./data.js";
+import { CURRENT_TEMPLATE, TEMPLATE_TREE } from "./data.js";
+import {
+  loadTree, loadTemplate, saveTemplate,
+  loadPlaceholderTree, loadBausteine, loadRecipients, renderPreview,
+  uploadImage, embedded,
+} from "./api.js";
+import { validateJinjaBalance } from "./tiptap/validateJinja.js";
+
+// Sentinel-Empfänger „Beispielwerte" (kein echter Datensatz → Split-Preview).
+const BEISPIEL = { id: null, label: "Beispielwerte" };
 
 export const App = () => {
   const [template, setTemplate] = useState(() => CURRENT_TEMPLATE);
-  const [recipient, setRecipient] = useState(() => SAMPLE_RECIPIENTS[0]);
+  const [recipient, setRecipient] = useState(BEISPIEL);
   const [tab, setTab] = useState("preview");
   const [dirty, setDirty] = useState(false);
   const [title, setTitle] = useState(template.title);
@@ -17,6 +26,21 @@ export const App = () => {
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(420);
   const [resizing, setResizing] = useState(false);
+  const [tree, setTree] = useState(() => TEMPLATE_TREE);
+  const [loadingTemplate, setLoadingTemplate] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [placeholders, setPlaceholders] = useState([]);
+  const [bausteine, setBausteine] = useState([]);
+  const [recipients, setRecipients] = useState([]);
+  const [previewPdf, setPreviewPdf] = useState("");
+  const [previewMode, setPreviewMode] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
+  // Token-Erhalt-Check beim Laden: null = sicher, sonst { lost, added } -> Speichern blockiert.
+  const [editorSafety, setEditorSafety] = useState(null);
+  const contentRef = useRef(null); // Zugriff auf den editierbaren HTML-Inhalt (getHtml)
+
+  const changeRecipient = useCallback((r) => setRecipient(r || BEISPIEL), []);
 
   // Resize handle for the right sidebar — drag left edge horizontally
   const onResizeStart = useCallback((e) => {
@@ -38,48 +62,52 @@ export const App = () => {
     window.addEventListener("mouseup", onUp);
   }, [sidebarWidth]);
 
-  // Insert a chip / snippet / baustein "at cursor" — for the prototype, append
-  // to the last paragraph block (or append a new block).
+  // Insert a chip / snippet / baustein "at cursor" — immer über den TipTap-Editor (contentRef).
+  // Guard: keine Mutation bei fehlender Schreibberechtigung oder unsicherer (read-only) Vorlage.
   const insertItem = useCallback((item) => {
-    setTemplate(prev => {
-      const blocks = [...prev.blocks];
-      if (item.kind === "chip") {
-        const last = blocks[blocks.length - 1];
-        if (last?.type === "p") {
-          last.inlines = [...last.inlines, { type: "text", value: " " }, { type: "chip", token: item.token }];
-        } else {
-          blocks.push({ type: "p", inlines: [{ type: "chip", token: item.token }] });
-        }
-      } else if (item.kind === "baustein") {
-        blocks.push({ type: "baustein", name: item.name });
-      } else if (item.kind === "snippet") {
-        // Insert a sample jinja-if block to visualize the snippet
-        if (item.snippet.key.startsWith("if")) {
-          blocks.push({
-            type: "jinja-if",
-            condition: item.snippet.key === "if-eq" ? 'FELD == "WERT"' : 'BEDINGUNG',
-            thenBlocks: [{ type: "p", inlines: [{ type: "text", value: "Inhalt der Bedingung …" }] }],
-          });
-        } else {
-          // fallback — append as text marker
-          blocks.push({ type: "p", inlines: [{ type: "text", value: item.snippet.value }] });
-        }
-      }
-      return { ...prev, blocks };
-    });
-    setDirty(true);
-  }, []);
+    if (!template.canWrite || editorSafety) return;
+    const api = contentRef.current;
+    if (!api || !api.insertToken) return;
+    let raw = "";
+    if (item.kind === "chip") raw = item.token;
+    else if (item.kind === "baustein") raw = `{{ baustein("${item.name}") }}`;
+    else if (item.kind === "snippet") raw = item.snippet.value;
+    if (raw) {
+      api.insertToken(raw);
+      setDirty(true);
+    }
+  }, [template.canWrite, editorSafety]);
 
   const insertPlaceholder = useCallback((token) => insertItem({ kind: "chip", token }), [insertItem]);
   const insertBaustein = useCallback((name) => insertItem({ kind: "baustein", name }), [insertItem]);
-  const removeBaustein = useCallback((name) => {
-    setTemplate(prev => ({ ...prev, blocks: prev.blocks.filter(b => !(b.type === "baustein" && b.name === name)) }));
-    setDirty(true);
-  }, []);
 
-  const onTemplateSelect = useCallback((id) => {
-    // For the prototype we keep the current template — but show a hint
-    // Could swap content per id; we'll just update title for visual feedback
+  // Vorlage auswählen. Eingebettet → echtes HTML aus der DB nachladen.
+  // Standalone (Prototyp) → Demo-/Stub-Inhalt wie gehabt.
+  const onTemplateSelect = useCallback(async (id) => {
+    if (embedded) {
+      setLoadingTemplate(true);
+      try {
+        const t = await loadTemplate(id);
+        setTemplate(t);
+        setTitle(t.title);
+        setDirty(false);
+      } catch (e) {
+        setTemplate({
+          id,
+          title: "Fehler beim Laden",
+          kategorie: "",
+          haupt_verteil_objekt: "",
+          canWrite: false,
+          htmlContent: `<h2>Vorlage konnte nicht geladen werden</h2><p>${String((e && e.message) || e)}</p>`,
+        });
+        setTitle("Fehler beim Laden");
+      } finally {
+        setLoadingTemplate(false);
+      }
+      return;
+    }
+
+    // Prototyp-Modus: Stub für visuelles Feedback
     const allTemplates = TEMPLATE_TREE.flatMap(c => c.templates);
     const t = allTemplates.find(x => x.id === id);
     if (!t) return;
@@ -87,25 +115,109 @@ export const App = () => {
       setTemplate(CURRENT_TEMPLATE);
       setTitle(CURRENT_TEMPLATE.title);
     } else {
-      // Build a stub template for visual feedback
       setTemplate({
         ...CURRENT_TEMPLATE,
         id,
         title: t.title,
-        blocks: [
-          { type: "h2", inlines: [{ type: "text", value: t.title }] },
-          { type: "p", inlines: [{ type: "text", value: 'Diese Vorlage ist im Prototyp nicht hinterlegt. Wechsel zurück zu „1. Mahnung" für die volle Demo.' }] },
-        ],
+        htmlContent: `<h2>${t.title}</h2><p>Diese Vorlage ist im Prototyp nicht hinterlegt. Wechsel zurück zu „1. Mahnung" für die volle Demo.</p>`,
       });
       setTitle(t.title);
     }
     setDirty(false);
   }, []);
 
-  const save = () => {
-    setDirty(false);
-    // little visual flash
+  // Beim Start: echten Vorlagen-Baum laden; eingebettet zusätzlich die erste
+  // Vorlage automatisch öffnen, damit die Mitte nicht mit Mock-Inhalt startet.
+  useEffect(() => {
+    let cancelled = false;
+    loadTree()
+      .then(({ groups }) => {
+        if (cancelled || !groups || !groups.length) return;
+        setTree(groups);
+        if (embedded) {
+          const first = groups.flatMap(g => g.templates)[0];
+          if (first) onTemplateSelect(first.id);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [onTemplateSelect]);
+
+  const save = async () => {
+    if (!template.canWrite || !dirty || saving) return;
+    // Harte Sperre: Vorlage round-trippt nicht verlustfrei (Token-Erhalt-Check beim Laden).
+    if (editorSafety) {
+      alert(
+        "Speichern blockiert: Diese Vorlage enthält Strukturen, die der Editor nicht verlustfrei " +
+        "abbilden kann (z. B. ein nicht unterstützter Schleifen-/Tabellen-Aufbau).\n\n" +
+        "Verlorene Tokens: " + Object.keys(editorSafety.lost || {}).join(", ") +
+        "\n\nBitte diese Vorlage vorerst im klassischen Formular bearbeiten."
+      );
+      return;
+    }
+    const html = contentRef.current ? contentRef.current.getHtml() : (template.htmlContent || "");
+    // Jinja-Balance-Warnung (nicht blockierend).
+    const bal = validateJinjaBalance(html);
+    if (!bal.ok) {
+      const proceed = confirm(
+        "Mögliche Jinja-Probleme:\n\n" + bal.errors.join("\n") + "\n\nTrotzdem speichern?"
+      );
+      if (!proceed) return;
+    }
+    setSaving(true);
+    try {
+      const res = await saveTemplate(template.id, html);
+      setDirty(false);
+      setTemplate(prev => ({ ...prev, modified: res.modified || prev.modified }));
+    } catch (e) {
+      alert("Speichern fehlgeschlagen: " + ((e && e.message) || e));
+    } finally {
+      setSaving(false);
+    }
   };
+
+  // Template-unabhängige Sidebar-Daten einmalig laden.
+  useEffect(() => {
+    loadBausteine().then(r => setBausteine(r.items || [])).catch(() => {});
+    loadRecipients().then(r => setRecipients(r.items || [])).catch(() => {});
+  }, []);
+
+  // Platzhalter-Baum der aktuellen Vorlage laden (Objekt-Felder + Variablen + Referenzen).
+  useEffect(() => {
+    loadPlaceholderTree(template.id).then(r => setPlaceholders(r.groups || [])).catch(() => {});
+  }, [template.id]);
+
+  const searchRecipients = useCallback((q) => {
+    loadRecipients(template.haupt_verteil_objekt, q)
+      .then(r => setRecipients(r.items || [])).catch(() => {});
+  }, [template.haupt_verteil_objekt]);
+
+  // PDF-Vorschau (gespeicherter Stand). Mit Empfänger → echte Daten, sonst Beispiel.
+  const refreshPreview = useCallback(async () => {
+    if (!embedded || !template.id) return;
+    setPreviewLoading(true);
+    setPreviewError("");
+    try {
+      const res = await renderPreview({
+        templateName: template.id,
+        hauptVerteilObjekt: template.haupt_verteil_objekt,
+        recipientId: recipient && recipient.id,
+      });
+      setPreviewPdf(res.pdf_base64 || "");
+      setPreviewMode(res.mode || "");
+    } catch (e) {
+      setPreviewError((e && e.message) || String(e));
+      setPreviewPdf("");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [template.id, template.haupt_verteil_objekt, recipient]);
+
+  // Automatisch rendern, wenn der Vorschau-Tab aktiv ist und sich Vorlage oder
+  // Empfänger ändert (nur eingebettet).
+  useEffect(() => {
+    if (embedded && tab === "preview" && template.id) refreshPreview();
+  }, [tab, template.id, recipient, refreshPreview]);
 
   return (
     <div className="app">
@@ -131,8 +243,8 @@ export const App = () => {
           )}
         </div>
 
-        <button className="btn" onClick={save} disabled={!dirty}>
-          <Icon name="save" size={14}/> Speichern
+        <button className="btn" onClick={save} disabled={!dirty || !template.canWrite || saving} title={!template.canWrite ? "Keine Schreibberechtigung" : ""}>
+          <Icon name="save" size={14}/> {saving ? "Speichert …" : "Speichern"}
         </button>
         <button className="btn ghost"><Icon name="copy" size={14}/> Kopieren</button>
         <button className="btn primary">
@@ -145,23 +257,37 @@ export const App = () => {
         className={`main ${resizing ? "resizing" : ""}`}
         style={{ gridTemplateColumns: `${navCollapsed ? "44px" : "260px"} 1fr ${sidebarWidth}px` }}
       >
-        <Navigator currentId={template.id} onSelect={onTemplateSelect} collapsed={navCollapsed} onToggleCollapse={() => setNavCollapsed(c => !c)}/>
+        <Navigator tree={tree} currentId={template.id} onSelect={onTemplateSelect} collapsed={navCollapsed} onToggleCollapse={() => setNavCollapsed(c => !c)}/>
         <Editor
           template={template}
           recipient={recipient}
+          loading={loadingTemplate}
+          canWrite={!!template.canWrite}
+          contentRef={contentRef}
+          onDirty={() => setDirty(true)}
           onInsertItem={insertItem}
           onPickRecipient={() => setRecipientPickerOpen(true)}
           onMaximizePreview={() => setPdfMaximized(true)}
+          onImageUpload={embedded ? (file) => uploadImage(file, template.id) : null}
+          onSafety={setEditorSafety}
         />
         <Sidebar
           tab={tab}
           onTab={setTab}
           template={template}
           recipient={recipient}
-          onChangeRecipient={setRecipient}
+          recipients={recipients}
+          placeholders={placeholders}
+          bausteine={bausteine}
+          onChangeRecipient={changeRecipient}
+          onSearchRecipients={searchRecipients}
+          previewPdf={previewPdf}
+          previewLoading={previewLoading}
+          previewError={previewError}
+          previewMode={previewMode}
+          onRefreshPreview={refreshPreview}
           onInsertPlaceholder={insertPlaceholder}
           onInsertBaustein={insertBaustein}
-          onRemoveBaustein={removeBaustein}
           onMaximizePreview={() => setPdfMaximized(true)}
           onResizeStart={onResizeStart}
         />
@@ -178,15 +304,25 @@ export const App = () => {
               <button className="btn ghost icon" onClick={() => setRecipientPickerOpen(false)}><Icon name="x" size={14}/></button>
             </div>
             <div className="modal-body">
-              {SAMPLE_RECIPIENTS.map(r => (
+              <div
+                className={`recipient-row ${!recipient.id ? "active" : ""}`}
+                onClick={() => { changeRecipient(null); setRecipientPickerOpen(false); }}
+              >
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 500, fontSize: 13 }}>Beispielwerte</div>
+                  <div style={{ fontSize: 11, color: "var(--text-faint)" }}>Vorschau mit Musterdaten (kein echter Empfänger)</div>
+                </div>
+                {!recipient.id && <Icon name="check" size={14}/>}
+              </div>
+              {recipients.map(r => (
                 <div
                   key={r.id}
                   className={`recipient-row ${r.id === recipient.id ? "active" : ""}`}
-                  onClick={() => { setRecipient(r); setRecipientPickerOpen(false); }}
+                  onClick={() => { changeRecipient(r); setRecipientPickerOpen(false); }}
                 >
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 500, fontSize: 13 }}>{r.label}</div>
-                    <div style={{ fontSize: 11, color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>{r.id} · Mahnstufe {r.values.mahnstufe} · Saldo {r.values.saldo}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>{r.id}</div>
                   </div>
                   {r.id === recipient.id && <Icon name="check" size={14}/>}
                 </div>
@@ -200,7 +336,11 @@ export const App = () => {
         <PdfMaximized
           template={template}
           recipient={recipient}
-          onChangeRecipient={setRecipient}
+          recipients={recipients}
+          pdfBase64={previewPdf}
+          loading={previewLoading}
+          onChangeRecipient={changeRecipient}
+          onRefresh={refreshPreview}
           onClose={() => setPdfMaximized(false)}
         />
       )}

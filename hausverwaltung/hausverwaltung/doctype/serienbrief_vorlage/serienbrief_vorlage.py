@@ -9,7 +9,7 @@ import frappe
 from frappe import _
 from frappe.exceptions import DuplicateEntryError
 from frappe.model.document import Document
-from frappe.utils import cint, cstr
+from frappe.utils import cint, cstr, pretty_date, strip_html_tags
 from frappe.utils.jinja import get_jenv
 from jinja2 import Undefined
 
@@ -1300,3 +1300,501 @@ def _build_snippet(text: str, query: str, context: int = 60) -> str | None:
 	if end < len(text):
 		snippet = f"{snippet} ..."
 	return snippet
+
+
+# ---------------------------------------------------------------------------
+# Read-only-Endpunkte für den neuen React-Serienbrief-Editor (Beta).
+# Liefern den Vorlagen-Baum und einen einzelnen Vorlagen-Inhalt. Werden vom
+# iframe-UI über die postMessage-Bridge (page/serienbrief_editor) aufgerufen.
+# ---------------------------------------------------------------------------
+
+
+@frappe.whitelist()
+def get_editor_tree() -> Dict[str, Any]:
+	"""Kategorien (flach, nach Titel sortiert) mit ihren direkt zugeordneten
+	Vorlagen — Datenquelle für den Navigator-Baum im React-Editor."""
+	if not frappe.has_permission("Serienbrief Vorlage", "read"):
+		frappe.throw(_("Keine Berechtigung, Serienbrief Vorlagen zu lesen."), frappe.PermissionError)
+
+	categories = frappe.get_all(
+		"Serienbrief Kategorie",
+		fields=["name", "title"],
+		order_by="title asc",
+	)
+
+	templates = frappe.get_all(
+		"Serienbrief Vorlage",
+		filters={"docstatus": ["<", 2]},
+		fields=["name", "title", "kategorie", "modified"],
+		order_by="title asc",
+	)
+
+	by_cat: Dict[str, List[Dict[str, str]]] = {}
+	for t in templates:
+		by_cat.setdefault(t.kategorie or "", []).append(
+			{"id": t.name, "title": t.title, "modified": pretty_date(t.modified)}
+		)
+
+	groups: List[Dict[str, Any]] = []
+	for cat in categories:
+		items = by_cat.get(cat.name, [])
+		if not items:
+			continue
+		groups.append(
+			{"key": cat.name, "label": cat.title or cat.name, "count": len(items), "templates": items}
+		)
+
+	uncategorized = by_cat.get("", [])
+	if uncategorized:
+		groups.append(
+			{
+				"key": "__none__",
+				"label": _("Ohne Ordner"),
+				"count": len(uncategorized),
+				"templates": uncategorized,
+			}
+		)
+
+	return {"groups": groups, "total": len(templates)}
+
+
+@frappe.whitelist()
+def get_editor_template(name: str | None = None) -> Dict[str, Any]:
+	"""Einzelne Vorlage für die Anzeige im React-Editor (read-only)."""
+	template_name = (name or "").strip()
+	if not template_name:
+		frappe.throw(_("Bitte eine Vorlage angeben."))
+
+	if not frappe.has_permission("Serienbrief Vorlage", "read", doc=template_name):
+		frappe.throw(_("Keine Berechtigung, die Vorlage zu lesen."), frappe.PermissionError)
+
+	doc = frappe.get_doc("Serienbrief Vorlage", template_name)
+
+	if doc.content_type == "HTML + Jinja":
+		html = doc.html_content or ""
+	else:
+		html = doc.content or ""
+
+	kategorie_label = ""
+	if doc.kategorie:
+		kategorie_label = (
+			frappe.db.get_value("Serienbrief Kategorie", doc.kategorie, "title") or doc.kategorie
+		)
+
+	can_write = 1 if frappe.has_permission("Serienbrief Vorlage", "write", doc=doc.name) else 0
+
+	variables = [
+		{
+			"variable": v.variable,
+			"label": v.label or v.variable,
+			"type": v.variable_type,
+			"beschreibung": v.beschreibung,
+		}
+		for v in (doc.variables or [])
+		if getattr(v, "variable", None)
+	]
+
+	return {
+		"id": doc.name,
+		"title": doc.title,
+		"kategorie": doc.kategorie,
+		"kategorie_label": kategorie_label,
+		"haupt_verteil_objekt": doc.haupt_verteil_objekt,
+		"content_type": doc.content_type,
+		"content_position": doc.content_position,
+		"html": html,
+		"modified": pretty_date(doc.modified),
+		"modified_by": doc.modified_by,
+		"can_write": can_write,
+		"variables": variables,
+	}
+
+
+@frappe.whitelist()
+def save_editor_template(name: str | None = None, html: str | None = None) -> Dict[str, Any]:
+	"""Editor-Inhalt zurück in die Vorlage schreiben (content bzw. html_content je
+	nach content_type). validate() sanitisiert Rich-Text automatisch."""
+	template_name = (name or "").strip()
+	if not template_name:
+		frappe.throw(_("Bitte eine Vorlage angeben."))
+
+	if not frappe.has_permission("Serienbrief Vorlage", "write", doc=template_name):
+		frappe.throw(_("Keine Berechtigung, die Vorlage zu bearbeiten."), frappe.PermissionError)
+
+	doc = frappe.get_doc("Serienbrief Vorlage", template_name)
+	new_html = cstr(html or "")
+	if doc.content_type == "HTML + Jinja":
+		doc.html_content = new_html
+	else:
+		doc.content = new_html
+	doc.save()
+
+	return {"id": doc.name, "modified": pretty_date(doc.modified)}
+
+
+# Erlaubte Raster-Bildformate, erkannt an Magic-Bytes (SVG bewusst NICHT — XSS-Risiko, da
+# das Bild später von Chrome im PDF-Render geladen wird). (sig_prefix, extension).
+_IMAGE_SIGNATURES = (
+	(b"\x89PNG\r\n\x1a\n", "png"),
+	(b"\xff\xd8\xff", "jpg"),
+	(b"GIF87a", "gif"),
+	(b"GIF89a", "gif"),
+)
+_MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+def _detect_image_ext(content: bytes) -> str | None:
+	for sig, ext in _IMAGE_SIGNATURES:
+		if content.startswith(sig):
+			return ext
+	# WebP: "RIFF"...."WEBP"
+	if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+		return "webp"
+	return None
+
+
+@frappe.whitelist()
+def upload_editor_image(
+	filename: str | None = None,
+	content_base64: str | None = None,
+	template: str | None = None,
+) -> Dict[str, str]:
+	"""Bild aus dem React-Editor in den Frappe-File-Store legen, gibt die /files/…-URL zurück.
+
+	Base64 nur im Transit; gespeichert wird die URL (kein Base64-Bloat in der Vorlage,
+	Chrome holt das Bild beim PDF-Render serverseitig über die public URL). Gehärtet:
+	doc-spezifische Schreibrechte, Magic-Byte-MIME-Prüfung (nur Raster, kein SVG),
+	Größenlimit, an die Vorlage angehängt.
+	"""
+	# Berechtigung: doc-spezifisch, wenn eine Vorlage angegeben ist; sonst generisch.
+	template_name = (template or "").strip()
+	if template_name:
+		if not frappe.has_permission("Serienbrief Vorlage", "write", doc=template_name):
+			frappe.throw(_("Keine Berechtigung, diese Vorlage zu bearbeiten."), frappe.PermissionError)
+	elif not frappe.has_permission("Serienbrief Vorlage", "write"):
+		frappe.throw(_("Keine Berechtigung, Bilder hochzuladen."), frappe.PermissionError)
+
+	raw = (content_base64 or "").strip()
+	if not raw:
+		frappe.throw(_("Kein Bildinhalt übergeben."))
+	# evtl. Data-URL-Präfix (data:image/png;base64,…) abschneiden
+	if raw.lower().startswith("data:") and "," in raw:
+		raw = raw.split(",", 1)[1]
+	try:
+		content = base64.b64decode(raw, validate=True)
+	except Exception:
+		frappe.throw(_("Ungültiger Bildinhalt."))
+
+	if len(content) > _MAX_IMAGE_BYTES:
+		frappe.throw(_("Bild zu groß (max. {0} MB).").format(_MAX_IMAGE_BYTES // (1024 * 1024)))
+
+	ext = _detect_image_ext(content)
+	if not ext:
+		frappe.throw(_("Nicht unterstütztes Bildformat (erlaubt: PNG, JPG, GIF, WebP)."))
+
+	# Dateiname säubern und Endung an das erkannte Format angleichen.
+	base_name = cstr(filename or "bild")
+	base_name = re.sub(r"[^\w.\-]+", "_", base_name).rsplit(".", 1)[0][:80] or "bild"
+	fname = f"{base_name}.{ext}"
+
+	file_doc = frappe.get_doc(
+		{
+			"doctype": "File",
+			"file_name": fname,
+			# public: Chrome muss das Bild beim PDF-Render ohne Auth laden können.
+			"is_private": 0,
+			"content": content,
+			# An die Vorlage hängen (Tracking/Cleanup), wenn vorhanden.
+			"attached_to_doctype": "Serienbrief Vorlage" if template_name else None,
+			"attached_to_name": template_name or None,
+		}
+	)
+	file_doc.save(ignore_permissions=True)
+	return {"file_url": file_doc.file_url, "file_name": file_doc.file_name}
+
+
+def _baustein_preview(text: str, limit: int = 160) -> str:
+	plain = re.sub(r"\s+", " ", strip_html_tags(cstr(text or ""))).strip()
+	return plain[:limit] + ("…" if len(plain) > limit else "")
+
+
+@frappe.whitelist()
+def get_editor_bausteine() -> Dict[str, Any]:
+	"""Alle Textbausteine für die Bausteine-Sidebar (Name = Insert-Key über
+	{{ baustein("Name") }}, da autoname = title)."""
+	if not frappe.has_permission("Serienbrief Textbaustein", "read"):
+		frappe.throw(_("Keine Berechtigung, Textbausteine zu lesen."), frappe.PermissionError)
+
+	rows = frappe.get_all(
+		"Serienbrief Textbaustein",
+		fields=["name", "title", "description", "content_type", "text_content"],
+		order_by="title asc",
+	)
+	items = [
+		{
+			"name": r.name,
+			"title": r.title or r.name,
+			"description": r.description or "",
+			"preview": _baustein_preview(r.text_content),
+		}
+		for r in rows
+	]
+	return {"items": items}
+
+
+# Präfix → Sidebar-Icon (Icon.jsx-Namen); Default "tag".
+_PLACEHOLDER_ICONS = {
+	"mieter": "user",
+	"objekt": "user",
+	"empfaenger": "user",
+	"eigentuemer": "user",
+	"verwalter": "building",
+	"wohnung": "door",
+	"immobilie": "door",
+	"mietvertrag": "euro",
+	"saldo": "euro",
+	"datum": "calendar",
+	"bankkonto": "credit-card",
+}
+
+
+# Platzhalter-Baum (Parität zum alten Formular-Picker in serienbrief_vorlage.js).
+# Feldtypen ohne Platzhalter-Wert bzw. Link-Ziele, in die nicht verzweigt wird.
+_TREE_SKIP_TYPES = {
+	"Table",
+	"Table MultiSelect",
+	"Section Break",
+	"Column Break",
+	"Tab Break",
+	"Fold",
+	"Button",
+	"HTML",
+	"Image",
+	"Attach",
+	"Attach Image",
+}
+_TREE_SKIP_LINK_TARGETS = {
+	"DocType",
+	"DocField",
+	"DocPerm",
+	"DocType Action",
+	"DocType Link",
+	"DocType State",
+	"DocType Layout",
+	"DocType Layout Field",
+}
+
+
+def _ph(path: str) -> str:
+	return f"{{{{$ {path} $}}}}"
+
+
+def _safe_meta(doctype: str):
+	try:
+		return frappe.get_meta(doctype)
+	except Exception:
+		return None
+
+
+def _build_tree_nodes(base_key, base_label, meta, visited, depth, max_depth):
+	"""Rekursive Feld-Knoten (Link-Felder verzweigen bis max_depth). Mirror von
+	hv_vorlage_build_tree_nodes im Formular-JS."""
+	nodes = []
+	for df in meta.fields:
+		if not getattr(df, "fieldname", None) or df.fieldtype in _TREE_SKIP_TYPES:
+			continue
+		label = df.label or df.fieldname
+		nodes.append(
+			{"label": f"{base_label}: {label}", "token": _ph(f"{base_key}.{df.fieldname}"),
+			 "type": df.fieldtype, "children": []}
+		)
+		if (
+			df.fieldtype == "Link"
+			and df.options
+			and df.options not in _TREE_SKIP_LINK_TARGETS
+			and df.options not in visited
+			and depth < max_depth
+		):
+			target_meta = _safe_meta(df.options)
+			if not target_meta:
+				continue
+			target_key = f"{base_key}.{df.fieldname}"
+			child_nodes = _build_tree_nodes(
+				target_key, df.options, target_meta, visited | {df.options}, depth + 1, max_depth
+			)
+			if child_nodes:
+				nodes.append(
+					{"label": f"{label} → {df.options}", "token": _ph(f"{target_key}.name"),
+					 "type": "Link", "children": child_nodes}
+				)
+	return nodes
+
+
+def _build_iteration_tree(dt):
+	"""Baum für das Iterationsobjekt (Root = ``objekt``). Mirror von
+	hv_vorlage_build_iteration_tree. Pro Doctype gecached (Tiefe-2-Rekursion ist
+	teuer), Invalidierung über bench clear-cache."""
+	cache = frappe.cache()
+	cache_key = f"hv_editor_ph_tree:{dt}"
+	cached = cache.get_value(cache_key)
+	if cached:
+		try:
+			return json.loads(cached)
+		except Exception:
+			pass
+
+	meta = _safe_meta(dt)
+	if not meta:
+		return []
+	nodes = [{"label": _("Name"), "token": _ph("objekt.name"), "type": "Name", "children": []}]
+	for df in meta.fields:
+		if not getattr(df, "fieldname", None) or df.fieldtype in _TREE_SKIP_TYPES:
+			continue
+		label = df.label or df.fieldname
+		if df.fieldtype == "Link" and df.options and df.options not in _TREE_SKIP_LINK_TARGETS:
+			target_meta = _safe_meta(df.options)
+			if target_meta:
+				child_nodes = _build_tree_nodes(
+					f"objekt.{df.fieldname}", df.options, target_meta, {df.options}, 0, 2
+				)
+				if child_nodes:
+					nodes.append(
+						{"label": f"{label} → {df.options}", "token": _ph(f"objekt.{df.fieldname}.name"),
+						 "type": "Link", "children": child_nodes}
+					)
+		nodes.append(
+			{"label": label, "token": _ph(f"objekt.{df.fieldname}"), "type": df.fieldtype, "children": []}
+		)
+
+	try:
+		cache.set_value(cache_key, json.dumps(nodes))
+	except Exception:
+		pass
+	return nodes
+
+
+@frappe.whitelist()
+def get_editor_placeholder_tree(name: str | None = None) -> Dict[str, Any]:
+	"""Voller Platzhalter-Baum wie im alten Formular-Picker: Gruppen Allgemein,
+	Vorlagen-Variablen, Iterationsobjekt (rekursiver Feld-Baum) und Referenz
+	(aus den Vorlagen-/Baustein-Anforderungen)."""
+	if not frappe.has_permission("Serienbrief Vorlage", "read"):
+		frappe.throw(_("Keine Berechtigung, Serienbrief Vorlagen zu lesen."), frappe.PermissionError)
+
+	doc = None
+	template_name = (name or "").strip()
+	if template_name and frappe.db.exists("Serienbrief Vorlage", template_name):
+		doc = frappe.get_doc("Serienbrief Vorlage", template_name)
+
+	dt = (getattr(doc, "haupt_verteil_objekt", None) or "Mietvertrag").strip() if doc else "Mietvertrag"
+
+	groups: List[Dict[str, Any]] = [
+		{
+			"key": "allgemein",
+			"label": _("Allgemein"),
+			"icon": "calendar",
+			"tree": [
+				{"label": _("Datum (formatiert)"), "token": "{{ datum }}", "type": "", "children": []},
+				{"label": _("Datum (ISO)"), "token": "{{ datum_iso }}", "type": "", "children": []},
+			],
+		}
+	]
+
+	# Vorlagen-Variablen
+	if doc:
+		var_nodes = [
+			{"label": v.label or v.variable, "token": f"{{{{ {frappe.scrub(v.variable)} }}}}",
+			 "type": v.variable_type or "", "children": []}
+			for v in (doc.variables or [])
+			if getattr(v, "variable", None)
+		]
+		if var_nodes:
+			groups.append(
+				{"key": "variablen", "label": _("Vorlagen-Variablen"), "icon": "tag", "tree": var_nodes}
+			)
+
+	# Iterationsobjekt (objekt)
+	if dt and frappe.db.exists("DocType", dt):
+		tree = _build_iteration_tree(dt)
+		if tree:
+			groups.append(
+				{"key": "objekt", "label": f"{_('Iterationsobjekt')}: {dt}", "icon": "user", "tree": tree}
+			)
+
+	# Referenz-Felder aus Anforderungen (Bausteine/Vorlage)
+	if doc:
+		try:
+			from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+				get_template_requirements,
+			)
+
+			requirements = get_template_requirements(template=doc.name) or {}
+		except Exception:
+			requirements = {}
+		refs = [*(requirements.get("required_fields") or []), *(requirements.get("auto_fields") or [])]
+		seen = set()
+		for ref in refs:
+			ref_dt = str((ref or {}).get("doctype") or "").strip()
+			fieldname = str((ref or {}).get("fieldname") or "").strip()
+			if not ref_dt or not fieldname:
+				continue
+			is_list = bool((ref or {}).get("is_list"))
+			signature = f"{fieldname}::{ref_dt}::{'list' if is_list else 'single'}"
+			if signature in seen or not frappe.db.exists("DocType", ref_dt):
+				continue
+			seen.add(signature)
+			ref_meta = _safe_meta(ref_dt)
+			if not ref_meta:
+				continue
+			tree_key = f"{fieldname}[0]" if is_list else fieldname
+			ref_tree = _build_tree_nodes(tree_key, ref_dt, ref_meta, {ref_dt}, 0, 2)
+			if not ref_tree:
+				continue
+			groups.append(
+				{
+					"key": f"ref_{signature}",
+					"label": f"{_('Referenz')}: {(ref or {}).get('label') or fieldname} ({ref_dt})",
+					"icon": "tag",
+					"tree": ref_tree,
+				}
+			)
+
+	return {"groups": groups, "doctype": dt}
+
+
+@frappe.whitelist()
+def get_editor_recipients(
+	doctype: str | None = None, query: str | None = None, limit: int = 25
+) -> Dict[str, Any]:
+	"""Echte Empfänger (z. B. Mietverträge) für den Vorschau-Empfänger-Picker."""
+	dt = (doctype or "Mietvertrag").strip()
+	if not frappe.db.exists("DocType", dt):
+		return {"items": [], "doctype": dt}
+	if not frappe.has_permission(dt, "read"):
+		frappe.throw(_("Keine Berechtigung, {0} zu lesen.").format(dt), frappe.PermissionError)
+
+	meta = frappe.get_meta(dt)
+	title_field = meta.get_title_field()
+	fields = ["name"]
+	if title_field and title_field != "name":
+		fields.append(title_field)
+
+	q = (query or "").strip()
+	or_filters = None
+	if q:
+		or_filters = [["name", "like", f"%{q}%"]]
+		if title_field and title_field != "name":
+			or_filters.append([title_field, "like", f"%{q}%"])
+
+	rows = frappe.get_list(
+		dt,
+		fields=fields,
+		or_filters=or_filters,
+		limit=cint(limit) or 25,
+		order_by="modified desc",
+	)
+	items = []
+	for r in rows:
+		label = r.get(title_field) if title_field and title_field != "name" else None
+		items.append({"id": r["name"], "label": label or r["name"]})
+	return {"items": items, "doctype": dt}
