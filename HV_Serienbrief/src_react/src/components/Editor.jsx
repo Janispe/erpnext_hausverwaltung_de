@@ -188,6 +188,28 @@ const EditorToolbar = ({ editor, disabled, onInsert, onImage }) => {
 					<option>Überschrift 2</option>
 					<option>Überschrift 3</option>
 				</select>
+				<select
+					className="block-style-select"
+					title="Schriftgröße"
+					value={(editor && editor.getAttributes("textStyle").fontSize) || ""}
+					disabled={!can}
+					onMouseDown={(e) => e.stopPropagation()}
+					onChange={(e) => {
+						const v = e.target.value;
+						if (v) chain().setFontSize(v).run();
+						else chain().unsetFontSize().run();
+					}}
+				>
+					<option value="">Größe</option>
+					<option value="10px">10</option>
+					<option value="11px">11</option>
+					<option value="12px">12</option>
+					<option value="14px">14</option>
+					<option value="16px">16</option>
+					<option value="18px">18</option>
+					<option value="20px">20</option>
+					<option value="24px">24</option>
+				</select>
 			</div>
 			<div className="tool-group">
 				<TBtn title="Fett" active={isA("bold")} disabled={!can} on={() => chain().toggleBold().run()}>

@@ -1626,7 +1626,10 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
   padding: 40px 56px 56px;
-  align-self: stretch;
+  /* An den Inhalt anpassen (NICHT auf Viewport-Höhe strecken), sonst läuft langer
+     Inhalt unten aus der weißen Karte heraus ("abgehackt"). Mindesthöhe für kurze Briefe. */
+  align-self: flex-start;
+  min-height: 600px;
 }
 .editor-canvas.drag-over {
   outline: 2px dashed var(--primary);

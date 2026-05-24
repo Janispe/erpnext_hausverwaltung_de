@@ -229,6 +229,18 @@ const FontSize = Extension.create({
 			},
 		];
 	},
+	addCommands() {
+		return {
+			setFontSize:
+				(size) =>
+				({ chain }) =>
+					chain().setMark("textStyle", { fontSize: size }).run(),
+			unsetFontSize:
+				() =>
+				({ chain }) =>
+					chain().setMark("textStyle", { fontSize: null }).removeEmptyTextStyle().run(),
+		};
+	},
 });
 
 // Komplette Extension-Liste. onImageRequest() öffnet den Upload-Flow (vom Editor injiziert).
