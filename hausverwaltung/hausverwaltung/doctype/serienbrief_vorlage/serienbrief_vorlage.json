@@ -19,6 +19,7 @@
   "textbausteine",
   "pfad_zuordnung",
   "variablen_werte",
+  "inline_baustein_pfade",
   "notizen_tab",
   "description"
  ],
@@ -56,7 +57,7 @@
    "reqd": 1
   },
   {
-   "description": "Freitext f\u00fcr einfache Briefe; Platzhalter/Jinja erlaubt.",
+   "description": "Freitext für einfache Briefe; Platzhalter/Jinja erlaubt.",
    "depends_on": "eval:doc.content_type == 'Textbaustein (Rich Text)'",
    "fieldname": "content",
    "fieldtype": "Text Editor",
@@ -108,6 +109,13 @@
    "fieldtype": "Small Text",
    "hidden": 1,
    "label": "Variablenwerte"
+  },
+  {
+   "fieldname": "inline_baustein_pfade",
+   "fieldtype": "Long Text",
+   "label": "Inline-Baustein-Pfade (JSON)",
+   "description": "Vom Serienbrief-Editor verwaltet: Pfad-Overrides pro inline eingefuegtem Baustein, JSON { \"<Baustein>\": { \"<Variable>\": \"<Pfad>\" } }.",
+   "read_only": 1
   },
   {
    "fieldname": "notizen_tab",

@@ -1,9 +1,10 @@
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { Icon } from "./components/Icon.jsx";
 import { Navigator } from "./components/Navigator.jsx";
 import { Editor } from "./components/Editor.jsx";
 import { Sidebar } from "./components/Sidebar.jsx";
 import { PdfMaximized } from "./components/PdfMaximized.jsx";
+import { PfadMappingModal } from "./components/PfadMappingModal.jsx";
 import { CURRENT_TEMPLATE, TEMPLATE_TREE } from "./data.js";
 import {
   loadTree, loadTemplate, saveTemplate,
@@ -38,6 +39,9 @@ export const App = () => {
   const [previewError, setPreviewError] = useState("");
   // Token-Erhalt-Check beim Laden: null = sicher, sonst { lost, added } -> Speichern blockiert.
   const [editorSafety, setEditorSafety] = useState(null);
+  // Pro-Baustein Input-Pfad-Overrides { "<Baustein>": { "<Variable>": "<Pfad>" } }
+  const [bausteinPaths, setBausteinPaths] = useState({});
+  const [mappingBaustein, setMappingBaustein] = useState(null);
   const contentRef = useRef(null); // Zugriff auf den editierbaren HTML-Inhalt (getHtml)
 
   const changeRecipient = useCallback((r) => setRecipient(r || BEISPIEL), []);
@@ -90,6 +94,7 @@ export const App = () => {
         const t = await loadTemplate(id);
         setTemplate(t);
         setTitle(t.title);
+        setBausteinPaths(t.bausteinPaths || {});
         setDirty(false);
       } catch (e) {
         setTemplate({
@@ -166,7 +171,7 @@ export const App = () => {
     }
     setSaving(true);
     try {
-      const res = await saveTemplate(template.id, html);
+      const res = await saveTemplate(template.id, html, bausteinPaths);
       setDirty(false);
       setTemplate(prev => ({ ...prev, modified: res.modified || prev.modified }));
     } catch (e) {
@@ -186,6 +191,34 @@ export const App = () => {
   useEffect(() => {
     loadPlaceholderTree(template.id).then(r => setPlaceholders(r.groups || [])).catch(() => {});
   }, [template.id]);
+
+  // Platzhalter-Baum zu flachen Pfaden (für den Pfad-Picker im Baustein-Mapping).
+  const placeholderPaths = useMemo(() => {
+    const out = [];
+    const walk = (nodes) => {
+      for (const n of nodes || []) {
+        if (n.token) {
+          const path = String(n.token).replace(/^\{\{\s*/, "").replace(/\s*\}\}$/, "").trim();
+          if (path) out.push({ path, type: n.type || "", label: n.label || path });
+        }
+        if (n.children) walk(n.children);
+      }
+    };
+    (placeholders || []).forEach((g) => walk(g.tree));
+    return out;
+  }, [placeholders]);
+
+  // Baustein-Chip im Editor doppelgeklickt -> Pfad-Mapping-Modal öffnen.
+  useEffect(() => {
+    const onMap = (e) => {
+      const name = e.detail && e.detail.name;
+      if (!name) return;
+      const bs = (bausteine || []).find((b) => b.name === name);
+      setMappingBaustein(bs || { name, title: name, inputs: [], outputs: [], standardpfade: [] });
+    };
+    window.addEventListener("hv-baustein-mapping", onMap);
+    return () => window.removeEventListener("hv-baustein-mapping", onMap);
+  }, [bausteine]);
 
   const searchRecipients = useCallback((q) => {
     loadRecipients(template.haupt_verteil_objekt, q)
@@ -330,6 +363,25 @@ export const App = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {mappingBaustein && (
+        <PfadMappingModal
+          baustein={mappingBaustein}
+          hauptVerteilObjekt={template.haupt_verteil_objekt}
+          existingOverrides={bausteinPaths[mappingBaustein.name] || {}}
+          placeholderPaths={placeholderPaths}
+          onClose={() => setMappingBaustein(null)}
+          onSave={(name, clean) => {
+            setBausteinPaths((prev) => {
+              const next = { ...prev };
+              if (clean && Object.keys(clean).length) next[name] = clean;
+              else delete next[name];
+              return next;
+            });
+            setDirty(true);
+          }}
+        />
       )}
 
       {pdfMaximized && (

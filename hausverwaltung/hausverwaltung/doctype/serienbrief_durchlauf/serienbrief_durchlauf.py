@@ -1063,6 +1063,24 @@ class SerienbriefDurchlauf(Document):
 
 		return block_doc.text_content or ""
 
+	def _get_inline_baustein_pfade(self) -> dict:
+		"""Pro-Baustein Input-Pfad-Overrides der Vorlage (vom Serienbrief-Editor gesetzt),
+		gecached. Greift für inline eingefügte Bausteine, die keine Listen-Zeile haben."""
+		cached = getattr(self, "_inline_bp_cache", None)
+		if cached is not None:
+			return cached
+		data: dict = {}
+		if getattr(self, "vorlage", None):
+			try:
+				tpl = frappe.get_cached_doc("Serienbrief Vorlage", self.vorlage)
+				parsed = frappe.parse_json(tpl.get("inline_baustein_pfade") or "{}")
+				if isinstance(parsed, dict):
+					data = parsed
+			except Exception:
+				data = {}
+		self._inline_bp_cache = data
+		return data
+
 	def _apply_block_variables(self, context: Dict[str, Any], base_context: Dict[str, Any], block_doc, block_row) -> None:
 		variable_defs = block_doc.get("variables") or []
 		if not variable_defs:
@@ -1070,7 +1088,13 @@ class SerienbriefDurchlauf(Document):
 
 		block_title = block_doc.title or block_doc.name
 		value_mapping = _parse_variable_values(getattr(block_row, "variablen_werte", None))
-		path_mapping = _parse_mapping(getattr(block_row, "pfad_zuordnung", None))
+		# Listen-Zeilen-Override (falls vorhanden) + inline-Override aus der Vorlage (Editor).
+		# Inline-Override gewinnt, da der neue Editor inline arbeitet.
+		inline_override = self._get_inline_baustein_pfade().get(getattr(block_doc, "name", "")) or {}
+		path_mapping = {
+			**_parse_mapping(getattr(block_row, "pfad_zuordnung", None)),
+			**(inline_override if isinstance(inline_override, dict) else {}),
+		}
 		# Default-Pfade aus ``block_doc.standardpfade`` für den aktuellen
 		# Iterations-Doctype. Damit kann ein Baustein einmal pro Iterations-
 		# Doctype einen Standard hinterlegen, statt dass jede einbettende

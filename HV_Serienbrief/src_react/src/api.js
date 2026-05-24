@@ -43,17 +43,24 @@ export async function loadTemplate(id) {
 		// Echte Vorlagen liefern HTML statt des Block-Modells. Der Editor rendert
 		// htmlContent (mit Chip-Dekoration), editierbar wenn canWrite.
 		htmlContent: t.html || "",
+		// Pro-Baustein Input-Pfad-Overrides: { "<Baustein>": { "<Variable>": "<Pfad>" } }
+		bausteinPaths: t.baustein_pfade || {},
 		blocks: [],
 		mock: false,
 	};
 }
 
 // Editierten Inhalt zurück in die Vorlage speichern. Gibt { id, modified } zurück.
-export async function saveTemplate(id, html) {
+// bausteinPaths = Pro-Baustein Input-Pfad-Overrides (werden als JSON gespeichert).
+export async function saveTemplate(id, html, bausteinPaths) {
 	if (!embedded) {
 		return { id, modified: "gerade eben (Demo)", mock: true };
 	}
-	return await rpc("save", { name: id, html });
+	return await rpc("save", {
+		name: id,
+		html,
+		baustein_pfade: JSON.stringify(bausteinPaths || {}),
+	});
 }
 
 // Bausteine (Serienbrief Textbaustein) für die Bausteine-Sidebar.
@@ -65,9 +72,13 @@ export async function loadBausteine() {
 				title: b.name,
 				description: b.desc || "",
 				preview: (b.preview || "").replace(/\n+/g, " · "),
+				inputs: b.inputs || [],
+				outputs: b.outputs || [],
+				standardpfade: b.standardpfade || [],
 			})),
 		};
 	}
+	// Embedded: rpc liefert items inkl. inputs/outputs/standardpfade.
 	return await rpc("bausteine");
 }
 

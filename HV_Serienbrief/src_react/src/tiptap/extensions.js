@@ -153,6 +153,33 @@ export const BausteinNode = Node.create({
 			`⧉ ${bausteinLabel(node.attrs.token)}`,
 		];
 	},
+	// Doppelklick öffnet das Pfad-Mapping (Input-Pfade des Bausteins) via DOM-Event,
+	// das die App abfängt. Serialisierung läuft weiter über renderHTML.
+	addNodeView() {
+		return ({ node }) => {
+			const dom = document.createElement("span");
+			dom.className = "chip baustein-chip";
+			dom.setAttribute("data-hv-kind", "baustein");
+			dom.setAttribute("data-group", "baustein");
+			dom.title = "Doppelklick: Input-Pfade konfigurieren";
+			dom.textContent = "\u29C9 " + bausteinLabel(node.attrs.token);
+			dom.addEventListener("dblclick", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				const name = bausteinLabel(node.attrs.token);
+				if (name) window.dispatchEvent(new CustomEvent("hv-baustein-mapping", { detail: { name } }));
+			});
+			return {
+				dom,
+				ignoreMutation: () => true,
+				update: (updated) => {
+					if (updated.type.name !== "hvBaustein") return false;
+					dom.textContent = "\u29C9 " + bausteinLabel(updated.attrs.token);
+					return true;
+				},
+			};
+		};
+	},
 });
 
 export const JinjaInlineNode = Node.create({

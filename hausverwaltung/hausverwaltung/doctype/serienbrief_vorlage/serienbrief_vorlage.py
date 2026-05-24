@@ -1407,13 +1407,18 @@ def get_editor_template(name: str | None = None) -> Dict[str, Any]:
 		"modified_by": doc.modified_by,
 		"can_write": can_write,
 		"variables": variables,
+		# Pro-Baustein Input-Pfad-Overrides für inline eingefügte Bausteine.
+		"baustein_pfade": _parse_path_mapping(doc.get("inline_baustein_pfade")),
 	}
 
 
 @frappe.whitelist()
-def save_editor_template(name: str | None = None, html: str | None = None) -> Dict[str, Any]:
+def save_editor_template(
+	name: str | None = None, html: str | None = None, baustein_pfade: str | None = None
+) -> Dict[str, Any]:
 	"""Editor-Inhalt zurück in die Vorlage schreiben (content bzw. html_content je
-	nach content_type). validate() sanitisiert Rich-Text automatisch."""
+	nach content_type). validate() sanitisiert Rich-Text automatisch.
+	baustein_pfade (JSON) = Pro-Baustein Input-Pfad-Overrides für inline Bausteine."""
 	template_name = (name or "").strip()
 	if not template_name:
 		frappe.throw(_("Bitte eine Vorlage angeben."))
@@ -1427,6 +1432,10 @@ def save_editor_template(name: str | None = None, html: str | None = None) -> Di
 		doc.html_content = new_html
 	else:
 		doc.content = new_html
+	if baustein_pfade is not None:
+		# normalisiert als JSON-String ablegen (nur Dicts akzeptieren)
+		parsed = _parse_path_mapping(baustein_pfade)
+		doc.inline_baustein_pfade = frappe.as_json(parsed) if parsed else ""
 	doc.save()
 
 	return {"id": doc.name, "modified": pretty_date(doc.modified)}
@@ -1513,6 +1522,14 @@ def upload_editor_image(
 	return {"file_url": file_doc.file_url, "file_name": file_doc.file_name}
 
 
+def _parse_path_mapping(raw) -> Dict[str, str]:
+	"""JSON-Pfad-Mapping ({var: path}) sicher als Dict parsen."""
+	if not raw:
+		return {}
+	data = frappe.parse_json(raw) if isinstance(raw, str) else raw
+	return data if isinstance(data, dict) else {}
+
+
 def _baustein_preview(text: str, limit: int = 160) -> str:
 	plain = re.sub(r"\s+", " ", strip_html_tags(cstr(text or ""))).strip()
 	return plain[:limit] + ("…" if len(plain) > limit else "")
@@ -1530,15 +1547,47 @@ def get_editor_bausteine() -> Dict[str, Any]:
 		fields=["name", "title", "description", "content_type", "text_content"],
 		order_by="title asc",
 	)
-	items = [
-		{
-			"name": r.name,
-			"title": r.title or r.name,
-			"description": r.description or "",
-			"preview": _baustein_preview(r.text_content),
-		}
-		for r in rows
-	]
+	items = []
+	for r in rows:
+		doc = frappe.get_cached_doc("Serienbrief Textbaustein", r.name)
+		inputs = [
+			{
+				"name": v.variable,
+				"label": v.label or v.variable,
+				"type": v.variable_type,
+				"reference_doctype": getattr(v, "reference_doctype", None),
+				"desc": v.beschreibung,
+			}
+			for v in (doc.get("variables") or [])
+			if getattr(v, "variable", None)
+		]
+		outputs = [
+			{
+				"name": o.output_name,
+				"label": o.label or o.output_name,
+				"type": o.output_type,
+				"reference_doctype": getattr(o, "reference_doctype", None),
+				"desc": o.beschreibung,
+			}
+			for o in (doc.get("outputs") or [])
+			if getattr(o, "output_name", None)
+		]
+		standardpfade = [
+			{"startobjekt": s.startobjekt, "mappings": _parse_path_mapping(s.pfad_zuordnung)}
+			for s in (doc.get("standardpfade") or [])
+			if getattr(s, "startobjekt", None)
+		]
+		items.append(
+			{
+				"name": r.name,
+				"title": r.title or r.name,
+				"description": r.description or "",
+				"preview": _baustein_preview(r.text_content),
+				"inputs": inputs,
+				"outputs": outputs,
+				"standardpfade": standardpfade,
+			}
+		)
 	return {"items": items}
 
 
