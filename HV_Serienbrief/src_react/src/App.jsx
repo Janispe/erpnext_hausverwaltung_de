@@ -405,6 +405,7 @@ export const App = () => {
         <input
           className="title-input"
           value={title}
+          title={title}
           onChange={e => { setTitle(e.target.value); setDirty(true); }}
         />
         <span className="status-pill">{template.haupt_verteil_objekt}</span>

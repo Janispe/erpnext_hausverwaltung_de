@@ -108,7 +108,12 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   padding: 4px 8px;
   border-radius: var(--radius-sm);
   color: var(--text);
-  min-width: 240px;
+  /* Wächst in den freien Platz (lange Titel nicht mehr abgeschnitten), kann aber
+     auf schmalen Fenstern schrumpfen (min-width: 0), damit die rechten Buttons
+     nicht weggedrückt werden. Obergrenze, damit kurze Titel kein Riesenfeld geben. */
+  flex: 4 1 0;
+  min-width: 0;
+  max-width: 720px;
 }
 .topbar .title-input:hover { background: var(--surface-hover); }
 .topbar .title-input:focus { outline: none; background: var(--surface-2); border-color: var(--border-focus); }
