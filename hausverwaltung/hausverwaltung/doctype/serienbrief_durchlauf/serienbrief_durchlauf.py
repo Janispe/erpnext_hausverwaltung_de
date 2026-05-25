@@ -126,6 +126,21 @@ _PLACEHOLDER_TOKEN_RE = re.compile(
 )
 
 
+# Einzige Quelle für die Serienbrief-PDF-Ränder — Versand (_default_pdf_options) UND
+# Vorschau (serienbrief_vorlage._preview_pdf_options) nutzen diese, damit sie nicht mehr
+# auseinanderlaufen können. margin-top/left bestimmen die Adressfenster-Position
+# (Fensterkuvert) — nicht ohne Grund ändern. 25mm bottom reserviert Platz für den
+# 2-zeiligen Page-Footer (Bankverbindung + Pfad). Sollte mit der @page-Regel in
+# install.py konsistent bleiben.
+SERIENBRIEF_PDF_OPTIONS: Dict[str, str] = {
+	"page-size": "A4",
+	"margin-top": "20mm",
+	"margin-right": "20mm",
+	"margin-bottom": "25mm",
+	"margin-left": "25mm",
+}
+
+
 def _preprocess_simple_paths(
 	template: str,
 	context: Dict[str, Any],
@@ -1405,19 +1420,9 @@ class SerienbriefDurchlauf(Document):
 		return custom_css
 
 	def _default_pdf_options(self) -> dict[str, str]:
-		return {
-			"page-size": "A4",
-			"margin-top": "20mm",
-			"margin-right": "20mm",
-			# 25mm bottom: identisch zur Print-Format @page-Regel in install.py.
-			# Footer ist nur ~12mm hoch, 25mm gibt schmalen Sicherheitsabstand,
-			# ohne Whitespace am Page-Ende der vermehrt zu unnötigen Page-Breaks führt.
-			# (Diese Werte müssen mit install.py:_ensure_serienbrief_dokument_print_format
-			# synchron bleiben, sonst weicht der finale Durchlauf-PDF von der
-			# Vorlagen-Preview ab.)
-			"margin-bottom": "25mm",
-			"margin-left": "25mm",
-		}
+		# EINE gemeinsame Quelle für Versand UND Vorschau (s. SERIENBRIEF_PDF_OPTIONS),
+		# damit beide nie wieder auseinanderlaufen.
+		return dict(SERIENBRIEF_PDF_OPTIONS)
 
 	def _wrap_html_fragment(self, body_html: str) -> str:
 		return f'<div class="serienbrief-root">{body_html}</div>'

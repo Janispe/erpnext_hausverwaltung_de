@@ -885,19 +885,13 @@ def _build_split_preview_html(template_doc) -> str:
 
 
 def _preview_pdf_options() -> Dict[str, str]:
-	# Muss synchron zu SerienbriefDurchlauf._default_pdf_options bleiben — der
-	# Final-Pfad nutzt exakt diese Werte. Abweichung würde Margins/Page-Breaks
-	# der Preview vom Durchlauf-PDF entfernen.
-	# margin-bottom 30mm reserviert Platz für 2-Zeilen-Footer (Bankverbindung
-	# + Pfad). Bei 25mm wurde die zweite Zeile abgeschnitten, weil ein langer
-	# IBAN/Account-Name die Bankverbindung schon umbrechen lässt.
-	return {
-		"page-size": "A4",
-		"margin-top": "20mm",
-		"margin-right": "20mm",
-		"margin-bottom": "30mm",
-		"margin-left": "25mm",
-	}
+	# EINE gemeinsame Quelle mit dem Versand (SERIENBRIEF_PDF_OPTIONS im Durchlauf),
+	# damit Vorschau und finales PDF nie wieder unterschiedliche Ränder/Page-Breaks haben.
+	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+		SERIENBRIEF_PDF_OPTIONS,
+	)
+
+	return dict(SERIENBRIEF_PDF_OPTIONS)
 
 
 def _render_through_serienbrief_dokument_print_format(
