@@ -256,9 +256,24 @@ export const App = () => {
       .then(r => setRecipients(r.items || [])).catch(() => {});
   }, [template.haupt_verteil_objekt]);
 
-  // PDF-Vorschau (gespeicherter Stand). Mit Empfänger → echte Daten, sonst Beispiel.
-  const refreshPreview = useCallback(async () => {
+  // PDF-Live-Vorschau: rendert den aktuellen (ungespeicherten) Editor-Stand.
+  // Queue-Guard: nie zwei Chrome-Renders parallel (OOM-Schutz) — läuft schon einer,
+  // wird er gemerkt und nach Abschluss einmal nachgezogen. Signatur-Check: kein Render,
+  // wenn sich nichts geändert hat.
+  const previewBusy = useRef(false);
+  const previewPending = useRef(false);
+  const previewSig = useRef(null);
+  const previewTimer = useRef(null);
+
+  const refreshPreview = useCallback(async ({ force = false } = {}) => {
     if (!embedded || !template.id) return;
+    const html = contentRef.current ? contentRef.current.getHtml() : (template.htmlContent || "");
+    const sig = JSON.stringify([html, recipient && recipient.id, variables, bausteinPaths]);
+    if (!force && sig === previewSig.current) return;        // nichts geändert
+    if (previewBusy.current) { previewPending.current = true; return; } // läuft -> queue
+    previewBusy.current = true;
+    previewPending.current = false;
+    previewSig.current = sig;
     setPreviewLoading(true);
     setPreviewError("");
     try {
@@ -266,22 +281,40 @@ export const App = () => {
         templateName: template.id,
         hauptVerteilObjekt: template.haupt_verteil_objekt,
         recipientId: recipient && recipient.id,
+        html,
+        variables,
+        bausteinPaths,
       });
       setPreviewPdf(res.pdf_base64 || "");
       setPreviewMode(res.mode || "");
     } catch (e) {
       setPreviewError((e && e.message) || String(e));
       setPreviewPdf("");
+      previewSig.current = null; // bei Fehler erneuten Versuch erlauben
     } finally {
+      previewBusy.current = false;
       setPreviewLoading(false);
+      if (previewPending.current) { previewPending.current = false; refreshPreview({ force: true }); }
     }
-  }, [template.id, template.haupt_verteil_objekt, recipient]);
+  }, [template.id, template.haupt_verteil_objekt, recipient, variables, bausteinPaths]);
 
-  // Automatisch rendern, wenn der Vorschau-Tab aktiv ist und sich Vorlage oder
-  // Empfänger ändert (nur eingebettet).
+  // Debounce: nach der letzten Eingabe ~4s warten, dann (live) rendern. Nur wenn der
+  // Vorschau-Tab sichtbar ist.
+  const schedulePreview = useCallback(() => {
+    if (!embedded || tab !== "preview") return;
+    if (previewTimer.current) clearTimeout(previewTimer.current);
+    previewTimer.current = setTimeout(() => refreshPreview(), 4000);
+  }, [tab, refreshPreview]);
+
+  // Sofort rendern bei Tab-/Vorlagen-/Empfängerwechsel (Signatur-Check dedupt).
   useEffect(() => {
     if (embedded && tab === "preview" && template.id) refreshPreview();
   }, [tab, template.id, recipient, refreshPreview]);
+
+  // Variablen-/Baustein-Pfad-Änderungen (nicht über den Editor) -> debounced nachrendern.
+  useEffect(() => {
+    schedulePreview();
+  }, [variables, bausteinPaths, schedulePreview]);
 
   return (
     <div className="app">
@@ -328,7 +361,7 @@ export const App = () => {
           loading={loadingTemplate}
           canWrite={!!template.canWrite}
           contentRef={contentRef}
-          onDirty={() => setDirty(true)}
+          onDirty={() => { setDirty(true); schedulePreview(); }}
           onInsertItem={insertItem}
           onPickRecipient={() => setRecipientPickerOpen(true)}
           onMaximizePreview={() => setPdfMaximized(true)}

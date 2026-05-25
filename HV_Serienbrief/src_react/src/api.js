@@ -132,14 +132,26 @@ export async function uploadImage(file, templateName) {
 
 // PDF-Vorschau rendern. Mit Empfänger → echte Daten (Durchlauf-Pfad, gespeicherte
 // Vorlage); ohne → Split-Preview mit Beispielwerten. Gibt { pdf_base64, mode }.
-export async function renderPreview({ templateName, hauptVerteilObjekt, recipientId }) {
+export async function renderPreview({
+	templateName,
+	hauptVerteilObjekt,
+	recipientId,
+	html,
+	variables,
+	bausteinPaths,
+}) {
 	if (!embedded) return { pdf_base64: "", mode: "mock" };
+	// Live-Vorschau: aktueller (ungespeicherter) Editor-Stand wird serverseitig in-memory
+	// auf die Vorlage angewandt und gerendert.
 	const params = { template: templateName };
+	if (html != null) params.html = html;
+	if (variables != null) params.variables = JSON.stringify(variables);
+	if (bausteinPaths != null) params.baustein_pfade = JSON.stringify(bausteinPaths);
 	if (recipientId && hauptVerteilObjekt) {
 		params.iteration_doctype = hauptVerteilObjekt;
 		params.iteration_objekt = recipientId;
 	} else {
 		params.split_preview = 1;
 	}
-	return await rpc("preview", params);
+	return await rpc("editor_preview", params);
 }

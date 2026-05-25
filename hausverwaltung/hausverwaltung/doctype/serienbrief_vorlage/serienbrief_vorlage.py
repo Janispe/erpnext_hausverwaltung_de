@@ -1087,6 +1087,45 @@ def render_template_preview_pdf(
 
 
 @frappe.whitelist()
+def render_editor_preview_pdf(
+	template: str | None = None,
+	html: str | None = None,
+	variables: str | None = None,
+	baustein_pfade: str | None = None,
+	iteration_doctype: str | None = None,
+	iteration_objekt: str | None = None,
+	split_preview: bool | None = None,
+) -> Dict[str, str]:
+	"""Live-Vorschau für den Editor: lädt die gespeicherte Vorlage, überschreibt Content/
+	Variablen/Baustein-Pfade **in-memory** (ohne zu speichern) mit dem aktuellen Editor-Stand
+	und rendert. So zeigt die Vorschau ungespeicherte Edits."""
+	template_name = (template or "").strip()
+	if not template_name:
+		frappe.throw(_("Bitte eine Vorlage angeben."))
+	if not frappe.has_permission("Serienbrief Vorlage", "read", doc=template_name):
+		frappe.throw(_("Keine Berechtigung, die Vorlage zu lesen."), frappe.PermissionError)
+
+	doc = frappe.get_doc("Serienbrief Vorlage", template_name)
+	if html is not None:
+		if doc.content_type == "HTML + Jinja":
+			doc.html_content = cstr(html)
+		else:
+			doc.content = cstr(html)
+	if variables is not None:
+		_apply_editor_variables(doc, variables)
+	if baustein_pfade is not None:
+		parsed = _parse_path_mapping(baustein_pfade)
+		doc.inline_baustein_pfade = frappe.as_json(parsed) if parsed else ""
+
+	return render_template_preview_pdf(
+		template_doc=doc.as_dict(),
+		iteration_doctype=iteration_doctype,
+		iteration_objekt=iteration_objekt,
+		split_preview=split_preview,
+	)
+
+
+@frappe.whitelist()
 def render_template_preview_html(
 	template: str | None = None, template_doc: Dict[str, Any] | None = None
 ) -> Dict[str, str]:
@@ -1427,6 +1466,43 @@ def get_editor_template(name: str | None = None) -> Dict[str, Any]:
 _VARIABLE_TEXT_TYPES = {"Text", "String", "Zahl", "Bool", "Datum"}
 
 
+def _apply_editor_variables(doc, variables) -> None:
+	"""Variablen-Definitionen (JSON-Array vom Editor) auf das Doc anwenden: baut die
+	variables-Child-Tabelle + variablen_werte (Werte) + pfad_zuordnung (Doctype-Pfade) neu."""
+	defs = frappe.parse_json(variables)
+	if not isinstance(defs, list):
+		return
+	rows, werte, pfade = [], {}, {}
+	for d in defs:
+		if not isinstance(d, dict):
+			continue
+		vname = cstr(d.get("variable")).strip()
+		if not vname:
+			continue
+		vtype = cstr(d.get("variable_type") or d.get("type") or "Text").strip() or "Text"
+		rows.append(
+			{
+				"variable": vname,
+				"variable_type": vtype,
+				"reference_doctype": d.get("reference_doctype") or None,
+				"label": d.get("label") or None,
+				"beschreibung": d.get("beschreibung") or None,
+			}
+		)
+		key = frappe.scrub(vname)
+		if vtype in _VARIABLE_TEXT_TYPES:
+			val = d.get("value")
+			if val not in (None, ""):
+				werte[key] = {"value": val}
+		else:
+			p = cstr(d.get("path")).strip()
+			if p:
+				pfade[key] = p
+	doc.set("variables", rows)
+	doc.variablen_werte = frappe.as_json(werte) if werte else ""
+	doc.pfad_zuordnung = frappe.as_json(pfade) if pfade else ""
+
+
 @frappe.whitelist()
 def save_editor_template(
 	name: str | None = None,
@@ -1457,37 +1533,7 @@ def save_editor_template(
 		parsed = _parse_path_mapping(baustein_pfade)
 		doc.inline_baustein_pfade = frappe.as_json(parsed) if parsed else ""
 	if variables is not None:
-		defs = frappe.parse_json(variables)
-		if isinstance(defs, list):
-			rows, werte, pfade = [], {}, {}
-			for d in defs:
-				if not isinstance(d, dict):
-					continue
-				vname = cstr(d.get("variable")).strip()
-				if not vname:
-					continue
-				vtype = cstr(d.get("variable_type") or d.get("type") or "Text").strip() or "Text"
-				rows.append(
-					{
-						"variable": vname,
-						"variable_type": vtype,
-						"reference_doctype": d.get("reference_doctype") or None,
-						"label": d.get("label") or None,
-						"beschreibung": d.get("beschreibung") or None,
-					}
-				)
-				key = frappe.scrub(vname)
-				if vtype in _VARIABLE_TEXT_TYPES:
-					val = d.get("value")
-					if val not in (None, ""):
-						werte[key] = {"value": val}
-				else:
-					p = cstr(d.get("path")).strip()
-					if p:
-						pfade[key] = p
-			doc.set("variables", rows)
-			doc.variablen_werte = frappe.as_json(werte) if werte else ""
-			doc.pfad_zuordnung = frappe.as_json(pfade) if pfade else ""
+		_apply_editor_variables(doc, variables)
 	doc.save()
 
 	return {"id": doc.name, "modified": pretty_date(doc.modified)}

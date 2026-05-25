@@ -24,6 +24,7 @@ const RPC_ACTIONS = {
 	placeholder_tree: HV_SB + "get_editor_placeholder_tree",
 	recipients: HV_SB + "get_editor_recipients",
 	preview: HV_SB + "render_template_preview_pdf",
+	editor_preview: HV_SB + "render_editor_preview_pdf",
 	upload_image: HV_SB + "upload_editor_image",
 };
 
