@@ -58,7 +58,7 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 			.print-format .serienbrief-root {
 				font-family: "Arial", "Helvetica", sans-serif;
 				font-size: 11pt;
-				line-height: 1.3;
+				line-height: 1.35;
 			}
 			/* Wasserzeichen: als Vollseiten-Layer, damit es nicht abgeschnitten wirkt. */
 			.hv-draft-watermark-layer {
@@ -143,11 +143,10 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 				/* Kein Default-margin — direkt aufeinanderfolgende <p> rendern
 				   kompakt (z.B. Adressblöcke). Leerzeilen werden durch ein
 				   leeres <p>&nbsp;</p> erzeugt, das line-height-Höhe bekommt.
-				   So entspricht das PDF-Layout dem Quill-Editor-Verhalten.
-				   line-height 1.3 (statt 1.4) -> weniger Weißraum, mehr passt auf
-				   eine Seite (auch die <p>&nbsp;</p>-Leerzeilen werden kompakter). */
+				   So entspricht das PDF-Layout dem Serienbrief-Editor-Verhalten
+				   (gleicher line-height-Wert 1.35). */
 				margin: 0;
-				line-height: 1.3;
+				line-height: 1.35;
 			}
 			.serienbrief-block {
 				margin-bottom: 12px;
