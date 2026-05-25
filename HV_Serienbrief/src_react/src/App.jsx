@@ -13,6 +13,7 @@ import {
   uploadImage, embedded,
 } from "./api.js";
 import { validateJinjaBalance } from "./tiptap/validateJinja.js";
+import { loadPref, savePref } from "./persist.js";
 
 // Sentinel-Empfänger „Beispielwerte" (kein echter Datensatz → Split-Preview).
 const BEISPIEL = { id: null, label: "Beispielwerte" };
@@ -29,13 +30,13 @@ export const App = () => {
   // Standalone (npm run dev) startet mit der Demo-Vorlage; eingebettet leer.
   const [template, setTemplate] = useState(() => (embedded ? EMPTY_TEMPLATE : CURRENT_TEMPLATE));
   const [recipient, setRecipient] = useState(BEISPIEL);
-  const [tab, setTab] = useState("preview");
+  const [tab, setTab] = useState(() => loadPref("tab", "preview"));
   const [dirty, setDirty] = useState(false);
   const [title, setTitle] = useState(template.title);
   const [recipientPickerOpen, setRecipientPickerOpen] = useState(false);
   const [pdfMaximized, setPdfMaximized] = useState(false);
-  const [navCollapsed, setNavCollapsed] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(420);
+  const [navCollapsed, setNavCollapsed] = useState(() => loadPref("navCollapsed", false));
+  const [sidebarWidth, setSidebarWidth] = useState(() => loadPref("sidebarWidth", 420));
   const [resizing, setResizing] = useState(false);
   const [tree, setTree] = useState(() => TEMPLATE_TREE);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
@@ -56,6 +57,11 @@ export const App = () => {
   // Vorlagen-Variablen (Definition + Wert/Pfad), im Editor bearbeitbar.
   const [variables, setVariables] = useState([]);
   const contentRef = useRef(null); // Zugriff auf den editierbaren HTML-Inhalt (getHtml)
+
+  // UI-Präferenzen merken (Sidebar-Breite/Trennlinie, Vorlagen auf/zu, aktiver Tab).
+  useEffect(() => savePref("tab", tab), [tab]);
+  useEffect(() => savePref("navCollapsed", navCollapsed), [navCollapsed]);
+  useEffect(() => savePref("sidebarWidth", sidebarWidth), [sidebarWidth]);
 
   const changeRecipient = useCallback((r) => setRecipient(r || BEISPIEL), []);
 

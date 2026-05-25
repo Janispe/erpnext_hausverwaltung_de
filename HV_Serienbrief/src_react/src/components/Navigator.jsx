@@ -1,11 +1,16 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { Icon } from "./Icon.jsx";
 import { TEMPLATE_TREE } from "../data.js";
+import { loadPref, savePref } from "../persist.js";
 
 export const Navigator = ({ tree: propTree, currentId, onSelect, collapsed, onToggleCollapse }) => {
   const tree = (propTree && propTree.length) ? propTree : TEMPLATE_TREE;
   const [query, setQuery] = useState("");
-  const [openKeys, setOpenKeys] = useState(() => new Set());
+  // Offene/zugeklappte Kategorien aus localStorage wiederherstellen.
+  const [openKeys, setOpenKeys] = useState(() => new Set(loadPref("navOpenKeys", [])));
+
+  // Offene Kategorien merken (uebersteht Neuladen/Sessions).
+  useEffect(() => { savePref("navOpenKeys", [...openKeys]); }, [openKeys]);
 
   // Gruppe der aktuell ausgewählten Vorlage automatisch aufklappen (bzw. erste).
   useEffect(() => {
