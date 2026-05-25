@@ -27,6 +27,7 @@ bleiben unangetastet).
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import date
 
@@ -320,6 +321,41 @@ def korrigiere_mietrechnung(sales_invoice: str, dry_run: int | str = 0) -> dict:
 
 	plan.update(result)
 	return plan
+
+
+@frappe.whitelist()
+def korrigiere_mietrechnungen_bulk(sales_invoices) -> dict:
+	"""Korrigiert mehrere Mietrechnungen nacheinander.
+
+	Jede SI wird in einem eigenen Savepoint verarbeitet — ein Fehler bei einer
+	Rechnung (z.B. festgeschrieben + Journal-Entry-Verknüpfung) kippt die anderen
+	nicht. ``sales_invoices`` ist eine Liste oder ein JSON-String von SI-Namen.
+	"""
+	if isinstance(sales_invoices, str):
+		sales_invoices = json.loads(sales_invoices)
+	names = list(dict.fromkeys(str(n).strip() for n in (sales_invoices or []) if str(n).strip()))
+
+	ergebnisse: list[dict] = []
+	ok = 0
+	for idx, name in enumerate(names):
+		sp = f"korr_bulk_{idx}"
+		frappe.db.savepoint(sp)
+		try:
+			res = korrigiere_mietrechnung(name, dry_run=0)
+			ok += 1
+			ergebnisse.append(
+				{
+					"sales_invoice": name,
+					"ok": True,
+					"path": res.get("path"),
+					"neue_si": res.get("neue_si"),
+				}
+			)
+		except Exception as e:
+			frappe.db.rollback(save_point=sp)
+			ergebnisse.append({"sales_invoice": name, "ok": False, "error": str(e)})
+
+	return {"total": len(names), "ok": ok, "fehler": len(names) - ok, "ergebnisse": ergebnisse}
 
 
 def _korrektur_storno(si, ctx: dict, pes: list[str]) -> dict:

@@ -21,3 +21,20 @@ frappe.listview_settings["Sales Invoice"].get_indicator = function (doc) {
 
 	return [__(doc.status), status_colors[doc.status] || "blue", "status,=," + doc.status];
 };
+
+// Sammelaktion „Mietrechnung korrigieren" für ausgewählte Rechnungen (beliebige
+// Auswahl in der Liste). Nutzt dieselbe Bulk-Logik wie der Mietrechnungsprüfung-Report.
+frappe.listview_settings["Sales Invoice"].onload = function (listview) {
+	listview.page.add_action_item(__("Mietrechnung korrigieren"), () => {
+		const names = listview.get_checked_items(true);
+		if (!names.length) {
+			frappe.msgprint(__("Bitte zuerst Rechnungen auswählen."));
+			return;
+		}
+		frappe.require("/assets/hausverwaltung/js/mietrechnung_korrektur_report.js", () => {
+			window.hausverwaltung?.korrektur?.run_bulk(names, {
+				onDone: () => listview.refresh(),
+			});
+		});
+	});
+};

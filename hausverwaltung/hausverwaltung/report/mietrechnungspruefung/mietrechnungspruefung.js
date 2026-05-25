@@ -43,5 +43,8 @@ frappe.query_reports["Mietrechnungspruefung"] = {
 				include_gesamt: false,
 			});
 		});
+		frappe.require("/assets/hausverwaltung/js/mietrechnung_korrektur_report.js", () => {
+			window.hausverwaltung?.korrektur?.attach_to_report(report);
+		});
 	},
 };

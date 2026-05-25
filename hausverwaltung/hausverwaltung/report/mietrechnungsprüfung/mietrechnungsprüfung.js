@@ -34,4 +34,10 @@ frappe.query_reports["Mietrechnungsprüfung"] = {
 			default: 1,
 		},
 	],
+
+	onload: function (report) {
+		frappe.require("/assets/hausverwaltung/js/mietrechnung_korrektur_report.js", () => {
+			window.hausverwaltung?.korrektur?.attach_to_report(report);
+		});
+	},
 };
