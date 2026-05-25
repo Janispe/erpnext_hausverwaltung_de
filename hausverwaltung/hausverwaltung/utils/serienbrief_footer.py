@@ -67,10 +67,7 @@ def get_footer_bankverbindung_html(doc) -> str:
 	# Live-Preview: hartkodiertes Mock-Snippet, weil iter-Doc kein echtes
 	# Frappe-Doc ist und der Resolver damit nicht arbeiten kann.
 	if frappe.flags.get("hv_serienbrief_split_preview"):
-		return (
-			"Bankverbindung: Beispielkonto Hausverwaltung · "
-			"IBAN DE12 3456 7890 1234 5678 90 · Beispielbank"
-		)
+		return "Bankverbindung: IBAN DE12 3456 7890 1234 5678 90 · Beispielbank"
 
 	iteration_doctype = cstr(getattr(doc, "iteration_doctype", "") or "").strip()
 	iteration_name = cstr(getattr(doc, "objekt", "") or "").strip()
@@ -133,7 +130,8 @@ def get_footer_bankverbindung_html(doc) -> str:
 			title=_("Serienbrief Footer-Fehler"),
 		)
 
-	account_name = escape_html(cstr(getattr(bk, "account_name", "") or ""))
+	# Kontoinhaber (account_name) bewusst weggelassen — steht schon im Briefkopf und
+	# würde die Footer-Zeile auf zwei Zeilen umbrechen. IBAN + Bank reichen zum Zahlen.
 	iban = escape_html(cstr(getattr(bk, "iban", "") or ""))
 	bank = escape_html(cstr(getattr(bk, "bank", "") or ""))
-	return f"Bankverbindung: {account_name} · IBAN {iban} · {bank}"
+	return f"Bankverbindung: IBAN {iban} · {bank}"
