@@ -1619,6 +1619,16 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   font-size: 13px;
 }
 
+/* Ladezustand als Overlay über der Canvas — EditorContent bleibt dahinter gemountet
+   (siehe Kommentar in Editor.jsx), deckt aber den stale Inhalt während des Ladens ab. */
+.editor-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
 /* Platzhalter-Baum (rekursiv, aufklappbar) */
 .ph-tree-row {
   display: flex;
@@ -1680,6 +1690,7 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
 /* Ent-papert: lesbare Schreibfläche, aber kein gefaktes A4-Blatt (kein schwerer
    Schatten, keine erzwungene Seitenhöhe, keine Randlinien). */
 .editor-canvas {
+  position: relative; /* Anker für .editor-loading-overlay */
   background: var(--surface);
   width: 100%;
   max-width: 820px;

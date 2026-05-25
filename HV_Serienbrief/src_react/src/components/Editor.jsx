@@ -513,12 +513,16 @@ export const Editor = ({
 					onDragLeave={() => setDragOver(false)}
 					onDrop={onDrop}
 				>
-					{loading ? (
-						<div className="editor-loading">Vorlage wird geladen …</div>
-					) : (
-						<EditorContent editor={editor} />
-					)}
-					{!loading && editor && <TableBubbleMenu editor={editor} editable={editable} />}
+					{/* EditorContent und das BubbleMenu bleiben dauerhaft gemountet. Beim
+					    Vorlagen-Laden (loading-Toggle) dürfen sie NICHT gegen einen Platzhalter
+					    getauscht werden: TipTap/ProseMirror und tippy.js verwalten eigenes DOM
+					    (das BubbleMenu hängt seinen Popper an document.body). Ein Unmount/Remount
+					    während des React-Commits führt zu „removeChild: node is not a child"
+					    und reißt die gesamte App ab. Der Ladezustand liegt daher nur als
+					    Overlay über der Canvas, das BubbleMenu blendet sich via shouldShow aus. */}
+					<EditorContent editor={editor} />
+					{editor && <TableBubbleMenu editor={editor} editable={editable} />}
+					{loading && <div className="editor-loading editor-loading-overlay">Vorlage wird geladen …</div>}
 					{!loading && (
 						<div className="editor-foot-hint">
 							{editable
