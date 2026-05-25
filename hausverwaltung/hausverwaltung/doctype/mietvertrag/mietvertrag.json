@@ -24,6 +24,9 @@
   "column_break_limy",
   "section_break_eezj",
   "miete_pro_qm",
+  "aktuelle_nettokaltmiete",
+  "aktuelle_betriebskosten",
+  "aktuelle_heizkosten",
   "bk_vorauszahlung_ytd_bezahlt",
   "betriebskosten",
   "heizkosten",
@@ -142,6 +145,27 @@
    "fieldtype": "Float",
    "is_virtual": 1,
    "label": "Nettokaltmiete pro qm",
+   "read_only": 1
+  },
+  {
+   "fieldname": "aktuelle_nettokaltmiete",
+   "fieldtype": "Currency",
+   "is_virtual": 1,
+   "label": "Aktuelle Nettokaltmiete",
+   "read_only": 1
+  },
+  {
+   "fieldname": "aktuelle_betriebskosten",
+   "fieldtype": "Currency",
+   "is_virtual": 1,
+   "label": "Aktuelle Betriebskosten",
+   "read_only": 1
+  },
+  {
+   "fieldname": "aktuelle_heizkosten",
+   "fieldtype": "Currency",
+   "is_virtual": 1,
+   "label": "Aktuelle Heizkosten",
    "read_only": 1
   },
   {

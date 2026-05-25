@@ -251,19 +251,29 @@ function update_bruttomiete(frm) {
 	if (!frm.doc) return;
 
 	const stichtagObj = _bruttomiete_stichtag_obj(frm);
+	const nettokaltmiete = _staffelbetrag_am(frm.doc.miete, stichtagObj);
+	const betriebskosten = _staffelbetrag_am(frm.doc.betriebskosten, stichtagObj);
+	const heizkosten = _staffelbetrag_am(frm.doc.heizkosten, stichtagObj);
 	const total =
-		_staffelbetrag_am(frm.doc.miete, stichtagObj) +
-		_staffelbetrag_am(frm.doc.betriebskosten, stichtagObj) +
-		_staffelbetrag_am(frm.doc.heizkosten, stichtagObj) +
+		nettokaltmiete +
+		betriebskosten +
+		heizkosten +
 		_staffelbetrag_am(frm.doc.untermietzuschlag, stichtagObj);
 
-	const current = flt(frm.doc.bruttomiete);
-	const next = flt(total);
-	if (Math.abs(current - next) < 0.00001) {
+	const changed = [
+		["aktuelle_nettokaltmiete", nettokaltmiete],
+		["aktuelle_betriebskosten", betriebskosten],
+		["aktuelle_heizkosten", heizkosten],
+		["bruttomiete", total],
+	].filter(([fieldname, value]) => Math.abs(flt(frm.doc[fieldname]) - flt(value)) >= 0.00001);
+
+	if (!changed.length) {
 		highlight_current_staffeln(frm);
 		return;
 	}
-	frm.set_value("bruttomiete", next);
+	changed.forEach(([fieldname, value]) => {
+		frm.set_value(fieldname, flt(value));
+	});
 	highlight_current_staffeln(frm);
 }
 

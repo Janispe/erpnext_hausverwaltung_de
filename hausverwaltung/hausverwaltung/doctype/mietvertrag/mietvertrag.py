@@ -332,6 +332,21 @@ class Mietvertrag(Document):
 			)
 
 	@property
+	def aktuelle_nettokaltmiete(self) -> float:
+		"""Aktuelle Nettokaltmiete zum Vertrags-Stichtag."""
+		return self._staffelbetrag_am(self.miete, self._bruttomiete_stichtag())
+
+	@property
+	def aktuelle_betriebskosten(self) -> float:
+		"""Aktuelle Betriebskosten zum Vertrags-Stichtag."""
+		return self._staffelbetrag_am(self.betriebskosten, self._bruttomiete_stichtag())
+
+	@property
+	def aktuelle_heizkosten(self) -> float:
+		"""Aktuelle Heizkosten zum Vertrags-Stichtag."""
+		return self._staffelbetrag_am(self.heizkosten, self._bruttomiete_stichtag())
+
+	@property
 	def bruttomiete(self) -> float:
 		"""Aktuelle Bruttomiete (Nettokaltmiete + BK + HK + Untermietzuschlag)."""
 		stichtag = self._bruttomiete_stichtag()
