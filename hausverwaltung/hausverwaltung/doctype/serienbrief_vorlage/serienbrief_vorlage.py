@@ -1089,10 +1089,16 @@ def render_editor_preview_pdf(
 	iteration_doctype: str | None = None,
 	iteration_objekt: str | None = None,
 	split_preview: bool | None = None,
+	preview_values: str | None = None,
 ) -> Dict[str, str]:
 	"""Live-Vorschau für den Editor: lädt die gespeicherte Vorlage, überschreibt Content/
 	Variablen/Baustein-Pfade **in-memory** (ohne zu speichern) mit dem aktuellen Editor-Stand
-	und rendert. So zeigt die Vorschau ungespeicherte Edits."""
+	und rendert. So zeigt die Vorschau ungespeicherte Edits.
+
+	``preview_values`` (JSON ``{key: wert}``) sind transiente Werte für Text-Variablen,
+	die der Autor sonst erst beim Durchlauf pro Lauf eingibt (Eingabe-Variablen). Sie werden
+	**nur** auf das ephemere Vorschau-Doc gemergt und nie gespeichert — sie verändern also
+	weder die Variablen-Definition noch den gespeicherten Default."""
 	template_name = (template or "").strip()
 	if not template_name:
 		frappe.throw(_("Bitte eine Vorlage angeben."))
@@ -1110,6 +1116,18 @@ def render_editor_preview_pdf(
 	if baustein_pfade is not None:
 		parsed = _parse_path_mapping(baustein_pfade)
 		doc.inline_baustein_pfade = frappe.as_json(parsed) if parsed else ""
+	# Transiente Vorschau-Werte über die (aus den Definitionen gebauten) Defaults legen.
+	if preview_values is not None:
+		pv = frappe.parse_json(preview_values)
+		if isinstance(pv, dict) and pv:
+			werte = frappe.parse_json(doc.variablen_werte) if doc.variablen_werte else {}
+			if not isinstance(werte, dict):
+				werte = {}
+			for raw_key, val in pv.items():
+				key = frappe.scrub(cstr(raw_key))
+				if key and val not in (None, ""):
+					werte[key] = {"value": val}
+			doc.variablen_werte = frappe.as_json(werte) if werte else ""
 
 	return render_template_preview_pdf(
 		template_doc=doc.as_dict(),

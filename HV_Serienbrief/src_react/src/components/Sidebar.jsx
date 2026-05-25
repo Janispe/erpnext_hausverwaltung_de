@@ -25,10 +25,18 @@ function usePdfUrl(base64) {
 // Preview pane — echtes PDF
 // =========================
 const PreviewPane = ({ template, recipient, recipients, onChangeRecipient, onSearchRecipients,
-                       previewPdf, previewLoading, previewError, previewMode, onRefresh, onMaximize }) => {
+                       previewPdf, previewLoading, previewError, previewMode, onRefresh, onMaximize,
+                       variablesForPreview, previewVars, onPreviewVarChange }) => {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pvOpen, setPvOpen] = useState(true);
   const [q, setQ] = useState("");
   const pdfUrl = usePdfUrl(previewPdf);
+
+  // Text-Variablen (keine Doctype-Pfad-Variablen) -> hier kann man für die Vorschau
+  // testweise Werte setzen, ohne den gespeicherten Default zu verändern.
+  const textVars = (variablesForPreview || []).filter(
+    (v) => v.variable && v.type !== "Doctype" && v.type !== "Doctype Liste"
+  );
 
   return (
     <div className="preview-pane">
@@ -84,6 +92,33 @@ const PreviewPane = ({ template, recipient, recipients, onChangeRecipient, onSea
           ))}
           {(recipients || []).length === 0 && (
             <div className="empty-hint" style={{ padding: 8 }}>Keine Empfänger gefunden.</div>
+          )}
+        </div>
+      )}
+
+      {textVars.length > 0 && (
+        <div className="pv-section">
+          <div className="pv-head" onClick={() => setPvOpen((o) => !o)}>
+            <Icon name="chevron-right" size={11} style={{ transform: pvOpen ? "rotate(90deg)" : "none" }}/>
+            <span>Vorschau-Werte</span>
+            <span className="pv-count">{textVars.length}</span>
+          </div>
+          {pvOpen && (
+            <div className="pv-body">
+              <div className="pv-hint">Werte nur für die Vorschau — wird <strong>nicht</strong> gespeichert.</div>
+              {textVars.map((v) => (
+                <label key={v.variable} className="pv-row">
+                  <span className="pv-label" title={v.variable}>{v.label || v.variable}</span>
+                  <input
+                    className="pv-input"
+                    value={(previewVars && previewVars[v.variable]) || ""}
+                    placeholder={v.value ? `Standard: ${v.value}` : "Wert für Vorschau"}
+                    onChange={(e) => onPreviewVarChange && onPreviewVarChange(v.variable, e.target.value)}
+                    spellCheck={false}
+                  />
+                </label>
+              ))}
+            </div>
           )}
         </div>
       )}
@@ -442,6 +477,7 @@ export const Sidebar = ({
   previewPdf, previewLoading, previewError, previewMode, onRefreshPreview,
   onInsertPlaceholder, onInsertBaustein, onMaximizePreview, onResizeStart,
   variables, placeholderPaths, onVariablesChange, editable = true,
+  variablesForPreview, previewVars, onPreviewVarChange,
 }) => {
   const phCount = (placeholders || []).reduce((n, g) => n + countTokens(g.tree), 0);
   const bsCount = (bausteine || []).length;
@@ -469,6 +505,8 @@ export const Sidebar = ({
             onChangeRecipient={onChangeRecipient} onSearchRecipients={onSearchRecipients}
             previewPdf={previewPdf} previewLoading={previewLoading} previewError={previewError}
             previewMode={previewMode} onRefresh={onRefreshPreview} onMaximize={onMaximizePreview}
+            variablesForPreview={variablesForPreview} previewVars={previewVars}
+            onPreviewVarChange={onPreviewVarChange}
           />
         )}
         {tab === "placeholders" && <PlaceholderPane groups={placeholders || []} onInsert={onInsertPlaceholder}/>}

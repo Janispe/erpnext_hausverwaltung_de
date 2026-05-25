@@ -156,6 +156,7 @@ export async function renderPreview({
 	html,
 	variables,
 	bausteinPaths,
+	previewValues,
 }) {
 	if (!embedded) return { pdf_base64: "", mode: "mock" };
 	// Live-Vorschau: aktueller (ungespeicherter) Editor-Stand wird serverseitig in-memory
@@ -164,6 +165,10 @@ export async function renderPreview({
 	if (html != null) params.html = html;
 	if (variables != null) params.variables = JSON.stringify(variables);
 	if (bausteinPaths != null) params.baustein_pfade = JSON.stringify(bausteinPaths);
+	// Transiente Vorschau-Werte für Eingabe-Variablen (nicht gespeichert).
+	if (previewValues && Object.keys(previewValues).length) {
+		params.preview_values = JSON.stringify(previewValues);
+	}
 	if (recipientId && hauptVerteilObjekt) {
 		params.iteration_doctype = hauptVerteilObjekt;
 		params.iteration_objekt = recipientId;

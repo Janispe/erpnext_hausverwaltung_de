@@ -57,6 +57,9 @@ export const App = () => {
   const [popoverBaustein, setPopoverBaustein] = useState(null); // { baustein, rect }
   // Vorlagen-Variablen (Definition + Wert/Pfad), im Editor bearbeitbar.
   const [variables, setVariables] = useState([]);
+  // Transiente Vorschau-Werte für Eingabe-Variablen { key: wert } — NICHT gespeichert,
+  // nur für die Live-Vorschau (siehe PreviewPane „Vorschau-Werte").
+  const [previewVars, setPreviewVars] = useState({});
   const contentRef = useRef(null); // Zugriff auf den editierbaren HTML-Inhalt (getHtml)
 
   // UI-Präferenzen merken (Sidebar-Breite/Trennlinie, Vorlagen auf/zu, aktiver Tab).
@@ -120,6 +123,7 @@ export const App = () => {
         setTitle(t.title);
         setBausteinPaths(t.bausteinPaths || {});
         setVariables(t.variables || []);
+        setPreviewVars({});
         setDirty(false);
       } catch (e) {
         setTemplate({
@@ -324,7 +328,7 @@ export const App = () => {
   const refreshPreview = useCallback(async ({ force = false } = {}) => {
     if (!embedded || !template.id) return;
     const html = contentRef.current ? contentRef.current.getHtml() : (template.htmlContent || "");
-    const sig = JSON.stringify([html, recipient && recipient.id, variables, bausteinPaths]);
+    const sig = JSON.stringify([html, recipient && recipient.id, variables, bausteinPaths, previewVars]);
     if (!force && sig === previewSig.current) return;        // nichts geändert
     if (previewBusy.current) { previewPending.current = true; return; } // läuft -> queue
     previewBusy.current = true;
@@ -340,6 +344,7 @@ export const App = () => {
         html,
         variables,
         bausteinPaths,
+        previewValues: previewVars,
       });
       setPreviewPdf(res.pdf_base64 || "");
       setPreviewMode(res.mode || "");
@@ -352,7 +357,7 @@ export const App = () => {
       setPreviewLoading(false);
       if (previewPending.current) { previewPending.current = false; refreshPreview({ force: true }); }
     }
-  }, [template.id, template.haupt_verteil_objekt, recipient, variables, bausteinPaths]);
+  }, [template.id, template.haupt_verteil_objekt, recipient, variables, bausteinPaths, previewVars]);
 
   // Debounce: nach der letzten Eingabe ~4s warten, dann (live) rendern. Nur wenn der
   // Vorschau-Tab sichtbar ist.
@@ -367,10 +372,11 @@ export const App = () => {
     if (embedded && tab === "preview" && template.id) refreshPreview();
   }, [tab, template.id, recipient, refreshPreview]);
 
-  // Variablen-/Baustein-Pfad-Änderungen (nicht über den Editor) -> debounced nachrendern.
+  // Variablen-/Baustein-Pfad-/Vorschau-Wert-Änderungen (nicht über den Editor)
+  // -> debounced nachrendern.
   useEffect(() => {
     schedulePreview();
-  }, [variables, bausteinPaths, schedulePreview]);
+  }, [variables, bausteinPaths, previewVars, schedulePreview]);
 
   return (
     <div className="app">
@@ -441,6 +447,16 @@ export const App = () => {
           previewError={previewError}
           previewMode={previewMode}
           onRefreshPreview={refreshPreview}
+          variablesForPreview={variables}
+          previewVars={previewVars}
+          onPreviewVarChange={(key, value) =>
+            setPreviewVars((prev) => {
+              const next = { ...prev };
+              if (value === "" || value == null) delete next[key];
+              else next[key] = value;
+              return next;
+            })
+          }
           onInsertPlaceholder={insertPlaceholder}
           onInsertBaustein={insertBaustein}
           onMaximizePreview={() => setPdfMaximized(true)}
