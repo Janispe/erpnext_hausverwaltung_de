@@ -197,11 +197,20 @@ def _render_serienbrief_template(template: str, context: Dict[str, Any]) -> str:
 		return ""
 	if ".__" in template:
 		frappe.throw(_("Illegal template"))
-	# Pfad-Pre-Processing: simple {{ x.y.z }}-Tokens via Resolver auflösen.
-	template = _preprocess_simple_paths(template, context)
-	# Frappes get_jenv() liefert eine Environment mit ChainableUndefined.
-	# Wir clonen sie + überschreiben undefined → StrictUndefined.
-	jenv = get_jenv().overlay(undefined=StrictUndefined, finalize=_strict_finalize)
+	# Live-Preview (lenient): fehlende {{$ $}}-Pfade / None-Werte werden leer gelassen,
+	# statt die Vorschau mit einem harten Fehler abzubrechen. Der echte Versand bleibt strict.
+	lenient = bool(context.get("_hv_lenient"))
+	# Pfad-Pre-Processing: simple {{$ x.y.z $}}-Tokens via Resolver auflösen.
+	template = _preprocess_simple_paths(
+		template, context, on_unresolvable=(lambda _p, _e: "") if lenient else None
+	)
+	if lenient:
+		# Frappe-Default-Undefined (chainable, fehlertolerant) + None -> "".
+		jenv = get_jenv().overlay(finalize=lambda v: "" if v is None else v)
+	else:
+		# Frappes get_jenv() liefert eine Environment mit ChainableUndefined.
+		# Wir clonen sie + überschreiben undefined → StrictUndefined.
+		jenv = get_jenv().overlay(undefined=StrictUndefined, finalize=_strict_finalize)
 	try:
 		return jenv.from_string(template).render(context)
 	except UndefinedError as exc:
@@ -714,6 +723,10 @@ class SerienbriefDurchlauf(Document):
 			outputs=frappe._dict(),
 		)
 
+		# Merken, damit auch die (später laufende) Baustein-Auflösung weiß, ob streng
+		# geworfen werden soll (Send) oder tolerant fehlende Werte leer lässt (Live-Preview).
+		self._strict_variables = strict_variables
+		context["_hv_lenient"] = not strict_variables
 		if template:
 			self._apply_template_variables(context, template)
 			self._apply_serienbrief_template_variables(context, template, row)
@@ -854,6 +867,7 @@ class SerienbriefDurchlauf(Document):
 			serienbrief=base_context.get("serienbrief"),
 			outputs=base_context.get("outputs") or frappe._dict(),
 			baustein=frappe._dict(key=block_key, name=getattr(block_doc, "name", None), title=getattr(block_doc, "title", None)),
+			_hv_lenient=base_context.get("_hv_lenient"),
 		)
 		self._apply_block_variables(block_context, base_context, block_doc, block_row)
 		return block_context
@@ -1087,6 +1101,8 @@ class SerienbriefDurchlauf(Document):
 			return
 
 		block_title = block_doc.title or block_doc.name
+		# Live-Preview (strict=False): fehlende Werte leer lassen statt zu werfen.
+		strict = getattr(self, "_strict_variables", True)
 		value_mapping = _parse_variable_values(getattr(block_row, "variablen_werte", None))
 		# Listen-Zeilen-Override (falls vorhanden) + inline-Override aus der Vorlage (Editor).
 		# Inline-Override gewinnt, da der neue Editor inline arbeitet.
@@ -1132,7 +1148,7 @@ class SerienbriefDurchlauf(Document):
 				# Pfade werden gegen den Parent-Context (mit ``objekt``)
 				# aufgelöst, nicht gegen den strict Block-Context.
 				resolved = _resolve_value_path(path, base_context)
-				if resolved is None:
+				if resolved is None and strict:
 					frappe.throw(
 						_("Pfad {0} für Variable {1} im Baustein {2} konnte nicht aufgelöst werden.").format(
 							frappe.bold(path), frappe.bold(raw_key or key), frappe.bold(block_title)
@@ -1143,8 +1159,11 @@ class SerienbriefDurchlauf(Document):
 
 			if resolved is None:
 				if context.get(key) in (None, ""):
-					label = getattr(variable, "label", None) or raw_key or key
-					missing.append(f"{label} (<code>{{{{ {key} }}}}</code>)")
+					if strict:
+						label = getattr(variable, "label", None) or raw_key or key
+						missing.append(f"{label} (<code>{{{{ {key} }}}}</code>)")
+					else:
+						context[key] = ""  # Live-Preview: leer lassen
 				continue
 
 			context[key] = resolved
@@ -1169,6 +1188,7 @@ class SerienbriefDurchlauf(Document):
 			return
 
 		template_title = template.title or template.name
+		strict = getattr(self, "_strict_variables", True)
 		mapping = _parse_variable_values(getattr(template, "variablen_werte", None))
 		path_mapping = _parse_mapping(getattr(template, "pfad_zuordnung", None))
 
@@ -1198,7 +1218,7 @@ class SerienbriefDurchlauf(Document):
 			resolved = None
 			if path:
 				resolved = _resolve_value_path(path, context)
-				if resolved is None:
+				if resolved is None and strict:
 					frappe.throw(
 						_("Pfad {0} für Variable {1} in der Vorlage {2} konnte nicht aufgelöst werden.").format(
 							frappe.bold(path), frappe.bold(raw_key or key), frappe.bold(template_title)
@@ -1208,9 +1228,12 @@ class SerienbriefDurchlauf(Document):
 				resolved = value
 
 			if resolved is None:
-				# Variable stays unresolved here; the durchlauf override may still fill it.
-				# _verify_template_variables_resolved raises afterwards if it's still missing.
-				continue
+				if not strict:
+					resolved = ""  # Live-Preview: leeren Wert setzen (verhindert StrictUndefined im Body)
+				else:
+					# Variable stays unresolved; durchlauf override may still fill it.
+					# _verify_template_variables_resolved raises afterwards if still missing.
+					continue
 
 			if is_text_like:
 				# Text-Variablen unter ``serienbrief.werte`` (Backwards-Compat).
