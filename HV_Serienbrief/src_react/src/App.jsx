@@ -17,8 +17,17 @@ import { validateJinjaBalance } from "./tiptap/validateJinja.js";
 // Sentinel-Empfänger „Beispielwerte" (kein echter Datensatz → Split-Preview).
 const BEISPIEL = { id: null, label: "Beispielwerte" };
 
+// Leerer Start-Zustand für die eingebettete Variante: KEINE id, damit beim Mount keine
+// Backend-Calls (Vorschau etc.) für die Mock-Vorlage „t-001" feuern. Die echte erste
+// Vorlage wird gleich darauf via loadTree -> onTemplateSelect geladen.
+const EMPTY_TEMPLATE = {
+  id: null, title: "", kategorie: "", haupt_verteil_objekt: "",
+  content_type: "", htmlContent: "", bausteinPaths: {}, variables: [], canWrite: false,
+};
+
 export const App = () => {
-  const [template, setTemplate] = useState(() => CURRENT_TEMPLATE);
+  // Standalone (npm run dev) startet mit der Demo-Vorlage; eingebettet leer.
+  const [template, setTemplate] = useState(() => (embedded ? EMPTY_TEMPLATE : CURRENT_TEMPLATE));
   const [recipient, setRecipient] = useState(BEISPIEL);
   const [tab, setTab] = useState("preview");
   const [dirty, setDirty] = useState(false);
