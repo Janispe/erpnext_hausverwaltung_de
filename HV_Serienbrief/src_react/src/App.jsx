@@ -8,7 +8,7 @@ import { PfadMappingModal } from "./components/PfadMappingModal.jsx";
 import { BausteinPopover } from "./components/BausteinPopover.jsx";
 import { CURRENT_TEMPLATE, TEMPLATE_TREE } from "./data.js";
 import {
-  loadTree, loadTemplate, saveTemplate, copyTemplate, openDurchlauf,
+  loadTree, loadTemplate, saveTemplate, copyTemplate, deleteTemplate, openDurchlauf,
   loadPlaceholderTree, loadBausteine, loadRecipients, renderPreview,
   uploadImage, embedded,
 } from "./api.js";
@@ -42,6 +42,7 @@ export const App = () => {
   const [loadingTemplate, setLoadingTemplate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [copying, setCopying] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [placeholders, setPlaceholders] = useState([]);
   const [bausteine, setBausteine] = useState([]);
   const [recipients, setRecipients] = useState([]);
@@ -262,6 +263,40 @@ export const App = () => {
     }
   }, [template.id, template.canWrite, title, dirty, copying, saving, onTemplateSelect]);
 
+  // „Löschen" -> Vorlage nach Bestätigung entfernen, Baum neu laden und die erste
+  // verbleibende Vorlage öffnen (sonst leeren Zustand). Serverseitig schlägt das
+  // Löschen fehl, wenn die Vorlage noch in einem Durchlauf referenziert wird.
+  const handleDelete = useCallback(async () => {
+    if (!template.id || deleting || copying || saving) return;
+    if (!window.confirm(`Vorlage „${title}" wirklich löschen? Das kann nicht rückgängig gemacht werden.`)) return;
+    setDeleting(true);
+    try {
+      await deleteTemplate(template.id);
+      let nextId = null;
+      try {
+        const { groups } = await loadTree();
+        if (groups && groups.length) {
+          setTree(groups);
+          const first = groups.flatMap(g => g.templates)[0];
+          nextId = first ? first.id : null;
+        } else {
+          setTree([]);
+        }
+      } catch (_) {}
+      if (nextId) {
+        onTemplateSelect(nextId);
+      } else {
+        setTemplate(EMPTY_TEMPLATE);
+        setTitle("");
+        setDirty(false);
+      }
+    } catch (e) {
+      alert("Löschen fehlgeschlagen: " + ((e && e.message) || e));
+    } finally {
+      setDeleting(false);
+    }
+  }, [template.id, title, deleting, copying, saving, onTemplateSelect]);
+
   // „In Serienbrief laden" -> neues Durchlauf-Formular im Desk öffnen, Vorlage
   // vorausgewählt. Der Durchlauf rendert aus dem gespeicherten Stand -> erst speichern.
   const handleLoadDurchlauf = useCallback(async () => {
@@ -420,13 +455,16 @@ export const App = () => {
           )}
         </div>
 
-        <button className="btn" onClick={save} disabled={!dirty || !template.canWrite || saving} title={!template.canWrite ? "Keine Schreibberechtigung" : ""}>
+        <button className="btn" onClick={save} disabled={!dirty || !template.canWrite || saving || deleting} title={!template.canWrite ? "Keine Schreibberechtigung" : ""}>
           <Icon name="save" size={14}/> {saving ? "Speichert …" : "Speichern"}
         </button>
-        <button className="btn ghost" onClick={handleCopy} disabled={!template.id || copying || saving} title="Diese Vorlage duplizieren">
+        <button className="btn ghost" onClick={handleCopy} disabled={!template.id || copying || saving || deleting} title="Diese Vorlage duplizieren">
           <Icon name="copy" size={14}/> {copying ? "Kopiert …" : "Kopieren"}
         </button>
-        <button className="btn primary" onClick={handleLoadDurchlauf} disabled={!template.id || saving} title="Neuen Serienbrief-Durchlauf mit dieser Vorlage starten">
+        <button className="btn ghost tb-danger" onClick={handleDelete} disabled={!template.id || !template.canWrite || copying || saving || deleting} title={!template.canWrite ? "Keine Berechtigung" : "Diese Vorlage löschen"}>
+          <Icon name="trash" size={14}/> {deleting ? "Löscht …" : "Löschen"}
+        </button>
+        <button className="btn primary" onClick={handleLoadDurchlauf} disabled={!template.id || saving || deleting} title="Neuen Serienbrief-Durchlauf mit dieser Vorlage starten">
           <Icon name="send" size={14}/> In Serienbrief laden
         </button>
         <button className="btn ghost icon"><Icon name="more"/></button>

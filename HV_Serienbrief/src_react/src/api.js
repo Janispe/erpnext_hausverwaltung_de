@@ -60,6 +60,14 @@ export async function copyTemplate(id, newTitle) {
 	return await rpc("copy", { template: id, new_title: newTitle });
 }
 
+// Vorlage löschen. Gibt { name } der gelöschten Vorlage zurück.
+export async function deleteTemplate(id) {
+	if (!embedded) {
+		return { name: id, mock: true };
+	}
+	return await rpc("delete", { template: id });
+}
+
 // Neues "Serienbrief Durchlauf"-Formular im Desk öffnen (Vorlage vorausgewählt).
 // Navigiert das Eltern-Desk weg vom Editor — kein Rückgabewert nötig.
 export async function openDurchlauf({ vorlage, title, iterationDoctype }) {

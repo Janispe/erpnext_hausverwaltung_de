@@ -156,6 +156,8 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   background: transparent;
 }
 .btn.ghost:hover { background: var(--surface-hover); }
+.btn.tb-danger { color: var(--danger); }
+.btn.tb-danger:hover { background: var(--danger-50); border-color: var(--danger); color: var(--danger); }
 .btn.sm { height: 26px; padding: 0 8px; font-size: 12px; }
 .btn.icon {
   width: 32px; padding: 0; justify-content: center;
