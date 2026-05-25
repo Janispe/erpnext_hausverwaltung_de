@@ -375,7 +375,10 @@ def _korrektur_storno(si, ctx: dict, pes: list[str]) -> dict:
 		pe.cancel()
 	bank_transactions = list(dict.fromkeys(bank_transactions))  # dedupe, Reihenfolge erhalten
 
-	# 2) Fehlerhafte SI stornieren.
+	# 2) Fehlerhafte SI stornieren. Das PE-Storno oben hat die SI (outstanding/status)
+	#    in der DB verändert → vorher neu laden, sonst TimestampMismatchError.
+	if pes:
+		si.reload()
 	si.cancel()
 
 	# 3) Korrigierte Rechnung neu erzeugen (nur dieser Vertrag/Monat; Guard erzeugt
