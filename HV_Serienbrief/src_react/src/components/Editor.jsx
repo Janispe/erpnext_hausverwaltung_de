@@ -343,14 +343,19 @@ const EditorToolbar = ({ editor, disabled, onInsert, onImage }) => {
 
 // Schwebe-Menü für Tabellen (offizielles BubbleMenu-Addon + die in der Table-Extension
 // bereits vorhandenen Befehle). Erscheint, sobald der Cursor in einer Tabelle steht.
-const TableBubbleMenu = ({ editor, editable }) => {
+const TableBubbleMenu = ({ editor }) => {
 	if (!editor) return null;
 	const run = (fn) => () => fn(editor.chain().focus()).run();
 	return (
 		<BubbleMenu
 			editor={editor}
 			pluginKey="hvTableBubble"
-			shouldShow={({ editor }) => !!editable && editor.isActive("table")}
+			// WICHTIG: @tiptap/react friert shouldShow beim ersten Mount ein (das Plugin-
+			// useEffect hängt nicht an shouldShow). Beim Start ist die Vorlage noch leer
+			// (canWrite=false), ein eingefrorenes `editable`-Prop bliebe also dauerhaft
+			// false und das Menü erschiene nie. Daher live `editor.isEditable` lesen
+			// (wird via editor.setEditable(editable) aktuell gehalten).
+			shouldShow={({ editor }) => editor.isEditable && editor.isActive("table")}
 			tippyOptions={{ placement: "top", maxWidth: "none" }}
 		>
 			<div className="table-bubble">
@@ -521,7 +526,7 @@ export const Editor = ({
 					    und reißt die gesamte App ab. Der Ladezustand liegt daher nur als
 					    Overlay über der Canvas, das BubbleMenu blendet sich via shouldShow aus. */}
 					<EditorContent editor={editor} />
-					{editor && <TableBubbleMenu editor={editor} editable={editable} />}
+					{editor && <TableBubbleMenu editor={editor} />}
 					{loading && <div className="editor-loading editor-loading-overlay">Vorlage wird geladen …</div>}
 					{!loading && (
 						<div className="editor-foot-hint">
