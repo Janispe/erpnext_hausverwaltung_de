@@ -1744,14 +1744,25 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   table-layout: fixed;
 }
 .tiptap-surface td, .tiptap-surface th {
-  /* Gestrichelt + dezent: nur Bearbeitungshilfe, im PDF rendern Tabellen randlos. */
+  /* Gestrichelt + dezent: nur Bearbeitungshilfe, im PDF rendern Tabellen randlos
+     (außer mit data-hv-borders, siehe unten). */
   border: 1px dashed var(--border);
-  /* Vertikal knapp (1px), damit gestapelte Zellen (z.B. Einzug/Auszug-Layout)
-     im Editor genauso eng stehen wie im PDF — sonst zeigt der Editor durch das
-     Zell-Padding mehr Abstand an, als das gerenderte PDF tatsächlich hat. */
-  padding: 1px 8px;
+  /* 2px vertikal = identisch zum PDF-Render (install.py Print-CSS), damit der Editor
+     gestapelte Zellen (z.B. Einzug/Auszug) genauso eng zeigt wie das PDF. */
+  padding: 2px 6px;
   vertical-align: top;
   position: relative;
+}
+/* „Rahmen pro Tabelle": data-hv-borders -> solide Rahmen (Editor) bzw. gedruckt (PDF). */
+.tiptap-surface table[data-hv-borders] td,
+.tiptap-surface table[data-hv-borders] th {
+  border: 1px solid #333;
+}
+/* Linien-Umschalter: .hv-no-grid blendet die gestrichelte Hilfslinie aus (nur Farbe,
+   Layout bleibt stabil). Mit Rahmen markierte Tabellen bleiben sichtbar. */
+.editor-canvas.hv-no-grid .tiptap-surface table:not([data-hv-borders]) td,
+.editor-canvas.hv-no-grid .tiptap-surface table:not([data-hv-borders]) th {
+  border-color: transparent;
 }
 .tiptap-surface th { background: var(--surface-2, #f4f4f2); font-weight: 600; text-align: left; }
 
@@ -1779,6 +1790,7 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   line-height: 1.2;
 }
 .table-bubble button:hover { background: var(--surface-hover, #f0f0ef); }
+.table-bubble button.is-active { background: var(--primary, #1f73b7); color: #fff; }
 .table-bubble .tb-danger:hover { background: var(--danger-50, #fde8e8); color: var(--danger, #c0392b); }
 .table-bubble .tb-sep { width: 1px; align-self: stretch; background: var(--border); margin: 3px 2px; }
 .tiptap-surface .selectedCell::after {

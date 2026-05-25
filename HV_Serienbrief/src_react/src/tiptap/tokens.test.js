@@ -76,6 +76,17 @@ describe("Token-Round-Trip", () => {
 		expect(out).toMatch(/\{%\s*for row in payments\s*%\}[\s\S]*<tr[\s\S]*<\/tr>[\s\S]*\{%\s*endfor\s*%\}/);
 	});
 
+	it("Tabellen-Rahmen-Flag (data-hv-borders) round-trippt", () => {
+		const withBorders = roundTrip(
+			'<table data-hv-borders="1"><tbody><tr><td><p>A</p></td><td><p>B</p></td></tr></tbody></table>'
+		);
+		expect(withBorders).toContain("data-hv-borders");
+		const without = roundTrip(
+			"<table><tbody><tr><td><p>A</p></td><td><p>B</p></td></tr></tbody></table>"
+		);
+		expect(without).not.toContain("data-hv-borders");
+	});
+
 	it("legacy data-token Chip round-trippt (Abwärtskompatibilität)", () => {
 		const legacy =
 			'<p>Hallo <span class="chip" data-group="mieter" data-token="{{ mieter.vorname }}" contenteditable="false">mieter.vorname</span>!</p>';

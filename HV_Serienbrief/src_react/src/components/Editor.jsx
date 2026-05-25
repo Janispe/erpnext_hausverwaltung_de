@@ -5,6 +5,7 @@ import { PLACEHOLDER_GROUPS, SNIPPETS, TEXT_BAUSTEINE } from "../data.js";
 import { buildExtensions } from "../tiptap/extensions.js";
 import { decorateForTiptap, serializeToTokens, groupForToken } from "../tiptap/tokens.js";
 import { diffTokens } from "../tiptap/validateJinja.js";
+import { loadPref, savePref } from "../persist.js";
 
 // Einzel-Token (Platzhalter/Baustein/inline-Jinja) als atomarer Node einfügen (robuster als
 // HTML-Parsing). Mehr-Token-Snippets mit Leerzeilen -> decorate + insertContent(HTML).
@@ -157,7 +158,7 @@ const TBtn = ({ on, active, disabled, title, children }) => (
 	</button>
 );
 
-const EditorToolbar = ({ editor, disabled, onInsert, onImage }) => {
+const EditorToolbar = ({ editor, disabled, onInsert, onImage, showGrid, onToggleGrid }) => {
 	const can = !!editor && !disabled;
 	const isA = (name, attrs) => !!editor && editor.isActive(name, attrs);
 	const chain = () => editor.chain().focus();
@@ -294,6 +295,13 @@ const EditorToolbar = ({ editor, disabled, onInsert, onImage }) => {
 				<TBtn title="Bild einfügen" disabled={!can} on={onImage}>
 					<Icon name="image" />
 				</TBtn>
+				<TBtn
+					title={showGrid ? "Tabellen-Hilfslinien ausblenden" : "Tabellen-Hilfslinien einblenden"}
+					active={!showGrid}
+					on={onToggleGrid}
+				>
+					<Icon name="grid" />
+				</TBtn>
 				{inTable && (
 					<TBtn
 						title="Diese Zeile als Schleife wiederholen ({% for %})"
@@ -366,6 +374,21 @@ const TableBubbleMenu = ({ editor }) => {
 				<button title="Zeile löschen" onClick={run((c) => c.deleteRow())}>Zeile －</button>
 				<span className="tb-sep" />
 				<button title="Kopfzeile an/aus" onClick={run((c) => c.toggleHeaderRow())}>Kopf</button>
+				<span className="tb-sep" />
+				<button
+					title="Rahmen dieser Tabelle im PDF drucken (an/aus)"
+					className={editor.getAttributes("table").borders ? "is-active" : ""}
+					onClick={() =>
+						editor
+							.chain()
+							.focus()
+							.updateAttributes("table", { borders: !editor.getAttributes("table").borders })
+							.run()
+					}
+				>
+					Rahmen
+				</button>
+				<span className="tb-sep" />
 				<button className="tb-danger" title="Tabelle löschen" onClick={run((c) => c.deleteTable())}>
 					Tabelle ✕
 				</button>
@@ -395,6 +418,9 @@ export const Editor = ({
 	const editable = hasHtml && !!canWrite && !safety;
 	const [, force] = useState(0);
 	const fileInputRef = useRef(null);
+	// Tabellen-Hilfslinien ein/aus (globale Ansichts-Präferenz, gemerkt).
+	const [showGrid, setShowGrid] = useState(() => loadPref("tableGrid", true));
+	useEffect(() => savePref("tableGrid", showGrid), [showGrid]);
 
 	const editor = useEditor({
 		extensions: buildExtensions(),
@@ -493,7 +519,14 @@ export const Editor = ({
 
 	return (
 		<main className="center">
-			<EditorToolbar editor={editor} disabled={!editable} onInsert={openSlash} onImage={handleImage} />
+			<EditorToolbar
+				editor={editor}
+				disabled={!editable}
+				onInsert={openSlash}
+				onImage={handleImage}
+				showGrid={showGrid}
+				onToggleGrid={() => setShowGrid((v) => !v)}
+			/>
 
 			{safety && (
 				<div className="editor-unsafe-banner">
@@ -510,7 +543,7 @@ export const Editor = ({
 
 			<div className="editor-scroll" ref={editorRef}>
 				<div
-					className={`editor-canvas ${dragOver ? "drag-over" : ""}`}
+					className={`editor-canvas ${dragOver ? "drag-over" : ""} ${showGrid ? "" : "hv-no-grid"}`}
 					onDragOver={(e) => {
 						e.preventDefault();
 						setDragOver(true);

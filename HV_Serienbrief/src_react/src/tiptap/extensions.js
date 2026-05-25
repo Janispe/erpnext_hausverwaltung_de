@@ -347,6 +347,23 @@ export const HvTableHeader = TableHeader.extend({
 	},
 });
 
+// Tabelle mit optionalem Rahmen-Flag. ``borders`` round-trippt über data-hv-borders am
+// <table> (Muster wie HvTableRow.loopExpr). Steuert per CSS, ob im Editor solide Rahmen
+// statt der gestrichelten Hilfslinie gezeigt UND im PDF echte Rahmen gedruckt werden
+// (Default randlos — Tabellen sind meist reine Layout-Hilfen).
+export const HvTable = Table.extend({
+	addAttributes() {
+		return {
+			...this.parent?.(),
+			borders: {
+				default: false,
+				parseHTML: (el) => el.hasAttribute("data-hv-borders"),
+				renderHTML: (attrs) => (attrs.borders ? { "data-hv-borders": "1" } : {}),
+			},
+		};
+	},
+});
+
 // TextStyle-Zusätze: Schriftgröße + Textfarbe (ersetzt @tiptap/extension-color, weil wir die
 // Farbe mit !important rendern müssen). Grund: Frappes Print-Bundle hat im PDF-Render eine
 // globale Regel `@media print { *,*:before,*:after { color:#000 !important } }`, die jede
@@ -411,7 +428,7 @@ export function buildExtensions() {
 		TextStyleExtras,
 		Highlight.configure({ multicolor: true }),
 		Image.configure({ inline: false, allowBase64: false }),
-		Table.configure({ resizable: true }),
+		HvTable.configure({ resizable: true }),
 		HvTableRow,
 		HvTableHeader,
 		HvTableCell,

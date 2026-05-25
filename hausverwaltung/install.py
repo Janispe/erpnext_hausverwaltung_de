@@ -148,6 +148,23 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 				margin: 0;
 				line-height: 1.35;
 			}
+			/* Tabellen: Frappes print.bundle erzwingt ``.print-format td {padding:10px
+			   !important}`` — das spreizt gestapelte Layout-Zellen (z.B. Einzug/Auszug)
+			   um ~1 Leerzeile. Mit höherer Spezifität (``.print-format .serienbrief-page td``)
+			   + !important auf knappes Padding zurückholen. Tabellen rendern randlos, außer
+			   sie sind ausdrücklich mit ``data-hv-borders`` markiert (Rahmen-pro-Tabelle). */
+			.serienbrief-page table {
+				border-collapse: collapse;
+			}
+			.print-format .serienbrief-page td,
+			.print-format .serienbrief-page th {
+				padding: 2px 6px !important;
+				vertical-align: top;
+			}
+			.print-format .serienbrief-page table[data-hv-borders] td,
+			.print-format .serienbrief-page table[data-hv-borders] th {
+				border: 1px solid #000 !important;
+			}
 			.serienbrief-block {
 				margin-bottom: 12px;
 			}
