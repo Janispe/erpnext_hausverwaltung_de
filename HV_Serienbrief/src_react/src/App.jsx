@@ -202,9 +202,20 @@ export const App = () => {
     }
     setSaving(true);
     try {
-      const res = await saveTemplate(template.id, html, bausteinPaths, variables);
+      const res = await saveTemplate(template.id, html, bausteinPaths, variables, title);
       setDirty(false);
-      setTemplate(prev => ({ ...prev, modified: res.modified || prev.modified }));
+      // autoname = format:{title}: bei Titeländerung benennt das Backend um -> neue id.
+      const renamed = res.id && res.id !== template.id;
+      setTemplate(prev => ({
+        ...prev,
+        id: res.id || prev.id,
+        title: res.title || prev.title,
+        modified: res.modified || prev.modified,
+      }));
+      if (res.title) setTitle(res.title);
+      if (renamed) {
+        try { const { groups } = await loadTree(); if (groups && groups.length) setTree(groups); } catch (_) {}
+      }
       return true;
     } catch (e) {
       alert("Speichern fehlgeschlagen: " + ((e && e.message) || e));
@@ -288,7 +299,13 @@ export const App = () => {
     const walk = (nodes) => {
       for (const n of nodes || []) {
         if (n.token) {
-          const path = String(n.token).replace(/^\{\{\s*/, "").replace(/\s*\}\}$/, "").trim();
+          // Sowohl {{ x }} (Variablen) als auch {{$ x $}} (Objekt-Platzhalter) ->
+          // reiner Pfad „x". Das $ MUSS mit weg, sonst landet „$ objekt.wohnung $"
+          // im Pfad-Picker und _resolve_value_path() kann es nicht auflösen.
+          const path = String(n.token)
+            .replace(/^\{\{\s*\$?\s*/, "")
+            .replace(/\s*\$?\s*\}\}$/, "")
+            .trim();
           if (path) out.push({ path, type: n.type || "", label: n.label || path });
         }
         if (n.children) walk(n.children);

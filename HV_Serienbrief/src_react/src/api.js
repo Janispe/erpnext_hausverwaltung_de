@@ -71,16 +71,18 @@ export async function openDurchlauf({ vorlage, title, iterationDoctype }) {
 
 // Editierten Inhalt zurück in die Vorlage speichern. Gibt { id, modified } zurück.
 // bausteinPaths = Pro-Baustein Input-Pfad-Overrides (werden als JSON gespeichert).
-export async function saveTemplate(id, html, bausteinPaths, variables) {
+export async function saveTemplate(id, html, bausteinPaths, variables, title) {
 	if (!embedded) {
-		return { id, modified: "gerade eben (Demo)", mock: true };
+		return { id, title, modified: "gerade eben (Demo)", mock: true };
 	}
-	return await rpc("save", {
+	const params = {
 		name: id,
 		html,
 		baustein_pfade: JSON.stringify(bausteinPaths || {}),
 		variables: JSON.stringify(variables || []),
-	});
+	};
+	if (title != null) params.title = title;
+	return await rpc("save", params);
 }
 
 // Bausteine (Serienbrief Textbaustein) für die Bausteine-Sidebar.

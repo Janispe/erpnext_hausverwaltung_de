@@ -983,6 +983,12 @@ def _render_segments_via_durchlauf(
 		"iteration_objekte",
 		{"iteration_doctype": iteration_doctype, "objekt": iteration_name},
 	)
+	# Live-Preview: die (ggf. ungespeicherten) inline-Baustein-Pfad-Overrides aus dem
+	# in-memory Vorlagen-Doc verwenden. Sonst würde _get_inline_baustein_pfade() sie per
+	# get_cached_doc aus der DB nachladen und den Editor-Stand ignorieren. Den Cache-Slot
+	# direkt vorbelegen (kurzschließt den DB-Read).
+	inline_override = frappe.parse_json(template_doc.get("inline_baustein_pfade") or "{}")
+	durchlauf._inline_bp_cache = inline_override if isinstance(inline_override, dict) else {}
 
 	rows = durchlauf._get_empfaenger_rows()
 	if not rows:
@@ -1521,6 +1527,7 @@ def save_editor_template(
 	html: str | None = None,
 	baustein_pfade: str | None = None,
 	variables: str | None = None,
+	title: str | None = None,
 ) -> Dict[str, Any]:
 	"""Editor-Inhalt zurück in die Vorlage schreiben (content bzw. html_content je
 	nach content_type). validate() sanitisiert Rich-Text automatisch.
@@ -1546,9 +1553,28 @@ def save_editor_template(
 		doc.inline_baustein_pfade = frappe.as_json(parsed) if parsed else ""
 	if variables is not None:
 		_apply_editor_variables(doc, variables)
+	new_title = cstr(title).strip() if title is not None else ""
+	if new_title and new_title != cstr(doc.title).strip():
+		doc.title = new_title
 	doc.save()
 
-	return {"id": doc.name, "modified": pretty_date(doc.modified)}
+	# autoname = format:{title}: der Name IST der Titel. Bei Titeländerung umbenennen,
+	# damit Name/Titel konsistent bleiben und verlinkte Durchläufe (vorlage) mitgezogen
+	# werden. rename_doc aktualisiert alle Link-Referenzen.
+	if new_title and new_title != doc.name:
+		try:
+			frappe.rename_doc(
+				"Serienbrief Vorlage", doc.name, new_title, merge=False, show_alert=False
+			)
+		except frappe.DuplicateEntryError:
+			frappe.throw(
+				_("Eine Vorlage mit dem Titel „{0}\" existiert bereits. Bitte einen anderen Titel wählen.").format(
+					new_title
+				)
+			)
+		doc = frappe.get_doc("Serienbrief Vorlage", new_title)
+
+	return {"id": doc.name, "title": doc.title, "modified": pretty_date(doc.modified)}
 
 
 # Erlaubte Raster-Bildformate, erkannt an Magic-Bytes (SVG bewusst NICHT — XSS-Risiko, da
