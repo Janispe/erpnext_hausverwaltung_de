@@ -1,32 +1,52 @@
-// Kopiert den Vite-Build nach hausverwaltung/public/serienbrief_editor/, sodass
-// Frappe ihn unter /assets/hausverwaltung/serienbrief_editor/ ausliefert.
-// Ersetzt den manuellen `cp`-Schritt aus der README (Copy-Falle).
+// Baut die Serienbrief-React-Apps (Editor + Browser) je mit ihrem eigenen Base-Pfad
+// und kopiert sie nach hausverwaltung/public/serienbrief_<app>/, sodass Frappe sie
+// unter /assets/hausverwaltung/serienbrief_<app>/ ausliefert.
+//
+// Wichtig: Bei der Multi-Entry-Vite-Config muss pro App mit HV_APP=<app> gebaut
+// werden, damit die index.html ihre Assets unter dem richtigen Base-Pfad
+// (/assets/hausverwaltung/serienbrief_<app>/) referenziert. Ein einzelner
+// `vite build` (Default-Base) würde falsche Asset-URLs erzeugen.
+//
+// Durchlauf wird (noch) nicht deployt.
 import { cp, mkdir, rm, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execSync } from "node:child_process";
 
-// here = apps/hausverwaltung/HV_Serienbrief/src_react/scripts
-// Ziel = apps/hausverwaltung/hausverwaltung/public/serienbrief_editor (3x hoch zu apps/hausverwaltung)
 const here = dirname(fileURLToPath(import.meta.url));
-const dist = resolve(here, "../dist");
-const target = resolve(here, "../../../hausverwaltung/public/serienbrief_editor");
+const root = resolve(here, ".."); // apps/hausverwaltung/HV_Serienbrief/src_react
 
-await rm(target, { recursive: true, force: true });
-await mkdir(target, { recursive: true });
-await cp(`${dist}/assets`, `${target}/assets`, { recursive: true });
-await cp(`${dist}/index.html`, `${target}/index.html`);
+// app → { html: Eintrags-HTML im dist/, bundle: stabiler (hash-loser) Bundle-Basename }
+const APPS = {
+	editor: { html: "index.html", bundle: "serienbrief-editor" },
+	browser: { html: "browser.html", bundle: "serienbrief-browser" },
+};
 
-// Cache-Bust: Die Bundle-Dateinamen sind bewusst fix (serienbrief-editor.js/.css)
-// für die Frappe-Integration, haben also KEINEN Content-Hash. Ohne Versions-Query
-// liefert der Browser-HTTP-Cache nach einem Rebuild das alte Bundle weiter aus
-// (die Host-Page cache-bustet nur die index.html, nicht die darin referenzierten
-// Assets). Daher pro Build eine ?v=<buildId> an die JS-/CSS-URLs anhängen.
-const buildId = Date.now();
-const indexPath = `${target}/index.html`;
-const html = await readFile(indexPath, "utf8");
-await writeFile(
-	indexPath,
-	html.replace(/(serienbrief-editor\.(?:js|css))(?=["'?])/g, `$1?v=${buildId}`),
-);
+for (const [app, cfg] of Object.entries(APPS)) {
+	console.log(`[copy-to-frappe] build ${app} …`);
+	execSync("npx vite build", { cwd: root, stdio: "inherit", env: { ...process.env, HV_APP: app } });
 
-console.log(`[copy-to-frappe] ${dist} -> ${target} (cache-bust v=${buildId})`);
+	const distAssets = resolve(root, "dist/assets");
+	const target = resolve(root, `../../hausverwaltung/public/serienbrief_${app}`);
+
+	await rm(target, { recursive: true, force: true });
+	await mkdir(`${target}/assets`, { recursive: true });
+	await cp(distAssets, `${target}/assets`, { recursive: true });
+
+	// Die Host-Page lädt jeweils <app>/index.html — beim Browser ist die Quelle browser.html.
+	await cp(resolve(root, `dist/${cfg.html}`), `${target}/index.html`);
+
+	// Cache-Bust: Die Bundle-Dateinamen sind bewusst fix (kein Content-Hash) für die
+	// Frappe-Integration. Ohne Versions-Query liefert der Browser-Cache nach einem
+	// Rebuild das alte Bundle weiter aus → pro Build ?v=<buildId> anhängen. Die
+	// shared Chunks haben Hashes und brauchen keinen Bust.
+	const buildId = Date.now();
+	const indexPath = `${target}/index.html`;
+	const html = await readFile(indexPath, "utf8");
+	await writeFile(
+		indexPath,
+		html.replace(new RegExp(`(${cfg.bundle}\\.(?:js|css))(?=["'?])`, "g"), `$1?v=${buildId}`),
+	);
+
+	console.log(`[copy-to-frappe] ${app} -> ${target} (cache-bust v=${buildId})`);
+}

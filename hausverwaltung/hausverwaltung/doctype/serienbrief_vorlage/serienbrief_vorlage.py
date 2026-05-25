@@ -2062,3 +2062,197 @@ def get_editor_recipients(
 		label = r.get(title_field) if title_field and title_field != "name" else None
 		items.append({"id": r["name"], "label": label or r["name"]})
 	return {"items": items, "doctype": dt}
+
+
+# ---------------------------------------------------------------------------
+# Serienbrief Browser (React) — Backend
+#
+# Eigenstaendige React-UI unter page/serienbrief_browser/, eingebettet per iframe
+# + postMessage-Bridge (analog Editor). Diese Methoden liefern die Browser-Daten
+# und die leichten Mutationen (Favorit, Verschieben, Ordner anlegen). Kopieren/
+# Loeschen/Suche/Empfaenger/PDF-Vorschau nutzen die bestehenden Editor-Methoden
+# (copy_serienbrief_vorlage, delete_serienbrief_vorlage, search_serienbrief_vorlagen,
+# get_editor_recipients, render_template_preview_pdf) unveraendert weiter.
+# ---------------------------------------------------------------------------
+
+
+@frappe.whitelist()
+def get_browser_data() -> Dict[str, Any]:
+	"""Ordnerbaum (Kategorie) + alle Vorlagen mit Metadaten fuer den Browser."""
+	if not frappe.has_permission("Serienbrief Vorlage", "read"):
+		frappe.throw(_("Keine Berechtigung, Serienbrief Vorlagen zu lesen."), frappe.PermissionError)
+
+	# --- Ordner (Kategorie-Baum, nach Nested-Set sortiert) -----------------
+	has_color = frappe.get_meta("Serienbrief Kategorie").has_field("color")
+	cat_fields = ["name", "title", "parent_serienbrief_kategorie", "is_group"]
+	if has_color:
+		cat_fields.append("color")
+	categories = frappe.get_all("Serienbrief Kategorie", fields=cat_fields, order_by="lft asc")
+
+	# --- Vorlagen ----------------------------------------------------------
+	templates = frappe.get_all(
+		"Serienbrief Vorlage",
+		filters={"docstatus": ["<", 2]},
+		fields=[
+			"name", "title", "kategorie", "modified", "modified_by",
+			"favorite", "haupt_verteil_objekt", "description", "content",
+		],
+		order_by="title asc",
+	)
+
+	# Bausteine je Vorlage (Titel) — ein Query, idx-sortiert.
+	bausteine_by_template: Dict[str, List[str]] = {}
+	for row in frappe.db.sql(
+		"""
+		select vb.parent as template, coalesce(block.title, block.name) as title
+		from `tabSerienbrief Vorlagenbaustein` vb
+		join `tabSerienbrief Textbaustein` block on block.name = vb.baustein
+		order by vb.idx asc
+		""",
+		as_dict=True,
+	):
+		bausteine_by_template.setdefault(row.template, []).append(row.title)
+
+	# Variablen-Anzahl je Vorlage.
+	var_counts: Dict[str, int] = {}
+	for row in frappe.db.sql(
+		"select parent as template, count(*) as n from `tabSerienbrief Vorlage Variable` group by parent",
+		as_dict=True,
+	):
+		var_counts[row.template] = row.n
+
+	# Zuletzt verwendet: juengstes Durchlauf-Datum je Vorlage (ein Aggregat-Query).
+	last_used: Dict[str, Any] = {}
+	for row in frappe.db.sql(
+		"select vorlage, max(date) as last from `tabSerienbrief Durchlauf` where vorlage is not null group by vorlage",
+		as_dict=True,
+	):
+		last_used[row.vorlage] = row.last
+
+	out_templates: List[Dict[str, Any]] = []
+	folder_counts: Dict[str, int] = {}
+	for t in templates:
+		folder_counts[t.kategorie or ""] = folder_counts.get(t.kategorie or "", 0) + 1
+		bausteine = bausteine_by_template.get(t.name, [])
+		lu = last_used.get(t.name)
+		out_templates.append(
+			{
+				"id": t.name,
+				"title": t.title,
+				"folder": t.kategorie or "",
+				"modified": t.modified.isoformat() if t.modified else None,
+				"modified_by": t.modified_by,
+				"favorite": bool(t.favorite),
+				"haupt_verteil_objekt": t.haupt_verteil_objekt or "",
+				"description": t.description or "",
+				# Klartext fuer die client-seitige Volltextsuche/Snippets.
+				"content": strip_html_tags(t.content or ""),
+				"bausteine": bausteine,
+				"variables": var_counts.get(t.name, 0),
+				"last_used": lu.isoformat() if hasattr(lu, "isoformat") else (lu or None),
+				# Nur fuer Vorlagen mit Bausteinen berechnen (spart Doc-Loads).
+				"missing_paths": _count_missing_paths(t.name) if bausteine else 0,
+			}
+		)
+
+	folders = [
+		{
+			"id": c.name,
+			"title": c.title or c.name,
+			"parent": c.parent_serienbrief_kategorie or None,
+			"is_group": bool(c.is_group),
+			"color": (c.get("color") if has_color else None) or None,
+			"count": folder_counts.get(c.name, 0),
+		}
+		for c in categories
+	]
+
+	return {
+		"folders": folders,
+		"templates": out_templates,
+		"uncategorized": folder_counts.get("", 0),
+		"total": len(out_templates),
+	}
+
+
+def _count_missing_paths(template_name: str) -> int:
+	"""Anzahl Baustein-Eingaben ohne aufgeloesten Pfad fuer diese Vorlage —
+	Wiederverwendung der Durchlauf-Requirements-Logik (lazy import gegen Zirkel)."""
+	try:
+		from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+			_collect_block_input_requirements,
+		)
+
+		doc = frappe.get_doc("Serienbrief Vorlage", template_name)
+		base = doc.get("haupt_verteil_objekt")
+		if not base:
+			return 0
+		blocks = _collect_block_input_requirements(doc, base)
+		return sum(1 for b in blocks for r in b.get("requirements", []) if not r.get("path"))
+	except Exception:
+		return 0
+
+
+@frappe.whitelist()
+def set_template_favorite(template: str | None = None, favorite: int | str | bool = 0) -> Dict[str, Any]:
+	"""Favorit-Flag einer Vorlage setzen/loeschen."""
+	name = (template or "").strip()
+	if not name:
+		frappe.throw(_("Bitte wählen Sie eine Vorlage."))
+	if not frappe.has_permission("Serienbrief Vorlage", "write", doc=name):
+		frappe.throw(_("Keine Berechtigung, die Vorlage zu ändern."), frappe.PermissionError)
+	value = 1 if cint(favorite) else 0
+	frappe.db.set_value("Serienbrief Vorlage", name, "favorite", value)
+	return {"name": name, "favorite": bool(value)}
+
+
+@frappe.whitelist()
+def move_templates_to_kategorie(
+	templates: str | list | None = None, kategorie: str | None = None
+) -> Dict[str, Any]:
+	"""Eine oder mehrere Vorlagen in einen anderen Ordner (Kategorie) verschieben."""
+	target = (kategorie or "").strip()
+	if not target or not frappe.db.exists("Serienbrief Kategorie", target):
+		frappe.throw(_("Bitte wählen Sie einen gültigen Ziel-Ordner."))
+
+	names = templates
+	if isinstance(names, str):
+		names = json.loads(names or "[]")
+	if not names:
+		frappe.throw(_("Bitte wählen Sie mindestens eine Vorlage."))
+
+	moved: List[str] = []
+	for name in names:
+		if not frappe.has_permission("Serienbrief Vorlage", "write", doc=name):
+			frappe.throw(_("Keine Berechtigung, eine der Vorlagen zu ändern."), frappe.PermissionError)
+		frappe.db.set_value("Serienbrief Vorlage", name, "kategorie", target)
+		moved.append(name)
+	return {"moved": moved, "kategorie": target}
+
+
+@frappe.whitelist()
+def create_kategorie(
+	title: str | None = None, parent: str | None = None, color: str | None = None
+) -> Dict[str, Any]:
+	"""Neuen Ordner (Serienbrief Kategorie) anlegen, optional unter einem Eltern-Ordner."""
+	folder_title = (title or "").strip()
+	if not folder_title:
+		frappe.throw(_("Bitte gib einen Ordnernamen ein."))
+	if not frappe.has_permission("Serienbrief Kategorie", "create"):
+		frappe.throw(_("Keine Berechtigung, einen Ordner anzulegen."), frappe.PermissionError)
+
+	doc = frappe.new_doc("Serienbrief Kategorie")
+	doc.title = folder_title
+	parent_name = (parent or "").strip()
+	if parent_name:
+		doc.parent_serienbrief_kategorie = parent_name
+		# Eltern als Gruppe markieren, damit der Baum konsistent bleibt.
+		if not frappe.db.get_value("Serienbrief Kategorie", parent_name, "is_group"):
+			frappe.db.set_value("Serienbrief Kategorie", parent_name, "is_group", 1)
+	if color and frappe.get_meta("Serienbrief Kategorie").has_field("color"):
+		doc.color = color
+	try:
+		doc.insert()
+	except DuplicateEntryError:
+		frappe.throw(_("Ein Ordner mit diesem Namen existiert bereits."))
+	return {"id": doc.name, "title": doc.title, "parent": parent_name or None, "color": color or None}

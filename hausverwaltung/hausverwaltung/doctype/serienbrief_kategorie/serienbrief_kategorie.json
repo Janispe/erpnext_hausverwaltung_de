@@ -9,7 +9,8 @@
   "parent_serienbrief_kategorie",
   "is_group",
   "title",
-  "beschreibung"
+  "beschreibung",
+  "color"
  ],
  "fields": [
   {
@@ -37,6 +38,11 @@
    "fieldname": "beschreibung",
    "fieldtype": "Small Text",
    "label": "Beschreibung"
+  },
+  {
+   "fieldname": "color",
+   "fieldtype": "Color",
+   "label": "Farbe"
   },
   {
    "fieldname": "lft",

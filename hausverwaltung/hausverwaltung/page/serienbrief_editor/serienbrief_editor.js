@@ -46,6 +46,32 @@ const NAV_ACTIONS = {
 	},
 };
 
+// Deep-Link aus dem Vorlagen-Browser: route_options.hv_serienbrief_template wird
+// an das iframe als ?template=<name> weitergereicht; der React-Editor wählt diese
+// Vorlage beim Start aus. Wir konsumieren den Param (einmalig), damit ein späterer
+// normaler Aufruf der Page nicht wieder dieselbe Vorlage erzwingt.
+let _editorReload = null;
+
+function consumeTemplateRoute() {
+	const ro = frappe.route_options || {};
+	const t = ro.hv_serienbrief_template;
+	if (t) delete frappe.route_options.hv_serienbrief_template;
+	return t || "";
+}
+
+function buildEditorSrc(template) {
+	let s = `/assets/hausverwaltung/serienbrief_editor/index.html?v=${Date.now()}`;
+	if (template) s += `&template=${encodeURIComponent(template)}`;
+	return s;
+}
+
+// Erneute Navigation Browser → Editor: on_page_load läuft bei gecachter Page nicht
+// noch einmal, on_page_show schon. Hier das iframe mit der neuen Vorlage neu laden.
+frappe.pages["serienbrief_editor"].on_page_show = function () {
+	const t = consumeTemplateRoute();
+	if (t && _editorReload) _editorReload(t);
+};
+
 frappe.pages["serienbrief_editor"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
@@ -58,7 +84,8 @@ frappe.pages["serienbrief_editor"].on_page_load = function (wrapper) {
 
 	// Cache-Bust pro Aufruf, damit nach einem Rebuild immer der aktuelle Build
 	// geladen wird (interne Beta — der Re-Download von ~60 KB gzip ist unkritisch).
-	const src = `/assets/hausverwaltung/serienbrief_editor/index.html?v=${Date.now()}`;
+	// Optionaler Deep-Link-Param ?template=<name> (aus dem Vorlagen-Browser).
+	const src = buildEditorSrc(consumeTemplateRoute());
 
 	const $frame = $(
 		`<iframe class="hv-serienbrief-editor-frame" src="${src}" title="Serienbrief Editor"></iframe>`
@@ -70,6 +97,9 @@ frappe.pages["serienbrief_editor"].on_page_load = function (wrapper) {
 	});
 
 	$body.append($frame);
+
+	// Reloader für erneute Browser → Editor-Navigation (siehe on_page_show oben).
+	_editorReload = (template) => $frame.attr("src", buildEditorSrc(template));
 
 	// iframe füllt den Platz bis zum Fensterende.
 	function resize() {

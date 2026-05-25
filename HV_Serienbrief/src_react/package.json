@@ -1,12 +1,18 @@
 {
-  "name": "hv-serienbrief-editor",
+  "name": "hv-serienbrief",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:editor": "vite --open /",
+    "dev:browser": "vite --open /browser.html",
+    "dev:durchlauf": "vite --open /durchlauf.html",
     "build": "vite build",
-    "build:frappe": "vite build && node ./scripts/copy-to-frappe.mjs",
+    "build:editor": "HV_APP=editor vite build",
+    "build:browser": "HV_APP=browser vite build",
+    "build:durchlauf": "HV_APP=durchlauf vite build",
+    "build:frappe": "node ./scripts/copy-to-frappe.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

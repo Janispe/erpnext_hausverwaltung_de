@@ -10,6 +10,7 @@
   "title",
   "haupt_verteil_objekt",
   "kategorie",
+  "favorite",
   "content_type",
   "content",
   "html_content",
@@ -47,6 +48,12 @@
    "label": "Ordner",
    "options": "Serienbrief Kategorie",
    "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "favorite",
+   "fieldtype": "Check",
+   "label": "Favorit"
   },
   {
    "default": "Textbaustein (Rich Text)",

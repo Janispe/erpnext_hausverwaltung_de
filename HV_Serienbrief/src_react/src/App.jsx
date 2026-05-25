@@ -170,8 +170,16 @@ export const App = () => {
         if (cancelled || !groups || !groups.length) return;
         setTree(groups);
         if (embedded) {
-          const first = groups.flatMap(g => g.templates)[0];
-          if (first) onTemplateSelect(first.id);
+          const all = groups.flatMap(g => g.templates);
+          // Deep-Link aus dem Vorlagen-Browser: ?template=<name> bevorzugen,
+          // sonst die erste Vorlage öffnen.
+          let target = null;
+          try {
+            const wanted = new URLSearchParams(window.location.search).get("template");
+            if (wanted) target = all.find(t => t.id === wanted) || null;
+          } catch (_) {}
+          const pick = target || all[0];
+          if (pick) onTemplateSelect(pick.id);
         }
       })
       .catch(() => {});
