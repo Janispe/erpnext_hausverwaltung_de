@@ -1636,17 +1636,21 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   outline-offset: -6px;
 }
 
-/* Die eigentliche ProseMirror-Fläche – Body-Typografie nah am Brief. */
+/* Die eigentliche ProseMirror-Fläche – Body-Typografie nah am Brief.
+   line-height 1.3 + margin:0 an <p> spiegeln das Print-Format (install.py
+   .serienbrief-page p): direkt aufeinanderfolgende Absätze rendern kompakt,
+   Abstand entsteht nur durch explizite Leerzeilen (leeres <p>). So sieht der
+   Editor genauso aus wie das spätere PDF. */
 .tiptap-surface {
   font-family: var(--font-serif, Georgia, "Times New Roman", serif);
   font-size: 15px;
-  line-height: 1.65;
+  line-height: 1.3;
   color: #1a1a1a;
   outline: none;
   min-height: 480px;
 }
 .tiptap-surface:focus { outline: none; }
-.tiptap-surface p { margin: 0 0 10px; }
+.tiptap-surface p { margin: 0; }
 .tiptap-surface h1 { font-size: 21px; font-weight: 600; margin: 18px 0 12px; }
 .tiptap-surface h2 { font-size: 17px; font-weight: 600; margin: 16px 0 10px; }
 .tiptap-surface h3 { font-size: 15px; font-weight: 600; margin: 14px 0 8px; }
