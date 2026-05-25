@@ -3203,6 +3203,8 @@ def set_run_variables(
 	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
 	if not frappe.has_permission("Serienbrief Durchlauf", "write", doc):
 		raise frappe.PermissionError
+	if int(getattr(doc, "docstatus", 0) or 0) != 0:
+		frappe.throw(_("Der Durchlauf ist bereits abgeschlossen (eingereicht)."))
 
 	if variables is not None:
 		if isinstance(variables, str):
@@ -3233,21 +3235,47 @@ def set_run_variables(
 
 @frappe.whitelist()
 def add_recipients(docname: str, objekte: str | list | None = None) -> Dict[str, Any]:
-	"""Iterations-Objekte zum Durchlauf hinzufügen (Duplikate werden ignoriert)."""
+	"""Iterations-Objekte zum Durchlauf hinzufügen (Duplikate werden ignoriert).
+
+	Sicherheit: nur existierende UND für den User lesbare Objekte werden aufgenommen —
+	sonst könnte ein User mit Schreibrecht auf den Durchlauf nicht-lesbare Ziel-Dokumente
+	rendern lassen und deren Daten über die erzeugten PDFs einsehen."""
 	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
 	if not frappe.has_permission("Serienbrief Durchlauf", "write", doc):
 		raise frappe.PermissionError
+	if int(getattr(doc, "docstatus", 0) or 0) != 0:
+		frappe.throw(_("Der Durchlauf ist bereits abgeschlossen (eingereicht)."))
 	if isinstance(objekte, str):
 		objekte = json.loads(objekte or "[]")
+
+	dt = cstr(doc.iteration_doctype or "").strip() or cstr(
+		frappe.db.get_value("Serienbrief Vorlage", doc.vorlage, "haupt_verteil_objekt") if doc.vorlage else ""
+	).strip()
+	if not dt or not frappe.db.exists("DocType", dt):
+		frappe.throw(_("Bitte zuerst eine Vorlage mit gültigem Iterations-Doctype wählen."))
+
 	existing = {cstr(getattr(it, "objekt", "") or "") for it in doc.get("iteration_objekte") or []}
+	rejected: list[str] = []
 	added = 0
 	for objekt in objekte or []:
 		objekt = cstr(objekt or "").strip()
 		if not objekt or objekt in existing:
 			continue
-		doc.append("iteration_objekte", {"iteration_doctype": doc.iteration_doctype, "objekt": objekt})
+		if not frappe.db.exists(dt, objekt) or not frappe.has_permission(dt, "read", doc=objekt):
+			rejected.append(objekt)
+			continue
+		doc.append("iteration_objekte", {"iteration_doctype": dt, "objekt": objekt})
 		existing.add(objekt)
 		added += 1
+
+	if rejected:
+		# Atomar: nichts speichern, wenn ein Objekt nicht zulässig ist (klare Rückmeldung).
+		frappe.throw(
+			_("Diese Objekte können nicht hinzugefügt werden (nicht vorhanden oder keine Leseberechtigung): {0}").format(
+				", ".join(rejected)
+			),
+			frappe.PermissionError,
+		)
 	if added:
 		doc.save(ignore_permissions=True)
 	return {"added": added}
@@ -3259,6 +3287,8 @@ def remove_recipients(docname: str, objekte: str | list | None = None) -> Dict[s
 	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
 	if not frappe.has_permission("Serienbrief Durchlauf", "write", doc):
 		raise frappe.PermissionError
+	if int(getattr(doc, "docstatus", 0) or 0) != 0:
+		frappe.throw(_("Der Durchlauf ist bereits abgeschlossen (eingereicht)."))
 	if isinstance(objekte, str):
 		objekte = json.loads(objekte or "[]")
 	remove = {cstr(o or "").strip() for o in (objekte or [])}
