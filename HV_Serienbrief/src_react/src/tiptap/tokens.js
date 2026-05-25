@@ -257,6 +257,20 @@ function exprFromNodes(nodes) {
 const S_OPEN = "\uE000HVTOK";
 const S_CLOSE = "\uE001";
 
+// Läufe aus >=2 Leerzeichen in allen Textknoten zu geschützten Leerzeichen (U+00A0)
+// machen — sonst kollabiert HTML sie beim Rendern. Einzelne Leerzeichen bleiben normal.
+function preserveMultiSpaces(doc) {
+	const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null);
+	const texts = [];
+	let n;
+	while ((n = walker.nextNode())) texts.push(n);
+	for (const t of texts) {
+		if (t.nodeValue && / {2,}/.test(t.nodeValue)) {
+			t.nodeValue = t.nodeValue.replace(/ {2,}/g, (m) => " ".repeat(m.length));
+		}
+	}
+}
+
 export function serializeToTokens(html) {
 	if (!html) return "";
 	const doc = parseBody(html);
@@ -300,6 +314,13 @@ export function serializeToTokens(html) {
 		const raw = el.getAttribute("data-hv-token") || el.getAttribute("data-token") || "";
 		el.replaceWith(doc.createTextNode(sentinel(raw)));
 	});
+
+	// 6) Mehrfach-Leerzeichen (>=2) in Textknoten -> geschützte Leerzeichen ( ),
+	// damit gewollte Abstände ("[   ]"-Kästchen, Einrückungen) im PDF erhalten bleiben.
+	// HTML faltet normalen Whitespace sonst zu EINEM Leerzeichen zusammen. Einzelne
+	// Leerzeichen bleiben normal -> Fließtext bricht weiter um. Token-Sentinels enthalten
+	// keine Mehrfach-Leerzeichen, werden also nicht berührt.
+	preserveMultiSpaces(doc);
 
 	let out = doc.body.innerHTML;
 	for (const { key, raw } of sentinels) {

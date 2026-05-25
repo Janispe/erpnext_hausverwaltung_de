@@ -111,6 +111,23 @@ describe("if-Bedingungen (inline hvIf)", () => {
 	});
 });
 
+describe("Mehrfach-Leerzeichen -> geschützte Leerzeichen", () => {
+	const NBSP = String.fromCharCode(160);
+	it("Lauf aus >=2 Leerzeichen wird zu nbsp (Kästchen bleibt erhalten)", () => {
+		const out = serializeToTokens("<p>[      ] Auszug</p>");
+		// 6 reguläre Leerzeichen -> 6 nbsp (als &nbsp; oder U+00A0 serialisiert)
+		const normalized = out.replace(/&nbsp;/g, NBSP);
+		expect(normalized).toContain(`[${NBSP.repeat(6)}]`);
+		expect(normalized).toContain("Auszug");
+	});
+	it("einzelne Leerzeichen bleiben normal (Umbruch erhalten)", () => {
+		const out = serializeToTokens("<p>Hallo Welt</p>");
+		expect(out).toContain("Hallo Welt");
+		expect(out).not.toContain(NBSP);
+		expect(out).not.toContain("&nbsp;");
+	});
+});
+
 describe("validateJinjaBalance", () => {
 	it("balanciert", () => {
 		expect(validateJinjaBalance("{% if a %}x{% endif %}").ok).toBe(true);
