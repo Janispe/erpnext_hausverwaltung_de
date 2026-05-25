@@ -31,14 +31,10 @@ const RPC_ACTIONS = {
 // andere Page. Werden vom iframe wie eine normale RPC-Aktion aufgerufen, aber hier
 // abgefangen.
 const NAV_ACTIONS = {
-	// Neues "Serienbrief Durchlauf"-Formular mit vorausgewählter Vorlage.
+	// Neuer Durchlauf in der Vollbild-Page (Vorlage vorausgewählt).
 	new_durchlauf: (params) => {
-		frappe.route_options = {
-			hv_serienbrief_template: params.vorlage || undefined,
-			hv_serienbrief_title: params.title || undefined,
-			hv_serienbrief_iteration_doctype: params.iteration_doctype || undefined,
-		};
-		frappe.new_doc("Serienbrief Durchlauf");
+		frappe.route_options = { hv_vorlage: params.vorlage || undefined };
+		frappe.set_route("serienbrief_durchlauf_viewer");
 	},
 	// Vorlage im Serienbrief Editor öffnen (vorausgewählt via route_options →
 	// die Editor-Host-Page reicht den Param ans iframe weiter).

@@ -21,6 +21,20 @@ export function getDocname() {
 	}
 }
 
+// Vorausgewählte Vorlage (?vorlage=…) für den „Neuer Durchlauf"-Modus.
+export function getVorlageParam() {
+	try {
+		return new URLSearchParams(window.location.search).get("vorlage") || "";
+	} catch {
+		return "";
+	}
+}
+
+// true → eingebettet ohne docname ⇒ „Neuer Durchlauf"-Modus.
+export function isNewMode() {
+	return embedded && !getDocname();
+}
+
 const STATUS_RUN = { Entwurf: "draft", "Läuft": "running", Generiert: "completed", Fehlgeschlagen: "failed" };
 const STATUS_REC = {
 	Ausstehend: "pending",
@@ -135,4 +149,34 @@ export async function mergedPdf() {
 export async function reloadForm() {
 	if (!embedded) return { ok: true };
 	return await rpc("reload_form", {});
+}
+
+// --- Vollbild-Page: Anlegen / Titel / Navigation ------------------------------
+
+// Vorlagen für den „Neuer Durchlauf"-Picker.
+export async function listVorlagen(query) {
+	if (!embedded) return { items: [] };
+	return await rpc("list_vorlagen", { query: query || "" });
+}
+
+// Neuen Durchlauf-Entwurf aus einer Vorlage anlegen. → { docname }.
+export async function createDurchlauf(title, vorlage) {
+	if (!embedded) return { docname: "MOCK-NEW" };
+	return await rpc("create", { title: title || "", vorlage });
+}
+
+// Titel des Durchlaufs ändern.
+export async function updateTitle(title) {
+	if (!embedded) return { ok: true };
+	return await rpc("update", { docname: getDocname(), title });
+}
+
+// Page-Navigation (Host setzt die Desk-Route → iframe lädt neu).
+export async function gotoDurchlauf(docname) {
+	if (!embedded) return { ok: true };
+	return await rpc("goto_durchlauf", { docname });
+}
+export async function gotoNew() {
+	if (!embedded) return { ok: true };
+	return await rpc("new_durchlauf", {});
 }

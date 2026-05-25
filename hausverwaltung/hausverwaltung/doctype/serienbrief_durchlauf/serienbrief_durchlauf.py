@@ -3346,3 +3346,80 @@ def get_merged_pdf(docname: str) -> Dict[str, str]:
 		frappe.throw(_("Keine erfolgreich generierten Dokumente. Bitte zuerst den Lauf starten."))
 	pdf_bytes = doc._build_merged_pdf(dokumente)
 	return {"file_url": doc._store_pdf(pdf_bytes)}
+
+
+@frappe.whitelist()
+def create_durchlauf(
+	title: str | None = None, vorlage: str | None = None, kategorie: str | None = None
+) -> Dict[str, Any]:
+	"""Neuen Durchlauf-Entwurf aus einer Vorlage anlegen (Vollbild-UI „Neuer Durchlauf").
+	Kategorie/Iterations-Doctype werden aus der Vorlage übernommen."""
+	if not frappe.has_permission("Serienbrief Durchlauf", "create"):
+		raise frappe.PermissionError
+	vorlage = cstr(vorlage or "").strip()
+	if not vorlage or not frappe.db.exists("Serienbrief Vorlage", vorlage):
+		frappe.throw(_("Bitte eine gültige Vorlage wählen."))
+	if not frappe.has_permission("Serienbrief Vorlage", "read", doc=vorlage):
+		raise frappe.PermissionError
+
+	v = frappe.db.get_value(
+		"Serienbrief Vorlage", vorlage, ["kategorie", "haupt_verteil_objekt", "title"], as_dict=True
+	) or frappe._dict()
+	doc = frappe.get_doc(
+		{
+			"doctype": "Serienbrief Durchlauf",
+			"title": cstr(title or "").strip() or cstr(v.get("title") or vorlage),
+			"vorlage": vorlage,
+			"kategorie": cstr(kategorie or "").strip() or v.get("kategorie"),
+			"iteration_doctype": v.get("haupt_verteil_objekt") or "",
+			"date": today(),
+			"status": "Entwurf",
+		}
+	)
+	doc.insert()
+	return {"docname": doc.name}
+
+
+@frappe.whitelist()
+def update_durchlauf(docname: str, title: str | None = None) -> Dict[str, Any]:
+	"""Kopfdaten eines Durchlauf-Entwurfs ändern (aktuell nur Titel)."""
+	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
+	if not frappe.has_permission("Serienbrief Durchlauf", "write", doc):
+		raise frappe.PermissionError
+	if int(getattr(doc, "docstatus", 0) or 0) != 0:
+		frappe.throw(_("Der Durchlauf ist bereits abgeschlossen (eingereicht)."))
+	if title is not None:
+		new_title = cstr(title).strip()
+		if new_title:
+			frappe.db.set_value("Serienbrief Durchlauf", docname, "title", new_title)
+	return {"ok": True}
+
+
+@frappe.whitelist()
+def list_vorlagen(query: str | None = None, limit: int = 50) -> Dict[str, Any]:
+	"""Vorlagen für den „Neuer Durchlauf"-Picker (berechtigungsgefiltert)."""
+	if not frappe.has_permission("Serienbrief Vorlage", "read"):
+		raise frappe.PermissionError
+	q = cstr(query or "").strip()
+	or_filters = None
+	if q:
+		or_filters = [["title", "like", f"%{q}%"], ["name", "like", f"%{q}%"]]
+	rows = frappe.get_list(
+		"Serienbrief Vorlage",
+		filters={"docstatus": ["<", 2]},
+		or_filters=or_filters,
+		fields=["name", "title", "kategorie", "haupt_verteil_objekt"],
+		order_by="title asc",
+		limit_page_length=cint(limit) or 50,
+	)
+	return {
+		"items": [
+			{
+				"id": r.name,
+				"title": r.title or r.name,
+				"kategorie": r.kategorie or "",
+				"haupt_verteil_objekt": r.haupt_verteil_objekt or "",
+			}
+			for r in rows
+		]
+	}

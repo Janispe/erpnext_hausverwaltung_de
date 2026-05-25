@@ -877,6 +877,19 @@ const hv_mount_durchlauf_viewer = (frm) => {
 
 frappe.ui.form.on("Serienbrief Durchlauf", {
 	refresh(frm) {
+		// Primäre Oberfläche ist die Vollbild-Page (serienbrief_durchlauf_viewer) —
+		// das Standardformular leitet dorthin um. Debug-Bypass: route_options.hv_show_form
+		// (einmalig) bzw. frm._hv_show_form (sticky innerhalb dieser Formular-Instanz).
+		if (frappe.route_options && frappe.route_options.hv_show_form) {
+			frm._hv_show_form = true;
+			delete frappe.route_options.hv_show_form;
+		}
+		if (!frm._hv_show_form) {
+			if (frm.is_new()) frappe.set_route("serienbrief_durchlauf_viewer");
+			else frappe.set_route("serienbrief_durchlauf_viewer", frm.doc.name);
+			return;
+		}
+
 		hv_apply_incoming_route_options(frm);
 
 		// React-Viewer früh mounten → setzt _hv_react_viewer, sodass die alte Live-

@@ -37,12 +37,8 @@ const NAV_ACTIONS = {
 	// Kategorie/iteration_doctype füllt das Durchlauf-Formular selbst aus der Vorlage
 	// (hv_apply_incoming_route_options + vorlage-onchange).
 	new_durchlauf: (params) => {
-		frappe.route_options = {
-			hv_serienbrief_template: params.vorlage || undefined,
-			hv_serienbrief_title: params.title || undefined,
-			hv_serienbrief_iteration_doctype: params.iteration_doctype || undefined,
-		};
-		frappe.new_doc("Serienbrief Durchlauf");
+		frappe.route_options = { hv_vorlage: params.vorlage || undefined };
+		frappe.set_route("serienbrief_durchlauf_viewer");
 	},
 };
 

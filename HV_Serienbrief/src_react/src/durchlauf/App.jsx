@@ -11,22 +11,43 @@ import {
   availableRecipients,
   mergedPdf,
   reloadForm,
+  isNewMode,
+  getVorlageParam,
+  listVorlagen,
+  createDurchlauf,
+  updateTitle,
+  gotoDurchlauf,
+  gotoNew,
 } from "./api.js";
 
 // Serienbrief Durchlauf — main app
 // ============== Header ==============
-const Header = ({ durchlauf, stats, onRun, onMergedPdf, running, progress, busy }) => {
+const Header = ({ durchlauf, stats, onRun, onMergedPdf, onTitleCommit, onNew, running, progress, busy }) => {
   const statusLabel = { draft: "Entwurf", running: "Läuft…", completed: "Abgeschlossen", failed: "Fehlgeschlagen", sent: "Versendet" }[durchlauf.status] || durchlauf.status;
+  const [titleDraft, setTitleDraft] = useState(durchlauf.title || "");
+  useEffect(() => { setTitleDraft(durchlauf.title || ""); }, [durchlauf.title]);
+  const commitTitle = () => {
+    const t = (titleDraft || "").trim();
+    if (t && t !== durchlauf.title && onTitleCommit) onTitleCommit(t);
+  };
   return (
     <header className="dl-header">
       <div className="dl-header-row">
-        <input className="dl-header-title" value={durchlauf.title} readOnly/>
+        <input
+          className="dl-header-title"
+          value={titleDraft}
+          disabled={!durchlauf.can_write}
+          onChange={e => setTitleDraft(e.target.value)}
+          onBlur={commitTitle}
+          onKeyDown={e => { if (e.key === "Enter") e.target.blur(); }}
+        />
         <span className="dl-id">{durchlauf.id}</span>
         <span className={`dl-status-pill ${durchlauf.status}`}>
           <span className="dl-status-dot"/> {statusLabel}{running && progress ? ` ${progress}` : ""}
         </span>
         <div className="dl-header-actions">
-          <button className="btn" onClick={onRun} disabled={running || busy}>
+          <button className="btn ghost" onClick={onNew}><Icon name="plus" size={13}/> Neuer Durchlauf</button>
+          <button className="btn" onClick={onRun} disabled={running || busy || !durchlauf.can_write}>
             <Icon name="refresh" size={13}/> {running ? "Läuft…" : "Lauf starten / neu rendern"}
           </button>
           <button className="btn" onClick={onMergedPdf} disabled={running || busy || stats.generated === 0}>
@@ -497,8 +518,8 @@ const DetailPane = ({ r, durchlauf, overrides, onSetOverride, onClearOverrides, 
   );
 };
 
-// ============== App ==============
-export const App = () => {
+// ============== Durchlauf-Viewer (bestehender Durchlauf) ==============
+const DurchlaufApp = () => {
   const [durchlaufMeta, setDurchlaufMeta] = useState({ id: "", title: "", status: "draft", vorlage: { title: "", kategorie: "" }, iteration_doctype: "", date: "", created_by: "", can_write: true });
   const [recipients, setRecipients] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -650,6 +671,13 @@ export const App = () => {
     if (r && r.pdf_url) window.open(r.pdf_url, "_blank");
   }, []);
 
+  const onTitleCommit = useCallback((t) => {
+    setDurchlaufMeta((m) => ({ ...m, title: t }));
+    updateTitle(t).catch(() => {});
+  }, []);
+
+  const onNew = useCallback(() => { gotoNew(); }, []);
+
   const onAddRecipient = useCallback(async () => {
     const term = window.prompt("Iterations-Objekt (Name/ID) hinzufügen:");
     if (!term || !term.trim()) return;
@@ -750,6 +778,8 @@ export const App = () => {
         stats={stats}
         onRun={onRun}
         onMergedPdf={onMergedPdf}
+        onTitleCommit={onTitleCommit}
+        onNew={onNew}
         running={running}
         progress={progress}
         busy={busy}
@@ -785,5 +815,78 @@ export const App = () => {
       </div>
     </div>
   );
+};
+
+// ============== Neuer Durchlauf (Vollbild-Page ohne docname) ==============
+const NewDurchlauf = ({ preselect }) => {
+  const [vorlagen, setVorlagen] = useState([]);
+  const [q, setQ] = useState("");
+  const [sel, setSel] = useState(preselect || "");
+  const [title, setTitle] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    listVorlagen(q).then((r) => { if (alive) setVorlagen(r.items || []); }).catch(() => {});
+    return () => { alive = false; };
+  }, [q]);
+
+  const create = async () => {
+    if (!sel) { setErr("Bitte eine Vorlage wählen."); return; }
+    setErr(null);
+    setBusy(true);
+    try {
+      const res = await createDurchlauf(title, sel);
+      await gotoDurchlauf(res.docname); // Page-Route → iframe lädt mit docname neu
+    } catch (e) {
+      setErr(e?.message || "Anlegen fehlgeschlagen.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="durchlauf-app dl-new">
+      <div className="dl-new-card">
+        <div className="dl-new-title">Neuer Serienbrief-Durchlauf</div>
+        <div className="dl-new-sub">Vorlage wählen — Kategorie und Iterations-Objekt werden übernommen.</div>
+
+        <label className="dl-new-label">Titel (optional)</label>
+        <input className="dl-new-input" value={title} placeholder="z. B. Mahnlauf Mai 2026" onChange={(e) => setTitle(e.target.value)}/>
+
+        <label className="dl-new-label">Vorlage</label>
+        <input className="dl-new-input" value={q} placeholder="Vorlage suchen…" onChange={(e) => setQ(e.target.value)}/>
+        <div className="dl-new-list">
+          {vorlagen.length === 0 ? (
+            <div className="dl-new-empty">Keine Vorlagen gefunden.</div>
+          ) : vorlagen.map((v) => (
+            <div key={v.id} className={`dl-new-row ${v.id === sel ? "active" : ""}`} onClick={() => setSel(v.id)}>
+              <div>
+                <div className="dl-new-row-title">{v.title}</div>
+                <div className="dl-new-row-sub">{v.kategorie || "—"}{v.haupt_verteil_objekt ? ` · ${v.haupt_verteil_objekt}` : ""}</div>
+              </div>
+              {v.id === sel && <Icon name="check" size={14}/>}
+            </div>
+          ))}
+        </div>
+
+        {err && <div className="dl-new-error">{err}</div>}
+
+        <div className="dl-new-actions">
+          <button className="btn primary" onClick={create} disabled={busy || !sel}>
+            <Icon name="plus" size={13}/> {busy ? "Wird angelegt…" : "Durchlauf anlegen"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ============== App (Wrapper: Neu-Modus vs. Viewer) ==============
+export const App = () => {
+  // Eingebettet ohne docname → „Neuer Durchlauf"; sonst der Viewer. Standalone (Mock)
+  // zeigt direkt den Viewer.
+  if (isNewMode()) return <NewDurchlauf preselect={getVorlageParam()}/>;
+  return <DurchlaufApp/>;
 };
 
