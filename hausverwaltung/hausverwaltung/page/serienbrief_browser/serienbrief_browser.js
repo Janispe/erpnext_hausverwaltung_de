@@ -59,7 +59,9 @@ frappe.pages["serienbrief_browser"].on_page_load = function (wrapper) {
 	$body.empty().css({ padding: 0, margin: 0 });
 
 	// Cache-Bust pro Aufruf, damit nach einem Rebuild immer der aktuelle Build geladen wird.
-	const src = `/assets/hausverwaltung/serienbrief_browser/browser.html?v=${Date.now()}`;
+	// Das Deploy-Skript legt den Browser-Build als index.html ab (dist/browser.html →
+	// serienbrief_browser/index.html), daher index.html laden — nicht browser.html.
+	const src = `/assets/hausverwaltung/serienbrief_browser/index.html?v=${Date.now()}`;
 
 	const $frame = $(
 		`<iframe class="hv-serienbrief-browser-frame" src="${src}" title="Serienbrief Vorlagen-Browser"></iframe>`

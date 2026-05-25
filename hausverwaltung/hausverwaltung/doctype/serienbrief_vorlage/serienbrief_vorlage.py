@@ -2090,7 +2090,11 @@ def get_browser_data() -> Dict[str, Any]:
 	categories = frappe.get_all("Serienbrief Kategorie", fields=cat_fields, order_by="lft asc")
 
 	# --- Vorlagen ----------------------------------------------------------
-	templates = frappe.get_all(
+	# get_list (nicht get_all): respektiert User Permissions, Sharing und Permission-
+	# Query-Conditions — der Browser gibt content/Metadaten ALLER gelisteten Vorlagen
+	# auf einmal aus, daher hier zwingend berechtigungsgefiltert. limit_page_length=0
+	# hebt das Default-Limit von 20 auf (alle erlaubten Vorlagen).
+	templates = frappe.get_list(
 		"Serienbrief Vorlage",
 		filters={"docstatus": ["<", 2]},
 		fields=[
@@ -2098,6 +2102,7 @@ def get_browser_data() -> Dict[str, Any]:
 			"favorite", "haupt_verteil_objekt", "description", "content",
 		],
 		order_by="title asc",
+		limit_page_length=0,
 	)
 
 	# Bausteine je Vorlage (Titel) — ein Query, idx-sortiert.
