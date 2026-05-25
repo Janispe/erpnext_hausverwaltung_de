@@ -75,6 +75,64 @@ class Immobilie(Document):
 		except frappe.DoesNotExistError:
 			return None
 
+	@property
+	def eigentuemer_adressen(self) -> list[str]:
+		"""Alle Eigentümer der Immobilie als formatierte Zeilen ``Name, Straße, PLZ Ort``.
+
+		Pro Eigentümer-Contact wird Name + Default-Adresse (Dynamic Link) aufgelöst.
+		Eigentümer ohne hinterlegte Adresse erscheinen nur mit Name; Eigentümer ohne
+		auflösbaren Contact werden übersprungen. Für Serienbrief-Bausteine, die alle
+		Eigentümer auflisten (Einzel-Contact: :attr:`eigentuemer`).
+
+		Pfad-Vorlage: ``{% for z in objekt.wohnung.immobilie.eigentuemer_adressen %}``.
+		"""
+		from frappe.contacts.doctype.address.address import get_default_address
+
+		zeilen: list[str] = []
+		for row in self.get("eigentumer") or []:
+			contact_name = cstr(getattr(row, "contact", None) or "").strip()
+			if not contact_name:
+				continue
+			try:
+				contact = frappe.get_cached_doc("Contact", contact_name)
+			except frappe.DoesNotExistError:
+				continue
+
+			name = " ".join(
+				p
+				for p in (
+					cstr(contact.get("first_name")).strip(),
+					cstr(contact.get("last_name")).strip(),
+				)
+				if p
+			).strip()
+			if not name:
+				name = cstr(contact.get("company_name") or contact_name).strip()
+
+			teile = [name]
+			addr_name = get_default_address("Contact", contact_name)
+			if addr_name:
+				try:
+					addr = frappe.get_cached_doc("Address", addr_name)
+				except frappe.DoesNotExistError:
+					addr = None
+				if addr is not None:
+					strasse = cstr(addr.get("address_line1")).strip()
+					plz_ort = " ".join(
+						p
+						for p in (
+							cstr(addr.get("pincode")).strip(),
+							cstr(addr.get("city")).strip(),
+						)
+						if p
+					).strip()
+					if strasse:
+						teile.append(strasse)
+					if plz_ort:
+						teile.append(plz_ort)
+			zeilen.append(", ".join(teile))
+		return zeilen
+
 
 def _sum_gesamtwohnflaeche(immobilie: str) -> float:
 	query = """
