@@ -1637,14 +1637,15 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
 }
 
 /* Die eigentliche ProseMirror-Fläche – Body-Typografie nah am Brief.
-   line-height 1.3 + margin:0 an <p> spiegeln das Print-Format (install.py
-   .serienbrief-page p): direkt aufeinanderfolgende Absätze rendern kompakt,
-   Abstand entsteht nur durch explizite Leerzeilen (leeres <p>). So sieht der
-   Editor genauso aus wie das spätere PDF. */
+   margin:0 an <p> spiegelt das Print-Format (install.py .serienbrief-page p):
+   direkt aufeinanderfolgende Absätze rendern kompakt, Abstand entsteht nur durch
+   explizite Leerzeilen (leeres <p>). line-height ist einheitenlos (= Vielfaches
+   der jeweiligen Schriftgröße), wächst also automatisch mit größerem Text mit.
+   Editor minimal luftiger (1.4) als das PDF (1.3) für angenehmeres Tippen. */
 .tiptap-surface {
   font-family: var(--font-serif, Georgia, "Times New Roman", serif);
   font-size: 15px;
-  line-height: 1.3;
+  line-height: 1.4;
   color: #1a1a1a;
   outline: none;
   min-height: 480px;
