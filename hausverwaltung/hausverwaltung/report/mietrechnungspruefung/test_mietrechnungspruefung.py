@@ -1,4 +1,5 @@
 from datetime import date
+from unittest.mock import patch
 
 from frappe.tests.utils import FrappeTestCase
 
@@ -56,3 +57,14 @@ class TestMietrechnungspruefung(FrappeTestCase):
         total = report._amount_for_invoice_type("SINV-1", "Miete", amount_by_invoice_and_code)
         total += report._amount_for_invoice_type("SINV-2", "Miete", amount_by_invoice_and_code)
         self.assertEqual(total, 500.0)
+
+    def test_invoice_map_uses_only_submitted_invoices(self):
+        with patch.object(report.frappe, "get_all", return_value=[]) as get_all:
+            out = report._get_invoice_map_for_month(
+                company="Test Company",
+                month_start=date(2026, 5, 1),
+                customers={"Customer A"},
+            )
+
+        self.assertEqual(out, {})
+        self.assertEqual(get_all.call_args.kwargs["filters"]["docstatus"], 1)

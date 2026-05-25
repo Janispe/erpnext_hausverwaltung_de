@@ -27,6 +27,7 @@ const RPC_ACTIONS = {
 	editor_preview: HV_SB + "render_editor_preview_pdf",
 	upload_image: HV_SB + "upload_editor_image",
 	copy: HV_SB + "copy_serienbrief_vorlage",
+	delete: HV_SB + "delete_serienbrief_vorlage",
 };
 
 // Navigations-Aktionen: kein frappe.call, sondern öffnen ein Desk-Formular. Werden

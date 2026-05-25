@@ -228,14 +228,15 @@ def _kunde_des_vertrags(mv_row: frappe._dict) -> str | None:
     return None
 
 
-def _invoice_exists(customer: str, von: date, mv_name: str, typ: str) -> bool:
+def _invoice_exists(customer: str, von: date, mv_name: str, typ: str, *, include_drafts: bool = True) -> bool:
+    docstatus_filter = ("in", [0, 1]) if include_drafts else 1
     # 1) Prüfen per Remark-Marker (neues Schema)
     existing = frappe.get_all(
         "Sales Invoice",
         filters={
             "customer": customer,
             "posting_date": ("between", [get_first_day(von), get_last_day(von)]),
-            "docstatus": ("in", [0, 1]),
+            "docstatus": docstatus_filter,
             "remarks": ("like", f"%[TYPE:{typ}] [MV:{mv_name}] {von.strftime('%m/%Y')}%"),
         },
         pluck="name",
@@ -250,7 +251,7 @@ def _invoice_exists(customer: str, von: date, mv_name: str, typ: str) -> bool:
         filters={
             "customer": customer,
             "posting_date": ("between", [get_first_day(von), get_last_day(von)]),
-            "docstatus": ("in", [0, 1]),
+            "docstatus": docstatus_filter,
         },
         pluck="name",
     )
@@ -376,13 +377,30 @@ def generate_miet_und_bk_rechnungen(
     monat: str | int | None = None,
     jahr: str | int | None = None,
     company: str | None = None,
+    mietvertrag: str | None = None,
+    rechnungstyp: str | None = None,
+    include_drafts_in_guard: int | str = 1,
 ) -> dict:
     """Erzeugt pro aktivem Mietvertrag drei Rechnungen (Miete, BK-VZ, Heiz-VZ) für den Monat.
+
+    ``mietvertrag`` (optional): Wenn gesetzt, wird nur dieser eine Vertrag verarbeitet.
+    Genutzt von der Mietrechnungs-Korrektur (utils.mietrechnung_korrektur), um nach einem
+    Storno gezielt die fehlende Rechnung neu zu erzeugen — der Idempotenz-Guard
+    (`_invoice_exists`) sorgt dafür, dass nur der stornierte Typ neu entsteht.
+
+    ``rechnungstyp`` (optional): Wenn gesetzt, wird nur dieser Typ erzeugt.
+    ``include_drafts_in_guard`` bleibt für normale Läufe aktiv; die Korrektur setzt
+    es aus, damit alte Entwürfe die Neu-Erzeugung einer stornierten gebuchten
+    Rechnung nicht blockieren.
 
     Rückgabe: Zusammenfassung mit Zählwerten und ggf. Hinweisen.
     """
     datum = _parse_monat_jahr(monat, jahr)
     company = _resolve_company(company)
+    only_typ = (rechnungstyp or "").strip() or None
+    if only_typ and only_typ not in {"Miete", "Betriebskosten", "Heizkosten", "Untermietzuschlag"}:
+        frappe.throw(_("Unbekannter Rechnungstyp: {0}").format(only_typ))
+    include_drafts = bool(int(include_drafts_in_guard or 0))
 
     from hausverwaltung.hausverwaltung.utils.income_accounts import get_hv_income_accounts
     from hausverwaltung.hausverwaltung.utils.rent_items import ensure_rent_items
@@ -472,9 +490,12 @@ def generate_miet_und_bk_rechnungen(
             },
         )
 
+    vertrag_filters: dict = {}
+    if mietvertrag:
+        vertrag_filters["name"] = mietvertrag
     vertrage = frappe.get_all(
         "Mietvertrag",
-        filters={},
+        filters=vertrag_filters,
         fields=["name", "kunde", "wohnung", "von", "bis"],
     )
 
@@ -516,7 +537,9 @@ def generate_miet_und_bk_rechnungen(
             monat_str = datum.strftime("%m/%Y")
 
             # Miete
-            if betrag_miete <= 0:
+            if only_typ and only_typ != "Miete":
+                pass
+            elif betrag_miete <= 0:
                 add_skip(
                     reason="betrag_0",
                     mietvertrag=v.name,
@@ -525,7 +548,7 @@ def generate_miet_und_bk_rechnungen(
                     betrag=0.0,
                     message=f"{v.name}: Miete Betrag 0",
                 )
-            elif _invoice_exists(kunde, datum, v.name, "Miete"):
+            elif _invoice_exists(kunde, datum, v.name, "Miete", include_drafts=include_drafts):
                 add_skip(
                     reason="rechnung_existiert",
                     mietvertrag=v.name,
@@ -563,7 +586,9 @@ def generate_miet_und_bk_rechnungen(
                     )
 
             # Betriebskosten-Vorauszahlung
-            if betrag_bk <= 0:
+            if only_typ and only_typ != "Betriebskosten":
+                pass
+            elif betrag_bk <= 0:
                 add_skip(
                     reason="betrag_0",
                     mietvertrag=v.name,
@@ -572,7 +597,7 @@ def generate_miet_und_bk_rechnungen(
                     betrag=0.0,
                     message=f"{v.name}: Betriebskosten Betrag 0",
                 )
-            elif _invoice_exists(kunde, datum, v.name, "Betriebskosten"):
+            elif _invoice_exists(kunde, datum, v.name, "Betriebskosten", include_drafts=include_drafts):
                 add_skip(
                     reason="rechnung_existiert",
                     mietvertrag=v.name,
@@ -610,7 +635,9 @@ def generate_miet_und_bk_rechnungen(
                     )
 
             # Heizkosten-Vorauszahlung (nur wenn Staffeleintrag vorhanden)
-            if betrag_heiz <= 0:
+            if only_typ and only_typ != "Heizkosten":
+                pass
+            elif betrag_heiz <= 0:
                 add_skip(
                     reason="betrag_0",
                     mietvertrag=v.name,
@@ -619,7 +646,7 @@ def generate_miet_und_bk_rechnungen(
                     betrag=0.0,
                     message=f"{v.name}: Heizkosten Betrag 0",
                 )
-            elif _invoice_exists(kunde, datum, v.name, "Heizkosten"):
+            elif _invoice_exists(kunde, datum, v.name, "Heizkosten", include_drafts=include_drafts):
                 add_skip(
                     reason="rechnung_existiert",
                     mietvertrag=v.name,
@@ -659,7 +686,9 @@ def generate_miet_und_bk_rechnungen(
             # Untermietzuschlag (nur wenn Staffel-Eintrag UND Erlöskonto konfiguriert)
             betrag_umz = _staffelbetrag(v.name, "untermietzuschlag", datum)
             umz_account = income_accounts.get("Untermietzuschlag")
-            if betrag_umz <= 0:
+            if only_typ and only_typ != "Untermietzuschlag":
+                pass
+            elif betrag_umz <= 0:
                 # Kein UMZ-Eintrag oder Betrag 0 → still & leise. Mietverträge
                 # ohne UMZ sind der Normalfall, kein Skip-Logging nötig.
                 pass
@@ -675,7 +704,7 @@ def generate_miet_und_bk_rechnungen(
                         "Erlöskonto Untermietzuschlag in Hausverwaltung Einstellungen pflegen."
                     ),
                 )
-            elif _invoice_exists(kunde, datum, v.name, "Untermietzuschlag"):
+            elif _invoice_exists(kunde, datum, v.name, "Untermietzuschlag", include_drafts=include_drafts):
                 add_skip(
                     reason="rechnung_existiert",
                     mietvertrag=v.name,
@@ -741,5 +770,19 @@ def generate_miet_und_bk_rechnungen(
 
 # Alias, falls der Workspace-Button einen anderen Namen erwartet
 @frappe.whitelist()
-def generate_mietrechnungen(monat: str | int | None = None, jahr: str | int | None = None, company: str | None = None) -> dict:
-    return generate_miet_und_bk_rechnungen(monat=monat, jahr=jahr, company=company)
+def generate_mietrechnungen(
+    monat: str | int | None = None,
+    jahr: str | int | None = None,
+    company: str | None = None,
+    mietvertrag: str | None = None,
+    rechnungstyp: str | None = None,
+    include_drafts_in_guard: int | str = 1,
+) -> dict:
+    return generate_miet_und_bk_rechnungen(
+        monat=monat,
+        jahr=jahr,
+        company=company,
+        mietvertrag=mietvertrag,
+        rechnungstyp=rechnungstyp,
+        include_drafts_in_guard=include_drafts_in_guard,
+    )

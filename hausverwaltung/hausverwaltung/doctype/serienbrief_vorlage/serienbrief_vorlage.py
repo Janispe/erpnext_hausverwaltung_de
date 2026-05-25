@@ -1189,6 +1189,32 @@ def copy_serienbrief_vorlage(
 
 
 @frappe.whitelist()
+def delete_serienbrief_vorlage(template: str | None = None) -> Dict[str, str]:
+	template_name = (template or "").strip()
+
+	if not template_name:
+		frappe.throw(_("Bitte wählen Sie eine Vorlage, die gelöscht werden soll."))
+
+	if not frappe.db.exists("Serienbrief Vorlage", template_name):
+		frappe.throw(_("Die Vorlage existiert nicht (mehr)."))
+
+	if not frappe.has_permission("Serienbrief Vorlage", "delete", doc=template_name):
+		frappe.throw(_("Keine Berechtigung, die Vorlage zu löschen."), frappe.PermissionError)
+
+	try:
+		frappe.delete_doc("Serienbrief Vorlage", template_name)
+	except frappe.LinkExistsError:
+		frappe.throw(
+			_(
+				"Die Vorlage wird noch verwendet (z. B. in einem Serienbrief-Durchlauf) "
+				"und kann nicht gelöscht werden."
+			)
+		)
+
+	return {"name": template_name}
+
+
+@frappe.whitelist()
 def search_serienbrief_vorlagen(query: str | None = None, limit: int = 20) -> List[Dict[str, str]]:
 	"""Suche Vorlagen per Volltext in Titel, Notizen und verknüpften Textbausteinen."""
 
