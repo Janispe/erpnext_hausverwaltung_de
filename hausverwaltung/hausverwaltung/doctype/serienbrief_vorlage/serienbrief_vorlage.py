@@ -1733,7 +1733,7 @@ def _build_tree_nodes(base_key, base_label, meta, visited, depth, max_depth):
 			child_nodes = _build_child_table_nodes(f"{base_key}.{df.fieldname}[0]", df.options)
 			if child_nodes:
 				nodes.append(
-					{"label": f"{label} [erstes] → {df.options}", "token": "", "type": "Tabelle",
+					{"label": f"{label} → {df.options}", "token": "", "type": "Tabelle",
 					 "children": child_nodes}
 				)
 			continue
@@ -1794,7 +1794,7 @@ def _build_iteration_tree(dt):
 			if child_nodes:
 				nodes.append(
 					{
-						"label": f"{label} [erstes] → {df.options}",
+						"label": f"{label} → {df.options}",
 						"token": "",
 						"type": "Tabelle",
 						"children": child_nodes,
