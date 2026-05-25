@@ -376,8 +376,14 @@ def generate_miet_und_bk_rechnungen(
     monat: str | int | None = None,
     jahr: str | int | None = None,
     company: str | None = None,
+    mietvertrag: str | None = None,
 ) -> dict:
     """Erzeugt pro aktivem Mietvertrag drei Rechnungen (Miete, BK-VZ, Heiz-VZ) für den Monat.
+
+    ``mietvertrag`` (optional): Wenn gesetzt, wird nur dieser eine Vertrag verarbeitet.
+    Genutzt von der Mietrechnungs-Korrektur (utils.mietrechnung_korrektur), um nach einem
+    Storno gezielt die fehlende Rechnung neu zu erzeugen — der Idempotenz-Guard
+    (`_invoice_exists`) sorgt dafür, dass nur der stornierte Typ neu entsteht.
 
     Rückgabe: Zusammenfassung mit Zählwerten und ggf. Hinweisen.
     """
@@ -472,9 +478,12 @@ def generate_miet_und_bk_rechnungen(
             },
         )
 
+    vertrag_filters: dict = {}
+    if mietvertrag:
+        vertrag_filters["name"] = mietvertrag
     vertrage = frappe.get_all(
         "Mietvertrag",
-        filters={},
+        filters=vertrag_filters,
         fields=["name", "kunde", "wohnung", "von", "bis"],
     )
 
@@ -741,5 +750,10 @@ def generate_miet_und_bk_rechnungen(
 
 # Alias, falls der Workspace-Button einen anderen Namen erwartet
 @frappe.whitelist()
-def generate_mietrechnungen(monat: str | int | None = None, jahr: str | int | None = None, company: str | None = None) -> dict:
-    return generate_miet_und_bk_rechnungen(monat=monat, jahr=jahr, company=company)
+def generate_mietrechnungen(
+    monat: str | int | None = None,
+    jahr: str | int | None = None,
+    company: str | None = None,
+    mietvertrag: str | None = None,
+) -> dict:
+    return generate_miet_und_bk_rechnungen(monat=monat, jahr=jahr, company=company, mietvertrag=mietvertrag)
