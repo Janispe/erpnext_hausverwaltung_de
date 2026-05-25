@@ -1731,12 +1731,40 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   table-layout: fixed;
 }
 .tiptap-surface td, .tiptap-surface th {
-  border: 1px solid var(--border);
-  padding: 5px 9px;
+  /* Gestrichelt + dezent: nur Bearbeitungshilfe, im PDF rendern Tabellen randlos. */
+  border: 1px dashed var(--border);
+  padding: 4px 8px;
   vertical-align: top;
   position: relative;
 }
 .tiptap-surface th { background: var(--surface-2, #f4f4f2); font-weight: 600; text-align: left; }
+
+/* Schwebe-Menü für Tabellen (BubbleMenu) */
+.table-bubble {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  padding: 3px;
+}
+.table-bubble button {
+  border: none;
+  background: transparent;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text);
+  padding: 4px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+.table-bubble button:hover { background: var(--surface-hover, #f0f0ef); }
+.table-bubble .tb-danger:hover { background: var(--danger-50, #fde8e8); color: var(--danger, #c0392b); }
+.table-bubble .tb-sep { width: 1px; align-self: stretch; background: var(--border); margin: 3px 2px; }
 .tiptap-surface .selectedCell::after {
   content: "";
   position: absolute;

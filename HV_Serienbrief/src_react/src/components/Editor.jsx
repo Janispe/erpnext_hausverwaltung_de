@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, BubbleMenu } from "@tiptap/react";
 import { Icon } from "./Icon.jsx";
 import { PLACEHOLDER_GROUPS, SNIPPETS, TEXT_BAUSTEINE } from "../data.js";
 import { buildExtensions } from "../tiptap/extensions.js";
@@ -288,7 +288,7 @@ const EditorToolbar = ({ editor, disabled, onInsert, onImage }) => {
 				</TBtn>
 			</div>
 			<div className="tool-group">
-				<TBtn title="Tabelle einfügen" disabled={!can} on={() => chain().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}>
+				<TBtn title="Tabelle einfügen (2×2) — bearbeiten über das Menü an der Tabelle" disabled={!can} on={() => chain().insertTable({ rows: 2, cols: 2, withHeaderRow: false }).run()}>
 					<Icon name="table" />
 				</TBtn>
 				<TBtn title="Bild einfügen" disabled={!can} on={onImage}>
@@ -338,6 +338,34 @@ const EditorToolbar = ({ editor, disabled, onInsert, onImage }) => {
 				</button>
 			</div>
 		</div>
+	);
+};
+
+// Schwebe-Menü für Tabellen (offizielles BubbleMenu-Addon + die in der Table-Extension
+// bereits vorhandenen Befehle). Erscheint, sobald der Cursor in einer Tabelle steht.
+const TableBubbleMenu = ({ editor, editable }) => {
+	if (!editor) return null;
+	const run = (fn) => () => fn(editor.chain().focus()).run();
+	return (
+		<BubbleMenu
+			editor={editor}
+			pluginKey="hvTableBubble"
+			shouldShow={({ editor }) => !!editable && editor.isActive("table")}
+			tippyOptions={{ placement: "top", maxWidth: "none" }}
+		>
+			<div className="table-bubble">
+				<button title="Spalte rechts einfügen" onClick={run((c) => c.addColumnAfter())}>Sp ＋</button>
+				<button title="Spalte löschen" onClick={run((c) => c.deleteColumn())}>Sp －</button>
+				<span className="tb-sep" />
+				<button title="Zeile darunter einfügen" onClick={run((c) => c.addRowAfter())}>Zeile ＋</button>
+				<button title="Zeile löschen" onClick={run((c) => c.deleteRow())}>Zeile －</button>
+				<span className="tb-sep" />
+				<button title="Kopfzeile an/aus" onClick={run((c) => c.toggleHeaderRow())}>Kopf</button>
+				<button className="tb-danger" title="Tabelle löschen" onClick={run((c) => c.deleteTable())}>
+					Tabelle ✕
+				</button>
+			</div>
+		</BubbleMenu>
 	);
 };
 
@@ -490,10 +518,11 @@ export const Editor = ({
 					) : (
 						<EditorContent editor={editor} />
 					)}
+					{!loading && editor && <TableBubbleMenu editor={editor} editable={editable} />}
 					{!loading && (
 						<div className="editor-foot-hint">
 							{editable
-								? "Platzhalter & Bausteine sind ein Stück (als Ganzes löschbar). In Tabellen: Zeile markieren → ↻ wiederholen für {% for %}. Speichern oben rechts."
+								? "Platzhalter & Bausteine sind ein Stück (als Ganzes löschbar). In Tabellen erscheint oben ein Menü (Spalte/Zeile +/−, Kopfzeile, löschen); ↻ wiederholt eine Zeile als {% for %}. Tabellen-Linien sind nur Bearbeitungshilfe – im PDF unsichtbar. Speichern oben rechts."
 								: "Read-only (keine Schreibberechtigung)."}
 						</div>
 					)}
