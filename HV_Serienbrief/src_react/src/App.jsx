@@ -195,6 +195,22 @@ export const App = () => {
     }
   };
 
+  // Strg+S / Cmd+S -> Speichern (statt Browser-Speichern-Dialog). saveRef hält die
+  // aktuelle save-Closure, damit der Listener nur einmal registriert wird.
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) {
+        e.preventDefault();
+        e.stopPropagation();
+        saveRef.current && saveRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
   // Template-unabhängige Sidebar-Daten einmalig laden.
   useEffect(() => {
     loadBausteine().then(r => setBausteine(r.items || [])).catch(() => {});
