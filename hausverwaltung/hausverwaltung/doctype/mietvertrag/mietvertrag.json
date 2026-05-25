@@ -8,6 +8,7 @@
   "details_section",
   "wohnung",
   "immobilie",
+  "vertragsabschluss_am",
   "von",
   "bis",
   "mieterwechsel",
@@ -64,6 +65,13 @@
    "label": "Immobilie",
    "options": "Immobilie",
    "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "vertragsabschluss_am",
+   "fieldtype": "Date",
+   "in_standard_filter": 1,
+   "label": "Vertragsabschluss am"
   },
   {
    "fieldname": "von",
