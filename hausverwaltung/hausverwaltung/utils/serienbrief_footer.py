@@ -67,7 +67,7 @@ def get_footer_bankverbindung_html(doc) -> str:
 	# Live-Preview: hartkodiertes Mock-Snippet, weil iter-Doc kein echtes
 	# Frappe-Doc ist und der Resolver damit nicht arbeiten kann.
 	if frappe.flags.get("hv_serienbrief_split_preview"):
-		return "Bankverbindung: IBAN DE12 3456 7890 1234 5678 90 · Beispielbank"
+		return "Bankverbindung: IBAN DE12 3456 7890 1234 5678 90 · BIC ABCDDEFFXXX · Beispielbank"
 
 	iteration_doctype = cstr(getattr(doc, "iteration_doctype", "") or "").strip()
 	iteration_name = cstr(getattr(doc, "objekt", "") or "").strip()
@@ -134,4 +134,14 @@ def get_footer_bankverbindung_html(doc) -> str:
 	# würde die Footer-Zeile auf zwei Zeilen umbrechen. IBAN + Bank reichen zum Zahlen.
 	iban = escape_html(cstr(getattr(bk, "iban", "") or ""))
 	bank = escape_html(cstr(getattr(bk, "bank", "") or ""))
-	return f"Bankverbindung: IBAN {iban} · {bank}"
+	# BIC ist nicht am Bank Account gepflegt, sondern am verknüpften „Bank"-Doc
+	# (swift_number). Nur anzeigen, wenn vorhanden — sonst kein leeres „· BIC".
+	bic = ""
+	if getattr(bk, "bank", None):
+		bic = escape_html(cstr(frappe.db.get_value("Bank", bk.bank, "swift_number") or ""))
+	parts = [f"IBAN {iban}"]
+	if bic:
+		parts.append(f"BIC {bic}")
+	if bank:
+		parts.append(bank)
+	return "Bankverbindung: " + " · ".join(parts)
