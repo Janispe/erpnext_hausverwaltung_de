@@ -20,6 +20,7 @@ const root = resolve(here, ".."); // apps/hausverwaltung/HV_Serienbrief/src_reac
 const APPS = {
 	editor: { html: "index.html", bundle: "serienbrief-editor" },
 	browser: { html: "browser.html", bundle: "serienbrief-browser" },
+	durchlauf: { html: "durchlauf.html", bundle: "serienbrief-durchlauf" },
 };
 
 for (const [app, cfg] of Object.entries(APPS)) {

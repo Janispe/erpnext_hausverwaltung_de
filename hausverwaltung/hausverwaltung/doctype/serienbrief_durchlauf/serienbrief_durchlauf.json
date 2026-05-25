@@ -10,6 +10,8 @@
  "issingle": 0,
  "field_order": [
   "title",
+  "status",
+  "progress",
   "kategorie",
   "iteration_doctype",
   "iteration_objekte",
@@ -17,7 +19,11 @@
   "vorlagen_variablen_section",
   "vorlagen_variablen_html",
   "date",
-  "variablen_werte"
+  "variablen_werte",
+  "last_run_on",
+  "run_summary",
+  "viewer_section",
+  "durchlauf_viewer_html"
  ],
  "fields": [
   {
@@ -27,6 +33,22 @@
    "label": "Titel",
    "reqd": 1,
    "search_index": 1
+  },
+  {
+   "default": "Entwurf",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Entwurf\nLäuft\nGeneriert\nFehlgeschlagen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "progress",
+   "fieldtype": "Data",
+   "label": "Fortschritt",
+   "read_only": 1
   },
   {
    "fieldname": "kategorie",
@@ -80,6 +102,28 @@
    "fieldtype": "Small Text",
    "hidden": 1,
    "label": "Variablenwerte"
+  },
+  {
+   "fieldname": "last_run_on",
+   "fieldtype": "Datetime",
+   "label": "Zuletzt erzeugt am",
+   "read_only": 1
+  },
+  {
+   "fieldname": "run_summary",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Lauf-Zusammenfassung"
+  },
+  {
+   "fieldname": "viewer_section",
+   "fieldtype": "Section Break",
+   "label": "Ausführung"
+  },
+  {
+   "fieldname": "durchlauf_viewer_html",
+   "fieldtype": "HTML",
+   "label": "Durchlauf-Viewer"
   }
  ],
  "index_web_pages_for_search": 1,

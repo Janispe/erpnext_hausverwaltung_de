@@ -16,6 +16,14 @@
   "title",
   "date",
   "generated_on",
+  "run_section",
+  "status",
+  "render_ms",
+  "pages",
+  "recipient_email",
+  "error_msg",
+  "skip_reason",
+  "warning",
   "html_section",
   "html",
   "snapshot_section",
@@ -87,6 +95,57 @@
    "fieldtype": "Datetime",
    "in_list_view": 1,
    "label": "Erzeugt am",
+   "read_only": 1
+  },
+  {
+   "fieldname": "run_section",
+   "fieldtype": "Section Break",
+   "label": "Lauf-Ergebnis"
+  },
+  {
+   "default": "Ausstehend",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Ausstehend\nGeneriert\nÜbersprungen\nFehler",
+   "read_only": 1
+  },
+  {
+   "fieldname": "render_ms",
+   "fieldtype": "Int",
+   "label": "Render-Zeit (ms)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pages",
+   "fieldtype": "Int",
+   "label": "Seiten",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recipient_email",
+   "fieldtype": "Data",
+   "label": "Empfänger-E-Mail",
+   "options": "Email",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error_msg",
+   "fieldtype": "Small Text",
+   "label": "Fehler",
+   "read_only": 1
+  },
+  {
+   "fieldname": "skip_reason",
+   "fieldtype": "Data",
+   "label": "Übersprungen weil",
+   "read_only": 1
+  },
+  {
+   "fieldname": "warning",
+   "fieldtype": "Small Text",
+   "label": "Warnung",
    "read_only": 1
   },
   {

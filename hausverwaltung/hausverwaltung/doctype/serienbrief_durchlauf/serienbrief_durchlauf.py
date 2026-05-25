@@ -4,6 +4,7 @@ import json
 import importlib
 import os
 import re
+import time
 import uuid
 from io import BytesIO
 from typing import Any, Dict, List
@@ -16,7 +17,7 @@ from markupsafe import Markup
 from frappe import _
 from frappe.contacts.doctype.address.address import get_default_address
 from frappe.model.document import Document
-from frappe.utils import cstr, format_date, today
+from frappe.utils import cint, cstr, format_date, now_datetime, today
 from frappe.utils.jinja import get_jenv
 
 from hausverwaltung.hausverwaltung.utils.pdf_engine import render_pdf as get_pdf
@@ -47,6 +48,11 @@ class _IterationEmpfaengerRow:
 _NONE_ATTR_RE = re.compile(r"^'None' has no attribute '([^']+)'$")
 _OBJ_ATTR_RE = re.compile(r"^'([^']+) object' has no attribute '([^']+)'$")
 _VAR_UNDEFINED_RE = re.compile(r"^'([^']+)' is undefined$")
+
+
+# Bis zu so vielen Empfängern wird beim Draft-Save synchron gerendert (alte UX).
+# Größere Läufe laufen nur über den Hintergrund-Job (kein Save-Timeout).
+AUTO_RENDER_LIMIT = 25
 
 
 def _humanize_jinja_error(raw: str) -> str:
@@ -247,11 +253,18 @@ def _get_template_template_source(template_doc) -> str:
 
 class SerienbriefDurchlauf(Document):
 	def on_update(self) -> None:
-		# Draft: bei jedem Save Dokumente neu rendern, damit HTML/PDF pro Iteration
-		# immer den aktuellen Stand der Variablenwerte widerspiegeln.
+		# Draft: kleine Läufe beim Save sofort rendern (snappy, alte UX). Große Läufe
+		# NICHT synchron rendern — das würde den Save minutenlang blockieren; dafür gibt
+		# es jetzt den Hintergrund-Job (start_durchlauf_run / React-Viewer „Lauf starten").
 		if int(getattr(self, "docstatus", 0) or 0) != 0:
 			return
-		if not self.vorlage or not (getattr(self, "iteration_objekte", None) or []):
+		# Läuft gerade ein Job? Dann nicht dazwischenfunken.
+		if cstr(getattr(self, "status", "") or "") == "Läuft":
+			return
+		rows = getattr(self, "iteration_objekte", None) or []
+		if not self.vorlage or not rows:
+			return
+		if len(rows) > AUTO_RENDER_LIMIT:
 			return
 		# strict_variables=False: der User darf noch Werte setzen, ohne beim Save zu werfen.
 		self._ensure_dokumente(recreate=True, submit=False, strict_variables=False)
@@ -318,6 +331,7 @@ class SerienbriefDurchlauf(Document):
 		recreate: bool = False,
 		submit: bool = False,
 		strict_variables: bool = True,
+		progress_cb=None,
 	) -> list[str]:
 		existing = frappe.get_all(
 			"Serienbrief Dokument",
@@ -332,9 +346,11 @@ class SerienbriefDurchlauf(Document):
 			for name in existing:
 				frappe.delete_doc("Serienbrief Dokument", name, force=1, ignore_permissions=True)
 
-		return self._create_dokumente(submit=submit, strict_variables=strict_variables)
+		return self._create_dokumente(
+			submit=submit, strict_variables=strict_variables, progress_cb=progress_cb
+		)
 
-	def _create_dokumente(self, *, submit: bool, strict_variables: bool = True) -> list[str]:
+	def _create_dokumente(self, *, submit: bool, strict_variables: bool = True, progress_cb=None) -> list[str]:
 		if not self.vorlage:
 			frappe.throw(_("Bitte wählen Sie eine Serienbrief Vorlage."))
 
@@ -356,32 +372,54 @@ class SerienbriefDurchlauf(Document):
 			frappe.throw(_("Die gewählte Vorlage enthält keinen Inhalt."))
 
 		created: list[str] = []
+		counts = {"generated": 0, "skipped": 0, "error": 0}
 		total = len(empfaenger_rows)
 		for idx, row in enumerate(empfaenger_rows, start=1):
-			context = self._build_context(
-				row,
-				idx,
-				template_requirements,
-				template,
-				total=total,
-				strict_variables=strict_variables,
-			)
-			segments = self._render_template_content(template, context)
-			if not segments:
-				continue
-			preview_pages = self._render_segments_preview_pages(segments)
-			pdf_bytes = self._render_segments_pdf_bytes(segments)
-			if not preview_pages and not pdf_bytes:
-				continue
-
-			page_html = self._wrap_html_fragment(
-				"\n".join(f'<div class="serienbrief-page">{page}</div>' for page in preview_pages)
-			)
-			title = getattr(row, "anzeigename", None) or getattr(row, "iteration_objekt", None) or ""
 			objekt = getattr(row, "iteration_objekt", None) or getattr(row, "objekt", None) or ""
+			title = getattr(row, "anzeigename", None) or objekt or ""
 			effective_variablen_werte = _merge_variable_values(
 				self.variablen_werte, getattr(row, "_iteration_variablen_werte", None)
 			)
+			recipient_email = self._resolve_recipient_email(row)
+
+			# Pro Empfänger fehlertolerant: ein Render-Fehler markiert NUR diesen
+			# Empfänger als "Fehler" und bricht den Lauf nicht ab. So bekommt jedes
+			# Iterations-Objekt ein Ergebnis-Dokument (Generiert/Übersprungen/Fehler).
+			status = "Generiert"
+			error_msg = ""
+			skip_reason = ""
+			pages = 0
+			render_ms = 0
+			page_html = ""
+			pdf_bytes = None
+
+			try:
+				context = self._build_context(
+					row, idx, template_requirements, template,
+					total=total, strict_variables=strict_variables,
+				)
+				segments = self._render_template_content(template, context)
+				if not segments:
+					status = "Übersprungen"
+					skip_reason = _("Kein Inhalt für diesen Empfänger.")
+				else:
+					t0 = time.monotonic()
+					preview_pages = self._render_segments_preview_pages(segments)
+					pdf_bytes = self._render_segments_pdf_bytes(segments)
+					render_ms = int((time.monotonic() - t0) * 1000)
+					if not preview_pages and not pdf_bytes:
+						status = "Übersprungen"
+						skip_reason = _("Render ohne Ergebnis.")
+						pdf_bytes = None
+					else:
+						pages = len(preview_pages)
+						page_html = self._wrap_html_fragment(
+							"\n".join(f'<div class="serienbrief-page">{page}</div>' for page in preview_pages)
+						)
+			except Exception as exc:
+				status = "Fehler"
+				error_msg = (_humanize_jinja_error(str(exc)) or str(exc))[:1000]
+				pdf_bytes = None
 
 			doc = frappe.get_doc(
 				{
@@ -395,23 +433,37 @@ class SerienbriefDurchlauf(Document):
 					"date": self.date,
 					"html": page_html,
 					"variablen_werte": effective_variablen_werte,
+					"status": status,
+					"error_msg": error_msg,
+					"skip_reason": skip_reason,
+					"render_ms": render_ms,
+					"pages": pages,
+					"recipient_email": recipient_email or "",
 				}
 			)
 			doc.insert(ignore_permissions=True)
 			if pdf_bytes:
 				file_url = self._store_document_pdf(doc, pdf_bytes)
 				doc.db_set("generated_pdf_file", file_url, update_modified=False)
-			if submit and int(getattr(doc, "docstatus", 0) or 0) == 0:
+			# Nur erfolgreiche Dokumente submitten; Fehler/Übersprungen bleiben Draft-Historie.
+			if submit and status == "Generiert" and int(getattr(doc, "docstatus", 0) or 0) == 0:
 				try:
 					doc.submit()
 				except Exception:
 					# Falls ein System/Role kein submit darf: trotzdem als Historie speichern.
 					pass
+
 			created.append(doc.name)
+			counts[{"Generiert": "generated", "Übersprungen": "skipped", "Fehler": "error"}[status]] += 1
 
-		if not created:
-			frappe.throw(_("Kein Serienbrief Dokument erzeugt. Bitte Vorlage/Iterationen prüfen."))
+			if progress_cb:
+				try:
+					progress_cb(idx, total, counts)
+				except Exception:
+					pass
 
+		# Zusammenfassung für den aufrufenden (Job-)Code; kein throw bei leerem Lauf.
+		self._last_run_counts = {"total": total, **counts}
 		return created
 
 	def _build_merged_pdf(self, dokumente: list[str], print_format: str | None = None) -> bytes:
@@ -422,17 +474,28 @@ class SerienbriefDurchlauf(Document):
 		use_print_format = frappe.db.exists("Print Format", format_name)
 
 		merger = PdfMerger()
+		appended = 0
 		try:
 			for docname in dokumente:
 				doc = frappe.get_doc("Serienbrief Dokument", docname)
+				# Fehler-/Übersprungen-Dokumente (kein Inhalt) nicht ins Sammel-PDF mergen.
+				if cstr(getattr(doc, "status", "") or "") in ("Fehler", "Übersprungen"):
+					continue
+				has_pdf = cstr(getattr(doc, "generated_pdf_file", None) or "").strip()
+				if not use_print_format and not has_pdf and not cstr(getattr(doc, "html", "") or "").strip():
+					continue
 				if use_print_format:
 					pdf_bytes = self._render_dokument_with_print_format(doc, format_name)
-				elif cstr(getattr(doc, "generated_pdf_file", None) or "").strip():
+				elif has_pdf:
 					pdf_bytes = read_file_url_bytes(doc.generated_pdf_file)
 				else:
 					pdf_bytes = get_pdf(self._wrap_html(doc.html or ""), options=self._default_pdf_options())
 
 				merger.append(BytesIO(pdf_bytes))
+				appended += 1
+
+			if not appended:
+				frappe.throw(_("Keine erfolgreich generierten Dokumente zum Drucken."))
 
 			out = BytesIO()
 			merger.write(out)
@@ -1651,6 +1714,50 @@ class SerienbriefDurchlauf(Document):
 			return frappe.get_doc(mieter_doctype, row.mieter)
 		except frappe.DoesNotExistError:
 			return None
+
+	def _resolve_recipient_email(self, row) -> str:
+		"""Best-effort Empfänger-E-Mail (in Phase 1 nur Anzeige/„hat E-Mail"). Versucht
+		den Mieter-Doc und einen über den Kunden verknüpften Contact; '' wenn nichts da."""
+		try:
+			mieter = self._load_mieter(row)
+			if mieter:
+				for field in ("email_id", "email", "e_mail", "email_address"):
+					val = cstr(getattr(mieter, field, "") or "").strip()
+					if val:
+						return val
+			doc = getattr(row, "_iteration_doc", None)
+			customer = cstr(
+				(getattr(doc, "kunde", None) or getattr(doc, "customer", None) or "") if doc else ""
+			).strip()
+			if customer and frappe.db.exists("DocType", "Contact"):
+				email = frappe.db.sql(
+					"""
+					select coalesce(c.email_id, '') from `tabContact` c
+					join `tabDynamic Link` dl on dl.parent = c.name and dl.parenttype = 'Contact'
+					where dl.link_doctype = 'Customer' and dl.link_name = %s
+					  and coalesce(c.email_id, '') != ''
+					limit 1
+					""",
+					(customer,),
+				)
+				if email:
+					return cstr(email[0][0] or "").strip()
+		except Exception:
+			pass
+		return ""
+
+	def _format_recipient_address(self, row) -> str:
+		"""Kurze Adress-/Objekt-Zeile für die Empfängerliste (best-effort, '' bei Fehlern)."""
+		try:
+			wohnung = cstr(getattr(row, "wohnung", "") or "").strip()
+			if wohnung and frappe.db.exists("Wohnung", wohnung):
+				bez = cstr(frappe.db.get_value("Wohnung", wohnung, "bezeichnung") or wohnung)
+				imm = frappe.db.get_value("Wohnung", wohnung, "immobilie")
+				imm_bez = cstr(frappe.db.get_value("Immobilie", imm, "bezeichnung") or "") if imm else ""
+				return " · ".join([p for p in (bez, imm_bez) if p])
+		except Exception:
+			pass
+		return ""
 
 	def _load_doc(self, doctype: str, name: str | None):
 		if not name:
@@ -2873,3 +2980,339 @@ def render_preview(doc: str | dict | None = None, docname: str | None = None) ->
 
 	html = serienbrief._render_full_html()
 	return {"html": html}
+
+
+# ---------------------------------------------------------------------------
+# Serienbrief Durchlauf — React-Ausführungs-Viewer (Phase 1)
+#
+# Eigenständige React-UI, eingebettet als iframe ins Durchlauf-Formular
+# (serienbrief_durchlauf.js) über die gemeinsame postMessage-Bridge. Diese Methoden
+# liefern die Lauf-Daten, starten den Lauf als Hintergrund-Job und verwalten
+# Empfänger/Variablen. E-Mail-Versand = Phase 2.
+# ---------------------------------------------------------------------------
+
+_RUN_COUNT_KEYS = {"Generiert": "generated", "Übersprungen": "skipped", "Fehler": "error"}
+
+
+def _run_durchlauf_job(docname: str) -> None:
+	"""Enqueued: rendert alle Empfänger, schreibt Pro-Empfänger-Status + Fortschritt,
+	setzt den Lauf-Status. Fehler einzelner Empfänger brechen den Lauf NICHT ab
+	(das macht _create_dokumente); nur ein unerwarteter Infra-Fehler → Fehlgeschlagen."""
+	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
+	total = len(doc.get("iteration_objekte") or [])
+
+	def progress_cb(idx, tot, counts):
+		# Fortschritt in Batches persistieren (DB schonen); die UI pollt get_run_progress.
+		if idx == tot or idx % 5 == 0:
+			frappe.db.set_value("Serienbrief Durchlauf", docname, "progress", f"{idx}/{tot}", update_modified=False)
+			frappe.db.commit()
+
+	try:
+		doc._ensure_dokumente(recreate=True, submit=False, strict_variables=False, progress_cb=progress_cb)
+		counts = getattr(doc, "_last_run_counts", {"total": total, "generated": 0, "skipped": 0, "error": 0})
+		done = counts.get("total", total)
+		frappe.db.set_value(
+			"Serienbrief Durchlauf",
+			docname,
+			{
+				"status": "Generiert",
+				"progress": f"{done}/{done}",
+				"run_summary": json.dumps(counts),
+				"last_run_on": now_datetime(),
+			},
+			update_modified=False,
+		)
+		frappe.db.commit()
+	except Exception:
+		frappe.db.rollback()
+		frappe.db.set_value("Serienbrief Durchlauf", docname, "status", "Fehlgeschlagen", update_modified=False)
+		frappe.db.commit()
+		frappe.log_error(frappe.get_traceback(), f"Serienbrief Durchlauf fehlgeschlagen: {docname}")
+		raise
+
+
+@frappe.whitelist()
+def start_durchlauf_run(docname: str, regenerate: int | str = 1) -> Dict[str, Any]:
+	"""Startet den Lauf als Hintergrund-Job. Gibt sofort zurück; UI pollt get_run_progress."""
+	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
+	if not frappe.has_permission("Serienbrief Durchlauf", "write", doc):
+		raise frappe.PermissionError
+	if int(getattr(doc, "docstatus", 0) or 0) != 0:
+		frappe.throw(_("Der Durchlauf ist bereits abgeschlossen (eingereicht)."))
+	if cstr(doc.get("status") or "") == "Läuft":
+		return {"status": "Läuft", "already_running": True}
+
+	total = len(doc.get("iteration_objekte") or [])
+	if not doc.vorlage or not total:
+		frappe.throw(_("Bitte wähle eine Vorlage und mindestens ein Iterations-Objekt."))
+
+	frappe.db.set_value(
+		"Serienbrief Durchlauf", docname, {"status": "Läuft", "progress": f"0/{total}"}, update_modified=False
+	)
+	frappe.db.commit()
+	frappe.enqueue(
+		"hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf._run_durchlauf_job",
+		queue="long",
+		timeout=3600,
+		docname=docname,
+		enqueue_after_commit=True,
+	)
+	return {"status": "Läuft", "total": total}
+
+
+@frappe.whitelist()
+def get_run_progress(docname: str) -> Dict[str, Any]:
+	"""Lauf-Status + Fortschritt + Zähler — für UI-Polling."""
+	if not frappe.has_permission("Serienbrief Durchlauf", "read", doc=docname):
+		raise frappe.PermissionError
+	vals = frappe.db.get_value(
+		"Serienbrief Durchlauf", docname, ["status", "progress", "run_summary"], as_dict=True
+	) or {}
+	counts: Dict[str, Any] = {}
+	try:
+		counts = json.loads(vals.get("run_summary") or "{}")
+	except Exception:
+		counts = {}
+	return {"status": vals.get("status"), "progress": vals.get("progress"), "counts": counts}
+
+
+@frappe.whitelist()
+def get_durchlauf_data(docname: str) -> Dict[str, Any]:
+	"""Header + Variablen + Empfängerliste (iteration_objekte ⋈ erzeugte Dokumente)."""
+	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
+	if not frappe.has_permission("Serienbrief Durchlauf", "read", doc):
+		raise frappe.PermissionError
+
+	iteration_doctype = doc.iteration_doctype or (
+		frappe.db.get_value("Serienbrief Vorlage", doc.vorlage, "haupt_verteil_objekt") if doc.vorlage else ""
+	)
+
+	# Erzeugte Dokumente nach Objekt gruppieren (jüngstes gewinnt).
+	dok_by_objekt: Dict[str, Any] = {}
+	for d in frappe.get_all(
+		"Serienbrief Dokument",
+		filters={"durchlauf": docname},
+		fields=[
+			"name", "objekt", "title", "status", "render_ms", "pages", "error_msg",
+			"skip_reason", "warning", "recipient_email", "generated_on", "generated_pdf_file",
+		],
+		order_by="creation asc",
+	):
+		dok_by_objekt[d.objekt] = d
+
+	recipients: List[Dict[str, Any]] = []
+	overrides_out: Dict[str, Dict[str, Any]] = {}
+	for it in doc.get("iteration_objekte") or []:
+		objekt = cstr(getattr(it, "objekt", "") or "")
+		if not objekt:
+			continue
+		name = None
+		address = ""
+		try:
+			row = doc._build_empfaenger_row_from_iteration(it)
+			if row:
+				name = getattr(row, "anzeigename", None)
+				address = doc._format_recipient_address(row)
+		except Exception:
+			pass
+		d = dok_by_objekt.get(objekt)
+		# Alt-Dokumente (vor Status-Feld) haben "Ausstehend", aber ein PDF → als
+		# "Generiert" anzeigen, damit bestehende Durchläufe korrekt aussehen.
+		rec_status = (d.status if d else "Ausstehend") or "Ausstehend"
+		if d and rec_status == "Ausstehend" and cstr(getattr(d, "generated_pdf_file", "") or "").strip():
+			rec_status = "Generiert"
+		recipients.append(
+			{
+				"id": objekt,
+				"name": (d.title if d else None) or name or objekt,
+				"address": address,
+				"recipient_email": (d.recipient_email if d else "") or "",
+				"has_email": bool(d.recipient_email) if d else False,
+				"status": rec_status,
+				"pages": (d.pages if d else 0) or 0,
+				"render_ms": (d.render_ms if d else 0) or 0,
+				"error_msg": (d.error_msg if d else "") or "",
+				"skip_reason": (d.skip_reason if d else "") or "",
+				"warning": (d.warning if d else "") or "",
+				"generated_on": cstr(d.generated_on) if (d and d.generated_on) else None,
+				"has_pdf": bool(d and d.generated_pdf_file),
+				"pdf_url": (d.generated_pdf_file if d else None) or None,
+				"dokument": (d.name if d else None),
+			}
+		)
+		ovw = _parse_variable_values(getattr(it, "variablen_werte", None))
+		if ovw:
+			overrides_out[objekt] = {
+				k: (e.get("value") if e.get("value") is not None else "") for k, e in ovw.items()
+			}
+
+	# Variablen: Definition (Vorlage) + Default (Vorlage) + aktueller Durchlauf-Wert.
+	variables_out: List[Dict[str, Any]] = []
+	if doc.vorlage:
+		template_doc = frappe.get_cached_doc("Serienbrief Vorlage", doc.vorlage)
+		global_values = _parse_variable_values(doc.variablen_werte)
+		vorlage_defaults = _parse_variable_values(getattr(template_doc, "variablen_werte", None))
+		for v in _collect_template_variables(template_doc):
+			key = v["key"]
+			dv = vorlage_defaults.get(key, {})
+			gv = global_values.get(key, {})
+			variables_out.append(
+				{
+					"name": key,
+					"label": v["label"],
+					"type": v["variable_type"],
+					"desc": v["description"],
+					"default": dv.get("value") if dv.get("value") is not None else "",
+					"value": gv.get("value") if gv.get("value") is not None else "",
+				}
+			)
+
+	counts: Dict[str, Any] = {}
+	try:
+		counts = json.loads(doc.run_summary or "{}")
+	except Exception:
+		counts = {}
+
+	return {
+		"docname": docname,
+		"title": doc.title,
+		"status": doc.status or "Entwurf",
+		"progress": doc.progress or "",
+		"created_by": doc.owner,
+		"vorlage": doc.vorlage,
+		"vorlage_title": frappe.db.get_value("Serienbrief Vorlage", doc.vorlage, "title") if doc.vorlage else "",
+		"kategorie": doc.kategorie,
+		"iteration_doctype": iteration_doctype,
+		"date": cstr(doc.date) if doc.date else None,
+		"docstatus": int(getattr(doc, "docstatus", 0) or 0),
+		"can_write": bool(frappe.has_permission("Serienbrief Durchlauf", "write", doc))
+		and int(getattr(doc, "docstatus", 0) or 0) == 0,
+		"variables": variables_out,
+		"per_recipient_overrides": overrides_out,
+		"recipients": recipients,
+		"counts": counts,
+	}
+
+
+@frappe.whitelist()
+def set_run_variables(
+	docname: str, variables: str | list | dict | None = None, per_recipient_overrides: str | dict | None = None
+) -> Dict[str, Any]:
+	"""Globale Variablenwerte + Pro-Empfänger-Overrides speichern (Format passend zu
+	_parse_variable_values: {key: {"value": …}})."""
+	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
+	if not frappe.has_permission("Serienbrief Durchlauf", "write", doc):
+		raise frappe.PermissionError
+
+	if variables is not None:
+		if isinstance(variables, str):
+			variables = json.loads(variables or "[]")
+		items = variables.items() if isinstance(variables, dict) else [
+			(v.get("name"), v.get("value")) for v in variables
+		]
+		vw = {cstr(k): {"value": val} for k, val in items if k and val not in (None, "")}
+		frappe.db.set_value(
+			"Serienbrief Durchlauf", docname, "variablen_werte", json.dumps(vw) if vw else "", update_modified=False
+		)
+
+	if per_recipient_overrides is not None:
+		if isinstance(per_recipient_overrides, str):
+			per_recipient_overrides = json.loads(per_recipient_overrides or "{}")
+		for it in doc.get("iteration_objekte") or []:
+			objekt = cstr(getattr(it, "objekt", "") or "")
+			ov = (per_recipient_overrides or {}).get(objekt) or {}
+			ovw = {cstr(k): {"value": val} for k, val in ov.items() if val not in (None, "")}
+			frappe.db.set_value(
+				"Serienbrief Iterationsobjekt", it.name,
+				"variablen_werte", json.dumps(ovw) if ovw else "", update_modified=False,
+			)
+
+	frappe.db.commit()
+	return {"ok": True}
+
+
+@frappe.whitelist()
+def add_recipients(docname: str, objekte: str | list | None = None) -> Dict[str, Any]:
+	"""Iterations-Objekte zum Durchlauf hinzufügen (Duplikate werden ignoriert)."""
+	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
+	if not frappe.has_permission("Serienbrief Durchlauf", "write", doc):
+		raise frappe.PermissionError
+	if isinstance(objekte, str):
+		objekte = json.loads(objekte or "[]")
+	existing = {cstr(getattr(it, "objekt", "") or "") for it in doc.get("iteration_objekte") or []}
+	added = 0
+	for objekt in objekte or []:
+		objekt = cstr(objekt or "").strip()
+		if not objekt or objekt in existing:
+			continue
+		doc.append("iteration_objekte", {"iteration_doctype": doc.iteration_doctype, "objekt": objekt})
+		existing.add(objekt)
+		added += 1
+	if added:
+		doc.save(ignore_permissions=True)
+	return {"added": added}
+
+
+@frappe.whitelist()
+def remove_recipients(docname: str, objekte: str | list | None = None) -> Dict[str, Any]:
+	"""Iterations-Objekte aus dem Durchlauf entfernen."""
+	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
+	if not frappe.has_permission("Serienbrief Durchlauf", "write", doc):
+		raise frappe.PermissionError
+	if isinstance(objekte, str):
+		objekte = json.loads(objekte or "[]")
+	remove = {cstr(o or "").strip() for o in (objekte or [])}
+	kept = [it for it in (doc.get("iteration_objekte") or []) if cstr(getattr(it, "objekt", "") or "") not in remove]
+	if len(kept) != len(doc.get("iteration_objekte") or []):
+		doc.set("iteration_objekte", kept)
+		doc.save(ignore_permissions=True)
+	return {"removed": True}
+
+
+@frappe.whitelist()
+def get_available_recipients(docname: str, query: str | None = None, limit: int = 25) -> Dict[str, Any]:
+	"""Iterations-Objekte, die noch nicht im Durchlauf sind (für „Empfänger hinzufügen")."""
+	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
+	if not frappe.has_permission("Serienbrief Durchlauf", "read", doc):
+		raise frappe.PermissionError
+	dt = cstr(doc.iteration_doctype or "").strip() or cstr(
+		frappe.db.get_value("Serienbrief Vorlage", doc.vorlage, "haupt_verteil_objekt") if doc.vorlage else ""
+	).strip()
+	if not dt or not frappe.db.exists("DocType", dt) or not frappe.has_permission(dt, "read"):
+		return {"items": [], "doctype": dt}
+
+	already = {cstr(getattr(it, "objekt", "") or "") for it in doc.get("iteration_objekte") or []}
+	meta = frappe.get_meta(dt)
+	title_field = meta.get_title_field()
+	fields = ["name"] + ([title_field] if title_field and title_field != "name" else [])
+	q = cstr(query or "").strip()
+	or_filters = None
+	if q:
+		or_filters = [["name", "like", f"%{q}%"]]
+		if title_field and title_field != "name":
+			or_filters.append([title_field, "like", f"%{q}%"])
+	rows = frappe.get_list(dt, fields=fields, or_filters=or_filters, limit=cint(limit) or 25, order_by="modified desc")
+	items = [
+		{"id": r["name"], "label": (r.get(title_field) if title_field and title_field != "name" else None) or r["name"]}
+		for r in rows
+		if r["name"] not in already
+	]
+	return {"items": items, "doctype": dt}
+
+
+@frappe.whitelist()
+def get_merged_pdf(docname: str) -> Dict[str, str]:
+	"""Sammel-PDF aus den bereits erzeugten (Generiert-)Dokumenten — ohne Neu-Render."""
+	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
+	if not frappe.has_permission("Serienbrief Durchlauf", "read", doc):
+		raise frappe.PermissionError
+	dokumente = frappe.get_all(
+		"Serienbrief Dokument",
+		filters={"durchlauf": docname, "status": "Generiert"},
+		order_by="creation asc",
+		pluck="name",
+	)
+	if not dokumente:
+		frappe.throw(_("Keine erfolgreich generierten Dokumente. Bitte zuerst den Lauf starten."))
+	pdf_bytes = doc._build_merged_pdf(dokumente)
+	return {"file_url": doc._store_pdf(pdf_bytes)}

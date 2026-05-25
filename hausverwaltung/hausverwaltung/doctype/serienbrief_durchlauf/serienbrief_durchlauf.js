@@ -151,6 +151,9 @@ frappe
 }, 700);
 
 const hv_trigger_preview = (frm) => {
+	// Bei aktivem React-Viewer übernimmt dieser die Vorschau — die alte Live-Preview
+	// (eigene Render-Pipeline pro Feldänderung) wird unterdrückt.
+	if (frm._hv_react_viewer) return;
 	hv_render_preview(frm);
 };
 
@@ -755,9 +758,130 @@ const hv_apply_incoming_route_options = (frm) => {
 	apply();
 };
 
+// --- React-Ausführungs-Viewer (Phase 1) -------------------------------------
+// Eingebettet als iframe ins Feld `durchlauf_viewer_html`, angebunden über die
+// gemeinsame postMessage-Bridge (wie Serienbrief Editor/Browser). Kurze Aktions-
+// Namen werden auf whitelisted Methoden gemappt; docname wird host-seitig injiziert.
+const HV_DL = "hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf.";
+const HV_DL_RPC_ACTIONS = {
+	durchlauf_data: HV_DL + "get_durchlauf_data",
+	run_progress: HV_DL + "get_run_progress",
+	start_run: HV_DL + "start_durchlauf_run",
+	set_variables: HV_DL + "set_run_variables",
+	add_recipients: HV_DL + "add_recipients",
+	remove_recipients: HV_DL + "remove_recipients",
+	available_recipients: HV_DL + "get_available_recipients",
+	merged_pdf: HV_DL + "get_merged_pdf",
+};
+
+const hv_dl_extract_error = (e) => {
+	if (!e) return __("Unbekannter Fehler");
+	if (typeof e === "string") return e;
+	if (e.message) return e.message;
+	const sm = e._server_messages || (e.responseJSON && e.responseJSON._server_messages);
+	if (sm) {
+		try {
+			return JSON.parse(sm)
+				.map((m) => {
+					try {
+						return JSON.parse(m).message;
+					} catch (_) {
+						return m;
+					}
+				})
+				.join("; ");
+		} catch (_) {
+			return String(sm);
+		}
+	}
+	if (e.responseJSON && e.responseJSON.exception) return e.responseJSON.exception;
+	try {
+		return JSON.stringify(e);
+	} catch (_) {
+		return String(e);
+	}
+};
+
+const hv_mount_durchlauf_viewer = (frm) => {
+	const field = frm.fields_dict.durchlauf_viewer_html;
+	if (!field || !field.wrapper) return;
+	const $wrapper = $(field.wrapper);
+
+	if (frm.is_new()) {
+		$wrapper.html(
+			`<div class="text-muted" style="padding:12px">${__(
+				"Bitte zuerst speichern — dann erscheint hier der Ausführungs-Viewer."
+			)}</div>`
+		);
+		return;
+	}
+
+	// React-Viewer übernimmt die Vorschau → alte Live-Preview unterdrücken/ausblenden.
+	frm._hv_react_viewer = true;
+	if (frm._hv_preview_ui && frm._hv_preview_ui.wrapper) frm._hv_preview_ui.wrapper.hide();
+
+	// Idempotent: iframe nur (neu) aufbauen, wenn es nicht (mehr) im Wrapper hängt.
+	if ($wrapper.find("iframe.hv-serienbrief-durchlauf-frame").length) return;
+
+	const src = `/assets/hausverwaltung/serienbrief_durchlauf/index.html?docname=${encodeURIComponent(
+		frm.doc.name
+	)}&v=${Date.now()}`;
+	$wrapper.empty();
+	const $frame = $(
+		`<iframe class="hv-serienbrief-durchlauf-frame" src="${src}" title="Serienbrief Durchlauf"></iframe>`
+	).css({ width: "100%", border: "none", display: "block", background: "#f6f5f1", minHeight: "720px" });
+	$wrapper.append($frame);
+
+	const resize = () => {
+		const top = $frame[0].getBoundingClientRect().top;
+		$frame.css("height", `${Math.max(600, window.innerHeight - top - 16)}px`);
+	};
+	resize();
+	$(window).off("resize.hv_durchlauf").on("resize.hv_durchlauf", frappe.utils.debounce(resize, 100));
+
+	if (frm._hv_viewer_onmessage) window.removeEventListener("message", frm._hv_viewer_onmessage);
+	const onMessage = (event) => {
+		if (event.source !== $frame[0].contentWindow) return;
+		if (event.origin !== window.location.origin) return;
+		const msg = event.data;
+		if (!msg || msg.source !== "hv-serienbrief" || msg.type !== "rpc") return;
+
+		const reply = (payload) =>
+			event.source.postMessage(
+				{ source: "hv-serienbrief-host", type: "rpc-result", id: msg.id, ...payload },
+				event.origin
+			);
+
+		// Nach Empfänger-Änderung das Frappe-Formular neu laden (Zeitstempel/Grid aktuell).
+		if (msg.action === "reload_form") {
+			frm.reload_doc()
+				.then(() => reply({ ok: true, data: {} }))
+				.catch((e) => reply({ ok: false, error: hv_dl_extract_error(e) }));
+			return;
+		}
+
+		const method = HV_DL_RPC_ACTIONS[msg.action];
+		if (!method) {
+			reply({ ok: false, error: `Unbekannte Aktion: ${msg.action}` });
+			return;
+		}
+		const args = Object.assign({ docname: frm.doc.name }, msg.params || {});
+		frappe
+			.call({ method, args })
+			.then((r) => reply({ ok: true, data: r.message }))
+			.catch((e) => reply({ ok: false, error: hv_dl_extract_error(e) }));
+	};
+	window.addEventListener("message", onMessage);
+	frm._hv_viewer_onmessage = onMessage;
+};
+
 frappe.ui.form.on("Serienbrief Durchlauf", {
 	refresh(frm) {
 		hv_apply_incoming_route_options(frm);
+
+		// React-Viewer früh mounten → setzt _hv_react_viewer, sodass die alte Live-
+		// Preview (hv_trigger_preview) unten nicht mehr rendert.
+		hv_mount_durchlauf_viewer(frm);
 
 		if (!frm.is_new()) {
 			frm.add_custom_button(__("PDF erzeugen"), () => trigger_serienbrief_pdf(frm));

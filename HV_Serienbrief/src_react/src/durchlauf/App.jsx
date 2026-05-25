@@ -1,25 +1,40 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { Icon } from "../components/Icon.jsx";
-import { DURCHLAUF, RECIPIENTS, AVAILABLE } from "./data.js";
+import {
+  embedded,
+  loadDurchlauf,
+  getProgress,
+  startRun,
+  saveVariables,
+  addRecipients as apiAddRecipients,
+  removeRecipients as apiRemoveRecipients,
+  availableRecipients,
+  mergedPdf,
+  reloadForm,
+} from "./api.js";
 
 // Serienbrief Durchlauf — main app
 // ============== Header ==============
-const Header = ({ durchlauf, stats, onAction }) => {
+const Header = ({ durchlauf, stats, onRun, onMergedPdf, running, progress, busy }) => {
   const statusLabel = { draft: "Entwurf", running: "Läuft…", completed: "Abgeschlossen", failed: "Fehlgeschlagen", sent: "Versendet" }[durchlauf.status] || durchlauf.status;
   return (
     <header className="dl-header">
       <div className="dl-header-row">
-        <button className="btn ghost icon" title="Zurück zur Liste"><Icon name="back" size={16}/></button>
-        <input className="dl-header-title" defaultValue={durchlauf.title}/>
+        <input className="dl-header-title" value={durchlauf.title} readOnly/>
         <span className="dl-id">{durchlauf.id}</span>
         <span className={`dl-status-pill ${durchlauf.status}`}>
-          <span className="dl-status-dot"/> {statusLabel}
+          <span className="dl-status-dot"/> {statusLabel}{running && progress ? ` ${progress}` : ""}
         </span>
         <div className="dl-header-actions">
-          <button className="btn ghost"><Icon name="copy" size={13}/> Duplizieren</button>
-          <button className="btn"><Icon name="refresh" size={13}/> Neu rendern</button>
-          <button className="btn"><Icon name="download" size={13}/> Sammel-PDF</button>
-          <button className="btn primary"><Icon name="send" size={13}/> E-Mails senden</button>
+          <button className="btn" onClick={onRun} disabled={running || busy}>
+            <Icon name="refresh" size={13}/> {running ? "Läuft…" : "Lauf starten / neu rendern"}
+          </button>
+          <button className="btn" onClick={onMergedPdf} disabled={running || busy || stats.generated === 0}>
+            <Icon name="download" size={13}/> Sammel-PDF
+          </button>
+          <button className="btn primary" disabled title="E-Mail-Versand kommt in Phase 2">
+            <Icon name="send" size={13}/> E-Mails senden
+          </button>
         </div>
       </div>
       <div className="dl-header-meta">
@@ -274,7 +289,7 @@ const RecipientsList = ({ recipients, filter, onFilter, filterCounts, query, onQ
 };
 
 // ============== Detail (right) ==============
-const DetailPane = ({ r, durchlauf, overrides, onSetOverride, onClearOverrides, overrideCounts }) => {
+const DetailPane = ({ r, durchlauf, overrides, onSetOverride, onClearOverrides, overrideCounts, onDownloadPdf, onRun, running }) => {
   const [tab, setTab] = useState("preview");
 
   if (!r) {
@@ -327,6 +342,16 @@ const DetailPane = ({ r, durchlauf, overrides, onSetOverride, onClearOverrides, 
                 <div style={{ marginTop: 8, fontWeight: 500, color: "var(--danger)" }}>Render-Fehler</div>
                 <div style={{ fontSize: 12, marginTop: 4, color: "var(--text-muted)", maxWidth: 320, marginLeft: "auto", marginRight: "auto" }}>{r.error_msg}</div>
               </div>
+            ) : embedded ? (
+              r.pdf_url ? (
+                <iframe className="dl-pdf-frame" src={r.pdf_url} title="PDF-Vorschau" style={{ width: "100%", height: "100%", minHeight: 520, border: "none", background: "#fff" }}/>
+              ) : (
+                <div style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>
+                  <Icon name="play" size={28} style={{ color: "var(--text-faint)" }}/>
+                  <div style={{ marginTop: 8, fontWeight: 500 }}>{r.status === "pending" ? "Noch nicht gerendert" : "Kein PDF verfügbar"}</div>
+                  <div style={{ fontSize: 12, marginTop: 4 }}>{r.status === "pending" ? "Starte den Lauf, um das PDF zu erzeugen." : ""}</div>
+                </div>
+              )
             ) : (
               <div className="dl-pdf-paper">
                 <div className="dl-pdf-right">München, 25. Mai 2026</div>
@@ -464,9 +489,9 @@ const DetailPane = ({ r, durchlauf, overrides, onSetOverride, onClearOverrides, 
       </div>
 
       <div className="dl-detail-footer">
-        <button className="btn sm"><Icon name="refresh" size={12}/> Neu rendern</button>
-        <button className="btn sm"><Icon name="download" size={12}/> PDF</button>
-        <button className="btn sm" disabled={!r.has_email}><Icon name="send" size={12}/> {r.has_email ? "Senden" : "Druck"}</button>
+        <button className="btn sm" onClick={onRun} disabled={running}><Icon name="refresh" size={12}/> Neu rendern</button>
+        <button className="btn sm" onClick={() => onDownloadPdf && onDownloadPdf(r)} disabled={!r.pdf_url}><Icon name="download" size={12}/> PDF</button>
+        <button className="btn sm" disabled title="E-Mail-Versand kommt in Phase 2"><Icon name="send" size={12}/> Senden</button>
       </div>
     </aside>
   );
@@ -474,19 +499,70 @@ const DetailPane = ({ r, durchlauf, overrides, onSetOverride, onClearOverrides, 
 
 // ============== App ==============
 export const App = () => {
-  const initial = DURCHLAUF;
-  const recipients = RECIPIENTS;
+  const [durchlaufMeta, setDurchlaufMeta] = useState({ id: "", title: "", status: "draft", vorlage: { title: "", kategorie: "" }, iteration_doctype: "", date: "", created_by: "", can_write: true });
+  const [recipients, setRecipients] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState(() => new Set());
-  const [currentId, setCurrentId] = useState("MV-2021-0034");
-  const [vars, setVars] = useState(initial.variables);
+  const [currentId, setCurrentId] = useState(null);
+  const [vars, setVars] = useState([]);
   // Per-recipient variable overrides: { [recipientId]: { [varName]: value } }
-  const [perRecipientOverrides, setPerRecipientOverrides] = useState({
-    "MV-2021-0034": { frist_tage: "7", stichtag: "2026-06-01" }, // demo: Bauer (Mahnstufe 2) hat kürzere Frist
-  });
+  const [perRecipientOverrides, setPerRecipientOverrides] = useState({});
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const durchlauf = { ...initial, variables: vars };
+  const durchlauf = { ...durchlaufMeta, variables: vars };
+
+  // --- Laden ---------------------------------------------------------------
+  const applyData = useCallback((d) => {
+    setDurchlaufMeta(d.durchlauf);
+    setRecipients(d.recipients || []);
+    setVars(d.durchlauf.variables || []);
+    setPerRecipientOverrides(d.overrides || {});
+    setRunning((d.durchlauf.status || "") === "running");
+    setCurrentId((prev) => {
+      const list = d.recipients || [];
+      if (prev && list.some((r) => r.id === prev)) return prev;
+      return list.length ? list[0].id : null;
+    });
+  }, []);
+
+  const refresh = useCallback(async () => {
+    const d = await loadDurchlauf();
+    applyData(d);
+    return d;
+  }, [applyData]);
+
+  useEffect(() => {
+    setLoading(true);
+    refresh()
+      .then(() => setLoadError(null))
+      .catch((e) => setLoadError(e?.message || String(e)))
+      .finally(() => setLoading(false));
+  }, [refresh]);
+
+  // --- Variablen speichern (debounced) ------------------------------------
+  const saveTimer = useRef(null);
+  const scheduleSave = useCallback((nextVars, nextOverrides) => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveVariables(
+        (nextVars || []).map((v) => ({ name: v.name, value: v.value })),
+        nextOverrides || {},
+      ).catch(() => {});
+    }, 600);
+  }, []);
+
+  const onUpdateVar = (name, value) => {
+    setVars((prev) => {
+      const next = prev.map((v) => (v.name === name ? { ...v, value } : v));
+      scheduleSave(next, perRecipientOverrides);
+      return next;
+    });
+  };
 
   const setRecipientOverride = (recipientId, varName, value) => {
     setPerRecipientOverrides(prev => {
@@ -500,6 +576,7 @@ export const App = () => {
       }
       if (Object.keys(cur).length === 0) delete next[recipientId];
       else next[recipientId] = cur;
+      scheduleSave(vars, next);
       return next;
     });
   };
@@ -508,9 +585,110 @@ export const App = () => {
     setPerRecipientOverrides(prev => {
       const next = { ...prev };
       delete next[recipientId];
+      scheduleSave(vars, next);
       return next;
     });
   };
+
+  // --- Lauf starten + Fortschritt pollen ----------------------------------
+  const pollTimer = useRef(null);
+  const stopPolling = () => { if (pollTimer.current) { clearTimeout(pollTimer.current); pollTimer.current = null; } };
+  const poll = useCallback(() => {
+    stopPolling();
+    pollTimer.current = setTimeout(async () => {
+      try {
+        const p = await getProgress();
+        setProgress(p.progress || "");
+        if (p.status === "running") {
+          poll();
+        } else {
+          setRunning(false);
+          setProgress("");
+          await refresh();
+        }
+      } catch {
+        setRunning(false);
+        stopPolling();
+      }
+    }, 1500);
+  }, [refresh]);
+
+  // Falls beim Öffnen bereits ein Job läuft → Polling aufnehmen.
+  useEffect(() => {
+    if (running) poll();
+    return stopPolling;
+  }, [running, poll]);
+
+  const onRun = useCallback(async () => {
+    if (running) return;
+    setBusy(true);
+    try {
+      await startRun();
+      setRunning(true);
+      setProgress("");
+      poll();
+    } catch (e) {
+      window.alert(e?.message || "Lauf konnte nicht gestartet werden.");
+    } finally {
+      setBusy(false);
+    }
+  }, [running, poll]);
+
+  const onMergedPdf = useCallback(async () => {
+    setBusy(true);
+    try {
+      const res = await mergedPdf();
+      if (res && res.file_url) window.open(res.file_url, "_blank");
+    } catch (e) {
+      window.alert(e?.message || "Sammel-PDF fehlgeschlagen.");
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const onDownloadPdf = useCallback((r) => {
+    if (r && r.pdf_url) window.open(r.pdf_url, "_blank");
+  }, []);
+
+  const onAddRecipient = useCallback(async () => {
+    const term = window.prompt("Iterations-Objekt (Name/ID) hinzufügen:");
+    if (!term || !term.trim()) return;
+    setBusy(true);
+    try {
+      await apiAddRecipients([term.trim()]);
+      await reloadForm();
+      await refresh();
+    } catch (e) {
+      window.alert(e?.message || "Hinzufügen fehlgeschlagen.");
+    } finally {
+      setBusy(false);
+    }
+  }, [refresh]);
+
+  const onBulkAction = useCallback(async (action) => {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    if (action === "remove") {
+      if (!window.confirm(`${ids.length} Empfänger entfernen?`)) return;
+      setBusy(true);
+      try {
+        await apiRemoveRecipients(ids);
+        await reloadForm();
+        setSelectedIds(new Set());
+        await refresh();
+      } catch (e) {
+        window.alert(e?.message || "Entfernen fehlgeschlagen.");
+      } finally {
+        setBusy(false);
+      }
+    } else if (action === "rerender") {
+      onRun();
+    } else if (action === "download") {
+      onMergedPdf();
+    } else if (action === "send") {
+      window.alert("E-Mail-Versand kommt in Phase 2.");
+    }
+  }, [selectedIds, onRun, onMergedPdf, refresh]);
 
   const filterCounts = useMemo(() => ({
     all: recipients.length,
@@ -558,13 +736,24 @@ export const App = () => {
 
   const currentRecipient = recipients.find(r => r.id === currentId);
 
-  const onUpdateVar = (name, value) => {
-    setVars(prev => prev.map(v => v.name === name ? { ...v, value } : v));
-  };
+  if (loadError) {
+    return <div className="durchlauf-app" style={{ padding: 24, color: "var(--danger)" }}>Fehler beim Laden: {loadError}</div>;
+  }
+  if (loading) {
+    return <div className="durchlauf-app" style={{ padding: 24, color: "var(--text-muted)" }}>Lade Durchlauf …</div>;
+  }
 
   return (
     <div className="durchlauf-app">
-      <Header durchlauf={durchlauf} stats={stats} onAction={() => {}}/>
+      <Header
+        durchlauf={durchlauf}
+        stats={stats}
+        onRun={onRun}
+        onMergedPdf={onMergedPdf}
+        running={running}
+        progress={progress}
+        busy={busy}
+      />
       <div className="dl-main">
         <ConfigColumn durchlauf={durchlauf} onUpdateVar={onUpdateVar}/>
         <RecipientsList
@@ -578,8 +767,8 @@ export const App = () => {
           onToggleSelect={toggleSelect}
           currentId={currentId}
           onSelect={(r) => setCurrentId(r.id)}
-          onAddRecipient={() => console.log("Add recipient dialog")}
-          onBulkAction={(a) => console.log("Bulk action:", a, "on", selectedIds.size)}
+          onAddRecipient={onAddRecipient}
+          onBulkAction={onBulkAction}
           overrideCounts={perRecipientOverrides}
         />
         <DetailPane
@@ -589,6 +778,9 @@ export const App = () => {
           onSetOverride={(name, val) => setRecipientOverride(currentId, name, val)}
           onClearOverrides={() => clearRecipientOverrides(currentId)}
           overrideCounts={perRecipientOverrides}
+          onDownloadPdf={onDownloadPdf}
+          onRun={onRun}
+          running={running}
         />
       </div>
     </div>
