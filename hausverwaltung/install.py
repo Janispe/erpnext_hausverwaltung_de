@@ -46,11 +46,11 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
         css = """
 			@page {
 				size: A4;
-				/* margin-bottom 25mm: reserviert Platz für den Page-Footer
-				   (``<div id="footer-html">``). Footer ist ~12mm hoch, 25mm
-				   gibt schmalen Sicherheitsabstand zum Brief-Text ohne riesigen
-				   Whitespace am Page-Ende. */
-				margin: 20mm 20mm 25mm 25mm;
+				/* margin-bottom 16mm: reserviert Platz für den Page-Footer
+				   (``<div id="footer-html">``). Footer ist ~12mm hoch, 16mm
+				   gibt 4mm Luft. Muss mit SERIENBRIEF_PDF_OPTIONS (durchlauf.py)
+				   konsistent bleiben — der Chrome-Margin-Wert dominiert effektiv. */
+				margin: 20mm 20mm 16mm 25mm;
 			}
 			body,
 			.serienbrief-root,

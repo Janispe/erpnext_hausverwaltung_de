@@ -129,14 +129,16 @@ _PLACEHOLDER_TOKEN_RE = re.compile(
 # Einzige Quelle für die Serienbrief-PDF-Ränder — Versand (_default_pdf_options) UND
 # Vorschau (serienbrief_vorlage._preview_pdf_options) nutzen diese, damit sie nicht mehr
 # auseinanderlaufen können. margin-top/left bestimmen die Adressfenster-Position
-# (Fensterkuvert) — nicht ohne Grund ändern. 25mm bottom reserviert Platz für den
-# 2-zeiligen Page-Footer (Bankverbindung + Pfad). Sollte mit der @page-Regel in
-# install.py konsistent bleiben.
+# (Fensterkuvert) — nicht ohne Grund ändern. 16mm bottom: der Page-Footer
+# (Bankverbindung + Pfad) ist nur ~12mm hoch, 16mm lässt 4mm Luft. Früher 25mm ->
+# das reservierte ~13mm tote Reserve am Seitenende und drückte z.B. die Signatur
+# unnötig auf eine zweite Seite. Sollte mit der @page-Regel in install.py konsistent
+# bleiben.
 SERIENBRIEF_PDF_OPTIONS: Dict[str, str] = {
 	"page-size": "A4",
 	"margin-top": "20mm",
 	"margin-right": "20mm",
-	"margin-bottom": "25mm",
+	"margin-bottom": "16mm",
 	"margin-left": "25mm",
 }
 
