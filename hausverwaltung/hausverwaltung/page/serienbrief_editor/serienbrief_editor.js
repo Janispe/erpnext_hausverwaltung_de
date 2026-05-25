@@ -26,6 +26,23 @@ const RPC_ACTIONS = {
 	preview: HV_SB + "render_template_preview_pdf",
 	editor_preview: HV_SB + "render_editor_preview_pdf",
 	upload_image: HV_SB + "upload_editor_image",
+	copy: HV_SB + "copy_serienbrief_vorlage",
+};
+
+// Navigations-Aktionen: kein frappe.call, sondern öffnen ein Desk-Formular. Werden
+// vom iframe wie eine normale RPC-Aktion aufgerufen, aber hier abgefangen.
+const NAV_ACTIONS = {
+	// Neues "Serienbrief Durchlauf"-Formular mit vorausgewählter Vorlage. Die
+	// Kategorie/iteration_doctype füllt das Durchlauf-Formular selbst aus der Vorlage
+	// (hv_apply_incoming_route_options + vorlage-onchange).
+	new_durchlauf: (params) => {
+		frappe.route_options = {
+			hv_serienbrief_template: params.vorlage || undefined,
+			hv_serienbrief_title: params.title || undefined,
+			hv_serienbrief_iteration_doctype: params.iteration_doctype || undefined,
+		};
+		frappe.new_doc("Serienbrief Durchlauf");
+	},
 };
 
 frappe.pages["serienbrief_editor"].on_page_load = function (wrapper) {
@@ -77,6 +94,18 @@ frappe.pages["serienbrief_editor"].on_page_load = function (wrapper) {
 				{ source: "hv-serienbrief-host", type: "rpc-result", id: msg.id, ...payload },
 				event.origin
 			);
+
+		// Navigations-Aktion? -> Desk-Formular öffnen (kein frappe.call).
+		const nav = NAV_ACTIONS[msg.action];
+		if (nav) {
+			try {
+				nav(msg.params || {});
+				reply({ ok: true, data: {} });
+			} catch (e) {
+				reply({ ok: false, error: extractError(e) });
+			}
+			return;
+		}
 
 		const method = RPC_ACTIONS[msg.action];
 		if (!method) {

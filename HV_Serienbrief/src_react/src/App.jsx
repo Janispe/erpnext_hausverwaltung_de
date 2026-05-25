@@ -8,7 +8,7 @@ import { PfadMappingModal } from "./components/PfadMappingModal.jsx";
 import { BausteinPopover } from "./components/BausteinPopover.jsx";
 import { CURRENT_TEMPLATE, TEMPLATE_TREE } from "./data.js";
 import {
-  loadTree, loadTemplate, saveTemplate,
+  loadTree, loadTemplate, saveTemplate, copyTemplate, openDurchlauf,
   loadPlaceholderTree, loadBausteine, loadRecipients, renderPreview,
   uploadImage, embedded,
 } from "./api.js";
@@ -41,6 +41,7 @@ export const App = () => {
   const [tree, setTree] = useState(() => TEMPLATE_TREE);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [copying, setCopying] = useState(false);
   const [placeholders, setPlaceholders] = useState([]);
   const [bausteine, setBausteine] = useState([]);
   const [recipients, setRecipients] = useState([]);
@@ -172,8 +173,10 @@ export const App = () => {
     return () => { cancelled = true; };
   }, [onTemplateSelect]);
 
+  // Gibt true bei Erfolg zurück (für Aufrufer wie Kopieren/„In Serienbrief laden",
+  // die vor ihrer Aktion erst speichern wollen).
   const save = async () => {
-    if (!template.canWrite || !dirty || saving) return;
+    if (!template.canWrite || !dirty || saving) return false;
     // Harte Sperre: Vorlage round-trippt nicht verlustfrei (Token-Erhalt-Check beim Laden).
     if (editorSafety) {
       alert(
@@ -182,7 +185,7 @@ export const App = () => {
         "Verlorene Tokens: " + Object.keys(editorSafety.lost || {}).join(", ") +
         "\n\nBitte diese Vorlage vorerst im klassischen Formular bearbeiten."
       );
-      return;
+      return false;
     }
     const html = contentRef.current ? contentRef.current.getHtml() : (template.htmlContent || "");
     // Jinja-Balance-Warnung (nicht blockierend).
@@ -191,15 +194,17 @@ export const App = () => {
       const proceed = confirm(
         "Mögliche Jinja-Probleme:\n\n" + bal.errors.join("\n") + "\n\nTrotzdem speichern?"
       );
-      if (!proceed) return;
+      if (!proceed) return false;
     }
     setSaving(true);
     try {
       const res = await saveTemplate(template.id, html, bausteinPaths, variables);
       setDirty(false);
       setTemplate(prev => ({ ...prev, modified: res.modified || prev.modified }));
+      return true;
     } catch (e) {
       alert("Speichern fehlgeschlagen: " + ((e && e.message) || e));
+      return false;
     } finally {
       setSaving(false);
     }
@@ -220,6 +225,47 @@ export const App = () => {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
+
+  // „Kopieren" -> Vorlage duplizieren und die Kopie öffnen. Die Kopie basiert auf
+  // dem gespeicherten Stand, daher offene Änderungen vorher speichern.
+  const handleCopy = useCallback(async () => {
+    if (!template.id || copying || saving) return;
+    if (dirty && template.canWrite) {
+      const ok = await saveRef.current();
+      if (!ok) return;
+    }
+    setCopying(true);
+    try {
+      const res = await copyTemplate(template.id, `${title} (Kopie)`);
+      // Navigator-Baum aktualisieren, damit die Kopie erscheint, dann öffnen.
+      try { const { groups } = await loadTree(); if (groups && groups.length) setTree(groups); } catch (_) {}
+      if (res && res.name) onTemplateSelect(res.name);
+    } catch (e) {
+      alert("Kopieren fehlgeschlagen: " + ((e && e.message) || e));
+    } finally {
+      setCopying(false);
+    }
+  }, [template.id, template.canWrite, title, dirty, copying, saving, onTemplateSelect]);
+
+  // „In Serienbrief laden" -> neues Durchlauf-Formular im Desk öffnen, Vorlage
+  // vorausgewählt. Der Durchlauf rendert aus dem gespeicherten Stand -> erst speichern.
+  const handleLoadDurchlauf = useCallback(async () => {
+    if (!template.id || saving) return;
+    if (dirty && template.canWrite) {
+      const ok = await saveRef.current();
+      if (!ok) return;
+    }
+    try {
+      await openDurchlauf({
+        vorlage: template.id,
+        title,
+        iterationDoctype: template.haupt_verteil_objekt,
+      });
+      // Das Desk navigiert jetzt zum neuen Durchlauf — das iframe wird ersetzt.
+    } catch (e) {
+      alert("In Serienbrief laden fehlgeschlagen: " + ((e && e.message) || e));
+    }
+  }, [template.id, template.canWrite, template.haupt_verteil_objekt, title, dirty, saving]);
 
   // Template-unabhängige Sidebar-Daten einmalig laden.
   useEffect(() => {
@@ -353,8 +399,10 @@ export const App = () => {
         <button className="btn" onClick={save} disabled={!dirty || !template.canWrite || saving} title={!template.canWrite ? "Keine Schreibberechtigung" : ""}>
           <Icon name="save" size={14}/> {saving ? "Speichert …" : "Speichern"}
         </button>
-        <button className="btn ghost"><Icon name="copy" size={14}/> Kopieren</button>
-        <button className="btn primary">
+        <button className="btn ghost" onClick={handleCopy} disabled={!template.id || copying || saving} title="Diese Vorlage duplizieren">
+          <Icon name="copy" size={14}/> {copying ? "Kopiert …" : "Kopieren"}
+        </button>
+        <button className="btn primary" onClick={handleLoadDurchlauf} disabled={!template.id || saving} title="Neuen Serienbrief-Durchlauf mit dieser Vorlage starten">
           <Icon name="send" size={14}/> In Serienbrief laden
         </button>
         <button className="btn ghost icon"><Icon name="more"/></button>

@@ -52,6 +52,23 @@ export async function loadTemplate(id) {
 	};
 }
 
+// Vorlage duplizieren. Gibt { name, title } der neuen Kopie zurück.
+export async function copyTemplate(id, newTitle) {
+	if (!embedded) {
+		return { name: `${id}-kopie`, title: newTitle || "Kopie", mock: true };
+	}
+	return await rpc("copy", { template: id, new_title: newTitle });
+}
+
+// Neues "Serienbrief Durchlauf"-Formular im Desk öffnen (Vorlage vorausgewählt).
+// Navigiert das Eltern-Desk weg vom Editor — kein Rückgabewert nötig.
+export async function openDurchlauf({ vorlage, title, iterationDoctype }) {
+	if (!embedded) {
+		return { ok: true, mock: true };
+	}
+	return await rpc("new_durchlauf", { vorlage, title, iteration_doctype: iterationDoctype });
+}
+
 // Editierten Inhalt zurück in die Vorlage speichern. Gibt { id, modified } zurück.
 // bausteinPaths = Pro-Baustein Input-Pfad-Overrides (werden als JSON gespeichert).
 export async function saveTemplate(id, html, bausteinPaths, variables) {
