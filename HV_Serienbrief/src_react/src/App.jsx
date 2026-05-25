@@ -104,6 +104,10 @@ export const App = () => {
   const insertPlaceholder = useCallback((token) => insertItem({ kind: "chip", token }), [insertItem]);
   const insertBaustein = useCallback((name) => insertItem({ kind: "baustein", name }), [insertItem]);
 
+  // Bearbeitbar nur mit Schreibrecht und solange die Vorlage verlustfrei round-trippt
+  // (sonst read-only — gilt auch für Variablen-/Pfad-Felder in der Sidebar).
+  const editable = !!template.canWrite && !editorSafety;
+
   // Vorlage auswählen. Eingebettet → echtes HTML aus der DB nachladen.
   // Standalone (Prototyp) → Demo-/Stub-Inhalt wie gehabt.
   const onTemplateSelect = useCallback(async (id) => {
@@ -395,7 +399,8 @@ export const App = () => {
           onResizeStart={onResizeStart}
           variables={variables}
           placeholderPaths={placeholderPaths}
-          onVariablesChange={(v) => { setVariables(v); setDirty(true); }}
+          editable={editable}
+          onVariablesChange={(v) => { if (!editable) return; setVariables(v); setDirty(true); }}
         />
       </div>
 

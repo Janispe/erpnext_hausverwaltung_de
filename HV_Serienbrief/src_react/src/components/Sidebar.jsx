@@ -156,12 +156,17 @@ const TreeNode = ({ node, depth, onInsert, expandAll, tokenTransform }) => {
   const childTransform = isTable ? (t) => xform(t).replace("[0]", `[${idx - 1}]`) : xform;
   const effToken = node.token ? xform(node.token) : "";
 
+  // Listen-Pfad der Tabelle aus dem ersten Kind-Token ableiten (z. B. objekt.mieter).
+  const childTok = (node.children || []).map((c) => c.token).find(Boolean) || "";
+  const listPath = (/\{\{\$\s*(.+?)\[0\]\./.exec(childTok) || [])[1] || "";
+  // Schleife nur für DIREKTE Child-Tabellen des Iterations-Objekts (objekt.<feld>).
+  // Tabellen unter einem Link-Feld (objekt.wohnung.<tabelle>) brechen beim Rendern, weil
+  // der Link im Kontext ein unaufgelöster String ist — Loop-Button dort ausblenden.
+  const canLoop = isTable && /^objekt\.[^.]+$/.test(listPath);
+
   // "Schleife über alle": Loop-Gerüst aus den Kindern ableiten.
   const insertLoop = () => {
-    const childTok = (node.children || []).map((c) => c.token).find(Boolean) || "";
-    const m = /\{\{\$\s*(.+?)\[0\]\./.exec(childTok);
-    if (!m) return;
-    const listPath = m[1]; // z.B. objekt.mieter
+    if (!listPath) return;
     const firstField =
       (node.children || [])
         .map((c) => (/\[0\]\.(\w+)/.exec(c.token || "") || [])[1])
@@ -202,9 +207,11 @@ const TreeNode = ({ node, depth, onInsert, expandAll, tokenTransform }) => {
               title="Welches Element (1 = erstes)"
               onChange={(e) => setIdx(Math.max(1, parseInt(e.target.value, 10) || 1))}
             />
-            <button className="ph-loop-btn" onClick={insertLoop} title="Schleife über alle Zeilen einfügen">
-              ↻ alle
-            </button>
+            {canLoop && (
+              <button className="ph-loop-btn" onClick={insertLoop} title="Schleife über alle Zeilen einfügen">
+                ↻ alle
+              </button>
+            )}
           </span>
         )}
         {effToken && (
@@ -316,7 +323,11 @@ const BausteinePane = ({ items, onInsert }) => {
 const VAR_TYPES = ["Text", "String", "Zahl", "Bool", "Datum", "Doctype", "Doctype Liste"];
 const isDoctypeType = (t) => t === "Doctype" || t === "Doctype Liste";
 
-const VariablesPane = ({ variables, onChange, onInsert, placeholderPaths }) => {
+// Muss exakt frappe.scrub() entsprechen: " " und "-" -> "_", lowercase. Sonst stimmt der
+// im Brief eingefügte {{ name }} nicht mit dem Backend-Schlüssel (frappe.scrub) überein.
+const scrubName = (s) => String(s || "").replace(/[ -]/g, "_").toLowerCase();
+
+const VariablesPane = ({ variables, onChange, onInsert, placeholderPaths, editable = true }) => {
   const vars = variables || [];
   const update = (i, patch) =>
     onChange && onChange(vars.map((v, idx) => (idx === i ? { ...v, ...patch } : v)));
@@ -342,6 +353,7 @@ const VariablesPane = ({ variables, onChange, onInsert, placeholderPaths }) => {
 
       {vars.map((v, i) => {
         const dt = isDoctypeType(v.type);
+        const key = scrubName(v.variable);
         return (
           <div key={i} className="var-edit-row">
             <div className="var-edit-head">
@@ -349,19 +361,21 @@ const VariablesPane = ({ variables, onChange, onInsert, placeholderPaths }) => {
                 className="var-edit-name"
                 placeholder="variablen_name"
                 value={v.variable || ""}
-                onChange={(e) => update(i, { variable: e.target.value })}
+                onChange={(e) => update(i, { variable: scrubName(e.target.value) })}
                 spellCheck={false}
+                disabled={!editable}
               />
               <select
                 className="var-edit-type"
                 value={v.type || "Text"}
                 onChange={(e) => update(i, { type: e.target.value })}
+                disabled={!editable}
               >
                 {VAR_TYPES.map((t) => (
                   <option key={t} value={t}>{t}</option>
                 ))}
               </select>
-              <button className="var-edit-del" title="Variable löschen" onClick={() => remove(i)}>
+              <button className="var-edit-del" title="Variable löschen" onClick={() => remove(i)} disabled={!editable}>
                 <Icon name="x" size={12} />
               </button>
             </div>
@@ -374,6 +388,7 @@ const VariablesPane = ({ variables, onChange, onInsert, placeholderPaths }) => {
                   value={v.reference_doctype || ""}
                   onChange={(e) => update(i, { reference_doctype: e.target.value })}
                   spellCheck={false}
+                  disabled={!editable}
                 />
                 <input
                   className="var-edit-sub var-edit-path"
@@ -382,6 +397,7 @@ const VariablesPane = ({ variables, onChange, onInsert, placeholderPaths }) => {
                   value={v.path || ""}
                   onChange={(e) => update(i, { path: e.target.value })}
                   spellCheck={false}
+                  disabled={!editable}
                 />
               </>
             ) : (
@@ -390,14 +406,15 @@ const VariablesPane = ({ variables, onChange, onInsert, placeholderPaths }) => {
                 placeholder="Wert"
                 value={v.value || ""}
                 onChange={(e) => update(i, { value: e.target.value })}
+                disabled={!editable}
               />
             )}
 
             <div className="var-edit-actions">
               <button
                 className="var-insert-btn"
-                disabled={!v.variable}
-                onClick={() => onInsert && onInsert(`{{ ${v.variable} }}`)}
+                disabled={!key || !editable}
+                onClick={() => onInsert && onInsert(`{{ ${key} }}`)}
                 title="In den Brief einfügen"
               >
                 <Icon name="tag" size={11} /> einfügen
@@ -408,7 +425,7 @@ const VariablesPane = ({ variables, onChange, onInsert, placeholderPaths }) => {
       })}
 
       {vars.length === 0 && <div className="empty-hint">Noch keine Variablen.</div>}
-      <button className="var-add-btn" onClick={add}>
+      <button className="var-add-btn" onClick={add} disabled={!editable}>
         <Icon name="plus" size={12} /> Variable hinzufügen
       </button>
     </div>
@@ -424,7 +441,7 @@ export const Sidebar = ({
   onChangeRecipient, onSearchRecipients,
   previewPdf, previewLoading, previewError, previewMode, onRefreshPreview,
   onInsertPlaceholder, onInsertBaustein, onMaximizePreview, onResizeStart,
-  variables, placeholderPaths, onVariablesChange,
+  variables, placeholderPaths, onVariablesChange, editable = true,
 }) => {
   const phCount = (placeholders || []).reduce((n, g) => n + countTokens(g.tree), 0);
   const bsCount = (bausteine || []).length;
@@ -462,6 +479,7 @@ export const Sidebar = ({
             onChange={onVariablesChange}
             onInsert={onInsertPlaceholder}
             placeholderPaths={placeholderPaths}
+            editable={editable}
           />
         )}
       </div>
