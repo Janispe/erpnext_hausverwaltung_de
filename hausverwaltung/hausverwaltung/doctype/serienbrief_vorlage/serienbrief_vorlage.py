@@ -1739,10 +1739,7 @@ def _build_tree_nodes(base_key, base_label, meta, visited, depth, max_depth):
 			continue
 		if df.fieldtype in _TREE_SKIP_TYPES:
 			continue
-		nodes.append(
-			{"label": f"{base_label}: {label}", "token": _ph(f"{base_key}.{df.fieldname}"),
-			 "type": df.fieldtype, "children": []}
-		)
+		# Aufklappbarer Link -> EIN Knoten (eigener Klick fügt .name ein), kein Blatt-Duplikat.
 		if (
 			df.fieldtype == "Link"
 			and df.options
@@ -1751,17 +1748,21 @@ def _build_tree_nodes(base_key, base_label, meta, visited, depth, max_depth):
 			and depth < max_depth
 		):
 			target_meta = _safe_meta(df.options)
-			if not target_meta:
-				continue
-			target_key = f"{base_key}.{df.fieldname}"
-			child_nodes = _build_tree_nodes(
-				target_key, df.options, target_meta, visited | {df.options}, depth + 1, max_depth
-			)
-			if child_nodes:
-				nodes.append(
-					{"label": f"{label} → {df.options}", "token": _ph(f"{target_key}.name"),
-					 "type": "Link", "children": child_nodes}
+			if target_meta:
+				target_key = f"{base_key}.{df.fieldname}"
+				child_nodes = _build_tree_nodes(
+					target_key, df.options, target_meta, visited | {df.options}, depth + 1, max_depth
 				)
+				if child_nodes:
+					nodes.append(
+						{"label": f"{label} → {df.options}", "token": _ph(f"{target_key}.name"),
+						 "type": "Link", "children": child_nodes}
+					)
+					continue
+		nodes.append(
+			{"label": f"{base_label}: {label}", "token": _ph(f"{base_key}.{df.fieldname}"),
+			 "type": df.fieldtype, "children": []}
+		)
 	return nodes
 
 
@@ -1802,6 +1803,7 @@ def _build_iteration_tree(dt):
 			continue
 		if df.fieldtype in _TREE_SKIP_TYPES:
 			continue
+		# Aufklappbarer Link -> EIN Knoten (eigener Klick fügt .name ein), kein Blatt-Duplikat.
 		if df.fieldtype == "Link" and df.options and df.options not in _TREE_SKIP_LINK_TARGETS:
 			target_meta = _safe_meta(df.options)
 			if target_meta:
@@ -1813,6 +1815,7 @@ def _build_iteration_tree(dt):
 						{"label": f"{label} → {df.options}", "token": _ph(f"objekt.{df.fieldname}.name"),
 						 "type": "Link", "children": child_nodes}
 					)
+					continue
 		nodes.append(
 			{"label": label, "token": _ph(f"objekt.{df.fieldname}"), "type": df.fieldtype, "children": []}
 		)
