@@ -7,10 +7,11 @@ greift, und ist daher die kritischste reine Logik im Modul.
 """
 
 import unittest
+from unittest.mock import patch
 
 import frappe
 
-from hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur import _si_context
+from hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur import _korrektur_storno, _si_context
 
 
 def _si(remarks="", mietabrechnung_id="", items=None, posting_date="2026-03-15"):
@@ -72,3 +73,46 @@ class TestSiContext(unittest.TestCase):
 		self.assertIsNone(ctx["typ"])
 		self.assertEqual(ctx["monat"], 2)
 		self.assertEqual(ctx["jahr"], 2026)
+
+
+class TestKorrekturStorno(unittest.TestCase):
+	def test_recreates_only_target_type_and_ignores_draft_blockers(self):
+		class DummySalesInvoice:
+			name = "SINV-OLD"
+			company = "Test Company"
+			cancelled = False
+
+			def cancel(self):
+				self.cancelled = True
+
+		si = DummySalesInvoice()
+		ctx = {
+			"typ": "Betriebskosten",
+			"mietvertrag": "MV-1",
+			"monat": 5,
+			"jahr": 2026,
+			"monat_str": "05/2026",
+		}
+
+		with (
+			patch(
+				"hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen.generate_miet_und_bk_rechnungen",
+				return_value={"created": {"Betriebskosten": 1}, "durchlauf": "DL-1"},
+			) as generate,
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._find_invoice",
+				return_value="SINV-NEW",
+			),
+		):
+			result = _korrektur_storno(si, ctx, [])
+
+		self.assertTrue(si.cancelled)
+		generate.assert_called_once_with(
+			monat=5,
+			jahr=2026,
+			company="Test Company",
+			mietvertrag="MV-1",
+			rechnungstyp="Betriebskosten",
+			include_drafts_in_guard=0,
+		)
+		self.assertEqual(result["neue_si"], "SINV-NEW")

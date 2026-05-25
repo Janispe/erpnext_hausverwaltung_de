@@ -381,10 +381,16 @@ def _korrektur_storno(si, ctx: dict, pes: list[str]) -> dict:
 		si.reload()
 	si.cancel()
 
-	# 3) Korrigierte Rechnung neu erzeugen (nur dieser Vertrag/Monat; Guard erzeugt
-	#    ausschließlich den stornierten Typ neu, da BK/HK/UMZ noch existieren).
+	# 3) Korrigierte Rechnung neu erzeugen. Der Korrekturpfad erzeugt gezielt nur
+	#    den betroffenen Typ; Draft-Dubletten dürfen den Ersatz für die stornierte
+	#    gebuchte Rechnung nicht blockieren.
 	gen = generate_miet_und_bk_rechnungen(
-		monat=ctx["monat"], jahr=ctx["jahr"], company=si.company, mietvertrag=ctx["mietvertrag"]
+		monat=ctx["monat"],
+		jahr=ctx["jahr"],
+		company=si.company,
+		mietvertrag=ctx["mietvertrag"],
+		rechnungstyp=ctx["typ"],
+		include_drafts_in_guard=0,
 	)
 
 	neue_si = _find_invoice(f"[TYPE:{ctx['typ']}] [MV:{ctx['mietvertrag']}] {ctx['monat_str']}")

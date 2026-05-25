@@ -217,13 +217,13 @@ def _miete_betrag_fuer_monat_from_rows(von: object, bis: object, anchor: date, r
             break
 
     change_points = sorted({row["von"] for row in monatlich_rows if ov_start < row["von"] < ov_end_excl})
-    segment_starts = [ov_start] + change_points
-    segment_ends = segment_starts[1:] + [ov_end_excl]
+    segment_starts = [ov_start, *change_points]
+    segment_ends = [*segment_starts[1:], ov_end_excl]
 
     future_rows = [row for row in monatlich_rows if row["von"] >= ov_start]
     row_index = 0
 
-    for seg_start, seg_end in zip(segment_starts, segment_ends):
+    for seg_start, seg_end in zip(segment_starts, segment_ends, strict=False):
         while row_index < len(future_rows) and future_rows[row_index]["von"] == seg_start:
             current_rate = flt(future_rows[row_index]["miete"])
             row_index += 1
@@ -314,7 +314,7 @@ def _get_invoice_map_for_month(
             "company": company,
             "customer": ("in", tuple(sorted(customers))),
             "posting_date": ("between", [month_start, month_end]),
-            "docstatus": ("in", [0, 1]),
+            "docstatus": 1,
         },
         fields=["name", "customer"],
     )
