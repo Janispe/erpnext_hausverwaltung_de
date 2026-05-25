@@ -342,28 +342,6 @@ const EditorToolbar = ({ editor, disabled, onInsert, onImage }) => {
 };
 
 // =========================
-// Sanity Status Row
-// =========================
-const SanityStatusRow = ({ recipient, onPickRecipient, onMaximizePreview }) => {
-	const label = (recipient?.label || "Beispielwerte").split("—")[0].trim();
-	return (
-		<div className="sanity-row">
-			<button className="sanity-recipient" onClick={onPickRecipient} title="Empfänger wechseln">
-				<Icon name="user" size={13} />
-				<span className="sanity-recipient-label">Vorschau-Empfänger</span>
-				<span className="sanity-recipient-value">{label}</span>
-				<Icon name="chevron-down" size={11} />
-			</button>
-			<div style={{ flex: 1 }} />
-			<button className="sanity-action" onClick={onMaximizePreview} title="PDF-Vorschau vergrößern">
-				<Icon name="play" size={12} />
-				<span>PDF groß ansehen</span>
-			</button>
-		</div>
-	);
-};
-
-// =========================
 // Editor (TipTap)
 // =========================
 export const Editor = ({
@@ -482,7 +460,6 @@ export const Editor = ({
 
 	return (
 		<main className="center">
-			<SanityStatusRow recipient={recipient} onPickRecipient={onPickRecipient} onMaximizePreview={onMaximizePreview} />
 			<EditorToolbar editor={editor} disabled={!editable} onInsert={openSlash} onImage={handleImage} />
 
 			{safety && (
