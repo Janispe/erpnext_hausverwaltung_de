@@ -1,0 +1,65 @@
+/* Bankimport — table + pills */
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; align-items: start; }
+@media (max-width: 1280px) {
+  .split { grid-template-columns: minmax(0, 1fr) 340px; }
+}
+@media (max-width: 1100px) {
+  .split { grid-template-columns: 1fr; }
+  .match-panel-wrap { position: static; }
+  .match-panel { max-height: none; }
+}
+body[data-layout="full"] .split { grid-template-columns: 1fr; }
+body[data-layout="full"] .match-panel-wrap { display: none; }
+
+.tx-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.tx-card-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.tx-card-head .title { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; }
+.tx-card-head .count { font-family: var(--font-mono); color: var(--text-muted); font-size: 11.5px; }
+
+.tx-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.tx-table thead th { background: var(--surface-2); border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 10.5px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; text-align: left; padding: 9px 12px; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
+.tx-table tbody tr { border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.08s; height: var(--row-height); }
+.tx-table tbody tr:hover { background: var(--surface-2); }
+.tx-table tbody tr.selected { background: var(--phase3-bg); }
+.tx-table tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--text); }
+.tx-table tbody tr.done td { color: var(--text-muted); }
+.tx-table tbody tr:last-child { border-bottom: none; }
+.tx-table td { padding: 8px 12px; vertical-align: middle; }
+.col-date { width: 92px; font-family: var(--font-mono); font-size: 11.5px; white-space: nowrap; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.col-dir { width: 22px; }
+.col-amount { width: 110px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; font-weight: 500; white-space: nowrap; font-size: 13px; }
+.col-amount.in { color: var(--eingang); }
+.col-amount.out { color: var(--text); }
+.col-party { min-width: 180px; }
+.col-zweck { color: var(--text-muted); font-size: 12px; max-width: 0; }
+.col-status { width: 130px; }
+.col-action { width: 36px; text-align: right; }
+.tx-table .party-cell { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.tx-table .party-name { font-weight: 500; }
+.tx-table .party-meta { font-size: 10.5px; color: var(--text-muted); font-family: var(--font-mono); }
+.tx-table .verwendung-cell { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dir-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.dir-dot.in { background: var(--eingang); }
+.dir-dot.out { background: var(--ausgang); }
+
+.pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; }
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; }
+.pill.phase1 { background: var(--phase1-bg); color: var(--phase1); }
+.pill.phase1::before { background: var(--phase1); }
+.pill.phase2 { background: var(--phase2-bg); color: var(--phase2); }
+.pill.phase2::before { background: var(--phase2); }
+.pill.phase3 { background: var(--phase3-bg); color: var(--phase3); }
+.pill.phase3::before { background: var(--phase3); }
+.pill.done { background: var(--done-bg); color: var(--done); }
+.pill.done::before { background: var(--done); }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.warn::before { background: var(--warn); }
+.pill.danger { background: var(--danger-bg); color: var(--danger); }
+.pill.danger::before { background: var(--danger); }
+.pill.ghost { background: var(--surface-3); color: var(--text-muted); }
+.pill.ghost::before { background: var(--text-faint); }
+
+.empty-state { padding: 60px 20px; text-align: center; color: var(--text-muted); }
+.empty-state .ico { width: 40px; height: 40px; border-radius: 50%; background: var(--surface-3); margin: 0 auto 12px; display: grid; place-items: center; color: var(--text-faint); }
+.empty-state .ttl { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 4px; }

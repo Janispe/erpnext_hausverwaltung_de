@@ -13,6 +13,11 @@ frappe.ui.form.on('Bankauszug Import', {
     frm.__hv_phase = _computePhase(frm);
 
     if (!frm.doc.__islocal) {
+      // Neue React-Bankimport-Ansicht (iframe-Page) mit diesem Import öffnen.
+      frm.add_custom_button(__('Bankimport-Ansicht (Beta)'), () => {
+        frappe.route_options = { import: frm.doc.name };
+        frappe.set_route('bankimport_v2');
+      });
       frm.add_custom_button('CSV parsen', () => parse_csv(frm), 'Aktionen');
       frm.add_custom_button('Bank Transaktionen erstellen', () => create_transactions(frm), 'Aktionen');
       frm.add_custom_button('Party in Bank Transactions neu zuordnen (alle)', () => relink_parties(frm), 'Aktionen');

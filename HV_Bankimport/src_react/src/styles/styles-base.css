@@ -1,0 +1,55 @@
+/* Bankimport — Hausverwaltung. Sachlich, bank-seriös. */
+
+:root {
+  --bg: #f7f6f3;
+  --surface: #ffffff;
+  --surface-2: #fbfaf7;
+  --surface-3: #f1efea;
+  --border: #e6e3dc;
+  --border-strong: #c9c5bb;
+  --text: #1a1a17;
+  --text-muted: #6b6961;
+  --text-faint: #8c8a82;
+  --eingang: #0f7a48;
+  --eingang-bg: #e8f3ec;
+  --ausgang: #b22d3b;
+  --ausgang-bg: #f7e6e7;
+  --phase1: #a35c0a; --phase1-bg: #fbf0dd;
+  --phase2: #1a4d8c; --phase2-bg: #e2ecf6;
+  --phase3: #8a6914; --phase3-bg: #f8efd2;
+  --done: #1a6b3a;   --done-bg: #e3f0e6;
+  --warn: #a14b00;   --warn-bg: #fbeacf;
+  --danger: #9b1f2b; --danger-bg: #f5dadc;
+  --font-sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --radius: 6px; --radius-lg: 10px;
+  --row-height: 48px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 13.5px; line-height: 1.4; -webkit-font-smoothing: antialiased; }
+body[data-density="compact"] { --row-height: 38px; font-size: 12.5px; }
+body[data-density="comfortable"] { --row-height: 58px; font-size: 14px; }
+#root { min-height: 100vh; }
+
+.shell { max-width: 1500px; margin: 0 auto; padding: 22px 28px 80px; }
+
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 18px; border-bottom: 1px solid var(--border); margin-bottom: 22px; }
+.topbar .brand { display: flex; align-items: center; gap: 12px; }
+.topbar .brand .mark { width: 30px; height: 30px; background: var(--text); color: var(--bg); border-radius: 6px; display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+.topbar h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.2px; }
+.topbar .crumb { color: var(--text-muted); font-size: 11.5px; margin-top: 2px; font-family: var(--font-mono); }
+.topbar .actions { display: flex; align-items: center; gap: 8px; }
+
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; font-size: 12.5px; font-weight: 500; font-family: var(--font-sans); background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: all 0.12s; white-space: nowrap; }
+.btn:hover { background: var(--surface-3); border-color: var(--border-strong); }
+.btn.primary { background: var(--text); color: var(--surface); border-color: var(--text); }
+.btn.primary:hover { background: #2c2c28; }
+.btn.subtle { background: transparent; border-color: transparent; color: var(--text-muted); }
+.btn.subtle:hover { background: var(--surface-3); color: var(--text); }
+.btn.danger { color: var(--danger); }
+.btn.danger:hover { background: var(--danger-bg); border-color: var(--danger); }
+.btn.success { color: var(--done); }
+.btn.success:hover { background: var(--done-bg); border-color: var(--done); }
+.btn.sm { height: 26px; padding: 0 9px; font-size: 12px; }
+.icon-btn { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid transparent; border-radius: var(--radius); background: transparent; cursor: pointer; color: var(--text-muted); }
+.icon-btn:hover { background: var(--surface-3); color: var(--text); border-color: var(--border); }

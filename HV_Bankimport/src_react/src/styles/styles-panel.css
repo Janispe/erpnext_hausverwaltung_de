@@ -1,0 +1,60 @@
+/* Bankimport — match panel (right side) */
+
+.match-panel-wrap { position: sticky; top: 16px; }
+.match-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; display: flex; flex-direction: column; max-height: calc(100vh - 40px); }
+.match-empty { padding: 50px 24px; text-align: center; color: var(--text-muted); }
+.match-empty .big { font-size: 32px; opacity: 0.4; margin-bottom: 10px; }
+.match-empty .ttl { font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.match-empty .sub { font-size: 12px; }
+
+.match-head { padding: 16px 18px 14px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.match-head .row-meta { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+.match-head .amount-big { font-family: var(--font-mono); font-size: 28px; font-weight: 500; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; line-height: 1.1; margin-top: 2px; white-space: nowrap; }
+.match-head .amount-big.in { color: var(--eingang); }
+.match-head .amount-big.out { color: var(--text); }
+.match-head .party-line { font-size: 13.5px; font-weight: 600; margin-top: 8px; }
+.match-head .zweck { font-size: 11.5px; color: var(--text-muted); margin-top: 4px; font-family: var(--font-mono); word-break: break-word; line-height: 1.4; }
+.match-head .iban-line { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); margin-top: 6px; }
+
+.match-body { flex: 1; overflow-y: auto; }
+.match-section { padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.match-section:last-child { border-bottom: none; }
+.match-section .sec-label { font-size: 10.5px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.match-section .sec-label .badge { background: var(--surface-3); padding: 1px 7px; border-radius: 999px; font-family: var(--font-mono); font-size: 10.5px; color: var(--text); }
+
+.invoice-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 8px; background: var(--surface); transition: all 0.12s; }
+.invoice-card:hover { border-color: var(--border-strong); }
+.invoice-card.suggested { border-color: var(--phase3); background: linear-gradient(180deg, var(--phase3-bg) 0%, var(--surface) 80%); }
+.invoice-card.alt { background: var(--surface-2); }
+.invoice-card .row1 { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.invoice-card .doc-id { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); font-weight: 500; }
+.invoice-card .amount { font-family: var(--font-mono); font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.invoice-card .party { font-size: 13px; font-weight: 600; margin: 2px 0 4px; }
+.invoice-card .ref { font-size: 11.5px; color: var(--text-muted); margin-bottom: 6px; }
+.invoice-card .meta-row { display: flex; gap: 10px; font-size: 11px; color: var(--text-faint); font-family: var(--font-mono); }
+.invoice-card .meta-row .due { display: inline-flex; align-items: center; gap: 4px; }
+.invoice-card .conf-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.invoice-card .conf-bar { flex: 1; height: 4px; background: var(--surface-3); border-radius: 2px; overflow: hidden; }
+.invoice-card .conf-fill { height: 100%; border-radius: 2px; transition: width 0.3s ease; }
+.invoice-card .conf-fill.hi { background: var(--done); }
+.invoice-card .conf-fill.mid { background: var(--warn); }
+.invoice-card .conf-fill.lo { background: var(--danger); }
+.invoice-card .conf-label { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 11.5px; font-weight: 600; }
+.invoice-card .conf-label.hi { color: var(--done); }
+.invoice-card .conf-label.mid { color: var(--warn); }
+.invoice-card .conf-label.lo { color: var(--danger); }
+.invoice-card .reason { font-size: 11px; color: var(--text-muted); margin-top: 8px; line-height: 1.5; font-style: italic; }
+
+.match-actions { display: flex; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--border); background: var(--surface-2); }
+.match-actions .btn { flex: 1; justify-content: center; }
+
+.assign-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px; cursor: pointer; transition: all 0.1s; }
+.assign-row:hover { background: var(--surface-3); border-color: var(--border-strong); }
+.assign-row .lbl { font-size: 10.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; min-width: 60px; }
+.assign-row .val { font-weight: 500; flex: 1; }
+.assign-row .val.empty { color: var(--text-faint); font-weight: 400; font-style: italic; }
+.assign-row .chev { color: var(--text-faint); }
+
+.kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; background: var(--surface); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 3px; color: var(--text-muted); }
+
+.section-divider { padding: 8px 18px 4px; font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600; background: var(--surface-2); border-bottom: 1px solid var(--border); }

@@ -1,0 +1,192 @@
+// High-level Daten-API für die Bankimport-UI. Eingebettet (im Frappe-iframe)
+// gehen die Aufrufe über die postMessage-Bridge an echte Backend-Methoden;
+// standalone (npm run dev) fallen sie auf die Mock-Daten aus data.js zurück.
+//
+// Die kurzen Aktions-Namen ("overview", "reconcile", …) sind in der Host-Page
+// (bankimport_v2.js) auf voll qualifizierte, whitelisted Server-Methoden gemappt
+// — fast alle direkt auf die bestehende bankauszug_import.py-API.
+
+import { rpc, isEmbedded, getImportFromUrl } from "./bridge.js";
+import {
+	MOCK_OVERVIEW,
+	MOCK_OPEN_INVOICES,
+	MOCK_PARTIES,
+	MOCK_ACCOUNTS,
+	MOCK_IMPORTS,
+} from "./data.js";
+
+export const embedded = isEmbedded();
+export const importName = getImportFromUrl();
+
+// ---- Übersicht / Import-Auswahl ------------------------------------------
+
+// Liste verfügbarer Importe (für den Picker, wenn ?import= fehlt).
+export async function listImports() {
+	if (!embedded) return { items: MOCK_IMPORTS, mock: true };
+	return await rpc("list_imports", {});
+}
+
+// Komplett-Übersicht: { import, rows, phaseCounts }.
+export async function loadOverview(name) {
+	if (!embedded) return { ...MOCK_OVERVIEW, mock: true };
+	return await rpc("overview", { import_name: name });
+}
+
+// ---- Globale Aktionen (doc-level) ----------------------------------------
+
+export async function parseCsv(name) {
+	if (!embedded) return { ok: true, mock: true };
+	return await rpc("parse_csv", { docname: name });
+}
+
+export async function refreshSaldo(name) {
+	if (!embedded) return { saldo_differenz: MOCK_OVERVIEW.import.saldoDifferenz, mock: true };
+	return await rpc("refresh_saldo", { docname: name });
+}
+
+export async function createBankTransactions(name, allowMissingParty = false) {
+	if (!embedded) return { created: [], errors: [], mock: true };
+	return await rpc("create_bank_transactions", {
+		docname: name,
+		allow_missing_party: allowMissingParty ? 1 : 0,
+	});
+}
+
+export async function relinkAllParties(name, overwrite = true) {
+	if (!embedded) return { processed: 0, updated: 0, mock: true };
+	return await rpc("relink_all_parties", { docname: name, overwrite: overwrite ? 1 : 0 });
+}
+
+// ---- Phase 1: Party zuordnen ---------------------------------------------
+
+// Such-Endpoint für Customer/Supplier (Phase-1-Zuordnung).
+export async function searchParties(partyType, txt) {
+	if (!embedded) {
+		const q = (txt || "").toLowerCase();
+		return { items: MOCK_PARTIES.filter((p) => p.label.toLowerCase().includes(q)) };
+	}
+	return await rpc("search_parties", { party_type: partyType, txt: txt || "" });
+}
+
+// Bestehende Party einer Zeile zuordnen (+ Relink aller passenden Zeilen).
+export async function assignParty(name, rowName, partyType, party, iban) {
+	if (!embedded) return { row_party_type: partyType, row_party: party, mock: true };
+	return await rpc("assign_party", {
+		docname: name, row_name: rowName, party_type: partyType, party, iban: iban || "",
+	});
+}
+
+// Neue Party (+ Bank Account) aus der Zeile anlegen und zuordnen.
+export async function createParty(name, rowName, partyType, partyName) {
+	if (!embedded) return { party: partyName, party_created: true, mock: true };
+	return await rpc("create_party", {
+		docname: name, row_name: rowName, party_type: partyType, party_name: partyName || "",
+	});
+}
+
+// ---- Phase 3: Beleg zuordnen / buchen -------------------------------------
+
+export async function getOpenInvoices(name, rowName) {
+	if (!embedded) return { ...MOCK_OPEN_INVOICES, mock: true };
+	const r = await rpc("open_invoices", { docname: name, row_name: rowName });
+	return {
+		invoiceDoctype: r.invoice_doctype,
+		invoices: r.invoices || [],
+		targetAmount: r.target_amount,
+	};
+}
+
+// invoices: [{ name, allocated_amount }]
+export async function reconcileInvoices(name, rowName, invoices, leftoverAsAdvance = false) {
+	if (!embedded) return { ok: true, payment_entry: "PE-DEMO", mock: true };
+	return await rpc("reconcile", {
+		docname: name,
+		row_name: rowName,
+		invoice_names: JSON.stringify(invoices),
+		leftover_as_advance: leftoverAsAdvance ? 1 : 0,
+	});
+}
+
+export async function createStandalonePayment(name, rowName, remarks) {
+	if (!embedded) return { ok: true, payment_entry: "PE-DEMO", mock: true };
+	return await rpc("standalone_payment", {
+		docname: name, row_name: rowName, remarks: remarks || "",
+	});
+}
+
+export async function getExpectedCostCenter(name, rowName) {
+	if (!embedded) return { cost_center: null, mock: true };
+	return await rpc("expected_cost_center", { docname: name, row_name: rowName });
+}
+
+export async function searchAccounts(txt) {
+	if (!embedded) {
+		const q = (txt || "").toLowerCase();
+		return { items: MOCK_ACCOUNTS.filter((a) => a.value.toLowerCase().includes(q)) };
+	}
+	return await rpc("search_accounts", { txt: txt || "" });
+}
+
+// splits: optional [{ account, cost_center?, amount }]
+export async function createJournalEntry(name, rowName, { account, costCenter, remarks, splits } = {}) {
+	if (!embedded) return { ok: true, journal_entry: "JE-DEMO", mock: true };
+	const params = { docname: name, row_name: rowName };
+	if (account) params.account = account;
+	if (costCenter) params.cost_center = costCenter;
+	if (remarks) params.remarks = remarks;
+	if (splits && splits.length) params.splits = JSON.stringify(splits);
+	return await rpc("journal_entry", params);
+}
+
+// ---- Phase 3: Abschlagsplan (Supplier-Ausgang) ----------------------------
+
+export async function getAbschlagsplanCandidates(name, rowName) {
+	if (!embedded) return { candidates: [], mock: true };
+	return await rpc("abschlag_candidates", { docname: name, row_name: rowName });
+}
+
+export async function assignAbschlagsplan(name, rowName, planRowName, remarks) {
+	if (!embedded) return { ok: true, payment_entry: "PE-DEMO", mock: true };
+	return await rpc("assign_abschlag", {
+		docname: name, row_name: rowName, plan_row_name: planRowName, remarks: remarks || "",
+	});
+}
+
+// ---- Phase 3: Kreditrate (Ausgang) ----------------------------------------
+
+export async function getOpenKreditraten(name, rowName) {
+	if (!embedded) return { candidates: [], can_create_from_statement: false, mock: true };
+	return await rpc("kreditraten", { docname: name, row_name: rowName });
+}
+
+export async function assignKreditrate(name, rowName, kreditvertrag, rateName) {
+	if (!embedded) return { ok: true, journal_entry: "JE-DEMO", mock: true };
+	return await rpc("assign_kreditrate", {
+		docname: name, row_name: rowName, kreditvertrag, rate_name: rateName,
+	});
+}
+
+export async function bookKreditrateFromStatement(name, rowName) {
+	if (!embedded) return { ok: false, message: "Standalone-Demo", mock: true };
+	return await rpc("book_kreditrate_statement", { docname: name, row_name: rowName });
+}
+
+// ---- Navigation (öffnet Desk-Formulare in der Eltern-Page) ----------------
+
+// Ein Desk-Dokument im Eltern-Desk öffnen (Bank Transaction, Payment Entry, …).
+export async function openDoc(doctype, docname) {
+	if (!embedded) return { ok: true, mock: true };
+	return await rpc("open_doc", { doctype, docname });
+}
+
+// Den Bankauszug-Import als klassisches Formular öffnen.
+export async function openImportForm(name) {
+	if (!embedded) return { ok: true, mock: true };
+	return await rpc("open_import_form", { docname: name });
+}
+
+// Neuen Bankauszug Import anlegen (Desk-Formular).
+export async function newImport() {
+	if (!embedded) return { ok: true, mock: true };
+	return await rpc("new_import", {});
+}

@@ -1,0 +1,83 @@
+/* Ergänzendes CSS für die verdrahteten Komponenten (LinkSearch, Segmente,
+   Toast, globale Aktionen, Import-Picker, Allocation-UI). Nutzt die Variablen
+   aus styles-base.css. */
+
+/* Spinner */
+.hv-spinner {
+	display: inline-block;
+	width: 14px; height: 14px;
+	border: 2px solid var(--border-strong);
+	border-top-color: var(--text);
+	border-radius: 50%;
+	animation: hv-spin 0.7s linear infinite;
+	vertical-align: middle;
+}
+@keyframes hv-spin { to { transform: rotate(360deg); } }
+
+.app-loading, .app-error, .panel-loading {
+	display: flex; align-items: center; gap: 10px;
+	padding: 28px; color: var(--text-muted); font-size: 13px;
+}
+.app-error { color: var(--danger); }
+.panel-loading { padding: 18px; }
+
+/* Segmented control */
+.seg { display: inline-flex; background: var(--surface-3); border: 1px solid var(--border); border-radius: var(--radius); padding: 2px; gap: 2px; flex-wrap: wrap; }
+.seg-btn { border: none; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+.seg-btn:hover { color: var(--text); }
+.seg-btn.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+
+/* LinkSearch autocomplete */
+.link-search { position: relative; }
+.link-search-input { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-muted); }
+.link-search-input input { flex: 1; border: none; outline: none; background: transparent; font-size: 13px; color: var(--text); font-family: var(--font-sans); }
+.link-search-list { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0; max-height: 260px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
+.link-search-item { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; text-align: left; border: none; background: transparent; padding: 7px 11px; cursor: pointer; }
+.link-search-item.active, .link-search-item:hover { background: var(--surface-3); }
+.link-search-item .ls-value { font-size: 12.5px; font-weight: 500; color: var(--text); }
+.link-search-item .ls-desc { font-size: 11px; color: var(--text-faint); font-family: var(--font-mono); }
+
+/* Form bits */
+.field-label { font-size: 10.5px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; }
+.text-input { width: 100%; height: 32px; padding: 0 10px; font-size: 13px; font-family: var(--font-sans); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); outline: none; }
+.text-input:focus { border-color: var(--border-strong); }
+.picked { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 32px; padding: 0 6px 0 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); font-size: 12.5px; font-family: var(--font-mono); }
+.hint { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; margin-top: 8px; }
+
+/* Allocation UI */
+.alloc-summary { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-muted); margin-bottom: 10px; font-family: var(--font-mono); }
+.alloc-summary strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.alloc-summary .ok strong { color: var(--done); }
+.alloc-summary .bad strong { color: var(--danger); }
+.alloc-input { width: 90px; height: 24px; padding: 0 6px; font-size: 12px; font-family: var(--font-mono); text-align: right; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); }
+.advance-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); margin: 8px 0; line-height: 1.4; }
+
+/* Done rows clickable */
+.assign-row.done-row { width: 100%; background: var(--done-bg); border-color: #bcdcc4; }
+.assign-row.done-row .val.mono { font-family: var(--font-mono); font-size: 12px; }
+.link-btn { border: none; background: transparent; padding: 0; color: var(--phase2); font-family: var(--font-mono); font-size: 11px; cursor: pointer; text-decoration: underline; }
+
+/* Global actions strip */
+.global-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 4px 0 16px; padding: 10px 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); }
+.global-actions .ga-status { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
+.global-actions .ga-spacer { flex: 1; }
+
+/* Import picker */
+.import-picker { min-height: 100vh; display: grid; place-items: center; padding: 40px 20px; }
+.ip-card { width: 100%; max-width: 520px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 26px; }
+.ip-card h2 { margin: 0 0 16px; font-size: 18px; font-weight: 600; }
+.ip-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ip-list button { width: 100%; text-align: left; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; cursor: pointer; transition: all 0.12s; }
+.ip-list button:hover { border-color: var(--border-strong); background: var(--surface-3); }
+.ip-title { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.ip-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 3px; font-family: var(--font-mono); }
+
+/* Toast */
+.hv-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; align-items: center; gap: 10px; max-width: 560px; padding: 11px 16px; border-radius: var(--radius); font-size: 13px; color: var(--surface); background: var(--text); box-shadow: 0 8px 30px rgba(0,0,0,0.22); cursor: pointer; animation: hv-toast-in 0.18s ease; }
+.hv-toast.success { background: var(--done); }
+.hv-toast.error { background: var(--danger); }
+.hv-toast-x { border: none; background: transparent; color: inherit; opacity: 0.7; cursor: pointer; display: inline-flex; }
+@keyframes hv-toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* Default density so layout looks balanced without the tweaks panel */
+body { --row-height: 48px; }
