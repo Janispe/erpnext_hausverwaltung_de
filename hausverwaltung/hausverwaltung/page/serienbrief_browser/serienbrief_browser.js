@@ -44,6 +44,32 @@ const NAV_ACTIONS = {
 	},
 };
 
+// Modul-Scope, damit on_page_show den im on_page_load installierten Listener
+// nach einem "hide"/Page-Wechsel wieder reaktivieren kann.
+let _browserOnMessage = null;
+let _browserListenerActive = false;
+
+function _attachBrowserListener() {
+	if (_browserOnMessage && !_browserListenerActive) {
+		window.addEventListener("message", _browserOnMessage);
+		_browserListenerActive = true;
+	}
+}
+
+function _detachBrowserListener() {
+	if (_browserOnMessage && _browserListenerActive) {
+		window.removeEventListener("message", _browserOnMessage);
+		_browserListenerActive = false;
+	}
+}
+
+// on_page_load läuft bei gecachter Page nicht noch einmal, on_page_show schon.
+// Ohne Re-Attach hier verliert der Browser nach „Durchlauf öffnen → Zurück" alle
+// postMessage-Aktionen (z.B. erneutes Klicken auf „Durchlauf" macht nichts).
+frappe.pages["serienbrief_browser"].on_page_show = function () {
+	_attachBrowserListener();
+};
+
 frappe.pages["serienbrief_browser"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
@@ -149,11 +175,13 @@ frappe.pages["serienbrief_browser"].on_page_load = function (wrapper) {
 		}
 	}
 
-	window.addEventListener("message", onMessage);
+	_browserOnMessage = onMessage;
+	_attachBrowserListener();
 
-	// Aufräumen, wenn die Seite verlassen wird.
+	// Aufräumen, wenn die Seite verlassen wird. Der Listener wird beim erneuten
+	// on_page_show via _attachBrowserListener() reaktiviert.
 	page.wrapper.on("hide", () => {
 		$(window).off("resize.hv_serienbrief_browser");
-		window.removeEventListener("message", onMessage);
+		_detachBrowserListener();
 	});
 };

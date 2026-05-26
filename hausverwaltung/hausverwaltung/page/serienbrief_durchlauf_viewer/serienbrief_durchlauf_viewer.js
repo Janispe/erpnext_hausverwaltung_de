@@ -63,9 +63,30 @@ function dl_build_src(docname, vorlage) {
 	return s;
 }
 
+// Modul-Scope für den message-Listener, damit on_page_show ihn nach einem
+// "hide" (Page-Wechsel) wieder reaktivieren kann. Sonst sind nach einmaligem
+// Verlassen alle postMessage-Aktionen (Lauf starten, Empfänger, PDF …) tot.
+let _viewerOnMessage = null;
+let _viewerListenerActive = false;
+
+function _attachViewerListener() {
+	if (_viewerOnMessage && !_viewerListenerActive) {
+		window.addEventListener("message", _viewerOnMessage);
+		_viewerListenerActive = true;
+	}
+}
+
+function _detachViewerListener() {
+	if (_viewerOnMessage && _viewerListenerActive) {
+		window.removeEventListener("message", _viewerOnMessage);
+		_viewerListenerActive = false;
+	}
+}
+
 // Bei Navigation auf eine andere/neue docname-Route (oder frischer Vorlage-Vorauswahl)
-// das iframe neu laden.
+// das iframe neu laden — und den Listener reaktivieren.
 frappe.pages["serienbrief_durchlauf_viewer"].on_page_show = function () {
+	_attachViewerListener();
 	const docname = dl_route_docname();
 	const vorlage = dl_consume_vorlage();
 	if (_frame && (docname !== _currentDocname || (!docname && vorlage))) {
@@ -160,10 +181,11 @@ frappe.pages["serienbrief_durchlauf_viewer"].on_page_load = function (wrapper) {
 		}
 	}
 
-	window.addEventListener("message", onMessage);
+	_viewerOnMessage = onMessage;
+	_attachViewerListener();
 
 	page.wrapper.on("hide", () => {
 		$(window).off("resize.hv_serienbrief_durchlauf");
-		window.removeEventListener("message", onMessage);
+		_detachViewerListener();
 	});
 };

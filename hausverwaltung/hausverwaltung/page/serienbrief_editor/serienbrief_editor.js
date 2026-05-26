@@ -73,9 +73,31 @@ function buildEditorSrc(template) {
 	return s;
 }
 
+// Modul-Scope für den message-Listener, damit on_page_show ihn nach einem
+// "hide" (Page-Wechsel) wieder reaktivieren kann. Sonst sind nach einmaligem
+// Verlassen alle postMessage-Aktionen (Speichern, Vorschau …) im Editor tot.
+let _editorOnMessage = null;
+let _editorListenerActive = false;
+
+function _attachEditorListener() {
+	if (_editorOnMessage && !_editorListenerActive) {
+		window.addEventListener("message", _editorOnMessage);
+		_editorListenerActive = true;
+	}
+}
+
+function _detachEditorListener() {
+	if (_editorOnMessage && _editorListenerActive) {
+		window.removeEventListener("message", _editorOnMessage);
+		_editorListenerActive = false;
+	}
+}
+
 // Erneute Navigation Browser → Editor: on_page_load läuft bei gecachter Page nicht
-// noch einmal, on_page_show schon. Hier das iframe mit der neuen Vorlage neu laden.
+// noch einmal, on_page_show schon. Hier das iframe mit der neuen Vorlage neu laden
+// und den Listener reaktivieren.
 frappe.pages["serienbrief_editor"].on_page_show = function () {
+	_attachEditorListener();
 	const t = consumeTemplateRoute();
 	if (t && _editorReload) _editorReload(t);
 };
@@ -189,11 +211,13 @@ frappe.pages["serienbrief_editor"].on_page_load = function (wrapper) {
 		}
 	}
 
-	window.addEventListener("message", onMessage);
+	_editorOnMessage = onMessage;
+	_attachEditorListener();
 
-	// Aufräumen, wenn die Seite verlassen wird.
+	// Aufräumen, wenn die Seite verlassen wird. Reaktiviert wird der Listener
+	// beim nächsten on_page_show via _attachEditorListener().
 	page.wrapper.on("hide", () => {
 		$(window).off("resize.hv_serienbrief_editor");
-		window.removeEventListener("message", onMessage);
+		_detachEditorListener();
 	});
 };
