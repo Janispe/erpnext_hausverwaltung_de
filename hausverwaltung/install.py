@@ -25,6 +25,7 @@ def after_install() -> None:
     _ensure_company_account_defaults(reason="after_install")
     _ensure_dunning_serienbrief_link_fields(reason="after_install")
     _ensure_serienbrief_print_format_link_field(reason="after_install")
+    _ensure_immobilie_muelltrennung_field(reason="after_install")
     _ensure_serienbrief_dokument_print_format(reason="after_install")
     _ensure_hv_dunning_print_format(reason="after_install")
     _ensure_zahlungshistorie_baustein(reason="after_install")
@@ -380,6 +381,7 @@ def after_migrate() -> None:
     _ensure_eigentuemer_custom_permissions(reason="after_migrate")
     _ensure_dunning_serienbrief_link_fields(reason="after_migrate")
     _ensure_serienbrief_print_format_link_field(reason="after_migrate")
+    _ensure_immobilie_muelltrennung_field(reason="after_migrate")
     _ensure_serienbrief_dokument_print_format(reason="after_migrate")
     _ensure_hv_dunning_print_format(reason="after_migrate")
     _ensure_zahlungshistorie_baustein(reason="after_migrate")
@@ -931,6 +933,53 @@ def _ensure_serienbrief_print_format_link_field(*, reason: str) -> None:
             frappe.log_error(
                 frappe.get_traceback(),
                 f"hausverwaltung Print Format Serienbrief field setup failed ({reason})",
+            )
+        except Exception:
+            pass
+
+
+def _ensure_immobilie_muelltrennung_field(*, reason: str) -> None:
+    """Custom Field ``muelltrennung_konfiguration`` (Text Editor) auf ``Immobilie``.
+
+    Hält den hausspezifischen Mülltrennungs-Block (Tonnen-Liste + Beschreibungen +
+    BSR-Recyclinghof-Hinweis + Glascontainer-Adressen), den die kanonische
+    Serienbrief-Vorlage „Mülltrennung Regeln" pro Empfänger über
+    ``{{$ mietvertrag.wohnung.immobilie.muelltrennung_konfiguration $}}`` zieht.
+    So entfällt der frühere Wildwuchs von Mülltrennung-G/-L/-W-Vorlagen mit
+    redundantem Boilerplate.
+
+    Idempotent über die Existenzprüfung des Custom-Field-Docs.
+    """
+    try:
+        docname = "Immobilie-muelltrennung_konfiguration"
+        if frappe.db.exists("Custom Field", docname):
+            return
+        if not frappe.db.exists("DocType", "Immobilie"):
+            return
+        frappe.get_doc({
+            "doctype": "Custom Field",
+            "dt": "Immobilie",
+            "fieldname": "muelltrennung_konfiguration",
+            "label": "Mülltrennungs-Konfiguration (Serienbrief-Block)",
+            "fieldtype": "Text Editor",
+            "description": (
+                "HTML-Block für die hausspezifische Tonnen-/Mülltrennungs-Beschreibung. "
+                "Wird vom Serienbrief 'Mülltrennung Regeln' eingebunden über den Pfad "
+                "{{$ mietvertrag.wohnung.immobilie.muelltrennung_konfiguration $}}. "
+                "Inhalt: Tonnen-Liste + Beschreibungen + BSR-Recyclinghof-Hinweis. "
+                "Leer lassen wenn diese Immobilie keinen Mülltrennungs-Rundbrief bekommt."
+            ),
+            "insert_after": "objekt",
+        }).insert(ignore_permissions=True)
+        try:
+            frappe.db.commit()
+        except Exception:
+            pass
+    except Exception:
+        try:
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"hausverwaltung Immobilie muelltrennung_konfiguration setup failed ({reason})",
             )
         except Exception:
             pass
