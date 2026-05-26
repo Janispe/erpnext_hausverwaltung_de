@@ -29,6 +29,38 @@ function useAction(notify) {
 	return [busy, run];
 }
 
+// ───────────────────────── Smart-Default-Inferenz ───────────────────────────
+// Liefert für eine Phase-3-Zeile den wahrscheinlich richtigen Modus + Begründung.
+// Bezieht sich auf die Modi-IDs aus BookingActions: invoice|abschlag|kredit|payment|journal.
+
+function inferBestMode(row, availableModes) {
+	const ids = new Set(availableModes.map((m) => m.id));
+	const z = (row.verwendungszweck || "").toLowerCase();
+	const auftr = (row.auftraggeber || "").toLowerCase();
+
+	// 1) Konkreter Auto-Match auf eine Rechnung schlägt alles
+	if (row.autoMatch && row.autoMatch.rechnungId && ids.has("invoice")) {
+		return {
+			id: "invoice",
+			reason: row.autoMatch.reason || "Offener Beleg dieser Höhe gefunden",
+		};
+	}
+	// 2) Kreditrate – Tilgung/Zins/Annuität/Darlehen
+	if (ids.has("kredit") && /tilgung|zins(en)?|annuit|darlehen|kredit|leasing/.test(z)) {
+		return { id: "kredit", reason: "Verwendungszweck deutet auf Darlehensrate hin" };
+	}
+	// 3) Abschlag – Akonto/Vorauszahlung/NKV
+	if (ids.has("abschlag") && /akonto|abschlag|vorauszahlung|nebenkost|nkv|wp[-_ ]?vz/.test(z)) {
+		return { id: "abschlag", reason: "Verwendungszweck deutet auf Akonto-/Abschlagszahlung hin" };
+	}
+	// 4) Buchungssatz – Finanzamt / Steuer
+	if (ids.has("journal") && (/finanzamt|umsatzsteuer|vorsteuer|lohnsteuer/.test(z) || /finanzamt/.test(auftr))) {
+		return { id: "journal", reason: "Finanzamt – direkt auf Steuer-Konto buchen" };
+	}
+	// 5) Default: erster verfügbarer Modus, kein lautes Banner
+	return { id: availableModes[0]?.id || "journal", reason: null };
+}
+
 // ───────────────────────── Phase 1: Partei zuordnen ─────────────────────────
 
 function PartyAssign({ docname, row, onActionDone, notify }) {
@@ -440,15 +472,41 @@ function BookingActions({ docname, row, onActionDone, notify }) {
 		return m;
 	}, [isOut, hasParty, row.partyTyp]);
 
-	const [mode, setMode] = useState(modes[0]?.id || "journal");
-	useEffect(() => { setMode(modes[0]?.id || "journal"); }, [row.id]); // reset bei Zeilenwechsel
+	// Smarter Default: pro Zeile neu inferieren
+	const reco = useMemo(() => inferBestMode(row, modes), [row.id, modes]);
+	const [mode, setMode] = useState(reco.id);
+	// Reset bei Zeilenwechsel auf die jeweils empfohlene Mode
+	useEffect(() => { setMode(reco.id); }, [row.id]); // eslint-disable-line
+
+	const recoLabel = modes.find((m) => m.id === reco.id)?.lbl;
+	const onReco = mode === reco.id;
 
 	return (
 		<div className="match-section">
 			<div className="sec-label">Beleg zuordnen</div>
+
+			{/* Empfehlungs-Karte: erklärt, warum dieser Modus vorgewählt ist */}
+			{reco.reason && (
+				<div className={`reco-card ${onReco ? "active" : "muted"}`}>
+					<div className="reco-tag">
+						{onReco ? "Empfohlen" : "Empfehlung war"} · {recoLabel}
+					</div>
+					<div className="reco-reason">{reco.reason}</div>
+					{!onReco && (
+						<button className="reco-revert" onClick={() => setMode(reco.id)}>
+							<Icon name="refresh" size={11} /> Wieder vorschlagen
+						</button>
+					)}
+				</div>
+			)}
+
 			<div className="seg" role="tablist" style={{ marginBottom: 12 }}>
 				{modes.map((m) => (
-					<button key={m.id} className={`seg-btn ${mode === m.id ? "active" : ""}`} onClick={() => setMode(m.id)}>
+					<button
+						key={m.id}
+						className={`seg-btn ${mode === m.id ? "active" : ""} ${m.id === reco.id && reco.reason ? "is-reco" : ""}`}
+						onClick={() => setMode(m.id)}
+					>
 						{m.lbl}
 					</button>
 				))}

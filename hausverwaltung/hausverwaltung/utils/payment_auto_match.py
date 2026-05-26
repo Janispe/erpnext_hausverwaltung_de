@@ -48,40 +48,31 @@ _RENT_TYPE_LABELS = {
 }
 
 
-def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
-	"""Hauptentry-Point: versucht eine Bank Transaction automatisch zuzuordnen.
+def prepare_invoice_match(bt) -> dict[str, Any]:
+	"""Bereitet einen Bank-Transaction-Match auf offene Rechnungen vor.
 
-	Idempotent — wenn die BT bereits ``payment_entries`` hat (status =
-	Reconciled / Partially Reconciled), wird nichts gemacht.
+	Macht Idempotenz/Direction-Checks, lädt offene Sales/Purchase Invoices der
+	Party und wendet bei Lieferanten den Cost-Center-Filter an. Reine Lese-
+	Operation — keine Buchungen, kein DB-Write.
 
-	Returns ein Dict mit:
-	    matched: bool
-	    payment_entry: Name des erstellten PE (oder None)
-	    invoices: Liste der zugeordneten Rechnungen
-	    strategy: 'single' | 'month_<key>' | 'all'
-	    reason: maschinen-lesbarer Grund bei kein Match
-	    message: kurze deutsche Zusammenfassung für UI
+	Returns einen von:
+	    { "ok": True, "candidates": [...], "invoice_doctype": "...",
+	      "target_amount": float }
+	    { "ok": False, "reason": "...", "message": "..." }
+
+	Damit teilen sich der echte Matcher (``auto_match_bank_transaction``) und
+	der Dry-Run-Suggester (bankimport_v2.py) Setup und Cost-Center-Filter, ohne
+	die Strategie-Loops doppelt zu pflegen.
 	"""
-	bt = frappe.get_doc("Bank Transaction", bt_name)
-
-	# Idempotenz: bereits zugeordnet?
 	if bt.get("payment_entries"):
-		return {
-			"matched": False,
-			"reason": "already_reconciled",
-			"message": "Bereits zugeordnet",
-		}
+		return {"ok": False, "reason": "already_reconciled", "message": "Bereits zugeordnet"}
 
 	if not bt.party_type or not bt.party:
-		return {
-			"matched": False,
-			"reason": "no_party",
-			"message": "Keine Party an Bank Transaction",
-		}
+		return {"ok": False, "reason": "no_party", "message": "Keine Party an Bank Transaction"}
 
 	if bt.party_type not in ("Customer", "Supplier"):
 		return {
-			"matched": False,
+			"ok": False,
 			"reason": "unsupported_party_type",
 			"message": f"Party-Typ '{bt.party_type}' nicht unterstützt",
 		}
@@ -92,7 +83,7 @@ def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 	if bt.party_type == "Customer":
 		if deposit <= 0:
 			return {
-				"matched": False,
+				"ok": False,
 				"reason": "wrong_direction_for_customer",
 				"message": "Customer aber kein Eingang — übersprungen",
 			}
@@ -102,7 +93,7 @@ def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 	else:  # Supplier
 		if withdrawal <= 0:
 			return {
-				"matched": False,
+				"ok": False,
 				"reason": "wrong_direction_for_supplier",
 				"message": "Supplier aber kein Ausgang — übersprungen",
 			}
@@ -110,7 +101,6 @@ def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 		invoice_doctype = "Purchase Invoice"
 		party_field = "supplier"
 
-	# Offene Rechnungen abfragen
 	candidates = frappe.get_all(
 		invoice_doctype,
 		filters={
@@ -124,7 +114,7 @@ def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 
 	if not candidates:
 		return {
-			"matched": False,
+			"ok": False,
 			"reason": "no_open_invoices",
 			"message": f"Keine offenen {invoice_doctype}s für {bt.party}",
 		}
@@ -142,7 +132,7 @@ def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 				filtered.append(inv)
 		if not filtered:
 			return {
-				"matched": False,
+				"ok": False,
 				"reason": "no_matching_cost_center",
 				"message": (
 					f"{len(candidates)} offene Rechnung(en) für {bt.party}, "
@@ -150,6 +140,37 @@ def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 				),
 			}
 		candidates = filtered
+
+	return {
+		"ok": True,
+		"candidates": candidates,
+		"invoice_doctype": invoice_doctype,
+		"target_amount": target_amount,
+	}
+
+
+def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
+	"""Hauptentry-Point: versucht eine Bank Transaction automatisch zuzuordnen.
+
+	Idempotent — wenn die BT bereits ``payment_entries`` hat (status =
+	Reconciled / Partially Reconciled), wird nichts gemacht.
+
+	Returns ein Dict mit:
+	    matched: bool
+	    payment_entry: Name des erstellten PE (oder None)
+	    invoices: Liste der zugeordneten Rechnungen
+	    strategy: 'single' | 'month_<key>' | 'all'
+	    reason: maschinen-lesbarer Grund bei kein Match
+	    message: kurze deutsche Zusammenfassung für UI
+	"""
+	bt = frappe.get_doc("Bank Transaction", bt_name)
+	prep = prepare_invoice_match(bt)
+	if not prep["ok"]:
+		return {"matched": False, "reason": prep["reason"], "message": prep["message"]}
+
+	candidates = prep["candidates"]
+	invoice_doctype = prep["invoice_doctype"]
+	target_amount = prep["target_amount"]
 
 	# Strategy 1: Single invoice exact
 	for inv in candidates:

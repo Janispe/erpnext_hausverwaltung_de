@@ -58,3 +58,78 @@
 .kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; background: var(--surface); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 3px; color: var(--text-muted); }
 
 .section-divider { padding: 8px 18px 4px; font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+/* ───────────────────────── Empfehlungs-Karte ─────────────────────────────
+   Diese Regeln ans Ende von HV_Bankimport/src_react/src/styles/styles-panel.css
+   anhängen. Sie nutzen die bereits vorhandenen Custom-Properties
+   (--phase3, --phase3-bg, --surface, --border …) – keine neuen Tokens.
+*/
+
+.reco-card {
+	border-radius: var(--radius);
+	padding: 10px 12px 12px;
+	margin-bottom: 12px;
+	position: relative;
+	transition: opacity 0.15s, background 0.15s;
+}
+.reco-card.active {
+	background: linear-gradient(180deg, var(--phase3-bg) 0%, var(--surface) 110%);
+	border: 1px solid var(--phase3);
+}
+.reco-card.muted {
+	background: var(--surface-2);
+	border: 1px dashed var(--border);
+	opacity: 0.85;
+}
+.reco-card .reco-tag {
+	font-size: 10px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.6px;
+	color: var(--phase3);
+	margin-bottom: 4px;
+}
+.reco-card.muted .reco-tag { color: var(--text-muted); }
+.reco-card .reco-reason {
+	font-size: 12.5px;
+	color: var(--text);
+	line-height: 1.5;
+}
+.reco-card.muted .reco-reason { color: var(--text-muted); }
+.reco-card .reco-revert {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin-top: 8px;
+	padding: 4px 9px;
+	font: inherit;
+	font-size: 11px;
+	color: var(--text-muted);
+	background: transparent;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	cursor: pointer;
+	transition: all 0.1s;
+}
+.reco-card .reco-revert:hover {
+	color: var(--text);
+	background: var(--surface);
+	border-color: var(--border-strong);
+}
+
+/* Markiert die Tab, die der KI-Empfehlung entspricht – dezenter Punkt links */
+.seg-btn.is-reco { position: relative; }
+.seg-btn.is-reco::before {
+	content: "";
+	position: absolute;
+	left: 6px;
+	top: 50%;
+	transform: translateY(-50%);
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: var(--phase3);
+}
+.seg-btn.is-reco.active::before {
+	background: currentColor;
+	opacity: 0.6;
+}

@@ -76,6 +76,40 @@ def _bank_account_iban(bank_account: str | None) -> str | None:
 	return None
 
 
+def _suggest_invoice_for_row(bt_name: str) -> dict[str, Any] | None:
+	"""Dry-Run: schlägt für eine Phase-3-Zeile eine offene Rechnung vor, wenn
+	exakt EINE Rechnung der Party mit dem Bank-Betrag übereinstimmt.
+
+	Spiegelt Strategy 1 (single exact) von ``auto_match_bank_transaction`` —
+	ohne zu buchen. Die Strategien 2 (Monats-Summe) und 3 (Alle-Summe) erzeugen
+	ein Set von Rechnungen, das nicht in eine Single-ID-Empfehlung passt; die
+	zeigt das UI eh erst beim Klick auf den Rechnungs-Tab.
+
+	Returns ``{ "rechnungId": "...", "reason": "..." }`` oder ``None``.
+	"""
+	from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+		_TOLERANCE,
+		prepare_invoice_match,
+	)
+
+	try:
+		bt = frappe.get_doc("Bank Transaction", bt_name)
+	except frappe.DoesNotExistError:
+		return None
+	prep = prepare_invoice_match(bt)
+	if not prep["ok"]:
+		return None
+
+	target = prep["target_amount"]
+	for inv in prep["candidates"]:
+		if abs(flt(inv.outstanding_amount) - target) < _TOLERANCE:
+			return {
+				"rechnungId": inv.name,
+				"reason": "Offener Beleg dieser Höhe gefunden",
+			}
+	return None
+
+
 @frappe.whitelist()
 def get_overview(import_name: str) -> dict[str, Any]:
 	"""Komplette Übersicht für die Bankimport-UI: importMeta + Zeilen + Phase-Counts."""
@@ -105,6 +139,16 @@ def get_overview(import_name: str) -> dict[str, Any]:
 			betrag = -abs(betrag)
 		elif row.richtung == "Eingang":
 			betrag = abs(betrag)
+		# Rechnungs-Empfehlung (Dry-Run) nur für Phase-3-Zeilen mit Party und BT.
+		# Strikt opportunistisch: jede Exception schluckt das Feld zu ``None``,
+		# damit der Overview-Endpoint nie wegen eines Suggester-Fehlers wackelt.
+		auto_match = None
+		if phase == 3 and row.party and row.bank_transaction:
+			try:
+				auto_match = _suggest_invoice_for_row(row.bank_transaction)
+			except Exception:
+				auto_match = None
+
 		rows_out.append(
 			{
 				"id": row.name,
@@ -124,6 +168,7 @@ def get_overview(import_name: str) -> dict[str, Any]:
 				"rowStatus": _row_status(rd, phase),
 				"phase": phase,
 				"autoMatchMessage": row.auto_match_message,
+				"autoMatch": auto_match,
 			}
 		)
 
