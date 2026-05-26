@@ -4,11 +4,28 @@
 
 .browser-app {
   display: grid;
-  grid-template-columns: 240px 1fr auto;
+  /* Spalten: Sidebar | Resize-Handle | Hauptliste | Preview. Sidebar-Breite
+     wird zur Laufzeit per inline-style aus dem persistierten Pref gesetzt. */
+  grid-template-columns: 240px 6px 1fr auto;
   height: 100vh;
   overflow: hidden;
   font-family: var(--font-sans);
   background: var(--bg);
+}
+.browser-app.resizing-sidebar { cursor: col-resize; user-select: none; }
+.browser-app.resizing-sidebar * { user-select: none !important; }
+
+/* Vertikaler Drag-Handle zwischen Sidebar und Hauptliste. */
+.bw-resize-handle {
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  border-left: 1px solid var(--border);
+  transition: background 120ms;
+}
+.bw-resize-handle:hover,
+.browser-app.resizing-sidebar .bw-resize-handle {
+  background: var(--primary-100, rgba(0,0,0,0.06));
 }
 
 /* ============== Sidebar (left) ============== */
@@ -663,7 +680,7 @@ mark {
   .bw-preview { width: 380px; }
 }
 @media (max-width: 1000px) {
-  .browser-app { grid-template-columns: 200px 1fr auto; }
+  .browser-app { grid-template-columns: 200px 6px 1fr auto; }
   .bw-preview { width: 320px; }
 }
 

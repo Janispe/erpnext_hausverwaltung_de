@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { Icon } from "../components/Icon.jsx";
+import { loadPref, savePref } from "../persist.js";
 import {
   loadBrowserData,
   setFavorite as apiSetFavorite,
@@ -74,7 +75,7 @@ const FolderTree = ({ folders, selected, onSelect, openKeys, onToggle, counts, d
           <span className="folder-icon" style={f.color ? { color: f.color } : undefined}>
             <Icon name={isOpen && kids.length > 0 ? "folder-open" : "folder"} size={14}/>
           </span>
-          <span className="folder-title">{f.title}</span>
+          <span className="folder-title" title={f.title}>{f.title}</span>
           <span className="folder-count">{tmpCount}</span>
         </div>
         {isOpen && kids.map(c => renderFolder(c, depth + 1))}
@@ -873,6 +874,29 @@ export const App = () => {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
+  // Verschiebbare Sidebar — Breite in localStorage merken. Min/Max-Werte
+  // verhindern, dass der User die Spalte unter die Lesbarkeitsschwelle
+  // schrumpft oder die Vorlagen-Liste komplett verdrängt.
+  const [sidebarWidth, setSidebarWidth] = useState(() => loadPref("browserSidebarWidth", 240));
+  const [resizingSidebar, setResizingSidebar] = useState(false);
+  useEffect(() => savePref("browserSidebarWidth", sidebarWidth), [sidebarWidth]);
+  const onSidebarResizeStart = useCallback((e) => {
+    e.preventDefault();
+    setResizingSidebar(true);
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+    const onMove = (ev) => {
+      const next = Math.max(180, Math.min(480, startWidth + (ev.clientX - startX)));
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      setResizingSidebar(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [sidebarWidth]);
 
   // Daten laden (eingebettet → Backend, standalone → Mock aus data.js).
   const reload = useCallback(() => {
@@ -1183,7 +1207,10 @@ export const App = () => {
             : "Keine Vorlagen in diesem Ordner.";
 
   return (
-    <div className="browser-app">
+    <div
+      className={`browser-app ${resizingSidebar ? "resizing-sidebar" : ""}`}
+      style={{ gridTemplateColumns: `${sidebarWidth}px 6px 1fr auto` }}
+    >
       <Sidebar
         folders={folders}
         selectedFolder={selectedFolder}
@@ -1199,6 +1226,7 @@ export const App = () => {
         onDropFolder={onDropFolder}
         onCreateFolder={handleCreateFolder}
       />
+      <div className="bw-resize-handle" onMouseDown={onSidebarResizeStart} title="Ziehen, um die Seitenleiste zu verbreitern" />
 
       <main className={`bw-main ${showPreview && previewTpl ? "with-preview" : ""}`}>
         <Topbar
