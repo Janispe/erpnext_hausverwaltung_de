@@ -675,9 +675,17 @@ def _preview_defaults_for_block(block_doc, base_context: Dict[str, Any] | None =
 
 	for row in block_doc.get("variables") or []:
 		varname = cstr(getattr(row, "variable", "") or "").strip()
+		if not varname or varname in defaults:
+			continue
 		preview = cstr(getattr(row, "preview_default", "") or "").strip()
-		if varname and preview and varname not in defaults:
+		is_optional = bool(int(getattr(row, "optional", 0) or 0))
+		if preview:
 			defaults[varname] = preview
+		elif is_optional:
+			# Optional-Flag honorieren: leerer String im Preview-Context, damit
+			# StrictUndefined nicht crasht. Konsistent mit dem Durchlauf-Render
+			# (_apply_block_variables setzt context[key] = "" für optional).
+			defaults[varname] = ""
 	return defaults
 
 
