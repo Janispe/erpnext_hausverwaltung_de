@@ -982,7 +982,7 @@ def _render_through_serienbrief_dokument_print_format(
 	if is_mock:
 		frappe.flags.hv_serienbrief_split_preview = True
 	try:
-		return frappe.get_print(
+		pdf_bytes = frappe.get_print(
 			"Serienbrief Dokument",
 			None,
 			print_format="Serienbrief Dokument",
@@ -990,6 +990,13 @@ def _render_through_serienbrief_dokument_print_format(
 			doc=ephemeral,
 			pdf_options=_preview_pdf_options(),
 		)
+		# Seitenzahlen-Overlay nur bei mehrseitigen PDFs (Single-Page bleibt sauber).
+		# Chrome's @page-margin-Boxes funktionieren nicht zusammen mit Frappes Footer-
+		# Stamp; daher post-processing hier statt CSS.
+		from hausverwaltung.hausverwaltung.utils.pdf_page_numbers import (
+			add_page_numbers_if_multipage,
+		)
+		return add_page_numbers_if_multipage(pdf_bytes)
 	finally:
 		if is_mock:
 			frappe.flags.hv_serienbrief_split_preview = previous_flag
