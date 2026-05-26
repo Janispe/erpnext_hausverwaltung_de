@@ -90,11 +90,22 @@ def get_footer_bankverbindung_html(doc) -> str:
 		or cstr(path_map.get("Immobilie") or "").strip()
 	)
 	if not immobilie_path:
+		from frappe.utils import get_url_to_form
+
+		baustein_link = get_url_to_form("Serienbrief Textbaustein", _FOOTER_BAUSTEIN)
+		# Pfad-Vorschlag: für „Dunning" zeigt der Beleg auf einen Mietvertrag,
+		# darüber kommt man auf die Immobilie. Für andere Iteration-Doctypes
+		# muss der User den passenden Attribut-Pfad selbst eintragen.
+		vorschlag = "mietvertrag.immobilie" if iteration_doctype == "Dunning" else "immobilie"
 		frappe.throw(
 			_(
 				"Footer-Bankverbindung: kein Standardpfad für Iteration-Doctype "
-				"<strong>{0}</strong> im Baustein „Bankverbindung Immobilie\" gepflegt."
-			).format(iteration_doctype),
+				"<strong>{0}</strong> im Baustein „Bankverbindung Immobilie\" gepflegt.<br><br>"
+				"<a href=\"{1}\" target=\"_blank\">Baustein öffnen</a> und in der Tabelle "
+				"<strong>Standardpfade</strong> eine Zeile mit "
+				"<code>startobjekt = {0}</code>, <code>variable = immobilie</code>, "
+				"<code>path = {2}</code> ergänzen."
+			).format(iteration_doctype, baustein_link, vorschlag),
 			title=_("Serienbrief Footer-Fehler"),
 		)
 
