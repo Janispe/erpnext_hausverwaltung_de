@@ -832,7 +832,15 @@ const NewDurchlauf = ({ preselect }) => {
     // pinnedId = preselect: das Backend stellt die vorausgewaehlte Vorlage
     // immer ans Anfang der Liste, sonst wirkt der Picker leer-ausgewaehlt
     // (sel-State ist gesetzt, die Vorlage aber nicht in den ersten 50).
-    listVorlagen(q, preselect).then((r) => { if (alive) setVorlagen(r.items || []); }).catch(() => {});
+    listVorlagen(q, preselect)
+      .then((r) => { if (alive) { setVorlagen(r.items || []); setErr(null); } })
+      .catch((e) => {
+        // RPC-Fehler nicht schlucken — sonst sieht der User nur "Keine Vorlagen
+        // gefunden" und kann nicht unterscheiden zwischen leerer Liste und Fehler.
+        if (alive) setErr(e?.message || "Vorlagen konnten nicht geladen werden.");
+        // eslint-disable-next-line no-console
+        console.error("[durchlauf] listVorlagen failed:", e);
+      });
     return () => { alive = false; };
   }, [q, preselect]);
 
