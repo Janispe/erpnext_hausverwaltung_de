@@ -154,7 +154,7 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 			   Höhe — daher ein non-breaking space als Pseudo-Inhalt einsetzen.
 			   <p><br/></p> hat durch das <br> bereits eine Zeilenhöhe. */
 			.serienbrief-page p:empty::before {
-				content: "\00a0";
+				content: "\\00a0";
 			}
 			/* Tabellen: Frappes print.bundle erzwingt ``.print-format td {padding:10px
 			   !important}`` — das spreizt gestapelte Layout-Zellen (z.B. Einzug/Auszug)
