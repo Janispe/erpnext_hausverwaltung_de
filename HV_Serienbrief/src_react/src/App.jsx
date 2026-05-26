@@ -240,7 +240,10 @@ export const App = () => {
       if (renamed) {
         try { const { groups } = await loadTree(); if (groups && groups.length) setTree(groups); } catch (_) {}
       }
-      return true;
+      // Return-Shape enthält die (ggf. umbenannte) neue ID + Titel, damit Caller
+      // wie handleOpenClassic/handleLoadDurchlauf nach `await save` die richtige ID
+      // benutzen koennen statt das stale `template.id` aus ihrer Closure.
+      return { ok: true, id: res.id || template.id, title: res.title || title };
     } catch (e) {
       alert("Speichern fehlgeschlagen: " + ((e && e.message) || e));
       return false;
@@ -324,14 +327,19 @@ export const App = () => {
   // geführten Mapping-Wizard und Spezialfälle (Mehrfach-Baustein-Mapping über
   // das Alt-Datenmodell textbausteine[].pfad_zuordnung). Vor dem Verlassen
   // anbieten zu speichern, damit ungespeicherte Edits nicht verloren gehen.
+  // Wichtig: Bei Titeländerung benennt das Backend um (autoname = format:{title}),
+  // die neue ID kommt aus dem save-Return; das stale `template.id` aus der
+  // useCallback-Closure ist dann veraltet und würde auf einen 404 führen.
   const handleOpenClassic = useCallback(async () => {
     if (!template.id) return;
+    let vorlageId = template.id;
     if (dirty && template.canWrite) {
-      const ok = await saveRef.current();
-      if (!ok) return;
+      const res = await saveRef.current();
+      if (!res) return;
+      vorlageId = res.id || vorlageId;
     }
     try {
-      await openClassicForm({ vorlage: template.id });
+      await openClassicForm({ vorlage: vorlageId });
     } catch (e) {
       alert("Klassische Form öffnen fehlgeschlagen: " + ((e && e.message) || e));
     }
@@ -339,16 +347,23 @@ export const App = () => {
 
   // „In Serienbrief laden" -> neues Durchlauf-Formular im Desk öffnen, Vorlage
   // vorausgewählt. Der Durchlauf rendert aus dem gespeicherten Stand -> erst speichern.
+  // Bei Titeländerung benennt das Backend um — die neue ID + Titel kommen aus dem
+  // save-Return (sonst landet das Durchlauf-Formular auf einer alten, nicht mehr
+  // existierenden Vorlage).
   const handleLoadDurchlauf = useCallback(async () => {
     if (!template.id || saving) return;
+    let vorlageId = template.id;
+    let vorlageTitle = title;
     if (dirty && template.canWrite) {
-      const ok = await saveRef.current();
-      if (!ok) return;
+      const res = await saveRef.current();
+      if (!res) return;
+      vorlageId = res.id || vorlageId;
+      vorlageTitle = res.title || vorlageTitle;
     }
     try {
       await openDurchlauf({
-        vorlage: template.id,
-        title,
+        vorlage: vorlageId,
+        title: vorlageTitle,
         iterationDoctype: template.haupt_verteil_objekt,
       });
       // Das Desk navigiert jetzt zum neuen Durchlauf — das iframe wird ersetzt.
