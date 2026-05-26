@@ -417,9 +417,20 @@ def allocate_kosten_auf_wohnungen(
 
         total_weight = sum((v for v in weights.values() if v is not None), Decimal("0"))
         if total_weight <= Decimal("0"):
-            # Keine sinnvolle Verteilung möglich → hart als Fehler abbrechen
+            # Datenproblem: alle Wohnungen haben am Stichtag 0 Gewicht. Statt
+            # heimlich 1/N zu verteilen, klar machen was zu pruefen ist.
+            # Echter Leerstand (qm>0, kein Mieter) wird hier nicht abgefangen —
+            # der laeuft normal durch und wird im Settlement-Schritt dem
+            # Eigentuemer zugerechnet.
+            anzahl_whg = len(weights)
             frappe.throw(
-                f"Keine Gewichte (>0) für Haus {haus}, Kostenart {kostenart} zum Stichtag {stichtag}. Betrag bleibt unverteilt (wir setzen 0)."
+                f"Verteilung '{verteilung}' für Kostenart '{kostenart}' (Haus {haus}, "
+                f"Stichtag {stichtag}) ergibt keine Gewichte > 0 auf {anzahl_whg} Wohnung(en).<br><br>"
+                "Mögliche Ursachen:<br>"
+                "• qm-Feld in den Wohnungs-Stammdaten ist leer oder 0<br>"
+                "• Schlüsselwert für die Kostenart fehlt<br>"
+                "• Wohnungen existieren am Stichtag noch nicht (Stichtag liegt vor Anlage)<br><br>"
+                "Bitte Wohnungs-Stammdaten und Stichtag prüfen."
             )
 
         for w, wgt in weights.items():
