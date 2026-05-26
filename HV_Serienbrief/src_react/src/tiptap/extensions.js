@@ -163,6 +163,12 @@ export const BausteinNode = Node.create({
 	// das die App abfängt. Serialisierung läuft weiter über renderHTML.
 	addNodeView() {
 		return ({ node }) => {
+			// TipTap reuses NodeViews wenn der Node-Type gleich bleibt; bei Edits
+			// kommt nur `update(updated)` mit den neuen Attrs. Der Click-Handler
+			// muss daher gegen eine MUTABLE Referenz lesen, nicht gegen das
+			// urspr\u00FCnglich captured `node` \u2014 sonst \u00F6ffnet sich der Popover des
+			// alten Bausteins.
+			let current = node;
 			const dom = document.createElement("span");
 			dom.className = "chip baustein-chip";
 			dom.setAttribute("data-hv-kind", "baustein");
@@ -172,7 +178,7 @@ export const BausteinNode = Node.create({
 			dom.addEventListener("click", (e) => {
 				e.preventDefault();
 				e.stopPropagation();
-				const name = bausteinLabel(node.attrs.token);
+				const name = bausteinLabel(current.attrs.token);
 				if (!name) return;
 				const rect = dom.getBoundingClientRect();
 				window.dispatchEvent(
@@ -186,6 +192,7 @@ export const BausteinNode = Node.create({
 				ignoreMutation: () => true,
 				update: (updated) => {
 					if (updated.type.name !== "hvBaustein") return false;
+					current = updated;
 					dom.textContent = "\u29C9 " + bausteinLabel(updated.attrs.token) + " \u25BE";
 					return true;
 				},
