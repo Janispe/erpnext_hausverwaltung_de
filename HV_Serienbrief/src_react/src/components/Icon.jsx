@@ -41,6 +41,8 @@ export const Icon = ({ name, size = 16, ...props }) => {
       return <svg {...common}><path d="M3 6h18M6 12h12M3 18h18M3 9h18"/></svg>;
     case "align-right":
       return <svg {...common}><path d="M3 6h18M9 12h12M3 18h18M3 9h18"/></svg>;
+    case "align-justify":
+      return <svg {...common}><path d="M3 6h18M3 12h18M3 18h18M3 9h18"/></svg>;
     case "link":
       return <svg {...common}><path d="M10 14a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1 1"/><path d="M14 10a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1-1"/></svg>;
     case "code":

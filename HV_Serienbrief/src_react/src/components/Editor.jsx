@@ -222,6 +222,9 @@ const EditorToolbar = ({ editor, disabled, onInsert, onImage, showGrid, onToggle
 				<TBtn title="Rechts" active={isA({ textAlign: "right" })} disabled={!can} on={() => chain().setTextAlign("right").run()}>
 					<Icon name="align-right" />
 				</TBtn>
+				<TBtn title="Blocksatz" active={isA({ textAlign: "justify" })} disabled={!can} on={() => chain().setTextAlign("justify").run()}>
+					<Icon name="align-justify" />
+				</TBtn>
 			</div>
 			<div className="tool-group">
 				<TBtn title="Liste" active={isA("bulletList")} disabled={!can} on={() => chain().toggleBulletList().run()}>
