@@ -213,6 +213,20 @@ export const SNIPPETS = [
     desc: "{% set name = wert %} — z. B. {% set stufe = serienbrief.werte.stufe | int %}",
     value: `{% set VARIABLE = WERT %}`,
   },
+  // Freie Eingabe: kein fester ``value`` — der SlashMenu-UI rendert ein Inline-
+  // Eingabefeld und konstruiert das Token aus ``custom.wrap`` + User-Input.
+  {
+    key: "custom-block",
+    label: "Eigener {% Block %}",
+    desc: "Beliebiger Jinja-Block — z. B. if loop.last, elif x > 0, endfor",
+    custom: { wrap: "block", placeholder: "z. B. if loop.last" },
+  },
+  {
+    key: "custom-expr",
+    label: "Eigener {{ Ausdruck }}",
+    desc: "Inline-Ausdruck — z. B. 'en' if _vm|length > 1 else ''",
+    custom: { wrap: "expr", placeholder: "z. B. mieter.name | upper" },
+  },
 ];
 
 export const TEXT_BAUSTEINE = [

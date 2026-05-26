@@ -35,13 +35,45 @@ function insertRawToken(editor, raw) {
 // Platzhalter und Bausteine sind über die rechte Sidebar (Tabs „Platzhalter" /
 // „Bausteine") erreichbar — hier nur Steuerstrukturen, die es dort nicht gibt.
 // =========================
+
+// Konstruiert das Roh-Token aus User-Input für die ``custom``-Snippets.
+// Wir trimmen und entfernen vorab schon vorhandene Klammern, falls der User
+// sie aus Gewohnheit selbst mitgetippt hat — sonst entstünde ``{% {% if x %} %}``.
+function buildCustomToken(wrap, input) {
+	const s = (input || "").trim();
+	if (!s) return null;
+	if (wrap === "block") {
+		const inner = s.replace(/^\{%-?\s*|\s*-?%\}$/g, "").trim();
+		return inner ? `{% ${inner} %}` : null;
+	}
+	if (wrap === "expr") {
+		const inner = s.replace(/^\{\{\s*|\s*\}\}$/g, "").trim();
+		return inner ? `{{ ${inner} }}` : null;
+	}
+	return null;
+}
+
 const SlashMenu = ({ open, x, y, onClose, onPick }) => {
 	const snippets = SNIPPETS.map((s) => ({ kind: "snippet", item: s }));
 	const [active, setActive] = useState(0);
+	// Inline-Eingabe: idx des aktiven custom-Items + aktueller Input. ``null`` = kein
+	// Custom-Input aktiv, dann läuft die normale Pfeiltasten-Navigation.
+	const [customIdx, setCustomIdx] = useState(null);
+	const [customValue, setCustomValue] = useState("");
+	const customInputRef = useRef(null);
+
 	useEffect(() => {
-		if (open) setActive(0);
+		if (open) {
+			setActive(0);
+			setCustomIdx(null);
+			setCustomValue("");
+		}
 	}, [open]);
+
 	useEffect(() => {
+		// Globale Tasten-Navigation NUR, wenn kein Custom-Input aktiv ist —
+		// sonst frisst der Menü-Listener Pfeiltasten/Enter im Textfeld.
+		if (customIdx !== null) return;
 		const onKey = (e) => {
 			if (!open) return;
 			if (e.key === "Escape") {
@@ -56,12 +88,38 @@ const SlashMenu = ({ open, x, y, onClose, onPick }) => {
 			} else if (e.key === "Enter") {
 				e.preventDefault();
 				const sel = snippets[active];
-				if (sel) onPick(sel);
+				if (!sel) return;
+				if (sel.item.custom) {
+					// Custom-Item: Inline-Input öffnen statt direkt einfügen.
+					setCustomIdx(active);
+					setCustomValue("");
+				} else {
+					onPick(sel);
+				}
 			}
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [open, snippets, active, onClose, onPick]);
+	}, [open, snippets, active, onClose, onPick, customIdx]);
+
+	// Beim Öffnen des Inline-Inputs: Fokus rein.
+	useEffect(() => {
+		if (customIdx !== null && customInputRef.current) {
+			customInputRef.current.focus();
+		}
+	}, [customIdx]);
+
+	const submitCustom = () => {
+		const sel = snippets[customIdx];
+		if (!sel || !sel.item.custom) return;
+		const token = buildCustomToken(sel.item.custom.wrap, customValue);
+		if (!token) return; // Leere Eingabe: nichts tun
+		onPick({
+			kind: "snippet",
+			item: { ...sel.item, value: token },
+		});
+	};
+
 	if (!open) return null;
 	return (
 		<div className="slash-menu" style={{ left: x, top: y }}>
@@ -78,22 +136,77 @@ const SlashMenu = ({ open, x, y, onClose, onPick }) => {
 				</button>
 			</div>
 			<div className="slash-list">
-				{snippets.map((m, i) => (
-					<div
-						key={`s-${i}`}
-						className={`slash-item ${i === active ? "active" : ""}`}
-						onMouseEnter={() => setActive(i)}
-						onClick={() => onPick(m)}
-					>
-						<span className="slash-icon">
-							<Icon name="branch" size={13} />
-						</span>
-						<span className="slash-text">
-							<div className="slash-label">{m.item.label}</div>
-							<div className="slash-desc">{m.item.desc}</div>
-						</span>
-					</div>
-				))}
+				{snippets.map((m, i) => {
+					const isCustom = !!m.item.custom;
+					const isInputOpen = isCustom && customIdx === i;
+					return (
+						<div
+							key={`s-${i}`}
+							className={`slash-item ${i === active ? "active" : ""} ${isCustom ? "slash-item-custom" : ""}`}
+							onMouseEnter={() => {
+								// Andere Items hovern schließt den Inline-Input nicht (verwirrend), wir
+								// markieren nur als aktiv für visuelles Feedback.
+								setActive(i);
+							}}
+							onClick={() => {
+								if (isCustom) {
+									if (customIdx === i) {
+										// Zweiter Klick: gleich submitten.
+										submitCustom();
+									} else {
+										setCustomIdx(i);
+										setCustomValue("");
+									}
+								} else {
+									onPick(m);
+								}
+							}}
+						>
+							<span className="slash-icon">
+								<Icon name="branch" size={13} />
+							</span>
+							<span className="slash-text">
+								<div className="slash-label">{m.item.label}</div>
+								<div className="slash-desc">{m.item.desc}</div>
+								{isInputOpen && (
+									<div
+										className="slash-custom-input"
+										onClick={(e) => e.stopPropagation()}
+									>
+										<input
+											ref={customInputRef}
+											type="text"
+											value={customValue}
+											placeholder={m.item.custom.placeholder || ""}
+											onChange={(e) => setCustomValue(e.target.value)}
+											onKeyDown={(e) => {
+												if (e.key === "Enter") {
+													e.preventDefault();
+													submitCustom();
+												} else if (e.key === "Escape") {
+													e.preventDefault();
+													setCustomIdx(null);
+													setCustomValue("");
+												}
+											}}
+										/>
+										<button
+											type="button"
+											className="slash-custom-submit"
+											onClick={(e) => {
+												e.stopPropagation();
+												submitCustom();
+											}}
+											disabled={!customValue.trim()}
+										>
+											Einfügen
+										</button>
+									</div>
+								)}
+							</span>
+						</div>
+					);
+				})}
 			</div>
 		</div>
 	);

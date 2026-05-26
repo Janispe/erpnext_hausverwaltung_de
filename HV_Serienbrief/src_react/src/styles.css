@@ -699,6 +699,44 @@ span[style*="color"] > .chip {
 .slash-item .slash-desc { color: var(--text-muted); font-size: 11.5px; }
 .slash-item .slash-kbd { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); }
 
+/* Inline-Eingabe für Custom-Snippets (Eigener Block / Eigener Ausdruck) */
+.slash-item-custom { align-items: flex-start; }
+.slash-custom-input {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  align-items: center;
+}
+.slash-custom-input input {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  min-width: 0;
+}
+.slash-custom-input input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-100);
+}
+.slash-custom-submit {
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.slash-custom-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Chip Tooltip */
 .chip-tooltip {
   position: absolute;
