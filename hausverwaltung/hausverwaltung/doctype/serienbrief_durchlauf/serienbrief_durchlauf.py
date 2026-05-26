@@ -1681,6 +1681,20 @@ class SerienbriefDurchlauf(Document):
 		row._iteration_rowname = getattr(iteration_row, "name", None)
 		row._iteration_variablen_werte = getattr(iteration_row, "variablen_werte", None)
 
+		# Dunning-getriebene Durchläufe: die pro Mahnstufe am Dunning Type
+		# gepflegten Variablenwerte als Basis in den Pro-Empfänger-Override mergen.
+		# Explizite Pro-Objekt-Overrides am Durchlauf gewinnen weiterhin. Nicht in
+		# der Vorlage deklarierte Keys werden vom Variablen-Resolver ignoriert,
+		# brechen also alte Vorlagen nicht.
+		if getattr(iteration_doc, "doctype", None) == "Dunning":
+			from hausverwaltung.hausverwaltung.doctype.dunning import collect_serienbrief_werte
+
+			type_werte = collect_serienbrief_werte(iteration_doc)
+			if type_werte:
+				row._iteration_variablen_werte = _merge_variable_values(
+					json.dumps(type_werte), row._iteration_variablen_werte
+				)
+
 		return row
 
 	def _get_iteration_link_field_map(self, iteration_doctype: str | None = None) -> Dict[str, str]:

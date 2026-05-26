@@ -3,6 +3,7 @@ from frappe.custom.doctype.custom_field.custom_field import create_custom_field
 
 
 FIELDNAME = "hv_serienbrief_vorlage"
+WERTE_FIELDNAME = "hv_serienbrief_werte"
 
 
 def _upsert_custom_field(doctype: str, custom_field: dict) -> None:
@@ -44,5 +45,18 @@ def execute():
 		"description": "Konkrete Serienbrief Vorlage für dieses Mahnschreiben.",
 	}
 
+	# Pro-Stufe-Werte für die in der Vorlage deklarierten Variablen. Erlaubt eine
+	# einzige konsolidierte Vorlage, die ihre stufenabhängigen Texte/Fristen aus
+	# dem Dunning Type zieht statt aus separaten Vorlagen je Stufe.
+	dunning_type_werte_field = {
+		"fieldname": WERTE_FIELDNAME,
+		"label": "Serienbrief-Werte",
+		"fieldtype": "Table",
+		"options": "Dunning Serienbrief Wert",
+		"insert_after": FIELDNAME,
+		"description": "Werte für die in der Serienbrief Vorlage deklarierten Variablen (pro Mahnstufe).",
+	}
+
 	_upsert_custom_field("Dunning Type", dunning_type_field)
 	_upsert_custom_field("Dunning", dunning_field)
+	_upsert_custom_field("Dunning Type", dunning_type_werte_field)
