@@ -65,7 +65,18 @@ const SlashMenu = ({ open, x, y, onClose, onPick }) => {
 	if (!open) return null;
 	return (
 		<div className="slash-menu" style={{ left: x, top: y }}>
-			<div className="slash-header">Kontrollfluss einfügen</div>
+			<div className="slash-header">
+				<span>Kontrollfluss einfügen</span>
+				<button
+					type="button"
+					className="slash-close"
+					onClick={onClose}
+					title="Schließen (Esc)"
+					aria-label="Schließen"
+				>
+					<Icon name="x" size={12} />
+				</button>
+			</div>
 			<div className="slash-list">
 				{snippets.map((m, i) => (
 					<div

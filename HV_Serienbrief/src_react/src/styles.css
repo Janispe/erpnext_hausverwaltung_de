@@ -583,13 +583,33 @@ span[style*="color"] > .chip {
   flex-direction: column;
 }
 .slash-menu .slash-header {
-  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
   border-bottom: 1px solid var(--border);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-faint);
   font-weight: 600;
+}
+.slash-menu .slash-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.slash-menu .slash-close:hover {
+  background: var(--surface-hover);
+  color: var(--text);
 }
 .slash-menu .slash-list {
   overflow-y: auto;
