@@ -123,6 +123,45 @@ def _strict_finalize(value):
 	return value
 
 
+def _extract_template_lineno(exc: BaseException) -> int | None:
+	"""Sucht im Traceback nach Jinja's ``<template>``-Frame (``rewrite_traceback_stack``)
+	und gibt die Zeilen-Nummer im gerenderten Source zurück. ``None``, wenn kein
+	Template-Frame im Traceback steckt (z.B. Fehler vor dem eigentlichen Render).
+	"""
+	tb = exc.__traceback__
+	lineno: int | None = None
+	while tb is not None:
+		if tb.tb_frame.f_code.co_filename == "<template>":
+			lineno = tb.tb_lineno
+		tb = tb.tb_next
+	return lineno
+
+
+def _template_snippet(source: str, lineno: int, *, context_lines: int = 2, max_line_len: int = 220) -> str:
+	"""Baut ein HTML-Snippet aus ``source`` rund um ``lineno`` (1-basiert).
+	Fehler-Zeile wird mit ``>>>`` markiert; Zeilen länger als ``max_line_len``
+	werden gekürzt, damit lange ``<p style="...">``-Zeilen nicht das Modal sprengen.
+	"""
+	from frappe.utils import escape_html
+
+	if not source or lineno < 1:
+		return ""
+	lines = source.splitlines()
+	if lineno > len(lines):
+		return ""
+	start = max(0, lineno - 1 - context_lines)
+	end = min(len(lines), lineno + context_lines)
+	parts: list[str] = []
+	for i in range(start, end):
+		line_no = i + 1
+		text = lines[i]
+		if len(text) > max_line_len:
+			text = text[: max_line_len - 1] + "…"
+		marker = ">>> " if line_no == lineno else "    "
+		parts.append(f"{marker}Z{line_no:>3}: {escape_html(text)}")
+	return "\n".join(parts)
+
+
 # Spezial-Notation für Platzhalter, die durch den Pfad-Resolver vor dem
 # Jinja-Rendering aufgelöst werden: ``{{$ objekt.wohnung.immobilie.name $}}``.
 # Eindeutig getrennt von Jinja-Tokens (``{{ ... }}``), die Logik, Filter und
@@ -259,6 +298,20 @@ def _render_serienbrief_template(template: str, context: Dict[str, Any]) -> str:
 		raw = str(exc) or _("Ein benötigtes Feld fehlt.")
 		human = _humanize_jinja_error(raw)
 		msg = _("Fehlendes Feld im Serienbrief: {0}").format(human)
+		# Vorlagen-Zeile + Snippet aus Jinja-Traceback anhängen, damit der Autor
+		# sieht, welche Stelle den ``None``-Wert produziert. Jinja's
+		# ``rewrite_traceback_stack`` schreibt einen Frame mit
+		# ``filename='<template>'`` und ``lineno`` = Zeile im (vorverarbeiteten)
+		# Source.
+		lineno = _extract_template_lineno(exc)
+		if lineno is not None:
+			snippet = _template_snippet(template, lineno)
+			if snippet:
+				msg += (
+					"<br/><br/>"
+					+ _("Vorlagen-Zeile {0}:").format(lineno)
+					+ f"<br/><pre style='white-space: pre-wrap; font-size: 0.85em; background: #f6f6f6; padding: 6px; border-radius: 3px'>{snippet}</pre>"
+				)
 		frappe.throw(title=_("Serienbrief Fehler"), msg=msg)
 	except TemplateError:
 		frappe.throw(
