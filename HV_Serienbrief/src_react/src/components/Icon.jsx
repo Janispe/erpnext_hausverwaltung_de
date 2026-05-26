@@ -57,6 +57,8 @@ export const Icon = ({ name, size = 16, ...props }) => {
       return <svg {...common}><polygon points="6 4 20 12 6 20 6 4" fill="currentColor"/></svg>;
     case "refresh":
       return <svg {...common}><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>;
+    case "maximize":
+      return <svg {...common}><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/></svg>;
     case "download":
       return <svg {...common}><path d="M12 4v12M6 12l6 6 6-6M4 20h16"/></svg>;
     case "send":

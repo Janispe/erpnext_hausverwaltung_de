@@ -51,11 +51,11 @@ const PreviewPane = ({ template, recipient, recipients, onChangeRecipient, onSea
           </div>
           <Icon name="chevron-down" size={12}/>
         </div>
-        <button className="btn sm" title="Vorschau aktualisieren" onClick={onRefresh} disabled={previewLoading}>
-          <Icon name="play" size={13}/>
+        <button className="btn sm icon" title="Vorschau aktualisieren" onClick={onRefresh} disabled={previewLoading}>
+          <Icon name="refresh" size={13}/>
         </button>
         <button className="btn sm icon" title="PDF groß ansehen" onClick={onMaximize}>
-          <Icon name="play" size={13}/>
+          <Icon name="maximize" size={13}/>
         </button>
       </div>
 
