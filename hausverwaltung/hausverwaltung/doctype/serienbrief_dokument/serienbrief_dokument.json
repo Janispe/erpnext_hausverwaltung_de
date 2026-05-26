@@ -16,6 +16,7 @@
   "title",
   "date",
   "generated_on",
+  "recreate_pending",
   "run_section",
   "status",
   "render_ms",
@@ -95,6 +96,16 @@
    "fieldtype": "Datetime",
    "in_list_view": 1,
    "label": "Erzeugt am",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Technisches Cutover-Flag: 1 = während Recreate erzeugt, noch nicht aktiv. Wird nicht in Listen-Ansichten gezeigt und nicht kopiert.",
+   "fieldname": "recreate_pending",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Recreate pending",
+   "no_copy": 1,
    "read_only": 1
   },
   {

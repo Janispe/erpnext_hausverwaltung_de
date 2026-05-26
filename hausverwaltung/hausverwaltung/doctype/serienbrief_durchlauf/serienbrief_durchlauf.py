@@ -310,15 +310,30 @@ class SerienbriefDurchlauf(Document):
 		# Beim Löschen: verknüpfte Serienbrief Dokumente mit entfernen.
 		self._remove_linked_dokumente()
 
-	def _remove_linked_dokumente(self) -> None:
-		# docstatus mit batched get_all holen, statt pro Doc einen vollen
-		# get_doc-Load (war N+1 vor allem bei Draft-Durchlaeufen mit vielen
-		# Empfaengern). Submitted Docs brauchen weiterhin get_doc().cancel().
+	def _remove_linked_dokumente(
+		self, only_active: bool = False, raise_on_failure: bool = False
+	) -> list[str]:
+		"""Entfernt verknüpfte Serienbrief Dokumente. Submitted Docs werden
+		zuerst gecanceled. Gibt die Liste der Doc-Namen zurück, die NICHT
+		entfernt werden konnten (Cancel-Fehler bei submitted Docs).
+
+		``raise_on_failure``: für den Cutover-Pfad (Bug 1.11) — wenn auch nur
+		EIN altes Doc nicht entfernbar ist, Exception werfen, damit der Caller
+		die pending-neuen nicht aktiviert und parallele aktive Docs entstehen.
+		Default ``False`` für on_cancel/on_trash (kein Datenverlust durch
+		harten Abbruch, eher Doc behalten).
+		"""
+		filters: dict = {"durchlauf": self.name}
+		if only_active:
+			# Recreate-Cutover (Bug 1.11): während Recreate die pending-NEUEN
+			# in Ruhe lassen — wir wollen nur die alten aktiven austauschen.
+			filters["recreate_pending"] = 0
 		dokumente = frappe.get_all(
 			"Serienbrief Dokument",
-			filters={"durchlauf": self.name},
+			filters=filters,
 			fields=["name", "docstatus"],
 		)
+		failed: list[str] = []
 		for row in dokumente:
 			docname = row["name"]
 			if int(row.get("docstatus") or 0) == 1:
@@ -332,6 +347,46 @@ class SerienbriefDurchlauf(Document):
 						frappe.get_traceback(),
 						f"_remove_linked_dokumente: Cancel von {docname!r} fehlgeschlagen — "
 						"Doc wird nicht geloescht, damit nichts verloren geht.",
+					)
+					failed.append(docname)
+					continue
+			frappe.delete_doc(
+				"Serienbrief Dokument",
+				docname,
+				force=1,
+				ignore_permissions=True,
+				delete_permanently=True,
+			)
+		if failed and raise_on_failure:
+			frappe.throw(
+				_(
+					"{0} alte(s) Serienbrief Dokument(e) konnten nicht entfernt werden "
+					"(Cancel fehlgeschlagen): {1}. Recreate abgebrochen, damit keine "
+					"doppelten aktiven Dokumente entstehen."
+				).format(len(failed), ", ".join(failed))
+			)
+		return failed
+
+	def _cleanup_pending_dokumente(self) -> None:
+		"""Räumt nur die mit recreate_pending=1 markierten NEUEN Docs des
+		Recreate-Versuchs (Bug 1.11). Aktive Docs bleiben unberührt. Wird im
+		Crash-Pfad und beim manuellen Reset (mark_durchlauf_failed) genutzt.
+		"""
+		pending = frappe.get_all(
+			"Serienbrief Dokument",
+			filters={"durchlauf": self.name, "recreate_pending": 1},
+			fields=["name", "docstatus"],
+		)
+		for row in pending:
+			docname = row["name"]
+			if int(row.get("docstatus") or 0) == 1:
+				try:
+					frappe.get_doc("Serienbrief Dokument", docname).cancel()
+				except Exception:
+					frappe.log_error(
+						frappe.get_traceback(),
+						f"_cleanup_pending_dokumente: Cancel von {docname!r} fehlgeschlagen — "
+						"pending-Doc bleibt liegen.",
 					)
 					continue
 			frappe.delete_doc(
@@ -372,24 +427,79 @@ class SerienbriefDurchlauf(Document):
 		strict_variables: bool = True,
 		progress_cb=None,
 	) -> list[str]:
+		# Nur aktive (recreate_pending=0) Docs zählen für den Existing-Check.
+		# pending-Docs sind unsichtbare Reste eines abgebrochenen Recreate-Versuchs
+		# und werden hier wegputzt, bevor neu gestartet wird.
 		existing = frappe.get_all(
 			"Serienbrief Dokument",
-			filters={"durchlauf": self.name},
+			filters={"durchlauf": self.name, "recreate_pending": 0},
 			order_by="creation asc",
 			pluck="name",
 		)
 		if existing and not recreate:
+			# Defensiver Cleanup-Pfad (Finding 4 zu Bug 1.11): pending-Reste eines
+			# abgebrochenen früheren Recreate-Versuchs entsorgen, aber NUR wenn der
+			# Durchlauf nicht aktiv läuft (sonst killen wir den parallelen Job).
+			current_status = cstr(frappe.db.get_value("Serienbrief Durchlauf", self.name, "status") or "")
+			if current_status != "Läuft":
+				try:
+					self._cleanup_pending_dokumente()
+				except Exception:
+					frappe.log_error(
+						frappe.get_traceback(),
+						f"_ensure_dokumente: defensiver pending-Cleanup für {self.name!r} fehlgeschlagen.",
+					)
 			return list(existing)
 
-		if existing and recreate:
-			for name in existing:
-				frappe.delete_doc("Serienbrief Dokument", name, force=1, ignore_permissions=True)
+		if not recreate:
+			# Keine existing, frischer Lauf — direkt erzeugen.
+			self._cleanup_pending_dokumente()
+			return self._create_dokumente(
+				submit=submit, strict_variables=strict_variables, progress_cb=progress_cb, pending=False
+			)
 
-		return self._create_dokumente(
-			submit=submit, strict_variables=strict_variables, progress_cb=progress_cb
-		)
+		# Recreate-Cutover (Bug 1.11): zuerst evtl. liegen gebliebene pending wegputzen,
+		# dann NEUE Docs als pending erzeugen, damit alte aktive sichtbar bleiben bis
+		# alles erfolgreich ist. Bei Crash bleibt der Durchlauf konsistent: alte
+		# weiterhin sichtbar, neue unsichtbar (per Reset wegputzbar).
+		self._cleanup_pending_dokumente()
+		try:
+			neu = self._create_dokumente(
+				submit=submit, strict_variables=strict_variables, progress_cb=progress_cb, pending=True
+			)
+		except Exception:
+			# Crash mitten in Erzeugung: angefangene pending-neue wegputzen.
+			# Alte aktive sind unverändert sichtbar.
+			try:
+				self._cleanup_pending_dokumente()
+			except Exception:
+				frappe.log_error(
+					frappe.get_traceback(),
+					f"_ensure_dokumente: Cleanup nach Recreate-Crash fehlgeschlagen ({self.name})",
+				)
+			raise
 
-	def _create_dokumente(self, *, submit: bool, strict_variables: bool = True, progress_cb=None) -> list[str]:
+		# Erfolg: alte aktive sauber raus (Cancel-vor-Delete für submitted Docs).
+		# raise_on_failure=True: wenn auch nur EIN altes Doc nicht entfernt werden
+		# kann, brechen wir HIER ab und aktivieren die pending-neuen NICHT, sonst
+		# entstehen parallele aktive Docs (Finding 1 zu Bug 1.11).
+		try:
+			self._remove_linked_dokumente(only_active=True, raise_on_failure=True)
+		except Exception:
+			# Pending-neue bleiben in der DB stehen (unsichtbar) — können per
+			# manuellem Reset weggeputzt werden.
+			raise
+		# Pending-neue aktivieren.
+		for name in neu:
+			frappe.db.set_value(
+				"Serienbrief Dokument", name, "recreate_pending", 0, update_modified=False
+			)
+		frappe.db.commit()
+		return neu
+
+	def _create_dokumente(
+		self, *, submit: bool, strict_variables: bool = True, progress_cb=None, pending: bool = False
+	) -> list[str]:
 		if not self.vorlage:
 			frappe.throw(_("Bitte wählen Sie eine Serienbrief Vorlage."))
 
@@ -478,6 +588,10 @@ class SerienbriefDurchlauf(Document):
 					"render_ms": render_ms,
 					"pages": pages,
 					"recipient_email": recipient_email or "",
+					# Cutover-Marker (Bug 1.11): vor dem Insert setzen, damit auch
+					# submitted Docs ihre pending-Flagge tragen, ohne nachträgliches
+					# Audit-relevantes set_value auf submitted Records.
+					"recreate_pending": 1 if pending else 0,
 				}
 			)
 			doc.insert(ignore_permissions=True)
@@ -3234,8 +3348,9 @@ def start_durchlauf_run(docname: str, regenerate: int | str = 1) -> Dict[str, An
 @frappe.whitelist()
 def mark_durchlauf_failed(docname: str, note: str | None = None) -> Dict[str, Any]:
 	"""Manueller Reset für hängende „Läuft"-Durchläufe (Worker-Crash, Timeout).
-	Setzt Status auf „Fehlgeschlagen" und merged einen ``manual_reset``-Eintrag
-	in ``run_summary``, ohne bestehende Zähler zu verlieren.
+	Setzt Status auf „Fehlgeschlagen", merged einen ``manual_reset``-Eintrag
+	in ``run_summary`` (ohne bestehende Zähler zu verlieren) und räumt
+	verwaiste pending-neue Dokumente eines abgebrochenen Recreate-Versuchs.
 
 	Server-side Guard: nur Drafts (``docstatus=0``) im Status ``Läuft`` dürfen
 	zurückgesetzt werden — Frontend-Visibility allein reicht nicht, weil der
@@ -3280,6 +3395,16 @@ def mark_durchlauf_failed(docname: str, note: str | None = None) -> Dict[str, An
 		{"status": "Fehlgeschlagen", "run_summary": json.dumps(summary)},
 		update_modified=False,
 	)
+	# Pending-neue Docs aus abgebrochenem Recreate-Versuch wegputzen (Bug 1.11).
+	# Aktive Docs bleiben unberührt — der User soll sehen was vor dem Reset stand.
+	try:
+		doc = frappe.get_doc("Serienbrief Durchlauf", docname)
+		doc._cleanup_pending_dokumente()
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"mark_durchlauf_failed: pending-Cleanup für {docname!r} fehlgeschlagen.",
+		)
 	frappe.db.commit()
 	return {"status": "Fehlgeschlagen"}
 
@@ -3311,11 +3436,12 @@ def get_durchlauf_data(docname: str) -> Dict[str, Any]:
 		frappe.db.get_value("Serienbrief Vorlage", doc.vorlage, "haupt_verteil_objekt") if doc.vorlage else ""
 	)
 
-	# Erzeugte Dokumente nach Objekt gruppieren (jüngstes gewinnt).
+	# Erzeugte Dokumente nach Objekt gruppieren (jüngstes gewinnt). recreate_pending=1
+	# sind unsichtbare Cutover-Reste (Bug 1.11) und gehören nicht in die Anzeige.
 	dok_by_objekt: Dict[str, Any] = {}
 	for d in frappe.get_all(
 		"Serienbrief Dokument",
-		filters={"durchlauf": docname},
+		filters={"durchlauf": docname, "recreate_pending": 0},
 		fields=[
 			"name", "objekt", "title", "status", "render_ms", "pages", "error_msg",
 			"skip_reason", "warning", "recipient_email", "generated_on", "generated_pdf_file",
@@ -3562,7 +3688,7 @@ def get_merged_pdf(docname: str) -> Dict[str, str]:
 		raise frappe.PermissionError
 	dokumente = frappe.get_all(
 		"Serienbrief Dokument",
-		filters={"durchlauf": docname, "status": "Generiert"},
+		filters={"durchlauf": docname, "status": "Generiert", "recreate_pending": 0},
 		order_by="creation asc",
 		pluck="name",
 	)
