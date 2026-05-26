@@ -730,6 +730,81 @@ def _preview_defaults_for_block(
 	return defaults
 
 
+def _preview_defaults_for_template(
+	template_doc,
+	base_context: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+	"""Collect Vorlage-Level-Variable defaults für den Split-Preview.
+
+	Spiegelt die Datenquellen aus
+	``serienbrief_durchlauf._apply_template_variables`` (Durchlauf-Render):
+
+	1. ``template_doc.variablen_werte[var]`` — vom Editor gesetzter Festwert
+	   bzw. Pfad pro Vorlage (höchste Priorität).
+	2. ``template_doc.pfad_zuordnung[var]`` — fallback-Pfad für Doctype-
+	   Variablen, wenn kein expliziter Festwert/Pfad in ``variablen_werte``.
+	3. ``optional``-Flag → leerer String, wenn nichts gefunden.
+
+	So produziert der Split-Preview dieselben Werte wie der echte Durchlauf-
+	Render (ein-Pipeline-Verhalten für Vorlage-Variablen, analog zur Block-
+	Variant in ``_preview_defaults_for_block``).
+	"""
+	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+		_parse_mapping,
+		_parse_variable_values,
+		_resolve_value_path,
+	)
+
+	defaults: Dict[str, Any] = {}
+
+	variable_defs = template_doc.get("variables") or []
+	if not variable_defs:
+		return defaults
+
+	mapping = _parse_variable_values(template_doc.get("variablen_werte"))
+	path_mapping = _parse_mapping(template_doc.get("pfad_zuordnung"))
+
+	for row in variable_defs:
+		varname = cstr(getattr(row, "variable", "") or "").strip()
+		if not varname:
+			continue
+		key = frappe.scrub(varname)
+		variable_type = cstr(getattr(row, "variable_type", None) or "").strip() or "Text"
+		is_text_like = variable_type in {"String", "Zahl", "Bool", "Datum", "Text"}
+		is_optional = bool(int(getattr(row, "optional", 0) or 0))
+
+		entry = mapping.get(key) or {}
+		path = cstr(entry.get("path") or "").strip()
+		value = entry.get("value")
+
+		# Doctype-Variablen: ggf. Fallback-Pfad aus pfad_zuordnung.
+		if not is_text_like and not path:
+			path = (
+				cstr(path_mapping.get(key) or "").strip()
+				or cstr(path_mapping.get(varname) or "").strip()
+				or cstr(path_mapping.get(getattr(row, "reference_doctype", None)) or "").strip()
+			)
+
+		resolved = None
+		if path and base_context is not None:
+			try:
+				resolved = _resolve_value_path(path, base_context)
+			except Exception:
+				resolved = None
+		# Bewusst gesetzter Leer-String ist gültiger Wert; nur echtes ``None`` zählt als fehlend.
+		if resolved is None and value is not None:
+			resolved = value
+
+		if resolved is not None:
+			defaults[key] = resolved
+			continue
+
+		if is_optional:
+			defaults[key] = ""
+
+	return defaults
+
+
 def _wrap_with_serienbrief_dokument_print_format(body_html: str, template_doc=None) -> str:
 	"""Wrap preview HTML with the Serienbrief Dokument print format so the split preview
 	matches the rendering users will see in the generated PDF.
@@ -910,6 +985,14 @@ def _build_split_preview_html(template_doc) -> str:
 	content_position = cstr(getattr(template_doc, "content_position", "")).strip() or "Nach Bausteinen"
 	inline_mode = bool(standard_text and ("baustein(" in standard_text or "textbaustein(" in standard_text))
 
+	# Vorlage-Level-Variablen einmal vorab auflösen — die Werte fließen sowohl
+	# in den Standard-Text als auch in jeden Baustein-Render. Block-Defaults
+	# überlagern Template-Defaults bei Namensgleichheit (Bausteine sind
+	# spezifischer als ihre umgebende Vorlage).
+	template_defaults = _preview_defaults_for_template(
+		template_doc, base_context=_split_preview_context()
+	)
+
 	def render_block(block_name: str) -> str:
 		name = cstr(block_name).strip()
 		if not name:
@@ -921,12 +1004,13 @@ def _build_split_preview_html(template_doc) -> str:
 		source = _get_block_template_source(block_doc).strip()
 		if not source:
 			return ""
-		defaults = _preview_defaults_for_block(
+		block_defaults = _preview_defaults_for_block(
 			block_doc,
 			base_context=_split_preview_context(),
 			template_doc=template_doc,
 		)
-		rendered = _render_split_preview_source(source, extra_context=defaults)
+		merged = {**template_defaults, **block_defaults}
+		rendered = _render_split_preview_source(source, extra_context=merged)
 		return f'<div class="serienbrief-block" data-block="{cstr(block_doc.name)}">{rendered}</div>'
 
 	if inline_mode:
@@ -941,7 +1025,9 @@ def _build_split_preview_html(template_doc) -> str:
 			return f"<!--HV_BLOCK_{len(rendered_blocks) - 1}-->"
 
 		standard_with_placeholders = pattern.sub(_placeholder, standard_text)
-		rendered_standard = _render_split_preview_source(standard_with_placeholders)
+		rendered_standard = _render_split_preview_source(
+			standard_with_placeholders, extra_context=template_defaults
+		)
 
 		def _restore(match) -> str:
 			idx = int(match.group(1))
@@ -962,7 +1048,8 @@ def _build_split_preview_html(template_doc) -> str:
 			blocks.append(rendered)
 
 	rendered_standard_body = (
-		_render_split_preview_source(standard_text) if standard_text else ""
+		_render_split_preview_source(standard_text, extra_context=template_defaults)
+		if standard_text else ""
 	)
 	standard_html = (
 		f'<div class="serienbrief-block serienbrief-content" data-block="standardtext">{rendered_standard_body}</div>'
@@ -1602,6 +1689,7 @@ def get_editor_template(name: str | None = None) -> Dict[str, Any]:
 				"label": v.label or v.variable,
 				"type": v.variable_type,
 				"reference_doctype": getattr(v, "reference_doctype", None),
+				"optional": 1 if int(getattr(v, "optional", 0) or 0) else 0,
 				"beschreibung": v.beschreibung,
 				"value": (entry or {}).get("value") if entry else (werte.get(key) if not isinstance(werte.get(key), dict) else None),
 				"path": pfade.get(key) or ((entry or {}).get("path") if entry else None),
@@ -1653,6 +1741,7 @@ def _apply_editor_variables(doc, variables) -> None:
 				"variable_type": vtype,
 				"reference_doctype": d.get("reference_doctype") or None,
 				"label": d.get("label") or None,
+				"optional": 1 if d.get("optional") else 0,
 				"beschreibung": d.get("beschreibung") or None,
 			}
 		)

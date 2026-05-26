@@ -446,6 +446,15 @@ const VariablesPane = ({ variables, onChange, onInsert, placeholderPaths, editab
             )}
 
             <div className="var-edit-actions">
+              <label className="var-edit-optional" title="Wenn aktiv: leerer Wert ist erlaubt — kein Fehler beim Rendern">
+                <input
+                  type="checkbox"
+                  checked={!!v.optional}
+                  onChange={(e) => update(i, { optional: e.target.checked ? 1 : 0 })}
+                  disabled={!editable}
+                />
+                optional
+              </label>
               <button
                 className="var-insert-btn"
                 disabled={!key || !editable}

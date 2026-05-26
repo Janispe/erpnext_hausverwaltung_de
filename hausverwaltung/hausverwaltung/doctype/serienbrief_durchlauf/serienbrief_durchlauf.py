@@ -1383,7 +1383,8 @@ class SerienbriefDurchlauf(Document):
 							frappe.bold(path), frappe.bold(raw_key or key), frappe.bold(template_title)
 						)
 					)
-			if resolved is None and value not in (None, ""):
+			# Bewusst gesetzter Leer-String ist gültiger Wert; nur echtes ``None`` zählt als fehlend.
+			if resolved is None and value is not None:
 				resolved = value
 
 			if resolved is None:
@@ -1391,15 +1392,9 @@ class SerienbriefDurchlauf(Document):
 				# _verify_template_variables_resolved raises afterwards if it's still missing.
 				continue
 
-			if is_text_like:
-				# Text-Variablen unter ``serienbrief.werte`` (Backwards-Compat).
-				if "werte" not in context["serienbrief"]:
-					context["serienbrief"]["werte"] = frappe._dict()
-				context["serienbrief"]["werte"][key] = resolved
-			else:
-				# Doctype-Variablen top-level (analog Bausteine: Body schreibt
-				# ``{{ wohnung.X }}`` statt ``{{ werte.wohnung.X }}``).
-				context[key] = resolved
+			# Alle Vorlagen-Variablen top-level — passt zur Editor-Konvention
+			# (Sidebar fügt bare ``{{ key }}`` ein), keine getrennten Namespaces.
+			context[key] = resolved
 
 	def _apply_serienbrief_template_variables(
 		self, context: Dict[str, Any], template, row=None
@@ -1436,18 +1431,14 @@ class SerienbriefDurchlauf(Document):
 							frappe.bold(path), frappe.bold(raw_key or key)
 						)
 					)
-			if resolved is None and value not in (None, ""):
+			# Bewusst gesetzter Leer-String ist gültiger Wert; nur echtes ``None`` zählt als fehlend.
+			if resolved is None and value is not None:
 				resolved = value
 
 			if resolved is None:
 				continue
 
-			if is_text_like:
-				if "werte" not in context["serienbrief"]:
-					context["serienbrief"]["werte"] = frappe._dict()
-				context["serienbrief"]["werte"][key] = resolved
-			else:
-				context[key] = resolved
+			context[key] = resolved
 
 	def _verify_template_variables_resolved(self, context: Dict[str, Any], template) -> None:
 		variable_defs = template.get("variables") or []
@@ -1458,22 +1449,22 @@ class SerienbriefDurchlauf(Document):
 		missing: list[str] = []
 
 		for variable in variable_defs:
-			variable_type = cstr(getattr(variable, "variable_type", None) or "").strip() or "Text"
-			is_text_like = variable_type in {"String", "Zahl", "Bool", "Datum", "Text"}
-
 			raw_key = cstr(getattr(variable, "variable", None) or getattr(variable, "label", None) or "")
 			key = frappe.scrub(raw_key) if raw_key else ""
 			if not key:
 				continue
 
-			if is_text_like:
-				# Text unter ``serienbrief.werte``.
-				if (context.get("serienbrief") or {}).get("werte", {}).get(key) not in (None, ""):
-					continue
-			else:
-				# Doctype-Variablen top-level.
-				if context.get(key) not in (None, ""):
-					continue
+			# Alle Vorlagen-Variablen liegen jetzt top-level — Editor schreibt
+			# bare ``{{ key }}``-Tokens, also einheitlich dort lesen.
+			if context.get(key) is not None:
+				continue
+
+			# Optional-Flag: leerer String ins Context, damit StrictUndefined
+			# nicht crasht und ``{% if x %}`` sauber den else-Branch nimmt.
+			is_optional = bool(int(getattr(variable, "optional", 0) or 0))
+			if is_optional:
+				context[key] = ""
+				continue
 
 			label = getattr(variable, "label", None) or raw_key or key
 			missing.append(f"{label} (<code>{{{{ {key} }}}}</code>)")

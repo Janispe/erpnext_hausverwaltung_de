@@ -10,6 +10,7 @@
   "variable_type",
   "reference_doctype",
   "label",
+  "optional",
   "beschreibung"
  ],
  "fields": [
@@ -42,6 +43,14 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Label"
+  },
+  {
+   "default": "0",
+   "fieldname": "optional",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Optional",
+   "description": "Wenn aktiv: leerer Wert ist erlaubt und führt nicht zum Vorlagenfehler. Nutzbar für Text-/Bool-/Datum-Variablen."
   },
   {
    "fieldname": "beschreibung",
