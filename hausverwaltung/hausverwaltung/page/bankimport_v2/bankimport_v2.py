@@ -97,11 +97,19 @@ def get_overview(import_name: str) -> dict[str, Any]:
 		rd = row.as_dict()
 		phase = _row_phase(rd)
 		counts[phase] += 1
+		# betrag ist im Child-Row immer positiv gespeichert; das Vorzeichen steckt
+		# in `richtung`. Die UI leitet Ein-/Ausgang aus dem Vorzeichen ab, daher
+		# hier signed ausliefern (Ausgang negativ).
+		betrag = flt(row.betrag)
+		if row.richtung == "Ausgang":
+			betrag = -abs(betrag)
+		elif row.richtung == "Eingang":
+			betrag = abs(betrag)
 		rows_out.append(
 			{
 				"id": row.name,
 				"buchungstag": str(row.buchungstag) if row.buchungstag else None,
-				"betrag": flt(row.betrag),
+				"betrag": betrag,
 				"richtung": row.richtung,
 				"iban": row.iban,
 				"auftraggeber": row.auftraggeber,
