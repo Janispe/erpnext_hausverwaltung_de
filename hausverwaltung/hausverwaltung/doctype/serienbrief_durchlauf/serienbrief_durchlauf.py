@@ -311,18 +311,29 @@ class SerienbriefDurchlauf(Document):
 		self._remove_linked_dokumente()
 
 	def _remove_linked_dokumente(self) -> None:
+		# docstatus mit batched get_all holen, statt pro Doc einen vollen
+		# get_doc-Load (war N+1 vor allem bei Draft-Durchlaeufen mit vielen
+		# Empfaengern). Submitted Docs brauchen weiterhin get_doc().cancel().
 		dokumente = frappe.get_all(
 			"Serienbrief Dokument",
 			filters={"durchlauf": self.name},
-			pluck="name",
+			fields=["name", "docstatus"],
 		)
-		for docname in dokumente:
-			doc = frappe.get_doc("Serienbrief Dokument", docname)
-			if int(getattr(doc, "docstatus", 0) or 0) == 1:
+		for row in dokumente:
+			docname = row["name"]
+			if int(row.get("docstatus") or 0) == 1:
 				try:
-					doc.cancel()
+					frappe.get_doc("Serienbrief Dokument", docname).cancel()
 				except Exception:
-					pass
+					# Cancel scheitert z.B. wenn referenzierte Buchungen submitted
+					# sind. Frueher: silent pass + dann delete_doc — Datenverlust.
+					# Jetzt: Log und Doc behalten, damit der User nachschauen kann.
+					frappe.log_error(
+						frappe.get_traceback(),
+						f"_remove_linked_dokumente: Cancel von {docname!r} fehlgeschlagen — "
+						"Doc wird nicht geloescht, damit nichts verloren geht.",
+					)
+					continue
 			frappe.delete_doc(
 				"Serienbrief Dokument",
 				docname,
