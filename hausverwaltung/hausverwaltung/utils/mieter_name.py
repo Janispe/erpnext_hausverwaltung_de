@@ -48,10 +48,14 @@ def pick_preferred_mieter_contact(rows: Iterable[object] | None) -> Optional[str
 		if mieter:
 			return mieter
 
-	# 3) First row at all
-	first = rows_list[0]
-	mieter = _get(first, "mieter")
-	return mieter or None
+	# 3) Any row with a mieter set (auch Ausgezogen, als letzte Notbremse).
+	# Vorher: starr rows_list[0] — wenn dort mieter leer ist, kommt None,
+	# auch wenn spätere Rows einen Wert haetten.
+	for row in rows_list:
+		mieter = _get(row, "mieter")
+		if mieter:
+			return mieter
+	return None
 
 
 def get_hauptmieter_contacts(rows: Iterable[object] | None) -> list[str]:
