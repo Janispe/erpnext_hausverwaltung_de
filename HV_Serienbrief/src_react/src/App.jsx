@@ -54,6 +54,8 @@ export const App = () => {
   const [editorSafety, setEditorSafety] = useState(null);
   // Pro-Baustein Input-Pfad-Overrides { "<Baustein>": { "<Variable>": "<Pfad>" } }
   const [bausteinPaths, setBausteinPaths] = useState({});
+  // Pro-Baustein Werte für Text-/Bool-Variablen { "<Baustein>": { "<Variable>": <Wert> } }
+  const [bausteinValues, setBausteinValues] = useState({});
   const [mappingBaustein, setMappingBaustein] = useState(null);
   const [popoverBaustein, setPopoverBaustein] = useState(null); // { baustein, rect }
   // Vorlagen-Variablen (Definition + Wert/Pfad), im Editor bearbeitbar.
@@ -123,6 +125,7 @@ export const App = () => {
         setTemplate(t);
         setTitle(t.title);
         setBausteinPaths(t.bausteinPaths || {});
+        setBausteinValues(t.bausteinValues || {});
         setVariables(t.variables || []);
         setPreviewVars({});
         setDirty(false);
@@ -219,7 +222,7 @@ export const App = () => {
     }
     setSaving(true);
     try {
-      const res = await saveTemplate(template.id, html, bausteinPaths, variables, title);
+      const res = await saveTemplate(template.id, html, bausteinPaths, bausteinValues, variables, title);
       setDirty(false);
       // autoname = format:{title}: bei Titeländerung benennt das Backend um -> neue id.
       const renamed = res.id && res.id !== template.id;
@@ -399,7 +402,7 @@ export const App = () => {
   const refreshPreview = useCallback(async ({ force = false } = {}) => {
     if (!embedded || !template.id) return;
     const html = contentRef.current ? contentRef.current.getHtml() : (template.htmlContent || "");
-    const sig = JSON.stringify([html, recipient && recipient.id, variables, bausteinPaths, previewVars]);
+    const sig = JSON.stringify([html, recipient && recipient.id, variables, bausteinPaths, bausteinValues, previewVars]);
     if (!force && sig === previewSig.current) return;        // nichts geändert
     if (previewBusy.current) { previewPending.current = true; return; } // läuft -> queue
     previewBusy.current = true;
@@ -415,6 +418,7 @@ export const App = () => {
         html,
         variables,
         bausteinPaths,
+        bausteinValues,
         previewValues: previewVars,
       });
       setPreviewPdf(res.pdf_base64 || "");
@@ -428,7 +432,7 @@ export const App = () => {
       setPreviewLoading(false);
       if (previewPending.current) { previewPending.current = false; refreshPreview({ force: true }); }
     }
-  }, [template.id, template.haupt_verteil_objekt, recipient, variables, bausteinPaths, previewVars]);
+  }, [template.id, template.haupt_verteil_objekt, recipient, variables, bausteinPaths, bausteinValues, previewVars]);
 
   // Debounce: nach der letzten Eingabe ~4s warten, dann (live) rendern. Nur wenn der
   // Vorschau-Tab sichtbar ist.
@@ -447,7 +451,7 @@ export const App = () => {
   // -> debounced nachrendern.
   useEffect(() => {
     schedulePreview();
-  }, [variables, bausteinPaths, previewVars, schedulePreview]);
+  }, [variables, bausteinPaths, bausteinValues, previewVars, schedulePreview]);
 
   return (
     <div className="app">
@@ -587,11 +591,23 @@ export const App = () => {
           baustein={popoverBaustein.baustein}
           hauptVerteilObjekt={template.haupt_verteil_objekt}
           overrides={bausteinPaths[popoverBaustein.baustein.name] || {}}
+          values={bausteinValues[popoverBaustein.baustein.name] || {}}
           rect={popoverBaustein.rect}
           onClose={() => setPopoverBaustein(null)}
           onEditMapping={() => {
             setMappingBaustein(popoverBaustein.baustein);
             setPopoverBaustein(null);
+          }}
+          onValuesChange={(clean) => {
+            if (!editable) return;
+            const name = popoverBaustein.baustein.name;
+            setBausteinValues((prev) => {
+              const next = { ...prev };
+              if (clean && Object.keys(clean).length) next[name] = clean;
+              else delete next[name];
+              return next;
+            });
+            setDirty(true);
           }}
         />
       )}

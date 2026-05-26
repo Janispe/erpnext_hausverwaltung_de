@@ -76,6 +76,37 @@ class Immobilie(Document):
 			return None
 
 	@property
+	def eigentuemer_namen(self) -> list[str]:
+		"""Alle Eigentümer der Immobilie als reine Namen (ohne Adresse). Für Bausteine,
+		die nur die Namen brauchen (z.B. „Lysk und Özgen"). Fällt auf den Contact-Namen
+		zurück, wenn first_name/last_name leer sind und ein Firmenname existiert.
+
+		Pfad-Vorlage: ``{{ immobilie.eigentuemer_namen | join(', ') }}``.
+		"""
+		zeilen: list[str] = []
+		for row in self.get("eigentumer") or []:
+			contact_name = cstr(getattr(row, "contact", None) or "").strip()
+			if not contact_name:
+				continue
+			try:
+				contact = frappe.get_cached_doc("Contact", contact_name)
+			except frappe.DoesNotExistError:
+				continue
+			name = " ".join(
+				p
+				for p in (
+					cstr(contact.get("first_name")).strip(),
+					cstr(contact.get("last_name")).strip(),
+				)
+				if p
+			).strip()
+			if not name:
+				name = cstr(contact.get("company_name") or contact_name).strip()
+			if name:
+				zeilen.append(name)
+		return zeilen
+
+	@property
 	def eigentuemer_adressen(self) -> list[str]:
 		"""Alle Eigentümer der Immobilie als formatierte Zeilen ``Name, Straße, PLZ Ort``.
 

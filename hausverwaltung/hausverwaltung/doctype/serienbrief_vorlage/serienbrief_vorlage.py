@@ -1036,6 +1036,9 @@ def _render_segments_via_durchlauf(
 	# direkt vorbelegen (kurzschließt den DB-Read).
 	inline_override = frappe.parse_json(template_doc.get("inline_baustein_pfade") or "{}")
 	durchlauf._inline_bp_cache = inline_override if isinstance(inline_override, dict) else {}
+	# Parallel dazu: Text-/Bool-Werte pro inline-Baustein (selbes Schema, separates Feld).
+	inline_werte = frappe.parse_json(template_doc.get("inline_baustein_werte") or "{}")
+	durchlauf._inline_bv_cache = inline_werte if isinstance(inline_werte, dict) else {}
 
 	rows = durchlauf._get_empfaenger_rows()
 	if not rows:
@@ -1144,6 +1147,7 @@ def render_editor_preview_pdf(
 	html: str | None = None,
 	variables: str | None = None,
 	baustein_pfade: str | None = None,
+	baustein_werte: str | None = None,
 	iteration_doctype: str | None = None,
 	iteration_objekt: str | None = None,
 	split_preview: bool | None = None,
@@ -1174,6 +1178,9 @@ def render_editor_preview_pdf(
 	if baustein_pfade is not None:
 		parsed = _parse_path_mapping(baustein_pfade)
 		doc.inline_baustein_pfade = frappe.as_json(parsed) if parsed else ""
+	if baustein_werte is not None:
+		parsed_w = _parse_path_mapping(baustein_werte)
+		doc.inline_baustein_werte = frappe.as_json(parsed_w) if parsed_w else ""
 	# Transiente Vorschau-Werte über die (aus den Definitionen gebauten) Defaults legen.
 	if preview_values is not None:
 		pv = frappe.parse_json(preview_values)
@@ -1554,8 +1561,12 @@ def get_editor_template(name: str | None = None) -> Dict[str, Any]:
 		"modified_by": doc.modified_by,
 		"can_write": can_write,
 		"variables": variables,
-		# Pro-Baustein Input-Pfad-Overrides für inline eingefügte Bausteine.
+		# Pro-Baustein Input-Pfad-Overrides für inline eingefügte Bausteine
+		# (für Doctype-/Doctype-Liste-Variablen).
 		"baustein_pfade": _parse_path_mapping(doc.get("inline_baustein_pfade")),
+		# Pro-Baustein Werte (Text / Bool) für inline eingefügte Bausteine.
+		# Struktur identisch zu baustein_pfade: { "<Baustein>": { "<Variable>": <Wert> } }.
+		"baustein_werte": _parse_path_mapping(doc.get("inline_baustein_werte")),
 	}
 
 
@@ -1604,12 +1615,16 @@ def save_editor_template(
 	name: str | None = None,
 	html: str | None = None,
 	baustein_pfade: str | None = None,
+	baustein_werte: str | None = None,
 	variables: str | None = None,
 	title: str | None = None,
 ) -> Dict[str, Any]:
 	"""Editor-Inhalt zurück in die Vorlage schreiben (content bzw. html_content je
 	nach content_type). validate() sanitisiert Rich-Text automatisch.
-	baustein_pfade (JSON) = Pro-Baustein Input-Pfad-Overrides für inline Bausteine.
+	baustein_pfade (JSON) = Pro-Baustein Input-Pfad-Overrides für inline Bausteine
+	  (Doctype-Variablen).
+	baustein_werte (JSON) = Pro-Baustein Werte für Text-/Bool-Variablen inline; selbes
+	  Format { "<Baustein>": { "<Variable>": <Wert> } }.
 	variables (JSON-Array) = Variablen-Definitionen inkl. Wert (Text) / Pfad (Doctype);
 	rebaut die variables-Child-Tabelle + variablen_werte + pfad_zuordnung."""
 	template_name = (name or "").strip()
@@ -1629,6 +1644,11 @@ def save_editor_template(
 		# normalisiert als JSON-String ablegen (nur Dicts akzeptieren)
 		parsed = _parse_path_mapping(baustein_pfade)
 		doc.inline_baustein_pfade = frappe.as_json(parsed) if parsed else ""
+	if baustein_werte is not None:
+		# Werte (Text/Bool) sind primitive JSON-Typen; _parse_path_mapping akzeptiert
+		# generische Dict-of-Dicts und prüft NICHT, ob die Inner-Values Strings sind.
+		parsed_w = _parse_path_mapping(baustein_werte)
+		doc.inline_baustein_werte = frappe.as_json(parsed_w) if parsed_w else ""
 	if variables is not None:
 		_apply_editor_variables(doc, variables)
 	new_title = cstr(title).strip() if title is not None else ""

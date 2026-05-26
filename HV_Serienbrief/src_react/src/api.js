@@ -45,6 +45,8 @@ export async function loadTemplate(id) {
 		htmlContent: t.html || "",
 		// Pro-Baustein Input-Pfad-Overrides: { "<Baustein>": { "<Variable>": "<Pfad>" } }
 		bausteinPaths: t.baustein_pfade || {},
+		// Pro-Baustein Werte (Text / Bool): { "<Baustein>": { "<Variable>": <Wert> } }
+		bausteinValues: t.baustein_werte || {},
 		// Vorlagen-Variablen (Definition + Wert/Pfad), im Editor bearbeitbar.
 		variables: t.variables || [],
 		blocks: [],
@@ -78,8 +80,16 @@ export async function openDurchlauf({ vorlage, title, iterationDoctype }) {
 }
 
 // Editierten Inhalt zurück in die Vorlage speichern. Gibt { id, modified } zurück.
-// bausteinPaths = Pro-Baustein Input-Pfad-Overrides (werden als JSON gespeichert).
-export async function saveTemplate(id, html, bausteinPaths, variables, title) {
+// bausteinPaths = Pro-Baustein Input-Pfad-Overrides (Doctype-Variablen).
+// bausteinValues = Pro-Baustein Werte für Text-/Bool-Variablen (selbes Format).
+export async function saveTemplate(
+	id,
+	html,
+	bausteinPaths,
+	bausteinValues,
+	variables,
+	title,
+) {
 	if (!embedded) {
 		return { id, title, modified: "gerade eben (Demo)", mock: true };
 	}
@@ -87,6 +97,7 @@ export async function saveTemplate(id, html, bausteinPaths, variables, title) {
 		name: id,
 		html,
 		baustein_pfade: JSON.stringify(bausteinPaths || {}),
+		baustein_werte: JSON.stringify(bausteinValues || {}),
 		variables: JSON.stringify(variables || []),
 	};
 	if (title != null) params.title = title;
@@ -166,6 +177,7 @@ export async function renderPreview({
 	html,
 	variables,
 	bausteinPaths,
+	bausteinValues,
 	previewValues,
 }) {
 	if (!embedded) return { pdf_base64: "", mode: "mock" };
@@ -175,6 +187,7 @@ export async function renderPreview({
 	if (html != null) params.html = html;
 	if (variables != null) params.variables = JSON.stringify(variables);
 	if (bausteinPaths != null) params.baustein_pfade = JSON.stringify(bausteinPaths);
+	if (bausteinValues != null) params.baustein_werte = JSON.stringify(bausteinValues);
 	// Transiente Vorschau-Werte für Eingabe-Variablen (nicht gespeichert).
 	if (previewValues && Object.keys(previewValues).length) {
 		params.preview_values = JSON.stringify(previewValues);

@@ -21,6 +21,7 @@
   "pfad_zuordnung",
   "variablen_werte",
   "inline_baustein_pfade",
+  "inline_baustein_werte",
   "notizen_tab",
   "description"
  ],
@@ -122,6 +123,13 @@
    "fieldtype": "Long Text",
    "label": "Inline-Baustein-Pfade (JSON)",
    "description": "Vom Serienbrief-Editor verwaltet: Pfad-Overrides pro inline eingefuegtem Baustein, JSON { \"<Baustein>\": { \"<Variable>\": \"<Pfad>\" } }.",
+   "read_only": 1
+  },
+  {
+   "fieldname": "inline_baustein_werte",
+   "fieldtype": "Long Text",
+   "label": "Inline-Baustein-Werte (JSON)",
+   "description": "Vom Serienbrief-Editor verwaltet: Werte fuer Text- und Bool-Variablen pro inline eingefuegtem Baustein, JSON { \"<Baustein>\": { \"<Variable>\": <Wert> } }.",
    "read_only": 1
   },
   {

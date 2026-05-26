@@ -27,16 +27,16 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Typ",
-   "options": "Text\nDoctype\nDoctype Liste",
+   "options": "Text\nBool\nDoctype\nDoctype Liste",
    "reqd": 0
   },
   {
-   "depends_on": "eval:doc.variable_type && doc.variable_type != 'Text'",
+   "depends_on": "eval:['Doctype','Doctype Liste'].includes(doc.variable_type)",
    "fieldname": "reference_doctype",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Doctype",
-   "mandatory_depends_on": "eval:doc.variable_type && doc.variable_type != 'Text'",
+   "mandatory_depends_on": "eval:['Doctype','Doctype Liste'].includes(doc.variable_type)",
    "options": "DocType",
    "reqd": 0
   },

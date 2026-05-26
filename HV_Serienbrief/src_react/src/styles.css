@@ -2232,6 +2232,57 @@ span[style*="color"] > .chip {
 .bp-port.bp-port-missing .port-pin { color: var(--danger); }
 .bp-port.bp-port-override { background: var(--primary-50); border-color: var(--primary); }
 .bp-port.bp-port-override .port-pin { color: var(--primary); }
+
+/* Werte (Text/Bool) — direkter Input pro Variable, inline im Popover. Anders als
+   die bp-ports/bp-port-Boxen, weil hier der User tippt/klickt statt nur liest. */
+.bp-values {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bp-value-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 11.5px;
+}
+.bp-value-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+.bp-value-label .bp-value-type {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.bp-value-input {
+  flex: 1;
+  min-width: 100px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: white;
+}
+.bp-value-input:focus {
+  outline: 2px solid var(--primary-100);
+  outline-offset: 0;
+  border-color: var(--primary);
+}
+.bp-value-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
 .bp-mapping-btn {
   margin: 4px 12px 12px;
   padding: 6px 10px;

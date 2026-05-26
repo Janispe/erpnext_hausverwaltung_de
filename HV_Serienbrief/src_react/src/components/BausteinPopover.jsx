@@ -1,11 +1,21 @@
 import React, { useEffect } from "react";
 import { Icon } from "./Icon.jsx";
 
+// Variablentypen, die im Editor als Wert (Text-Input/Checkbox) erfasst werden,
+// statt als Doctype-Pfad. Müssen synchron mit dem Backend-Render-Pfad bleiben
+// (serienbrief_durchlauf._apply_block_variables: variable_type not in ("Text", "Bool")).
+const VALUE_TYPES = new Set(["Text", "Bool"]);
+
+function isDoctypeInput(inp) {
+	const t = (inp?.type || "").trim();
+	return t && !VALUE_TYPES.has(t);
+}
+
 // Effektive Input-Pfade auflösen: Override (Vorlage) > Standardpfad (Baustein).
 function resolveInputs(baustein, haupt, overrides) {
 	const std = (baustein?.standardpfade || []).find((s) => s.startobjekt === haupt);
 	const stdMap = std?.mappings || {};
-	return (baustein?.inputs || []).map((inp) => {
+	return (baustein?.inputs || []).filter(isDoctypeInput).map((inp) => {
 		const overridePath = (overrides || {})[inp.name];
 		const stdPath = stdMap[inp.name];
 		const path = overridePath || stdPath || "";
@@ -17,14 +27,16 @@ function resolveInputs(baustein, haupt, overrides) {
 }
 
 // Aufklappbares Detail-Popover am Baustein-Chip: Inputs (effektiver Pfad + Status),
-// Outputs, Knopf zum Pfad-Mapping. Frei positioniert (position: fixed an der Chip-Rect).
+// Werte (Text/Bool), Outputs, Knopf zum Pfad-Mapping. Frei positioniert.
 export const BausteinPopover = ({
 	baustein,
 	hauptVerteilObjekt,
 	overrides,
+	values,
 	rect,
 	onClose,
 	onEditMapping,
+	onValuesChange,
 }) => {
 	useEffect(() => {
 		const onKey = (e) => {
@@ -44,9 +56,20 @@ export const BausteinPopover = ({
 
 	if (!baustein) return null;
 	const inputs = resolveInputs(baustein, hauptVerteilObjekt, overrides);
+	const valueVars = (baustein.inputs || []).filter((inp) => !isDoctypeInput(inp));
 	const outputs = baustein.outputs || [];
 	const left = Math.max(8, Math.min(rect?.left ?? 100, window.innerWidth - 360));
 	const top = (rect?.bottom ?? 100) + 6;
+
+	const setValue = (name, val) => {
+		if (typeof onValuesChange !== "function") return;
+		// null/undefined/leerer String → Eintrag entfernen, damit das gespeicherte JSON
+		// nicht mit Leereinträgen zumüllt. Bool=false ist KEIN Leerwert.
+		const next = { ...(values || {}) };
+		if (val === null || val === undefined || val === "") delete next[name];
+		else next[name] = val;
+		onValuesChange(next);
+	};
 
 	return (
 		<div
@@ -62,6 +85,42 @@ export const BausteinPopover = ({
 				</button>
 			</div>
 			{baustein.description && <div className="bp-desc">{baustein.description}</div>}
+
+			{valueVars.length > 0 && (
+				<div className="bp-section">
+					<div className="bp-section-label">Werte · {valueVars.length}</div>
+					<div className="bp-values">
+						{valueVars.map((v, i) => {
+							const cur = (values || {})[v.name];
+							const t = (v.type || "").trim();
+							return (
+								<div className="bp-value-row" key={i}>
+									<label className="bp-value-label" title={v.desc || ""}>
+										{v.label || v.name}
+										<span className="bp-value-type">{t}</span>
+									</label>
+									{t === "Bool" ? (
+										<input
+											type="checkbox"
+											className="bp-value-checkbox"
+											checked={!!cur}
+											onChange={(e) => setValue(v.name, e.target.checked)}
+										/>
+									) : (
+										<input
+											type="text"
+											className="bp-value-input"
+											value={cur ?? ""}
+											placeholder={v.desc || "Wert eintragen…"}
+											onChange={(e) => setValue(v.name, e.target.value)}
+										/>
+									)}
+								</div>
+							);
+						})}
+					</div>
+				</div>
+			)}
 
 			{inputs.length > 0 && (
 				<div className="bp-section">
@@ -98,13 +157,13 @@ export const BausteinPopover = ({
 				</div>
 			)}
 
-			{(inputs.length > 0 || outputs.length > 0) && (
+			{inputs.length > 0 && (
 				<button className="bp-mapping-btn" onClick={onEditMapping}>
 					<Icon name="branch" size={11} /> Pfad-Mapping bearbeiten
 				</button>
 			)}
-			{inputs.length === 0 && outputs.length === 0 && (
-				<div className="bp-desc" style={{ padding: "4px 0" }}>Keine Inputs/Outputs.</div>
+			{inputs.length === 0 && outputs.length === 0 && valueVars.length === 0 && (
+				<div className="bp-desc" style={{ padding: "4px 0" }}>Keine Variablen.</div>
 			)}
 		</div>
 	);

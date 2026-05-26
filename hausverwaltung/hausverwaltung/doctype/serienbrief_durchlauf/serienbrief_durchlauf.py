@@ -1202,6 +1202,25 @@ class SerienbriefDurchlauf(Document):
 		self._inline_bp_cache = data
 		return data
 
+	def _get_inline_baustein_werte(self) -> dict:
+		"""Pro-Baustein Werte (Text / Bool) der Vorlage, gecached. Spiegel zu
+		_get_inline_baustein_pfade — selbes Storage-Schema ({Baustein: {Variable: Wert}}),
+		aber für nicht-Doctype-Variablen."""
+		cached = getattr(self, "_inline_bv_cache", None)
+		if cached is not None:
+			return cached
+		data: dict = {}
+		if getattr(self, "vorlage", None):
+			try:
+				tpl = frappe.get_cached_doc("Serienbrief Vorlage", self.vorlage)
+				parsed = frappe.parse_json(tpl.get("inline_baustein_werte") or "{}")
+				if isinstance(parsed, dict):
+					data = parsed
+			except Exception:
+				data = {}
+		self._inline_bv_cache = data
+		return data
+
 	def _apply_block_variables(self, context: Dict[str, Any], base_context: Dict[str, Any], block_doc, block_row) -> None:
 		variable_defs = block_doc.get("variables") or []
 		if not variable_defs:
@@ -1216,6 +1235,14 @@ class SerienbriefDurchlauf(Document):
 			**_parse_mapping(getattr(block_row, "pfad_zuordnung", None)),
 			**(inline_override if isinstance(inline_override, dict) else {}),
 		}
+		# Werte (Text/Bool) für inline-Bausteine — vom Editor pro Baustein-Vorkommen
+		# gepflegt. Wird unten als Override für ``value`` benutzt; greift, wenn keine
+		# Werte über die alte block_row.variablen_werte-Tabelle gepflegt sind.
+		inline_value_override = self._get_inline_baustein_werte().get(
+			getattr(block_doc, "name", ""),
+		) or {}
+		if not isinstance(inline_value_override, dict):
+			inline_value_override = {}
 		# Default-Pfade aus ``block_doc.standardpfade`` für den aktuellen
 		# Iterations-Doctype. Damit kann ein Baustein einmal pro Iterations-
 		# Doctype einen Standard hinterlegen, statt dass jede einbettende
@@ -1237,7 +1264,14 @@ class SerienbriefDurchlauf(Document):
 			entry = value_mapping.get(key) or {}
 			path = cstr(entry.get("path") or "").strip()
 			value = entry.get("value")
-			if variable_type != "Text":
+			# Inline-Override aus dem Editor schlägt block_row.variablen_werte. Auch
+			# falsy-Werte (False, 0, "") sind hier gültige Überschreibungen, daher kein
+			# truthiness-Check, sondern explizit „Key vorhanden".
+			if key in inline_value_override:
+				value = inline_value_override[key]
+			elif raw_key in inline_value_override:
+				value = inline_value_override[raw_key]
+			if variable_type not in ("Text", "Bool"):
 				path = (
 					cstr(path_mapping.get(key) or "").strip()
 					or cstr(path_mapping.get(raw_key) or "").strip()
