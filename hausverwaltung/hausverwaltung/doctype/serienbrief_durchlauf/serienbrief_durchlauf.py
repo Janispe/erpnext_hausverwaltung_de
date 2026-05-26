@@ -1293,11 +1293,14 @@ class SerienbriefDurchlauf(Document):
 							frappe.bold(path), frappe.bold(raw_key or key), frappe.bold(block_title)
 						)
 					)
-			if resolved is None and value not in (None, ""):
+			# Bewusst gesetzter Leer-String ("") ist ein gültiger Wert (optionale
+			# Baustein-Variable, vom User absichtlich leer gelassen). Nur echtes
+			# ``None`` (= Key überhaupt nicht im Override) zählt als „fehlt".
+			if resolved is None and value is not None:
 				resolved = value
 
 			if resolved is None:
-				if context.get(key) in (None, ""):
+				if context.get(key) is None:
 					label = getattr(variable, "label", None) or raw_key or key
 					missing.append(f"{label} (<code>{{{{ {key} }}}}</code>)")
 				continue
