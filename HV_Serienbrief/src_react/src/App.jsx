@@ -94,9 +94,10 @@ export const App = () => {
   }, [sidebarWidth]);
 
   // Insert a chip / snippet / baustein "at cursor" — immer über den TipTap-Editor (contentRef).
-  // Guard: keine Mutation bei fehlender Schreibberechtigung oder unsicherer (read-only) Vorlage.
+  // Guard: keine Mutation bei fehlender Schreibberechtigung, unsicherer (read-only) Vorlage
+  // oder waehrend ein Template-Wechsel laeuft (Token wuerde sonst im alten Editor-Stand landen).
   const insertItem = useCallback((item) => {
-    if (!template.canWrite || editorSafety) return;
+    if (!template.canWrite || editorSafety || loadingTemplate) return;
     const api = contentRef.current;
     if (!api || !api.insertToken) return;
     let raw = "";
@@ -107,14 +108,15 @@ export const App = () => {
       api.insertToken(raw);
       setDirty(true);
     }
-  }, [template.canWrite, editorSafety]);
+  }, [template.canWrite, editorSafety, loadingTemplate]);
 
   const insertPlaceholder = useCallback((token) => insertItem({ kind: "chip", token }), [insertItem]);
   const insertBaustein = useCallback((name) => insertItem({ kind: "baustein", name }), [insertItem]);
 
-  // Bearbeitbar nur mit Schreibrecht und solange die Vorlage verlustfrei round-trippt
-  // (sonst read-only — gilt auch für Variablen-/Pfad-Felder in der Sidebar).
-  const editable = !!template.canWrite && !editorSafety;
+  // Bearbeitbar nur mit Schreibrecht, solange die Vorlage verlustfrei round-trippt
+  // und kein Template-Wechsel laeuft (sonst tippt der User im alten Editor, der gleich
+  // durch die neue Vorlage ersetzt wird).
+  const editable = !!template.canWrite && !editorSafety && !loadingTemplate;
 
   // Vorlage auswählen. Eingebettet → echtes HTML aus der DB nachladen.
   // Standalone (Prototyp) → Demo-/Stub-Inhalt wie gehabt.

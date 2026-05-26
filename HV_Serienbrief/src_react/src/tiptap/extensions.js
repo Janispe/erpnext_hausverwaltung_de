@@ -395,7 +395,22 @@ const TextStyleExtras = Extension.create({
 				attributes: {
 					fontSize: {
 						default: null,
-						parseHTML: (el) => el.style.fontSize || null,
+						parseHTML: (el) => {
+							// Erst CSSOM versuchen (validiert + normalisiert).
+							const cssValue = (el.style.fontSize || "").trim();
+							if (cssValue) return cssValue;
+							// CSSOM hat den Wert als invalid verworfen → rohes style-Attribut
+							// nachfassen. Tritt bei Bestandsdaten ohne Einheit auf
+							// (z.B. ``font-size: 15`` aus Word-Imports).
+							const style = el.getAttribute("style") || "";
+							const match = /(?:^|;)\s*font-size\s*:\s*([^;]+)/i.exec(style);
+							const raw = (match?.[1] || "").trim();
+							if (!raw) return null;
+							// Pure positive Zahl ohne Einheit → "pt" anhängen.
+							// Negative Werte verwerfen (kein sinnvoller Briefwert).
+							if (/^\d+(\.\d+)?$/.test(raw)) return `${raw}pt`;
+							return raw;
+						},
 						renderHTML: (attrs) =>
 							attrs.fontSize ? { style: `font-size: ${attrs.fontSize}` } : {},
 					},

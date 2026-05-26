@@ -39,17 +39,22 @@ export const BausteinPopover = ({
 	onValuesChange,
 }) => {
 	useEffect(() => {
+		// Mount-Time merken, damit der Mount-Klick (= der mousedown, der das Popover
+		// gerade geoeffnet hat) nicht direkt durch den Outside-Listener wieder
+		// geschlossen wird. Vorher per setTimeout(0) geloest — bei schnellem
+		// Wechsel zwischen Bausteinen war die Cleanup-Reihenfolge subtil fragil.
+		const mountedAt = Date.now();
 		const onKey = (e) => {
 			if (e.key === "Escape") onClose();
 		};
 		const onDown = (e) => {
+			if (Date.now() - mountedAt < 50) return;
 			if (!(e.target.closest && e.target.closest(".baustein-popover"))) onClose();
 		};
 		window.addEventListener("keydown", onKey);
-		const t = setTimeout(() => document.addEventListener("mousedown", onDown), 0);
+		document.addEventListener("mousedown", onDown);
 		return () => {
 			window.removeEventListener("keydown", onKey);
-			clearTimeout(t);
 			document.removeEventListener("mousedown", onDown);
 		};
 	}, [onClose]);
