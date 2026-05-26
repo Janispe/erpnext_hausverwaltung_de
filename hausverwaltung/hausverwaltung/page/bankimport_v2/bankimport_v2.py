@@ -78,12 +78,15 @@ def _bank_account_iban(bank_account: str | None) -> str | None:
 
 def _suggest_invoice_for_row(bt_name: str) -> dict[str, Any] | None:
 	"""Dry-Run: schlägt für eine Phase-3-Zeile eine offene Rechnung vor, wenn
-	exakt EINE Rechnung der Party mit dem Bank-Betrag übereinstimmt.
+	exakt EINE Rechnung der Party den Bank-Betrag trifft.
 
-	Spiegelt Strategy 1 (single exact) von ``auto_match_bank_transaction`` —
-	ohne zu buchen. Die Strategien 2 (Monats-Summe) und 3 (Alle-Summe) erzeugen
-	ein Set von Rechnungen, das nicht in eine Single-ID-Empfehlung passt; die
-	zeigt das UI eh erst beim Klick auf den Rechnungs-Tab.
+	Im Gegensatz zu ``auto_match_bank_transaction`` Strategy 1 — die beim
+	ersten Treffer bucht — gibt der Suggester bei mehreren gleichbetraglichen
+	Rechnungen bewusst ``None`` zurück. Eine UI-Empfehlung soll eindeutig
+	sein; bei Ambiguität wählt der User die richtige selber im Rechnungs-Tab.
+
+	Die Strategien 2/3 (Monats-/Alle-Summe) erzeugen ohnehin Sets, die nicht
+	in eine Single-ID-Empfehlung passen.
 
 	Returns ``{ "rechnungId": "...", "reason": "..." }`` oder ``None``.
 	"""
@@ -101,13 +104,16 @@ def _suggest_invoice_for_row(bt_name: str) -> dict[str, Any] | None:
 		return None
 
 	target = prep["target_amount"]
-	for inv in prep["candidates"]:
-		if abs(flt(inv.outstanding_amount) - target) < _TOLERANCE:
-			return {
-				"rechnungId": inv.name,
-				"reason": "Offener Beleg dieser Höhe gefunden",
-			}
-	return None
+	exact = [
+		inv for inv in prep["candidates"]
+		if abs(flt(inv.outstanding_amount) - target) < _TOLERANCE
+	]
+	if len(exact) != 1:
+		return None
+	return {
+		"rechnungId": exact[0].name,
+		"reason": "Offener Beleg dieser Höhe gefunden",
+	}
 
 
 @frappe.whitelist()

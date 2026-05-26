@@ -472,10 +472,18 @@ function BookingActions({ docname, row, onActionDone, notify }) {
 		return m;
 	}, [isOut, hasParty, row.partyTyp]);
 
-	// Smarter Default: pro Zeile neu inferieren
-	const reco = useMemo(() => inferBestMode(row, modes), [row.id, modes]);
+	// Smarter Default: pro Zeile neu inferieren.
+	// Deps spiegeln die Felder, die inferBestMode tatsächlich liest — damit ein
+	// Refresh derselben row (gleiche row.id) mit aktualisiertem autoMatch oder
+	// Verwendungszweck die Empfehlung nicht stale lässt.
+	const reco = useMemo(
+		() => inferBestMode(row, modes),
+		[row.id, row.autoMatch?.rechnungId, row.verwendungszweck, row.auftraggeber, modes]
+	);
 	const [mode, setMode] = useState(reco.id);
-	// Reset bei Zeilenwechsel auf die jeweils empfohlene Mode
+	// Mode-Reset nur bei Zeilenwechsel (row.id) — auf derselben Zeile bleibt
+	// die manuelle User-Auswahl bestehen, selbst wenn sich reco nachträglich
+	// noch ändert.
 	useEffect(() => { setMode(reco.id); }, [row.id]); // eslint-disable-line
 
 	const recoLabel = modes.find((m) => m.id === reco.id)?.lbl;

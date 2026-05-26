@@ -71,6 +71,18 @@ class TestSuggestInvoiceForRow(FrappeTestCase):
 
 		self.assertIsNone(result)
 
+	def test_returns_none_when_multiple_exact_matches(self):
+		"""Ambiguität ist keine Empfehlung — bei mehreren gleichbetraglichen
+		offenen Rechnungen wählt der User selbst im Rechnungs-Tab."""
+		bt = _FakeBT(party_type="Customer", party="MIETER-1", deposit=1234.56)
+		invoices = [
+			_FakeInvoice("SI-001", outstanding_amount=1234.56),
+			_FakeInvoice("SI-002", outstanding_amount=1234.56),  # zweiter exact match
+		]
+		with patch("frappe.get_doc", return_value=bt), \
+			 patch("frappe.get_all", return_value=invoices):
+			self.assertIsNone(bv2._suggest_invoice_for_row("BT-1"))
+
 	def test_returns_none_when_no_open_invoices(self):
 		bt = _FakeBT(party_type="Customer", party="MIETER-1", deposit=100.00)
 		with patch("frappe.get_doc", return_value=bt), \
