@@ -448,9 +448,17 @@ export const App = () => {
   }, [tab, template.id, recipient, refreshPreview]);
 
   // Variablen-/Baustein-Pfad-/Vorschau-Wert-Änderungen (nicht über den Editor)
-  // -> debounced nachrendern.
+  // -> debounced nachrendern. Cleanup-Return killt den 4s-Timer beim
+  // Vorlagen-/Empfänger-Wechsel oder Unmount, damit ein altes setTimeout
+  // nicht mehr auf die inzwischen ausgetauschte Vorlage refreshPreview() ruft.
   useEffect(() => {
     schedulePreview();
+    return () => {
+      if (previewTimer.current) {
+        clearTimeout(previewTimer.current);
+        previewTimer.current = null;
+      }
+    };
   }, [variables, bausteinPaths, bausteinValues, previewVars, schedulePreview]);
 
   return (
