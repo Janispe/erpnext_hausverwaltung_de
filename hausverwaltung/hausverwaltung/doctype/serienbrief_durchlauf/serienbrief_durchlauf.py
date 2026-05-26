@@ -1299,8 +1299,17 @@ class SerienbriefDurchlauf(Document):
 			if resolved is None and value is not None:
 				resolved = value
 
+			# Optional-Flag auf der Variable: kein Vorlagenfehler bei fehlendem Wert.
+			# Stattdessen wird leerer String ins Context gesetzt, sodass Jinja
+			# StrictUndefined nicht crasht und die Vorlage `{% if X %}` ohne
+			# Wert sauber den else-Branch nimmt.
+			is_optional = bool(int(getattr(variable, "optional", 0) or 0))
+
 			if resolved is None:
 				if context.get(key) is None:
+					if is_optional:
+						context[key] = ""
+						continue
 					label = getattr(variable, "label", None) or raw_key or key
 					missing.append(f"{label} (<code>{{{{ {key} }}}}</code>)")
 				continue

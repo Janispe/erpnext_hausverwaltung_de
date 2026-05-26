@@ -10,6 +10,7 @@
   "variable_type",
   "reference_doctype",
   "label",
+  "optional",
   "preview_default",
   "beschreibung"
  ],
@@ -45,6 +46,14 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Label"
+  },
+  {
+   "default": "0",
+   "fieldname": "optional",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Optional",
+   "description": "Wenn aktiv: Vorlagen müssen keinen Wert setzen — leerer Wert ist erlaubt und führt nicht zum Vorlagenfehler. Nutzbar für Text-/Bool-Variablen."
   },
   {
    "fieldname": "preview_default",
