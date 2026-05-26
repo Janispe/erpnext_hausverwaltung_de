@@ -535,23 +535,35 @@ class SerienbriefDurchlauf(Document):
 				pass
 
 	def _render_dokument_with_print_format(self, doc, format_name: str) -> bytes:
-		hybrid_pdf = self._render_dokument_hybrid_print_pdf(doc, format_name)
-		if hybrid_pdf:
-			return hybrid_pdf
+		# Inner-Closure liefert die PDF-Bytes aus dem jeweils greifenden Render-Pfad
+		# (Hybrid → Disk-Cache → frisches frappe.get_print); Post-Processing
+		# (Seitenzahlen-Overlay bei multipage) passiert dann einheitlich danach,
+		# damit der Versand dieselbe „Seite X von Y"-Anzeige hat wie die Editor-
+		# Vorschau (vorher nur dort applied → Inkonsistenz Vorschau/Versand).
+		def _raw_pdf() -> bytes:
+			hybrid_pdf = self._render_dokument_hybrid_print_pdf(doc, format_name)
+			if hybrid_pdf:
+				return hybrid_pdf
+			if (
+				cstr(getattr(doc, "generated_pdf_file", None) or "").strip()
+				and "hv-pdf-inline-fragment" in cstr(getattr(doc, "html", None) or "")
+			):
+				return read_file_url_bytes(doc.generated_pdf_file)
+			return frappe.get_print(
+				"Serienbrief Dokument",
+				doc.name,
+				print_format=format_name,
+				as_pdf=True,
+				pdf_options=self._default_pdf_options(),
+			)
 
-		if (
-			cstr(getattr(doc, "generated_pdf_file", None) or "").strip()
-			and "hv-pdf-inline-fragment" in cstr(getattr(doc, "html", None) or "")
-		):
-			return read_file_url_bytes(doc.generated_pdf_file)
-
-		return frappe.get_print(
-			"Serienbrief Dokument",
-			doc.name,
-			print_format=format_name,
-			as_pdf=True,
-			pdf_options=self._default_pdf_options(),
+		pdf_bytes = _raw_pdf()
+		from hausverwaltung.hausverwaltung.utils.pdf_page_numbers import (
+			add_page_numbers_if_multipage,
 		)
+		# Defensiv: bei 1-Seiten-PDFs ist das ein No-Op, bei fehlenden Dependencies
+		# ebenfalls — kein Render-Crash.
+		return add_page_numbers_if_multipage(pdf_bytes)
 
 	def _render_dokument_hybrid_print_pdf(self, doc, format_name: str) -> bytes | None:
 		html = cstr(getattr(doc, "html", None) or "").strip()
