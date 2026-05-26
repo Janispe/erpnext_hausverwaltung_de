@@ -126,6 +126,8 @@ export const App = () => {
         setVariables(t.variables || []);
         setPreviewVars({});
         setDirty(false);
+        // Zuletzt geöffnete Vorlage merken, damit sie beim Neuladen wieder erscheint.
+        try { savePref("lastTemplateId", t.id || id); } catch (_) {}
       } catch (e) {
         setTemplate({
           id,
@@ -178,6 +180,12 @@ export const App = () => {
             const wanted = new URLSearchParams(window.location.search).get("template");
             if (wanted) target = all.find(t => t.id === wanted) || null;
           } catch (_) {}
+          // Sonst zuletzt geöffnete Vorlage aus localStorage; wenn die nicht mehr
+          // existiert (gelöscht/umbenannt), fällt es auf die erste der Liste zurück.
+          if (!target) {
+            const last = loadPref("lastTemplateId", null);
+            if (last) target = all.find(t => t.id === last) || null;
+          }
           const pick = target || all[0];
           if (pick) onTemplateSelect(pick.id);
         }
