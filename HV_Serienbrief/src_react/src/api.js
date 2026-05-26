@@ -89,6 +89,15 @@ export async function openClassicForm({ vorlage }) {
 	return await rpc("open_classic_form", { vorlage });
 }
 
+// "Zurück zur Liste" — vom Editor zum neuen Vorlagen-Browser springen.
+// Eingebettet als NAV_ACTION; standalone (npm run dev) no-op.
+export async function openBrowser() {
+	if (!embedded) {
+		return { ok: true, mock: true };
+	}
+	return await rpc("open_browser", {});
+}
+
 // Editierten Inhalt zurück in die Vorlage speichern. Gibt { id, modified } zurück.
 // bausteinPaths = Pro-Baustein Input-Pfad-Overrides (Doctype-Variablen).
 // bausteinValues = Pro-Baustein Werte für Text-/Bool-Variablen (selbes Format).

@@ -9,7 +9,7 @@ import { BausteinPopover } from "./components/BausteinPopover.jsx";
 import { CURRENT_TEMPLATE, TEMPLATE_TREE } from "./data.js";
 import {
   loadTree, loadTemplate, saveTemplate, copyTemplate, deleteTemplate, openDurchlauf,
-  openClassicForm,
+  openClassicForm, openBrowser,
   loadPlaceholderTree, loadBausteine, loadRecipients, renderPreview,
   uploadImage, embedded,
 } from "./api.js";
@@ -499,7 +499,24 @@ export const App = () => {
   return (
     <div className="app">
       <header className="topbar">
-        <button className="btn ghost icon" title="Zurück zur Liste"><Icon name="back" size={16}/></button>
+        <button
+          className="btn ghost icon"
+          title="Zurück zur Liste"
+          onClick={async () => {
+            // Ungespeicherte Edits anbieten zu speichern, damit der User
+            // sie beim Wechsel zum Browser nicht verliert.
+            if (dirty && template.canWrite) {
+              const proceed = confirm("Ungespeicherte Änderungen. Vor dem Verlassen speichern?");
+              if (proceed) {
+                const res = await saveRef.current();
+                if (!res) return;
+              }
+            }
+            try { await openBrowser(); } catch (e) { alert("Zurück zur Liste fehlgeschlagen: " + ((e && e.message) || e)); }
+          }}
+        >
+          <Icon name="back" size={16}/>
+        </button>
         <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
           <span className="crumb">Serienbrief · {template.kategorie}</span>
         </div>

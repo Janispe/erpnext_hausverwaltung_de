@@ -47,6 +47,11 @@ const NAV_ACTIONS = {
 	open_classic_form: (params) => {
 		if (params.vorlage) frappe.set_route("Form", "Serienbrief Vorlage", params.vorlage);
 	},
+	// "Zurück zur Liste"-Button im Editor-Header — springt zum neuen
+	// Vorlagen-Browser (Default-Einstieg seit Soft-Switch).
+	open_browser: () => {
+		frappe.set_route("serienbrief_browser");
+	},
 };
 
 // Deep-Link aus dem Vorlagen-Browser: route_options.hv_serienbrief_template wird
