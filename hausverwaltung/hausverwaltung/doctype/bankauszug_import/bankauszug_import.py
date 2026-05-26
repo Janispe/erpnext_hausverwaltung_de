@@ -1285,7 +1285,9 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
     doc = frappe.get_doc("Bankauszug Import", docname)
     if not doc.bank_account:
         frappe.throw("Bitte Bankkonto auswählen.")
-    bank_account = frappe.get_cached_doc("Bank Account", doc.bank_account)
+    # get_doc (uncached): falls is_company_account zwischen Anlage und Aufruf
+    # geaendert wurde, soll der aktuelle Stand gelesen werden, nicht der Cache.
+    bank_account = frappe.get_doc("Bank Account", doc.bank_account)
     if hasattr(bank_account, "is_company_account") and not bank_account.is_company_account:
         frappe.throw("Bitte ein Firmen-Bankkonto auswählen (Bank Account mit 'Is Company Account' = 1).")
 
