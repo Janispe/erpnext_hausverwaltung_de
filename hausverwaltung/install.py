@@ -141,12 +141,20 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 			}
 			.serienbrief-page p {
 				/* Kein Default-margin — direkt aufeinanderfolgende <p> rendern
-				   kompakt (z.B. Adressblöcke). Leerzeilen werden durch ein
-				   leeres <p>&nbsp;</p> erzeugt, das line-height-Höhe bekommt.
+				   kompakt (z.B. Adressblöcke). Leerzeilen werden durch leere <p>
+				   erzeugt; die :empty-Regel unten gibt ihnen eine sichtbare
+				   line-height-Höhe (sonst kollabieren sie in Print auf 0).
 				   So entspricht das PDF-Layout dem Serienbrief-Editor-Verhalten
 				   (gleicher line-height-Wert 1.35). */
 				margin: 0;
 				line-height: 1.35;
+			}
+			/* Leere <p> als Leerzeile rendern: TipTap serialisiert Enter zu
+			   <p></p> (ohne &nbsp;), Browser/Chrome geben dem ohne Inhalt 0px
+			   Höhe — daher ein non-breaking space als Pseudo-Inhalt einsetzen.
+			   <p><br/></p> hat durch das <br> bereits eine Zeilenhöhe. */
+			.serienbrief-page p:empty::before {
+				content: "\00a0";
 			}
 			/* Tabellen: Frappes print.bundle erzwingt ``.print-format td {padding:10px
 			   !important}`` — das spreizt gestapelte Layout-Zellen (z.B. Einzug/Auszug)
