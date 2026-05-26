@@ -639,15 +639,18 @@ def _lookup_inline_key(store, raw_key):
 	# Inline-Werte und -Pfade koennen mit raw varname ODER scrub(varname) als
 	# Key persistiert sein (aelterer Editor-State, importierte Daten).
 	# Helfer probiert beide Varianten. Returns (value, found).
-	# Der Durchlauf-Pfad in serienbrief_durchlauf hat dieselbe Toleranz inline;
-	# dieser Helper bringt den Preview-Pfad auf Augenhoehe.
+	#
+	# Reihenfolge: scrub-first, dann raw — analog zum Durchlauf-Render
+	# (_apply_block_variables in serienbrief_durchlauf.py Z.1282-1294).
+	# Wenn beide Keys im JSON drin sind, gewinnt scrub. So liefert die
+	# Vorschau garantiert denselben Wert wie der echte PDF-Render.
 	if not isinstance(store, dict) or not raw_key:
 		return None, False
-	if raw_key in store:
-		return store[raw_key], True
 	scrubbed = frappe.scrub(raw_key)
-	if scrubbed and scrubbed != raw_key and scrubbed in store:
+	if scrubbed and scrubbed in store:
 		return store[scrubbed], True
+	if raw_key in store and raw_key != scrubbed:
+		return store[raw_key], True
 	return None, False
 
 
