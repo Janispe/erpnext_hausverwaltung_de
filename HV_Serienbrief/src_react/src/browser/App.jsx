@@ -312,10 +312,6 @@ const TemplateRow = ({ tpl, folder, selected, selectedIds, onSelect, onToggleSel
           {folder?.title || "—"}
         </span>
       </div>
-      <div className="tpl-cell tpl-cell-bausteine">
-        <span className="tpl-cell-num">{tpl.bausteine.length}</span>
-        {tpl.missing_paths > 0 && <span className="tpl-cell-warn" title={`${tpl.missing_paths} Pfad${tpl.missing_paths > 1 ? "e" : ""} fehlt`}>⚠ {tpl.missing_paths}</span>}
-      </div>
       <div className="tpl-cell tpl-cell-modified" title={`${formatDateAbs(tpl.modified)} · ${tpl.modified_by}`}>
         <div>{formatDate(tpl.modified)}</div>
         <div className="tpl-cell-sub">{tpl.modified_by.split("@")[0]}</div>
@@ -357,7 +353,6 @@ const ListHeader = ({ sort, onSortClick, allSelected, someSelected, onSelectAll,
       </div>
       <div className="tpl-cell tpl-cell-title tpl-th" onClick={() => onSortClick("title")}>Titel{arrow("title")}</div>
       <div className="tpl-cell tpl-cell-folder tpl-th">Ordner</div>
-      <div className="tpl-cell tpl-cell-bausteine tpl-th">Bausteine</div>
       <div className="tpl-cell tpl-cell-modified tpl-th" onClick={() => onSortClick("modified")}>Geändert{arrow("modified")}</div>
       <div className="tpl-cell tpl-cell-used tpl-th" onClick={() => onSortClick("used")}>Verwendet{arrow("used")}</div>
       <div className="tpl-cell tpl-cell-actions"></div>
