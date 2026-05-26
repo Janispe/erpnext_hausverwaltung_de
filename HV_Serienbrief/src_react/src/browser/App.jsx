@@ -874,12 +874,15 @@ export const App = () => {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
-  // Verschiebbare Sidebar — Breite in localStorage merken. Min/Max-Werte
-  // verhindern, dass der User die Spalte unter die Lesbarkeitsschwelle
-  // schrumpft oder die Vorlagen-Liste komplett verdrängt.
+  // Verschiebbare Sidebar + Preview — Breiten in localStorage merken.
+  // Min/Max-Werte verhindern, dass der User die Spalte unter die Lesbar-
+  // keitsschwelle schrumpft oder die Vorlagen-Liste komplett verdrängt.
   const [sidebarWidth, setSidebarWidth] = useState(() => loadPref("browserSidebarWidth", 240));
+  const [previewWidth, setPreviewWidth] = useState(() => loadPref("browserPreviewWidth", 440));
   const [resizingSidebar, setResizingSidebar] = useState(false);
+  const [resizingPreview, setResizingPreview] = useState(false);
   useEffect(() => savePref("browserSidebarWidth", sidebarWidth), [sidebarWidth]);
+  useEffect(() => savePref("browserPreviewWidth", previewWidth), [previewWidth]);
   const onSidebarResizeStart = useCallback((e) => {
     e.preventDefault();
     setResizingSidebar(true);
@@ -897,6 +900,24 @@ export const App = () => {
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   }, [sidebarWidth]);
+  // Preview-Resize: rechter Handle zieht nach LINKS = breiter (umgekehrt zur Sidebar).
+  const onPreviewResizeStart = useCallback((e) => {
+    e.preventDefault();
+    setResizingPreview(true);
+    const startX = e.clientX;
+    const startWidth = previewWidth;
+    const onMove = (ev) => {
+      const next = Math.max(320, Math.min(900, startWidth - (ev.clientX - startX)));
+      setPreviewWidth(next);
+    };
+    const onUp = () => {
+      setResizingPreview(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [previewWidth]);
 
   // Daten laden (eingebettet → Backend, standalone → Mock aus data.js).
   const reload = useCallback(() => {
@@ -1208,8 +1229,12 @@ export const App = () => {
 
   return (
     <div
-      className={`browser-app ${resizingSidebar ? "resizing-sidebar" : ""}`}
-      style={{ gridTemplateColumns: `${sidebarWidth}px 6px 1fr auto` }}
+      className={`browser-app ${resizingSidebar || resizingPreview ? "resizing-sidebar" : ""}`}
+      style={{
+        gridTemplateColumns: (showPreview && previewTpl)
+          ? `${sidebarWidth}px 6px 1fr 6px ${previewWidth}px`
+          : `${sidebarWidth}px 6px 1fr`,
+      }}
     >
       <Sidebar
         folders={folders}
@@ -1294,13 +1319,16 @@ export const App = () => {
       </main>
 
       {showPreview && previewTpl && (
-        <PreviewPane
-          tpl={previewTpl}
-          folder={folders.find(f => f.id === previewTpl.folder)}
-          onClose={() => setShowPreview(false)}
-          onOpen={(tpl) => openInEditor(tpl)}
-          onDurchlauf={(tpl) => startDurchlauf(tpl)}
-        />
+        <>
+          <div className="bw-resize-handle" onMouseDown={onPreviewResizeStart} title="Ziehen, um die Vorschau zu verbreitern" />
+          <PreviewPane
+            tpl={previewTpl}
+            folder={folders.find(f => f.id === previewTpl.folder)}
+            onClose={() => setShowPreview(false)}
+            onOpen={(tpl) => openInEditor(tpl)}
+            onDurchlauf={(tpl) => startDurchlauf(tpl)}
+          />
+        </>
       )}
 
       {contextMenu && (

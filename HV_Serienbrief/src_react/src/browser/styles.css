@@ -4,9 +4,10 @@
 
 .browser-app {
   display: grid;
-  /* Spalten: Sidebar | Resize-Handle | Hauptliste | Preview. Sidebar-Breite
-     wird zur Laufzeit per inline-style aus dem persistierten Pref gesetzt. */
-  grid-template-columns: 240px 6px 1fr auto;
+  /* Default-Fallback: 3 Spalten (Sidebar | Handle | Hauptliste). Wenn Preview
+     offen ist, ueberschreibt das inline-style auf 5 Spalten (... | Handle |
+     Preview). Beide Breiten persistieren in localStorage. */
+  grid-template-columns: 240px 6px 1fr;
   height: 100vh;
   overflow: hidden;
   font-family: var(--font-sans);
@@ -476,7 +477,9 @@ mark {
 
 /* ============== Preview ============== */
 .bw-preview {
-  width: 440px;
+  /* Breite kommt aus der Grid-Spalte (per inline-style aus dem persistierten
+     Pref). Das aside fuellt seine Grid-Zelle. */
+  min-width: 0;
   background: var(--surface);
   border-left: 1px solid var(--border);
   display: flex;
@@ -680,7 +683,7 @@ mark {
   .bw-preview { width: 380px; }
 }
 @media (max-width: 1000px) {
-  .browser-app { grid-template-columns: 200px 6px 1fr auto; }
+  .browser-app { grid-template-columns: 200px 6px 1fr; }
   .bw-preview { width: 320px; }
 }
 
