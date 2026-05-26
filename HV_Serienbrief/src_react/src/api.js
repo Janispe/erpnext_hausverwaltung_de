@@ -79,6 +79,16 @@ export async function openDurchlauf({ vorlage, title, iterationDoctype }) {
 	return await rpc("new_durchlauf", { vorlage, title, iteration_doctype: iterationDoctype });
 }
 
+// Klassische Frappe-Form der Vorlage öffnen. Escape-Hatch für den geführten
+// Mapping-Wizard und Spezialfälle (Mehrfach-Baustein-Mappings via Alt-Datenmodell).
+// Navigiert das Eltern-Desk weg vom Editor — kein Rückgabewert nötig.
+export async function openClassicForm({ vorlage }) {
+	if (!embedded) {
+		return { ok: true, mock: true };
+	}
+	return await rpc("open_classic_form", { vorlage });
+}
+
 // Editierten Inhalt zurück in die Vorlage speichern. Gibt { id, modified } zurück.
 // bausteinPaths = Pro-Baustein Input-Pfad-Overrides (Doctype-Variablen).
 // bausteinValues = Pro-Baustein Werte für Text-/Bool-Variablen (selbes Format).

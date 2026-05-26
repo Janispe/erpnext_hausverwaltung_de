@@ -40,6 +40,13 @@ const NAV_ACTIONS = {
 		frappe.route_options = { hv_vorlage: params.vorlage || undefined };
 		frappe.set_route("serienbrief_durchlauf_viewer");
 	},
+	// Escape-Hatch zur klassischen Form: nötig für den geführten Mapping-Wizard
+	// und Spezialfälle wie Mehrfach-Baustein-Mappings, die das alte Child-Table-
+	// Datenmodell (textbausteine[].pfad_zuordnung) abbildet, das Inline-Modell
+	// des neuen Editors aber nicht.
+	open_classic_form: (params) => {
+		if (params.vorlage) frappe.set_route("Form", "Serienbrief Vorlage", params.vorlage);
+	},
 };
 
 // Deep-Link aus dem Vorlagen-Browser: route_options.hv_serienbrief_template wird

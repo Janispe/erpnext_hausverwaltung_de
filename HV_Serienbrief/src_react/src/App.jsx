@@ -9,6 +9,7 @@ import { BausteinPopover } from "./components/BausteinPopover.jsx";
 import { CURRENT_TEMPLATE, TEMPLATE_TREE } from "./data.js";
 import {
   loadTree, loadTemplate, saveTemplate, copyTemplate, deleteTemplate, openDurchlauf,
+  openClassicForm,
   loadPlaceholderTree, loadBausteine, loadRecipients, renderPreview,
   uploadImage, embedded,
 } from "./api.js";
@@ -319,6 +320,23 @@ export const App = () => {
     }
   }, [template.id, title, deleting, copying, saving, onTemplateSelect]);
 
+  // „Klassisch" -> Escape-Hatch zur Standard-Frappe-Form. Nötig für den
+  // geführten Mapping-Wizard und Spezialfälle (Mehrfach-Baustein-Mapping über
+  // das Alt-Datenmodell textbausteine[].pfad_zuordnung). Vor dem Verlassen
+  // anbieten zu speichern, damit ungespeicherte Edits nicht verloren gehen.
+  const handleOpenClassic = useCallback(async () => {
+    if (!template.id) return;
+    if (dirty && template.canWrite) {
+      const ok = await saveRef.current();
+      if (!ok) return;
+    }
+    try {
+      await openClassicForm({ vorlage: template.id });
+    } catch (e) {
+      alert("Klassische Form öffnen fehlgeschlagen: " + ((e && e.message) || e));
+    }
+  }, [template.id, template.canWrite, dirty]);
+
   // „In Serienbrief laden" -> neues Durchlauf-Formular im Desk öffnen, Vorlage
   // vorausgewählt. Der Durchlauf rendert aus dem gespeicherten Stand -> erst speichern.
   const handleLoadDurchlauf = useCallback(async () => {
@@ -494,6 +512,9 @@ export const App = () => {
         </button>
         <button className="btn ghost tb-danger" onClick={handleDelete} disabled={!template.id || !template.canWrite || copying || saving || deleting} title={!template.canWrite ? "Keine Berechtigung" : "Diese Vorlage löschen"}>
           <Icon name="trash" size={14}/> {deleting ? "Löscht …" : "Löschen"}
+        </button>
+        <button className="btn ghost" onClick={handleOpenClassic} disabled={!template.id || copying || saving || deleting} title="In klassischer Form öffnen (Mapping-Wizard, Spezialfälle)">
+          <Icon name="file" size={14}/> Klassisch
         </button>
         <button className="btn primary" onClick={handleLoadDurchlauf} disabled={!template.id || saving || deleting} title="Neuen Serienbrief-Durchlauf mit dieser Vorlage starten">
           <Icon name="send" size={14}/> In Serienbrief laden

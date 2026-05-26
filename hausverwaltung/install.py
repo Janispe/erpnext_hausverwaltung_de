@@ -1705,7 +1705,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         "label": "Serienbriefe",
         "icon": "mail",
         "links": [
-            {"label": "Serienbrief Vorlage", "link_type": "Page", "link_to": "serienbrief_vorlagenbaum"},
+            {"label": "Serienbrief Vorlage", "link_type": "Page", "link_to": "serienbrief_browser"},
             {"label": "Serienbrief Durchlauf", "link_type": "DocType", "link_to": "Serienbrief Durchlauf"},
             {"label": "Sprachnotiz Aufnahme", "link_type": "Page", "link_to": "sprachnotiz-aufnahme"},
         ],

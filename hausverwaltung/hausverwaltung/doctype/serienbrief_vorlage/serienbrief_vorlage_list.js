@@ -221,7 +221,7 @@
 	frappe.listview_settings["Serienbrief Vorlage"] = {
 		onload(listview) {
 			if (hv_should_redirect_to_ordneransicht()) {
-				frappe.set_route("serienbrief_vorlagenbaum");
+				frappe.set_route("serienbrief_browser");
 				return;
 			}
 
@@ -230,7 +230,7 @@
 				hv_open_kategorie_ordner_dialog(listview)
 			);
 			listview.page.add_inner_button(__("Ordneransicht"), () =>
-				frappe.set_route("serienbrief_vorlagenbaum")
+				frappe.set_route("serienbrief_browser")
 			);
 		},
 	};
