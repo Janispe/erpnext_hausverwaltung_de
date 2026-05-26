@@ -207,6 +207,12 @@ export const SNIPPETS = [
     desc: "{% for item in liste %} … {% endfor %}",
     value: `{% for item in liste %}\n\n{% endfor %}`,
   },
+  {
+    key: "set",
+    label: "Variable setzen (set)",
+    desc: "{% set name = wert %} — z. B. {% set stufe = serienbrief.werte.stufe | int %}",
+    value: `{% set VARIABLE = WERT %}`,
+  },
 ];
 
 export const TEXT_BAUSTEINE = [

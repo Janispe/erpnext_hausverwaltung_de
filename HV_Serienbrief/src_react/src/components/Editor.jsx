@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useEditor, EditorContent, BubbleMenu } from "@tiptap/react";
 import { Icon } from "./Icon.jsx";
-import { PLACEHOLDER_GROUPS, SNIPPETS, TEXT_BAUSTEINE } from "../data.js";
+import { SNIPPETS } from "../data.js";
 import { buildExtensions } from "../tiptap/extensions.js";
 import { decorateForTiptap, serializeToTokens, groupForToken } from "../tiptap/tokens.js";
 import { diffTokens } from "../tiptap/validateJinja.js";
@@ -31,29 +31,16 @@ function insertRawToken(editor, raw) {
 }
 
 // =========================
-// Slash menu (Schnell-Einfügen, mock-basiert wie bisher; Picks gehen über onInsertItem)
+// Kontrollfluss-Menü (Jinja-Snippets: if/for/set …)
+// Platzhalter und Bausteine sind über die rechte Sidebar (Tabs „Platzhalter" /
+// „Bausteine") erreichbar — hier nur Steuerstrukturen, die es dort nicht gibt.
 // =========================
-const SlashMenu = ({ open, x, y, query, onClose, onPick }) => {
-	const groups = PLACEHOLDER_GROUPS;
-	const snippets = SNIPPETS;
-	const bausteine = TEXT_BAUSTEINE;
-	const q = (query || "").toLowerCase().trim();
-	const matchesPh = groups.flatMap((g) =>
-		g.items
-			.filter((it) => !q || it.label.toLowerCase().includes(q) || it.token.toLowerCase().includes(q))
-			.map((it) => ({ kind: "placeholder", group: g, item: it }))
-	);
-	const matchesSn = snippets
-		.filter((s) => !q || s.label.toLowerCase().includes(q))
-		.map((s) => ({ kind: "snippet", item: s }));
-	const matchesBs = bausteine
-		.filter((b) => !q || b.name.toLowerCase().includes(q))
-		.map((b) => ({ kind: "baustein", item: b }));
+const SlashMenu = ({ open, x, y, onClose, onPick }) => {
+	const snippets = SNIPPETS.map((s) => ({ kind: "snippet", item: s }));
 	const [active, setActive] = useState(0);
-	const all = [...matchesPh.slice(0, 8), ...matchesSn, ...matchesBs];
 	useEffect(() => {
-		setActive(0);
-	}, [query]);
+		if (open) setActive(0);
+	}, [open]);
 	useEffect(() => {
 		const onKey = (e) => {
 			if (!open) return;
@@ -62,82 +49,40 @@ const SlashMenu = ({ open, x, y, query, onClose, onPick }) => {
 				onClose();
 			} else if (e.key === "ArrowDown") {
 				e.preventDefault();
-				setActive((a) => Math.min(a + 1, all.length - 1));
+				setActive((a) => Math.min(a + 1, snippets.length - 1));
 			} else if (e.key === "ArrowUp") {
 				e.preventDefault();
 				setActive((a) => Math.max(a - 1, 0));
 			} else if (e.key === "Enter") {
 				e.preventDefault();
-				const sel = all[active];
+				const sel = snippets[active];
 				if (sel) onPick(sel);
 			}
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [open, all, active, onClose, onPick]);
+	}, [open, snippets, active, onClose, onPick]);
 	if (!open) return null;
 	return (
 		<div className="slash-menu" style={{ left: x, top: y }}>
-			<div className="slash-header">Einfügen{query ? ` · "${query}"` : ""}</div>
+			<div className="slash-header">Kontrollfluss einfügen</div>
 			<div className="slash-list">
-				{matchesPh.length > 0 && <div className="slash-section-label">Platzhalter</div>}
-				{matchesPh.slice(0, 8).map((m, i) => (
+				{snippets.map((m, i) => (
 					<div
-						key={`p-${i}`}
+						key={`s-${i}`}
 						className={`slash-item ${i === active ? "active" : ""}`}
 						onMouseEnter={() => setActive(i)}
 						onClick={() => onPick(m)}
 					>
 						<span className="slash-icon">
-							<Icon name={m.group.icon} size={13} />
+							<Icon name="branch" size={13} />
 						</span>
 						<span className="slash-text">
 							<div className="slash-label">{m.item.label}</div>
-							<div className="slash-desc">{m.item.token}</div>
+							<div className="slash-desc">{m.item.desc}</div>
 						</span>
 					</div>
 				))}
-				{matchesSn.length > 0 && <div className="slash-section-label">Snippets</div>}
-				{matchesSn.map((m, i) => {
-					const idx = matchesPh.slice(0, 8).length + i;
-					return (
-						<div
-							key={`s-${i}`}
-							className={`slash-item ${idx === active ? "active" : ""}`}
-							onMouseEnter={() => setActive(idx)}
-							onClick={() => onPick(m)}
-						>
-							<span className="slash-icon">
-								<Icon name="branch" size={13} />
-							</span>
-							<span className="slash-text">
-								<div className="slash-label">{m.item.label}</div>
-								<div className="slash-desc">{m.item.desc}</div>
-							</span>
-						</div>
-					);
-				})}
-				{matchesBs.length > 0 && <div className="slash-section-label">Bausteine</div>}
-				{matchesBs.map((m, i) => {
-					const idx = matchesPh.slice(0, 8).length + matchesSn.length + i;
-					return (
-						<div
-							key={`b-${i}`}
-							className={`slash-item ${idx === active ? "active" : ""}`}
-							onMouseEnter={() => setActive(idx)}
-							onClick={() => onPick(m)}
-						>
-							<span className="slash-icon">
-								<Icon name="block" size={13} />
-							</span>
-							<span className="slash-text">
-								<div className="slash-label">{m.item.name}</div>
-								<div className="slash-desc">{m.item.desc}</div>
-							</span>
-						</div>
-					);
-				})}
-				{all.length === 0 && <div className="empty-hint">Keine Treffer für „{query}".</div>}
 			</div>
 		</div>
 	);
@@ -339,10 +284,9 @@ const EditorToolbar = ({ editor, disabled, onInsert, onImage, showGrid, onToggle
 			)}
 			<div style={{ flex: 1 }} />
 			<div className="tool-group" style={{ borderRight: "none" }}>
-				<button className="tool-btn tool-btn-wide primary-tool" onClick={onInsert} title="Einfügen / Slash-Commander" disabled={!can}>
-					<Icon name="tag" size={14} />
-					<span>Einfügen</span>
-					<span className="kbd" style={{ marginLeft: 4 }}>/</span>
+				<button className="tool-btn tool-btn-wide primary-tool" onClick={onInsert} title="Kontrollfluss einfügen (if / for / set …)" disabled={!can}>
+					<Icon name="branch" size={14} />
+					<span>Kontrollfluss</span>
 				</button>
 			</div>
 		</div>
@@ -463,10 +407,9 @@ export const Editor = ({
 		};
 	}, [editor, contentRef]);
 
-	// --- Slash-Menü ---
+	// --- Kontrollfluss-Menü (Jinja-Snippets) ---
 	const [slashOpen, setSlashOpen] = useState(false);
 	const [slashPos, setSlashPos] = useState({ x: 0, y: 0 });
-	const [slashQuery] = useState("");
 	const editorRef = useRef(null);
 	const openSlash = useCallback(() => {
 		const r = editorRef.current?.getBoundingClientRect();
@@ -475,9 +418,7 @@ export const Editor = ({
 	}, []);
 	const closeSlash = () => setSlashOpen(false);
 	const onPick = (selection) => {
-		if (selection.kind === "placeholder") onInsertItem({ kind: "chip", token: selection.item.token });
-		else if (selection.kind === "snippet") onInsertItem({ kind: "snippet", snippet: selection.item });
-		else if (selection.kind === "baustein") onInsertItem({ kind: "baustein", name: selection.item.name });
+		if (selection.kind === "snippet") onInsertItem({ kind: "snippet", snippet: selection.item });
 		closeSlash();
 	};
 
@@ -573,7 +514,7 @@ export const Editor = ({
 
 			<input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onFileChosen} />
 
-			<SlashMenu open={slashOpen} x={slashPos.x} y={slashPos.y} query={slashQuery} onClose={closeSlash} onPick={onPick} />
+			<SlashMenu open={slashOpen} x={slashPos.x} y={slashPos.y} onClose={closeSlash} onPick={onPick} />
 		</main>
 	);
 };
