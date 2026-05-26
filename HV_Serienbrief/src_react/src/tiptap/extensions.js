@@ -435,6 +435,12 @@ const TextStyleExtras = Extension.create({
 // <p>/<h*> — Inline-Style überschreibt das Print-CSS (`.serienbrief-page p { line-height: 1.35 }`)
 // durch höhere Spezifität, daher kein !important nötig. Werte sind einheitenlos (Word-Konvention
 // 1.0 / 1.15 / 1.35 / 1.5 / 2.0).
+//
+// indent: Einrück-Stufen (0..5), jede Stufe = 1cm margin-left. Wird per Tab/Shift+Tab
+// gesteuert (siehe Keymap unten). Tab am Zeilenanfang → indent++; Tab in der Mitte
+// einer Zeile → 8 ``&nbsp;`` einfügen (Tab-Stop-Imitation).
+const INDENT_MAX = 5;
+const INDENT_STEP_CM = 1;
 const ParagraphExtras = Extension.create({
 	name: "hvParagraphExtras",
 	addGlobalAttributes() {
@@ -447,6 +453,21 @@ const ParagraphExtras = Extension.create({
 						parseHTML: (el) => el.style.lineHeight || null,
 						renderHTML: (attrs) =>
 							attrs.lineHeight ? { style: `line-height: ${attrs.lineHeight}` } : {},
+					},
+					indent: {
+						default: 0,
+						parseHTML: (el) => {
+							// Aus margin-left zurückrechnen (Step = 1cm).
+							const ml = el.style.marginLeft || "";
+							const m = /^(-?\d+(?:\.\d+)?)cm$/.exec(ml);
+							if (!m) return 0;
+							const n = Math.round(parseFloat(m[1]) / INDENT_STEP_CM);
+							return Math.max(0, Math.min(INDENT_MAX, n));
+						},
+						renderHTML: (attrs) => {
+							const n = Math.max(0, Math.min(INDENT_MAX, Number(attrs.indent) || 0));
+							return n > 0 ? { style: `margin-left: ${n * INDENT_STEP_CM}cm` } : {};
+						},
 					},
 				},
 			},
@@ -466,6 +487,30 @@ const ParagraphExtras = Extension.create({
 					}
 					return c.run();
 				},
+			indentParagraph:
+				() =>
+				({ state, chain, editor }) => {
+					const types = ["paragraph", "heading"];
+					const node = state.selection.$from.node();
+					const currentName = node?.type?.name;
+					if (!types.includes(currentName)) return false;
+					const cur = Number(node.attrs.indent || 0);
+					const next = Math.min(INDENT_MAX, cur + 1);
+					if (next === cur) return false;
+					return chain().updateAttributes(currentName, { indent: next }).run();
+				},
+			outdentParagraph:
+				() =>
+				({ state, chain, editor }) => {
+					const types = ["paragraph", "heading"];
+					const node = state.selection.$from.node();
+					const currentName = node?.type?.name;
+					if (!types.includes(currentName)) return false;
+					const cur = Number(node.attrs.indent || 0);
+					const next = Math.max(0, cur - 1);
+					if (next === cur) return false;
+					return chain().updateAttributes(currentName, { indent: next }).run();
+				},
 			unsetLineHeight:
 				() =>
 				({ chain, editor }) => {
@@ -478,6 +523,46 @@ const ParagraphExtras = Extension.create({
 					}
 					return c.run();
 				},
+		};
+	},
+	addKeyboardShortcuts() {
+		const TAB_NBSP = "        "; // 8 nbsp = ~1 Tab-Stop
+		return {
+			Tab: ({ editor }) => {
+				const { state } = editor;
+				// Nicht greifen in Tabellen-Zellen (Tabellen-Extension navigiert dort).
+				if (editor.isActive("table") || editor.isActive("tableCell") || editor.isActive("tableHeader")) {
+					return false;
+				}
+				// Nicht greifen in Listen (StarterKit hat eigene Tab-Logik für Sub-Listen).
+				if (editor.isActive("bulletList") || editor.isActive("orderedList") || editor.isActive("listItem")) {
+					return false;
+				}
+				// Nur paragraph/heading sind Indent-fähig.
+				const node = state.selection.$from.node();
+				if (!["paragraph", "heading"].includes(node?.type?.name)) return false;
+				// Am Zeilenanfang (parentOffset == 0): indent++ statt Tab-Whitespace.
+				const atStart = state.selection.empty && state.selection.$from.parentOffset === 0;
+				if (atStart) {
+					return editor.commands.indentParagraph();
+				}
+				// Sonst: Tab-Stop-Whitespace einfügen.
+				return editor.chain().insertContent(TAB_NBSP).run();
+			},
+			"Shift-Tab": ({ editor }) => {
+				const { state } = editor;
+				if (editor.isActive("table") || editor.isActive("tableCell") || editor.isActive("tableHeader")) {
+					return false;
+				}
+				if (editor.isActive("bulletList") || editor.isActive("orderedList") || editor.isActive("listItem")) {
+					return false;
+				}
+				const node = state.selection.$from.node();
+				if (!["paragraph", "heading"].includes(node?.type?.name)) return false;
+				const cur = Number(node.attrs.indent || 0);
+				if (cur <= 0) return false; // kein Outdent → andere Handler greifen lassen
+				return editor.commands.outdentParagraph();
+			},
 		};
 	},
 });
