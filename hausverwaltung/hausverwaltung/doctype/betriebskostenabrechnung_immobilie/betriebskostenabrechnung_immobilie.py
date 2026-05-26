@@ -52,18 +52,26 @@ class BetriebskostenabrechnungImmobilie(Document):
 		"""Beim Anlegen automatisch alle Mieter‑Abrechnungen als Entwurf erzeugen."""
 		if not (self.immobilie and self.von and self.bis):
 			frappe.throw("Bitte Immobilie, Von und Bis ausfüllen.")
-		stichtag = self.stichtag or self.bis
-		from hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen import create_bk_abrechnungen_immobilie
-		res = create_bk_abrechnungen_immobilie(
-			von=cstr(self.von),
-			bis=cstr(self.bis),
-			immobilie=self.immobilie,
-			submit=False,
-			stichtag=cstr(stichtag),
-			head=self.name,
-			split_by_mietvertrag=True,
+		# Idempotenz: wenn bereits Child-Abrechnungen verknuepft sind (Retry,
+		# doppelter Trigger), nicht erneut erzeugen. Summary + Save laufen
+		# trotzdem, damit ein abgebrochener Vorlauf konsistent fertig wird.
+		children_exist = frappe.db.exists(
+			"Betriebskostenabrechnung Mieter",
+			{"immobilien_abrechnung": self.name},
 		)
-		# Nach Erzeugung: Zusammenfassungen berechnen
+		if not children_exist:
+			stichtag = self.stichtag or self.bis
+			from hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen import create_bk_abrechnungen_immobilie
+			create_bk_abrechnungen_immobilie(
+				von=cstr(self.von),
+				bis=cstr(self.bis),
+				immobilie=self.immobilie,
+				submit=False,
+				stichtag=cstr(stichtag),
+				head=self.name,
+				split_by_mietvertrag=True,
+			)
+		# Nach Erzeugung (oder Skip): Zusammenfassungen berechnen + persistieren.
 		self._populate_summary()
 		self.save(ignore_permissions=True)
 	def on_submit(self):
