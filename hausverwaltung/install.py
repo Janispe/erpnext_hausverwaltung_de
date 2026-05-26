@@ -327,7 +327,7 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
             if int(getattr(doc, "custom_format", 0) or 0) != 1:
                 doc.custom_format = 1
                 changed = True
-            if (doc.html or "").strip() != html:
+            if (doc.html or "").strip() != html.strip():
                 doc.html = html
                 changed = True
             if int(getattr(doc, "disabled", 0) or 0) != 0:
