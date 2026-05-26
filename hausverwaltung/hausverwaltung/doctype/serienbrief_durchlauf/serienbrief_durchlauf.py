@@ -1587,6 +1587,24 @@ class SerienbriefDurchlauf(Document):
 				).format(frappe.bold(block_title), "<br>".join(missing))
 			)
 
+	def _stash_serienbrief_wert(self, context: Dict[str, Any], key: str, value: Any) -> None:
+		"""Spiegelt einen Vorlagen-Variablen-Wert zusätzlich nach
+		``context.serienbrief.werte[key]``. Damit unterstützen wir beide
+		Token-Styles in der Vorlage: ``{{ key }}`` (top-level, historisch)
+		und ``{{ serienbrief.werte.key }}`` (gruppierter Namespace, von
+		neueren Vorlagen genutzt). Ohne Spiegelung war ``serienbrief.werte``
+		stets leer und ``{{ serienbrief.werte.monat }}`` lief auf None.
+		"""
+		sb = context.get("serienbrief")
+		if sb is None:
+			sb = frappe._dict()
+			context["serienbrief"] = sb
+		werte = sb.get("werte")
+		if werte is None:
+			werte = frappe._dict()
+			sb["werte"] = werte
+		werte[key] = value
+
 	def _apply_template_variables(self, context: Dict[str, Any], template) -> None:
 		variable_defs = template.get("variables") or []
 		if not variable_defs:
@@ -1642,6 +1660,8 @@ class SerienbriefDurchlauf(Document):
 			# Alle Vorlagen-Variablen top-level — passt zur Editor-Konvention
 			# (Sidebar fügt bare ``{{ key }}`` ein), keine getrennten Namespaces.
 			context[key] = resolved
+			# Zusätzlich unter serienbrief.werte.X spiegeln (siehe Helper).
+			self._stash_serienbrief_wert(context, key, resolved)
 
 	def _apply_serienbrief_template_variables(
 		self, context: Dict[str, Any], template, row=None
@@ -1688,6 +1708,8 @@ class SerienbriefDurchlauf(Document):
 				continue
 
 			context[key] = resolved
+			# Spiegelung nach serienbrief.werte.X (siehe Helper-Docstring).
+			self._stash_serienbrief_wert(context, key, resolved)
 
 	def _verify_template_variables_resolved(self, context: Dict[str, Any], template) -> None:
 		variable_defs = template.get("variables") or []
