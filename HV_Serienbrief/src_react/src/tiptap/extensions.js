@@ -407,9 +407,12 @@ const TextStyleExtras = Extension.create({
 							const raw = (match?.[1] || "").trim();
 							if (!raw) return null;
 							// Pure positive Zahl ohne Einheit → "pt" anhängen.
-							// Negative Werte verwerfen (kein sinnvoller Briefwert).
+							// Andere kaputte Werte (negative Zahlen, ``abc``, ``15%`` etc)
+							// verwerfen — CSSOM hat valide Werte bereits oben abgefangen,
+							// also ist alles was hier ankommt kaputter Altbestand, der
+							// nicht heilbar ist.
 							if (/^\d+(\.\d+)?$/.test(raw)) return `${raw}pt`;
-							return raw;
+							return null;
 						},
 						renderHTML: (attrs) =>
 							attrs.fontSize ? { style: `font-size: ${attrs.fontSize}` } : {},
