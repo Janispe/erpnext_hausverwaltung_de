@@ -501,6 +501,12 @@ def _split_preview_context() -> Dict[str, Any]:
 	)
 	return {
 		"objekt": mietvertrag,
+		# Spiegelt die Runtime-Kontext-Wurzel aus serienbrief_durchlauf._build_context:
+		# dort liegt der aktive Mietvertrag zusätzlich unter ``mietvertrag`` (bei
+		# Dunning via row.mietvertrag aufgelöst). Ohne diesen Key liefen Bausteine/
+		# Standardpfade mit ``mietvertrag.…`` in der Preview auf Fehler/Placeholder,
+		# obwohl der echte Render funktioniert.
+		"mietvertrag": mietvertrag,
 		"datum": "31.12.2024",
 		"datum_iso": "2024-12-31",
 		"empfaenger": empfaenger,
