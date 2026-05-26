@@ -767,8 +767,21 @@ class SerienbriefDurchlauf(Document):
 		mieter_name = row.anzeigename or self._guess_person_name(mieter_doc)
 		empfaenger_data = row.as_dict() if hasattr(row, "as_dict") else {}
 
+		# Aktiven Mietvertrag als Kontext-Wurzel exponieren. Bei Mietvertrag-Iteration
+		# ist das ``objekt`` selbst; bei anderen Iterations-Objekten (z.B. Dunning)
+		# der via Empfänger-Auflösung gefundene Mietvertrag (row.mietvertrag). So
+		# können Bausteine ``mietvertrag.mieter`` / ``mietvertrag.kunde`` /
+		# ``mietvertrag.wohnung.immobilie`` auflösen, auch wenn ``objekt`` kein
+		# Mietvertrag ist.
+		mietvertrag_doc = (
+			iteration_doc
+			if getattr(iteration_doc, "doctype", "") == "Mietvertrag"
+			else self._load_doc("Mietvertrag", getattr(row, "mietvertrag", None))
+		)
+
 		context = frappe._dict(
 			objekt=iteration_doc,
+			mietvertrag=mietvertrag_doc,
 			datum=format_date(letter_date),
 			datum_iso=letter_date,
 			empfaenger=frappe._dict(
@@ -1675,6 +1688,14 @@ class SerienbriefDurchlauf(Document):
 			)
 		if display_name:
 			row_data["anzeigename"] = display_name
+
+		# Aktiven Mietvertrag am Row festhalten, damit _build_context ihn als
+		# Kontext-Wurzel ``mietvertrag`` bereitstellen kann. Nötig für Iterationen
+		# über Objekte ohne direkten Mieter-/Wohnungsbezug (z.B. Dunning): die
+		# Bausteine (Briefkopf, Anrede, Bankverbindung) lösen ihre Daten dann über
+		# ``mietvertrag.…`` statt ``objekt.…`` auf.
+		if mietvertrag_name:
+			row_data["mietvertrag"] = mietvertrag_name
 
 		row = _IterationEmpfaengerRow(row_data)
 		row._iteration_doc = iteration_doc
