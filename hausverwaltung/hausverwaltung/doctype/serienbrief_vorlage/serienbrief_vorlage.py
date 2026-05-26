@@ -635,14 +635,25 @@ def _split_preview_error_marker(exc: Exception) -> str:
 	)
 
 
-def _preview_defaults_for_block(block_doc, base_context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+def _preview_defaults_for_block(
+	block_doc,
+	base_context: Dict[str, Any] | None = None,
+	template_doc=None,
+) -> Dict[str, Any]:
 	"""Collect per-block preview defaults keyed by variable name.
 
-	1. Doctype-Variablen mit Standardpfad werden gegen den ``base_context``
-	   (= Split-Preview-Mock) aufgelöst — analog zum echten Render-Pfad.
-	   Damit landet ``mietvertrag`` als Mock-Mietvertrag im Block-Context,
-	   ohne dass der User pro Vorlage Preview-Defaults pflegen muss.
-	2. ``preview_default``-Werte aus den Variablen-Rows als Text-Fallback.
+	Spiegelt die Datenquellen aus ``_apply_block_variables`` (Durchlauf-Render):
+
+	1. ``template_doc.inline_baustein_werte[block][var]`` — vom Editor pro Vorlage
+	   gepflegte Text-/Bool-Werte (höchste Priorität für Text-Variablen).
+	2. ``template_doc.inline_baustein_pfade[block][var]`` — vom Editor pro Vorlage
+	   gepflegte Doctype-Pfade (höchste Priorität für Path-Resolution).
+	3. ``block_doc.standardpfade[iteration_doctype]`` — Default-Pfade des Bausteins.
+	4. ``row.preview_default`` — Text-Fallback aus der Variablen-Row.
+	5. ``optional``-Flag → leerer String, wenn nichts gefunden.
+
+	So produziert der Split-Preview dieselben Werte wie der echte Durchlauf-Render
+	(ein-Pipeline-Verhalten für Baustein-Variablen).
 	"""
 	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 		_get_block_default_path_map,
@@ -651,18 +662,50 @@ def _preview_defaults_for_block(block_doc, base_context: Dict[str, Any] | None =
 
 	defaults: Dict[str, Any] = {}
 
-	# Standardpfade des Bausteins für den aktuellen Iterations-Doctype
-	# (im Preview ist das immer „Mietvertrag", weil _split_preview_context
-	# einen SplitPreviewMietvertrag als objekt hat).
-	if base_context is not None:
-		path_map = _get_block_default_path_map(block_doc, "Mietvertrag")
-		for row in block_doc.get("variables") or []:
-			varname = cstr(getattr(row, "variable", "") or "").strip()
-			variable_type = cstr(getattr(row, "variable_type", None) or "").strip() or "Text"
-			if not varname or variable_type == "Text":
-				continue
+	# Vorlagen-spezifische Overrides aus inline_baustein_werte / _pfade lesen.
+	inline_values: Dict[str, Any] = {}
+	inline_pfade: Dict[str, str] = {}
+	if template_doc is not None:
+		try:
+			werte_root = frappe.parse_json(template_doc.get("inline_baustein_werte") or "{}")
+			if isinstance(werte_root, dict):
+				per_block = werte_root.get(block_doc.name) or {}
+				if isinstance(per_block, dict):
+					inline_values = per_block
+		except Exception:
+			inline_values = {}
+		try:
+			pfade_root = frappe.parse_json(template_doc.get("inline_baustein_pfade") or "{}")
+			if isinstance(pfade_root, dict):
+				per_block_p = pfade_root.get(block_doc.name) or {}
+				if isinstance(per_block_p, dict):
+					inline_pfade = per_block_p
+		except Exception:
+			inline_pfade = {}
+
+	path_map = (
+		_get_block_default_path_map(block_doc, "Mietvertrag")
+		if base_context is not None else {}
+	)
+
+	for row in block_doc.get("variables") or []:
+		varname = cstr(getattr(row, "variable", "") or "").strip()
+		if not varname:
+			continue
+		variable_type = cstr(getattr(row, "variable_type", None) or "").strip() or "Text"
+		is_text_like = variable_type in ("Text", "Bool")
+		is_optional = bool(int(getattr(row, "optional", 0) or 0))
+
+		# 1) Inline-Werte-Override (vom Editor gepflegt) — Priorität für Text/Bool.
+		if varname in inline_values:
+			defaults[varname] = inline_values[varname]
+			continue
+
+		# 2) Path-Resolution für Doctype-Variablen.
+		if not is_text_like and base_context is not None:
 			path = (
-				cstr(path_map.get(varname) or "").strip()
+				cstr(inline_pfade.get(varname) or "").strip()
+				or cstr(path_map.get(varname) or "").strip()
 				or cstr(path_map.get(getattr(row, "reference_doctype", None)) or "").strip()
 				or "__self__"
 			)
@@ -672,20 +715,18 @@ def _preview_defaults_for_block(block_doc, base_context: Dict[str, Any] | None =
 				value = None
 			if value is not None:
 				defaults[varname] = value
+				continue
 
-	for row in block_doc.get("variables") or []:
-		varname = cstr(getattr(row, "variable", "") or "").strip()
-		if not varname or varname in defaults:
-			continue
+		# 3) preview_default als Text-Fallback.
 		preview = cstr(getattr(row, "preview_default", "") or "").strip()
-		is_optional = bool(int(getattr(row, "optional", 0) or 0))
 		if preview:
 			defaults[varname] = preview
-		elif is_optional:
-			# Optional-Flag honorieren: leerer String im Preview-Context, damit
-			# StrictUndefined nicht crasht. Konsistent mit dem Durchlauf-Render
-			# (_apply_block_variables setzt context[key] = "" für optional).
+			continue
+
+		# 4) Optional-Flag: leerer String, sonst undefined → Jinja-Fehler.
+		if is_optional:
 			defaults[varname] = ""
+
 	return defaults
 
 
@@ -880,7 +921,11 @@ def _build_split_preview_html(template_doc) -> str:
 		source = _get_block_template_source(block_doc).strip()
 		if not source:
 			return ""
-		defaults = _preview_defaults_for_block(block_doc, base_context=_split_preview_context())
+		defaults = _preview_defaults_for_block(
+			block_doc,
+			base_context=_split_preview_context(),
+			template_doc=template_doc,
+		)
 		rendered = _render_split_preview_source(source, extra_context=defaults)
 		return f'<div class="serienbrief-block" data-block="{cstr(block_doc.name)}">{rendered}</div>'
 
