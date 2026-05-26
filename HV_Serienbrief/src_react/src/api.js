@@ -148,11 +148,20 @@ export async function loadRecipients(doctype, query) {
 	return await rpc("recipients", { doctype: doctype || "", query: query || "" });
 }
 
+// Maximale Bildgröße fürs Frontend-Upload. Schutz vor 100+ MB-Bildern, die
+// FileReader.readAsDataURL den UI-Thread blockieren lassen und durch Base64-
+// Encoding noch ~33 % Memory-Overhead haben. Backend könnte zusätzlich limitieren.
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
+
 // Bild in den Frappe-File-Store hochladen, gibt die /files/…-URL zurück. Base64 nur im
 // Transit; gespeichert wird die URL (kein Base64-Bloat in der Vorlage). Standalone → null
 // (Editor fällt dann auf URL-Eingabe zurück).
 export async function uploadImage(file, templateName) {
 	if (!embedded) return null;
+	if (file && file.size > MAX_UPLOAD_BYTES) {
+		const mb = (file.size / 1024 / 1024).toFixed(1);
+		throw new Error(`Bild ist ${mb} MB groß — max 10 MB erlaubt.`);
+	}
 	const dataUrl = await new Promise((resolve, reject) => {
 		const r = new FileReader();
 		r.onload = () => resolve(r.result);
