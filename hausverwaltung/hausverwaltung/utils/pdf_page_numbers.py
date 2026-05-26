@@ -55,14 +55,25 @@ def add_page_numbers_if_multipage(
 	for i, page in enumerate(reader.pages):
 		page_num = i + 1
 		text = text_template.format(page=page_num, total=total)
-		width_pt = float(page.mediabox.width)
-		height_pt = float(page.mediabox.height)
+
+		# Canvas-Groesse auf mediabox: Overlay muss exakt ueber Originalseite
+		# liegen, sonst rutscht es beim merge_page. Text-Position dagegen
+		# relativ zur cropbox (sichtbare Druckflaeche), damit "Seite X von Y"
+		# bei Bleed-PDFs nicht aus dem Sichtbaren rutscht. Bei Standard-PDFs
+		# (cropbox.left=0, cropbox.bottom=0) ist das Verhalten identisch zum
+		# alten Code.
+		media = page.mediabox
+		box = getattr(page, "cropbox", None) or media
+		width_pt = float(media.width)
+		height_pt = float(media.height)
+		x_text = float(box.left) + float(box.width) / 2
+		y_text = float(box.bottom) + y_pt
 
 		buf = io.BytesIO()
 		c = canvas.Canvas(buf, pagesize=(width_pt, height_pt))
 		c.setFont("Helvetica", font_size)
 		c.setFillColorRGB(0, 0, 0)
-		c.drawCentredString(width_pt / 2, y_pt, text)
+		c.drawCentredString(x_text, y_text, text)
 		c.save()
 
 		overlay = PdfReader(io.BytesIO(buf.getvalue())).pages[0]
