@@ -21,13 +21,14 @@ def add_page_numbers_if_multipage(
 	*,
 	text_template: str = "Seite {page} von {total}",
 	font_size: int = 9,
-	y_from_bottom_mm: float = 20.0,
+	y_from_bottom_mm: float = 14.0,
 ) -> bytes:
 	"""Fügt 'Seite X von Y' mittig in den unteren Seitenrand jeder Seite ein.
 
-	Voraussetzung für die Sichtbarkeit: das Print Format hat einen Bottom-Margin
-	von mind. ~22mm — sonst landet die Seitenzahl entweder im Body-Bereich (über
-	Text) oder im Frappe-Footer-Bereich (überdeckt).
+	Position: y_from_bottom_mm=14 platziert die Zeile in den Spalt zwischen
+	Body-Ende (~29mm vom unteren Rand) und dem Frappe-Page-Footer (~9mm) — ~5mm
+	Abstand nach unten zum Footer, ~15mm nach oben zum Body. Bei kleinerem
+	Bottom-Margin im Print Format ggf. anpassen.
 
 	Bei genau einer Seite wird das PDF unverändert zurückgegeben. Bei fehlenden
 	Dependencies (reportlab/pypdf) ebenfalls — defensive Degradation statt
