@@ -1751,6 +1751,22 @@ class SerienbriefDurchlauf(Document):
 						{"kunde": customer_name},
 						as_dict=True,
 					)
+					if not mv:
+						# Schluss-Mahnung: Mieter bereits ausgezogen (bis < CURDATE).
+						# Fallback auf zuletzt gueltigen MV des Kunden, dessen von
+						# schon erreicht war (zukuenftige Vertraege ausgeschlossen).
+						mv = frappe.db.sql(
+							"""
+							SELECT name, wohnung FROM `tabMietvertrag`
+							WHERE kunde = %(kunde)s
+							  AND (von IS NULL OR von <= CURDATE())
+							ORDER BY COALESCE(bis, '9999-12-31') DESC,
+							         COALESCE(von, '1900-01-01') DESC
+							LIMIT 1
+							""",
+							{"kunde": customer_name},
+							as_dict=True,
+						)
 				except Exception:
 					mv = []
 				if mv:
