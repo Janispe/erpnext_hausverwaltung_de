@@ -115,6 +115,13 @@ export async function startRun() {
 	return await rpc("start_run", { docname: getDocname() });
 }
 
+// Manueller Reset eines hängenden „Läuft"-Durchlaufs auf „Fehlgeschlagen".
+// Backend prüft serverseitig, dass status === "Läuft" und docstatus === 0.
+export async function markFailed(note) {
+	if (!embedded) return { status: "Fehlgeschlagen", mock: true };
+	return await rpc("mark_failed", { docname: getDocname(), note: note || "" });
+}
+
 // Globale Variablenwerte + Pro-Empfänger-Overrides speichern.
 export async function saveVariables(variables, perRecipientOverrides) {
 	if (!embedded) return { ok: true, mock: true };

@@ -24,6 +24,7 @@ const RPC_ACTIONS = {
 	create: HV_DL + "create_durchlauf",
 	update: HV_DL + "update_durchlauf",
 	list_vorlagen: HV_DL + "list_vorlagen",
+	mark_failed: HV_DL + "mark_durchlauf_failed",
 };
 
 // Navigations-Aktionen (kein frappe.call).

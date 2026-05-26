@@ -3232,6 +3232,59 @@ def start_durchlauf_run(docname: str, regenerate: int | str = 1) -> Dict[str, An
 
 
 @frappe.whitelist()
+def mark_durchlauf_failed(docname: str, note: str | None = None) -> Dict[str, Any]:
+	"""Manueller Reset für hängende „Läuft"-Durchläufe (Worker-Crash, Timeout).
+	Setzt Status auf „Fehlgeschlagen" und merged einen ``manual_reset``-Eintrag
+	in ``run_summary``, ohne bestehende Zähler zu verlieren.
+
+	Server-side Guard: nur Drafts (``docstatus=0``) im Status ``Läuft`` dürfen
+	zurückgesetzt werden — Frontend-Visibility allein reicht nicht, weil der
+	RPC direkt aufrufbar ist und sonst auch ``Entwurf``/``Generiert``/submitted
+	Durchläufe zerstört werden könnten.
+	"""
+	if not frappe.has_permission("Serienbrief Durchlauf", "write", doc=docname):
+		raise frappe.PermissionError
+
+	current = frappe.db.get_value(
+		"Serienbrief Durchlauf", docname, ["status", "docstatus"], as_dict=True
+	) or {}
+	if int(current.get("docstatus") or 0) != 0:
+		frappe.throw(_("Der Durchlauf ist bereits abgeschlossen (eingereicht) und kann nicht zurückgesetzt werden."))
+	if cstr(current.get("status") or "") != "Läuft":
+		frappe.throw(
+			_("Nur Durchläufe im Status „Läuft\" können manuell als fehlgeschlagen markiert werden (aktuell: {0}).").format(
+				current.get("status") or _("unbekannt")
+			)
+		)
+
+	summary: Dict[str, Any] = {}
+	raw = frappe.db.get_value("Serienbrief Durchlauf", docname, "run_summary")
+	if raw:
+		try:
+			parsed = json.loads(raw)
+			if isinstance(parsed, dict):
+				summary = parsed
+			else:
+				summary = {"prev_run_summary_raw": raw}
+		except Exception:
+			summary = {"prev_run_summary_raw": raw}
+	summary["manual_reset"] = {
+		"by": frappe.session.user,
+		"at": now_datetime().isoformat(),
+		"note": cstr(note or "").strip() or None,
+	}
+
+	frappe.db.set_value(
+		"Serienbrief Durchlauf",
+		docname,
+		{"status": "Fehlgeschlagen", "run_summary": json.dumps(summary)},
+		update_modified=False,
+	)
+	frappe.db.commit()
+	return {"status": "Fehlgeschlagen"}
+
+
+@frappe.whitelist()
 def get_run_progress(docname: str) -> Dict[str, Any]:
 	"""Lauf-Status + Fortschritt + Zähler — für UI-Polling."""
 	if not frappe.has_permission("Serienbrief Durchlauf", "read", doc=docname):

@@ -772,6 +772,7 @@ const HV_DL_RPC_ACTIONS = {
 	remove_recipients: HV_DL + "remove_recipients",
 	available_recipients: HV_DL + "get_available_recipients",
 	merged_pdf: HV_DL + "get_merged_pdf",
+	mark_failed: HV_DL + "mark_durchlauf_failed",
 };
 
 const hv_dl_extract_error = (e) => {
@@ -922,6 +923,26 @@ frappe.ui.form.on("Serienbrief Durchlauf", {
 						freeze_message: __("Erzeuge Dokumente …"),
 					});
 					frappe.show_alert({ message: __("Dokumente wurden neu erzeugt."), indicator: "green" });
+				});
+			}
+			if (frm.doc.status === "Läuft") {
+				frm.add_custom_button(__("Lauf als fehlgeschlagen markieren"), async () => {
+					const confirmed = await new Promise((resolve) => {
+						frappe.confirm(
+							__(
+								"Setzt den Durchlauf-Status auf <b>Fehlgeschlagen</b>. Verwende das nur, wenn der Background-Job offensichtlich tot ist (z.B. Worker-Crash). Bereits erzeugte Dokumente bleiben erhalten."
+							),
+							() => resolve(true),
+							() => resolve(false)
+						);
+					});
+					if (!confirmed) return;
+					await frappe.xcall(
+						"hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf.mark_durchlauf_failed",
+						{ docname: frm.doc.name }
+					);
+					frappe.show_alert({ message: __("Lauf-Status auf Fehlgeschlagen gesetzt."), indicator: "orange" });
+					frm.reload_doc();
 				});
 			}
 		}

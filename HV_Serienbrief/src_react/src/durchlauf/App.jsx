@@ -5,6 +5,7 @@ import {
   loadDurchlauf,
   getProgress,
   startRun,
+  markFailed,
   saveVariables,
   addRecipients as apiAddRecipients,
   removeRecipients as apiRemoveRecipients,
@@ -22,7 +23,7 @@ import {
 
 // Serienbrief Durchlauf — main app
 // ============== Header ==============
-const Header = ({ durchlauf, stats, onRun, onMergedPdf, onTitleCommit, onNew, running, progress, busy }) => {
+const Header = ({ durchlauf, stats, onRun, onMergedPdf, onMarkFailed, onTitleCommit, onNew, running, progress, busy }) => {
   const statusLabel = { draft: "Entwurf", running: "Läuft…", completed: "Abgeschlossen", failed: "Fehlgeschlagen", sent: "Versendet" }[durchlauf.status] || durchlauf.status;
   const [titleDraft, setTitleDraft] = useState(durchlauf.title || "");
   useEffect(() => { setTitleDraft(durchlauf.title || ""); }, [durchlauf.title]);
@@ -50,6 +51,16 @@ const Header = ({ durchlauf, stats, onRun, onMergedPdf, onTitleCommit, onNew, ru
           <button className="btn" onClick={onRun} disabled={running || busy || !durchlauf.can_write}>
             <Icon name="refresh" size={13}/> {running ? "Läuft…" : "Lauf starten / neu rendern"}
           </button>
+          {running && durchlauf.can_write && (
+            <button
+              className="btn"
+              onClick={onMarkFailed}
+              disabled={busy}
+              title="Setzt den Status auf Fehlgeschlagen. Nur verwenden, wenn der Background-Job offensichtlich tot ist."
+            >
+              <Icon name="x" size={13}/> Als fehlgeschlagen markieren
+            </button>
+          )}
           <button className="btn" onClick={onMergedPdf} disabled={running || busy || stats.generated === 0}>
             <Icon name="download" size={13}/> Sammel-PDF
           </button>
@@ -667,6 +678,29 @@ const DurchlaufApp = () => {
     }
   }, []);
 
+  // Manueller Reset: bricht das Polling, setzt running=false und refresht den Doc,
+  // damit Status/Counts vom Backend kommen. Backend prüft status === "Läuft" +
+  // docstatus === 0 selbst, daher hier nur User-Confirmation.
+  const onMarkFailed = useCallback(async () => {
+    if (!running) return;
+    const ok = window.confirm(
+      "Lauf als FEHLGESCHLAGEN markieren?\n\nNur verwenden, wenn der Background-Job offensichtlich tot ist (z.B. Worker-Crash). Bereits erzeugte Dokumente bleiben erhalten."
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await markFailed();
+      stopPolling();
+      setRunning(false);
+      setProgress("");
+      await refresh();
+    } catch (e) {
+      window.alert(e?.message || "Reset fehlgeschlagen.");
+    } finally {
+      setBusy(false);
+    }
+  }, [running, refresh]);
+
   const onDownloadPdf = useCallback((r) => {
     if (r && r.pdf_url) window.open(r.pdf_url, "_blank");
   }, []);
@@ -778,6 +812,7 @@ const DurchlaufApp = () => {
         stats={stats}
         onRun={onRun}
         onMergedPdf={onMergedPdf}
+        onMarkFailed={onMarkFailed}
         onTitleCommit={onTitleCommit}
         onNew={onNew}
         running={running}
