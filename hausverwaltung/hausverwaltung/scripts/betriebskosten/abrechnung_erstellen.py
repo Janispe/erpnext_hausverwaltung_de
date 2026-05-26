@@ -224,6 +224,17 @@ def _mietvertrag_segmente_fuer_zeitraum(wohnung: str, von: str, bis: str) -> Lis
         if cur["start"] <= prev["end"]:
             pv = prev["raw"]
             cv = cur["raw"]
+            if cur["start"] == prev["end"]:
+                # Same-day-Wechsel ist mehrdeutig (wem gehoert der Tag?) — Daten-
+                # Eingabe-Fehler in 99% der Faelle. Spezifische Meldung mit klarer
+                # Handlungsanweisung, statt heimlich eine Konvention zu waehlen.
+                frappe.throw(
+                    "Same-day-Wechsel der Mietverträge nicht erlaubt: "
+                    f"{pv.get('name')} endet am {pv.get('bis')}, "
+                    f"{cv.get('name')} startet am {cv.get('von')} — derselbe Tag. "
+                    "Bitte ein Datum korrigieren: Vor-Mieter einen Tag früher beenden "
+                    "oder Nach-Mieter einen Tag später beginnen lassen."
+                )
             frappe.throw(
                 "Überlappende Mietverträge gefunden: "
                 f"{pv.get('name')} ({pv.get('von')} - {pv.get('bis') or 'offen'}) und "
