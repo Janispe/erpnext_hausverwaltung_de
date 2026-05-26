@@ -303,6 +303,73 @@ export const IfNode = Node.create({
 	},
 });
 
+// Container für ein komplettes {% if %} ... {% endif %}: erste Kind = hvIf (Header
+// mit Bedingung), danach beliebige Block-Kinder = Body. Das endif wird beim
+// Serialisieren implizit angehängt — der Container besitzt also kein endif-Kind.
+// NodeView fügt einen Collapse-Toggle hinzu (UI-only, nicht persistiert).
+export const IfBlockNode = Node.create({
+	name: "hvIfBlock",
+	group: "block",
+	content: "hvIf block*",
+	defining: true,
+	selectable: true,
+	parseHTML() {
+		return [{ tag: 'div[data-hv-kind="if-block"]' }];
+	},
+	renderHTML({ HTMLAttributes }) {
+		return [
+			"div",
+			mergeAttributes(HTMLAttributes, { class: "jinja-if-container", "data-hv-kind": "if-block" }),
+			0,
+		];
+	},
+	addNodeView() {
+		return ({ editor }) => {
+			const dom = document.createElement("div");
+			dom.className = "jinja-if-container";
+			dom.setAttribute("data-hv-kind", "if-block");
+
+			// Toggle-Spalte links — nicht editierbar, Click toggled Collapse-Klasse.
+			const gutter = document.createElement("div");
+			gutter.className = "jinja-if-gutter";
+			gutter.setAttribute("contenteditable", "false");
+			const toggle = document.createElement("button");
+			toggle.type = "button";
+			toggle.className = "jinja-if-toggle";
+			toggle.title = "Block aus-/einklappen";
+			toggle.setAttribute("aria-label", "Block aus-/einklappen");
+			toggle.textContent = "▾";
+			toggle.addEventListener("mousedown", (e) => e.preventDefault());
+			toggle.addEventListener("click", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				const collapsed = dom.classList.toggle("is-collapsed");
+				toggle.textContent = collapsed ? "▸" : "▾";
+				toggle.title = collapsed ? "Block ausklappen" : "Block einklappen";
+			});
+			gutter.appendChild(toggle);
+			dom.appendChild(gutter);
+
+			const content = document.createElement("div");
+			content.className = "jinja-if-content";
+			dom.appendChild(content);
+
+			return {
+				dom,
+				contentDOM: content,
+				ignoreMutation(mutation) {
+					// Klassen-Wechsel am Wrapper (is-collapsed) NICHT als Content-Mutation
+					// melden — sonst will ProseMirror den DOM re-rendern und unsere
+					// Toggle-Klasse verschwindet.
+					if (mutation.type === "attributes" && mutation.target === dom) return true;
+					if (mutation.type === "attributes" && gutter.contains(mutation.target)) return true;
+					return false;
+				},
+			};
+		};
+	},
+});
+
 // Tabellen-Zeile mit optionalem Loop-Ausdruck (Schleife als Zeilen-Attribut).
 export const HvTableRow = TableRow.extend({
 	addAttributes() {
@@ -609,6 +676,7 @@ export function buildExtensions() {
 		BausteinNode,
 		FieldNode,
 		IfNode,
+		IfBlockNode,
 		JinjaInlineNode,
 		JinjaBlockNode,
 	];

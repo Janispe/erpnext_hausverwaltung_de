@@ -185,6 +185,67 @@ function promoteBlockJinja(root, doc) {
 	}
 }
 
+// Schritt 2b: hvIf + zugehöriges {% endif %} (+ alles dazwischen) zu einem
+// hvIfBlock-Container zusammenfassen. Header-hvIf bleibt erstes Kind; das
+// {% endif %}-Element wird entfernt (implizit durch das Container-Ende).
+// Voraussetzungen für die Gruppierung:
+//   - es gibt einen matchenden {% endif %}-jinja-block auf gleicher DOM-Tiefe
+//   - kein {% else %}/{% elif %} auf gleicher Tiefe (sonst bleibt alles flach,
+//     bis wir Else/Elif ebenfalls als Schema modellieren).
+// Nesting wird per Counter aufgelöst; querySelectorAll-Reverse iteriert
+// innen-vor-außen, damit der äußere Container den inneren als Kind enthält.
+const ENDIF_RE = /^\{%\s*endif\s*%\}$/;
+const ELSE_ELIF_RE = /^\{%\s*(else|elif)\b/;
+
+function groupIfBlocks(root, doc) {
+	const ifs = Array.from(root.querySelectorAll('[data-hv-kind="if"]'));
+	for (let i = ifs.length - 1; i >= 0; i--) {
+		const ifEl = ifs[i];
+		const parent = ifEl.parentNode;
+		if (!parent) continue;
+		// Schon in einem Container? -> nichts zu tun.
+		if (parent.getAttribute && parent.getAttribute("data-hv-kind") === "if-block") continue;
+
+		let depth = 1;
+		let endifEl = null;
+		let blocker = false;
+		let node = ifEl.nextSibling;
+		while (node) {
+			if (node.nodeType === 1) {
+				const kind = node.getAttribute && node.getAttribute("data-hv-kind");
+				if (kind === "if") {
+					depth++;
+				} else if (kind === "jinja-block") {
+					const tok = (node.getAttribute("data-hv-token") || "").trim();
+					if (ENDIF_RE.test(tok)) {
+						depth--;
+						if (depth === 0) {
+							endifEl = node;
+							break;
+						}
+					} else if (depth === 1 && ELSE_ELIF_RE.test(tok)) {
+						blocker = true;
+						break;
+					}
+				}
+			}
+			node = node.nextSibling;
+		}
+		if (!endifEl || blocker) continue;
+
+		const container = doc.createElement("div");
+		container.setAttribute("data-hv-kind", "if-block");
+		parent.insertBefore(container, ifEl);
+		let cur = ifEl;
+		while (cur && cur !== endifEl) {
+			const next = cur.nextSibling;
+			container.appendChild(cur);
+			cur = next;
+		}
+		endifEl.parentNode.removeChild(endifEl);
+	}
+}
+
 // Schritt 0 (string-basiert, VOR jedem DOM-Parse!): {% for X %}<tr>..</tr>{% endfor %}
 // -> <tr data-hv-loop="X">..</tr>. Muss als String laufen, weil der HTML-Parser jeden
 // Nicht-Tabellen-Knoten (Text/Span) aus <tbody> herausziehen würde (foster parenting) –
@@ -231,6 +292,7 @@ export function decorateForTiptap(html) {
 	const doc = parseBody(wrapped);
 	normalizeLegacyClasses(doc.body); // ql-align-* -> text-align (Vorsorge)
 	promoteBlockJinja(doc.body, doc); // block-level {% %} zwischen Blöcken hochstufen
+	groupIfBlocks(doc.body, doc); // hvIf + endif -> hvIfBlock-Container (collapsible)
 	return doc.body.innerHTML;
 }
 
@@ -290,6 +352,19 @@ export function serializeToTokens(html) {
 		tr.parentNode.insertBefore(open, tr);
 		if (tr.nextSibling) tr.parentNode.insertBefore(close, tr.nextSibling);
 		else tr.parentNode.appendChild(close);
+	});
+
+	// 1b) hvIfBlock-Container auflösen: Inhalt VOR den Container schieben, hinten
+	// einen {% endif %}-Sentinel anhängen, Container entfernen. Der hvIf darin
+	// wird vom anschließenden Pass (2) zum {% if X %}-Sentinel. Container in
+	// Doc-Order verarbeiten -> äußere zuerst aufgeklappt, dann innere; jeder
+	// schreibt sein eigenes endif an der richtigen Stelle.
+	doc.querySelectorAll('[data-hv-kind="if-block"]').forEach((container) => {
+		const parent = container.parentNode;
+		if (!parent) return;
+		while (container.firstChild) parent.insertBefore(container.firstChild, container);
+		parent.insertBefore(doc.createTextNode("\n" + sentinel("{% endif %}")), container);
+		parent.removeChild(container);
 	});
 
 	// 2) hvIf-Blöcke -> {% if <ausdruck> %}. Ausdruck = Inhalt (Feld-Chips -> bare name, Text -> Text).

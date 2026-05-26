@@ -142,6 +142,39 @@ describe("if-Bedingungen (inline hvIf)", () => {
 	});
 });
 
+describe("if-Container (hvIfBlock)", () => {
+	it("if + endif werden bei decorateForTiptap zu einem if-block-Container", () => {
+		const decorated = decorateForTiptap(
+			"<p>a</p>\n{% if first %}\n<p>x</p>\n{% endif %}\n<p>b</p>"
+		);
+		// Container existiert
+		expect(decorated).toMatch(/data-hv-kind="if-block"/);
+		// hvIf-Header ist im Container
+		expect(decorated).toMatch(/data-hv-kind="if-block"[\s\S]*data-hv-kind="if"/);
+		// endif-jinja-block ist NICHT mehr separat im Output
+		expect(decorated).not.toMatch(/data-hv-token="\{%\s*endif\s*%\}"/);
+	});
+	it("verschachtelte ifs erzeugen verschachtelte Container", () => {
+		const decorated = decorateForTiptap(
+			"{% if a %}\n<p>x</p>\n{% if b %}\n<p>y</p>\n{% endif %}\n<p>z</p>\n{% endif %}"
+		);
+		// Zwei Container im Output
+		const matches = decorated.match(/data-hv-kind="if-block"/g) || [];
+		expect(matches.length).toBe(2);
+	});
+	it("if mit else bleibt FLACH (kein Container) — wird später separat modelliert", () => {
+		const decorated = decorateForTiptap(
+			"{% if a %}\n<p>x</p>\n{% else %}\n<p>y</p>\n{% endif %}"
+		);
+		expect(decorated).not.toMatch(/data-hv-kind="if-block"/);
+	});
+	it("verschachtelter if + endif Round-Trip", () => {
+		expectTokensPreserved(
+			"{% if a %}\n<p>x</p>\n{% if b %}\n<p>y</p>\n{% endif %}\n<p>z</p>\n{% endif %}"
+		);
+	});
+});
+
 describe("Mehrfach-Leerzeichen -> geschützte Leerzeichen", () => {
 	const NBSP = String.fromCharCode(160);
 	it("Lauf aus >=2 Leerzeichen wird zu nbsp (Kästchen bleibt erhalten)", () => {

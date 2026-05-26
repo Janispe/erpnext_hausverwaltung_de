@@ -1961,7 +1961,10 @@ span[style*="color"] > .chip {
   opacity: 0.85;
 }
 
-/* Inline-editierbarer if-Block: Bedingung mit Feld-Chips + frei tippbarem Rest */
+/* Inline-editierbarer if-Block: Bedingung mit Feld-Chips + frei tippbarem Rest.
+   In Container (hvIfBlock): keine eigene Border, gehört zum Container-Rahmen.
+   Standalone (kein Endif gefunden, also nicht gruppiert): bleibt die bisherige
+   blaue Banner-Optik. */
 .tiptap-surface .jinja-if-block {
   display: block;
   font-family: var(--font-mono);
@@ -1982,6 +1985,75 @@ span[style*="color"] > .chip {
   letter-spacing: 0.06em;
   margin-right: 4px;
   user-select: none;
+}
+
+/* Container für {% if %} ... {% endif %} mit klappbarem Body.
+   Layout: 2 Spalten (Gutter mit Toggle + Content). hvIf bleibt als Header
+   im Content sichtbar; nachfolgende Block-Geschwister bilden den Body. */
+.tiptap-surface .jinja-if-container {
+  display: flex;
+  align-items: stretch;
+  margin: 8px 0;
+  border-left: 3px solid var(--primary);
+  background: rgba(31, 115, 183, 0.04);
+  border-radius: 0 6px 6px 0;
+  position: relative;
+}
+.tiptap-surface .jinja-if-container .jinja-if-gutter {
+  flex: 0 0 22px;
+  display: flex;
+  justify-content: center;
+  padding-top: 6px;
+  user-select: none;
+}
+.tiptap-surface .jinja-if-container .jinja-if-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--primary);
+  padding: 0;
+  width: 16px;
+  height: 18px;
+  line-height: 1;
+  border-radius: 3px;
+  transition: background 0.12s ease;
+}
+.tiptap-surface .jinja-if-container .jinja-if-toggle:hover {
+  background: rgba(31, 115, 183, 0.16);
+}
+.tiptap-surface .jinja-if-container .jinja-if-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px 4px 0;
+}
+/* Im Container: hvIf-Banner wird zum Header, ohne eigene Border (Container hat schon eine) */
+.tiptap-surface .jinja-if-container .jinja-if-block {
+  border-left: none;
+  background: transparent;
+  padding: 2px 4px;
+  margin: 0;
+  font-weight: 500;
+  color: var(--primary-hover);
+}
+.tiptap-surface .jinja-if-container .jinja-if-block::before {
+  content: "Wenn ";
+  font-weight: 600;
+  text-transform: none;
+  font-size: 11.5px;
+  letter-spacing: 0;
+}
+/* Eingeklappt: Body ausblenden, nur Header (hvIf) und ein "(…)"-Hinweis sichtbar */
+.tiptap-surface .jinja-if-container.is-collapsed > .jinja-if-content > :not([data-hv-kind="if"]) {
+  display: none;
+}
+.tiptap-surface .jinja-if-container.is-collapsed > .jinja-if-content::after {
+  content: "(eingeklappt)";
+  display: inline-block;
+  margin-left: 8px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-style: italic;
 }
 .tiptap-surface .jinja-if-block .field-chip {
   font-style: normal;
