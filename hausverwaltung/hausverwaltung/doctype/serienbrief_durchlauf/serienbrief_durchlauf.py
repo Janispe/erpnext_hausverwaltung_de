@@ -105,7 +105,48 @@ def _humanize_jinja_error(raw: str) -> str:
 			"erwartet einen Wert, der vom System nicht bereitgestellt wird "
 			"(Mapping-Lücke oder Tippfehler in der Vorlage)."
 		).format(var)
+	if raw == "Wert ist None":
+		# Aus _strict_finalize: ein {{ ... }}-Ausdruck hat None zurueckgegeben.
+		# Jinja gibt uns hier den Ausdruck-Text nicht — Aufrufer rendert die
+		# Kandidaten-Liste aus der Fehler-Zeile dazu (siehe _render_serienbrief_template).
+		return _(
+			"Ein Ausdruck (<code>{{ … }}</code>) hat den Wert <code>None</code> zurückgegeben "
+			"und würde sonst als Literal-Text \"None\" ins PDF rutschen. "
+			"Typische Ursachen:<ul>"
+			"<li>Pfad zeigt auf ein leeres DocType-Feld (z.B. <code>kunde.first_name</code> "
+			"ohne Vornamen) → entweder das Feld pflegen oder den Ausdruck in "
+			"<code>{% if x %}…{% endif %}</code> wrappen.</li>"
+			"<li><code>baustein(\"…\")</code> findet den Baustein nicht / liefert leeres "
+			"Ergebnis → Baustein-Name pruefen.</li>"
+			"<li>Filter-Kette ergibt <code>None</code> (z.B. <code>x | irgendwas</code> "
+			"auf einem Wert, den der Filter nicht versteht).</li>"
+			"</ul>"
+		)
 	return frappe.utils.escape_html(raw)
+
+
+_OUTPUT_EXPR_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}", re.DOTALL)
+
+
+def _extract_output_expressions_on_line(source: str, lineno: int) -> list[str]:
+	"""Liefert die {{ ... }}-Ausdrücke der angegebenen Zeile. Wird im
+	"Wert ist None"-Pfad genutzt, damit der Autor die Kandidaten sieht, die
+	den None-Wert geliefert haben könnten — Jinja gibt uns die konkrete
+	Expression nicht.
+	"""
+	if not source or lineno < 1:
+		return []
+	lines = source.splitlines()
+	if lineno > len(lines):
+		return []
+	line = lines[lineno - 1]
+	# Dedupe in Reihenfolge des Vorkommens.
+	seen: list[str] = []
+	for match in _OUTPUT_EXPR_RE.finditer(line):
+		expr = match.group(1).strip()
+		if expr and expr not in seen:
+			seen.append(expr)
+	return seen
 
 
 def _strict_finalize(value):
@@ -312,6 +353,20 @@ def _render_serienbrief_template(template: str, context: Dict[str, Any]) -> str:
 					+ _("Vorlagen-Zeile {0}:").format(lineno)
 					+ f"<br/><pre style='white-space: pre-wrap; font-size: 0.85em; background: #f6f6f6; padding: 6px; border-radius: 3px'>{snippet}</pre>"
 				)
+			# Bei "Wert ist None" zusätzlich alle {{ ... }}-Ausdrücke der Fehler-Zeile
+			# auflisten — Jinja gibt uns nicht, welche Expression genau None lieferte,
+			# aber der Autor kann die Kandidaten dann gezielt durchgehen.
+			if raw == "Wert ist None":
+				candidates = _extract_output_expressions_on_line(template, lineno)
+				if candidates:
+					from frappe.utils import escape_html
+
+					items = "".join(f"<li><code>{escape_html(c)}</code></li>" for c in candidates)
+					msg += (
+						"<br/>"
+						+ _("Kandidaten in dieser Zeile (einer davon liefert None):")
+						+ f"<ul style='margin-top: 4px'>{items}</ul>"
+					)
 		frappe.throw(title=_("Serienbrief Fehler"), msg=msg)
 	except TemplateError:
 		frappe.throw(
