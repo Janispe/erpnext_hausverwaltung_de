@@ -154,9 +154,13 @@ export async function reloadForm() {
 // --- Vollbild-Page: Anlegen / Titel / Navigation ------------------------------
 
 // Vorlagen für den „Neuer Durchlauf"-Picker.
-export async function listVorlagen(query) {
+// `pinnedId` (optional): Backend hängt diese Vorlage IMMER an den Anfang
+// der Liste, auch wenn sie ausserhalb der ersten 50 Treffer oder ausserhalb
+// des Such-Filters liegt — wichtig fuer die vom Browser preselected Vorlage,
+// damit sie in der Liste sichtbar markiert wird.
+export async function listVorlagen(query, pinnedId) {
 	if (!embedded) return { items: [] };
-	return await rpc("list_vorlagen", { query: query || "" });
+	return await rpc("list_vorlagen", { query: query || "", pinned_id: pinnedId || "" });
 }
 
 // Neuen Durchlauf-Entwurf aus einer Vorlage anlegen. → { docname }.

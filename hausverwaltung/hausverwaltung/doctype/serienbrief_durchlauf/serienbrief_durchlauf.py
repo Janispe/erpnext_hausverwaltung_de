@@ -3563,8 +3563,20 @@ def update_durchlauf(docname: str, title: str | None = None) -> Dict[str, Any]:
 
 
 @frappe.whitelist()
-def list_vorlagen(query: str | None = None, limit: int = 50) -> Dict[str, Any]:
-	"""Vorlagen für den „Neuer Durchlauf"-Picker (berechtigungsgefiltert)."""
+def list_vorlagen(
+	query: str | None = None,
+	limit: int = 50,
+	pinned_id: str | None = None,
+) -> Dict[str, Any]:
+	"""Vorlagen für den „Neuer Durchlauf"-Picker (berechtigungsgefiltert).
+
+	``pinned_id``: Wenn gesetzt, wird diese Vorlage IMMER ans Anfang der
+	Ergebnisse gestellt — auch wenn sie ausserhalb der ersten ``limit``
+	Treffer oder ausserhalb des Such-Filters laege. Wird vom Browser
+	"Durchlauf starten" genutzt, damit die vorausgewaehlte Vorlage in der
+	Picker-Liste sichtbar markiert ist (sonst wirkt der Picker leer-
+	ausgewaehlt, obwohl ``sel`` technisch gesetzt ist).
+	"""
 	if not frappe.has_permission("Serienbrief Vorlage", "read"):
 		raise frappe.PermissionError
 	q = cstr(query or "").strip()
@@ -3579,6 +3591,19 @@ def list_vorlagen(query: str | None = None, limit: int = 50) -> Dict[str, Any]:
 		order_by="title asc",
 		limit_page_length=cint(limit) or 50,
 	)
+
+	# Pinned-ID einmalig prepend, wenn nicht schon in den Ergebnissen.
+	pinned = cstr(pinned_id or "").strip()
+	if pinned and not any(r.name == pinned for r in rows):
+		extra = frappe.get_list(
+			"Serienbrief Vorlage",
+			filters={"name": pinned, "docstatus": ["<", 2]},
+			fields=["name", "title", "kategorie", "haupt_verteil_objekt"],
+			limit_page_length=1,
+		)
+		if extra:
+			rows = list(extra) + list(rows)
+
 	return {
 		"items": [
 			{

@@ -825,12 +825,24 @@ const NewDurchlauf = ({ preselect }) => {
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const selRowRef = React.useRef(null);
 
   useEffect(() => {
     let alive = true;
-    listVorlagen(q).then((r) => { if (alive) setVorlagen(r.items || []); }).catch(() => {});
+    // pinnedId = preselect: das Backend stellt die vorausgewaehlte Vorlage
+    // immer ans Anfang der Liste, sonst wirkt der Picker leer-ausgewaehlt
+    // (sel-State ist gesetzt, die Vorlage aber nicht in den ersten 50).
+    listVorlagen(q, preselect).then((r) => { if (alive) setVorlagen(r.items || []); }).catch(() => {});
     return () => { alive = false; };
-  }, [q]);
+  }, [q, preselect]);
+
+  // Beim ersten Render mit gesetzter Vorauswahl ins Viewport scrollen,
+  // damit der User die Markierung sofort sieht.
+  useEffect(() => {
+    if (sel && selRowRef.current) {
+      try { selRowRef.current.scrollIntoView({ block: "nearest" }); } catch (_) {}
+    }
+  }, [vorlagen.length, sel]);
 
   const create = async () => {
     if (!sel) { setErr("Bitte eine Vorlage wählen."); return; }
@@ -860,7 +872,12 @@ const NewDurchlauf = ({ preselect }) => {
           {vorlagen.length === 0 ? (
             <div className="dl-new-empty">Keine Vorlagen gefunden.</div>
           ) : vorlagen.map((v) => (
-            <div key={v.id} className={`dl-new-row ${v.id === sel ? "active" : ""}`} onClick={() => setSel(v.id)}>
+            <div
+              key={v.id}
+              ref={v.id === sel ? selRowRef : undefined}
+              className={`dl-new-row ${v.id === sel ? "active" : ""}`}
+              onClick={() => setSel(v.id)}
+            >
               <div>
                 <div className="dl-new-row-title">{v.title}</div>
                 <div className="dl-new-row-sub">{v.kategorie || "—"}{v.haupt_verteil_objekt ? ` · ${v.haupt_verteil_objekt}` : ""}</div>
