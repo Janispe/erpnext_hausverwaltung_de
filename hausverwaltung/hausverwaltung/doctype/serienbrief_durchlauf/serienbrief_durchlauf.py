@@ -489,8 +489,14 @@ class SerienbriefDurchlauf(Document):
 				try:
 					doc.submit()
 				except Exception:
-					# Falls ein System/Role kein submit darf: trotzdem als Historie speichern.
-					pass
+					# Bewusst kein Hard-Fail des Laufs (z.B. fehlende Submit-Permission
+					# soll nicht die ganze Generierung kippen). Aber: bisher silent —
+					# User sah "Generiert" obwohl Brief Draft blieb. Jetzt im Error Log
+					# nachvollziehbar.
+					frappe.log_error(
+						frappe.get_traceback(),
+						f"Serienbrief Durchlauf: Submit von {doc.name!r} fehlgeschlagen — bleibt Draft.",
+					)
 
 			created.append(doc.name)
 			counts[{"Generiert": "generated", "Übersprungen": "skipped", "Fehler": "error"}[status]] += 1
