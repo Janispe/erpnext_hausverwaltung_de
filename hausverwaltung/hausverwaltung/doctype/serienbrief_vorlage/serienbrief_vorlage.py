@@ -1260,7 +1260,10 @@ def render_template_preview_pdf(
 	# und für echte Empfänger (iter_dt + iter_name).
 	# ``_skip_cache`` ist der Re-Entry-Schutz für regenerate_preview_pdf selbst,
 	# damit der Cache nicht aus sich selbst entsteht.
-	if not _skip_cache and not iter_name and template and not template_doc:
+	# ``cint(split_preview)`` ist hier essenziell: ohne den Check würde ein
+	# Aufruf im Raw-Modus (split_preview=None/False) fälschlicherweise das
+	# Split-Preview-PDF (mit gelben Beispielwert-Highlights) ausliefern.
+	if not _skip_cache and not iter_name and template and not template_doc and cint(split_preview):
 		cached_file = cstr(getattr(doc, "preview_pdf_file", "") or "").strip()
 		if cached_file:
 			try:
@@ -2576,10 +2579,17 @@ def regenerate_preview_pdf(vorlage_name: str) -> str | None:
 	als File-Attachment am Doc. Setzt ``preview_pdf_file`` auf die neue URL.
 	Idempotent — alte Cache-Files derselben Vorlage werden vorher gelöscht.
 
-	Gibt die file_url zurück (oder None bei Render-Fehler — der Fehler wird
-	geloggt, der Job läuft beim nächsten Save erneut)."""
+	Stale-Check: ``modified`` wird beim Job-Start gemerkt und vor dem Cache-
+	Write neu gegen die DB geprüft. Wenn die Vorlage zwischenzeitlich erneut
+	gespeichert wurde, verwirft der Job sein Ergebnis und re-enqueued sich
+	selbst — sonst würde ein parallel laufender Job mit altem Stand den
+	frisch invalidierten Cache wieder mit veralteten Daten füllen.
+
+	Gibt die file_url zurück (oder None bei Render-Fehler / Stale-Abbruch —
+	der Fehler wird geloggt, der Job läuft beim nächsten Save erneut)."""
 	if not frappe.db.exists("Serienbrief Vorlage", vorlage_name):
 		return None
+	start_modified = frappe.db.get_value("Serienbrief Vorlage", vorlage_name, "modified")
 	try:
 		result = render_template_preview_pdf(
 			template=vorlage_name,
@@ -2599,6 +2609,26 @@ def regenerate_preview_pdf(vorlage_name: str) -> str | None:
 	try:
 		pdf_bytes = base64.b64decode(pdf_b64)
 	except Exception:
+		return None
+
+	# Stale-Check: hat die Vorlage seit Job-Start einen weiteren Save bekommen?
+	# Dann ist unser Render-Ergebnis veraltet — verwerfen und re-enqueuen.
+	# job_id ist zu diesem Zeitpunkt durch den abschließenden Job1 wieder frei.
+	current_modified = frappe.db.get_value("Serienbrief Vorlage", vorlage_name, "modified")
+	if current_modified and start_modified and current_modified != start_modified:
+		try:
+			frappe.enqueue(
+				"hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.regenerate_preview_pdf",
+				queue="short",
+				timeout=120,
+				job_id=f"sb-preview-{vorlage_name}",
+				vorlage_name=vorlage_name,
+			)
+		except Exception:
+			frappe.log_error(
+				frappe.get_traceback(),
+				f"regenerate_preview_pdf: Re-Enqueue nach Stale-Check für {vorlage_name!r} fehlgeschlagen.",
+			)
 		return None
 
 	_delete_existing_preview_files(vorlage_name)
@@ -2624,11 +2654,30 @@ def regenerate_preview_pdf(vorlage_name: str) -> str | None:
 
 
 def enqueue_preview_regeneration(doc, method=None) -> None:
-	"""on_update-Hook: enqueued den Preview-Render nach dem Commit. job_id
-	dedupliziert, sodass mehrere schnelle Saves nicht 10 Jobs queueen."""
+	"""on_update-Hook: invalidiert den alten Cache **sofort** (sonst zeigt
+	der Browser bis zum Job-Ende den alten Stand, und bei Render-Fehler
+	dauerhaft) und enqueued den neuen Render nach Commit. Zwischen Save und
+	Job-Fertig fällt die Vorschau auf Live-Render zurück.
+
+	job_id dedupliziert mehrere schnelle Saves zu einem Job. Der Stale-Check
+	in regenerate_preview_pdf verhindert dabei, dass ein noch laufender Job
+	mit altem Stand den neuen Cache überschreibt."""
 	vorlage_name = cstr(getattr(doc, "name", "") or "").strip()
 	if not vorlage_name:
 		return
+	# Sofort-Invalidierung: Cache-Referenz leeren, das File selbst räumt
+	# regenerate_preview_pdf beim nächsten Lauf auf (oder bleibt orphan bis
+	# zum nächsten Save — kein Schaden, nur Disk-Bytes).
+	try:
+		frappe.db.set_value(
+			"Serienbrief Vorlage", vorlage_name, "preview_pdf_file", "",
+			update_modified=False,
+		)
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"enqueue_preview_regeneration: Cache-Invalidierung für {vorlage_name!r} fehlgeschlagen.",
+		)
 	try:
 		frappe.enqueue(
 			"hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.regenerate_preview_pdf",
