@@ -93,12 +93,17 @@ const tokenAttr = {
 	renderHTML: (attrs) => ({ "data-hv-token": attrs.token }),
 };
 
+// marks: "_" -> der Node erlaubt alle Marks (Bold/Italic/Underline/TextStyle für Schriftgröße & Farbe).
+// ProseMirror rendert Marks um die NodeView-DOM, der serializeToTokens-Pfad ersetzt nur den
+// Chip-Span durch den rohen Token, eine umschließende <strong>/<span style="font-size:…">-Hülle
+// bleibt erhalten -> Markup landet 1:1 im PDF.
 export const PlaceholderNode = Node.create({
 	name: "hvPlaceholder",
 	inline: true,
 	group: "inline",
 	atom: true,
 	selectable: true,
+	marks: "_",
 	addAttributes() {
 		return {
 			token: tokenAttr,
@@ -133,6 +138,7 @@ export const BausteinNode = Node.create({
 	group: "inline",
 	atom: true,
 	selectable: true,
+	marks: "_",
 	addAttributes() {
 		return { token: tokenAttr };
 	},
@@ -246,6 +252,7 @@ export const FieldNode = Node.create({
 	group: "inline",
 	atom: true,
 	selectable: true,
+	marks: "_",
 	addAttributes() {
 		return {
 			name: {

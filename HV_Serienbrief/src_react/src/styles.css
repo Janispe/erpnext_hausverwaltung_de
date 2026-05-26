@@ -442,6 +442,27 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   color: inherit;
   padding: 0 4px;
 }
+/* Marks auf Chips (Bold/Italic/Underline/Strike, Schriftgröße, Farbe) — ProseMirror wrappt die
+   atomare Chip-NodeView mit dem jeweiligen Mark-Element. Damit der Nutzer im Editor sieht,
+   dass die Formatierung greift (im PDF wirkt sie auf den aufgelösten Wert), ziehen wir die
+   visuellen Signale auf das Chip selbst durch. font-size/color werden inline auf einem <span>
+   gesetzt; dafür ein dezenter gestrichelter Rahmen + tatsächliche font-size Anwendung. */
+strong > .chip { font-weight: 700; }
+em > .chip { font-style: italic; }
+u > .chip { text-decoration: underline; }
+s > .chip { text-decoration: line-through; }
+sup > .chip { vertical-align: super; font-size: 0.85em; }
+sub > .chip { vertical-align: sub; font-size: 0.85em; }
+/* Inline-Style-Marks (TextStyle: font-size, color): font-size erbt der Chip, damit man sieht
+   wie groß er später wird; color-Override würde die Chip-Group-Farbe killen, also nur
+   ein gestrichelter Rahmen als Hinweis. */
+span[style*="font-size"] > .chip {
+  font-size: inherit;
+}
+span[style*="color"] > .chip {
+  outline: 1px dashed currentColor;
+  outline-offset: 1px;
+}
 
 /* Baustein block */
 .baustein-block {

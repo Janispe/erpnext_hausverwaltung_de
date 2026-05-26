@@ -40,6 +40,26 @@ describe("Token-Round-Trip", () => {
 		expectTokensPreserved("<p>Offen: <strong>{{ saldo }}</strong></p>");
 	});
 
+	it("Marks um Chips bleiben nach Round-Trip erhalten", () => {
+		// <strong>/<em>/<u> und Inline-Stil-Marks (textStyle: font-size) wrappen die atomare
+		// Chip-NodeView; ohne `marks: "_"` auf dem Chip-Node würden sie beim Parse verschluckt.
+		const bold = roundTrip("<p>Saldo: <strong>{{ saldo }}</strong> EUR</p>");
+		expect(bold).toMatch(/<strong>\{\{\s*saldo\s*\}\}<\/strong>/);
+
+		const italic = roundTrip("<p><em>{{ mieter.nachname }}</em></p>");
+		expect(italic).toMatch(/<em>\{\{\s*mieter\.nachname\s*\}\}<\/em>/);
+
+		const sized = roundTrip(
+			'<p>Wert: <span style="font-size: 14pt">{{ saldo }}</span></p>'
+		);
+		expect(sized).toMatch(/font-size:\s*14pt[^>]*>\{\{\s*saldo\s*\}\}</);
+
+		const bausteinFett = roundTrip(
+			'<p><strong>{{ baustein("Anrede") }}</strong></p>'
+		);
+		expect(bausteinFett).toMatch(/<strong>\{\{\s*baustein\("Anrede"\)\s*\}\}<\/strong>/);
+	});
+
 	it("Umlaute und mehrere Platzhalter", () => {
 		expectTokensPreserved(
 			"<p>Wohnung {{ wohnung.bezeichnung }} in {{ immobilie.bezeichnung }} – Größe {{ wohnung.qm }} m²</p>"
