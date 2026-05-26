@@ -1621,7 +1621,12 @@ def get_editor_tree() -> Dict[str, Any]:
 	by_cat: Dict[str, List[Dict[str, str]]] = {}
 	for t in templates:
 		by_cat.setdefault(t.kategorie or "", []).append(
-			{"id": t.name, "title": t.title, "modified": pretty_date(t.modified)}
+			{
+				"id": t.name,
+				"title": t.title,
+				"modified": pretty_date(t.modified),
+				"modified_iso": t.modified.isoformat() if t.modified else None,
+			}
 		)
 
 	groups: List[Dict[str, Any]] = []

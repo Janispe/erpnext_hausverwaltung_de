@@ -246,36 +246,71 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   color: var(--text-faint);
   font-weight: 600;
 }
+.nav-sort {
+  margin-top: 8px;
+}
+.nav-sort select {
+  width: 100%;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 8px;
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.nav-sort select:focus { outline: none; border-color: var(--border-focus); }
+.nav-sort select:hover { color: var(--text); }
+
 .nav-cat {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 8px;
+  padding: 6px 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   user-select: none;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
+  color: var(--text);
 }
 .nav-cat:hover { background: var(--surface-hover); }
 .nav-cat.open { color: var(--text); }
 .nav-cat .chev {
   color: var(--text-faint);
   transition: transform 120ms;
+  flex-shrink: 0;
 }
 .nav-cat.open .chev { transform: rotate(90deg); }
+.nav-cat-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.nav-cat.open .nav-cat-icon { color: var(--text); }
+.nav-cat-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .nav-cat .count {
   margin-left: auto;
   font-size: 11px;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
+  font-weight: 500;
 }
 .nav-cat .pin { color: var(--warn); }
 
 .nav-template {
   display: flex;
-  flex-direction: column;
-  padding: 6px 8px 6px 26px;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 5px 8px 5px 20px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   margin: 1px 0;
@@ -285,9 +320,23 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   background: var(--primary-50);
   color: var(--primary-hover);
 }
+.nav-template-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-faint);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.nav-template.current .nav-template-icon { color: var(--primary-hover); }
+.nav-template-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
 .nav-template .name {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 400;
   /* Zwei Zeilen Umbruch statt aggressivem 1-Zeilen-Cut. Ab 3. Zeile clamped,
      hover-tooltip (title-Attribut) zeigt den vollen Namen. */
   display: -webkit-box;
@@ -297,6 +346,7 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   overflow-wrap: anywhere;
   line-height: 1.3;
 }
+.nav-template.current .name { font-weight: 500; }
 .nav-template .meta {
   font-size: 11px;
   color: var(--text-faint);
