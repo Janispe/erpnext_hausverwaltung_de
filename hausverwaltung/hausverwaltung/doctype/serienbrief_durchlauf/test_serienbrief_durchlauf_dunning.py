@@ -11,7 +11,10 @@ import json
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from hausverwaltung.hausverwaltung.doctype.dunning import collect_serienbrief_werte
+from hausverwaltung.hausverwaltung.doctype.dunning import (
+	collect_serienbrief_werte,
+	validate_dunning_type_serienbrief_werte,
+)
 from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 	_merge_variable_values,
 	_parse_variable_values,
@@ -54,6 +57,26 @@ class TestSerienbriefDurchlaufDunning(FrappeTestCase):
 	def test_collect_unknown_type_is_empty(self):
 		dunning = frappe._dict(doctype="Dunning", dunning_type="_Does Not Exist 9999")
 		self.assertEqual(collect_serienbrief_werte(dunning), {})
+
+	def test_validate_blocks_scrub_collision(self):
+		"""„Frist Tage" und „frist_tage" werden beide zu `frist_tage` —
+		muss als Duplikat erkannt und beim Save abgelehnt werden."""
+		dt = frappe.new_doc("Dunning Type")
+		dt.dunning_type = "_Test SB Dunning Type Dup"
+		company = frappe.db.get_value("Company", {}, "name")
+		if company:
+			dt.company = company
+		dt.append("hv_serienbrief_werte", {"variable": "Frist Tage", "wert": "7"})
+		dt.append("hv_serienbrief_werte", {"variable": "frist_tage", "wert": "14"})
+		with self.assertRaises(frappe.ValidationError):
+			validate_dunning_type_serienbrief_werte(dt)
+
+	def test_validate_passes_distinct(self):
+		dt = frappe.new_doc("Dunning Type")
+		dt.append("hv_serienbrief_werte", {"variable": "Frist Tage", "wert": "7"})
+		dt.append("hv_serienbrief_werte", {"variable": "Ueberschrift", "wert": "X"})
+		# Sollte ohne Exception durchlaufen.
+		validate_dunning_type_serienbrief_werte(dt)
 
 	def test_merge_type_is_base_override_wins(self):
 		"""Spiegelt die Glue in _build_iteration-Row: Typ-Werte als Basis,

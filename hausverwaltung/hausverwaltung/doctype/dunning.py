@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import frappe
+from frappe import _
 
 
 SERIENBRIEF_FIELDNAME = "hv_serienbrief_vorlage"
@@ -70,3 +71,40 @@ def collect_serienbrief_werte(dunning) -> dict[str, dict[str, Any]]:
 			continue
 		werte[frappe.scrub(name)] = {"value": row.get("wert")}
 	return werte
+
+
+def validate_dunning_type_serienbrief_werte(doc, method=None) -> None:
+	"""Verhindert, dass zwei hv_serienbrief_werte-Zeilen nach frappe.scrub()
+	denselben Variablennamen liefern. Sonst würden Werte stumm überschrieben
+	(siehe collect_serienbrief_werte → dict-Assignment).
+
+	Beispiele für Kollisionen: "Frist Tage" + "frist_tage", "Ueberschrift" +
+	"Überschrift". Beide werden zu "frist_tage" bzw. "ueberschrift" — der zweite
+	Eintrag gewänne stumm.
+	"""
+	rows = doc.get(SERIENBRIEF_WERTE_FIELDNAME) or []
+	seen: dict[str, list[tuple[int, str]]] = {}
+	for row in rows:
+		name = (getattr(row, "variable", None) or "").strip()
+		if not name:
+			continue
+		key = frappe.scrub(name)
+		seen.setdefault(key, []).append((getattr(row, "idx", 0), name))
+
+	duplicates = [(key, occ) for key, occ in seen.items() if len(occ) > 1]
+	if not duplicates:
+		return
+
+	parts = []
+	for key, occ in duplicates:
+		labels = ", ".join(f"#{idx} „{name}\"" for idx, name in occ)
+		parts.append(f"<li><code>{key}</code> ({labels})</li>")
+	frappe.throw(
+		_(
+			"Im Feld <strong>Serienbrief-Werte</strong> gibt es Variablen, "
+			"die nach Normalisierung identisch sind und sich gegenseitig "
+			"stumm überschreiben würden:<ul>{0}</ul>"
+			"Bitte jede Variable nur einmal vergeben."
+		).format("".join(parts)),
+		title=_("Doppelte Variablen"),
+	)

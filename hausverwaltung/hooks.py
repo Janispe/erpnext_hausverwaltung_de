@@ -261,6 +261,9 @@ doc_events = {
 	"Dunning": {
 		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.sync_serienbrief_vorlage_from_dunning_type",
 	},
+	"Dunning Type": {
+		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning_type_serienbrief_werte",
+	},
 	"Purchase Invoice": {
 		# Auto Repeat setzt nur Pflicht-Date-Felder. bill_date, due_date und
 		# custom_wertstellungsdatum müssen wir manuell mit dem Schedule
