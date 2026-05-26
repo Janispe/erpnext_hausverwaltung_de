@@ -103,7 +103,7 @@ export const BausteinPopover = ({
 										<input
 											type="checkbox"
 											className="bp-value-checkbox"
-											checked={!!cur}
+											checked={cur === true || cur === "true" || cur === 1 || cur === "1"}
 											onChange={(e) => setValue(v.name, e.target.checked)}
 										/>
 									) : (

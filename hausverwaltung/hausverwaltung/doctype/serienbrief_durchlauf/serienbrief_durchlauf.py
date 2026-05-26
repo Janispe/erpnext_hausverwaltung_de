@@ -1311,6 +1311,8 @@ class SerienbriefDurchlauf(Document):
 			if resolved is None and value is not None:
 				resolved = value
 
+			resolved = _coerce_bool_if_needed(resolved, variable_type)
+
 			# Optional-Flag auf der Variable: kein Vorlagenfehler bei fehlendem Wert.
 			# Stattdessen wird leerer String ins Context gesetzt, sodass Jinja
 			# StrictUndefined nicht crasht und die Vorlage `{% if X %}` ohne
@@ -1387,6 +1389,8 @@ class SerienbriefDurchlauf(Document):
 			if resolved is None and value is not None:
 				resolved = value
 
+			resolved = _coerce_bool_if_needed(resolved, variable_type)
+
 			if resolved is None:
 				# Variable stays unresolved here; the durchlauf override may still fill it.
 				# _verify_template_variables_resolved raises afterwards if it's still missing.
@@ -1434,6 +1438,8 @@ class SerienbriefDurchlauf(Document):
 			# Bewusst gesetzter Leer-String ist gültiger Wert; nur echtes ``None`` zählt als fehlend.
 			if resolved is None and value is not None:
 				resolved = value
+
+			resolved = _coerce_bool_if_needed(resolved, variable_type)
 
 			if resolved is None:
 				continue
@@ -2048,6 +2054,20 @@ def _scrub_value(value: str) -> str:
 	value = re.sub(r"[^a-z0-9]+", "-", value)
 	value = value.strip("-")
 	return value or "serienbrief"
+
+
+def _coerce_bool_if_needed(value, variable_type: str):
+	# Bool-Werte aus inline_baustein_werte / variablen_werte koennen als String
+	# "false"/"true" persistiert sein (alte Editor-States, JSON-Roundtrips).
+	# Jinja sieht jeden nicht-leeren String als truthy, daher vor Context-
+	# Uebergabe in echtes Boolean konvertieren.
+	if variable_type != "Bool" or value is None:
+		return value
+	if isinstance(value, bool):
+		return value
+	if isinstance(value, str):
+		return value.strip().lower() in ("true", "1", "yes", "on", "ja")
+	return bool(value)
 
 
 def _parse_mapping(raw: str | None) -> dict:
