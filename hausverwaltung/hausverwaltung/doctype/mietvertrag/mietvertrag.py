@@ -178,15 +178,29 @@ class Mietvertrag(Document):
 
 		final_target = _unique_docname("Customer", target, current_name=current)
 		if final_target != current:
-			final_target = rename_doc(
-				"Customer",
-				current,
-				final_target,
-				force=True,
-				merge=False,
-				show_alert=False,
-				ignore_permissions=True,
-			)
+			try:
+				final_target = rename_doc(
+					"Customer",
+					current,
+					final_target,
+					force=True,
+					merge=False,
+					show_alert=False,
+					ignore_permissions=True,
+				)
+			except Exception:
+				frappe.log_error(
+					frappe.get_traceback(),
+					f"Mietvertrag-Sync: Customer-Rename {current!r} -> {final_target!r} fehlgeschlagen",
+				)
+				frappe.throw(
+					f"Der Customer '{current}' konnte nicht zu '{final_target}' umbenannt werden.<br><br>"
+					"Mögliche Ursachen:<br>"
+					"• anderer Customer mit gleichem Namen existiert bereits<br>"
+					"• Customer ist in offenen Sales Invoices / Payment Entries referenziert und gesperrt<br>"
+					"• Lock-Timeout (anderer User editiert gerade denselben Customer)<br><br>"
+					"Details siehe Error Log."
+				)
 			self.kunde = final_target
 
 		if frappe.db.get_value("Customer", final_target, "customer_name") != display_name:
@@ -204,15 +218,29 @@ class Mietvertrag(Document):
 		if not target or target == current:
 			return current
 
-		new_name = rename_doc(
-			"Mietvertrag",
-			current,
-			target,
-			force=True,
-			merge=False,
-			show_alert=False,
-			ignore_permissions=True,
-		)
+		try:
+			new_name = rename_doc(
+				"Mietvertrag",
+				current,
+				target,
+				force=True,
+				merge=False,
+				show_alert=False,
+				ignore_permissions=True,
+			)
+		except Exception:
+			frappe.log_error(
+				frappe.get_traceback(),
+				f"Mietvertrag-Sync: Mietvertrag-Rename {current!r} -> {target!r} fehlgeschlagen",
+			)
+			frappe.throw(
+				f"Der Mietvertrag '{current}' konnte nicht zu '{target}' umbenannt werden.<br><br>"
+				"Mögliche Ursachen:<br>"
+				"• anderer Mietvertrag mit gleichem Namen existiert<br>"
+				"• Mietvertrag ist in submitted Buchungen referenziert<br>"
+				"• Lock-Timeout<br><br>"
+				"Details siehe Error Log."
+			)
 		self.name = new_name
 		return new_name
 
