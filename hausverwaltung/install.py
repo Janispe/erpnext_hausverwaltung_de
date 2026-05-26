@@ -384,6 +384,9 @@ def after_migrate() -> None:
     _ensure_dunning_serienbrief_link_fields(reason="after_migrate")
     _ensure_serienbrief_print_format_link_field(reason="after_migrate")
     _ensure_immobilie_muelltrennung_field(reason="after_migrate")
+    # Custom Fields sichtbar machen, bevor Print Formats sie referenzieren.
+    # Schuetzt vor Race wenn parallele Worker after_migrate triggern.
+    frappe.db.commit()
     _ensure_serienbrief_dokument_print_format(reason="after_migrate")
     _ensure_hv_dunning_print_format(reason="after_migrate")
     _ensure_zahlungshistorie_baustein(reason="after_migrate")
