@@ -1709,15 +1709,15 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
   outline-offset: -6px;
 }
 
-/* Die eigentliche ProseMirror-Fläche – Body-Typografie nah am Brief.
-   margin:0 an <p> spiegelt das Print-Format (install.py .serienbrief-page p):
-   direkt aufeinanderfolgende Absätze rendern kompakt, Abstand entsteht nur durch
-   explizite Leerzeilen (leeres <p>). line-height ist einheitenlos (= Vielfaches
-   der jeweiligen Schriftgröße), wächst also automatisch mit größerem Text mit.
-   Gleicher Wert wie im Print-Format (1.35) -> Editor entspricht dem PDF. */
+/* Die eigentliche ProseMirror-Fläche – Body-Typografie 1:1 wie das PDF (install.py
+   `body, .serienbrief-root`): Arial 11pt / line-height 1.35. So zeigt der Editor genau
+   die Schriftart und -größe, die später im PDF gedruckt wird (echtes WYSIWYG).
+   margin:0 an <p> spiegelt das Print-Format (.serienbrief-page p): direkt aufeinander-
+   folgende Absätze rendern kompakt, Abstand entsteht nur durch explizite Leerzeilen
+   (leeres <p>). line-height einheitenlos = Vielfaches der jeweiligen Schriftgröße. */
 .tiptap-surface {
-  font-family: var(--font-serif, Georgia, "Times New Roman", serif);
-  font-size: 15px;
+  font-family: "Arial", "Helvetica", sans-serif;
+  font-size: 11pt;
   line-height: 1.35;
   color: #1a1a1a;
   outline: none;
@@ -1725,9 +1725,9 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
 }
 .tiptap-surface:focus { outline: none; }
 .tiptap-surface p { margin: 0; }
-.tiptap-surface h1 { font-size: 21px; font-weight: 600; margin: 18px 0 12px; }
-.tiptap-surface h2 { font-size: 17px; font-weight: 600; margin: 16px 0 10px; }
-.tiptap-surface h3 { font-size: 15px; font-weight: 600; margin: 14px 0 8px; }
+.tiptap-surface h1 { font-size: 16pt; font-weight: 600; margin: 14pt 0 9pt; }
+.tiptap-surface h2 { font-size: 13pt; font-weight: 600; margin: 12pt 0 8pt; }
+.tiptap-surface h3 { font-size: 12pt; font-weight: 600; margin: 10pt 0 6pt; }
 .tiptap-surface ul, .tiptap-surface ol { margin: 0 0 10px; padding-left: 1.5em; }
 .tiptap-surface a { color: var(--primary); }
 .tiptap-surface img { max-width: 100%; height: auto; }

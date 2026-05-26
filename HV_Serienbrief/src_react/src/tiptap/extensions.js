@@ -368,6 +368,10 @@ export const HvTable = Table.extend({
 // Farbe mit !important rendern müssen). Grund: Frappes Print-Bundle hat im PDF-Render eine
 // globale Regel `@media print { *,*:before,*:after { color:#000 !important } }`, die jede
 // Inline-Farbe ohne !important überschreibt. Inline-!important schlägt das universelle !important.
+//
+// fontSize-Werte werden in **pt** ausgegeben (z.B. "11pt") — passt 1:1 zum PDF-Render
+// (Print-CSS = 11pt). Bestandsdaten mit `font-size: 15px` bleiben dank generischem
+// `el.style.fontSize`-Parser unverändert lesbar; nur neue Eingaben sind in pt.
 const TextStyleExtras = Extension.create({
 	name: "hvTextStyleExtras",
 	addGlobalAttributes() {
@@ -413,6 +417,57 @@ const TextStyleExtras = Extension.create({
 	},
 });
 
+// Zeilenabstand auf paragraph-/heading-Ebene. Setzt `style="line-height: X"` direkt aufs
+// <p>/<h*> — Inline-Style überschreibt das Print-CSS (`.serienbrief-page p { line-height: 1.35 }`)
+// durch höhere Spezifität, daher kein !important nötig. Werte sind einheitenlos (Word-Konvention
+// 1.0 / 1.15 / 1.35 / 1.5 / 2.0).
+const ParagraphExtras = Extension.create({
+	name: "hvParagraphExtras",
+	addGlobalAttributes() {
+		return [
+			{
+				types: ["paragraph", "heading"],
+				attributes: {
+					lineHeight: {
+						default: null,
+						parseHTML: (el) => el.style.lineHeight || null,
+						renderHTML: (attrs) =>
+							attrs.lineHeight ? { style: `line-height: ${attrs.lineHeight}` } : {},
+					},
+				},
+			},
+		];
+	},
+	addCommands() {
+		return {
+			setLineHeight:
+				(value) =>
+				({ chain, editor }) => {
+					const types = ["paragraph", "heading"];
+					let c = chain();
+					for (const t of types) {
+						if (editor.can().updateAttributes(t, { lineHeight: value })) {
+							c = c.updateAttributes(t, { lineHeight: value });
+						}
+					}
+					return c.run();
+				},
+			unsetLineHeight:
+				() =>
+				({ chain, editor }) => {
+					const types = ["paragraph", "heading"];
+					let c = chain();
+					for (const t of types) {
+						if (editor.can().updateAttributes(t, { lineHeight: null })) {
+							c = c.updateAttributes(t, { lineHeight: null });
+						}
+					}
+					return c.run();
+				},
+		};
+	},
+});
+
 // Komplette Extension-Liste. onImageRequest() öffnet den Upload-Flow (vom Editor injiziert).
 export function buildExtensions() {
 	return [
@@ -426,6 +481,7 @@ export function buildExtensions() {
 		Link.configure({ openOnClick: false, autolink: false }),
 		TextStyle,
 		TextStyleExtras,
+		ParagraphExtras,
 		Highlight.configure({ multicolor: true }),
 		Image.configure({ inline: false, allowBase64: false }),
 		HvTable.configure({ resizable: true }),

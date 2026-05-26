@@ -151,7 +151,7 @@ const EditorToolbar = ({ editor, disabled, onInsert, onImage, showGrid, onToggle
 				</select>
 				<select
 					className="block-style-select"
-					title="Schriftgröße"
+					title="Schriftgröße (Punkt — entspricht dem PDF)"
 					value={(editor && editor.getAttributes("textStyle").fontSize) || ""}
 					disabled={!can}
 					onMouseDown={(e) => e.stopPropagation()}
@@ -162,14 +162,40 @@ const EditorToolbar = ({ editor, disabled, onInsert, onImage, showGrid, onToggle
 					}}
 				>
 					<option value="">Größe</option>
-					<option value="10px">10</option>
-					<option value="11px">11</option>
-					<option value="12px">12</option>
-					<option value="14px">14</option>
-					<option value="16px">16</option>
-					<option value="18px">18</option>
-					<option value="20px">20</option>
-					<option value="24px">24</option>
+					<option value="8pt">8</option>
+					<option value="9pt">9</option>
+					<option value="10pt">10</option>
+					<option value="11pt">11</option>
+					<option value="12pt">12</option>
+					<option value="14pt">14</option>
+					<option value="16pt">16</option>
+					<option value="18pt">18</option>
+					<option value="20pt">20</option>
+					<option value="24pt">24</option>
+				</select>
+				<select
+					className="block-style-select"
+					title="Zeilenabstand"
+					value={
+						(editor &&
+							(editor.getAttributes("paragraph").lineHeight ||
+								editor.getAttributes("heading").lineHeight)) ||
+						""
+					}
+					disabled={!can}
+					onMouseDown={(e) => e.stopPropagation()}
+					onChange={(e) => {
+						const v = e.target.value;
+						if (v) chain().setLineHeight(v).run();
+						else chain().unsetLineHeight().run();
+					}}
+				>
+					<option value="">Abstand</option>
+					<option value="1">1.0</option>
+					<option value="1.15">1.15</option>
+					<option value="1.35">1.35</option>
+					<option value="1.5">1.5</option>
+					<option value="2">2.0</option>
 				</select>
 			</div>
 			<div className="tool-group">
