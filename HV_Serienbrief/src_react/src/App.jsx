@@ -230,6 +230,9 @@ export const App = () => {
         modified: res.modified || prev.modified,
       }));
       if (res.title) setTitle(res.title);
+      // lastTemplateId mitziehen, sonst landet ein Reload nach Umbenennung nicht in
+      // dieser Vorlage, sondern (weil die alte ID nicht mehr existiert) auf der ersten.
+      try { savePref("lastTemplateId", res.id || template.id); } catch (_) {}
       if (renamed) {
         try { const { groups } = await loadTree(); if (groups && groups.length) setTree(groups); } catch (_) {}
       }
