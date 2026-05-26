@@ -149,6 +149,34 @@ SERIENBRIEF_PDF_OPTIONS: Dict[str, str] = {
 }
 
 
+def get_serienbrief_pdf_options() -> Dict[str, str]:
+	"""Liefert die Chrome-PDF-Optionen für den Serienbrief-Render.
+
+	Werte stammen aus ``Serienbrief Einstellungen`` (Single) — wir lesen sie hier
+	dynamisch pro Aufruf, damit Konfigurationsänderungen sofort greifen (sonst würde
+	man auf einen Worker-Restart warten müssen, weil das Modul-Level-Dict einmal beim
+	Import eingefroren wäre). Bei jeder Art von Fehler (DocType existiert noch nicht,
+	Single noch nie gespeichert, Feld leer) fällt es auf die SERIENBRIEF_PDF_OPTIONS-
+	Defaults zurück.
+
+	Muss konsistent bleiben mit der ``@page``-CSS-Regel im Print Format (siehe
+	``hausverwaltung.install._ensure_serienbrief_dokument_print_format``) — beide
+	lesen dieselben Felder aus dem Single.
+	"""
+	opts = dict(SERIENBRIEF_PDF_OPTIONS)
+	try:
+		from hausverwaltung.install import get_serienbrief_margins
+
+		m = get_serienbrief_margins()
+		opts["margin-top"] = f"{m['margin_top']}mm"
+		opts["margin-right"] = f"{m['margin_right']}mm"
+		opts["margin-bottom"] = f"{m['margin_bottom']}mm"
+		opts["margin-left"] = f"{m['margin_left']}mm"
+	except Exception:
+		pass
+	return opts
+
+
 def _preprocess_simple_paths(
 	template: str,
 	context: Dict[str, Any],
@@ -1498,9 +1526,11 @@ class SerienbriefDurchlauf(Document):
 		return custom_css
 
 	def _default_pdf_options(self) -> dict[str, str]:
-		# EINE gemeinsame Quelle für Versand UND Vorschau (s. SERIENBRIEF_PDF_OPTIONS),
-		# damit beide nie wieder auseinanderlaufen.
-		return dict(SERIENBRIEF_PDF_OPTIONS)
+		# EINE gemeinsame Quelle für Versand UND Vorschau, damit beide nicht
+		# auseinanderlaufen. Werte stammen jetzt aus ``Serienbrief Einstellungen``
+		# (Single) — siehe ``get_serienbrief_pdf_options``. Fallback bei Fehler
+		# auf die SERIENBRIEF_PDF_OPTIONS-Hardcodes.
+		return get_serienbrief_pdf_options()
 
 	def _wrap_html_fragment(self, body_html: str) -> str:
 		return f'<div class="serienbrief-root">{body_html}</div>'

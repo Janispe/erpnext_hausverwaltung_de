@@ -931,13 +931,14 @@ def _build_split_preview_html(template_doc) -> str:
 
 
 def _preview_pdf_options() -> Dict[str, str]:
-	# EINE gemeinsame Quelle mit dem Versand (SERIENBRIEF_PDF_OPTIONS im Durchlauf),
-	# damit Vorschau und finales PDF nie wieder unterschiedliche Ränder/Page-Breaks haben.
+	# EINE gemeinsame Quelle mit dem Versand, damit Vorschau und finales PDF nie wieder
+	# unterschiedliche Ränder/Page-Breaks haben. Werte stammen aus ``Serienbrief
+	# Einstellungen`` (Single) — siehe ``get_serienbrief_pdf_options``.
 	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
-		SERIENBRIEF_PDF_OPTIONS,
+		get_serienbrief_pdf_options,
 	)
 
-	return dict(SERIENBRIEF_PDF_OPTIONS)
+	return get_serienbrief_pdf_options()
 
 
 def _render_through_serienbrief_dokument_print_format(

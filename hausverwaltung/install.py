@@ -37,21 +37,70 @@ def after_install() -> None:
     ensure_hausverwaltung_sidebar()
 
 
+SERIENBRIEF_MARGIN_DEFAULTS: dict[str, float] = {
+    "margin_top": 20.0,
+    "margin_right": 20.0,
+    # margin_bottom: reserviert Platz für den Page-Footer (Bankverbindung +
+    # Kategorien-Pfad). Footer ist ~12mm hoch, 16mm gibt 4mm Luft.
+    "margin_bottom": 16.0,
+    # margin_left: DIN-5008 Heftrand 25mm.
+    "margin_left": 25.0,
+}
+
+
+def get_serienbrief_margins() -> dict[str, float]:
+    """Liest die PDF-Seitenränder aus ``Serienbrief Einstellungen`` (Single).
+
+    Defaults greifen, wenn das Single noch nicht existiert oder ein Feld leer ist.
+    Wird sowohl von ``_ensure_serienbrief_dokument_print_format`` (Print-Format-
+    CSS) als auch von ``serienbrief_durchlauf._default_pdf_options`` (Chrome-
+    PDF-Optionen) benutzt — Single Source of Truth.
+    """
+    margins = dict(SERIENBRIEF_MARGIN_DEFAULTS)
+    try:
+        if frappe.db.exists("DocType", "Serienbrief Einstellungen"):
+            for key in margins:
+                val = frappe.db.get_single_value("Serienbrief Einstellungen", key)
+                if val is not None:
+                    try:
+                        f = float(val)
+                        if f > 0:
+                            margins[key] = f
+                    except (TypeError, ValueError):
+                        pass
+    except Exception:
+        pass
+    return margins
+
+
 def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
     """Only for new installations: create the Print Format used for Serienbrief Dokument PDFs."""
     try:
         if not frappe.db.exists("DocType", "Serienbrief Dokument"):
             return
         name = "Serienbrief Dokument"
-        css = """
-			@page {
-				size: A4;
-				/* margin-bottom 16mm: reserviert Platz für den Page-Footer
-				   (``<div id="footer-html">``). Footer ist ~12mm hoch, 16mm
-				   gibt 4mm Luft. Muss mit SERIENBRIEF_PDF_OPTIONS (durchlauf.py)
-				   konsistent bleiben — der Chrome-Margin-Wert dominiert effektiv. */
-				margin: 20mm 20mm 16mm 25mm;
-			}
+        m = get_serienbrief_margins()
+        # @page wird aus den Einstellungen gebaut (Single Source of Truth zusammen mit
+        # SERIENBRIEF_PDF_OPTIONS in durchlauf.py). body { margin: 0 } neutralisiert den
+        # Browser-Default von 8px (= ~2.117mm), sonst kommt der zu jedem Page-Margin obendrauf
+        # und die gemessenen Ränder im PDF wären 2mm größer als konfiguriert.
+        page_block = (
+            "\n\t\t\t@page {\n"
+            "\t\t\t\tsize: A4;\n"
+            "\t\t\t\t/* Werte stammen aus ``Serienbrief Einstellungen`` (Single). Müssen mit\n"
+            "\t\t\t\t   SERIENBRIEF_PDF_OPTIONS (durchlauf.py) konsistent bleiben — der\n"
+            "\t\t\t\t   Chrome-Margin-Wert dominiert effektiv das PDF. */\n"
+            f"\t\t\t\tmargin: {m['margin_top']}mm {m['margin_right']}mm "
+            f"{m['margin_bottom']}mm {m['margin_left']}mm;\n"
+            "\t\t\t}\n"
+            "\t\t\tbody {\n"
+            "\t\t\t\t/* Browser-Default body{margin:8px} ausschalten — sonst kommt zu jedem\n"
+            "\t\t\t\t   @page-Margin noch ~2.117mm (8px) obendrauf, und die effektiven\n"
+            "\t\t\t\t   Ränder im PDF stimmen nicht mit den konfigurierten überein. */\n"
+            "\t\t\t\tmargin: 0;\n"
+            "\t\t\t}\n"
+        )
+        css = page_block + """
 			body,
 			.serienbrief-root,
 			.print-format,
