@@ -1312,19 +1312,15 @@ class SerienbriefDurchlauf(Document):
 				)
 
 			resolved = None
+			path_was_set = bool(path)
 			if path:
 				# Pfade werden gegen den Parent-Context (mit ``objekt``)
 				# aufgelöst, nicht gegen den strict Block-Context.
 				resolved = _resolve_value_path(path, base_context)
-				if resolved is None:
-					frappe.throw(
-						_("Pfad {0} für Variable {1} im Baustein {2} konnte nicht aufgelöst werden.").format(
-							frappe.bold(path), frappe.bold(raw_key or key), frappe.bold(block_title)
-						)
-					)
 			# Bewusst gesetzter Leer-String ("") ist ein gültiger Wert (optionale
 			# Baustein-Variable, vom User absichtlich leer gelassen). Nur echtes
 			# ``None`` (= Key überhaupt nicht im Override) zählt als „fehlt".
+			# Inline-/Listen-``value`` ist der Fallback, wenn der Pfad nichts liefert.
 			if resolved is None and value is not None:
 				resolved = value
 
@@ -1341,6 +1337,14 @@ class SerienbriefDurchlauf(Document):
 					if is_optional:
 						context[key] = ""
 						continue
+					# Pfad war gesetzt aber resolved=None UND kein value-Fallback:
+					# präzise Pfad-Meldung statt generische missing-Liste.
+					if path_was_set:
+						frappe.throw(
+							_("Pfad {0} für Variable {1} im Baustein {2} konnte nicht aufgelöst werden.").format(
+								frappe.bold(path), frappe.bold(raw_key or key), frappe.bold(block_title)
+							)
+						)
 					label = getattr(variable, "label", None) or raw_key or key
 					missing.append(f"{label} (<code>{{{{ {key} }}}}</code>)")
 				continue
