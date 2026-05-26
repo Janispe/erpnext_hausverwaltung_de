@@ -19,6 +19,7 @@ from jinja2.exceptions import TemplateError
 # pixel-für-pixel zur finalen PDF passt — frappe.utils.pdf.get_pdf ist hardcoded auf
 # wkhtmltopdf und würde Spacing/Footer/Paged-Media anders rendern.
 from hausverwaltung.hausverwaltung.utils.pdf_engine import render_pdf as get_pdf
+from hausverwaltung.hausverwaltung.utils.serienbrief_pdf_form import read_file_url_bytes
 from markupsafe import Markup, escape
 
 from hausverwaltung.hausverwaltung.utils.jinja_source_sanitizer import sanitize_richtext_jinja_source
@@ -1242,6 +1243,7 @@ def render_template_preview_pdf(
 	split_preview: bool | None = None,
 	iteration_doctype: str | None = None,
 	iteration_objekt: str | None = None,
+	_skip_cache: bool = False,
 ) -> Dict[str, str]:
 	doc = _load_template_doc(template, template_doc)
 
@@ -1250,6 +1252,28 @@ def render_template_preview_pdf(
 		or cstr(getattr(doc, "haupt_verteil_objekt", "") or "").strip()
 	)
 	iter_name = cstr(iteration_objekt or "").strip()
+
+	# Cache-Hit-Pfad: gespeicherte Vorlage + Split-Preview-Modus (kein konkreter
+	# Empfänger) + vorhandenes preview_pdf_file → File direkt zurückgeben, kein
+	# Live-Render. Invalidiert nur beim on_update der Vorlage (siehe
+	# enqueue_preview_regeneration). Live-Render bleibt im Editor-Pfad
+	# und für echte Empfänger (iter_dt + iter_name).
+	# ``_skip_cache`` ist der Re-Entry-Schutz für regenerate_preview_pdf selbst,
+	# damit der Cache nicht aus sich selbst entsteht.
+	if not _skip_cache and not iter_name and template and not template_doc:
+		cached_file = cstr(getattr(doc, "preview_pdf_file", "") or "").strip()
+		if cached_file:
+			try:
+				pdf_bytes = read_file_url_bytes(cached_file)
+			except Exception:
+				# File evtl. weg / Permission-Fehler → live rendern als Fallback.
+				pdf_bytes = None
+			if pdf_bytes:
+				return {
+					"pdf_base64": base64.b64encode(pdf_bytes).decode("utf-8"),
+					"filename": f"vorlage-preview-{frappe.scrub(doc.name or doc.title or 'vorlage')}.pdf",
+					"mode": "cached",
+				}
 
 	mode: str
 	# Modus A: 1:1-Render mit echtem Empfänger über den Durchlauf-Pfad.
@@ -2510,3 +2534,113 @@ def create_kategorie(
 	except DuplicateEntryError:
 		frappe.throw(_("Ein Ordner mit diesem Namen existiert bereits."))
 	return {"id": doc.name, "title": doc.title, "parent": parent_name or None, "color": color or None}
+
+
+# --- Vorgerendertes Preview-PDF (Cache) ---------------------------------------
+#
+# Der Vorlagen-Browser zeigt eine Split-Preview-PDF (Beispielwerte) jeder
+# Vorlage. Live rendern via Chrome-PDF dauert pro Klick ~1-3 s. Stattdessen
+# wird das PDF beim Save der Vorlage als Background-Job gerendert und in
+# ``preview_pdf_file`` abgelegt; die Browser-API liefert es direkt aus.
+#
+# Invalidiert nur bei explizitem on_update der Vorlage (nicht bei Änderungen
+# referenzierter Bausteine — bewusst, sonst wird Cache-Logik komplex).
+
+_PREVIEW_FILE_PREFIX = "vorlage-preview-cache-"
+
+
+def _delete_existing_preview_files(vorlage_name: str) -> None:
+	"""Räumt alte gecachte Preview-PDFs der Vorlage weg, bevor ein neues
+	geschrieben wird. Defensiv — fehlende Files / Permission-Fehler werden
+	geloggt aber nicht propagiert."""
+	for row in frappe.get_all(
+		"File",
+		filters={
+			"attached_to_doctype": "Serienbrief Vorlage",
+			"attached_to_name": vorlage_name,
+			"file_name": ["like", f"{_PREVIEW_FILE_PREFIX}%"],
+		},
+		pluck="name",
+	):
+		try:
+			frappe.delete_doc("File", row, force=1, ignore_permissions=True)
+		except Exception:
+			frappe.log_error(
+				frappe.get_traceback(),
+				f"regenerate_preview_pdf: alte Preview-File {row!r} konnte nicht entfernt werden.",
+			)
+
+
+def regenerate_preview_pdf(vorlage_name: str) -> str | None:
+	"""Background-Job: rendert Split-Preview-PDF der Vorlage und speichert sie
+	als File-Attachment am Doc. Setzt ``preview_pdf_file`` auf die neue URL.
+	Idempotent — alte Cache-Files derselben Vorlage werden vorher gelöscht.
+
+	Gibt die file_url zurück (oder None bei Render-Fehler — der Fehler wird
+	geloggt, der Job läuft beim nächsten Save erneut)."""
+	if not frappe.db.exists("Serienbrief Vorlage", vorlage_name):
+		return None
+	try:
+		result = render_template_preview_pdf(
+			template=vorlage_name,
+			split_preview=True,
+			_skip_cache=True,  # niemals den Cache als Quelle für den Cache nehmen
+		)
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"regenerate_preview_pdf: Render für Vorlage {vorlage_name!r} fehlgeschlagen.",
+		)
+		return None
+
+	pdf_b64 = result.get("pdf_base64")
+	if not pdf_b64:
+		return None
+	try:
+		pdf_bytes = base64.b64decode(pdf_b64)
+	except Exception:
+		return None
+
+	_delete_existing_preview_files(vorlage_name)
+
+	scrubbed = frappe.scrub(vorlage_name) or "vorlage"
+	file_name = f"{_PREVIEW_FILE_PREFIX}{scrubbed}.pdf"
+	file_doc = frappe.get_doc(
+		{
+			"doctype": "File",
+			"file_name": file_name,
+			"is_private": 0,
+			"content": pdf_bytes,
+			"attached_to_doctype": "Serienbrief Vorlage",
+			"attached_to_name": vorlage_name,
+		}
+	).insert(ignore_permissions=True)
+
+	frappe.db.set_value(
+		"Serienbrief Vorlage", vorlage_name, "preview_pdf_file",
+		file_doc.file_url, update_modified=False,
+	)
+	return file_doc.file_url
+
+
+def enqueue_preview_regeneration(doc, method=None) -> None:
+	"""on_update-Hook: enqueued den Preview-Render nach dem Commit. job_id
+	dedupliziert, sodass mehrere schnelle Saves nicht 10 Jobs queueen."""
+	vorlage_name = cstr(getattr(doc, "name", "") or "").strip()
+	if not vorlage_name:
+		return
+	try:
+		frappe.enqueue(
+			"hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.regenerate_preview_pdf",
+			queue="short",
+			timeout=120,
+			enqueue_after_commit=True,
+			job_id=f"sb-preview-{vorlage_name}",
+			vorlage_name=vorlage_name,
+		)
+	except Exception:
+		# Job-Enqueue darf den Save niemals zum Scheitern bringen.
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"enqueue_preview_regeneration: enqueue für {vorlage_name!r} fehlgeschlagen.",
+		)

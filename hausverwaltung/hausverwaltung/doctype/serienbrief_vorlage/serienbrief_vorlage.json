@@ -22,6 +22,7 @@
   "variablen_werte",
   "inline_baustein_pfade",
   "inline_baustein_werte",
+  "preview_pdf_file",
   "notizen_tab",
   "description"
  ],
@@ -130,6 +131,15 @@
    "fieldtype": "Long Text",
    "label": "Inline-Baustein-Werte (JSON)",
    "description": "Vom Serienbrief-Editor verwaltet: Werte fuer Text- und Bool-Variablen pro inline eingefuegtem Baustein, JSON { \"<Baustein>\": { \"<Variable>\": <Wert> } }.",
+   "read_only": 1
+  },
+  {
+   "description": "Pre-gerendertes Split-Preview-PDF (Beispielwerte). Wird beim on_update via Background-Job aktualisiert und vom Vorlagen-Browser direkt angezeigt, statt jedesmal live zu rendern.",
+   "fieldname": "preview_pdf_file",
+   "fieldtype": "Attach",
+   "hidden": 1,
+   "label": "Vorschau-PDF (gecacht)",
+   "no_copy": 1,
    "read_only": 1
   },
   {

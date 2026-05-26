@@ -264,6 +264,12 @@ doc_events = {
 	"Dunning Type": {
 		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning_type_serienbrief_werte",
 	},
+	"Serienbrief Vorlage": {
+		# Beim Save: Split-Preview-PDF als Background-Job regenerieren, damit der
+		# Vorlagen-Browser eine pre-gerenderte Vorschau zeigt statt jedesmal live
+		# durch Chrome-PDF zu rendern. Job dedupliziert per vorlage_name.
+		"on_update": "hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.enqueue_preview_regeneration",
+	},
 	"Purchase Invoice": {
 		# Auto Repeat setzt nur Pflicht-Date-Felder. bill_date, due_date und
 		# custom_wertstellungsdatum müssen wir manuell mit dem Schedule
