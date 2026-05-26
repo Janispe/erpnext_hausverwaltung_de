@@ -745,6 +745,18 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
     Optional: listet offene BK-Rechnungen im Zeitraum (BK-Anteil) als Bericht auf.
     """
     doc = frappe.get_doc("Betriebskostenabrechnung Mieter", abrechnung)
+    # Doppel-Trigger nach erfolgter Verlinkung verhindern (Button erneut klicken,
+    # Job-Retry nach erfolgreichem Lauf). Echte parallele Races (zwei Requests
+    # sehen das Doc gleichzeitig als leer) faengt dieser Check nicht ab — dafuer
+    # waere Row-Lock noetig (out-of-scope; single-user-LAN, geringes Praxisrisiko).
+    existing_si = (doc.get("sales_invoice") or "").strip()
+    existing_cn = (doc.get("credit_note") or "").strip()
+    if existing_si or existing_cn:
+        return {
+            "sales_invoice": existing_si or None,
+            "credit_note": existing_cn or None,
+            "note": "Settlement bereits erzeugt. Felder erst leeren, um neu zu generieren.",
+        }
     wohnung = doc.wohnung
     mv = doc.mietvertrag
     customer = doc.customer or _get_customer_for_mietvertrag(mv)
