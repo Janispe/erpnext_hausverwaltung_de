@@ -11,11 +11,18 @@ from frappe.utils import getdate, nowdate
 def _to_iso(value) -> str | None:
 	# Normalisiere zu ISO-String YYYY-MM-DD (zero-padded) oder None.
 	# Akzeptiert date-Objekte, ISO-Strings und unpadded Varianten.
-	# Bei nicht-parsbarem Input wirft getdate von sich aus — Schrott darf
-	# nicht still durchlaufen.
+	#
+	# getdate-Verhalten in Frappe v15:
+	# - normaler Schrott ("abc", "13.13.2020") → wirft ValidationError
+	# - Sentinel-Werte ("0000-00-00", "0001-01-01") → return None, kein Throw
+	# Beide Fälle werden hier als ungültig behandelt: explizit werfen, statt
+	# .isoformat() auf None mit AttributeError abstürzen zu lassen.
 	if value is None or value == "":
 		return None
-	return getdate(value).isoformat()
+	parsed = getdate(value)
+	if not parsed:
+		frappe.throw(f"Ungültiges Datum: {value!r}")
+	return parsed.isoformat()
 
 
 def _period_overlap_days(start_a: str, end_a: str, start_b: str, end_b: str) -> int:
