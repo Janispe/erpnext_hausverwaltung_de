@@ -8,6 +8,16 @@ import frappe
 from frappe.utils import getdate, nowdate
 
 
+def _to_iso(value) -> str | None:
+	# Normalisiere zu ISO-String YYYY-MM-DD (zero-padded) oder None.
+	# Akzeptiert date-Objekte, ISO-Strings und unpadded Varianten.
+	# Bei nicht-parsbarem Input wirft getdate von sich aus — Schrott darf
+	# nicht still durchlaufen.
+	if value is None or value == "":
+		return None
+	return getdate(value).isoformat()
+
+
 def _period_overlap_days(start_a: str, end_a: str, start_b: str, end_b: str) -> int:
 	start = max(getdate(start_a), getdate(start_b))
 	end = min(getdate(end_a), getdate(end_b))
@@ -18,6 +28,10 @@ def _period_overlap_days(start_a: str, end_a: str, start_b: str, end_b: str) -> 
 
 def find_mietvertrag_for_zeitraum(*, wohnung: str, gueltig_von: str, gueltig_bis: str) -> str | None:
 	"""Finde den Mietvertrag einer Wohnung, der den Zeitraum [gueltig_von, gueltig_bis] am besten abdeckt."""
+	gueltig_von = _to_iso(gueltig_von)
+	gueltig_bis = _to_iso(gueltig_bis)
+	if not gueltig_von or not gueltig_bis:
+		return None
 	candidates = frappe.get_all(
 		"Mietvertrag",
 		filters={
@@ -29,16 +43,18 @@ def find_mietvertrag_for_zeitraum(*, wohnung: str, gueltig_von: str, gueltig_bis
 		order_by="von asc",
 	)
 	overlapping = []
-	gueltig_bis_is_open = gueltig_bis == nowdate()
+	gueltig_bis_is_open = gueltig_bis == _to_iso(nowdate())
 	for row in candidates or []:
-		row_von = str(row.get("von") or "")
-		row_bis = str(row.get("bis") or "") or "9999-12-31"
+		row_von = _to_iso(row.get("von"))
+		if not row_von:
+			continue
+		row_bis = _to_iso(row.get("bis")) or "9999-12-31"
 		overlap_days = _period_overlap_days(row_von, row_bis, gueltig_von, gueltig_bis)
 		if overlap_days <= 0:
 			continue
 		exact_start = row_von == gueltig_von
 		row_is_open = not row.get("bis")
-		exact_end = (str(row.get("bis") or "") == gueltig_bis) or (row_is_open and gueltig_bis_is_open)
+		exact_end = (_to_iso(row.get("bis")) == gueltig_bis) or (row_is_open and gueltig_bis_is_open)
 		overlapping.append(
 			(
 				1 if exact_start else 0,
@@ -88,26 +104,35 @@ def upsert_festbetrag(
 	Gibt "created" / "updated" / "skipped" zurück. `wohnung` wird ignoriert
 	(Festbetrag ist nun Child von Mietvertrag, Wohnung ergibt sich aus mv.wohnung).
 	"""
+	gueltig_von = _to_iso(gueltig_von)
+	gueltig_bis = _to_iso(gueltig_bis)
+	if not gueltig_von or not gueltig_bis:
+		frappe.throw("upsert_festbetrag: gueltig_von und gueltig_bis sind Pflicht.")
 	mv = frappe.get_doc("Mietvertrag", mietvertrag)
 	rows = [r for r in (mv.get("festbetraege") or []) if r.get("betriebskostenart") == bk_art]
 	new_amount = round(float(betrag or 0), 2)
 
 	# 1) Exakter Zeitraum-Treffer
 	for row in rows:
-		if str(row.get("gueltig_von") or "") == gueltig_von and str(row.get("gueltig_bis") or "") == gueltig_bis:
+		row_von_iso = _to_iso(row.get("gueltig_von"))
+		row_bis_iso = _to_iso(row.get("gueltig_bis"))
+		if row_von_iso == gueltig_von and row_bis_iso == gueltig_bis:
 			if float(row.get("betrag") or 0) == new_amount:
 				return "skipped"
 			row.betrag = new_amount
 			mv.save(ignore_permissions=True)
 			return "updated"
 
-	# 2) Überlappung: 1 Treffer → updaten, mehrere → entfernen + neu anlegen
-	overlapping = [
-		r for r in rows
-		if str(r.get("gueltig_von") or "") and str(r.get("gueltig_bis") or "")
-		and str(r.get("gueltig_von")) <= gueltig_bis
-		and str(r.get("gueltig_bis")) >= gueltig_von
-	]
+	# 2) Überlappung: 1 Treffer → updaten, mehrere → entfernen + neu anlegen.
+	# Beide Seiten via _to_iso normalisiert → lexikographisch == chronologisch.
+	overlapping = []
+	for r in rows:
+		r_von = _to_iso(r.get("gueltig_von"))
+		r_bis = _to_iso(r.get("gueltig_bis"))
+		if not r_von or not r_bis:
+			continue
+		if r_von <= gueltig_bis and r_bis >= gueltig_von:
+			overlapping.append(r)
 
 	if len(overlapping) == 1:
 		row = overlapping[0]
