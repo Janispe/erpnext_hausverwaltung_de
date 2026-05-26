@@ -106,6 +106,13 @@ def get_contact_last_name(contact_name: str | None) -> str:
 	try:
 		row = frappe.db.get_value("Contact", contact, ["last_name", "first_name"], as_dict=True)
 	except Exception:
+		# frappe.db.get_value returnt bei nicht-existenter Row None (kein Throw).
+		# Wenn wir hier landen, ist etwas Unerwartetes passiert (Lock, Permission,
+		# DB-Connection). Vorher silent → falscher Anzeigename. Jetzt sichtbar.
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"get_contact_last_name: Lookup von Contact {contact!r} fehlgeschlagen.",
+		)
 		row = None
 
 	last_name = (row.get("last_name") if row else "") or ""
@@ -128,6 +135,12 @@ def get_contact_display_name(contact_name: str | None) -> str:
 	try:
 		row = frappe.db.get_value("Contact", contact, ["last_name", "first_name"], as_dict=True)
 	except Exception:
+		# Siehe Hinweis in get_contact_last_name: get_value wirft nicht bei
+		# nicht-existenter Row, daher ist eine Exception hier unerwartet.
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"get_contact_display_name: Lookup von Contact {contact!r} fehlgeschlagen.",
+		)
 		row = None
 
 	if row:
