@@ -12,6 +12,7 @@ from frappe.model.document import Document
 from frappe.utils import cint, cstr, pretty_date, strip_html_tags
 from frappe.utils.jinja import get_jenv
 from jinja2 import Undefined
+from jinja2.exceptions import TemplateError
 
 # Wrapper, der Print-Settings → pdf_generator respektiert (Chrome bzw. wkhtmltopdf).
 # Muss derselbe sein wie im Serienbrief Durchlauf-Render, damit die Vorlagen-Preview
@@ -544,7 +545,12 @@ def _render_split_preview_html(html: str) -> str:
 	preprocessed = _preprocess_simple_paths(
 		sanitized, ctx, on_unresolvable=_split_preview_token_fallback
 	)
-	return env.from_string(preprocessed).render(ctx)
+	try:
+		return env.from_string(preprocessed).render(ctx)
+	except TemplateError as exc:
+		# StrictUndefined wirft bei undefinierten Root-Variablen / Syntaxfehlern.
+		# Im Live-Preview als Inline-Fehler markieren statt 500 zu werfen.
+		return _split_preview_error_marker(exc)
 
 
 def _render_split_preview_source(source: str, extra_context: Dict[str, Any] | None = None) -> str:
@@ -577,7 +583,12 @@ def _render_split_preview_source(source: str, extra_context: Dict[str, Any] | No
 	preprocessed = _preprocess_simple_paths(
 		sanitized, ctx, on_unresolvable=_split_preview_token_fallback
 	)
-	return env.from_string(preprocessed).render(ctx)
+	try:
+		return env.from_string(preprocessed).render(ctx)
+	except TemplateError as exc:
+		# StrictUndefined wirft bei undefinierten Root-Variablen / Syntaxfehlern.
+		# Im Live-Preview als Inline-Fehler markieren statt 500 zu werfen.
+		return _split_preview_error_marker(exc)
 
 
 def _split_preview_token_fallback(path: str, exc: Exception | None) -> str:
@@ -587,6 +598,35 @@ def _split_preview_token_fallback(path: str, exc: Exception | None) -> str:
 	"""
 	preview_value = _preview_value_from_path(path)
 	return f'<span class="hv-preview-field">{preview_value}</span>'
+
+
+def _split_preview_error_marker(exc: Exception) -> str:
+	"""Im Live-Preview: einen Jinja-Render-Fehler (undefinierte Root-Variable,
+	Syntaxfehler) NICHT als HTTP-500 propagieren, sondern als rot
+	hervorgehobene Inline-Meldung in die Vorschau rendern.
+
+	So bleibt die restliche Vorschau sichtbar und der Autor sieht direkt an
+	Ort und Stelle, welcher Baustein/Token kaputt ist — analog zum echten
+	Render-Pfad (``_render_serienbrief_template``), der den ``UndefinedError``
+	in eine lesbare ``Fehlendes Feld``-Meldung übersetzt.
+
+	Anders als ``SplitPreviewUndefined`` (gelber Beispielwert für definierte
+	Sub-Attribute) markiert das hier echte Fehler rot — Root-Variablen laufen
+	bewusst gegen ``StrictUndefined``, damit Tippfehler sichtbar werden.
+	"""
+	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+		_humanize_jinja_error,
+	)
+
+	raw = str(exc) or _("Unbekannter Vorlagenfehler")
+	human = _humanize_jinja_error(raw)
+	# ``human`` kann kontrolliertes HTML enthalten (z.B. <code>…</code>); für das
+	# title-Attribut die Markup-freie Variante verwenden.
+	plain = strip_html_tags(human) if human else raw
+	return (
+		f'<span class="hv-preview-error" title="{escape(plain)}">'
+		f'⚠ {_("Vorlagenfehler")}: {human}</span>'
+	)
 
 
 def _preview_defaults_for_block(block_doc, base_context: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -1044,10 +1084,15 @@ def render_template_preview_pdf(
 		# Gelbe Hervorhebung der Beispielwerte (passt zur Optik im Quill-
 		# Editor, siehe ``_split_preview_finalize_value``). Wird nur in
 		# Modus B injiziert — Modus A rendert echte Daten ohne Markup.
+		# Rote Markierung für Vorlagenfehler (``_split_preview_error_marker``),
+		# damit kaputte Tokens/Bausteine sichtbar sind statt die Vorschau zu 500en.
 		if body:
 			body = (
 				'<style>.hv-preview-field{background:#fff2a8;'
-				'border-radius:2px;padding:0 2px;}</style>' + body
+				'border-radius:2px;padding:0 2px;}'
+				'.hv-preview-error{background:#fde2e1;color:#b42318;'
+				'border-radius:2px;padding:0 3px;font-size:0.9em;}'
+				'</style>' + body
 			)
 	else:
 		body = _build_raw_template_html(doc)
