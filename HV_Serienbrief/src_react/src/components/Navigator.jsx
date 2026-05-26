@@ -94,7 +94,7 @@ export const Navigator = ({ tree: propTree, currentId, onSelect, collapsed, onTo
                   className={`nav-template ${t.id === currentId ? "current" : ""}`}
                   onClick={() => onSelect && onSelect(t.id)}
                 >
-                  <div className="name">{t.title}</div>
+                  <div className="name" title={t.title}>{t.title}</div>
                   <div className="meta">{t.modified}</div>
                 </div>
               ))}
