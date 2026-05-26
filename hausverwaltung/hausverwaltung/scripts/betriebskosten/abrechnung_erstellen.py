@@ -780,7 +780,8 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
     if head_name:
         try:
             head_doc = frappe.get_doc("Betriebskostenabrechnung Immobilie", head_name)
-            due_date = cstr(getattr(head_doc, "nachzahlung_faellig_am", None) or "")
+            # Bei None faellt _make_sales_invoice auf Default (+21 Tage) zurueck.
+            due_date = getattr(head_doc, "nachzahlung_faellig_am", None) or None
         except Exception:
             due_date = None
     # Differenz robust berechnen: Summe Abrechnungsposten minus Vorauszahlungen
@@ -832,7 +833,7 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
                 is_return=0,
                 do_submit=True,
                 company=company,
-                due_date=due_date or None,
+                due_date=due_date,
                 cost_center=cost_center,
                 wohnung=wohnung,
             )
