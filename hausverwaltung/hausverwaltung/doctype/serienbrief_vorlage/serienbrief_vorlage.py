@@ -635,6 +635,22 @@ def _split_preview_error_marker(exc: Exception) -> str:
 	)
 
 
+def _lookup_inline_key(store, raw_key):
+	# Inline-Werte und -Pfade koennen mit raw varname ODER scrub(varname) als
+	# Key persistiert sein (aelterer Editor-State, importierte Daten).
+	# Helfer probiert beide Varianten. Returns (value, found).
+	# Der Durchlauf-Pfad in serienbrief_durchlauf hat dieselbe Toleranz inline;
+	# dieser Helper bringt den Preview-Pfad auf Augenhoehe.
+	if not isinstance(store, dict) or not raw_key:
+		return None, False
+	if raw_key in store:
+		return store[raw_key], True
+	scrubbed = frappe.scrub(raw_key)
+	if scrubbed and scrubbed != raw_key and scrubbed in store:
+		return store[scrubbed], True
+	return None, False
+
+
 def _preview_defaults_for_block(
 	block_doc,
 	base_context: Dict[str, Any] | None = None,
@@ -697,16 +713,20 @@ def _preview_defaults_for_block(
 		is_optional = bool(int(getattr(row, "optional", 0) or 0))
 
 		# 1) Inline-Werte-Override (vom Editor gepflegt) — Priorität für Text/Bool.
-		if varname in inline_values:
-			defaults[varname] = inline_values[varname]
+		inline_val, inline_found = _lookup_inline_key(inline_values, varname)
+		if inline_found:
+			defaults[varname] = inline_val
 			continue
 
 		# 2) Path-Resolution für Doctype-Variablen.
 		if not is_text_like and base_context is not None:
+			inline_pf_val, _ = _lookup_inline_key(inline_pfade, varname)
+			pm_val, _ = _lookup_inline_key(path_map, varname)
+			pm_ref_val, _ = _lookup_inline_key(path_map, getattr(row, "reference_doctype", None))
 			path = (
-				cstr(inline_pfade.get(varname) or "").strip()
-				or cstr(path_map.get(varname) or "").strip()
-				or cstr(path_map.get(getattr(row, "reference_doctype", None)) or "").strip()
+				cstr(inline_pf_val or "").strip()
+				or cstr(pm_val or "").strip()
+				or cstr(pm_ref_val or "").strip()
 				or "__self__"
 			)
 			try:
