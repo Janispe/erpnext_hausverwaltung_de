@@ -292,10 +292,12 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 {%- set vorlage_doc = frappe.get_cached_doc("Serienbrief Vorlage", vorlage_name) -%}
 {%- set ns = namespace(current=vorlage_doc.kategorie, chain=[]) -%}
 {%- for _ in range(20) -%}
-{%- if ns.current -%}
+{%- if ns.current and frappe.db.exists("Serienbrief Kategorie", ns.current) -%}
 {%- set kat_doc = frappe.get_cached_doc("Serienbrief Kategorie", ns.current) -%}
 {%- set ns.chain = ns.chain + [kat_doc.title or ns.current] -%}
 {%- set ns.current = kat_doc.parent_serienbrief_kategorie -%}
+{%- else -%}
+{%- set ns.current = None -%}
 {%- endif -%}
 {%- endfor -%}
 {%- set pfad_parts = (ns.chain | reverse | list) + [vorlage_doc.title or vorlage_name] -%}
