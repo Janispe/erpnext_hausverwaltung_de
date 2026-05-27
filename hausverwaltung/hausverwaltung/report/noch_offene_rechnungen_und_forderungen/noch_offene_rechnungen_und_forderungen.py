@@ -113,6 +113,10 @@ def _group_rows_by_mietabrechnung(rows):
 				int(merged.get("can_write_off") or 0),
 				int(row.get("can_write_off") or 0),
 			)
+			merged["mahnstufe"] = max(
+				int(merged.get("mahnstufe") or 0),
+				int(row.get("mahnstufe") or 0),
+			)
 			merged["_member_count"] += 1
 			merged["_member_voucher_nos"].append(row.get("belegnummer"))
 
@@ -363,6 +367,7 @@ def _filter_and_map_rows(source_rows, filters, mode):
 				"waehrung": row.get("currency"),
 				"bemerkungen": remarks_map.get((row.get("voucher_type"), row.get("voucher_no"))),
 				"can_write_off": _can_write_off_row(row, mode, outstanding, invoice_status),
+				"mahnstufe": _get_mahnstufe_row(row, mode),
 			}
 		)
 
@@ -520,6 +525,41 @@ def _can_write_off_row(row, mode, outstanding, invoice_status=None):
 	):
 		return 0
 	return 1
+
+
+def _get_mahnstufe_row(row, mode):
+	if mode != "Forderungen" or row.get("voucher_type") != "Sales Invoice":
+		return 0
+	sales_invoice = row.get("voucher_no")
+	if not sales_invoice:
+		return 0
+
+	dunning_names = set()
+	if frappe.db.has_column("Dunning", "sales_invoice"):
+		dunning_names.update(frappe.get_all(
+			"Dunning",
+			filters={"docstatus": 1, "sales_invoice": sales_invoice},
+			pluck="name",
+		))
+
+	table_field = frappe.get_meta("Dunning").get_field("overdue_payments")
+	if table_field and table_field.options:
+		child_dt = table_field.options
+		if frappe.db.has_column(child_dt, "sales_invoice"):
+			parents = frappe.get_all(
+				child_dt,
+				filters={"parenttype": "Dunning", "sales_invoice": sales_invoice},
+				pluck="parent",
+			)
+			parents = list(set(parents))
+			if parents:
+				dunning_names.update(frappe.get_all(
+					"Dunning",
+					filters={"name": ("in", parents), "docstatus": 1},
+					pluck="name",
+				))
+
+	return min(4, len(dunning_names))
 
 
 def _get_columns(filters):

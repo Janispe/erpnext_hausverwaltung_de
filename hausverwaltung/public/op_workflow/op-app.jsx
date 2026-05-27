@@ -79,22 +79,34 @@ function OpApp() {
   const [modal, setModal] = useStateA0(null); // { type, row }
   const [toast, setToast] = useStateA0(null);
 
-  const handleAction = (key, row) => {
-    if (key === "mahnung" || key === "sammelmahnung") setModal({ type: "mahnung", row });
-    else if (key === "zahlung_anlegen") setModal({ type: "zahlung", row });
-    else if (key === "zuordnen") setModal({ type: "zuordnen", row });
-    else if (key === "mieterkonto") {
-      window.location.href = "/app/mieterkonto-workflow?customer=" + encodeURIComponent(row.party);
+  const handleAction = async (key, row) => {
+    try {
+      if (key === "mahnung" || key === "sammelmahnung") setModal({ type: "mahnung", row });
+      else if (key === "zahlung_anlegen") setModal({ type: "zahlung", row });
+      else if (key === "zuordnen") setModal({ type: "zuordnen", row });
+      else if (key === "mieterkonto") {
+        window.OP_ACTIONS.openMieterkonto(row);
+      }
+      else if (key === "abschreiben") {
+        const result = await window.OP_ACTIONS.writeOff(row, {
+          remarks: `Abschreibung aus OP-Workflow vorbereitet: ${row.belegnummer}`,
+        });
+        setToast(`Journal Entry Draft erstellt: ${result.journal_entry}`);
+      }
+      else if (key === "beleg") window.OP_ACTIONS.openBeleg(row);
+      else if (key === "kontakt") setToast(`Kontakt: ${window.OFFENE_POSTEN.partyName(row.party)}`);
+      else if (key === "notiz") setToast("Notiz-Dialog (mock)");
+      else if (key === "stundung") {
+        await window.OP_ACTIONS.setStundungComment(row, { grund: "Stundung im OP-Workflow markiert" });
+        setToast(`Stundung dokumentiert: ${row.belegnummer}`);
+      }
+      else if (key === "kl\u00e4rung") setToast(`Status: in Klärung → ${row.belegnummer}`);
+      else if (key === "guthaben_auszahlen") setToast(`Auszahlung an ${window.OFFENE_POSTEN.partyName(row.party)} vorbereitet`);
+      else if (key === "inkasso") setToast(`Inkasso-Vorgang eröffnet: ${row.belegnummer}`);
+      else setToast(`Aktion: ${key}`);
+    } catch (err) {
+      console.error("op action failed", err);
     }
-    else if (key === "abschreiben") setToast(`Abgeschrieben: ${row.belegnummer} (£ ${fmtEUR_op(row.offen)})`);
-    else if (key === "beleg") setToast(`Beleg würde geöffnet: ${row.belegnummer}`);
-    else if (key === "kontakt") setToast(`Kontakt: ${window.OFFENE_POSTEN.partyName(row.party)}`);
-    else if (key === "notiz") setToast("Notiz-Dialog (mock)");
-    else if (key === "stundung") setToast("Stundung-Dialog (mock)");
-    else if (key === "kl\u00e4rung") setToast(`Status: in Klärung → ${row.belegnummer}`);
-    else if (key === "guthaben_auszahlen") setToast(`Auszahlung an ${window.OFFENE_POSTEN.partyName(row.party)} vorbereitet`);
-    else if (key === "inkasso") setToast(`Inkasso-Vorgang eröffnet: ${row.belegnummer}`);
-    else setToast(`Aktion: ${key}`);
   };
 
   // Counts pro Mode (für Tab-Badges)
@@ -120,11 +132,11 @@ function OpApp() {
       if (r.art !== "Forderungen") return false;
       if (r.belegart === "Payment Entry") return false;
       if (r.offen <= 0) return false;
-      return r.alter_tage > 0 && (r.mahnstufe || 0) < 3;
+      return r.alter_tage > 0 && (r.mahnstufe || 0) < 4;
     });
     const sum = reif.reduce((a, r) => a + r.offen, 0);
     const partySet = new Set(reif.map(r => r.party));
-    const byStufe = { m0: 0, m1: 0, m2: 0 };
+    const byStufe = { m0: 0, m1: 0, m2: 0, m3: 0 };
     reif.forEach(r => { byStufe[`m${r.mahnstufe || 0}`] = (byStufe[`m${r.mahnstufe || 0}`] || 0) + 1; });
     const mahnreifIds = new Set(reif.map(r => r.belegnummer));
     return { count: reif.length, sum, parties: partySet.size, byStufe, rows: reif, mahnreifIds };
@@ -324,9 +336,10 @@ function OpApp() {
               bei <strong>{mahnStats.parties}</strong> {mahnStats.parties === 1 ? "Mieter" : "Mietern"} · Σ <strong>{fmtEUR_op(mahnStats.sum)}</strong>
             </span>
             <span className="op-mahn-stufes">
-              {mahnStats.byStufe.m0 > 0 && <span>→ M1 <strong>{mahnStats.byStufe.m0}</strong></span>}
-              {mahnStats.byStufe.m1 > 0 && <span>→ M2 <strong>{mahnStats.byStufe.m1}</strong></span>}
-              {mahnStats.byStufe.m2 > 0 && <span>→ M3 <strong>{mahnStats.byStufe.m2}</strong></span>}
+              {mahnStats.byStufe.m0 > 0 && <span>→ ZE <strong>{mahnStats.byStufe.m0}</strong></span>}
+              {mahnStats.byStufe.m1 > 0 && <span>→ M1 <strong>{mahnStats.byStufe.m1}</strong></span>}
+              {mahnStats.byStufe.m2 > 0 && <span>→ M2 <strong>{mahnStats.byStufe.m2}</strong></span>}
+              {mahnStats.byStufe.m3 > 0 && <span>→ Letzte <strong>{mahnStats.byStufe.m3}</strong></span>}
             </span>
             <span className="op-mahn-banner-spacer" />
             <button className="op-mahn-banner-secondary"
@@ -507,10 +520,10 @@ function OpApp() {
       </TweaksPanel>
 
       {/* Modals */}
-      {modal?.type === "mahnung" && <MahnungModal row={modal.row} onClose={() => { setModal(null); setToast(`Mahnung gesendet an ${window.OFFENE_POSTEN.partyName(modal.row.party)}`); }} />}
-      {modal?.type === "sammelmahnung" && <SammelmahnungModal rows={modal.rows} onClose={() => { setModal(null); setToast(`Sammelmahnung erstellt`); }} />}
-      {modal?.type === "zahlung" && <ZahlungModal row={modal.row} onClose={() => { setModal(null); setToast(`Zahlung angelegt für ${modal.row.belegnummer}`); }} />}
-      {modal?.type === "zuordnen" && <ZuordnenModal row={modal.row} onClose={() => { setModal(null); setToast(`Vorauszahlung zugeordnet`); }} />}
+      {modal?.type === "mahnung" && <MahnungModal row={modal.row} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`Mahnung-Draft erstellt: ${result.dunning}`); }} />}
+      {modal?.type === "sammelmahnung" && <SammelmahnungModal rows={modal.rows} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`${(result.created || []).length} Mahnung-Drafts erstellt`); }} />}
+      {modal?.type === "zahlung" && <ZahlungModal row={modal.row} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`Payment Entry Draft erstellt: ${result.payment_entry}`); }} />}
+      {modal?.type === "zuordnen" && <ZuordnenModal row={modal.row} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`Payment Reconciliation Draft erstellt: ${result.payment_reconciliation}`); }} />}
       {toast && <Toast message={toast} onClose={() => setToast(null)} />}
     </div>
   );

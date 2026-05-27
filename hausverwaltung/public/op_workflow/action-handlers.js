@@ -3,10 +3,8 @@
 // Die React-Modals (op-actions.jsx) feuern beim "Bestätigen"-Klick ein Event
 // auf window.OP_ACTIONS — der ruft den passenden Frappe-Endpoint.
 //
-// HINWEIS: Solange die Action-Bodies in op_workflow.py noch auskommentiert sind
-// (Phase-3-Setup nicht abgeschlossen — Dunning Types etc.), liefert das Backend
-// `{ mock: true }` zurück. handleResult() zeigt dann eine deutliche Warnung
-// statt der Erfolgs-Meldung.
+// Die Endpoints erzeugen Draft-Belege. Submit/Buchung erfolgt anschließend
+// bewusst im ERPNext-Desk.
 
 (function () {
   async function call(method, args) {
@@ -29,13 +27,6 @@
   }
 
   function handleResult(result, successMsg) {
-    if (result && result.mock) {
-      toast(
-        __("Backend noch im Mock-Modus. Body in op_workflow.py auskommentiert — kein echter Beleg erstellt."),
-        "orange",
-      );
-      return;
-    }
     toast(successMsg);
   }
 
@@ -53,7 +44,7 @@
     );
     handleResult(
       result,
-      `Mahnung ${result.dunning} erstellt · ${frappe.format(result.summe, { fieldtype: "Currency" })}`,
+      `Mahnung ${result.dunning} als Draft erstellt · ${frappe.format(result.summe, { fieldtype: "Currency" })}`,
     );
     await window.OP_ADAPTER.refresh({});
     return result;
@@ -75,7 +66,7 @@
     if (result.errors && result.errors.length) {
       result.errors.forEach((e) => toast(`Fehler bei ${e.customer}: ${e.msg}`, "red"));
     }
-    handleResult(result, `${(result.created || []).length} Mahnungen erstellt`);
+    handleResult(result, `${(result.created || []).length} Mahnungen als Draft erstellt`);
     await window.OP_ADAPTER.refresh({});
     return result;
   }
@@ -92,7 +83,7 @@
         mode_of_payment: opts.zahlart,
       },
     );
-    handleResult(result, `Payment Entry ${result.payment_entry} erstellt`);
+    handleResult(result, `Payment Entry ${result.payment_entry} als Draft erstellt`);
     await window.OP_ADAPTER.refresh({});
     return result;
   }
@@ -108,7 +99,7 @@
     );
     handleResult(
       result,
-      `${result.allocated} Zuordnungen gebucht · Rest ${frappe.format(result.rest, { fieldtype: "Currency" })}`,
+      `Payment Reconciliation ${result.payment_reconciliation} als Draft vorbereitet · Rest ${frappe.format(result.rest, { fieldtype: "Currency" })}`,
     );
     await window.OP_ADAPTER.refresh({});
     return result;
@@ -123,7 +114,23 @@
         remarks: opts.remarks,
       },
     );
-    handleResult(result, `Abgeschrieben · JE ${result.journal_entry}`);
+    handleResult(result, `Abschreibung als Journal Entry Draft erstellt · ${result.journal_entry}`);
+    await window.OP_ADAPTER.refresh({});
+    return result;
+  }
+
+  // ─── Stundung dokumentieren ─────────────────────────────────────────────
+  async function setStundungComment(row, opts = {}) {
+    const result = await call(
+      "hausverwaltung.hausverwaltung.page.op_workflow.op_workflow.set_stundung_comment",
+      {
+        sales_invoice: row.belegnummer,
+        grund: opts.grund || "Stundung vereinbart",
+        notiz: opts.notiz || "",
+        stundung_bis: opts.stundungBis || null,
+      },
+    );
+    toast(`Stundung an ${row.belegnummer} dokumentiert`);
     await window.OP_ADAPTER.refresh({});
     return result;
   }
@@ -151,6 +158,7 @@
     createPaymentEntry,
     allocatePayment,
     writeOff,
+    setStundungComment,
     openMieterkonto,
     openBeleg,
   };

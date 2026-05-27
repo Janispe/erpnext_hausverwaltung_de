@@ -18,7 +18,7 @@ from typing import Any
 
 import frappe
 from frappe import _
-from frappe.utils import flt, getdate, nowdate, add_days
+from frappe.utils import cint, flt, getdate, nowdate, add_days
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -91,8 +91,142 @@ def get_mieter_summary(party: str) -> dict:
 
 # ───────────────────────────────────────────────────────────────────────────
 # Phase 3 · Aktionen
-# Alle Endpoints sind als Skeleton vorhanden. Body schrittweise entkommentieren.
+# Endpoints erzeugen bewusst Draft-Belege. Submit/Buchung passiert im Desk.
 # ───────────────────────────────────────────────────────────────────────────
+
+
+def _as_bool(value) -> bool:
+    if isinstance(value, str):
+        return value.lower() not in {"0", "false", "no", "nein", ""}
+    return bool(value)
+
+
+def _meta_has_field(doctype: str, fieldname: str) -> bool:
+    return bool(frappe.get_meta(doctype).get_field(fieldname))
+
+
+def _set_if_field(doc, fieldname: str, value) -> None:
+    if value is not None and _meta_has_field(doc.doctype, fieldname):
+        doc.set(fieldname, value)
+
+
+def _child_fieldnames(parent_doctype: str, table_fieldname: str) -> set[str]:
+    table_field = frappe.get_meta(parent_doctype).get_field(table_fieldname)
+    if not table_field or not table_field.options:
+        return set()
+    return {df.fieldname for df in frappe.get_meta(table_field.options).fields}
+
+
+def _append_child_if_table(doc, table_fieldname: str, values: dict[str, Any]) -> bool:
+    allowed = _child_fieldnames(doc.doctype, table_fieldname)
+    if not allowed:
+        return False
+    doc.append(table_fieldname, {key: value for key, value in values.items() if key in allowed})
+    return True
+
+
+def _draft_response(doc, key: str, **extra) -> dict:
+    return {
+        "doctype": doc.doctype,
+        "name": doc.name,
+        key: doc.name,
+        "docstatus": cint(doc.docstatus),
+        "draft": cint(doc.docstatus) == 0,
+        **extra,
+    }
+
+
+def _require_submitted_invoice(doctype: str, name: str):
+    doc = frappe.get_doc(doctype, name)
+    if cint(doc.docstatus) != 1:
+        frappe.throw(_("{0} ist nicht submitted.").format(name))
+    if flt(getattr(doc, "outstanding_amount", 0)) <= 0:
+        frappe.throw(_("{0} hat keinen offenen Betrag.").format(name))
+    return doc
+
+
+def _resolve_dunning_type(level: int, explicit: str | None = None) -> str:
+    if explicit and frappe.db.exists("Dunning Type", explicit):
+        return explicit
+
+    stage_candidates = {
+        1: [
+            "Zahlungserinnerung - HP",
+            "Zahlungserinnerung",
+            "Zahlungserinnerung Stufe 1",
+        ],
+        2: [
+            "1. Mahnung - HP",
+            "1. Mahnung",
+            "Mahnung Stufe 1",
+            "Mahnung M1",
+            "M1",
+        ],
+        3: [
+            "2. Mahnung - HP",
+            "2. Mahnung",
+            "Mahnung Stufe 2",
+            "Mahnung M2",
+            "M2",
+        ],
+        4: [
+            "Letzte Mahnung - HP",
+            "Letzte Mahnung",
+            "Letzte Mahnung Stufe 3",
+            "Mahnung Stufe 3",
+            "Mahnung M3",
+            "M3",
+        ],
+    }
+    candidates = stage_candidates.get(min(4, max(1, level)), [])
+
+    for candidate in candidates:
+        if frappe.db.exists("Dunning Type", candidate):
+            return candidate
+
+    first = frappe.db.get_value("Dunning Type", {}, "name", order_by="creation asc")
+    if first:
+        return first
+    frappe.throw(_("Bitte zuerst mindestens einen Dunning Type anlegen."))
+
+
+def _submitted_dunning_count(sales_invoice: str) -> int:
+    dunning_names: set[str] = set()
+    if frappe.db.has_column("Dunning", "sales_invoice"):
+        dunning_names.update(frappe.get_all(
+            "Dunning",
+            filters={"docstatus": 1, "sales_invoice": sales_invoice},
+            pluck="name",
+        ))
+
+    table_field = frappe.get_meta("Dunning").get_field("overdue_payments")
+    if table_field and table_field.options:
+        child_dt = table_field.options
+        if frappe.db.has_column(child_dt, "sales_invoice"):
+            parents = frappe.get_all(
+                child_dt,
+                filters={
+                    "parenttype": "Dunning",
+                    "sales_invoice": sales_invoice,
+                },
+                pluck="parent",
+            )
+            parents = list(set(parents))
+            if parents:
+                dunning_names.update(frappe.get_all(
+                    "Dunning",
+                    filters={"name": ("in", parents), "docstatus": 1},
+                    pluck="name",
+                ))
+    return len(dunning_names)
+
+
+def _resolve_mode_of_payment(mode_of_payment: str | None) -> str | None:
+    if mode_of_payment and frappe.db.exists("Mode of Payment", mode_of_payment):
+        return mode_of_payment
+    if mode_of_payment == "SEPA-Überweisung" and frappe.db.exists("Mode of Payment", "Bank Draft"):
+        return "Bank Draft"
+    return frappe.db.get_value("Mode of Payment", {"enabled": 1}, "name")
 
 
 @frappe.whitelist()
@@ -116,55 +250,52 @@ def create_dunning(
         zinsen_aktiv: ob Verzugszinsen berechnet werden sollen
 
     Returns:
-        ``{"dunning": "<dunning-name>", "summe": <gesamtsumme>}``
+        ``{"dunning": "<dunning-name>", "docstatus": 0, "draft": true}``
     """
     if not frappe.has_permission("Dunning", "create"):
         frappe.throw(_("Keine Berechtigung Mahnungen zu erstellen."), frappe.PermissionError)
 
-    # ─────────────────────────────────────────────────────────────────────
-    # PHASE 3 — Body entkommentieren wenn bereit:
-    # ─────────────────────────────────────────────────────────────────────
-    #
-    # si = frappe.get_doc("Sales Invoice", sales_invoice)
-    # if si.docstatus != 1:
-    #     frappe.throw(_("Rechnung ist nicht submitted."))
-    # if si.outstanding_amount <= 0:
-    #     frappe.throw(_("Rechnung hat keinen offenen Betrag."))
-    #
-    # dunning = frappe.new_doc("Dunning")
-    # dunning.update({
-    #     "sales_invoice": sales_invoice,
-    #     "customer": si.customer,
-    #     "company": si.company,
-    #     "dunning_type": dunning_type,
-    #     "posting_date": posting_date or nowdate(),
-    #     "due_date": new_due_date or add_days(nowdate(), 7),
-    #     "outstanding_amount": si.outstanding_amount,
-    #     "currency": si.currency,
-    # })
-    # # Mahngebühr-Override falls gewünscht
-    # if mahngebuehr is not None:
-    #     dunning.dunning_fee = flt(mahngebuehr)
-    # # Verzugszinsen
-    # if not zinsen_aktiv:
-    #     dunning.rate_of_interest = 0
-    # dunning.insert(ignore_permissions=False)
-    # dunning.submit()
-    #
-    # # Optional: mahnstufe-Custom-Field auf Sales Invoice hochzählen
-    # # (besser: per Doc-Event-Hook auf Dunning.after_submit)
-    # if hasattr(si, "mahnstufe"):
-    #     frappe.db.set_value("Sales Invoice", sales_invoice, "mahnstufe",
-    #                         (si.mahnstufe or 0) + 1)
-    #
-    # return {"dunning": dunning.name, "summe": flt(dunning.grand_total)}
+    si = _require_submitted_invoice("Sales Invoice", sales_invoice)
+    level = min(4, _submitted_dunning_count(sales_invoice) + 1)
+    resolved_type = _resolve_dunning_type(level, dunning_type)
 
-    # MOCK-Response solange Body kommentiert ist:
-    return {
-        "dunning": "DUN-MOCK-001",
-        "summe": 1020.50,
-        "mock": True,
-    }
+    dunning = frappe.new_doc("Dunning")
+    for fieldname, value in {
+        "sales_invoice": sales_invoice,
+        "customer": si.customer,
+        "company": si.company,
+        "dunning_type": resolved_type,
+        "posting_date": posting_date or nowdate(),
+        "due_date": new_due_date or add_days(nowdate(), 7),
+        "outstanding_amount": si.outstanding_amount,
+        "currency": si.currency,
+        "dunning_fee": flt(mahngebuehr) if mahngebuehr is not None else None,
+        "rate_of_interest": None if _as_bool(zinsen_aktiv) else 0,
+    }.items():
+        _set_if_field(dunning, fieldname, value)
+
+    _append_child_if_table(
+        dunning,
+        "overdue_payments",
+        {
+            "sales_invoice": si.name,
+            "payment_term": None,
+            "due_date": si.due_date,
+            "invoice_portion": 100,
+            "outstanding": si.outstanding_amount,
+            "outstanding_amount": si.outstanding_amount,
+            "amount": si.outstanding_amount,
+        },
+    )
+
+    dunning.insert(ignore_permissions=False)
+    return _draft_response(
+        dunning,
+        "dunning",
+        summe=flt(getattr(dunning, "grand_total", 0) or getattr(si, "outstanding_amount", 0)),
+        dunning_type=resolved_type,
+        mahnstufe=level,
+    )
 
 
 @frappe.whitelist()
@@ -190,34 +321,59 @@ def create_bulk_dunning(
 
     created: list[str] = []
     errors: list[dict] = []
+    docs: list[dict] = []
 
-    # PHASE 3 — Body entkommentieren wenn bereit:
-    # for customer, invoices in invoices_by_customer.items():
-    #     try:
-    #         dunning = frappe.new_doc("Dunning")
-    #         dunning.customer = customer
-    #         dunning.posting_date = nowdate()
-    #         dunning.due_date = new_due_date or add_days(nowdate(), 7)
-    #         dunning.dunning_type = (
-    #             dunning_type_per_customer.get(customer)
-    #             if dunning_type_per_customer else "Zahlungserinnerung Stufe 1"
-    #         )
-    #         for invoice_name in invoices:
-    #             si = frappe.get_doc("Sales Invoice", invoice_name)
-    #             dunning.append("overdue_payments", {
-    #                 "sales_invoice": invoice_name,
-    #                 "payment_term": None,
-    #                 "due_date": si.due_date,
-    #                 "invoice_portion": 100,
-    #                 "outstanding": si.outstanding_amount,
-    #             })
-    #         dunning.insert()
-    #         dunning.submit()
-    #         created.append(dunning.name)
-    #     except Exception as e:
-    #         errors.append({"customer": customer, "msg": str(e)})
+    for customer, invoices in (invoices_by_customer or {}).items():
+        try:
+            invoice_names = [name for name in invoices if name]
+            if not invoice_names:
+                continue
 
-    return {"created": created or ["DUN-MOCK-BULK-001"], "errors": errors, "mock": not created}
+            sales_invoices = [_require_submitted_invoice("Sales Invoice", name) for name in invoice_names]
+            companies = {si.company for si in sales_invoices}
+            customers = {si.customer for si in sales_invoices}
+            if len(companies) != 1 or len(customers) != 1 or customer not in customers:
+                frappe.throw(_("Sammelmahnung darf nur Rechnungen einer Firma und eines Mieters enthalten."))
+
+            next_level = min(4, max(_submitted_dunning_count(si.name) for si in sales_invoices) + 1)
+            explicit_type = (dunning_type_per_customer or {}).get(customer) if dunning_type_per_customer else None
+            resolved_type = _resolve_dunning_type(next_level, explicit_type)
+
+            dunning = frappe.new_doc("Dunning")
+            first = sales_invoices[0]
+            for fieldname, value in {
+                "customer": customer,
+                "company": first.company,
+                "dunning_type": resolved_type,
+                "posting_date": nowdate(),
+                "due_date": new_due_date or add_days(nowdate(), 7),
+                "currency": first.currency,
+                "outstanding_amount": sum(flt(si.outstanding_amount) for si in sales_invoices),
+            }.items():
+                _set_if_field(dunning, fieldname, value)
+
+            for si in sales_invoices:
+                _append_child_if_table(
+                    dunning,
+                    "overdue_payments",
+                    {
+                        "sales_invoice": si.name,
+                        "payment_term": None,
+                        "due_date": si.due_date,
+                        "invoice_portion": 100,
+                        "outstanding": si.outstanding_amount,
+                        "outstanding_amount": si.outstanding_amount,
+                        "amount": si.outstanding_amount,
+                    },
+                )
+
+            dunning.insert(ignore_permissions=False)
+            created.append(dunning.name)
+            docs.append(_draft_response(dunning, "dunning", dunning_type=resolved_type, mahnstufe=next_level))
+        except Exception as e:
+            errors.append({"customer": customer, "msg": str(e)})
+
+    return {"created": created, "docs": docs, "errors": errors, "draft": True}
 
 
 @frappe.whitelist()
@@ -236,34 +392,36 @@ def create_payment_entry(
     if not frappe.has_permission("Payment Entry", "create"):
         frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
 
-    # PHASE 3 — Body entkommentieren wenn bereit:
-    # from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
-    #
-    # pi = frappe.get_doc("Purchase Invoice", purchase_invoice)
-    # if pi.outstanding_amount <= 0:
-    #     frappe.throw(_("Rechnung hat keinen offenen Betrag."))
-    #
-    # pe = get_payment_entry("Purchase Invoice", purchase_invoice)
-    # pe.posting_date = posting_date or nowdate()
-    # pe.mode_of_payment = mode_of_payment
-    #
-    # if use_skonto and skonto_amount:
-    #     # Skonto als Deduction-Zeile (Aufwandsminderung)
-    #     pe.append("deductions", {
-    #         "account": frappe.get_cached_value(
-    #             "Company", pi.company, "default_discount_account"
-    #         ),
-    #         "amount": flt(skonto_amount),
-    #         "cost_center": pi.cost_center,
-    #     })
-    #     pe.paid_amount = flt(pi.outstanding_amount) - flt(skonto_amount)
-    #     pe.references[0].allocated_amount = flt(pi.outstanding_amount)
-    #
-    # pe.insert()
-    # pe.submit()
-    # return {"payment_entry": pe.name, "auszahlung": flt(pe.paid_amount)}
+    from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
 
-    return {"payment_entry": "PE-MOCK-001", "auszahlung": 4196.89, "mock": True}
+    pi = _require_submitted_invoice("Purchase Invoice", purchase_invoice)
+    pe = get_payment_entry("Purchase Invoice", purchase_invoice)
+    pe.posting_date = posting_date or nowdate()
+
+    resolved_mode = _resolve_mode_of_payment(mode_of_payment)
+    if resolved_mode:
+        pe.mode_of_payment = resolved_mode
+
+    if _as_bool(use_skonto) and flt(skonto_amount):
+        discount_account = frappe.get_cached_value(
+            "Company", pi.company, "default_discount_account"
+        )
+        if not discount_account:
+            frappe.throw(_("Für Skonto fehlt an der Firma das Default Discount Account."))
+        pe.append(
+            "deductions",
+            {
+                "account": discount_account,
+                "amount": flt(skonto_amount),
+                "cost_center": getattr(pi, "cost_center", None),
+            },
+        )
+        pe.paid_amount = flt(pi.outstanding_amount) - flt(skonto_amount)
+        if pe.references:
+            pe.references[0].allocated_amount = flt(pi.outstanding_amount)
+
+    pe.insert(ignore_permissions=False)
+    return _draft_response(pe, "payment_entry", auszahlung=flt(pe.paid_amount), mode_of_payment=resolved_mode)
 
 
 @frappe.whitelist()
@@ -280,25 +438,47 @@ def allocate_payment(
     if isinstance(allocations, str):
         allocations = json.loads(allocations)
 
-    if not frappe.has_permission("Payment Reconciliation", "write"):
+    if not frappe.has_permission("Payment Reconciliation", "create"):
         frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
+    pe = frappe.get_doc("Payment Entry", payment_entry)
+    if cint(pe.docstatus) != 1:
+        frappe.throw(_("Nur submitted Payment Entries können zur Abstimmung vorbereitet werden."))
 
-    # PHASE 3 — Body entkommentieren wenn bereit:
-    # from erpnext.accounts.doctype.payment_reconciliation.payment_reconciliation import (
-    #     reconcile,
-    # )
-    # pe = frappe.get_doc("Payment Entry", payment_entry)
-    # for alloc in allocations:
-    #     pe.append("references", {
-    #         "reference_doctype": "Sales Invoice",
-    #         "reference_name": alloc["invoice"],
-    #         "allocated_amount": flt(alloc["amount"]),
-    #     })
-    # pe.save()
-    # # Optional: pe.cancel() + pe.submit() um die Reconciliation zu triggern
-    # return {"allocated": len(allocations), "rest": flt(pe.unallocated_amount)}
+    reconciliation = frappe.new_doc("Payment Reconciliation")
+    for fieldname, value in {
+        "company": pe.company,
+        "party_type": getattr(pe, "party_type", None),
+        "party": getattr(pe, "party", None),
+        "receivable_payable_account": getattr(pe, "paid_from", None) or getattr(pe, "paid_to", None),
+    }.items():
+        _set_if_field(reconciliation, fieldname, value)
 
-    return {"allocated": len(allocations), "rest": 0.0, "mock": True}
+    lines = []
+    allocated = 0.0
+    for alloc in allocations or []:
+        invoice = alloc.get("invoice")
+        amount = flt(alloc.get("amount"))
+        if not invoice or amount <= 0:
+            continue
+        lines.append(f"{invoice}: {frappe.format_value(amount, {'fieldtype': 'Currency'})}")
+        allocated += amount
+
+    reconciliation.insert(ignore_permissions=False)
+    reconciliation.add_comment(
+        "Comment",
+        text=_("Vorbereitete Zuordnung für {0}:<br>{1}").format(
+            payment_entry,
+            "<br>".join(lines) if lines else _("Keine gültigen Zuordnungen ausgewählt."),
+        ),
+    )
+    rest = flt(getattr(pe, "unallocated_amount", 0)) - allocated
+    return _draft_response(
+        reconciliation,
+        "payment_reconciliation",
+        allocated=len(lines),
+        allocated_amount=allocated,
+        rest=rest,
+    )
 
 
 @frappe.whitelist()
@@ -312,37 +492,63 @@ def write_off_invoice(
     if not frappe.has_permission("Journal Entry", "create"):
         frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
 
-    # PHASE 3 — Body entkommentieren wenn bereit:
-    # si = frappe.get_doc("Sales Invoice", sales_invoice)
-    # if si.outstanding_amount <= 0:
-    #     frappe.throw(_("Nichts abzuschreiben."))
-    #
-    # je = frappe.new_doc("Journal Entry")
-    # je.voucher_type = "Write Off Entry"
-    # je.company = si.company
-    # je.posting_date = nowdate()
-    # je.user_remark = remarks or f"Abschreibung {sales_invoice}"
-    # write_off_account = write_off_account or frappe.get_cached_value(
-    #     "Company", si.company, "write_off_account"
-    # )
-    # je.append("accounts", {
-    #     "account": write_off_account,
-    #     "debit_in_account_currency": si.outstanding_amount,
-    #     "cost_center": cost_center or si.cost_center,
-    # })
-    # je.append("accounts", {
-    #     "account": si.debit_to,
-    #     "party_type": "Customer",
-    #     "party": si.customer,
-    #     "credit_in_account_currency": si.outstanding_amount,
-    #     "reference_type": "Sales Invoice",
-    #     "reference_name": si.name,
-    # })
-    # je.insert()
-    # je.submit()
-    # return {"journal_entry": je.name, "amount": flt(si.outstanding_amount)}
+    si = _require_submitted_invoice("Sales Invoice", sales_invoice)
+    write_off_account = write_off_account or frappe.get_cached_value(
+        "Company", si.company, "write_off_account"
+    )
+    if not write_off_account:
+        frappe.throw(_("Für die Firma ist kein Write Off Account hinterlegt."))
 
-    return {"journal_entry": "JE-MOCK-001", "amount": 980.00, "mock": True}
+    je = frappe.new_doc("Journal Entry")
+    je.voucher_type = "Write Off Entry"
+    je.company = si.company
+    je.posting_date = nowdate()
+    je.user_remark = remarks or _("Abschreibung {0}").format(sales_invoice)
+    amount = flt(si.outstanding_amount)
+    je.append(
+        "accounts",
+        {
+            "account": write_off_account,
+            "debit_in_account_currency": amount,
+            "cost_center": cost_center or getattr(si, "cost_center", None),
+        },
+    )
+    je.append(
+        "accounts",
+        {
+            "account": si.debit_to,
+            "party_type": "Customer",
+            "party": si.customer,
+            "credit_in_account_currency": amount,
+            "reference_type": "Sales Invoice",
+            "reference_name": si.name,
+        },
+    )
+    je.insert(ignore_permissions=False)
+    return _draft_response(je, "journal_entry", amount=amount)
+
+
+@frappe.whitelist()
+def set_stundung_comment(
+    sales_invoice: str,
+    grund: str,
+    notiz: str = "",
+    stundung_bis: str | None = None,
+) -> dict:
+    """Dokumentiert eine Stundung als Kommentar auf der Sales Invoice."""
+    if not frappe.has_permission("Sales Invoice", "write", sales_invoice):
+        frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
+
+    si = frappe.get_doc("Sales Invoice", sales_invoice)
+    parts = [_("Stundung vereinbart")]
+    if stundung_bis:
+        parts.append(_("bis {0}").format(stundung_bis))
+    if grund:
+        parts.append(_("Grund: {0}").format(grund))
+    if notiz:
+        parts.append(notiz)
+    si.add_comment("Comment", text=". ".join(parts))
+    return {"ok": True, "sales_invoice": sales_invoice}
 
 
 # ───────────────────────────────────────────────────────────────────────────

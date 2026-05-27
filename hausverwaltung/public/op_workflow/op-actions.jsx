@@ -21,13 +21,13 @@ function primaryActionFor(row) {
     return { key: "zuordnen", label: "Zuordnen", kind: "warn" };
   }
 
-  // Forderung, überfällig: Mahnstufe nach oben treiben
+  // Forderung, überfällig: Dunning Type nach oben treiben
   if (row.alter_tage > 0) {
     const nextStufe = (row.mahnstufe || 0) + 1;
-    if (nextStufe <= 3) {
+    if (nextStufe <= 4) {
       return {
         key: "mahnung",
-        label: nextStufe === 1 ? "Mahnung erstellen" : `Mahnung M${nextStufe}`,
+        label: nextStufe === 1 ? "Zahlungserinnerung" : nextStufe === 4 ? "Letzte Mahnung" : `${nextStufe - 1}. Mahnung`,
         kind: nextStufe >= 2 ? "late" : "primary",
       };
     } else {
@@ -129,18 +129,21 @@ function Modal({ title, subtitle, onClose, footer, children }) {
 
 // ───────── Aktion: Mahnung erstellen ─────────
 
-function MahnungModal({ row, onClose }) {
+function MahnungModal({ row, onClose, onDone }) {
   const nextStufe = (row.mahnstufe || 0) + 1;
-  const [mahngebuehr, setMahngebuehr] = useStateAct(nextStufe === 1 ? 5.00 : nextStufe === 2 ? 10.00 : 20.00);
+  const [mahngebuehr, setMahngebuehr] = useStateAct(nextStufe === 1 ? 0.00 : nextStufe === 2 ? 5.00 : nextStufe === 3 ? 10.00 : 15.00);
   const [zinsen, setZinsen] = useStateAct(true);
   const [zinssatz, setZinssatz] = useStateAct(9.12); // Basis + 9% gem. §288 BGB
   const [versand, setVersand] = useStateAct("Brief");
+  const [busy, setBusy] = useStateAct(false);
   const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
     const d = new Date();
     d.setDate(d.getDate() + 7);
     return d.toISOString().slice(0, 10);
   });
-  const [textStufe, setTextStufe] = useStateAct(`Zahlungserinnerung Stufe ${nextStufe}`);
+  const [textStufe, setTextStufe] = useStateAct(
+    nextStufe === 1 ? "Zahlungserinnerung - HP" : nextStufe === 2 ? "1. Mahnung - HP" : nextStufe === 3 ? "2. Mahnung - HP" : "Letzte Mahnung - HP",
+  );
 
   // Verzugszinsen-Berechnung (rein illustrativ)
   const zinsBetrag = zinsen ? (row.offen * (zinssatz / 100) * (row.alter_tage / 365)) : 0;
@@ -148,10 +151,24 @@ function MahnungModal({ row, onClose }) {
   const summe = row.offen + mahngebuehr + zinsBetrag;
   const partyName = window.OFFENE_POSTEN.partyName(row.party);
   const objekt = window.OFFENE_POSTEN.ccLabel[row.kostenstelle] || row.kostenstelle;
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const result = await window.OP_ACTIONS.createDunning(row, {
+        dunningType: textStufe,
+        neueFaelligkeit,
+        mahngebuehr,
+        zinsenAktiv: zinsen,
+      });
+      onDone?.(result);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <Modal
-      title={`Mahnung erstellen · Stufe ${nextStufe}`}
+      title={`${nextStufe === 1 ? "Zahlungserinnerung" : nextStufe === 4 ? "Letzte Mahnung" : `${nextStufe - 1}. Mahnung`} erstellen`}
       subtitle={`${partyName} · ${row.belegnummer} · ${fmtEUR_op(row.offen)} offen seit ${row.alter_tage} Tagen`}
       onClose={onClose}
       footer={
@@ -160,9 +177,9 @@ function MahnungModal({ row, onClose }) {
             Erzeugt 1 Dunning-Doc · 1 Journal Entry (Mahngebühr) · 1 Datei (PDF)
           </span>
           <div className="op-modal-foot-actions">
-            <button className="mk-btn" onClick={onClose}>Abbrechen</button>
-            <button className="mk-btn mk-btn-primary" onClick={onClose}>
-              {`Mahnung versenden · ${fmtEUR_op(summe)}`}
+            <button className="mk-btn" onClick={onClose} disabled={busy}>Abbrechen</button>
+            <button className="mk-btn mk-btn-primary" onClick={submit} disabled={busy}>
+              {busy ? "Draft wird angelegt …" : `Mahnung als Draft anlegen · ${fmtEUR_op(summe)}`}
             </button>
           </div>
         </>
@@ -171,7 +188,7 @@ function MahnungModal({ row, onClose }) {
       <div className="op-form-grid">
         <div className="op-field">
           <label>Mahnstufe</label>
-          <div className="op-field-display">M{nextStufe} · {textStufe}</div>
+          <div className="op-field-display">{textStufe}</div>
         </div>
         <div className="op-field">
           <label>Versandart</label>
@@ -262,18 +279,33 @@ function MahnungModal({ row, onClose }) {
 
 // ───────── Aktion: Zahlung anlegen (Lieferanten) ─────────
 
-function ZahlungModal({ row, onClose }) {
+function ZahlungModal({ row, onClose, onDone }) {
   // Skonto-Logik: wenn Bemerkung "Skonto bis" enthält, biete an
   const skontoMatch = (row.bemerkungen || "").match(/Skonto bis (\d{2}\.\d{2}\.).*?(-?\d+(?:\.\d+)?)\s*%/i);
   const hasSkonto = !!skontoMatch;
   const skontoBis = skontoMatch ? skontoMatch[1] : null;
   const skontoSatz = skontoMatch ? parseFloat(skontoMatch[2]) : 0;
   const [nutzeSkonto, setNutzeSkonto] = useStateAct(hasSkonto);
-  const [zahldatum, setZahldatum] = useStateAct("2026-05-27");
+  const [zahldatum, setZahldatum] = useStateAct(() => frappe.datetime.get_today());
   const [zahlart, setZahlart] = useStateAct("SEPA-Überweisung");
+  const [busy, setBusy] = useStateAct(false);
 
   const abzug = nutzeSkonto ? row.offen * (Math.abs(skontoSatz) / 100) : 0;
   const auszahlung = row.offen - abzug;
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const result = await window.OP_ACTIONS.createPaymentEntry(row, {
+        zahldatum,
+        useSkonto: nutzeSkonto,
+        skontoAmount: abzug,
+        zahlart,
+      });
+      onDone?.(result);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <Modal
@@ -286,9 +318,9 @@ function ZahlungModal({ row, onClose }) {
             Erzeugt 1 Payment Entry · ggf. 1 SEPA-XML
           </span>
           <div className="op-modal-foot-actions">
-            <button className="mk-btn" onClick={onClose}>Abbrechen</button>
-            <button className="mk-btn mk-btn-primary" onClick={onClose}>
-              {`Zahlung anlegen · ${fmtEUR_op(auszahlung)}`}
+            <button className="mk-btn" onClick={onClose} disabled={busy}>Abbrechen</button>
+            <button className="mk-btn mk-btn-primary" onClick={submit} disabled={busy}>
+              {busy ? "Draft wird angelegt …" : `Zahlung als Draft anlegen · ${fmtEUR_op(auszahlung)}`}
             </button>
           </div>
         </>
@@ -349,13 +381,14 @@ function ZahlungModal({ row, onClose }) {
 
 // ───────── Aktion: Vorauszahlung zuordnen ─────────
 
-function ZuordnenModal({ row, onClose }) {
+function ZuordnenModal({ row, onClose, onDone }) {
   // Mock: zeigt alle offenen Forderungen desselben Mieters
   const partyOpens = window.OFFENE_POSTEN.rows
     .filter(r => r.party === row.party && r.offen > 0.01)
     .sort((a, b) => a.faellig_am.localeCompare(b.faellig_am));
   const verfuegbar = Math.abs(row.offen);
   const [selected, setSelected] = useStateAct(() => new Set(partyOpens[0] ? [partyOpens[0].belegnummer] : []));
+  const [busy, setBusy] = useStateAct(false);
   const sel = partyOpens.filter(p => selected.has(p.belegnummer));
   const zugeordnet = sel.reduce((a, p) => a + Math.min(p.offen, verfuegbar - a), 0);
   const rest = verfuegbar - zugeordnet;
@@ -367,6 +400,23 @@ function ZuordnenModal({ row, onClose }) {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+  };
+  const submit = async () => {
+    let remaining = verfuegbar;
+    const allocations = [];
+    for (const item of sel) {
+      if (remaining <= 0) break;
+      const amount = Math.min(item.offen, remaining);
+      allocations.push({ invoice: item.belegnummer, amount });
+      remaining -= amount;
+    }
+    setBusy(true);
+    try {
+      const result = await window.OP_ACTIONS.allocatePayment(row, allocations);
+      onDone?.(result);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -380,9 +430,9 @@ function ZuordnenModal({ row, onClose }) {
             Rest {fmtEUR_op(rest)} bleibt als Vorauszahlung stehen.
           </span>
           <div className="op-modal-foot-actions">
-            <button className="mk-btn" onClick={onClose}>Abbrechen</button>
-            <button className="mk-btn mk-btn-primary" onClick={onClose}>
-              {`${sel.length} ${sel.length === 1 ? "Zuordnung buchen" : "Zuordnungen buchen"}`}
+            <button className="mk-btn" onClick={onClose} disabled={busy}>Abbrechen</button>
+            <button className="mk-btn mk-btn-primary" onClick={submit} disabled={busy || sel.length === 0}>
+              {busy ? "Draft wird angelegt …" : `${sel.length} ${sel.length === 1 ? "Zuordnung vorbereiten" : "Zuordnungen vorbereiten"}`}
             </button>
           </div>
         </>
@@ -467,7 +517,7 @@ function Toast({ message, onClose }) {
 
 // ───────── Aktion: Sammelmahnung (Bulk, gruppiert pro Mieter) ─────────
 
-function SammelmahnungModal({ rows, onClose }) {
+function SammelmahnungModal({ rows, onClose, onDone }) {
   // Gruppiere pro Mieter
   const groups = React.useMemo(() => {
     const map = new Map();
@@ -480,8 +530,11 @@ function SammelmahnungModal({ rows, onClose }) {
     return [...map.values()].map((g) => ({
       ...g,
       name: window.OFFENE_POSTEN.partyName(g.party),
-      nextStufe: Math.min(3, Math.max(...g.items.map((r) => (r.mahnstufe || 0) + 1))),
-      gebuehr: g.items.length * 5.00, // Mock-Gebühr-Logik
+      nextStufe: Math.min(4, Math.max(...g.items.map((r) => (r.mahnstufe || 0) + 1))),
+      gebuehr: g.items.reduce((sum, r) => {
+        const stufe = Math.min(4, (r.mahnstufe || 0) + 1);
+        return sum + (stufe === 1 ? 0 : stufe === 2 ? 5 : stufe === 3 ? 10 : 15);
+      }, 0),
     })).sort((a, b) => b.sum - a.sum);
   }, [rows]);
 
@@ -491,6 +544,7 @@ function SammelmahnungModal({ rows, onClose }) {
     return d.toISOString().slice(0, 10);
   });
   const [excluded, setExcluded] = useStateAct(() => new Set());
+  const [busy, setBusy] = useStateAct(false);
 
   const aktiv = groups.filter((g) => !excluded.has(g.party));
   const totalSum = aktiv.reduce((a, g) => a + g.sum + g.gebuehr, 0);
@@ -501,6 +555,19 @@ function SammelmahnungModal({ rows, onClose }) {
       next.has(p) ? next.delete(p) : next.add(p);
       return next;
     });
+  };
+  const submit = async () => {
+    const rowsByParty = {};
+    aktiv.forEach((group) => {
+      rowsByParty[group.party] = group.items;
+    });
+    setBusy(true);
+    try {
+      const result = await window.OP_ACTIONS.createBulkDunning(rowsByParty, { neueFaelligkeit });
+      onDone?.(result);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -514,9 +581,9 @@ function SammelmahnungModal({ rows, onClose }) {
             Erzeugt {aktiv.length} Dunning-Doc{aktiv.length === 1 ? "" : "s"} · {aktiv.reduce((a, g) => a + g.items.length, 0)} Mahngebühr-JEs · {aktiv.length} PDF{aktiv.length === 1 ? "" : "s"}
           </span>
           <div className="op-modal-foot-actions">
-            <button className="mk-btn" onClick={onClose}>Abbrechen</button>
-            <button className="mk-btn mk-btn-primary" disabled={aktiv.length === 0} onClick={onClose}>
-              {`${aktiv.length} ${aktiv.length === 1 ? "Mahnung" : "Mahnungen"} versenden · ${fmtEUR_op(totalSum)}`}
+            <button className="mk-btn" onClick={onClose} disabled={busy}>Abbrechen</button>
+            <button className="mk-btn mk-btn-primary" disabled={busy || aktiv.length === 0} onClick={submit}>
+              {busy ? "Drafts werden angelegt …" : `${aktiv.length} ${aktiv.length === 1 ? "Mahnung" : "Mahnungen"} als Draft anlegen · ${fmtEUR_op(totalSum)}`}
             </button>
           </div>
         </>
@@ -568,8 +635,8 @@ function SammelmahnungModal({ rows, onClose }) {
               </div>
               <div style={{ fontSize: 11.5, color: "var(--ink-3)", textAlign: "center" }}>
                 Stufe<br />
-                <span style={{ color: g.nextStufe === 3 ? "var(--accent)" : "var(--ink)", fontWeight: 600, fontSize: 13 }}>
-                  → M{g.nextStufe}
+                <span style={{ color: g.nextStufe >= 4 ? "var(--accent)" : "var(--ink)", fontWeight: 600, fontSize: 13 }}>
+                  → {g.nextStufe === 1 ? "ZE" : g.nextStufe === 4 ? "Letzte" : `M${g.nextStufe - 1}`}
                 </span>
               </div>
               <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
