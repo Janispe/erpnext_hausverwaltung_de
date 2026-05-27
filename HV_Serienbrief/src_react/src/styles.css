@@ -2602,3 +2602,129 @@ span[style*="color"] > .chip {
   cursor: pointer; white-space: nowrap;
 }
 .ph-loop-btn:hover { border-color: var(--primary); }
+
+/* =====================================================================
+   Cursor-Sichtbarkeit & Block-Navigation
+   ---------------------------------------------------------------------
+   ProseMirror's Standard-Gap-Cursor und der normale Edit-Caret sind in
+   bunten Backgrounds (Bausteine, Wenn-Container) kaum sichtbar. Wir
+   machen sie klar erkennbar und geben atomic Block-Nodes
+   visuelle Hinweise, wo der User clicken kann um den Cursor davor/
+   danach zu setzen.
+   ===================================================================== */
+
+/* 1) Normaler Edit-Caret in Primary-Farbe (statt unsichtbarem default-black
+      auf weissen Bausteinen-Bodies). */
+.tiptap-surface .ProseMirror {
+  caret-color: var(--primary);
+}
+
+/* 2) Gap-Cursor zwischen Block-Nodes: ProseMirror zeichnet ihn als
+      ::after-Pseudo-Element. Default ist ein 1px-Strich, wir machen ihn
+      dicker, primary-farbig und animiert. */
+.tiptap-surface .ProseMirror-gapcursor::after {
+  border-top: 2px solid var(--primary);
+  width: 60px;
+  animation: hv-gap-cursor-pulse 1s steps(1) infinite;
+}
+@keyframes hv-gap-cursor-pulse {
+  50% { opacity: 0.35; }
+}
+
+/* 3) Atomic Block-Nodes (jinja-block: freie {% set %}, {% endif %},
+      eigenstaendige Bausteine etc.) bekommen schmale Hover-Klickzonen
+      vor und nach dem Block. Macht visuell sichtbar, wo Cursor moeglich
+      ist, und vergroessert die Klick-Trefferflaeche. */
+.tiptap-surface .jinja-block {
+  position: relative;
+}
+.tiptap-surface .jinja-block::before,
+.tiptap-surface .jinja-block::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 8px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  background:
+    linear-gradient(to right, transparent, var(--primary) 50%, transparent);
+  background-size: 40px 2px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.tiptap-surface .jinja-block::before { top: -6px; }
+.tiptap-surface .jinja-block::after  { bottom: -6px; }
+.tiptap-surface .jinja-block:hover::before,
+.tiptap-surface .jinja-block:hover::after {
+  opacity: 0.55;
+}
+
+/* 4) Wenn-Container (jinja-if-container): klare Klick-Zone NACH dem
+      Container, damit der User zuverlaessig den Cursor danach setzen
+      und z.B. Inhalt anfuegen oder mit Backspace den Container loeschen
+      kann. Plus: kleiner Footer-Hint beim Hover, der die Klick-Zone
+      sichtbar macht. */
+.tiptap-surface .jinja-if-container {
+  /* Etwas mehr Bottom-Margin, damit der Gap-Cursor unter dem Container
+     sichtbar Platz bekommt. */
+  margin-bottom: 14px;
+}
+.tiptap-surface .jinja-if-container::after {
+  content: "";
+  display: block;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -8px;
+  height: 6px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  background:
+    linear-gradient(to right, transparent, var(--hv-if-accent) 50%, transparent);
+  background-size: 80px 2px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.tiptap-surface .jinja-if-container:hover::after {
+  opacity: 0.55;
+}
+
+/* 5) Selektion eines atomic Nodes klarer hervorheben: ein dunkler Frame
+      statt der unscheinbaren default-blauen Outline. */
+.tiptap-surface .ProseMirror-selectednode {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 4px rgba(31, 115, 183, 0.15);
+}
+
+/* Wenn-Block Loeschen-Button: nur sichtbar beim Hover ueber den Container.
+   Sitzt im Gutter unter dem Toggle-Pfeil. Klickbar trotz contenteditable=false
+   (Capture-Phase im NodeView). */
+.tiptap-surface .jinja-if-container .jinja-if-delete {
+  display: block;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--hv-if-accent);
+  padding: 0;
+  margin-top: 4px;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.12s ease;
+  user-select: none;
+}
+.tiptap-surface .jinja-if-container:hover .jinja-if-delete {
+  opacity: 0.7;
+}
+.tiptap-surface .jinja-if-container .jinja-if-delete:hover {
+  opacity: 1;
+  background: rgba(220, 38, 38, 0.15);
+  color: #dc2626;
+}

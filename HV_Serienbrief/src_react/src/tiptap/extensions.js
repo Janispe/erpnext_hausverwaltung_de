@@ -339,7 +339,7 @@ export const IfBlockNode = Node.create({
 		];
 	},
 	addNodeView() {
-		return () => {
+		return ({ editor, getPos }) => {
 			const dom = document.createElement("div");
 			dom.className = "jinja-if-container";
 			dom.setAttribute("data-hv-kind", "if-block");
@@ -377,7 +377,42 @@ export const IfBlockNode = Node.create({
 			}, true);
 			toggle.addEventListener("click", doToggle, true);
 
+			// Loeschen-Button: nur im Hover sichtbar (CSS). Entfernt den
+			// kompletten If-Container inkl. Body — der User kann sonst nur per
+			// Selektion + Backspace loeschen, was nicht offensichtlich ist.
+			const deleteBtn = document.createElement("button");
+			deleteBtn.type = "button";
+			deleteBtn.className = "jinja-if-delete";
+			deleteBtn.title = "Wenn-Block entfernen";
+			deleteBtn.setAttribute("aria-label", "Wenn-Block entfernen");
+			deleteBtn.textContent = "✕";
+			const doDelete = (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				if (!editor || typeof getPos !== "function") return;
+				if (!window.confirm("Wenn-Block inkl. Inhalt entfernen?")) return;
+				const pos = getPos();
+				if (typeof pos !== "number") return;
+				const node = editor.state.doc.nodeAt(pos);
+				if (!node) return;
+				editor
+					.chain()
+					.focus()
+					.deleteRange({ from: pos, to: pos + node.nodeSize })
+					.run();
+			};
+			deleteBtn.addEventListener("mousedown", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+			}, true);
+			deleteBtn.addEventListener("mouseup", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+			}, true);
+			deleteBtn.addEventListener("click", doDelete, true);
+
 			gutter.appendChild(toggle);
+			gutter.appendChild(deleteBtn);
 			dom.appendChild(gutter);
 
 			const content = document.createElement("div");
