@@ -6,6 +6,7 @@ import { Sidebar } from "./components/Sidebar.jsx";
 import { PdfMaximized } from "./components/PdfMaximized.jsx";
 import { PfadMappingModal } from "./components/PfadMappingModal.jsx";
 import { BausteinPopover } from "./components/BausteinPopover.jsx";
+import { JinjaTokenPopover } from "./components/JinjaTokenPopover.jsx";
 import { CURRENT_TEMPLATE, TEMPLATE_TREE } from "./data.js";
 import {
   loadTree, loadTemplate, saveTemplate, copyTemplate, deleteTemplate, openDurchlauf,
@@ -59,6 +60,8 @@ export const App = () => {
   const [bausteinValues, setBausteinValues] = useState({});
   const [mappingBaustein, setMappingBaustein] = useState(null);
   const [popoverBaustein, setPopoverBaustein] = useState(null); // { baustein, rect }
+  // Jinja-Token-Editor-Popover (loest window.prompt ab). { token, rect, save, kind }
+  const [jinjaPopover, setJinjaPopover] = useState(null);
   // Vorlagen-Variablen (Definition + Wert/Pfad), im Editor bearbeitbar.
   const [variables, setVariables] = useState([]);
   // Transiente Vorschau-Werte für Eingabe-Variablen { key: wert } — NICHT gespeichert,
@@ -420,6 +423,23 @@ export const App = () => {
     return () => window.removeEventListener("hv-baustein-popover", onPop);
   }, [bausteine]);
 
+  // Jinja-Token (z.B. {% if ... %}, {% endif %}) im Editor doppel-geklickt
+  // -> Inline-Popover statt window.prompt. NodeView (extensions.js) dispatcht
+  // den Save-Callback mit, damit die State-Mutation im NodeView-Kontext bleibt.
+  useEffect(() => {
+    const onPop = (e) => {
+      if (!e.detail) return;
+      setJinjaPopover({
+        token: e.detail.token || "",
+        rect: e.detail.rect || null,
+        kind: e.detail.kind || "",
+        save: typeof e.detail.save === "function" ? e.detail.save : () => {},
+      });
+    };
+    window.addEventListener("hv-jinja-token-popover", onPop);
+    return () => window.removeEventListener("hv-jinja-token-popover", onPop);
+  }, []);
+
   const searchRecipients = useCallback((q) => {
     loadRecipients(template.haupt_verteil_objekt, q)
       .then(r => setRecipients(r.items || [])).catch(() => {});
@@ -672,6 +692,16 @@ export const App = () => {
             });
             setDirty(true);
           }}
+        />
+      )}
+
+      {jinjaPopover && (
+        <JinjaTokenPopover
+          token={jinjaPopover.token}
+          rect={jinjaPopover.rect}
+          kind={jinjaPopover.kind}
+          onSave={(newToken) => jinjaPopover.save(newToken)}
+          onClose={() => setJinjaPopover(null)}
         />
       )}
 

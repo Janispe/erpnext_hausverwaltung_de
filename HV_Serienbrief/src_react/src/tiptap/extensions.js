@@ -39,8 +39,11 @@ function bausteinLabel(token) {
 	return m ? m[1] : token || "";
 }
 
-// NodeView für die (atomaren) Jinja-Knoten: Doppelklick öffnet einen Prompt zum Bearbeiten des
-// Ausdrucks (z. B. BEDINGUNG -> mahnstufe == "2"). Serialisierung läuft weiter über renderHTML.
+// NodeView für die (atomaren) Jinja-Knoten: Doppelklick (oder einfacher Click)
+// oeffnet einen Inline-Popover zum Editieren des Ausdrucks. Der Popover wird
+// von App.jsx gehostet — wir dispatchen einen CustomEvent mit token, rect und
+// einem save-Callback, der dann den setNodeMarkup-Transaction-Step ausfuehrt.
+// Serialisierung läuft weiter über renderHTML.
 function makeJinjaNodeView(tag, className, kind) {
 	return ({ node, editor, getPos }) => {
 		let current = node;
@@ -52,31 +55,36 @@ function makeJinjaNodeView(tag, className, kind) {
 		// spiegeln, damit CSS-Selektoren ihn ansprechen können.
 		if (node.attrs.branch) dom.setAttribute("data-hv-branch", node.attrs.branch);
 		dom.title = "Doppelklick: Jinja-Ausdruck bearbeiten";
-		dom.addEventListener("dblclick", (e) => {
+
+		const openPopover = (e) => {
 			e.preventDefault();
 			e.stopPropagation();
 			if (!editor.isEditable) return;
-			const next = window.prompt(
-				'Jinja-Ausdruck bearbeiten (z. B. {% if mahnstufe == "2" %}):',
-				current.attrs.token
-			);
-			if (next == null) return;
-			const token = next.trim();
-			if (!/^\{%[\s\S]*%\}$/.test(token)) {
-				window.alert("Der Ausdruck muss mit {% beginnen und mit %} enden.");
-				return;
-			}
+			const rect = dom.getBoundingClientRect();
 			const pos = typeof getPos === "function" ? getPos() : null;
 			if (pos == null) return;
-			editor
-				.chain()
-				.focus()
-				.command(({ tr }) => {
-					tr.setNodeMarkup(pos, undefined, { ...current.attrs, token });
-					return true;
+			const save = (token) => {
+				editor
+					.chain()
+					.focus()
+					.command(({ tr }) => {
+						tr.setNodeMarkup(pos, undefined, { ...current.attrs, token });
+						return true;
+					})
+					.run();
+			};
+			window.dispatchEvent(
+				new CustomEvent("hv-jinja-token-popover", {
+					detail: {
+						token: current.attrs.token,
+						rect: { left: rect.left, bottom: rect.bottom, top: rect.top },
+						kind,
+						save,
+					},
 				})
-				.run();
-		});
+			);
+		};
+		dom.addEventListener("dblclick", openPopover);
 		return {
 			dom,
 			update: (updated) => {
