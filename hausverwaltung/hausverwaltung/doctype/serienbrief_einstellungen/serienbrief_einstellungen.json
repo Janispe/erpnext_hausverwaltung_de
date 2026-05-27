@@ -6,6 +6,7 @@
  "engine": "InnoDB",
  "field_order": [
   "section_pdf_ranges",
+  "editor_print_format",
   "margin_top",
   "margin_right",
   "column_break_margins",
@@ -19,6 +20,14 @@
    "fieldname": "section_pdf_ranges",
    "fieldtype": "Section Break",
    "label": "PDF-Seitenränder (Serienbrief Dokument)"
+  },
+  {
+   "default": "Serienbrief Dokument",
+   "description": "Print Format, dessen CSS im Serienbrief Editor für die gerenderte Baustein-Vorschau verwendet wird.",
+   "fieldname": "editor_print_format",
+   "fieldtype": "Link",
+   "label": "Editor Layout Print Format",
+   "options": "Print Format"
   },
   {
    "default": "20",

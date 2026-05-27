@@ -142,6 +142,11 @@ export async function loadBausteine() {
 	return await rpc("bausteine");
 }
 
+export async function loadEditorPrintFormatCss() {
+	if (!embedded) return { print_format: "", css: "" };
+	return await rpc("editor_print_css", {});
+}
+
 // Voller Platzhalter-Baum (Parität zum alten Formular-Picker): Gruppen mit
 // rekursivem Feld-Baum, abgeleitet aus dem Iterationsobjekt + Variablen + Referenzen.
 export async function loadPlaceholderTree(name) {

@@ -13,6 +13,7 @@ import {
   openClassicForm, openBrowser,
   loadPlaceholderTree, loadBausteine, loadRecipients, renderPreview,
   renderBausteinPreviews,
+  loadEditorPrintFormatCss,
   uploadImage, embedded,
 } from "./api.js";
 import { validateJinjaBalance } from "./tiptap/validateJinja.js";
@@ -55,6 +56,7 @@ export const App = () => {
   const [previewError, setPreviewError] = useState("");
   const [bausteinLayoutMode, setBausteinLayoutMode] = useState(() => loadPref("bausteinLayoutMode", false));
   const [bausteinPreviewHtml, setBausteinPreviewHtml] = useState({});
+  const [editorPrintCss, setEditorPrintCss] = useState("");
   // Token-Erhalt-Check beim Laden: null = sicher, sonst { lost, added } -> Speichern blockiert.
   const [editorSafety, setEditorSafety] = useState(null);
   // Pro-Baustein Input-Pfad-Overrides { "<Baustein>": { "<Variable>": "<Pfad>" } }
@@ -77,6 +79,19 @@ export const App = () => {
   useEffect(() => savePref("navCollapsed", navCollapsed), [navCollapsed]);
   useEffect(() => savePref("sidebarWidth", sidebarWidth), [sidebarWidth]);
   useEffect(() => savePref("bausteinLayoutMode", bausteinLayoutMode), [bausteinLayoutMode]);
+
+  useEffect(() => {
+    if (!embedded) return;
+    let alive = true;
+    loadEditorPrintFormatCss()
+      .then((res) => {
+        if (alive) setEditorPrintCss(res.css || "");
+      })
+      .catch(() => {
+        if (alive) setEditorPrintCss("");
+      });
+    return () => { alive = false; };
+  }, []);
 
   const changeRecipient = useCallback((r) => setRecipient(r || BEISPIEL), []);
 
@@ -588,6 +603,7 @@ export const App = () => {
 
   return (
     <div className="app">
+      {editorPrintCss && <style id="hv-editor-print-format-css">{editorPrintCss}</style>}
       <header className="topbar">
         <button
           className="btn ghost icon"

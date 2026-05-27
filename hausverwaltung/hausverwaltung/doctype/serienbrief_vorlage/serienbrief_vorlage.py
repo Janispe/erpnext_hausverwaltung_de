@@ -1647,6 +1647,99 @@ def render_editor_baustein_previews(
 	return {"items": previews}
 
 
+def _get_editor_print_format_name() -> str:
+	default = "Serienbrief Dokument"
+	try:
+		if (
+			frappe.db.exists("DocType", "Serienbrief Einstellungen")
+			and frappe.get_meta("Serienbrief Einstellungen").get_field("editor_print_format")
+		):
+			configured = cstr(
+				frappe.db.get_single_value("Serienbrief Einstellungen", "editor_print_format") or ""
+			).strip()
+			if configured and frappe.db.exists("Print Format", configured):
+				return configured
+	except Exception:
+		pass
+	return default
+
+
+def _scope_print_format_css_for_editor(css: str) -> str:
+	clean = re.sub(r"/\*.*?\*/", "", cstr(css), flags=re.S)
+	out: list[str] = []
+	pos = 0
+	wrappers = (
+		".print-format .serienbrief-root",
+		".print-format",
+		".serienbrief-root",
+		".serienbrief-page",
+	)
+
+	def find_rule_end(start: int) -> int:
+		depth = 1
+		i = start
+		while i < len(clean):
+			if clean[i] == "{":
+				depth += 1
+			elif clean[i] == "}":
+				depth -= 1
+				if depth == 0:
+					return i
+			i += 1
+		return -1
+
+	def scope_selector(selector: str) -> str | None:
+		sel = selector.strip()
+		if not sel:
+			return None
+		if sel in {"body", "html", "html body"}:
+			return ".baustein-preview-body"
+		for wrapper in wrappers:
+			if sel == wrapper:
+				return ".baustein-preview-body"
+			if sel.startswith(wrapper + " "):
+				return ".baustein-preview-body " + sel[len(wrapper) :].strip()
+			if sel.startswith(wrapper + ":"):
+				return ".baustein-preview-body" + sel[len(wrapper) :]
+		return f".baustein-preview-body {sel}"
+
+	while pos < len(clean):
+		brace = clean.find("{", pos)
+		if brace < 0:
+			break
+		selector = clean[pos:brace].strip()
+		end = find_rule_end(brace + 1)
+		if end < 0:
+			break
+		body = clean[brace + 1 : end].strip()
+		pos = end + 1
+		if not selector or not body:
+			continue
+		if selector.startswith("@"):
+			if selector.lower().startswith("@font-face"):
+				out.append(f"{selector} {{{body}}}")
+			continue
+		scoped = [scope_selector(part) for part in selector.split(",")]
+		scoped = [part for part in scoped if part]
+		if scoped:
+			out.append(f"{', '.join(scoped)} {{{body}}}")
+	return "\n".join(out)
+
+
+@frappe.whitelist()
+def get_editor_print_format_css() -> Dict[str, str]:
+	print_format = _get_editor_print_format_name()
+	try:
+		html = frappe.db.get_value("Print Format", print_format, "html") or ""
+	except Exception:
+		html = ""
+	style_blocks = re.findall(r"<style[^>]*>(.*?)</style>", html, flags=re.I | re.S)
+	return {
+		"print_format": print_format,
+		"css": _scope_print_format_css_for_editor("\n".join(style_blocks)),
+	}
+
+
 @frappe.whitelist()
 def render_template_preview_html(
 	template: str | None = None, template_doc: Dict[str, Any] | None = None
