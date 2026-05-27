@@ -29,6 +29,7 @@ def execute() -> None:
 				queue="long",
 				timeout=180,
 				job_id=f"sb-preview-{name}",
+				deduplicate=True,
 				vorlage_name=name,
 			)
 		except Exception:

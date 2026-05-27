@@ -2736,7 +2736,10 @@ def regenerate_preview_pdf(vorlage_name: str) -> str | None:
 
 	# Stale-Check: hat die Vorlage seit Job-Start einen weiteren Save bekommen?
 	# Dann ist unser Render-Ergebnis veraltet — verwerfen und re-enqueuen.
-	# job_id ist zu diesem Zeitpunkt durch den abschließenden Job1 wieder frei.
+	# job_id + deduplicate=True ist zu diesem Zeitpunkt durch den abschliessenden
+	# Job1 wieder frei (Frappe loescht den eigenen Job aus dem Registry beim
+	# finish). deduplicate=True ist notwendig — job_id allein dedupliziert in
+	# Frappe v15 NICHT (siehe background_jobs.py).
 	current_modified = frappe.db.get_value("Serienbrief Vorlage", vorlage_name, "modified")
 	if current_modified and start_modified and current_modified != start_modified:
 		try:
@@ -2745,6 +2748,7 @@ def regenerate_preview_pdf(vorlage_name: str) -> str | None:
 				queue="short",
 				timeout=120,
 				job_id=f"sb-preview-{vorlage_name}",
+				deduplicate=True,
 				vorlage_name=vorlage_name,
 			)
 		except Exception:
@@ -2782,9 +2786,10 @@ def enqueue_preview_regeneration(doc, method=None) -> None:
 	dauerhaft) und enqueued den neuen Render nach Commit. Zwischen Save und
 	Job-Fertig fällt die Vorschau auf Live-Render zurück.
 
-	job_id dedupliziert mehrere schnelle Saves zu einem Job. Der Stale-Check
-	in regenerate_preview_pdf verhindert dabei, dass ein noch laufender Job
-	mit altem Stand den neuen Cache überschreibt."""
+	job_id + deduplicate=True dedupliziert mehrere schnelle Saves zu einem Job
+	(deduplicate ist in Frappe v15 explizit noetig, job_id allein dedupliziert
+	nicht). Der Stale-Check in regenerate_preview_pdf verhindert zusaetzlich,
+	dass ein noch laufender Job mit altem Stand den neuen Cache ueberschreibt."""
 	vorlage_name = cstr(getattr(doc, "name", "") or "").strip()
 	if not vorlage_name:
 		return
@@ -2808,6 +2813,7 @@ def enqueue_preview_regeneration(doc, method=None) -> None:
 			timeout=120,
 			enqueue_after_commit=True,
 			job_id=f"sb-preview-{vorlage_name}",
+			deduplicate=True,
 			vorlage_name=vorlage_name,
 		)
 	except Exception:
