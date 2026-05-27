@@ -469,12 +469,90 @@ class SplitPreviewMietvertrag:
 		return True
 
 
+_SPLIT_PREVIEW_MOCK_TYPES: tuple[type, ...] = (
+	SplitPreviewUndefined,
+	SplitPreviewDummy,
+	SplitPreviewContact,
+	SplitPreviewAddress,
+	SplitPreviewVertragspartner,
+	SplitPreviewBank,
+	SplitPreviewBankAccount,
+	SplitPreviewImmobilie,
+	SplitPreviewWohnung,
+	SplitPreviewMietvertrag,
+)
+
+
+def _has_split_preview_mock(value) -> bool:
+	"""Recursive: enthaelt value irgendwo einen SplitPreview*-Mock?"""
+	if isinstance(value, _SPLIT_PREVIEW_MOCK_TYPES):
+		return True
+	if isinstance(value, dict):
+		return any(_has_split_preview_mock(v) for v in value.values()) or any(
+			_has_split_preview_mock(k) for k in value.keys()
+		)
+	if isinstance(value, (list, tuple, set)):
+		return any(_has_split_preview_mock(v) for v in value)
+	return False
+
+
+class SplitPreviewFrappeDB:
+	"""Mock-Wrapper um ``frappe.db`` fuer den Split-Preview-Render.
+
+	Wenn eine Vorlage ``frappe.db.get_all("X", filters={"y": objekt.wohnung})``
+	o.ae. macht und ``objekt.wohnung`` ist ein SplitPreview*-Mock, wirft die
+	echte Frappe-DB ``ValueError: Unsupported filters type``. Hier fangen wir
+	Aufrufe ab, bei denen die Args Mock-Werte enthalten, und liefern
+	sichere Defaults statt zu crashen. Echte Aufrufe (ohne Mock-Werte) gehen
+	durch zur richtigen DB.
+	"""
+
+	_MOCK_DEFAULTS: dict[str, object] = {
+		"get_all": [],
+		"get_list": [],
+		"get_value": None,
+		"get_single_value": None,
+		"get_values": [],
+		"exists": False,
+		"count": 0,
+		"sql": [],
+		"sql_list": [],
+		"sql_ddl": None,
+		"set_value": None,
+	}
+
+	def __getattr__(self, name):
+		attr = getattr(frappe.db, name)
+		if not callable(attr) or name not in self._MOCK_DEFAULTS:
+			return attr
+		default = self._MOCK_DEFAULTS[name]
+
+		def _wrapped(*args, **kwargs):
+			if _has_split_preview_mock(args) or _has_split_preview_mock(kwargs):
+				return default
+			return attr(*args, **kwargs)
+
+		return _wrapped
+
+
 class SplitPreviewFrappeProxy:
+	"""Proxy fuer ``frappe`` im Split-Preview-Context.
+
+	Whitelisted Aufrufe (``get_doc``, ``get_cached_doc``) liefern
+	SplitPreviewDummy. ``db`` faengt Mock-Filter-Args ab. Alles andere geht
+	durch zum echten ``frappe``.
+	"""
+
+	def __init__(self):
+		self._db = SplitPreviewFrappeDB()
+
 	def __getattr__(self, name):
 		if name == "get_doc":
 			return self.get_doc
 		if name == "get_cached_doc":
 			return self.get_cached_doc
+		if name == "db":
+			return self._db
 		return getattr(frappe, name)
 
 	def get_doc(self, doctype, name=None, *args, **kwargs):
@@ -521,6 +599,10 @@ def _split_preview_context() -> Dict[str, Any]:
 			werte=frappe._dict(frist="31.12.2024"),
 		),
 		"outputs": frappe._dict(),
+		# Frappe-Proxy fuer Vorlagen, die ``frappe.db.get_all/get_value/exists/...``
+		# direkt aufrufen. Mit Mock-Args (z.B. ``filters={"x": objekt.wohnung}``)
+		# liefert der Proxy sichere Defaults statt zu crashen.
+		"frappe": SplitPreviewFrappeProxy(),
 	}
 
 
@@ -557,6 +639,12 @@ def _render_split_preview_html(html: str) -> str:
 	except TemplateError as exc:
 		# StrictUndefined wirft bei undefinierten Root-Variablen / Syntaxfehlern.
 		# Im Live-Preview als Inline-Fehler markieren statt 500 zu werfen.
+		return _split_preview_error_marker(exc)
+	except Exception as exc:
+		# Safety-Net: alles andere (ValueError aus frappe.db, Type-Fehler aus
+		# Filter-Aufrufen mit Mock-Werten, etc.) ebenfalls als Inline-Marker
+		# rendern. Lieber eine sichtbare Fehler-Stelle als ein 500er, das die
+		# komplette Vorschau zerstoert.
 		return _split_preview_error_marker(exc)
 
 
@@ -595,6 +683,12 @@ def _render_split_preview_source(source: str, extra_context: Dict[str, Any] | No
 	except TemplateError as exc:
 		# StrictUndefined wirft bei undefinierten Root-Variablen / Syntaxfehlern.
 		# Im Live-Preview als Inline-Fehler markieren statt 500 zu werfen.
+		return _split_preview_error_marker(exc)
+	except Exception as exc:
+		# Safety-Net: alles andere (ValueError aus frappe.db, Type-Fehler aus
+		# Filter-Aufrufen mit Mock-Werten, etc.) ebenfalls als Inline-Marker
+		# rendern. Lieber eine sichtbare Fehler-Stelle als ein 500er, das die
+		# komplette Vorschau zerstoert.
 		return _split_preview_error_marker(exc)
 
 
