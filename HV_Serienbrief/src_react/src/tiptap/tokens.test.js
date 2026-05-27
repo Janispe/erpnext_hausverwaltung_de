@@ -162,11 +162,28 @@ describe("if-Container (hvIfBlock)", () => {
 		const matches = decorated.match(/data-hv-kind="if-block"/g) || [];
 		expect(matches.length).toBe(2);
 	});
-	it("if mit else bleibt FLACH (kein Container) — wird später separat modelliert", () => {
+	it("if mit else: Container entsteht, else bekommt data-hv-branch", () => {
 		const decorated = decorateForTiptap(
 			"{% if a %}\n<p>x</p>\n{% else %}\n<p>y</p>\n{% endif %}"
 		);
-		expect(decorated).not.toMatch(/data-hv-kind="if-block"/);
+		expect(decorated).toMatch(/data-hv-kind="if-block"/);
+		expect(decorated).toMatch(/data-hv-branch="else"/);
+	});
+	it("if/elif/else: Container mit beiden Branch-Markern", () => {
+		const decorated = decorateForTiptap(
+			"{% if a %}\n<p>x</p>\n{% elif b %}\n<p>y</p>\n{% else %}\n<p>z</p>\n{% endif %}"
+		);
+		expect(decorated).toMatch(/data-hv-kind="if-block"/);
+		expect(decorated).toMatch(/data-hv-branch="elif"/);
+		expect(decorated).toMatch(/data-hv-branch="else"/);
+	});
+	it("if/else Round-Trip preserved", () => {
+		const out = expectTokensPreserved(
+			"{% if a %}\n<p>x</p>\n{% else %}\n<p>y</p>\n{% endif %}"
+		);
+		expect(out).toContain("{% if a %}");
+		expect(out).toContain("{% else %}");
+		expect(out).toContain("{% endif %}");
 	});
 	it("verschachtelter if + endif Round-Trip", () => {
 		expectTokensPreserved(

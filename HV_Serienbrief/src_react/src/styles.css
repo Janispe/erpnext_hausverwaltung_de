@@ -1988,14 +1988,21 @@ span[style*="color"] > .chip {
 }
 
 /* Container für {% if %} ... {% endif %} mit klappbarem Body.
-   Layout: 2 Spalten (Gutter mit Toggle + Content). hvIf bleibt als Header
-   im Content sichtbar; nachfolgende Block-Geschwister bilden den Body. */
+   Farbpalette: dezentes Indigo (statt Primärblau, das schon Platzhalter-Chips
+   und der nackte hvIf-Banner nutzen) — Container heben sich als Strukturelement
+   visuell ab, ohne zu konkurrieren. */
 .tiptap-surface .jinja-if-container {
+  --hv-if-accent: #6366f1;
+  --hv-if-accent-soft: rgba(99, 102, 241, 0.08);
+  --hv-if-accent-strong: rgba(99, 102, 241, 0.18);
+  --hv-if-else: #d97706;
+  --hv-if-else-soft: rgba(217, 119, 6, 0.10);
+
   display: flex;
   align-items: stretch;
-  margin: 8px 0;
-  border-left: 3px solid var(--primary);
-  background: rgba(31, 115, 183, 0.04);
+  margin: 10px 0;
+  border-left: 3px solid var(--hv-if-accent);
+  background: var(--hv-if-accent-soft);
   border-radius: 0 6px 6px 0;
   position: relative;
 }
@@ -2003,7 +2010,7 @@ span[style*="color"] > .chip {
   flex: 0 0 22px;
   display: flex;
   justify-content: center;
-  padding-top: 6px;
+  padding-top: 8px;
   user-select: none;
 }
 .tiptap-surface .jinja-if-container .jinja-if-toggle {
@@ -2011,30 +2018,31 @@ span[style*="color"] > .chip {
   border: none;
   cursor: pointer;
   font-size: 11px;
-  color: var(--primary);
+  color: var(--hv-if-accent);
   padding: 0;
-  width: 16px;
+  width: 18px;
   height: 18px;
   line-height: 1;
   border-radius: 3px;
   transition: background 0.12s ease;
+  user-select: none;
 }
 .tiptap-surface .jinja-if-container .jinja-if-toggle:hover {
-  background: rgba(31, 115, 183, 0.16);
+  background: var(--hv-if-accent-strong);
 }
 .tiptap-surface .jinja-if-container .jinja-if-content {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 4px 8px 4px 0;
+  padding: 4px 10px 6px 0;
 }
-/* Im Container: hvIf-Banner wird zum Header, ohne eigene Border (Container hat schon eine) */
+/* Im Container: hvIf-Header wird zur Section-Überschrift mit „Wenn"-Label */
 .tiptap-surface .jinja-if-container .jinja-if-block {
   border-left: none;
   background: transparent;
   padding: 2px 4px;
   margin: 0;
   font-weight: 500;
-  color: var(--primary-hover);
+  color: var(--hv-if-accent);
 }
 .tiptap-surface .jinja-if-container .jinja-if-block::before {
   content: "Wenn ";
@@ -2042,18 +2050,60 @@ span[style*="color"] > .chip {
   text-transform: none;
   font-size: 11.5px;
   letter-spacing: 0;
+  color: var(--hv-if-accent);
 }
-/* Eingeklappt: Body ausblenden, nur Header (hvIf) und ein "(…)"-Hinweis sichtbar */
-.tiptap-surface .jinja-if-container.is-collapsed > .jinja-if-content > :not([data-hv-kind="if"]) {
+
+/* else/elif als Branch-Trenner: linker Akzent in Warm-Orange, eigenes Label */
+.tiptap-surface .jinja-if-container .jinja-block[data-hv-branch="else"],
+.tiptap-surface .jinja-if-container .jinja-block[data-hv-branch="elif"] {
+  border-left: 2px solid var(--hv-if-else);
+  background: var(--hv-if-else-soft);
+  color: var(--hv-if-else);
+  font-weight: 500;
+  padding: 3px 8px;
+  margin: 6px 0 4px 0;
+}
+.tiptap-surface .jinja-if-container .jinja-block[data-hv-branch="else"]::before {
+  content: "Sonst";
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  margin-right: 6px;
+  color: var(--hv-if-else);
+}
+.tiptap-surface .jinja-if-container .jinja-block[data-hv-branch="elif"]::before {
+  content: "Sonst wenn";
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  margin-right: 6px;
+  color: var(--hv-if-else);
+}
+/* Den rohen Token in der Branch-Box ausblenden — das Label reicht; der Editor
+   bleibt schlank. Bei Hover/Selection sichtbar machen, damit Doppelklick-Edit
+   möglich bleibt. */
+.tiptap-surface .jinja-if-container .jinja-block[data-hv-branch] {
+  font-size: 0;
+}
+.tiptap-surface .jinja-if-container .jinja-block[data-hv-branch]::before {
+  font-size: 11px;
+}
+.tiptap-surface .jinja-if-container .jinja-block[data-hv-branch]:hover {
+  font-size: 11.5px;
+}
+
+/* Eingeklappt: alles im Content außer dem Header (hvIf) ausblenden.
+   Descendant-Selector (Leerzeichen) statt direct-child (>), damit es robuster
+   gegen ProseMirror-Wrapper greift. */
+.tiptap-surface .jinja-if-container.is-collapsed .jinja-if-content > :not([data-hv-kind="if"]) {
   display: none;
 }
-.tiptap-surface .jinja-if-container.is-collapsed > .jinja-if-content::after {
-  content: "(eingeklappt)";
-  display: inline-block;
-  margin-left: 8px;
+.tiptap-surface .jinja-if-container.is-collapsed .jinja-if-content::after {
+  content: " (Body eingeklappt)";
   color: var(--text-faint);
   font-size: 11px;
   font-style: italic;
+  margin-left: 8px;
 }
 .tiptap-surface .jinja-if-block .field-chip {
   font-style: normal;

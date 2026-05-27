@@ -185,17 +185,17 @@ function promoteBlockJinja(root, doc) {
 	}
 }
 
-// Schritt 2b: hvIf + zugehöriges {% endif %} (+ alles dazwischen) zu einem
-// hvIfBlock-Container zusammenfassen. Header-hvIf bleibt erstes Kind; das
-// {% endif %}-Element wird entfernt (implizit durch das Container-Ende).
-// Voraussetzungen für die Gruppierung:
-//   - es gibt einen matchenden {% endif %}-jinja-block auf gleicher DOM-Tiefe
-//   - kein {% else %}/{% elif %} auf gleicher Tiefe (sonst bleibt alles flach,
-//     bis wir Else/Elif ebenfalls als Schema modellieren).
-// Nesting wird per Counter aufgelöst; querySelectorAll-Reverse iteriert
-// innen-vor-außen, damit der äußere Container den inneren als Kind enthält.
+// Schritt 2b: hvIf + zugehöriges {% endif %} (+ alles dazwischen, inkl.
+// {% else %}/{% elif %}) zu einem hvIfBlock-Container zusammenfassen.
+// Header-hvIf bleibt erstes Kind; das {% endif %}-Element wird entfernt
+// (implizit durch das Container-Ende). Zwischenliegende {% else %}/{% elif %}-
+// Blocks bleiben als normale hvJinjaBlocks im Body und werden visuell als
+// Branch-Trenner markiert (data-hv-branch="else|elif"), damit CSS sie eigen
+// stylen kann; im Token-Output sind sie unverändert.
+// Nesting per Counter; querySelectorAll-Reverse iteriert innen-vor-außen.
 const ENDIF_RE = /^\{%\s*endif\s*%\}$/;
-const ELSE_ELIF_RE = /^\{%\s*(else|elif)\b/;
+const ELSE_RE = /^\{%\s*else\s*%\}$/;
+const ELIF_RE = /^\{%\s*elif\b/;
 
 function groupIfBlocks(root, doc) {
 	const ifs = Array.from(root.querySelectorAll('[data-hv-kind="if"]'));
@@ -203,12 +203,11 @@ function groupIfBlocks(root, doc) {
 		const ifEl = ifs[i];
 		const parent = ifEl.parentNode;
 		if (!parent) continue;
-		// Schon in einem Container? -> nichts zu tun.
 		if (parent.getAttribute && parent.getAttribute("data-hv-kind") === "if-block") continue;
 
 		let depth = 1;
 		let endifEl = null;
-		let blocker = false;
+		const branchMarks = []; // [{el, kind}] für die else/elif auf Top-Level dieses ifs
 		let node = ifEl.nextSibling;
 		while (node) {
 			if (node.nodeType === 1) {
@@ -223,15 +222,21 @@ function groupIfBlocks(root, doc) {
 							endifEl = node;
 							break;
 						}
-					} else if (depth === 1 && ELSE_ELIF_RE.test(tok)) {
-						blocker = true;
-						break;
+					} else if (depth === 1 && ELSE_RE.test(tok)) {
+						branchMarks.push({ el: node, kind: "else" });
+					} else if (depth === 1 && ELIF_RE.test(tok)) {
+						branchMarks.push({ el: node, kind: "elif" });
 					}
 				}
 			}
 			node = node.nextSibling;
 		}
-		if (!endifEl || blocker) continue;
+		if (!endifEl) continue;
+
+		// Branch-Marker setzen (CSS-Hook), Token bleibt unverändert.
+		for (const { el, kind } of branchMarks) {
+			el.setAttribute("data-hv-branch", kind);
+		}
 
 		const container = doc.createElement("div");
 		container.setAttribute("data-hv-kind", "if-block");

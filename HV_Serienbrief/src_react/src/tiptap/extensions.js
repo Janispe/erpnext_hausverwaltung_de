@@ -48,6 +48,9 @@ function makeJinjaNodeView(tag, className, kind) {
 		dom.className = className;
 		dom.setAttribute("data-hv-kind", kind);
 		dom.textContent = node.attrs.token;
+		// Branch-Marker (else/elif innerhalb eines if-Containers) als data-Attribut
+		// spiegeln, damit CSS-Selektoren ihn ansprechen können.
+		if (node.attrs.branch) dom.setAttribute("data-hv-branch", node.attrs.branch);
 		dom.title = "Doppelklick: Jinja-Ausdruck bearbeiten";
 		dom.addEventListener("dblclick", (e) => {
 			e.preventDefault();
@@ -80,6 +83,8 @@ function makeJinjaNodeView(tag, className, kind) {
 				if (updated.type.name !== current.type.name) return false;
 				current = updated;
 				dom.textContent = updated.attrs.token;
+				if (updated.attrs.branch) dom.setAttribute("data-hv-branch", updated.attrs.branch);
+				else dom.removeAttribute("data-hv-branch");
 				return true;
 			},
 			ignoreMutation: () => true,
@@ -234,7 +239,17 @@ export const JinjaBlockNode = Node.create({
 	atom: true,
 	selectable: true,
 	addAttributes() {
-		return { token: tokenAttr };
+		return {
+			token: tokenAttr,
+			// CSS-Hook für else/elif innerhalb eines if-Containers (data-hv-branch
+			// wird vom Parser in tokens.js gesetzt). Wird beim Serialize nicht
+			// in den Token-Output kodiert — der raw token ist autoritativ.
+			branch: {
+				default: null,
+				parseHTML: (el) => el.getAttribute("data-hv-branch") || null,
+				renderHTML: (attrs) => (attrs.branch ? { "data-hv-branch": attrs.branch } : {}),
+			},
+		};
 	},
 	parseHTML() {
 		return [{ tag: 'div[data-hv-kind="jinja-block"]' }];
@@ -324,29 +339,44 @@ export const IfBlockNode = Node.create({
 		];
 	},
 	addNodeView() {
-		return ({ editor }) => {
+		return () => {
 			const dom = document.createElement("div");
 			dom.className = "jinja-if-container";
 			dom.setAttribute("data-hv-kind", "if-block");
 
-			// Toggle-Spalte links — nicht editierbar, Click toggled Collapse-Klasse.
+			// Toggle-Spalte links — komplett nicht-editierbar. Wir nehmen ALLE
+			// Mouse-Events VOR ProseMirror (capture-phase) ab, damit PM nicht
+			// in seinen Selection-Handler springt und den Click verschluckt.
 			const gutter = document.createElement("div");
 			gutter.className = "jinja-if-gutter";
 			gutter.setAttribute("contenteditable", "false");
+
 			const toggle = document.createElement("button");
 			toggle.type = "button";
 			toggle.className = "jinja-if-toggle";
 			toggle.title = "Block aus-/einklappen";
 			toggle.setAttribute("aria-label", "Block aus-/einklappen");
 			toggle.textContent = "▾";
-			toggle.addEventListener("mousedown", (e) => e.preventDefault());
-			toggle.addEventListener("click", (e) => {
+
+			const doToggle = (e) => {
 				e.preventDefault();
 				e.stopPropagation();
 				const collapsed = dom.classList.toggle("is-collapsed");
 				toggle.textContent = collapsed ? "▸" : "▾";
 				toggle.title = collapsed ? "Block ausklappen" : "Block einklappen";
-			});
+			};
+			// Capture-Phase + mehrere Events: PM hängt seine Handler an
+			// mousedown/mouseup; wir wollen den Click trotzdem behandeln.
+			toggle.addEventListener("mousedown", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+			}, true);
+			toggle.addEventListener("mouseup", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+			}, true);
+			toggle.addEventListener("click", doToggle, true);
+
 			gutter.appendChild(toggle);
 			dom.appendChild(gutter);
 
@@ -361,8 +391,8 @@ export const IfBlockNode = Node.create({
 					// Klassen-Wechsel am Wrapper (is-collapsed) NICHT als Content-Mutation
 					// melden — sonst will ProseMirror den DOM re-rendern und unsere
 					// Toggle-Klasse verschwindet.
-					if (mutation.type === "attributes" && mutation.target === dom) return true;
-					if (mutation.type === "attributes" && gutter.contains(mutation.target)) return true;
+					if (mutation.type === "attributes") return true;
+					if (gutter.contains(mutation.target)) return true;
 					return false;
 				},
 			};
