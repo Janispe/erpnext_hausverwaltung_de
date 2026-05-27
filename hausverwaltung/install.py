@@ -106,7 +106,7 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 			.serienbrief-root,
 			.print-format,
 			.print-format .serienbrief-root {
-				font-family: "Arial", "Helvetica", sans-serif;
+				font-family: "Liberation Sans", "Arial", "Helvetica", sans-serif;
 				font-size: 11pt;
 				line-height: 1.35;
 			}

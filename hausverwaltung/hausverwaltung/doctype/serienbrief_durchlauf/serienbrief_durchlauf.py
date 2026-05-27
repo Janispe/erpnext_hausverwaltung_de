@@ -1740,21 +1740,17 @@ class SerienbriefDurchlauf(Document):
 		custom_css = """
 			@page {
 				size: A4;
-				/* margin-bottom 25mm: identisch zu install.py-Print-Format und
-				   ``_default_pdf_options`` — Footer ist nur ~12mm hoch, mehr
-				   Margin würde zu unnötigen Page-Breaks führen.
-				   (Diese drei Stellen müssen synchron bleiben — siehe
-				   install.py + _default_pdf_options.) */
-				margin: 20mm 20mm 25mm 25mm;
+				/* Synchron mit install.py und _default_pdf_options. */
+				margin: 20mm 20mm 16mm 25mm;
 			}
 			body,
 			.serienbrief-root,
 			.print-format,
 			.print-format .serienbrief-root {
-				font-family: "Arial", "Helvetica", sans-serif;
+				font-family: "Liberation Sans", "Arial", "Helvetica", sans-serif;
 				color: #222;
 				font-size: 11pt !important;
-				line-height: 1.4;
+				line-height: 1.35;
 			}
 			/* Serienbrief: Briefkopf-Layout (Inhalt liefert nur Klassen; Layout kommt aus CSS) */
 			.sb-letterhead {
@@ -1812,7 +1808,7 @@ class SerienbriefDurchlauf(Document):
 				   gespeichert). Direkt aufeinanderfolgende <p> rendern kompakt;
 				   Leerzeilen kommen durch <p>&nbsp;</p> zustande (line-height). */
 				margin: 0;
-				line-height: 1.4;
+				line-height: 1.35;
 			}
 			.serienbrief-block {
 				margin-bottom: 12px;
