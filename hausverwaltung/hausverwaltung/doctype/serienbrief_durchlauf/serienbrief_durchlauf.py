@@ -1635,8 +1635,16 @@ class SerienbriefDurchlauf(Document):
 			resolved = _coerce_bool_if_needed(resolved, variable_type)
 
 			if resolved is None:
-				# Variable stays unresolved here; the durchlauf override may still fill it.
-				# _verify_template_variables_resolved raises afterwards if it's still missing.
+				# Optional + nicht resolved: leeren String ablegen, damit
+				# StrictUndefined in ``{% if X %}`` nicht crasht. Wichtig auch im
+				# strict_variables=False-Pfad (Editor-Live-Preview mit Empfaenger),
+				# wo _verify_template_variables_resolved nicht laeuft.
+				# Ein nachfolgender _apply_serienbrief_template_variables-Lauf
+				# kann das "" jederzeit mit einem echten Wert ueberschreiben.
+				is_optional = bool(int(getattr(variable, "optional", 0) or 0))
+				if is_optional and context.get(key) is None:
+					context[key] = ""
+				# Sonst: Variable bleibt unresolved; verify (sofern aktiv) wirft strict.
 				continue
 
 			# Alle Vorlagen-Variablen top-level — passt zur Editor-Konvention
