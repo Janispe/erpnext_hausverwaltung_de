@@ -15,3 +15,5 @@ AGENTS.local.md
 cypress/screenshots/
 cypress/videos/
 cypress/downloads/
+# Frappe/bench generated asset bundles
+hausverwaltung/public/dist/
