@@ -2282,6 +2282,66 @@ span[style*="color"] > .chip {
 .tiptap-surface .jinja-if-block .field-chip {
   font-style: normal;
 }
+.editor-canvas.hv-baustein-layout .tiptap-surface .jinja-if-container {
+  display: block;
+  margin: 2mm 0;
+  padding: 0 0 0 3mm;
+  border-left: 1.4mm solid rgba(99, 102, 241, 0.55);
+  border-radius: 0;
+  background: transparent;
+  position: relative;
+}
+.editor-canvas.hv-baustein-layout .tiptap-surface .jinja-if-container .jinja-if-gutter {
+  position: absolute;
+  top: 0;
+  left: -8mm;
+  width: 6mm;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1mm;
+}
+.editor-canvas.hv-baustein-layout .tiptap-surface .jinja-if-container .jinja-if-toggle,
+.editor-canvas.hv-baustein-layout .tiptap-surface .jinja-if-container .jinja-if-delete {
+  width: 5mm;
+  height: 5mm;
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 9px;
+}
+.editor-canvas.hv-baustein-layout .tiptap-surface .jinja-if-container .jinja-if-content {
+  padding: 0;
+}
+.editor-canvas.hv-baustein-layout .tiptap-surface .jinja-if-container .jinja-if-block {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  margin: 0 0 1.5mm;
+  padding: 1mm 1.5mm;
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  border-radius: 3px;
+  background: rgba(99, 102, 241, 0.07);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1.35;
+  color: var(--hv-if-accent);
+}
+.editor-canvas.hv-baustein-layout .tiptap-surface .jinja-if-container .jinja-if-block::before {
+  font-size: 9.5px;
+}
+.editor-canvas.hv-baustein-layout .tiptap-surface .jinja-if-container .jinja-block[data-hv-branch="else"],
+.editor-canvas.hv-baustein-layout .tiptap-surface .jinja-if-container .jinja-block[data-hv-branch="elif"] {
+  margin: 2mm 0 1.5mm;
+  padding: 0.8mm 1.5mm;
+  border-left: 1mm solid var(--hv-if-else);
+  border-radius: 0 3px 3px 0;
+  background: rgba(217, 119, 6, 0.07);
+}
+.editor-canvas.hv-baustein-layout .tiptap-surface .jinja-if-container p {
+  margin: 0;
+  line-height: inherit;
+}
 /* Operator-Buttons (nur sichtbar wenn Cursor im if-Block) */
 .op-group { background: rgba(31, 115, 183, 0.06); border-radius: var(--radius-sm); padding-left: 4px; }
 .op-btn { width: auto; min-width: 26px; padding: 0 7px; font-size: 12px; font-weight: 600; font-family: var(--font-mono); color: var(--primary-hover); }
