@@ -1780,6 +1780,41 @@ span[style*="color"] > .chip {
 .baustein-preview-body {
   display: block;
 }
+.baustein-preview-body .sb-letterhead {
+  margin-top: 0.7cm;
+}
+.baustein-preview-body .sb-address-window {
+  float: left;
+  width: 60%;
+  padding-top: 3.2cm;
+  font-size: 10pt;
+  box-sizing: border-box;
+}
+.baustein-preview-body .sb-return-address {
+  font-size: 7pt;
+  text-decoration: underline;
+  margin-bottom: 0.15cm;
+}
+.baustein-preview-body .sb-sender {
+  float: right;
+  width: 40%;
+  text-align: right;
+  font-size: 9pt;
+  box-sizing: border-box;
+}
+.baustein-preview-body .sb-office-hours {
+  font-size: 7.5pt;
+  margin-top: 0.15cm;
+}
+.baustein-preview-body .sb-letterhead::after {
+  content: "";
+  display: block;
+  clear: both;
+}
+.baustein-preview-body .sb-date {
+  margin-top: 0.5cm;
+  text-align: right;
+}
 .baustein-preview-body p {
   margin: 0;
   min-height: 1.35em;
