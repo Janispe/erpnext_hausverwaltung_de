@@ -1778,10 +1778,24 @@ _VARIABLE_TEXT_TYPES = {"Text", "String", "Zahl", "Bool", "Datum"}
 
 def _apply_editor_variables(doc, variables) -> None:
 	"""Variablen-Definitionen (JSON-Array vom Editor) auf das Doc anwenden: baut die
-	variables-Child-Tabelle + variablen_werte (Werte) + pfad_zuordnung (Doctype-Pfade) neu."""
+	variables-Child-Tabelle + variablen_werte (Werte) + pfad_zuordnung (Doctype-Pfade) neu.
+
+	Der Editor sendet das ``optional``-Feld aktuell NICHT mit (kein UI dafuer).
+	Damit wir bestehende DB-Werte nicht jedes Mal mit 0 ueberschreiben: existing
+	optional-Werte pro Variablenname vorab cachen und beim Rebuild beibehalten,
+	wenn der Editor das Feld nicht explizit setzt.
+	"""
 	defs = frappe.parse_json(variables)
 	if not isinstance(defs, list):
 		return
+	# Bestehende optional-Werte (pro Variablenname) merken, damit sie nicht
+	# beim Editor-Render zurueckgesetzt werden.
+	existing_optional: dict[str, int] = {}
+	for existing_row in doc.get("variables") or []:
+		ename = cstr(getattr(existing_row, "variable", "") or "").strip()
+		if ename:
+			existing_optional[ename] = int(getattr(existing_row, "optional", 0) or 0)
+
 	rows, werte, pfade = [], {}, {}
 	for d in defs:
 		if not isinstance(d, dict):
@@ -1790,13 +1804,19 @@ def _apply_editor_variables(doc, variables) -> None:
 		if not vname:
 			continue
 		vtype = cstr(d.get("variable_type") or d.get("type") or "Text").strip() or "Text"
+		# optional: wenn Editor explizit liefert (key vorhanden) → das nehmen.
+		# Sonst: DB-Wert beibehalten. Sonst (neue Variable): 0.
+		if "optional" in d:
+			opt_val = 1 if d.get("optional") else 0
+		else:
+			opt_val = existing_optional.get(vname, 0)
 		rows.append(
 			{
 				"variable": vname,
 				"variable_type": vtype,
 				"reference_doctype": d.get("reference_doctype") or None,
 				"label": d.get("label") or None,
-				"optional": 1 if d.get("optional") else 0,
+				"optional": opt_val,
 				"beschreibung": d.get("beschreibung") or None,
 			}
 		)
