@@ -80,8 +80,8 @@ class Telefonnummernauszug(Document):
 				{
 					"name": row.mieter_name or "",
 					"rolle": row.rolle or "",
-					"telefon": row.telefon or "",
-					"mobil": row.mobil or "",
+					"telefon": _format_phone_number(row.telefon),
+					"mobil": _format_phone_number(row.mobil),
 				}
 			)
 
@@ -232,6 +232,26 @@ def _wohnung_key(row: dict) -> tuple[str, str, str]:
 
 def _normalize_sort_value(value: str | None) -> str:
 	return (value or "").strip().casefold() or "\uffff"
+
+
+def _format_phone_number(value: str | None) -> str:
+	"""Format phone numbers in compact three-digit groups for the print extract."""
+	raw = (value or "").strip()
+	if not raw:
+		return ""
+
+	digits = "".join(ch for ch in raw if ch.isdigit())
+	if len(digits) < 6:
+		return raw
+
+	if raw.lstrip().startswith("+") and digits.startswith("49") and len(digits) > 2:
+		return "+49 " + _group_digits(digits[2:])
+
+	return _group_digits(digits)
+
+
+def _group_digits(digits: str) -> str:
+	return " ".join(digits[i : i + 3] for i in range(0, len(digits), 3))
 
 
 def _hauptmieter_sort_map(rows: list[dict]) -> dict[tuple[str, str, str], str]:
