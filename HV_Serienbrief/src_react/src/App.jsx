@@ -12,6 +12,7 @@ import {
   loadTree, loadTemplate, saveTemplate, copyTemplate, deleteTemplate, openDurchlauf,
   openClassicForm, openBrowser,
   loadPlaceholderTree, loadBausteine, loadRecipients, renderPreview,
+  renderBausteinPreviews,
   uploadImage, embedded,
 } from "./api.js";
 import { validateJinjaBalance } from "./tiptap/validateJinja.js";
@@ -52,6 +53,8 @@ export const App = () => {
   const [previewMode, setPreviewMode] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
+  const [bausteinLayoutMode, setBausteinLayoutMode] = useState(() => loadPref("bausteinLayoutMode", false));
+  const [bausteinPreviewHtml, setBausteinPreviewHtml] = useState({});
   // Token-Erhalt-Check beim Laden: null = sicher, sonst { lost, added } -> Speichern blockiert.
   const [editorSafety, setEditorSafety] = useState(null);
   // Pro-Baustein Input-Pfad-Overrides { "<Baustein>": { "<Variable>": "<Pfad>" } }
@@ -73,6 +76,7 @@ export const App = () => {
   useEffect(() => savePref("tab", tab), [tab]);
   useEffect(() => savePref("navCollapsed", navCollapsed), [navCollapsed]);
   useEffect(() => savePref("sidebarWidth", sidebarWidth), [sidebarWidth]);
+  useEffect(() => savePref("bausteinLayoutMode", bausteinLayoutMode), [bausteinLayoutMode]);
 
   const changeRecipient = useCallback((r) => setRecipient(r || BEISPIEL), []);
 
@@ -458,6 +462,10 @@ export const App = () => {
   const previewPending = useRef(false);
   const previewSig = useRef(null);
   const previewTimer = useRef(null);
+  const bausteinPreviewBusy = useRef(false);
+  const bausteinPreviewPending = useRef(false);
+  const bausteinPreviewSig = useRef(null);
+  const bausteinPreviewTimer = useRef(null);
 
   const refreshPreview = useCallback(async ({ force = false } = {}) => {
     if (!embedded || !template.id) return;
@@ -494,6 +502,48 @@ export const App = () => {
     }
   }, [template.id, template.haupt_verteil_objekt, recipient, variables, bausteinPaths, bausteinValues, previewVars]);
 
+  const refreshBausteinPreview = useCallback(async ({ force = false } = {}) => {
+    if (!embedded || !template.id || !bausteinLayoutMode) return;
+    const html = contentRef.current ? contentRef.current.getHtml() : (template.htmlContent || "");
+    const sig = JSON.stringify([html, recipient && recipient.id, variables, bausteinPaths, bausteinValues, previewVars]);
+    if (!force && sig === bausteinPreviewSig.current) return;
+    if (bausteinPreviewBusy.current) {
+      bausteinPreviewPending.current = true;
+      return;
+    }
+    bausteinPreviewBusy.current = true;
+    bausteinPreviewPending.current = false;
+    bausteinPreviewSig.current = sig;
+    try {
+      const res = await renderBausteinPreviews({
+        templateName: template.id,
+        hauptVerteilObjekt: template.haupt_verteil_objekt,
+        recipientId: recipient && recipient.id,
+        html,
+        variables,
+        bausteinPaths,
+        bausteinValues,
+        previewValues: previewVars,
+      });
+      setBausteinPreviewHtml(res.items || {});
+    } catch (e) {
+      setBausteinPreviewHtml({});
+      bausteinPreviewSig.current = null;
+    } finally {
+      bausteinPreviewBusy.current = false;
+      if (bausteinPreviewPending.current) {
+        bausteinPreviewPending.current = false;
+        refreshBausteinPreview({ force: true });
+      }
+    }
+  }, [template.id, template.htmlContent, template.haupt_verteil_objekt, recipient, variables, bausteinPaths, bausteinValues, previewVars, bausteinLayoutMode]);
+
+  const scheduleBausteinPreview = useCallback(() => {
+    if (!embedded || !bausteinLayoutMode) return;
+    if (bausteinPreviewTimer.current) clearTimeout(bausteinPreviewTimer.current);
+    bausteinPreviewTimer.current = setTimeout(() => refreshBausteinPreview(), 900);
+  }, [bausteinLayoutMode, refreshBausteinPreview]);
+
   // Debounce: nach der letzten Eingabe ~4s warten, dann (live) rendern. Nur wenn der
   // Vorschau-Tab sichtbar ist.
   const schedulePreview = useCallback(() => {
@@ -501,6 +551,11 @@ export const App = () => {
     if (previewTimer.current) clearTimeout(previewTimer.current);
     previewTimer.current = setTimeout(() => refreshPreview(), 4000);
   }, [tab, refreshPreview]);
+
+  useEffect(() => {
+    if (bausteinLayoutMode) refreshBausteinPreview({ force: true });
+    else setBausteinPreviewHtml({});
+  }, [bausteinLayoutMode, template.id, refreshBausteinPreview]);
 
   // Sofort rendern bei Tab-/Vorlagen-/Empfängerwechsel (Signatur-Check dedupt).
   useEffect(() => {
@@ -520,6 +575,16 @@ export const App = () => {
       }
     };
   }, [variables, bausteinPaths, bausteinValues, previewVars, schedulePreview]);
+
+  useEffect(() => {
+    scheduleBausteinPreview();
+    return () => {
+      if (bausteinPreviewTimer.current) {
+        clearTimeout(bausteinPreviewTimer.current);
+        bausteinPreviewTimer.current = null;
+      }
+    };
+  }, [variables, bausteinPaths, bausteinValues, previewVars, scheduleBausteinPreview]);
 
   return (
     <div className="app">
@@ -592,12 +657,15 @@ export const App = () => {
           loading={loadingTemplate}
           canWrite={!!template.canWrite}
           contentRef={contentRef}
-          onDirty={() => { setDirty(true); schedulePreview(); }}
+          onDirty={() => { setDirty(true); schedulePreview(); scheduleBausteinPreview(); }}
           onInsertItem={insertItem}
           onPickRecipient={() => setRecipientPickerOpen(true)}
           onMaximizePreview={() => setPdfMaximized(true)}
           onImageUpload={embedded ? (file) => uploadImage(file, template.id) : null}
           onSafety={setEditorSafety}
+          bausteinLayoutMode={bausteinLayoutMode}
+          onToggleBausteinLayout={() => setBausteinLayoutMode((v) => !v)}
+          bausteinPreviews={bausteinPreviewHtml}
         />
         <Sidebar
           tab={tab}
@@ -631,7 +699,7 @@ export const App = () => {
           variables={variables}
           placeholderPaths={placeholderPaths}
           editable={editable}
-          onVariablesChange={(v) => { if (!editable) return; setVariables(v); setDirty(true); }}
+          onVariablesChange={(v) => { if (!editable) return; setVariables(v); setDirty(true); scheduleBausteinPreview(); }}
         />
       </div>
 
@@ -744,4 +812,3 @@ export const App = () => {
     </div>
   );
 };
-

@@ -35,8 +35,28 @@ function innerOfPlaceholder(token) {
 }
 
 function bausteinLabel(token) {
-	const m = /\{\{\s*baustein\(\s*["']([^"']+)["']\s*\)\s*\}\}/.exec(token || "");
+	const m = /\{\{\s*(?:baustein|textbaustein)\(\s*["']([^"']+)["']\s*\)\s*\}\}/.exec(token || "");
 	return m ? m[1] : token || "";
+}
+
+function updateBausteinDom(dom, token) {
+	const name = bausteinLabel(token);
+	const layoutMode = !!window.__hvBausteinLayoutMode;
+	const previews = window.__hvBausteinLayoutPreviews || {};
+	const html = previews[name] || "";
+	dom.setAttribute("data-hv-kind", "baustein");
+	dom.setAttribute("data-group", "baustein");
+	dom.setAttribute("data-hv-baustein-name", name);
+	dom.title = "Klick: Details / Input-Pfade";
+	if (layoutMode && html) {
+		dom.className = "baustein-preview-node";
+		dom.innerHTML =
+			`<span class="baustein-preview-label">⧉ ${name}</span>` +
+			`<span class="baustein-preview-body">${html}</span>`;
+	} else {
+		dom.className = "chip baustein-chip";
+		dom.textContent = "\u29C9 " + name + " \u25BE";
+	}
 }
 
 // NodeView für die (atomaren) Jinja-Knoten: Doppelklick (oder einfacher Click)
@@ -198,11 +218,9 @@ export const BausteinNode = Node.create({
 			// alten Bausteins.
 			let current = node;
 			const dom = document.createElement("span");
-			dom.className = "chip baustein-chip";
-			dom.setAttribute("data-hv-kind", "baustein");
-			dom.setAttribute("data-group", "baustein");
-			dom.title = "Klick: Details / Input-Pfade";
-			dom.textContent = "\u29C9 " + bausteinLabel(node.attrs.token) + " \u25BE";
+			updateBausteinDom(dom, node.attrs.token);
+			const onPreviewRefresh = () => updateBausteinDom(dom, current.attrs.token);
+			window.addEventListener("hv-baustein-preview-refresh", onPreviewRefresh);
 			dom.addEventListener("click", (e) => {
 				e.preventDefault();
 				e.stopPropagation();
@@ -218,10 +236,13 @@ export const BausteinNode = Node.create({
 			return {
 				dom,
 				ignoreMutation: () => true,
+				destroy: () => {
+					window.removeEventListener("hv-baustein-preview-refresh", onPreviewRefresh);
+				},
 				update: (updated) => {
 					if (updated.type.name !== "hvBaustein") return false;
 					current = updated;
-					dom.textContent = "\u29C9 " + bausteinLabel(updated.attrs.token) + " \u25BE";
+					updateBausteinDom(dom, updated.attrs.token);
 					return true;
 				},
 			};

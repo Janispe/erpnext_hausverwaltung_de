@@ -25,6 +25,7 @@ const RPC_ACTIONS = {
 	recipients: HV_SB + "get_editor_recipients",
 	preview: HV_SB + "render_template_preview_pdf",
 	editor_preview: HV_SB + "render_editor_preview_pdf",
+	baustein_previews: HV_SB + "render_editor_baustein_previews",
 	upload_image: HV_SB + "upload_editor_image",
 	copy: HV_SB + "copy_serienbrief_vorlage",
 	delete: HV_SB + "delete_serienbrief_vorlage",

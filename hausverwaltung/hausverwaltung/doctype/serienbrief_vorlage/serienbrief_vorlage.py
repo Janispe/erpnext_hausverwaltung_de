@@ -124,7 +124,7 @@ def _build_pfad_footer_html(template_doc) -> str:
 def _wrap_preview_html(body_html: str, template_doc=None) -> str:
 	styles = """
 		body {
-			font-family: "Arial", "Helvetica", sans-serif;
+			font-family: "Liberation Sans", "Arial", "Helvetica", sans-serif;
 			color: #222;
 			font-size: 11pt;
 			margin: 24px;
@@ -143,7 +143,7 @@ def _wrap_preview_html(body_html: str, template_doc=None) -> str:
 		   rendern (z.B. Adressblöcke). Leerzeilen kommen durch <p>&nbsp;</p>. */
 		.serienbrief-page p {
 			margin: 0;
-			line-height: 1.4;
+			line-height: 1.35;
 		}
 		.serienbrief-block {
 			margin-bottom: 12px;
@@ -1500,6 +1500,151 @@ def render_editor_preview_pdf(
 		iteration_objekt=iteration_objekt,
 		split_preview=split_preview,
 	)
+
+
+@frappe.whitelist()
+def render_editor_baustein_previews(
+	template: str | None = None,
+	html: str | None = None,
+	variables: str | None = None,
+	baustein_pfade: str | None = None,
+	baustein_werte: str | None = None,
+	iteration_doctype: str | None = None,
+	iteration_objekt: str | None = None,
+	preview_values: str | None = None,
+) -> Dict[str, Any]:
+	"""Rendert die im Editor sichtbaren Inline-Bausteine als HTML-Snippets.
+
+	Der Editor speichert weiterhin nur ``{{ baustein("…") }}``, kann im
+	Layoutmodus aber an derselben Stelle den gerenderten Beispiel-Inhalt zeigen.
+	Die Werte-/Pfadlogik ist absichtlich dieselbe wie in der Split-PDF-Vorschau,
+	nur ohne PDF-Erzeugung.
+	"""
+	template_name = (template or "").strip()
+	if not template_name:
+		frappe.throw(_("Bitte eine Vorlage angeben."))
+	if not frappe.has_permission("Serienbrief Vorlage", "read", doc=template_name):
+		frappe.throw(_("Keine Berechtigung, die Vorlage zu lesen."), frappe.PermissionError)
+
+	doc = frappe.get_doc("Serienbrief Vorlage", template_name)
+	if html is not None:
+		if doc.content_type == "HTML + Jinja":
+			doc.html_content = cstr(html)
+		else:
+			doc.content = cstr(html)
+	if variables is not None:
+		_apply_editor_variables(doc, variables)
+	if baustein_pfade is not None:
+		parsed = _parse_path_mapping(baustein_pfade)
+		doc.inline_baustein_pfade = frappe.as_json(parsed) if parsed else ""
+	if baustein_werte is not None:
+		parsed_w = _parse_path_mapping(baustein_werte)
+		doc.inline_baustein_werte = frappe.as_json(parsed_w) if parsed_w else ""
+	if preview_values is not None:
+		pv = frappe.parse_json(preview_values)
+		if isinstance(pv, dict) and pv:
+			werte = frappe.parse_json(doc.variablen_werte) if doc.variablen_werte else {}
+			if not isinstance(werte, dict):
+				werte = {}
+			for raw_key, val in pv.items():
+				key = frappe.scrub(cstr(raw_key))
+				if key and val not in (None, ""):
+					werte[key] = {"value": val}
+			doc.variablen_werte = frappe.as_json(werte) if werte else ""
+
+	source = cstr(html if html is not None else _get_template_template_source(doc))
+	names: list[str] = []
+	for match in re.finditer(
+		r"\{\{\s*(?:baustein|textbaustein)\(\s*['\"]([^'\"]+)['\"]\s*\)\s*\}\}",
+		source,
+	):
+		name = cstr(match.group(1)).strip()
+		if name and name not in names:
+			names.append(name)
+
+	template_defaults = _preview_defaults_for_template(
+		doc, base_context=_split_preview_context()
+	)
+	previews: Dict[str, str] = {}
+	iter_dt = cstr(iteration_doctype or "").strip()
+	iter_name = cstr(iteration_objekt or "").strip()
+
+	real_context: Dict[str, Any] | None = None
+	durchlauf = None
+	if iter_dt and iter_name and frappe.db.exists(iter_dt, iter_name):
+		from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+			_collect_template_requirements,
+		)
+
+		durchlauf = frappe.new_doc("Serienbrief Durchlauf")
+		durchlauf.vorlage = doc.name
+		durchlauf.iteration_doctype = iter_dt
+		durchlauf.append(
+			"iteration_objekte",
+			{"iteration_doctype": iter_dt, "objekt": iter_name},
+		)
+		inline_override = frappe.parse_json(doc.get("inline_baustein_pfade") or "{}")
+		durchlauf._inline_bp_cache = inline_override if isinstance(inline_override, dict) else {}
+		inline_werte = frappe.parse_json(doc.get("inline_baustein_werte") or "{}")
+		durchlauf._inline_bv_cache = inline_werte if isinstance(inline_werte, dict) else {}
+		rows = durchlauf._get_empfaenger_rows()
+		if rows:
+			requirements = _collect_template_requirements(doc, iter_dt)
+			real_context = durchlauf._build_context(
+				rows[0],
+				index=1,
+				requirements=requirements,
+				template=doc,
+				total=1,
+				strict_variables=False,
+			)
+
+	for name in names:
+		try:
+			block_doc = frappe.get_cached_doc("Serienbrief Textbaustein", name)
+		except frappe.DoesNotExistError:
+			previews[name] = _split_preview_error_marker(_("Textbaustein nicht gefunden"))
+			continue
+		if real_context is not None and durchlauf is not None:
+			try:
+				block_row = next(
+					(
+						row
+						for row in (doc.get("textbausteine") or [])
+						if cstr(getattr(row, "baustein", "")).strip() == block_doc.name
+					),
+					None,
+				)
+				block_key = frappe.scrub(block_doc.name) or "baustein"
+				block_context = durchlauf._build_block_context(
+					real_context, block_doc, block_row, block_key
+				)
+				segment = durchlauf._render_block_segment(block_doc, block_context)
+				if segment and segment.get("type") == "html":
+					previews[name] = segment.get("html") or ""
+				elif segment and segment.get("preview_html"):
+					previews[name] = segment.get("preview_html") or ""
+				else:
+					previews[name] = ""
+				continue
+			except Exception as exc:
+				previews[name] = _split_preview_error_marker(exc)
+				continue
+		block_source = _get_block_template_source(block_doc).strip()
+		if not block_source:
+			previews[name] = ""
+			continue
+		block_defaults = _preview_defaults_for_block(
+			block_doc,
+			base_context=_split_preview_context(),
+			template_doc=doc,
+		)
+		previews[name] = _render_split_preview_source(
+			block_source,
+			extra_context={**template_defaults, **block_defaults},
+		)
+
+	return {"items": previews}
 
 
 @frappe.whitelist()

@@ -228,3 +228,31 @@ export async function renderPreview({
 	}
 	return await rpc("editor_preview", params);
 }
+
+// Gerenderte HTML-Snippets für die im Editor vorkommenden {{ baustein("…") }}.
+// Wird nur für den Layoutmodus genutzt; gespeichert bleibt weiter der Roh-Token.
+export async function renderBausteinPreviews({
+	templateName,
+	hauptVerteilObjekt,
+	recipientId,
+	html,
+	variables,
+	bausteinPaths,
+	bausteinValues,
+	previewValues,
+}) {
+	if (!embedded) return { items: {} };
+	const params = { template: templateName };
+	if (html != null) params.html = html;
+	if (variables != null) params.variables = JSON.stringify(variables);
+	if (bausteinPaths != null) params.baustein_pfade = JSON.stringify(bausteinPaths);
+	if (bausteinValues != null) params.baustein_werte = JSON.stringify(bausteinValues);
+	if (previewValues && Object.keys(previewValues).length) {
+		params.preview_values = JSON.stringify(previewValues);
+	}
+	if (recipientId && hauptVerteilObjekt) {
+		params.iteration_doctype = hauptVerteilObjekt;
+		params.iteration_objekt = recipientId;
+	}
+	return await rpc("baustein_previews", params);
+}

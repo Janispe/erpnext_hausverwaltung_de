@@ -227,7 +227,16 @@ const TBtn = ({ on, active, disabled, title, children }) => (
 	</button>
 );
 
-const EditorToolbar = ({ editor, disabled, onInsert, onImage, showGrid, onToggleGrid }) => {
+const EditorToolbar = ({
+	editor,
+	disabled,
+	onInsert,
+	onImage,
+	showGrid,
+	onToggleGrid,
+	bausteinLayoutMode,
+	onToggleBausteinLayout,
+}) => {
 	const can = !!editor && !disabled;
 	const isA = (name, attrs) => !!editor && editor.isActive(name, attrs);
 	const chain = () => editor.chain().focus();
@@ -437,6 +446,15 @@ const EditorToolbar = ({ editor, disabled, onInsert, onImage, showGrid, onToggle
 			)}
 			<div style={{ flex: 1 }} />
 			<div className="tool-group" style={{ borderRight: "none" }}>
+				<button
+					className={`tool-btn tool-btn-wide ${bausteinLayoutMode ? "primary-tool" : ""}`}
+					onClick={onToggleBausteinLayout}
+					title={bausteinLayoutMode ? "Bausteine als Chips anzeigen" : "Bausteine gerendert im Layout anzeigen"}
+					disabled={!editor}
+				>
+					<Icon name="block" size={14} />
+					<span>Layoutmodus</span>
+				</button>
 				<button className="tool-btn tool-btn-wide primary-tool" onClick={onInsert} title="Kontrollfluss einfügen (if / for / set …)" disabled={!can}>
 					<Icon name="branch" size={14} />
 					<span>Kontrollfluss</span>
@@ -509,6 +527,9 @@ export const Editor = ({
 	onMaximizePreview,
 	onImageUpload,
 	onSafety,
+	bausteinLayoutMode,
+	onToggleBausteinLayout,
+	bausteinPreviews,
 }) => {
 	const hasHtml = typeof template.htmlContent === "string";
 	const [safety, setSafety] = useState(null); // null = sicher; sonst { lost, added }
@@ -518,6 +539,12 @@ export const Editor = ({
 	// Tabellen-Hilfslinien ein/aus (globale Ansichts-Präferenz, gemerkt).
 	const [showGrid, setShowGrid] = useState(() => loadPref("tableGrid", true));
 	useEffect(() => savePref("tableGrid", showGrid), [showGrid]);
+
+	useEffect(() => {
+		window.__hvBausteinLayoutMode = !!bausteinLayoutMode;
+		window.__hvBausteinLayoutPreviews = bausteinPreviews || {};
+		window.dispatchEvent(new CustomEvent("hv-baustein-preview-refresh"));
+	}, [bausteinLayoutMode, bausteinPreviews]);
 
 	const editor = useEditor({
 		extensions: buildExtensions(),
@@ -620,6 +647,8 @@ export const Editor = ({
 				onImage={handleImage}
 				showGrid={showGrid}
 				onToggleGrid={() => setShowGrid((v) => !v)}
+				bausteinLayoutMode={bausteinLayoutMode}
+				onToggleBausteinLayout={onToggleBausteinLayout}
 			/>
 
 			{safety && (
@@ -637,7 +666,7 @@ export const Editor = ({
 
 			<div className="editor-scroll" ref={editorRef}>
 				<div
-					className={`editor-canvas ${dragOver ? "drag-over" : ""} ${showGrid ? "" : "hv-no-grid"}`}
+					className={`editor-canvas ${dragOver ? "drag-over" : ""} ${showGrid ? "" : "hv-no-grid"} ${bausteinLayoutMode ? "hv-baustein-layout" : ""}`}
 					onDragOver={(e) => {
 						e.preventDefault();
 						setDragOver(true);
