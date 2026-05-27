@@ -1,0 +1,15 @@
+{
+  "name": "op-workflow-bundle",
+  "version": "1.0.0",
+  "description": "Production-Bundle für die Frappe Page op-workflow",
+  "private": true,
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}
