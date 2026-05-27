@@ -13,6 +13,7 @@ from hausverwaltung.hausverwaltung.utils.immobilie_accounts import get_immobilie
 
 RHYTHMUS_MONTHS: dict[str, int] = {
 	"Monatlich": 1,
+	"Alle 2 Monate": 2,
 	"Vierteljährlich": 3,
 	"Halbjährlich": 6,
 	"Jährlich": 12,
@@ -99,7 +100,7 @@ class Zahlungsplan(Document):
 
 	@frappe.whitelist()
 	def plan_vorbelegen(self, rhythmus: str, von: str, bis: str, betrag: float | None = None, replace: int | bool = 0):
-		"""Generate plan rows for a fixed rhythm (Monatlich/Vierteljährlich/Halbjährlich/Jährlich)."""
+		"""Generate plan rows for a fixed monthly rhythm."""
 		self.check_permission("write")
 
 		if rhythmus not in RHYTHMUS_MONTHS:

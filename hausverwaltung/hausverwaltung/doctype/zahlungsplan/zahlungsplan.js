@@ -320,7 +320,7 @@ frappe.ui.form.on("Zahlungsplan", {
 					fieldname: "rhythmus",
 					fieldtype: "Select",
 					label: __("Rhythmus"),
-					options: "Monatlich\nVierteljährlich\nHalbjährlich\nJährlich",
+					options: "Monatlich\nAlle 2 Monate\nVierteljährlich\nHalbjährlich\nJährlich",
 					default: "Monatlich",
 					reqd: 1,
 				},
