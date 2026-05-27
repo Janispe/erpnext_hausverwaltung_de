@@ -518,21 +518,7 @@ def _split_preview_context() -> Dict[str, Any]:
 			index=1,
 			count=1,
 			durchlauf_name="VORSCHAU",
-			# Häufige Dunning-Type-Variablen (hv_serienbrief_werte) mit Beispielwerten,
-			# damit Mahn-Vorlagen mit {{ serienbrief.werte.X }} im Split-Preview-
-			# Modus nicht auf None laufen und der finalize-Hook werfen muss.
-			# Bei neuen Variablennamen kann diese Liste jederzeit ergänzt werden.
-			werte=frappe._dict(
-				frist="31.12.2024",
-				stufe="2",
-				monat="März 2026",
-				rueckstand="850,00",
-				zusatz_text="Beispiel-Zusatztext für die Vorschau.",
-				anlagen_text="zzgl. Nebenkosten gem. Anlage",
-				vergangene_mahnung_1="15.02.2026",
-				vergangene_mahnung_2="01.03.2026",
-				vergangene_mahnung_3="",
-			),
+			werte=frappe._dict(frist="31.12.2024"),
 		),
 		"outputs": frappe._dict(),
 	}
@@ -600,16 +586,6 @@ def _render_split_preview_source(source: str, extra_context: Dict[str, Any] | No
 	ctx = _split_preview_context()
 	if extra_context:
 		ctx.update(extra_context)
-		# Spiegelung in serienbrief.werte.X analog zum Durchlauf-Render:
-		# Vorlagen mit {{ serienbrief.werte.X }} sollen auch im Split-Preview
-		# die User-gepflegten variablen_werte-Defaults sehen — sonst fällt
-		# der Token auf den (oft generischen) Mock-Default zurück.
-		sb = ctx.get("serienbrief") or frappe._dict()
-		werte = sb.get("werte") or frappe._dict()
-		for k, v in extra_context.items():
-			werte[k] = v
-		sb["werte"] = werte
-		ctx["serienbrief"] = sb
 	sanitized = sanitize_richtext_jinja_source(source)
 	preprocessed = _preprocess_simple_paths(
 		sanitized, ctx, on_unresolvable=_split_preview_token_fallback
