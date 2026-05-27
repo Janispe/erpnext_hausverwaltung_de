@@ -54,15 +54,24 @@ function makeJinjaNodeView(tag, className, kind) {
 		// Branch-Marker (else/elif innerhalb eines if-Containers) als data-Attribut
 		// spiegeln, damit CSS-Selektoren ihn ansprechen können.
 		if (node.attrs.branch) dom.setAttribute("data-hv-branch", node.attrs.branch);
-		dom.title = "Doppelklick: Jinja-Ausdruck bearbeiten";
+		dom.title = "Klick: Jinja-Ausdruck bearbeiten";
+		// Cursor pointer + subtile Hover-Highlight, damit der User sieht dass
+		// der Knoten klickbar ist.
+		dom.style.cursor = "pointer";
 
 		const openPopover = (e) => {
 			e.preventDefault();
 			e.stopPropagation();
-			if (!editor.isEditable) return;
+			if (!editor.isEditable) {
+				console.debug("[hv-jinja-popover] editor not editable, ignore");
+				return;
+			}
 			const rect = dom.getBoundingClientRect();
 			const pos = typeof getPos === "function" ? getPos() : null;
-			if (pos == null) return;
+			if (pos == null) {
+				console.debug("[hv-jinja-popover] no pos, ignore");
+				return;
+			}
 			const save = (token) => {
 				editor
 					.chain()
@@ -73,6 +82,7 @@ function makeJinjaNodeView(tag, className, kind) {
 					})
 					.run();
 			};
+			console.debug("[hv-jinja-popover] dispatching for token", current.attrs.token);
 			window.dispatchEvent(
 				new CustomEvent("hv-jinja-token-popover", {
 					detail: {
@@ -84,7 +94,12 @@ function makeJinjaNodeView(tag, className, kind) {
 				})
 			);
 		};
-		dom.addEventListener("dblclick", openPopover);
+		// Capture-Phase: greift VOR ProseMirror's eigenen Click-Handlern, sonst
+		// schluckt PM den Click bei atomic nodes (Selektion). Beides — Click und
+		// Dblclick — damit der User nicht zweimal klicken muss, aber Dblclick
+		// als Fallback fuer User die das gewohnt sind.
+		dom.addEventListener("click", openPopover, true);
+		dom.addEventListener("dblclick", openPopover, true);
 		return {
 			dom,
 			update: (updated) => {

@@ -423,11 +423,12 @@ export const App = () => {
     return () => window.removeEventListener("hv-baustein-popover", onPop);
   }, [bausteine]);
 
-  // Jinja-Token (z.B. {% if ... %}, {% endif %}) im Editor doppel-geklickt
-  // -> Inline-Popover statt window.prompt. NodeView (extensions.js) dispatcht
-  // den Save-Callback mit, damit die State-Mutation im NodeView-Kontext bleibt.
+  // Jinja-Token (z.B. {% if ... %}, {% endif %}) im Editor geklickt → Inline-
+  // Popover statt window.prompt. NodeView (extensions.js) dispatcht den Save-
+  // Callback mit, damit die State-Mutation im NodeView-Kontext bleibt.
   useEffect(() => {
     const onPop = (e) => {
+      console.debug("[hv-jinja-popover] App received event", e.detail);
       if (!e.detail) return;
       setJinjaPopover({
         token: e.detail.token || "",
@@ -437,7 +438,11 @@ export const App = () => {
       });
     };
     window.addEventListener("hv-jinja-token-popover", onPop);
-    return () => window.removeEventListener("hv-jinja-token-popover", onPop);
+    console.debug("[hv-jinja-popover] App listener mounted");
+    return () => {
+      window.removeEventListener("hv-jinja-token-popover", onPop);
+      console.debug("[hv-jinja-popover] App listener removed");
+    };
   }, []);
 
   const searchRecipients = useCallback((q) => {
