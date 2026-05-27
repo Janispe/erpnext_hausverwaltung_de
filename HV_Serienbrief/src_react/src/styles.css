@@ -1970,6 +1970,51 @@ span[style*="color"] > .chip {
   outline: 2px dashed var(--primary);
   outline-offset: -6px;
 }
+.editor-canvas.hv-baustein-layout {
+  overflow: hidden;
+}
+.editor-canvas.hv-baustein-layout::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  top: 0;
+  right: -14mm;
+  bottom: 0;
+  left: -14mm;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(297mm - 1px),
+      rgba(31, 115, 183, 0.32) calc(297mm - 1px),
+      rgba(31, 115, 183, 0.32) 297mm
+    );
+}
+.editor-canvas.hv-baustein-layout::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  top: 0;
+  right: -11mm;
+  bottom: 0;
+  width: 7mm;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(297mm - 20px),
+      rgba(31, 115, 183, 0.08) calc(297mm - 20px),
+      rgba(31, 115, 183, 0.08) 297mm
+    );
+}
+.editor-canvas.hv-baustein-layout .tiptap-surface,
+.editor-canvas.hv-baustein-layout .editor-foot-hint,
+.editor-canvas.hv-baustein-layout .editor-loading-overlay {
+  position: relative;
+  z-index: 2;
+}
 
 /* Die eigentliche ProseMirror-Fläche – Body-Typografie 1:1 wie das PDF (install.py
    `body, .serienbrief-root`): Arial 11pt / line-height 1.35. So zeigt der Editor genau
