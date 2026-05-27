@@ -1111,7 +1111,14 @@ def _build_split_preview_html(template_doc) -> str:
 		template_doc, base_context=_split_preview_context()
 	)
 
-	def render_block(block_name: str) -> str:
+	def render_block(block_name: str, wrap: bool = True) -> str:
+		# wrap=False: rendert nur den nackten Baustein-Inhalt — für Inline-Substitution
+		# in einer ``{{ baustein("…") }}``-Vorlage. Der ``<div class="serienbrief-block">``
+		# Wrapper wäre dort fatal: viele Vorlagen schreiben ``<p>{{ baustein("X") }}</p>``,
+		# ein <div> im <p> ist invalides HTML und Chrome auto-schließt das <p>, was
+		# Phantom-leere ``<p></p>`` plus 12px ``margin-bottom`` vom Wrapper zu einem
+		# 2-Leerzeilen-Loch zusammenrechnet. Der echte Durchlauf inlined den Baustein
+		# direkt (siehe _render_inline_textbaustein), die Preview muss das spiegeln.
 		name = cstr(block_name).strip()
 		if not name:
 			return ""
@@ -1129,6 +1136,8 @@ def _build_split_preview_html(template_doc) -> str:
 		)
 		merged = {**template_defaults, **block_defaults}
 		rendered = _render_split_preview_source(source, extra_context=merged)
+		if not wrap:
+			return rendered
 		return f'<div class="serienbrief-block" data-block="{cstr(block_doc.name)}">{rendered}</div>'
 
 	if inline_mode:
@@ -1139,7 +1148,7 @@ def _build_split_preview_html(template_doc) -> str:
 		rendered_blocks: list[str] = []
 
 		def _placeholder(match) -> str:
-			rendered_blocks.append(render_block(match.group(1)))
+			rendered_blocks.append(render_block(match.group(1), wrap=False))
 			return f"<!--HV_BLOCK_{len(rendered_blocks) - 1}-->"
 
 		standard_with_placeholders = pattern.sub(_placeholder, standard_text)
