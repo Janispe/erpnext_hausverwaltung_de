@@ -17,16 +17,20 @@ frappe.pages["op-workflow"].on_page_load = function (wrapper) {
     single_column: true,
   });
 
-  // ─── Page-Toolbar ───────────────────────────────────────────────────────
-  page.set_primary_action(__("Sammelmahnung"), () => {
-    window.dispatchEvent(new CustomEvent("op-trigger-bulk-dunning"));
-  });
-  page.set_secondary_action(__("Export CSV"), () => {
-    window.dispatchEvent(new CustomEvent("op-trigger-export"));
-  });
+  // Page-Toolbar bewusst leer: Die React-UI rendert ihren eigenen Topbar
+  // (Mieterkonto / Drucken / Export CSV / Sammelmahnung), eine zweite Leiste
+  // im Frappe-Page-Header wäre ein optisches Duplikat.
 
-  // ─── React Mount-Point ──────────────────────────────────────────────────
-  $(page.body).html('<div id="op-workflow-root" style="margin:-15px -15px 0 -15px;"></div>');
+  // ─── React Mount-Point + Loading-Spinner ────────────────────────────────
+  $(page.body).html(`
+    <div id="op-workflow-root" style="margin:-15px -15px 0 -15px;">
+      <div style="display:flex;align-items:center;justify-content:center;height:60vh;color:#666;font-size:14px;">
+        <span style="display:inline-block;width:18px;height:18px;border:2px solid #ccc;border-top-color:#666;border-radius:50%;animation:op-spin 0.8s linear infinite;margin-right:10px;"></span>
+        Offene Posten werden geladen …
+      </div>
+    </div>
+    <style>@keyframes op-spin{to{transform:rotate(360deg)}}</style>
+  `);
 
   // ─── CSS + Fonts laden ──────────────────────────────────────────────────
   const cssHref = "/assets/hausverwaltung/op_workflow/styles.css";
@@ -63,12 +67,8 @@ frappe.pages["op-workflow"].on_page_load = function (wrapper) {
   (async () => {
     try {
       // React + ReactDOM (Bundle nutzt window.React/window.ReactDOM als Globals)
-      await loadScript("https://unpkg.com/react@18.3.1/umd/react.development.js", {
-        integrity: "sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L",
-      });
-      await loadScript("https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js", {
-        integrity: "sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm",
-      });
+      await loadScript("https://unpkg.com/react@18.3.1/umd/react.production.min.js");
+      await loadScript("https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js");
 
       // Bridge-Layer (Mock ↔ frappe.call)
       await loadScript(`${ASSET_BASE}/data-adapter.js`);

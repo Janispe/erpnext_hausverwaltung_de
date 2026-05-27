@@ -23,7 +23,25 @@ const MODE_SUB = {
 
 function OpApp() {
   const [t, setTweak] = useTweaks(OP_TWEAK_DEFAULTS);
-  const { rows: ALL_ROWS, partyName } = window.OFFENE_POSTEN;
+  const { partyName } = window.OFFENE_POSTEN;
+
+  // Rows als State — werden bei Backend-Refresh aktualisiert
+  const [ALL_ROWS, setAllRows] = React.useState(window.OFFENE_POSTEN.rows);
+  const [isLoading, setIsLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    const onRefresh = () => setAllRows([...window.OFFENE_POSTEN.rows]);
+    const onLoadStart = () => setIsLoading(true);
+    const onLoadEnd = () => setIsLoading(false);
+    window.addEventListener("op-data-refreshed", onRefresh);
+    window.addEventListener("op-loading-start", onLoadStart);
+    window.addEventListener("op-loading-end", onLoadEnd);
+    return () => {
+      window.removeEventListener("op-data-refreshed", onRefresh);
+      window.removeEventListener("op-loading-start", onLoadStart);
+      window.removeEventListener("op-loading-end", onLoadEnd);
+    };
+  }, []);
 
   // Filter-State
   const [mode, setMode] = useStateA0("Forderungen");
@@ -35,8 +53,27 @@ function OpApp() {
   const [activeChip, setActiveChip] = useStateA0(null);
   const [selected, setSelected] = useStateA0(() => new Set());
   const [immoFilter, setImmoFilter] = useStateA0(() => new Set()); // leer = alle
-  const [datumVon, setDatumVon] = useStateA0("");
-  const [datumBis, setDatumBis] = useStateA0("");
+  // Default: aktueller Monat (1. bis letzter Tag)
+  const _initNow = new Date();
+  const _initPad = (n) => String(n).padStart(2, "0");
+  const _initMonthStart = `${_initNow.getFullYear()}-${_initPad(_initNow.getMonth() + 1)}-01`;
+  const _initMonthEnd = `${_initNow.getFullYear()}-${_initPad(_initNow.getMonth() + 1)}-${_initPad(new Date(_initNow.getFullYear(), _initNow.getMonth() + 1, 0).getDate())}`;
+  const [datumVon, setDatumVon] = useStateA0(_initMonthStart);
+  const [datumBis, setDatumBis] = useStateA0(_initMonthEnd);
+
+  // Backend-Refresh bei Datums-Änderung (debounced 300ms). First render skip:
+  // Bootstrap hat bereits mit aktuellem Monat geladen.
+  const _didInitRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!_didInitRef.current) { _didInitRef.current = true; return; }
+    const timer = setTimeout(() => {
+      window.OP_ADAPTER.refresh({
+        von_faelligkeit: datumVon,
+        bis_faelligkeit: datumBis,
+      });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [datumVon, datumBis]);
 
   // Modal-State
   const [modal, setModal] = useStateA0(null); // { type, row }
@@ -74,7 +111,7 @@ function OpApp() {
   // Mode-gefilterte Rows
   const modeRows = useMemoA0(() => {
     return ALL_ROWS.filter((r) => mode === "Beides" || r.art === mode);
-  }, [mode]);
+  }, [mode, ALL_ROWS]);
 
   // Mahn-Statistik für Banner
   const mahnStats = useMemoA0(() => {
@@ -241,7 +278,12 @@ function OpApp() {
     <div className="mk-app">
       <div className="mk-topbar" data-screen-label="Topbar">
         <div className="mk-topbar-left">
-          <h1>Noch offene Rechnungen und Forderungen</h1>
+          <h1>
+            Noch offene Rechnungen und Forderungen
+            {isLoading && (
+              <span style={{ display: "inline-block", marginLeft: 10, width: 14, height: 14, border: "2px solid #ccc", borderTopColor: "#666", borderRadius: "50%", animation: "op-spin 0.8s linear infinite", verticalAlign: "middle" }} />
+            )}
+          </h1>
           <span className="mk-crumb">Hausverwaltung · Berichte</span>
         </div>
         <div className="mk-topbar-actions">
@@ -690,14 +732,33 @@ function FilterRow({ availableImmos, immoFilter, setImmoFilter, datumVon, datumB
   };
   const hasFilter = immoFilter.size > 0 || datumVon || datumBis;
 
-  // Datum-Presets
+  // Datum-Presets — alles dynamisch zur Render-Zeit berechnet
   const _now = new Date();
   const _Y = _now.getFullYear();
+  const _M = _now.getMonth(); // 0-indexed
+  const _pad = (n) => String(n).padStart(2, "0");
+  const _ymd = (y, m, d) => `${y}-${_pad(m + 1)}-${_pad(d)}`;
+
+  const curMonthStart = _ymd(_Y, _M, 1);
+  const curMonthEnd = _ymd(_Y, _M, new Date(_Y, _M + 1, 0).getDate());
+
+  const _prev = new Date(_Y, _M - 1, 1);
+  const prevMonthStart = _ymd(_prev.getFullYear(), _prev.getMonth(), 1);
+  const prevMonthEnd = _ymd(
+    _prev.getFullYear(),
+    _prev.getMonth(),
+    new Date(_prev.getFullYear(), _prev.getMonth() + 1, 0).getDate(),
+  );
+
+  const todayStr = _ymd(_Y, _M, _now.getDate());
+  const _d30 = new Date(_now); _d30.setDate(_d30.getDate() - 30);
+  const minus30Str = _ymd(_d30.getFullYear(), _d30.getMonth(), _d30.getDate());
+
   const presets = [
-    { label: "Q1", von: "2026-01-01", bis: "2026-03-31" },
-    { label: "Q2", von: "2026-04-01", bis: "2026-06-30" },
-    { label: "Heute", von: "2026-05-27", bis: "2026-05-27" },
-    { label: "> 30 Tage", von: "", bis: "2026-04-27" },
+    { label: "Aktueller Monat", von: curMonthStart, bis: curMonthEnd },
+    { label: "Letzter Monat", von: prevMonthStart, bis: prevMonthEnd },
+    { label: "Heute", von: todayStr, bis: todayStr },
+    { label: "> 30 Tage", von: "", bis: minus30Str },
     { label: `${_Y}`, von: `${_Y}-01-01`, bis: `${_Y}-12-31` },
     { label: `${_Y - 1}`, von: `${_Y - 1}-01-01`, bis: `${_Y - 1}-12-31` },
   ];

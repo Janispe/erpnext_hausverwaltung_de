@@ -69,23 +69,97 @@ function OpenBadge({ amount }) {
 
 // ───────── Filterbar ─────────
 
-function FilterBar({ filters, gruppieren, setGruppieren, showCats, setShowCats }) {
+function FilterBar({
+  customer, onCustomerChange,
+  fromDate, onFromChange,
+  toDate, onToChange,
+  setRange,
+  customers, company,
+  gruppieren, setGruppieren,
+  showCats, setShowCats,
+}) {
+  const Y = new Date().getFullYear();
+  const today = frappe.datetime.get_today();
+  const yearStart = `${Y}-01-01`;
+  const lastYearFrom = `${Y - 1}-01-01`;
+  const lastYearTo = `${Y - 1}-12-31`;
+  const last12From = (() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 12);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  const inputStyle = {
+    font: "inherit",
+    border: "1px solid var(--ink-3, #d6d3cb)",
+    background: "#fff",
+    borderRadius: 6,
+    padding: "4px 8px",
+    minWidth: 0,
+  };
+  const presetActive = (f, t) => fromDate === f && toDate === t;
+  const presetBtn = (label, f, t) => (
+    <button
+      className={`mk-btn mk-btn-ghost ${presetActive(f, t) ? "is-active" : ""}`}
+      onClick={() => setRange(f, t)}
+    >
+      {label}
+    </button>
+  );
+
   return (
     <div className="mk-filterbar">
       <span className="mk-filter">
-        <span className="mk-filter-label">Firma</span>
-        <span className="mk-filter-value">{filters.company}</span>
-      </span>
-      <span className="mk-filter">
         <span className="mk-filter-label">Mieter</span>
-        <span className="mk-filter-value">{filters.customer}</span>
+        <select
+          style={{ ...inputStyle, minWidth: 220 }}
+          value={customer}
+          onChange={(e) => onCustomerChange(e.target.value)}
+        >
+          <option value="">— Mieter wählen —</option>
+          {customers.map((c) => (
+            <option key={c.name} value={c.name}>
+              {c.customer_name && c.customer_name !== c.name
+                ? `${c.customer_name} (${c.name})`
+                : c.name}
+            </option>
+          ))}
+        </select>
+      </span>
+
+      <span className="mk-filter">
+        <span className="mk-filter-label">Von</span>
+        <input
+          type="date"
+          style={inputStyle}
+          value={fromDate || ""}
+          onChange={(e) => onFromChange(e.target.value)}
+        />
       </span>
       <span className="mk-filter">
-        <span className="mk-filter-label">Zeitraum</span>
-        <span className="mk-filter-value">
-          {fmtDate(filters.from_date)} — {fmtDate(filters.to_date)}
-        </span>
+        <span className="mk-filter-label">Bis</span>
+        <input
+          type="date"
+          style={inputStyle}
+          value={toDate || ""}
+          onChange={(e) => onToChange(e.target.value)}
+        />
       </span>
+
+      <span style={{ display: "inline-flex", gap: 4 }}>
+        {presetBtn("Dieses Jahr", yearStart, today)}
+        {presetBtn("Vorjahr", lastYearFrom, lastYearTo)}
+        {presetBtn("Letzte 12 Mo.", last12From, today)}
+      </span>
+
+      {company && <div className="mk-filter-sep" />}
+      {company && (
+        <span className="mk-filter">
+          <span className="mk-filter-label">Firma</span>
+          <span className="mk-filter-value">{company}</span>
+        </span>
+      )}
+
       <div className="mk-filter-sep" />
       <label className="mk-toggle">
         <input type="checkbox" checked={showCats}

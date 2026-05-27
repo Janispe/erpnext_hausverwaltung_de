@@ -14,7 +14,26 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 
 function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
-  const { mieter, filters, rows, totalRow, summary } = window.MIETERKONTO;
+
+  // Daten-State (wird bei Filter-Änderung neu gesetzt)
+  const [data, setData] = useState(window.MIETERKONTO);
+  const { mieter, filters, rows, totalRow, summary } = data;
+
+  // Filter-State
+  const _init = window.MK_INITIAL || {};
+  const [customer, setCustomer] = useState(_init.customer || "");
+  const [fromDate, setFromDate] = useState(_init.from_date || `${new Date().getFullYear()}-01-01`);
+  const [toDate, setToDate] = useState(_init.to_date || frappe.datetime.get_today());
+
+  async function applyFilters(c, f, t) {
+    await window.MK_ADAPTER.load(c, f, t);
+    setData(window.MIETERKONTO);
+  }
+
+  const onCustomerChange = (c) => { setCustomer(c); applyFilters(c, fromDate, toDate); };
+  const onFromChange = (f) => { setFromDate(f); applyFilters(customer, f, toDate); };
+  const onToChange = (t) => { setToDate(t); applyFilters(customer, fromDate, t); };
+  const setRange = (f, tt) => { setFromDate(f); setToDate(tt); applyFilters(customer, f, tt); };
 
   const [variant, setVariantLocal] = useState(t.variant);
   const [showCats, setShowCats] = useState(t.showCats);
@@ -64,7 +83,15 @@ function App() {
         {variant !== "C" && <SummaryCards summary={summary} />}
 
         <FilterBar
-          filters={filters}
+          customer={customer}
+          onCustomerChange={onCustomerChange}
+          fromDate={fromDate}
+          onFromChange={onFromChange}
+          toDate={toDate}
+          onToChange={onToChange}
+          setRange={setRange}
+          customers={window.MK_CUSTOMERS || []}
+          company={filters?.company}
           gruppieren={gruppieren}
           setGruppieren={setGruppierenBoth}
           showCats={showCats}

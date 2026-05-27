@@ -23,11 +23,23 @@
     return res.message;
   }
 
+  function defaultDateFilter() {
+    const d = new Date();
+    const Y = d.getFullYear();
+    const M = d.getMonth();
+    const pad = (n) => String(n).padStart(2, "0");
+    return {
+      von_faelligkeit: `${Y}-${pad(M + 1)}-01`,
+      bis_faelligkeit: `${Y}-${pad(M + 1)}-${pad(new Date(Y, M + 1, 0).getDate())}`,
+    };
+  }
+
   async function loadReal() {
     const { rows, today } = await fetchRows({
       company: frappe.defaults.get_user_default("Company"),
       mode: "Forderungen",
       show_aktion: 1,
+      ...defaultDateFilter(),
     });
 
     // Parties extrahieren für partyName-Lookup
@@ -84,10 +96,23 @@
     };
   }
 
+  // Refresh — Caller gibt {von_faelligkeit, bis_faelligkeit, ...} mit.
+  // Andere Filter (company/mode/show_aktion) werden ergänzt.
   async function refresh(filters) {
-    const { rows } = await fetchRows(filters);
-    window.OFFENE_POSTEN.rows = rows.map(adaptRow);
-    window.dispatchEvent(new CustomEvent("op-data-refreshed"));
+    const merged = {
+      company: frappe.defaults.get_user_default("Company"),
+      mode: "Forderungen",
+      show_aktion: 1,
+      ...(filters || {}),
+    };
+    window.dispatchEvent(new CustomEvent("op-loading-start"));
+    try {
+      const { rows } = await fetchRows(merged);
+      window.OFFENE_POSTEN.rows = rows.map(adaptRow);
+      window.dispatchEvent(new CustomEvent("op-data-refreshed"));
+    } finally {
+      window.dispatchEvent(new CustomEvent("op-loading-end"));
+    }
   }
 
   // ─── Public API ─────────────────────────────────────────────────────────
