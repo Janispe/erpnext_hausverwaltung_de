@@ -4,6 +4,14 @@ Customer Name,Debitor-Name
 Customer Type,Debitor-Typ
 Customer Group,Debitorengruppe
 Customer Groups,Debitorengruppen
+Sales Invoice,Sollstellung
+Sales Invoices,Sollstellungen
+Purchase Invoice,Ausgabe
+Purchase Invoices,Ausgaben
+Payment Entry,Zahlung
+Payment Entries,Zahlungen
+Journal Entry,Buchungssatz
+Journal Entries,Buchungssätze
 Eigentuemer,Eigentümer
 Eigentümer Name,Eigentümer Name
 Betriebskostenart,Umlagefähige Kostenart

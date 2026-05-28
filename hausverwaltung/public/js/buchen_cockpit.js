@@ -526,7 +526,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 	];
 
 	const dialog = new frappe.ui.Dialog({
-		title: __("Eingangsrechnung buchen"),
+		title: __("Ausgabe erfassen"),
 		size: "extra-large",
 		fields,
 		primary_action_label: __("Buchen"),
@@ -885,8 +885,8 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 			dialog.hide();
 			frappe.show_alert({
 				message: submit_doc
-					? __("Eingangsrechnung {0} erstellt und gebucht.", [name])
-					: __("Eingangsrechnung {0} als Entwurf gespeichert.", [name]),
+					? __("Ausgabe {0} erstellt und gebucht.", [name])
+					: __("Ausgabe {0} als Entwurf gespeichert.", [name]),
 				indicator: "green",
 			});
 			// Wenn der Dialog aus dem Bulk-Wizard heraus geöffnet wurde:
@@ -1029,7 +1029,7 @@ hausverwaltung.buchen_cockpit.open_mieterrechnung_dialog = (opts = {}) => {
 	];
 
 	const dialog = new frappe.ui.Dialog({
-		title: __("Rechnung an Mieter"),
+		title: __("Sollstellung erfassen"),
 		size: "extra-large",
 		fields,
 		primary_action_label: __("Buchen"),
@@ -1106,8 +1106,8 @@ function submit_mieterrechnung(dialog, values, submit_doc = true) {
 			dialog.hide();
 			frappe.show_alert({
 				message: submit_doc
-					? __("Rechnung {0} erstellt und gebucht.", [name])
-					: __("Rechnung {0} als Entwurf gespeichert.", [name]),
+					? __("Sollstellung {0} erstellt und gebucht.", [name])
+					: __("Sollstellung {0} als Entwurf gespeichert.", [name]),
 				indicator: "green",
 			});
 			frappe.set_route("Form", "Sales Invoice", name);
@@ -1256,7 +1256,7 @@ function open_duplicate_dialog(file_doc, parent_dialog, render_list_fn) {
 		Pending: __("wartet auf Verarbeitung"),
 		Processing: __("wird gerade analysiert"),
 		Ready: __("Vorschlag bereit, noch nicht gebucht"),
-		Booked: __("bereits als Eingangsrechnung gebucht"),
+		Booked: __("bereits als Ausgabe gebucht"),
 		Skipped: __("zuvor übersprungen"),
 		Error: __("mit Fehler abgebrochen"),
 	}[status] || status;
@@ -1299,7 +1299,7 @@ function open_duplicate_dialog(file_doc, parent_dialog, render_list_fn) {
 
 	if (status === "Booked" && existing.linked_purchase_invoice) {
 		d.add_custom_action(
-			__("Eingangsrechnung öffnen"),
+			__("Ausgabe öffnen"),
 			close_and(() =>
 				frappe.set_route("Form", "Purchase Invoice", existing.linked_purchase_invoice)
 			),
@@ -1559,20 +1559,20 @@ hausverwaltung.buchen_cockpit.mount = ($container) => {
 			<div class="hv-cockpit-tiles">
 				<div class="hv-cockpit-tile" data-action="eingang">
 					<div class="hv-cockpit-tile-title">
-						<i class="fa fa-sign-in"></i> ${__("Eingangsrechnung buchen")}
+						<i class="fa fa-sign-in"></i> ${__("Ausgabe erfassen")}
 					</div>
 					<div class="hv-cockpit-tile-desc">
 						${__(
-							"Handwerker, Versorger, Einzelbeleg — erzeugt eine Eingangsrechnung direkt."
+							"Handwerker, Versorger, Einzelbeleg — erzeugt eine Ausgabe direkt."
 						)}
 					</div>
 				</div>
 				<div class="hv-cockpit-tile" data-action="ausgang">
 					<div class="hv-cockpit-tile-title">
-						<i class="fa fa-sign-out"></i> ${__("Rechnung an Mieter")}
+						<i class="fa fa-sign-out"></i> ${__("Sollstellung erfassen")}
 					</div>
 					<div class="hv-cockpit-tile-desc">
-						${__("Einzelleistung, Nebenkosten-Nachberechnung — erzeugt eine Rechnung direkt.")}
+						${__("Einzelleistung, Nebenkosten-Nachberechnung — erzeugt eine Sollstellung direkt.")}
 					</div>
 				</div>
 				<div class="hv-cockpit-tile" data-action="abschlag">
@@ -1596,13 +1596,13 @@ hausverwaltung.buchen_cockpit.mount = ($container) => {
 			</div>
 			<div class="hv-cockpit-columns">
 				<div class="hv-cockpit-section" data-section="pi">
-					<h4>${__("Zuletzt erfasste Eingangsrechnungen")}</h4>
+					<h4>${__("Zuletzt erfasste Ausgaben")}</h4>
 					<div class="hv-cockpit-list" data-list="pi">
 						<div class="hv-cockpit-empty">${__("Lade...")}</div>
 					</div>
 				</div>
 				<div class="hv-cockpit-section" data-section="si">
-					<h4>${__("Zuletzt erfasste Mieterrechnungen")}</h4>
+					<h4>${__("Zuletzt erfasste Sollstellungen")}</h4>
 					<div class="hv-cockpit-list" data-list="si">
 						<div class="hv-cockpit-empty">${__("Lade...")}</div>
 					</div>
@@ -1673,7 +1673,7 @@ hausverwaltung.buchen_cockpit.mount = ($container) => {
 							</div>
 						`;
 					},
-					__("Noch keine Eingangsrechnungen über das Cockpit erfasst.")
+					__("Noch keine Ausgaben über das Cockpit erfasst.")
 				);
 
 				render_list(
@@ -1694,7 +1694,7 @@ hausverwaltung.buchen_cockpit.mount = ($container) => {
 							</div>
 						`;
 					},
-					__("Noch keine Mieterrechnungen über das Cockpit erfasst.")
+					__("Noch keine Sollstellungen über das Cockpit erfasst.")
 				);
 
 				render_list(

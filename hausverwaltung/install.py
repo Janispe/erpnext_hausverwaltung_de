@@ -1651,20 +1651,20 @@ def ensure_hausverwaltung_workspace_layout() -> None:
 # Order here defines the order users see. Edit here to change both surfaces.
 _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
     {
-        "label": "Buchen",
+        "label": "Buchungen",
         "icon": "receipt",
         "links": [
             {"label": "Buchungs-Cockpit", "link_type": "Page", "link_to": "buchen_cockpit"},
             # Eingangsrechnung = Lieferantenrechnung (Purchase Invoice)
-            {"label": "Eingangsrechnung", "link_type": "DocType", "link_to": "Purchase Invoice"},
+            {"label": "Ausgabe / Lieferantenrechnung", "link_type": "DocType", "link_to": "Purchase Invoice"},
             {"label": "Eingangsrechnung Vorlage", "link_type": "DocType", "link_to": "Eingangsrechnung Vorlage"},
             # Ausgangsrechnung = Mieter-/Kundenrechnung (Sales Invoice)
-            {"label": "Ausgangsrechnung", "link_type": "DocType", "link_to": "Sales Invoice"},
+            {"label": "Sollstellung / Mieterforderung", "link_type": "DocType", "link_to": "Sales Invoice"},
             {"label": "Abschlagsplan/Zahlungsplan", "link_type": "DocType", "link_to": "Zahlungsplan"},
-            {"label": "Zahlungsabgleich", "link_type": "DocType", "link_to": "Payment Reconciliation"},
-            {"label": "Noch offene Rechnungen und Forderungen", "link_type": "Report", "link_to": "Noch offene Rechnungen und Forderungen"},
+            {"label": "Zahlungen zuordnen", "link_type": "DocType", "link_to": "Payment Reconciliation"},
+            {"label": "Offene Posten", "link_type": "Report", "link_to": "Noch offene Rechnungen und Forderungen"},
             {"label": "Mahnung", "link_type": "DocType", "link_to": "Dunning"},
-            {"label": "Buchungssatz (Journal Entry)", "link_type": "DocType", "link_to": "Journal Entry"},
+            {"label": "Buchungssatz / Korrektur", "link_type": "DocType", "link_to": "Journal Entry"},
             {"label": "Kontenplan", "link_type": "DocType", "link_to": "Account"},
         ],
     },
@@ -1683,7 +1683,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
             {"label": "Immobilie", "link_type": "DocType", "link_to": "Immobilie"},
             {"label": "Wohnung", "link_type": "DocType", "link_to": "Wohnung"},
             {"label": "Mietvertrag", "link_type": "DocType", "link_to": "Mietvertrag"},
-            {"label": "Debitor (Mieter)", "link_type": "DocType", "link_to": "Customer"},
+            {"label": "Mieter", "link_type": "DocType", "link_to": "Customer"},
             {"label": "Eigentümer", "link_type": "DocType", "link_to": "Eigentuemer"},
             {"label": "Telefonnummern", "link_type": "DocType", "link_to": "Telefonnummernauszug"},
         ],
@@ -1717,7 +1717,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         "label": "Berichte",
         "icon": "sheet",
         "links": [
-            {"label": "EÜR", "link_type": "DocType", "link_to": "Einnahmen Ueberschuss Rechnung"},
+            {"label": "Einnahmen-Überschuss-Rechnung", "link_type": "DocType", "link_to": "Einnahmen Ueberschuss Rechnung"},
             {"label": "Mieterkonto", "link_type": "Report", "link_to": "Mieterkonto"},
             {"label": "Mietrechnungsprüfung", "link_type": "Report", "link_to": "Mietrechnungspruefung"},
             {"label": "Offene Abschlagszahlungen", "link_type": "Report", "link_to": "Offene Abschlagszahlungen"},
