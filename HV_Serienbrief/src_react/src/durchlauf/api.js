@@ -160,12 +160,6 @@ export async function mergedPdf() {
 	return await rpc("merged_pdf", { docname: getDocname() });
 }
 
-// Frappe-Formular neu laden (nach Empfänger-Änderung, Zeitstempel/Grid aktuell halten).
-export async function reloadForm() {
-	if (!embedded) return { ok: true };
-	return await rpc("reload_form", {});
-}
-
 // --- Vollbild-Page: Anlegen / Titel / Navigation ------------------------------
 
 // Vorlagen für den „Neuer Durchlauf"-Picker.

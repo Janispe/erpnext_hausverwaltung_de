@@ -11,7 +11,6 @@ import {
   removeRecipients as apiRemoveRecipients,
   availableRecipients,
   mergedPdf,
-  reloadForm,
   isNewMode,
   getVorlageParam,
   listVorlagen,
@@ -827,7 +826,6 @@ const DurchlaufApp = () => {
     setBusy(true);
     try {
       await apiAddRecipients(ids);
-      await reloadForm();
       setAddDialogOpen(false);
       await refresh();
     } catch (e) {
@@ -845,7 +843,6 @@ const DurchlaufApp = () => {
       setBusy(true);
       try {
         await apiRemoveRecipients(ids);
-        await reloadForm();
         setSelectedIds(new Set());
         await refresh();
       } catch (e) {
