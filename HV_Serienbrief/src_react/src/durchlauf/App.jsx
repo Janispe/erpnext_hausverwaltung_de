@@ -247,7 +247,7 @@ const RecipientRow = ({ r, selected, onSelect, onToggleSelect, isCurrent, onDown
   );
 };
 
-const RecipientsList = ({ recipients, filter, onFilter, filterCounts, query, onQuery, selectedIds, onToggleSelect, currentId, onSelect, onAddRecipient, onBulkAction, overrideCounts }) => {
+const RecipientsList = ({ recipients, filter, onFilter, filterCounts, query, onQuery, selectedIds, onToggleSelect, currentId, onSelect, onAddRecipient, onBulkAction, overrideCounts, canWrite, busy }) => {
   return (
     <main className="dl-recipients">
       <div className="dl-recipients-head">
@@ -269,7 +269,7 @@ const RecipientsList = ({ recipients, filter, onFilter, filterCounts, query, onQ
           <span className="dl-recipients-search-icon"><Icon name="search" size={12}/></span>
           <input placeholder="Empfänger suchen…" value={query} onChange={e => onQuery(e.target.value)}/>
         </div>
-        <button className="btn sm" onClick={onAddRecipient}><Icon name="plus" size={11}/> Hinzufügen</button>
+        <button className="btn sm" onClick={onAddRecipient} disabled={!canWrite || busy}><Icon name="plus" size={11}/> Hinzufügen</button>
       </div>
 
       {selectedIds.size > 0 && (
@@ -317,6 +317,110 @@ const RecipientsList = ({ recipients, filter, onFilter, filterCounts, query, onQ
         ))}
       </div>
     </main>
+  );
+};
+
+const AddRecipientDialog = ({ open, doctype, selected, busy, onClose, onConfirm }) => {
+  const [query, setQuery] = useState("");
+  const [items, setItems] = useState([]);
+  const [checked, setChecked] = useState(() => new Set());
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setQuery("");
+    setChecked(new Set());
+    setError("");
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    setLoading(true);
+    const timer = setTimeout(() => {
+      availableRecipients(query)
+        .then((res) => {
+          if (!alive) return;
+          setItems(res.items || []);
+          setError("");
+        })
+        .catch((e) => {
+          if (!alive) return;
+          setItems([]);
+          setError(e?.message || "Objekte konnten nicht geladen werden.");
+        })
+        .finally(() => { if (alive) setLoading(false); });
+    }, 180);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [open, query]);
+
+  const toggle = (id) => {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const add = () => {
+    const ids = Array.from(checked);
+    if (!ids.length) return;
+    onConfirm(ids);
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="dl-modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <div className="dl-modal" role="dialog" aria-modal="true" aria-labelledby="dl-add-recipient-title" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="dl-modal-head">
+          <div>
+            <div className="dl-modal-title" id="dl-add-recipient-title">Iterationsobjekte hinzufügen</div>
+            <div className="dl-modal-sub">{doctype || "Iterations-Doctype"} · bereits gewählte Objekte werden ausgeblendet</div>
+          </div>
+          <button className="dl-modal-icon-btn" onClick={onClose} disabled={busy} title="Schließen"><Icon name="x" size={14}/></button>
+        </div>
+
+        <div className="dl-modal-search">
+          <span className="dl-modal-search-icon"><Icon name="search" size={13}/></span>
+          <input autoFocus value={query} placeholder="Name oder Titel suchen…" onChange={(e) => setQuery(e.target.value)}/>
+        </div>
+
+        <div className="dl-modal-list">
+          {loading ? (
+            <div className="dl-modal-empty">Lade Objekte …</div>
+          ) : error ? (
+            <div className="dl-modal-error">{error}</div>
+          ) : items.length === 0 ? (
+            <div className="dl-modal-empty">Keine weiteren Objekte gefunden.</div>
+          ) : items.map((item) => {
+            const id = item.id || item.name;
+            const label = item.label || item.customer || id;
+            return (
+              <label className="dl-modal-row" key={id}>
+                <input type="checkbox" checked={checked.has(id)} onChange={() => toggle(id)}/>
+                <span className="dl-modal-row-main">
+                  <span className="dl-modal-row-title">{label}</span>
+                  <span className="dl-modal-row-sub">{id}{item.address ? ` · ${item.address}` : ""}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="dl-modal-actions">
+          <div className="dl-modal-count">{checked.size ? `${checked.size} ausgewählt` : `${selected} im Durchlauf`}</div>
+          <button className="btn" onClick={onClose} disabled={busy}>Abbrechen</button>
+          <button className="btn primary" onClick={add} disabled={busy || checked.size === 0}>
+            <Icon name="plus" size={13}/> {busy ? "Füge hinzu…" : "Hinzufügen"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -545,6 +649,7 @@ const DurchlaufApp = () => {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState("");
   const [busy, setBusy] = useState(false);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
 
   const durchlauf = { ...durchlaufMeta, variables: vars };
 
@@ -712,13 +817,18 @@ const DurchlaufApp = () => {
 
   const onNew = useCallback(() => { gotoNew(); }, []);
 
-  const onAddRecipient = useCallback(async () => {
-    const term = window.prompt("Iterations-Objekt (Name/ID) hinzufügen:");
-    if (!term || !term.trim()) return;
+  const onAddRecipient = useCallback(() => {
+    if (!durchlaufMeta.can_write || busy) return;
+    setAddDialogOpen(true);
+  }, [durchlaufMeta.can_write, busy]);
+
+  const onConfirmAddRecipients = useCallback(async (ids) => {
+    if (!ids.length) return;
     setBusy(true);
     try {
-      await apiAddRecipients([term.trim()]);
+      await apiAddRecipients(ids);
       await reloadForm();
+      setAddDialogOpen(false);
       await refresh();
     } catch (e) {
       window.alert(e?.message || "Hinzufügen fehlgeschlagen.");
@@ -807,6 +917,14 @@ const DurchlaufApp = () => {
 
   return (
     <div className="durchlauf-app">
+      <AddRecipientDialog
+        open={addDialogOpen}
+        doctype={durchlauf.iteration_doctype}
+        selected={recipients.length}
+        busy={busy}
+        onClose={() => { if (!busy) setAddDialogOpen(false); }}
+        onConfirm={onConfirmAddRecipients}
+      />
       <Header
         durchlauf={durchlauf}
         stats={stats}
@@ -835,6 +953,8 @@ const DurchlaufApp = () => {
           onAddRecipient={onAddRecipient}
           onBulkAction={onBulkAction}
           overrideCounts={perRecipientOverrides}
+          canWrite={durchlauf.can_write}
+          busy={busy}
         />
         <DetailPane
           r={currentRecipient}
@@ -949,4 +1069,3 @@ export const App = () => {
   if (isNewMode()) return <NewDurchlauf preselect={getVorlageParam()}/>;
   return <DurchlaufApp/>;
 };
-

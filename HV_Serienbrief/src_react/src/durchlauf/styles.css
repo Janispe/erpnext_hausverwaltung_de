@@ -714,6 +714,141 @@
 }
 .dl-bulk-actions { display: flex; gap: 6px; margin-left: auto; }
 
+/* ===== Empfänger hinzufügen ===== */
+.dl-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(15, 23, 42, 0.34);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.dl-modal {
+  width: min(620px, 100%);
+  max-height: min(720px, calc(100vh - 48px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dl-modal-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.dl-modal-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+.dl-modal-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.dl-modal-icon-btn {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.dl-modal-icon-btn:hover { background: var(--surface-hover); border-color: var(--border); color: var(--text); }
+.dl-modal-search {
+  position: relative;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.dl-modal-search input {
+  width: 100%;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 0 10px 0 30px;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+.dl-modal-search input:focus { outline: none; border-color: var(--border-focus); }
+.dl-modal-search-icon {
+  position: absolute;
+  left: 28px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.dl-modal-list {
+  min-height: 220px;
+  overflow-y: auto;
+}
+.dl-modal-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 18px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.dl-modal-row:hover { background: var(--surface-hover); }
+.dl-modal-row input { margin-top: 2px; }
+.dl-modal-row-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.dl-modal-row-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dl-modal-row-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dl-modal-empty,
+.dl-modal-error {
+  padding: 40px 18px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.dl-modal-error { color: var(--danger); }
+.dl-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.dl-modal-count {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 @media (max-width: 1400px) {
   .dl-main { grid-template-columns: 280px 1fr 420px; }
   .dl-list-header, .dl-row { grid-template-columns: 32px 80px 1fr 110px 70px 80px 90px 28px; }

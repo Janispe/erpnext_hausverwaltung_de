@@ -8,7 +8,7 @@
 // (englische Status-Keys, vollständige Empfänger-Objekte gegen undefined-Crashes).
 
 import { rpc, isEmbedded } from "../bridge.js";
-import { DURCHLAUF, RECIPIENTS } from "./data.js";
+import { AVAILABLE, DURCHLAUF, RECIPIENTS } from "./data.js";
 
 export const embedded = isEmbedded();
 
@@ -142,7 +142,15 @@ export async function removeRecipients(objekte) {
 }
 
 export async function availableRecipients(query) {
-	if (!embedded) return { items: [], doctype: "" };
+	if (!embedded) {
+		const q = (query || "").trim().toLowerCase();
+		const items = !q
+			? AVAILABLE
+			: AVAILABLE.filter((r) =>
+					[r.id, r.customer, r.address].some((v) => (v || "").toLowerCase().includes(q)),
+				);
+		return { items, doctype: DURCHLAUF.iteration_doctype };
+	}
 	return await rpc("available_recipients", { docname: getDocname(), query: query || "" });
 }
 
