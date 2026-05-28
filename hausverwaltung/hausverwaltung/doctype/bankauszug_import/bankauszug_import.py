@@ -51,6 +51,15 @@ class BankauszugImport(Document):
         self._compute_title()
 
     def onload(self):
+        # Beim normalen Formular-Öffnen stale Payment-Entry-Links entfernen
+        # (z.B. wenn ein Payment Entry außerhalb der Bankimport-UI storniert wurde).
+        try:
+            sync_cancelled_payment_entry_links(import_name=self.name)
+        except Exception:
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"Bankauszug Import: Storno-Sync beim Öffnen fehlgeschlagen ({self.name})",
+            )
         # Status beim Öffnen aus aktuellem Zeilen-Stand neu berechnen, damit
         # ältere Dokumente (deren Status zur Bulk-Create-Zeit eingefroren wurde)
         # die aktuelle Phase im Header zeigen.
