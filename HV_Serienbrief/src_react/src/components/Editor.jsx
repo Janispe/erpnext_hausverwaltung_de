@@ -444,7 +444,7 @@ const EditorToolbar = ({
 					))}
 				</div>
 			)}
-			<div style={{ flex: 1 }} />
+			<div className="toolbar-spacer" />
 			<div className="tool-group" style={{ borderRight: "none" }}>
 				<button
 					className={`tool-btn tool-btn-wide ${bausteinLayoutMode ? "primary-tool" : ""}`}

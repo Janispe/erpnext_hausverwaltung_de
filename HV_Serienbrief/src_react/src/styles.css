@@ -394,22 +394,29 @@ input, textarea, select { font-family: inherit; font-size: inherit; }
 
 .editor-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  align-content: flex-start;
   gap: 4px;
   padding: 8px 12px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  overflow-x: auto;
+  overflow: visible;
   min-height: 50px;
 }
-.editor-toolbar::-webkit-scrollbar { display: none; }
 .tool-group {
   display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
   align-items: center;
   gap: 2px;
   padding-right: 6px;
   margin-right: 4px;
   border-right: 1px solid var(--border);
+}
+.toolbar-spacer {
+  flex: 1 1 12px;
+  min-width: 12px;
 }
 .tool-group:last-child { border-right: none; }
 .tool-btn {
