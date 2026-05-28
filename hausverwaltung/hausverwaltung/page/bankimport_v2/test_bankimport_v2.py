@@ -39,6 +39,58 @@ class _FakeInvoice:
 		return getattr(self, key, default)
 
 
+class _OverviewRow:
+	def __init__(self):
+		self.name = "ROW-OVERVIEW"
+		self.buchungstag = "2026-04-27"
+		self.betrag = 625.0
+		self.richtung = "Eingang"
+		self.iban = "DE123"
+		self.auftraggeber = "Mieter"
+		self.verwendungszweck = "Miete"
+		self.party_type = "Customer"
+		self.party = "MIETER-1"
+		self.bank_transaction = "BT-1"
+		self.payment_entry = "PE-CANCELLED"
+		self.journal_entry = None
+		self.payment_document = "PE-CANCELLED"
+		self.payment_document_type = "Payment Entry"
+		self.row_status = "success"
+		self.auto_match_message = ""
+
+	def get(self, key, default=None):
+		return getattr(self, key, default)
+
+	def as_dict(self):
+		return {
+			"payment_entry": self.payment_entry,
+			"journal_entry": self.journal_entry,
+			"bank_transaction": self.bank_transaction,
+			"party_type": self.party_type,
+			"party": self.party,
+			"row_status": self.row_status,
+		}
+
+
+class _OverviewDoc:
+	def __init__(self, row):
+		self.name = "IMP-OVERVIEW"
+		self.title = "Import"
+		self.bank_account = "BANK-1"
+		self.csv_file = None
+		self.status = "stale"
+		self.rows = [row]
+
+	def get(self, key, default=None):
+		return getattr(self, key, default)
+
+	def reload(self):
+		return None
+
+	def _bank_account_label(self):
+		return "Bank"
+
+
 class TestSuggestInvoiceForRow(FrappeTestCase):
 	"""Sichert, dass die Rechnungs-Empfehlung des bankimport_v2-Overview die
 	gleiche Single-Exact-Logik wie der echte Auto-Matcher anwendet — nur ohne
@@ -114,3 +166,35 @@ class TestSuggestInvoiceForRow(FrappeTestCase):
 
 		with patch("frappe.get_doc", side_effect=raise_dne):
 			self.assertIsNone(bv2._suggest_invoice_for_row("BT-NONEXISTENT"))
+
+
+class TestGetOverviewSync(FrappeTestCase):
+	def test_get_overview_syncs_cancelled_payment_entry_before_response(self):
+		row = _OverviewRow()
+		doc = _OverviewDoc(row)
+
+		def sync_side_effect(import_name=None, payment_entry_name=None):
+			row.payment_entry = None
+			row.payment_document = None
+			row.payment_document_type = None
+			row.row_status = None
+			row.auto_match_message = (
+				"Automatisch zurückgesetzt: Payment Entry PE-CANCELLED ist storniert."
+			)
+			return {"cleared": 1}
+
+		with patch("frappe.get_doc", return_value=doc), \
+			 patch("frappe.has_permission", return_value=True), \
+			 patch.object(bv2, "sync_cancelled_payment_entry_links", side_effect=sync_side_effect) as sync, \
+			 patch.object(bv2, "_recompute_doc_status"), \
+			 patch.object(bv2, "_refresh_saldo_fields"), \
+			 patch.object(bv2, "_persist_saldo_fields"), \
+			 patch.object(bv2, "_suggest_invoice_for_row", return_value=None):
+			res = bv2.get_overview("IMP-OVERVIEW")
+
+		sync.assert_called_once_with(import_name="IMP-OVERVIEW")
+		out = res["rows"][0]
+		self.assertIsNone(out["paymentEntry"])
+		self.assertIsNone(out["paymentDocument"])
+		self.assertEqual(out["phase"], 3)
+		self.assertEqual(out["rowStatus"], "phase3-open")

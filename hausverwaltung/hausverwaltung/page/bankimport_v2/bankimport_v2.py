@@ -26,6 +26,7 @@ from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import i
 	_recompute_doc_status,
 	_refresh_saldo_fields,
 	_persist_saldo_fields,
+	sync_cancelled_payment_entry_links,
 )
 
 
@@ -123,6 +124,15 @@ def get_overview(import_name: str) -> dict[str, Any]:
 	frappe.has_permission("Bankauszug Import", "read", doc=doc, throw=True)
 
 	# Status + Saldo frisch halten (sonst stale nach nachträglichen Buchungen).
+	try:
+		sync_cancelled_payment_entry_links(import_name=doc.name)
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"Bankimport v2: Storno-Sync fehlgeschlagen ({doc.name})",
+		)
+		frappe.clear_last_message()
+
 	try:
 		_recompute_doc_status(doc.name)
 		_refresh_saldo_fields(doc)

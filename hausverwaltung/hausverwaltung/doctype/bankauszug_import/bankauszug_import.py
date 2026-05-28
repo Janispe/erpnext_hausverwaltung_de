@@ -215,6 +215,146 @@ def _recompute_doc_status(docname: str) -> str:
     return status
 
 
+def _payment_entry_is_cancelled_or_missing(payment_entry_name: str | None) -> bool:
+    if not payment_entry_name:
+        return False
+    docstatus = frappe.db.get_value("Payment Entry", payment_entry_name, "docstatus")
+    if docstatus is None:
+        return True
+    try:
+        return int(docstatus) == 2
+    except Exception:
+        return False
+
+
+def sync_cancelled_payment_entry_links(
+    payment_entry_name: str | None = None,
+    import_name: str | None = None,
+) -> Dict[str, Any]:
+    """Entfernt stale Payment-Entry-Links aus Bankimport-Zeilen.
+
+    Wird nach PE-Storno und beim Öffnen der Bankimport-UI genutzt. Die Bank
+    Transaction bleibt an der Zeile; nur der erledigt wirkende Voucher-Link
+    wird entfernt, damit die Zeile wieder in Phase 3 auftaucht.
+    """
+    if not payment_entry_name and not import_name:
+        frappe.throw("payment_entry_name oder import_name muss gesetzt sein.")
+
+    conditions = ["parenttype = 'Bankauszug Import'"]
+    values: Dict[str, Any] = {}
+    if import_name:
+        conditions.append("parent = %(import_name)s")
+        values["import_name"] = import_name
+    if payment_entry_name:
+        conditions.append(
+            "(payment_entry = %(payment_entry_name)s OR "
+            "(payment_document_type = 'Payment Entry' AND payment_document = %(payment_entry_name)s))"
+        )
+        values["payment_entry_name"] = payment_entry_name
+    else:
+        conditions.append(
+            "((payment_entry IS NOT NULL AND payment_entry != '') OR "
+            "(payment_document_type = 'Payment Entry' AND payment_document IS NOT NULL AND payment_document != ''))"
+        )
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT
+            name,
+            parent,
+            payment_entry,
+            payment_document_type,
+            payment_document,
+            journal_entry,
+            row_status,
+            error
+        FROM `tabBankauszug Import Row`
+        WHERE {" AND ".join(conditions)}
+        """,
+        values,
+        as_dict=True,
+    ) or []
+
+    checked: set[str] = set()
+    stale: set[str] = set()
+    cleared_rows: list[str] = []
+    affected_imports: set[str] = set()
+
+    for row in rows:
+        if row.get("journal_entry"):
+            continue
+
+        linked_payment_entries = {
+            value for value in (
+                row.get("payment_entry"),
+                row.get("payment_document")
+                if row.get("payment_document_type") == "Payment Entry"
+                else None,
+            )
+            if value
+        }
+        if payment_entry_name:
+            linked_payment_entries.add(payment_entry_name)
+
+        should_clear = False
+        stale_name = None
+        for pe_name in linked_payment_entries:
+            if pe_name not in checked:
+                checked.add(pe_name)
+                if _payment_entry_is_cancelled_or_missing(pe_name):
+                    stale.add(pe_name)
+            if pe_name in stale:
+                should_clear = True
+                stale_name = pe_name
+                break
+
+        if not should_clear:
+            continue
+
+        updates = {
+            "payment_entry": None,
+            "payment_document_type": None,
+            "payment_document": None,
+            "auto_match_message": (
+                f"Automatisch zurückgesetzt: Payment Entry {stale_name} ist storniert."
+            ),
+        }
+        if not row.get("error"):
+            updates["row_status"] = None
+
+        frappe.db.set_value(
+            "Bankauszug Import Row",
+            row.get("name"),
+            updates,
+            update_modified=False,
+        )
+        cleared_rows.append(row.get("name"))
+        if row.get("parent"):
+            affected_imports.add(row.get("parent"))
+
+    for docname in sorted(affected_imports):
+        _recompute_doc_status(docname)
+        _refresh_and_persist_saldo(docname)
+
+    return {
+        "checked": len(rows),
+        "cleared": len(cleared_rows),
+        "rows": cleared_rows,
+        "imports": sorted(affected_imports),
+    }
+
+
+def on_payment_entry_cancel(doc, method=None) -> None:
+    """Doc-event hook: Bankimport-Zeilen nach Payment-Entry-Storno öffnen."""
+    try:
+        sync_cancelled_payment_entry_links(payment_entry_name=doc.name)
+    except Exception:
+        frappe.log_error(
+            frappe.get_traceback(),
+            f"Bankauszug Import: Payment-Entry-Storno-Sync fehlgeschlagen ({doc.name})",
+        )
+
+
 def _normalize_iban(value: Optional[str]) -> Optional[str]:
     if not value:
         return None

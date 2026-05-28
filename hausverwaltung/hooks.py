@@ -281,6 +281,9 @@ doc_events = {
 		"on_submit": "hausverwaltung.hausverwaltung.services.bulk_extraction.on_purchase_invoice_submit",
 		"on_cancel": "hausverwaltung.hausverwaltung.services.bulk_extraction.on_purchase_invoice_cancel",
 	},
+	"Payment Entry": {
+		"on_cancel": "hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.on_payment_entry_cancel",
+	},
 	"Account": {
 		# Bei jedem neuen Blatt-Konto unter "Nicht Umlagefähig" automatisch
 		# eine Kostenart-Eintrag mit Default-Artikel anlegen.

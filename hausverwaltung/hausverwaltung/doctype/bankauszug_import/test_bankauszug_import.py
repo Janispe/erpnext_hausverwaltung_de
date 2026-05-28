@@ -606,6 +606,112 @@ class TestBankauszugImport(FrappeTestCase):
         self.assertNotIn("row_status", row.db_updates)
         self.assertEqual(row.reference, "BT-L2")
 
+    def test_sync_cancelled_payment_entry_links_keeps_active_payment_entry(self):
+        rows = [
+            frappe._dict({
+                "name": "ROW-ACTIVE",
+                "parent": "IMP-ACTIVE",
+                "payment_entry": "PE-ACTIVE",
+                "payment_document_type": "Payment Entry",
+                "payment_document": "PE-ACTIVE",
+                "journal_entry": None,
+                "row_status": "success",
+                "error": None,
+            })
+        ]
+
+        with patch.object(bi.frappe.db, "sql", return_value=rows), \
+             patch.object(bi.frappe.db, "get_value", return_value=1), \
+             patch.object(bi.frappe.db, "set_value") as set_value, \
+             patch.object(bi, "_recompute_doc_status") as recompute, \
+             patch.object(bi, "_refresh_and_persist_saldo") as refresh:
+            res = bi.sync_cancelled_payment_entry_links(payment_entry_name="PE-ACTIVE")
+
+        self.assertEqual(res["cleared"], 0)
+        set_value.assert_not_called()
+        recompute.assert_not_called()
+        refresh.assert_not_called()
+
+    def test_sync_cancelled_payment_entry_links_clears_cancelled_payment_entry(self):
+        rows = [
+            frappe._dict({
+                "name": "ROW-CANCELLED",
+                "parent": "IMP-CANCELLED",
+                "payment_entry": "PE-CANCELLED",
+                "payment_document_type": "Payment Entry",
+                "payment_document": "PE-CANCELLED",
+                "journal_entry": None,
+                "row_status": "success",
+                "error": None,
+            })
+        ]
+
+        with patch.object(bi.frappe.db, "sql", return_value=rows), \
+             patch.object(bi.frappe.db, "get_value", return_value=2), \
+             patch.object(bi.frappe.db, "set_value") as set_value, \
+             patch.object(bi, "_recompute_doc_status") as recompute, \
+             patch.object(bi, "_refresh_and_persist_saldo") as refresh:
+            res = bi.sync_cancelled_payment_entry_links(payment_entry_name="PE-CANCELLED")
+
+        self.assertEqual(res["cleared"], 1)
+        updates = set_value.call_args[0][2]
+        self.assertIsNone(updates["payment_entry"])
+        self.assertIsNone(updates["payment_document_type"])
+        self.assertIsNone(updates["payment_document"])
+        self.assertIsNone(updates["row_status"])
+        self.assertIn("PE-CANCELLED", updates["auto_match_message"])
+        recompute.assert_called_once_with("IMP-CANCELLED")
+        refresh.assert_called_once_with("IMP-CANCELLED")
+
+    def test_sync_cancelled_payment_entry_links_clears_payment_document_only_link(self):
+        rows = [
+            frappe._dict({
+                "name": "ROW-DOC-LINK",
+                "parent": "IMP-DOC-LINK",
+                "payment_entry": None,
+                "payment_document_type": "Payment Entry",
+                "payment_document": "PE-DOC-LINK",
+                "journal_entry": None,
+                "row_status": "success",
+                "error": None,
+            })
+        ]
+
+        with patch.object(bi.frappe.db, "sql", return_value=rows), \
+             patch.object(bi.frappe.db, "get_value", return_value=2), \
+             patch.object(bi.frappe.db, "set_value") as set_value, \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch.object(bi, "_refresh_and_persist_saldo"):
+            res = bi.sync_cancelled_payment_entry_links(import_name="IMP-DOC-LINK")
+
+        self.assertEqual(res["cleared"], 1)
+        updates = set_value.call_args[0][2]
+        self.assertIsNone(updates["payment_entry"])
+        self.assertIsNone(updates["payment_document_type"])
+        self.assertIsNone(updates["payment_document"])
+
+    def test_sync_cancelled_payment_entry_links_ignores_journal_entry_rows(self):
+        rows = [
+            frappe._dict({
+                "name": "ROW-JOURNAL",
+                "parent": "IMP-JOURNAL",
+                "payment_entry": "PE-CANCELLED",
+                "payment_document_type": "Payment Entry",
+                "payment_document": "PE-CANCELLED",
+                "journal_entry": "JE-1",
+                "row_status": "success",
+                "error": None,
+            })
+        ]
+
+        with patch.object(bi.frappe.db, "sql", return_value=rows), \
+             patch.object(bi.frappe.db, "get_value", return_value=2), \
+             patch.object(bi.frappe.db, "set_value") as set_value:
+            res = bi.sync_cancelled_payment_entry_links(payment_entry_name="PE-CANCELLED")
+
+        self.assertEqual(res["cleared"], 0)
+        set_value.assert_not_called()
+
     def test_get_abschlagsplan_candidates_filters_and_sorts_plan_rows(self):
         row = self._FakeRow(name="ROW-ABS", iban="DE16")
         row.richtung = "Ausgang"
