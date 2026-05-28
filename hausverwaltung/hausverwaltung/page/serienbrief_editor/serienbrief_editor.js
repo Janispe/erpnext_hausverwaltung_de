@@ -80,6 +80,14 @@ function buildEditorSrc(template) {
 // Verlassen alle postMessage-Aktionen (Speichern, Vorschau …) im Editor tot.
 let _editorOnMessage = null;
 let _editorListenerActive = false;
+let _editorWrapper = null;
+
+function _hideEditorPageHead(wrapper) {
+	const $wrapper = $(wrapper);
+	$wrapper.addClass("hv-serienbrief-editor-full-height");
+	$wrapper.find(".page-head").hide();
+	$wrapper.find(".page-body").css({ paddingTop: 0 });
+}
 
 function _attachEditorListener() {
 	if (_editorOnMessage && !_editorListenerActive) {
@@ -100,16 +108,19 @@ function _detachEditorListener() {
 // und den Listener reaktivieren.
 frappe.pages["serienbrief_editor"].on_page_show = function () {
 	_attachEditorListener();
+	if (_editorWrapper) _hideEditorPageHead(_editorWrapper);
 	const t = consumeTemplateRoute();
 	if (t && _editorReload) _editorReload(t);
 };
 
 frappe.pages["serienbrief_editor"].on_page_load = function (wrapper) {
+	_editorWrapper = wrapper;
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
 		title: __("Serienbrief Editor (Beta)"),
 		single_column: true,
 	});
+	_hideEditorPageHead(wrapper);
 
 	const $body = $(page.body);
 	$body.empty().css({ padding: 0, margin: 0 });
