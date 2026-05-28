@@ -44,6 +44,21 @@
 .picked { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 32px; padding: 0 6px 0 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); font-size: 12.5px; font-family: var(--font-mono); }
 .hint { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; margin-top: 8px; }
 
+/* Journal Entry split UI */
+.journal-mode { margin-bottom: 2px; }
+.journal-splits { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.split-summary { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11.5px; color: var(--text-muted); font-family: var(--font-mono); }
+.split-summary strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.split-summary.ok strong { color: var(--done); }
+.split-summary.bad strong { color: var(--danger); }
+.split-row { padding: 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); }
+.split-row-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.split-row-grid { display: grid; grid-template-columns: 105px minmax(0, 1fr); gap: 8px; margin-top: 8px; }
+.amount-input { font-family: var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 560px) {
+	.split-row-grid { grid-template-columns: 1fr; }
+}
+
 /* Allocation UI */
 .alloc-summary { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-muted); margin-bottom: 10px; font-family: var(--font-mono); }
 .alloc-summary strong { color: var(--text); font-variant-numeric: tabular-nums; }

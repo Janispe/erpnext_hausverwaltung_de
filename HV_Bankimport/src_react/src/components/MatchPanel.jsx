@@ -258,21 +258,70 @@ function JournalEntryForm({ docname, row, onActionDone, notify }) {
 	const [account, setAccount] = useState(null);
 	const [costCenter, setCostCenter] = useState("");
 	const [remarks, setRemarks] = useState(row.verwendungszweck || "");
+	const [splitMode, setSplitMode] = useState(false);
+	const [splits, setSplits] = useState([
+		{ id: 1, account: null, costCenter: "", amount: Math.abs(Number(row.betrag) || 0).toFixed(2) },
+	]);
 	const [busy, run] = useAction(notify);
+
+	useEffect(() => {
+		setAccount(null);
+		setCostCenter("");
+		setRemarks(row.verwendungszweck || "");
+		setSplitMode(false);
+		setSplits([
+			{ id: 1, account: null, costCenter: "", amount: Math.abs(Number(row.betrag) || 0).toFixed(2) },
+		]);
+	}, [row.id, row.betrag, row.verwendungszweck]);
 
 	useEffect(() => {
 		let alive = true;
 		api.getExpectedCostCenter(docname, row.id)
-			.then((d) => { if (alive && d && d.cost_center) setCostCenter(d.cost_center); })
+			.then((d) => {
+				if (alive && d && d.cost_center) {
+					setCostCenter(d.cost_center);
+					setSplits((prev) => prev.map((s) => ({ ...s, costCenter: s.costCenter || d.cost_center })));
+				}
+			})
 			.catch(() => {});
 		return () => { alive = false; };
 	}, [docname, row.id]);
 
+	const targetAmount = Math.abs(Number(row.betrag) || 0);
+	const parseAmount = (value) => {
+		const raw = String(value || "").trim();
+		const normalized = raw.includes(",") ? raw.replace(/\./g, "").replace(",", ".") : raw;
+		const n = Number(normalized);
+		return Number.isFinite(n) ? n : 0;
+	};
+	const splitTotal = splits.reduce((sum, s) => sum + parseAmount(s.amount), 0);
+	const splitDiff = Math.round((targetAmount - splitTotal) * 100) / 100;
+	const splitReady = splits.length > 0 && splits.every((s) => s.account && parseAmount(s.amount) > 0) && Math.abs(splitDiff) <= 0.01;
+	const updateSplit = (id, patch) => setSplits((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+	const addSplit = () => {
+		setSplits((prev) => [
+			...prev,
+			{ id: Date.now(), account: null, costCenter: costCenter || "", amount: Math.max(splitDiff, 0).toFixed(2) },
+		]);
+	};
+	const removeSplit = (id) => setSplits((prev) => (prev.length <= 1 ? prev : prev.filter((s) => s.id !== id)));
+
 	const book = () => {
-		if (!account) return notify("error", "Bitte ein Gegenkonto wählen.");
+		if (splitMode && !splitReady) {
+			if (Math.abs(splitDiff) > 0.01) return notify("error", "Die Split-Summe muss dem Bankbetrag entsprechen.");
+			return notify("error", "Bitte je Split-Zeile Konto und Betrag angeben.");
+		}
+		if (!splitMode && !account) return notify("error", "Bitte ein Gegenkonto wählen.");
 		run(
 			() => api.createJournalEntry(docname, row.id, {
-				account: account.value, costCenter: costCenter || undefined, remarks,
+				account: splitMode ? undefined : account.value,
+				costCenter: splitMode ? undefined : costCenter || undefined,
+				remarks,
+				splits: splitMode ? splits.map((s) => ({
+					account: s.account.value,
+					cost_center: s.costCenter || undefined,
+					amount: parseAmount(s.amount),
+				})) : undefined,
 			}),
 			{ success: "Buchungssatz erstellt und abgeglichen." }
 		).then((r) => r && r.ok !== false && onActionDone());
@@ -280,17 +329,70 @@ function JournalEntryForm({ docname, row, onActionDone, notify }) {
 
 	return (
 		<div>
-			<div className="field-label">Gegenkonto</div>
-			{account ? (
-				<div className="picked">
-					<span>{account.value}</span>
-					<button className="btn sm subtle" onClick={() => setAccount(null)}><Icon name="x" /></button>
-				</div>
+			<div className="seg journal-mode" role="tablist">
+				<button className={`seg-btn ${!splitMode ? "active" : ""}`} onClick={() => setSplitMode(false)}>
+					Ein Konto
+				</button>
+				<button className={`seg-btn ${splitMode ? "active" : ""}`} onClick={() => setSplitMode(true)}>
+					Aufteilen
+				</button>
+			</div>
+
+			{!splitMode ? (
+				<>
+					<div className="field-label" style={{ marginTop: 10 }}>Gegenkonto</div>
+					{account ? (
+						<div className="picked">
+							<span>{account.value}</span>
+							<button className="btn sm subtle" onClick={() => setAccount(null)}><Icon name="x" /></button>
+						</div>
+					) : (
+						<LinkSearch placeholder="Konto suchen (z.B. 4970)…" fetcher={api.searchAccounts} onPick={setAccount} />
+					)}
+					<div className="field-label" style={{ marginTop: 10 }}>Kostenstelle</div>
+					<input className="text-input" value={costCenter} placeholder="(optional)" onChange={(e) => setCostCenter(e.target.value)} />
+				</>
 			) : (
-				<LinkSearch placeholder="Konto suchen (z.B. 4970)…" fetcher={api.searchAccounts} onPick={setAccount} />
+				<div className="journal-splits">
+					<div className={`split-summary ${Math.abs(splitDiff) <= 0.01 ? "ok" : "bad"}`}>
+						<span>Ziel <strong>{fmtEUR(targetAmount)}</strong></span>
+						<span>Split <strong>{fmtEUR(splitTotal)}</strong></span>
+						<span>Rest <strong>{fmtEUR(splitDiff)}</strong></span>
+					</div>
+					{splits.map((s, idx) => (
+						<div className="split-row" key={s.id}>
+							<div className="split-row-head">
+								<span>Zeile {idx + 1}</span>
+								<button className="btn sm subtle" onClick={() => removeSplit(s.id)} disabled={splits.length <= 1}>
+									<Icon name="x" />
+								</button>
+							</div>
+							<div className="field-label">Konto</div>
+							{s.account ? (
+								<div className="picked">
+									<span>{s.account.value}</span>
+									<button className="btn sm subtle" onClick={() => updateSplit(s.id, { account: null })}><Icon name="x" /></button>
+								</div>
+							) : (
+								<LinkSearch placeholder="Konto suchen…" fetcher={api.searchAccounts} onPick={(item) => updateSplit(s.id, { account: item })} />
+							)}
+							<div className="split-row-grid">
+								<div>
+									<div className="field-label">Betrag</div>
+									<input className="text-input amount-input" value={s.amount} onChange={(e) => updateSplit(s.id, { amount: e.target.value })} />
+								</div>
+								<div>
+									<div className="field-label">Kostenstelle</div>
+									<input className="text-input" value={s.costCenter} placeholder="(optional)" onChange={(e) => updateSplit(s.id, { costCenter: e.target.value })} />
+								</div>
+							</div>
+						</div>
+					))}
+					<button className="btn sm" onClick={addSplit}>
+						<Icon name="plus" /> Zeile hinzufügen
+					</button>
+				</div>
 			)}
-			<div className="field-label" style={{ marginTop: 10 }}>Kostenstelle</div>
-			<input className="text-input" value={costCenter} placeholder="(optional)" onChange={(e) => setCostCenter(e.target.value)} />
 			<div className="field-label" style={{ marginTop: 10 }}>Bemerkung</div>
 			<input className="text-input" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
 			<button className="btn primary" style={{ width: "100%", justifyContent: "center", marginTop: 10 }} onClick={book} disabled={busy}>

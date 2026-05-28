@@ -244,10 +244,53 @@ def search_parties(party_type: str, txt: str = "") -> dict[str, Any]:
 
 @frappe.whitelist()
 def search_accounts(txt: str = "") -> dict[str, Any]:
-	"""Konto-Autocomplete für den Journal-Entry — Wrapper auf die bestehende
-	Cockpit-Logik (buchbare Konten aus Betriebskostenart / Kostenart nicht UL)."""
+	"""Konto-Autocomplete für den Journal-Entry.
+
+	Die Cockpit-Logik liefert nur Kostenarten-Konten. Für freie Bankimport-
+	Buchungssätze müssen zusätzlich alle aktiven Blattkonten auffindbar sein.
+	"""
 	from hausverwaltung.hausverwaltung.page.buchen_cockpit.buchen_cockpit import (
 		autocomplete_konten,
 	)
 
-	return {"items": autocomplete_konten(txt=txt or "", typ="alle")}
+	txt = (txt or "").strip()
+	items_by_value: dict[str, dict[str, Any]] = {}
+
+	for item in autocomplete_konten(txt=txt, typ="alle") or []:
+		if item.get("value"):
+			items_by_value[item["value"]] = item
+
+	like = f"%{txt}%"
+	conditions = ["is_group = 0", "ifnull(disabled, 0) = 0"]
+	values: list[Any] = []
+	if txt:
+		conditions.append("(name LIKE %s OR account_name LIKE %s OR account_number LIKE %s)")
+		values.extend([like, like, like])
+
+	accounts = frappe.db.sql(
+		f"""
+		SELECT name, account_number, account_name, root_type, report_type
+		FROM `tabAccount`
+		WHERE {" AND ".join(conditions)}
+		ORDER BY ifnull(account_number, ''), name
+		LIMIT 80
+		""",
+		values,
+		as_dict=True,
+	) or []
+
+	for account in accounts:
+		name = account.get("name")
+		if not name or name in items_by_value:
+			continue
+		account_number = account.get("account_number")
+		account_name = account.get("account_name")
+		label = f"{account_number} {account_name}" if account_number and account_name else name
+		parts = [p for p in (account.get("root_type"), account.get("report_type")) if p]
+		items_by_value[name] = {
+			"value": name,
+			"label": label,
+			"description": " / ".join(parts) if parts else None,
+		}
+
+	return {"items": list(items_by_value.values())[:80]}
