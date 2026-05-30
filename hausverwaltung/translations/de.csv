@@ -17,3 +17,7 @@ Eigentümer Name,Eigentümer Name
 Betriebskostenart,Umlagefähige Kostenart
 Betriebskostenarten,Umlagefähige Kostenarten
 Betriebskosten Festbetrag,Kostenart-Festbetrag
+Return,Guthaben
+Credit Note Issued,Guthaben ausgestellt
+Is Return (Credit Note),Ist Guthaben
+Return Against,Guthaben zu

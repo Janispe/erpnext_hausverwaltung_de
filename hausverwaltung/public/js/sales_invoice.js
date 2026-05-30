@@ -1,6 +1,7 @@
 frappe.ui.form.on("Sales Invoice", {
 	refresh(frm) {
 		window.hv_role_field_visibility?.apply(frm);
+		apply_guthaben_labels(frm);
 
 		if (is_hv_mietrechnung(frm.doc)) {
 			frm.add_custom_button(__("Stornieren & korrigiert neu erstellen"), () =>
@@ -16,8 +17,26 @@ frappe.ui.form.on("Sales Invoice", {
 	},
 	onload_post_render(frm) {
 		window.hv_role_field_visibility?.apply(frm);
+		apply_guthaben_labels(frm);
 	},
 });
+
+function apply_guthaben_labels(frm) {
+	frm.set_df_property("is_return", "label", __("Ist Guthaben"));
+	frm.set_df_property("return_against", "label", __("Guthaben zu"));
+
+	window.setTimeout(() => {
+		frm.page?.wrapper?.find(".indicator-pill").each(function () {
+			const $pill = $(this);
+			const text = ($pill.text() || "").trim();
+			if (text === __("Return") || text === "Return" || text === "Retoure") {
+				$pill.text(__("Guthaben"));
+			} else if (text === __("Credit Note Issued") || text === "Credit Note Issued") {
+				$pill.text(__("Guthaben ausgestellt"));
+			}
+		});
+	}, 0);
+}
 
 function can_write_off(doc) {
 	return (

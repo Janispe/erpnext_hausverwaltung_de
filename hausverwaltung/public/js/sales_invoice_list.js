@@ -1,6 +1,10 @@
 frappe.listview_settings["Sales Invoice"] = frappe.listview_settings["Sales Invoice"] || {};
 
 frappe.listview_settings["Sales Invoice"].get_indicator = function (doc) {
+	const status_labels = {
+		Return: __("Guthaben"),
+		"Credit Note Issued": __("Guthaben ausgestellt"),
+	};
 	const status_colors = {
 		Draft: "red",
 		Unpaid: "orange",
@@ -19,7 +23,11 @@ frappe.listview_settings["Sales Invoice"].get_indicator = function (doc) {
 		Submitted: "blue",
 	};
 
-	return [__(doc.status), status_colors[doc.status] || "blue", "status,=," + doc.status];
+	return [
+		status_labels[doc.status] || __(doc.status),
+		status_colors[doc.status] || "blue",
+		"status,=," + doc.status,
+	];
 };
 
 // Sammelaktion „Mietrechnung korrigieren" für ausgewählte Rechnungen (beliebige

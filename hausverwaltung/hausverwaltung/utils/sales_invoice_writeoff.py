@@ -318,7 +318,7 @@ def _validate_sales_invoice_for_writeoff(invoice_name: str) -> dict[str, Any]:
 	if int(invoice.get("docstatus") or 0) != 1:
 		frappe.throw(_("Sales Invoice {0} ist nicht eingereicht.").format(invoice_name))
 	if int(invoice.get("is_return") or 0):
-		frappe.throw(_("Sales Invoice {0} ist eine Return/Credit Note und kann nicht abgeschrieben werden.").format(invoice_name))
+		frappe.throw(_("Sales Invoice {0} ist ein Guthaben und kann nicht abgeschrieben werden.").format(invoice_name))
 	if invoice.get("status") in (WRITTEN_OFF_STATUS, PARTLY_PAID_AND_WRITTEN_OFF_STATUS):
 		frappe.throw(_("Sales Invoice {0} ist bereits abgeschrieben.").format(invoice_name))
 
