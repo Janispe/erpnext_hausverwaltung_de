@@ -128,6 +128,9 @@ frappe.query_reports["Noch offene Rechnungen und Forderungen"] = {
 
 	onload: function (report) {
 		update_dependent_filters();
+		report.page.add_inner_button(__("Neue OP-Ansicht öffnen"), () => {
+			frappe.set_route("op-workflow");
+		});
 		report.page.add_inner_button(__("Ausgewählte abschreiben"), () => {
 			write_off_selected_rows();
 		});
