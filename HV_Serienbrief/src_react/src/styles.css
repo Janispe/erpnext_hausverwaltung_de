@@ -1746,15 +1746,22 @@ span[style*="color"] > .chip {
   background: #ece9fb;
   color: #4b3fa3;
 }
+/* Layoutmodus: Baustein-Inhalt soll im Editor pixelgenau dort sitzen, wo er
+   im PDF landet (vor allem für Briefkopf-Bausteine relevant — sb-letterhead,
+   sb-address-window etc. positionieren sich absolut/per Float). Daher keine
+   eigene Padding/Border-Box, die den Inhalt nach unten schiebt. Stattdessen
+   ein dezenter Strich am linken Rand als Erkennungsmerkmal, Label kommt erst
+   beim Hover als Overlay rein. */
 .baustein-preview-node {
   display: inline-block;
   position: relative;
   width: 100%;
-  margin: 2px 0;
-  padding: 18px 8px 6px;
-  border: 1px dashed rgba(91, 58, 153, 0.45);
-  border-radius: 4px;
-  background: rgba(241, 236, 248, 0.26);
+  margin: 0;
+  padding: 0 0 0 4px;
+  border: 0;
+  border-left: 2px solid rgba(91, 58, 153, 0.25);
+  border-radius: 0;
+  background: transparent;
   color: inherit;
   font-family: inherit;
   font-size: inherit;
@@ -1764,14 +1771,14 @@ span[style*="color"] > .chip {
   box-sizing: border-box;
 }
 .baustein-preview-node:hover {
-  border-color: rgba(91, 58, 153, 0.9);
-  background: rgba(241, 236, 248, 0.42);
+  border-left-color: rgba(91, 58, 153, 0.9);
+  background: rgba(241, 236, 248, 0.22);
 }
 .baustein-preview-label {
   position: absolute;
-  top: 2px;
-  left: 6px;
-  max-width: calc(100% - 12px);
+  top: 0;
+  right: 4px;
+  max-width: 50%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1779,10 +1786,16 @@ span[style*="color"] > .chip {
   font-size: 9px;
   line-height: 1.2;
   color: #5b3a99;
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid rgba(91, 58, 153, 0.18);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(91, 58, 153, 0.25);
   border-radius: 3px;
   padding: 1px 4px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease-in;
+}
+.baustein-preview-node:hover .baustein-preview-label {
+  opacity: 1;
 }
 .baustein-preview-body {
   display: block;
