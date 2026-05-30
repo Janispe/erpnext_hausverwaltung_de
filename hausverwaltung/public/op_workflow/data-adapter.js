@@ -34,21 +34,43 @@
     };
   }
 
-  async function loadReal() {
-    const { rows, today } = await fetchRows({
+  function defaultFilters() {
+    return {
       company: frappe.defaults.get_user_default("Company"),
-      mode: "Forderungen",
+      mode: "Beides",
       show_aktion: 1,
+      show_settled: 0,
+      show_written_off: 0,
       ...defaultDateFilter(),
-    });
+    };
+  }
 
-    // Parties extrahieren für partyName-Lookup
+  async function hydrateLookups(rows) {
     const partyMap = {};
+    const partiesByType = {};
     for (const r of rows) {
       if (r.party && r.party_name) partyMap[r.party] = r.party_name;
+      if (r.party && r.party_type && !partyMap[r.party]) {
+        if (!partiesByType[r.party_type]) partiesByType[r.party_type] = new Set();
+        partiesByType[r.party_type].add(r.party);
+      }
     }
 
-    // CC-Labels — pro Kostenstelle deren `cost_center_name` holen.
+    const partyConfig = {
+      Customer: { fields: ["name", "customer_name"], label: (doc) => doc.customer_name || doc.name },
+      Supplier: { fields: ["name", "supplier_name"], label: (doc) => doc.supplier_name || doc.name },
+    };
+    for (const [doctype, names] of Object.entries(partiesByType)) {
+      const cfg = partyConfig[doctype];
+      if (!cfg || !names.size) continue;
+      const docs = await frappe.db.get_list(doctype, {
+        filters: [["name", "in", [...names]]],
+        fields: cfg.fields,
+        limit_page_length: 500,
+      });
+      for (const doc of docs) partyMap[doc.name] = cfg.label(doc);
+    }
+
     const ccLabel = {};
     const ccs = [...new Set(rows.map((r) => r.kostenstelle).filter(Boolean))];
     if (ccs.length) {
@@ -60,8 +82,16 @@
       for (const cc of ccDocs) ccLabel[cc.name] = cc.cost_center_name || cc.name;
     }
 
+    return { partyMap, ccLabel };
+  }
+
+  async function loadReal() {
+    const filters = defaultFilters();
+    const { rows, today } = await fetchRows(filters);
+    const { partyMap, ccLabel } = await hydrateLookups(rows);
+
     window.OFFENE_POSTEN = {
-      filters: {},
+      filters,
       rows: rows.map(adaptRow),
       parties: partyMap,
       partyName: (id) => partyMap[id] || id,
@@ -77,6 +107,7 @@
   function adaptRow(raw) {
     return {
       art: raw.art,
+      party_type: raw.party_type,
       party: raw.party,
       buchungsdatum: raw.buchungsdatum,
       faellig_am: raw.faellig_am,
@@ -96,19 +127,23 @@
     };
   }
 
-  // Refresh — Caller gibt {von_faelligkeit, bis_faelligkeit, ...} mit.
-  // Andere Filter (company/mode/show_aktion) werden ergänzt.
+  // Refresh — Caller gibt Report-Filter mit. Defaults bleiben erhalten, damit
+  // Tab-Wechsel und Toggles immer gegen echte Backend-Daten laufen.
   async function refresh(filters) {
     const merged = {
-      company: frappe.defaults.get_user_default("Company"),
-      mode: "Forderungen",
-      show_aktion: 1,
+      ...(window.OFFENE_POSTEN?.filters || defaultFilters()),
       ...(filters || {}),
     };
     window.dispatchEvent(new CustomEvent("op-loading-start"));
     try {
-      const { rows } = await fetchRows(merged);
+      const { rows, today } = await fetchRows(merged);
+      const { partyMap, ccLabel } = await hydrateLookups(rows);
+      window.OFFENE_POSTEN.filters = merged;
       window.OFFENE_POSTEN.rows = rows.map(adaptRow);
+      window.OFFENE_POSTEN.parties = partyMap;
+      window.OFFENE_POSTEN.partyName = (id) => partyMap[id] || id;
+      window.OFFENE_POSTEN.ccLabel = ccLabel;
+      if (today) window.OFFENE_POSTEN.TODAY = today;
       window.dispatchEvent(new CustomEvent("op-data-refreshed"));
     } finally {
       window.dispatchEvent(new CustomEvent("op-loading-end"));

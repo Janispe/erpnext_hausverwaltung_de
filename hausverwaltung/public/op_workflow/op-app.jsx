@@ -30,7 +30,10 @@ function OpApp() {
   const [isLoading, setIsLoading] = React.useState(false);
 
   React.useEffect(() => {
-    const onRefresh = () => setAllRows([...window.OFFENE_POSTEN.rows]);
+    const onRefresh = () => {
+      setAllRows([...window.OFFENE_POSTEN.rows]);
+      setSelected(new Set());
+    };
     const onLoadStart = () => setIsLoading(true);
     const onLoadEnd = () => setIsLoading(false);
     window.addEventListener("op-data-refreshed", onRefresh);
@@ -48,7 +51,7 @@ function OpApp() {
   const [sortierung, setSortierung] = useStateA0("Fällig am");
   const [sortDir, setSortDir] = useStateA0("asc"); // asc | desc
   const [showSettled, setShowSettled] = useStateA0(false);
-  const [showWrittenOff, setShowWrittenOff] = useStateA0(true);
+  const [showWrittenOff, setShowWrittenOff] = useStateA0(false);
   const [search, setSearch] = useStateA0("");
   const [activeChip, setActiveChip] = useStateA0(null);
   const [selected, setSelected] = useStateA0(() => new Set());
@@ -61,19 +64,22 @@ function OpApp() {
   const [datumVon, setDatumVon] = useStateA0(_initMonthStart);
   const [datumBis, setDatumBis] = useStateA0(_initMonthEnd);
 
-  // Backend-Refresh bei Datums-Änderung (debounced 300ms). First render skip:
-  // Bootstrap hat bereits mit aktuellem Monat geladen.
+  // Backend-Refresh bei Report-Filtern (debounced 300ms). First render skip:
+  // Bootstrap hat bereits mit den Initial-Filtern geladen.
   const _didInitRef = React.useRef(false);
   React.useEffect(() => {
     if (!_didInitRef.current) { _didInitRef.current = true; return; }
     const timer = setTimeout(() => {
       window.OP_ADAPTER.refresh({
+        mode: "Beides",
         von_faelligkeit: datumVon,
         bis_faelligkeit: datumBis,
+        show_settled: showSettled ? 1 : 0,
+        show_written_off: showWrittenOff ? 1 : 0,
       });
     }, 300);
     return () => clearTimeout(timer);
-  }, [datumVon, datumBis]);
+  }, [datumVon, datumBis, showSettled, showWrittenOff]);
 
   // Modal-State
   const [modal, setModal] = useStateA0(null); // { type, row }
@@ -118,7 +124,7 @@ function OpApp() {
       cnt["Beides"] += 1;
     });
     return cnt;
-  }, []);
+  }, [ALL_ROWS]);
 
   // Mode-gefilterte Rows
   const modeRows = useMemoA0(() => {
@@ -234,6 +240,13 @@ function OpApp() {
   // Selection: Bulk-Aktionen
   const selectableIds = useMemoA0(() => new Set(filteredRows.filter(r => r.can_write_off).map(r => r.belegnummer)), [filteredRows]);
   const selectedRows = useMemoA0(() => filteredRows.filter(r => selected.has(r.belegnummer)), [filteredRows, selected]);
+  React.useEffect(() => {
+    const visibleIds = new Set(filteredRows.map((r) => r.belegnummer));
+    setSelected((prev) => {
+      const next = new Set([...prev].filter((id) => visibleIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [filteredRows]);
   const selectedSum = selectedRows.reduce((a, r) => a + r.offen, 0);
   const toggleSel = (id) => {
     setSelected(prev => {
@@ -245,6 +258,71 @@ function OpApp() {
   const toggleSelAll = () => {
     if (selected.size === selectableIds.size) setSelected(new Set());
     else setSelected(new Set(selectableIds));
+  };
+
+  const exportCsv = () => {
+    const cols = [
+      ["faellig_am", "Fällig am"],
+      ["alter_tage", "Alter Tage"],
+      ["party", mode === "Rechnungen" ? "Lieferant" : "Mieter"],
+      ["kostenstelle", "Immobilie/Kostenstelle"],
+      ["belegart", "Belegart"],
+      ["belegnummer", "Belegnummer"],
+      ["bemerkungen", "Bemerkungen"],
+      ["status", "Status"],
+      ["rechnungsbetrag", "Rechnungsbetrag"],
+      ["bezahlt", "Bezahlt"],
+      ["offen", "Offen"],
+      ["zahlungsrichtung", "Zahlungsrichtung"],
+    ];
+    const esc = (value) => {
+      const text = value == null ? "" : String(value);
+      return /[",\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    };
+    const csv = [
+      cols.map(([, label]) => esc(label)).join(";"),
+      ...filteredRows.map((row) => cols.map(([key]) => esc(row[key])).join(";")),
+    ].join("\n");
+    const blob = new Blob([`\ufeff${csv}`], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `offene-posten-${mode.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const openBulkDunning = (rows) => {
+    const candidates = rows.filter((r) =>
+      r.art === "Forderungen" &&
+      r.belegart === "Sales Invoice" &&
+      r.offen > 0.01 &&
+      r.alter_tage > 0 &&
+      r.status !== "Written Off"
+    );
+    if (!candidates.length) {
+      setToast("Keine mahnfähigen Forderungen in der Auswahl.");
+      return;
+    }
+    setSelected(new Set(candidates.map((r) => r.belegnummer)));
+    setModal({ type: "sammelmahnung", rows: candidates });
+  };
+
+  const writeOffSelected = async () => {
+    const candidates = selectedRows.filter((r) => r.can_write_off);
+    if (!candidates.length) {
+      setToast("Keine abschreibbaren Sales-Invoice-Forderungen ausgewählt.");
+      return;
+    }
+    for (const row of candidates) {
+      await window.OP_ACTIONS.writeOff(row, {
+        remarks: `Abschreibung aus OP-Workflow vorbereitet: ${row.belegnummer}`,
+      });
+    }
+    setSelected(new Set());
+    setToast(`${candidates.length} Abschreibungs-Draft${candidates.length === 1 ? "" : "s"} erstellt.`);
   };
 
   // Generische Gruppierung: nach Mieter oder Immobilie
@@ -301,8 +379,8 @@ function OpApp() {
         <div className="mk-topbar-actions">
           <a className="mk-btn mk-btn-ghost" href="/app/mieterkonto-workflow">← Mieterkonto</a>
           <button className="mk-btn mk-btn-ghost" onClick={() => window.print()}>Drucken</button>
-          <button className="mk-btn mk-btn-ghost">Export CSV</button>
-          <button className="mk-btn mk-btn-primary">Sammelmahnung</button>
+          <button className="mk-btn mk-btn-ghost" onClick={exportCsv}>Export CSV</button>
+          <button className="mk-btn mk-btn-primary" onClick={() => openBulkDunning(mahnStats.rows)}>Sammelmahnung</button>
         </div>
       </div>
 
@@ -454,8 +532,8 @@ function OpApp() {
             </div>
             <div className="op-bulkbar-actions">
               <button className="op-bulk-btn" onClick={() => setSelected(new Set())}>Auswahl aufheben</button>
-              <button className="op-bulk-btn">Mahnung erstellen</button>
-              <button className="op-bulk-btn is-primary">Ausgewählte abschreiben</button>
+              <button className="op-bulk-btn" onClick={() => openBulkDunning(selectedRows)}>Mahnung erstellen</button>
+              <button className="op-bulk-btn is-primary" onClick={writeOffSelected}>Ausgewählte abschreiben</button>
             </div>
           </div>
         )}
