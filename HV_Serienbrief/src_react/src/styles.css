@@ -2074,6 +2074,20 @@ span[style*="color"] > .chip {
       transparent calc(var(--hv-editor-page-height) + var(--hv-editor-page-gap))
     );
 }
+/* Per-Seite-Footer-Overlay im Layoutmodus: wird von Editor.jsx
+   (applyFooterOverlays) pro simulierter Seite ins Canvas eingefügt.
+   Positioniert absolut relativ zum Canvas, breite Spalte = Content-Spalte
+   (passend zu den Canvas-Paddings 25mm links / 20mm rechts). Der vom
+   Backend gelieferte <div id="footer-html"> bringt seinen eigenen Style
+   mit (border-top, font-size, color, height 12mm) — wir geben hier nur
+   Position und z-Index vor. */
+.editor-canvas.hv-baustein-layout .hv-page-sim-footer-overlay {
+  position: absolute;
+  left: 25mm;
+  right: 20mm;
+  z-index: 1;
+  pointer-events: none;
+}
 .editor-canvas.hv-baustein-layout .tiptap-surface .hv-page-sim-next {
   margin-top: var(--hv-page-sim-gap) !important;
   position: relative;

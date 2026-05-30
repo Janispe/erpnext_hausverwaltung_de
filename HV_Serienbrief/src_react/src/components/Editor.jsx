@@ -161,6 +161,52 @@ function applyPageSimulation(canvas, editor) {
 	);
 }
 
+// Per-Seite-Footer im Layoutmodus: legt im Bottom-Margin-Bereich jeder
+// simulierten Seite ein absolut positioniertes Overlay mit dem gerenderten
+// Footer-HTML aus dem Print Format ab. Liest den HTML-Stand aus dem globalen
+// window.__hvEditorFooterHtml (in Editor.jsx an die App-Prop synced), damit
+// schedulePageSimulation keine zusätzliche Signatur braucht.
+function applyFooterOverlays(canvas, editor) {
+	if (!canvas) return;
+	const footerHtml = (typeof window !== "undefined" && window.__hvEditorFooterHtml) || "";
+	const existing = canvas.querySelectorAll(".hv-page-sim-footer-overlay");
+	if (!footerHtml) {
+		existing.forEach((el) => el.remove());
+		return;
+	}
+	const pm = editor?.view?.dom;
+	const canvasRect = canvas.getBoundingClientRect();
+	const pxPerMm = canvasRect.width / PAGE_SIM.pageWidthMm;
+	const pageStep = (PAGE_SIM.pageMm + PAGE_SIM.pageGapMm) * pxPerMm;
+	const pageHeightPx = PAGE_SIM.pageMm * pxPerMm;
+	const bottomMarginPx = PAGE_SIM.paddingBottomMm * pxPerMm;
+	// Seitenanzahl: jede page-sim-next-Marker ist ein Seitenumbruch → pages = breaks + 1.
+	const breaks = pm ? pm.querySelectorAll(".hv-page-sim-next").length : 0;
+	const pageCount = Math.max(1, breaks + 1);
+
+	for (let i = existing.length; i < pageCount; i += 1) {
+		const el = document.createElement("div");
+		el.className = "hv-page-sim-footer-overlay";
+		canvas.appendChild(el);
+	}
+	const overlays = canvas.querySelectorAll(".hv-page-sim-footer-overlay");
+	for (let i = overlays.length - 1; i >= pageCount; i -= 1) {
+		overlays[i].remove();
+	}
+	const fresh = canvas.querySelectorAll(".hv-page-sim-footer-overlay");
+	fresh.forEach((overlay, idx) => {
+		// Top am Beginn des Bottom-Margin-Bereichs der Seite. Der Footer-Inhalt
+		// hat selbst eine fixe Höhe (12mm laut Print Format), Rest des Margins
+		// bleibt sichtbar leer wie im PDF.
+		const top = idx * pageStep + pageHeightPx - bottomMarginPx;
+		overlay.style.top = `${top}px`;
+		if (overlay.dataset.footerHtml !== footerHtml) {
+			overlay.innerHTML = footerHtml;
+			overlay.dataset.footerHtml = footerHtml;
+		}
+	});
+}
+
 function schedulePageSimulation(editor) {
 	if (!editor) return;
 	const run = () => {
@@ -168,9 +214,12 @@ function schedulePageSimulation(editor) {
 		if (!canvas) {
 			clearPageSimulationDecorations(editor);
 			clearPageSimulation(editor.view?.dom);
+			// Footer-Overlays räumen, wenn Layoutmodus aus ist (kein Canvas).
+			document.querySelectorAll(".hv-page-sim-footer-overlay").forEach((el) => el.remove());
 			return;
 		}
 		applyPageSimulation(canvas, editor);
+		applyFooterOverlays(canvas, editor);
 	};
 	(window.__hvPageSimTimers || []).forEach((timer) => window.clearTimeout(timer));
 	window.requestAnimationFrame(() => {
@@ -679,6 +728,7 @@ export const Editor = ({
 	bausteinLayoutMode,
 	onToggleBausteinLayout,
 	bausteinPreviews,
+	footerHtml,
 }) => {
 	const hasHtml = typeof template.htmlContent === "string";
 	const [safety, setSafety] = useState(null); // null = sicher; sonst { lost, added }
@@ -695,6 +745,13 @@ export const Editor = ({
 		window.__hvBausteinLayoutPreviews = bausteinPreviews || {};
 		window.dispatchEvent(new CustomEvent("hv-baustein-preview-refresh"));
 	}, [bausteinLayoutMode, bausteinPreviews]);
+
+	useEffect(() => {
+		// Footer-HTML im window ablegen — schedulePageSimulation liest es von dort
+		// (sonst müsste die Funktion durch die ganze Aufrufkette geschleift werden).
+		window.__hvEditorFooterHtml = (bausteinLayoutMode && footerHtml) || "";
+		schedulePageSimulation(editor);
+	}, [bausteinLayoutMode, footerHtml, editor]);
 
 	const editor = useEditor({
 		extensions: [...buildExtensions(), PageSimulationExtension],

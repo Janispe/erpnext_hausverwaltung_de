@@ -1741,6 +1741,70 @@ def get_editor_print_format_css() -> Dict[str, str]:
 
 
 @frappe.whitelist()
+def render_editor_footer_html(template: str | None = None) -> Dict[str, str]:
+	"""Rendert das Page-Footer-Snippet des Print Formats fuer die Editor-
+	Layoutvorschau. Nutzt dieselbe Split-Preview-Mock-Pipeline wie die
+	Baustein-Vorschau: ephemeres ``Serienbrief Dokument`` mit Vorlage-Bezug,
+	``hv_serienbrief_split_preview``-Flag an, damit der Bankverbindung-
+	Helper sein Mock-Snippet liefert statt Resolver gegen Mocks laufen
+	zu lassen.
+
+	Liefert ``{html, error}`` — Fehler werden NICHT geworfen, damit die
+	Vorschau auch bei kaputten Templates weiterläuft.
+	"""
+	template_name = cstr(template or "").strip()
+	if not template_name:
+		return {"html": "", "error": ""}
+	if not frappe.has_permission("Serienbrief Vorlage", "read", doc=template_name):
+		return {"html": "", "error": _("Keine Leseberechtigung.")}
+
+	print_format = _get_editor_print_format_name()
+	try:
+		pf_html = frappe.db.get_value("Print Format", print_format, "html") or ""
+	except Exception as exc:
+		return {"html": "", "error": cstr(exc)}
+
+	# Footer-Block aus dem Print Format ziehen (install.py: <div id="footer-html"…>).
+	# Der Footer enthält verschachtelte <div>s (Bank-Zeile, Pfad-Zeile), daher
+	# Tag-Balancing statt non-greedy Regex: vom Anfangs-<div id="footer-html"> die
+	# passenden <div>/</div> mitzählen bis Depth 0.
+	open_match = re.search(
+		r'<div\s+id=["\']footer-html["\'][^>]*>',
+		pf_html,
+		flags=re.I,
+	)
+	if not open_match:
+		return {"html": "", "error": ""}
+	start = open_match.start()
+	cursor = open_match.end()
+	depth = 1
+	tag_re = re.compile(r"<(/?)div\b[^>]*>", flags=re.I)
+	while depth > 0:
+		next_tag = tag_re.search(pf_html, cursor)
+		if not next_tag:
+			return {"html": "", "error": _("Footer-Block im Print Format ist nicht balanciert.")}
+		depth += -1 if next_tag.group(1) else 1
+		cursor = next_tag.end()
+	footer_template = pf_html[start:cursor]
+
+	ephemeral = frappe.new_doc("Serienbrief Dokument")
+	ephemeral.vorlage = template_name
+	# iteration_doctype / objekt bewusst leer — der Bankverbindungs-Helper sieht das
+	# Split-Preview-Flag und liefert das hartkodierte Mock-Snippet, ohne Iterations-
+	# objekt zu brauchen.
+
+	previous_flag = frappe.flags.get("hv_serienbrief_split_preview")
+	frappe.flags.hv_serienbrief_split_preview = True
+	try:
+		rendered = frappe.render_template(footer_template, {"doc": ephemeral})
+		return {"html": rendered, "error": ""}
+	except Exception as exc:
+		return {"html": "", "error": cstr(exc)}
+	finally:
+		frappe.flags.hv_serienbrief_split_preview = previous_flag
+
+
+@frappe.whitelist()
 def render_template_preview_html(
 	template: str | None = None, template_doc: Dict[str, Any] | None = None
 ) -> Dict[str, str]:

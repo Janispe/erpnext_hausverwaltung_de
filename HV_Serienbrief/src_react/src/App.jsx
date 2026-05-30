@@ -14,6 +14,7 @@ import {
   loadPlaceholderTree, loadBausteine, loadRecipients, renderPreview,
   renderBausteinPreviews,
   loadEditorPrintFormatCss,
+  loadEditorFooterHtml,
   uploadImage, embedded,
 } from "./api.js";
 import { validateJinjaBalance } from "./tiptap/validateJinja.js";
@@ -57,6 +58,9 @@ export const App = () => {
   const [bausteinLayoutMode, setBausteinLayoutMode] = useState(() => loadPref("bausteinLayoutMode", false));
   const [bausteinPreviewHtml, setBausteinPreviewHtml] = useState({});
   const [editorPrintCss, setEditorPrintCss] = useState("");
+  // Gerendertes Page-Footer-HTML (mit Mock-Bankverbindung + Pfad-Zeile) für die
+  // Per-Seite-Anzeige im Layoutmodus. Leer wenn der Modus aus ist.
+  const [editorFooterHtml, setEditorFooterHtml] = useState("");
   // Token-Erhalt-Check beim Laden: null = sicher, sonst { lost, added } -> Speichern blockiert.
   const [editorSafety, setEditorSafety] = useState(null);
   // Pro-Baustein Input-Pfad-Overrides { "<Baustein>": { "<Variable>": "<Pfad>" } }
@@ -572,6 +576,21 @@ export const App = () => {
     else setBausteinPreviewHtml({});
   }, [bausteinLayoutMode, template.id, refreshBausteinPreview]);
 
+  // Footer-HTML nachladen, sobald Layoutmodus an ist oder die Vorlage wechselt.
+  // Footer-Inhalt hängt nur an der Vorlage (Mock-Bank + Pfad-Zeile aus Kategorie),
+  // nicht am Empfänger oder am Edit-Stand — daher kein Debounce, ein-Fetch reicht.
+  useEffect(() => {
+    if (!embedded || !bausteinLayoutMode || !template.id) {
+      setEditorFooterHtml("");
+      return;
+    }
+    let alive = true;
+    loadEditorFooterHtml(template.id)
+      .then((res) => { if (alive) setEditorFooterHtml((res && res.html) || ""); })
+      .catch(() => { if (alive) setEditorFooterHtml(""); });
+    return () => { alive = false; };
+  }, [bausteinLayoutMode, template.id]);
+
   // Sofort rendern bei Tab-/Vorlagen-/Empfängerwechsel (Signatur-Check dedupt).
   useEffect(() => {
     if (embedded && tab === "preview" && template.id) refreshPreview();
@@ -682,6 +701,7 @@ export const App = () => {
           bausteinLayoutMode={bausteinLayoutMode}
           onToggleBausteinLayout={() => setBausteinLayoutMode((v) => !v)}
           bausteinPreviews={bausteinPreviewHtml}
+          footerHtml={editorFooterHtml}
         />
         <Sidebar
           tab={tab}

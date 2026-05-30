@@ -147,6 +147,13 @@ export async function loadEditorPrintFormatCss() {
 	return await rpc("editor_print_css", {});
 }
 
+// Gerendertes Page-Footer-HTML (mit Mock-Bankverbindung + Kategorienpfad) zum
+// Einblenden im Editor-Layoutmodus pro Seite. Liefert {html, error}.
+export async function loadEditorFooterHtml(templateName) {
+	if (!embedded) return { html: "", error: "" };
+	return await rpc("editor_footer", { template: templateName || "" });
+}
+
 // Voller Platzhalter-Baum (Parität zum alten Formular-Picker): Gruppen mit
 // rekursivem Feld-Baum, abgeleitet aus dem Iterationsobjekt + Variablen + Referenzen.
 export async function loadPlaceholderTree(name) {
