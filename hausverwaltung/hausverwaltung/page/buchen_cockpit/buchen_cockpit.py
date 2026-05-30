@@ -797,6 +797,8 @@ def create_sales_invoice(**kwargs) -> dict:
         wertstellungsdatum: ISO date (Leistungszeitraum, optional) — landet in custom_wertstellungsdatum
         rechnungsname: free-form label
         referenz: optional reference
+        bemerkung: optionale freie Bemerkung — landet in si.remarks. Wenn leer,
+            werden standardmäßig die Positions-Beschreibungen übernommen.
         positionen: list of dicts with keys
             beschreibung, betrag, artikel, erloeskonto
     """
@@ -834,13 +836,17 @@ def create_sales_invoice(**kwargs) -> dict:
     default_income_account = frappe.db.get_value("Company", company, "default_income_account")
 
     items: list[dict] = []
+    position_descriptions: list[str] = []
     for idx, r in enumerate(rows, start=1):
         betrag = r.get("betrag")
         if betrag in (None, ""):
             frappe.throw(f"Position {idx}: Betrag fehlt.")
 
         item_code = r.get("artikel") or default_item_code
-        desc = r.get("beschreibung") or kwargs.get("rechnungsname") or kwargs.get("referenz") or "Sonstige Leistung"
+        beschreibung = (r.get("beschreibung") or "").strip()
+        desc = beschreibung or kwargs.get("rechnungsname") or kwargs.get("referenz") or "Sonstige Leistung"
+        if beschreibung:
+            position_descriptions.append(beschreibung)
 
         item_row: dict[str, Any] = {
             "item_code": item_code,
@@ -861,6 +867,11 @@ def create_sales_invoice(**kwargs) -> dict:
 
         items.append(item_row)
 
+    # Bemerkung: freie User-Eingabe hat Vorrang, sonst werden standardmäßig die
+    # Positions-Beschreibungen übernommen.
+    user_remark = (kwargs.get("bemerkung") or "").strip()
+    remarks = user_remark or "\n".join(d for d in position_descriptions if d)
+
     si = frappe.new_doc("Sales Invoice")
     si.update({
         "company": company,
@@ -868,7 +879,7 @@ def create_sales_invoice(**kwargs) -> dict:
         "posting_date": posting_date,
         "due_date": due_date,
         "ignore_default_payment_terms_template": 1,
-        "remarks": f"Erfasst über Buchungs-Cockpit | Mietvertrag: {mietvertrag} | Referenz: {kwargs.get('referenz') or ''}",
+        "remarks": remarks,
     })
     si.set("payment_terms_template", None)
     si.set("payment_schedule", [])

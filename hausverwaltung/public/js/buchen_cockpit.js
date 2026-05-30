@@ -1026,6 +1026,15 @@ hausverwaltung.buchen_cockpit.open_mieterrechnung_dialog = (opts = {}) => {
 				},
 			],
 		},
+		{ fieldtype: "Section Break", label: __("Bemerkung") },
+		{
+			fieldtype: "Small Text",
+			fieldname: "bemerkung",
+			label: __("Bemerkung"),
+			description: __(
+				"Optional — landet in den Bemerkungen der Rechnung. Wenn leer, werden die Positions-Beschreibungen übernommen."
+			),
+		},
 	];
 
 	const dialog = new frappe.ui.Dialog({
@@ -1058,6 +1067,7 @@ hausverwaltung.buchen_cockpit.open_mieterrechnung_dialog = (opts = {}) => {
 		if (opts.wertstellungsdatum) dialog.set_value("wertstellungsdatum", opts.wertstellungsdatum);
 		if (opts.rechnungsname) dialog.set_value("rechnungsname", opts.rechnungsname);
 		if (opts.referenz) dialog.set_value("referenz", opts.referenz);
+		if (opts.bemerkung) dialog.set_value("bemerkung", opts.bemerkung);
 		if (opts.positionen && opts.positionen.length) {
 			dialog.fields_dict.positionen.df.data = opts.positionen;
 			dialog.fields_dict.positionen.grid.refresh();
@@ -1095,6 +1105,7 @@ function submit_mieterrechnung(dialog, values, submit_doc = true) {
 				wertstellungsdatum: values.wertstellungsdatum,
 				rechnungsname: values.rechnungsname,
 				referenz: values.referenz,
+				bemerkung: values.bemerkung,
 				positionen: JSON.stringify(rows),
 				submit_doc: submit_doc ? 1 : 0,
 			},
