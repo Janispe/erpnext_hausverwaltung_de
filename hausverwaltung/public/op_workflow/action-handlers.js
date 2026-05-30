@@ -88,6 +88,22 @@
     return result;
   }
 
+  // ─── Mieter-Guthaben auszahlen ─────────────────────────────────────────
+  async function createRefundPayment(row, opts = {}) {
+    const result = await call(
+      "hausverwaltung.hausverwaltung.page.op_workflow.op_workflow.create_refund_payment",
+      {
+        sales_invoice: row.belegnummer,
+        posting_date: opts.postingDate,
+        bank_account: opts.bankAccount || null,
+        mode_of_payment: opts.modeOfPayment || "Bank Draft",
+      },
+    );
+    handleResult(result, `Auszahlung ${result.payment_entry} als Draft erstellt`);
+    await window.OP_ADAPTER.refresh({});
+    return result;
+  }
+
   // ─── Vorauszahlung zuordnen ─────────────────────────────────────────────
   async function allocatePayment(row, allocations) {
     const result = await call(
@@ -156,6 +172,7 @@
     createDunning,
     createBulkDunning,
     createPaymentEntry,
+    createRefundPayment,
     allocatePayment,
     writeOff,
     setStundungComment,

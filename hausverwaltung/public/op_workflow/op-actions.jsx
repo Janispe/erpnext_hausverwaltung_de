@@ -11,14 +11,14 @@ function primaryActionFor(row) {
     return { key: "zahlung_anlegen", label: "Zahlung anlegen", kind: "primary" };
   }
 
-  // Mieter-Guthaben (Mieter bekommt Geld)
-  if (row.art === "Forderungen" && row.offen < -0.01) {
-    return { key: "guthaben_auszahlen", label: "Guthaben auszahlen", kind: "ghost" };
-  }
-
   // Vorauszahlung (Payment Entry, unallocated)
   if (row.belegart === "Payment Entry") {
     return { key: "zuordnen", label: "Zuordnen", kind: "warn" };
+  }
+
+  // Mieter-Guthaben aus einer Credit Note / negativen Sales Invoice.
+  if (row.art === "Forderungen" && row.belegart === "Sales Invoice" && row.offen < -0.01) {
+    return { key: "guthaben_auszahlen", label: "Guthaben auszahlen", kind: "ghost" };
   }
 
   // Forderung, überfällig: Dunning Type nach oben treiben
@@ -379,6 +379,83 @@ function ZahlungModal({ row, onClose, onDone }) {
   );
 }
 
+// ───────── Aktion: Guthaben auszahlen (Mieter) ─────────
+
+function GuthabenAuszahlenModal({ row, onClose, onDone }) {
+  const [postingDate, setPostingDate] = useStateAct(() => frappe.datetime.get_today());
+  const [modeOfPayment, setModeOfPayment] = useStateAct("Bank Draft");
+  const [busy, setBusy] = useStateAct(false);
+  const amount = Math.abs(row.offen || 0);
+  const partyName = window.OFFENE_POSTEN.partyName(row.party);
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const result = await window.OP_ACTIONS.createRefundPayment(row, {
+        postingDate,
+        modeOfPayment,
+      });
+      onDone?.(result);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="Guthaben auszahlen"
+      subtitle={`${partyName} · ${row.belegnummer} · ${fmtEUR_op(amount)}`}
+      onClose={onClose}
+      footer={
+        <>
+          <span className="op-modal-foot-info">
+            Erzeugt einen Payment-Entry-Draft. Gebucht wird erst nach Submit im Desk.
+          </span>
+          <div className="op-modal-foot-actions">
+            <button className="mk-btn" onClick={onClose} disabled={busy}>Abbrechen</button>
+            <button className="mk-btn mk-btn-primary" onClick={submit} disabled={busy}>
+              {busy ? "Draft wird angelegt …" : `Auszahlung als Draft anlegen · ${fmtEUR_op(amount)}`}
+            </button>
+          </div>
+        </>
+      }
+    >
+      <div className="op-form-grid">
+        <div className="op-field">
+          <label>Auszahlungsdatum</label>
+          <input type="date" value={postingDate} onChange={(e) => setPostingDate(e.target.value)} />
+        </div>
+        <div className="op-field">
+          <label>Zahlart</label>
+          <select value={modeOfPayment} onChange={(e) => setModeOfPayment(e.target.value)}>
+            <option>Bank Draft</option>
+            <option>SEPA-Überweisung</option>
+            <option>Manuelle Überweisung</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="op-preview">
+        <div className="op-preview-label">Auszahlungs-Vorschau</div>
+        <div className="op-preview-row">
+          <span className="op-preview-key">Guthaben aus Beleg</span>
+          <span className="op-preview-val">{row.belegnummer}</span>
+        </div>
+        <div className="op-preview-row is-total">
+          <span className="op-preview-key">Auszahlung an Mieter</span>
+          <span className="op-preview-val">{fmtEUR_op(amount)}</span>
+        </div>
+      </div>
+
+      <div className="op-checklist">
+        <div className="op-checklist-item">Payment Entry Typ „Pay" gegen die Sales Invoice</div>
+        <div className="op-checklist-item">Auszahlung wird mit dem negativen offenen Betrag verrechnet</div>
+        <div className="op-checklist-item">Bank-/Kassenkonto kann im Draft vor Submit geprüft werden</div>
+      </div>
+    </Modal>
+  );
+}
+
 // ───────── Aktion: Vorauszahlung zuordnen ─────────
 
 function ZuordnenModal({ row, onClose, onDone }) {
@@ -662,5 +739,5 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
 
 Object.assign(window, {
   primaryActionFor, ActionCell,
-  Modal, MahnungModal, ZahlungModal, ZuordnenModal, SammelmahnungModal, Toast,
+  Modal, MahnungModal, ZahlungModal, GuthabenAuszahlenModal, ZuordnenModal, SammelmahnungModal, Toast,
 });

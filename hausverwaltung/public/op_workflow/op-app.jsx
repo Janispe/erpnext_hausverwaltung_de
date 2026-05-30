@@ -90,6 +90,7 @@ function OpApp() {
       if (key === "mahnung" || key === "sammelmahnung") setModal({ type: "mahnung", row });
       else if (key === "zahlung_anlegen") setModal({ type: "zahlung", row });
       else if (key === "zuordnen") setModal({ type: "zuordnen", row });
+      else if (key === "guthaben_auszahlen") setModal({ type: "guthaben", row });
       else if (key === "mieterkonto") {
         window.OP_ACTIONS.openMieterkonto(row);
       }
@@ -107,7 +108,6 @@ function OpApp() {
         setToast(`Stundung dokumentiert: ${row.belegnummer}`);
       }
       else if (key === "kl\u00e4rung") setToast(`Status: in Klärung → ${row.belegnummer}`);
-      else if (key === "guthaben_auszahlen") setToast(`Auszahlung an ${window.OFFENE_POSTEN.partyName(row.party)} vorbereitet`);
       else if (key === "inkasso") setToast(`Inkasso-Vorgang eröffnet: ${row.belegnummer}`);
       else setToast(`Aktion: ${key}`);
     } catch (err) {
@@ -601,6 +601,7 @@ function OpApp() {
       {modal?.type === "mahnung" && <MahnungModal row={modal.row} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`Mahnung-Draft erstellt: ${result.dunning}`); }} />}
       {modal?.type === "sammelmahnung" && <SammelmahnungModal rows={modal.rows} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`${(result.created || []).length} Mahnung-Drafts erstellt`); }} />}
       {modal?.type === "zahlung" && <ZahlungModal row={modal.row} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`Payment Entry Draft erstellt: ${result.payment_entry}`); }} />}
+      {modal?.type === "guthaben" && <GuthabenAuszahlenModal row={modal.row} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`Auszahlungs-Draft erstellt: ${result.payment_entry}`); }} />}
       {modal?.type === "zuordnen" && <ZuordnenModal row={modal.row} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`Payment Reconciliation Draft erstellt: ${result.payment_reconciliation}`); }} />}
       {toast && <Toast message={toast} onClose={() => setToast(null)} />}
     </div>

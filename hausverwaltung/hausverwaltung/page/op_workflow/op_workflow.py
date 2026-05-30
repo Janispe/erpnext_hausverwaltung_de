@@ -425,6 +425,61 @@ def create_payment_entry(
 
 
 @frappe.whitelist()
+def create_refund_payment(
+    sales_invoice: str,
+    posting_date: str | None = None,
+    bank_account: str | None = None,
+    mode_of_payment: str | None = None,
+) -> dict:
+    """Erzeugt einen Payment-Entry-Draft zur Auszahlung eines Mieter-Guthabens.
+
+    Unterstützt bewusst nur Sales Invoices / Credit Notes mit negativem
+    ``outstanding_amount``. Unzugeordnete Payment Entries/Vorauszahlungen werden
+    hier nicht automatisch ausgezahlt, weil dafür ein anderer Abstimmungsprozess
+    nötig ist.
+    """
+    if not frappe.has_permission("Payment Entry", "create"):
+        frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
+
+    si = frappe.get_doc("Sales Invoice", sales_invoice)
+    if cint(si.docstatus) != 1:
+        frappe.throw(_("{0} ist nicht submitted.").format(sales_invoice))
+
+    outstanding = flt(si.outstanding_amount)
+    if outstanding >= -0.01:
+        frappe.throw(_("{0} hat kein auszahlbares Guthaben.").format(sales_invoice))
+
+    from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
+
+    pe = get_payment_entry("Sales Invoice", sales_invoice, bank_account=bank_account)
+    pe.posting_date = posting_date or nowdate()
+    pe.payment_type = "Pay"
+
+    resolved_mode = _resolve_mode_of_payment(mode_of_payment)
+    if resolved_mode:
+        pe.mode_of_payment = resolved_mode
+
+    amount = abs(outstanding)
+    pe.paid_amount = amount
+    pe.received_amount = amount
+    for ref in pe.references:
+        if ref.reference_doctype == "Sales Invoice" and ref.reference_name == sales_invoice:
+            ref.outstanding_amount = outstanding
+            ref.allocated_amount = outstanding
+
+    pe.remarks = _("Auszahlung Guthaben {0} an {1}").format(sales_invoice, si.customer)
+    pe.insert(ignore_permissions=False)
+    return _draft_response(
+        pe,
+        "payment_entry",
+        auszahlung=amount,
+        customer=si.customer,
+        sales_invoice=sales_invoice,
+        mode_of_payment=resolved_mode,
+    )
+
+
+@frappe.whitelist()
 def allocate_payment(
     payment_entry: str,
     allocations: str | list,
