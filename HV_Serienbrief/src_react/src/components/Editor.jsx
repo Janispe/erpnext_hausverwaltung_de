@@ -746,13 +746,6 @@ export const Editor = ({
 		window.dispatchEvent(new CustomEvent("hv-baustein-preview-refresh"));
 	}, [bausteinLayoutMode, bausteinPreviews]);
 
-	useEffect(() => {
-		// Footer-HTML im window ablegen — schedulePageSimulation liest es von dort
-		// (sonst müsste die Funktion durch die ganze Aufrufkette geschleift werden).
-		window.__hvEditorFooterHtml = (bausteinLayoutMode && footerHtml) || "";
-		schedulePageSimulation(editor);
-	}, [bausteinLayoutMode, footerHtml, editor]);
-
 	const editor = useEditor({
 		extensions: [...buildExtensions(), PageSimulationExtension],
 		editable,
@@ -769,6 +762,13 @@ export const Editor = ({
 			schedulePageSimulation(editor);
 		},
 	});
+
+	useEffect(() => {
+		// Footer-HTML im window ablegen — schedulePageSimulation liest es von dort
+		// (sonst müsste die Funktion durch die ganze Aufrufkette geschleift werden).
+		window.__hvEditorFooterHtml = (bausteinLayoutMode && footerHtml) || "";
+		schedulePageSimulation(editor);
+	}, [bausteinLayoutMode, footerHtml, editor]);
 
 	// Inhalt laden, wenn sich die Vorlage ändert (decorate -> TipTap). emitUpdate=false,
 	// damit Laden nicht als dirty zählt.
