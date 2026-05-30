@@ -1727,6 +1727,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
             {"label": "Staffelmieterhöhungen", "link_type": "Report", "link_to": "Staffelmieterhoehungen"},
             {"label": "Staffelmieten Übersicht", "link_type": "Report", "link_to": "Staffelmieten Uebersicht"},
             {"label": "Mieterhöhungs-Kandidaten", "link_type": "Report", "link_to": "Mieterhoehungs Kandidaten"},
+            {"label": "Bankkonten mit mehreren Parteien", "link_type": "Report", "link_to": "Bankkonten mit mehreren Parteien"},
         ],
     },
     {
