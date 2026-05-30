@@ -1,11 +1,40 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
 import { useEditor, EditorContent, BubbleMenu } from "@tiptap/react";
+import { Extension } from "@tiptap/core";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { Icon } from "./Icon.jsx";
 import { SNIPPETS } from "../data.js";
 import { buildExtensions } from "../tiptap/extensions.js";
 import { decorateForTiptap, serializeToTokens, groupForToken } from "../tiptap/tokens.js";
 import { diffTokens } from "../tiptap/validateJinja.js";
 import { loadPref, savePref } from "../persist.js";
+
+const pageSimPluginKey = new PluginKey("hvPageSimulation");
+
+const PageSimulationExtension = Extension.create({
+	name: "hvPageSimulation",
+	addProseMirrorPlugins() {
+		return [
+			new Plugin({
+				key: pageSimPluginKey,
+				state: {
+					init: () => DecorationSet.empty,
+					apply(tr, old) {
+						const next = tr.getMeta(pageSimPluginKey);
+						if (next) return next;
+						return old.map(tr.mapping, tr.doc);
+					},
+				},
+				props: {
+					decorations(state) {
+						return this.getState(state);
+					},
+				},
+			}),
+		];
+	},
+});
 
 // Einzel-Token (Platzhalter/Baustein/inline-Jinja) als atomarer Node einfügen (robuster als
 // HTML-Parsing). Mehr-Token-Snippets mit Leerzeilen -> decorate + insertContent(HTML).
@@ -28,6 +57,126 @@ function insertRawToken(editor, raw) {
 	}
 	if (node) editor.chain().focus().insertContent(node).run();
 	else editor.chain().focus().insertContent(decorateForTiptap(t)).run();
+}
+
+const PAGE_SIM = {
+	pageMm: 297,
+	pageGapMm: 14,
+	pageWidthMm: 210,
+	paddingTopMm: 20,
+	paddingBottomMm: 16,
+};
+
+function clearPageSimulation(dom) {
+	if (!dom) return;
+	dom.querySelectorAll(".hv-page-sim-next").forEach((el) => {
+		el.classList.remove("hv-page-sim-next");
+		el.style.removeProperty("--hv-page-sim-gap");
+	});
+}
+
+function clearPageSimulationDecorations(editor) {
+	if (!editor?.view) return;
+	editor.storage.hvPageSimulationKey = null;
+	editor.view.dispatch(editor.view.state.tr.setMeta(pageSimPluginKey, DecorationSet.empty));
+}
+
+function applyPageSimulation(canvas, editor) {
+	const pm = editor?.view?.dom;
+	if (!canvas || !pm) return;
+
+	const children = Array.from(pm.children).filter((el) => {
+		if (!(el instanceof HTMLElement)) return false;
+		if (el.classList.contains("ProseMirror-trailingBreak")) return false;
+		return el.getBoundingClientRect().height > 0;
+	});
+	if (!children.length) return;
+
+	const canvasRect = canvas.getBoundingClientRect();
+	const pxPerMm = canvasRect.width / PAGE_SIM.pageWidthMm;
+	const pageHeight = PAGE_SIM.pageMm * pxPerMm;
+	const pageGap = PAGE_SIM.pageGapMm * pxPerMm;
+	const pageStep = pageHeight + pageGap;
+	const contentTop = PAGE_SIM.paddingTopMm * pxPerMm;
+	const contentBottom = PAGE_SIM.paddingBottomMm * pxPerMm;
+	const contentHeight = pageHeight - contentTop - contentBottom;
+	const docChildren = [];
+	editor.view.state.doc.forEach((node, offset) => {
+		docChildren.push({ node, offset });
+	});
+	const decorations = [];
+	const decorationKeys = [];
+
+	const addDecoration = (docChild, gap) => {
+		if (!docChild || gap <= 1) return false;
+		const style = `--hv-page-sim-gap: ${gap}px`;
+		decorationKeys.push(`${docChild.offset}:${docChild.offset + docChild.node.nodeSize}:${style}`);
+		decorations.push(
+			Decoration.node(docChild.offset, docChild.offset + docChild.node.nodeSize, {
+				class: "hv-page-sim-next",
+				style,
+			})
+		);
+		return true;
+	};
+
+	children.forEach((el, idx) => {
+		if (!el.classList.contains("hv-page-sim-next")) return;
+		const rawGap = el.style.getPropertyValue("--hv-page-sim-gap");
+		const gap = Number.parseFloat(rawGap);
+		addDecoration(docChildren[idx], Number.isFinite(gap) ? gap : 0);
+	});
+
+	for (let idx = 0; idx < children.length; idx += 1) {
+		const el = children[idx];
+		const movedParent = el.parentElement?.closest(".hv-page-sim-next");
+		if (movedParent && movedParent !== el) continue;
+		if (el.classList.contains("hv-page-sim-next")) continue;
+
+		const rect = el.getBoundingClientRect();
+		const top = rect.top - canvasRect.top;
+		const height = rect.height;
+		if (height <= 0 || height > contentHeight) continue;
+
+		const pageIndex = Math.max(0, Math.floor(Math.max(0, top) / pageStep));
+		const pageTop = pageIndex * pageStep;
+		const pageContentTop = pageTop + contentTop;
+		const pageContentBottom = pageTop + pageHeight - contentBottom;
+		const pageVisualBottom = pageTop + pageHeight;
+		const inPageGap = top >= pageVisualBottom - 1;
+
+		if (top <= pageContentTop + 1) continue;
+		if (!inPageGap && top + height <= pageContentBottom + 1) continue;
+
+		const nextContentTop = pageTop + pageStep + contentTop;
+		addDecoration(docChildren[idx], Math.max(0, nextContentTop - top));
+		break;
+	}
+
+	const key = decorationKeys.join("|");
+	if (editor.storage.hvPageSimulationKey === key) return;
+	editor.storage.hvPageSimulationKey = key;
+	editor.view.dispatch(
+		editor.view.state.tr.setMeta(pageSimPluginKey, DecorationSet.create(editor.view.state.doc, decorations))
+	);
+}
+
+function schedulePageSimulation(editor) {
+	if (!editor) return;
+	const run = () => {
+		const canvas = document.querySelector(".editor-canvas.hv-baustein-layout");
+		if (!canvas) {
+			clearPageSimulationDecorations(editor);
+			clearPageSimulation(editor.view?.dom);
+			return;
+		}
+		applyPageSimulation(canvas, editor);
+	};
+	(window.__hvPageSimTimers || []).forEach((timer) => window.clearTimeout(timer));
+	window.requestAnimationFrame(() => {
+		run();
+		window.__hvPageSimTimers = [80, 250, 600].map((delay) => window.setTimeout(run, delay));
+	});
 }
 
 // =========================
@@ -534,8 +683,9 @@ export const Editor = ({
 	const hasHtml = typeof template.htmlContent === "string";
 	const [safety, setSafety] = useState(null); // null = sicher; sonst { lost, added }
 	const editable = hasHtml && !!canWrite && !safety;
-	const [, force] = useState(0);
+	const [revision, force] = useState(0);
 	const fileInputRef = useRef(null);
+	const editorRef = useRef(null);
 	// Tabellen-Hilfslinien ein/aus (globale Ansichts-Präferenz, gemerkt).
 	const [showGrid, setShowGrid] = useState(() => loadPref("tableGrid", true));
 	useEffect(() => savePref("tableGrid", showGrid), [showGrid]);
@@ -547,13 +697,20 @@ export const Editor = ({
 	}, [bausteinLayoutMode, bausteinPreviews]);
 
 	const editor = useEditor({
-		extensions: buildExtensions(),
+		extensions: [...buildExtensions(), PageSimulationExtension],
 		editable,
 		content: "",
 		editorProps: { attributes: { class: "tiptap-surface" } },
-		onUpdate: () => onDirty && onDirty(),
+		onUpdate: ({ editor }) => {
+			onDirty && onDirty();
+			schedulePageSimulation(editor);
+		},
 		onSelectionUpdate: () => force((n) => n + 1),
-		onTransaction: () => force((n) => n + 1),
+		onTransaction: ({ editor, transaction }) => {
+			if (transaction.getMeta(pageSimPluginKey)) return;
+			force((n) => n + 1);
+			schedulePageSimulation(editor);
+		},
 	});
 
 	// Inhalt laden, wenn sich die Vorlage ändert (decorate -> TipTap). emitUpdate=false,
@@ -562,6 +719,7 @@ export const Editor = ({
 		if (!editor) return;
 		const original = template.htmlContent || "";
 		editor.commands.setContent(decorateForTiptap(original), false);
+		schedulePageSimulation(editor);
 		// Token-Erhalt-Check: ging beim Laden ein Token verloren (nicht modellierbare Struktur)?
 		const back = serializeToTokens(editor.getHTML());
 		const d = diffTokens(original, back);
@@ -573,6 +731,60 @@ export const Editor = ({
 	useEffect(() => {
 		if (editor) editor.setEditable(editable);
 	}, [editor, editable]);
+
+	useLayoutEffect(() => {
+		const canvas = editorRef.current?.querySelector(".editor-canvas");
+		if (!bausteinLayoutMode) {
+			clearPageSimulationDecorations(editor);
+			clearPageSimulation(editor?.view?.dom);
+			return;
+		}
+		if (!canvas || !editor?.view?.dom) return;
+
+		let raf = 0;
+		const run = () => {
+			raf = 0;
+			applyPageSimulation(canvas, editor);
+		};
+		raf = window.requestAnimationFrame(run);
+
+		const ro = new ResizeObserver(() => {
+			if (raf) window.cancelAnimationFrame(raf);
+			raf = window.requestAnimationFrame(run);
+		});
+		ro.observe(canvas);
+		ro.observe(editor.view.dom);
+
+		return () => {
+			if (raf) window.cancelAnimationFrame(raf);
+			ro.disconnect();
+		};
+	}, [editor, bausteinLayoutMode, revision, template.id, bausteinPreviews]);
+
+	useEffect(() => {
+		const dom = editor?.view?.dom;
+		if (!dom) return;
+		const schedule = () => schedulePageSimulation(editor);
+		dom.addEventListener("input", schedule, true);
+		dom.addEventListener("keyup", schedule, true);
+		dom.addEventListener("paste", schedule, true);
+		return () => {
+			dom.removeEventListener("input", schedule, true);
+			dom.removeEventListener("keyup", schedule, true);
+			dom.removeEventListener("paste", schedule, true);
+		};
+	}, [editor]);
+
+	useEffect(() => {
+		if (!editor || !bausteinLayoutMode) return;
+		const run = () => {
+			const canvas = editorRef.current?.querySelector(".editor-canvas.hv-baustein-layout");
+			if (canvas) applyPageSimulation(canvas, editor);
+		};
+		run();
+		const timer = window.setInterval(run, 250);
+		return () => window.clearInterval(timer);
+	}, [editor, bausteinLayoutMode]);
 
 	// contentRef-API für App (getHtml/insertToken/editor).
 	useEffect(() => {
@@ -590,7 +802,6 @@ export const Editor = ({
 	// --- Kontrollfluss-Menü (Jinja-Snippets) ---
 	const [slashOpen, setSlashOpen] = useState(false);
 	const [slashPos, setSlashPos] = useState({ x: 0, y: 0 });
-	const editorRef = useRef(null);
 	const openSlash = useCallback(() => {
 		const r = editorRef.current?.getBoundingClientRect();
 		setSlashPos({ x: (r?.left || 100) + 60, y: (r?.top || 100) + 40 });
@@ -673,6 +884,10 @@ export const Editor = ({
 					}}
 					onDragLeave={() => setDragOver(false)}
 					onDrop={onDrop}
+					onInput={() => schedulePageSimulation(editor)}
+					onKeyUp={() => schedulePageSimulation(editor)}
+					onMouseUp={() => schedulePageSimulation(editor)}
+					onPaste={() => schedulePageSimulation(editor)}
 				>
 					{/* EditorContent und das BubbleMenu bleiben dauerhaft gemountet. Beim
 					    Vorlagen-Laden (loading-Toggle) dürfen sie NICHT gegen einen Platzhalter

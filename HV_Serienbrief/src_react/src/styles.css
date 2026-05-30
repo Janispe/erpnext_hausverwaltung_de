@@ -1978,49 +1978,101 @@ span[style*="color"] > .chip {
   outline-offset: -6px;
 }
 .editor-canvas.hv-baustein-layout {
-  overflow: hidden;
+  --hv-editor-page-height: 297mm;
+  --hv-editor-page-gap: 14mm;
+  --hv-editor-page-margin-top: 20mm;
+  --hv-editor-page-margin-bottom: 16mm;
+  overflow: visible;
+  border: none;
+  box-shadow: none;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      var(--surface) 0,
+      var(--surface) var(--hv-editor-page-height),
+      transparent var(--hv-editor-page-height),
+      transparent calc(var(--hv-editor-page-height) + var(--hv-editor-page-gap))
+    );
 }
 .editor-canvas.hv-baustein-layout::before {
   content: "";
   position: absolute;
-  z-index: 1;
+  z-index: 0;
   pointer-events: none;
   top: 0;
-  right: -14mm;
+  right: 0;
   bottom: 0;
-  left: -14mm;
+  left: 0;
   background:
     repeating-linear-gradient(
       to bottom,
       transparent 0,
-      transparent calc(297mm - 1px),
-      rgba(31, 115, 183, 0.32) calc(297mm - 1px),
-      rgba(31, 115, 183, 0.32) 297mm
+      transparent calc(var(--hv-editor-page-height) - var(--hv-editor-page-margin-bottom)),
+      rgba(129, 140, 158, 0.035) calc(var(--hv-editor-page-height) - var(--hv-editor-page-margin-bottom)),
+      rgba(129, 140, 158, 0.035) var(--hv-editor-page-height),
+      rgba(17, 24, 39, 0.055) var(--hv-editor-page-height),
+      rgba(17, 24, 39, 0.055) calc(var(--hv-editor-page-height) + var(--hv-editor-page-gap))
     );
 }
 .editor-canvas.hv-baustein-layout::after {
   content: "";
   position: absolute;
-  z-index: 1;
+  z-index: 0;
   pointer-events: none;
   top: 0;
-  right: -11mm;
+  right: 0;
   bottom: 0;
-  width: 7mm;
+  left: 0;
   background:
     repeating-linear-gradient(
       to bottom,
       transparent 0,
-      transparent calc(297mm - 20px),
-      rgba(31, 115, 183, 0.08) calc(297mm - 20px),
-      rgba(31, 115, 183, 0.08) 297mm
+      transparent calc(var(--hv-editor-page-height) - 1px),
+      rgba(129, 140, 158, 0.2) calc(var(--hv-editor-page-height) - 1px),
+      rgba(129, 140, 158, 0.2) var(--hv-editor-page-height),
+      transparent var(--hv-editor-page-height),
+      transparent calc(var(--hv-editor-page-height) + var(--hv-editor-page-gap))
     );
 }
 .editor-canvas.hv-baustein-layout .tiptap-surface,
-.editor-canvas.hv-baustein-layout .editor-foot-hint,
 .editor-canvas.hv-baustein-layout .editor-loading-overlay {
   position: relative;
   z-index: 2;
+}
+.editor-canvas.hv-baustein-layout .editor-foot-hint {
+  display: none;
+}
+.editor-canvas.hv-baustein-layout .tiptap-surface::before {
+  content: "";
+  position: absolute;
+  left: -25mm;
+  right: -20mm;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(var(--hv-editor-page-height) - var(--hv-editor-page-margin-bottom)),
+      rgba(129, 140, 158, 0.11) calc(var(--hv-editor-page-height) - var(--hv-editor-page-margin-bottom)),
+      rgba(129, 140, 158, 0.11) calc(var(--hv-editor-page-height) - var(--hv-editor-page-margin-bottom) + 1px),
+      transparent calc(var(--hv-editor-page-height) - var(--hv-editor-page-margin-bottom) + 1px),
+      transparent calc(var(--hv-editor-page-height) + var(--hv-editor-page-gap))
+    );
+}
+.editor-canvas.hv-baustein-layout .tiptap-surface .hv-page-sim-next {
+  margin-top: var(--hv-page-sim-gap) !important;
+  position: relative;
+}
+.editor-canvas.hv-baustein-layout .tiptap-surface .hv-page-sim-next::before {
+  content: "";
+  position: absolute;
+  left: -25mm;
+  right: -20mm;
+  top: calc(-1 * var(--hv-page-sim-gap));
+  height: var(--hv-page-sim-gap);
+  pointer-events: none;
 }
 
 /* Die eigentliche ProseMirror-Fläche – Body-Typografie 1:1 wie das PDF (install.py
