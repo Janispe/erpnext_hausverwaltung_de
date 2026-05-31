@@ -143,6 +143,10 @@ def _get_invoices(filters) -> dict[str, InvoiceInfo]:
 		],
 		order_by="posting_date asc, name asc",
 	)
+	category_amounts_by_invoice = _get_invoice_category_amounts_bulk(
+		[row.name for row in rows],
+		{row.name: flt(row.grand_total) for row in rows},
+	)
 
 	invoices: dict[str, InvoiceInfo] = {}
 	for row in rows:
@@ -158,7 +162,7 @@ def _get_invoices(filters) -> dict[str, InvoiceInfo]:
 			status=row.status,
 			cost_center=row.cost_center,
 			remarks=row.remarks,
-			category_amounts=_get_invoice_category_amounts(row.name, flt(row.grand_total)),
+			category_amounts=category_amounts_by_invoice.get(row.name, _empty_category_amounts()),
 			mietabrechnung_id=row.get("mietabrechnung_id"),
 			member_invoices=[row.name],
 		)
@@ -257,9 +261,40 @@ def _get_invoice_category_amounts(invoice_name: str, grand_total: float) -> dict
 	items = frappe.get_all(
 		"Sales Invoice Item",
 		filters={"parent": invoice_name},
-		fields=["item_code", "item_name", "description", "amount", "base_amount"],
+		fields=["parent", "item_code", "item_name", "description", "amount", "base_amount"],
 		order_by="idx asc",
 	)
+	return _category_amounts_from_items(invoice_name, items, grand_total)
+
+
+def _get_invoice_category_amounts_bulk(
+	invoice_names: list[str],
+	grand_totals: dict[str, float],
+) -> dict[str, dict[str, float]]:
+	if not invoice_names:
+		return {}
+
+	items_by_invoice: dict[str, list] = {name: [] for name in invoice_names}
+	for chunk in _chunks(invoice_names, 500):
+		for item in frappe.get_all(
+			"Sales Invoice Item",
+			filters={"parent": ("in", chunk)},
+			fields=["parent", "item_code", "item_name", "description", "amount", "base_amount"],
+			order_by="parent asc, idx asc",
+		):
+			items_by_invoice.setdefault(item.parent, []).append(item)
+
+	return {
+		invoice_name: _category_amounts_from_items(
+			invoice_name,
+			items,
+			grand_totals.get(invoice_name, 0),
+		)
+		for invoice_name, items in items_by_invoice.items()
+	}
+
+
+def _category_amounts_from_items(invoice_name: str, items, grand_total: float) -> dict[str, float]:
 	amounts = {category: 0.0 for category in CATEGORIES}
 	for item in items:
 		category = _get_item_category(item)
@@ -275,6 +310,10 @@ def _get_invoice_category_amounts(invoice_name: str, grand_total: float) -> dict
 	if abs(flt(grand_total) - item_total) > TOLERANCE:
 		amounts = _allocate_amount(grand_total, amounts)
 	return _round_amounts(amounts)
+
+
+def _empty_category_amounts() -> dict[str, float]:
+	return {category: 0.0 for category in CATEGORIES}
 
 
 def _get_item_category(item) -> str:
