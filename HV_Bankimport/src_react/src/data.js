@@ -86,6 +86,6 @@ export const MOCK_ACCOUNTS = [
 ];
 
 export const MOCK_IMPORTS = [
-	{ name: "BAI-1812-DEMO-0001", title: MOCK_OVERVIEW.import.title, status: MOCK_OVERVIEW.import.status, offene_buchungen: 2, modified: "2026-05-01" },
-	{ name: "BAI-1804-DEMO-0007", title: "Sparkasse (1804) · 03.2026 · 14 Buchungen", status: "Abgeschlossen: 14 Zeilen verbucht", offene_buchungen: 0, modified: "2026-04-02" },
+	{ name: "BAI-1812-DEMO-0001", title: MOCK_OVERVIEW.import.title, status: MOCK_OVERVIEW.import.status, offene_buchungen: 2, total_rows: 6, modified: "2026-05-01" },
+	{ name: "BAI-1804-DEMO-0007", title: "Sparkasse (1804) · 03.2026 · 14 Buchungen", status: "Abgeschlossen: 14 Zeilen verbucht", offene_buchungen: 0, total_rows: 14, modified: "2026-04-02" },
 ];

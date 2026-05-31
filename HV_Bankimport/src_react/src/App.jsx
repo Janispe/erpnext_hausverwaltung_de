@@ -23,32 +23,126 @@ function Toast({ toast, onClose }) {
 // ── Import-Picker (wenn ?import= fehlt) ───────────────────────────────────────
 function ImportPicker({ onPick }) {
 	const [items, setItems] = useState(null);
+	const [query, setQuery] = useState("");
+	const [statusFilter, setStatusFilter] = useState("open");
 	useEffect(() => {
 		api.listImports().then((d) => setItems(d.items || [])).catch(() => setItems([]));
 	}, []);
+
+	const isClosedImport = (it) => {
+		const open = Number(it.offene_buchungen || 0);
+		const total = Number(it.total_rows || 0);
+		const status = String(it.status || "").toLowerCase();
+		return status.includes("abgeschlossen") || (total > 0 && open <= 0);
+	};
+
+	const filteredItems = useMemo(() => {
+		if (!items) return [];
+		const q = query.trim().toLowerCase();
+		return items.filter((it) => {
+			const isClosed = isClosedImport(it);
+			if (statusFilter === "open" && isClosed) return false;
+			if (statusFilter === "closed" && !isClosed) return false;
+			if (!q) return true;
+			return [it.title, it.name, it.status]
+				.some((v) => String(v || "").toLowerCase().includes(q));
+		});
+	}, [items, query, statusFilter]);
+
+	const counts = useMemo(() => {
+		const all = items || [];
+		return {
+			all: all.length,
+			open: all.filter((it) => !isClosedImport(it)).length,
+			closed: all.filter((it) => isClosedImport(it)).length,
+		};
+	}, [items]);
+
 	return (
 		<div className="import-picker">
 			<div className="ip-card">
-				<h2>Bankauszug-Import wählen</h2>
+				<div className="ip-head">
+					<div>
+						<h2>Bankauszug-Import wählen</h2>
+						<div className="ip-head-sub">Offene und abgeschlossene Kontoauszüge prüfen.</div>
+					</div>
+					<button className="btn primary" onClick={() => api.newImport()}>
+						<Icon name="plus" /> Neuer Import
+					</button>
+				</div>
 				{items === null ? (
 					<div className="panel-loading"><Spinner size={18} /> Importe laden…</div>
 				) : items.length === 0 ? (
 					<div className="hint">Keine Importe vorhanden. Lege zuerst einen neuen Import an.</div>
 				) : (
-					<ul className="ip-list">
-						{items.map((it) => (
-							<li key={it.name}>
-								<button onClick={() => onPick(it.name)}>
-									<div className="ip-title">{it.title || it.name}</div>
-									<div className="ip-sub">{it.status}{it.modified ? ` · ${fmtDate(it.modified)}` : ""}</div>
-								</button>
-							</li>
-						))}
-					</ul>
+					<>
+						<div className="ip-toolbar">
+							<div className="ip-search">
+								<Icon name="search" />
+								<input
+									value={query}
+									onChange={(e) => setQuery(e.target.value)}
+									placeholder="Import, Objekt, Zeitraum oder Status suchen..."
+								/>
+							</div>
+							<div className="ip-status-tabs">
+								{[
+									["open", "Offen", counts.open],
+									["all", "Alle", counts.all],
+									["closed", "Abgeschlossen", counts.closed],
+								].map(([value, label, count]) => (
+									<button
+										key={value}
+										className={`ip-status-tab ${statusFilter === value ? "is-active" : ""}`}
+										onClick={() => setStatusFilter(value)}
+									>
+										{label} <span>{count}</span>
+									</button>
+								))}
+							</div>
+						</div>
+						{filteredItems.length === 0 ? (
+							<div className="ip-empty">Keine Importe für diese Auswahl.</div>
+						) : (
+							<div className="ip-table-wrap">
+								<table className="ip-table">
+									<thead>
+										<tr>
+											<th>Import</th>
+											<th>Status</th>
+											<th className="num">Offen</th>
+											<th className="num">Zeilen</th>
+											<th>Geändert</th>
+										</tr>
+									</thead>
+									<tbody>
+										{filteredItems.map((it) => {
+											const open = Number(it.offene_buchungen || 0);
+											const done = isClosedImport(it);
+											return (
+												<tr key={it.name} onClick={() => onPick(it.name)}>
+													<td>
+														<div className="ip-title">{it.title || it.name}</div>
+														<div className="ip-sub">{it.name}</div>
+													</td>
+													<td>
+														<span className={`ip-status ${done ? "done" : "open"}`}>
+															{done ? "Abgeschlossen" : "Offen"}
+														</span>
+														<div className="ip-sub">{it.status || "—"}</div>
+													</td>
+													<td className={`num ip-open ${open > 0 ? "has-open" : ""}`}>{open}</td>
+													<td className="num">{it.total_rows ?? "—"}</td>
+													<td className="ip-date">{fmtDate(it.modified)}</td>
+												</tr>
+											);
+										})}
+									</tbody>
+								</table>
+							</div>
+						)}
+					</>
 				)}
-				<button className="btn primary" style={{ marginTop: 12 }} onClick={() => api.newImport()}>
-					<Icon name="plus" /> Neuer Import
-				</button>
 			</div>
 		</div>
 	);

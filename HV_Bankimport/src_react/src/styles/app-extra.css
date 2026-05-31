@@ -78,14 +78,48 @@
 .global-actions .ga-spacer { flex: 1; }
 
 /* Import picker */
-.import-picker { min-height: 100vh; display: grid; place-items: center; padding: 40px 20px; }
-.ip-card { width: 100%; max-width: 520px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 26px; }
-.ip-card h2 { margin: 0 0 16px; font-size: 18px; font-weight: 600; }
-.ip-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.ip-list button { width: 100%; text-align: left; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; cursor: pointer; transition: all 0.12s; }
-.ip-list button:hover { border-color: var(--border-strong); background: var(--surface-3); }
-.ip-title { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.import-picker { min-height: 100vh; padding: 42px 48px 72px; }
+.ip-card { width: 100%; max-width: 1180px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 22px; }
+.ip-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.ip-card h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.ip-head-sub { margin-top: 3px; color: var(--text-muted); font-size: 12.5px; }
+.ip-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.ip-search { display: flex; align-items: center; gap: 8px; min-width: 280px; flex: 1; height: 34px; padding: 0 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-muted); }
+.ip-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 12.5px; }
+.ip-status-tabs { display: inline-flex; gap: 2px; padding: 2px; background: var(--surface-3); border: 1px solid var(--border); border-radius: var(--radius); }
+.ip-status-tab { border: 0; border-radius: 4px; padding: 5px 10px; background: transparent; color: var(--text-muted); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; }
+.ip-status-tab:hover { color: var(--text); }
+.ip-status-tab.is-active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+.ip-status-tab span { margin-left: 4px; color: var(--text-faint); font-family: var(--font-mono); font-size: 11px; }
+.ip-table-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+.ip-table { width: 100%; border-collapse: collapse; }
+.ip-table th { padding: 9px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; text-align: left; }
+.ip-table td { padding: 11px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.ip-table tr:last-child td { border-bottom: 0; }
+.ip-table tbody tr { cursor: pointer; transition: background .1s; }
+.ip-table tbody tr:hover { background: var(--surface-2); }
+.ip-table .num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ip-title { font-size: 13px; font-weight: 600; color: var(--text); }
 .ip-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 3px; font-family: var(--font-mono); }
+.ip-status { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+.ip-status:before { content: ""; width: 6px; height: 6px; border-radius: 50%; }
+.ip-status.open { background: var(--warn-bg); color: var(--warn); }
+.ip-status.open:before { background: var(--warn); }
+.ip-status.done { background: var(--done-bg); color: var(--done); }
+.ip-status.done:before { background: var(--done); }
+.ip-open.has-open { color: var(--warn); font-weight: 700; }
+.ip-date { color: var(--text-muted); font-family: var(--font-mono); font-size: 11.5px; white-space: nowrap; }
+.ip-empty { padding: 28px; text-align: center; color: var(--text-muted); background: var(--surface-2); border: 1px dashed var(--border); border-radius: var(--radius); }
+@media (max-width: 820px) {
+	.import-picker { padding: 20px 12px 48px; }
+	.ip-card { padding: 16px; }
+	.ip-head { flex-direction: column; }
+	.ip-head .btn { width: 100%; justify-content: center; }
+	.ip-search { min-width: 100%; }
+	.ip-status-tabs { width: 100%; overflow-x: auto; }
+	.ip-table-wrap { overflow-x: auto; }
+	.ip-table { min-width: 720px; }
+}
 
 /* Toast */
 .hv-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; align-items: center; gap: 10px; max-width: 560px; padding: 11px 16px; border-radius: var(--radius); font-size: 13px; color: var(--surface); background: var(--text); box-shadow: 0 8px 30px rgba(0,0,0,0.22); cursor: pointer; animation: hv-toast-in 0.18s ease; }

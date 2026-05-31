@@ -217,8 +217,18 @@ def list_imports(limit: int = 30) -> dict[str, Any]:
 		order_by="modified desc",
 		limit=limit,
 	)
+	row_counts = {
+		r.parent: r.total_rows
+		for r in frappe.get_all(
+			"Bankauszug Import Row",
+			filters={"parent": ["in", [it.name for it in items] or [""]]},
+			fields=["parent", "count(name) as total_rows"],
+			group_by="parent",
+		)
+	}
 	for it in items:
 		it["modified"] = str(it["modified"]) if it.get("modified") else None
+		it["total_rows"] = row_counts.get(it.name, 0)
 	return {"items": items}
 
 
