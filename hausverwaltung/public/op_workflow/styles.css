@@ -213,9 +213,6 @@ button { font-family: inherit; }
 .op-mahn-draft {
   background: var(--warn-soft);
 }
-.op-mahn-table tbody tr.is-mahn-focused td {
-  background: oklch(0.96 0.03 80);
-}
 .op-draft-badge {
   display: inline-flex;
   align-items: center;
@@ -251,6 +248,35 @@ button { font-family: inherit; }
 .op-mahn-detail-row td {
   background: var(--bg-soft);
   border-top: 0;
+}
+.op-table tbody tr.is-mahn-open td {
+  background: oklch(0.965 0.025 80);
+}
+.op-mahn-inline-row td {
+  background: var(--bg-soft);
+  border-top: 0;
+  padding: 0;
+}
+.op-mahn-inline {
+  border-top: 1px solid var(--line);
+  padding: 14px 18px 16px;
+}
+.op-mahn-inline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.op-mahn-inline-head strong {
+  display: block;
+  font-size: 13px;
+}
+.op-mahn-inline-head span {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-3);
+  font-size: 12px;
 }
 .op-mahn-detail {
   display: grid;

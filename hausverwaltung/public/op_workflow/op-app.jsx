@@ -93,22 +93,30 @@ function OpApp() {
   // Modal-State
   const [modal, setModal] = useStateA0(null); // { type, row }
   const [toast, setToast] = useStateA0(null);
-  const [mahnFocusKey, setMahnFocusKey] = useStateA0(null);
+  const [expandedMahnRows, setExpandedMahnRows] = useStateA0(() => new Set());
 
-  const openMahnwesenForRow = (row) => {
-    const candidate = (MAHN_ROWS || []).find((entry) =>
-      (entry.invoices || []).some((invoice) => invoice.sales_invoice === row.belegnummer)
-    ) || (MAHN_ROWS || []).find((entry) => entry.customer === row.party);
+  const mahnCandidateByInvoice = useMemoA0(() => {
+    const map = new Map();
+    (MAHN_ROWS || []).forEach((candidate) => {
+      (candidate.invoices || []).forEach((invoice) => {
+        if (invoice.sales_invoice) map.set(invoice.sales_invoice, candidate);
+      });
+    });
+    return map;
+  }, [MAHN_ROWS]);
 
-    setView("mahnwesen");
-    setSearch(row.belegnummer || row.party || "");
-    setMahnFocusKey(candidate?.key || null);
+  const toggleMahnwesenForRow = (row) => {
+    setExpandedMahnRows((prev) => {
+      const next = new Set(prev);
+      next.has(row.belegnummer) ? next.delete(row.belegnummer) : next.add(row.belegnummer);
+      return next;
+    });
     setSelected(new Set());
   };
 
   const handleAction = async (key, row) => {
     try {
-      if (key === "mahnwesen") openMahnwesenForRow(row);
+      if (key === "mahnwesen") toggleMahnwesenForRow(row);
       else if (key === "mahnung" || key === "sammelmahnung") setModal({ type: "mahnung", row });
       else if (key === "zahlung_anlegen") setModal({ type: "zahlung", row });
       else if (key === "zuordnen") setModal({ type: "zuordnen", row });
@@ -503,7 +511,6 @@ function OpApp() {
             rows={MAHN_ROWS}
             search={search}
             setSearch={setSearch}
-            focusKey={mahnFocusKey}
             onCreateDunning={openCandidateDunning}
             onCreateBulkDunning={openCandidatesBulkDunning}
           />
@@ -652,7 +659,19 @@ function OpApp() {
             Filter ändern oder „Auch ausgeglichene anzeigen" aktivieren.
           </div>
         ) : t.gruppierung !== "keine" ? (
-          <GroupedView groups={grouped} selected={selected} toggleSel={toggleSel} selectableIds={selectableIds} mode={mode} gruppierung={t.gruppierung} showObjekt={t.showObjekt} onAction={handleAction} />
+          <GroupedView
+            groups={grouped}
+            selected={selected}
+            toggleSel={toggleSel}
+            selectableIds={selectableIds}
+            mode={mode}
+            gruppierung={t.gruppierung}
+            showObjekt={t.showObjekt}
+            onAction={handleAction}
+            mahnCandidateByInvoice={mahnCandidateByInvoice}
+            expandedMahnRows={expandedMahnRows}
+            onCreateDunning={openCandidateDunning}
+          />
         ) : (
           <FlatTable
             rows={filteredRows}
@@ -671,6 +690,9 @@ function OpApp() {
             }}
             onAction={handleAction}
             mahnreifIds={mahnStats.mahnreifIds}
+            mahnCandidateByInvoice={mahnCandidateByInvoice}
+            expandedMahnRows={expandedMahnRows}
+            onCreateDunning={openCandidateDunning}
           />
         )}
 
@@ -717,17 +739,8 @@ function OpApp() {
   );
 }
 
-function MahnwesenView({ rows, search, setSearch, focusKey, onCreateDunning, onCreateBulkDunning }) {
+function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkDunning }) {
   const [openSet, setOpenSet] = useStateA0(() => new Set());
-  useEffectA0(() => {
-    if (!focusKey) return;
-    setOpenSet((prev) => {
-      const next = new Set(prev);
-      next.add(focusKey);
-      return next;
-    });
-  }, [focusKey]);
-
   const filtered = useMemoA0(() => {
     const q = (search || "").trim().toLowerCase();
     if (!q) return rows;
@@ -807,7 +820,7 @@ function MahnwesenView({ rows, search, setSearch, focusKey, onCreateDunning, onC
                 const draft = drafts[0];
                 return (
                   <React.Fragment key={row.key}>
-                    <tr className={`${row.draft_warning ? "is-mahn-draft" : ""} ${focusKey === row.key ? "is-mahn-focused" : ""}`}>
+                    <tr className={row.draft_warning ? "is-mahn-draft" : ""}>
                       <td>
                         <button className="op-row-toggle" onClick={() => toggle(row.key)}>{open ? "▾" : "▸"}</button>
                       </td>
@@ -912,9 +925,104 @@ function MahnwesenView({ rows, search, setSearch, focusKey, onCreateDunning, onC
   );
 }
 
+function MahnInlineDetail({ candidate, row, onCreateDunning }) {
+  if (!candidate) {
+    return (
+      <div className="op-mahn-inline">
+        <div className="op-muted">Für {row.belegnummer} wurde kein Mahnwesen-Datensatz gefunden.</div>
+      </div>
+    );
+  }
+
+  const mahnungen = candidate.mahnungen || [];
+  const drafts = mahnungen.filter((mahnung) => mahnung.docstatus === 0);
+  const draft = drafts[0];
+
+  return (
+    <div className="op-mahn-inline">
+      <div className="op-mahn-inline-head">
+        <div>
+          <strong>{candidate.customer_name || candidate.customer}</strong>
+          <span>{candidate.wohnung || "—"} · {candidate.mietvertrag || "—"} · {fmtEUR_op(candidate.offen)} offen</span>
+        </div>
+        {drafts.length > 1 ? (
+          <button className="op-action-btn is-draft" onClick={() => window.OP_ACTIONS.openDunning(draft.name)}>
+            Ersten Draft öffnen
+          </button>
+        ) : draft ? (
+          <button className="op-action-btn is-draft" onClick={() => window.OP_ACTIONS.openDunning(draft.name)}>
+            Draft öffnen
+          </button>
+        ) : (
+          <button className="op-action-btn is-primary" onClick={() => onCreateDunning(candidate)}>
+            Mahnung erstellen
+          </button>
+        )}
+      </div>
+      {drafts.length > 1 && (
+        <div className="op-draft-note">Mehrere offene Drafts. Bitte einen finalisieren oder alte Drafts löschen.</div>
+      )}
+      <div className="op-mahn-detail">
+        <div>
+          <div className="op-preview-label">Offene Rechnungen</div>
+          <table className="op-mini-table">
+            <tbody>
+              {(candidate.invoices || []).map((invoice) => (
+                <tr key={invoice.sales_invoice}>
+                  <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openBeleg({ belegart: "Sales Invoice", belegnummer: invoice.sales_invoice })}>{invoice.sales_invoice}</button></td>
+                  <td>{fmtDate_op(invoice.due_date)}</td>
+                  <td className="is-num">{fmtEUR_op(invoice.outstanding_amount)}</td>
+                  <td>{invoice.status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <div className="op-preview-label">Mahnhistorie</div>
+          {mahnungen.length ? (
+            <table className="op-mini-table">
+              <tbody>
+                {mahnungen.map((mahnung) => (
+                  <tr key={mahnung.name}>
+                    <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openDunning(mahnung.name)}>{mahnung.name}</button></td>
+                    <td>{mahnung.docstatus === 0 ? <span className="op-draft-badge">Draft</span> : mahnung.status}</td>
+                    <td>{mahnung.dunning_type || "—"}</td>
+                    <td>{mahnung.serienbrief_vorlage || "—"}</td>
+                    <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openDunningPdf(mahnung.name)}>PDF</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="op-muted">Noch keine Mahnung zu diesen offenen Rechnungen.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ───────── Flache Tabelle ─────────
 
-function FlatTable({ rows, selected, toggleSel, selectableIds, toggleSelAll, mode, showAktion, showObjekt, sortierung, sortDir, onSort, onAction, mahnreifIds }) {
+function FlatTable({
+  rows,
+  selected,
+  toggleSel,
+  selectableIds,
+  toggleSelAll,
+  mode,
+  showAktion,
+  showObjekt,
+  sortierung,
+  sortDir,
+  onSort,
+  onAction,
+  mahnreifIds,
+  mahnCandidateByInvoice,
+  expandedMahnRows,
+  onCreateDunning,
+}) {
   const allChecked = selectableIds.size > 0 && selected.size === selectableIds.size;
   const someChecked = selected.size > 0 && !allChecked;
   const SortableTh = ({ col, label, style, className = "" }) => {
@@ -961,48 +1069,60 @@ function FlatTable({ rows, selected, toggleSel, selectableIds, toggleSelAll, mod
             const isNeg = r.offen < -0.01;
             const writtenOff = r.status === "Written Off";
             const mahnreif = mahnreifIds && mahnreifIds.has(r.belegnummer);
+            const mahnOpen = expandedMahnRows?.has(r.belegnummer);
+            const mahnCandidate = mahnCandidateByInvoice?.get(r.belegnummer);
+            const detailColspan = 10 + (showObjekt ? 1 : 0) + (showAktion ? 1 : 0);
             return (
-              <tr key={r.belegnummer + r.party} className={`${sel ? "is-selected" : ""} ${writtenOff ? "is-written-off" : ""} ${mahnreif ? "is-mahnreif" : ""}`}>
-                <td className="col-check">
-                  <input type="checkbox" checked={sel}
-                    disabled={!r.can_write_off}
-                    onChange={() => toggleSel(r.belegnummer)} />
-                </td>
-                <td className="col-date">{fmtDate_op(r.faellig_am)}</td>
-                <td><AgePill age={r.alter_tage} faellig_am={r.faellig_am} /></td>
-                <td className="col-party">
-                  {window.OFFENE_POSTEN.partyName(r.party)}
-                  <span className="op-party-id">{r.party}</span>
-                </td>
-                {showObjekt && (
-                  <td style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
-                    {window.OFFENE_POSTEN.ccLabel[r.kostenstelle] || r.kostenstelle || "—"}
+              <React.Fragment key={r.belegnummer + r.party}>
+                <tr className={`${sel ? "is-selected" : ""} ${writtenOff ? "is-written-off" : ""} ${mahnreif ? "is-mahnreif" : ""} ${mahnOpen ? "is-mahn-open" : ""}`}>
+                  <td className="col-check">
+                    <input type="checkbox" checked={sel}
+                      disabled={!r.can_write_off}
+                      onChange={() => toggleSel(r.belegnummer)} />
                   </td>
-                )}
-                <td className="col-beleg">
-                  {r.belegnummer}
-                  <span className="op-beleg-art">{r.belegart}</span>
-                </td>
-                <td className="col-bemerk">
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    <span>{r.bemerkungen}</span>
-                    {r.mahnstufe ? <MahnstufeBadge stufe={r.mahnstufe} /> : null}
-                  </div>
-                </td>
-                <td><StatusBadge status={r.status} /></td>
-                <td className="is-num">{fmtEUR_op(r.rechnungsbetrag)}</td>
-                <td className="is-num" style={{ color: "var(--ink-3)" }}>
-                  {r.bezahlt > 0.01 ? fmtEUR_op(r.bezahlt) : "—"}
-                </td>
-                <td className={`is-num col-offen ${isNeg ? "is-negative" : ""}`}>
-                  {fmtEUR_op(r.offen)}
-                </td>
-                {showAktion && (
-                  <td style={{ position: "relative", textAlign: "right" }}>
-                    <ActionCell row={r} onAction={onAction} />
+                  <td className="col-date">{fmtDate_op(r.faellig_am)}</td>
+                  <td><AgePill age={r.alter_tage} faellig_am={r.faellig_am} /></td>
+                  <td className="col-party">
+                    {window.OFFENE_POSTEN.partyName(r.party)}
+                    <span className="op-party-id">{r.party}</span>
                   </td>
+                  {showObjekt && (
+                    <td style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
+                      {window.OFFENE_POSTEN.ccLabel[r.kostenstelle] || r.kostenstelle || "—"}
+                    </td>
+                  )}
+                  <td className="col-beleg">
+                    {r.belegnummer}
+                    <span className="op-beleg-art">{r.belegart}</span>
+                  </td>
+                  <td className="col-bemerk">
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span>{r.bemerkungen}</span>
+                      {r.mahnstufe ? <MahnstufeBadge stufe={r.mahnstufe} /> : null}
+                    </div>
+                  </td>
+                  <td><StatusBadge status={r.status} /></td>
+                  <td className="is-num">{fmtEUR_op(r.rechnungsbetrag)}</td>
+                  <td className="is-num" style={{ color: "var(--ink-3)" }}>
+                    {r.bezahlt > 0.01 ? fmtEUR_op(r.bezahlt) : "—"}
+                  </td>
+                  <td className={`is-num col-offen ${isNeg ? "is-negative" : ""}`}>
+                    {fmtEUR_op(r.offen)}
+                  </td>
+                  {showAktion && (
+                    <td style={{ position: "relative", textAlign: "right" }}>
+                      <ActionCell row={r} onAction={onAction} />
+                    </td>
+                  )}
+                </tr>
+                {mahnOpen && (
+                  <tr className="op-mahn-inline-row">
+                    <td colSpan={detailColspan}>
+                      <MahnInlineDetail candidate={mahnCandidate} row={r} onCreateDunning={onCreateDunning} />
+                    </td>
+                  </tr>
                 )}
-              </tr>
+              </React.Fragment>
             );
           })}
         </tbody>
@@ -1013,7 +1133,19 @@ function FlatTable({ rows, selected, toggleSel, selectableIds, toggleSelAll, mod
 
 // ───────── Gruppierte Ansicht ─────────
 
-function GroupedView({ groups, selected, toggleSel, selectableIds, mode, gruppierung, showObjekt, onAction }) {
+function GroupedView({
+  groups,
+  selected,
+  toggleSel,
+  selectableIds,
+  mode,
+  gruppierung,
+  showObjekt,
+  onAction,
+  mahnCandidateByInvoice,
+  expandedMahnRows,
+  onCreateDunning,
+}) {
   const [openSet, setOpenSet] = useStateA0(() => new Set(groups.map(g => g.key)));
   const toggle = (p) => {
     setOpenSet(prev => {
@@ -1061,43 +1193,55 @@ function GroupedView({ groups, selected, toggleSel, selectableIds, mode, gruppie
                       const sel = selected.has(r.belegnummer);
                       const isNeg = r.offen < -0.01;
                       const writtenOff = r.status === "Written Off";
+                      const mahnOpen = expandedMahnRows?.has(r.belegnummer);
+                      const mahnCandidate = mahnCandidateByInvoice?.get(r.belegnummer);
+                      const detailColspan = 8 + (gruppierung !== "objekt" && showObjekt ? 1 : 0) + (gruppierung === "objekt" ? 1 : 0);
                       return (
-                        <tr key={r.belegnummer} className={`${sel ? "is-selected" : ""} ${writtenOff ? "is-written-off" : ""}`}>
-                          <td className="col-check" style={{ width: 32 }}>
-                            <input type="checkbox" checked={sel}
-                              disabled={!r.can_write_off}
-                              onChange={() => toggleSel(r.belegnummer)} />
-                          </td>
-                          <td className="col-date" style={{ width: 100 }}>{fmtDate_op(r.faellig_am)}</td>
-                          <td style={{ width: 80 }}><AgePill age={r.alter_tage} faellig_am={r.faellig_am} /></td>
-                          <td className="col-beleg" style={{ width: 170 }}>
-                            {r.belegnummer}<span className="op-beleg-art">{r.belegart}</span>
-                          </td>
-                          {gruppierung !== "objekt" && showObjekt && (
-                            <td style={{ width: 130, fontSize: 12.5, color: "var(--ink-2)" }}>
-                              {window.OFFENE_POSTEN.ccLabel[r.kostenstelle] || "—"}
+                        <React.Fragment key={r.belegnummer}>
+                          <tr className={`${sel ? "is-selected" : ""} ${writtenOff ? "is-written-off" : ""} ${mahnOpen ? "is-mahn-open" : ""}`}>
+                            <td className="col-check" style={{ width: 32 }}>
+                              <input type="checkbox" checked={sel}
+                                disabled={!r.can_write_off}
+                                onChange={() => toggleSel(r.belegnummer)} />
                             </td>
-                          )}
-                          {gruppierung === "objekt" && (
-                            <td className="col-party" style={{ width: 200, fontSize: 12.5 }}>
-                              {window.OFFENE_POSTEN.partyName(r.party)}
-                              <span className="op-party-id">{r.party}</span>
+                            <td className="col-date" style={{ width: 100 }}>{fmtDate_op(r.faellig_am)}</td>
+                            <td style={{ width: 80 }}><AgePill age={r.alter_tage} faellig_am={r.faellig_am} /></td>
+                            <td className="col-beleg" style={{ width: 170 }}>
+                              {r.belegnummer}<span className="op-beleg-art">{r.belegart}</span>
                             </td>
+                            {gruppierung !== "objekt" && showObjekt && (
+                              <td style={{ width: 130, fontSize: 12.5, color: "var(--ink-2)" }}>
+                                {window.OFFENE_POSTEN.ccLabel[r.kostenstelle] || "—"}
+                              </td>
+                            )}
+                            {gruppierung === "objekt" && (
+                              <td className="col-party" style={{ width: 200, fontSize: 12.5 }}>
+                                {window.OFFENE_POSTEN.partyName(r.party)}
+                                <span className="op-party-id">{r.party}</span>
+                              </td>
+                            )}
+                            <td className="col-bemerk">
+                              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                <span>{r.bemerkungen}</span>
+                                {r.mahnstufe ? <MahnstufeBadge stufe={r.mahnstufe} /> : null}
+                              </div>
+                            </td>
+                            <td style={{ width: 120 }}><StatusBadge status={r.status} /></td>
+                            <td className={`is-num col-offen ${isNeg ? "is-negative" : ""}`} style={{ width: 130 }}>
+                              {fmtEUR_op(r.offen)}
+                            </td>
+                            <td style={{ position: "relative", textAlign: "right", width: 200 }}>
+                              <ActionCell row={r} onAction={onAction} />
+                            </td>
+                          </tr>
+                          {mahnOpen && (
+                            <tr className="op-mahn-inline-row">
+                              <td colSpan={detailColspan}>
+                                <MahnInlineDetail candidate={mahnCandidate} row={r} onCreateDunning={onCreateDunning} />
+                              </td>
+                            </tr>
                           )}
-                          <td className="col-bemerk">
-                            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                              <span>{r.bemerkungen}</span>
-                              {r.mahnstufe ? <MahnstufeBadge stufe={r.mahnstufe} /> : null}
-                            </div>
-                          </td>
-                          <td style={{ width: 120 }}><StatusBadge status={r.status} /></td>
-                          <td className={`is-num col-offen ${isNeg ? "is-negative" : ""}`} style={{ width: 130 }}>
-                            {fmtEUR_op(r.offen)}
-                          </td>
-                          <td style={{ position: "relative", textAlign: "right", width: 200 }}>
-                            <ActionCell row={r} onAction={onAction} />
-                          </td>
-                        </tr>
+                        </React.Fragment>
                       );
                     })}
                   </tbody>
