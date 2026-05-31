@@ -1106,7 +1106,14 @@ function FlatTable({
                     </td>
                   )}
                   <td className="col-beleg">
-                    {r.belegnummer}
+                    <button
+                      type="button"
+                      className="op-link-btn op-beleg-link"
+                      onClick={() => window.OP_ACTIONS.openBeleg(r)}
+                      title={`${r.belegart} ${r.belegnummer} öffnen`}
+                    >
+                      {r.belegnummer}
+                    </button>
                     <span className="op-beleg-art">{r.belegart}</span>
                   </td>
                   <td className="col-bemerk">
@@ -1221,7 +1228,15 @@ function GroupedView({
                             <td className="col-date" style={{ width: 100 }}>{fmtDate_op(r.faellig_am)}</td>
                             <td style={{ width: 80 }}><AgePill age={r.alter_tage} faellig_am={r.faellig_am} /></td>
                             <td className="col-beleg" style={{ width: 170 }}>
-                              {r.belegnummer}<span className="op-beleg-art">{r.belegart}</span>
+                              <button
+                                type="button"
+                                className="op-link-btn op-beleg-link"
+                                onClick={() => window.OP_ACTIONS.openBeleg(r)}
+                                title={`${r.belegart} ${r.belegnummer} öffnen`}
+                              >
+                                {r.belegnummer}
+                              </button>
+                              <span className="op-beleg-art">{r.belegart}</span>
                             </td>
                             {gruppierung !== "objekt" && showObjekt && (
                               <td style={{ width: 130, fontSize: 12.5, color: "var(--ink-2)" }}>

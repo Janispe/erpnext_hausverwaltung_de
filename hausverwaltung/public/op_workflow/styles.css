@@ -1479,6 +1479,14 @@ button { font-family: inherit; }
   color: var(--ink-2);
   white-space: nowrap;
 }
+.op-table td.col-beleg .op-beleg-link {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--ink-2);
+}
+.op-table td.col-beleg .op-beleg-link:hover {
+  color: var(--info);
+}
 .op-table td.col-beleg .op-beleg-art {
   display: block;
   font-family: inherit;
