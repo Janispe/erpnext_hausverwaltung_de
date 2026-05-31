@@ -803,7 +803,8 @@ function MahnwesenView({ rows, search, setSearch, focusKey, onCreateDunning, onC
               {filtered.map((row) => {
                 const open = openSet.has(row.key);
                 const last = (row.mahnungen || [])[0];
-                const draft = (row.mahnungen || []).find((mahnung) => mahnung.docstatus === 0);
+                const drafts = (row.mahnungen || []).filter((mahnung) => mahnung.docstatus === 0);
+                const draft = drafts[0];
                 return (
                   <React.Fragment key={row.key}>
                     <tr className={`${row.draft_warning ? "is-mahn-draft" : ""} ${focusKey === row.key ? "is-mahn-focused" : ""}`}>
@@ -827,6 +828,7 @@ function MahnwesenView({ rows, search, setSearch, focusKey, onCreateDunning, onC
                             <span>
                               {last.dunning_type || last.name}
                               {last.docstatus === 0 && <span className="op-draft-badge">Draft</span>}
+                              {drafts.length > 1 && <span className="op-draft-badge is-multiple">{drafts.length} Drafts</span>}
                             </span>
                             <span className="op-party-id">{fmtDate_op(last.posting_date)} · {last.status}</span>
                           </>
@@ -835,7 +837,11 @@ function MahnwesenView({ rows, search, setSearch, focusKey, onCreateDunning, onC
                       <td><MahnstufeBadge stufe={row.next_level} /></td>
                       <td>{row.serienbrief_vorlage || <span className="op-muted">Default fehlt</span>}</td>
                       <td className="op-mahn-actions">
-                        {draft ? (
+                        {drafts.length > 1 ? (
+                          <button className="op-action-btn is-draft" onClick={() => toggle(row.key)}>
+                            Drafts prüfen
+                          </button>
+                        ) : draft ? (
                           <button className="op-action-btn is-draft" onClick={() => window.OP_ACTIONS.openDunning(draft.name)}>
                             Draft öffnen
                           </button>
@@ -865,7 +871,12 @@ function MahnwesenView({ rows, search, setSearch, focusKey, onCreateDunning, onC
                               </table>
                             </div>
                             <div>
-                              <div className="op-preview-label">Mahnhistorie</div>
+                              <div className="op-preview-label">
+                                Mahnhistorie
+                                {drafts.length > 1 && (
+                                  <span className="op-draft-note">Mehrere offene Drafts. Bitte einen finalisieren oder alte Drafts löschen.</span>
+                                )}
+                              </div>
                               {(row.mahnungen || []).length ? (
                                 <table className="op-mini-table">
                                   <tbody>
