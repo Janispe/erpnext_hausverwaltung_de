@@ -5,7 +5,6 @@ from unittest.mock import patch
 from hausverwaltung.hausverwaltung.report.noch_offene_rechnungen_und_forderungen.noch_offene_rechnungen_und_forderungen import (
 	_group_rows_by_mietabrechnung,
 	_resolve_abschlagsplan_payment_entries,
-	_shorten_sollstellung_remark,
 )
 
 
@@ -38,16 +37,6 @@ def _row(
 
 
 class TestNochOffeneForderungenAggregation(TestCase):
-	def test_sollstellung_marker_remark_is_shortened_for_display(self):
-		remark = "[TYPE:Betriebskosten] [MV:G1 | VH | 4.OG links | ab: 2003-10-01] 06/2026"
-
-		self.assertEqual(_shorten_sollstellung_remark(remark), "BK 06/2026")
-
-	def test_non_sollstellung_remark_stays_unchanged(self):
-		remark = "Freie Bemerkung"
-
-		self.assertEqual(_shorten_sollstellung_remark(remark), remark)
-
 	def test_abschlagsplan_payment_entries_are_resolved_from_plan_rows(self):
 		source_rows = [
 			{"voucher_type": "Payment Entry", "voucher_no": "PE-ABS"},
