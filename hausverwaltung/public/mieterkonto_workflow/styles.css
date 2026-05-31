@@ -411,6 +411,16 @@ button { font-family: inherit; }
 .mk-table td.col-desc {
   color: var(--ink);
 }
+.mk-desc-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+}
+.mk-desc-main {
+  min-width: 0;
+}
 .mk-table td.col-desc .mk-desc-sub {
   display: block;
   color: var(--ink-3);
@@ -509,6 +519,33 @@ button { font-family: inherit; }
 .mk-cat-label { color: var(--ink-3); }
 .mk-cat-val { font-variant-numeric: tabular-nums; color: var(--ink-2); }
 .mk-cat-val.is-zero { color: var(--ink-4); }
+
+.mk-cat-breakdown {
+  display: inline-flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.mk-cat-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.mk-cat-chip-label {
+  color: var(--ink-3);
+}
+.mk-cat-chip-val {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
 
 .mk-cats-toggle {
   appearance: none;
@@ -1171,6 +1208,16 @@ button { font-family: inherit; }
 .op-chips { flex: 1; min-width: 0; }
 .op-search { width: 200px; }
 @media (max-width: 1280px) {
+  .mk-desc-line {
+    display: block;
+  }
+  .mk-cat-breakdown {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    margin: 4px 0 0;
+    white-space: normal;
+  }
   .op-toolbar { flex-wrap: wrap; }
   .op-search { width: 100%; }
 }

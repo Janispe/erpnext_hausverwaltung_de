@@ -3,7 +3,7 @@
 // Ruft den echten Mieterkonto-Report + Stammdaten-Endpoint.
 
 (function () {
-  async function loadReal(customer, fromDate, toDate) {
+  async function loadReal(customer, fromDate, toDate, options = {}) {
     if (!customer) {
       window.MIETERKONTO = emptyState();
       return;
@@ -27,6 +27,7 @@
             from_date: from,
             to_date: to,
             show_kategorien: 1,
+            gruppieren_pro_monat: options.gruppieren === false ? 0 : 1,
           },
         },
       }),
@@ -125,8 +126,8 @@
   }
 
   window.MK_ADAPTER = {
-    async load(customer, fromDate, toDate) {
-      await loadReal(customer, fromDate, toDate);
+    async load(customer, fromDate, toDate, options) {
+      await loadReal(customer, fromDate, toDate, options);
     },
     async searchMieter(txt = "", status = "Läuft") {
       const res = await frappe.call({

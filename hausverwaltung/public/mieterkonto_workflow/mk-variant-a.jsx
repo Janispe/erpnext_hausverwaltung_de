@@ -26,7 +26,26 @@ function CategoryRow({ row, isOpen }) {
   );
 }
 
-function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen }) {
+function CategoryBreakdown({ row, align = "inline" }) {
+  const values = CATS
+    .map((c) => ({ ...c, value: row[`betrag_${c.key}`] || 0 }))
+    .filter((c) => Math.abs(c.value) >= 0.01);
+
+  if (!values.length) return null;
+
+  return (
+    <span className={`mk-cat-breakdown mk-cat-breakdown-${align}`}>
+      {values.map((c) => (
+        <span className="mk-cat-chip" key={c.key}>
+          <span className="mk-cat-chip-label">{c.label}</span>
+          <span className="mk-cat-chip-val">{fmtEUR(c.value, { signed: true })}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, showInlineCats }) {
   const [openIdx, setOpenIdx] = useStateA(() => new Set());
   const isOpen = (i) => defaultCatsOpen || openIdx.has(i);
   const toggle = (i) => {
@@ -116,8 +135,13 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen }) {
                   <td><ArtPill art={r.art} /></td>
                   <td className="col-beleg">{r.belegnummer}</td>
                   <td className="col-desc">
-                    {r.beschreibung}
-                    {showOpen && <OpenBadge amount={r.offen} />}
+                    <div className="mk-desc-line">
+                      <span className="mk-desc-main">
+                        {r.beschreibung}
+                        {showOpen && <OpenBadge amount={r.offen} />}
+                      </span>
+                      {showInlineCats && <CategoryBreakdown row={r} />}
+                    </div>
                     {!defaultCatsOpen && (
                       <button
                         className={`mk-cats-toggle ${opn ? "is-open" : ""}`}

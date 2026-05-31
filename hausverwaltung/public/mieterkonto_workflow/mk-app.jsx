@@ -29,8 +29,10 @@ function App() {
   const [customers, setCustomers] = useState(window.MK_CUSTOMERS || []);
   const [mieterSearching, setMieterSearching] = useState(false);
 
-  async function applyFilters(c, f, t) {
-    await window.MK_ADAPTER.load(c, f, t);
+  async function applyFilters(c, f, t, gruppierenOverride) {
+    await window.MK_ADAPTER.load(c, f, t, {
+      gruppieren: gruppierenOverride ?? gruppieren,
+    });
     setData(window.MIETERKONTO);
   }
 
@@ -80,7 +82,11 @@ function App() {
 
   // Filter-Toggle synct mit Tweak
   const setShowCatsBoth = (v) => { setShowCats(v); setTweak("showCats", v); };
-  const setGruppierenBoth = (v) => { setGruppieren(v); setTweak("gruppieren", v); };
+  const setGruppierenBoth = (v) => {
+    setGruppieren(v);
+    setTweak("gruppieren", v);
+    applyFilters(customer, fromDate, toDate, v);
+  };
 
   const openLegacyReport = () => {
     if (!customer) {
@@ -159,8 +165,9 @@ function App() {
             rows={rows}
             totalRow={totalRow}
             density={t.density}
-            defaultCatsOpen={showCats || t.defaultCatsOpen}
+            defaultCatsOpen={t.defaultCatsOpen}
             highlightOpen={t.highlightOpen}
+            showInlineCats={showCats}
           />
         )}
         {variant === "B" && <VariantB rows={rows} totalRow={totalRow} />}
