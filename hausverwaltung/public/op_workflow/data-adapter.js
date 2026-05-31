@@ -31,6 +31,27 @@
     return res.message;
   }
 
+  function chunkArray(items, size) {
+    const chunks = [];
+    for (let i = 0; i < items.length; i += size) {
+      chunks.push(items.slice(i, i + size));
+    }
+    return chunks;
+  }
+
+  async function getListInBatches(doctype, names, fields, batchSize = 40) {
+    const docs = [];
+    for (const batch of chunkArray([...names], batchSize)) {
+      const rows = await frappe.db.get_list(doctype, {
+        filters: [["name", "in", batch]],
+        fields,
+        limit_page_length: batch.length,
+      });
+      docs.push(...rows);
+    }
+    return docs;
+  }
+
   function defaultDateFilter() {
     const d = new Date();
     const Y = d.getFullYear();
@@ -71,22 +92,14 @@
     for (const [doctype, names] of Object.entries(partiesByType)) {
       const cfg = partyConfig[doctype];
       if (!cfg || !names.size) continue;
-      const docs = await frappe.db.get_list(doctype, {
-        filters: [["name", "in", [...names]]],
-        fields: cfg.fields,
-        limit_page_length: 500,
-      });
+      const docs = await getListInBatches(doctype, names, cfg.fields);
       for (const doc of docs) partyMap[doc.name] = cfg.label(doc);
     }
 
     const ccLabel = {};
     const ccs = [...new Set(rows.map((r) => r.kostenstelle).filter(Boolean))];
     if (ccs.length) {
-      const ccDocs = await frappe.db.get_list("Cost Center", {
-        filters: [["name", "in", ccs]],
-        fields: ["name", "cost_center_name"],
-        limit_page_length: 200,
-      });
+      const ccDocs = await getListInBatches("Cost Center", ccs, ["name", "cost_center_name"]);
       for (const cc of ccDocs) ccLabel[cc.name] = cc.cost_center_name || cc.name;
     }
 
