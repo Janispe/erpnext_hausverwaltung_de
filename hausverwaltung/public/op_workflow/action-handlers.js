@@ -53,6 +53,7 @@
         mahngebuehr: opts.mahngebuehr,
         zinsen_aktiv: opts.zinsenAktiv,
         serienbrief_vorlage: opts.serienbriefVorlage || null,
+        serienbrief_werte: opts.serienbriefWerte || null,
       },
     );
     handleResult(
@@ -68,11 +69,13 @@
     const invoicesByCustomer = {};
     const dunningTypePerCustomer = {};
     const serienbriefVorlagePerCustomer = {};
+    const serienbriefWertePerCustomer = {};
     for (const [party, rows] of Object.entries(rowsByParty)) {
       invoicesByCustomer[party] = rows.map((r) => r.belegnummer);
       if (opts?.dunningType) dunningTypePerCustomer[party] = opts.dunningType;
       if (opts?.serienbriefVorlage) serienbriefVorlagePerCustomer[party] = opts.serienbriefVorlage;
       else if (rows[0]?.serienbrief_vorlage) serienbriefVorlagePerCustomer[party] = rows[0].serienbrief_vorlage;
+      if (opts?.serienbriefWerte) serienbriefWertePerCustomer[party] = opts.serienbriefWerte;
     }
     const result = await call(
       "hausverwaltung.hausverwaltung.page.op_workflow.op_workflow.create_bulk_dunning",
@@ -81,6 +84,8 @@
         dunning_type_per_customer: dunningTypePerCustomer,
         serienbrief_vorlage_per_customer: serienbriefVorlagePerCustomer,
         serienbrief_vorlage: opts?.serienbriefVorlage || null,
+        serienbrief_werte_per_customer: serienbriefWertePerCustomer,
+        serienbrief_werte: opts?.serienbriefWerte || null,
         new_due_date: opts.neueFaelligkeit,
       },
     );

@@ -455,6 +455,30 @@ def _append_child_if_table(doc, table_fieldname: str, values: dict[str, Any]) ->
     return True
 
 
+def _parse_serienbrief_werte(values: str | list | dict | None) -> list[dict[str, Any]]:
+    if isinstance(values, str):
+        values = json.loads(values or "[]")
+    if isinstance(values, dict):
+        values = [{"variable": key, "wert": value} for key, value in values.items()]
+
+    rows: list[dict[str, Any]] = []
+    for row in values or []:
+        variable = (row.get("variable") or "").strip()
+        if not variable:
+            continue
+        rows.append({
+            "variable": variable,
+            "wert": row.get("wert"),
+            "beschreibung": row.get("beschreibung"),
+        })
+    return rows
+
+
+def _append_serienbrief_werte(doc, values: str | list | dict | None) -> None:
+    for row in _parse_serienbrief_werte(values):
+        _append_child_if_table(doc, "hv_serienbrief_werte", row)
+
+
 def _draft_response(doc, key: str, **extra) -> dict:
     return {
         "doctype": doc.doctype,
@@ -568,6 +592,7 @@ def create_dunning(
     mahngebuehr: float | None = None,
     zinsen_aktiv: bool = True,
     serienbrief_vorlage: str | None = None,
+    serienbrief_werte: str | list | dict | None = None,
 ) -> dict:
     """Erzeugt ein Dunning-Dokument für eine Sales Invoice.
 
@@ -620,6 +645,7 @@ def create_dunning(
             "amount": si.outstanding_amount,
         },
     )
+    _append_serienbrief_werte(dunning, serienbrief_werte)
 
     dunning.insert(ignore_permissions=False)
     return _draft_response(
@@ -639,6 +665,8 @@ def create_bulk_dunning(
     new_due_date: str | None = None,
     serienbrief_vorlage_per_customer: str | dict | None = None,
     serienbrief_vorlage: str | None = None,
+    serienbrief_werte_per_customer: str | dict | None = None,
+    serienbrief_werte: str | list | dict | None = None,
 ) -> dict:
     """Sammelmahnung: pro Kunde EIN Dunning-Doc mit mehreren Invoices.
 
@@ -656,6 +684,8 @@ def create_bulk_dunning(
         dunning_type_per_customer = json.loads(dunning_type_per_customer)
     if isinstance(serienbrief_vorlage_per_customer, str):
         serienbrief_vorlage_per_customer = json.loads(serienbrief_vorlage_per_customer)
+    if isinstance(serienbrief_werte_per_customer, str):
+        serienbrief_werte_per_customer = json.loads(serienbrief_werte_per_customer)
 
     created: list[str] = []
     errors: list[dict] = []
@@ -710,6 +740,8 @@ def create_bulk_dunning(
                         "amount": si.outstanding_amount,
                     },
                 )
+            customer_werte = (serienbrief_werte_per_customer or {}).get(customer) if serienbrief_werte_per_customer else None
+            _append_serienbrief_werte(dunning, customer_werte or serienbrief_werte)
 
             dunning.insert(ignore_permissions=False)
             created.append(dunning.name)

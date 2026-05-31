@@ -44,6 +44,14 @@ function apply_hv_dunning_labels(frm) {
 			"Briefvorlage, die beim Drucken dieser Mahnung gerendert wird. Diese Auswahl überschreibt den Default der Mahnstufe."
 		)
 	);
+	frm.set_df_property("hv_serienbrief_werte", "label", __("Serienbrief-Werte für diese Mahnung"));
+	frm.set_df_property(
+		"hv_serienbrief_werte",
+		"description",
+		__(
+			"Optionale Variablenwerte nur für diese konkrete Mahnung. Gleichnamige Werte überschreiben die Defaults aus der Mahnstufe."
+		)
+	);
 }
 
 function toggle_standard_letter_fields(frm) {

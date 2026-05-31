@@ -260,7 +260,7 @@ doc_events = {
 		"on_trash": "hausverwaltung.hausverwaltung.doctype.wohnung.wohnung.update_wohnung_status_from_zustand",
 	},
 	"Dunning": {
-		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.sync_serienbrief_vorlage_from_dunning_type",
+		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning",
 	},
 	"Dunning Type": {
 		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning_type_serienbrief_werte",

@@ -56,6 +56,18 @@ def execute():
 		),
 	}
 
+	dunning_werte_field = {
+		"fieldname": WERTE_FIELDNAME,
+		"label": "Serienbrief-Werte",
+		"fieldtype": "Table",
+		"options": "Dunning Serienbrief Wert",
+		"insert_after": FIELDNAME,
+		"description": (
+			"Variable Werte nur für diese konkrete Mahnung. "
+			"Diese Einträge überschreiben gleichnamige Werte aus der Mahnstufe/Regel."
+		),
+	}
+
 	# Pro-Stufe-Werte für die in der Vorlage deklarierten Variablen. Erlaubt eine
 	# einzige konsolidierte Vorlage, die ihre stufenabhängigen Texte/Fristen aus
 	# dem Dunning Type zieht statt aus separaten Vorlagen je Stufe.
@@ -71,4 +83,5 @@ def execute():
 	_upsert_custom_field("Dunning Type", dunning_type_field)
 	_upsert_custom_field("Dunning", dunning_section_field)
 	_upsert_custom_field("Dunning", dunning_field)
+	_upsert_custom_field("Dunning", dunning_werte_field)
 	_upsert_custom_field("Dunning Type", dunning_type_werte_field)

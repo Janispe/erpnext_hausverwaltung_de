@@ -33,39 +33,9 @@ def sync_serienbrief_vorlage_from_dunning_type(doc, method=None) -> None:
 		doc.set(SERIENBRIEF_FIELDNAME, template)
 
 
-def collect_serienbrief_werte(dunning) -> dict[str, dict[str, Any]]:
-	"""Sammle die pro Mahnstufe gepflegten Variablenwerte aus dem Dunning Type.
-
-	Liefert ein Mapping im selben Format wie ``variablen_werte``
-	(``{scrub(variable): {"value": wert}}``), das der Serienbrief-Durchlauf in den
-	Pro-Empfänger-Override (`row._iteration_variablen_werte`) mergen kann. So zieht
-	eine einzige konsolidierte Vorlage ihre stufenabhängigen Texte/Fristen aus dem
-	Dunning Type des Belegs.
-
-	Defensiv: kein ``dunning_type`` / fehlende Tabelle / fehlende Spalte → ``{}``.
-	``dunning`` darf ein Doc oder ein Dunning-Name (str) sein.
-	"""
-	dunning_type = None
-	if isinstance(dunning, str):
-		if frappe.db.has_column("Dunning", "dunning_type"):
-			dunning_type = frappe.db.get_value("Dunning", dunning, "dunning_type")
-	else:
-		dunning_type = getattr(dunning, "dunning_type", None)
-
-	if not dunning_type:
-		return {}
-
-	# Table-Felder haben keine Spalte am Parent — daher Meta-Check statt has_column.
-	if not frappe.get_meta("Dunning Type").get_field(SERIENBRIEF_WERTE_FIELDNAME):
-		return {}
-
-	try:
-		type_doc = frappe.get_cached_doc("Dunning Type", dunning_type)
-	except frappe.DoesNotExistError:
-		return {}
-
+def _collect_werte_rows(rows) -> dict[str, dict[str, Any]]:
 	werte: dict[str, dict[str, Any]] = {}
-	for row in type_doc.get(SERIENBRIEF_WERTE_FIELDNAME) or []:
+	for row in rows or []:
 		name = (row.get("variable") or "").strip()
 		if not name:
 			continue
@@ -73,7 +43,49 @@ def collect_serienbrief_werte(dunning) -> dict[str, dict[str, Any]]:
 	return werte
 
 
-def validate_dunning_type_serienbrief_werte(doc, method=None) -> None:
+def collect_serienbrief_werte(dunning) -> dict[str, dict[str, Any]]:
+	"""Sammle Serienbrief-Variablenwerte aus Dunning Type und Dunning.
+
+	Liefert ein Mapping im selben Format wie ``variablen_werte``
+	(``{scrub(variable): {"value": wert}}``), das der Serienbrief-Durchlauf in den
+	Pro-Empfänger-Override (`row._iteration_variablen_werte`) mergen kann. Werte
+	aus dem Dunning Type bilden den Default; Werte auf der konkreten Mahnung
+	überschreiben gleichnamige Defaults.
+
+	Defensiv: fehlende Tabelle / fehlende Spalte → ``{}``.
+	``dunning`` darf ein Doc oder ein Dunning-Name (str) sein.
+	"""
+	dunning_type = None
+	dunning_doc = None
+	if isinstance(dunning, str):
+		try:
+			dunning_doc = frappe.get_cached_doc("Dunning", dunning)
+		except frappe.DoesNotExistError:
+			dunning_doc = None
+	else:
+		dunning_doc = dunning
+
+	if dunning_doc:
+		dunning_type = getattr(dunning_doc, "dunning_type", None)
+
+	werte: dict[str, dict[str, Any]] = {}
+
+	# Table-Felder haben keine Spalte am Parent — daher Meta-Check statt has_column.
+	if dunning_type and frappe.get_meta("Dunning Type").get_field(SERIENBRIEF_WERTE_FIELDNAME):
+		try:
+			type_doc = frappe.get_cached_doc("Dunning Type", dunning_type)
+		except frappe.DoesNotExistError:
+			type_doc = None
+		if type_doc:
+			werte.update(_collect_werte_rows(type_doc.get(SERIENBRIEF_WERTE_FIELDNAME) or []))
+
+	if dunning_doc and frappe.get_meta("Dunning").get_field(SERIENBRIEF_WERTE_FIELDNAME):
+		werte.update(_collect_werte_rows(dunning_doc.get(SERIENBRIEF_WERTE_FIELDNAME) or []))
+
+	return werte
+
+
+def validate_serienbrief_werte(doc, method=None) -> None:
 	"""Verhindert, dass zwei hv_serienbrief_werte-Zeilen nach frappe.scrub()
 	denselben Variablennamen liefern. Sonst würden Werte stumm überschrieben
 	(siehe collect_serienbrief_werte → dict-Assignment).
@@ -108,3 +120,12 @@ def validate_dunning_type_serienbrief_werte(doc, method=None) -> None:
 		).format("".join(parts)),
 		title=_("Doppelte Variablen"),
 	)
+
+
+def validate_dunning_type_serienbrief_werte(doc, method=None) -> None:
+	validate_serienbrief_werte(doc, method=method)
+
+
+def validate_dunning(doc, method=None) -> None:
+	sync_serienbrief_vorlage_from_dunning_type(doc, method=method)
+	validate_serienbrief_werte(doc, method=method)

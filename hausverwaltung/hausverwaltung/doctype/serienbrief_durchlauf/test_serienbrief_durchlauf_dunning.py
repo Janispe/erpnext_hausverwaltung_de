@@ -15,6 +15,7 @@ from frappe.tests.utils import FrappeTestCase
 from hausverwaltung.hausverwaltung.doctype.dunning import (
 	collect_serienbrief_werte,
 	sync_serienbrief_vorlage_from_dunning_type,
+	validate_dunning,
 	validate_dunning_type_serienbrief_werte,
 )
 from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
@@ -53,6 +54,20 @@ class TestSerienbriefDurchlaufDunning(FrappeTestCase):
 		self.assertEqual(werte["frist_tage"], {"value": "3"})
 		self.assertEqual(werte["klage_androhen"], {"value": "1"})
 
+	def test_collect_dunning_values_override_type_defaults(self):
+		dunning = frappe._dict(
+			doctype="Dunning",
+			dunning_type=self.type_name,
+			hv_serienbrief_werte=[
+				frappe._dict(variable="Ueberschrift", wert="Individuelle Mahnung"),
+				frappe._dict(variable="zusatztext", wert="Bitte melden Sie sich telefonisch."),
+			],
+		)
+		werte = collect_serienbrief_werte(dunning)
+		self.assertEqual(werte["ueberschrift"], {"value": "Individuelle Mahnung"})
+		self.assertEqual(werte["frist_tage"], {"value": "3"})
+		self.assertEqual(werte["zusatztext"], {"value": "Bitte melden Sie sich telefonisch."})
+
 	def test_collect_empty_without_type(self):
 		self.assertEqual(collect_serienbrief_werte(frappe._dict(doctype="Dunning")), {})
 		self.assertEqual(collect_serienbrief_werte(frappe._dict(doctype="Dunning", dunning_type=None)), {})
@@ -73,6 +88,17 @@ class TestSerienbriefDurchlaufDunning(FrappeTestCase):
 		dt.append("hv_serienbrief_werte", {"variable": "frist_tage", "wert": "14"})
 		with self.assertRaises(frappe.ValidationError):
 			validate_dunning_type_serienbrief_werte(dt)
+
+	def test_validate_dunning_blocks_scrub_collision(self):
+		dunning = frappe._dict(
+			doctype="Dunning",
+			hv_serienbrief_werte=[
+				frappe._dict(variable="Zusatz Text", wert="A"),
+				frappe._dict(variable="zusatz_text", wert="B"),
+			],
+		)
+		with self.assertRaises(frappe.ValidationError):
+			validate_dunning(dunning)
 
 	def test_validate_passes_distinct(self):
 		dt = frappe.new_doc("Dunning Type")

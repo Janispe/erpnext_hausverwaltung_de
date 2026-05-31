@@ -135,6 +135,7 @@ function MahnungModal({ row, onClose, onDone }) {
   const [zinsen, setZinsen] = useStateAct(true);
   const [zinssatz, setZinssatz] = useStateAct(9.12); // Basis + 9% gem. §288 BGB
   const [versand, setVersand] = useStateAct("Brief");
+  const [zusatztext, setZusatztext] = useStateAct("");
   const [busy, setBusy] = useStateAct(false);
   const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
     const d = new Date();
@@ -178,6 +179,9 @@ function MahnungModal({ row, onClose, onDone }) {
         mahngebuehr,
         zinsenAktiv: zinsen,
         serienbriefVorlage,
+        serienbriefWerte: zusatztext.trim()
+          ? [{ variable: "zusatztext", wert: zusatztext.trim(), beschreibung: "Optionaler Text aus dem Mahn-Cockpit" }]
+          : [],
       });
       onDone?.(result);
     } finally {
@@ -249,6 +253,15 @@ function MahnungModal({ row, onClose, onDone }) {
           <label>Neue Zahlungsfrist</label>
           <input type="date" value={neueFaelligkeit}
             onChange={(e) => setNeueFaelligkeit(e.target.value)} />
+        </div>
+        <div className="op-field is-full">
+          <label>Optionaler Zusatztext</label>
+          <textarea
+            rows="3"
+            value={zusatztext}
+            placeholder="Wird als Variable {{ zusatztext }} an die Serienbrief-Vorlage übergeben."
+            onChange={(e) => setZusatztext(e.target.value)}
+          />
         </div>
         <div className="op-field is-full">
           <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
@@ -657,6 +670,7 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
   }, [rows]);
 
   const [versand, setVersand] = useStateAct("Brief");
+  const [zusatztext, setZusatztext] = useStateAct("");
   const [dunningTypes, setDunningTypes] = useStateAct([]);
   const [dunningType, setDunningType] = useStateAct(rows.find((r) => r.dunning_type)?.dunning_type || "");
   const [vorlagen, setVorlagen] = useStateAct([]);
@@ -701,7 +715,15 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
     });
     setBusy(true);
     try {
-      const result = await window.OP_ACTIONS.createBulkDunning(rowsByParty, { neueFaelligkeit, dunningType, serienbriefVorlage });
+      const serienbriefWerte = zusatztext.trim()
+        ? [{ variable: "zusatztext", wert: zusatztext.trim(), beschreibung: "Optionaler Text aus dem Mahn-Cockpit" }]
+        : [];
+      const result = await window.OP_ACTIONS.createBulkDunning(rowsByParty, {
+        neueFaelligkeit,
+        dunningType,
+        serienbriefVorlage,
+        serienbriefWerte,
+      });
       onDone?.(result);
     } finally {
       setBusy(false);
@@ -761,6 +783,15 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
         <div className="op-field">
           <label>Neue Zahlungsfrist</label>
           <input type="date" value={neueFaelligkeit} onChange={(e) => setNeueFaelligkeit(e.target.value)} />
+        </div>
+        <div className="op-field is-full">
+          <label>Optionaler Zusatztext</label>
+          <textarea
+            rows="3"
+            value={zusatztext}
+            placeholder="Wird als Variable {{ zusatztext }} an jede Serienbrief-Vorlage übergeben."
+            onChange={(e) => setZusatztext(e.target.value)}
+          />
         </div>
       </div>
 
