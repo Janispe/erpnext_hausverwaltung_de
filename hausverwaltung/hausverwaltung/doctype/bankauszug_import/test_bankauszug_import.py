@@ -30,6 +30,9 @@ class TestBankauszugImport(FrappeTestCase):
         def get(self, key, default=None):
             return getattr(self, key, default)
 
+        def db_set(self, fieldname, value):
+            setattr(self, fieldname, value)
+
     class _FakeDoc:
         def __init__(self, name: str, rows):
             self.name = name
@@ -37,10 +40,10 @@ class TestBankauszugImport(FrappeTestCase):
             self.saved = False
             self.ignore_permissions = None
 
-        def get(self, key):
+        def get(self, key, default=None):
             if key == "rows":
                 return self._rows
-            return None
+            return getattr(self, key, default)
 
         def save(self, ignore_permissions=False):
             self.saved = True
@@ -514,6 +517,184 @@ class TestBankauszugImport(FrappeTestCase):
         self.assertEqual(row.party, "SUP-H")
         self.assertTrue(doc.saved)
         self.assertEqual(res["row_party_type"], "Supplier")
+
+    def test_change_row_party_without_bt_updates_row(self):
+        row = self._FakeRow(name="ROW-CHANGE-1", iban="")
+        doc = self._FakeDoc("IMP-CHANGE-1", [row])
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(bi, "_recompute_doc_status") as recompute, \
+             patch.object(bi, "_refresh_and_persist_saldo"):
+            res = bi.change_row_party("IMP-CHANGE-1", "ROW-CHANGE-1", "Customer", "CUST-1")
+
+        self.assertTrue(res["ok"])
+        self.assertEqual(row.party_type, "Customer")
+        self.assertEqual(row.party, "CUST-1")
+        self.assertEqual(res["bank_transaction"]["reason"], "no_bank_transaction")
+        recompute.assert_called_once_with("IMP-CHANGE-1")
+
+    def test_change_row_party_with_bt_updates_row_and_bt_directly(self):
+        row = self._FakeRow(name="ROW-CHANGE-2", iban="DE-OLD")
+        row.bank_transaction = "BT-CHANGE-2"
+        row.party_type = "Customer"
+        row.party = "CUST-OLD"
+        doc = self._FakeDoc("IMP-CHANGE-2", [row])
+        bt = self._FakeBT("BT-CHANGE-2", party_type="Customer", party="CUST-OLD")
+        meta = type("M", (), {"fields": [type("F", (), {"fieldname": "party_type"})(), type("F", (), {"fieldname": "party"})()]})()
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Transaction":
+                return bt
+            raise AssertionError("unexpected doctype")
+
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(bi.frappe, "get_meta", return_value=meta), \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch.object(bi, "_refresh_and_persist_saldo"):
+            res = bi.change_row_party("IMP-CHANGE-2", "ROW-CHANGE-2", "Supplier", "SUP-NEW")
+
+        self.assertEqual(row.party_type, "Supplier")
+        self.assertEqual(row.party, "SUP-NEW")
+        self.assertEqual(bt.party_type, "Supplier")
+        self.assertEqual(bt.party, "SUP-NEW")
+        self.assertTrue(res["bank_transaction"]["updated"])
+
+    def test_change_row_party_clear_removes_party_from_row_and_bt(self):
+        row = self._FakeRow(name="ROW-CLEAR", iban="DE-CLEAR")
+        row.bank_transaction = "BT-CLEAR"
+        row.party_type = "Customer"
+        row.party = "CUST-CLEAR"
+        doc = self._FakeDoc("IMP-CLEAR", [row])
+        bt = self._FakeBT("BT-CLEAR", party_type="Customer", party="CUST-CLEAR")
+        meta = type("M", (), {"fields": [type("F", (), {"fieldname": "party_type"})(), type("F", (), {"fieldname": "party"})()]})()
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Transaction":
+                return bt
+            raise AssertionError("unexpected doctype")
+
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe, "get_meta", return_value=meta), \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch.object(bi, "_refresh_and_persist_saldo"):
+            res = bi.change_row_party("IMP-CLEAR", "ROW-CLEAR", clear_party=1)
+
+        self.assertIsNone(row.party_type)
+        self.assertIsNone(row.party)
+        self.assertIsNone(bt.party_type)
+        self.assertIsNone(bt.party)
+        self.assertTrue(res["bank_transaction"]["updated"])
+
+    def test_reset_row_booking_cancels_payment_entry_and_clears_row(self):
+        row = self._FakeRow(name="ROW-RESET", iban="DE-RESET")
+        row.payment_entry = "PE-RESET"
+        row.payment_document_type = "Payment Entry"
+        row.payment_document = "PE-RESET"
+        row.row_status = "success"
+        row.auto_match_message = "done"
+        doc = self._FakeDoc("IMP-RESET", [row])
+
+        class _Voucher:
+            name = "PE-RESET"
+            flags = frappe._dict()
+
+            def cancel(self):
+                self.cancelled = True
+
+        voucher = _Voucher()
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Payment Entry":
+                return voucher
+            raise AssertionError("unexpected doctype")
+
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe.db, "get_value", return_value=1), \
+             patch("hausverwaltung.hausverwaltung.utils.bank_transaction_links.remove_bank_transaction_payment_links", return_value=["BT-1"]) as remove_links, \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch.object(bi, "_refresh_and_persist_saldo"):
+            res = bi.reset_row_booking("IMP-RESET", "ROW-RESET")
+
+        self.assertTrue(res["reset"])
+        self.assertTrue(voucher.cancelled)
+        remove_links.assert_called_once_with("Payment Entry", "PE-RESET")
+        self.assertIsNone(row.payment_entry)
+        self.assertIsNone(row.payment_document_type)
+        self.assertIsNone(row.payment_document)
+        self.assertIsNone(row.row_status)
+        self.assertIn("PE-RESET", row.auto_match_message)
+
+    def test_change_row_party_does_not_propagate_when_iban_not_unique(self):
+        row = self._FakeRow(name="ROW-AMB-1", iban="DE-AMB")
+        other = self._FakeRow(name="ROW-AMB-2", iban="DE-AMB")
+        doc = self._FakeDoc("IMP-AMB", [row, other])
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(bi, "_get_party_by_iban", return_value=None), \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch.object(bi, "_refresh_and_persist_saldo"):
+            res = bi.change_row_party(
+                "IMP-AMB",
+                "ROW-AMB-1",
+                "Customer",
+                "CUST-AMB",
+                propagate_same_iban=1,
+            )
+
+        self.assertEqual(row.party, "CUST-AMB")
+        self.assertIsNone(other.party)
+        self.assertEqual(res["propagation_skipped"], "iban_not_unique")
+
+    def test_change_row_party_propagates_only_unbooked_same_unique_iban_rows(self):
+        row = self._FakeRow(name="ROW-PROP-1", iban="DE-PROP")
+        other = self._FakeRow(name="ROW-PROP-2", iban="DE-PROP")
+        other.bank_transaction = "BT-PROP-2"
+        booked = self._FakeRow(name="ROW-PROP-3", iban="DE-PROP")
+        booked.payment_entry = "PE-BOOKED"
+        doc = self._FakeDoc("IMP-PROP", [row, other, booked])
+        bt = self._FakeBT("BT-PROP-2")
+        meta = type("M", (), {"fields": [type("F", (), {"fieldname": "party_type"})(), type("F", (), {"fieldname": "party"})()]})()
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Transaction":
+                return bt
+            raise AssertionError("unexpected doctype")
+
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(bi.frappe, "get_meta", return_value=meta), \
+             patch.object(bi, "_get_party_by_iban", return_value=("Customer", "CUST-PROP")), \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch.object(bi, "_refresh_and_persist_saldo"):
+            res = bi.change_row_party(
+                "IMP-PROP",
+                "ROW-PROP-1",
+                "Customer",
+                "CUST-PROP",
+                propagate_same_iban=1,
+            )
+
+        self.assertEqual(other.party, "CUST-PROP")
+        self.assertEqual(bt.party, "CUST-PROP")
+        self.assertIsNone(booked.party)
+        self.assertEqual(len(res["propagated_rows"]), 1)
 
     def test_create_bank_transactions_blocks_when_any_row_has_no_party(self):
         row_ok = self._FakeRow(name="ROW-J1", iban="DE12")

@@ -30,6 +30,8 @@ const RPC_ACTIONS = {
 	refresh_saldo: DT + "refresh_saldo",
 	create_bank_transactions: DT + "create_bank_transactions",
 	relink_all_parties: DT + "relink_parties_for_all_rows",
+	reset_row_booking: DT + "reset_row_booking",
+	change_row_party: DT + "change_row_party",
 	// Phase 1: Party zuordnen
 	assign_party: DT + "apply_party_to_row_and_relink",
 	create_party: DT + "create_party_and_bank_for_row",

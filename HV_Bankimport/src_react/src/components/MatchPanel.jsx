@@ -113,6 +113,120 @@ function PartyAssign({ docname, row, onActionDone, notify }) {
 	);
 }
 
+function PartyChangeDialog({ docname, row, onClose, onActionDone, notify }) {
+	const [partyType, setPartyType] = useState(row.betrag < 0 ? "Supplier" : "Customer");
+	const [updateIbanMapping, setUpdateIbanMapping] = useState(false);
+	const [propagateSameIban, setPropagateSameIban] = useState(true);
+	const [busy, run] = useAction(notify);
+	const hasVoucher = !!(row.paymentEntry || row.journalEntry || row.paymentDocument);
+	const fetcher = useCallback((txt) => api.searchParties(partyType, txt), [partyType]);
+
+	const finish = (res, success) => {
+		if (!res || res.ok === false) return;
+		if (success) notify("success", success);
+		onClose();
+		onActionDone();
+	};
+
+	const changeTo = (item) =>
+		run(() => api.changeRowParty(docname, row.id, {
+			partyType,
+			party: item.value,
+			updateIbanMapping,
+			propagateSameIban,
+		})).then((res) => finish(res, `Partei geändert: ${item.value}`));
+
+	const clearParty = () =>
+		run(() => api.changeRowParty(docname, row.id, {
+			clearParty: true,
+			updateIbanMapping,
+			propagateSameIban: false,
+		})).then((res) => finish(res, "Partei entfernt."));
+
+	const createNew = () =>
+		run(() => api.changeRowParty(docname, row.id, {
+			partyType,
+			party: row.auftraggeber,
+			updateIbanMapping,
+			propagateSameIban,
+			createIfMissing: true,
+		})).then((res) => finish(res, "Partei angelegt und zugeordnet."));
+
+	return (
+		<div className="modal-backdrop" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+			<div className="party-dialog" role="dialog" aria-modal="true" aria-label="Partei ändern">
+				<div className="dialog-head">
+					<div>
+						<div className="dialog-title">Partei ändern</div>
+						<div className="dialog-sub">{fmtDate(row.buchungstag)} · {fmtEUR(row.betrag)}</div>
+					</div>
+					<button className="btn subtle sm" onClick={onClose} disabled={busy} aria-label="Schließen">
+						<Icon name="x" />
+					</button>
+				</div>
+				{hasVoucher && (
+					<div className="reset-warning">
+						<Icon name="info" /> Bestehende Buchung wird vor der Änderung storniert.
+					</div>
+				)}
+				<div className="current-party">
+					<span>Aktuell</span>
+					<strong>{row.party || "keine Partei"}{row.partyTyp ? ` · ${row.partyTyp}` : ""}</strong>
+				</div>
+				<div className="seg" role="tablist" style={{ marginBottom: 10 }}>
+					{["Customer", "Supplier"].map((t) => (
+						<button
+							key={t}
+							className={`seg-btn ${partyType === t ? "active" : ""}`}
+							onClick={() => setPartyType(t)}
+							disabled={busy}
+						>
+							{t === "Customer" ? "Mieter" : "Lieferant"}
+						</button>
+					))}
+				</div>
+				<LinkSearch
+					placeholder={`${partyType === "Customer" ? "Mieter" : "Lieferant"} suchen…`}
+					fetcher={fetcher}
+					onPick={changeTo}
+					autoFocus
+					disabled={busy}
+				/>
+				<div className="dialog-options">
+					<label className="advance-toggle">
+						<input
+							type="checkbox"
+							checked={updateIbanMapping}
+							onChange={(e) => setUpdateIbanMapping(e.target.checked)}
+							disabled={busy || !row.iban}
+						/>
+						IBAN-Verknüpfung ebenfalls ändern/entfernen
+					</label>
+					<label className="advance-toggle">
+						<input
+							type="checkbox"
+							checked={propagateSameIban}
+							onChange={(e) => setPropagateSameIban(e.target.checked)}
+							disabled={busy || !row.iban}
+						/>
+						Ungebuchte Zeilen mit gleicher eindeutiger IBAN aktualisieren
+					</label>
+				</div>
+				<div className="dialog-actions">
+					{row.auftraggeber && (
+						<button className="btn" onClick={createNew} disabled={busy}>
+							{busy ? <Spinner /> : <Icon name="plus" />} Neu anlegen aus Auftraggeber
+						</button>
+					)}
+					<button className="btn danger" onClick={clearParty} disabled={busy || (!row.party && !row.partyTyp)}>
+						{busy ? <Spinner /> : <Icon name="x" />} Partei entfernen
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
 // ───────────────────────── Phase 2: Bank-Tx erstellen ───────────────────────
 
 function NeedsBankTransaction({ onRunGlobal }) {
@@ -633,6 +747,8 @@ function BookingActions({ docname, row, onActionDone, notify }) {
 // ───────────────────────── Panel-Wurzel ─────────────────────────────────────
 
 export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) {
+	const [partyDialogOpen, setPartyDialogOpen] = useState(false);
+
 	if (!row) {
 		return (
 			<div className="match-panel">
@@ -665,7 +781,12 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 					)}
 				</div>
 				<div className={`amount-big ${isOut ? "out" : "in"}`}>{fmtEUR(row.betrag)}</div>
-				<div className="party-line">{row.party || row.auftraggeber || "unbekannt"}{row.partyTyp ? ` · ${row.partyTyp}` : ""}</div>
+				<div className="party-line with-action">
+					<span>{row.party || row.auftraggeber || "unbekannt"}{row.partyTyp ? ` · ${row.partyTyp}` : ""}</span>
+					<button className="btn subtle sm party-edit-btn" onClick={() => setPartyDialogOpen(true)}>
+						<Icon name="settings" /> Partei ändern
+					</button>
+				</div>
 				<div className="zweck">{row.verwendungszweck}</div>
 				{row.iban && <div className="iban-line">{fmtIban(row.iban)}</div>}
 			</div>
@@ -676,6 +797,15 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 				{phase === 3 && <BookingActions docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 				{phase === 4 && <DoneView row={row} />}
 			</div>
+			{partyDialogOpen && (
+				<PartyChangeDialog
+					docname={docname}
+					row={row}
+					onClose={() => setPartyDialogOpen(false)}
+					onActionDone={onActionDone}
+					notify={notify}
+				/>
+			)}
 		</div>
 	);
 }

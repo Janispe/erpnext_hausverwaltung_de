@@ -698,6 +698,17 @@ def _set_row_payment_document(row: Document, payment_document_type: str, payment
     row.db_set("payment_document", payment_document)
 
 
+def _row_set(row: Document, fieldname: str, value: Any) -> None:
+    if hasattr(row, "db_set"):
+        row.db_set(fieldname, value)
+    else:
+        setattr(row, fieldname, value)
+
+
+def _doc_field(row: Document, fieldname: str, default=None):
+    return row.get(fieldname, default) if hasattr(row, "get") else getattr(row, fieldname, default)
+
+
 def _resolve_row_party_for_validation(row: Document) -> Optional[Tuple[str, str]]:
     return _resolve_row_party(row)
 
@@ -808,6 +819,46 @@ def _update_bt_party_from_row(row: Document, *, overwrite: bool = True) -> Dict[
 
     if (not overwrite) and (current_party_type or current_party_name):
         return {"updated": False, "reason": "overwrite_disabled"}
+
+    bt.db_set(bt_party_type_field, target_party_type, update_modified=False)
+    bt.db_set(bt_party_field, target_party_name, update_modified=False)
+    return {
+        "updated": True,
+        "bank_transaction": bt.name,
+        "from_party_type": current_party_type,
+        "from_party": current_party_name,
+        "to_party_type": target_party_type,
+        "to_party": target_party_name,
+    }
+
+
+def _set_bt_party(
+    row: Document,
+    party_type: Optional[str],
+    party: Optional[str],
+    *,
+    clear: bool = False,
+) -> Dict[str, Any]:
+    bt_name = _get_row_bank_transaction_name(row)
+    if not bt_name:
+        return {"updated": False, "reason": "no_bank_transaction"}
+
+    meta = frappe.get_meta("Bank Transaction")
+    bt_party_type_field, bt_party_field = _get_bt_party_fieldnames(meta)
+    if not bt_party_type_field or not bt_party_field:
+        return {"updated": False, "reason": "bt_has_no_party_fields"}
+
+    bt = frappe.get_doc("Bank Transaction", bt_name)
+    current_party_type = getattr(bt, bt_party_type_field, None)
+    current_party_name = getattr(bt, bt_party_field, None)
+    target_party_type = None if clear else party_type
+    target_party_name = None if clear else party
+
+    if (
+        str(current_party_type or "") == str(target_party_type or "")
+        and str(current_party_name or "") == str(target_party_name or "")
+    ):
+        return {"updated": False, "reason": "unchanged", "bank_transaction": bt.name}
 
     bt.db_set(bt_party_type_field, target_party_type, update_modified=False)
     bt.db_set(bt_party_field, target_party_name, update_modified=False)
@@ -1485,6 +1536,250 @@ def apply_party_to_row_and_relink(
         "bank_account": bank_account_info,
         "relink_all_count": relink_all_count,
         "relink_bt_count": relink_bt_count,
+    }
+
+
+def _linked_voucher_for_row(row: Document) -> Tuple[Optional[str], Optional[str]]:
+    voucher_type = _doc_field(row, "payment_document_type")
+    voucher_name = _doc_field(row, "payment_document")
+    if voucher_type in ("Payment Entry", "Journal Entry") and voucher_name:
+        return voucher_type, voucher_name
+    if _doc_field(row, "payment_entry"):
+        return "Payment Entry", _doc_field(row, "payment_entry")
+    if _doc_field(row, "journal_entry"):
+        return "Journal Entry", _doc_field(row, "journal_entry")
+    return None, None
+
+
+def _cancel_voucher_for_row(voucher_type: str, voucher_name: str) -> Dict[str, Any]:
+    docstatus = frappe.db.get_value(voucher_type, voucher_name, "docstatus")
+    if docstatus is None:
+        return {"voucher_type": voucher_type, "voucher": voucher_name, "status": "missing"}
+
+    try:
+        docstatus_int = int(docstatus)
+    except Exception:
+        docstatus_int = docstatus
+
+    if docstatus_int == 2:
+        return {"voucher_type": voucher_type, "voucher": voucher_name, "status": "already_cancelled"}
+
+    voucher = frappe.get_doc(voucher_type, voucher_name)
+    if docstatus_int == 1:
+        voucher.flags.ignore_permissions = True
+        voucher.cancel()
+        return {"voucher_type": voucher_type, "voucher": voucher_name, "status": "cancelled"}
+
+    return {"voucher_type": voucher_type, "voucher": voucher_name, "status": "not_submitted"}
+
+
+def _clear_row_booking_links(row: Document, message: str) -> None:
+    for fieldname in (
+        "payment_entry",
+        "journal_entry",
+        "payment_document_type",
+        "payment_document",
+    ):
+        _row_set(row, fieldname, None)
+    if not _doc_field(row, "error"):
+        _row_set(row, "row_status", None)
+    _row_set(row, "auto_match_message", message)
+
+
+@frappe.whitelist()
+def reset_row_booking(docname: str, row_name: str) -> Dict[str, Any]:
+    doc = frappe.get_doc("Bankauszug Import", docname)
+    if not frappe.has_permission("Bankauszug Import", "write", doc=doc):
+        frappe.throw("Keine Berechtigung zum Bearbeiten dieses Bankauszug Imports.")
+
+    row = _get_row_by_name(doc, row_name)
+    voucher_type, voucher_name = _linked_voucher_for_row(row)
+    if not voucher_type or not voucher_name:
+        return {"ok": True, "reset": False, "reason": "no_voucher"}
+
+    from hausverwaltung.hausverwaltung.utils.bank_transaction_links import (
+        remove_bank_transaction_payment_links,
+    )
+
+    cancel_result = _cancel_voucher_for_row(voucher_type, voucher_name)
+    delinked_bank_transactions = remove_bank_transaction_payment_links(voucher_type, voucher_name)
+    _clear_row_booking_links(
+        row,
+        f"Zurückgesetzt: {voucher_type} {voucher_name} wurde storniert.",
+    )
+
+    _recompute_doc_status(docname)
+    _refresh_and_persist_saldo(docname)
+    return {
+        "ok": True,
+        "reset": True,
+        "voucher_type": voucher_type,
+        "voucher": voucher_name,
+        "cancel": cancel_result,
+        "delinked_bank_transactions": delinked_bank_transactions,
+    }
+
+
+def unlink_party_bank_account_for_row(
+    row: Document,
+    party_type: Optional[str],
+    party: Optional[str],
+) -> Dict[str, Any]:
+    iban_norm = _normalize_iban(_doc_field(row, "iban"))
+    if not iban_norm or not party_type or not party:
+        return {"updated": 0, "bank_accounts": []}
+
+    accounts = frappe.get_all(
+        "Bank Account",
+        filters={
+            "iban": ("in", [iban_norm, _doc_field(row, "iban")]),
+            "party_type": party_type,
+            "party": party,
+        },
+        fields=["name", "is_company_account"],
+        limit=50,
+    )
+    updated = []
+    for account in accounts:
+        if account.get("is_company_account"):
+            continue
+        try:
+            bank_doc = frappe.get_doc("Bank Account", account.get("name"))
+            bank_doc.party_type = None
+            bank_doc.party = None
+            if hasattr(bank_doc, "is_company_account"):
+                bank_doc.is_company_account = 0
+            bank_doc.save(ignore_permissions=True)
+            updated.append(bank_doc.name)
+        except Exception:
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"Bankauszug Import: Bankkonto-Party-Link entfernen fehlgeschlagen ({account.get('name')})",
+            )
+    return {"updated": len(updated), "bank_accounts": updated}
+
+
+def _row_is_unbooked(row: Document) -> bool:
+    voucher_type, voucher_name = _linked_voucher_for_row(row)
+    return not voucher_type and not voucher_name
+
+
+@frappe.whitelist()
+def change_row_party(
+    docname: str,
+    row_name: str,
+    party_type: Optional[str] = None,
+    party: Optional[str] = None,
+    clear_party: int = 0,
+    update_iban_mapping: int = 0,
+    propagate_same_iban: int = 0,
+    create_if_missing: int = 0,
+) -> Dict[str, Any]:
+    doc = frappe.get_doc("Bankauszug Import", docname)
+    if not frappe.has_permission("Bankauszug Import", "write", doc=doc):
+        frappe.throw("Keine Berechtigung zum Bearbeiten dieses Bankauszug Imports.")
+
+    row = _get_row_by_name(doc, row_name)
+    old_party_type = _doc_field(row, "party_type")
+    old_party = _doc_field(row, "party")
+    clear = bool(int(clear_party or 0))
+
+    if not clear:
+        if party_type not in SUPPORTED_PARTY_TYPES or not party:
+            frappe.throw("Bitte eine gültige Partei auswählen.")
+        if not frappe.db.exists(party_type, party):
+            if bool(int(create_if_missing or 0)) and party_type in ("Customer", "Supplier"):
+                party, party_created = _create_party_if_missing(party_type, party)
+            else:
+                frappe.throw(f"{party_type} {party} wurde nicht gefunden.")
+        else:
+            party_created = False
+    else:
+        party_created = False
+
+    reset = reset_row_booking(docname, row_name)
+    if reset.get("reset"):
+        doc = frappe.get_doc("Bankauszug Import", docname)
+        row = _get_row_by_name(doc, row_name)
+
+    bank_account_unlink = {"updated": 0, "bank_accounts": []}
+    bank_account_link = {}
+    if bool(int(update_iban_mapping or 0)):
+        bank_account_unlink = unlink_party_bank_account_for_row(row, old_party_type, old_party)
+        if not clear:
+            ba_name, ba_created = _get_or_create_party_bank_account(
+                party_type=party_type,
+                party=party,
+                iban=_doc_field(row, "iban"),
+            )
+            bank_account_link = {"bank_account": ba_name, "created": ba_created}
+            if party_type == "Customer" and ba_name:
+                bank_account_link["mietvertrag_links"] = _link_customer_bank_account_to_mietvertraege(
+                    party, ba_name
+                )
+
+    _row_set(row, "party_type", None if clear else party_type)
+    _row_set(row, "party", None if clear else party)
+    if not _doc_field(row, "error"):
+        _row_set(row, "row_status", None)
+    _row_set(
+        row,
+        "auto_match_message",
+        "Partei entfernt." if clear else f"Partei geändert: {party_type} {party}",
+    )
+    bt_update = _set_bt_party(row, None if clear else party_type, None if clear else party, clear=clear)
+
+    propagated_rows = []
+    propagation_skipped = None
+    if (
+        not clear
+        and bool(int(propagate_same_iban or 0))
+        and _normalize_iban(_doc_field(row, "iban"))
+    ):
+        resolved = _get_party_by_iban(_doc_field(row, "iban"))
+        if resolved == (party_type, party):
+            iban_norm = _normalize_iban(_doc_field(row, "iban"))
+            for other in doc.get("rows") or []:
+                if other.name == row.name:
+                    continue
+                if _normalize_iban(_doc_field(other, "iban")) != iban_norm:
+                    continue
+                if not _row_is_unbooked(other):
+                    continue
+                if _doc_field(other, "party_type") == party_type and _doc_field(other, "party") == party:
+                    continue
+                _row_set(other, "party_type", party_type)
+                _row_set(other, "party", party)
+                if not _doc_field(other, "error"):
+                    _row_set(other, "row_status", None)
+                bt_res = _set_bt_party(other, party_type, party)
+                propagated_rows.append({
+                    "row": other.name,
+                    "bank_transaction": bt_res.get("bank_transaction"),
+                    "bt_updated": bt_res.get("updated"),
+                })
+        else:
+            propagation_skipped = "iban_not_unique"
+
+    if hasattr(doc, "save"):
+        doc.save(ignore_permissions=True)
+    _recompute_doc_status(docname)
+    _refresh_and_persist_saldo(docname)
+
+    return {
+        "ok": True,
+        "row": row.name,
+        "old_party_type": old_party_type,
+        "old_party": old_party,
+        "row_party_type": None if clear else party_type,
+        "row_party": None if clear else party,
+        "party_created": party_created,
+        "reset": reset,
+        "bank_transaction": bt_update,
+        "bank_account_unlink": bank_account_unlink,
+        "bank_account_link": bank_account_link,
+        "propagated_rows": propagated_rows,
+        "propagation_skipped": propagation_skipped,
     }
 
 

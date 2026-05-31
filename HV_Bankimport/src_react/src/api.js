@@ -57,6 +57,11 @@ export async function relinkAllParties(name, overwrite = true) {
 	return await rpc("relink_all_parties", { docname: name, overwrite: overwrite ? 1 : 0 });
 }
 
+export async function resetRowBooking(name, rowName) {
+	if (!embedded) return { ok: true, reset: false, mock: true };
+	return await rpc("reset_row_booking", { docname: name, row_name: rowName });
+}
+
 // ---- Phase 1: Party zuordnen ---------------------------------------------
 
 // Such-Endpoint für Customer/Supplier (Phase-1-Zuordnung).
@@ -81,6 +86,34 @@ export async function createParty(name, rowName, partyType, partyName) {
 	if (!embedded) return { party: partyName, party_created: true, mock: true };
 	return await rpc("create_party", {
 		docname: name, row_name: rowName, party_type: partyType, party_name: partyName || "",
+	});
+}
+
+export async function changeRowParty(name, rowName, {
+	partyType,
+	party,
+	clearParty = false,
+	updateIbanMapping = false,
+	propagateSameIban = false,
+	createIfMissing = false,
+} = {}) {
+	if (!embedded) {
+		return {
+			ok: true,
+			row_party_type: clearParty ? null : partyType,
+			row_party: clearParty ? null : party,
+			mock: true,
+		};
+	}
+	return await rpc("change_row_party", {
+		docname: name,
+		row_name: rowName,
+		party_type: partyType || "",
+		party: party || "",
+		clear_party: clearParty ? 1 : 0,
+		update_iban_mapping: updateIbanMapping ? 1 : 0,
+		propagate_same_iban: propagateSameIban ? 1 : 0,
+		create_if_missing: createIfMissing ? 1 : 0,
 	});
 }
 
