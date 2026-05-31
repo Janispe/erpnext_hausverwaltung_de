@@ -60,12 +60,8 @@ frappe.pages["mieterkonto-workflow"].on_page_load = function (wrapper) {
       // Bridge-Layer (frappe.call)
       await loadScript(`${ASSET_BASE}/mk-data-adapter.js`);
 
-      // Mieter-Liste vorladen (für die FilterBar-Dropdown)
-      window.MK_CUSTOMERS = await frappe.db.get_list("Customer", {
-        fields: ["name", "customer_name"],
-        limit_page_length: 1000,
-        order_by: "customer_name asc",
-      });
+      // Erste Treffer für die suchbare Mieter-Auswahl vorladen.
+      window.MK_CUSTOMERS = await window.MK_ADAPTER.searchMieter("", "Läuft");
 
       // Initiale Filter
       const initialCustomer = frappe.utils.get_query_params().customer || "";

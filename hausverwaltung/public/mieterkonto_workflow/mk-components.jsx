@@ -1,5 +1,5 @@
 // components.jsx — geteilte Atome für den Mieterkonto-Report.
-const { useState, useMemo } = React;
+const { useState, useMemo, useEffect, useRef } = React;
 
 // ───────── Formatter ─────────
 
@@ -67,6 +67,109 @@ function OpenBadge({ amount }) {
   );
 }
 
+function mieterOptionLabel(mieter) {
+  if (!mieter) return "";
+  return mieter.customer_name && mieter.customer_name !== mieter.name
+    ? `${mieter.customer_name} (${mieter.name})`
+    : mieter.name;
+}
+
+function MieterPicker({
+  customer,
+  customers,
+  status,
+  searchText,
+  searching,
+  onStatusChange,
+  onSearchChange,
+  onCustomerChange,
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const selected = customers.find((c) => c.name === customer);
+
+  useEffect(() => {
+    const onPointerDown = (event) => {
+      if (!rootRef.current || rootRef.current.contains(event.target)) return;
+      setOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, []);
+
+  const choose = (mieter) => {
+    onSearchChange(mieter ? mieterOptionLabel(mieter) : "");
+    onCustomerChange(mieter?.name || "");
+    setOpen(false);
+  };
+
+  return (
+    <span className="mk-filter mk-mieter-filter" ref={rootRef}>
+      <span className="mk-filter-label">Mieter</span>
+      <select
+        className="mk-field mk-status-select"
+        value={status}
+        onChange={(e) => onStatusChange(e.target.value)}
+      >
+        <option value="Läuft">Aktive</option>
+        <option value="Alle">Alle</option>
+        <option value="Zukunft">Zukünftige</option>
+        <option value="Vergangenheit">Vergangene</option>
+      </select>
+      <div className="mk-combobox">
+        <input
+          className="mk-field mk-mieter-search"
+          type="search"
+          value={searchText}
+          placeholder={selected ? mieterOptionLabel(selected) : "Mieter suchen"}
+          onFocus={(e) => {
+            e.target.select();
+            setOpen(true);
+          }}
+          onChange={(e) => {
+            onSearchChange(e.target.value);
+            setOpen(true);
+          }}
+        />
+        {customer && (
+          <button
+            type="button"
+            className="mk-combobox-clear"
+            aria-label="Mieterauswahl löschen"
+            onClick={() => {
+              onSearchChange("");
+              choose(null);
+            }}
+          >
+            ×
+          </button>
+        )}
+        {open && (
+          <div className="mk-combobox-menu">
+            {searching && <div className="mk-combobox-empty">Suche läuft …</div>}
+            {!searching && customers.length === 0 && (
+              <div className="mk-combobox-empty">Keine Mieter gefunden</div>
+            )}
+            {!searching && customers.map((mieter) => (
+              <button
+                type="button"
+                key={`${mieter.name}-${mieter.mietvertrag || ""}`}
+                className={`mk-combobox-option ${customer === mieter.name ? "is-selected" : ""}`}
+                onClick={() => choose(mieter)}
+              >
+                <span className="mk-combobox-title">{mieterOptionLabel(mieter)}</span>
+                <span className="mk-combobox-meta">
+                  {[mieter.status, mieter.wohnung, mieter.immobilie].filter(Boolean).join(" · ")}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </span>
+  );
+}
+
 // ───────── Filterbar ─────────
 
 function FilterBar({
@@ -75,6 +178,9 @@ function FilterBar({
   toDate, onToChange,
   setRange,
   customers, company,
+  mieterStatus, onMieterStatusChange,
+  mieterSearch, onMieterSearchChange,
+  mieterSearching,
   gruppieren, setGruppieren,
   showCats, setShowCats,
 }) {
@@ -89,14 +195,6 @@ function FilterBar({
     return d.toISOString().slice(0, 10);
   })();
 
-  const inputStyle = {
-    font: "inherit",
-    border: "1px solid var(--ink-3, #d6d3cb)",
-    background: "#fff",
-    borderRadius: 6,
-    padding: "4px 8px",
-    minWidth: 0,
-  };
   const presetActive = (f, t) => fromDate === f && toDate === t;
   const presetBtn = (label, f, t) => (
     <button
@@ -109,29 +207,22 @@ function FilterBar({
 
   return (
     <div className="mk-filterbar">
-      <span className="mk-filter">
-        <span className="mk-filter-label">Mieter</span>
-        <select
-          style={{ ...inputStyle, minWidth: 220 }}
-          value={customer}
-          onChange={(e) => onCustomerChange(e.target.value)}
-        >
-          <option value="">— Mieter wählen —</option>
-          {customers.map((c) => (
-            <option key={c.name} value={c.name}>
-              {c.customer_name && c.customer_name !== c.name
-                ? `${c.customer_name} (${c.name})`
-                : c.name}
-            </option>
-          ))}
-        </select>
-      </span>
+      <MieterPicker
+        customer={customer}
+        customers={customers}
+        status={mieterStatus}
+        searchText={mieterSearch}
+        searching={mieterSearching}
+        onStatusChange={onMieterStatusChange}
+        onSearchChange={onMieterSearchChange}
+        onCustomerChange={onCustomerChange}
+      />
 
       <span className="mk-filter">
         <span className="mk-filter-label">Von</span>
         <input
           type="date"
-          style={inputStyle}
+          className="mk-field"
           value={fromDate || ""}
           onChange={(e) => onFromChange(e.target.value)}
         />
@@ -140,7 +231,7 @@ function FilterBar({
         <span className="mk-filter-label">Bis</span>
         <input
           type="date"
-          style={inputStyle}
+          className="mk-field"
           value={toDate || ""}
           onChange={(e) => onToChange(e.target.value)}
         />

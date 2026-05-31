@@ -49,6 +49,79 @@ def get_mieterkonto(filters: str | dict | None = None) -> dict:
 
 
 @frappe.whitelist()
+def search_mieter(txt: str = "", status: str = "Läuft", limit: int = 30) -> list[dict[str, Any]]:
+    """Search tenant customers through Mietvertrag context.
+
+    The account report is keyed by Customer, but users usually search by tenant,
+    apartment, property, or contract status. Returning the contract context keeps
+    the picker useful without loading every Customer into the browser.
+    """
+    if not frappe.has_permission("Customer", "read"):
+        frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
+
+    try:
+        limit = min(max(int(limit or 30), 1), 100)
+    except (TypeError, ValueError):
+        limit = 30
+
+    search = f"%{(txt or '').strip()}%"
+    filters = ["mv.kunde is not null", "mv.kunde != ''"]
+    values: dict[str, Any] = {"search": search, "limit": limit}
+
+    if status and status != "Alle":
+        filters.append("mv.status = %(status)s")
+        values["status"] = status
+
+    if txt:
+        filters.append(
+            """(
+                mv.name like %(search)s
+                or mv.kunde like %(search)s
+                or coalesce(c.customer_name, '') like %(search)s
+                or coalesce(mv.wohnung, '') like %(search)s
+                or coalesce(mv.immobilie, '') like %(search)s
+            )"""
+        )
+
+    rows = frappe.db.sql(
+        f"""
+        select
+            mv.kunde as name,
+            coalesce(c.customer_name, mv.kunde) as customer_name,
+            mv.name as mietvertrag,
+            mv.status,
+            mv.wohnung,
+            mv.immobilie
+        from `tabMietvertrag` mv
+        left join `tabCustomer` c on c.name = mv.kunde
+        where {" and ".join(filters)}
+        order by
+            case mv.status
+                when 'Läuft' then 0
+                when 'Zukunft' then 1
+                when 'Vergangenheit' then 2
+                else 3
+            end,
+            c.customer_name asc,
+            mv.von desc
+        limit %(limit)s
+        """,
+        values,
+        as_dict=True,
+    )
+
+    seen: set[tuple[str, str | None]] = set()
+    result = []
+    for row in rows:
+        key = (row.name, row.mietvertrag)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(dict(row))
+    return result
+
+
+@frappe.whitelist()
 def get_mieter_stammdaten(customer: str) -> dict:
     """Mieter-Stammdaten für den Header oben auf der Seite.
 
@@ -67,7 +140,7 @@ def get_mieter_stammdaten(customer: str) -> dict:
     try:
         # Beispiel: aktiver Vertrag des Customers
         mietvertrag_name = frappe.db.get_value(
-            "Mietvertrag", {"customer": customer, "status": "Aktiv"}, "name"
+            "Mietvertrag", {"kunde": customer, "status": "Läuft"}, "name"
         )
         if mietvertrag_name:
             mietvertrag = frappe.get_doc("Mietvertrag", mietvertrag_name)

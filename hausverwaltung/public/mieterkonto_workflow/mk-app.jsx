@@ -24,6 +24,10 @@ function App() {
   const [customer, setCustomer] = useState(_init.customer || "");
   const [fromDate, setFromDate] = useState(_init.from_date || `${new Date().getFullYear()}-01-01`);
   const [toDate, setToDate] = useState(_init.to_date || frappe.datetime.get_today());
+  const [mieterStatus, setMieterStatus] = useState("Läuft");
+  const [mieterSearch, setMieterSearch] = useState("");
+  const [customers, setCustomers] = useState(window.MK_CUSTOMERS || []);
+  const [mieterSearching, setMieterSearching] = useState(false);
 
   async function applyFilters(c, f, t) {
     await window.MK_ADAPTER.load(c, f, t);
@@ -34,6 +38,32 @@ function App() {
   const onFromChange = (f) => { setFromDate(f); applyFilters(customer, f, toDate); };
   const onToChange = (t) => { setToDate(t); applyFilters(customer, fromDate, t); };
   const setRange = (f, tt) => { setFromDate(f); setToDate(tt); applyFilters(customer, f, tt); };
+
+  async function searchMieter(txt, status) {
+    setMieterSearching(true);
+    try {
+      const result = await window.MK_ADAPTER.searchMieter(txt, status);
+      setCustomers(result);
+    } finally {
+      setMieterSearching(false);
+    }
+  }
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      searchMieter(mieterSearch, mieterStatus);
+    }, 220);
+    return () => window.clearTimeout(handle);
+  }, [mieterSearch, mieterStatus]);
+
+  const onMieterStatusChange = (status) => {
+    setMieterStatus(status);
+    setMieterSearch("");
+    if (customer) {
+      setCustomer("");
+      applyFilters("", fromDate, toDate);
+    }
+  };
 
   const [variant, setVariantLocal] = useState(t.variant);
   const [showCats, setShowCats] = useState(t.showCats);
@@ -111,8 +141,13 @@ function App() {
           toDate={toDate}
           onToChange={onToChange}
           setRange={setRange}
-          customers={window.MK_CUSTOMERS || []}
+          customers={customers}
           company={filters?.company}
+          mieterStatus={mieterStatus}
+          onMieterStatusChange={onMieterStatusChange}
+          mieterSearch={mieterSearch}
+          onMieterSearchChange={setMieterSearch}
+          mieterSearching={mieterSearching}
           gruppieren={gruppieren}
           setGruppieren={setGruppierenBoth}
           showCats={showCats}

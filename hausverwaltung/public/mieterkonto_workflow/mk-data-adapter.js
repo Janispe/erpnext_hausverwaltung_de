@@ -128,5 +128,12 @@
     async load(customer, fromDate, toDate) {
       await loadReal(customer, fromDate, toDate);
     },
+    async searchMieter(txt = "", status = "Läuft") {
+      const res = await frappe.call({
+        method: "hausverwaltung.hausverwaltung.page.mieterkonto_workflow.mieterkonto_workflow.search_mieter",
+        args: { txt, status, limit: 30 },
+      });
+      return res.message || [];
+    },
   };
 })();
