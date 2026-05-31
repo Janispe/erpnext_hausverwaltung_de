@@ -399,6 +399,7 @@ def after_migrate() -> None:
     _ensure_eingabequelle_fields(reason="after_migrate")
     _ensure_currency_symbol_on_right(reason="after_migrate")
     _ensure_main_cost_center_disabled(reason="after_migrate")
+    ensure_sollstellung_titel_backfilled()
     _ensure_company_account_defaults(reason="after_migrate")
 
 
@@ -589,6 +590,41 @@ def ensure_mietabrechnung_id_backfilled() -> None:
     except Exception:
         try:
             frappe.log_error(frappe.get_traceback(), "ensure_mietabrechnung_id_backfilled")
+        except Exception:
+            pass
+
+
+def ensure_sollstellung_titel_backfilled() -> None:
+    """Backfill the human-facing Sales Invoice title for existing Sollstellungen."""
+    try:
+        if not frappe.db.has_column("Sales Invoice", "hv_sollstellung_titel"):
+            return
+
+        from hausverwaltung.hausverwaltung.utils.sollstellung_titel import build_sollstellung_titel
+
+        candidates = frappe.get_all(
+            "Sales Invoice",
+            filters={"hv_sollstellung_titel": ("in", ["", None])},
+            fields=["name"],
+            limit_page_length=0,
+        )
+        if not candidates:
+            return
+
+        for row in candidates:
+            doc = frappe.get_doc("Sales Invoice", row.name)
+            title = build_sollstellung_titel(doc)
+            if title:
+                frappe.db.set_value(
+                    "Sales Invoice",
+                    doc.name,
+                    "hv_sollstellung_titel",
+                    title,
+                    update_modified=False,
+                )
+    except Exception:
+        try:
+            frappe.log_error(frappe.get_traceback(), "ensure_sollstellung_titel_backfilled")
         except Exception:
             pass
 
