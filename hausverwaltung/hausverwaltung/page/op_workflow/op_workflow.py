@@ -63,6 +63,15 @@ def get_open_items(filters: str | dict | None = None) -> dict:
     from hausverwaltung.hausverwaltung.report.noch_offene_rechnungen_und_forderungen import (
         noch_offene_rechnungen_und_forderungen as report_module,
     )
+
+    fast_rows = _get_open_items_fast(filters, report_module)
+    if fast_rows is not None:
+        return {
+            "columns": report_module._get_columns(frappe._dict(filters)),
+            "rows": fast_rows,
+            "today": nowdate(),
+        }
+
     result = report_module.execute(filters)
 
     # execute() liefert (columns, rows, message, chart, report_summary)
@@ -73,6 +82,265 @@ def get_open_items(filters: str | dict | None = None) -> dict:
         "rows": rows,
         "today": nowdate(),
     }
+
+
+def _get_open_items_fast(filters: dict, report_module) -> list[dict] | None:
+    """Indexfreundlicher Pfad für die OP-Workflow-Page.
+
+    Der klassische Report berechnet Outstanding über ERPNexts Receivable/
+    Payable-Report und filtert danach auf ``due_date``. Für die Page ist der
+    Normalfall enger: offene Sales/Purchase Invoices in einem Fälligkeitsfenster.
+    Diesen Fall können wir direkt über die gepflegten ``outstanding_amount``-
+    Felder lesen und damit die neuen Invoice-Due-Date-Indizes nutzen.
+    """
+    filters = frappe._dict(filters or {})
+    if not _can_use_fast_open_items(filters):
+        return None
+
+    report_module._validate_filters(filters)
+    mode = report_module._get_mode(filters)
+
+    rows: list[dict] = []
+    if mode in ("Forderungen", "Beides"):
+        rows.extend(_get_fast_sales_invoice_rows(filters, report_module))
+    if mode in ("Rechnungen", "Beides"):
+        rows.extend(_get_fast_purchase_invoice_rows(filters, report_module))
+
+    if filters.get("gruppieren_pro_monat", 1):
+        rows = report_module._group_rows_by_mietabrechnung(rows)
+
+    rows.sort(key=lambda row: report_module._sort_key(row, filters))
+    return rows
+
+
+def _can_use_fast_open_items(filters: dict) -> bool:
+    if filters.get("show_settled") or filters.get("show_written_off"):
+        return False
+    if filters.get("party_account") or filters.get("voucher_type"):
+        return False
+    if filters.get("zahlungsrichtung") == "Ausgeglichen":
+        return False
+    return True
+
+
+def _base_invoice_filters(filters: dict, party_field: str) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "company": filters.get("company"),
+        "docstatus": 1,
+        "outstanding_amount": (">", 0.01),
+    }
+    if filters.get("von_faelligkeit") and filters.get("bis_faelligkeit"):
+        out["due_date"] = ("between", [filters.get("von_faelligkeit"), filters.get("bis_faelligkeit")])
+    elif filters.get("von_faelligkeit"):
+        out["due_date"] = (">=", filters.get("von_faelligkeit"))
+    elif filters.get("bis_faelligkeit"):
+        out["due_date"] = ("<=", filters.get("bis_faelligkeit"))
+
+    party = filters.get("party")
+    if party:
+        out[party_field] = ("in", party) if isinstance(party, list) else party
+    if filters.get("cost_center"):
+        out["cost_center"] = filters.get("cost_center")
+    return out
+
+
+def _fast_sales_invoice_fields() -> list[str]:
+    fields = [
+        "name",
+        "customer",
+        "debit_to",
+        "posting_date",
+        "due_date",
+        "outstanding_amount",
+        "grand_total",
+        "currency",
+        "status",
+        "remarks",
+    ]
+    for fieldname in ("cost_center", "mietabrechnung_id"):
+        if _meta_has_field("Sales Invoice", fieldname):
+            fields.append(fieldname)
+    return fields
+
+
+def _fast_purchase_invoice_fields() -> list[str]:
+    fields = [
+        "name",
+        "supplier",
+        "credit_to",
+        "posting_date",
+        "due_date",
+        "outstanding_amount",
+        "grand_total",
+        "currency",
+        "status",
+        "remarks",
+    ]
+    if _meta_has_field("Purchase Invoice", "cost_center"):
+        fields.append("cost_center")
+    return fields
+
+
+def _get_fast_sales_invoice_rows(filters: dict, report_module) -> list[dict]:
+    invoice_filters = _base_invoice_filters(filters, "customer")
+    invoice_filters["is_return"] = 0
+    invoice_filters["status"] = ("not in", ["Paid", "Credit Note Issued", "Written Off", "Partly Paid and Written Off"])
+
+    invoices = frappe.get_all(
+        "Sales Invoice",
+        filters=invoice_filters,
+        fields=_fast_sales_invoice_fields(),
+        limit_page_length=0,
+        order_by="due_date asc, customer asc, name asc",
+    )
+    mahnstufen = _mahnstufen_for_sales_invoices([row.name for row in invoices])
+    item_cost_centers = _invoice_item_cost_centers("Sales Invoice", [row.name for row in invoices])
+
+    rows = []
+    for invoice in invoices:
+        outstanding = flt(invoice.outstanding_amount)
+        direction = report_module._get_payment_direction("Forderungen", outstanding)
+        if filters.get("zahlungsrichtung") and direction != filters.get("zahlungsrichtung"):
+            continue
+        cost_centers = item_cost_centers.get(invoice.name, set())
+        if invoice.get("cost_center"):
+            cost_centers.add(invoice.cost_center)
+        rows.append(
+            {
+                "aktion": "",
+                "art": "Forderungen",
+                "zahlungsrichtung": direction,
+                "status": invoice.status,
+                "party_type": "Customer",
+                "faellig_am": getdate(invoice.due_date or invoice.posting_date),
+                "buchungsdatum": invoice.posting_date,
+                "party": invoice.customer,
+                "party_account": invoice.debit_to,
+                "belegart": "Sales Invoice",
+                "belegnummer": invoice.name,
+                "rechnungsbetrag": flt(invoice.grand_total),
+                "bezahlt": flt(invoice.grand_total) - outstanding,
+                "offen": outstanding,
+                "alter_tage": _date_days_overdue(invoice.due_date or invoice.posting_date),
+                "kostenstelle": report_module._format_cost_centers(cost_centers),
+                "waehrung": invoice.currency,
+                "bemerkungen": invoice.remarks,
+                "can_write_off": 1,
+                "mahnstufe": mahnstufen.get(invoice.name, 0),
+            }
+        )
+    return rows
+
+
+def _get_fast_purchase_invoice_rows(filters: dict, report_module) -> list[dict]:
+    invoice_filters = _base_invoice_filters(filters, "supplier")
+    invoice_filters["is_return"] = 0
+    invoice_filters["status"] = ("not in", ["Paid", "Credit Note Issued"])
+
+    invoices = frappe.get_all(
+        "Purchase Invoice",
+        filters=invoice_filters,
+        fields=_fast_purchase_invoice_fields(),
+        limit_page_length=0,
+        order_by="due_date asc, supplier asc, name asc",
+    )
+    item_cost_centers = _invoice_item_cost_centers("Purchase Invoice", [row.name for row in invoices])
+
+    rows = []
+    for invoice in invoices:
+        outstanding = flt(invoice.outstanding_amount)
+        direction = report_module._get_payment_direction("Rechnungen", outstanding)
+        if filters.get("zahlungsrichtung") and direction != filters.get("zahlungsrichtung"):
+            continue
+        cost_centers = item_cost_centers.get(invoice.name, set())
+        if invoice.get("cost_center"):
+            cost_centers.add(invoice.cost_center)
+        rows.append(
+            {
+                "aktion": "",
+                "art": "Rechnungen",
+                "zahlungsrichtung": direction,
+                "status": invoice.status,
+                "party_type": "Supplier",
+                "faellig_am": getdate(invoice.due_date or invoice.posting_date),
+                "buchungsdatum": invoice.posting_date,
+                "party": invoice.supplier,
+                "party_account": invoice.credit_to,
+                "belegart": "Purchase Invoice",
+                "belegnummer": invoice.name,
+                "rechnungsbetrag": flt(invoice.grand_total),
+                "bezahlt": flt(invoice.grand_total) - outstanding,
+                "offen": outstanding,
+                "alter_tage": _date_days_overdue(invoice.due_date or invoice.posting_date),
+                "kostenstelle": report_module._format_cost_centers(cost_centers),
+                "waehrung": invoice.currency,
+                "bemerkungen": invoice.remarks,
+                "can_write_off": 0,
+                "mahnstufe": 0,
+            }
+        )
+    return rows
+
+
+def _invoice_item_cost_centers(doctype: str, invoice_names: list[str]) -> dict[str, set[str]]:
+    if not invoice_names:
+        return {}
+    item_doctype = f"{doctype} Item"
+    if not frappe.db.has_column(item_doctype, "cost_center"):
+        return {}
+    out: dict[str, set[str]] = {}
+    for row in frappe.get_all(
+        item_doctype,
+        filters={"parent": ("in", invoice_names)},
+        fields=["parent", "cost_center"],
+        limit_page_length=0,
+    ):
+        if row.cost_center:
+            out.setdefault(row.parent, set()).add(row.cost_center)
+    return out
+
+
+def _mahnstufen_for_sales_invoices(invoice_names: list[str]) -> dict[str, int]:
+    if not invoice_names:
+        return {}
+
+    dunning_names_by_invoice: dict[str, set[str]] = {name: set() for name in invoice_names}
+    if frappe.db.has_column("Dunning", "sales_invoice"):
+        for row in frappe.get_all(
+            "Dunning",
+            filters={"docstatus": 1, "sales_invoice": ("in", invoice_names)},
+            fields=["name", "sales_invoice"],
+            limit_page_length=0,
+        ):
+            dunning_names_by_invoice.setdefault(row.sales_invoice, set()).add(row.name)
+
+    table_field = frappe.get_meta("Dunning").get_field("overdue_payments")
+    if table_field and table_field.options and frappe.db.has_column(table_field.options, "sales_invoice"):
+        child_rows = frappe.get_all(
+            table_field.options,
+            filters={
+                "parenttype": "Dunning",
+                "sales_invoice": ("in", invoice_names),
+            },
+            fields=["parent", "sales_invoice"],
+            limit_page_length=0,
+        )
+        parents = list({row.parent for row in child_rows if row.parent})
+        submitted = set()
+        if parents:
+            submitted.update(
+                frappe.get_all(
+                    "Dunning",
+                    filters={"name": ("in", parents), "docstatus": 1},
+                    pluck="name",
+                    limit_page_length=0,
+                )
+            )
+        for row in child_rows:
+            if row.parent in submitted:
+                dunning_names_by_invoice.setdefault(row.sales_invoice, set()).add(row.parent)
+
+    return {name: min(4, len(dunning_names)) for name, dunning_names in dunning_names_by_invoice.items()}
 
 
 @frappe.whitelist()
