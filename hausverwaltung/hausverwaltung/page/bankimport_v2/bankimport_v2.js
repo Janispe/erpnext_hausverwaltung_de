@@ -70,10 +70,27 @@ function buildSrc(importName) {
 }
 
 let _reload = null;
+let _onMessage = null;
+let _listenerActive = false;
+
+function attachListener() {
+	if (_onMessage && !_listenerActive) {
+		window.addEventListener("message", _onMessage);
+		_listenerActive = true;
+	}
+}
+
+function detachListener() {
+	if (_onMessage && _listenerActive) {
+		window.removeEventListener("message", _onMessage);
+		_listenerActive = false;
+	}
+}
 
 // Erneute Navigation (z.B. aus dem Bankauszug-Import-Formular) mit neuem Import:
 // on_page_load läuft bei gecachter Page nicht erneut, on_page_show schon.
 frappe.pages["bankimport_v2"].on_page_show = function () {
+	attachListener();
 	const name = consumeImportRoute();
 	if (name && _reload) _reload(name);
 };
@@ -170,10 +187,13 @@ frappe.pages["bankimport_v2"].on_page_load = function (wrapper) {
 		}
 	}
 
-	window.addEventListener("message", onMessage);
+	_onMessage = onMessage;
+	attachListener();
 
+	// Frappe cached Pages nach der Navigation weg vom iframe. Deshalb wird der
+	// postMessage-Listener beim nächsten on_page_show wieder aktiviert.
 	page.wrapper.on("hide", () => {
 		$(window).off("resize.hv_bankimport");
-		window.removeEventListener("message", onMessage);
+		detachListener();
 	});
 };
