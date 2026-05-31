@@ -21,13 +21,14 @@ function primaryActionFor(row) {
     return { key: "guthaben_auszahlen", label: "Guthaben auszahlen", kind: "ghost" };
   }
 
-  // Forderung, überfällig: Dunning Type nach oben treiben
-  if (row.alter_tage > 0) {
+  // Forderung, überfällig: erst ins Mahnwesen drillen. Dort sieht man Historie
+  // und erstellt die nächste Mahnung explizit.
+  if (row.art === "Forderungen" && row.belegart === "Sales Invoice" && row.offen > 0.01 && row.alter_tage > 0) {
     const nextStufe = (row.mahnstufe || 0) + 1;
     if (nextStufe <= 4) {
       return {
-        key: "mahnung",
-        label: nextStufe === 1 ? "Zahlungserinnerung" : nextStufe === 4 ? "Letzte Mahnung" : `${nextStufe - 1}. Mahnung`,
+        key: "mahnwesen",
+        label: "Mahnwesen",
         kind: nextStufe >= 2 ? "late" : "primary",
       };
     } else {

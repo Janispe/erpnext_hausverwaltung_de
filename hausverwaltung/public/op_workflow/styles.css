@@ -213,6 +213,9 @@ button { font-family: inherit; }
 .op-mahn-draft {
   background: var(--warn-soft);
 }
+.op-mahn-table tbody tr.is-mahn-focused td {
+  background: oklch(0.96 0.03 80);
+}
 .op-mahn-detail-row td {
   background: var(--bg-soft);
   border-top: 0;

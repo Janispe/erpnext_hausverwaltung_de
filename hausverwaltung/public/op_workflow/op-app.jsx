@@ -93,10 +93,23 @@ function OpApp() {
   // Modal-State
   const [modal, setModal] = useStateA0(null); // { type, row }
   const [toast, setToast] = useStateA0(null);
+  const [mahnFocusKey, setMahnFocusKey] = useStateA0(null);
+
+  const openMahnwesenForRow = (row) => {
+    const candidate = (MAHN_ROWS || []).find((entry) =>
+      (entry.invoices || []).some((invoice) => invoice.sales_invoice === row.belegnummer)
+    ) || (MAHN_ROWS || []).find((entry) => entry.customer === row.party);
+
+    setView("mahnwesen");
+    setSearch(row.belegnummer || row.party || "");
+    setMahnFocusKey(candidate?.key || null);
+    setSelected(new Set());
+  };
 
   const handleAction = async (key, row) => {
     try {
-      if (key === "mahnung" || key === "sammelmahnung") setModal({ type: "mahnung", row });
+      if (key === "mahnwesen") openMahnwesenForRow(row);
+      else if (key === "mahnung" || key === "sammelmahnung") setModal({ type: "mahnung", row });
       else if (key === "zahlung_anlegen") setModal({ type: "zahlung", row });
       else if (key === "zuordnen") setModal({ type: "zuordnen", row });
       else if (key === "guthaben_auszahlen") setModal({ type: "guthaben", row });
@@ -490,6 +503,7 @@ function OpApp() {
             rows={MAHN_ROWS}
             search={search}
             setSearch={setSearch}
+            focusKey={mahnFocusKey}
             onCreateDunning={openCandidateDunning}
             onCreateBulkDunning={openCandidatesBulkDunning}
           />
@@ -703,8 +717,17 @@ function OpApp() {
   );
 }
 
-function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkDunning }) {
+function MahnwesenView({ rows, search, setSearch, focusKey, onCreateDunning, onCreateBulkDunning }) {
   const [openSet, setOpenSet] = useStateA0(() => new Set());
+  useEffectA0(() => {
+    if (!focusKey) return;
+    setOpenSet((prev) => {
+      const next = new Set(prev);
+      next.add(focusKey);
+      return next;
+    });
+  }, [focusKey]);
+
   const filtered = useMemoA0(() => {
     const q = (search || "").trim().toLowerCase();
     if (!q) return rows;
@@ -713,7 +736,16 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
       (row.customer || "").toLowerCase().includes(q) ||
       (row.mietvertrag || "").toLowerCase().includes(q) ||
       (row.wohnung || "").toLowerCase().includes(q) ||
-      (row.serienbrief_vorlage || "").toLowerCase().includes(q)
+      (row.serienbrief_vorlage || "").toLowerCase().includes(q) ||
+      (row.invoices || []).some((invoice) =>
+        (invoice.sales_invoice || "").toLowerCase().includes(q) ||
+        (invoice.remarks || "").toLowerCase().includes(q) ||
+        (invoice.mietabrechnung_id || "").toLowerCase().includes(q)
+      ) ||
+      (row.mahnungen || []).some((mahnung) =>
+        (mahnung.name || "").toLowerCase().includes(q) ||
+        (mahnung.dunning_type || "").toLowerCase().includes(q)
+      )
     );
   }, [rows, search]);
   const total = filtered.reduce((sum, row) => sum + (row.offen || 0), 0);
@@ -736,7 +768,7 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
         </div>
         <input
           className="op-search"
-          placeholder="Mieter, Wohnung, Vertrag oder Vorlage suchen..."
+          placeholder="Mieter, Beleg, Wohnung, Vertrag oder Vorlage suchen..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -773,7 +805,7 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
                 const last = (row.mahnungen || [])[0];
                 return (
                   <React.Fragment key={row.key}>
-                    <tr className={row.draft_warning ? "is-mahn-draft" : ""}>
+                    <tr className={`${row.draft_warning ? "is-mahn-draft" : ""} ${focusKey === row.key ? "is-mahn-focused" : ""}`}>
                       <td>
                         <button className="op-row-toggle" onClick={() => toggle(row.key)}>{open ? "▾" : "▸"}</button>
                       </td>
