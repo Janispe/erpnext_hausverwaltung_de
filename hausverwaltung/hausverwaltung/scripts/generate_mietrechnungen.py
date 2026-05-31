@@ -1,6 +1,6 @@
 import frappe
 from frappe import _
-from frappe.utils import add_days, get_first_day, get_last_day, add_months, now_datetime
+from frappe.utils import add_days, get_first_day, get_last_day, add_months, now_datetime, getdate
 from datetime import datetime, date, timedelta
 
 
@@ -175,6 +175,22 @@ def _cost_center_via_wohnung(wohnung: str | None) -> str | None:
     if not immobilie:
         return None
     return frappe.db.get_value("Immobilie", immobilie, "kostenstelle")
+
+
+def _immobilie_via_wohnung(wohnung: str | None) -> str | None:
+    if not wohnung:
+        return None
+    return frappe.db.get_value("Wohnung", wohnung, "immobilie")
+
+
+def _immobilie_active_for_month(immobilie: str | None, anchor: date) -> bool:
+    """Immobilien ohne Erwerbsdatum gelten als aktiv, um Bestandsdaten nicht auszuschliessen."""
+    if not immobilie:
+        return True
+    erworben_am = frappe.db.get_value("Immobilie", immobilie, "erworben_am")
+    if not erworben_am:
+        return True
+    return getdate(erworben_am) <= get_last_day(anchor)
 
 
 def _third_working_day(month_anchor: date, company: str | None) -> date:
@@ -496,7 +512,7 @@ def generate_miet_und_bk_rechnungen(
     vertrage = frappe.get_all(
         "Mietvertrag",
         filters=vertrag_filters,
-        fields=["name", "kunde", "wohnung", "von", "bis"],
+        fields=["name", "kunde", "wohnung", "immobilie", "von", "bis"],
     )
 
     try:
@@ -507,6 +523,18 @@ def generate_miet_und_bk_rechnungen(
             c_end_excl = (v.bis + timedelta(days=1)) if v.bis else date(9999, 12, 31)
             _, _, ov_days = _overlap(month_start, month_end_excl, c_start, c_end_excl)
             if ov_days == 0:
+                continue
+
+            immobilie = v.immobilie or _immobilie_via_wohnung(v.wohnung)
+            if not _immobilie_active_for_month(immobilie, datum):
+                add_skip(
+                    reason="immobilie_nicht_aktiv",
+                    mietvertrag=v.name,
+                    wohnung=v.wohnung,
+                    typ=None,
+                    betrag=None,
+                    message=f"{v.name}: Immobilie {immobilie} im Sollstellungsmonat noch nicht aktiv",
+                )
                 continue
 
             kunde = _kunde_des_vertrags(v)
