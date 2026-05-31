@@ -125,7 +125,7 @@ function PartyChangeDialog({ docname, row, onClose, onActionDone, notify }) {
 		if (!res || res.ok === false) return;
 		if (success) notify("success", success);
 		onClose();
-		onActionDone();
+		onActionDone({ advance: false });
 	};
 
 	const changeTo = (item) =>
@@ -171,7 +171,7 @@ function PartyChangeDialog({ docname, row, onClose, onActionDone, notify }) {
 				)}
 				<div className="current-party">
 					<span>Aktuell</span>
-					<strong>{row.party || "keine Partei"}{row.partyTyp ? ` · ${row.partyTyp}` : ""}</strong>
+					<strong>{row.party ? `${row.party}${row.partyTyp ? ` · ${row.partyTyp}` : ""}` : "keine Partei"}</strong>
 				</div>
 				<div className="seg" role="tablist" style={{ marginBottom: 10 }}>
 					{["Customer", "Supplier"].map((t) => (
@@ -782,7 +782,7 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 				</div>
 				<div className={`amount-big ${isOut ? "out" : "in"}`}>{fmtEUR(row.betrag)}</div>
 				<div className="party-line with-action">
-					<span>{row.party || row.auftraggeber || "unbekannt"}{row.partyTyp ? ` · ${row.partyTyp}` : ""}</span>
+					<span>{row.party ? `${row.party}${row.partyTyp ? ` · ${row.partyTyp}` : ""}` : "Partei fehlt"}</span>
 					<button className="btn subtle sm party-edit-btn" onClick={() => setPartyDialogOpen(true)}>
 						<Icon name="settings" /> Partei ändern
 					</button>

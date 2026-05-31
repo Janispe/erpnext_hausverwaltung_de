@@ -244,9 +244,13 @@ export function App() {
 	};
 
 	// Aktion fertig → Overview neu laden, ggf. nächste offene Zeile wählen.
-	const onActionDone = useCallback(async () => {
+	const onActionDone = useCallback(async ({ advance = true } = {}) => {
 		const prevId = selectedId;
 		const data = await reload();
+		if (!advance) {
+			if (data && data.rows && data.rows.some((r) => r.id === prevId)) setSelectedId(prevId);
+			return;
+		}
 		// Nach dem Buchen automatisch zur nächsten offenen Zeile springen.
 		if (data && data.rows) {
 			const idx = data.rows.findIndex((r) => r.id === prevId);

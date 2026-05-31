@@ -3,6 +3,7 @@ import { fmtEUR, fmtDate, fmtIban, StatusPill, Icon } from "../helpers.jsx";
 
 function TxRow({ row, selected, onSelect }) {
 	const isOut = Number(row.betrag) < 0;
+	const hasParty = !!row.party;
 	return (
 		<tr
 			className={`${selected ? "selected" : ""} ${row.rowStatus === "done" ? "done" : ""}`}
@@ -14,10 +15,13 @@ function TxRow({ row, selected, onSelect }) {
 			<td className="col-party">
 				<div className="party-cell">
 					<span className="party-name">
-						{row.party || row.auftraggeber || (
-							<em style={{ color: "var(--text-faint)" }}>unbekannt</em>
+						{hasParty ? row.party : (
+							<em style={{ color: "var(--text-faint)" }}>Partei fehlt</em>
 						)}
 					</span>
+					{!hasParty && row.auftraggeber && (
+						<span className="party-meta">Auftraggeber: {row.auftraggeber}</span>
+					)}
 					{row.iban && <span className="party-meta">{fmtIban(row.iban).slice(0, 17)}…</span>}
 				</div>
 			</td>

@@ -42,11 +42,11 @@ def get_context(context):
 def _row_phase(row: dict) -> int:
 	if row.get("payment_entry") or row.get("journal_entry"):
 		return 4
+	if not (row.get("party_type") and row.get("party")):
+		return 1
 	if row.get("bank_transaction"):
 		return 3
-	if row.get("party_type") and row.get("party"):
-		return 2
-	return 1
+	return 2
 
 
 def _row_status(row: dict, phase: int) -> str:

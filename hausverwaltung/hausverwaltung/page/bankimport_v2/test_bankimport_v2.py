@@ -194,6 +194,21 @@ class TestSuggestInvoiceForRow(FrappeTestCase):
 
 
 class TestGetOverviewSync(FrappeTestCase):
+	def test_row_without_party_stays_in_phase_1_even_with_bank_transaction(self):
+		row = {
+			"payment_entry": None,
+			"journal_entry": None,
+			"bank_transaction": "BT-1",
+			"party_type": None,
+			"party": None,
+			"row_status": None,
+		}
+
+		phase = bv2._row_phase(row)
+
+		self.assertEqual(phase, 1)
+		self.assertEqual(bv2._row_status(row, phase), "phase1-no-party")
+
 	def test_get_overview_syncs_cancelled_payment_entry_before_response(self):
 		row = _OverviewRow()
 		doc = _OverviewDoc(row)
