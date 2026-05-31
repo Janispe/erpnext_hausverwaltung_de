@@ -38,10 +38,14 @@ frappe.pages["mieterkonto-workflow"].on_page_load = function (wrapper) {
     new Promise((resolve, reject) => {
       const existing = document.querySelector(`script[data-mk-src="${src}"]`);
       if (existing) {
-        if (existing.dataset.loaded === "1") return resolve();
-        existing.addEventListener("load", resolve, { once: true });
-        existing.addEventListener("error", () => reject(new Error(`Failed to load: ${src}`)), { once: true });
-        return;
+        if (opts.reload) {
+          existing.remove();
+        } else {
+          if (existing.dataset.loaded === "1") return resolve();
+          existing.addEventListener("load", resolve, { once: true });
+          existing.addEventListener("error", () => reject(new Error(`Failed to load: ${src}`)), { once: true });
+          return;
+        }
       }
       const s = document.createElement("script");
       s.src = src;
@@ -68,7 +72,7 @@ frappe.pages["mieterkonto-workflow"].on_page_load = function (wrapper) {
       window.MK_CUSTOMERS = await window.MK_ADAPTER.searchMieter("", "Läuft");
 
       // Initiale Filter
-      const initialCustomer = frappe.utils.get_query_params().customer || "";
+      const initialCustomer = new URLSearchParams(window.location.search).get("customer") || "";
       const initialFrom = `${new Date().getFullYear()}-01-01`;
       const initialTo = frappe.datetime.get_today();
       window.MK_INITIAL = { customer: initialCustomer, from_date: initialFrom, to_date: initialTo };
@@ -80,8 +84,9 @@ frappe.pages["mieterkonto-workflow"].on_page_load = function (wrapper) {
       const target = document.getElementById("mk-workflow-root");
       if (target) target.id = "root";
 
-      // React-Components — esbuild-Bundle
-      await loadScript(`${ASSET_BASE}/mk-workflow.bundle.js`);
+      // React-Components — esbuild-Bundle. Das Bundle rendert beim Ausführen;
+      // deshalb bei erneuter Desk-Navigation bewusst erneut ausführen.
+      await loadScript(`${ASSET_BASE}/mk-workflow.bundle.js`, { reload: true });
     } catch (err) {
       console.error("mieterkonto-workflow bootstrap failed", err);
       frappe.msgprint({
