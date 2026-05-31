@@ -98,6 +98,7 @@ class TestNochOffeneForderungenAggregation(TestCase):
 		self.assertEqual(len(out), 2)
 		self.assertEqual(out[0]["belegnummer"], "SI-Miete")
 		self.assertEqual(out[0]["belegart"], "Sales Invoice (×2)")  # noqa: RUF001
+		self.assertEqual(out[0]["member_voucher_nos"], ["SI-Miete", "SI-BK"])
 		self.assertAlmostEqual(out[0]["rechnungsbetrag"], 620.0)
 		self.assertAlmostEqual(out[0]["offen"], 620.0)
 		self.assertEqual(out[1]["belegnummer"], "SI-GN")

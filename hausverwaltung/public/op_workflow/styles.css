@@ -1571,6 +1571,23 @@ button { font-family: inherit; }
 .op-table td.col-beleg .op-beleg-link:hover {
   color: var(--info);
 }
+.op-table td.col-beleg .op-beleg-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 16px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--bg-soft);
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  line-height: 1;
+  text-decoration: none;
+}
 .op-table td.col-beleg .op-beleg-art {
   display: block;
   font-family: inherit;

@@ -190,6 +190,16 @@
       "Journal Entry": "Journal Entry",
     };
     const dt = doctypeMap[row.belegart] || row.belegart.replace(/ \(×\d+\)$/, "");
+    const voucherNames = Array.isArray(row.member_voucher_nos) && row.member_voucher_nos.length
+      ? row.member_voucher_nos
+      : [row.belegnummer];
+    if (voucherNames.length > 1) {
+      voucherNames.forEach((name) => {
+        window.open(`/app/${frappe.router.slug(dt)}/${encodeURIComponent(name)}`, "_blank");
+      });
+      toast(`${voucherNames.length} Belege geöffnet`);
+      return;
+    }
     frappe.set_route("Form", dt, row.belegnummer);
   }
 

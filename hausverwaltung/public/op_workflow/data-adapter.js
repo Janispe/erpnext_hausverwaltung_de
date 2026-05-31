@@ -138,6 +138,7 @@
       faellig_am: raw.faellig_am,
       belegart: raw.belegart,
       belegnummer: raw.belegnummer,
+      member_voucher_nos: Array.isArray(raw.member_voucher_nos) ? raw.member_voucher_nos : [],
       rechnungsbetrag: raw.rechnungsbetrag,
       bezahlt: raw.bezahlt,
       offen: raw.offen,

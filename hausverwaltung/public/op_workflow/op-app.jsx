@@ -1141,6 +1141,28 @@ function MahnInlineDetail({ candidate, row, onCreateDunning }) {
 
 // ───────── Flache Tabelle ─────────
 
+function BelegLink({ row }) {
+  const memberCount = row.member_voucher_nos?.length || 0;
+  const hasMembers = memberCount > 1;
+  const title = hasMembers
+    ? `${memberCount} ${row.belegart.replace(/ \(×\d+\)$/, "")} öffnen`
+    : `${row.belegart} ${row.belegnummer} öffnen`;
+  return (
+    <>
+      <button
+        type="button"
+        className="op-link-btn op-beleg-link"
+        onClick={() => window.OP_ACTIONS.openBeleg(row)}
+        title={title}
+      >
+        {row.belegnummer}
+        {hasMembers ? <span className="op-beleg-count">+{memberCount - 1}</span> : null}
+      </button>
+      <span className="op-beleg-art">{row.belegart}</span>
+    </>
+  );
+}
+
 function FlatTable({
   rows,
   selected,
@@ -1229,15 +1251,7 @@ function FlatTable({
                     </td>
                   )}
                   <td className="col-beleg">
-                    <button
-                      type="button"
-                      className="op-link-btn op-beleg-link"
-                      onClick={() => window.OP_ACTIONS.openBeleg(r)}
-                      title={`${r.belegart} ${r.belegnummer} öffnen`}
-                    >
-                      {r.belegnummer}
-                    </button>
-                    <span className="op-beleg-art">{r.belegart}</span>
+                    <BelegLink row={r} />
                   </td>
                   <td className="col-bemerk">
                     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -1352,15 +1366,7 @@ function GroupedView({
                             <td className="col-date" style={{ width: 100 }}>{fmtDate_op(r.faellig_am)}</td>
                             <td style={{ width: 80 }}><AgePill age={r.alter_tage} faellig_am={r.faellig_am} /></td>
                             <td className="col-beleg" style={{ width: 170 }}>
-                              <button
-                                type="button"
-                                className="op-link-btn op-beleg-link"
-                                onClick={() => window.OP_ACTIONS.openBeleg(r)}
-                                title={`${r.belegart} ${r.belegnummer} öffnen`}
-                              >
-                                {r.belegnummer}
-                              </button>
-                              <span className="op-beleg-art">{r.belegart}</span>
+                              <BelegLink row={r} />
                             </td>
                             {gruppierung !== "objekt" && showObjekt && (
                               <td style={{ width: 130, fontSize: 12.5, color: "var(--ink-2)" }}>

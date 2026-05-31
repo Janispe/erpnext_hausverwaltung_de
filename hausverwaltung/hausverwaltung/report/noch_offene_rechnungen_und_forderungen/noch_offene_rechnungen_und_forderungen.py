@@ -123,7 +123,9 @@ def _group_rows_by_mietabrechnung(rows):
 	# Aggregate finalisieren: Zähler-Hinweis in der Belegart-Spalte.
 	for merged in buckets.values():
 		count = merged.pop("_member_count", 1)
-		merged.pop("_member_voucher_nos", None)
+		member_voucher_nos = [name for name in merged.pop("_member_voucher_nos", []) if name]
+		if member_voucher_nos:
+			merged["member_voucher_nos"] = member_voucher_nos
 		if count > 1:
 			# In der Belegart-Spalte: "Sales Invoice (x4)". Beleg­nummer-Spalte
 			# behält den Dynamic-Link auf die erste SI.
