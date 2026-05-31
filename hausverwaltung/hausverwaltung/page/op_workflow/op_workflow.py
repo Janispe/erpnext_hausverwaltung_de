@@ -224,7 +224,7 @@ def _get_fast_sales_invoice_rows(filters: dict, report_module) -> list[dict]:
                 "alter_tage": _date_days_overdue(invoice.due_date or invoice.posting_date),
                 "kostenstelle": report_module._format_cost_centers(cost_centers),
                 "waehrung": invoice.currency,
-                "bemerkungen": invoice.remarks,
+                "bemerkungen": report_module._format_voucher_remark_for_report("Sales Invoice", invoice.remarks),
                 "can_write_off": 1,
                 "mahnstufe": mahnstufen.get(invoice.name, 0),
             }
@@ -274,7 +274,7 @@ def _get_fast_purchase_invoice_rows(filters: dict, report_module) -> list[dict]:
                 "alter_tage": _date_days_overdue(invoice.due_date or invoice.posting_date),
                 "kostenstelle": report_module._format_cost_centers(cost_centers),
                 "waehrung": invoice.currency,
-                "bemerkungen": invoice.remarks,
+                "bemerkungen": report_module._format_voucher_remark_for_report("Purchase Invoice", invoice.remarks),
                 "can_write_off": 0,
                 "mahnstufe": 0,
             }
