@@ -33,9 +33,9 @@
     ]);
 
     const mieter = stammRes.message;
-    const { rows, summary } = reportRes.message;
+    const { rows = [], summary = [] } = reportRes.message || {};
 
-    const totalRow = rows.find((r) => r.is_total_row) || rows[rows.length - 1];
+    const totalRow = rows.find((r) => r.is_total_row) || rows[rows.length - 1] || emptyTotalRow(to);
     const txRows = rows.filter((r) => !r.is_total_row);
 
     window.MIETERKONTO = {
@@ -75,7 +75,7 @@
   }
 
   function adaptSummary(rawSummary) {
-    if (!rawSummary || !rawSummary.length) return [];
+    if (!rawSummary || !rawSummary.length) return defaultSummary();
     return rawSummary.map((s) => ({
       label: s.label,
       value: s.value,
@@ -89,12 +89,39 @@
 
   function emptyState() {
     return {
-      mieter: { name: "Bitte Mieter auswählen", customer_id: "—", aufteilung_aktuell: {} },
-      filters: {},
+      mieter: {
+        name: "Bitte Mieter auswählen",
+        customer_id: "—",
+        aufteilung_aktuell: {},
+      },
+      filters: {
+        from_date: defaultFromDate(),
+        to_date: frappe.datetime.get_today(),
+      },
       rows: [],
-      totalRow: { kontostand: 0, betrag_summe: 0 },
-      summary: [],
+      totalRow: emptyTotalRow(frappe.datetime.get_today()),
+      summary: defaultSummary(),
     };
+  }
+
+  function emptyTotalRow(date) {
+    return {
+      datum: date,
+      art: "",
+      belegart: "",
+      belegnummer: "",
+      beschreibung: "",
+      betrag_summe: 0,
+      kontostand: 0,
+      is_total_row: true,
+    };
+  }
+
+  function defaultSummary() {
+    return [
+      { label: "Kontostand", value: 0, indicator: "neutral" },
+      { label: "Bezahlt im Zeitraum", value: 0, indicator: "neutral" },
+    ];
   }
 
   window.MK_ADAPTER = {
