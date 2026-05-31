@@ -16,6 +16,7 @@ frappe.ui.form.on("Dunning", {
 		remember_auto_template(frm);
 		toggle_standard_letter_fields(frm);
 		add_template_actions(frm);
+		render_pdf_preview(frm);
 	},
 
 	dunning_type(frm) {
@@ -65,6 +66,134 @@ function add_template_actions(frm) {
 	frm.add_custom_button(__("Serienbrief Vorlage öffnen"), () => {
 		frappe.set_route("Form", "Serienbrief Vorlage", frm.doc.hv_serienbrief_vorlage);
 	});
+}
+
+function render_pdf_preview(frm) {
+	ensure_pdf_preview_styles();
+
+	let host = frm.$wrapper.find(".hv-dunning-pdf-preview-host");
+	if (!host.length) {
+		host = $('<div class="hv-dunning-pdf-preview-host"></div>');
+		const dashboard = frm.$wrapper.find(".form-dashboard").first();
+		if (dashboard.length) {
+			dashboard.after(host);
+		} else {
+			frm.$wrapper.find(".form-layout").first().prepend(host);
+		}
+	}
+
+	if (frm.is_new()) {
+		host.html(`
+			<div class="hv-dunning-pdf-preview">
+				<div class="hv-dunning-pdf-preview-head">
+					<div>
+						<div class="hv-dunning-pdf-preview-title">${__("PDF-Vorschau")}</div>
+						<div class="hv-dunning-pdf-preview-subtitle">${__(
+							"Speichern Sie die Mahnung, um das finale PDF hier zu rendern."
+						)}</div>
+					</div>
+				</div>
+			</div>
+		`);
+		return;
+	}
+
+	const pdf_url = build_dunning_pdf_url(frm);
+	const subtitle = frm.is_dirty()
+		? __("Ungespeicherte Änderungen sind noch nicht im PDF. Speichern Sie die Mahnung und laden Sie die Vorschau neu.")
+		: __("Gerendert über denselben PDF-Endpunkt wie der spätere Ausdruck.");
+	host.html(`
+		<div class="hv-dunning-pdf-preview">
+			<div class="hv-dunning-pdf-preview-head">
+				<div>
+					<div class="hv-dunning-pdf-preview-title">${__("PDF-Vorschau")}</div>
+					<div class="hv-dunning-pdf-preview-subtitle">${subtitle}</div>
+				</div>
+				<div class="hv-dunning-pdf-preview-actions">
+					<button class="btn btn-xs btn-default hv-dunning-pdf-reload" type="button">
+						${__("Neu laden")}
+					</button>
+					<button class="btn btn-xs btn-default hv-dunning-pdf-open" type="button">
+						${__("Öffnen")}
+					</button>
+				</div>
+			</div>
+			<iframe class="hv-dunning-pdf-frame" src="${pdf_url}" title="${__("PDF-Vorschau")}"></iframe>
+		</div>
+	`);
+
+	host.find(".hv-dunning-pdf-reload").on("click", () => {
+		host.find(".hv-dunning-pdf-frame").attr("src", build_dunning_pdf_url(frm));
+	});
+	host.find(".hv-dunning-pdf-open").on("click", () => {
+		window.open(build_dunning_pdf_url(frm), "_blank");
+	});
+}
+
+function build_dunning_pdf_url(frm) {
+	const params = new URLSearchParams({
+		doctype: frm.doctype,
+		name: frm.doc.name,
+		no_letterhead: "0",
+		_: String(Date.now()),
+	});
+	return `/api/method/frappe.utils.print_format.download_pdf?${params.toString()}`;
+}
+
+function ensure_pdf_preview_styles() {
+	if (document.getElementById("hv-dunning-pdf-preview-style")) return;
+
+	$(`<style id="hv-dunning-pdf-preview-style">
+		.hv-dunning-pdf-preview {
+			margin: 0 0 16px;
+			border: 1px solid var(--border-color);
+			border-radius: 6px;
+			background: var(--fg-color);
+			overflow: hidden;
+		}
+		.hv-dunning-pdf-preview-head {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 12px;
+			padding: 10px 12px;
+			border-bottom: 1px solid var(--border-color);
+			background: var(--subtle-fg);
+		}
+		.hv-dunning-pdf-preview-title {
+			font-size: 13px;
+			font-weight: 600;
+			color: var(--text-color);
+		}
+		.hv-dunning-pdf-preview-subtitle {
+			margin-top: 2px;
+			font-size: 12px;
+			color: var(--text-muted);
+		}
+		.hv-dunning-pdf-preview-actions {
+			display: flex;
+			flex: 0 0 auto;
+			gap: 6px;
+		}
+		.hv-dunning-pdf-frame {
+			display: block;
+			width: 100%;
+			height: 72vh;
+			min-height: 520px;
+			border: 0;
+			background: #fff;
+		}
+		@media (max-width: 767px) {
+			.hv-dunning-pdf-preview-head {
+				align-items: flex-start;
+				flex-direction: column;
+			}
+			.hv-dunning-pdf-frame {
+				height: 70vh;
+				min-height: 420px;
+			}
+		}
+	</style>`).appendTo(document.head);
 }
 
 function remember_auto_template(frm) {
