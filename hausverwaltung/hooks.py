@@ -279,10 +279,16 @@ doc_events = {
 		# - on_cancel: stornierte PI → Vorschlag zurück auf Ready (taucht wieder in der Inbox auf)
 		# - on_submit: Amendment → Vorschlag von alter (stornierter) PI auf neue relinken
 		"on_submit": "hausverwaltung.hausverwaltung.services.bulk_extraction.on_purchase_invoice_submit",
-		"on_cancel": "hausverwaltung.hausverwaltung.services.bulk_extraction.on_purchase_invoice_cancel",
+		"on_cancel": [
+			"hausverwaltung.hausverwaltung.services.bulk_extraction.on_purchase_invoice_cancel",
+			"hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.on_purchase_invoice_cancel",
+		],
 	},
 	"Payment Entry": {
-		"on_cancel": "hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.on_payment_entry_cancel",
+		"on_cancel": [
+			"hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.on_payment_entry_cancel",
+			"hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.on_payment_entry_cancel",
+		],
 	},
 	"Account": {
 		# Bei jedem neuen Blatt-Konto unter "Nicht Umlagefähig" automatisch
@@ -292,7 +298,10 @@ doc_events = {
 	"Journal Entry": {
 		# Bei Storno eines Journal Entry, der zu einer Kreditrate gehört:
 		# Rate zurücksetzen + Bank-Transaction-Reconciliation entkoppeln.
-		"on_cancel": "hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag.on_journal_entry_cancel",
+		"on_cancel": [
+			"hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag.on_journal_entry_cancel",
+			"hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.on_journal_entry_cancel",
+		],
 	},
 }
 

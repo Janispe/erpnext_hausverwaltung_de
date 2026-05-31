@@ -52,9 +52,10 @@ class BankauszugImport(Document):
 
     def onload(self):
         # Beim normalen Formular-Öffnen stale Payment-Entry-Links entfernen
-        # (z.B. wenn ein Payment Entry außerhalb der Bankimport-UI storniert wurde).
+        # (z.B. wenn ein Voucher außerhalb der Bankimport-UI storniert wurde).
         try:
             sync_cancelled_payment_entry_links(import_name=self.name)
+            sync_cancelled_journal_entry_links(import_name=self.name)
         except Exception:
             frappe.log_error(
                 frappe.get_traceback(),
@@ -225,9 +226,13 @@ def _recompute_doc_status(docname: str) -> str:
 
 
 def _payment_entry_is_cancelled_or_missing(payment_entry_name: str | None) -> bool:
-    if not payment_entry_name:
+    return _voucher_is_cancelled_or_missing("Payment Entry", payment_entry_name)
+
+
+def _voucher_is_cancelled_or_missing(doctype: str, voucher_name: str | None) -> bool:
+    if not voucher_name:
         return False
-    docstatus = frappe.db.get_value("Payment Entry", payment_entry_name, "docstatus")
+    docstatus = frappe.db.get_value(doctype, voucher_name, "docstatus")
     if docstatus is None:
         return True
     try:
@@ -236,35 +241,40 @@ def _payment_entry_is_cancelled_or_missing(payment_entry_name: str | None) -> bo
         return False
 
 
-def sync_cancelled_payment_entry_links(
-    payment_entry_name: str | None = None,
+def sync_cancelled_voucher_links(
+    voucher_doctype: str,
+    voucher_name: str | None = None,
     import_name: str | None = None,
 ) -> Dict[str, Any]:
-    """Entfernt stale Payment-Entry-Links aus Bankimport-Zeilen.
+    """Entfernt stale Voucher-Links aus Bankimport-Zeilen.
 
-    Wird nach PE-Storno und beim Öffnen der Bankimport-UI genutzt. Die Bank
-    Transaction bleibt an der Zeile; nur der erledigt wirkende Voucher-Link
-    wird entfernt, damit die Zeile wieder in Phase 3 auftaucht.
+    Wird nach PE/JE-Storno und beim Öffnen der Bankimport-UI genutzt. Die Bank
+    Transaction bleibt an der Zeile; nur der erledigt wirkende Voucher-Link wird
+    entfernt, damit die Zeile wieder in Phase 3 auftaucht.
     """
-    if not payment_entry_name and not import_name:
-        frappe.throw("payment_entry_name oder import_name muss gesetzt sein.")
+    if voucher_doctype not in ("Payment Entry", "Journal Entry"):
+        frappe.throw(f"Voucher-Typ '{voucher_doctype}' wird nicht unterstützt.")
+
+    direct_field = "payment_entry" if voucher_doctype == "Payment Entry" else "journal_entry"
 
     conditions = ["parenttype = 'Bankauszug Import'"]
     values: Dict[str, Any] = {}
     if import_name:
         conditions.append("parent = %(import_name)s")
         values["import_name"] = import_name
-    if payment_entry_name:
+    if voucher_name:
         conditions.append(
-            "(payment_entry = %(payment_entry_name)s OR "
-            "(payment_document_type = 'Payment Entry' AND payment_document = %(payment_entry_name)s))"
+            f"({direct_field} = %(voucher_name)s OR "
+            "(payment_document_type = %(voucher_doctype)s AND payment_document = %(voucher_name)s))"
         )
-        values["payment_entry_name"] = payment_entry_name
+        values["voucher_name"] = voucher_name
+        values["voucher_doctype"] = voucher_doctype
     else:
         conditions.append(
-            "((payment_entry IS NOT NULL AND payment_entry != '') OR "
-            "(payment_document_type = 'Payment Entry' AND payment_document IS NOT NULL AND payment_document != ''))"
+            f"(({direct_field} IS NOT NULL AND {direct_field} != '') OR "
+            "(payment_document_type = %(voucher_doctype)s AND payment_document IS NOT NULL AND payment_document != ''))"
         )
+        values["voucher_doctype"] = voucher_doctype
 
     rows = frappe.db.sql(
         f"""
@@ -290,44 +300,44 @@ def sync_cancelled_payment_entry_links(
     affected_imports: set[str] = set()
 
     for row in rows:
-        if row.get("journal_entry"):
+        if voucher_doctype == "Payment Entry" and row.get("journal_entry"):
             continue
 
-        linked_payment_entries = {
+        linked_vouchers = {
             value for value in (
-                row.get("payment_entry"),
+                row.get(direct_field),
                 row.get("payment_document")
-                if row.get("payment_document_type") == "Payment Entry"
+                if row.get("payment_document_type") == voucher_doctype
                 else None,
             )
             if value
         }
-        if payment_entry_name:
-            linked_payment_entries.add(payment_entry_name)
+        if voucher_name:
+            linked_vouchers.add(voucher_name)
 
         should_clear = False
         stale_name = None
-        for pe_name in linked_payment_entries:
-            if pe_name not in checked:
-                checked.add(pe_name)
-                if _payment_entry_is_cancelled_or_missing(pe_name):
-                    stale.add(pe_name)
-            if pe_name in stale:
+        for linked_name in linked_vouchers:
+            if linked_name not in checked:
+                checked.add(linked_name)
+                if _voucher_is_cancelled_or_missing(voucher_doctype, linked_name):
+                    stale.add(linked_name)
+            if linked_name in stale:
                 should_clear = True
-                stale_name = pe_name
+                stale_name = linked_name
                 break
 
         if not should_clear:
             continue
 
         updates = {
-            "payment_entry": None,
             "payment_document_type": None,
             "payment_document": None,
             "auto_match_message": (
-                f"Automatisch zurückgesetzt: Payment Entry {stale_name} ist storniert."
+                f"Automatisch zurückgesetzt: {voucher_doctype} {stale_name} ist storniert."
             ),
         }
+        updates[direct_field] = None
         if not row.get("error"):
             updates["row_status"] = None
 
@@ -341,6 +351,20 @@ def sync_cancelled_payment_entry_links(
         if row.get("parent"):
             affected_imports.add(row.get("parent"))
 
+    if stale:
+        try:
+            from hausverwaltung.hausverwaltung.utils.bank_transaction_links import (
+                remove_bank_transaction_payment_links,
+            )
+
+            for stale_name in sorted(stale):
+                remove_bank_transaction_payment_links(voucher_doctype, stale_name)
+        except Exception:
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"Bankauszug Import: Bank-Transaction-Delink fehlgeschlagen ({voucher_doctype})",
+            )
+
     for docname in sorted(affected_imports):
         _recompute_doc_status(docname)
         _refresh_and_persist_saldo(docname)
@@ -353,6 +377,30 @@ def sync_cancelled_payment_entry_links(
     }
 
 
+def sync_cancelled_payment_entry_links(
+    payment_entry_name: str | None = None,
+    import_name: str | None = None,
+) -> Dict[str, Any]:
+    """Backward-compatible Wrapper für Payment-Entry-Storno-Sync."""
+    return sync_cancelled_voucher_links(
+        "Payment Entry",
+        voucher_name=payment_entry_name,
+        import_name=import_name,
+    )
+
+
+def sync_cancelled_journal_entry_links(
+    journal_entry_name: str | None = None,
+    import_name: str | None = None,
+) -> Dict[str, Any]:
+    """Entfernt stale Journal-Entry-Links aus Bankimport-Zeilen."""
+    return sync_cancelled_voucher_links(
+        "Journal Entry",
+        voucher_name=journal_entry_name,
+        import_name=import_name,
+    )
+
+
 def on_payment_entry_cancel(doc, method=None) -> None:
     """Doc-event hook: Bankimport-Zeilen nach Payment-Entry-Storno öffnen."""
     try:
@@ -361,6 +409,17 @@ def on_payment_entry_cancel(doc, method=None) -> None:
         frappe.log_error(
             frappe.get_traceback(),
             f"Bankauszug Import: Payment-Entry-Storno-Sync fehlgeschlagen ({doc.name})",
+        )
+
+
+def on_journal_entry_cancel(doc, method=None) -> None:
+    """Doc-event hook: Bankimport-Zeilen nach Journal-Entry-Storno öffnen."""
+    try:
+        sync_cancelled_journal_entry_links(journal_entry_name=doc.name)
+    except Exception:
+        frappe.log_error(
+            frappe.get_traceback(),
+            f"Bankauszug Import: Journal-Entry-Storno-Sync fehlgeschlagen ({doc.name})",
         )
 
 

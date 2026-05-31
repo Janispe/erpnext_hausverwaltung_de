@@ -1345,38 +1345,11 @@ def _cleanup_bank_transaction_link(journal_entry_name: str) -> None:
 	``payment_entry == journal_entry_name`` (statt nur nach Name zu suchen,
 	um Namens-Kollisionen mit anderen Doctypes zu vermeiden).
 	"""
-	# Bank Transactions finden, die diesen JE als Payment führen
-	bt_names = frappe.get_all(
-		"Bank Transaction Payments",
-		filters={
-			"payment_document": "Journal Entry",
-			"payment_entry": journal_entry_name,
-		},
-		fields=["parent"],
-		distinct=True,
+	from hausverwaltung.hausverwaltung.utils.bank_transaction_links import (
+		remove_bank_transaction_payment_links,
 	)
-	for r in bt_names:
-		if not r.get("parent"):
-			continue
-		try:
-			bt = frappe.get_doc("Bank Transaction", r.parent)
-			# Alle matching-Rows entfernen (theoretisch nur eine pro BT, aber defensiv)
-			targets = [
-				pe
-				for pe in bt.payment_entries
-				if pe.payment_document == "Journal Entry"
-				and pe.payment_entry == journal_entry_name
-			]
-			if not targets:
-				continue
-			for pe in targets:
-				bt.remove_payment_entry(pe)
-			bt.save(ignore_permissions=True)
-		except Exception:
-			frappe.log_error(
-				frappe.get_traceback(),
-				f"Bank Transaction {r.parent} delink fehlgeschlagen (JE {journal_entry_name})",
-			)
+
+	remove_bank_transaction_payment_links("Journal Entry", journal_entry_name)
 
 
 # ----------------------------------------------------------------------

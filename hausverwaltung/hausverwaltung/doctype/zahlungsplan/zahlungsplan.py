@@ -352,10 +352,13 @@ class Zahlungsplan(Document):
 				continue
 			# Idempotenz: bereits eine gültige PI verknüpft?
 			existing_pi = row.get("purchase_invoice")
-			if existing_pi and frappe.db.exists("Purchase Invoice", existing_pi):
-				skipped += 1
-				continue
-
+			if existing_pi:
+				docstatus = frappe.db.get_value("Purchase Invoice", existing_pi, "docstatus")
+				if docstatus is not None and int(docstatus) != 2:
+					skipped += 1
+					continue
+				row.db_set("purchase_invoice", None, update_modified=False)
+				row.db_set("pi_erstellt_am", None, update_modified=False)
 			try:
 				pi = _create_purchase_invoice_for_plan_row(self, row)
 				row.db_set("purchase_invoice", pi.name, update_modified=False)
@@ -405,6 +408,164 @@ def update_statuses_for_list():
 				doc.db_set("status", new_status, update_modified=False)
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), f"Zahlungsplan Status-Update: {name}")
+
+
+def _document_is_cancelled_or_missing(doctype: str, name: str | None) -> bool:
+	if not name:
+		return False
+	docstatus = frappe.db.get_value(doctype, name, "docstatus")
+	if docstatus is None:
+		return True
+	try:
+		return int(docstatus) == 2
+	except Exception:
+		return False
+
+
+def _recompute_zahlungsplan_status(name: str) -> None:
+	try:
+		doc = frappe.get_doc("Zahlungsplan", name)
+		doc.db_set("status", _compute_status(doc), update_modified=False)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), f"Zahlungsplan Status-Recompute: {name}")
+
+
+def sync_cancelled_payment_entry_links(payment_entry_name: str | None = None) -> dict:
+	"""Gibt Zahlungsplan-Zeilen frei, deren Payment Entry storniert oder gelöscht ist."""
+	conditions = ["payment_entry IS NOT NULL", "payment_entry != ''"]
+	values: dict[str, str] = {}
+	if payment_entry_name:
+		conditions.append("payment_entry = %(payment_entry_name)s")
+		values["payment_entry_name"] = payment_entry_name
+
+	rows = frappe.db.sql(
+		f"""
+		SELECT name, parent, payment_entry
+		FROM `tabZahlungsplan Zeile`
+		WHERE {" AND ".join(conditions)}
+		""",
+		values,
+		as_dict=True,
+	) or []
+
+	cleared: list[str] = []
+	affected_parents: set[str] = set()
+	for row in rows:
+		if not _document_is_cancelled_or_missing("Payment Entry", row.get("payment_entry")):
+			continue
+		frappe.db.set_value(
+			"Zahlungsplan Zeile",
+			row.name,
+			{
+				"payment_entry": None,
+				"bank_transaction": None,
+				"gebucht_am": None,
+			},
+			update_modified=False,
+		)
+		cleared.append(row.name)
+		if row.get("parent"):
+			affected_parents.add(row.parent)
+
+	for parent in sorted(affected_parents):
+		_recompute_zahlungsplan_status(parent)
+
+	return {"checked": len(rows), "cleared": len(cleared), "rows": cleared}
+
+
+def sync_cancelled_purchase_invoice_links(purchase_invoice_name: str | None = None) -> dict:
+	"""Gibt Zahlungsplan-PI-Links frei, deren Purchase Invoice storniert oder gelöscht ist."""
+	row_conditions = ["purchase_invoice IS NOT NULL", "purchase_invoice != ''"]
+	parent_conditions = ["ja_purchase_invoice IS NOT NULL", "ja_purchase_invoice != ''"]
+	values: dict[str, str] = {}
+	if purchase_invoice_name:
+		row_conditions.append("purchase_invoice = %(purchase_invoice_name)s")
+		parent_conditions.append("ja_purchase_invoice = %(purchase_invoice_name)s")
+		values["purchase_invoice_name"] = purchase_invoice_name
+
+	rows = frappe.db.sql(
+		f"""
+		SELECT name, parent, purchase_invoice
+		FROM `tabZahlungsplan Zeile`
+		WHERE {" AND ".join(row_conditions)}
+		""",
+		values,
+		as_dict=True,
+	) or []
+	parents = frappe.db.sql(
+		f"""
+		SELECT name, ja_purchase_invoice
+		FROM `tabZahlungsplan`
+		WHERE {" AND ".join(parent_conditions)}
+		""",
+		values,
+		as_dict=True,
+	) or []
+
+	cleared_rows: list[str] = []
+	affected_parents: set[str] = set()
+	for row in rows:
+		if not _document_is_cancelled_or_missing("Purchase Invoice", row.get("purchase_invoice")):
+			continue
+		frappe.db.set_value(
+			"Zahlungsplan Zeile",
+			row.name,
+			{
+				"purchase_invoice": None,
+				"pi_erstellt_am": None,
+			},
+			update_modified=False,
+		)
+		cleared_rows.append(row.name)
+		if row.get("parent"):
+			affected_parents.add(row.parent)
+
+	cleared_plans: list[str] = []
+	for parent in parents:
+		if not _document_is_cancelled_or_missing("Purchase Invoice", parent.get("ja_purchase_invoice")):
+			continue
+		frappe.db.set_value(
+			"Zahlungsplan",
+			parent.name,
+			{
+				"ja_purchase_invoice": None,
+				"ja_status": None,
+				"ja_differenz": None,
+			},
+			update_modified=False,
+		)
+		cleared_plans.append(parent.name)
+		affected_parents.add(parent.name)
+
+	for parent in sorted(affected_parents):
+		_recompute_zahlungsplan_status(parent)
+
+	return {
+		"checked_rows": len(rows),
+		"cleared_rows": cleared_rows,
+		"checked_plans": len(parents),
+		"cleared_plans": cleared_plans,
+	}
+
+
+def on_payment_entry_cancel(doc, method=None) -> None:
+	try:
+		sync_cancelled_payment_entry_links(payment_entry_name=doc.name)
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"Zahlungsplan: Payment-Entry-Storno-Sync fehlgeschlagen ({doc.name})",
+		)
+
+
+def on_purchase_invoice_cancel(doc, method=None) -> None:
+	try:
+		sync_cancelled_purchase_invoice_links(purchase_invoice_name=doc.name)
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"Zahlungsplan: Purchase-Invoice-Storno-Sync fehlgeschlagen ({doc.name})",
+		)
 
 
 def create_due_purchase_invoices_global():
