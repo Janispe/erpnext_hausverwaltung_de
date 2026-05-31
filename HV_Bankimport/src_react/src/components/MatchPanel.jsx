@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { fmtEUR, fmtDate, fmtIban, Icon, Spinner } from "../helpers.jsx";
+import { fmtEUR, fmtDate, fmtDateTime, fmtIban, Icon, Spinner } from "../helpers.jsx";
 import { LinkSearch } from "./LinkSearch.jsx";
 import * as api from "../api.js";
 
@@ -62,6 +62,92 @@ function inferBestMode(row, availableModes) {
 }
 
 // ───────────────────────── Phase 1: Partei zuordnen ─────────────────────────
+
+function AuditItem({ label, doc, actionLabel, actor, at, source, onOpen }) {
+	if (!doc && !actor && !at && !source) return null;
+	const created = doc && (doc.createdBy || doc.createdAt);
+	const changed = doc && (doc.modifiedBy || doc.modifiedAt);
+	return (
+		<div className="audit-item">
+			<div className="audit-top">
+				<span>{label}</span>
+				{source && <span className="audit-source">{source}</span>}
+			</div>
+			{doc && (
+				<button className="audit-doc" onClick={onOpen} title={doc.name}>
+					<span className="mono">{doc.name}</span>
+					<Icon name="link" size={12} />
+				</button>
+			)}
+			{created && (
+				<div className="audit-line">
+					<span>Erstellt</span>
+					<strong>{doc.createdBy || "—"}</strong>
+					<time>{fmtDateTime(doc.createdAt)}</time>
+				</div>
+			)}
+			{changed && (
+				<div className="audit-line">
+					<span>Geändert</span>
+					<strong>{doc.modifiedBy || "—"}</strong>
+					<time>{fmtDateTime(doc.modifiedAt)}</time>
+				</div>
+			)}
+			{!doc && (actor || at) && (
+				<div className="audit-line">
+					<span>{actionLabel || "Zugeordnet"}</span>
+					<strong>{actor || "—"}</strong>
+					<time>{fmtDateTime(at)}</time>
+				</div>
+			)}
+		</div>
+	);
+}
+
+function AuditTrail({ row }) {
+	const audit = row.audit || {};
+	const assignment = audit.assignment || {};
+	const items = [
+		audit.row && (audit.row.createdBy || audit.row.createdAt),
+		audit.party || (assignment.by || assignment.at || assignment.source),
+		audit.bankTransaction,
+		audit.paymentDocument,
+	];
+	if (!items.some(Boolean)) return null;
+	return (
+		<div className="audit-box">
+			<div className="audit-title"><Icon name="info" size={13} /> Nachvollziehbarkeit</div>
+			<AuditItem
+				label="Importzeile"
+				actionLabel="Erstellt"
+				actor={audit.row?.createdBy}
+				at={audit.row?.createdAt}
+			/>
+			<AuditItem
+				label="Partei"
+				doc={audit.party}
+				onOpen={() => audit.party && api.openDoc(audit.party.doctype, audit.party.name)}
+			/>
+			<AuditItem
+				label="Zuordnung"
+				actionLabel="Zugeordnet"
+				actor={assignment.by}
+				at={assignment.at}
+				source={assignment.source}
+			/>
+			<AuditItem
+				label="Bank-Transaktion"
+				doc={audit.bankTransaction}
+				onOpen={() => audit.bankTransaction && api.openDoc("Bank Transaction", audit.bankTransaction.name)}
+			/>
+			<AuditItem
+				label="Zahlung"
+				doc={audit.paymentDocument}
+				onOpen={() => audit.paymentDocument && api.openDoc(audit.paymentDocument.doctype, audit.paymentDocument.name)}
+			/>
+		</div>
+	);
+}
 
 function PartyAssign({ docname, row, onActionDone, notify }) {
 	const [partyType, setPartyType] = useState(row.betrag < 0 ? "Supplier" : "Customer");
@@ -789,6 +875,7 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 				</div>
 				<div className="zweck">{row.verwendungszweck}</div>
 				{row.iban && <div className="iban-line">{fmtIban(row.iban)}</div>}
+				<AuditTrail row={row} />
 			</div>
 
 			<div className="match-body">

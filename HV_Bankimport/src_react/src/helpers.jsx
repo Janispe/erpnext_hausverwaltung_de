@@ -17,6 +17,15 @@ export const fmtDate = (iso) => {
 	return `${d}.${m}.${y.slice(2)}`;
 };
 
+export const fmtDateTime = (value) => {
+	if (!value) return "—";
+	const raw = String(value).trim();
+	const [date, time = ""] = raw.split(/[ T]/);
+	const d = fmtDate(date);
+	const hm = time.slice(0, 5);
+	return hm ? `${d} ${hm}` : d;
+};
+
 export const fmtIban = (iban) =>
 	iban ? iban.replace(/\s+/g, "").replace(/(.{4})/g, "$1 ").trim() : "";
 

@@ -58,6 +58,10 @@ class _OverviewRow:
 		self.payment_document_type = "Payment Entry"
 		self.row_status = "success"
 		self.auto_match_message = ""
+		self.owner = "importer@example.test"
+		self.creation = "2026-04-27 09:30:00"
+		self.modified_by = "user@example.test"
+		self.modified = "2026-04-27 10:15:00"
 
 	def get(self, key, default=None):
 		return getattr(self, key, default)
@@ -194,6 +198,38 @@ class TestSuggestInvoiceForRow(FrappeTestCase):
 
 
 class TestGetOverviewSync(FrappeTestCase):
+	def test_row_audit_contains_actor_dates_and_manual_source(self):
+		row = _OverviewRow()
+		row.auto_match_message = "Manuell zugeordnet: 1 Rechnung(en), 625.00 €"
+
+		with patch.object(bv2, "_doc_audit", side_effect=lambda doctype, name: {
+			"doctype": doctype,
+			"name": name,
+			"createdBy": "creator@example.test",
+			"createdAt": "2026-04-27 10:00:00",
+			"modifiedBy": "editor@example.test",
+			"modifiedAt": "2026-04-27 10:01:00",
+		} if name else None):
+			audit = bv2._row_audit(row)
+
+		self.assertEqual(audit["row"]["createdBy"], "importer@example.test")
+		self.assertEqual(audit["row"]["createdAt"], "2026-04-27 09:30:00")
+		self.assertEqual(audit["assignment"]["source"], "Manuell")
+		self.assertEqual(audit["assignment"]["by"], "user@example.test")
+		self.assertEqual(audit["assignment"]["at"], "2026-04-27 10:15:00")
+		self.assertEqual(audit["party"]["doctype"], "Customer")
+		self.assertEqual(audit["bankTransaction"]["name"], "BT-1")
+		self.assertEqual(audit["paymentDocument"]["doctype"], "Payment Entry")
+
+	def test_row_audit_marks_auto_message_as_automatic(self):
+		row = _OverviewRow()
+		row.auto_match_message = "Automatisch gebucht: PE-1"
+
+		with patch.object(bv2, "_doc_audit", return_value=None):
+			audit = bv2._row_audit(row)
+
+		self.assertEqual(audit["assignment"]["source"], "Automatisch")
+
 	def test_row_without_party_stays_in_phase_1_even_with_bank_transaction(self):
 		row = {
 			"payment_entry": None,

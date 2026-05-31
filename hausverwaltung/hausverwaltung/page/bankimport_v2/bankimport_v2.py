@@ -77,6 +77,77 @@ def _bank_account_iban(bank_account: str | None) -> str | None:
 	return None
 
 
+def _doc_audit(doctype: str | None, name: str | None) -> dict[str, Any] | None:
+	"""Liefert Standard-Metadaten eines verlinkten Dokuments für die UI.
+
+	Die Bankimport-Übersicht soll nie an fehlenden/stornierten Links scheitern;
+	darum gibt der Helper bei fehlenden Rechten/Docs still ``None`` zurück.
+	"""
+	if not doctype or not name:
+		return None
+	try:
+		values = frappe.db.get_value(
+			doctype,
+			name,
+			["owner", "creation", "modified_by", "modified"],
+			as_dict=True,
+		)
+	except Exception:
+		return None
+	if not values:
+		return None
+	return {
+		"doctype": doctype,
+		"name": name,
+		"createdBy": values.get("owner"),
+		"createdAt": str(values.get("creation")) if values.get("creation") else None,
+		"modifiedBy": values.get("modified_by"),
+		"modifiedAt": str(values.get("modified")) if values.get("modified") else None,
+	}
+
+
+def _row_audit(row) -> dict[str, Any]:
+	payment_document_type = row.payment_document_type
+	payment_document = row.payment_document
+	if not payment_document and row.payment_entry:
+		payment_document_type = "Payment Entry"
+		payment_document = row.payment_entry
+	elif not payment_document and row.journal_entry:
+		payment_document_type = "Journal Entry"
+		payment_document = row.journal_entry
+
+	message = row.auto_match_message or ""
+	message_lc = message.lower()
+	if "auto" in message_lc or "automatisch" in message_lc:
+		assignment_source = "Automatisch"
+	elif (
+		"manuell" in message_lc
+		or message_lc.startswith("buchungssatz:")
+		or message_lc.startswith("abschlag zugeordnet")
+	):
+		assignment_source = "Manuell"
+	else:
+		assignment_source = None
+
+	return {
+		"row": {
+			"createdBy": getattr(row, "owner", None),
+			"createdAt": str(getattr(row, "creation", None)) if getattr(row, "creation", None) else None,
+			"modifiedBy": getattr(row, "modified_by", None),
+			"modifiedAt": str(getattr(row, "modified", None)) if getattr(row, "modified", None) else None,
+		},
+		"assignment": {
+			"source": assignment_source,
+			"by": getattr(row, "modified_by", None),
+			"at": str(getattr(row, "modified", None)) if getattr(row, "modified", None) else None,
+			"message": message or None,
+		},
+		"party": _doc_audit(row.party_type, row.party),
+		"bankTransaction": _doc_audit("Bank Transaction", row.bank_transaction),
+		"paymentDocument": _doc_audit(payment_document_type, payment_document),
+	}
+
+
 def _suggest_invoice_for_row(bt_name: str) -> dict[str, Any] | None:
 	"""Dry-Run: schlägt für eine Phase-3-Zeile eine offene Rechnung vor, wenn
 	exakt EINE Rechnung der Party den Bank-Betrag trifft.
@@ -185,6 +256,7 @@ def get_overview(import_name: str) -> dict[str, Any]:
 				"phase": phase,
 				"autoMatchMessage": row.auto_match_message,
 				"autoMatch": auto_match,
+				"audit": _row_audit(row),
 			}
 		)
 

@@ -19,6 +19,89 @@
 .match-head .zweck { font-size: 11.5px; color: var(--text-muted); margin-top: 4px; font-family: var(--font-mono); word-break: break-word; line-height: 1.4; }
 .match-head .iban-line { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); margin-top: 6px; }
 
+.audit-box {
+	margin-top: 12px;
+	padding-top: 10px;
+	border-top: 1px solid var(--border);
+}
+.audit-title {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 7px;
+	font-size: 10.5px;
+	font-weight: 600;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+.audit-item {
+	padding: 7px 0;
+	border-top: 1px dashed var(--border);
+}
+.audit-title + .audit-item { border-top: none; }
+.audit-top {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 4px;
+	font-size: 11px;
+	font-weight: 650;
+	color: var(--text);
+}
+.audit-source {
+	flex: 0 0 auto;
+	padding: 1px 6px;
+	border-radius: 999px;
+	background: var(--surface-3);
+	color: var(--text-muted);
+	font-size: 10px;
+	font-weight: 600;
+}
+.audit-doc {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	max-width: 100%;
+	margin: 0 0 4px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--text-muted);
+	font: inherit;
+	font-size: 11px;
+	cursor: pointer;
+}
+.audit-doc:hover { color: var(--text); }
+.audit-doc span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.audit-line {
+	display: grid;
+	grid-template-columns: 64px minmax(0, 1fr) auto;
+	gap: 7px;
+	align-items: baseline;
+	font-size: 10.5px;
+	color: var(--text-muted);
+	line-height: 1.45;
+}
+.audit-line strong {
+	min-width: 0;
+	color: var(--text);
+	font-weight: 500;
+	overflow-wrap: anywhere;
+}
+.audit-line time {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	color: var(--text-faint);
+}
+
 .match-body { flex: 1; overflow-y: auto; }
 .match-section { padding: 14px 18px; border-bottom: 1px solid var(--border); }
 .match-section:last-child { border-bottom: none; }
