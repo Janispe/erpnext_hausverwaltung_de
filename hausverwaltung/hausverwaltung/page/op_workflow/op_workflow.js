@@ -9,6 +9,14 @@
 // In Phase 3 ersetzt du die <script type="text/babel">-Blöcke durch
 // <script src="op-workflow.bundle.js"> (siehe build/README.md).
 
+let op_workflow_page_body = null;
+
+frappe.pages["op-workflow"].on_page_show = function () {
+  if (op_workflow_page_body) {
+    render_op_workflow(op_workflow_page_body);
+  }
+};
+
 frappe.pages["op-workflow"].on_page_load = function (wrapper) {
   const page = frappe.ui.make_app_page({
     parent: wrapper,
@@ -19,9 +27,22 @@ frappe.pages["op-workflow"].on_page_load = function (wrapper) {
   // Page-Toolbar bewusst leer: Die React-UI rendert ihren eigenen Topbar
   // (Mieterkonto / Drucken / Export CSV / Sammelmahnung), eine zweite Leiste
   // im Frappe-Page-Header wäre ein optisches Duplikat.
+  op_workflow_page_body = page.body;
+  render_op_workflow(page.body);
+};
+
+function render_op_workflow(page_body) {
+  if (window.__OP_REACT_ROOT) {
+    try {
+      window.__OP_REACT_ROOT.unmount();
+    } catch (err) {
+      // Frappe may already have replaced the previous mount point.
+    }
+    window.__OP_REACT_ROOT = null;
+  }
 
   // ─── React Mount-Point + Loading-Spinner ────────────────────────────────
-  $(page.body).html(`
+  $(page_body).html(`
     <div id="op-workflow-root" style="margin:-15px -15px 0 -15px;">
       <div style="display:flex;align-items:center;justify-content:center;height:60vh;color:#666;font-size:14px;">
         <span style="display:inline-block;width:18px;height:18px;border:2px solid #ccc;border-top-color:#666;border-radius:50%;animation:op-spin 0.8s linear infinite;margin-right:10px;"></span>
@@ -83,6 +104,7 @@ frappe.pages["op-workflow"].on_page_load = function (wrapper) {
       // React-Components — esbuild-Bundle (tweaks-panel + op-components + op-actions + op-app)
       // Build: cd op_workflow_build && NODE_ENV=production npm run build
       await loadScript(`${ASSET_BASE}/op-workflow.bundle.js`);
+      if (window.OP_RENDER) window.OP_RENDER();
     } catch (err) {
       console.error("op-workflow bootstrap failed", err);
       frappe.msgprint({
@@ -92,4 +114,4 @@ frappe.pages["op-workflow"].on_page_load = function (wrapper) {
       });
     }
   })();
-};
+}

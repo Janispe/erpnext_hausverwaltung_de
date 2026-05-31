@@ -1526,4 +1526,18 @@ function FilterRow({ availableImmos, immoFilter, setImmoFilter, datumVon, datumB
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<OpApp />);
+window.OP_RENDER = function renderOpWorkflow() {
+  const rootEl = document.getElementById("root");
+  if (!rootEl) return;
+  if (window.__OP_REACT_ROOT) {
+    try {
+      window.__OP_REACT_ROOT.unmount();
+    } catch (err) {
+      // The previous mount point may already have been replaced by Frappe.
+    }
+  }
+  window.__OP_REACT_ROOT = ReactDOM.createRoot(rootEl);
+  window.__OP_REACT_ROOT.render(<OpApp />);
+};
+
+window.OP_RENDER();

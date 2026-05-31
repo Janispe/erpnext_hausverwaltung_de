@@ -207,4 +207,18 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+window.MK_RENDER = function renderMieterkontoWorkflow() {
+  const rootEl = document.getElementById("root");
+  if (!rootEl) return;
+  if (window.__MK_REACT_ROOT) {
+    try {
+      window.__MK_REACT_ROOT.unmount();
+    } catch (err) {
+      // The previous mount point may already have been replaced by Frappe.
+    }
+  }
+  window.__MK_REACT_ROOT = ReactDOM.createRoot(rootEl);
+  window.__MK_REACT_ROOT.render(<App />);
+};
+
+window.MK_RENDER();

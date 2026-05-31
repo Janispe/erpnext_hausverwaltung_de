@@ -3,6 +3,14 @@
 // Picker (Mieter, Von, Bis, Presets) wird in der React-FilterBar gerendert
 // (siehe mk-components.jsx). Hier nur Asset-Loading + Initialdaten.
 
+let mieterkonto_workflow_page_body = null;
+
+frappe.pages["mieterkonto-workflow"].on_page_show = function () {
+  if (mieterkonto_workflow_page_body) {
+    render_mieterkonto_workflow(mieterkonto_workflow_page_body);
+  }
+};
+
 frappe.pages["mieterkonto-workflow"].on_page_load = function (wrapper) {
   const page = frappe.ui.make_app_page({
     parent: wrapper,
@@ -15,8 +23,22 @@ frappe.pages["mieterkonto-workflow"].on_page_load = function (wrapper) {
     frappe.set_route("op-workflow"),
   );
 
+  mieterkonto_workflow_page_body = page.body;
+  render_mieterkonto_workflow(page.body);
+};
+
+function render_mieterkonto_workflow(page_body) {
+  if (window.__MK_REACT_ROOT) {
+    try {
+      window.__MK_REACT_ROOT.unmount();
+    } catch (err) {
+      // Frappe may already have replaced the previous mount point.
+    }
+    window.__MK_REACT_ROOT = null;
+  }
+
   // React Mount-Point + Loading-Spinner
-  $(page.body).html(`
+  $(page_body).html(`
     <div id="mk-workflow-root" style="margin:-15px -15px 0 -15px;">
       <div style="display:flex;align-items:center;justify-content:center;height:60vh;color:#666;font-size:14px;">
         <span style="display:inline-block;width:18px;height:18px;border:2px solid #ccc;border-top-color:#666;border-radius:50%;animation:mk-spin 0.8s linear infinite;margin-right:10px;"></span>
@@ -38,14 +60,10 @@ frappe.pages["mieterkonto-workflow"].on_page_load = function (wrapper) {
     new Promise((resolve, reject) => {
       const existing = document.querySelector(`script[data-mk-src="${src}"]`);
       if (existing) {
-        if (opts.reload) {
-          existing.remove();
-        } else {
-          if (existing.dataset.loaded === "1") return resolve();
+        if (existing.dataset.loaded === "1") return resolve();
           existing.addEventListener("load", resolve, { once: true });
           existing.addEventListener("error", () => reject(new Error(`Failed to load: ${src}`)), { once: true });
           return;
-        }
       }
       const s = document.createElement("script");
       s.src = src;
@@ -85,8 +103,9 @@ frappe.pages["mieterkonto-workflow"].on_page_load = function (wrapper) {
       if (target) target.id = "root";
 
       // React-Components — esbuild-Bundle. Das Bundle rendert beim Ausführen;
-      // deshalb bei erneuter Desk-Navigation bewusst erneut ausführen.
-      await loadScript(`${ASSET_BASE}/mk-workflow.bundle.js`, { reload: true });
+      // bei erneuter Desk-Navigation rendert MK_RENDER auf den neuen Mount-Point.
+      await loadScript(`${ASSET_BASE}/mk-workflow.bundle.js`);
+      if (window.MK_RENDER) window.MK_RENDER();
     } catch (err) {
       console.error("mieterkonto-workflow bootstrap failed", err);
       frappe.msgprint({
@@ -96,4 +115,4 @@ frappe.pages["mieterkonto-workflow"].on_page_load = function (wrapper) {
       });
     }
   })();
-};
+}

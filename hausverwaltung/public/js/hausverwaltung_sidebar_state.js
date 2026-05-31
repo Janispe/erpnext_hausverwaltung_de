@@ -48,7 +48,8 @@
 	function set_open($item, open) {
 		const currently_open = is_open($item);
 		if (currently_open === open) return;
-		$item.find("> .standard-sidebar-item .drop-icon:not(.hidden)").first().trigger("click");
+		const toggle = $item.find("> .standard-sidebar-item .drop-icon:not(.hidden)").first()[0];
+		if (toggle) toggle.click();
 	}
 
 	function snapshot_state() {
@@ -95,7 +96,12 @@
 
 		const original_set_active = frappe.ui.Sidebar.prototype.set_active_workspace_item;
 		frappe.ui.Sidebar.prototype.set_active_workspace_item = function () {
-			const result = original_set_active.apply(this, arguments);
+			let result;
+			try {
+				result = original_set_active.apply(this, arguments);
+			} catch (e) {
+				if (!String(e && e.message).includes("isTrusted")) throw e;
+			}
 			restore_soon();
 			return result;
 		};
