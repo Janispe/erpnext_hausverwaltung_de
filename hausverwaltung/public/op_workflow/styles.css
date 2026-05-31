@@ -216,6 +216,27 @@ button { font-family: inherit; }
 .op-mahn-table tbody tr.is-mahn-focused td {
   background: oklch(0.96 0.03 80);
 }
+.op-draft-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #b42318;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.op-action-btn.is-draft {
+  background: #b42318;
+  color: #fff;
+}
+.op-action-btn.is-draft:hover {
+  background: #8f1d14;
+}
 .op-mahn-detail-row td {
   background: var(--bg-soft);
   border-top: 0;

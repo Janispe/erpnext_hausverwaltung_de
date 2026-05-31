@@ -803,6 +803,7 @@ function MahnwesenView({ rows, search, setSearch, focusKey, onCreateDunning, onC
               {filtered.map((row) => {
                 const open = openSet.has(row.key);
                 const last = (row.mahnungen || [])[0];
+                const draft = (row.mahnungen || []).find((mahnung) => mahnung.docstatus === 0);
                 return (
                   <React.Fragment key={row.key}>
                     <tr className={`${row.draft_warning ? "is-mahn-draft" : ""} ${focusKey === row.key ? "is-mahn-focused" : ""}`}>
@@ -823,7 +824,10 @@ function MahnwesenView({ rows, search, setSearch, focusKey, onCreateDunning, onC
                       <td>
                         {last ? (
                           <>
-                            <span>{last.dunning_type || last.name}</span>
+                            <span>
+                              {last.dunning_type || last.name}
+                              {last.docstatus === 0 && <span className="op-draft-badge">Draft</span>}
+                            </span>
                             <span className="op-party-id">{fmtDate_op(last.posting_date)} · {last.status}</span>
                           </>
                         ) : "—"}
@@ -831,7 +835,13 @@ function MahnwesenView({ rows, search, setSearch, focusKey, onCreateDunning, onC
                       <td><MahnstufeBadge stufe={row.next_level} /></td>
                       <td>{row.serienbrief_vorlage || <span className="op-muted">Default fehlt</span>}</td>
                       <td className="op-mahn-actions">
-                        <button className="op-action-btn is-primary" onClick={() => onCreateDunning(row)}>Mahnung erstellen</button>
+                        {draft ? (
+                          <button className="op-action-btn is-draft" onClick={() => window.OP_ACTIONS.openDunning(draft.name)}>
+                            Draft öffnen
+                          </button>
+                        ) : (
+                          <button className="op-action-btn is-primary" onClick={() => onCreateDunning(row)}>Mahnung erstellen</button>
+                        )}
                       </td>
                     </tr>
                     {open && (
@@ -862,7 +872,9 @@ function MahnwesenView({ rows, search, setSearch, focusKey, onCreateDunning, onC
                                     {row.mahnungen.map((mahnung) => (
                                       <tr key={mahnung.name}>
                                         <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openDunning(mahnung.name)}>{mahnung.name}</button></td>
-                                        <td>{mahnung.status}</td>
+                                        <td>
+                                          {mahnung.docstatus === 0 ? <span className="op-draft-badge">Draft</span> : mahnung.status}
+                                        </td>
                                         <td>{mahnung.dunning_type || "—"}</td>
                                         <td>{mahnung.serienbrief_vorlage || "—"}</td>
                                         <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openDunningPdf(mahnung.name)}>PDF</button></td>
