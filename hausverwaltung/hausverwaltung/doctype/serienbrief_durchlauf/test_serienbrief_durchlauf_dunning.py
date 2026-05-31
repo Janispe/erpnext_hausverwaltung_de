@@ -7,18 +7,21 @@ Pro-Empfänger-Override gemergt (`row._iteration_variablen_werte`).
 """
 
 import json
+from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from hausverwaltung.hausverwaltung.doctype.dunning import (
 	collect_serienbrief_werte,
+	sync_serienbrief_vorlage_from_dunning_type,
 	validate_dunning_type_serienbrief_werte,
 )
 from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 	_merge_variable_values,
 	_parse_variable_values,
 )
+from hausverwaltung.hausverwaltung.utils import serienbrief_print
 
 
 class TestSerienbriefDurchlaufDunning(FrappeTestCase):
@@ -90,3 +93,165 @@ class TestSerienbriefDurchlaufDunning(FrappeTestCase):
 		# … Typ-Basiswerte ohne Override bleiben erhalten.
 		self.assertEqual(parsed["frist_tage"]["value"], "3")
 		self.assertEqual(parsed["klage_androhen"]["value"], "1")
+
+	def test_dunning_template_wins_over_print_format_template(self):
+		target_doc = frappe._dict(
+			doctype="Dunning",
+			name="DUN-TEST-0001",
+			hv_serienbrief_vorlage="Mahnung Direkt",
+		)
+		print_format = frappe._dict(
+			doctype="Print Format",
+			name="HV Dunning Letter",
+			doc_type="Dunning",
+			hv_serienbrief_vorlage="Print Format Vorlage",
+		)
+		direct_template = frappe._dict(
+			doctype="Serienbrief Vorlage",
+			name="Mahnung Direkt",
+			haupt_verteil_objekt="Dunning",
+			content="Direkt",
+		)
+		pf_template = frappe._dict(
+			doctype="Serienbrief Vorlage",
+			name="Print Format Vorlage",
+			haupt_verteil_objekt="Dunning",
+			content="Print Format",
+		)
+		built = object()
+
+		def fake_get_cached_doc(doctype, name):
+			if doctype == "Print Format" and name == "HV Dunning Letter":
+				return print_format
+			if doctype == "Serienbrief Vorlage" and name == "Mahnung Direkt":
+				return direct_template
+			if doctype == "Serienbrief Vorlage" and name == "Print Format Vorlage":
+				return pf_template
+			raise frappe.DoesNotExistError
+
+		with (
+			patch.object(serienbrief_print, "normalize_print_format_name", return_value="HV Dunning Letter"),
+			patch.object(serienbrief_print.frappe, "get_cached_doc", side_effect=fake_get_cached_doc),
+			patch.object(serienbrief_print, "_build_serienbrief_doc", return_value=built),
+		):
+			template, serienbrief_doc = serienbrief_print._resolve_serienbrief_print_context(
+				"HV Dunning Letter",
+				doc=target_doc,
+				doctype="Dunning",
+			)
+
+		self.assertEqual(template.name, "Mahnung Direkt")
+		self.assertIs(serienbrief_doc, built)
+
+	def test_print_format_template_remains_fallback_for_non_dunning(self):
+		target_doc = frappe._dict(
+			doctype="Betriebskostenabrechnung Mieter",
+			name="BKA-TEST-0001",
+			hv_serienbrief_vorlage="Dokument Vorlage",
+		)
+		print_format = frappe._dict(
+			doctype="Print Format",
+			name="BKA Print Format",
+			doc_type="Betriebskostenabrechnung Mieter",
+			hv_serienbrief_vorlage="Print Format Vorlage",
+		)
+		template = frappe._dict(
+			doctype="Serienbrief Vorlage",
+			name="Print Format Vorlage",
+			haupt_verteil_objekt="Betriebskostenabrechnung Mieter",
+			content="Print Format",
+		)
+		built = object()
+
+		def fake_get_cached_doc(doctype, name):
+			if doctype == "Print Format" and name == "BKA Print Format":
+				return print_format
+			if doctype == "Serienbrief Vorlage" and name == "Print Format Vorlage":
+				return template
+			raise frappe.DoesNotExistError
+
+		with (
+			patch.object(serienbrief_print, "normalize_print_format_name", return_value="BKA Print Format"),
+			patch.object(serienbrief_print.frappe, "get_cached_doc", side_effect=fake_get_cached_doc),
+			patch.object(serienbrief_print, "_build_serienbrief_doc", return_value=built),
+		):
+			resolved_template, serienbrief_doc = serienbrief_print._resolve_serienbrief_print_context(
+				"BKA Print Format",
+				doc=target_doc,
+				doctype="Betriebskostenabrechnung Mieter",
+			)
+
+		self.assertEqual(resolved_template.name, "Print Format Vorlage")
+		self.assertIs(serienbrief_doc, built)
+
+	def test_dunning_type_template_is_backfilled_but_existing_override_stays(self):
+		with (
+			patch.object(serienbrief_print.frappe.db, "has_column", return_value=True),
+			patch.object(serienbrief_print.frappe.db, "get_value", return_value="Typ Vorlage"),
+		):
+			doc = frappe._dict(doctype="Dunning", dunning_type=self.type_name, hv_serienbrief_vorlage="")
+			sync_serienbrief_vorlage_from_dunning_type(doc)
+			self.assertEqual(doc.hv_serienbrief_vorlage, "Typ Vorlage")
+
+			doc = frappe._dict(
+				doctype="Dunning",
+				dunning_type=self.type_name,
+				hv_serienbrief_vorlage="Sonder Vorlage",
+			)
+			sync_serienbrief_vorlage_from_dunning_type(doc)
+			self.assertEqual(doc.hv_serienbrief_vorlage, "Sonder Vorlage")
+
+	def test_dunning_type_template_is_used_for_existing_unsynced_dunning(self):
+		doc = frappe._dict(
+			doctype="Dunning",
+			name="DUN-TEST-0001",
+			dunning_type=self.type_name,
+			hv_serienbrief_vorlage="",
+		)
+
+		with (
+			patch.object(serienbrief_print.frappe.db, "has_column", return_value=True),
+			patch.object(serienbrief_print.frappe.db, "get_value", return_value="Typ Vorlage"),
+		):
+			template = serienbrief_print._get_direct_dunning_template(doc)
+
+		self.assertEqual(template, "Typ Vorlage")
+
+	def test_pdf_render_no_longer_calls_removed_required_field_validator(self):
+		template = frappe._dict(
+			doctype="Serienbrief Vorlage",
+			name="Mahnung Direkt",
+			haupt_verteil_objekt="Dunning",
+			content="Hallo",
+			textbausteine=[],
+		)
+
+		class FakeSerienbrief:
+			iteration_doctype = "Dunning"
+
+			def _get_empfaenger_rows(self):
+				return [frappe._dict(objekt="DUN-TEST-0001")]
+
+			def _build_context(self, row, index, requirements, template_doc, total=None):
+				return frappe._dict(objekt=row, index=index, total=total)
+
+			def _render_template_content(self, template_doc, context):
+				return [{"type": "html", "html": "Hallo"}]
+
+			def _render_segments_pdf_bytes(self, segments):
+				return b"pdf-chunk"
+
+			def _merge_pdf_chunks(self, chunks):
+				return b"merged-pdf"
+
+		with (
+			patch.object(serienbrief_print, "_resolve_serienbrief_print_context", return_value=(template, FakeSerienbrief())),
+			patch.object(serienbrief_print, "_collect_template_requirements", return_value={}),
+		):
+			pdf = serienbrief_print.render_serienbrief_pdf_for_print_format(
+				"HV Dunning Letter",
+				doc=frappe._dict(doctype="Dunning", name="DUN-TEST-0001"),
+				doctype="Dunning",
+			)
+
+		self.assertEqual(pdf, b"merged-pdf")

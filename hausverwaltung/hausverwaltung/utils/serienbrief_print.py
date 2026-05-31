@@ -64,10 +64,10 @@ def render_serienbrief_for_print_format(
 	docname: str | None = None,
 	doctype: str | None = None,
 ) -> str | None:
-	"""Render Serienbrief HTML when the Print Format is linked to a Serienbrief Vorlage.
+	"""Render Serienbrief HTML when the print context resolves to a Serienbrief Vorlage.
 
-	Returns ``None`` when no Serienbrief Vorlage is configured on the Print Format so that
-	the caller can fall back to the standard printing logic.
+	Returns ``None`` when no Serienbrief Vorlage is configured so that the caller can
+	fall back to the standard printing logic.
 	"""
 	context = _resolve_serienbrief_print_context(
 		print_format=print_format,
@@ -106,8 +106,6 @@ def render_serienbrief_pdf_for_print_format(
 	if not empfaenger_rows:
 		frappe.throw(_("Bitte fügen Sie mindestens ein Iterations-Objekt hinzu."))
 
-	serienbrief_doc._validate_required_fields(template_requirements, empfaenger_rows)
-
 	has_blocks = bool(template.get("textbausteine"))
 	has_content = bool(_get_template_template_source(template).strip())
 	if not has_blocks and not has_content:
@@ -138,7 +136,7 @@ def _resolve_serienbrief_print_context(
 	docname: str | None = None,
 	doctype: str | None = None,
 ) -> tuple[Any, SerienbriefDurchlauf] | None:
-	"""Resolve linked Serienbrief Vorlage and build an in-memory Serienbrief Durchlauf."""
+	"""Resolve a Serienbrief Vorlage and build an in-memory Serienbrief Durchlauf."""
 
 	target_doctype = (
 		doctype
@@ -155,21 +153,24 @@ def _resolve_serienbrief_print_context(
 			print_format_name = ""
 
 	print_format_name = normalize_print_format_name(print_format_name)
-	if not print_format_name:
-		# Without a concrete Print Format we cannot look up the Serienbrief setting.
-		return None
+	pf_doc = None
+	if print_format_name:
+		try:
+			pf_doc = frappe.get_cached_doc("Print Format", print_format_name)
+		except frappe.DoesNotExistError:
+			pf_doc = None
 
-	try:
-		pf_doc = frappe.get_cached_doc("Print Format", print_format_name)
-	except frappe.DoesNotExistError:
-		return None
-
-	target_doc = _coerce_doc(doc, doctype or pf_doc.doc_type or target_doctype, docname)
+	target_doc = _coerce_doc(
+		doc,
+		doctype or getattr(pf_doc, "doc_type", None) or target_doctype,
+		docname,
+	)
 	if not target_doc:
 		return None
 
 	template_name = (
-		(pf_doc.get(SERIENBRIEF_FIELDNAME) or "").strip()
+		_get_direct_dunning_template(target_doc)
+		or ((pf_doc.get(SERIENBRIEF_FIELDNAME) or "").strip() if pf_doc else "")
 		or (getattr(target_doc, SERIENBRIEF_FIELDNAME, None) or "").strip()
 	)
 	if not template_name:
@@ -182,9 +183,33 @@ def _resolve_serienbrief_print_context(
 	return template, serienbrief_doc
 
 
+def _get_direct_dunning_template(target_doc) -> str:
+	"""Return the template configured on a Dunning document, if any.
+
+	Mahnungen are the one case where the business configuration lives on the
+	document or Dunning Type, not primarily on the selected Print Format.
+	"""
+	if (getattr(target_doc, "doctype", None) or "").strip() != "Dunning":
+		return ""
+	template = (getattr(target_doc, SERIENBRIEF_FIELDNAME, None) or "").strip()
+	if template:
+		return template
+
+	dunning_type = (getattr(target_doc, "dunning_type", None) or "").strip()
+	if not dunning_type:
+		return ""
+
+	try:
+		if not frappe.db.has_column("Dunning Type", SERIENBRIEF_FIELDNAME):
+			return ""
+		return (frappe.db.get_value("Dunning Type", dunning_type, SERIENBRIEF_FIELDNAME) or "").strip()
+	except Exception:
+		return ""
+
+
 def _determine_iteration_doctype(template, pf_doc, target_doc) -> str:
 	template_dt = (template.get("haupt_verteil_objekt") or "").strip()
-	print_format_dt = (pf_doc.get("doc_type") or "").strip()
+	print_format_dt = (pf_doc.get("doc_type") or "").strip() if pf_doc else ""
 	target_dt = (getattr(target_doc, "doctype", None) or "").strip()
 
 	iteration_doctype = template_dt or print_format_dt or target_dt
