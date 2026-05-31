@@ -1789,7 +1789,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         "label": "Bank",
         "icon": "money-coins-1",
         "links": [
-            {"label": "Import Bank CSV", "link_type": "DocType", "link_to": "Bankauszug Import"},
+            {"label": "Import Bank CSV", "link_type": "Page", "link_to": "bankimport_v2"},
             {"label": "Bankkonto", "link_type": "DocType", "link_to": "Bank Account"},
         ],
     },

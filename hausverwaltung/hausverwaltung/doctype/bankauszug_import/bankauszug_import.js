@@ -14,7 +14,7 @@ frappe.ui.form.on('Bankauszug Import', {
 
     if (!frm.doc.__islocal) {
       // Neue React-Bankimport-Ansicht (iframe-Page) mit diesem Import öffnen.
-      frm.add_custom_button(__('Bankimport-Ansicht (Beta)'), () => {
+      frm.add_custom_button(__('Bankimport öffnen'), () => {
         frappe.route_options = { import: frm.doc.name };
         frappe.set_route('bankimport_v2');
       });
