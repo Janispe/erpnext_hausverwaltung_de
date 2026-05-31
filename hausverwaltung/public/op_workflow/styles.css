@@ -1330,8 +1330,7 @@ button { font-family: inherit; }
   width: 240px;
 }
 .op-search:focus { outline: 2px solid var(--ink); outline-offset: -1px; }
-.op-sort-select,
-.op-party-select {
+.op-sort-select {
   appearance: none;
   border: 1px solid var(--line-strong);
   background: var(--bg);
@@ -1344,9 +1343,83 @@ button { font-family: inherit; }
   background-position: right 8px center;
   cursor: pointer;
 }
-.op-party-select {
-  width: 220px;
-  max-width: 28vw;
+.op-party-picker {
+  position: relative;
+  width: min(360px, 30vw);
+  min-width: 220px;
+}
+.op-party-search {
+  appearance: none;
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  border-radius: var(--radius);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 30px 6px 10px;
+}
+.op-party-search:focus { outline: 2px solid var(--ink); outline-offset: -1px; }
+.op-party-clear {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  height: 24px;
+  width: 24px;
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  border-radius: 4px;
+  font-size: 18px;
+  line-height: 20px;
+}
+.op-party-clear:hover {
+  background: var(--bg-soft);
+  color: var(--ink);
+}
+.op-party-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 38px rgba(0,0,0,0.14);
+  padding: 4px;
+}
+.op-party-option {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  font: inherit;
+}
+.op-party-option:hover,
+.op-party-option.is-selected {
+  background: var(--bg-soft);
+}
+.op-party-option-title {
+  color: var(--ink);
+  font-weight: 500;
+}
+.op-party-option-meta,
+.op-party-empty {
+  color: var(--ink-3);
+  font-size: 11px;
+}
+.op-party-empty {
+  padding: 10px 8px;
 }
 
 /* ───────── Bulk-Action-Bar (sticky bei Auswahl) ───────── */

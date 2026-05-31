@@ -1,5 +1,7 @@
 /* op-workflow bundle — siehe op_workflow_build/esbuild.config.mjs */
-var OpWorkflow=(()=>{var Ve=`
+var OpWorkflow = (() => {
+  // ../hausverwaltung/public/op_workflow/tweaks-panel.jsx
+  var __TWEAKS_STYLE = `
   .twk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:280px;
     max-height:calc(100vh - 32px);display:flex;flex-direction:column;
     transform:scale(var(--dc-inv-zoom,1));transform-origin:bottom right;
@@ -107,5 +109,1863 @@ var OpWorkflow=(()=>{var Ve=`
   .twk-chip>span>i:first-child{box-shadow:none}
   .twk-chip svg{position:absolute;top:6px;left:6px;width:13px;height:13px;
     filter:drop-shadow(0 1px 1px rgba(0,0,0,.3))}
-`;function We(t){let[n,i]=React.useState(t),a=React.useCallback((d,c)=>{let o=typeof d=="object"&&d!==null?d:{[d]:c};i(v=>({...v,...o})),window.parent.postMessage({type:"__edit_mode_set_keys",edits:o},"*"),window.dispatchEvent(new CustomEvent("tweakchange",{detail:o}))},[]);return[n,a]}function je({title:t="Tweaks",children:n}){let[i,a]=React.useState(!1),d=React.useRef(null),c=React.useRef({x:16,y:16}),o=16,v=React.useCallback(()=>{let s=d.current;if(!s)return;let p=s.offsetWidth,h=s.offsetHeight,k=Math.max(o,window.innerWidth-p-o),w=Math.max(o,window.innerHeight-h-o);c.current={x:Math.min(k,Math.max(o,c.current.x)),y:Math.min(w,Math.max(o,c.current.y))},s.style.right=c.current.x+"px",s.style.bottom=c.current.y+"px"},[]);React.useEffect(()=>{if(!i)return;if(v(),typeof ResizeObserver>"u")return window.addEventListener("resize",v),()=>window.removeEventListener("resize",v);let s=new ResizeObserver(v);return s.observe(document.documentElement),()=>s.disconnect()},[i,v]),React.useEffect(()=>{let s=p=>{let h=p?.data?.type;h==="__activate_edit_mode"?a(!0):h==="__deactivate_edit_mode"&&a(!1)};return window.addEventListener("message",s),window.parent.postMessage({type:"__edit_mode_available"},"*"),()=>window.removeEventListener("message",s)},[]);let M=()=>{a(!1),window.parent.postMessage({type:"__edit_mode_dismissed"},"*")},C=s=>{let p=d.current;if(!p)return;let h=p.getBoundingClientRect(),k=s.clientX,w=s.clientY,g=window.innerWidth-h.right,l=window.innerHeight-h.bottom,N=f=>{c.current={x:g-(f.clientX-k),y:l-(f.clientY-w)},v()},x=()=>{window.removeEventListener("mousemove",N),window.removeEventListener("mouseup",x)};window.addEventListener("mousemove",N),window.addEventListener("mouseup",x)};return i?React.createElement(React.Fragment,null,React.createElement("style",null,Ve),React.createElement("div",{ref:d,className:"twk-panel","data-omelette-chrome":"",style:{right:c.current.x,bottom:c.current.y}},React.createElement("div",{className:"twk-hd",onMouseDown:C},React.createElement("b",null,t),React.createElement("button",{className:"twk-x","aria-label":"Close tweaks",onMouseDown:s=>s.stopPropagation(),onClick:M},"\u2715")),React.createElement("div",{className:"twk-body"},n))):null}function Ge({label:t,children:n}){return React.createElement(React.Fragment,null,React.createElement("div",{className:"twk-sect"},t),n)}function ae({label:t,value:n,children:i,inline:a=!1}){return React.createElement("div",{className:a?"twk-row twk-row-h":"twk-row"},React.createElement("div",{className:"twk-lbl"},React.createElement("span",null,t),n!=null&&React.createElement("span",{className:"twk-val"},n)),i)}function Ze({label:t,value:n,min:i=0,max:a=100,step:d=1,unit:c="",onChange:o}){return React.createElement(ae,{label:t,value:`${n}${c}`},React.createElement("input",{type:"range",className:"twk-slider",min:i,max:a,step:d,value:n,onChange:v=>o(Number(v.target.value))}))}function Ke({label:t,value:n,onChange:i}){return React.createElement("div",{className:"twk-row twk-row-h"},React.createElement("div",{className:"twk-lbl"},React.createElement("span",null,t)),React.createElement("button",{type:"button",className:"twk-toggle","data-on":n?"1":"0",role:"switch","aria-checked":!!n,onClick:()=>i(!n)},React.createElement("i",null)))}function He({label:t,value:n,options:i,onChange:a}){let d=React.useRef(null),[c,o]=React.useState(!1),v=React.useRef(n);v.current=n;let M=l=>String(typeof l=="object"?l.label:l).length;if(!(i.reduce((l,N)=>Math.max(l,M(N)),0)<=({2:16,3:10}[i.length]??0))){let l=N=>{let x=i.find(f=>String(typeof f=="object"?f.value:f)===N);return x===void 0?N:typeof x=="object"?x.value:x};return React.createElement(Ne,{label:t,value:n,options:i,onChange:N=>a(l(N))})}let p=i.map(l=>typeof l=="object"?l:{value:l,label:l}),h=Math.max(0,p.findIndex(l=>l.value===n)),k=p.length,w=l=>{let N=d.current.getBoundingClientRect(),x=N.width-4,f=Math.floor((l-N.left-2)/x*k);return p[Math.max(0,Math.min(k-1,f))].value};return React.createElement(ae,{label:t},React.createElement("div",{ref:d,role:"radiogroup",onPointerDown:l=>{o(!0);let N=w(l.clientX);N!==v.current&&a(N);let x=F=>{if(!d.current)return;let z=w(F.clientX);z!==v.current&&a(z)},f=()=>{o(!1),window.removeEventListener("pointermove",x),window.removeEventListener("pointerup",f)};window.addEventListener("pointermove",x),window.addEventListener("pointerup",f)},className:c?"twk-seg dragging":"twk-seg"},React.createElement("div",{className:"twk-seg-thumb",style:{left:`calc(2px + ${h} * (100% - 4px) / ${k})`,width:`calc((100% - 4px) / ${k})`}}),p.map(l=>React.createElement("button",{key:l.value,type:"button",role:"radio","aria-checked":l.value===n},l.label))))}function Ne({label:t,value:n,options:i,onChange:a}){return React.createElement(ae,{label:t},React.createElement("select",{className:"twk-field",value:n,onChange:d=>a(d.target.value)},i.map(d=>{let c=typeof d=="object"?d.value:d,o=typeof d=="object"?d.label:d;return React.createElement("option",{key:c,value:c},o)})))}function Ye({label:t,value:n,placeholder:i,onChange:a}){return React.createElement(ae,{label:t},React.createElement("input",{className:"twk-field",type:"text",value:n,placeholder:i,onChange:d=>a(d.target.value)}))}function Xe({label:t,value:n,min:i,max:a,step:d=1,unit:c="",onChange:o}){let v=s=>i!=null&&s<i?i:a!=null&&s>a?a:s,M=React.useRef({x:0,val:0});return React.createElement("div",{className:"twk-num"},React.createElement("span",{className:"twk-num-lbl",onPointerDown:s=>{s.preventDefault(),M.current={x:s.clientX,val:n};let p=(String(d).split(".")[1]||"").length,h=w=>{let g=w.clientX-M.current.x,l=M.current.val+g*d,N=Math.round(l/d)*d;o(v(Number(N.toFixed(p))))},k=()=>{window.removeEventListener("pointermove",h),window.removeEventListener("pointerup",k)};window.addEventListener("pointermove",h),window.addEventListener("pointerup",k)}},t),React.createElement("input",{type:"number",value:n,min:i,max:a,step:d,onChange:s=>o(v(Number(s.target.value)))}),c&&React.createElement("span",{className:"twk-num-unit"},c))}function qe(t){let n=String(t).replace("#",""),i=n.length===3?n.replace(/./g,v=>v+v):n.padEnd(6,"0"),a=parseInt(i.slice(0,6),16);if(Number.isNaN(a))return!0;let d=a>>16&255,c=a>>8&255,o=a&255;return d*299+c*587+o*114>148e3}var Je=({light:t})=>React.createElement("svg",{viewBox:"0 0 14 14","aria-hidden":"true"},React.createElement("path",{d:"M3 7.2 5.8 10 11 4.2",fill:"none",strokeWidth:"2.2",strokeLinecap:"round",strokeLinejoin:"round",stroke:t?"rgba(0,0,0,.78)":"#fff"}));function Qe({label:t,value:n,options:i,onChange:a}){if(!i||!i.length)return React.createElement("div",{className:"twk-row twk-row-h"},React.createElement("div",{className:"twk-lbl"},React.createElement("span",null,t)),React.createElement("input",{type:"color",className:"twk-swatch",value:n,onChange:o=>a(o.target.value)}));let d=o=>String(JSON.stringify(o)).toLowerCase(),c=d(n);return React.createElement(ae,{label:t},React.createElement("div",{className:"twk-chips",role:"radiogroup"},i.map((o,v)=>{let M=Array.isArray(o)?o:[o],[C,...s]=M,p=s.slice(0,4),h=d(o)===c;return React.createElement("button",{key:v,type:"button",className:"twk-chip",role:"radio","aria-checked":h,"data-on":h?"1":"0","aria-label":M.join(", "),title:M.join(" \xB7 "),style:{background:C},onClick:()=>a(o)},p.length>0&&React.createElement("span",null,p.map((k,w)=>React.createElement("i",{key:w,style:{background:k}}))),h&&React.createElement(Je,{light:qe(C)}))})))}function et({label:t,onClick:n,secondary:i=!1}){return React.createElement("button",{type:"button",className:i?"twk-btn secondary":"twk-btn",onClick:n},t)}Object.assign(window,{useTweaks:We,TweaksPanel:je,TweakSection:Ge,TweakRow:ae,TweakSlider:Ze,TweakToggle:Ke,TweakRadio:He,TweakSelect:Ne,TweakText:Ye,TweakNumber:Xe,TweakColor:Qe,TweakButton:et});var{useState:yt,useMemo:xt}=React,ce=t=>t==null||isNaN(t)?"\u2014":new Intl.NumberFormat("de-DE",{style:"currency",currency:"EUR",minimumFractionDigits:2,maximumFractionDigits:2}).format(t),ye=t=>{if(!t)return"\u2014";let[n,i,a]=t.split("-");return`${a}.${i}.${n}`},ue=[{key:"b0",label:"nicht f\xE4llig",min:-1/0,max:0,sub:"0 Tage"},{key:"b1",label:"1\u201330",min:1,max:30,sub:"Tage"},{key:"b2",label:"31\u201360",min:31,max:60,sub:"Tage"},{key:"b3",label:"61\u201390",min:61,max:90,sub:"Tage"},{key:"b4",label:"> 90",min:91,max:1/0,sub:"Tage"}],tt=t=>ue.find(n=>t>=n.min&&t<=n.max);function nt({status:t}){let n={Paid:["op-status-paid","Bezahlt"],"Partly Paid":["op-status-partly","Teilweise bezahlt"],Unpaid:["op-status-unpaid","Offen"],Overdue:["op-status-overdue","\xDCberf\xE4llig"],"Written Off":["op-status-writtenoff","Abgeschrieben"],"Partly Paid and Written Off":["op-status-writtenoff","Teilweise abgeschr."]},[i,a]=n[t]||["op-status-unpaid",t||"\u2014"];return React.createElement("span",{className:`op-status ${i}`},a)}function at({direction:t}){let n={"Geld bekommen":["is-in","Geld bekommen"],"Geld bezahlen / erstatten":["is-out","Geld bezahlen"],Ausgeglichen:["is-bal","Ausgeglichen"]},[i,a]=n[t]||["is-bal",t];return React.createElement("span",{className:`op-dir ${i}`},a)}function st({stufe:t}){if(!t)return null;let n=Array.from({length:t},(i,a)=>React.createElement("span",{key:a,className:"op-mahn-dot"}));return React.createElement("span",{className:"op-mahn",title:`Mahnstufe ${t}`},n,React.createElement("span",{style:{marginLeft:2}},"M",t))}function ot({age:t,faellig_am:n}){if(t==null)return null;if(t<=0)return React.createElement("span",{className:"op-age-pill is-future"},"f\xE4llig ",ye(n));let i=t>30?"is-late":"is-due";return React.createElement("span",{className:`op-age-pill ${i}`},t," Tage")}function xe({buckets:t,totalSum:n,mini:i=!1}){let a=ue.map(c=>({...c,val:t[c.key]||0})),d=n??a.reduce((c,o)=>c+o.val,0);return Math.abs(d)<.01?React.createElement("div",{className:"op-aging-bars"},React.createElement("div",{className:"op-aging-seg is-empty"},"keine")):React.createElement("div",{className:"op-aging-bars"},a.map((c,o)=>{if(Math.abs(c.val)<.01)return null;let v=c.val/d*100;return React.createElement("div",{key:c.key,className:`op-aging-seg op-aging-seg-${o}`,style:{flex:`${v} 1 0`},title:`${c.label}: ${ce(c.val)}`},!i&&v>8&&ce(c.val).replace("\u20AC","").trim())}))}function it({buckets:t}){return React.createElement("div",null,React.createElement(xe,{buckets:t}),React.createElement("div",{className:"op-aging-legend"},ue.map(n=>{let i=t[n.key]||0;return React.createElement("span",{key:n.key},React.createElement("div",{style:{color:"var(--ink-2)",fontWeight:500}},n.label),React.createElement("div",{className:"num"},Math.abs(i)<.01?"\u2014":ce(i)))})))}Object.assign(window,{fmtEUR_op:ce,fmtDate_op:ye,AGING_BUCKETS:ue,bucketOf:tt,StatusBadge:nt,DirectionBadge:at,MahnstufeBadge:st,AgePill:ot,AgingBar:xe,AgingStrip:it});var{useState:T,useEffect:ie}=React;function _e(t){if(t.status==="Written Off")return null;if(t.art==="Rechnungen"&&t.offen>0)return{key:"zahlung_anlegen",label:"Zahlung anlegen",kind:"primary"};if(t.belegart==="Payment Entry")return{key:"zuordnen",label:"Zuordnen",kind:"warn"};if(t.art==="Forderungen"&&t.belegart==="Sales Invoice"&&t.offen<-.01)return{key:"guthaben_auszahlen",label:"Guthaben auszahlen",kind:"ghost"};let n=String(t.belegart||"").replace(/ \(×\d+\)$/,"")==="Sales Invoice";if(t.art==="Forderungen"&&n&&t.offen>.01&&t.alter_tage>0){let i=(t.mahnstufe||0)+1;return i<=4?{key:"mahnwesen",label:"Mahnwesen",kind:i>=2?"late":"primary"}:{key:"inkasso",label:"An Inkasso",kind:"late"}}return null}function lt({row:t,onAction:n}){let[i,a]=T(!1),d=_e(t);return ie(()=>{if(!i)return;let c=()=>a(!1);return window.addEventListener("click",c),()=>window.removeEventListener("click",c)},[i]),React.createElement("div",{className:"op-row-actions",onClick:c=>c.stopPropagation()},d&&React.createElement("button",{className:`op-action-btn is-${d.kind}`,onClick:()=>n(d.key,t)},d.label),React.createElement("div",{className:"op-action-wrap"},React.createElement("button",{className:"op-action-more",onClick:c=>{c.stopPropagation(),a(o=>!o)}},"\u22EF"),i&&React.createElement("div",{className:"op-action-menu"},React.createElement("button",{className:"op-action-menu-item",onClick:()=>n("mieterkonto",t)},"\u2192 Mieterkonto \xF6ffnen",React.createElement("span",{className:"op-action-menu-shortcut"},"\u2197")),React.createElement("button",{className:"op-action-menu-item",onClick:()=>n("beleg",t)},"\u2192 Beleg \xF6ffnen"),t.art==="Forderungen"&&React.createElement("button",{className:"op-action-menu-item",onClick:()=>n("kontakt",t)},"Mieter anrufen / mailen"),React.createElement("div",{className:"op-action-menu-sep"}),React.createElement("button",{className:"op-action-menu-item",onClick:()=>n("notiz",t)},"Notiz hinzuf\xFCgen"),React.createElement("button",{className:"op-action-menu-item",onClick:()=>n("stundung",t)},"Stundung vereinbaren"),React.createElement("button",{className:"op-action-menu-item",onClick:()=>n("kl\xE4rung",t)},'Auf \u201Ein Kl\xE4rung" setzen'),React.createElement("div",{className:"op-action-menu-sep"}),t.can_write_off&&React.createElement("button",{className:"op-action-menu-item is-danger",onClick:()=>n("abschreiben",t)},"Abschreiben\u2026"))))}function se({title:t,subtitle:n,onClose:i,footer:a,children:d}){return ie(()=>{let c=o=>o.key==="Escape"&&i();return document.addEventListener("keydown",c),()=>document.removeEventListener("keydown",c)},[i]),React.createElement("div",{className:"op-modal-backdrop",onClick:i},React.createElement("div",{className:"op-modal",onClick:c=>c.stopPropagation()},React.createElement("div",{className:"op-modal-head"},React.createElement("div",null,React.createElement("h3",null,t),n&&React.createElement("div",{className:"op-modal-sub"},n)),React.createElement("button",{className:"op-modal-close",onClick:i},"\xD7")),React.createElement("div",{className:"op-modal-body"},d),a&&React.createElement("div",{className:"op-modal-foot"},a)))}function rt({row:t,onClose:n,onDone:i}){let a=(t.mahnstufe||0)+1,[d,c]=T(a===1?0:a===2?5:a===3?10:15),[o,v]=T(!0),[M,C]=T(9.12),[s,p]=T("Brief"),[h,k]=T(""),[w,g]=T(!1),[l,N]=T(()=>{let O=new Date;return O.setDate(O.getDate()+7),O.toISOString().slice(0,10)}),x=t.dunning_type||(a===1?"Zahlungserinnerung - HP":a===2?"1. Mahnung - HP":a===3?"2. Mahnung - HP":"Letzte Mahnung - HP"),[f,F]=T([]),[z,A]=T(x),[R,B]=T([]),[E,m]=T(t.serienbrief_vorlage||"");ie(()=>{let O=!0;return Promise.all([window.OP_ACTIONS.listDunningTypes(),window.OP_ACTIONS.listSerienbriefVorlagen?window.OP_ACTIONS.listSerienbriefVorlagen():Promise.resolve([])]).then(([X,oe])=>{O&&(F(X),X.length&&!X.includes(z)&&A(X[0]),B(oe||[]))}).catch(()=>{}),()=>{O=!1}},[]);let y=o?t.offen*(M/100)*(t.alter_tage/365):0,P=t.offen+d+y,G=window.OFFENE_POSTEN.partyName(t.party),L=window.OFFENE_POSTEN.ccLabel[t.kostenstelle]||t.kostenstelle,ee=async()=>{g(!0);try{let O=await window.OP_ACTIONS.createDunning(t,{dunningType:z,neueFaelligkeit:l,mahngebuehr:d,zinsenAktiv:o,serienbriefVorlage:E,serienbriefWerte:h.trim()?[{variable:"zusatztext",wert:h.trim(),beschreibung:"Optionaler Text aus dem Mahn-Cockpit"}]:[]});i?.(O)}finally{g(!1)}};return React.createElement(se,{title:`${a===1?"Zahlungserinnerung":a===4?"Letzte Mahnung":`${a-1}. Mahnung`} erstellen`,subtitle:`${G} \xB7 ${t.belegnummer} \xB7 ${fmtEUR_op(t.offen)} offen seit ${t.alter_tage} Tagen`,onClose:n,footer:React.createElement(React.Fragment,null,React.createElement("span",{className:"op-modal-foot-info"},"Erzeugt 1 Dunning-Draft \xB7 Mahngeb\xFChr-Rechnung beim Submit \xB7 1 PDF"),React.createElement("div",{className:"op-modal-foot-actions"},React.createElement("button",{className:"mk-btn",onClick:n,disabled:w},"Abbrechen"),React.createElement("button",{className:"mk-btn mk-btn-primary",onClick:ee,disabled:w},w?"Draft wird angelegt \u2026":`Mahnung als Draft anlegen \xB7 ${fmtEUR_op(P)}`)))},React.createElement("div",{className:"op-form-grid"},React.createElement("div",{className:"op-field"},React.createElement("label",null,"Mahnstufe / Regel"),f.length?React.createElement("select",{value:z,onChange:O=>A(O.target.value)},f.map(O=>React.createElement("option",{key:O,value:O},O))):React.createElement("input",{value:z,onChange:O=>A(O.target.value)}),f.includes(x)&&z!==x&&React.createElement("button",{type:"button",className:"mk-btn mk-btn-ghost",style:{marginTop:6,padding:"4px 8px",fontSize:11},onClick:()=>A(x)},"Vorschlag w\xE4hlen")),React.createElement("div",{className:"op-field"},React.createElement("label",null,"Serienbrief-Vorlage"),R.length?React.createElement("select",{value:E,onChange:O=>m(O.target.value)},React.createElement("option",{value:""},"Default aus Mahnstufe"),R.map(O=>React.createElement("option",{key:O,value:O},O))):React.createElement("input",{value:E,placeholder:"Default aus Mahnstufe",onChange:O=>m(O.target.value)})),React.createElement("div",{className:"op-field"},React.createElement("label",null,"Versandart"),React.createElement("select",{value:s,onChange:O=>p(O.target.value)},React.createElement("option",null,"Brief"),React.createElement("option",null,"E-Mail"),React.createElement("option",null,"Brief + E-Mail"),React.createElement("option",null,"Einschreiben"))),React.createElement("div",{className:"op-field"},React.createElement("label",null,"Mahngeb\xFChr"),React.createElement("input",{type:"number",step:"0.50",value:d,onChange:O=>c(parseFloat(O.target.value)||0)})),React.createElement("div",{className:"op-field"},React.createElement("label",null,"Neue Zahlungsfrist"),React.createElement("input",{type:"date",value:l,onChange:O=>N(O.target.value)})),React.createElement("div",{className:"op-field is-full"},React.createElement("label",null,"Optionaler Zusatztext"),React.createElement("textarea",{rows:"3",value:h,placeholder:"Wird als Variable {{ zusatztext }} an die Serienbrief-Vorlage \xFCbergeben.",onChange:O=>k(O.target.value)})),React.createElement("div",{className:"op-field is-full"},React.createElement("label",{style:{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}},React.createElement("input",{type:"checkbox",checked:o,onChange:O=>v(O.target.checked)}),React.createElement("span",null,"Verzugszinsen berechnen (",M,"% p.a. \xB7 \xA7288 BGB)")))),React.createElement("div",{className:"op-preview"},React.createElement("div",{className:"op-preview-label"},"Vorschau Forderung"),React.createElement("div",{className:"op-preview-row"},React.createElement("span",{className:"op-preview-key"},"Offene Hauptforderung"),React.createElement("span",{className:"op-preview-val"},fmtEUR_op(t.offen))),React.createElement("div",{className:"op-preview-row"},React.createElement("span",{className:"op-preview-key"},"+ Mahngeb\xFChr"),React.createElement("span",{className:"op-preview-val"},fmtEUR_op(d))),o&&React.createElement("div",{className:"op-preview-row"},React.createElement("span",{className:"op-preview-key"},"+ Verzugszinsen (",t.alter_tage," Tage)"),React.createElement("span",{className:"op-preview-val"},fmtEUR_op(y))),React.createElement("div",{className:"op-preview-row is-total"},React.createElement("span",{className:"op-preview-key"},"\u03A3 Zahlungsaufforderung"),React.createElement("span",{className:"op-preview-val"},fmtEUR_op(P)))),React.createElement("div",{className:"op-doc-letter"},React.createElement("div",{className:"op-doc-head"},"Hausverwaltung M\xFCller GmbH \xB7 Hauptstr. 1 \xB7 70173 Stuttgart"),React.createElement("h4",null,z),React.createElement("p",null,G,React.createElement("br",null),"Objekt ",L),React.createElement("p",null,"Sehr geehrte Damen und Herren,",React.createElement("br",null),"wir bitten Sie h\xF6flich, den nachfolgend genannten Betrag bis sp\xE4testens",React.createElement("strong",null," ",fmtDate_op(l))," auf unser Konto zu \xFCberweisen. Verwendungszweck: ",React.createElement("strong",null,t.belegnummer)),React.createElement("table",null,React.createElement("thead",null,React.createElement("tr",null,React.createElement("th",null,"Beleg"),React.createElement("th",null,"F\xE4llig am"),React.createElement("th",{className:"num"},"Betrag"))),React.createElement("tbody",null,React.createElement("tr",null,React.createElement("td",null,t.belegnummer),React.createElement("td",null,fmtDate_op(t.faellig_am)),React.createElement("td",{className:"num"},fmtEUR_op(P)))))),React.createElement("div",{className:"op-checklist"},React.createElement("div",{className:"op-checklist-item"},"Dunning-Doc gem\xE4\xDF ERPNext-Standard"),React.createElement("div",{className:"op-checklist-item"},"Mahngeb\xFChr als verlinkte Sales Invoice beim Submit"),React.createElement("div",{className:"op-checklist-item"},"PDF-Anhang automatisch erzeugt + im Mieter-Kontakt archiviert"),s.includes("E-Mail")&&React.createElement("div",{className:"op-checklist-item"},"E-Mail-Versand vorbereitet (",G,")")))}function ct({row:t,onClose:n,onDone:i}){let a=(t.bemerkungen||"").match(/Skonto bis (\d{2}\.\d{2}\.).*?(-?\d+(?:\.\d+)?)\s*%/i),d=!!a,c=a?a[1]:null,o=a?parseFloat(a[2]):0,[v,M]=T(d),[C,s]=T(()=>frappe.datetime.get_today()),[p,h]=T("SEPA-\xDCberweisung"),[k,w]=T(!1),g=v?t.offen*(Math.abs(o)/100):0,l=t.offen-g,N=async()=>{w(!0);try{let x=await window.OP_ACTIONS.createPaymentEntry(t,{zahldatum:C,useSkonto:v,skontoAmount:g,zahlart:p});i?.(x)}finally{w(!1)}};return React.createElement(se,{title:"Zahlung an Lieferant anlegen",subtitle:`${window.OFFENE_POSTEN.partyName(t.party)} \xB7 ${t.belegnummer} \xB7 ${fmtEUR_op(t.offen)}`,onClose:n,footer:React.createElement(React.Fragment,null,React.createElement("span",{className:"op-modal-foot-info"},"Erzeugt 1 Payment Entry \xB7 ggf. 1 SEPA-XML"),React.createElement("div",{className:"op-modal-foot-actions"},React.createElement("button",{className:"mk-btn",onClick:n,disabled:k},"Abbrechen"),React.createElement("button",{className:"mk-btn mk-btn-primary",onClick:N,disabled:k},k?"Draft wird angelegt \u2026":`Zahlung als Draft anlegen \xB7 ${fmtEUR_op(l)}`)))},React.createElement("div",{className:"op-form-grid"},React.createElement("div",{className:"op-field"},React.createElement("label",null,"Zahldatum"),React.createElement("input",{type:"date",value:C,onChange:x=>s(x.target.value)})),React.createElement("div",{className:"op-field"},React.createElement("label",null,"Zahlart"),React.createElement("select",{value:p,onChange:x=>h(x.target.value)},React.createElement("option",null,"SEPA-\xDCberweisung"),React.createElement("option",null,"Lastschrift"),React.createElement("option",null,"Manuelle \xDCberweisung"))),d&&React.createElement("div",{className:"op-field is-full",style:{background:"oklch(0.97 0.04 80)",padding:12,border:"1px solid oklch(0.85 0.06 70)",borderRadius:4}},React.createElement("label",{style:{display:"flex",alignItems:"center",gap:6,cursor:"pointer",color:"oklch(0.40 0.10 70)"}},React.createElement("input",{type:"checkbox",checked:v,onChange:x=>M(x.target.checked)}),React.createElement("strong",null,"Skonto bis ",c," nutzen (",Math.abs(o),"%)")),React.createElement("div",{style:{fontSize:12,color:"var(--ink-3)",marginTop:2}},"Spart ",fmtEUR_op(t.offen*(Math.abs(o)/100))," bei dieser Rechnung."))),React.createElement("div",{className:"op-preview"},React.createElement("div",{className:"op-preview-label"},"Buchungs-Vorschau"),React.createElement("div",{className:"op-preview-row"},React.createElement("span",{className:"op-preview-key"},"Rechnungsbetrag"),React.createElement("span",{className:"op-preview-val"},fmtEUR_op(t.offen))),v&&React.createElement("div",{className:"op-preview-row"},React.createElement("span",{className:"op-preview-key"},"\u2212 Skonto ",Math.abs(o),"%"),React.createElement("span",{className:"op-preview-val"},"\u2212",fmtEUR_op(g))),React.createElement("div",{className:"op-preview-row is-total"},React.createElement("span",{className:"op-preview-key"},"Auszahlung"),React.createElement("span",{className:"op-preview-val"},fmtEUR_op(l)))),React.createElement("div",{className:"op-checklist"},React.createElement("div",{className:"op-checklist-item"},"Payment Entry zu ",t.belegnummer),v&&React.createElement("div",{className:"op-checklist-item"},"Skonto-Buchung auf 3736 (Aufwandsminderung)"),p==="SEPA-\xDCberweisung"&&React.createElement("div",{className:"op-checklist-item"},"SEPA-XML zur n\xE4chsten Zahlungsdatei hinzugef\xFCgt")))}function ut({row:t,onClose:n,onDone:i}){let[a,d]=T(()=>frappe.datetime.get_today()),[c,o]=T("Bank Draft"),[v,M]=T(!1),C=Math.abs(t.offen||0),s=window.OFFENE_POSTEN.partyName(t.party),p=async()=>{M(!0);try{let h=await window.OP_ACTIONS.createRefundPayment(t,{postingDate:a,modeOfPayment:c});i?.(h)}finally{M(!1)}};return React.createElement(se,{title:"Guthaben auszahlen",subtitle:`${s} \xB7 ${t.belegnummer} \xB7 ${fmtEUR_op(C)}`,onClose:n,footer:React.createElement(React.Fragment,null,React.createElement("span",{className:"op-modal-foot-info"},"Erzeugt einen Payment-Entry-Draft. Gebucht wird erst nach Submit im Desk."),React.createElement("div",{className:"op-modal-foot-actions"},React.createElement("button",{className:"mk-btn",onClick:n,disabled:v},"Abbrechen"),React.createElement("button",{className:"mk-btn mk-btn-primary",onClick:p,disabled:v},v?"Draft wird angelegt \u2026":`Auszahlung als Draft anlegen \xB7 ${fmtEUR_op(C)}`)))},React.createElement("div",{className:"op-form-grid"},React.createElement("div",{className:"op-field"},React.createElement("label",null,"Auszahlungsdatum"),React.createElement("input",{type:"date",value:a,onChange:h=>d(h.target.value)})),React.createElement("div",{className:"op-field"},React.createElement("label",null,"Zahlart"),React.createElement("select",{value:c,onChange:h=>o(h.target.value)},React.createElement("option",null,"Bank Draft"),React.createElement("option",null,"SEPA-\xDCberweisung"),React.createElement("option",null,"Manuelle \xDCberweisung")))),React.createElement("div",{className:"op-preview"},React.createElement("div",{className:"op-preview-label"},"Auszahlungs-Vorschau"),React.createElement("div",{className:"op-preview-row"},React.createElement("span",{className:"op-preview-key"},"Guthaben aus Beleg"),React.createElement("span",{className:"op-preview-val"},t.belegnummer)),React.createElement("div",{className:"op-preview-row is-total"},React.createElement("span",{className:"op-preview-key"},"Auszahlung an Mieter"),React.createElement("span",{className:"op-preview-val"},fmtEUR_op(C)))),React.createElement("div",{className:"op-checklist"},React.createElement("div",{className:"op-checklist-item"},'Payment Entry Typ \u201EPay" gegen die Sales Invoice'),React.createElement("div",{className:"op-checklist-item"},"Auszahlung wird mit dem negativen offenen Betrag verrechnet"),React.createElement("div",{className:"op-checklist-item"},"Bank-/Kassenkonto kann im Draft vor Submit gepr\xFCft werden")))}function dt({row:t,onClose:n,onDone:i}){let a=window.OFFENE_POSTEN.rows.filter(g=>g.party===t.party&&g.offen>.01).sort((g,l)=>g.faellig_am.localeCompare(l.faellig_am)),d=Math.abs(t.offen),[c,o]=T(()=>new Set(a[0]?[a[0].belegnummer]:[])),[v,M]=T(!1),C=a.filter(g=>c.has(g.belegnummer)),s=C.reduce((g,l)=>g+Math.min(l.offen,d-g),0),p=d-s,h=window.OFFENE_POSTEN.partyName(t.party),k=g=>{o(l=>{let N=new Set(l);return N.has(g)?N.delete(g):N.add(g),N})},w=async()=>{let g=d,l=[];for(let N of C){if(g<=0)break;let x=Math.min(N.offen,g);l.push({invoice:N.belegnummer,amount:x}),g-=x}M(!0);try{let N=await window.OP_ACTIONS.allocatePayment(t,l);i?.(N)}finally{M(!1)}};return React.createElement(se,{title:"Vorauszahlung zuordnen",subtitle:`${h} \xB7 Eingang ${fmtEUR_op(d)} am ${fmtDate_op(t.buchungsdatum)}`,onClose:n,footer:React.createElement(React.Fragment,null,React.createElement("span",{className:"op-modal-foot-info"},"Rest ",fmtEUR_op(p)," bleibt als Vorauszahlung stehen."),React.createElement("div",{className:"op-modal-foot-actions"},React.createElement("button",{className:"mk-btn",onClick:n,disabled:v},"Abbrechen"),React.createElement("button",{className:"mk-btn mk-btn-primary",onClick:w,disabled:v||C.length===0},v?"Draft wird angelegt \u2026":`${C.length} ${C.length===1?"Zuordnung vorbereiten":"Zuordnungen vorbereiten"}`)))},a.length===0?React.createElement("div",{style:{padding:24,textAlign:"center",color:"var(--ink-3)"}},"Keine offenen Forderungen bei ",h,". Eingang als Anzahlung stehen lassen?"):React.createElement(React.Fragment,null,React.createElement("p",{style:{margin:"0 0 12px",fontSize:12.5,color:"var(--ink-2)"}},"W\xE4hle die Forderungen, die mit dieser Vorauszahlung verrechnet werden sollen. \xC4ltester Posten ist vorausgew\xE4hlt."),React.createElement("table",{style:{width:"100%",fontSize:12.5,borderCollapse:"collapse"}},React.createElement("thead",null,React.createElement("tr",{style:{background:"var(--bg-soft)",color:"var(--ink-3)",textTransform:"uppercase",fontSize:10.5,letterSpacing:"0.04em"}},React.createElement("th",{style:{padding:"8px 10px",textAlign:"left"}}),React.createElement("th",{style:{padding:"8px 10px",textAlign:"left"}},"Beleg"),React.createElement("th",{style:{padding:"8px 10px",textAlign:"left"}},"F\xE4llig"),React.createElement("th",{style:{padding:"8px 10px",textAlign:"right"}},"Offen"))),React.createElement("tbody",null,a.map(g=>React.createElement("tr",{key:g.belegnummer,style:{borderBottom:"1px solid var(--line)"}},React.createElement("td",{style:{padding:"8px 10px"}},React.createElement("input",{type:"checkbox",checked:c.has(g.belegnummer),onChange:()=>k(g.belegnummer)})),React.createElement("td",{style:{padding:"8px 10px",fontFamily:"ui-monospace, monospace",fontSize:11.5}},g.belegnummer),React.createElement("td",{style:{padding:"8px 10px"}},fmtDate_op(g.faellig_am)),React.createElement("td",{style:{padding:"8px 10px",textAlign:"right",fontVariantNumeric:"tabular-nums"}},fmtEUR_op(g.offen)))))),React.createElement("div",{className:"op-preview",style:{marginTop:14}},React.createElement("div",{className:"op-preview-row"},React.createElement("span",{className:"op-preview-key"},"Verf\xFCgbar"),React.createElement("span",{className:"op-preview-val"},fmtEUR_op(d))),React.createElement("div",{className:"op-preview-row"},React.createElement("span",{className:"op-preview-key"},"Zugeordnet (",C.length," Beleg",C.length===1?"":"e",")"),React.createElement("span",{className:"op-preview-val"},"\u2212",fmtEUR_op(s))),React.createElement("div",{className:"op-preview-row is-total"},React.createElement("span",{className:"op-preview-key"},"Rest als Vorauszahlung"),React.createElement("span",{className:"op-preview-val"},fmtEUR_op(p))))))}function pt({message:t,onClose:n}){return ie(()=>{let i=setTimeout(n,2400);return()=>clearTimeout(i)},[]),React.createElement("div",{style:{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--ink)",color:"var(--bg)",padding:"10px 18px",borderRadius:6,fontSize:13,boxShadow:"0 8px 24px rgba(0,0,0,0.2)",zIndex:200}},t)}function mt({rows:t,onClose:n,onDone:i}){let a=React.useMemo(()=>{let m=new Map;return t.forEach(y=>{m.has(y.party)||m.set(y.party,{party:y.party,items:[],sum:0});let P=m.get(y.party);P.items.push(y),P.sum+=y.offen}),[...m.values()].map(y=>({...y,name:window.OFFENE_POSTEN.partyName(y.party),nextStufe:Math.min(4,Math.max(...y.items.map(P=>(P.mahnstufe||0)+1))),gebuehr:y.items.reduce((P,G)=>{let L=Math.min(4,(G.mahnstufe||0)+1);return P+(L===1?0:L===2?5:L===3?10:15)},0)})).sort((y,P)=>P.sum-y.sum)},[t]),[d,c]=T("Brief"),[o,v]=T(""),[M,C]=T([]),[s,p]=T(t.find(m=>m.dunning_type)?.dunning_type||""),[h,k]=T([]),[w,g]=T(t.find(m=>m.serienbrief_vorlage)?.serienbrief_vorlage||""),[l,N]=T(()=>{let m=new Date;return m.setDate(m.getDate()+7),m.toISOString().slice(0,10)}),[x,f]=T(()=>new Set),[F,z]=T(!1),A=a.filter(m=>!x.has(m.party)),R=A.reduce((m,y)=>m+y.sum+y.gebuehr,0);ie(()=>{let m=!0;return Promise.all([window.OP_ACTIONS.listDunningTypes(),window.OP_ACTIONS.listSerienbriefVorlagen?window.OP_ACTIONS.listSerienbriefVorlagen():Promise.resolve([])]).then(([y,P])=>{m&&(C(y),y.length&&!s&&p(y[0]),k(P||[]))}).catch(()=>{}),()=>{m=!1}},[]);let B=m=>{f(y=>{let P=new Set(y);return P.has(m)?P.delete(m):P.add(m),P})},E=async()=>{let m={};A.forEach(y=>{m[y.party]=y.items}),z(!0);try{let y=o.trim()?[{variable:"zusatztext",wert:o.trim(),beschreibung:"Optionaler Text aus dem Mahn-Cockpit"}]:[],P=await window.OP_ACTIONS.createBulkDunning(m,{neueFaelligkeit:l,dunningType:s,serienbriefVorlage:w,serienbriefWerte:y});i?.(P)}finally{z(!1)}};return React.createElement(se,{title:"Sammelmahnung erstellen",subtitle:`${t.length} Posten \xB7 ${a.length} ${a.length===1,"Mieter"} \xB7 ein Dunning-Doc pro Mieter`,onClose:n,footer:React.createElement(React.Fragment,null,React.createElement("span",{className:"op-modal-foot-info"},"Erzeugt ",A.length," Dunning-Doc",A.length===1?"":"s"," \xB7 Mahngeb\xFChr-Rechnung beim Submit \xB7 ",A.length," PDF",A.length===1?"":"s"),React.createElement("div",{className:"op-modal-foot-actions"},React.createElement("button",{className:"mk-btn",onClick:n,disabled:F},"Abbrechen"),React.createElement("button",{className:"mk-btn mk-btn-primary",disabled:F||A.length===0,onClick:E},F?"Drafts werden angelegt \u2026":`${A.length} ${A.length===1?"Mahnung":"Mahnungen"} als Draft anlegen \xB7 ${fmtEUR_op(R)}`)))},React.createElement("div",{className:"op-form-grid"},React.createElement("div",{className:"op-field"},React.createElement("label",null,"Versandart (f\xFCr alle)"),React.createElement("select",{value:d,onChange:m=>c(m.target.value)},React.createElement("option",null,"Brief"),React.createElement("option",null,"E-Mail"),React.createElement("option",null,"Brief + E-Mail"),React.createElement("option",null,"Einschreiben"))),React.createElement("div",{className:"op-field"},React.createElement("label",null,"Mahnstufe / Regel (f\xFCr alle)"),M.length?React.createElement("select",{value:s,onChange:m=>p(m.target.value)},M.map(m=>React.createElement("option",{key:m,value:m},m))):React.createElement("input",{value:s,onChange:m=>p(m.target.value),placeholder:"Automatisch"})),React.createElement("div",{className:"op-field"},React.createElement("label",null,"Serienbrief-Vorlage"),h.length?React.createElement("select",{value:w,onChange:m=>g(m.target.value)},React.createElement("option",{value:""},"Default aus Mahnstufe"),h.map(m=>React.createElement("option",{key:m,value:m},m))):React.createElement("input",{value:w,onChange:m=>g(m.target.value),placeholder:"Default aus Mahnstufe"})),React.createElement("div",{className:"op-field"},React.createElement("label",null,"Neue Zahlungsfrist"),React.createElement("input",{type:"date",value:l,onChange:m=>N(m.target.value)})),React.createElement("div",{className:"op-field is-full"},React.createElement("label",null,"Optionaler Zusatztext"),React.createElement("textarea",{rows:"3",value:o,placeholder:"Wird als Variable {{ zusatztext }} an jede Serienbrief-Vorlage \xFCbergeben.",onChange:m=>v(m.target.value)}))),React.createElement("div",{className:"op-preview-label",style:{marginBottom:8}},"Mahnungen pro Mieter"),React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:6}},a.map(m=>{let y=x.has(m.party);return React.createElement("div",{key:m.party,style:{display:"grid",gridTemplateColumns:"24px 1fr auto 100px",gap:12,alignItems:"center",padding:"10px 12px",background:y?"var(--bg-soft)":"var(--bg-card)",border:"1px solid var(--line)",borderRadius:4,opacity:y?.55:1,transition:"opacity 0.1s"}},React.createElement("input",{type:"checkbox",checked:!y,onChange:()=>B(m.party)}),React.createElement("div",null,React.createElement("div",{style:{fontWeight:600,fontSize:13}},m.name),React.createElement("div",{style:{fontSize:11.5,color:"var(--ink-3)",marginTop:2}},m.items.length," ",(m.items.length===1,"Posten")," \xB7"," ","\xC4lteste seit ",Math.max(...m.items.map(P=>P.alter_tage))," Tagen")),React.createElement("div",{style:{fontSize:11.5,color:"var(--ink-3)",textAlign:"center"}},"Stufe",React.createElement("br",null),React.createElement("span",{style:{color:m.nextStufe>=4?"var(--accent)":"var(--ink)",fontWeight:600,fontSize:13}},"\u2192 ",m.nextStufe===1?"ZE":m.nextStufe===4?"Letzte":`M${m.nextStufe-1}`)),React.createElement("div",{style:{textAlign:"right",fontVariantNumeric:"tabular-nums"}},React.createElement("div",{style:{fontSize:13.5,fontWeight:600}},fmtEUR_op(m.sum+m.gebuehr)),React.createElement("div",{style:{fontSize:11,color:"var(--ink-3)"}},"inkl. ",fmtEUR_op(m.gebuehr)," Geb\xFChr")))})),React.createElement("div",{className:"op-preview",style:{marginTop:14}},React.createElement("div",{className:"op-preview-row is-total"},React.createElement("span",{className:"op-preview-key"},"\u03A3 Sammelmahnung (",A.length," Schreiben)"),React.createElement("span",{className:"op-preview-val"},fmtEUR_op(R)))))}Object.assign(window,{primaryActionFor:_e,ActionCell:lt,Modal:se,MahnungModal:rt,ZahlungModal:ct,GuthabenAuszahlenModal:ut,ZuordnenModal:dt,SammelmahnungModal:mt,Toast:pt});var{useState:$,useMemo:H,useEffect:_t}=React,gt={layout:"flat",showAktion:!0,density:"regular",gruppierung:"keine",showObjekt:!0},bt={Forderungen:"Forderungen",Rechnungen:"Rechnungen",Beides:"Beides"},ft={Forderungen:"Mieter schulden uns",Rechnungen:"Wir schulden Lieferanten",Beides:"Bilanzielle Gesamtsicht"};function ht(){let[t,n]=useTweaks(gt),{partyName:i}=window.OFFENE_POSTEN,[a,d]=React.useState(window.OFFENE_POSTEN.rows),[c,o]=React.useState(window.OFFENE_POSTEN.mahnkandidaten||[]),[v,M]=React.useState(!1);React.useEffect(()=>{let e=()=>{d([...window.OFFENE_POSTEN.rows]),o([...window.OFFENE_POSTEN.mahnkandidaten||[]]),L(new Set)},u=()=>o([...window.OFFENE_POSTEN.mahnkandidaten||[]]),b=()=>M(!0),r=()=>M(!1);return window.addEventListener("op-data-refreshed",e),window.addEventListener("op-mahn-data-refreshed",u),window.addEventListener("op-loading-start",b),window.addEventListener("op-loading-end",r),()=>{window.removeEventListener("op-data-refreshed",e),window.removeEventListener("op-mahn-data-refreshed",u),window.removeEventListener("op-loading-start",b),window.removeEventListener("op-loading-end",r)}},[]);let[C,s]=$(()=>new URLSearchParams(window.location.search||"").get("view")==="mahnwesen"||frappe.route_options?.view==="mahnwesen"?"mahnwesen":"op"),[p,h]=$("Forderungen"),[k,w]=$("F\xE4llig am"),[g,l]=$("asc"),[N,x]=$(!1),[f,F]=$(!1),[z,A]=$(""),[R,B]=$(null),[E,m]=$("alle"),[y,P]=$(""),[G,L]=$(()=>new Set),[ee,O]=$(()=>new Set),X=new Date,oe=e=>String(e).padStart(2,"0"),Ee=`${X.getFullYear()}-${oe(X.getMonth()+1)}-01`,Ce=`${X.getFullYear()}-${oe(X.getMonth()+1)}-${oe(new Date(X.getFullYear(),X.getMonth()+1,0).getDate())}`,[te,Me]=$(Ee),[ne,Oe]=$(Ce),me=React.useRef(!1);React.useEffect(()=>{if(!me.current){me.current=!0;return}let e=setTimeout(()=>{window.OP_ADAPTER.refresh({mode:"Beides",von_faelligkeit:te,bis_faelligkeit:ne,show_settled:N?1:0,show_written_off:f?1:0})},300);return()=>clearTimeout(e)},[te,ne,N,f]);let[J,I]=$(null),[ge,U]=$(null),[be,ze]=$(()=>new Set),fe=H(()=>{let e=new Map;return(c||[]).forEach(u=>{(u.invoices||[]).forEach(b=>{b.sales_invoice&&e.set(b.sales_invoice,u)})}),e},[c]),Re=e=>{ze(u=>{let b=new Set(u);return b.has(e.belegnummer)?b.delete(e.belegnummer):b.add(e.belegnummer),b}),L(new Set)},he=async(e,u)=>{try{if(e==="mahnwesen")Re(u);else if(e==="mahnung"||e==="sammelmahnung")I({type:"mahnung",row:u});else if(e==="zahlung_anlegen")I({type:"zahlung",row:u});else if(e==="zuordnen")I({type:"zuordnen",row:u});else if(e==="guthaben_auszahlen")I({type:"guthaben",row:u});else if(e==="mieterkonto")window.OP_ACTIONS.openMieterkonto(u);else if(e==="abschreiben"){let b=await window.OP_ACTIONS.writeOff(u,{remarks:`Abschreibung aus OP-Workflow vorbereitet: ${u.belegnummer}`});U(`Journal Entry Draft erstellt: ${b.journal_entry}`)}else e==="beleg"?window.OP_ACTIONS.openBeleg(u):e==="kontakt"?U(`Kontakt: ${window.OFFENE_POSTEN.partyName(u.party)}`):e==="notiz"?U("Notiz-Dialog (mock)"):e==="stundung"?(await window.OP_ACTIONS.setStundungComment(u,{grund:"Stundung im OP-Workflow markiert"}),U(`Stundung dokumentiert: ${u.belegnummer}`)):U(e==="kl\xE4rung"?`Status: in Kl\xE4rung \u2192 ${u.belegnummer}`:e==="inkasso"?`Inkasso-Vorgang er\xF6ffnet: ${u.belegnummer}`:`Aktion: ${e}`)}catch(b){console.error("op action failed",b)}},De=H(()=>{let e={Forderungen:0,Rechnungen:0,Beides:0};return a.forEach(u=>{Math.abs(u.offen)<.01||(e[u.art]=(e[u.art]||0)+1,e.Beides+=1)}),e},[a]),Z=H(()=>a.filter(e=>p==="Beides"||e.art===p),[p,a]),V=H(()=>{let e=Z.filter(S=>S.status==="Written Off"||S.art!=="Forderungen"||S.belegart==="Payment Entry"||S.offen<=0?!1:S.alter_tage>0&&(S.mahnstufe||0)<4),u=e.reduce((S,j)=>S+j.offen,0),b=new Set(e.map(S=>S.party)),r={m0:0,m1:0,m2:0,m3:0};e.forEach(S=>{r[`m${S.mahnstufe||0}`]=(r[`m${S.mahnstufe||0}`]||0)+1});let _=new Set(e.map(S=>S.belegnummer));return{count:e.length,sum:u,parties:b.size,byStufe:r,rows:e,mahnreifIds:_}},[Z]),Te=H(()=>{let e=new Map;return Z.forEach(u=>{let b=u.kostenstelle;b&&(e.has(b)||e.set(b,{cc:b,label:window.OFFENE_POSTEN.ccLabel[b]||b,count:0}),e.get(b).count+=1)}),[...e.values()].sort((u,b)=>u.label.localeCompare(b.label))},[Z]),Ae=H(()=>{let e=new Map;return Z.forEach(u=>{u.party&&(e.has(u.party)||e.set(u.party,{id:u.party,label:i(u.party)||u.party,count:0}),e.get(u.party).count+=1)}),[...e.values()].sort((u,b)=>u.label.localeCompare(b.label))},[Z,i]),le=H(()=>({overdue:Z.filter(e=>e.alter_tage>0&&e.status!=="Written Off"&&Math.abs(e.offen)>.01).length,mahnung:Z.filter(e=>e.mahnstufe&&e.mahnstufe>0).length,gt1000:Z.filter(e=>Math.abs(e.offen)>=1e3).length,guthaben:Z.filter(e=>e.offen<-.01).length}),[Z]),W=H(()=>{let e=Z;if(ee.size>0&&(e=e.filter(r=>ee.has(r.kostenstelle))),y&&(e=e.filter(r=>r.party===y)),E!=="alle"&&(e=e.filter(r=>r.zahlungsrichtung===E)),te&&(e=e.filter(r=>(r.faellig_am||"")>=te)),ne&&(e=e.filter(r=>(r.faellig_am||"")<=ne)),N||(e=e.filter(r=>Math.abs(r.offen)>.01)),f||(e=e.filter(r=>r.status!=="Written Off")),R==="overdue"&&(e=e.filter(r=>r.alter_tage>0&&r.status!=="Written Off")),R==="mahnung"&&(e=e.filter(r=>r.mahnstufe&&r.mahnstufe>0)),R==="gt1000"&&(e=e.filter(r=>Math.abs(r.offen)>=1e3)),R==="guthaben"&&(e=e.filter(r=>r.offen<-.01)),z.trim()){let r=z.toLowerCase();e=e.filter(_=>(i(_.party)||"").toLowerCase().includes(r)||(_.belegnummer||"").toLowerCase().includes(r)||(_.party||"").toLowerCase().includes(r)||(_.bemerkungen||"").toLowerCase().includes(r))}let u=(r,_)=>{let S=0;if(k==="Offener Betrag absteigend")S=Math.abs(_.offen)-Math.abs(r.offen);else if(k==="Offener Betrag")S=r.offen-_.offen;else if(k==="Buchungsdatum")S=(r.buchungsdatum||"").localeCompare(_.buchungsdatum||"");else if(k==="Mieter")S=(window.OFFENE_POSTEN.partyName(r.party)||"").localeCompare(window.OFFENE_POSTEN.partyName(_.party)||"");else if(k==="Status")S=(r.status||"").localeCompare(_.status||"");else if(k==="Richtung")S=(r.zahlungsrichtung||"").localeCompare(_.zahlungsrichtung||"");else if(k==="Richtung: Geld bekommen zuerst")S=(r.zahlungsrichtung==="Geld bekommen"?-1:1)-(_.zahlungsrichtung==="Geld bekommen"?-1:1);else if(k==="Richtung: Geld bezahlen zuerst")S=(r.zahlungsrichtung==="Geld bezahlen / erstatten"?-1:1)-(_.zahlungsrichtung==="Geld bezahlen / erstatten"?-1:1);else if(k==="Immobilie"){let j=window.OFFENE_POSTEN.ccLabel[r.kostenstelle]||r.kostenstelle||"",D=window.OFFENE_POSTEN.ccLabel[_.kostenstelle]||_.kostenstelle||"";S=j.localeCompare(D)}else k==="\xC4lteste zuerst"||k==="Alter"?S=(_.alter_tage||0)-(r.alter_tage||0):S=(r.faellig_am||"").localeCompare(_.faellig_am||"");return S===0&&(S=(r.faellig_am||"").localeCompare(_.faellig_am||"")),S===0&&(S=(r.belegnummer||"").localeCompare(_.belegnummer||"")),g==="desc"?-S:S};return[...e].sort(u)},[Z,ee,y,E,te,ne,N,f,R,z,k,g]),Q=H(()=>{let e=W.filter(D=>D.offen>0&&D.status!=="Written Off"),u=e.reduce((D,Y)=>D+Y.offen,0),b=e.filter(D=>D.alter_tage>0).reduce((D,Y)=>D+Y.offen,0),r=W.filter(D=>D.offen<-.01).reduce((D,Y)=>D+Math.abs(Y.offen),0),_=new Set(e.map(D=>D.party)),S=e.reduce((D,Y)=>Math.max(D,Y.alter_tage||0),0),j={b0:0,b1:0,b2:0,b3:0,b4:0};return e.forEach(D=>{let Y=bucketOf(D.alter_tage);Y&&(j[Y.key]+=D.offen)}),{summe:u,ueberfaellig:b,guthabenSum:r,parties:_.size,oldest:S,buckets:j}},[W]),re=H(()=>new Set(W.filter(e=>e.can_write_off).map(e=>e.belegnummer)),[W]),de=H(()=>W.filter(e=>G.has(e.belegnummer)),[W,G]);React.useEffect(()=>{let e=new Set(W.map(u=>u.belegnummer));L(u=>{let b=new Set([...u].filter(r=>e.has(r)));return b.size===u.size?u:b})},[W]);let Pe=de.reduce((e,u)=>e+u.offen,0),ve=e=>{L(u=>{let b=new Set(u);return b.has(e)?b.delete(e):b.add(e),b})},Fe=()=>{G.size===re.size?L(new Set):L(new Set(re))},$e=()=>{let e=[["faellig_am","F\xE4llig am"],["alter_tage","Alter Tage"],["party",p==="Rechnungen"?"Lieferant":"Mieter"],["kostenstelle","Immobilie/Kostenstelle"],["belegart","Belegart"],["belegnummer","Belegnummer"],["bemerkungen","Bemerkungen"],["status","Status"],["rechnungsbetrag","Rechnungsbetrag"],["bezahlt","Bezahlt"],["offen","Offen"],["zahlungsrichtung","Zahlungsrichtung"]],u=j=>{let D=j==null?"":String(j);return/[",\n;]/.test(D)?`"${D.replace(/"/g,'""')}"`:D},b=[e.map(([,j])=>u(j)).join(";"),...W.map(j=>e.map(([D])=>u(j[D])).join(";"))].join(`
-`),r=new Blob([`\uFEFF${b}`],{type:"text/csv;charset=utf-8"}),_=URL.createObjectURL(r),S=document.createElement("a");S.href=_,S.download=`offene-posten-${p.toLowerCase()}-${new Date().toISOString().slice(0,10)}.csv`,document.body.appendChild(S),S.click(),S.remove(),URL.revokeObjectURL(_)},we=e=>{let u=e.filter(b=>b.art==="Forderungen"&&b.belegart==="Sales Invoice"&&b.offen>.01&&b.alter_tage>0&&b.status!=="Written Off");if(!u.length){U("Keine mahnf\xE4higen Forderungen in der Auswahl.");return}L(new Set(u.map(b=>b.belegnummer))),I({type:"sammelmahnung",rows:u})},pe=e=>{let u=(e.invoices||[]).map(b=>({art:"Forderungen",party_type:"Customer",party:e.customer,buchungsdatum:b.posting_date,faellig_am:b.due_date,belegart:"Sales Invoice",belegnummer:b.sales_invoice,rechnungsbetrag:b.grand_total,bezahlt:Math.max((b.grand_total||0)-(b.outstanding_amount||0),0),offen:b.outstanding_amount,party_account:null,kostenstelle:b.cost_center,bemerkungen:b.remarks||b.mietabrechnung_id||"",status:b.status,zahlungsrichtung:"Geld bekommen",alter_tage:e.oldest_age_days||0,can_write_off:!0,mahnstufe:Math.max((e.next_level||1)-1,0),dunning_type:e.next_dunning_type||"",serienbrief_vorlage:e.serienbrief_vorlage||""}));if(!u.length){U("Keine offenen Rechnungen f\xFCr diese Mahnung.");return}I({type:u.length===1?"mahnung":"sammelmahnung",row:u[0],rows:u})},Be=e=>{let u=e.flatMap(b=>(b.invoices||[]).map(r=>({art:"Forderungen",party_type:"Customer",party:b.customer,buchungsdatum:r.posting_date,faellig_am:r.due_date,belegart:"Sales Invoice",belegnummer:r.sales_invoice,rechnungsbetrag:r.grand_total,bezahlt:Math.max((r.grand_total||0)-(r.outstanding_amount||0),0),offen:r.outstanding_amount,party_account:null,kostenstelle:r.cost_center,bemerkungen:r.remarks||r.mietabrechnung_id||"",status:r.status,zahlungsrichtung:"Geld bekommen",alter_tage:b.oldest_age_days||0,can_write_off:!0,mahnstufe:Math.max((b.next_level||1)-1,0),dunning_type:b.next_dunning_type||"",serienbrief_vorlage:b.serienbrief_vorlage||""})));if(!u.length){U("Keine offenen Rechnungen f\xFCr eine Sammelmahnung.");return}I({type:"sammelmahnung",rows:u})},Le=async()=>{let e=de.filter(u=>u.can_write_off);if(!e.length){U("Keine abschreibbaren Sales-Invoice-Forderungen ausgew\xE4hlt.");return}for(let u of e)await window.OP_ACTIONS.writeOff(u,{remarks:`Abschreibung aus OP-Workflow vorbereitet: ${u.belegnummer}`});L(new Set),U(`${e.length} Abschreibungs-Draft${e.length===1?"":"s"} erstellt.`)},Ie=H(()=>{if(t.gruppierung==="keine")return null;let e=t.gruppierung==="objekt"?r=>r.kostenstelle||"\u2014":r=>r.party,u=t.gruppierung==="objekt"?r=>window.OFFENE_POSTEN.ccLabel[r]||r:r=>i(r),b=new Map;return W.forEach(r=>{let _=e(r);b.has(_)||b.set(_,[]),b.get(_).push(r)}),[...b.entries()].map(([r,_])=>{let S=_.reduce((K,q)=>K+q.offen,0),j=_.reduce((K,q)=>K+(q.alter_tage>0?q.offen:0),0),D={b0:0,b1:0,b2:0,b3:0,b4:0};_.forEach(K=>{if(K.offen>0){let q=bucketOf(K.alter_tage);q&&(D[q.key]+=K.offen)}});let Y=_.reduce((K,q)=>Math.max(K,q.alter_tage||0),0),Ue=_.reduce((K,q)=>Math.max(K,q.mahnstufe||0),0),ke=new Set(_.map(K=>K.party));return{key:r,label:u(r),subLabel:t.gruppierung==="objekt"?`${ke.size} ${ke.size===1,"Mieter"} \xB7 ${_.length} ${_.length===1,"Posten"}`:`${r} \xB7 ${_.length} ${_.length===1,"Posten"}`,rows:_,sum:S,overdue:j,buckets:D,maxAge:Y,maxMahn:Ue}}).sort((r,_)=>_.sum-r.sum)},[W,t.gruppierung]);return React.createElement("div",{className:"mk-app"},React.createElement("div",{className:"mk-topbar","data-screen-label":"Topbar"},React.createElement("div",{className:"mk-topbar-left"},React.createElement("h1",null,"Noch offene Rechnungen und Forderungen",v&&React.createElement("span",{style:{display:"inline-block",marginLeft:10,width:14,height:14,border:"2px solid #ccc",borderTopColor:"#666",borderRadius:"50%",animation:"op-spin 0.8s linear infinite",verticalAlign:"middle"}})),React.createElement("span",{className:"mk-crumb"},"Hausverwaltung \xB7 Berichte")),React.createElement("div",{className:"mk-topbar-actions"},React.createElement("a",{className:"mk-btn mk-btn-ghost",href:"/app/mieterkonto-workflow"},"\u2190 Mieterkonto"),React.createElement("button",{className:"mk-btn mk-btn-ghost",onClick:()=>window.print()},"Drucken"),React.createElement("button",{className:"mk-btn mk-btn-ghost",onClick:$e},"Export CSV"),React.createElement("button",{className:"mk-btn mk-btn-primary",onClick:()=>we(V.rows)},"Sammelmahnung"))),React.createElement("main",{className:"mk-main","data-screen-label":`Mode ${p}`},React.createElement("div",{className:"op-view-tabs"},React.createElement("button",{className:`op-view-tab ${C==="op"?"is-active":""}`,onClick:()=>s("op")},"Offene Posten"),React.createElement("button",{className:`op-view-tab ${C==="mahnwesen"?"is-active":""}`,onClick:()=>s("mahnwesen")},"Mahnwesen ",React.createElement("span",{className:"op-count"},c.length))),C==="op"&&React.createElement("div",{className:"op-mode-bar"},React.createElement("div",{className:"op-mode-tabs"},["Forderungen","Rechnungen","Beides"].map(e=>React.createElement("button",{key:e,className:`op-mode-tab ${p===e?"is-active":""}`,onClick:()=>{h(e),L(new Set),B(null),P("")}},React.createElement("span",null,bt[e]),React.createElement("span",{className:"op-count"},De[e])))),React.createElement("div",{style:{fontSize:12,color:"var(--ink-3)",textAlign:"right"}},React.createElement("div",null,ft[p]),React.createElement("div",{style:{marginTop:2}},"Stichtag: ",fmtDate_op(window.OFFENE_POSTEN.TODAY)))),C==="mahnwesen"?React.createElement(vt,{rows:c,search:z,setSearch:A,onCreateDunning:pe,onCreateBulkDunning:Be}):React.createElement(React.Fragment,null,V.count>0&&p!=="Rechnungen"&&React.createElement("div",{className:"op-mahn-banner"},React.createElement("span",{className:"op-mahn-badge"},V.count),React.createElement("span",{className:"op-mahn-banner-headline"},V.count," Posten ",React.createElement("strong",null,"mahnreif")),React.createElement("span",{className:"op-mahn-banner-meta"},"bei ",React.createElement("strong",null,V.parties)," ",V.parties===1?"Mieter":"Mietern"," \xB7 \u03A3 ",React.createElement("strong",null,fmtEUR_op(V.sum))),React.createElement("span",{className:"op-mahn-stufes"},V.byStufe.m0>0&&React.createElement("span",null,"\u2192 ZE ",React.createElement("strong",null,V.byStufe.m0)),V.byStufe.m1>0&&React.createElement("span",null,"\u2192 M1 ",React.createElement("strong",null,V.byStufe.m1)),V.byStufe.m2>0&&React.createElement("span",null,"\u2192 M2 ",React.createElement("strong",null,V.byStufe.m2)),V.byStufe.m3>0&&React.createElement("span",null,"\u2192 Letzte ",React.createElement("strong",null,V.byStufe.m3))),React.createElement("span",{className:"op-mahn-banner-spacer"}),React.createElement("button",{className:"op-mahn-banner-secondary",onClick:()=>B(R==="overdue"?null:"overdue")},R==="overdue"?"Filter zur\xFCcksetzen":"Nur diese zeigen"),React.createElement("button",{className:"op-mahn-banner-cta",onClick:()=>{L(new Set(V.rows.map(e=>e.belegnummer))),I({type:"sammelmahnung",rows:V.rows})}},"Sammelmahnung erstellen \u2192")),React.createElement("div",{className:"op-stats"},React.createElement("div",{className:"op-stat is-primary"},React.createElement("div",{className:"op-stat-label"},"Offen gesamt"),React.createElement("div",{className:"op-stat-value"},fmtEUR_op(Q.summe)),React.createElement("div",{className:"op-stat-sub"},W.filter(e=>e.offen>0&&e.status!=="Written Off").length," Posten \xB7"," ",Q.parties," ",p==="Rechnungen"?"Lieferanten":"Mieter")),React.createElement("div",{className:"op-stat"},React.createElement("div",{className:"op-stat-label"},"davon \xFCberf\xE4llig"),React.createElement("div",{className:"op-stat-value",style:{color:"var(--accent)"}},fmtEUR_op(Q.ueberfaellig)),React.createElement("div",{className:"op-stat-sub"},(Q.ueberfaellig/Math.max(Q.summe,1)*100).toFixed(0)," % des Offen-Saldos")),React.createElement("div",{className:"op-stat"},React.createElement("div",{className:"op-stat-label"},"\xC4lteste Forderung"),React.createElement("div",{className:"op-stat-value"},Q.oldest,React.createElement("span",{style:{fontSize:14,color:"var(--ink-3)",marginLeft:4}},"Tage"))),React.createElement("div",{className:"op-stat"},React.createElement("div",{className:"op-stat-label"},"Guthaben (auszuzahlen)"),React.createElement("div",{className:"op-stat-value"},Q.guthabenSum>0?fmtEUR_op(Q.guthabenSum):"\u2014")),React.createElement("div",{className:"op-aging-strip"},React.createElement("div",{className:"op-stat-label"},"Aging nach F\xE4lligkeit"),React.createElement(AgingStrip,{buckets:Q.buckets}))),React.createElement(Nt,{availableImmos:Te,immoFilter:ee,setImmoFilter:O,datumVon:te,datumBis:ne,setDatumVon:Me,setDatumBis:Oe}),React.createElement("div",{className:"op-toolbar"},React.createElement("div",{className:"op-chips"},React.createElement("button",{className:`op-chip ${R===null?"is-active":""}`,onClick:()=>B(null)},"Alle ",React.createElement("span",{className:"op-chip-count"},W.length)),React.createElement("button",{className:`op-chip ${R==="overdue"?"is-active":""}`,onClick:()=>B(R==="overdue"?null:"overdue")},"\xDCberf\xE4llig ",React.createElement("span",{className:"op-chip-count"},le.overdue)),React.createElement("button",{className:`op-chip ${R==="mahnung"?"is-active":""}`,onClick:()=>B(R==="mahnung"?null:"mahnung")},"Im Mahnlauf ",React.createElement("span",{className:"op-chip-count"},le.mahnung)),React.createElement("button",{className:`op-chip ${R==="gt1000"?"is-active":""}`,onClick:()=>B(R==="gt1000"?null:"gt1000")},"\u2265 1.000 \u20AC ",React.createElement("span",{className:"op-chip-count"},le.gt1000)),React.createElement("button",{className:`op-chip ${R==="guthaben"?"is-active":""}`,onClick:()=>B(R==="guthaben"?null:"guthaben")},"Guthaben ",React.createElement("span",{className:"op-chip-count"},le.guthaben)),React.createElement("span",{className:"op-chip-separator"}),React.createElement("button",{className:`op-chip ${E==="alle"?"is-active":""}`,onClick:()=>m("alle")},"Alle Richtungen"),React.createElement("button",{className:`op-chip ${E==="Geld bekommen"?"is-active":""}`,onClick:()=>m("Geld bekommen")},"Geld bekommen"),React.createElement("button",{className:`op-chip ${E==="Geld bezahlen / erstatten"?"is-active":""}`,onClick:()=>m("Geld bezahlen / erstatten")},"Geld zahlen"),React.createElement("label",{className:"mk-toggle",style:{marginLeft:10}},React.createElement("input",{type:"checkbox",checked:f,onChange:e=>F(e.target.checked)}),"Abgeschriebene"),React.createElement("label",{className:"mk-toggle"},React.createElement("input",{type:"checkbox",checked:N,onChange:e=>x(e.target.checked)}),"Auch ausgeglichene")),React.createElement("div",{className:"op-toolbar-right"},React.createElement("select",{className:"op-party-select",value:y,onChange:e=>{P(e.target.value),L(new Set)},title:p==="Rechnungen"?"Lieferant ausw\xE4hlen":p==="Beides"?"Mieter oder Lieferant ausw\xE4hlen":"Mieter ausw\xE4hlen"},React.createElement("option",{value:""},p==="Rechnungen"?"Alle Lieferanten":p==="Beides"?"Alle Parteien":"Alle Mieter"),Ae.map(e=>React.createElement("option",{key:e.id,value:e.id},e.label," (",e.count,")"))),React.createElement("input",{className:"op-search",placeholder:"Beleg oder Bemerkung suchen\u2026",value:z,onChange:e=>A(e.target.value)}),React.createElement("select",{className:"op-sort-select",value:k,onChange:e=>{w(e.target.value),l("asc")}},React.createElement("option",null,"F\xE4llig am"),React.createElement("option",null,"Buchungsdatum"),React.createElement("option",null,"\xC4lteste zuerst"),React.createElement("option",null,"Offener Betrag absteigend"),React.createElement("option",null,"Mieter"),React.createElement("option",null,"Immobilie"),React.createElement("option",null,"Status"),React.createElement("option",null,"Richtung"),React.createElement("option",null,"Richtung: Geld bekommen zuerst"),React.createElement("option",null,"Richtung: Geld bezahlen zuerst")),React.createElement("button",{className:"mk-btn mk-btn-ghost",title:"Richtung umkehren",onClick:()=>l(g==="asc"?"desc":"asc"),style:{padding:"5px 10px",fontSize:12}},g==="asc"?"\u2191 aufst.":"\u2193 abst."))),G.size>0&&React.createElement("div",{className:"op-bulkbar"},React.createElement("div",{className:"op-bulkbar-left"},React.createElement("span",{className:"op-bulkbar-count"},G.size," ausgew\xE4hlt"),React.createElement("span",{className:"op-bulkbar-sep"}),React.createElement("span",{className:"op-bulkbar-sum"},"\u03A3 offen: ",React.createElement("strong",null,fmtEUR_op(Pe)))),React.createElement("div",{className:"op-bulkbar-actions"},React.createElement("button",{className:"op-bulk-btn",onClick:()=>L(new Set)},"Auswahl aufheben"),React.createElement("button",{className:"op-bulk-btn",onClick:()=>we(de)},"Mahnung erstellen"),React.createElement("button",{className:"op-bulk-btn is-primary",onClick:Le},"Ausgew\xE4hlte abschreiben"))),W.length===0?React.createElement("div",{className:"op-empty"},React.createElement("strong",null,"Keine offenen Posten in dieser Auswahl."),'Filter \xE4ndern oder \u201EAuch ausgeglichene anzeigen" aktivieren.'):t.gruppierung!=="keine"?React.createElement(kt,{groups:Ie,selected:G,toggleSel:ve,selectableIds:re,mode:p,gruppierung:t.gruppierung,showObjekt:t.showObjekt,onAction:he,mahnCandidateByInvoice:fe,expandedMahnRows:be,onCreateDunning:pe}):React.createElement(wt,{rows:W,selected:G,toggleSel:ve,selectableIds:re,toggleSelAll:Fe,mode:p,showAktion:t.showAktion,showObjekt:t.showObjekt,sortierung:k,sortDir:g,onSort:e=>{k===e?l(g==="asc"?"desc":"asc"):(w(e),l("asc"))},onAction:he,mahnreifIds:V.mahnreifIds,mahnCandidateByInvoice:fe,expandedMahnRows:be,onCreateDunning:pe}),React.createElement("div",{className:"op-footer-total"},React.createElement("div",{className:"op-footer-total-label"},"\u03A3 ",W.length," Posten in Auswahl"),React.createElement("div",{className:"op-footer-total-value"},fmtEUR_op(W.reduce((e,u)=>e+u.offen,0)))))),React.createElement(TweaksPanel,{title:"Tweaks"},React.createElement(TweakSection,{label:"Gruppierung"}),React.createElement(TweakRadio,{label:"Gruppiert nach",value:t.gruppierung,options:["keine","mieter","objekt"],onChange:e=>n("gruppierung",e)}),React.createElement("p",{style:{margin:"0 0 4px",fontSize:10.5,color:"rgba(41,38,27,.55)",lineHeight:1.4}},"Mieter \xB7 pro Partei \xB7 Objekt \xB7 pro Immobilie"),React.createElement(TweakSection,{label:"Layout"}),React.createElement(TweakRadio,{label:"Dichte",value:t.density,options:["compact","regular","comfy"],onChange:e=>n("density",e)}),React.createElement(TweakSection,{label:"Spalten"}),React.createElement(TweakToggle,{label:"Immobilie anzeigen",value:t.showObjekt,onChange:e=>n("showObjekt",e)}),React.createElement(TweakToggle,{label:"Aktion-Spalte (Abschreiben)",value:t.showAktion,onChange:e=>n("showAktion",e)})),J?.type==="mahnung"&&React.createElement(MahnungModal,{row:J.row,onClose:()=>I(null),onDone:e=>{I(null),U(`Mahnung-Draft erstellt: ${e.dunning}`)}}),J?.type==="sammelmahnung"&&React.createElement(SammelmahnungModal,{rows:J.rows,onClose:()=>I(null),onDone:e=>{I(null),U(`${(e.created||[]).length} Mahnung-Drafts erstellt`)}}),J?.type==="zahlung"&&React.createElement(ZahlungModal,{row:J.row,onClose:()=>I(null),onDone:e=>{I(null),U(`Payment Entry Draft erstellt: ${e.payment_entry}`)}}),J?.type==="guthaben"&&React.createElement(GuthabenAuszahlenModal,{row:J.row,onClose:()=>I(null),onDone:e=>{I(null),U(`Auszahlungs-Draft erstellt: ${e.payment_entry}`)}}),J?.type==="zuordnen"&&React.createElement(ZuordnenModal,{row:J.row,onClose:()=>I(null),onDone:e=>{I(null),U(`Payment Reconciliation Draft erstellt: ${e.payment_reconciliation}`)}}),ge&&React.createElement(Toast,{message:ge,onClose:()=>U(null)}))}function vt({rows:t,search:n,setSearch:i,onCreateDunning:a,onCreateBulkDunning:d}){let[c,o]=$(()=>new Set),v=H(()=>{let s=(n||"").trim().toLowerCase();return s?t.filter(p=>(p.customer_name||"").toLowerCase().includes(s)||(p.customer||"").toLowerCase().includes(s)||(p.mietvertrag||"").toLowerCase().includes(s)||(p.wohnung||"").toLowerCase().includes(s)||(p.serienbrief_vorlage||"").toLowerCase().includes(s)||(p.invoices||[]).some(h=>(h.sales_invoice||"").toLowerCase().includes(s)||(h.remarks||"").toLowerCase().includes(s)||(h.mietabrechnung_id||"").toLowerCase().includes(s))||(p.mahnungen||[]).some(h=>(h.name||"").toLowerCase().includes(s)||(h.dunning_type||"").toLowerCase().includes(s))):t},[t,n]),M=v.reduce((s,p)=>s+(p.offen||0),0),C=s=>{o(p=>{let h=new Set(p);return h.has(s)?h.delete(s):h.add(s),h})};return React.createElement("div",{className:"op-mahn-cockpit"},React.createElement("div",{className:"op-mahn-head"},React.createElement("div",null,React.createElement("h2",null,"Mahnwesen"),React.createElement("div",{className:"op-mahn-head-sub"},v.length," Kandidaten \xB7 ",fmtEUR_op(M)," offen \xB7 Stichtag ",fmtDate_op(window.OFFENE_POSTEN.TODAY))),React.createElement("input",{className:"op-search",placeholder:"Mieter, Beleg, Wohnung, Vertrag oder Vorlage suchen...",value:n,onChange:s=>i(s.target.value)}),React.createElement("button",{className:"mk-btn mk-btn-primary",onClick:()=>d(v),disabled:!v.length},"Sammelmahnung erstellen")),v.length===0?React.createElement("div",{className:"op-empty"},React.createElement("strong",null,"Keine Mahnkandidaten."),"Es gibt aktuell keine \xFCberf\xE4lligen offenen Sales Invoices in dieser Auswahl."):React.createElement("div",{className:"op-mahn-table-wrap"},React.createElement("table",{className:"op-table op-mahn-table"},React.createElement("thead",null,React.createElement("tr",null,React.createElement("th",{style:{width:34}}),React.createElement("th",null,"Mieter"),React.createElement("th",null,"Wohnung"),React.createElement("th",null,"Mietvertrag"),React.createElement("th",{className:"is-num"},"Offen"),React.createElement("th",null,"\xC4lteste F\xE4lligkeit"),React.createElement("th",null,"Letzte Mahnung"),React.createElement("th",null,"N\xE4chste Stufe"),React.createElement("th",null,"Serienbrief-Vorlage"),React.createElement("th",{style:{width:170}},"Aktionen"))),React.createElement("tbody",null,v.map(s=>{let p=c.has(s.key),h=(s.mahnungen||[])[0],k=(s.mahnungen||[]).filter(g=>g.docstatus===0),w=k[0];return React.createElement(React.Fragment,{key:s.key},React.createElement("tr",{className:s.draft_warning?"is-mahn-draft":""},React.createElement("td",null,React.createElement("button",{className:"op-row-toggle",onClick:()=>C(s.key)},p?"\u25BE":"\u25B8")),React.createElement("td",{className:"col-party"},s.customer_name||s.customer,React.createElement("span",{className:"op-party-id"},s.customer)),React.createElement("td",null,s.wohnung||"\u2014"),React.createElement("td",null,s.mietvertrag||"\u2014"),React.createElement("td",{className:"is-num col-offen"},fmtEUR_op(s.offen)),React.createElement("td",null,fmtDate_op(s.oldest_due_date),React.createElement("span",{className:"op-party-id"},s.oldest_age_days||0," Tage")),React.createElement("td",null,h?React.createElement(React.Fragment,null,React.createElement("span",null,h.dunning_type||h.name,h.docstatus===0&&React.createElement("span",{className:"op-draft-badge"},"Draft"),k.length>1&&React.createElement("span",{className:"op-draft-badge is-multiple"},k.length," Drafts")),React.createElement("span",{className:"op-party-id"},fmtDate_op(h.posting_date)," \xB7 ",h.status)):"\u2014"),React.createElement("td",null,React.createElement(MahnstufeBadge,{stufe:s.next_level})),React.createElement("td",null,s.serienbrief_vorlage||React.createElement("span",{className:"op-muted"},"Default fehlt")),React.createElement("td",{className:"op-mahn-actions"},k.length>1?React.createElement("button",{className:"op-action-btn is-draft",onClick:()=>C(s.key)},"Drafts pr\xFCfen"):w?React.createElement("button",{className:"op-action-btn is-draft",onClick:()=>window.OP_ACTIONS.openDunning(w.name)},"Draft \xF6ffnen"):React.createElement("button",{className:"op-action-btn is-primary",onClick:()=>a(s)},"Mahnung erstellen"))),p&&React.createElement("tr",{className:"op-mahn-detail-row"},React.createElement("td",null),React.createElement("td",{colSpan:"9"},React.createElement("div",{className:"op-mahn-detail"},React.createElement("div",null,React.createElement("div",{className:"op-preview-label"},"Offene Rechnungen"),React.createElement("table",{className:"op-mini-table"},React.createElement("tbody",null,(s.invoices||[]).map(g=>React.createElement("tr",{key:g.sales_invoice},React.createElement("td",null,React.createElement("button",{className:"op-link-btn",onClick:()=>window.OP_ACTIONS.openBeleg({belegart:"Sales Invoice",belegnummer:g.sales_invoice})},g.sales_invoice)),React.createElement("td",null,fmtDate_op(g.due_date)),React.createElement("td",{className:"is-num"},fmtEUR_op(g.outstanding_amount)),React.createElement("td",null,g.status)))))),React.createElement("div",null,React.createElement("div",{className:"op-preview-label"},"Mahnhistorie",k.length>1&&React.createElement("span",{className:"op-draft-note"},"Mehrere offene Drafts. Bitte einen finalisieren oder alte Drafts l\xF6schen.")),(s.mahnungen||[]).length?React.createElement("table",{className:"op-mini-table"},React.createElement("tbody",null,s.mahnungen.map(g=>React.createElement("tr",{key:g.name},React.createElement("td",null,React.createElement("button",{className:"op-link-btn",onClick:()=>window.OP_ACTIONS.openDunning(g.name)},g.name)),React.createElement("td",null,g.docstatus===0?React.createElement("span",{className:"op-draft-badge"},"Draft"):g.status),React.createElement("td",null,g.dunning_type||"\u2014"),React.createElement("td",null,g.serienbrief_vorlage||"\u2014"),React.createElement("td",null,g.fee_sales_invoice?React.createElement("button",{className:"op-link-btn",onClick:()=>window.OP_ACTIONS.openBeleg({belegart:"Sales Invoice",belegnummer:g.fee_sales_invoice})},"Geb\xFChr"):"\u2014"),React.createElement("td",null,React.createElement("button",{className:"op-link-btn",onClick:()=>window.OP_ACTIONS.openDunningPdf(g.name)},"PDF")))))):React.createElement("div",{className:"op-muted"},"Noch keine Mahnung zu diesen offenen Rechnungen."))))))})))))}function Se({candidate:t,row:n,onCreateDunning:i}){if(!t)return React.createElement("div",{className:"op-mahn-inline"},React.createElement("div",{className:"op-muted"},"F\xFCr ",n.belegnummer," wurde kein Mahnwesen-Datensatz gefunden."));let a=t.mahnungen||[],d=a.filter(o=>o.docstatus===0),c=d[0];return React.createElement("div",{className:"op-mahn-inline"},React.createElement("div",{className:"op-mahn-inline-head"},React.createElement("div",null,React.createElement("strong",null,t.customer_name||t.customer),React.createElement("span",null,t.wohnung||"\u2014"," \xB7 ",t.mietvertrag||"\u2014"," \xB7 ",fmtEUR_op(t.offen)," offen")),d.length>1?React.createElement("button",{className:"op-action-btn is-draft",onClick:()=>window.OP_ACTIONS.openDunning(c.name)},"Ersten Draft \xF6ffnen"):c?React.createElement("button",{className:"op-action-btn is-draft",onClick:()=>window.OP_ACTIONS.openDunning(c.name)},"Draft \xF6ffnen"):React.createElement("button",{className:"op-action-btn is-primary",onClick:()=>i(t)},"Mahnung erstellen")),d.length>1&&React.createElement("div",{className:"op-draft-note"},"Mehrere offene Drafts. Bitte einen finalisieren oder alte Drafts l\xF6schen."),React.createElement("div",{className:"op-mahn-detail"},React.createElement("div",null,React.createElement("div",{className:"op-preview-label"},"Offene Rechnungen"),React.createElement("table",{className:"op-mini-table"},React.createElement("tbody",null,(t.invoices||[]).map(o=>React.createElement("tr",{key:o.sales_invoice},React.createElement("td",null,React.createElement("button",{className:"op-link-btn",onClick:()=>window.OP_ACTIONS.openBeleg({belegart:"Sales Invoice",belegnummer:o.sales_invoice})},o.sales_invoice)),React.createElement("td",null,fmtDate_op(o.due_date)),React.createElement("td",{className:"is-num"},fmtEUR_op(o.outstanding_amount)),React.createElement("td",null,o.status)))))),React.createElement("div",null,React.createElement("div",{className:"op-preview-label"},"Mahnhistorie"),a.length?React.createElement("table",{className:"op-mini-table"},React.createElement("tbody",null,a.map(o=>React.createElement("tr",{key:o.name},React.createElement("td",null,React.createElement("button",{className:"op-link-btn",onClick:()=>window.OP_ACTIONS.openDunning(o.name)},o.name)),React.createElement("td",null,o.docstatus===0?React.createElement("span",{className:"op-draft-badge"},"Draft"):o.status),React.createElement("td",null,o.dunning_type||"\u2014"),React.createElement("td",null,o.serienbrief_vorlage||"\u2014"),React.createElement("td",null,o.fee_sales_invoice?React.createElement("button",{className:"op-link-btn",onClick:()=>window.OP_ACTIONS.openBeleg({belegart:"Sales Invoice",belegnummer:o.fee_sales_invoice})},"Geb\xFChr"):"\u2014"),React.createElement("td",null,React.createElement("button",{className:"op-link-btn",onClick:()=>window.OP_ACTIONS.openDunningPdf(o.name)},"PDF")))))):React.createElement("div",{className:"op-muted"},"Noch keine Mahnung zu diesen offenen Rechnungen."))))}function wt({rows:t,selected:n,toggleSel:i,selectableIds:a,toggleSelAll:d,mode:c,showAktion:o,showObjekt:v,sortierung:M,sortDir:C,onSort:s,onAction:p,mahnreifIds:h,mahnCandidateByInvoice:k,expandedMahnRows:w,onCreateDunning:g}){let l=a.size>0&&n.size===a.size,N=n.size>0&&!l,x=({col:f,label:F,style:z,className:A=""})=>{let R=M===f,B=R?C==="asc"?"\u25B2":"\u25BC":"\u25C7";return React.createElement("th",{style:z,className:`is-sortable ${R?"is-sorted":""} ${A}`,onClick:()=>s(f),title:`Nach ${F} sortieren`},F,React.createElement("span",{className:"op-sort-ind"},B))};return React.createElement("div",{className:"op-table-wrap"},React.createElement("table",{className:"op-table"},React.createElement("thead",null,React.createElement("tr",null,React.createElement("th",{className:"is-check"},React.createElement("input",{type:"checkbox",checked:l,ref:f=>f&&(f.indeterminate=N),onChange:d,disabled:a.size===0})),React.createElement(x,{col:"F\xE4llig am",label:"F\xE4llig am",style:{width:100}}),React.createElement(x,{col:"Alter",label:"Alter",style:{width:80}}),React.createElement(x,{col:"Mieter",label:c==="Rechnungen"?"Lieferant":"Mieter",style:{minWidth:200}}),v&&React.createElement(x,{col:"Immobilie",label:"Immobilie",style:{width:140}}),React.createElement("th",{style:{width:170}},"Beleg"),React.createElement("th",null,"Bemerkung"),React.createElement(x,{col:"Status",label:"Status",style:{width:120}}),React.createElement(x,{col:"Richtung",label:"Richtung",style:{width:130}}),React.createElement("th",{className:"is-num",style:{width:120}},"Rechnungsbetrag"),React.createElement("th",{className:"is-num",style:{width:100}},"Bezahlt"),React.createElement(x,{col:"Offener Betrag absteigend",label:"Offen",style:{width:130},className:"is-num"}),o&&React.createElement("th",{style:{width:200}},"Aktion"))),React.createElement("tbody",null,t.map(f=>{let F=n.has(f.belegnummer),z=f.offen<-.01,A=f.status==="Written Off",R=h&&h.has(f.belegnummer),B=w?.has(f.belegnummer),E=k?.get(f.belegnummer),m=11+(v?1:0)+(o?1:0);return React.createElement(React.Fragment,{key:f.belegnummer+f.party},React.createElement("tr",{className:`${F?"is-selected":""} ${A?"is-written-off":""} ${R?"is-mahnreif":""} ${B?"is-mahn-open":""}`},React.createElement("td",{className:"col-check"},React.createElement("input",{type:"checkbox",checked:F,disabled:!f.can_write_off,onChange:()=>i(f.belegnummer)})),React.createElement("td",{className:"col-date"},fmtDate_op(f.faellig_am)),React.createElement("td",null,React.createElement(AgePill,{age:f.alter_tage,faellig_am:f.faellig_am})),React.createElement("td",{className:"col-party"},window.OFFENE_POSTEN.partyName(f.party),React.createElement("span",{className:"op-party-id"},f.party)),v&&React.createElement("td",{style:{fontSize:12.5,color:"var(--ink-2)"}},window.OFFENE_POSTEN.ccLabel[f.kostenstelle]||f.kostenstelle||"\u2014"),React.createElement("td",{className:"col-beleg"},React.createElement("button",{type:"button",className:"op-link-btn op-beleg-link",onClick:()=>window.OP_ACTIONS.openBeleg(f),title:`${f.belegart} ${f.belegnummer} \xF6ffnen`},f.belegnummer),React.createElement("span",{className:"op-beleg-art"},f.belegart)),React.createElement("td",{className:"col-bemerk"},React.createElement("div",{style:{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}},React.createElement("span",null,f.bemerkungen),f.mahnstufe?React.createElement(MahnstufeBadge,{stufe:f.mahnstufe}):null)),React.createElement("td",null,React.createElement(StatusBadge,{status:f.status})),React.createElement("td",null,React.createElement(DirectionBadge,{direction:f.zahlungsrichtung})),React.createElement("td",{className:"is-num"},fmtEUR_op(f.rechnungsbetrag)),React.createElement("td",{className:"is-num",style:{color:"var(--ink-3)"}},f.bezahlt>.01?fmtEUR_op(f.bezahlt):"\u2014"),React.createElement("td",{className:`is-num col-offen ${z?"is-negative":""}`},fmtEUR_op(f.offen)),o&&React.createElement("td",{style:{position:"relative",textAlign:"right"}},React.createElement(ActionCell,{row:f,onAction:p}))),B&&React.createElement("tr",{className:"op-mahn-inline-row"},React.createElement("td",{colSpan:m},React.createElement(Se,{candidate:E,row:f,onCreateDunning:g}))))}))))}function kt({groups:t,selected:n,toggleSel:i,selectableIds:a,mode:d,gruppierung:c,showObjekt:o,onAction:v,mahnCandidateByInvoice:M,expandedMahnRows:C,onCreateDunning:s}){let[p,h]=$(()=>new Set(t.map(w=>w.key))),k=w=>{h(g=>{let l=new Set(g);return l.has(w)?l.delete(w):l.add(w),l})};return React.createElement("div",null,t.map(w=>{let g=p.has(w.key);return React.createElement("div",{key:w.key,className:`op-group ${g?"is-open":""}`},React.createElement("div",{className:"op-group-head",onClick:()=>k(w.key)},React.createElement("span",{className:"op-group-chevron"},"\u25B6"),React.createElement("div",{className:"op-group-party"},React.createElement("span",{className:"op-group-party-name"},c==="objekt"&&React.createElement("span",{style:{color:"var(--ink-3)",fontWeight:400,marginRight:6}},"\u{1F3E0}"),w.label),React.createElement("span",{className:"op-group-party-id"},w.subLabel)),React.createElement("div",{className:"op-group-aging"},React.createElement(AgingBar,{buckets:w.buckets,mini:!0})),React.createElement("div",{className:"op-group-stat"},"\xC4ltester",React.createElement("strong",null,w.maxAge," d")),React.createElement("div",{className:"op-group-stat"},"Mahnstufe",React.createElement("strong",null,w.maxMahn||"\u2014")),React.createElement("div",{className:`op-group-stat ${w.overdue>.01?"is-overdue":""}`},"\u03A3 Offen",React.createElement("strong",null,fmtEUR_op(w.sum)))),g&&React.createElement("div",{className:"op-group-body"},React.createElement("table",{className:"op-table"},React.createElement("tbody",null,w.rows.map(l=>{let N=n.has(l.belegnummer),x=l.offen<-.01,f=l.status==="Written Off",F=C?.has(l.belegnummer),z=M?.get(l.belegnummer),A=8+(c!=="objekt"&&o?1:0)+(c==="objekt"?1:0);return React.createElement(React.Fragment,{key:l.belegnummer},React.createElement("tr",{className:`${N?"is-selected":""} ${f?"is-written-off":""} ${F?"is-mahn-open":""}`},React.createElement("td",{className:"col-check",style:{width:32}},React.createElement("input",{type:"checkbox",checked:N,disabled:!l.can_write_off,onChange:()=>i(l.belegnummer)})),React.createElement("td",{className:"col-date",style:{width:100}},fmtDate_op(l.faellig_am)),React.createElement("td",{style:{width:80}},React.createElement(AgePill,{age:l.alter_tage,faellig_am:l.faellig_am})),React.createElement("td",{className:"col-beleg",style:{width:170}},React.createElement("button",{type:"button",className:"op-link-btn op-beleg-link",onClick:()=>window.OP_ACTIONS.openBeleg(l),title:`${l.belegart} ${l.belegnummer} \xF6ffnen`},l.belegnummer),React.createElement("span",{className:"op-beleg-art"},l.belegart)),c!=="objekt"&&o&&React.createElement("td",{style:{width:130,fontSize:12.5,color:"var(--ink-2)"}},window.OFFENE_POSTEN.ccLabel[l.kostenstelle]||"\u2014"),c==="objekt"&&React.createElement("td",{className:"col-party",style:{width:200,fontSize:12.5}},window.OFFENE_POSTEN.partyName(l.party),React.createElement("span",{className:"op-party-id"},l.party)),React.createElement("td",{className:"col-bemerk"},React.createElement("div",{style:{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}},React.createElement("span",null,l.bemerkungen),l.mahnstufe?React.createElement(MahnstufeBadge,{stufe:l.mahnstufe}):null)),React.createElement("td",{style:{width:120}},React.createElement(StatusBadge,{status:l.status})),React.createElement("td",{className:`is-num col-offen ${x?"is-negative":""}`,style:{width:130}},fmtEUR_op(l.offen)),React.createElement("td",{style:{position:"relative",textAlign:"right",width:200}},React.createElement(ActionCell,{row:l,onAction:v}))),F&&React.createElement("tr",{className:"op-mahn-inline-row"},React.createElement("td",{colSpan:A},React.createElement(Se,{candidate:z,row:l,onCreateDunning:s}))))})))))}))}function Nt({availableImmos:t,immoFilter:n,setImmoFilter:i,datumVon:a,datumBis:d,setDatumVon:c,setDatumBis:o}){let v=E=>{i(m=>{let y=new Set(m);return y.has(E)?y.delete(E):y.add(E),y})},M=()=>{i(new Set),c(""),o("")},C=n.size>0||a||d,s=new Date,p=s.getFullYear(),h=s.getMonth(),k=E=>String(E).padStart(2,"0"),w=(E,m,y)=>`${E}-${k(m+1)}-${k(y)}`,g=w(p,h,1),l=w(p,h,new Date(p,h+1,0).getDate()),N=new Date(p,h-1,1),x=w(N.getFullYear(),N.getMonth(),1),f=w(N.getFullYear(),N.getMonth(),new Date(N.getFullYear(),N.getMonth()+1,0).getDate()),F=w(p,h,s.getDate()),z=new Date(s);z.setDate(z.getDate()-30);let A=w(z.getFullYear(),z.getMonth(),z.getDate()),R=[{label:"Aktueller Monat",von:g,bis:l},{label:"Letzter Monat",von:x,bis:f},{label:"Heute",von:F,bis:F},{label:"> 30 Tage",von:"",bis:A},{label:`${p}`,von:`${p}-01-01`,bis:`${p}-12-31`},{label:`${p-1}`,von:`${p-1}-01-01`,bis:`${p-1}-12-31`}],B=R.find(E=>E.von===a&&E.bis===d);return React.createElement("div",{className:"op-filter-row"},React.createElement("div",{className:"op-filter-group"},React.createElement("span",{className:"op-filter-group-label"},"Immobilie"),React.createElement("button",{className:`op-immo-chip ${n.size===0?"is-active":""}`,onClick:()=>i(new Set)},"Alle"),t.map(E=>React.createElement("button",{key:E.cc,className:`op-immo-chip ${n.has(E.cc)?"is-active":""}`,onClick:()=>v(E.cc)},E.label,React.createElement("span",{className:"op-immo-chip-count"},E.count)))),React.createElement("div",{className:"op-filter-sep"}),React.createElement("div",{className:"op-filter-group"},React.createElement("span",{className:"op-filter-group-label"},"F\xE4lligkeit"),React.createElement("input",{type:"date",className:"op-date-input",value:a,onChange:E=>c(E.target.value),placeholder:"von"}),React.createElement("span",{style:{color:"var(--ink-3)"}},"\u2014"),React.createElement("input",{type:"date",className:"op-date-input",value:d,onChange:E=>o(E.target.value),placeholder:"bis"}),React.createElement("span",{style:{display:"inline-flex",gap:2,marginLeft:4}},R.map(E=>React.createElement("button",{key:E.label,className:`op-date-preset ${B?.label===E.label?"is-active":""}`,onClick:()=>{c(E.von),o(E.bis)}},E.label)))),C&&React.createElement("button",{className:"op-filter-clear",onClick:M},"Filter zur\xFCcksetzen \xD7"))}ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(ht,null));})();
+`;
+  function useTweaks2(defaults) {
+    const [values, setValues] = React.useState(defaults);
+    const setTweak = React.useCallback((keyOrEdits, val) => {
+      const edits = typeof keyOrEdits === "object" && keyOrEdits !== null ? keyOrEdits : { [keyOrEdits]: val };
+      setValues((prev) => ({ ...prev, ...edits }));
+      window.parent.postMessage({ type: "__edit_mode_set_keys", edits }, "*");
+      window.dispatchEvent(new CustomEvent("tweakchange", { detail: edits }));
+    }, []);
+    return [values, setTweak];
+  }
+  function TweaksPanel2({ title = "Tweaks", children }) {
+    const [open, setOpen] = React.useState(false);
+    const dragRef = React.useRef(null);
+    const offsetRef = React.useRef({ x: 16, y: 16 });
+    const PAD = 16;
+    const clampToViewport = React.useCallback(() => {
+      const panel = dragRef.current;
+      if (!panel)
+        return;
+      const w = panel.offsetWidth, h = panel.offsetHeight;
+      const maxRight = Math.max(PAD, window.innerWidth - w - PAD);
+      const maxBottom = Math.max(PAD, window.innerHeight - h - PAD);
+      offsetRef.current = {
+        x: Math.min(maxRight, Math.max(PAD, offsetRef.current.x)),
+        y: Math.min(maxBottom, Math.max(PAD, offsetRef.current.y))
+      };
+      panel.style.right = offsetRef.current.x + "px";
+      panel.style.bottom = offsetRef.current.y + "px";
+    }, []);
+    React.useEffect(() => {
+      if (!open)
+        return;
+      clampToViewport();
+      if (typeof ResizeObserver === "undefined") {
+        window.addEventListener("resize", clampToViewport);
+        return () => window.removeEventListener("resize", clampToViewport);
+      }
+      const ro = new ResizeObserver(clampToViewport);
+      ro.observe(document.documentElement);
+      return () => ro.disconnect();
+    }, [open, clampToViewport]);
+    React.useEffect(() => {
+      const onMsg = (e) => {
+        const t = e?.data?.type;
+        if (t === "__activate_edit_mode")
+          setOpen(true);
+        else if (t === "__deactivate_edit_mode")
+          setOpen(false);
+      };
+      window.addEventListener("message", onMsg);
+      window.parent.postMessage({ type: "__edit_mode_available" }, "*");
+      return () => window.removeEventListener("message", onMsg);
+    }, []);
+    const dismiss = () => {
+      setOpen(false);
+      window.parent.postMessage({ type: "__edit_mode_dismissed" }, "*");
+    };
+    const onDragStart = (e) => {
+      const panel = dragRef.current;
+      if (!panel)
+        return;
+      const r = panel.getBoundingClientRect();
+      const sx = e.clientX, sy = e.clientY;
+      const startRight = window.innerWidth - r.right;
+      const startBottom = window.innerHeight - r.bottom;
+      const move = (ev) => {
+        offsetRef.current = {
+          x: startRight - (ev.clientX - sx),
+          y: startBottom - (ev.clientY - sy)
+        };
+        clampToViewport();
+      };
+      const up = () => {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+    };
+    if (!open)
+      return null;
+    return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("style", null, __TWEAKS_STYLE), /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        ref: dragRef,
+        className: "twk-panel",
+        "data-omelette-chrome": "",
+        style: { right: offsetRef.current.x, bottom: offsetRef.current.y }
+      },
+      /* @__PURE__ */ React.createElement("div", { className: "twk-hd", onMouseDown: onDragStart }, /* @__PURE__ */ React.createElement("b", null, title), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          className: "twk-x",
+          "aria-label": "Close tweaks",
+          onMouseDown: (e) => e.stopPropagation(),
+          onClick: dismiss
+        },
+        "\u2715"
+      )),
+      /* @__PURE__ */ React.createElement("div", { className: "twk-body" }, children)
+    ));
+  }
+  function TweakSection2({ label, children }) {
+    return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "twk-sect" }, label), children);
+  }
+  function TweakRow({ label, value, children, inline = false }) {
+    return /* @__PURE__ */ React.createElement("div", { className: inline ? "twk-row twk-row-h" : "twk-row" }, /* @__PURE__ */ React.createElement("div", { className: "twk-lbl" }, /* @__PURE__ */ React.createElement("span", null, label), value != null && /* @__PURE__ */ React.createElement("span", { className: "twk-val" }, value)), children);
+  }
+  function TweakSlider({ label, value, min = 0, max = 100, step = 1, unit = "", onChange }) {
+    return /* @__PURE__ */ React.createElement(TweakRow, { label, value: `${value}${unit}` }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "range",
+        className: "twk-slider",
+        min,
+        max,
+        step,
+        value,
+        onChange: (e) => onChange(Number(e.target.value))
+      }
+    ));
+  }
+  function TweakToggle2({ label, value, onChange }) {
+    return /* @__PURE__ */ React.createElement("div", { className: "twk-row twk-row-h" }, /* @__PURE__ */ React.createElement("div", { className: "twk-lbl" }, /* @__PURE__ */ React.createElement("span", null, label)), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        className: "twk-toggle",
+        "data-on": value ? "1" : "0",
+        role: "switch",
+        "aria-checked": !!value,
+        onClick: () => onChange(!value)
+      },
+      /* @__PURE__ */ React.createElement("i", null)
+    ));
+  }
+  function TweakRadio2({ label, value, options, onChange }) {
+    const trackRef = React.useRef(null);
+    const [dragging, setDragging] = React.useState(false);
+    const valueRef = React.useRef(value);
+    valueRef.current = value;
+    const labelLen = (o) => String(typeof o === "object" ? o.label : o).length;
+    const maxLen = options.reduce((m, o) => Math.max(m, labelLen(o)), 0);
+    const fitsAsSegments = maxLen <= ({ 2: 16, 3: 10 }[options.length] ?? 0);
+    if (!fitsAsSegments) {
+      const resolve = (s) => {
+        const m = options.find((o) => String(typeof o === "object" ? o.value : o) === s);
+        return m === void 0 ? s : typeof m === "object" ? m.value : m;
+      };
+      return /* @__PURE__ */ React.createElement(
+        TweakSelect,
+        {
+          label,
+          value,
+          options,
+          onChange: (s) => onChange(resolve(s))
+        }
+      );
+    }
+    const opts = options.map((o) => typeof o === "object" ? o : { value: o, label: o });
+    const idx = Math.max(0, opts.findIndex((o) => o.value === value));
+    const n = opts.length;
+    const segAt = (clientX) => {
+      const r = trackRef.current.getBoundingClientRect();
+      const inner = r.width - 4;
+      const i = Math.floor((clientX - r.left - 2) / inner * n);
+      return opts[Math.max(0, Math.min(n - 1, i))].value;
+    };
+    const onPointerDown = (e) => {
+      setDragging(true);
+      const v0 = segAt(e.clientX);
+      if (v0 !== valueRef.current)
+        onChange(v0);
+      const move = (ev) => {
+        if (!trackRef.current)
+          return;
+        const v = segAt(ev.clientX);
+        if (v !== valueRef.current)
+          onChange(v);
+      };
+      const up = () => {
+        setDragging(false);
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    };
+    return /* @__PURE__ */ React.createElement(TweakRow, { label }, /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        ref: trackRef,
+        role: "radiogroup",
+        onPointerDown,
+        className: dragging ? "twk-seg dragging" : "twk-seg"
+      },
+      /* @__PURE__ */ React.createElement(
+        "div",
+        {
+          className: "twk-seg-thumb",
+          style: {
+            left: `calc(2px + ${idx} * (100% - 4px) / ${n})`,
+            width: `calc((100% - 4px) / ${n})`
+          }
+        }
+      ),
+      opts.map((o) => /* @__PURE__ */ React.createElement("button", { key: o.value, type: "button", role: "radio", "aria-checked": o.value === value }, o.label))
+    ));
+  }
+  function TweakSelect({ label, value, options, onChange }) {
+    return /* @__PURE__ */ React.createElement(TweakRow, { label }, /* @__PURE__ */ React.createElement("select", { className: "twk-field", value, onChange: (e) => onChange(e.target.value) }, options.map((o) => {
+      const v = typeof o === "object" ? o.value : o;
+      const l = typeof o === "object" ? o.label : o;
+      return /* @__PURE__ */ React.createElement("option", { key: v, value: v }, l);
+    })));
+  }
+  function TweakText({ label, value, placeholder, onChange }) {
+    return /* @__PURE__ */ React.createElement(TweakRow, { label }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        className: "twk-field",
+        type: "text",
+        value,
+        placeholder,
+        onChange: (e) => onChange(e.target.value)
+      }
+    ));
+  }
+  function TweakNumber({ label, value, min, max, step = 1, unit = "", onChange }) {
+    const clamp = (n) => {
+      if (min != null && n < min)
+        return min;
+      if (max != null && n > max)
+        return max;
+      return n;
+    };
+    const startRef = React.useRef({ x: 0, val: 0 });
+    const onScrubStart = (e) => {
+      e.preventDefault();
+      startRef.current = { x: e.clientX, val: value };
+      const decimals = (String(step).split(".")[1] || "").length;
+      const move = (ev) => {
+        const dx = ev.clientX - startRef.current.x;
+        const raw = startRef.current.val + dx * step;
+        const snapped = Math.round(raw / step) * step;
+        onChange(clamp(Number(snapped.toFixed(decimals))));
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    };
+    return /* @__PURE__ */ React.createElement("div", { className: "twk-num" }, /* @__PURE__ */ React.createElement("span", { className: "twk-num-lbl", onPointerDown: onScrubStart }, label), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "number",
+        value,
+        min,
+        max,
+        step,
+        onChange: (e) => onChange(clamp(Number(e.target.value)))
+      }
+    ), unit && /* @__PURE__ */ React.createElement("span", { className: "twk-num-unit" }, unit));
+  }
+  function __twkIsLight(hex) {
+    const h = String(hex).replace("#", "");
+    const x = h.length === 3 ? h.replace(/./g, (c) => c + c) : h.padEnd(6, "0");
+    const n = parseInt(x.slice(0, 6), 16);
+    if (Number.isNaN(n))
+      return true;
+    const r = n >> 16 & 255, g = n >> 8 & 255, b = n & 255;
+    return r * 299 + g * 587 + b * 114 > 148e3;
+  }
+  var __TwkCheck = ({ light }) => /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 14 14", "aria-hidden": "true" }, /* @__PURE__ */ React.createElement(
+    "path",
+    {
+      d: "M3 7.2 5.8 10 11 4.2",
+      fill: "none",
+      strokeWidth: "2.2",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      stroke: light ? "rgba(0,0,0,.78)" : "#fff"
+    }
+  ));
+  function TweakColor({ label, value, options, onChange }) {
+    if (!options || !options.length) {
+      return /* @__PURE__ */ React.createElement("div", { className: "twk-row twk-row-h" }, /* @__PURE__ */ React.createElement("div", { className: "twk-lbl" }, /* @__PURE__ */ React.createElement("span", null, label)), /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          type: "color",
+          className: "twk-swatch",
+          value,
+          onChange: (e) => onChange(e.target.value)
+        }
+      ));
+    }
+    const key = (o) => String(JSON.stringify(o)).toLowerCase();
+    const cur = key(value);
+    return /* @__PURE__ */ React.createElement(TweakRow, { label }, /* @__PURE__ */ React.createElement("div", { className: "twk-chips", role: "radiogroup" }, options.map((o, i) => {
+      const colors = Array.isArray(o) ? o : [o];
+      const [hero, ...rest] = colors;
+      const sup = rest.slice(0, 4);
+      const on = key(o) === cur;
+      return /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          key: i,
+          type: "button",
+          className: "twk-chip",
+          role: "radio",
+          "aria-checked": on,
+          "data-on": on ? "1" : "0",
+          "aria-label": colors.join(", "),
+          title: colors.join(" \xB7 "),
+          style: { background: hero },
+          onClick: () => onChange(o)
+        },
+        sup.length > 0 && /* @__PURE__ */ React.createElement("span", null, sup.map((c, j) => /* @__PURE__ */ React.createElement("i", { key: j, style: { background: c } }))),
+        on && /* @__PURE__ */ React.createElement(__TwkCheck, { light: __twkIsLight(hero) })
+      );
+    })));
+  }
+  function TweakButton({ label, onClick, secondary = false }) {
+    return /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        className: secondary ? "twk-btn secondary" : "twk-btn",
+        onClick
+      },
+      label
+    );
+  }
+  Object.assign(window, {
+    useTweaks: useTweaks2,
+    TweaksPanel: TweaksPanel2,
+    TweakSection: TweakSection2,
+    TweakRow,
+    TweakSlider,
+    TweakToggle: TweakToggle2,
+    TweakRadio: TweakRadio2,
+    TweakSelect,
+    TweakText,
+    TweakNumber,
+    TweakColor,
+    TweakButton
+  });
+
+  // ../hausverwaltung/public/op_workflow/op-components.jsx
+  var { useState: useStateOP, useMemo: useMemoOP } = React;
+  var fmtEUR_op2 = (n) => {
+    if (n == null || isNaN(n))
+      return "\u2014";
+    return new Intl.NumberFormat("de-DE", {
+      style: "currency",
+      currency: "EUR",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(n);
+  };
+  var fmtDate_op2 = (s) => {
+    if (!s)
+      return "\u2014";
+    const [y, m, d] = s.split("-");
+    return `${d}.${m}.${y}`;
+  };
+  var AGING_BUCKETS = [
+    { key: "b0", label: "nicht f\xE4llig", min: -Infinity, max: 0, sub: "0 Tage" },
+    { key: "b1", label: "1\u201330", min: 1, max: 30, sub: "Tage" },
+    { key: "b2", label: "31\u201360", min: 31, max: 60, sub: "Tage" },
+    { key: "b3", label: "61\u201390", min: 61, max: 90, sub: "Tage" },
+    { key: "b4", label: "> 90", min: 91, max: Infinity, sub: "Tage" }
+  ];
+  var bucketOf2 = (age) => AGING_BUCKETS.find((b) => age >= b.min && age <= b.max);
+  function StatusBadge2({ status }) {
+    const map = {
+      "Paid": ["op-status-paid", "Bezahlt"],
+      "Partly Paid": ["op-status-partly", "Teilweise bezahlt"],
+      "Unpaid": ["op-status-unpaid", "Offen"],
+      "Overdue": ["op-status-overdue", "\xDCberf\xE4llig"],
+      "Written Off": ["op-status-writtenoff", "Abgeschrieben"],
+      "Partly Paid and Written Off": ["op-status-writtenoff", "Teilweise abgeschr."]
+    };
+    const [cls, label] = map[status] || ["op-status-unpaid", status || "\u2014"];
+    return /* @__PURE__ */ React.createElement("span", { className: `op-status ${cls}` }, label);
+  }
+  function DirectionBadge2({ direction }) {
+    const map = {
+      "Geld bekommen": ["is-in", "Geld bekommen"],
+      "Geld bezahlen / erstatten": ["is-out", "Geld bezahlen"],
+      "Ausgeglichen": ["is-bal", "Ausgeglichen"]
+    };
+    const [cls, label] = map[direction] || ["is-bal", direction];
+    return /* @__PURE__ */ React.createElement("span", { className: `op-dir ${cls}` }, label);
+  }
+  function MahnstufeBadge2({ stufe }) {
+    if (!stufe)
+      return null;
+    const dots = Array.from({ length: stufe }, (_, i) => /* @__PURE__ */ React.createElement("span", { key: i, className: "op-mahn-dot" }));
+    return /* @__PURE__ */ React.createElement("span", { className: "op-mahn", title: `Mahnstufe ${stufe}` }, dots, /* @__PURE__ */ React.createElement("span", { style: { marginLeft: 2 } }, "M", stufe));
+  }
+  function AgePill2({ age, faellig_am }) {
+    if (age == null)
+      return null;
+    if (age <= 0) {
+      return /* @__PURE__ */ React.createElement("span", { className: "op-age-pill is-future" }, "f\xE4llig ", fmtDate_op2(faellig_am));
+    }
+    const cls = age > 30 ? "is-late" : "is-due";
+    return /* @__PURE__ */ React.createElement("span", { className: `op-age-pill ${cls}` }, age, " Tage");
+  }
+  function AgingBar2({ buckets, totalSum, mini = false }) {
+    const parts = AGING_BUCKETS.map((b) => ({ ...b, val: buckets[b.key] || 0 }));
+    const total = totalSum ?? parts.reduce((a, p) => a + p.val, 0);
+    if (Math.abs(total) < 0.01) {
+      return /* @__PURE__ */ React.createElement("div", { className: "op-aging-bars" }, /* @__PURE__ */ React.createElement("div", { className: "op-aging-seg is-empty" }, "keine"));
+    }
+    return /* @__PURE__ */ React.createElement("div", { className: "op-aging-bars" }, parts.map((p, i) => {
+      if (Math.abs(p.val) < 0.01)
+        return null;
+      const pct = p.val / total * 100;
+      return /* @__PURE__ */ React.createElement(
+        "div",
+        {
+          key: p.key,
+          className: `op-aging-seg op-aging-seg-${i}`,
+          style: { flex: `${pct} 1 0` },
+          title: `${p.label}: ${fmtEUR_op2(p.val)}`
+        },
+        !mini && pct > 8 && fmtEUR_op2(p.val).replace("\u20AC", "").trim()
+      );
+    }));
+  }
+  function AgingStrip2({ buckets }) {
+    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(AgingBar2, { buckets }), /* @__PURE__ */ React.createElement("div", { className: "op-aging-legend" }, AGING_BUCKETS.map((b) => {
+      const v = buckets[b.key] || 0;
+      return /* @__PURE__ */ React.createElement("span", { key: b.key }, /* @__PURE__ */ React.createElement("div", { style: { color: "var(--ink-2)", fontWeight: 500 } }, b.label), /* @__PURE__ */ React.createElement("div", { className: "num" }, Math.abs(v) < 0.01 ? "\u2014" : fmtEUR_op2(v)));
+    })));
+  }
+  Object.assign(window, {
+    fmtEUR_op: fmtEUR_op2,
+    fmtDate_op: fmtDate_op2,
+    AGING_BUCKETS,
+    bucketOf: bucketOf2,
+    StatusBadge: StatusBadge2,
+    DirectionBadge: DirectionBadge2,
+    MahnstufeBadge: MahnstufeBadge2,
+    AgePill: AgePill2,
+    AgingBar: AgingBar2,
+    AgingStrip: AgingStrip2
+  });
+
+  // ../hausverwaltung/public/op_workflow/op-actions.jsx
+  var { useState: useStateAct, useEffect: useEffectAct } = React;
+  function primaryActionFor(row) {
+    if (row.status === "Written Off")
+      return null;
+    if (row.art === "Rechnungen" && row.offen > 0) {
+      return { key: "zahlung_anlegen", label: "Zahlung anlegen", kind: "primary" };
+    }
+    if (row.belegart === "Payment Entry") {
+      return { key: "zuordnen", label: "Zuordnen", kind: "warn" };
+    }
+    if (row.art === "Forderungen" && row.belegart === "Sales Invoice" && row.offen < -0.01) {
+      return { key: "guthaben_auszahlen", label: "Guthaben auszahlen", kind: "ghost" };
+    }
+    const isSalesInvoice = String(row.belegart || "").replace(/ \(×\d+\)$/, "") === "Sales Invoice";
+    if (row.art === "Forderungen" && isSalesInvoice && row.offen > 0.01 && row.alter_tage > 0) {
+      const nextStufe = (row.mahnstufe || 0) + 1;
+      if (nextStufe <= 4) {
+        return {
+          key: "mahnwesen",
+          label: "Mahnwesen",
+          kind: nextStufe >= 2 ? "late" : "primary"
+        };
+      } else {
+        return { key: "inkasso", label: "An Inkasso", kind: "late" };
+      }
+    }
+    return null;
+  }
+  function ActionCell2({ row, onAction }) {
+    const [menuOpen, setMenuOpen] = useStateAct(false);
+    const primary = primaryActionFor(row);
+    useEffectAct(() => {
+      if (!menuOpen)
+        return;
+      const onClick = () => setMenuOpen(false);
+      window.addEventListener("click", onClick);
+      return () => window.removeEventListener("click", onClick);
+    }, [menuOpen]);
+    return /* @__PURE__ */ React.createElement("div", { className: "op-row-actions", onClick: (e) => e.stopPropagation() }, primary && /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: `op-action-btn is-${primary.kind}`,
+        onClick: () => onAction(primary.key, row)
+      },
+      primary.label
+    ), /* @__PURE__ */ React.createElement("div", { className: "op-action-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "op-action-more", onClick: (e) => {
+      e.stopPropagation();
+      setMenuOpen((o) => !o);
+    } }, "\u22EF"), menuOpen && /* @__PURE__ */ React.createElement("div", { className: "op-action-menu" }, /* @__PURE__ */ React.createElement("button", { className: "op-action-menu-item", onClick: () => onAction("mieterkonto", row) }, "\u2192 Mieterkonto \xF6ffnen", /* @__PURE__ */ React.createElement("span", { className: "op-action-menu-shortcut" }, "\u2197")), /* @__PURE__ */ React.createElement("button", { className: "op-action-menu-item", onClick: () => onAction("beleg", row) }, "\u2192 Beleg \xF6ffnen"), row.art === "Forderungen" && /* @__PURE__ */ React.createElement("button", { className: "op-action-menu-item", onClick: () => onAction("kontakt", row) }, "Mieter anrufen / mailen"), /* @__PURE__ */ React.createElement("div", { className: "op-action-menu-sep" }), /* @__PURE__ */ React.createElement("button", { className: "op-action-menu-item", onClick: () => onAction("notiz", row) }, "Notiz hinzuf\xFCgen"), /* @__PURE__ */ React.createElement("button", { className: "op-action-menu-item", onClick: () => onAction("stundung", row) }, "Stundung vereinbaren"), /* @__PURE__ */ React.createElement("button", { className: "op-action-menu-item", onClick: () => onAction("kl\xE4rung", row) }, 'Auf \u201Ein Kl\xE4rung" setzen'), /* @__PURE__ */ React.createElement("div", { className: "op-action-menu-sep" }), row.can_write_off && /* @__PURE__ */ React.createElement("button", { className: "op-action-menu-item is-danger", onClick: () => onAction("abschreiben", row) }, "Abschreiben\u2026"))));
+  }
+  function Modal({ title, subtitle, onClose, footer, children }) {
+    useEffectAct(() => {
+      const onKey = (e) => e.key === "Escape" && onClose();
+      document.addEventListener("keydown", onKey);
+      return () => document.removeEventListener("keydown", onKey);
+    }, [onClose]);
+    return /* @__PURE__ */ React.createElement("div", { className: "op-modal-backdrop", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "op-modal", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "op-modal-head" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h3", null, title), subtitle && /* @__PURE__ */ React.createElement("div", { className: "op-modal-sub" }, subtitle)), /* @__PURE__ */ React.createElement("button", { className: "op-modal-close", onClick: onClose }, "\xD7")), /* @__PURE__ */ React.createElement("div", { className: "op-modal-body" }, children), footer && /* @__PURE__ */ React.createElement("div", { className: "op-modal-foot" }, footer)));
+  }
+  function MahnungModal2({ row, onClose, onDone }) {
+    const nextStufe = (row.mahnstufe || 0) + 1;
+    const [mahngebuehr, setMahngebuehr] = useStateAct(nextStufe === 1 ? 0 : nextStufe === 2 ? 5 : nextStufe === 3 ? 10 : 15);
+    const [zinsen, setZinsen] = useStateAct(true);
+    const [zinssatz, setZinssatz] = useStateAct(9.12);
+    const [versand, setVersand] = useStateAct("Brief");
+    const [zusatztext, setZusatztext] = useStateAct("");
+    const [busy, setBusy] = useStateAct(false);
+    const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
+      const d = /* @__PURE__ */ new Date();
+      d.setDate(d.getDate() + 7);
+      return d.toISOString().slice(0, 10);
+    });
+    const suggestedDunningType = row.dunning_type || (nextStufe === 1 ? "Zahlungserinnerung - HP" : nextStufe === 2 ? "1. Mahnung - HP" : nextStufe === 3 ? "2. Mahnung - HP" : "Letzte Mahnung - HP");
+    const [dunningTypes, setDunningTypes] = useStateAct([]);
+    const [textStufe, setTextStufe] = useStateAct(suggestedDunningType);
+    const [vorlagen, setVorlagen] = useStateAct([]);
+    const [serienbriefVorlage, setSerienbriefVorlage] = useStateAct(row.serienbrief_vorlage || "");
+    useEffectAct(() => {
+      let alive = true;
+      Promise.all([
+        window.OP_ACTIONS.listDunningTypes(),
+        window.OP_ACTIONS.listSerienbriefVorlagen ? window.OP_ACTIONS.listSerienbriefVorlagen() : Promise.resolve([])
+      ]).then(([items, templates]) => {
+        if (!alive)
+          return;
+        setDunningTypes(items);
+        if (items.length && !items.includes(textStufe))
+          setTextStufe(items[0]);
+        setVorlagen(templates || []);
+      }).catch(() => {
+      });
+      return () => {
+        alive = false;
+      };
+    }, []);
+    const zinsBetrag = zinsen ? row.offen * (zinssatz / 100) * (row.alter_tage / 365) : 0;
+    const summe = row.offen + mahngebuehr + zinsBetrag;
+    const partyName = window.OFFENE_POSTEN.partyName(row.party);
+    const objekt = window.OFFENE_POSTEN.ccLabel[row.kostenstelle] || row.kostenstelle;
+    const submit = async () => {
+      setBusy(true);
+      try {
+        const result = await window.OP_ACTIONS.createDunning(row, {
+          dunningType: textStufe,
+          neueFaelligkeit,
+          mahngebuehr,
+          zinsenAktiv: zinsen,
+          serienbriefVorlage,
+          serienbriefWerte: zusatztext.trim() ? [{ variable: "zusatztext", wert: zusatztext.trim(), beschreibung: "Optionaler Text aus dem Mahn-Cockpit" }] : []
+        });
+        onDone?.(result);
+      } finally {
+        setBusy(false);
+      }
+    };
+    return /* @__PURE__ */ React.createElement(
+      Modal,
+      {
+        title: `${nextStufe === 1 ? "Zahlungserinnerung" : nextStufe === 4 ? "Letzte Mahnung" : `${nextStufe - 1}. Mahnung`} erstellen`,
+        subtitle: `${partyName} \xB7 ${row.belegnummer} \xB7 ${fmtEUR_op(row.offen)} offen seit ${row.alter_tage} Tagen`,
+        onClose,
+        footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { className: "op-modal-foot-info" }, "Erzeugt 1 Dunning-Draft \xB7 Mahngeb\xFChr-Rechnung beim Submit \xB7 1 PDF"), /* @__PURE__ */ React.createElement("div", { className: "op-modal-foot-actions" }, /* @__PURE__ */ React.createElement("button", { className: "mk-btn", onClick: onClose, disabled: busy }, "Abbrechen"), /* @__PURE__ */ React.createElement("button", { className: "mk-btn mk-btn-primary", onClick: submit, disabled: busy }, busy ? "Draft wird angelegt \u2026" : `Mahnung als Draft anlegen \xB7 ${fmtEUR_op(summe)}`)))
+      },
+      /* @__PURE__ */ React.createElement("div", { className: "op-form-grid" }, /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Mahnstufe / Regel"), dunningTypes.length ? /* @__PURE__ */ React.createElement("select", { value: textStufe, onChange: (e) => setTextStufe(e.target.value) }, dunningTypes.map((name) => /* @__PURE__ */ React.createElement("option", { key: name, value: name }, name))) : /* @__PURE__ */ React.createElement("input", { value: textStufe, onChange: (e) => setTextStufe(e.target.value) }), dunningTypes.includes(suggestedDunningType) && textStufe !== suggestedDunningType && /* @__PURE__ */ React.createElement("button", { type: "button", className: "mk-btn mk-btn-ghost", style: { marginTop: 6, padding: "4px 8px", fontSize: 11 }, onClick: () => setTextStufe(suggestedDunningType) }, "Vorschlag w\xE4hlen")), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Serienbrief-Vorlage"), vorlagen.length ? /* @__PURE__ */ React.createElement("select", { value: serienbriefVorlage, onChange: (e) => setSerienbriefVorlage(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Default aus Mahnstufe"), vorlagen.map((name) => /* @__PURE__ */ React.createElement("option", { key: name, value: name }, name))) : /* @__PURE__ */ React.createElement("input", { value: serienbriefVorlage, placeholder: "Default aus Mahnstufe", onChange: (e) => setSerienbriefVorlage(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Versandart"), /* @__PURE__ */ React.createElement("select", { value: versand, onChange: (e) => setVersand(e.target.value) }, /* @__PURE__ */ React.createElement("option", null, "Brief"), /* @__PURE__ */ React.createElement("option", null, "E-Mail"), /* @__PURE__ */ React.createElement("option", null, "Brief + E-Mail"), /* @__PURE__ */ React.createElement("option", null, "Einschreiben"))), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Mahngeb\xFChr"), /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          type: "number",
+          step: "0.50",
+          value: mahngebuehr,
+          onChange: (e) => setMahngebuehr(parseFloat(e.target.value) || 0)
+        }
+      )), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Neue Zahlungsfrist"), /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          type: "date",
+          value: neueFaelligkeit,
+          onChange: (e) => setNeueFaelligkeit(e.target.value)
+        }
+      )), /* @__PURE__ */ React.createElement("div", { className: "op-field is-full" }, /* @__PURE__ */ React.createElement("label", null, "Optionaler Zusatztext"), /* @__PURE__ */ React.createElement(
+        "textarea",
+        {
+          rows: "3",
+          value: zusatztext,
+          placeholder: "Wird als Variable {{ zusatztext }} an die Serienbrief-Vorlage \xFCbergeben.",
+          onChange: (e) => setZusatztext(e.target.value)
+        }
+      )), /* @__PURE__ */ React.createElement("div", { className: "op-field is-full" }, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: zinsen, onChange: (e) => setZinsen(e.target.checked) }), /* @__PURE__ */ React.createElement("span", null, "Verzugszinsen berechnen (", zinssatz, "% p.a. \xB7 \xA7288 BGB)")))),
+      /* @__PURE__ */ React.createElement("div", { className: "op-preview" }, /* @__PURE__ */ React.createElement("div", { className: "op-preview-label" }, "Vorschau Forderung"), /* @__PURE__ */ React.createElement("div", { className: "op-preview-row" }, /* @__PURE__ */ React.createElement("span", { className: "op-preview-key" }, "Offene Hauptforderung"), /* @__PURE__ */ React.createElement("span", { className: "op-preview-val" }, fmtEUR_op(row.offen))), /* @__PURE__ */ React.createElement("div", { className: "op-preview-row" }, /* @__PURE__ */ React.createElement("span", { className: "op-preview-key" }, "+ Mahngeb\xFChr"), /* @__PURE__ */ React.createElement("span", { className: "op-preview-val" }, fmtEUR_op(mahngebuehr))), zinsen && /* @__PURE__ */ React.createElement("div", { className: "op-preview-row" }, /* @__PURE__ */ React.createElement("span", { className: "op-preview-key" }, "+ Verzugszinsen (", row.alter_tage, " Tage)"), /* @__PURE__ */ React.createElement("span", { className: "op-preview-val" }, fmtEUR_op(zinsBetrag))), /* @__PURE__ */ React.createElement("div", { className: "op-preview-row is-total" }, /* @__PURE__ */ React.createElement("span", { className: "op-preview-key" }, "\u03A3 Zahlungsaufforderung"), /* @__PURE__ */ React.createElement("span", { className: "op-preview-val" }, fmtEUR_op(summe)))),
+      /* @__PURE__ */ React.createElement("div", { className: "op-doc-letter" }, /* @__PURE__ */ React.createElement("div", { className: "op-doc-head" }, "Hausverwaltung M\xFCller GmbH \xB7 Hauptstr. 1 \xB7 70173 Stuttgart"), /* @__PURE__ */ React.createElement("h4", null, textStufe), /* @__PURE__ */ React.createElement("p", null, partyName, /* @__PURE__ */ React.createElement("br", null), "Objekt ", objekt), /* @__PURE__ */ React.createElement("p", null, "Sehr geehrte Damen und Herren,", /* @__PURE__ */ React.createElement("br", null), "wir bitten Sie h\xF6flich, den nachfolgend genannten Betrag bis sp\xE4testens", /* @__PURE__ */ React.createElement("strong", null, " ", fmtDate_op(neueFaelligkeit)), " auf unser Konto zu \xFCberweisen. Verwendungszweck: ", /* @__PURE__ */ React.createElement("strong", null, row.belegnummer)), /* @__PURE__ */ React.createElement("table", null, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Beleg"), /* @__PURE__ */ React.createElement("th", null, "F\xE4llig am"), /* @__PURE__ */ React.createElement("th", { className: "num" }, "Betrag"))), /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", null, row.belegnummer), /* @__PURE__ */ React.createElement("td", null, fmtDate_op(row.faellig_am)), /* @__PURE__ */ React.createElement("td", { className: "num" }, fmtEUR_op(summe)))))),
+      /* @__PURE__ */ React.createElement("div", { className: "op-checklist" }, /* @__PURE__ */ React.createElement("div", { className: "op-checklist-item" }, "Dunning-Doc gem\xE4\xDF ERPNext-Standard"), /* @__PURE__ */ React.createElement("div", { className: "op-checklist-item" }, "Mahngeb\xFChr als verlinkte Sales Invoice beim Submit"), /* @__PURE__ */ React.createElement("div", { className: "op-checklist-item" }, "PDF-Anhang automatisch erzeugt + im Mieter-Kontakt archiviert"), versand.includes("E-Mail") && /* @__PURE__ */ React.createElement("div", { className: "op-checklist-item" }, "E-Mail-Versand vorbereitet (", partyName, ")"))
+    );
+  }
+  function ZahlungModal2({ row, onClose, onDone }) {
+    const skontoMatch = (row.bemerkungen || "").match(/Skonto bis (\d{2}\.\d{2}\.).*?(-?\d+(?:\.\d+)?)\s*%/i);
+    const hasSkonto = !!skontoMatch;
+    const skontoBis = skontoMatch ? skontoMatch[1] : null;
+    const skontoSatz = skontoMatch ? parseFloat(skontoMatch[2]) : 0;
+    const [nutzeSkonto, setNutzeSkonto] = useStateAct(hasSkonto);
+    const [zahldatum, setZahldatum] = useStateAct(() => frappe.datetime.get_today());
+    const [zahlart, setZahlart] = useStateAct("SEPA-\xDCberweisung");
+    const [busy, setBusy] = useStateAct(false);
+    const abzug = nutzeSkonto ? row.offen * (Math.abs(skontoSatz) / 100) : 0;
+    const auszahlung = row.offen - abzug;
+    const submit = async () => {
+      setBusy(true);
+      try {
+        const result = await window.OP_ACTIONS.createPaymentEntry(row, {
+          zahldatum,
+          useSkonto: nutzeSkonto,
+          skontoAmount: abzug,
+          zahlart
+        });
+        onDone?.(result);
+      } finally {
+        setBusy(false);
+      }
+    };
+    return /* @__PURE__ */ React.createElement(
+      Modal,
+      {
+        title: "Zahlung an Lieferant anlegen",
+        subtitle: `${window.OFFENE_POSTEN.partyName(row.party)} \xB7 ${row.belegnummer} \xB7 ${fmtEUR_op(row.offen)}`,
+        onClose,
+        footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { className: "op-modal-foot-info" }, "Erzeugt 1 Payment Entry \xB7 ggf. 1 SEPA-XML"), /* @__PURE__ */ React.createElement("div", { className: "op-modal-foot-actions" }, /* @__PURE__ */ React.createElement("button", { className: "mk-btn", onClick: onClose, disabled: busy }, "Abbrechen"), /* @__PURE__ */ React.createElement("button", { className: "mk-btn mk-btn-primary", onClick: submit, disabled: busy }, busy ? "Draft wird angelegt \u2026" : `Zahlung als Draft anlegen \xB7 ${fmtEUR_op(auszahlung)}`)))
+      },
+      /* @__PURE__ */ React.createElement("div", { className: "op-form-grid" }, /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Zahldatum"), /* @__PURE__ */ React.createElement("input", { type: "date", value: zahldatum, onChange: (e) => setZahldatum(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Zahlart"), /* @__PURE__ */ React.createElement("select", { value: zahlart, onChange: (e) => setZahlart(e.target.value) }, /* @__PURE__ */ React.createElement("option", null, "SEPA-\xDCberweisung"), /* @__PURE__ */ React.createElement("option", null, "Lastschrift"), /* @__PURE__ */ React.createElement("option", null, "Manuelle \xDCberweisung"))), hasSkonto && /* @__PURE__ */ React.createElement("div", { className: "op-field is-full", style: { background: "oklch(0.97 0.04 80)", padding: 12, border: "1px solid oklch(0.85 0.06 70)", borderRadius: 4 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: "oklch(0.40 0.10 70)" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: nutzeSkonto, onChange: (e) => setNutzeSkonto(e.target.checked) }), /* @__PURE__ */ React.createElement("strong", null, "Skonto bis ", skontoBis, " nutzen (", Math.abs(skontoSatz), "%)")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "var(--ink-3)", marginTop: 2 } }, "Spart ", fmtEUR_op(row.offen * (Math.abs(skontoSatz) / 100)), " bei dieser Rechnung."))),
+      /* @__PURE__ */ React.createElement("div", { className: "op-preview" }, /* @__PURE__ */ React.createElement("div", { className: "op-preview-label" }, "Buchungs-Vorschau"), /* @__PURE__ */ React.createElement("div", { className: "op-preview-row" }, /* @__PURE__ */ React.createElement("span", { className: "op-preview-key" }, "Rechnungsbetrag"), /* @__PURE__ */ React.createElement("span", { className: "op-preview-val" }, fmtEUR_op(row.offen))), nutzeSkonto && /* @__PURE__ */ React.createElement("div", { className: "op-preview-row" }, /* @__PURE__ */ React.createElement("span", { className: "op-preview-key" }, "\u2212 Skonto ", Math.abs(skontoSatz), "%"), /* @__PURE__ */ React.createElement("span", { className: "op-preview-val" }, "\u2212", fmtEUR_op(abzug))), /* @__PURE__ */ React.createElement("div", { className: "op-preview-row is-total" }, /* @__PURE__ */ React.createElement("span", { className: "op-preview-key" }, "Auszahlung"), /* @__PURE__ */ React.createElement("span", { className: "op-preview-val" }, fmtEUR_op(auszahlung)))),
+      /* @__PURE__ */ React.createElement("div", { className: "op-checklist" }, /* @__PURE__ */ React.createElement("div", { className: "op-checklist-item" }, "Payment Entry zu ", row.belegnummer), nutzeSkonto && /* @__PURE__ */ React.createElement("div", { className: "op-checklist-item" }, "Skonto-Buchung auf 3736 (Aufwandsminderung)"), zahlart === "SEPA-\xDCberweisung" && /* @__PURE__ */ React.createElement("div", { className: "op-checklist-item" }, "SEPA-XML zur n\xE4chsten Zahlungsdatei hinzugef\xFCgt"))
+    );
+  }
+  function GuthabenAuszahlenModal2({ row, onClose, onDone }) {
+    const [postingDate, setPostingDate] = useStateAct(() => frappe.datetime.get_today());
+    const [modeOfPayment, setModeOfPayment] = useStateAct("Bank Draft");
+    const [busy, setBusy] = useStateAct(false);
+    const amount = Math.abs(row.offen || 0);
+    const partyName = window.OFFENE_POSTEN.partyName(row.party);
+    const submit = async () => {
+      setBusy(true);
+      try {
+        const result = await window.OP_ACTIONS.createRefundPayment(row, {
+          postingDate,
+          modeOfPayment
+        });
+        onDone?.(result);
+      } finally {
+        setBusy(false);
+      }
+    };
+    return /* @__PURE__ */ React.createElement(
+      Modal,
+      {
+        title: "Guthaben auszahlen",
+        subtitle: `${partyName} \xB7 ${row.belegnummer} \xB7 ${fmtEUR_op(amount)}`,
+        onClose,
+        footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { className: "op-modal-foot-info" }, "Erzeugt einen Payment-Entry-Draft. Gebucht wird erst nach Submit im Desk."), /* @__PURE__ */ React.createElement("div", { className: "op-modal-foot-actions" }, /* @__PURE__ */ React.createElement("button", { className: "mk-btn", onClick: onClose, disabled: busy }, "Abbrechen"), /* @__PURE__ */ React.createElement("button", { className: "mk-btn mk-btn-primary", onClick: submit, disabled: busy }, busy ? "Draft wird angelegt \u2026" : `Auszahlung als Draft anlegen \xB7 ${fmtEUR_op(amount)}`)))
+      },
+      /* @__PURE__ */ React.createElement("div", { className: "op-form-grid" }, /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Auszahlungsdatum"), /* @__PURE__ */ React.createElement("input", { type: "date", value: postingDate, onChange: (e) => setPostingDate(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Zahlart"), /* @__PURE__ */ React.createElement("select", { value: modeOfPayment, onChange: (e) => setModeOfPayment(e.target.value) }, /* @__PURE__ */ React.createElement("option", null, "Bank Draft"), /* @__PURE__ */ React.createElement("option", null, "SEPA-\xDCberweisung"), /* @__PURE__ */ React.createElement("option", null, "Manuelle \xDCberweisung")))),
+      /* @__PURE__ */ React.createElement("div", { className: "op-preview" }, /* @__PURE__ */ React.createElement("div", { className: "op-preview-label" }, "Auszahlungs-Vorschau"), /* @__PURE__ */ React.createElement("div", { className: "op-preview-row" }, /* @__PURE__ */ React.createElement("span", { className: "op-preview-key" }, "Guthaben aus Beleg"), /* @__PURE__ */ React.createElement("span", { className: "op-preview-val" }, row.belegnummer)), /* @__PURE__ */ React.createElement("div", { className: "op-preview-row is-total" }, /* @__PURE__ */ React.createElement("span", { className: "op-preview-key" }, "Auszahlung an Mieter"), /* @__PURE__ */ React.createElement("span", { className: "op-preview-val" }, fmtEUR_op(amount)))),
+      /* @__PURE__ */ React.createElement("div", { className: "op-checklist" }, /* @__PURE__ */ React.createElement("div", { className: "op-checklist-item" }, 'Payment Entry Typ \u201EPay" gegen die Sales Invoice'), /* @__PURE__ */ React.createElement("div", { className: "op-checklist-item" }, "Auszahlung wird mit dem negativen offenen Betrag verrechnet"), /* @__PURE__ */ React.createElement("div", { className: "op-checklist-item" }, "Bank-/Kassenkonto kann im Draft vor Submit gepr\xFCft werden"))
+    );
+  }
+  function ZuordnenModal2({ row, onClose, onDone }) {
+    const partyOpens = window.OFFENE_POSTEN.rows.filter((r) => r.party === row.party && r.offen > 0.01).sort((a, b) => a.faellig_am.localeCompare(b.faellig_am));
+    const verfuegbar = Math.abs(row.offen);
+    const [selected, setSelected] = useStateAct(() => new Set(partyOpens[0] ? [partyOpens[0].belegnummer] : []));
+    const [busy, setBusy] = useStateAct(false);
+    const sel = partyOpens.filter((p) => selected.has(p.belegnummer));
+    const zugeordnet = sel.reduce((a, p) => a + Math.min(p.offen, verfuegbar - a), 0);
+    const rest = verfuegbar - zugeordnet;
+    const partyName = window.OFFENE_POSTEN.partyName(row.party);
+    const toggle = (id) => {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.has(id) ? next.delete(id) : next.add(id);
+        return next;
+      });
+    };
+    const submit = async () => {
+      let remaining = verfuegbar;
+      const allocations = [];
+      for (const item of sel) {
+        if (remaining <= 0)
+          break;
+        const amount = Math.min(item.offen, remaining);
+        allocations.push({ invoice: item.belegnummer, amount });
+        remaining -= amount;
+      }
+      setBusy(true);
+      try {
+        const result = await window.OP_ACTIONS.allocatePayment(row, allocations);
+        onDone?.(result);
+      } finally {
+        setBusy(false);
+      }
+    };
+    return /* @__PURE__ */ React.createElement(
+      Modal,
+      {
+        title: "Vorauszahlung zuordnen",
+        subtitle: `${partyName} \xB7 Eingang ${fmtEUR_op(verfuegbar)} am ${fmtDate_op(row.buchungsdatum)}`,
+        onClose,
+        footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { className: "op-modal-foot-info" }, "Rest ", fmtEUR_op(rest), " bleibt als Vorauszahlung stehen."), /* @__PURE__ */ React.createElement("div", { className: "op-modal-foot-actions" }, /* @__PURE__ */ React.createElement("button", { className: "mk-btn", onClick: onClose, disabled: busy }, "Abbrechen"), /* @__PURE__ */ React.createElement("button", { className: "mk-btn mk-btn-primary", onClick: submit, disabled: busy || sel.length === 0 }, busy ? "Draft wird angelegt \u2026" : `${sel.length} ${sel.length === 1 ? "Zuordnung vorbereiten" : "Zuordnungen vorbereiten"}`)))
+      },
+      partyOpens.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { padding: 24, textAlign: "center", color: "var(--ink-3)" } }, "Keine offenen Forderungen bei ", partyName, ". Eingang als Anzahlung stehen lassen?") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { style: { margin: "0 0 12px", fontSize: 12.5, color: "var(--ink-2)" } }, "W\xE4hle die Forderungen, die mit dieser Vorauszahlung verrechnet werden sollen. \xC4ltester Posten ist vorausgew\xE4hlt."), /* @__PURE__ */ React.createElement("table", { style: { width: "100%", fontSize: 12.5, borderCollapse: "collapse" } }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { style: { background: "var(--bg-soft)", color: "var(--ink-3)", textTransform: "uppercase", fontSize: 10.5, letterSpacing: "0.04em" } }, /* @__PURE__ */ React.createElement("th", { style: { padding: "8px 10px", textAlign: "left" } }), /* @__PURE__ */ React.createElement("th", { style: { padding: "8px 10px", textAlign: "left" } }, "Beleg"), /* @__PURE__ */ React.createElement("th", { style: { padding: "8px 10px", textAlign: "left" } }, "F\xE4llig"), /* @__PURE__ */ React.createElement("th", { style: { padding: "8px 10px", textAlign: "right" } }, "Offen"))), /* @__PURE__ */ React.createElement("tbody", null, partyOpens.map((p) => /* @__PURE__ */ React.createElement("tr", { key: p.belegnummer, style: { borderBottom: "1px solid var(--line)" } }, /* @__PURE__ */ React.createElement("td", { style: { padding: "8px 10px" } }, /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          type: "checkbox",
+          checked: selected.has(p.belegnummer),
+          onChange: () => toggle(p.belegnummer)
+        }
+      )), /* @__PURE__ */ React.createElement("td", { style: { padding: "8px 10px", fontFamily: "ui-monospace, monospace", fontSize: 11.5 } }, p.belegnummer), /* @__PURE__ */ React.createElement("td", { style: { padding: "8px 10px" } }, fmtDate_op(p.faellig_am)), /* @__PURE__ */ React.createElement("td", { style: { padding: "8px 10px", textAlign: "right", fontVariantNumeric: "tabular-nums" } }, fmtEUR_op(p.offen)))))), /* @__PURE__ */ React.createElement("div", { className: "op-preview", style: { marginTop: 14 } }, /* @__PURE__ */ React.createElement("div", { className: "op-preview-row" }, /* @__PURE__ */ React.createElement("span", { className: "op-preview-key" }, "Verf\xFCgbar"), /* @__PURE__ */ React.createElement("span", { className: "op-preview-val" }, fmtEUR_op(verfuegbar))), /* @__PURE__ */ React.createElement("div", { className: "op-preview-row" }, /* @__PURE__ */ React.createElement("span", { className: "op-preview-key" }, "Zugeordnet (", sel.length, " Beleg", sel.length === 1 ? "" : "e", ")"), /* @__PURE__ */ React.createElement("span", { className: "op-preview-val" }, "\u2212", fmtEUR_op(zugeordnet))), /* @__PURE__ */ React.createElement("div", { className: "op-preview-row is-total" }, /* @__PURE__ */ React.createElement("span", { className: "op-preview-key" }, "Rest als Vorauszahlung"), /* @__PURE__ */ React.createElement("span", { className: "op-preview-val" }, fmtEUR_op(rest)))))
+    );
+  }
+  function Toast2({ message, onClose }) {
+    useEffectAct(() => {
+      const t = setTimeout(onClose, 2400);
+      return () => clearTimeout(t);
+    }, []);
+    return /* @__PURE__ */ React.createElement("div", { style: {
+      position: "fixed",
+      bottom: 24,
+      left: "50%",
+      transform: "translateX(-50%)",
+      background: "var(--ink)",
+      color: "var(--bg)",
+      padding: "10px 18px",
+      borderRadius: 6,
+      fontSize: 13,
+      boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
+      zIndex: 200
+    } }, message);
+  }
+  function SammelmahnungModal2({ rows, onClose, onDone }) {
+    const groups = React.useMemo(() => {
+      const map = /* @__PURE__ */ new Map();
+      rows.forEach((r) => {
+        if (!map.has(r.party))
+          map.set(r.party, { party: r.party, items: [], sum: 0 });
+        const g = map.get(r.party);
+        g.items.push(r);
+        g.sum += r.offen;
+      });
+      return [...map.values()].map((g) => ({
+        ...g,
+        name: window.OFFENE_POSTEN.partyName(g.party),
+        nextStufe: Math.min(4, Math.max(...g.items.map((r) => (r.mahnstufe || 0) + 1))),
+        gebuehr: g.items.reduce((sum, r) => {
+          const stufe = Math.min(4, (r.mahnstufe || 0) + 1);
+          return sum + (stufe === 1 ? 0 : stufe === 2 ? 5 : stufe === 3 ? 10 : 15);
+        }, 0)
+      })).sort((a, b) => b.sum - a.sum);
+    }, [rows]);
+    const [versand, setVersand] = useStateAct("Brief");
+    const [zusatztext, setZusatztext] = useStateAct("");
+    const [dunningTypes, setDunningTypes] = useStateAct([]);
+    const [dunningType, setDunningType] = useStateAct(rows.find((r) => r.dunning_type)?.dunning_type || "");
+    const [vorlagen, setVorlagen] = useStateAct([]);
+    const [serienbriefVorlage, setSerienbriefVorlage] = useStateAct(rows.find((r) => r.serienbrief_vorlage)?.serienbrief_vorlage || "");
+    const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
+      const d = /* @__PURE__ */ new Date();
+      d.setDate(d.getDate() + 7);
+      return d.toISOString().slice(0, 10);
+    });
+    const [excluded, setExcluded] = useStateAct(() => /* @__PURE__ */ new Set());
+    const [busy, setBusy] = useStateAct(false);
+    const aktiv = groups.filter((g) => !excluded.has(g.party));
+    const totalSum = aktiv.reduce((a, g) => a + g.sum + g.gebuehr, 0);
+    useEffectAct(() => {
+      let alive = true;
+      Promise.all([
+        window.OP_ACTIONS.listDunningTypes(),
+        window.OP_ACTIONS.listSerienbriefVorlagen ? window.OP_ACTIONS.listSerienbriefVorlagen() : Promise.resolve([])
+      ]).then(([items, templates]) => {
+        if (!alive)
+          return;
+        setDunningTypes(items);
+        if (items.length && !dunningType)
+          setDunningType(items[0]);
+        setVorlagen(templates || []);
+      }).catch(() => {
+      });
+      return () => {
+        alive = false;
+      };
+    }, []);
+    const toggle = (p) => {
+      setExcluded((prev) => {
+        const next = new Set(prev);
+        next.has(p) ? next.delete(p) : next.add(p);
+        return next;
+      });
+    };
+    const submit = async () => {
+      const rowsByParty = {};
+      aktiv.forEach((group) => {
+        rowsByParty[group.party] = group.items;
+      });
+      setBusy(true);
+      try {
+        const serienbriefWerte = zusatztext.trim() ? [{ variable: "zusatztext", wert: zusatztext.trim(), beschreibung: "Optionaler Text aus dem Mahn-Cockpit" }] : [];
+        const result = await window.OP_ACTIONS.createBulkDunning(rowsByParty, {
+          neueFaelligkeit,
+          dunningType,
+          serienbriefVorlage,
+          serienbriefWerte
+        });
+        onDone?.(result);
+      } finally {
+        setBusy(false);
+      }
+    };
+    return /* @__PURE__ */ React.createElement(
+      Modal,
+      {
+        title: "Sammelmahnung erstellen",
+        subtitle: `${rows.length} Posten \xB7 ${groups.length} ${groups.length === 1 ? "Mieter" : "Mieter"} \xB7 ein Dunning-Doc pro Mieter`,
+        onClose,
+        footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { className: "op-modal-foot-info" }, "Erzeugt ", aktiv.length, " Dunning-Doc", aktiv.length === 1 ? "" : "s", " \xB7 Mahngeb\xFChr-Rechnung beim Submit \xB7 ", aktiv.length, " PDF", aktiv.length === 1 ? "" : "s"), /* @__PURE__ */ React.createElement("div", { className: "op-modal-foot-actions" }, /* @__PURE__ */ React.createElement("button", { className: "mk-btn", onClick: onClose, disabled: busy }, "Abbrechen"), /* @__PURE__ */ React.createElement("button", { className: "mk-btn mk-btn-primary", disabled: busy || aktiv.length === 0, onClick: submit }, busy ? "Drafts werden angelegt \u2026" : `${aktiv.length} ${aktiv.length === 1 ? "Mahnung" : "Mahnungen"} als Draft anlegen \xB7 ${fmtEUR_op(totalSum)}`)))
+      },
+      /* @__PURE__ */ React.createElement("div", { className: "op-form-grid" }, /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Versandart (f\xFCr alle)"), /* @__PURE__ */ React.createElement("select", { value: versand, onChange: (e) => setVersand(e.target.value) }, /* @__PURE__ */ React.createElement("option", null, "Brief"), /* @__PURE__ */ React.createElement("option", null, "E-Mail"), /* @__PURE__ */ React.createElement("option", null, "Brief + E-Mail"), /* @__PURE__ */ React.createElement("option", null, "Einschreiben"))), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Mahnstufe / Regel (f\xFCr alle)"), dunningTypes.length ? /* @__PURE__ */ React.createElement("select", { value: dunningType, onChange: (e) => setDunningType(e.target.value) }, dunningTypes.map((name) => /* @__PURE__ */ React.createElement("option", { key: name, value: name }, name))) : /* @__PURE__ */ React.createElement("input", { value: dunningType, onChange: (e) => setDunningType(e.target.value), placeholder: "Automatisch" })), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Serienbrief-Vorlage"), vorlagen.length ? /* @__PURE__ */ React.createElement("select", { value: serienbriefVorlage, onChange: (e) => setSerienbriefVorlage(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Default aus Mahnstufe"), vorlagen.map((name) => /* @__PURE__ */ React.createElement("option", { key: name, value: name }, name))) : /* @__PURE__ */ React.createElement("input", { value: serienbriefVorlage, onChange: (e) => setSerienbriefVorlage(e.target.value), placeholder: "Default aus Mahnstufe" })), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Neue Zahlungsfrist"), /* @__PURE__ */ React.createElement("input", { type: "date", value: neueFaelligkeit, onChange: (e) => setNeueFaelligkeit(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "op-field is-full" }, /* @__PURE__ */ React.createElement("label", null, "Optionaler Zusatztext"), /* @__PURE__ */ React.createElement(
+        "textarea",
+        {
+          rows: "3",
+          value: zusatztext,
+          placeholder: "Wird als Variable {{ zusatztext }} an jede Serienbrief-Vorlage \xFCbergeben.",
+          onChange: (e) => setZusatztext(e.target.value)
+        }
+      ))),
+      /* @__PURE__ */ React.createElement("div", { className: "op-preview-label", style: { marginBottom: 8 } }, "Mahnungen pro Mieter"),
+      /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, groups.map((g) => {
+        const isOff = excluded.has(g.party);
+        return /* @__PURE__ */ React.createElement(
+          "div",
+          {
+            key: g.party,
+            style: {
+              display: "grid",
+              gridTemplateColumns: "24px 1fr auto 100px",
+              gap: 12,
+              alignItems: "center",
+              padding: "10px 12px",
+              background: isOff ? "var(--bg-soft)" : "var(--bg-card)",
+              border: "1px solid var(--line)",
+              borderRadius: 4,
+              opacity: isOff ? 0.55 : 1,
+              transition: "opacity 0.1s"
+            }
+          },
+          /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: !isOff, onChange: () => toggle(g.party) }),
+          /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: 13 } }, g.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-3)", marginTop: 2 } }, g.items.length, " ", g.items.length === 1 ? "Posten" : "Posten", " \xB7", " ", "\xC4lteste seit ", Math.max(...g.items.map((i) => i.alter_tage)), " Tagen")),
+          /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-3)", textAlign: "center" } }, "Stufe", /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("span", { style: { color: g.nextStufe >= 4 ? "var(--accent)" : "var(--ink)", fontWeight: 600, fontSize: 13 } }, "\u2192 ", g.nextStufe === 1 ? "ZE" : g.nextStufe === 4 ? "Letzte" : `M${g.nextStufe - 1}`)),
+          /* @__PURE__ */ React.createElement("div", { style: { textAlign: "right", fontVariantNumeric: "tabular-nums" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600 } }, fmtEUR_op(g.sum + g.gebuehr)), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: "var(--ink-3)" } }, "inkl. ", fmtEUR_op(g.gebuehr), " Geb\xFChr"))
+        );
+      })),
+      /* @__PURE__ */ React.createElement("div", { className: "op-preview", style: { marginTop: 14 } }, /* @__PURE__ */ React.createElement("div", { className: "op-preview-row is-total" }, /* @__PURE__ */ React.createElement("span", { className: "op-preview-key" }, "\u03A3 Sammelmahnung (", aktiv.length, " Schreiben)"), /* @__PURE__ */ React.createElement("span", { className: "op-preview-val" }, fmtEUR_op(totalSum))))
+    );
+  }
+  Object.assign(window, {
+    primaryActionFor,
+    ActionCell: ActionCell2,
+    Modal,
+    MahnungModal: MahnungModal2,
+    ZahlungModal: ZahlungModal2,
+    GuthabenAuszahlenModal: GuthabenAuszahlenModal2,
+    ZuordnenModal: ZuordnenModal2,
+    SammelmahnungModal: SammelmahnungModal2,
+    Toast: Toast2
+  });
+
+  // ../hausverwaltung/public/op_workflow/op-app.jsx
+  var { useState: useStateA0, useMemo: useMemoA0, useEffect: useEffectA0 } = React;
+  var OP_TWEAK_DEFAULTS = (
+    /*EDITMODE-BEGIN*/
+    {
+      "layout": "flat",
+      "showAktion": true,
+      "density": "regular",
+      "gruppierung": "keine",
+      "showObjekt": true
+    }
+  );
+  var MODE_LABEL = {
+    "Forderungen": "Forderungen",
+    "Rechnungen": "Rechnungen",
+    "Beides": "Beides"
+  };
+  var MODE_SUB = {
+    "Forderungen": "Mieter schulden uns",
+    "Rechnungen": "Wir schulden Lieferanten",
+    "Beides": "Bilanzielle Gesamtsicht"
+  };
+  function OpApp() {
+    const [t, setTweak] = useTweaks(OP_TWEAK_DEFAULTS);
+    const { partyName } = window.OFFENE_POSTEN;
+    const [ALL_ROWS, setAllRows] = React.useState(window.OFFENE_POSTEN.rows);
+    const [MAHN_ROWS, setMahnRows] = React.useState(window.OFFENE_POSTEN.mahnkandidaten || []);
+    const [isLoading, setIsLoading] = React.useState(false);
+    React.useEffect(() => {
+      const onRefresh = () => {
+        setAllRows([...window.OFFENE_POSTEN.rows]);
+        setMahnRows([...window.OFFENE_POSTEN.mahnkandidaten || []]);
+        setSelected(/* @__PURE__ */ new Set());
+      };
+      const onMahnRefresh = () => setMahnRows([...window.OFFENE_POSTEN.mahnkandidaten || []]);
+      const onLoadStart = () => setIsLoading(true);
+      const onLoadEnd = () => setIsLoading(false);
+      window.addEventListener("op-data-refreshed", onRefresh);
+      window.addEventListener("op-mahn-data-refreshed", onMahnRefresh);
+      window.addEventListener("op-loading-start", onLoadStart);
+      window.addEventListener("op-loading-end", onLoadEnd);
+      return () => {
+        window.removeEventListener("op-data-refreshed", onRefresh);
+        window.removeEventListener("op-mahn-data-refreshed", onMahnRefresh);
+        window.removeEventListener("op-loading-start", onLoadStart);
+        window.removeEventListener("op-loading-end", onLoadEnd);
+      };
+    }, []);
+    const [view, setView] = useStateA0(() => {
+      const params = new URLSearchParams(window.location.search || "");
+      return params.get("view") === "mahnwesen" || frappe.route_options?.view === "mahnwesen" ? "mahnwesen" : "op";
+    });
+    const [mode, setMode] = useStateA0("Forderungen");
+    const [sortierung, setSortierung] = useStateA0("F\xE4llig am");
+    const [sortDir, setSortDir] = useStateA0("asc");
+    const [showSettled, setShowSettled] = useStateA0(false);
+    const [showWrittenOff, setShowWrittenOff] = useStateA0(false);
+    const [search, setSearch] = useStateA0("");
+    const [activeChip, setActiveChip] = useStateA0(null);
+    const [directionFilter, setDirectionFilter] = useStateA0("alle");
+    const [partyFilter, setPartyFilter] = useStateA0("");
+    const [partySearch, setPartySearch] = useStateA0("");
+    const [selected, setSelected] = useStateA0(() => /* @__PURE__ */ new Set());
+    const [immoFilter, setImmoFilter] = useStateA0(() => /* @__PURE__ */ new Set());
+    const _initNow = /* @__PURE__ */ new Date();
+    const _initPad = (n) => String(n).padStart(2, "0");
+    const _initMonthStart = `${_initNow.getFullYear()}-${_initPad(_initNow.getMonth() + 1)}-01`;
+    const _initMonthEnd = `${_initNow.getFullYear()}-${_initPad(_initNow.getMonth() + 1)}-${_initPad(new Date(_initNow.getFullYear(), _initNow.getMonth() + 1, 0).getDate())}`;
+    const [datumVon, setDatumVon] = useStateA0(_initMonthStart);
+    const [datumBis, setDatumBis] = useStateA0(_initMonthEnd);
+    const _didInitRef = React.useRef(false);
+    React.useEffect(() => {
+      if (!_didInitRef.current) {
+        _didInitRef.current = true;
+        return;
+      }
+      const timer = setTimeout(() => {
+        window.OP_ADAPTER.refresh({
+          mode: "Beides",
+          von_faelligkeit: datumVon,
+          bis_faelligkeit: datumBis,
+          show_settled: showSettled ? 1 : 0,
+          show_written_off: showWrittenOff ? 1 : 0
+        });
+      }, 300);
+      return () => clearTimeout(timer);
+    }, [datumVon, datumBis, showSettled, showWrittenOff]);
+    const [modal, setModal] = useStateA0(null);
+    const [toast, setToast] = useStateA0(null);
+    const [expandedMahnRows, setExpandedMahnRows] = useStateA0(() => /* @__PURE__ */ new Set());
+    const mahnCandidateByInvoice = useMemoA0(() => {
+      const map = /* @__PURE__ */ new Map();
+      (MAHN_ROWS || []).forEach((candidate) => {
+        (candidate.invoices || []).forEach((invoice) => {
+          if (invoice.sales_invoice)
+            map.set(invoice.sales_invoice, candidate);
+        });
+      });
+      return map;
+    }, [MAHN_ROWS]);
+    const toggleMahnwesenForRow = (row) => {
+      setExpandedMahnRows((prev) => {
+        const next = new Set(prev);
+        next.has(row.belegnummer) ? next.delete(row.belegnummer) : next.add(row.belegnummer);
+        return next;
+      });
+      setSelected(/* @__PURE__ */ new Set());
+    };
+    const handleAction = async (key, row) => {
+      try {
+        if (key === "mahnwesen")
+          toggleMahnwesenForRow(row);
+        else if (key === "mahnung" || key === "sammelmahnung")
+          setModal({ type: "mahnung", row });
+        else if (key === "zahlung_anlegen")
+          setModal({ type: "zahlung", row });
+        else if (key === "zuordnen")
+          setModal({ type: "zuordnen", row });
+        else if (key === "guthaben_auszahlen")
+          setModal({ type: "guthaben", row });
+        else if (key === "mieterkonto") {
+          window.OP_ACTIONS.openMieterkonto(row);
+        } else if (key === "abschreiben") {
+          const result = await window.OP_ACTIONS.writeOff(row, {
+            remarks: `Abschreibung aus OP-Workflow vorbereitet: ${row.belegnummer}`
+          });
+          setToast(`Journal Entry Draft erstellt: ${result.journal_entry}`);
+        } else if (key === "beleg")
+          window.OP_ACTIONS.openBeleg(row);
+        else if (key === "kontakt")
+          setToast(`Kontakt: ${window.OFFENE_POSTEN.partyName(row.party)}`);
+        else if (key === "notiz")
+          setToast("Notiz-Dialog (mock)");
+        else if (key === "stundung") {
+          await window.OP_ACTIONS.setStundungComment(row, { grund: "Stundung im OP-Workflow markiert" });
+          setToast(`Stundung dokumentiert: ${row.belegnummer}`);
+        } else if (key === "kl\xE4rung")
+          setToast(`Status: in Kl\xE4rung \u2192 ${row.belegnummer}`);
+        else if (key === "inkasso")
+          setToast(`Inkasso-Vorgang er\xF6ffnet: ${row.belegnummer}`);
+        else
+          setToast(`Aktion: ${key}`);
+      } catch (err) {
+        console.error("op action failed", err);
+      }
+    };
+    const countsByMode = useMemoA0(() => {
+      const cnt = { "Forderungen": 0, "Rechnungen": 0, "Beides": 0 };
+      ALL_ROWS.forEach((r) => {
+        if (Math.abs(r.offen) < 0.01)
+          return;
+        cnt[r.art] = (cnt[r.art] || 0) + 1;
+        cnt["Beides"] += 1;
+      });
+      return cnt;
+    }, [ALL_ROWS]);
+    const modeRows = useMemoA0(() => {
+      return ALL_ROWS.filter((r) => mode === "Beides" || r.art === mode);
+    }, [mode, ALL_ROWS]);
+    const mahnStats = useMemoA0(() => {
+      const reif = modeRows.filter((r) => {
+        if (r.status === "Written Off")
+          return false;
+        if (r.art !== "Forderungen")
+          return false;
+        if (r.belegart === "Payment Entry")
+          return false;
+        if (r.offen <= 0)
+          return false;
+        return r.alter_tage > 0 && (r.mahnstufe || 0) < 4;
+      });
+      const sum = reif.reduce((a, r) => a + r.offen, 0);
+      const partySet = new Set(reif.map((r) => r.party));
+      const byStufe = { m0: 0, m1: 0, m2: 0, m3: 0 };
+      reif.forEach((r) => {
+        byStufe[`m${r.mahnstufe || 0}`] = (byStufe[`m${r.mahnstufe || 0}`] || 0) + 1;
+      });
+      const mahnreifIds = new Set(reif.map((r) => r.belegnummer));
+      return { count: reif.length, sum, parties: partySet.size, byStufe, rows: reif, mahnreifIds };
+    }, [modeRows]);
+    const availableImmos = useMemoA0(() => {
+      const map = /* @__PURE__ */ new Map();
+      modeRows.forEach((r) => {
+        const cc = r.kostenstelle;
+        if (!cc)
+          return;
+        if (!map.has(cc))
+          map.set(cc, { cc, label: window.OFFENE_POSTEN.ccLabel[cc] || cc, count: 0 });
+        map.get(cc).count += 1;
+      });
+      return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
+    }, [modeRows]);
+    const availableParties = useMemoA0(() => {
+      const map = /* @__PURE__ */ new Map();
+      modeRows.forEach((r) => {
+        if (!r.party)
+          return;
+        if (!map.has(r.party)) {
+          map.set(r.party, {
+            id: r.party,
+            label: partyName(r.party) || r.party,
+            count: 0
+          });
+        }
+        map.get(r.party).count += 1;
+      });
+      return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
+    }, [modeRows, partyName]);
+    const chipCounts = useMemoA0(() => ({
+      overdue: modeRows.filter((r) => r.alter_tage > 0 && r.status !== "Written Off" && Math.abs(r.offen) > 0.01).length,
+      mahnung: modeRows.filter((r) => r.mahnstufe && r.mahnstufe > 0).length,
+      gt1000: modeRows.filter((r) => Math.abs(r.offen) >= 1e3).length,
+      guthaben: modeRows.filter((r) => r.offen < -0.01).length
+    }), [modeRows]);
+    const filteredRows = useMemoA0(() => {
+      let rows = modeRows;
+      if (immoFilter.size > 0)
+        rows = rows.filter((r) => immoFilter.has(r.kostenstelle));
+      if (partyFilter)
+        rows = rows.filter((r) => r.party === partyFilter);
+      if (directionFilter !== "alle")
+        rows = rows.filter((r) => r.zahlungsrichtung === directionFilter);
+      if (datumVon)
+        rows = rows.filter((r) => (r.faellig_am || "") >= datumVon);
+      if (datumBis)
+        rows = rows.filter((r) => (r.faellig_am || "") <= datumBis);
+      if (!showSettled)
+        rows = rows.filter((r) => Math.abs(r.offen) > 0.01);
+      if (!showWrittenOff)
+        rows = rows.filter((r) => r.status !== "Written Off");
+      if (activeChip === "overdue")
+        rows = rows.filter((r) => r.alter_tage > 0 && r.status !== "Written Off");
+      if (activeChip === "mahnung")
+        rows = rows.filter((r) => r.mahnstufe && r.mahnstufe > 0);
+      if (activeChip === "gt1000")
+        rows = rows.filter((r) => Math.abs(r.offen) >= 1e3);
+      if (activeChip === "guthaben")
+        rows = rows.filter((r) => r.offen < -0.01);
+      if (search.trim()) {
+        const q = search.toLowerCase();
+        rows = rows.filter((r) => (partyName(r.party) || "").toLowerCase().includes(q) || (r.belegnummer || "").toLowerCase().includes(q) || (r.party || "").toLowerCase().includes(q) || (r.bemerkungen || "").toLowerCase().includes(q));
+      }
+      const cmp = (a, b) => {
+        let r = 0;
+        if (sortierung === "Offener Betrag absteigend")
+          r = Math.abs(b.offen) - Math.abs(a.offen);
+        else if (sortierung === "Offener Betrag")
+          r = a.offen - b.offen;
+        else if (sortierung === "Buchungsdatum")
+          r = (a.buchungsdatum || "").localeCompare(b.buchungsdatum || "");
+        else if (sortierung === "Mieter")
+          r = (window.OFFENE_POSTEN.partyName(a.party) || "").localeCompare(window.OFFENE_POSTEN.partyName(b.party) || "");
+        else if (sortierung === "Status")
+          r = (a.status || "").localeCompare(b.status || "");
+        else if (sortierung === "Richtung")
+          r = (a.zahlungsrichtung || "").localeCompare(b.zahlungsrichtung || "");
+        else if (sortierung === "Richtung: Geld bekommen zuerst")
+          r = (a.zahlungsrichtung === "Geld bekommen" ? -1 : 1) - (b.zahlungsrichtung === "Geld bekommen" ? -1 : 1);
+        else if (sortierung === "Richtung: Geld bezahlen zuerst")
+          r = (a.zahlungsrichtung === "Geld bezahlen / erstatten" ? -1 : 1) - (b.zahlungsrichtung === "Geld bezahlen / erstatten" ? -1 : 1);
+        else if (sortierung === "Immobilie") {
+          const ka = window.OFFENE_POSTEN.ccLabel[a.kostenstelle] || a.kostenstelle || "";
+          const kb = window.OFFENE_POSTEN.ccLabel[b.kostenstelle] || b.kostenstelle || "";
+          r = ka.localeCompare(kb);
+        } else if (sortierung === "\xC4lteste zuerst" || sortierung === "Alter")
+          r = (b.alter_tage || 0) - (a.alter_tage || 0);
+        else
+          r = (a.faellig_am || "").localeCompare(b.faellig_am || "");
+        if (r === 0)
+          r = (a.faellig_am || "").localeCompare(b.faellig_am || "");
+        if (r === 0)
+          r = (a.belegnummer || "").localeCompare(b.belegnummer || "");
+        return sortDir === "desc" ? -r : r;
+      };
+      const sorted = [...rows].sort(cmp);
+      return sorted;
+    }, [modeRows, immoFilter, partyFilter, directionFilter, datumVon, datumBis, showSettled, showWrittenOff, activeChip, search, sortierung, sortDir]);
+    const stats = useMemoA0(() => {
+      const positiveOpen = filteredRows.filter((r) => r.offen > 0 && r.status !== "Written Off");
+      const summe = positiveOpen.reduce((a, r) => a + r.offen, 0);
+      const ueberfaellig = positiveOpen.filter((r) => r.alter_tage > 0).reduce((a, r) => a + r.offen, 0);
+      const guthabenSum = filteredRows.filter((r) => r.offen < -0.01).reduce((a, r) => a + Math.abs(r.offen), 0);
+      const parties = new Set(positiveOpen.map((r) => r.party));
+      const oldest = positiveOpen.reduce((max, r) => Math.max(max, r.alter_tage || 0), 0);
+      const buckets = { b0: 0, b1: 0, b2: 0, b3: 0, b4: 0 };
+      positiveOpen.forEach((r) => {
+        const b = bucketOf(r.alter_tage);
+        if (b)
+          buckets[b.key] += r.offen;
+      });
+      return { summe, ueberfaellig, guthabenSum, parties: parties.size, oldest, buckets };
+    }, [filteredRows]);
+    const selectableIds = useMemoA0(() => new Set(filteredRows.filter((r) => r.can_write_off).map((r) => r.belegnummer)), [filteredRows]);
+    const selectedRows = useMemoA0(() => filteredRows.filter((r) => selected.has(r.belegnummer)), [filteredRows, selected]);
+    React.useEffect(() => {
+      const visibleIds = new Set(filteredRows.map((r) => r.belegnummer));
+      setSelected((prev) => {
+        const next = new Set([...prev].filter((id) => visibleIds.has(id)));
+        return next.size === prev.size ? prev : next;
+      });
+    }, [filteredRows]);
+    const selectedSum = selectedRows.reduce((a, r) => a + r.offen, 0);
+    const toggleSel = (id) => {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.has(id) ? next.delete(id) : next.add(id);
+        return next;
+      });
+    };
+    const toggleSelAll = () => {
+      if (selected.size === selectableIds.size)
+        setSelected(/* @__PURE__ */ new Set());
+      else
+        setSelected(new Set(selectableIds));
+    };
+    const exportCsv = () => {
+      const cols = [
+        ["faellig_am", "F\xE4llig am"],
+        ["alter_tage", "Alter Tage"],
+        ["party", mode === "Rechnungen" ? "Lieferant" : "Mieter"],
+        ["kostenstelle", "Immobilie/Kostenstelle"],
+        ["belegart", "Belegart"],
+        ["belegnummer", "Belegnummer"],
+        ["bemerkungen", "Bemerkungen"],
+        ["status", "Status"],
+        ["rechnungsbetrag", "Rechnungsbetrag"],
+        ["bezahlt", "Bezahlt"],
+        ["offen", "Offen"],
+        ["zahlungsrichtung", "Zahlungsrichtung"]
+      ];
+      const esc = (value) => {
+        const text = value == null ? "" : String(value);
+        return /[",\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+      };
+      const csv = [
+        cols.map(([, label]) => esc(label)).join(";"),
+        ...filteredRows.map((row) => cols.map(([key]) => esc(row[key])).join(";"))
+      ].join("\n");
+      const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `offene-posten-${mode.toLowerCase()}-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    };
+    const openBulkDunning = (rows) => {
+      const candidates = rows.filter(
+        (r) => r.art === "Forderungen" && r.belegart === "Sales Invoice" && r.offen > 0.01 && r.alter_tage > 0 && r.status !== "Written Off"
+      );
+      if (!candidates.length) {
+        setToast("Keine mahnf\xE4higen Forderungen in der Auswahl.");
+        return;
+      }
+      setSelected(new Set(candidates.map((r) => r.belegnummer)));
+      setModal({ type: "sammelmahnung", rows: candidates });
+    };
+    const openCandidateDunning = (candidate) => {
+      const rows = (candidate.invoices || []).map((invoice) => ({
+        art: "Forderungen",
+        party_type: "Customer",
+        party: candidate.customer,
+        buchungsdatum: invoice.posting_date,
+        faellig_am: invoice.due_date,
+        belegart: "Sales Invoice",
+        belegnummer: invoice.sales_invoice,
+        rechnungsbetrag: invoice.grand_total,
+        bezahlt: Math.max((invoice.grand_total || 0) - (invoice.outstanding_amount || 0), 0),
+        offen: invoice.outstanding_amount,
+        party_account: null,
+        kostenstelle: invoice.cost_center,
+        bemerkungen: invoice.remarks || invoice.mietabrechnung_id || "",
+        status: invoice.status,
+        zahlungsrichtung: "Geld bekommen",
+        alter_tage: candidate.oldest_age_days || 0,
+        can_write_off: true,
+        mahnstufe: Math.max((candidate.next_level || 1) - 1, 0),
+        dunning_type: candidate.next_dunning_type || "",
+        serienbrief_vorlage: candidate.serienbrief_vorlage || ""
+      }));
+      if (!rows.length) {
+        setToast("Keine offenen Rechnungen f\xFCr diese Mahnung.");
+        return;
+      }
+      setModal({
+        type: rows.length === 1 ? "mahnung" : "sammelmahnung",
+        row: rows[0],
+        rows
+      });
+    };
+    const openCandidatesBulkDunning = (candidates) => {
+      const rows = candidates.flatMap((candidate) => (candidate.invoices || []).map((invoice) => ({
+        art: "Forderungen",
+        party_type: "Customer",
+        party: candidate.customer,
+        buchungsdatum: invoice.posting_date,
+        faellig_am: invoice.due_date,
+        belegart: "Sales Invoice",
+        belegnummer: invoice.sales_invoice,
+        rechnungsbetrag: invoice.grand_total,
+        bezahlt: Math.max((invoice.grand_total || 0) - (invoice.outstanding_amount || 0), 0),
+        offen: invoice.outstanding_amount,
+        party_account: null,
+        kostenstelle: invoice.cost_center,
+        bemerkungen: invoice.remarks || invoice.mietabrechnung_id || "",
+        status: invoice.status,
+        zahlungsrichtung: "Geld bekommen",
+        alter_tage: candidate.oldest_age_days || 0,
+        can_write_off: true,
+        mahnstufe: Math.max((candidate.next_level || 1) - 1, 0),
+        dunning_type: candidate.next_dunning_type || "",
+        serienbrief_vorlage: candidate.serienbrief_vorlage || ""
+      })));
+      if (!rows.length) {
+        setToast("Keine offenen Rechnungen f\xFCr eine Sammelmahnung.");
+        return;
+      }
+      setModal({ type: "sammelmahnung", rows });
+    };
+    const writeOffSelected = async () => {
+      const candidates = selectedRows.filter((r) => r.can_write_off);
+      if (!candidates.length) {
+        setToast("Keine abschreibbaren Sales-Invoice-Forderungen ausgew\xE4hlt.");
+        return;
+      }
+      for (const row of candidates) {
+        await window.OP_ACTIONS.writeOff(row, {
+          remarks: `Abschreibung aus OP-Workflow vorbereitet: ${row.belegnummer}`
+        });
+      }
+      setSelected(/* @__PURE__ */ new Set());
+      setToast(`${candidates.length} Abschreibungs-Draft${candidates.length === 1 ? "" : "s"} erstellt.`);
+    };
+    const grouped = useMemoA0(() => {
+      if (t.gruppierung === "keine")
+        return null;
+      const keyFn = t.gruppierung === "objekt" ? (r) => r.kostenstelle || "\u2014" : (r) => r.party;
+      const labelFn = t.gruppierung === "objekt" ? (k) => window.OFFENE_POSTEN.ccLabel[k] || k : (k) => partyName(k);
+      const map = /* @__PURE__ */ new Map();
+      filteredRows.forEach((r) => {
+        const k = keyFn(r);
+        if (!map.has(k))
+          map.set(k, []);
+        map.get(k).push(r);
+      });
+      return [...map.entries()].map(([key, rows]) => {
+        const sum = rows.reduce((a, r) => a + r.offen, 0);
+        const overdue = rows.reduce((a, r) => a + (r.alter_tage > 0 ? r.offen : 0), 0);
+        const buckets = { b0: 0, b1: 0, b2: 0, b3: 0, b4: 0 };
+        rows.forEach((r) => {
+          if (r.offen > 0) {
+            const b = bucketOf(r.alter_tage);
+            if (b)
+              buckets[b.key] += r.offen;
+          }
+        });
+        const maxAge = rows.reduce((m, r) => Math.max(m, r.alter_tage || 0), 0);
+        const maxMahn = rows.reduce((m, r) => Math.max(m, r.mahnstufe || 0), 0);
+        const partySet = new Set(rows.map((r) => r.party));
+        return {
+          key,
+          label: labelFn(key),
+          subLabel: t.gruppierung === "objekt" ? `${partySet.size} ${partySet.size === 1 ? "Mieter" : "Mieter"} \xB7 ${rows.length} ${rows.length === 1 ? "Posten" : "Posten"}` : `${key} \xB7 ${rows.length} ${rows.length === 1 ? "Posten" : "Posten"}`,
+          rows,
+          sum,
+          overdue,
+          buckets,
+          maxAge,
+          maxMahn
+        };
+      }).sort((a, b) => b.sum - a.sum);
+    }, [filteredRows, t.gruppierung]);
+    return /* @__PURE__ */ React.createElement("div", { className: "mk-app" }, /* @__PURE__ */ React.createElement("div", { className: "mk-topbar", "data-screen-label": "Topbar" }, /* @__PURE__ */ React.createElement("div", { className: "mk-topbar-left" }, /* @__PURE__ */ React.createElement("h1", null, "Noch offene Rechnungen und Forderungen", isLoading && /* @__PURE__ */ React.createElement("span", { style: { display: "inline-block", marginLeft: 10, width: 14, height: 14, border: "2px solid #ccc", borderTopColor: "#666", borderRadius: "50%", animation: "op-spin 0.8s linear infinite", verticalAlign: "middle" } })), /* @__PURE__ */ React.createElement("span", { className: "mk-crumb" }, "Hausverwaltung \xB7 Berichte")), /* @__PURE__ */ React.createElement("div", { className: "mk-topbar-actions" }, /* @__PURE__ */ React.createElement("a", { className: "mk-btn mk-btn-ghost", href: "/app/mieterkonto-workflow" }, "\u2190 Mieterkonto"), /* @__PURE__ */ React.createElement("button", { className: "mk-btn mk-btn-ghost", onClick: () => window.print() }, "Drucken"), /* @__PURE__ */ React.createElement("button", { className: "mk-btn mk-btn-ghost", onClick: exportCsv }, "Export CSV"), /* @__PURE__ */ React.createElement("button", { className: "mk-btn mk-btn-primary", onClick: () => openBulkDunning(mahnStats.rows) }, "Sammelmahnung"))), /* @__PURE__ */ React.createElement("main", { className: "mk-main", "data-screen-label": `Mode ${mode}` }, /* @__PURE__ */ React.createElement("div", { className: "op-view-tabs" }, /* @__PURE__ */ React.createElement("button", { className: `op-view-tab ${view === "op" ? "is-active" : ""}`, onClick: () => setView("op") }, "Offene Posten"), /* @__PURE__ */ React.createElement("button", { className: `op-view-tab ${view === "mahnwesen" ? "is-active" : ""}`, onClick: () => setView("mahnwesen") }, "Mahnwesen ", /* @__PURE__ */ React.createElement("span", { className: "op-count" }, MAHN_ROWS.length))), view === "op" && /* @__PURE__ */ React.createElement("div", { className: "op-mode-bar" }, /* @__PURE__ */ React.createElement("div", { className: "op-mode-tabs" }, ["Forderungen", "Rechnungen", "Beides"].map((m) => /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: m,
+        className: `op-mode-tab ${mode === m ? "is-active" : ""}`,
+        onClick: () => {
+          setMode(m);
+          setSelected(/* @__PURE__ */ new Set());
+          setActiveChip(null);
+          setPartyFilter("");
+          setPartySearch("");
+        }
+      },
+      /* @__PURE__ */ React.createElement("span", null, MODE_LABEL[m]),
+      /* @__PURE__ */ React.createElement("span", { className: "op-count" }, countsByMode[m])
+    ))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "var(--ink-3)", textAlign: "right" } }, /* @__PURE__ */ React.createElement("div", null, MODE_SUB[mode]), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 2 } }, "Stichtag: ", fmtDate_op(window.OFFENE_POSTEN.TODAY)))), view === "mahnwesen" ? /* @__PURE__ */ React.createElement(
+      MahnwesenView,
+      {
+        rows: MAHN_ROWS,
+        search,
+        setSearch,
+        onCreateDunning: openCandidateDunning,
+        onCreateBulkDunning: openCandidatesBulkDunning
+      }
+    ) : /* @__PURE__ */ React.createElement(React.Fragment, null, mahnStats.count > 0 && mode !== "Rechnungen" && /* @__PURE__ */ React.createElement("div", { className: "op-mahn-banner" }, /* @__PURE__ */ React.createElement("span", { className: "op-mahn-badge" }, mahnStats.count), /* @__PURE__ */ React.createElement("span", { className: "op-mahn-banner-headline" }, mahnStats.count, " Posten ", /* @__PURE__ */ React.createElement("strong", null, "mahnreif")), /* @__PURE__ */ React.createElement("span", { className: "op-mahn-banner-meta" }, "bei ", /* @__PURE__ */ React.createElement("strong", null, mahnStats.parties), " ", mahnStats.parties === 1 ? "Mieter" : "Mietern", " \xB7 \u03A3 ", /* @__PURE__ */ React.createElement("strong", null, fmtEUR_op(mahnStats.sum))), /* @__PURE__ */ React.createElement("span", { className: "op-mahn-stufes" }, mahnStats.byStufe.m0 > 0 && /* @__PURE__ */ React.createElement("span", null, "\u2192 ZE ", /* @__PURE__ */ React.createElement("strong", null, mahnStats.byStufe.m0)), mahnStats.byStufe.m1 > 0 && /* @__PURE__ */ React.createElement("span", null, "\u2192 M1 ", /* @__PURE__ */ React.createElement("strong", null, mahnStats.byStufe.m1)), mahnStats.byStufe.m2 > 0 && /* @__PURE__ */ React.createElement("span", null, "\u2192 M2 ", /* @__PURE__ */ React.createElement("strong", null, mahnStats.byStufe.m2)), mahnStats.byStufe.m3 > 0 && /* @__PURE__ */ React.createElement("span", null, "\u2192 Letzte ", /* @__PURE__ */ React.createElement("strong", null, mahnStats.byStufe.m3))), /* @__PURE__ */ React.createElement("span", { className: "op-mahn-banner-spacer" }), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: "op-mahn-banner-secondary",
+        onClick: () => setActiveChip(activeChip === "overdue" ? null : "overdue")
+      },
+      activeChip === "overdue" ? "Filter zur\xFCcksetzen" : "Nur diese zeigen"
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: "op-mahn-banner-cta",
+        onClick: () => {
+          setSelected(new Set(mahnStats.rows.map((r) => r.belegnummer)));
+          setModal({ type: "sammelmahnung", rows: mahnStats.rows });
+        }
+      },
+      "Sammelmahnung erstellen \u2192"
+    )), /* @__PURE__ */ React.createElement("div", { className: "op-stats" }, /* @__PURE__ */ React.createElement("div", { className: `op-stat is-primary` }, /* @__PURE__ */ React.createElement("div", { className: "op-stat-label" }, "Offen gesamt"), /* @__PURE__ */ React.createElement("div", { className: "op-stat-value" }, fmtEUR_op(stats.summe)), /* @__PURE__ */ React.createElement("div", { className: "op-stat-sub" }, filteredRows.filter((r) => r.offen > 0 && r.status !== "Written Off").length, " Posten \xB7", " ", stats.parties, " ", mode === "Rechnungen" ? "Lieferanten" : "Mieter")), /* @__PURE__ */ React.createElement("div", { className: "op-stat" }, /* @__PURE__ */ React.createElement("div", { className: "op-stat-label" }, "davon \xFCberf\xE4llig"), /* @__PURE__ */ React.createElement("div", { className: "op-stat-value", style: { color: "var(--accent)" } }, fmtEUR_op(stats.ueberfaellig)), /* @__PURE__ */ React.createElement("div", { className: "op-stat-sub" }, (stats.ueberfaellig / Math.max(stats.summe, 1) * 100).toFixed(0), " % des Offen-Saldos")), /* @__PURE__ */ React.createElement("div", { className: "op-stat" }, /* @__PURE__ */ React.createElement("div", { className: "op-stat-label" }, "\xC4lteste Forderung"), /* @__PURE__ */ React.createElement("div", { className: "op-stat-value" }, stats.oldest, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 14, color: "var(--ink-3)", marginLeft: 4 } }, "Tage"))), /* @__PURE__ */ React.createElement("div", { className: "op-stat" }, /* @__PURE__ */ React.createElement("div", { className: "op-stat-label" }, "Guthaben (auszuzahlen)"), /* @__PURE__ */ React.createElement("div", { className: "op-stat-value" }, stats.guthabenSum > 0 ? fmtEUR_op(stats.guthabenSum) : "\u2014")), /* @__PURE__ */ React.createElement("div", { className: "op-aging-strip" }, /* @__PURE__ */ React.createElement("div", { className: "op-stat-label" }, "Aging nach F\xE4lligkeit"), /* @__PURE__ */ React.createElement(AgingStrip, { buckets: stats.buckets }))), /* @__PURE__ */ React.createElement(
+      FilterRow,
+      {
+        availableImmos,
+        immoFilter,
+        setImmoFilter,
+        datumVon,
+        datumBis,
+        setDatumVon,
+        setDatumBis
+      }
+    ), /* @__PURE__ */ React.createElement("div", { className: "op-toolbar" }, /* @__PURE__ */ React.createElement("div", { className: "op-chips" }, /* @__PURE__ */ React.createElement("button", { className: `op-chip ${activeChip === null ? "is-active" : ""}`, onClick: () => setActiveChip(null) }, "Alle ", /* @__PURE__ */ React.createElement("span", { className: "op-chip-count" }, filteredRows.length)), /* @__PURE__ */ React.createElement("button", { className: `op-chip ${activeChip === "overdue" ? "is-active" : ""}`, onClick: () => setActiveChip(activeChip === "overdue" ? null : "overdue") }, "\xDCberf\xE4llig ", /* @__PURE__ */ React.createElement("span", { className: "op-chip-count" }, chipCounts.overdue)), /* @__PURE__ */ React.createElement("button", { className: `op-chip ${activeChip === "mahnung" ? "is-active" : ""}`, onClick: () => setActiveChip(activeChip === "mahnung" ? null : "mahnung") }, "Im Mahnlauf ", /* @__PURE__ */ React.createElement("span", { className: "op-chip-count" }, chipCounts.mahnung)), /* @__PURE__ */ React.createElement("button", { className: `op-chip ${activeChip === "gt1000" ? "is-active" : ""}`, onClick: () => setActiveChip(activeChip === "gt1000" ? null : "gt1000") }, "\u2265 1.000 \u20AC ", /* @__PURE__ */ React.createElement("span", { className: "op-chip-count" }, chipCounts.gt1000)), /* @__PURE__ */ React.createElement("button", { className: `op-chip ${activeChip === "guthaben" ? "is-active" : ""}`, onClick: () => setActiveChip(activeChip === "guthaben" ? null : "guthaben") }, "Guthaben ", /* @__PURE__ */ React.createElement("span", { className: "op-chip-count" }, chipCounts.guthaben)), /* @__PURE__ */ React.createElement("span", { className: "op-chip-separator" }), /* @__PURE__ */ React.createElement("button", { className: `op-chip ${directionFilter === "alle" ? "is-active" : ""}`, onClick: () => setDirectionFilter("alle") }, "Alle Richtungen"), /* @__PURE__ */ React.createElement("button", { className: `op-chip ${directionFilter === "Geld bekommen" ? "is-active" : ""}`, onClick: () => setDirectionFilter("Geld bekommen") }, "Geld bekommen"), /* @__PURE__ */ React.createElement("button", { className: `op-chip ${directionFilter === "Geld bezahlen / erstatten" ? "is-active" : ""}`, onClick: () => setDirectionFilter("Geld bezahlen / erstatten") }, "Geld zahlen"), /* @__PURE__ */ React.createElement("label", { className: "mk-toggle", style: { marginLeft: 10 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: showWrittenOff, onChange: (e) => setShowWrittenOff(e.target.checked) }), "Abgeschriebene"), /* @__PURE__ */ React.createElement("label", { className: "mk-toggle" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: showSettled, onChange: (e) => setShowSettled(e.target.checked) }), "Auch ausgeglichene")), /* @__PURE__ */ React.createElement("div", { className: "op-toolbar-right" }, /* @__PURE__ */ React.createElement(
+      PartyPicker,
+      {
+        value: partyFilter,
+        searchText: partySearch,
+        parties: availableParties,
+        mode,
+        onSearchChange: setPartySearch,
+        onChange: (partyId) => {
+          setPartyFilter(partyId);
+          setSelected(/* @__PURE__ */ new Set());
+        }
+      }
+    ), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        className: "op-search",
+        placeholder: "Beleg oder Bemerkung suchen\u2026",
+        value: search,
+        onChange: (e) => setSearch(e.target.value)
+      }
+    ), /* @__PURE__ */ React.createElement("select", { className: "op-sort-select", value: sortierung, onChange: (e) => {
+      setSortierung(e.target.value);
+      setSortDir("asc");
+    } }, /* @__PURE__ */ React.createElement("option", null, "F\xE4llig am"), /* @__PURE__ */ React.createElement("option", null, "Buchungsdatum"), /* @__PURE__ */ React.createElement("option", null, "\xC4lteste zuerst"), /* @__PURE__ */ React.createElement("option", null, "Offener Betrag absteigend"), /* @__PURE__ */ React.createElement("option", null, "Mieter"), /* @__PURE__ */ React.createElement("option", null, "Immobilie"), /* @__PURE__ */ React.createElement("option", null, "Status"), /* @__PURE__ */ React.createElement("option", null, "Richtung"), /* @__PURE__ */ React.createElement("option", null, "Richtung: Geld bekommen zuerst"), /* @__PURE__ */ React.createElement("option", null, "Richtung: Geld bezahlen zuerst")), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: "mk-btn mk-btn-ghost",
+        title: "Richtung umkehren",
+        onClick: () => setSortDir(sortDir === "asc" ? "desc" : "asc"),
+        style: { padding: "5px 10px", fontSize: 12 }
+      },
+      sortDir === "asc" ? "\u2191 aufst." : "\u2193 abst."
+    ))), selected.size > 0 && /* @__PURE__ */ React.createElement("div", { className: "op-bulkbar" }, /* @__PURE__ */ React.createElement("div", { className: "op-bulkbar-left" }, /* @__PURE__ */ React.createElement("span", { className: "op-bulkbar-count" }, selected.size, " ausgew\xE4hlt"), /* @__PURE__ */ React.createElement("span", { className: "op-bulkbar-sep" }), /* @__PURE__ */ React.createElement("span", { className: "op-bulkbar-sum" }, "\u03A3 offen: ", /* @__PURE__ */ React.createElement("strong", null, fmtEUR_op(selectedSum)))), /* @__PURE__ */ React.createElement("div", { className: "op-bulkbar-actions" }, /* @__PURE__ */ React.createElement("button", { className: "op-bulk-btn", onClick: () => setSelected(/* @__PURE__ */ new Set()) }, "Auswahl aufheben"), /* @__PURE__ */ React.createElement("button", { className: "op-bulk-btn", onClick: () => openBulkDunning(selectedRows) }, "Mahnung erstellen"), /* @__PURE__ */ React.createElement("button", { className: "op-bulk-btn is-primary", onClick: writeOffSelected }, "Ausgew\xE4hlte abschreiben"))), filteredRows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "op-empty" }, /* @__PURE__ */ React.createElement("strong", null, "Keine offenen Posten in dieser Auswahl."), 'Filter \xE4ndern oder \u201EAuch ausgeglichene anzeigen" aktivieren.') : t.gruppierung !== "keine" ? /* @__PURE__ */ React.createElement(
+      GroupedView,
+      {
+        groups: grouped,
+        selected,
+        toggleSel,
+        selectableIds,
+        mode,
+        gruppierung: t.gruppierung,
+        showObjekt: t.showObjekt,
+        onAction: handleAction,
+        mahnCandidateByInvoice,
+        expandedMahnRows,
+        onCreateDunning: openCandidateDunning
+      }
+    ) : /* @__PURE__ */ React.createElement(
+      FlatTable,
+      {
+        rows: filteredRows,
+        selected,
+        toggleSel,
+        selectableIds,
+        toggleSelAll,
+        mode,
+        showAktion: t.showAktion,
+        showObjekt: t.showObjekt,
+        sortierung,
+        sortDir,
+        onSort: (col) => {
+          if (sortierung === col)
+            setSortDir(sortDir === "asc" ? "desc" : "asc");
+          else {
+            setSortierung(col);
+            setSortDir("asc");
+          }
+        },
+        onAction: handleAction,
+        mahnreifIds: mahnStats.mahnreifIds,
+        mahnCandidateByInvoice,
+        expandedMahnRows,
+        onCreateDunning: openCandidateDunning
+      }
+    ), /* @__PURE__ */ React.createElement("div", { className: "op-footer-total" }, /* @__PURE__ */ React.createElement("div", { className: "op-footer-total-label" }, "\u03A3 ", filteredRows.length, " Posten in Auswahl"), /* @__PURE__ */ React.createElement("div", { className: "op-footer-total-value" }, fmtEUR_op(filteredRows.reduce((a, r) => a + r.offen, 0)))))), /* @__PURE__ */ React.createElement(TweaksPanel, { title: "Tweaks" }, /* @__PURE__ */ React.createElement(TweakSection, { label: "Gruppierung" }), /* @__PURE__ */ React.createElement(
+      TweakRadio,
+      {
+        label: "Gruppiert nach",
+        value: t.gruppierung,
+        options: ["keine", "mieter", "objekt"],
+        onChange: (v) => setTweak("gruppierung", v)
+      }
+    ), /* @__PURE__ */ React.createElement("p", { style: { margin: "0 0 4px", fontSize: 10.5, color: "rgba(41,38,27,.55)", lineHeight: 1.4 } }, "Mieter \xB7 pro Partei \xB7 Objekt \xB7 pro Immobilie"), /* @__PURE__ */ React.createElement(TweakSection, { label: "Layout" }), /* @__PURE__ */ React.createElement(
+      TweakRadio,
+      {
+        label: "Dichte",
+        value: t.density,
+        options: ["compact", "regular", "comfy"],
+        onChange: (v) => setTweak("density", v)
+      }
+    ), /* @__PURE__ */ React.createElement(TweakSection, { label: "Spalten" }), /* @__PURE__ */ React.createElement(
+      TweakToggle,
+      {
+        label: "Immobilie anzeigen",
+        value: t.showObjekt,
+        onChange: (v) => setTweak("showObjekt", v)
+      }
+    ), /* @__PURE__ */ React.createElement(
+      TweakToggle,
+      {
+        label: "Aktion-Spalte (Abschreiben)",
+        value: t.showAktion,
+        onChange: (v) => setTweak("showAktion", v)
+      }
+    )), modal?.type === "mahnung" && /* @__PURE__ */ React.createElement(MahnungModal, { row: modal.row, onClose: () => setModal(null), onDone: (result) => {
+      setModal(null);
+      setToast(`Mahnung-Draft erstellt: ${result.dunning}`);
+    } }), modal?.type === "sammelmahnung" && /* @__PURE__ */ React.createElement(SammelmahnungModal, { rows: modal.rows, onClose: () => setModal(null), onDone: (result) => {
+      setModal(null);
+      setToast(`${(result.created || []).length} Mahnung-Drafts erstellt`);
+    } }), modal?.type === "zahlung" && /* @__PURE__ */ React.createElement(ZahlungModal, { row: modal.row, onClose: () => setModal(null), onDone: (result) => {
+      setModal(null);
+      setToast(`Payment Entry Draft erstellt: ${result.payment_entry}`);
+    } }), modal?.type === "guthaben" && /* @__PURE__ */ React.createElement(GuthabenAuszahlenModal, { row: modal.row, onClose: () => setModal(null), onDone: (result) => {
+      setModal(null);
+      setToast(`Auszahlungs-Draft erstellt: ${result.payment_entry}`);
+    } }), modal?.type === "zuordnen" && /* @__PURE__ */ React.createElement(ZuordnenModal, { row: modal.row, onClose: () => setModal(null), onDone: (result) => {
+      setModal(null);
+      setToast(`Payment Reconciliation Draft erstellt: ${result.payment_reconciliation}`);
+    } }), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onClose: () => setToast(null) }));
+  }
+  function partyPickerLabel(party) {
+    if (!party)
+      return "";
+    return party.label && party.label !== party.id ? `${party.label} (${party.id})` : party.id;
+  }
+  function PartyPicker({ value, searchText, parties, mode, onSearchChange, onChange }) {
+    const [open, setOpen] = useStateA0(false);
+    const rootRef = React.useRef(null);
+    const selected = parties.find((party) => party.id === value);
+    const roleLabel = mode === "Rechnungen" ? "Lieferant" : mode === "Beides" ? "Partei" : "Mieter";
+    const q = (searchText || "").trim().toLowerCase();
+    const visibleParties = useMemoA0(() => {
+      if (!q)
+        return parties.slice(0, 80);
+      return parties.filter(
+        (party) => (party.label || "").toLowerCase().includes(q) || (party.id || "").toLowerCase().includes(q)
+      ).slice(0, 80);
+    }, [parties, q]);
+    useEffectA0(() => {
+      const onPointerDown = (event) => {
+        if (!rootRef.current || rootRef.current.contains(event.target))
+          return;
+        setOpen(false);
+      };
+      window.addEventListener("pointerdown", onPointerDown);
+      return () => window.removeEventListener("pointerdown", onPointerDown);
+    }, []);
+    const choose = (party) => {
+      onSearchChange(party ? partyPickerLabel(party) : "");
+      onChange(party?.id || "");
+      setOpen(false);
+    };
+    return /* @__PURE__ */ React.createElement("div", { className: "op-party-picker", ref: rootRef }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        className: "op-party-search",
+        type: "search",
+        value: searchText,
+        placeholder: selected ? partyPickerLabel(selected) : `${roleLabel} suchen`,
+        onFocus: (e) => {
+          e.target.select();
+          setOpen(true);
+        },
+        onChange: (e) => {
+          onSearchChange(e.target.value);
+          setOpen(true);
+        }
+      }
+    ), value && /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        className: "op-party-clear",
+        "aria-label": `${roleLabel}auswahl l\xF6schen`,
+        onClick: () => choose(null)
+      },
+      "\xD7"
+    ), open && /* @__PURE__ */ React.createElement("div", { className: "op-party-menu" }, visibleParties.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "op-party-empty" }, "Keine Treffer") : visibleParties.map((party) => /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        key: party.id,
+        className: `op-party-option ${value === party.id ? "is-selected" : ""}`,
+        onClick: () => choose(party)
+      },
+      /* @__PURE__ */ React.createElement("span", { className: "op-party-option-title" }, partyPickerLabel(party)),
+      /* @__PURE__ */ React.createElement("span", { className: "op-party-option-meta" }, party.count, " ", party.count === 1 ? "Posten" : "Posten")
+    ))));
+  }
+  function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkDunning }) {
+    const [openSet, setOpenSet] = useStateA0(() => /* @__PURE__ */ new Set());
+    const filtered = useMemoA0(() => {
+      const q = (search || "").trim().toLowerCase();
+      if (!q)
+        return rows;
+      return rows.filter(
+        (row) => (row.customer_name || "").toLowerCase().includes(q) || (row.customer || "").toLowerCase().includes(q) || (row.mietvertrag || "").toLowerCase().includes(q) || (row.wohnung || "").toLowerCase().includes(q) || (row.serienbrief_vorlage || "").toLowerCase().includes(q) || (row.invoices || []).some(
+          (invoice) => (invoice.sales_invoice || "").toLowerCase().includes(q) || (invoice.remarks || "").toLowerCase().includes(q) || (invoice.mietabrechnung_id || "").toLowerCase().includes(q)
+        ) || (row.mahnungen || []).some(
+          (mahnung) => (mahnung.name || "").toLowerCase().includes(q) || (mahnung.dunning_type || "").toLowerCase().includes(q)
+        )
+      );
+    }, [rows, search]);
+    const total = filtered.reduce((sum, row) => sum + (row.offen || 0), 0);
+    const toggle = (key) => {
+      setOpenSet((prev) => {
+        const next = new Set(prev);
+        next.has(key) ? next.delete(key) : next.add(key);
+        return next;
+      });
+    };
+    return /* @__PURE__ */ React.createElement("div", { className: "op-mahn-cockpit" }, /* @__PURE__ */ React.createElement("div", { className: "op-mahn-head" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", null, "Mahnwesen"), /* @__PURE__ */ React.createElement("div", { className: "op-mahn-head-sub" }, filtered.length, " Kandidaten \xB7 ", fmtEUR_op(total), " offen \xB7 Stichtag ", fmtDate_op(window.OFFENE_POSTEN.TODAY))), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        className: "op-search",
+        placeholder: "Mieter, Beleg, Wohnung, Vertrag oder Vorlage suchen...",
+        value: search,
+        onChange: (e) => setSearch(e.target.value)
+      }
+    ), /* @__PURE__ */ React.createElement("button", { className: "mk-btn mk-btn-primary", onClick: () => onCreateBulkDunning(filtered), disabled: !filtered.length }, "Sammelmahnung erstellen")), filtered.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "op-empty" }, /* @__PURE__ */ React.createElement("strong", null, "Keine Mahnkandidaten."), "Es gibt aktuell keine \xFCberf\xE4lligen offenen Sales Invoices in dieser Auswahl.") : /* @__PURE__ */ React.createElement("div", { className: "op-mahn-table-wrap" }, /* @__PURE__ */ React.createElement("table", { className: "op-table op-mahn-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { style: { width: 34 } }), /* @__PURE__ */ React.createElement("th", null, "Mieter"), /* @__PURE__ */ React.createElement("th", null, "Wohnung"), /* @__PURE__ */ React.createElement("th", null, "Mietvertrag"), /* @__PURE__ */ React.createElement("th", { className: "is-num" }, "Offen"), /* @__PURE__ */ React.createElement("th", null, "\xC4lteste F\xE4lligkeit"), /* @__PURE__ */ React.createElement("th", null, "Letzte Mahnung"), /* @__PURE__ */ React.createElement("th", null, "N\xE4chste Stufe"), /* @__PURE__ */ React.createElement("th", null, "Serienbrief-Vorlage"), /* @__PURE__ */ React.createElement("th", { style: { width: 170 } }, "Aktionen"))), /* @__PURE__ */ React.createElement("tbody", null, filtered.map((row) => {
+      const open = openSet.has(row.key);
+      const last = (row.mahnungen || [])[0];
+      const drafts = (row.mahnungen || []).filter((mahnung) => mahnung.docstatus === 0);
+      const draft = drafts[0];
+      return /* @__PURE__ */ React.createElement(React.Fragment, { key: row.key }, /* @__PURE__ */ React.createElement("tr", { className: row.draft_warning ? "is-mahn-draft" : "" }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("button", { className: "op-row-toggle", onClick: () => toggle(row.key) }, open ? "\u25BE" : "\u25B8")), /* @__PURE__ */ React.createElement("td", { className: "col-party" }, row.customer_name || row.customer, /* @__PURE__ */ React.createElement("span", { className: "op-party-id" }, row.customer)), /* @__PURE__ */ React.createElement("td", null, row.wohnung || "\u2014"), /* @__PURE__ */ React.createElement("td", null, row.mietvertrag || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "is-num col-offen" }, fmtEUR_op(row.offen)), /* @__PURE__ */ React.createElement("td", null, fmtDate_op(row.oldest_due_date), /* @__PURE__ */ React.createElement("span", { className: "op-party-id" }, row.oldest_age_days || 0, " Tage")), /* @__PURE__ */ React.createElement("td", null, last ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", null, last.dunning_type || last.name, last.docstatus === 0 && /* @__PURE__ */ React.createElement("span", { className: "op-draft-badge" }, "Draft"), drafts.length > 1 && /* @__PURE__ */ React.createElement("span", { className: "op-draft-badge is-multiple" }, drafts.length, " Drafts")), /* @__PURE__ */ React.createElement("span", { className: "op-party-id" }, fmtDate_op(last.posting_date), " \xB7 ", last.status)) : "\u2014"), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement(MahnstufeBadge, { stufe: row.next_level })), /* @__PURE__ */ React.createElement("td", null, row.serienbrief_vorlage || /* @__PURE__ */ React.createElement("span", { className: "op-muted" }, "Default fehlt")), /* @__PURE__ */ React.createElement("td", { className: "op-mahn-actions" }, drafts.length > 1 ? /* @__PURE__ */ React.createElement("button", { className: "op-action-btn is-draft", onClick: () => toggle(row.key) }, "Drafts pr\xFCfen") : draft ? /* @__PURE__ */ React.createElement("button", { className: "op-action-btn is-draft", onClick: () => window.OP_ACTIONS.openDunning(draft.name) }, "Draft \xF6ffnen") : /* @__PURE__ */ React.createElement("button", { className: "op-action-btn is-primary", onClick: () => onCreateDunning(row) }, "Mahnung erstellen"))), open && /* @__PURE__ */ React.createElement("tr", { className: "op-mahn-detail-row" }, /* @__PURE__ */ React.createElement("td", null), /* @__PURE__ */ React.createElement("td", { colSpan: "9" }, /* @__PURE__ */ React.createElement("div", { className: "op-mahn-detail" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "op-preview-label" }, "Offene Rechnungen"), /* @__PURE__ */ React.createElement("table", { className: "op-mini-table" }, /* @__PURE__ */ React.createElement("tbody", null, (row.invoices || []).map((invoice) => /* @__PURE__ */ React.createElement("tr", { key: invoice.sales_invoice }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("button", { className: "op-link-btn", onClick: () => window.OP_ACTIONS.openBeleg({ belegart: "Sales Invoice", belegnummer: invoice.sales_invoice }) }, invoice.sales_invoice)), /* @__PURE__ */ React.createElement("td", null, fmtDate_op(invoice.due_date)), /* @__PURE__ */ React.createElement("td", { className: "is-num" }, fmtEUR_op(invoice.outstanding_amount)), /* @__PURE__ */ React.createElement("td", null, invoice.status)))))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "op-preview-label" }, "Mahnhistorie", drafts.length > 1 && /* @__PURE__ */ React.createElement("span", { className: "op-draft-note" }, "Mehrere offene Drafts. Bitte einen finalisieren oder alte Drafts l\xF6schen.")), (row.mahnungen || []).length ? /* @__PURE__ */ React.createElement("table", { className: "op-mini-table" }, /* @__PURE__ */ React.createElement("tbody", null, row.mahnungen.map((mahnung) => /* @__PURE__ */ React.createElement("tr", { key: mahnung.name }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("button", { className: "op-link-btn", onClick: () => window.OP_ACTIONS.openDunning(mahnung.name) }, mahnung.name)), /* @__PURE__ */ React.createElement("td", null, mahnung.docstatus === 0 ? /* @__PURE__ */ React.createElement("span", { className: "op-draft-badge" }, "Draft") : mahnung.status), /* @__PURE__ */ React.createElement("td", null, mahnung.dunning_type || "\u2014"), /* @__PURE__ */ React.createElement("td", null, mahnung.serienbrief_vorlage || "\u2014"), /* @__PURE__ */ React.createElement("td", null, mahnung.fee_sales_invoice ? /* @__PURE__ */ React.createElement("button", { className: "op-link-btn", onClick: () => window.OP_ACTIONS.openBeleg({ belegart: "Sales Invoice", belegnummer: mahnung.fee_sales_invoice }) }, "Geb\xFChr") : "\u2014"), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("button", { className: "op-link-btn", onClick: () => window.OP_ACTIONS.openDunningPdf(mahnung.name) }, "PDF")))))) : /* @__PURE__ */ React.createElement("div", { className: "op-muted" }, "Noch keine Mahnung zu diesen offenen Rechnungen."))))));
+    })))));
+  }
+  function MahnInlineDetail({ candidate, row, onCreateDunning }) {
+    if (!candidate) {
+      return /* @__PURE__ */ React.createElement("div", { className: "op-mahn-inline" }, /* @__PURE__ */ React.createElement("div", { className: "op-muted" }, "F\xFCr ", row.belegnummer, " wurde kein Mahnwesen-Datensatz gefunden."));
+    }
+    const mahnungen = candidate.mahnungen || [];
+    const drafts = mahnungen.filter((mahnung) => mahnung.docstatus === 0);
+    const draft = drafts[0];
+    return /* @__PURE__ */ React.createElement("div", { className: "op-mahn-inline" }, /* @__PURE__ */ React.createElement("div", { className: "op-mahn-inline-head" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("strong", null, candidate.customer_name || candidate.customer), /* @__PURE__ */ React.createElement("span", null, candidate.wohnung || "\u2014", " \xB7 ", candidate.mietvertrag || "\u2014", " \xB7 ", fmtEUR_op(candidate.offen), " offen")), drafts.length > 1 ? /* @__PURE__ */ React.createElement("button", { className: "op-action-btn is-draft", onClick: () => window.OP_ACTIONS.openDunning(draft.name) }, "Ersten Draft \xF6ffnen") : draft ? /* @__PURE__ */ React.createElement("button", { className: "op-action-btn is-draft", onClick: () => window.OP_ACTIONS.openDunning(draft.name) }, "Draft \xF6ffnen") : /* @__PURE__ */ React.createElement("button", { className: "op-action-btn is-primary", onClick: () => onCreateDunning(candidate) }, "Mahnung erstellen")), drafts.length > 1 && /* @__PURE__ */ React.createElement("div", { className: "op-draft-note" }, "Mehrere offene Drafts. Bitte einen finalisieren oder alte Drafts l\xF6schen."), /* @__PURE__ */ React.createElement("div", { className: "op-mahn-detail" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "op-preview-label" }, "Offene Rechnungen"), /* @__PURE__ */ React.createElement("table", { className: "op-mini-table" }, /* @__PURE__ */ React.createElement("tbody", null, (candidate.invoices || []).map((invoice) => /* @__PURE__ */ React.createElement("tr", { key: invoice.sales_invoice }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("button", { className: "op-link-btn", onClick: () => window.OP_ACTIONS.openBeleg({ belegart: "Sales Invoice", belegnummer: invoice.sales_invoice }) }, invoice.sales_invoice)), /* @__PURE__ */ React.createElement("td", null, fmtDate_op(invoice.due_date)), /* @__PURE__ */ React.createElement("td", { className: "is-num" }, fmtEUR_op(invoice.outstanding_amount)), /* @__PURE__ */ React.createElement("td", null, invoice.status)))))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "op-preview-label" }, "Mahnhistorie"), mahnungen.length ? /* @__PURE__ */ React.createElement("table", { className: "op-mini-table" }, /* @__PURE__ */ React.createElement("tbody", null, mahnungen.map((mahnung) => /* @__PURE__ */ React.createElement("tr", { key: mahnung.name }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("button", { className: "op-link-btn", onClick: () => window.OP_ACTIONS.openDunning(mahnung.name) }, mahnung.name)), /* @__PURE__ */ React.createElement("td", null, mahnung.docstatus === 0 ? /* @__PURE__ */ React.createElement("span", { className: "op-draft-badge" }, "Draft") : mahnung.status), /* @__PURE__ */ React.createElement("td", null, mahnung.dunning_type || "\u2014"), /* @__PURE__ */ React.createElement("td", null, mahnung.serienbrief_vorlage || "\u2014"), /* @__PURE__ */ React.createElement("td", null, mahnung.fee_sales_invoice ? /* @__PURE__ */ React.createElement("button", { className: "op-link-btn", onClick: () => window.OP_ACTIONS.openBeleg({ belegart: "Sales Invoice", belegnummer: mahnung.fee_sales_invoice }) }, "Geb\xFChr") : "\u2014"), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("button", { className: "op-link-btn", onClick: () => window.OP_ACTIONS.openDunningPdf(mahnung.name) }, "PDF")))))) : /* @__PURE__ */ React.createElement("div", { className: "op-muted" }, "Noch keine Mahnung zu diesen offenen Rechnungen."))));
+  }
+  function FlatTable({
+    rows,
+    selected,
+    toggleSel,
+    selectableIds,
+    toggleSelAll,
+    mode,
+    showAktion,
+    showObjekt,
+    sortierung,
+    sortDir,
+    onSort,
+    onAction,
+    mahnreifIds,
+    mahnCandidateByInvoice,
+    expandedMahnRows,
+    onCreateDunning
+  }) {
+    const allChecked = selectableIds.size > 0 && selected.size === selectableIds.size;
+    const someChecked = selected.size > 0 && !allChecked;
+    const SortableTh = ({ col, label, style, className = "" }) => {
+      const active = sortierung === col;
+      const ind = active ? sortDir === "asc" ? "\u25B2" : "\u25BC" : "\u25C7";
+      return /* @__PURE__ */ React.createElement(
+        "th",
+        {
+          style,
+          className: `is-sortable ${active ? "is-sorted" : ""} ${className}`,
+          onClick: () => onSort(col),
+          title: `Nach ${label} sortieren`
+        },
+        label,
+        /* @__PURE__ */ React.createElement("span", { className: "op-sort-ind" }, ind)
+      );
+    };
+    return /* @__PURE__ */ React.createElement("div", { className: "op-table-wrap" }, /* @__PURE__ */ React.createElement("table", { className: "op-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { className: "is-check" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "checkbox",
+        checked: allChecked,
+        ref: (el) => el && (el.indeterminate = someChecked),
+        onChange: toggleSelAll,
+        disabled: selectableIds.size === 0
+      }
+    )), /* @__PURE__ */ React.createElement(SortableTh, { col: "F\xE4llig am", label: "F\xE4llig am", style: { width: 100 } }), /* @__PURE__ */ React.createElement(SortableTh, { col: "Alter", label: "Alter", style: { width: 80 } }), /* @__PURE__ */ React.createElement(SortableTh, { col: "Mieter", label: mode === "Rechnungen" ? "Lieferant" : "Mieter", style: { minWidth: 200 } }), showObjekt && /* @__PURE__ */ React.createElement(SortableTh, { col: "Immobilie", label: "Immobilie", style: { width: 140 } }), /* @__PURE__ */ React.createElement("th", { style: { width: 170 } }, "Beleg"), /* @__PURE__ */ React.createElement("th", null, "Bemerkung"), /* @__PURE__ */ React.createElement(SortableTh, { col: "Status", label: "Status", style: { width: 120 } }), /* @__PURE__ */ React.createElement(SortableTh, { col: "Richtung", label: "Richtung", style: { width: 130 } }), /* @__PURE__ */ React.createElement("th", { className: "is-num", style: { width: 120 } }, "Rechnungsbetrag"), /* @__PURE__ */ React.createElement("th", { className: "is-num", style: { width: 100 } }, "Bezahlt"), /* @__PURE__ */ React.createElement(SortableTh, { col: "Offener Betrag absteigend", label: "Offen", style: { width: 130 }, className: "is-num" }), showAktion && /* @__PURE__ */ React.createElement("th", { style: { width: 200 } }, "Aktion"))), /* @__PURE__ */ React.createElement("tbody", null, rows.map((r) => {
+      const sel = selected.has(r.belegnummer);
+      const isNeg = r.offen < -0.01;
+      const writtenOff = r.status === "Written Off";
+      const mahnreif = mahnreifIds && mahnreifIds.has(r.belegnummer);
+      const mahnOpen = expandedMahnRows?.has(r.belegnummer);
+      const mahnCandidate = mahnCandidateByInvoice?.get(r.belegnummer);
+      const detailColspan = 11 + (showObjekt ? 1 : 0) + (showAktion ? 1 : 0);
+      return /* @__PURE__ */ React.createElement(React.Fragment, { key: r.belegnummer + r.party }, /* @__PURE__ */ React.createElement("tr", { className: `${sel ? "is-selected" : ""} ${writtenOff ? "is-written-off" : ""} ${mahnreif ? "is-mahnreif" : ""} ${mahnOpen ? "is-mahn-open" : ""}` }, /* @__PURE__ */ React.createElement("td", { className: "col-check" }, /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          type: "checkbox",
+          checked: sel,
+          disabled: !r.can_write_off,
+          onChange: () => toggleSel(r.belegnummer)
+        }
+      )), /* @__PURE__ */ React.createElement("td", { className: "col-date" }, fmtDate_op(r.faellig_am)), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement(AgePill, { age: r.alter_tage, faellig_am: r.faellig_am })), /* @__PURE__ */ React.createElement("td", { className: "col-party" }, window.OFFENE_POSTEN.partyName(r.party), /* @__PURE__ */ React.createElement("span", { className: "op-party-id" }, r.party)), showObjekt && /* @__PURE__ */ React.createElement("td", { style: { fontSize: 12.5, color: "var(--ink-2)" } }, window.OFFENE_POSTEN.ccLabel[r.kostenstelle] || r.kostenstelle || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "col-beleg" }, /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "op-link-btn op-beleg-link",
+          onClick: () => window.OP_ACTIONS.openBeleg(r),
+          title: `${r.belegart} ${r.belegnummer} \xF6ffnen`
+        },
+        r.belegnummer
+      ), /* @__PURE__ */ React.createElement("span", { className: "op-beleg-art" }, r.belegart)), /* @__PURE__ */ React.createElement("td", { className: "col-bemerk" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", null, r.bemerkungen), r.mahnstufe ? /* @__PURE__ */ React.createElement(MahnstufeBadge, { stufe: r.mahnstufe }) : null)), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement(StatusBadge, { status: r.status })), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement(DirectionBadge, { direction: r.zahlungsrichtung })), /* @__PURE__ */ React.createElement("td", { className: "is-num" }, fmtEUR_op(r.rechnungsbetrag)), /* @__PURE__ */ React.createElement("td", { className: "is-num", style: { color: "var(--ink-3)" } }, r.bezahlt > 0.01 ? fmtEUR_op(r.bezahlt) : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: `is-num col-offen ${isNeg ? "is-negative" : ""}` }, fmtEUR_op(r.offen)), showAktion && /* @__PURE__ */ React.createElement("td", { style: { position: "relative", textAlign: "right" } }, /* @__PURE__ */ React.createElement(ActionCell, { row: r, onAction }))), mahnOpen && /* @__PURE__ */ React.createElement("tr", { className: "op-mahn-inline-row" }, /* @__PURE__ */ React.createElement("td", { colSpan: detailColspan }, /* @__PURE__ */ React.createElement(MahnInlineDetail, { candidate: mahnCandidate, row: r, onCreateDunning }))));
+    }))));
+  }
+  function GroupedView({
+    groups,
+    selected,
+    toggleSel,
+    selectableIds,
+    mode,
+    gruppierung,
+    showObjekt,
+    onAction,
+    mahnCandidateByInvoice,
+    expandedMahnRows,
+    onCreateDunning
+  }) {
+    const [openSet, setOpenSet] = useStateA0(() => new Set(groups.map((g) => g.key)));
+    const toggle = (p) => {
+      setOpenSet((prev) => {
+        const next = new Set(prev);
+        next.has(p) ? next.delete(p) : next.add(p);
+        return next;
+      });
+    };
+    return /* @__PURE__ */ React.createElement("div", null, groups.map((g) => {
+      const open = openSet.has(g.key);
+      return /* @__PURE__ */ React.createElement("div", { key: g.key, className: `op-group ${open ? "is-open" : ""}` }, /* @__PURE__ */ React.createElement("div", { className: "op-group-head", onClick: () => toggle(g.key) }, /* @__PURE__ */ React.createElement("span", { className: "op-group-chevron" }, "\u25B6"), /* @__PURE__ */ React.createElement("div", { className: "op-group-party" }, /* @__PURE__ */ React.createElement("span", { className: "op-group-party-name" }, gruppierung === "objekt" && /* @__PURE__ */ React.createElement("span", { style: { color: "var(--ink-3)", fontWeight: 400, marginRight: 6 } }, "\u{1F3E0}"), g.label), /* @__PURE__ */ React.createElement("span", { className: "op-group-party-id" }, g.subLabel)), /* @__PURE__ */ React.createElement("div", { className: "op-group-aging" }, /* @__PURE__ */ React.createElement(AgingBar, { buckets: g.buckets, mini: true })), /* @__PURE__ */ React.createElement("div", { className: "op-group-stat" }, "\xC4ltester", /* @__PURE__ */ React.createElement("strong", null, g.maxAge, " d")), /* @__PURE__ */ React.createElement("div", { className: "op-group-stat" }, "Mahnstufe", /* @__PURE__ */ React.createElement("strong", null, g.maxMahn || "\u2014")), /* @__PURE__ */ React.createElement("div", { className: `op-group-stat ${g.overdue > 0.01 ? "is-overdue" : ""}` }, "\u03A3 Offen", /* @__PURE__ */ React.createElement("strong", null, fmtEUR_op(g.sum)))), open && /* @__PURE__ */ React.createElement("div", { className: "op-group-body" }, /* @__PURE__ */ React.createElement("table", { className: "op-table" }, /* @__PURE__ */ React.createElement("tbody", null, g.rows.map((r) => {
+        const sel = selected.has(r.belegnummer);
+        const isNeg = r.offen < -0.01;
+        const writtenOff = r.status === "Written Off";
+        const mahnOpen = expandedMahnRows?.has(r.belegnummer);
+        const mahnCandidate = mahnCandidateByInvoice?.get(r.belegnummer);
+        const detailColspan = 8 + (gruppierung !== "objekt" && showObjekt ? 1 : 0) + (gruppierung === "objekt" ? 1 : 0);
+        return /* @__PURE__ */ React.createElement(React.Fragment, { key: r.belegnummer }, /* @__PURE__ */ React.createElement("tr", { className: `${sel ? "is-selected" : ""} ${writtenOff ? "is-written-off" : ""} ${mahnOpen ? "is-mahn-open" : ""}` }, /* @__PURE__ */ React.createElement("td", { className: "col-check", style: { width: 32 } }, /* @__PURE__ */ React.createElement(
+          "input",
+          {
+            type: "checkbox",
+            checked: sel,
+            disabled: !r.can_write_off,
+            onChange: () => toggleSel(r.belegnummer)
+          }
+        )), /* @__PURE__ */ React.createElement("td", { className: "col-date", style: { width: 100 } }, fmtDate_op(r.faellig_am)), /* @__PURE__ */ React.createElement("td", { style: { width: 80 } }, /* @__PURE__ */ React.createElement(AgePill, { age: r.alter_tage, faellig_am: r.faellig_am })), /* @__PURE__ */ React.createElement("td", { className: "col-beleg", style: { width: 170 } }, /* @__PURE__ */ React.createElement(
+          "button",
+          {
+            type: "button",
+            className: "op-link-btn op-beleg-link",
+            onClick: () => window.OP_ACTIONS.openBeleg(r),
+            title: `${r.belegart} ${r.belegnummer} \xF6ffnen`
+          },
+          r.belegnummer
+        ), /* @__PURE__ */ React.createElement("span", { className: "op-beleg-art" }, r.belegart)), gruppierung !== "objekt" && showObjekt && /* @__PURE__ */ React.createElement("td", { style: { width: 130, fontSize: 12.5, color: "var(--ink-2)" } }, window.OFFENE_POSTEN.ccLabel[r.kostenstelle] || "\u2014"), gruppierung === "objekt" && /* @__PURE__ */ React.createElement("td", { className: "col-party", style: { width: 200, fontSize: 12.5 } }, window.OFFENE_POSTEN.partyName(r.party), /* @__PURE__ */ React.createElement("span", { className: "op-party-id" }, r.party)), /* @__PURE__ */ React.createElement("td", { className: "col-bemerk" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", null, r.bemerkungen), r.mahnstufe ? /* @__PURE__ */ React.createElement(MahnstufeBadge, { stufe: r.mahnstufe }) : null)), /* @__PURE__ */ React.createElement("td", { style: { width: 120 } }, /* @__PURE__ */ React.createElement(StatusBadge, { status: r.status })), /* @__PURE__ */ React.createElement("td", { className: `is-num col-offen ${isNeg ? "is-negative" : ""}`, style: { width: 130 } }, fmtEUR_op(r.offen)), /* @__PURE__ */ React.createElement("td", { style: { position: "relative", textAlign: "right", width: 200 } }, /* @__PURE__ */ React.createElement(ActionCell, { row: r, onAction }))), mahnOpen && /* @__PURE__ */ React.createElement("tr", { className: "op-mahn-inline-row" }, /* @__PURE__ */ React.createElement("td", { colSpan: detailColspan }, /* @__PURE__ */ React.createElement(MahnInlineDetail, { candidate: mahnCandidate, row: r, onCreateDunning }))));
+      })))));
+    }));
+  }
+  function FilterRow({ availableImmos, immoFilter, setImmoFilter, datumVon, datumBis, setDatumVon, setDatumBis }) {
+    const toggleImmo = (cc) => {
+      setImmoFilter((prev) => {
+        const next = new Set(prev);
+        next.has(cc) ? next.delete(cc) : next.add(cc);
+        return next;
+      });
+    };
+    const clearAll = () => {
+      setImmoFilter(/* @__PURE__ */ new Set());
+      setDatumVon("");
+      setDatumBis("");
+    };
+    const hasFilter = immoFilter.size > 0 || datumVon || datumBis;
+    const _now = /* @__PURE__ */ new Date();
+    const _Y = _now.getFullYear();
+    const _M = _now.getMonth();
+    const _pad = (n) => String(n).padStart(2, "0");
+    const _ymd = (y, m, d) => `${y}-${_pad(m + 1)}-${_pad(d)}`;
+    const curMonthStart = _ymd(_Y, _M, 1);
+    const curMonthEnd = _ymd(_Y, _M, new Date(_Y, _M + 1, 0).getDate());
+    const _prev = new Date(_Y, _M - 1, 1);
+    const prevMonthStart = _ymd(_prev.getFullYear(), _prev.getMonth(), 1);
+    const prevMonthEnd = _ymd(
+      _prev.getFullYear(),
+      _prev.getMonth(),
+      new Date(_prev.getFullYear(), _prev.getMonth() + 1, 0).getDate()
+    );
+    const todayStr = _ymd(_Y, _M, _now.getDate());
+    const _d30 = new Date(_now);
+    _d30.setDate(_d30.getDate() - 30);
+    const minus30Str = _ymd(_d30.getFullYear(), _d30.getMonth(), _d30.getDate());
+    const presets = [
+      { label: "Aktueller Monat", von: curMonthStart, bis: curMonthEnd },
+      { label: "Letzter Monat", von: prevMonthStart, bis: prevMonthEnd },
+      { label: "Heute", von: todayStr, bis: todayStr },
+      { label: "> 30 Tage", von: "", bis: minus30Str },
+      { label: `${_Y}`, von: `${_Y}-01-01`, bis: `${_Y}-12-31` },
+      { label: `${_Y - 1}`, von: `${_Y - 1}-01-01`, bis: `${_Y - 1}-12-31` }
+    ];
+    const presetMatch = presets.find((p) => p.von === datumVon && p.bis === datumBis);
+    return /* @__PURE__ */ React.createElement("div", { className: "op-filter-row" }, /* @__PURE__ */ React.createElement("div", { className: "op-filter-group" }, /* @__PURE__ */ React.createElement("span", { className: "op-filter-group-label" }, "Immobilie"), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: `op-immo-chip ${immoFilter.size === 0 ? "is-active" : ""}`,
+        onClick: () => setImmoFilter(/* @__PURE__ */ new Set())
+      },
+      "Alle"
+    ), availableImmos.map((i) => /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: i.cc,
+        className: `op-immo-chip ${immoFilter.has(i.cc) ? "is-active" : ""}`,
+        onClick: () => toggleImmo(i.cc)
+      },
+      i.label,
+      /* @__PURE__ */ React.createElement("span", { className: "op-immo-chip-count" }, i.count)
+    ))), /* @__PURE__ */ React.createElement("div", { className: "op-filter-sep" }), /* @__PURE__ */ React.createElement("div", { className: "op-filter-group" }, /* @__PURE__ */ React.createElement("span", { className: "op-filter-group-label" }, "F\xE4lligkeit"), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "date",
+        className: "op-date-input",
+        value: datumVon,
+        onChange: (e) => setDatumVon(e.target.value),
+        placeholder: "von"
+      }
+    ), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--ink-3)" } }, "\u2014"), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "date",
+        className: "op-date-input",
+        value: datumBis,
+        onChange: (e) => setDatumBis(e.target.value),
+        placeholder: "bis"
+      }
+    ), /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", gap: 2, marginLeft: 4 } }, presets.map((p) => /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: p.label,
+        className: `op-date-preset ${presetMatch?.label === p.label ? "is-active" : ""}`,
+        onClick: () => {
+          setDatumVon(p.von);
+          setDatumBis(p.bis);
+        }
+      },
+      p.label
+    )))), hasFilter && /* @__PURE__ */ React.createElement("button", { className: "op-filter-clear", onClick: clearAll }, "Filter zur\xFCcksetzen \xD7"));
+  }
+  ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(OpApp, null));
+})();

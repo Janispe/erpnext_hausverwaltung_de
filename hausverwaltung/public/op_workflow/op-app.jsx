@@ -65,6 +65,7 @@ function OpApp() {
   const [activeChip, setActiveChip] = useStateA0(null);
   const [directionFilter, setDirectionFilter] = useStateA0("alle");
   const [partyFilter, setPartyFilter] = useStateA0("");
+  const [partySearch, setPartySearch] = useStateA0("");
   const [selected, setSelected] = useStateA0(() => new Set());
   const [immoFilter, setImmoFilter] = useStateA0(() => new Set()); // leer = alle
   // Default: aktueller Monat (1. bis letzter Tag)
@@ -515,7 +516,7 @@ function OpApp() {
             {["Forderungen", "Rechnungen", "Beides"].map((m) => (
               <button key={m}
                 className={`op-mode-tab ${mode === m ? "is-active" : ""}`}
-                onClick={() => { setMode(m); setSelected(new Set()); setActiveChip(null); setPartyFilter(""); }}>
+                onClick={() => { setMode(m); setSelected(new Set()); setActiveChip(null); setPartyFilter(""); setPartySearch(""); }}>
                 <span>{MODE_LABEL[m]}</span>
                 <span className="op-count">{countsByMode[m]}</span>
               </button>
@@ -646,19 +647,14 @@ function OpApp() {
             </label>
           </div>
           <div className="op-toolbar-right">
-            <select
-              className="op-party-select"
+            <PartyPicker
               value={partyFilter}
-              onChange={(e) => { setPartyFilter(e.target.value); setSelected(new Set()); }}
-              title={mode === "Rechnungen" ? "Lieferant auswählen" : mode === "Beides" ? "Mieter oder Lieferant auswählen" : "Mieter auswählen"}
-            >
-              <option value="">{mode === "Rechnungen" ? "Alle Lieferanten" : mode === "Beides" ? "Alle Parteien" : "Alle Mieter"}</option>
-              {availableParties.map((party) => (
-                <option key={party.id} value={party.id}>
-                  {party.label} ({party.count})
-                </option>
-              ))}
-            </select>
+              searchText={partySearch}
+              parties={availableParties}
+              mode={mode}
+              onSearchChange={setPartySearch}
+              onChange={(partyId) => { setPartyFilter(partyId); setSelected(new Set()); }}
+            />
             <input className="op-search" placeholder="Beleg oder Bemerkung suchen…"
               value={search} onChange={(e) => setSearch(e.target.value)} />
             <select className="op-sort-select" value={sortierung} onChange={(e) => { setSortierung(e.target.value); setSortDir("asc"); }}>
@@ -780,6 +776,87 @@ function OpApp() {
       {modal?.type === "guthaben" && <GuthabenAuszahlenModal row={modal.row} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`Auszahlungs-Draft erstellt: ${result.payment_entry}`); }} />}
       {modal?.type === "zuordnen" && <ZuordnenModal row={modal.row} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`Payment Reconciliation Draft erstellt: ${result.payment_reconciliation}`); }} />}
       {toast && <Toast message={toast} onClose={() => setToast(null)} />}
+    </div>
+  );
+}
+
+function partyPickerLabel(party) {
+  if (!party) return "";
+  return party.label && party.label !== party.id ? `${party.label} (${party.id})` : party.id;
+}
+
+function PartyPicker({ value, searchText, parties, mode, onSearchChange, onChange }) {
+  const [open, setOpen] = useStateA0(false);
+  const rootRef = React.useRef(null);
+  const selected = parties.find((party) => party.id === value);
+  const roleLabel = mode === "Rechnungen" ? "Lieferant" : mode === "Beides" ? "Partei" : "Mieter";
+  const q = (searchText || "").trim().toLowerCase();
+  const visibleParties = useMemoA0(() => {
+    if (!q) return parties.slice(0, 80);
+    return parties.filter((party) =>
+      (party.label || "").toLowerCase().includes(q) ||
+      (party.id || "").toLowerCase().includes(q)
+    ).slice(0, 80);
+  }, [parties, q]);
+
+  useEffectA0(() => {
+    const onPointerDown = (event) => {
+      if (!rootRef.current || rootRef.current.contains(event.target)) return;
+      setOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, []);
+
+  const choose = (party) => {
+    onSearchChange(party ? partyPickerLabel(party) : "");
+    onChange(party?.id || "");
+    setOpen(false);
+  };
+
+  return (
+    <div className="op-party-picker" ref={rootRef}>
+      <input
+        className="op-party-search"
+        type="search"
+        value={searchText}
+        placeholder={selected ? partyPickerLabel(selected) : `${roleLabel} suchen`}
+        onFocus={(e) => {
+          e.target.select();
+          setOpen(true);
+        }}
+        onChange={(e) => {
+          onSearchChange(e.target.value);
+          setOpen(true);
+        }}
+      />
+      {value && (
+        <button
+          type="button"
+          className="op-party-clear"
+          aria-label={`${roleLabel}auswahl löschen`}
+          onClick={() => choose(null)}
+        >
+          ×
+        </button>
+      )}
+      {open && (
+        <div className="op-party-menu">
+          {visibleParties.length === 0 ? (
+            <div className="op-party-empty">Keine Treffer</div>
+          ) : visibleParties.map((party) => (
+            <button
+              type="button"
+              key={party.id}
+              className={`op-party-option ${value === party.id ? "is-selected" : ""}`}
+              onClick={() => choose(party)}
+            >
+              <span className="op-party-option-title">{partyPickerLabel(party)}</span>
+              <span className="op-party-option-meta">{party.count} {party.count === 1 ? "Posten" : "Posten"}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
