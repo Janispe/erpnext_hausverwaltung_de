@@ -23,7 +23,8 @@ function primaryActionFor(row) {
 
   // Forderung, überfällig: erst ins Mahnwesen drillen. Dort sieht man Historie
   // und erstellt die nächste Mahnung explizit.
-  if (row.art === "Forderungen" && row.belegart === "Sales Invoice" && row.offen > 0.01 && row.alter_tage > 0) {
+  const isSalesInvoice = String(row.belegart || "").replace(/ \(×\d+\)$/, "") === "Sales Invoice";
+  if (row.art === "Forderungen" && isSalesInvoice && row.offen > 0.01 && row.alter_tage > 0) {
     const nextStufe = (row.mahnstufe || 0) + 1;
     if (nextStufe <= 4) {
       return {
