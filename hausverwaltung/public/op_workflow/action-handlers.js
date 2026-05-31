@@ -30,6 +30,11 @@
     toast(successMsg);
   }
 
+  async function listDunningTypes() {
+    const result = await call("hausverwaltung.hausverwaltung.page.op_workflow.op_workflow.list_dunning_types", {});
+    return Array.isArray(result) ? result : [];
+  }
+
   // ─── Einzel-Mahnung ─────────────────────────────────────────────────────
   async function createDunning(row, opts) {
     const result = await call(
@@ -53,13 +58,16 @@
   // ─── Sammelmahnung ──────────────────────────────────────────────────────
   async function createBulkDunning(rowsByParty, opts) {
     const invoicesByCustomer = {};
+    const dunningTypePerCustomer = {};
     for (const [party, rows] of Object.entries(rowsByParty)) {
       invoicesByCustomer[party] = rows.map((r) => r.belegnummer);
+      if (opts?.dunningType) dunningTypePerCustomer[party] = opts.dunningType;
     }
     const result = await call(
       "hausverwaltung.hausverwaltung.page.op_workflow.op_workflow.create_bulk_dunning",
       {
         invoices_by_customer: invoicesByCustomer,
+        dunning_type_per_customer: dunningTypePerCustomer,
         new_due_date: opts.neueFaelligkeit,
       },
     );
@@ -169,6 +177,7 @@
 
   // ─── Public API ─────────────────────────────────────────────────────────
   window.OP_ACTIONS = {
+    listDunningTypes,
     createDunning,
     createBulkDunning,
     createPaymentEntry,

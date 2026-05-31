@@ -89,6 +89,15 @@ def get_mieter_summary(party: str) -> dict:
     }
 
 
+@frappe.whitelist()
+def list_dunning_types() -> list[str]:
+    """Liefert verfügbare Dunning Types für die OP-Workflow-Auswahl."""
+    if not frappe.has_permission("Dunning Type", "read"):
+        frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
+
+    return frappe.get_all("Dunning Type", pluck="name", order_by="name asc")
+
+
 # ───────────────────────────────────────────────────────────────────────────
 # Phase 3 · Aktionen
 # Endpoints erzeugen bewusst Draft-Belege. Submit/Buchung passiert im Desk.

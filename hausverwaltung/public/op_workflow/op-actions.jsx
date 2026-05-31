@@ -141,9 +141,21 @@ function MahnungModal({ row, onClose, onDone }) {
     d.setDate(d.getDate() + 7);
     return d.toISOString().slice(0, 10);
   });
-  const [textStufe, setTextStufe] = useStateAct(
-    nextStufe === 1 ? "Zahlungserinnerung - HP" : nextStufe === 2 ? "1. Mahnung - HP" : nextStufe === 3 ? "2. Mahnung - HP" : "Letzte Mahnung - HP",
-  );
+  const suggestedDunningType = nextStufe === 1 ? "Zahlungserinnerung - HP" : nextStufe === 2 ? "1. Mahnung - HP" : nextStufe === 3 ? "2. Mahnung - HP" : "Letzte Mahnung - HP";
+  const [dunningTypes, setDunningTypes] = useStateAct([]);
+  const [textStufe, setTextStufe] = useStateAct(suggestedDunningType);
+
+  useEffectAct(() => {
+    let alive = true;
+    window.OP_ACTIONS.listDunningTypes()
+      .then((items) => {
+        if (!alive) return;
+        setDunningTypes(items);
+        if (items.length && !items.includes(textStufe)) setTextStufe(items[0]);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   // Verzugszinsen-Berechnung (rein illustrativ)
   const zinsBetrag = zinsen ? (row.offen * (zinssatz / 100) * (row.alter_tage / 365)) : 0;
@@ -187,8 +199,19 @@ function MahnungModal({ row, onClose, onDone }) {
     >
       <div className="op-form-grid">
         <div className="op-field">
-          <label>Mahnstufe</label>
-          <div className="op-field-display">{textStufe}</div>
+          <label>Mahnungstyp</label>
+          {dunningTypes.length ? (
+            <select value={textStufe} onChange={(e) => setTextStufe(e.target.value)}>
+              {dunningTypes.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          ) : (
+            <input value={textStufe} onChange={(e) => setTextStufe(e.target.value)} />
+          )}
+          {dunningTypes.includes(suggestedDunningType) && textStufe !== suggestedDunningType && (
+            <button type="button" className="mk-btn mk-btn-ghost" style={{ marginTop: 6, padding: "4px 8px", fontSize: 11 }} onClick={() => setTextStufe(suggestedDunningType)}>
+              Vorschlag wählen
+            </button>
+          )}
         </div>
         <div className="op-field">
           <label>Versandart</label>
@@ -616,6 +639,8 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
   }, [rows]);
 
   const [versand, setVersand] = useStateAct("Brief");
+  const [dunningTypes, setDunningTypes] = useStateAct([]);
+  const [dunningType, setDunningType] = useStateAct("");
   const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
     const d = new Date(); d.setDate(d.getDate() + 7);
     return d.toISOString().slice(0, 10);
@@ -625,6 +650,18 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
 
   const aktiv = groups.filter((g) => !excluded.has(g.party));
   const totalSum = aktiv.reduce((a, g) => a + g.sum + g.gebuehr, 0);
+
+  useEffectAct(() => {
+    let alive = true;
+    window.OP_ACTIONS.listDunningTypes()
+      .then((items) => {
+        if (!alive) return;
+        setDunningTypes(items);
+        if (items.length) setDunningType(items[0]);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   const toggle = (p) => {
     setExcluded((prev) => {
@@ -640,7 +677,7 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
     });
     setBusy(true);
     try {
-      const result = await window.OP_ACTIONS.createBulkDunning(rowsByParty, { neueFaelligkeit });
+      const result = await window.OP_ACTIONS.createBulkDunning(rowsByParty, { neueFaelligkeit, dunningType });
       onDone?.(result);
     } finally {
       setBusy(false);
@@ -675,6 +712,16 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
             <option>Brief + E-Mail</option>
             <option>Einschreiben</option>
           </select>
+        </div>
+        <div className="op-field">
+          <label>Mahnungstyp (für alle)</label>
+          {dunningTypes.length ? (
+            <select value={dunningType} onChange={(e) => setDunningType(e.target.value)}>
+              {dunningTypes.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          ) : (
+            <input value={dunningType} onChange={(e) => setDunningType(e.target.value)} placeholder="Automatisch" />
+          )}
         </div>
         <div className="op-field">
           <label>Neue Zahlungsfrist</label>
