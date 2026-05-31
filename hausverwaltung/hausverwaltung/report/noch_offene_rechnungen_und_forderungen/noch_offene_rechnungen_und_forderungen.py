@@ -1,3 +1,5 @@
+import re
+
 import frappe
 from erpnext.accounts.report.accounts_receivable.accounts_receivable import ReceivablePayableReport
 from frappe import _
@@ -91,6 +93,7 @@ def _group_rows_by_mietabrechnung(rows):
 			merged = dict(row)
 			merged["_member_count"] = 1
 			merged["_member_voucher_nos"] = [row.get("belegnummer")]
+			merged["_member_remarks"] = [row.get("bemerkungen")]
 			# Aggregat verlinkt weiterhin die erste Member-SI (Dynamic Link OK).
 			buckets[key] = merged
 			bucket_position[key] = len(out)
@@ -119,19 +122,60 @@ def _group_rows_by_mietabrechnung(rows):
 			)
 			merged["_member_count"] += 1
 			merged["_member_voucher_nos"].append(row.get("belegnummer"))
+			merged["_member_remarks"].append(row.get("bemerkungen"))
 
 	# Aggregate finalisieren: Zähler-Hinweis in der Belegart-Spalte.
 	for merged in buckets.values():
 		count = merged.pop("_member_count", 1)
 		member_voucher_nos = [name for name in merged.pop("_member_voucher_nos", []) if name]
+		member_remarks = [remark for remark in merged.pop("_member_remarks", []) if remark]
 		if member_voucher_nos:
 			merged["member_voucher_nos"] = member_voucher_nos
+		if member_remarks:
+			merged["bemerkungen"] = _combine_monthly_sollstellung_remarks(member_remarks)
 		if count > 1:
 			# In der Belegart-Spalte: "Sales Invoice (x4)". Beleg­nummer-Spalte
 			# behält den Dynamic-Link auf die erste SI.
 			merged["belegart"] = f"{merged.get('belegart')} (×{count})"  # noqa: RUF001
 
 	return out
+
+
+def _combine_monthly_sollstellung_remarks(remarks: list[str]) -> str:
+	"""Verdichtet Member-Bemerkungen wie Miete/BK/HK 06/2026 fürs Aggregat."""
+	seen: set[str] = set()
+	parts: list[str] = []
+	for remark in remarks:
+		value = str(remark or "").strip()
+		if value and value not in seen:
+			seen.add(value)
+			parts.append(value)
+	if not parts:
+		return ""
+
+	parsed = [_parse_monthly_sollstellung_remark(part) for part in parts]
+	if all(parsed):
+		periods = {period for _label, period in parsed}
+		if len(periods) == 1:
+			period = periods.pop()
+			sort_order = {"Miete": 0, "BK": 1, "HK": 2, "UMZ": 3}
+			labels = [
+				label
+				for label, _period in sorted(
+					parsed,
+					key=lambda item: sort_order.get(item[0], 99),
+				)
+			]
+			return f"{', '.join(labels)} {period}"
+
+	return " · ".join(parts)
+
+
+def _parse_monthly_sollstellung_remark(remark: str) -> tuple[str, str] | None:
+	match = re.fullmatch(r"(Miete|BK|HK|UMZ)\s+(\d{2}/\d{4})", str(remark or "").strip())
+	if not match:
+		return None
+	return match.group(1), match.group(2)
 
 
 def _resolve_guthaben_nachzahlung_invoice_names(si_rows_by_no):

@@ -14,6 +14,7 @@ def _row(
 	*,
 	party: str = "MIETER-A",
 	party_account: str = "1410 - Forderungen - HV",
+	bemerkungen: str | None = None,
 ) -> dict:
 	return {
 		"art": "Forderungen",
@@ -32,6 +33,7 @@ def _row(
 		"alter_tage": 5,
 		"kostenstelle": None,
 		"waehrung": "EUR",
+		"bemerkungen": bemerkungen,
 		"can_write_off": 1,
 	}
 
@@ -124,3 +126,25 @@ class TestNochOffeneForderungenAggregation(TestCase):
 		self.assertEqual(out[1]["belegnummer"], "SI-GN")
 		self.assertEqual(out[1]["belegart"], "Sales Invoice")
 		self.assertAlmostEqual(out[1]["rechnungsbetrag"], 75.0)
+
+	def test_grouped_monthly_sollstellung_remarks_are_combined_by_period(self):
+		mab = "MV-2026-001|06/2026"
+		rows = [
+			_row("SI-Miete", 500.0, bemerkungen="Miete 06/2026"),
+			_row("SI-BK", 120.0, bemerkungen="BK 06/2026"),
+			_row("SI-HK", 80.0, bemerkungen="HK 06/2026"),
+		]
+		patches = self._patch_invoice_lookup(
+			{"SI-Miete": mab, "SI-BK": mab, "SI-HK": mab},
+			{"SI-Miete": "Miete", "SI-BK": "Betriebskosten", "SI-HK": "Heizkosten"},
+		)
+		for p in patches:
+			p.start()
+		try:
+			out = _group_rows_by_mietabrechnung(rows)
+		finally:
+			for p in patches:
+				p.stop()
+
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]["bemerkungen"], "Miete, BK, HK 06/2026")
