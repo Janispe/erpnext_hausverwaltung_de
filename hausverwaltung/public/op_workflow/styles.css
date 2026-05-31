@@ -1533,6 +1533,10 @@ button { font-family: inherit; }
   font-variant-numeric: tabular-nums;
 }
 .op-table th.is-check { padding-left: 16px; padding-right: 6px; width: 32px; }
+.op-table th.col-bemerk-head {
+  min-width: 420px;
+  width: 28%;
+}
 .op-table tbody tr {
   border-bottom: 1px solid var(--line);
   transition: background 0.1s;
@@ -1601,7 +1605,9 @@ button { font-family: inherit; }
 .op-table td.col-bemerk {
   color: var(--ink-2);
   font-size: 12px;
-  max-width: 320px;
+  min-width: 420px;
+  max-width: 560px;
+  line-height: 1.35;
 }
 .op-table td.col-date {
   white-space: nowrap;

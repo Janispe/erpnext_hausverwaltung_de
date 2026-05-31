@@ -1213,13 +1213,13 @@ function FlatTable({
             <SortableTh col="Mieter" label={mode === "Rechnungen" ? "Lieferant" : "Mieter"} style={{ minWidth: 200 }} />
             {showObjekt && <SortableTh col="Immobilie" label="Immobilie" style={{ width: 140 }} />}
             <th style={{ width: 170 }}>Beleg</th>
-            <th>Bemerkung</th>
-            <SortableTh col="Status" label="Status" style={{ width: 120 }} />
-            <SortableTh col="Richtung" label="Richtung" style={{ width: 130 }} />
+            <th className="col-bemerk-head">Bemerkung</th>
+            <SortableTh col="Status" label="Status" style={{ width: 96 }} />
+            <SortableTh col="Richtung" label="Richtung" style={{ width: 124 }} />
             <th className="is-num" style={{ width: 120 }}>Rechnungsbetrag</th>
             <th className="is-num" style={{ width: 100 }}>Bezahlt</th>
             <SortableTh col="Offener Betrag absteigend" label="Offen" style={{ width: 130 }} className="is-num" />
-            {showAktion && <th style={{ width: 200 }}>Aktion</th>}
+            {showAktion && <th style={{ width: 72 }}>Aktion</th>}
           </tr>
         </thead>
         <tbody>
@@ -1269,7 +1269,7 @@ function FlatTable({
                     {fmtEUR_op(r.offen)}
                   </td>
                   {showAktion && (
-                    <td style={{ position: "relative", textAlign: "right" }}>
+                    <td style={{ position: "relative", textAlign: "right", width: 72 }}>
                       <ActionCell row={r} onAction={onAction} />
                     </td>
                   )}
@@ -1385,11 +1385,11 @@ function GroupedView({
                                 {r.mahnstufe ? <MahnstufeBadge stufe={r.mahnstufe} /> : null}
                               </div>
                             </td>
-                            <td style={{ width: 120 }}><StatusBadge status={r.status} /></td>
+                            <td style={{ width: 96 }}><StatusBadge status={r.status} /></td>
                             <td className={`is-num col-offen ${isNeg ? "is-negative" : ""}`} style={{ width: 130 }}>
                               {fmtEUR_op(r.offen)}
                             </td>
-                            <td style={{ position: "relative", textAlign: "right", width: 200 }}>
+                            <td style={{ position: "relative", textAlign: "right", width: 72 }}>
                               <ActionCell row={r} onAction={onAction} />
                             </td>
                           </tr>
