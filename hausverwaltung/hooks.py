@@ -77,6 +77,7 @@ process_engine_paperless_export_handler = [
 
 # include js in doctype views
 doctype_js = {
+	"Account": "public/js/account.js",
 	"Bank Account": "public/js/bank_account.js",
 	"Bank Reconciliation Tool": "public/js/bank_reconciliation_tool.js",
 	"Communication": "public/js/communication.js",
@@ -94,7 +95,9 @@ doctype_list_js = {
 	"Sales Invoice": "public/js/sales_invoice_list.js",
 	"Mietvertrag": "hausverwaltung/doctype/mietvertrag/mietvertrag_list.js",
 }
-# doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
+doctype_tree_js = {
+	"Account": "public/js/account_tree.js",
+}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
 # Svg Icons
