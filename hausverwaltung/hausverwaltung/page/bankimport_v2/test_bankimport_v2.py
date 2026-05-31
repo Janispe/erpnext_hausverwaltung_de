@@ -2,6 +2,7 @@
 
 from unittest.mock import patch
 
+import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from hausverwaltung.hausverwaltung.page.bankimport_v2 import bankimport_v2 as bv2
@@ -89,6 +90,30 @@ class _OverviewDoc:
 
 	def _bank_account_label(self):
 		return "Bank"
+
+
+class TestListImports(FrappeTestCase):
+	def test_uses_dict_syntax_for_row_count_aggregate(self):
+		imports = [
+			frappe._dict(
+				name="BAI-1",
+				title="Import",
+				status="Offen",
+				offene_buchungen=1,
+				modified="2026-05-31 10:00:00",
+			)
+		]
+		rows = [frappe._dict(parent="BAI-1", total_rows=3)]
+
+		with patch("frappe.get_list", return_value=imports), \
+			 patch("frappe.get_all", return_value=rows) as get_all:
+			result = bv2.list_imports()
+
+		self.assertEqual(result["items"][0]["total_rows"], 3)
+		self.assertEqual(
+			get_all.call_args.kwargs["fields"],
+			["parent", {"COUNT": "name", "as": "total_rows"}],
+		)
 
 
 class TestSuggestInvoiceForRow(FrappeTestCase):

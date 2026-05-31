@@ -222,7 +222,7 @@ def list_imports(limit: int = 30) -> dict[str, Any]:
 		for r in frappe.get_all(
 			"Bankauszug Import Row",
 			filters={"parent": ["in", [it.name for it in items] or [""]]},
-			fields=["parent", "count(name) as total_rows"],
+			fields=["parent", {"COUNT": "name", "as": "total_rows"}],
 			group_by="parent",
 		)
 	}
