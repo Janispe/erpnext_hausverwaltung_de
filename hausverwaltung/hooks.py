@@ -262,11 +262,15 @@ doc_events = {
 	},
 	"Dunning": {
 		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning",
+		"before_cancel": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning_fee_invoice_can_cancel",
 		"on_submit": "hausverwaltung.hausverwaltung.doctype.dunning.create_dunning_fee_invoice",
 		"on_cancel": "hausverwaltung.hausverwaltung.doctype.dunning.cancel_dunning_fee_invoice",
 	},
 	"Dunning Type": {
 		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning_type_serienbrief_werte",
+	},
+	"Sales Invoice": {
+		"before_cancel": "hausverwaltung.hausverwaltung.doctype.dunning.prevent_direct_cancel_of_dunning_fee_invoice",
 	},
 	"Serienbrief Vorlage": {
 		# Beim Save: Split-Preview-PDF als Background-Job regenerieren, damit der

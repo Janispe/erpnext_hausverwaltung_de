@@ -306,6 +306,50 @@ def create_dunning_fee_invoice(doc, method=None) -> None:
 	)
 
 
+def validate_dunning_fee_invoice_can_cancel(doc, method=None) -> None:
+	fee_invoice = doc.get(DUNNING_FEE_SALES_INVOICE_FIELDNAME) or _dunning_fee_sales_invoice(doc.name)
+	if not fee_invoice:
+		return
+
+	payment_refs = frappe.get_all(
+		"Payment Entry Reference",
+		filters={
+			"reference_doctype": "Sales Invoice",
+			"reference_name": fee_invoice,
+			"parenttype": "Payment Entry",
+		},
+		fields=["parent", "allocated_amount"],
+		limit_page_length=0,
+	)
+	if not payment_refs:
+		return
+
+	payment_names = list({row.parent for row in payment_refs if row.parent})
+	if not payment_names:
+		return
+
+	submitted_payments = frappe.get_all(
+		"Payment Entry",
+		filters={"name": ("in", payment_names), "docstatus": 1},
+		pluck="name",
+		limit_page_length=0,
+	)
+	if not submitted_payments:
+		return
+
+	links = ", ".join(
+		frappe.utils.get_link_to_form("Payment Entry", name) for name in submitted_payments
+	)
+	frappe.throw(
+		_(
+			"Die Mahnung kann nicht storniert werden, weil die Mahngebühr-Rechnung {0} "
+			"bereits mit Payment Entry {1} ausgeglichen wurde. Bitte zuerst die Zahlung "
+			"stornieren oder auf eine andere offene Rechnung umbuchen."
+		).format(fee_invoice, links),
+		title=_("Zahlung zuerst klären"),
+	)
+
+
 def cancel_dunning_fee_invoice(doc, method=None) -> None:
 	fee_invoice = doc.get(DUNNING_FEE_SALES_INVOICE_FIELDNAME) or _dunning_fee_sales_invoice(doc.name)
 	if not fee_invoice:
@@ -317,9 +361,33 @@ def cancel_dunning_fee_invoice(doc, method=None) -> None:
 		return
 
 	if si.docstatus == 1:
-		si.cancel()
+		frappe.flags.hv_cancelling_dunning_fee_invoice = si.name
+		try:
+			si.cancel()
+		finally:
+			frappe.flags.hv_cancelling_dunning_fee_invoice = None
 	elif si.docstatus == 0:
 		si.delete(ignore_permissions=True)
+
+
+def prevent_direct_cancel_of_dunning_fee_invoice(doc, method=None) -> None:
+	if not _meta_has_field("Sales Invoice", SALES_INVOICE_IS_DUNNING_FEE_FIELDNAME):
+		return
+	if not _meta_has_field("Sales Invoice", SALES_INVOICE_DUNNING_FIELDNAME):
+		return
+	if not doc.get(SALES_INVOICE_IS_DUNNING_FEE_FIELDNAME) or not doc.get(SALES_INVOICE_DUNNING_FIELDNAME):
+		return
+	if getattr(frappe.flags, "hv_cancelling_dunning_fee_invoice", None) == doc.name:
+		return
+
+	dunning = doc.get(SALES_INVOICE_DUNNING_FIELDNAME)
+	frappe.throw(
+		_(
+			"Diese Sales Invoice gehört zur Mahnung {0}. Bitte die Mahnung stornieren; "
+			"die verknüpfte Mahngebühr-Rechnung wird dann automatisch mit storniert."
+		).format(dunning),
+		title=_("Über Mahnung stornieren"),
+	)
 
 
 def validate_payment_entry_not_against_fee_dunning(doc, method=None) -> None:
