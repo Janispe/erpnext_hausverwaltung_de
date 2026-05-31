@@ -182,6 +182,10 @@
     window.location.href = "/app/mieterkonto-workflow?customer=" + encodeURIComponent(row.party);
   }
 
+  function openSingleBeleg(doctype, voucherName) {
+    frappe.set_route("Form", doctype, voucherName);
+  }
+
   function openBeleg(row) {
     const doctypeMap = {
       "Sales Invoice": "Sales Invoice",
@@ -194,13 +198,26 @@
       ? row.member_voucher_nos
       : [row.belegnummer];
     if (voucherNames.length > 1) {
-      voucherNames.forEach((name) => {
-        window.open(`/app/${frappe.router.slug(dt)}/${encodeURIComponent(name)}`, "_blank");
+      frappe.prompt([
+        {
+          fieldname: "voucher_name",
+          fieldtype: "Select",
+          label: "Beleg",
+          options: voucherNames.join("\n"),
+          default: voucherNames.includes(row.belegnummer) ? row.belegnummer : voucherNames[0],
+          reqd: 1,
+        },
+      ], (values) => {
+        openSingleBeleg(dt, values.voucher_name);
+      }, `${dt} auswählen`, "Öffnen");
+      setTimeout(() => {
+        const dialog = document.querySelector(".modal.show");
+        const primary = dialog?.querySelector(".modal-footer .btn-primary");
+        if (primary) primary.focus();
       });
-      toast(`${voucherNames.length} Belege geöffnet`);
       return;
     }
-    frappe.set_route("Form", dt, row.belegnummer);
+    openSingleBeleg(dt, row.belegnummer);
   }
 
   function openDunning(name) {

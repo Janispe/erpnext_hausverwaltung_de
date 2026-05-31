@@ -1145,7 +1145,7 @@ function BelegLink({ row }) {
   const memberCount = row.member_voucher_nos?.length || 0;
   const hasMembers = memberCount > 1;
   const title = hasMembers
-    ? `${memberCount} ${row.belegart.replace(/ \(×\d+\)$/, "")} öffnen`
+    ? `${memberCount} ${row.belegart.replace(/ \(×\d+\)$/, "")} auswählen`
     : `${row.belegart} ${row.belegnummer} öffnen`;
   return (
     <>
