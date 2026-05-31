@@ -90,18 +90,15 @@ def _replace_cost_center_links(old_cost_centers: list[str], new_cost_center: str
 
 def _cost_center_link_fields() -> set[tuple[str, str]]:
 	fields: set[tuple[str, str]] = set()
-	for meta_doctype in ("DocField", "Custom Field"):
-		if not frappe.db.table_exists(meta_doctype):
+	for doctype in frappe.get_all("DocType", pluck="name", limit_page_length=0):
+		try:
+			meta = frappe.get_meta(doctype)
+		except Exception:
 			continue
-		rows = frappe.get_all(
-			meta_doctype,
-			filters={"fieldtype": "Link", "options": "Cost Center"},
-			fields=["parent", "fieldname"],
-			limit_page_length=0,
-		)
-		for row in rows:
-			if row.get("parent") and row.get("fieldname"):
-				fields.add((row["parent"], row["fieldname"]))
+
+		for df in meta.fields:
+			if df.fieldtype == "Link" and df.options == "Cost Center" and df.fieldname:
+				fields.add((doctype, df.fieldname))
 	return fields
 
 
