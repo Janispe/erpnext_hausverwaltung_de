@@ -28,6 +28,7 @@ const COMMON = {
   minify: isProd,
   sourcemap: !isProd,
   define: { "process.env.NODE_ENV": JSON.stringify(process.env.NODE_ENV || "development") },
+  inject: [path.resolve(__dirname, "react-shim.js")],
   external: [],
 };
 

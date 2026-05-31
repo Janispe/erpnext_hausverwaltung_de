@@ -2,9 +2,8 @@
 //
 // Hängt unsere React-UI in die Page ein. Lädt:
 //   1. styles.css
-//   2. React + ReactDOM + (Dev:) Babel-Standalone
-//   3. Unsere Components in Reihenfolge
-//   4. data-adapter.js + action-handlers.js (Bridge zu frappe.call)
+//   2. data-adapter.js + action-handlers.js (Bridge zu frappe.call)
+//   3. op-workflow.bundle.js (React + UI lokal gebundelt)
 //
 // In Phase 1+2 läuft alles über Inline-Babel (Dev-Modus).
 // In Phase 3 ersetzt du die <script type="text/babel">-Blöcke durch
@@ -50,7 +49,12 @@ frappe.pages["op-workflow"].on_page_load = function (wrapper) {
     new Promise((resolve, reject) => {
       // Idempotent: nicht doppelt laden
       const existing = document.querySelector(`script[data-op-src="${src}"]`);
-      if (existing) return resolve();
+      if (existing) {
+        if (existing.dataset.loaded === "1") return resolve();
+        existing.addEventListener("load", resolve, { once: true });
+        existing.addEventListener("error", () => reject(new Error(`Failed to load: ${src}`)), { once: true });
+        return;
+      }
       const s = document.createElement("script");
       s.src = src;
       s.dataset.opSrc = src;
@@ -59,17 +63,16 @@ frappe.pages["op-workflow"].on_page_load = function (wrapper) {
         s.integrity = opts.integrity;
         s.crossOrigin = "anonymous";
       }
-      s.onload = resolve;
+      s.onload = () => {
+        s.dataset.loaded = "1";
+        resolve();
+      };
       s.onerror = () => reject(new Error(`Failed to load: ${src}`));
       document.head.appendChild(s);
     });
 
   (async () => {
     try {
-      // React + ReactDOM (Bundle nutzt window.React/window.ReactDOM als Globals)
-      await loadScript("https://unpkg.com/react@18.3.1/umd/react.production.min.js");
-      await loadScript("https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js");
-
       // Bridge-Layer (Mock ↔ frappe.call)
       await loadScript(`${ASSET_BASE}/data-adapter.js`);
       await loadScript(`${ASSET_BASE}/action-handlers.js`);
@@ -80,9 +83,6 @@ frappe.pages["op-workflow"].on_page_load = function (wrapper) {
       // React-Components — esbuild-Bundle (tweaks-panel + op-components + op-actions + op-app)
       // Build: cd op_workflow_build && NODE_ENV=production npm run build
       await loadScript(`${ASSET_BASE}/op-workflow.bundle.js`);
-
-      // op-app.jsx mounted automatisch auf #root — wir haben aber #op-workflow-root
-      // → kleiner Shim: alias setzen bevor das Script lädt (in data-adapter.js)
     } catch (err) {
       console.error("op-workflow bootstrap failed", err);
       frappe.msgprint({

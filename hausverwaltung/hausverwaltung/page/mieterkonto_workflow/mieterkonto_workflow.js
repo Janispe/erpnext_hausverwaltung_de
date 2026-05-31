@@ -37,7 +37,12 @@ frappe.pages["mieterkonto-workflow"].on_page_load = function (wrapper) {
   const loadScript = (src, opts = {}) =>
     new Promise((resolve, reject) => {
       const existing = document.querySelector(`script[data-mk-src="${src}"]`);
-      if (existing) return resolve();
+      if (existing) {
+        if (existing.dataset.loaded === "1") return resolve();
+        existing.addEventListener("load", resolve, { once: true });
+        existing.addEventListener("error", () => reject(new Error(`Failed to load: ${src}`)), { once: true });
+        return;
+      }
       const s = document.createElement("script");
       s.src = src;
       s.dataset.mkSrc = src;
@@ -46,17 +51,16 @@ frappe.pages["mieterkonto-workflow"].on_page_load = function (wrapper) {
         s.integrity = opts.integrity;
         s.crossOrigin = "anonymous";
       }
-      s.onload = resolve;
+      s.onload = () => {
+        s.dataset.loaded = "1";
+        resolve();
+      };
       s.onerror = () => reject(new Error(`Failed to load: ${src}`));
       document.head.appendChild(s);
     });
 
   (async () => {
     try {
-      // React + ReactDOM (Bundle nutzt window.React/window.ReactDOM als Globals)
-      await loadScript("https://unpkg.com/react@18.3.1/umd/react.production.min.js");
-      await loadScript("https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js");
-
       // Bridge-Layer (frappe.call)
       await loadScript(`${ASSET_BASE}/mk-data-adapter.js`);
 
