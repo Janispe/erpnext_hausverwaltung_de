@@ -52,6 +52,26 @@ function App() {
   const setShowCatsBoth = (v) => { setShowCats(v); setTweak("showCats", v); };
   const setGruppierenBoth = (v) => { setGruppieren(v); setTweak("gruppieren", v); };
 
+  const openLegacyReport = () => {
+    if (!customer) {
+      frappe.msgprint(__("Bitte zuerst einen Mieter auswählen."));
+      return;
+    }
+    const company = frappe.defaults.get_user_default("Company");
+    if (!company) {
+      frappe.msgprint(__("Bitte zuerst eine Standard-Firma setzen."));
+      return;
+    }
+    frappe.set_route("query-report", "Mieterkonto", {
+      company,
+      customer,
+      from_date: fromDate,
+      to_date: toDate,
+      show_kategorien: showCats ? 1 : 0,
+      gruppieren_pro_monat: gruppieren ? 1 : 0,
+    });
+  };
+
   return (
     <div className={`mk-app ${t.printMode ? "is-print-mode" : ""}`}>
       <div className="mk-topbar" data-screen-label="Topbar">
@@ -71,6 +91,7 @@ function App() {
           </div>
         </div>
         <div className="mk-topbar-actions">
+          <button className="mk-btn mk-btn-ghost" onClick={openLegacyReport}>Alte Ansicht</button>
           <button className="mk-btn mk-btn-ghost" onClick={() => window.print()}>Drucken</button>
           <button className="mk-btn mk-btn-ghost">Export CSV</button>
           <button className="mk-btn mk-btn-primary">PDF</button>

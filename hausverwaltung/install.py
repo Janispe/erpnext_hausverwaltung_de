@@ -1835,7 +1835,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         "icon": "sheet",
         "links": [
             {"label": "Einnahmen-Überschuss-Rechnung", "link_type": "DocType", "link_to": "Einnahmen Ueberschuss Rechnung"},
-            {"label": "Mieterkonto", "link_type": "Report", "link_to": "Mieterkonto"},
+            {"label": "Mieterkonto", "link_type": "Page", "link_to": "mieterkonto-workflow"},
             {"label": "Mietrechnungsprüfung", "link_type": "Report", "link_to": "Mietrechnungspruefung"},
             {"label": "Offene Abschlagszahlungen", "link_type": "Report", "link_to": "Offene Abschlagszahlungen"},
             {"label": "Kontostand alle Konten", "link_type": "Report", "link_to": "Kontostand alle Konten"},
