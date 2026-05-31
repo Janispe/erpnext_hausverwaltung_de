@@ -114,9 +114,15 @@ def _get_open_items_fast(filters: dict, report_module) -> list[dict] | None:
 
 
 def _can_use_fast_open_items(filters: dict) -> bool:
+    # The direct invoice path is intentionally opt-in. The canonical report also
+    # returns open Payment Entry / Journal Entry rows (advance payments and
+    # correction bookings), and reproducing that logic here would duplicate
+    # ERPNext's receivable/payable report semantics.
+    if not filters.get("invoice_only_fast_path"):
+        return False
     if filters.get("show_settled") or filters.get("show_written_off"):
         return False
-    if filters.get("party_account") or filters.get("voucher_type"):
+    if filters.get("party_account") or filters.get("voucher_type") or filters.get("cost_center"):
         return False
     if filters.get("zahlungsrichtung") == "Ausgeglichen":
         return False
@@ -139,8 +145,6 @@ def _base_invoice_filters(filters: dict, party_field: str) -> dict[str, Any]:
     party = filters.get("party")
     if party:
         out[party_field] = ("in", party) if isinstance(party, list) else party
-    if filters.get("cost_center"):
-        out["cost_center"] = filters.get("cost_center")
     return out
 
 

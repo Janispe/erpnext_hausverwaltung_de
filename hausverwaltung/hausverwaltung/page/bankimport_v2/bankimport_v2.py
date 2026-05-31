@@ -38,14 +38,15 @@ def get_context(context):
 # ───────────────────────────────────────────── Zeilen-Phase / Status-Mapping ──
 
 # Spiegelt das Phasen-Modell aus bankauszug_import._recompute_doc_status:
-# Phase hängt an party → bank_transaction → voucher, NICHT an row_status.
+# Sobald eine Bank Transaction existiert, kann die Zeile gebucht werden, auch
+# wenn sie keine Party hat (z.B. Bankgebühren als Journal Entry).
 def _row_phase(row: dict) -> int:
 	if row.get("payment_entry") or row.get("journal_entry"):
 		return 4
-	if not (row.get("party_type") and row.get("party")):
-		return 1
 	if row.get("bank_transaction"):
 		return 3
+	if not (row.get("party_type") and row.get("party")):
+		return 1
 	return 2
 
 

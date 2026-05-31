@@ -197,10 +197,15 @@ def _recompute_doc_status(docname: str) -> str:
         needs_review = sum(1 for r in rows if (r.get("row_status") or "") == "needs_review")
         offene_buchungen = total - with_voucher
 
-        if with_party < total:
-            status = f"Phase 1: {with_party}/{total} Parteien zugeordnet"
-        elif with_bt < total:
-            status = f"Phase 2: {with_bt}/{total} Bank-Transaktionen — {total - with_bt} bereit zum Buchen"
+        # Phasen-Logik hängt am bank_transaction, nicht am Party-Count: Zeilen
+        # ohne Party können trotzdem als Journal Entry verbucht werden (z.B.
+        # Bankgebühren), und wenn alle BTs erzeugt sind ist die Party-Phase
+        # vorbei — egal wie viele Parties leer sind.
+        if with_bt < total:
+            if with_party < total:
+                status = f"Phase 1: {with_party}/{total} Parteien zugeordnet"
+            else:
+                status = f"Phase 2: {with_bt}/{total} Bank-Transaktionen — {total - with_bt} bereit zum Buchen"
         elif with_voucher < total:
             status = f"Phase 3: {with_voucher}/{total} Belege zugeordnet — {offene_buchungen} offen"
         else:

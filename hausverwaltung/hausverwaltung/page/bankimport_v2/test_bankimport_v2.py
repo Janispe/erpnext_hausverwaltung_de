@@ -230,7 +230,7 @@ class TestGetOverviewSync(FrappeTestCase):
 
 		self.assertEqual(audit["assignment"]["source"], "Automatisch")
 
-	def test_row_without_party_stays_in_phase_1_even_with_bank_transaction(self):
+	def test_row_without_party_with_bank_transaction_is_bookable_phase_3(self):
 		row = {
 			"payment_entry": None,
 			"journal_entry": None,
@@ -242,8 +242,8 @@ class TestGetOverviewSync(FrappeTestCase):
 
 		phase = bv2._row_phase(row)
 
-		self.assertEqual(phase, 1)
-		self.assertEqual(bv2._row_status(row, phase), "phase1-no-party")
+		self.assertEqual(phase, 3)
+		self.assertEqual(bv2._row_status(row, phase), "phase3-open")
 
 	def test_get_overview_syncs_cancelled_payment_entry_before_response(self):
 		row = _OverviewRow()
