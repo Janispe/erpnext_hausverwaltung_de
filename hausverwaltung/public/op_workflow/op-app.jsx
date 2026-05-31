@@ -63,6 +63,8 @@ function OpApp() {
   const [showWrittenOff, setShowWrittenOff] = useStateA0(false);
   const [search, setSearch] = useStateA0("");
   const [activeChip, setActiveChip] = useStateA0(null);
+  const [directionFilter, setDirectionFilter] = useStateA0("alle");
+  const [partyFilter, setPartyFilter] = useStateA0("");
   const [selected, setSelected] = useStateA0(() => new Set());
   const [immoFilter, setImmoFilter] = useStateA0(() => new Set()); // leer = alle
   // Default: aktueller Monat (1. bis letzter Tag)
@@ -190,6 +192,22 @@ function OpApp() {
     return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
   }, [modeRows]);
 
+  const availableParties = useMemoA0(() => {
+    const map = new Map();
+    modeRows.forEach((r) => {
+      if (!r.party) return;
+      if (!map.has(r.party)) {
+        map.set(r.party, {
+          id: r.party,
+          label: partyName(r.party) || r.party,
+          count: 0,
+        });
+      }
+      map.get(r.party).count += 1;
+    });
+    return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }, [modeRows, partyName]);
+
   // Quick-Filter-Chip-Counts (auf modeRows berechnet)
   const chipCounts = useMemoA0(() => ({
     overdue: modeRows.filter(r => r.alter_tage > 0 && r.status !== "Written Off" && Math.abs(r.offen) > 0.01).length,
@@ -202,6 +220,8 @@ function OpApp() {
   const filteredRows = useMemoA0(() => {
     let rows = modeRows;
     if (immoFilter.size > 0) rows = rows.filter((r) => immoFilter.has(r.kostenstelle));
+    if (partyFilter) rows = rows.filter((r) => r.party === partyFilter);
+    if (directionFilter !== "alle") rows = rows.filter((r) => r.zahlungsrichtung === directionFilter);
     if (datumVon) rows = rows.filter((r) => (r.faellig_am || "") >= datumVon);
     if (datumBis) rows = rows.filter((r) => (r.faellig_am || "") <= datumBis);
     if (!showSettled) rows = rows.filter((r) => Math.abs(r.offen) > 0.01);
@@ -227,6 +247,7 @@ function OpApp() {
       else if (sortierung === "Buchungsdatum") r = (a.buchungsdatum || "").localeCompare(b.buchungsdatum || "");
       else if (sortierung === "Mieter") r = (window.OFFENE_POSTEN.partyName(a.party) || "").localeCompare(window.OFFENE_POSTEN.partyName(b.party) || "");
       else if (sortierung === "Status") r = (a.status || "").localeCompare(b.status || "");
+      else if (sortierung === "Richtung") r = (a.zahlungsrichtung || "").localeCompare(b.zahlungsrichtung || "");
       else if (sortierung === "Richtung: Geld bekommen zuerst")
         r = (a.zahlungsrichtung === "Geld bekommen" ? -1 : 1) - (b.zahlungsrichtung === "Geld bekommen" ? -1 : 1);
       else if (sortierung === "Richtung: Geld bezahlen zuerst")
@@ -246,7 +267,7 @@ function OpApp() {
     };
     const sorted = [...rows].sort(cmp);
     return sorted;
-  }, [modeRows, immoFilter, datumVon, datumBis, showSettled, showWrittenOff, activeChip, search, sortierung, sortDir]);
+  }, [modeRows, immoFilter, partyFilter, directionFilter, datumVon, datumBis, showSettled, showWrittenOff, activeChip, search, sortierung, sortDir]);
 
   // Aggregate für Stats + Aging
   const stats = useMemoA0(() => {
@@ -494,7 +515,7 @@ function OpApp() {
             {["Forderungen", "Rechnungen", "Beides"].map((m) => (
               <button key={m}
                 className={`op-mode-tab ${mode === m ? "is-active" : ""}`}
-                onClick={() => { setMode(m); setSelected(new Set()); setActiveChip(null); }}>
+                onClick={() => { setMode(m); setSelected(new Set()); setActiveChip(null); setPartyFilter(""); }}>
                 <span>{MODE_LABEL[m]}</span>
                 <span className="op-count">{countsByMode[m]}</span>
               </button>
@@ -605,6 +626,16 @@ function OpApp() {
             <button className={`op-chip ${activeChip === "guthaben" ? "is-active" : ""}`} onClick={() => setActiveChip(activeChip === "guthaben" ? null : "guthaben")}>
               Guthaben <span className="op-chip-count">{chipCounts.guthaben}</span>
             </button>
+            <span className="op-chip-separator" />
+            <button className={`op-chip ${directionFilter === "alle" ? "is-active" : ""}`} onClick={() => setDirectionFilter("alle")}>
+              Alle Richtungen
+            </button>
+            <button className={`op-chip ${directionFilter === "Geld bekommen" ? "is-active" : ""}`} onClick={() => setDirectionFilter("Geld bekommen")}>
+              Geld bekommen
+            </button>
+            <button className={`op-chip ${directionFilter === "Geld bezahlen / erstatten" ? "is-active" : ""}`} onClick={() => setDirectionFilter("Geld bezahlen / erstatten")}>
+              Geld zahlen
+            </button>
             <label className="mk-toggle" style={{ marginLeft: 10 }}>
               <input type="checkbox" checked={showWrittenOff} onChange={(e) => setShowWrittenOff(e.target.checked)} />
               Abgeschriebene
@@ -615,7 +646,20 @@ function OpApp() {
             </label>
           </div>
           <div className="op-toolbar-right">
-            <input className="op-search" placeholder="Mieter, Beleg oder Bemerkung suchen…"
+            <select
+              className="op-party-select"
+              value={partyFilter}
+              onChange={(e) => { setPartyFilter(e.target.value); setSelected(new Set()); }}
+              title={mode === "Rechnungen" ? "Lieferant auswählen" : mode === "Beides" ? "Mieter oder Lieferant auswählen" : "Mieter auswählen"}
+            >
+              <option value="">{mode === "Rechnungen" ? "Alle Lieferanten" : mode === "Beides" ? "Alle Parteien" : "Alle Mieter"}</option>
+              {availableParties.map((party) => (
+                <option key={party.id} value={party.id}>
+                  {party.label} ({party.count})
+                </option>
+              ))}
+            </select>
+            <input className="op-search" placeholder="Beleg oder Bemerkung suchen…"
               value={search} onChange={(e) => setSearch(e.target.value)} />
             <select className="op-sort-select" value={sortierung} onChange={(e) => { setSortierung(e.target.value); setSortDir("asc"); }}>
               <option>Fällig am</option>
@@ -625,6 +669,7 @@ function OpApp() {
               <option>Mieter</option>
               <option>Immobilie</option>
               <option>Status</option>
+              <option>Richtung</option>
               <option>Richtung: Geld bekommen zuerst</option>
               <option>Richtung: Geld bezahlen zuerst</option>
             </select>
@@ -1071,6 +1116,7 @@ function FlatTable({
             <th style={{ width: 170 }}>Beleg</th>
             <th>Bemerkung</th>
             <SortableTh col="Status" label="Status" style={{ width: 120 }} />
+            <SortableTh col="Richtung" label="Richtung" style={{ width: 130 }} />
             <th className="is-num" style={{ width: 120 }}>Rechnungsbetrag</th>
             <th className="is-num" style={{ width: 100 }}>Bezahlt</th>
             <SortableTh col="Offener Betrag absteigend" label="Offen" style={{ width: 130 }} className="is-num" />
@@ -1085,7 +1131,7 @@ function FlatTable({
             const mahnreif = mahnreifIds && mahnreifIds.has(r.belegnummer);
             const mahnOpen = expandedMahnRows?.has(r.belegnummer);
             const mahnCandidate = mahnCandidateByInvoice?.get(r.belegnummer);
-            const detailColspan = 10 + (showObjekt ? 1 : 0) + (showAktion ? 1 : 0);
+            const detailColspan = 11 + (showObjekt ? 1 : 0) + (showAktion ? 1 : 0);
             return (
               <React.Fragment key={r.belegnummer + r.party}>
                 <tr className={`${sel ? "is-selected" : ""} ${writtenOff ? "is-written-off" : ""} ${mahnreif ? "is-mahnreif" : ""} ${mahnOpen ? "is-mahn-open" : ""}`}>
@@ -1123,6 +1169,7 @@ function FlatTable({
                     </div>
                   </td>
                   <td><StatusBadge status={r.status} /></td>
+                  <td><DirectionBadge direction={r.zahlungsrichtung} /></td>
                   <td className="is-num">{fmtEUR_op(r.rechnungsbetrag)}</td>
                   <td className="is-num" style={{ color: "var(--ink-3)" }}>
                     {r.bezahlt > 0.01 ? fmtEUR_op(r.bezahlt) : "—"}

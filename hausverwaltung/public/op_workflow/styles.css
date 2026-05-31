@@ -1308,6 +1308,12 @@ button { font-family: inherit; }
   opacity: 0.6;
   font-size: 11px;
 }
+.op-chip-separator {
+  width: 1px;
+  height: 20px;
+  background: var(--line-strong);
+  margin: 0 4px;
+}
 .op-toolbar-right {
   display: flex;
   align-items: center;
@@ -1324,7 +1330,8 @@ button { font-family: inherit; }
   width: 240px;
 }
 .op-search:focus { outline: 2px solid var(--ink); outline-offset: -1px; }
-.op-sort-select {
+.op-sort-select,
+.op-party-select {
   appearance: none;
   border: 1px solid var(--line-strong);
   background: var(--bg);
@@ -1336,6 +1343,10 @@ button { font-family: inherit; }
   background-repeat: no-repeat;
   background-position: right 8px center;
   cursor: pointer;
+}
+.op-party-select {
+  width: 220px;
+  max-width: 28vw;
 }
 
 /* ───────── Bulk-Action-Bar (sticky bei Auswahl) ───────── */
