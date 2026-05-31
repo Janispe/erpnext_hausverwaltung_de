@@ -1779,7 +1779,6 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
             {"label": "Abschlagsplan/Zahlungsplan", "link_type": "DocType", "link_to": "Zahlungsplan"},
             {"label": "Zahlungen zuordnen", "link_type": "DocType", "link_to": "Payment Reconciliation"},
             {"label": "Offene Posten", "link_type": "Page", "link_to": "op-workflow"},
-            {"label": "Mahnwesen", "link_type": "Page", "link_to": "op-workflow"},
             {"label": "Mahnung", "link_type": "DocType", "link_to": "Dunning"},
             {"label": "Buchungssatz / Korrektur", "link_type": "DocType", "link_to": "Journal Entry"},
             {"label": "Kontenplan", "link_type": "DocType", "link_to": "Account"},
