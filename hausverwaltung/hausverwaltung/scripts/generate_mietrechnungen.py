@@ -246,7 +246,36 @@ def _kunde_des_vertrags(mv_row: frappe._dict) -> str | None:
 
 def _invoice_exists(customer: str, von: date, mv_name: str, typ: str, *, include_drafts: bool = True) -> bool:
     docstatus_filter = ("in", [0, 1]) if include_drafts else 1
-    # 1) Prüfen per Remark-Marker (neues Schema)
+    item_code = {
+        "Miete": "Miete",
+        "Betriebskosten": "Betriebskosten",
+        "Heizkosten": "Heizkosten",
+        "Untermietzuschlag": "Untermietzuschlag",
+    }.get(typ, typ)
+
+    # Neuer Primärschlüssel für Sollstellungs-Rechnungen: nicht mehr aus der
+    # sichtbaren Bemerkung lesen, sondern aus dem strukturierten Koppel-Feld.
+    if _has_field("Sales Invoice", "mietabrechnung_id"):
+        parent_names = frappe.get_all(
+            "Sales Invoice",
+            filters={
+                "customer": customer,
+                "posting_date": ("between", [get_first_day(von), get_last_day(von)]),
+                "docstatus": docstatus_filter,
+                "mietabrechnung_id": f"{mv_name}|{von.strftime('%m/%Y')}",
+            },
+            pluck="name",
+        )
+        if parent_names:
+            child = frappe.get_all(
+                "Sales Invoice Item",
+                filters={"parent": ("in", parent_names), "item_code": item_code},
+                limit=1,
+            )
+            if child:
+                return True
+
+    # 1) Fallback für alte Rechnungen mit technischem Marker in der Bemerkung.
     existing = frappe.get_all(
         "Sales Invoice",
         filters={
@@ -273,12 +302,6 @@ def _invoice_exists(customer: str, von: date, mv_name: str, typ: str, *, include
     )
     if not parent_names:
         return False
-    item_code = {
-        "Miete": "Miete",
-        "Betriebskosten": "Betriebskosten",
-        "Heizkosten": "Heizkosten",
-        "Untermietzuschlag": "Untermietzuschlag",
-    }.get(typ, typ)
     child = frappe.get_all(
         "Sales Invoice Item",
         filters={"parent": ("in", parent_names), "item_code": item_code},
@@ -320,6 +343,16 @@ def _resolve_company(company: str | None) -> str:
         return companies[0]
 
     frappe.throw(_("Bitte eine Company auswählen oder eine Standard-Company setzen (User/Global Defaults)."))
+
+
+def _build_invoice_remark(typ: str, monat_str: str) -> str:
+    label = {
+        "Miete": "Miete",
+        "Betriebskosten": "BK",
+        "Heizkosten": "HK",
+        "Untermietzuschlag": "UMZ",
+    }.get(typ, typ)
+    return f"{label} {monat_str}"
 
 
 def _create_invoice(
@@ -586,7 +619,7 @@ def generate_miet_und_bk_rechnungen(
                     message=f"{v.name}: Miete bereits vorhanden",
                 )
             else:
-                remark = f"[TYPE:Miete] [MV:{v.name}] {monat_str}"
+                remark = _build_invoice_remark("Miete", monat_str)
                 desc = f"Nettokaltmiete {monat_str} Wohnung {v.wohnung}"
                 sinv_name = _create_invoice(
                     kunde,
@@ -635,7 +668,7 @@ def generate_miet_und_bk_rechnungen(
                     message=f"{v.name}: Betriebskosten bereits vorhanden",
                 )
             else:
-                remark = f"[TYPE:Betriebskosten] [MV:{v.name}] {monat_str}"
+                remark = _build_invoice_remark("Betriebskosten", monat_str)
                 desc = f"Betriebskosten-Vorauszahlung {monat_str} Wohnung {v.wohnung}"
                 sinv_name = _create_invoice(
                     kunde,
@@ -684,7 +717,7 @@ def generate_miet_und_bk_rechnungen(
                     message=f"{v.name}: Heizkosten bereits vorhanden",
                 )
             else:
-                remark = f"[TYPE:Heizkosten] [MV:{v.name}] {monat_str}"
+                remark = _build_invoice_remark("Heizkosten", monat_str)
                 desc = f"Heizkosten-Vorauszahlung {monat_str} Wohnung {v.wohnung}"
                 sinv_name = _create_invoice(
                     kunde,
@@ -742,7 +775,7 @@ def generate_miet_und_bk_rechnungen(
                     message=f"{v.name}: Untermietzuschlag bereits vorhanden",
                 )
             else:
-                remark = f"[TYPE:Untermietzuschlag] [MV:{v.name}] {monat_str}"
+                remark = _build_invoice_remark("Untermietzuschlag", monat_str)
                 desc = f"Untermietzuschlag {monat_str} Wohnung {v.wohnung}"
                 sinv_name = _create_invoice(
                     kunde,

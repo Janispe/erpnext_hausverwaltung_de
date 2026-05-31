@@ -1,3 +1,5 @@
+import re
+
 import frappe
 from erpnext.accounts.report.accounts_receivable.accounts_receivable import ReceivablePayableReport
 from frappe import _
@@ -443,8 +445,29 @@ def _resolve_voucher_remarks(source_rows):
 			as_list=True,
 		):
 			if remark:
-				out[(vtype, name)] = remark
+				out[(vtype, name)] = _format_voucher_remark_for_report(vtype, remark)
 	return out
+
+
+def _format_voucher_remark_for_report(voucher_type: str, remark: str) -> str:
+	if voucher_type != "Sales Invoice":
+		return remark
+	return _shorten_sollstellung_remark(remark)
+
+
+def _shorten_sollstellung_remark(remark: str) -> str:
+	"""Kürzt alte Sollstellungs-Marker auf den fachlichen Anzeige-Text."""
+	match = re.search(r"\[TYPE:([^\]]+)\].*?(\d{2}/\d{4})", remark or "")
+	if not match:
+		return remark
+
+	label = {
+		"Miete": "Miete",
+		"Betriebskosten": "BK",
+		"Heizkosten": "HK",
+		"Untermietzuschlag": "UMZ",
+	}.get(match.group(1).strip(), match.group(1).strip())
+	return f"{label} {match.group(2)}"
 
 
 def _row_cost_centers(row, invoice_cc_map):
