@@ -269,6 +269,7 @@ def create_dunning(
         "due_date": new_due_date or add_days(nowdate(), 7),
         "outstanding_amount": si.outstanding_amount,
         "currency": si.currency,
+        "conversion_rate": flt(getattr(si, "conversion_rate", None)) or 1,
         "dunning_fee": flt(mahngebuehr) if mahngebuehr is not None else None,
         "rate_of_interest": None if _as_bool(zinsen_aktiv) else 0,
     }.items():
@@ -348,6 +349,7 @@ def create_bulk_dunning(
                 "posting_date": nowdate(),
                 "due_date": new_due_date or add_days(nowdate(), 7),
                 "currency": first.currency,
+                "conversion_rate": flt(getattr(first, "conversion_rate", None)) or 1,
                 "outstanding_amount": sum(flt(si.outstanding_amount) for si in sales_invoices),
             }.items():
                 _set_if_field(dunning, fieldname, value)
