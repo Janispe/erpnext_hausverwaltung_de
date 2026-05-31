@@ -103,6 +103,14 @@ frappe.query_reports["Noch offene Rechnungen und Forderungen"] = {
 			default: 0,
 		},
 		{
+			fieldname: "hide_abschlagszahlungen",
+			label: __("Abschlagszahlungen ausblenden"),
+			fieldtype: "Check",
+			default: 0,
+			description: __("Blendet offene Payment Entries aus, die mit einer Abschlagsplan-Zeile verknüpft sind."),
+			on_change: () => frappe.query_report.refresh(),
+		},
+		{
 			fieldname: "show_written_off",
 			label: __("Abgeschriebene anzeigen"),
 			fieldtype: "Check",

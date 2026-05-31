@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from hausverwaltung.hausverwaltung.report.noch_offene_rechnungen_und_forderungen.noch_offene_rechnungen_und_forderungen import (
 	_group_rows_by_mietabrechnung,
+	_resolve_abschlagsplan_payment_entries,
 	_shorten_sollstellung_remark,
 )
 
@@ -46,6 +47,25 @@ class TestNochOffeneForderungenAggregation(TestCase):
 		remark = "Freie Bemerkung"
 
 		self.assertEqual(_shorten_sollstellung_remark(remark), remark)
+
+	def test_abschlagsplan_payment_entries_are_resolved_from_plan_rows(self):
+		source_rows = [
+			{"voucher_type": "Payment Entry", "voucher_no": "PE-ABS"},
+			{"voucher_type": "Payment Entry", "voucher_no": "PE-NORMAL"},
+			{"voucher_type": "Sales Invoice", "voucher_no": "SI-1"},
+		]
+
+		def fake_sql(sql, params=None, as_dict=False):
+			self.assertIn("tabZahlungsplan Zeile", sql)
+			self.assertEqual(set(params["payment_entries"]), {"PE-ABS", "PE-NORMAL"})
+			self.assertTrue(as_dict)
+			return [{"payment_entry": "PE-ABS"}]
+
+		with patch(
+			"hausverwaltung.hausverwaltung.report.noch_offene_rechnungen_und_forderungen.noch_offene_rechnungen_und_forderungen.frappe.db.sql",
+			side_effect=fake_sql,
+		):
+			self.assertEqual(_resolve_abschlagsplan_payment_entries(source_rows), {"PE-ABS"})
 
 	def _patch_invoice_lookup(self, mab_mapping: dict[str, str], item_mapping: dict[str, str]):
 		def fake_get_all(doctype, filters=None, fields=None, **kwargs):

@@ -311,9 +311,16 @@ def _filter_and_map_rows(source_rows, filters, mode):
 	cost_center_filter = filters.get("cost_center")
 	invoice_cc_map = _resolve_invoice_cost_centers(source_rows)
 	remarks_map = _resolve_voucher_remarks(source_rows)
+	abschlagsplan_payment_entries = (
+		_resolve_abschlagsplan_payment_entries(source_rows)
+		if filters.get("hide_abschlagszahlungen")
+		else set()
+	)
 
 	for row in source_rows or []:
 		row = frappe._dict(row)
+		if row.get("voucher_type") == "Payment Entry" and row.get("voucher_no") in abschlagsplan_payment_entries:
+			continue
 
 		# Fallback auf posting_date für Vouchers ohne due_date (Journal Entries
 		# und unallokierte Payment Entries / Vorauszahlungen). Sonst würden
@@ -376,6 +383,30 @@ def _filter_and_map_rows(source_rows, filters, mode):
 		)
 
 	return rows
+
+
+def _resolve_abschlagsplan_payment_entries(source_rows):
+	"""Payment Entries ermitteln, die als Abschlagsplan-Zahlung verknüpft sind."""
+	payment_entries = {
+		(row or {}).get("voucher_no")
+		for row in source_rows or []
+		if (row or {}).get("voucher_type") == "Payment Entry" and (row or {}).get("voucher_no")
+	}
+	if not payment_entries:
+		return set()
+
+	rows = frappe.db.sql(
+		"""
+		SELECT DISTINCT zpz.payment_entry
+		FROM `tabZahlungsplan Zeile` zpz
+		INNER JOIN `tabZahlungsplan` zp ON zp.name = zpz.parent
+		WHERE zp.modus = 'Abschlagsplan'
+		  AND zpz.payment_entry IN %(payment_entries)s
+		""",
+		{"payment_entries": tuple(payment_entries)},
+		as_dict=True,
+	)
+	return {row.get("payment_entry") for row in rows if row.get("payment_entry")}
 
 
 def _resolve_invoice_cost_centers(source_rows):

@@ -97,6 +97,14 @@
   },
   {
    "default": "0",
+   "fieldname": "hide_abschlagszahlungen",
+   "fieldtype": "Check",
+   "label": "Abschlagszahlungen ausblenden",
+   "mandatory": 0,
+   "wildcard_filter": 0
+  },
+  {
+   "default": "0",
    "fieldname": "show_written_off",
    "fieldtype": "Check",
    "label": "Abgeschriebene anzeigen",
