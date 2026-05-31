@@ -123,6 +123,121 @@ button { font-family: inherit; }
   width: 100%;
 }
 
+.op-view-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  margin-bottom: 14px;
+}
+.op-view-tab {
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.op-view-tab.is-active {
+  background: var(--ink);
+  color: var(--bg);
+}
+.op-view-tab .op-count {
+  margin-left: 6px;
+}
+
+.op-mahn-cockpit {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.op-mahn-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 20px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
+}
+.op-mahn-head h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+.op-mahn-head-sub {
+  margin-top: 4px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.op-mahn-table-wrap {
+  border: 1px solid var(--line);
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  overflow: auto;
+}
+.op-mahn-table {
+  min-width: 1280px;
+}
+.op-row-toggle,
+.op-link-btn {
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+.op-row-toggle {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+}
+.op-row-toggle:hover,
+.op-link-btn:hover {
+  background: var(--bg-soft);
+}
+.op-link-btn {
+  color: var(--info);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.op-muted {
+  color: var(--ink-3);
+}
+.op-mahn-actions {
+  text-align: right;
+}
+.op-mahn-draft {
+  background: var(--warn-soft);
+}
+.op-mahn-detail-row td {
+  background: var(--bg-soft);
+  border-top: 0;
+}
+.op-mahn-detail {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 12px 0;
+}
+.op-mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+}
+.op-mini-table td {
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--line);
+}
+.op-mini-table tr:last-child td {
+  border-bottom: 0;
+}
+
 /* ───────── Mieter-Kopf ───────── */
 
 .mk-header {

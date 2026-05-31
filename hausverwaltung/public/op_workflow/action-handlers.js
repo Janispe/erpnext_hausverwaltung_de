@@ -35,6 +35,13 @@
     return Array.isArray(result) ? result : [];
   }
 
+  async function listSerienbriefVorlagen() {
+    const result = await call("hausverwaltung.hausverwaltung.page.op_workflow.op_workflow.list_serienbrief_vorlagen", {
+      doctype: "Dunning",
+    });
+    return Array.isArray(result) ? result : [];
+  }
+
   // ─── Einzel-Mahnung ─────────────────────────────────────────────────────
   async function createDunning(row, opts) {
     const result = await call(
@@ -45,6 +52,7 @@
         new_due_date: opts.neueFaelligkeit,
         mahngebuehr: opts.mahngebuehr,
         zinsen_aktiv: opts.zinsenAktiv,
+        serienbrief_vorlage: opts.serienbriefVorlage || null,
       },
     );
     handleResult(
@@ -59,15 +67,20 @@
   async function createBulkDunning(rowsByParty, opts) {
     const invoicesByCustomer = {};
     const dunningTypePerCustomer = {};
+    const serienbriefVorlagePerCustomer = {};
     for (const [party, rows] of Object.entries(rowsByParty)) {
       invoicesByCustomer[party] = rows.map((r) => r.belegnummer);
       if (opts?.dunningType) dunningTypePerCustomer[party] = opts.dunningType;
+      if (opts?.serienbriefVorlage) serienbriefVorlagePerCustomer[party] = opts.serienbriefVorlage;
+      else if (rows[0]?.serienbrief_vorlage) serienbriefVorlagePerCustomer[party] = rows[0].serienbrief_vorlage;
     }
     const result = await call(
       "hausverwaltung.hausverwaltung.page.op_workflow.op_workflow.create_bulk_dunning",
       {
         invoices_by_customer: invoicesByCustomer,
         dunning_type_per_customer: dunningTypePerCustomer,
+        serienbrief_vorlage_per_customer: serienbriefVorlagePerCustomer,
+        serienbrief_vorlage: opts?.serienbriefVorlage || null,
         new_due_date: opts.neueFaelligkeit,
       },
     );
@@ -175,9 +188,26 @@
     frappe.set_route("Form", dt, row.belegnummer);
   }
 
+  function openDunning(name) {
+    if (!name) return;
+    frappe.set_route("Form", "Dunning", name);
+  }
+
+  function openDunningPdf(name) {
+    if (!name) return;
+    const params = new URLSearchParams({
+      doctype: "Dunning",
+      name,
+      format: "HV Dunning Letter",
+      no_letterhead: "0",
+    });
+    window.open(`/api/method/frappe.utils.print_format.download_pdf?${params.toString()}`, "_blank");
+  }
+
   // ─── Public API ─────────────────────────────────────────────────────────
   window.OP_ACTIONS = {
     listDunningTypes,
+    listSerienbriefVorlagen,
     createDunning,
     createBulkDunning,
     createPaymentEntry,
@@ -187,5 +217,7 @@
     setStundungComment,
     openMieterkonto,
     openBeleg,
+    openDunning,
+    openDunningPdf,
   };
 })();

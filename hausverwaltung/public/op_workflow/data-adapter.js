@@ -23,6 +23,14 @@
     return res.message;
   }
 
+  async function fetchMahnkandidaten(filters) {
+    const res = await frappe.call({
+      method: "hausverwaltung.hausverwaltung.page.op_workflow.op_workflow.get_mahnkandidaten",
+      args: { filters: filters || {} },
+    });
+    return res.message;
+  }
+
   function defaultDateFilter() {
     const d = new Date();
     const Y = d.getFullYear();
@@ -87,16 +95,20 @@
 
   async function loadReal() {
     const filters = defaultFilters();
-    const { rows, today } = await fetchRows(filters);
+    const [{ rows, today }, mahnData] = await Promise.all([
+      fetchRows(filters),
+      fetchMahnkandidaten(filters),
+    ]);
     const { partyMap, ccLabel } = await hydrateLookups(rows);
 
     window.OFFENE_POSTEN = {
       filters,
       rows: rows.map(adaptRow),
+      mahnkandidaten: mahnData?.rows || [],
       parties: partyMap,
       partyName: (id) => partyMap[id] || id,
       ccLabel,
-      TODAY: today,
+      TODAY: today || mahnData?.today,
     };
   }
 
@@ -137,14 +149,17 @@
     window.dispatchEvent(new CustomEvent("op-loading-start"));
     try {
       const { rows, today } = await fetchRows(merged);
+      const mahnData = await fetchMahnkandidaten(merged);
       const { partyMap, ccLabel } = await hydrateLookups(rows);
       window.OFFENE_POSTEN.filters = merged;
       window.OFFENE_POSTEN.rows = rows.map(adaptRow);
+      window.OFFENE_POSTEN.mahnkandidaten = mahnData?.rows || [];
       window.OFFENE_POSTEN.parties = partyMap;
       window.OFFENE_POSTEN.partyName = (id) => partyMap[id] || id;
       window.OFFENE_POSTEN.ccLabel = ccLabel;
-      if (today) window.OFFENE_POSTEN.TODAY = today;
+      if (today || mahnData?.today) window.OFFENE_POSTEN.TODAY = today || mahnData.today;
       window.dispatchEvent(new CustomEvent("op-data-refreshed"));
+      window.dispatchEvent(new CustomEvent("op-mahn-data-refreshed"));
     } finally {
       window.dispatchEvent(new CustomEvent("op-loading-end"));
     }

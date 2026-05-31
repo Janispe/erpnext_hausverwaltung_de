@@ -27,26 +27,35 @@ function OpApp() {
 
   // Rows als State — werden bei Backend-Refresh aktualisiert
   const [ALL_ROWS, setAllRows] = React.useState(window.OFFENE_POSTEN.rows);
+  const [MAHN_ROWS, setMahnRows] = React.useState(window.OFFENE_POSTEN.mahnkandidaten || []);
   const [isLoading, setIsLoading] = React.useState(false);
 
   React.useEffect(() => {
     const onRefresh = () => {
       setAllRows([...window.OFFENE_POSTEN.rows]);
+      setMahnRows([...(window.OFFENE_POSTEN.mahnkandidaten || [])]);
       setSelected(new Set());
     };
+    const onMahnRefresh = () => setMahnRows([...(window.OFFENE_POSTEN.mahnkandidaten || [])]);
     const onLoadStart = () => setIsLoading(true);
     const onLoadEnd = () => setIsLoading(false);
     window.addEventListener("op-data-refreshed", onRefresh);
+    window.addEventListener("op-mahn-data-refreshed", onMahnRefresh);
     window.addEventListener("op-loading-start", onLoadStart);
     window.addEventListener("op-loading-end", onLoadEnd);
     return () => {
       window.removeEventListener("op-data-refreshed", onRefresh);
+      window.removeEventListener("op-mahn-data-refreshed", onMahnRefresh);
       window.removeEventListener("op-loading-start", onLoadStart);
       window.removeEventListener("op-loading-end", onLoadEnd);
     };
   }, []);
 
   // Filter-State
+  const [view, setView] = useStateA0(() => {
+    const params = new URLSearchParams(window.location.search || "");
+    return params.get("view") === "mahnwesen" || frappe.route_options?.view === "mahnwesen" ? "mahnwesen" : "op";
+  });
   const [mode, setMode] = useStateA0("Forderungen");
   const [sortierung, setSortierung] = useStateA0("Fällig am");
   const [sortDir, setSortDir] = useStateA0("asc"); // asc | desc
@@ -310,6 +319,70 @@ function OpApp() {
     setModal({ type: "sammelmahnung", rows: candidates });
   };
 
+  const openCandidateDunning = (candidate) => {
+    const rows = (candidate.invoices || []).map((invoice) => ({
+      art: "Forderungen",
+      party_type: "Customer",
+      party: candidate.customer,
+      buchungsdatum: invoice.posting_date,
+      faellig_am: invoice.due_date,
+      belegart: "Sales Invoice",
+      belegnummer: invoice.sales_invoice,
+      rechnungsbetrag: invoice.grand_total,
+      bezahlt: Math.max((invoice.grand_total || 0) - (invoice.outstanding_amount || 0), 0),
+      offen: invoice.outstanding_amount,
+      party_account: null,
+      kostenstelle: invoice.cost_center,
+      bemerkungen: invoice.remarks || invoice.mietabrechnung_id || "",
+      status: invoice.status,
+      zahlungsrichtung: "Geld bekommen",
+      alter_tage: candidate.oldest_age_days || 0,
+      can_write_off: true,
+      mahnstufe: Math.max((candidate.next_level || 1) - 1, 0),
+      dunning_type: candidate.next_dunning_type || "",
+      serienbrief_vorlage: candidate.serienbrief_vorlage || "",
+    }));
+    if (!rows.length) {
+      setToast("Keine offenen Rechnungen für diese Mahnung.");
+      return;
+    }
+    setModal({
+      type: rows.length === 1 ? "mahnung" : "sammelmahnung",
+      row: rows[0],
+      rows,
+    });
+  };
+
+  const openCandidatesBulkDunning = (candidates) => {
+    const rows = candidates.flatMap((candidate) => (candidate.invoices || []).map((invoice) => ({
+      art: "Forderungen",
+      party_type: "Customer",
+      party: candidate.customer,
+      buchungsdatum: invoice.posting_date,
+      faellig_am: invoice.due_date,
+      belegart: "Sales Invoice",
+      belegnummer: invoice.sales_invoice,
+      rechnungsbetrag: invoice.grand_total,
+      bezahlt: Math.max((invoice.grand_total || 0) - (invoice.outstanding_amount || 0), 0),
+      offen: invoice.outstanding_amount,
+      party_account: null,
+      kostenstelle: invoice.cost_center,
+      bemerkungen: invoice.remarks || invoice.mietabrechnung_id || "",
+      status: invoice.status,
+      zahlungsrichtung: "Geld bekommen",
+      alter_tage: candidate.oldest_age_days || 0,
+      can_write_off: true,
+      mahnstufe: Math.max((candidate.next_level || 1) - 1, 0),
+      dunning_type: candidate.next_dunning_type || "",
+      serienbrief_vorlage: candidate.serienbrief_vorlage || "",
+    })));
+    if (!rows.length) {
+      setToast("Keine offenen Rechnungen für eine Sammelmahnung.");
+      return;
+    }
+    setModal({ type: "sammelmahnung", rows });
+  };
+
   const writeOffSelected = async () => {
     const candidates = selectedRows.filter((r) => r.can_write_off);
     if (!candidates.length) {
@@ -385,8 +458,17 @@ function OpApp() {
       </div>
 
       <main className="mk-main" data-screen-label={`Mode ${mode}`}>
+        <div className="op-view-tabs">
+          <button className={`op-view-tab ${view === "op" ? "is-active" : ""}`} onClick={() => setView("op")}>
+            Offene Posten
+          </button>
+          <button className={`op-view-tab ${view === "mahnwesen" ? "is-active" : ""}`} onClick={() => setView("mahnwesen")}>
+            Mahnwesen <span className="op-count">{MAHN_ROWS.length}</span>
+          </button>
+        </div>
+
         {/* Mode-Switch */}
-        <div className="op-mode-bar">
+        {view === "op" && <div className="op-mode-bar">
           <div className="op-mode-tabs">
             {["Forderungen", "Rechnungen", "Beides"].map((m) => (
               <button key={m}
@@ -401,7 +483,18 @@ function OpApp() {
             <div>{MODE_SUB[mode]}</div>
             <div style={{ marginTop: 2 }}>Stichtag: {fmtDate_op(window.OFFENE_POSTEN.TODAY)}</div>
           </div>
-        </div>
+        </div>}
+
+        {view === "mahnwesen" ? (
+          <MahnwesenView
+            rows={MAHN_ROWS}
+            search={search}
+            setSearch={setSearch}
+            onCreateDunning={openCandidateDunning}
+            onCreateBulkDunning={openCandidatesBulkDunning}
+          />
+        ) : (
+          <>
 
         {/* Mahn-Banner (kompakt, eine Zeile) */}
         {mahnStats.count > 0 && mode !== "Rechnungen" && (
@@ -576,6 +669,8 @@ function OpApp() {
             {fmtEUR_op(filteredRows.reduce((a, r) => a + r.offen, 0))}
           </div>
         </div>
+          </>
+        )}
       </main>
 
       <TweaksPanel title="Tweaks">
@@ -604,6 +699,160 @@ function OpApp() {
       {modal?.type === "guthaben" && <GuthabenAuszahlenModal row={modal.row} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`Auszahlungs-Draft erstellt: ${result.payment_entry}`); }} />}
       {modal?.type === "zuordnen" && <ZuordnenModal row={modal.row} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`Payment Reconciliation Draft erstellt: ${result.payment_reconciliation}`); }} />}
       {toast && <Toast message={toast} onClose={() => setToast(null)} />}
+    </div>
+  );
+}
+
+function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkDunning }) {
+  const [openSet, setOpenSet] = useStateA0(() => new Set());
+  const filtered = useMemoA0(() => {
+    const q = (search || "").trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) =>
+      (row.customer_name || "").toLowerCase().includes(q) ||
+      (row.customer || "").toLowerCase().includes(q) ||
+      (row.mietvertrag || "").toLowerCase().includes(q) ||
+      (row.wohnung || "").toLowerCase().includes(q) ||
+      (row.serienbrief_vorlage || "").toLowerCase().includes(q)
+    );
+  }, [rows, search]);
+  const total = filtered.reduce((sum, row) => sum + (row.offen || 0), 0);
+  const toggle = (key) => {
+    setOpenSet((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  };
+
+  return (
+    <div className="op-mahn-cockpit">
+      <div className="op-mahn-head">
+        <div>
+          <h2>Mahnwesen</h2>
+          <div className="op-mahn-head-sub">
+            {filtered.length} Kandidaten · {fmtEUR_op(total)} offen · Stichtag {fmtDate_op(window.OFFENE_POSTEN.TODAY)}
+          </div>
+        </div>
+        <input
+          className="op-search"
+          placeholder="Mieter, Wohnung, Vertrag oder Vorlage suchen..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <button className="mk-btn mk-btn-primary" onClick={() => onCreateBulkDunning(filtered)} disabled={!filtered.length}>
+          Sammelmahnung erstellen
+        </button>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="op-empty">
+          <strong>Keine Mahnkandidaten.</strong>
+          Es gibt aktuell keine überfälligen offenen Sales Invoices in dieser Auswahl.
+        </div>
+      ) : (
+        <div className="op-mahn-table-wrap">
+          <table className="op-table op-mahn-table">
+            <thead>
+              <tr>
+                <th style={{ width: 34 }}></th>
+                <th>Mieter</th>
+                <th>Wohnung</th>
+                <th>Mietvertrag</th>
+                <th className="is-num">Offen</th>
+                <th>Älteste Fälligkeit</th>
+                <th>Letzte Mahnung</th>
+                <th>Nächste Stufe</th>
+                <th>Serienbrief-Vorlage</th>
+                <th style={{ width: 170 }}>Aktionen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((row) => {
+                const open = openSet.has(row.key);
+                const last = (row.mahnungen || [])[0];
+                return (
+                  <React.Fragment key={row.key}>
+                    <tr className={row.draft_warning ? "is-mahn-draft" : ""}>
+                      <td>
+                        <button className="op-row-toggle" onClick={() => toggle(row.key)}>{open ? "▾" : "▸"}</button>
+                      </td>
+                      <td className="col-party">
+                        {row.customer_name || row.customer}
+                        <span className="op-party-id">{row.customer}</span>
+                      </td>
+                      <td>{row.wohnung || "—"}</td>
+                      <td>{row.mietvertrag || "—"}</td>
+                      <td className="is-num col-offen">{fmtEUR_op(row.offen)}</td>
+                      <td>
+                        {fmtDate_op(row.oldest_due_date)}
+                        <span className="op-party-id">{row.oldest_age_days || 0} Tage</span>
+                      </td>
+                      <td>
+                        {last ? (
+                          <>
+                            <span>{last.dunning_type || last.name}</span>
+                            <span className="op-party-id">{fmtDate_op(last.posting_date)} · {last.status}</span>
+                          </>
+                        ) : "—"}
+                      </td>
+                      <td><MahnstufeBadge stufe={row.next_level} /></td>
+                      <td>{row.serienbrief_vorlage || <span className="op-muted">Default fehlt</span>}</td>
+                      <td className="op-mahn-actions">
+                        <button className="op-action-btn is-primary" onClick={() => onCreateDunning(row)}>Mahnung erstellen</button>
+                      </td>
+                    </tr>
+                    {open && (
+                      <tr className="op-mahn-detail-row">
+                        <td></td>
+                        <td colSpan="9">
+                          <div className="op-mahn-detail">
+                            <div>
+                              <div className="op-preview-label">Offene Rechnungen</div>
+                              <table className="op-mini-table">
+                                <tbody>
+                                  {(row.invoices || []).map((invoice) => (
+                                    <tr key={invoice.sales_invoice}>
+                                      <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openBeleg({ belegart: "Sales Invoice", belegnummer: invoice.sales_invoice })}>{invoice.sales_invoice}</button></td>
+                                      <td>{fmtDate_op(invoice.due_date)}</td>
+                                      <td className="is-num">{fmtEUR_op(invoice.outstanding_amount)}</td>
+                                      <td>{invoice.status}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            <div>
+                              <div className="op-preview-label">Mahnhistorie</div>
+                              {(row.mahnungen || []).length ? (
+                                <table className="op-mini-table">
+                                  <tbody>
+                                    {row.mahnungen.map((mahnung) => (
+                                      <tr key={mahnung.name}>
+                                        <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openDunning(mahnung.name)}>{mahnung.name}</button></td>
+                                        <td>{mahnung.status}</td>
+                                        <td>{mahnung.dunning_type || "—"}</td>
+                                        <td>{mahnung.serienbrief_vorlage || "—"}</td>
+                                        <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openDunningPdf(mahnung.name)}>PDF</button></td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              ) : (
+                                <div className="op-muted">Noch keine Mahnung zu diesen offenen Rechnungen.</div>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

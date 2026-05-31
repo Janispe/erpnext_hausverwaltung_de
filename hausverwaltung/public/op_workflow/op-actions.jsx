@@ -141,17 +141,23 @@ function MahnungModal({ row, onClose, onDone }) {
     d.setDate(d.getDate() + 7);
     return d.toISOString().slice(0, 10);
   });
-  const suggestedDunningType = nextStufe === 1 ? "Zahlungserinnerung - HP" : nextStufe === 2 ? "1. Mahnung - HP" : nextStufe === 3 ? "2. Mahnung - HP" : "Letzte Mahnung - HP";
+  const suggestedDunningType = row.dunning_type || (nextStufe === 1 ? "Zahlungserinnerung - HP" : nextStufe === 2 ? "1. Mahnung - HP" : nextStufe === 3 ? "2. Mahnung - HP" : "Letzte Mahnung - HP");
   const [dunningTypes, setDunningTypes] = useStateAct([]);
   const [textStufe, setTextStufe] = useStateAct(suggestedDunningType);
+  const [vorlagen, setVorlagen] = useStateAct([]);
+  const [serienbriefVorlage, setSerienbriefVorlage] = useStateAct(row.serienbrief_vorlage || "");
 
   useEffectAct(() => {
     let alive = true;
-    window.OP_ACTIONS.listDunningTypes()
-      .then((items) => {
+    Promise.all([
+      window.OP_ACTIONS.listDunningTypes(),
+      window.OP_ACTIONS.listSerienbriefVorlagen ? window.OP_ACTIONS.listSerienbriefVorlagen() : Promise.resolve([]),
+    ])
+      .then(([items, templates]) => {
         if (!alive) return;
         setDunningTypes(items);
         if (items.length && !items.includes(textStufe)) setTextStufe(items[0]);
+        setVorlagen(templates || []);
       })
       .catch(() => {});
     return () => { alive = false; };
@@ -171,6 +177,7 @@ function MahnungModal({ row, onClose, onDone }) {
         neueFaelligkeit,
         mahngebuehr,
         zinsenAktiv: zinsen,
+        serienbriefVorlage,
       });
       onDone?.(result);
     } finally {
@@ -199,7 +206,7 @@ function MahnungModal({ row, onClose, onDone }) {
     >
       <div className="op-form-grid">
         <div className="op-field">
-          <label>Mahnungstyp</label>
+          <label>Mahnstufe / Regel</label>
           {dunningTypes.length ? (
             <select value={textStufe} onChange={(e) => setTextStufe(e.target.value)}>
               {dunningTypes.map((name) => <option key={name} value={name}>{name}</option>)}
@@ -211,6 +218,17 @@ function MahnungModal({ row, onClose, onDone }) {
             <button type="button" className="mk-btn mk-btn-ghost" style={{ marginTop: 6, padding: "4px 8px", fontSize: 11 }} onClick={() => setTextStufe(suggestedDunningType)}>
               Vorschlag wählen
             </button>
+          )}
+        </div>
+        <div className="op-field">
+          <label>Serienbrief-Vorlage</label>
+          {vorlagen.length ? (
+            <select value={serienbriefVorlage} onChange={(e) => setSerienbriefVorlage(e.target.value)}>
+              <option value="">Default aus Mahnstufe</option>
+              {vorlagen.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          ) : (
+            <input value={serienbriefVorlage} placeholder="Default aus Mahnstufe" onChange={(e) => setSerienbriefVorlage(e.target.value)} />
           )}
         </div>
         <div className="op-field">
@@ -640,7 +658,9 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
 
   const [versand, setVersand] = useStateAct("Brief");
   const [dunningTypes, setDunningTypes] = useStateAct([]);
-  const [dunningType, setDunningType] = useStateAct("");
+  const [dunningType, setDunningType] = useStateAct(rows.find((r) => r.dunning_type)?.dunning_type || "");
+  const [vorlagen, setVorlagen] = useStateAct([]);
+  const [serienbriefVorlage, setSerienbriefVorlage] = useStateAct(rows.find((r) => r.serienbrief_vorlage)?.serienbrief_vorlage || "");
   const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
     const d = new Date(); d.setDate(d.getDate() + 7);
     return d.toISOString().slice(0, 10);
@@ -653,11 +673,15 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
 
   useEffectAct(() => {
     let alive = true;
-    window.OP_ACTIONS.listDunningTypes()
-      .then((items) => {
+    Promise.all([
+      window.OP_ACTIONS.listDunningTypes(),
+      window.OP_ACTIONS.listSerienbriefVorlagen ? window.OP_ACTIONS.listSerienbriefVorlagen() : Promise.resolve([]),
+    ])
+      .then(([items, templates]) => {
         if (!alive) return;
         setDunningTypes(items);
-        if (items.length) setDunningType(items[0]);
+        if (items.length && !dunningType) setDunningType(items[0]);
+        setVorlagen(templates || []);
       })
       .catch(() => {});
     return () => { alive = false; };
@@ -677,7 +701,7 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
     });
     setBusy(true);
     try {
-      const result = await window.OP_ACTIONS.createBulkDunning(rowsByParty, { neueFaelligkeit, dunningType });
+      const result = await window.OP_ACTIONS.createBulkDunning(rowsByParty, { neueFaelligkeit, dunningType, serienbriefVorlage });
       onDone?.(result);
     } finally {
       setBusy(false);
@@ -714,13 +738,24 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
           </select>
         </div>
         <div className="op-field">
-          <label>Mahnungstyp (für alle)</label>
+          <label>Mahnstufe / Regel (für alle)</label>
           {dunningTypes.length ? (
             <select value={dunningType} onChange={(e) => setDunningType(e.target.value)}>
               {dunningTypes.map((name) => <option key={name} value={name}>{name}</option>)}
             </select>
           ) : (
             <input value={dunningType} onChange={(e) => setDunningType(e.target.value)} placeholder="Automatisch" />
+          )}
+        </div>
+        <div className="op-field">
+          <label>Serienbrief-Vorlage</label>
+          {vorlagen.length ? (
+            <select value={serienbriefVorlage} onChange={(e) => setSerienbriefVorlage(e.target.value)}>
+              <option value="">Default aus Mahnstufe</option>
+              {vorlagen.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          ) : (
+            <input value={serienbriefVorlage} onChange={(e) => setSerienbriefVorlage(e.target.value)} placeholder="Default aus Mahnstufe" />
           )}
         </div>
         <div className="op-field">

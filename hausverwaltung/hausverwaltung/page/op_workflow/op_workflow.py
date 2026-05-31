@@ -14,11 +14,20 @@ beim Buchen zu vermeiden.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import frappe
 from frappe import _
 from frappe.utils import cint, flt, getdate, nowdate, add_days
+
+
+_MV_MARKER_RE = re.compile(r"\[MV:([^\]]+)\]")
+_DUNNING_DOCSTATUS_LABEL = {
+    0: "Draft",
+    1: "Submitted",
+    2: "Cancelled",
+}
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -96,6 +105,318 @@ def list_dunning_types() -> list[str]:
         frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
 
     return frappe.get_all("Dunning Type", pluck="name", order_by="name asc")
+
+
+@frappe.whitelist()
+def list_serienbrief_vorlagen(doctype: str | None = "Dunning") -> list[str]:
+    """Liefert Serienbrief-Vorlagen für Mahnungs-Auswahlfelder."""
+    if not frappe.has_permission("Serienbrief Vorlage", "read"):
+        frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
+
+    filters = {}
+    if doctype and _meta_has_field("Serienbrief Vorlage", "haupt_verteil_objekt"):
+        filters = {"haupt_verteil_objekt": ("in", [doctype, "", None])}
+
+    return frappe.get_all("Serienbrief Vorlage", filters=filters, pluck="name", order_by="name asc")
+
+
+def _parse_filters(filters: str | dict | None) -> dict:
+    if isinstance(filters, str):
+        return json.loads(filters or "{}")
+    return filters or {}
+
+
+def _date_days_overdue(due_date) -> int:
+    if not due_date:
+        return 0
+    return max(0, (getdate(nowdate()) - getdate(due_date)).days)
+
+
+def _normalize_docstatus(value) -> int:
+    return cint(value or 0)
+
+
+def _dunning_status_label(row: dict) -> str:
+    if row.get("status") == "Resolved":
+        return "Resolved"
+    return _DUNNING_DOCSTATUS_LABEL.get(_normalize_docstatus(row.get("docstatus")), row.get("status") or "")
+
+
+def _serienbrief_vorlage_for_dunning_type(dunning_type: str | None) -> str | None:
+    if not dunning_type or not _meta_has_field("Dunning Type", "hv_serienbrief_vorlage"):
+        return None
+    return frappe.db.get_value("Dunning Type", dunning_type, "hv_serienbrief_vorlage")
+
+
+def _resolve_invoice_mietvertrag(si) -> dict[str, str | None]:
+    """Best-effort-Auflösung einer Mietrechnung auf Mietvertrag/Wohnung."""
+    remarks = getattr(si, "remarks", None) or ""
+    marker = _MV_MARKER_RE.search(remarks)
+    mietvertrag = marker.group(1).strip() if marker else None
+
+    mietabrechnung_id = getattr(si, "mietabrechnung_id", None)
+    if not mietvertrag and mietabrechnung_id and "|" in str(mietabrechnung_id):
+        candidate = str(mietabrechnung_id).split("|", 1)[0].strip()
+        if candidate:
+            mietvertrag = candidate
+
+    if not mietvertrag and _meta_has_field("Sales Invoice", "mietvertrag"):
+        mietvertrag = getattr(si, "mietvertrag", None)
+
+    if not mietvertrag:
+        try:
+            from hausverwaltung.hausverwaltung.utils.mietabrechnung import resolve_mietabrechnung_id
+
+            resolved = resolve_mietabrechnung_id(
+                customer=getattr(si, "customer", None),
+                posting_date=getattr(si, "posting_date", None) or getattr(si, "due_date", None),
+                wohnung=getattr(si, "wohnung", None) if _meta_has_field("Sales Invoice", "wohnung") else None,
+            )
+            if resolved and "|" in resolved:
+                mietvertrag = resolved.split("|", 1)[0].strip()
+        except Exception:
+            mietvertrag = None
+
+    wohnung = None
+    if mietvertrag and frappe.db.exists("Mietvertrag", mietvertrag):
+        wohnung = frappe.db.get_value("Mietvertrag", mietvertrag, "wohnung")
+    elif _meta_has_field("Sales Invoice", "wohnung"):
+        wohnung = getattr(si, "wohnung", None)
+
+    return {"mietvertrag": mietvertrag, "wohnung": wohnung}
+
+
+def _sales_invoice_fields_for_mahnkandidaten() -> list[str]:
+    fields = [
+        "name",
+        "customer",
+        "customer_name",
+        "company",
+        "posting_date",
+        "due_date",
+        "outstanding_amount",
+        "grand_total",
+        "currency",
+        "status",
+        "remarks",
+    ]
+    for fieldname in ("mietabrechnung_id", "mietvertrag", "wohnung", "cost_center"):
+        if _meta_has_field("Sales Invoice", fieldname):
+            fields.append(fieldname)
+    return fields
+
+
+def _dunning_fields_for_history() -> list[str]:
+    fields = ["name", "docstatus", "status", "posting_date", "customer", "company", "dunning_type"]
+    for fieldname in ("hv_serienbrief_vorlage", "grand_total", "outstanding_amount", "dunning_amount"):
+        if _meta_has_field("Dunning", fieldname):
+            fields.append(fieldname)
+    return fields
+
+
+def _dunnings_for_invoices(invoice_names: list[str]) -> dict[str, list[dict]]:
+    if not invoice_names:
+        return {}
+
+    invoice_set = set(invoice_names)
+    parent_to_invoices: dict[str, set[str]] = {}
+
+    if frappe.db.has_column("Dunning", "sales_invoice"):
+        direct = frappe.get_all(
+            "Dunning",
+            filters={"sales_invoice": ("in", invoice_names)},
+            fields=["name", "sales_invoice"],
+            limit_page_length=0,
+        )
+        for row in direct:
+            parent_to_invoices.setdefault(row.name, set()).add(row.sales_invoice)
+
+    table_field = frappe.get_meta("Dunning").get_field("overdue_payments")
+    if table_field and table_field.options and frappe.db.has_column(table_field.options, "sales_invoice"):
+        child_rows = frappe.get_all(
+            table_field.options,
+            filters={
+                "parenttype": "Dunning",
+                "sales_invoice": ("in", invoice_names),
+            },
+            fields=["parent", "sales_invoice"],
+            limit_page_length=0,
+        )
+        for row in child_rows:
+            parent_to_invoices.setdefault(row.parent, set()).add(row.sales_invoice)
+
+    if not parent_to_invoices:
+        return {name: [] for name in invoice_names}
+
+    dunning_docs = frappe.get_all(
+        "Dunning",
+        filters={"name": ("in", list(parent_to_invoices))},
+        fields=_dunning_fields_for_history(),
+        limit_page_length=0,
+        order_by="posting_date desc, creation desc",
+    )
+
+    result: dict[str, list[dict]] = {name: [] for name in invoice_names}
+    for doc in dunning_docs:
+        amount = (
+            flt(doc.get("grand_total"))
+            or flt(doc.get("dunning_amount"))
+            or flt(doc.get("outstanding_amount"))
+        )
+        item = {
+            "name": doc.name,
+            "docstatus": _normalize_docstatus(doc.docstatus),
+            "status": _dunning_status_label(doc),
+            "posting_date": doc.get("posting_date"),
+            "dunning_type": doc.get("dunning_type"),
+            "serienbrief_vorlage": doc.get("hv_serienbrief_vorlage"),
+            "amount": amount,
+        }
+        for invoice in parent_to_invoices.get(doc.name, set()) & invoice_set:
+            result.setdefault(invoice, []).append(item)
+    return result
+
+
+def _next_dunning_type_for_invoices(invoice_names: list[str], history_by_invoice: dict[str, list[dict]]) -> tuple[int, str | None]:
+    submitted_count = 0
+    for invoice in invoice_names:
+        submitted_count = max(
+            submitted_count,
+            len([row for row in history_by_invoice.get(invoice, []) if _normalize_docstatus(row.get("docstatus")) == 1]),
+        )
+    next_level = min(4, submitted_count + 1)
+    try:
+        return next_level, _resolve_dunning_type(next_level)
+    except Exception:
+        return next_level, None
+
+
+@frappe.whitelist()
+def get_mahnkandidaten(filters: str | dict | None = None) -> dict:
+    """Gruppierte Mahnkandidaten inkl. offener Rechnungen und Mahnhistorie."""
+    filters = _parse_filters(filters)
+
+    if not frappe.has_permission("Sales Invoice", "read") or not frappe.has_permission("Dunning", "read"):
+        frappe.throw(_("Keine Berechtigung für Mahnkandidaten."), frappe.PermissionError)
+
+    si_filters: dict[str, Any] = {
+        "docstatus": 1,
+        "outstanding_amount": (">", 0),
+        "status": ("not in", ["Paid", "Credit Note Issued", "Written Off", "Partly Paid and Written Off"]),
+        "due_date": ("<=", nowdate()),
+    }
+    if filters.get("company"):
+        si_filters["company"] = filters.get("company")
+    if filters.get("include_not_due"):
+        si_filters.pop("due_date", None)
+    if filters.get("bis_faelligkeit"):
+        bis = getdate(filters.get("bis_faelligkeit"))
+        if not filters.get("include_not_due"):
+            bis = min(bis, getdate(nowdate()))
+        si_filters["due_date"] = ("<=", bis)
+    if filters.get("von_faelligkeit") and filters.get("include_not_due"):
+        si_filters["due_date"] = ("between", [filters.get("von_faelligkeit"), filters.get("bis_faelligkeit") or nowdate()])
+
+    invoices = frappe.get_all(
+        "Sales Invoice",
+        filters=si_filters,
+        fields=_sales_invoice_fields_for_mahnkandidaten(),
+        limit_page_length=0,
+        order_by="due_date asc, customer asc, name asc",
+    )
+    invoice_names = [row.name for row in invoices]
+    history_by_invoice = _dunnings_for_invoices(invoice_names)
+
+    groups: dict[str, dict] = {}
+    for si in invoices:
+        resolved = _resolve_invoice_mietvertrag(si)
+        mietvertrag = resolved.get("mietvertrag")
+        wohnung = resolved.get("wohnung")
+        key = f"MV::{mietvertrag}" if mietvertrag else f"CUSTOMER::{si.customer}"
+        group = groups.setdefault(
+            key,
+            {
+                "key": key,
+                "customer": si.customer,
+                "customer_name": si.get("customer_name") or si.customer,
+                "mietvertrag": mietvertrag,
+                "wohnung": wohnung,
+                "company": si.company,
+                "currency": si.currency,
+                "offen": 0.0,
+                "invoice_count": 0,
+                "oldest_due_date": si.due_date,
+                "oldest_age_days": _date_days_overdue(si.due_date),
+                "invoices": [],
+                "mahnungen": [],
+            },
+        )
+        if not group.get("mietvertrag") and mietvertrag:
+            group["mietvertrag"] = mietvertrag
+        if not group.get("wohnung") and wohnung:
+            group["wohnung"] = wohnung
+
+        amount = flt(si.outstanding_amount)
+        group["offen"] += amount
+        group["invoice_count"] += 1
+        if si.due_date and (not group.get("oldest_due_date") or getdate(si.due_date) < getdate(group["oldest_due_date"])):
+            group["oldest_due_date"] = si.due_date
+            group["oldest_age_days"] = _date_days_overdue(si.due_date)
+
+        group["invoices"].append(
+            {
+                "sales_invoice": si.name,
+                "name": si.name,
+                "customer": si.customer,
+                "customer_name": si.get("customer_name") or si.customer,
+                "company": si.company,
+                "posting_date": si.posting_date,
+                "due_date": si.due_date,
+                "outstanding_amount": amount,
+                "grand_total": flt(si.grand_total),
+                "currency": si.currency,
+                "status": si.status,
+                "remarks": si.get("remarks"),
+                "mietabrechnung_id": si.get("mietabrechnung_id"),
+                "mietvertrag": mietvertrag,
+                "wohnung": wohnung,
+                "cost_center": si.get("cost_center"),
+                "mahnungen": history_by_invoice.get(si.name, []),
+            }
+        )
+
+    for group in groups.values():
+        invoice_names = [row["sales_invoice"] for row in group["invoices"]]
+        seen: set[str] = set()
+        history: list[dict] = []
+        for invoice in invoice_names:
+            for mahnung in history_by_invoice.get(invoice, []):
+                if mahnung["name"] in seen:
+                    continue
+                seen.add(mahnung["name"])
+                history.append(mahnung)
+        history.sort(key=lambda row: (row.get("posting_date") or "", row.get("name") or ""), reverse=True)
+
+        next_level, dunning_type = _next_dunning_type_for_invoices(invoice_names, history_by_invoice)
+        template = _serienbrief_vorlage_for_dunning_type(dunning_type)
+        group.update(
+            {
+                "mahnungen": history,
+                "draft_warning": any(_normalize_docstatus(row.get("docstatus")) == 0 for row in history),
+                "next_level": next_level,
+                "next_dunning_type": dunning_type,
+                "serienbrief_vorlage": template,
+                "serienbrief_vorlage_source": "dunning_type" if template else "none",
+                "submitted_mahnung_count": len([row for row in history if _normalize_docstatus(row.get("docstatus")) == 1]),
+            }
+        )
+
+    candidates = sorted(
+        groups.values(),
+        key=lambda row: (row.get("oldest_age_days") or 0, row.get("offen") or 0),
+        reverse=True,
+    )
+    return {"rows": candidates, "today": nowdate()}
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -246,6 +567,7 @@ def create_dunning(
     new_due_date: str | None = None,
     mahngebuehr: float | None = None,
     zinsen_aktiv: bool = True,
+    serienbrief_vorlage: str | None = None,
 ) -> dict:
     """Erzeugt ein Dunning-Dokument für eine Sales Invoice.
 
@@ -281,6 +603,7 @@ def create_dunning(
         "conversion_rate": flt(getattr(si, "conversion_rate", None)) or 1,
         "dunning_fee": flt(mahngebuehr) if mahngebuehr is not None else None,
         "rate_of_interest": None if _as_bool(zinsen_aktiv) else 0,
+        "hv_serienbrief_vorlage": serienbrief_vorlage or _serienbrief_vorlage_for_dunning_type(resolved_type),
     }.items():
         _set_if_field(dunning, fieldname, value)
 
@@ -304,6 +627,7 @@ def create_dunning(
         "dunning",
         summe=flt(getattr(dunning, "grand_total", 0) or getattr(si, "outstanding_amount", 0)),
         dunning_type=resolved_type,
+        serienbrief_vorlage=getattr(dunning, "hv_serienbrief_vorlage", None),
         mahnstufe=level,
     )
 
@@ -313,6 +637,8 @@ def create_bulk_dunning(
     invoices_by_customer: str | dict,
     dunning_type_per_customer: str | dict | None = None,
     new_due_date: str | None = None,
+    serienbrief_vorlage_per_customer: str | dict | None = None,
+    serienbrief_vorlage: str | None = None,
 ) -> dict:
     """Sammelmahnung: pro Kunde EIN Dunning-Doc mit mehreren Invoices.
 
@@ -328,6 +654,8 @@ def create_bulk_dunning(
         invoices_by_customer = json.loads(invoices_by_customer)
     if isinstance(dunning_type_per_customer, str):
         dunning_type_per_customer = json.loads(dunning_type_per_customer)
+    if isinstance(serienbrief_vorlage_per_customer, str):
+        serienbrief_vorlage_per_customer = json.loads(serienbrief_vorlage_per_customer)
 
     created: list[str] = []
     errors: list[dict] = []
@@ -348,6 +676,10 @@ def create_bulk_dunning(
             next_level = min(4, max(_submitted_dunning_count(si.name) for si in sales_invoices) + 1)
             explicit_type = (dunning_type_per_customer or {}).get(customer) if dunning_type_per_customer else None
             resolved_type = _resolve_dunning_type(next_level, explicit_type)
+            explicit_template = None
+            if serienbrief_vorlage_per_customer:
+                explicit_template = serienbrief_vorlage_per_customer.get(customer)
+            effective_template = explicit_template or serienbrief_vorlage or _serienbrief_vorlage_for_dunning_type(resolved_type)
 
             dunning = frappe.new_doc("Dunning")
             first = sales_invoices[0]
@@ -360,6 +692,7 @@ def create_bulk_dunning(
                 "currency": first.currency,
                 "conversion_rate": flt(getattr(first, "conversion_rate", None)) or 1,
                 "outstanding_amount": sum(flt(si.outstanding_amount) for si in sales_invoices),
+                "hv_serienbrief_vorlage": effective_template,
             }.items():
                 _set_if_field(dunning, fieldname, value)
 
@@ -380,7 +713,15 @@ def create_bulk_dunning(
 
             dunning.insert(ignore_permissions=False)
             created.append(dunning.name)
-            docs.append(_draft_response(dunning, "dunning", dunning_type=resolved_type, mahnstufe=next_level))
+            docs.append(
+                _draft_response(
+                    dunning,
+                    "dunning",
+                    dunning_type=resolved_type,
+                    serienbrief_vorlage=getattr(dunning, "hv_serienbrief_vorlage", None),
+                    mahnstufe=next_level,
+                )
+            )
         except Exception as e:
             errors.append({"customer": customer, "msg": str(e)})
 

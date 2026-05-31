@@ -25,6 +25,14 @@ def _upsert_custom_field(doctype: str, custom_field: dict) -> None:
 
 def execute():
 	"""Ensure Dunning and Dunning Type can reference Serienbrief Vorlagen."""
+	dunning_section_field = {
+		"fieldname": "hv_mahnung_section",
+		"label": "Mahnschreiben",
+		"fieldtype": "Section Break",
+		"insert_after": "dunning_type",
+		"description": "Briefausgabe für diese Mahnung.",
+	}
+
 	dunning_type_field = {
 		"fieldname": FIELDNAME,
 		"label": "Serienbrief Vorlage",
@@ -39,10 +47,13 @@ def execute():
 		"label": "Serienbrief Vorlage",
 		"fieldtype": "Link",
 		"options": "Serienbrief Vorlage",
-		"insert_after": "dunning_type",
+		"insert_after": "hv_mahnung_section",
 		"fetch_from": f"dunning_type.{FIELDNAME}",
 		"fetch_if_empty": 1,
-		"description": "Konkrete Serienbrief Vorlage für dieses Mahnschreiben.",
+		"description": (
+			"Konkrete Serienbrief Vorlage für dieses Mahnschreiben. "
+			"Die Mahnstufe/Regel kann einen Default setzen; diese Auswahl gewinnt beim Drucken."
+		),
 	}
 
 	# Pro-Stufe-Werte für die in der Vorlage deklarierten Variablen. Erlaubt eine
@@ -58,5 +69,6 @@ def execute():
 	}
 
 	_upsert_custom_field("Dunning Type", dunning_type_field)
+	_upsert_custom_field("Dunning", dunning_section_field)
 	_upsert_custom_field("Dunning", dunning_field)
 	_upsert_custom_field("Dunning Type", dunning_type_werte_field)

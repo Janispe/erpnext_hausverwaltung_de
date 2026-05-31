@@ -1663,6 +1663,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
             {"label": "Abschlagsplan/Zahlungsplan", "link_type": "DocType", "link_to": "Zahlungsplan"},
             {"label": "Zahlungen zuordnen", "link_type": "DocType", "link_to": "Payment Reconciliation"},
             {"label": "Offene Posten", "link_type": "Report", "link_to": "Noch offene Rechnungen und Forderungen"},
+            {"label": "Mahnwesen", "link_type": "URL", "link_to": "/app/op-workflow?view=mahnwesen"},
             {"label": "Mahnung", "link_type": "DocType", "link_to": "Dunning"},
             {"label": "Buchungssatz / Korrektur", "link_type": "DocType", "link_to": "Journal Entry"},
             {"label": "Kontenplan", "link_type": "DocType", "link_to": "Account"},

@@ -81,6 +81,7 @@ doctype_js = {
 	"Bank Reconciliation Tool": "public/js/bank_reconciliation_tool.js",
 	"Communication": "public/js/communication.js",
 	"Customer": "public/js/customer.js",
+	"Dunning": "public/js/dunning.js",
 	"Immobilie": "hausverwaltung/doctype/immobilie/immobilie.js",
 	"Journal Entry": "public/js/journal_entry.js",
 	"Payment Entry": "public/js/payment_entry.js",
