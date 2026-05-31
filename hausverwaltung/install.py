@@ -1778,7 +1778,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
             {"label": "Sollstellung / Mieterforderung", "link_type": "DocType", "link_to": "Sales Invoice"},
             {"label": "Abschlagsplan/Zahlungsplan", "link_type": "DocType", "link_to": "Zahlungsplan"},
             {"label": "Zahlungen zuordnen", "link_type": "DocType", "link_to": "Payment Reconciliation"},
-            {"label": "Offene Posten", "link_type": "Report", "link_to": "Noch offene Rechnungen und Forderungen"},
+            {"label": "Offene Posten", "link_type": "Page", "link_to": "op-workflow"},
             {"label": "Mahnwesen", "link_type": "Page", "link_to": "op-workflow"},
             {"label": "Mahnung", "link_type": "DocType", "link_to": "Dunning"},
             {"label": "Buchungssatz / Korrektur", "link_type": "DocType", "link_to": "Journal Entry"},
