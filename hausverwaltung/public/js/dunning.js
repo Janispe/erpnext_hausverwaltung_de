@@ -15,6 +15,8 @@ frappe.ui.form.on("Dunning", {
 		apply_hv_dunning_labels(frm);
 		remember_auto_template(frm);
 		toggle_standard_letter_fields(frm);
+		guard_dunning_payment_button(frm);
+		add_fee_invoice_action(frm);
 		add_template_actions(frm);
 		render_pdf_preview(frm);
 	},
@@ -66,6 +68,39 @@ function add_template_actions(frm) {
 	frm.add_custom_button(__("Serienbrief Vorlage öffnen"), () => {
 		frappe.set_route("Form", "Serienbrief Vorlage", frm.doc.hv_serienbrief_vorlage);
 	});
+}
+
+function add_fee_invoice_action(frm) {
+	if (!frm.doc.hv_dunning_fee_sales_invoice) return;
+
+	frm.add_custom_button(__("Mahngebühr-Rechnung öffnen"), () => {
+		frappe.set_route("Form", "Sales Invoice", frm.doc.hv_dunning_fee_sales_invoice);
+	});
+}
+
+function guard_dunning_payment_button(frm) {
+	const message = __(
+		"Bitte Zahlung gegen die offenen Sales Invoices buchen. Die Mahnung ist nur Brief und Mahnhistorie."
+	);
+
+	if (frm.events) {
+		frm.events.make_payment_entry = () => {
+			frappe.msgprint({
+				title: __("Zahlung über Rechnung buchen"),
+				message,
+				indicator: "orange",
+			});
+		};
+	}
+
+	const remove_payment_button = () => {
+		if (frm.remove_custom_button) {
+			frm.remove_custom_button(__("Payment"), __("Create"));
+		}
+	};
+	remove_payment_button();
+	setTimeout(remove_payment_button, 0);
+	setTimeout(remove_payment_button, 250);
 }
 
 function render_pdf_preview(frm) {

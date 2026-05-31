@@ -4,6 +4,7 @@ from hausverwaltung.hausverwaltung.utils.income_accounts import get_hv_income_ac
 
 
 ITEM_CODES = ("Miete", "Betriebskosten", "Heizkosten")
+DUNNING_FEE_ITEM_CODE = "Mahngebuehr"
 
 
 def _ensure_root_item_group() -> str:
@@ -151,6 +152,39 @@ def _ensure_item(item_code: str, *, item_group: str, stock_uom: str) -> None:
 		doc.insert(ignore_permissions=True)
 	except Exception:
 		pass
+
+
+def ensure_dunning_fee_item(*, company: str | None = None, income_account: str | None = None) -> str:
+	"""Ensure the service Item used for fee/interest Sales Invoices exists."""
+	if not frappe.db.exists("DocType", "Item"):
+		return DUNNING_FEE_ITEM_CODE
+
+	item_group = _ensure_leaf_item_group()
+	stock_uom = _ensure_uom("Nos")
+	_ensure_item(DUNNING_FEE_ITEM_CODE, item_group=item_group, stock_uom=stock_uom)
+
+	try:
+		doc = frappe.get_doc("Item", DUNNING_FEE_ITEM_CODE)
+		changed = False
+		if getattr(doc, "item_name", None) != "Mahngebühr":
+			doc.item_name = "Mahngebühr"
+			changed = True
+		if getattr(doc, "description", None) != "Mahngebühr und Verzugszinsen":
+			doc.description = "Mahngebühr und Verzugszinsen"
+			changed = True
+		if changed:
+			doc.save(ignore_permissions=True)
+	except Exception:
+		pass
+
+	if company:
+		_ensure_item_defaults(
+			DUNNING_FEE_ITEM_CODE,
+			company,
+			income_account or _pick_income_account(company),
+		)
+
+	return DUNNING_FEE_ITEM_CODE
 
 
 def ensure_rent_items(*, company: str | None = None) -> None:

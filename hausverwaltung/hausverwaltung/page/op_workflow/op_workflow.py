@@ -208,7 +208,13 @@ def _sales_invoice_fields_for_mahnkandidaten() -> list[str]:
 
 def _dunning_fields_for_history() -> list[str]:
     fields = ["name", "docstatus", "status", "posting_date", "customer", "company", "dunning_type"]
-    for fieldname in ("hv_serienbrief_vorlage", "grand_total", "outstanding_amount", "dunning_amount"):
+    for fieldname in (
+        "hv_serienbrief_vorlage",
+        "hv_dunning_fee_sales_invoice",
+        "grand_total",
+        "outstanding_amount",
+        "dunning_amount",
+    ):
         if _meta_has_field("Dunning", fieldname):
             fields.append(fieldname)
     return fields
@@ -270,6 +276,7 @@ def _dunnings_for_invoices(invoice_names: list[str]) -> dict[str, list[dict]]:
             "posting_date": doc.get("posting_date"),
             "dunning_type": doc.get("dunning_type"),
             "serienbrief_vorlage": doc.get("hv_serienbrief_vorlage"),
+            "fee_sales_invoice": doc.get("hv_dunning_fee_sales_invoice"),
             "amount": amount,
         }
         for invoice in parent_to_invoices.get(doc.name, set()) & invoice_set:

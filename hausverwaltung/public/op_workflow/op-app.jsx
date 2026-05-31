@@ -901,6 +901,13 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
                                         </td>
                                         <td>{mahnung.dunning_type || "—"}</td>
                                         <td>{mahnung.serienbrief_vorlage || "—"}</td>
+                                        <td>
+                                          {mahnung.fee_sales_invoice ? (
+                                            <button className="op-link-btn" onClick={() => window.OP_ACTIONS.openBeleg({ belegart: "Sales Invoice", belegnummer: mahnung.fee_sales_invoice })}>
+                                              Gebühr
+                                            </button>
+                                          ) : "—"}
+                                        </td>
                                         <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openDunningPdf(mahnung.name)}>PDF</button></td>
                                       </tr>
                                     ))}
@@ -989,6 +996,13 @@ function MahnInlineDetail({ candidate, row, onCreateDunning }) {
                     <td>{mahnung.docstatus === 0 ? <span className="op-draft-badge">Draft</span> : mahnung.status}</td>
                     <td>{mahnung.dunning_type || "—"}</td>
                     <td>{mahnung.serienbrief_vorlage || "—"}</td>
+                    <td>
+                      {mahnung.fee_sales_invoice ? (
+                        <button className="op-link-btn" onClick={() => window.OP_ACTIONS.openBeleg({ belegart: "Sales Invoice", belegnummer: mahnung.fee_sales_invoice })}>
+                          Gebühr
+                        </button>
+                      ) : "—"}
+                    </td>
                     <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openDunningPdf(mahnung.name)}>PDF</button></td>
                   </tr>
                 ))}

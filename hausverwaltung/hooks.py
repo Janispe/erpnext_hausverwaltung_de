@@ -156,6 +156,7 @@ after_migrate = [
 	"hausverwaltung.install.ensure_hausverwalter_desktop_icon_visibility",
 	"hausverwaltung.install.ensure_hausverwalter_report_roles",
 	"hausverwaltung.install.ensure_dunning_serienbrief_link_fields",
+	"hausverwaltung.install.ensure_dunning_fee_invoice_fields",
 	"hausverwaltung.install.ensure_serienbrief_print_format_link_field",
 	"hausverwaltung.install.ensure_serienbrief_dokument_print_format",
 	"hausverwaltung.install.ensure_hv_dunning_print_format",
@@ -261,6 +262,8 @@ doc_events = {
 	},
 	"Dunning": {
 		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning",
+		"on_submit": "hausverwaltung.hausverwaltung.doctype.dunning.create_dunning_fee_invoice",
+		"on_cancel": "hausverwaltung.hausverwaltung.doctype.dunning.cancel_dunning_fee_invoice",
 	},
 	"Dunning Type": {
 		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning_type_serienbrief_werte",
@@ -286,6 +289,7 @@ doc_events = {
 		],
 	},
 	"Payment Entry": {
+		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.validate_payment_entry_not_against_fee_dunning",
 		"on_cancel": [
 			"hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.on_payment_entry_cancel",
 			"hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.on_payment_entry_cancel",
@@ -346,6 +350,7 @@ override_whitelisted_methods = {
 	"frappe.www.printview.get_html_and_style": "hausverwaltung.hausverwaltung.overrides.printview.get_html_and_style",
 	"frappe.www.printview.download_pdf": "hausverwaltung.hausverwaltung.overrides.printview.download_pdf",
 	"frappe.utils.print_format.download_pdf": "hausverwaltung.hausverwaltung.overrides.print_format.download_pdf",
+	"erpnext.accounts.doctype.payment_entry.payment_entry.get_payment_entry": "hausverwaltung.hausverwaltung.doctype.dunning.get_payment_entry_guarded",
 }
 
 # each overriding function accepts a `data` argument;

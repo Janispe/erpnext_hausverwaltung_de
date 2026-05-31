@@ -199,7 +199,7 @@ function MahnungModal({ row, onClose, onDone }) {
       footer={
         <>
           <span className="op-modal-foot-info">
-            Erzeugt 1 Dunning-Doc · 1 Journal Entry (Mahngebühr) · 1 Datei (PDF)
+            Erzeugt 1 Dunning-Draft · Mahngebühr-Rechnung beim Submit · 1 PDF
           </span>
           <div className="op-modal-foot-actions">
             <button className="mk-btn" onClick={onClose} disabled={busy}>Abbrechen</button>
@@ -325,7 +325,7 @@ function MahnungModal({ row, onClose, onDone }) {
 
       <div className="op-checklist">
         <div className="op-checklist-item">Dunning-Doc gemäß ERPNext-Standard</div>
-        <div className="op-checklist-item">Mahngebühr als Journal Entry auf 1400 (Forderungen Mieter)</div>
+        <div className="op-checklist-item">Mahngebühr als verlinkte Sales Invoice beim Submit</div>
         <div className="op-checklist-item">PDF-Anhang automatisch erzeugt + im Mieter-Kontakt archiviert</div>
         {versand.includes("E-Mail") && <div className="op-checklist-item">E-Mail-Versand vorbereitet ({partyName})</div>}
       </div>
@@ -740,7 +740,7 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
       footer={
         <>
           <span className="op-modal-foot-info">
-            Erzeugt {aktiv.length} Dunning-Doc{aktiv.length === 1 ? "" : "s"} · {aktiv.reduce((a, g) => a + g.items.length, 0)} Mahngebühr-JEs · {aktiv.length} PDF{aktiv.length === 1 ? "" : "s"}
+            Erzeugt {aktiv.length} Dunning-Doc{aktiv.length === 1 ? "" : "s"} · Mahngebühr-Rechnung beim Submit · {aktiv.length} PDF{aktiv.length === 1 ? "" : "s"}
           </span>
           <div className="op-modal-foot-actions">
             <button className="mk-btn" onClick={onClose} disabled={busy}>Abbrechen</button>

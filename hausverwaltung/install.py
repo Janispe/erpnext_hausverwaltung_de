@@ -24,6 +24,7 @@ def after_install() -> None:
     _ensure_main_cost_center_disabled(reason="after_install")
     _ensure_company_account_defaults(reason="after_install")
     _ensure_dunning_serienbrief_link_fields(reason="after_install")
+    _ensure_dunning_fee_invoice_fields(reason="after_install")
     _ensure_serienbrief_print_format_link_field(reason="after_install")
     _ensure_immobilie_muelltrennung_field(reason="after_install")
     _ensure_serienbrief_dokument_print_format(reason="after_install")
@@ -382,6 +383,7 @@ def after_migrate() -> None:
     _sync_hausverwalter_permissions(reason="after_migrate")
     _ensure_eigentuemer_custom_permissions(reason="after_migrate")
     _ensure_dunning_serienbrief_link_fields(reason="after_migrate")
+    _ensure_dunning_fee_invoice_fields(reason="after_migrate")
     _ensure_serienbrief_print_format_link_field(reason="after_migrate")
     _ensure_immobilie_muelltrennung_field(reason="after_migrate")
     # Custom Fields sichtbar machen, bevor Print Formats sie referenzieren.
@@ -501,6 +503,10 @@ def ensure_serienbrief_print_format_link_field() -> None:
 
 def ensure_dunning_serienbrief_link_fields() -> None:
     _ensure_dunning_serienbrief_link_fields(reason="hook")
+
+
+def ensure_dunning_fee_invoice_fields() -> None:
+    _ensure_dunning_fee_invoice_fields(reason="hook")
 
 
 def ensure_hv_dunning_print_format() -> None:
@@ -1008,6 +1014,80 @@ def _ensure_dunning_serienbrief_link_fields(*, reason: str) -> None:
             frappe.log_error(
                 frappe.get_traceback(),
                 f"hausverwaltung Dunning Serienbrief field setup failed ({reason})",
+            )
+        except Exception:
+            pass
+
+
+def _ensure_dunning_fee_invoice_fields(*, reason: str) -> None:
+    try:
+        if not frappe.db.exists("DocType", "Dunning"):
+            return
+
+        fields = [
+            {
+                "doctype": "Custom Field",
+                "dt": "Dunning",
+                "fieldname": "hv_dunning_fee_sales_invoice",
+                "label": "Mahngebühr-Rechnung",
+                "fieldtype": "Link",
+                "options": "Sales Invoice",
+                "read_only": 1,
+                "insert_after": "dunning_amount",
+                "description": (
+                    "Gebuchte Sales Invoice für Mahngebühr und Verzugszinsen. "
+                    "Zahlungen werden über diese Rechnung ausgeglichen, nicht über die Mahnung."
+                ),
+            },
+            {
+                "doctype": "Custom Field",
+                "dt": "Sales Invoice",
+                "fieldname": "hv_dunning",
+                "label": "Mahnung",
+                "fieldtype": "Link",
+                "options": "Dunning",
+                "read_only": 1,
+                "insert_after": "customer",
+            },
+            {
+                "doctype": "Custom Field",
+                "dt": "Sales Invoice",
+                "fieldname": "hv_is_dunning_fee_invoice",
+                "label": "Mahngebühr-Rechnung",
+                "fieldtype": "Check",
+                "read_only": 1,
+                "default": "0",
+                "insert_after": "hv_dunning",
+            },
+        ]
+
+        changed = False
+        for field in fields:
+            docname = f"{field['dt']}-{field['fieldname']}"
+            if frappe.db.exists("Custom Field", docname):
+                doc = frappe.get_doc("Custom Field", docname)
+                dirty = False
+                for key, value in field.items():
+                    if getattr(doc, key, None) != value:
+                        setattr(doc, key, value)
+                        dirty = True
+                if dirty:
+                    doc.save(ignore_permissions=True)
+                    changed = True
+                continue
+
+            frappe.get_doc(field).insert(ignore_permissions=True)
+            changed = True
+
+        if changed:
+            frappe.clear_cache(doctype="Dunning")
+            frappe.clear_cache(doctype="Sales Invoice")
+            frappe.db.commit()
+    except Exception:
+        try:
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"hausverwaltung Dunning fee invoice field setup failed ({reason})",
             )
         except Exception:
             pass
