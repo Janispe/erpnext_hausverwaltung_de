@@ -23,31 +23,51 @@ const MODE_SUB = {
 
 function OpApp() {
   const [t, setTweak] = useTweaks(OP_TWEAK_DEFAULTS);
-  const { partyName } = window.OFFENE_POSTEN;
+  const initialData = window.OFFENE_POSTEN || window.OP_ADAPTER?.emptyState?.() || {
+    filters: {},
+    rows: [],
+    mahnkandidaten: [],
+    partyName: (id) => id,
+    ccLabel: {},
+    TODAY: frappe.datetime?.get_today?.() || new Date().toISOString().slice(0, 10),
+  };
+  window.OFFENE_POSTEN = initialData;
+  const partyName = (id) => window.OFFENE_POSTEN.partyName(id);
 
   // Rows als State — werden bei Backend-Refresh aktualisiert
-  const [ALL_ROWS, setAllRows] = React.useState(window.OFFENE_POSTEN.rows);
-  const [MAHN_ROWS, setMahnRows] = React.useState(window.OFFENE_POSTEN.mahnkandidaten || []);
+  const [ALL_ROWS, setAllRows] = React.useState(initialData.rows || []);
+  const [MAHN_ROWS, setMahnRows] = React.useState(initialData.mahnkandidaten || []);
   const [isLoading, setIsLoading] = React.useState(false);
+  const [loadError, setLoadError] = React.useState("");
 
   React.useEffect(() => {
     const onRefresh = () => {
       setAllRows([...window.OFFENE_POSTEN.rows]);
       setMahnRows([...(window.OFFENE_POSTEN.mahnkandidaten || [])]);
       setSelected(new Set());
+      setLoadError("");
     };
     const onMahnRefresh = () => setMahnRows([...(window.OFFENE_POSTEN.mahnkandidaten || [])]);
-    const onLoadStart = () => setIsLoading(true);
+    const onLoadStart = () => {
+      setIsLoading(true);
+      setLoadError("");
+    };
     const onLoadEnd = () => setIsLoading(false);
+    const onLoadError = (event) => {
+      console.error("op data load failed", event.detail);
+      setLoadError(event.detail?.message || "Offene Posten konnten nicht geladen werden.");
+    };
     window.addEventListener("op-data-refreshed", onRefresh);
     window.addEventListener("op-mahn-data-refreshed", onMahnRefresh);
     window.addEventListener("op-loading-start", onLoadStart);
     window.addEventListener("op-loading-end", onLoadEnd);
+    window.addEventListener("op-loading-error", onLoadError);
     return () => {
       window.removeEventListener("op-data-refreshed", onRefresh);
       window.removeEventListener("op-mahn-data-refreshed", onMahnRefresh);
       window.removeEventListener("op-loading-start", onLoadStart);
       window.removeEventListener("op-loading-end", onLoadEnd);
+      window.removeEventListener("op-loading-error", onLoadError);
     };
   }, []);
 
@@ -76,11 +96,9 @@ function OpApp() {
   const [datumVon, setDatumVon] = useStateA0(_initMonthStart);
   const [datumBis, setDatumBis] = useStateA0(_initMonthEnd);
 
-  // Backend-Refresh bei Report-Filtern (debounced 300ms). First render skip:
-  // Bootstrap hat bereits mit den Initial-Filtern geladen.
-  const _didInitRef = React.useRef(false);
+  // Backend-Refresh bei Report-Filtern (debounced 300ms). Läuft auch initial,
+  // weil der Bootstrap nur die UI rendert und keine Reportdaten blockierend lädt.
   React.useEffect(() => {
-    if (!_didInitRef.current) { _didInitRef.current = true; return; }
     const timer = setTimeout(() => {
       window.OP_ADAPTER.refresh({
         mode: "Beides",
@@ -88,7 +106,7 @@ function OpApp() {
         bis_faelligkeit: datumBis,
         show_settled: showSettled ? 1 : 0,
         show_written_off: showWrittenOff ? 1 : 0,
-      });
+      }).catch(() => {});
     }, 300);
     return () => clearTimeout(timer);
   }, [datumVon, datumBis, showSettled, showWrittenOff]);
@@ -509,6 +527,12 @@ function OpApp() {
             Mahnwesen <span className="op-count">{MAHN_ROWS.length}</span>
           </button>
         </div>
+
+        {(isLoading || loadError) && (
+          <div className={`op-load-state ${loadError ? "is-error" : ""}`}>
+            {loadError || "Offene-Posten-Daten werden geladen ..."}
+          </div>
+        )}
 
         {/* Mode-Switch */}
         {view === "op" && <div className="op-mode-bar">

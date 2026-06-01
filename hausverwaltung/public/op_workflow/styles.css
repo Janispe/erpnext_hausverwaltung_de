@@ -149,6 +149,22 @@ button { font-family: inherit; }
   margin-left: 6px;
 }
 
+.op-load-state {
+  margin: -4px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--info-soft);
+  color: var(--info);
+  font-size: 13px;
+}
+
+.op-load-state.is-error {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: oklch(0.82 0.07 25);
+}
+
 .op-mahn-cockpit {
   display: flex;
   flex-direction: column;
@@ -1500,19 +1516,19 @@ button { font-family: inherit; }
   border-collapse: collapse;
   font-size: 13px;
 }
-.op-table .op-col-check { width: 28px; }
-.op-table .op-col-date { width: 84px; }
-.op-table .op-col-age { width: 64px; }
+.op-table .op-col-check { width: 32px; }
+.op-table .op-col-date { width: 96px; }
+.op-table .op-col-age { width: 76px; }
 .op-table .op-col-party { width: 170px; }
-.op-table .op-col-object { width: 108px; }
+.op-table .op-col-object { width: 112px; }
 .op-table .op-col-beleg { width: 145px; }
 .op-table .op-col-bemerk { width: auto; }
-.op-table .op-col-status { width: 82px; }
-.op-table .op-col-direction { width: 108px; }
+.op-table .op-col-status { width: 86px; }
+.op-table .op-col-direction { width: 126px; }
 .op-table .op-col-amount { width: 112px; }
-.op-table .op-col-paid { width: 78px; }
-.op-table .op-col-open { width: 100px; }
-.op-table .op-col-action { width: 108px; }
+.op-table .op-col-paid { width: 82px; }
+.op-table .op-col-open { width: 104px; }
+.op-table .op-col-action { width: 140px; }
 .op-table thead th {
   background: var(--bg-soft);
   font-weight: 500;
@@ -1566,6 +1582,9 @@ button { font-family: inherit; }
   padding: 11px 12px;
   vertical-align: middle;
   overflow: hidden;
+}
+.op-table tbody td:last-child {
+  overflow: visible;
 }
 .op-table td.col-check { padding-left: 16px; padding-right: 6px; }
 .op-table td.col-party { font-weight: 500; }

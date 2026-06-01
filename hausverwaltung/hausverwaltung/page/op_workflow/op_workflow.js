@@ -53,7 +53,9 @@ function render_op_workflow(page_body) {
   `);
 
   // ─── CSS + Fonts laden ──────────────────────────────────────────────────
-  const cssHref = "/assets/hausverwaltung/op_workflow/styles.css";
+  const ASSET_VERSION = "20260601-op-async-render";
+  const versioned = (src) => `${src}?v=${ASSET_VERSION}`;
+  const cssHref = versioned("/assets/hausverwaltung/op_workflow/styles.css");
   if (!document.querySelector(`link[href="${cssHref}"]`)) {
     $(`<link rel="stylesheet" href="${cssHref}">`).appendTo("head");
   }
@@ -95,15 +97,16 @@ function render_op_workflow(page_body) {
   (async () => {
     try {
       // Bridge-Layer (Mock ↔ frappe.call)
-      await loadScript(`${ASSET_BASE}/data-adapter.js`);
-      await loadScript(`${ASSET_BASE}/action-handlers.js`);
+      await loadScript(versioned(`${ASSET_BASE}/data-adapter.js`));
+      await loadScript(versioned(`${ASSET_BASE}/action-handlers.js`));
 
-      // Daten initial laden — data-adapter.js setzt window.OFFENE_POSTEN
+      // Nur Root + leeren Initial-State setzen. Die React-UI lädt Daten selbst,
+      // damit der Frappe-Spinner nicht bei langsamen Reports hängen bleibt.
       await window.OP_ADAPTER.loadInitial();
 
       // React-Components — esbuild-Bundle (tweaks-panel + op-components + op-actions + op-app)
       // Build: cd op_workflow_build && NODE_ENV=production npm run build
-      await loadScript(`${ASSET_BASE}/op-workflow.bundle.js`);
+      await loadScript(versioned(`${ASSET_BASE}/op-workflow.bundle.js`));
       if (window.OP_RENDER) window.OP_RENDER();
     } catch (err) {
       console.error("op-workflow bootstrap failed", err);

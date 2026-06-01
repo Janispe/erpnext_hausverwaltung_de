@@ -74,6 +74,18 @@
     };
   }
 
+  function emptyState() {
+    return {
+      filters: defaultFilters(),
+      rows: [],
+      mahnkandidaten: [],
+      parties: {},
+      partyName: (id) => id,
+      ccLabel: {},
+      TODAY: frappe.datetime?.get_today?.() || new Date().toISOString().slice(0, 10),
+    };
+  }
+
   async function hydrateLookups(rows) {
     const partyMap = {};
     const partiesByType = {};
@@ -174,6 +186,9 @@
       if (today || mahnData?.today) window.OFFENE_POSTEN.TODAY = today || mahnData.today;
       window.dispatchEvent(new CustomEvent("op-data-refreshed"));
       window.dispatchEvent(new CustomEvent("op-mahn-data-refreshed"));
+    } catch (err) {
+      window.dispatchEvent(new CustomEvent("op-loading-error", { detail: err }));
+      throw err;
     } finally {
       window.dispatchEvent(new CustomEvent("op-loading-end"));
     }
@@ -183,8 +198,9 @@
   window.OP_ADAPTER = {
     async loadInitial() {
       ensureRootMount();
-      await loadReal();
+      window.OFFENE_POSTEN = window.OFFENE_POSTEN || emptyState();
     },
     refresh,
+    emptyState,
   };
 })();
