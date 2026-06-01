@@ -19,7 +19,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Reason",
-   "options": "kein_kunde\nbetrag_0\nrechnung_existiert\nkein_umz_konto",
+   "options": "kein_kunde\nbetrag_0\nrechnung_existiert\nkein_umz_konto\nimmobilie_nicht_aktiv",
    "reqd": 1
   },
   {
