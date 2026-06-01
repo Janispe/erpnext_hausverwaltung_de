@@ -19,7 +19,7 @@ from typing import Any
 
 import frappe
 from frappe import _
-from frappe.utils import cint, flt, getdate, nowdate, add_days
+from frappe.utils import cint, flt, formatdate, getdate, nowdate, add_days
 
 
 _MV_MARKER_RE = re.compile(r"\[MV:([^\]]+)\]")
@@ -418,42 +418,121 @@ def _dunning_type_variable_defaults(dunning_type: str | None) -> dict[str, Any]:
     return defaults
 
 
+def _parse_sales_invoice_names(sales_invoices: str | list | tuple | None) -> list[str]:
+    if isinstance(sales_invoices, str):
+        try:
+            sales_invoices = json.loads(sales_invoices or "[]")
+        except Exception:
+            sales_invoices = [sales_invoices]
+    return [str(name).strip() for name in (sales_invoices or []) if str(name or "").strip()]
+
+
+def _fmt_money_without_currency(value: float, currency: str = "EUR") -> str:
+    return (frappe.utils.fmt_money(flt(value), currency=currency) or "").replace("€", "").strip()
+
+
+def _dunning_stage_from_type(dunning_type: str | None) -> int:
+    dunning_type = dunning_type or ""
+    if dunning_type.startswith("Zahlungserinnerung"):
+        return 0
+    if dunning_type.startswith("1. Mahnung"):
+        return 1
+    if dunning_type.startswith("2. Mahnung"):
+        return 2
+    return 3
+
+
+def _calculated_dunning_variable_defaults(
+    sales_invoices: str | list | tuple | None = None,
+    dunning_type: str | None = None,
+    mahngebuehr: float | None = None,
+) -> dict[str, Any]:
+    invoice_names = _parse_sales_invoice_names(sales_invoices)
+    if not invoice_names:
+        return {}
+
+    invoices = []
+    for name in invoice_names:
+        if frappe.db.exists("Sales Invoice", name):
+            invoices.append(frappe.get_doc("Sales Invoice", name))
+    if not invoices:
+        return {}
+
+    currency = getattr(invoices[0], "currency", None) or "EUR"
+    outstanding = sum(flt(getattr(si, "outstanding_amount", 0)) for si in invoices)
+    paid = sum(max(flt(getattr(si, "grand_total", 0)) - flt(getattr(si, "outstanding_amount", 0)), 0) for si in invoices)
+    fee = flt(mahngebuehr) if mahngebuehr is not None else 0
+    months = []
+    for si in invoices:
+        if getattr(si, "due_date", None):
+            month = formatdate(si.due_date, "MM/yyyy")
+            if month and month not in months:
+                months.append(month)
+
+    if len(months) == 1:
+        month_value = months[0]
+    elif len(months) > 1:
+        month_value = f"{months[0]} bis {months[-1]}"
+    else:
+        month_value = formatdate(nowdate(), "MM/yyyy")
+
+    return {
+        "stufe": _dunning_stage_from_type(dunning_type),
+        "monat": month_value,
+        "rueckstand": _fmt_money_without_currency(outstanding + fee, currency),
+        "fehlbetrag": _fmt_money_without_currency(outstanding, currency),
+        "gezahlt": _fmt_money_without_currency(paid, currency),
+        "fehlbetrag_text": "ein Betrag",
+    }
+
+
 @frappe.whitelist()
-def get_serienbrief_vorlage_variables(template: str | None = None, dunning_type: str | None = None) -> dict:
+def get_serienbrief_vorlage_variables(
+    template: str | None = None,
+    dunning_type: str | None = None,
+    sales_invoices: str | list | tuple | None = None,
+    mahngebuehr: float | None = None,
+) -> dict:
     """Liefert die vom OP-Mahnungsdialog auszufüllenden Vorlagenvariablen."""
     if not template:
         return {"template": None, "variables": []}
     if not frappe.has_permission("Serienbrief Vorlage", "read"):
         frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
 
-    doc = frappe.get_cached_doc("Serienbrief Vorlage", template)
-    defaults = _parse_variable_values(getattr(doc, "variablen_werte", None))
-    dunning_defaults = _dunning_type_variable_defaults(dunning_type)
+    from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+        get_serienbrief_value_fields,
+    )
+
+    value_fields = get_serienbrief_value_fields(
+        template=template,
+        iteration_doctype="Dunning",
+        context={
+            "dunning_type": dunning_type,
+            "sales_invoices": sales_invoices,
+            "mahngebuehr": mahngebuehr,
+        },
+    )
     variables: list[dict[str, Any]] = []
-    for row in doc.get("variables") or []:
-        variable_type = str(getattr(row, "variable_type", None) or "String").strip() or "String"
+    for field in value_fields.get("fields") or []:
+        if field.get("kind") != "variable":
+            continue
+        variable_type = str(field.get("variable_type") or "String").strip() or "String"
         if variable_type not in {"String", "Zahl", "Bool", "Datum", "Text"}:
             continue
-        raw_key = str(getattr(row, "variable", None) or getattr(row, "label", None) or "").strip()
-        key = frappe.scrub(raw_key)
-        if not key:
-            continue
-        default = defaults.get(key) or {}
-        default_value = default.get("value") if isinstance(default, dict) else None
-        if key in dunning_defaults:
-            default_value = dunning_defaults.get(key)
         variables.append(
             {
-                "key": key,
-                "variable": raw_key,
-                "label": getattr(row, "label", None) or raw_key,
-                "description": getattr(row, "beschreibung", None) or "",
+                "key": field.get("key"),
+                "variable": field.get("variable") or field.get("key"),
+                "label": field.get("label") or field.get("variable") or field.get("key"),
+                "description": field.get("description") or "",
                 "variable_type": variable_type,
-                "optional": cint(getattr(row, "optional", 0)),
-                "default": default_value,
+                "optional": cint(field.get("optional")),
+                "default": field.get("value"),
+                "source": field.get("source"),
+                "auto_value": field.get("auto_value"),
             }
         )
-    return {"template": doc.name, "variables": variables}
+    return {"template": template, "variables": variables}
 
 
 def _parse_filters(filters: str | dict | None) -> dict:

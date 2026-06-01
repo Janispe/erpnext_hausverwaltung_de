@@ -214,6 +214,7 @@ def _template_snippet(source: str, lineno: int, *, context_lines: int = 2, max_l
 _PLACEHOLDER_TOKEN_RE = re.compile(
 	r"\{\{\s*\$\s*([a-zA-Z_][\w]*(?:\[\d+\])?(?:\.[a-zA-Z_][\w]*(?:\[\d+\])?)*)\s*\$\s*\}\}"
 )
+PATH_OVERRIDE_PREFIX = "__path__:"
 
 
 # Einzige Quelle für die Serienbrief-PDF-Ränder — Versand (_default_pdf_options) UND
@@ -288,6 +289,9 @@ def _preprocess_simple_paths(
 
 	def _replace(match: "re.Match[str]") -> str:
 		path = match.group(1)
+		override = _get_value_override(context, _path_override_key(path))
+		if override is not None:
+			return cstr(_display_value(override))
 		try:
 			value = _resolve_value_path(path, context)
 		except Exception as exc:
@@ -1091,6 +1095,7 @@ class SerienbriefDurchlauf(Document):
 		)
 
 		if template:
+			context["_serienbrief_value_overrides"] = _build_value_override_mapping(template, self, row)
 			self._apply_template_variables(context, template)
 			self._apply_serienbrief_template_variables(context, template, row)
 			if strict_variables:
@@ -2062,10 +2067,15 @@ class SerienbriefDurchlauf(Document):
 		if getattr(iteration_doc, "doctype", None) == "Dunning":
 			from hausverwaltung.hausverwaltung.doctype.dunning import collect_serienbrief_werte
 
+			auto_werte = _collect_dunning_auto_values(iteration_doc)
 			type_werte = collect_serienbrief_werte(iteration_doc)
-			if type_werte:
+			base_werte = _merge_variable_values(
+				json.dumps(auto_werte) if auto_werte else None,
+				json.dumps(type_werte) if type_werte else None,
+			)
+			if base_werte:
 				row._iteration_variablen_werte = _merge_variable_values(
-					json.dumps(type_werte), row._iteration_variablen_werte
+					base_werte, row._iteration_variablen_werte
 				)
 
 		return row
@@ -2354,12 +2364,46 @@ def _parse_variable_values(raw: str | None) -> dict[str, dict[str, Any]]:
 
 	parsed: dict[str, dict[str, Any]] = {}
 	for key, value in data.items():
+		key = cstr(key or "").strip()
+		if not key:
+			continue
 		if isinstance(value, dict):
 			parsed[key] = {"value": value.get("value"), "path": value.get("path")}
 		else:
 			parsed[key] = {"value": value, "path": None}
 
 	return parsed
+
+
+def _path_override_key(path: str) -> str:
+	return f"{PATH_OVERRIDE_PREFIX}{cstr(path or '').strip()}"
+
+
+def _entry_has_explicit_value(entry: dict[str, Any] | None) -> bool:
+	if not isinstance(entry, dict):
+		return False
+	value = entry.get("value")
+	if value is None:
+		return False
+	if isinstance(value, str) and not value.strip():
+		return False
+	return True
+
+
+def _get_value_override(context: Dict[str, Any], key: str) -> Any:
+	mapping = context.get("_serienbrief_value_overrides") if isinstance(context, dict) else None
+	if not isinstance(mapping, dict):
+		return None
+	entry = mapping.get(key)
+	if _entry_has_explicit_value(entry):
+		return entry.get("value")
+	return None
+
+
+def _display_value(value: Any) -> Any:
+	if hasattr(value, "doctype") and getattr(value, "name", None):
+		return value.name
+	return value
 
 
 def _merge_variable_values(base_raw: str | None, override_raw: str | None) -> str | None:
@@ -2371,6 +2415,129 @@ def _merge_variable_values(base_raw: str | None, override_raw: str | None) -> st
 	merged.update(base)
 	merged.update(override)
 	return json.dumps(merged) if merged else None
+
+
+def _as_variable_values(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+	return {key: {"value": value} for key, value in data.items() if key and value is not None}
+
+
+def _money_without_currency(value: float, currency: str = "EUR") -> str:
+	return (frappe.utils.fmt_money(value, currency=currency) or "").replace("€", "").strip()
+
+
+def _dunning_stage_from_type(dunning_type: str | None) -> int:
+	dunning_type = cstr(dunning_type or "")
+	if dunning_type.startswith("Zahlungserinnerung"):
+		return 0
+	if dunning_type.startswith("1. Mahnung"):
+		return 1
+	if dunning_type.startswith("2. Mahnung"):
+		return 2
+	return 3
+
+
+def _collect_dunning_auto_values(dunning) -> dict[str, dict[str, Any]]:
+	if not dunning or getattr(dunning, "doctype", None) != "Dunning":
+		return {}
+
+	payments = list(getattr(dunning, "overdue_payments", None) or [])
+	currency = cstr(getattr(dunning, "currency", None) or "EUR")
+	outstanding = getattr(dunning, "total_outstanding", None)
+	if outstanding is None:
+		outstanding = getattr(dunning, "outstanding_amount", None)
+	if outstanding is None:
+		outstanding = sum(frappe.utils.flt(row.get("outstanding") or row.get("outstanding_amount") or row.get("amount") or 0) for row in payments)
+	outstanding = frappe.utils.flt(outstanding)
+	fee = frappe.utils.flt(getattr(dunning, "dunning_fee", 0) or 0)
+	grand_total = getattr(dunning, "grand_total", None)
+	if grand_total is None:
+		grand_total = outstanding + fee
+	grand_total = frappe.utils.flt(grand_total)
+
+	paid = 0.0
+	months: list[str] = []
+	for row in payments:
+		row_outstanding = frappe.utils.flt(row.get("outstanding") or row.get("outstanding_amount") or row.get("amount") or 0)
+		sales_invoice = row.get("sales_invoice")
+		if sales_invoice:
+			invoice_total = frappe.utils.flt(frappe.db.get_value("Sales Invoice", sales_invoice, "grand_total") or 0)
+			paid += max(invoice_total - row_outstanding, 0)
+		if row.get("due_date"):
+			month = frappe.utils.formatdate(row.get("due_date"), "MM/yyyy")
+			if month and month not in months:
+				months.append(month)
+
+	if len(months) == 1:
+		month_value = months[0]
+	elif len(months) > 1:
+		month_value = f"{months[0]} bis {months[-1]}"
+	else:
+		month_value = frappe.utils.formatdate(getattr(dunning, "posting_date", None) or today(), "MM/yyyy")
+
+	return _as_variable_values(
+		{
+			"stufe": _dunning_stage_from_type(getattr(dunning, "dunning_type", None)),
+			"monat": month_value,
+			"rueckstand": _money_without_currency(grand_total, currency),
+			"fehlbetrag": _money_without_currency(outstanding, currency),
+			"gezahlt": _money_without_currency(paid, currency),
+			"fehlbetrag_text": "ein Betrag",
+		}
+	)
+
+
+def _collect_auto_variable_values(context: Dict[str, Any]) -> dict[str, dict[str, Any]]:
+	objekt = context.get("objekt") if isinstance(context, dict) else None
+	if getattr(objekt, "doctype", None) == "Dunning":
+		return _collect_dunning_auto_values(objekt)
+	return {}
+
+
+def _get_textbaustein_template_source(block_doc) -> str:
+	content_type = (getattr(block_doc, "content_type", "") or "").strip() or "Textbaustein (Rich Text)"
+	if content_type == "HTML + Jinja":
+		return "\n".join(
+			part for part in [
+				cstr(getattr(block_doc, "jinja_content", "") or ""),
+				cstr(getattr(block_doc, "html_content", "") or ""),
+			] if part.strip()
+		)
+	return sanitize_richtext_jinja_source(cstr(getattr(block_doc, "text_content", "") or "").strip())
+
+
+def _collect_template_path_tokens(template) -> list[str]:
+	seen: set[str] = set()
+	paths: list[str] = []
+
+	def add_from_source(source: str | None) -> None:
+		for match in _PLACEHOLDER_TOKEN_RE.finditer(source or ""):
+			path = cstr(match.group(1) or "").strip()
+			if path and path not in seen:
+				seen.add(path)
+				paths.append(path)
+
+	add_from_source(_get_template_template_source(template))
+	for row in template.get("textbausteine") or []:
+		if not getattr(row, "baustein", None):
+			continue
+		try:
+			block_doc = frappe.get_cached_doc("Serienbrief Textbaustein", row.baustein)
+		except Exception:
+			continue
+		add_from_source(_get_textbaustein_template_source(block_doc))
+
+	return paths
+
+
+def _build_value_override_mapping(template, durchlauf=None, row=None) -> dict[str, dict[str, Any]]:
+	merged: dict[str, dict[str, Any]] = {}
+	if template is not None:
+		merged.update(_parse_variable_values(getattr(template, "variablen_werte", None)))
+	if durchlauf is not None:
+		merged.update(_parse_variable_values(getattr(durchlauf, "variablen_werte", None)))
+	if row is not None:
+		merged.update(_parse_variable_values(getattr(row, "_iteration_variablen_werte", None)))
+	return merged
 
 
 def _serialize_overview_value(value: Any, max_items: int = 5) -> dict[str, Any]:
@@ -3145,6 +3312,267 @@ def get_template_requirements(template: str | None = None, template_doc: Dict[st
 		frappe.throw(_("Bitte wählen Sie eine Vorlage."))
 
 	return _collect_template_requirements(doc, getattr(doc, "haupt_verteil_objekt", None))
+
+
+def _parse_value_fields_context(context: str | dict | None) -> dict[str, Any]:
+	if isinstance(context, str):
+		try:
+			context = json.loads(context or "{}")
+		except Exception:
+			context = {}
+	return context if isinstance(context, dict) else {}
+
+
+def _context_overrides(context: dict[str, Any]) -> dict[str, dict[str, Any]]:
+	raw = context.get("overrides") or context.get("values") or context.get("variablen_werte") or {}
+	if isinstance(raw, str):
+		return _parse_variable_values(raw)
+	if isinstance(raw, dict):
+		return _parse_variable_values(json.dumps(raw))
+	return {}
+
+
+def _parse_context_list(value) -> list[str]:
+	if isinstance(value, str):
+		try:
+			value = json.loads(value or "[]")
+		except Exception:
+			value = [value]
+	return [cstr(item or "").strip() for item in (value or []) if cstr(item or "").strip()]
+
+
+def _mock_dunning_from_context(context_data: dict[str, Any]):
+	invoice_names = _parse_context_list(
+		context_data.get("sales_invoices") or context_data.get("salesInvoices")
+	)
+	if not invoice_names:
+		return None
+
+	payments = []
+	outstanding = 0.0
+	currency = "EUR"
+	for name in invoice_names:
+		if not frappe.db.exists("Sales Invoice", name):
+			continue
+		si = frappe.get_cached_doc("Sales Invoice", name)
+		currency = getattr(si, "currency", None) or currency
+		amount = frappe.utils.flt(getattr(si, "outstanding_amount", 0))
+		outstanding += amount
+		payments.append(
+			frappe._dict(
+				sales_invoice=si.name,
+				due_date=getattr(si, "due_date", None),
+				outstanding=amount,
+				outstanding_amount=amount,
+				amount=amount,
+			)
+		)
+
+	if not payments:
+		return None
+
+	fee = frappe.utils.flt(context_data.get("mahngebuehr") or context_data.get("dunning_fee") or 0)
+	return frappe._dict(
+		doctype="Dunning",
+		name=None,
+		dunning_type=context_data.get("dunning_type"),
+		currency=currency,
+		dunning_fee=fee,
+		total_outstanding=outstanding,
+		outstanding_amount=outstanding,
+		grand_total=outstanding + fee,
+		posting_date=today(),
+		overdue_payments=payments,
+	)
+
+
+def _resolve_mapping_entry_value(entry: dict[str, Any] | None, context: Dict[str, Any]) -> Any:
+	if not isinstance(entry, dict):
+		return None
+	path = cstr(entry.get("path") or "").strip()
+	if path:
+		try:
+			return _resolve_value_path(path, context)
+		except Exception:
+			return None
+	if _entry_has_explicit_value(entry):
+		return entry.get("value")
+	return None
+
+
+def _field_source_and_value(
+	key: str,
+	*,
+	defaults: dict[str, dict[str, Any]],
+	auto_values: dict[str, dict[str, Any]],
+	overrides: dict[str, dict[str, Any]],
+	context: Dict[str, Any],
+) -> tuple[Any, Any, str]:
+	override = overrides.get(key)
+	if _entry_has_explicit_value(override):
+		auto = _resolve_mapping_entry_value(auto_values.get(key), context)
+		return override.get("value"), auto, "override"
+
+	auto = _resolve_mapping_entry_value(auto_values.get(key), context)
+	if auto is not None:
+		return auto, auto, "auto"
+
+	default = _resolve_mapping_entry_value(defaults.get(key), context)
+	if default is not None:
+		return default, None, "default"
+
+	return None, None, "empty"
+
+
+def _load_value_fields_context(template, iteration_doctype: str | None, iteration_objekt: str | None, context_data: dict[str, Any]):
+	iteration_doctype = cstr(iteration_doctype or template.get("haupt_verteil_objekt") or "").strip()
+	iteration_objekt = cstr(iteration_objekt or "").strip()
+	if iteration_doctype and iteration_objekt:
+		serienbrief = frappe.new_doc("Serienbrief Durchlauf")
+		serienbrief.title = "Serienbrief Wertvorschau"
+		serienbrief.date = today()
+		serienbrief.vorlage = template.name
+		serienbrief.iteration_doctype = iteration_doctype
+		row = serienbrief.append(
+			"iteration_objekte",
+			{
+				"iteration_doctype": iteration_doctype,
+				"objekt": iteration_objekt,
+			},
+		)
+		overrides = _context_overrides(context_data)
+		if overrides:
+			row.variablen_werte = json.dumps(overrides)
+		requirements = _collect_template_requirements(template, iteration_doctype)
+		rows = serienbrief._get_empfaenger_rows()
+		if rows:
+			return serienbrief._build_context(
+				rows[0],
+				1,
+				requirements,
+				template,
+				total=1,
+				strict_variables=False,
+			)
+
+	overrides = _context_overrides(context_data)
+	mock_dunning = _mock_dunning_from_context(context_data) if iteration_doctype == "Dunning" else None
+	return frappe._dict(
+		objekt=mock_dunning,
+		mietvertrag=None,
+		empfaenger=frappe._dict(),
+		serienbrief=frappe._dict(werte=frappe._dict()),
+		outputs=frappe._dict(),
+		_serienbrief_value_overrides=overrides,
+	)
+
+
+def _get_serienbrief_value_fields_for_doc(
+	template,
+	iteration_doctype: str | None = None,
+	iteration_objekt: str | None = None,
+	context: str | dict | None = None,
+) -> dict[str, Any]:
+	context_data = _parse_value_fields_context(context)
+	render_context = _load_value_fields_context(template, iteration_doctype, iteration_objekt, context_data)
+	defaults = _parse_variable_values(getattr(template, "variablen_werte", None))
+	auto_values = _collect_auto_variable_values(render_context)
+	overrides = render_context.get("_serienbrief_value_overrides") or {}
+	if not isinstance(overrides, dict):
+		overrides = {}
+
+	fields: list[dict[str, Any]] = []
+	seen: set[str] = set()
+
+	for row in template.get("variables") or []:
+		raw_key = cstr(getattr(row, "variable", None) or getattr(row, "label", None) or "").strip()
+		key = frappe.scrub(raw_key) if raw_key else ""
+		if not key or key in seen:
+			continue
+		seen.add(key)
+		value, auto_value, source = _field_source_and_value(
+			key,
+			defaults=defaults,
+			auto_values=auto_values,
+			overrides=overrides,
+			context=render_context,
+		)
+		fields.append(
+			{
+				"key": key,
+				"kind": "variable",
+				"label": getattr(row, "label", None) or raw_key or key,
+				"token": f"{{{{ {key} }}}}",
+				"value": _display_value(value),
+				"auto_value": _display_value(auto_value),
+				"overridable": True,
+				"source": source,
+				"variable": raw_key,
+				"variable_type": cstr(getattr(row, "variable_type", None) or "String"),
+				"optional": cint(getattr(row, "optional", 0)),
+				"description": getattr(row, "beschreibung", None) or "",
+			}
+		)
+
+	for path in _collect_template_path_tokens(template):
+		key = _path_override_key(path)
+		if key in seen:
+			continue
+		seen.add(key)
+		override = overrides.get(key)
+		auto_value = None
+		try:
+			auto_value = _resolve_value_path(path, render_context)
+		except Exception:
+			auto_value = None
+		if _entry_has_explicit_value(override):
+			value = override.get("value")
+			source = "override"
+		elif auto_value is not None:
+			value = auto_value
+			source = "auto"
+		else:
+			value = None
+			source = "empty"
+		fields.append(
+			{
+				"key": key,
+				"kind": "path",
+				"label": path,
+				"token": "{{" + f"$ {path} $" + "}}",
+				"value": _display_value(value),
+				"auto_value": _display_value(auto_value),
+				"overridable": True,
+				"source": source,
+			}
+		)
+
+	return {
+		"template": template.name,
+		"iteration_doctype": iteration_doctype or template.get("haupt_verteil_objekt"),
+		"iteration_objekt": iteration_objekt,
+		"fields": fields,
+	}
+
+
+@frappe.whitelist()
+def get_serienbrief_value_fields(
+	template: str | None = None,
+	iteration_doctype: str | None = None,
+	iteration_objekt: str | None = None,
+	context: str | dict | None = None,
+) -> dict[str, Any]:
+	if not template:
+		return {"template": None, "fields": []}
+	if not frappe.has_permission("Serienbrief Vorlage", "read"):
+		frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
+	template_doc = frappe.get_cached_doc("Serienbrief Vorlage", template)
+	return _get_serienbrief_value_fields_for_doc(
+		template_doc,
+		iteration_doctype=iteration_doctype,
+		iteration_objekt=iteration_objekt,
+		context=context,
+	)
 
 
 @frappe.whitelist()

@@ -19,8 +19,12 @@ from hausverwaltung.hausverwaltung.doctype.dunning import (
 	validate_dunning_type_serienbrief_werte,
 )
 from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+	_collect_dunning_auto_values,
+	_field_source_and_value,
+	_get_serienbrief_value_fields_for_doc,
 	_merge_variable_values,
 	_parse_variable_values,
+	_render_serienbrief_template,
 )
 from hausverwaltung.hausverwaltung.utils import serienbrief_print
 
@@ -281,3 +285,75 @@ class TestSerienbriefDurchlaufDunning(FrappeTestCase):
 			)
 
 		self.assertEqual(pdf, b"merged-pdf")
+
+	def test_value_fields_collect_variables_and_path_tokens(self):
+		template = frappe._dict(
+			doctype="Serienbrief Vorlage",
+			name="_Test Value Fields",
+			haupt_verteil_objekt="Dunning",
+			content_type="HTML + Jinja",
+			jinja_content="Hallo {{$ objekt.customer $}} {{ rueckstand }} {{$ objekt.customer $}}",
+			html_content="",
+			variablen_werte="{}",
+			variables=[
+				frappe._dict(
+					variable="rueckstand",
+					label="Rückstand",
+					variable_type="String",
+					optional=1,
+				)
+			],
+			textbausteine=[],
+		)
+
+		result = _get_serienbrief_value_fields_for_doc(template, iteration_doctype="Dunning")
+		keys = [field["key"] for field in result["fields"]]
+
+		self.assertIn("rueckstand", keys)
+		self.assertIn("__path__:objekt.customer", keys)
+		self.assertEqual(keys.count("__path__:objekt.customer"), 1)
+
+	def test_path_override_wins_over_resolved_object_value(self):
+		context = frappe._dict(
+			objekt=frappe._dict(customer="Auto Customer"),
+			_serienbrief_value_overrides={
+				"__path__:objekt.customer": {"value": "Override Customer"},
+			},
+		)
+
+		rendered = _render_serienbrief_template("Hallo {{$ objekt.customer $}}", context)
+
+		self.assertEqual(rendered, "Hallo Override Customer")
+
+	def test_dunning_value_fields_compute_auto_values_and_keep_overrides(self):
+		dunning = frappe._dict(
+			doctype="Dunning",
+			dunning_type="1. Mahnung - HP",
+			currency="EUR",
+			dunning_fee=5,
+			total_outstanding=100,
+			grand_total=105,
+			overdue_payments=[],
+		)
+		auto_values = _collect_dunning_auto_values(dunning)
+
+		self.assertEqual(auto_values["stufe"]["value"], 1)
+		self.assertEqual(auto_values["rueckstand"]["value"], "105,00")
+
+		value, auto_value, source = _field_source_and_value(
+			"stufe",
+			defaults={},
+			auto_values=auto_values,
+			overrides={"stufe": {"value": "Sonderstufe"}},
+			context=frappe._dict(objekt=dunning),
+		)
+		self.assertEqual((value, auto_value, source), ("Sonderstufe", 1, "override"))
+
+		value, auto_value, source = _field_source_and_value(
+			"rueckstand",
+			defaults={},
+			auto_values=auto_values,
+			overrides={"rueckstand": {"value": ""}},
+			context=frappe._dict(objekt=dunning),
+		)
+		self.assertEqual((value, auto_value, source), ("105,00", "105,00", "auto"))
