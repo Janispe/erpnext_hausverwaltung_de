@@ -60,6 +60,10 @@ class TestBankauszugImport(FrappeTestCase):
             self.values[fieldname] = value
             setattr(self, fieldname, value)
 
+        def set(self, fieldname, value):
+            self.values[fieldname] = value
+            setattr(self, fieldname, value)
+
     def test_get_party_by_iban_returns_single_unique_party(self):
         with patch.object(
             bi.frappe,
@@ -786,6 +790,165 @@ class TestBankauszugImport(FrappeTestCase):
         self.assertEqual(row.row_status, "success")
         self.assertNotIn("row_status", row.db_updates)
         self.assertEqual(row.reference, "BT-L2")
+
+    def test_create_bank_transactions_marks_row_failed_when_submit_fails(self):
+        row = self._FakeRow(name="ROW-SUBMIT-FAIL", iban="DE16")
+        row.bank_transaction = None
+        row.reference = None
+        row.row_status = None
+        row.buchungstag = "2026-01-15"
+        row.idx = 1
+        row.betrag = 42
+        row.richtung = "Eingang"
+        row.currency = "EUR"
+        row.verwendungszweck = "Test"
+        row.db_updates = {}
+
+        def _db_set(fieldname, value):
+            row.db_updates[fieldname] = value
+            setattr(row, fieldname, value)
+
+        row.db_set = _db_set
+        doc = self._FakeDoc("IMP-SUBMIT-FAIL", [row])
+        doc.bank_account = "BANK-1"
+        doc.rows = [row]
+        doc.reload = lambda: None
+
+        class _BankAccount:
+            is_company_account = 1
+
+        class _BankTransaction:
+            name = "BT-SUBMIT-FAIL"
+
+            def set(self, fieldname, value):
+                setattr(self, fieldname, value)
+
+            def insert(self, ignore_permissions=False):
+                self.inserted = True
+
+            def submit(self):
+                raise Exception("submit boom")
+
+        meta = type(
+            "M",
+            (),
+            {
+                "is_submittable": 1,
+                "fields": [
+                    type("F", (), {"fieldname": "date"})(),
+                    type("F", (), {"fieldname": "deposit"})(),
+                    type("F", (), {"fieldname": "withdrawal"})(),
+                    type("F", (), {"fieldname": "description"})(),
+                    type("F", (), {"fieldname": "currency"})(),
+                ],
+            },
+        )()
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Account":
+                return _BankAccount()
+            raise AssertionError(f"unexpected doctype {doctype}")
+
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe, "new_doc", return_value=_BankTransaction()), \
+             patch.object(bi.frappe, "get_meta", return_value=meta), \
+             patch.object(bi.frappe.db, "get_single_value", return_value=None), \
+             patch.object(bi, "_build_missing_party_warning_payload", return_value=None), \
+             patch.object(bi, "_find_existing_bank_transaction", return_value=None), \
+             patch.object(bi, "_get_party_by_iban", return_value=("Customer", "CUST-1")), \
+             patch.object(bi, "_refresh_saldo_fields"), \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch.object(bi.frappe, "log_error"), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.auto_match_bank_transaction",
+                 return_value={"matched": True, "payment_entry": "PE-1"},
+             ) as auto_match:
+            res = bi.create_bank_transactions("IMP-SUBMIT-FAIL")
+
+        self.assertEqual(row.row_status, "failed")
+        self.assertIn("submit boom", row.error)
+        self.assertIsNone(row.bank_transaction)
+        self.assertIsNone(row.reference)
+        self.assertEqual(res["created"], [])
+        self.assertEqual(res["errors"][0]["row"], "ROW-SUBMIT-FAIL")
+        auto_match.assert_not_called()
+
+    def test_create_bank_transactions_marks_submitted_transaction_success(self):
+        row = self._FakeRow(name="ROW-SUBMIT-OK", iban="DE17")
+        row.bank_transaction = None
+        row.reference = None
+        row.row_status = None
+        row.buchungstag = "2026-01-15"
+        row.idx = 1
+        row.betrag = 42
+        row.richtung = "Eingang"
+        row.currency = "EUR"
+        row.verwendungszweck = "Test"
+
+        doc = self._FakeDoc("IMP-SUBMIT-OK", [row])
+        doc.bank_account = "BANK-1"
+        doc.rows = [row]
+        doc.reload = lambda: None
+
+        class _BankAccount:
+            is_company_account = 1
+
+        class _BankTransaction:
+            name = "BT-SUBMIT-OK"
+
+            def set(self, fieldname, value):
+                setattr(self, fieldname, value)
+
+            def insert(self, ignore_permissions=False):
+                self.inserted = True
+
+            def submit(self):
+                self.submitted = True
+
+        meta = type(
+            "M",
+            (),
+            {
+                "is_submittable": 1,
+                "fields": [
+                    type("F", (), {"fieldname": "date"})(),
+                    type("F", (), {"fieldname": "deposit"})(),
+                    type("F", (), {"fieldname": "withdrawal"})(),
+                    type("F", (), {"fieldname": "description"})(),
+                    type("F", (), {"fieldname": "currency"})(),
+                ],
+            },
+        )()
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Account":
+                return _BankAccount()
+            raise AssertionError(f"unexpected doctype {doctype}")
+
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe, "new_doc", return_value=_BankTransaction()), \
+             patch.object(bi.frappe, "get_meta", return_value=meta), \
+             patch.object(bi.frappe.db, "get_single_value", return_value=None), \
+             patch.object(bi, "_build_missing_party_warning_payload", return_value=None), \
+             patch.object(bi, "_find_existing_bank_transaction", return_value=None), \
+             patch.object(bi, "_get_party_by_iban", return_value=("Customer", "CUST-1")), \
+             patch.object(bi, "_refresh_saldo_fields"), \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.auto_match_bank_transaction",
+                 return_value={"matched": False, "message": "kein Match"},
+             ) as auto_match:
+            res = bi.create_bank_transactions("IMP-SUBMIT-OK")
+
+        self.assertEqual(row.row_status, "success")
+        self.assertEqual(row.bank_transaction, "BT-SUBMIT-OK")
+        self.assertEqual(row.reference, "BT-SUBMIT-OK")
+        self.assertEqual(res["created"], ["BT-SUBMIT-OK"])
+        auto_match.assert_called_once_with("BT-SUBMIT-OK")
 
     def test_sync_cancelled_payment_entry_links_keeps_active_payment_entry(self):
         rows = [

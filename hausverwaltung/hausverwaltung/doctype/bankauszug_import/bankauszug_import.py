@@ -1963,9 +1963,16 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
             try:
                 if getattr(meta, "is_submittable", 0):
                     bt.submit()
-            except Exception:
-                # ignore submit errors to not block the rest
-                pass
+            except Exception as submit_exc:
+                error_msg = f"Bank Transaction konnte nicht eingereicht werden: {submit_exc}"
+                row.db_set("error", error_msg)
+                row.db_set("row_status", "failed")
+                errors.append({"row": row.name, "error": error_msg})
+                frappe.log_error(
+                    frappe.get_traceback(),
+                    f"Bankauszug Import: Bank Transaction Submit fehlgeschlagen für {bt.name}",
+                )
+                continue
             row.db_set("bank_transaction", bt.name)
             row.db_set("row_status", "success")
             row.db_set("reference", bt.name)

@@ -244,30 +244,18 @@ def _mietvertrag_segmente_fuer_zeitraum(wohnung: str, von: str, bis: str) -> Lis
 
 
 def _bestehender_mietvertrag_fuer_stichtag(wohnung: str, stichtag: str) -> Optional[str]:
-    rows = frappe.get_all(
-        "Mietvertrag",
-        filters={
-            "wohnung": wohnung,
-            "von": ("<=", stichtag),
-            "bis": ("is", "set"),
-        },
-        fields=["name", "von"],
-        order_by="von desc",
-        limit=1,
-    )
-    if rows:
-        return rows[0].name
-    # Falls bis NULL (läuft weiter)
-    rows = frappe.get_all(
-        "Mietvertrag",
-        filters={
-            "wohnung": wohnung,
-            "von": ("<=", stichtag),
-            "bis": ("is", "not set"),
-        },
-        fields=["name", "von"],
-        order_by="von desc",
-        limit=1,
+    rows = frappe.db.sql(
+        """
+        SELECT name
+        FROM `tabMietvertrag`
+        WHERE wohnung = %(wohnung)s
+          AND von <= %(stichtag)s
+          AND (bis IS NULL OR bis >= %(stichtag)s)
+        ORDER BY von DESC
+        LIMIT 1
+        """,
+        {"wohnung": wohnung, "stichtag": getdate(stichtag)},
+        as_dict=True,
     )
     return rows[0].name if rows else None
 
@@ -706,6 +694,24 @@ def _get_si_debit_to(name: str) -> Optional[str]:
         return None
 
 
+def _receivable_account_for_existing_invoices(rows: List[dict], fallback_company: Optional[str]) -> Optional[str]:
+    for r in rows or []:
+        old_name = r.get("name")
+        if not old_name:
+            continue
+        account = _get_si_debit_to(old_name)
+        if account:
+            return account
+    try:
+        filters = {"account_type": "Receivable", "is_group": 0}
+        if fallback_company:
+            filters["company"] = fallback_company
+        accounts = frappe.get_all("Account", filters=filters, pluck="name", limit=1)
+        return accounts[0] if accounts else None
+    except Exception:
+        return None
+
+
 def _allocate_via_journal_entry(
     company: str, entries: List[dict], posting_date: str, wertstellungsdatum: Optional[str] = None
 ) -> Optional[str]:
@@ -729,8 +735,10 @@ def _allocate_via_journal_entry(
         row.account = e.get("account")
         row.party_type = e.get("party_type")
         row.party = e.get("party")
-        row.reference_type = e.get("reference_type")
-        row.reference_name = e.get("reference_name")
+        if e.get("reference_type"):
+            row.reference_type = e.get("reference_type")
+        if e.get("reference_name"):
+            row.reference_name = e.get("reference_name")
         debit = _to_decimal(e.get("debit"))
         credit = _to_decimal(e.get("credit"))
         row.debit_in_account_currency = _as_money(debit)
@@ -804,7 +812,6 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
 
     created: Dict[str, Optional[str]] = {"sales_invoice": None, "credit_note": None, "journal_entry": None}
     new_doc_name = None
-    new_doc_is_return = 0
     base_amount = Decimal("0")
     applied = Decimal("0")
 
@@ -822,68 +829,88 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
 
     if diff > MONEY_QUANT:
         # Nachzahlung: wende offene Alt-BK bis zur Höhe der Differenz an
-        applied = min(total_out_bk, diff)
+        applied = min(total_out_bk, diff) if consolidate_unpaid else Decimal("0")
         base_amount = _quantize_money(diff - applied) if diff > applied else Decimal("0")
-        try:
-            new_doc_name = _make_sales_invoice(
-                customer,
-                posting_date,
-                code_nach,
-                base_amount,
-                is_return=0,
-                do_submit=True,
-                company=company,
-                due_date=due_date,
-                cost_center=cost_center,
-                wohnung=wohnung,
-            )
-        except Exception as e:
-            frappe.throw(f"Nachzahlung konnte nicht erstellt werden: {e}")
-        new_doc_is_return = 0
-        created["sales_invoice"] = new_doc_name
+        if base_amount > MONEY_QUANT:
+            try:
+                new_doc_name = _make_sales_invoice(
+                    customer,
+                    posting_date,
+                    code_nach,
+                    base_amount,
+                    is_return=0,
+                    do_submit=True,
+                    company=company,
+                    due_date=due_date,
+                    cost_center=cost_center,
+                    wohnung=wohnung,
+                )
+            except Exception as e:
+                frappe.throw(f"Nachzahlung konnte nicht erstellt werden: {e}")
+            created["sales_invoice"] = new_doc_name
+        elif applied > MONEY_QUANT:
+            created["note"] = "Nachzahlung vollständig durch offene BK-Anteile verrechnet; kein Null-Euro-Beleg erstellt."
     elif diff < -MONEY_QUANT:
         # Guthaben: Credit Note; ggfs. Teil des Guthabens zur Schließung alter Offenen verwenden
         diff_abs = diff.copy_abs()
-        applied = min(total_out_bk, diff_abs)
+        applied = min(total_out_bk, diff_abs) if consolidate_unpaid else Decimal("0")
         base_amount = _quantize_money(diff_abs - applied) if diff_abs > applied else Decimal("0")
-        try:
-            new_doc_name = _make_sales_invoice(
-                customer,
-                posting_date,
-                code_guth,
-                base_amount,
-                is_return=1,
-                do_submit=True,
-                company=company,
-                cost_center=cost_center,
-                wohnung=wohnung,
-            )
-        except Exception as e:
-            frappe.throw(f"Guthaben konnte nicht erstellt werden: {e}")
-        new_doc_is_return = 1
-        created["credit_note"] = new_doc_name
+        if base_amount > MONEY_QUANT:
+            try:
+                new_doc_name = _make_sales_invoice(
+                    customer,
+                    posting_date,
+                    code_guth,
+                    base_amount,
+                    is_return=1,
+                    do_submit=True,
+                    company=company,
+                    cost_center=cost_center,
+                    wohnung=wohnung,
+                )
+            except Exception as e:
+                frappe.throw(f"Guthaben konnte nicht erstellt werden: {e}")
+            created["credit_note"] = new_doc_name
+        elif applied > MONEY_QUANT:
+            created["note"] = "Guthaben vollständig mit offenen BK-Anteilen verrechnet; kein Null-Euro-Beleg erstellt."
     else:
         created["note"] = "Abrechnung ist ausgeglichen."
 
-    # Konsolidierung via Journal Entry: alte Offene schließen und auf neuen Beleg übertragen
-    if consolidate_unpaid and applied > MONEY_QUANT and new_doc_name:
+    # Konsolidierung via Journal Entry: alte Offene schließen und auf neuen Beleg
+    # oder eine unreferenzierte Debitoren-Gegenbuchung übertragen.
+    if consolidate_unpaid and applied > MONEY_QUANT:
         # Konten bestimmen
         entries: List[dict] = []
-        # company und receivable account vom neuen Beleg ziehen
-        si_doc = frappe.get_doc("Sales Invoice", new_doc_name)
-        company = si_doc.company
-        new_acc = si_doc.debit_to
-        # Debit auf neuen Beleg (Nachzahlung) oder auf Credit Note (reduziert deren Gutschrift)
-        if applied > MONEY_QUANT:
-            entries.append({
+        if new_doc_name:
+            # company und receivable account vom neuen Beleg ziehen
+            si_doc = frappe.get_doc("Sales Invoice", new_doc_name)
+            company = si_doc.company
+            new_acc = si_doc.debit_to
+            new_party = si_doc.customer
+            debit_entry = {
                 "account": new_acc,
                 "party_type": "Customer",
-                "party": si_doc.customer,
+                "party": new_party,
                 "reference_type": "Sales Invoice",
                 "reference_name": new_doc_name,
                 "debit": _quantize_money(applied),
                 "credit": Decimal("0"),
-            })
+            }
+        else:
+            if not company:
+                frappe.throw("Offene BK-Anteile konnten nicht verrechnet werden: keine Company gefunden.")
+            new_acc = _receivable_account_for_existing_invoices(rows, company)
+            if not new_acc:
+                frappe.throw("Offene BK-Anteile konnten nicht verrechnet werden: kein Debitorenkonto gefunden.")
+            new_party = customer
+            debit_entry = {
+                "account": new_acc,
+                "party_type": "Customer",
+                "party": new_party,
+                "debit": _quantize_money(applied),
+                "credit": Decimal("0"),
+            }
+        entries.append(debit_entry)
         # Credits je alte Rechnung (BK-Anteil)
         remaining = applied
         for r in rows:
@@ -898,7 +925,7 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
             entries.append({
                 "account": old_acc,
                 "party_type": "Customer",
-                "party": si_doc.customer,
+                "party": new_party,
                 "reference_type": "Sales Invoice",
                 "reference_name": old_name,
                 "debit": Decimal("0"),
