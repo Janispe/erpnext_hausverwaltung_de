@@ -521,7 +521,15 @@ function parse_csv(frm) {
     callback: (r) => {
       frm.reload_doc();
       if (r && r.message) {
-        frappe.show_alert(`Geladen: ${r.message.count} Zeilen`);
+        const auto = r.message.auto_create || {};
+        let msg = __('Geladen: {0} Zeilen', [r.message.count || 0]);
+        const created = (auto.created || []).length;
+        const matched = (auto.auto_matched || []).length
+          + (auto.auto_abschlag_matched || []).length
+          + (auto.auto_kredit_matched || []).length;
+        if (created) msg += ', ' + __('Bank-Transaktionen erstellt: {0}', [created]);
+        if (matched) msg += ', ' + __('automatisch gebucht: {0}', [matched]);
+        frappe.show_alert(msg);
       }
     }
   });

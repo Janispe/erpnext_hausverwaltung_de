@@ -799,6 +799,41 @@ class TestBankauszugImport(FrappeTestCase):
             row_name="ROW-1",
             allow_missing_party=1,
         )
+
+    def test_auto_create_transactions_for_ready_rows_only_processes_party_rows(self):
+        row_ready = self._FakeRow(name="ROW-READY", iban="DE1")
+        row_ready.party_type = "Customer"
+        row_ready.party = "CUST-1"
+        row_missing_party = self._FakeRow(name="ROW-MISSING", iban="DE2")
+        row_existing = self._FakeRow(name="ROW-EXISTING", iban="DE3")
+        row_existing.party_type = "Customer"
+        row_existing.party = "CUST-2"
+        row_existing.bank_transaction = "BT-EXISTING"
+        doc = self._FakeDoc("IMP-AUTO", [row_ready, row_missing_party, row_existing])
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(
+                 bi,
+                 "create_bank_transactions",
+                 return_value={
+                     "created": ["BT-1"],
+                     "auto_matched": ["BT-1"],
+                     "auto_abschlag_matched": [],
+                     "auto_kredit_matched": [],
+                     "auto_match_failed": [],
+                     "errors": [],
+                 },
+             ) as create:
+            res = bi._auto_create_transactions_for_ready_rows("IMP-AUTO")
+
+        self.assertEqual(res["attempted"], 1)
+        self.assertEqual(res["created"], ["BT-1"])
+        self.assertEqual(res["auto_matched"], ["BT-1"])
+        create.assert_called_once_with(
+            docname="IMP-AUTO",
+            row_name="ROW-READY",
+            allow_missing_party=0,
+        )
         self.assertNotIn("row_status", row.db_updates)
         self.assertEqual(row.reference, "BT-L2")
 

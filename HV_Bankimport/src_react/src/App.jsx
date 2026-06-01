@@ -282,7 +282,13 @@ export function App() {
 				}
 				notify("success", `Bank-Transaktionen erstellt: ${(res.created || []).length}`);
 			} else if (action === "parse_csv") {
-				await api.parseCsv(docname); notify("success", "CSV neu eingelesen.");
+				const res = await api.parseCsv(docname);
+				const auto = res.auto_create || {};
+				const created = (auto.created || []).length;
+				const matched = (auto.auto_matched || []).length
+					+ (auto.auto_abschlag_matched || []).length
+					+ (auto.auto_kredit_matched || []).length;
+				notify("success", `CSV neu eingelesen. Auto erstellt: ${created}, gebucht: ${matched}.`);
 			} else if (action === "refresh_saldo") {
 				await api.refreshSaldo(docname); notify("success", "Saldo aktualisiert.");
 			} else if (action === "relink_all") {

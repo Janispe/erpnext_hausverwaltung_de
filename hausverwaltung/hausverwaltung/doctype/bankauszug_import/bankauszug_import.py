@@ -1170,6 +1170,56 @@ def reextract_saldo_from_csv(doc) -> Dict[str, Any]:
     }
 
 
+def _auto_create_transactions_for_ready_rows(docname: str) -> Dict[str, Any]:
+    """Nach dem Parsen automatisch verarbeitbare Zeilen anlegen/buchen.
+
+    Scope bewusst eng: nur Zeilen mit bereits eindeutig gesetzter Party und
+    ohne bestehende Bank Transaction. Der bestehende Create-Pfad entscheidet
+    danach, ob eine Rechnung/Kreditrate/ein Abschlag eindeutig auto-matcht.
+    """
+    doc = frappe.get_doc("Bankauszug Import", docname)
+    row_names = [
+        row.name
+        for row in (doc.get("rows") or [])
+        if not row.get("error")
+        and not _row_is_skipped(row)
+        and not row.get("bank_transaction")
+        and row.get("party_type") in SUPPORTED_PARTY_TYPES
+        and row.get("party")
+    ]
+
+    summary: Dict[str, Any] = {
+        "attempted": 0,
+        "created": [],
+        "errors": [],
+        "created_without_party": 0,
+        "skipped_before_cutoff": 0,
+        "auto_matched": [],
+        "auto_abschlag_matched": [],
+        "auto_kredit_matched": [],
+        "auto_match_failed": [],
+    }
+
+    for row_name in row_names:
+        summary["attempted"] += 1
+        try:
+            result = create_bank_transactions(
+                docname=docname,
+                row_name=row_name,
+                allow_missing_party=0,
+            )
+        except Exception as exc:
+            summary["errors"].append({"row": row_name, "error": str(exc)})
+            continue
+
+        for key in ("created", "auto_matched", "auto_abschlag_matched", "auto_kredit_matched", "auto_match_failed", "errors"):
+            summary[key].extend(result.get(key) or [])
+        summary["created_without_party"] += int(result.get("created_without_party") or 0)
+        summary["skipped_before_cutoff"] += int(result.get("skipped_before_cutoff") or 0)
+
+    return summary
+
+
 @frappe.whitelist()
 def parse_csv(docname: str) -> Dict[str, Any]:
     doc = frappe.get_doc("Bankauszug Import", docname)
@@ -1364,8 +1414,14 @@ def parse_csv(docname: str) -> Dict[str, Any]:
             doc.saldo_datum = max(parsed_dates)
 
     doc.save()
+    auto_create = _auto_create_transactions_for_ready_rows(doc.name)
     _recompute_doc_status(doc.name)
-    return {"rows": rows, "count": len(rows), "saldo_laut_csv": saldo_value}
+    return {
+        "rows": rows,
+        "count": len(rows),
+        "saldo_laut_csv": saldo_value,
+        "auto_create": auto_create,
+    }
 
 
 @frappe.whitelist()
