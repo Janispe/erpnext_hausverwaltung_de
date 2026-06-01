@@ -29,6 +29,17 @@ function useAction(notify) {
 	return [busy, run];
 }
 
+function partyActionMessage(base, res) {
+	const auto = res?.auto_create || {};
+	const created = (auto.created || []).length;
+	const matched = (auto.auto_matched || []).length
+		+ (auto.auto_abschlag_matched || []).length
+		+ (auto.auto_kredit_matched || []).length;
+	if (!created) return base;
+	if (matched) return `${base} Bank-Transaktion erstellt und automatisch gebucht.`;
+	return `${base} Bank-Transaktion erstellt.`;
+}
+
 // ───────────────────────── Smart-Default-Inferenz ───────────────────────────
 // Liefert für eine Phase-3-Zeile den wahrscheinlich richtigen Modus + Begründung.
 // Bezieht sich auf die Modi-IDs aus BookingActions: invoice|abschlag|kredit|payment|journal.
@@ -156,14 +167,20 @@ function PartyAssign({ docname, row, onActionDone, notify }) {
 	const fetcher = useCallback((txt) => api.searchParties(partyType, txt), [partyType]);
 
 	const assign = (item) =>
-		run(() => api.assignParty(docname, row.id, partyType, item.value, row.iban), {
-			success: `Partei zugeordnet: ${item.value}`,
-		}).then((r) => r && onActionDone());
+		run(() => api.assignParty(docname, row.id, partyType, item.value, row.iban))
+			.then((r) => {
+				if (!r) return;
+				notify("success", partyActionMessage(`Partei zugeordnet: ${item.value}.`, r));
+				onActionDone();
+			});
 
 	const createNew = () =>
-		run(() => api.createParty(docname, row.id, partyType, row.auftraggeber), {
-			success: "Partei angelegt und zugeordnet.",
-		}).then((r) => r && onActionDone());
+		run(() => api.createParty(docname, row.id, partyType, row.auftraggeber))
+			.then((r) => {
+				if (!r) return;
+				notify("success", partyActionMessage("Partei angelegt und zugeordnet.", r));
+				onActionDone();
+			});
 
 	return (
 		<div className="match-section">
@@ -209,7 +226,7 @@ function PartyChangeDialog({ docname, row, onClose, onActionDone, notify }) {
 
 	const finish = (res, success) => {
 		if (!res || res.ok === false) return;
-		if (success) notify("success", success);
+		if (success) notify("success", partyActionMessage(success, res));
 		onClose();
 		onActionDone({ advance: false });
 	};

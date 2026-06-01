@@ -1220,6 +1220,30 @@ def _auto_create_transactions_for_ready_rows(docname: str) -> Dict[str, Any]:
     return summary
 
 
+def _auto_create_transaction_for_ready_row(docname: str, row_name: str) -> Dict[str, Any]:
+    doc = frappe.get_doc("Bankauszug Import", docname)
+    row = _get_row_by_name(doc, row_name)
+    if (
+        row.get("error")
+        or _row_is_skipped(row)
+        or row.get("bank_transaction")
+        or row.get("party_type") not in SUPPORTED_PARTY_TYPES
+        or not row.get("party")
+    ):
+        return {"attempted": 0, "created": [], "errors": []}
+
+    try:
+        result = create_bank_transactions(
+            docname=docname,
+            row_name=row_name,
+            allow_missing_party=0,
+        )
+    except Exception as exc:
+        return {"attempted": 1, "created": [], "errors": [{"row": row_name, "error": str(exc)}]}
+    result["attempted"] = 1
+    return result
+
+
 @frappe.whitelist()
 def parse_csv(docname: str) -> Dict[str, Any]:
     doc = frappe.get_doc("Bankauszug Import", docname)
@@ -1457,6 +1481,7 @@ def create_party_and_bank_for_row(
     if getattr(row, "error", None):
         row.error = None
     doc.save(ignore_permissions=True)
+    auto_create = _auto_create_transaction_for_ready_row(doc.name, row.name)
     _recompute_doc_status(doc.name)
 
     return {
@@ -1466,6 +1491,7 @@ def create_party_and_bank_for_row(
         "bank_account": bank_account,
         "bank_account_created": bank_created,
         "mietvertrag_links": mietvertrag_links,
+        "auto_create": auto_create,
     }
 
 
@@ -1617,6 +1643,7 @@ def apply_party_to_row_and_relink(
     except Exception:
         pass
 
+    auto_create = _auto_create_transaction_for_ready_row(docname, row.name)
     _recompute_doc_status(docname)
 
     return {
@@ -1627,6 +1654,7 @@ def apply_party_to_row_and_relink(
         "bank_account": bank_account_info,
         "relink_all_count": relink_all_count,
         "relink_bt_count": relink_bt_count,
+        "auto_create": auto_create,
     }
 
 
@@ -1854,6 +1882,11 @@ def change_row_party(
 
     if hasattr(doc, "save"):
         doc.save(ignore_permissions=True)
+    auto_create = (
+        {"attempted": 0, "created": [], "errors": []}
+        if clear
+        else _auto_create_transaction_for_ready_row(docname, row.name)
+    )
     _recompute_doc_status(docname)
     _refresh_and_persist_saldo(docname)
 
@@ -1871,6 +1904,7 @@ def change_row_party(
         "bank_account_link": bank_account_link,
         "propagated_rows": propagated_rows,
         "propagation_skipped": propagation_skipped,
+        "auto_create": auto_create,
     }
 
 
