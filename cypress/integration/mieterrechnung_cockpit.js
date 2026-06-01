@@ -136,7 +136,7 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 
 	// ── HAPPY PATH (API-LEVEL) ────────────────────────────────────────────
 
-	it("[1] Draft mit nur Beschreibung + Betrag (+ erloeskonto) → Default-Artikel wird verwendet", () => {
+	it("[1] Draft mit nur Beschreibung + Betrag (+ erloeskonto) → Mieterkonto-Default-Artikel wird verwendet", () => {
 		expect(mietvertrag, "mietvertrag seed").to.be.a("string").and.not.empty;
 		expect(income_account, "income_account seed").to.be.a("string").and.not.empty;
 
@@ -167,7 +167,7 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 				const item = si.items[0];
 				expect(item.qty).to.eq(1);
 				expect(Number(item.rate)).to.eq(250);
-				expect(item.item_code, "item_code (Default-Service)").to.be.a("string").and.not.empty;
+				expect(item.item_code, "item_code (Mieterkonto-Default)").to.eq("Guthaben/Nachzahlungen");
 				expect(item.description).to.match(/Renovierungspauschale/);
 				expect(si.remarks).to.eq("Renovierungspauschale");
 				expect(si.mietabrechnung_id || "").to.eq("");
@@ -546,8 +546,8 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 		});
 	});
 
-	it("[11] Default-Artikel = 'hv-default-service' (oder via ensure_default_service_item)", () => {
-		// Sanity: Stelle sicher, dass das Default-Item existiert
+	it("[11] Default-Artikel ist im Mieterkonto erlaubt", () => {
+		// Sanity: Stelle sicher, dass der Cockpit-Default-Artikel existiert
 		cy.call(`${HV_API}.create_sales_invoice`, {
 			mietvertrag,
 			rechnungsdatum: "2026-05-06",
@@ -566,7 +566,7 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 			}).then((g) => {
 				const si = g.message;
 				const item_code = si.items[0].item_code;
-				expect(item_code, "Item existiert").to.be.a("string").and.not.empty;
+				expect(item_code, "Mieterkonto-Default").to.eq("Guthaben/Nachzahlungen");
 				cy.call("frappe.client.get", {
 					doctype: "Item",
 					name: item_code,

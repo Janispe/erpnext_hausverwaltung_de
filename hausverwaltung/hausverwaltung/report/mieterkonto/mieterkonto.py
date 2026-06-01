@@ -33,6 +33,8 @@ ITEM_CATEGORY_MAP = {
 	# HK-Settlement-Items (aus Heizkostenabrechnung Mieter)
 	"HK Nachzahlung": "guthaben_nachzahlungen",
 	"HK Guthaben": "guthaben_nachzahlungen",
+	# Legacy default from Buchungs-Cockpit before it used a Mieterkonto item.
+	"VHB-SERVICE": "guthaben_nachzahlungen",
 }
 # Account-Name-Substring → Kategorie (für Stand-alone-JE-Buchungen ohne
 # SI-Bezug, z.B. nachgebuchte Mahngebühren auf Mieterforderungen). Match

@@ -14,6 +14,10 @@ import frappe
 from frappe.utils import add_days, cstr, getdate, nowdate
 
 from hausverwaltung.hausverwaltung.utils.buchung import ensure_default_service_item
+from hausverwaltung.hausverwaltung.utils.rent_items import (
+    MISC_TENANT_ITEM_CODE,
+    ensure_rent_items,
+)
 
 
 EINGABEQUELLE_EINGANG = "Vereinfachte Buchung"
@@ -837,7 +841,8 @@ def create_sales_invoice(**kwargs) -> dict:
     if not rows:
         frappe.throw("Es sind keine Positionen erfasst.")
 
-    default_item_code = ensure_default_service_item()
+    ensure_rent_items(company=company)
+    default_item_code = MISC_TENANT_ITEM_CODE
     default_cost_center = (
         _derive_cost_center_from_mietvertrag(mietvertrag)
         or frappe.db.get_value("Company", company, "cost_center")

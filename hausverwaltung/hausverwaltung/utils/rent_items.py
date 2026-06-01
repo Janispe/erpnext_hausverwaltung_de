@@ -3,7 +3,8 @@ import frappe
 from hausverwaltung.hausverwaltung.utils.income_accounts import get_hv_income_accounts
 
 
-ITEM_CODES = ("Miete", "Betriebskosten", "Heizkosten")
+MISC_TENANT_ITEM_CODE = "Guthaben/Nachzahlungen"
+ITEM_CODES = ("Miete", "Betriebskosten", "Heizkosten", MISC_TENANT_ITEM_CODE)
 DUNNING_FEE_ITEM_CODE = "Mahngebuehr"
 
 
