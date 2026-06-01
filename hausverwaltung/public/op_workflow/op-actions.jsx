@@ -5,8 +5,7 @@ function canCreateDunningFor(row) {
   const isSalesInvoice = String(row.belegart || "").replace(/ \(×\d+\)$/, "") === "Sales Invoice";
   if (row.status === "Written Off") return false;
   if (row.art !== "Forderungen" || !isSalesInvoice) return false;
-  if (row.offen <= 0.01 || row.alter_tage <= 0) return false;
-  return (row.mahnstufe || 0) < 4;
+  return row.offen > 0.01;
 }
 
 function isOverdueSalesInvoiceReceivable(row) {
@@ -154,7 +153,7 @@ function Modal({ title, subtitle, onClose, footer, children }) {
 // ───────── Aktion: Mahnung erstellen ─────────
 
 function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
-  const nextStufe = (row.mahnstufe || 0) + 1;
+  const nextStufe = Math.min((row.mahnstufe || 0) + 1, 4);
   const [mahngebuehr, setMahngebuehr] = useStateAct(nextStufe === 1 ? 0.00 : nextStufe === 2 ? 5.00 : nextStufe === 3 ? 10.00 : 15.00);
   const [zinsen, setZinsen] = useStateAct(true);
   const [zinssatz, setZinssatz] = useStateAct(9.12); // Basis + 9% gem. §288 BGB
@@ -210,7 +209,9 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
   }, []);
 
   // Verzugszinsen-Berechnung (rein illustrativ)
-  const zinsBetrag = zinsen ? selectedRows.reduce((sum, item) => sum + ((item.offen || 0) * (zinssatz / 100) * ((item.alter_tage || 0) / 365)), 0) : 0;
+  const zinsBetrag = zinsen ? selectedRows.reduce((sum, item) => sum + ((item.offen || 0) * (zinssatz / 100) * (Math.max(item.alter_tage || 0, 0) / 365)), 0) : 0;
+  const selectedAgeDays = Math.max(selectedRow.alter_tage || 0, 0);
+  const subtitleDueText = row.alter_tage > 0 ? `offen seit ${row.alter_tage} Tagen` : `fällig am ${fmtDate_op(row.faellig_am)}`;
 
   const summe = selectedOpen + mahngebuehr + zinsBetrag;
   const partyName = window.OFFENE_POSTEN.partyName(row.party);
@@ -262,7 +263,7 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
   return (
     <Modal
       title={`${nextStufe === 1 ? "Zahlungserinnerung" : nextStufe === 4 ? "Letzte Mahnung" : `${nextStufe - 1}. Mahnung`} erstellen`}
-      subtitle={`${partyName} · ${row.belegnummer} · ${fmtEUR_op(row.offen)} offen seit ${row.alter_tage} Tagen`}
+      subtitle={`${partyName} · ${row.belegnummer} · ${fmtEUR_op(row.offen)} · ${subtitleDueText}`}
       onClose={onClose}
       footer={
         <>
@@ -414,7 +415,7 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
         </div>
         {zinsen && (
           <div className="op-preview-row">
-            <span className="op-preview-key">+ Verzugszinsen ({selectedRow.alter_tage} Tage)</span>
+            <span className="op-preview-key">+ Verzugszinsen ({selectedAgeDays} Tage)</span>
             <span className="op-preview-val">{fmtEUR_op(zinsBetrag)}</span>
           </div>
         )}
