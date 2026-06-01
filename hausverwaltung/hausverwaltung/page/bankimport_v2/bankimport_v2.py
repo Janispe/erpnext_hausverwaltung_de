@@ -319,11 +319,16 @@ def list_imports(limit: int = 30) -> dict[str, Any]:
 
 @frappe.whitelist()
 def search_parties(party_type: str, txt: str = "") -> dict[str, Any]:
-	"""Autocomplete für Customer/Supplier (Phase-1-Zuordnung)."""
-	if party_type not in ("Customer", "Supplier"):
-		frappe.throw(_("Party-Typ muss Customer oder Supplier sein."))
+	"""Autocomplete für Customer/Supplier/Eigentuemer (Phase-1-Zuordnung)."""
+	title_fields = {
+		"Customer": "customer_name",
+		"Supplier": "supplier_name",
+		"Eigentuemer": "eigentuemer_name",
+	}
+	if party_type not in title_fields:
+		frappe.throw(_("Party-Typ muss Customer, Supplier oder Eigentuemer sein."))
 
-	title_field = "customer_name" if party_type == "Customer" else "supplier_name"
+	title_field = title_fields[party_type]
 	txt = (txt or "").strip()
 	or_filters = None
 	if txt:

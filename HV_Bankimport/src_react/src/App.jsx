@@ -207,6 +207,7 @@ export function App() {
 		nopay: scope.filter((r) => !r.paymentEntry && !r.journalEntry && r.rowStatus !== "done").length,
 		customer: scope.filter((r) => r.partyTyp === "Customer").length,
 		supplier: scope.filter((r) => r.partyTyp === "Supplier").length,
+		eigentuemer: scope.filter((r) => r.partyTyp === "Eigentuemer").length,
 	}), [scope]);
 
 	const visibleRows = useMemo(() => {
@@ -216,6 +217,7 @@ export function App() {
 		else if (filter === "nopay") out = scope.filter((r) => !r.paymentEntry && !r.journalEntry && r.rowStatus !== "done");
 		else if (filter === "customer") out = scope.filter((r) => r.partyTyp === "Customer");
 		else if (filter === "supplier") out = scope.filter((r) => r.partyTyp === "Supplier");
+		else if (filter === "eigentuemer") out = scope.filter((r) => r.partyTyp === "Eigentuemer");
 
 		if (search.trim()) {
 			const q = search.toLowerCase();

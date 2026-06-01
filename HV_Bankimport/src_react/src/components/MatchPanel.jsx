@@ -163,6 +163,11 @@ function AuditTrail({ row }) {
 function PartyAssign({ docname, row, onActionDone, notify }) {
 	const [partyType, setPartyType] = useState(row.betrag < 0 ? "Supplier" : "Customer");
 	const [busy, run] = useAction(notify);
+	const partyLabels = {
+		Customer: "Mieter",
+		Supplier: "Lieferant",
+		Eigentuemer: "Eigentümer",
+	};
 
 	const fetcher = useCallback((txt) => api.searchParties(partyType, txt), [partyType]);
 
@@ -182,35 +187,52 @@ function PartyAssign({ docname, row, onActionDone, notify }) {
 				onActionDone();
 			});
 
+	const createWithoutParty = () =>
+		run(async () => api.createBankTransactionForRow(docname, row.id, true))
+			.then((r) => {
+				if (!r) return;
+				const created = (r.created || []).length;
+				const matched = (r.auto_matched || []).length
+					+ (r.auto_abschlag_matched || []).length
+					+ (r.auto_kredit_matched || []).length;
+				if (created && matched) notify("success", "Bank-Transaktion ohne Partei erstellt und automatisch gebucht.");
+				else if (created) notify("success", "Bank-Transaktion ohne Partei erstellt.");
+				else notify("success", "Zeile verarbeitet.");
+				onActionDone({ advance: false });
+			});
+
 	return (
 		<div className="match-section">
 			<div className="sec-label">Partei zuordnen</div>
 			<div className="seg" role="tablist" style={{ marginBottom: 10 }}>
-				{["Customer", "Supplier"].map((t) => (
+				{["Customer", "Supplier", "Eigentuemer"].map((t) => (
 					<button
 						key={t}
 						className={`seg-btn ${partyType === t ? "active" : ""}`}
 						onClick={() => setPartyType(t)}
 					>
-						{t === "Customer" ? "Mieter" : "Lieferant"}
+						{partyLabels[t]}
 					</button>
 				))}
 			</div>
 			<LinkSearch
-				placeholder={`${partyType === "Customer" ? "Mieter" : "Lieferant"} suchen…`}
+				placeholder={`${partyLabels[partyType]} suchen…`}
 				fetcher={fetcher}
 				onPick={assign}
 				autoFocus
 				disabled={busy}
 			/>
-			{row.auftraggeber && (
+			{row.auftraggeber && partyType !== "Eigentuemer" && (
 				<button className="btn sm" style={{ marginTop: 10 }} onClick={createNew} disabled={busy}>
 					{busy ? <Spinner /> : <Icon name="plus" />} Neu anlegen aus „{row.auftraggeber}"
 				</button>
 			)}
+			<button className="btn sm" style={{ marginTop: 10, marginLeft: row.auftraggeber && partyType !== "Eigentuemer" ? 8 : 0 }} onClick={createWithoutParty} disabled={busy}>
+				{busy ? <Spinner /> : <Icon name="bolt" />} Ohne Partei als Bank-Transaktion anlegen
+			</button>
 			<div className="hint">
-				Die Zuordnung verlinkt das Bankkonto (IBAN) mit der Partei und überträgt sie auf alle
-				passenden Zeilen.
+				Interne Umbuchungen oder neutrale Bankbewegungen können ohne Partei weiterlaufen.
+				Echte Mieter-, Lieferanten- oder Eigentümerbewegungen sollten einer Partei zugeordnet werden.
 			</div>
 		</div>
 	);
@@ -223,6 +245,11 @@ function PartyChangeDialog({ docname, row, onClose, onActionDone, notify }) {
 	const [busy, run] = useAction(notify);
 	const hasVoucher = !!(row.paymentEntry || row.journalEntry || row.paymentDocument);
 	const fetcher = useCallback((txt) => api.searchParties(partyType, txt), [partyType]);
+	const partyLabels = {
+		Customer: "Mieter",
+		Supplier: "Lieferant",
+		Eigentuemer: "Eigentümer",
+	};
 
 	const finish = (res, success) => {
 		if (!res || res.ok === false) return;
@@ -277,19 +304,19 @@ function PartyChangeDialog({ docname, row, onClose, onActionDone, notify }) {
 					<strong>{row.party ? `${row.party}${row.partyTyp ? ` · ${row.partyTyp}` : ""}` : "keine Partei"}</strong>
 				</div>
 				<div className="seg" role="tablist" style={{ marginBottom: 10 }}>
-					{["Customer", "Supplier"].map((t) => (
+					{["Customer", "Supplier", "Eigentuemer"].map((t) => (
 						<button
 							key={t}
 							className={`seg-btn ${partyType === t ? "active" : ""}`}
 							onClick={() => setPartyType(t)}
 							disabled={busy}
 						>
-							{t === "Customer" ? "Mieter" : "Lieferant"}
+							{partyLabels[t]}
 						</button>
 					))}
 				</div>
 				<LinkSearch
-					placeholder={`${partyType === "Customer" ? "Mieter" : "Lieferant"} suchen…`}
+					placeholder={`${partyLabels[partyType]} suchen…`}
 					fetcher={fetcher}
 					onPick={changeTo}
 					autoFocus
@@ -316,7 +343,7 @@ function PartyChangeDialog({ docname, row, onClose, onActionDone, notify }) {
 					</label>
 				</div>
 				<div className="dialog-actions">
-					{row.auftraggeber && (
+					{row.auftraggeber && partyType !== "Eigentuemer" && (
 						<button className="btn" onClick={createNew} disabled={busy}>
 							{busy ? <Spinner /> : <Icon name="plus" />} Neu anlegen aus Auftraggeber
 						</button>

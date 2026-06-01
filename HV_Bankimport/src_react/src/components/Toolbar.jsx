@@ -9,6 +9,7 @@ export function Toolbar({ filter, setFilter, search, setSearch, counts, phaseLab
 		{ id: "nopay", lbl: "Ohne Zahlung", cnt: counts.nopay },
 		{ id: "customer", lbl: "Kunde", cnt: counts.customer },
 		{ id: "supplier", lbl: "Lieferant", cnt: counts.supplier },
+		{ id: "eigentuemer", lbl: "Eigentümer", cnt: counts.eigentuemer },
 	];
 	return (
 		<div className="toolbar">
