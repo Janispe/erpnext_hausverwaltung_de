@@ -2413,6 +2413,8 @@ def get_abschlagsplan_candidates_for_row(docname: str, row_name: str) -> dict[st
 
         row_date = getdate(item.get("faelligkeitsdatum")) if item.get("faelligkeitsdatum") else None
         delta_days = abs((row_date - target_date).days) if row_date and target_date else None
+        if delta_days is not None and delta_days > manual_window_days:
+            continue
         item["delta_days"] = delta_days
         item["bank_account_match"] = bool(bank_account and item.get("bank_account") == bank_account)
         item["cost_center_match"] = bool(expected_cc and item.get("cost_center") == expected_cc)

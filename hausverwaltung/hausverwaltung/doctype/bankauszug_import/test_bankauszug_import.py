@@ -1188,8 +1188,9 @@ class TestBankauszugImport(FrappeTestCase):
              ):
             res = bi.get_abschlagsplan_candidates_for_row("IMP-ABS", "ROW-ABS")
 
-        self.assertEqual([c["row_name"] for c in res["candidates"]], ["ROW-OK", "ROW-FAR"])
+        self.assertEqual([c["row_name"] for c in res["candidates"]], ["ROW-OK"])
         self.assertEqual(res["candidates"][0]["delta_days"], 1)
+        self.assertEqual(res["manual_window_days"], 45)
 
     def test_manually_reconcile_row_reconcile_failure_leaves_row_unset(self):
         row = self._FakeRow(name="ROW-INV-FAIL", iban="DE15")
