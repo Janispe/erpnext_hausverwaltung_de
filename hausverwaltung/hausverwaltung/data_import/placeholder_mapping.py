@@ -80,9 +80,6 @@ PLACEHOLDER_MAPPING = {
     "VerwName": "{{ verwalter.name if verwalter is defined and verwalter else '' }}",
     "Verw.-Name": "{{ verwalter.name if verwalter is defined and verwalter else '' }}",
     "Verw-Straße": "{{ verwalter.address_line1 if verwalter is defined and verwalter else '' }}",
-    "Verw-Straße": "{{ verwalter.address_line1 if verwalter is defined and verwalter else '' }}",
-    "Verw.-Straße": "{{ verwalter.address_line1 if verwalter is defined and verwalter else '' }}",
-    "Verw-Straße": "{{ verwalter.address_line1 if verwalter is defined and verwalter else '' }}",
     "Verw.-Straße": "{{ verwalter.address_line1 if verwalter is defined and verwalter else '' }}",
     "Verw-StraÃe": "{{ verwalter.address_line1 if verwalter is defined and verwalter else '' }}",  # Encoding issue
     "Verw.-StraÃe": "{{ verwalter.address_line1 if verwalter is defined and verwalter else '' }}",  # Encoding issue
