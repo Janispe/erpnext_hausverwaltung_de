@@ -537,6 +537,11 @@ def create_payment_entry_for_invoices(
 			explicit = flt(explicit)
 			if explicit <= 0:
 				frappe.throw(f"Zuweisung für {inv_name} muss größer als 0 € sein.")
+			if explicit > remaining + _TOLERANCE:
+				frappe.throw(
+					f"Zuweisung für {inv_name} ({explicit:.2f} €) übersteigt "
+					f"verbleibenden Bank-Betrag ({remaining:.2f} €)."
+				)
 			alloc = min(explicit, outstanding, remaining if remaining > 0 else explicit)
 		else:
 			alloc = min(outstanding, remaining)

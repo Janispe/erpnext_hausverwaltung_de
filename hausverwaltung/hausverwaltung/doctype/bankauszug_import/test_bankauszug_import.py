@@ -1060,6 +1060,42 @@ class TestBankauszugImport(FrappeTestCase):
         recompute.assert_not_called()
         refresh.assert_not_called()
 
+    def test_manually_reconcile_row_rejects_explicit_allocations_above_bank_amount(self):
+        import json as _json
+
+        row = self._FakeRow(name="ROW-INV-OVER", iban="DE15")
+        row.party_type = "Customer"
+        row.party = "CUST-1"
+        row.betrag = 150.0
+        row.payment_entry = None
+        row.journal_entry = None
+        bt = type("BT", (), {"name": "BT-INV-OVER"})()
+
+        invoices = {
+            "SINV-A": frappe._dict(name="SINV-A", outstanding_amount=100.0, posting_date="2026-05-05"),
+            "SINV-B": frappe._dict(name="SINV-B", outstanding_amount=100.0, posting_date="2026-05-06"),
+        }
+
+        def _get_value(doctype, name, fields, as_dict=False):
+            return invoices.get(name)
+
+        payload = _json.dumps([
+            {"name": "SINV-A", "allocated_amount": 100.0},
+            {"name": "SINV-B", "allocated_amount": 100.0},
+        ])
+
+        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(object(), row, bt)), \
+             patch.object(bi.frappe.db, "get_value", side_effect=_get_value), \
+             patch.object(bi.frappe, "throw", side_effect=Exception) as throw, \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.create_payment_entry_for_invoices",
+             ) as create_pe:
+            with self.assertRaises(Exception):
+                bi.manually_reconcile_row("IMP-INV-OVER", "ROW-INV-OVER", payload)
+
+        create_pe.assert_not_called()
+        self.assertIn("Zuweisungen summieren", throw.call_args[0][0])
+
     def test_assign_abschlagsplan_row_creates_payment_and_marks_plan_row(self):
         row = self._FakeRow(name="ROW-ASSIGN", iban="DE17", verwendungszweck="Abschlag")
         row.richtung = "Ausgang"
@@ -1131,7 +1167,7 @@ class TestBankauszugImport(FrappeTestCase):
                  return_value=pe,
              ) as create_pe, \
              patch(
-                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_voucher_with_bt",
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_created_voucher_or_rollback",
              ) as reconcile, \
              patch.object(bi, "_recompute_doc_status"), \
              patch.object(bi, "_refresh_and_persist_saldo"):
@@ -1292,7 +1328,7 @@ class TestBankauszugImport(FrappeTestCase):
                  return_value=je,
              ) as create_je, \
              patch(
-                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_voucher_with_bt",
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_created_voucher_or_rollback",
                  return_value=None,
              ) as reconcile:
             res = bi.create_journal_entry_for_row(
@@ -1384,7 +1420,7 @@ class TestBankauszugImport(FrappeTestCase):
                  return_value=je,
              ) as create_je, \
              patch(
-                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_voucher_with_bt",
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_created_voucher_or_rollback",
                  return_value=None,
              ) as reconcile:
             res = bi.create_journal_entry_for_row(

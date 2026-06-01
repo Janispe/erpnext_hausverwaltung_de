@@ -280,6 +280,7 @@ class TestGetOverviewSync(FrappeTestCase):
 		with patch("frappe.get_doc", return_value=doc), \
 			 patch("frappe.has_permission", return_value=True), \
 			 patch.object(bv2, "sync_cancelled_payment_entry_links", side_effect=sync_side_effect) as sync, \
+			 patch.object(bv2, "sync_cancelled_journal_entry_links") as sync_journal, \
 			 patch.object(bv2, "_recompute_doc_status"), \
 			 patch.object(bv2, "_refresh_saldo_fields"), \
 			 patch.object(bv2, "_persist_saldo_fields"), \
@@ -287,8 +288,45 @@ class TestGetOverviewSync(FrappeTestCase):
 			res = bv2.get_overview("IMP-OVERVIEW")
 
 		sync.assert_called_once_with(import_name="IMP-OVERVIEW")
+		sync_journal.assert_called_once_with(import_name="IMP-OVERVIEW")
 		out = res["rows"][0]
 		self.assertIsNone(out["paymentEntry"])
+		self.assertIsNone(out["paymentDocument"])
+		self.assertEqual(out["phase"], 3)
+		self.assertEqual(out["rowStatus"], "phase3-open")
+
+	def test_get_overview_syncs_cancelled_journal_entry_before_response(self):
+		row = _OverviewRow()
+		row.payment_entry = None
+		row.payment_document_type = "Journal Entry"
+		row.payment_document = "JE-CANCELLED"
+		row.journal_entry = "JE-CANCELLED"
+		doc = _OverviewDoc(row)
+
+		def sync_side_effect(import_name=None, journal_entry_name=None):
+			row.journal_entry = None
+			row.payment_document = None
+			row.payment_document_type = None
+			row.row_status = None
+			row.auto_match_message = (
+				"Automatisch zurückgesetzt: Journal Entry JE-CANCELLED ist storniert."
+			)
+			return {"cleared": 1}
+
+		with patch("frappe.get_doc", return_value=doc), \
+			 patch("frappe.has_permission", return_value=True), \
+			 patch.object(bv2, "sync_cancelled_payment_entry_links") as sync_payment, \
+			 patch.object(bv2, "sync_cancelled_journal_entry_links", side_effect=sync_side_effect) as sync_journal, \
+			 patch.object(bv2, "_recompute_doc_status"), \
+			 patch.object(bv2, "_refresh_saldo_fields"), \
+			 patch.object(bv2, "_persist_saldo_fields"), \
+			 patch.object(bv2, "_suggest_invoice_for_row", return_value=None):
+			res = bv2.get_overview("IMP-OVERVIEW")
+
+		sync_payment.assert_called_once_with(import_name="IMP-OVERVIEW")
+		sync_journal.assert_called_once_with(import_name="IMP-OVERVIEW")
+		out = res["rows"][0]
+		self.assertIsNone(out["journalEntry"])
 		self.assertIsNone(out["paymentDocument"])
 		self.assertEqual(out["phase"], 3)
 		self.assertEqual(out["rowStatus"], "phase3-open")

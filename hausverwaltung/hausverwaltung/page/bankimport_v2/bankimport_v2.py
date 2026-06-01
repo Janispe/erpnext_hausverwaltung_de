@@ -26,6 +26,7 @@ from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import i
 	_recompute_doc_status,
 	_refresh_saldo_fields,
 	_persist_saldo_fields,
+	sync_cancelled_journal_entry_links,
 	sync_cancelled_payment_entry_links,
 )
 
@@ -201,6 +202,7 @@ def get_overview(import_name: str) -> dict[str, Any]:
 	# Status + Saldo frisch halten (sonst stale nach nachträglichen Buchungen).
 	try:
 		sync_cancelled_payment_entry_links(import_name=doc.name)
+		sync_cancelled_journal_entry_links(import_name=doc.name)
 	except Exception:
 		frappe.log_error(
 			frappe.get_traceback(),

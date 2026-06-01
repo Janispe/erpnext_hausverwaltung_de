@@ -2476,9 +2476,12 @@ def manually_reconcile_row(
     else:
         frappe.throw(f"Party-Typ '{row.party_type}' nicht unterstützt für manuelle Zuordnung.")
 
+    target_amount = flt(row.betrag)
+
     # Rechnungen einzeln laden, um aktuelle outstanding_amount zu prüfen.
     # Allocation pro Rechnung: explizit aus Frontend (falls gesetzt) sonst Vollbetrag.
     invoices = []
+    explicit_allocated_total = 0.0
     for item in items:
         inv_name = item["name"]
         inv = frappe.db.get_value(
@@ -2503,9 +2506,15 @@ def manually_reconcile_row(
                     f"offenen Betrag ({flt(inv.outstanding_amount):.2f} €)."
                 )
             inv["allocated_amount"] = explicit_alloc
+            explicit_allocated_total += explicit_alloc
         invoices.append(inv)
 
-    target_amount = flt(row.betrag)
+    if explicit_allocated_total > target_amount + 0.01:
+        frappe.throw(
+            f"Zuweisungen summieren auf {explicit_allocated_total:.2f} €, "
+            f"Bank-Betrag ist {target_amount:.2f} €. Bitte Beträge reduzieren."
+        )
+
     pe = create_payment_entry_for_invoices(
         bt=bt,
         invoices=invoices,
