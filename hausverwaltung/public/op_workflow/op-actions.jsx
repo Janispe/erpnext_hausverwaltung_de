@@ -218,6 +218,8 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
         ? await window.OP_ACTIONS.createBulkDunning({ [row.party]: selectedRows }, {
             dunningType: textStufe,
             neueFaelligkeit,
+            mahngebuehr,
+            zinsenAktiv: zinsen,
             serienbriefVorlage,
             serienbriefWerte,
           })
@@ -824,8 +826,10 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
   };
   const submit = async () => {
     const rowsByParty = {};
+    const mahngebuehrPerParty = {};
     aktiv.forEach((group) => {
       rowsByParty[group.party] = group.items;
+      mahngebuehrPerParty[group.party] = group.gebuehr;
     });
     setBusy(true);
     try {
@@ -835,6 +839,7 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
       const result = await window.OP_ACTIONS.createBulkDunning(rowsByParty, {
         neueFaelligkeit,
         dunningType,
+        mahngebuehrPerParty,
         serienbriefVorlage,
         serienbriefWerte,
       });

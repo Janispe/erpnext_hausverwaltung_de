@@ -942,6 +942,9 @@ def create_bulk_dunning(
     invoices_by_customer: str | dict,
     dunning_type_per_customer: str | dict | None = None,
     new_due_date: str | None = None,
+    mahngebuehr: float | None = None,
+    mahngebuehr_per_customer: str | dict | None = None,
+    zinsen_aktiv: bool = True,
     serienbrief_vorlage_per_customer: str | dict | None = None,
     serienbrief_vorlage: str | None = None,
     serienbrief_werte_per_customer: str | dict | None = None,
@@ -953,6 +956,9 @@ def create_bulk_dunning(
         invoices_by_customer: Dict ``{"<customer>": ["SI-1", "SI-2"], ...}``
         dunning_type_per_customer: optional, Dict mit Override pro Customer
         new_due_date: Default für alle
+        mahngebuehr: optionaler Gebühren-Override für alle
+        mahngebuehr_per_customer: optional, Dict mit Gebühren-Override pro Customer
+        zinsen_aktiv: ob Verzugszinsen berechnet werden sollen
 
     Returns:
         ``{"created": [<dunning-names>], "errors": [{"customer": ..., "msg": ...}]}``
@@ -961,6 +967,8 @@ def create_bulk_dunning(
         invoices_by_customer = json.loads(invoices_by_customer)
     if isinstance(dunning_type_per_customer, str):
         dunning_type_per_customer = json.loads(dunning_type_per_customer)
+    if isinstance(mahngebuehr_per_customer, str):
+        mahngebuehr_per_customer = json.loads(mahngebuehr_per_customer)
     if isinstance(serienbrief_vorlage_per_customer, str):
         serienbrief_vorlage_per_customer = json.loads(serienbrief_vorlage_per_customer)
     if isinstance(serienbrief_werte_per_customer, str):
@@ -989,6 +997,11 @@ def create_bulk_dunning(
             if serienbrief_vorlage_per_customer:
                 explicit_template = serienbrief_vorlage_per_customer.get(customer)
             effective_template = explicit_template or serienbrief_vorlage or _serienbrief_vorlage_for_dunning_type(resolved_type)
+            explicit_fee = None
+            if mahngebuehr_per_customer and customer in mahngebuehr_per_customer:
+                explicit_fee = mahngebuehr_per_customer.get(customer)
+            elif mahngebuehr is not None:
+                explicit_fee = mahngebuehr
 
             dunning = frappe.new_doc("Dunning")
             first = sales_invoices[0]
@@ -1001,6 +1014,8 @@ def create_bulk_dunning(
                 "currency": first.currency,
                 "conversion_rate": flt(getattr(first, "conversion_rate", None)) or 1,
                 "outstanding_amount": sum(flt(si.outstanding_amount) for si in sales_invoices),
+                "dunning_fee": flt(explicit_fee) if explicit_fee is not None else None,
+                "rate_of_interest": None if zinsen_aktiv is None or _as_bool(zinsen_aktiv) else 0,
                 "hv_serienbrief_vorlage": effective_template,
             }.items():
                 _set_if_field(dunning, fieldname, value)

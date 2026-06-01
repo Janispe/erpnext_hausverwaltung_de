@@ -68,11 +68,17 @@
   async function createBulkDunning(rowsByParty, opts) {
     const invoicesByCustomer = {};
     const dunningTypePerCustomer = {};
+    const mahngebuehrPerCustomer = {};
     const serienbriefVorlagePerCustomer = {};
     const serienbriefWertePerCustomer = {};
     for (const [party, rows] of Object.entries(rowsByParty)) {
       invoicesByCustomer[party] = rows.map((r) => r.belegnummer);
       if (opts?.dunningType) dunningTypePerCustomer[party] = opts.dunningType;
+      if (opts?.mahngebuehrPerParty && Object.prototype.hasOwnProperty.call(opts.mahngebuehrPerParty, party)) {
+        mahngebuehrPerCustomer[party] = opts.mahngebuehrPerParty[party];
+      } else if (opts?.mahngebuehr !== undefined) {
+        mahngebuehrPerCustomer[party] = opts.mahngebuehr;
+      }
       if (opts?.serienbriefVorlage) serienbriefVorlagePerCustomer[party] = opts.serienbriefVorlage;
       else if (rows[0]?.serienbrief_vorlage) serienbriefVorlagePerCustomer[party] = rows[0].serienbrief_vorlage;
       if (opts?.serienbriefWerte) serienbriefWertePerCustomer[party] = opts.serienbriefWerte;
@@ -82,6 +88,8 @@
       {
         invoices_by_customer: invoicesByCustomer,
         dunning_type_per_customer: dunningTypePerCustomer,
+        mahngebuehr_per_customer: mahngebuehrPerCustomer,
+        zinsen_aktiv: opts?.zinsenAktiv !== undefined ? opts.zinsenAktiv : true,
         serienbrief_vorlage_per_customer: serienbriefVorlagePerCustomer,
         serienbrief_vorlage: opts?.serienbriefVorlage || null,
         serienbrief_werte_per_customer: serienbriefWertePerCustomer,
