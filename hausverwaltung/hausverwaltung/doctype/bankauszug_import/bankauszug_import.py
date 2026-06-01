@@ -1965,6 +1965,13 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
                     bt.submit()
             except Exception as submit_exc:
                 error_msg = f"Bank Transaction konnte nicht eingereicht werden: {submit_exc}"
+                try:
+                    bt.delete(ignore_permissions=True)
+                except Exception:
+                    frappe.log_error(
+                        frappe.get_traceback(),
+                        f"Bankauszug Import: Draft Bank Transaction Cleanup fehlgeschlagen für {bt.name}",
+                    )
                 row.db_set("error", error_msg)
                 row.db_set("row_status", "failed")
                 errors.append({"row": row.name, "error": error_msg})

@@ -233,10 +233,10 @@ def _kunde_des_vertrags(mv_row: frappe._dict) -> str | None:
     # Bevorzugt das im Vertrag gepflegte Mieterfeld
     if getattr(mv_row, "kunde", None):
         return mv_row.kunde
-    # Fallback: Ersten Vertragspartner nehmen -> zu Customer auflösen (falls vorhanden)
+    # Fallback: Hauptmieter-Vertragspartner nehmen -> zu Customer auflösen (falls vorhanden)
     partner = frappe.db.get_value(
         "Vertragspartner",
-        {"parent": mv_row.name, "parenttype": "Mietvertrag"},
+        {"parent": mv_row.name, "parenttype": "Mietvertrag", "rolle": "Hauptmieter"},
         "mieter",
         order_by="idx asc",
     )

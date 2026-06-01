@@ -829,6 +829,12 @@ class TestBankauszugImport(FrappeTestCase):
             def submit(self):
                 raise Exception("submit boom")
 
+            def delete(self, ignore_permissions=False):
+                self.deleted = True
+                self.delete_ignore_permissions = ignore_permissions
+
+        bt = _BankTransaction()
+
         meta = type(
             "M",
             (),
@@ -852,7 +858,7 @@ class TestBankauszugImport(FrappeTestCase):
             raise AssertionError(f"unexpected doctype {doctype}")
 
         with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
-             patch.object(bi.frappe, "new_doc", return_value=_BankTransaction()), \
+             patch.object(bi.frappe, "new_doc", return_value=bt), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
              patch.object(bi.frappe.db, "get_single_value", return_value=None), \
              patch.object(bi, "_build_missing_party_warning_payload", return_value=None), \
@@ -873,6 +879,8 @@ class TestBankauszugImport(FrappeTestCase):
         self.assertIsNone(row.reference)
         self.assertEqual(res["created"], [])
         self.assertEqual(res["errors"][0]["row"], "ROW-SUBMIT-FAIL")
+        self.assertTrue(bt.deleted)
+        self.assertTrue(bt.delete_ignore_permissions)
         auto_match.assert_not_called()
 
     def test_create_bank_transactions_marks_submitted_transaction_success(self):

@@ -16,7 +16,7 @@ class TestGenerateMietrechnungen(FrappeTestCase):
 
         get_value.assert_not_called()
 
-    def test_kunde_des_vertrags_resolves_customer_from_first_contact(self):
+    def test_kunde_des_vertrags_resolves_customer_from_first_hauptmieter_contact(self):
         row = frappe._dict(name="MV-FALLBACK", kunde=None)
 
         with (
@@ -27,7 +27,7 @@ class TestGenerateMietrechnungen(FrappeTestCase):
 
         get_value.assert_called_once_with(
             "Vertragspartner",
-            {"parent": "MV-FALLBACK", "parenttype": "Mietvertrag"},
+            {"parent": "MV-FALLBACK", "parenttype": "Mietvertrag", "rolle": "Hauptmieter"},
             "mieter",
             order_by="idx asc",
         )
