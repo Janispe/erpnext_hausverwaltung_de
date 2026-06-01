@@ -383,7 +383,10 @@ def create_bk_abrechnung_wohnung(
 
     segments = _mietvertrag_segmente_fuer_zeitraum(wohnung, von, bis)
     if not segments:
-        frappe.throw(f"Kein Mietvertrag im Zeitraum {von} bis {bis} für Wohnung '{wohnung}' gefunden.")
+        frappe.throw(
+            f"Keine Mieter-Abrechnung erzeugt: Im Zeitraum {von} bis {bis} "
+            f"existiert kein Mietvertrag für Wohnung '{wohnung}'."
+        )
 
     festbetrag_arten = {
         row.get("name")

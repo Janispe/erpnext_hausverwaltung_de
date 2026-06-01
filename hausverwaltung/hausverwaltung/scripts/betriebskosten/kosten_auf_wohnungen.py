@@ -419,9 +419,10 @@ def allocate_kosten_auf_wohnungen(
         if total_weight <= Decimal("0"):
             # Datenproblem: alle Wohnungen haben am Stichtag 0 Gewicht. Statt
             # heimlich 1/N zu verteilen, klar machen was zu pruefen ist.
-            # Echter Leerstand (qm>0, kein Mieter) wird hier nicht abgefangen —
-            # der laeuft normal durch und wird im Settlement-Schritt dem
-            # Eigentuemer zugerechnet.
+            # Echter Leerstand (qm>0, kein Mieter) wird hier nicht abgefangen:
+            # Die Kosten bleiben auf Wohnungsebene erhalten. Beim spaeteren
+            # Split nach Mietvertraegen wird nur der vermietete Zeitraum an
+            # Mieter weiterbelastet; der Rest bleibt beim Vermieter.
             anzahl_whg = len(weights)
             frappe.throw(
                 f"Verteilung '{verteilung}' für Kostenart '{kostenart}' (Haus {haus}, "
