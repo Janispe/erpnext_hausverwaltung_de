@@ -63,10 +63,12 @@ frappe.ui.form.on('Bankauszug Import', {
 
 function _computePhase(frm) {
   const rows = frm.doc.rows || [];
+  const activeRows = rows.filter(r => !isSkippedRow(r));
   if (!rows.length) return 'empty';
-  const allHaveParty   = rows.every(r => r.party_type && r.party);
-  const allHaveBT      = rows.every(r => r.bank_transaction || r.reference);
-  const allHaveVoucher = rows.every(r => r.payment_entry || r.journal_entry);
+  if (!activeRows.length) return 'done';
+  const allHaveParty   = activeRows.every(r => r.party_type && r.party);
+  const allHaveBT      = activeRows.every(r => r.bank_transaction || r.reference);
+  const allHaveVoucher = activeRows.every(r => r.payment_entry || r.journal_entry);
   // Phasen-Logik hängt am bank_transaction, nicht am Party-Count: Zeilen
   // ohne Party können trotzdem als Journal Entry verbucht werden.
   if (!allHaveBT) {
@@ -76,15 +78,23 @@ function _computePhase(frm) {
   return 'done';
 }
 
+function isSkippedRow(row) {
+  const status = (row && row.row_status || '').toString().trim().toLowerCase();
+  return status === 'schon vorhanden' || status === 'vor start-datum';
+}
+
 function _renderInfoBanner(frm) {
   const rows = frm.doc.rows || [];
+  const activeRows = rows.filter(r => !isSkippedRow(r));
   const total     = rows.length;
-  const withParty = rows.filter(r => r.party_type && r.party).length;
+  const activeTotal = activeRows.length;
+  const withParty = activeRows.filter(r => r.party_type && r.party).length;
   const withoutParty = total - withParty;
-  const withBT    = rows.filter(r => r.bank_transaction || r.reference).length;
-  const withoutBT = total - withBT;
-  const withVoucher    = rows.filter(r => r.payment_entry || r.journal_entry).length;
-  const withoutVoucher = total - withVoucher;
+  const activeWithoutParty = activeTotal - withParty;
+  const withBT    = activeRows.filter(r => r.bank_transaction || r.reference).length;
+  const withoutBT = activeTotal - withBT;
+  const withVoucher    = activeRows.filter(r => r.payment_entry || r.journal_entry).length;
+  const withoutVoucher = activeTotal - withVoucher;
   const eingang   = rows.filter(r => r.richtung === 'Eingang').length;
   const ausgang   = rows.filter(r => r.richtung === 'Ausgang').length;
   const kunde     = rows.filter(r => r.party_type === 'Customer'    && r.party).length;
@@ -117,8 +127,8 @@ function _renderInfoBanner(frm) {
     header = `<div style="background:${cfg.bg}; border:1px solid ${cfg.border}; border-radius:6px; padding:12px 16px; margin-bottom:10px;">`
       + `<div style="font-size:14px; color:${cfg.fg}; font-weight:600;">${cfg.icon} ${cfg.title}</div>`
       + `<div style="margin-top:4px; font-size:12px; color:${cfg.fg};">`
-      +   `<strong>${withParty}</strong> ${__('von')} <strong>${total}</strong> ${__('Zeilen zugeordnet')} – `
-      +   `<strong>${withoutParty}</strong> ${__('offen.')}`
+      +   `<strong>${withParty}</strong> ${__('von')} <strong>${activeTotal}</strong> ${__('Zeilen zugeordnet')} – `
+      +   `<strong>${activeWithoutParty}</strong> ${__('offen.')}`
       + `</div>`
       + `<div style="margin-top:2px; font-size:11px; color:${cfg.fg}; opacity:0.85;">${__('Klick auf „⋯ Aktionen" in einer roten Zeile, um Mieter oder Lieferant zuzuweisen.')}</div>`
       + `</div>`;
@@ -126,7 +136,7 @@ function _renderInfoBanner(frm) {
     header = `<div style="background:${cfg.bg}; border:1px solid ${cfg.border}; border-radius:6px; padding:12px 16px; margin-bottom:10px;">`
       + `<div style="font-size:14px; color:${cfg.fg}; font-weight:600;">${cfg.icon} ${cfg.title}</div>`
       + `<div style="margin-top:4px; font-size:12px; color:${cfg.fg};">`
-      +   `<strong>${withBT}</strong> ${__('von')} <strong>${total}</strong> ${__('gebucht')} – `
+      +   `<strong>${withBT}</strong> ${__('von')} <strong>${activeTotal}</strong> ${__('gebucht')} – `
       +   `<strong>${withoutBT}</strong> ${__('bereit zum Buchen.')}`
       + `</div>`
       + `<div style="margin-top:2px; font-size:11px; color:${cfg.fg}; opacity:0.85;">${__('Oben rechts „Bank-Transaktionen erstellen" klicken.')}</div>`
@@ -135,7 +145,7 @@ function _renderInfoBanner(frm) {
     header = `<div style="background:${cfg.bg}; border:1px solid ${cfg.border}; border-radius:6px; padding:12px 16px; margin-bottom:10px;">`
       + `<div style="font-size:14px; color:${cfg.fg}; font-weight:600;">${cfg.icon} ${cfg.title}</div>`
       + `<div style="margin-top:4px; font-size:12px; color:${cfg.fg};">`
-      +   `<strong>${withVoucher}</strong> ${__('von')} <strong>${total}</strong> ${__('Belege zugeordnet')} – `
+      +   `<strong>${withVoucher}</strong> ${__('von')} <strong>${activeTotal}</strong> ${__('Belege zugeordnet')} – `
       +   `<strong>${withoutVoucher}</strong> ${__('offen.')}`
       + `</div>`
       + `<div style="margin-top:2px; font-size:11px; color:${cfg.fg}; opacity:0.85;">${__('Klick auf „⋯ Aktionen" in einer Zeile ohne Zahlung, um Payment Entry oder Journal Entry zuzuordnen.')}</div>`
@@ -143,7 +153,7 @@ function _renderInfoBanner(frm) {
   } else if (phase === 'done') {
     header = `<div style="background:${cfg.bg}; border:1px solid ${cfg.border}; border-radius:6px; padding:12px 16px; margin-bottom:10px;">`
       + `<div style="font-size:14px; color:${cfg.fg}; font-weight:600;">${cfg.icon} ${cfg.title}</div>`
-      + `<div style="margin-top:4px; font-size:12px; color:${cfg.fg};">${__('Alle')} <strong>${total}</strong> ${__('Zeilen erfolgreich verarbeitet.')}</div>`
+      + `<div style="margin-top:4px; font-size:12px; color:${cfg.fg};">${__('Alle')} <strong>${total}</strong> ${__('Zeilen erfolgreich verarbeitet oder übersprungen.')}</div>`
       + `</div>`;
   }
 
@@ -153,7 +163,7 @@ function _renderInfoBanner(frm) {
   if (eingang)   pills += pill('blue',   __('{0} Eingang', [eingang]));
   if (ausgang)   pills += pill('purple', __('{0} Ausgang', [ausgang]));
   if (phase === 'phase1') {
-    if (withoutParty) pills += pill('red',   __('{0} ohne Party', [withoutParty]));
+    if (activeWithoutParty) pills += pill('red',   __('{0} ohne Party', [activeWithoutParty]));
     if (withParty)    pills += pill('green', __('{0} zugeordnet', [withParty]));
   } else {
     if (kunde)     pills += pill('green',  __('{0} Kunde', [kunde]));
@@ -403,6 +413,14 @@ function _computeRowStatusPill(row, phase) {
   const hasBT      = !!(row.bank_transaction || row.reference);
   const hasVoucher = !!(row.payment_entry || row.journal_entry);
 
+  const map = {
+    'success':         { color: colorMap.green, label: __('✓ Erstellt') },
+    'failed':          { color: colorMap.red,   label: __('✗ Fehler') },
+    'schon vorhanden': { color: colorMap.gray,  label: __('• Vorhanden') },
+    'vor Start-Datum': { color: colorMap.gray,  label: __('• Übersprungen') },
+  };
+  if (v && map[v])    return map[v];
+
   // In Phase 3 / done unterscheiden wir „BT erstellt, aber kein Beleg" vs.
   // „komplett verbucht" — sonst zeigen wir alle row_status='success' Zeilen
   // als grün/„Erstellt", obwohl der Reconciliation-Schritt noch fehlt.
@@ -411,12 +429,6 @@ function _computeRowStatusPill(row, phase) {
     return            { color: colorMap.orange, label: __('○ Beleg fehlt') };
   }
 
-  const map = {
-    'success':         { color: colorMap.green, label: __('✓ Erstellt') },
-    'failed':          { color: colorMap.red,   label: __('✗ Fehler') },
-    'schon vorhanden': { color: colorMap.gray,  label: __('• Vorhanden') },
-  };
-  if (v && map[v])    return map[v];
   if (v)              return { color: colorMap.gray, label: v };
   if (phase === 'phase1') {
     return (row.party_type && row.party)
@@ -599,12 +611,15 @@ function create_transactions(frm) {
 
 function rowMatchesFilter(row, mode, phase) {
   if (mode === 'missing_party') {
+    if (isSkippedRow(row)) return false;
     return !(row.party_type && row.party);
   }
   if (mode === 'missing_bank_transaction') {
+    if (isSkippedRow(row)) return false;
     return !(row.bank_transaction || row.reference);
   }
   if (mode === 'missing_payment') {
+    if (isSkippedRow(row)) return false;
     // Zeile hat eine Bank Transaction, aber noch keine Zahlung/Buchung verknüpft
     const hasBT = !!(row.bank_transaction || row.reference);
     const hasVoucher = !!(row.payment_entry || row.journal_entry);
@@ -614,6 +629,7 @@ function rowMatchesFilter(row, mode, phase) {
     // Phase 1: Probleme = fehlende Partei (das ist hier der Hauptfokus).
     // Phase 2/done: Probleme = failed-Status, Error, oder noch ohne Bank-Transaktion,
     // ODER BT da aber noch keine Zahlung/Buchung zugeordnet (offene Reconciliation).
+    if (isSkippedRow(row)) return false;
     if (phase === 'phase1') {
       return !(row.party_type && row.party);
     }

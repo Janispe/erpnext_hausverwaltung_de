@@ -21,6 +21,16 @@ RELEVANT_HEADERS = {
 }
 
 SUPPORTED_PARTY_TYPES = ("Customer", "Supplier", "Eigentuemer")
+SKIPPED_ROW_STATUSES = {"schon vorhanden", "vor start-datum"}
+
+
+def _row_is_skipped(row: Any) -> bool:
+    status = ""
+    if hasattr(row, "get"):
+        status = row.get("row_status") or ""
+    else:
+        status = getattr(row, "row_status", "") or ""
+    return str(status).strip().lower() in SKIPPED_ROW_STATUSES
 
 
 class BankauszugImport(Document):
@@ -185,16 +195,21 @@ def _recompute_doc_status(docname: str) -> str:
         filters={"parent": docname, "parenttype": "Bankauszug Import"},
         fields=["party_type", "party", "bank_transaction", "payment_entry", "journal_entry", "row_status"],
     )
-    total = len(rows)
-    if not total:
+    actionable_rows = [r for r in rows if not _row_is_skipped(r)]
+    skipped = len(rows) - len(actionable_rows)
+    total = len(actionable_rows)
+    if not rows:
         status = "Keine Zeilen geladen"
         offene_buchungen = 0
+    elif not total:
+        status = f"Abgeschlossen: {len(rows)} Zeilen bereits vorhanden/übersprungen"
+        offene_buchungen = 0
     else:
-        with_party = sum(1 for r in rows if r.get("party_type") and r.get("party"))
-        with_bt = sum(1 for r in rows if r.get("bank_transaction"))
-        with_voucher = sum(1 for r in rows if r.get("payment_entry") or r.get("journal_entry"))
-        failed = sum(1 for r in rows if (r.get("row_status") or "") == "failed")
-        needs_review = sum(1 for r in rows if (r.get("row_status") or "") == "needs_review")
+        with_party = sum(1 for r in actionable_rows if r.get("party_type") and r.get("party"))
+        with_bt = sum(1 for r in actionable_rows if r.get("bank_transaction"))
+        with_voucher = sum(1 for r in actionable_rows if r.get("payment_entry") or r.get("journal_entry"))
+        failed = sum(1 for r in actionable_rows if (r.get("row_status") or "") == "failed")
+        needs_review = sum(1 for r in actionable_rows if (r.get("row_status") or "") == "needs_review")
         offene_buchungen = total - with_voucher
 
         # Phasen-Logik hängt am bank_transaction, nicht am Party-Count: Zeilen
@@ -215,6 +230,8 @@ def _recompute_doc_status(docname: str) -> str:
             status += f" · Fehler: {failed}"
         if needs_review:
             status += f" · Prüfung: {needs_review}"
+        if skipped:
+            status += f" · Übersprungen: {skipped}"
 
     frappe.db.set_value(
         "Bankauszug Import",
@@ -713,9 +730,13 @@ def _resolve_row_party_for_validation(row: Document) -> Optional[Tuple[str, str]
     return _resolve_row_party(row)
 
 
-def _collect_rows_missing_party(doc: Document) -> List[Dict[str, Any]]:
+def _collect_rows_missing_party(doc: Document, row_name: str | None = None) -> List[Dict[str, Any]]:
     missing: List[Dict[str, Any]] = []
     for row in doc.get("rows") or []:
+        if row_name and row.name != row_name:
+            continue
+        if _row_is_skipped(row):
+            continue
         party_tuple = _resolve_row_party_for_validation(row)
         if party_tuple:
             continue
@@ -738,8 +759,8 @@ def _collect_rows_missing_party(doc: Document) -> List[Dict[str, Any]]:
     return missing
 
 
-def _throw_if_missing_party_rows(doc: Document) -> None:
-    missing = _collect_rows_missing_party(doc)
+def _throw_if_missing_party_rows(doc: Document, row_name: str | None = None) -> None:
+    missing = _collect_rows_missing_party(doc, row_name=row_name)
     if not missing:
         return
 
@@ -763,8 +784,8 @@ def _throw_if_missing_party_rows(doc: Document) -> None:
     frappe.throw(msg)
 
 
-def _build_missing_party_warning_payload(doc: Document) -> Optional[Dict[str, Any]]:
-    missing = _collect_rows_missing_party(doc)
+def _build_missing_party_warning_payload(doc: Document, row_name: str | None = None) -> Optional[Dict[str, Any]]:
+    missing = _collect_rows_missing_party(doc, row_name=row_name)
     if not missing:
         return None
 
@@ -1290,6 +1311,20 @@ def parse_csv(docname: str) -> Dict[str, Any]:
             )
             if existing_bt:
                 existing_status = "schon vorhanden"
+                if not (party_type and party):
+                    existing_party = frappe.db.get_value(
+                        "Bank Transaction",
+                        existing_bt,
+                        ["party_type", "party"],
+                        as_dict=True,
+                    )
+                    if (
+                        existing_party
+                        and existing_party.get("party_type") in SUPPORTED_PARTY_TYPES
+                        and existing_party.get("party")
+                    ):
+                        party_type = existing_party.get("party_type")
+                        party = existing_party.get("party")
 
         rows.append({
             "doctype": "Bankauszug Import Row",
@@ -1784,7 +1819,11 @@ def change_row_party(
 
 
 @frappe.whitelist()
-def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict[str, Any]:
+def create_bank_transactions(
+    docname: str,
+    allow_missing_party: int = 0,
+    row_name: str | None = None,
+) -> Dict[str, Any]:
     doc = frappe.get_doc("Bankauszug Import", docname)
     if not doc.bank_account:
         frappe.throw("Bitte Bankkonto auswählen.")
@@ -1794,7 +1833,11 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
     if hasattr(bank_account, "is_company_account") and not bank_account.is_company_account:
         frappe.throw("Bitte ein Firmen-Bankkonto auswählen (Bank Account mit 'Is Company Account' = 1).")
 
-    warning = _build_missing_party_warning_payload(doc)
+    target_row = None
+    if row_name:
+        target_row = _get_row_by_name(doc, row_name)
+
+    warning = _build_missing_party_warning_payload(doc, row_name=row_name)
     if warning and not bool(int(allow_missing_party or 0)):
         return {
             "created": [],
@@ -1866,7 +1909,7 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
     # spätere Bank-Zahlung der älteren Rechnung „dazwischenfunkt". Sekundär
     # nach idx (= CSV-Reihenfolge), um stabil zu bleiben.
     sorted_rows = sorted(
-        doc.rows,
+        [target_row] if target_row else doc.rows,
         key=lambda r: (
             getdate(r.buchungstag) if r.buchungstag else getdate("9999-12-31"),
             r.idx,
@@ -2141,6 +2184,22 @@ def create_bank_transactions(docname: str, allow_missing_party: int = 0) -> Dict
         "auto_match_failed": auto_match_failed,
         "warning": warning if warning and bool(int(allow_missing_party or 0)) else None,
     }
+
+
+@frappe.whitelist()
+def create_bank_transaction_for_row(
+    docname: str,
+    row_name: str,
+    allow_missing_party: int = 0,
+) -> Dict[str, Any]:
+    """Erstellt eine Bank Transaction nur für die ausgewählte Import-Zeile."""
+    if not row_name:
+        frappe.throw("Bitte eine Zeile auswählen.")
+    return create_bank_transactions(
+        docname=docname,
+        row_name=row_name,
+        allow_missing_party=allow_missing_party,
+    )
 
 
 def _persist_saldo_fields(doc) -> None:

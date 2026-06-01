@@ -247,6 +247,21 @@ class TestGetOverviewSync(FrappeTestCase):
 		self.assertEqual(phase, 3)
 		self.assertEqual(bv2._row_status(row, phase), "phase3-open")
 
+	def test_existing_row_is_done_phase_without_party(self):
+		row = {
+			"payment_entry": None,
+			"journal_entry": None,
+			"bank_transaction": "BT-1",
+			"party_type": None,
+			"party": None,
+			"row_status": "schon vorhanden",
+		}
+
+		phase = bv2._row_phase(row)
+
+		self.assertEqual(phase, 4)
+		self.assertEqual(bv2._row_status(row, phase), "existing")
+
 	def test_failed_import_row_is_error_not_party_assignment(self):
 		row = {
 			"payment_entry": None,

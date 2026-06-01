@@ -788,6 +788,17 @@ class TestBankauszugImport(FrappeTestCase):
             bi.create_bank_transactions("IMP-L2")
 
         self.assertEqual(row.row_status, "success")
+
+    def test_create_bank_transaction_for_row_delegates_with_row_scope(self):
+        with patch.object(bi, "create_bank_transactions", return_value={"created": ["BT-1"]}) as create:
+            res = bi.create_bank_transaction_for_row("IMP-ROW", "ROW-1", allow_missing_party=1)
+
+        self.assertEqual(res["created"], ["BT-1"])
+        create.assert_called_once_with(
+            docname="IMP-ROW",
+            row_name="ROW-1",
+            allow_missing_party=1,
+        )
         self.assertNotIn("row_status", row.db_updates)
         self.assertEqual(row.reference, "BT-L2")
 
@@ -1658,6 +1669,31 @@ class TestBankauszugImport(FrappeTestCase):
         self.assertIn("ROW-M1", msg)
         self.assertIn("Grund", msg)
         self.assertIn("Betrag", msg)
+
+    def test_collect_rows_missing_party_ignores_existing_rows(self):
+        row_existing = self._FakeRow(name="ROW-EXISTING", iban="")
+        row_existing.row_status = "schon vorhanden"
+        row_open = self._FakeRow(name="ROW-OPEN", iban="")
+        doc = self._FakeDoc("IMP-SKIP", [row_existing, row_open])
+
+        with patch.object(bi, "_resolve_row_party_for_validation", return_value=None):
+            missing = bi._collect_rows_missing_party(doc)
+
+        self.assertEqual([m["row"] for m in missing], ["ROW-OPEN"])
+
+    def test_recompute_doc_status_excludes_existing_rows_from_open_count(self):
+        rows = [
+            frappe._dict(row_status="schon vorhanden", party_type=None, party=None, bank_transaction="BT-1"),
+            frappe._dict(row_status=None, party_type=None, party=None, bank_transaction=None),
+        ]
+
+        with patch.object(bi.frappe, "get_all", return_value=rows), \
+             patch.object(bi.frappe.db, "set_value") as set_value:
+            status = bi._recompute_doc_status("IMP-STATUS")
+
+        self.assertIn("Phase 1: 0/1 Parteien zugeordnet", status)
+        self.assertIn("Übersprungen: 1", status)
+        self.assertEqual(set_value.call_args.args[2]["offene_buchungen"], 1)
 
     def test_block_message_truncates_long_list(self):
         rows = [self._FakeRow(name=f"ROW-N{i}", iban="") for i in range(15)]

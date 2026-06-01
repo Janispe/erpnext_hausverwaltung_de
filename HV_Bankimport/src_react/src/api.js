@@ -52,6 +52,15 @@ export async function createBankTransactions(name, allowMissingParty = false) {
 	});
 }
 
+export async function createBankTransactionForRow(name, rowName, allowMissingParty = false) {
+	if (!embedded) return { created: ["BT-DEMO"], errors: [], mock: true };
+	return await rpc("create_bank_transaction_for_row", {
+		docname: name,
+		row_name: rowName,
+		allow_missing_party: allowMissingParty ? 1 : 0,
+	});
+}
+
 export async function relinkAllParties(name, overwrite = true) {
 	if (!embedded) return { processed: 0, updated: 0, mock: true };
 	return await rpc("relink_all_parties", { docname: name, overwrite: overwrite ? 1 : 0 });

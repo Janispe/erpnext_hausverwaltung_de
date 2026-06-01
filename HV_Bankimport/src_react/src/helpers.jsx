@@ -39,6 +39,8 @@ export const PHASE_OF = {
 	"phase3-journal": 3,
 	"needs_review": 3,
 	"error": 3,
+	"existing": 4,
+	"skipped": 4,
 	"done": 4,
 };
 
@@ -50,6 +52,8 @@ export const STATUS_PILL = {
 	"phase3-journal": { cls: "phase3", lbl: "Journal nötig" },
 	"needs_review": { cls: "warn", lbl: "Prüfen" },
 	"error": { cls: "danger", lbl: "Fehler" },
+	"existing": { cls: "done", lbl: "Vorhanden" },
+	"skipped": { cls: "done", lbl: "Übersprungen" },
 	"done": { cls: "done", lbl: "Gebucht" },
 };
 

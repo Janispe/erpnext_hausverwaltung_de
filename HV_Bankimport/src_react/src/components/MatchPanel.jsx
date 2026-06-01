@@ -315,17 +315,36 @@ function PartyChangeDialog({ docname, row, onClose, onActionDone, notify }) {
 
 // ───────────────────────── Phase 2: Bank-Tx erstellen ───────────────────────
 
-function NeedsBankTransaction({ onRunGlobal }) {
+function NeedsBankTransaction({ docname, row, onActionDone, notify, onRunGlobal }) {
+	const [busy, run] = useAction(notify);
+	const createOne = () => run(async () => {
+		let res = await api.createBankTransactionForRow(docname, row.id, false);
+		if (res && res.warning && (!res.created || !res.created.length)) {
+			const w = res.warning;
+			const msg = (w.message || "Diese Zeile hat keine Partei.") + "\n\nTrotzdem Bank-Transaktion erstellen?";
+			if (!window.confirm(msg)) return;
+			res = await api.createBankTransactionForRow(docname, row.id, true);
+		}
+		const created = (res.created || []).length;
+		const existing = (res.created || []).length === 0 && row.bankTransaction;
+		notify("success", created ? "Bank-Transaktion erstellt." : existing ? "Bank-Transaktion vorhanden." : "Zeile verarbeitet.");
+		await onActionDone({ advance: false });
+	});
+
 	return (
 		<div className="match-section">
 			<div className="sec-label">Bank-Transaktion fehlt</div>
 			<div className="hint" style={{ marginBottom: 10 }}>
-				Für diese Zeile wurde noch keine Bank Transaction erzeugt. Das passiert gesammelt für
-				alle verprobten Zeilen.
+				Für diese Zeile wurde noch keine Bank Transaction erzeugt.
 			</div>
-			<button className="btn primary" onClick={() => onRunGlobal("create_bank_transactions")}>
-				<Icon name="bolt" /> Bank-Transaktionen erstellen
-			</button>
+			<div className="dialog-actions">
+				<button className="btn primary" onClick={createOne} disabled={busy}>
+					{busy ? <Spinner /> : <Icon name="bolt" />} Diese Zeile erstellen
+				</button>
+				<button className="btn" onClick={() => onRunGlobal("create_bank_transactions")} disabled={busy}>
+					<Icon name="bolt" /> Alle bereiten Zeilen
+				</button>
+			</div>
 		</div>
 	);
 }
@@ -908,7 +927,15 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 			<div className="match-body">
 				{row.rowStatus === "error" && <ErrorView row={row} />}
 				{row.rowStatus !== "error" && phase === 1 && <PartyAssign docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
-				{row.rowStatus !== "error" && phase === 2 && <NeedsBankTransaction onRunGlobal={onRunGlobal} />}
+				{row.rowStatus !== "error" && phase === 2 && (
+					<NeedsBankTransaction
+						docname={docname}
+						row={row}
+						onActionDone={onActionDone}
+						notify={notify}
+						onRunGlobal={onRunGlobal}
+					/>
+				)}
 				{row.rowStatus !== "error" && phase === 3 && <BookingActions docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 				{row.rowStatus !== "error" && phase === 4 && <DoneView row={row} />}
 			</div>

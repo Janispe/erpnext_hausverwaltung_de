@@ -45,6 +45,8 @@ def _row_phase(row: dict) -> int:
 	rs = (row.get("row_status") or "").lower()
 	if row.get("error") or rs == "failed":
 		return 3
+	if rs in {"schon vorhanden", "vor start-datum"}:
+		return 4
 	if row.get("payment_entry") or row.get("journal_entry"):
 		return 4
 	if row.get("bank_transaction"):
@@ -58,6 +60,10 @@ def _row_status(row: dict, phase: int) -> str:
 	rs = (row.get("row_status") or "").lower()
 	if row.get("error") or rs == "failed":
 		return "error"
+	if rs == "schon vorhanden":
+		return "existing"
+	if rs == "vor start-datum":
+		return "skipped"
 	if phase == 4:
 		return "done"
 	if phase == 2:

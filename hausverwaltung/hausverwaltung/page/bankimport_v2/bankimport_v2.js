@@ -29,6 +29,7 @@ const RPC_ACTIONS = {
 	parse_csv: DT + "parse_csv",
 	refresh_saldo: DT + "refresh_saldo",
 	create_bank_transactions: DT + "create_bank_transactions",
+	create_bank_transaction_for_row: DT + "create_bank_transaction_for_row",
 	relink_all_parties: DT + "relink_parties_for_all_rows",
 	reset_row_booking: DT + "reset_row_booking",
 	change_row_party: DT + "change_row_party",
