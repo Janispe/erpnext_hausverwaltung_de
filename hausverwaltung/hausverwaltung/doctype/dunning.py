@@ -12,6 +12,7 @@ SERIENBRIEF_WERTE_FIELDNAME = "hv_serienbrief_werte"
 DUNNING_FEE_SALES_INVOICE_FIELDNAME = "hv_dunning_fee_sales_invoice"
 SALES_INVOICE_DUNNING_FIELDNAME = "hv_dunning"
 SALES_INVOICE_IS_DUNNING_FEE_FIELDNAME = "hv_is_dunning_fee_invoice"
+PATH_OVERRIDE_PREFIX = "__path__:"
 
 
 def sync_serienbrief_vorlage_from_dunning_type(doc, method=None) -> None:
@@ -43,7 +44,8 @@ def _collect_werte_rows(rows) -> dict[str, dict[str, Any]]:
 		name = (row.get("variable") or "").strip()
 		if not name:
 			continue
-		werte[frappe.scrub(name)] = {"value": row.get("wert")}
+		key = name if name.startswith(PATH_OVERRIDE_PREFIX) else frappe.scrub(name)
+		werte[key] = {"value": row.get("wert")}
 	return werte
 
 
@@ -104,7 +106,7 @@ def validate_serienbrief_werte(doc, method=None) -> None:
 		name = (getattr(row, "variable", None) or "").strip()
 		if not name:
 			continue
-		key = frappe.scrub(name)
+		key = name if name.startswith(PATH_OVERRIDE_PREFIX) else frappe.scrub(name)
 		seen.setdefault(key, []).append((getattr(row, "idx", 0), name))
 
 	duplicates = [(key, occ) for key, occ in seen.items() if len(occ) > 1]

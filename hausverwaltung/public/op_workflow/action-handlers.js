@@ -42,13 +42,35 @@
     return Array.isArray(result) ? result : [];
   }
 
-  async function getSerienbriefVorlageVariables(template, dunningType) {
+  async function getSerienbriefVorlageVariables(template, dunningType, context = {}) {
     if (!template) return { template: null, variables: [] };
     const result = await call(
       "hausverwaltung.hausverwaltung.page.op_workflow.op_workflow.get_serienbrief_vorlage_variables",
-      { template, dunning_type: dunningType || null },
+      {
+        template,
+        dunning_type: dunningType || null,
+        sales_invoices: context.salesInvoices || context.sales_invoices || null,
+        mahngebuehr: context.mahngebuehr ?? null,
+      },
     );
     return result || { template, variables: [] };
+  }
+
+  async function getSerienbriefValueFields(template, dunningType, context = {}) {
+    if (!template) return { template: null, fields: [] };
+    const result = await call(
+      "hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf.get_serienbrief_value_fields",
+      {
+        template,
+        iteration_doctype: "Dunning",
+        context: {
+          dunning_type: dunningType || null,
+          sales_invoices: context.salesInvoices || context.sales_invoices || null,
+          mahngebuehr: context.mahngebuehr ?? null,
+        },
+      },
+    );
+    return result || { template, fields: [] };
   }
 
   // ─── Einzel-Mahnung ─────────────────────────────────────────────────────
@@ -258,6 +280,7 @@
     listDunningTypes,
     listSerienbriefVorlagen,
     getSerienbriefVorlageVariables,
+    getSerienbriefValueFields,
     createDunning,
     createBulkDunning,
     createPaymentEntry,

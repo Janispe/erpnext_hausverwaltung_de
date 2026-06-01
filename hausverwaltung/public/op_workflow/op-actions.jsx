@@ -1,6 +1,38 @@
 // op-actions.jsx — Aktionen und Modals für den Offene-Posten-Report.
 const { useState: useStateAct, useEffect: useEffectAct } = React;
 
+function fieldHintText(field) {
+  const parts = [];
+  if (field.source === "auto") parts.push("Automatisch berechnet");
+  else if (field.source === "override") parts.push("Manuell überschrieben");
+  else if (field.source === "default") parts.push("Vorlagen-Standard");
+  if (field.kind === "path") parts.push(`Pfad: ${field.label || String(field.key || "").replace(/^__path__:/, "")}`);
+  if (field.description) parts.push(field.description);
+  return parts.join(" · ");
+}
+
+function fieldDisplayLabel(field) {
+  if (field.kind === "path") {
+    return (field.label || String(field.key || "").replace(/^__path__:/, "")).replace(/^objekt\./, "");
+  }
+  return field.label || field.variable || field.key;
+}
+
+function fieldVariableName(field) {
+  return field.kind === "path" ? field.key : (field.variable || field.label || field.key);
+}
+
+function buildSerienbriefWerte(fields, values, dirty) {
+  return fields
+    .filter((field) => dirty[field.key])
+    .map((field) => ({
+      variable: fieldVariableName(field),
+      wert: values[field.key],
+      beschreibung: fieldHintText(field),
+    }))
+    .filter((item) => item.wert !== undefined && item.wert !== null && String(item.wert).trim() !== "");
+}
+
 function canCreateDunningFor(row) {
   const isSalesInvoice = String(row.belegart || "").replace(/ \(×\d+\)$/, "") === "Sales Invoice";
   if (row.status === "Written Off") return false;
@@ -161,6 +193,7 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
   const [templateBusy, setTemplateBusy] = useStateAct(false);
   const [templateVariables, setTemplateVariables] = useStateAct([]);
   const [templateValues, setTemplateValues] = useStateAct({});
+  const [templateDirty, setTemplateDirty] = useStateAct({});
   const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
     const d = new Date();
     d.setDate(d.getDate() + 7);
@@ -179,6 +212,7 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
   const [invoiceSearch, setInvoiceSearch] = useStateAct("");
   const selectedRows = mahnRows.filter((item) => selectedInvoices.has(item.belegnummer));
   const selectedRow = selectedRows[0] || row;
+  const selectedInvoiceKey = [...selectedInvoices].sort().join("|");
   const selectedOpen = selectedRows.reduce((sum, item) => sum + (item.offen || 0), 0);
   const isBulk = selectedRows.length > 1;
   const addSearch = invoiceSearch.trim().toLowerCase();
@@ -217,29 +251,36 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
       return () => { alive = false; };
     }
     setTemplateBusy(true);
-    window.OP_ACTIONS.getSerienbriefVorlageVariables(serienbriefVorlage, textStufe)
+    const loader = window.OP_ACTIONS.getSerienbriefValueFields || window.OP_ACTIONS.getSerienbriefVorlageVariables;
+    loader(serienbriefVorlage, textStufe, {
+      salesInvoices: selectedRows.map((item) => item.belegnummer).filter(Boolean),
+      mahngebuehr,
+    })
       .then((result) => {
         if (!alive) return;
-        const variables = Array.isArray(result?.variables) ? result.variables : [];
+        const variables = Array.isArray(result?.fields) ? result.fields : (Array.isArray(result?.variables) ? result.variables : []);
         const defaults = {};
         variables.forEach((variable) => {
-          if (variable.default !== undefined && variable.default !== null) {
-            defaults[variable.key] = variable.default;
+          const value = variable.value ?? variable.default;
+          if (value !== undefined && value !== null) {
+            defaults[variable.key] = value;
           }
         });
         setTemplateVariables(variables);
         setTemplateValues(defaults);
+        setTemplateDirty({});
       })
       .catch(() => {
         if (!alive) return;
         setTemplateVariables([]);
         setTemplateValues({});
+        setTemplateDirty({});
       })
       .finally(() => {
         if (alive) setTemplateBusy(false);
       });
     return () => { alive = false; };
-  }, [serienbriefVorlage, textStufe]);
+  }, [serienbriefVorlage, textStufe, selectedInvoiceKey, mahngebuehr]);
 
   // Verzugszinsen-Berechnung (rein illustrativ)
   const zinsBetrag = zinsen ? selectedRows.reduce((sum, item) => sum + ((item.offen || 0) * (zinssatz / 100) * (Math.max(item.alter_tage || 0, 0) / 365)), 0) : 0;
@@ -265,6 +306,7 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
   };
   const setTemplateValue = (key, value) => {
     setTemplateValues((prev) => ({ ...prev, [key]: value }));
+    setTemplateDirty((prev) => ({ ...prev, [key]: true }));
   };
   const renderTemplateVariableInput = (variable) => {
     const key = variable.key;
@@ -328,13 +370,7 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
     if (!selectedRows.length || !serienbriefVorlage || missingRequiredVariables.length) return;
     setBusy(true);
     try {
-      const serienbriefWerte = templateVariables
-        .map((variable) => ({
-          variable: variable.variable || variable.label || variable.key,
-          wert: templateValues[variable.key],
-          beschreibung: variable.description || "",
-        }))
-        .filter((item) => item.wert !== undefined && item.wert !== null && String(item.wert).trim() !== "");
+      const serienbriefWerte = buildSerienbriefWerte(templateVariables, templateValues, templateDirty);
       const result = isBulk
         ? await window.OP_ACTIONS.createBulkDunning({ [row.party]: selectedRows }, {
             dunningType: textStufe,
@@ -416,11 +452,12 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
                 {templateVariables.map((variable) => (
                   <div className="op-template-var" key={variable.key}>
                     <label>
-                      {variable.label || variable.variable || variable.key}
+                      {fieldDisplayLabel(variable)}
+                      {variable.kind === "path" && <span className="op-required-dot" title="Pfad-Override">↗</span>}
                       {!variable.optional && <span className="op-required-dot">*</span>}
                     </label>
                     {renderTemplateVariableInput(variable)}
-                    {variable.description && <div className="op-field-hint">{variable.description}</div>}
+                    {fieldHintText(variable) && <div className="op-field-hint">{fieldHintText(variable)}</div>}
                   </div>
                 ))}
               </div>
@@ -871,6 +908,7 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
   const [templateBusy, setTemplateBusy] = useStateAct(false);
   const [templateVariables, setTemplateVariables] = useStateAct([]);
   const [templateValues, setTemplateValues] = useStateAct({});
+  const [templateDirty, setTemplateDirty] = useStateAct({});
   const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
     const d = new Date(); d.setDate(d.getDate() + 7);
     return d.toISOString().slice(0, 10);
@@ -879,6 +917,8 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
   const [busy, setBusy] = useStateAct(false);
 
   const aktiv = groups.filter((g) => !excluded.has(g.party));
+  const activeInvoiceNames = aktiv.length === 1 ? aktiv[0].items.map((item) => item.belegnummer).filter(Boolean) : [];
+  const activeInvoiceKey = activeInvoiceNames.slice().sort().join("|");
   const totalSum = aktiv.reduce((a, g) => a + g.sum + g.gebuehr, 0);
 
   useEffectAct(() => {
@@ -905,29 +945,36 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
       return () => { alive = false; };
     }
     setTemplateBusy(true);
-    window.OP_ACTIONS.getSerienbriefVorlageVariables(serienbriefVorlage, dunningType)
+    const loader = window.OP_ACTIONS.getSerienbriefValueFields || window.OP_ACTIONS.getSerienbriefVorlageVariables;
+    loader(serienbriefVorlage, dunningType, {
+      salesInvoices: activeInvoiceNames,
+      mahngebuehr: aktiv.length === 1 ? aktiv[0].gebuehr : null,
+    })
       .then((result) => {
         if (!alive) return;
-        const variables = Array.isArray(result?.variables) ? result.variables : [];
+        const variables = Array.isArray(result?.fields) ? result.fields : (Array.isArray(result?.variables) ? result.variables : []);
         const defaults = {};
         variables.forEach((variable) => {
-          if (variable.default !== undefined && variable.default !== null) {
-            defaults[variable.key] = variable.default;
+          const value = variable.value ?? variable.default;
+          if (value !== undefined && value !== null) {
+            defaults[variable.key] = value;
           }
         });
         setTemplateVariables(variables);
         setTemplateValues(defaults);
+        setTemplateDirty({});
       })
       .catch(() => {
         if (!alive) return;
         setTemplateVariables([]);
         setTemplateValues({});
+        setTemplateDirty({});
       })
       .finally(() => {
         if (alive) setTemplateBusy(false);
       });
     return () => { alive = false; };
-  }, [serienbriefVorlage, dunningType]);
+  }, [serienbriefVorlage, dunningType, activeInvoiceKey, aktiv.length]);
 
   const toggle = (p) => {
     setExcluded((prev) => {
@@ -938,6 +985,7 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
   };
   const setTemplateValue = (key, value) => {
     setTemplateValues((prev) => ({ ...prev, [key]: value }));
+    setTemplateDirty((prev) => ({ ...prev, [key]: true }));
   };
   const renderTemplateVariableInput = (variable) => {
     const key = variable.key;
@@ -982,13 +1030,7 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
     });
     setBusy(true);
     try {
-      const serienbriefWerte = templateVariables
-        .map((variable) => ({
-          variable: variable.variable || variable.label || variable.key,
-          wert: templateValues[variable.key],
-          beschreibung: variable.description || "",
-        }))
-        .filter((item) => item.wert !== undefined && item.wert !== null && String(item.wert).trim() !== "");
+      const serienbriefWerte = buildSerienbriefWerte(templateVariables, templateValues, templateDirty);
       const result = await window.OP_ACTIONS.createBulkDunning(rowsByParty, {
         neueFaelligkeit,
         dunningType,
@@ -1048,11 +1090,12 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
                 {templateVariables.map((variable) => (
                   <div className="op-template-var" key={variable.key}>
                     <label>
-                      {variable.label || variable.variable || variable.key}
+                      {fieldDisplayLabel(variable)}
+                      {variable.kind === "path" && <span className="op-required-dot" title="Pfad-Override">↗</span>}
                       {!variable.optional && <span className="op-required-dot">*</span>}
                     </label>
                     {renderTemplateVariableInput(variable)}
-                    {variable.description && <div className="op-field-hint">{variable.description}</div>}
+                    {fieldHintText(variable) && <div className="op-field-hint">{fieldHintText(variable)}</div>}
                   </div>
                 ))}
               </div>
