@@ -1771,15 +1771,22 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         "icon": "receipt",
         "links": [
             {"label": "Buchungs-Cockpit", "link_type": "Page", "link_to": "buchen_cockpit"},
+            {"label": "Offene Posten", "link_type": "Page", "link_to": "op-workflow"},
+            {"label": "Mieterkonto", "link_type": "Page", "link_to": "mieterkonto-workflow"},
+            {"label": "Zahlungen zuordnen", "link_type": "DocType", "link_to": "Payment Reconciliation"},
+            {"label": "Mahnung", "link_type": "DocType", "link_to": "Dunning"},
+        ],
+    },
+    {
+        "label": "Buchungen Extras",
+        "icon": "receipt",
+        "links": [
             # Eingangsrechnung = Lieferantenrechnung (Purchase Invoice)
             {"label": "Ausgabe / Lieferantenrechnung", "link_type": "DocType", "link_to": "Purchase Invoice"},
             {"label": "Eingangsrechnung Vorlage", "link_type": "DocType", "link_to": "Eingangsrechnung Vorlage"},
             # Ausgangsrechnung = Mieter-/Kundenrechnung (Sales Invoice)
             {"label": "Sollstellung / Mieterforderung", "link_type": "DocType", "link_to": "Sales Invoice"},
             {"label": "Abschlagsplan/Zahlungsplan", "link_type": "DocType", "link_to": "Zahlungsplan"},
-            {"label": "Zahlungen zuordnen", "link_type": "DocType", "link_to": "Payment Reconciliation"},
-            {"label": "Offene Posten", "link_type": "Page", "link_to": "op-workflow"},
-            {"label": "Mahnung", "link_type": "DocType", "link_to": "Dunning"},
             {"label": "Buchungssatz / Korrektur", "link_type": "DocType", "link_to": "Journal Entry"},
             {"label": "Kontenplan", "link_type": "DocType", "link_to": "Account"},
         ],
