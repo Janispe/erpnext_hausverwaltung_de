@@ -21,8 +21,8 @@ body[data-layout="full"] .match-panel-wrap { display: none; }
 .tx-table thead th { background: var(--surface-2); border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 10.5px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; text-align: left; padding: 9px 12px; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
 .tx-table tbody tr { border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.08s; height: var(--row-height); }
 .tx-table tbody tr:hover { background: var(--surface-2); }
-.tx-table tbody tr.selected { background: var(--phase3-bg); }
-.tx-table tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--text); }
+.tx-table tbody tr.selected { background: var(--primary-soft); }
+.tx-table tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
 .tx-table tbody tr.done td { color: var(--text-muted); }
 .tx-table tbody tr:last-child { border-bottom: none; }
 .tx-table td { padding: 8px 12px; vertical-align: middle; }

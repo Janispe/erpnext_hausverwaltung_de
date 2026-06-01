@@ -18,11 +18,6 @@ frappe.pages["mieterkonto-workflow"].on_page_load = function (wrapper) {
     single_column: true,
   });
 
-  page.set_primary_action(__("PDF erzeugen"), () => window.print());
-  page.set_secondary_action(__("→ Offene Posten"), () =>
-    frappe.set_route("op-workflow"),
-  );
-
   mieterkonto_workflow_page_body = page.body;
   render_mieterkonto_workflow(page.body);
 };

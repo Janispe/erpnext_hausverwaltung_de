@@ -226,7 +226,7 @@ export const App = () => {
     return () => { cancelled = true; };
   }, [onTemplateSelect]);
 
-  // Gibt true bei Erfolg zurück (für Aufrufer wie Kopieren/„In Serienbrief laden",
+  // Gibt true bei Erfolg zurück (für Aufrufer wie Kopieren/„Durchlauf anlegen",
   // die vor ihrer Aktion erst speichern wollen).
   const save = async () => {
     if (!template.canWrite || !dirty || saving) return false;
@@ -351,7 +351,7 @@ export const App = () => {
     }
   }, [template.id, title, deleting, copying, saving, onTemplateSelect]);
 
-  // „Klassisch" -> Escape-Hatch zur Standard-Frappe-Form. Nötig für den
+  // „Formular öffnen" -> Escape-Hatch zur Standard-Frappe-Form. Nötig für den
   // geführten Mapping-Wizard und Spezialfälle (Mehrfach-Baustein-Mapping über
   // das Alt-Datenmodell textbausteine[].pfad_zuordnung). Vor dem Verlassen
   // anbieten zu speichern, damit ungespeicherte Edits nicht verloren gehen.
@@ -369,11 +369,11 @@ export const App = () => {
     try {
       await openClassicForm({ vorlage: vorlageId });
     } catch (e) {
-      alert("Klassische Form öffnen fehlgeschlagen: " + ((e && e.message) || e));
+      alert("Formular öffnen fehlgeschlagen: " + ((e && e.message) || e));
     }
   }, [template.id, template.canWrite, dirty]);
 
-  // „In Serienbrief laden" -> neues Durchlauf-Formular im Desk öffnen, Vorlage
+  // „Durchlauf anlegen" -> neues Durchlauf-Formular im Desk öffnen, Vorlage
   // vorausgewählt. Der Durchlauf rendert aus dem gespeicherten Stand -> erst speichern.
   // Bei Titeländerung benennt das Backend um — die neue ID + Titel kommen aus dem
   // save-Return (sonst landet das Durchlauf-Formular auf einer alten, nicht mehr
@@ -396,7 +396,7 @@ export const App = () => {
       });
       // Das Desk navigiert jetzt zum neuen Durchlauf — das iframe wird ersetzt.
     } catch (e) {
-      alert("In Serienbrief laden fehlgeschlagen: " + ((e && e.message) || e));
+      alert("Durchlauf anlegen fehlgeschlagen: " + ((e && e.message) || e));
     }
   }, [template.id, template.canWrite, template.haupt_verteil_objekt, title, dirty, saving]);
 
@@ -672,11 +672,11 @@ export const App = () => {
         <button className="btn ghost tb-danger" onClick={handleDelete} disabled={!template.id || !template.canWrite || copying || saving || deleting} title={!template.canWrite ? "Keine Berechtigung" : "Diese Vorlage löschen"}>
           <Icon name="trash" size={14}/> {deleting ? "Löscht …" : "Löschen"}
         </button>
-        <button className="btn ghost" onClick={handleOpenClassic} disabled={!template.id || copying || saving || deleting} title="In klassischer Form öffnen (Mapping-Wizard, Spezialfälle)">
-          <Icon name="file" size={14}/> Klassisch
+        <button className="btn ghost" onClick={handleOpenClassic} disabled={!template.id || copying || saving || deleting} title="Im ERPNext-Formular öffnen (Mapping-Wizard, Spezialfälle)">
+          <Icon name="file" size={14}/> Formular öffnen
         </button>
         <button className="btn primary" onClick={handleLoadDurchlauf} disabled={!template.id || saving || deleting} title="Neuen Serienbrief-Durchlauf mit dieser Vorlage starten">
-          <Icon name="send" size={14}/> In Serienbrief laden
+          <Icon name="send" size={14}/> Durchlauf anlegen
         </button>
         <button className="btn ghost icon"><Icon name="more"/></button>
       </header>

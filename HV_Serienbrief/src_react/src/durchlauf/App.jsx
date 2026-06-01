@@ -63,7 +63,7 @@ const Header = ({ durchlauf, stats, onRun, onMergedPdf, onMarkFailed, onTitleCom
           <button className="btn" onClick={onMergedPdf} disabled={running || busy || stats.generated === 0}>
             <Icon name="download" size={13}/> Sammel-PDF
           </button>
-          <button className="btn primary" disabled title="E-Mail-Versand kommt in Phase 2">
+          <button className="btn" disabled title="E-Mail-Versand kommt in Phase 2">
             <Icon name="send" size={13}/> E-Mails senden
           </button>
         </div>

@@ -306,9 +306,9 @@
 }
 .dl-filter-pill:hover { background: var(--surface-hover); border-color: var(--border-strong); }
 .dl-filter-pill.active {
-  background: var(--text);
-  color: white;
-  border-color: var(--text);
+  background: var(--primary-50);
+  color: var(--primary-hover);
+  border-color: var(--primary);
 }
 .dl-filter-pill .dl-filter-count {
   font-variant-numeric: tabular-nums;
@@ -878,7 +878,7 @@
 }
 .dl-new-row:last-child { border-bottom: none; }
 .dl-new-row:hover { background: var(--bg-subtle); }
-.dl-new-row.active { background: var(--accent-50); color: var(--accent); }
+.dl-new-row.active { background: var(--primary-50); color: var(--primary-hover); }
 .dl-new-row-title { font-weight: 600; font-size: 14px; }
 .dl-new-row-sub { font-size: 12px; color: var(--text-muted); }
 .dl-new-empty { padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px; }

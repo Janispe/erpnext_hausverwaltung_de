@@ -325,7 +325,7 @@ export function App() {
 				)}
 				<button className="btn subtle sm" onClick={() => runGlobal("relink_all")} disabled={busy}><Icon name="link" /> Parteien verknüpfen</button>
 				<button className="btn subtle sm" onClick={() => runGlobal("refresh_saldo")} disabled={busy}><Icon name="refresh" /> Saldo</button>
-				<button className="btn subtle sm" onClick={() => api.openImportForm(docname)}><Icon name="file" /> Formular</button>
+				<button className="btn subtle sm" onClick={() => api.openImportForm(docname)}><Icon name="file" /> Formular öffnen</button>
 			</div>
 
 			<Toolbar

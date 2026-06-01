@@ -569,7 +569,7 @@ function OpApp() {
           <span className="mk-crumb">Hausverwaltung · Berichte</span>
         </div>
         <div className="mk-topbar-actions">
-          <a className="mk-btn mk-btn-ghost" href="/app/mieterkonto-workflow">← Mieterkonto</a>
+          <a className="mk-btn mk-btn-ghost" href="/app/mieterkonto-workflow">Mieterkonto öffnen</a>
           <button className="mk-btn mk-btn-ghost" onClick={() => window.print()}>Drucken</button>
           <button className="mk-btn mk-btn-ghost" onClick={exportCsv}>Export CSV</button>
           <button className="mk-btn mk-btn-primary" onClick={() => setWorkflowView("mahnwesen")}>Sammelmahnung</button>

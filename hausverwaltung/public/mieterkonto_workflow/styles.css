@@ -1709,6 +1709,157 @@ button { font-family: inherit; }
   border-color: var(--accent);
 }
 .op-action-btn.is-late:hover { background: oklch(0.45 0.16 25); }
+
+/* ───────── HV Cockpit Desktop Alignment ─────────
+   Gemeinsame ERPNext-nahe Oberflaeche fuer OP/Mieterkonto.
+   Schwarz bleibt als Textfarbe erhalten, Primaeraktionen und aktive
+   Controls laufen ueber Frappe-Blau.
+*/
+:root {
+  --hv-primary: #2490ef;
+  --hv-primary-hover: #1670c8;
+  --hv-primary-soft: #eaf4ff;
+  --hv-danger: #e03636;
+  --hv-danger-soft: #fff1f1;
+  --bg: #f8f8f8;
+  --bg-soft: #f3f5f7;
+  --bg-card: #ffffff;
+  --ink: #1f272e;
+  --ink-2: #4c5a67;
+  --ink-3: #74808b;
+  --ink-4: #a6b0b8;
+  --line: #dce3ea;
+  --line-strong: #c7d1db;
+  --info: #2490ef;
+  --info-soft: #eaf4ff;
+  --accent: #d65a31;
+  --accent-soft: #fff3ed;
+  --radius: 6px;
+  --radius-lg: 8px;
+}
+
+.mk-topbar {
+  background: var(--bg-card);
+  border-bottom-color: var(--line);
+  padding: 12px 18px;
+  position: relative;
+  top: auto;
+}
+.mk-topbar-left h1 { font-size: 16px; letter-spacing: 0; }
+.mk-topbar-left .mk-crumb { color: var(--ink-3); }
+.mk-btn {
+  min-height: 32px;
+  border-color: var(--line);
+  background: var(--bg-card);
+  color: var(--ink);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.mk-btn:hover { background: var(--bg-soft); border-color: var(--line-strong); }
+.mk-btn-primary {
+  background: var(--hv-primary);
+  border-color: var(--hv-primary);
+  color: #fff;
+}
+.mk-btn-primary:hover { background: var(--hv-primary-hover); border-color: var(--hv-primary-hover); }
+.mk-btn-ghost { border-color: var(--line); background: var(--bg-card); }
+.mk-btn-ghost:hover { background: var(--bg-soft); }
+.mk-btn:disabled,
+.mk-btn:disabled:hover {
+  background: var(--bg-soft);
+  border-color: var(--line);
+  color: var(--ink-4);
+}
+
+.op-view-tabs,
+.op-mode-tabs,
+.mk-tabs {
+  background: var(--bg-card);
+  border-color: var(--line);
+  border-radius: 6px;
+}
+.op-view-tab.is-active,
+.op-mode-tab.is-active,
+.mk-tab.is-active,
+.op-date-preset.is-active,
+.op-immo-chip.is-active,
+.op-chip.is-active {
+  background: var(--hv-primary-soft);
+  color: var(--hv-primary-hover);
+  box-shadow: inset 0 0 0 1px var(--hv-primary);
+  border-color: var(--hv-primary);
+}
+.op-mode-tab { border-color: var(--line); }
+.op-mode-tab .op-count,
+.op-view-tab .op-count { color: inherit; opacity: 0.72; }
+
+.mk-summary,
+.op-stats {
+  border-color: var(--line);
+  border-radius: 8px;
+}
+.mk-summary-card,
+.op-stat {
+  background: var(--bg-card);
+}
+.mk-summary-card.is-primary,
+.op-stat.is-primary {
+  background: linear-gradient(180deg, var(--hv-primary-soft), var(--bg-card));
+  color: var(--ink);
+  box-shadow: inset 3px 0 0 var(--hv-primary);
+}
+.mk-summary-card.is-primary .mk-summary-label,
+.op-stat.is-primary .op-stat-label {
+  color: var(--ink-3);
+}
+.mk-summary-card.is-primary .mk-summary-sub,
+.op-stat.is-primary .op-stat-sub {
+  color: var(--ink-3);
+}
+.mk-summary-card.is-primary.is-due {
+  background: linear-gradient(180deg, var(--accent-soft), var(--bg-card));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.mk-filterbar,
+.op-filter-row,
+.op-filter-panel,
+.mk-table-wrap,
+.op-table-wrap,
+.op-group,
+.op-empty {
+  border-color: var(--line);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+.mk-table thead th,
+.op-table thead th {
+  background: var(--bg-soft);
+  color: var(--ink-3);
+}
+
+.op-action-btn.is-primary,
+.op-bulk-btn.is-primary {
+  background: var(--hv-primary);
+  border-color: var(--hv-primary);
+  color: #fff;
+}
+.op-action-btn.is-primary:hover,
+.op-bulk-btn.is-primary:hover {
+  background: var(--hv-primary-hover);
+  color: #fff;
+}
+.op-action-btn.is-late,
+.op-action-btn.is-draft {
+  background: var(--hv-danger);
+  border-color: var(--hv-danger);
+  color: #fff;
+}
+.op-action-btn.is-late:hover,
+.op-action-btn.is-draft:hover {
+  background: #b72a2a;
+  color: #fff;
+}
 .op-action-more {
   appearance: none;
   border: 1px solid transparent;

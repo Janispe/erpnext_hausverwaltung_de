@@ -18,7 +18,7 @@ export function TopBar({ meta, onReload, onNewImport, onSwitchImport, busy }) {
 			<div className="actions">
 				{onSwitchImport && (
 					<button className="btn subtle" onClick={onSwitchImport}>
-						<Icon name="file" /> Import wechseln
+						<Icon name="file" /> Liste öffnen
 					</button>
 				)}
 				<button className="btn subtle" onClick={onReload} disabled={busy}>

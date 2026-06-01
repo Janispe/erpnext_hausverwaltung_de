@@ -194,7 +194,8 @@ function App() {
           </div>
         </div>
         <div className="mk-topbar-actions">
-          <button className="mk-btn mk-btn-ghost" onClick={openLegacyReport}>Alte Ansicht</button>
+          <button className="mk-btn mk-btn-ghost" onClick={() => { window.location.href = "/app/op-workflow"; }}>Offene Posten öffnen</button>
+          <button className="mk-btn mk-btn-ghost" onClick={openLegacyReport}>Alte Ansicht öffnen</button>
           <button className="mk-btn mk-btn-ghost" onClick={printPage}>Drucken</button>
           <button className="mk-btn mk-btn-ghost" onClick={exportCsv}>Export CSV</button>
           <button className="mk-btn mk-btn-primary" onClick={printPage}>PDF</button>
