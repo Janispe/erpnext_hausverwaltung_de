@@ -240,8 +240,21 @@ def _kunde_des_vertrags(mv_row: frappe._dict) -> str | None:
         "mieter",
         order_by="idx asc",
     )
-    # Ohne Mapping zum Customer nicht nutzbar -> None
-    return None
+    if not partner:
+        return None
+
+    customers = frappe.get_all(
+        "Dynamic Link",
+        filters={
+            "parenttype": "Contact",
+            "parent": partner,
+            "link_doctype": "Customer",
+        },
+        pluck="link_name",
+        order_by="idx asc",
+        limit=1,
+    )
+    return customers[0] if customers else None
 
 
 def _invoice_exists(customer: str, von: date, mv_name: str, typ: str, *, include_drafts: bool = True) -> bool:

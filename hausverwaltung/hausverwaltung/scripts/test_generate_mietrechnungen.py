@@ -1,12 +1,57 @@
 from datetime import date
 from unittest.mock import patch
 
+import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from hausverwaltung.hausverwaltung.scripts import generate_mietrechnungen
 
 
 class TestGenerateMietrechnungen(FrappeTestCase):
+    def test_kunde_des_vertrags_prefers_direct_customer(self):
+        row = frappe._dict(name="MV-DIREKT", kunde="CUST-DIREKT")
+
+        with patch.object(generate_mietrechnungen.frappe.db, "get_value") as get_value:
+            self.assertEqual(generate_mietrechnungen._kunde_des_vertrags(row), "CUST-DIREKT")
+
+        get_value.assert_not_called()
+
+    def test_kunde_des_vertrags_resolves_customer_from_first_contact(self):
+        row = frappe._dict(name="MV-FALLBACK", kunde=None)
+
+        with (
+            patch.object(generate_mietrechnungen.frappe.db, "get_value", return_value="CONTACT-1") as get_value,
+            patch.object(generate_mietrechnungen.frappe, "get_all", return_value=["CUST-1"]) as get_all,
+        ):
+            self.assertEqual(generate_mietrechnungen._kunde_des_vertrags(row), "CUST-1")
+
+        get_value.assert_called_once_with(
+            "Vertragspartner",
+            {"parent": "MV-FALLBACK", "parenttype": "Mietvertrag"},
+            "mieter",
+            order_by="idx asc",
+        )
+        get_all.assert_called_once_with(
+            "Dynamic Link",
+            filters={
+                "parenttype": "Contact",
+                "parent": "CONTACT-1",
+                "link_doctype": "Customer",
+            },
+            pluck="link_name",
+            order_by="idx asc",
+            limit=1,
+        )
+
+    def test_kunde_des_vertrags_returns_none_without_contact_customer_link(self):
+        row = frappe._dict(name="MV-NO-CUSTOMER", kunde=None)
+
+        with (
+            patch.object(generate_mietrechnungen.frappe.db, "get_value", return_value="CONTACT-1"),
+            patch.object(generate_mietrechnungen.frappe, "get_all", return_value=[]),
+        ):
+            self.assertIsNone(generate_mietrechnungen._kunde_des_vertrags(row))
+
     def test_immobilie_without_erworben_am_is_active(self):
         with patch.object(generate_mietrechnungen.frappe.db, "get_value", return_value=None):
             self.assertTrue(
