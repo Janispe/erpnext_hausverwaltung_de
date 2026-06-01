@@ -1200,6 +1200,21 @@ function FlatTable({
   return (
     <div className="op-table-wrap">
       <table className="op-table">
+        <colgroup>
+          <col className="op-col-check" />
+          <col className="op-col-date" />
+          <col className="op-col-age" />
+          <col className="op-col-party" />
+          {showObjekt && <col className="op-col-object" />}
+          <col className="op-col-beleg" />
+          <col className="op-col-bemerk" />
+          <col className="op-col-status" />
+          <col className="op-col-direction" />
+          <col className="op-col-amount" />
+          <col className="op-col-paid" />
+          <col className="op-col-open" />
+          {showAktion && <col className="op-col-action" />}
+        </colgroup>
         <thead>
           <tr>
             <th className="is-check">
@@ -1208,18 +1223,18 @@ function FlatTable({
                 onChange={toggleSelAll}
                 disabled={selectableIds.size === 0} />
             </th>
-            <SortableTh col="Fällig am" label="Fällig am" style={{ width: 100 }} />
-            <SortableTh col="Alter" label="Alter" style={{ width: 80 }} />
-            <SortableTh col="Mieter" label={mode === "Rechnungen" ? "Lieferant" : "Mieter"} style={{ minWidth: 200 }} />
-            {showObjekt && <SortableTh col="Immobilie" label="Immobilie" style={{ width: 140 }} />}
-            <th style={{ width: 170 }}>Beleg</th>
+            <SortableTh col="Fällig am" label="Fällig am" />
+            <SortableTh col="Alter" label="Alter" />
+            <SortableTh col="Mieter" label={mode === "Rechnungen" ? "Lieferant" : "Mieter"} />
+            {showObjekt && <SortableTh col="Immobilie" label="Immobilie" />}
+            <th>Beleg</th>
             <th className="col-bemerk-head">Bemerkung</th>
-            <SortableTh col="Status" label="Status" style={{ width: 96 }} />
-            <SortableTh col="Richtung" label="Richtung" style={{ width: 124 }} />
-            <th className="is-num" style={{ width: 120 }}>Rechnungsbetrag</th>
-            <th className="is-num" style={{ width: 100 }}>Bezahlt</th>
-            <SortableTh col="Offener Betrag absteigend" label="Offen" style={{ width: 130 }} className="is-num" />
-            {showAktion && <th style={{ width: 72 }}>Aktion</th>}
+            <SortableTh col="Status" label="Status" />
+            <SortableTh col="Richtung" label="Richtung" />
+            <th className="is-num">Rechnungsbetrag</th>
+            <th className="is-num">Bezahlt</th>
+            <SortableTh col="Offener Betrag absteigend" label="Offen" className="is-num" />
+            {showAktion && <th>Aktion</th>}
           </tr>
         </thead>
         <tbody>
@@ -1269,7 +1284,7 @@ function FlatTable({
                     {fmtEUR_op(r.offen)}
                   </td>
                   {showAktion && (
-                    <td style={{ position: "relative", textAlign: "right", width: 72 }}>
+                    <td style={{ position: "relative", textAlign: "right" }}>
                       <ActionCell row={r} onAction={onAction} />
                     </td>
                   )}
@@ -1347,6 +1362,18 @@ function GroupedView({
             {open && (
               <div className="op-group-body">
                 <table className="op-table">
+                  <colgroup>
+                    <col className="op-col-check" />
+                    <col className="op-col-date" />
+                    <col className="op-col-age" />
+                    <col className="op-col-beleg" />
+                    {gruppierung !== "objekt" && showObjekt && <col className="op-col-object" />}
+                    {gruppierung === "objekt" && <col className="op-col-party" />}
+                    <col className="op-col-bemerk" />
+                    <col className="op-col-status" />
+                    <col className="op-col-open" />
+                    <col className="op-col-action" />
+                  </colgroup>
                   <tbody>
                     {g.rows.map((r) => {
                       const sel = selected.has(r.belegnummer);
@@ -1358,23 +1385,23 @@ function GroupedView({
                       return (
                         <React.Fragment key={r.belegnummer}>
                           <tr className={`${sel ? "is-selected" : ""} ${writtenOff ? "is-written-off" : ""} ${mahnOpen ? "is-mahn-open" : ""}`}>
-                            <td className="col-check" style={{ width: 32 }}>
+                            <td className="col-check">
                               <input type="checkbox" checked={sel}
                                 disabled={!r.can_write_off}
                                 onChange={() => toggleSel(r.belegnummer)} />
                             </td>
-                            <td className="col-date" style={{ width: 100 }}>{fmtDate_op(r.faellig_am)}</td>
-                            <td style={{ width: 80 }}><AgePill age={r.alter_tage} faellig_am={r.faellig_am} /></td>
-                            <td className="col-beleg" style={{ width: 170 }}>
+                            <td className="col-date">{fmtDate_op(r.faellig_am)}</td>
+                            <td><AgePill age={r.alter_tage} faellig_am={r.faellig_am} /></td>
+                            <td className="col-beleg">
                               <BelegLink row={r} />
                             </td>
                             {gruppierung !== "objekt" && showObjekt && (
-                              <td style={{ width: 130, fontSize: 12.5, color: "var(--ink-2)" }}>
+                              <td style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
                                 {window.OFFENE_POSTEN.ccLabel[r.kostenstelle] || "—"}
                               </td>
                             )}
                             {gruppierung === "objekt" && (
-                              <td className="col-party" style={{ width: 200, fontSize: 12.5 }}>
+                              <td className="col-party" style={{ fontSize: 12.5 }}>
                                 {window.OFFENE_POSTEN.partyName(r.party)}
                                 <span className="op-party-id">{r.party}</span>
                               </td>
@@ -1385,11 +1412,11 @@ function GroupedView({
                                 {r.mahnstufe ? <MahnstufeBadge stufe={r.mahnstufe} /> : null}
                               </div>
                             </td>
-                            <td style={{ width: 96 }}><StatusBadge status={r.status} /></td>
-                            <td className={`is-num col-offen ${isNeg ? "is-negative" : ""}`} style={{ width: 130 }}>
+                            <td><StatusBadge status={r.status} /></td>
+                            <td className={`is-num col-offen ${isNeg ? "is-negative" : ""}`}>
                               {fmtEUR_op(r.offen)}
                             </td>
-                            <td style={{ position: "relative", textAlign: "right", width: 72 }}>
+                            <td style={{ position: "relative", textAlign: "right" }}>
                               <ActionCell row={r} onAction={onAction} />
                             </td>
                           </tr>

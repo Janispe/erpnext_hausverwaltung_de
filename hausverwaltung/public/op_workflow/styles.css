@@ -1496,9 +1496,23 @@ button { font-family: inherit; }
 .op-table {
   width: 100%;
   min-width: 1280px;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 13px;
 }
+.op-table .op-col-check { width: 28px; }
+.op-table .op-col-date { width: 84px; }
+.op-table .op-col-age { width: 64px; }
+.op-table .op-col-party { width: 170px; }
+.op-table .op-col-object { width: 108px; }
+.op-table .op-col-beleg { width: 145px; }
+.op-table .op-col-bemerk { width: auto; }
+.op-table .op-col-status { width: 82px; }
+.op-table .op-col-direction { width: 108px; }
+.op-table .op-col-amount { width: 112px; }
+.op-table .op-col-paid { width: 78px; }
+.op-table .op-col-open { width: 100px; }
+.op-table .op-col-action { width: 108px; }
 .op-table thead th {
   background: var(--bg-soft);
   font-weight: 500;
@@ -1512,6 +1526,8 @@ button { font-family: inherit; }
   white-space: nowrap;
   position: sticky;
   top: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .op-table th.is-sortable {
   cursor: pointer;
@@ -1534,8 +1550,7 @@ button { font-family: inherit; }
 }
 .op-table th.is-check { padding-left: 16px; padding-right: 6px; width: 32px; }
 .op-table th.col-bemerk-head {
-  min-width: 420px;
-  width: 28%;
+  width: auto;
 }
 .op-table tbody tr {
   border-bottom: 1px solid var(--line);
@@ -1550,9 +1565,14 @@ button { font-family: inherit; }
 .op-table tbody td {
   padding: 11px 12px;
   vertical-align: middle;
+  overflow: hidden;
 }
 .op-table td.col-check { padding-left: 16px; padding-right: 6px; }
 .op-table td.col-party { font-weight: 500; }
+.op-table td.col-party,
+.op-table td.col-date {
+  overflow-wrap: anywhere;
+}
 .op-table td.col-party .op-party-id {
   display: block;
   font-size: 11px;
@@ -1605,9 +1625,14 @@ button { font-family: inherit; }
 .op-table td.col-bemerk {
   color: var(--ink-2);
   font-size: 12px;
-  min-width: 420px;
-  max-width: 560px;
   line-height: 1.35;
+  width: auto;
+  overflow-wrap: anywhere;
+}
+.op-table td.col-bemerk > div {
+  max-height: calc(1.35em * 3);
+  overflow: hidden;
+  align-content: flex-start;
 }
 .op-table td.col-date {
   white-space: nowrap;
@@ -1773,7 +1798,7 @@ button { font-family: inherit; }
   overflow-x: auto;
 }
 .op-group.is-open .op-group-body { display: block; }
-.op-group-body .op-table { border: 0; min-width: 1100px; }
+.op-group-body .op-table { border: 0; min-width: 1080px; }
 .op-group-body .op-table tbody tr:last-child { border-bottom: 0; }
 
 /* leerer Zustand */
@@ -1814,6 +1839,7 @@ button { font-family: inherit; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  max-width: 100%;
   white-space: nowrap;
 }
 .op-action-btn {
@@ -1831,6 +1857,11 @@ button { font-family: inherit; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: calc(100% - 28px);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .op-action-btn:hover { background: var(--bg-soft); }
 .op-action-btn.is-primary {
@@ -1912,6 +1943,7 @@ button { font-family: inherit; }
 .op-action-wrap {
   position: relative;
   display: inline-block;
+  flex: 0 0 24px;
 }
 
 /* ───────── Modal ───────── */
