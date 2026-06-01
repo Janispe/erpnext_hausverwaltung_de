@@ -1774,7 +1774,13 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
             {"label": "Offene Posten", "link_type": "Page", "link_to": "op-workflow"},
             {"label": "Mieterkonto", "link_type": "Page", "link_to": "mieterkonto-workflow"},
             {"label": "Zahlungen zuordnen", "link_type": "DocType", "link_to": "Payment Reconciliation"},
-            {"label": "Mahnung", "link_type": "DocType", "link_to": "Dunning"},
+            {
+                "label": "Mahnung",
+                "link_type": "Page",
+                "link_to": "op-workflow",
+                "route_options": {"view": "mahnwesen"},
+                "url": "/app/op-workflow?view=mahnwesen",
+            },
         ],
     },
     {
@@ -1988,6 +1994,8 @@ def ensure_hausverwaltung_sidebar() -> None:
                     "type": "Link",
                     "link_type": link["link_type"],
                     "link_to": link["link_to"],
+                    "route_options": json.dumps(link["route_options"]) if link.get("route_options") else None,
+                    "url": link.get("url"),
                     "child": 1,
                     "icon": link.get("icon"),
                 })

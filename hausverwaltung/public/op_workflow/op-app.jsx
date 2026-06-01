@@ -96,6 +96,53 @@ function OpApp() {
   const [datumVon, setDatumVon] = useStateA0(_initMonthStart);
   const [datumBis, setDatumBis] = useStateA0(_initMonthEnd);
 
+  const routeViewFromUrl = () => {
+    const params = new URLSearchParams(window.location.search || "");
+    return params.get("view") === "mahnwesen" ? "mahnwesen" : "op";
+  };
+  const viewRef = React.useRef(view);
+  React.useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+  const setWorkflowView = (nextView) => {
+    viewRef.current = nextView;
+    setView(nextView);
+    const url = new URL(window.location.href);
+    if (nextView === "mahnwesen") url.searchParams.set("view", "mahnwesen");
+    else url.searchParams.delete("view");
+    window.history.pushState(
+      { ...(window.history.state || {}), opWorkflowView: nextView },
+      "",
+      `${url.pathname}${url.search}${url.hash}`
+    );
+  };
+  React.useEffect(() => {
+    const syncViewFromUrl = () => {
+      const nextView = routeViewFromUrl();
+      if (viewRef.current !== nextView) {
+        viewRef.current = nextView;
+        setView(nextView);
+      }
+    };
+    const syncViewFromEvent = (event) => {
+      const nextView = event.detail?.view === "mahnwesen" ? "mahnwesen" : "op";
+      if (viewRef.current !== nextView) {
+        viewRef.current = nextView;
+        setView(nextView);
+      }
+    };
+    const interval = window.setInterval(syncViewFromUrl, 500);
+    window.addEventListener("popstate", syncViewFromUrl);
+    window.addEventListener("hashchange", syncViewFromUrl);
+    window.addEventListener("op-workflow-view-change", syncViewFromEvent);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("popstate", syncViewFromUrl);
+      window.removeEventListener("hashchange", syncViewFromUrl);
+      window.removeEventListener("op-workflow-view-change", syncViewFromEvent);
+    };
+  }, []);
+
   // Backend-Refresh bei Report-Filtern (debounced 300ms). Läuft auch initial,
   // weil der Bootstrap nur die UI rendert und keine Reportdaten blockierend lädt.
   React.useEffect(() => {
@@ -525,16 +572,16 @@ function OpApp() {
           <a className="mk-btn mk-btn-ghost" href="/app/mieterkonto-workflow">← Mieterkonto</a>
           <button className="mk-btn mk-btn-ghost" onClick={() => window.print()}>Drucken</button>
           <button className="mk-btn mk-btn-ghost" onClick={exportCsv}>Export CSV</button>
-          <button className="mk-btn mk-btn-primary" onClick={() => openBulkDunning(mahnStats.rows)}>Sammelmahnung</button>
+          <button className="mk-btn mk-btn-primary" onClick={() => setWorkflowView("mahnwesen")}>Sammelmahnung</button>
         </div>
       </div>
 
       <main className="mk-main" data-screen-label={`Mode ${mode}`}>
         <div className="op-view-tabs">
-          <button className={`op-view-tab ${view === "op" ? "is-active" : ""}`} onClick={() => setView("op")}>
+          <button className={`op-view-tab ${view === "op" ? "is-active" : ""}`} onClick={() => setWorkflowView("op")}>
             Offene Posten
           </button>
-          <button className={`op-view-tab ${view === "mahnwesen" ? "is-active" : ""}`} onClick={() => setView("mahnwesen")}>
+          <button className={`op-view-tab ${view === "mahnwesen" ? "is-active" : ""}`} onClick={() => setWorkflowView("mahnwesen")}>
             Mahnwesen <span className="op-count">{MAHN_ROWS.length}</span>
           </button>
         </div>
@@ -596,8 +643,8 @@ function OpApp() {
               {activeChip === "overdue" ? "Filter zurücksetzen" : "Nur diese zeigen"}
             </button>
             <button className="op-mahn-banner-cta"
-              onClick={() => { setSelected(new Set(mahnStats.rows.map(r => r.belegnummer))); setModal({ type: "sammelmahnung", rows: mahnStats.rows }); }}>
-              Sammelmahnung erstellen →
+              onClick={() => setWorkflowView("mahnwesen")}>
+              Zum Mahnwesen →
             </button>
           </div>
         )}
@@ -927,10 +974,6 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
         const valid = new Set((row.invoices || []).map((invoice) => invoice.sales_invoice));
         const existing = prev.get(row.key);
         const keep = existing ? new Set([...existing].filter((name) => valid.has(name))) : new Set();
-        if (!keep.size) {
-          const latest = latestInvoiceName(row.invoices);
-          if (latest) keep.add(latest);
-        }
         next.set(row.key, keep);
       });
       return next;
@@ -1016,6 +1059,10 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
           <h2>Mahnwesen</h2>
           <div className="op-mahn-head-sub">
             {filtered.length} Kandidaten · {fmtEUR_op(total)} offen · ausgewählt {fmtEUR_op(selectedTotal)}
+          </div>
+          <div className="op-mahn-scope-note">
+            Zeigt alle mahnreifen offenen Rechnungen, unabhängig vom Fälligkeitsfilter der Offene-Posten-Ansicht.
+            {!selectedRows.length && " Rechnungen in den aufgeklappten Zeilen auswählen."}
           </div>
         </div>
         <div className="op-chips" style={{ flex: "0 0 auto" }}>

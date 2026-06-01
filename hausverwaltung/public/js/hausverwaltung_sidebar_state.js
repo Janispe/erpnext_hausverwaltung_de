@@ -117,6 +117,40 @@
 		snapshot_state();
 	});
 
+	function open_mahnwesen(event) {
+		const anchor = event.target?.closest?.('.body-sidebar .item-anchor[href*="op-workflow?view=mahnwesen"]');
+		if (!anchor) return false;
+		event.preventDefault();
+		event.stopPropagation();
+		if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+		snapshot_state();
+
+		const target = "/desk/op-workflow?view=mahnwesen";
+		const route = window.frappe?.get_route?.() || [];
+		const is_op_workflow =
+			route[0] === "op-workflow" || window.location.pathname.endsWith("/op-workflow");
+
+		frappe.route_options = Object.assign({}, frappe.route_options || {}, { view: "mahnwesen" });
+
+		if (is_op_workflow) {
+			if (window.location.pathname + window.location.search !== target) {
+				window.history.pushState(
+					{ ...(window.history.state || {}), opWorkflowView: "mahnwesen" },
+					"",
+					target
+				);
+			}
+			window.dispatchEvent(new CustomEvent("op-workflow-view-change", { detail: { view: "mahnwesen" } }));
+			return true;
+		}
+
+		window.location.href = target;
+		return true;
+	}
+
+	document.addEventListener("click", open_mahnwesen, true);
+	$(document).on("click", '.body-sidebar .item-anchor[href*="op-workflow?view=mahnwesen"]', open_mahnwesen);
+
 	$(document).on("app_ready", function () {
 		patch_sidebar();
 		restore_soon();
