@@ -50,8 +50,10 @@ function render_mieterkonto_workflow(page_body) {
 
   // ─── Assets laden ──────────────────────────────────────────────────────
   const ASSET_BASE = "/assets/hausverwaltung/mieterkonto_workflow";
+  const ASSET_VERSION = "20260601-load-guard";
+  const versioned = (src) => `${src}?v=${ASSET_VERSION}`;
 
-  const cssHref = `${ASSET_BASE}/styles.css`;
+  const cssHref = versioned(`${ASSET_BASE}/styles.css`);
   if (!document.querySelector(`link[href="${cssHref}"]`)) {
     $(`<link rel="stylesheet" href="${cssHref}">`).appendTo("head");
   }
@@ -81,10 +83,34 @@ function render_mieterkonto_workflow(page_body) {
       document.head.appendChild(s);
     });
 
+  const showBootstrapError = (err) => {
+    const message = err?.message || String(err || __("Unbekannter Fehler"));
+    const escapeHtml = (value) =>
+      String(value).replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      }[ch]));
+    const root = document.getElementById("mk-workflow-root");
+    if (root) {
+      root.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;min-height:60vh;padding:32px;color:#8a1f11;">
+          <div style="max-width:720px;border:1px solid #f0b8ad;background:#fff4f1;border-radius:8px;padding:16px 18px;">
+            <div style="font-weight:600;margin-bottom:6px;">Mieterkonto konnte nicht geladen werden.</div>
+            <div style="font-size:13px;color:#6f2b21;">${escapeHtml(message)}</div>
+            <button class="btn btn-default btn-sm" style="margin-top:12px;" onclick="frappe.pages['mieterkonto-workflow'].on_page_show()">Erneut laden</button>
+          </div>
+        </div>
+      `;
+    }
+  };
+
   (async () => {
     try {
       // Bridge-Layer (frappe.call)
-      await loadScript(`${ASSET_BASE}/mk-data-adapter.js`);
+      await loadScript(versioned(`${ASSET_BASE}/mk-data-adapter.js`));
 
       // Initiale Filter
       const initialCustomer = new URLSearchParams(window.location.search).get("customer") || "";
@@ -93,16 +119,13 @@ function render_mieterkonto_workflow(page_body) {
       window.MK_INITIAL = { customer: initialCustomer, from_date: initialFrom, to_date: initialTo };
       window.MIETERKONTO = window.MK_ADAPTER.emptyState();
 
-      // ID-Shim — mk-app.jsx mounted auf #root, Page hat #mk-workflow-root
-      const target = document.getElementById("mk-workflow-root");
-      if (target) target.id = "root";
-
       // React-Components — esbuild-Bundle. Das Bundle rendert beim Ausführen;
       // bei erneuter Desk-Navigation rendert MK_RENDER auf den neuen Mount-Point.
-      await loadScript(`${ASSET_BASE}/mk-workflow.bundle.js`);
+      await loadScript(versioned(`${ASSET_BASE}/mk-workflow.bundle.js`));
       if (window.MK_RENDER) window.MK_RENDER();
     } catch (err) {
       console.error("mieterkonto-workflow bootstrap failed", err);
+      showBootstrapError(err);
       frappe.msgprint({
         title: __("Lade-Fehler"),
         message: __("Konnte UI nicht laden: ") + err.message,

@@ -3,6 +3,19 @@
 // Ruft den echten Mieterkonto-Report + Stammdaten-Endpoint.
 
 (function () {
+  const REQUEST_TIMEOUT_MS = 45000;
+
+  function callWithTimeout(options, label) {
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+      timer = window.setTimeout(
+        () => reject(new Error(`${label || "Anfrage"} hat zu lange gedauert. Bitte erneut versuchen.`)),
+        REQUEST_TIMEOUT_MS
+      );
+    });
+    return Promise.race([frappe.call(options), timeout]).finally(() => window.clearTimeout(timer));
+  }
+
   async function loadReal(customer, fromDate, toDate, options = {}) {
     if (!customer) {
       window.MIETERKONTO = emptyState();
@@ -14,11 +27,11 @@
     const to = toDate || frappe.datetime.get_today();
 
     const [stammRes, reportRes] = await Promise.all([
-      frappe.call({
+      callWithTimeout({
         method: "hausverwaltung.hausverwaltung.page.mieterkonto_workflow.mieterkonto_workflow.get_mieter_stammdaten",
         args: { customer },
-      }),
-      frappe.call({
+      }, "Mieter-Stammdaten"),
+      callWithTimeout({
         method: "hausverwaltung.hausverwaltung.page.mieterkonto_workflow.mieterkonto_workflow.get_mieterkonto",
         args: {
           filters: {
@@ -30,7 +43,7 @@
             gruppieren_pro_monat: options.gruppieren === false ? 0 : 1,
           },
         },
-      }),
+      }, "Mieterkonto"),
     ]);
 
     const mieter = stammRes.message;
@@ -145,10 +158,10 @@
       return await loadReal(customer, fromDate, toDate, options);
     },
     async searchMieter(txt = "", status = "Läuft") {
-      const res = await frappe.call({
+      const res = await callWithTimeout({
         method: "hausverwaltung.hausverwaltung.page.mieterkonto_workflow.mieterkonto_workflow.search_mieter",
         args: { txt, status, limit: 30 },
-      });
+      }, "Mietersuche");
       return res.message || [];
     },
     emptyState,

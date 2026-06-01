@@ -1778,7 +1778,7 @@ function FilterRow({ availableImmos, immoFilter, setImmoFilter, datumVon, datumB
 }
 
 window.OP_RENDER = function renderOpWorkflow() {
-  const rootEl = document.getElementById("root");
+  const rootEl = document.getElementById("op-workflow-root") || document.getElementById("root");
   if (!rootEl) return;
   if (window.__OP_REACT_ROOT) {
     try {

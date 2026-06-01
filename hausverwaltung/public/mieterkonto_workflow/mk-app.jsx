@@ -286,7 +286,7 @@ function csvCell(value) {
 }
 
 window.MK_RENDER = function renderMieterkontoWorkflow() {
-  const rootEl = document.getElementById("root");
+  const rootEl = document.getElementById("mk-workflow-root") || document.getElementById("root");
   if (!rootEl) return;
   if (window.__MK_REACT_ROOT) {
     try {

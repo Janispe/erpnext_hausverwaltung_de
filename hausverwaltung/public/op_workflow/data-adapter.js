@@ -5,29 +5,39 @@
 // Falls dein echter Report andere Field-Namen liefert, passe NUR adaptRow() an.
 
 (function () {
-  // ─── ROOT-ID-Shim ──────────────────────────────────────────────────────
-  // op-app.jsx mounted auf #root — Frappe-Page hat #op-workflow-root.
-  // Wir spiegeln das Element als #root, damit der bestehende Code unverändert läuft.
+  const REQUEST_TIMEOUT_MS = 45000;
+
+  function callWithTimeout(options, label) {
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+      timer = window.setTimeout(
+        () => reject(new Error(`${label || "Anfrage"} hat zu lange gedauert. Bitte erneut versuchen.`)),
+        REQUEST_TIMEOUT_MS
+      );
+    });
+    return Promise.race([frappe.call(options), timeout]).finally(() => window.clearTimeout(timer));
+  }
+
+  // ─── ROOT-Finder ───────────────────────────────────────────────────────
+  // Bevorzugt den aktuellen Frappe-Page-Mount. #root bleibt nur als Fallback
+  // für bereits geladene ältere Bundles im selben Desk-Tab.
   function ensureRootMount() {
-    const target = document.getElementById("op-workflow-root");
-    if (target && !document.getElementById("root")) {
-      target.id = "root";
-    }
+    return document.getElementById("op-workflow-root") || document.getElementById("root");
   }
 
   async function fetchRows(filters) {
-    const res = await frappe.call({
+    const res = await callWithTimeout({
       method: "hausverwaltung.hausverwaltung.page.op_workflow.op_workflow.get_open_items",
       args: { filters: filters || {} },
-    });
+    }, "Offene-Posten-Abfrage");
     return res.message;
   }
 
   async function fetchMahnkandidaten(filters) {
-    const res = await frappe.call({
+    const res = await callWithTimeout({
       method: "hausverwaltung.hausverwaltung.page.op_workflow.op_workflow.get_mahnkandidaten",
       args: { filters: filters || {} },
-    });
+    }, "Mahnwesen-Abfrage");
     return res.message;
   }
 

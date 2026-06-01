@@ -53,7 +53,7 @@ function render_op_workflow(page_body) {
   `);
 
   // ─── CSS + Fonts laden ──────────────────────────────────────────────────
-  const ASSET_VERSION = "20260601-dunning-url-sync";
+  const ASSET_VERSION = "20260601-load-guard";
   const versioned = (src) => `${src}?v=${ASSET_VERSION}`;
   const cssHref = versioned("/assets/hausverwaltung/op_workflow/styles.css");
   if (!document.querySelector(`link[href="${cssHref}"]`)) {
@@ -94,6 +94,30 @@ function render_op_workflow(page_body) {
       document.head.appendChild(s);
     });
 
+  const showBootstrapError = (err) => {
+    const message = err?.message || String(err || __("Unbekannter Fehler"));
+    const escapeHtml = (value) =>
+      String(value).replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      }[ch]));
+    const root = document.getElementById("op-workflow-root");
+    if (root) {
+      root.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;min-height:60vh;padding:32px;color:#8a1f11;">
+          <div style="max-width:720px;border:1px solid #f0b8ad;background:#fff4f1;border-radius:8px;padding:16px 18px;">
+            <div style="font-weight:600;margin-bottom:6px;">Offene Posten konnten nicht geladen werden.</div>
+            <div style="font-size:13px;color:#6f2b21;">${escapeHtml(message)}</div>
+            <button class="btn btn-default btn-sm" style="margin-top:12px;" onclick="frappe.pages['op-workflow'].on_page_show()">Erneut laden</button>
+          </div>
+        </div>
+      `;
+    }
+  };
+
   (async () => {
     try {
       // Bridge-Layer (Mock ↔ frappe.call)
@@ -110,6 +134,7 @@ function render_op_workflow(page_body) {
       if (window.OP_RENDER) window.OP_RENDER();
     } catch (err) {
       console.error("op-workflow bootstrap failed", err);
+      showBootstrapError(err);
       frappe.msgprint({
         title: __("Lade-Fehler"),
         message: __("Konnte UI nicht laden: ") + err.message,
