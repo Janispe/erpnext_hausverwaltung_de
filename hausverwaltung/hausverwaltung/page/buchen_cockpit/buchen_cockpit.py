@@ -61,6 +61,20 @@ def _has_field(doctype: str, fieldname: str) -> bool:
         return False
 
 
+def _normalize_sales_invoice_user_remark(raw: Any) -> str:
+    remark = (cstr(raw) or "").strip()
+    if not remark:
+        return ""
+
+    compact = " ".join(remark.split())
+    if compact.startswith("Erfasst über Buchungs-Cockpit") and (
+        "Mietvertrag:" in compact or "Referenz:" in compact
+    ):
+        return ""
+
+    return remark
+
+
 def _resolve_kostenart_name(raw_name: str) -> tuple[str, str] | None:
     """Findet zu einem Kostenart-Namen den passenden Doctype.
 
@@ -867,9 +881,10 @@ def create_sales_invoice(**kwargs) -> dict:
 
         items.append(item_row)
 
-    # Bemerkung: freie User-Eingabe hat Vorrang, sonst werden standardmäßig die
-    # Positions-Beschreibungen übernommen.
-    user_remark = (kwargs.get("bemerkung") or "").strip()
+    # Bemerkung: echte freie User-Eingabe hat Vorrang. Der alte automatisch
+    # erzeugte Cockpit-Text wird verworfen; danach greifen Positions-
+    # Beschreibungen, und wenn es die nicht gibt, bleibt die Bemerkung leer.
+    user_remark = _normalize_sales_invoice_user_remark(kwargs.get("bemerkung"))
     remarks = user_remark or "\n".join(d for d in position_descriptions if d)
 
     si = frappe.new_doc("Sales Invoice")

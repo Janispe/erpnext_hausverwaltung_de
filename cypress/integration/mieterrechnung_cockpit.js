@@ -169,6 +169,7 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 				expect(Number(item.rate)).to.eq(250);
 				expect(item.item_code, "item_code (Default-Service)").to.be.a("string").and.not.empty;
 				expect(item.description).to.match(/Renovierungspauschale/);
+				expect(si.remarks).to.eq("Renovierungspauschale");
 			});
 		});
 	});
@@ -307,6 +308,75 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 				if (wohnung && si.wohnung !== undefined) {
 					expect(si.wohnung).to.eq(wohnung);
 				}
+			});
+		});
+	});
+
+	it("[6b] Bemerkung kommt aus Positionsbeschreibung, wenn nur Cockpit-Standardtext vorhanden ist", () => {
+		cy.call(`${HV_API}.create_sales_invoice`, {
+			mietvertrag,
+			rechnungsdatum: "2026-05-06",
+			faellig_am: "2026-05-27",
+			rechnungsname: `${TEST_TAG}-6b`,
+			bemerkung: `Erfasst über Buchungs-Cockpit | Mietvertrag: ${mietvertrag} | Referenz: `,
+			submit_doc: 0,
+			positionen: JSON.stringify([
+				{ beschreibung: "Rechnung Ra Köpf gemäß Schreiben 19.05.2026", betrag: 403.56, erloeskonto: income_account },
+			]),
+		}).then((r) => {
+			const name = r.message?.name;
+			trackSi(name);
+			cy.call("frappe.client.get", {
+				doctype: "Sales Invoice",
+				name,
+			}).then((g) => {
+				expect(g.message.remarks).to.eq("Rechnung Ra Köpf gemäß Schreiben 19.05.2026");
+			});
+		});
+	});
+
+	it("[6c] Explizite Bemerkung gewinnt vor Positionsbeschreibung", () => {
+		cy.call(`${HV_API}.create_sales_invoice`, {
+			mietvertrag,
+			rechnungsdatum: "2026-05-06",
+			faellig_am: "2026-05-27",
+			rechnungsname: `${TEST_TAG}-6c`,
+			bemerkung: "Bitte separat abstimmen",
+			submit_doc: 0,
+			positionen: JSON.stringify([
+				{ beschreibung: "Positionsbeschreibung", betrag: 1, erloeskonto: income_account },
+			]),
+		}).then((r) => {
+			const name = r.message?.name;
+			trackSi(name);
+			cy.call("frappe.client.get", {
+				doctype: "Sales Invoice",
+				name,
+			}).then((g) => {
+				expect(g.message.remarks).to.eq("Bitte separat abstimmen");
+			});
+		});
+	});
+
+	it("[6d] Cockpit-Standardtext wird ohne Positionsbeschreibung gelöscht", () => {
+		cy.call(`${HV_API}.create_sales_invoice`, {
+			mietvertrag,
+			rechnungsdatum: "2026-05-06",
+			faellig_am: "2026-05-27",
+			rechnungsname: `${TEST_TAG}-6d`,
+			bemerkung: `Erfasst über Buchungs-Cockpit | Mietvertrag: ${mietvertrag} | Referenz: `,
+			submit_doc: 0,
+			positionen: JSON.stringify([
+				{ betrag: 1, erloeskonto: income_account },
+			]),
+		}).then((r) => {
+			const name = r.message?.name;
+			trackSi(name);
+			cy.call("frappe.client.get", {
+				doctype: "Sales Invoice",
+				name,
+			}).then((g) => {
+				expect(g.message.remarks || "").to.eq("");
 			});
 		});
 	});
