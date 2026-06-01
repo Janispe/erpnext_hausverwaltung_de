@@ -81,11 +81,11 @@ button { font-family: inherit; }
 }
 .mk-btn:hover { background: var(--bg-soft); }
 .mk-btn-primary {
-  background: var(--ink);
-  color: var(--bg);
-  border-color: var(--ink);
+  background: var(--hv-primary);
+  color: var(--hv-on-primary);
+  border-color: var(--hv-primary);
 }
-.mk-btn-primary:hover { background: var(--hv-primary-hover); }
+.mk-btn-primary:hover { background: var(--hv-primary-hover); border-color: var(--hv-primary-hover); }
 .mk-btn-ghost { border-color: transparent; }
 .mk-btn-ghost:hover { background: var(--bg-soft); }
 
@@ -199,20 +199,22 @@ button { font-family: inherit; }
   letter-spacing: -0.015em;
 }
 .mk-summary-card.is-primary {
-  background: var(--ink);
-  color: var(--bg);
+  background: linear-gradient(180deg, var(--hv-primary-soft), var(--hv-surface));
+  color: var(--ink);
+  box-shadow: inset 3px 0 0 var(--hv-primary), var(--hv-shadow);
 }
-.mk-summary-card.is-primary .mk-summary-label { color: color-mix(in srgb, var(--hv-on-primary) 60%, transparent); }
+.mk-summary-card.is-primary .mk-summary-label { color: var(--ink-3); }
 .mk-summary-card.is-primary .mk-summary-value { font-size: 30px; }
 .mk-summary-card.is-primary.is-due {
-  background: var(--hv-danger);
+  background: linear-gradient(180deg, var(--hv-accent-soft), var(--hv-surface));
+  box-shadow: inset 3px 0 0 var(--hv-accent), var(--hv-shadow);
 }
 .mk-summary-card .mk-summary-sub {
   font-size: 11px;
   color: var(--ink-3);
   margin-top: 4px;
 }
-.mk-summary-card.is-primary .mk-summary-sub { color: color-mix(in srgb, var(--hv-on-primary) 55%, transparent); }
+.mk-summary-card.is-primary .mk-summary-sub { color: var(--ink-3); }
 .mk-summary-card.is-zero .mk-summary-value { color: var(--ink-4); }
 
 /* ───────── Filter-Strip ───────── */
@@ -710,8 +712,9 @@ button { font-family: inherit; }
   margin-bottom: 24px;
 }
 .mk-kpi-big {
-  background: var(--ink);
-  color: var(--bg);
+  background: linear-gradient(180deg, var(--hv-primary-soft), var(--hv-surface));
+  color: var(--ink);
+  box-shadow: inset 3px 0 0 var(--hv-primary), var(--hv-shadow);
   border-radius: var(--radius-lg);
   padding: 22px 24px;
   display: flex;
@@ -719,13 +722,19 @@ button { font-family: inherit; }
   justify-content: space-between;
   min-height: 160px;
 }
-.mk-kpi-big.is-due { background: var(--hv-danger); }
-.mk-kpi-big.is-credit { background: var(--hv-success); }
+.mk-kpi-big.is-due {
+  background: linear-gradient(180deg, var(--hv-accent-soft), var(--hv-surface));
+  box-shadow: inset 3px 0 0 var(--hv-accent), var(--hv-shadow);
+}
+.mk-kpi-big.is-credit {
+  background: linear-gradient(180deg, var(--hv-success-soft), var(--hv-surface));
+  box-shadow: inset 3px 0 0 var(--hv-success), var(--hv-shadow);
+}
 .mk-kpi-big-label {
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: color-mix(in srgb, var(--hv-on-primary) 60%, transparent);
+  color: var(--ink-3);
 }
 .mk-kpi-big-value {
   font-size: 44px;
@@ -736,7 +745,7 @@ button { font-family: inherit; }
 }
 .mk-kpi-big-sub {
   font-size: 12px;
-  color: color-mix(in srgb, var(--hv-on-primary) 65%, transparent);
+  color: var(--ink-2);
 }
 .mk-kpi-stack {
   display: flex;
@@ -801,7 +810,7 @@ button { font-family: inherit; }
 .mk-kpi-cat-bar > span {
   display: block;
   height: 100%;
-  background: var(--ink);
+  background: var(--hv-primary);
 }
 .mk-kpi-cat.is-open .mk-kpi-cat-bar > span { background: var(--accent); }
 
@@ -921,8 +930,8 @@ button { font-family: inherit; }
 }
 .op-mode-tab:last-child { border-right: 0; }
 .op-mode-tab.is-active {
-  background: var(--ink);
-  color: var(--bg);
+  background: var(--hv-primary-soft);
+  color: var(--hv-primary-ink);
   font-weight: 500;
 }
 .op-mode-tab .op-count {
@@ -962,17 +971,18 @@ button { font-family: inherit; }
   letter-spacing: -0.015em;
 }
 .op-stat.is-primary {
-  background: var(--ink);
-  color: var(--bg);
+  background: linear-gradient(180deg, var(--hv-primary-soft), var(--hv-surface));
+  color: var(--ink);
+  box-shadow: inset 3px 0 0 var(--hv-primary), var(--hv-shadow);
 }
-.op-stat.is-primary .op-stat-label { color: color-mix(in srgb, var(--hv-on-primary) 60%, transparent); }
+.op-stat.is-primary .op-stat-label { color: var(--ink-3); }
 .op-stat.is-primary .op-stat-value { font-size: 30px; }
 .op-stat-sub {
   font-size: 11px;
   color: var(--ink-3);
   margin-top: 4px;
 }
-.op-stat.is-primary .op-stat-sub { color: color-mix(in srgb, var(--hv-on-primary) 55%, transparent); }
+.op-stat.is-primary .op-stat-sub { color: var(--ink-3); }
 
 /* Aging-Mini-Bar im Stat-Strip */
 .op-aging-strip {
@@ -995,13 +1005,13 @@ button { font-family: inherit; }
   justify-content: center;
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
-  color: var(--bg);
+  color: var(--hv-on-primary);
   font-weight: 500;
   min-width: 0;
   position: relative;
 }
 .op-aging-seg-0 { background: var(--hv-success-soft); color: var(--ink); }
-.op-aging-seg-1 { background: var(--hv-warning-soft); }
+.op-aging-seg-1 { background: var(--hv-warning-soft); color: var(--hv-warning); }
 .op-aging-seg-2 { background: var(--hv-warning); }
 .op-aging-seg-3 { background: var(--hv-accent); }
 .op-aging-seg-4 { background: var(--hv-danger); }
@@ -1064,9 +1074,9 @@ button { font-family: inherit; }
 }
 .op-immo-chip:hover { background: var(--bg-soft); }
 .op-immo-chip.is-active {
-  background: var(--ink);
-  color: var(--bg);
-  border-color: var(--ink);
+  background: var(--hv-primary-soft);
+  color: var(--hv-primary-ink);
+  border-color: var(--hv-primary);
 }
 .op-immo-chip .op-immo-chip-count {
   font-variant-numeric: tabular-nums;
@@ -1076,7 +1086,7 @@ button { font-family: inherit; }
 .op-date-input {
   appearance: none;
   border: 1px solid var(--line-strong);
-  background: var(--bg);
+  background: var(--hv-surface);
   border-radius: 4px;
   font-family: inherit;
   font-size: 12.5px;
@@ -1098,7 +1108,7 @@ button { font-family: inherit; }
   border-radius: 3px;
 }
 .op-date-preset:hover { background: var(--bg-soft); color: var(--ink); }
-.op-date-preset.is-active { background: var(--ink); color: var(--bg); }
+.op-date-preset.is-active { background: var(--hv-primary-soft); color: var(--hv-primary-ink); }
 .op-filter-clear {
   appearance: none;
   border: 0;
@@ -1277,9 +1287,9 @@ button { font-family: inherit; }
 }
 .op-chip:hover { background: var(--bg-soft); }
 .op-chip.is-active {
-  background: var(--ink);
-  color: var(--bg);
-  border-color: var(--ink);
+  background: var(--hv-primary-soft);
+  color: var(--hv-primary-ink);
+  border-color: var(--hv-primary);
 }
 .op-chip .op-chip-count {
   font-variant-numeric: tabular-nums;
@@ -1294,7 +1304,7 @@ button { font-family: inherit; }
 .op-search {
   appearance: none;
   border: 1px solid var(--line-strong);
-  background: var(--bg);
+  background: var(--hv-surface);
   border-radius: var(--radius);
   font-family: inherit;
   font-size: 13px;
@@ -1305,7 +1315,7 @@ button { font-family: inherit; }
 .op-sort-select {
   appearance: none;
   border: 1px solid var(--line-strong);
-  background: var(--bg);
+  background: var(--hv-surface);
   border-radius: var(--radius);
   font-family: inherit;
   font-size: 12px;
@@ -1319,8 +1329,8 @@ button { font-family: inherit; }
 /* ───────── Bulk-Action-Bar (sticky bei Auswahl) ───────── */
 
 .op-bulkbar {
-  background: var(--ink);
-  color: var(--bg);
+  background: var(--hv-primary);
+  color: var(--hv-on-primary);
   border-radius: var(--radius);
   padding: 10px 16px;
   margin-bottom: 12px;
@@ -1349,13 +1359,13 @@ button { font-family: inherit; }
   color: color-mix(in srgb, var(--hv-on-primary) 70%, transparent);
   font-variant-numeric: tabular-nums;
 }
-.op-bulkbar-sum strong { color: var(--bg); font-weight: 500; }
+.op-bulkbar-sum strong { color: var(--hv-on-primary); font-weight: 500; }
 .op-bulkbar-actions { display: flex; gap: 6px; }
 .op-bulk-btn {
   appearance: none;
   border: 1px solid color-mix(in srgb, var(--hv-on-primary) 25%, transparent);
   background: color-mix(in srgb, var(--hv-on-primary) 6%, transparent);
-  color: var(--bg);
+  color: var(--hv-on-primary);
   padding: 5px 12px;
   border-radius: 4px;
   font-family: inherit;
@@ -1697,11 +1707,11 @@ button { font-family: inherit; }
 }
 .op-action-btn:hover { background: var(--bg-soft); }
 .op-action-btn.is-primary {
-  background: var(--ink);
-  color: var(--bg);
-  border-color: var(--ink);
+  background: var(--hv-primary);
+  color: var(--hv-on-primary);
+  border-color: var(--hv-primary);
 }
-.op-action-btn.is-primary:hover { background: var(--hv-primary-hover); }
+.op-action-btn.is-primary:hover { background: var(--hv-primary-hover); border-color: var(--hv-primary-hover); }
 .op-action-btn.is-warn {
   border-color: var(--hv-warning);
   color: var(--hv-warning);
@@ -1710,7 +1720,7 @@ button { font-family: inherit; }
 .op-action-btn.is-warn:hover { background: var(--hv-warning-soft); }
 .op-action-btn.is-late {
   background: var(--accent);
-  color: var(--bg);
+  color: var(--hv-on-primary);
   border-color: var(--accent);
 }
 .op-action-btn.is-late:hover { background: var(--hv-danger-hover); }
