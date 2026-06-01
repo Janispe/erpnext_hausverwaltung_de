@@ -834,6 +834,30 @@ class TestBankauszugImport(FrappeTestCase):
             row_name="ROW-READY",
             allow_missing_party=0,
         )
+
+    def test_retry_auto_match_only_processes_open_bank_transaction_rows(self):
+        row_open = self._FakeRow(name="ROW-OPEN", iban="DE1")
+        row_open.bank_transaction = "BT-OPEN"
+        row_done = self._FakeRow(name="ROW-DONE", iban="DE2")
+        row_done.bank_transaction = "BT-DONE"
+        row_done.payment_entry = "PE-DONE"
+        row_no_bt = self._FakeRow(name="ROW-NO-BT", iban="DE3")
+        doc = self._FakeDoc("IMP-RETRY", [row_open, row_done, row_no_bt])
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(
+                 bi,
+                 "_retry_auto_match_for_row",
+                 return_value={"row": "ROW-OPEN", "matched": True, "payment_entry": "PE-1"},
+             ) as retry, \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch.object(bi, "_refresh_and_persist_saldo"):
+            res = bi.retry_auto_match("IMP-RETRY")
+
+        self.assertEqual(res["processed"], 1)
+        self.assertEqual(len(res["matched"]), 1)
+        retry.assert_called_once_with("IMP-RETRY", "ROW-OPEN")
         self.assertNotIn("row_status", row.db_updates)
         self.assertEqual(row.reference, "BT-L2")
 

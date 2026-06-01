@@ -61,6 +61,11 @@ export async function createBankTransactionForRow(name, rowName, allowMissingPar
 	});
 }
 
+export async function retryAutoMatch(name, rowName = "") {
+	if (!embedded) return { processed: 0, matched: [], unmatched: [], errors: [], mock: true };
+	return await rpc("retry_auto_match", { docname: name, row_name: rowName || "" });
+}
+
 export async function relinkAllParties(name, overwrite = true) {
 	if (!embedded) return { processed: 0, updated: 0, mock: true };
 	return await rpc("relink_all_parties", { docname: name, overwrite: overwrite ? 1 : 0 });

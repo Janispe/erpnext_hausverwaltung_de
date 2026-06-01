@@ -296,6 +296,9 @@ export function App() {
 			} else if (action === "relink_all") {
 				const r = await api.relinkAllParties(docname);
 				notify("success", `Parteien neu verknüpft: ${r.updated || 0} aktualisiert.`);
+			} else if (action === "retry_auto_match") {
+				const r = await api.retryAutoMatch(docname);
+				notify("success", `Auto-Match geprüft: ${r.processed || 0}, gebucht: ${(r.matched || []).length}.`);
 			}
 			await reload();
 		} catch (e) {
@@ -332,6 +335,11 @@ export function App() {
 					</button>
 				)}
 				<button className="btn subtle sm" onClick={() => runGlobal("relink_all")} disabled={busy}><Icon name="link" /> Parteien verknüpfen</button>
+				{(phaseCounts[3] || 0) > 0 && (
+					<button className="btn subtle sm" onClick={() => runGlobal("retry_auto_match")} disabled={busy}>
+						<Icon name="refresh" /> Auto-Match erneut
+					</button>
+				)}
 				<button className="btn subtle sm" onClick={() => runGlobal("refresh_saldo")} disabled={busy}><Icon name="refresh" /> Saldo</button>
 				<button className="btn subtle sm" onClick={() => api.openImportForm(docname)}><Icon name="file" /> Formular</button>
 			</div>

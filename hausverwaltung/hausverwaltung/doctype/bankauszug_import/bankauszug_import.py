@@ -2292,6 +2292,161 @@ def create_bank_transaction_for_row(
     )
 
 
+def _retry_auto_match_for_row(docname: str, row_name: str) -> Dict[str, Any]:
+    doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
+    result: Dict[str, Any] = {
+        "row": row.name,
+        "bank_transaction": bt.name,
+        "matched": False,
+        "payment_entry": None,
+        "journal_entry": None,
+        "reason": None,
+        "message": None,
+    }
+
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+        auto_match_bank_transaction,
+    )
+
+    try:
+        match_result = auto_match_bank_transaction(bt.name)
+        if match_result.get("matched"):
+            row.db_set("payment_entry", match_result.get("payment_entry"))
+            _set_row_payment_document(row, "Payment Entry", match_result.get("payment_entry"))
+            row.db_set("auto_match_message", match_result.get("message"))
+            result.update(
+                {
+                    "matched": True,
+                    "payment_entry": match_result.get("payment_entry"),
+                    "reason": match_result.get("strategy"),
+                    "message": match_result.get("message"),
+                }
+            )
+            return result
+
+        row.db_set("auto_match_message", match_result.get("message"))
+        result.update({"reason": match_result.get("reason"), "message": match_result.get("message")})
+
+        if row.get("richtung") == "Ausgang":
+            try:
+                from hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag import (
+                    link_bank_transaction_to_kreditvertrag_rate,
+                )
+
+                kredit_result = link_bank_transaction_to_kreditvertrag_rate(
+                    bank_account=bt.bank_account,
+                    posting_date=bt.date,
+                    amount=row.get("betrag"),
+                    bank_transaction=bt.name,
+                    supplier=row.get("party") if row.get("party_type") == "Supplier" else None,
+                    reference_text=row.get("verwendungszweck"),
+                )
+                if kredit_result and kredit_result.get("match_count") == 1:
+                    je_name = kredit_result["journal_entry"]
+                    row.db_set("journal_entry", je_name)
+                    _set_row_payment_document(row, "Journal Entry", je_name)
+                    row.db_set("row_status", "success")
+                    msg = (
+                        f"Kreditrate automatisch gebucht: "
+                        f"{kredit_result['kreditvertrag']} Zeile {kredit_result['row_idx']} "
+                        f"→ {je_name}"
+                    )
+                    if kredit_result.get("created_from_statement"):
+                        msg = (
+                            f"Kreditrate aus Kontoauszug angelegt und gebucht: "
+                            f"{kredit_result['kreditvertrag']} Zeile {kredit_result['row_idx']} "
+                            f"→ {je_name}"
+                        )
+                    row.db_set("auto_match_message", msg)
+                    result.update({"matched": True, "journal_entry": je_name, "reason": "kreditrate", "message": msg})
+                    return result
+                if kredit_result and kredit_result.get("blocked"):
+                    blocked_message = kredit_result.get("message") or "Kreditrate nicht automatisch gebucht — bitte prüfen."
+                    row.db_set("row_status", "needs_review")
+                    row.db_set("auto_match_message", blocked_message)
+                    result.update({"reason": kredit_result.get("reason") or "kreditrate_blocked", "message": blocked_message})
+                    return result
+            except Exception:
+                frappe.log_error(
+                    frappe.get_traceback(),
+                    f"Bankauszug Import: Kredit-Retry fehlgeschlagen für {bt.name}",
+                )
+
+        if (
+            row.get("richtung") == "Ausgang"
+            and row.get("party_type") == "Supplier"
+            and match_result.get("reason") in ("no_open_invoices", "no_matching_cost_center")
+        ):
+            try:
+                candidate_payload = get_abschlagsplan_candidates_for_row(doc.name, row.name)
+                auto_tolerance = int(candidate_payload.get("auto_tolerance_days") or 0)
+                strict_candidates = [
+                    c for c in candidate_payload.get("candidates", [])
+                    if c.get("delta_days") is None or c.get("delta_days") <= auto_tolerance
+                ]
+                if len(strict_candidates) == 1:
+                    abschlag_result = assign_abschlagsplan_row(
+                        doc.name,
+                        row.name,
+                        strict_candidates[0].get("row_name"),
+                        remarks=row.get("verwendungszweck") or row.get("auftraggeber") or None,
+                    )
+                    msg = (
+                        f"Abschlag automatisch zugeordnet: "
+                        f"{abschlag_result.get('zahlungsplan')} Zeile {abschlag_result.get('row_idx')}"
+                    )
+                    row.db_set("auto_match_message", msg)
+                    result.update({"matched": True, "payment_entry": abschlag_result.get("payment_entry"), "reason": "abschlag", "message": msg})
+                    return result
+            except Exception:
+                frappe.log_error(
+                    frappe.get_traceback(),
+                    f"Bankauszug Import: Abschlagsplan-Retry fehlgeschlagen für {bt.name}",
+                )
+    except Exception as exc:
+        frappe.log_error(
+            frappe.get_traceback(),
+            f"Bankauszug Import: Auto-Match-Retry fehlgeschlagen für {bt.name}",
+        )
+        row.db_set("auto_match_message", f"Auto-Match-Fehler: {exc}")
+        result.update({"reason": "exception", "message": str(exc)})
+
+    return result
+
+
+@frappe.whitelist()
+def retry_auto_match(docname: str, row_name: str | None = None) -> Dict[str, Any]:
+    """Führt den Auto-Matcher erneut für offene Bankimport-Zeilen aus."""
+    doc = frappe.get_doc("Bankauszug Import", docname)
+    if not frappe.has_permission("Bankauszug Import", "write", doc=doc):
+        frappe.throw("Keine Berechtigung zum Bearbeiten dieses Bankauszug Imports.")
+
+    rows = [row for row in (doc.get("rows") or []) if (not row_name or row.name == row_name)]
+    processed = 0
+    matched = []
+    unmatched = []
+    errors = []
+
+    for row in rows:
+        if row.get("error") or not row.get("bank_transaction"):
+            continue
+        if row.get("payment_entry") or row.get("journal_entry") or row.get("payment_document"):
+            continue
+        try:
+            res = _retry_auto_match_for_row(docname, row.name)
+            processed += 1
+            if res.get("matched"):
+                matched.append(res)
+            else:
+                unmatched.append(res)
+        except Exception as exc:
+            errors.append({"row": row.name, "error": str(exc)})
+
+    _recompute_doc_status(docname)
+    _refresh_and_persist_saldo(docname)
+    return {"processed": processed, "matched": matched, "unmatched": unmatched, "errors": errors}
+
+
 def _persist_saldo_fields(doc) -> None:
     """Schreibt aktualisierte Saldo-Werte ohne ``modified``-Timestamp zu ändern.
 
