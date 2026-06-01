@@ -36,12 +36,83 @@ class TestPaymentAutoMatchRemarks(FrappeTestCase):
 			)
 
 	def test_does_not_override_supplier_payment_remarks(self):
-			self.assertIsNone(
-				pam._build_customer_payment_remarks(
-					invoices=[frappe._dict(name="PI-1", posting_date="2026-03-01")],
-					invoice_doctype="Purchase Invoice",
-				)
+		self.assertIsNone(
+			pam._build_customer_payment_remarks(
+				invoices=[frappe._dict(name="PI-1", posting_date="2026-03-01")],
+				invoice_doctype="Purchase Invoice",
 			)
+		)
+
+
+class TestAutoMatchExactAmbiguity(FrappeTestCase):
+	def _run_auto_match(self, *, bt_date="2026-03-05", invoices):
+		bt = frappe._dict(name="BT-EXACT", date=bt_date)
+		with patch.object(pam.frappe, "get_doc", return_value=bt), \
+			patch.object(
+				pam,
+				"prepare_invoice_match",
+				return_value={
+					"ok": True,
+					"candidates": invoices,
+					"invoice_doctype": "Sales Invoice",
+					"target_amount": 100.0,
+				},
+			), \
+			patch.object(pam, "_get_exact_match_window_days", return_value=7), \
+			patch.object(pam, "_do_match", return_value={"matched": True, "strategy": "stub"}) as do_match:
+			result = pam.auto_match_bank_transaction("BT-EXACT")
+		return result, do_match
+
+	def test_single_exact_match_still_books(self):
+		result, do_match = self._run_auto_match(
+			invoices=[
+				frappe._dict(name="SINV-1", outstanding_amount=100.0, posting_date="2026-01-01"),
+				frappe._dict(name="SINV-2", outstanding_amount=80.0, posting_date="2026-03-05"),
+			]
+		)
+
+		self.assertTrue(result["matched"])
+		do_match.assert_called_once()
+		self.assertEqual(do_match.call_args[0][1][0].name, "SINV-1")
+		self.assertEqual(do_match.call_args[0][3], "single")
+
+	def test_multiple_exact_matches_book_unique_invoice_in_date_window(self):
+		result, do_match = self._run_auto_match(
+			invoices=[
+				frappe._dict(name="SINV-OLD", outstanding_amount=100.0, posting_date="2026-01-05"),
+				frappe._dict(name="SINV-MARCH", outstanding_amount=100.0, posting_date="2026-03-01"),
+			]
+		)
+
+		self.assertTrue(result["matched"])
+		do_match.assert_called_once()
+		self.assertEqual(do_match.call_args[0][1][0].name, "SINV-MARCH")
+		self.assertEqual(do_match.call_args[0][3], "single_window_7d")
+
+	def test_multiple_exact_matches_in_window_stay_manual(self):
+		result, do_match = self._run_auto_match(
+			invoices=[
+				frappe._dict(name="SINV-A", outstanding_amount=100.0, posting_date="2026-03-01"),
+				frappe._dict(name="SINV-B", outstanding_amount=100.0, posting_date="2026-03-07"),
+			]
+		)
+
+		self.assertFalse(result["matched"])
+		self.assertEqual(result["reason"], "ambiguous_exact_match")
+		do_match.assert_not_called()
+
+	def test_month_sum_strategy_still_books_when_no_single_exact_match(self):
+		result, do_match = self._run_auto_match(
+			invoices=[
+				frappe._dict(name="SINV-MIETE", outstanding_amount=60.0, posting_date="2026-03-01"),
+				frappe._dict(name="SINV-BK", outstanding_amount=40.0, posting_date="2026-03-01"),
+			]
+		)
+
+		self.assertTrue(result["matched"])
+		do_match.assert_called_once()
+		self.assertEqual([inv.name for inv in do_match.call_args[0][1]], ["SINV-MIETE", "SINV-BK"])
+		self.assertEqual(do_match.call_args[0][3], "month_2026-03")
 
 
 class TestCreatePaymentEntryForInvoices(FrappeTestCase):

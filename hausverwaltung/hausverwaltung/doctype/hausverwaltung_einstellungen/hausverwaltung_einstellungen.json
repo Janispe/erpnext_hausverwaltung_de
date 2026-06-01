@@ -38,6 +38,7 @@
   "bankimport_abschlag_toleranz_tage",
   "bankimport_section",
   "bankimport_start_datum",
+  "bankimport_exact_match_toleranz_tage",
   "trennstreifen_section",
   "trennstreifen_qr_base_url",
   "ui_section",
@@ -247,6 +248,13 @@
    "fieldtype": "Date",
    "label": "Bank-Transaktionen erstellen ab",
    "description": "Beim Erstellen aus dem Bankauszug Import werden CSV-Zeilen mit Buchungstag VOR diesem Datum übersprungen. Nützlich wenn die CSV-Historie weiter zurück geht als der ERP-Start. Leer = keine Begrenzung."
+  },
+  {
+   "default": "7",
+   "description": "Datumsfenster um das Bank-Buchungsdatum, in dem bei mehreren gleich hohen offenen Rechnungen genau eine Rechnung automatisch gewählt werden darf.",
+   "fieldname": "bankimport_exact_match_toleranz_tage",
+   "fieldtype": "Int",
+   "label": "Bankimport: Exakt-Match Toleranz Tage"
   },
   {
    "fieldname": "trennstreifen_section",

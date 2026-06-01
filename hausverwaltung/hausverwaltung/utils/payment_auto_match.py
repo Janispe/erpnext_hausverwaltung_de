@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import re
 from collections import defaultdict
+from datetime import timedelta
 from typing import Any
 
 import frappe
@@ -32,6 +33,7 @@ from frappe.utils import flt, getdate
 
 
 _TOLERANCE = 0.01
+_DEFAULT_EXACT_MATCH_WINDOW_DAYS = 7
 
 _RENT_ITEM_LABELS = {
 	"Miete": "Miete",
@@ -149,6 +151,40 @@ def prepare_invoice_match(bt) -> dict[str, Any]:
 	}
 
 
+def _get_exact_match_window_days(default: int = _DEFAULT_EXACT_MATCH_WINDOW_DAYS) -> int:
+	try:
+		value = frappe.db.get_single_value(
+			"Hausverwaltung Einstellungen", "bankimport_exact_match_toleranz_tage"
+		)
+		if value is not None and int(value) >= 0:
+			return int(value)
+	except Exception:
+		pass
+	return default
+
+
+def _bank_transaction_date(bt):
+	for fieldname in ("date", "posting_date", "transaction_date"):
+		value = getattr(bt, fieldname, None)
+		if value:
+			return getdate(value)
+	return None
+
+
+def _filter_exact_matches_by_date_window(exact_matches, bt, window_days: int):
+	bt_date = _bank_transaction_date(bt)
+	if not bt_date:
+		return []
+	start = bt_date - timedelta(days=window_days)
+	end = bt_date + timedelta(days=window_days)
+	return [
+		inv
+		for inv in exact_matches
+		if getattr(inv, "posting_date", None)
+		and start <= getdate(inv.posting_date) <= end
+	]
+
+
 def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 	"""Hauptentry-Point: versucht eine Bank Transaction automatisch zuzuordnen.
 
@@ -172,10 +208,35 @@ def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 	invoice_doctype = prep["invoice_doctype"]
 	target_amount = prep["target_amount"]
 
-	# Strategy 1: Single invoice exact
-	for inv in candidates:
-		if abs(flt(inv.outstanding_amount) - target_amount) < _TOLERANCE:
-			return _do_match(bt, [inv], invoice_doctype, "single", target_amount)
+	# Strategy 1: Single invoice exact. Bei mehreren exakten Treffern nur
+	# buchen, wenn genau einer im Datumsfenster der Bankbuchung liegt.
+	exact = [
+		inv
+		for inv in candidates
+		if abs(flt(inv.outstanding_amount) - target_amount) < _TOLERANCE
+	]
+	if len(exact) == 1:
+		return _do_match(bt, exact, invoice_doctype, "single", target_amount)
+	if len(exact) > 1:
+		window_days = _get_exact_match_window_days()
+		window_matches = _filter_exact_matches_by_date_window(exact, bt, window_days)
+		if len(window_matches) == 1:
+			return _do_match(
+				bt,
+				window_matches,
+				invoice_doctype,
+				f"single_window_{window_days}d",
+				target_amount,
+			)
+		return {
+			"matched": False,
+			"reason": "ambiguous_exact_match",
+			"message": (
+				f"{len(exact)} offene Rechnung(en) mit exakt {target_amount:.2f} € gefunden; "
+				f"{len(window_matches)} davon im Datumsfenster ±{window_days} Tage — "
+				"bitte manuell zuordnen."
+			),
+		}
 
 	# Strategy 2: Same posting month sum
 	by_month: dict[tuple[int, int], list] = defaultdict(list)
