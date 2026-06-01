@@ -16,6 +16,80 @@ PRINT_BUNDLE_CSS_PATH = "/assets/frappe/css/print.bundle.css"
 DRAFT_EMAIL_SEND_AFTER = "2099-01-01 00:00:00"
 
 
+def _row_value(row, key: str):
+	return row.get(key) if hasattr(row, "get") else getattr(row, key, None)
+
+
+def _get_exact_zaehlerstand(zaehler: str, datum) -> float | None:
+	value = frappe.db.get_value(
+		"Zaehlerstand",
+		{"parent": zaehler, "datum": cstr(datum)},
+		"zaehlerstand",
+	)
+	if value in (None, ""):
+		return None
+	try:
+		return float(value)
+	except Exception:
+		return None
+
+
+def _calculate_zaehler_summen(immobilie: str | None, von, bis) -> Dict[str, float]:
+	"""Berechnet Verbrauch je Zählerart streng aus exakten Ständen am Periodenrand."""
+	if not (immobilie and von and bis):
+		return {}
+
+	wohnungen = frappe.get_all("Wohnung", filters={"immobilie": immobilie}, pluck="name")
+	if not wohnungen:
+		return {}
+
+	period_start = cstr(von)
+	period_end = cstr(bis)
+	period_end_excl = cstr(add_days(bis, 1))
+	zuordnungen = frappe.get_all(
+		"Zaehler Zuordnung",
+		filters={
+			"bezugsobjekt_typ": "Wohnung",
+			"bezugsobjekt": ("in", wohnungen),
+			"von": ("<", period_end_excl),
+		},
+		fields=["zaehler", "von", "bis"],
+	)
+	zaehler_names = []
+	seen = set()
+	for row in zuordnungen or []:
+		# Overlap check with [period_start, period_end_excl)
+		if _row_value(row, "bis") and cstr(_row_value(row, "bis")) <= period_start:
+			continue
+		zaehler = _row_value(row, "zaehler")
+		if zaehler and zaehler not in seen:
+			seen.add(zaehler)
+			zaehler_names.append(zaehler)
+
+	if not zaehler_names:
+		return {}
+
+	sums: Dict[str, float] = {}
+	zaehler_rows = frappe.get_all(
+		"Zaehler",
+		filters={"name": ("in", zaehler_names)},
+		fields=["name", "zaehlerart"],
+	)
+	for zaehler in zaehler_rows or []:
+		name = _row_value(zaehler, "name")
+		if not name:
+			continue
+		art = _row_value(zaehler, "zaehlerart") or _("Unbekannt")
+		start = _get_exact_zaehlerstand(name, period_start)
+		end = _get_exact_zaehlerstand(name, period_end)
+		if start is None:
+			frappe.throw(f"Zählerstand für Zähler {name} ({art}) am {period_start} fehlt.")
+		if end is None:
+			frappe.throw(f"Zählerstand für Zähler {name} ({art}) am {period_end} fehlt.")
+		sums[art] = sums.get(art, 0.0) + (end - start)
+	return sums
+
+
 class BetriebskostenabrechnungImmobilie(Document):
 	@property
 	def mieter_abrechnungen(self) -> List[Dict[str, object]]:
@@ -145,58 +219,9 @@ class BetriebskostenabrechnungImmobilie(Document):
 		self.gesamt_vorauszahlungen = round(total_pre, 2)
 		self.gesamt_differenz = round(self.gesamtkosten - self.gesamt_vorauszahlungen, 2)
 
-		# Zähler-Summen: Summe letzter - erster Stand je ZählerTyp über alle Zähler in den Wohnungen der Immobilie
+		# Zähler-Summen: periodengenauer Verbrauch je ZählerTyp.
 		self.set("zaehler_summen", [])
-		wohnungen = frappe.get_all("Wohnung", filters={"immobilie": self.immobilie}, pluck="name")
-		sums = {}
-		if wohnungen and self.von and self.bis:
-			period_start = cstr(self.von)
-			period_end_excl = cstr(add_days(self.bis, 1))
-			zuordnungen = frappe.get_all(
-				"Zaehler Zuordnung",
-				filters={
-					"bezugsobjekt_typ": "Wohnung",
-					"bezugsobjekt": ("in", wohnungen),
-					"von": ("<", period_end_excl),
-				},
-				fields=["zaehler", "von", "bis"],
-			)
-			zaehler_names = []
-			seen = set()
-			for r in zuordnungen or []:
-				# Overlap check with [period_start, period_end_excl)
-				if r.get("bis") and cstr(r.get("bis")) <= period_start:
-					continue
-				zname = r.get("zaehler")
-				if zname and zname not in seen:
-					seen.add(zname)
-					zaehler_names.append(zname)
-
-			zaehler = (
-				frappe.get_all(
-					"Zaehler",
-					filters={"name": ("in", zaehler_names)},
-					fields=["name", "zaehlerart"],
-				)
-				if zaehler_names
-				else []
-			)
-			for z in zaehler or []:
-				st = frappe.get_all(
-					"Zaehlerstand",
-					filters={"parent": z["name"]},
-					fields=["datum", "zaehlerstand"],
-					order_by="datum asc",
-				)
-				if st:
-					try:
-						start = float(st[0]["zaehlerstand"] or 0)
-						end = float(st[-1]["zaehlerstand"] or 0)
-						diff = end - start
-						art = z.get("zaehlerart") or _("Unbekannt")
-						sums[art] = sums.get(art, 0.0) + diff
-					except Exception:
-						pass
+		sums = _calculate_zaehler_summen(self.immobilie, self.von, self.bis)
 		for art, s in sorted(sums.items()):
 			self.append("zaehler_summen", {"zaehlerart": art, "summe": round(float(s or 0), 3)})
 
