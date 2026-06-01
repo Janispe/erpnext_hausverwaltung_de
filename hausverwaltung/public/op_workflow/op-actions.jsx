@@ -131,7 +131,7 @@ function Modal({ title, subtitle, onClose, footer, children }) {
 
 // ───────── Aktion: Mahnung erstellen ─────────
 
-function MahnungModal({ row, onClose, onDone }) {
+function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
   const nextStufe = (row.mahnstufe || 0) + 1;
   const [mahngebuehr, setMahngebuehr] = useStateAct(nextStufe === 1 ? 0.00 : nextStufe === 2 ? 5.00 : nextStufe === 3 ? 10.00 : 15.00);
   const [zinsen, setZinsen] = useStateAct(true);
@@ -149,6 +149,27 @@ function MahnungModal({ row, onClose, onDone }) {
   const [textStufe, setTextStufe] = useStateAct(suggestedDunningType);
   const [vorlagen, setVorlagen] = useStateAct([]);
   const [serienbriefVorlage, setSerienbriefVorlage] = useStateAct(row.serienbrief_vorlage || "");
+  const mahnRows = rows?.length ? rows : [row];
+  const [selectedInvoices, setSelectedInvoices] = useStateAct(() => new Set(
+    selectedInvoiceNames?.length ? selectedInvoiceNames : [row.belegnummer]
+  ));
+  const [showInvoiceAdd, setShowInvoiceAdd] = useStateAct(false);
+  const [invoiceSearch, setInvoiceSearch] = useStateAct("");
+  const selectedRows = mahnRows.filter((item) => selectedInvoices.has(item.belegnummer));
+  const selectedRow = selectedRows[0] || row;
+  const selectedOpen = selectedRows.reduce((sum, item) => sum + (item.offen || 0), 0);
+  const isBulk = selectedRows.length > 1;
+  const addSearch = invoiceSearch.trim().toLowerCase();
+  const addableRows = mahnRows
+    .filter((item) => !selectedInvoices.has(item.belegnummer))
+    .filter((item) =>
+      !addSearch ||
+      (item.belegnummer || "").toLowerCase().includes(addSearch) ||
+      (item.bemerkungen || "").toLowerCase().includes(addSearch) ||
+      (item.status || "").toLowerCase().includes(addSearch) ||
+      (item.faellig_am || "").toLowerCase().includes(addSearch)
+    )
+    .slice(0, 20);
 
   useEffectAct(() => {
     let alive = true;
@@ -167,24 +188,47 @@ function MahnungModal({ row, onClose, onDone }) {
   }, []);
 
   // Verzugszinsen-Berechnung (rein illustrativ)
-  const zinsBetrag = zinsen ? (row.offen * (zinssatz / 100) * (row.alter_tage / 365)) : 0;
+  const zinsBetrag = zinsen ? selectedRows.reduce((sum, item) => sum + ((item.offen || 0) * (zinssatz / 100) * ((item.alter_tage || 0) / 365)), 0) : 0;
 
-  const summe = row.offen + mahngebuehr + zinsBetrag;
+  const summe = selectedOpen + mahngebuehr + zinsBetrag;
   const partyName = window.OFFENE_POSTEN.partyName(row.party);
   const objekt = window.OFFENE_POSTEN.ccLabel[row.kostenstelle] || row.kostenstelle;
+  const toggleInvoice = (invoiceName) => {
+    setSelectedInvoices((prev) => {
+      const next = new Set(prev);
+      next.has(invoiceName) ? next.delete(invoiceName) : next.add(invoiceName);
+      return next;
+    });
+  };
+  const addInvoice = (invoiceName) => {
+    setSelectedInvoices((prev) => {
+      const next = new Set(prev);
+      next.add(invoiceName);
+      return next;
+    });
+  };
   const submit = async () => {
+    if (!selectedRows.length) return;
     setBusy(true);
     try {
-      const result = await window.OP_ACTIONS.createDunning(row, {
-        dunningType: textStufe,
-        neueFaelligkeit,
-        mahngebuehr,
-        zinsenAktiv: zinsen,
-        serienbriefVorlage,
-        serienbriefWerte: zusatztext.trim()
-          ? [{ variable: "zusatztext", wert: zusatztext.trim(), beschreibung: "Optionaler Text aus dem Mahn-Cockpit" }]
-          : [],
-      });
+      const serienbriefWerte = zusatztext.trim()
+        ? [{ variable: "zusatztext", wert: zusatztext.trim(), beschreibung: "Optionaler Text aus dem Mahn-Cockpit" }]
+        : [];
+      const result = isBulk
+        ? await window.OP_ACTIONS.createBulkDunning({ [row.party]: selectedRows }, {
+            dunningType: textStufe,
+            neueFaelligkeit,
+            serienbriefVorlage,
+            serienbriefWerte,
+          })
+        : await window.OP_ACTIONS.createDunning(selectedRow, {
+            dunningType: textStufe,
+            neueFaelligkeit,
+            mahngebuehr,
+            zinsenAktiv: zinsen,
+            serienbriefVorlage,
+            serienbriefWerte,
+          });
       onDone?.(result);
     } finally {
       setBusy(false);
@@ -199,12 +243,12 @@ function MahnungModal({ row, onClose, onDone }) {
       footer={
         <>
           <span className="op-modal-foot-info">
-            Erzeugt 1 Dunning-Draft · Mahngebühr-Rechnung beim Submit · 1 PDF
+            Erzeugt {isBulk ? "1 Sammel-Dunning-Draft" : "1 Dunning-Draft"} · Mahngebühr-Rechnung beim Submit · 1 PDF
           </span>
           <div className="op-modal-foot-actions">
             <button className="mk-btn" onClick={onClose} disabled={busy}>Abbrechen</button>
-            <button className="mk-btn mk-btn-primary" onClick={submit} disabled={busy}>
-              {busy ? "Draft wird angelegt …" : `Mahnung als Draft anlegen · ${fmtEUR_op(summe)}`}
+            <button className="mk-btn mk-btn-primary" onClick={submit} disabled={busy || selectedRows.length === 0}>
+              {busy ? "Draft wird angelegt …" : `${isBulk ? "Sammelmahnung" : "Mahnung"} als Draft anlegen · ${fmtEUR_op(summe)}`}
             </button>
           </div>
         </>
@@ -273,11 +317,72 @@ function MahnungModal({ row, onClose, onDone }) {
         </div>
       </div>
 
+      <div className="op-preview-label" style={{ marginTop: 14, marginBottom: 8 }}>Zu mahnende Rechnungen</div>
+      <table className="op-mini-table" style={{ marginBottom: 14 }}>
+        <tbody>
+          {selectedRows.map((item) => (
+            <tr key={item.belegnummer}>
+              <td style={{ width: 28 }}>
+                <input
+                  type="checkbox"
+                  checked
+                  onChange={() => toggleInvoice(item.belegnummer)}
+                />
+              </td>
+              <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openBeleg(item)}>{item.belegnummer}</button></td>
+              <td>{fmtDate_op(item.faellig_am)}</td>
+              <td className="is-num">{fmtEUR_op(item.offen)}</td>
+              <td>{item.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {mahnRows.length > selectedRows.length && (
+        <div style={{ marginBottom: 14 }}>
+          <button
+            type="button"
+            className="mk-btn mk-btn-ghost"
+            style={{ padding: "5px 10px", fontSize: 12 }}
+            onClick={() => setShowInvoiceAdd((open) => !open)}
+          >
+            {showInvoiceAdd ? "Rechnungen ausblenden" : "Rechnung hinzufügen"}
+          </button>
+          {showInvoiceAdd && (
+            <div style={{ marginTop: 8, border: "1px solid var(--line)", borderRadius: 4, background: "var(--bg-card)", padding: 10 }}>
+              <input
+                className="op-search"
+                style={{ width: "100%", marginBottom: 8 }}
+                placeholder="Rechnung suchen..."
+                value={invoiceSearch}
+                onChange={(e) => setInvoiceSearch(e.target.value)}
+              />
+              <table className="op-mini-table">
+                <tbody>
+                  {addableRows.length ? addableRows.map((item) => (
+                    <tr key={item.belegnummer}>
+                      <td><button type="button" className="op-link-btn" onClick={() => addInvoice(item.belegnummer)}>Hinzufügen</button></td>
+                      <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openBeleg(item)}>{item.belegnummer}</button></td>
+                      <td>{fmtDate_op(item.faellig_am)}</td>
+                      <td className="is-num">{fmtEUR_op(item.offen)}</td>
+                      <td>{item.status}</td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan="5" style={{ color: "var(--ink-3)", padding: "10px" }}>Keine weiteren Rechnungen gefunden.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="op-preview">
         <div className="op-preview-label">Vorschau Forderung</div>
         <div className="op-preview-row">
           <span className="op-preview-key">Offene Hauptforderung</span>
-          <span className="op-preview-val">{fmtEUR_op(row.offen)}</span>
+          <span className="op-preview-val">{fmtEUR_op(selectedOpen)}</span>
         </div>
         <div className="op-preview-row">
           <span className="op-preview-key">+ Mahngebühr</span>
@@ -285,7 +390,7 @@ function MahnungModal({ row, onClose, onDone }) {
         </div>
         {zinsen && (
           <div className="op-preview-row">
-            <span className="op-preview-key">+ Verzugszinsen ({row.alter_tage} Tage)</span>
+            <span className="op-preview-key">+ Verzugszinsen ({selectedRow.alter_tage} Tage)</span>
             <span className="op-preview-val">{fmtEUR_op(zinsBetrag)}</span>
           </div>
         )}
@@ -303,7 +408,7 @@ function MahnungModal({ row, onClose, onDone }) {
           Sehr geehrte Damen und Herren,<br />
           wir bitten Sie höflich, den nachfolgend genannten Betrag bis spätestens
           <strong> {fmtDate_op(neueFaelligkeit)}</strong> auf unser Konto zu überweisen.
-          Verwendungszweck: <strong>{row.belegnummer}</strong>
+          Verwendungszweck: <strong>{selectedRows.map((item) => item.belegnummer).join(", ") || selectedRow.belegnummer}</strong>
         </p>
         <table>
           <thead>
@@ -314,9 +419,16 @@ function MahnungModal({ row, onClose, onDone }) {
             </tr>
           </thead>
           <tbody>
+            {selectedRows.map((item) => (
+              <tr key={item.belegnummer}>
+                <td>{item.belegnummer}</td>
+                <td>{fmtDate_op(item.faellig_am)}</td>
+                <td className="num">{fmtEUR_op(item.offen)}</td>
+              </tr>
+            ))}
             <tr>
-              <td>{row.belegnummer}</td>
-              <td>{fmtDate_op(row.faellig_am)}</td>
+              <td>{isBulk ? "Summe inkl. Gebühren/Zinsen" : selectedRow.belegnummer}</td>
+              <td>{fmtDate_op(neueFaelligkeit)}</td>
               <td className="num">{fmtEUR_op(summe)}</td>
             </tr>
           </tbody>

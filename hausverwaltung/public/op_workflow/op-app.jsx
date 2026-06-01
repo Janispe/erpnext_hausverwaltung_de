@@ -380,7 +380,8 @@ function OpApp() {
     setModal({ type: "sammelmahnung", rows: candidates });
   };
 
-  const openCandidateDunning = (candidate) => {
+  const openCandidateDunning = (candidate, selectedInvoiceNames = null) => {
+    const selectedNames = selectedInvoiceNames ? new Set(selectedInvoiceNames) : null;
     const rows = (candidate.invoices || []).map((invoice) => ({
       art: "Forderungen",
       party_type: "Customer",
@@ -404,41 +405,51 @@ function OpApp() {
       serienbrief_vorlage: candidate.serienbrief_vorlage || "",
     }));
     if (!rows.length) {
-      setToast("Keine offenen Rechnungen für diese Mahnung.");
+      setToast("Keine ausgewählten Rechnungen für diese Mahnung.");
       return;
     }
+    const initialRows = selectedNames
+      ? rows.filter((item) => selectedNames.has(item.belegnummer))
+      : [rows[0]];
     setModal({
-      type: rows.length === 1 ? "mahnung" : "sammelmahnung",
-      row: rows[0],
+      type: "mahnung",
+      row: initialRows[0] || rows[0],
       rows,
+      selectedInvoiceNames: initialRows.map((item) => item.belegnummer),
     });
   };
 
-  const openCandidatesBulkDunning = (candidates) => {
-    const rows = candidates.flatMap((candidate) => (candidate.invoices || []).map((invoice) => ({
-      art: "Forderungen",
-      party_type: "Customer",
-      party: candidate.customer,
-      buchungsdatum: invoice.posting_date,
-      faellig_am: invoice.due_date,
-      belegart: "Sales Invoice",
-      belegnummer: invoice.sales_invoice,
-      rechnungsbetrag: invoice.grand_total,
-      bezahlt: Math.max((invoice.grand_total || 0) - (invoice.outstanding_amount || 0), 0),
-      offen: invoice.outstanding_amount,
-      party_account: null,
-      kostenstelle: invoice.cost_center,
-      bemerkungen: invoice.remarks || invoice.mietabrechnung_id || "",
-      status: invoice.status,
-      zahlungsrichtung: "Geld bekommen",
-      alter_tage: candidate.oldest_age_days || 0,
-      can_write_off: true,
-      mahnstufe: Math.max((candidate.next_level || 1) - 1, 0),
-      dunning_type: candidate.next_dunning_type || "",
-      serienbrief_vorlage: candidate.serienbrief_vorlage || "",
-    })));
+  const openCandidatesBulkDunning = (candidates, selectedInvoicesByCandidate = null) => {
+    const rows = candidates.flatMap((candidate) => {
+      const selectedNames = selectedInvoicesByCandidate?.get?.(candidate.key);
+      const invoices = (candidate.invoices || []).filter((invoice) =>
+        !selectedNames || selectedNames.has(invoice.sales_invoice)
+      );
+      return invoices.map((invoice) => ({
+        art: "Forderungen",
+        party_type: "Customer",
+        party: candidate.customer,
+        buchungsdatum: invoice.posting_date,
+        faellig_am: invoice.due_date,
+        belegart: "Sales Invoice",
+        belegnummer: invoice.sales_invoice,
+        rechnungsbetrag: invoice.grand_total,
+        bezahlt: Math.max((invoice.grand_total || 0) - (invoice.outstanding_amount || 0), 0),
+        offen: invoice.outstanding_amount,
+        party_account: null,
+        kostenstelle: invoice.cost_center,
+        bemerkungen: invoice.remarks || invoice.mietabrechnung_id || "",
+        status: invoice.status,
+        zahlungsrichtung: "Geld bekommen",
+        alter_tage: candidate.oldest_age_days || 0,
+        can_write_off: true,
+        mahnstufe: Math.max((candidate.next_level || 1) - 1, 0),
+        dunning_type: candidate.next_dunning_type || "",
+        serienbrief_vorlage: candidate.serienbrief_vorlage || "",
+      }));
+    });
     if (!rows.length) {
-      setToast("Keine offenen Rechnungen für eine Sammelmahnung.");
+      setToast("Keine ausgewählten Rechnungen für eine Sammelmahnung.");
       return;
     }
     setModal({ type: "sammelmahnung", rows });
@@ -794,7 +805,7 @@ function OpApp() {
       </TweaksPanel>
 
       {/* Modals */}
-      {modal?.type === "mahnung" && <MahnungModal row={modal.row} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`Mahnung-Draft erstellt: ${result.dunning}`); }} />}
+      {modal?.type === "mahnung" && <MahnungModal row={modal.row} rows={modal.rows} selectedInvoiceNames={modal.selectedInvoiceNames} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(result.created ? `${(result.created || []).length} Mahnung-Drafts erstellt` : `Mahnung-Draft erstellt: ${result.dunning}`); }} />}
       {modal?.type === "sammelmahnung" && <SammelmahnungModal rows={modal.rows} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`${(result.created || []).length} Mahnung-Drafts erstellt`); }} />}
       {modal?.type === "zahlung" && <ZahlungModal row={modal.row} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`Payment Entry Draft erstellt: ${result.payment_entry}`); }} />}
       {modal?.type === "guthaben" && <GuthabenAuszahlenModal row={modal.row} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(`Auszahlungs-Draft erstellt: ${result.payment_entry}`); }} />}
@@ -885,8 +896,36 @@ function PartyPicker({ value, searchText, parties, mode, onSearchChange, onChang
   );
 }
 
+function latestInvoiceName(invoices) {
+  const sorted = [...(invoices || [])].sort((a, b) => {
+    const dateCmp = (b.due_date || "").localeCompare(a.due_date || "");
+    if (dateCmp !== 0) return dateCmp;
+    return (b.sales_invoice || "").localeCompare(a.sales_invoice || "");
+  });
+  return sorted[0]?.sales_invoice || "";
+}
+
 function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkDunning }) {
   const [openSet, setOpenSet] = useStateA0(() => new Set());
+  const [invoiceFilter, setInvoiceFilter] = useStateA0("current");
+  const [selectedInvoices, setSelectedInvoices] = useStateA0(() => new Map());
+  useEffectA0(() => {
+    setSelectedInvoices((prev) => {
+      const next = new Map();
+      rows.forEach((row) => {
+        const valid = new Set((row.invoices || []).map((invoice) => invoice.sales_invoice));
+        const existing = prev.get(row.key);
+        const keep = existing ? new Set([...existing].filter((name) => valid.has(name))) : new Set();
+        if (!keep.size) {
+          const latest = latestInvoiceName(row.invoices);
+          if (latest) keep.add(latest);
+        }
+        next.set(row.key, keep);
+      });
+      return next;
+    });
+  }, [rows]);
+
   const filtered = useMemoA0(() => {
     const q = (search || "").trim().toLowerCase();
     if (!q) return rows;
@@ -907,7 +946,50 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
       )
     );
   }, [rows, search]);
+  const visibleInvoicesFor = (row) => {
+    const invoices = row.invoices || [];
+    if (invoiceFilter !== "current") return invoices;
+    const latest = latestInvoiceName(invoices);
+    return invoices.filter((invoice) => invoice.sales_invoice === latest);
+  };
+  const effectiveSelectedInvoices = useMemoA0(() => {
+    const next = new Map();
+    filtered.forEach((row) => {
+      const visibleNames = new Set(visibleInvoicesFor(row).map((invoice) => invoice.sales_invoice));
+      const selected = new Set(
+        [...(selectedInvoices.get(row.key) || new Set())].filter((name) => visibleNames.has(name))
+      );
+      if (selected.size) next.set(row.key, selected);
+    });
+    return next;
+  }, [filtered, selectedInvoices, invoiceFilter]);
+  const selectedRows = filtered.filter((row) => (effectiveSelectedInvoices.get(row.key)?.size || 0) > 0);
+  const selectedTotal = filtered.reduce((sum, row) => {
+    const selected = effectiveSelectedInvoices.get(row.key) || new Set();
+    return sum + (row.invoices || []).reduce((inner, invoice) => (
+      selected.has(invoice.sales_invoice) ? inner + (invoice.outstanding_amount || 0) : inner
+    ), 0);
+  }, 0);
   const total = filtered.reduce((sum, row) => sum + (row.offen || 0), 0);
+  const toggleInvoice = (candidateKey, invoiceName) => {
+    setSelectedInvoices((prev) => {
+      const next = new Map(prev);
+      const current = new Set(next.get(candidateKey) || []);
+      current.has(invoiceName) ? current.delete(invoiceName) : current.add(invoiceName);
+      next.set(candidateKey, current);
+      return next;
+    });
+  };
+  const selectVisibleInvoices = (row, checked) => {
+    const names = visibleInvoicesFor(row).map((invoice) => invoice.sales_invoice).filter(Boolean);
+    setSelectedInvoices((prev) => {
+      const next = new Map(prev);
+      const current = new Set(next.get(row.key) || []);
+      names.forEach((name) => checked ? current.add(name) : current.delete(name));
+      next.set(row.key, current);
+      return next;
+    });
+  };
   const toggle = (key) => {
     setOpenSet((prev) => {
       const next = new Set(prev);
@@ -922,8 +1004,16 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
         <div>
           <h2>Mahnwesen</h2>
           <div className="op-mahn-head-sub">
-            {filtered.length} Kandidaten · {fmtEUR_op(total)} offen · Stichtag {fmtDate_op(window.OFFENE_POSTEN.TODAY)}
+            {filtered.length} Kandidaten · {fmtEUR_op(total)} offen · ausgewählt {fmtEUR_op(selectedTotal)}
           </div>
+        </div>
+        <div className="op-chips" style={{ flex: "0 0 auto" }}>
+          <button className={`op-chip ${invoiceFilter === "current" ? "is-active" : ""}`} onClick={() => setInvoiceFilter("current")}>
+            Aktuelle Rechnung
+          </button>
+          <button className={`op-chip ${invoiceFilter === "all" ? "is-active" : ""}`} onClick={() => setInvoiceFilter("all")}>
+            Alle Rechnungen
+          </button>
         </div>
         <input
           className="op-search"
@@ -931,7 +1021,11 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <button className="mk-btn mk-btn-primary" onClick={() => onCreateBulkDunning(filtered)} disabled={!filtered.length}>
+        <button
+          className="mk-btn mk-btn-primary"
+          onClick={() => onCreateBulkDunning(selectedRows, effectiveSelectedInvoices)}
+          disabled={!selectedRows.length}
+        >
           Sammelmahnung erstellen
         </button>
       </div>
@@ -964,6 +1058,15 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
                 const last = (row.mahnungen || [])[0];
                 const drafts = (row.mahnungen || []).filter((mahnung) => mahnung.docstatus === 0);
                 const draft = drafts[0];
+                const selected = effectiveSelectedInvoices.get(row.key) || new Set();
+                const visibleInvoices = visibleInvoicesFor(row);
+                const visibleSelected = visibleInvoices.filter((invoice) => selected.has(invoice.sales_invoice));
+                const visibleSum = visibleInvoices.reduce((sum, invoice) => sum + (invoice.outstanding_amount || 0), 0);
+                const visibleDueDates = visibleInvoices.map((invoice) => invoice.due_date).filter(Boolean).sort();
+                const visibleDueDate = visibleDueDates[0] || row.oldest_due_date;
+                const visibleAge = visibleDueDate
+                  ? Math.max(0, Math.floor((new Date(window.OFFENE_POSTEN.TODAY) - new Date(visibleDueDate)) / 86400000))
+                  : row.oldest_age_days || 0;
                 return (
                   <React.Fragment key={row.key}>
                     <tr className={row.draft_warning ? "is-mahn-draft" : ""}>
@@ -976,10 +1079,15 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
                       </td>
                       <td>{row.wohnung || "—"}</td>
                       <td>{row.mietvertrag || "—"}</td>
-                      <td className="is-num col-offen">{fmtEUR_op(row.offen)}</td>
+                      <td className="is-num col-offen">
+                        {fmtEUR_op(invoiceFilter === "current" ? visibleSum : row.offen)}
+                        {invoiceFilter === "current" && Math.abs((row.offen || 0) - visibleSum) > 0.01 && (
+                          <span className="op-party-id">gesamt {fmtEUR_op(row.offen)}</span>
+                        )}
+                      </td>
                       <td>
-                        {fmtDate_op(row.oldest_due_date)}
-                        <span className="op-party-id">{row.oldest_age_days || 0} Tage</span>
+                        {fmtDate_op(invoiceFilter === "current" ? visibleDueDate : row.oldest_due_date)}
+                        <span className="op-party-id">{invoiceFilter === "current" ? visibleAge : row.oldest_age_days || 0} Tage</span>
                       </td>
                       <td>
                         {last ? (
@@ -1005,7 +1113,13 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
                             Draft öffnen
                           </button>
                         ) : (
-                          <button className="op-action-btn is-primary" onClick={() => onCreateDunning(row)}>Mahnung erstellen</button>
+                          <button
+                            className="op-action-btn is-primary"
+                            disabled={!selected.size}
+                            onClick={() => onCreateDunning(row, [...selected])}
+                          >
+                            Mahnung erstellen
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -1017,9 +1131,32 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
                             <div>
                               <div className="op-preview-label">Offene Rechnungen</div>
                               <table className="op-mini-table">
+                                <thead>
+                                  <tr>
+                                    <th>
+                                      <input
+                                        type="checkbox"
+                                        checked={visibleInvoices.length > 0 && visibleSelected.length === visibleInvoices.length}
+                                        ref={(el) => el && (el.indeterminate = visibleSelected.length > 0 && visibleSelected.length < visibleInvoices.length)}
+                                        onChange={(e) => selectVisibleInvoices(row, e.target.checked)}
+                                      />
+                                    </th>
+                                    <th>Beleg</th>
+                                    <th>Fällig</th>
+                                    <th className="is-num">Offen</th>
+                                    <th>Status</th>
+                                  </tr>
+                                </thead>
                                 <tbody>
-                                  {(row.invoices || []).map((invoice) => (
+                                  {visibleInvoices.map((invoice) => (
                                     <tr key={invoice.sales_invoice}>
+                                      <td>
+                                        <input
+                                          type="checkbox"
+                                          checked={selected.has(invoice.sales_invoice)}
+                                          onChange={() => toggleInvoice(row.key, invoice.sales_invoice)}
+                                        />
+                                      </td>
                                       <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openBeleg({ belegart: "Sales Invoice", belegnummer: invoice.sales_invoice })}>{invoice.sales_invoice}</button></td>
                                       <td>{fmtDate_op(invoice.due_date)}</td>
                                       <td className="is-num">{fmtEUR_op(invoice.outstanding_amount)}</td>
@@ -1090,13 +1227,20 @@ function MahnInlineDetail({ candidate, row, onCreateDunning }) {
   const mahnungen = candidate.mahnungen || [];
   const drafts = mahnungen.filter((mahnung) => mahnung.docstatus === 0);
   const draft = drafts[0];
+  const currentInvoices = (candidate.invoices || []).filter((invoice) => invoice.sales_invoice === row.belegnummer);
+  const visibleInvoices = currentInvoices.length ? currentInvoices : [{
+    sales_invoice: row.belegnummer,
+    due_date: row.faellig_am,
+    outstanding_amount: row.offen,
+    status: row.status,
+  }];
 
   return (
     <div className="op-mahn-inline">
       <div className="op-mahn-inline-head">
         <div>
           <strong>{candidate.customer_name || candidate.customer}</strong>
-          <span>{candidate.wohnung || "—"} · {candidate.mietvertrag || "—"} · {fmtEUR_op(candidate.offen)} offen</span>
+          <span>{candidate.wohnung || "—"} · {candidate.mietvertrag || "—"} · {fmtEUR_op(row.offen)} offen</span>
         </div>
         {drafts.length > 1 ? (
           <button className="op-action-btn is-draft" onClick={() => window.OP_ACTIONS.openDunning(draft.name)}>
@@ -1107,7 +1251,7 @@ function MahnInlineDetail({ candidate, row, onCreateDunning }) {
             Draft öffnen
           </button>
         ) : (
-          <button className="op-action-btn is-primary" onClick={() => onCreateDunning(candidate)}>
+          <button className="op-action-btn is-primary" onClick={() => onCreateDunning(candidate, [row.belegnummer])}>
             Mahnung erstellen
           </button>
         )}
@@ -1117,10 +1261,10 @@ function MahnInlineDetail({ candidate, row, onCreateDunning }) {
       )}
       <div className="op-mahn-detail">
         <div>
-          <div className="op-preview-label">Offene Rechnungen</div>
+          <div className="op-preview-label">Aktuelle Rechnung</div>
           <table className="op-mini-table">
             <tbody>
-              {(candidate.invoices || []).map((invoice) => (
+              {visibleInvoices.map((invoice) => (
                 <tr key={invoice.sales_invoice}>
                   <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openBeleg({ belegart: "Sales Invoice", belegnummer: invoice.sales_invoice })}>{invoice.sales_invoice}</button></td>
                   <td>{fmtDate_op(invoice.due_date)}</td>
