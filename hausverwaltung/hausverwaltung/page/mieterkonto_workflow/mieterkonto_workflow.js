@@ -86,17 +86,12 @@ function render_mieterkonto_workflow(page_body) {
       // Bridge-Layer (frappe.call)
       await loadScript(`${ASSET_BASE}/mk-data-adapter.js`);
 
-      // Erste Treffer für die suchbare Mieter-Auswahl vorladen.
-      window.MK_CUSTOMERS = await window.MK_ADAPTER.searchMieter("", "Läuft");
-
       // Initiale Filter
       const initialCustomer = new URLSearchParams(window.location.search).get("customer") || "";
       const initialFrom = `${new Date().getFullYear()}-01-01`;
       const initialTo = frappe.datetime.get_today();
       window.MK_INITIAL = { customer: initialCustomer, from_date: initialFrom, to_date: initialTo };
-
-      // Daten initial laden — Adapter setzt window.MIETERKONTO
-      await window.MK_ADAPTER.load(initialCustomer, initialFrom, initialTo);
+      window.MIETERKONTO = window.MK_ADAPTER.emptyState();
 
       // ID-Shim — mk-app.jsx mounted auf #root, Page hat #mk-workflow-root
       const target = document.getElementById("mk-workflow-root");

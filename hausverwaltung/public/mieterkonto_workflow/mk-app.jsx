@@ -1,6 +1,6 @@
 // app.jsx — Main shell + variant switcher + Tweaks.
 
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "variant": "A",
@@ -16,7 +16,17 @@ function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
 
   // Daten-State (wird bei Filter-Änderung neu gesetzt)
-  const [data, setData] = useState(window.MIETERKONTO);
+  const initialData = window.MIETERKONTO || window.MK_ADAPTER?.emptyState?.() || {
+    mieter: { name: "Bitte Mieter auswählen", customer_id: "-", aufteilung_aktuell: {} },
+    filters: {},
+    rows: [],
+    totalRow: {},
+    summary: [{ label: "Kontostand", value: 0 }, { label: "Bezahlt im Zeitraum", value: 0 }],
+  };
+  const [data, setData] = useState(initialData);
+  const [loadingData, setLoadingData] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const loadSeq = useRef(0);
   const { mieter, filters, rows, totalRow, summary } = data;
 
   // Filter-State
@@ -30,10 +40,26 @@ function App() {
   const [mieterSearching, setMieterSearching] = useState(false);
 
   async function applyFilters(c, f, t, gruppierenOverride) {
-    await window.MK_ADAPTER.load(c, f, t, {
-      gruppieren: gruppierenOverride ?? gruppieren,
-    });
-    setData(window.MIETERKONTO);
+    const seq = ++loadSeq.current;
+    setLoadingData(!!c);
+    setLoadError("");
+    try {
+      const nextData = await window.MK_ADAPTER.load(c, f, t, {
+        gruppieren: gruppierenOverride ?? gruppieren,
+      });
+      if (seq === loadSeq.current) {
+        setData(nextData || window.MIETERKONTO);
+      }
+    } catch (err) {
+      console.error("mieterkonto load failed", err);
+      if (seq === loadSeq.current) {
+        setLoadError(err?.message || "Mieterkonto konnte nicht geladen werden.");
+      }
+    } finally {
+      if (seq === loadSeq.current) {
+        setLoadingData(false);
+      }
+    }
   }
 
   const onCustomerChange = (c) => { setCustomer(c); applyFilters(c, fromDate, toDate); };
@@ -46,6 +72,9 @@ function App() {
     try {
       const result = await window.MK_ADAPTER.searchMieter(txt, status);
       setCustomers(result);
+    } catch (err) {
+      console.error("mieterkonto mieter search failed", err);
+      setCustomers([]);
     } finally {
       setMieterSearching(false);
     }
@@ -70,6 +99,12 @@ function App() {
   const [variant, setVariantLocal] = useState(t.variant);
   const [showCats, setShowCats] = useState(t.showCats);
   const [gruppieren, setGruppieren] = useState(t.gruppieren);
+
+  useEffect(() => {
+    if (customer) {
+      applyFilters(customer, fromDate, toDate);
+    }
+  }, []);
 
   useEffect(() => { setVariantLocal(t.variant); }, [t.variant]);
   useEffect(() => { setShowCats(t.showCats); }, [t.showCats]);
@@ -136,6 +171,12 @@ function App() {
 
       <main className="mk-main" data-screen-label={`Variante ${variant}`}>
         <MieterHeader mieter={mieter} filters={filters} />
+
+        {(loadingData || loadError) && (
+          <div className={`mk-load-state ${loadError ? "is-error" : ""}`}>
+            {loadError || "Mieterkonto-Daten werden geladen ..."}
+          </div>
+        )}
 
         {variant !== "C" && <SummaryCards summary={summary} />}
 

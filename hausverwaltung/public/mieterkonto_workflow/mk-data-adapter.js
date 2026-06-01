@@ -6,7 +6,7 @@
   async function loadReal(customer, fromDate, toDate, options = {}) {
     if (!customer) {
       window.MIETERKONTO = emptyState();
-      return;
+      return window.MIETERKONTO;
     }
 
     const company = frappe.defaults.get_user_default("Company");
@@ -51,6 +51,7 @@
       totalRow: adaptRow(totalRow),
       summary: adaptSummary(summary),
     };
+    return window.MIETERKONTO;
   }
 
   function adaptRow(raw) {
@@ -127,7 +128,7 @@
 
   window.MK_ADAPTER = {
     async load(customer, fromDate, toDate, options) {
-      await loadReal(customer, fromDate, toDate, options);
+      return await loadReal(customer, fromDate, toDate, options);
     },
     async searchMieter(txt = "", status = "Läuft") {
       const res = await frappe.call({
@@ -136,5 +137,6 @@
       });
       return res.message || [];
     },
+    emptyState,
   };
 })();
