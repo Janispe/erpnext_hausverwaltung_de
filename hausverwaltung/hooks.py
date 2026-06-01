@@ -27,7 +27,11 @@ required_apps = ["process_engine"]
 # ------------------
 
 # include js, css files in header of desk.html
-# app_include_css = "/assets/hausverwaltung/css/hausverwaltung.css"
+app_include_css = [
+	"/assets/hausverwaltung/css/hv-tokens.css",
+	"/assets/hausverwaltung/css/hv-components.css",
+	"/assets/hausverwaltung/css/hv-bridge.css",
+]
 app_include_js = [
 	"/assets/hausverwaltung/js/link_title_hook.js",
 	"/assets/hausverwaltung/js/ui_helpers.js",

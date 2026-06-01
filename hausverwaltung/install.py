@@ -6,6 +6,11 @@ from pathlib import Path
 
 import frappe
 
+from hausverwaltung.hausverwaltung.utils.serienbrief_fonts import (
+    get_serienbrief_font_face_css,
+    serienbrief_font_family,
+)
+
 
 def after_install() -> None:
     _run_bootstrap(reason="after_install")
@@ -102,12 +107,12 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
             "\t\t\t\tmargin: 0;\n"
             "\t\t\t}\n"
         )
-        css = page_block + """
+        css = (page_block + get_serienbrief_font_face_css() + """
 			body,
 			.serienbrief-root,
 			.print-format,
 			.print-format .serienbrief-root {
-				font-family: "Liberation Sans", "Arial", "Helvetica", sans-serif;
+				font-family: __HV_SERIENBRIEF_FONT_FAMILY__;
 				font-size: 11pt;
 				line-height: 1.35;
 			}
@@ -260,7 +265,7 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 					display: none !important;
 				}
 			}
-        """
+		""").replace("__HV_SERIENBRIEF_FONT_FAMILY__", serienbrief_font_family())
         # Echter Frappe-Page-Footer via ``<div id="footer-html">`` — Chrome
         # rendert das auf jeder Seite am Page-Boden und reserviert dafür Platz
         # via ``@page margin-bottom``. Den Frappe-Bug, der die Footer-Page mit

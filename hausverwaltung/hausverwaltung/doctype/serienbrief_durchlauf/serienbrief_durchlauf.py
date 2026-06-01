@@ -21,6 +21,10 @@ from frappe.utils import cint, cstr, format_date, now_datetime, today
 from frappe.utils.jinja import get_jenv
 
 from hausverwaltung.hausverwaltung.utils.pdf_engine import render_pdf as get_pdf
+from hausverwaltung.hausverwaltung.utils.serienbrief_fonts import (
+	get_serienbrief_font_face_css,
+	serienbrief_font_family,
+)
 
 from hausverwaltung.hausverwaltung.utils.jinja_source_sanitizer import sanitize_richtext_jinja_source
 from hausverwaltung.hausverwaltung.utils.serienbrief_pdf_form import read_file_url_bytes
@@ -1737,7 +1741,7 @@ class SerienbriefDurchlauf(Document):
 			)
 
 	def _default_css(self) -> str:
-		custom_css = """
+		custom_css = (get_serienbrief_font_face_css() + """
 			@page {
 				size: A4;
 				/* Synchron mit install.py und _default_pdf_options. */
@@ -1747,7 +1751,7 @@ class SerienbriefDurchlauf(Document):
 			.serienbrief-root,
 			.print-format,
 			.print-format .serienbrief-root {
-				font-family: "Liberation Sans", "Arial", "Helvetica", sans-serif;
+				font-family: __HV_SERIENBRIEF_FONT_FAMILY__;
 				color: #222;
 				font-size: 11pt !important;
 				line-height: 1.35;
@@ -1824,7 +1828,7 @@ class SerienbriefDurchlauf(Document):
 				margin: 10px 0;
 				font-size: 9.5pt;
 			}
-		"""
+		""").replace("__HV_SERIENBRIEF_FONT_FAMILY__", serienbrief_font_family())
 		return custom_css
 
 	def _default_pdf_options(self) -> dict[str, str]:
