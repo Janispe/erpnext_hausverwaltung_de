@@ -1,0 +1,221 @@
+/* ============================================================================
+   hv-components.css — gemeinsame Komponenten-Bausteine (auf hv-tokens.css)
+   ----------------------------------------------------------------------------
+   Die Bausteine, die heute in jeder App getrennt existieren (op-* in
+   op_workflow, mk-* in mieterkonto_workflow, hv-cockpit-* im Cockpit), hier
+   EINMAL definiert. Konsumiert ausschließlich --hv-* Tokens → dark-mode-sicher,
+   themetreu, ohne Hardcodes.
+
+   Migrationsweg: op-*/mk-* schrittweise auf hv-* umstellen (oder als Alias
+   `.op-btn { @extend .hv-btn }` bzw. per Klassentausch im Bundle).
+   ============================================================================ */
+
+/* ---- Topbar -------------------------------------------------------------- */
+.hv-topbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--hv-gap);
+	padding: 12px 18px;
+	background: var(--hv-surface);
+	border-bottom: 1px solid var(--hv-line);
+}
+.hv-topbar h1 {
+	margin: 0;
+	font-size: var(--hv-fs-lg);
+	font-weight: 600;
+	color: var(--hv-ink);
+	letter-spacing: 0;
+}
+.hv-crumb { font-size: var(--hv-fs-sm); color: var(--hv-ink-3); }
+
+/* ---- Buttons ------------------------------------------------------------- */
+.hv-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: var(--hv-control-h);
+	padding: 0 12px;
+	font-family: var(--hv-font);
+	font-size: var(--hv-fs);
+	font-weight: 500;
+	color: var(--hv-ink);
+	background: var(--hv-surface);
+	border: 1px solid var(--hv-line);
+	border-radius: var(--hv-radius);
+	cursor: pointer;
+	transition: background .12s ease, border-color .12s ease, box-shadow .12s ease;
+	white-space: nowrap;
+}
+.hv-btn:hover { background: var(--hv-surface-2); border-color: var(--hv-line-strong); }
+.hv-btn:focus-visible { outline: 2px solid var(--hv-primary); outline-offset: 1px; }
+
+.hv-btn-primary {
+	background: var(--hv-primary);
+	border-color: var(--hv-primary);
+	color: var(--hv-on-primary);
+}
+.hv-btn-primary:hover { background: var(--hv-primary-hover); border-color: var(--hv-primary-hover); }
+
+.hv-btn-danger {
+	background: var(--hv-danger);
+	border-color: var(--hv-danger);
+	color: var(--hv-on-primary);
+}
+.hv-btn-danger:hover { background: var(--hv-danger-hover); border-color: var(--hv-danger-hover); }
+
+.hv-btn-ghost { background: var(--hv-surface); border-color: var(--hv-line); }
+.hv-btn-ghost:hover { background: var(--hv-surface-2); }
+
+.hv-btn:disabled,
+.hv-btn:disabled:hover {
+	background: var(--hv-surface-2);
+	border-color: var(--hv-line);
+	color: var(--hv-ink-4);
+	cursor: not-allowed;
+}
+
+/* ---- Tabs / Chips -------------------------------------------------------- */
+.hv-tabs {
+	display: inline-flex;
+	gap: 2px;
+	padding: 3px;
+	background: var(--hv-surface-2);
+	border: 1px solid var(--hv-line);
+	border-radius: var(--hv-radius);
+}
+.hv-tab {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 5px 12px;
+	font-size: var(--hv-fs);
+	font-weight: 500;
+	color: var(--hv-ink-2);
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: var(--hv-radius-sm);
+	cursor: pointer;
+}
+.hv-tab:hover { color: var(--hv-ink); }
+.hv-tab.is-active {
+	background: var(--hv-primary-soft);
+	color: var(--hv-primary-ink);
+	box-shadow: inset 0 0 0 1px var(--hv-primary);
+}
+.hv-tab .hv-count { font-size: var(--hv-fs-sm); opacity: .72; }
+
+.hv-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 10px;
+	font-size: var(--hv-fs-sm);
+	color: var(--hv-ink-2);
+	background: var(--hv-surface);
+	border: 1px solid var(--hv-line);
+	border-radius: 999px;
+	cursor: pointer;
+}
+.hv-chip.is-active {
+	background: var(--hv-primary-soft);
+	color: var(--hv-primary-ink);
+	border-color: var(--hv-primary);
+}
+
+/* ---- Karten / Stat-Cards ------------------------------------------------- */
+.hv-cardgrid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+	gap: var(--hv-gap);
+}
+.hv-card {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 14px 16px;
+	background: var(--hv-surface);
+	border: 1px solid var(--hv-line);
+	border-radius: var(--hv-radius-lg);
+	box-shadow: var(--hv-shadow);
+}
+.hv-stat-label { font-size: var(--hv-fs-sm); color: var(--hv-ink-3); }
+.hv-stat-value { font-size: 22px; font-weight: 600; color: var(--hv-ink); font-variant-numeric: tabular-nums; }
+.hv-stat-sub   { font-size: var(--hv-fs-sm); color: var(--hv-ink-3); }
+
+.hv-card.is-primary {
+	background: linear-gradient(180deg, var(--hv-primary-soft), var(--hv-surface));
+	box-shadow: inset 3px 0 0 var(--hv-primary), var(--hv-shadow);
+}
+.hv-card.is-due {
+	background: linear-gradient(180deg, var(--hv-accent-soft), var(--hv-surface));
+	box-shadow: inset 3px 0 0 var(--hv-accent), var(--hv-shadow);
+}
+
+/* ---- Filterleiste -------------------------------------------------------- */
+.hv-filterbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px;
+	padding: 12px 14px;
+	background: var(--hv-surface);
+	border: 1px solid var(--hv-line);
+	border-radius: var(--hv-radius-lg);
+}
+.hv-filter { display: inline-flex; align-items: center; gap: 6px; }
+.hv-filter-label { font-size: var(--hv-fs-sm); color: var(--hv-ink-3); }
+.hv-field {
+	height: var(--hv-control-h);
+	padding: 0 10px;
+	font-family: var(--hv-font);
+	font-size: var(--hv-fs);
+	color: var(--hv-ink);
+	background: var(--hv-surface);
+	border: 1px solid var(--hv-line);
+	border-radius: var(--hv-radius);
+}
+.hv-field:focus { outline: none; border-color: var(--hv-primary); box-shadow: 0 0 0 2px var(--hv-primary-soft); }
+.hv-filter-sep { width: 1px; align-self: stretch; background: var(--hv-line); margin: 0 2px; }
+
+/* ---- Tabelle ------------------------------------------------------------- */
+.hv-table-wrap {
+	background: var(--hv-surface);
+	border: 1px solid var(--hv-line);
+	border-radius: var(--hv-radius-lg);
+	overflow: hidden;
+}
+.hv-table { width: 100%; border-collapse: collapse; font-size: var(--hv-fs); }
+.hv-table thead th {
+	text-align: left;
+	padding: 9px 14px;
+	font-size: var(--hv-fs-sm);
+	font-weight: 600;
+	color: var(--hv-ink-3);
+	background: var(--hv-surface-2);
+	border-bottom: 1px solid var(--hv-line);
+}
+.hv-table tbody td {
+	padding: 9px 14px;
+	color: var(--hv-ink);
+	border-bottom: 1px solid var(--hv-line);
+}
+.hv-table tbody tr:last-child td { border-bottom: none; }
+.hv-table tbody tr:hover td { background: var(--hv-surface-2); }
+.hv-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---- Pills / Badges ------------------------------------------------------ */
+.hv-pill {
+	display: inline-flex;
+	align-items: center;
+	padding: 1px 8px;
+	font-size: var(--hv-fs-xs);
+	font-weight: 500;
+	border-radius: 999px;
+	line-height: 1.7;
+}
+.hv-pill-info    { background: var(--hv-primary-soft); color: var(--hv-primary-ink); }
+.hv-pill-success { background: var(--hv-success-soft); color: var(--hv-success); }
+.hv-pill-danger  { background: var(--hv-danger-soft);  color: var(--hv-danger); }
+.hv-pill-warning { background: var(--hv-warning-soft);  color: var(--hv-warning); }
+.hv-pill-muted   { background: var(--hv-surface-2);    color: var(--hv-ink-3); }

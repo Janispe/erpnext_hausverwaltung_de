@@ -1,0 +1,242 @@
+/* hv-bridge.css - bindet Alt-Klassen an das Design-System. Uebergangsloesung,
+   bis das Markup auf hv-* umgestellt ist. Nur --hv-* Tokens verwenden. */
+
+/* Legacy variable aliases used by op_workflow and mieterkonto_workflow. */
+:root {
+	--bg: var(--hv-bg);
+	--bg-soft: var(--hv-surface-2);
+	--bg-card: var(--hv-surface);
+	--ink: var(--hv-ink);
+	--ink-2: var(--hv-ink-2);
+	--ink-3: var(--hv-ink-3);
+	--ink-4: var(--hv-ink-4);
+	--line: var(--hv-line);
+	--line-strong: var(--hv-line-strong);
+	--accent: var(--hv-danger);
+	--accent-soft: var(--hv-danger-soft);
+	--good: var(--hv-success);
+	--good-soft: var(--hv-success-soft);
+	--info: var(--hv-primary);
+	--info-soft: var(--hv-primary-soft);
+	--warn: var(--hv-warning);
+	--warn-soft: var(--hv-warning-soft);
+	--font-sans: var(--hv-font);
+	--font-num: var(--hv-font);
+	--font-serif: var(--hv-font);
+	--radius: var(--hv-radius);
+	--radius-lg: var(--hv-radius-lg);
+}
+
+/* Buttons */
+.op-action-btn,
+.op-bulk-btn,
+.mk-btn,
+.op-mahn-banner-cta,
+.op-mahn-banner-secondary {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: var(--hv-control-h);
+	padding: 0 12px;
+	font-family: var(--hv-font);
+	font-size: var(--hv-fs);
+	font-weight: 500;
+	color: var(--hv-ink);
+	background: var(--hv-surface);
+	border: 1px solid var(--hv-line);
+	border-radius: var(--hv-radius);
+	cursor: pointer;
+}
+.op-action-btn:hover,
+.op-bulk-btn:hover,
+.mk-btn:hover,
+.op-mahn-banner-secondary:hover {
+	background: var(--hv-surface-2);
+	border-color: var(--hv-line-strong);
+}
+.op-action-btn.is-primary,
+.op-bulk-btn.is-primary,
+.mk-btn-primary,
+.op-mahn-banner-cta {
+	background: var(--hv-primary);
+	border-color: var(--hv-primary);
+	color: var(--hv-on-primary);
+}
+.op-action-btn.is-primary:hover,
+.op-bulk-btn.is-primary:hover,
+.mk-btn-primary:hover,
+.op-mahn-banner-cta:hover {
+	background: var(--hv-primary-hover);
+	border-color: var(--hv-primary-hover);
+	color: var(--hv-on-primary);
+}
+.op-action-btn.is-late,
+.op-action-btn.is-draft {
+	background: var(--hv-danger);
+	border-color: var(--hv-danger);
+	color: var(--hv-on-primary);
+}
+.op-action-btn.is-warn {
+	background: var(--hv-warning-soft);
+	border-color: var(--hv-warning);
+	color: var(--hv-warning);
+}
+.mk-btn-ghost {
+	background: var(--hv-surface);
+	border-color: var(--hv-line);
+}
+
+/* Tabs / Chips */
+.op-view-tabs,
+.op-mode-tabs,
+.mk-tabs {
+	background: var(--hv-surface-2);
+	border-color: var(--hv-line);
+}
+.op-view-tab.is-active,
+.op-mode-tab.is-active,
+.mk-tab.is-active,
+.op-date-preset.is-active,
+.op-immo-chip.is-active,
+.op-chip.is-active {
+	background: var(--hv-primary-soft);
+	color: var(--hv-primary-ink);
+	box-shadow: inset 0 0 0 1px var(--hv-primary);
+}
+.op-chip,
+.op-immo-chip {
+	background: var(--hv-surface);
+	border-color: var(--hv-line);
+	color: var(--hv-ink-2);
+}
+
+/* Stat-/Summary-Cards */
+.op-stat,
+.mk-summary-card,
+.mk-kpi-small,
+.mk-saldo-chart {
+	background: var(--hv-surface);
+	border-color: var(--hv-line);
+}
+.op-stat.is-primary,
+.mk-summary-card.is-primary,
+.mk-kpi-big {
+	background: linear-gradient(180deg, var(--hv-primary-soft), var(--hv-surface));
+	color: var(--hv-ink);
+	box-shadow: inset 3px 0 0 var(--hv-primary), var(--hv-shadow);
+}
+.mk-summary-card.is-primary.is-due,
+.mk-kpi-big.is-due {
+	background: linear-gradient(180deg, var(--hv-accent-soft), var(--hv-surface));
+	box-shadow: inset 3px 0 0 var(--hv-accent), var(--hv-shadow);
+}
+.mk-kpi-big.is-credit {
+	background: linear-gradient(180deg, var(--hv-success-soft), var(--hv-surface));
+	box-shadow: inset 3px 0 0 var(--hv-success), var(--hv-shadow);
+}
+
+/* Tabellen / Panels */
+.op-table thead th,
+.mk-table thead th,
+.op-group-head,
+.mk-month-row td {
+	background: var(--hv-surface-2);
+	color: var(--hv-ink-3);
+}
+.op-table-wrap,
+.mk-table-wrap,
+.op-filter-row,
+.mk-filterbar,
+.op-toolbar,
+.op-group,
+.op-empty,
+.op-load-state,
+.mk-load-state,
+.op-mahn-table-wrap {
+	background: var(--hv-surface);
+	border: 1px solid var(--hv-line);
+	border-radius: var(--hv-radius-lg);
+}
+.op-table tbody tr:hover,
+.mk-combobox-option:hover,
+.mk-combobox-option.is-selected,
+.op-party-option:hover,
+.op-party-option.is-selected {
+	background: var(--hv-surface-2);
+}
+
+/* Pills / Status */
+.mk-pill-forderung,
+.op-status-partly,
+.op-age-pill.is-due {
+	background: var(--hv-warning-soft);
+	color: var(--hv-warning);
+	border-color: var(--hv-warning);
+}
+.mk-pill-zahlung,
+.op-status-paid {
+	background: var(--hv-success-soft);
+	color: var(--hv-success);
+	border-color: var(--hv-success);
+}
+.mk-pill-open,
+.op-status-overdue,
+.op-age-pill.is-late {
+	background: var(--hv-danger-soft);
+	color: var(--hv-danger);
+	border-color: var(--hv-danger);
+}
+.mk-pill-gutschrift,
+.mk-pill-eroeffnung,
+.op-status-unpaid,
+.op-status-writtenoff,
+.op-age-pill.is-future {
+	background: var(--hv-surface-2);
+	color: var(--hv-ink-3);
+	border-color: var(--hv-line);
+}
+.mk-pill-abschreibung {
+	background: var(--hv-warning-soft);
+	color: var(--hv-warning);
+	border-color: var(--hv-warning);
+}
+
+/* Mahnwesen */
+.op-mahn-banner {
+	background: var(--hv-danger-soft);
+	border-color: var(--hv-danger);
+	border-left-color: var(--hv-danger);
+}
+.op-mahn-badge,
+.op-draft-badge {
+	background: var(--hv-danger);
+	color: var(--hv-on-primary);
+}
+.op-mahn-banner-secondary {
+	color: var(--hv-danger);
+	border-color: var(--hv-danger);
+}
+
+/* Cockpit (Tiles/Sections aus dem inline <style> in buchen_cockpit.js) */
+.hv-cockpit-tile,
+.hv-cockpit-section {
+	background: var(--hv-surface) !important;
+	border: 1px solid var(--hv-line) !important;
+	border-radius: var(--hv-radius-lg) !important;
+	box-shadow: var(--hv-shadow) !important;
+}
+.hv-cockpit-tile:hover {
+	box-shadow: var(--hv-shadow-lg) !important;
+}
+.hv-cockpit-tile .hv-cockpit-tile-desc,
+.hv-cockpit-empty {
+	color: var(--hv-ink-3) !important;
+}
+.hv-cockpit-list .hv-cockpit-row {
+	border-bottom-color: var(--hv-line) !important;
+}
+.hv-cockpit-draft-banner {
+	background: var(--hv-warning-soft) !important;
+	border: 1px solid var(--hv-warning) !important;
+	color: var(--hv-ink) !important;
+}

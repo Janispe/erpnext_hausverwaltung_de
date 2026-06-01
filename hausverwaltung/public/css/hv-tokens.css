@@ -1,0 +1,81 @@
+/* ============================================================================
+   hv-tokens.css — Hausverwaltung Design System: gemeinsame Token-Ebene
+   ----------------------------------------------------------------------------
+   EINE Quelle der Wahrheit für Farben, Flächen, Linien, Radien und Typo,
+   die von ALLEN Front-End-Flächen genutzt wird (op_workflow, mieterkonto_
+   workflow, buchen_cockpit, buchungs_inbox, …).
+
+   Prinzip: Jeder HV-Token ist an die ENTSPRECHENDE Frappe-Desk-Variable
+   gebunden — mit einem Fallback dahinter.
+       --hv-ink: var(--text-color, #1f272e);
+                 └ Frappe-Theme ┘  └ Standalone-Fallback ┘
+
+   • Innerhalb von ERPNext/Frappe gewinnt die echte Theme-Variable
+     → Light/Dark folgen automatisch dem Desk-Theme. KEIN doppeltes
+       Farbsystem mehr, kein Dark-Mode-Bruch.
+   • Standalone (z. B. dieses Mockup oder ein isolierter Test) greift der
+     Fallback hinter dem Komma.
+
+   Laden: in Produktion via hooks.py `app_include_css` NACH Frappes eigener
+   CSS — die echten Variablen sind dann bereits gesetzt. Ein eigenes
+   Light-only-Palettenset (wie im Alignment-Commit) entfällt damit komplett.
+   ============================================================================ */
+
+:root {
+	/* ---- Marke / Primär (Frappe-Primärfarbe = Blau-Ramp) ---------------- */
+	--hv-primary:        var(--primary, #2490ef);              /* Frappe-Blau */
+	--hv-primary-hover:  var(--blue-600, #1670c8);
+	--hv-primary-soft:   var(--bg-light-blue, #eaf4ff);        /* aktive Chips/Tabs */
+	--hv-primary-ink:    var(--text-on-light-blue, #1670c8);   /* Text auf soft */
+	--hv-on-primary:     #ffffff;                              /* Text auf Primär */
+
+	/* ---- HV-Akzent (z. B. fällige Beträge) ------------------------------ */
+	--hv-accent:         #d65a31;
+	--hv-accent-soft:    color-mix(in srgb, var(--hv-accent) 13%, var(--hv-surface));
+
+	/* ---- Status -------------------------------------------------------- */
+	--hv-danger:         var(--red-600, #e03636);
+	--hv-danger-hover:   var(--red-700, #b72a2a);
+	--hv-danger-soft:    var(--alert-bg-danger, #fff1f1);
+	--hv-success:        var(--green-600, #1f8a4c);
+	--hv-success-soft:   var(--alert-bg-success, #d8f3e3);
+	--hv-warning:        var(--yellow-600, #cb9a04);
+	--hv-warning-soft:   var(--alert-bg-warning, #fff8e1);
+
+	/* ---- Flächen ------------------------------------------------------- */
+	--hv-bg:        var(--bg-color, #f6f7f8);        /* Seitenhintergrund */
+	--hv-surface:   var(--card-bg, #ffffff);         /* Karten, Panels, Topbar */
+	--hv-surface-2: var(--subtle-accent, #f4f5f6);   /* Tabellenkopf, Insets */
+	--hv-control:   var(--control-bg, #ebeef0);      /* Inputs, Default-Buttons */
+
+	/* ---- Text / Ink ---------------------------------------------------- */
+	--hv-ink:    var(--text-color, #1f272e);
+	--hv-ink-2:  var(--text-light, #4c5a67);
+	--hv-ink-3:  var(--text-muted, #74808b);
+	--hv-ink-4:  var(--disabled-text-color, #a6b0b8);
+
+	/* ---- Linien -------------------------------------------------------- */
+	--hv-line:        var(--border-color, #e2e6ea);
+	--hv-line-strong: var(--dark-border-color, #c8d0d8);
+
+	/* ---- Radien -------------------------------------------------------- */
+	--hv-radius-sm: 4px;
+	--hv-radius:    var(--border-radius, 6px);
+	--hv-radius-lg: var(--border-radius-lg, 8px);
+
+	/* ---- Schatten ------------------------------------------------------ */
+	--hv-shadow:    var(--card-shadow, 0 1px 2px rgba(31,39,46,.06), 0 1px 3px rgba(31,39,46,.05));
+	--hv-shadow-lg: var(--shadow-md, 0 4px 16px rgba(31,39,46,.12));
+
+	/* ---- Typografie ---------------------------------------------------- */
+	--hv-font: var(--font-stack, "Inter", -apple-system, "Segoe UI", Roboto, system-ui, sans-serif);
+	--hv-fs-xs:  11px;
+	--hv-fs-sm:  12px;
+	--hv-fs:     13px;   /* Desk-Standard */
+	--hv-fs-md:  14px;
+	--hv-fs-lg:  16px;
+
+	/* ---- Maße ---------------------------------------------------------- */
+	--hv-control-h: 32px;
+	--hv-gap:       12px;
+}
