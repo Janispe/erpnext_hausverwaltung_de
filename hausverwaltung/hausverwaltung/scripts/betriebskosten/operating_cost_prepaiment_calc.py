@@ -54,6 +54,9 @@ def _customer_segments_for_wohnung(wohnung: str, from_date: Optional[str | date]
 	Rückgabe: Liste von Segmenten [{customer, start, end}]. start/end sind Strings YYYY-MM-DD oder None.
 	Nur überlappende Verträge werden berücksichtigt und auf [from_date, to_date] geclippt.
 	"""
+	# Fachliche Annahme: Customer ist die Abrechnungseinheit pro Mietvertrag/Wohnung.
+	# Wenn dieselbe Person mehrere Wohnungen mietet, bekommt sie mehrere Customer.
+	# Deshalb reicht customer + Zeitraum + Item-Code fuer BK/HK-Vorauszahlungen.
 	# Ohne Zeitraum: wir nehmen volle Vertragszeiträume
 	fd = getdate(from_date) if from_date else None
 	td = getdate(to_date) if to_date else None
