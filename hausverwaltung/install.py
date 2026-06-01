@@ -553,6 +553,10 @@ def ensure_mietabrechnung_id_backfilled() -> None:
 
         marker_re = re.compile(r"\[MV:([^\]]+)\]\s+(\d{2}/\d{4})")
 
+        fields = ["name", "remarks", "customer", "posting_date", "wohnung"]
+        if frappe.db.has_column("Sales Invoice", "hv_eingabequelle"):
+            fields.append("hv_eingabequelle")
+
         candidates = frappe.get_all(
             "Sales Invoice",
             filters={
@@ -560,12 +564,15 @@ def ensure_mietabrechnung_id_backfilled() -> None:
                 "is_return": 0,
                 "mietabrechnung_id": ("in", ["", None]),
             },
-            fields=["name", "remarks", "customer", "posting_date", "wohnung"],
+            fields=fields,
         )
         if not candidates:
             return
 
         for sinv in candidates:
+            if sinv.get("hv_eingabequelle") == "Vereinfachte Mieterrechnung":
+                continue
+
             value = None
             remarks = sinv.get("remarks") or ""
             match = marker_re.search(str(remarks))

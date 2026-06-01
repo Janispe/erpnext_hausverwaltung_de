@@ -914,6 +914,9 @@ def create_sales_invoice(**kwargs) -> dict:
     if _has_field("Sales Invoice", "hv_eingabequelle"):
         si.hv_eingabequelle = EINGABEQUELLE_AUSGANG
 
+    if _has_field("Sales Invoice", "mietabrechnung_id"):
+        si.set("mietabrechnung_id", None)
+
     si.insert(ignore_permissions=True)
 
     submit_doc_raw = kwargs.get("submit_doc", 1)

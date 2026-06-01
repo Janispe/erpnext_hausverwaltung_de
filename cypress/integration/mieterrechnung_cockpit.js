@@ -170,6 +170,7 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 				expect(item.item_code, "item_code (Default-Service)").to.be.a("string").and.not.empty;
 				expect(item.description).to.match(/Renovierungspauschale/);
 				expect(si.remarks).to.eq("Renovierungspauschale");
+				expect(si.mietabrechnung_id || "").to.eq("");
 			});
 		});
 	});

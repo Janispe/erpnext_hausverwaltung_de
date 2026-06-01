@@ -21,12 +21,17 @@ from hausverwaltung.hausverwaltung.utils.mietabrechnung import (
 
 
 _MARKER_RE = re.compile(r"\[MV:([^\]]+)\]\s+(\d{2}/\d{4})")
+COCKPIT_SOURCE = "Vereinfachte Mieterrechnung"
 
 
 def execute():
 	if not frappe.db.has_column("Sales Invoice", "mietabrechnung_id"):
 		# Custom Field noch nicht synchronisiert — passiert beim nächsten Migrate.
 		return
+
+	fields = ["name", "remarks", "customer", "posting_date", "wohnung"]
+	if frappe.db.has_column("Sales Invoice", "hv_eingabequelle"):
+		fields.append("hv_eingabequelle")
 
 	candidates = frappe.get_all(
 		"Sales Invoice",
@@ -35,7 +40,7 @@ def execute():
 			"is_return": 0,
 			"mietabrechnung_id": ("in", ["", None]),
 		},
-		fields=["name", "remarks", "customer", "posting_date", "wohnung"],
+		fields=fields,
 	)
 
 	if not candidates:
@@ -46,6 +51,10 @@ def execute():
 	skipped = 0
 
 	for sinv in candidates:
+		if sinv.get("hv_eingabequelle") == COCKPIT_SOURCE:
+			skipped += 1
+			continue
+
 		value = _from_marker(sinv.get("remarks"))
 		if value:
 			frappe.db.set_value(
