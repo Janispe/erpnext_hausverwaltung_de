@@ -1,6 +1,25 @@
 // op-actions.jsx — Aktionen und Modals für den Offene-Posten-Report.
 const { useState: useStateAct, useEffect: useEffectAct } = React;
 
+function canCreateDunningFor(row) {
+  const isSalesInvoice = String(row.belegart || "").replace(/ \(×\d+\)$/, "") === "Sales Invoice";
+  if (row.status === "Written Off") return false;
+  if (row.art !== "Forderungen" || !isSalesInvoice) return false;
+  if (row.offen <= 0.01 || row.alter_tage <= 0) return false;
+  return (row.mahnstufe || 0) < 4;
+}
+
+function isOverdueSalesInvoiceReceivable(row) {
+  const isSalesInvoice = String(row.belegart || "").replace(/ \(×\d+\)$/, "") === "Sales Invoice";
+  return (
+    row.status !== "Written Off" &&
+    row.art === "Forderungen" &&
+    isSalesInvoice &&
+    row.offen > 0.01 &&
+    row.alter_tage > 0
+  );
+}
+
 // Wählt die *primäre* Aktion pro Zeile basierend auf Status/Art/Mahnstufe.
 function primaryActionFor(row) {
   // Bereits abgeschrieben → keine primäre Aktion
@@ -23,8 +42,7 @@ function primaryActionFor(row) {
 
   // Forderung, überfällig: erst ins Mahnwesen drillen. Dort sieht man Historie
   // und erstellt die nächste Mahnung explizit.
-  const isSalesInvoice = String(row.belegart || "").replace(/ \(×\d+\)$/, "") === "Sales Invoice";
-  if (row.art === "Forderungen" && isSalesInvoice && row.offen > 0.01 && row.alter_tage > 0) {
+  if (isOverdueSalesInvoiceReceivable(row)) {
     const nextStufe = (row.mahnstufe || 0) + 1;
     if (nextStufe <= 4) {
       return {
@@ -32,9 +50,8 @@ function primaryActionFor(row) {
         label: "Mahnwesen",
         kind: nextStufe >= 2 ? "late" : "primary",
       };
-    } else {
-      return { key: "inkasso", label: "An Inkasso", kind: "late" };
     }
+    return { key: "inkasso", label: "An Inkasso", kind: "late" };
   }
 
   // Forderung noch nicht fällig → keine primäre Aktion
@@ -75,6 +92,11 @@ function ActionCell({ row, onAction }) {
             <button className="op-action-menu-item" onClick={() => onAction("beleg", row)}>
               → Beleg öffnen
             </button>
+            {canCreateDunningFor(row) && (
+              <button className="op-action-menu-item" onClick={() => onAction("mahnung", row)}>
+                Mahnung erstellen…
+              </button>
+            )}
             {row.art === "Forderungen" && (
               <button className="op-action-menu-item" onClick={() => onAction("kontakt", row)}>
                 Mieter anrufen / mailen
@@ -970,6 +992,6 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
 }
 
 Object.assign(window, {
-  primaryActionFor, ActionCell,
+  canCreateDunningFor, isOverdueSalesInvoiceReceivable, primaryActionFor, ActionCell,
   Modal, MahnungModal, ZahlungModal, GuthabenAuszahlenModal, ZuordnenModal, SammelmahnungModal, Toast,
 });
