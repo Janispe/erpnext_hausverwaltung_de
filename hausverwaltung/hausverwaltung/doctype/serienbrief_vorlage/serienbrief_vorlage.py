@@ -19,6 +19,10 @@ from jinja2.exceptions import TemplateError
 # pixel-für-pixel zur finalen PDF passt — frappe.utils.pdf.get_pdf ist hardcoded auf
 # wkhtmltopdf und würde Spacing/Footer/Paged-Media anders rendern.
 from hausverwaltung.hausverwaltung.utils.pdf_engine import render_pdf as get_pdf
+from hausverwaltung.hausverwaltung.utils.serienbrief_fonts import (
+	get_serienbrief_font_face_css,
+	serienbrief_font_family,
+)
 from hausverwaltung.hausverwaltung.utils.serienbrief_pdf_form import read_file_url_bytes
 from markupsafe import Markup, escape
 
@@ -122,9 +126,9 @@ def _build_pfad_footer_html(template_doc) -> str:
 
 
 def _wrap_preview_html(body_html: str, template_doc=None) -> str:
-	styles = """
+	styles = (get_serienbrief_font_face_css() + """
 		body {
-			font-family: "Liberation Sans", "Arial", "Helvetica", sans-serif;
+			font-family: __HV_SERIENBRIEF_FONT_FAMILY__;
 			color: #222;
 			font-size: 11pt;
 			margin: 24px;
@@ -171,7 +175,7 @@ def _wrap_preview_html(body_html: str, template_doc=None) -> str:
 			font-family: Arial, Helvetica, sans-serif;
 			line-height: 1.4;
 		}
-	"""
+	""").replace("__HV_SERIENBRIEF_FONT_FAMILY__", serienbrief_font_family())
 
 	pfad_html = _build_pfad_footer_html(template_doc)
 
