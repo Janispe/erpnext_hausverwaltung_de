@@ -42,3 +42,75 @@ class TestPaymentAutoMatchRemarks(FrappeTestCase):
 				invoice_doctype="Purchase Invoice",
 			)
 		)
+
+
+class TestReconcileCreatedVoucherRollback(FrappeTestCase):
+	def test_do_match_uses_protected_reconcile(self):
+		bt = frappe._dict(name="BT-MATCH")
+		invoices = [frappe._dict(name="SINV-MATCH")]
+		pe = frappe._dict(name="PE-MATCH")
+
+		with patch.object(pam, "create_payment_entry_for_invoices", return_value=pe), \
+			patch.object(pam, "reconcile_created_voucher_or_rollback") as protected_reconcile:
+			result = pam._do_match(bt, invoices, "Sales Invoice", "single", 100.0)
+
+		protected_reconcile.assert_called_once_with(bt, "Payment Entry", "PE-MATCH", 100.0)
+		self.assertTrue(result["matched"])
+		self.assertEqual(result["payment_entry"], "PE-MATCH")
+
+	def test_do_match_propagates_protected_reconcile_failure(self):
+		bt = frappe._dict(name="BT-MATCH-FAIL")
+		invoices = [frappe._dict(name="SINV-MATCH-FAIL")]
+		pe = frappe._dict(name="PE-MATCH-FAIL")
+
+		with patch.object(pam, "create_payment_entry_for_invoices", return_value=pe), \
+			patch.object(
+				pam,
+				"reconcile_created_voucher_or_rollback",
+				side_effect=RuntimeError("simulated"),
+			):
+			with self.assertRaises(RuntimeError):
+				pam._do_match(bt, invoices, "Sales Invoice", "single", 100.0)
+
+	def test_reconcile_failure_rolls_back_and_cancels_submitted_voucher(self):
+		bt = frappe._dict(name="BT-ROLLBACK")
+		voucher = frappe._dict(name="PE-ROLLBACK", docstatus=1, flags=frappe._dict())
+		voucher.cancelled = False
+		voucher.cancel = lambda: setattr(voucher, "cancelled", True)
+
+		with patch.object(pam.frappe.db, "savepoint") as savepoint, \
+			patch.object(pam.frappe.db, "rollback") as rollback, \
+			patch.object(pam.frappe.db, "exists", return_value=True), \
+			patch.object(pam.frappe, "get_doc", return_value=voucher), \
+			patch.object(pam, "reconcile_voucher_with_bt", side_effect=RuntimeError("simulated")):
+			with self.assertRaises(RuntimeError):
+				pam.reconcile_created_voucher_or_rollback(
+					bt,
+					"Payment Entry",
+					"PE-ROLLBACK",
+					100.0,
+				)
+
+		savepoint.assert_called_once_with("bankimport_reconcile_voucher")
+		rollback.assert_called_once_with(save_point="bankimport_reconcile_voucher")
+		self.assertTrue(voucher.cancelled)
+		self.assertTrue(voucher.flags.ignore_permissions)
+
+	def test_successful_reconcile_does_not_cancel_voucher(self):
+		bt = frappe._dict(name="BT-OK")
+
+		with patch.object(pam.frappe.db, "savepoint") as savepoint, \
+			patch.object(pam.frappe.db, "rollback") as rollback, \
+			patch.object(pam.frappe.db, "exists") as exists, \
+			patch.object(pam, "reconcile_voucher_with_bt") as reconcile:
+			pam.reconcile_created_voucher_or_rollback(
+				bt,
+				"Journal Entry",
+				"JE-OK",
+				42.0,
+			)
+
+		savepoint.assert_called_once_with("bankimport_reconcile_voucher")
+		reconcile.assert_called_once_with(bt, "Journal Entry", "JE-OK", 42.0)
+		rollback.assert_not_called()
+		exists.assert_not_called()

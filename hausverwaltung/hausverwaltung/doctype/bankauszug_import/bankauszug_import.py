@@ -2440,7 +2440,7 @@ def manually_reconcile_row(
     import json as _json
     from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
         create_payment_entry_for_invoices,
-        reconcile_voucher_with_bt,
+        reconcile_created_voucher_or_rollback,
     )
 
     doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
@@ -2514,7 +2514,7 @@ def manually_reconcile_row(
         leftover_as_advance=bool(int(leftover_as_advance or 0)),
     )
 
-    reconcile_voucher_with_bt(bt, "Payment Entry", pe.name, target_amount)
+    reconcile_created_voucher_or_rollback(bt, "Payment Entry", pe.name, target_amount)
 
     row.db_set("payment_entry", pe.name)
     _set_row_payment_document(row, "Payment Entry", pe.name)
@@ -2546,7 +2546,7 @@ def assign_abschlagsplan_row(
     from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
         _resolve_expected_cost_center_for_bt,
         create_standalone_payment_entry,
-        reconcile_voucher_with_bt,
+        reconcile_created_voucher_or_rollback,
     )
 
     _doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
@@ -2587,7 +2587,7 @@ def assign_abschlagsplan_row(
         remarks=remarks or row.get("verwendungszweck") or row.get("auftraggeber") or None,
     )
     target_amount = flt(row.betrag)
-    reconcile_voucher_with_bt(bt, "Payment Entry", pe.name, target_amount)
+    reconcile_created_voucher_or_rollback(bt, "Payment Entry", pe.name, target_amount)
 
     row.db_set("payment_entry", pe.name)
     _set_row_payment_document(row, "Payment Entry", pe.name)
@@ -2631,7 +2631,7 @@ def create_standalone_payment_for_row(
     """
     from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
         create_standalone_payment_entry,
-        reconcile_voucher_with_bt,
+        reconcile_created_voucher_or_rollback,
     )
 
     doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
@@ -2645,7 +2645,7 @@ def create_standalone_payment_for_row(
         remarks=remarks,
     )
     target_amount = flt(row.betrag)
-    reconcile_voucher_with_bt(bt, "Payment Entry", pe.name, target_amount)
+    reconcile_created_voucher_or_rollback(bt, "Payment Entry", pe.name, target_amount)
 
     row.db_set("payment_entry", pe.name)
     _set_row_payment_document(row, "Payment Entry", pe.name)
@@ -2710,7 +2710,7 @@ def create_journal_entry_for_row(
     import json as _json
     from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
         create_journal_entry_for_bt,
-        reconcile_voucher_with_bt,
+        reconcile_created_voucher_or_rollback,
     )
 
     doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
@@ -2735,7 +2735,7 @@ def create_journal_entry_for_row(
         remarks=remarks,
     )
     target_amount = flt(row.betrag)
-    reconcile_voucher_with_bt(bt, "Journal Entry", je.name, target_amount)
+    reconcile_created_voucher_or_rollback(bt, "Journal Entry", je.name, target_amount)
 
     row.db_set("journal_entry", je.name)
     _set_row_payment_document(row, "Journal Entry", je.name)

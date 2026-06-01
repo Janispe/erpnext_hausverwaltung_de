@@ -218,7 +218,7 @@ def _do_match(bt, invoices, invoice_doctype, strategy_label, target_amount):
 		invoice_doctype=invoice_doctype,
 		target_amount=target_amount,
 	)
-	reconcile_voucher_with_bt(bt, "Payment Entry", pe.name, target_amount)
+	reconcile_created_voucher_or_rollback(bt, "Payment Entry", pe.name, target_amount)
 
 	return {
 		"matched": True,
@@ -250,6 +250,40 @@ def reconcile_voucher_with_bt(bt, voucher_doctype, voucher_name, amount):
 			]
 		),
 	)
+
+
+def reconcile_created_voucher_or_rollback(
+	bt,
+	voucher_doctype: str,
+	voucher_name: str,
+	amount,
+	savepoint_name: str = "bankimport_reconcile_voucher",
+) -> None:
+	"""Reconcile a freshly submitted voucher, rolling it back on failure.
+
+	Bankimport first creates/submits the voucher and then reconciles it with the
+	Bank Transaction. If reconcile fails, the submitted voucher must not remain
+	as an orphan that can be booked a second time from the import row.
+	"""
+	frappe.db.savepoint(savepoint_name)
+	try:
+		reconcile_voucher_with_bt(bt, voucher_doctype, voucher_name, amount)
+	except Exception:
+		frappe.db.rollback(save_point=savepoint_name)
+		try:
+			if frappe.db.exists(voucher_doctype, voucher_name):
+				voucher = frappe.get_doc(voucher_doctype, voucher_name)
+				if int(getattr(voucher, "docstatus", 0) or 0) == 1:
+					if not getattr(voucher, "flags", None):
+						voucher.flags = frappe._dict()
+					voucher.flags.ignore_permissions = True
+					voucher.cancel()
+		except Exception:
+			frappe.log_error(
+				frappe.get_traceback(),
+				f"Bankimport: konnte verwaisten {voucher_doctype} {voucher_name} nicht stornieren",
+			)
+		raise
 
 
 def _resolve_company_and_bank_account(bt):

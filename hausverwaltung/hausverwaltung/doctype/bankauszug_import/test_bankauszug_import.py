@@ -1020,6 +1020,46 @@ class TestBankauszugImport(FrappeTestCase):
         self.assertEqual([c["row_name"] for c in res["candidates"]], ["ROW-OK", "ROW-FAR"])
         self.assertEqual(res["candidates"][0]["delta_days"], 1)
 
+    def test_manually_reconcile_row_reconcile_failure_leaves_row_unset(self):
+        row = self._FakeRow(name="ROW-INV-FAIL", iban="DE15")
+        row.party_type = "Customer"
+        row.party = "CUST-1"
+        row.betrag = 100.0
+        row.payment_entry = None
+        row.journal_entry = None
+        row.row_status = None
+        row.db_updates = {}
+
+        def _db_set(fieldname, value):
+            row.db_updates[fieldname] = value
+            setattr(row, fieldname, value)
+
+        row.db_set = _db_set
+        bt = type("BT", (), {"name": "BT-INV-FAIL"})()
+        pe = type("PE", (), {"name": "PE-INV-FAIL"})()
+        invoice = frappe._dict(name="SINV-FAIL", outstanding_amount=100.0, posting_date="2026-05-05")
+
+        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(object(), row, bt)), \
+             patch.object(bi.frappe.db, "get_value", return_value=invoice), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.create_payment_entry_for_invoices",
+                 return_value=pe,
+             ), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_created_voucher_or_rollback",
+                 side_effect=RuntimeError("simulated"),
+             ), \
+             patch.object(bi, "_recompute_doc_status") as recompute, \
+             patch.object(bi, "_refresh_and_persist_saldo") as refresh:
+            with self.assertRaises(RuntimeError):
+                bi.manually_reconcile_row("IMP-INV-FAIL", "ROW-INV-FAIL", "SINV-FAIL")
+
+        self.assertIsNone(row.payment_entry)
+        self.assertIsNone(getattr(row, "payment_document", None))
+        self.assertIsNone(row.row_status)
+        recompute.assert_not_called()
+        refresh.assert_not_called()
+
     def test_assign_abschlagsplan_row_creates_payment_and_marks_plan_row(self):
         row = self._FakeRow(name="ROW-ASSIGN", iban="DE17", verwendungszweck="Abschlag")
         row.richtung = "Ausgang"
@@ -1108,6 +1148,128 @@ class TestBankauszugImport(FrappeTestCase):
         self.assertEqual(str(plan_row_doc.gebucht_am), "2026-05-05")
         self.assertEqual(res["zahlungsplan"], "ZP-1")
 
+    def test_assign_abschlagsplan_row_reconcile_failure_leaves_links_unset(self):
+        row = self._FakeRow(name="ROW-ASSIGN-FAIL", iban="DE17", verwendungszweck="Abschlag")
+        row.richtung = "Ausgang"
+        row.party_type = "Supplier"
+        row.party = "SUP-1"
+        row.betrag = 120.0
+        row.buchungstag = "2026-05-05"
+        row.payment_entry = None
+        row.journal_entry = None
+        row.row_status = None
+        row.db_updates = {}
+
+        def _row_db_set(fieldname, value):
+            row.db_updates[fieldname] = value
+            setattr(row, fieldname, value)
+
+        row.db_set = _row_db_set
+        doc = self._FakeDoc("IMP-ASSIGN-FAIL", [row])
+        bt = type("BT", (), {"name": "BT-ASSIGN-FAIL", "bank_account": "BA-1"})()
+        pe = type("PE", (), {"name": "PE-ASSIGN-FAIL"})()
+        plan_row = frappe._dict({
+            "name": "PLAN-ROW-FAIL",
+            "parent": "ZP-1",
+            "idx": 4,
+            "faelligkeitsdatum": "2026-05-05",
+            "betrag": 120.0,
+            "payment_entry": None,
+        })
+
+        class _Plan:
+            name = "ZP-1"
+            bank_account = "BA-1"
+            cost_center = "CC-1"
+
+            def get(self, key, default=None):
+                return {
+                    "modus": "Abschlagsplan",
+                    "status": "Läuft",
+                    "lieferant": "SUP-1",
+                    "bank_account": "BA-1",
+                    "cost_center": "CC-1",
+                }.get(key, default)
+
+        class _PlanRowDoc:
+            def db_set(self, fieldname, value, update_modified=False):
+                setattr(self, fieldname, value)
+
+        plan_row_doc = _PlanRowDoc()
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Zahlungsplan":
+                return _Plan()
+            if doctype == "Zahlungsplan Zeile":
+                return plan_row_doc
+            raise AssertionError("unexpected doctype")
+
+        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(doc, row, bt)), \
+             patch.object(bi.frappe.db, "get_value", return_value=plan_row), \
+             patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match._resolve_expected_cost_center_for_bt",
+                 return_value="CC-1",
+             ), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.create_standalone_payment_entry",
+                 return_value=pe,
+             ), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_created_voucher_or_rollback",
+                 side_effect=RuntimeError("simulated"),
+             ), \
+             patch.object(bi, "_recompute_doc_status") as recompute, \
+             patch.object(bi, "_refresh_and_persist_saldo") as refresh:
+            with self.assertRaises(RuntimeError):
+                bi.assign_abschlagsplan_row("IMP-ASSIGN-FAIL", "ROW-ASSIGN-FAIL", "PLAN-ROW-FAIL")
+
+        self.assertIsNone(row.payment_entry)
+        self.assertIsNone(getattr(row, "payment_document", None))
+        self.assertIsNone(row.row_status)
+        self.assertFalse(hasattr(plan_row_doc, "payment_entry"))
+        self.assertFalse(hasattr(plan_row_doc, "bank_transaction"))
+        recompute.assert_not_called()
+        refresh.assert_not_called()
+
+    def test_create_standalone_payment_for_row_reconcile_failure_leaves_row_unset(self):
+        row = self._FakeRow(name="ROW-PE-FAIL", iban="DE18")
+        row.party_type = "Customer"
+        row.party = "CUST-1"
+        row.betrag = 80.0
+        row.payment_entry = None
+        row.journal_entry = None
+        row.row_status = None
+        row.db_updates = {}
+
+        def _db_set(fieldname, value):
+            row.db_updates[fieldname] = value
+            setattr(row, fieldname, value)
+
+        row.db_set = _db_set
+        bt = type("BT", (), {"name": "BT-PE-FAIL"})()
+        pe = type("PE", (), {"name": "PE-FAIL"})()
+
+        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(object(), row, bt)), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.create_standalone_payment_entry",
+                 return_value=pe,
+             ), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_created_voucher_or_rollback",
+                 side_effect=RuntimeError("simulated"),
+             ), \
+             patch.object(bi, "_recompute_doc_status") as recompute, \
+             patch.object(bi, "_refresh_and_persist_saldo") as refresh:
+            with self.assertRaises(RuntimeError):
+                bi.create_standalone_payment_for_row("IMP-PE-FAIL", "ROW-PE-FAIL")
+
+        self.assertIsNone(row.payment_entry)
+        self.assertIsNone(getattr(row, "payment_document", None))
+        self.assertIsNone(row.row_status)
+        recompute.assert_not_called()
+        refresh.assert_not_called()
+
     def test_create_journal_entry_for_row_sets_journal_entry_and_success_status(self):
         row = self._FakeRow(name="ROW-JE", iban="DE16")
         row.bank_transaction = "BT-JE"
@@ -1149,6 +1311,49 @@ class TestBankauszugImport(FrappeTestCase):
         self.assertIn("Buchungssatz", row.auto_match_message)
         create_je.assert_called_once()
         reconcile.assert_called_once_with(bt, "Journal Entry", "JE-1", 12.34)
+
+    def test_create_journal_entry_for_row_reconcile_failure_leaves_row_unset(self):
+        row = self._FakeRow(name="ROW-JE-FAIL", iban="DE16")
+        row.bank_transaction = "BT-JE-FAIL"
+        row.betrag = 12.34
+        row.journal_entry = None
+        row.payment_entry = None
+        row.row_status = None
+        row.db_updates = {}
+
+        def _db_set(fieldname, value):
+            row.db_updates[fieldname] = value
+            setattr(row, fieldname, value)
+
+        row.db_set = _db_set
+        bt = type("BT", (), {"name": "BT-JE-FAIL"})()
+        je = type("JE", (), {"name": "JE-FAIL"})()
+
+        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(object(), row, bt)), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.create_journal_entry_for_bt",
+                 return_value=je,
+             ), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_created_voucher_or_rollback",
+                 side_effect=RuntimeError("simulated"),
+             ), \
+             patch.object(bi, "_recompute_doc_status") as recompute, \
+             patch.object(bi, "_refresh_and_persist_saldo") as refresh:
+            with self.assertRaises(RuntimeError):
+                bi.create_journal_entry_for_row(
+                    "IMP-JE-FAIL",
+                    "ROW-JE-FAIL",
+                    "6300 - Hausmeister-Vergütung - HP",
+                    None,
+                    "Test JE",
+                )
+
+        self.assertIsNone(row.journal_entry)
+        self.assertIsNone(getattr(row, "payment_document", None))
+        self.assertIsNone(row.row_status)
+        recompute.assert_not_called()
+        refresh.assert_not_called()
 
     def test_create_journal_entry_for_row_with_splits_passes_list_to_backend(self):
         import json as _json
