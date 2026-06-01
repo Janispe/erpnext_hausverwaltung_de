@@ -281,8 +281,8 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
         # Zweizeiliger Footer: Bankverbindung oben, Kategorien-Pfad unten.
         # Page-margin-bottom in ``_preview_pdf_options`` ist auf 30mm erhöht,
         # damit Chrome's Page-Footer auch bei langer Bankverbindung-Zeile
-        # (umgebrochen) noch Platz für die Pfad-Zeile hat. 7pt + heller
-        # entspricht dem User-Wunsch (klein und grau).
+        # (umgebrochen) noch Platz für die Pfad-Zeile hat. 6pt + mittleres Grau
+        # hält den Footer unauffällig, aber besser lesbar als sehr helles Grau.
         # `color: ... !important` ist nötig, weil Frappes Print-Bundle eine
         # globale @media-print-Regel ``*, *:before, *:after { color: #000 }``
         # mitlädt — ohne !important rendert Chrome den Footer schwarz statt
@@ -290,7 +290,7 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
         # Universal-Regel direkt auf jedes Descendant-Element greift und
         # damit die Vererbung vom #footer-html-Container ignoriert.
         footer_html = """
-<div id="footer-html" style="padding: 4px 0 6px; border-top: 1px solid #eef0f3; font-size: 7pt; color: #b8c0cc !important; text-align: center; font-family: Arial, sans-serif; line-height: 1.3; height: 12mm; min-height: 12mm; box-sizing: border-box;">
+<div id="footer-html" style="padding: 2px 0 4px; border-top: 1px solid #eef0f3; font-size: 6pt; color: #8a93a3 !important; text-align: center; font-family: Arial, sans-serif; line-height: 1.2; height: 10mm; min-height: 10mm; box-sizing: border-box;">
 {%- set bank_html = get_footer_bankverbindung_html(doc) -%}
 {%- set vorlage_name = doc.vorlage if doc and doc.vorlage else None -%}
 {%- set pfad_html = "" -%}
@@ -309,8 +309,8 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 {%- set pfad_parts = (ns.chain | reverse | list) + [vorlage_doc.title or vorlage_name] -%}
 {%- set pfad_html = pfad_parts | join(" / ") -%}
 {%- endif -%}
-{%- if bank_html -%}<div style="color: #b8c0cc !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ bank_html | safe }}</div>{%- endif -%}
-{%- if pfad_html -%}<div style="color: #b8c0cc !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ pfad_html }}</div>{%- endif -%}
+{%- if bank_html -%}<div style="color: #8a93a3 !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ bank_html | safe }}</div>{%- endif -%}
+{%- if pfad_html -%}<div style="color: #8a93a3 !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ pfad_html }}</div>{%- endif -%}
 </div>
 """
 
