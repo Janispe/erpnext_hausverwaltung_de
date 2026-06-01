@@ -18,6 +18,11 @@ import {
 export const embedded = isEmbedded();
 export const importName = getImportFromUrl();
 
+export function isMissingRowError(errorOrMessage) {
+	const msg = String(errorOrMessage?.message || errorOrMessage || "");
+	return /Zeile\s+\S+\s+wurde im Dokument\s+\S+\s+nicht gefunden/i.test(msg);
+}
+
 // ---- Übersicht / Import-Auswahl ------------------------------------------
 
 // Liste verfügbarer Importe (für den Picker, wenn ?import= fehlt).

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import * as api from "./api.js";
 import { rowPhase, Icon, Spinner, fmtDate } from "./helpers.jsx";
 import { TopBar } from "./components/TopBar.jsx";
@@ -161,8 +161,20 @@ export function App() {
 	const [search, setSearch] = useState("");
 	const [selectedId, setSelectedId] = useState(null);
 	const [toast, setToast] = useState(null);
+	const reloadRef = useRef(null);
 
 	const notify = useCallback((type, msg) => {
+		if (type === "error" && api.isMissingRowError(msg)) {
+			setToast({
+				type: "error",
+				msg: "Die ausgewählte Importzeile ist nicht mehr aktuell. Die Ansicht wird neu geladen.",
+			});
+			window.clearTimeout(notify._t);
+			notify._t = window.setTimeout(() => setToast(null), 5000);
+			setSelectedId(null);
+			reloadRef.current?.();
+			return;
+		}
 		setToast({ type, msg });
 		window.clearTimeout(notify._t);
 		notify._t = window.setTimeout(() => setToast(null), type === "error" ? 7000 : 3500);
@@ -186,6 +198,7 @@ export function App() {
 		},
 		[docname]
 	);
+	reloadRef.current = reload;
 
 	useEffect(() => { if (docname) reload(docname); }, [docname]); // eslint-disable-line
 
