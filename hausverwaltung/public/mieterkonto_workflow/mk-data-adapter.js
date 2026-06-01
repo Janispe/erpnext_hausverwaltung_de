@@ -77,12 +77,16 @@
   }
 
   function adaptSummary(rawSummary) {
-    if (!rawSummary || !rawSummary.length) return defaultSummary();
-    return rawSummary.map((s) => ({
+    const summary = rawSummary && rawSummary.length ? rawSummary : defaultSummary();
+    const normalized = summary.map((s) => ({
       label: s.label,
-      value: s.value,
+      value: Number(s.value) || 0,
       indicator: s.indicator || "neutral",
     }));
+    for (const item of defaultSummary()) {
+      if (!normalized.some((s) => s.label === item.label)) normalized.push(item);
+    }
+    return normalized;
   }
 
   function defaultFromDate() {
@@ -123,6 +127,10 @@
     return [
       { label: "Kontostand", value: 0, indicator: "neutral" },
       { label: "Bezahlt im Zeitraum", value: 0, indicator: "neutral" },
+      { label: "Miete offen", value: 0, indicator: "neutral" },
+      { label: "BK offen", value: 0, indicator: "neutral" },
+      { label: "HK offen", value: 0, indicator: "neutral" },
+      { label: "G/N offen", value: 0, indicator: "neutral" },
     ];
   }
 

@@ -390,6 +390,7 @@ def _build_invoice_transactions(invoices: dict[str, InvoiceInfo]) -> list[dict[s
 				"paid_amounts": {},
 				"written_off_amounts": {},
 				"delta": sum(invoice.category_amounts.values()),
+				"offen": invoice.outstanding_amount,
 			}
 		)
 	return transactions
@@ -501,6 +502,7 @@ def _build_settlement_transactions(
 					"paid_amounts": {category: 0.0 for category in CATEGORIES},
 					"written_off_amounts": {category: 0.0 for category in CATEGORIES},
 					"delta": 0.0,
+					"offen": 0.0,
 				}
 				bundles[bundle_key] = bundle
 				bundle_order.append(bundle_key)
@@ -647,6 +649,7 @@ def _build_standalone_receivable_transactions(
 				"paid_amounts": {cat: 0.0 for cat in CATEGORIES} if is_charge else amounts,
 				"written_off_amounts": {cat: 0.0 for cat in CATEGORIES},
 				"delta": net_charge,
+				"offen": 0.0,
 			}
 		)
 
@@ -896,6 +899,7 @@ def _transaction_to_row(transaction: dict[str, Any], balance: float) -> dict[str
 		"status": transaction.get("status"),
 		"kontostand": flt(balance, 2),
 		"waehrung": transaction.get("currency"),
+		"offen": flt(transaction.get("offen"), 2),
 	}
 	# Signed per-category Spalte: +Soll (Rechnung), -Bezahlt (Zahlung),
 	# -Abgeschrieben. Pro Transaktion ist nur eine Quelle ≠ 0, das Vorzeichen

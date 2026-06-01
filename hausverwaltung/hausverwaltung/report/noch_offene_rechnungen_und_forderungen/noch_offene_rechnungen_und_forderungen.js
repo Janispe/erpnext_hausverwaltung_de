@@ -144,8 +144,8 @@ frappe.query_reports["Noch offene Rechnungen und Forderungen"] = {
 		});
 
 		report.page.wrapper.off("click.hv_writeoff").on("click.hv_writeoff", ".hv-writeoff-row", function () {
-			const invoice = $(this).data("invoice");
-			window.hv_sales_invoice_writeoff.open_dialog([invoice], {
+			const invoices = get_row_invoices($(this).attr("data-invoices"));
+			window.hv_sales_invoice_writeoff.open_dialog(invoices, {
 				on_success: () => frappe.query_report.refresh(),
 			});
 		});
@@ -162,10 +162,15 @@ frappe.query_reports["Noch offene Rechnungen und Forderungen"] = {
 	formatter: function (value, row, column, data, default_formatter) {
 		if (column.fieldname === "aktion") {
 			if (!data || !data.can_write_off) return "";
-			const invoice = frappe.utils.escape_html(data.belegnummer || "");
-			return `<button class="btn btn-xs btn-default hv-writeoff-row" data-invoice="${invoice}">${__(
+			const invoices = data.member_voucher_nos?.length ? data.member_voucher_nos : [data.belegnummer];
+			const encoded = frappe.utils.escape_html(JSON.stringify(invoices.filter(Boolean)));
+			return `<button class="btn btn-xs btn-default hv-writeoff-row" data-invoices="${encoded}">${__(
 				"Abschreiben"
 			)}</button>`;
+		}
+		if (column.fieldname === "belegnummer" && data?.beleg_count > 1) {
+			const rendered = default_formatter(value, row, column, data);
+			return `${rendered} <span class="text-muted">(×${data.beleg_count})</span>`;
 		}
 		if (column.fieldname === "zahlungsrichtung") {
 			const label = data?.zahlungsrichtung || "";
@@ -198,11 +203,26 @@ function write_off_selected_rows() {
 	}
 
 	window.hv_sales_invoice_writeoff.open_dialog(
-		selected_rows.map((row) => row.belegnummer),
+		[
+			...new Set(
+				selected_rows.flatMap((row) =>
+					row.member_voucher_nos?.length ? row.member_voucher_nos : [row.belegnummer]
+				).filter(Boolean)
+			),
+		],
 		{
 			on_success: () => frappe.query_report.refresh(),
 		}
 	);
+}
+
+function get_row_invoices(raw) {
+	try {
+		const parsed = JSON.parse(raw || "[]");
+		return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+	} catch (err) {
+		return [];
+	}
 }
 
 function get_selected_report_rows() {

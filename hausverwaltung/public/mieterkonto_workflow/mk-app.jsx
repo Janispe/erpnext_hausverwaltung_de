@@ -143,6 +143,38 @@ function App() {
     });
   };
 
+  const printPage = () => window.print();
+
+  const exportCsv = () => {
+    const csvRows = [
+      ["Datum", "Art", "Belegart", "Belegnummer", "Beschreibung", "Miete", "BK", "HK", "G/N", "Summe", "Kontostand"],
+      ...rows.map((r) => [
+        r.datum || "",
+        r.art || "",
+        r.belegart || "",
+        r.belegnummer || "",
+        r.beschreibung || "",
+        r.betrag_miete || 0,
+        r.betrag_betriebskosten || 0,
+        r.betrag_heizkosten || 0,
+        r.betrag_guthaben_nachzahlungen || 0,
+        r.betrag_summe || 0,
+        r.kontostand || 0,
+      ]),
+    ];
+    const csv = csvRows.map((row) => row.map(csvCell).join(";")).join("\n");
+    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const safeCustomer = (customer || "mieterkonto").replace(/[^a-z0-9_-]+/gi, "_");
+    link.href = url;
+    link.download = `${safeCustomer}_${fromDate}_${toDate}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className={`mk-app ${t.printMode ? "is-print-mode" : ""}`}>
       <div className="mk-topbar" data-screen-label="Topbar">
@@ -163,9 +195,9 @@ function App() {
         </div>
         <div className="mk-topbar-actions">
           <button className="mk-btn mk-btn-ghost" onClick={openLegacyReport}>Alte Ansicht</button>
-          <button className="mk-btn mk-btn-ghost" onClick={() => window.print()}>Drucken</button>
-          <button className="mk-btn mk-btn-ghost">Export CSV</button>
-          <button className="mk-btn mk-btn-primary">PDF</button>
+          <button className="mk-btn mk-btn-ghost" onClick={printPage}>Drucken</button>
+          <button className="mk-btn mk-btn-ghost" onClick={exportCsv}>Export CSV</button>
+          <button className="mk-btn mk-btn-primary" onClick={printPage}>PDF</button>
         </div>
       </div>
 
@@ -246,6 +278,11 @@ function App() {
       </TweaksPanel>
     </div>
   );
+}
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  return /[;"\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 window.MK_RENDER = function renderMieterkontoWorkflow() {

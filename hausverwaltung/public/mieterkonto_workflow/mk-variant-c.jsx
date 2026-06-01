@@ -1,9 +1,9 @@
 // variant-c.jsx — Dashboard-Stil: KPI-Kacheln prominent, Tabelle kompakter.
 
 function VariantC({ rows, totalRow, summary, density }) {
-  const kontostand = summary[0].value;
-  const bezahlt = summary[1].value;
-  const offen = summary.slice(2);
+  const kontostand = getSummaryItem(summary, "Kontostand").value;
+  const bezahlt = getSummaryItem(summary, "Bezahlt im Zeitraum").value;
+  const offen = getOpenSummaryItems(summary);
   const totalOffen = offen.reduce((a, s) => a + s.value, 0);
   const offenPosten = rows.filter(r => r.offen > 0).length;
   const isDue = kontostand > 0.01;

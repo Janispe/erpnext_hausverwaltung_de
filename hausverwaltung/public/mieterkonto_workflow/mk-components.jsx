@@ -295,9 +295,9 @@ function MieterHeader({ mieter, filters }) {
             </dd>
           </dl>
           <dl>
-            <dt>Verwendungszweck</dt>
+            <dt>Bankkonto</dt>
             <dd style={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}>
-              {mieter.iban_verwendung}
+              {mieter.iban_verwendung || "—"}
             </dd>
           </dl>
           <dl>
@@ -319,7 +319,10 @@ function MieterHeader({ mieter, filters }) {
 // ───────── Summary-Cards (für Variante A) ─────────
 
 function SummaryCards({ summary }) {
-  const [kontostand, bezahlt, ...offen] = summary;
+  const kontostand = getSummaryItem(summary, "Kontostand");
+  const bezahlt = getSummaryItem(summary, "Bezahlt im Zeitraum");
+  const writtenOff = getSummaryItem(summary, "Abgeschrieben im Zeitraum", null);
+  const offen = getOpenSummaryItems(summary);
   const isDue = kontostand.value > 0.01;
   return (
     <div className="mk-summary">
@@ -334,6 +337,12 @@ function SummaryCards({ summary }) {
         <div className="mk-summary-label">Bezahlt im Zeitraum</div>
         <div className="mk-summary-value num">{fmtEUR(bezahlt.value)}</div>
       </div>
+      {writtenOff && (
+        <div className="mk-summary-card">
+          <div className="mk-summary-label">{writtenOff.label}</div>
+          <div className="mk-summary-value num">{fmtEUR(writtenOff.value)}</div>
+        </div>
+      )}
       {offen.map((s) => (
         <div key={s.label}
           className={`mk-summary-card ${Math.abs(s.value) < 0.01 ? "is-zero" : ""}`}>
@@ -345,7 +354,17 @@ function SummaryCards({ summary }) {
   );
 }
 
+function getSummaryItem(summary, label, fallback = { label, value: 0 }) {
+  return (summary || []).find((s) => s.label === label) || fallback;
+}
+
+function getOpenSummaryItems(summary) {
+  const preferred = ["Miete offen", "BK offen", "HK offen", "G/N offen"];
+  return preferred.map((label) => getSummaryItem(summary, label)).filter(Boolean);
+}
+
 Object.assign(window, {
   fmtEUR, fmtEURsoll, fmtDate, fmtDateShort, monthLabel, CATS,
   ArtPill, OpenBadge, FilterBar, MieterHeader, SummaryCards,
+  getSummaryItem, getOpenSummaryItems,
 });

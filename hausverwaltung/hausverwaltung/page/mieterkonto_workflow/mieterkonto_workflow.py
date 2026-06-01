@@ -150,16 +150,25 @@ def get_mieter_stammdaten(customer: str) -> dict:
     return {
         "customer_id": cust.name,
         "name": cust.customer_name,
-        "objekt": getattr(mietvertrag, "objekt", None) if mietvertrag else None,
-        "einheit": getattr(mietvertrag, "einheit", None) if mietvertrag else None,
+        "objekt": getattr(mietvertrag, "immobilie", None) if mietvertrag else None,
+        "einheit": getattr(mietvertrag, "wohnung", None) if mietvertrag else None,
         "vertrag_seit": getattr(mietvertrag, "von", None) if mietvertrag else None,
-        "sollmiete_aktuell": getattr(mietvertrag, "sollmiete", None) if mietvertrag else None,
+        "sollmiete_aktuell": getattr(mietvertrag, "bruttomiete", None) if mietvertrag else None,
         "aufteilung_aktuell": {
-            "miete":              getattr(mietvertrag, "betrag_miete", 0) if mietvertrag else 0,
-            "betriebskosten":     getattr(mietvertrag, "betrag_betriebskosten", 0) if mietvertrag else 0,
-            "heizkosten":         getattr(mietvertrag, "betrag_heizkosten", 0) if mietvertrag else 0,
+            "miete":              getattr(mietvertrag, "aktuelle_nettokaltmiete", 0) if mietvertrag else 0,
+            "betriebskosten":     getattr(mietvertrag, "aktuelle_betriebskosten", 0) if mietvertrag else 0,
+            "heizkosten":         getattr(mietvertrag, "aktuelle_heizkosten", 0) if mietvertrag else 0,
             "guthaben_nachzahlungen": 0,
         },
-        "iban_verwendung": getattr(mietvertrag, "verwendungszweck", None) if mietvertrag else None,
+        "iban_verwendung": _get_mietvertrag_bankkonto(mietvertrag),
         "firma": frappe.defaults.get_user_default("Company"),
     }
+
+
+def _get_mietvertrag_bankkonto(mietvertrag) -> str | None:
+    if not mietvertrag:
+        return None
+    rows = getattr(mietvertrag, "kontoverbindungen", None) or []
+    active = next((row for row in rows if getattr(row, "aktiv", 0)), None)
+    selected = active or (rows[0] if rows else None)
+    return getattr(selected, "bankkonto", None) if selected else None

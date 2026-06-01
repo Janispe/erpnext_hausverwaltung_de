@@ -124,7 +124,8 @@ def _group_rows_by_mietabrechnung(rows):
 			merged["_member_voucher_nos"].append(row.get("belegnummer"))
 			merged["_member_remarks"].append(row.get("bemerkungen"))
 
-	# Aggregate finalisieren: Zähler-Hinweis in der Belegart-Spalte.
+	# Aggregate finalisieren. `belegart` muss der echte DocType bleiben,
+	# weil die Belegnummer-Spalte ein Dynamic Link auf dieses Feld ist.
 	for merged in buckets.values():
 		count = merged.pop("_member_count", 1)
 		member_voucher_nos = [name for name in merged.pop("_member_voucher_nos", []) if name]
@@ -134,9 +135,7 @@ def _group_rows_by_mietabrechnung(rows):
 		if member_remarks:
 			merged["bemerkungen"] = _combine_monthly_sollstellung_remarks(member_remarks)
 		if count > 1:
-			# In der Belegart-Spalte: "Sales Invoice (x4)". Beleg­nummer-Spalte
-			# behält den Dynamic-Link auf die erste SI.
-			merged["belegart"] = f"{merged.get('belegart')} (×{count})"  # noqa: RUF001
+			merged["beleg_count"] = count
 
 	return out
 
