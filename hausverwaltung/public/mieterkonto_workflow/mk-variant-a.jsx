@@ -133,7 +133,9 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
                 <tr className={showOpen ? "mk-row-open" : ""}>
                   <td className="col-date">{fmtDate(r.datum)}</td>
                   <td><ArtPill art={r.art} /></td>
-                  <td className="col-beleg">{r.belegnummer}</td>
+                  <td className="col-beleg">
+                    <VoucherLink belegart={r.belegart} belegnummer={r.belegnummer} />
+                  </td>
                   <td className="col-desc">
                     <div className="mk-desc-line">
                       <span className="mk-desc-main">

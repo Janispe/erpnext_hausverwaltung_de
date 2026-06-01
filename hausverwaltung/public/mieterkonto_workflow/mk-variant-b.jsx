@@ -89,7 +89,11 @@ function VariantB({ rows, totalRow }) {
                         <span>{r.beschreibung}</span>
                         {isOpen && <OpenBadge amount={r.offen} />}
                       </div>
-                      <span className="mk-tl-beleg">{r.belegnummer}</span>
+                      <VoucherLink
+                        belegart={r.belegart}
+                        belegnummer={r.belegnummer}
+                        className="mk-tl-beleg"
+                      />
                     </div>
                     <div className={`mk-tl-item-amount ${isOut ? "is-out" : ""}`}>
                       {fmtEUR(amount, { signed: true })}

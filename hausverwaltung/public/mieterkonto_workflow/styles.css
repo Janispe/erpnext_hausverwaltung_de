@@ -397,6 +397,23 @@ button { font-family: inherit; }
   color: var(--ink-3);
   white-space: nowrap;
 }
+.mk-voucher-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+.mk-voucher-link:hover {
+  text-decoration: underline;
+}
+.mk-voucher-link:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
+}
 .mk-table td.col-desc {
   color: var(--ink);
 }
@@ -652,6 +669,9 @@ button { font-family: inherit; }
   font-size: 11px;
   color: var(--ink-3);
   margin-top: 2px;
+}
+.mk-tl-item-desc .mk-voucher-link.mk-tl-beleg {
+  color: var(--accent);
 }
 .mk-tl-item-amount {
   font-size: 14px;

@@ -67,6 +67,26 @@ function OpenBadge({ amount }) {
   );
 }
 
+function openVoucher(belegart, belegnummer) {
+  if (!belegart || !belegnummer) return;
+  frappe.set_route("Form", belegart, belegnummer);
+}
+
+function VoucherLink({ belegart, belegnummer, className = "" }) {
+  if (!belegnummer) return null;
+  if (!belegart) return <span className={className}>{belegnummer}</span>;
+  return (
+    <button
+      type="button"
+      className={`mk-voucher-link ${className}`.trim()}
+      title={`${belegart} öffnen`}
+      onClick={() => openVoucher(belegart, belegnummer)}
+    >
+      {belegnummer}
+    </button>
+  );
+}
+
 function mieterOptionLabel(mieter) {
   if (!mieter) return "";
   return mieter.customer_name && mieter.customer_name !== mieter.name
@@ -365,6 +385,6 @@ function getOpenSummaryItems(summary) {
 
 Object.assign(window, {
   fmtEUR, fmtEURsoll, fmtDate, fmtDateShort, monthLabel, CATS,
-  ArtPill, OpenBadge, FilterBar, MieterHeader, SummaryCards,
+  ArtPill, OpenBadge, VoucherLink, openVoucher, FilterBar, MieterHeader, SummaryCards,
   getSummaryItem, getOpenSummaryItems,
 });
