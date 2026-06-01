@@ -3,33 +3,6 @@
    Keine Ampelfarben in der Tabelle — Beträge bleiben schwarz, Status über Pills/Marker.
 */
 
-:root {
-  --bg: var(--hv-bg);
-  --bg-soft: var(--hv-surface-2);
-  --bg-card: var(--hv-surface);
-  --ink: var(--hv-ink);
-  --ink-2: var(--hv-ink-2);
-  --ink-3: var(--hv-ink-3);
-  --ink-4: var(--hv-ink-4);
-  --line: var(--hv-line);
-  --line-strong: var(--hv-line-strong);
-  --accent: var(--hv-danger);
-  --accent-soft: var(--hv-danger-soft);
-  --good: var(--hv-success);
-  --good-soft: var(--hv-success-soft);
-  --info: var(--hv-primary);
-  --info-soft: var(--hv-primary-soft);
-  --warn: var(--hv-warning);
-  --warn-soft: var(--hv-warning-soft);
-
-  --font-sans: var(--hv-font);
-  --font-num: var(--hv-font);
-  --font-serif: var(--hv-font);
-
-  --radius: var(--hv-radius);
-  --radius-lg: var(--hv-radius-lg);
-}
-
 * { box-sizing: border-box; }
 
 html, body {
