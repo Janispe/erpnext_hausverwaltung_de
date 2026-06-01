@@ -356,6 +356,10 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 		[sel]
 	);
 	const remaining = Math.round((target - allocated) * 100) / 100;
+	const invoiceByName = useMemo(
+		() => new Map((data?.invoices || []).map((inv) => [inv.name, inv])),
+		[data]
+	);
 
 	const toggle = (inv) => {
 		setSel((prev) => {
@@ -377,6 +381,18 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 	const book = () => {
 		const invoices = Object.entries(sel).map(([name, allocated_amount]) => ({ name, allocated_amount }));
 		if (!invoices.length) return notify("error", "Bitte mindestens eine Rechnung auswählen.");
+		for (const inv of invoices) {
+			const amount = Number(inv.allocated_amount);
+			const source = invoiceByName.get(inv.name);
+			const outstanding = Number(source?.outstanding_amount || 0);
+			if (!Number.isFinite(amount) || amount <= 0) {
+				return notify("error", `Zuweisung für ${inv.name} muss größer als 0 € sein.`);
+			}
+			if (amount > outstanding + 0.01) {
+				return notify("error", `Zuweisung für ${inv.name} übersteigt den offenen Betrag.`);
+			}
+		}
+		if (allocated - target > 0.01) return notify("error", "Die Zuweisung übersteigt den Bankbetrag.");
 		run(() => api.reconcileInvoices(docname, row.id, invoices, advance), {
 			success: "Zahlung gebucht und Bank Transaction abgeglichen.",
 		}).then((r) => r && r.ok !== false && onActionDone());
@@ -758,6 +774,17 @@ function DoneView({ row }) {
 	);
 }
 
+function ErrorView({ row }) {
+	return (
+		<div className="match-section">
+			<div className="sec-label">Zeile fehlerhaft</div>
+			<div className="reset-warning">
+				<Icon name="info" /> {row.error || row.autoMatchMessage || "Diese Zeile kann erst verarbeitet werden, wenn der Importfehler behoben ist."}
+			</div>
+		</div>
+	);
+}
+
 // ───────────────────────── Phase 3 Container (Modus-Wahl) ────────────────────
 
 function BookingActions({ docname, row, onActionDone, notify }) {
@@ -879,10 +906,11 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 			</div>
 
 			<div className="match-body">
-				{phase === 1 && <PartyAssign docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
-				{phase === 2 && <NeedsBankTransaction onRunGlobal={onRunGlobal} />}
-				{phase === 3 && <BookingActions docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
-				{phase === 4 && <DoneView row={row} />}
+				{row.rowStatus === "error" && <ErrorView row={row} />}
+				{row.rowStatus !== "error" && phase === 1 && <PartyAssign docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
+				{row.rowStatus !== "error" && phase === 2 && <NeedsBankTransaction onRunGlobal={onRunGlobal} />}
+				{row.rowStatus !== "error" && phase === 3 && <BookingActions docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
+				{row.rowStatus !== "error" && phase === 4 && <DoneView row={row} />}
 			</div>
 			{partyDialogOpen && (
 				<PartyChangeDialog

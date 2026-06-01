@@ -2493,13 +2493,16 @@ def manually_reconcile_row(
             frappe.throw(f"Rechnung {inv_name} hat keinen offenen Betrag mehr.")
         # Allocation festlegen: Frontend-Wert hat Vorrang, sonst voller outstanding_amount
         explicit_alloc = item.get("allocated_amount")
-        if explicit_alloc is not None and explicit_alloc > 0:
-            if flt(explicit_alloc) > flt(inv.outstanding_amount) + 0.01:
+        if explicit_alloc is not None:
+            explicit_alloc = flt(explicit_alloc)
+            if explicit_alloc <= 0:
+                frappe.throw(f"Zuweisung für {inv_name} muss größer als 0 € sein.")
+            if explicit_alloc > flt(inv.outstanding_amount) + 0.01:
                 frappe.throw(
                     f"Zuweisung für {inv_name} ({explicit_alloc:.2f} €) übersteigt "
                     f"offenen Betrag ({flt(inv.outstanding_amount):.2f} €)."
                 )
-            inv["allocated_amount"] = flt(explicit_alloc)
+            inv["allocated_amount"] = explicit_alloc
         invoices.append(inv)
 
     target_amount = flt(row.betrag)

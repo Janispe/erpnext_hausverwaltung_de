@@ -41,6 +41,9 @@ def get_context(context):
 # Sobald eine Bank Transaction existiert, kann die Zeile gebucht werden, auch
 # wenn sie keine Party hat (z.B. Bankgebühren als Journal Entry).
 def _row_phase(row: dict) -> int:
+	rs = (row.get("row_status") or "").lower()
+	if row.get("error") or rs == "failed":
+		return 3
 	if row.get("payment_entry") or row.get("journal_entry"):
 		return 4
 	if row.get("bank_transaction"):
@@ -51,6 +54,9 @@ def _row_phase(row: dict) -> int:
 
 
 def _row_status(row: dict, phase: int) -> str:
+	rs = (row.get("row_status") or "").lower()
+	if row.get("error") or rs == "failed":
+		return "error"
 	if phase == 4:
 		return "done"
 	if phase == 2:
@@ -59,9 +65,6 @@ def _row_status(row: dict, phase: int) -> str:
 		return "phase1-no-party"
 	# Phase 3: Bank-Tx da, aber kein Beleg — row_status-Feld überlagert nur die
 	# Sonderfälle (Auto-Match-Misserfolg).
-	rs = (row.get("row_status") or "").lower()
-	if rs == "failed":
-		return "error"
 	if rs == "needs_review":
 		return "needs_review"
 	return "phase3-open"
@@ -246,6 +249,7 @@ def get_overview(import_name: str) -> dict[str, Any]:
 				"iban": row.iban,
 				"auftraggeber": row.auftraggeber,
 				"verwendungszweck": row.verwendungszweck,
+				"error": row.error,
 				"partyTyp": row.party_type,
 				"party": row.party,
 				"bankTransaction": row.bank_transaction,

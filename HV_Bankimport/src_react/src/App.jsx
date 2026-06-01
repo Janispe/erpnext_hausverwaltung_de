@@ -193,12 +193,6 @@ export function App() {
 	const meta = overview?.import || {};
 	const phaseCounts = overview?.phaseCounts || { 1: 0, 2: 0, 3: 0, 4: 0 };
 
-	// Auswahl gültig halten
-	useEffect(() => {
-		if (!rows.length) { setSelectedId(null); return; }
-		if (!selectedId || !rows.some((r) => r.id === selectedId)) setSelectedId(rows[0].id);
-	}, [rows]); // eslint-disable-line
-
 	useEffect(() => { setFilter("all"); }, [phase]);
 
 	const scope = useMemo(
@@ -235,7 +229,22 @@ export function App() {
 		return out;
 	}, [scope, filter, search]);
 
-	const selectedRow = useMemo(() => rows.find((r) => r.id === selectedId), [rows, selectedId]);
+	// Auswahl gültig halten: Das Detailpanel darf nur Zeilen bearbeiten, die in
+	// der aktuell gefilterten linken Liste sichtbar sind.
+	useEffect(() => {
+		if (!visibleRows.length) {
+			if (selectedId) setSelectedId(null);
+			return;
+		}
+		if (!selectedId || !visibleRows.some((r) => r.id === selectedId)) {
+			setSelectedId(visibleRows[0].id);
+		}
+	}, [visibleRows, selectedId]);
+
+	const selectedRow = useMemo(
+		() => visibleRows.find((r) => r.id === selectedId) || null,
+		[visibleRows, selectedId]
+	);
 
 	const filterLabels = {
 		all: phase === 0 ? "Alle Phasen · Alle Zeilen" : `Phase ${phase} · Alle Zeilen`,

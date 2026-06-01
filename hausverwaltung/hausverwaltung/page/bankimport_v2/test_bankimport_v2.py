@@ -57,6 +57,7 @@ class _OverviewRow:
 		self.payment_document = "PE-CANCELLED"
 		self.payment_document_type = "Payment Entry"
 		self.row_status = "success"
+		self.error = None
 		self.auto_match_message = ""
 		self.owner = "importer@example.test"
 		self.creation = "2026-04-27 09:30:00"
@@ -74,6 +75,7 @@ class _OverviewRow:
 			"party_type": self.party_type,
 			"party": self.party,
 			"row_status": self.row_status,
+			"error": self.error,
 		}
 
 
@@ -244,6 +246,22 @@ class TestGetOverviewSync(FrappeTestCase):
 
 		self.assertEqual(phase, 3)
 		self.assertEqual(bv2._row_status(row, phase), "phase3-open")
+
+	def test_failed_import_row_is_error_not_party_assignment(self):
+		row = {
+			"payment_entry": None,
+			"journal_entry": None,
+			"bank_transaction": None,
+			"party_type": None,
+			"party": None,
+			"row_status": "failed",
+			"error": "Ungültiges Datum",
+		}
+
+		phase = bv2._row_phase(row)
+
+		self.assertEqual(phase, 3)
+		self.assertEqual(bv2._row_status(row, phase), "error")
 
 	def test_get_overview_syncs_cancelled_payment_entry_before_response(self):
 		row = _OverviewRow()
