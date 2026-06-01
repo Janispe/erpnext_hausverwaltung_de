@@ -392,6 +392,70 @@ def list_serienbrief_vorlagen(doctype: str | None = "Dunning") -> list[str]:
     return frappe.get_all("Serienbrief Vorlage", filters=filters, pluck="name", order_by="name asc")
 
 
+def _parse_variable_values(raw) -> dict[str, dict[str, Any]]:
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "{}")
+        except Exception:
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {frappe.scrub(str(key)): value for key, value in raw.items() if key}
+
+
+def _dunning_type_variable_defaults(dunning_type: str | None) -> dict[str, Any]:
+    if not dunning_type or not frappe.get_meta("Dunning Type").get_field("hv_serienbrief_werte"):
+        return {}
+    try:
+        doc = frappe.get_cached_doc("Dunning Type", dunning_type)
+    except frappe.DoesNotExistError:
+        return {}
+    defaults: dict[str, Any] = {}
+    for row in doc.get("hv_serienbrief_werte") or []:
+        variable = str(getattr(row, "variable", "") or "").strip()
+        if variable:
+            defaults[frappe.scrub(variable)] = getattr(row, "wert", None)
+    return defaults
+
+
+@frappe.whitelist()
+def get_serienbrief_vorlage_variables(template: str | None = None, dunning_type: str | None = None) -> dict:
+    """Liefert die vom OP-Mahnungsdialog auszufüllenden Vorlagenvariablen."""
+    if not template:
+        return {"template": None, "variables": []}
+    if not frappe.has_permission("Serienbrief Vorlage", "read"):
+        frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
+
+    doc = frappe.get_cached_doc("Serienbrief Vorlage", template)
+    defaults = _parse_variable_values(getattr(doc, "variablen_werte", None))
+    dunning_defaults = _dunning_type_variable_defaults(dunning_type)
+    variables: list[dict[str, Any]] = []
+    for row in doc.get("variables") or []:
+        variable_type = str(getattr(row, "variable_type", None) or "String").strip() or "String"
+        if variable_type not in {"String", "Zahl", "Bool", "Datum", "Text"}:
+            continue
+        raw_key = str(getattr(row, "variable", None) or getattr(row, "label", None) or "").strip()
+        key = frappe.scrub(raw_key)
+        if not key:
+            continue
+        default = defaults.get(key) or {}
+        default_value = default.get("value") if isinstance(default, dict) else None
+        if key in dunning_defaults:
+            default_value = dunning_defaults.get(key)
+        variables.append(
+            {
+                "key": key,
+                "variable": raw_key,
+                "label": getattr(row, "label", None) or raw_key,
+                "description": getattr(row, "beschreibung", None) or "",
+                "variable_type": variable_type,
+                "optional": cint(getattr(row, "optional", 0)),
+                "default": default_value,
+            }
+        )
+    return {"template": doc.name, "variables": variables}
+
+
 def _parse_filters(filters: str | dict | None) -> dict:
     if isinstance(filters, str):
         return json.loads(filters or "{}")

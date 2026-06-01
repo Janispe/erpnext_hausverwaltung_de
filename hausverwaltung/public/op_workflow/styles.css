@@ -2095,6 +2095,55 @@ button { font-family: inherit; }
   outline: 2px solid var(--ink);
   outline-offset: -1px;
 }
+.op-field-hint {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.op-template-vars {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 14px;
+}
+.op-template-var {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.op-template-var label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.op-template-var textarea {
+  min-height: 84px;
+}
+.op-template-var:has(textarea) {
+  grid-column: 1 / -1;
+}
+.op-required-dot {
+  color: var(--hv-danger);
+}
+.op-check-inline {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+}
+.op-field .op-check-inline input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+.op-empty-inline {
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  color: var(--ink-3);
+  background: var(--bg-soft);
+  padding: 10px 12px;
+  font-size: 12px;
+}
 .op-field-display {
   font-size: 13px;
   padding: 7px 10px;

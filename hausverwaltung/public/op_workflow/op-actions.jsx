@@ -157,9 +157,10 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
   const [mahngebuehr, setMahngebuehr] = useStateAct(nextStufe === 1 ? 0.00 : nextStufe === 2 ? 5.00 : nextStufe === 3 ? 10.00 : 15.00);
   const [zinsen, setZinsen] = useStateAct(true);
   const [zinssatz, setZinssatz] = useStateAct(9.12); // Basis + 9% gem. §288 BGB
-  const [versand, setVersand] = useStateAct("Brief");
-  const [zusatztext, setZusatztext] = useStateAct("");
   const [busy, setBusy] = useStateAct(false);
+  const [templateBusy, setTemplateBusy] = useStateAct(false);
+  const [templateVariables, setTemplateVariables] = useStateAct([]);
+  const [templateValues, setTemplateValues] = useStateAct({});
   const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
     const d = new Date();
     d.setDate(d.getDate() + 7);
@@ -208,6 +209,38 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
     return () => { alive = false; };
   }, []);
 
+  useEffectAct(() => {
+    let alive = true;
+    if (!serienbriefVorlage) {
+      setTemplateVariables([]);
+      setTemplateValues({});
+      return () => { alive = false; };
+    }
+    setTemplateBusy(true);
+    window.OP_ACTIONS.getSerienbriefVorlageVariables(serienbriefVorlage, textStufe)
+      .then((result) => {
+        if (!alive) return;
+        const variables = Array.isArray(result?.variables) ? result.variables : [];
+        const defaults = {};
+        variables.forEach((variable) => {
+          if (variable.default !== undefined && variable.default !== null) {
+            defaults[variable.key] = variable.default;
+          }
+        });
+        setTemplateVariables(variables);
+        setTemplateValues(defaults);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setTemplateVariables([]);
+        setTemplateValues({});
+      })
+      .finally(() => {
+        if (alive) setTemplateBusy(false);
+      });
+    return () => { alive = false; };
+  }, [serienbriefVorlage, textStufe]);
+
   // Verzugszinsen-Berechnung (rein illustrativ)
   const zinsBetrag = zinsen ? selectedRows.reduce((sum, item) => sum + ((item.offen || 0) * (zinssatz / 100) * (Math.max(item.alter_tage || 0, 0) / 365)), 0) : 0;
   const selectedAgeDays = Math.max(selectedRow.alter_tage || 0, 0);
@@ -230,13 +263,78 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
       return next;
     });
   };
+  const setTemplateValue = (key, value) => {
+    setTemplateValues((prev) => ({ ...prev, [key]: value }));
+  };
+  const renderTemplateVariableInput = (variable) => {
+    const key = variable.key;
+    const type = variable.variable_type || "String";
+    const value = templateValues[key] ?? "";
+    if (type === "Text") {
+      return (
+        <textarea
+          rows="3"
+          value={value}
+          onChange={(e) => setTemplateValue(key, e.target.value)}
+        />
+      );
+    }
+    if (type === "Zahl") {
+      return (
+        <input
+          type="number"
+          step="any"
+          value={value}
+          onChange={(e) => setTemplateValue(key, e.target.value)}
+        />
+      );
+    }
+    if (type === "Bool") {
+      return (
+        <label className="op-check-inline">
+          <input
+            type="checkbox"
+            checked={value === true || value === "1" || value === "Ja"}
+            onChange={(e) => setTemplateValue(key, e.target.checked)}
+          />
+          <span>Ja</span>
+        </label>
+      );
+    }
+    if (type === "Datum") {
+      return (
+        <input
+          type="date"
+          value={value}
+          onChange={(e) => setTemplateValue(key, e.target.value)}
+        />
+      );
+    }
+    return (
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => setTemplateValue(key, e.target.value)}
+      />
+    );
+  };
+  const missingRequiredVariables = templateVariables.filter((variable) => {
+    if (variable.optional) return false;
+    const value = templateValues[variable.key];
+    if (variable.variable_type === "Bool") return value === undefined || value === null || value === "";
+    return String(value ?? "").trim() === "";
+  });
   const submit = async () => {
-    if (!selectedRows.length) return;
+    if (!selectedRows.length || !serienbriefVorlage || missingRequiredVariables.length) return;
     setBusy(true);
     try {
-      const serienbriefWerte = zusatztext.trim()
-        ? [{ variable: "zusatztext", wert: zusatztext.trim(), beschreibung: "Optionaler Text aus dem Mahn-Cockpit" }]
-        : [];
+      const serienbriefWerte = templateVariables
+        .map((variable) => ({
+          variable: variable.variable || variable.label || variable.key,
+          wert: templateValues[variable.key],
+          beschreibung: variable.description || "",
+        }))
+        .filter((item) => item.wert !== undefined && item.wert !== null && String(item.wert).trim() !== "");
       const result = isBulk
         ? await window.OP_ACTIONS.createBulkDunning({ [row.party]: selectedRows }, {
             dunningType: textStufe,
@@ -268,11 +366,11 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
       footer={
         <>
           <span className="op-modal-foot-info">
-            Erzeugt {isBulk ? "1 Sammel-Dunning-Draft" : "1 Dunning-Draft"} · Mahngebühr-Rechnung beim Submit · 1 PDF
+            Erzeugt {isBulk ? "1 Sammel-Dunning-Draft" : "1 Dunning-Draft"} mit ausgefüllten Serienbrief-Werten
           </span>
           <div className="op-modal-foot-actions">
             <button className="mk-btn" onClick={onClose} disabled={busy}>Abbrechen</button>
-            <button className="mk-btn mk-btn-primary" onClick={submit} disabled={busy || selectedRows.length === 0}>
+            <button className="mk-btn mk-btn-primary" onClick={submit} disabled={busy || templateBusy || selectedRows.length === 0 || !serienbriefVorlage || missingRequiredVariables.length > 0}>
               {busy ? "Draft wird angelegt …" : `${isBulk ? "Sammelmahnung" : "Mahnung"} als Draft anlegen · ${fmtEUR_op(summe)}`}
             </button>
           </div>
@@ -281,39 +379,16 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
     >
       <div className="op-form-grid">
         <div className="op-field">
-          <label>Mahnstufe / Regel</label>
-          {dunningTypes.length ? (
-            <select value={textStufe} onChange={(e) => setTextStufe(e.target.value)}>
-              {dunningTypes.map((name) => <option key={name} value={name}>{name}</option>)}
-            </select>
-          ) : (
-            <input value={textStufe} onChange={(e) => setTextStufe(e.target.value)} />
-          )}
-          {dunningTypes.includes(suggestedDunningType) && textStufe !== suggestedDunningType && (
-            <button type="button" className="mk-btn mk-btn-ghost" style={{ marginTop: 6, padding: "4px 8px", fontSize: 11 }} onClick={() => setTextStufe(suggestedDunningType)}>
-              Vorschlag wählen
-            </button>
-          )}
-        </div>
-        <div className="op-field">
           <label>Serienbrief-Vorlage</label>
           {vorlagen.length ? (
             <select value={serienbriefVorlage} onChange={(e) => setSerienbriefVorlage(e.target.value)}>
-              <option value="">Default aus Mahnstufe</option>
+              <option value="">Vorlage wählen</option>
               {vorlagen.map((name) => <option key={name} value={name}>{name}</option>)}
             </select>
           ) : (
-            <input value={serienbriefVorlage} placeholder="Default aus Mahnstufe" onChange={(e) => setSerienbriefVorlage(e.target.value)} />
+            <input value={serienbriefVorlage} placeholder="Vorlage wählen" onChange={(e) => setSerienbriefVorlage(e.target.value)} />
           )}
-        </div>
-        <div className="op-field">
-          <label>Versandart</label>
-          <select value={versand} onChange={(e) => setVersand(e.target.value)}>
-            <option>Brief</option>
-            <option>E-Mail</option>
-            <option>Brief + E-Mail</option>
-            <option>Einschreiben</option>
-          </select>
+          <div className="op-field-hint">Mahnregel: {textStufe}</div>
         </div>
         <div className="op-field">
           <label>Mahngebühr</label>
@@ -326,20 +401,34 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
             onChange={(e) => setNeueFaelligkeit(e.target.value)} />
         </div>
         <div className="op-field is-full">
-          <label>Optionaler Zusatztext</label>
-          <textarea
-            rows="3"
-            value={zusatztext}
-            placeholder="Wird als Variable {{ zusatztext }} an die Serienbrief-Vorlage übergeben."
-            onChange={(e) => setZusatztext(e.target.value)}
-          />
-        </div>
-        <div className="op-field is-full">
           <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
             <input type="checkbox" checked={zinsen} onChange={(e) => setZinsen(e.target.checked)} />
             <span>Verzugszinsen berechnen ({zinssatz}% p.a. · §288 BGB)</span>
           </label>
         </div>
+        {serienbriefVorlage && (
+          <div className="op-field is-full">
+            <label>Serienbrief-Werte</label>
+            {templateBusy ? (
+              <div className="op-empty-inline">Variablen werden geladen...</div>
+            ) : templateVariables.length ? (
+              <div className="op-template-vars">
+                {templateVariables.map((variable) => (
+                  <div className="op-template-var" key={variable.key}>
+                    <label>
+                      {variable.label || variable.variable || variable.key}
+                      {!variable.optional && <span className="op-required-dot">*</span>}
+                    </label>
+                    {renderTemplateVariableInput(variable)}
+                    {variable.description && <div className="op-field-hint">{variable.description}</div>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="op-empty-inline">Diese Vorlage hat keine auszufüllenden Variablen.</div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="op-preview-label" style={{ marginTop: 14, marginBottom: 8 }}>Zu mahnende Rechnungen</div>
@@ -425,47 +514,14 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
         </div>
       </div>
 
-      <div className="op-doc-letter">
-        <div className="op-doc-head">Hausverwaltung Müller GmbH · Hauptstr. 1 · 70173 Stuttgart</div>
-        <h4>{textStufe}</h4>
-        <p>{partyName}<br />Objekt {objekt}</p>
-        <p>
-          Sehr geehrte Damen und Herren,<br />
-          wir bitten Sie höflich, den nachfolgend genannten Betrag bis spätestens
-          <strong> {fmtDate_op(neueFaelligkeit)}</strong> auf unser Konto zu überweisen.
-          Verwendungszweck: <strong>{selectedRows.map((item) => item.belegnummer).join(", ") || selectedRow.belegnummer}</strong>
-        </p>
-        <table>
-          <thead>
-            <tr>
-              <th>Beleg</th>
-              <th>Fällig am</th>
-              <th className="num">Betrag</th>
-            </tr>
-          </thead>
-          <tbody>
-            {selectedRows.map((item) => (
-              <tr key={item.belegnummer}>
-                <td>{item.belegnummer}</td>
-                <td>{fmtDate_op(item.faellig_am)}</td>
-                <td className="num">{fmtEUR_op(item.offen)}</td>
-              </tr>
-            ))}
-            <tr>
-              <td>{isBulk ? "Summe inkl. Gebühren/Zinsen" : selectedRow.belegnummer}</td>
-              <td>{fmtDate_op(neueFaelligkeit)}</td>
-              <td className="num">{fmtEUR_op(summe)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div className="op-checklist">
-        <div className="op-checklist-item">Dunning-Doc gemäß ERPNext-Standard</div>
-        <div className="op-checklist-item">Mahngebühr als verlinkte Sales Invoice beim Submit</div>
-        <div className="op-checklist-item">PDF-Anhang automatisch erzeugt + im Mieter-Kontakt archiviert</div>
-        {versand.includes("E-Mail") && <div className="op-checklist-item">E-Mail-Versand vorbereitet ({partyName})</div>}
-      </div>
+      {!serienbriefVorlage && (
+        <div className="op-empty-inline" style={{ marginTop: 12 }}>Bitte zuerst eine Serienbrief-Vorlage wählen.</div>
+      )}
+      {missingRequiredVariables.length > 0 && (
+        <div className="op-empty-inline" style={{ marginTop: 12 }}>
+          Pflichtwerte fehlen: {missingRequiredVariables.map((variable) => variable.label || variable.variable || variable.key).join(", ")}
+        </div>
+      )}
     </Modal>
   );
 }
@@ -808,12 +864,13 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
     })).sort((a, b) => b.sum - a.sum);
   }, [rows]);
 
-  const [versand, setVersand] = useStateAct("Brief");
-  const [zusatztext, setZusatztext] = useStateAct("");
   const [dunningTypes, setDunningTypes] = useStateAct([]);
   const [dunningType, setDunningType] = useStateAct(rows.find((r) => r.dunning_type)?.dunning_type || "");
   const [vorlagen, setVorlagen] = useStateAct([]);
   const [serienbriefVorlage, setSerienbriefVorlage] = useStateAct(rows.find((r) => r.serienbrief_vorlage)?.serienbrief_vorlage || "");
+  const [templateBusy, setTemplateBusy] = useStateAct(false);
+  const [templateVariables, setTemplateVariables] = useStateAct([]);
+  const [templateValues, setTemplateValues] = useStateAct({});
   const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
     const d = new Date(); d.setDate(d.getDate() + 7);
     return d.toISOString().slice(0, 10);
@@ -840,6 +897,38 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
     return () => { alive = false; };
   }, []);
 
+  useEffectAct(() => {
+    let alive = true;
+    if (!serienbriefVorlage) {
+      setTemplateVariables([]);
+      setTemplateValues({});
+      return () => { alive = false; };
+    }
+    setTemplateBusy(true);
+    window.OP_ACTIONS.getSerienbriefVorlageVariables(serienbriefVorlage, dunningType)
+      .then((result) => {
+        if (!alive) return;
+        const variables = Array.isArray(result?.variables) ? result.variables : [];
+        const defaults = {};
+        variables.forEach((variable) => {
+          if (variable.default !== undefined && variable.default !== null) {
+            defaults[variable.key] = variable.default;
+          }
+        });
+        setTemplateVariables(variables);
+        setTemplateValues(defaults);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setTemplateVariables([]);
+        setTemplateValues({});
+      })
+      .finally(() => {
+        if (alive) setTemplateBusy(false);
+      });
+    return () => { alive = false; };
+  }, [serienbriefVorlage, dunningType]);
+
   const toggle = (p) => {
     setExcluded((prev) => {
       const next = new Set(prev);
@@ -847,7 +936,44 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
       return next;
     });
   };
+  const setTemplateValue = (key, value) => {
+    setTemplateValues((prev) => ({ ...prev, [key]: value }));
+  };
+  const renderTemplateVariableInput = (variable) => {
+    const key = variable.key;
+    const type = variable.variable_type || "String";
+    const value = templateValues[key] ?? "";
+    if (type === "Text") {
+      return <textarea rows="3" value={value} onChange={(e) => setTemplateValue(key, e.target.value)} />;
+    }
+    if (type === "Zahl") {
+      return <input type="number" step="any" value={value} onChange={(e) => setTemplateValue(key, e.target.value)} />;
+    }
+    if (type === "Bool") {
+      return (
+        <label className="op-check-inline">
+          <input
+            type="checkbox"
+            checked={value === true || value === "1" || value === "Ja"}
+            onChange={(e) => setTemplateValue(key, e.target.checked)}
+          />
+          <span>Ja</span>
+        </label>
+      );
+    }
+    if (type === "Datum") {
+      return <input type="date" value={value} onChange={(e) => setTemplateValue(key, e.target.value)} />;
+    }
+    return <input type="text" value={value} onChange={(e) => setTemplateValue(key, e.target.value)} />;
+  };
+  const missingRequiredVariables = templateVariables.filter((variable) => {
+    if (variable.optional) return false;
+    const value = templateValues[variable.key];
+    if (variable.variable_type === "Bool") return value === undefined || value === null || value === "";
+    return String(value ?? "").trim() === "";
+  });
   const submit = async () => {
+    if (!aktiv.length || !serienbriefVorlage || missingRequiredVariables.length) return;
     const rowsByParty = {};
     const mahngebuehrPerParty = {};
     aktiv.forEach((group) => {
@@ -856,9 +982,13 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
     });
     setBusy(true);
     try {
-      const serienbriefWerte = zusatztext.trim()
-        ? [{ variable: "zusatztext", wert: zusatztext.trim(), beschreibung: "Optionaler Text aus dem Mahn-Cockpit" }]
-        : [];
+      const serienbriefWerte = templateVariables
+        .map((variable) => ({
+          variable: variable.variable || variable.label || variable.key,
+          wert: templateValues[variable.key],
+          beschreibung: variable.description || "",
+        }))
+        .filter((item) => item.wert !== undefined && item.wert !== null && String(item.wert).trim() !== "");
       const result = await window.OP_ACTIONS.createBulkDunning(rowsByParty, {
         neueFaelligkeit,
         dunningType,
@@ -880,11 +1010,11 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
       footer={
         <>
           <span className="op-modal-foot-info">
-            Erzeugt {aktiv.length} Dunning-Doc{aktiv.length === 1 ? "" : "s"} · Mahngebühr-Rechnung beim Submit · {aktiv.length} PDF{aktiv.length === 1 ? "" : "s"}
+            Erzeugt {aktiv.length} Dunning-Doc{aktiv.length === 1 ? "" : "s"} mit ausgefüllten Serienbrief-Werten
           </span>
           <div className="op-modal-foot-actions">
             <button className="mk-btn" onClick={onClose} disabled={busy}>Abbrechen</button>
-            <button className="mk-btn mk-btn-primary" disabled={busy || aktiv.length === 0} onClick={submit}>
+            <button className="mk-btn mk-btn-primary" disabled={busy || templateBusy || aktiv.length === 0 || !serienbriefVorlage || missingRequiredVariables.length > 0} onClick={submit}>
               {busy ? "Drafts werden angelegt …" : `${aktiv.length} ${aktiv.length === 1 ? "Mahnung" : "Mahnungen"} als Draft anlegen · ${fmtEUR_op(totalSum)}`}
             </button>
           </div>
@@ -893,49 +1023,54 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
     >
       <div className="op-form-grid">
         <div className="op-field">
-          <label>Versandart (für alle)</label>
-          <select value={versand} onChange={(e) => setVersand(e.target.value)}>
-            <option>Brief</option>
-            <option>E-Mail</option>
-            <option>Brief + E-Mail</option>
-            <option>Einschreiben</option>
-          </select>
-        </div>
-        <div className="op-field">
-          <label>Mahnstufe / Regel (für alle)</label>
-          {dunningTypes.length ? (
-            <select value={dunningType} onChange={(e) => setDunningType(e.target.value)}>
-              {dunningTypes.map((name) => <option key={name} value={name}>{name}</option>)}
-            </select>
-          ) : (
-            <input value={dunningType} onChange={(e) => setDunningType(e.target.value)} placeholder="Automatisch" />
-          )}
-        </div>
-        <div className="op-field">
           <label>Serienbrief-Vorlage</label>
           {vorlagen.length ? (
             <select value={serienbriefVorlage} onChange={(e) => setSerienbriefVorlage(e.target.value)}>
-              <option value="">Default aus Mahnstufe</option>
+              <option value="">Vorlage wählen</option>
               {vorlagen.map((name) => <option key={name} value={name}>{name}</option>)}
             </select>
           ) : (
-            <input value={serienbriefVorlage} onChange={(e) => setSerienbriefVorlage(e.target.value)} placeholder="Default aus Mahnstufe" />
+            <input value={serienbriefVorlage} onChange={(e) => setSerienbriefVorlage(e.target.value)} placeholder="Vorlage wählen" />
           )}
+          <div className="op-field-hint">Mahnregel: {dunningType || "automatisch"}</div>
         </div>
         <div className="op-field">
           <label>Neue Zahlungsfrist</label>
           <input type="date" value={neueFaelligkeit} onChange={(e) => setNeueFaelligkeit(e.target.value)} />
         </div>
-        <div className="op-field is-full">
-          <label>Optionaler Zusatztext</label>
-          <textarea
-            rows="3"
-            value={zusatztext}
-            placeholder="Wird als Variable {{ zusatztext }} an jede Serienbrief-Vorlage übergeben."
-            onChange={(e) => setZusatztext(e.target.value)}
-          />
-        </div>
+        {serienbriefVorlage && (
+          <div className="op-field is-full">
+            <label>Serienbrief-Werte</label>
+            {templateBusy ? (
+              <div className="op-empty-inline">Variablen werden geladen...</div>
+            ) : templateVariables.length ? (
+              <div className="op-template-vars">
+                {templateVariables.map((variable) => (
+                  <div className="op-template-var" key={variable.key}>
+                    <label>
+                      {variable.label || variable.variable || variable.key}
+                      {!variable.optional && <span className="op-required-dot">*</span>}
+                    </label>
+                    {renderTemplateVariableInput(variable)}
+                    {variable.description && <div className="op-field-hint">{variable.description}</div>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="op-empty-inline">Diese Vorlage hat keine auszufüllenden Variablen.</div>
+            )}
+          </div>
+        )}
       </div>
+
+      {!serienbriefVorlage && (
+        <div className="op-empty-inline" style={{ marginBottom: 12 }}>Bitte zuerst eine Serienbrief-Vorlage wählen.</div>
+      )}
+      {missingRequiredVariables.length > 0 && (
+        <div className="op-empty-inline" style={{ marginBottom: 12 }}>
+          Pflichtwerte fehlen: {missingRequiredVariables.map((variable) => variable.label || variable.variable || variable.key).join(", ")}
+        </div>
+      )}
 
       <div className="op-preview-label" style={{ marginBottom: 8 }}>Mahnungen pro Mieter</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

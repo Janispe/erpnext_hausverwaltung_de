@@ -42,6 +42,15 @@
     return Array.isArray(result) ? result : [];
   }
 
+  async function getSerienbriefVorlageVariables(template, dunningType) {
+    if (!template) return { template: null, variables: [] };
+    const result = await call(
+      "hausverwaltung.hausverwaltung.page.op_workflow.op_workflow.get_serienbrief_vorlage_variables",
+      { template, dunning_type: dunningType || null },
+    );
+    return result || { template, variables: [] };
+  }
+
   // ─── Einzel-Mahnung ─────────────────────────────────────────────────────
   async function createDunning(row, opts) {
     const result = await call(
@@ -248,6 +257,7 @@
   window.OP_ACTIONS = {
     listDunningTypes,
     listSerienbriefVorlagen,
+    getSerienbriefVorlageVariables,
     createDunning,
     createBulkDunning,
     createPaymentEntry,
