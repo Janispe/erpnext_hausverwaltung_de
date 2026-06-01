@@ -1267,6 +1267,35 @@ class TestBankauszugImport(FrappeTestCase):
         create_pe.assert_not_called()
         self.assertIn("Zuweisungen summieren", throw.call_args[0][0])
 
+    def test_manually_reconcile_row_rejects_implicit_partial_allocation(self):
+        row = self._FakeRow(name="ROW-INV-PARTIAL", iban="DE15")
+        row.party_type = "Customer"
+        row.party = "CUST-1"
+        row.betrag = 100.0
+        row.payment_entry = None
+        row.journal_entry = None
+        bt = type("BT", (), {"name": "BT-INV-PARTIAL"})()
+
+        invoices = {
+            "SINV-A": frappe._dict(name="SINV-A", outstanding_amount=80.0, posting_date="2026-05-05"),
+            "SINV-B": frappe._dict(name="SINV-B", outstanding_amount=80.0, posting_date="2026-05-06"),
+        }
+
+        def _get_value(doctype, name, fields, as_dict=False):
+            return invoices.get(name)
+
+        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(object(), row, bt)), \
+             patch.object(bi.frappe.db, "get_value", side_effect=_get_value), \
+             patch.object(bi.frappe, "throw", side_effect=Exception) as throw, \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.create_payment_entry_for_invoices",
+             ) as create_pe:
+            with self.assertRaises(Exception):
+                bi.manually_reconcile_row("IMP-INV-PARTIAL", "ROW-INV-PARTIAL", "SINV-A,SINV-B")
+
+        create_pe.assert_not_called()
+        self.assertIn("Ausgewählte Rechnungen summieren", throw.call_args[0][0])
+
     def test_assign_abschlagsplan_row_creates_payment_and_marks_plan_row(self):
         row = self._FakeRow(name="ROW-ASSIGN", iban="DE17", verwendungszweck="Abschlag")
         row.richtung = "Ausgang"

@@ -36,12 +36,93 @@ class TestPaymentAutoMatchRemarks(FrappeTestCase):
 			)
 
 	def test_does_not_override_supplier_payment_remarks(self):
-		self.assertIsNone(
-			pam._build_customer_payment_remarks(
-				invoices=[frappe._dict(name="PI-1", posting_date="2026-03-01")],
-				invoice_doctype="Purchase Invoice",
+			self.assertIsNone(
+				pam._build_customer_payment_remarks(
+					invoices=[frappe._dict(name="PI-1", posting_date="2026-03-01")],
+					invoice_doctype="Purchase Invoice",
+				)
 			)
+
+
+class TestCreatePaymentEntryForInvoices(FrappeTestCase):
+	class _FakeMeta:
+		def get_field(self, fieldname):
+			return False
+
+	class _FakePaymentEntry:
+		def __init__(self):
+			self.meta = TestCreatePaymentEntryForInvoices._FakeMeta()
+			self.references = []
+			self.inserted = False
+			self.submitted = False
+
+		def update(self, values):
+			for key, value in values.items():
+				setattr(self, key, value)
+
+		def append(self, fieldname, value):
+			if fieldname != "references":
+				raise AssertionError(f"unexpected child table {fieldname}")
+			self.references.append(value)
+
+		def insert(self, ignore_permissions=False):
+			self.inserted = True
+			self.ignore_permissions = ignore_permissions
+
+		def submit(self):
+			self.submitted = True
+
+	def _call_create_payment_entry(self, *, invoices, target_amount):
+		bt = frappe._dict(
+			name="BT-ALLOC",
+			party_type="Customer",
+			party="CUST-1",
+			bank_account="BA-1",
+			date="2026-05-05",
+			reference_number=None,
 		)
+		bank_account_doc = frappe._dict(company="COMP-1", account="BANK-1")
+		pe = self._FakePaymentEntry()
+		with patch.object(pam, "_resolve_company_and_bank_account", return_value=("COMP-1", bank_account_doc)), \
+			patch.object(pam, "_resolve_expected_cost_center_for_bt", return_value=None), \
+			patch("erpnext.accounts.party.get_party_account", return_value="RECEIVABLE-1"), \
+			patch.object(pam.frappe, "new_doc", return_value=pe):
+			result = pam.create_payment_entry_for_invoices(
+				bt=bt,
+				invoices=invoices,
+				invoice_doctype="Sales Invoice",
+				target_amount=target_amount,
+			)
+		return result
+
+	def test_implicit_allocations_use_full_outstanding_amounts(self):
+		pe = self._call_create_payment_entry(
+			invoices=[
+				frappe._dict(name="SINV-A", outstanding_amount=80.0),
+				frappe._dict(name="SINV-B", outstanding_amount=20.0),
+			],
+			target_amount=100.0,
+		)
+
+		self.assertTrue(pe.inserted)
+		self.assertTrue(pe.submitted)
+		self.assertEqual(
+			[r["allocated_amount"] for r in pe.references],
+			[80.0, 20.0],
+		)
+
+	def test_implicit_allocations_are_not_silently_capped(self):
+		with patch.object(pam.frappe, "throw", side_effect=Exception) as throw:
+			with self.assertRaises(Exception):
+				self._call_create_payment_entry(
+					invoices=[
+						frappe._dict(name="SINV-A", outstanding_amount=80.0),
+						frappe._dict(name="SINV-B", outstanding_amount=80.0),
+					],
+					target_amount=100.0,
+				)
+
+		self.assertIn("Auswahl summiert", throw.call_args[0][0])
 
 
 class TestReconcileCreatedVoucherRollback(FrappeTestCase):

@@ -2470,9 +2470,11 @@ def manually_reconcile_row(
     except Exception:
         parsed = None
 
+    has_explicit_allocations = False
     if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
         # Format 1: explizite Allocations
         items = [{"name": p.get("name"), "allocated_amount": flt(p.get("allocated_amount"))} for p in parsed]
+        has_explicit_allocations = any(item.get("allocated_amount") is not None for item in items)
     elif isinstance(parsed, list):
         # Format 2: nur Namen, kein Betrag → später Vollbetrag verwenden
         items = [{"name": n, "allocated_amount": None} for n in parsed]
@@ -2496,6 +2498,7 @@ def manually_reconcile_row(
     # Allocation pro Rechnung: explizit aus Frontend (falls gesetzt) sonst Vollbetrag.
     invoices = []
     explicit_allocated_total = 0.0
+    implicit_outstanding_total = 0.0
     for item in items:
         inv_name = item["name"]
         inv = frappe.db.get_value(
@@ -2521,12 +2524,27 @@ def manually_reconcile_row(
                 )
             inv["allocated_amount"] = explicit_alloc
             explicit_allocated_total += explicit_alloc
+        else:
+            implicit_outstanding_total += flt(inv.outstanding_amount)
         invoices.append(inv)
 
-    if explicit_allocated_total > target_amount + 0.01:
+    if has_explicit_allocations:
+        if explicit_allocated_total > target_amount + 0.01:
+            frappe.throw(
+                f"Zuweisungen summieren auf {explicit_allocated_total:.2f} €, "
+                f"Bank-Betrag ist {target_amount:.2f} €. Bitte Beträge reduzieren."
+            )
+    elif implicit_outstanding_total > target_amount + 0.01:
         frappe.throw(
-            f"Zuweisungen summieren auf {explicit_allocated_total:.2f} €, "
-            f"Bank-Betrag ist {target_amount:.2f} €. Bitte Beträge reduzieren."
+            f"Ausgewählte Rechnungen summieren auf {implicit_outstanding_total:.2f} €, "
+            f"Bank-Betrag ist {target_amount:.2f} €. Bitte passende Rechnungen wählen "
+            "oder Teilbeträge explizit zuweisen."
+        )
+    elif target_amount - implicit_outstanding_total > 0.01 and not bool(int(leftover_as_advance or 0)):
+        frappe.throw(
+            f"Ausgewählte Rechnungen summieren auf {implicit_outstanding_total:.2f} €, "
+            f"Bank-Betrag ist {target_amount:.2f} €. Bitte weitere Rechnungen wählen "
+            "oder 'Restbetrag als Vorauszahlung' aktivieren."
         )
 
     pe = create_payment_entry_for_invoices(

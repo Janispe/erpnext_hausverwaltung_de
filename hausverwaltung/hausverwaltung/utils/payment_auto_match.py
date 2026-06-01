@@ -523,7 +523,8 @@ def create_payment_entry_for_invoices(
 	# Allocations in Reihenfolge der Eingangs-Liste:
 	#   - Wenn die Rechnung ein explizites ``allocated_amount`` mitbringt
 	#     (z.B. vom manuellen Zuordnen-Dialog), wird genau das genutzt.
-	#   - Sonst: Voll-Allokation bis remaining (älteste zuerst, max outstanding).
+	#   - Sonst: voller offener Betrag. Nicht still auf den verbleibenden
+	#     Bankbetrag kuerzen, sonst entstehen unbeabsichtigte Teilzahlungen.
 	remaining = target_amount
 	allocated_total = 0.0
 	for inv in invoices:
@@ -537,14 +538,19 @@ def create_payment_entry_for_invoices(
 			explicit = flt(explicit)
 			if explicit <= 0:
 				frappe.throw(f"Zuweisung für {inv_name} muss größer als 0 € sein.")
+			if explicit > outstanding + _TOLERANCE:
+				frappe.throw(
+					f"Zuweisung für {inv_name} ({explicit:.2f} €) übersteigt "
+					f"offenen Betrag ({outstanding:.2f} €)."
+				)
 			if explicit > remaining + _TOLERANCE:
 				frappe.throw(
 					f"Zuweisung für {inv_name} ({explicit:.2f} €) übersteigt "
 					f"verbleibenden Bank-Betrag ({remaining:.2f} €)."
 				)
-			alloc = min(explicit, outstanding, remaining if remaining > 0 else explicit)
+			alloc = explicit
 		else:
-			alloc = min(outstanding, remaining)
+			alloc = outstanding
 		if alloc <= 0:
 			continue
 		pe.append(
@@ -559,6 +565,13 @@ def create_payment_entry_for_invoices(
 		allocated_total += alloc
 
 	# Sanity-Check: Differenz Bank-Betrag vs. zuteilbare Summe
+	over_allocated = flt(allocated_total) - flt(target_amount)
+	if over_allocated > _TOLERANCE:
+		frappe.throw(
+			f"Auswahl summiert auf {allocated_total:.2f} €, Bank-Betrag ist "
+			f"{target_amount:.2f} €. Bitte Teilbeträge explizit reduzieren."
+		)
+
 	leftover = flt(target_amount) - flt(allocated_total)
 	if leftover > _TOLERANCE and not leftover_as_advance:
 		frappe.throw(
