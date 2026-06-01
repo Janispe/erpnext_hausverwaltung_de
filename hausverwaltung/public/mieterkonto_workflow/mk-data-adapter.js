@@ -61,6 +61,11 @@
       art: raw.art,
       belegart: raw.belegart,
       belegnummer: raw.belegnummer,
+      belegnummern: Array.isArray(raw.belegnummern) && raw.belegnummern.length
+        ? raw.belegnummern
+        : raw.belegnummer
+          ? [raw.belegnummer]
+          : [],
       beschreibung: raw.beschreibung,
       betrag_miete: raw.betrag_miete || 0,
       betrag_betriebskosten: raw.betrag_betriebskosten || 0,
@@ -116,6 +121,7 @@
       art: "",
       belegart: "",
       belegnummer: "",
+      belegnummern: [],
       beschreibung: "",
       betrag_summe: 0,
       kontostand: 0,

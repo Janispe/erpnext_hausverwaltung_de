@@ -4,7 +4,9 @@ from unittest import TestCase
 from hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto import (
 	CATEGORIES,
 	InvoiceInfo,
+	_build_invoice_transactions,
 	_group_invoices,
+	_transaction_to_row,
 )
 
 
@@ -179,7 +181,7 @@ class TestGroupInvoices(TestCase):
 		groups = _group_invoices(invoices)
 		self.assertEqual(groups[mab].status, "Paid")
 
-	def test_group_remarks_includes_mv_and_count(self):
+	def test_group_remarks_includes_mv_without_count(self):
 		mab = "MV-2025-001|11/2025"
 		invoices = {
 			"A": _make_invoice("A", mab_id=mab, categories={"miete": 500.0}),
@@ -190,8 +192,20 @@ class TestGroupInvoices(TestCase):
 		header = groups[mab].remarks
 		self.assertIn("11/2025", header)
 		self.assertIn("MV-2025-001", header)
-		self.assertIn("(+2 weitere)", header)
+		self.assertNotIn("weitere", header)
 		# Kategorien-Liste enthält die aktiven Kategorien.
 		self.assertIn("Miete", header)
 		self.assertIn("BK", header)
 		self.assertIn("HK", header)
+
+	def test_grouped_invoice_row_exposes_member_vouchers(self):
+		mab = "MV-2025-001|11/2025"
+		invoices = {
+			"SI-Miete": _make_invoice("SI-Miete", mab_id=mab, categories={"miete": 500.0}),
+			"SI-BK": _make_invoice("SI-BK", mab_id=mab, categories={"betriebskosten": 100.0}),
+		}
+		groups = _group_invoices(invoices)
+		transaction = _build_invoice_transactions(groups)[0]
+		row = _transaction_to_row(transaction, balance=600.0)
+		self.assertIn(row["belegnummer"], {"SI-Miete", "SI-BK"})
+		self.assertEqual(set(row["belegnummern"]), {"SI-Miete", "SI-BK"})

@@ -89,9 +89,10 @@ function VariantB({ rows, totalRow }) {
                         <span>{r.beschreibung}</span>
                         {isOpen && <OpenBadge amount={r.offen} />}
                       </div>
-                      <VoucherLink
+                      <VoucherLinks
                         belegart={r.belegart}
                         belegnummer={r.belegnummer}
+                        belegnummern={r.belegnummern}
                         className="mk-tl-beleg"
                       />
                     </div>

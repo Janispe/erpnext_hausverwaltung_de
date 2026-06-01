@@ -134,7 +134,11 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
                   <td className="col-date">{fmtDate(r.datum)}</td>
                   <td><ArtPill art={r.art} /></td>
                   <td className="col-beleg">
-                    <VoucherLink belegart={r.belegart} belegnummer={r.belegnummer} />
+                    <VoucherLinks
+                      belegart={r.belegart}
+                      belegnummer={r.belegnummer}
+                      belegnummern={r.belegnummern}
+                    />
                   </td>
                   <td className="col-desc">
                     <div className="mk-desc-line">

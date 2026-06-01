@@ -221,7 +221,8 @@ def _merge_invoices(group_key: str, members: list[InvoiceInfo]) -> InvoiceInfo:
 	else:
 		merged_status = next((s for s in ("Partly Paid", "Unpaid") if s in statuses), anchor.status)
 
-	# Beschreibung: kategorien-Liste aus den Items, plus "+N weitere"-Hinweis.
+	# Beschreibung: Kategorien-Liste aus den Items. Die konkreten Belege
+	# werden separat in der Beleg-Spalte gezeigt, nicht im Beschreibungstext.
 	category_labels_in_group = sorted(
 		{
 			CATEGORY_LABELS[cat]
@@ -236,8 +237,6 @@ def _merge_invoices(group_key: str, members: list[InvoiceInfo]) -> InvoiceInfo:
 		header += f" ({' + '.join(category_labels_in_group)})"
 	if mv_part:
 		header += f" - {mv_part}"
-	if len(members) > 1:
-		header += f" (+{len(members) - 1} weitere)"
 
 	return InvoiceInfo(
 		name=anchor.name,  # für Drill-Down: Belegnummer-Spalte zeigt erste SI
@@ -376,6 +375,7 @@ def _build_invoice_transactions(invoices: dict[str, InvoiceInfo]) -> list[dict[s
 				"art": "Forderung",
 				"belegart": "Sales Invoice",
 				"belegnummer": invoice.name,
+				"belegnummern": invoice.member_invoices or [invoice.name],
 				# ``rechnung`` ist intern als Sort-Schlüssel — Rechnung +
 				# zugehörige Zahlung sollen pro Datum zusammen erscheinen
 				# (siehe ``_transaction_sort_key``). Wird nicht mehr in die
@@ -894,6 +894,7 @@ def _transaction_to_row(transaction: dict[str, Any], balance: float) -> dict[str
 		"art": transaction["art"],
 		"belegart": transaction["belegart"],
 		"belegnummer": transaction["belegnummer"],
+		"belegnummern": transaction.get("belegnummern") or [transaction["belegnummer"]],
 		"beschreibung": transaction["beschreibung"],
 		"faellig_am": transaction.get("due_date"),
 		"status": transaction.get("status"),

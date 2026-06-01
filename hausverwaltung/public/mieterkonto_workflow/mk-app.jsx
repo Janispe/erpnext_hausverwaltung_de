@@ -147,12 +147,12 @@ function App() {
 
   const exportCsv = () => {
     const csvRows = [
-      ["Datum", "Art", "Belegart", "Belegnummer", "Beschreibung", "Miete", "BK", "HK", "G/N", "Summe", "Kontostand"],
+      ["Datum", "Art", "Belegart", "Belegnummern", "Beschreibung", "Miete", "BK", "HK", "G/N", "Summe", "Kontostand"],
       ...rows.map((r) => [
         r.datum || "",
         r.art || "",
         r.belegart || "",
-        r.belegnummer || "",
+        (r.belegnummern && r.belegnummern.length ? r.belegnummern : [r.belegnummer].filter(Boolean)).join(", "),
         r.beschreibung || "",
         r.betrag_miete || 0,
         r.betrag_betriebskosten || 0,

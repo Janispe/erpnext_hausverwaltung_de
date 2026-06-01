@@ -414,6 +414,15 @@ button { font-family: inherit; }
   outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
   outline-offset: 2px;
 }
+.mk-voucher-list {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.mk-voucher-list-item {
+  display: block;
+}
 .mk-table td.col-desc {
   color: var(--ink);
 }
@@ -664,7 +673,10 @@ button { font-family: inherit; }
 }
 .mk-tl-item-desc { font-size: 13px; }
 .mk-tl-item-desc .mk-tl-beleg {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   font-family: ui-monospace, monospace;
   font-size: 11px;
   color: var(--ink-3);
