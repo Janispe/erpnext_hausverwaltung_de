@@ -820,6 +820,17 @@ function partyPickerLabel(party) {
   return party.label && party.label !== party.id ? `${party.label} (${party.id})` : party.id;
 }
 
+function PartyCellLabel({ party }) {
+  const label = window.OFFENE_POSTEN.partyName(party) || party;
+  const showId = party && label !== party;
+  return (
+    <>
+      {label}
+      {showId && <span className="op-party-id">{party}</span>}
+    </>
+  );
+}
+
 function PartyPicker({ value, searchText, parties, mode, onSearchChange, onChange }) {
   const [open, setOpen] = useStateA0(false);
   const rootRef = React.useRef(null);
@@ -1425,8 +1436,7 @@ function FlatTable({
                   <td className="col-date">{fmtDate_op(r.faellig_am)}</td>
                   <td><AgePill age={r.alter_tage} faellig_am={r.faellig_am} /></td>
                   <td className="col-party">
-                    {window.OFFENE_POSTEN.partyName(r.party)}
-                    <span className="op-party-id">{r.party}</span>
+                    <PartyCellLabel party={r.party} />
                   </td>
                   {showObjekt && (
                     <td style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
@@ -1570,8 +1580,7 @@ function GroupedView({
                             )}
                             {gruppierung === "objekt" && (
                               <td className="col-party" style={{ fontSize: 12.5 }}>
-                                {window.OFFENE_POSTEN.partyName(r.party)}
-                                <span className="op-party-id">{r.party}</span>
+                                <PartyCellLabel party={r.party} />
                               </td>
                             )}
                             <td className="col-bemerk">
