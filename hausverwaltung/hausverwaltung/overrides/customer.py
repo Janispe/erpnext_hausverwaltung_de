@@ -57,7 +57,13 @@ class Customer(ERPNextCustomer):
 		if not immobilie:
 			return None
 
-		addr_name = get_default_address("Immobilie", immobilie)
+		# Das Hausverwaltung-Immobilie-Doc hat ein explizites Adress-Linkfeld.
+		# Dieses ist fachlich maßgeblich; Frappe's get_default_address hängt
+		# zusätzlich an Dynamic Links im Address-Doc, die in Alt-/Importdaten
+		# fehlen können.
+		addr_name = frappe.db.get_value("Immobilie", immobilie, "adresse")
+		if not addr_name:
+			addr_name = get_default_address("Immobilie", immobilie)
 		if not addr_name:
 			return None
 
