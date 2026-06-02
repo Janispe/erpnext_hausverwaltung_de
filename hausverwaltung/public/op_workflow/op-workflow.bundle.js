@@ -24251,6 +24251,8 @@ var OpWorkflow = (() => {
     const [templateVariables, setTemplateVariables] = useStateAct([]);
     const [templateValues, setTemplateValues] = useStateAct({});
     const [templateDirty, setTemplateDirty] = useStateAct({});
+    const [showTemplateValues, setShowTemplateValues] = useStateAct(false);
+    const [briefdatum, setBriefdatum] = useStateAct(() => frappe.datetime?.get_today?.() || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
     const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
       const d = /* @__PURE__ */ new Date();
       d.setDate(d.getDate() + 7);
@@ -24430,6 +24432,7 @@ var OpWorkflow = (() => {
         const serienbriefWerte = buildSerienbriefWerte(templateVariables, templateValues, templateDirty);
         const result = isBulk ? await window.OP_ACTIONS.createBulkDunning({ [row.party]: selectedRows }, {
           dunningType: textStufe,
+          briefdatum,
           neueFaelligkeit,
           mahngebuehr,
           zinsenAktiv: zinsen,
@@ -24437,6 +24440,7 @@ var OpWorkflow = (() => {
           serienbriefWerte
         }) : await window.OP_ACTIONS.createDunning(selectedRow, {
           dunningType: textStufe,
+          briefdatum,
           neueFaelligkeit,
           mahngebuehr,
           zinsenAktiv: zinsen,
@@ -24464,6 +24468,13 @@ var OpWorkflow = (() => {
           value: mahngebuehr,
           onChange: (e) => setMahngebuehr(parseFloat(e.target.value) || 0)
         }
+      )), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Briefdatum"), /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          type: "date",
+          value: briefdatum,
+          onChange: (e) => setBriefdatum(e.target.value)
+        }
       )), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Neue Zahlungsfrist"), /* @__PURE__ */ React.createElement(
         "input",
         {
@@ -24471,7 +24482,17 @@ var OpWorkflow = (() => {
           value: neueFaelligkeit,
           onChange: (e) => setNeueFaelligkeit(e.target.value)
         }
-      )), /* @__PURE__ */ React.createElement("div", { className: "op-field is-full" }, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: zinsen, onChange: (e) => setZinsen(e.target.checked) }), /* @__PURE__ */ React.createElement("span", null, "Verzugszinsen berechnen (", zinssatz, "% p.a. \xB7 \xA7288 BGB)"))), serienbriefVorlage && /* @__PURE__ */ React.createElement("div", { className: "op-field is-full" }, /* @__PURE__ */ React.createElement("label", null, "Serienbrief-Werte"), templateBusy ? /* @__PURE__ */ React.createElement("div", { className: "op-empty-inline" }, "Variablen werden geladen...") : templateVariables.length ? /* @__PURE__ */ React.createElement("div", { className: "op-template-vars" }, templateVariables.map((variable) => /* @__PURE__ */ React.createElement("div", { className: "op-template-var", key: variable.key }, /* @__PURE__ */ React.createElement("label", null, fieldDisplayLabel(variable), variable.kind === "path" && /* @__PURE__ */ React.createElement("span", { className: "op-required-dot", title: "Pfad-Override" }, "\u2197"), !variable.optional && /* @__PURE__ */ React.createElement("span", { className: "op-required-dot" }, "*")), renderTemplateVariableInput(variable), fieldHintText(variable) && /* @__PURE__ */ React.createElement("div", { className: "op-field-hint" }, fieldHintText(variable))))) : /* @__PURE__ */ React.createElement("div", { className: "op-empty-inline" }, "Diese Vorlage hat keine auszuf\xFCllenden Variablen."))),
+      )), /* @__PURE__ */ React.createElement("div", { className: "op-field is-full" }, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: zinsen, onChange: (e) => setZinsen(e.target.checked) }), /* @__PURE__ */ React.createElement("span", null, "Verzugszinsen berechnen (", zinssatz, "% p.a. \xB7 \xA7288 BGB)"))), serienbriefVorlage && /* @__PURE__ */ React.createElement("div", { className: "op-field is-full" }, /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "op-collapse-toggle",
+          onClick: () => setShowTemplateValues((open) => !open),
+          "aria-expanded": showTemplateValues
+        },
+        /* @__PURE__ */ React.createElement("span", null, "Serienbrief-Werte"),
+        /* @__PURE__ */ React.createElement("span", null, templateBusy ? "l\xE4dt..." : `${templateVariables.length} Felder`)
+      ), showTemplateValues && (templateBusy ? /* @__PURE__ */ React.createElement("div", { className: "op-empty-inline" }, "Variablen werden geladen...") : templateVariables.length ? /* @__PURE__ */ React.createElement("div", { className: "op-template-vars" }, templateVariables.map((variable) => /* @__PURE__ */ React.createElement("div", { className: "op-template-var", key: variable.key }, /* @__PURE__ */ React.createElement("label", null, fieldDisplayLabel(variable), variable.kind === "path" && /* @__PURE__ */ React.createElement("span", { className: "op-required-dot", title: "Pfad-Override" }, "\u2197"), !variable.optional && /* @__PURE__ */ React.createElement("span", { className: "op-required-dot" }, "*")), renderTemplateVariableInput(variable), fieldHintText(variable) && /* @__PURE__ */ React.createElement("div", { className: "op-field-hint" }, fieldHintText(variable))))) : /* @__PURE__ */ React.createElement("div", { className: "op-empty-inline" }, "Diese Vorlage hat keine auszuf\xFCllenden Variablen.")))),
       /* @__PURE__ */ React.createElement("div", { className: "op-preview-label", style: { marginTop: 14, marginBottom: 8 } }, "Zu mahnende Rechnungen"),
       /* @__PURE__ */ React.createElement("table", { className: "op-mini-table", style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("tbody", null, selectedRows.map((item) => /* @__PURE__ */ React.createElement("tr", { key: item.belegnummer }, /* @__PURE__ */ React.createElement("td", { style: { width: 28 } }, /* @__PURE__ */ React.createElement(
         "input",
@@ -24673,6 +24694,8 @@ var OpWorkflow = (() => {
     const [templateVariables, setTemplateVariables] = useStateAct([]);
     const [templateValues, setTemplateValues] = useStateAct({});
     const [templateDirty, setTemplateDirty] = useStateAct({});
+    const [showTemplateValues, setShowTemplateValues] = useStateAct(false);
+    const [briefdatum, setBriefdatum] = useStateAct(() => frappe.datetime?.get_today?.() || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
     const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
       const d = /* @__PURE__ */ new Date();
       d.setDate(d.getDate() + 7);
@@ -24801,6 +24824,7 @@ var OpWorkflow = (() => {
       try {
         const serienbriefWerte = buildSerienbriefWerte(templateVariables, templateValues, templateDirty);
         const result = await window.OP_ACTIONS.createBulkDunning(rowsByParty, {
+          briefdatum,
           neueFaelligkeit,
           dunningType,
           mahngebuehrPerParty,
@@ -24820,7 +24844,17 @@ var OpWorkflow = (() => {
         onClose,
         footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { className: "op-modal-foot-info" }, "Erzeugt ", aktiv.length, " Dunning-Doc", aktiv.length === 1 ? "" : "s", " mit ausgef\xFCllten Serienbrief-Werten"), /* @__PURE__ */ React.createElement("div", { className: "op-modal-foot-actions" }, /* @__PURE__ */ React.createElement("button", { className: "mk-btn", onClick: onClose, disabled: busy }, "Abbrechen"), /* @__PURE__ */ React.createElement("button", { className: "mk-btn mk-btn-primary", disabled: busy || templateBusy || aktiv.length === 0 || !serienbriefVorlage || missingRequiredVariables.length > 0, onClick: submit }, busy ? "Drafts werden angelegt \u2026" : `${aktiv.length} ${aktiv.length === 1 ? "Mahnung" : "Mahnungen"} als Draft anlegen \xB7 ${fmtEUR_op(totalSum)}`)))
       },
-      /* @__PURE__ */ React.createElement("div", { className: "op-form-grid" }, /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Serienbrief-Vorlage"), vorlagen.length ? /* @__PURE__ */ React.createElement("select", { value: serienbriefVorlage, onChange: (e) => setSerienbriefVorlage(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Vorlage w\xE4hlen"), vorlagen.map((name) => /* @__PURE__ */ React.createElement("option", { key: name, value: name }, name))) : /* @__PURE__ */ React.createElement("input", { value: serienbriefVorlage, onChange: (e) => setSerienbriefVorlage(e.target.value), placeholder: "Vorlage w\xE4hlen" }), /* @__PURE__ */ React.createElement("div", { className: "op-field-hint" }, "Mahnregel: ", dunningType || "automatisch")), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Neue Zahlungsfrist"), /* @__PURE__ */ React.createElement("input", { type: "date", value: neueFaelligkeit, onChange: (e) => setNeueFaelligkeit(e.target.value) })), serienbriefVorlage && /* @__PURE__ */ React.createElement("div", { className: "op-field is-full" }, /* @__PURE__ */ React.createElement("label", null, "Serienbrief-Werte"), templateBusy ? /* @__PURE__ */ React.createElement("div", { className: "op-empty-inline" }, "Variablen werden geladen...") : templateVariables.length ? /* @__PURE__ */ React.createElement("div", { className: "op-template-vars" }, templateVariables.map((variable) => /* @__PURE__ */ React.createElement("div", { className: "op-template-var", key: variable.key }, /* @__PURE__ */ React.createElement("label", null, fieldDisplayLabel(variable), variable.kind === "path" && /* @__PURE__ */ React.createElement("span", { className: "op-required-dot", title: "Pfad-Override" }, "\u2197"), !variable.optional && /* @__PURE__ */ React.createElement("span", { className: "op-required-dot" }, "*")), renderTemplateVariableInput(variable), fieldHintText(variable) && /* @__PURE__ */ React.createElement("div", { className: "op-field-hint" }, fieldHintText(variable))))) : /* @__PURE__ */ React.createElement("div", { className: "op-empty-inline" }, "Diese Vorlage hat keine auszuf\xFCllenden Variablen."))),
+      /* @__PURE__ */ React.createElement("div", { className: "op-form-grid" }, /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Serienbrief-Vorlage"), vorlagen.length ? /* @__PURE__ */ React.createElement("select", { value: serienbriefVorlage, onChange: (e) => setSerienbriefVorlage(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Vorlage w\xE4hlen"), vorlagen.map((name) => /* @__PURE__ */ React.createElement("option", { key: name, value: name }, name))) : /* @__PURE__ */ React.createElement("input", { value: serienbriefVorlage, onChange: (e) => setSerienbriefVorlage(e.target.value), placeholder: "Vorlage w\xE4hlen" }), /* @__PURE__ */ React.createElement("div", { className: "op-field-hint" }, "Mahnregel: ", dunningType || "automatisch")), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Briefdatum"), /* @__PURE__ */ React.createElement("input", { type: "date", value: briefdatum, onChange: (e) => setBriefdatum(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Neue Zahlungsfrist"), /* @__PURE__ */ React.createElement("input", { type: "date", value: neueFaelligkeit, onChange: (e) => setNeueFaelligkeit(e.target.value) })), serienbriefVorlage && /* @__PURE__ */ React.createElement("div", { className: "op-field is-full" }, /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "op-collapse-toggle",
+          onClick: () => setShowTemplateValues((open) => !open),
+          "aria-expanded": showTemplateValues
+        },
+        /* @__PURE__ */ React.createElement("span", null, "Serienbrief-Werte"),
+        /* @__PURE__ */ React.createElement("span", null, templateBusy ? "l\xE4dt..." : `${templateVariables.length} Felder`)
+      ), showTemplateValues && (templateBusy ? /* @__PURE__ */ React.createElement("div", { className: "op-empty-inline" }, "Variablen werden geladen...") : templateVariables.length ? /* @__PURE__ */ React.createElement("div", { className: "op-template-vars" }, templateVariables.map((variable) => /* @__PURE__ */ React.createElement("div", { className: "op-template-var", key: variable.key }, /* @__PURE__ */ React.createElement("label", null, fieldDisplayLabel(variable), variable.kind === "path" && /* @__PURE__ */ React.createElement("span", { className: "op-required-dot", title: "Pfad-Override" }, "\u2197"), !variable.optional && /* @__PURE__ */ React.createElement("span", { className: "op-required-dot" }, "*")), renderTemplateVariableInput(variable), fieldHintText(variable) && /* @__PURE__ */ React.createElement("div", { className: "op-field-hint" }, fieldHintText(variable))))) : /* @__PURE__ */ React.createElement("div", { className: "op-empty-inline" }, "Diese Vorlage hat keine auszuf\xFCllenden Variablen.")))),
       !serienbriefVorlage && /* @__PURE__ */ React.createElement("div", { className: "op-empty-inline", style: { marginBottom: 12 } }, "Bitte zuerst eine Serienbrief-Vorlage w\xE4hlen."),
       missingRequiredVariables.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "op-empty-inline", style: { marginBottom: 12 } }, "Pflichtwerte fehlen: ", missingRequiredVariables.map((variable) => variable.label || variable.variable || variable.key).join(", ")),
       /* @__PURE__ */ React.createElement("div", { className: "op-preview-label", style: { marginBottom: 8 } }, "Mahnungen pro Mieter"),

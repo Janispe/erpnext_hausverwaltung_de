@@ -1084,6 +1084,7 @@ def create_dunning(
 def create_bulk_dunning(
     invoices_by_customer: str | dict,
     dunning_type_per_customer: str | dict | None = None,
+    posting_date: str | None = None,
     new_due_date: str | None = None,
     mahngebuehr: float | None = None,
     mahngebuehr_per_customer: str | dict | None = None,
@@ -1098,6 +1099,7 @@ def create_bulk_dunning(
     Args:
         invoices_by_customer: Dict ``{"<customer>": ["SI-1", "SI-2"], ...}``
         dunning_type_per_customer: optional, Dict mit Override pro Customer
+        posting_date: Default für alle
         new_due_date: Default für alle
         mahngebuehr: optionaler Gebühren-Override für alle
         mahngebuehr_per_customer: optional, Dict mit Gebühren-Override pro Customer
@@ -1152,7 +1154,7 @@ def create_bulk_dunning(
                 "customer": customer,
                 "company": first.company,
                 "dunning_type": resolved_type,
-                "posting_date": nowdate(),
+                "posting_date": posting_date or nowdate(),
                 "due_date": new_due_date or add_days(nowdate(), 7),
                 "currency": first.currency,
                 "conversion_rate": flt(getattr(first, "conversion_rate", None)) or 1,

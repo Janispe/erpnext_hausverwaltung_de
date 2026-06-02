@@ -80,6 +80,7 @@
       {
         sales_invoice: row.belegnummer,
         dunning_type: opts.dunningType,
+        posting_date: opts.briefdatum || null,
         new_due_date: opts.neueFaelligkeit,
         mahngebuehr: opts.mahngebuehr,
         zinsen_aktiv: opts.zinsenAktiv,
@@ -125,6 +126,7 @@
         serienbrief_vorlage: opts?.serienbriefVorlage || null,
         serienbrief_werte_per_customer: serienbriefWertePerCustomer,
         serienbrief_werte: opts?.serienbriefWerte || null,
+        posting_date: opts.briefdatum || null,
         new_due_date: opts.neueFaelligkeit,
       },
     );

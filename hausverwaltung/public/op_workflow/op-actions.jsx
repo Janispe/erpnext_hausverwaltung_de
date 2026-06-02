@@ -194,6 +194,8 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
   const [templateVariables, setTemplateVariables] = useStateAct([]);
   const [templateValues, setTemplateValues] = useStateAct({});
   const [templateDirty, setTemplateDirty] = useStateAct({});
+  const [showTemplateValues, setShowTemplateValues] = useStateAct(false);
+  const [briefdatum, setBriefdatum] = useStateAct(() => frappe.datetime?.get_today?.() || new Date().toISOString().slice(0, 10));
   const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
     const d = new Date();
     d.setDate(d.getDate() + 7);
@@ -374,6 +376,7 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
       const result = isBulk
         ? await window.OP_ACTIONS.createBulkDunning({ [row.party]: selectedRows }, {
             dunningType: textStufe,
+            briefdatum,
             neueFaelligkeit,
             mahngebuehr,
             zinsenAktiv: zinsen,
@@ -382,6 +385,7 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
           })
         : await window.OP_ACTIONS.createDunning(selectedRow, {
             dunningType: textStufe,
+            briefdatum,
             neueFaelligkeit,
             mahngebuehr,
             zinsenAktiv: zinsen,
@@ -432,6 +436,11 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
             onChange={(e) => setMahngebuehr(parseFloat(e.target.value) || 0)} />
         </div>
         <div className="op-field">
+          <label>Briefdatum</label>
+          <input type="date" value={briefdatum}
+            onChange={(e) => setBriefdatum(e.target.value)} />
+        </div>
+        <div className="op-field">
           <label>Neue Zahlungsfrist</label>
           <input type="date" value={neueFaelligkeit}
             onChange={(e) => setNeueFaelligkeit(e.target.value)} />
@@ -444,25 +453,35 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
         </div>
         {serienbriefVorlage && (
           <div className="op-field is-full">
-            <label>Serienbrief-Werte</label>
-            {templateBusy ? (
-              <div className="op-empty-inline">Variablen werden geladen...</div>
-            ) : templateVariables.length ? (
-              <div className="op-template-vars">
-                {templateVariables.map((variable) => (
-                  <div className="op-template-var" key={variable.key}>
-                    <label>
-                      {fieldDisplayLabel(variable)}
-                      {variable.kind === "path" && <span className="op-required-dot" title="Pfad-Override">↗</span>}
-                      {!variable.optional && <span className="op-required-dot">*</span>}
-                    </label>
-                    {renderTemplateVariableInput(variable)}
-                    {fieldHintText(variable) && <div className="op-field-hint">{fieldHintText(variable)}</div>}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="op-empty-inline">Diese Vorlage hat keine auszufüllenden Variablen.</div>
+            <button
+              type="button"
+              className="op-collapse-toggle"
+              onClick={() => setShowTemplateValues((open) => !open)}
+              aria-expanded={showTemplateValues}
+            >
+              <span>Serienbrief-Werte</span>
+              <span>{templateBusy ? "lädt..." : `${templateVariables.length} Felder`}</span>
+            </button>
+            {showTemplateValues && (
+              templateBusy ? (
+                <div className="op-empty-inline">Variablen werden geladen...</div>
+              ) : templateVariables.length ? (
+                <div className="op-template-vars">
+                  {templateVariables.map((variable) => (
+                    <div className="op-template-var" key={variable.key}>
+                      <label>
+                        {fieldDisplayLabel(variable)}
+                        {variable.kind === "path" && <span className="op-required-dot" title="Pfad-Override">↗</span>}
+                        {!variable.optional && <span className="op-required-dot">*</span>}
+                      </label>
+                      {renderTemplateVariableInput(variable)}
+                      {fieldHintText(variable) && <div className="op-field-hint">{fieldHintText(variable)}</div>}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="op-empty-inline">Diese Vorlage hat keine auszufüllenden Variablen.</div>
+              )
             )}
           </div>
         )}
@@ -909,6 +928,8 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
   const [templateVariables, setTemplateVariables] = useStateAct([]);
   const [templateValues, setTemplateValues] = useStateAct({});
   const [templateDirty, setTemplateDirty] = useStateAct({});
+  const [showTemplateValues, setShowTemplateValues] = useStateAct(false);
+  const [briefdatum, setBriefdatum] = useStateAct(() => frappe.datetime?.get_today?.() || new Date().toISOString().slice(0, 10));
   const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
     const d = new Date(); d.setDate(d.getDate() + 7);
     return d.toISOString().slice(0, 10);
@@ -1032,6 +1053,7 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
     try {
       const serienbriefWerte = buildSerienbriefWerte(templateVariables, templateValues, templateDirty);
       const result = await window.OP_ACTIONS.createBulkDunning(rowsByParty, {
+        briefdatum,
         neueFaelligkeit,
         dunningType,
         mahngebuehrPerParty,
@@ -1077,30 +1099,44 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
           <div className="op-field-hint">Mahnregel: {dunningType || "automatisch"}</div>
         </div>
         <div className="op-field">
+          <label>Briefdatum</label>
+          <input type="date" value={briefdatum} onChange={(e) => setBriefdatum(e.target.value)} />
+        </div>
+        <div className="op-field">
           <label>Neue Zahlungsfrist</label>
           <input type="date" value={neueFaelligkeit} onChange={(e) => setNeueFaelligkeit(e.target.value)} />
         </div>
         {serienbriefVorlage && (
           <div className="op-field is-full">
-            <label>Serienbrief-Werte</label>
-            {templateBusy ? (
-              <div className="op-empty-inline">Variablen werden geladen...</div>
-            ) : templateVariables.length ? (
-              <div className="op-template-vars">
-                {templateVariables.map((variable) => (
-                  <div className="op-template-var" key={variable.key}>
-                    <label>
-                      {fieldDisplayLabel(variable)}
-                      {variable.kind === "path" && <span className="op-required-dot" title="Pfad-Override">↗</span>}
-                      {!variable.optional && <span className="op-required-dot">*</span>}
-                    </label>
-                    {renderTemplateVariableInput(variable)}
-                    {fieldHintText(variable) && <div className="op-field-hint">{fieldHintText(variable)}</div>}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="op-empty-inline">Diese Vorlage hat keine auszufüllenden Variablen.</div>
+            <button
+              type="button"
+              className="op-collapse-toggle"
+              onClick={() => setShowTemplateValues((open) => !open)}
+              aria-expanded={showTemplateValues}
+            >
+              <span>Serienbrief-Werte</span>
+              <span>{templateBusy ? "lädt..." : `${templateVariables.length} Felder`}</span>
+            </button>
+            {showTemplateValues && (
+              templateBusy ? (
+                <div className="op-empty-inline">Variablen werden geladen...</div>
+              ) : templateVariables.length ? (
+                <div className="op-template-vars">
+                  {templateVariables.map((variable) => (
+                    <div className="op-template-var" key={variable.key}>
+                      <label>
+                        {fieldDisplayLabel(variable)}
+                        {variable.kind === "path" && <span className="op-required-dot" title="Pfad-Override">↗</span>}
+                        {!variable.optional && <span className="op-required-dot">*</span>}
+                      </label>
+                      {renderTemplateVariableInput(variable)}
+                      {fieldHintText(variable) && <div className="op-field-hint">{fieldHintText(variable)}</div>}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="op-empty-inline">Diese Vorlage hat keine auszufüllenden Variablen.</div>
+              )
             )}
           </div>
         )}

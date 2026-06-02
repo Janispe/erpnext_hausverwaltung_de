@@ -2114,6 +2114,29 @@ button { font-family: inherit; }
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px 14px;
+  margin-top: 10px;
+}
+.op-collapse-toggle {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 700;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.op-collapse-toggle::after {
+  content: "+";
+  color: var(--ink-3);
+}
+.op-collapse-toggle[aria-expanded="true"]::after {
+  content: "-";
 }
 .op-template-var {
   display: flex;
