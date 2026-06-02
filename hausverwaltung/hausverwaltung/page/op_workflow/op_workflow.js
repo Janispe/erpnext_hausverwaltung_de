@@ -53,7 +53,7 @@ function render_op_workflow(page_body) {
   `);
 
   // ─── CSS + Fonts laden ──────────────────────────────────────────────────
-  const ASSET_VERSION = "20260602-dunning-overrides-collapse";
+  const ASSET_VERSION = "20260602-dunning-relative-payment-term";
   const versioned = (src) => `${src}?v=${ASSET_VERSION}`;
   const cssHref = versioned("/assets/hausverwaltung/op_workflow/styles.css");
   if (!document.querySelector(`link[href="${cssHref}"]`)) {

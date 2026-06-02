@@ -196,11 +196,6 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
   const [templateDirty, setTemplateDirty] = useStateAct({});
   const [showTemplateValues, setShowTemplateValues] = useStateAct(false);
   const [briefdatum, setBriefdatum] = useStateAct(() => frappe.datetime?.get_today?.() || new Date().toISOString().slice(0, 10));
-  const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 7);
-    return d.toISOString().slice(0, 10);
-  });
   const suggestedDunningType = row.dunning_type || (nextStufe === 1 ? "Zahlungserinnerung - HP" : nextStufe === 2 ? "1. Mahnung - HP" : nextStufe === 3 ? "2. Mahnung - HP" : "Letzte Mahnung - HP");
   const [dunningTypes, setDunningTypes] = useStateAct([]);
   const [textStufe, setTextStufe] = useStateAct(suggestedDunningType);
@@ -374,10 +369,9 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
     try {
       const serienbriefWerte = buildSerienbriefWerte(templateVariables, templateValues, templateDirty);
       const result = isBulk
-        ? await window.OP_ACTIONS.createBulkDunning({ [row.party]: selectedRows }, {
+          ? await window.OP_ACTIONS.createBulkDunning({ [row.party]: selectedRows }, {
             dunningType: textStufe,
             briefdatum,
-            neueFaelligkeit,
             mahngebuehr,
             zinsenAktiv: zinsen,
             serienbriefVorlage,
@@ -386,7 +380,6 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
         : await window.OP_ACTIONS.createDunning(selectedRow, {
             dunningType: textStufe,
             briefdatum,
-            neueFaelligkeit,
             mahngebuehr,
             zinsenAktiv: zinsen,
             serienbriefVorlage,
@@ -439,11 +432,6 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
           <label>Briefdatum</label>
           <input type="date" value={briefdatum}
             onChange={(e) => setBriefdatum(e.target.value)} />
-        </div>
-        <div className="op-field">
-          <label>Neue Zahlungsfrist</label>
-          <input type="date" value={neueFaelligkeit}
-            onChange={(e) => setNeueFaelligkeit(e.target.value)} />
         </div>
         <div className="op-field is-full">
           <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
@@ -930,10 +918,6 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
   const [templateDirty, setTemplateDirty] = useStateAct({});
   const [showTemplateValues, setShowTemplateValues] = useStateAct(false);
   const [briefdatum, setBriefdatum] = useStateAct(() => frappe.datetime?.get_today?.() || new Date().toISOString().slice(0, 10));
-  const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
-    const d = new Date(); d.setDate(d.getDate() + 7);
-    return d.toISOString().slice(0, 10);
-  });
   const [excluded, setExcluded] = useStateAct(() => new Set());
   const [busy, setBusy] = useStateAct(false);
 
@@ -1054,7 +1038,6 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
       const serienbriefWerte = buildSerienbriefWerte(templateVariables, templateValues, templateDirty);
       const result = await window.OP_ACTIONS.createBulkDunning(rowsByParty, {
         briefdatum,
-        neueFaelligkeit,
         dunningType,
         mahngebuehrPerParty,
         serienbriefVorlage,
@@ -1101,10 +1084,6 @@ function SammelmahnungModal({ rows, onClose, onDone }) {
         <div className="op-field">
           <label>Briefdatum</label>
           <input type="date" value={briefdatum} onChange={(e) => setBriefdatum(e.target.value)} />
-        </div>
-        <div className="op-field">
-          <label>Neue Zahlungsfrist</label>
-          <input type="date" value={neueFaelligkeit} onChange={(e) => setNeueFaelligkeit(e.target.value)} />
         </div>
         {serienbriefVorlage && (
           <div className="op-field is-full">

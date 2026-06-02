@@ -24253,11 +24253,6 @@ var OpWorkflow = (() => {
     const [templateDirty, setTemplateDirty] = useStateAct({});
     const [showTemplateValues, setShowTemplateValues] = useStateAct(false);
     const [briefdatum, setBriefdatum] = useStateAct(() => frappe.datetime?.get_today?.() || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
-    const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
-      const d = /* @__PURE__ */ new Date();
-      d.setDate(d.getDate() + 7);
-      return d.toISOString().slice(0, 10);
-    });
     const suggestedDunningType = row.dunning_type || (nextStufe === 1 ? "Zahlungserinnerung - HP" : nextStufe === 2 ? "1. Mahnung - HP" : nextStufe === 3 ? "2. Mahnung - HP" : "Letzte Mahnung - HP");
     const [dunningTypes, setDunningTypes] = useStateAct([]);
     const [textStufe, setTextStufe] = useStateAct(suggestedDunningType);
@@ -24433,7 +24428,6 @@ var OpWorkflow = (() => {
         const result = isBulk ? await window.OP_ACTIONS.createBulkDunning({ [row.party]: selectedRows }, {
           dunningType: textStufe,
           briefdatum,
-          neueFaelligkeit,
           mahngebuehr,
           zinsenAktiv: zinsen,
           serienbriefVorlage,
@@ -24441,7 +24435,6 @@ var OpWorkflow = (() => {
         }) : await window.OP_ACTIONS.createDunning(selectedRow, {
           dunningType: textStufe,
           briefdatum,
-          neueFaelligkeit,
           mahngebuehr,
           zinsenAktiv: zinsen,
           serienbriefVorlage,
@@ -24474,13 +24467,6 @@ var OpWorkflow = (() => {
           type: "date",
           value: briefdatum,
           onChange: (e) => setBriefdatum(e.target.value)
-        }
-      )), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Neue Zahlungsfrist"), /* @__PURE__ */ React.createElement(
-        "input",
-        {
-          type: "date",
-          value: neueFaelligkeit,
-          onChange: (e) => setNeueFaelligkeit(e.target.value)
         }
       )), /* @__PURE__ */ React.createElement("div", { className: "op-field is-full" }, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: zinsen, onChange: (e) => setZinsen(e.target.checked) }), /* @__PURE__ */ React.createElement("span", null, "Verzugszinsen berechnen (", zinssatz, "% p.a. \xB7 \xA7288 BGB)"))), serienbriefVorlage && /* @__PURE__ */ React.createElement("div", { className: "op-field is-full" }, /* @__PURE__ */ React.createElement(
         "button",
@@ -24696,11 +24682,6 @@ var OpWorkflow = (() => {
     const [templateDirty, setTemplateDirty] = useStateAct({});
     const [showTemplateValues, setShowTemplateValues] = useStateAct(false);
     const [briefdatum, setBriefdatum] = useStateAct(() => frappe.datetime?.get_today?.() || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
-    const [neueFaelligkeit, setNeueFaelligkeit] = useStateAct(() => {
-      const d = /* @__PURE__ */ new Date();
-      d.setDate(d.getDate() + 7);
-      return d.toISOString().slice(0, 10);
-    });
     const [excluded, setExcluded] = useStateAct(() => /* @__PURE__ */ new Set());
     const [busy, setBusy] = useStateAct(false);
     const aktiv = groups.filter((g) => !excluded.has(g.party));
@@ -24825,7 +24806,6 @@ var OpWorkflow = (() => {
         const serienbriefWerte = buildSerienbriefWerte(templateVariables, templateValues, templateDirty);
         const result = await window.OP_ACTIONS.createBulkDunning(rowsByParty, {
           briefdatum,
-          neueFaelligkeit,
           dunningType,
           mahngebuehrPerParty,
           serienbriefVorlage,
@@ -24844,7 +24824,7 @@ var OpWorkflow = (() => {
         onClose,
         footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { className: "op-modal-foot-info" }, "Erzeugt ", aktiv.length, " Dunning-Doc", aktiv.length === 1 ? "" : "s", " mit ausgef\xFCllten Serienbrief-Werten"), /* @__PURE__ */ React.createElement("div", { className: "op-modal-foot-actions" }, /* @__PURE__ */ React.createElement("button", { className: "mk-btn", onClick: onClose, disabled: busy }, "Abbrechen"), /* @__PURE__ */ React.createElement("button", { className: "mk-btn mk-btn-primary", disabled: busy || templateBusy || aktiv.length === 0 || !serienbriefVorlage || missingRequiredVariables.length > 0, onClick: submit }, busy ? "Drafts werden angelegt \u2026" : `${aktiv.length} ${aktiv.length === 1 ? "Mahnung" : "Mahnungen"} als Draft anlegen \xB7 ${fmtEUR_op(totalSum)}`)))
       },
-      /* @__PURE__ */ React.createElement("div", { className: "op-form-grid" }, /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Serienbrief-Vorlage"), vorlagen.length ? /* @__PURE__ */ React.createElement("select", { value: serienbriefVorlage, onChange: (e) => setSerienbriefVorlage(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Vorlage w\xE4hlen"), vorlagen.map((name) => /* @__PURE__ */ React.createElement("option", { key: name, value: name }, name))) : /* @__PURE__ */ React.createElement("input", { value: serienbriefVorlage, onChange: (e) => setSerienbriefVorlage(e.target.value), placeholder: "Vorlage w\xE4hlen" }), /* @__PURE__ */ React.createElement("div", { className: "op-field-hint" }, "Mahnregel: ", dunningType || "automatisch")), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Briefdatum"), /* @__PURE__ */ React.createElement("input", { type: "date", value: briefdatum, onChange: (e) => setBriefdatum(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Neue Zahlungsfrist"), /* @__PURE__ */ React.createElement("input", { type: "date", value: neueFaelligkeit, onChange: (e) => setNeueFaelligkeit(e.target.value) })), serienbriefVorlage && /* @__PURE__ */ React.createElement("div", { className: "op-field is-full" }, /* @__PURE__ */ React.createElement(
+      /* @__PURE__ */ React.createElement("div", { className: "op-form-grid" }, /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Serienbrief-Vorlage"), vorlagen.length ? /* @__PURE__ */ React.createElement("select", { value: serienbriefVorlage, onChange: (e) => setSerienbriefVorlage(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Vorlage w\xE4hlen"), vorlagen.map((name) => /* @__PURE__ */ React.createElement("option", { key: name, value: name }, name))) : /* @__PURE__ */ React.createElement("input", { value: serienbriefVorlage, onChange: (e) => setSerienbriefVorlage(e.target.value), placeholder: "Vorlage w\xE4hlen" }), /* @__PURE__ */ React.createElement("div", { className: "op-field-hint" }, "Mahnregel: ", dunningType || "automatisch")), /* @__PURE__ */ React.createElement("div", { className: "op-field" }, /* @__PURE__ */ React.createElement("label", null, "Briefdatum"), /* @__PURE__ */ React.createElement("input", { type: "date", value: briefdatum, onChange: (e) => setBriefdatum(e.target.value) })), serienbriefVorlage && /* @__PURE__ */ React.createElement("div", { className: "op-field is-full" }, /* @__PURE__ */ React.createElement(
         "button",
         {
           type: "button",

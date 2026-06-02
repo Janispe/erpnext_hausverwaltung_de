@@ -1005,6 +1005,10 @@ def _resolve_mode_of_payment(mode_of_payment: str | None) -> str | None:
     return frappe.db.get_value("Mode of Payment", {"enabled": 1}, "name")
 
 
+def _default_dunning_due_date(posting_date: str | None = None):
+    return add_days(getdate(posting_date or nowdate()), 3)
+
+
 @frappe.whitelist()
 def create_dunning(
     sales_invoice: str,
@@ -1023,7 +1027,7 @@ def create_dunning(
         dunning_type: Name eines konfigurierten Dunning Type
             (z. B. "Zahlungserinnerung Stufe 1")
         posting_date: optional, default = heute
-        new_due_date: optional, default = heute + 7 Tage
+        new_due_date: optional, default = Briefdatum + 3 Tage
         mahngebuehr: optional Override
         zinsen_aktiv: ob Verzugszinsen berechnet werden sollen
 
@@ -1044,7 +1048,7 @@ def create_dunning(
         "company": si.company,
         "dunning_type": resolved_type,
         "posting_date": posting_date or nowdate(),
-        "due_date": new_due_date or add_days(nowdate(), 7),
+        "due_date": new_due_date or _default_dunning_due_date(posting_date),
         "outstanding_amount": si.outstanding_amount,
         "currency": si.currency,
         "conversion_rate": flt(getattr(si, "conversion_rate", None)) or 1,
@@ -1155,7 +1159,7 @@ def create_bulk_dunning(
                 "company": first.company,
                 "dunning_type": resolved_type,
                 "posting_date": posting_date or nowdate(),
-                "due_date": new_due_date or add_days(nowdate(), 7),
+                "due_date": new_due_date or _default_dunning_due_date(posting_date),
                 "currency": first.currency,
                 "conversion_rate": flt(getattr(first, "conversion_rate", None)) or 1,
                 "outstanding_amount": sum(flt(si.outstanding_amount) for si in sales_invoices),
