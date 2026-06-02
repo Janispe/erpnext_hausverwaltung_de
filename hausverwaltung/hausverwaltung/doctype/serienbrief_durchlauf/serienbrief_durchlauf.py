@@ -2486,6 +2486,16 @@ def _collect_dunning_auto_values(dunning) -> dict[str, dict[str, Any]]:
 	)
 
 
+DUNNING_AUTO_VALUE_FIELD_META = {
+	"stufe": {"label": "Mahnstufe", "description": "Automatisch aus der Mahnregel berechnet."},
+	"monat": {"label": "Monat", "description": "Automatisch aus den zu mahnenden Rechnungen berechnet."},
+	"rueckstand": {"label": "Rückstand", "description": "Automatisch aus offenen Rechnungen plus Mahngebühr berechnet."},
+	"fehlbetrag": {"label": "Fehlbetrag", "description": "Automatisch aus den offenen Rechnungen berechnet."},
+	"gezahlt": {"label": "Gezahlt", "description": "Automatisch aus Rechnungsbetrag minus offenem Betrag berechnet."},
+	"fehlbetrag_text": {"label": "Fehlbetrag-Text", "description": "Automatisch berechneter Textbaustein zum Fehlbetrag."},
+}
+
+
 def _collect_auto_variable_values(context: Dict[str, Any]) -> dict[str, dict[str, Any]]:
 	objekt = context.get("objekt") if isinstance(context, dict) else None
 	if getattr(objekt, "doctype", None) == "Dunning":
@@ -3513,6 +3523,35 @@ def _get_serienbrief_value_fields_for_doc(
 				"description": getattr(row, "beschreibung", None) or "",
 			}
 		)
+
+	if (iteration_doctype or template.get("haupt_verteil_objekt")) == "Dunning":
+		for key, meta in DUNNING_AUTO_VALUE_FIELD_META.items():
+			if key in seen or key not in auto_values:
+				continue
+			seen.add(key)
+			value, auto_value, source = _field_source_and_value(
+				key,
+				defaults=defaults,
+				auto_values=auto_values,
+				overrides=overrides,
+				context=render_context,
+			)
+			fields.append(
+				{
+					"key": key,
+					"kind": "variable",
+					"label": meta["label"],
+					"token": f"{{{{ {key} }}}}",
+					"value": _display_value(value),
+					"auto_value": _display_value(auto_value),
+					"overridable": True,
+					"source": source,
+					"variable": key,
+					"variable_type": "String",
+					"optional": 1,
+					"description": meta["description"],
+				}
+			)
 
 	for path in _collect_template_path_tokens(template):
 		key = _path_override_key(path)

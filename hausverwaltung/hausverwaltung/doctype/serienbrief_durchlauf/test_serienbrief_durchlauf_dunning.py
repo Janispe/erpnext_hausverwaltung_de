@@ -357,3 +357,40 @@ class TestSerienbriefDurchlaufDunning(FrappeTestCase):
 			context=frappe._dict(objekt=dunning),
 		)
 		self.assertEqual((value, auto_value, source), ("105,00", "105,00", "auto"))
+
+	def test_dunning_value_fields_include_provider_fields_without_template_tokens(self):
+		template = frappe._dict(
+			name="_Test Dunning Auto Fields",
+			haupt_verteil_objekt="Dunning",
+			content_type="HTML + Jinja",
+			jinja_content="Hallo",
+			html_content="",
+			variablen_werte="{}",
+			variables=[],
+			textbausteine=[],
+		)
+		dunning = frappe._dict(
+			doctype="Dunning",
+			dunning_type="2. Mahnung - HP",
+			currency="EUR",
+			dunning_fee=5,
+			total_outstanding=100,
+			grand_total=105,
+			overdue_payments=[],
+		)
+		context = frappe._dict(
+			objekt=dunning,
+			_serienbrief_value_overrides={"stufe": {"value": "Sonderstufe"}},
+		)
+
+		with patch(
+			"hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf._load_value_fields_context",
+			return_value=context,
+		):
+			result = _get_serienbrief_value_fields_for_doc(template, iteration_doctype="Dunning")
+
+		fields = {field["key"]: field for field in result["fields"]}
+		self.assertEqual(fields["stufe"]["value"], "Sonderstufe")
+		self.assertEqual(fields["stufe"]["auto_value"], 2)
+		self.assertEqual(fields["rueckstand"]["value"], "105,00")
+		self.assertIn("monat", fields)
