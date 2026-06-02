@@ -90,6 +90,10 @@
 .dl-print-option input {
   margin: 0;
 }
+.dl-print-option.disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
 .dl-print-option:has(input:checked) {
   border-color: var(--primary-200);
   background: var(--primary-50);

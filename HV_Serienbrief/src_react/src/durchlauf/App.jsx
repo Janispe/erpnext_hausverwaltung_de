@@ -43,6 +43,7 @@ const Header = ({
     const t = (titleDraft || "").trim();
     if (t && t !== durchlauf.title && onTitleCommit) onTitleCommit(t);
   };
+  const supportsDruckSchwarzWeiss = !!durchlauf.supports_druck_schwarz_weiss;
   return (
     <header className="dl-header">
       <div className="dl-header-row">
@@ -60,12 +61,19 @@ const Header = ({
         </span>
         <div className="dl-header-actions">
           <button className="btn ghost" onClick={onNew}><Icon name="plus" size={13}/> Neuer Durchlauf</button>
-          <label className="dl-print-option" title="Rendert unterstützte Briefköpfe mit drucksparender Schwarz-Weiß-Variante">
+          <label
+            className={`dl-print-option ${!supportsDruckSchwarzWeiss ? "disabled" : ""}`}
+            title={
+              supportsDruckSchwarzWeiss
+                ? "Rendert unterstützte Briefköpfe mit drucksparender Schwarz-Weiß-Variante"
+                : "Diese Vorlage enthält keinen drucksparenden Briefkopf"
+            }
+          >
             <input
               type="checkbox"
-              checked={druckSchwarzWeiss}
+              checked={supportsDruckSchwarzWeiss && druckSchwarzWeiss}
               onChange={e => onDruckSchwarzWeissChange && onDruckSchwarzWeissChange(e.target.checked)}
-              disabled={running || busy}
+              disabled={running || busy || !supportsDruckSchwarzWeiss}
             />
             <span>Drucksparend / Schwarz-Weiß</span>
           </label>
@@ -782,7 +790,7 @@ const DurchlaufApp = () => {
     if (running) return;
     setBusy(true);
     try {
-      await startRun({ druckSchwarzWeiss });
+      await startRun({ druckSchwarzWeiss: durchlauf.supports_druck_schwarz_weiss && druckSchwarzWeiss });
       setRunning(true);
       setProgress("");
       poll();
@@ -791,12 +799,14 @@ const DurchlaufApp = () => {
     } finally {
       setBusy(false);
     }
-  }, [running, poll, druckSchwarzWeiss]);
+  }, [running, poll, druckSchwarzWeiss, durchlauf.supports_druck_schwarz_weiss]);
 
   const onMergedPdf = useCallback(async () => {
     setBusy(true);
     try {
-      const res = await mergedPdf({ druckSchwarzWeiss });
+      const res = await mergedPdf({
+        druckSchwarzWeiss: durchlauf.supports_druck_schwarz_weiss && druckSchwarzWeiss,
+      });
       if (res && res.file_url) window.open(res.file_url, "_blank");
       await refresh();
     } catch (e) {
@@ -804,7 +814,7 @@ const DurchlaufApp = () => {
     } finally {
       setBusy(false);
     }
-  }, [druckSchwarzWeiss, refresh]);
+  }, [druckSchwarzWeiss, refresh, durchlauf.supports_druck_schwarz_weiss]);
 
   // Manueller Reset: bricht das Polling, setzt running=false und refresht den Doc,
   // damit Status/Counts vom Backend kommen. Backend prüft status === "Läuft" +

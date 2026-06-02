@@ -2543,6 +2543,21 @@ def _collect_template_path_tokens(template) -> list[str]:
 	return paths
 
 
+def _template_supports_druck_schwarz_weiss(template) -> bool:
+	if not template:
+		return False
+	sources = [_get_template_template_source(template)]
+	for row in template.get("textbausteine") or []:
+		if not getattr(row, "baustein", None):
+			continue
+		try:
+			block_doc = frappe.get_cached_doc("Serienbrief Textbaustein", row.baustein)
+		except Exception:
+			continue
+		sources.append(_get_textbaustein_template_source(block_doc))
+	return any("druck_schwarz_weiss" in cstr(source or "") for source in sources)
+
+
 def _build_value_override_mapping(template, durchlauf=None, row=None) -> dict[str, dict[str, Any]]:
 	merged: dict[str, dict[str, Any]] = {}
 	if template is not None:
@@ -4093,8 +4108,10 @@ def get_durchlauf_data(docname: str) -> Dict[str, Any]:
 
 	# Variablen: Definition (Vorlage) + Default (Vorlage) + aktueller Durchlauf-Wert.
 	variables_out: List[Dict[str, Any]] = []
+	supports_druck_schwarz_weiss = False
 	if doc.vorlage:
 		template_doc = frappe.get_cached_doc("Serienbrief Vorlage", doc.vorlage)
+		supports_druck_schwarz_weiss = _template_supports_druck_schwarz_weiss(template_doc)
 		global_values = _parse_variable_values(doc.variablen_werte)
 		vorlage_defaults = _parse_variable_values(getattr(template_doc, "variablen_werte", None))
 		for v in _collect_template_variables(template_doc):
@@ -4130,6 +4147,7 @@ def get_durchlauf_data(docname: str) -> Dict[str, Any]:
 		"iteration_doctype": iteration_doctype,
 		"date": cstr(doc.date) if doc.date else None,
 		"docstatus": int(getattr(doc, "docstatus", 0) or 0),
+		"supports_druck_schwarz_weiss": supports_druck_schwarz_weiss,
 		"can_write": bool(frappe.has_permission("Serienbrief Durchlauf", "write", doc))
 		and int(getattr(doc, "docstatus", 0) or 0) == 0,
 		"variables": variables_out,

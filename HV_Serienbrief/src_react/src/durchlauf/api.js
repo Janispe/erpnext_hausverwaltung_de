@@ -84,6 +84,7 @@ export async function loadDurchlauf() {
 		date: d.date || "",
 		created_by: d.created_by || "",
 		can_write: !!d.can_write,
+		supports_druck_schwarz_weiss: !!d.supports_druck_schwarz_weiss,
 		counts: d.counts || {},
 		variables: (d.variables || []).map((v) => ({
 			name: v.name,
