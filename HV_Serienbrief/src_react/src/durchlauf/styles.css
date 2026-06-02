@@ -65,7 +65,36 @@
   background: currentColor;
 }
 
-.dl-header-actions { margin-left: auto; display: flex; gap: 6px; }
+.dl-header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.dl-print-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.dl-print-option input {
+  margin: 0;
+}
+.dl-print-option:has(input:checked) {
+  border-color: var(--primary-200);
+  background: var(--primary-50);
+  color: var(--primary-hover);
+}
 
 .dl-header-meta {
   display: flex;

@@ -110,9 +110,12 @@ export async function getProgress() {
 }
 
 // Lauf als Hintergrund-Job starten.
-export async function startRun() {
+export async function startRun({ druckSchwarzWeiss = false } = {}) {
 	if (!embedded) return { status: "Läuft", mock: true };
-	return await rpc("start_run", { docname: getDocname() });
+	return await rpc("start_run", {
+		docname: getDocname(),
+		druck_schwarz_weiss: druckSchwarzWeiss ? 1 : 0,
+	});
 }
 
 // Manueller Reset eines hängenden „Läuft"-Durchlaufs auf „Fehlgeschlagen".
@@ -155,9 +158,12 @@ export async function availableRecipients(query) {
 }
 
 // Sammel-PDF aus den bereits generierten Dokumenten. → { file_url }.
-export async function mergedPdf() {
+export async function mergedPdf({ druckSchwarzWeiss = false } = {}) {
 	if (!embedded) return { file_url: "" };
-	return await rpc("merged_pdf", { docname: getDocname() });
+	return await rpc("merged_pdf", {
+		docname: getDocname(),
+		druck_schwarz_weiss: druckSchwarzWeiss ? 1 : 0,
+	});
 }
 
 // --- Vollbild-Page: Anlegen / Titel / Navigation ------------------------------

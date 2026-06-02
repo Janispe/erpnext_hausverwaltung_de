@@ -22,7 +22,20 @@ import {
 
 // Serienbrief Durchlauf — main app
 // ============== Header ==============
-const Header = ({ durchlauf, stats, onRun, onMergedPdf, onMarkFailed, onTitleCommit, onNew, running, progress, busy }) => {
+const Header = ({
+  durchlauf,
+  stats,
+  onRun,
+  onMergedPdf,
+  onMarkFailed,
+  onTitleCommit,
+  onNew,
+  running,
+  progress,
+  busy,
+  druckSchwarzWeiss,
+  onDruckSchwarzWeissChange,
+}) => {
   const statusLabel = { draft: "Entwurf", running: "Läuft…", completed: "Abgeschlossen", failed: "Fehlgeschlagen", sent: "Versendet" }[durchlauf.status] || durchlauf.status;
   const [titleDraft, setTitleDraft] = useState(durchlauf.title || "");
   useEffect(() => { setTitleDraft(durchlauf.title || ""); }, [durchlauf.title]);
@@ -47,6 +60,15 @@ const Header = ({ durchlauf, stats, onRun, onMergedPdf, onMarkFailed, onTitleCom
         </span>
         <div className="dl-header-actions">
           <button className="btn ghost" onClick={onNew}><Icon name="plus" size={13}/> Neuer Durchlauf</button>
+          <label className="dl-print-option" title="Rendert unterstützte Briefköpfe mit drucksparender Schwarz-Weiß-Variante">
+            <input
+              type="checkbox"
+              checked={druckSchwarzWeiss}
+              onChange={e => onDruckSchwarzWeissChange && onDruckSchwarzWeissChange(e.target.checked)}
+              disabled={running || busy}
+            />
+            <span>Drucksparend / Schwarz-Weiß</span>
+          </label>
           <button className="btn" onClick={onRun} disabled={running || busy || !durchlauf.can_write}>
             <Icon name="refresh" size={13}/> {running ? "Läuft…" : "Lauf starten / neu rendern"}
           </button>
@@ -649,6 +671,7 @@ const DurchlaufApp = () => {
   const [progress, setProgress] = useState("");
   const [busy, setBusy] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [druckSchwarzWeiss, setDruckSchwarzWeiss] = useState(false);
 
   const durchlauf = { ...durchlaufMeta, variables: vars };
 
@@ -759,7 +782,7 @@ const DurchlaufApp = () => {
     if (running) return;
     setBusy(true);
     try {
-      await startRun();
+      await startRun({ druckSchwarzWeiss });
       setRunning(true);
       setProgress("");
       poll();
@@ -768,19 +791,20 @@ const DurchlaufApp = () => {
     } finally {
       setBusy(false);
     }
-  }, [running, poll]);
+  }, [running, poll, druckSchwarzWeiss]);
 
   const onMergedPdf = useCallback(async () => {
     setBusy(true);
     try {
-      const res = await mergedPdf();
+      const res = await mergedPdf({ druckSchwarzWeiss });
       if (res && res.file_url) window.open(res.file_url, "_blank");
+      await refresh();
     } catch (e) {
       window.alert(e?.message || "Sammel-PDF fehlgeschlagen.");
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [druckSchwarzWeiss, refresh]);
 
   // Manueller Reset: bricht das Polling, setzt running=false und refresht den Doc,
   // damit Status/Counts vom Backend kommen. Backend prüft status === "Läuft" +
@@ -933,6 +957,8 @@ const DurchlaufApp = () => {
         running={running}
         progress={progress}
         busy={busy}
+        druckSchwarzWeiss={druckSchwarzWeiss}
+        onDruckSchwarzWeissChange={setDruckSchwarzWeiss}
       />
       <div className="dl-main">
         <ConfigColumn durchlauf={durchlauf} onUpdateVar={onUpdateVar}/>

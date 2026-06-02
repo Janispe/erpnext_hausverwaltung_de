@@ -3868,11 +3868,12 @@ def render_preview(doc: str | dict | None = None, docname: str | None = None) ->
 _RUN_COUNT_KEYS = {"Generiert": "generated", "Übersprungen": "skipped", "Fehler": "error"}
 
 
-def _run_durchlauf_job(docname: str) -> None:
+def _run_durchlauf_job(docname: str, druck_schwarz_weiss: int | str = 0) -> None:
 	"""Enqueued: rendert alle Empfänger, schreibt Pro-Empfänger-Status + Fortschritt,
 	setzt den Lauf-Status. Fehler einzelner Empfänger brechen den Lauf NICHT ab
 	(das macht _create_dokumente); nur ein unerwarteter Infra-Fehler → Fehlgeschlagen."""
 	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
+	doc._druck_schwarz_weiss = bool(cint(druck_schwarz_weiss or 0))
 	total = len(doc.get("iteration_objekte") or [])
 
 	def progress_cb(idx, tot, counts):
@@ -3906,7 +3907,11 @@ def _run_durchlauf_job(docname: str) -> None:
 
 
 @frappe.whitelist()
-def start_durchlauf_run(docname: str, regenerate: int | str = 1) -> Dict[str, Any]:
+def start_durchlauf_run(
+	docname: str,
+	regenerate: int | str = 1,
+	druck_schwarz_weiss: int | str = 0,
+) -> Dict[str, Any]:
 	"""Startet den Lauf als Hintergrund-Job. Gibt sofort zurück; UI pollt get_run_progress."""
 	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
 	if not frappe.has_permission("Serienbrief Durchlauf", "write", doc):
@@ -3929,6 +3934,7 @@ def start_durchlauf_run(docname: str, regenerate: int | str = 1) -> Dict[str, An
 		queue="long",
 		timeout=3600,
 		docname=docname,
+		druck_schwarz_weiss=cint(druck_schwarz_weiss or 0),
 		enqueue_after_commit=True,
 	)
 	return {"status": "Läuft", "total": total}
@@ -4270,21 +4276,17 @@ def get_available_recipients(docname: str, query: str | None = None, limit: int 
 
 
 @frappe.whitelist()
-def get_merged_pdf(docname: str) -> Dict[str, str]:
-	"""Sammel-PDF aus den bereits erzeugten (Generiert-)Dokumenten — ohne Neu-Render."""
+def get_merged_pdf(docname: str, druck_schwarz_weiss: int | str = 0) -> Dict[str, str]:
+	"""Sammel-PDF im gewählten Druckmodus erzeugen."""
 	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
 	if not frappe.has_permission("Serienbrief Durchlauf", "read", doc):
 		raise frappe.PermissionError
-	dokumente = frappe.get_all(
-		"Serienbrief Dokument",
-		filters={"durchlauf": docname, "status": "Generiert", "recreate_pending": 0},
-		order_by="creation asc",
-		pluck="name",
+	file_url = doc.generate_pdf_file(
+		print_format="Serienbrief Dokument",
+		recreate_documents=True,
+		druck_schwarz_weiss=bool(cint(druck_schwarz_weiss or 0)),
 	)
-	if not dokumente:
-		frappe.throw(_("Keine erfolgreich generierten Dokumente. Bitte zuerst den Lauf starten."))
-	pdf_bytes = doc._build_merged_pdf(dokumente)
-	return {"file_url": doc._store_pdf(pdf_bytes)}
+	return {"file_url": file_url}
 
 
 @frappe.whitelist()
