@@ -321,10 +321,14 @@ const hv_render_template_variables_table = (frm, requirements) => {
 		});
 };
 
-const _hv_run_pdf_generation = (frm, printFormat) => {
+const _hv_run_pdf_generation = (frm, printFormat, druckSchwarzWeiss = false) => {
 	frappe.call({
 		method: "hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf.generate_pdf",
-		args: { docname: frm.doc.name, print_format: printFormat },
+		args: {
+			docname: frm.doc.name,
+			print_format: printFormat,
+			druck_schwarz_weiss: druckSchwarzWeiss ? 1 : 0,
+		},
 		freeze: true,
 		freeze_message: __("PDF wird erzeugt …"),
 	}).then((r) => {
@@ -345,7 +349,7 @@ const trigger_serienbrief_pdf = (frm) => {
 	const defaultFormat = ui.serienbrief_pdf_default_format || "Serienbrief Dokument";
 
 	if (skipDialog && defaultFormat) {
-		_hv_run_pdf_generation(frm, defaultFormat);
+		_hv_run_pdf_generation(frm, defaultFormat, false);
 		return;
 	}
 
@@ -367,6 +371,12 @@ const trigger_serienbrief_pdf = (frm) => {
 					},
 				}),
 			},
+			{
+				fieldname: "druck_schwarz_weiss",
+				fieldtype: "Check",
+				label: __("Drucksparend / Schwarz-Weiß"),
+				description: __("Verwendet drucksparende Varianten im Briefkopf, sofern die Vorlage diese Option unterstützt."),
+			},
 		],
 		primary_action_label: __("PDF erzeugen"),
 		primary_action(values) {
@@ -375,7 +385,7 @@ const trigger_serienbrief_pdf = (frm) => {
 				return;
 			}
 			dialog.hide();
-			_hv_run_pdf_generation(frm, printFormat);
+			_hv_run_pdf_generation(frm, printFormat, !!values.druck_schwarz_weiss);
 		},
 	});
 

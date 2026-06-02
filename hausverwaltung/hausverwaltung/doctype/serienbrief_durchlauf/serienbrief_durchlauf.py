@@ -517,7 +517,9 @@ class SerienbriefDurchlauf(Document):
 		self,
 		print_format: str | None = None,
 		recreate_documents: bool = False,
+		druck_schwarz_weiss: bool = False,
 	) -> str:
+		self._druck_schwarz_weiss = bool(druck_schwarz_weiss)
 		submit_docs = bool(int(getattr(self, "docstatus", 0) or 0))
 		# Drafts: immer neu rendern, sonst werden Variablen-Änderungen aus dem
 		# Formular nicht berücksichtigt und ein veralteter gespeicherter PDF-Cache
@@ -1071,6 +1073,7 @@ class SerienbriefDurchlauf(Document):
 			mietvertrag=mietvertrag_doc,
 			datum=format_date(letter_date),
 			datum_iso=letter_date,
+			druck_schwarz_weiss=bool(getattr(self, "_druck_schwarz_weiss", False)),
 			empfaenger=frappe._dict(
 				empfaenger_data,
 				name=getattr(row, "iteration_objekt", None) or getattr(row, "objekt", None) or "",
@@ -3797,6 +3800,7 @@ def generate_pdf(
 	docname: str,
 	print_format: str | None = None,
 	recreate_documents: int | str = 0,
+	druck_schwarz_weiss: int | str = 0,
 ) -> str:
 	doc = frappe.get_doc("Serienbrief Durchlauf", docname)
 	if not frappe.has_permission("Serienbrief Durchlauf", "read", doc):
@@ -3805,6 +3809,7 @@ def generate_pdf(
 	return doc.generate_pdf_file(
 		print_format=print_format,
 		recreate_documents=recreate_flag,
+		druck_schwarz_weiss=bool(cint(druck_schwarz_weiss or 0)),
 	)
 
 
