@@ -1234,6 +1234,7 @@ class SerienbriefDurchlauf(Document):
 		block_context = frappe._dict(
 			datum=base_context.get("datum"),
 			datum_iso=base_context.get("datum_iso"),
+			druck_schwarz_weiss=bool(base_context.get("druck_schwarz_weiss")),
 			empfaenger=base_context.get("empfaenger"),
 			serienbrief=base_context.get("serienbrief"),
 			outputs=base_context.get("outputs") or frappe._dict(),
