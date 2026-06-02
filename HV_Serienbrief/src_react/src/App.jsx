@@ -55,6 +55,7 @@ export const App = () => {
   const [previewMode, setPreviewMode] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
+  const [druckSchwarzWeiss, setDruckSchwarzWeiss] = useState(false);
   const [bausteinLayoutMode, setBausteinLayoutMode] = useState(() => loadPref("bausteinLayoutMode", false));
   const [bausteinPreviewHtml, setBausteinPreviewHtml] = useState({});
   const [editorPrintCss, setEditorPrintCss] = useState("");
@@ -489,7 +490,15 @@ export const App = () => {
   const refreshPreview = useCallback(async ({ force = false } = {}) => {
     if (!embedded || !template.id) return;
     const html = contentRef.current ? contentRef.current.getHtml() : (template.htmlContent || "");
-    const sig = JSON.stringify([html, recipient && recipient.id, variables, bausteinPaths, bausteinValues, previewVars]);
+    const sig = JSON.stringify([
+      html,
+      recipient && recipient.id,
+      variables,
+      bausteinPaths,
+      bausteinValues,
+      previewVars,
+      druckSchwarzWeiss,
+    ]);
     if (!force && sig === previewSig.current) return;        // nichts geändert
     if (previewBusy.current) { previewPending.current = true; return; } // läuft -> queue
     previewBusy.current = true;
@@ -507,6 +516,7 @@ export const App = () => {
         bausteinPaths,
         bausteinValues,
         previewValues: previewVars,
+        druckSchwarzWeiss,
       });
       setPreviewPdf(res.pdf_base64 || "");
       setPreviewMode(res.mode || "");
@@ -519,7 +529,7 @@ export const App = () => {
       setPreviewLoading(false);
       if (previewPending.current) { previewPending.current = false; refreshPreview({ force: true }); }
     }
-  }, [template.id, template.haupt_verteil_objekt, recipient, variables, bausteinPaths, bausteinValues, previewVars]);
+  }, [template.id, template.haupt_verteil_objekt, recipient, variables, bausteinPaths, bausteinValues, previewVars, druckSchwarzWeiss]);
 
   const refreshBausteinPreview = useCallback(async ({ force = false } = {}) => {
     if (!embedded || !template.id || !bausteinLayoutMode) return;
@@ -718,6 +728,8 @@ export const App = () => {
           previewError={previewError}
           previewMode={previewMode}
           onRefreshPreview={refreshPreview}
+          druckSchwarzWeiss={druckSchwarzWeiss}
+          onDruckSchwarzWeissChange={setDruckSchwarzWeiss}
           variablesForPreview={variables}
           previewVars={previewVars}
           onPreviewVarChange={(key, value) =>

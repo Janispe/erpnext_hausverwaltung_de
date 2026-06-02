@@ -219,6 +219,7 @@ export async function renderPreview({
 	bausteinPaths,
 	bausteinValues,
 	previewValues,
+	druckSchwarzWeiss,
 }) {
 	if (!embedded) return { pdf_base64: "", mode: "mock" };
 	// Live-Vorschau: aktueller (ungespeicherter) Editor-Stand wird serverseitig in-memory
@@ -231,6 +232,9 @@ export async function renderPreview({
 	// Transiente Vorschau-Werte für Eingabe-Variablen (nicht gespeichert).
 	if (previewValues && Object.keys(previewValues).length) {
 		params.preview_values = JSON.stringify(previewValues);
+	}
+	if (druckSchwarzWeiss) {
+		params.druck_schwarz_weiss = 1;
 	}
 	if (recipientId && hauptVerteilObjekt) {
 		params.iteration_doctype = hauptVerteilObjekt;

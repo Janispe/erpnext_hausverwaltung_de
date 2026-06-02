@@ -566,7 +566,7 @@ class SplitPreviewFrappeProxy:
 		return SplitPreviewDummy(cstr(doctype), cstr(name) if name else None)
 
 
-def _split_preview_context() -> Dict[str, Any]:
+def _split_preview_context(druck_schwarz_weiss: bool = False) -> Dict[str, Any]:
 	kontakt = SplitPreviewContact()
 	address = SplitPreviewAddress()
 	immobilie = SplitPreviewImmobilie(kontakt, address)
@@ -592,6 +592,7 @@ def _split_preview_context() -> Dict[str, Any]:
 		"mietvertrag": mietvertrag,
 		"datum": "31.12.2024",
 		"datum_iso": "2024-12-31",
+		"druck_schwarz_weiss": bool(druck_schwarz_weiss),
 		"empfaenger": empfaenger,
 		"serienbrief": frappe._dict(
 			titel="Beispiel Serienbrief",
@@ -610,7 +611,7 @@ def _split_preview_context() -> Dict[str, Any]:
 	}
 
 
-def _render_split_preview_html(html: str) -> str:
+def _render_split_preview_html(html: str, druck_schwarz_weiss: bool = False) -> str:
 	"""Render with ``StrictUndefined`` als root-undefined, sodass eine im
 	Context fehlende Variable (Tippfehler in der Vorlage) sofort einen
 	Fehler wirft. Sub-Attribute auf den Beispiel-Klassen (SplitPreviewContact,
@@ -633,7 +634,7 @@ def _render_split_preview_html(html: str) -> str:
 	env = get_jenv().overlay(
 		undefined=StrictUndefined, finalize=_split_preview_finalize_value
 	)
-	ctx = _split_preview_context()
+	ctx = _split_preview_context(druck_schwarz_weiss=druck_schwarz_weiss)
 	sanitized = sanitize_richtext_jinja_source(html)
 	preprocessed = _preprocess_simple_paths(
 		sanitized, ctx, on_unresolvable=_split_preview_token_fallback
@@ -652,7 +653,11 @@ def _render_split_preview_html(html: str) -> str:
 		return _split_preview_error_marker(exc)
 
 
-def _render_split_preview_source(source: str, extra_context: Dict[str, Any] | None = None) -> str:
+def _render_split_preview_source(
+	source: str,
+	extra_context: Dict[str, Any] | None = None,
+	druck_schwarz_weiss: bool = False,
+) -> str:
 	"""Render a single Jinja source (baustein or standard text) with the split preview context,
 	optionally overlayed with preview defaults for the currently-rendered block.
 
@@ -675,7 +680,7 @@ def _render_split_preview_source(source: str, extra_context: Dict[str, Any] | No
 	env = get_jenv().overlay(
 		undefined=StrictUndefined, finalize=_split_preview_finalize_value
 	)
-	ctx = _split_preview_context()
+	ctx = _split_preview_context(druck_schwarz_weiss=druck_schwarz_weiss)
 	if extra_context:
 		ctx.update(extra_context)
 	sanitized = sanitize_richtext_jinja_source(source)
@@ -1098,7 +1103,7 @@ def _build_raw_template_html(template_doc) -> str:
 	return _wrap_preview_html("\n".join(html_blocks), template_doc=template_doc)
 
 
-def _build_split_preview_html(template_doc) -> str:
+def _build_split_preview_html(template_doc, druck_schwarz_weiss: bool = False) -> str:
 	"""Build the split preview HTML by pre-rendering each Textbaustein with its own
 	preview defaults, rendering the template's standard text with the base context,
 	and assembling the result without a further outer Jinja pass.
@@ -1112,7 +1117,7 @@ def _build_split_preview_html(template_doc) -> str:
 	# überlagern Template-Defaults bei Namensgleichheit (Bausteine sind
 	# spezifischer als ihre umgebende Vorlage).
 	template_defaults = _preview_defaults_for_template(
-		template_doc, base_context=_split_preview_context()
+		template_doc, base_context=_split_preview_context(druck_schwarz_weiss=druck_schwarz_weiss)
 	)
 
 	def render_block(block_name: str, wrap: bool = True) -> str:
@@ -1135,11 +1140,15 @@ def _build_split_preview_html(template_doc) -> str:
 			return ""
 		block_defaults = _preview_defaults_for_block(
 			block_doc,
-			base_context=_split_preview_context(),
+			base_context=_split_preview_context(druck_schwarz_weiss=druck_schwarz_weiss),
 			template_doc=template_doc,
 		)
 		merged = {**template_defaults, **block_defaults}
-		rendered = _render_split_preview_source(source, extra_context=merged)
+		rendered = _render_split_preview_source(
+			source,
+			extra_context=merged,
+			druck_schwarz_weiss=druck_schwarz_weiss,
+		)
 		if not wrap:
 			return rendered
 		return f'<div class="serienbrief-block" data-block="{cstr(block_doc.name)}">{rendered}</div>'
@@ -1157,7 +1166,9 @@ def _build_split_preview_html(template_doc) -> str:
 
 		standard_with_placeholders = pattern.sub(_placeholder, standard_text)
 		rendered_standard = _render_split_preview_source(
-			standard_with_placeholders, extra_context=template_defaults
+			standard_with_placeholders,
+			extra_context=template_defaults,
+			druck_schwarz_weiss=druck_schwarz_weiss,
 		)
 
 		def _restore(match) -> str:
@@ -1179,7 +1190,11 @@ def _build_split_preview_html(template_doc) -> str:
 			blocks.append(rendered)
 
 	rendered_standard_body = (
-		_render_split_preview_source(standard_text, extra_context=template_defaults)
+		_render_split_preview_source(
+			standard_text,
+			extra_context=template_defaults,
+			druck_schwarz_weiss=druck_schwarz_weiss,
+		)
 		if standard_text else ""
 	)
 	standard_html = (
@@ -1274,7 +1289,10 @@ def _render_through_serienbrief_dokument_print_format(
 
 
 def _render_segments_via_durchlauf(
-	template_doc, iteration_doctype: str, iteration_name: str
+	template_doc,
+	iteration_doctype: str,
+	iteration_name: str,
+	druck_schwarz_weiss: bool = False,
 ) -> str:
 	"""Baut für genau einen Empfänger den HTML-Body über den echten
 	SerienbriefDurchlauf-Render-Pfad: ``_get_empfaenger_rows`` → ``_build_context``
@@ -1303,6 +1321,7 @@ def _render_segments_via_durchlauf(
 	durchlauf.title = f"Vorschau: {template_doc.title or template_doc.name}"
 	durchlauf.vorlage = template_doc.name
 	durchlauf.date = today()
+	durchlauf._druck_schwarz_weiss = bool(druck_schwarz_weiss)
 	durchlauf.iteration_doctype = iteration_doctype
 	durchlauf.append(
 		"iteration_objekte",
@@ -1350,9 +1369,11 @@ def render_template_preview_pdf(
 	split_preview: bool | None = None,
 	iteration_doctype: str | None = None,
 	iteration_objekt: str | None = None,
+	druck_schwarz_weiss: int | str = 0,
 	_skip_cache: bool = False,
 ) -> Dict[str, str]:
 	doc = _load_template_doc(template, template_doc)
+	druck_sw = bool(cint(druck_schwarz_weiss or 0))
 
 	iter_dt = (
 		cstr(iteration_doctype or "").strip()
@@ -1370,7 +1391,7 @@ def render_template_preview_pdf(
 	# ``cint(split_preview)`` ist hier essenziell: ohne den Check würde ein
 	# Aufruf im Raw-Modus (split_preview=None/False) fälschlicherweise das
 	# Split-Preview-PDF (mit gelben Beispielwert-Highlights) ausliefern.
-	if not _skip_cache and not iter_name and template and not template_doc and cint(split_preview):
+	if not druck_sw and not _skip_cache and not iter_name and template and not template_doc and cint(split_preview):
 		cached_file = cstr(getattr(doc, "preview_pdf_file", "") or "").strip()
 		if cached_file:
 			try:
@@ -1390,10 +1411,15 @@ def render_template_preview_pdf(
 	# Modus B: Split-Preview mit Beispielwerten, aber durch dieselbe Print-
 	# Format-Pipeline gewickelt (Footer/Watermark/Margins identisch).
 	if iter_dt and iter_name:
-		body = _render_segments_via_durchlauf(doc, iter_dt, iter_name)
+		body = _render_segments_via_durchlauf(
+			doc,
+			iter_dt,
+			iter_name,
+			druck_schwarz_weiss=druck_sw,
+		)
 		mode = "durchlauf"
 	elif split_preview:
-		body = _build_split_preview_html(doc)
+		body = _build_split_preview_html(doc, druck_schwarz_weiss=druck_sw)
 		mode = "split_preview"
 		# Gelbe Hervorhebung der Beispielwerte (passt zur Optik im Quill-
 		# Editor, siehe ``_split_preview_finalize_value``). Wird nur in
@@ -1456,6 +1482,7 @@ def render_editor_preview_pdf(
 	iteration_objekt: str | None = None,
 	split_preview: bool | None = None,
 	preview_values: str | None = None,
+	druck_schwarz_weiss: int | str = 0,
 ) -> Dict[str, str]:
 	"""Live-Vorschau für den Editor: lädt die gespeicherte Vorlage, überschreibt Content/
 	Variablen/Baustein-Pfade **in-memory** (ohne zu speichern) mit dem aktuellen Editor-Stand
@@ -1503,6 +1530,7 @@ def render_editor_preview_pdf(
 		iteration_doctype=iteration_doctype,
 		iteration_objekt=iteration_objekt,
 		split_preview=split_preview,
+		druck_schwarz_weiss=druck_schwarz_weiss,
 	)
 
 

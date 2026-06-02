@@ -26,6 +26,7 @@ function usePdfUrl(base64) {
 // =========================
 const PreviewPane = ({ template, recipient, recipients, onChangeRecipient, onSearchRecipients,
                        previewPdf, previewLoading, previewError, previewMode, onRefresh, onMaximize,
+                       druckSchwarzWeiss, onDruckSchwarzWeissChange,
                        variablesForPreview, previewVars, onPreviewVarChange }) => {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pvOpen, setPvOpen] = useState(true);
@@ -54,6 +55,15 @@ const PreviewPane = ({ template, recipient, recipients, onChangeRecipient, onSea
         <button className="btn sm icon" title="Vorschau aktualisieren" onClick={onRefresh} disabled={previewLoading}>
           <Icon name="refresh" size={13}/>
         </button>
+        <label className="preview-print-option" title="Drucksparende Schwarz-Weiß-Variante für unterstützte Briefköpfe">
+          <input
+            type="checkbox"
+            checked={!!druckSchwarzWeiss}
+            onChange={(e) => onDruckSchwarzWeissChange && onDruckSchwarzWeissChange(e.target.checked)}
+            disabled={previewLoading}
+          />
+          <span>S/W</span>
+        </label>
         <button className="btn sm icon" title="PDF groß ansehen" onClick={onMaximize}>
           <Icon name="maximize" size={13}/>
         </button>
@@ -486,6 +496,7 @@ export const Sidebar = ({
   previewPdf, previewLoading, previewError, previewMode, onRefreshPreview,
   onInsertPlaceholder, onInsertBaustein, onMaximizePreview, onResizeStart,
   variables, placeholderPaths, onVariablesChange, editable = true,
+  druckSchwarzWeiss, onDruckSchwarzWeissChange,
   variablesForPreview, previewVars, onPreviewVarChange,
 }) => {
   const phCount = (placeholders || []).reduce((n, g) => n + countTokens(g.tree), 0);
@@ -514,6 +525,8 @@ export const Sidebar = ({
             onChangeRecipient={onChangeRecipient} onSearchRecipients={onSearchRecipients}
             previewPdf={previewPdf} previewLoading={previewLoading} previewError={previewError}
             previewMode={previewMode} onRefresh={onRefreshPreview} onMaximize={onMaximizePreview}
+            druckSchwarzWeiss={druckSchwarzWeiss}
+            onDruckSchwarzWeissChange={onDruckSchwarzWeissChange}
             variablesForPreview={variablesForPreview} previewVars={previewVars}
             onPreviewVarChange={onPreviewVarChange}
           />

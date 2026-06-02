@@ -962,6 +962,29 @@ span[style*="color"] > .chip {
 .preview-control .recipient-picker:hover { border-color: var(--border-strong); }
 .preview-control .recipient-picker .pp-label { color: var(--text-faint); font-size: 11px; }
 .preview-control .recipient-picker .pp-value { color: var(--text); font-weight: 500; flex: 1; }
+.preview-print-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.preview-print-option input {
+  margin: 0;
+}
+.preview-print-option:has(input:checked) {
+  border-color: var(--primary-200);
+  background: var(--primary-50);
+  color: var(--primary-hover);
+}
 
 /* Vorschau-Werte (transiente Eingabe-Variablen, nicht gespeichert) */
 .pv-section {
