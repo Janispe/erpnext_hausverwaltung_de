@@ -27,6 +27,7 @@ from hausverwaltung.hausverwaltung.utils.serienbrief_fonts import (
 )
 
 from hausverwaltung.hausverwaltung.utils.jinja_source_sanitizer import sanitize_richtext_jinja_source
+from hausverwaltung.hausverwaltung.utils.brand_print import apply_print_saving_brand_assets
 from hausverwaltung.hausverwaltung.utils.serienbrief_pdf_form import read_file_url_bytes
 from hausverwaltung.hausverwaltung.utils.serienbrief_pdf_form import render_pdf_bytes_as_html_fragment
 from hausverwaltung.hausverwaltung.utils.serienbrief_pdf_form import render_pdf_form_block
@@ -1329,11 +1330,17 @@ class SerienbriefDurchlauf(Document):
 
 	def _render_preview_segment_html(self, segment: Dict[str, Any]) -> str:
 		if segment.get("type") == "html":
-			return cstr(segment.get("html") or "").strip()
+			return apply_print_saving_brand_assets(
+				cstr(segment.get("html") or "").strip(),
+				bool(getattr(self, "_druck_schwarz_weiss", False)),
+			)
 
 		inline_html = cstr(segment.get("preview_html") or "").strip()
 		if inline_html:
-			return inline_html
+			return apply_print_saving_brand_assets(
+				inline_html,
+				bool(getattr(self, "_druck_schwarz_weiss", False)),
+			)
 
 		title = cstr(segment.get("title") or segment.get("block") or _("PDF-Formular")).strip()
 		pages = cstr(segment.get("pages_label") or "").strip()
@@ -1359,7 +1366,10 @@ class SerienbriefDurchlauf(Document):
 
 		for segment in segments or []:
 			if segment.get("type") == "html":
-				value = cstr(segment.get("html") or "").strip()
+				value = apply_print_saving_brand_assets(
+					cstr(segment.get("html") or "").strip(),
+					bool(getattr(self, "_druck_schwarz_weiss", False)),
+				)
 				if value:
 					html_buffer.append(value)
 				continue

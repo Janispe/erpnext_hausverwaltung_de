@@ -27,6 +27,7 @@ from hausverwaltung.hausverwaltung.utils.serienbrief_pdf_form import read_file_u
 from markupsafe import Markup, escape
 
 from hausverwaltung.hausverwaltung.utils.jinja_source_sanitizer import sanitize_richtext_jinja_source
+from hausverwaltung.hausverwaltung.utils.brand_print import apply_print_saving_brand_assets
 
 
 class SerienbriefVorlage(Document):
@@ -640,7 +641,10 @@ def _render_split_preview_html(html: str, druck_schwarz_weiss: bool = False) -> 
 		sanitized, ctx, on_unresolvable=_split_preview_token_fallback
 	)
 	try:
-		return env.from_string(preprocessed).render(ctx)
+		return apply_print_saving_brand_assets(
+			env.from_string(preprocessed).render(ctx),
+			druck_schwarz_weiss,
+		)
 	except TemplateError as exc:
 		# StrictUndefined wirft bei undefinierten Root-Variablen / Syntaxfehlern.
 		# Im Live-Preview als Inline-Fehler markieren statt 500 zu werfen.
@@ -688,7 +692,10 @@ def _render_split_preview_source(
 		sanitized, ctx, on_unresolvable=_split_preview_token_fallback
 	)
 	try:
-		return env.from_string(preprocessed).render(ctx)
+		return apply_print_saving_brand_assets(
+			env.from_string(preprocessed).render(ctx),
+			druck_schwarz_weiss,
+		)
 	except TemplateError as exc:
 		# StrictUndefined wirft bei undefinierten Root-Variablen / Syntaxfehlern.
 		# Im Live-Preview als Inline-Fehler markieren statt 500 zu werfen.
