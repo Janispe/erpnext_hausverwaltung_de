@@ -121,6 +121,53 @@
 	.ip-table { min-width: 720px; }
 }
 
+/* New import modal */
+.modal-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 900;
+	display: grid;
+	place-items: center;
+	padding: 22px;
+	background: rgba(35, 34, 30, 0.42);
+}
+.new-import-modal {
+	width: min(560px, 100%);
+	background: var(--surface);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-lg);
+	box-shadow: 0 18px 52px rgba(0,0,0,0.24);
+	padding: 20px;
+}
+.nim-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
+.nim-head h2 { margin: 0; font-size: 17px; font-weight: 600; color: var(--text); }
+.nim-sub { margin-top: 4px; color: var(--text-muted); font-size: 12.5px; line-height: 1.4; }
+.nim-field { display: block; margin-top: 14px; }
+.nim-select { height: 34px; }
+.nim-file { height: auto; min-height: 34px; padding: 6px 10px; }
+.nim-error {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	margin-top: 14px;
+	padding: 10px 12px;
+	background: var(--danger-bg);
+	border: 1px solid #efb8b8;
+	border-radius: var(--radius);
+	color: var(--danger);
+	font-size: 12.5px;
+	line-height: 1.45;
+}
+.nim-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.btn.icon { width: 30px; padding: 0; justify-content: center; }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+@media (max-width: 560px) {
+	.modal-backdrop { align-items: start; padding: 12px; }
+	.new-import-modal { padding: 16px; }
+	.nim-actions { flex-direction: column-reverse; }
+	.nim-actions .btn { width: 100%; justify-content: center; }
+}
+
 /* Toast */
 .hv-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; align-items: center; gap: 10px; max-width: 560px; padding: 11px 16px; border-radius: var(--radius); font-size: 13px; color: var(--surface); background: var(--text); box-shadow: 0 8px 30px rgba(0,0,0,0.22); cursor: pointer; animation: hv-toast-in 0.18s ease; }
 .hv-toast.success { background: var(--done); }

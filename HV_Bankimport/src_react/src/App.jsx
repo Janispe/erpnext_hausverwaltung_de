@@ -21,7 +21,7 @@ function Toast({ toast, onClose }) {
 }
 
 // ── Import-Picker (wenn ?import= fehlt) ───────────────────────────────────────
-function ImportPicker({ onPick }) {
+function ImportPicker({ onPick, onNewImport }) {
 	const [items, setItems] = useState(null);
 	const [query, setQuery] = useState("");
 	const [statusFilter, setStatusFilter] = useState("open");
@@ -66,7 +66,7 @@ function ImportPicker({ onPick }) {
 						<h2>Bankauszug-Import wählen</h2>
 						<div className="ip-head-sub">Offene und abgeschlossene Kontoauszüge prüfen.</div>
 					</div>
-					<button className="btn primary" onClick={() => api.newImport()}>
+					<button className="btn primary" onClick={onNewImport}>
 						<Icon name="plus" /> Neuer Import
 					</button>
 				</div>
@@ -148,6 +148,117 @@ function ImportPicker({ onPick }) {
 	);
 }
 
+function readFileAsDataUrl(file) {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => resolve(reader.result);
+		reader.onerror = () => reject(reader.error || new Error("Datei konnte nicht gelesen werden."));
+		reader.readAsDataURL(file);
+	});
+}
+
+function NewImportDialog({ open, onClose, onCreated, notify }) {
+	const [accounts, setAccounts] = useState(null);
+	const [bankAccount, setBankAccount] = useState("");
+	const [file, setFile] = useState(null);
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState("");
+
+	useEffect(() => {
+		if (!open) return;
+		setError("");
+		api.listBankAccounts()
+			.then((d) => {
+				const items = d.items || [];
+				setAccounts(items);
+				if (!bankAccount && items.length === 1) setBankAccount(items[0].value);
+			})
+			.catch((e) => {
+				setAccounts([]);
+				setError(e.message || String(e));
+			});
+	}, [open]); // eslint-disable-line
+
+	if (!open) return null;
+
+	const submit = async (event) => {
+		event.preventDefault();
+		if (!bankAccount || !file || busy) return;
+		setBusy(true);
+		setError("");
+		try {
+			const fileData = await readFileAsDataUrl(file);
+			const result = await api.createImport({
+				bankAccount,
+				filename: file.name || "bankauszug.csv",
+				fileData,
+			});
+			notify?.("success", "Bankauszug importiert.");
+			onCreated(result.name);
+			onClose();
+		} catch (e) {
+			setError(e.message || String(e));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	return (
+		<div className="modal-backdrop" onMouseDown={onClose}>
+			<form className="new-import-modal" onSubmit={submit} onMouseDown={(e) => e.stopPropagation()}>
+				<div className="nim-head">
+					<div>
+						<h2>Neuer Bankimport</h2>
+						<div className="nim-sub">CSV auswählen, parsen und direkt in dieser Ansicht weiterbearbeiten.</div>
+					</div>
+					<button type="button" className="btn ghost icon" onClick={onClose} disabled={busy} title="Schließen">
+						<Icon name="x" />
+					</button>
+				</div>
+
+				<label className="nim-field">
+					<span className="field-label">Bankkonto</span>
+					<select
+						className="text-input nim-select"
+						value={bankAccount}
+						onChange={(e) => setBankAccount(e.target.value)}
+						disabled={busy || accounts === null}
+						required
+					>
+						<option value="">{accounts === null ? "Bankkonten laden..." : "Bankkonto wählen"}</option>
+						{(accounts || []).map((item) => (
+							<option key={item.value} value={item.value}>
+								{item.label}{item.description ? ` · ${item.description}` : ""}
+							</option>
+						))}
+					</select>
+				</label>
+
+				<label className="nim-field">
+					<span className="field-label">CSV-Datei</span>
+					<input
+						className="text-input nim-file"
+						type="file"
+						accept=".csv,text/csv,text/plain"
+						onChange={(e) => setFile(e.target.files?.[0] || null)}
+						disabled={busy}
+						required
+					/>
+				</label>
+
+				{error && <div className="nim-error"><Icon name="info" /> {error}</div>}
+
+				<div className="nim-actions">
+					<button type="button" className="btn subtle" onClick={onClose} disabled={busy}>Abbrechen</button>
+					<button type="submit" className="btn primary" disabled={busy || !bankAccount || !file}>
+						{busy ? <Spinner /> : <Icon name="upload" />} Importieren
+					</button>
+				</div>
+			</form>
+		</div>
+	);
+}
+
 // ── App ───────────────────────────────────────────────────────────────────--
 export function App() {
 	const [docname, setDocname] = useState(api.importName || "");
@@ -161,6 +272,7 @@ export function App() {
 	const [search, setSearch] = useState("");
 	const [selectedId, setSelectedId] = useState(null);
 	const [toast, setToast] = useState(null);
+	const [newImportOpen, setNewImportOpen] = useState(false);
 	const reloadRef = useRef(null);
 
 	const notify = useCallback((type, msg) => {
@@ -178,6 +290,14 @@ export function App() {
 		setToast({ type, msg });
 		window.clearTimeout(notify._t);
 		notify._t = window.setTimeout(() => setToast(null), type === "error" ? 7000 : 3500);
+	}, []);
+
+	const openImport = useCallback((name) => {
+		setOverview(null);
+		setSelectedId(null);
+		setPhase(0);
+		setFilter("all");
+		setDocname(name);
 	}, []);
 
 	const reload = useCallback(
@@ -322,7 +442,18 @@ export function App() {
 	}, [docname, notify, reload]);
 
 	// ── Render ──
-	if (!docname) return <><ImportPicker onPick={setDocname} /><Toast toast={toast} onClose={() => setToast(null)} /></>;
+	if (!docname) return (
+		<>
+			<ImportPicker onPick={openImport} onNewImport={() => setNewImportOpen(true)} />
+			<NewImportDialog
+				open={newImportOpen}
+				onClose={() => setNewImportOpen(false)}
+				onCreated={openImport}
+				notify={notify}
+			/>
+			<Toast toast={toast} onClose={() => setToast(null)} />
+		</>
+	);
 
 	if (loading && !overview) return <div className="app-loading"><Spinner size={22} /> Bankimport laden…</div>;
 	if (error) return <div className="app-error"><Icon name="info" /> {error}<button className="btn" style={{ marginLeft: 12 }} onClick={() => reload()}>Erneut</button></div>;
@@ -333,7 +464,7 @@ export function App() {
 				meta={meta}
 				busy={busy || loading}
 				onReload={() => reload()}
-				onNewImport={() => api.newImport()}
+				onNewImport={() => setNewImportOpen(true)}
 				onSwitchImport={api.importName ? null : () => setDocname("")}
 			/>
 			<StatRow meta={meta} rowsCount={rows.length} phases={phaseCounts} />
@@ -380,6 +511,12 @@ export function App() {
 					/>
 				</div>
 			</div>
+			<NewImportDialog
+				open={newImportOpen}
+				onClose={() => setNewImportOpen(false)}
+				onCreated={openImport}
+				notify={notify}
+			/>
 			<Toast toast={toast} onClose={() => setToast(null)} />
 		</div>
 	);

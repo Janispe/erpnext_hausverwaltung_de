@@ -31,6 +31,27 @@ export async function listImports() {
 	return await rpc("list_imports", {});
 }
 
+export async function listBankAccounts(txt = "") {
+	if (!embedded) {
+		return {
+			items: [
+				{ value: "Demo Bankkonto - Postbank", label: "Demo Bankkonto (1812)", description: "DE00 0000 0000 0000 0000 00" },
+			],
+			mock: true,
+		};
+	}
+	return await rpc("list_bank_accounts", { txt });
+}
+
+export async function createImport({ bankAccount, filename, fileData }) {
+	if (!embedded) return { name: "BAI-DEMO-0001", title: "Demo Bankimport", mock: true };
+	return await rpc("create_import", {
+		bank_account: bankAccount,
+		filename,
+		file_data: fileData,
+	});
+}
+
 // Komplett-Übersicht: { import, rows, phaseCounts }.
 export async function loadOverview(name) {
 	if (!embedded) return { ...MOCK_OVERVIEW, mock: true };

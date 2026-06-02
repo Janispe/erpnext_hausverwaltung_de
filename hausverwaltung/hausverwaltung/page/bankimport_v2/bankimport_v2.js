@@ -23,6 +23,8 @@ const RPC_ACTIONS = {
 	// Adapter (nur Lesen/Mappen)
 	overview: PG + "get_overview",
 	list_imports: PG + "list_imports",
+	list_bank_accounts: PG + "list_bank_accounts",
+	create_import: PG + "create_import",
 	search_parties: PG + "search_parties",
 	search_accounts: PG + "search_accounts",
 	// Globale Aktionen

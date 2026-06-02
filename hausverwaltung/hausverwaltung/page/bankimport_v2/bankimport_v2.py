@@ -16,16 +16,20 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from typing import Any
 
 import frappe
 from frappe import _
 from frappe.utils import flt
+from frappe.utils.file_manager import save_file
 
 from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import import (
 	_recompute_doc_status,
 	_refresh_saldo_fields,
 	_persist_saldo_fields,
+	parse_csv,
 	sync_cancelled_journal_entry_links,
 	sync_cancelled_payment_entry_links,
 )
@@ -315,6 +319,103 @@ def list_imports(limit: int = 30) -> dict[str, Any]:
 		it["modified"] = str(it["modified"]) if it.get("modified") else None
 		it["total_rows"] = row_counts.get(it.name, 0)
 	return {"items": items}
+
+
+@frappe.whitelist()
+def list_bank_accounts(txt: str = "") -> dict[str, Any]:
+	"""Firmen-Bankkonten für den Neu-Import-Dialog."""
+	txt = (txt or "").strip()
+	meta = frappe.get_meta("Bank Account")
+	fields = ["name", "bank", "account"]
+	if meta.has_field("iban"):
+		fields.append("iban")
+
+	filters: dict[str, Any] = {"is_company_account": 1}
+	or_filters = None
+	if txt:
+		or_filters = [["name", "like", f"%{txt}%"], ["bank", "like", f"%{txt}%"]]
+
+	rows = frappe.get_list(
+		"Bank Account",
+		filters=filters,
+		or_filters=or_filters,
+		fields=fields,
+		order_by="name asc",
+		limit=80,
+	)
+
+	items = []
+	for row in rows:
+		account_number = None
+		if row.get("account"):
+			account_number = frappe.db.get_value("Account", row.account, "account_number")
+		short = (row.name or "").split(" - ", 1)[0].strip() or row.name
+		label = f"{short} ({account_number})" if account_number else short
+		description = row.get("iban") or row.get("bank") or row.get("account")
+		items.append(
+			{
+				"value": row.name,
+				"label": label,
+				"description": description,
+			}
+		)
+
+	return {"items": items}
+
+
+@frappe.whitelist()
+def create_import(bank_account: str, filename: str, file_data: str) -> dict[str, Any]:
+	"""Legt einen Bankauszug-Import aus dem React-Dialog an und parst die CSV."""
+	frappe.has_permission("Bankauszug Import", "create", throw=True)
+	if not bank_account:
+		frappe.throw(_("Bitte ein Bankkonto auswählen."))
+	if not filename:
+		filename = "bankauszug.csv"
+	if not file_data:
+		frappe.throw(_("Bitte eine CSV-Datei auswählen."))
+
+	if not frappe.db.exists("Bank Account", bank_account):
+		frappe.throw(_("Bankkonto {0} wurde nicht gefunden.").format(bank_account))
+	bank_account_doc = frappe.get_doc("Bank Account", bank_account)
+	frappe.has_permission("Bank Account", "read", doc=bank_account_doc, throw=True)
+	if bank_account_doc.get("is_company_account") != 1:
+		frappe.throw(_("Bitte ein Firmen-Bankkonto auswählen."))
+
+	raw_data = file_data.split(",", 1)[1] if "," in file_data and file_data.startswith("data:") else file_data
+	try:
+		content = base64.b64decode(raw_data, validate=True)
+	except (binascii.Error, ValueError):
+		frappe.throw(_("Die CSV-Datei konnte nicht gelesen werden."))
+	if not content:
+		frappe.throw(_("Die CSV-Datei ist leer."))
+	if len(content) > 10 * 1024 * 1024:
+		frappe.throw(_("Die CSV-Datei ist zu groß. Maximal erlaubt sind 10 MB."))
+
+	file_doc = save_file(filename, content, "", "", is_private=1)
+	doc = frappe.get_doc(
+		{
+			"doctype": "Bankauszug Import",
+			"bank_account": bank_account,
+			"csv_file": file_doc.file_url,
+			"delimiter": ";",
+			"encoding": "auto",
+		}
+	)
+	doc.insert()
+
+	file_doc.db_set("attached_to_doctype", "Bankauszug Import")
+	file_doc.db_set("attached_to_name", doc.name)
+	if frappe.get_meta("File").has_field("attached_to_field"):
+		file_doc.db_set("attached_to_field", "csv_file")
+
+	parse_result = parse_csv(doc.name)
+	doc.reload()
+
+	return {
+		"name": doc.name,
+		"title": doc.title,
+		"parse": parse_result,
+	}
 
 
 @frappe.whitelist()
