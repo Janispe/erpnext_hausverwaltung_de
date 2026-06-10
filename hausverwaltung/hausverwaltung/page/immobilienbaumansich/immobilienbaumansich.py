@@ -79,11 +79,30 @@ def _get_mieter_und_vertrag(wohnung: str) -> tuple[list[dict], str | None]:
 			{
 				"contact": row.get("contact"),
 				"label": label,
-				"telefon": row.get("telefon") or "—",
+				"telefon": _format_phone_number(row.get("telefon")) or "—",
 				"rolle": rolle,
 			}
 		)
 	return tenants, vertrag_name
+
+
+def _format_phone_number(value: str | None) -> str:
+	raw = (value or "").strip()
+	if not raw:
+		return ""
+
+	digits = "".join(ch for ch in raw if ch.isdigit())
+	if len(digits) < 6:
+		return raw
+
+	if raw.lstrip().startswith("+") and digits.startswith("49") and len(digits) > 2:
+		return _group_digits("0" + digits[2:])
+
+	return _group_digits(digits)
+
+
+def _group_digits(digits: str) -> str:
+	return " ".join(digits[i : i + 3] for i in range(0, len(digits), 3))
 
 
 def _wohnung_sort_key(whg: dict) -> tuple[int, int, str]:

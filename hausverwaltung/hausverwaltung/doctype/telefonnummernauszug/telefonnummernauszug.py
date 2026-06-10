@@ -235,7 +235,7 @@ def _normalize_sort_value(value: str | None) -> str:
 
 
 def _format_phone_number(value: str | None) -> str:
-	"""Format phone numbers in compact three-digit groups for the print extract."""
+	"""Format phone numbers in compact three-digit groups for the phone extract."""
 	raw = (value or "").strip()
 	if not raw:
 		return ""
@@ -245,7 +245,7 @@ def _format_phone_number(value: str | None) -> str:
 		return raw
 
 	if raw.lstrip().startswith("+") and digits.startswith("49") and len(digits) > 2:
-		return "+49 " + _group_digits(digits[2:])
+		return _group_digits("0" + digits[2:])
 
 	return _group_digits(digits)
 
@@ -306,8 +306,8 @@ def erstelle_und_lade(
 				"wohnung": row.get("wohnung"),
 				"mieter_name": row.get("mieter_name"),
 				"rolle": row.get("rolle"),
-				"telefon": row.get("telefon"),
-				"mobil": row.get("mobil"),
+				"telefon": _format_phone_number(row.get("telefon")),
+				"mobil": _format_phone_number(row.get("mobil")),
 			},
 		)
 	doc.anzahl_eintraege = len(doc.eintraege or [])
@@ -336,8 +336,8 @@ def lade_eintraege(name: str) -> dict:
 				"wohnung": row.get("wohnung"),
 				"mieter_name": row.get("mieter_name"),
 				"rolle": row.get("rolle"),
-				"telefon": row.get("telefon"),
-				"mobil": row.get("mobil"),
+				"telefon": _format_phone_number(row.get("telefon")),
+				"mobil": _format_phone_number(row.get("mobil")),
 			},
 		)
 	doc.anzahl_eintraege = len(doc.eintraege or [])

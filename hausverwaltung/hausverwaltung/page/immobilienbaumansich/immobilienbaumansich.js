@@ -154,6 +154,9 @@ ${teil.name || ""}
 						if (!hasPlus) {
 							return groupRest(digits);
 						}
+						if (digits.startsWith("49") && digits.length > 2) {
+							return groupRest(`0${digits.slice(2)}`);
+						}
 
 						let countryLen = 2;
 						if (digits.startsWith("1")) {
@@ -172,7 +175,11 @@ ${teil.name || ""}
 						return `+${country}${paddedArea ? ` ${paddedArea}` : ""}${grouped ? ` ${grouped}` : ""}`;
 					};
 					const formatTelefonLine = (line) =>
-						line.replace(/(\+?\d{5,})/g, (match) => formatTelefonToken(match));
+						line
+							.replace(/\+49[\s.-]*([0-9][0-9\s().-]{4,})/g, (match) =>
+								groupRest(`0${match.replace(/\D/g, "").slice(2)}`)
+							)
+							.replace(/(\+?\d{5,})/g, (match) => formatTelefonToken(match));
 					const formatTelefon = (raw) =>
 						(raw || "")
 							.split(/\r?\n/)
