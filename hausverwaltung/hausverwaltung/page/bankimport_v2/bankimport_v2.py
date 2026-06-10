@@ -26,6 +26,8 @@ from frappe.utils import flt
 from frappe.utils.file_manager import save_file
 
 from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import import (
+	_cancel_voucher_for_row,
+	_linked_voucher_for_row,
 	_recompute_doc_status,
 	_refresh_saldo_fields,
 	_persist_saldo_fields,
@@ -331,6 +333,8 @@ def list_bank_accounts(txt: str = "") -> dict[str, Any]:
 		fields.append("iban")
 
 	filters: dict[str, Any] = {"is_company_account": 1}
+	if meta.has_field("disabled"):
+		filters["disabled"] = 0
 	or_filters = None
 	if txt:
 		or_filters = [["name", "like", f"%{txt}%"], ["bank", "like", f"%{txt}%"]]
@@ -346,6 +350,8 @@ def list_bank_accounts(txt: str = "") -> dict[str, Any]:
 
 	items = []
 	for row in rows:
+		if row.get("account") and frappe.db.get_value("Account", row.account, "disabled"):
+			continue
 		account_number = None
 		if row.get("account"):
 			account_number = frappe.db.get_value("Account", row.account, "account_number")
@@ -380,6 +386,10 @@ def create_import(bank_account: str, filename: str, file_data: str) -> dict[str,
 	frappe.has_permission("Bank Account", "read", doc=bank_account_doc, throw=True)
 	if bank_account_doc.get("is_company_account") != 1:
 		frappe.throw(_("Bitte ein Firmen-Bankkonto auswählen."))
+	if frappe.get_meta("Bank Account").has_field("disabled") and bank_account_doc.get("disabled"):
+		frappe.throw(_("Bitte ein aktives Bankkonto auswählen."))
+	if bank_account_doc.get("account") and frappe.db.get_value("Account", bank_account_doc.account, "disabled"):
+		frappe.throw(_("Das verknüpfte Sachkonto ist deaktiviert. Bitte ein aktives Bankkonto auswählen."))
 
 	raw_data = file_data.split(",", 1)[1] if "," in file_data and file_data.startswith("data:") else file_data
 	try:
@@ -416,6 +426,181 @@ def create_import(bank_account: str, filename: str, file_data: str) -> dict[str,
 		"title": doc.title,
 		"parse": parse_result,
 	}
+
+
+@frappe.whitelist()
+def get_delete_impact(import_name: str) -> dict[str, Any]:
+	"""Ermittelt vor dem Löschen, welche Folgebelege zurückgenommen würden."""
+	if not import_name:
+		frappe.throw(_("Bitte einen Bankimport auswählen."))
+	doc = frappe.get_doc("Bankauszug Import", import_name)
+	frappe.has_permission("Bankauszug Import", "delete", doc=doc, throw=True)
+	return _delete_impact_for_doc(doc)
+
+
+def _status_key(value: Any) -> str:
+	return str(value or "").strip().lower()
+
+
+def _row_value(row: Any, fieldname: str, default: Any = None) -> Any:
+	if hasattr(row, "get"):
+		return row.get(fieldname, default)
+	return getattr(row, fieldname, default)
+
+
+def _docstatus(doctype: str, name: str) -> int | None:
+	value = frappe.db.get_value(doctype, name, "docstatus")
+	if value is None:
+		return None
+	try:
+		return int(value)
+	except Exception:
+		return value
+
+
+def _docstatus_label(docstatus: int | None) -> str:
+	if docstatus is None:
+		return "missing"
+	if docstatus == 0:
+		return "draft"
+	if docstatus == 1:
+		return "submitted"
+	if docstatus == 2:
+		return "cancelled"
+	return str(docstatus)
+
+
+def _import_owns_bank_transaction(row: Any) -> bool:
+	"""Nur Bank-Transactions zurücknehmen, die dieser Import erzeugt hat."""
+	if not (_row_value(row, "bank_transaction") or _row_value(row, "reference")):
+		return False
+	return _status_key(_row_value(row, "row_status")) not in {"schon vorhanden", "vor start-datum"}
+
+
+def _delete_impact_for_doc(doc) -> dict[str, Any]:
+	vouchers: dict[tuple[str, str], dict[str, Any]] = {}
+	bank_transactions_to_reverse: dict[str, dict[str, Any]] = {}
+	bank_transactions_kept: dict[str, dict[str, Any]] = {}
+
+	for row in doc.get("rows") or []:
+		row_name = _row_value(row, "name")
+		voucher_type, voucher_name = _linked_voucher_for_row(row)
+		if voucher_type and voucher_name:
+			key = (voucher_type, voucher_name)
+			if key not in vouchers:
+				status = _docstatus(voucher_type, voucher_name)
+				vouchers[key] = {
+					"type": voucher_type,
+					"name": voucher_name,
+					"docstatus": status,
+					"status": _docstatus_label(status),
+					"rows": [],
+				}
+			vouchers[key]["rows"].append(row_name)
+
+		bt_name = _row_value(row, "bank_transaction") or _row_value(row, "reference")
+		if not bt_name:
+			continue
+		target = bank_transactions_to_reverse if _import_owns_bank_transaction(row) else bank_transactions_kept
+		if bt_name not in target:
+			status = _docstatus("Bank Transaction", bt_name)
+			target[bt_name] = {
+				"name": bt_name,
+				"docstatus": status,
+				"status": _docstatus_label(status),
+				"rows": [],
+				"reason": "import-owned" if target is bank_transactions_to_reverse else "already-existing",
+			}
+		target[bt_name]["rows"].append(row_name)
+
+	impact = {
+		"import": doc.name,
+		"title": doc.get("title"),
+		"rows": len(doc.get("rows") or []),
+		"vouchers": list(vouchers.values()),
+		"bankTransactionsToReverse": list(bank_transactions_to_reverse.values()),
+		"bankTransactionsKept": list(bank_transactions_kept.values()),
+	}
+	impact["counts"] = {
+		"vouchers": len(impact["vouchers"]),
+		"paymentEntries": sum(1 for item in impact["vouchers"] if item["type"] == "Payment Entry"),
+		"journalEntries": sum(1 for item in impact["vouchers"] if item["type"] == "Journal Entry"),
+		"bankTransactionsToReverse": len(impact["bankTransactionsToReverse"]),
+		"bankTransactionsKept": len(impact["bankTransactionsKept"]),
+	}
+	impact["requiresCascade"] = bool(impact["vouchers"] or impact["bankTransactionsToReverse"])
+	return impact
+
+
+def _cleanup_bank_transaction_for_import_delete(bank_transaction: str) -> dict[str, Any]:
+	docstatus = _docstatus("Bank Transaction", bank_transaction)
+	if docstatus is None:
+		return {"bank_transaction": bank_transaction, "status": "missing"}
+
+	bt = frappe.get_doc("Bank Transaction", bank_transaction)
+	if docstatus == 2:
+		return {"bank_transaction": bank_transaction, "status": "already_cancelled"}
+	if docstatus == 1:
+		if not getattr(bt, "flags", None):
+			bt.flags = frappe._dict()
+		bt.flags.ignore_permissions = True
+		bt.cancel()
+		return {"bank_transaction": bank_transaction, "status": "cancelled"}
+
+	bt.delete(ignore_permissions=True)
+	return {"bank_transaction": bank_transaction, "status": "deleted_draft"}
+
+
+def _cascade_delete_import(doc, impact: dict[str, Any]) -> dict[str, Any]:
+	from hausverwaltung.hausverwaltung.utils.bank_transaction_links import (
+		remove_bank_transaction_payment_links,
+	)
+
+	savepoint = "bankimport_delete_cascade"
+	frappe.db.savepoint(savepoint)
+	try:
+		voucher_results = []
+		for voucher in impact["vouchers"]:
+			cancel = _cancel_voucher_for_row(voucher["type"], voucher["name"])
+			delinked = remove_bank_transaction_payment_links(voucher["type"], voucher["name"])
+			voucher_results.append({**voucher, "cancel": cancel, "delinkedBankTransactions": delinked})
+
+		bank_transaction_results = [
+			_cleanup_bank_transaction_for_import_delete(item["name"])
+			for item in impact["bankTransactionsToReverse"]
+		]
+
+		frappe.delete_doc("Bankauszug Import", doc.name)
+	except Exception:
+		frappe.db.rollback(save_point=savepoint)
+		raise
+
+	return {
+		"vouchers": voucher_results,
+		"bankTransactions": bank_transaction_results,
+		"keptBankTransactions": impact["bankTransactionsKept"],
+	}
+
+
+@frappe.whitelist()
+def delete_import(import_name: str, cascade: int = 0) -> dict[str, Any]:
+	"""Löscht einen Bankauszug-Import und nimmt import-eigene Folgebelege zurück."""
+	if not import_name:
+		frappe.throw(_("Bitte einen Bankimport auswählen."))
+	doc = frappe.get_doc("Bankauszug Import", import_name)
+	frappe.has_permission("Bankauszug Import", "delete", doc=doc, throw=True)
+	impact = _delete_impact_for_doc(doc)
+
+	if impact["requiresCascade"] and not bool(int(cascade or 0)):
+		frappe.throw(
+			_("Dieser Import enthält Bank-Transaktionen oder Zahlungsbelege. Bitte Löschfolgen bestätigen.")
+		)
+
+	cleanup = _cascade_delete_import(doc, impact) if impact["requiresCascade"] else {}
+	if not impact["requiresCascade"]:
+		frappe.delete_doc("Bankauszug Import", import_name)
+
+	return {"ok": True, "name": import_name, "impact": impact, "cleanup": cleanup}
 
 
 @frappe.whitelist()

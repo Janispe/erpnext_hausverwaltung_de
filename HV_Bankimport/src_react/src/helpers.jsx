@@ -75,6 +75,7 @@ export const Icon = ({ name, size = 14 }) => {
 		dots: <><circle cx="4" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none" /></>,
 		refresh: <><path d="M3 8a5 5 0 0 1 8.5-3.5M13 8a5 5 0 0 1-8.5 3.5M11 3v2.5h-2M5 13v-2.5h2" {...p} /></>,
 		file: <><path d="M4 2h5l3 3v9H4z" {...p} /><path d="M9 2v3h3" {...p} /></>,
+		trash: <><path d="M3 4h10M6 4V2h4v2M5 6v7h6V6M7 7.5v4M9 7.5v4" {...p} /></>,
 		link: <><path d="M7 9a3 3 0 0 0 4 0l2-2a3 3 0 0 0-4-4l-1 1M9 7a3 3 0 0 0-4 0l-2 2a3 3 0 0 0 4 4l1-1" {...p} /></>,
 		split: <><path d="M3 4h4l4 8h4M11 4h4M11 4l-1-1M11 4l-1 1" {...p} /></>,
 		filter: <><path d="M2 3h12l-4.5 6V14L6.5 12V9z" {...p} /></>,

@@ -2,7 +2,8 @@ frappe.ui.form.on('Bankauszug Import', {
   setup(frm) {
     frm.set_query('bank_account', () => ({
       filters: {
-        is_company_account: 1
+        is_company_account: 1,
+        disabled: 0
       }
     }));
     _installRowActionsRenderer(frm);
@@ -199,7 +200,7 @@ function _showInitDialog(frm) {
         label: __('Bankkonto'),
         options: 'Bank Account',
         reqd: 1,
-        get_query: () => ({ filters: { is_company_account: 1 } }),
+        get_query: () => ({ filters: { is_company_account: 1, disabled: 0 } }),
       },
       {
         fieldtype: 'Attach',

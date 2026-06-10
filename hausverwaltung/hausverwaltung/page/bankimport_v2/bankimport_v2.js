@@ -25,6 +25,8 @@ const RPC_ACTIONS = {
 	list_imports: PG + "list_imports",
 	list_bank_accounts: PG + "list_bank_accounts",
 	create_import: PG + "create_import",
+	get_delete_impact: PG + "get_delete_impact",
+	delete_import: PG + "delete_import",
 	search_parties: PG + "search_parties",
 	search_accounts: PG + "search_accounts",
 	// Globale Aktionen

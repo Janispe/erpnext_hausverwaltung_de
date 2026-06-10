@@ -441,6 +441,41 @@ export function App() {
 		}
 	}, [docname, notify, reload]);
 
+	const deleteCurrentImport = useCallback(async () => {
+		if (!docname || busy) return;
+		const title = meta.title || docname;
+		setBusy(true);
+		try {
+			const impact = await api.getDeleteImpact(docname);
+			const counts = impact.counts || {};
+			const lines = [
+				`Bankimport "${title}" wirklich löschen?`,
+				"",
+				`${impact.rows || 0} Importzeilen werden gelöscht.`,
+			];
+			if (impact.requiresCascade) {
+				lines.push(
+					`${counts.paymentEntries || 0} Payment Entries und ${counts.journalEntries || 0} Journal Entries werden storniert.`,
+					`${counts.bankTransactionsToReverse || 0} import-eigene Bank-Transaktionen werden storniert oder gelöscht.`
+				);
+			}
+			if (counts.bankTransactionsKept) {
+				lines.push(`${counts.bankTransactionsKept} bereits vorhandene Bank-Transaktionen bleiben erhalten.`);
+			}
+			lines.push("", "Dieser Vorgang kann nicht automatisch rückgängig gemacht werden.");
+			if (!window.confirm(lines.join("\n"))) return;
+			await api.deleteImport(docname);
+			notify("success", "Bankimport gelöscht.");
+			setOverview(null);
+			setSelectedId(null);
+			setDocname("");
+		} catch (e) {
+			notify("error", e.message || String(e));
+		} finally {
+			setBusy(false);
+		}
+	}, [busy, docname, meta.title, notify]);
+
 	// ── Render ──
 	if (!docname) return (
 		<>
@@ -486,6 +521,9 @@ export function App() {
 				)}
 				<button className="btn subtle sm" onClick={() => runGlobal("refresh_saldo")} disabled={busy}><Icon name="refresh" /> Saldo</button>
 				<button className="btn subtle sm" onClick={() => api.openImportForm(docname)}><Icon name="file" /> Formular</button>
+				<button className="btn danger sm" onClick={deleteCurrentImport} disabled={busy}>
+					<Icon name="trash" /> Löschen
+				</button>
 			</div>
 
 			<Toolbar

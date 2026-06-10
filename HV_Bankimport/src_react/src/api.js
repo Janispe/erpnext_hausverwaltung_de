@@ -52,6 +52,27 @@ export async function createImport({ bankAccount, filename, fileData }) {
 	});
 }
 
+export async function deleteImport(name) {
+	if (!embedded) return { ok: true, name, mock: true };
+	return await rpc("delete_import", { import_name: name, cascade: 1 });
+}
+
+export async function getDeleteImpact(name) {
+	if (!embedded) {
+		return {
+			import: name,
+			rows: MOCK_OVERVIEW.rows.length,
+			vouchers: [],
+			bankTransactionsToReverse: [],
+			bankTransactionsKept: [],
+			counts: { vouchers: 0, paymentEntries: 0, journalEntries: 0, bankTransactionsToReverse: 0, bankTransactionsKept: 0 },
+			requiresCascade: false,
+			mock: true,
+		};
+	}
+	return await rpc("get_delete_impact", { import_name: name });
+}
+
 // Komplett-Übersicht: { import, rows, phaseCounts }.
 export async function loadOverview(name) {
 	if (!embedded) return { ...MOCK_OVERVIEW, mock: true };

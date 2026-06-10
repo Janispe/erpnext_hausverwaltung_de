@@ -122,6 +122,97 @@ class TestListImports(FrappeTestCase):
 		)
 
 
+class TestListBankAccounts(FrappeTestCase):
+	class _Meta:
+		def has_field(self, fieldname):
+			return fieldname in {"iban", "disabled"}
+
+	def test_filters_out_disabled_bank_accounts(self):
+		with patch("frappe.get_meta", return_value=self._Meta()), \
+			 patch("frappe.get_list", return_value=[]) as get_list:
+			bv2.list_bank_accounts()
+
+		self.assertEqual(
+			get_list.call_args.kwargs["filters"],
+			{"is_company_account": 1, "disabled": 0},
+		)
+
+	def test_skips_bank_accounts_with_disabled_gl_account(self):
+		rows = [
+			frappe._dict(name="Active Bank", bank="Postbank", account="1800", iban="DE-ACTIVE"),
+			frappe._dict(name="Disabled GL Bank", bank="Postbank", account="1810", iban="DE-DISABLED"),
+		]
+
+		def get_value(doctype, name, fieldname):
+			if doctype == "Account" and fieldname == "disabled":
+				return 1 if name == "1810" else 0
+			if doctype == "Account" and fieldname == "account_number":
+				return name
+			return None
+
+		with patch("frappe.get_meta", return_value=self._Meta()), \
+			 patch("frappe.get_list", return_value=rows), \
+			 patch("frappe.db.get_value", side_effect=get_value):
+			result = bv2.list_bank_accounts()
+
+		self.assertEqual([item["value"] for item in result["items"]], ["Active Bank"])
+
+
+class TestDeleteImport(FrappeTestCase):
+	def test_delete_import_uses_normal_permissions(self):
+		doc = frappe._dict(name="BAI-1", title="Import", rows=[])
+
+		with patch("frappe.get_doc", return_value=doc), \
+			 patch("frappe.has_permission") as has_permission, \
+			 patch("frappe.delete_doc") as delete_doc:
+			result = bv2.delete_import("BAI-1")
+
+		has_permission.assert_called_once_with("Bankauszug Import", "delete", doc=doc, throw=True)
+		delete_doc.assert_called_once_with("Bankauszug Import", "BAI-1")
+		self.assertTrue(result["ok"])
+		self.assertEqual(result["name"], "BAI-1")
+
+	def test_delete_impact_separates_import_owned_and_existing_bank_transactions(self):
+		doc = frappe._dict(
+			name="BAI-1",
+			title="Import",
+			rows=[
+				frappe._dict(name="ROW-1", bank_transaction="BT-OWN", row_status="success"),
+				frappe._dict(name="ROW-2", bank_transaction="BT-EXISTING", row_status="schon vorhanden"),
+				frappe._dict(
+					name="ROW-3",
+					bank_transaction="BT-OWN",
+					row_status="success",
+					payment_document_type="Payment Entry",
+					payment_document="PE-1",
+				),
+			],
+		)
+
+		with patch("frappe.db.get_value", return_value=1):
+			impact = bv2._delete_impact_for_doc(doc)
+
+		self.assertTrue(impact["requiresCascade"])
+		self.assertEqual(impact["counts"]["bankTransactionsToReverse"], 1)
+		self.assertEqual(impact["counts"]["bankTransactionsKept"], 1)
+		self.assertEqual(impact["counts"]["paymentEntries"], 1)
+		self.assertEqual(impact["bankTransactionsToReverse"][0]["name"], "BT-OWN")
+		self.assertEqual(impact["bankTransactionsKept"][0]["name"], "BT-EXISTING")
+
+	def test_delete_import_requires_cascade_when_followup_documents_exist(self):
+		doc = frappe._dict(
+			name="BAI-1",
+			title="Import",
+			rows=[frappe._dict(name="ROW-1", bank_transaction="BT-OWN", row_status="success")],
+		)
+
+		with patch("frappe.get_doc", return_value=doc), \
+			 patch("frappe.has_permission"), \
+			 patch("frappe.db.get_value", return_value=1), \
+			 self.assertRaises(frappe.ValidationError):
+			bv2.delete_import("BAI-1", cascade=0)
+
+
 class TestSuggestInvoiceForRow(FrappeTestCase):
 	"""Sichert, dass die Rechnungs-Empfehlung des bankimport_v2-Overview die
 	gleiche Single-Exact-Logik wie der echte Auto-Matcher anwendet — nur ohne
