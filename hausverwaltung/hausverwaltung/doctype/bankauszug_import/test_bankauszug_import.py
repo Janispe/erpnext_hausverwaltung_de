@@ -1213,6 +1213,7 @@ class TestBankauszugImport(unittest.TestCase):
             docname="IMP-ROW",
             row_name="ROW-1",
             allow_missing_party=1,
+            skip_auto_match=0,
         )
 
     def test_auto_create_transactions_for_ready_rows_only_processes_party_rows(self):
