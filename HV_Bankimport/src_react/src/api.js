@@ -123,6 +123,11 @@ export async function resetRowBooking(name, rowName) {
 	return await rpc("reset_row_booking", { docname: name, row_name: rowName });
 }
 
+export async function resetRowProcessing(name, rowName) {
+	if (!embedded) return { ok: true, mock: true };
+	return await rpc("reset_row_processing", { docname: name, row_name: rowName });
+}
+
 // ---- Phase 1: Party zuordnen ---------------------------------------------
 
 // Such-Endpoint für Customer/Supplier (Phase-1-Zuordnung).

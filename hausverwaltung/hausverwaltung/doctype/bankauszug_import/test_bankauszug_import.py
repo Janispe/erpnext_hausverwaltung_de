@@ -991,6 +991,52 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertIsNone(row.row_status)
         self.assertIn("PE-RESET", row.auto_match_message)
 
+    def test_reset_row_processing_clears_party_and_import_owned_bank_transaction(self):
+        row = self._FakeRow(name="ROW-RESET-ALL", iban="DE-RESET")
+        row.party_type = "Customer"
+        row.party = "CUST-RESET"
+        row.bank_transaction = "BT-RESET"
+        row.reference = "BT-RESET"
+        row.payment_entry = "PE-RESET"
+        row.payment_document_type = "Payment Entry"
+        row.payment_document = "PE-RESET"
+        row.row_status = "success"
+        doc = self._FakeDoc("IMP-RESET-ALL", [row])
+
+        class _BT:
+            name = "BT-RESET"
+            flags = frappe._dict()
+            cancelled = False
+
+            def cancel(self):
+                self.cancelled = True
+
+        bt = _BT()
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Transaction":
+                return bt
+            raise AssertionError("unexpected doctype")
+
+        with patch.object(bi, "reset_row_booking", return_value={"ok": True, "reset": True}), \
+             patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe.db, "get_value", return_value=1), \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch.object(bi, "_refresh_and_persist_saldo"):
+            res = bi.reset_row_processing("IMP-RESET-ALL", "ROW-RESET-ALL")
+
+        self.assertTrue(res["cleared_bank_transaction"])
+        self.assertTrue(bt.cancelled)
+        self.assertIsNone(row.party_type)
+        self.assertIsNone(row.party)
+        self.assertIsNone(row.bank_transaction)
+        self.assertIsNone(row.reference)
+        self.assertIsNone(row.row_status)
+        self.assertEqual(row.auto_match_message, "Zeile vollständig zurückgesetzt.")
+
     def test_change_row_party_does_not_propagate_when_iban_not_unique(self):
         row = self._FakeRow(name="ROW-AMB-1", iban="DE-AMB")
         other = self._FakeRow(name="ROW-AMB-2", iban="DE-AMB")

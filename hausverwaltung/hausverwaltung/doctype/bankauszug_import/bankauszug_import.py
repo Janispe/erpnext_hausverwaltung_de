@@ -1709,6 +1709,36 @@ def _clear_row_booking_links(row: Document, message: str) -> None:
     _row_set(row, "auto_match_message", message)
 
 
+def _reset_import_owned_bank_transaction(row: Document) -> Dict[str, Any]:
+    bt_name = _get_row_bank_transaction_name(row)
+    if not bt_name:
+        return {"reset": False, "reason": "no_bank_transaction"}
+    if _row_is_skipped(row):
+        return {"reset": False, "bank_transaction": bt_name, "reason": "not_import_owned"}
+
+    docstatus = frappe.db.get_value("Bank Transaction", bt_name, "docstatus")
+    if docstatus is None:
+        return {"reset": True, "bank_transaction": bt_name, "status": "missing"}
+
+    bt = frappe.get_doc("Bank Transaction", bt_name)
+    try:
+        docstatus_int = int(docstatus)
+    except Exception:
+        docstatus_int = docstatus
+
+    if docstatus_int == 2:
+        return {"reset": True, "bank_transaction": bt_name, "status": "already_cancelled"}
+    if docstatus_int == 1:
+        if not getattr(bt, "flags", None):
+            bt.flags = frappe._dict()
+        bt.flags.ignore_permissions = True
+        bt.cancel()
+        return {"reset": True, "bank_transaction": bt_name, "status": "cancelled"}
+
+    bt.delete(ignore_permissions=True)
+    return {"reset": True, "bank_transaction": bt_name, "status": "deleted_draft"}
+
+
 @frappe.whitelist()
 def reset_row_booking(docname: str, row_name: str) -> Dict[str, Any]:
     doc = frappe.get_doc("Bankauszug Import", docname)
@@ -1740,6 +1770,51 @@ def reset_row_booking(docname: str, row_name: str) -> Dict[str, Any]:
         "voucher": voucher_name,
         "cancel": cancel_result,
         "delinked_bank_transactions": delinked_bank_transactions,
+    }
+
+
+@frappe.whitelist()
+def reset_row_processing(docname: str, row_name: str) -> Dict[str, Any]:
+    """Setzt eine Import-Zeile auf den Anfang zurück.
+
+    Storniert zuerst einen verknüpften Payment/Journal-Beleg, nimmt danach nur
+    import-eigene Bank Transactions zurück und leert die Zeilen-Zuordnung.
+    Bereits vorhandene Bank Transactions (``schon vorhanden`` / vor Startdatum)
+    bleiben erhalten.
+    """
+    doc = frappe.get_doc("Bankauszug Import", docname)
+    if not frappe.has_permission("Bankauszug Import", "write", doc=doc):
+        frappe.throw("Keine Berechtigung zum Bearbeiten dieses Bankauszug Imports.")
+
+    row = _get_row_by_name(doc, row_name)
+    original_bank_transaction = _get_row_bank_transaction_name(row)
+    booking_reset = reset_row_booking(docname, row_name)
+    if booking_reset.get("reset"):
+        doc = frappe.get_doc("Bankauszug Import", docname)
+        row = _get_row_by_name(doc, row_name)
+
+    bank_transaction_reset = _reset_import_owned_bank_transaction(row)
+
+    for fieldname in ("party_type", "party"):
+        _row_set(row, fieldname, None)
+    if original_bank_transaction:
+        for fieldname in ("bank_transaction", "reference"):
+            _row_set(row, fieldname, None)
+    if not _doc_field(row, "error"):
+        _row_set(row, "row_status", None)
+    _row_set(row, "auto_match_message", "Zeile vollständig zurückgesetzt.")
+
+    if hasattr(doc, "save"):
+        doc.save(ignore_permissions=True)
+    _recompute_doc_status(docname)
+    _refresh_and_persist_saldo(docname)
+    return {
+        "ok": True,
+        "row": row.name,
+        "booking": booking_reset,
+        "bank_transaction": bank_transaction_reset,
+        "cleared_party": True,
+        "cleared_bank_transaction": bool(original_bank_transaction),
     }
 
 

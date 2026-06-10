@@ -937,6 +937,7 @@ function BookingActions({ docname, row, onActionDone, notify }) {
 
 export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) {
 	const [partyDialogOpen, setPartyDialogOpen] = useState(false);
+	const [resetBusy, runReset] = useAction(notify);
 
 	if (!row) {
 		return (
@@ -954,6 +955,21 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 	const phase = row.phase || 3;
 	const partyLabel = partyDisplayLabel(row);
 	const roleLabel = partyTypeLabel(row.partyTyp);
+	const canResetRow = Boolean(row.party || row.partyTyp || row.bankTransaction || row.paymentEntry || row.journalEntry || row.paymentDocument);
+	const resetRow = () => {
+		if (!canResetRow || resetBusy) return;
+		const lines = [
+			"Diese Importzeile wirklich zurücksetzen?",
+			"",
+			"Verknüpfte Payment/Journal-Belege werden storniert.",
+			"Import-eigene Bank-Transaktionen werden storniert oder gelöscht.",
+			"Partei und Zeilen-Links werden entfernt.",
+		];
+		if (!window.confirm(lines.join("\n"))) return;
+		runReset(() => api.resetRowProcessing(docname, row.id), {
+			success: "Zeile zurückgesetzt.",
+		}).then((res) => res && res.ok !== false && onActionDone({ advance: false }));
+	};
 
 	return (
 		<div className="match-panel">
@@ -986,6 +1002,11 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 						<Icon name="settings" /> Partei ändern
 					</button>
 				</div>
+				{canResetRow && (
+					<button className="btn danger sm row-reset-btn" onClick={resetRow} disabled={resetBusy}>
+						{resetBusy ? <Spinner /> : <Icon name="trash" />} Zeile zurücksetzen
+					</button>
+				)}
 				<div className="zweck">{row.verwendungszweck}</div>
 				{row.iban && <div className="iban-line">{fmtIban(row.iban)}</div>}
 				<AuditTrail row={row} />

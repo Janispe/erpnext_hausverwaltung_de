@@ -37,6 +37,7 @@ const RPC_ACTIONS = {
 	retry_auto_match: DT + "retry_auto_match",
 	relink_all_parties: DT + "relink_parties_for_all_rows",
 	reset_row_booking: DT + "reset_row_booking",
+	reset_row_processing: DT + "reset_row_processing",
 	change_row_party: DT + "change_row_party",
 	// Phase 1: Party zuordnen
 	assign_party: DT + "apply_party_to_row_and_relink",
