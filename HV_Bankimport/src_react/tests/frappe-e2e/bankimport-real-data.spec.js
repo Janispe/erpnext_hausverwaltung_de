@@ -72,6 +72,10 @@ function benchExecute(method, { args, kwargs } = {}) {
 	}
 }
 
+test.beforeAll(() => {
+	benchExecute("hausverwaltung.cypress_fixtures.ensure_bankimport_bank_account");
+});
+
 function rowsForRun(runId) {
 	return benchExecute("frappe.get_all", {
 		kwargs: {

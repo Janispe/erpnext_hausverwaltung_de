@@ -43,6 +43,64 @@ def _resolve_company(explicit: Optional[str] = None) -> str:
 
 
 @frappe.whitelist()
+def ensure_bankimport_bank_account(company: Optional[str] = None) -> dict:
+	"""Ensure the Bankimport UI has at least one selectable company bank account.
+
+	Fresh Docker sites can have a Company and chart of accounts but no ``Bank
+	Account`` doctype row yet. The real Bankimport UI filters for active company
+	bank accounts, so seed one narrow test-safe row when needed.
+	"""
+	_check_dev_mode()
+	company = _resolve_company(company)
+
+	def is_active_account(account: str | None) -> bool:
+		if not account:
+			return True
+		return not bool(frappe.db.get_value("Account", account, "disabled"))
+
+	existing = frappe.get_all(
+		"Bank Account",
+		filters={"is_company_account": 1},
+		fields=["name", "account"],
+		order_by="name asc",
+		limit=50,
+	)
+	for row in existing:
+		if is_active_account(row.get("account")):
+			return {"bank_account": row["name"], "created": False, "company": company}
+
+	from hausverwaltung.hausverwaltung.data_import.sample.sample_data import (
+		_ensure_bank_cash_defaults,
+		_ensure_default_bank,
+	)
+
+	gl_account = (
+		frappe.db.get_value("Company", company, "default_bank_account")
+		or _ensure_bank_cash_defaults(company)
+	)
+	if not gl_account:
+		frappe.throw("hausverwaltung.cypress_fixtures: kein Bank-/Kasse-Sachkonto gefunden.")
+
+	bank = _ensure_default_bank()
+	payload = {
+		"doctype": "Bank Account",
+		"account_name": "HV UI Test Bankkonto",
+		"bank": bank,
+		"is_company_account": 1,
+		"company": company,
+		"account": gl_account,
+	}
+	if frappe.get_meta("Bank Account").has_field("iban"):
+		payload["iban"] = "DE89370400440532013000"
+	if frappe.get_meta("Bank Account").has_field("disabled"):
+		payload["disabled"] = 0
+
+	doc = frappe.get_doc(payload).insert(ignore_permissions=True)
+	frappe.db.commit()
+	return {"bank_account": doc.name, "created": True, "company": company, "account": gl_account}
+
+
+@frappe.whitelist()
 def seed(company: Optional[str] = None) -> dict:
 	"""Liefert eine Immobilie + Zeitraum mit existierender GL-Aktivität.
 
