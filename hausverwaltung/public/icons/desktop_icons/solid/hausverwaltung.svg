@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Hausverwaltung">
+  <rect width="64" height="64" rx="14" fill="#276EF1"/>
+  <path d="M16 30 32 17l16 13v19a2 2 0 0 1-2 2H18a2 2 0 0 1-2-2V30Z" fill="#fff"/>
+  <path d="M24 51V36h16v15" fill="#DCE8FF"/>
+  <path d="M26 27h12v6H26zM24 40h5v5h-5zM35 40h5v5h-5z" fill="#276EF1"/>
+</svg>

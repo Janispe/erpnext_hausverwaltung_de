@@ -1756,12 +1756,13 @@ def ensure_hausverwaltung_workspace_layout() -> None:
             ws.module = "Hausverwaltung"
             ws.public = 1
             ws.is_hidden = 0
-            ws.icon = "table_2"
+            ws.icon = "table"
             ws.flags.ignore_links = True
             ws.flags.ignore_mandatory = True
             ws.insert(ignore_permissions=True)
 
         _apply_hausverwaltung_workspace_layout()
+        _sync_hausverwaltung_desktop_icon()
 
         frappe.clear_cache()
         frappe.db.commit()
@@ -1958,6 +1959,25 @@ def _apply_hausverwaltung_workspace_layout() -> None:
         }).insert(ignore_permissions=True)
 
 
+def _sync_hausverwaltung_desktop_icon() -> None:
+    values = {
+        "app": "hausverwaltung",
+        "icon": "hausverwaltung",
+        "logo_url": None,
+        "icon_image": None,
+    }
+    if frappe.db.exists("Desktop Icon", "Hausverwaltung"):
+        frappe.db.set_value("Desktop Icon", "Hausverwaltung", values)
+    else:
+        doc = frappe.new_doc("Desktop Icon")
+        doc.label = "Hausverwaltung"
+        doc.icon_type = "Link"
+        doc.link_type = "Workspace Sidebar"
+        doc.app = values["app"]
+        doc.icon = values["icon"]
+        doc.insert(ignore_permissions=True)
+
+
 def _slug(text: str) -> str:
     return "".join(c.lower() if c.isalnum() else "_" for c in text).strip("_")
 
@@ -1977,7 +1997,7 @@ def ensure_hausverwaltung_sidebar() -> None:
         sidebar = frappe.new_doc("Workspace Sidebar")
         sidebar.title = "Hausverwaltung"
         sidebar.module = "Hausverwaltung"
-        sidebar.header_icon = "table_2"
+        sidebar.header_icon = "table"
 
         items: list[dict] = []
         idx = 0
