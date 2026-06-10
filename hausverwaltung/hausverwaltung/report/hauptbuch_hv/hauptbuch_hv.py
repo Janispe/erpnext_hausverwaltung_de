@@ -7,6 +7,9 @@ from frappe import _
 from frappe.utils import cint, flt
 
 from erpnext.accounts.report.general_ledger import general_ledger
+from hausverwaltung.hausverwaltung.patches.post_model_sync.clean_legacy_purchase_invoice_remarks import (
+	clean_legacy_remark,
+)
 
 
 HIDDEN_COLUMNS = {
@@ -42,6 +45,7 @@ def execute(filters=None):
 		data = _aggregate_mietlauf_rows(data)
 	_add_signed_amount(data)
 	_normalize_party_display(data)
+	_normalize_remarks_display(data)
 	return _filter_columns(
 		columns,
 		hide_account=hide_account,
@@ -233,6 +237,13 @@ def _add_signed_amount(data):
 		if not isinstance(row, dict):
 			continue
 		row["hv_amount"] = flt(row.get("debit")) - flt(row.get("credit"))
+
+
+def _normalize_remarks_display(data):
+	for row in data or []:
+		if not isinstance(row, dict) or "remarks" not in row:
+			continue
+		row["remarks"] = clean_legacy_remark(row.get("remarks"))
 
 
 def _has_single_selected_account(filters) -> bool:

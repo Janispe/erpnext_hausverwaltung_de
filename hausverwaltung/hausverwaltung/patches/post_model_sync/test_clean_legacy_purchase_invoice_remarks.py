@@ -21,5 +21,11 @@ class TestCleanLegacyPurchaseInvoiceRemarks(TestCase):
 			"Kamin gereinigt",
 		)
 
+	def test_clean_marker_with_text_after_space(self):
+		self.assertEqual(
+			clean_legacy_remark("Erfasst über Buchungs-Cockpit Aufbau eines Abgasventilators"),
+			"Aufbau eines Abgasventilators",
+		)
+
 	def test_leave_normal_remark_unchanged(self):
 		self.assertEqual(clean_legacy_remark("Kamin gereinigt"), "Kamin gereinigt")

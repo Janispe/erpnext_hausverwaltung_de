@@ -7,6 +7,7 @@ from hausverwaltung.hausverwaltung.report.hauptbuch_hv.hauptbuch_hv import (
 	_aggregate_mietlauf_rows,
 	_filter_columns,
 	_normalize_party_display,
+	_normalize_remarks_display,
 )
 
 
@@ -163,7 +164,8 @@ class TestHauptbuchAggregation(unittest.TestCase):
 		self.assertIn("(+1 weitere SI", out[0]["remarks"])
 		self.assertEqual(out[1]["voucher_no"], "SI-COCKPIT")
 		self.assertAlmostEqual(out[1]["debit"], 42.5)
-		self.assertEqual(out[1]["remarks"], "Erfasst über Buchungs-Cockpit: Nachzahlung laut Abrechnung")
+		_normalize_remarks_display(out)
+		self.assertEqual(out[1]["remarks"], "Nachzahlung laut Abrechnung")
 
 	def test_payment_entry_unchanged(self):
 		# Zahlungs- und Storno-Buchungen ohne mietabrechnung_id-Tagging
@@ -293,3 +295,14 @@ class TestHauptbuchColumns(unittest.TestCase):
 		self.assertEqual(rows[0]["hv_amount"], 100)
 		self.assertEqual(rows[1]["hv_amount"], -25.5)
 		self.assertEqual(rows[2]["hv_amount"], 80)
+
+	def test_normalize_remarks_display_removes_cockpit_marker(self):
+		rows = [
+			{"remarks": "Erfasst über Buchungs-Cockpit Aufbau eines Abgasventilators"},
+			{"remarks": "Normale Anmerkung"},
+		]
+
+		_normalize_remarks_display(rows)
+
+		self.assertEqual(rows[0]["remarks"], "Aufbau eines Abgasventilators")
+		self.assertEqual(rows[1]["remarks"], "Normale Anmerkung")
