@@ -1,9 +1,10 @@
 import React from "react";
-import { fmtEUR, fmtDate, fmtIban, partyDisplayLabel, partyTypeLabel, StatusPill, Icon } from "../helpers.jsx";
+import { fmtEUR, fmtDate, fmtIban, partyDisplayLabel, partyTypeLabel, rowPhase, StatusPill, Icon } from "../helpers.jsx";
 import * as api from "../api.js";
 
 function TxRow({ row, selected, onSelect }) {
 	const isOut = Number(row.betrag) < 0;
+	const isDone = rowPhase(row) === 4;
 	const hasParty = !!row.party;
 	const partyLabel = partyDisplayLabel(row);
 	const roleLabel = partyTypeLabel(row.partyTyp);
@@ -13,7 +14,7 @@ function TxRow({ row, selected, onSelect }) {
 	};
 	return (
 		<tr
-			className={`${selected ? "selected" : ""} ${row.rowStatus === "done" ? "done" : ""}`}
+			className={`${selected ? "selected" : ""} ${isDone ? "done" : ""}`}
 			onClick={() => onSelect(row.id)}
 		>
 			<td className="col-date">{fmtDate(row.buchungstag)}</td>

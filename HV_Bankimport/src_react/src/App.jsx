@@ -268,7 +268,7 @@ export function App() {
 	const [busy, setBusy] = useState(false);
 
 	const [phase, setPhase] = useState(0);
-	const [filter, setFilter] = useState("all");
+	const [filter, setFilter] = useState("open");
 	const [search, setSearch] = useState("");
 	const [selectedId, setSelectedId] = useState(null);
 	const [toast, setToast] = useState(null);
@@ -296,7 +296,7 @@ export function App() {
 		setOverview(null);
 		setSelectedId(null);
 		setPhase(0);
-		setFilter("all");
+		setFilter("open");
 		setDocname(name);
 	}, []);
 
@@ -326,7 +326,7 @@ export function App() {
 	const meta = overview?.import || {};
 	const phaseCounts = overview?.phaseCounts || { 1: 0, 2: 0, 3: 0, 4: 0 };
 
-	useEffect(() => { setFilter("all"); }, [phase]);
+	useEffect(() => { setFilter(phase === 4 ? "all" : "open"); }, [phase]);
 
 	const scope = useMemo(
 		() => (phase === 0 ? rows : rows.filter((r) => rowPhase(r) === phase)),
@@ -335,6 +335,7 @@ export function App() {
 
 	const filterCounts = useMemo(() => ({
 		all: scope.length,
+		open: scope.filter((r) => rowPhase(r) < 4).length,
 		problem: scope.filter((r) => ["phase3-ambiguous", "error", "needs_review", "phase1-no-party"].includes(r.rowStatus)).length,
 		noparty: scope.filter((r) => !r.party).length,
 		nopay: scope.filter((r) => !r.paymentEntry && !r.journalEntry && r.rowStatus !== "done").length,
@@ -343,9 +344,16 @@ export function App() {
 		eigentuemer: scope.filter((r) => r.partyTyp === "Eigentuemer").length,
 	}), [scope]);
 
+	useEffect(() => {
+		if (filter === "open" && filterCounts.open === 0 && filterCounts.all > 0) {
+			setFilter("all");
+		}
+	}, [filter, filterCounts.open, filterCounts.all]);
+
 	const visibleRows = useMemo(() => {
 		let out = scope;
-		if (filter === "problem") out = scope.filter((r) => ["phase3-ambiguous", "error", "needs_review", "phase1-no-party"].includes(r.rowStatus));
+		if (filter === "open") out = scope.filter((r) => rowPhase(r) < 4);
+		else if (filter === "problem") out = scope.filter((r) => ["phase3-ambiguous", "error", "needs_review", "phase1-no-party"].includes(r.rowStatus));
 		else if (filter === "noparty") out = scope.filter((r) => !r.party);
 		else if (filter === "nopay") out = scope.filter((r) => !r.paymentEntry && !r.journalEntry && r.rowStatus !== "done");
 		else if (filter === "customer") out = scope.filter((r) => r.partyTyp === "Customer");
@@ -382,6 +390,7 @@ export function App() {
 	);
 
 	const filterLabels = {
+		open: phase === 0 ? "Alle Phasen · Offene Zeilen" : `Phase ${phase} · Offene Zeilen`,
 		all: phase === 0 ? "Alle Phasen · Alle Zeilen" : `Phase ${phase} · Alle Zeilen`,
 		problem: "Problemzeilen", noparty: "Ohne Partei", nopay: "Ohne Zahlung",
 		customer: "Kunde", supplier: "Lieferant",

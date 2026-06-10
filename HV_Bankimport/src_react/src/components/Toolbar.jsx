@@ -3,6 +3,7 @@ import { Icon } from "../helpers.jsx";
 
 export function Toolbar({ filter, setFilter, search, setSearch, counts, phaseLabel }) {
 	const filters = [
+		{ id: "open", lbl: "Offen", cnt: counts.open },
 		{ id: "all", lbl: "Alle", cnt: counts.all },
 		{ id: "problem", lbl: "Problemzeilen", cnt: counts.problem },
 		{ id: "noparty", lbl: "Ohne Partei", cnt: counts.noparty },
