@@ -10,7 +10,7 @@ import json
 from unittest.mock import patch
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests import IntegrationTestCase
 
 from hausverwaltung.hausverwaltung.doctype.dunning import (
 	collect_serienbrief_werte,
@@ -29,7 +29,12 @@ from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_dur
 from hausverwaltung.hausverwaltung.utils import serienbrief_print
 
 
-class TestSerienbriefDurchlaufDunning(FrappeTestCase):
+class TestSerienbriefDurchlaufDunning(IntegrationTestCase):
+	@classmethod
+	def setUpClass(cls):
+		frappe.local.test_objects.setdefault("Serienbrief Durchlauf", [])
+		super().setUpClass()
+
 	def setUp(self):
 		# Vorhandene Test-Reste entfernen (Dunning Type-Name kann ein Company-
 		# Kürzel angehängt bekommen, daher per Feldwert suchen statt per Name).
@@ -215,15 +220,19 @@ class TestSerienbriefDurchlaufDunning(FrappeTestCase):
 		self.assertIs(serienbrief_doc, built)
 
 	def test_dunning_type_template_is_backfilled_but_existing_override_stays(self):
+		class _FakeDunning(frappe._dict):
+			def set(self, fieldname, value):
+				self[fieldname] = value
+
 		with (
 			patch.object(serienbrief_print.frappe.db, "has_column", return_value=True),
 			patch.object(serienbrief_print.frappe.db, "get_value", return_value="Typ Vorlage"),
 		):
-			doc = frappe._dict(doctype="Dunning", dunning_type=self.type_name, hv_serienbrief_vorlage="")
+			doc = _FakeDunning(doctype="Dunning", dunning_type=self.type_name, hv_serienbrief_vorlage="")
 			sync_serienbrief_vorlage_from_dunning_type(doc)
 			self.assertEqual(doc.hv_serienbrief_vorlage, "Typ Vorlage")
 
-			doc = frappe._dict(
+			doc = _FakeDunning(
 				doctype="Dunning",
 				dunning_type=self.type_name,
 				hv_serienbrief_vorlage="Sonder Vorlage",
@@ -335,7 +344,12 @@ class TestSerienbriefDurchlaufDunning(FrappeTestCase):
 			grand_total=105,
 			overdue_payments=[],
 		)
-		auto_values = _collect_dunning_auto_values(dunning)
+		with patch.object(
+			frappe.utils,
+			"fmt_money",
+			side_effect=lambda value, currency=None: f"{float(value):.2f}".replace(".", ",") + " €",
+		):
+			auto_values = _collect_dunning_auto_values(dunning)
 
 		self.assertEqual(auto_values["stufe"]["value"], 1)
 		self.assertEqual(auto_values["rueckstand"]["value"], "105,00")
@@ -386,6 +400,10 @@ class TestSerienbriefDurchlaufDunning(FrappeTestCase):
 		with patch(
 			"hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf._load_value_fields_context",
 			return_value=context,
+		), patch.object(
+			frappe.utils,
+			"fmt_money",
+			side_effect=lambda value, currency=None: f"{float(value):.2f}".replace(".", ",") + " €",
 		):
 			result = _get_serienbrief_value_fields_for_doc(template, iteration_doctype="Dunning")
 

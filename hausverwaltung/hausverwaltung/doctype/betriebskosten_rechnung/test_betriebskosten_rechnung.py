@@ -1,8 +1,8 @@
 # See license.txt
 
 # import frappe
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 
-class TestBetriebskostenrechnung(FrappeTestCase):
+class TestBetriebskostenrechnung(unittest.TestCase):
 	pass

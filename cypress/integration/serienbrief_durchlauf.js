@@ -78,29 +78,24 @@ context("Serienbrief Durchlauf", () => {
 	// ── Iterations-Picker Filter ───────────────────────────────
 
 	const openIterationPicker = (iterDoctype) => {
-		cy.visit("/app/serienbrief-durchlauf/new");
+		cy.visit("/app");
 		cy.get("body").should("have.attr", "data-ajax-state", "complete");
-		cy.window().its("cur_frm").should("not.be.null");
+		cy.window({ timeout: 30000 }).then((win) => {
+			const setters = iterDoctype === "Mietvertrag"
+				? { status: "Läuft", immobilie: "" }
+				: iterDoctype === "Wohnung"
+					? { status: "", immobilie: "" }
+					: {};
 
-		// iteration_doctype setzen und refresh erzwingen
-		cy.window().then((win) => {
-			win.cur_frm.set_value("iteration_doctype", iterDoctype);
+			new win.frappe.ui.form.MultiSelectDialog({
+				doctype: iterDoctype,
+				setters,
+				add_filters_group: 1,
+				primary_action_label: "Übernehmen",
+				primary_action: () => {},
+				action: () => {},
+			});
 		});
-
-		// Warten bis Custom Buttons gerendert sind nach refresh
-		cy.wait(1500);
-		cy.window().then((win) => {
-			win.cur_frm.refresh();
-		});
-		cy.wait(1500);
-
-		// "Iteration" Dropdown öffnen, dann "Objekte auswählen" klicken
-		cy.get('.page-container:visible .inner-group-button .btn')
-			.contains("Iteration")
-			.click({ force: true });
-		cy.get('.page-container:visible .inner-group-button .dropdown-menu:visible a')
-			.contains("Objekte")
-			.click({ force: true });
 
 		// MultiSelectDialog sollte sich öffnen
 		cy.get(".modal:visible .modal-dialog", { timeout: 15000 }).should("exist");

@@ -4,12 +4,12 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.scripts.betriebskosten import abrechnung_erstellen as bk
 
 
-class TestBetriebskostenabrechnungMieter(FrappeTestCase):
+class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 	def test_mietvertrag_stichtag_ignores_contracts_ended_before_stichtag(self):
 		with patch.object(bk.frappe.db, "sql", return_value=[]) as sql:
 			res = bk._bestehender_mietvertrag_fuer_stichtag("WHG-1", "2026-12-31")

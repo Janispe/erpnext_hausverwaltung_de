@@ -17,6 +17,13 @@ module.exports = defineConfig({
 	},
 	e2e: {
 		setupNodeEvents(on, config) {
+			on("before:browser:launch", (browser, launchOptions) => {
+				if (browser.family === "chromium") {
+					launchOptions.args.push("--no-sandbox");
+				}
+				return launchOptions;
+			});
+
 			on("after:spec", (spec, results) => {
 				if (results && results.video) {
 					const failures = results.tests.some((test) =>

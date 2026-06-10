@@ -1,12 +1,12 @@
 from unittest.mock import patch
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.utils import payment_auto_match as pam
 
 
-class TestPaymentAutoMatchRemarks(FrappeTestCase):
+class TestPaymentAutoMatchRemarks(unittest.TestCase):
 	def test_builds_rent_payment_remarks_from_sales_invoice_items(self):
 		invoices = [
 			frappe._dict(name="SI-MIETE", posting_date="2026-03-01"),
@@ -44,7 +44,7 @@ class TestPaymentAutoMatchRemarks(FrappeTestCase):
 		)
 
 
-class TestAutoMatchExactAmbiguity(FrappeTestCase):
+class TestAutoMatchExactAmbiguity(unittest.TestCase):
 	def _run_auto_match(self, *, bt_date="2026-03-05", invoices):
 		bt = frappe._dict(name="BT-EXACT", date=bt_date)
 		with patch.object(pam.frappe, "get_doc", return_value=bt), \
@@ -115,7 +115,7 @@ class TestAutoMatchExactAmbiguity(FrappeTestCase):
 		self.assertEqual(do_match.call_args[0][3], "month_2026-03")
 
 
-class TestCreatePaymentEntryForInvoices(FrappeTestCase):
+class TestCreatePaymentEntryForInvoices(unittest.TestCase):
 	class _FakeMeta:
 		def get_field(self, fieldname):
 			return False
@@ -196,7 +196,7 @@ class TestCreatePaymentEntryForInvoices(FrappeTestCase):
 		self.assertIn("Auswahl summiert", throw.call_args[0][0])
 
 
-class TestReconcileCreatedVoucherRollback(FrappeTestCase):
+class TestReconcileCreatedVoucherRollback(unittest.TestCase):
 	def test_do_match_uses_protected_reconcile(self):
 		bt = frappe._dict(name="BT-MATCH")
 		invoices = [frappe._dict(name="SINV-MATCH")]

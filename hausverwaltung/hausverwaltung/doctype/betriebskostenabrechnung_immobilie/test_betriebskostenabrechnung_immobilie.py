@@ -2,14 +2,14 @@
 
 from unittest.mock import MagicMock, patch
 
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_immobilie import (
 	betriebskostenabrechnung_immobilie as module,
 )
 
 
-class TestBetriebskostenabrechnungImmobilie(FrappeTestCase):
+class TestBetriebskostenabrechnungImmobilie(unittest.TestCase):
 	def _mock_frappe_for_zaehler(self, readings: dict[tuple[str, str], float | None]):
 		frappe = MagicMock()
 		frappe.get_all.side_effect = lambda doctype, **kwargs: {

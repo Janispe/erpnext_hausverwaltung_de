@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.integrations.temporal.adapters.process_adapter import (
 	ACTION_BYPASS_COMPLETE,
@@ -18,7 +18,7 @@ from hausverwaltung.hausverwaltung.integrations.temporal.adapters.process_adapte
 )
 
 
-class TestTemporalAdapters(FrappeTestCase):
+class TestTemporalAdapters(unittest.TestCase):
 	def test_status_transitions(self):
 		self.assertEqual(get_target_status(STATUS_ENTWURF, ACTION_START), STATUS_IN_BEARBEITUNG)
 		self.assertEqual(get_target_status(STATUS_IN_BEARBEITUNG, ACTION_WAIT_FOR_DOCUMENTS), STATUS_WARTET)

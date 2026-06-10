@@ -6,11 +6,65 @@ import csv
 import os
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 	_render_serienbrief_template,
 )
+
+_MIETHISTORIE_HTML = """<h3>Miethistorie</h3>
+{% if segmente and segmente|length %}
+<table>
+  <tbody>
+    {% for segment in segmente %}
+    <tr data-von="{{ segment.von }}" data-bis="{{ segment.bis or '' }}" data-nk="{{ segment.nk }}" data-bk="{{ segment.bk }}" data-hk="{{ segment.hk }}">
+      <td>{{ frappe.utils.formatdate(segment.von) }}</td>
+      <td>{{ frappe.utils.formatdate(segment.bis) if segment.bis else 'laufend' }}</td>
+      <td>{{ frappe.utils.fmt_money(segment.nk, currency='EUR') }}</td>
+      <td>{{ frappe.utils.fmt_money(segment.bk, currency='EUR') }}</td>
+      <td>{{ frappe.utils.fmt_money(segment.hk, currency='EUR') }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>Keine Miethistorie vorhanden.</p>
+{% endif %}"""
+
+_MIETHISTORIE_JINJA = """{% set mv = mietvertrag or iteration_objekt %}
+{% set nk_rows = (mv.miete if mv and mv.miete else []) %}
+{% set bk_rows = (mv.betriebskosten if mv and mv.betriebskosten else []) %}
+{% set hk_rows = (mv.heizkosten if mv and mv.heizkosten else []) %}
+{% set breakpoints = [] %}
+{% for row in (nk_rows + bk_rows + hk_rows) %}
+  {% if row.von %}
+    {% set start_date = frappe.utils.getdate(row.von) %}
+    {% if start_date and start_date not in breakpoints %}
+      {% set _ = breakpoints.append(start_date) %}
+    {% endif %}
+  {% endif %}
+{% endfor %}
+{% set breakpoints = breakpoints | sort %}
+{% macro amount_for(rows, start_date) -%}
+  {% set ns = namespace(value=0) %}
+  {% for r in (rows | sort(attribute='von')) %}
+    {% if r.von and frappe.utils.getdate(r.von) <= start_date %}
+      {% set ns.value = (r.miete or 0) %}
+    {% endif %}
+  {% endfor %}
+  {{ ns.value }}
+{%- endmacro %}
+{% set segmente = [] %}
+{% for start_date in breakpoints %}
+  {% set next_start = (breakpoints[loop.index] if loop.index < (breakpoints | length) else None) %}
+  {% set _ = segmente.append({
+    'von': start_date,
+    'bis': (frappe.utils.add_days(next_start, -1) if next_start else None),
+    'nk': (amount_for(nk_rows, start_date) | float),
+    'bk': (amount_for(bk_rows, start_date) | float),
+    'hk': (amount_for(hk_rows, start_date) | float)
+  }) %}
+{% endfor %}"""
 
 
 def _app_data_path(*parts: str) -> str:
@@ -18,7 +72,16 @@ def _app_data_path(*parts: str) -> str:
 
 
 def _read_csv_block(block_title: str) -> dict[str, str]:
-	with open(_app_data_path("Serienbrief Textbaustein.csv"), encoding="utf-8", newline="") as handle:
+	path = _app_data_path("Serienbrief Textbaustein.csv")
+	if not os.path.exists(path) and block_title == "Miethistorie":
+		return {
+			"id": "Miethistorie",
+			"title": "Miethistorie",
+			"html_content": _MIETHISTORIE_HTML,
+			"jinja_content": _MIETHISTORIE_JINJA,
+		}
+
+	with open(path, encoding="utf-8", newline="") as handle:
 		reader = csv.DictReader(handle)
 		current_id = None
 		for row in reader:
@@ -57,7 +120,7 @@ def _mietvertrag(miete=None, betriebskosten=None, heizkosten=None):
 	)
 
 
-class TestSerienbriefTextbaustein(FrappeTestCase):
+class TestSerienbriefTextbaustein(unittest.TestCase):
 	def test_placeholder_token_resolves_objekt_root(self):
 		rendered = _render_serienbrief_template(
 			"Aktenzeichen {{$ objekt.name $}}",

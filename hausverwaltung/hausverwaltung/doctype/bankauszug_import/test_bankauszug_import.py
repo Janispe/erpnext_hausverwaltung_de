@@ -3,12 +3,12 @@
 from unittest.mock import patch
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.doctype.bankauszug_import import bankauszug_import as bi
 
 
-class TestBankauszugImport(FrappeTestCase):
+class TestBankauszugImport(unittest.TestCase):
     class _FakeRow:
         def __init__(
             self,
@@ -26,6 +26,19 @@ class TestBankauszugImport(FrappeTestCase):
             self.error = error
             self.party_type = None
             self.party = None
+            self.bank_transaction = None
+            self.reference = None
+            self.buchungstag = "2026-01-15"
+            self.idx = 1
+            self.betrag = 42
+            self.richtung = "Eingang"
+            self.currency = "EUR"
+            self.payment_entry = None
+            self.journal_entry = None
+            self.payment_document_type = None
+            self.payment_document = None
+            self.row_status = None
+            self.auto_match_message = None
 
         def get(self, key, default=None):
             return getattr(self, key, default)
@@ -37,6 +50,8 @@ class TestBankauszugImport(FrappeTestCase):
         def __init__(self, name: str, rows):
             self.name = name
             self._rows = rows
+            self.rows = rows
+            self.bank_account = "BANK-1"
             self.saved = False
             self.ignore_permissions = None
 
@@ -48,6 +63,9 @@ class TestBankauszugImport(FrappeTestCase):
         def save(self, ignore_permissions=False):
             self.saved = True
             self.ignore_permissions = ignore_permissions
+
+        def reload(self):
+            return None
 
     class _FakeBT:
         def __init__(self, name: str, party_type=None, party=None):
@@ -236,7 +254,9 @@ class TestBankauszugImport(FrappeTestCase):
         with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
-             patch.object(bi, "_get_party_by_iban", return_value=("Customer", "CUST-1")):
+             patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(bi, "_get_party_by_iban", return_value=("Customer", "CUST-1")), \
+             patch.object(bi, "_recompute_doc_status"):
             res = bi.relink_parties_for_all_rows("IMP-A")
 
         self.assertEqual(res["updated"], 1)
@@ -326,7 +346,9 @@ class TestBankauszugImport(FrappeTestCase):
         with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
-             patch.object(bi, "_get_party_by_iban", return_value=("Customer", "CUST-NEW")):
+             patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(bi, "_get_party_by_iban", return_value=("Customer", "CUST-NEW")), \
+             patch.object(bi, "_recompute_doc_status"):
             res = bi.relink_parties_for_all_rows("IMP-B", overwrite=1)
 
         self.assertEqual(res["updated"], 1)
@@ -342,7 +364,9 @@ class TestBankauszugImport(FrappeTestCase):
 
         with patch.object(bi.frappe, "get_doc", return_value=doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
-             patch.object(bi.frappe, "get_meta", return_value=meta):
+             patch.object(bi.frappe, "get_meta", return_value=meta), \
+             patch.object(bi, "_get_party_by_iban", return_value=None), \
+             patch.object(bi, "_recompute_doc_status"):
             res = bi.relink_parties_for_all_rows("IMP-C")
 
         self.assertEqual(res["processed"], 1)
@@ -368,7 +392,9 @@ class TestBankauszugImport(FrappeTestCase):
         with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
-             patch.object(bi, "_get_party_by_iban", return_value=None):
+             patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(bi, "_get_party_by_iban", return_value=None), \
+             patch.object(bi, "_recompute_doc_status"):
             res = bi.relink_parties_for_all_rows("IMP-D")
 
         self.assertEqual(res["updated"], 1)
@@ -406,7 +432,9 @@ class TestBankauszugImport(FrappeTestCase):
         with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
-             patch.object(bi, "_get_party_by_iban", side_effect=_by_iban):
+             patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(bi, "_get_party_by_iban", side_effect=_by_iban), \
+             patch.object(bi, "_recompute_doc_status"):
             res = bi.relink_parties_for_all_rows("IMP-E")
 
         self.assertEqual(res["processed"], 3)
@@ -438,7 +466,9 @@ class TestBankauszugImport(FrappeTestCase):
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
              patch.object(bi.frappe, "get_traceback", return_value="trace"), \
-             patch.object(bi, "_get_party_by_iban", return_value=("Customer", "C-OK")):
+             patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(bi, "_get_party_by_iban", return_value=("Customer", "C-OK")), \
+             patch.object(bi, "_recompute_doc_status"):
             res = bi.relink_parties_for_all_rows("IMP-F")
 
         self.assertEqual(res["updated"], 1)
@@ -463,7 +493,8 @@ class TestBankauszugImport(FrappeTestCase):
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
              patch.object(bi.frappe.db, "exists", return_value=True), \
-             patch.object(bi, "_get_party_by_iban", return_value=("Supplier", "SUP-I")):
+             patch.object(bi, "_get_party_by_iban", return_value=("Supplier", "SUP-I")), \
+             patch.object(bi, "_recompute_doc_status"):
             res = bi.relink_parties_for_all_rows("IMP-I")
 
         self.assertEqual(res["updated"], 1)
@@ -587,6 +618,7 @@ class TestBankauszugImport(FrappeTestCase):
 
         with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe.db, "exists", return_value=True), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
              patch.object(bi, "_recompute_doc_status"), \
              patch.object(bi, "_refresh_and_persist_saldo"):
@@ -700,7 +732,7 @@ class TestBankauszugImport(FrappeTestCase):
         self.assertIsNone(booked.party)
         self.assertEqual(len(res["propagated_rows"]), 1)
 
-    def test_create_bank_transactions_blocks_when_any_row_has_no_party(self):
+    def test_create_bank_transactions_returns_warning_when_any_row_has_no_party(self):
         row_ok = self._FakeRow(name="ROW-J1", iban="DE12")
         row_bad = self._FakeRow(name="ROW-J2", iban="")
         doc = self._FakeDoc("IMP-J", [row_ok, row_bad])
@@ -708,17 +740,23 @@ class TestBankauszugImport(FrappeTestCase):
         class _BankAccount:
             is_company_account = 1
 
-        def _throw(msg):
-            raise Exception(msg)
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Account":
+                return _BankAccount()
+            raise AssertionError("unexpected doctype")
 
-        with patch.object(bi.frappe, "get_doc", return_value=doc), \
-             patch.object(bi.frappe, "get_cached_doc", return_value=_BankAccount()), \
-             patch.object(bi.frappe, "throw", side_effect=_throw), \
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
              patch.object(bi, "_resolve_row_party_for_validation", side_effect=[("Customer", "C1"), None]):
-            with self.assertRaisesRegex(Exception, "Zeilen ohne Party"):
-                bi.create_bank_transactions("IMP-J")
+            res = bi.create_bank_transactions("IMP-J")
 
-    def test_create_bank_transactions_blocks_even_if_row_has_error_or_existing_bt(self):
+        self.assertEqual(res["created"], [])
+        self.assertEqual(res["errors"], [])
+        self.assertEqual(res["warning"]["missing_count"], 1)
+        self.assertIn("Zeilen ohne Party", res["warning"]["message"])
+
+    def test_create_bank_transactions_warns_even_if_row_has_error_or_existing_bt(self):
         row_err = self._FakeRow(name="ROW-K1", iban="", error="Ungültig")
         row_err.bank_transaction = "BT-K1"
         row_ok = self._FakeRow(name="ROW-K2", iban="DE13")
@@ -727,20 +765,32 @@ class TestBankauszugImport(FrappeTestCase):
         class _BankAccount:
             is_company_account = 1
 
-        def _throw(msg):
-            raise Exception(msg)
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Account":
+                return _BankAccount()
+            raise AssertionError("unexpected doctype")
 
-        with patch.object(bi.frappe, "get_doc", return_value=doc), \
-             patch.object(bi.frappe, "get_cached_doc", return_value=_BankAccount()), \
-             patch.object(bi.frappe, "throw", side_effect=_throw), \
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
              patch.object(bi, "_resolve_row_party_for_validation", side_effect=[None, ("Supplier", "S1")]):
-            with self.assertRaisesRegex(Exception, "Zeilen ohne Party"):
-                bi.create_bank_transactions("IMP-K")
+            res = bi.create_bank_transactions("IMP-K")
+
+        self.assertEqual(res["created"], [])
+        self.assertEqual(res["errors"], [])
+        self.assertEqual(res["warning"]["missing_count"], 1)
+        self.assertIn("Zeilen ohne Party", res["warning"]["message"])
 
     def test_create_bank_transactions_allows_when_party_resolved_via_iban(self):
         row = self._FakeRow(name="ROW-L1", iban="DE14")
         row.bank_transaction = "BT-L1"
+        row.buchungstag = "2026-01-15"
+        row.idx = 1
+        row.betrag = 42
+        row.richtung = "Eingang"
+        row.currency = "EUR"
         doc = self._FakeDoc("IMP-L", [row])
+        doc.bank_account = "BANK-1"
 
         class _BankAccount:
             is_company_account = 1
@@ -858,8 +908,7 @@ class TestBankauszugImport(FrappeTestCase):
         self.assertEqual(res["processed"], 1)
         self.assertEqual(len(res["matched"]), 1)
         retry.assert_called_once_with("IMP-RETRY", "ROW-OPEN")
-        self.assertNotIn("row_status", row.db_updates)
-        self.assertEqual(row.reference, "BT-L2")
+        self.assertIsNone(row_open.payment_entry)
 
     def test_create_bank_transactions_marks_row_failed_when_submit_fails(self):
         row = self._FakeRow(name="ROW-SUBMIT-FAIL", iban="DE16")

@@ -3,7 +3,7 @@
 from unittest.mock import patch
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.page.bankimport_v2 import bankimport_v2 as bv2
 
@@ -98,7 +98,7 @@ class _OverviewDoc:
 		return "Bank"
 
 
-class TestListImports(FrappeTestCase):
+class TestListImports(unittest.TestCase):
 	def test_uses_dict_syntax_for_row_count_aggregate(self):
 		imports = [
 			frappe._dict(
@@ -122,7 +122,7 @@ class TestListImports(FrappeTestCase):
 		)
 
 
-class TestListBankAccounts(FrappeTestCase):
+class TestListBankAccounts(unittest.TestCase):
 	class _Meta:
 		def has_field(self, fieldname):
 			return fieldname in {"iban", "disabled"}
@@ -158,7 +158,7 @@ class TestListBankAccounts(FrappeTestCase):
 		self.assertEqual([item["value"] for item in result["items"]], ["Active Bank"])
 
 
-class TestDeleteImport(FrappeTestCase):
+class TestDeleteImport(unittest.TestCase):
 	def test_delete_import_uses_normal_permissions(self):
 		doc = frappe._dict(name="BAI-1", title="Import", rows=[])
 
@@ -213,7 +213,7 @@ class TestDeleteImport(FrappeTestCase):
 			bv2.delete_import("BAI-1", cascade=0)
 
 
-class TestSuggestInvoiceForRow(FrappeTestCase):
+class TestSuggestInvoiceForRow(unittest.TestCase):
 	"""Sichert, dass die Rechnungs-Empfehlung des bankimport_v2-Overview die
 	gleiche Single-Exact-Logik wie der echte Auto-Matcher anwendet — nur ohne
 	zu buchen."""
@@ -290,7 +290,7 @@ class TestSuggestInvoiceForRow(FrappeTestCase):
 			self.assertIsNone(bv2._suggest_invoice_for_row("BT-NONEXISTENT"))
 
 
-class TestGetOverviewSync(FrappeTestCase):
+class TestGetOverviewSync(unittest.TestCase):
 	def test_row_audit_contains_actor_dates_and_manual_source(self):
 		row = _OverviewRow()
 		row.auto_match_message = "Manuell zugeordnet: 1 Rechnung(en), 625.00 €"

@@ -1,12 +1,12 @@
 from datetime import date
 from unittest.mock import patch
 
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.report.mietrechnungspruefung import mietrechnungspruefung as report
 
 
-class TestMietrechnungspruefung(FrappeTestCase):
+class TestMietrechnungspruefung(unittest.TestCase):
     def test_missing_miete_marks_fehlt(self):
         status, delta, _ = report._evaluate_row(expected_amount=500.0, actual_amount=0.0, has_invoice=False, tolerance=0.01)
         self.assertEqual(status, "FEHLT")

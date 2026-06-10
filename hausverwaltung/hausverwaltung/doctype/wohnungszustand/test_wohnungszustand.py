@@ -3,12 +3,12 @@
 from unittest.mock import patch
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.doctype.wohnungszustand import wohnungszustand as wz
 
 
-class TestWohnungszustand(FrappeTestCase):
+class TestWohnungszustand(unittest.TestCase):
 	def test_merkmalpunkte_accepts_minus_five_to_five(self):
 		for value in (-5, 0, 5):
 			doc = frappe.get_doc({"doctype": "Wohnungszustand", "merkmalpunkte": value})

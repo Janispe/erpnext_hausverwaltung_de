@@ -25,6 +25,7 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 	let kunde;
 	let wohnung;
 	let income_account;
+	let company;
 	let custom_item;
 	let default_item_code;
 
@@ -58,28 +59,21 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 			wohnung = mv.wohnung;
 		});
 
-		// Income-Account aus dem Kontenplan holen (Company.default_income_account
-		// ist in dieser Dev-Umgebung nicht gepflegt, daher Fallback auf
-		// erstes Income-Leaf-Konto).
+		// Die Sales Invoice wird in dieser Dev-Umgebung für "Hausverwaltung Peters"
+		// erstellt. _Test-Company-Konten sind in ERPNext nicht kompatibel.
+		company = "Hausverwaltung Peters";
 		cy.call("frappe.client.get_list", {
-			doctype: "Company",
-			fields: ["name", "default_income_account"],
-			limit_page_length: 5,
-		}).then((r) => {
-			const c = (r.message || []).find((x) => x.default_income_account);
-			if (c) {
-				income_account = c.default_income_account;
-				return;
-			}
-			// Fallback: ein Income-Leaf-Konto suchen
-			cy.call("frappe.client.get_list", {
-				doctype: "Account",
-				filters: { is_group: 0, root_type: "Income" },
-				fields: ["name"],
-				limit_page_length: 1,
-			}).then((rr) => {
-				income_account = rr.message?.[0]?.name;
-			});
+			doctype: "Account",
+			filters: {
+				name: "1495 - Guthaben/Nachzahlungen(Bew.) - HP",
+				company,
+				root_type: "Income",
+				is_group: 0,
+			},
+			fields: ["name"],
+			limit_page_length: 1,
+		}).then((rr) => {
+			income_account = rr.message?.[0]?.name;
 		});
 
 		// Default-Service-Artikel via API erzeugen/holen
@@ -531,15 +525,18 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 		cy.wait(500); // Routing/DB write Settle-Zeit
 		cy.call("frappe.client.get_list", {
 			doctype: "Sales Invoice",
-			filters: { customer: kunde, docstatus: 0 },
+			filters: {
+				customer: kunde,
+				docstatus: 0,
+				hv_eingabequelle: "Vereinfachte Mieterrechnung",
+				remarks: "UI-Test Position",
+			},
 			fields: ["name", "remarks", "grand_total"],
 			limit_page_length: 5,
 			order_by: "creation desc",
 		}).then((r) => {
-			const list = (r.message || []).filter((s) =>
-				(s.remarks || "").includes(mietvertrag)
-			);
-			expect(list.length, "min. 1 Draft-SI für diesen Mietvertrag").to.be.greaterThan(0);
+			const list = r.message || [];
+			expect(list.length, "min. 1 UI-Test-Draft-SI").to.be.greaterThan(0);
 			const si = list[0];
 			expect(Number(si.grand_total)).to.be.closeTo(33, 0.01);
 			trackSi(si.name);

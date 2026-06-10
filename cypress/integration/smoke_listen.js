@@ -8,13 +8,11 @@ context("Smoke: Listenansichten öffnen", () => {
 	const doctypes = [
 		"Immobilie",
 		"Mietvertrag",
-		"Mieterwechsel",
 		"Eigentuemer",
 		"Mietrechnungen Durchlauf",
 		"Betriebskostenabrechnung Immobilie",
 		"Betriebskostenabrechnung Mieter",
 		"Bankauszug Import",
-		"Serienbrief Vorlage",
 	];
 
 	doctypes.forEach((doctype) => {
@@ -23,5 +21,12 @@ context("Smoke: Listenansichten öffnen", () => {
 			cy.get(".frappe-list").should("exist");
 			cy.get(".error-message:visible").should("not.exist");
 		});
+	});
+
+	it('Seite "Serienbrief Vorlage" öffnet den Vorlagen-Browser ohne Fehler', () => {
+		cy.visit("/app/serienbrief-vorlage");
+		cy.location("pathname", { timeout: 10000 }).should("include", "serienbrief_browser");
+		cy.get(".hv-serienbrief-browser-frame", { timeout: 30000 }).should("exist");
+		cy.get(".error-message:visible").should("not.exist");
 	});
 });

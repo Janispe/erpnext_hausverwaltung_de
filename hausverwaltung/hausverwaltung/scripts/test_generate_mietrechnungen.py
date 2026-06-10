@@ -2,12 +2,12 @@ from datetime import date
 from unittest.mock import patch
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.scripts import generate_mietrechnungen
 
 
-class TestGenerateMietrechnungen(FrappeTestCase):
+class TestGenerateMietrechnungen(unittest.TestCase):
     def test_kunde_des_vertrags_prefers_direct_customer(self):
         row = frappe._dict(name="MV-DIREKT", kunde="CUST-DIREKT")
 

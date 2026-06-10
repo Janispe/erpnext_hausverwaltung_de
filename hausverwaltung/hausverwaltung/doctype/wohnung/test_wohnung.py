@@ -4,14 +4,19 @@ import uuid
 
 import frappe
 from frappe.exceptions import PermissionError
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests import IntegrationTestCase
 
 from hausverwaltung.hausverwaltung.doctype.wohnung.wohnung import (
 	get_mietvertraege_fuer_wohnung,
 )
 
 
-class TestWohnung(FrappeTestCase):
+class TestWohnung(IntegrationTestCase):
+	@classmethod
+	def setUpClass(cls):
+		frappe.local.test_objects.setdefault("Wohnung", [])
+		super().setUpClass()
+
 	def _make_wohnung(self, suffix: str):
 		return frappe.get_doc(
 			{

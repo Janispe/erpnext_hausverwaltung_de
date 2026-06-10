@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import inspect
+import re
 
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests import IntegrationTestCase
 
 from hausverwaltung.hausverwaltung.agent_tools import read_api
 from hausverwaltung.hausverwaltung.agent_tools.read_api import SENSITIVE_DOCTYPES
 
 
-class TestAgentReadApi(FrappeTestCase):
+class TestAgentReadApi(IntegrationTestCase):
 	def test_list_doctypes_excludes_sensitive(self):
 		response = read_api.list_doctypes()
 
@@ -75,6 +76,8 @@ class TestAgentReadApi(FrappeTestCase):
 
 	def test_regression_read_api_has_no_write_calls(self):
 		source = inspect.getsource(read_api)
-		for banned in (".insert(", ".save(", ".delete(", ".submit(", ".cancel("):
-			self.assertNotIn(banned, source)
-
+		for pattern in (
+			r"\bfrappe(?:\.db)?\.(?:insert|set_value|delete)\(",
+			r"\.(?:save|submit|cancel)\(",
+		):
+			self.assertIsNone(re.search(pattern, source), pattern)

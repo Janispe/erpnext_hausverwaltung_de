@@ -1,12 +1,12 @@
 # See license.txt
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.page.op_workflow import op_workflow
 
 
-class TestOPWorkflowFastPathGuards(FrappeTestCase):
+class TestOPWorkflowFastPathGuards(unittest.TestCase):
 	def test_fast_path_is_off_by_default_to_keep_non_invoice_open_items(self):
 		filters = frappe._dict({"company": "Test Company"})
 

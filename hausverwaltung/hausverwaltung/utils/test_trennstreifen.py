@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.utils.trennstreifen import (
 	get_contact_kontakte,
@@ -13,11 +13,11 @@ from hausverwaltung.hausverwaltung.utils.trennstreifen import (
 )
 
 
-class TestVormieterLookup(FrappeTestCase):
+class TestVormieterLookup(unittest.TestCase):
 	def test_picks_latest_prior_contract(self):
 		captured: dict = {}
 
-		def fake_sql(query, params, as_dict=False):
+		def fake_sql(query, params, as_dict=False, **kwargs):
 			captured["query"] = query
 			captured["params"] = params
 			return [{"name": "MV-PREV-2", "von": "2025-01-01", "bis": "2026-04-30"}]
@@ -34,6 +34,9 @@ class TestVormieterLookup(FrappeTestCase):
 		), patch(
 			"hausverwaltung.hausverwaltung.utils.trennstreifen.get_hauptmieter_display_name",
 			return_value="Mustermann Max",
+		), patch(
+			"hausverwaltung.hausverwaltung.utils.trennstreifen.frappe.utils.formatdate",
+			side_effect=lambda value: value,
 		):
 			result = get_vormieter_display_name("WOHNUNG-1", "2026-05-01")
 
@@ -44,7 +47,7 @@ class TestVormieterLookup(FrappeTestCase):
 	def test_excludes_self_in_filter(self):
 		captured: dict = {}
 
-		def fake_sql(query, params, as_dict=False):
+		def fake_sql(query, params, as_dict=False, **kwargs):
 			captured["query"] = query
 			captured["params"] = params
 			return []
@@ -71,7 +74,7 @@ class TestVormieterLookup(FrappeTestCase):
 		self.assertEqual(get_vormieter_display_name("", "2026-05-01"), "")
 
 	def test_returns_period_for_latest_prior_contract(self):
-		def fake_sql(query, params, as_dict=False):
+		def fake_sql(query, params, as_dict=False, **kwargs):
 			return [{"name": "MV-PREV-2", "von": "2025-01-01", "bis": "2026-04-30"}]
 
 		with patch(
@@ -90,7 +93,7 @@ class TestVormieterLookup(FrappeTestCase):
 		self.assertEqual(result["zeitraum"], "2025-01-01 - 2026-04-30")
 
 
-class TestContactKontakte(FrappeTestCase):
+class TestContactKontakte(unittest.TestCase):
 	def test_picks_primary_phone_mobile_email(self):
 		contact = SimpleNamespace(
 			phone_nos=[
@@ -134,7 +137,7 @@ class TestContactKontakte(FrappeTestCase):
 		self.assertEqual(result, {"telefon": "", "mobil": "", "email": ""})
 
 
-class TestWohnungAdresse(FrappeTestCase):
+class TestWohnungAdresse(unittest.TestCase):
 	def test_normalizes_gebaeudeteil_from_lage_prefix(self):
 		def fake_get_value(doctype, name, fields, as_dict=False):
 			if doctype == "Wohnung":
@@ -156,7 +159,7 @@ class TestWohnungAdresse(FrappeTestCase):
 		self.assertEqual(result["lage"], "4. OG re")
 
 
-class TestMakeQrDataUrl(FrappeTestCase):
+class TestMakeQrDataUrl(unittest.TestCase):
 	def test_returns_data_uri_for_url(self):
 		data_url = make_qr_data_url("https://example.com/app/mietvertrag/MV-1")
 		self.assertTrue(data_url.startswith("data:image/png;base64,"))
@@ -167,7 +170,7 @@ class TestMakeQrDataUrl(FrappeTestCase):
 		self.assertEqual(make_qr_data_url(None), "")
 
 
-class TestMietvertragQrUrl(FrappeTestCase):
+class TestMietvertragQrUrl(unittest.TestCase):
 	def test_uses_configured_base_url_and_encodes_name(self):
 		with patch(
 			"hausverwaltung.hausverwaltung.utils.trennstreifen.frappe.db.get_single_value",

@@ -3,7 +3,7 @@
 from unittest.mock import patch
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 	_render_serienbrief_template,
@@ -14,7 +14,7 @@ from hausverwaltung.hausverwaltung.utils.immobilie_accounts import (
 )
 
 
-class TestImmobilie(FrappeTestCase):
+class TestImmobilie(unittest.TestCase):
 	def test_bank_konto_uses_bank_account_account_link(self):
 		doc = frappe.get_doc(
 			{

@@ -1,8 +1,8 @@
 # See license.txt
 
 # import frappe
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 
-class TestZaehlertyp(FrappeTestCase):
+class TestZaehlertyp(unittest.TestCase):
 	pass

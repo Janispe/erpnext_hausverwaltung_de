@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.utils.serienbrief_pdf_form import _normalize_mapping_value
 from hausverwaltung.hausverwaltung.utils.serienbrief_pdf_form import parse_pdf_pages
@@ -16,7 +16,7 @@ except Exception:  # pragma: no cover
 	from PyPDF2 import PdfWriter
 
 
-class TestSerienbriefPdfForm(FrappeTestCase):
+class TestSerienbriefPdfForm(unittest.TestCase):
 	def test_parse_pdf_pages(self):
 		self.assertEqual(parse_pdf_pages("", 5), [0, 1, 2, 3, 4])
 		self.assertEqual(parse_pdf_pages("1,3-4", 5), [0, 2, 3])

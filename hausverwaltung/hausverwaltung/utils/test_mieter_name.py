@@ -1,11 +1,11 @@
 from unittest.mock import patch
 
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.utils.mieter_name import get_contact_display_name
 
 
-class TestMieterName(FrappeTestCase):
+class TestMieterName(unittest.TestCase):
 	def test_contact_display_name_uses_last_name_first(self):
 		with patch(
 			"hausverwaltung.hausverwaltung.utils.mieter_name.frappe.db.get_value",

@@ -3,7 +3,7 @@
 Drei Test-Schichten:
 1. Pure Unit-Tests (Parser, Math) — laufen ohne Frappe-DB.
 2. Mock-basierte Tests für Compute-Methoden (status, restschuld_nach).
-3. Integration-Tests (FrappeTestCase) für JE-Erstellung, PLE-Negativ,
+3. Integration-Tests (IntegrationTestCase) für JE-Erstellung, PLE-Negativ,
    Rollback bei Reconcile-Fehler und Storno-Hook. Diese brauchen eine
    Site mit Liability- + Expense-Konten und einem Bank Account — werden
    übersprungen wenn die Site-Daten nicht passen.
@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests import IntegrationTestCase
 
 from hausverwaltung.hausverwaltung.doctype.kreditvertrag import kreditvertrag as kv_mod
 from hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag import (
@@ -510,7 +510,7 @@ class TestImportable(unittest.TestCase):
 
 
 # ============================================================================
-# Integration Tests (FrappeTestCase, brauchen Site-Daten)
+# Integration Tests (IntegrationTestCase, brauchen Site-Daten)
 # ============================================================================
 
 
@@ -600,7 +600,7 @@ def _make_test_bank_transaction(bank_account: str, posting_date, amount: float) 
 class TestKreditvertragIntegration(unittest.TestCase):
 	"""Integration: JE-Erstellung, PLE-Negativ, Rollback, Storno.
 
-	Bewusst ``unittest.TestCase`` statt ``FrappeTestCase``: letzteres würde
+	Bewusst ``unittest.TestCase`` statt ``IntegrationTestCase``: letzteres würde
 	automatische Test-Record-Dependency-Erstellung anwerfen (Fiscal Year etc.),
 	was auf einer laufenden Site mit echten Daten kollidiert. Stattdessen
 	nutzen wir die existierenden Site-Daten und isolieren Tests via

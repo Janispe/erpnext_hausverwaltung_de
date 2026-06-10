@@ -2,14 +2,19 @@
 
 import frappe
 from frappe.exceptions import ValidationError
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests import IntegrationTestCase
 
 from hausverwaltung.hausverwaltung.doctype.zustandsschluessel.zustandsschluessel import (
 	get_effective_zustandsschluessel_value,
 )
 
 
-class TestZustandsschluessel(FrappeTestCase):
+class TestZustandsschluessel(IntegrationTestCase):
+	@classmethod
+	def setUpClass(cls):
+		frappe.local.test_objects.setdefault("Zustandsschluessel", [])
+		super().setUpClass()
+
 	def setUp(self):
 		self.wohnung = frappe.get_doc(
 			{

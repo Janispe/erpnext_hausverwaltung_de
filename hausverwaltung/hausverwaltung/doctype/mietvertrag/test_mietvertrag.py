@@ -1,11 +1,11 @@
 from unittest.mock import patch
 
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.doctype.mietvertrag import mietvertrag
 
 
-class TestMietvertrag(FrappeTestCase):
+class TestMietvertrag(unittest.TestCase):
 	def test_sanitize_name_part_removes_control_separators(self):
 		value = mietvertrag._sanitize_name_part("G1\t| VH\t| EG links")
 

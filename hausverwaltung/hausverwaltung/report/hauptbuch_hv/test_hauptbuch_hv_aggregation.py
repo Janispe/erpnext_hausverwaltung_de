@@ -1,7 +1,7 @@
 from datetime import date
 from unittest.mock import patch
 
-from frappe.tests.utils import FrappeTestCase
+import unittest
 
 from hausverwaltung.hausverwaltung.report.hauptbuch_hv.hauptbuch_hv import (
 	_aggregate_mietlauf_rows,
@@ -33,7 +33,7 @@ def _gle_row(
 	}
 
 
-class TestHauptbuchAggregation(FrappeTestCase):
+class TestHauptbuchAggregation(unittest.TestCase):
 	def _patch_si_lookup(self, mapping: dict[str, str]):
 		"""Mock frappe.get_all('Sales Invoice', ...) und has_column."""
 		def fake_get_all(doctype, filters=None, fields=None, **kwargs):
