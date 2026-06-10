@@ -28,6 +28,7 @@ RUN_UI_TESTS="${RUN_UI_TESTS:-0}"
 RUN_ALL_TESTS="${RUN_ALL_TESTS:-0}"
 KEEP_STACK="${KEEP_STACK:-0}"
 KEEP_ON_FAIL="${KEEP_ON_FAIL:-0}"
+CYPRESS_SPECS="${CYPRESS_SPECS:-cypress/integration/mieterwechsel_complex_ui.js}"
 
 TEST_MODULES_DEFAULT=(
 	"hausverwaltung.hausverwaltung.doctype.bankauszug_import.test_bankauszug_import"
@@ -232,6 +233,15 @@ if [[ "${RUN_UI_TESTS}" == "1" ]]; then
 		FRAPPE_USER="Administrator" \
 		FRAPPE_PASSWORD="${ADMIN_PASSWORD}" \
 			npm run test:e2e:frappe
+	)
+
+	log "Running Cypress UI tests against isolated stack..."
+	(
+		cd "${APP_DIR}"
+		CYPRESS_BASE_URL="http://127.0.0.1:${HTTP_PORT}" \
+			npx cypress run \
+				--spec "${CYPRESS_SPECS}" \
+				--env "hv_user=Administrator,hv_password=${ADMIN_PASSWORD}"
 	)
 fi
 
