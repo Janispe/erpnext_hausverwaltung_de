@@ -370,6 +370,55 @@ function PartyChangeDialog({ docname, row, onClose, onActionDone, notify }) {
 	);
 }
 
+function ResetRowDialog({ row, mode, busy, onClose, onConfirm }) {
+	const bookingOnly = mode === "booking";
+	return (
+		<div className="modal-backdrop" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && !busy && onClose()}>
+			<div className="party-dialog reset-row-dialog" role="dialog" aria-modal="true" aria-label="Importzeile zurücksetzen">
+				<div className="dialog-head">
+					<div>
+						<div className="dialog-title">{bookingOnly ? "Beleg lösen" : "Importzeile zurücksetzen"}</div>
+						<div className="dialog-sub">{fmtDate(row.buchungstag)} · {fmtEUR(row.betrag)}</div>
+					</div>
+					<button className="btn subtle sm" onClick={onClose} disabled={busy} aria-label="Schließen">
+						<Icon name="x" />
+					</button>
+				</div>
+				<div className="reset-warning">
+					<Icon name="info" /> {bookingOnly
+						? "Diese Aktion löst nur den gebuchten Beleg von der Bankzeile."
+						: "Diese Aktion nimmt die Verarbeitung dieser Zeile zurück."}
+				</div>
+				<div className="reset-row-summary">
+					<strong>{partyDisplayLabel(row)}</strong>
+					<span>{row.verwendungszweck || "Ohne Verwendungszweck"}</span>
+				</div>
+				<ul className="reset-impact-list">
+					{bookingOnly ? (
+						<>
+							<li>Payment/Journal-Belege werden storniert.</li>
+							<li>Bank-Transaktion bleibt erhalten.</li>
+							<li>Partei bleibt erhalten.</li>
+						</>
+					) : (
+						<>
+							<li>Payment/Journal-Belege werden storniert.</li>
+							<li>Import-eigene Bank-Transaktionen werden storniert oder gelöscht.</li>
+							<li>Partei, Bank-Transaktion und Zeilen-Links werden entfernt.</li>
+						</>
+					)}
+				</ul>
+				<div className="dialog-actions">
+					<button className="btn" onClick={onClose} disabled={busy}>Abbrechen</button>
+					<button className="btn danger" onClick={onConfirm} disabled={busy}>
+						{busy ? <Spinner /> : <Icon name={bookingOnly ? "x" : "trash"} />} {bookingOnly ? "Beleg lösen" : "Zurücksetzen"}
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
 // ───────────────────────── Phase 2: Bank-Tx erstellen ───────────────────────
 
 function NeedsBankTransaction({ docname, row, onActionDone, notify, onRunGlobal }) {
@@ -937,6 +986,7 @@ function BookingActions({ docname, row, onActionDone, notify }) {
 
 export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) {
 	const [partyDialogOpen, setPartyDialogOpen] = useState(false);
+	const [resetDialogMode, setResetDialogMode] = useState(null);
 	const [resetBusy, runReset] = useAction(notify);
 
 	if (!row) {
@@ -955,20 +1005,29 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 	const phase = row.phase || 3;
 	const partyLabel = partyDisplayLabel(row);
 	const roleLabel = partyTypeLabel(row.partyTyp);
+	const hasVoucher = Boolean(row.paymentEntry || row.journalEntry || row.paymentDocument);
 	const canResetRow = Boolean(row.party || row.partyTyp || row.bankTransaction || row.paymentEntry || row.journalEntry || row.paymentDocument);
+	const resetBooking = () => {
+		if (!hasVoucher || resetBusy) return;
+		runReset(() => api.resetRowBooking(docname, row.id), {
+			success: "Beleg gelöst.",
+		}).then((res) => {
+			if (res && res.ok !== false) {
+				setResetDialogMode(null);
+				onActionDone({ advance: false });
+			}
+		});
+	};
 	const resetRow = () => {
 		if (!canResetRow || resetBusy) return;
-		const lines = [
-			"Diese Importzeile wirklich zurücksetzen?",
-			"",
-			"Verknüpfte Payment/Journal-Belege werden storniert.",
-			"Import-eigene Bank-Transaktionen werden storniert oder gelöscht.",
-			"Partei und Zeilen-Links werden entfernt.",
-		];
-		if (!window.confirm(lines.join("\n"))) return;
 		runReset(() => api.resetRowProcessing(docname, row.id), {
 			success: "Zeile zurückgesetzt.",
-		}).then((res) => res && res.ok !== false && onActionDone({ advance: false }));
+		}).then((res) => {
+			if (res && res.ok !== false) {
+				setResetDialogMode(null);
+				onActionDone({ advance: false });
+			}
+		});
 	};
 
 	return (
@@ -1003,9 +1062,16 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 					</button>
 				</div>
 				{canResetRow && (
-					<button className="btn danger sm row-reset-btn" onClick={resetRow} disabled={resetBusy}>
-						{resetBusy ? <Spinner /> : <Icon name="trash" />} Zeile zurücksetzen
-					</button>
+					<div className="row-action-buttons">
+						{hasVoucher && (
+							<button className="btn subtle sm" onClick={() => setResetDialogMode("booking")} disabled={resetBusy}>
+								{resetBusy ? <Spinner /> : <Icon name="x" />} Beleg lösen
+							</button>
+						)}
+						<button className="btn danger sm" onClick={() => setResetDialogMode("row")} disabled={resetBusy}>
+							{resetBusy ? <Spinner /> : <Icon name="trash" />} Zeile zurücksetzen
+						</button>
+					</div>
 				)}
 				<div className="zweck">{row.verwendungszweck}</div>
 				{row.iban && <div className="iban-line">{fmtIban(row.iban)}</div>}
@@ -1047,6 +1113,15 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 					onClose={() => setPartyDialogOpen(false)}
 					onActionDone={onActionDone}
 					notify={notify}
+				/>
+			)}
+			{resetDialogMode && (
+				<ResetRowDialog
+					row={row}
+					mode={resetDialogMode}
+					busy={resetBusy}
+					onClose={() => setResetDialogMode(null)}
+					onConfirm={resetDialogMode === "booking" ? resetBooking : resetRow}
 				/>
 			)}
 		</div>
