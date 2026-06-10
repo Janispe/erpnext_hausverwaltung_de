@@ -40,6 +40,16 @@ function partyActionMessage(base, res) {
 	return `${base} Bank-Transaktion erstellt.`;
 }
 
+const PARTY_TYPE_OPTIONS = [
+	{ id: "Customer", label: "Mieter" },
+	{ id: "Supplier", label: "Lieferant" },
+	{ id: "Eigentuemer", label: "Eigentümer" },
+	{ id: "none", label: "Keine Partei" },
+];
+
+const partyOptionLabel = (partyType) =>
+	PARTY_TYPE_OPTIONS.find((option) => option.id === partyType)?.label || partyType;
+
 // ───────────────────────── Smart-Default-Inferenz ───────────────────────────
 // Liefert für eine Phase-3-Zeile den wahrscheinlich richtigen Modus + Begründung.
 // Bezieht sich auf die Modi-IDs aus BookingActions: invoice|abschlag|kredit|payment|journal.
@@ -176,11 +186,7 @@ function AuditTrail({ row }) {
 function PartyAssign({ docname, row, onActionDone, notify }) {
 	const [partyType, setPartyType] = useState(row.betrag < 0 ? "Supplier" : "Customer");
 	const [busy, run] = useAction(notify);
-	const partyLabels = {
-		Customer: "Mieter",
-		Supplier: "Lieferant",
-		Eigentuemer: "Eigentümer",
-	};
+	const noPartyMode = partyType === "none";
 
 	const fetcher = useCallback((txt) => api.searchParties(partyType, txt), [partyType]);
 
@@ -218,51 +224,58 @@ function PartyAssign({ docname, row, onActionDone, notify }) {
 		<div className="match-section">
 			<div className="sec-label">Partei zuordnen</div>
 			<div className="seg" role="tablist" style={{ marginBottom: 10 }}>
-				{["Customer", "Supplier", "Eigentuemer"].map((t) => (
+				{PARTY_TYPE_OPTIONS.map((option) => (
 					<button
-						key={t}
-						className={`seg-btn ${partyType === t ? "active" : ""}`}
-						onClick={() => setPartyType(t)}
+						key={option.id}
+						className={`seg-btn ${partyType === option.id ? "active" : ""}`}
+						onClick={() => setPartyType(option.id)}
 					>
-						{partyLabels[t]}
+						{option.label}
 					</button>
 				))}
 			</div>
-			<LinkSearch
-				placeholder={`${partyLabels[partyType]} suchen…`}
-				fetcher={fetcher}
-				onPick={assign}
-				autoFocus
-				disabled={busy}
-			/>
-			{row.auftraggeber && partyType !== "Eigentuemer" && (
-				<button className="btn sm" style={{ marginTop: 10 }} onClick={createNew} disabled={busy}>
-					{busy ? <Spinner /> : <Icon name="plus" />} Neu anlegen aus „{row.auftraggeber}"
-				</button>
+			{noPartyMode ? (
+				<>
+					<div className="hint" style={{ marginBottom: 10 }}>
+						Für Bankgebühren, Umbuchungen oder neutrale Bewegungen ohne Mieter, Lieferant oder Eigentümer.
+					</div>
+					<button className="btn sm" style={{ marginBottom: 14 }} onClick={createWithoutParty} disabled={busy}>
+						{busy ? <Spinner /> : <Icon name="bolt" />} Bank-Transaktion ohne Partei anlegen
+					</button>
+					<JournalEntryForm docname={docname} row={row} onActionDone={onActionDone} notify={notify} />
+				</>
+			) : (
+				<>
+					<LinkSearch
+						placeholder={`${partyOptionLabel(partyType)} suchen…`}
+						fetcher={fetcher}
+						onPick={assign}
+						autoFocus
+						disabled={busy}
+					/>
+					{row.auftraggeber && partyType !== "Eigentuemer" && (
+						<button className="btn sm" style={{ marginTop: 10 }} onClick={createNew} disabled={busy}>
+							{busy ? <Spinner /> : <Icon name="plus" />} Neu anlegen aus „{row.auftraggeber}"
+						</button>
+					)}
+					<div className="hint">
+						Echte Mieter-, Lieferanten- oder Eigentümerbewegungen sollten einer Partei zugeordnet werden.
+						Für neutrale Bewegungen wähle „Keine Partei".
+					</div>
+				</>
 			)}
-			<button className="btn sm" style={{ marginTop: 10, marginLeft: row.auftraggeber && partyType !== "Eigentuemer" ? 8 : 0 }} onClick={createWithoutParty} disabled={busy}>
-				{busy ? <Spinner /> : <Icon name="bolt" />} Ohne Partei als Bank-Transaktion anlegen
-			</button>
-			<div className="hint">
-				Interne Umbuchungen oder neutrale Bankbewegungen können ohne Partei weiterlaufen.
-				Echte Mieter-, Lieferanten- oder Eigentümerbewegungen sollten einer Partei zugeordnet werden.
-			</div>
 		</div>
 	);
 }
 
 function PartyChangeDialog({ docname, row, onClose, onActionDone, notify }) {
-	const [partyType, setPartyType] = useState(row.betrag < 0 ? "Supplier" : "Customer");
+	const [partyType, setPartyType] = useState(row.partyTyp || (row.betrag < 0 ? "Supplier" : "Customer"));
 	const [updateIbanMapping, setUpdateIbanMapping] = useState(false);
 	const [propagateSameIban, setPropagateSameIban] = useState(true);
 	const [busy, run] = useAction(notify);
 	const hasVoucher = !!(row.paymentEntry || row.journalEntry || row.paymentDocument);
+	const noPartyMode = partyType === "none";
 	const fetcher = useCallback((txt) => api.searchParties(partyType, txt), [partyType]);
-	const partyLabels = {
-		Customer: "Mieter",
-		Supplier: "Lieferant",
-		Eigentuemer: "Eigentümer",
-	};
 
 	const finish = (res, success) => {
 		if (!res || res.ok === false) return;
@@ -317,24 +330,31 @@ function PartyChangeDialog({ docname, row, onClose, onActionDone, notify }) {
 					<strong>{row.party ? `${row.party}${partyTypeLabel(row.partyTyp) ? ` · ${partyTypeLabel(row.partyTyp)}` : ""}` : "keine Partei"}</strong>
 				</div>
 				<div className="seg" role="tablist" style={{ marginBottom: 10 }}>
-					{["Customer", "Supplier", "Eigentuemer"].map((t) => (
+					{PARTY_TYPE_OPTIONS.map((option) => (
 						<button
-							key={t}
-							className={`seg-btn ${partyType === t ? "active" : ""}`}
-							onClick={() => setPartyType(t)}
+							key={option.id}
+							className={`seg-btn ${partyType === option.id ? "active" : ""}`}
+							onClick={() => setPartyType(option.id)}
 							disabled={busy}
 						>
-							{partyLabels[t]}
+							{option.label}
 						</button>
 					))}
 				</div>
-				<LinkSearch
-					placeholder={`${partyLabels[partyType]} suchen…`}
-					fetcher={fetcher}
-					onPick={changeTo}
-					autoFocus
-					disabled={busy}
-				/>
+				{noPartyMode ? (
+					<div className="hint" style={{ marginBottom: 10 }}>
+						Entfernt die Partei von dieser Importzeile. Bank-Transaktion und Belegzuordnung bleiben erhalten,
+						sofern du nicht separat „Beleg lösen" oder „Zeile zurücksetzen" nutzt.
+					</div>
+				) : (
+					<LinkSearch
+						placeholder={`${partyOptionLabel(partyType)} suchen…`}
+						fetcher={fetcher}
+						onPick={changeTo}
+						autoFocus
+						disabled={busy}
+					/>
+				)}
 				<div className="dialog-options">
 					<label className="advance-toggle">
 						<input
@@ -345,25 +365,29 @@ function PartyChangeDialog({ docname, row, onClose, onActionDone, notify }) {
 						/>
 						IBAN-Verknüpfung ebenfalls ändern/entfernen
 					</label>
-					<label className="advance-toggle">
-						<input
-							type="checkbox"
-							checked={propagateSameIban}
-							onChange={(e) => setPropagateSameIban(e.target.checked)}
-							disabled={busy || !row.iban}
-						/>
-						Ungebuchte Zeilen mit gleicher eindeutiger IBAN aktualisieren
-					</label>
+					{!noPartyMode && (
+						<label className="advance-toggle">
+							<input
+								type="checkbox"
+								checked={propagateSameIban}
+								onChange={(e) => setPropagateSameIban(e.target.checked)}
+								disabled={busy || !row.iban}
+							/>
+							Ungebuchte Zeilen mit gleicher eindeutiger IBAN aktualisieren
+						</label>
+					)}
 				</div>
 				<div className="dialog-actions">
-					{row.auftraggeber && partyType !== "Eigentuemer" && (
+					{!noPartyMode && row.auftraggeber && partyType !== "Eigentuemer" && (
 						<button className="btn" onClick={createNew} disabled={busy}>
 							{busy ? <Spinner /> : <Icon name="plus" />} Neu anlegen aus Auftraggeber
 						</button>
 					)}
-					<button className="btn danger" onClick={clearParty} disabled={busy || (!row.party && !row.partyTyp)}>
-						{busy ? <Spinner /> : <Icon name="x" />} Partei entfernen
-					</button>
+					{noPartyMode && (
+						<button className="btn danger" onClick={clearParty} disabled={busy || (!row.party && !row.partyTyp)}>
+							{busy ? <Spinner /> : <Icon name="x" />} Keine Partei übernehmen
+						</button>
+					)}
 				</div>
 			</div>
 		</div>
@@ -1081,18 +1105,7 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 			<div className="match-body">
 				{row.rowStatus === "error" && <ErrorView row={row} />}
 				{row.rowStatus !== "error" && phase === 1 && (
-					<>
-						<PartyAssign docname={docname} row={row} onActionDone={onActionDone} notify={notify} />
-						{!row.party && !row.bankTransaction && (
-							<div className="match-section">
-								<div className="sec-label">Ohne Partei buchen</div>
-								<div className="hint" style={{ marginBottom: 10 }}>
-									Für Bankgebühren, Umbuchungen oder neutrale Bewegungen direkt einen Buchungssatz erstellen.
-								</div>
-								<JournalEntryForm docname={docname} row={row} onActionDone={onActionDone} notify={notify} />
-							</div>
-						)}
-					</>
+					<PartyAssign docname={docname} row={row} onActionDone={onActionDone} notify={notify} />
 				)}
 				{row.rowStatus !== "error" && phase === 2 && (
 					<NeedsBankTransaction
