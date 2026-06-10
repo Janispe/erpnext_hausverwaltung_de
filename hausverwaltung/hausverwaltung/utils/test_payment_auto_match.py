@@ -196,6 +196,149 @@ class TestCreatePaymentEntryForInvoices(unittest.TestCase):
 		self.assertIn("Auswahl summiert", throw.call_args[0][0])
 
 
+class TestCreateJournalEntryForBt(unittest.TestCase):
+	class _FakeJournalEntry:
+		def __init__(self):
+			self.accounts = []
+			self.inserted = False
+			self.submitted = False
+
+		def update(self, values):
+			for key, value in values.items():
+				setattr(self, key, value)
+
+		def append(self, fieldname, value):
+			if fieldname != "accounts":
+				raise AssertionError(f"unexpected child table {fieldname}")
+			self.accounts.append(value)
+
+		def insert(self, ignore_permissions=False):
+			self.inserted = True
+			self.ignore_permissions = ignore_permissions
+
+		def submit(self):
+			self.submitted = True
+
+	def _call_create_journal_entry(self, *, bt, **kwargs):
+		je = self._FakeJournalEntry()
+		bank_account_doc = frappe._dict(company="COMP-1", account="1200 - Bank - HP")
+
+		with patch.object(
+			pam,
+			"_resolve_company_and_bank_account",
+			return_value=("COMP-1", bank_account_doc),
+		), \
+			patch.object(pam, "_resolve_expected_cost_center_for_bt", return_value="CC-DEFAULT"), \
+			patch.object(pam.frappe.db, "exists", return_value=True), \
+			patch.object(pam.frappe, "new_doc", return_value=je):
+			result = pam.create_journal_entry_for_bt(bt=bt, **kwargs)
+
+		return result
+
+	def test_incoming_bank_transaction_debits_bank_and_credits_counter_account(self):
+		bt = frappe._dict(
+			name="BT-IN",
+			deposit=123.45,
+			withdrawal=0,
+			date="2026-05-04",
+			reference_number="REF-IN",
+			description="Miete Mai",
+		)
+
+		je = self._call_create_journal_entry(
+			bt=bt,
+			account="4400 - Mieteinnahmen - HP",
+			cost_center="CC-MIETE",
+			remarks="Manuelle Buchung",
+		)
+
+		self.assertTrue(je.inserted)
+		self.assertTrue(je.submitted)
+		self.assertEqual(je.voucher_type, "Bank Entry")
+		self.assertEqual(je.company, "COMP-1")
+		self.assertEqual(je.posting_date, "2026-05-04")
+		self.assertEqual(je.cheque_no, "REF-IN")
+		self.assertEqual(je.remark, "Manuelle Buchung")
+		self.assertEqual(je.accounts[0], {
+			"account": "1200 - Bank - HP",
+			"cost_center": "CC-DEFAULT",
+			"debit_in_account_currency": 123.45,
+		})
+		self.assertEqual(je.accounts[1], {
+			"account": "4400 - Mieteinnahmen - HP",
+			"cost_center": "CC-MIETE",
+			"credit_in_account_currency": 123.45,
+		})
+
+	def test_outgoing_split_credits_bank_and_debits_each_counter_account(self):
+		bt = frappe._dict(
+			name="BT-OUT",
+			deposit=0,
+			withdrawal=100.0,
+			date="2026-05-05",
+			reference_number=None,
+			description="Hausmeisterrechnung",
+		)
+
+		je = self._call_create_journal_entry(
+			bt=bt,
+			splits=[
+				{"account": "6300 - Hausmeister - HP", "cost_center": "CC-A", "amount": 80},
+				{"account": "4970 - Bankgebuehren - HP", "amount": 20},
+			],
+		)
+
+		self.assertEqual(je.cheque_no, "BT-OUT")
+		self.assertEqual(je.user_remark, "Hausmeisterrechnung")
+		self.assertEqual(je.accounts[0], {
+			"account": "1200 - Bank - HP",
+			"cost_center": "CC-DEFAULT",
+			"credit_in_account_currency": 100.0,
+		})
+		self.assertEqual(je.accounts[1], {
+			"account": "6300 - Hausmeister - HP",
+			"cost_center": "CC-A",
+			"debit_in_account_currency": 80.0,
+		})
+		self.assertEqual(je.accounts[2], {
+			"account": "4970 - Bankgebuehren - HP",
+			"cost_center": "CC-DEFAULT",
+			"debit_in_account_currency": 20.0,
+		})
+
+	def test_split_sum_must_match_bank_amount(self):
+		bt = frappe._dict(
+			name="BT-SPLIT-BAD",
+			deposit=0,
+			withdrawal=100.0,
+			date="2026-05-05",
+			reference_number=None,
+			description="Split falsch",
+		)
+
+		with self.assertRaisesRegex(frappe.ValidationError, "Split-Summe"):
+			self._call_create_journal_entry(
+				bt=bt,
+				splits=[
+					{"account": "6300 - Hausmeister - HP", "amount": 60},
+					{"account": "4970 - Bankgebuehren - HP", "amount": 20},
+				],
+			)
+
+	def test_rejects_bank_transaction_without_clear_direction(self):
+		bt = frappe._dict(
+			name="BT-AMBIGUOUS",
+			deposit=10,
+			withdrawal=5,
+			date="2026-05-05",
+			reference_number=None,
+			description="Unklar",
+		)
+
+		with self.assertRaisesRegex(frappe.ValidationError, "keinen eindeutigen Betrag"):
+			self._call_create_journal_entry(bt=bt, account="4970 - Bankgebuehren - HP")
+
+
 class TestReconcileCreatedVoucherRollback(unittest.TestCase):
 	def test_do_match_uses_protected_reconcile(self):
 		bt = frappe._dict(name="BT-MATCH")
