@@ -143,6 +143,15 @@ ${teil.name || ""}
 					);
 					tbody.append(teilRow);
 
+					const formatGermanDigits = (digits) => {
+						if (digits.startsWith("01") && digits.length > 4) {
+							return `${digits.slice(0, 4)} ${digits.slice(4)}`;
+						}
+						if (digits.startsWith("030") && digits.length > 3) {
+							return `030 ${digits.slice(3)}`;
+						}
+						return digits;
+					};
 					const groupRest = (value) => value.replace(/(\d{3})(?=\d)/g, "$1 ");
 					const formatTelefonToken = (token) => {
 						const cleaned = token.replace(/[^\d+]/g, "");
@@ -152,10 +161,10 @@ ${teil.name || ""}
 							return token;
 						}
 						if (!hasPlus) {
-							return groupRest(digits);
+							return formatGermanDigits(digits);
 						}
 						if (digits.startsWith("49") && digits.length > 2) {
-							return groupRest(`0${digits.slice(2)}`);
+							return formatGermanDigits(`0${digits.slice(2)}`);
 						}
 
 						let countryLen = 2;
@@ -177,7 +186,7 @@ ${teil.name || ""}
 					const formatTelefonLine = (line) =>
 						line
 							.replace(/\+49[\s.-]*([0-9][0-9\s().-]{4,})/g, (match) =>
-								groupRest(`0${match.replace(/\D/g, "").slice(2)}`)
+								formatGermanDigits(`0${match.replace(/\D/g, "").slice(2)}`)
 							)
 							.replace(/(\+?\d{5,})/g, (match) => formatTelefonToken(match));
 					const formatTelefon = (raw) =>

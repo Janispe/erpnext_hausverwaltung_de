@@ -96,13 +96,17 @@ def _format_phone_number(value: str | None) -> str:
 		return raw
 
 	if raw.lstrip().startswith("+") and digits.startswith("49") and len(digits) > 2:
-		return _group_digits("0" + digits[2:])
+		return _format_german_phone_digits("0" + digits[2:])
 
-	return _group_digits(digits)
+	return _format_german_phone_digits(digits)
 
 
-def _group_digits(digits: str) -> str:
-	return " ".join(digits[i : i + 3] for i in range(0, len(digits), 3))
+def _format_german_phone_digits(digits: str) -> str:
+	if digits.startswith("01") and len(digits) > 4:
+		return f"{digits[:4]} {digits[4:]}"
+	if digits.startswith("030") and len(digits) > 3:
+		return f"030 {digits[3:]}"
+	return digits
 
 
 def _wohnung_sort_key(whg: dict) -> tuple[int, int, str]:
