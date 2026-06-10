@@ -19,12 +19,16 @@ from hausverwaltung.hausverwaltung.doctype.dunning import (
 	validate_dunning_type_serienbrief_werte,
 )
 from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+	SerienbriefDurchlauf,
 	_collect_dunning_auto_values,
 	_field_source_and_value,
 	_get_serienbrief_value_fields_for_doc,
 	_merge_variable_values,
 	_parse_variable_values,
 	_render_serienbrief_template,
+)
+from hausverwaltung.hausverwaltung.patches.post_model_sync.migrate_serienbrief_to_placeholder_tokens import (
+	MIETER_ANREDE_BODY,
 )
 from hausverwaltung.hausverwaltung.utils import serienbrief_print
 
@@ -218,6 +222,35 @@ class TestSerienbriefDurchlaufDunning(IntegrationTestCase):
 
 		self.assertEqual(resolved_template.name, "Print Format Vorlage")
 		self.assertIs(serienbrief_doc, built)
+
+	def test_recipient_name_uses_only_hauptmieter_from_mietvertrag(self):
+		serienbrief = SerienbriefDurchlauf()
+		contacts = {
+			"CONTACT-1": frappe._dict(first_name="Erika", last_name="Haupt"),
+			"CONTACT-2": frappe._dict(first_name="Max", last_name="Haupt"),
+		}
+
+		with (
+			patch.object(
+				frappe.db,
+				"sql",
+				return_value=[
+					{"mieter": "CONTACT-1"},
+					{"mieter": "CONTACT-2"},
+				],
+			) as sql_mock,
+			patch.object(serienbrief, "_load_doc", side_effect=lambda doctype, name: contacts.get(name)),
+		):
+			name = serienbrief._resolve_mieter_names_from_vertrag("MV-TEST-0001")
+
+		self.assertEqual(name, "Erika Haupt und Max Haupt")
+		query = sql_mock.call_args.args[0]
+		self.assertIn("COALESCE(vp.rolle, '') = 'Hauptmieter'", query)
+		self.assertIn("ORDER BY vp.idx", query)
+
+	def test_mieter_anrede_baustein_collects_only_hauptmieter(self):
+		self.assertIn("vp.rolle == 'Hauptmieter'", MIETER_ANREDE_BODY)
+		self.assertIn("hat keine Hauptmieter", MIETER_ANREDE_BODY)
 
 	def test_dunning_type_template_is_backfilled_but_existing_override_stays(self):
 		class _FakeDunning(frappe._dict):

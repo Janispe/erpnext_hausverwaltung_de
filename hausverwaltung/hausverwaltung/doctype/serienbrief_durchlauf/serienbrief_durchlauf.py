@@ -2305,8 +2305,10 @@ class SerienbriefDurchlauf(Document):
 		return cstr(getattr(doc, "title", "")).strip()
 
 	def _resolve_mieter_names_from_vertrag(self, mietvertrag_name: str | None) -> str:
-		"""Personen-Anzeigename aus der ``mieter``-Tabelle eines Mietvertrags
-		(Vertragspartner → Contact). Ausgezogene Mieter werden ignoriert."""
+		"""Personen-Anzeigename der Hauptmieter aus der ``mieter``-Tabelle eines
+		Mietvertrags (Vertragspartner → Contact). Reihenfolge folgt der
+		Tabellen-Reihenfolge im Mietvertrag.
+		"""
 		if not mietvertrag_name:
 			return ""
 		try:
@@ -2317,7 +2319,7 @@ class SerienbriefDurchlauf(Document):
 				WHERE vp.parent = %(mv)s
 				  AND vp.parenttype = 'Mietvertrag'
 				  AND vp.parentfield = 'mieter'
-				  AND COALESCE(vp.rolle, '') != 'Ausgezogen'
+				  AND COALESCE(vp.rolle, '') = 'Hauptmieter'
 				ORDER BY vp.idx
 				""",
 				{"mv": mietvertrag_name},

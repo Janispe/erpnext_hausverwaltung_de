@@ -65,10 +65,10 @@ MIETER_ANREDE_BODY = """\
 {%- set sep = (sep if sep is defined else '<br/>') -%}
 {%- set personen = [] -%}
 {%- for vp in (mietvertrag.mieter or []) -%}
-{%- if vp.kontakt -%}{%- set _ = personen.append(vp.kontakt) -%}{%- endif -%}
+{%- if vp.rolle == 'Hauptmieter' and vp.kontakt -%}{%- set _ = personen.append(vp.kontakt) -%}{%- endif -%}
 {%- endfor -%}
 {%- if not personen -%}
-{{ frappe.throw("Mietvertrag " ~ mietvertrag.name ~ " hat keine Vertragspartner mit Contact-Verknüpfung — die Anrede kann nicht generiert werden. Bitte unter Mietvertrag → Mieter mindestens einen Vertragspartner mit gepflegtem Mieter-Contact ergänzen.") }}
+{{ frappe.throw("Mietvertrag " ~ mietvertrag.name ~ " hat keine Hauptmieter mit Contact-Verknüpfung — die Anrede kann nicht generiert werden. Bitte unter Mietvertrag → Mieter mindestens einen Vertragspartner mit Rolle Hauptmieter und gepflegtem Mieter-Contact ergänzen.") }}
 {%- endif -%}
 {%- for p in personen -%}
 {{ _person_line(p) }}{% if not loop.last %}{{ sep | safe }}{% endif %}
