@@ -48,7 +48,7 @@ SERIENBRIEF_MARGIN_DEFAULTS: dict[str, float] = {
     "margin_top": 20.0,
     "margin_right": 20.0,
     # margin_bottom: reserviert Platz für den Page-Footer (Bankverbindung +
-    # Kategorien-Pfad). Footer ist ~12mm hoch, 16mm gibt 4mm Luft.
+    # Kategorien-Pfad). Footer ist ~8mm hoch, 16mm gibt großzügig Luft.
     "margin_bottom": 16.0,
     # margin_left: DIN-5008 Heftrand 25mm.
     "margin_left": 25.0,
@@ -274,23 +274,20 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
         # Inhalt wird in ``<p>`` verpackt, damit ``.wrapper`` eine messbare
         # Höhe bekommt (sonst paperHeight=0 -> Chrome Error).
         # Footer: Bankverbindung (oben) + Kategorien-Pfad (unten).
-        # Beide Zeilen kompakt + hell; Höhe wird nicht abgeschnitten.
+        # Beide Zeilen sehr kompakt; Höhe wird nicht abgeschnitten.
         # Bankverbindungs-Zeile rendert nur wenn Vorlage den Baustein
         # „Bankverbindung Immobilie" referenziert (siehe
         # ``hausverwaltung.utils.serienbrief_footer``).
         # Zweizeiliger Footer: Bankverbindung oben, Kategorien-Pfad unten.
         # Page-margin-bottom in ``_preview_pdf_options`` ist auf 30mm erhöht,
         # damit Chrome's Page-Footer auch bei langer Bankverbindung-Zeile
-        # (umgebrochen) noch Platz für die Pfad-Zeile hat. 6pt + mittleres Grau
-        # hält den Footer unauffällig, aber besser lesbar als sehr helles Grau.
+        # (umgebrochen) noch Platz für die Pfad-Zeile hat.
         # `color: ... !important` ist nötig, weil Frappes Print-Bundle eine
         # globale @media-print-Regel ``*, *:before, *:after { color: #000 }``
-        # mitlädt — ohne !important rendert Chrome den Footer schwarz statt
-        # grau. Inline-Style auf den inneren <div>s zusätzlich, weil die
-        # Universal-Regel direkt auf jedes Descendant-Element greift und
-        # damit die Vererbung vom #footer-html-Container ignoriert.
+        # mitlädt. Inline-Style auf den inneren <div>s zusätzlich, weil die
+        # Universal-Regel direkt auf jedes Descendant-Element greift.
         footer_html = """
-<div id="footer-html" style="padding: 2px 0 4px; border-top: 1px solid #eef0f3; font-size: 6pt; color: #8a93a3 !important; text-align: center; font-family: Arial, sans-serif; line-height: 1.2; height: 10mm; min-height: 10mm; box-sizing: border-box;">
+<div id="footer-html" style="padding: 1px 0 2px; border-top: 0.5px solid #000; font-size: 5pt; color: #000 !important; text-align: center; font-family: Arial, sans-serif; line-height: 1.1; height: 8mm; min-height: 8mm; box-sizing: border-box;">
 {%- set bank_html = get_footer_bankverbindung_html(doc) -%}
 {%- set vorlage_name = doc.vorlage if doc and doc.vorlage else None -%}
 {%- set pfad_html = "" -%}
@@ -309,8 +306,8 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 {%- set pfad_parts = (ns.chain | reverse | list) + [vorlage_doc.title or vorlage_name] -%}
 {%- set pfad_html = pfad_parts | join(" / ") -%}
 {%- endif -%}
-{%- if bank_html -%}<div style="color: #8a93a3 !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ bank_html | safe }}</div>{%- endif -%}
-{%- if pfad_html -%}<div style="color: #8a93a3 !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ pfad_html }}</div>{%- endif -%}
+{%- if bank_html -%}<div style="color: #000 !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ bank_html | safe }}</div>{%- endif -%}
+{%- if pfad_html -%}<div style="color: #000 !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ pfad_html }}</div>{%- endif -%}
 </div>
 """
 
