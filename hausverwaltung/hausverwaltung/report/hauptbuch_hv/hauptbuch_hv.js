@@ -77,6 +77,11 @@ frappe.query_reports["Hauptbuch HV"] = {
 			fieldtype: "Check",
 		},
 		{
+			fieldname: "saldo_anzeigen",
+			label: __("Saldo anzeigen"),
+			fieldtype: "Check",
+		},
+		{
 			fieldname: "mietlauf_zusammenfassen",
 			label: __("Mietabrechnungs-Buchungen pro Monat zusammenfassen"),
 			fieldtype: "Check",

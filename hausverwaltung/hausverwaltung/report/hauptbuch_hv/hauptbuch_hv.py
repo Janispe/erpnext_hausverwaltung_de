@@ -10,12 +10,28 @@ from erpnext.accounts.report.general_ledger import general_ledger
 
 
 HIDDEN_COLUMNS = {
+	"voucher_type",
 	"voucher_subtype",
 	"party_type",
 	"against_voucher_type",
 	"bill_no",
 	"project",
 }
+
+PREFERRED_COLUMN_ORDER = [
+	"posting_date",
+	"account",
+	"hv_amount",
+	"balance",
+	"voucher_no",
+	"against",
+	"party_name",
+	"party",
+	"remarks",
+	"wohnung",
+	"cost_center",
+	"against_voucher",
+]
 
 
 def execute(filters=None):
@@ -24,7 +40,13 @@ def execute(filters=None):
 	columns, data = general_ledger.execute(filters)
 	if cint(filters.get("mietlauf_zusammenfassen")):
 		data = _aggregate_mietlauf_rows(data)
-	return _filter_columns(columns, hide_account=hide_account), data
+	_add_signed_amount(data)
+	_normalize_party_display(data)
+	return _filter_columns(
+		columns,
+		hide_account=hide_account,
+		show_balance=cint(filters.get("saldo_anzeigen")),
+	), data
 
 
 def _with_hv_defaults(filters=None):
@@ -149,19 +171,68 @@ def _aggregate_mietlauf_rows(data):
 
 
 
-def _filter_columns(columns, *, hide_account: bool = False):
+def _filter_columns(columns, *, hide_account: bool = False, show_balance: bool = False):
+	hidden_columns = set(HIDDEN_COLUMNS)
+	hidden_columns.update({"credit"})
+	if not show_balance:
+		hidden_columns.add("balance")
+	if any(column.get("fieldname") == "party_name" for column in columns or []):
+		hidden_columns.add("party")
+
 	filtered = []
 	for column in columns or []:
-		if column.get("fieldname") in HIDDEN_COLUMNS:
+		fieldname = column.get("fieldname")
+		if fieldname == "debit":
+			filtered.append(_amount_column_from(column))
 			continue
-		if hide_account and column.get("fieldname") == "account":
+		if fieldname in hidden_columns:
 			continue
-		if column.get("fieldname") == "remarks":
+		if hide_account and fieldname == "account":
+			continue
+		if fieldname == "party_name":
+			column = dict(column)
+			column["label"] = _("Partei")
+			column["width"] = max(int(column.get("width") or 0), 180)
+		if fieldname == "remarks":
 			column = dict(column)
 			column["label"] = _("Anmerkungen")
 			column["width"] = max(int(column.get("width") or 0), 400)
 		filtered.append(column)
-	return filtered
+	return _order_columns(filtered)
+
+
+def _amount_column_from(column):
+	out = dict(column)
+	out["fieldname"] = "hv_amount"
+	out["label"] = _("Betrag")
+	out["width"] = max(int(out.get("width") or 0), 130)
+	return out
+
+
+def _order_columns(columns):
+	positions = {fieldname: idx for idx, fieldname in enumerate(PREFERRED_COLUMN_ORDER)}
+	return sorted(
+		columns,
+		key=lambda column: (
+			positions.get(column.get("fieldname"), len(positions)),
+			columns.index(column),
+		),
+	)
+
+
+def _normalize_party_display(data):
+	for row in data or []:
+		if not isinstance(row, dict):
+			continue
+		if not row.get("party_name") and row.get("party"):
+			row["party_name"] = row.get("party")
+
+
+def _add_signed_amount(data):
+	for row in data or []:
+		if not isinstance(row, dict):
+			continue
+		row["hv_amount"] = flt(row.get("debit")) - flt(row.get("credit"))
 
 
 def _has_single_selected_account(filters) -> bool:

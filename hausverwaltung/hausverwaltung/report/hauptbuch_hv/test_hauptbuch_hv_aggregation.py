@@ -3,7 +3,10 @@ from datetime import date
 from unittest.mock import patch
 
 from hausverwaltung.hausverwaltung.report.hauptbuch_hv.hauptbuch_hv import (
+	_add_signed_amount,
 	_aggregate_mietlauf_rows,
+	_filter_columns,
+	_normalize_party_display,
 )
 
 
@@ -217,3 +220,76 @@ class TestHauptbuchAggregation(unittest.TestCase):
 
 		self.assertEqual(len(out), 2)
 		self.assertEqual(out[0], header_row)
+
+
+class TestHauptbuchColumns(unittest.TestCase):
+	def test_filter_columns_combines_debit_credit_and_hides_balance_by_default(self):
+		columns = [
+			{"fieldname": "posting_date", "label": "Buchungsdatum"},
+			{"fieldname": "debit", "label": "Soll"},
+			{"fieldname": "credit", "label": "Haben"},
+			{"fieldname": "balance", "label": "Saldo"},
+			{"fieldname": "voucher_type", "label": "Belegtyp"},
+			{"fieldname": "voucher_no", "label": "Belegnr."},
+			{"fieldname": "against", "label": "Gegenkonto"},
+			{"fieldname": "party", "label": "Partei"},
+			{"fieldname": "party_name", "label": "Name der Partei"},
+			{"fieldname": "wohnung", "label": "Wohnung"},
+			{"fieldname": "cost_center", "label": "Kostenstelle"},
+			{"fieldname": "against_voucher", "label": "Gegenbeleg"},
+			{"fieldname": "remarks", "label": "Remarks"},
+		]
+
+		out = _filter_columns(columns, hide_account=True)
+		fieldnames = [column["fieldname"] for column in out]
+
+		self.assertNotIn("voucher_type", fieldnames)
+		self.assertNotIn("debit", fieldnames)
+		self.assertNotIn("credit", fieldnames)
+		self.assertNotIn("balance", fieldnames)
+		self.assertIn("hv_amount", fieldnames)
+		self.assertEqual(out[fieldnames.index("hv_amount")]["label"], "Betrag")
+		self.assertNotIn("party", fieldnames)
+		self.assertIn("party_name", fieldnames)
+		self.assertEqual(out[fieldnames.index("party_name")]["label"], "Partei")
+		self.assertLess(fieldnames.index("remarks"), fieldnames.index("wohnung"))
+		self.assertLess(fieldnames.index("remarks"), fieldnames.index("cost_center"))
+		self.assertLess(fieldnames.index("remarks"), fieldnames.index("against_voucher"))
+
+	def test_filter_columns_can_show_balance(self):
+		out = _filter_columns(
+			[
+				{"fieldname": "debit", "label": "Soll"},
+				{"fieldname": "credit", "label": "Haben"},
+				{"fieldname": "balance", "label": "Saldo"},
+			],
+			show_balance=True,
+		)
+
+		self.assertEqual([column["fieldname"] for column in out], ["hv_amount", "balance"])
+
+	def test_normalize_party_display_uses_party_as_fallback(self):
+		rows = [
+			{"party": "SUP-1", "party_name": ""},
+			{"party": "SUP-2", "party_name": "Teichert"},
+			{"party": ""},
+		]
+
+		_normalize_party_display(rows)
+
+		self.assertEqual(rows[0]["party_name"], "SUP-1")
+		self.assertEqual(rows[1]["party_name"], "Teichert")
+		self.assertNotIn("party_name", rows[2])
+
+	def test_add_signed_amount_uses_debit_positive_and_credit_negative(self):
+		rows = [
+			{"debit": 100, "credit": 0},
+			{"debit": 0, "credit": 25.5},
+			{"debit": 90, "credit": 10},
+		]
+
+		_add_signed_amount(rows)
+
+		self.assertEqual(rows[0]["hv_amount"], 100)
+		self.assertEqual(rows[1]["hv_amount"], -25.5)
+		self.assertEqual(rows[2]["hv_amount"], 80)
