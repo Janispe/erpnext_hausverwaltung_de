@@ -59,6 +59,19 @@ export const STATUS_PILL = {
 
 export const rowPhase = (row) => row.phase || PHASE_OF[row.rowStatus] || 3;
 
+export const partyDisplayLabel = (row) => {
+	if (row?.party) return row.party;
+	const isExplicitlyPartyless = Boolean(
+		row?.bankTransaction ||
+		row?.paymentEntry ||
+		row?.journalEntry ||
+		row?.paymentDocument ||
+		row?.rowStatus === "done" ||
+		row?.rowStatus === "existing"
+	);
+	return isExplicitlyPartyless ? "Ohne Partei" : "Partei fehlt";
+};
+
 export const Icon = ({ name, size = 14 }) => {
 	const s = { width: size, height: size, display: "inline-block", verticalAlign: "middle" };
 	const p = { fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", strokeLinejoin: "round" };

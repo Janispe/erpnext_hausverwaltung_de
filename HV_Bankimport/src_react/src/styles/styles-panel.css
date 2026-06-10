@@ -12,6 +12,28 @@
 .match-head .amount-big { font-family: var(--font-mono); font-size: 28px; font-weight: 500; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; line-height: 1.1; margin-top: 2px; white-space: nowrap; }
 .match-head .amount-big.in { color: var(--eingang); }
 .match-head .amount-big.out { color: var(--text); }
+.bank-tx-ref {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	max-width: 100%;
+	margin-top: 7px;
+	padding: 4px 8px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--surface);
+	font-size: 11px;
+	color: var(--text-muted);
+}
+.bank-tx-ref span {
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.45px;
+}
+.bank-tx-ref strong {
+	color: var(--warn);
+	font-weight: 600;
+}
 .match-head .party-line { font-size: 13.5px; font-weight: 600; margin-top: 8px; }
 .match-head .party-line.with-action { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .match-head .party-line.with-action span { min-width: 0; overflow-wrap: anywhere; }

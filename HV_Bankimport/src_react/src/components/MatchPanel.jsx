@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { fmtEUR, fmtDate, fmtDateTime, fmtIban, Icon, Spinner } from "../helpers.jsx";
+import { fmtEUR, fmtDate, fmtDateTime, fmtIban, partyDisplayLabel, Icon, Spinner } from "../helpers.jsx";
 import { LinkSearch } from "./LinkSearch.jsx";
 import * as api from "../api.js";
 
@@ -952,6 +952,7 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 
 	const isOut = Number(row.betrag) < 0;
 	const phase = row.phase || 3;
+	const partyLabel = partyDisplayLabel(row);
 
 	return (
 		<div className="match-panel">
@@ -960,18 +961,26 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 					<span>{fmtDate(row.buchungstag)}</span>
 					<span>·</span>
 					<span>{isOut ? "Ausgang" : "Eingang"}</span>
-					{row.bankTransaction && (
-						<>
-							<span>·</span>
-							<button className="link-btn" onClick={() => api.openDoc("Bank Transaction", row.bankTransaction)}>
-								{row.bankTransaction}
-							</button>
-						</>
-					)}
 				</div>
 				<div className={`amount-big ${isOut ? "out" : "in"}`}>{fmtEUR(row.betrag)}</div>
+				<div className={`bank-tx-ref ${row.bankTransaction ? "has-link" : "missing"}`}>
+					<span>Bank-Transaktion</span>
+					{row.bankTransaction ? (
+						<button className="link-btn" onClick={() => api.openDoc("Bank Transaction", row.bankTransaction)}>
+							{row.bankTransaction}
+						</button>
+					) : (
+						<strong>fehlt</strong>
+					)}
+				</div>
 				<div className="party-line with-action">
-					<span>{row.party ? `${row.party}${row.partyTyp ? ` · ${row.partyTyp}` : ""}` : "Partei fehlt"}</span>
+					<span>
+						{row.party ? (
+							<button className="party-link detail-party-link" onClick={() => api.openDoc(row.partyTyp, row.party)}>
+								{row.party}{row.partyTyp ? ` · ${row.partyTyp}` : ""}
+							</button>
+						) : partyLabel}
+					</span>
 					<button className="btn subtle sm party-edit-btn" onClick={() => setPartyDialogOpen(true)}>
 						<Icon name="settings" /> Partei ändern
 					</button>

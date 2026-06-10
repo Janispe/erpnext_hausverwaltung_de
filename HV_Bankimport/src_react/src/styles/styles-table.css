@@ -37,6 +37,29 @@ body[data-layout="full"] .match-panel-wrap { display: none; }
 .col-action { width: 36px; text-align: right; }
 .tx-table .party-cell { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .tx-table .party-name { font-weight: 500; }
+.party-link {
+	min-width: 0;
+	max-width: 100%;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-weight: inherit;
+	text-align: left;
+	cursor: pointer;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.party-link:hover {
+	color: var(--phase2);
+	text-decoration: underline;
+}
+.detail-party-link {
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
 .tx-table .party-meta { font-size: 10.5px; color: var(--text-muted); font-family: var(--font-mono); }
 .tx-table .verwendung-cell { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dir-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }

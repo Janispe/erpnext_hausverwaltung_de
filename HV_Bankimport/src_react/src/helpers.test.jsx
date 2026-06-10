@@ -4,6 +4,7 @@ import {
 	fmtDateTime,
 	fmtEUR,
 	fmtIban,
+	partyDisplayLabel,
 	rowPhase,
 	STATUS_PILL,
 } from "./helpers.jsx";
@@ -51,5 +52,12 @@ describe("Bankimport phase/status edge cases", () => {
 		expect(STATUS_PILL["phase1-no-party"].lbl).toBe("Partei fehlt");
 		expect(STATUS_PILL.error.cls).toBe("danger");
 		expect(STATUS_PILL.done.lbl).toBe("Gebucht");
+	});
+
+	it("unterscheidet fehlende von bewusst leerer Partei", () => {
+		expect(partyDisplayLabel({ rowStatus: "phase1-no-party" })).toBe("Partei fehlt");
+		expect(partyDisplayLabel({ bankTransaction: "BT-1" })).toBe("Ohne Partei");
+		expect(partyDisplayLabel({ journalEntry: "JE-1" })).toBe("Ohne Partei");
+		expect(partyDisplayLabel({ party: "Kunde A" })).toBe("Kunde A");
 	});
 });
