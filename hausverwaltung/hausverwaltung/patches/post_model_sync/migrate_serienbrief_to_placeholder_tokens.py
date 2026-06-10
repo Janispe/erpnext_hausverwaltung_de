@@ -63,10 +63,18 @@ MIETER_ANREDE_BODY = """\
 {{ (greet ~ (' ' if greet and last else '') ~ last ~ (',' if greet or last else ''))|replace('  ', ' ')|trim }}
 {%- endmacro -%}
 {%- set sep = (sep if sep is defined else '<br/>') -%}
-{%- set personen = [] -%}
+{%- set frauen = [] -%}
+{%- set andere = [] -%}
 {%- for vp in (mietvertrag.mieter or []) -%}
-{%- if vp.rolle == 'Hauptmieter' and vp.kontakt -%}{%- set _ = personen.append(vp.kontakt) -%}{%- endif -%}
+{%- if vp.rolle == 'Hauptmieter' and vp.kontakt -%}
+{%- if vp.kontakt.salutation == 'Frau' -%}
+{%- set _ = frauen.append(vp.kontakt) -%}
+{%- else -%}
+{%- set _ = andere.append(vp.kontakt) -%}
+{%- endif -%}
+{%- endif -%}
 {%- endfor -%}
+{%- set personen = frauen + andere -%}
 {%- if not personen -%}
 {{ frappe.throw("Mietvertrag " ~ mietvertrag.name ~ " hat keine Hauptmieter mit Contact-Verknüpfung — die Anrede kann nicht generiert werden. Bitte unter Mietvertrag → Mieter mindestens einen Vertragspartner mit Rolle Hauptmieter und gepflegtem Mieter-Contact ergänzen.") }}
 {%- endif -%}

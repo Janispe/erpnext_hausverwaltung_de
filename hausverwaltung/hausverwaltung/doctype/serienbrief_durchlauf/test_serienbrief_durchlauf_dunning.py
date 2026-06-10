@@ -223,11 +223,11 @@ class TestSerienbriefDurchlaufDunning(IntegrationTestCase):
 		self.assertEqual(resolved_template.name, "Print Format Vorlage")
 		self.assertIs(serienbrief_doc, built)
 
-	def test_recipient_name_uses_only_hauptmieter_from_mietvertrag(self):
+	def test_recipient_name_uses_only_hauptmieter_and_lists_frauen_first(self):
 		serienbrief = SerienbriefDurchlauf()
 		contacts = {
-			"CONTACT-1": frappe._dict(first_name="Erika", last_name="Haupt"),
-			"CONTACT-2": frappe._dict(first_name="Max", last_name="Haupt"),
+			"CONTACT-1": frappe._dict(first_name="Max", last_name="Haupt", salutation="Herr"),
+			"CONTACT-2": frappe._dict(first_name="Erika", last_name="Haupt", salutation="Frau"),
 		}
 
 		with (
@@ -250,6 +250,7 @@ class TestSerienbriefDurchlaufDunning(IntegrationTestCase):
 
 	def test_mieter_anrede_baustein_collects_only_hauptmieter(self):
 		self.assertIn("vp.rolle == 'Hauptmieter'", MIETER_ANREDE_BODY)
+		self.assertIn("frauen + andere", MIETER_ANREDE_BODY)
 		self.assertIn("hat keine Hauptmieter", MIETER_ANREDE_BODY)
 
 	def test_dunning_type_template_is_backfilled_but_existing_override_stays(self):

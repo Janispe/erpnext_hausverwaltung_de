@@ -2306,8 +2306,8 @@ class SerienbriefDurchlauf(Document):
 
 	def _resolve_mieter_names_from_vertrag(self, mietvertrag_name: str | None) -> str:
 		"""Personen-Anzeigename der Hauptmieter aus der ``mieter``-Tabelle eines
-		Mietvertrags (Vertragspartner → Contact). Reihenfolge folgt der
-		Tabellen-Reihenfolge im Mietvertrag.
+		Mietvertrags (Vertragspartner → Contact). Frauen werden zuerst genannt,
+		innerhalb der Gruppen folgt die Reihenfolge der Mietvertrag-Tabelle.
 		"""
 		if not mietvertrag_name:
 			return ""
@@ -2327,12 +2327,19 @@ class SerienbriefDurchlauf(Document):
 			)
 		except Exception:
 			return ""
-		names: list[str] = []
+		contacts = []
 		for row in rows:
 			contact_name = cstr(row.get("mieter")).strip()
 			if not contact_name:
 				continue
 			contact_doc = self._load_doc("Contact", contact_name)
+			if contact_doc:
+				contacts.append(contact_doc)
+
+		contacts.sort(key=lambda doc: 0 if cstr(getattr(doc, "salutation", "")).strip() == "Frau" else 1)
+
+		names: list[str] = []
+		for contact_doc in contacts:
 			person = self._guess_person_name(contact_doc)
 			if person and person not in names:
 				names.append(person)
