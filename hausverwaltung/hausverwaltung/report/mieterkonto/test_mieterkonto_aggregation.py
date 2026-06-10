@@ -5,6 +5,7 @@ from hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto import (
 	CATEGORIES,
 	InvoiceInfo,
 	_build_invoice_transactions,
+	_category_amounts_from_items,
 	_group_invoices,
 	_transaction_to_row,
 )
@@ -40,6 +41,42 @@ def _make_invoice(
 
 
 class TestGroupInvoices(TestCase):
+	def test_buchungscockpit_default_item_maps_to_guthaben_nachzahlungen(self):
+		amounts = _category_amounts_from_items(
+			"SI-COCKPIT",
+			[
+				{
+					"parent": "SI-COCKPIT",
+					"item_code": "Guthaben/Nachzahlungen",
+					"amount": 42.5,
+					"base_amount": 42.5,
+				}
+			],
+			42.5,
+		)
+
+		self.assertEqual(amounts["miete"], 0.0)
+		self.assertEqual(amounts["betriebskosten"], 0.0)
+		self.assertEqual(amounts["heizkosten"], 0.0)
+		self.assertEqual(amounts["guthaben_nachzahlungen"], 42.5)
+
+	def test_buchungscockpit_invoice_row_exposes_gn_amount_and_description(self):
+		invoice = _make_invoice(
+			"SI-COCKPIT",
+			grand_total=42.5,
+			outstanding=42.5,
+			categories={"guthaben_nachzahlungen": 42.5},
+		)
+		invoice.remarks = "Nachzahlung laut Abrechnung"
+
+		transaction = _build_invoice_transactions({"SI-COCKPIT": invoice})[0]
+		row = _transaction_to_row(transaction, balance=42.5)
+
+		self.assertEqual(row["beschreibung"], "Nachzahlung laut Abrechnung")
+		self.assertEqual(row["betrag_guthaben_nachzahlungen"], 42.5)
+		self.assertEqual(row["betrag_summe"], 42.5)
+		self.assertEqual(row["offen"], 42.5)
+
 	def test_four_sis_same_id_collapse_to_one_group(self):
 		mab = "MV-2025-001|11/2025"
 		invoices = {

@@ -107,12 +107,30 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 	after(() => {
 		cy.then(() => {
 			created.forEach((name) => {
-				// Direkter delete — Tests laufen alle als Draft (submit_doc: 0),
-				// daher kein Cancel nötig. failOnStatusCode: false damit best-effort
-				// keine restlichen Tests fail-cascadiert.
-				cy.window()
-					.its("frappe.csrf_token")
-					.then((csrf_token) => {
+				cy.window().its("frappe.csrf_token").then((csrf_token) => {
+					cy.request({
+						method: "POST",
+						url: "/api/method/frappe.client.get",
+						body: { doctype: "Sales Invoice", name },
+						headers: {
+							"Content-Type": "application/json",
+							"X-Frappe-CSRF-Token": csrf_token,
+						},
+						failOnStatusCode: false,
+					}).then((getRes) => {
+						const docstatus = Number(getRes.body?.message?.docstatus);
+						if (getRes.status === 200 && docstatus === 1) {
+							cy.request({
+								method: "POST",
+								url: "/api/method/frappe.client.cancel",
+								body: { doctype: "Sales Invoice", name },
+								headers: {
+									"Content-Type": "application/json",
+									"X-Frappe-CSRF-Token": csrf_token,
+								},
+								failOnStatusCode: false,
+							});
+						}
 						cy.request({
 							method: "POST",
 							url: "/api/method/frappe.client.delete",
@@ -124,6 +142,7 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 							failOnStatusCode: false,
 						});
 					});
+				});
 			});
 		});
 	});
@@ -571,6 +590,118 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 					expect(ig.message.is_stock_item, "Service item").to.eq(0);
 				});
 			});
+		});
+	});
+
+	it("[12] UI-Flow: Buchen erzeugt eingereichte SI und Mieterkonto-Report zeigt G/N-Betrag", () => {
+		const description = `${TEST_TAG}-UI-Report Nachzahlung`;
+		let submittedName;
+
+		cy.visit("/app");
+		cy.get("body").should("have.attr", "data-ajax-state", "complete");
+
+		cy.window().then((win) => {
+			expect(
+				typeof win.hausverwaltung?.buchen_cockpit?.open_mieterrechnung_dialog,
+				"open_mieterrechnung_dialog vorhanden"
+			).to.equal("function");
+			win.hausverwaltung.buchen_cockpit.open_mieterrechnung_dialog();
+		});
+		cy.get(".modal:visible", { timeout: 10000 }).should("exist");
+
+		cy.window().its("cur_dialog", { timeout: 10000 }).then((dialog) => {
+			dialog.set_value("mietvertrag", mietvertrag);
+			dialog.set_value("rechnungsdatum", "2026-05-06");
+			dialog.set_value("faellig_am", "2026-05-27");
+			dialog.set_value("rechnungsname", `${TEST_TAG}-12`);
+		});
+
+		cy.wait(800);
+
+		cy.window().its("cur_dialog").then((dialog) => {
+			expect(dialog.get_value("kunde"), "Kunde auto-gesetzt").to.eq(kunde);
+			const grid = dialog.fields_dict.positionen.grid;
+			grid.df.data = [
+				{ beschreibung: description, betrag: 44.44, erloeskonto: income_account },
+			];
+			grid.refresh();
+		});
+
+		cy.get(".modal:visible .modal-footer .btn-primary").contains("Buchen").click();
+		cy.contains(
+			".alert, .desk-alert, .frappe-toast, .toast-message, .text-medium",
+			"erstellt und gebucht",
+			{ timeout: 15000 }
+		).should("exist");
+
+		cy.window({ timeout: 15000 }).its("cur_frm.doc.doctype").should("eq", "Sales Invoice");
+		cy.window().its("cur_frm.doc").then((si) => {
+			submittedName = si.name;
+			trackSi(si.name);
+			expect(si.docstatus).to.eq(1);
+			expect(si.customer).to.eq(kunde);
+			expect(si.hv_eingabequelle).to.eq("Vereinfachte Mieterrechnung");
+			expect(si.mietabrechnung_id || "").to.eq("");
+			expect(si.items[0].item_code).to.eq("Guthaben/Nachzahlungen");
+		});
+
+		cy.call("frappe.desk.query_report.run", {
+			report_name: "Mieterkonto",
+			filters: JSON.stringify({
+				company,
+				customer: kunde,
+				from_date: "2026-01-01",
+				to_date: "2026-12-31",
+				show_kategorien: 1,
+				gruppieren_pro_monat: 0,
+			}),
+			ignore_prepared_report: 1,
+		}).then((r) => {
+			const rows = r.message?.result || [];
+			const reportRow = rows.find((row) =>
+				row.belegnummer === submittedName || (row.belegnummern || []).includes(submittedName)
+			);
+			expect(reportRow, "Mieterkonto-Zeile").to.exist;
+			expect(reportRow.art).to.eq("Forderung");
+			expect(reportRow.beschreibung).to.eq(description);
+			expect(Number(reportRow.betrag_guthaben_nachzahlungen)).to.be.closeTo(44.44, 0.01);
+			expect(Number(reportRow.betrag_summe)).to.be.closeTo(44.44, 0.01);
+		});
+	});
+
+	it("[13] UI-Randfall: Buchen ohne Position zeigt Validierung und erzeugt keine SI", () => {
+		cy.visit("/app");
+		cy.get("body").should("have.attr", "data-ajax-state", "complete");
+
+		cy.window().then((win) => {
+			win.hausverwaltung.buchen_cockpit.open_mieterrechnung_dialog();
+		});
+		cy.get(".modal:visible", { timeout: 10000 }).should("exist");
+
+		cy.window().its("cur_dialog", { timeout: 10000 }).then((dialog) => {
+			dialog.set_value("mietvertrag", mietvertrag);
+			dialog.set_value("rechnungsname", `${TEST_TAG}-13`);
+			dialog.fields_dict.positionen.grid.df.data = [];
+			dialog.fields_dict.positionen.grid.refresh();
+		});
+
+		cy.get(".modal:visible .modal-footer .btn-primary").contains("Buchen").click();
+		cy.contains(
+			".modal:visible, .msgprint-dialog, .frappe-msgprint, .modal-body",
+			"Bitte mindestens eine Position erfassen",
+			{ timeout: 10000 }
+		).should("exist");
+
+		cy.call("frappe.client.get_list", {
+			doctype: "Sales Invoice",
+			filters: {
+				customer: kunde,
+				remarks: `${TEST_TAG}-13`,
+			},
+			fields: ["name"],
+			limit_page_length: 1,
+		}).then((r) => {
+			expect(r.message || []).to.have.length(0);
 		});
 	});
 });

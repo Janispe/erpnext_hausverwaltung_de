@@ -9,7 +9,7 @@ set -euo pipefail
 #
 # Defaults are intentionally conservative:
 # - uses separate ports so it can run next to the local 8080 dev stack
-# - runs targeted Bankimport backend tests by default
+# - runs targeted critical backend/report tests by default
 # - runs real browser UI tests only when RUN_UI_TESTS=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,6 +32,11 @@ KEEP_ON_FAIL="${KEEP_ON_FAIL:-0}"
 TEST_MODULES_DEFAULT=(
 	"hausverwaltung.hausverwaltung.doctype.bankauszug_import.test_bankauszug_import"
 	"hausverwaltung.hausverwaltung.page.bankimport_v2.test_bankimport_v2"
+	"hausverwaltung.hausverwaltung.doctype.mietvertrag.test_mietvertrag"
+	"hausverwaltung.hausverwaltung.page.buchen_cockpit.test_buchen_cockpit"
+	"hausverwaltung.hausverwaltung.report.mieterkonto.test_mieterkonto_aggregation"
+	"hausverwaltung.hausverwaltung.report.noch_offene_rechnungen_und_forderungen.test_noch_offene_rechnungen_und_forderungen_aggregation"
+	"hausverwaltung.hausverwaltung.report.hauptbuch_hv.test_hauptbuch_hv_aggregation"
 )
 
 cleanup_done=0

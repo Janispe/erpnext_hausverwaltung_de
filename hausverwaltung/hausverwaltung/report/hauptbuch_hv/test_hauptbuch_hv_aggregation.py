@@ -1,7 +1,6 @@
+import unittest
 from datetime import date
 from unittest.mock import patch
-
-import unittest
 
 from hausverwaltung.hausverwaltung.report.hauptbuch_hv.hauptbuch_hv import (
 	_aggregate_mietlauf_rows,
@@ -133,6 +132,35 @@ class TestHauptbuchAggregation(unittest.TestCase):
 		self.assertEqual(len(out), 2)
 		self.assertAlmostEqual(out[0]["debit"], 100.0)
 		self.assertAlmostEqual(out[1]["debit"], 50.0)
+
+	def test_buchungscockpit_sales_invoice_without_mab_id_is_not_folded_into_monthly_run(self):
+		mapping = {"SI-Miete": "MV-2026-001|05/2026", "SI-BK": "MV-2026-001|05/2026"}
+		data = [
+			_gle_row(voucher_no="SI-Miete", account="1410 - Forderungen", debit=500),
+			_gle_row(voucher_no="SI-BK", account="1410 - Forderungen", debit=120),
+			_gle_row(
+				voucher_no="SI-COCKPIT",
+				account="1410 - Forderungen",
+				debit=42.5,
+				remarks="Erfasst über Buchungs-Cockpit: Nachzahlung laut Abrechnung",
+			),
+		]
+		patches = self._patch_si_lookup(mapping)
+		for p in patches:
+			p.start()
+		try:
+			out = _aggregate_mietlauf_rows(data)
+		finally:
+			for p in patches:
+				p.stop()
+
+		self.assertEqual(len(out), 2)
+		self.assertEqual(out[0]["voucher_no"], "SI-Miete")
+		self.assertAlmostEqual(out[0]["debit"], 620.0)
+		self.assertIn("(+1 weitere SI", out[0]["remarks"])
+		self.assertEqual(out[1]["voucher_no"], "SI-COCKPIT")
+		self.assertAlmostEqual(out[1]["debit"], 42.5)
+		self.assertEqual(out[1]["remarks"], "Erfasst über Buchungs-Cockpit: Nachzahlung laut Abrechnung")
 
 	def test_payment_entry_unchanged(self):
 		# Zahlungs- und Storno-Buchungen ohne mietabrechnung_id-Tagging

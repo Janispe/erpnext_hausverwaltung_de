@@ -128,6 +128,36 @@ class TestNochOffeneForderungenAggregation(TestCase):
 		self.assertEqual(out[1]["belegart"], "Sales Invoice")
 		self.assertAlmostEqual(out[1]["rechnungsbetrag"], 75.0)
 
+	def test_buchungscockpit_default_item_stays_separate_from_monthly_sollstellung(self):
+		mab = "MV-2026-001|05/2026"
+		rows = [
+			_row("SI-Miete", 500.0, bemerkungen="Miete 05/2026"),
+			_row("SI-BK", 120.0, bemerkungen="BK 05/2026"),
+			_row("SI-COCKPIT", 42.5, bemerkungen="Nachzahlung laut Abrechnung"),
+		]
+		patches = self._patch_invoice_lookup(
+			{"SI-Miete": mab, "SI-BK": mab, "SI-COCKPIT": ""},
+			{
+				"SI-Miete": "Miete",
+				"SI-BK": "Betriebskosten",
+				"SI-COCKPIT": "Guthaben/Nachzahlungen",
+			},
+		)
+		for p in patches:
+			p.start()
+		try:
+			out = _group_rows_by_mietabrechnung(rows)
+		finally:
+			for p in patches:
+				p.stop()
+
+		self.assertEqual(len(out), 2)
+		self.assertEqual(out[0]["member_voucher_nos"], ["SI-Miete", "SI-BK"])
+		self.assertAlmostEqual(out[0]["rechnungsbetrag"], 620.0)
+		self.assertEqual(out[1]["belegnummer"], "SI-COCKPIT")
+		self.assertEqual(out[1]["bemerkungen"], "Nachzahlung laut Abrechnung")
+		self.assertAlmostEqual(out[1]["offen"], 42.5)
+
 	def test_grouped_monthly_sollstellung_remarks_are_combined_by_period(self):
 		mab = "MV-2026-001|06/2026"
 		rows = [
