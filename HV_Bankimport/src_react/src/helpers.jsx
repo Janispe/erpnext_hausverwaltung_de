@@ -59,6 +59,12 @@ export const STATUS_PILL = {
 
 export const rowPhase = (row) => row.phase || PHASE_OF[row.rowStatus] || 3;
 
+export const partyTypeLabel = (partyType) => ({
+	Customer: "Kunde",
+	Supplier: "Lieferant",
+	Eigentuemer: "Eigentümer",
+}[partyType] || partyType || "");
+
 export const partyDisplayLabel = (row) => {
 	if (row?.party) return row.party;
 	const isExplicitlyPartyless = Boolean(

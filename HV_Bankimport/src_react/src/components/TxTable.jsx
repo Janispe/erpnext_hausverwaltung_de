@@ -1,11 +1,12 @@
 import React from "react";
-import { fmtEUR, fmtDate, fmtIban, partyDisplayLabel, StatusPill, Icon } from "../helpers.jsx";
+import { fmtEUR, fmtDate, fmtIban, partyDisplayLabel, partyTypeLabel, StatusPill, Icon } from "../helpers.jsx";
 import * as api from "../api.js";
 
 function TxRow({ row, selected, onSelect }) {
 	const isOut = Number(row.betrag) < 0;
 	const hasParty = !!row.party;
 	const partyLabel = partyDisplayLabel(row);
+	const roleLabel = partyTypeLabel(row.partyTyp);
 	const openParty = (event) => {
 		event.stopPropagation();
 		if (row.partyTyp && row.party) api.openDoc(row.partyTyp, row.party);
@@ -22,7 +23,7 @@ function TxRow({ row, selected, onSelect }) {
 				<div className="party-cell">
 					<span className="party-name">
 						{hasParty ? (
-							<button className="party-link" onClick={openParty} title={`${row.partyTyp || "Partei"} öffnen`}>
+							<button className="party-link" onClick={openParty} title={`${roleLabel || "Partei"} öffnen`}>
 								{row.party}
 							</button>
 						) : (

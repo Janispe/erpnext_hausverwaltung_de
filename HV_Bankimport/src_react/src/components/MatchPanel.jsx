@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { fmtEUR, fmtDate, fmtDateTime, fmtIban, partyDisplayLabel, Icon, Spinner } from "../helpers.jsx";
+import { fmtEUR, fmtDate, fmtDateTime, fmtIban, partyDisplayLabel, partyTypeLabel, Icon, Spinner } from "../helpers.jsx";
 import { LinkSearch } from "./LinkSearch.jsx";
 import * as api from "../api.js";
 
@@ -314,7 +314,7 @@ function PartyChangeDialog({ docname, row, onClose, onActionDone, notify }) {
 				)}
 				<div className="current-party">
 					<span>Aktuell</span>
-					<strong>{row.party ? `${row.party}${row.partyTyp ? ` · ${row.partyTyp}` : ""}` : "keine Partei"}</strong>
+					<strong>{row.party ? `${row.party}${partyTypeLabel(row.partyTyp) ? ` · ${partyTypeLabel(row.partyTyp)}` : ""}` : "keine Partei"}</strong>
 				</div>
 				<div className="seg" role="tablist" style={{ marginBottom: 10 }}>
 					{["Customer", "Supplier", "Eigentuemer"].map((t) => (
@@ -953,6 +953,7 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 	const isOut = Number(row.betrag) < 0;
 	const phase = row.phase || 3;
 	const partyLabel = partyDisplayLabel(row);
+	const roleLabel = partyTypeLabel(row.partyTyp);
 
 	return (
 		<div className="match-panel">
@@ -977,7 +978,7 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 					<span>
 						{row.party ? (
 							<button className="party-link detail-party-link" onClick={() => api.openDoc(row.partyTyp, row.party)}>
-								{row.party}{row.partyTyp ? ` · ${row.partyTyp}` : ""}
+								{row.party}{roleLabel ? ` · ${roleLabel}` : ""}
 							</button>
 						) : partyLabel}
 					</span>

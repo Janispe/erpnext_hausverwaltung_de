@@ -5,6 +5,7 @@ import {
 	fmtEUR,
 	fmtIban,
 	partyDisplayLabel,
+	partyTypeLabel,
 	rowPhase,
 	STATUS_PILL,
 } from "./helpers.jsx";
@@ -59,5 +60,12 @@ describe("Bankimport phase/status edge cases", () => {
 		expect(partyDisplayLabel({ bankTransaction: "BT-1" })).toBe("Ohne Partei");
 		expect(partyDisplayLabel({ journalEntry: "JE-1" })).toBe("Ohne Partei");
 		expect(partyDisplayLabel({ party: "Kunde A" })).toBe("Kunde A");
+	});
+
+	it("uebersetzt technische Party-Typen fuer die UI", () => {
+		expect(partyTypeLabel("Customer")).toBe("Kunde");
+		expect(partyTypeLabel("Supplier")).toBe("Lieferant");
+		expect(partyTypeLabel("Eigentuemer")).toBe("Eigentümer");
+		expect(partyTypeLabel("")).toBe("");
 	});
 });
