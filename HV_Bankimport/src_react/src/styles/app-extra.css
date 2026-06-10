@@ -125,13 +125,15 @@
 .modal-backdrop {
 	position: fixed;
 	inset: 0;
-	z-index: 900;
+	z-index: 5000;
 	display: grid;
 	place-items: center;
 	padding: 22px;
 	background: rgba(35, 34, 30, 0.42);
 }
 .new-import-modal {
+	position: relative;
+	z-index: 1;
 	width: min(560px, 100%);
 	background: var(--surface);
 	border: 1px solid var(--border-strong);
