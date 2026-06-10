@@ -116,6 +116,7 @@ function AuditItem({ label, doc, actionLabel, actor, at, source, onOpen }) {
 }
 
 function AuditTrail({ row }) {
+	const [open, setOpen] = useState(false);
 	const audit = row.audit || {};
 	const assignment = audit.assignment || {};
 	const items = [
@@ -126,36 +127,48 @@ function AuditTrail({ row }) {
 	];
 	if (!items.some(Boolean)) return null;
 	return (
-		<div className="audit-box">
-			<div className="audit-title"><Icon name="info" size={13} /> Nachvollziehbarkeit</div>
-			<AuditItem
-				label="Importzeile"
-				actionLabel="Erstellt"
-				actor={audit.row?.createdBy}
-				at={audit.row?.createdAt}
-			/>
-			<AuditItem
-				label="Partei"
-				doc={audit.party}
-				onOpen={() => audit.party && api.openDoc(audit.party.doctype, audit.party.name)}
-			/>
-			<AuditItem
-				label="Zuordnung"
-				actionLabel="Zugeordnet"
-				actor={assignment.by}
-				at={assignment.at}
-				source={assignment.source}
-			/>
-			<AuditItem
-				label="Bank-Transaktion"
-				doc={audit.bankTransaction}
-				onOpen={() => audit.bankTransaction && api.openDoc("Bank Transaction", audit.bankTransaction.name)}
-			/>
-			<AuditItem
-				label="Zahlung"
-				doc={audit.paymentDocument}
-				onOpen={() => audit.paymentDocument && api.openDoc(audit.paymentDocument.doctype, audit.paymentDocument.name)}
-			/>
+		<div className={`audit-box ${open ? "is-open" : ""}`}>
+			<button
+				type="button"
+				className="audit-title"
+				onClick={() => setOpen((value) => !value)}
+				aria-expanded={open}
+			>
+				<span><Icon name="info" size={13} /> Nachvollziehbarkeit</span>
+				<Icon name={open ? "chevDown" : "chev"} size={13} />
+			</button>
+			{open && (
+				<div className="audit-content">
+					<AuditItem
+						label="Importzeile"
+						actionLabel="Erstellt"
+						actor={audit.row?.createdBy}
+						at={audit.row?.createdAt}
+					/>
+					<AuditItem
+						label="Partei"
+						doc={audit.party}
+						onOpen={() => audit.party && api.openDoc(audit.party.doctype, audit.party.name)}
+					/>
+					<AuditItem
+						label="Zuordnung"
+						actionLabel="Zugeordnet"
+						actor={assignment.by}
+						at={assignment.at}
+						source={assignment.source}
+					/>
+					<AuditItem
+						label="Bank-Transaktion"
+						doc={audit.bankTransaction}
+						onOpen={() => audit.bankTransaction && api.openDoc("Bank Transaction", audit.bankTransaction.name)}
+					/>
+					<AuditItem
+						label="Zahlung"
+						doc={audit.paymentDocument}
+						onOpen={() => audit.paymentDocument && api.openDoc(audit.paymentDocument.doctype, audit.paymentDocument.name)}
+					/>
+				</div>
+			)}
 		</div>
 	);
 }

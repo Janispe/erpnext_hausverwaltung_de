@@ -27,19 +27,36 @@
 .audit-title {
 	display: flex;
 	align-items: center;
+	justify-content: space-between;
+	width: 100%;
 	gap: 6px;
-	margin-bottom: 7px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
 	font-size: 10.5px;
 	font-weight: 600;
+	font-family: var(--font-sans);
 	color: var(--text-muted);
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
+	cursor: pointer;
+}
+.audit-title span {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+.audit-title:hover { color: var(--text); }
+.audit-content {
+	margin-top: 7px;
 }
 .audit-item {
 	padding: 7px 0;
 	border-top: 1px dashed var(--border);
 }
-.audit-title + .audit-item { border-top: none; }
+.audit-content .audit-item:first-child { border-top: none; }
 .audit-top {
 	display: flex;
 	align-items: center;
