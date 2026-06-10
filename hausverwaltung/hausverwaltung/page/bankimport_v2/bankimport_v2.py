@@ -26,6 +26,7 @@ from frappe.utils import flt
 from frappe.utils.file_manager import save_file
 
 from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import import (
+	SKIPPED_ROW_STATUSES,
 	_cancel_voucher_for_row,
 	_linked_voucher_for_row,
 	_recompute_doc_status,
@@ -474,7 +475,7 @@ def _import_owns_bank_transaction(row: Any) -> bool:
 	"""Nur Bank-Transactions zurücknehmen, die dieser Import erzeugt hat."""
 	if not (_row_value(row, "bank_transaction") or _row_value(row, "reference")):
 		return False
-	return _status_key(_row_value(row, "row_status")) not in {"schon vorhanden", "vor start-datum"}
+	return _status_key(_row_value(row, "row_status")) not in SKIPPED_ROW_STATUSES
 
 
 def _delete_impact_for_doc(doc) -> dict[str, Any]:
