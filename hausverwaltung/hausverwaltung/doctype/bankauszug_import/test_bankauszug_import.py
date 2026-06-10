@@ -2168,20 +2168,8 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
             self.skipTest("Integrationstest benötigt mindestens eine Company.")
         self.company = company_rows[0]
 
-        bank_account_rows = frappe.get_all(
-            "Bank Account",
-            filters={
-                "company": self.company,
-                "is_company_account": 1,
-                "disabled": 0,
-            },
-            fields=["name", "account"],
-            limit=1,
-        )
-        if not bank_account_rows:
-            self.skipTest("Integrationstest benötigt ein aktives Firmen-Bankkonto.")
-        self.bank_account = bank_account_rows[0].name
-        self.bank_gl_account = bank_account_rows[0].account
+        self.bank_gl_account = self._make_bank_gl_account()
+        self.bank_account = self._make_company_bank_account()
 
     def tearDown(self):
         for doctype, name in reversed(self.created_docs):
@@ -2203,6 +2191,65 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
     def _track(self, doc):
         self.created_docs.append((doc.doctype, doc.name))
         return doc
+
+    def _bank_parent_account(self):
+        preferred = frappe.get_all(
+            "Account",
+            filters={
+                "company": self.company,
+                "is_group": 1,
+                "root_type": "Asset",
+                "account_name": ["in", ["Bank Accounts", "Bank", "Bankkonten"]],
+            },
+            pluck="name",
+            limit=1,
+        )
+        if preferred:
+            return preferred[0]
+
+        asset_groups = frappe.get_all(
+            "Account",
+            filters={"company": self.company, "is_group": 1, "root_type": "Asset"},
+            pluck="name",
+            order_by="lft desc",
+            limit=1,
+        )
+        if not asset_groups:
+            self.skipTest("Integrationstest benötigt eine Asset-Konto-Gruppe.")
+        return asset_groups[0]
+
+    def _make_bank_gl_account(self):
+        account = frappe.get_doc({
+            "doctype": "Account",
+            "account_name": f"HV Test Bank GL {self.suffix}",
+            "parent_account": self._bank_parent_account(),
+            "company": self.company,
+            "account_type": "Bank",
+            "is_group": 0,
+        }).insert(ignore_permissions=True)
+        self._track(account)
+        return account.name
+
+    def _make_company_bank_account(self):
+        bank_name = f"HV Test Bank {self.suffix}"
+        if not frappe.db.exists("Bank", bank_name):
+            self._track(
+                frappe.get_doc({"doctype": "Bank", "bank_name": bank_name}).insert(
+                    ignore_permissions=True
+                )
+            )
+        bank_account = frappe.get_doc({
+            "doctype": "Bank Account",
+            "account_name": f"HV Test Bankkonto {self.suffix}",
+            "bank": bank_name,
+            "company": self.company,
+            "account": self.bank_gl_account,
+            "is_company_account": 1,
+            "disabled": 0,
+            "iban": "DE89370400440532013000",
+        }).insert(ignore_permissions=True)
+        self._track(bank_account)
+        return bank_account.name
 
     def _make_file(self):
         file_doc = save_file(
