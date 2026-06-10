@@ -9,7 +9,8 @@
     "build:frappe": "node ./scripts/copy-to-frappe.mjs",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:frappe": "playwright test -c playwright.frappe.config.js"
   },
   "dependencies": {
     "react": "^18.3.1",

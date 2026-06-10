@@ -1,11 +1,13 @@
 # See license.txt
 
+import unittest
 from unittest.mock import patch
 
 import frappe
-import unittest
+from frappe.utils.file_manager import save_file
 
 from hausverwaltung.hausverwaltung.doctype.bankauszug_import import bankauszug_import as bi
+from hausverwaltung.hausverwaltung.page.bankimport_v2 import bankimport_v2 as bv2
 
 
 class TestBankauszugImport(unittest.TestCase):
@@ -72,7 +74,11 @@ class TestBankauszugImport(unittest.TestCase):
             self.name = name
             self.party_type = party_type
             self.party = party
+            self.bank_account = "BANK-1"
             self.values = {}
+            self.inserted = False
+            self.submitted = False
+            self.deleted = False
 
         def db_set(self, fieldname, value, update_modified=False):
             self.values[fieldname] = value
@@ -81,6 +87,21 @@ class TestBankauszugImport(unittest.TestCase):
         def set(self, fieldname, value):
             self.values[fieldname] = value
             setattr(self, fieldname, value)
+
+        def insert(self, ignore_permissions=False):
+            self.inserted = True
+            self.ignore_permissions = ignore_permissions
+
+        def submit(self):
+            self.submitted = True
+
+        def delete(self, ignore_permissions=False):
+            self.deleted = True
+
+    class _FakeMeta:
+        def __init__(self, fieldnames, is_submittable=0):
+            self.fields = [type("F", (), {"fieldname": fieldname, "label": fieldname})() for fieldname in fieldnames]
+            self.is_submittable = is_submittable
 
     def test_get_party_by_iban_returns_single_unique_party(self):
         with patch.object(
@@ -194,9 +215,10 @@ class TestBankauszugImport(unittest.TestCase):
             bankkonto = "BA-1"
 
         class _FakeMietvertrag:
-            name = "MV-1"
-            kontoverbindungen = [_FakeLink()]
-            mieter = []
+            def __init__(self):
+                self.name = "MV-1"
+                self.kontoverbindungen = [_FakeLink()]
+                self.mieter = []
 
             def get(self, key):
                 return getattr(self, key)
@@ -517,6 +539,302 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertTrue(doc.saved)
         self.assertEqual(res["row_party"], "CUST-G")
         self.assertTrue(res["relink"]["updated"])
+
+    def test_change_row_party_resets_existing_booking_before_changing_party(self):
+        row = self._FakeRow(name="ROW-CHG", iban="DE10")
+        row.party_type = "Customer"
+        row.party = "CUST-OLD"
+        row.bank_transaction = "BT-CHG"
+        row.payment_entry = "PE-OLD"
+        doc = self._FakeDoc("IMP-CHG", [row])
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(bi, "reset_row_booking", return_value={"ok": True, "reset": True}) as reset, \
+             patch.object(bi, "_set_bt_party", return_value={"updated": True, "bank_transaction": "BT-CHG"}) as set_bt, \
+             patch.object(bi, "_auto_create_transaction_for_ready_row", return_value={"attempted": 1, "created": ["BT-NEW"], "errors": []}) as auto_create, \
+             patch.object(bi, "_recompute_doc_status") as recompute, \
+             patch.object(bi, "_refresh_and_persist_saldo") as refresh:
+            res = bi.change_row_party("IMP-CHG", "ROW-CHG", party_type="Supplier", party="SUP-NEW")
+
+        reset.assert_called_once_with("IMP-CHG", "ROW-CHG")
+        set_bt.assert_called_once_with(row, "Supplier", "SUP-NEW", clear=False)
+        auto_create.assert_called_once_with("IMP-CHG", "ROW-CHG")
+        recompute.assert_called_once_with("IMP-CHG")
+        refresh.assert_called_once_with("IMP-CHG")
+        self.assertEqual(row.party_type, "Supplier")
+        self.assertEqual(row.party, "SUP-NEW")
+        self.assertEqual(row.auto_match_message, "Partei geändert: Supplier SUP-NEW")
+        self.assertEqual(res["old_party"], "CUST-OLD")
+        self.assertEqual(res["row_party"], "SUP-NEW")
+        self.assertTrue(doc.saved)
+
+    def test_change_row_party_clear_removes_party_and_does_not_auto_create_transaction(self):
+        row = self._FakeRow(name="ROW-CLEAR", iban="DE11")
+        row.party_type = "Customer"
+        row.party = "CUST-OLD"
+        row.bank_transaction = "BT-CLEAR"
+        doc = self._FakeDoc("IMP-CLEAR", [row])
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi, "reset_row_booking", return_value={"ok": True, "reset": False}), \
+             patch.object(bi, "_set_bt_party", return_value={"updated": True, "bank_transaction": "BT-CLEAR"}) as set_bt, \
+             patch.object(bi, "_auto_create_transaction_for_ready_row") as auto_create, \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch.object(bi, "_refresh_and_persist_saldo"):
+            res = bi.change_row_party("IMP-CLEAR", "ROW-CLEAR", clear_party=1)
+
+        set_bt.assert_called_once_with(row, None, None, clear=True)
+        auto_create.assert_not_called()
+        self.assertIsNone(row.party_type)
+        self.assertIsNone(row.party)
+        self.assertEqual(row.auto_match_message, "Partei entfernt.")
+        self.assertEqual(res["auto_create"], {"attempted": 0, "created": [], "errors": []})
+
+    def test_change_row_party_propagates_same_unique_iban_only_to_unbooked_rows(self):
+        target = self._FakeRow(name="ROW-TARGET", iban="DE 12")
+        target.party_type = "Customer"
+        target.party = "CUST-OLD"
+        target.bank_transaction = "BT-TARGET"
+        same_open = self._FakeRow(name="ROW-SAME-OPEN", iban="DE12")
+        same_open.bank_transaction = "BT-SAME"
+        same_booked = self._FakeRow(name="ROW-SAME-BOOKED", iban="DE12")
+        same_booked.payment_entry = "PE-BOOKED"
+        different = self._FakeRow(name="ROW-DIFF", iban="DE99")
+        doc = self._FakeDoc("IMP-PROP", [target, same_open, same_booked, different])
+
+        def _set_bt(row, party_type, party, clear=False):
+            return {"updated": True, "bank_transaction": row.bank_transaction}
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(bi, "reset_row_booking", return_value={"ok": True, "reset": False}), \
+             patch.object(bi, "_set_bt_party", side_effect=_set_bt), \
+             patch.object(bi, "_get_party_by_iban", return_value=("Customer", "CUST-NEW")), \
+             patch.object(bi, "_auto_create_transaction_for_ready_row", return_value={"attempted": 0, "created": [], "errors": []}), \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch.object(bi, "_refresh_and_persist_saldo"):
+            res = bi.change_row_party(
+                "IMP-PROP",
+                "ROW-TARGET",
+                party_type="Customer",
+                party="CUST-NEW",
+                propagate_same_iban=1,
+            )
+
+        self.assertEqual(same_open.party_type, "Customer")
+        self.assertEqual(same_open.party, "CUST-NEW")
+        self.assertIsNone(same_booked.party)
+        self.assertIsNone(different.party)
+        self.assertEqual(res["propagated_rows"], [
+            {"row": "ROW-SAME-OPEN", "bank_transaction": "BT-SAME", "bt_updated": True}
+        ])
+
+    def test_change_row_party_skips_propagation_when_iban_mapping_is_ambiguous(self):
+        target = self._FakeRow(name="ROW-TARGET", iban="DE12")
+        same_open = self._FakeRow(name="ROW-SAME", iban="DE12")
+        doc = self._FakeDoc("IMP-AMB", [target, same_open])
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(bi, "reset_row_booking", return_value={"ok": True, "reset": False}), \
+             patch.object(bi, "_set_bt_party", return_value={"updated": False}), \
+             patch.object(bi, "_get_party_by_iban", return_value=None), \
+             patch.object(bi, "_auto_create_transaction_for_ready_row", return_value={"attempted": 0, "created": [], "errors": []}), \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch.object(bi, "_refresh_and_persist_saldo"):
+            res = bi.change_row_party(
+                "IMP-AMB",
+                "ROW-TARGET",
+                party_type="Customer",
+                party="CUST-NEW",
+                propagate_same_iban=1,
+            )
+
+        self.assertIsNone(same_open.party)
+        self.assertEqual(res["propagated_rows"], [])
+        self.assertEqual(res["propagation_skipped"], "iban_not_unique")
+
+    def test_change_row_party_update_iban_mapping_unlinks_old_and_links_new_bank_account(self):
+        row = self._FakeRow(name="ROW-IBAN", iban="DE13")
+        row.party_type = "Customer"
+        row.party = "CUST-OLD"
+        doc = self._FakeDoc("IMP-IBAN", [row])
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(bi, "reset_row_booking", return_value={"ok": True, "reset": False}), \
+             patch.object(bi, "unlink_party_bank_account_for_row", return_value={"updated": 1, "bank_accounts": ["BA-OLD"]}) as unlink, \
+             patch.object(bi, "_get_or_create_party_bank_account", return_value=("BA-NEW", True)) as link, \
+             patch.object(bi, "_link_customer_bank_account_to_mietvertraege", return_value={"updated": 2, "unchanged": 0, "errors": []}) as link_mv, \
+             patch.object(bi, "_set_bt_party", return_value={"updated": False}), \
+             patch.object(bi, "_auto_create_transaction_for_ready_row", return_value={"attempted": 0, "created": [], "errors": []}), \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch.object(bi, "_refresh_and_persist_saldo"):
+            res = bi.change_row_party(
+                "IMP-IBAN",
+                "ROW-IBAN",
+                party_type="Customer",
+                party="CUST-NEW",
+                update_iban_mapping=1,
+            )
+
+        unlink.assert_called_once_with(row, "Customer", "CUST-OLD")
+        link.assert_called_once_with(party_type="Customer", party="CUST-NEW", iban="DE13")
+        link_mv.assert_called_once_with("CUST-NEW", "BA-NEW")
+        self.assertEqual(res["bank_account_unlink"]["bank_accounts"], ["BA-OLD"])
+        self.assertEqual(res["bank_account_link"]["bank_account"], "BA-NEW")
+        self.assertEqual(res["bank_account_link"]["mietvertrag_links"]["updated"], 2)
+
+    def test_create_bank_transactions_returns_warning_for_missing_party_without_creating(self):
+        row = self._FakeRow(name="ROW-MISS", iban="DE14")
+        doc = self._FakeDoc("IMP-MISS", [row])
+        bank_account = type("BankAccount", (), {"is_company_account": 1})()
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Account":
+                return bank_account
+            raise AssertionError("unexpected doctype")
+
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe, "new_doc") as new_doc:
+            res = bi.create_bank_transactions("IMP-MISS", allow_missing_party=0)
+
+        new_doc.assert_not_called()
+        self.assertEqual(res["created"], [])
+        self.assertEqual(res["errors"], [])
+        self.assertEqual(res["warning"]["missing_count"], 1)
+        self.assertIn("Zeile ROW-MISS", res["warning"]["preview_lines"][0])
+
+    def test_create_bank_transactions_allows_missing_party_and_creates_neutral_bank_transaction(self):
+        row = self._FakeRow(name="ROW-NEUTRAL", iban="DE15", verwendungszweck="Bankgebühr")
+        doc = self._FakeDoc("IMP-NEUTRAL", [row])
+        bank_account = type("BankAccount", (), {"is_company_account": 1})()
+        bt = self._FakeBT("BT-NEUTRAL")
+        meta = self._FakeMeta(
+            ["date", "deposit", "withdrawal", "description", "party_type", "party", "status", "unallocated_amount"]
+        )
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Account":
+                return bank_account
+            raise AssertionError("unexpected doctype")
+
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe, "get_meta", return_value=meta), \
+             patch.object(bi.frappe, "new_doc", return_value=bt), \
+             patch.object(bi.frappe.db, "get_single_value", return_value=None), \
+             patch.object(bi, "_find_existing_bank_transaction", return_value=None), \
+             patch.object(bi, "_get_party_by_iban", return_value=None), \
+             patch("hausverwaltung.hausverwaltung.utils.payment_auto_match.auto_match_bank_transaction", return_value={"matched": False, "reason": "no_party", "message": "Keine Party"}), \
+             patch.object(bi, "_refresh_saldo_fields"), \
+             patch.object(bi, "_recompute_doc_status"):
+            res = bi.create_bank_transactions("IMP-NEUTRAL", allow_missing_party=1)
+
+        self.assertEqual(res["created"], ["BT-NEUTRAL"])
+        self.assertEqual(res["created_without_party"], 1)
+        self.assertEqual(row.bank_transaction, "BT-NEUTRAL")
+        self.assertEqual(row.row_status, "success")
+        self.assertIsNone(getattr(bt, "party", None))
+        self.assertEqual(bt.description, "Bankgebühr")
+        self.assertTrue(bt.inserted)
+
+    def test_create_bank_transactions_links_duplicate_instead_of_creating_new_transaction(self):
+        row = self._FakeRow(name="ROW-DUP", iban="DE16")
+        doc = self._FakeDoc("IMP-DUP", [row])
+        bank_account = type("BankAccount", (), {"is_company_account": 1})()
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Account":
+                return bank_account
+            raise AssertionError("unexpected doctype")
+
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe.db, "get_single_value", return_value=None), \
+             patch.object(bi, "_build_missing_party_warning_payload", return_value=None), \
+             patch.object(bi, "_find_existing_bank_transaction", return_value="BT-EXISTING"), \
+             patch.object(bi.frappe, "new_doc") as new_doc, \
+             patch.object(bi, "_refresh_saldo_fields"), \
+             patch.object(bi, "_recompute_doc_status"):
+            res = bi.create_bank_transactions("IMP-DUP")
+
+        new_doc.assert_not_called()
+        self.assertEqual(res["created"], [])
+        self.assertEqual(row.bank_transaction, "BT-EXISTING")
+        self.assertEqual(row.reference, "BT-EXISTING")
+        self.assertEqual(row.row_status, "schon vorhanden")
+
+    def test_create_bank_transactions_skips_rows_before_configured_start_date(self):
+        row = self._FakeRow(name="ROW-OLD", iban="DE17")
+        row.party_type = "Customer"
+        row.party = "CUST-1"
+        row.buchungstag = "2026-01-01"
+        doc = self._FakeDoc("IMP-OLD", [row])
+        bank_account = type("BankAccount", (), {"is_company_account": 1})()
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Account":
+                return bank_account
+            raise AssertionError("unexpected doctype")
+
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe.db, "get_single_value", return_value="2026-02-01"), \
+             patch.object(bi, "_build_missing_party_warning_payload", return_value=None), \
+             patch.object(bi.frappe, "new_doc") as new_doc, \
+             patch.object(bi, "_refresh_saldo_fields"), \
+             patch.object(bi, "_recompute_doc_status"):
+            res = bi.create_bank_transactions("IMP-OLD")
+
+        new_doc.assert_not_called()
+        self.assertEqual(res["skipped_before_cutoff"], 1)
+        self.assertEqual(res["cutoff_date"], "2026-02-01")
+        self.assertEqual(row.row_status, "vor Start-Datum")
+
+    def test_create_bank_transactions_marks_error_rows_failed_and_continues_with_other_rows(self):
+        bad = self._FakeRow(name="ROW-BAD", error="Ungültiges Datum")
+        good = self._FakeRow(name="ROW-GOOD", iban="DE18")
+        good.party_type = "Customer"
+        good.party = "CUST-1"
+        doc = self._FakeDoc("IMP-MIX", [bad, good])
+        bank_account = type("BankAccount", (), {"is_company_account": 1})()
+        bt = self._FakeBT("BT-GOOD")
+        meta = self._FakeMeta(["date", "deposit", "withdrawal", "description", "party_type", "party"])
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Account":
+                return bank_account
+            raise AssertionError("unexpected doctype")
+
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe, "get_meta", return_value=meta), \
+             patch.object(bi.frappe, "new_doc", return_value=bt), \
+             patch.object(bi.frappe.db, "get_single_value", return_value=None), \
+             patch.object(bi, "_build_missing_party_warning_payload", return_value=None), \
+             patch.object(bi, "_find_existing_bank_transaction", return_value=None), \
+             patch("hausverwaltung.hausverwaltung.utils.payment_auto_match.auto_match_bank_transaction", return_value={"matched": False, "reason": "no_open_invoices", "message": "Keine Rechnung"}), \
+             patch.object(bi, "_refresh_saldo_fields"), \
+             patch.object(bi, "_recompute_doc_status"):
+            res = bi.create_bank_transactions("IMP-MIX")
+
+        self.assertEqual(bad.row_status, "failed")
+        self.assertEqual(res["errors"], [{"row": "ROW-BAD", "error": "Ungültiges Datum"}])
+        self.assertEqual(res["created"], ["BT-GOOD"])
+        self.assertEqual(good.row_status, "success")
 
     def test_apply_party_to_row_and_relink_accepts_eigentuemer(self):
         row = self._FakeRow(name="ROW-GE", iban="DE9E")
@@ -1839,3 +2157,144 @@ class TestBankauszugImport(unittest.TestCase):
 
         self.assertEqual(len(missing), 1)
         self.assertEqual(missing[0]["reason"], "no_party_mapping")
+
+
+class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
+    def setUp(self):
+        self.created_docs = []
+        self.suffix = frappe.generate_hash(length=8)
+        company_rows = frappe.get_all("Company", pluck="name", limit=1)
+        if not company_rows:
+            self.skipTest("Integrationstest benötigt mindestens eine Company.")
+        self.company = company_rows[0]
+
+        bank_account_rows = frappe.get_all(
+            "Bank Account",
+            filters={
+                "company": self.company,
+                "is_company_account": 1,
+                "disabled": 0,
+            },
+            fields=["name", "account"],
+            limit=1,
+        )
+        if not bank_account_rows:
+            self.skipTest("Integrationstest benötigt ein aktives Firmen-Bankkonto.")
+        self.bank_account = bank_account_rows[0].name
+        self.bank_gl_account = bank_account_rows[0].account
+
+    def tearDown(self):
+        for doctype, name in reversed(self.created_docs):
+            if not frappe.db.exists(doctype, name):
+                continue
+            try:
+                doc = frappe.get_doc(doctype, name)
+                if getattr(doc, "docstatus", 0) == 1:
+                    doc.cancel()
+            except Exception:
+                pass
+            try:
+                frappe.delete_doc(doctype, name, ignore_permissions=True, force=True)
+            except TypeError:
+                frappe.delete_doc(doctype, name, ignore_permissions=True)
+            except Exception:
+                pass
+
+    def _track(self, doc):
+        self.created_docs.append((doc.doctype, doc.name))
+        return doc
+
+    def _make_file(self):
+        file_doc = save_file(
+            f"hv-bankimport-{self.suffix}.csv",
+            b"Buchungstag;Betrag;Verwendungszweck\n",
+            "",
+            "",
+            is_private=1,
+        )
+        self._track(file_doc)
+        return file_doc
+
+    def _make_import(self, rows):
+        file_doc = self._make_file()
+        import_doc = frappe.get_doc({
+            "doctype": "Bankauszug Import",
+            "bank_account": self.bank_account,
+            "csv_file": file_doc.file_url,
+        })
+        for row in rows:
+            import_doc.append("rows", row)
+        import_doc.insert(ignore_permissions=True)
+        self._track(import_doc)
+        return import_doc
+
+    def _neutral_row(self, **overrides):
+        row = {
+            "buchungstag": "2026-04-03",
+            "betrag": 42.35,
+            "richtung": "Eingang",
+            "auftraggeber": f"HV Integration {self.suffix}",
+            "verwendungszweck": f"Integrationstest {self.suffix}",
+            "iban": "DE89370400440532013000",
+            "currency": "EUR",
+        }
+        row.update(overrides)
+        return row
+
+    def _create_transactions_without_auto_match(self, import_name):
+        with patch(
+            "hausverwaltung.hausverwaltung.utils.payment_auto_match.auto_match_bank_transaction",
+            return_value={"matched": False, "reason": "no_party", "message": "Keine Party"},
+        ), \
+             patch.object(bi, "_refresh_saldo_fields"), \
+             patch.object(bi, "_persist_saldo_fields"):
+            return bi.create_bank_transactions(import_name, allow_missing_party=1)
+
+    def test_real_import_document_persists_rows_and_computes_title(self):
+        doc = self._make_import([
+            self._neutral_row(betrag=10.5, verwendungszweck="Erste echte Zeile"),
+            self._neutral_row(
+                buchungstag="2026-04-05",
+                betrag=15.25,
+                richtung="Ausgang",
+                verwendungszweck="Zweite echte Zeile",
+            ),
+        ])
+
+        doc.reload()
+
+        self.assertEqual(len(doc.rows), 2)
+        self.assertIn("2 Buchungen", doc.title)
+        self.assertEqual(doc.rows[0].betrag, 10.5)
+        self.assertEqual(doc.rows[1].richtung, "Ausgang")
+
+    def test_real_create_bank_transactions_creates_submitted_bt_and_updates_row(self):
+        doc = self._make_import([self._neutral_row()])
+
+        result = self._create_transactions_without_auto_match(doc.name)
+
+        doc.reload()
+        row = doc.rows[0]
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["created"], [row.bank_transaction])
+        self.assertTrue(frappe.db.exists("Bank Transaction", row.bank_transaction))
+        self.created_docs.append(("Bank Transaction", row.bank_transaction))
+        bt = frappe.get_doc("Bank Transaction", row.bank_transaction)
+        self.assertEqual(bt.bank_account, self.bank_account)
+        self.assertEqual(bt.deposit, 42.35)
+        self.assertEqual(bt.withdrawal, 0)
+        self.assertEqual(bt.status, "Unreconciled")
+        self.assertEqual(row.row_status, "success")
+        self.assertEqual(row.reference, row.bank_transaction)
+
+    def test_real_delete_import_blocks_without_cascade_when_import_owns_bank_transaction(self):
+        doc = self._make_import([self._neutral_row(betrag=71.9)])
+        result = self._create_transactions_without_auto_match(doc.name)
+        self.created_docs.append(("Bank Transaction", result["created"][0]))
+
+        with self.assertRaises(frappe.ValidationError):
+            bv2.delete_import(doc.name, cascade=0)
+
+        self.assertTrue(frappe.db.exists("Bankauszug Import", doc.name))
+        doc.reload()
+        self.assertEqual(doc.rows[0].bank_transaction, result["created"][0])

@@ -1,9 +1,10 @@
 # See license.txt
 
+import base64
+import unittest
 from unittest.mock import patch
 
 import frappe
-import unittest
 
 from hausverwaltung.hausverwaltung.page.bankimport_v2 import bankimport_v2 as bv2
 
@@ -96,6 +97,17 @@ class _OverviewDoc:
 
 	def _bank_account_label(self):
 		return "Bank"
+
+
+class _FakeBankAccount:
+	def __init__(self, *, name="BANK-1", is_company_account=1, disabled=0, account="1800"):
+		self.name = name
+		self.is_company_account = is_company_account
+		self.disabled = disabled
+		self.account = account
+
+	def get(self, key, default=None):
+		return getattr(self, key, default)
 
 
 class TestListImports(unittest.TestCase):
@@ -211,6 +223,103 @@ class TestDeleteImport(unittest.TestCase):
 			 patch("frappe.db.get_value", return_value=1), \
 			 self.assertRaises(frappe.ValidationError):
 			bv2.delete_import("BAI-1", cascade=0)
+
+	def test_cascade_delete_cancels_vouchers_cleans_owned_bank_transactions_and_deletes_import(self):
+		doc = frappe._dict(name="BAI-1")
+		impact = {
+			"vouchers": [{"type": "Payment Entry", "name": "PE-1"}],
+			"bankTransactionsToReverse": [{"name": "BT-1"}],
+			"bankTransactionsKept": [{"name": "BT-EXISTING"}],
+		}
+
+		with patch("frappe.db.savepoint") as savepoint, \
+			 patch.object(bv2, "_cancel_voucher_for_row", return_value={"status": "cancelled"}) as cancel, \
+			 patch("hausverwaltung.hausverwaltung.utils.bank_transaction_links.remove_bank_transaction_payment_links", return_value=["BT-1"]) as delink, \
+			 patch.object(bv2, "_cleanup_bank_transaction_for_import_delete", return_value={"status": "cancelled"}) as cleanup_bt, \
+			 patch("frappe.delete_doc") as delete_doc:
+			res = bv2._cascade_delete_import(doc, impact)
+
+		savepoint.assert_called_once_with("bankimport_delete_cascade")
+		cancel.assert_called_once_with("Payment Entry", "PE-1")
+		delink.assert_called_once_with("Payment Entry", "PE-1")
+		cleanup_bt.assert_called_once_with("BT-1")
+		delete_doc.assert_called_once_with("Bankauszug Import", "BAI-1")
+		self.assertEqual(res["vouchers"][0]["cancel"]["status"], "cancelled")
+		self.assertEqual(res["keptBankTransactions"], [{"name": "BT-EXISTING"}])
+
+	def test_cascade_delete_rolls_back_and_keeps_import_when_cleanup_fails(self):
+		doc = frappe._dict(name="BAI-ROLLBACK")
+		impact = {
+			"vouchers": [{"type": "Journal Entry", "name": "JE-1"}],
+			"bankTransactionsToReverse": [],
+			"bankTransactionsKept": [],
+		}
+
+		with patch("frappe.db.savepoint") as savepoint, \
+			 patch("frappe.db.rollback") as rollback, \
+			 patch.object(bv2, "_cancel_voucher_for_row", side_effect=Exception("cancel failed")), \
+			 patch("frappe.delete_doc") as delete_doc, \
+			 self.assertRaisesRegex(Exception, "cancel failed"):
+			bv2._cascade_delete_import(doc, impact)
+
+		savepoint.assert_called_once_with("bankimport_delete_cascade")
+		rollback.assert_called_once_with(save_point="bankimport_delete_cascade")
+		delete_doc.assert_not_called()
+
+
+class TestCreateImport(unittest.TestCase):
+	class _Meta:
+		def has_field(self, fieldname):
+			return fieldname in {"disabled", "attached_to_field"}
+
+	def _raise_throw(self, msg):
+		raise frappe.ValidationError(str(msg))
+
+	def test_rejects_empty_file_payload(self):
+		with patch("frappe.has_permission"), \
+			 patch("frappe.throw", side_effect=self._raise_throw):
+			with self.assertRaisesRegex(frappe.ValidationError, "Bitte eine CSV-Datei auswählen."):
+				bv2.create_import("BANK-1", "konto.csv", "")
+
+	def test_rejects_invalid_base64_payload(self):
+		with patch("frappe.has_permission"), \
+			 patch("frappe.db.exists", return_value=True), \
+			 patch("frappe.get_doc", return_value=_FakeBankAccount()), \
+			 patch("frappe.get_meta", return_value=self._Meta()), \
+			 patch("frappe.db.get_value", return_value=0), \
+			 patch("frappe.throw", side_effect=self._raise_throw):
+			with self.assertRaisesRegex(frappe.ValidationError, "CSV-Datei konnte nicht gelesen"):
+				bv2.create_import("BANK-1", "konto.csv", "data:text/csv;base64,%%%")
+
+	def test_rejects_non_company_bank_account(self):
+		with patch("frappe.has_permission"), \
+			 patch("frappe.db.exists", return_value=True), \
+			 patch("frappe.get_doc", return_value=_FakeBankAccount(is_company_account=0)), \
+			 patch("frappe.get_meta", return_value=self._Meta()), \
+			 patch("frappe.throw", side_effect=self._raise_throw):
+			with self.assertRaisesRegex(frappe.ValidationError, "Firmen-Bankkonto"):
+				bv2.create_import("BANK-1", "konto.csv", "QQ==")
+
+	def test_rejects_disabled_linked_gl_account(self):
+		with patch("frappe.has_permission"), \
+			 patch("frappe.db.exists", return_value=True), \
+			 patch("frappe.get_doc", return_value=_FakeBankAccount(account="1800")), \
+			 patch("frappe.get_meta", return_value=self._Meta()), \
+			 patch("frappe.db.get_value", return_value=1), \
+			 patch("frappe.throw", side_effect=self._raise_throw):
+			with self.assertRaisesRegex(frappe.ValidationError, "Sachkonto ist deaktiviert"):
+				bv2.create_import("BANK-1", "konto.csv", "QQ==")
+
+	def test_rejects_payload_over_ten_megabytes(self):
+		too_large = base64.b64encode(b"x" * (10 * 1024 * 1024 + 1)).decode("ascii")
+		with patch("frappe.has_permission"), \
+			 patch("frappe.db.exists", return_value=True), \
+			 patch("frappe.get_doc", return_value=_FakeBankAccount()), \
+			 patch("frappe.get_meta", return_value=self._Meta()), \
+			 patch("frappe.db.get_value", return_value=0), \
+			 patch("frappe.throw", side_effect=self._raise_throw):
+			with self.assertRaisesRegex(frappe.ValidationError, "zu groß"):
+				bv2.create_import("BANK-1", "konto.csv", too_large)
 
 
 class TestSuggestInvoiceForRow(unittest.TestCase):
@@ -436,3 +545,78 @@ class TestGetOverviewSync(unittest.TestCase):
 		self.assertIsNone(out["paymentDocument"])
 		self.assertEqual(out["phase"], 3)
 		self.assertEqual(out["rowStatus"], "phase3-open")
+
+	def test_get_overview_returns_outgoing_amounts_as_negative_and_counts_phases(self):
+		incoming = _OverviewRow()
+		incoming.name = "ROW-IN"
+		incoming.betrag = 625.0
+		incoming.richtung = "Eingang"
+		incoming.payment_entry = None
+		incoming.payment_document = None
+		incoming.payment_document_type = None
+		incoming.row_status = None
+
+		outgoing = _OverviewRow()
+		outgoing.name = "ROW-OUT"
+		outgoing.betrag = 89.9
+		outgoing.richtung = "Ausgang"
+		outgoing.party_type = "Supplier"
+		outgoing.party = "SUP-1"
+		outgoing.bank_transaction = None
+		outgoing.payment_entry = None
+		outgoing.payment_document = None
+		outgoing.payment_document_type = None
+		outgoing.row_status = None
+
+		done = _OverviewRow()
+		done.name = "ROW-DONE"
+		done.betrag = 100.0
+		done.richtung = "Eingang"
+		done.payment_entry = "PE-1"
+		done.payment_document = "PE-1"
+		done.payment_document_type = "Payment Entry"
+		done.row_status = "success"
+
+		doc = _OverviewDoc(incoming)
+		doc.rows = [incoming, outgoing, done]
+
+		with patch("frappe.get_doc", return_value=doc), \
+			 patch("frappe.has_permission", return_value=True), \
+			 patch.object(bv2, "sync_cancelled_payment_entry_links"), \
+			 patch.object(bv2, "sync_cancelled_journal_entry_links"), \
+			 patch.object(bv2, "_recompute_doc_status"), \
+			 patch.object(bv2, "_refresh_saldo_fields"), \
+			 patch.object(bv2, "_persist_saldo_fields"), \
+			 patch.object(bv2, "_bank_account_iban", return_value="DE-BANK"), \
+			 patch.object(bv2, "_suggest_invoice_for_row", return_value=None):
+			res = bv2.get_overview("IMP-OVERVIEW")
+
+		rows = {row["id"]: row for row in res["rows"]}
+		self.assertEqual(rows["ROW-IN"]["betrag"], 625.0)
+		self.assertEqual(rows["ROW-OUT"]["betrag"], -89.9)
+		self.assertEqual(rows["ROW-DONE"]["betrag"], 100.0)
+		self.assertEqual(res["phaseCounts"], {1: 0, 2: 1, 3: 1, 4: 1})
+		self.assertEqual(rows["ROW-OUT"]["rowStatus"], "phase2-no-bt")
+		self.assertEqual(rows["ROW-DONE"]["rowStatus"], "done")
+
+	def test_get_overview_keeps_response_stable_when_invoice_suggestion_fails(self):
+		row = _OverviewRow()
+		row.payment_entry = None
+		row.payment_document = None
+		row.payment_document_type = None
+		row.row_status = None
+		doc = _OverviewDoc(row)
+
+		with patch("frappe.get_doc", return_value=doc), \
+			 patch("frappe.has_permission", return_value=True), \
+			 patch.object(bv2, "sync_cancelled_payment_entry_links"), \
+			 patch.object(bv2, "sync_cancelled_journal_entry_links"), \
+			 patch.object(bv2, "_recompute_doc_status"), \
+			 patch.object(bv2, "_refresh_saldo_fields"), \
+			 patch.object(bv2, "_persist_saldo_fields"), \
+			 patch.object(bv2, "_suggest_invoice_for_row", side_effect=Exception("matcher down")):
+			res = bv2.get_overview("IMP-OVERVIEW")
+
+		self.assertIsNone(res["rows"][0]["autoMatch"])
+		self.assertEqual(res["rows"][0]["phase"], 3)
+		self.assertEqual(res["rows"][0]["rowStatus"], "phase3-open")
