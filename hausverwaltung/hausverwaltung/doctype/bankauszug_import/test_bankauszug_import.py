@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 import frappe
+from frappe.utils import flt
 from frappe.utils.file_manager import save_file
 
 from hausverwaltung.hausverwaltung.doctype.bankauszug_import import bankauszug_import as bi
@@ -2170,6 +2171,22 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
 
         self.bank_gl_account = self._make_bank_gl_account()
         self.bank_account = self._make_company_bank_account()
+        self.receivable_account = self._get_or_make_leaf_account(
+            root_type="Asset",
+            account_type="Receivable",
+            fallback_label="HV Test Forderungen",
+        )
+        self.income_account = self._get_or_make_leaf_account(
+            root_type="Income",
+            fallback_label="HV Test Mieterloese",
+        )
+        self.expense_account = self._get_or_make_leaf_account(
+            root_type="Expense",
+            fallback_label="HV Test Bankgebuehren",
+        )
+        self.cost_center = self._get_cost_center()
+        self._ensure_fiscal_year_2026()
+        self._ensure_rent_items_for_test()
 
     def tearDown(self):
         for doctype, name in reversed(self.created_docs):
@@ -2191,6 +2208,94 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
     def _track(self, doc):
         self.created_docs.append((doc.doctype, doc.name))
         return doc
+
+    def _get_cost_center(self):
+        cost_center = frappe.db.get_value("Company", self.company, "cost_center")
+        if cost_center:
+            return cost_center
+        rows = frappe.get_all(
+            "Cost Center",
+            filters={"company": self.company, "is_group": 0},
+            pluck="name",
+            limit=1,
+        )
+        if rows:
+            return rows[0]
+        self.skipTest("Integrationstest benötigt eine Kostenstelle.")
+
+    def _get_or_make_leaf_account(self, *, root_type, account_type=None, fallback_label):
+        filters = {"company": self.company, "is_group": 0, "root_type": root_type}
+        if account_type:
+            filters["account_type"] = account_type
+        rows = frappe.get_all("Account", filters=filters, pluck="name", limit=1)
+        if rows:
+            return rows[0]
+
+        parent_rows = frappe.get_all(
+            "Account",
+            filters={"company": self.company, "is_group": 1, "root_type": root_type},
+            pluck="name",
+            order_by="lft desc",
+            limit=1,
+        )
+        if not parent_rows:
+            self.skipTest(f"Integrationstest benötigt eine {root_type}-Konto-Gruppe.")
+        payload = {
+            "doctype": "Account",
+            "account_name": f"{fallback_label} {self.suffix}",
+            "parent_account": parent_rows[0],
+            "company": self.company,
+            "is_group": 0,
+        }
+        if account_type:
+            payload["account_type"] = account_type
+        return self._track(frappe.get_doc(payload).insert(ignore_permissions=True)).name
+
+    def _ensure_rent_items_for_test(self):
+        if not frappe.db.exists("UOM", "Nos"):
+            self._track(
+                frappe.get_doc({
+                    "doctype": "UOM",
+                    "uom_name": "Nos",
+                }).insert(ignore_permissions=True)
+            )
+        item_group = "Services"
+        if not frappe.db.exists("Item Group", item_group):
+            item_group = frappe.get_all("Item Group", pluck="name", limit=1)[0]
+        for item_code in ("Miete", "Betriebskosten", "Heizkosten"):
+            if frappe.db.exists("Item", item_code):
+                continue
+            item = frappe.get_doc({
+                "doctype": "Item",
+                "item_code": item_code,
+                "item_name": item_code,
+                "item_group": item_group,
+                "stock_uom": "Nos",
+                "is_stock_item": 0,
+            }).insert(ignore_permissions=True)
+            self._track(item)
+
+    def _ensure_fiscal_year_2026(self):
+        existing = frappe.db.exists(
+            "Fiscal Year",
+            {
+                "year_start_date": ["<=", "2026-05-01"],
+                "year_end_date": [">=", "2026-05-31"],
+                "disabled": 0,
+            },
+        )
+        if existing:
+            return existing
+        fiscal_year = frappe.get_doc({
+            "doctype": "Fiscal Year",
+            "year": f"HV Test 2026 {self.suffix}",
+            "year_start_date": "2026-01-01",
+            "year_end_date": "2026-12-31",
+            "disabled": 0,
+            "companies": [{"company": self.company}],
+        }).insert(ignore_permissions=True)
+        self._track(fiscal_year)
+        return fiscal_year.name
 
     def _bank_parent_account(self):
         preferred = frappe.get_all(
@@ -2251,6 +2356,81 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         self._track(bank_account)
         return bank_account.name
 
+    def _make_customer(self, label, iban):
+        customer = frappe.get_doc({
+            "doctype": "Customer",
+            "customer_name": f"HV Test {label} {self.suffix}",
+            "customer_type": "Individual",
+        })
+        customer.append(
+            "accounts",
+            {
+                "company": self.company,
+                "account": self.receivable_account,
+            },
+        )
+        customer.insert(ignore_permissions=True)
+        self._track(customer)
+
+        bank_account = frappe.get_doc({
+            "doctype": "Bank Account",
+            "account_name": f"HV Test {label} Bank {self.suffix}",
+            "bank": self._get_default_bank(),
+            "iban": iban,
+            "is_company_account": 0,
+            "party_type": "Customer",
+            "party": customer.name,
+        }).insert(ignore_permissions=True)
+        self._track(bank_account)
+        return customer.name
+
+    def _get_default_bank(self):
+        rows = frappe.get_all("Bank", pluck="name", limit=1, order_by="name asc")
+        if rows:
+            return rows[0]
+        bank = frappe.get_doc({
+            "doctype": "Bank",
+            "bank_name": f"HV Test Default Bank {self.suffix}",
+        }).insert(ignore_permissions=True)
+        self._track(bank)
+        return bank.name
+
+    def _make_sales_invoice(
+        self,
+        *,
+        customer,
+        posting_date,
+        amount,
+        item_code="Miete",
+        remarks=None,
+        description=None,
+    ):
+        invoice = frappe.get_doc({
+            "doctype": "Sales Invoice",
+            "company": self.company,
+            "customer": customer,
+            "set_posting_time": 1,
+            "posting_date": posting_date,
+            "due_date": posting_date,
+            "currency": "EUR",
+            "debit_to": self.receivable_account,
+            "items": [
+                {
+                    "item_code": item_code,
+                    "description": description or item_code,
+                    "qty": 1,
+                    "rate": amount,
+                    "income_account": self.income_account,
+                    "cost_center": self.cost_center,
+                }
+            ],
+            "remarks": remarks or f"[TYPE:{item_code}] [MV:HV-TEST-{self.suffix}] 05/2026",
+        })
+        invoice.insert(ignore_permissions=True)
+        invoice.submit()
+        self._track(invoice)
+        return invoice.name
+
     def _make_file(self):
         file_doc = save_file(
             f"hv-bankimport-{self.suffix}.csv",
@@ -2287,6 +2467,14 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         }
         row.update(overrides)
         return row
+
+    def _row_by_purpose(self, doc, purpose):
+        matches = [
+            row for row in (doc.get("rows") or [])
+            if (row.verwendungszweck or "") == purpose
+        ]
+        self.assertEqual(len(matches), 1, purpose)
+        return matches[0]
 
     def _create_transactions_without_auto_match(self, import_name):
         with patch(
@@ -2345,3 +2533,197 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         self.assertTrue(frappe.db.exists("Bankauszug Import", doc.name))
         doc.reload()
         self.assertEqual(doc.rows[0].bank_transaction, result["created"][0])
+
+    def test_real_complex_rent_invoice_bankimport_auto_match_and_manual_journal_flow(self):
+        exact_iban = "DE50100000000000000001"
+        partial_iban = "DE23100000000000000002"
+        ambiguous_iban = "DE93100000000000000003"
+        exact_customer = self._make_customer("Exaktzahler", exact_iban)
+        partial_customer = self._make_customer("Teilzahler", partial_iban)
+        ambiguous_customer = self._make_customer("Doppeltreffer", ambiguous_iban)
+
+        exact_invoice = self._make_sales_invoice(
+            customer=exact_customer,
+            posting_date="2026-05-01",
+            amount=1000.00,
+            item_code="Miete",
+            description="Nettokaltmiete 05/2026",
+        )
+        partial_invoice = self._make_sales_invoice(
+            customer=partial_customer,
+            posting_date="2026-05-01",
+            amount=1200.00,
+            item_code="Miete",
+            description="Miete 05/2026 mit fehlendem Zahlungsteil",
+        )
+        ambiguous_invoice_a = self._make_sales_invoice(
+            customer=ambiguous_customer,
+            posting_date="2026-05-01",
+            amount=333.33,
+            item_code="Betriebskosten",
+            description="BK Vorauszahlung 05/2026 A",
+        )
+        ambiguous_invoice_b = self._make_sales_invoice(
+            customer=ambiguous_customer,
+            posting_date="2026-05-03",
+            amount=333.33,
+            item_code="Heizkosten",
+            description="HK Vorauszahlung 05/2026 B",
+        )
+
+        old_cutoff = frappe.db.get_single_value(
+            "Hausverwaltung Einstellungen",
+            "bankimport_start_datum",
+        )
+        frappe.db.set_single_value(
+            "Hausverwaltung Einstellungen",
+            "bankimport_start_datum",
+            "2026-05-01",
+        )
+        self.addCleanup(
+            frappe.db.set_single_value,
+            "Hausverwaltung Einstellungen",
+            "bankimport_start_datum",
+            old_cutoff,
+        )
+
+        doc = self._make_import([
+            self._neutral_row(
+                buchungstag="2026-05-05",
+                betrag=1000.00,
+                iban=exact_iban,
+                auftraggeber="Exaktzahler",
+                verwendungszweck="Miete Mai exakt",
+            ),
+            self._neutral_row(
+                buchungstag="2026-05-06",
+                betrag=1150.00,
+                iban=partial_iban,
+                auftraggeber="Teilzahler",
+                verwendungszweck="Miete Mai Teilzahlung",
+            ),
+            self._neutral_row(
+                buchungstag="2026-05-04",
+                betrag=333.33,
+                iban=ambiguous_iban,
+                auftraggeber="Doppeltreffer",
+                verwendungszweck="Miete Mai mehrdeutig",
+            ),
+            self._neutral_row(
+                buchungstag="2026-05-07",
+                betrag=12.50,
+                richtung="Ausgang",
+                iban="",
+                auftraggeber="Bank",
+                verwendungszweck="Bankgebuehr Mai",
+            ),
+            self._neutral_row(
+                buchungstag="2026-05-08",
+                betrag=77.77,
+                iban="",
+                auftraggeber="Unbekannt",
+                verwendungszweck="Ungeklaerte Einzahlung ohne Party",
+            ),
+            self._neutral_row(
+                buchungstag="2026-04-30",
+                betrag=22.22,
+                iban=exact_iban,
+                auftraggeber="Exaktzahler",
+                verwendungszweck="Alte Zahlung vor Startdatum",
+            ),
+        ])
+
+        result = bi.create_bank_transactions(doc.name, allow_missing_party=1)
+
+        doc.reload()
+        for bt_name in result["created"]:
+            self.created_docs.append(("Bank Transaction", bt_name))
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(len(result["created"]), 5)
+        self.assertEqual(result["created_without_party"], 2)
+        self.assertEqual(result["skipped_before_cutoff"], 1)
+        self.assertEqual(len(result["auto_matched"]), 1)
+
+        exact_row = self._row_by_purpose(doc, "Miete Mai exakt")
+        partial_row = self._row_by_purpose(doc, "Miete Mai Teilzahlung")
+        ambiguous_row = self._row_by_purpose(doc, "Miete Mai mehrdeutig")
+        fee_row = self._row_by_purpose(doc, "Bankgebuehr Mai")
+        unknown_row = self._row_by_purpose(doc, "Ungeklaerte Einzahlung ohne Party")
+        old_row = self._row_by_purpose(doc, "Alte Zahlung vor Startdatum")
+
+        self.assertEqual(exact_row.row_status, "success")
+        self.assertTrue(exact_row.bank_transaction)
+        self.assertTrue(exact_row.payment_entry)
+        self.assertEqual(exact_row.payment_document_type, "Payment Entry")
+        self.assertIn("single", exact_row.auto_match_message)
+        self.created_docs.append(("Payment Entry", exact_row.payment_entry))
+        exact_payment = frappe.get_doc("Payment Entry", exact_row.payment_entry)
+        self.assertEqual(exact_payment.docstatus, 1)
+        self.assertEqual(flt(exact_payment.paid_amount), 1000.00)
+        self.assertEqual(len(exact_payment.references), 1)
+        self.assertEqual(exact_payment.references[0].reference_name, exact_invoice)
+        self.assertEqual(flt(exact_payment.references[0].allocated_amount), 1000.00)
+
+        self.assertEqual(partial_row.row_status, "success")
+        self.assertTrue(partial_row.bank_transaction)
+        self.assertFalse(partial_row.payment_entry)
+        self.assertIn("1200.00", partial_row.auto_match_message)
+        self.assertIn("1150.00", partial_row.auto_match_message)
+        self.assertEqual(
+            flt(frappe.db.get_value("Sales Invoice", partial_invoice, "outstanding_amount")),
+            1200.00,
+        )
+
+        self.assertEqual(ambiguous_row.row_status, "success")
+        self.assertTrue(ambiguous_row.bank_transaction)
+        self.assertFalse(ambiguous_row.payment_entry)
+        self.assertIn("2 offene Rechnung", ambiguous_row.auto_match_message)
+        self.assertIn("bitte manuell", ambiguous_row.auto_match_message)
+        self.assertEqual(
+            flt(frappe.db.get_value("Sales Invoice", ambiguous_invoice_a, "outstanding_amount")),
+            333.33,
+        )
+        self.assertEqual(
+            flt(frappe.db.get_value("Sales Invoice", ambiguous_invoice_b, "outstanding_amount")),
+            333.33,
+        )
+
+        self.assertEqual(fee_row.row_status, "success")
+        self.assertTrue(fee_row.bank_transaction)
+        self.assertFalse(fee_row.payment_entry)
+        self.assertFalse(fee_row.journal_entry)
+        self.assertIn("Keine Party", fee_row.auto_match_message)
+
+        journal_result = bi.create_journal_entry_for_row(
+            doc.name,
+            fee_row.name,
+            account=self.expense_account,
+            cost_center=self.cost_center,
+            remarks="Manuelle Bankgebuehr aus komplexem Importtest",
+        )
+        self.created_docs.append(("Journal Entry", journal_result["journal_entry"]))
+        doc.reload()
+        fee_row = self._row_by_purpose(doc, "Bankgebuehr Mai")
+        self.assertEqual(fee_row.row_status, "success")
+        self.assertEqual(fee_row.payment_document_type, "Journal Entry")
+        self.assertEqual(fee_row.payment_document, journal_result["journal_entry"])
+        self.assertEqual(fee_row.journal_entry, journal_result["journal_entry"])
+        journal_entry = frappe.get_doc("Journal Entry", journal_result["journal_entry"])
+        self.assertEqual(journal_entry.docstatus, 1)
+        self.assertEqual(flt(journal_entry.total_debit), 12.50)
+        self.assertEqual(flt(journal_entry.total_credit), 12.50)
+
+        self.assertEqual(unknown_row.row_status, "success")
+        self.assertTrue(unknown_row.bank_transaction)
+        self.assertFalse(unknown_row.payment_entry)
+        self.assertFalse(unknown_row.journal_entry)
+        self.assertIn("Keine Party", unknown_row.auto_match_message)
+
+        self.assertEqual(old_row.row_status, "vor Start-Datum")
+        self.assertFalse(old_row.bank_transaction)
+
+        doc.reload()
+        self.assertEqual(doc.offene_buchungen, 3)
+        self.assertIn("Phase 3", doc.status)
+        self.assertIn("3 offen", doc.status)
