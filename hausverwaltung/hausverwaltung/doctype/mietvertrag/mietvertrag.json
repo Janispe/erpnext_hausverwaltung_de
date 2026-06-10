@@ -8,6 +8,8 @@
   "details_section",
   "wohnung",
   "immobilie",
+  "keller_mitvermietet",
+  "keller_bezeichnung",
   "vertragsabschluss_am",
   "von",
   "bis",
@@ -68,6 +70,18 @@
    "label": "Immobilie",
    "options": "Immobilie",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "keller_mitvermietet",
+   "fieldtype": "Check",
+   "label": "Keller mitvermietet"
+  },
+  {
+   "depends_on": "eval:doc.keller_mitvermietet",
+   "fieldname": "keller_bezeichnung",
+   "fieldtype": "Data",
+   "label": "Keller-Bezeichnung"
   },
   {
    "allow_on_submit": 1,
