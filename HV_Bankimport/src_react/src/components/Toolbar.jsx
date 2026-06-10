@@ -1,7 +1,7 @@
 import React from "react";
 import { Icon } from "../helpers.jsx";
 
-export function Toolbar({ filter, setFilter, search, setSearch, counts, phaseLabel }) {
+export function Toolbar({ filter, setFilter, search, setSearch, counts }) {
 	const filters = [
 		{ id: "open", lbl: "Offen", cnt: counts.open },
 		{ id: "all", lbl: "Alle", cnt: counts.all },
@@ -15,7 +15,6 @@ export function Toolbar({ filter, setFilter, search, setSearch, counts, phaseLab
 	return (
 		<div className="toolbar">
 			<div className="filters">
-				{phaseLabel && <span className="phase-label">{phaseLabel}</span>}
 				{filters.map((f) => (
 					<button
 						key={f.id}

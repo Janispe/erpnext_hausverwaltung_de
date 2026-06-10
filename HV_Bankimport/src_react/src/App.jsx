@@ -389,12 +389,23 @@ export function App() {
 		[visibleRows, selectedId]
 	);
 
-	const filterLabels = {
-		open: phase === 0 ? "Alle Phasen · Offene Zeilen" : `Phase ${phase} · Offene Zeilen`,
-		all: phase === 0 ? "Alle Phasen · Alle Zeilen" : `Phase ${phase} · Alle Zeilen`,
-		problem: "Problemzeilen", noparty: "Ohne Partei", nopay: "Ohne Zahlung",
-		customer: "Kunde", supplier: "Lieferant",
+	const phaseTitles = {
+		1: "Parteien zuordnen",
+		2: "Bank-Tx erstellen",
+		3: "Belege zuordnen",
+		4: "Gebucht",
 	};
+	const filterNames = {
+		open: "Offen",
+		all: "Alle",
+		problem: "Problemzeilen",
+		noparty: "Ohne Partei",
+		nopay: "Ohne Zahlung",
+		customer: "Kunde",
+		supplier: "Lieferant",
+		eigentuemer: "Eigentümer",
+	};
+	const tableLabel = `${phase === 0 ? "" : `${phaseTitles[phase] || `Phase ${phase}`} · `}${filterNames[filter] || "Bankzeilen"}`;
 
 	// Aktion fertig → Overview neu laden, ggf. nächste offene Zeile wählen.
 	const onActionDone = useCallback(async ({ advance = true } = {}) => {
@@ -539,14 +550,13 @@ export function App() {
 				filter={filter} setFilter={setFilter}
 				search={search} setSearch={setSearch}
 				counts={filterCounts}
-				phaseLabel={phase === 0 ? "Alle Phasen" : `Phase ${phase}`}
 			/>
 			<div className="split">
 				<TxTable
 					rows={visibleRows}
 					selectedId={selectedId}
 					onSelect={setSelectedId}
-					filterLabel={filterLabels[filter] || "Bankzeilen"}
+					filterLabel={tableLabel}
 				/>
 				<div className="match-panel-wrap">
 					<MatchPanel
