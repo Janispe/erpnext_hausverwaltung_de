@@ -169,6 +169,27 @@ class TestListBankAccounts(unittest.TestCase):
 
 		self.assertEqual([item["value"] for item in result["items"]], ["Active Bank"])
 
+	def test_search_text_adds_name_and_bank_or_filters_without_dropping_active_filter(self):
+		rows = [
+			frappe._dict(name="Hausbank Betrieb - HV", bank="Sparkasse", account="1800", iban="DE-ACTIVE"),
+		]
+
+		with patch("frappe.get_meta", return_value=self._Meta()), \
+			 patch("frappe.get_list", return_value=rows) as get_list, \
+			 patch("frappe.db.get_value", side_effect=lambda doctype, name, fieldname: "1800" if fieldname == "account_number" else 0):
+			result = bv2.list_bank_accounts("spark")
+
+		self.assertEqual(result["items"][0]["value"], "Hausbank Betrieb - HV")
+		self.assertEqual(
+			get_list.call_args.kwargs["filters"],
+			{"is_company_account": 1, "disabled": 0},
+		)
+		self.assertEqual(
+			get_list.call_args.kwargs["or_filters"],
+			[["name", "like", "%spark%"], ["bank", "like", "%spark%"]],
+		)
+		self.assertEqual(result["items"][0]["label"], "Hausbank Betrieb (1800)")
+
 
 class TestDeleteImport(unittest.TestCase):
 	def test_delete_import_uses_normal_permissions(self):
@@ -210,6 +231,61 @@ class TestDeleteImport(unittest.TestCase):
 		self.assertEqual(impact["counts"]["paymentEntries"], 1)
 		self.assertEqual(impact["bankTransactionsToReverse"][0]["name"], "BT-OWN")
 		self.assertEqual(impact["bankTransactionsKept"][0]["name"], "BT-EXISTING")
+
+	def test_delete_impact_deduplicates_vouchers_and_bank_transactions_across_rows(self):
+		doc = frappe._dict(
+			name="BAI-MIXED",
+			title="Gemischter Import",
+			rows=[
+				frappe._dict(
+					name="ROW-1",
+					bank_transaction="BT-SHARED",
+					row_status="success",
+					payment_document_type="Payment Entry",
+					payment_document="PE-SHARED",
+				),
+				frappe._dict(
+					name="ROW-2",
+					bank_transaction="BT-SHARED",
+					row_status="success",
+					payment_document_type="Payment Entry",
+					payment_document="PE-SHARED",
+				),
+				frappe._dict(
+					name="ROW-3",
+					reference="BT-EXISTING",
+					row_status="vor Start-Datum",
+					journal_entry="JE-DRAFT",
+				),
+			],
+		)
+
+		def get_value(doctype, name, fieldname):
+			if doctype == "Payment Entry":
+				return 1
+			if doctype == "Journal Entry":
+				return 0
+			if doctype == "Bank Transaction" and name == "BT-SHARED":
+				return 1
+			if doctype == "Bank Transaction" and name == "BT-EXISTING":
+				return 2
+			return None
+
+		with patch("frappe.db.get_value", side_effect=get_value):
+			impact = bv2._delete_impact_for_doc(doc)
+
+		self.assertTrue(impact["requiresCascade"])
+		self.assertEqual(impact["counts"], {
+			"vouchers": 2,
+			"paymentEntries": 1,
+			"journalEntries": 1,
+			"bankTransactionsToReverse": 1,
+			"bankTransactionsKept": 1,
+		})
+		self.assertEqual(impact["vouchers"][0]["rows"], ["ROW-1", "ROW-2"])
+		self.assertEqual(impact["bankTransactionsToReverse"][0]["rows"], ["ROW-1", "ROW-2"])
+		self.assertEqual(impact["bankTransactionsKept"][0]["reason"], "already-existing")
+		self.assertEqual(impact["bankTransactionsKept"][0]["status"], "cancelled")
 
 	def test_delete_import_requires_cascade_when_followup_documents_exist(self):
 		doc = frappe._dict(
@@ -266,6 +342,20 @@ class TestDeleteImport(unittest.TestCase):
 		rollback.assert_called_once_with(save_point="bankimport_delete_cascade")
 		delete_doc.assert_not_called()
 
+	def test_delete_import_without_impact_deletes_directly_without_savepoint(self):
+		doc = frappe._dict(name="BAI-EMPTY", title="Leerer Import", rows=[])
+
+		with patch("frappe.get_doc", return_value=doc), \
+			 patch("frappe.has_permission"), \
+			 patch("frappe.db.savepoint") as savepoint, \
+			 patch("frappe.delete_doc") as delete_doc:
+			result = bv2.delete_import("BAI-EMPTY", cascade=0)
+
+		savepoint.assert_not_called()
+		delete_doc.assert_called_once_with("Bankauszug Import", "BAI-EMPTY")
+		self.assertFalse(result["impact"]["requiresCascade"])
+		self.assertEqual(result["cleanup"], {})
+
 
 class TestCreateImport(unittest.TestCase):
 	class _Meta:
@@ -320,6 +410,50 @@ class TestCreateImport(unittest.TestCase):
 			 patch("frappe.throw", side_effect=self._raise_throw):
 			with self.assertRaisesRegex(frappe.ValidationError, "zu groß"):
 				bv2.create_import("BANK-1", "konto.csv", too_large)
+
+	def test_rejects_missing_bank_account_before_file_decoding(self):
+		with patch("frappe.has_permission"), \
+			 patch("frappe.throw", side_effect=self._raise_throw), \
+			 patch("frappe.db.exists") as exists:
+			with self.assertRaisesRegex(frappe.ValidationError, "Bitte ein Bankkonto auswählen."):
+				bv2.create_import("", "konto.csv", "not-base64")
+
+		exists.assert_not_called()
+
+	def test_attaches_file_to_import_after_successful_parse(self):
+		file_doc = frappe._dict(file_url="/private/files/konto.csv")
+		file_doc.db_set = unittest.mock.Mock()
+		import_doc = frappe._dict(name="BAI-1", title=None, csv_file=file_doc.file_url)
+		import_doc.insert = unittest.mock.Mock()
+		import_doc.reload = unittest.mock.Mock(side_effect=lambda: import_doc.update(title="Import 1"))
+
+		def get_doc(arg1, name=None):
+			if arg1 == "Bank Account":
+				return _FakeBankAccount()
+			if isinstance(arg1, dict) and arg1.get("doctype") == "Bankauszug Import":
+				self.assertEqual(arg1["bank_account"], "BANK-1")
+				self.assertEqual(arg1["csv_file"], file_doc.file_url)
+				return import_doc
+			raise AssertionError(f"unexpected get_doc call: {arg1!r}, {name!r}")
+
+		payload = base64.b64encode(b"Buchungstag;Betrag\n10.06.2026;1,00").decode("ascii")
+		with patch("frappe.has_permission"), \
+			 patch("frappe.db.exists", return_value=True), \
+			 patch("frappe.get_doc", side_effect=get_doc), \
+			 patch("frappe.get_meta", return_value=self._Meta()), \
+			 patch("frappe.db.get_value", return_value=0), \
+			 patch.object(bv2, "save_file", return_value=file_doc) as save_file, \
+			 patch.object(bv2, "parse_csv", return_value={"rows": 1}) as parse_csv:
+			result = bv2.create_import("BANK-1", "konto.csv", f"data:text/csv;base64,{payload}")
+
+		save_file.assert_called_once()
+		import_doc.insert.assert_called_once()
+		parse_csv.assert_called_once_with("BAI-1")
+		file_doc.db_set.assert_any_call("attached_to_doctype", "Bankauszug Import")
+		file_doc.db_set.assert_any_call("attached_to_name", "BAI-1")
+		file_doc.db_set.assert_any_call("attached_to_field", "csv_file")
+		self.assertEqual(result["name"], "BAI-1")
+		self.assertEqual(result["parse"], {"rows": 1})
 
 
 class TestSuggestInvoiceForRow(unittest.TestCase):
@@ -620,3 +754,120 @@ class TestGetOverviewSync(unittest.TestCase):
 		self.assertIsNone(res["rows"][0]["autoMatch"])
 		self.assertEqual(res["rows"][0]["phase"], 3)
 		self.assertEqual(res["rows"][0]["rowStatus"], "phase3-open")
+
+	def test_get_overview_maps_mixed_error_existing_and_needs_review_rows(self):
+		error_row = _OverviewRow()
+		error_row.name = "ROW-ERROR"
+		error_row.error = "Betrag fehlt"
+		error_row.row_status = "failed"
+		error_row.bank_transaction = None
+		error_row.party_type = None
+		error_row.party = None
+		error_row.payment_entry = None
+		error_row.payment_document = None
+		error_row.payment_document_type = None
+
+		existing_row = _OverviewRow()
+		existing_row.name = "ROW-EXISTING"
+		existing_row.row_status = "schon vorhanden"
+		existing_row.payment_entry = None
+		existing_row.payment_document = None
+		existing_row.payment_document_type = None
+
+		review_row = _OverviewRow()
+		review_row.name = "ROW-REVIEW"
+		review_row.row_status = "needs_review"
+		review_row.payment_entry = None
+		review_row.payment_document = None
+		review_row.payment_document_type = None
+
+		doc = _OverviewDoc(error_row)
+		doc.rows = [error_row, existing_row, review_row]
+
+		with patch("frappe.get_doc", return_value=doc), \
+			 patch("frappe.has_permission", return_value=True), \
+			 patch.object(bv2, "sync_cancelled_payment_entry_links"), \
+			 patch.object(bv2, "sync_cancelled_journal_entry_links"), \
+			 patch.object(bv2, "_recompute_doc_status"), \
+			 patch.object(bv2, "_refresh_saldo_fields"), \
+			 patch.object(bv2, "_persist_saldo_fields"), \
+			 patch.object(bv2, "_bank_account_iban", return_value="DE-BANK"), \
+			 patch.object(bv2, "_suggest_invoice_for_row", return_value=None):
+			res = bv2.get_overview("IMP-OVERVIEW")
+
+		rows = {row["id"]: row for row in res["rows"]}
+		self.assertEqual(rows["ROW-ERROR"]["phase"], 3)
+		self.assertEqual(rows["ROW-ERROR"]["rowStatus"], "error")
+		self.assertEqual(rows["ROW-EXISTING"]["phase"], 4)
+		self.assertEqual(rows["ROW-EXISTING"]["rowStatus"], "existing")
+		self.assertEqual(rows["ROW-REVIEW"]["phase"], 3)
+		self.assertEqual(rows["ROW-REVIEW"]["rowStatus"], "needs_review")
+		self.assertEqual(res["phaseCounts"], {1: 0, 2: 0, 3: 2, 4: 1})
+
+
+class TestSearchPartiesAndAccounts(unittest.TestCase):
+	def test_search_parties_validates_party_type_before_query(self):
+		with patch("frappe.throw", side_effect=frappe.ValidationError("bad party")), \
+			 patch("frappe.get_list") as get_list, \
+			 self.assertRaisesRegex(frappe.ValidationError, "bad party"):
+			bv2.search_parties("User", "abc")
+
+		get_list.assert_not_called()
+
+	def test_search_parties_maps_titles_and_descriptions(self):
+		rows = [
+			frappe._dict(name="CUST-1", title="Max Mustermann"),
+			frappe._dict(name="CUST-2", title="CUST-2"),
+		]
+
+		with patch("frappe.get_list", return_value=rows) as get_list:
+			result = bv2.search_parties("Customer", "max")
+
+		self.assertEqual(
+			get_list.call_args.kwargs["or_filters"],
+			[["name", "like", "%max%"], ["customer_name", "like", "%max%"]],
+		)
+		self.assertEqual(result["items"], [
+			{"value": "CUST-1", "label": "Max Mustermann", "description": "CUST-1"},
+			{"value": "CUST-2", "label": "CUST-2", "description": None},
+		])
+
+	def test_search_accounts_merges_cockpit_and_leaf_accounts_without_duplicates(self):
+		cockpit_item = {
+			"value": "4930 - Bankgebühren - HV",
+			"label": "4930 Bankgebühren",
+			"description": "Cockpit",
+		}
+		sql_rows = [
+			frappe._dict(
+				name="4930 - Bankgebühren - HV",
+				account_number="4930",
+				account_name="Bankgebühren",
+				root_type="Expense",
+				report_type="Profit and Loss",
+			),
+			frappe._dict(
+				name="1800 - Bank - HV",
+				account_number="1800",
+				account_name="Bank",
+				root_type="Asset",
+				report_type="Balance Sheet",
+			),
+		]
+
+		with patch(
+			"hausverwaltung.hausverwaltung.page.buchen_cockpit.buchen_cockpit.autocomplete_konten",
+			return_value=[cockpit_item],
+		) as autocomplete, \
+			 patch("frappe.db.sql", return_value=sql_rows) as sql:
+			result = bv2.search_accounts("bank")
+
+		autocomplete.assert_called_once_with(txt="bank", typ="alle")
+		self.assertIn("name LIKE %s", sql.call_args.args[0])
+		self.assertEqual(sql.call_args.args[1], ["%bank%", "%bank%", "%bank%"])
+		self.assertEqual([item["value"] for item in result["items"]], [
+			"4930 - Bankgebühren - HV",
+			"1800 - Bank - HV",
+		])
+		self.assertEqual(result["items"][1]["label"], "1800 Bank")
+		self.assertEqual(result["items"][1]["description"], "Asset / Balance Sheet")

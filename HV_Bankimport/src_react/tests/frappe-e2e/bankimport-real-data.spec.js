@@ -39,6 +39,16 @@ function brokenCsvForRun(runId) {
 	].join("\n");
 }
 
+function mixedCsvForRun(runId) {
+	return [
+		"Buchungstag;Betrag;IBAN;Auftraggeber;Verwendungszweck;Währung",
+		`10.06.2026;${runId.amount};DE89370400440532013000;HV UI Test ${runId.id};HV UI Realdaten ${runId.id} valide;EUR`,
+		`11.06.2026;;DE89370400440532013000;HV UI Test ${runId.id};HV UI Realdaten ${runId.id} betrag fehlt;EUR`,
+		`12.06.2026;-3,21;DE89370400440532013000;HV UI Test ${runId.id};HV UI Realdaten ${runId.id} ausgang;EUR`,
+		"",
+	].join("\n");
+}
+
 function shellQuote(value) {
 	return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
 }
@@ -67,7 +77,19 @@ function rowsForRun(runId) {
 		kwargs: {
 			doctype: "Bankauszug Import Row",
 			filters: { verwendungszweck: ["like", `HV UI Realdaten ${runId.id}%`] },
-			fields: ["parent", "verwendungszweck", "bank_transaction"],
+			fields: [
+				"name",
+				"parent",
+				"verwendungszweck",
+				"betrag",
+				"richtung",
+				"row_status",
+				"error",
+				"bank_transaction",
+				"payment_entry",
+				"journal_entry",
+			],
+			order_by: "idx asc",
 			limit: 20,
 		},
 	}) || [];
@@ -243,6 +265,91 @@ test("erstellt echten CSV-Import, erzeugt echte Bank Transaction und löscht per
 		expect(docExists("Bankauszug Import", importName)).toBe(false);
 		if (docExists("Bank Transaction", bankTransaction)) {
 			expect(Number(docValue("Bank Transaction", bankTransaction, "docstatus"))).toBe(2);
+		}
+		expect(accountBalance(glAccount)).toBe(balanceBefore);
+	} finally {
+		if (created && !deleted) {
+			await deleteCurrentImportThroughUi(page, frame).catch(() => {});
+		}
+	}
+});
+
+test("verarbeitet Mehrzeilen-Import mit Fehlerzeile und kontrolliert DB-Zustaende", async ({ page }) => {
+	const runId = {
+		id: `${Date.now()}`,
+		amount: `4${String(Date.now()).slice(-2)},42`,
+	};
+
+	await login(page);
+	const frame = await bankimportFrame(page);
+	let created = false;
+	let deleted = false;
+
+	try {
+		await frame.getByRole("button", { name: "Neuer Import" }).click();
+		await expect(frame.getByRole("heading", { name: "Neuer Bankimport" })).toBeVisible();
+		await uploadCsvInDialog(frame, {
+			filename: `hv-ui-mixed-${runId.id}.csv`,
+			content: mixedCsvForRun(runId),
+		});
+		created = true;
+
+		await expect(frame.getByText("Bankauszug importiert.")).toBeVisible();
+		await expect(frame.locator(".tx-table tbody tr")).toHaveCount(3);
+		await expect(frame.locator(".verwendung-cell", { hasText: `HV UI Realdaten ${runId.id} valide` })).toBeVisible();
+		await expect(frame.locator(".verwendung-cell", { hasText: `HV UI Realdaten ${runId.id} betrag fehlt` })).toBeVisible();
+		await expect(frame.locator(".verwendung-cell", { hasText: `HV UI Realdaten ${runId.id} ausgang` })).toBeVisible();
+		await expect(frame.locator(".tx-table").getByText("Fehler")).toBeVisible();
+
+		const rowsAfterImport = rowsForRun(runId);
+		expect(rowsAfterImport).toHaveLength(3);
+		const importName = rowsAfterImport[0].parent;
+		expect(new Set(rowsAfterImport.map((row) => row.parent)).size).toBe(1);
+
+		const validRow = rowsAfterImport.find((row) => row.verwendungszweck.endsWith("valide"));
+		const failedRow = rowsAfterImport.find((row) => row.verwendungszweck.endsWith("betrag fehlt"));
+		const outgoingRow = rowsAfterImport.find((row) => row.verwendungszweck.endsWith("ausgang"));
+		expect(validRow.row_status).toBeFalsy();
+		expect(validRow.richtung).toBe("Eingang");
+		expect(Number(validRow.betrag)).toBeGreaterThan(0);
+		expect(failedRow.row_status).toBeFalsy();
+		expect(failedRow.error).toContain("Betrag fehlt");
+		expect(outgoingRow.richtung).toBe("Ausgang");
+		expect(Number(outgoingRow.betrag)).toBeGreaterThan(0);
+
+		const bankAccount = importBankAccount(importName);
+		const glAccount = glAccountForBankAccount(bankAccount);
+		const balanceBefore = accountBalance(glAccount);
+
+		await frame.getByRole("row", { name: new RegExp(`HV UI Realdaten ${runId.id} valide`) }).click();
+		await expect(frame.getByText("Partei zuordnen")).toBeVisible();
+		await frame.getByRole("button", { name: /Ohne Partei als Bank-Transaktion anlegen/ }).click();
+		await expect(frame.getByText("Bank-Transaktion ohne Partei erstellt.")).toBeVisible();
+
+		const rowsAfterBt = rowsForRun(runId);
+		const validAfterBt = rowsAfterBt.find((row) => row.verwendungszweck.endsWith("valide"));
+		const failedAfterBt = rowsAfterBt.find((row) => row.verwendungszweck.endsWith("betrag fehlt"));
+		const outgoingAfterBt = rowsAfterBt.find((row) => row.verwendungszweck.endsWith("ausgang"));
+		expect(validAfterBt.row_status).toBe("success");
+		expect(validAfterBt.bank_transaction).toMatch(/^ACC-BTN-2026-/);
+		expect(failedAfterBt.row_status).toBeFalsy();
+		expect(failedAfterBt.error).toContain("Betrag fehlt");
+		expect(failedAfterBt.bank_transaction).toBeFalsy();
+		expect(outgoingAfterBt.row_status).toBeFalsy();
+		expect(outgoingAfterBt.bank_transaction).toBeFalsy();
+		expect(docExists("Bank Transaction", validAfterBt.bank_transaction)).toBe(true);
+		expect(accountBalance(glAccount)).toBe(balanceBefore);
+
+		await expect(frame.locator(".tx-table").getByText("Beleg zuordnen")).toBeVisible();
+		await expect(frame.locator(".tx-table").getByText("Partei fehlt").first()).toBeVisible();
+		await expect(frame.locator(".tx-table").getByText("Fehler")).toBeVisible();
+
+		await deleteCurrentImportThroughUi(page, frame);
+		deleted = true;
+		expect(rowsForRun(runId)).toHaveLength(0);
+		expect(docExists("Bankauszug Import", importName)).toBe(false);
+		if (docExists("Bank Transaction", validAfterBt.bank_transaction)) {
+			expect(Number(docValue("Bank Transaction", validAfterBt.bank_transaction, "docstatus"))).toBe(2);
 		}
 		expect(accountBalance(glAccount)).toBe(balanceBefore);
 	} finally {
