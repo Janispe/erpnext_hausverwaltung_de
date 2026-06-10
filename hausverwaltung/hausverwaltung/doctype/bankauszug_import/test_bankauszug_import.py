@@ -1961,7 +1961,7 @@ class TestBankauszugImport(unittest.TestCase):
         bt = type("BT", (), {"name": "BT-JE"})()
         je = type("JE", (), {"name": "JE-1"})()
 
-        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(object(), row, bt)), \
+        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(object(), row, bt)) as row_helper, \
              patch(
                  "hausverwaltung.hausverwaltung.utils.payment_auto_match.create_journal_entry_for_bt",
                  return_value=je,
@@ -1984,8 +1984,50 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertEqual(row.payment_document, "JE-1")
         self.assertEqual(row.row_status, "success")
         self.assertIn("Buchungssatz", row.auto_match_message)
+        row_helper.assert_called_once_with(
+            "IMP-JE",
+            "ROW-JE",
+            create_missing_bank_transaction=True,
+            allow_missing_party=1,
+        )
         create_je.assert_called_once()
         reconcile.assert_called_once_with(bt, "Journal Entry", "JE-1", 12.34)
+
+    def test_row_with_unreconciled_bt_can_create_missing_bt_without_auto_match(self):
+        row = self._FakeRow(name="ROW-NO-BT", iban="")
+        doc = self._FakeDoc("IMP-NO-BT", [row])
+        bt = type("BT", (), {"name": "BT-CREATED", "get": lambda self, key, default=None: [] if key == "payment_entries" else default})()
+
+        def get_doc(doctype, name):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Transaction" and name == "BT-CREATED":
+                return bt
+            raise AssertionError(f"unexpected get_doc call: {doctype!r}, {name!r}")
+
+        def create_bt(**kwargs):
+            row.bank_transaction = "BT-CREATED"
+            return {"created": ["BT-CREATED"], "errors": []}
+
+        with patch.object(bi.frappe, "get_doc", side_effect=get_doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi, "create_bank_transactions", side_effect=create_bt) as create_bank_transactions:
+            result_doc, result_row, result_bt = bi._row_with_unreconciled_bt(
+                "IMP-NO-BT",
+                "ROW-NO-BT",
+                create_missing_bank_transaction=True,
+                allow_missing_party=1,
+            )
+
+        self.assertIs(result_doc, doc)
+        self.assertIs(result_row, row)
+        self.assertIs(result_bt, bt)
+        create_bank_transactions.assert_called_once_with(
+            docname="IMP-NO-BT",
+            row_name="ROW-NO-BT",
+            allow_missing_party=1,
+            skip_auto_match=1,
+        )
 
     def test_create_journal_entry_for_row_reconcile_failure_leaves_row_unset(self):
         row = self._FakeRow(name="ROW-JE-FAIL", iban="DE16")
@@ -2121,6 +2163,42 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertIn("Phase 1: 0/1 Parteien zugeordnet", status)
         self.assertIn("Übersprungen: 1", status)
         self.assertEqual(set_value.call_args.args[2]["offene_buchungen"], 1)
+
+    def test_recompute_doc_status_failed_rows_do_not_reset_processed_rows_to_phase_1(self):
+        rows = [
+            frappe._dict(
+                row_status="success",
+                party_type=None,
+                party=None,
+                bank_transaction="BT-1",
+                payment_entry="PE-1",
+                journal_entry=None,
+            ),
+            frappe._dict(
+                row_status="success",
+                party_type=None,
+                party=None,
+                bank_transaction="BT-2",
+                payment_entry=None,
+                journal_entry=None,
+            ),
+            frappe._dict(
+                row_status="failed",
+                party_type=None,
+                party=None,
+                bank_transaction=None,
+                payment_entry=None,
+                journal_entry=None,
+            ),
+        ]
+
+        with patch.object(bi.frappe, "get_all", return_value=rows), \
+             patch.object(bi.frappe.db, "set_value") as set_value:
+            status = bi._recompute_doc_status("IMP-STATUS-FAILED")
+
+        self.assertIn("Phase 3: 1/3 Belege zugeordnet", status)
+        self.assertIn("Fehler: 1", status)
+        self.assertEqual(set_value.call_args.args[2]["offene_buchungen"], 2)
 
     def test_block_message_truncates_long_list(self):
         rows = [self._FakeRow(name=f"ROW-N{i}", iban="") for i in range(15)]
@@ -2395,6 +2473,12 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         self._track(bank)
         return bank.name
 
+    def _valid_test_iban(self, serial):
+        bban = "10000000" + f"{int(serial):010d}"
+        converted = "".join(str(ord(c) - 55) if c.isalpha() else c for c in bban + "DE00")
+        check_digits = 98 - (int(converted) % 97)
+        return f"DE{check_digits:02d}{bban}"
+
     def _make_sales_invoice(
         self,
         *,
@@ -2475,6 +2559,12 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         ]
         self.assertEqual(len(matches), 1, purpose)
         return matches[0]
+
+    def _rows_by_purpose(self, doc, purpose):
+        return [
+            row for row in (doc.get("rows") or [])
+            if (row.verwendungszweck or "") == purpose
+        ]
 
     def _create_transactions_without_auto_match(self, import_name):
         with patch(
@@ -2727,3 +2817,296 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         self.assertEqual(doc.offene_buchungen, 3)
         self.assertIn("Phase 3", doc.status)
         self.assertIn("3 offen", doc.status)
+
+    def test_real_chaos_bankimport_with_thirty_rows_rollbacks_duplicates_and_retry(self):
+        old_cutoff = frappe.db.get_single_value(
+            "Hausverwaltung Einstellungen",
+            "bankimport_start_datum",
+        )
+        frappe.db.set_single_value(
+            "Hausverwaltung Einstellungen",
+            "bankimport_start_datum",
+            "2026-05-01",
+        )
+        self.addCleanup(
+            frappe.db.set_single_value,
+            "Hausverwaltung Einstellungen",
+            "bankimport_start_datum",
+            old_cutoff,
+        )
+
+        rows = []
+        exact_invoice_names = []
+        exact_amounts = [100.00, 110.00, 120.00, 130.00, 140.00, 150.00, 160.00, 170.00]
+        for idx, amount in enumerate(exact_amounts, start=10):
+            iban = self._valid_test_iban(idx)
+            customer = self._make_customer(f"Chaos Exakt {idx}", iban)
+            invoice = self._make_sales_invoice(
+                customer=customer,
+                posting_date="2026-05-02",
+                amount=amount,
+                item_code="Miete",
+                description=f"Chaos Miete exakt {idx}",
+            )
+            exact_invoice_names.append(invoice)
+            rows.append(
+                self._neutral_row(
+                    buchungstag="2026-05-05",
+                    betrag=amount,
+                    iban=iban,
+                    auftraggeber=f"Chaos Exakt {idx}",
+                    verwendungszweck=f"Chaos exakt {idx}",
+                )
+            )
+
+        partial_invoice_names = []
+        partial_specs = [(30, 500.00, 450.00), (31, 510.00, 460.00), (32, 520.00, 470.00)]
+        for serial, invoice_amount, bank_amount in partial_specs:
+            iban = self._valid_test_iban(serial)
+            customer = self._make_customer(f"Chaos Teil {serial}", iban)
+            invoice = self._make_sales_invoice(
+                customer=customer,
+                posting_date="2026-05-03",
+                amount=invoice_amount,
+                item_code="Miete",
+                description=f"Chaos Teilzahlung {serial}",
+            )
+            partial_invoice_names.append((invoice, invoice_amount, bank_amount))
+            rows.append(
+                self._neutral_row(
+                    buchungstag="2026-05-06",
+                    betrag=bank_amount,
+                    iban=iban,
+                    auftraggeber=f"Chaos Teil {serial}",
+                    verwendungszweck=f"Chaos Teilzahlung {serial}",
+                )
+            )
+
+        ambiguous_iban = self._valid_test_iban(40)
+        ambiguous_customer = self._make_customer("Chaos Mehrdeutig", ambiguous_iban)
+        ambiguous_invoice_a = self._make_sales_invoice(
+            customer=ambiguous_customer,
+            posting_date="2026-05-04",
+            amount=333.33,
+            item_code="Betriebskosten",
+            description="Chaos BK mehrdeutig",
+        )
+        ambiguous_invoice_b = self._make_sales_invoice(
+            customer=ambiguous_customer,
+            posting_date="2026-05-05",
+            amount=333.33,
+            item_code="Heizkosten",
+            description="Chaos HK mehrdeutig",
+        )
+        rows.append(
+            self._neutral_row(
+                buchungstag="2026-05-07",
+                betrag=333.33,
+                iban=ambiguous_iban,
+                auftraggeber="Chaos Mehrdeutig",
+                verwendungszweck="Chaos mehrdeutig 333",
+            )
+        )
+
+        no_open_iban = self._valid_test_iban(41)
+        self._make_customer("Chaos Keine Rechnung", no_open_iban)
+        rows.append(
+            self._neutral_row(
+                buchungstag="2026-05-07",
+                betrag=444.44,
+                iban=no_open_iban,
+                auftraggeber="Chaos Keine Rechnung",
+                verwendungszweck="Chaos keine offene Rechnung",
+            )
+        )
+
+        duplicate_iban = self._valid_test_iban(42)
+        self._make_customer("Chaos Duplikat", duplicate_iban)
+        for purpose, amount, day in (
+            ("Chaos Duplikat A", 88.88, "2026-05-08"),
+            ("Chaos Duplikat A", 88.88, "2026-05-08"),
+            ("Chaos Duplikat B", 99.99, "2026-05-09"),
+            ("Chaos Duplikat B", 99.99, "2026-05-09"),
+        ):
+            rows.append(
+                self._neutral_row(
+                    buchungstag=day,
+                    betrag=amount,
+                    iban=duplicate_iban,
+                    auftraggeber="Chaos Duplikat",
+                    verwendungszweck=purpose,
+                )
+            )
+
+        for idx in range(5):
+            rows.append(
+                self._neutral_row(
+                    buchungstag="2026-05-10",
+                    betrag=70 + idx,
+                    iban="",
+                    auftraggeber=f"Chaos Unbekannt {idx}",
+                    verwendungszweck=f"Chaos ohne Party {idx}",
+                )
+            )
+
+        for idx in range(3):
+            rows.append(
+                self._neutral_row(
+                    buchungstag="2026-05-11",
+                    betrag=200 + idx,
+                    iban="",
+                    auftraggeber=f"Chaos Fehler {idx}",
+                    verwendungszweck=f"Chaos kaputt {idx}",
+                    error="Kaputte Testzeile",
+                )
+            )
+
+        old_iban = self._valid_test_iban(43)
+        self._make_customer("Chaos Alt", old_iban)
+        for idx in range(4):
+            rows.append(
+                self._neutral_row(
+                    buchungstag="2026-04-25",
+                    betrag=22.22 + idx,
+                    iban=old_iban,
+                    auftraggeber="Chaos Alt",
+                    verwendungszweck=f"Chaos alt {idx}",
+                )
+            )
+
+        rows.append(
+            self._neutral_row(
+                buchungstag="2026-05-12",
+                betrag=19.99,
+                richtung="Ausgang",
+                iban="",
+                auftraggeber="Chaos Bank",
+                verwendungszweck="Chaos Rollback Bankgebuehr",
+            )
+        )
+        self.assertEqual(len(rows), 30)
+
+        doc = self._make_import(rows)
+        result = bi.create_bank_transactions(doc.name, allow_missing_party=1)
+
+        doc.reload()
+        for bt_name in result["created"]:
+            self.created_docs.append(("Bank Transaction", bt_name))
+
+        self.assertEqual(len(result["created"]), 21)
+        self.assertEqual(len(result["errors"]), 3)
+        self.assertEqual(result["created_without_party"], 6)
+        self.assertEqual(result["skipped_before_cutoff"], 4)
+        self.assertEqual(len(result["auto_matched"]), 8)
+
+        for idx, invoice in enumerate(exact_invoice_names, start=10):
+            row = self._row_by_purpose(doc, f"Chaos exakt {idx}")
+            self.assertEqual(row.row_status, "success")
+            self.assertTrue(row.payment_entry)
+            self.created_docs.append(("Payment Entry", row.payment_entry))
+            pe = frappe.get_doc("Payment Entry", row.payment_entry)
+            self.assertEqual(pe.docstatus, 1)
+            self.assertEqual(pe.references[0].reference_name, invoice)
+
+        for invoice, invoice_amount, bank_amount in partial_invoice_names:
+            row = self._row_by_purpose(doc, f"Chaos Teilzahlung {30 + partial_invoice_names.index((invoice, invoice_amount, bank_amount))}")
+            self.assertTrue(row.bank_transaction)
+            self.assertFalse(row.payment_entry)
+            self.assertIn(f"{invoice_amount:.2f}", row.auto_match_message)
+            self.assertIn(f"{bank_amount:.2f}", row.auto_match_message)
+            self.assertEqual(
+                flt(frappe.db.get_value("Sales Invoice", invoice, "outstanding_amount")),
+                invoice_amount,
+            )
+
+        ambiguous_row = self._row_by_purpose(doc, "Chaos mehrdeutig 333")
+        self.assertTrue(ambiguous_row.bank_transaction)
+        self.assertFalse(ambiguous_row.payment_entry)
+        self.assertIn("2 offene Rechnung", ambiguous_row.auto_match_message)
+        self.assertEqual(
+            flt(frappe.db.get_value("Sales Invoice", ambiguous_invoice_a, "outstanding_amount")),
+            333.33,
+        )
+        self.assertEqual(
+            flt(frappe.db.get_value("Sales Invoice", ambiguous_invoice_b, "outstanding_amount")),
+            333.33,
+        )
+
+        no_open_row = self._row_by_purpose(doc, "Chaos keine offene Rechnung")
+        self.assertTrue(no_open_row.bank_transaction)
+        self.assertFalse(no_open_row.payment_entry)
+        self.assertIn("Keine offenen", no_open_row.auto_match_message)
+
+        for purpose in ("Chaos Duplikat A", "Chaos Duplikat B"):
+            duplicate_rows = self._rows_by_purpose(doc, purpose)
+            self.assertEqual(len(duplicate_rows), 2)
+            statuses = sorted(row.row_status for row in duplicate_rows)
+            self.assertEqual(statuses, ["schon vorhanden", "success"])
+            bt_names = {row.bank_transaction for row in duplicate_rows}
+            self.assertEqual(len(bt_names), 1)
+
+        for idx in range(5):
+            row = self._row_by_purpose(doc, f"Chaos ohne Party {idx}")
+            self.assertTrue(row.bank_transaction)
+            self.assertFalse(row.payment_entry)
+            self.assertIn("Keine Party", row.auto_match_message)
+
+        for idx in range(3):
+            row = self._row_by_purpose(doc, f"Chaos kaputt {idx}")
+            self.assertEqual(row.row_status, "failed")
+            self.assertFalse(row.bank_transaction)
+
+        for idx in range(4):
+            row = self._row_by_purpose(doc, f"Chaos alt {idx}")
+            self.assertEqual(row.row_status, "vor Start-Datum")
+            self.assertFalse(row.bank_transaction)
+
+        rollback_row = self._row_by_purpose(doc, "Chaos Rollback Bankgebuehr")
+        with patch(
+            "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_voucher_with_bt",
+            side_effect=RuntimeError("simulierter Reconcile-Fehler"),
+        ):
+            with self.assertRaises(RuntimeError):
+                bi.create_journal_entry_for_row(
+                    doc.name,
+                    rollback_row.name,
+                    account=self.expense_account,
+                    cost_center=self.cost_center,
+                    remarks="Chaos Rollback absichtlich",
+                )
+
+        doc.reload()
+        rollback_row = self._row_by_purpose(doc, "Chaos Rollback Bankgebuehr")
+        self.assertFalse(rollback_row.journal_entry)
+        self.assertFalse(rollback_row.payment_document)
+        cancelled_journals = frappe.get_all(
+            "Journal Entry",
+            filters={"user_remark": "Chaos Rollback absichtlich"},
+            fields=["name", "docstatus"],
+        )
+        self.assertEqual(len(cancelled_journals), 1)
+        self.assertEqual(cancelled_journals[0].docstatus, 2)
+        self.created_docs.append(("Journal Entry", cancelled_journals[0].name))
+
+        retry_result = bi.create_journal_entry_for_row(
+            doc.name,
+            rollback_row.name,
+            account=self.expense_account,
+            cost_center=self.cost_center,
+            remarks="Chaos Rollback Retry erfolgreich",
+        )
+        self.created_docs.append(("Journal Entry", retry_result["journal_entry"]))
+        doc.reload()
+        rollback_row = self._row_by_purpose(doc, "Chaos Rollback Bankgebuehr")
+        self.assertEqual(rollback_row.payment_document_type, "Journal Entry")
+        self.assertEqual(rollback_row.payment_document, retry_result["journal_entry"])
+        retry_journal = frappe.get_doc("Journal Entry", retry_result["journal_entry"])
+        self.assertEqual(retry_journal.docstatus, 1)
+        self.assertEqual(flt(retry_journal.total_debit), 19.99)
+        self.assertEqual(flt(retry_journal.total_credit), 19.99)
+
+        doc.reload()
+        self.assertEqual(doc.offene_buchungen, 15)
+        self.assertIn("Phase 3", doc.status)
+        self.assertIn("15 offen", doc.status)
+        self.assertIn("Fehler: 3", doc.status)

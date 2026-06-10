@@ -205,19 +205,23 @@ def _recompute_doc_status(docname: str) -> str:
         status = f"Abgeschlossen: {len(rows)} Zeilen bereits vorhanden/übersprungen"
         offene_buchungen = 0
     else:
-        with_party = sum(1 for r in actionable_rows if r.get("party_type") and r.get("party"))
-        with_bt = sum(1 for r in actionable_rows if r.get("bank_transaction"))
-        with_voucher = sum(1 for r in actionable_rows if r.get("payment_entry") or r.get("journal_entry"))
         failed = sum(1 for r in actionable_rows if (r.get("row_status") or "") == "failed")
+        progress_rows = [r for r in actionable_rows if (r.get("row_status") or "") != "failed"]
+        progress_total = len(progress_rows)
+        with_party = sum(1 for r in progress_rows if r.get("party_type") and r.get("party"))
+        with_bt = sum(1 for r in progress_rows if r.get("bank_transaction"))
+        with_voucher = sum(1 for r in actionable_rows if r.get("payment_entry") or r.get("journal_entry"))
         needs_review = sum(1 for r in actionable_rows if (r.get("row_status") or "") == "needs_review")
         offene_buchungen = total - with_voucher
 
         # Phasen-Logik hängt am bank_transaction, nicht am Party-Count: Zeilen
         # ohne Party können trotzdem als Journal Entry verbucht werden (z.B.
         # Bankgebühren), und wenn alle BTs erzeugt sind ist die Party-Phase
-        # vorbei — egal wie viele Parties leer sind.
-        if with_bt < total:
-            if with_party < total:
+        # vorbei — egal wie viele Parties leer sind. Fehlerzeilen werden im
+        # Header separat gezählt, sollen aber den Fortschritt der übrigen
+        # Zeilen nicht zurück in Phase 1 ziehen.
+        if progress_total and with_bt < progress_total:
+            if with_party < progress_total:
                 status = f"Phase 1: {with_party}/{total} Parteien zugeordnet"
             else:
                 status = f"Phase 2: {with_bt}/{total} Bank-Transaktionen — {total - with_bt} bereit zum Buchen"
@@ -1913,6 +1917,7 @@ def create_bank_transactions(
     docname: str,
     allow_missing_party: int = 0,
     row_name: str | None = None,
+    skip_auto_match: int = 0,
 ) -> Dict[str, Any]:
     doc = frappe.get_doc("Bankauszug Import", docname)
     if not doc.bank_account:
@@ -2123,6 +2128,9 @@ def create_bank_transactions(
             # fehl (kein/mehrdeutig/Teilbetrag), bleibt die BT unreconciled
             # und der User klickt manuell.
             try:
+                if bool(int(skip_auto_match or 0)):
+                    row.db_set("auto_match_message", "Bank Transaction manuell vorbereitet.")
+                    continue
                 match_result = auto_match_bank_transaction(bt.name)
                 if match_result.get("matched"):
                     row.db_set("payment_entry", match_result.get("payment_entry"))
@@ -2281,6 +2289,7 @@ def create_bank_transaction_for_row(
     docname: str,
     row_name: str,
     allow_missing_party: int = 0,
+    skip_auto_match: int = 0,
 ) -> Dict[str, Any]:
     """Erstellt eine Bank Transaction nur für die ausgewählte Import-Zeile."""
     if not row_name:
@@ -2289,6 +2298,7 @@ def create_bank_transaction_for_row(
         docname=docname,
         row_name=row_name,
         allow_missing_party=allow_missing_party,
+        skip_auto_match=skip_auto_match,
     )
 
 
@@ -2543,7 +2553,13 @@ def refresh_saldo(docname: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _row_with_unreconciled_bt(docname: str, row_name: str) -> Tuple[Document, Document, Document]:
+def _row_with_unreconciled_bt(
+    docname: str,
+    row_name: str,
+    *,
+    create_missing_bank_transaction: bool = False,
+    allow_missing_party: int = 1,
+) -> Tuple[Document, Document, Document]:
     """Lädt (doc, row, bt). Wirft, wenn Zeile keine BT hat oder bereits reconciled ist."""
     doc = frappe.get_doc("Bankauszug Import", docname)
     if not frappe.has_permission("Bankauszug Import", "write", doc=doc):
@@ -2551,6 +2567,21 @@ def _row_with_unreconciled_bt(docname: str, row_name: str) -> Tuple[Document, Do
 
     row = _get_row_by_name(doc, row_name)
     bt_name = getattr(row, "bank_transaction", None)
+    if not bt_name and create_missing_bank_transaction:
+        result = create_bank_transactions(
+            docname=docname,
+            row_name=row_name,
+            allow_missing_party=allow_missing_party,
+            skip_auto_match=1,
+        )
+        if result.get("errors"):
+            first = result["errors"][0]
+            first_error = first.get("error") if hasattr(first, "get") else first
+            frappe.throw(f"Bank Transaction konnte nicht erstellt werden: {first_error}")
+        doc.reload()
+        row = _get_row_by_name(doc, row_name)
+        bt_name = getattr(row, "bank_transaction", None)
+
     if not bt_name:
         frappe.throw(
             "Diese Zeile hat noch keine Bank Transaction. Bitte zuerst "
@@ -3060,7 +3091,12 @@ def create_journal_entry_for_row(
         reconcile_created_voucher_or_rollback,
     )
 
-    doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
+    doc, row, bt = _row_with_unreconciled_bt(
+        docname,
+        row_name,
+        create_missing_bank_transaction=True,
+        allow_missing_party=1,
+    )
 
     parsed_splits = None
     if splits:

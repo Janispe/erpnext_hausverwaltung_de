@@ -970,7 +970,20 @@ export function MatchPanel({ docname, row, onActionDone, onRunGlobal, notify }) 
 
 			<div className="match-body">
 				{row.rowStatus === "error" && <ErrorView row={row} />}
-				{row.rowStatus !== "error" && phase === 1 && <PartyAssign docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
+				{row.rowStatus !== "error" && phase === 1 && (
+					<>
+						<PartyAssign docname={docname} row={row} onActionDone={onActionDone} notify={notify} />
+						{!row.party && !row.bankTransaction && (
+							<div className="match-section">
+								<div className="sec-label">Ohne Partei buchen</div>
+								<div className="hint" style={{ marginBottom: 10 }}>
+									Für Bankgebühren, Umbuchungen oder neutrale Bewegungen direkt einen Buchungssatz erstellen.
+								</div>
+								<JournalEntryForm docname={docname} row={row} onActionDone={onActionDone} notify={notify} />
+							</div>
+						)}
+					</>
+				)}
 				{row.rowStatus !== "error" && phase === 2 && (
 					<NeedsBankTransaction
 						docname={docname}
