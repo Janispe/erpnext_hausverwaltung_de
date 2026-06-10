@@ -706,6 +706,7 @@ def save_vorlage_from_cockpit(**kwargs) -> dict:
         bk_name: str | None = None
         nul_name: str | None = None
 
+        row_konto = (row.get("konto") or "").strip() or None
         raw_kostenart = (row.get("kostenart") or "").strip()
         if raw_kostenart:
             info = _resolve_kostenart_name(raw_kostenart)
@@ -716,9 +717,17 @@ def save_vorlage_from_cockpit(**kwargs) -> dict:
                 else:
                     nul_name = name
             else:
-                frappe.throw(
-                    f"Position {idx}: Kostenart '{raw_kostenart}' konnte nicht aufgelöst werden."
-                )
+                konto_match = _find_kostenart_for_konto(raw_kostenart)
+                if konto_match:
+                    row_konto = raw_kostenart
+                    if konto_match["doctype"] == "Betriebskostenart":
+                        bk_name = konto_match["name"]
+                    else:
+                        nul_name = konto_match["name"]
+                else:
+                    frappe.throw(
+                        f"Position {idx}: Kostenart '{raw_kostenart}' konnte nicht aufgelöst werden."
+                    )
         else:
             # Legacy-Picker (verstecktes Link-Feld) als Fallback
             bk_name = row.get("betriebskostenart") or None
@@ -750,7 +759,7 @@ def save_vorlage_from_cockpit(**kwargs) -> dict:
             "betriebskostenart": bk_name,
             "kostenart_nicht_ul": nul_name,
             "kostenstelle": row.get("kostenstelle"),
-            "konto": row.get("konto") or None,
+            "konto": row_konto,
             "wohnung": row.get("wohnung") or None,
             "betrag_default": betrag_default,
         })
@@ -776,9 +785,12 @@ def load_vorlage_for_cockpit(name: str) -> dict:
         frappe.throw(f"Vorlage '{name}' ist deaktiviert.")
 
     positionen: list[dict] = []
+    konto_mode = (doc.eingabemodus or "Kostenart") == "Konto"
     for row in doc.get("positionen") or []:
         typ = row.get("typ") or "umlegbar"
-        if typ == "umlegbar":
+        if konto_mode and row.get("konto"):
+            kostenart = row.get("konto") or ""
+        elif typ == "umlegbar":
             kostenart = row.get("betriebskostenart") or ""
         else:
             kostenart = row.get("kostenart_nicht_ul") or ""

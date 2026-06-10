@@ -31,6 +31,25 @@ class _FakeInvoice:
 		self.docstatus = 1
 
 
+class _FakeVorlage:
+	def __init__(self):
+		self.name = None
+		self.titel = None
+		self.positionen = []
+
+	def update(self, values):
+		for key, value in values.items():
+			setattr(self, key, value)
+		if values.get("titel"):
+			self.name = values["titel"]
+
+	def append(self, key, value):
+		getattr(self, key).append(frappe._dict(value))
+
+	def insert(self):
+		self.insert_called = True
+
+
 class TestBuchenCockpit(unittest.TestCase):
 	def test_parse_rows_rejects_invalid_shapes(self):
 		with self.assertRaisesRegex(frappe.ValidationError, "ungültiges JSON"):
@@ -157,3 +176,69 @@ class TestBuchenCockpit(unittest.TestCase):
 				],
 				submit_doc=0,
 			)
+
+	def test_save_vorlage_from_cockpit_resolves_konto_mode_account_value(self):
+		vorlage = _FakeVorlage()
+
+		with patch.object(cockpit.frappe, "new_doc", return_value=vorlage), \
+			 patch.object(cockpit, "_resolve_kostenart_name", return_value=None), \
+			 patch.object(
+				cockpit,
+				"_find_kostenart_for_konto",
+				return_value={
+					"doctype": "Betriebskostenart",
+					"name": "Hausmeister",
+					"artikel": "Hausmeister Item",
+				},
+			 ) as konto_lookup, \
+			 patch.object(cockpit.frappe.db, "commit"):
+			result = cockpit.save_vorlage_from_cockpit(
+				titel="Konto Vorlage",
+				lieferant="SUP-1",
+				eingabemodus="Konto",
+				positionen=[
+					{
+						"typ": "umlegbar",
+						"kostenart": "6300 - Hausmeister - HP",
+						"kostenstelle": "CC-HV",
+						"betrag": 80.12,
+					}
+				],
+			)
+
+		self.assertEqual(result["name"], "Konto Vorlage")
+		konto_lookup.assert_called_once_with("6300 - Hausmeister - HP")
+		self.assertEqual(vorlage.eingabemodus, "Konto")
+		self.assertEqual(vorlage.positionen[0].betriebskostenart, "Hausmeister")
+		self.assertIsNone(vorlage.positionen[0].kostenart_nicht_ul)
+		self.assertEqual(vorlage.positionen[0].konto, "6300 - Hausmeister - HP")
+		self.assertEqual(vorlage.positionen[0].betrag_default, 80.12)
+
+	def test_load_vorlage_for_cockpit_uses_account_as_visible_value_in_konto_mode(self):
+		doc = frappe._dict(
+			name="Konto Vorlage",
+			titel="Konto Vorlage",
+			lieferant="SUP-1",
+			eingabemodus="Konto",
+			standard_remarks="Standard",
+			disabled=0,
+			positionen=[
+				frappe._dict(
+					typ="umlegbar",
+					betriebskostenart="Hausmeister",
+					kostenart_nicht_ul=None,
+					kostenstelle="CC-HV",
+					konto="6300 - Hausmeister - HP",
+					wohnung=None,
+					betrag_default=80.12,
+				)
+			],
+		)
+
+		with patch.object(cockpit.frappe, "get_doc", return_value=doc):
+			result = cockpit.load_vorlage_for_cockpit("Konto Vorlage")
+
+		self.assertEqual(result["eingabemodus"], "Konto")
+		self.assertEqual(result["positionen"][0]["kostenart"], "6300 - Hausmeister - HP")
+		self.assertEqual(result["positionen"][0]["betriebskostenart"], "Hausmeister")
+		self.assertEqual(result["positionen"][0]["konto"], "6300 - Hausmeister - HP")

@@ -136,6 +136,30 @@ const hv_draft_clear = (key) => {
 	}
 };
 
+const hv_after_async = (request, callback) => {
+	if (!request || typeof callback !== "function") return request;
+	if (typeof request.finally === "function") {
+		return request.finally(callback);
+	}
+	if (typeof request.always === "function") {
+		return request.always(callback);
+	}
+	if (typeof request.then === "function") {
+		return request.then(
+			(value) => {
+				callback();
+				return value;
+			},
+			(error) => {
+				callback();
+				throw error;
+			}
+		);
+	}
+	callback();
+	return request;
+};
+
 // Debounced autosave: prevents get_values() from running on every keystroke,
 // which interferes with Grid row editing (Link-autocompletes, partial rows).
 const hv_attach_autosave = (dialog, key) => {
@@ -743,22 +767,24 @@ function open_supplier_quick_create(parent_dialog, prefill) {
 		primary_action_label: __("Anlegen"),
 		primary_action(values) {
 			qc.disable_primary_action();
-			frappe
-				.call({
-					method: `${HV_COCKPIT_API}.create_supplier_from_extraction`,
-					args: values,
-				})
-				.then((r) => {
-					const created = r && r.message;
-					if (!created || !created.name) return;
-					qc.hide();
-					parent_dialog.set_value("lieferant", created.name);
-					frappe.show_alert({
-						message: __("Lieferant {0} angelegt.", [created.name]),
-						indicator: "green",
-					});
-				})
-				.finally(() => qc.enable_primary_action());
+			hv_after_async(
+				frappe
+					.call({
+						method: `${HV_COCKPIT_API}.create_supplier_from_extraction`,
+						args: values,
+					})
+					.then((r) => {
+						const created = r && r.message;
+						if (!created || !created.name) return;
+						qc.hide();
+						parent_dialog.set_value("lieferant", created.name);
+						frappe.show_alert({
+							message: __("Lieferant {0} angelegt.", [created.name]),
+							indicator: "green",
+						});
+					}),
+				() => qc.enable_primary_action()
+			);
 		},
 	});
 	qc.show();
@@ -820,16 +846,23 @@ function show_draft_banner(dialog, stored_draft, draft_key) {
 }
 
 function restore_draft(dialog, data) {
-	Object.keys(data || {}).forEach((key) => {
-		const field = dialog.fields_dict[key];
-		if (!field) return;
-		if (field.df.fieldtype === "Table") {
-			field.df.data = Array.isArray(data[key]) ? data[key] : [];
-			field.grid.refresh();
-		} else {
-			dialog.set_value(key, data[key]);
-		}
-	});
+	dialog._hv_suppress_kostenart_clear = true;
+	try {
+		Object.keys(data || {}).forEach((key) => {
+			const field = dialog.fields_dict[key];
+			if (!field) return;
+			if (field.df.fieldtype === "Table") {
+				field.df.data = Array.isArray(data[key]) ? data[key] : [];
+				field.grid.refresh();
+			} else {
+				dialog.set_value(key, data[key]);
+			}
+		});
+	} finally {
+		setTimeout(() => {
+			delete dialog._hv_suppress_kostenart_clear;
+		}, 500);
+	}
 }
 
 function submit_eingangsrechnung(dialog, values, submit_doc = true) {
@@ -863,46 +896,48 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 	}
 
 	dialog.disable_primary_action();
-	frappe
-		.call({
-			method: `${HV_COCKPIT_API}.create_purchase_invoice`,
-			args: {
-				lieferant: values.lieferant,
-				rechnungsdatum: values.rechnungsdatum,
-				wertstellungsdatum: values.wertstellungsdatum,
-				rechnungsname: values.rechnungsname,
-				remarks: values.remarks,
-				positionen: JSON.stringify(rows),
-				submit_doc: submit_doc ? 1 : 0,
-				attached_file_url: dialog._hv_attached_file || null,
-				vorschlag_name: dialog._hv_vorschlag_name || null,
-			},
-		})
-		.then((r) => {
-			const name = r && r.message && r.message.name;
-			if (!name) return;
-			hv_draft_clear(HV_DRAFT_KEY_PI);
-			dialog.hide();
-			frappe.show_alert({
-				message: submit_doc
-					? __("Ausgabe {0} erstellt und gebucht.", [name])
-					: __("Ausgabe {0} als Entwurf gespeichert.", [name]),
-				indicator: "green",
-			});
-			// Wenn der Dialog aus dem Bulk-Wizard heraus geöffnet wurde:
-			// Callback ausführen (Wizard refresht und springt zum nächsten Eintrag),
-			// nicht aufs PI-Formular wegnavigieren.
-			if (typeof dialog._hv_after_book === "function") {
-				try {
-					dialog._hv_after_book(name);
-				} catch (e) {
-					console.error(e);
+	hv_after_async(
+		frappe
+			.call({
+				method: `${HV_COCKPIT_API}.create_purchase_invoice`,
+				args: {
+					lieferant: values.lieferant,
+					rechnungsdatum: values.rechnungsdatum,
+					wertstellungsdatum: values.wertstellungsdatum,
+					rechnungsname: values.rechnungsname,
+					remarks: values.remarks,
+					positionen: JSON.stringify(rows),
+					submit_doc: submit_doc ? 1 : 0,
+					attached_file_url: dialog._hv_attached_file || null,
+					vorschlag_name: dialog._hv_vorschlag_name || null,
+				},
+			})
+			.then((r) => {
+				const name = r && r.message && r.message.name;
+				if (!name) return;
+				hv_draft_clear(HV_DRAFT_KEY_PI);
+				dialog.hide();
+				frappe.show_alert({
+					message: submit_doc
+						? __("Ausgabe {0} erstellt und gebucht.", [name])
+						: __("Ausgabe {0} als Entwurf gespeichert.", [name]),
+					indicator: "green",
+				});
+				// Wenn der Dialog aus dem Bulk-Wizard heraus geöffnet wurde:
+				// Callback ausführen (Wizard refresht und springt zum nächsten Eintrag),
+				// nicht aufs PI-Formular wegnavigieren.
+				if (typeof dialog._hv_after_book === "function") {
+					try {
+						dialog._hv_after_book(name);
+					} catch (e) {
+						console.error(e);
+					}
+				} else {
+					frappe.set_route("Form", "Purchase Invoice", name);
 				}
-			} else {
-				frappe.set_route("Form", "Purchase Invoice", name);
-			}
-		})
-		.finally(() => dialog.enable_primary_action());
+			}),
+		() => dialog.enable_primary_action()
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -1095,35 +1130,37 @@ function submit_mieterrechnung(dialog, values, submit_doc = true) {
 	}
 
 	dialog.disable_primary_action();
-	frappe
-		.call({
-			method: `${HV_COCKPIT_API}.create_sales_invoice`,
-			args: {
-				mietvertrag: values.mietvertrag,
-				rechnungsdatum: values.rechnungsdatum,
-				faellig_am: values.faellig_am,
-				wertstellungsdatum: values.wertstellungsdatum,
-				rechnungsname: values.rechnungsname,
-				referenz: values.referenz,
-				bemerkung: values.bemerkung,
-				positionen: JSON.stringify(rows),
-				submit_doc: submit_doc ? 1 : 0,
-			},
-		})
-		.then((r) => {
-			const name = r && r.message && r.message.name;
-			if (!name) return;
-			hv_draft_clear(HV_DRAFT_KEY_SI);
-			dialog.hide();
-			frappe.show_alert({
-				message: submit_doc
-					? __("Sollstellung {0} erstellt und gebucht.", [name])
-					: __("Sollstellung {0} als Entwurf gespeichert.", [name]),
-				indicator: "green",
-			});
-			frappe.set_route("Form", "Sales Invoice", name);
-		})
-		.finally(() => dialog.enable_primary_action());
+	hv_after_async(
+		frappe
+			.call({
+				method: `${HV_COCKPIT_API}.create_sales_invoice`,
+				args: {
+					mietvertrag: values.mietvertrag,
+					rechnungsdatum: values.rechnungsdatum,
+					faellig_am: values.faellig_am,
+					wertstellungsdatum: values.wertstellungsdatum,
+					rechnungsname: values.rechnungsname,
+					referenz: values.referenz,
+					bemerkung: values.bemerkung,
+					positionen: JSON.stringify(rows),
+					submit_doc: submit_doc ? 1 : 0,
+				},
+			})
+			.then((r) => {
+				const name = r && r.message && r.message.name;
+				if (!name) return;
+				hv_draft_clear(HV_DRAFT_KEY_SI);
+				dialog.hide();
+				frappe.show_alert({
+					message: submit_doc
+						? __("Sollstellung {0} erstellt und gebucht.", [name])
+						: __("Sollstellung {0} als Entwurf gespeichert.", [name]),
+					indicator: "green",
+				});
+				frappe.set_route("Form", "Sales Invoice", name);
+			}),
+		() => dialog.enable_primary_action()
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -1169,33 +1206,35 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 				return;
 			}
 			dialog.disable_primary_action();
-			frappe
-				.call({
-					method: `${HV_BULK_API}.bulk_create_vorschlaege`,
-					args: { file_urls: JSON.stringify(urls) },
-					freeze: true,
-					freeze_message: __("Lege Vorschläge an..."),
-				})
-				.then((r) => {
-					const res = (r && r.message) || {};
-					if (!res.session_id) return;
-					dialog.hide();
-					// KEINE Session-Filterung — sonst verschwinden alle anderen
-					// Vorschläge bis zum manuellen Filter-Wechsel. Die neuen
-					// landen mit Status=Pending und sind automatisch im
-					// Default-"open"-Filter sichtbar.
-					const route = frappe.get_route() || [];
-					if (
-						route[0] === "buchungs_inbox"
-						&& hausverwaltung.buchungs_inbox
-						&& typeof hausverwaltung.buchungs_inbox._refresh === "function"
-					) {
-						hausverwaltung.buchungs_inbox._refresh();
-					} else {
-						frappe.set_route("buchungs_inbox");
-					}
-				})
-				.finally(() => dialog.enable_primary_action());
+			hv_after_async(
+				frappe
+					.call({
+						method: `${HV_BULK_API}.bulk_create_vorschlaege`,
+						args: { file_urls: JSON.stringify(urls) },
+						freeze: true,
+						freeze_message: __("Lege Vorschläge an..."),
+					})
+					.then((r) => {
+						const res = (r && r.message) || {};
+						if (!res.session_id) return;
+						dialog.hide();
+						// KEINE Session-Filterung — sonst verschwinden alle anderen
+						// Vorschläge bis zum manuellen Filter-Wechsel. Die neuen
+						// landen mit Status=Pending und sind automatisch im
+						// Default-"open"-Filter sichtbar.
+						const route = frappe.get_route() || [];
+						if (
+							route[0] === "buchungs_inbox"
+							&& hausverwaltung.buchungs_inbox
+							&& typeof hausverwaltung.buchungs_inbox._refresh === "function"
+						) {
+							hausverwaltung.buchungs_inbox._refresh();
+						} else {
+							frappe.set_route("buchungs_inbox");
+						}
+					}),
+				() => dialog.enable_primary_action()
+			);
 		},
 	});
 	dialog._hv_uploaded_urls = [];
