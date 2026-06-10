@@ -155,6 +155,41 @@ class TestBuchenCockpit(unittest.TestCase):
 				submit_doc=0,
 			)
 
+	def test_create_purchase_invoice_uses_only_user_remarks(self):
+		invoice = _FakeInvoice()
+
+		with patch.object(cockpit.frappe, "new_doc", return_value=invoice), \
+			 patch.object(cockpit, "_derive_company_from_rows", return_value="Hausverwaltung Peters"), \
+			 patch.object(cockpit, "ensure_default_service_item", return_value="VHB-SERVICE"), \
+			 patch.object(cockpit, "_get_payable_account", return_value="1600 - Kreditoren - HV"), \
+			 patch.object(cockpit, "_get_kostenart_details", return_value={"konto": "4500 - Hausgeld - HV"}), \
+			 patch.object(cockpit, "_has_field", return_value=True), \
+			 patch.object(cockpit, "_attach_source_file"), \
+			 patch.object(cockpit.frappe.db, "get_value", return_value="EUR"), \
+			 patch.object(cockpit.frappe, "msgprint"):
+			result = cockpit.create_purchase_invoice(
+				lieferant="SUP-1",
+				rechnungsdatum="2026-05-06",
+				rechnungsname="R-1",
+				remarks="Kamin gereinigt",
+				positionen=[
+					{
+						"betrag": 99,
+						"kostenstelle": "CC-HV",
+						"umlagefaehig": "Kostenart nicht umlagefaehig",
+						"kostenart": "Schornsteinfeger",
+					}
+				],
+				submit_doc=0,
+			)
+
+		self.assertEqual(result, {"name": "SINV-COCKPIT-1", "submitted": False})
+		self.assertEqual(invoice.remarks, "Kamin gereinigt")
+		self.assertNotIn("Erfasst über Buchungs-Cockpit", invoice.remarks)
+		self.assertEqual(invoice.hv_eingabequelle, cockpit.EINGABEQUELLE_EINGANG)
+		self.assertTrue(invoice.insert_called)
+		self.assertFalse(invoice.submit_called)
+
 	def test_create_purchase_invoice_requires_wohnung_for_einzelverteilung(self):
 		with patch.object(cockpit, "_derive_company_from_rows", return_value="Hausverwaltung Peters"), \
 			 patch.object(cockpit, "ensure_default_service_item", return_value="VHB-SERVICE"), \

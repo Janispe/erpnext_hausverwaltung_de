@@ -503,16 +503,13 @@ def create_purchase_invoice(**kwargs) -> dict:
 
     pi = frappe.new_doc("Purchase Invoice")
     user_remarks = (kwargs.get("remarks") or "").strip()
-    remarks_lines = ["Erfasst über Buchungs-Cockpit"]
-    if user_remarks:
-        remarks_lines.append(user_remarks)
     pi.update({
         "company": company,
         "supplier": supplier,
         "posting_date": posting_date,
         "bill_date": posting_date,
         "bill_no": bill_no,
-        "remarks": "\n".join(remarks_lines),
+        "remarks": user_remarks,
     })
 
     payable_account = _get_payable_account(company=company, supplier=supplier)

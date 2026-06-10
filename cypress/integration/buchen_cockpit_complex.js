@@ -412,7 +412,7 @@ context("Buchungs-Cockpit — komplexer Eingangsrechnungs-UI-Flow", () => {
 			createdPurchaseInvoices.push(pi.name);
 			expect(Number(pi.docstatus)).to.eq(0);
 			expect(Number(pi.grand_total)).to.be.closeTo(100, 0.01);
-			expect(pi.remarks).to.include("Erfasst über Buchungs-Cockpit");
+			expect(pi.remarks || "").to.not.include("Erfasst über Buchungs-Cockpit");
 			return cy.call("frappe.client.get", {
 				doctype: "Purchase Invoice",
 				name: pi.name,
