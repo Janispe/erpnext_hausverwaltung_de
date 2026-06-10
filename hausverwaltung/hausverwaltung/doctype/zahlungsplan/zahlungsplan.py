@@ -222,7 +222,7 @@ class Zahlungsplan(Document):
 		if not payable_account:
 			frappe.throw("In der Company ist kein 'default_payable_account' hinterlegt.")
 
-		pes = []
+		pes_by_name = {}
 		unlinked_abschlagsplan_rows = []
 		for row in self.get("plan") or []:
 			row_date = getdate(row.faelligkeitsdatum) if row.get("faelligkeitsdatum") else None
@@ -248,7 +248,11 @@ class Zahlungsplan(Document):
 				or flt(pe.unallocated_amount) <= 0
 			):
 				continue
-			pes.append(pe)
+			if pe.name not in pes_by_name:
+				pe["linked_plan_amount"] = 0.0
+				pes_by_name[pe.name] = pe
+			pes_by_name[pe.name]["linked_plan_amount"] += flt(row.get("betrag"))
+		pes = list(pes_by_name.values())
 		pes.sort(key=lambda pe: getdate(pe.posting_date) if pe.posting_date else getdate(self.ja_von))
 
 		# 3. Reconcile advances against PI
@@ -260,7 +264,8 @@ class Zahlungsplan(Document):
 		for pe in pes:
 			if remaining <= 0.01:
 				break
-			alloc = min(float(pe.unallocated_amount), remaining)
+			linked_plan_amount = flt(pe.get("linked_plan_amount")) or flt(pe.unallocated_amount)
+			alloc = min(float(pe.unallocated_amount), linked_plan_amount, remaining)
 			if alloc <= 0:
 				continue
 			entry_list.append(

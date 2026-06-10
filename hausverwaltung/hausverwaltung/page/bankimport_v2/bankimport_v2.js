@@ -45,6 +45,8 @@ const RPC_ACTIONS = {
 	// Phase 3: Beleg zuordnen / buchen
 	open_invoices: DT + "get_open_invoices_for_row",
 	reconcile: DT + "manually_reconcile_row",
+	split_options: DT + "get_payment_split_options_for_row",
+	reconcile_split: DT + "reconcile_split_row",
 	standalone_payment: DT + "create_standalone_payment_for_row",
 	journal_entry: DT + "create_journal_entry_for_row",
 	expected_cost_center: DT + "get_expected_cost_center_for_row",

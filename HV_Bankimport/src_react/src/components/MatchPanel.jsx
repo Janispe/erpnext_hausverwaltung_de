@@ -52,7 +52,7 @@ const partyOptionLabel = (partyType) =>
 
 // ───────────────────────── Smart-Default-Inferenz ───────────────────────────
 // Liefert für eine Phase-3-Zeile den wahrscheinlich richtigen Modus + Begründung.
-// Bezieht sich auf die Modi-IDs aus BookingActions: invoice|abschlag|kredit|payment|journal.
+// Bezieht sich auf die Modi-IDs aus BookingActions: invoice|split|abschlag|kredit|payment|journal.
 
 function inferBestMode(row, availableModes) {
 	const ids = new Set(availableModes.map((m) => m.id));
@@ -71,6 +71,9 @@ function inferBestMode(row, availableModes) {
 		return { id: "kredit", reason: "Verwendungszweck deutet auf Darlehensrate hin" };
 	}
 	// 3) Abschlag – Akonto/Vorauszahlung/NKV
+	if (ids.has("split") && /sammel|mehrere|aufteil|abschlag.*rechnung|rechnung.*abschlag/.test(z)) {
+		return { id: "split", reason: "Verwendungszweck deutet auf eine aufzuteilende Zahlung hin" };
+	}
 	if (ids.has("abschlag") && /akonto|abschlag|vorauszahlung|nebenkost|nkv|wp[-_ ]?vz/.test(z)) {
 		return { id: "abschlag", reason: "Verwendungszweck deutet auf Akonto-/Abschlagszahlung hin" };
 	}
@@ -617,6 +620,181 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 	);
 }
 
+// ───────────────────────── Phase 3: Zahlung aufteilen ───────────────────────
+
+function SplitPaymentMatch({ docname, row, onActionDone, notify }) {
+	const [data, setData] = useState(null);
+	const [invoiceSel, setInvoiceSel] = useState({});
+	const [abschlagSel, setAbschlagSel] = useState({});
+	const [leftoverAsAdvance, setLeftoverAsAdvance] = useState(false);
+	const [loading, setLoading] = useState(true);
+	const [busy, run] = useAction(notify);
+	const target = Math.abs(Number(row.betrag) || 0);
+
+	useEffect(() => {
+		let alive = true;
+		setLoading(true);
+		setInvoiceSel({});
+		setAbschlagSel({});
+		setLeftoverAsAdvance(false);
+		api.getSplitOptions(docname, row.id)
+			.then((d) => alive && setData(d))
+			.catch((e) => alive && notify("error", e.message))
+			.finally(() => alive && setLoading(false));
+		return () => { alive = false; };
+	}, [docname, row.id, notify]);
+
+	const invoiceByName = useMemo(
+		() => new Map((data?.invoices || []).map((inv) => [inv.name, inv])),
+		[data]
+	);
+	const abschlagByName = useMemo(
+		() => new Map((data?.abschlaege || []).map((a) => [a.row_name, a])),
+		[data]
+	);
+	const invoiceTotal = useMemo(
+		() => Object.values(invoiceSel).reduce((s, v) => s + (Number(v) || 0), 0),
+		[invoiceSel]
+	);
+	const abschlagTotal = useMemo(
+		() => Object.keys(abschlagSel).reduce((s, name) => s + (Number(abschlagByName.get(name)?.betrag) || 0), 0),
+		[abschlagSel, abschlagByName]
+	);
+	const allocated = invoiceTotal + abschlagTotal;
+	const remaining = Math.round((target - allocated) * 100) / 100;
+
+	const toggleInvoice = (inv) => {
+		setInvoiceSel((prev) => {
+			const next = { ...prev };
+			if (next[inv.name] != null) {
+				delete next[inv.name];
+			} else {
+				const already = Object.values(next).reduce((s, v) => s + (Number(v) || 0), 0) + abschlagTotal;
+				const rem = Math.max(0, target - already);
+				next[inv.name] = Math.min(Number(inv.outstanding_amount) || 0, rem) || Number(inv.outstanding_amount) || 0;
+			}
+			return next;
+		});
+	};
+	const setInvoiceAlloc = (name, val) =>
+		setInvoiceSel((prev) => ({ ...prev, [name]: val === "" ? 0 : Number(val) }));
+
+	const toggleAbschlag = (a) => {
+		setAbschlagSel((prev) => {
+			const next = { ...prev };
+			if (next[a.row_name]) delete next[a.row_name];
+			else next[a.row_name] = true;
+			return next;
+		});
+	};
+
+	const book = () => {
+		const invoices = Object.entries(invoiceSel).map(([name, allocated_amount]) => ({ name, allocated_amount }));
+		const abschlaege = Object.keys(abschlagSel).map((row_name) => ({ row_name }));
+		if (!invoices.length && !abschlaege.length) return notify("error", "Bitte mindestens eine Rechnung oder einen Abschlag auswählen.");
+		for (const inv of invoices) {
+			const amount = Number(inv.allocated_amount);
+			const source = invoiceByName.get(inv.name);
+			const outstanding = Number(source?.outstanding_amount || 0);
+			if (!Number.isFinite(amount) || amount <= 0) return notify("error", `Zuweisung für ${inv.name} muss größer als 0 € sein.`);
+			if (amount > outstanding + 0.01) return notify("error", `Zuweisung für ${inv.name} übersteigt den offenen Betrag.`);
+		}
+		if (allocated - target > 0.01) return notify("error", "Die Auswahl übersteigt den Bankbetrag.");
+		if (remaining > 0.01 && !leftoverAsAdvance) return notify("error", "Bitte Restbetrag als Vorauszahlung aktivieren oder weitere Positionen wählen.");
+		run(() => api.reconcileSplit(docname, row.id, { invoices, abschlaege, leftoverAsAdvance }), {
+			success: "Zahlung aufgeteilt und gebucht.",
+		}).then((r) => r && r.ok !== false && onActionDone());
+	};
+
+	if (loading) return <div className="panel-loading"><Spinner size={18} /> Split-Optionen laden…</div>;
+	const hasInvoices = (data?.invoices || []).length > 0;
+	const hasAbschlaege = (data?.abschlaege || []).length > 0;
+	if (!hasInvoices && !hasAbschlaege) {
+		return <div className="hint">Keine offenen Rechnungen oder Abschlagszeilen für diese Partei gefunden.</div>;
+	}
+
+	return (
+		<div>
+			<div className="alloc-summary">
+				<span>Tx-Betrag <strong>{fmtEUR(target)}</strong></span>
+				<span>Zugewiesen <strong>{fmtEUR(allocated)}</strong></span>
+				<span className={remaining === 0 ? "ok" : remaining < 0 ? "bad" : ""}>
+					Rest <strong>{fmtEUR(remaining)}</strong>
+				</span>
+			</div>
+
+			{hasInvoices && <div className="field-label" style={{ marginTop: 10 }}>Rechnungen</div>}
+			{(data?.invoices || []).map((inv) => {
+				const checked = invoiceSel[inv.name] != null;
+				return (
+					<div key={inv.name} className={`invoice-card ${checked ? "suggested" : "alt"}`}>
+						<label className="row1" style={{ cursor: "pointer" }}>
+							<div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+								<input type="checkbox" checked={checked} onChange={() => toggleInvoice(inv)} />
+								<div>
+									<div className="doc-id">{inv.name}</div>
+									<div className="ref">{inv.remarks || "—"}</div>
+								</div>
+							</div>
+							<div className="amount">{fmtEUR(inv.outstanding_amount)}</div>
+						</label>
+						<div className="meta-row">
+							<span className="due"><Icon name="file" size={11} /> {fmtDate(inv.posting_date)}</span>
+							{checked && (
+								<span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+									zuweisen
+									<input
+										className="alloc-input"
+										type="number"
+										step="0.01"
+										value={invoiceSel[inv.name]}
+										onChange={(e) => setInvoiceAlloc(inv.name, e.target.value)}
+									/>
+									€
+								</span>
+							)}
+						</div>
+					</div>
+				);
+			})}
+
+			{hasAbschlaege && <div className="field-label" style={{ marginTop: 12 }}>Abschläge</div>}
+			{(data?.abschlaege || []).map((a) => {
+				const checked = !!abschlagSel[a.row_name];
+				return (
+					<div key={a.row_name} className={`invoice-card ${checked ? "suggested" : "alt"}`}>
+						<label className="row1" style={{ cursor: "pointer" }}>
+							<div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+								<input type="checkbox" checked={checked} onChange={() => toggleAbschlag(a)} />
+								<div>
+									<div className="doc-id">{a.bezeichnung || a.zahlungsplan}</div>
+									<div className="ref">Fällig {fmtDate(a.faelligkeitsdatum)}{a.immobilie ? ` · ${a.immobilie}` : ""}</div>
+								</div>
+							</div>
+							<div className="amount">{fmtEUR(a.betrag)}</div>
+						</label>
+					</div>
+				);
+			})}
+
+			{remaining > 0.01 && (
+				<label className="advance-toggle">
+					<input type="checkbox" checked={leftoverAsAdvance} onChange={(e) => setLeftoverAsAdvance(e.target.checked)} />
+					Restbetrag {fmtEUR(remaining)} als weitere Vorauszahlung am Konto belassen
+				</label>
+			)}
+			<button
+				className="btn primary"
+				style={{ width: "100%", justifyContent: "center", marginTop: 8 }}
+				onClick={book}
+				disabled={busy || (!Object.keys(invoiceSel).length && !Object.keys(abschlagSel).length)}
+			>
+				{busy ? <Spinner /> : <Icon name="check" />} Aufteilen &amp; buchen
+			</button>
+		</div>
+	);
+}
+
 // ───────────────────────── Phase 3: Buchungssatz ────────────────────────────
 
 function JournalEntryForm({ docname, row, onActionDone, notify }) {
@@ -943,6 +1121,7 @@ function BookingActions({ docname, row, onActionDone, notify }) {
 		const m = [];
 		if (hasParty && (row.partyTyp === "Customer" || row.partyTyp === "Supplier"))
 			m.push({ id: "invoice", lbl: "Rechnung" });
+		if (isOut && row.partyTyp === "Supplier") m.push({ id: "split", lbl: "Aufteilen" });
 		if (isOut && row.partyTyp === "Supplier") m.push({ id: "abschlag", lbl: "Abschlag" });
 		if (isOut) m.push({ id: "kredit", lbl: "Kreditrate" });
 		if (hasParty) m.push({ id: "payment", lbl: "Vorauszahlung" });
@@ -998,6 +1177,7 @@ function BookingActions({ docname, row, onActionDone, notify }) {
 				))}
 			</div>
 			{mode === "invoice" && <InvoiceMatch docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
+			{mode === "split" && <SplitPaymentMatch docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 			{mode === "abschlag" && <AbschlagMatch docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 			{mode === "kredit" && <KreditMatch docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 			{mode === "payment" && <StandalonePayment docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}

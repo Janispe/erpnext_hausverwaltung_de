@@ -206,6 +206,28 @@ export async function reconcileInvoices(name, rowName, invoices, leftoverAsAdvan
 	});
 }
 
+export async function getSplitOptions(name, rowName) {
+	if (!embedded) return { invoiceDoctype: "Purchase Invoice", invoices: [], abschlaege: [], targetAmount: 0, mock: true };
+	const r = await rpc("split_options", { docname: name, row_name: rowName });
+	return {
+		invoiceDoctype: r.invoice_doctype,
+		invoices: r.invoices || [],
+		abschlaege: r.abschlaege || [],
+		targetAmount: r.target_amount,
+	};
+}
+
+export async function reconcileSplit(name, rowName, { invoices, abschlaege, leftoverAsAdvance } = {}) {
+	if (!embedded) return { ok: true, payment_entry: "PE-DEMO", mock: true };
+	return await rpc("reconcile_split", {
+		docname: name,
+		row_name: rowName,
+		invoice_allocations: JSON.stringify(invoices || []),
+		abschlag_rows: JSON.stringify(abschlaege || []),
+		leftover_as_advance: leftoverAsAdvance ? 1 : 0,
+	});
+}
+
 export async function createStandalonePayment(name, rowName, remarks) {
 	if (!embedded) return { ok: true, payment_entry: "PE-DEMO", mock: true };
 	return await rpc("standalone_payment", {

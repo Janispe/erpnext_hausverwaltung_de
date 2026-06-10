@@ -2849,6 +2849,122 @@ def get_abschlagsplan_candidates_for_row(docname: str, row_name: str) -> dict[st
     }
 
 
+def _get_abschlagsplan_candidates(
+    *,
+    row,
+    bt,
+    exact_amount_only: bool = True,
+) -> dict[str, Any]:
+    from hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan import (
+        MODUS_ABSCHLAGSPLAN,
+        _get_abschlag_tolerance_days,
+    )
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+        _resolve_expected_cost_center_for_bt,
+    )
+
+    if row.get("richtung") != "Ausgang" or row.get("party_type") != "Supplier" or not row.get("party"):
+        return {"candidates": [], "target_amount": flt(row.get("betrag")), "reason": "not_supplier_outgoing"}
+
+    target_amount = flt(row.get("betrag"))
+    target_date = getdate(row.get("buchungstag")) if row.get("buchungstag") else None
+    tolerance_days = _get_abschlag_tolerance_days()
+    manual_window_days = max(tolerance_days, 45)
+    expected_cc = _resolve_expected_cost_center_for_bt(bt)
+    bank_account = getattr(bt, "bank_account", None)
+
+    rows = frappe.db.sql(
+        """
+        SELECT
+            p.name AS row_name,
+            p.idx AS row_idx,
+            p.faelligkeitsdatum,
+            p.betrag,
+            p.bemerkung,
+            az.name AS zahlungsplan,
+            az.bezeichnung,
+            az.company,
+            az.lieferant,
+            az.immobilie,
+            az.wohnung,
+            az.bank_account,
+            az.cost_center
+        FROM `tabZahlungsplan Zeile` p
+        INNER JOIN `tabZahlungsplan` az ON az.name = p.parent
+        WHERE
+            az.modus = %(modus)s
+            AND az.status != 'Abgerechnet'
+            AND az.lieferant = %(supplier)s
+            AND (p.payment_entry IS NULL OR p.payment_entry = '')
+        ORDER BY p.faelligkeitsdatum ASC, az.name ASC, p.idx ASC
+        """,
+        {"modus": MODUS_ABSCHLAGSPLAN, "supplier": row.party},
+        as_dict=True,
+    )
+
+    candidates = []
+    for item in rows:
+        row_amount = flt(item.get("betrag"))
+        if exact_amount_only:
+            if abs(row_amount - target_amount) > 0.01:
+                continue
+        elif row_amount > target_amount + 0.01:
+            continue
+        if bank_account and item.get("bank_account") and item.get("bank_account") != bank_account:
+            continue
+        if expected_cc and item.get("cost_center") and item.get("cost_center") != expected_cc:
+            continue
+
+        row_date = getdate(item.get("faelligkeitsdatum")) if item.get("faelligkeitsdatum") else None
+        delta_days = abs((row_date - target_date).days) if row_date and target_date else None
+        if delta_days is not None and delta_days > manual_window_days:
+            continue
+        item["delta_days"] = delta_days
+        item["bank_account_match"] = bool(bank_account and item.get("bank_account") == bank_account)
+        item["cost_center_match"] = bool(expected_cc and item.get("cost_center") == expected_cc)
+        candidates.append(item)
+
+    candidates.sort(
+        key=lambda c: (
+            0 if c.get("bank_account_match") else 1,
+            0 if c.get("cost_center_match") else 1,
+            c.get("delta_days") if c.get("delta_days") is not None else 9999,
+            c.get("faelligkeitsdatum") or "9999-12-31",
+        )
+    )
+    return {
+        "candidates": candidates,
+        "target_amount": target_amount,
+        "target_date": str(target_date) if target_date else None,
+        "bank_account": bank_account,
+        "expected_cost_center": expected_cc,
+        "auto_tolerance_days": tolerance_days,
+        "manual_window_days": manual_window_days,
+    }
+
+
+@frappe.whitelist()
+def get_payment_split_options_for_row(docname: str, row_name: str) -> Dict[str, Any]:
+    """Liefert offene Rechnungen und Abschlagsplan-Zeilen für gemischte Buchung."""
+    invoices_payload = get_open_invoices_for_row(docname, row_name)
+    doc = frappe.get_doc("Bankauszug Import", docname)
+    if not frappe.has_permission("Bankauszug Import", "read", doc=doc):
+        frappe.throw("Keine Berechtigung.")
+    row = _get_row_by_name(doc, row_name)
+    abschlag_payload = {"candidates": [], "target_amount": flt(row.get("betrag"))}
+    bt_name = _get_row_bank_transaction_name(row)
+    if bt_name and row.get("richtung") == "Ausgang" and row.get("party_type") == "Supplier":
+        bt = frappe.get_doc("Bank Transaction", bt_name)
+        abschlag_payload = _get_abschlagsplan_candidates(row=row, bt=bt, exact_amount_only=False)
+
+    return {
+        "invoice_doctype": invoices_payload.get("invoice_doctype"),
+        "invoices": invoices_payload.get("invoices") or [],
+        "abschlaege": abschlag_payload.get("candidates") or [],
+        "target_amount": flt(row.get("betrag")),
+    }
+
+
 @frappe.whitelist()
 def manually_reconcile_row(
     docname: str,
@@ -2984,6 +3100,183 @@ def manually_reconcile_row(
         "ok": True,
         "payment_entry": pe.name,
         "invoices": [i.name for i in invoices],
+    }
+
+
+@frappe.whitelist()
+def reconcile_split_row(
+    docname: str,
+    row_name: str,
+    invoice_allocations: str | None = None,
+    abschlag_rows: str | None = None,
+    leftover_as_advance: int = 0,
+) -> Dict[str, Any]:
+    """Gemischte Zuordnung: Rechnungs-Allocations plus Abschlagsplan-Verlinkungen.
+
+    Es entsteht bewusst genau ein Payment Entry über den Bankbetrag. Rechnungen
+    werden als Payment-Entry-References zugeordnet; der nicht auf Rechnungen
+    verteilte Betrag bleibt als Advance und wird an die ausgewählten
+    Abschlagsplan-Zeilen gehängt.
+    """
+    import json as _json
+    from hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan import MODUS_ABSCHLAGSPLAN
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+        _resolve_expected_cost_center_for_bt,
+        create_payment_entry_for_invoices,
+        reconcile_created_voucher_or_rollback,
+    )
+
+    _doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
+    if row.party_type not in ("Customer", "Supplier") or not row.party:
+        frappe.throw("Bitte zuerst eine unterstützte Partei an der Bankzeile zuweisen.")
+
+    def _loads_list(raw):
+        if not raw:
+            return []
+        try:
+            parsed = _json.loads(raw)
+        except Exception:
+            frappe.throw("Ungültige Split-Daten.")
+        if not isinstance(parsed, list):
+            frappe.throw("Ungültige Split-Daten.")
+        return parsed
+
+    invoice_items = _loads_list(invoice_allocations)
+    plan_row_names = []
+    for item in _loads_list(abschlag_rows):
+        if isinstance(item, dict):
+            name = item.get("row_name") or item.get("name")
+        else:
+            name = item
+        if name and name not in plan_row_names:
+            plan_row_names.append(name)
+
+    if not invoice_items and not plan_row_names:
+        frappe.throw("Bitte mindestens eine Rechnung oder Abschlagszeile auswählen.")
+
+    if row.party_type == "Customer":
+        invoice_doctype = "Sales Invoice"
+    else:
+        invoice_doctype = "Purchase Invoice"
+
+    target_amount = flt(row.betrag)
+    invoices = []
+    invoice_total = 0.0
+    for item in invoice_items:
+        if not isinstance(item, dict):
+            frappe.throw("Rechnungs-Split muss Name und Betrag enthalten.")
+        inv_name = item.get("name")
+        allocated_amount = flt(item.get("allocated_amount"))
+        if not inv_name:
+            frappe.throw("Rechnung ohne Namen im Split.")
+        if allocated_amount <= 0:
+            frappe.throw(f"Zuweisung für {inv_name} muss größer als 0 € sein.")
+        inv = frappe.db.get_value(
+            invoice_doctype,
+            inv_name,
+            ["name", "outstanding_amount", "posting_date"],
+            as_dict=True,
+        )
+        if not inv:
+            frappe.throw(f"Rechnung {inv_name} nicht gefunden.")
+        if flt(inv.outstanding_amount) <= 0:
+            frappe.throw(f"Rechnung {inv_name} hat keinen offenen Betrag mehr.")
+        if allocated_amount > flt(inv.outstanding_amount) + 0.01:
+            frappe.throw(
+                f"Zuweisung für {inv_name} ({allocated_amount:.2f} €) übersteigt "
+                f"offenen Betrag ({flt(inv.outstanding_amount):.2f} €)."
+            )
+        inv["allocated_amount"] = allocated_amount
+        invoices.append(inv)
+        invoice_total += allocated_amount
+
+    if invoice_total > target_amount + 0.01:
+        frappe.throw(
+            f"Rechnungszuweisungen summieren auf {invoice_total:.2f} €, "
+            f"Bank-Betrag ist {target_amount:.2f} €."
+        )
+
+    plan_rows = []
+    plan_total = 0.0
+    if plan_row_names:
+        if row.get("richtung") != "Ausgang" or row.get("party_type") != "Supplier":
+            frappe.throw("Abschlagsplan-Zuordnung ist nur für Lieferanten-Ausgänge möglich.")
+        expected_cc = _resolve_expected_cost_center_for_bt(bt)
+        for plan_row_name in plan_row_names:
+            plan_row = frappe.db.get_value(
+                "Zahlungsplan Zeile",
+                plan_row_name,
+                ["name", "parent", "idx", "faelligkeitsdatum", "betrag", "payment_entry"],
+                as_dict=True,
+            )
+            if not plan_row:
+                frappe.throw(f"Abschlagsplan-Zeile {plan_row_name} nicht gefunden.")
+            if plan_row.get("payment_entry"):
+                frappe.throw(f"Abschlagsplan-Zeile {plan_row.idx} ist bereits bezahlt.")
+            plan = frappe.get_doc("Zahlungsplan", plan_row.parent)
+            if plan.get("modus") != MODUS_ABSCHLAGSPLAN:
+                frappe.throw(f"Zeile {plan_row.idx} gehört nicht zu einem Abschlagsplan.")
+            if plan.get("status") == "Abgerechnet":
+                frappe.throw(f"Abschlagsplan {plan.name} ist bereits abgerechnet.")
+            if plan.get("lieferant") != row.get("party"):
+                frappe.throw(f"Lieferant von Abschlagsplan {plan.name} passt nicht zur Bankzeile.")
+            if getattr(bt, "bank_account", None) and plan.get("bank_account") and plan.bank_account != bt.bank_account:
+                frappe.throw(f"Bankkonto von Abschlagsplan {plan.name} passt nicht zur Bankzeile.")
+            if expected_cc and plan.get("cost_center") and plan.cost_center != expected_cc:
+                frappe.throw(f"Kostenstelle von Abschlagsplan {plan.name} passt nicht zur Bankzeile.")
+            plan_rows.append((plan, plan_row))
+            plan_total += flt(plan_row.get("betrag"))
+
+    advance_amount = target_amount - invoice_total
+    if plan_total > advance_amount + 0.01:
+        frappe.throw(
+            f"Ausgewählte Abschläge summieren auf {plan_total:.2f} €, "
+            f"nach Rechnungen bleiben nur {advance_amount:.2f} €."
+        )
+    if advance_amount - plan_total > 0.01 and not bool(int(leftover_as_advance or 0)):
+        frappe.throw(
+            f"Nach Rechnungen und Abschlägen bleiben {advance_amount - plan_total:.2f} € übrig. "
+            "Bitte Restbetrag als Vorauszahlung aktivieren oder die Auswahl ergänzen."
+        )
+
+    pe = create_payment_entry_for_invoices(
+        bt=bt,
+        invoices=invoices,
+        invoice_doctype=invoice_doctype,
+        target_amount=target_amount,
+        leftover_as_advance=advance_amount > 0.01,
+    )
+    reconcile_created_voucher_or_rollback(bt, "Payment Entry", pe.name, target_amount)
+
+    for _plan, plan_row in plan_rows:
+        plan_row_doc = frappe.get_doc("Zahlungsplan Zeile", plan_row.name)
+        plan_row_doc.db_set("payment_entry", pe.name, update_modified=False)
+        plan_row_doc.db_set("bank_transaction", bt.name, update_modified=False)
+        if row.get("buchungstag"):
+            plan_row_doc.db_set("gebucht_am", getdate(row.buchungstag), update_modified=False)
+
+    row.db_set("payment_entry", pe.name)
+    _set_row_payment_document(row, "Payment Entry", pe.name)
+    row.db_set("row_status", "success")
+    row.db_set(
+        "auto_match_message",
+        (
+            f"Aufgeteilt gebucht: {len(invoices)} Rechnung(en) "
+            f"({invoice_total:.2f} €), {len(plan_rows)} Abschlag/Abschläge "
+            f"({plan_total:.2f} €)"
+        ),
+    )
+    _recompute_doc_status(docname)
+    _refresh_and_persist_saldo(docname)
+
+    return {
+        "ok": True,
+        "payment_entry": pe.name,
+        "invoices": [i.name for i in invoices],
+        "abschlag_rows": [r.name for _p, r in plan_rows],
+        "invoice_total": invoice_total,
+        "abschlag_total": plan_total,
+        "advance_total": advance_amount,
     }
 
 
