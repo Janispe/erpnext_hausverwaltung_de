@@ -89,6 +89,22 @@ class TestSerienbriefDurchlaufDunning(IntegrationTestCase):
 		dunning = frappe._dict(doctype="Dunning", dunning_type="_Does Not Exist 9999")
 		self.assertEqual(collect_serienbrief_werte(dunning), {})
 
+	def test_inline_html_textbaustein_can_render_without_block_wrapper(self):
+		durchlauf = frappe.new_doc("Serienbrief Durchlauf")
+		block = frappe._dict(
+			name="_Test Anrede",
+			title="_Test Anrede",
+			content_type="HTML + Jinja",
+			html_content="Sehr geehrte Frau Beispiel,",
+			jinja_content="",
+		)
+
+		inline_segment = durchlauf._render_block_segment(block, {}, wrap_html=False)
+		self.assertEqual(inline_segment["html"], "Sehr geehrte Frau Beispiel,")
+
+		block_segment = durchlauf._render_block_segment(block, {})
+		self.assertIn('class="serienbrief-block"', block_segment["html"])
+
 	def test_validate_blocks_scrub_collision(self):
 		"""„Frist Tage" und „frist_tage" werden beide zu `frist_tage` —
 		muss als Duplikat erkannt und beim Save abgelehnt werden."""

@@ -1139,7 +1139,7 @@ class SerienbriefDurchlauf(Document):
 			block_key = self._get_block_key(block_doc, block_row, block_counts)
 			block_context = self._build_block_context(context, block_doc, block_row, block_key)
 
-			segment = self._render_block_segment(block_doc, block_context)
+			segment = self._render_block_segment(block_doc, block_context, wrap_html=False)
 			self._publish_block_outputs(context, block_context, block_doc, block_key)
 			if not segment:
 				return Markup("")
@@ -1401,7 +1401,13 @@ class SerienbriefDurchlauf(Document):
 			except Exception:
 				pass
 
-	def _render_block_segment(self, block_doc, context: Dict[str, Any]) -> Dict[str, Any] | None:
+	def _render_block_segment(
+		self,
+		block_doc,
+		context: Dict[str, Any],
+		*,
+		wrap_html: bool = True,
+	) -> Dict[str, Any] | None:
 		content_type = cstr(getattr(block_doc, "content_type", None) or "").strip() or "Textbaustein (Rich Text)"
 		if content_type == "PDF Formular":
 			pdf_bytes = render_pdf_form_block(block_doc, context, _resolve_value_path)
@@ -1418,11 +1424,16 @@ class SerienbriefDurchlauf(Document):
 		rendered = self._render_block_html(block_doc, context)
 		if not rendered:
 			return None
+		html = (
+			f'<div class="serienbrief-block" data-block="{cstr(block_doc.name)}">{rendered}</div>'
+			if wrap_html
+			else rendered
+		)
 		return {
 			"type": "html",
 			"block": cstr(getattr(block_doc, "name", None) or ""),
 			"title": cstr(getattr(block_doc, "title", None) or getattr(block_doc, "name", None) or ""),
-			"html": f'<div class="serienbrief-block" data-block="{cstr(block_doc.name)}">{rendered}</div>',
+			"html": html,
 		}
 
 	def _render_block_html(self, block_doc, context: Dict[str, Any]) -> str:
