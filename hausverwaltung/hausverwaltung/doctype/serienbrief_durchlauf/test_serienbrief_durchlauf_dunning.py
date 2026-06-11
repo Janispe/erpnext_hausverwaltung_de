@@ -7,6 +7,7 @@ Pro-Empfänger-Override gemergt (`row._iteration_variablen_werte`).
 """
 
 import json
+from decimal import Decimal
 from unittest.mock import patch
 
 import frappe
@@ -104,6 +105,32 @@ class TestSerienbriefDurchlaufDunning(IntegrationTestCase):
 
 		block_segment = durchlauf._render_block_segment(block, {})
 		self.assertIn('class="serienbrief-block"', block_segment["html"])
+
+	def test_serienbrief_formats_float_outputs_european(self):
+		context = {
+			"objekt": frappe._dict(
+				bruttomiete=1075.0,
+				nettokaltmiete=Decimal("1075.5"),
+				stufe=1,
+			)
+		}
+
+		rendered = _render_serienbrief_template(
+			"Brutto {{ objekt.bruttomiete }} / Netto {{ objekt.nettokaltmiete }} / Stufe {{ objekt.stufe }}",
+			context,
+		)
+
+		self.assertIn("Brutto 1.075,00", rendered)
+		self.assertIn("Netto 1.075,50", rendered)
+		self.assertIn("Stufe 1", rendered)
+		self.assertNotIn("Stufe 1,00", rendered)
+
+	def test_serienbrief_formats_placeholder_float_outputs_european(self):
+		context = {"objekt": frappe._dict(bruttomiete=1075.0)}
+
+		rendered = _render_serienbrief_template("Brutto {{$ objekt.bruttomiete $}}", context)
+
+		self.assertEqual(rendered, "Brutto 1.075,00")
 
 	def test_validate_blocks_scrub_collision(self):
 		"""„Frist Tage" und „frist_tage" werden beide zu `frist_tage` —

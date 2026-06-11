@@ -602,9 +602,12 @@ export const App = () => {
   }, [bausteinLayoutMode, template.id]);
 
   // Sofort rendern bei Tab-/Vorlagen-/Empfängerwechsel (Signatur-Check dedupt).
+  // Nicht von refreshPreview abhängen: die Callback-Identität ändert sich auch
+  // bei previewVars, dann würde jeder Tastendruck sofort einen Chrome-Render
+  // starten statt den Debounce unten zu nutzen.
   useEffect(() => {
     if (embedded && tab === "preview" && template.id) refreshPreview();
-  }, [tab, template.id, recipient, refreshPreview]);
+  }, [tab, template.id, recipient && recipient.id]);
 
   // Variablen-/Baustein-Pfad-/Vorschau-Wert-Änderungen (nicht über den Editor)
   // -> debounced nachrendern. Cleanup-Return killt den 4s-Timer beim
@@ -732,14 +735,15 @@ export const App = () => {
           onDruckSchwarzWeissChange={setDruckSchwarzWeiss}
           variablesForPreview={variables}
           previewVars={previewVars}
-          onPreviewVarChange={(key, value) =>
+          onPreviewVarChange={(key, value) => {
+            setPreviewError("");
             setPreviewVars((prev) => {
               const next = { ...prev };
               if (value === "" || value == null) delete next[key];
               else next[key] = value;
               return next;
-            })
-          }
+            });
+          }}
           onInsertPlaceholder={insertPlaceholder}
           onInsertBaustein={insertBaustein}
           onMaximizePreview={() => setPdfMaximized(true)}

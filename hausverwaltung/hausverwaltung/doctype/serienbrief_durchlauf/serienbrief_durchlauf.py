@@ -6,6 +6,7 @@ import os
 import re
 import time
 import uuid
+from decimal import Decimal
 from io import BytesIO
 from typing import Any, Dict, List
 
@@ -166,7 +167,26 @@ def _strict_finalize(value):
 	"""
 	if value is None:
 		raise UndefinedError("Wert ist None")
+	formatted = _format_serienbrief_number(value)
+	if formatted is not None:
+		return formatted
 	return value
+
+
+def _format_serienbrief_number(value: Any) -> str | None:
+	"""Format real decimal values for German letters.
+
+	Only floats/Decimals are formatted. Integers often represent counters, stages
+	or years in templates and must remain untouched.
+	"""
+	if isinstance(value, bool) or not isinstance(value, (float, Decimal)):
+		return None
+	if isinstance(value, float) and value != value:
+		return cstr(value)
+	if isinstance(value, Decimal) and not value.is_finite():
+		return cstr(value)
+	text = f"{value:,.2f}"
+	return text.replace(",", "\u0000").replace(".", ",").replace("\u0000", ".")
 
 
 def _extract_template_lineno(exc: BaseException) -> int | None:
@@ -313,7 +333,7 @@ def _preprocess_simple_paths(
 		# Document/Dict-ähnliches → Doc-Name (analog Frappe-Default).
 		if hasattr(value, "doctype") and getattr(value, "name", None):
 			return cstr(value.name)
-		return cstr(value)
+		return cstr(_display_value(value))
 
 	return _PLACEHOLDER_TOKEN_RE.sub(_replace, template)
 
@@ -2437,6 +2457,9 @@ def _get_value_override(context: Dict[str, Any], key: str) -> Any:
 def _display_value(value: Any) -> Any:
 	if hasattr(value, "doctype") and getattr(value, "name", None):
 		return value.name
+	formatted = _format_serienbrief_number(value)
+	if formatted is not None:
+		return formatted
 	return value
 
 
