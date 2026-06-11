@@ -42,6 +42,191 @@ def _resolve_company(explicit: Optional[str] = None) -> str:
 	frappe.throw("hausverwaltung.cypress_fixtures: keine Company gefunden.")
 
 
+def _first_value(doctype: str, filters: dict | list | None, fieldname: str = "name", order_by: str = "name asc"):
+	rows = frappe.get_all(doctype, filters=filters or {}, pluck=fieldname, order_by=order_by, limit=1)
+	return rows[0] if rows else None
+
+
+def _ensure_uom() -> str:
+	uom = _first_value("UOM", {"enabled": 1}) or _first_value("UOM", {})
+	if uom:
+		return uom
+	doc = frappe.get_doc({"doctype": "UOM", "uom_name": "Nos"}).insert(ignore_permissions=True)
+	return doc.name
+
+
+def _ensure_item_group() -> str:
+	group = _first_value("Item Group", {"is_group": 0}) or _first_value("Item Group", {})
+	if group:
+		return group
+	doc = frappe.get_doc({"doctype": "Item Group", "item_group_name": "HV UI Test Items"}).insert(ignore_permissions=True)
+	return doc.name
+
+
+def _ensure_customer_group() -> str:
+	group = _first_value("Customer Group", {"is_group": 0}) or _first_value("Customer Group", {})
+	if group:
+		return group
+	doc = frappe.get_doc({"doctype": "Customer Group", "customer_group_name": "HV UI Test Customers"}).insert(ignore_permissions=True)
+	return doc.name
+
+
+def _ensure_territory() -> str:
+	territory = _first_value("Territory", {"is_group": 0}) or _first_value("Territory", {})
+	if territory:
+		return territory
+	doc = frappe.get_doc({"doctype": "Territory", "territory_name": "HV UI Test Territory"}).insert(ignore_permissions=True)
+	return doc.name
+
+
+def _leaf_account(company: str, *, account_type: str | None = None, root_type: str | None = None) -> str | None:
+	filters = {"company": company, "is_group": 0, "disabled": 0}
+	if account_type:
+		filters["account_type"] = account_type
+	if root_type:
+		filters["root_type"] = root_type
+	return _first_value("Account", filters)
+
+
+def _ensure_cost_center(company: str) -> str:
+	cost_center = (
+		frappe.db.get_value("Company", company, "cost_center")
+		or _first_value("Cost Center", {"company": company, "is_group": 0, "disabled": 0})
+		or _first_value("Cost Center", {"company": company, "is_group": 0})
+	)
+	if cost_center:
+		return cost_center
+	frappe.throw(f"hausverwaltung.cypress_fixtures: keine Kostenstelle für {company} gefunden.")
+
+
+def _ensure_income_account(company: str) -> str:
+	account = frappe.db.get_value("Company", company, "default_income_account") or _leaf_account(company, root_type="Income")
+	if account:
+		return account
+	frappe.throw(f"hausverwaltung.cypress_fixtures: kein Erlöskonto für {company} gefunden.")
+
+
+def _ensure_receivable_account(company: str) -> str:
+	account = (
+		frappe.db.get_value("Company", company, "default_receivable_account")
+		or _leaf_account(company, account_type="Receivable")
+		or _leaf_account(company, root_type="Asset")
+	)
+	if account:
+		return account
+	frappe.throw(f"hausverwaltung.cypress_fixtures: kein Debitorenkonto für {company} gefunden.")
+
+
+def _ensure_test_item(company: str, income_account: str) -> str:
+	item_code = "HV UI Mahnwesen Testleistung"
+	if frappe.db.exists("Item", item_code):
+		return item_code
+	doc = frappe.get_doc(
+		{
+			"doctype": "Item",
+			"item_code": item_code,
+			"item_name": item_code,
+			"item_group": _ensure_item_group(),
+			"stock_uom": _ensure_uom(),
+			"is_stock_item": 0,
+			"disabled": 0,
+			"include_item_in_manufacturing": 0,
+		}
+	).insert(ignore_permissions=True)
+	return doc.name
+
+
+def _ensure_test_customer(run_id: str) -> str:
+	customer_name = f"HV UI Mahnwesen Real {run_id}"
+	doc = frappe.get_doc(
+		{
+			"doctype": "Customer",
+			"customer_name": customer_name,
+			"customer_type": "Individual",
+			"customer_group": _ensure_customer_group(),
+			"territory": _ensure_territory(),
+		}
+	).insert(ignore_permissions=True)
+	return doc.name
+
+
+def _ensure_serienbrief_category() -> str | None:
+	if not frappe.db.exists("DocType", "Serienbrief Kategorie"):
+		return None
+	existing = frappe.db.exists("Serienbrief Kategorie", "HV UI Tests")
+	if existing:
+		return "HV UI Tests"
+	doc = frappe.get_doc({"doctype": "Serienbrief Kategorie", "title": "HV UI Tests"}).insert(ignore_permissions=True)
+	return doc.name
+
+
+def _ensure_serienbrief_vorlage(run_id: str) -> str | None:
+	if not frappe.db.exists("DocType", "Serienbrief Vorlage"):
+		return None
+	name = f"HV UI Mahnung Real {run_id}"
+	if frappe.db.exists("Serienbrief Vorlage", name):
+		return name
+	doc = frappe.new_doc("Serienbrief Vorlage")
+	doc.update(
+		{
+			"title": name,
+			"haupt_verteil_objekt": "Dunning",
+			"content_type": "Textbaustein (Rich Text)",
+			"content": "<p>Mahnung {{ ansprechpartner }}</p>",
+			"description": "Playwright real DB test fixture",
+		}
+	)
+	category = _ensure_serienbrief_category()
+	if category:
+		doc.kategorie = category
+	doc.append(
+		"variables",
+		{
+			"variable": "ansprechpartner",
+			"label": "Ansprechpartner",
+			"variable_type": "String",
+			"optional": 0,
+		},
+	)
+	doc.insert(ignore_permissions=True)
+	return doc.name
+
+
+def _ensure_dunning_type(company: str, income_account: str, cost_center: str, template: str | None) -> str:
+	name = "Zahlungserinnerung - HP"
+	if frappe.db.exists("Dunning Type", name):
+		doc = frappe.get_doc("Dunning Type", name)
+	else:
+		doc = frappe.get_doc(
+			{
+				"doctype": "Dunning Type",
+				"dunning_type": name,
+				"company": company,
+				"dunning_fee": 0,
+				"rate_of_interest": 0,
+				"income_account": income_account,
+				"cost_center": cost_center,
+			}
+		).insert(ignore_permissions=True)
+		return doc.name
+	changed = False
+	for fieldname, value in {
+		"company": company,
+		"income_account": income_account,
+		"cost_center": cost_center,
+	}.items():
+		if getattr(doc, fieldname, None) != value:
+			setattr(doc, fieldname, value)
+			changed = True
+	if template and frappe.get_meta("Dunning Type").get_field("hv_serienbrief_vorlage"):
+		if getattr(doc, "hv_serienbrief_vorlage", None) != template:
+			doc.hv_serienbrief_vorlage = template
+			changed = True
+	if changed:
+		doc.save(ignore_permissions=True)
+	return doc.name
+
+
 @frappe.whitelist()
 def ensure_bankimport_bank_account(company: Optional[str] = None) -> dict:
 	"""Ensure the Bankimport UI has at least one selectable company bank account.
@@ -98,6 +283,169 @@ def ensure_bankimport_bank_account(company: Optional[str] = None) -> dict:
 	doc = frappe.get_doc(payload).insert(ignore_permissions=True)
 	frappe.db.commit()
 	return {"bank_account": doc.name, "created": True, "company": company, "account": gl_account}
+
+
+@frappe.whitelist()
+def seed_real_op_dunning(run_id: str, company: Optional[str] = None) -> dict:
+	"""Create a real overdue Sales Invoice for OP/Mahnwesen Playwright tests.
+
+	The created Sales Invoice is submitted and therefore visible to
+	``get_mahnkandidaten``. The test is expected to create a real Dunning draft
+	through the UI and then call ``cleanup_real_op_dunning``.
+	"""
+	_check_dev_mode()
+	run_id = str(run_id or "").strip()
+	if not run_id:
+		frappe.throw("hausverwaltung.cypress_fixtures: run_id fehlt.")
+
+	company = _resolve_company(company)
+	income_account = _ensure_income_account(company)
+	receivable_account = _ensure_receivable_account(company)
+	cost_center = _ensure_cost_center(company)
+	item_code = _ensure_test_item(company, income_account)
+	customer = _ensure_test_customer(run_id)
+	template = _ensure_serienbrief_vorlage(run_id)
+	dunning_type = _ensure_dunning_type(company, income_account, cost_center, template)
+
+	si = frappe.new_doc("Sales Invoice")
+	si.update(
+		{
+			"company": company,
+			"customer": customer,
+			"posting_date": "2026-05-01",
+			"due_date": "2026-05-15",
+			"debit_to": receivable_account,
+			"currency": frappe.db.get_value("Company", company, "default_currency") or "EUR",
+			"ignore_default_payment_terms_template": 1,
+			"remarks": f"HV UI Mahnwesen Real {run_id}",
+			"items": [
+				{
+					"item_code": item_code,
+					"item_name": item_code,
+					"description": f"HV UI Mahnwesen Real {run_id}",
+					"qty": 1,
+					"rate": 123.45,
+					"income_account": income_account,
+					"cost_center": cost_center,
+				}
+			],
+		}
+	)
+	si.set("payment_terms_template", None)
+	si.set("payment_schedule", [])
+	if frappe.get_meta("Sales Invoice").get_field("mietabrechnung_id"):
+		si.mietabrechnung_id = f"HV-UI-MAHN-{run_id}"
+	si.insert(ignore_permissions=True)
+	si.submit()
+	frappe.db.commit()
+
+	return {
+		"company": company,
+		"customer": customer,
+		"customer_name": frappe.db.get_value("Customer", customer, "customer_name") or customer,
+		"sales_invoice": si.name,
+		"dunning_type": dunning_type,
+		"serienbrief_vorlage": template,
+		"outstanding_amount": flt(si.outstanding_amount),
+		"run_id": run_id,
+	}
+
+
+@frappe.whitelist()
+def cleanup_real_op_dunning(run_id: str, sales_invoice: Optional[str] = None, customer: Optional[str] = None, template: Optional[str] = None) -> dict:
+	"""Best-effort cleanup for ``seed_real_op_dunning``."""
+	_check_dev_mode()
+	run_id = str(run_id or "").strip()
+	deleted: dict[str, list[str]] = {"Dunning": [], "Sales Invoice": [], "Customer": [], "Serienbrief Vorlage": []}
+
+	def delete_doc(doctype: str, name: str | None) -> None:
+		if not name or not frappe.db.exists(doctype, name):
+			return
+		try:
+			doc = frappe.get_doc(doctype, name)
+			if getattr(doc, "docstatus", 0) == 1:
+				doc.cancel()
+			frappe.delete_doc(doctype, name, force=True, ignore_permissions=True)
+			deleted.setdefault(doctype, []).append(name)
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), f"cleanup_real_op_dunning failed for {doctype} {name}")
+
+	if sales_invoice:
+		dunning_names = [
+			row.parent
+			for row in frappe.get_all(
+				"Overdue Payment",
+				filters={"sales_invoice": sales_invoice, "parenttype": "Dunning"},
+				fields=["parent"],
+				limit_page_length=0,
+			)
+		]
+	else:
+		dunning_names = frappe.get_all(
+			"Dunning",
+			filters={"customer": customer} if customer else {},
+			pluck="name",
+			limit=20,
+			order_by="creation desc",
+		)
+		if run_id:
+			dunning_names = [
+				name for name in dunning_names
+				if run_id in str(frappe.db.get_value("Dunning", name, "customer") or "")
+				or bool(
+					frappe.db.exists(
+						"Sales Invoice",
+						{
+							"name": frappe.db.get_value("Dunning", name, "sales_invoice"),
+							"remarks": ("like", f"%{run_id}%"),
+						},
+					)
+				)
+			]
+	for name in dunning_names:
+		delete_doc("Dunning", name)
+
+	if not sales_invoice and run_id:
+		sales_invoice = frappe.db.get_value("Sales Invoice", {"remarks": ("like", f"%{run_id}%")}, "name")
+	delete_doc("Sales Invoice", sales_invoice)
+
+	if customer:
+		delete_doc("Customer", customer)
+
+	if template:
+		delete_doc("Serienbrief Vorlage", template)
+
+	frappe.db.commit()
+	return {"deleted": deleted}
+
+
+@frappe.whitelist()
+def get_dunnings_for_sales_invoice(sales_invoice: str) -> list[dict]:
+	"""Return Dunning docs linked through the ERPNext Overdue Payment child table."""
+	_check_dev_mode()
+	if not sales_invoice:
+		return []
+	rows = frappe.db.sql(
+		"""
+		SELECT
+			d.name,
+			d.docstatus,
+			op.sales_invoice,
+			d.customer,
+			d.dunning_type,
+			d.posting_date,
+			op.outstanding AS outstanding_amount,
+			d.hv_serienbrief_vorlage
+		FROM `tabDunning` d
+		INNER JOIN `tabOverdue Payment` op ON op.parent = d.name
+		WHERE op.parenttype = 'Dunning'
+		  AND op.sales_invoice = %s
+		ORDER BY d.creation DESC
+		""",
+		(sales_invoice,),
+		as_dict=True,
+	)
+	return [dict(row) for row in rows]
 
 
 @frappe.whitelist()
