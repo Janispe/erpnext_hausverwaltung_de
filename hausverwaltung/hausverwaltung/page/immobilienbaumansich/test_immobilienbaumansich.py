@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 sys.modules.setdefault("frappe", SimpleNamespace(whitelist=lambda: (lambda fn: fn)))
 
-_wohnung_sort_key = import_module(
-	"hausverwaltung.hausverwaltung.page.immobilienbaumansich.immobilienbaumansich"
-)._wohnung_sort_key
+_module = import_module("hausverwaltung.hausverwaltung.page.immobilienbaumansich.immobilienbaumansich")
+_format_phone_number = _module._format_phone_number
+_wohnung_sort_key = _module._wohnung_sort_key
 
 
 class TestWohnungSortKey(unittest.TestCase):
@@ -36,3 +36,17 @@ class TestWohnungSortKey(unittest.TestCase):
 			[row["name__lage_in_der_immobilie"] for row in sorted(rows, key=_wohnung_sort_key)],
 			["HH EG li", "HH EG mi", "HH EG re"],
 		)
+
+
+class TestPhoneFormatting(unittest.TestCase):
+	def test_mobile_number_groups_subscriber_digits_after_prefix(self):
+		self.assertEqual(_format_phone_number("0176123456789"), "0176 123 456 789")
+
+	def test_berlin_landline_groups_subscriber_digits_after_prefix(self):
+		self.assertEqual(_format_phone_number("030123456789"), "030 123 456 789")
+
+	def test_german_country_code_is_normalized_and_grouped(self):
+		self.assertEqual(_format_phone_number("+49 176 123456789"), "0176 123 456 789")
+
+	def test_existing_area_code_separator_is_preserved_and_subscriber_is_grouped(self):
+		self.assertEqual(_format_phone_number("089 123456789"), "089 123 456 789")

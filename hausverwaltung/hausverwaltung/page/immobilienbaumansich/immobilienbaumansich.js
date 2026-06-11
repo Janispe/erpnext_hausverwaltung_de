@@ -143,16 +143,17 @@ ${teil.name || ""}
 					);
 					tbody.append(teilRow);
 
+					const groupSubscriberDigits = (digits) =>
+						digits.replace(/(\d{3})(?=\d)/g, "$1 ");
 					const formatGermanDigits = (digits) => {
 						if (digits.startsWith("01") && digits.length > 4) {
-							return `${digits.slice(0, 4)} ${digits.slice(4)}`;
+							return `${digits.slice(0, 4)} ${groupSubscriberDigits(digits.slice(4))}`;
 						}
 						if (digits.startsWith("030") && digits.length > 3) {
-							return `030 ${digits.slice(3)}`;
+							return `030 ${groupSubscriberDigits(digits.slice(3))}`;
 						}
-						return digits;
+						return groupSubscriberDigits(digits);
 					};
-					const groupRest = (value) => value.replace(/(\d{3})(?=\d)/g, "$1 ");
 					const formatTelefonToken = (token) => {
 						const cleaned = token.replace(/[^\d+]/g, "");
 						const hasPlus = cleaned.startsWith("+");
@@ -179,7 +180,7 @@ ${teil.name || ""}
 						}
 						const area = rest.slice(0, Math.min(areaLen, rest.length));
 						const subscriber = rest.slice(area.length);
-						const grouped = groupRest(subscriber);
+						const grouped = groupSubscriberDigits(subscriber);
 						const paddedArea = area ? area.padEnd(3, " ") : "";
 						return `+${country}${paddedArea ? ` ${paddedArea}` : ""}${grouped ? ` ${grouped}` : ""}`;
 					};

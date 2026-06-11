@@ -1,3 +1,5 @@
+import re
+
 import frappe
 
 from hausverwaltung.hausverwaltung.utils.gebaeudeteil import split_lage_gebaeudeteil
@@ -174,6 +176,7 @@ def execute(filters=None):
             teil_from_lage, _rest = split_lage_gebaeudeteil(row.get("lage_in_der_immobilie"))
             if teil_from_lage:
                 row["gebaeudeteil"] = teil_from_lage
+        row["telefonnummern"] = _format_phone_number_list(row.get("telefonnummern"))
 
     data.sort(
         key=lambda r: (
@@ -216,3 +219,56 @@ def execute(filters=None):
 
     enrich_link_titles(data, columns)
     return columns, data
+
+
+def _format_phone_number_list(value: str | None) -> str:
+    return "\n".join(
+        " / ".join(_format_phone_number(part) for part in line.split(" / "))
+        for line in (value or "").splitlines()
+    )
+
+
+def _format_phone_number(value: str | None) -> str:
+    raw = (value or "").strip()
+    if not raw or raw == "—":
+        return raw
+
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if len(digits) < 6:
+        return raw
+
+    if raw.lstrip().startswith("+") and digits.startswith("49") and len(digits) > 2:
+        separated = _format_separated_german_phone_number(
+            re.sub(r"^\s*\+?\s*49[\s().-]*", "0", raw, count=1)
+        )
+        if separated:
+            return separated
+        return _format_german_phone_digits("0" + digits[2:])
+
+    separated = _format_separated_german_phone_number(raw)
+    if separated:
+        return separated
+
+    return _format_german_phone_digits(digits)
+
+
+def _format_german_phone_digits(digits: str) -> str:
+    if digits.startswith("01") and len(digits) > 4:
+        return f"{digits[:4]} {_group_phone_subscriber_digits(digits[4:])}"
+    if digits.startswith("030") and len(digits) > 3:
+        return f"030 {_group_phone_subscriber_digits(digits[3:])}"
+    return digits
+
+
+def _group_phone_subscriber_digits(digits: str) -> str:
+    return " ".join(digits[i : i + 3] for i in range(0, len(digits), 3))
+
+
+def _format_separated_german_phone_number(raw: str) -> str:
+    match = re.match(r"^(0\d{1,5})[\s().-]+(\d[\d\s().-]*)$", raw.strip())
+    if not match:
+        return ""
+    subscriber_digits = "".join(ch for ch in match.group(2) if ch.isdigit())
+    if not subscriber_digits:
+        return ""
+    return f"{match.group(1)} {_group_phone_subscriber_digits(subscriber_digits)}"
