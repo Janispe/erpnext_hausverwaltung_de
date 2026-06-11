@@ -1,5 +1,5 @@
 // variant-a.jsx — Klassischer Kontoauszug.
-// Soll/Haben/Saldo · Monatsblöcke · Kategorien als ausklappbare Sub-Zeile.
+// Standard: Soll/Haben/Saldo. Kategorie-Modus: Miete/BK/HK/G+N/Saldo.
 
 const { useState: useStateA } = React;
 
@@ -45,6 +45,14 @@ function CategoryBreakdown({ row, align = "inline" }) {
   );
 }
 
+function categoryAmount(row, category) {
+  return row[`betrag_${category.key}`] || 0;
+}
+
+function formatSignedAmount(value) {
+  return Math.abs(value) < 0.01 ? "" : fmtEUR(value, { signed: true });
+}
+
 function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, showInlineCats }) {
   const [openIdx, setOpenIdx] = useStateA(() => new Set());
   const isOpen = (i) => defaultCatsOpen || openIdx.has(i);
@@ -77,17 +85,38 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
     grouped.push({ type: "row", row: r, idx: i, key: `r-${i}` });
   });
 
+  const splitCategories = !!showInlineCats;
+  const tableClasses = [
+    "mk-table",
+    density === "compact" ? "is-compact" : density === "comfy" ? "is-comfy" : "",
+    splitCategories ? "is-cat-split" : "",
+  ].filter(Boolean).join(" ");
+  const totalForCategory = (category) => rows
+    .filter((r) => !r.is_opening_row)
+    .reduce((a, r) => a + categoryAmount(r, category), 0);
+  const colspan = splitCategories ? 9 : 7;
+
   return (
     <div className="mk-table-wrap">
-      <table className={`mk-table ${density === "compact" ? "is-compact" : density === "comfy" ? "is-comfy" : ""}`}>
+      <table className={tableClasses}>
         <thead>
           <tr>
-            <th style={{ width: 96 }}>Datum</th>
-            <th style={{ width: 110 }}>Art</th>
-            <th style={{ width: 200 }}>Beleg</th>
+            <th style={{ width: 92 }}>Datum</th>
+            <th style={{ width: 104 }}>Art</th>
+            <th style={{ width: 190 }}>Beleg</th>
             <th>Beschreibung</th>
-            <th className="is-num" style={{ width: 110 }}>Soll</th>
-            <th className="is-num" style={{ width: 110 }}>Haben</th>
+            {splitCategories ? (
+              <>
+                {CATS.map((c) => (
+                  <th key={c.key} className="is-num col-cat-amount">{c.label}</th>
+                ))}
+              </>
+            ) : (
+              <>
+                <th className="is-num" style={{ width: 110 }}>Soll</th>
+                <th className="is-num" style={{ width: 110 }}>Haben</th>
+              </>
+            )}
             <th className="is-num" style={{ width: 130 }}>Saldo</th>
           </tr>
         </thead>
@@ -100,8 +129,14 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
                   <td><ArtPill art="Eröffnung" /></td>
                   <td className="col-beleg">—</td>
                   <td className="col-desc">Anfangsbestand</td>
-                  <td className="is-num">—</td>
-                  <td className="is-num">—</td>
+                  {splitCategories ? (
+                    CATS.map((c) => <td key={c.key} className="is-num col-cat-amount">—</td>)
+                  ) : (
+                    <>
+                      <td className="is-num">—</td>
+                      <td className="is-num">—</td>
+                    </>
+                  )}
                   <td className="is-num col-saldo">{fmtEUR(g.row.kontostand)}</td>
                 </tr>
               );
@@ -109,7 +144,7 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
             if (g.type === "month") {
               return (
                 <tr key={g.key} className="mk-month-row">
-                  <td colSpan="7">
+                  <td colSpan={colspan}>
                     <div className="mk-month-bar">
                       <span>{monthLabel(g.month + "-01")}</span>
                       {g.endSaldo != null && (
@@ -146,9 +181,9 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
                         {r.beschreibung}
                         {showOpen && <OpenBadge amount={r.offen} />}
                       </span>
-                      {showInlineCats && <CategoryBreakdown row={r} />}
+                      {!splitCategories && showInlineCats && <CategoryBreakdown row={r} />}
                     </div>
-                    {!defaultCatsOpen && (
+                    {!splitCategories && !defaultCatsOpen && (
                       <button
                         className={`mk-cats-toggle ${opn ? "is-open" : ""}`}
                         onClick={() => toggle(g.idx)}
@@ -158,11 +193,21 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
                       </button>
                     )}
                   </td>
-                  <td className="is-num col-soll">{soll ? fmtEURsoll(soll) : ""}</td>
-                  <td className="is-num col-haben">{haben ? fmtEURsoll(haben) : ""}</td>
+                  {splitCategories ? (
+                    CATS.map((c) => (
+                      <td key={c.key} className="is-num col-cat-amount">
+                        {formatSignedAmount(categoryAmount(r, c))}
+                      </td>
+                    ))
+                  ) : (
+                    <>
+                      <td className="is-num col-soll">{soll ? fmtEURsoll(soll) : ""}</td>
+                      <td className="is-num col-haben">{haben ? fmtEURsoll(haben) : ""}</td>
+                    </>
+                  )}
                   <td className="is-num col-saldo">{fmtEUR(r.kontostand)}</td>
                 </tr>
-                <CategoryRow row={r} isOpen={opn} />
+                {!splitCategories && <CategoryRow row={r} isOpen={opn} />}
               </React.Fragment>
             );
           })}
@@ -173,14 +218,24 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
             <td></td>
             <td className="col-beleg"></td>
             <td className="col-desc"><strong>Σ Zeitraum</strong></td>
-            <td className="is-num">
-              {fmtEURsoll(rows.filter(r => !r.is_opening_row && r.art === "Forderung")
-                .reduce((a, r) => a + r.betrag_summe, 0))}
-            </td>
-            <td className="is-num">
-              {fmtEURsoll(Math.abs(rows.filter(r => !r.is_opening_row && r.art !== "Forderung")
-                .reduce((a, r) => a + r.betrag_summe, 0)))}
-            </td>
+            {splitCategories ? (
+              CATS.map((c) => (
+                <td key={c.key} className="is-num col-cat-amount">
+                  {formatSignedAmount(totalForCategory(c))}
+                </td>
+              ))
+            ) : (
+              <>
+                <td className="is-num">
+                  {fmtEURsoll(rows.filter(r => !r.is_opening_row && r.art === "Forderung")
+                    .reduce((a, r) => a + r.betrag_summe, 0))}
+                </td>
+                <td className="is-num">
+                  {fmtEURsoll(Math.abs(rows.filter(r => !r.is_opening_row && r.art !== "Forderung")
+                    .reduce((a, r) => a + r.betrag_summe, 0)))}
+                </td>
+              </>
+            )}
             <td className="is-num col-saldo">{fmtEUR(totalRow.kontostand)}</td>
           </tr>
         </tbody>

@@ -356,12 +356,16 @@ button { font-family: inherit; }
   background: var(--bg-card);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .mk-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
+}
+.mk-table.is-cat-split {
+  min-width: 1180px;
 }
 .mk-table thead th {
   background: var(--bg-soft);
@@ -449,6 +453,10 @@ button { font-family: inherit; }
 }
 .mk-table td.col-haben {
   color: var(--ink-2);
+}
+.mk-table .col-cat-amount {
+  width: 96px;
+  white-space: nowrap;
 }
 
 /* Density-Varianten */
