@@ -1889,6 +1889,52 @@ def copy_serienbrief_vorlage(
 
 
 @frappe.whitelist()
+def create_serienbrief_vorlage(
+	title: str | None = None,
+	kategorie: str | None = None,
+	haupt_verteil_objekt: str | None = None,
+) -> Dict[str, str]:
+	target_title = cstr(title or "").strip()
+	target_kategorie = cstr(kategorie or "").strip()
+	target_doctype = cstr(haupt_verteil_objekt or "").strip() or "Mietvertrag"
+
+	if not target_title:
+		frappe.throw(_("Bitte gib einen Titel für die neue Vorlage ein."))
+
+	if not target_kategorie:
+		frappe.throw(_("Bitte wähle einen Ordner für die neue Vorlage."))
+
+	if not frappe.db.exists("Serienbrief Kategorie", target_kategorie):
+		frappe.throw(_("Der gewählte Ordner existiert nicht."))
+
+	if target_doctype and not frappe.db.exists("DocType", target_doctype):
+		frappe.throw(_("Das gewählte Verteilobjekt existiert nicht."))
+
+	if not frappe.has_permission("Serienbrief Vorlage", "create"):
+		frappe.throw(_("Keine Berechtigung, eine neue Vorlage anzulegen."), frappe.PermissionError)
+
+	doc = frappe.get_doc(
+		{
+			"doctype": "Serienbrief Vorlage",
+			"title": target_title,
+			"kategorie": target_kategorie,
+			"haupt_verteil_objekt": target_doctype,
+			"content_type": "HTML + Jinja",
+			"content_position": "Nach Bausteinen",
+			"html_content": "<p></p>",
+			"jinja_content": "",
+		}
+	)
+
+	try:
+		doc.insert()
+	except DuplicateEntryError:
+		frappe.throw(_("Eine Vorlage mit diesem Titel existiert bereits. Bitte wähle einen anderen Titel."))
+
+	return {"name": doc.name, "title": doc.title}
+
+
+@frappe.whitelist()
 def delete_serienbrief_vorlage(template: str | None = None) -> Dict[str, str]:
 	template_name = (template or "").strip()
 

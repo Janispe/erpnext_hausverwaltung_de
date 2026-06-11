@@ -48,6 +48,16 @@ export async function copyTemplate(id, newTitle) {
 	return await rpc("copy", { template: id, new_title: newTitle });
 }
 
+// Neue Vorlage anlegen. → { name, title }
+export async function createTemplate(title, kategorie, hauptVerteilObjekt = "Mietvertrag") {
+	if (!embedded) return { name: title, title, kategorie, haupt_verteil_objekt: hauptVerteilObjekt, mock: true };
+	return await rpc("create_template", {
+		title,
+		kategorie,
+		haupt_verteil_objekt: hauptVerteilObjekt,
+	});
+}
+
 // Vorlage löschen. → { name }
 export async function deleteTemplate(id) {
 	if (!embedded) return { name: id, mock: true };

@@ -21,6 +21,7 @@ const RPC_ACTIONS = {
 	set_favorite: HV_SB + "set_template_favorite",
 	move: HV_SB + "move_templates_to_kategorie",
 	create_folder: HV_SB + "create_kategorie",
+	create_template: HV_SB + "create_serienbrief_vorlage",
 	copy: HV_SB + "copy_serienbrief_vorlage",
 	delete: HV_SB + "delete_serienbrief_vorlage",
 	recipients: HV_SB + "get_editor_recipients",

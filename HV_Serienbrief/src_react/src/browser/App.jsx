@@ -6,6 +6,7 @@ import {
   setFavorite as apiSetFavorite,
   moveTemplates,
   copyTemplate,
+  createTemplate,
   deleteTemplate,
   createFolder as apiCreateFolder,
   openDurchlauf,
@@ -186,6 +187,7 @@ const Topbar = ({
   query, onQuery, fulltextMode, onToggleFulltextMode,
   sort, onSort, view, onView,
   showPreview, onTogglePreview,
+  onCreateTemplate,
 }) => {
   return (
     <header className="bw-topbar">
@@ -224,7 +226,7 @@ const Topbar = ({
           <Icon name="play" size={12}/>
           <span>Vorschau</span>
         </button>
-        <button className="btn primary"><Icon name="plus" size={12}/> Neue Vorlage</button>
+        <button className="btn primary" onClick={onCreateTemplate}><Icon name="plus" size={12}/> Neue Vorlage</button>
       </div>
     </header>
   );
@@ -988,6 +990,18 @@ export const App = () => {
       .catch((e) => window.alert(e?.message || "Ordner konnte nicht angelegt werden."));
   }, [reload, selectedFolder]);
 
+  const handleCreateTemplate = useCallback(() => {
+    if (!selectedFolder || smartFolder) {
+      window.alert("Bitte wähle zuerst links den Ordner, in dem die neue Vorlage angelegt werden soll.");
+      return;
+    }
+    const title = window.prompt("Titel der neuen Vorlage:");
+    if (!title || !title.trim()) return;
+    createTemplate(title.trim(), selectedFolder, "Mietvertrag")
+      .then((res) => apiOpenEditor(res.name))
+      .catch((e) => window.alert(e?.message || "Vorlage konnte nicht angelegt werden."));
+  }, [selectedFolder, smartFolder]);
+
   // Build descendants lookup
   const descendants = useMemo(() => {
     const map = {};
@@ -1269,6 +1283,7 @@ export const App = () => {
           onView={setView}
           showPreview={showPreview}
           onTogglePreview={() => setShowPreview(s => !s)}
+          onCreateTemplate={handleCreateTemplate}
         />
 
         <BulkBar
@@ -1363,4 +1378,3 @@ export const App = () => {
     </div>
   );
 };
-
