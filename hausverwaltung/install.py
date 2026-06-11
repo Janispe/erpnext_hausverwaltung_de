@@ -48,7 +48,7 @@ SERIENBRIEF_MARGIN_DEFAULTS: dict[str, float] = {
     "margin_top": 20.0,
     "margin_right": 20.0,
     # margin_bottom: reserviert Platz für den Page-Footer (Bankverbindung +
-    # Kategorien-Pfad). Footer ist ~7mm hoch, 16mm gibt großzügig Luft.
+    # Kategorien-Pfad). Footer ist ~8mm hoch, 16mm gibt großzügig Luft.
     "margin_bottom": 16.0,
     # margin_left: DIN-5008 Heftrand 25mm.
     "margin_left": 25.0,
@@ -287,7 +287,7 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
         # mitlädt. Inline-Style auf den inneren <div>s zusätzlich, weil die
         # Universal-Regel direkt auf jedes Descendant-Element greift.
         footer_html = """
-<div id="footer-html" style="width: 100%; padding: 1px 0 1px; border-top: 1px solid #000; font-size: 5pt; color: #000 !important; text-align: center; font-family: Arial, sans-serif; line-height: 1.05; height: 7mm; min-height: 7mm; box-sizing: border-box;">
+<div id="footer-html" style="width: 100%; padding: 1px 0 1px; border-top: 1px solid #000; font-size: 6pt; color: #000 !important; text-align: center; font-family: Arial, sans-serif; line-height: 1.05; height: 8mm; min-height: 8mm; box-sizing: border-box;">
 {%- set bank_html = get_footer_bankverbindung_html(doc) -%}
 {%- set vorlage_name = doc.vorlage if doc and doc.vorlage else None -%}
 {%- set pfad_html = "" -%}
@@ -307,8 +307,8 @@ def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
 {%- set pfad_html = pfad_parts | join(" / ") -%}
 {%- endif -%}
 {%- if bank_html or pfad_html -%}<div style="width: 100%; border-top: 1px solid #000; height: 0; margin: 0 0 1px 0; padding: 0; line-height: 0; font-size: 0;"></div>{%- endif -%}
-{%- if bank_html -%}<div style="font-size: 5pt !important; line-height: 1.05 !important; color: #000 !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ bank_html | safe }}</div>{%- endif -%}
-{%- if pfad_html -%}<div style="font-size: 5pt !important; line-height: 1.05 !important; color: #000 !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ pfad_html }}</div>{%- endif -%}
+{%- if bank_html -%}<div style="font-size: 6pt !important; line-height: 1.05 !important; color: #000 !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ bank_html | safe }}</div>{%- endif -%}
+{%- if pfad_html -%}<div style="font-size: 6pt !important; line-height: 1.05 !important; color: #000 !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ pfad_html }}</div>{%- endif -%}
 </div>
 """
 
