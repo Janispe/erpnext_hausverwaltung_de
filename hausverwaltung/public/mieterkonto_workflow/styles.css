@@ -852,10 +852,210 @@ button { font-family: inherit; }
 .is-print-mode body { background: var(--hv-surface); }
 
 @media print {
-  .mk-topbar, .mk-filterbar, .mk-cats-toggle, .mk-edit-toggle, .twk-panel { display: none !important; }
-  .mk-main { padding: 0 !important; max-width: 100% !important; }
-  body { background: var(--hv-surface) !important; }
-  .mk-table-wrap { border: 0; border-radius: 0; }
+  @page {
+    size: A4 landscape;
+    margin: 9mm 8mm 11mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #111 !important;
+    font-size: 10px;
+    line-height: 1.25;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .mk-app {
+    min-height: 0;
+    display: block;
+  }
+
+  .mk-topbar,
+  .mk-filterbar,
+  .mk-cats-toggle,
+  .mk-edit-toggle,
+  .twk-panel,
+  .mk-load-state {
+    display: none !important;
+  }
+
+  .mk-main {
+    padding: 0 !important;
+    max-width: none !important;
+    width: 100% !important;
+    margin: 0 !important;
+  }
+
+  .mk-header {
+    grid-template-columns: 1fr auto;
+    gap: 10mm;
+    padding-bottom: 4mm;
+    margin-bottom: 4mm;
+    border-bottom: 1px solid #777;
+    break-after: avoid;
+  }
+  .mk-header-id {
+    font-size: 8px;
+    margin-bottom: 1.5mm;
+    color: #555 !important;
+  }
+  .mk-header h2 {
+    font-size: 16px;
+    margin-bottom: 1mm;
+  }
+  .mk-header-meta {
+    gap: 3mm 7mm;
+    margin-top: 3mm;
+    font-size: 9px;
+  }
+  .mk-header-meta dt,
+  .mk-period-badge {
+    font-size: 8px;
+    color: #666 !important;
+  }
+  .mk-period-badge .mk-period-range {
+    font-size: 10px;
+    color: #111 !important;
+  }
+
+  .mk-summary {
+    grid-template-columns: repeat(6, 1fr);
+    gap: 0;
+    border: 1px solid #bbb;
+    border-radius: 0;
+    margin-bottom: 4mm;
+    background: #bbb !important;
+    break-after: avoid;
+  }
+  .mk-summary-card,
+  .mk-summary-card.is-primary,
+  .mk-summary-card.is-primary.is-due {
+    background: #fff !important;
+    box-shadow: none !important;
+    padding: 2.5mm 3mm;
+    min-height: 0;
+  }
+  .mk-summary-card .mk-summary-label {
+    font-size: 7.5px;
+    margin-bottom: 1mm;
+    color: #666 !important;
+  }
+  .mk-summary-card .mk-summary-value,
+  .mk-summary-card.is-primary .mk-summary-value {
+    font-size: 12px;
+    color: #111 !important;
+  }
+  .mk-summary-card .mk-summary-sub {
+    font-size: 7.5px;
+    color: #666 !important;
+  }
+
+  .mk-table-wrap {
+    border: 0;
+    border-radius: 0;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+  .mk-table,
+  .mk-table.is-cat-split {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: fixed;
+    font-size: 8.5px;
+  }
+  .mk-table thead {
+    display: table-header-group;
+  }
+  .mk-table tfoot {
+    display: table-footer-group;
+  }
+  .mk-table thead th {
+    background: #f2f2f2 !important;
+    color: #444 !important;
+    border-bottom: 1px solid #777;
+    padding: 1.8mm 1.6mm;
+    font-size: 7.5px;
+    letter-spacing: 0.03em;
+  }
+  .mk-table tbody tr,
+  .mk-row-opening,
+  .mk-row-total,
+  .mk-month-row {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .mk-table tbody td {
+    padding: 1.9mm 1.6mm;
+    border-bottom: 1px solid #ddd;
+  }
+  .mk-table td.col-date {
+    width: 18mm;
+  }
+  .mk-table td.col-beleg {
+    width: 32mm;
+    font-size: 7.2px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    color: #444 !important;
+  }
+  .mk-voucher-link {
+    color: #111 !important;
+    text-decoration: none !important;
+  }
+  .mk-table td.col-desc {
+    overflow-wrap: anywhere;
+  }
+  .mk-desc-line {
+    display: block;
+  }
+  .mk-desc-main {
+    display: block;
+  }
+  .mk-table .col-cat-amount {
+    width: 20mm;
+  }
+  .mk-table td.col-saldo,
+  .mk-table th:last-child {
+    width: 24mm !important;
+  }
+  .mk-month-row td {
+    background: #f7f7f7 !important;
+    color: #555 !important;
+    padding: 1.4mm 1.6mm !important;
+    font-size: 7.5px;
+    border-top: 1px solid #bbb;
+    border-bottom: 1px solid #bbb;
+  }
+  .mk-month-row .mk-month-saldo {
+    font-size: 8px;
+    color: #444 !important;
+  }
+  .mk-row-opening td,
+  .mk-row-total td {
+    background: #f8f8f8 !important;
+  }
+  .mk-row-total td {
+    border-top: 1.5px solid #111 !important;
+  }
+  .mk-row-total td.col-saldo {
+    font-size: 9px;
+  }
+  .mk-pill,
+  .mk-pill-open {
+    background: transparent !important;
+    color: #111 !important;
+    border-color: #777 !important;
+    border-radius: 3px;
+    padding: 0.5mm 1.4mm;
+    font-size: 7px;
+  }
+  .mk-pill-open {
+    display: inline-block;
+    margin-top: 0.8mm;
+    margin-left: 0 !important;
+  }
 }
 
 /* ───────── Tab-Switcher ───────── */
