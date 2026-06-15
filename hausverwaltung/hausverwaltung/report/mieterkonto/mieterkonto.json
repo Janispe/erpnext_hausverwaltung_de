@@ -41,7 +41,7 @@
    "default": "1",
    "fieldname": "show_kategorien",
    "fieldtype": "Check",
-   "label": "Aufteilung nach Miete/BK/HK/Guthaben",
+   "label": "Aufteilung nach Miete/BK/HK/Guthaben/VZ",
    "mandatory": 0,
    "wildcard_filter": 0
   },

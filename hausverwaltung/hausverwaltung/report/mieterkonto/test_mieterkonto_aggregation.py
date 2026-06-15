@@ -77,6 +77,27 @@ class TestGroupInvoices(TestCase):
 		self.assertEqual(row["betrag_summe"], 42.5)
 		self.assertEqual(row["offen"], 42.5)
 
+	def test_vorauszahlung_row_exposes_vz_amount(self):
+		transaction = {
+			"date": date(2025, 11, 5),
+			"art": "Vorauszahlung",
+			"belegart": "Payment Entry",
+			"belegnummer": "PE-VZ",
+			"beschreibung": "Vorauszahlung",
+			"currency": "EUR",
+			"invoice_amounts": {cat: 0.0 for cat in CATEGORIES},
+			"paid_amounts": {cat: 0.0 for cat in CATEGORIES} | {"vorauszahlungen": 120.0},
+			"written_off_amounts": {cat: 0.0 for cat in CATEGORIES},
+			"delta": -120.0,
+			"offen": 0.0,
+		}
+
+		row = _transaction_to_row(transaction, balance=-120.0)
+
+		self.assertEqual(row["betrag_vorauszahlungen"], -120.0)
+		self.assertEqual(row["betrag_summe"], -120.0)
+		self.assertEqual(row["kontostand"], -120.0)
+
 	def test_four_sis_same_id_collapse_to_one_group(self):
 		mab = "MV-2025-001|11/2025"
 		invoices = {

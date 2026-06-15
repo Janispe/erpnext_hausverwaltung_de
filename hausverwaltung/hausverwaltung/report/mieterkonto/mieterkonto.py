@@ -13,12 +13,13 @@ from hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff import (
 	is_receivable_writeoff_journal_entry,
 )
 
-CATEGORIES = ("miete", "betriebskosten", "heizkosten", "guthaben_nachzahlungen")
+CATEGORIES = ("miete", "betriebskosten", "heizkosten", "guthaben_nachzahlungen", "vorauszahlungen")
 CATEGORY_LABELS = {
 	"miete": "Miete",
 	"betriebskosten": "BK",
 	"heizkosten": "HK",
 	"guthaben_nachzahlungen": "G/N",
+	"vorauszahlungen": "VZ",
 }
 ITEM_CATEGORY_MAP = {
 	"Miete": "miete",
@@ -89,8 +90,9 @@ def execute(filters=None):
 
 	transactions = _build_invoice_transactions(display_invoices)
 	transactions.extend(_build_settlement_transactions(display_invoices, raw_invoices, filters))
-	# Stand-alone Receivable-Bewegungen (JE/PE auf Mieterforderungen ohne
-	# SI-Referenz) — z.B. nachgebuchte Mahngebühren oder Korrektur-JEs.
+	transactions.extend(_build_payment_entry_advance_transactions(raw_invoices, filters))
+	# Stand-alone Receivable-Bewegungen auf Mieterforderungen ohne
+	# SI-Referenz — z.B. nachgebuchte Mahngebühren oder Korrektur-JEs.
 	transactions.extend(standalone_transactions)
 	transactions.sort(key=_transaction_sort_key)
 
@@ -598,6 +600,10 @@ def _build_standalone_receivable_transactions(
 		key = (row.voucher_type, row.voucher_no)
 		if key in covered_voucher_keys:
 			continue
+		if row.voucher_type == "Payment Entry":
+			# Payment Entries werden separat als VZ mit dem unzugeordneten
+			# Restbetrag ermittelt. Hier weiter mitzuzählen würde sie doppeln.
+			continue
 		standalone_voucher_keys.add(key)
 
 	if not standalone_voucher_keys:
@@ -656,6 +662,152 @@ def _build_standalone_receivable_transactions(
 		)
 
 	return transactions
+
+
+def _build_payment_entry_advance_transactions(
+	raw_invoices: dict[str, InvoiceInfo],
+	filters,
+) -> list[dict[str, Any]]:
+	"""Zeigt unzugeordnete Mieterzahlungen/Überzahlungen als eigene VZ-Spalte.
+
+	Grundlage ist der Netto-Betrag des Payment Entry auf Mieterforderungen.
+	Der bereits über Payment Ledger Entries gegen Rechnungen gezeigte Anteil
+	wird abgezogen; übrig bleibt nur die tatsächliche Vorauszahlung.
+	"""
+	receivable_accounts: set[str] = {inv.debit_to for inv in raw_invoices.values() if inv.debit_to}
+	if not receivable_accounts:
+		receivable_accounts = {
+			row["name"]
+			for row in frappe.get_all(
+				"Account",
+				filters={
+					"company": filters.company,
+					"account_type": "Receivable",
+					"is_group": 0,
+					"disabled": 0,
+				},
+				fields=["name"],
+			)
+		}
+	if not receivable_accounts:
+		return []
+
+	gle_rows = frappe.get_all(
+		"GL Entry",
+		filters={
+			"account": ("in", list(receivable_accounts)),
+			"party_type": "Customer",
+			"party": filters.customer,
+			"voucher_type": "Payment Entry",
+			"docstatus": 1,
+			"is_cancelled": 0,
+			"posting_date": ("<=", filters.to_date),
+		},
+		fields=[
+			"posting_date",
+			"voucher_no",
+			"debit",
+			"credit",
+			"account",
+			"remarks",
+		],
+		order_by="posting_date asc, creation asc",
+	)
+	if not gle_rows:
+		return []
+
+	net_by_voucher: dict[str, float] = defaultdict(float)
+	date_by_voucher: dict[str, Any] = {}
+	for row in gle_rows:
+		voucher_no = row.voucher_no
+		if not voucher_no:
+			continue
+		net_by_voucher[voucher_no] += flt(row.debit) - flt(row.credit)
+		date_by_voucher.setdefault(voucher_no, getdate(row.posting_date))
+
+	if not net_by_voucher:
+		return []
+
+	allocated_receipts = _get_payment_entry_allocated_receipts(
+		set(net_by_voucher),
+		set(raw_invoices),
+		filters,
+	)
+	voucher_remarks = _fetch_voucher_remarks(
+		[frappe._dict(voucher_type="Payment Entry", voucher_no=name) for name in net_by_voucher]
+	)
+
+	transactions: list[dict[str, Any]] = []
+	for voucher_no, receivable_net in net_by_voucher.items():
+		# receivable_net < 0: Eingang vom Mieter. receivable_net > 0: Auszahlung/Erstattung.
+		if receivable_net < -TOLERANCE:
+			advance_amount = flt(abs(receivable_net) - flt(allocated_receipts.get(voucher_no)), 2)
+		elif receivable_net > TOLERANCE:
+			advance_amount = flt(-receivable_net, 2)
+		else:
+			continue
+		if abs(advance_amount) <= TOLERANCE:
+			continue
+
+		paid_amounts = {cat: 0.0 for cat in CATEGORIES}
+		paid_amounts["vorauszahlungen"] = advance_amount
+		description = (
+			_build_voucher_suffix("Payment Entry", voucher_remarks.get(("Payment Entry", voucher_no), {}))
+			or _("Vorauszahlung")
+		)
+
+		transactions.append(
+			{
+				"date": date_by_voucher.get(voucher_no),
+				"sort_order": 26,
+				"art": "Vorauszahlung",
+				"belegart": "Payment Entry",
+				"belegnummer": voucher_no,
+				"rechnung": voucher_no,
+				"beschreibung": description,
+				"due_date": date_by_voucher.get(voucher_no),
+				"status": None,
+				"currency": _get_currency(filters.company),
+				"invoice_amounts": {cat: 0.0 for cat in CATEGORIES},
+				"paid_amounts": paid_amounts,
+				"written_off_amounts": {cat: 0.0 for cat in CATEGORIES},
+				"delta": flt(-advance_amount, 2),
+				"offen": 0.0,
+			}
+		)
+
+	return transactions
+
+
+def _get_payment_entry_allocated_receipts(
+	payment_entries: set[str],
+	invoice_names: set[str],
+	filters,
+) -> dict[str, float]:
+	if not payment_entries or not invoice_names:
+		return {}
+
+	rows = frappe.get_all(
+		"Payment Ledger Entry",
+		filters={
+			"company": filters.company,
+			"party_type": "Customer",
+			"party": filters.customer,
+			"voucher_type": "Payment Entry",
+			"voucher_no": ("in", list(payment_entries)),
+			"against_voucher_type": "Sales Invoice",
+			"against_voucher_no": ("in", list(invoice_names)),
+			"posting_date": ("<=", filters.to_date),
+			"delinked": 0,
+		},
+		fields=["voucher_no", "amount"],
+	)
+	allocated: dict[str, float] = defaultdict(float)
+	for row in rows:
+		amount = flt(row.amount)
+		if amount < 0:
+			allocated[row.voucher_no] += abs(amount)
+	return {voucher_no: flt(amount, 2) for voucher_no, amount in allocated.items()}
 
 
 def _fetch_offset_accounts(
@@ -988,6 +1140,13 @@ def _get_report_summary(totals: dict[str, Any], filters) -> list[dict[str, Any]]
 			"value": _open_category_amount(all_totals, "guthaben_nachzahlungen"),
 			"indicator": "Blue",
 			"label": _("G/N offen"),
+			"datatype": "Currency",
+			"currency": currency,
+		},
+		{
+			"value": _open_category_amount(all_totals, "vorauszahlungen"),
+			"indicator": "Blue",
+			"label": _("VZ offen"),
 			"datatype": "Currency",
 			"currency": currency,
 		},
