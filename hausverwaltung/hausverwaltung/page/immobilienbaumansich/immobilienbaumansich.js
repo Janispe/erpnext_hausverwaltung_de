@@ -150,7 +150,7 @@ ${teil.name || ""}
 							return `${digits.slice(0, 4)} ${groupSubscriberDigits(digits.slice(4))}`;
 						}
 						if (digits.startsWith("030") && digits.length > 3) {
-							return `030 ${groupSubscriberDigits(digits.slice(3))}`;
+							return groupSubscriberDigits(digits.slice(3));
 						}
 						return groupSubscriberDigits(digits);
 					};

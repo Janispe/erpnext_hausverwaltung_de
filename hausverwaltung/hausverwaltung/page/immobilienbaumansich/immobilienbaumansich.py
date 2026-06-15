@@ -116,7 +116,7 @@ def _format_german_phone_digits(digits: str) -> str:
 	if digits.startswith("01") and len(digits) > 4:
 		return f"{digits[:4]} {_group_phone_subscriber_digits(digits[4:])}"
 	if digits.startswith("030") and len(digits) > 3:
-		return f"030 {_group_phone_subscriber_digits(digits[3:])}"
+		return _group_phone_subscriber_digits(digits[3:])
 	return digits
 
 
@@ -131,7 +131,10 @@ def _format_separated_german_phone_number(raw: str) -> str:
 	subscriber_digits = "".join(ch for ch in match.group(2) if ch.isdigit())
 	if not subscriber_digits:
 		return ""
-	return f"{match.group(1)} {_group_phone_subscriber_digits(subscriber_digits)}"
+	prefix = match.group(1)
+	if prefix == "030":
+		return _group_phone_subscriber_digits(subscriber_digits)
+	return f"{prefix} {_group_phone_subscriber_digits(subscriber_digits)}"
 
 
 def _wohnung_sort_key(whg: dict) -> tuple[int, int, str]:
