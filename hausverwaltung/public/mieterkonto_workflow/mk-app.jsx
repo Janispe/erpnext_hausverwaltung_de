@@ -319,6 +319,13 @@ function buildMieterkontoPrintHtml(data, options = {}) {
 
   const grouped = [];
   let lastMonth = null;
+  const monthEndRow = (month) => txRows
+    .filter((r) => !r.is_opening_row && (r.datum || "").slice(0, 7) === month)
+    .reduce((best, row) => {
+      if (!best) return row;
+      return (row.datum || "") > (best.datum || "") ? row : best;
+    }, null);
+
   txRows.forEach((row, index) => {
     if (row.is_opening_row) {
       grouped.push({ type: "opening", row, key: `op-${index}` });
@@ -326,9 +333,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
     }
     const month = (row.datum || "").slice(0, 7);
     if (month && month !== lastMonth) {
-      const lastInMonth = txRows
-        .filter((r) => !r.is_opening_row && (r.datum || "").slice(0, 7) === month)
-        .slice(-1)[0];
+      const lastInMonth = monthEndRow(month);
       grouped.push({
         type: "month",
         month,

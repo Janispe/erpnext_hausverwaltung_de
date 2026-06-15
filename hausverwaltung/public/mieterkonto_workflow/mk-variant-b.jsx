@@ -47,6 +47,12 @@ function SaldoSparkline({ rows }) {
 }
 
 function VariantB({ rows, totalRow }) {
+  const chronologicalRows = [...rows].sort((a, b) => {
+    const aOpening = a.is_opening_row ? 0 : 1;
+    const bOpening = b.is_opening_row ? 0 : 1;
+    if (aOpening !== bOpening) return aOpening - bOpening;
+    return (a.datum || "").localeCompare(b.datum || "");
+  });
   // group by month
   const byMonth = {};
   const order = [];
@@ -59,11 +65,14 @@ function VariantB({ rows, totalRow }) {
 
   return (
     <div>
-      <SaldoSparkline rows={rows} />
+      <SaldoSparkline rows={chronologicalRows} />
       <div className="mk-timeline">
         {order.map((m) => {
           const items = byMonth[m];
-          const endSaldo = items[items.length - 1].kontostand;
+          const endSaldo = items.reduce((best, row) => {
+            if (!best) return row;
+            return (row.datum || "") > (best.datum || "") ? row : best;
+          }, null)?.kontostand;
           return (
             <div key={m}>
               <div className="mk-tl-month">

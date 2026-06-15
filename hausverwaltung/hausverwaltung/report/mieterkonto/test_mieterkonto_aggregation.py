@@ -7,6 +7,7 @@ from hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto import (
 	_build_invoice_transactions,
 	_category_amounts_from_items,
 	_group_invoices,
+	_sort_rows_for_display,
 	_transaction_to_row,
 )
 
@@ -97,6 +98,21 @@ class TestGroupInvoices(TestCase):
 		self.assertEqual(row["betrag_vorauszahlungen"], -120.0)
 		self.assertEqual(row["betrag_summe"], -120.0)
 		self.assertEqual(row["kontostand"], -120.0)
+
+	def test_display_rows_are_newest_first_with_summary_at_end(self):
+		rows = [
+			{"datum": date(2025, 1, 1), "is_opening_row": 1},
+			{"datum": date(2025, 1, 2), "belegnummer": "OLD"},
+			{"datum": date(2025, 1, 3), "belegnummer": "MID"},
+			{"datum": date(2025, 1, 3), "belegnummer": "NEWER-SAME-DAY"},
+			{"datum": date(2025, 1, 31), "is_total_row": 1},
+		]
+
+		result = _sort_rows_for_display(rows)
+
+		self.assertEqual([r.get("belegnummer") for r in result[:3]], ["NEWER-SAME-DAY", "MID", "OLD"])
+		self.assertTrue(result[-2].get("is_opening_row"))
+		self.assertTrue(result[-1].get("is_total_row"))
 
 	def test_four_sis_same_id_collapse_to_one_group(self):
 		mab = "MV-2025-001|11/2025"

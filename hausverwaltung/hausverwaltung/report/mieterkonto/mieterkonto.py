@@ -97,6 +97,7 @@ def execute(filters=None):
 	transactions.sort(key=_transaction_sort_key)
 
 	rows, summary_totals = _build_rows(transactions, filters)
+	rows = _sort_rows_for_display(rows)
 	columns = _get_columns(filters)
 	enrich_link_titles(rows, columns)
 	return columns, rows, None, None, _get_report_summary(summary_totals, filters)
@@ -1088,6 +1089,31 @@ def _transaction_sort_key(transaction: dict[str, Any]):
 		transaction.get("sort_order") or 99,
 		transaction.get("belegnummer") or "",
 	)
+
+
+def _sort_rows_for_display(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+	"""Newest account rows first; keep summary rows at the end.
+
+	Kontostand values are calculated chronologically in ``_build_rows`` before
+	this display-only ordering is applied.
+	"""
+	transaction_rows: list[tuple[int, dict[str, Any]]] = []
+	opening_rows: list[dict[str, Any]] = []
+	total_rows: list[dict[str, Any]] = []
+
+	for index, row in enumerate(rows):
+		if row.get("is_total_row"):
+			total_rows.append(row)
+		elif row.get("is_opening_row"):
+			opening_rows.append(row)
+		else:
+			transaction_rows.append((index, row))
+
+	transaction_rows.sort(
+		key=lambda item: (item[1].get("datum") or getdate("1900-01-01"), item[0]),
+		reverse=True,
+	)
+	return [row for _index, row in transaction_rows] + opening_rows + total_rows
 
 
 def _get_currency(company: str) -> str | None:

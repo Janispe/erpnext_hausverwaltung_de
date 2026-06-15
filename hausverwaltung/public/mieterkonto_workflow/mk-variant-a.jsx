@@ -53,6 +53,15 @@ function formatSignedAmount(value) {
   return Math.abs(value) < 0.01 ? "" : fmtEUR(value, { signed: true });
 }
 
+function monthEndRow(rows, month) {
+  return rows
+    .filter((r) => !r.is_opening_row && r.datum && r.datum.slice(0, 7) === month)
+    .reduce((best, row) => {
+      if (!best) return row;
+      return row.datum > best.datum ? row : best;
+    }, null);
+}
+
 function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, showInlineCats }) {
   const [openIdx, setOpenIdx] = useStateA(() => new Set());
   const isOpen = (i) => defaultCatsOpen || openIdx.has(i);
@@ -75,7 +84,7 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
     const month = r.datum.slice(0, 7);
     if (month !== lastMonth) {
       // monatlicher Endsaldo
-      const lastInMonth = rows.filter(x => !x.is_opening_row && x.datum.slice(0, 7) === month).slice(-1)[0];
+      const lastInMonth = monthEndRow(rows, month);
       grouped.push({
         type: "month", month, key: `m-${month}`,
         endSaldo: lastInMonth ? lastInMonth.kontostand : null,
