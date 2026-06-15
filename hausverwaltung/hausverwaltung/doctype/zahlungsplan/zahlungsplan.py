@@ -98,6 +98,9 @@ class Zahlungsplan(Document):
 
 		self.status = _compute_status(self)
 
+	def on_update(self):
+		_sync_purchase_invoices_for_plan(self)
+
 	@frappe.whitelist()
 	def plan_vorbelegen(self, rhythmus: str, von: str, bis: str, betrag: float | None = None, replace: int | bool = 0):
 		"""Generate plan rows for a fixed monthly rhythm."""
@@ -433,6 +436,114 @@ def _recompute_zahlungsplan_status(name: str) -> None:
 		doc.db_set("status", _compute_status(doc), update_modified=False)
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), f"Zahlungsplan Status-Recompute: {name}")
+
+
+def _sync_purchase_invoices_for_plan(doc: Zahlungsplan) -> dict:
+	"""Keep generated row invoices in sync while they are still fully open.
+
+	Submitted Purchase Invoices are accounting documents. Instead of mutating a
+	submitted invoice amount/item in place, we cancel the still-unpaid generated
+	invoice and create a replacement from the current plan row.
+	"""
+	if doc.get("modus") != MODUS_ZAHLUNGSPLAN:
+		return {"checked": 0, "updated": []}
+
+	checked = 0
+	updated: list[dict[str, str]] = []
+	skipped: list[dict[str, str]] = []
+
+	for row in doc.get("plan") or []:
+		pi_name = row.get("purchase_invoice")
+		if not pi_name:
+			continue
+		checked += 1
+		try:
+			pi = frappe.get_doc("Purchase Invoice", pi_name)
+		except Exception:
+			row.db_set("purchase_invoice", None, update_modified=False)
+			row.db_set("pi_erstellt_am", None, update_modified=False)
+			row.db_set("pi_fehler", f"Eingangsrechnung {pi_name} nicht gefunden.", update_modified=False)
+			skipped.append({"row": row.name, "reason": "missing"})
+			continue
+
+		if int(pi.docstatus or 0) == 2:
+			row.db_set("purchase_invoice", None, update_modified=False)
+			row.db_set("pi_erstellt_am", None, update_modified=False)
+			continue
+		if int(pi.docstatus or 0) != 1:
+			continue
+		if _purchase_invoice_matches_plan_row(doc, row, pi):
+			if row.get("pi_fehler"):
+				row.db_set("pi_fehler", None, update_modified=False)
+			continue
+		if not _purchase_invoice_is_unreconciled(pi):
+			message = (
+				f"Eingangsrechnung {pi.name} ist bereits teilbezahlt/verrechnet "
+				"und wurde nicht automatisch angepasst."
+			)
+			row.db_set("pi_fehler", message, update_modified=False)
+			skipped.append({"row": row.name, "reason": "reconciled"})
+			continue
+
+		try:
+			pi.cancel()
+			new_pi = _create_purchase_invoice_for_plan_row(doc, row)
+			row.db_set("purchase_invoice", new_pi.name, update_modified=False)
+			row.db_set("pi_erstellt_am", now_datetime(), update_modified=False)
+			row.db_set("pi_fehler", None, update_modified=False)
+			updated.append({"row": row.name, "old": pi.name, "new": new_pi.name})
+		except Exception as exc:
+			row.db_set("pi_fehler", str(exc)[:1000], update_modified=False)
+			skipped.append({"row": row.name, "reason": "error"})
+			frappe.log_error(
+				frappe.get_traceback(),
+				f"Zahlungsplan {doc.name} Zeile {row.idx}: PI-Sync fehlgeschlagen",
+			)
+
+	return {"checked": checked, "updated": updated, "skipped": skipped}
+
+
+def _purchase_invoice_is_unreconciled(pi: Document) -> bool:
+	total = flt(pi.get("rounded_total")) or flt(pi.get("grand_total"))
+	return abs(flt(pi.get("outstanding_amount")) - total) <= 0.01
+
+
+def _purchase_invoice_matches_plan_row(doc: Zahlungsplan, row: Document, pi: Document) -> bool:
+	try:
+		item_code, expense_account, cost_center = _resolve_pi_fields(doc)
+	except Exception:
+		return False
+
+	expected_amount = flt(row.get("betrag"))
+	expected_date = getdate(row.get("faelligkeitsdatum")) if row.get("faelligkeitsdatum") else None
+	expected_remarks = _build_plan_row_pi_remarks(doc, row)
+	items = pi.get("items") or []
+
+	if pi.get("company") != doc.get("company") or pi.get("supplier") != doc.get("lieferant"):
+		return False
+	if expected_date and getdate(pi.get("posting_date")) != expected_date:
+		return False
+	if expected_date and getdate(pi.get("bill_date")) != expected_date:
+		return False
+	if pi.meta.get_field("custom_wertstellungsdatum") and expected_date:
+		if getdate(pi.get("custom_wertstellungsdatum")) != expected_date:
+			return False
+	if (pi.get("remarks") or "") != expected_remarks:
+		return False
+	if len(items) != 1:
+		return False
+
+	item = items[0]
+	if item.get("item_code") != item_code:
+		return False
+	if abs(flt(item.get("rate")) - expected_amount) > 0.01:
+		return False
+	if item.get("expense_account") != expense_account:
+		return False
+	if (item.get("cost_center") or None) != (cost_center or None):
+		return False
+
+	return True
 
 
 def sync_cancelled_payment_entry_links(payment_entry_name: str | None = None) -> dict:
@@ -828,10 +939,6 @@ def _create_purchase_invoice_for_plan_row(doc: Zahlungsplan, row: Document):
 		frappe.throw(f"Plan-Zeile {row.idx}: Betrag muss positiv sein.")
 
 	posting_date = getdate(row.faelligkeitsdatum)
-	bemerkung_extra = (row.get("bemerkung") or "").strip()
-	remarks = _build_remarks(doc) + f" | Plan-Zeile {row.idx}"
-	if bemerkung_extra:
-		remarks += f" | {bemerkung_extra}"
 
 	pi = _build_purchase_invoice(
 		doc=doc,
@@ -839,7 +946,7 @@ def _create_purchase_invoice_for_plan_row(doc: Zahlungsplan, row: Document):
 		posting_date=posting_date,
 		bill_no=None,
 		wertstellungsdatum=posting_date,
-		remarks=remarks,
+		remarks=_build_plan_row_pi_remarks(doc, row),
 	)
 	return pi
 
@@ -937,6 +1044,14 @@ def _build_remarks(doc: Zahlungsplan) -> str:
 	if doc.get("wohnung"):
 		parts.append(f"Wohnung: {doc.get('wohnung')}")
 	return " | ".join(parts) or f"Zahlungsplan ({DEFAULT_SERVICE_ITEM_CODE})"
+
+
+def _build_plan_row_pi_remarks(doc: Zahlungsplan, row: Document) -> str:
+	remarks = _build_remarks(doc) + f" | Plan-Zeile {row.idx}"
+	bemerkung_extra = (row.get("bemerkung") or "").strip()
+	if bemerkung_extra:
+		remarks += f" | {bemerkung_extra}"
+	return remarks
 
 
 def _resolve_pi_fields(doc: Zahlungsplan):

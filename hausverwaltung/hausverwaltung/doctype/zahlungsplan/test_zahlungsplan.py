@@ -109,3 +109,113 @@ def test_create_due_purchase_invoices_ignores_cancelled_existing_pi():
 	assert res["created"] == ["PI-NEW"]
 	assert row.updates["purchase_invoice"] == "PI-NEW"
 	assert row.updates["pi_erstellt_am"] is not None
+
+
+def test_sync_purchase_invoices_replaces_unreconciled_changed_invoice():
+	class _FakeRow:
+		name = "ZP-ROW-OPEN"
+		idx = 1
+		purchase_invoice = "PI-OLD"
+		pi_fehler = None
+
+		def __init__(self):
+			self.updates = {}
+
+		def get(self, key, default=None):
+			return getattr(self, key, default)
+
+		def db_set(self, fieldname, value, update_modified=False):
+			self.updates[fieldname] = value
+			setattr(self, fieldname, value)
+
+	class _FakePI:
+		name = "PI-OLD"
+		docstatus = 1
+
+		def __init__(self):
+			self.cancelled = False
+
+		def get(self, key, default=None):
+			return {
+				"outstanding_amount": 100,
+				"grand_total": 100,
+			}.get(key, default)
+
+		def cancel(self):
+			self.cancelled = True
+
+	row = _FakeRow()
+	pi = _FakePI()
+	doc = SimpleNamespace(
+		name="ZP-1",
+		modus=zp.MODUS_ZAHLUNGSPLAN,
+		plan=[row],
+		get=lambda key, default=None: getattr(doc, key, default),
+	)
+	new_pi = SimpleNamespace(name="PI-NEW")
+
+	with patch.object(zp.frappe, "get_doc", return_value=pi), \
+		patch.object(zp, "_purchase_invoice_matches_plan_row", return_value=False), \
+		patch.object(zp, "_create_purchase_invoice_for_plan_row", return_value=new_pi) as create_pi:
+		res = zp._sync_purchase_invoices_for_plan(doc)
+
+	assert pi.cancelled is True
+	create_pi.assert_called_once_with(doc, row)
+	assert row.purchase_invoice == "PI-NEW"
+	assert row.updates["pi_erstellt_am"] is not None
+	assert row.pi_fehler is None
+	assert res["updated"] == [{"row": "ZP-ROW-OPEN", "old": "PI-OLD", "new": "PI-NEW"}]
+
+
+def test_sync_purchase_invoices_skips_reconciled_changed_invoice():
+	class _FakeRow:
+		name = "ZP-ROW-PAID"
+		idx = 1
+		purchase_invoice = "PI-PAID"
+		pi_fehler = None
+
+		def __init__(self):
+			self.updates = {}
+
+		def get(self, key, default=None):
+			return getattr(self, key, default)
+
+		def db_set(self, fieldname, value, update_modified=False):
+			self.updates[fieldname] = value
+			setattr(self, fieldname, value)
+
+	class _FakePI:
+		name = "PI-PAID"
+		docstatus = 1
+
+		def __init__(self):
+			self.cancelled = False
+
+		def get(self, key, default=None):
+			return {
+				"outstanding_amount": 40,
+				"grand_total": 100,
+			}.get(key, default)
+
+		def cancel(self):
+			self.cancelled = True
+
+	row = _FakeRow()
+	pi = _FakePI()
+	doc = SimpleNamespace(
+		name="ZP-1",
+		modus=zp.MODUS_ZAHLUNGSPLAN,
+		plan=[row],
+		get=lambda key, default=None: getattr(doc, key, default),
+	)
+
+	with patch.object(zp.frappe, "get_doc", return_value=pi), \
+		patch.object(zp, "_purchase_invoice_matches_plan_row", return_value=False), \
+		patch.object(zp, "_create_purchase_invoice_for_plan_row") as create_pi:
+		res = zp._sync_purchase_invoices_for_plan(doc)
+
+	assert pi.cancelled is False
+	create_pi.assert_not_called()
+	assert row.purchase_invoice == "PI-PAID"
+	assert "bereits teilbezahlt/verrechnet" in row.pi_fehler
+	assert res["skipped"] == [{"row": "ZP-ROW-PAID", "reason": "reconciled"}]
