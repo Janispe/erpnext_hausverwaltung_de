@@ -96,7 +96,7 @@
    "wildcard_filter": 0
   },
   {
-   "default": "0",
+   "default": "1",
    "fieldname": "hide_abschlagszahlungen",
    "fieldtype": "Check",
    "label": "Abschlagszahlungen ausblenden",

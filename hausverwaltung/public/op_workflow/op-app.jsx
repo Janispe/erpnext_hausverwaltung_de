@@ -81,6 +81,7 @@ function OpApp() {
   const [sortDir, setSortDir] = useStateA0("asc"); // asc | desc
   const [showSettled, setShowSettled] = useStateA0(false);
   const [showWrittenOff, setShowWrittenOff] = useStateA0(false);
+  const [showAbschlagszahlungen, setShowAbschlagszahlungen] = useStateA0(false);
   const [search, setSearch] = useStateA0("");
   const [activeChip, setActiveChip] = useStateA0(null);
   const [directionFilter, setDirectionFilter] = useStateA0("alle");
@@ -153,10 +154,11 @@ function OpApp() {
         bis_faelligkeit: datumBis,
         show_settled: showSettled ? 1 : 0,
         show_written_off: showWrittenOff ? 1 : 0,
+        hide_abschlagszahlungen: showAbschlagszahlungen ? 0 : 1,
       }).catch(() => {});
     }, 300);
     return () => clearTimeout(timer);
-  }, [datumVon, datumBis, showSettled, showWrittenOff]);
+  }, [datumVon, datumBis, showSettled, showWrittenOff, showAbschlagszahlungen]);
 
   // Modal-State
   const [modal, setModal] = useStateA0(null); // { type, row }
@@ -726,6 +728,10 @@ function OpApp() {
             <label className="mk-toggle">
               <input type="checkbox" checked={showSettled} onChange={(e) => setShowSettled(e.target.checked)} />
               Auch ausgeglichene
+            </label>
+            <label className="mk-toggle">
+              <input type="checkbox" checked={showAbschlagszahlungen} onChange={(e) => setShowAbschlagszahlungen(e.target.checked)} />
+              Abschläge anzeigen
             </label>
           </div>
           <div className="op-toolbar-right">

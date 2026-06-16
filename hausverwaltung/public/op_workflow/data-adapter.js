@@ -80,6 +80,7 @@
       show_aktion: 1,
       show_settled: 0,
       show_written_off: 0,
+      hide_abschlagszahlungen: 1,
       ...defaultDateFilter(),
     };
   }
