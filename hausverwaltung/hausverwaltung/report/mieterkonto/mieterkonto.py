@@ -102,6 +102,7 @@ def execute(filters=None):
 	transactions = _build_invoice_transactions(display_invoices)
 	transactions.extend(_build_settlement_transactions(display_invoices, raw_invoices, filters))
 	transactions.extend(_build_payment_entry_advance_transactions(raw_invoices, filters))
+	transactions = _merge_payment_entry_mixed_advance_transactions(transactions)
 	# Stand-alone Receivable-Bewegungen auf Mieterforderungen ohne
 	# SI-Referenz — z.B. nachgebuchte Mahngebühren oder Korrektur-JEs.
 	transactions.extend(standalone_transactions)
@@ -531,6 +532,75 @@ def _build_settlement_transactions(
 			bundle["delta"] = flt(bundle["delta"] - sum(allocated.values()), 2)
 
 	return [bundles[key] for key in bundle_order]
+
+
+def _merge_payment_entry_mixed_advance_transactions(
+	transactions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+	"""Zeigt Zahlung + Rest-Vorauszahlung desselben Payment Entry in einer Zeile."""
+	advance_vouchers = {
+		transaction.get("belegnummer")
+		for transaction in transactions
+		if transaction.get("belegart") == "Payment Entry"
+		and abs(flt((transaction.get("paid_amounts") or {}).get("vorauszahlungen"))) > TOLERANCE
+	}
+	if not advance_vouchers:
+		return transactions
+
+	merged_by_voucher: dict[str, dict[str, Any]] = {}
+	order: list[str] = []
+	out: list[dict[str, Any]] = []
+
+	for transaction in transactions:
+		voucher_no = transaction.get("belegnummer")
+		if transaction.get("belegart") != "Payment Entry" or voucher_no not in advance_vouchers:
+			out.append(transaction)
+			continue
+
+		merged = merged_by_voucher.get(voucher_no)
+		if merged is None:
+			merged = {
+				**transaction,
+				"sort_order": transaction.get("sort_order") or 99,
+				"invoice_amounts": {category: 0.0 for category in CATEGORIES},
+				"paid_amounts": {category: 0.0 for category in CATEGORIES},
+				"written_off_amounts": {category: 0.0 for category in CATEGORIES},
+				"delta": 0.0,
+				"offen": 0.0,
+				"_has_regular_payment": False,
+			}
+			merged_by_voucher[voucher_no] = merged
+			order.append(voucher_no)
+
+		for source in ("invoice_amounts", "paid_amounts", "written_off_amounts"):
+			for category in CATEGORIES:
+				merged[source][category] = flt(
+					flt(merged[source].get(category))
+					+ flt((transaction.get(source) or {}).get(category)),
+					2,
+				)
+
+		merged["delta"] = flt(flt(merged.get("delta")) + flt(transaction.get("delta")), 2)
+		merged["offen"] = flt(flt(merged.get("offen")) + flt(transaction.get("offen")), 2)
+		merged["sort_order"] = min(merged.get("sort_order") or 99, transaction.get("sort_order") or 99)
+
+		has_regular_payment = any(
+			abs(flt((transaction.get("paid_amounts") or {}).get(category))) > TOLERANCE
+			for category in CATEGORIES
+			if category != "vorauszahlungen"
+		)
+		if has_regular_payment:
+			merged["_has_regular_payment"] = True
+			merged["art"] = "Zahlung"
+			merged["beschreibung"] = transaction.get("beschreibung") or merged.get("beschreibung")
+
+	for voucher_no in order:
+		merged = merged_by_voucher[voucher_no]
+		if not merged.pop("_has_regular_payment", False):
+			merged["art"] = "Vorauszahlung"
+		out.append(merged)
+
+	return out
 
 
 def _build_standalone_receivable_transactions(

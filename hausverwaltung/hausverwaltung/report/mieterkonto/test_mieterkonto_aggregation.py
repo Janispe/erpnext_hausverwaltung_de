@@ -5,6 +5,7 @@ from hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto import (
 	CATEGORIES,
 	InvoiceInfo,
 	_build_invoice_transactions,
+	_merge_payment_entry_mixed_advance_transactions,
 	_categorize_offset_accounts,
 	_category_amounts_from_items,
 	_group_invoices,
@@ -121,6 +122,48 @@ class TestGroupInvoices(TestCase):
 			_categorize_offset_accounts({"Sonstige betriebliche Ertraege - HV"}),
 			"sonstiges",
 		)
+
+	def test_payment_entry_payment_and_advance_merge_to_one_row(self):
+		base = {
+			"date": date(2025, 11, 5),
+			"belegart": "Payment Entry",
+			"belegnummer": "PE-MIXED",
+			"rechnung": "PE-MIXED",
+			"due_date": date(2025, 11, 5),
+			"status": None,
+			"currency": "EUR",
+			"invoice_amounts": {cat: 0.0 for cat in CATEGORIES},
+			"written_off_amounts": {cat: 0.0 for cat in CATEGORIES},
+			"offen": 0.0,
+		}
+		transactions = [
+			{
+				**base,
+				"sort_order": 20,
+				"art": "Zahlung",
+				"beschreibung": "Zahlung 11/2025",
+				"paid_amounts": {cat: 0.0 for cat in CATEGORIES} | {"miete": 1030.0, "betriebskosten": 100.0},
+				"delta": -1130.0,
+			},
+			{
+				**base,
+				"sort_order": 26,
+				"art": "Vorauszahlung",
+				"beschreibung": "Vorauszahlung",
+				"paid_amounts": {cat: 0.0 for cat in CATEGORIES} | {"vorauszahlungen": 10.0},
+				"delta": -10.0,
+			},
+		]
+
+		result = _merge_payment_entry_mixed_advance_transactions(transactions)
+
+		self.assertEqual(len(result), 1)
+		self.assertEqual(result[0]["art"], "Zahlung")
+		self.assertEqual(result[0]["beschreibung"], "Zahlung 11/2025")
+		self.assertEqual(result[0]["paid_amounts"]["miete"], 1030.0)
+		self.assertEqual(result[0]["paid_amounts"]["betriebskosten"], 100.0)
+		self.assertEqual(result[0]["paid_amounts"]["vorauszahlungen"], 10.0)
+		self.assertEqual(result[0]["delta"], -1140.0)
 
 	def test_display_rows_are_newest_first_with_summary_at_end(self):
 		rows = [
