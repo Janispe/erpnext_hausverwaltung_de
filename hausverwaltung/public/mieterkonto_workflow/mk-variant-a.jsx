@@ -1,5 +1,5 @@
 // variant-a.jsx — Klassischer Kontoauszug.
-// Standard: Soll/Haben/Saldo. Kategorie-Modus: Miete/BK/HK/G+N/Saldo.
+// Standard: Soll/Haben/Saldo. Kategorie-Modus: Miete/BK/HK/G+N/VZ/Sonstig/Saldo.
 
 const { useState: useStateA } = React;
 
@@ -103,7 +103,7 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
   const totalForCategory = (category) => rows
     .filter((r) => !r.is_opening_row)
     .reduce((a, r) => a + categoryAmount(r, category), 0);
-  const colspan = splitCategories ? 9 : 7;
+  const colspan = splitCategories ? CATS.length + 5 : 7;
 
   return (
     <div className="mk-table-wrap">
@@ -198,7 +198,7 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
                         onClick={() => toggle(g.idx)}
                       >
                         <span className="mk-chevron">▶</span>
-                        Aufteilung nach Miete/BK/HK/G+N
+                        Aufteilung nach Miete/BK/HK/G+N/VZ/Sonstig
                       </button>
                     )}
                   </td>

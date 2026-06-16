@@ -5,6 +5,7 @@ from hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto import (
 	CATEGORIES,
 	InvoiceInfo,
 	_build_invoice_transactions,
+	_categorize_offset_accounts,
 	_category_amounts_from_items,
 	_group_invoices,
 	_sort_rows_for_display,
@@ -98,6 +99,28 @@ class TestGroupInvoices(TestCase):
 		self.assertEqual(row["betrag_vorauszahlungen"], -120.0)
 		self.assertEqual(row["betrag_summe"], -120.0)
 		self.assertEqual(row["kontostand"], -120.0)
+
+	def test_sonstiges_item_maps_to_sonstiges(self):
+		amounts = _category_amounts_from_items(
+			"SI-SONSTIG",
+			[
+				{
+					"parent": "SI-SONSTIG",
+					"item_code": "Sonstiges",
+					"amount": 35.0,
+					"base_amount": 35.0,
+				}
+			],
+			35.0,
+		)
+
+		self.assertEqual(amounts["sonstiges"], 35.0)
+
+	def test_sonstiges_account_maps_to_sonstiges(self):
+		self.assertEqual(
+			_categorize_offset_accounts({"Sonstige betriebliche Ertraege - HV"}),
+			"sonstiges",
+		)
 
 	def test_display_rows_are_newest_first_with_summary_at_end(self):
 		rows = [

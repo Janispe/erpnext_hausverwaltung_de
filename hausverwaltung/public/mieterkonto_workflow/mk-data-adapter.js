@@ -84,6 +84,8 @@
       betrag_betriebskosten: raw.betrag_betriebskosten || 0,
       betrag_heizkosten: raw.betrag_heizkosten || 0,
       betrag_guthaben_nachzahlungen: raw.betrag_guthaben_nachzahlungen || 0,
+      betrag_vorauszahlungen: raw.betrag_vorauszahlungen || 0,
+      betrag_sonstiges: raw.betrag_sonstiges || 0,
       betrag_summe: raw.betrag_summe || 0,
       kontostand: raw.kontostand || 0,
       faellig_am: raw.faellig_am || null,
@@ -136,6 +138,12 @@
       belegnummer: "",
       belegnummern: [],
       beschreibung: "",
+      betrag_miete: 0,
+      betrag_betriebskosten: 0,
+      betrag_heizkosten: 0,
+      betrag_guthaben_nachzahlungen: 0,
+      betrag_vorauszahlungen: 0,
+      betrag_sonstiges: 0,
       betrag_summe: 0,
       kontostand: 0,
       is_total_row: true,
@@ -150,6 +158,8 @@
       { label: "BK offen", value: 0, indicator: "neutral" },
       { label: "HK offen", value: 0, indicator: "neutral" },
       { label: "G/N offen", value: 0, indicator: "neutral" },
+      { label: "VZ offen", value: 0, indicator: "neutral" },
+      { label: "Sonstig offen", value: 0, indicator: "neutral" },
     ];
   }
 

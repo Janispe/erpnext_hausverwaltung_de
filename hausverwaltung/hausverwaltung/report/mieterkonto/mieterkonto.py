@@ -13,13 +13,21 @@ from hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff import (
 	is_receivable_writeoff_journal_entry,
 )
 
-CATEGORIES = ("miete", "betriebskosten", "heizkosten", "guthaben_nachzahlungen", "vorauszahlungen")
+CATEGORIES = (
+	"miete",
+	"betriebskosten",
+	"heizkosten",
+	"guthaben_nachzahlungen",
+	"vorauszahlungen",
+	"sonstiges",
+)
 CATEGORY_LABELS = {
 	"miete": "Miete",
 	"betriebskosten": "BK",
 	"heizkosten": "HK",
 	"guthaben_nachzahlungen": "G/N",
 	"vorauszahlungen": "VZ",
+	"sonstiges": "Sonstig",
 }
 ITEM_CATEGORY_MAP = {
 	"Miete": "miete",
@@ -36,6 +44,8 @@ ITEM_CATEGORY_MAP = {
 	"HK Guthaben": "guthaben_nachzahlungen",
 	# Legacy default from Buchungs-Cockpit before it used a Mieterkonto item.
 	"VHB-SERVICE": "guthaben_nachzahlungen",
+	"Sonstiges": "sonstiges",
+	"Sonstige": "sonstiges",
 }
 # Account-Name-Substring → Kategorie (für Stand-alone-JE-Buchungen ohne
 # SI-Bezug, z.B. nachgebuchte Mahngebühren auf Mieterforderungen). Match
@@ -49,6 +59,7 @@ ACCOUNT_CATEGORY_MAP = {
 	"heizkostenvorauszahlung": "heizkosten",
 	"guthaben/nachzahlungen": "guthaben_nachzahlungen",
 	"mahnungen": "guthaben_nachzahlungen",
+	"sonstig": "sonstiges",
 }
 TOLERANCE = 0.01
 
@@ -1173,6 +1184,13 @@ def _get_report_summary(totals: dict[str, Any], filters) -> list[dict[str, Any]]
 			"value": _open_category_amount(all_totals, "vorauszahlungen"),
 			"indicator": "Blue",
 			"label": _("VZ offen"),
+			"datatype": "Currency",
+			"currency": currency,
+		},
+		{
+			"value": _open_category_amount(all_totals, "sonstiges"),
+			"indicator": "Blue",
+			"label": _("Sonstig offen"),
 			"datatype": "Currency",
 			"currency": currency,
 		},

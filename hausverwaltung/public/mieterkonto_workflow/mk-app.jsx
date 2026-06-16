@@ -147,7 +147,7 @@ function App() {
 
   const exportCsv = () => {
     const csvRows = [
-      ["Datum", "Art", "Belegart", "Belegnummern", "Beschreibung", "Miete", "BK", "HK", "G/N", "Summe", "Kontostand"],
+      ["Datum", "Art", "Belegart", "Belegnummern", "Beschreibung", "Miete", "BK", "HK", "G/N", "VZ", "Sonstig", "Summe", "Kontostand"],
       ...rows.map((r) => [
         r.datum || "",
         r.art || "",
@@ -158,6 +158,8 @@ function App() {
         r.betrag_betriebskosten || 0,
         r.betrag_heizkosten || 0,
         r.betrag_guthaben_nachzahlungen || 0,
+        r.betrag_vorauszahlungen || 0,
+        r.betrag_sonstiges || 0,
         r.betrag_summe || 0,
         r.kontostand || 0,
       ]),
@@ -315,7 +317,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
   const bezahlt = getSummaryItem(summary, "Bezahlt im Zeitraum");
   const openItems = getOpenSummaryItems(summary);
   const title = `Mieterkonto ${mieter.name || ""}`.trim();
-  const visibleCols = showCats ? 9 : 7;
+  const visibleCols = showCats ? CATS.length + 5 : 7;
 
   const grouped = [];
   let lastMonth = null;
@@ -514,7 +516,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
     th:nth-child(2), td:nth-child(2) { width: 21mm; }
     th:nth-child(3), td:nth-child(3) { width: 32mm; }
     th:last-child, td:last-child { width: 24mm; }
-    ${showCats ? "th:nth-child(5),td:nth-child(5),th:nth-child(6),td:nth-child(6),th:nth-child(7),td:nth-child(7),th:nth-child(8),td:nth-child(8){width:20mm;}" : "th:nth-child(5),td:nth-child(5),th:nth-child(6),td:nth-child(6){width:23mm;}"}
+    ${showCats ? "th:nth-child(n+5):not(:last-child),td:nth-child(n+5):not(:last-child){width:18mm;}" : "th:nth-child(5),td:nth-child(5),th:nth-child(6),td:nth-child(6){width:23mm;}"}
     .num {
       text-align: right;
       white-space: nowrap;

@@ -43,6 +43,8 @@ const CATS = [
   { key: "betriebskosten", label: "BK" },
   { key: "heizkosten", label: "HK" },
   { key: "guthaben_nachzahlungen", label: "G/N" },
+  { key: "vorauszahlungen", label: "VZ" },
+  { key: "sonstiges", label: "Sonstig" },
 ];
 
 // ───────── Pills ─────────
@@ -296,7 +298,7 @@ function FilterBar({
       <label className="mk-toggle">
         <input type="checkbox" checked={showCats}
           onChange={(e) => setShowCats(e.target.checked)} />
-        Aufteilung nach Miete/BK/HK/G+N
+        Aufteilung nach Miete/BK/HK/G+N/VZ/Sonstig
       </label>
       <label className="mk-toggle">
         <input type="checkbox" checked={gruppieren}
@@ -400,7 +402,7 @@ function getSummaryItem(summary, label, fallback = { label, value: 0 }) {
 }
 
 function getOpenSummaryItems(summary) {
-  const preferred = ["Miete offen", "BK offen", "HK offen", "G/N offen"];
+  const preferred = ["Miete offen", "BK offen", "HK offen", "G/N offen", "VZ offen", "Sonstig offen"];
   return preferred.map((label) => getSummaryItem(summary, label)).filter(Boolean);
 }
 
