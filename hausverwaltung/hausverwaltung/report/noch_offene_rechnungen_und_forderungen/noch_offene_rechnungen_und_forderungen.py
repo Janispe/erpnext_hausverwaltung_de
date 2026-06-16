@@ -352,15 +352,15 @@ def _filter_and_map_rows(source_rows, filters, mode):
 	cost_center_filter = filters.get("cost_center")
 	invoice_cc_map = _resolve_invoice_cost_centers(source_rows)
 	remarks_map = _resolve_voucher_remarks(source_rows)
-	abschlagsplan_payment_entries = (
-		_resolve_abschlagsplan_payment_entries(source_rows)
-		if filters.get("hide_abschlagszahlungen")
-		else set()
-	)
+	abschlagsplan_payment_entries = _resolve_abschlagsplan_payment_entries(source_rows)
 
 	for row in source_rows or []:
 		row = frappe._dict(row)
-		if row.get("voucher_type") == "Payment Entry" and row.get("voucher_no") in abschlagsplan_payment_entries:
+		is_abschlagszahlung = (
+			row.get("voucher_type") == "Payment Entry"
+			and row.get("voucher_no") in abschlagsplan_payment_entries
+		)
+		if filters.get("hide_abschlagszahlungen") and is_abschlagszahlung:
 			continue
 
 		# Fallback auf posting_date für Vouchers ohne due_date (Journal Entries
@@ -394,7 +394,7 @@ def _filter_and_map_rows(source_rows, filters, mode):
 		):
 			continue
 
-		direction = _get_payment_direction(mode, outstanding)
+		direction = "Abschlag" if is_abschlagszahlung else _get_payment_direction(mode, outstanding)
 		if filters.get("zahlungsrichtung") and direction != filters.get("zahlungsrichtung"):
 			continue
 

@@ -47,6 +47,7 @@ function DirectionBadge({ direction }) {
   const map = {
     "Geld bekommen":              ["is-in",  "Geld bekommen"],
     "Geld bezahlen / erstatten":  ["is-out", "Geld bezahlen"],
+    "Abschlag":                   ["is-bal", "Abschlag"],
     "Ausgeglichen":               ["is-bal", "Ausgeglichen"],
   };
   const [cls, label] = map[direction] || ["is-bal", direction];
