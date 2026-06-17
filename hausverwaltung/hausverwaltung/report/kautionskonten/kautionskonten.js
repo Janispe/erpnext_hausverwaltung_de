@@ -51,7 +51,6 @@ frappe.query_reports["Kautionskonten"] = {
 				Unterdeckt: "red",
 				Überdeckt: "orange",
 				"Kautionskonto fehlt": "red",
-				"Sachkonto fehlt": "red",
 				"Kaution fehlt": "orange",
 			}[data.pruefung] || "gray";
 			return `<span class="indicator-pill ${indicator}">${__(data.pruefung)}</span>`;
@@ -331,7 +330,7 @@ function status_class(status) {
 	if (status === "OK") {
 		return "status-ok";
 	}
-	if (["Unterdeckt", "Kautionskonto fehlt", "Sachkonto fehlt"].includes(status)) {
+	if (["Unterdeckt", "Kautionskonto fehlt"].includes(status)) {
 		return "status-bad";
 	}
 	return "status-warn";

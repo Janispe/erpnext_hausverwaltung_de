@@ -216,8 +216,6 @@ def _difference(row) -> float | None:
 def _status(row) -> str:
 	if not row.get("kautionskonto"):
 		return _("Kautionskonto fehlt")
-	if not row.get("gl_account"):
-		return _("Sachkonto fehlt")
 	if not row.get("kaution_gepflegt"):
 		return _("Kaution fehlt")
 	diff = flt(row.get("differenz"))
@@ -231,11 +229,10 @@ def _status(row) -> str:
 def _sort_rows(rows: list[frappe._dict]) -> list[frappe._dict]:
 	status_rank = {
 		"Kautionskonto fehlt": 0,
-		"Sachkonto fehlt": 1,
-		"Kaution fehlt": 2,
-		"Unterdeckt": 3,
-		"Überdeckt": 4,
-		"OK": 5,
+		"Kaution fehlt": 1,
+		"Unterdeckt": 2,
+		"Überdeckt": 3,
+		"OK": 4,
 	}
 	return sorted(
 		rows,
