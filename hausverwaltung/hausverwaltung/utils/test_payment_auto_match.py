@@ -66,7 +66,7 @@ class TestAutoMatchExactAmbiguity(unittest.TestCase):
 	def test_single_exact_match_still_books(self):
 		result, do_match = self._run_auto_match(
 			invoices=[
-				frappe._dict(name="SINV-1", outstanding_amount=100.0, posting_date="2026-01-01"),
+				frappe._dict(name="SINV-1", outstanding_amount=100.0, posting_date="2026-03-01"),
 				frappe._dict(name="SINV-2", outstanding_amount=80.0, posting_date="2026-03-05"),
 			]
 		)
@@ -74,10 +74,23 @@ class TestAutoMatchExactAmbiguity(unittest.TestCase):
 		self.assertTrue(result["matched"])
 		do_match.assert_called_once()
 		self.assertEqual(do_match.call_args[0][1][0].name, "SINV-1")
-		self.assertEqual(do_match.call_args[0][3], "single")
+		self.assertEqual(do_match.call_args[0][3], "single_month_window_10_10d")
 
-	def test_multiple_exact_matches_book_unique_invoice_in_date_window(self):
+	def test_single_exact_match_outside_rent_month_window_stays_manual(self):
 		result, do_match = self._run_auto_match(
+			bt_date="2026-03-20",
+			invoices=[
+				frappe._dict(name="SINV-MARCH", outstanding_amount=100.0, posting_date="2026-03-01"),
+			],
+		)
+
+		self.assertFalse(result["matched"])
+		self.assertEqual(result["reason"], "exact_match_outside_month_window")
+		do_match.assert_not_called()
+
+	def test_multiple_exact_matches_book_unique_invoice_in_rent_month_window(self):
+		result, do_match = self._run_auto_match(
+			bt_date="2026-03-05",
 			invoices=[
 				frappe._dict(name="SINV-OLD", outstanding_amount=100.0, posting_date="2026-01-05"),
 				frappe._dict(name="SINV-MARCH", outstanding_amount=100.0, posting_date="2026-03-01"),
@@ -87,7 +100,7 @@ class TestAutoMatchExactAmbiguity(unittest.TestCase):
 		self.assertTrue(result["matched"])
 		do_match.assert_called_once()
 		self.assertEqual(do_match.call_args[0][1][0].name, "SINV-MARCH")
-		self.assertEqual(do_match.call_args[0][3], "single_window_7d")
+		self.assertEqual(do_match.call_args[0][3], "single_month_window_10_10d")
 
 	def test_multiple_exact_matches_in_window_stay_manual(self):
 		result, do_match = self._run_auto_match(
@@ -103,6 +116,7 @@ class TestAutoMatchExactAmbiguity(unittest.TestCase):
 
 	def test_month_sum_strategy_still_books_when_no_single_exact_match(self):
 		result, do_match = self._run_auto_match(
+			bt_date="2026-03-05",
 			invoices=[
 				frappe._dict(name="SINV-MIETE", outstanding_amount=60.0, posting_date="2026-03-01"),
 				frappe._dict(name="SINV-BK", outstanding_amount=40.0, posting_date="2026-03-01"),
@@ -113,6 +127,51 @@ class TestAutoMatchExactAmbiguity(unittest.TestCase):
 		do_match.assert_called_once()
 		self.assertEqual([inv.name for inv in do_match.call_args[0][1]], ["SINV-MIETE", "SINV-BK"])
 		self.assertEqual(do_match.call_args[0][3], "month_2026-03")
+
+	def test_month_sum_outside_rent_month_window_stays_manual(self):
+		result, do_match = self._run_auto_match(
+			bt_date="2026-03-20",
+			invoices=[
+				frappe._dict(name="SINV-MIETE", outstanding_amount=60.0, posting_date="2026-03-01"),
+				frappe._dict(name="SINV-BK", outstanding_amount=40.0, posting_date="2026-03-01"),
+			],
+		)
+
+		self.assertFalse(result["matched"])
+		self.assertEqual(result["reason"], "month_total_outside_payment_window")
+		do_match.assert_not_called()
+
+	def test_month_sum_uses_payment_date_to_pick_one_open_rent_month(self):
+		result, do_match = self._run_auto_match(
+			bt_date="2026-04-05",
+			invoices=[
+				frappe._dict(name="SINV-MARCH-MIETE", outstanding_amount=60.0, posting_date="2026-03-01"),
+				frappe._dict(name="SINV-MARCH-BK", outstanding_amount=40.0, posting_date="2026-03-01"),
+				frappe._dict(name="SINV-APRIL-MIETE", outstanding_amount=60.0, posting_date="2026-04-01"),
+				frappe._dict(name="SINV-APRIL-BK", outstanding_amount=40.0, posting_date="2026-04-01"),
+			],
+		)
+
+		self.assertTrue(result["matched"])
+		do_match.assert_called_once()
+		self.assertEqual(
+			[inv.name for inv in do_match.call_args[0][1]],
+			["SINV-APRIL-MIETE", "SINV-APRIL-BK"],
+		)
+		self.assertEqual(do_match.call_args[0][3], "month_2026-04")
+
+	def test_sales_invoice_total_across_multiple_months_is_not_auto_matched(self):
+		result, do_match = self._run_auto_match(
+			bt_date="2026-04-05",
+			invoices=[
+				frappe._dict(name="SINV-MARCH", outstanding_amount=50.0, posting_date="2026-03-01"),
+				frappe._dict(name="SINV-APRIL", outstanding_amount=50.0, posting_date="2026-04-01"),
+			],
+		)
+
+		self.assertFalse(result["matched"])
+		self.assertEqual(result["reason"], "multi_month_total_not_auto_matched")
+		do_match.assert_not_called()
 
 
 class TestCreatePaymentEntryForInvoices(unittest.TestCase):

@@ -7,14 +7,32 @@ const FRAPPE_SITE = process.env.FRAPPE_SITE || "frontend";
 const FRAPPE_BACKEND_CONTAINER = process.env.FRAPPE_BACKEND_CONTAINER || "hausverwaltung_peters-backend-1";
 const FRAPPE_BENCH_DIR = process.env.FRAPPE_BENCH_DIR || "/home/frappe/frappe-bench";
 
+async function dismissDeskModals(page) {
+	for (let i = 0; i < 3; i += 1) {
+		const modal = page.locator(".modal.show").first();
+		if (!(await modal.isVisible().catch(() => false))) return;
+		const closeButton = modal.locator(".btn-close, .close, button").first();
+		if (await closeButton.isVisible().catch(() => false)) {
+			await closeButton.click();
+		} else {
+			await page.keyboard.press("Escape");
+		}
+		await expect(modal).toBeHidden({ timeout: 5000 }).catch(() => {});
+	}
+}
+
 async function login(page) {
 	await page.goto("/desk/bankimport_v2");
-	if (!page.url().includes("/login")) return;
+	if (!page.url().includes("/login")) {
+		await dismissDeskModals(page);
+		return;
+	}
 
 	await page.getByRole("textbox", { name: "Email" }).fill(FRAPPE_USER);
 	await page.getByRole("textbox", { name: "Password" }).fill(FRAPPE_PASSWORD);
 	await page.getByRole("button", { name: "Login" }).click();
 	await expect(page).toHaveURL(/\/desk\/bankimport_v2/);
+	await dismissDeskModals(page);
 }
 
 async function bankimportFrame(page) {
@@ -27,6 +45,14 @@ function csvForRun(runId) {
 	return [
 		"Buchungstag;Betrag;IBAN;Auftraggeber;Verwendungszweck;Währung",
 		`10.06.2026;${runId.amount};DE89370400440532013000;HV UI Test ${runId.id};HV UI Realdaten ${runId.id};EUR`,
+		"",
+	].join("\n");
+}
+
+function overUnderCsvForRun({ runId, label, date, amount, iban }) {
+	return [
+		"Buchungstag;Betrag;IBAN;Auftraggeber;Verwendungszweck;Währung",
+		`${date};${amount};${iban};HV UI OverUnder ${runId.id};HV UI OverUnder ${runId.id} ${label};EUR`,
 		"",
 	].join("\n");
 }
@@ -92,6 +118,33 @@ function rowsForRun(runId) {
 				"bank_transaction",
 				"payment_entry",
 				"journal_entry",
+				"auto_match_message",
+			],
+			order_by: "idx asc",
+			limit: 20,
+		},
+	}) || [];
+}
+
+function overUnderRowsForRun(runId, label = "%") {
+	return benchExecute("frappe.get_all", {
+		kwargs: {
+			doctype: "Bankauszug Import Row",
+			filters: { verwendungszweck: ["like", `HV UI OverUnder ${runId.id} ${label}`] },
+			fields: [
+				"name",
+				"parent",
+				"verwendungszweck",
+				"betrag",
+				"richtung",
+				"party_type",
+				"party",
+				"row_status",
+				"error",
+				"bank_transaction",
+				"payment_entry",
+				"journal_entry",
+				"auto_match_message",
 			],
 			order_by: "idx asc",
 			limit: 20,
@@ -129,6 +182,14 @@ function docValue(doctype, name, fieldname) {
 	});
 }
 
+function invoiceOutstanding(invoiceName) {
+	return Number(docValue("Sales Invoice", invoiceName, "outstanding_amount") || 0);
+}
+
+function paymentEntryUnallocated(paymentEntryName) {
+	return Number(docValue("Payment Entry", paymentEntryName, "unallocated_amount") || 0);
+}
+
 async function uploadCsvInDialog(frame, { filename, content }) {
 	const bankAccount = frame.getByLabel("Bankkonto");
 	await expect.poll(async () => bankAccount.locator("option").count()).toBeGreaterThan(1);
@@ -142,15 +203,30 @@ async function uploadCsvInDialog(frame, { filename, content }) {
 	await frame.getByRole("button", { name: /Importieren/ }).click();
 }
 
-async function createImportThroughUi(frame, runId) {
+async function createImportFromCsv(frame, { filename, content }) {
 	await frame.getByRole("button", { name: "Neuer Import" }).click();
 	await expect(frame.getByRole("heading", { name: "Neuer Bankimport" })).toBeVisible();
-	await uploadCsvInDialog(frame, {
+	await uploadCsvInDialog(frame, { filename, content });
+	await expect(frame.getByText("Bankauszug importiert.")).toBeVisible();
+}
+
+async function ensureSelectedRowHasBankTransaction(frame) {
+	const createButton = frame.getByRole("button", { name: /Diese Zeile erstellen/ });
+	if (await createButton.isVisible({ timeout: 1500 }).catch(() => false)) {
+		await createButton.click();
+	}
+	await expect(frame.locator(".sec-label", { hasText: "Beleg zuordnen" })).toBeVisible();
+}
+
+async function selectRowByPurpose(frame, text) {
+	await frame.locator(".verwendung-cell", { hasText: text }).click();
+}
+
+async function createImportThroughUi(frame, runId) {
+	await createImportFromCsv(frame, {
 		filename: `hv-ui-realdata-${runId.id}.csv`,
 		content: csvForRun(runId),
 	});
-
-	await expect(frame.getByText("Bankauszug importiert.")).toBeVisible();
 }
 
 async function deleteCurrentImportThroughUi(page, frame) {
@@ -359,6 +435,91 @@ test("verarbeitet Mehrzeilen-Import mit Fehlerzeile und kontrolliert DB-Zustaend
 	} finally {
 		if (created && !deleted) {
 			await deleteCurrentImportThroughUi(page, frame).catch(() => {});
+		}
+	}
+});
+
+test("verrechnet Ueberzahlung nicht automatisch mit Unterzahlung im Folgemonat", async ({ page }) => {
+	const runId = { id: `${Date.now()}` };
+	let fixture = null;
+
+	try {
+		fixture = benchExecute("hausverwaltung.cypress_fixtures.seed_bankimport_over_under", {
+			kwargs: { run_id: runId.id },
+		});
+
+		await login(page);
+		const frame = await bankimportFrame(page);
+
+		await createImportFromCsv(frame, {
+			filename: `hv-ui-overunder-april-${runId.id}.csv`,
+			content: overUnderCsvForRun({
+				runId,
+				label: "April",
+				date: "15.04.2026",
+				amount: "115,00",
+				iban: fixture.iban,
+			}),
+		});
+		await dismissDeskModals(page);
+		await selectRowByPurpose(frame, `HV UI OverUnder ${runId.id} April`);
+		await expect(frame.getByText(fixture.customer).first()).toBeVisible();
+		await ensureSelectedRowHasBankTransaction(frame);
+
+		let aprilRows = overUnderRowsForRun(runId, "April");
+		expect(aprilRows).toHaveLength(1);
+		expect(aprilRows[0].payment_entry).toBeFalsy();
+		expect(invoiceOutstanding(fixture.april_invoice)).toBeCloseTo(100, 2);
+		expect(invoiceOutstanding(fixture.may_invoice)).toBeCloseTo(100, 2);
+
+		await frame.getByRole("button", { name: "Rechnung", exact: true }).click();
+		const aprilCard = frame.locator(".invoice-card", { hasText: fixture.april_invoice });
+		await expect(aprilCard).toBeVisible();
+		await aprilCard.getByRole("checkbox").check();
+		await frame.locator("label.advance-toggle", { hasText: "Restbetrag" }).getByRole("checkbox").check();
+		await frame.getByRole("button", { name: /Zuordnen & buchen/ }).click();
+		await expect(frame.getByText("Zahlung gebucht und Bank Transaction abgeglichen.")).toBeVisible();
+
+		aprilRows = overUnderRowsForRun(runId, "April");
+		expect(aprilRows).toHaveLength(1);
+		expect(aprilRows[0].payment_entry).toBeTruthy();
+		expect(invoiceOutstanding(fixture.april_invoice)).toBeCloseTo(0, 2);
+		expect(invoiceOutstanding(fixture.may_invoice)).toBeCloseTo(100, 2);
+		expect(paymentEntryUnallocated(aprilRows[0].payment_entry)).toBeCloseTo(15, 2);
+
+		await createImportFromCsv(frame, {
+			filename: `hv-ui-overunder-mai-${runId.id}.csv`,
+			content: overUnderCsvForRun({
+				runId,
+				label: "Mai",
+				date: "15.05.2026",
+				amount: "85,00",
+				iban: fixture.iban,
+			}),
+		});
+		await dismissDeskModals(page);
+		await selectRowByPurpose(frame, `HV UI OverUnder ${runId.id} Mai`);
+		await expect(frame.getByText(fixture.customer).first()).toBeVisible();
+		await ensureSelectedRowHasBankTransaction(frame);
+
+		const mayRows = overUnderRowsForRun(runId, "Mai");
+		expect(mayRows).toHaveLength(1);
+		expect(mayRows[0].bank_transaction).toMatch(/^ACC-BTN-2026-/);
+		expect(mayRows[0].payment_entry).toBeFalsy();
+		expect(mayRows[0].auto_match_message).toContain("≠ 85.00");
+		expect(invoiceOutstanding(fixture.may_invoice)).toBeCloseTo(100, 2);
+		expect(paymentEntryUnallocated(aprilRows[0].payment_entry)).toBeCloseTo(15, 2);
+	} finally {
+		if (fixture) {
+			benchExecute("hausverwaltung.cypress_fixtures.cleanup_bankimport_over_under", {
+				kwargs: {
+					run_id: runId.id,
+					customer: fixture.customer,
+					party_bank_account: fixture.party_bank_account,
+					april_invoice: fixture.april_invoice,
+					may_invoice: fixture.may_invoice,
+				},
+			});
 		}
 	}
 });

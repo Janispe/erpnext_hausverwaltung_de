@@ -5,20 +5,18 @@ Zuordnung zu offenen Sales/Purchase Invoices zu finden und legt — bei
 Erfolg — ein passendes Payment Entry an, das gegen die Bank Transaction
 reconciled wird.
 
-Strategien (in dieser Reihenfolge, jeweils mit Toleranz ≤ 0,01 €):
+Strategien für Mieter-Zahlungen (in dieser Reihenfolge, jeweils mit Toleranz ≤ 0,01 €):
 
 1. **Single match** — eine offene Rechnung mit ``outstanding_amount`` =
-   Bank-Betrag.
+   Bank-Betrag, deren Rechnungsmonat zur Bankbuchung passt.
 2. **Monats-Summe** — alle offenen Rechnungen der Party im selben
-   Kalendermonat (posting_date) summieren sich auf den Bank-Betrag.
-   Deckt den Mieten-Standardfall ab (Miete + NK + HK = 1 Überweisung).
-3. **Gesamt-Summe** — alle offenen Rechnungen der Party summiert sind
-   exakt der Bank-Betrag (z.B. zwei aufgelaufene Monatsmieten in einer
-   Überweisung).
+   Kalendermonat (posting_date) summieren sich auf den Bank-Betrag, und die
+   Bankbuchung liegt im Monatsfenster. Deckt den Mieten-Standardfall ab
+   (Miete + NK + HK = 1 Überweisung).
 
-Kein Auto-Match bei Teilzahlungen, ungleichen Beträgen oder Subset-Sum-
-Kombinationen. Die Bank Transaction bleibt dann unreconciled und der
-User kann manuell zuordnen.
+Kein Auto-Match bei Teilzahlungen, ungleichen Beträgen, Subset-Sum-
+Kombinationen oder Gesamtsummen über mehrere Mietmonate. Die Bank Transaction
+bleibt dann unreconciled und der User kann manuell zuordnen.
 """
 from __future__ import annotations
 
@@ -34,6 +32,8 @@ from frappe.utils import flt, getdate
 
 _TOLERANCE = 0.01
 _DEFAULT_EXACT_MATCH_WINDOW_DAYS = 7
+_DEFAULT_RENT_MATCH_DAYS_BEFORE_MONTH = 10
+_DEFAULT_RENT_MATCH_DAYS_IN_MONTH = 10
 
 _RENT_ITEM_LABELS = {
 	"Miete": "Miete",
@@ -185,6 +185,36 @@ def _filter_exact_matches_by_date_window(exact_matches, bt, window_days: int):
 	]
 
 
+def _rent_month_payment_window(
+	posting_date,
+	*,
+	days_before: int = _DEFAULT_RENT_MATCH_DAYS_BEFORE_MONTH,
+	days_in_month: int = _DEFAULT_RENT_MATCH_DAYS_IN_MONTH,
+):
+	if not posting_date:
+		return None
+	d = getdate(posting_date)
+	month_start = d.replace(day=1)
+	start = month_start - timedelta(days=max(int(days_before or 0), 0))
+	end = month_start + timedelta(days=max(int(days_in_month or 1), 1) - 1)
+	return start, end
+
+
+def _invoice_in_rent_month_window(inv, bt) -> bool:
+	bt_date = _bank_transaction_date(bt)
+	if not bt_date:
+		return False
+	window = _rent_month_payment_window(getattr(inv, "posting_date", None))
+	if not window:
+		return False
+	start, end = window
+	return start <= bt_date <= end
+
+
+def _filter_matches_by_rent_month_window(matches, bt):
+	return [inv for inv in matches if _invoice_in_rent_month_window(inv, bt)]
+
+
 def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 	"""Hauptentry-Point: versucht eine Bank Transaction automatisch zuzuordnen.
 
@@ -195,7 +225,7 @@ def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 	    matched: bool
 	    payment_entry: Name des erstellten PE (oder None)
 	    invoices: Liste der zugeordneten Rechnungen
-	    strategy: 'single' | 'month_<key>' | 'all'
+	    strategy: 'single' | 'month_<key>'
 	    reason: maschinen-lesbarer Grund bei kein Match
 	    message: kurze deutsche Zusammenfassung für UI
 	"""
@@ -208,16 +238,41 @@ def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 	invoice_doctype = prep["invoice_doctype"]
 	target_amount = prep["target_amount"]
 
-	# Strategy 1: Single invoice exact. Bei mehreren exakten Treffern nur
-	# buchen, wenn genau einer im Datumsfenster der Bankbuchung liegt.
+	is_sales_invoice = invoice_doctype == "Sales Invoice"
+
+	# Strategy 1: Single invoice exact. Bei Mieter-Rechnungen nur, wenn der
+	# Rechnungsmonat zur Bankbuchung passt. Bei mehreren exakten Treffern muss
+	# genau einer im erlaubten Zeitfenster liegen.
 	exact = [
 		inv
 		for inv in candidates
 		if abs(flt(inv.outstanding_amount) - target_amount) < _TOLERANCE
 	]
+	if is_sales_invoice and exact:
+		window_matches = _filter_matches_by_rent_month_window(exact, bt)
+		if len(window_matches) == 1:
+			return _do_match(
+				bt,
+				window_matches,
+				invoice_doctype,
+				"single_month_window_10_10d",
+				target_amount,
+			)
+		return {
+			"matched": False,
+			"reason": "exact_match_outside_month_window"
+			if len(exact) == 1
+			else "ambiguous_exact_match",
+			"message": (
+				f"{len(exact)} offene Rechnung(en) mit exakt {target_amount:.2f} € gefunden; "
+				f"{len(window_matches)} davon im Mietfenster "
+				f"(-{_DEFAULT_RENT_MATCH_DAYS_BEFORE_MONTH}/+{_DEFAULT_RENT_MATCH_DAYS_IN_MONTH - 1} Tage ab Monatsbeginn) — "
+				"bitte manuell zuordnen."
+			),
+		}
 	if len(exact) == 1:
 		return _do_match(bt, exact, invoice_doctype, "single", target_amount)
-	if len(exact) > 1:
+	elif len(exact) > 1:
 		window_days = _get_exact_match_window_days()
 		window_matches = _filter_exact_matches_by_date_window(exact, bt, window_days)
 		if len(window_matches) == 1:
@@ -238,7 +293,10 @@ def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 			),
 		}
 
-	# Strategy 2: Same posting month sum
+	# Strategy 2: Same posting month sum. Bei Mieter-Rechnungen darf nur der
+	# Monat automatisch gebucht werden, in dessen Zahlungsfenster die Bankbuchung
+	# liegt. Dadurch kann eine einzelne Zahlung nicht mehrere offene Mietmonate
+	# automatisch ausgleichen.
 	by_month: dict[tuple[int, int], list] = defaultdict(list)
 	for inv in candidates:
 		if inv.posting_date:
@@ -248,19 +306,48 @@ def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 	for month_key, invs in by_month.items():
 		if len(invs) < 2:
 			continue  # bereits durch Strategy 1 abgedeckt
+		if is_sales_invoice and not any(_invoice_in_rent_month_window(inv, bt) for inv in invs):
+			continue
 		total = sum(flt(i.outstanding_amount) for i in invs)
 		if abs(total - target_amount) < _TOLERANCE:
 			label = f"month_{month_key[0]}-{month_key[1]:02d}"
 			return _do_match(bt, invs, invoice_doctype, label, target_amount)
 
-	# Strategy 3: All open invoices sum
-	if len(candidates) >= 2:
+	# Strategy 3: All open invoices sum. Für Mieter bewusst deaktiviert:
+	# mehrere offene Monate dürfen nicht durch eine einzige Zahlung automatisch
+	# geschlossen werden.
+	if (not is_sales_invoice) and len(candidates) >= 2:
 		total = sum(flt(i.outstanding_amount) for i in candidates)
 		if abs(total - target_amount) < _TOLERANCE:
 			return _do_match(bt, candidates, invoice_doctype, "all", target_amount)
 
 	# Sum-Diagnose für die Message (hilft beim manuellen Zuordnen)
 	candidates_sum = sum(flt(i.outstanding_amount) for i in candidates)
+	if is_sales_invoice and len(candidates) >= 2 and abs(candidates_sum - target_amount) < _TOLERANCE:
+		months = {
+			(getdate(inv.posting_date).year, getdate(inv.posting_date).month)
+			for inv in candidates
+			if inv.posting_date
+		}
+		if len(months) <= 1:
+			return {
+				"matched": False,
+				"reason": "month_total_outside_payment_window",
+				"message": (
+					f"{len(candidates)} offene Rechnung(en), Monatssumme {candidates_sum:.2f} € "
+					"passt zur Zahlung, liegt aber außerhalb des Miet-Zahlungsfensters — "
+					"bitte manuell zuordnen."
+				),
+			}
+		return {
+			"matched": False,
+			"reason": "multi_month_total_not_auto_matched",
+			"message": (
+				f"{len(candidates)} offene Rechnung(en), Gesamtsumme {candidates_sum:.2f} € "
+				"passt zur Zahlung, wird aber nicht automatisch über mehrere Mietmonate gebucht — "
+				"bitte manuell zuordnen."
+			),
+		}
 	return {
 		"matched": False,
 		"reason": "no_exact_match",

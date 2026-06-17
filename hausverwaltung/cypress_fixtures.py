@@ -117,6 +117,15 @@ def _ensure_receivable_account(company: str) -> str:
 	frappe.throw(f"hausverwaltung.cypress_fixtures: kein Debitorenkonto für {company} gefunden.")
 
 
+def _make_de_iban_from_run_id(run_id: str) -> str:
+	"""Build a checksum-valid German IBAN for deterministic test bank accounts."""
+	digits = "".join(ch for ch in str(run_id or "") if ch.isdigit())[-10:].rjust(10, "0")
+	bban = f"37040044{digits}"
+	rearranged = f"{bban}131400"
+	check_digits = 98 - (int(rearranged) % 97)
+	return f"DE{check_digits:02d}{bban}"
+
+
 def _ensure_test_item(company: str, income_account: str) -> str:
 	item_code = "HV UI Mahnwesen Testleistung"
 	if frappe.db.exists("Item", item_code):
@@ -283,6 +292,213 @@ def ensure_bankimport_bank_account(company: Optional[str] = None) -> dict:
 	doc = frappe.get_doc(payload).insert(ignore_permissions=True)
 	frappe.db.commit()
 	return {"bank_account": doc.name, "created": True, "company": company, "account": gl_account}
+
+
+def _make_over_under_invoice(
+	*,
+	run_id: str,
+	company: str,
+	customer: str,
+	income_account: str,
+	receivable_account: str,
+	cost_center: str,
+	item_code: str,
+	label: str,
+	posting_date: str,
+	due_date: str,
+	amount: float = 100.0,
+) -> str:
+	si = frappe.new_doc("Sales Invoice")
+	si.update(
+		{
+			"company": company,
+			"customer": customer,
+			"posting_date": posting_date,
+			"due_date": due_date,
+			"debit_to": receivable_account,
+			"currency": frappe.db.get_value("Company", company, "default_currency") or "EUR",
+			"ignore_default_payment_terms_template": 1,
+			"allocate_advances_automatically": 0,
+			"remarks": f"HV UI OverUnder {run_id} {label}",
+			"items": [
+				{
+					"item_code": item_code,
+					"item_name": item_code,
+					"description": f"HV UI OverUnder {run_id} {label}",
+					"qty": 1,
+					"rate": amount,
+					"income_account": income_account,
+					"cost_center": cost_center,
+				}
+			],
+		}
+	)
+	si.set("payment_terms_template", None)
+	si.set("payment_schedule", [])
+	if frappe.get_meta("Sales Invoice").get_field("mietabrechnung_id"):
+		si.mietabrechnung_id = f"HV-UI-OU-{run_id}-{label}"
+	si.insert(ignore_permissions=True)
+	si.submit()
+	return si.name
+
+
+@frappe.whitelist()
+def seed_bankimport_over_under(run_id: str, company: Optional[str] = None) -> dict:
+	"""Seed two rent invoices and a payer IBAN for the over/underpayment UI test."""
+	_check_dev_mode()
+	run_id = str(run_id or "").strip()
+	if not run_id:
+		frappe.throw("hausverwaltung.cypress_fixtures: run_id fehlt.")
+
+	company = _resolve_company(company)
+	income_account = _ensure_income_account(company)
+	receivable_account = _ensure_receivable_account(company)
+	cost_center = _ensure_cost_center(company)
+	item_code = _ensure_test_item(company, income_account)
+	customer = _ensure_test_customer(f"OverUnder {run_id}")
+	iban = _make_de_iban_from_run_id(run_id)
+
+	bank = _first_value("Bank", {}) or _first_value("Bank", None)
+	if not bank:
+		frappe.throw("hausverwaltung.cypress_fixtures: keine Bank gefunden.")
+	party_bank_account = frappe.get_doc(
+		{
+			"doctype": "Bank Account",
+			"account_name": f"HV UI OverUnder {run_id}",
+			"bank": bank,
+			"iban": iban,
+			"is_company_account": 0,
+			"party_type": "Customer",
+			"party": customer,
+		}
+	).insert(ignore_permissions=True)
+
+	april_invoice = _make_over_under_invoice(
+		run_id=run_id,
+		company=company,
+		customer=customer,
+		income_account=income_account,
+		receivable_account=receivable_account,
+		cost_center=cost_center,
+		item_code=item_code,
+		label="April",
+		posting_date="2026-04-01",
+		due_date="2026-04-05",
+	)
+	may_invoice = _make_over_under_invoice(
+		run_id=run_id,
+		company=company,
+		customer=customer,
+		income_account=income_account,
+		receivable_account=receivable_account,
+		cost_center=cost_center,
+		item_code=item_code,
+		label="Mai",
+		posting_date="2026-05-01",
+		due_date="2026-05-05",
+	)
+	frappe.db.commit()
+	return {
+		"company": company,
+		"customer": customer,
+		"customer_name": frappe.db.get_value("Customer", customer, "customer_name") or customer,
+		"iban": iban,
+		"party_bank_account": party_bank_account.name,
+		"april_invoice": april_invoice,
+		"may_invoice": may_invoice,
+		"run_id": run_id,
+	}
+
+
+@frappe.whitelist()
+def cleanup_bankimport_over_under(
+	run_id: str,
+	customer: Optional[str] = None,
+	party_bank_account: Optional[str] = None,
+	april_invoice: Optional[str] = None,
+	may_invoice: Optional[str] = None,
+) -> dict:
+	"""Best-effort cleanup for ``seed_bankimport_over_under``."""
+	_check_dev_mode()
+	run_id = str(run_id or "").strip()
+	deleted: dict[str, list[str]] = {
+		"Bankauszug Import": [],
+		"Payment Entry": [],
+		"Sales Invoice": [],
+		"Bank Account": [],
+		"Customer": [],
+	}
+
+	def delete_doc(doctype: str, name: str | None) -> None:
+		if not name or not frappe.db.exists(doctype, name):
+			return
+		try:
+			doc = frappe.get_doc(doctype, name)
+			if getattr(doc, "docstatus", 0) == 1:
+				doc.cancel()
+			frappe.delete_doc(doctype, name, force=True, ignore_permissions=True)
+			deleted.setdefault(doctype, []).append(name)
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), f"cleanup_bankimport_over_under failed for {doctype} {name}")
+
+	imports = {
+		row.parent
+		for row in frappe.get_all(
+			"Bankauszug Import Row",
+			filters={"verwendungszweck": ("like", f"HV UI OverUnder {run_id}%")},
+			fields=["parent"],
+			limit_page_length=0,
+		)
+		if row.get("parent")
+	}
+	for import_name in imports:
+		try:
+			from hausverwaltung.hausverwaltung.page.bankimport_v2.bankimport_v2 import delete_import
+
+			delete_import(import_name, cascade=1)
+			deleted["Bankauszug Import"].append(import_name)
+		except Exception:
+			frappe.log_error(
+				frappe.get_traceback(),
+				f"cleanup_bankimport_over_under failed for Bankauszug Import {import_name}",
+			)
+
+	if not customer and run_id:
+		customer = frappe.db.get_value("Customer", {"customer_name": f"HV UI Mahnwesen Real OverUnder {run_id}"}, "name")
+
+	if customer:
+		for pe in frappe.get_all(
+			"Payment Entry",
+			filters={"party_type": "Customer", "party": customer},
+			pluck="name",
+			limit_page_length=0,
+		):
+			delete_doc("Payment Entry", pe)
+
+	for invoice in (april_invoice, may_invoice):
+		delete_doc("Sales Invoice", invoice)
+	if not april_invoice or not may_invoice:
+		for invoice in frappe.get_all(
+			"Sales Invoice",
+			filters={"remarks": ("like", f"%HV UI OverUnder {run_id}%")},
+			pluck="name",
+			limit_page_length=0,
+		):
+			delete_doc("Sales Invoice", invoice)
+
+	delete_doc("Bank Account", party_bank_account)
+	if not party_bank_account and run_id:
+		for bank_account in frappe.get_all(
+			"Bank Account",
+			filters={"account_name": f"HV UI OverUnder {run_id}"},
+			pluck="name",
+			limit_page_length=0,
+		):
+			delete_doc("Bank Account", bank_account)
+
+	delete_doc("Customer", customer)
+	frappe.db.commit()
+	return {"deleted": deleted}
 
 
 @frappe.whitelist()
