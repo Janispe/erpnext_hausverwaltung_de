@@ -5,6 +5,8 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "section_brand",
+  "hide_peters_logo",
   "section_pdf_ranges",
   "editor_print_format",
   "margin_top",
@@ -16,6 +18,18 @@
   "standardpfade"
  ],
  "fields": [
+  {
+   "fieldname": "section_brand",
+   "fieldtype": "Section Break",
+   "label": "Briefkopf"
+  },
+  {
+   "default": "1",
+   "description": "Entfernt Peters-Logo-Grafiken aus Serienbrief-Vorschau und Serienbrief-PDFs. Deaktivieren, wenn Vorlagen das Logo wieder ausgeben sollen.",
+   "fieldname": "hide_peters_logo",
+   "fieldtype": "Check",
+   "label": "Peters-Logo im Serienbrief ausblenden"
+  },
   {
    "fieldname": "section_pdf_ranges",
    "fieldtype": "Section Break",
@@ -84,7 +98,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-26 15:30:00.000000",
+ "modified": "2026-06-18 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
  "name": "Serienbrief Einstellungen",

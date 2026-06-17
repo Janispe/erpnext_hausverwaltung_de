@@ -787,7 +787,11 @@ class SerienbriefDurchlauf(Document):
 				elif has_pdf:
 					pdf_bytes = read_file_url_bytes(doc.generated_pdf_file)
 				else:
-					pdf_bytes = get_pdf(self._wrap_html(doc.html or ""), options=self._default_pdf_options())
+					html = apply_print_saving_brand_assets(
+						cstr(getattr(doc, "html", None) or ""),
+						bool(getattr(self, "_druck_schwarz_weiss", False)),
+					)
+					pdf_bytes = get_pdf(self._wrap_html(html), options=self._default_pdf_options())
 
 				merger.append(BytesIO(pdf_bytes))
 				appended += 1
@@ -824,6 +828,7 @@ class SerienbriefDurchlauf(Document):
 				doc.name,
 				print_format=format_name,
 				as_pdf=True,
+				doc=self._brand_adjusted_dokument_doc(doc),
 				pdf_options=self._default_pdf_options(),
 			)
 
@@ -835,8 +840,23 @@ class SerienbriefDurchlauf(Document):
 		# ebenfalls — kein Render-Crash.
 		return add_page_numbers_if_multipage(pdf_bytes)
 
+	def _brand_adjusted_dokument_doc(self, doc):
+		html = cstr(getattr(doc, "html", None) or "")
+		adjusted_html = apply_print_saving_brand_assets(
+			html,
+			bool(getattr(self, "_druck_schwarz_weiss", False)),
+		)
+		if adjusted_html == html:
+			return doc
+		doc_data = doc.as_dict()
+		doc_data["html"] = adjusted_html
+		return frappe.get_doc(doc_data)
+
 	def _render_dokument_hybrid_print_pdf(self, doc, format_name: str) -> bytes | None:
-		html = cstr(getattr(doc, "html", None) or "").strip()
+		html = apply_print_saving_brand_assets(
+			cstr(getattr(doc, "html", None) or ""),
+			bool(getattr(self, "_druck_schwarz_weiss", False)),
+		).strip()
 		if not html or "hv-pdf-inline-fragment" not in html:
 			return None
 
