@@ -100,14 +100,13 @@ def _ensure_category() -> None:
 
 
 def _upsert_template(source: dict) -> None:
-	name = source.get("name")
+	name = (source.get("name") or "").strip()
 	if not name:
 		return
 
-	if frappe.db.exists("Serienbrief Vorlage", name):
-		doc = frappe.get_doc("Serienbrief Vorlage", name)
-	else:
-		doc = frappe.get_doc({"doctype": "Serienbrief Vorlage", "name": name})
+	doc = _get_existing_template(source)
+	if not doc:
+		doc = frappe.new_doc("Serienbrief Vorlage")
 
 	_copy_main_fields(doc, source)
 	_copy_child_table(doc, source, "variables")
@@ -117,6 +116,30 @@ def _upsert_template(source: dict) -> None:
 		doc.insert(ignore_permissions=True)
 	else:
 		doc.save(ignore_permissions=True)
+
+
+def _get_existing_template(source: dict):
+	"""Resolve existing templates before copying fields.
+
+	``Serienbrief Vorlage`` is named from ``title``. Older restored data can have a
+	name/title mismatch, so resolving only by archived ``name`` can make save()
+	try to reload a non-existing document name.
+	"""
+	names = [
+		(source.get("name") or "").strip(),
+		(source.get("title") or "").strip(),
+	]
+	for candidate in dict.fromkeys(filter(None, names)):
+		if frappe.db.exists("Serienbrief Vorlage", candidate):
+			return frappe.get_doc("Serienbrief Vorlage", candidate)
+
+	title = (source.get("title") or source.get("name") or "").strip()
+	if title:
+		existing_name = frappe.db.get_value("Serienbrief Vorlage", {"title": title}, "name")
+		if existing_name:
+			return frappe.get_doc("Serienbrief Vorlage", existing_name)
+
+	return None
 
 
 def _copy_main_fields(doc, source: dict) -> None:
