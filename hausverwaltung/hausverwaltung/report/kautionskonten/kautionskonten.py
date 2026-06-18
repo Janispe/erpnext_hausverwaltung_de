@@ -297,12 +297,6 @@ def _get_summary(rows: list[frappe._dict], filters) -> list[dict[str, Any]]:
 def get_columns():
 	return [
 		{
-			"label": _("Prüfung"),
-			"fieldname": "pruefung",
-			"fieldtype": "Data",
-			"width": 115,
-		},
-		{
 			"label": _("Mieter"),
 			"fieldname": "mietvertrag",
 			"fieldtype": "Link",
@@ -354,19 +348,6 @@ def get_columns():
 			"fieldtype": "Link",
 			"options": "Bank",
 			"width": 130,
-		},
-		{
-			"label": _("Sachkonto"),
-			"fieldname": "gl_account",
-			"fieldtype": "Link",
-			"options": "Account",
-			"width": 220,
-		},
-		{
-			"label": _("Kaution ab"),
-			"fieldname": "kaution_ab",
-			"fieldtype": "Date",
-			"width": 100,
 		},
 		{
 			"label": _("Kaution laut Vertrag"),

@@ -63,7 +63,6 @@ frappe.query_reports["Kautionskonten"] = {
 };
 
 const KAUTIONSKONTEN_PRINT_COLUMNS = [
-	"pruefung",
 	"mietvertrag",
 	"immobilie",
 	"wohnung",
@@ -76,7 +75,6 @@ const KAUTIONSKONTEN_PRINT_COLUMNS = [
 ];
 
 const KAUTIONSKONTEN_COMPACT_COLUMNS = [
-	{ fieldname: "pruefung", label: __("Prüfung"), type: "text" },
 	{ fieldname: "mietvertrag", label: __("Mieter"), type: "link_label" },
 	{ fieldname: "immobilie", label: __("Immobilie"), type: "text" },
 	{ fieldname: "wohnung", label: __("Wohnung"), type: "text" },
