@@ -8,7 +8,6 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "showCats": false,
   "gruppieren": true,
   "highlightOpen": true,
-  "defaultCatsOpen": false,
   "printMode": false
 }/*EDITMODE-END*/;
 
@@ -240,7 +239,6 @@ function App() {
             rows={rows}
             totalRow={totalRow}
             density={t.density}
-            defaultCatsOpen={t.defaultCatsOpen}
             highlightOpen={t.highlightOpen}
             showInlineCats={showCats}
           />
@@ -269,8 +267,6 @@ function App() {
           onChange={(v) => setTweak("density", v)} />
 
         <TweakSection label="Inhalt" />
-        <TweakToggle label="Kategorien immer offen" value={t.defaultCatsOpen}
-          onChange={(v) => setTweak("defaultCatsOpen", v)} />
         <TweakToggle label="Offene Posten hervorheben" value={t.highlightOpen}
           onChange={(v) => setTweak("highlightOpen", v)} />
 

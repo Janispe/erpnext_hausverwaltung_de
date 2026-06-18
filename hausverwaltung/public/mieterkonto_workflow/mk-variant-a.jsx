@@ -1,50 +1,6 @@
 // variant-a.jsx — Klassischer Kontoauszug.
 // Standard: Soll/Haben/Gesamt/Saldo. Kategorie-Modus: Miete/BK/HK/G+N/VZ/Sonstig/Gesamt/Saldo.
 
-const { useState: useStateA } = React;
-
-function CategoryRow({ row, isOpen, colSpan = 8 }) {
-  if (!isOpen) return null;
-  return (
-    <tr className="mk-row-cats">
-      <td colSpan={colSpan}>
-        <div className="mk-cats">
-          {CATS.map((c) => {
-            const v = row[`betrag_${c.key}`] || 0;
-            return (
-              <div className="mk-cat" key={c.key}>
-                <span className="mk-cat-label">{c.label}</span>
-                <span className={`mk-cat-val ${Math.abs(v) < 0.01 ? "is-zero" : ""}`}>
-                  {Math.abs(v) < 0.01 ? "—" : fmtEUR(v, { signed: true })}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function CategoryBreakdown({ row, align = "inline" }) {
-  const values = CATS
-    .map((c) => ({ ...c, value: row[`betrag_${c.key}`] || 0 }))
-    .filter((c) => Math.abs(c.value) >= 0.01);
-
-  if (!values.length) return null;
-
-  return (
-    <span className={`mk-cat-breakdown mk-cat-breakdown-${align}`}>
-      {values.map((c) => (
-        <span className="mk-cat-chip" key={c.key}>
-          <span className="mk-cat-chip-label">{c.label}</span>
-          <span className="mk-cat-chip-val">{fmtEUR(c.value, { signed: true })}</span>
-        </span>
-      ))}
-    </span>
-  );
-}
-
 function categoryAmount(row, category) {
   return row[`betrag_${category.key}`] || 0;
 }
@@ -62,17 +18,7 @@ function monthEndRow(rows, month) {
     }, null);
 }
 
-function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, showInlineCats }) {
-  const [openIdx, setOpenIdx] = useStateA(() => new Set());
-  const isOpen = (i) => defaultCatsOpen || openIdx.has(i);
-  const toggle = (i) => {
-    setOpenIdx((prev) => {
-      const next = new Set(prev);
-      next.has(i) ? next.delete(i) : next.add(i);
-      return next;
-    });
-  };
-
+function VariantA({ rows, totalRow, density, highlightOpen, showInlineCats }) {
   // Monats-Header zwischen verschiedenen Monaten einfügen
   const grouped = [];
   let lastMonth = null;
@@ -177,7 +123,6 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
             const soll = isForderung ? r.betrag_summe : 0;
             const haben = !isForderung ? Math.abs(r.betrag_summe) : 0;
             const showOpen = highlightOpen && r.offen > 0;
-            const opn = isOpen(g.idx);
             return (
               <React.Fragment key={g.key}>
                 <tr className={showOpen ? "mk-row-open" : ""}>
@@ -196,17 +141,7 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
                         {r.beschreibung}
                         {showOpen && <OpenBadge amount={r.offen} />}
                       </span>
-                      {!splitCategories && showInlineCats && <CategoryBreakdown row={r} />}
                     </div>
-                    {!splitCategories && !defaultCatsOpen && (
-                      <button
-                        className={`mk-cats-toggle ${opn ? "is-open" : ""}`}
-                        onClick={() => toggle(g.idx)}
-                      >
-                        <span className="mk-chevron">▶</span>
-                        Aufteilung nach Miete/BK/HK/G+N/VZ/Sonstig
-                      </button>
-                    )}
                   </td>
                   {splitCategories ? (
                     CATS.map((c) => (
@@ -223,7 +158,6 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
                   <td className="is-num col-total">{formatSignedAmount(totalAmount(r))}</td>
                   <td className="is-num col-saldo">{fmtEUR(r.kontostand)}</td>
                 </tr>
-                {!splitCategories && <CategoryRow row={r} isOpen={opn} colSpan={colspan} />}
               </React.Fragment>
             );
           })}
