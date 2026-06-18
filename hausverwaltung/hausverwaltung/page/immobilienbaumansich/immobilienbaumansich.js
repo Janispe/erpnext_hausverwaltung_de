@@ -143,11 +143,21 @@ ${teil.name || ""}
 					);
 					tbody.append(teilRow);
 
-					const groupSubscriberDigits = (digits) =>
-						digits.replace(/(\d{3})(?=\d)/g, "$1 ");
+					const groupSubscriberDigits = (digits) => {
+						if (digits.length > 3 && digits.length % 3 === 1) {
+							const head = digits.slice(0, -4);
+							const tail = digits.slice(-4);
+							return [
+								...(head.match(/.{1,3}/g) || []),
+								tail.slice(0, 2),
+								tail.slice(2),
+							].join(" ");
+						}
+						return digits.replace(/(\d{3})(?=\d)/g, "$1 ");
+					};
 					const formatGermanDigits = (digits) => {
 						if (digits.startsWith("01") && digits.length > 4) {
-							return `${digits.slice(0, 4)} ${groupSubscriberDigits(digits.slice(4))}`;
+							return `${digits.slice(0, 4)}-${groupSubscriberDigits(digits.slice(4))}`;
 						}
 						if (digits.startsWith("030") && digits.length > 3) {
 							return groupSubscriberDigits(digits.slice(3));

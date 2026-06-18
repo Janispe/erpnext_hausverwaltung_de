@@ -263,13 +263,19 @@ def _format_phone_number(value: str | None) -> str:
 
 def _format_german_phone_digits(digits: str) -> str:
 	if digits.startswith("01") and len(digits) > 4:
-		return f"{digits[:4]} {_group_phone_subscriber_digits(digits[4:])}"
+		return f"{digits[:4]}-{_group_phone_subscriber_digits(digits[4:])}"
 	if digits.startswith("030") and len(digits) > 3:
 		return _group_phone_subscriber_digits(digits[3:])
 	return digits
 
 
 def _group_phone_subscriber_digits(digits: str) -> str:
+	if len(digits) > 3 and len(digits) % 3 == 1:
+		head = digits[:-4]
+		tail = digits[-4:]
+		groups = [head[i : i + 3] for i in range(0, len(head), 3) if head[i : i + 3]]
+		groups.extend([tail[:2], tail[2:]])
+		return " ".join(groups)
 	return " ".join(digits[i : i + 3] for i in range(0, len(digits), 3))
 
 
@@ -283,6 +289,8 @@ def _format_separated_german_phone_number(raw: str) -> str:
 	prefix = match.group(1)
 	if prefix == "030":
 		return _group_phone_subscriber_digits(subscriber_digits)
+	if prefix.startswith("01"):
+		return f"{prefix}-{_group_phone_subscriber_digits(subscriber_digits)}"
 	return f"{prefix} {_group_phone_subscriber_digits(subscriber_digits)}"
 
 
