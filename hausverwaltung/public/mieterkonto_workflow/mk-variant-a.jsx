@@ -1,13 +1,13 @@
 // variant-a.jsx — Klassischer Kontoauszug.
-// Standard: Soll/Haben/Saldo. Kategorie-Modus: Miete/BK/HK/G+N/VZ/Sonstig/Saldo.
+// Standard: Soll/Haben/Gesamt/Saldo. Kategorie-Modus: Miete/BK/HK/G+N/VZ/Sonstig/Gesamt/Saldo.
 
 const { useState: useStateA } = React;
 
-function CategoryRow({ row, isOpen }) {
+function CategoryRow({ row, isOpen, colSpan = 8 }) {
   if (!isOpen) return null;
   return (
     <tr className="mk-row-cats">
-      <td colSpan="7">
+      <td colSpan={colSpan}>
         <div className="mk-cats">
           {CATS.map((c) => {
             const v = row[`betrag_${c.key}`] || 0;
@@ -103,7 +103,11 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
   const totalForCategory = (category) => rows
     .filter((r) => !r.is_opening_row)
     .reduce((a, r) => a + categoryAmount(r, category), 0);
-  const colspan = splitCategories ? CATS.length + 5 : 7;
+  const totalAmount = (row) => Number(row?.betrag_summe || 0);
+  const totalForPeriod = () => rows
+    .filter((r) => !r.is_opening_row)
+    .reduce((a, r) => a + totalAmount(r), 0);
+  const colspan = splitCategories ? CATS.length + 6 : 8;
 
   return (
     <div className="mk-table-wrap">
@@ -126,6 +130,7 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
                 <th className="is-num" style={{ width: 110 }}>Haben</th>
               </>
             )}
+            <th className="is-num col-total" style={{ width: 110 }}>Gesamt</th>
             <th className="is-num" style={{ width: 130 }}>Saldo</th>
           </tr>
         </thead>
@@ -146,6 +151,7 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
                       <td className="is-num">—</td>
                     </>
                   )}
+                  <td className="is-num col-total">—</td>
                   <td className="is-num col-saldo">{fmtEUR(g.row.kontostand)}</td>
                 </tr>
               );
@@ -214,9 +220,10 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
                       <td className="is-num col-haben">{haben ? fmtEURsoll(haben) : ""}</td>
                     </>
                   )}
+                  <td className="is-num col-total">{formatSignedAmount(totalAmount(r))}</td>
                   <td className="is-num col-saldo">{fmtEUR(r.kontostand)}</td>
                 </tr>
-                {!splitCategories && <CategoryRow row={r} isOpen={opn} />}
+                {!splitCategories && <CategoryRow row={r} isOpen={opn} colSpan={colspan} />}
               </React.Fragment>
             );
           })}
@@ -245,6 +252,7 @@ function VariantA({ rows, totalRow, density, defaultCatsOpen, highlightOpen, sho
                 </td>
               </>
             )}
+            <td className="is-num col-total">{formatSignedAmount(totalForPeriod())}</td>
             <td className="is-num col-saldo">{fmtEUR(totalRow.kontostand)}</td>
           </tr>
         </tbody>

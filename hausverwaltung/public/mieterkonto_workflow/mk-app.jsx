@@ -147,7 +147,7 @@ function App() {
 
   const exportCsv = () => {
     const csvRows = [
-      ["Datum", "Art", "Belegart", "Belegnummern", "Beschreibung", "Miete", "BK", "HK", "G/N", "VZ", "Sonstig", "Summe", "Kontostand"],
+      ["Datum", "Art", "Belegart", "Belegnummern", "Beschreibung", "Miete", "BK", "HK", "G/N", "VZ", "Sonstig", "Gesamt", "Kontostand"],
       ...rows.map((r) => [
         r.datum || "",
         r.art || "",
@@ -317,7 +317,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
   const bezahlt = getSummaryItem(summary, "Bezahlt im Zeitraum");
   const openItems = getOpenSummaryItems(summary);
   const title = `Mieterkonto ${mieter.name || ""}`.trim();
-  const visibleCols = showCats ? CATS.length + 5 : 7;
+  const visibleCols = showCats ? CATS.length + 6 : 8;
 
   const grouped = [];
   let lastMonth = null;
@@ -366,6 +366,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
           <td>—</td>
           <td>Anfangsbestand</td>
           ${showCats ? CATS.map(() => "<td class=\"num muted\">—</td>").join("") : "<td class=\"num muted\">—</td><td class=\"num muted\">—</td>"}
+          <td class="num muted">—</td>
           <td class="num saldo">${esc(fmtEUR(entry.row.kontostand))}</td>
         </tr>`;
     }
@@ -401,16 +402,21 @@ function buildMieterkontoPrintHtml(data, options = {}) {
           <td class="num">${isForderung && row.betrag_summe ? esc(fmtEURsoll(row.betrag_summe)) : ""}</td>
           <td class="num">${!isForderung && row.betrag_summe ? esc(fmtEURsoll(Math.abs(row.betrag_summe))) : ""}</td>
         `}
+        <td class="num">${Math.abs(Number(row.betrag_summe || 0)) < 0.01 ? "" : esc(fmtEUR(Number(row.betrag_summe || 0), { signed: true }))}</td>
         <td class="num saldo">${esc(fmtEUR(row.kontostand))}</td>
       </tr>`;
   }).join("");
 
+  const totalSumme = txRows
+    .filter((r) => !r.is_opening_row)
+    .reduce((a, r) => a + Number(r.betrag_summe || 0), 0);
   const totalCells = showCats
     ? CATS.map((cat) => {
         const value = totalForCategory(cat);
         return `<td class="num">${Math.abs(value) < 0.01 ? "" : esc(fmtEUR(value, { signed: true }))}</td>`;
       }).join("")
     : `<td class="num">${esc(fmtEURsoll(totalSoll))}</td><td class="num">${esc(fmtEURsoll(totalHaben))}</td>`;
+  const totalSummeCell = `<td class="num">${Math.abs(totalSumme) < 0.01 ? "" : esc(fmtEUR(totalSumme, { signed: true }))}</td>`;
 
   return `<!doctype html>
 <html lang="de">
@@ -516,7 +522,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
     th:nth-child(2), td:nth-child(2) { width: 21mm; }
     th:nth-child(3), td:nth-child(3) { width: 32mm; }
     th:last-child, td:last-child { width: 24mm; }
-    ${showCats ? "th:nth-child(n+5):not(:last-child),td:nth-child(n+5):not(:last-child){width:18mm;}" : "th:nth-child(5),td:nth-child(5),th:nth-child(6),td:nth-child(6){width:23mm;}"}
+    ${showCats ? "th:nth-child(n+5):not(:last-child),td:nth-child(n+5):not(:last-child){width:17mm;}" : "th:nth-child(5),td:nth-child(5),th:nth-child(6),td:nth-child(6),th:nth-child(7),td:nth-child(7){width:21mm;}"}
     .num {
       text-align: right;
       white-space: nowrap;
@@ -615,6 +621,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
           <th>Beleg</th>
           <th>Beschreibung</th>
           ${showCats ? CATS.map((cat) => `<th class="num">${esc(cat.label)}</th>`).join("") : "<th class=\"num\">Soll</th><th class=\"num\">Haben</th>"}
+          <th class="num">Gesamt</th>
           <th class="num">Saldo</th>
         </tr>
       </thead>
@@ -626,6 +633,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
           <td></td>
           <td>Σ Zeitraum</td>
           ${totalCells}
+          ${totalSummeCell}
           <td class="num saldo">${esc(fmtEUR(totalRow.kontostand || 0))}</td>
         </tr>
       </tbody>
