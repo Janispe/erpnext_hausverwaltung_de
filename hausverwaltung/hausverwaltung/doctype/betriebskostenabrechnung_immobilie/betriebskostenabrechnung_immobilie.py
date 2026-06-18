@@ -14,6 +14,7 @@ from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienb
 SERIENBRIEF_PRINT_FORMAT_FIELDNAME = "hv_serienbrief_vorlage"
 PRINT_BUNDLE_CSS_PATH = "/assets/frappe/css/print.bundle.css"
 DRAFT_EMAIL_SEND_AFTER = "2099-01-01 00:00:00"
+SUMMARY_TABLE_FIELDS = ("kosten_pro_art", "zaehler_summen")
 
 
 def _row_value(row, key: str):
@@ -122,12 +123,25 @@ class BetriebskostenabrechnungImmobilie(Document):
 			except Exception as e:
 				frappe.throw(f"Mieter-Abrechnung konnte nicht storniert/gelöscht werden ({nm}): {e}")
 
+	def _persist_summary_after_insert(self) -> None:
+		"""Persistiert automatisch berechnete Summen ohne zweiten vollen Save.
+
+		Ein normales `save()` innerhalb von `after_insert` aktualisiert den Datensatz
+		noch einmal, während der ursprüngliche Client-Speichervorgang noch läuft. Das
+		kann im Desk zu einem geänderten Dokumentstand direkt nach dem Anlegen führen.
+		"""
+		self.set_parent_in_children()
+		self.set_name_in_children()
+		self.db_update()
+		for fieldname in SUMMARY_TABLE_FIELDS:
+			self.update_child_table(fieldname)
+
 	def after_insert(self):
 		"""Beim Anlegen automatisch alle Mieter‑Abrechnungen als Entwurf erzeugen."""
 		if not (self.immobilie and self.von and self.bis):
 			frappe.throw("Bitte Immobilie, Von und Bis ausfüllen.")
 		# Idempotenz: wenn bereits Child-Abrechnungen verknuepft sind (Retry,
-		# doppelter Trigger), nicht erneut erzeugen. Summary + Save laufen
+		# doppelter Trigger), nicht erneut erzeugen. Summary + Persistenz laufen
 		# trotzdem, damit ein abgebrochener Vorlauf konsistent fertig wird.
 		children_exist = frappe.db.exists(
 			"Betriebskostenabrechnung Mieter",
@@ -147,7 +161,8 @@ class BetriebskostenabrechnungImmobilie(Document):
 			)
 		# Nach Erzeugung (oder Skip): Zusammenfassungen berechnen + persistieren.
 		self._populate_summary()
-		self.save(ignore_permissions=True)
+		self._persist_summary_after_insert()
+
 	def on_submit(self):
 		"""Beim Submit: alle verknüpften Mieter-Abrechnungen einreichen und erst dann Ausgleichsbelege erzeugen."""
 		children = frappe.get_all(
