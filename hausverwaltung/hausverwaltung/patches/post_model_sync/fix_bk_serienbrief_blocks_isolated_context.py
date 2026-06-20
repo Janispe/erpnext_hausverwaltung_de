@@ -16,6 +16,7 @@ REPLACEMENTS = {
 		},
 		"html_content": {
 			'{{ immobilie_bezeichnung or "" }}': '{{ objekt.wohnung.immobilie.bezeichnung or objekt.wohnung.immobilie.name or "" }}',
+			'{{ wohnung_bezeichnung or "" }}': '{{ objekt.wohnung.name__lage_in_der_immobilie or objekt.wohnung.name or "" }}',
 		},
 	},
 }
@@ -37,4 +38,3 @@ def execute():
 
 		if updates:
 			frappe.db.set_value("Serienbrief Textbaustein", block_name, updates, update_modified=False)
-
