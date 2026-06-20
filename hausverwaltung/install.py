@@ -1785,13 +1785,6 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
             {"label": "Offene Posten", "link_type": "Page", "link_to": "op-workflow"},
             {"label": "Mieterkonto", "link_type": "Page", "link_to": "mieterkonto-workflow"},
             {"label": "Zahlungen zuordnen", "link_type": "DocType", "link_to": "Payment Reconciliation"},
-            {
-                "label": "Mahnung",
-                "link_type": "Page",
-                "link_to": "op-workflow",
-                "route_options": {"view": "mahnwesen"},
-                "url": "/app/op-workflow?view=mahnwesen",
-            },
         ],
     },
     {
