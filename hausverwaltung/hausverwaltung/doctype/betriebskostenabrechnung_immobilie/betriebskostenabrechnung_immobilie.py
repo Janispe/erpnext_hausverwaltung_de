@@ -479,6 +479,37 @@ def _get_or_create_serienbrief_print_format(serienbrief_vorlage: str) -> str:
 	return doc.name
 
 
+def _validate_bk_mieter_print_format(print_format: Optional[str]) -> Optional[str]:
+	name = (print_format or "").strip()
+	if not name or name.lower() == "standard":
+		return None
+	if not frappe.db.exists("Print Format", name):
+		frappe.throw(_("Print Format '{0}' wurde nicht gefunden.").format(name))
+
+	pf_doc = frappe.get_cached_doc("Print Format", name)
+	doc_type = (pf_doc.get("doc_type") or "").strip()
+	if doc_type and doc_type != "Betriebskostenabrechnung Mieter":
+		frappe.throw(
+			_("Print Format {0} gehört zu {1}, benötigt wird aber {2}.").format(
+				name, doc_type, "Betriebskostenabrechnung Mieter"
+			)
+		)
+	if cint(pf_doc.get("disabled")):
+		frappe.throw(_("Print Format '{0}' ist deaktiviert.").format(name))
+	return name
+
+
+def _get_serienbrief_vorlage_from_print_format(print_format: Optional[str]) -> Optional[str]:
+	name = (print_format or "").strip()
+	if not name:
+		return None
+	try:
+		pf_doc = frappe.get_cached_doc("Print Format", name)
+	except frappe.DoesNotExistError:
+		return None
+	return (pf_doc.get(SERIENBRIEF_PRINT_FORMAT_FIELDNAME) or "").strip() or None
+
+
 def _build_print_html_document(
 	body: str,
 	print_style: str = "",
@@ -550,13 +581,21 @@ def download_batch_print_html(
 
 	auto_print = bool(cint(trigger_print))
 
-	if (serienbrief_vorlage or "").strip():
+	print_format_name = (print_format or "").strip() or None
+	if doctype == "Betriebskostenabrechnung Mieter":
+		print_format_name = _validate_bk_mieter_print_format(print_format_name)
+
+	effective_serienbrief_vorlage = (serienbrief_vorlage or "").strip()
+	if not effective_serienbrief_vorlage and print_format_name:
+		effective_serienbrief_vorlage = _get_serienbrief_vorlage_from_print_format(print_format_name) or ""
+
+	if effective_serienbrief_vorlage:
 		# Serienbrief: ein Dokument mit mehreren Seiten
 		from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 			SerienbriefDurchlauf,
 		)
 
-		vorlage = (serienbrief_vorlage or "").strip()
+		vorlage = effective_serienbrief_vorlage
 		if doctype != "Betriebskostenabrechnung Mieter":
 			frappe.throw(_("Serienbrief-Druck wird aktuell nur für Betriebskostenabrechnung Mieter unterstützt."))
 
@@ -613,7 +652,7 @@ window.addEventListener("load", () => {
 		res = core_printview.get_html_and_style(
 			doc=doctype,
 			name=nm,
-			print_format=print_format,
+			print_format=print_format_name,
 			no_letterhead=bool(cint(no_letterhead)),
 			letterhead=letterhead,
 			trigger_print=False,
@@ -692,7 +731,7 @@ def dispatch_mieter_abrechnungen(
 	also_print_emailed = cint(also_print_emailed)
 	subject_override = (email_subject or "").strip() or None
 	message = (email_message or "").strip() or _default_email_message()
-	effective_print_format = (print_format or "").strip() or None
+	effective_print_format = _validate_bk_mieter_print_format(print_format)
 	if (serienbrief_vorlage or "").strip():
 		effective_print_format = _get_or_create_serienbrief_print_format(serienbrief_vorlage)
 

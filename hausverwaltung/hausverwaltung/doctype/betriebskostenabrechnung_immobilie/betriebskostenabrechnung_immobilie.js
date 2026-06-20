@@ -411,7 +411,25 @@ const open_dispatch_dialog = (frm) => {
 				fieldtype: "Link",
 				label: __("Serienbrief Vorlage"),
 				options: "Serienbrief Vorlage",
+				get_query: () => ({
+					filters: {
+						haupt_verteil_objekt: "Betriebskostenabrechnung Mieter",
+					},
+				}),
 				description: __("Optional: Ausgabe als Serienbrief (Adresse/Briefkopf) statt Standard-Print."),
+			},
+			{
+				fieldname: "print_format",
+				fieldtype: "Link",
+				label: __("Print Format"),
+				options: "Print Format",
+				get_query: () => ({
+					filters: {
+						doc_type: "Betriebskostenabrechnung Mieter",
+						disabled: 0,
+					},
+				}),
+				description: __("Optional: beliebiges Print Format für Betriebskostenabrechnung Mieter. Eine gewählte Serienbrief Vorlage hat Vorrang."),
 			},
 			{ fieldtype: "Section Break", label: __("E-Mail") },
 			{
@@ -438,6 +456,7 @@ const open_dispatch_dialog = (frm) => {
 					name: frm.doc.name,
 					mode: values.mode,
 					serienbrief_vorlage: values.serienbrief_vorlage || null,
+					print_format: values.print_format || null,
 					email_subject: values.email_subject || null,
 					email_message: values.email_message || null,
 					also_print_emailed: values.also_print_emailed ? 1 : 0,

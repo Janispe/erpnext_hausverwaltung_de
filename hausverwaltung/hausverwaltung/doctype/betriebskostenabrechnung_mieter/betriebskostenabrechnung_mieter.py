@@ -1,10 +1,13 @@
 from typing import Any, Dict, List
 
 import frappe
+from frappe.contacts.doctype.address.address import get_default_address
 from frappe.model.document import Document
+from frappe.utils import cstr
 
 from hausverwaltung.hausverwaltung.utils.mieter_name import (
 	get_contact_last_name,
+	get_hauptmieter_display_name,
 	pick_preferred_mieter_contact,
 	sanitize_name_part,
 )
@@ -183,6 +186,108 @@ class BetriebskostenabrechnungMieter(Document):
 		from hausverwaltung.hausverwaltung.utils.bk_sort import sort_key
 
 		return [combined[key] for key in sorted(combined, key=sort_key)]
+
+	def get_print_context(self) -> Dict[str, object]:
+		"""Kontext für freie BK-Print-Formate.
+
+		Serienbrief-Vorlagen erwarten historisch
+		``objekt``, ``empfaenger`` und ``datum``. Ein Frappe Print Format bekommt
+		standardmäßig nur ``doc``; diese Methode stellt die fehlenden Werte
+		für beliebige BK-Mieter-Layouts bereit.
+		"""
+		address = self._get_print_recipient_address()
+		display_name = self._get_print_recipient_name()
+		return frappe._dict(
+			objekt=self,
+			datum=frappe.utils.formatdate(self.get("datum") or frappe.utils.today(), "dd.MM.yyyy"),
+			empfaenger=frappe._dict(
+				name=self.get("customer") or self.name,
+				anzeigename=display_name,
+				mieter_name=display_name,
+				strasse=address.get("street", ""),
+				plz=address.get("zip", ""),
+				ort=address.get("city", ""),
+				plz_ort=address.get("plz_ort", ""),
+				adresse=address.get("display", ""),
+			),
+		)
+
+	def _get_print_recipient_name(self) -> str:
+		name = get_hauptmieter_display_name(getattr(self, "mieter", None))
+		if name:
+			return name
+
+		customer = cstr(self.get("customer")).strip()
+		if customer:
+			customer_name = cstr(frappe.db.get_value("Customer", customer, "customer_name")).strip()
+			if customer_name:
+				return customer_name
+			return customer
+
+		return cstr(self.name).strip()
+
+	def _get_print_recipient_address(self) -> Dict[str, str]:
+		customer = cstr(self.get("customer")).strip()
+		if customer:
+			address = self._get_print_address_for_link("Customer", customer)
+			if address:
+				return address
+
+		wohnung = cstr(self.get("wohnung")).strip()
+		if wohnung:
+			try:
+				immobilie = cstr(frappe.db.get_value("Wohnung", wohnung, "immobilie")).strip()
+			except Exception:
+				immobilie = ""
+			if immobilie:
+				try:
+					linked_address = cstr(frappe.db.get_value("Immobilie", immobilie, "adresse")).strip()
+				except Exception:
+					linked_address = ""
+				address = self._print_address_dict_from_name(linked_address)
+				if address:
+					return address
+				address = self._get_print_address_for_link("Immobilie", immobilie)
+				if address:
+					return address
+
+		return {}
+
+	def _get_print_address_for_link(self, link_doctype: str, link_name: str) -> Dict[str, str]:
+		try:
+			address_name = get_default_address(link_doctype, link_name)
+		except Exception:
+			address_name = None
+		return self._print_address_dict_from_name(address_name)
+
+	def _print_address_dict_from_name(self, address_name: str | None) -> Dict[str, str]:
+		address_name = cstr(address_name).strip()
+		if not address_name:
+			return {}
+		try:
+			address = frappe.get_cached_doc("Address", address_name)
+		except Exception:
+			return {}
+
+		street = ", ".join(
+			filter(
+				None,
+				[
+					cstr(getattr(address, "address_line1", "")).strip(),
+					cstr(getattr(address, "address_line2", "")).strip(),
+				],
+			)
+		)
+		zip_code = cstr(getattr(address, "pincode", None) or getattr(address, "zip", None)).strip()
+		city = cstr(getattr(address, "city", "")).strip()
+		plz_ort = " ".join(p for p in (zip_code, city) if p).strip()
+		return {
+			"street": street,
+			"zip": zip_code,
+			"city": city,
+			"plz_ort": plz_ort,
+			"display": "\n".join(filter(None, [street, plz_ort])),
+		}
 
 
 @frappe.whitelist()

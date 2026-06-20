@@ -1110,8 +1110,8 @@ class SerienbriefDurchlauf(Document):
 		)
 
 		context = frappe._dict(
-			objekt=iteration_doc,
-			mietvertrag=mietvertrag_doc,
+			objekt=_wrap_jinja_value(iteration_doc),
+			mietvertrag=_wrap_jinja_value(mietvertrag_doc),
 			datum=format_date(letter_date),
 			datum_iso=letter_date,
 			druck_schwarz_weiss=bool(getattr(self, "_druck_schwarz_weiss", False)),
@@ -1137,6 +1137,7 @@ class SerienbriefDurchlauf(Document):
 			),
 			outputs=frappe._dict(),
 		)
+		self._apply_legacy_context_aliases(context)
 
 		if template:
 			context["_serienbrief_value_overrides"] = _build_value_override_mapping(template, self, row)
@@ -1609,6 +1610,8 @@ class SerienbriefDurchlauf(Document):
 
 			resolved = None
 			path_was_set = bool(path)
+			if variable_type == "Doctype Liste" and path and not path.endswith("[]"):
+				path = f"{path}[]"
 			if path:
 				# Pfade werden gegen den Parent-Context (mit ``objekt``)
 				# aufgelöst, nicht gegen den strict Block-Context.
@@ -1645,11 +1648,11 @@ class SerienbriefDurchlauf(Document):
 					missing.append(f"{label} (<code>{{{{ {key} }}}}</code>)")
 				continue
 
-			context[key] = resolved
+			context[key] = _wrap_jinja_value(resolved)
 
 			if "inputs" not in context["baustein"]:
 				context["baustein"]["inputs"] = {}
-			context["baustein"]["inputs"][key] = resolved
+			context["baustein"]["inputs"][key] = context[key]
 
 		if missing:
 			frappe.throw(
@@ -1694,6 +1697,8 @@ class SerienbriefDurchlauf(Document):
 				)
 
 			resolved = None
+			if variable_type == "Doctype Liste" and path and not path.endswith("[]"):
+				path = f"{path}[]"
 			if path:
 				resolved = _resolve_value_path(path, context)
 				if resolved is None:
@@ -1723,7 +1728,7 @@ class SerienbriefDurchlauf(Document):
 
 			# Alle Vorlagen-Variablen top-level — passt zur Editor-Konvention
 			# (Sidebar fügt bare ``{{ key }}`` ein), keine getrennten Namespaces.
-			context[key] = resolved
+			context[key] = _wrap_jinja_value(resolved)
 
 	def _apply_serienbrief_template_variables(
 		self, context: Dict[str, Any], template, row=None
@@ -1752,6 +1757,8 @@ class SerienbriefDurchlauf(Document):
 			value = entry.get("value")
 
 			resolved = None
+			if variable_type == "Doctype Liste" and path and not path.endswith("[]"):
+				path = f"{path}[]"
 			if path:
 				resolved = _resolve_value_path(path, context)
 				if resolved is None:
@@ -1769,7 +1776,22 @@ class SerienbriefDurchlauf(Document):
 			if resolved is None:
 				continue
 
-			context[key] = resolved
+			context[key] = _wrap_jinja_value(resolved)
+
+	def _apply_legacy_context_aliases(self, context: Dict[str, Any]) -> None:
+		"""Keep old BK letter variables usable beside the generic ``objekt`` root."""
+		legacy_paths = {
+			"wohnung_bezeichnung": "objekt.wohnung.name__lage_in_der_immobilie",
+			"immobilie_bezeichnung": "objekt.wohnung.immobilie.bezeichnung",
+		}
+		for key, path in legacy_paths.items():
+			if context.get(key) is not None:
+				continue
+			value = _resolve_value_path(path, context)
+			if value is None and key == "immobilie_bezeichnung":
+				value = _resolve_value_path("objekt.wohnung.immobilie.name", context)
+			if value is not None:
+				context[key] = value
 
 	def _verify_template_variables_resolved(self, context: Dict[str, Any], template) -> None:
 		variable_defs = template.get("variables") or []
@@ -2677,13 +2699,10 @@ class _LinkResolvingRow:
 	Sub-Docs auflöst — analog zur Logik im :func:`_resolve_value_path`-Resolver,
 	nur on-demand bei Jinja-``getattr`` statt eager beim String-Pfad-Splitting.
 
-	Der Wrapper wird bewusst für aufgelöste Listen-Inputs aus ``[]``-Mapping-
-	Pfaden verwendet. Tiefe Datenpfade im Body laufen offiziell über
-	``{{$ objekt.wohnung.immobilie.name $}}`` und damit über
-	:func:`_resolve_value_path`; Root-``objekt`` wird nicht pauschal als
-	``_LinkResolvingRow`` in den Jinja-Kontext gelegt. Sub-Docs werden rekursiv
+	Der Wrapper wird für Doctype-Werte im Jinja-Kontext und für aufgelöste
+	Listen-Inputs aus ``[]``-Mapping-Pfaden verwendet. Sub-Docs werden rekursiv
 	weiter gewrappt; Child-Tables liefern eine Liste gewrappter Zeilen;
-	``.address`` an einem Dynamic-Link-Doctype liefert das Default-Address-Doc
+	``.address`` an einem Dynamic-Link-Doctype liefert das passende Address-Doc
 	(analog zur Resolver-Address-Magic).
 
 	String-Vergleiche bleiben funktional, weil ``__str__``/``__eq__`` an den
@@ -2714,23 +2733,15 @@ class _LinkResolvingRow:
 			and getattr(source, "doctype", None) in _ADDRESS_TARGET_DOCTYPES
 			and getattr(source, "name", None)
 		):
-			addr_name = get_default_address(source.doctype, source.name)
-			if addr_name:
-				try:
-					return _LinkResolvingRow(frappe.get_cached_doc("Address", addr_name))
-				except frappe.DoesNotExistError:
-					return None
-			return None
+			address_doc = _get_magic_address_doc(source)
+			return _LinkResolvingRow(address_doc) if address_doc else None
 
 		value = _dig_attr(source, key)
 
 		if meta:
 			df = meta.get_field(key)
 			if df and df.fieldtype == "Link" and df.options and isinstance(value, str) and value:
-				try:
-					return _LinkResolvingRow(frappe.get_cached_doc(df.options, value))
-				except Exception:
-					return value
+				return _LinkResolvingValue(df.options, value)
 			if df and df.fieldtype == "Table" and isinstance(value, (list, tuple)):
 				return [_LinkResolvingRow(row) if _is_document_like(row) else row for row in value]
 
@@ -2805,6 +2816,64 @@ class _LinkResolvingRow:
 		return f"<LinkResolvingRow {source!r}>"
 
 
+class _LinkResolvingValue(str):
+	"""String-compatible Link value that can still resolve nested Jinja attrs."""
+
+	__slots__ = ("_doctype", "_doc")
+
+	def __new__(cls, doctype: str, name: str):
+		obj = str.__new__(cls, cstr(name))
+		object.__setattr__(obj, "_doctype", cstr(doctype))
+		object.__setattr__(obj, "_doc", None)
+		return obj
+
+	def _get_doc(self):
+		doc = object.__getattribute__(self, "_doc")
+		if doc is not None:
+			return doc
+		doctype = object.__getattribute__(self, "_doctype")
+		if not doctype or not str(self):
+			return None
+		try:
+			doc = frappe.get_cached_doc(doctype, str(self))
+		except Exception:
+			doc = None
+		object.__setattr__(self, "_doc", doc)
+		return doc
+
+	def __getattr__(self, key: str):
+		doc = self._get_doc()
+		if doc is None:
+			raise AttributeError(key)
+		return getattr(_LinkResolvingRow(doc), key)
+
+	def get(self, key: str, default: Any = None) -> Any:
+		try:
+			value = self.__getattr__(key)
+		except AttributeError:
+			return default
+		return default if value is None else value
+
+	def as_dict(self):
+		doc = self._get_doc()
+		if doc and hasattr(doc, "as_dict"):
+			try:
+				return doc.as_dict()
+			except Exception:
+				return {}
+		return {}
+
+
+def _wrap_jinja_value(value: Any) -> Any:
+	if isinstance(value, (_LinkResolvingRow, _LinkResolvingValue)):
+		return value
+	if _is_document_like(value):
+		return _LinkResolvingRow(value)
+	if isinstance(value, (list, tuple)):
+		return [_wrap_jinja_value(item) for item in value]
+	return value
+
+
 def _is_document_like(value: Any) -> bool:
 	if getattr(value, "doctype", None):
 		return True
@@ -2846,6 +2915,55 @@ _BRACKET_INDEX_PARTS_RE = re.compile(r"\[(\d+)\]")
 # Datenplatzhalter ``{{$ objekt.kunde.address.address_line1 $}}`` schreiben
 # können statt ``frappe.get_doc("Address", get_default_address(...))``.
 _ADDRESS_TARGET_DOCTYPES = {"Customer", "Immobilie", "Wohnung", "Contact", "Supplier"}
+
+
+def _get_magic_address_doc(source: Any):
+	"""Resolve ``.address`` for address-capable docs.
+
+	Immobilie stores the canonical address in its explicit ``adresse`` Link
+	field; imported data does not always have Frappe Dynamic Links on Address.
+	For all other doctypes, fall back to Frappe's default-address resolver.
+	"""
+	doctype = getattr(source, "doctype", None)
+	name = getattr(source, "name", None)
+	if not doctype or not name or doctype not in _ADDRESS_TARGET_DOCTYPES:
+		return None
+
+	addr_name = None
+	if doctype == "Immobilie":
+		addr_name = cstr(_dig_attr(source, "adresse")).strip()
+		if not addr_name:
+			try:
+				addr_name = cstr(frappe.db.get_value("Immobilie", name, "adresse")).strip()
+			except Exception:
+				addr_name = ""
+
+	if not addr_name and doctype == "Wohnung":
+		immobilie = cstr(_dig_attr(source, "immobilie")).strip()
+		if not immobilie:
+			try:
+				immobilie = cstr(frappe.db.get_value("Wohnung", name, "immobilie")).strip()
+			except Exception:
+				immobilie = ""
+		if immobilie:
+			try:
+				return _get_magic_address_doc(frappe.get_cached_doc("Immobilie", immobilie))
+			except frappe.DoesNotExistError:
+				return None
+
+	if not addr_name:
+		try:
+			addr_name = get_default_address(doctype, name)
+		except Exception:
+			addr_name = None
+
+	if not addr_name:
+		return None
+
+	try:
+		return frappe.get_cached_doc("Address", addr_name)
+	except frappe.DoesNotExistError:
+		return None
 
 
 def _resolve_value_path(path: str, context: Dict[str, Any]) -> Any:
@@ -2958,8 +3076,7 @@ def _resolve_value_path(path: str, context: Dict[str, Any]) -> Any:
 				and getattr(current, "doctype", None) in _ADDRESS_TARGET_DOCTYPES
 				and getattr(current, "name", None)
 			):
-				addr_name = get_default_address(current.doctype, current.name)
-				current = frappe.get_cached_doc("Address", addr_name) if addr_name else None
+				current = _get_magic_address_doc(current)
 				if current is None:
 					return None
 				idx += 1
