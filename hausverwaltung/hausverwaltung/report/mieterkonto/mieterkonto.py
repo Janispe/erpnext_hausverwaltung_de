@@ -118,6 +118,7 @@ def execute(filters=None):
 def _apply_defaults(filters):
 	filters.show_kategorien = cint(filters.get("show_kategorien", 1))
 	filters.gruppieren_pro_monat = cint(filters.get("gruppieren_pro_monat", 1))
+	filters.offene_betraege_basis = filters.get("offene_betraege_basis") or "Zeitraum"
 
 
 def _validate_filters(filters):
@@ -1204,6 +1205,8 @@ def _get_currency(company: str) -> str | None:
 def _get_report_summary(totals: dict[str, Any], filters) -> list[dict[str, Any]]:
 	all_totals = totals["all"]
 	period_totals = totals["period"]
+	open_totals = period_totals if _use_period_open_totals(filters) else all_totals
+	open_scope = _("Zeitraum") if _use_period_open_totals(filters) else _("Gesamt")
 	currency = all_totals.get("currency") or period_totals.get("currency")
 	paid_period = period_totals["paid"]
 	written_off_period = period_totals["written_off"]
@@ -1223,44 +1226,44 @@ def _get_report_summary(totals: dict[str, Any], filters) -> list[dict[str, Any]]
 			"currency": currency,
 		},
 		{
-			"value": _open_category_amount(all_totals, "miete"),
+			"value": _open_category_amount(open_totals, "miete"),
 			"indicator": "Blue",
-			"label": _("Miete offen"),
+			"label": _("{0} offen ({1})").format(_("Miete"), open_scope),
 			"datatype": "Currency",
 			"currency": currency,
 		},
 		{
-			"value": _open_category_amount(all_totals, "betriebskosten"),
+			"value": _open_category_amount(open_totals, "betriebskosten"),
 			"indicator": "Blue",
-			"label": _("BK offen"),
+			"label": _("{0} offen ({1})").format(_("BK"), open_scope),
 			"datatype": "Currency",
 			"currency": currency,
 		},
 		{
-			"value": _open_category_amount(all_totals, "heizkosten"),
+			"value": _open_category_amount(open_totals, "heizkosten"),
 			"indicator": "Blue",
-			"label": _("HK offen"),
+			"label": _("{0} offen ({1})").format(_("HK"), open_scope),
 			"datatype": "Currency",
 			"currency": currency,
 		},
 		{
-			"value": _open_category_amount(all_totals, "guthaben_nachzahlungen"),
+			"value": _open_category_amount(open_totals, "guthaben_nachzahlungen"),
 			"indicator": "Blue",
-			"label": _("G/N offen"),
+			"label": _("{0} offen ({1})").format(_("G/N"), open_scope),
 			"datatype": "Currency",
 			"currency": currency,
 		},
 		{
-			"value": _open_category_amount(all_totals, "vorauszahlungen"),
+			"value": _open_category_amount(open_totals, "vorauszahlungen"),
 			"indicator": "Blue",
-			"label": _("VZ offen"),
+			"label": _("{0} offen ({1})").format(_("VZ"), open_scope),
 			"datatype": "Currency",
 			"currency": currency,
 		},
 		{
-			"value": _open_category_amount(all_totals, "sonstiges"),
+			"value": _open_category_amount(open_totals, "sonstiges"),
 			"indicator": "Blue",
-			"label": _("Sonstig offen"),
+			"label": _("{0} offen ({1})").format(_("Sonstig"), open_scope),
 			"datatype": "Currency",
 			"currency": currency,
 		},
@@ -1280,6 +1283,10 @@ def _get_report_summary(totals: dict[str, Any], filters) -> list[dict[str, Any]]
 			},
 		)
 	return summary
+
+
+def _use_period_open_totals(filters) -> bool:
+	return (filters.get("offene_betraege_basis") or "Zeitraum") != "Gesamt"
 
 
 def _open_category_amount(totals: dict[str, Any], category: str) -> float:

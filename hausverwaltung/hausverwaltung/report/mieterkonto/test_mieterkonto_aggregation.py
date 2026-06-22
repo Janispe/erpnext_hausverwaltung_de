@@ -5,10 +5,11 @@ from hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto import (
 	CATEGORIES,
 	InvoiceInfo,
 	_build_invoice_transactions,
-	_merge_payment_entry_mixed_advance_transactions,
 	_categorize_offset_accounts,
 	_category_amounts_from_items,
+	_get_report_summary,
 	_group_invoices,
+	_merge_payment_entry_mixed_advance_transactions,
 	_sort_rows_for_display,
 	_transaction_to_row,
 )
@@ -43,7 +44,50 @@ def _make_invoice(
 	)
 
 
+def _totals(*, all_miete: float, period_miete: float) -> dict:
+	return {
+		"all": {
+			"invoice": {"miete": all_miete},
+			"paid": {},
+			"written_off": {},
+			"balance": all_miete,
+			"currency": "EUR",
+		},
+		"period": {
+			"invoice": {"miete": period_miete},
+			"paid": {},
+			"written_off": {},
+			"balance": period_miete,
+			"currency": "EUR",
+		},
+	}
+
+
+def _summary_value(summary: list[dict], label: str) -> float:
+	for row in summary:
+		if row["label"] == label:
+			return row["value"]
+	raise AssertionError(f"Summary label not found: {label}")
+
+
 class TestGroupInvoices(TestCase):
+	def test_summary_open_amounts_default_to_period(self):
+		summary = _get_report_summary(
+			_totals(all_miete=700.0, period_miete=200.0),
+			{},
+		)
+
+		self.assertEqual(_summary_value(summary, "Kontostand"), 700.0)
+		self.assertEqual(_summary_value(summary, "Miete offen (Zeitraum)"), 200.0)
+
+	def test_summary_open_amounts_can_use_total_scope(self):
+		summary = _get_report_summary(
+			_totals(all_miete=700.0, period_miete=200.0),
+			{"offene_betraege_basis": "Gesamt"},
+		)
+
+		self.assertEqual(_summary_value(summary, "Miete offen (Gesamt)"), 700.0)
+
 	def test_buchungscockpit_default_item_maps_to_guthaben_nachzahlungen(self):
 		amounts = _category_amounts_from_items(
 			"SI-COCKPIT",

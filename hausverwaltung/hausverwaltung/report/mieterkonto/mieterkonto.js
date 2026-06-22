@@ -44,6 +44,14 @@ frappe.query_reports["Mieterkonto"] = {
 			default: 1,
 			description: __("G/N-Zeilen bleiben immer separat."),
 		},
+		{
+			fieldname: "offene_betraege_basis",
+			label: __("Offene Beträge"),
+			fieldtype: "Select",
+			options: "Zeitraum\nGesamt",
+			default: "Zeitraum",
+			description: __("Zeitraum zeigt offene Beträge aus Von/Bis. Gesamt zeigt den Stand bis Bis inklusive Anfangsbestand."),
+		},
 	],
 
 	onload: function (report) {
