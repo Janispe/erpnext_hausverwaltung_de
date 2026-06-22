@@ -41,6 +41,7 @@
             to_date: to,
             show_kategorien: 1,
             gruppieren_pro_monat: options.gruppieren === false ? 0 : 1,
+            offene_betraege_basis: options.openScope || "Zeitraum",
           },
         },
       }, "Mieterkonto"),
@@ -59,6 +60,7 @@
         customer: `${customer} — ${mieter.name}`,
         from_date: from,
         to_date: to,
+        offene_betraege_basis: options.openScope || "Zeitraum",
       },
       rows: txRows.map(adaptRow),
       totalRow: adaptRow(totalRow),
@@ -154,12 +156,12 @@
     return [
       { label: "Kontostand", value: 0, indicator: "neutral" },
       { label: "Bezahlt im Zeitraum", value: 0, indicator: "neutral" },
-      { label: "Miete offen", value: 0, indicator: "neutral" },
-      { label: "BK offen", value: 0, indicator: "neutral" },
-      { label: "HK offen", value: 0, indicator: "neutral" },
-      { label: "G/N offen", value: 0, indicator: "neutral" },
-      { label: "VZ offen", value: 0, indicator: "neutral" },
-      { label: "Sonstig offen", value: 0, indicator: "neutral" },
+      { label: "Miete offen (Zeitraum)", value: 0, indicator: "neutral" },
+      { label: "BK offen (Zeitraum)", value: 0, indicator: "neutral" },
+      { label: "HK offen (Zeitraum)", value: 0, indicator: "neutral" },
+      { label: "G/N offen (Zeitraum)", value: 0, indicator: "neutral" },
+      { label: "VZ offen (Zeitraum)", value: 0, indicator: "neutral" },
+      { label: "Sonstig offen (Zeitraum)", value: 0, indicator: "neutral" },
     ];
   }
 

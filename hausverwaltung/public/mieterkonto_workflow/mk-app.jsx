@@ -37,14 +37,16 @@ function App() {
   const [mieterSearch, setMieterSearch] = useState("");
   const [customers, setCustomers] = useState(window.MK_CUSTOMERS || []);
   const [mieterSearching, setMieterSearching] = useState(false);
+  const [openScope, setOpenScope] = useState(_init.offene_betraege_basis || "Zeitraum");
 
-  async function applyFilters(c, f, t, gruppierenOverride) {
+  async function applyFilters(c, f, t, gruppierenOverride, openScopeOverride) {
     const seq = ++loadSeq.current;
     setLoadingData(!!c);
     setLoadError("");
     try {
       const nextData = await window.MK_ADAPTER.load(c, f, t, {
         gruppieren: gruppierenOverride ?? gruppieren,
+        openScope: openScopeOverride ?? openScope,
       });
       if (seq === loadSeq.current) {
         setData(nextData || window.MIETERKONTO);
@@ -121,6 +123,10 @@ function App() {
     setTweak("gruppieren", v);
     applyFilters(customer, fromDate, toDate, v);
   };
+  const setOpenScopeBoth = (v) => {
+    setOpenScope(v);
+    applyFilters(customer, fromDate, toDate, undefined, v);
+  };
 
   const openLegacyReport = () => {
     if (!customer) {
@@ -139,6 +145,7 @@ function App() {
       to_date: toDate,
       show_kategorien: showCats ? 1 : 0,
       gruppieren_pro_monat: gruppieren ? 1 : 0,
+      offene_betraege_basis: openScope,
     });
   };
 
@@ -232,6 +239,8 @@ function App() {
           setGruppieren={setGruppierenBoth}
           showCats={showCats}
           setShowCats={setShowCatsBoth}
+          openScope={openScope}
+          setOpenScope={setOpenScopeBoth}
         />
 
         {variant === "A" && (

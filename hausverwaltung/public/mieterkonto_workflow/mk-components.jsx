@@ -226,6 +226,7 @@ function FilterBar({
   mieterSearching,
   gruppieren, setGruppieren,
   showCats, setShowCats,
+  openScope, setOpenScope,
 }) {
   const Y = new Date().getFullYear();
   const today = frappe.datetime.get_today();
@@ -295,6 +296,17 @@ function FilterBar({
       )}
 
       <div className="mk-filter-sep" />
+      <span className="mk-filter">
+        <span className="mk-filter-label">Offene Beträge</span>
+        <select
+          className="mk-field"
+          value={openScope}
+          onChange={(e) => setOpenScope(e.target.value)}
+        >
+          <option value="Zeitraum">Zeitraum</option>
+          <option value="Gesamt">Gesamt</option>
+        </select>
+      </span>
       <label className="mk-toggle">
         <input type="checkbox" checked={showCats}
           onChange={(e) => setShowCats(e.target.checked)} />
@@ -403,7 +415,16 @@ function getSummaryItem(summary, label, fallback = { label, value: 0 }) {
 
 function getOpenSummaryItems(summary) {
   const preferred = ["Miete offen", "BK offen", "HK offen", "G/N offen", "VZ offen", "Sonstig offen"];
-  return preferred.map((label) => getSummaryItem(summary, label)).filter(Boolean);
+  return preferred.map((label) => getOpenSummaryItem(summary, label)).filter(Boolean);
+}
+
+function getOpenSummaryItem(summary, label) {
+  const items = summary || [];
+  return (
+    items.find((s) => s.label && s.label.startsWith(`${label} (`))
+    || items.find((s) => s.label === label)
+    || { label, value: 0 }
+  );
 }
 
 Object.assign(window, {
