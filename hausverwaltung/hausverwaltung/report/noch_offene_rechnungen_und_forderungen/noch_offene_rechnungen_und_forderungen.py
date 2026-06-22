@@ -158,23 +158,45 @@ def _combine_monthly_sollstellung_remarks(remarks: list[str]) -> str:
 		if len(periods) == 1:
 			period = periods.pop()
 			sort_order = {"Miete": 0, "BK": 1, "HK": 2, "UMZ": 3}
-			labels = [
-				label
-				for label, _period in sorted(
-					parsed,
-					key=lambda item: sort_order.get(item[0], 99),
-				)
-			]
+			seen_labels: set[str] = set()
+			labels: list[str] = []
+			for label, _period in sorted(parsed, key=lambda item: sort_order.get(item[0], 99)):
+				if label in seen_labels:
+					continue
+				seen_labels.add(label)
+				labels.append(label)
 			return f"{', '.join(labels)} {period}"
 
 	return " · ".join(parts)
 
 
 def _parse_monthly_sollstellung_remark(remark: str) -> tuple[str, str] | None:
-	match = re.fullmatch(r"(Miete|BK|HK|UMZ)\s+(\d{2}/\d{4})", str(remark or "").strip())
+	value = str(remark or "").strip()
+	label_aliases = {
+		"Miete": "Miete",
+		"BK": "BK",
+		"Betriebskosten": "BK",
+		"HK": "HK",
+		"Heizkosten": "HK",
+		"UMZ": "UMZ",
+		"Untermietzuschlag": "UMZ",
+	}
+	label_pattern = "|".join(re.escape(label) for label in label_aliases)
+
+	match = re.fullmatch(rf"({label_pattern})\s+(\d{{1,2}})/(\d{{4}})", value)
+	if not match:
+		match = re.search(rf"\b({label_pattern})\s+(\d{{1,2}})\.(\d{{2}}|\d{{4}})\b(?!\.)", value)
 	if not match:
 		return None
-	return match.group(1), match.group(2)
+
+	label = label_aliases.get(match.group(1), match.group(1))
+	month = int(match.group(2))
+	if month < 1 or month > 12:
+		return None
+	year = match.group(3)
+	if len(year) == 2:
+		year = f"20{year}"
+	return label, f"{month:02d}/{year}"
 
 
 def _resolve_guthaben_nachzahlung_invoice_names(si_rows_by_no):

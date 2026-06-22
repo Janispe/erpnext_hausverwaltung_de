@@ -3,6 +3,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from hausverwaltung.hausverwaltung.report.noch_offene_rechnungen_und_forderungen.noch_offene_rechnungen_und_forderungen import (
+	_combine_monthly_sollstellung_remarks,
 	_group_rows_by_mietabrechnung,
 	_resolve_abschlagsplan_payment_entries,
 )
@@ -179,3 +180,49 @@ class TestNochOffeneForderungenAggregation(TestCase):
 
 		self.assertEqual(len(out), 1)
 		self.assertEqual(out[0]["bemerkungen"], "Miete, BK, HK 06/2026")
+
+	def test_grouped_import_rent_remarks_are_combined_by_period(self):
+		mab = "MV-2026-001|01/2026"
+		rows = [
+			_row(
+				"SI-IMPORT-1",
+				500.0,
+				bemerkungen="Import BNR 124928: Miete 01.26 Beganovic Ferida, Vorderhaus, EG links",
+			),
+			_row(
+				"SI-IMPORT-2",
+				120.0,
+				bemerkungen="Import BNR 124929: Miete 01.26 Beganovic Ferida, Vorderhaus, EG links",
+			),
+			_row(
+				"SI-IMPORT-3",
+				80.0,
+				bemerkungen="Import BNR 124930: Miete 01.26 Beganovic Ferida, Vorderhaus, EG links",
+			),
+		]
+		patches = self._patch_invoice_lookup(
+			{"SI-IMPORT-1": mab, "SI-IMPORT-2": mab, "SI-IMPORT-3": mab},
+			{"SI-IMPORT-1": "Miete", "SI-IMPORT-2": "Betriebskosten", "SI-IMPORT-3": "Heizkosten"},
+		)
+		for p in patches:
+			p.start()
+		try:
+			out = _group_rows_by_mietabrechnung(rows)
+		finally:
+			for p in patches:
+				p.stop()
+
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]["bemerkungen"], "Miete 01/2026")
+
+	def test_combined_import_remarks_can_keep_distinct_labels(self):
+		self.assertEqual(
+			_combine_monthly_sollstellung_remarks(
+				[
+					"Import BNR 1: Miete 02.26 Muster",
+					"Import BNR 2: BK 02.26 Muster",
+					"Import BNR 3: Heizkosten 02.26 Muster",
+				]
+			),
+			"Miete, BK, HK 02/2026",
+		)
