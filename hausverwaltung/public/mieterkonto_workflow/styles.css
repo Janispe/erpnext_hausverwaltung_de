@@ -260,6 +260,63 @@ button { font-family: inherit; }
   min-width: 0;
   height: 30px;
 }
+.mk-date-filter {
+  gap: 7px;
+}
+.mk-date-field {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.mk-date-text {
+  width: 112px;
+  padding-right: 32px;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+.mk-date-filter.is-invalid .mk-date-text {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.mk-date-picker-button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  position: absolute;
+  right: 1px;
+  top: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.mk-date-picker-button:hover {
+  background: var(--bg-soft);
+  color: var(--ink);
+}
+.mk-date-picker-button svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.mk-native-date {
+  position: absolute;
+  right: 1px;
+  top: 1px;
+  width: 28px;
+  height: 28px;
+  opacity: 0;
+  cursor: pointer;
+}
 .mk-status-select {
   width: 116px;
 }

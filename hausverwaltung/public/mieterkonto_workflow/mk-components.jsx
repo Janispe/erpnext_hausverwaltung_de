@@ -31,6 +31,43 @@ const fmtDateShort = (s) => {
   return `${d}.${m}.`;
 };
 
+const isIsoDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
+
+const isoToDisplayDate = (s) => {
+  if (!isIsoDate(s)) return "";
+  const [y, m, d] = s.split("-");
+  return `${d}.${m}.${y}`;
+};
+
+const pad2 = (n) => String(n).padStart(2, "0");
+
+const validIsoDate = (y, m, d) => {
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (date.getUTCFullYear() !== y) return null;
+  if (date.getUTCMonth() !== m - 1) return null;
+  if (date.getUTCDate() !== d) return null;
+  return `${y}-${pad2(m)}-${pad2(d)}`;
+};
+
+const parseDateInput = (raw) => {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+
+  const iso = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) return validIsoDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+
+  const de = value.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2}|\d{4})$/);
+  if (de) {
+    const year = Number(de[3].length === 2 ? `20${de[3]}` : de[3]);
+    return validIsoDate(year, Number(de[2]), Number(de[1]));
+  }
+
+  const compact = value.match(/^(\d{2})(\d{2})(\d{4})$/);
+  if (compact) return validIsoDate(Number(compact[3]), Number(compact[2]), Number(compact[1]));
+
+  return null;
+};
+
 const monthLabel = (s) => {
   const [y, m] = s.split("-");
   const names = ["Januar", "Februar", "März", "April", "Mai", "Juni",
@@ -213,6 +250,103 @@ function MieterPicker({
   );
 }
 
+function CalendarIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M4.5 1.5v3M11.5 1.5v3M2.5 6h11" />
+      <rect x="2.5" y="3.5" width="11" height="10" rx="1.5" />
+    </svg>
+  );
+}
+
+function DateField({ label, value, onChange }) {
+  const [draft, setDraft] = useState(isoToDisplayDate(value));
+  const [invalid, setInvalid] = useState(false);
+  const nativeRef = useRef(null);
+
+  useEffect(() => {
+    setDraft(isoToDisplayDate(value));
+    setInvalid(false);
+  }, [value]);
+
+  const commit = () => {
+    const parsed = parseDateInput(draft);
+    if (parsed === "") {
+      onChange("");
+      setInvalid(false);
+      return;
+    }
+    if (!parsed) {
+      setInvalid(true);
+      return;
+    }
+    setInvalid(false);
+    setDraft(isoToDisplayDate(parsed));
+    if (parsed !== value) onChange(parsed);
+  };
+
+  const openPicker = () => {
+    const nativeInput = nativeRef.current;
+    if (!nativeInput) return;
+    if (typeof nativeInput.showPicker === "function") {
+      nativeInput.showPicker();
+      return;
+    }
+    nativeInput.focus();
+    nativeInput.click();
+  };
+
+  return (
+    <span className={`mk-filter mk-date-filter ${invalid ? "is-invalid" : ""}`}>
+      <span className="mk-filter-label">{label}</span>
+      <span className="mk-date-field">
+        <input
+          className="mk-field mk-date-text"
+          type="text"
+          inputMode="numeric"
+          placeholder="TT.MM.JJJJ"
+          value={draft}
+          aria-invalid={invalid ? "true" : "false"}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            if (invalid) setInvalid(false);
+          }}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit();
+              e.currentTarget.blur();
+            } else if (e.key === "Escape") {
+              setDraft(isoToDisplayDate(value));
+              setInvalid(false);
+              e.currentTarget.blur();
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="mk-date-picker-button"
+          aria-label={`${label}: Kalender öffnen`}
+          title="Kalender öffnen"
+          onClick={openPicker}
+        >
+          <CalendarIcon />
+        </button>
+        <input
+          ref={nativeRef}
+          className="mk-native-date"
+          aria-hidden="true"
+          tabIndex={-1}
+          type="date"
+          value={isIsoDate(value) ? value : ""}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </span>
+    </span>
+  );
+}
+
 // ───────── Filterbar ─────────
 
 function FilterBar({
@@ -262,24 +396,8 @@ function FilterBar({
         onCustomerChange={onCustomerChange}
       />
 
-      <span className="mk-filter">
-        <span className="mk-filter-label">Von</span>
-        <input
-          type="date"
-          className="mk-field"
-          value={fromDate || ""}
-          onChange={(e) => onFromChange(e.target.value)}
-        />
-      </span>
-      <span className="mk-filter">
-        <span className="mk-filter-label">Bis</span>
-        <input
-          type="date"
-          className="mk-field"
-          value={toDate || ""}
-          onChange={(e) => onToChange(e.target.value)}
-        />
-      </span>
+      <DateField label="Von" value={fromDate} onChange={onFromChange} />
+      <DateField label="Bis" value={toDate} onChange={onToChange} />
 
       <span style={{ display: "inline-flex", gap: 4 }}>
         {presetBtn("Dieses Jahr", yearStart, today)}
@@ -429,6 +547,6 @@ function getOpenSummaryItem(summary, label) {
 
 Object.assign(window, {
   fmtEUR, fmtEURsoll, fmtDate, fmtDateShort, monthLabel, CATS,
-  ArtPill, OpenBadge, VoucherLink, VoucherLinks, openVoucher, FilterBar, MieterHeader, SummaryCards,
+  ArtPill, OpenBadge, VoucherLink, VoucherLinks, openVoucher, DateField, FilterBar, MieterHeader, SummaryCards,
   getSummaryItem, getOpenSummaryItems,
 });
