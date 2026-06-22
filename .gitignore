@@ -3,6 +3,8 @@
 *.egg-info
 *.swp
 tags
+.ruff_cache/
+.playwright-cli/
 node_modules
 __pycache__
 export/erpnext_backups/
