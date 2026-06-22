@@ -5,6 +5,7 @@ from hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto import (
 	CATEGORIES,
 	InvoiceInfo,
 	_build_invoice_transactions,
+	_build_rows,
 	_categorize_offset_accounts,
 	_category_amounts_from_items,
 	_get_report_summary,
@@ -13,6 +14,11 @@ from hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto import (
 	_sort_rows_for_display,
 	_transaction_to_row,
 )
+
+
+class AttrDict(dict):
+	def __getattr__(self, key):
+		return self.get(key)
 
 
 def _make_invoice(
@@ -70,6 +76,16 @@ def _summary_value(summary: list[dict], label: str) -> float:
 	raise AssertionError(f"Summary label not found: {label}")
 
 
+def _filters(*, from_date: date, to_date: date, open_scope: str = "Zeitraum") -> AttrDict:
+	return AttrDict(
+		company="Test Company",
+		from_date=from_date,
+		to_date=to_date,
+		show_kategorien=1,
+		offene_betraege_basis=open_scope,
+	)
+
+
 class TestGroupInvoices(TestCase):
 	def test_summary_open_amounts_default_to_period(self):
 		summary = _get_report_summary(
@@ -87,6 +103,92 @@ class TestGroupInvoices(TestCase):
 		)
 
 		self.assertEqual(_summary_value(summary, "Miete offen (Gesamt)"), 700.0)
+
+	def test_period_open_amounts_follow_invoice_date_not_payment_date(self):
+		filters = _filters(from_date=date(2026, 6, 1), to_date=date(2026, 6, 30))
+		transactions = [
+			{
+				"date": date(2026, 5, 29),
+				"sort_order": 20,
+				"art": "Zahlung",
+				"belegart": "Payment Entry",
+				"belegnummer": "PAY-1",
+				"rechnung": "SI-JUN",
+				"beschreibung": "Zahlung vor Rechnung",
+				"currency": "EUR",
+				"open_date": date(2026, 6, 1),
+				"invoice_amounts": {cat: 0.0 for cat in CATEGORIES},
+				"paid_amounts": {cat: 0.0 for cat in CATEGORIES} | {"miete": 25.0},
+				"written_off_amounts": {cat: 0.0 for cat in CATEGORIES},
+				"delta": -25.0,
+				"offen": 0.0,
+			},
+			{
+				"date": date(2026, 6, 1),
+				"sort_order": 10,
+				"art": "Forderung",
+				"belegart": "Sales Invoice",
+				"belegnummer": "SI-JUN",
+				"rechnung": "SI-JUN",
+				"beschreibung": "Miete Juni",
+				"currency": "EUR",
+				"open_date": date(2026, 6, 1),
+				"invoice_amounts": {cat: 0.0 for cat in CATEGORIES} | {"miete": 100.0},
+				"paid_amounts": {cat: 0.0 for cat in CATEGORIES},
+				"written_off_amounts": {cat: 0.0 for cat in CATEGORIES},
+				"delta": 100.0,
+				"offen": 75.0,
+			},
+		]
+
+		_rows, totals = _build_rows(transactions, filters)
+		summary = _get_report_summary(totals, filters)
+
+		self.assertEqual(_summary_value(summary, "Bezahlt im Zeitraum"), 0.0)
+		self.assertEqual(_summary_value(summary, "Miete offen (Zeitraum)"), 75.0)
+
+	def test_period_open_amounts_ignore_payments_for_old_invoices(self):
+		filters = _filters(from_date=date(2026, 5, 1), to_date=date(2026, 5, 31))
+		transactions = [
+			{
+				"date": date(2026, 1, 1),
+				"sort_order": 10,
+				"art": "Forderung",
+				"belegart": "Sales Invoice",
+				"belegnummer": "SI-JAN",
+				"rechnung": "SI-JAN",
+				"beschreibung": "Miete Januar",
+				"currency": "EUR",
+				"open_date": date(2026, 1, 1),
+				"invoice_amounts": {cat: 0.0 for cat in CATEGORIES} | {"miete": 100.0},
+				"paid_amounts": {cat: 0.0 for cat in CATEGORIES},
+				"written_off_amounts": {cat: 0.0 for cat in CATEGORIES},
+				"delta": 100.0,
+				"offen": 60.0,
+			},
+			{
+				"date": date(2026, 5, 10),
+				"sort_order": 20,
+				"art": "Zahlung",
+				"belegart": "Payment Entry",
+				"belegnummer": "PAY-OLD",
+				"rechnung": "SI-JAN",
+				"beschreibung": "Zahlung alte Rechnung",
+				"currency": "EUR",
+				"open_date": date(2026, 1, 1),
+				"invoice_amounts": {cat: 0.0 for cat in CATEGORIES},
+				"paid_amounts": {cat: 0.0 for cat in CATEGORIES} | {"miete": 40.0},
+				"written_off_amounts": {cat: 0.0 for cat in CATEGORIES},
+				"delta": -40.0,
+				"offen": 0.0,
+			},
+		]
+
+		_rows, totals = _build_rows(transactions, filters)
+		summary = _get_report_summary(totals, filters)
+
+		self.assertEqual(_summary_value(summary, "Bezahlt im Zeitraum"), 40.0)
+		self.assertEqual(_summary_value(summary, "Miete offen (Zeitraum)"), 0.0)
 
 	def test_buchungscockpit_default_item_maps_to_guthaben_nachzahlungen(self):
 		amounts = _category_amounts_from_items(

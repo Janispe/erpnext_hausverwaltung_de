@@ -404,6 +404,7 @@ def _build_invoice_transactions(invoices: dict[str, InvoiceInfo]) -> list[dict[s
 				"due_date": invoice.due_date,
 				"status": invoice.status,
 				"currency": invoice.currency,
+				"open_date": getdate(invoice.posting_date),
 				"invoice_amounts": invoice.category_amounts,
 				"paid_amounts": {},
 				"written_off_amounts": {},
@@ -516,6 +517,7 @@ def _build_settlement_transactions(
 					"due_date": group.due_date,
 					"status": group.status,
 					"currency": group.currency,
+					"open_date": getdate(group.posting_date),
 					"invoice_amounts": {},
 					"paid_amounts": {category: 0.0 for category in CATEGORIES},
 					"written_off_amounts": {category: 0.0 for category in CATEGORIES},
@@ -568,10 +570,13 @@ def _merge_payment_entry_mixed_advance_transactions(
 				"written_off_amounts": {category: 0.0 for category in CATEGORIES},
 				"delta": 0.0,
 				"offen": 0.0,
+				"_open_summary_parts": [],
 				"_has_regular_payment": False,
 			}
 			merged_by_voucher[voucher_no] = merged
 			order.append(voucher_no)
+
+		merged.setdefault("_open_summary_parts", []).append(_open_summary_part(transaction))
 
 		for source in ("invoice_amounts", "paid_amounts", "written_off_amounts"):
 			for category in CATEGORIES:
@@ -736,6 +741,7 @@ def _build_standalone_receivable_transactions(
 				"due_date": getdate(row.posting_date),
 				"status": None,
 				"currency": _get_currency(filters.company),
+				"open_date": getdate(row.posting_date),
 				"invoice_amounts": amounts if is_charge else {cat: 0.0 for cat in CATEGORIES},
 				"paid_amounts": {cat: 0.0 for cat in CATEGORIES} if is_charge else amounts,
 				"written_off_amounts": {cat: 0.0 for cat in CATEGORIES},
@@ -851,6 +857,7 @@ def _build_payment_entry_advance_transactions(
 				"due_date": date_by_voucher.get(voucher_no),
 				"status": None,
 				"currency": _get_currency(filters.company),
+				"open_date": date_by_voucher.get(voucher_no),
 				"invoice_amounts": {cat: 0.0 for cat in CATEGORIES},
 				"paid_amounts": paid_amounts,
 				"written_off_amounts": {cat: 0.0 for cat in CATEGORIES},
@@ -1025,12 +1032,17 @@ def _build_rows(transactions: list[dict[str, Any]], filters) -> tuple[list[dict[
 	balance = 0.0
 	all_totals = _new_totals()
 	period_totals = _new_totals()
+	open_all_totals = _new_totals()
+	open_period_totals = _new_totals()
 	opening_added = False
 	currency_seen: str | None = None
 
 	for transaction in transactions:
 		if transaction["date"] > filters.to_date:
 			continue
+		_accumulate_open_totals(open_all_totals, transaction)
+		_accumulate_open_totals(open_period_totals, transaction, filters)
+
 		if transaction["date"] < filters.from_date:
 			balance += flt(transaction["delta"])
 			_accumulate_totals(all_totals, transaction)
@@ -1064,7 +1076,12 @@ def _build_rows(transactions: list[dict[str, Any]], filters) -> tuple[list[dict[
 		rows.append(_total_row(rows, balance, filters))
 
 	all_totals["balance"] = flt(balance, 2)
-	return rows, {"all": all_totals, "period": period_totals}
+	return rows, {
+		"all": all_totals,
+		"period": period_totals,
+		"open_all": open_all_totals,
+		"open_period": open_period_totals,
+	}
 
 
 def _new_totals() -> dict[str, Any]:
@@ -1087,6 +1104,35 @@ def _accumulate_totals(totals: dict[str, Any], transaction: dict[str, Any]) -> N
 	):
 		for category, amount in (transaction.get(source) or {}).items():
 			totals[target][category] += flt(amount)
+
+
+def _open_summary_part(transaction: dict[str, Any]) -> dict[str, Any]:
+	return {
+		"open_date": transaction.get("open_date") or transaction.get("date"),
+		"currency": transaction.get("currency"),
+		"invoice_amounts": dict(transaction.get("invoice_amounts") or {}),
+		"paid_amounts": dict(transaction.get("paid_amounts") or {}),
+		"written_off_amounts": dict(transaction.get("written_off_amounts") or {}),
+	}
+
+
+def _accumulate_open_totals(
+	totals: dict[str, Any],
+	transaction: dict[str, Any],
+	filters=None,
+) -> None:
+	parts = transaction.get("_open_summary_parts") or [_open_summary_part(transaction)]
+	for part in parts:
+		if filters and not _date_in_period(part.get("open_date"), filters):
+			continue
+		_accumulate_totals(totals, part)
+
+
+def _date_in_period(value, filters) -> bool:
+	if not value:
+		return False
+	value = getdate(value)
+	return filters.from_date <= value <= filters.to_date
 
 
 def _opening_row(filters, balance: float, currency: str | None) -> dict[str, Any]:
@@ -1205,7 +1251,9 @@ def _get_currency(company: str) -> str | None:
 def _get_report_summary(totals: dict[str, Any], filters) -> list[dict[str, Any]]:
 	all_totals = totals["all"]
 	period_totals = totals["period"]
-	open_totals = period_totals if _use_period_open_totals(filters) else all_totals
+	open_period_totals = totals.get("open_period") or period_totals
+	open_all_totals = totals.get("open_all") or all_totals
+	open_totals = open_period_totals if _use_period_open_totals(filters) else open_all_totals
 	open_scope = _("Zeitraum") if _use_period_open_totals(filters) else _("Gesamt")
 	currency = all_totals.get("currency") or period_totals.get("currency")
 	paid_period = period_totals["paid"]
