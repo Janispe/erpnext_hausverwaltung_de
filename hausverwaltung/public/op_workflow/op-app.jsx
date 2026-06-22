@@ -1746,20 +1746,16 @@ function FilterRow({ availableImmos, immoFilter, setImmoFilter, datumVon, datumB
 
       <div className="op-filter-group">
         <span className="op-filter-group-label">Fälligkeit</span>
-        <input
-          type="date"
-          className="op-date-input"
+        <DateField_op
           value={datumVon}
-          onChange={(e) => setDatumVon(e.target.value)}
-          placeholder="von"
+          onChange={setDatumVon}
+          ariaLabel="Fälligkeit von"
         />
         <span style={{ color: "var(--ink-3)" }}>—</span>
-        <input
-          type="date"
-          className="op-date-input"
+        <DateField_op
           value={datumBis}
-          onChange={(e) => setDatumBis(e.target.value)}
-          placeholder="bis"
+          onChange={setDatumBis}
+          ariaLabel="Fälligkeit bis"
         />
         <span style={{ display: "inline-flex", gap: 2, marginLeft: 4 }}>
           {presets.map((p) => (

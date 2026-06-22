@@ -24039,7 +24039,7 @@ var OpWorkflow = (() => {
 
   // ../hausverwaltung/public/op_workflow/op-components.jsx
   init_react_shim();
-  var { useState: useStateOP, useMemo: useMemoOP } = React;
+  var { useState: useStateOP, useMemo: useMemoOP, useEffect: useEffectOP, useRef: useRefOP } = React;
   var fmtEUR_op2 = (n) => {
     if (n == null || isNaN(n))
       return "\u2014";
@@ -24056,6 +24056,130 @@ var OpWorkflow = (() => {
     const [y, m, d] = s.split("-");
     return `${d}.${m}.${y}`;
   };
+  var isIsoDate_op = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
+  var isoToDisplayDate_op = (s) => {
+    if (!isIsoDate_op(s))
+      return "";
+    const [y, m, d] = s.split("-");
+    return `${d}.${m}.${y}`;
+  };
+  var pad2_op = (n) => String(n).padStart(2, "0");
+  var validIsoDate_op = (y, m, d) => {
+    const date = new Date(Date.UTC(y, m - 1, d));
+    if (date.getUTCFullYear() !== y)
+      return null;
+    if (date.getUTCMonth() !== m - 1)
+      return null;
+    if (date.getUTCDate() !== d)
+      return null;
+    return `${y}-${pad2_op(m)}-${pad2_op(d)}`;
+  };
+  var parseDateInput_op = (raw) => {
+    const value = String(raw || "").trim();
+    if (!value)
+      return "";
+    const iso = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (iso)
+      return validIsoDate_op(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+    const de = value.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2}|\d{4})$/);
+    if (de) {
+      const year = Number(de[3].length === 2 ? `20${de[3]}` : de[3]);
+      return validIsoDate_op(year, Number(de[2]), Number(de[1]));
+    }
+    const compact = value.match(/^(\d{2})(\d{2})(\d{4})$/);
+    if (compact)
+      return validIsoDate_op(Number(compact[3]), Number(compact[2]), Number(compact[1]));
+    return null;
+  };
+  function CalendarIcon_op() {
+    return /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 16 16", "aria-hidden": "true", focusable: "false" }, /* @__PURE__ */ React.createElement("path", { d: "M4.5 1.5v3M11.5 1.5v3M2.5 6h11" }), /* @__PURE__ */ React.createElement("rect", { x: "2.5", y: "3.5", width: "11", height: "10", rx: "1.5" }));
+  }
+  function DateField_op2({ value, onChange, ariaLabel }) {
+    const [draft, setDraft] = useStateOP(isoToDisplayDate_op(value));
+    const [invalid, setInvalid] = useStateOP(false);
+    const nativeRef = useRefOP(null);
+    useEffectOP(() => {
+      setDraft(isoToDisplayDate_op(value));
+      setInvalid(false);
+    }, [value]);
+    const commit = () => {
+      const parsed = parseDateInput_op(draft);
+      if (parsed === "") {
+        onChange("");
+        setInvalid(false);
+        return;
+      }
+      if (!parsed) {
+        setInvalid(true);
+        return;
+      }
+      setInvalid(false);
+      setDraft(isoToDisplayDate_op(parsed));
+      if (parsed !== value)
+        onChange(parsed);
+    };
+    const openPicker = () => {
+      const nativeInput = nativeRef.current;
+      if (!nativeInput)
+        return;
+      if (typeof nativeInput.showPicker === "function") {
+        nativeInput.showPicker();
+        return;
+      }
+      nativeInput.focus();
+      nativeInput.click();
+    };
+    return /* @__PURE__ */ React.createElement("span", { className: `op-date-field ${invalid ? "is-invalid" : ""}` }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        className: "op-date-text",
+        type: "text",
+        inputMode: "numeric",
+        placeholder: "TT.MM.JJJJ",
+        value: draft,
+        "aria-label": ariaLabel,
+        "aria-invalid": invalid ? "true" : "false",
+        onChange: (e) => {
+          setDraft(e.target.value);
+          if (invalid)
+            setInvalid(false);
+        },
+        onBlur: commit,
+        onKeyDown: (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+            e.currentTarget.blur();
+          } else if (e.key === "Escape") {
+            setDraft(isoToDisplayDate_op(value));
+            setInvalid(false);
+            e.currentTarget.blur();
+          }
+        }
+      }
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        className: "op-date-picker-button",
+        "aria-label": `${ariaLabel}: Kalender \xF6ffnen`,
+        title: "Kalender \xF6ffnen",
+        onClick: openPicker
+      },
+      /* @__PURE__ */ React.createElement(CalendarIcon_op, null)
+    ), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        ref: nativeRef,
+        className: "op-native-date",
+        "aria-hidden": "true",
+        tabIndex: -1,
+        type: "date",
+        value: isIsoDate_op(value) ? value : "",
+        onChange: (e) => onChange(e.target.value)
+      }
+    ));
+  }
   var AGING_BUCKETS = [
     { key: "b0", label: "nicht f\xE4llig", min: -Infinity, max: 0, sub: "0 Tage" },
     { key: "b1", label: "1\u201330", min: 1, max: 30, sub: "Tage" },
@@ -24139,7 +24263,8 @@ var OpWorkflow = (() => {
     MahnstufeBadge: MahnstufeBadge2,
     AgePill: AgePill2,
     AgingBar: AgingBar2,
-    AgingStrip: AgingStrip2
+    AgingStrip: AgingStrip2,
+    DateField_op: DateField_op2
   });
 
   // ../hausverwaltung/public/op_workflow/op-actions.jsx
@@ -26013,22 +26138,18 @@ var OpWorkflow = (() => {
       i.label,
       /* @__PURE__ */ React.createElement("span", { className: "op-immo-chip-count" }, i.count)
     ))), /* @__PURE__ */ React.createElement("div", { className: "op-filter-sep" }), /* @__PURE__ */ React.createElement("div", { className: "op-filter-group" }, /* @__PURE__ */ React.createElement("span", { className: "op-filter-group-label" }, "F\xE4lligkeit"), /* @__PURE__ */ React.createElement(
-      "input",
+      DateField_op,
       {
-        type: "date",
-        className: "op-date-input",
         value: datumVon,
-        onChange: (e) => setDatumVon(e.target.value),
-        placeholder: "von"
+        onChange: setDatumVon,
+        ariaLabel: "F\xE4lligkeit von"
       }
     ), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--ink-3)" } }, "\u2014"), /* @__PURE__ */ React.createElement(
-      "input",
+      DateField_op,
       {
-        type: "date",
-        className: "op-date-input",
         value: datumBis,
-        onChange: (e) => setDatumBis(e.target.value),
-        placeholder: "bis"
+        onChange: setDatumBis,
+        ariaLabel: "F\xE4lligkeit bis"
       }
     ), /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", gap: 2, marginLeft: 4 } }, presets.map((p) => /* @__PURE__ */ React.createElement(
       "button",
@@ -26106,4 +26227,3 @@ react-dom/cjs/react-dom.development.js:
    * @license Modernizr 3.0.0pre (Custom Build) | MIT
    *)
 */
-//# sourceMappingURL=op-workflow.bundle.js.map

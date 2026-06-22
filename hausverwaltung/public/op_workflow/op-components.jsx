@@ -1,5 +1,5 @@
 // op-components.jsx — Atome für Offene-Posten-Report.
-const { useState: useStateOP, useMemo: useMemoOP } = React;
+const { useState: useStateOP, useMemo: useMemoOP, useEffect: useEffectOP, useRef: useRefOP } = React;
 
 // ───────── Formatter (gleiche Konvention) ─────────
 
@@ -15,6 +15,138 @@ const fmtDate_op = (s) => {
   const [y, m, d] = s.split("-");
   return `${d}.${m}.${y}`;
 };
+
+const isIsoDate_op = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
+
+const isoToDisplayDate_op = (s) => {
+  if (!isIsoDate_op(s)) return "";
+  const [y, m, d] = s.split("-");
+  return `${d}.${m}.${y}`;
+};
+
+const pad2_op = (n) => String(n).padStart(2, "0");
+
+const validIsoDate_op = (y, m, d) => {
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (date.getUTCFullYear() !== y) return null;
+  if (date.getUTCMonth() !== m - 1) return null;
+  if (date.getUTCDate() !== d) return null;
+  return `${y}-${pad2_op(m)}-${pad2_op(d)}`;
+};
+
+const parseDateInput_op = (raw) => {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+
+  const iso = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) return validIsoDate_op(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+
+  const de = value.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2}|\d{4})$/);
+  if (de) {
+    const year = Number(de[3].length === 2 ? `20${de[3]}` : de[3]);
+    return validIsoDate_op(year, Number(de[2]), Number(de[1]));
+  }
+
+  const compact = value.match(/^(\d{2})(\d{2})(\d{4})$/);
+  if (compact) return validIsoDate_op(Number(compact[3]), Number(compact[2]), Number(compact[1]));
+
+  return null;
+};
+
+function CalendarIcon_op() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M4.5 1.5v3M11.5 1.5v3M2.5 6h11" />
+      <rect x="2.5" y="3.5" width="11" height="10" rx="1.5" />
+    </svg>
+  );
+}
+
+function DateField_op({ value, onChange, ariaLabel }) {
+  const [draft, setDraft] = useStateOP(isoToDisplayDate_op(value));
+  const [invalid, setInvalid] = useStateOP(false);
+  const nativeRef = useRefOP(null);
+
+  useEffectOP(() => {
+    setDraft(isoToDisplayDate_op(value));
+    setInvalid(false);
+  }, [value]);
+
+  const commit = () => {
+    const parsed = parseDateInput_op(draft);
+    if (parsed === "") {
+      onChange("");
+      setInvalid(false);
+      return;
+    }
+    if (!parsed) {
+      setInvalid(true);
+      return;
+    }
+    setInvalid(false);
+    setDraft(isoToDisplayDate_op(parsed));
+    if (parsed !== value) onChange(parsed);
+  };
+
+  const openPicker = () => {
+    const nativeInput = nativeRef.current;
+    if (!nativeInput) return;
+    if (typeof nativeInput.showPicker === "function") {
+      nativeInput.showPicker();
+      return;
+    }
+    nativeInput.focus();
+    nativeInput.click();
+  };
+
+  return (
+    <span className={`op-date-field ${invalid ? "is-invalid" : ""}`}>
+      <input
+        className="op-date-text"
+        type="text"
+        inputMode="numeric"
+        placeholder="TT.MM.JJJJ"
+        value={draft}
+        aria-label={ariaLabel}
+        aria-invalid={invalid ? "true" : "false"}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          if (invalid) setInvalid(false);
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+            e.currentTarget.blur();
+          } else if (e.key === "Escape") {
+            setDraft(isoToDisplayDate_op(value));
+            setInvalid(false);
+            e.currentTarget.blur();
+          }
+        }}
+      />
+      <button
+        type="button"
+        className="op-date-picker-button"
+        aria-label={`${ariaLabel}: Kalender öffnen`}
+        title="Kalender öffnen"
+        onClick={openPicker}
+      >
+        <CalendarIcon_op />
+      </button>
+      <input
+        ref={nativeRef}
+        className="op-native-date"
+        aria-hidden="true"
+        tabIndex={-1}
+        type="date"
+        value={isIsoDate_op(value) ? value : ""}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </span>
+  );
+}
 
 // Aging-Buckets gemäß ERPNext range "30, 60, 90, 120"
 const AGING_BUCKETS = [
@@ -133,6 +265,6 @@ function AgingStrip({ buckets }) {
 }
 
 Object.assign(window, {
-  fmtEUR_op, fmtDate_op, AGING_BUCKETS, bucketOf,
-  StatusBadge, DirectionBadge, MahnstufeBadge, AgePill, AgingBar, AgingStrip,
+	fmtEUR_op, fmtDate_op, AGING_BUCKETS, bucketOf,
+	StatusBadge, DirectionBadge, MahnstufeBadge, AgePill, AgingBar, AgingStrip, DateField_op,
 });
