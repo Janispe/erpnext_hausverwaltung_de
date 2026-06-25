@@ -1783,6 +1783,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         "links": [
             {"label": "Buchungs-Cockpit", "link_type": "Page", "link_to": "buchen_cockpit"},
             {"label": "Offene Posten", "link_type": "Page", "link_to": "op-workflow"},
+            {"label": "Mahnung", "link_type": "Page", "link_to": "mahnung-workflow"},
             {"label": "Mieterkonto", "link_type": "Page", "link_to": "mieterkonto-workflow"},
             {"label": "Zahlungen zuordnen", "link_type": "DocType", "link_to": "Payment Reconciliation"},
         ],

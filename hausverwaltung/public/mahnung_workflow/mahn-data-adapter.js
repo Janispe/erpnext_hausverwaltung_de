@@ -11,7 +11,7 @@
 // die build*()-Funktionen unten anpassen, nicht die Components.
 
 (function () {
-  const USE_MOCK_DATA = true; // ⚠ PHASE 2: auf false setzen
+  const USE_MOCK_DATA = false;
 
   const METHOD = "hausverwaltung.hausverwaltung.page.mahnung_workflow.mahnung_workflow";
 

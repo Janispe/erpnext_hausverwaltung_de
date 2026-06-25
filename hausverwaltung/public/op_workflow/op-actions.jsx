@@ -78,7 +78,7 @@ function primaryActionFor(row) {
     if (nextStufe <= 4) {
       return {
         key: "mahnwesen",
-        label: "Mahnwesen",
+        label: "Mahnung",
         kind: nextStufe >= 2 ? "late" : "primary",
       };
     }

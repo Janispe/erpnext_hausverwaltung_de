@@ -47,14 +47,45 @@ function MahnApp() {
   const [t, setTweak] = useTweaks(MH_TWEAK_DEFAULTS);
   const M = window.MAHNUNG;
 
+  if (!M?.mieter?.length) {
+    return (
+      <div className="mk-app mh-app is-regular">
+        <div className="mk-topbar" data-screen-label="Topbar">
+          <div className="mk-topbar-left">
+            <h1>Mahnung erstellen</h1>
+            <span className="mk-crumb">Hausverwaltung · Forderungsmanagement</span>
+          </div>
+        </div>
+        <main className="mk-main mh-main">
+          <div className="mh-card">
+            <strong>Keine mahnfähigen Mieter gefunden.</strong>
+            <p className="mh-empty-hint">Für die aktuelle Auswahl wurden keine offenen Forderungen gefunden.</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   // Mieter aus URL ?party= vorauswählen
   const initialId = useMemoApp(() => {
     const p = new URLSearchParams(location.search).get("party");
     return M.mieter.find((m) => m.id === p)?.id || M.mieter[0].id;
   }, []);
+  const initialInvoices = useMemoApp(() => {
+    const raw = new URLSearchParams(location.search).get("invoices") || "";
+    return new Set(raw.split(",").map((v) => decodeURIComponent(v.trim())).filter(Boolean));
+  }, []);
 
   const [mieterId, setMieterId] = useStateApp(initialId);
   const mieter = useMemoApp(() => M.mieter.find((m) => m.id === mieterId), [mieterId]);
+  const selectedPostenFor = (m, useUrlSelection = false) => {
+    const all = (m?.posten || []).map((p) => p.beleg);
+    if (!useUrlSelection || m.id !== initialId || !initialInvoices.size) return new Set(all);
+
+    const available = new Set(all);
+    const fromUrl = [...initialInvoices].filter((name) => available.has(name));
+    return new Set(fromUrl.length ? fromUrl : all);
+  };
 
   const [vorlageKey, setVorlageKey] = useStateApp(() => mieter.empf_vorlage || M.naechsteVorlageKey(mieter.mahnstufe));
 
@@ -73,7 +104,7 @@ function MahnApp() {
 
   const [mahndatum, setMahndatum] = useStateApp(M.TODAY);
   const [kanal, setKanal] = useStateApp("Brief");
-  const [selected, setSelected] = useStateApp(() => new Set(mieter.posten.map((p) => p.beleg)));
+  const [selected, setSelected] = useStateApp(() => selectedPostenFor(mieter, true));
   const [gebuehr, setGebuehr] = useStateApp(vorlage.gebuehr);
   const [zinsenAktiv, setZinsenAktiv] = useStateApp(vorlage.zinsen);
   const [zinssatz, setZinssatz] = useStateApp(M.zinssatzFuer(mieter.verbrauchertyp));
@@ -130,10 +161,10 @@ function MahnApp() {
   );
 
   // Editor frisch aufsetzen (für aktuellen Mieter)
-  const setupFresh = (m) => {
+  const setupFresh = (m, options = {}) => {
     const empf = m.empf_vorlage || M.naechsteVorlageKey(m.mahnstufe);
     setVorlageKey(empf);
-    setSelected(new Set(m.posten.map((p) => p.beleg)));
+    setSelected(selectedPostenFor(m, !!options.useUrlSelection));
     setZinssatz(M.zinssatzFuer(m.verbrauchertyp));
     setAnrede(m.anrede);
     const v = M.vorlageByKey[empf];
@@ -145,7 +176,7 @@ function MahnApp() {
   };
 
   // Mieterwechsel → alles neu aufsetzen
-  useEffectApp(() => { setupFresh(mieter); }, [mieterId]);
+  useEffectApp(() => { setupFresh(mieter, { useUrlSelection: true }); }, [mieterId]);
 
   // Gebuchte Mahnung in der großen Seite öffnen → gesperrte Ansicht
   const openInEditor = (entry) => {

@@ -49,7 +49,7 @@ function render_mahnung_workflow(page_body) {
   `);
 
   const ASSET_BASE = "/assets/hausverwaltung/mahnung_workflow";
-  const ASSET_VERSION = "20260625-bundle-loader";
+  const ASSET_VERSION = "20260625-wired";
   const versioned = (src) => `${src}?v=${ASSET_VERSION}`;
 
   const cssHref = versioned(`${ASSET_BASE}/styles.css`);

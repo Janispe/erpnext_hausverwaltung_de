@@ -184,10 +184,19 @@ function OpApp() {
     setSelected(new Set());
   };
 
+  const openMahnungWorkflow = (row, invoiceNames = []) => {
+    const party = row?.party || row?.customer || "";
+    const invoices = (invoiceNames || []).filter(Boolean);
+    const url = new URL("/desk/mahnung-workflow", window.location.origin);
+    if (party) url.searchParams.set("party", party);
+    if (invoices.length) url.searchParams.set("invoices", invoices.join(","));
+    window.location.href = `${url.pathname}${url.search}`;
+  };
+
   const handleAction = async (key, row) => {
     try {
-      if (key === "mahnwesen") toggleMahnwesenForRow(row);
-      else if (key === "mahnung" || key === "sammelmahnung") setModal({ type: "mahnung", row });
+      if (key === "mahnwesen" || key === "mahnung") openMahnungWorkflow(row, [row.belegnummer]);
+      else if (key === "sammelmahnung") openBulkDunning([row]);
       else if (key === "zahlung_anlegen") setModal({ type: "zahlung", row });
       else if (key === "zuordnen") setModal({ type: "zuordnen", row });
       else if (key === "guthaben_auszahlen") setModal({ type: "guthaben", row });
@@ -425,8 +434,13 @@ function OpApp() {
       setToast("Keine mahnfähigen Forderungen in der Auswahl.");
       return;
     }
+    const parties = new Set(candidates.map((r) => r.party).filter(Boolean));
+    if (parties.size > 1) {
+      setToast("Bitte Mahnungen pro Mieter erstellen. Die neue Mahnung-Seite verarbeitet jeweils einen Mieter.");
+      return;
+    }
     setSelected(new Set(candidates.map((r) => r.belegnummer)));
-    setModal({ type: "sammelmahnung", rows: candidates });
+    openMahnungWorkflow(candidates[0], candidates.map((r) => r.belegnummer));
   };
 
   const openCandidateDunning = (candidate, selectedInvoiceNames = null) => {
@@ -460,12 +474,7 @@ function OpApp() {
     const initialRows = selectedNames
       ? rows.filter((item) => selectedNames.has(item.belegnummer))
       : [rows[0]];
-    setModal({
-      type: "mahnung",
-      row: initialRows[0] || rows[0],
-      rows,
-      selectedInvoiceNames: initialRows.map((item) => item.belegnummer),
-    });
+    openMahnungWorkflow(initialRows[0] || rows[0], initialRows.map((item) => item.belegnummer));
   };
 
   const openCandidatesBulkDunning = (candidates, selectedInvoicesByCandidate = null) => {
@@ -501,7 +510,12 @@ function OpApp() {
       setToast("Keine ausgewählten Rechnungen für eine Sammelmahnung.");
       return;
     }
-    setModal({ type: "sammelmahnung", rows });
+    const parties = new Set(rows.map((row) => row.party).filter(Boolean));
+    if (parties.size > 1) {
+      setToast("Bitte Mahnungen pro Mieter erstellen. Die neue Mahnung-Seite verarbeitet jeweils einen Mieter.");
+      return;
+    }
+    openMahnungWorkflow(rows[0], rows.map((row) => row.belegnummer));
   };
 
   const writeOffSelected = async () => {
