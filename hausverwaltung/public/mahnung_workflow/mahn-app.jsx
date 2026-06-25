@@ -630,4 +630,18 @@ function MahnApp() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<MahnApp />);
+window.MH_RENDER = function renderMahnungWorkflow() {
+  const rootEl = document.getElementById("mahnung-workflow-root") || document.getElementById("root");
+  if (!rootEl) return;
+  if (window.__MH_REACT_ROOT) {
+    try {
+      window.__MH_REACT_ROOT.unmount();
+    } catch (err) {
+      // The previous mount point may already have been replaced by Frappe.
+    }
+  }
+  window.__MH_REACT_ROOT = ReactDOM.createRoot(rootEl);
+  window.__MH_REACT_ROOT.render(<MahnApp />);
+};
+
+window.MH_RENDER();

@@ -1,8 +1,9 @@
 // esbuild.config.mjs — Produktions-Bundles für die React-Pages.
 //
-// Baut zwei Bundles:
+// Baut Bundles:
 //   1. op-workflow.bundle.js  → ../hausverwaltung/public/op_workflow/
 //   2. mk-workflow.bundle.js  → ../hausverwaltung/public/mieterkonto_workflow/
+//   3. mahn-workflow.bundle.js → ../hausverwaltung/public/mahnung_workflow/
 //
 // Run:
 //   npm install
@@ -53,6 +54,13 @@ const targets = [
       "mk-app.jsx",
     ],
     globalName: "MkWorkflow",
+  },
+  {
+    name: "mahn-workflow",
+    src: path.join(PUBLIC, "mahnung_workflow"),
+    out: "mahn-workflow.bundle.js",
+    entries: ["tweaks-panel.jsx", "mahn-components.jsx", "mahn-letter.jsx", "mahn-app.jsx"],
+    globalName: "MahnWorkflow",
   },
 ];
 
