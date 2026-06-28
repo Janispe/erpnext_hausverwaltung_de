@@ -132,7 +132,7 @@ function SentOverlayMH({ data, onClose }) {
     <div className="mh-sent-backdrop" onClick={onClose}>
       <div className="mh-sent-card" onClick={(e) => e.stopPropagation()}>
         <div className="mh-sent-check">✓</div>
-        <h3>Mahnung erstellt &amp; versendet</h3>
+        <h3>{data.draft ? "Mahnung-Draft erstellt" : data.email_queue ? "Mahnung erstellt & E-Mail eingereiht" : "Mahnung erstellt"}</h3>
         <p className="mh-sent-sub">
           {data.vorlage} an {data.mieter} · {data.kanal}
         </p>
@@ -152,7 +152,7 @@ function SentOverlayMH({ data, onClose }) {
         </div>
         <div className="mh-sent-actions">
           <button className="mk-btn" onClick={onClose}>Schließen</button>
-          <a className="mk-btn mk-btn-ghost" href="Offene Posten Report.html">Zur Postenliste</a>
+          <a className="mk-btn mk-btn-ghost" href="/app/op-workflow?view=mahnwesen">Zum Mahnwesen</a>
           <button className="mk-btn mk-btn-primary" onClick={onClose}>Nächste Mahnung</button>
         </div>
       </div>

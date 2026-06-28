@@ -39,6 +39,8 @@
   "bankimport_section",
   "bankimport_start_datum",
   "bankimport_exact_match_toleranz_tage",
+  "mahnung_section",
+  "mahnung_basiszins",
   "trennstreifen_section",
   "trennstreifen_qr_base_url",
   "ui_section",
@@ -255,6 +257,18 @@
    "fieldname": "bankimport_exact_match_toleranz_tage",
    "fieldtype": "Int",
    "label": "Bankimport: Exakt-Match Toleranz Tage"
+  },
+  {
+   "fieldname": "mahnung_section",
+   "fieldtype": "Section Break",
+   "label": "Mahnwesen"
+  },
+  {
+   "default": "1.27",
+   "description": "Bundesbank-Basiszinssatz in Prozent. Der Mahnungsworkflow addiert je nach Mieterart die gesetzlichen Prozentpunkte.",
+   "fieldname": "mahnung_basiszins",
+   "fieldtype": "Float",
+   "label": "Basiszinssatz (%)"
   },
   {
    "fieldname": "trennstreifen_section",

@@ -66,6 +66,25 @@ function MahnApp() {
     );
   }
 
+  if (!M?.vorlagen?.length) {
+    return (
+      <div className="mk-app mh-app is-regular">
+        <div className="mk-topbar" data-screen-label="Topbar">
+          <div className="mk-topbar-left">
+            <h1>Mahnung erstellen</h1>
+            <span className="mk-crumb">Hausverwaltung · Forderungsmanagement</span>
+          </div>
+        </div>
+        <main className="mk-main mh-main">
+          <div className="mh-card">
+            <strong>Keine Mahnstufen konfiguriert.</strong>
+            <p className="mh-empty-hint">Bitte legen Sie zuerst mindestens einen Dunning Type an.</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   // Mieter aus URL ?party= vorauswählen
   const initialId = useMemoApp(() => {
     const p = new URLSearchParams(location.search).get("party");
@@ -304,9 +323,10 @@ function MahnApp() {
     verwendungszweck,
   };
 
-  // ── Versenden (Mock) ──
-  const doSend = async () => {
+  // ── Dunning-Draft anlegen ──
+  const doSend = async (options = {}) => {
     if (posten.length === 0) { setToast("Bitte mindestens einen Posten auswählen."); return; }
+    const finalize = options.finalize !== false;
 
     // Produktions-Bridge: existiert window.MAHN_ACTIONS (Frappe-Page), echte
     // Aktion auslösen; sonst lokaler Studio-Mock. (siehe mahn-action-handlers.js)
@@ -317,10 +337,10 @@ function MahnApp() {
           mahndatum, fristTage, kanal,
           belege: posten.map((p) => p.beleg),
           mahngebuehr: gebuehr, zinssatz, zinsenAktiv,
-          kontonummer, variablen: varValues, summe,
+          kontonummer, variablen: varValues, summe, finalize,
         });
         const docs = r.docs || [{ id: r.dunning, desc: `Dunning-Doc · ${vorlage.label}`, amount: r.summe }];
-        setSent({ vorlage: vorlage.label, mieter: mieter.name, kanal, docs, summe: r.summe ?? summe });
+        setSent({ vorlage: vorlage.label, mieter: mieter.name, kanal, docs, summe: r.summe ?? summe, draft: !!r.draft, email_queue: r.email_queue });
       } catch (e) {
         setToast("Fehler beim Erstellen: " + (e && e.message ? e.message : e));
       }
@@ -337,6 +357,43 @@ function MahnApp() {
     setSent({ vorlage: vorlage.label, mieter: mieter.name, kanal, docs, summe });
   };
 
+  const cancelCurrentDunning = async () => {
+    if (!viewEntry?.beleg) return;
+    if (!window.MAHN_ACTIONS?.cancelDunning) {
+      setToast("Storno ist in dieser Umgebung nicht angebunden.");
+      return;
+    }
+    const confirmed = !frappe?.confirm || await new Promise((resolve) => {
+      frappe.confirm(
+        `Mahnung ${viewEntry.beleg} wirklich stornieren?`,
+        () => resolve(true),
+        () => resolve(false)
+      );
+    });
+    if (!confirmed) return;
+    try {
+      const result = await window.MAHN_ACTIONS.cancelDunning(viewEntry.beleg);
+      mieter.historie = (mieter.historie || []).filter((h) => h.beleg !== viewEntry.beleg);
+      setViewEntry(null);
+      setPastDetail(null);
+      setupFresh(mieter);
+      const feeHint = result?.fee_sales_invoice ? ` · Mahngebühr-Rechnung ${result.fee_sales_invoice} wurde mitstorniert` : "";
+      setToast(`Mahnung ${viewEntry.beleg} storniert${feeHint}.`);
+    } catch (e) {
+      setToast("Fehler beim Stornieren: " + (e && e.message ? e.message : e));
+    }
+  };
+
+  const openTemplateEditor = () => {
+    const template = vorlage.serienbrief_vorlage;
+    if (window.MAHN_ACTIONS?.openSerienbriefEditor) {
+      const opened = window.MAHN_ACTIONS.openSerienbriefEditor(template);
+      if (!opened) setToast("Für diese Mahnstufe ist keine Serienbrief-Vorlage hinterlegt.");
+      return;
+    }
+    setToast("Serienbrief-Editor ist in dieser Umgebung nicht angebunden.");
+  };
+
   const layoutClass =
     t.layout === "Brief links" ? "is-letter-left" :
     t.layout === "Gestapelt" ? "is-stacked" : "is-letter-right";
@@ -350,11 +407,13 @@ function MahnApp() {
           <span className="mk-crumb">Hausverwaltung · Forderungsmanagement</span>
         </div>
         <div className="mk-topbar-actions">
-          <a className="mk-btn mk-btn-ghost" href="Offene Posten Report.html">← Offene Posten</a>
+          <a className="mk-btn mk-btn-ghost" href="/app/op-workflow?view=mahnwesen">← Mahnwesen</a>
           <a className="mk-btn mk-btn-ghost" href="Mieterkonto Report.html">Mieterkonto</a>
           <button className="mk-btn mk-btn-ghost" onClick={() => window.print()}>Drucken</button>
-          <button className="mk-btn" onClick={() => setToast("Als Entwurf gespeichert (Status: Draft)")}>Als Entwurf speichern</button>
-          <button className="mk-btn mk-btn-primary" onClick={doSend} disabled={locked}>Erzeugen &amp; versenden</button>
+          <button className="mk-btn" onClick={() => doSend({ finalize: false })} disabled={locked}>Als Draft speichern</button>
+          <button className="mk-btn mk-btn-primary" onClick={() => doSend()} disabled={locked}>
+            {kanal.includes("E-Mail") ? "Erstellen & E-Mail einreihen" : "Erstellen & PDF erzeugen"}
+          </button>
         </div>
       </div>
 
@@ -401,7 +460,7 @@ function MahnApp() {
               <span><strong>Mahnung {viewEntry.beleg}</strong> · {viewEntry.stufe} vom {fmtDate_mh(viewEntry.datum)} — schreibgeschützt. Gebühr, Zinsen, Posten und Text sind festgeschrieben.</span>
             </div>
             <div className="mh-locked-banner-actions">
-              <button className="mk-btn" onClick={() => setToast("Storno-Buchung vorbereitet (Mock)")}>Stornieren</button>
+              <button className="mk-btn" onClick={cancelCurrentDunning}>Stornieren</button>
               <button className="mk-btn" onClick={() => { setViewEntry(null); setToast("Entsperrt — jetzt als neue Mahnung bearbeitbar"); }}>Als neue Mahnung bearbeiten</button>
               <button className="mk-btn mk-btn-primary" onClick={() => { setupFresh(mieter); window.scrollTo(0, 0); }}>Schließen</button>
             </div>
@@ -419,7 +478,7 @@ function MahnApp() {
                 right={!locked && (
                   <div className="mh-vorlage-head-actions">
                     <button type="button" className="mh-add-btn"
-                      onClick={() => setToast("Öffnet die Vorlage im Serienbrief-Editor (Mock)")}>Im Editor bearbeiten ↗</button>
+                      onClick={openTemplateEditor}>Im Editor bearbeiten ↗</button>
                     <button type="button" className="mh-add-btn" onClick={saveAsVorlage}>＋ Als Vorlage sichern</button>
                   </div>
                 )} />
@@ -620,8 +679,8 @@ function MahnApp() {
               Ansicht schließen
             </button>
           ) : (
-            <button className="mk-btn mk-btn-primary mh-actionbar-cta" onClick={doSend}>
-              {vorlage.label} versenden →
+            <button className="mk-btn mk-btn-primary mh-actionbar-cta" onClick={() => doSend()}>
+              {kanal.includes("E-Mail") ? `${vorlage.label} erstellen & E-Mail einreihen →` : `${vorlage.label} erstellen & PDF erzeugen →`}
             </button>
           )}
         </div>

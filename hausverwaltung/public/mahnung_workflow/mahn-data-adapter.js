@@ -46,16 +46,27 @@
     });
     const ctx = res.message;
 
+    const vorlagen = ctx.vorlagen || [];
+    const vorlageByKey = Object.fromEntries(vorlagen.map((v) => [v.key, v]));
+    const byStage = new Map();
+    vorlagen.forEach((v) => {
+      const stage = Number(v.stufe_nr ?? 0);
+      if (!byStage.has(stage)) byStage.set(stage, v.key);
+    });
+    const fallbackKey = vorlagen[0]?.key || "";
+
     // ctx liefert bereits das fertige Schema (siehe mahnung_workflow.py).
     // Falls dein Backend abweicht: hier mappen.
     window.MAHNUNG = {
       TODAY: ctx.today,
       absender: ctx.absender,
       mieter: ctx.mieter,
-      vorlagen: ctx.vorlagen,
-      vorlageByKey: Object.fromEntries(ctx.vorlagen.map((v) => [v.key, v])),
-      naechsteVorlageKey: (stufe) =>
-        stufe >= 2 ? "letzte_mahnung" : stufe === 1 ? "mahnung_2" : stufe === 0 ? "mahnung_1" : "erinnerung",
+      vorlagen,
+      vorlageByKey,
+      naechsteVorlageKey: (stufe) => {
+        const nextStage = Math.min(3, Math.max(0, Number(stufe || 0)));
+        return byStage.get(nextStage) || byStage.get(Math.min(3, nextStage + 1)) || fallbackKey;
+      },
       zinssatzFuer: (typ) =>
         Math.round((ctx.basiszins + (typ === "gewerbe" ? 9 : 5)) * 100) / 100,
       BASISZINS: ctx.basiszins,

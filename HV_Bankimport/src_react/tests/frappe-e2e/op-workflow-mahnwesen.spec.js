@@ -389,6 +389,80 @@ async function installOpWorkflowMocks(page, state) {
 			return;
 		}
 
+		if (method.endsWith("mahnung_workflow.get_dunning_context")) {
+			const party = args.party || "CUST-UI-ALT";
+			const row = mahnRows.find((item) => item.customer === party) || mahnRows[0];
+			await fulfillJson(route, {
+				today: TODAY,
+				basiszins: 1.27,
+				absender: {
+					firma: "Hausverwaltung Peters",
+					telefon: "",
+					email: "",
+					iban: "DE00TEST0000000000",
+					konto_erloese_mahn: "8950 — Mahngebühren-Erlöse",
+				},
+				mieter: [{
+					id: party,
+					name: row.customer_name,
+					anrede: "Sehr geehrte Damen und Herren,",
+					adresse: [row.customer_name],
+					objekt: row.wohnung || "",
+					einheit: "",
+					kostenstelle: row.kostenstelle || "",
+					email: "",
+					verbrauchertyp: "privat",
+					mahnstufe: row.mahnstufe || 0,
+					empf_vorlage: "zahlungserinnerung_hp",
+					historie: [],
+					posten: (row.invoices || []).map((invoice) => ({
+						beleg: invoice.sales_invoice,
+						art: "Sales Invoice",
+						bez: invoice.remarks || "Mietabrechnung",
+						posting: invoice.posting_date,
+						faellig: invoice.due_date,
+						betrag: invoice.grand_total,
+						bezahlt: invoice.grand_total - invoice.outstanding_amount,
+						offen: invoice.outstanding_amount,
+						overdue_days: invoice.age_days || 1,
+					})),
+				}],
+				vorlagen: [{
+					key: "zahlungserinnerung_hp",
+					tpl_id: TEMPLATE,
+					dunning_type: "Zahlungserinnerung - HP",
+					serienbrief_vorlage: TEMPLATE,
+					label: "Zahlungserinnerung - HP",
+					kategorie: "Mahnungen",
+					stufe_nr: 0,
+					ton: "sachlich",
+					gebuehr: 0,
+					zinsen: false,
+					variablen: [
+						{ name: "frist_tage", type: "Zahl", default: "7", desc: "Zahlungsfrist in Tagen" },
+						{ name: "kontonummer", type: "String", default: "DE00TEST0000000000", desc: "Empfänger-IBAN" },
+						{ name: "ansprechpartner", type: "String", default: "UI Test Sachbearbeitung", desc: "Ansprechpartner" },
+					],
+					betreff: "Zahlungserinnerung — Objekt {objekt}",
+					einleitung: "bitte gleichen Sie die unten aufgeführten offenen Forderungen bis zum {frist} aus.",
+					schluss: "Sollten Sie die Zahlung zwischenzeitlich veranlasst haben, betrachten Sie dieses Schreiben bitte als gegenstandslos.",
+				}],
+			});
+			return;
+		}
+
+		if (method.endsWith("mahnung_workflow.create_dunning")) {
+			state.createdDunnings.push(args);
+			await fulfillJson(route, {
+				dunning: `DUN-UI-CREATED-${state.createdDunnings.length}`,
+				summe: 286.11,
+				draft: true,
+				docstatus: 0,
+				docs: [{ id: `DUN-UI-CREATED-${state.createdDunnings.length}`, desc: "Dunning-Draft · Zahlungserinnerung - HP", amount: 286.11 }],
+			});
+			return;
+		}
+
 		if (method.endsWith("op_workflow.create_bulk_dunning")) {
 			state.createdBulkDunnings.push(args);
 			await fulfillJson(route, {
@@ -453,6 +527,7 @@ test("OP-Workflow deckt komplexe Mahnwesen- und Offene-Posten-UI-Kanten ab", asy
 		const text = message.text();
 		if (text.includes("op data load failed")) return;
 		if (text.includes("Error connecting to socket.io: Invalid origin")) return;
+		if (text.includes("Failed to load resource: the server responded with a status of 400")) return;
 		if (text.includes("Failed to load resource: the server responded with a status of 500")) return;
 		consoleErrors.push(text);
 	});
@@ -516,26 +591,22 @@ test("OP-Workflow deckt komplexe Mahnwesen- und Offene-Posten-UI-Kanten ab", asy
 	await expect(noTemplateRow.getByRole("button", { name: "Mahnung erstellen" })).toBeEnabled();
 	await noTemplateRow.getByRole("button", { name: "Mahnung erstellen" }).click();
 
-	await expect(page.getByRole("heading", { name: "Zahlungserinnerung erstellen" })).toBeVisible();
-	await expect(page.getByText("Bitte zuerst eine Serienbrief-Vorlage wählen.")).toBeVisible();
-	await expect(page.getByRole("button", { name: /Mahnung als Draft anlegen/ })).toBeDisabled();
-	await page.locator(".op-field", { hasText: "Serienbrief-Vorlage" }).locator("select").selectOption(TEMPLATE);
-	await page.getByRole("button", { name: /Serienbrief-Werte/ }).click();
-	await expect(page.getByText("Pflichtwerte fehlen: Ansprechpartner")).toBeVisible();
-	await expect(page.getByRole("button", { name: /Mahnung als Draft anlegen/ })).toBeDisabled();
-	await page.locator(".op-template-var", { hasText: "Ansprechpartner" }).locator("input").fill("UI Test Sachbearbeitung");
-	await expect(page.getByText("Pflichtwerte fehlen: Ansprechpartner")).toBeHidden();
-	await page.getByRole("button", { name: /Mahnung als Draft anlegen/ }).click();
-	await expect(page.getByText("Mahnung-Draft erstellt: DUN-UI-CREATED-1")).toBeVisible();
+	await expect(page).toHaveURL(/mahnung-workflow/);
+	await expect(page.getByRole("heading", { name: "Mahnung erstellen" })).toBeVisible();
+	await expect(page.locator(".mh-tenant-select")).toHaveValue("CUST-UI-ALT");
+	await expect(page.getByText("SI-UI-MAHN-0003").first()).toBeVisible();
+	await page.getByRole("button", { name: "Als Draft speichern" }).click();
+	await expect(page.getByRole("heading", { name: "Mahnung-Draft erstellt" })).toBeVisible();
 	expect(state.createdDunnings).toHaveLength(1);
 	expect(state.createdDunnings[0]).toMatchObject({
-		sales_invoice: "SI-UI-MAHN-0003",
 		dunning_type: "Zahlungserinnerung - HP",
 		serienbrief_vorlage: TEMPLATE,
 	});
+	expect(JSON.stringify(state.createdDunnings[0].sales_invoices)).toContain("SI-UI-MAHN-0003");
 	expect(JSON.stringify(state.createdDunnings[0].serienbrief_werte)).toContain("UI Test Sachbearbeitung");
 
-	await page.locator(".op-view-tab", { hasText: "Offene Posten" }).click();
+	await page.goto("/app/op-workflow");
+	await expect(page.getByRole("heading", { name: "Noch offene Rechnungen und Forderungen" })).toBeVisible();
 	await page.getByRole("button", { name: /Rechnungen/ }).click();
 	await expect(page.getByText("PI-UI-SKONTO-0001")).toBeVisible();
 	await page.getByRole("button", { name: "Zahlung anlegen" }).click();
@@ -595,21 +666,66 @@ test("OP-Workflow erstellt echte Mahnung als Dunning-Draft in der Datenbank", as
 		await expect(candidateRow.getByRole("button", { name: "Mahnung erstellen" })).toBeEnabled();
 		await candidateRow.getByRole("button", { name: "Mahnung erstellen" }).click();
 
-		await expect(page.getByRole("heading", { name: "Zahlungserinnerung erstellen" })).toBeVisible();
-		if (!fixture.serienbrief_vorlage) {
-			const select = page.locator(".op-field", { hasText: "Serienbrief-Vorlage" }).locator("select");
-			await expect(select).toBeVisible();
-			await select.selectOption({ index: 1 });
-		}
-		await page.getByRole("button", { name: /Serienbrief-Werte/ }).click();
-		const requiredValue = page.locator(".op-template-var", { hasText: "Ansprechpartner" }).locator("input, textarea").first();
-		if (await requiredValue.count()) {
-			await requiredValue.fill("Real DB Playwright");
-		}
-		await expect(page.getByRole("button", { name: /Mahnung als Draft anlegen/ })).toBeEnabled();
-		await page.getByRole("button", { name: /Mahnung als Draft anlegen/ }).click();
+		await expect(page).toHaveURL(/mahnung-workflow/);
+		await expect(page.getByRole("heading", { name: "Mahnung erstellen" })).toBeVisible();
+		await expect(page.locator(".mh-tenant-select")).toHaveValue(fixture.customer);
+		await expect(page.getByText(fixture.sales_invoice).first()).toBeVisible();
+		await page.getByRole("button", { name: "Als Draft speichern" }).click();
 
-		await expect(page.getByText(/Mahnung-Draft erstellt:/)).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Mahnung-Draft erstellt" })).toBeVisible();
+		await expect.poll(() => dunningsForInvoice(fixture.sales_invoice).length, {
+			message: "Dunning wurde in der DB angelegt",
+			timeout: 15000,
+		}).toBe(1);
+
+		const [dunning] = dunningsForInvoice(fixture.sales_invoice);
+		expect(dunning).toMatchObject({
+			docstatus: 0,
+			sales_invoice: fixture.sales_invoice,
+			customer: fixture.customer,
+			dunning_type: fixture.dunning_type,
+		});
+		expect(Number(dunning.outstanding_amount)).toBeCloseTo(Number(fixture.outstanding_amount), 2);
+		if (fixture.serienbrief_vorlage) {
+			expect(dunning.hv_serienbrief_vorlage).toBe(fixture.serienbrief_vorlage);
+		}
+	} finally {
+		if (fixture) {
+			benchExecute("hausverwaltung.cypress_fixtures.cleanup_real_op_dunning", {
+				kwargs: {
+					run_id: runId,
+					sales_invoice: fixture.sales_invoice,
+					customer: fixture.customer,
+					template: fixture.serienbrief_vorlage,
+				},
+			});
+		}
+	}
+});
+
+test("Geführter Mahnungsworkflow erstellt echten Dunning-Draft in der Datenbank", async ({ page }) => {
+	const runId = `${Date.now()}`;
+	let fixture = null;
+
+	try {
+		benchExecute("hausverwaltung.cypress_fixtures.cleanup_real_op_dunning", {
+			kwargs: { run_id: runId },
+		});
+		fixture = benchExecute("hausverwaltung.cypress_fixtures.seed_real_op_dunning", {
+			kwargs: { run_id: runId },
+		});
+
+		expect(fixture?.sales_invoice, "Seed Sales Invoice").toBeTruthy();
+		expect(dunningsForInvoice(fixture.sales_invoice), "vor UI-Aktion keine Mahnung").toHaveLength(0);
+
+		await login(page);
+		await page.goto(`/app/mahnung-workflow?party=${encodeURIComponent(fixture.customer)}&invoices=${encodeURIComponent(fixture.sales_invoice)}`);
+		await expect(page.getByRole("heading", { name: "Mahnung erstellen" })).toBeVisible();
+		await expect(page.locator(".mh-tenant-select")).toHaveValue(fixture.customer);
+		await expect(page.getByText(fixture.sales_invoice).first()).toBeVisible();
+
+		await page.getByRole("button", { name: "Als Draft speichern" }).click();
+		await expect(page.getByRole("heading", { name: "Mahnung-Draft erstellt" })).toBeVisible();
 		await expect.poll(() => dunningsForInvoice(fixture.sales_invoice).length, {
 			message: "Dunning wurde in der DB angelegt",
 			timeout: 15000,
