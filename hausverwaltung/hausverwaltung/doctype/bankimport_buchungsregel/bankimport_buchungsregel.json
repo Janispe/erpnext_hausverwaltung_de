@@ -7,10 +7,9 @@
  "engine": "InnoDB",
  "field_order": [
   "enabled",
-  "is_system_rule",
   "rule_key",
   "priority",
-  "matcher_function",
+  "rule_code",
   "auto_apply",
   "stop_on_match",
   "requires_review",
@@ -26,14 +25,6 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Aktiv"
-  },
-  {
-   "default": "0",
-   "fieldname": "is_system_rule",
-   "fieldtype": "Check",
-   "in_list_view": 1,
-   "label": "Systemregel",
-   "read_only": 1
   },
   {
    "fieldname": "rule_key",
@@ -53,11 +44,10 @@
    "reqd": 1
   },
   {
-   "fieldname": "matcher_function",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "label": "Matcher-Funktion",
-   "options": "invoice_auto_match\nkreditrate_auto_match\nabschlagsplan_auto_match\nneeds_review_fallback",
+   "fieldname": "rule_code",
+   "fieldtype": "Code",
+   "label": "Regel-Code",
+   "options": "Python",
    "reqd": 1
   },
   {
@@ -129,7 +119,7 @@
    "write": 1
   }
  ],
- "search_fields": "rule_key,matcher_function,description",
+ "search_fields": "rule_key,description",
  "sort_field": "priority",
  "sort_order": "ASC",
  "states": [],

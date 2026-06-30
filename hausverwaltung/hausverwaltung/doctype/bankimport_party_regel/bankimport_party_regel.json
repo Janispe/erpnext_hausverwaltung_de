@@ -7,10 +7,9 @@
  "engine": "InnoDB",
  "field_order": [
   "enabled",
-  "is_system_rule",
   "rule_key",
   "priority",
-  "matcher_function",
+  "rule_code",
   "stop_on_match",
   "requires_review",
   "scope_section",
@@ -25,14 +24,6 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Aktiv"
-  },
-  {
-   "default": "0",
-   "fieldname": "is_system_rule",
-   "fieldtype": "Check",
-   "in_list_view": 1,
-   "label": "Systemregel",
-   "read_only": 1
   },
   {
    "fieldname": "rule_key",
@@ -52,11 +43,10 @@
    "reqd": 1
   },
   {
-   "fieldname": "matcher_function",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "label": "Matcher-Funktion",
-   "options": "row_party\nunique_iban_to_party",
+   "fieldname": "rule_code",
+   "fieldtype": "Code",
+   "label": "Regel-Code",
+   "options": "Python",
    "reqd": 1
   },
   {
@@ -122,7 +112,7 @@
    "write": 1
   }
  ],
- "search_fields": "rule_key,matcher_function,description",
+ "search_fields": "rule_key,description",
  "sort_field": "priority",
  "sort_order": "ASC",
  "states": [],

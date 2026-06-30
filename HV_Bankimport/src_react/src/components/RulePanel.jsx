@@ -4,17 +4,6 @@ import { Icon, Spinner, fmtDateTime } from "../helpers.jsx";
 
 const GROUP_ORDER = ["party", "booking"];
 
-function matcherLabel(value) {
-	return ({
-		row_party: "Zeilen-Partei",
-		unique_iban_to_party: "IBAN -> Party",
-		invoice_auto_match: "Rechnung",
-		kreditrate_auto_match: "Kreditrate",
-		abschlagsplan_auto_match: "Abschlagsplan",
-		needs_review_fallback: "Review-Fallback",
-	}[value] || value || "—");
-}
-
 function ruleTypeLabel(doctype) {
 	return doctype === "Bankimport Buchungsregel" ? "Buchungsregel" : "Party-Regel";
 }
@@ -44,12 +33,11 @@ function RuleCard({ rule, onOpen, onToggle, toggling }) {
 						<button className="rule-title" onClick={() => onOpen(rule)}>
 							{rule.ruleKey || rule.name}
 						</button>
-						{rule.isSystemRule && <span className="rule-tag">System</span>}
 						{disabled && <span className="rule-tag off">Aus</span>}
 					</div>
 					<div className="rule-subline">
-						<span>{matcherLabel(rule.matcherFunction)}</span>
 						<span>{ruleTypeLabel(rule.doctype)}</span>
+						<span>{rule.hasRuleCode ? `${rule.ruleCodeLines || 1} Code-Zeilen` : "Kein Code"}</span>
 						{rule.modified && <span>{fmtDateTime(rule.modified)}</span>}
 					</div>
 				</div>
@@ -68,6 +56,7 @@ function RuleCard({ rule, onOpen, onToggle, toggling }) {
 
 			<div className="rule-flags">
 				<span>{rule.stopOnMatch ? "Stoppt bei Treffer" : "Läuft weiter"}</span>
+				<span>{rule.hasRuleCode ? "DB-Code" : "Code fehlt"}</span>
 				{rule.autoApply !== null && rule.autoApply !== undefined && (
 					<span>{rule.autoApply ? "Automatisch" : "Manuell"}</span>
 				)}

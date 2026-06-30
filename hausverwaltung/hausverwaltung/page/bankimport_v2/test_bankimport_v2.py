@@ -197,12 +197,11 @@ class TestBankimportRulesPanel(unittest.TestCase):
 			if doctype == "Bankimport Party Regel":
 				return [
 					frappe._dict(
-						name="system.unique_iban_to_party",
-						rule_key="system.unique_iban_to_party",
+						name="party.unique_iban_to_party",
+						rule_key="party.unique_iban_to_party",
 						enabled=1,
-						is_system_rule=1,
 						priority=10,
-						matcher_function="unique_iban_to_party",
+						rule_code="result = {'matched': False}",
 						stop_on_match=1,
 						requires_review=0,
 						parameters_json="",
@@ -213,12 +212,11 @@ class TestBankimportRulesPanel(unittest.TestCase):
 			if doctype == "Bankimport Buchungsregel":
 				return [
 					frappe._dict(
-						name="system.invoice_auto_match",
-						rule_key="system.invoice_auto_match",
+						name="booking.invoice_auto_match",
+						rule_key="booking.invoice_auto_match",
 						enabled=0,
-						is_system_rule=1,
 						priority=100,
-						matcher_function="invoice_auto_match",
+						rule_code="result = auto_match_invoice(row=row, bt=bt, context=context)",
 						auto_apply=1,
 						stop_on_match=1,
 						requires_review=0,
@@ -232,7 +230,7 @@ class TestBankimportRulesPanel(unittest.TestCase):
 				if parenttype == "Bankimport Party Regel":
 					return [
 						frappe._dict(
-							parent="system.unique_iban_to_party",
+							parent="party.unique_iban_to_party",
 							mode="Sperren",
 							scope_type="IBAN",
 							iban="de12 3456",
@@ -253,13 +251,14 @@ class TestBankimportRulesPanel(unittest.TestCase):
 		self.assertEqual(has_permission.call_count, 2)
 		self.assertEqual(result["groups"]["party"]["counts"]["enabled"], 1)
 		self.assertEqual(result["groups"]["booking"]["counts"]["disabled"], 1)
+		self.assertTrue(result["groups"]["party"]["items"][0]["hasRuleCode"])
 		self.assertEqual(
 			result["groups"]["party"]["items"][0]["scope"][0]["iban"],
 			"DE123456",
 		)
 		self.assertEqual(
-			result["groups"]["booking"]["items"][0]["matcherFunction"],
-			"invoice_auto_match",
+			result["groups"]["booking"]["items"][0]["ruleKey"],
+			"booking.invoice_auto_match",
 		)
 
 	def test_set_bankimport_rule_enabled_validates_doctype_and_sets_value(self):
@@ -268,14 +267,14 @@ class TestBankimportRulesPanel(unittest.TestCase):
 			 patch("frappe.db.set_value") as set_value:
 			result = bv2.set_bankimport_rule_enabled(
 				"Bankimport Party Regel",
-				"system.unique_iban_to_party",
+				"party.unique_iban_to_party",
 				0,
 			)
 
 		has_permission.assert_called_once_with("Bankimport Party Regel", "write", throw=True)
 		set_value.assert_called_once_with(
 			"Bankimport Party Regel",
-			"system.unique_iban_to_party",
+			"party.unique_iban_to_party",
 			"enabled",
 			0,
 		)

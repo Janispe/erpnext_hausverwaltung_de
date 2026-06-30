@@ -16,42 +16,70 @@ RULE_SCOPE_DOCTYPE = "Bankimport Regel Scope"
 
 DEFAULT_PARTY_RULES = [
 	{
-		"rule_key": "system.unique_iban_to_party",
+		"rule_key": "party.unique_iban_to_party",
+		"legacy_rule_key": "system.unique_iban_to_party",
 		"priority": 10,
-		"matcher_function": "unique_iban_to_party",
+		"rule_code": """
+party_tuple = get_party_by_iban(row.get("iban"))
+if party_tuple:
+	party_type, party = party_tuple
+	result = {
+		"matched": True,
+		"party_type": party_type,
+		"party": party,
+		"message": "Eindeutige IBAN-Regel hat Partei gefunden.",
+	}
+else:
+	result = {"matched": False, "reason": "iban_not_unique_or_missing"}
+""".strip(),
 		"description": "Eindeutige IBAN aus Bank Account auf Party abbilden.",
 	},
 	{
-		"rule_key": "system.row_party",
+		"rule_key": "party.row_party",
+		"legacy_rule_key": "system.row_party",
 		"priority": 100,
-		"matcher_function": "row_party",
+		"rule_code": """
+if row.get("party_type") in SUPPORTED_PARTY_TYPES and row.get("party"):
+	result = {
+		"matched": True,
+		"party_type": row.get("party_type"),
+		"party": row.get("party"),
+		"message": "Partei aus Bankimport-Zeile uebernommen.",
+	}
+else:
+	result = {"matched": False, "reason": "row_has_no_party"}
+""".strip(),
 		"description": "Bereits gesetzte Partei der Bankimport-Zeile uebernehmen.",
 	},
 ]
 
 DEFAULT_BOOKING_RULES = [
 	{
-		"rule_key": "system.invoice_auto_match",
+		"rule_key": "booking.invoice_auto_match",
+		"legacy_rule_key": "system.invoice_auto_match",
 		"priority": 100,
-		"matcher_function": "invoice_auto_match",
+		"rule_code": 'result = auto_match_invoice(row=row, bt=bt, context=context)',
 		"description": "Offene Sales/Purchase Invoice konservativ automatisch zuordnen.",
 	},
 	{
-		"rule_key": "system.kreditrate_auto_match",
+		"rule_key": "booking.kreditrate_auto_match",
+		"legacy_rule_key": "system.kreditrate_auto_match",
 		"priority": 200,
-		"matcher_function": "kreditrate_auto_match",
+		"rule_code": 'result = match_kreditrate(row=row, bt=bt)',
 		"description": "Ausgang eindeutig gegen Kreditrate buchen.",
 	},
 	{
-		"rule_key": "system.abschlagsplan_auto_match",
+		"rule_key": "booking.abschlagsplan_auto_match",
+		"legacy_rule_key": "system.abschlagsplan_auto_match",
 		"priority": 300,
-		"matcher_function": "abschlagsplan_auto_match",
+		"rule_code": 'result = match_abschlagsplan(doc=doc, row=row, bt=bt, context=context)',
 		"description": "Supplier-Ausgang eindeutig gegen offene Abschlagsplan-Zeile buchen.",
 	},
 	{
-		"rule_key": "system.needs_review_fallback",
+		"rule_key": "booking.needs_review_fallback",
+		"legacy_rule_key": "system.needs_review_fallback",
 		"priority": 900,
-		"matcher_function": "needs_review_fallback",
+		"rule_code": 'result = needs_review_fallback(row=row, context=context)',
 		"description": "Offene Bankimport-Zeile ohne automatische Buchung zur Pruefung belassen.",
 	},
 ]
@@ -92,10 +120,10 @@ def get_party_by_unique_iban(iban: str | None) -> tuple[str, str] | None:
 
 
 def ensure_default_bankimport_rules() -> dict[str, int]:
-	"""Create missing system rules.
+	"""Create or migrate built-in DB rule records.
 
-	Priorities and enabled flags are only set on creation. Existing records keep
-	user changes, while immutable function metadata is refreshed.
+	The rule code is stored in the rule documents. Existing records keep user
+	changes for priority, enabled state, and scope.
 	"""
 	created = 0
 	updated = 0
@@ -107,16 +135,14 @@ def ensure_default_bankimport_rules() -> dict[str, int]:
 			continue
 		for spec in defaults:
 			name = spec["rule_key"]
+			_migrate_legacy_rule_name(doctype, spec)
 			if frappe.db.exists(doctype, name):
 				doc = frappe.get_doc(doctype, name)
 				changed = False
-				for fieldname in ("matcher_function", "description"):
+				for fieldname in ("rule_code", "description"):
 					if doc.get(fieldname) != spec.get(fieldname):
 						doc.set(fieldname, spec.get(fieldname))
 						changed = True
-				if not doc.get("is_system_rule"):
-					doc.set("is_system_rule", 1)
-					changed = True
 				if changed:
 					doc.save(ignore_permissions=True)
 					updated += 1
@@ -125,9 +151,11 @@ def ensure_default_bankimport_rules() -> dict[str, int]:
 			payload = {
 				"doctype": doctype,
 				"enabled": 1,
-				"is_system_rule": 1,
 				"stop_on_match": 1,
-				**spec,
+				"rule_key": spec["rule_key"],
+				"priority": spec["priority"],
+				"rule_code": spec["rule_code"],
+				"description": spec["description"],
 			}
 			if doctype == BOOKING_RULE_DOCTYPE:
 				payload["auto_apply"] = 1
@@ -139,13 +167,16 @@ def ensure_default_bankimport_rules() -> dict[str, int]:
 
 def match_party_for_row(row) -> dict[str, Any]:
 	context: dict[str, Any] = {"row": row}
-	for rule in _load_rules(PARTY_RULE_DOCTYPE, DEFAULT_PARTY_RULES):
-		matcher = PARTY_MATCHERS.get(rule.get("matcher_function"))
-		if not matcher:
-			continue
+	for rule in _load_rules(PARTY_RULE_DOCTYPE):
 		if not _rule_scope_allows(rule, row=row, enforce_allow=False):
 			continue
-		result = matcher(row=row, rule=rule, context=context)
+		result = _execute_rule_code(
+			rule,
+			{
+				"row": row,
+				"context": context,
+			},
+		)
 		if not result or not result.get("matched"):
 			continue
 		if not _rule_scope_allows(rule, row=row, result=result, enforce_allow=True):
@@ -174,13 +205,18 @@ def apply_booking_rules_for_row(doc, row, bt) -> dict[str, Any]:
 		"auto_match_failed": [],
 	}
 
-	for rule in _load_rules(BOOKING_RULE_DOCTYPE, DEFAULT_BOOKING_RULES):
-		matcher = BOOKING_MATCHERS.get(rule.get("matcher_function"))
-		if not matcher:
-			continue
+	for rule in _load_rules(BOOKING_RULE_DOCTYPE):
 		if not _rule_scope_allows(rule, row=row, bt=bt, enforce_allow=True):
 			continue
-		result = matcher(doc=doc, row=row, bt=bt, rule=rule, context=context)
+		result = _execute_rule_code(
+			rule,
+			{
+				"doc": doc,
+				"row": row,
+				"bt": bt,
+				"context": context,
+			},
+		)
 		if not result:
 			continue
 		if result.get("message"):
@@ -202,30 +238,6 @@ def apply_booking_rules_for_row(doc, row, bt) -> dict[str, Any]:
 	return summary
 
 
-def _party_row_party(*, row, rule, context):
-	if getattr(row, "party_type", None) in SUPPORTED_PARTY_TYPES and getattr(row, "party", None):
-		return {
-			"matched": True,
-			"party_type": row.party_type,
-			"party": row.party,
-			"message": "Partei aus Bankimport-Zeile uebernommen.",
-		}
-	return {"matched": False, "reason": "row_has_no_party"}
-
-
-def _party_unique_iban_to_party(*, row, rule, context):
-	party_tuple = _resolve_party_by_iban_via_bankimport(getattr(row, "iban", None))
-	if not party_tuple:
-		return {"matched": False, "reason": "iban_not_unique_or_missing"}
-	party_type, party = party_tuple
-	return {
-		"matched": True,
-		"party_type": party_type,
-		"party": party,
-		"message": "Eindeutige IBAN-Regel hat Partei gefunden.",
-	}
-
-
 def _resolve_party_by_iban_via_bankimport(iban: str | None) -> tuple[str, str] | None:
 	"""Use the Bankimport module resolver so existing tests/overrides keep working."""
 	try:
@@ -241,7 +253,7 @@ def _resolve_party_by_iban_via_bankimport(iban: str | None) -> tuple[str, str] |
 	return get_party_by_unique_iban(iban)
 
 
-def _booking_invoice_auto_match(*, doc, row, bt, rule, context):
+def _booking_invoice_auto_match(*, row, bt, context):
 	from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
 		auto_match_bank_transaction,
 	)
@@ -272,7 +284,7 @@ def _booking_invoice_auto_match(*, doc, row, bt, rule, context):
 	}
 
 
-def _booking_kreditrate_auto_match(*, doc, row, bt, rule, context):
+def _booking_kreditrate_auto_match(*, row, bt):
 	if row.get("richtung") != "Ausgang":
 		return {"matched": False, "reason": "not_outgoing"}
 
@@ -356,7 +368,7 @@ def _booking_kreditrate_auto_match(*, doc, row, bt, rule, context):
 	return {"matched": False, "reason": "no_kreditrate_match"}
 
 
-def _booking_abschlagsplan_auto_match(*, doc, row, bt, rule, context):
+def _booking_abschlagsplan_auto_match(*, doc, row, bt, context):
 	if (
 		row.get("richtung") != "Ausgang"
 		or row.get("party_type") != "Supplier"
@@ -415,7 +427,7 @@ def _booking_abschlagsplan_auto_match(*, doc, row, bt, rule, context):
 	}
 
 
-def _booking_needs_review_fallback(*, doc, row, bt, rule, context):
+def _booking_needs_review_fallback(*, row, context):
 	reason = context.get("last_reason")
 	message = context.get("last_message") or "Keine automatische Buchungsregel hat gegriffen."
 	if reason in ("no_party", "wrong_direction_for_customer", "wrong_direction_for_supplier"):
@@ -430,25 +442,73 @@ def _booking_needs_review_fallback(*, doc, row, bt, rule, context):
 	}
 
 
-PARTY_MATCHERS = {
-	"row_party": _party_row_party,
-	"unique_iban_to_party": _party_unique_iban_to_party,
-}
+def _rule_get_party_by_iban(iban: str | None) -> tuple[str, str] | None:
+	return _resolve_party_by_iban_via_bankimport(iban)
 
-BOOKING_MATCHERS = {
-	"invoice_auto_match": _booking_invoice_auto_match,
-	"kreditrate_auto_match": _booking_kreditrate_auto_match,
-	"abschlagsplan_auto_match": _booking_abschlagsplan_auto_match,
+
+RULE_GLOBALS = {
+	"SUPPORTED_PARTY_TYPES": SUPPORTED_PARTY_TYPES,
+	"get_party_by_iban": _rule_get_party_by_iban,
+	"auto_match_invoice": _booking_invoice_auto_match,
+	"match_kreditrate": _booking_kreditrate_auto_match,
+	"match_abschlagsplan": _booking_abschlagsplan_auto_match,
 	"needs_review_fallback": _booking_needs_review_fallback,
+	"flt": flt,
+}
+
+SAFE_BUILTINS = {
+	"abs": abs,
+	"all": all,
+	"any": any,
+	"bool": bool,
+	"dict": dict,
+	"float": float,
+	"int": int,
+	"len": len,
+	"list": list,
+	"max": max,
+	"min": min,
+	"round": round,
+	"set": set,
+	"str": str,
+	"sum": sum,
+	"tuple": tuple,
 }
 
 
-def _load_rules(doctype: str, defaults: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _execute_rule_code(rule: dict[str, Any], local_vars: dict[str, Any]) -> dict[str, Any]:
+	code = (rule.get("rule_code") or "").strip()
+	if not code:
+		return {"matched": False, "reason": "empty_rule_code"}
+
+	env = {
+		"__builtins__": SAFE_BUILTINS,
+		**RULE_GLOBALS,
+		"rule": rule,
+	}
+	scope = {**local_vars, "result": {"matched": False, "reason": "no_result"}}
+	try:
+		compiled = compile(code, f"<bankimport-rule {rule.get('name') or rule.get('rule_key')}>", "exec")
+		exec(compiled, env, scope)
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"Bankimport-Regel fehlgeschlagen: {rule.get('name') or rule.get('rule_key')}",
+		)
+		return {"matched": False, "reason": "rule_exception"}
+
+	result = scope.get("result")
+	if isinstance(result, dict):
+		return result
+	return {"matched": False, "reason": "invalid_rule_result"}
+
+
+def _load_rules(doctype: str) -> list[dict[str, Any]]:
 	if not _doctype_ready(doctype):
-		return [_default_rule_row(doctype, spec) for spec in defaults]
+		return [_default_rule_row(doctype, spec) for spec in _default_specs_for_doctype(doctype)]
 
 	try:
-		if not frappe.get_all(doctype, filters={"is_system_rule": 1}, limit=1):
+		if not frappe.get_all(doctype, limit=1):
 			ensure_default_bankimport_rules()
 
 		rows = frappe.get_all(
@@ -458,7 +518,7 @@ def _load_rules(doctype: str, defaults: list[dict[str, Any]]) -> list[dict[str, 
 				"name",
 				"rule_key",
 				"priority",
-				"matcher_function",
+				"rule_code",
 				"stop_on_match",
 				"requires_review",
 				"parameters_json",
@@ -468,7 +528,7 @@ def _load_rules(doctype: str, defaults: list[dict[str, Any]]) -> list[dict[str, 
 		)
 		scope_by_parent = _load_scope_rows(doctype, [row.get("name") for row in rows])
 	except Exception:
-		return [_default_rule_row(doctype, spec) for spec in defaults]
+		return [_default_rule_row(doctype, spec) for spec in _default_specs_for_doctype(doctype)]
 	return [_prepare_rule(row, scope_by_parent.get(row.get("name"), [])) for row in rows]
 
 
@@ -492,13 +552,79 @@ def _default_rule_row(doctype: str, spec: dict[str, Any]) -> dict[str, Any]:
 		"doctype": doctype,
 		"name": spec["rule_key"],
 		"enabled": 1,
-		"is_system_rule": 1,
 		"stop_on_match": 1,
 		"requires_review": 0,
 		"parameters": {},
 		"scope_rules": [],
-		**spec,
+		"rule_key": spec["rule_key"],
+		"priority": spec["priority"],
+		"rule_code": spec["rule_code"],
+		"description": spec["description"],
 	}
+
+
+def _default_specs_for_doctype(doctype: str) -> list[dict[str, Any]]:
+	if doctype == PARTY_RULE_DOCTYPE:
+		return DEFAULT_PARTY_RULES
+	if doctype == BOOKING_RULE_DOCTYPE:
+		return DEFAULT_BOOKING_RULES
+	return []
+
+
+def _migrate_legacy_rule_name(doctype: str, spec: dict[str, Any]) -> None:
+	legacy = spec.get("legacy_rule_key")
+	current = spec.get("rule_key")
+	if not legacy or not current or legacy == current:
+		return
+	try:
+		if not frappe.db.exists(doctype, legacy):
+			return
+		if frappe.db.exists(doctype, current):
+			_relink_legacy_rule_references(doctype, legacy, current)
+			frappe.delete_doc(doctype, legacy, ignore_permissions=True, force=True)
+			return
+		frappe.rename_doc(doctype, legacy, current, force=True, ignore_permissions=True)
+	except Exception:
+		try:
+			doc = frappe.get_doc(doctype, legacy)
+			doc.rule_key = current
+			doc.save(ignore_permissions=True)
+			frappe.rename_doc(doctype, doc.name, current, force=True, ignore_permissions=True)
+		except Exception:
+			frappe.log_error(
+				frappe.get_traceback(),
+				f"Bankimport-Regel konnte nicht umbenannt werden: {legacy}",
+			)
+
+
+def _relink_legacy_rule_references(doctype: str, legacy: str, current: str) -> None:
+	if doctype == PARTY_RULE_DOCTYPE:
+		frappe.db.sql(
+			"""
+			UPDATE `tabBankauszug Import Row`
+			SET party_rule = %s
+			WHERE party_rule = %s
+			""",
+			(current, legacy),
+		)
+	elif doctype == BOOKING_RULE_DOCTYPE:
+		frappe.db.sql(
+			"""
+			UPDATE `tabBankauszug Import Row`
+			SET booking_rule = %s
+			WHERE booking_rule = %s
+			""",
+			(current, legacy),
+		)
+	if _doctype_ready(RULE_SCOPE_DOCTYPE):
+		frappe.db.sql(
+			"""
+			UPDATE `tabBankimport Regel Scope`
+			SET parent = %s
+			WHERE parenttype = %s AND parent = %s
+			""",
+			(current, doctype, legacy),
+		)
 
 
 def _load_scope_rows(doctype: str, names: list[str | None]) -> dict[str, list[dict[str, Any]]]:

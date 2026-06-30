@@ -11,4 +11,8 @@ class BankimportBuchungsregel(Document):
 				json.loads(self.parameters_json)
 			except Exception:
 				frappe.throw("Parameter JSON ist ungueltig.")
-
+		if self.get("rule_code"):
+			try:
+				compile(self.rule_code, f"<{self.doctype} {self.name or self.rule_key}>", "exec")
+			except Exception as exc:
+				frappe.throw(f"Regel-Code ist ungueltig: {exc}")

@@ -1,9 +1,19 @@
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import frappe
 
 from hausverwaltung.hausverwaltung.utils import bankimport_rules as rules
+
+
+PARTY_IBAN_RULE_CODE = """
+party_tuple = get_party_by_iban(row.get("iban"))
+if party_tuple:
+	party_type, party = party_tuple
+	result = {"matched": True, "party_type": party_type, "party": party}
+else:
+	result = {"matched": False}
+""".strip()
 
 
 class TestBankimportRuleScope(unittest.TestCase):
@@ -12,7 +22,7 @@ class TestBankimportRuleScope(unittest.TestCase):
 		rule = {
 			"name": "rule-iban",
 			"rule_key": "rule-iban",
-			"matcher_function": "unique_iban_to_party",
+			"rule_code": PARTY_IBAN_RULE_CODE,
 			"parameters": {"scope": {"blocked_ibans": ["DE123456"]}},
 			"scope_rules": [],
 		}
@@ -29,7 +39,7 @@ class TestBankimportRuleScope(unittest.TestCase):
 		rule = {
 			"name": "rule-iban",
 			"rule_key": "rule-iban",
-			"matcher_function": "unique_iban_to_party",
+			"rule_code": PARTY_IBAN_RULE_CODE,
 			"parameters": {
 				"scope": {
 					"blocked_parties": [
@@ -55,7 +65,7 @@ class TestBankimportRuleScope(unittest.TestCase):
 		rule = {
 			"name": "rule-iban",
 			"rule_key": "rule-iban",
-			"matcher_function": "unique_iban_to_party",
+			"rule_code": PARTY_IBAN_RULE_CODE,
 			"parameters": {
 				"scope": {
 					"allowed_parties": [
@@ -96,11 +106,10 @@ class TestBankimportRuleScope(unittest.TestCase):
 		)
 		doc = frappe._dict(name="IMPORT-1")
 		bt = frappe._dict(name="BT-1", party_type="Customer", party="CUST-BLOCKED")
-		matcher = Mock(return_value={"matched": True, "category": "auto_matched"})
 		rule = {
 			"name": "rule-booking",
 			"rule_key": "rule-booking",
-			"matcher_function": "fake_booking",
+			"rule_code": 'result = {"matched": True, "category": "auto_matched"}',
 			"stop_on_match": 1,
 			"parameters": {},
 			"scope_rules": [
@@ -113,9 +122,29 @@ class TestBankimportRuleScope(unittest.TestCase):
 			],
 		}
 
-		with patch.object(rules, "_load_rules", return_value=[rule]), \
-			patch.dict(rules.BOOKING_MATCHERS, {"fake_booking": matcher}):
+		with patch.object(rules, "_load_rules", return_value=[rule]):
 			result = rules.apply_booking_rules_for_row(doc, row, bt)
 
 		self.assertFalse(result["matched"])
-		matcher.assert_not_called()
+
+	def test_db_rule_code_executes_and_returns_match(self):
+		row = frappe._dict(iban="", party_type="Customer", party="CUST-1")
+		rule = {
+			"name": "rule-code",
+			"rule_key": "rule-code",
+			"rule_code": """
+result = {
+	"matched": True,
+	"party_type": row.get("party_type"),
+	"party": row.get("party"),
+}
+""".strip(),
+			"parameters": {},
+			"scope_rules": [],
+		}
+
+		with patch.object(rules, "_load_rules", return_value=[rule]):
+			result = rules.match_party_for_row(row)
+
+		self.assertTrue(result["matched"])
+		self.assertEqual(result["rule"], "rule-code")

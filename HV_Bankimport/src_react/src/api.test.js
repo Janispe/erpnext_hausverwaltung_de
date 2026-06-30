@@ -52,18 +52,19 @@ describe("Bankimport standalone API fallback", () => {
 		const rules = await listBankimportRules();
 
 		expect(rules.mock).toBe(true);
-		expect(rules.groups.party.items[0].matcherFunction).toBe("unique_iban_to_party");
+		expect(rules.groups.party.items[0].ruleKey).toBe("party.unique_iban_to_party");
+		expect(rules.groups.party.items[0].hasRuleCode).toBe(true);
 		expect(rules.groups.booking.items[0].doctype).toBe("Bankimport Buchungsregel");
 
 		const toggled = await setBankimportRuleEnabled(
 			"Bankimport Party Regel",
-			"system.unique_iban_to_party",
+			"party.unique_iban_to_party",
 			false
 		);
 		expect(toggled).toMatchObject({
 			ok: true,
 			doctype: "Bankimport Party Regel",
-			name: "system.unique_iban_to_party",
+			name: "party.unique_iban_to_party",
 			enabled: 0,
 			mock: true,
 		});
