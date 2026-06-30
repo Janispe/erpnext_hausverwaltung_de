@@ -574,14 +574,50 @@ def _get_mieter_abrechnung_names_for_head(name: str) -> List[str]:
 def _get_child_print_format_for_sammeldruck(print_format: Optional[str]) -> Optional[str]:
 	print_format_name = (print_format or "").strip()
 	if not print_format_name or print_format_name.lower() == "standard":
-		return None
+		return _get_default_bk_mieter_print_format()
 
 	if frappe.db.exists("Print Format", print_format_name):
 		pf_doc = frappe.get_cached_doc("Print Format", print_format_name)
 		if (pf_doc.get("doc_type") or "").strip() != "Betriebskostenabrechnung Mieter":
-			return None
+			return _get_default_bk_mieter_print_format()
 
 	return _validate_bk_mieter_print_format(print_format_name)
+
+
+def _get_default_bk_mieter_print_format() -> Optional[str]:
+	try:
+		default_format = (frappe.get_meta("Betriebskostenabrechnung Mieter").default_print_format or "").strip()
+	except frappe.DoesNotExistError:
+		default_format = ""
+	if default_format:
+		return _validate_bk_mieter_print_format(default_format)
+
+	if frappe.db.has_column("Print Format", SERIENBRIEF_PRINT_FORMAT_FIELDNAME):
+		serienbrief_formats = frappe.get_all(
+			"Print Format",
+			filters={
+				"doc_type": "Betriebskostenabrechnung Mieter",
+				"disabled": 0,
+				SERIENBRIEF_PRINT_FORMAT_FIELDNAME: ("is", "set"),
+			},
+			pluck="name",
+			order_by="modified desc",
+			limit_page_length=1,
+		)
+		if serienbrief_formats:
+			return _validate_bk_mieter_print_format(serienbrief_formats[0])
+
+	print_formats = frappe.get_all(
+		"Print Format",
+		filters={"doc_type": "Betriebskostenabrechnung Mieter", "disabled": 0},
+		pluck="name",
+		order_by="modified desc",
+		limit_page_length=1,
+	)
+	if print_formats:
+		return _validate_bk_mieter_print_format(print_formats[0])
+
+	return None
 
 
 def get_mieter_abrechnungen_print_html_and_style(
