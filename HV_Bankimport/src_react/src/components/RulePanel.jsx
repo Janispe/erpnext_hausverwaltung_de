@@ -128,11 +128,118 @@ function RuleGroup({ group, onOpen, onNew, onList, onToggle, toggling }) {
 	);
 }
 
+function GraphNode({ rule, index, total, onOpen, onToggle, toggling }) {
+	const scope = rule.scope || [];
+	const disabled = !rule.enabled;
+	return (
+		<div className={`rule-graph-node ${disabled ? "is-disabled" : ""}`}>
+			<div className="rgn-top">
+				<div className="rgn-priority">{rule.priority ?? "—"}</div>
+				<button className="rgn-name" onClick={() => onOpen(rule)}>
+					{rule.ruleKey || rule.name}
+				</button>
+				<label className="rule-switch rgn-switch" title={rule.enabled ? "Regel deaktivieren" : "Regel aktivieren"}>
+					<input
+						type="checkbox"
+						checked={Boolean(rule.enabled)}
+						disabled={toggling}
+						onChange={(e) => onToggle(rule, e.target.checked)}
+					/>
+					<span />
+				</label>
+			</div>
+			<div className="rgn-meta">
+				<span>{rule.hasRuleCode ? `${rule.ruleCodeLines || 1} Code-Zeilen` : "Code fehlt"}</span>
+				<span>{scope.length ? `${scope.length} Scope` : "Kein Scope"}</span>
+				{rule.autoApply !== null && rule.autoApply !== undefined && (
+					<span>{rule.autoApply ? "Auto" : "Manuell"}</span>
+				)}
+			</div>
+			<div className="rgn-body">
+				<div className="rgn-output">{rule.stopOnMatch ? "Treffer stoppt Phase" : "Treffer laeuft weiter"}</div>
+				{scope.length > 0 && <div className="rgn-scope">{scopeLabel(scope[0])}</div>}
+			</div>
+			<div className="rgn-actions">
+				<button className="btn subtle sm" onClick={() => onOpen(rule)}>
+					<Icon name="file" /> Code & Scope
+				</button>
+			</div>
+			{index < total - 1 && (
+				<div className="rgn-edge" aria-hidden="true">
+					<span />
+					<Icon name="arrowDown" size={13} />
+				</div>
+			)}
+		</div>
+	);
+}
+
+function RuleGraph({ groups, onOpen, onNew, onList, onToggle, toggling }) {
+	return (
+		<div className="rule-graph">
+			<div className="rule-graph-start">
+				<div className="rgs-dot" />
+				<div>
+					<div className="rgs-title">Bankimport-Zeile</div>
+					<div className="rgs-sub">wird von oben nach unten durch die Phasen geführt</div>
+				</div>
+			</div>
+			<div className="rule-graph-lanes">
+				{groups.map((group, groupIndex) => {
+					const items = group.items || [];
+					return (
+						<section className="rule-graph-lane" key={group.doctype}>
+							<div className="rgl-head">
+								<div>
+									<h3>{group.label}</h3>
+									<div>{group.counts?.enabled || 0} aktiv · {items.length} Knoten</div>
+								</div>
+								<div className="rgl-actions">
+									<button className="btn subtle sm" onClick={() => onList(group.doctype)}>
+										<Icon name="file" /> Liste
+									</button>
+									<button className="btn primary sm" onClick={() => onNew(group.doctype)}>
+										<Icon name="plus" /> Neu
+									</button>
+								</div>
+							</div>
+							{items.length === 0 ? (
+								<div className="rule-empty">Keine Regeln in dieser Phase.</div>
+							) : (
+								<div className="rule-graph-stack">
+									{items.map((rule, index) => (
+										<GraphNode
+											key={`${rule.doctype}:${rule.name}`}
+											rule={rule}
+											index={index}
+											total={items.length}
+											onOpen={onOpen}
+											onToggle={onToggle}
+											toggling={toggling === `${rule.doctype}:${rule.name}`}
+										/>
+									))}
+								</div>
+							)}
+							{groupIndex < groups.length - 1 && (
+								<div className="rgl-phase-edge" aria-hidden="true">
+									<span />
+									<Icon name="arrowDown" size={14} />
+								</div>
+							)}
+						</section>
+					);
+				})}
+			</div>
+		</div>
+	);
+}
+
 export function RulePanel({ open, onClose, notify }) {
 	const [data, setData] = useState(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState("");
 	const [toggling, setToggling] = useState("");
+	const [viewMode, setViewMode] = useState("graph");
 
 	const load = useCallback(async () => {
 		setLoading(true);
@@ -189,6 +296,20 @@ export function RulePanel({ open, onClose, notify }) {
 						<div className="rule-modal-sub">Reihenfolge, Aktivierung und Geltungsbereiche der automatischen Zuordnung.</div>
 					</div>
 					<div className="rule-modal-actions">
+						<div className="seg rule-view-toggle">
+							<button
+								className={`seg-btn ${viewMode === "graph" ? "active" : ""}`}
+								onClick={() => setViewMode("graph")}
+							>
+								Graph
+							</button>
+							<button
+								className={`seg-btn ${viewMode === "list" ? "active" : ""}`}
+								onClick={() => setViewMode("list")}
+							>
+								Liste
+							</button>
+						</div>
 						<button className="btn subtle" onClick={load} disabled={loading}>
 							{loading ? <Spinner /> : <Icon name="refresh" />} Neu laden
 						</button>
@@ -202,6 +323,15 @@ export function RulePanel({ open, onClose, notify }) {
 					<div className="rule-error"><Icon name="info" /> {error}</div>
 				) : loading && !data ? (
 					<div className="panel-loading"><Spinner size={18} /> Regeln laden...</div>
+				) : viewMode === "graph" ? (
+					<RuleGraph
+						groups={groups}
+						onOpen={openRule}
+						onNew={newRule}
+						onList={openList}
+						onToggle={toggleRule}
+						toggling={toggling}
+					/>
 				) : (
 					<div className="rule-grid">
 						{groups.map((group) => (
