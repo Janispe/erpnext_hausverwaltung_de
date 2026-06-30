@@ -13,19 +13,31 @@ import frappe
 def execute():
 	header_pre = _count_headers_to_update()
 	gl_pre = _count_gl_entries_to_update()
+	has_custom_remark = _journal_entry_has_custom_remark()
 
-	frappe.db.sql(
-		"""
-		UPDATE `tabJournal Entry`
-		SET remark = user_remark, custom_remark = 1
-		WHERE docstatus = 1
-		  AND COALESCE(TRIM(user_remark), '') <> ''
-		  AND (
-		      COALESCE(remark, '') <> user_remark
-		      OR COALESCE(custom_remark, 0) = 0
-		  )
-		"""
-	)
+	if has_custom_remark:
+		frappe.db.sql(
+			"""
+			UPDATE `tabJournal Entry`
+			SET remark = user_remark, custom_remark = 1
+			WHERE docstatus = 1
+			  AND COALESCE(TRIM(user_remark), '') <> ''
+			  AND (
+			      COALESCE(remark, '') <> user_remark
+			      OR COALESCE(custom_remark, 0) = 0
+			  )
+			"""
+		)
+	else:
+		frappe.db.sql(
+			"""
+			UPDATE `tabJournal Entry`
+			SET remark = user_remark
+			WHERE docstatus = 1
+			  AND COALESCE(TRIM(user_remark), '') <> ''
+			  AND COALESCE(remark, '') <> user_remark
+			"""
+		)
 
 	frappe.db.sql(
 		"""
@@ -54,6 +66,17 @@ def execute():
 
 
 def _count_headers_to_update() -> int:
+	if not _journal_entry_has_custom_remark():
+		return frappe.db.sql(
+			"""
+			SELECT COUNT(*)
+			FROM `tabJournal Entry`
+			WHERE docstatus = 1
+			  AND COALESCE(TRIM(user_remark), '') <> ''
+			  AND COALESCE(remark, '') <> user_remark
+			"""
+		)[0][0]
+
 	return frappe.db.sql(
 		"""
 		SELECT COUNT(*)
@@ -66,6 +89,10 @@ def _count_headers_to_update() -> int:
 		  )
 		"""
 	)[0][0]
+
+
+def _journal_entry_has_custom_remark() -> bool:
+	return bool(frappe.db.has_column("Journal Entry", "custom_remark"))
 
 
 def _count_gl_entries_to_update() -> int:

@@ -8,6 +8,13 @@ from frappe.model.document import Document
 from frappe.model.naming import make_autoname
 from frappe.utils import flt, getdate
 
+from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
+    apply_booking_rules_for_row,
+    get_party_by_unique_iban,
+    match_party_for_row,
+    normalize_iban,
+)
+
 
 RELEVANT_HEADERS = {
     "buchungstag": ["Buchungstag", "Buchungstag"],
@@ -445,12 +452,7 @@ def on_journal_entry_cancel(doc, method=None) -> None:
 
 
 def _normalize_iban(value: Optional[str]) -> Optional[str]:
-    if not value:
-        return None
-    s = str(value).strip()
-    if not s:
-        return None
-    return s.replace(" ", "").upper()
+    return normalize_iban(value)
 
 
 def _get_party_by_iban(iban: Optional[str]) -> Optional[Tuple[str, str]]:
@@ -459,24 +461,7 @@ def _get_party_by_iban(iban: Optional[str]) -> Optional[Tuple[str, str]]:
     If the same IBAN points to multiple different parties, keep the row
     unresolved so phase 1 can be decided manually.
     """
-    iban_norm = _normalize_iban(iban)
-    if not iban_norm:
-        return None
-
-    candidates = frappe.get_all(
-        "Bank Account",
-        filters={"iban": ("in", [iban_norm, iban])},
-        fields=["party_type", "party"],
-        limit=50,
-    )
-    parties = {
-        (c["party_type"], c["party"])
-        for c in candidates
-        if c.get("party") and c.get("party_type") in SUPPORTED_PARTY_TYPES
-    }
-    if len(parties) == 1:
-        return next(iter(parties))
-    return None
+    return get_party_by_unique_iban(iban)
 
 
 def _get_default_group(doctype: str, setting_doctype: str, setting_field: str, fallback_name: str) -> str:
@@ -696,11 +681,9 @@ def _get_bt_party_fieldnames(meta) -> Tuple[Optional[str], Optional[str]]:
 
 
 def _resolve_row_party(row: Document) -> Optional[Tuple[str, str]]:
-    party_tuple = _get_party_by_iban(getattr(row, "iban", None))
-    if party_tuple:
-        return party_tuple
-    if getattr(row, "party_type", None) in SUPPORTED_PARTY_TYPES and getattr(row, "party", None):
-        return (row.party_type, row.party)
+    match = match_party_for_row(row)
+    if match.get("matched") and match.get("party_type") and match.get("party"):
+        return (match["party_type"], match["party"])
     return None
 
 
@@ -1286,7 +1269,6 @@ def parse_csv(docname: str) -> Dict[str, Any]:
 
     # Validate other required fields (IBAN is optional in some lines, don't hard-fail here)
     rows = []
-    party_cache: Dict[str, Optional[Tuple[str, str]]] = {}
     for raw in reader:
         if not any(raw):
             continue
@@ -1311,13 +1293,7 @@ def parse_csv(docname: str) -> Dict[str, Any]:
 
         party_type = None
         party = None
-        iban_norm = _normalize_iban(iban)
-        if iban_norm:
-            if iban_norm not in party_cache:
-                party_cache[iban_norm] = _get_party_by_iban(iban)
-            party_tuple = party_cache.get(iban_norm)
-            if party_tuple:
-                party_type, party = party_tuple
+        party_rule = None
 
         # parse amount and direction
         betrag = None
@@ -1348,6 +1324,24 @@ def parse_csv(docname: str) -> Dict[str, Any]:
             elif h and not s:
                 betrag = h
                 richtung = "Eingang"
+
+        party_match = match_party_for_row(
+            frappe._dict(
+                {
+                    "iban": iban,
+                    "party_type": party_type,
+                    "party": party,
+                    "auftraggeber": auftraggeber,
+                    "verwendungszweck": verwendungszweck,
+                    "betrag": betrag,
+                    "richtung": richtung,
+                }
+            )
+        )
+        if party_match.get("matched"):
+            party_type = party_match.get("party_type")
+            party = party_match.get("party")
+            party_rule = party_match.get("rule")
 
         error = None
         # Datum parsen. Wichtig: deutsches Format dd.mm.yyyy (mit oder ohne
@@ -1412,6 +1406,7 @@ def parse_csv(docname: str) -> Dict[str, Any]:
             "iban": iban,
             "party_type": party_type,
             "party": party,
+            "party_rule": party_rule,
             "auftraggeber": auftraggeber,
             "verwendungszweck": verwendungszweck,
             "currency": waehrung,
@@ -2035,9 +2030,6 @@ def create_bank_transactions(
     auto_abschlag_matched = []
     auto_kredit_matched = []
     auto_match_failed = []
-    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
-        auto_match_bank_transaction,
-    )
 
     # get meta and field names to be version-safe
     meta = frappe.get_meta("Bank Transaction")
@@ -2155,11 +2147,19 @@ def create_bank_transactions(
                 set_if_exists(bt, "party_type", row.party_type)
                 set_if_exists(bt, "party", row.party)
             else:
-                party_tuple = _get_party_by_iban(row.iban)
-                if party_tuple:
-                    party_type, party = party_tuple
+                party_match = match_party_for_row(row)
+                if party_match.get("matched"):
+                    party_type = party_match.get("party_type")
+                    party = party_match.get("party")
                     set_if_exists(bt, "party_type", party_type)
                     set_if_exists(bt, "party", party)
+                    row.db_set("party_type", party_type)
+                    row.db_set("party", party)
+                    try:
+                        if row.meta.get_field("party_rule"):
+                            row.db_set("party_rule", party_match.get("rule"))
+                    except Exception:
+                        pass
                 else:
                     created_without_party += 1
 
@@ -2198,133 +2198,18 @@ def create_bank_transactions(
             row.db_set("reference", bt.name)
             created.append(bt.name)
 
-            # Auto-Match: versuche, exakt passende offene Rechnungen zu
-            # finden und ein Payment Entry anzulegen. Schlägt der Match
-            # fehl (kein/mehrdeutig/Teilbetrag), bleibt die BT unreconciled
-            # und der User klickt manuell.
+            # Buchungsregeln laufen top-down aus `Bankimport Buchungsregel`.
+            # Die Systemregeln bilden die bisherige Reihenfolge ab:
+            # Rechnung -> Kreditrate -> Abschlagsplan -> Review-Fallback.
             try:
                 if bool(int(skip_auto_match or 0)):
                     row.db_set("auto_match_message", "Bank Transaction manuell vorbereitet.")
                     continue
-                match_result = auto_match_bank_transaction(bt.name)
-                if match_result.get("matched"):
-                    row.db_set("payment_entry", match_result.get("payment_entry"))
-                    _set_row_payment_document(row, "Payment Entry", match_result.get("payment_entry"))
-                    row.db_set("auto_match_message", match_result.get("message"))
-                    auto_matched.append(bt.name)
-                else:
-                    row.db_set("auto_match_message", match_result.get("message"))
-
-                    # Kreditraten-Match: vor dem Abschlagsplan-Fallback. Greift bei
-                    # Ausgängen — Supplier ist optional (kann auch ohne Party matchen,
-                    # solange Bankkonto + Betrag + Datum eindeutig sind).
-                    if row.get("richtung") == "Ausgang":
-                        try:
-                            from hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag import (
-                                link_bank_transaction_to_kreditvertrag_rate,
-                            )
-                            kredit_result = link_bank_transaction_to_kreditvertrag_rate(
-                                bank_account=bt.bank_account,
-                                posting_date=bt.date,
-                                amount=row.get("betrag"),
-                                bank_transaction=bt.name,
-                                supplier=row.get("party") if row.get("party_type") == "Supplier" else None,
-                                reference_text=row.get("verwendungszweck"),
-                            )
-                            if kredit_result and kredit_result.get("match_count") == 1:
-                                je_name = kredit_result["journal_entry"]
-                                row.db_set("journal_entry", je_name)
-                                _set_row_payment_document(row, "Journal Entry", je_name)
-                                row.db_set("row_status", "success")
-                                if kredit_result.get("created_from_statement"):
-                                    kredit_message = (
-                                        f"Kreditrate aus Kontoauszug angelegt und gebucht: "
-                                        f"{kredit_result['kreditvertrag']} Zeile {kredit_result['row_idx']} "
-                                        f"→ {je_name}"
-                                    )
-                                else:
-                                    kredit_message = (
-                                        f"Kreditrate automatisch gebucht: "
-                                        f"{kredit_result['kreditvertrag']} Zeile {kredit_result['row_idx']} "
-                                        f"({kredit_result['gesamtbetrag']:.2f} €) → {je_name}"
-                                    )
-                                row.db_set(
-                                    "auto_match_message",
-                                    kredit_message,
-                                )
-                                auto_kredit_matched.append(bt.name)
-                                continue
-                            elif kredit_result and kredit_result.get("blocked"):
-                                blocked_message = (
-                                    kredit_result.get("message")
-                                    or "Kreditrate nicht automatisch gebucht — bitte prüfen."
-                                )
-                                row.db_set("row_status", "needs_review")
-                                row.db_set(
-                                    "auto_match_message",
-                                    blocked_message,
-                                )
-                                auto_match_failed.append({
-                                    "row": row.name,
-                                    "bank_transaction": bt.name,
-                                    "reason": kredit_result.get("reason") or "kreditrate_blocked",
-                                    "message": blocked_message,
-                                })
-                                continue
-                            elif kredit_result and kredit_result.get("match_count", 0) > 1:
-                                row.db_set(
-                                    "auto_match_message",
-                                    (
-                                        f"{kredit_result['match_count']} mögliche Kreditraten — "
-                                        "bitte manuell zuordnen (Aktion 'Kreditrate zuordnen')."
-                                    ),
-                                )
-                        except Exception:
-                            frappe.log_error(
-                                frappe.get_traceback(),
-                                f"Bankauszug Import: Kredit-Match fehlgeschlagen für {bt.name}",
-                            )
-
-                    if (
-                        row.get("richtung") == "Ausgang"
-                        and row.get("party_type") == "Supplier"
-                        and match_result.get("reason") in ("no_open_invoices", "no_matching_cost_center")
-                    ):
-                        try:
-                            candidate_payload = get_abschlagsplan_candidates_for_row(doc.name, row.name)
-                            auto_tolerance = int(candidate_payload.get("auto_tolerance_days") or 0)
-                            strict_candidates = [
-                                c for c in candidate_payload.get("candidates", [])
-                                if c.get("delta_days") is None or c.get("delta_days") <= auto_tolerance
-                            ]
-                            if len(strict_candidates) == 1:
-                                abschlag_result = assign_abschlagsplan_row(
-                                    doc.name,
-                                    row.name,
-                                    strict_candidates[0].get("row_name"),
-                                    remarks=row.get("verwendungszweck") or row.get("auftraggeber") or None,
-                                )
-                                row.db_set(
-                                    "auto_match_message",
-                                    (
-                                        f"Abschlag automatisch zugeordnet: "
-                                        f"{abschlag_result.get('zahlungsplan')} Zeile {abschlag_result.get('row_idx')}"
-                                    ),
-                                )
-                                auto_abschlag_matched.append(bt.name)
-                                continue
-                        except Exception:
-                            frappe.log_error(
-                                frappe.get_traceback(),
-                                f"Bankauszug Import: Abschlagsplan-Auto-Zuordnung fehlgeschlagen für {bt.name}",
-                            )
-                    if match_result.get("reason") not in ("no_party", "wrong_direction_for_customer", "wrong_direction_for_supplier"):
-                        # Diagnose-Info für die Liste — kein "Fehler" im engeren Sinne
-                        auto_match_failed.append({
-                            "row": row.name,
-                            "bank_transaction": bt.name,
-                            "reason": match_result.get("reason"),
-                        })
+                rule_result = apply_booking_rules_for_row(doc, row, bt)
+                auto_matched.extend(rule_result.get("auto_matched") or [])
+                auto_abschlag_matched.extend(rule_result.get("auto_abschlag_matched") or [])
+                auto_kredit_matched.extend(rule_result.get("auto_kredit_matched") or [])
+                auto_match_failed.extend(rule_result.get("auto_match_failed") or [])
             except Exception as match_exc:
                 # Match-Fehler sollen den Import nicht abbrechen.
                 frappe.log_error(
@@ -2379,124 +2264,38 @@ def create_bank_transaction_for_row(
 
 def _retry_auto_match_for_row(docname: str, row_name: str) -> Dict[str, Any]:
     doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
-    result: Dict[str, Any] = {
-        "row": row.name,
-        "bank_transaction": bt.name,
-        "matched": False,
-        "payment_entry": None,
-        "journal_entry": None,
-        "reason": None,
-        "message": None,
-    }
-
-    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
-        auto_match_bank_transaction,
-    )
-
     try:
-        match_result = auto_match_bank_transaction(bt.name)
-        if match_result.get("matched"):
-            row.db_set("payment_entry", match_result.get("payment_entry"))
-            _set_row_payment_document(row, "Payment Entry", match_result.get("payment_entry"))
-            row.db_set("auto_match_message", match_result.get("message"))
-            result.update(
-                {
-                    "matched": True,
-                    "payment_entry": match_result.get("payment_entry"),
-                    "reason": match_result.get("strategy"),
-                    "message": match_result.get("message"),
-                }
-            )
-            return result
-
-        row.db_set("auto_match_message", match_result.get("message"))
-        result.update({"reason": match_result.get("reason"), "message": match_result.get("message")})
-
-        if row.get("richtung") == "Ausgang":
-            try:
-                from hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag import (
-                    link_bank_transaction_to_kreditvertrag_rate,
-                )
-
-                kredit_result = link_bank_transaction_to_kreditvertrag_rate(
-                    bank_account=bt.bank_account,
-                    posting_date=bt.date,
-                    amount=row.get("betrag"),
-                    bank_transaction=bt.name,
-                    supplier=row.get("party") if row.get("party_type") == "Supplier" else None,
-                    reference_text=row.get("verwendungszweck"),
-                )
-                if kredit_result and kredit_result.get("match_count") == 1:
-                    je_name = kredit_result["journal_entry"]
-                    row.db_set("journal_entry", je_name)
-                    _set_row_payment_document(row, "Journal Entry", je_name)
-                    row.db_set("row_status", "success")
-                    msg = (
-                        f"Kreditrate automatisch gebucht: "
-                        f"{kredit_result['kreditvertrag']} Zeile {kredit_result['row_idx']} "
-                        f"→ {je_name}"
-                    )
-                    if kredit_result.get("created_from_statement"):
-                        msg = (
-                            f"Kreditrate aus Kontoauszug angelegt und gebucht: "
-                            f"{kredit_result['kreditvertrag']} Zeile {kredit_result['row_idx']} "
-                            f"→ {je_name}"
-                        )
-                    row.db_set("auto_match_message", msg)
-                    result.update({"matched": True, "journal_entry": je_name, "reason": "kreditrate", "message": msg})
-                    return result
-                if kredit_result and kredit_result.get("blocked"):
-                    blocked_message = kredit_result.get("message") or "Kreditrate nicht automatisch gebucht — bitte prüfen."
-                    row.db_set("row_status", "needs_review")
-                    row.db_set("auto_match_message", blocked_message)
-                    result.update({"reason": kredit_result.get("reason") or "kreditrate_blocked", "message": blocked_message})
-                    return result
-            except Exception:
-                frappe.log_error(
-                    frappe.get_traceback(),
-                    f"Bankauszug Import: Kredit-Retry fehlgeschlagen für {bt.name}",
-                )
-
-        if (
-            row.get("richtung") == "Ausgang"
-            and row.get("party_type") == "Supplier"
-            and match_result.get("reason") in ("no_open_invoices", "no_matching_cost_center")
-        ):
-            try:
-                candidate_payload = get_abschlagsplan_candidates_for_row(doc.name, row.name)
-                auto_tolerance = int(candidate_payload.get("auto_tolerance_days") or 0)
-                strict_candidates = [
-                    c for c in candidate_payload.get("candidates", [])
-                    if c.get("delta_days") is None or c.get("delta_days") <= auto_tolerance
-                ]
-                if len(strict_candidates) == 1:
-                    abschlag_result = assign_abschlagsplan_row(
-                        doc.name,
-                        row.name,
-                        strict_candidates[0].get("row_name"),
-                        remarks=row.get("verwendungszweck") or row.get("auftraggeber") or None,
-                    )
-                    msg = (
-                        f"Abschlag automatisch zugeordnet: "
-                        f"{abschlag_result.get('zahlungsplan')} Zeile {abschlag_result.get('row_idx')}"
-                    )
-                    row.db_set("auto_match_message", msg)
-                    result.update({"matched": True, "payment_entry": abschlag_result.get("payment_entry"), "reason": "abschlag", "message": msg})
-                    return result
-            except Exception:
-                frappe.log_error(
-                    frappe.get_traceback(),
-                    f"Bankauszug Import: Abschlagsplan-Retry fehlgeschlagen für {bt.name}",
-                )
+        rule_result = apply_booking_rules_for_row(doc, row, bt)
+        fresh = frappe.db.get_value(
+            "Bankauszug Import Row",
+            row.name,
+            ["payment_entry", "journal_entry", "auto_match_message"],
+            as_dict=True,
+        ) or {}
+        return {
+            "row": row.name,
+            "bank_transaction": bt.name,
+            "matched": bool(rule_result.get("matched") and (fresh.get("payment_entry") or fresh.get("journal_entry"))),
+            "payment_entry": fresh.get("payment_entry"),
+            "journal_entry": fresh.get("journal_entry"),
+            "reason": rule_result.get("rule_key") or rule_result.get("rule"),
+            "message": fresh.get("auto_match_message"),
+        }
     except Exception as exc:
         frappe.log_error(
             frappe.get_traceback(),
             f"Bankauszug Import: Auto-Match-Retry fehlgeschlagen für {bt.name}",
         )
         row.db_set("auto_match_message", f"Auto-Match-Fehler: {exc}")
-        result.update({"reason": "exception", "message": str(exc)})
-
-    return result
+        return {
+            "row": row.name,
+            "bank_transaction": bt.name,
+            "matched": False,
+            "payment_entry": None,
+            "journal_entry": None,
+            "reason": "exception",
+            "message": str(exc),
+        }
 
 
 @frappe.whitelist()

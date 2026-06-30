@@ -1,0 +1,759 @@
+from __future__ import annotations
+
+import json
+from typing import Any
+
+import frappe
+from frappe.utils import flt
+
+
+SUPPORTED_PARTY_TYPES = {"Customer", "Supplier", "Eigentuemer"}
+
+PARTY_RULE_DOCTYPE = "Bankimport Party Regel"
+BOOKING_RULE_DOCTYPE = "Bankimport Buchungsregel"
+RULE_SCOPE_DOCTYPE = "Bankimport Regel Scope"
+
+
+DEFAULT_PARTY_RULES = [
+	{
+		"rule_key": "system.unique_iban_to_party",
+		"priority": 10,
+		"matcher_function": "unique_iban_to_party",
+		"description": "Eindeutige IBAN aus Bank Account auf Party abbilden.",
+	},
+	{
+		"rule_key": "system.row_party",
+		"priority": 100,
+		"matcher_function": "row_party",
+		"description": "Bereits gesetzte Partei der Bankimport-Zeile uebernehmen.",
+	},
+]
+
+DEFAULT_BOOKING_RULES = [
+	{
+		"rule_key": "system.invoice_auto_match",
+		"priority": 100,
+		"matcher_function": "invoice_auto_match",
+		"description": "Offene Sales/Purchase Invoice konservativ automatisch zuordnen.",
+	},
+	{
+		"rule_key": "system.kreditrate_auto_match",
+		"priority": 200,
+		"matcher_function": "kreditrate_auto_match",
+		"description": "Ausgang eindeutig gegen Kreditrate buchen.",
+	},
+	{
+		"rule_key": "system.abschlagsplan_auto_match",
+		"priority": 300,
+		"matcher_function": "abschlagsplan_auto_match",
+		"description": "Supplier-Ausgang eindeutig gegen offene Abschlagsplan-Zeile buchen.",
+	},
+	{
+		"rule_key": "system.needs_review_fallback",
+		"priority": 900,
+		"matcher_function": "needs_review_fallback",
+		"description": "Offene Bankimport-Zeile ohne automatische Buchung zur Pruefung belassen.",
+	},
+]
+
+
+def normalize_iban(value: str | None) -> str | None:
+	if not value:
+		return None
+	s = str(value).strip()
+	if not s:
+		return None
+	return s.replace(" ", "").upper()
+
+
+def get_party_by_unique_iban(iban: str | None) -> tuple[str, str] | None:
+	"""Return exactly one supported party linked to an IBAN via Bank Account."""
+	iban_norm = normalize_iban(iban)
+	if not iban_norm:
+		return None
+
+	try:
+		candidates = frappe.get_all(
+			"Bank Account",
+			filters={"iban": ("in", [iban_norm, iban])},
+			fields=["party_type", "party"],
+			limit=50,
+		)
+	except Exception:
+		return None
+	parties = {
+		(c["party_type"], c["party"])
+		for c in candidates
+		if c.get("party") and c.get("party_type") in SUPPORTED_PARTY_TYPES
+	}
+	if len(parties) == 1:
+		return next(iter(parties))
+	return None
+
+
+def ensure_default_bankimport_rules() -> dict[str, int]:
+	"""Create missing system rules.
+
+	Priorities and enabled flags are only set on creation. Existing records keep
+	user changes, while immutable function metadata is refreshed.
+	"""
+	created = 0
+	updated = 0
+	for doctype, defaults in (
+		(PARTY_RULE_DOCTYPE, DEFAULT_PARTY_RULES),
+		(BOOKING_RULE_DOCTYPE, DEFAULT_BOOKING_RULES),
+	):
+		if not _doctype_ready(doctype):
+			continue
+		for spec in defaults:
+			name = spec["rule_key"]
+			if frappe.db.exists(doctype, name):
+				doc = frappe.get_doc(doctype, name)
+				changed = False
+				for fieldname in ("matcher_function", "description"):
+					if doc.get(fieldname) != spec.get(fieldname):
+						doc.set(fieldname, spec.get(fieldname))
+						changed = True
+				if not doc.get("is_system_rule"):
+					doc.set("is_system_rule", 1)
+					changed = True
+				if changed:
+					doc.save(ignore_permissions=True)
+					updated += 1
+				continue
+
+			payload = {
+				"doctype": doctype,
+				"enabled": 1,
+				"is_system_rule": 1,
+				"stop_on_match": 1,
+				**spec,
+			}
+			if doctype == BOOKING_RULE_DOCTYPE:
+				payload["auto_apply"] = 1
+			doc = frappe.get_doc(payload)
+			doc.insert(ignore_permissions=True)
+			created += 1
+	return {"created": created, "updated": updated}
+
+
+def match_party_for_row(row) -> dict[str, Any]:
+	context: dict[str, Any] = {"row": row}
+	for rule in _load_rules(PARTY_RULE_DOCTYPE, DEFAULT_PARTY_RULES):
+		matcher = PARTY_MATCHERS.get(rule.get("matcher_function"))
+		if not matcher:
+			continue
+		if not _rule_scope_allows(rule, row=row, enforce_allow=False):
+			continue
+		result = matcher(row=row, rule=rule, context=context)
+		if not result or not result.get("matched"):
+			continue
+		if not _rule_scope_allows(rule, row=row, result=result, enforce_allow=True):
+			continue
+		result.setdefault("rule", rule.get("name") or rule.get("rule_key"))
+		result.setdefault("rule_key", rule.get("rule_key") or rule.get("name"))
+		return result
+	return {"matched": False, "reason": "no_party_rule_matched"}
+
+
+def apply_booking_rules_for_row(doc, row, bt) -> dict[str, Any]:
+	"""Run booking rules top-down for one freshly-created Bank Transaction."""
+	context: dict[str, Any] = {
+		"doc": doc,
+		"row": row,
+		"bt": bt,
+		"last_message": None,
+		"last_reason": None,
+		"invoice_match_result": None,
+	}
+	summary: dict[str, Any] = {
+		"matched": False,
+		"auto_matched": [],
+		"auto_abschlag_matched": [],
+		"auto_kredit_matched": [],
+		"auto_match_failed": [],
+	}
+
+	for rule in _load_rules(BOOKING_RULE_DOCTYPE, DEFAULT_BOOKING_RULES):
+		matcher = BOOKING_MATCHERS.get(rule.get("matcher_function"))
+		if not matcher:
+			continue
+		if not _rule_scope_allows(rule, row=row, bt=bt, enforce_allow=True):
+			continue
+		result = matcher(doc=doc, row=row, bt=bt, rule=rule, context=context)
+		if not result:
+			continue
+		if result.get("message"):
+			context["last_message"] = result.get("message")
+		if result.get("reason"):
+			context["last_reason"] = result.get("reason")
+		if not result.get("matched"):
+			continue
+
+		rule_name = rule.get("name") or rule.get("rule_key")
+		_set_optional_row_value(row, "booking_rule", rule_name)
+		_append_booking_summary(summary, result, row=row, bt=bt)
+		summary["matched"] = True
+		summary["rule"] = rule_name
+		summary["rule_key"] = rule.get("rule_key") or rule_name
+		if rule.get("stop_on_match", 1):
+			break
+
+	return summary
+
+
+def _party_row_party(*, row, rule, context):
+	if getattr(row, "party_type", None) in SUPPORTED_PARTY_TYPES and getattr(row, "party", None):
+		return {
+			"matched": True,
+			"party_type": row.party_type,
+			"party": row.party,
+			"message": "Partei aus Bankimport-Zeile uebernommen.",
+		}
+	return {"matched": False, "reason": "row_has_no_party"}
+
+
+def _party_unique_iban_to_party(*, row, rule, context):
+	party_tuple = _resolve_party_by_iban_via_bankimport(getattr(row, "iban", None))
+	if not party_tuple:
+		return {"matched": False, "reason": "iban_not_unique_or_missing"}
+	party_type, party = party_tuple
+	return {
+		"matched": True,
+		"party_type": party_type,
+		"party": party,
+		"message": "Eindeutige IBAN-Regel hat Partei gefunden.",
+	}
+
+
+def _resolve_party_by_iban_via_bankimport(iban: str | None) -> tuple[str, str] | None:
+	"""Use the Bankimport module resolver so existing tests/overrides keep working."""
+	try:
+		from hausverwaltung.hausverwaltung.doctype.bankauszug_import import (
+			bankauszug_import,
+		)
+
+		resolver = getattr(bankauszug_import, "_get_party_by_iban", None)
+		if resolver:
+			return resolver(iban)
+	except Exception:
+		pass
+	return get_party_by_unique_iban(iban)
+
+
+def _booking_invoice_auto_match(*, doc, row, bt, rule, context):
+	from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+		auto_match_bank_transaction,
+	)
+	from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import import (
+		_set_row_payment_document,
+	)
+
+	match_result = auto_match_bank_transaction(bt.name)
+	context["invoice_match_result"] = match_result
+	if match_result.get("matched"):
+		_set_row_value(row, "payment_entry", match_result.get("payment_entry"))
+		_set_row_payment_document(row, "Payment Entry", match_result.get("payment_entry"))
+		_set_row_value(row, "auto_match_message", match_result.get("message"))
+		return {
+			"matched": True,
+			"category": "auto_matched",
+			"document_type": "Payment Entry",
+			"document": match_result.get("payment_entry"),
+			"reason": match_result.get("strategy"),
+			"message": match_result.get("message"),
+		}
+
+	_set_row_value(row, "auto_match_message", match_result.get("message"))
+	return {
+		"matched": False,
+		"reason": match_result.get("reason"),
+		"message": match_result.get("message"),
+	}
+
+
+def _booking_kreditrate_auto_match(*, doc, row, bt, rule, context):
+	if row.get("richtung") != "Ausgang":
+		return {"matched": False, "reason": "not_outgoing"}
+
+	try:
+		from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import import (
+			_set_row_payment_document,
+		)
+		from hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag import (
+			link_bank_transaction_to_kreditvertrag_rate,
+		)
+
+		kredit_result = link_bank_transaction_to_kreditvertrag_rate(
+			bank_account=bt.bank_account,
+			posting_date=bt.date,
+			amount=row.get("betrag"),
+			bank_transaction=bt.name,
+			supplier=row.get("party") if row.get("party_type") == "Supplier" else None,
+			reference_text=row.get("verwendungszweck"),
+		)
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"Bankauszug Import: Kredit-Match fehlgeschlagen fuer {bt.name}",
+		)
+		return {"matched": False, "reason": "exception"}
+
+	if kredit_result and kredit_result.get("match_count") == 1:
+		je_name = kredit_result["journal_entry"]
+		_set_row_value(row, "journal_entry", je_name)
+		_set_row_payment_document(row, "Journal Entry", je_name)
+		_set_row_value(row, "row_status", "success")
+		if kredit_result.get("created_from_statement"):
+			message = (
+				f"Kreditrate aus Kontoauszug angelegt und gebucht: "
+				f"{kredit_result['kreditvertrag']} Zeile {kredit_result['row_idx']} "
+				f"-> {je_name}"
+			)
+		else:
+			message = (
+				f"Kreditrate automatisch gebucht: "
+				f"{kredit_result['kreditvertrag']} Zeile {kredit_result['row_idx']} "
+				f"({kredit_result['gesamtbetrag']:.2f} EUR) -> {je_name}"
+			)
+		_set_row_value(row, "auto_match_message", message)
+		return {
+			"matched": True,
+			"category": "auto_kredit_matched",
+			"document_type": "Journal Entry",
+			"document": je_name,
+			"reason": "kreditrate",
+			"message": message,
+		}
+
+	if kredit_result and kredit_result.get("blocked"):
+		message = kredit_result.get("message") or "Kreditrate nicht automatisch gebucht - bitte pruefen."
+		_set_row_value(row, "row_status", "needs_review")
+		_set_row_value(row, "auto_match_message", message)
+		return {
+			"matched": True,
+			"category": "auto_match_failed",
+			"reason": kredit_result.get("reason") or "kreditrate_blocked",
+			"message": message,
+			"needs_review": True,
+		}
+
+	if kredit_result and kredit_result.get("match_count", 0) > 1:
+		message = (
+			f"{kredit_result['match_count']} moegliche Kreditraten - "
+			"bitte manuell zuordnen (Aktion 'Kreditrate zuordnen')."
+		)
+		_set_row_value(row, "row_status", "needs_review")
+		_set_row_value(row, "auto_match_message", message)
+		return {
+			"matched": True,
+			"category": "auto_match_failed",
+			"reason": "ambiguous_kreditrate",
+			"message": message,
+			"needs_review": True,
+		}
+
+	return {"matched": False, "reason": "no_kreditrate_match"}
+
+
+def _booking_abschlagsplan_auto_match(*, doc, row, bt, rule, context):
+	if (
+		row.get("richtung") != "Ausgang"
+		or row.get("party_type") != "Supplier"
+		or not row.get("party")
+	):
+		return {"matched": False, "reason": "not_supplier_outgoing"}
+
+	invoice_result = context.get("invoice_match_result") or {}
+	if invoice_result.get("reason") not in ("no_open_invoices", "no_matching_cost_center"):
+		return {"matched": False, "reason": "invoice_result_not_abschlag_candidate"}
+
+	try:
+		from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import import (
+			assign_abschlagsplan_row,
+			get_abschlagsplan_candidates_for_row,
+		)
+
+		candidate_payload = get_abschlagsplan_candidates_for_row(doc.name, row.name)
+		auto_tolerance = int(candidate_payload.get("auto_tolerance_days") or 0)
+		strict_candidates = [
+			c
+			for c in candidate_payload.get("candidates", [])
+			if c.get("delta_days") is None or c.get("delta_days") <= auto_tolerance
+		]
+		if len(strict_candidates) != 1:
+			return {
+				"matched": False,
+				"reason": "no_unique_abschlagsplan_candidate",
+				"message": context.get("last_message"),
+			}
+		abschlag_result = assign_abschlagsplan_row(
+			doc.name,
+			row.name,
+			strict_candidates[0].get("row_name"),
+			remarks=row.get("verwendungszweck") or row.get("auftraggeber") or None,
+		)
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"Bankauszug Import: Abschlagsplan-Auto-Zuordnung fehlgeschlagen fuer {bt.name}",
+		)
+		return {"matched": False, "reason": "exception"}
+
+	message = (
+		f"Abschlag automatisch zugeordnet: "
+		f"{abschlag_result.get('zahlungsplan')} Zeile {abschlag_result.get('row_idx')}"
+	)
+	_set_row_value(row, "auto_match_message", message)
+	return {
+		"matched": True,
+		"category": "auto_abschlag_matched",
+		"document_type": "Payment Entry",
+		"document": abschlag_result.get("payment_entry"),
+		"reason": "abschlagsplan",
+		"message": message,
+	}
+
+
+def _booking_needs_review_fallback(*, doc, row, bt, rule, context):
+	reason = context.get("last_reason")
+	message = context.get("last_message") or "Keine automatische Buchungsregel hat gegriffen."
+	if reason in ("no_party", "wrong_direction_for_customer", "wrong_direction_for_supplier"):
+		return {"matched": False, "reason": reason, "message": message}
+	_set_row_value(row, "auto_match_message", message)
+	return {
+		"matched": True,
+		"category": "auto_match_failed",
+		"reason": reason or "no_booking_rule_matched",
+		"message": message,
+		"needs_review": True,
+	}
+
+
+PARTY_MATCHERS = {
+	"row_party": _party_row_party,
+	"unique_iban_to_party": _party_unique_iban_to_party,
+}
+
+BOOKING_MATCHERS = {
+	"invoice_auto_match": _booking_invoice_auto_match,
+	"kreditrate_auto_match": _booking_kreditrate_auto_match,
+	"abschlagsplan_auto_match": _booking_abschlagsplan_auto_match,
+	"needs_review_fallback": _booking_needs_review_fallback,
+}
+
+
+def _load_rules(doctype: str, defaults: list[dict[str, Any]]) -> list[dict[str, Any]]:
+	if not _doctype_ready(doctype):
+		return [_default_rule_row(doctype, spec) for spec in defaults]
+
+	try:
+		if not frappe.get_all(doctype, filters={"is_system_rule": 1}, limit=1):
+			ensure_default_bankimport_rules()
+
+		rows = frappe.get_all(
+			doctype,
+			filters={"enabled": 1},
+			fields=[
+				"name",
+				"rule_key",
+				"priority",
+				"matcher_function",
+				"stop_on_match",
+				"requires_review",
+				"parameters_json",
+			],
+			order_by="priority asc, creation asc",
+			limit=0,
+		)
+		scope_by_parent = _load_scope_rows(doctype, [row.get("name") for row in rows])
+	except Exception:
+		return [_default_rule_row(doctype, spec) for spec in defaults]
+	return [_prepare_rule(row, scope_by_parent.get(row.get("name"), [])) for row in rows]
+
+
+def _prepare_rule(row, scope_rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+	rule = dict(row)
+	params = {}
+	if rule.get("parameters_json"):
+		try:
+			params = json.loads(rule.get("parameters_json") or "{}")
+		except Exception:
+			params = {}
+		if not isinstance(params, dict):
+			params = {}
+	rule["parameters"] = params
+	rule["scope_rules"] = scope_rows or []
+	return rule
+
+
+def _default_rule_row(doctype: str, spec: dict[str, Any]) -> dict[str, Any]:
+	return {
+		"doctype": doctype,
+		"name": spec["rule_key"],
+		"enabled": 1,
+		"is_system_rule": 1,
+		"stop_on_match": 1,
+		"requires_review": 0,
+		"parameters": {},
+		"scope_rules": [],
+		**spec,
+	}
+
+
+def _load_scope_rows(doctype: str, names: list[str | None]) -> dict[str, list[dict[str, Any]]]:
+	names = [name for name in names if name]
+	if not names or not _doctype_ready(RULE_SCOPE_DOCTYPE):
+		return {}
+	try:
+		rows = frappe.get_all(
+			RULE_SCOPE_DOCTYPE,
+			filters={
+				"parenttype": doctype,
+				"parent": ("in", names),
+				"enabled": 1,
+			},
+			fields=[
+				"parent",
+				"mode",
+				"scope_type",
+				"iban",
+				"party_type",
+				"party",
+				"description",
+			],
+			order_by="parent asc, idx asc",
+			limit=0,
+		)
+	except Exception:
+		return {}
+
+	by_parent: dict[str, list[dict[str, Any]]] = {}
+	for row in rows:
+		by_parent.setdefault(row.get("parent"), []).append(dict(row))
+	return by_parent
+
+
+def _rule_scope_allows(
+	rule: dict[str, Any],
+	*,
+	row=None,
+	result: dict[str, Any] | None = None,
+	bt=None,
+	enforce_allow: bool,
+) -> bool:
+	entries = _get_scope_entries(rule)
+	if not entries:
+		return True
+
+	candidate = _build_scope_candidate(row=row, result=result, bt=bt)
+	block_entries = [entry for entry in entries if entry.get("mode") == "block"]
+	if any(_scope_entry_matches(entry, candidate) for entry in block_entries):
+		return False
+
+	if not enforce_allow:
+		return True
+
+	allow_entries = [entry for entry in entries if entry.get("mode") == "allow"]
+	if allow_entries and not any(_scope_entry_matches(entry, candidate) for entry in allow_entries):
+		return False
+
+	return True
+
+
+def _get_scope_entries(rule: dict[str, Any]) -> list[dict[str, Any]]:
+	entries: list[dict[str, Any]] = []
+	for row in rule.get("scope_rules") or []:
+		entry = _scope_entry_from_child_row(row)
+		if entry:
+			entries.append(entry)
+	entries.extend(_scope_entries_from_parameters(rule.get("parameters") or {}))
+	return entries
+
+
+def _scope_entry_from_child_row(row: dict[str, Any]) -> dict[str, Any] | None:
+	scope_type = _normalize_scope_type(row.get("scope_type"))
+	if not scope_type:
+		return None
+	return {
+		"mode": _normalize_scope_mode(row.get("mode")),
+		"scope_type": scope_type,
+		"iban": normalize_iban(row.get("iban")),
+		"party_type": row.get("party_type"),
+		"party": row.get("party"),
+	}
+
+
+def _scope_entries_from_parameters(parameters: dict[str, Any]) -> list[dict[str, Any]]:
+	if not isinstance(parameters, dict):
+		return []
+	scope = parameters.get("scope") if isinstance(parameters.get("scope"), dict) else parameters
+	entries: list[dict[str, Any]] = []
+
+	for key in ("exclude_ibans", "excluded_ibans", "blocked_ibans", "block_ibans"):
+		entries.extend(_scope_iban_entries(scope.get(key), mode="block"))
+	for key in ("include_ibans", "included_ibans", "allowed_ibans", "allow_ibans"):
+		entries.extend(_scope_iban_entries(scope.get(key), mode="allow"))
+	for key in ("exclude_parties", "excluded_parties", "blocked_parties", "block_parties"):
+		entries.extend(_scope_party_entries(scope.get(key), mode="block"))
+	for key in ("include_parties", "included_parties", "allowed_parties", "allow_parties"):
+		entries.extend(_scope_party_entries(scope.get(key), mode="allow"))
+	for key in ("exclude_party_types", "excluded_party_types", "blocked_party_types", "block_party_types"):
+		entries.extend(_scope_party_type_entries(scope.get(key), mode="block"))
+	for key in ("include_party_types", "included_party_types", "allowed_party_types", "allow_party_types"):
+		entries.extend(_scope_party_type_entries(scope.get(key), mode="allow"))
+
+	return entries
+
+
+def _scope_iban_entries(values, *, mode: str) -> list[dict[str, Any]]:
+	return [
+		{"mode": mode, "scope_type": "iban", "iban": normalized}
+		for value in _as_list(values)
+		if (normalized := normalize_iban(value))
+	]
+
+
+def _scope_party_entries(values, *, mode: str) -> list[dict[str, Any]]:
+	entries: list[dict[str, Any]] = []
+	for value in _as_list(values):
+		party_type = None
+		party = None
+		if isinstance(value, dict):
+			party_type = value.get("party_type")
+			party = value.get("party")
+		elif isinstance(value, str):
+			party_type, party = _split_party_key(value)
+		if party:
+			entries.append(
+				{
+					"mode": mode,
+					"scope_type": "party",
+					"party_type": party_type,
+					"party": party,
+				}
+			)
+	return entries
+
+
+def _scope_party_type_entries(values, *, mode: str) -> list[dict[str, Any]]:
+	return [
+		{"mode": mode, "scope_type": "party_type", "party_type": str(value)}
+		for value in _as_list(values)
+		if value
+	]
+
+
+def _build_scope_candidate(*, row=None, result: dict[str, Any] | None = None, bt=None) -> dict[str, Any]:
+	return {
+		"iban": normalize_iban(_first_present(row, "iban") or _first_present(bt, "iban")),
+		"party_type": (
+			(result or {}).get("party_type")
+			or _first_present(row, "party_type")
+			or _first_present(bt, "party_type")
+		),
+		"party": (
+			(result or {}).get("party")
+			or _first_present(row, "party")
+			or _first_present(bt, "party")
+		),
+	}
+
+
+def _scope_entry_matches(entry: dict[str, Any], candidate: dict[str, Any]) -> bool:
+	scope_type = entry.get("scope_type")
+	if scope_type == "iban":
+		return bool(entry.get("iban") and candidate.get("iban") == entry.get("iban"))
+	if scope_type == "party_type":
+		return bool(entry.get("party_type") and candidate.get("party_type") == entry.get("party_type"))
+	if scope_type == "party":
+		if not entry.get("party") or candidate.get("party") != entry.get("party"):
+			return False
+		return not entry.get("party_type") or candidate.get("party_type") == entry.get("party_type")
+	return False
+
+
+def _normalize_scope_mode(value) -> str:
+	value = str(value or "").strip().lower()
+	if value in {"allow", "allowed", "include", "included", "erlauben", "einschliessen"}:
+		return "allow"
+	return "block"
+
+
+def _normalize_scope_type(value) -> str | None:
+	value = str(value or "").strip().lower().replace("_", " ")
+	if value == "iban":
+		return "iban"
+	if value == "party":
+		return "party"
+	if value in {"party type", "party-type", "partytype", "partei typ", "parteityp"}:
+		return "party_type"
+	return None
+
+
+def _as_list(values) -> list[Any]:
+	if values is None:
+		return []
+	if isinstance(values, list):
+		return values
+	return [values]
+
+
+def _split_party_key(value: str) -> tuple[str | None, str | None]:
+	value = str(value or "").strip()
+	if not value:
+		return None, None
+	for separator in ("::", ":"):
+		if separator in value:
+			party_type, party = value.split(separator, 1)
+			return party_type.strip() or None, party.strip() or None
+	return None, value
+
+
+def _first_present(obj, fieldname: str):
+	if obj is None:
+		return None
+	if hasattr(obj, "get"):
+		value = obj.get(fieldname)
+	else:
+		value = getattr(obj, fieldname, None)
+	return value or None
+
+
+def _doctype_ready(doctype: str) -> bool:
+	try:
+		return bool(frappe.db.exists("DocType", doctype)) and bool(frappe.db.table_exists(doctype))
+	except Exception:
+		return False
+
+
+def _set_row_value(row, fieldname: str, value) -> None:
+	if hasattr(row, "db_set"):
+		row.db_set(fieldname, value)
+	else:
+		setattr(row, fieldname, value)
+
+
+def _set_optional_row_value(row, fieldname: str, value) -> None:
+	try:
+		if hasattr(row, "meta") and row.meta and not row.meta.get_field(fieldname):
+			return
+		_set_row_value(row, fieldname, value)
+	except Exception:
+		pass
+
+
+def _append_booking_summary(summary: dict[str, Any], result: dict[str, Any], *, row, bt) -> None:
+	category = result.get("category")
+	if category in ("auto_matched", "auto_abschlag_matched", "auto_kredit_matched"):
+		summary[category].append(bt.name)
+		return
+	if category == "auto_match_failed":
+		summary["auto_match_failed"].append(
+			{
+				"row": row.name,
+				"bank_transaction": bt.name,
+				"reason": result.get("reason"),
+				"message": result.get("message"),
+			}
+		)

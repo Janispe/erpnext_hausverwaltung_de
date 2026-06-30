@@ -24,6 +24,8 @@
   "payment_entry",
   "journal_entry",
   "auto_match_message",
+  "party_rule",
+  "booking_rule",
   "reference",
   "row_status",
   "error"
@@ -163,6 +165,20 @@
    "fieldname": "auto_match_message",
    "fieldtype": "Small Text",
    "label": "Auto-Match-Hinweis",
+   "read_only": 1
+  },
+  {
+   "fieldname": "party_rule",
+   "fieldtype": "Link",
+   "label": "Party-Regel",
+   "options": "Bankimport Party Regel",
+   "read_only": 1
+  },
+  {
+   "fieldname": "booking_rule",
+   "fieldtype": "Link",
+   "label": "Buchungsregel",
+   "options": "Bankimport Buchungsregel",
    "read_only": 1
   },
   {

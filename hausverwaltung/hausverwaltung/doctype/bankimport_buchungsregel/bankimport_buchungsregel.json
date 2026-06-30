@@ -1,0 +1,137 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:rule_key",
+ "creation": "2026-06-29 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "is_system_rule",
+  "rule_key",
+  "priority",
+  "matcher_function",
+  "auto_apply",
+  "stop_on_match",
+  "requires_review",
+  "scope_section",
+  "scope_rules",
+  "parameters_json",
+  "description"
+ ],
+ "fields": [
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Aktiv"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_system_rule",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Systemregel",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rule_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Regel-Schluessel",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "100",
+   "fieldname": "priority",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Prioritaet",
+   "reqd": 1
+  },
+  {
+   "fieldname": "matcher_function",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Matcher-Funktion",
+   "options": "invoice_auto_match\nkreditrate_auto_match\nabschlagsplan_auto_match\nneeds_review_fallback",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "auto_apply",
+   "fieldtype": "Check",
+   "label": "Automatisch anwenden"
+  },
+  {
+   "default": "1",
+   "fieldname": "stop_on_match",
+   "fieldtype": "Check",
+   "label": "Bei Treffer stoppen"
+  },
+  {
+   "default": "0",
+   "fieldname": "requires_review",
+   "fieldtype": "Check",
+   "label": "Pruefung erforderlich"
+  },
+  {
+   "fieldname": "scope_section",
+   "fieldtype": "Section Break",
+   "label": "Geltungsbereich"
+  },
+  {
+   "fieldname": "scope_rules",
+   "fieldtype": "Table",
+   "label": "IBANs und Partys",
+   "options": "Bankimport Regel Scope"
+  },
+  {
+   "fieldname": "parameters_json",
+   "fieldtype": "Code",
+   "label": "Parameter JSON",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Beschreibung"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-06-29 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Bankimport Buchungsregel",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "Accounts User",
+   "write": 1
+  }
+ ],
+ "search_fields": "rule_key,matcher_function,description",
+ "sort_field": "priority",
+ "sort_order": "ASC",
+ "states": [],
+ "track_changes": 1
+}
