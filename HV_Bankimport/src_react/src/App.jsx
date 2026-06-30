@@ -7,6 +7,7 @@ import { PhaseStepper } from "./components/PhaseStepper.jsx";
 import { Toolbar } from "./components/Toolbar.jsx";
 import { TxTable } from "./components/TxTable.jsx";
 import { MatchPanel } from "./components/MatchPanel.jsx";
+import { RulePanel } from "./components/RulePanel.jsx";
 
 // ── Toast ───────────────────────────────────────────────────────────────────
 function Toast({ toast, onClose }) {
@@ -21,7 +22,7 @@ function Toast({ toast, onClose }) {
 }
 
 // ── Import-Picker (wenn ?import= fehlt) ───────────────────────────────────────
-function ImportPicker({ onPick, onNewImport }) {
+function ImportPicker({ onPick, onNewImport, onOpenRules }) {
 	const [items, setItems] = useState(null);
 	const [query, setQuery] = useState("");
 	const [statusFilter, setStatusFilter] = useState("open");
@@ -66,9 +67,14 @@ function ImportPicker({ onPick, onNewImport }) {
 						<h2>Bankauszug-Import wählen</h2>
 						<div className="ip-head-sub">Offene und abgeschlossene Kontoauszüge prüfen.</div>
 					</div>
-					<button className="btn primary" onClick={onNewImport}>
-						<Icon name="plus" /> Neuer Import
-					</button>
+					<div className="ip-head-actions">
+						<button className="btn subtle" onClick={onOpenRules}>
+							<Icon name="settings" /> Regeln
+						</button>
+						<button className="btn primary" onClick={onNewImport}>
+							<Icon name="plus" /> Neuer Import
+						</button>
+					</div>
 				</div>
 				{items === null ? (
 					<div className="panel-loading"><Spinner size={18} /> Importe laden…</div>
@@ -273,6 +279,7 @@ export function App() {
 	const [selectedId, setSelectedId] = useState(null);
 	const [toast, setToast] = useState(null);
 	const [newImportOpen, setNewImportOpen] = useState(false);
+	const [rulesOpen, setRulesOpen] = useState(false);
 	const reloadRef = useRef(null);
 
 	const notify = useCallback((type, msg) => {
@@ -499,11 +506,20 @@ export function App() {
 	// ── Render ──
 	if (!docname) return (
 		<>
-			<ImportPicker onPick={openImport} onNewImport={() => setNewImportOpen(true)} />
+			<ImportPicker
+				onPick={openImport}
+				onNewImport={() => setNewImportOpen(true)}
+				onOpenRules={() => setRulesOpen(true)}
+			/>
 			<NewImportDialog
 				open={newImportOpen}
 				onClose={() => setNewImportOpen(false)}
 				onCreated={openImport}
+				notify={notify}
+			/>
+			<RulePanel
+				open={rulesOpen}
+				onClose={() => setRulesOpen(false)}
 				notify={notify}
 			/>
 			<Toast toast={toast} onClose={() => setToast(null)} />
@@ -521,6 +537,7 @@ export function App() {
 				onReload={() => reload()}
 				onNewImport={() => setNewImportOpen(true)}
 				onSwitchImport={api.importName ? null : () => setDocname("")}
+				onOpenRules={() => setRulesOpen(true)}
 			/>
 			<StatRow meta={meta} rowsCount={rows.length} phases={phaseCounts} />
 			<PhaseStepper currentPhase={phase} setPhase={setPhase} phases={phaseCounts} />
@@ -572,6 +589,11 @@ export function App() {
 				open={newImportOpen}
 				onClose={() => setNewImportOpen(false)}
 				onCreated={openImport}
+				notify={notify}
+			/>
+			<RulePanel
+				open={rulesOpen}
+				onClose={() => setRulesOpen(false)}
 				notify={notify}
 			/>
 			<Toast toast={toast} onClose={() => setToast(null)} />

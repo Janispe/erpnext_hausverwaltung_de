@@ -27,6 +27,8 @@ const RPC_ACTIONS = {
 	create_import: PG + "create_import",
 	get_delete_impact: PG + "get_delete_impact",
 	delete_import: PG + "delete_import",
+	list_bankimport_rules: PG + "list_bankimport_rules",
+	set_bankimport_rule_enabled: PG + "set_bankimport_rule_enabled",
 	search_parties: PG + "search_parties",
 	search_accounts: PG + "search_accounts",
 	// Globale Aktionen
@@ -61,6 +63,8 @@ const RPC_ACTIONS = {
 // iframe wie eine RPC-Aktion aufgerufen, aber hier abgefangen.
 const NAV_ACTIONS = {
 	open_doc: (p) => p.doctype && p.docname && frappe.set_route("Form", p.doctype, p.docname),
+	open_list: (p) => p.doctype && frappe.set_route("List", p.doctype),
+	new_doc: (p) => p.doctype && frappe.new_doc(p.doctype),
 	open_import_form: (p) => frappe.set_route("Form", "Bankauszug Import", p.docname),
 	new_import: () => frappe.new_doc("Bankauszug Import"),
 };

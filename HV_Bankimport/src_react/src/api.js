@@ -13,6 +13,7 @@ import {
 	MOCK_PARTIES,
 	MOCK_ACCOUNTS,
 	MOCK_IMPORTS,
+	MOCK_BANKIMPORT_RULES,
 } from "./data.js";
 
 export const embedded = isEmbedded();
@@ -71,6 +72,18 @@ export async function getDeleteImpact(name) {
 		};
 	}
 	return await rpc("get_delete_impact", { import_name: name });
+}
+
+// ---- Regelkonfiguration ---------------------------------------------------
+
+export async function listBankimportRules() {
+	if (!embedded) return { ...MOCK_BANKIMPORT_RULES, mock: true };
+	return await rpc("list_bankimport_rules", {});
+}
+
+export async function setBankimportRuleEnabled(doctype, name, enabled) {
+	if (!embedded) return { ok: true, doctype, name, enabled: enabled ? 1 : 0, mock: true };
+	return await rpc("set_bankimport_rule_enabled", { doctype, name, enabled: enabled ? 1 : 0 });
 }
 
 // Komplett-Übersicht: { import, rows, phaseCounts }.
@@ -298,6 +311,16 @@ export async function bookKreditrateFromStatement(name, rowName) {
 export async function openDoc(doctype, docname) {
 	if (!embedded) return { ok: true, mock: true };
 	return await rpc("open_doc", { doctype, docname });
+}
+
+export async function openList(doctype) {
+	if (!embedded) return { ok: true, mock: true };
+	return await rpc("open_list", { doctype });
+}
+
+export async function newDoc(doctype) {
+	if (!embedded) return { ok: true, mock: true };
+	return await rpc("new_doc", { doctype });
 }
 
 // Den Bankauszug-Import als klassisches Formular öffnen.

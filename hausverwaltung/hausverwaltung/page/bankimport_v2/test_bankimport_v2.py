@@ -191,6 +191,97 @@ class TestListBankAccounts(unittest.TestCase):
 		self.assertEqual(result["items"][0]["label"], "Hausbank Betrieb (1800)")
 
 
+class TestBankimportRulesPanel(unittest.TestCase):
+	def test_list_bankimport_rules_groups_rule_types_and_scope_rows(self):
+		def fake_get_all(doctype, **kwargs):
+			if doctype == "Bankimport Party Regel":
+				return [
+					frappe._dict(
+						name="system.unique_iban_to_party",
+						rule_key="system.unique_iban_to_party",
+						enabled=1,
+						is_system_rule=1,
+						priority=10,
+						matcher_function="unique_iban_to_party",
+						stop_on_match=1,
+						requires_review=0,
+						parameters_json="",
+						description="IBAN",
+						modified="2026-06-30 10:00:00",
+					)
+				]
+			if doctype == "Bankimport Buchungsregel":
+				return [
+					frappe._dict(
+						name="system.invoice_auto_match",
+						rule_key="system.invoice_auto_match",
+						enabled=0,
+						is_system_rule=1,
+						priority=100,
+						matcher_function="invoice_auto_match",
+						auto_apply=1,
+						stop_on_match=1,
+						requires_review=0,
+						parameters_json="",
+						description="Invoice",
+						modified="2026-06-30 11:00:00",
+					)
+				]
+			if doctype == "Bankimport Regel Scope":
+				parenttype = kwargs["filters"]["parenttype"]
+				if parenttype == "Bankimport Party Regel":
+					return [
+						frappe._dict(
+							parent="system.unique_iban_to_party",
+							mode="Sperren",
+							scope_type="IBAN",
+							iban="de12 3456",
+							party_type=None,
+							party=None,
+							description="",
+						)
+					]
+				return []
+			raise AssertionError(f"unexpected doctype {doctype}")
+
+		with patch.object(bv2, "ensure_default_bankimport_rules") as ensure_defaults, \
+			 patch("frappe.has_permission") as has_permission, \
+			 patch("frappe.get_all", side_effect=fake_get_all):
+			result = bv2.list_bankimport_rules()
+
+		ensure_defaults.assert_called_once()
+		self.assertEqual(has_permission.call_count, 2)
+		self.assertEqual(result["groups"]["party"]["counts"]["enabled"], 1)
+		self.assertEqual(result["groups"]["booking"]["counts"]["disabled"], 1)
+		self.assertEqual(
+			result["groups"]["party"]["items"][0]["scope"][0]["iban"],
+			"DE123456",
+		)
+		self.assertEqual(
+			result["groups"]["booking"]["items"][0]["matcherFunction"],
+			"invoice_auto_match",
+		)
+
+	def test_set_bankimport_rule_enabled_validates_doctype_and_sets_value(self):
+		with patch("frappe.has_permission") as has_permission, \
+			 patch("frappe.db.exists", return_value=True), \
+			 patch("frappe.db.set_value") as set_value:
+			result = bv2.set_bankimport_rule_enabled(
+				"Bankimport Party Regel",
+				"system.unique_iban_to_party",
+				0,
+			)
+
+		has_permission.assert_called_once_with("Bankimport Party Regel", "write", throw=True)
+		set_value.assert_called_once_with(
+			"Bankimport Party Regel",
+			"system.unique_iban_to_party",
+			"enabled",
+			0,
+		)
+		self.assertEqual(result["enabled"], 0)
+
+
 class TestDeleteImport(unittest.TestCase):
 	def test_delete_import_uses_normal_permissions(self):
 		doc = frappe._dict(name="BAI-1", title="Import", rows=[])

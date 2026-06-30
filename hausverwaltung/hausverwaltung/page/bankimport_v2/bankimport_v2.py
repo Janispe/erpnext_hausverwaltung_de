@@ -36,6 +36,13 @@ from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import i
 	sync_cancelled_journal_entry_links,
 	sync_cancelled_payment_entry_links,
 )
+from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
+	BOOKING_RULE_DOCTYPE,
+	PARTY_RULE_DOCTYPE,
+	RULE_SCOPE_DOCTYPE,
+	ensure_default_bankimport_rules,
+	normalize_iban,
+)
 
 
 def get_context(context):
@@ -368,6 +375,144 @@ def list_bank_accounts(txt: str = "") -> dict[str, Any]:
 		)
 
 	return {"items": items}
+
+
+RULE_CONFIG = {
+	PARTY_RULE_DOCTYPE: {
+		"group": "party",
+		"label": "Party Matching",
+		"fields": [
+			"name",
+			"rule_key",
+			"enabled",
+			"is_system_rule",
+			"priority",
+			"matcher_function",
+			"stop_on_match",
+			"requires_review",
+			"parameters_json",
+			"description",
+			"modified",
+		],
+	},
+	BOOKING_RULE_DOCTYPE: {
+		"group": "booking",
+		"label": "Buchungs-Matching",
+		"fields": [
+			"name",
+			"rule_key",
+			"enabled",
+			"is_system_rule",
+			"priority",
+			"matcher_function",
+			"auto_apply",
+			"stop_on_match",
+			"requires_review",
+			"parameters_json",
+			"description",
+			"modified",
+		],
+	},
+}
+
+
+@frappe.whitelist()
+def list_bankimport_rules() -> dict[str, Any]:
+	"""Rule-Übersicht für die Bankimport-UI."""
+	ensure_default_bankimport_rules()
+	groups = {}
+	for doctype, config in RULE_CONFIG.items():
+		frappe.has_permission(doctype, "read", throw=True)
+		rows = frappe.get_all(
+			doctype,
+			fields=config["fields"],
+			order_by="priority asc, creation asc",
+			limit=0,
+		)
+		scope_by_parent = _rule_scope_by_parent(doctype, [row.name for row in rows])
+		items = [
+			_format_rule_row(doctype, row, scope_by_parent.get(row.name, []))
+			for row in rows
+		]
+		groups[config["group"]] = {
+			"doctype": doctype,
+			"label": config["label"],
+			"items": items,
+			"counts": {
+				"total": len(items),
+				"enabled": sum(1 for item in items if item["enabled"]),
+				"disabled": sum(1 for item in items if not item["enabled"]),
+				"system": sum(1 for item in items if item["isSystemRule"]),
+			},
+		}
+	return {"groups": groups}
+
+
+@frappe.whitelist()
+def set_bankimport_rule_enabled(doctype: str, name: str, enabled: int) -> dict[str, Any]:
+	"""Aktiv/Inaktiv-Schalter aus dem Regelpanel."""
+	if doctype not in RULE_CONFIG:
+		frappe.throw(_("Unbekannter Regeltyp."))
+	if not name:
+		frappe.throw(_("Bitte eine Regel auswählen."))
+	frappe.has_permission(doctype, "write", throw=True)
+	if not frappe.db.exists(doctype, name):
+		frappe.throw(_("Regel {0} wurde nicht gefunden.").format(name))
+	value = 1 if bool(int(enabled or 0)) else 0
+	frappe.db.set_value(doctype, name, "enabled", value)
+	return {"ok": True, "doctype": doctype, "name": name, "enabled": value}
+
+
+def _rule_scope_by_parent(doctype: str, names: list[str]) -> dict[str, list[dict[str, Any]]]:
+	if not names:
+		return {}
+	rows = frappe.get_all(
+		RULE_SCOPE_DOCTYPE,
+		filters={
+			"parenttype": doctype,
+			"parent": ["in", names],
+			"enabled": 1,
+		},
+		fields=["parent", "mode", "scope_type", "iban", "party_type", "party", "description"],
+		order_by="parent asc, idx asc",
+		limit=0,
+	)
+	out: dict[str, list[dict[str, Any]]] = {}
+	for row in rows:
+		out.setdefault(row.parent, []).append(_format_rule_scope(row))
+	return out
+
+
+def _format_rule_row(doctype: str, row, scope_rows: list[dict[str, Any]]) -> dict[str, Any]:
+	modified = row.get("modified")
+	return {
+		"doctype": doctype,
+		"name": row.name,
+		"ruleKey": row.get("rule_key"),
+		"enabled": bool(row.get("enabled")),
+		"isSystemRule": bool(row.get("is_system_rule")),
+		"priority": row.get("priority"),
+		"matcherFunction": row.get("matcher_function"),
+		"autoApply": bool(row.get("auto_apply")) if doctype == BOOKING_RULE_DOCTYPE else None,
+		"stopOnMatch": bool(row.get("stop_on_match")),
+		"requiresReview": bool(row.get("requires_review")),
+		"parametersJson": row.get("parameters_json") or "",
+		"description": row.get("description") or "",
+		"scope": scope_rows,
+		"scopeCount": len(scope_rows),
+		"modified": str(modified) if modified else None,
+	}
+
+
+def _format_rule_scope(row) -> dict[str, Any]:
+	return {
+		"mode": row.get("mode"),
+		"scopeType": row.get("scope_type"),
+		"iban": normalize_iban(row.get("iban")),
+		"partyType": row.get("party_type"),
+		"party": row.get("party"),
+		"description": row.get("description") or "",
+	}
 
 
 @frappe.whitelist()

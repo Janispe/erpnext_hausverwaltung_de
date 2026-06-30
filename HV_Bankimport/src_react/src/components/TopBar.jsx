@@ -1,7 +1,7 @@
 import React from "react";
 import { Icon, Spinner } from "../helpers.jsx";
 
-export function TopBar({ meta, onReload, onNewImport, onSwitchImport, busy }) {
+export function TopBar({ meta, onReload, onNewImport, onSwitchImport, onOpenRules, busy }) {
 	return (
 		<div className="topbar">
 			<div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -16,6 +16,9 @@ export function TopBar({ meta, onReload, onNewImport, onSwitchImport, busy }) {
 				</div>
 			</div>
 			<div className="actions">
+				<button className="btn subtle" onClick={onOpenRules}>
+					<Icon name="settings" /> Regeln
+				</button>
 				{onSwitchImport && (
 					<button className="btn subtle" onClick={onSwitchImport}>
 						<Icon name="file" /> Import wechseln

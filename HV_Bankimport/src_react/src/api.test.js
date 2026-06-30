@@ -4,10 +4,12 @@ import {
 	getDeleteImpact,
 	isMissingRowError,
 	listBankAccounts,
+	listBankimportRules,
 	listImports,
 	loadOverview,
 	searchAccounts,
 	searchParties,
+	setBankimportRuleEnabled,
 } from "./api.js";
 
 describe("Bankimport standalone API fallback", () => {
@@ -44,6 +46,27 @@ describe("Bankimport standalone API fallback", () => {
 		expect(impact.mock).toBe(true);
 		expect(impact.rows).toBe(overview.rows.length);
 		expect(impact.requiresCascade).toBe(false);
+	});
+
+	it("liefert Regelgruppen und Toggle-Fallback fuer die Regel-UI", async () => {
+		const rules = await listBankimportRules();
+
+		expect(rules.mock).toBe(true);
+		expect(rules.groups.party.items[0].matcherFunction).toBe("unique_iban_to_party");
+		expect(rules.groups.booking.items[0].doctype).toBe("Bankimport Buchungsregel");
+
+		const toggled = await setBankimportRuleEnabled(
+			"Bankimport Party Regel",
+			"system.unique_iban_to_party",
+			false
+		);
+		expect(toggled).toMatchObject({
+			ok: true,
+			doctype: "Bankimport Party Regel",
+			name: "system.unique_iban_to_party",
+			enabled: 0,
+			mock: true,
+		});
 	});
 });
 
