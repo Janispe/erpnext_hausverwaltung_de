@@ -24,6 +24,16 @@ def download_pdf(
 	doc = doc or frappe.get_doc(doctype, name)
 	validate_print_permission(doc)
 
+	if (doctype or "").strip() == "Betriebskostenabrechnung Immobilie" and name:
+		from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_immobilie.betriebskostenabrechnung_immobilie import (
+			get_mieter_abrechnungen_print_pdf,
+		)
+
+		frappe.local.response.filename = f"{hv_scrub(name or '')}.pdf"
+		frappe.local.response.filecontent = get_mieter_abrechnungen_print_pdf(name, print_format=format)
+		frappe.local.response.type = "pdf"
+		return
+
 	serienbrief_pdf = render_serienbrief_pdf_for_print_format(
 		format,
 		doc=doc,

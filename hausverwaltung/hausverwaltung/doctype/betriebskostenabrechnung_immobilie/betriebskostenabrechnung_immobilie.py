@@ -1,5 +1,6 @@
 import hashlib
 import json
+from io import BytesIO
 from typing import Dict, List, Optional, Set
 
 import frappe
@@ -94,10 +95,8 @@ def _calculate_zaehler_summen(immobilie: str | None, von, bis) -> Dict[str, floa
 class BetriebskostenabrechnungImmobilie(Document):
 	@property
 	def mieter_abrechnungen(self) -> List[Dict[str, object]]:
-		"""Virtuelle Tabellenzeilen für die Formular-Übersicht."""
-		if not self.name:
-			return []
-		return get_mieter_abrechnungen(self.name)
+		"""Virtuelles Desk-Feld; die echten Zeilen lädt das Formular per API."""
+		return []
 
 	def _cleanup_mieter_abrechnungen(self, *, allow_delete: bool = True) -> None:
 		"""Storniert/loescht verknuepfte Mieter-Abrechnungen."""
@@ -551,6 +550,152 @@ window.addEventListener("load", () => {
 	{script}
 </body>
 </html>"""
+
+
+def _get_mieter_abrechnung_names_for_head(name: str) -> List[str]:
+	if not name:
+		frappe.throw(_("Parameter 'name' fehlt."))
+
+	head = frappe.get_doc("Betriebskostenabrechnung Immobilie", name)
+	if not frappe.has_permission(head.doctype, "print", head) and not frappe.has_permission(
+		head.doctype, "read", head
+	):
+		raise frappe.PermissionError
+
+	children = frappe.get_all(
+		"Betriebskostenabrechnung Mieter",
+		filters={"immobilien_abrechnung": name},
+		fields=["name"],
+		order_by="wohnung asc",
+	)
+	return [row.get("name") for row in children or [] if row.get("name")]
+
+
+def _get_child_print_format_for_sammeldruck(print_format: Optional[str]) -> Optional[str]:
+	print_format_name = (print_format or "").strip()
+	if not print_format_name or print_format_name.lower() == "standard":
+		return None
+
+	if frappe.db.exists("Print Format", print_format_name):
+		pf_doc = frappe.get_cached_doc("Print Format", print_format_name)
+		if (pf_doc.get("doc_type") or "").strip() != "Betriebskostenabrechnung Mieter":
+			return None
+
+	return _validate_bk_mieter_print_format(print_format_name)
+
+
+def get_mieter_abrechnungen_print_html_and_style(
+	name: str,
+	print_format: Optional[str] = None,
+	no_letterhead: int | str = 0,
+	letterhead: Optional[str] = None,
+) -> Dict[str, str]:
+	"""Rendert alle Mieterabrechnungen eines Kopfes als Sammeldruck."""
+	child_names = _get_mieter_abrechnung_names_for_head(name)
+	if not child_names:
+		return {
+			"html": "<p>{0}</p>".format(frappe.utils.escape_html(_("Keine Mieterabrechnungen vorhanden."))),
+			"style": "",
+		}
+
+	child_print_format = _get_child_print_format_for_sammeldruck(print_format)
+	effective_serienbrief_vorlage = _get_serienbrief_vorlage_from_print_format(child_print_format)
+
+	if effective_serienbrief_vorlage:
+		from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+			SerienbriefDurchlauf,
+		)
+
+		serienbrief_doc: SerienbriefDurchlauf = frappe.get_doc(
+			{
+				"doctype": "Serienbrief Durchlauf",
+				"title": _("Betriebskostenabrechnungen"),
+				"vorlage": effective_serienbrief_vorlage,
+				"iteration_doctype": "Betriebskostenabrechnung Mieter",
+				"iteration_objekte": [
+					{
+						"doctype": "Serienbrief Iterationsobjekt",
+						"iteration_doctype": "Betriebskostenabrechnung Mieter",
+						"objekt": child_name,
+					}
+					for child_name in child_names
+				],
+			}
+		)
+		serienbrief_doc.flags.ignore_mandatory = True
+		serienbrief_doc.flags.ignore_permissions = True
+		return {"html": serienbrief_doc._render_full_html(), "style": ""}
+
+	from frappe.www import printview as core_printview
+
+	combined_docs: List[str] = []
+	style = ""
+	for child_name in child_names:
+		res = core_printview.get_html_and_style(
+			doc="Betriebskostenabrechnung Mieter",
+			name=child_name,
+			print_format=child_print_format,
+			no_letterhead=bool(cint(no_letterhead)),
+			letterhead=letterhead,
+			trigger_print=False,
+			style=None,
+			settings=json.dumps({}),
+		)
+		html = (res or {}).get("html") or ""
+		if not html:
+			continue
+		if not style:
+			style = (res or {}).get("style") or ""
+		combined_docs.append(html)
+
+	parts: List[str] = []
+	for idx, html in enumerate(combined_docs):
+		parts.append(html)
+		if idx < len(combined_docs) - 1:
+			parts.append('<div class="hv-print-break"></div>')
+
+	if not parts:
+		parts.append("<p>{0}</p>".format(frappe.utils.escape_html(_("Keine Druckinhalte vorhanden."))))
+
+	style = "\n".join(
+		filter(
+			None,
+			[
+				style,
+				".hv-print-break { break-after: page; page-break-after: always; height: 0; }",
+			],
+		)
+	)
+	return {"html": "\n".join(parts), "style": style}
+
+
+def get_mieter_abrechnungen_print_pdf(name: str, print_format: Optional[str] = None) -> bytes:
+	"""Rendert alle Mieterabrechnungen eines Kopfes als zusammengeführtes PDF."""
+	child_names = _get_mieter_abrechnung_names_for_head(name)
+	if not child_names:
+		frappe.throw(_("Keine Mieterabrechnungen vorhanden."))
+
+	child_print_format = _get_child_print_format_for_sammeldruck(print_format)
+
+	try:
+		from PyPDF2 import PdfMerger
+	except ImportError:
+		from pypdf import PdfMerger
+
+	merger = PdfMerger()
+	try:
+		for child_name in child_names:
+			pdf = _render_abrechnung_pdf(child_name, print_format=child_print_format)
+			if pdf:
+				merger.append(BytesIO(pdf))
+		out = BytesIO()
+		merger.write(out)
+		return out.getvalue()
+	finally:
+		try:
+			merger.close()
+		except Exception:
+			pass
 
 
 @frappe.whitelist()

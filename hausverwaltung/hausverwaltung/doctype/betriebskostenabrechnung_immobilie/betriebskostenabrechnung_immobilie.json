@@ -73,6 +73,7 @@
    "is_virtual": 1,
    "label": "Mieterabrechnungen",
    "options": "Betriebskostenabrechnung Immobilie Mieter",
+   "print_hide": 1,
    "read_only": 1
   },
   {

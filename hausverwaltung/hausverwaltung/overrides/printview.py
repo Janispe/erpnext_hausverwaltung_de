@@ -38,6 +38,18 @@ def get_html_and_style(
 			docname = docname or doc_dict.get("name")
 			doc_doctype = doc_doctype or doc_dict.get("doctype")
 
+	if (doc_doctype or doc or "").strip() == "Betriebskostenabrechnung Immobilie" and docname:
+		from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_immobilie.betriebskostenabrechnung_immobilie import (
+			get_mieter_abrechnungen_print_html_and_style,
+		)
+
+		return get_mieter_abrechnungen_print_html_and_style(
+			docname,
+			print_format=print_format,
+			no_letterhead=no_letterhead,
+			letterhead=letterhead,
+		)
+
 	serienbrief_html = render_serienbrief_for_print_format(
 		print_format, doc=doc_dict or doc, docname=docname, doctype=doc_doctype
 	)
@@ -82,6 +94,16 @@ def download_pdf(
 		if isinstance(doc_dict, dict):
 			docname = docname or doc_dict.get("name")
 			doc_doctype = doc_doctype or doc_dict.get("doctype")
+
+	if (doc_doctype or doctype or doc or "").strip() == "Betriebskostenabrechnung Immobilie" and docname:
+		from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_immobilie.betriebskostenabrechnung_immobilie import (
+			get_mieter_abrechnungen_print_pdf,
+		)
+
+		frappe.local.response.filename = f"{hv_scrub(docname or '')}.pdf"
+		frappe.local.response.filecontent = get_mieter_abrechnungen_print_pdf(docname, print_format=format)
+		frappe.local.response.type = "pdf"
+		return
 
 	serienbrief_pdf = render_serienbrief_pdf_for_print_format(
 		format, doc=doc_dict or doc, docname=docname, doctype=doc_doctype
