@@ -3232,6 +3232,50 @@ def create_standalone_payment_for_row(
 
 
 @frappe.whitelist()
+def create_internal_transfer_for_row(
+    docname: str,
+    row_name: str,
+    other_bank_account: str,
+    remarks: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Bucht eine party-lose Bankzeile als Payment Entry / Internal Transfer."""
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+        create_internal_transfer_payment_entry,
+        reconcile_created_voucher_or_rollback,
+    )
+
+    _doc, row, bt = _row_with_unreconciled_bt(
+        docname,
+        row_name,
+        create_missing_bank_transaction=True,
+        allow_missing_party=1,
+    )
+
+    pe = create_internal_transfer_payment_entry(
+        bt=bt,
+        other_bank_account=other_bank_account,
+        remarks=remarks or row.get("verwendungszweck") or row.get("auftraggeber") or None,
+    )
+    target_amount = flt(row.betrag)
+    reconcile_created_voucher_or_rollback(bt, "Payment Entry", pe.name, target_amount)
+
+    row.db_set("payment_entry", pe.name)
+    _set_row_payment_document(row, "Payment Entry", pe.name)
+    row.db_set("row_status", "success")
+    row.db_set(
+        "auto_match_message",
+        f"Interne Umbuchung: {target_amount:.2f} € mit {other_bank_account}",
+    )
+    _recompute_doc_status(docname)
+    _refresh_and_persist_saldo(docname)
+    return {
+        "ok": True,
+        "payment_entry": pe.name,
+        "other_bank_account": other_bank_account,
+    }
+
+
+@frappe.whitelist()
 def create_journal_entry_for_row(
     docname: str,
     row_name: str,

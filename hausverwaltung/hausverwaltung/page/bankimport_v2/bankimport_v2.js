@@ -56,6 +56,7 @@ const RPC_ACTIONS = {
 	split_options: DT + "get_payment_split_options_for_row",
 	reconcile_split: DT + "reconcile_split_row",
 	standalone_payment: DT + "create_standalone_payment_for_row",
+	internal_transfer: DT + "create_internal_transfer_for_row",
 	journal_entry: DT + "create_journal_entry_for_row",
 	expected_cost_center: DT + "get_expected_cost_center_for_row",
 	abschlag_candidates: DT + "get_abschlagsplan_candidates_for_row",

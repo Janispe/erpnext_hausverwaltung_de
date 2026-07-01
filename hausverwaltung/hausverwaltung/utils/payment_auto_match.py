@@ -802,6 +802,77 @@ def create_standalone_payment_entry(*, bt, party_type=None, party=None, remarks=
 	return pe
 
 
+def create_internal_transfer_payment_entry(*, bt, other_bank_account: str, remarks=None):
+	"""Payment Entry / Internal Transfer between the BT bank account and another bank account.
+
+	The Bank Transaction side determines direction:
+	- withdrawal: current bank account -> other bank account
+	- deposit: other bank account -> current bank account
+	"""
+	other_bank_account = (other_bank_account or "").strip()
+	if not other_bank_account:
+		frappe.throw("Bitte Ziel-/Gegen-Bankkonto auswählen.")
+
+	deposit = flt(bt.deposit)
+	withdrawal = flt(bt.withdrawal)
+	if deposit > 0 and withdrawal == 0:
+		direction = "in"
+		target_amount = deposit
+	elif withdrawal > 0 and deposit == 0:
+		direction = "out"
+		target_amount = withdrawal
+	else:
+		frappe.throw(
+			"Bank Transaction hat keinen eindeutigen Betrag (deposit + withdrawal nicht klar)."
+		)
+	if target_amount <= 0:
+		frappe.throw("Bank Transaction hat keinen Betrag.")
+
+	company, bank_account_doc = _resolve_company_and_bank_account(bt)
+	if other_bank_account == bt.bank_account:
+		frappe.throw("Das Gegen-Bankkonto muss ein anderes Bankkonto sein.")
+	if not frappe.db.exists("Bank Account", other_bank_account):
+		frappe.throw(f"Bankkonto '{other_bank_account}' existiert nicht.")
+
+	other_bank_account_doc = frappe.get_cached_doc("Bank Account", other_bank_account)
+	if getattr(other_bank_account_doc, "disabled", 0):
+		frappe.throw(f"Bankkonto '{other_bank_account}' ist deaktiviert.")
+	if getattr(other_bank_account_doc, "company", None) and other_bank_account_doc.company != company:
+		frappe.throw("Das Gegen-Bankkonto gehört zu einer anderen Company.")
+	if not getattr(other_bank_account_doc, "account", None):
+		frappe.throw(f"Bank Account {other_bank_account} hat kein GL-Konto hinterlegt.")
+	if other_bank_account_doc.account == bank_account_doc.account:
+		frappe.throw("Das Gegen-Bankkonto verwendet dasselbe GL-Konto.")
+
+	if direction == "out":
+		paid_from = bank_account_doc.account
+		paid_to = other_bank_account_doc.account
+	else:
+		paid_from = other_bank_account_doc.account
+		paid_to = bank_account_doc.account
+
+	pe = frappe.new_doc("Payment Entry")
+	pe.update(
+		{
+			"payment_type": "Internal Transfer",
+			"company": company,
+			"posting_date": bt.date,
+			"bank_account": bt.bank_account,
+			"paid_from": paid_from,
+			"paid_to": paid_to,
+			"paid_amount": target_amount,
+			"received_amount": target_amount,
+			"reference_no": bt.reference_number or bt.name,
+			"reference_date": bt.date,
+			"remarks": remarks or bt.description or None,
+			"custom_remarks": 1,
+		}
+	)
+	pe.insert(ignore_permissions=True)
+	pe.submit()
+	return pe
+
+
 def create_journal_entry_for_bt(*, bt, account=None, cost_center=None, splits=None, remarks=None):
 	"""Buchungssatz: Bank-Konto vs. ein oder mehrere Gegenkonten.
 

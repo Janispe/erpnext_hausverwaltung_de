@@ -300,6 +300,16 @@ export async function createStandalonePayment(name, rowName, remarks) {
 	});
 }
 
+export async function createInternalTransfer(name, rowName, otherBankAccount, remarks) {
+	if (!embedded) return { ok: true, payment_entry: "PE-DEMO-TRANSFER", mock: true };
+	return await rpc("internal_transfer", {
+		docname: name,
+		row_name: rowName,
+		other_bank_account: otherBankAccount,
+		remarks: remarks || "",
+	});
+}
+
 export async function getExpectedCostCenter(name, rowName) {
 	if (!embedded) return { cost_center: null, mock: true };
 	return await rpc("expected_cost_center", { docname: name, row_name: rowName });

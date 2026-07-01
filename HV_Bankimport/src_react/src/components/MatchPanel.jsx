@@ -296,6 +296,10 @@ function PartyAssign({ docname, row, onActionDone, notify }) {
 					<button className="btn sm" style={{ marginBottom: 14 }} onClick={createWithoutParty} disabled={busy}>
 						{busy ? <Spinner /> : <Icon name="bolt" />} Bank-Transaktion ohne Partei anlegen
 					</button>
+					<InternalTransferPayment docname={docname} row={row} onActionDone={onActionDone} notify={notify} />
+					<div className="hint" style={{ marginTop: 14, marginBottom: 10 }}>
+						Alternativ direkt auf ein Sachkonto buchen:
+					</div>
 					<JournalEntryForm docname={docname} row={row} onActionDone={onActionDone} notify={notify} />
 				</>
 			) : (
@@ -1026,6 +1030,50 @@ function StandalonePayment({ docname, row, onActionDone, notify }) {
 	);
 }
 
+// ───────────────────────── Phase 3: Interne Umbuchung ──────────────────────
+
+function InternalTransferPayment({ docname, row, onActionDone, notify }) {
+	const [bankAccount, setBankAccount] = useState(null);
+	const [remarks, setRemarks] = useState(row.verwendungszweck || "");
+	const [busy, run] = useAction(notify);
+	const isOut = Number(row.betrag) < 0;
+
+	useEffect(() => {
+		setBankAccount(null);
+		setRemarks(row.verwendungszweck || "");
+	}, [row.id, row.verwendungszweck]);
+
+	const book = () => {
+		if (!bankAccount) return notify("error", "Bitte das Gegen-Bankkonto wählen.");
+		run(() => api.createInternalTransfer(docname, row.id, bankAccount.value, remarks), {
+			success: "Interne Umbuchung gebucht und abgeglichen.",
+		}).then((r) => r && r.ok !== false && onActionDone());
+	};
+
+	return (
+		<div>
+			<div className="hint" style={{ marginBottom: 10 }}>
+				Bucht {fmtEUR(Math.abs(row.betrag))} als internen Transfer
+				{isOut ? " auf das gewählte Ziel-Bankkonto." : " vom gewählten Quell-Bankkonto."}
+			</div>
+			<div className="field-label">{isOut ? "Ziel-Bankkonto" : "Quell-Bankkonto"}</div>
+			{bankAccount ? (
+				<div className="picked">
+					<span>{bankAccount.label || bankAccount.value}</span>
+					<button className="btn sm subtle" onClick={() => setBankAccount(null)}><Icon name="x" /></button>
+				</div>
+			) : (
+				<LinkSearch placeholder="Bankkonto suchen…" fetcher={api.listBankAccounts} onPick={setBankAccount} />
+			)}
+			<div className="field-label" style={{ marginTop: 10 }}>Bemerkung</div>
+			<input className="text-input" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+			<button className="btn primary" style={{ width: "100%", justifyContent: "center", marginTop: 10 }} onClick={book} disabled={busy}>
+				{busy ? <Spinner /> : <Icon name="check" />} Umbuchung buchen
+			</button>
+		</div>
+	);
+}
+
 // ───────────────────────── Phase 3: Abschlagsplan ───────────────────────────
 
 function AbschlagMatch({ docname, row, onActionDone, notify }) {
@@ -1182,6 +1230,7 @@ function BookingActions({ docname, row, onActionDone, notify }) {
 		if (isOut && row.partyTyp === "Supplier") m.push({ id: "abschlag", lbl: "Abschlag" });
 		if (isOut) m.push({ id: "kredit", lbl: "Kreditrate" });
 		if (hasParty) m.push({ id: "payment", lbl: "Vorauszahlung" });
+		if (!hasParty) m.push({ id: "transfer", lbl: "Umbuchung" });
 		m.push({ id: "journal", lbl: "Buchungssatz" });
 		return m;
 	}, [isOut, hasParty, row.partyTyp]);
@@ -1238,6 +1287,7 @@ function BookingActions({ docname, row, onActionDone, notify }) {
 			{mode === "abschlag" && <AbschlagMatch docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 			{mode === "kredit" && <KreditMatch docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 			{mode === "payment" && <StandalonePayment docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
+			{mode === "transfer" && <InternalTransferPayment docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 			{mode === "journal" && <JournalEntryForm docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 		</div>
 	);

@@ -1992,6 +1992,102 @@ class TestBankauszugImport(unittest.TestCase):
         recompute.assert_not_called()
         refresh.assert_not_called()
 
+    def test_create_internal_transfer_for_row_sets_payment_entry_and_success_status(self):
+        row = self._FakeRow(name="ROW-TRANSFER", iban="")
+        row.bank_transaction = "BT-TRANSFER"
+        row.betrag = 250.0
+        row.payment_entry = None
+        row.journal_entry = None
+        row.db_updates = {}
+
+        def _db_set(fieldname, value):
+            row.db_updates[fieldname] = value
+            setattr(row, fieldname, value)
+
+        row.db_set = _db_set
+        bt = type("BT", (), {"name": "BT-TRANSFER"})()
+        pe = type("PE", (), {"name": "PE-TRANSFER"})()
+
+        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(object(), row, bt)) as row_helper, \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.create_internal_transfer_payment_entry",
+                 return_value=pe,
+             ) as create_pe, \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_created_voucher_or_rollback",
+                 return_value=None,
+             ) as reconcile, \
+             patch.object(bi, "_recompute_doc_status") as recompute, \
+             patch.object(bi, "_refresh_and_persist_saldo") as refresh:
+            res = bi.create_internal_transfer_for_row(
+                "IMP-TRANSFER",
+                "ROW-TRANSFER",
+                "Kautionskonto - HP",
+                "Kaution umbuchen",
+            )
+
+        self.assertEqual(res["payment_entry"], "PE-TRANSFER")
+        self.assertEqual(row.payment_entry, "PE-TRANSFER")
+        self.assertEqual(row.payment_document_type, "Payment Entry")
+        self.assertEqual(row.payment_document, "PE-TRANSFER")
+        self.assertEqual(row.row_status, "success")
+        self.assertIn("Interne Umbuchung", row.auto_match_message)
+        row_helper.assert_called_once_with(
+            "IMP-TRANSFER",
+            "ROW-TRANSFER",
+            create_missing_bank_transaction=True,
+            allow_missing_party=1,
+        )
+        create_pe.assert_called_once_with(
+            bt=bt,
+            other_bank_account="Kautionskonto - HP",
+            remarks="Kaution umbuchen",
+        )
+        reconcile.assert_called_once_with(bt, "Payment Entry", "PE-TRANSFER", 250.0)
+        recompute.assert_called_once_with("IMP-TRANSFER")
+        refresh.assert_called_once_with("IMP-TRANSFER")
+
+    def test_create_internal_transfer_for_row_reconcile_failure_leaves_row_unset(self):
+        row = self._FakeRow(name="ROW-TRANSFER-FAIL", iban="")
+        row.bank_transaction = "BT-TRANSFER-FAIL"
+        row.betrag = 250.0
+        row.payment_entry = None
+        row.journal_entry = None
+        row.row_status = None
+        row.db_updates = {}
+
+        def _db_set(fieldname, value):
+            row.db_updates[fieldname] = value
+            setattr(row, fieldname, value)
+
+        row.db_set = _db_set
+        bt = type("BT", (), {"name": "BT-TRANSFER-FAIL"})()
+        pe = type("PE", (), {"name": "PE-TRANSFER-FAIL"})()
+
+        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(object(), row, bt)), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.create_internal_transfer_payment_entry",
+                 return_value=pe,
+             ), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_created_voucher_or_rollback",
+                 side_effect=RuntimeError("simulated"),
+             ), \
+             patch.object(bi, "_recompute_doc_status") as recompute, \
+             patch.object(bi, "_refresh_and_persist_saldo") as refresh:
+            with self.assertRaises(RuntimeError):
+                bi.create_internal_transfer_for_row(
+                    "IMP-TRANSFER-FAIL",
+                    "ROW-TRANSFER-FAIL",
+                    "Kautionskonto - HP",
+                )
+
+        self.assertIsNone(row.payment_entry)
+        self.assertIsNone(getattr(row, "payment_document", None))
+        self.assertIsNone(row.row_status)
+        recompute.assert_not_called()
+        refresh.assert_not_called()
+
     def test_create_journal_entry_for_row_sets_journal_entry_and_success_status(self):
         row = self._FakeRow(name="ROW-JE", iban="DE16")
         row.bank_transaction = "BT-JE"
