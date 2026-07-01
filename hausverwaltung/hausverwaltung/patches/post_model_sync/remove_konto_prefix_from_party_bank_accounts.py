@@ -1,7 +1,7 @@
 """Remove the redundant ``Konto `` prefix from party Bank Account names.
 
-Only non-company Bank Accounts are touched, and only when ``account_name``
-matches the linked party exactly as ``Konto {party}`` or ``Konto {party} (...)``.
+Only non-company Bank Accounts are touched, and only when ``account_name`` starts
+with the redundant ``Konto `` prefix.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ def execute() -> None:
 	)
 
 	for row in rows:
-		new_account_name = _without_konto_prefix(row.get("account_name"), row.get("party"))
+		new_account_name = _without_konto_prefix(row.get("account_name"))
 		if not new_account_name:
 			continue
 
@@ -43,18 +43,13 @@ def execute() -> None:
 		_set_account_name(target_name, new_account_name)
 
 
-def _without_konto_prefix(account_name: str | None, party: str | None) -> str | None:
+def _without_konto_prefix(account_name: str | None) -> str | None:
 	account_name = (account_name or "").strip()
-	party = (party or "").strip()
-	if not account_name or not party:
+	prefix = "Konto "
+	if not account_name.startswith(prefix):
 		return None
 
-	prefix = f"Konto {party}"
-	if account_name == prefix:
-		return party
-	if account_name.startswith(f"{prefix} (") and account_name.endswith(")"):
-		return f"{party}{account_name[len(prefix):]}"
-	return None
+	return account_name[len(prefix):].strip() or None
 
 
 def _bank_account_docname(account_name: str | None, bank: str | None) -> str | None:
