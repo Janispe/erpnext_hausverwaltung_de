@@ -620,6 +620,32 @@ def _get_default_bk_mieter_print_format() -> Optional[str]:
 	return None
 
 
+def _render_mieter_abrechnungen_serienbrief_html(child_names: List[str], vorlage: str) -> str:
+	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+		SerienbriefDurchlauf,
+	)
+
+	serienbrief_doc: SerienbriefDurchlauf = frappe.get_doc(
+		{
+			"doctype": "Serienbrief Durchlauf",
+			"title": _("Betriebskostenabrechnungen"),
+			"vorlage": vorlage,
+			"iteration_doctype": "Betriebskostenabrechnung Mieter",
+			"iteration_objekte": [
+				{
+					"doctype": "Serienbrief Iterationsobjekt",
+					"iteration_doctype": "Betriebskostenabrechnung Mieter",
+					"objekt": child_name,
+				}
+				for child_name in child_names
+			],
+		}
+	)
+	serienbrief_doc.flags.ignore_mandatory = True
+	serienbrief_doc.flags.ignore_permissions = True
+	return serienbrief_doc._render_full_html()
+
+
 def get_mieter_abrechnungen_print_html_and_style(
 	name: str,
 	print_format: Optional[str] = None,
@@ -638,29 +664,10 @@ def get_mieter_abrechnungen_print_html_and_style(
 	effective_serienbrief_vorlage = _get_serienbrief_vorlage_from_print_format(child_print_format)
 
 	if effective_serienbrief_vorlage:
-		from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
-			SerienbriefDurchlauf,
-		)
-
-		serienbrief_doc: SerienbriefDurchlauf = frappe.get_doc(
-			{
-				"doctype": "Serienbrief Durchlauf",
-				"title": _("Betriebskostenabrechnungen"),
-				"vorlage": effective_serienbrief_vorlage,
-				"iteration_doctype": "Betriebskostenabrechnung Mieter",
-				"iteration_objekte": [
-					{
-						"doctype": "Serienbrief Iterationsobjekt",
-						"iteration_doctype": "Betriebskostenabrechnung Mieter",
-						"objekt": child_name,
-					}
-					for child_name in child_names
-				],
-			}
-		)
-		serienbrief_doc.flags.ignore_mandatory = True
-		serienbrief_doc.flags.ignore_permissions = True
-		return {"html": serienbrief_doc._render_full_html(), "style": ""}
+		return {
+			"html": _render_mieter_abrechnungen_serienbrief_html(child_names, effective_serienbrief_vorlage),
+			"style": "",
+		}
 
 	from frappe.www import printview as core_printview
 
@@ -712,6 +719,10 @@ def get_mieter_abrechnungen_print_pdf(name: str, print_format: Optional[str] = N
 		frappe.throw(_("Keine Mieterabrechnungen vorhanden."))
 
 	child_print_format = _get_child_print_format_for_sammeldruck(print_format)
+	effective_serienbrief_vorlage = _get_serienbrief_vorlage_from_print_format(child_print_format)
+	if effective_serienbrief_vorlage:
+		html = _render_mieter_abrechnungen_serienbrief_html(child_names, effective_serienbrief_vorlage)
+		return get_pdf(html)
 
 	try:
 		from PyPDF2 import PdfMerger
