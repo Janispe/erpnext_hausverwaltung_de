@@ -283,10 +283,43 @@ function renderHausverwaltungAssistant(pageBody) {
 		node.append(details);
 	};
 
+	const textFromAny = (value) => {
+		if (value === null || value === undefined) return "";
+		if (typeof value === "string") return value;
+		if (typeof value === "number" || typeof value === "boolean") return String(value);
+		if (Array.isArray(value)) {
+			return value.map(textFromAny).filter(Boolean).join("\n");
+		}
+		if (typeof value === "object") {
+			return (
+				value.message ||
+				value.exc ||
+				value.exception ||
+				value.error ||
+				JSON.stringify(value, null, 2)
+			);
+		}
+		return String(value);
+	};
+
+	const errorText = (err) => {
+		try {
+			if (err?._server_messages) {
+				return JSON.parse(err._server_messages)
+					.map((message) => textFromAny(JSON.parse(message).message || JSON.parse(message)))
+					.filter(Boolean)
+					.join("\n");
+			}
+		} catch (error) {
+			return textFromAny(err?._server_messages);
+		}
+		return textFromAny(err?.message || err?.responseJSON || err) || __("Unbekannter Fehler.");
+	};
+
 	const addMessage = (kind, text, toolCalls) => {
 		const node = document.createElement("div");
 		node.className = `hv-assistant-message ${kind}`;
-		node.textContent = text;
+		node.textContent = textFromAny(text);
 		appendToolCalls(node, toolCalls);
 		messagesEl.append(node);
 		messagesEl.scrollTop(messagesEl[0].scrollHeight);
@@ -403,16 +436,13 @@ function renderHausverwaltungAssistant(pageBody) {
 			});
 			const data = response.message || {};
 			conversationId = data.conversation_id || conversationId;
-			pending.textContent = data.answer || __("Keine Antwort erhalten.");
+			pending.textContent = textFromAny(data.answer) || __("Keine Antwort erhalten.");
 			appendToolCalls(pending, data.tool_calls || []);
 			renderResults(data.matches || []);
 			await loadConversationList();
 		} catch (err) {
-			const text = err?._server_messages
-				? JSON.parse(err._server_messages).map((m) => JSON.parse(m).message).join("\n")
-				: (err.message || String(err));
 			pending.className = "hv-assistant-message error";
-			pending.textContent = text;
+			pending.textContent = errorText(err);
 		} finally {
 			form.find("button, input").prop("disabled", false);
 			input.trigger("focus");

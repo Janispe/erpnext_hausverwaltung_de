@@ -972,6 +972,12 @@ def _tool_call_debug(name: str, arguments: dict[str, Any], result: dict[str, Any
 def _tool_result_count(result: dict[str, Any]) -> int:
 	if not isinstance(result, dict):
 		return 0
+	aggregate = result.get("aggregate")
+	if isinstance(aggregate, dict) and aggregate.get("group_count") is not None:
+		try:
+			return int(aggregate.get("group_count") or 0)
+		except (TypeError, ValueError):
+			return 0
 	for key in ("total_count", "count", "returned"):
 		try:
 			if result.get(key) is not None:
@@ -1379,6 +1385,7 @@ def hv_query_docs(
 		"total_count": len(working_rows),
 		"candidate_limit": page_length,
 		"rows": data,
+		"matches": [_hv_row_to_match(dt, row) for row in returned_rows if row.get("name")],
 	}
 
 
@@ -1421,14 +1428,23 @@ def hv_query_view(
 	"""
 	raw_rows = frappe.db.sql(sql, params, as_dict=True)
 	working_rows = [dict(row) for row in raw_rows if _can_read_view_row(conf, row)]
-	if order_spec:
+	if order_spec and not order_spec.get("aggregate_order"):
 		working_rows.sort(
 			key=lambda row: _sort_value(row.get(order_spec["field"])),
 			reverse=order_spec["direction"] == "desc",
 		)
 	aggregate_result = _aggregate_hv_rows(working_rows, aggregate_spec)
+	if order_spec and order_spec.get("aggregate_order") and aggregate_result and aggregate_result.get("groups"):
+		aggregate_result["groups"].sort(
+			key=lambda group: _sort_value(group.get(order_spec["field"])),
+			reverse=order_spec["direction"] == "desc",
+		)
 	returned_rows = working_rows[:resolved_limit]
 	data = [_trim_hv_row(row, selected_fields) for row in returned_rows]
+	if aggregate_result and aggregate_result.get("group_by"):
+		matches = _view_aggregate_matches(conf["name"], aggregate_result)
+	else:
+		matches = [_view_row_to_match(conf["name"], row) for row in returned_rows]
 	return {
 		"view": conf["name"],
 		"description": conf.get("description") or "",
@@ -1442,7 +1458,7 @@ def hv_query_view(
 		"candidate_limit": VIEW_CANDIDATE_LIMIT,
 		"truncated": len(raw_rows) >= VIEW_CANDIDATE_LIMIT,
 		"rows": data,
-		"matches": [_view_row_to_match(conf["name"], row) for row in returned_rows],
+		"matches": matches,
 	}
 
 
@@ -2229,6 +2245,8 @@ def _safe_view_order_spec(conf: dict[str, Any], order_by: str | dict | None) -> 
 		field = match.group("field")
 		direction = match.group("direction").lower()
 	field = _normalize_view_field(conf, field)
+	if field.lower() in {"count", "value"}:
+		return {"field": field.lower(), "direction": direction, "order_by": f"{field.lower()} {direction}", "aggregate_order": True}
 	if field not in conf.get("fields", {}):
 		frappe.throw(_("Sortierfeld nicht erlaubt: {0}").format(field or "-"))
 	if direction not in {"asc", "desc"}:
@@ -2352,6 +2370,8 @@ def _view_param_key(params: dict[str, Any]) -> str:
 def _view_sql_order_clause(conf: dict[str, Any], order_spec: dict[str, Any] | None) -> str:
 	if not order_spec:
 		return ""
+	if order_spec.get("aggregate_order"):
+		return ""
 	expr = conf["fields"][order_spec["field"]]
 	return f"order by {expr} {order_spec['direction']}"
 
@@ -2415,6 +2435,70 @@ def _view_row_to_match(view: str, row: dict[str, Any]) -> dict[str, Any]:
 			"routes": routes,
 		}
 	return {}
+
+
+def _view_aggregate_matches(view: str, aggregate: dict[str, Any]) -> list[dict[str, Any]]:
+	group_by = aggregate.get("group_by") or ""
+	matches = []
+	for group in (aggregate.get("groups") or [])[:STORED_MATCH_LIMIT]:
+		key = str(group.get("key") or "")
+		if not key or key == "-":
+			continue
+		match = {
+			"type": "hv_aggregate",
+			"title": key,
+			"subtitle": _compact_join(
+				[
+					f"{group.get('count')} Treffer" if group.get("count") is not None else "",
+					f"Wert {group.get('value')}" if group.get("value") not in (None, "") else "",
+				]
+			),
+			"view": view,
+			"group_by": group_by,
+			"value": group.get("value"),
+			"count": group.get("count"),
+			"routes": [],
+		}
+		route_data = _aggregate_group_route(group_by, key)
+		if route_data:
+			match[route_data["fieldname"]] = key
+			match["routes"] = [route_data["route"]]
+		matches.append(match)
+	return matches
+
+
+def _aggregate_group_route(group_by: str, key: str) -> dict[str, Any] | None:
+	if group_by == "immobilie":
+		return {
+			"fieldname": "immobilie",
+			"route": {"label": "Immobilie", "doctype": "Immobilie", "name": key, "route": ["Form", "Immobilie", key]},
+		}
+	if group_by == "wohnung":
+		return {
+			"fieldname": "wohnung",
+			"route": {"label": "Wohnung", "doctype": "Wohnung", "name": key, "route": ["Form", "Wohnung", key]},
+		}
+	if group_by == "customer":
+		return {
+			"fieldname": "customer",
+			"route": {"label": "Mieter", "doctype": "Customer", "name": key, "route": ["Form", "Customer", key]},
+		}
+	if group_by == "mietvertrag":
+		return {
+			"fieldname": "mietvertrag",
+			"route": {"label": "Mietvertrag", "doctype": "Mietvertrag", "name": key, "route": ["Form", "Mietvertrag", key]},
+		}
+	if group_by in {"invoice", "name"}:
+		return {
+			"fieldname": "invoice",
+			"route": {"label": "Rechnung", "doctype": "Sales Invoice", "name": key, "route": ["Form", "Sales Invoice", key]},
+		}
+	if group_by == "payment_entry":
+		return {
+			"fieldname": "payment_entry",
+			"route": {"label": "Zahlung", "doctype": "Payment Entry", "name": key, "route": ["Form", "Payment Entry", key]},
+		}
+	return None
 
 
 def _normalize_hv_doctype(doctype: str) -> str:
