@@ -1,7 +1,7 @@
 import hashlib
 import json
 from io import BytesIO
-from typing import Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set
 
 import frappe
 from frappe import _
@@ -23,7 +23,8 @@ BK_BUNDLE_PDF_PROGRESS_TTL = 60 * 60
 
 
 def _row_value(row, key: str):
-	return row.get(key) if hasattr(row, "get") else getattr(row, key, None)
+	getter = getattr(row, "get", None)
+	return getter(key) if callable(getter) else getattr(row, key, None)
 
 
 def _get_exact_zaehlerstand(zaehler: str, datum) -> float | None:
@@ -737,6 +738,86 @@ def _render_mieter_abrechnungen_serienbrief_html(child_names: List[str], vorlage
 	return serienbrief_doc._render_full_html()
 
 
+class _UnsupportedBatchSerienbriefPDF(Exception):
+	pass
+
+
+def _render_mieter_abrechnungen_serienbrief_pdf_batch(
+	child_names: List[str],
+	vorlage: str,
+	progress_cb: Optional[Callable[[int, int, Optional[str]], None]] = None,
+) -> bytes:
+	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+		_collect_template_requirements,
+	)
+	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+		SerienbriefDurchlauf,
+	)
+	from hausverwaltung.hausverwaltung.utils.brand_print import apply_print_saving_brand_assets
+
+	template = frappe.get_cached_doc("Serienbrief Vorlage", vorlage)
+	serienbrief_doc: SerienbriefDurchlauf = frappe.get_doc(
+		{
+			"doctype": "Serienbrief Durchlauf",
+			"title": _("Betriebskostenabrechnungen"),
+			"vorlage": vorlage,
+			"iteration_doctype": "Betriebskostenabrechnung Mieter",
+			"iteration_objekte": [
+				{
+					"doctype": "Serienbrief Iterationsobjekt",
+					"iteration_doctype": "Betriebskostenabrechnung Mieter",
+					"objekt": child_name,
+				}
+				for child_name in child_names
+			],
+		}
+	)
+	serienbrief_doc.flags.ignore_mandatory = True
+	serienbrief_doc.flags.ignore_permissions = True
+
+	template_requirements = _collect_template_requirements(template, "Betriebskostenabrechnung Mieter")
+	empfaenger_rows = serienbrief_doc._get_empfaenger_rows()
+	if not empfaenger_rows:
+		frappe.throw(_("Bitte fügen Sie mindestens ein Iterations-Objekt hinzu."))
+
+	pages: List[str] = []
+	total = len(empfaenger_rows)
+	for idx, row in enumerate(empfaenger_rows, start=1):
+		current = _row_value(row, "iteration_objekt")
+		context_data = serienbrief_doc._build_context(
+			row, idx, template_requirements, template, total=total
+		)
+		segments = serienbrief_doc._render_template_content(template, context_data)
+		if not segments:
+			frappe.throw(
+				_(
+					"Die gewählte Vorlage liefert keinen renderbaren Inhalt. "
+					"Bitte prüfen Sie die Textbausteine."
+				)
+			)
+
+		html_parts: List[str] = []
+		for segment in segments:
+			if segment.get("type") != "html":
+				raise _UnsupportedBatchSerienbriefPDF
+			value = apply_print_saving_brand_assets(
+				cstr(segment.get("html") or "").strip(),
+				bool(getattr(serienbrief_doc, "_druck_schwarz_weiss", False)),
+			)
+			if value:
+				html_parts.append(value)
+		if not html_parts:
+			raise _UnsupportedBatchSerienbriefPDF
+
+		page_body = "\n".join(html_parts)
+		pages.append(f'<div class="serienbrief-page">{page_body}</div>')
+		if progress_cb:
+			progress_cb(idx, total, current)
+
+	page_html = serienbrief_doc._wrap_html("\n".join(pages))
+	return get_pdf(page_html, options=serienbrief_doc._default_pdf_options())
+
+
 def get_mieter_abrechnungen_print_html_and_style(
 	name: str,
 	print_format: Optional[str] = None,
@@ -810,6 +891,16 @@ def get_mieter_abrechnungen_print_pdf(name: str, print_format: Optional[str] = N
 		frappe.throw(_("Keine Mieterabrechnungen vorhanden."))
 
 	child_print_format = _get_child_print_format_for_sammeldruck(print_format)
+	effective_serienbrief_vorlage = _get_serienbrief_vorlage_from_print_format(child_print_format)
+	if effective_serienbrief_vorlage:
+		try:
+			content = _render_mieter_abrechnungen_serienbrief_pdf_batch(
+				child_names,
+				effective_serienbrief_vorlage,
+			)
+			return _apply_draft_watermark(content) if _is_bk_head_draft(name) else content
+		except _UnsupportedBatchSerienbriefPDF:
+			pass
 
 	try:
 		from PyPDF2 import PdfMerger
@@ -848,6 +939,7 @@ def _run_mieter_abrechnungen_pdf_job(
 		child_print_format = _get_child_print_format_for_sammeldruck(print_format)
 		total = len(child_names)
 		is_draft = _is_bk_head_draft(name)
+		effective_serienbrief_vorlage = _get_serienbrief_vorlage_from_print_format(child_print_format)
 		_set_bk_bundle_pdf_progress(
 			progress_id,
 			status="running",
@@ -857,34 +949,56 @@ def _run_mieter_abrechnungen_pdf_job(
 			is_draft=is_draft,
 		)
 
-		try:
-			from PyPDF2 import PdfMerger
-		except ImportError:
-			from pypdf import PdfMerger
+		content = None
+		if effective_serienbrief_vorlage:
+			try:
+				def progress_cb(done: int, progress_total: int, current: Optional[str]) -> None:
+					_set_bk_bundle_pdf_progress(
+						progress_id,
+						status="running",
+						done=done,
+						total=progress_total,
+						current=current,
+						is_draft=is_draft,
+					)
 
-		merger = PdfMerger()
-		for idx, child_name in enumerate(child_names, start=1):
-			_set_bk_bundle_pdf_progress(
-				progress_id,
-				status="running",
-				done=idx - 1,
-				total=total,
-				current=child_name,
-			)
-			pdf = _render_abrechnung_pdf(child_name, print_format=child_print_format)
-			if pdf:
-				merger.append(BytesIO(pdf))
-			_set_bk_bundle_pdf_progress(
-				progress_id,
-				status="running",
-				done=idx,
-				total=total,
-				current=child_name,
-			)
+				content = _render_mieter_abrechnungen_serienbrief_pdf_batch(
+					child_names,
+					effective_serienbrief_vorlage,
+					progress_cb=progress_cb,
+				)
+			except _UnsupportedBatchSerienbriefPDF:
+				content = None
 
-		out = BytesIO()
-		merger.write(out)
-		content = out.getvalue()
+		if content is None:
+			try:
+				from PyPDF2 import PdfMerger
+			except ImportError:
+				from pypdf import PdfMerger
+
+			merger = PdfMerger()
+			for idx, child_name in enumerate(child_names, start=1):
+				_set_bk_bundle_pdf_progress(
+					progress_id,
+					status="running",
+					done=idx - 1,
+					total=total,
+					current=child_name,
+				)
+				pdf = _render_abrechnung_pdf(child_name, print_format=child_print_format)
+				if pdf:
+					merger.append(BytesIO(pdf))
+				_set_bk_bundle_pdf_progress(
+					progress_id,
+					status="running",
+					done=idx,
+					total=total,
+					current=child_name,
+				)
+
+			out = BytesIO()
+			merger.write(out)
+			content = out.getvalue()
 		if not content:
 			frappe.throw(_("PDF konnte nicht erzeugt werden."))
 		if is_draft:
