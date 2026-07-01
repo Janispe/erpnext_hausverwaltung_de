@@ -87,3 +87,9 @@ def execute() -> None:
 
 	if changed:
 		doc.save(ignore_permissions=True)
+
+	from hausverwaltung.hausverwaltung.patches.post_model_sync.fix_briefkopf_address_from_standard_paths import (
+		execute as sync_briefkopf_address_from_standard_paths,
+	)
+
+	sync_briefkopf_address_from_standard_paths()
