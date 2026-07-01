@@ -86,6 +86,31 @@ export async function setBankimportRuleEnabled(doctype, name, enabled) {
 	return await rpc("set_bankimport_rule_enabled", { doctype, name, enabled: enabled ? 1 : 0 });
 }
 
+export async function saveBankimportRule(doctype, values) {
+	if (!embedded) return { ok: true, rule: { ...values, doctype, name: values.name || values.ruleKey }, mock: true };
+	return await rpc("save_bankimport_rule", { doctype, values });
+}
+
+export async function deleteBankimportRule(doctype, name) {
+	if (!embedded) return { ok: true, doctype, name, mock: true };
+	return await rpc("delete_bankimport_rule", { doctype, name });
+}
+
+export async function reorderBankimportRule(doctype, name, direction) {
+	if (!embedded) return { ok: true, changed: true, mock: true };
+	return await rpc("reorder_bankimport_rule", { doctype, name, direction });
+}
+
+export async function previewBankimportRuleHits(doctype, parametersJson, currentImport = importName, name = "") {
+	if (!embedded) return { ok: true, hits: 0, rows: [], mock: true };
+	return await rpc("preview_bankimport_rule_hits", {
+		doctype,
+		parameters_json: parametersJson || {},
+		import_name: currentImport || "",
+		name: name || "",
+	});
+}
+
 // Komplett-Übersicht: { import, rows, phaseCounts }.
 export async function loadOverview(name) {
 	if (!embedded) return { ...MOCK_OVERVIEW, mock: true };

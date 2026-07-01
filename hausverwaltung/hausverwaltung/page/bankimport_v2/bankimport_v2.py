@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 from typing import Any
 
 import frappe
@@ -37,11 +38,16 @@ from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import i
 	sync_cancelled_payment_entry_links,
 )
 from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
+	BUILDER_RULE_CODE,
 	BOOKING_RULE_DOCTYPE,
+	DEFAULT_BOOKING_RULES,
+	DEFAULT_PARTY_RULES,
 	PARTY_RULE_DOCTYPE,
 	RULE_SCOPE_DOCTYPE,
+	builder_matches_row,
 	ensure_default_bankimport_rules,
 	normalize_iban,
+	validate_builder,
 )
 
 
@@ -384,6 +390,7 @@ RULE_CONFIG = {
 		"fields": [
 			"name",
 			"rule_key",
+			"title",
 			"enabled",
 			"priority",
 			"rule_code",
@@ -400,6 +407,7 @@ RULE_CONFIG = {
 		"fields": [
 			"name",
 			"rule_key",
+			"title",
 			"enabled",
 			"priority",
 			"rule_code",
@@ -411,6 +419,11 @@ RULE_CONFIG = {
 			"modified",
 		],
 	},
+}
+
+SYSTEM_RULE_KEYS = {
+	spec["rule_key"]
+	for spec in [*DEFAULT_PARTY_RULES, *DEFAULT_BOOKING_RULES]
 }
 
 
@@ -460,6 +473,215 @@ def set_bankimport_rule_enabled(doctype: str, name: str, enabled: int) -> dict[s
 	return {"ok": True, "doctype": doctype, "name": name, "enabled": value}
 
 
+@frappe.whitelist()
+def save_bankimport_rule(doctype: str, values: str | dict[str, Any]) -> dict[str, Any]:
+	"""Create/update a Bankimport rule from the React rule editor."""
+	if doctype not in RULE_CONFIG:
+		frappe.throw(_("Unbekannter Regeltyp."))
+	frappe.has_permission(doctype, "write", throw=True)
+	payload = _coerce_json_dict(values)
+	name = (payload.get("name") or "").strip()
+	existing = frappe.get_doc(doctype, name) if name and frappe.db.exists(doctype, name) else None
+	is_system = bool(existing and existing.get("rule_key") in SYSTEM_RULE_KEYS)
+
+	title = (payload.get("title") or "").strip()
+	if not title:
+		frappe.throw(_("Bitte einen Titel eingeben."))
+
+	if existing:
+		doc = existing
+		old_name = doc.name
+	else:
+		rule_key = (payload.get("ruleKey") or payload.get("rule_key") or "").strip()
+		if not rule_key:
+			frappe.throw(_("Bitte einen Regel-Schlüssel eingeben."))
+		if frappe.db.exists(doctype, rule_key):
+			frappe.throw(_("Der Regel-Schlüssel existiert bereits."))
+		doc = frappe.get_doc({"doctype": doctype, "rule_key": rule_key})
+		old_name = ""
+
+	doc.title = title
+	doc.description = payload.get("description") or ""
+	doc.priority = int(payload.get("priority") or 100)
+	doc.enabled = 1 if payload.get("enabled", True) else 0
+	doc.stop_on_match = 1 if payload.get("stopOnMatch", True) else 0
+	doc.requires_review = 1 if payload.get("requiresReview") else 0
+	if doctype == BOOKING_RULE_DOCTYPE:
+		doc.auto_apply = 1 if payload.get("autoApply", True) else 0
+
+	if not is_system:
+		rule_key = (payload.get("ruleKey") or payload.get("rule_key") or doc.get("rule_key") or "").strip()
+		if not rule_key:
+			frappe.throw(_("Bitte einen Regel-Schlüssel eingeben."))
+		if rule_key != doc.get("rule_key") and frappe.db.exists(doctype, rule_key):
+			frappe.throw(_("Der Regel-Schlüssel existiert bereits."))
+		doc.rule_key = rule_key
+		parameters = _normalize_rule_parameters(payload, doctype)
+		doc.parameters_json = json.dumps(parameters, ensure_ascii=False, indent=2)
+		doc.rule_code = BUILDER_RULE_CODE
+
+	_set_rule_scope_rows(doc, payload.get("scope") or [])
+	if existing:
+		doc.save()
+		if not is_system and doc.rule_key != old_name:
+			frappe.rename_doc(doctype, old_name, doc.rule_key, force=True)
+			doc = frappe.get_doc(doctype, doc.rule_key)
+	else:
+		doc.insert()
+	return {"ok": True, "rule": _format_rule_row(doctype, doc, [_format_rule_scope(row) for row in doc.get("scope_rules") or []])}
+
+
+@frappe.whitelist()
+def delete_bankimport_rule(doctype: str, name: str) -> dict[str, Any]:
+	if doctype not in RULE_CONFIG:
+		frappe.throw(_("Unbekannter Regeltyp."))
+	frappe.has_permission(doctype, "delete", throw=True)
+	if not name or not frappe.db.exists(doctype, name):
+		frappe.throw(_("Regel wurde nicht gefunden."))
+	doc = frappe.get_doc(doctype, name)
+	if doc.get("rule_key") in SYSTEM_RULE_KEYS or doc.get("rule_code") != BUILDER_RULE_CODE:
+		frappe.throw(_("Systemregeln können nicht gelöscht werden."))
+	frappe.delete_doc(doctype, name)
+	return {"ok": True, "doctype": doctype, "name": name}
+
+
+@frappe.whitelist()
+def reorder_bankimport_rule(doctype: str, name: str, direction: int) -> dict[str, Any]:
+	if doctype not in RULE_CONFIG:
+		frappe.throw(_("Unbekannter Regeltyp."))
+	frappe.has_permission(doctype, "write", throw=True)
+	if not name or not frappe.db.exists(doctype, name):
+		frappe.throw(_("Regel wurde nicht gefunden."))
+	direction = -1 if int(direction or 0) < 0 else 1
+	rows = frappe.get_all(
+		doctype,
+		fields=["name", "priority"],
+		order_by="priority asc, creation asc",
+		limit=0,
+	)
+	index = next((idx for idx, row in enumerate(rows) if row.name == name), None)
+	if index is None:
+		frappe.throw(_("Regel wurde nicht gefunden."))
+	other_index = index + direction
+	if other_index < 0 or other_index >= len(rows):
+		return {"ok": True, "changed": False}
+	current = rows[index]
+	other = rows[other_index]
+	frappe.db.set_value(doctype, current.name, "priority", other.priority)
+	frappe.db.set_value(doctype, other.name, "priority", current.priority)
+	return {"ok": True, "changed": True}
+
+
+@frappe.whitelist()
+def preview_bankimport_rule_hits(
+	doctype: str,
+	parameters_json: str | dict[str, Any] | None = None,
+	import_name: str | None = None,
+	name: str | None = None,
+) -> dict[str, Any]:
+	if doctype not in RULE_CONFIG:
+		frappe.throw(_("Unbekannter Regeltyp."))
+	frappe.has_permission(doctype, "read", throw=True)
+	params = _coerce_json_dict(parameters_json or {})
+	if not params and name and frappe.db.exists(doctype, name):
+		params = _coerce_json_dict(frappe.db.get_value(doctype, name, "parameters_json") or {})
+	builder = params.get("builder") if isinstance(params.get("builder"), dict) else {}
+	ok, message = validate_builder(builder)
+	if not ok:
+		return {"ok": False, "hits": 0, "message": message}
+	if not import_name:
+		return {"ok": True, "hits": 0, "rows": []}
+	doc = frappe.get_doc("Bankauszug Import", import_name)
+	frappe.has_permission("Bankauszug Import", "read", doc=doc, throw=True)
+	rows = []
+	for row in doc.get("rows") or []:
+		if _row_phase(row) >= 4:
+			continue
+		if builder_matches_row(builder, row):
+			rows.append(row.name)
+	return {"ok": True, "hits": len(rows), "rows": rows}
+
+
+def _coerce_json_dict(value) -> dict[str, Any]:
+	if not value:
+		return {}
+	if isinstance(value, dict):
+		return value
+	if isinstance(value, str):
+		try:
+			parsed = json.loads(value)
+		except Exception:
+			frappe.throw(_("Ungültiges JSON."))
+		if isinstance(parsed, dict):
+			return parsed
+	frappe.throw(_("Ungültige Datenstruktur."))
+
+
+def _safe_json_dict(value) -> dict[str, Any]:
+	if isinstance(value, dict):
+		return value
+	if not value:
+		return {}
+	try:
+		parsed = json.loads(value) if isinstance(value, str) else {}
+	except Exception:
+		return {}
+	return parsed if isinstance(parsed, dict) else {}
+
+
+def _normalize_rule_parameters(payload: dict[str, Any], doctype: str) -> dict[str, Any]:
+	parameters = _coerce_json_dict(payload.get("parametersJson") or payload.get("parameters_json") or {})
+	builder = payload.get("builder") if isinstance(payload.get("builder"), dict) else parameters.get("builder")
+	action = payload.get("action") if isinstance(payload.get("action"), dict) else parameters.get("action")
+	if not isinstance(builder, dict):
+		frappe.throw(_("Bitte Bedingungen erfassen."))
+	ok, message = validate_builder(builder)
+	if not ok:
+		frappe.throw(_(message))
+	if not isinstance(action, dict):
+		action = {}
+	action_type = action.get("type")
+	if doctype == BOOKING_RULE_DOCTYPE and action_type in {"buchung", "booking"}:
+		if not (action.get("account") or action.get("konto")):
+			frappe.throw(_("Bitte ein Gegenkonto auswählen."))
+	elif action_type in {"party", "partei"}:
+		if action.get("party_type") not in {"Customer", "Supplier", "Eigentuemer"} or not action.get("party"):
+			frappe.throw(_("Bitte eine Partei auswählen."))
+	elif action_type:
+		frappe.throw(_("Unbekannte Aktion."))
+	return {
+		"builder": {
+			"connector": str(builder.get("connector") or "und").lower(),
+			"conditions": builder.get("conditions") or [],
+		},
+		"action": action,
+		"ui": parameters.get("ui") if isinstance(parameters.get("ui"), dict) else {},
+	}
+
+
+def _set_rule_scope_rows(doc, scope_rows) -> None:
+	doc.set("scope_rules", [])
+	for row in scope_rows or []:
+		if not isinstance(row, dict):
+			continue
+		scope_type = row.get("scopeType") or row.get("scope_type") or "IBAN"
+		mode = row.get("mode") or "Sperren"
+		child = {
+			"enabled": 1 if row.get("enabled", True) else 0,
+			"mode": mode,
+			"scope_type": scope_type,
+			"description": row.get("description") or "",
+		}
+		if scope_type == "IBAN":
+			child["iban"] = normalize_iban(row.get("iban")) or ""
+		elif scope_type == "Party":
+			child["party_type"] = row.get("partyType") or row.get("party_type") or ""
+			child["party"] = row.get("party") or ""
+		elif scope_type == "Party Type":
+			child["party_type"] = row.get("partyType") or row.get("party_type") or ""
+		doc.append("scope_rules", child)
+
+
 def _rule_scope_by_parent(doctype: str, names: list[str]) -> dict[str, list[dict[str, Any]]]:
 	if not names:
 		return {}
@@ -468,9 +690,8 @@ def _rule_scope_by_parent(doctype: str, names: list[str]) -> dict[str, list[dict
 		filters={
 			"parenttype": doctype,
 			"parent": ["in", names],
-			"enabled": 1,
 		},
-		fields=["parent", "mode", "scope_type", "iban", "party_type", "party", "description"],
+		fields=["parent", "enabled", "mode", "scope_type", "iban", "party_type", "party", "description"],
 		order_by="parent asc, idx asc",
 		limit=0,
 	)
@@ -482,20 +703,31 @@ def _rule_scope_by_parent(doctype: str, names: list[str]) -> dict[str, list[dict
 
 def _format_rule_row(doctype: str, row, scope_rows: list[dict[str, Any]]) -> dict[str, Any]:
 	modified = row.get("modified")
+	parameters = _safe_json_dict(row.get("parameters_json") or {})
+	rule_key = row.get("rule_key")
+	description = row.get("description") or ""
+	title = row.get("title") or _title_from_description(description) or rule_key or row.name
+	is_builder = (row.get("rule_code") or "").strip() == BUILDER_RULE_CODE
 	return {
 		"doctype": doctype,
 		"name": row.name,
-		"ruleKey": row.get("rule_key"),
+		"ruleKey": rule_key,
+		"title": title,
 		"enabled": bool(row.get("enabled")),
 		"priority": row.get("priority"),
 		"ruleCode": row.get("rule_code") or "",
 		"hasRuleCode": bool((row.get("rule_code") or "").strip()),
 		"ruleCodeLines": len((row.get("rule_code") or "").strip().splitlines()) if row.get("rule_code") else 0,
+		"isSystem": rule_key in SYSTEM_RULE_KEYS,
+		"isBuilderRule": is_builder,
 		"autoApply": bool(row.get("auto_apply")) if doctype == BOOKING_RULE_DOCTYPE else None,
 		"stopOnMatch": bool(row.get("stop_on_match")),
 		"requiresReview": bool(row.get("requires_review")),
 		"parametersJson": row.get("parameters_json") or "",
-		"description": row.get("description") or "",
+		"parameters": parameters,
+		"builder": parameters.get("builder") if isinstance(parameters.get("builder"), dict) else None,
+		"action": parameters.get("action") if isinstance(parameters.get("action"), dict) else None,
+		"description": description,
 		"scope": scope_rows,
 		"scopeCount": len(scope_rows),
 		"modified": str(modified) if modified else None,
@@ -504,6 +736,7 @@ def _format_rule_row(doctype: str, row, scope_rows: list[dict[str, Any]]) -> dic
 
 def _format_rule_scope(row) -> dict[str, Any]:
 	return {
+		"enabled": bool(row.get("enabled", 1)),
 		"mode": row.get("mode"),
 		"scopeType": row.get("scope_type"),
 		"iban": normalize_iban(row.get("iban")),
@@ -511,6 +744,10 @@ def _format_rule_scope(row) -> dict[str, Any]:
 		"party": row.get("party"),
 		"description": row.get("description") or "",
 	}
+
+
+def _title_from_description(description: str) -> str:
+	return (description or "").strip().splitlines()[0][:80]
 
 
 @frappe.whitelist()

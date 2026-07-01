@@ -1,245 +1,519 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import * as api from "../api.js";
-import { Icon, Spinner, fmtDateTime } from "../helpers.jsx";
+import { Icon, Spinner } from "../helpers.jsx";
 
 const GROUP_ORDER = ["party", "booking"];
+const DOCTYPE_KIND = {
+	"Bankimport Party Regel": "party",
+	"Bankimport Buchungsregel": "booking",
+};
+const KIND_DOCTYPE = {
+	party: "Bankimport Party Regel",
+	booking: "Bankimport Buchungsregel",
+};
+const FIELD_LABELS = {
+	iban: "IBAN",
+	auftraggeber: "Auftraggeber",
+	zweck: "Zweck",
+	betrag: "Betrag",
+	richtung: "Richtung",
+};
+const FIELDS = ["iban", "auftraggeber", "zweck", "betrag", "richtung"];
+const OPS = ["enthält", "beginnt mit", "=", "!=", ">", "<", ">=", "<="];
+const PARTY_TYPES = [
+	["Customer", "Mieter / Kunde"],
+	["Supplier", "Lieferant"],
+	["Eigentuemer", "Eigentümer"],
+];
 
-function ruleTypeLabel(doctype) {
-	return doctype === "Bankimport Buchungsregel" ? "Buchungsregel" : "Party-Regel";
+function parseParams(rule) {
+	if (rule?.parameters && typeof rule.parameters === "object") return rule.parameters;
+	if (!rule?.parametersJson) return {};
+	try {
+		const parsed = JSON.parse(rule.parametersJson);
+		return parsed && typeof parsed === "object" ? parsed : {};
+	} catch {
+		return {};
+	}
+}
+
+function titleOf(rule) {
+	return rule?.title || rule?.description?.split(/\n/)[0] || rule?.ruleKey || rule?.name || "Regel";
+}
+
+function isDoneRow(row) {
+	return row?.phase >= 4 || ["done", "existing", "skipped"].includes(row?.rowStatus);
+}
+
+function fieldValue(field, row) {
+	if (field === "iban") return row.iban || "";
+	if (field === "auftraggeber") return row.auftraggeber || "";
+	if (field === "zweck") return row.verwendungszweck || "";
+	if (field === "betrag") return Math.abs(Number(row.betrag) || 0);
+	if (field === "richtung") return row.richtung || ((Number(row.betrag) || 0) < 0 ? "Ausgang" : "Eingang");
+	return "";
+}
+
+function parseNumber(value) {
+	const raw = String(value || "0").trim();
+	const normalized = raw.includes(",") ? raw.replace(/\./g, "").replace(",", ".") : raw;
+	return Number.parseFloat(normalized) || 0;
+}
+
+function conditionMatches(condition, row) {
+	const lhs = fieldValue(condition.field, row);
+	const rhs = condition.value ?? "";
+	if (condition.field === "betrag") {
+		const a = Number(lhs) || 0;
+		const b = parseNumber(rhs);
+		if (condition.op === "=") return a === b;
+		if (condition.op === "!=") return a !== b;
+		if (condition.op === ">") return a > b;
+		if (condition.op === "<") return a < b;
+		if (condition.op === ">=") return a >= b;
+		if (condition.op === "<=") return a <= b;
+		return false;
+	}
+	const a = String(lhs).toLowerCase();
+	const b = String(rhs).toLowerCase();
+	if (condition.op === "enthält") return a.includes(b);
+	if (condition.op === "beginnt mit") return a.startsWith(b);
+	if (condition.op === "=") return a === b;
+	if (condition.op === "!=") return a !== b;
+	return false;
+}
+
+function builderMatches(builder, row) {
+	const conditions = builder?.conditions || [];
+	if (!conditions.length) return false;
+	const hits = conditions.map((condition) => conditionMatches(condition, row));
+	return builder.connector === "oder" ? hits.some(Boolean) : hits.every(Boolean);
+}
+
+function validateBuilder(builder) {
+	const conditions = builder?.conditions || [];
+	if (!conditions.length) return "Mindestens eine Bedingung ist erforderlich.";
+	for (const condition of conditions) {
+		if (!FIELDS.includes(condition.field)) return "Unbekanntes Feld.";
+		if (!OPS.includes(condition.op)) return "Unbekannter Operator.";
+		if (condition.value === undefined || condition.value === "") return "Jede Bedingung benötigt einen Wert.";
+	}
+	return "";
+}
+
+function exprText(builder) {
+	const connector = ` ${builder?.connector || "und"} `;
+	return (builder?.conditions || [])
+		.map((condition) => `${FIELD_LABELS[condition.field] || condition.field} ${condition.op} "${condition.value || ""}"`)
+		.join(connector);
+}
+
+function actionText(action) {
+	if (!action) return "";
+	if (["party", "partei"].includes(action.type)) return `${action.party_type || action.partyType || "Party"} · ${action.party || ""}`;
+	if (["buchung", "booking"].includes(action.type)) return `${action.account || action.konto || ""}${action.cost_center || action.kostenstelle ? ` · ${action.cost_center || action.kostenstelle}` : ""}`;
+	return "";
 }
 
 function scopeLabel(entry) {
-	if (!entry) return "";
 	const mode = entry.mode || "Sperren";
-	const type = entry.scopeType || "";
+	const type = entry.scopeType || "IBAN";
 	if (type === "IBAN") return `${mode}: ${entry.iban || "IBAN"}`;
 	if (type === "Party Type") return `${mode}: ${entry.partyType || "Party Type"}`;
-	if (type === "Party") {
-		return `${mode}: ${[entry.partyType, entry.party].filter(Boolean).join(" / ") || "Party"}`;
-	}
-	return `${mode}: ${type || "Scope"}`;
+	return `${mode}: ${[entry.partyType, entry.party].filter(Boolean).join(" / ") || "Party"}`;
 }
 
-function RuleCard({ rule, onOpen, onToggle, toggling }) {
-	const [showScope, setShowScope] = useState(false);
-	const scope = rule.scope || [];
-	const disabled = !rule.enabled;
+function InkToggle({ checked, onChange, disabled }) {
 	return (
-		<div className={`rule-card ${disabled ? "is-disabled" : ""}`}>
-			<div className="rule-card-head">
-				<div className="rule-order">{rule.priority ?? "—"}</div>
-				<div className="rule-title-block">
-					<div className="rule-title-row">
-						<button className="rule-title" onClick={() => onOpen(rule)}>
-							{rule.ruleKey || rule.name}
-						</button>
-						{disabled && <span className="rule-tag off">Aus</span>}
-					</div>
-					<div className="rule-subline">
-						<span>{ruleTypeLabel(rule.doctype)}</span>
-						<span>{rule.hasRuleCode ? `${rule.ruleCodeLines || 1} Code-Zeilen` : "Kein Code"}</span>
-						{rule.modified && <span>{fmtDateTime(rule.modified)}</span>}
-					</div>
+		<button
+			type="button"
+			className={`rp-status ${checked ? "on" : "off"}`}
+			role="switch"
+			aria-checked={checked}
+			disabled={disabled}
+			onClick={() => onChange(!checked)}
+			title={checked ? "Regel deaktivieren" : "Regel aktivieren"}
+		>
+			<span className="rp-status-track"><span className="rp-status-knob" /></span>
+		</button>
+	);
+}
+
+function RuleCard({ rule, rows, index, total, onEdit, onToggle, onReorder, onDelete, busy }) {
+	const params = parseParams(rule);
+	const builder = rule.builder || params.builder;
+	const action = rule.action || params.action;
+	const isBuilder = Boolean(rule.isBuilderRule || builder);
+	const hits = isBuilder && rows?.length
+		? rows.filter((row) => !isDoneRow(row) && builderMatches(builder, row)).length
+		: null;
+	const disabled = !rule.enabled;
+	const scope = rule.scope || [];
+
+	return (
+		<div className={`rule-card ${disabled ? "inactive" : ""}`}>
+			<div className="rc-head">
+				<div className="rc-prio-col">
+					<button className="rc-prio-btn" disabled={index === 0 || busy} onClick={() => onReorder(rule, -1)} title="Priorität erhöhen">▲</button>
+					<span className="rc-prio">{rule.priority ?? "—"}</span>
+					<button className="rc-prio-btn" disabled={index === total - 1 || busy} onClick={() => onReorder(rule, 1)} title="Priorität senken">▼</button>
 				</div>
-				<label className="rule-switch" title={rule.enabled ? "Regel deaktivieren" : "Regel aktivieren"}>
-					<input
-						type="checkbox"
-						checked={Boolean(rule.enabled)}
-						disabled={toggling}
-						onChange={(e) => onToggle(rule, e.target.checked)}
-					/>
-					<span />
-				</label>
+				<div className="rc-titlewrap">
+					<div className="rc-title">{titleOf(rule)}</div>
+					<div className="rc-key mono">{rule.ruleKey || rule.name}</div>
+				</div>
+				<InkToggle checked={Boolean(rule.enabled)} disabled={busy} onChange={(next) => onToggle(rule, next)} />
 			</div>
 
-			{rule.description && <div className="rule-desc">{rule.description}</div>}
+			{rule.description && <div className="rc-desc">{rule.description}</div>}
 
-			<div className="rule-flags">
-				<span>{rule.stopOnMatch ? "Stoppt bei Treffer" : "Läuft weiter"}</span>
-				<span>{rule.hasRuleCode ? "DB-Code" : "Code fehlt"}</span>
-				{rule.autoApply !== null && rule.autoApply !== undefined && (
-					<span>{rule.autoApply ? "Automatisch" : "Manuell"}</span>
-				)}
-				{rule.requiresReview && <span>Prüfung</span>}
-				<span>{scope.length ? `${scope.length} Scope` : "Kein Scope"}</span>
-			</div>
-
-			{scope.length > 0 && (
-				<div className="rule-scope">
-					<button className="rule-scope-toggle" onClick={() => setShowScope((v) => !v)}>
-						<Icon name={showScope ? "chevDown" : "chev"} /> {scopeLabel(scope[0])}
-						{scope.length > 1 && <span>+{scope.length - 1}</span>}
-					</button>
-					{showScope && (
-						<div className="rule-scope-list">
-							{scope.map((entry, idx) => (
-								<div key={`${entry.scopeType}-${idx}`}>{scopeLabel(entry)}</div>
-							))}
-						</div>
-					)}
+			{isBuilder && (
+				<div className="rc-sig mono">
+					<span className="fn-g">ƒ</span> wenn {exprText(builder)} <span className="fn-arrow">→</span> <span className="fn-out">{actionText(action)}</span>
 				</div>
 			)}
 
-			<div className="rule-card-actions">
-				<button className="btn subtle sm" onClick={() => onOpen(rule)}>
-					<Icon name="file" /> Bearbeiten
-				</button>
+			<div className="rc-badges">
+				{rule.stopOnMatch && <span className="rc-badge">Stoppt bei Treffer</span>}
+				{rule.autoApply && <span className="rc-badge">Automatisch</span>}
+				{rule.requiresReview && <span className="rc-badge warn">Prüfung</span>}
+				{isBuilder ? <span className="rc-badge soft">Ausdruck</span> : <span className="rc-badge soft">DB-Code · {rule.ruleCodeLines || 0}</span>}
+				{scope.length > 0 && <span className="rc-badge accent">Scope · {scope.length}</span>}
+			</div>
+
+			<div className="rc-foot">
+				<div className="rc-foot-left">
+					{isBuilder
+						? hits > 0 ? <span className="rp-hits has">↻ {hits} {hits === 1 ? "Zeile" : "Zeilen"} im Auszug</span> : <span className="rp-hits">keine Treffer</span>
+						: <span className="rc-foot-note">Backend-Regel</span>}
+				</div>
+				<div className="rc-actions">
+					<button className="btn subtle sm" onClick={() => onEdit(rule)}><Icon name="settings" size={13} /> Bearbeiten</button>
+					{!rule.isSystem && isBuilder && (
+						<button className="icon-btn danger" onClick={() => onDelete(rule)} title="Löschen" aria-label="Löschen"><Icon name="trash" size={13} /></button>
+					)}
+				</div>
 			</div>
 		</div>
 	);
 }
 
-function RuleGroup({ group, onOpen, onNew, onList, onToggle, toggling }) {
-	const items = group?.items || [];
+function RuleColumn({ group, rows, onNew, onEdit, onToggle, onReorder, onDelete, busy }) {
+	const items = [...(group?.items || [])].sort((a, b) => (a.priority || 0) - (b.priority || 0));
+	const active = items.filter((rule) => rule.enabled).length;
 	return (
-		<section className="rule-group">
-			<div className="rule-group-head">
+		<section className="rule-col">
+			<div className="rule-col-head">
 				<div>
-					<h3>{group?.label || "Regeln"}</h3>
-					<div className="rule-group-meta">
-						{group?.counts?.enabled || 0} aktiv · {group?.counts?.disabled || 0} aus
-					</div>
+					<h3 className="rule-col-title">{group?.label || "Regeln"}</h3>
+					<div className="rule-col-count">{active} aktiv · {items.length - active} aus</div>
 				</div>
-				<div className="rule-group-actions">
-					<button className="btn subtle sm" onClick={() => onList(group.doctype)}>
-						<Icon name="file" /> Liste
-					</button>
-					<button className="btn primary sm" onClick={() => onNew(group.doctype)}>
-						<Icon name="plus" /> Neu
-					</button>
-				</div>
+				<button className="btn primary sm" onClick={() => onNew(group)}><Icon name="plus" size={13} /> Neu</button>
 			</div>
-			{items.length === 0 ? (
-				<div className="rule-empty">Keine Regeln vorhanden.</div>
-			) : (
-				<div className="rule-list">
-					{items.map((rule) => (
-						<RuleCard
-							key={`${rule.doctype}:${rule.name}`}
-							rule={rule}
-							onOpen={onOpen}
-							onToggle={onToggle}
-							toggling={toggling === `${rule.doctype}:${rule.name}`}
-						/>
-					))}
-				</div>
-			)}
+			<div className="rule-col-list">
+				{items.length === 0 ? <div className="rule-col-empty">Keine Regeln in dieser Spalte.</div> : items.map((rule, index) => (
+					<RuleCard
+						key={`${rule.doctype}:${rule.name}`}
+						rule={rule}
+						rows={rows}
+						index={index}
+						total={items.length}
+						onEdit={onEdit}
+						onToggle={onToggle}
+						onReorder={onReorder}
+						onDelete={onDelete}
+						busy={busy}
+					/>
+				))}
+			</div>
 		</section>
 	);
 }
 
-function GraphNode({ rule, index, total, onOpen, onToggle, toggling }) {
-	const scope = rule.scope || [];
-	const disabled = !rule.enabled;
+function GraphColumn({ group }) {
+	const items = [...(group?.items || [])].sort((a, b) => (a.priority || 0) - (b.priority || 0));
 	return (
-		<div className={`rule-graph-node ${disabled ? "is-disabled" : ""}`}>
-			<div className="rgn-top">
-				<div className="rgn-priority">{rule.priority ?? "—"}</div>
-				<button className="rgn-name" onClick={() => onOpen(rule)}>
-					{rule.ruleKey || rule.name}
-				</button>
-				<label className="rule-switch rgn-switch" title={rule.enabled ? "Regel deaktivieren" : "Regel aktivieren"}>
-					<input
-						type="checkbox"
-						checked={Boolean(rule.enabled)}
-						disabled={toggling}
-						onChange={(e) => onToggle(rule, e.target.checked)}
-					/>
-					<span />
-				</label>
+		<section className="graph-col">
+			<h3 className="rule-col-title">{group?.label || "Regeln"}</h3>
+			<div className="graph-flow">
+				<div className="graph-cap start">BANK-ZEILE</div>
+				{items.map((rule) => (
+					<React.Fragment key={`${rule.doctype}:${rule.name}`}>
+						<div className="graph-arrow" aria-hidden="true">↓</div>
+						<div className={`graph-node ${rule.enabled ? "" : "inactive"} ${rule.requiresReview ? "review" : ""}`}>
+							<span className="gn-prio">{rule.priority ?? "—"}</span>
+							<div className="gn-body">
+								<div className="gn-title">{titleOf(rule)}</div>
+								<div className="gn-key mono">{rule.ruleKey || rule.name}</div>
+							</div>
+							{rule.enabled
+								? rule.stopOnMatch ? <span className="gn-flag stop">Treffer → fertig</span> : <span className="gn-flag pass">läuft weiter</span>
+								: <span className="gn-flag off">aus</span>}
+						</div>
+					</React.Fragment>
+				))}
+				<div className="graph-arrow" aria-hidden="true">↓</div>
+				<div className="graph-cap end">offen / zur Prüfung</div>
 			</div>
-			<div className="rgn-meta">
-				<span>{rule.hasRuleCode ? `${rule.ruleCodeLines || 1} Code-Zeilen` : "Code fehlt"}</span>
-				<span>{scope.length ? `${scope.length} Scope` : "Kein Scope"}</span>
-				{rule.autoApply !== null && rule.autoApply !== undefined && (
-					<span>{rule.autoApply ? "Auto" : "Manuell"}</span>
-				)}
-			</div>
-			<div className="rgn-body">
-				<div className="rgn-output">{rule.stopOnMatch ? "Treffer stoppt Phase" : "Treffer laeuft weiter"}</div>
-				{scope.length > 0 && <div className="rgn-scope">{scopeLabel(scope[0])}</div>}
-			</div>
-			<div className="rgn-actions">
-				<button className="btn subtle sm" onClick={() => onOpen(rule)}>
-					<Icon name="file" /> Code & Scope
-				</button>
-			</div>
-			{index < total - 1 && (
-				<div className="rgn-edge" aria-hidden="true">
-					<span />
-					<Icon name="arrowDown" size={13} />
-				</div>
-			)}
-		</div>
+		</section>
 	);
 }
 
-function RuleGraph({ groups, onOpen, onNew, onList, onToggle, toggling }) {
+function defaultCondition() {
+	return { field: "auftraggeber", op: "enthält", value: "" };
+}
+
+function makeInitialEditorState(state) {
+	const rule = state.rule || {};
+	const kind = DOCTYPE_KIND[state.doctype || rule.doctype] || state.kind || "booking";
+	const params = parseParams(rule);
+	const builder = params.builder || { connector: "und", conditions: [defaultCondition()] };
+	const action = params.action || {
+		type: kind === "party" ? "party" : "buchung",
+		party_type: "Customer",
+		party: "",
+		account: "",
+		cost_center: "Allgemein",
+	};
+	return {
+		name: rule.name || "",
+		doctype: state.doctype || rule.doctype || KIND_DOCTYPE[kind],
+		kind,
+		title: titleOf(rule) === "Regel" ? "" : titleOf(rule),
+		ruleKey: rule.ruleKey || (kind === "party" ? "party.neue_regel" : "booking.neue_regel"),
+		description: rule.description || "",
+		priority: rule.priority ?? 100,
+		enabled: rule.enabled !== false,
+		stopOnMatch: rule.stopOnMatch !== false,
+		autoApply: rule.autoApply !== false,
+		requiresReview: Boolean(rule.requiresReview),
+		builder: {
+			connector: builder.connector || "und",
+			conditions: builder.conditions?.length ? builder.conditions : [defaultCondition()],
+		},
+		action,
+		scope: (rule.scope || []).map((entry) => ({ enabled: entry.enabled !== false, ...entry })),
+		mode: params.ui?.mode || "einfach",
+		isSystem: Boolean(rule.isSystem),
+		isBuilderRule: Boolean(rule.isBuilderRule || params.builder),
+		ruleCodeLines: rule.ruleCodeLines || 0,
+	};
+}
+
+function RuleEditor({ state, rows, onClose, onSave }) {
+	const [form, setForm] = useState(() => makeInitialEditorState(state));
+	const [saving, setSaving] = useState(false);
+	const [serverPreview, setServerPreview] = useState(null);
+
+	useEffect(() => {
+		setForm(makeInitialEditorState(state));
+		setServerPreview(null);
+	}, [state]);
+
+	useEffect(() => {
+		const onKey = (event) => { if (event.key === "Escape") onClose(); };
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [onClose]);
+
+	const builderError = form.isSystem ? "" : validateBuilder(form.builder);
+	const localHits = !form.isSystem && !builderError ? (rows || []).filter((row) => !isDoneRow(row) && builderMatches(form.builder, row)).length : 0;
+	const actionValid = form.isSystem || form.requiresReview || (
+		["party", "partei"].includes(form.action.type)
+			? Boolean(form.action.party_type && form.action.party)
+			: Boolean(form.action.account || form.action.konto)
+	);
+	const valid = form.title.trim() && (form.isSystem || form.ruleKey.trim()) && !builderError && actionValid;
+
+	const patch = (next) => setForm((current) => ({ ...current, ...next }));
+	const setCondition = (index, next) => patch({
+		builder: {
+			...form.builder,
+			conditions: form.builder.conditions.map((condition, idx) => idx === index ? { ...condition, ...next } : condition),
+		},
+	});
+	const addCondition = () => patch({ builder: { ...form.builder, conditions: [...form.builder.conditions, { field: "zweck", op: "enthält", value: "" }] } });
+	const removeCondition = (index) => patch({ builder: { ...form.builder, conditions: form.builder.conditions.filter((_, idx) => idx !== index) } });
+	const setScope = (index, next) => patch({ scope: form.scope.map((entry, idx) => idx === index ? { ...entry, ...next } : entry) });
+
+	const preview = async () => {
+		if (builderError || form.isSystem) return;
+		try {
+			const parameters = { builder: form.builder, action: form.action, ui: { mode: form.mode } };
+			setServerPreview(await api.previewBankimportRuleHits(form.doctype, parameters, undefined, form.name));
+		} catch (e) {
+			setServerPreview({ ok: false, message: e.message || String(e), hits: 0 });
+		}
+	};
+
+	const submit = async (event) => {
+		event.preventDefault();
+		if (!valid || saving) return;
+		setSaving(true);
+		try {
+			await onSave({
+				...form,
+				parametersJson: { builder: form.builder, action: form.action, ui: { mode: form.mode } },
+			});
+		} finally {
+			setSaving(false);
+		}
+	};
+
 	return (
-		<div className="rule-graph">
-			<div className="rule-graph-start">
-				<div className="rgs-dot" />
-				<div>
-					<div className="rgs-title">Bankimport-Zeile</div>
-					<div className="rgs-sub">wird von oben nach unten durch die Phasen geführt</div>
+		<div className="modal-backdrop rule-editor-backdrop" onMouseDown={(event) => { event.stopPropagation(); onClose(); }}>
+			<form className="rule-editor" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
+				<div className="re-head">
+					<div>
+						<h2>{form.name ? "Regel bearbeiten" : "Neue Regel"}</h2>
+						<div className="re-sub">{form.kind === "party" ? "Party Matching" : "Buchungs-Matching"}</div>
+					</div>
+					<button type="button" className="btn ghost icon" onClick={onClose} title="Schließen"><Icon name="x" /></button>
 				</div>
-			</div>
-			<div className="rule-graph-lanes">
-				{groups.map((group, groupIndex) => {
-					const items = group.items || [];
-					return (
-						<section className="rule-graph-lane" key={group.doctype}>
-							<div className="rgl-head">
-								<div>
-									<h3>{group.label}</h3>
-									<div>{group.counts?.enabled || 0} aktiv · {items.length} Knoten</div>
-								</div>
-								<div className="rgl-actions">
-									<button className="btn subtle sm" onClick={() => onList(group.doctype)}>
-										<Icon name="file" /> Liste
-									</button>
-									<button className="btn primary sm" onClick={() => onNew(group.doctype)}>
-										<Icon name="plus" /> Neu
-									</button>
-								</div>
-							</div>
-							{items.length === 0 ? (
-								<div className="rule-empty">Keine Regeln in dieser Phase.</div>
-							) : (
-								<div className="rule-graph-stack">
-									{items.map((rule, index) => (
-										<GraphNode
-											key={`${rule.doctype}:${rule.name}`}
-											rule={rule}
-											index={index}
-											total={items.length}
-											onOpen={onOpen}
-											onToggle={onToggle}
-											toggling={toggling === `${rule.doctype}:${rule.name}`}
-										/>
-									))}
+
+				<div className="re-body">
+					<div className="re-grid top">
+						<label><span className="field-label">Titel</span><input className="text-input" value={form.title} onChange={(e) => patch({ title: e.target.value })} required /></label>
+						<label><span className="field-label">Priorität</span><input className="text-input mono" type="number" value={form.priority} onChange={(e) => patch({ priority: Number(e.target.value) || 0 })} /></label>
+					</div>
+					<label className="re-field"><span className="field-label">Regel-Schlüssel</span><input className="text-input mono" value={form.ruleKey} disabled={form.isSystem} onChange={(e) => patch({ ruleKey: e.target.value })} /></label>
+					<label className="re-field"><span className="field-label">Beschreibung</span><textarea className="text-input re-textarea" value={form.description} onChange={(e) => patch({ description: e.target.value })} /></label>
+
+					<section className="re-section">
+						<div className="re-section-head">
+							<span>Wenn</span>
+							{!form.isSystem && (
+								<div className="seg">
+									<button type="button" className={`seg-btn ${form.mode === "einfach" ? "active" : ""}`} onClick={() => patch({ mode: "einfach" })}>Einfach</button>
+									<button type="button" className={`seg-btn ${form.mode === "erweitert" ? "active" : ""}`} onClick={() => patch({ mode: "erweitert" })}>Erweitert</button>
 								</div>
 							)}
-							{groupIndex < groups.length - 1 && (
-								<div className="rgl-phase-edge" aria-hidden="true">
-									<span />
-									<Icon name="arrowDown" size={14} />
+						</div>
+						{form.isSystem ? (
+							<div className="locked-rule">
+								<span>Python-Regel · {form.ruleCodeLines || 0} Code-Zeilen</span>
+								<button
+									type="button"
+									className="btn subtle sm"
+									onClick={() => api.openDoc(form.doctype, form.name)}
+								>
+									<Icon name="file" size={13} /> Python-Code öffnen
+								</button>
+							</div>
+						) : form.mode === "erweitert" ? (
+							<textarea
+								className="text-input re-code"
+								value={exprText(form.builder)}
+								readOnly
+								title="Der erweiterte Freitext wird aus den strukturierten Bedingungen serialisiert."
+							/>
+						) : (
+							<>
+								{form.builder.conditions.map((condition, index) => (
+									<div className="cond-row" key={index}>
+										<select className="text-input" value={condition.field} onChange={(e) => setCondition(index, { field: e.target.value, value: "" })}>
+											{FIELDS.map((field) => <option value={field} key={field}>{FIELD_LABELS[field]}</option>)}
+										</select>
+										<select className="text-input" value={condition.op} onChange={(e) => setCondition(index, { op: e.target.value })}>
+											{OPS.map((op) => <option value={op} key={op}>{op}</option>)}
+										</select>
+										{condition.field === "richtung" ? (
+											<select className="text-input" value={condition.value} onChange={(e) => setCondition(index, { value: e.target.value })}>
+												<option value="">Richtung</option>
+												<option value="Eingang">Eingang</option>
+												<option value="Ausgang">Ausgang</option>
+											</select>
+										) : (
+											<input className="text-input" type={condition.field === "betrag" ? "number" : "text"} value={condition.value} onChange={(e) => setCondition(index, { value: e.target.value })} />
+										)}
+										<button type="button" className="icon-btn" disabled={form.builder.conditions.length <= 1} onClick={() => removeCondition(index)}><Icon name="x" size={13} /></button>
+									</div>
+								))}
+								<div className="builder-actions">
+									<button type="button" className="btn subtle sm" onClick={addCondition}><Icon name="plus" size={13} /> Bedingung</button>
+									{form.builder.conditions.length > 1 && (
+										<div className="seg">
+											<button type="button" className={`seg-btn ${form.builder.connector === "und" ? "active" : ""}`} onClick={() => patch({ builder: { ...form.builder, connector: "und" } })}>alle</button>
+											<button type="button" className={`seg-btn ${form.builder.connector === "oder" ? "active" : ""}`} onClick={() => patch({ builder: { ...form.builder, connector: "oder" } })}>eine</button>
+										</div>
+									)}
+								</div>
+							</>
+						)}
+						<div className={`re-live ${builderError ? "bad" : "ok"}`}>
+							{builderError || `gültig · trifft ${serverPreview?.ok ? serverPreview.hits : localHits} Zeilen im aktuellen Auszug`}
+							{!form.isSystem && <button type="button" className="link-btn" onClick={preview}>Server prüfen</button>}
+						</div>
+					</section>
+
+					{!form.isSystem && !form.requiresReview && (
+						<section className="re-section">
+							<div className="re-section-head"><span>Dann</span></div>
+							<div className="seg action-seg">
+								<button type="button" className={`seg-btn ${["buchung", "booking"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { ...form.action, type: "buchung" } })}>Auf Konto buchen</button>
+								<button type="button" className={`seg-btn ${["party", "partei"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { ...form.action, type: "party" } })}>Partei zuordnen</button>
+							</div>
+							{["party", "partei"].includes(form.action.type) ? (
+								<div className="re-grid">
+									<label><span className="field-label">Party Type</span><select className="text-input" value={form.action.party_type || ""} onChange={(e) => patch({ action: { ...form.action, party_type: e.target.value } })}>{PARTY_TYPES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+									<label><span className="field-label">Party</span><input className="text-input" value={form.action.party || ""} onChange={(e) => patch({ action: { ...form.action, party: e.target.value } })} /></label>
+								</div>
+							) : (
+								<div className="re-grid">
+									<label><span className="field-label">Gegenkonto</span><input className="text-input" value={form.action.account || ""} onChange={(e) => patch({ action: { ...form.action, account: e.target.value } })} placeholder="4970 Bankgebühren - HV" /></label>
+									<label><span className="field-label">Kostenstelle</span><input className="text-input" value={form.action.cost_center || ""} onChange={(e) => patch({ action: { ...form.action, cost_center: e.target.value } })} /></label>
 								</div>
 							)}
 						</section>
-					);
-				})}
-			</div>
+					)}
+
+					<section className="re-section">
+						<div className="option-grid">
+							<label><input type="checkbox" checked={form.enabled} onChange={(e) => patch({ enabled: e.target.checked })} /> Aktiv</label>
+							<label><input type="checkbox" checked={form.stopOnMatch} onChange={(e) => patch({ stopOnMatch: e.target.checked })} /> Stoppt bei Treffer</label>
+							{form.kind === "booking" && <label><input type="checkbox" checked={form.autoApply} onChange={(e) => patch({ autoApply: e.target.checked })} /> Automatisch anwenden</label>}
+							<label><input type="checkbox" checked={form.requiresReview} onChange={(e) => patch({ requiresReview: e.target.checked })} /> Prüfung erforderlich</label>
+						</div>
+					</section>
+
+					<section className="re-section">
+						<div className="re-section-head">
+							<span>Geltungsbereich</span>
+							<button type="button" className="btn subtle sm" onClick={() => patch({ scope: [...form.scope, { enabled: true, mode: "Sperren", scopeType: "IBAN", iban: "" }] })}><Icon name="plus" size={13} /> Regel</button>
+						</div>
+						{form.scope.length === 0 ? <div className="scope-empty">Gilt für alle Zeilen.</div> : form.scope.map((entry, index) => (
+							<div className="scope-row" key={index}>
+								<select className="text-input" value={entry.mode || "Sperren"} onChange={(e) => setScope(index, { mode: e.target.value })}><option>Sperren</option><option>Erlauben</option></select>
+								<select className="text-input" value={entry.scopeType || "IBAN"} onChange={(e) => setScope(index, { scopeType: e.target.value })}><option>IBAN</option><option>Party</option><option>Party Type</option></select>
+								{entry.scopeType === "Party Type" ? (
+									<select className="text-input" value={entry.partyType || ""} onChange={(e) => setScope(index, { partyType: e.target.value })}>{PARTY_TYPES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select>
+								) : entry.scopeType === "Party" ? (
+									<input className="text-input" value={entry.party || ""} onChange={(e) => setScope(index, { party: e.target.value })} placeholder={scopeLabel(entry)} />
+								) : (
+									<input className="text-input mono" value={entry.iban || ""} onChange={(e) => setScope(index, { iban: e.target.value })} />
+								)}
+								<button type="button" className="icon-btn" onClick={() => patch({ scope: form.scope.filter((_, idx) => idx !== index) })}><Icon name="trash" size={13} /></button>
+							</div>
+						))}
+					</section>
+				</div>
+
+				<div className="re-actions">
+					<button type="button" className="btn subtle" onClick={onClose}>Abbrechen</button>
+					<button type="submit" className="btn primary" disabled={!valid || saving}>{saving ? <Spinner /> : <Icon name="check" />} Speichern</button>
+				</div>
+			</form>
 		</div>
 	);
 }
 
-export function RulePanel({ open, onClose, notify }) {
+export function RulePanel({ open, onClose, notify, rows = [] }) {
 	const [data, setData] = useState(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState("");
-	const [toggling, setToggling] = useState("");
-	const [viewMode, setViewMode] = useState("graph");
+	const [busyKey, setBusyKey] = useState("");
+	const [viewMode, setViewMode] = useState("list");
+	const [editor, setEditor] = useState(null);
 
 	const load = useCallback(async () => {
 		setLoading(true);
@@ -248,7 +522,7 @@ export function RulePanel({ open, onClose, notify }) {
 			setData(await api.listBankimportRules());
 		} catch (e) {
 			setError(e.message || String(e));
-		} finally {
+		 } finally {
 			setLoading(false);
 		}
 	}, []);
@@ -264,18 +538,9 @@ export function RulePanel({ open, onClose, notify }) {
 
 	if (!open) return null;
 
-	const openRule = async (rule) => {
-		await api.openDoc(rule.doctype, rule.name);
-	};
-	const newRule = async (doctype) => {
-		await api.newDoc(doctype);
-	};
-	const openList = async (doctype) => {
-		await api.openList(doctype);
-	};
 	const toggleRule = async (rule, enabled) => {
 		const key = `${rule.doctype}:${rule.name}`;
-		setToggling(key);
+		setBusyKey(key);
 		try {
 			await api.setBankimportRuleEnabled(rule.doctype, rule.name, enabled);
 			notify?.("success", enabled ? "Regel aktiviert." : "Regel deaktiviert.");
@@ -283,7 +548,43 @@ export function RulePanel({ open, onClose, notify }) {
 		} catch (e) {
 			notify?.("error", e.message || String(e));
 		} finally {
-			setToggling("");
+			setBusyKey("");
+		}
+	};
+
+	const reorderRule = async (rule, direction) => {
+		const key = `${rule.doctype}:${rule.name}`;
+		setBusyKey(key);
+		try {
+			await api.reorderBankimportRule(rule.doctype, rule.name, direction);
+			await load();
+		} catch (e) {
+			notify?.("error", e.message || String(e));
+		} finally {
+			setBusyKey("");
+		}
+	};
+
+	const deleteRule = async (rule) => {
+		if (!window.confirm(`Regel "${titleOf(rule)}" löschen?`)) return;
+		try {
+			await api.deleteBankimportRule(rule.doctype, rule.name);
+			notify?.("success", "Regel gelöscht.");
+			await load();
+		} catch (e) {
+			notify?.("error", e.message || String(e));
+		}
+	};
+
+	const saveRule = async (values) => {
+		try {
+			await api.saveBankimportRule(values.doctype, values);
+			notify?.("success", "Regel gespeichert.");
+			setEditor(null);
+			await load();
+		} catch (e) {
+			notify?.("error", e.message || String(e));
+			throw e;
 		}
 	};
 
@@ -293,29 +594,15 @@ export function RulePanel({ open, onClose, notify }) {
 				<div className="rule-modal-head">
 					<div>
 						<h2>Bankimport-Regeln</h2>
-						<div className="rule-modal-sub">Reihenfolge, Aktivierung und Geltungsbereiche der automatischen Zuordnung.</div>
+						<div className="rule-modal-sub">Priorisierte Zuordnung für Party Matching und Buchungs-Matching.</div>
 					</div>
 					<div className="rule-modal-actions">
 						<div className="seg rule-view-toggle">
-							<button
-								className={`seg-btn ${viewMode === "graph" ? "active" : ""}`}
-								onClick={() => setViewMode("graph")}
-							>
-								Graph
-							</button>
-							<button
-								className={`seg-btn ${viewMode === "list" ? "active" : ""}`}
-								onClick={() => setViewMode("list")}
-							>
-								Liste
-							</button>
+							<button className={`seg-btn ${viewMode === "list" ? "active" : ""}`} onClick={() => setViewMode("list")}>Liste</button>
+							<button className={`seg-btn ${viewMode === "graph" ? "active" : ""}`} onClick={() => setViewMode("graph")}>Graph</button>
 						</div>
-						<button className="btn subtle" onClick={load} disabled={loading}>
-							{loading ? <Spinner /> : <Icon name="refresh" />} Neu laden
-						</button>
-						<button className="btn ghost icon" onClick={onClose} title="Schließen">
-							<Icon name="x" />
-						</button>
+						<button className="btn subtle" onClick={load} disabled={loading}>{loading ? <Spinner /> : <Icon name="refresh" />} Neu laden</button>
+						<button className="btn ghost icon" onClick={onClose} title="Schließen"><Icon name="x" /></button>
 					</div>
 				</div>
 
@@ -324,30 +611,24 @@ export function RulePanel({ open, onClose, notify }) {
 				) : loading && !data ? (
 					<div className="panel-loading"><Spinner size={18} /> Regeln laden...</div>
 				) : viewMode === "graph" ? (
-					<RuleGraph
-						groups={groups}
-						onOpen={openRule}
-						onNew={newRule}
-						onList={openList}
-						onToggle={toggleRule}
-						toggling={toggling}
-					/>
+					<div className="rule-graph-grid">{groups.map((group) => <GraphColumn group={group} key={group.doctype} />)}</div>
 				) : (
-					<div className="rule-grid">
-						{groups.map((group) => (
-							<RuleGroup
-								key={group.doctype}
-								group={group}
-								onOpen={openRule}
-								onNew={newRule}
-								onList={openList}
-								onToggle={toggleRule}
-								toggling={toggling}
-							/>
-						))}
-					</div>
+					<div className="rule-grid">{groups.map((group) => (
+						<RuleColumn
+							key={group.doctype}
+							group={group}
+							rows={rows}
+							onNew={(nextGroup) => setEditor({ doctype: nextGroup.doctype, kind: DOCTYPE_KIND[nextGroup.doctype] })}
+							onEdit={(rule) => setEditor({ doctype: rule.doctype, rule })}
+							onToggle={toggleRule}
+							onReorder={reorderRule}
+							onDelete={deleteRule}
+							busy={Boolean(busyKey)}
+						/>
+					))}</div>
 				)}
 			</div>
+			{editor && <RuleEditor state={editor} rows={rows} onClose={() => setEditor(null)} onSave={saveRule} />}
 		</div>
 	);
 }

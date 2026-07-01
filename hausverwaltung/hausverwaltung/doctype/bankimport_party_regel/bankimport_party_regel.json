@@ -7,6 +7,7 @@
  "engine": "InnoDB",
  "field_order": [
   "enabled",
+  "title",
   "rule_key",
   "priority",
   "rule_code",
@@ -24,6 +25,12 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Aktiv"
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Titel"
   },
   {
    "fieldname": "rule_key",
@@ -112,7 +119,7 @@
    "write": 1
   }
  ],
- "search_fields": "rule_key,description",
+ "search_fields": "title,rule_key,description",
  "sort_field": "priority",
  "sort_order": "ASC",
  "states": [],

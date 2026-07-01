@@ -12,6 +12,7 @@ SUPPORTED_PARTY_TYPES = {"Customer", "Supplier", "Eigentuemer"}
 PARTY_RULE_DOCTYPE = "Bankimport Party Regel"
 BOOKING_RULE_DOCTYPE = "Bankimport Buchungsregel"
 RULE_SCOPE_DOCTYPE = "Bankimport Regel Scope"
+BUILDER_RULE_CODE = "result = evaluate_builder_rule(rule=rule, row=row, context=context)"
 
 
 DEFAULT_PARTY_RULES = [
@@ -19,6 +20,7 @@ DEFAULT_PARTY_RULES = [
 		"rule_key": "party.unique_iban_to_party",
 		"legacy_rule_key": "system.unique_iban_to_party",
 		"priority": 10,
+		"title": "Eindeutige IBAN",
 		"rule_code": """
 party_tuple = get_party_by_iban(row.get("iban"))
 if party_tuple:
@@ -38,6 +40,7 @@ else:
 		"rule_key": "party.row_party",
 		"legacy_rule_key": "system.row_party",
 		"priority": 100,
+		"title": "Partei aus Importzeile",
 		"rule_code": """
 if row.get("party_type") in SUPPORTED_PARTY_TYPES and row.get("party"):
 	result = {
@@ -58,6 +61,7 @@ DEFAULT_BOOKING_RULES = [
 		"rule_key": "booking.invoice_auto_match",
 		"legacy_rule_key": "system.invoice_auto_match",
 		"priority": 100,
+		"title": "Rechnung automatisch zuordnen",
 		"rule_code": 'result = auto_match_invoice(row=row, bt=bt, context=context)',
 		"description": "Offene Sales/Purchase Invoice konservativ automatisch zuordnen.",
 	},
@@ -65,6 +69,7 @@ DEFAULT_BOOKING_RULES = [
 		"rule_key": "booking.kreditrate_auto_match",
 		"legacy_rule_key": "system.kreditrate_auto_match",
 		"priority": 200,
+		"title": "Kreditrate automatisch zuordnen",
 		"rule_code": 'result = match_kreditrate(row=row, bt=bt)',
 		"description": "Ausgang eindeutig gegen Kreditrate buchen.",
 	},
@@ -72,6 +77,7 @@ DEFAULT_BOOKING_RULES = [
 		"rule_key": "booking.abschlagsplan_auto_match",
 		"legacy_rule_key": "system.abschlagsplan_auto_match",
 		"priority": 300,
+		"title": "Abschlagsplan automatisch zuordnen",
 		"rule_code": 'result = match_abschlagsplan(doc=doc, row=row, bt=bt, context=context)',
 		"description": "Supplier-Ausgang eindeutig gegen offene Abschlagsplan-Zeile buchen.",
 	},
@@ -79,6 +85,7 @@ DEFAULT_BOOKING_RULES = [
 		"rule_key": "booking.needs_review_fallback",
 		"legacy_rule_key": "system.needs_review_fallback",
 		"priority": 900,
+		"title": "Zur Prüfung markieren",
 		"rule_code": 'result = needs_review_fallback(row=row, context=context)',
 		"description": "Offene Bankimport-Zeile ohne automatische Buchung zur Pruefung belassen.",
 	},
@@ -139,7 +146,7 @@ def ensure_default_bankimport_rules() -> dict[str, int]:
 			if frappe.db.exists(doctype, name):
 				doc = frappe.get_doc(doctype, name)
 				changed = False
-				for fieldname in ("rule_code", "description"):
+				for fieldname in ("rule_code", "description", "title"):
 					if doc.get(fieldname) != spec.get(fieldname):
 						doc.set(fieldname, spec.get(fieldname))
 						changed = True
@@ -154,6 +161,7 @@ def ensure_default_bankimport_rules() -> dict[str, int]:
 				"stop_on_match": 1,
 				"rule_key": spec["rule_key"],
 				"priority": spec["priority"],
+				"title": spec.get("title"),
 				"rule_code": spec["rule_code"],
 				"description": spec["description"],
 			}
@@ -442,6 +450,187 @@ def _booking_needs_review_fallback(*, row, context):
 	}
 
 
+BUILDER_FIELDS = {"iban", "auftraggeber", "zweck", "betrag", "richtung"}
+BUILDER_OPS = {"enthält", "beginnt mit", "=", "!=", ">", "<", ">=", "<="}
+
+
+def evaluate_builder_rule(*, rule: dict[str, Any], row, context: dict[str, Any] | None = None) -> dict[str, Any]:
+	"""Evaluate a structured UI rule stored in parameters_json."""
+	params = rule.get("parameters") or {}
+	builder = params.get("builder") if isinstance(params.get("builder"), dict) else {}
+	if not builder:
+		return {"matched": False, "reason": "missing_builder"}
+	if not builder_matches_row(builder, row):
+		return {"matched": False, "reason": "builder_no_match"}
+	if rule.get("requires_review"):
+		_set_row_value(row, "row_status", "needs_review")
+		_set_row_value(row, "auto_match_message", "Bankimport-Regel markiert die Zeile zur Prüfung.")
+		return {
+			"matched": True,
+			"category": "auto_match_failed",
+			"reason": "builder_requires_review",
+			"needs_review": True,
+			"message": "Bankimport-Regel markiert die Zeile zur Prüfung.",
+		}
+
+	action = params.get("action") if isinstance(params.get("action"), dict) else {}
+	action_type = action.get("type")
+	if action_type in {"party", "partei"}:
+		party_type = action.get("party_type") or action.get("partyType")
+		party = action.get("party")
+		if party_type in SUPPORTED_PARTY_TYPES and party:
+			return {
+				"matched": True,
+				"party_type": party_type,
+				"party": party,
+				"message": "Builder-Regel hat Partei zugeordnet.",
+			}
+		return {"matched": False, "reason": "invalid_party_action"}
+
+	if action_type in {"buchung", "booking"}:
+		return _evaluate_builder_booking_action(rule=rule, row=row, context=context or {}, action=action)
+
+	return {"matched": True, "message": "Builder-Regel hat getroffen."}
+
+
+def builder_matches_row(builder: dict[str, Any], row) -> bool:
+	conditions = builder.get("conditions") or []
+	if not isinstance(conditions, list) or not conditions:
+		return False
+	results = [_builder_condition_matches(cond, row) for cond in conditions if isinstance(cond, dict)]
+	if not results:
+		return False
+	connector = str(builder.get("connector") or "und").lower()
+	return any(results) if connector == "oder" else all(results)
+
+
+def validate_builder(builder: dict[str, Any]) -> tuple[bool, str]:
+	conditions = builder.get("conditions") or []
+	if not isinstance(conditions, list) or not conditions:
+		return False, "Mindestens eine Bedingung ist erforderlich."
+	connector = str(builder.get("connector") or "und").lower()
+	if connector not in {"und", "oder"}:
+		return False, "Die Verknüpfung muss und oder oder sein."
+	for cond in conditions:
+		if not isinstance(cond, dict):
+			return False, "Ungültige Bedingung."
+		field = str(cond.get("field") or "").strip()
+		op = str(cond.get("op") or "").strip()
+		value = cond.get("value")
+		if field not in BUILDER_FIELDS:
+			return False, f"Unbekanntes Feld: {field}"
+		if op not in BUILDER_OPS:
+			return False, f"Unbekannter Operator: {op}"
+		if value in (None, ""):
+			return False, "Jede Bedingung benötigt einen Wert."
+	return True, ""
+
+
+def _builder_condition_matches(cond: dict[str, Any], row) -> bool:
+	field = str(cond.get("field") or "").strip()
+	op = str(cond.get("op") or "").strip()
+	rhs = cond.get("value")
+	lhs = _builder_field_value(field, row)
+	if lhs is None:
+		return False
+	if field == "betrag":
+		left = flt(lhs)
+		right = flt(_parse_builder_number(rhs))
+		return _compare_builder_values(left, right, op)
+	left = str(lhs or "").lower()
+	right = str(rhs or "").strip().lower()
+	if op == "enthält":
+		return right in left
+	if op == "beginnt mit":
+		return left.startswith(right)
+	if op == "=":
+		return left == right
+	if op == "!=":
+		return left != right
+	return _compare_builder_values(_parse_builder_number(left), _parse_builder_number(right), op)
+
+
+def _builder_field_value(field: str, row):
+	if field == "iban":
+		return row.get("iban")
+	if field == "auftraggeber":
+		return row.get("auftraggeber")
+	if field == "zweck":
+		return row.get("verwendungszweck") or row.get("zweck")
+	if field == "betrag":
+		return abs(flt(row.get("betrag")))
+	if field == "richtung":
+		return row.get("richtung") or ("Ausgang" if flt(row.get("betrag")) < 0 else "Eingang")
+	return None
+
+
+def _parse_builder_number(value) -> float:
+	raw = str(value or "0").strip()
+	normalized = raw.replace(".", "").replace(",", ".") if "," in raw else raw
+	return flt(normalized)
+
+
+def _compare_builder_values(left: float, right: float, op: str) -> bool:
+	if op == "=":
+		return left == right
+	if op == "!=":
+		return left != right
+	if op == ">":
+		return left > right
+	if op == "<":
+		return left < right
+	if op == ">=":
+		return left >= right
+	if op == "<=":
+		return left <= right
+	return False
+
+
+def _evaluate_builder_booking_action(*, rule: dict[str, Any], row, context: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
+	bt = context.get("bt")
+	if not bt:
+		return {"matched": False, "reason": "missing_bank_transaction"}
+	account = action.get("account") or action.get("konto")
+	cost_center = action.get("cost_center") or action.get("kostenstelle")
+	if not account:
+		return {"matched": False, "reason": "missing_account"}
+	try:
+		from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import import (
+			_set_row_payment_document,
+		)
+		from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+			create_journal_entry_for_bt,
+			reconcile_created_voucher_or_rollback,
+		)
+
+		je = create_journal_entry_for_bt(
+			bt=bt,
+			account=account,
+			cost_center=cost_center,
+			remarks=row.get("verwendungszweck") or rule.get("title") or rule.get("rule_key"),
+		)
+		reconcile_created_voucher_or_rollback(bt, "Journal Entry", je.name, flt(row.get("betrag")))
+		_set_row_value(row, "journal_entry", je.name)
+		_set_row_payment_document(row, "Journal Entry", je.name)
+		_set_row_value(row, "row_status", "success")
+		message = f"Builder-Regel: {flt(row.get('betrag')):.2f} EUR gegen {account}"
+		_set_row_value(row, "auto_match_message", message)
+		return {
+			"matched": True,
+			"category": "auto_matched",
+			"document_type": "Journal Entry",
+			"document": je.name,
+			"reason": "builder_journal_entry",
+			"message": message,
+		}
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"Bankimport-Builder-Regel fehlgeschlagen: {rule.get('name') or rule.get('rule_key')}",
+		)
+		return {"matched": False, "reason": "builder_booking_exception"}
+
+
 def _rule_get_party_by_iban(iban: str | None) -> tuple[str, str] | None:
 	return _resolve_party_by_iban_via_bankimport(iban)
 
@@ -453,6 +642,7 @@ RULE_GLOBALS = {
 	"match_kreditrate": _booking_kreditrate_auto_match,
 	"match_abschlagsplan": _booking_abschlagsplan_auto_match,
 	"needs_review_fallback": _booking_needs_review_fallback,
+	"evaluate_builder_rule": evaluate_builder_rule,
 	"flt": flt,
 }
 
@@ -517,6 +707,7 @@ def _load_rules(doctype: str) -> list[dict[str, Any]]:
 			fields=[
 				"name",
 				"rule_key",
+				"title",
 				"priority",
 				"rule_code",
 				"stop_on_match",
@@ -557,6 +748,7 @@ def _default_rule_row(doctype: str, spec: dict[str, Any]) -> dict[str, Any]:
 		"parameters": {},
 		"scope_rules": [],
 		"rule_key": spec["rule_key"],
+		"title": spec.get("title") or spec.get("description"),
 		"priority": spec["priority"],
 		"rule_code": spec["rule_code"],
 		"description": spec["description"],

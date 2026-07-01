@@ -1,6 +1,7 @@
 # See license.txt
 
 import base64
+import json
 import unittest
 from unittest.mock import patch
 
@@ -199,6 +200,7 @@ class TestBankimportRulesPanel(unittest.TestCase):
 					frappe._dict(
 						name="party.unique_iban_to_party",
 						rule_key="party.unique_iban_to_party",
+						title="Eindeutige IBAN",
 						enabled=1,
 						priority=10,
 						rule_code="result = {'matched': False}",
@@ -214,6 +216,7 @@ class TestBankimportRulesPanel(unittest.TestCase):
 					frappe._dict(
 						name="booking.invoice_auto_match",
 						rule_key="booking.invoice_auto_match",
+						title="Rechnung automatisch zuordnen",
 						enabled=0,
 						priority=100,
 						rule_code="result = auto_match_invoice(row=row, bt=bt, context=context)",
@@ -250,6 +253,8 @@ class TestBankimportRulesPanel(unittest.TestCase):
 		ensure_defaults.assert_called_once()
 		self.assertEqual(has_permission.call_count, 2)
 		self.assertEqual(result["groups"]["party"]["counts"]["enabled"], 1)
+		self.assertEqual(result["groups"]["party"]["items"][0]["title"], "Eindeutige IBAN")
+		self.assertTrue(result["groups"]["party"]["items"][0]["isSystem"])
 		self.assertEqual(result["groups"]["booking"]["counts"]["disabled"], 1)
 		self.assertTrue(result["groups"]["party"]["items"][0]["hasRuleCode"])
 		self.assertEqual(
@@ -279,6 +284,67 @@ class TestBankimportRulesPanel(unittest.TestCase):
 			0,
 		)
 		self.assertEqual(result["enabled"], 0)
+
+	def test_reorder_bankimport_rule_swaps_priorities_with_neighbor(self):
+		rows = [
+			frappe._dict(name="party.a", priority=10),
+			frappe._dict(name="party.b", priority=20),
+		]
+		with patch("frappe.has_permission") as has_permission, \
+			 patch("frappe.db.exists", return_value=True), \
+			 patch("frappe.get_all", return_value=rows), \
+			 patch("frappe.db.set_value") as set_value:
+			result = bv2.reorder_bankimport_rule("Bankimport Party Regel", "party.b", -1)
+
+		has_permission.assert_called_once_with("Bankimport Party Regel", "write", throw=True)
+		self.assertTrue(result["changed"])
+		set_value.assert_any_call("Bankimport Party Regel", "party.b", "priority", 10)
+		set_value.assert_any_call("Bankimport Party Regel", "party.a", "priority", 20)
+
+	def test_delete_bankimport_rule_rejects_system_rule(self):
+		doc = frappe._dict(
+			doctype="Bankimport Buchungsregel",
+			name="booking.invoice_auto_match",
+			rule_key="booking.invoice_auto_match",
+			rule_code="result = auto_match_invoice(row=row, bt=bt, context=context)",
+		)
+		with patch("frappe.has_permission"), \
+			 patch("frappe.db.exists", return_value=True), \
+			 patch("frappe.get_doc", return_value=doc):
+			with self.assertRaises(Exception):
+				bv2.delete_bankimport_rule("Bankimport Buchungsregel", "booking.invoice_auto_match")
+
+	def test_preview_bankimport_rule_hits_counts_open_matching_rows(self):
+		parameters = {
+			"builder": {
+				"connector": "und",
+				"conditions": [
+					{"field": "auftraggeber", "op": "enthält", "value": "Postbank"},
+					{"field": "richtung", "op": "=", "value": "Ausgang"},
+				],
+			},
+			"action": {"type": "buchung", "account": "4970 Bankgebühren - HV"},
+		}
+		doc = frappe._dict(
+			doctype="Bankauszug Import",
+			name="BAI-1",
+			rows=[
+				frappe._dict(name="row-1", auftraggeber="Postbank", verwendungszweck="Gebühr", betrag=-12.5, richtung="Ausgang", row_status="", bank_transaction="BT-1"),
+				frappe._dict(name="row-2", auftraggeber="Postbank", verwendungszweck="Gebühr", betrag=-9.5, richtung="Ausgang", row_status="success", journal_entry="JE-1"),
+				frappe._dict(name="row-3", auftraggeber="Sparkasse", verwendungszweck="Gebühr", betrag=-5.0, richtung="Ausgang", row_status="", bank_transaction="BT-2"),
+			],
+		)
+		with patch("frappe.has_permission"), \
+			 patch("frappe.get_doc", return_value=doc):
+			result = bv2.preview_bankimport_rule_hits(
+				"Bankimport Buchungsregel",
+				parameters_json=json.dumps(parameters),
+				import_name="BAI-1",
+			)
+
+		self.assertTrue(result["ok"])
+		self.assertEqual(result["hits"], 1)
+		self.assertEqual(result["rows"], ["row-1"])
 
 
 class TestDeleteImport(unittest.TestCase):

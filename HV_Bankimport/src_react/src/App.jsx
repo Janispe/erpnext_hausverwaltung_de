@@ -521,6 +521,7 @@ export function App() {
 				open={rulesOpen}
 				onClose={() => setRulesOpen(false)}
 				notify={notify}
+				rows={rows}
 			/>
 			<Toast toast={toast} onClose={() => setToast(null)} />
 		</>
@@ -595,6 +596,7 @@ export function App() {
 				open={rulesOpen}
 				onClose={() => setRulesOpen(false)}
 				notify={notify}
+				rows={rows}
 			/>
 			<Toast toast={toast} onClose={() => setToast(null)} />
 		</div>
