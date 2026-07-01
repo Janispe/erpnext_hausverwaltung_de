@@ -105,6 +105,9 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertTrue(result["read_only"])
 		self.assertEqual(result["answer"], "Ich habe einen passenden Treffer gefunden.")
 		self.assertEqual(result["matches"][0]["mietvertrag"], "MV-1")
+		self.assertEqual(result["tool_calls"][0]["name"], "search_mieter")
+		self.assertEqual(result["tool_calls"][0]["arguments"], {"query": "Schmidt", "limit": 3})
+		self.assertEqual(result["tool_calls"][0]["result_count"], 1)
 
 	def test_run_assistant_uses_conversation_history_and_stores_messages(self):
 		final_response = {"content": "Das ist die Folgeantwort."}
@@ -127,7 +130,7 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["conversation_id"], "CONV-1")
 		self.assertEqual(store_message.call_count, 2)
 		store_message.assert_any_call("CONV-1", "user", "und jetzt?")
-		store_message.assert_any_call("CONV-1", "assistant", "Das ist die Folgeantwort.", tool_names=[], matches=[])
+		store_message.assert_any_call("CONV-1", "assistant", "Das ist die Folgeantwort.", tool_names=[], tool_calls=[], matches=[])
 
 	def test_get_mieterkonto_summary_uses_existing_report(self):
 		match = {"customer": "CUST-1", "customer_name": "Anna Schmidt", "mietvertrag": "MV-1"}

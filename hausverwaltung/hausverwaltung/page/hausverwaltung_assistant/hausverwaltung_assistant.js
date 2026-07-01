@@ -93,6 +93,39 @@ function renderHausverwaltungAssistant(pageBody) {
 				color: #8a1f11;
 				border: 1px solid #f0b8ad;
 			}
+			.hv-assistant-toolcalls {
+				margin-top: 8px;
+				border-top: 1px solid rgba(0, 0, 0, 0.08);
+				padding-top: 7px;
+				font-size: 12px;
+			}
+			.hv-assistant-toolcalls summary {
+				cursor: pointer;
+				color: #59636e;
+				font-weight: 600;
+			}
+			.hv-assistant-toolcall {
+				margin-top: 7px;
+				padding: 7px;
+				border: 1px solid #deded8;
+				border-radius: 6px;
+				background: #fff;
+			}
+			.hv-assistant-toolcall-title {
+				font-weight: 600;
+				margin-bottom: 4px;
+			}
+			.hv-assistant-toolcall pre {
+				margin: 0;
+				white-space: pre-wrap;
+				word-break: break-word;
+				font-size: 11px;
+				line-height: 1.35;
+				color: #3d444d;
+				background: transparent;
+				border: 0;
+				padding: 0;
+			}
 			.hv-assistant-form {
 				display: grid;
 				grid-template-columns: minmax(0, 1fr) auto;
@@ -220,10 +253,41 @@ function renderHausverwaltungAssistant(pageBody) {
 	const input = root.find(".hv-assistant-input");
 	let conversationId = null;
 
-	const addMessage = (kind, text) => {
+	const appendToolCalls = (node, toolCalls) => {
+		if (!toolCalls || !toolCalls.length) return;
+		const details = document.createElement("details");
+		details.className = "hv-assistant-toolcalls";
+		const summary = document.createElement("summary");
+		summary.textContent = `${__("Tool Calls")} (${toolCalls.length})`;
+		details.append(summary);
+		toolCalls.forEach((toolCall) => {
+			const item = document.createElement("div");
+			item.className = "hv-assistant-toolcall";
+			const title = document.createElement("div");
+			title.className = "hv-assistant-toolcall-title";
+			const count = Number.isFinite(Number(toolCall.result_count)) ? ` - ${toolCall.result_count} ${__("Treffer")}` : "";
+			title.textContent = `${toolCall.name || __("Tool")}${count}`;
+			const pre = document.createElement("pre");
+			pre.textContent = JSON.stringify(
+				{
+					arguments: toolCall.arguments || {},
+					error: toolCall.error || null,
+				},
+				null,
+				2
+			);
+			item.append(title);
+			item.append(pre);
+			details.append(item);
+		});
+		node.append(details);
+	};
+
+	const addMessage = (kind, text, toolCalls) => {
 		const node = document.createElement("div");
 		node.className = `hv-assistant-message ${kind}`;
 		node.textContent = text;
+		appendToolCalls(node, toolCalls);
 		messagesEl.append(node);
 		messagesEl.scrollTop(messagesEl[0].scrollHeight);
 		return node;
@@ -276,7 +340,11 @@ function renderHausverwaltungAssistant(pageBody) {
 		messagesEl.empty();
 		let lastMatches = [];
 		(data.messages || []).forEach((message) => {
-			addMessage(message.role === "user" ? "user" : "assistant", message.content || "");
+			addMessage(
+				message.role === "user" ? "user" : "assistant",
+				message.content || "",
+				message.tool_calls || []
+			);
 			if (message.matches && message.matches.length) {
 				lastMatches = message.matches;
 			}
@@ -336,6 +404,7 @@ function renderHausverwaltungAssistant(pageBody) {
 			const data = response.message || {};
 			conversationId = data.conversation_id || conversationId;
 			pending.textContent = data.answer || __("Keine Antwort erhalten.");
+			appendToolCalls(pending, data.tool_calls || []);
 			renderResults(data.matches || []);
 			await loadConversationList();
 		} catch (err) {

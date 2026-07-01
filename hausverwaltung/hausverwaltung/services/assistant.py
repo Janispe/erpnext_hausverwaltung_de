@@ -405,7 +405,7 @@ def get_conversation(conversation_id: str) -> dict[str, Any]:
 	rows = frappe.get_all(
 		"Hausverwaltung Assistant Message",
 		filters={"conversation": conversation.name, "user": frappe.session.user},
-		fields=["role", "content", "tool_names", "matches_json", "creation"],
+		fields=["role", "content", "tool_names", "tool_calls_json", "matches_json", "creation"],
 		order_by="creation asc",
 		limit=CONVERSATION_MESSAGE_LIMIT,
 	)
@@ -437,6 +437,7 @@ def run_assistant(message: str, conversation_id: str | None = None) -> dict[str,
 	]
 
 	tool_names: list[str] = []
+	tool_calls_debug: list[dict[str, Any]] = []
 	matches: list[dict[str, Any]] = []
 	final_message: dict[str, Any] | None = None
 
@@ -458,6 +459,7 @@ def run_assistant(message: str, conversation_id: str | None = None) -> dict[str,
 			name, arguments = _parse_tool_call(tool_call)
 			tool_names.append(name)
 			result = _execute_tool(name, arguments)
+			tool_calls_debug.append(_tool_call_debug(name, arguments, result))
 			matches.extend(_extract_matches_from_tool_result(result))
 			messages.append(
 				{
@@ -482,6 +484,7 @@ def run_assistant(message: str, conversation_id: str | None = None) -> dict[str,
 		"assistant",
 		answer,
 		tool_names=tool_names,
+		tool_calls=tool_calls_debug,
 		matches=deduped_matches,
 	)
 	_log_assistant_call(
@@ -496,6 +499,7 @@ def run_assistant(message: str, conversation_id: str | None = None) -> dict[str,
 		"matches": deduped_matches,
 		"conversation_id": conversation.name,
 		"tool_names": tool_names,
+		"tool_calls": tool_calls_debug,
 		"read_only": True,
 	}
 
@@ -560,6 +564,7 @@ def _store_conversation_message(
 	content: str,
 	*,
 	tool_names: list[str] | None = None,
+	tool_calls: list[dict[str, Any]] | None = None,
 	matches: list[dict[str, Any]] | None = None,
 ) -> None:
 	if role not in {"user", "assistant"}:
@@ -572,6 +577,7 @@ def _store_conversation_message(
 			"role": role,
 			"content": content or "",
 			"tool_names": ", ".join(tool_names or []),
+			"tool_calls_json": json.dumps(tool_calls or [], ensure_ascii=True, default=str) if tool_calls else "",
 			"matches_json": json.dumps((matches or [])[:STORED_MATCH_LIMIT], ensure_ascii=True, default=str)
 			if matches
 			else "",
@@ -595,12 +601,17 @@ def _conversation_message_row(row: dict[str, Any]) -> dict[str, Any]:
 		"role": row.get("role") or "",
 		"content": row.get("content") or "",
 		"tool_names": [name.strip() for name in (row.get("tool_names") or "").split(",") if name.strip()],
+		"tool_calls": _parse_stored_json_list(row.get("tool_calls_json")),
 		"matches": _parse_stored_matches(row.get("matches_json")),
 		"creation": row.get("creation"),
 	}
 
 
 def _parse_stored_matches(value: str | None) -> list[dict[str, Any]]:
+	return _parse_stored_json_list(value)
+
+
+def _parse_stored_json_list(value: str | None) -> list[dict[str, Any]]:
 	if not value:
 		return []
 	try:
@@ -608,6 +619,29 @@ def _parse_stored_matches(value: str | None) -> list[dict[str, Any]]:
 	except Exception:
 		return []
 	return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
+
+
+def _tool_call_debug(name: str, arguments: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+	error = result.get("error") if isinstance(result, dict) else None
+	return {
+		"name": name,
+		"arguments": arguments,
+		"result_count": _tool_result_count(result),
+		"error": error,
+	}
+
+
+def _tool_result_count(result: dict[str, Any]) -> int:
+	if not isinstance(result, dict):
+		return 0
+	for key in ("total_count", "count", "returned"):
+		try:
+			if result.get(key) is not None:
+				return int(result.get(key) or 0)
+		except (TypeError, ValueError):
+			return 0
+	rows = result.get("rows") or result.get("matches") or result.get("items")
+	return len(rows) if isinstance(rows, list) else 0
 
 
 def search_mieter(query: str, status: str | None = None, limit: int | None = None) -> dict[str, Any]:

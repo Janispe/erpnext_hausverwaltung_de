@@ -11,6 +11,7 @@
   "role",
   "content",
   "tool_names",
+  "tool_calls_json",
   "matches_json"
  ],
  "fields": [
@@ -49,6 +50,12 @@
    "fieldname": "tool_names",
    "fieldtype": "Small Text",
    "label": "Tools"
+  },
+  {
+   "fieldname": "tool_calls_json",
+   "fieldtype": "Code",
+   "label": "Tool Calls JSON",
+   "options": "JSON"
   },
   {
    "fieldname": "matches_json",
