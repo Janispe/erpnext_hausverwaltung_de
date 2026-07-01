@@ -187,6 +187,57 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["items"][0]["belegnummer"], "SINV-1")
 		self.assertEqual(result["items"][0]["route"], ["Form", "Sales Invoice", "SINV-1"])
 
+	def test_rank_mieter_by_rent_returns_highest_active_contracts(self):
+		docs = {
+			"MV-1": frappe._dict(
+				name="MV-1",
+				kunde="CUST-1",
+				status="Lauft",
+				wohnung="WHG-1",
+				immobilie="IMM-1",
+				von="2026-01-01",
+				bis=None,
+				bruttomiete=800,
+				aktuelle_nettokaltmiete=600,
+				aktuelle_betriebskosten=120,
+				aktuelle_heizkosten=80,
+				untermietzuschlag=[],
+			),
+			"MV-2": frappe._dict(
+				name="MV-2",
+				kunde="CUST-2",
+				status="Lauft",
+				wohnung="WHG-2",
+				immobilie="IMM-1",
+				von="2026-01-01",
+				bis=None,
+				bruttomiete=950,
+				aktuelle_nettokaltmiete=700,
+				aktuelle_betriebskosten=150,
+				aktuelle_heizkosten=100,
+				untermietzuschlag=[],
+			),
+		}
+
+		def get_doc(doctype, name):
+			return docs[name]
+
+		def get_value(doctype, name, fieldname):
+			return {"CUST-1": "Anna Schmidt", "CUST-2": "Bernd Schmidt"}.get(name)
+
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant.frappe, "get_all", return_value=[frappe._dict(name="MV-1"), frappe._dict(name="MV-2")]), \
+			 patch.object(assistant, "_can_read_doc", return_value=True), \
+			 patch.object(assistant.frappe, "get_doc", side_effect=get_doc), \
+			 patch.object(assistant.frappe.db, "get_value", side_effect=get_value), \
+			 patch.object(assistant.frappe, "has_permission", return_value=True):
+			result = assistant.rank_mieter_by_rent(metric="bruttomiete", order="desc", limit=1)
+
+		self.assertEqual(result["count"], 2)
+		self.assertEqual(result["matches"][0]["mietvertrag"], "MV-2")
+		self.assertEqual(result["matches"][0]["title"], "Bernd Schmidt")
+		self.assertEqual(result["matches"][0]["bruttomiete"], 950)
+
 	def test_ask_reports_mistral_configuration_errors(self):
 		with patch.object(
 			assistant,

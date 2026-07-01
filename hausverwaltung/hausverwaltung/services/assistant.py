@@ -16,7 +16,7 @@ SQL_PREFETCH_FACTOR = 4
 
 ASSISTANT_SYSTEM_PROMPT = """Du bist der interne Hausverwaltungs-Assistent.
 Du darfst nur lesen. Du darfst keine Buchungen, Briefe, Aufgaben oder sonstige Daten aendern.
-Nutze die bereitgestellten Tools fuer Mietersuche, Mieterkonto, Salden und offene Posten.
+Nutze die bereitgestellten Tools fuer Mietersuche, Mieterkonto, Salden, offene Posten und Miet-Ranglisten.
 Erfinde keine Datensaetze und keine Betraege.
 Wenn Treffer mehrdeutig sind, nenne die wichtigsten Treffer und frage nach einer Konkretisierung.
 Antworte knapp auf Deutsch und verweise auf die gefundenen Treffernummern, wenn vorhanden."""
@@ -111,6 +111,30 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 			},
 		},
 	},
+	{
+		"type": "function",
+		"function": {
+			"name": "rank_mieter_by_rent",
+			"description": "Findet aktive Mieter mit der hoechsten oder niedrigsten aktuellen Miete.",
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"metric": {
+						"type": "string",
+						"description": "bruttomiete oder nettokaltmiete. Default bruttomiete.",
+					},
+					"order": {
+						"type": "string",
+						"description": "desc fuer hoechste Miete, asc fuer niedrigste Miete.",
+					},
+					"limit": {
+						"type": "integer",
+						"description": "Maximale Trefferzahl, 1 bis 10.",
+					},
+				},
+			},
+		},
+	},
 ]
 
 TOOL_FUNCTIONS = {
@@ -118,6 +142,7 @@ TOOL_FUNCTIONS = {
 	"get_mieter_context": lambda **kwargs: get_mieter_context(**kwargs),
 	"get_mieterkonto_summary": lambda **kwargs: get_mieterkonto_summary(**kwargs),
 	"search_open_items": lambda **kwargs: search_open_items(**kwargs),
+	"rank_mieter_by_rent": lambda **kwargs: rank_mieter_by_rent(**kwargs),
 }
 
 
@@ -397,6 +422,78 @@ def search_open_items(query: str, limit: int | None = None) -> dict[str, Any]:
 	}
 
 
+def rank_mieter_by_rent(
+	metric: str | None = None,
+	order: str | None = None,
+	limit: int | None = None,
+) -> dict[str, Any]:
+	_require_search_permissions()
+	resolved_limit = _normalize_limit(limit)
+	resolved_metric = (metric or "bruttomiete").strip().lower()
+	if resolved_metric not in {"bruttomiete", "nettokaltmiete"}:
+		resolved_metric = "bruttomiete"
+	resolved_order = (order or "desc").strip().lower()
+	if resolved_order not in {"asc", "desc"}:
+		resolved_order = "desc"
+
+	candidates = frappe.get_all(
+		"Mietvertrag",
+		filters={"status": "L\u00e4uft"},
+		fields=["name"],
+		limit_page_length=0,
+	)
+	rows: list[dict[str, Any]] = []
+	for candidate in candidates:
+		if not _can_read_doc("Mietvertrag", candidate.name):
+			continue
+		try:
+			doc = frappe.get_doc("Mietvertrag", candidate.name)
+		except Exception:
+			continue
+		amounts = _rent_amounts_for_contract(doc)
+		customer_name = (
+			getattr(doc, "kunde", None)
+			and (frappe.db.get_value("Customer", doc.kunde, "customer_name") or doc.kunde)
+		) or ""
+		sort_value = amounts["nettokaltmiete"] if resolved_metric == "nettokaltmiete" else amounts["bruttomiete"]
+		rows.append(
+			{
+				"type": "rent_ranking",
+				"title": customer_name or doc.name,
+				"subtitle": _compact_join([getattr(doc, "wohnung", None), getattr(doc, "immobilie", None), "L\u00e4uft"]),
+				"mietvertrag": doc.name,
+				"customer": getattr(doc, "kunde", "") or "",
+				"customer_name": customer_name,
+				"status": getattr(doc, "status", "") or "",
+				"wohnung": getattr(doc, "wohnung", "") or "",
+				"immobilie": getattr(doc, "immobilie", "") or "",
+				"von": getattr(doc, "von", None),
+				"bis": getattr(doc, "bis", None),
+				"metric": resolved_metric,
+				"amount": flt(sort_value, 2),
+				"bruttomiete": amounts["bruttomiete"],
+				"nettokaltmiete": amounts["nettokaltmiete"],
+				"betriebskosten": amounts["betriebskosten"],
+				"heizkosten": amounts["heizkosten"],
+				"untermietzuschlag": amounts["untermietzuschlag"],
+				"routes": _routes_for_match(
+					mietvertrag=doc.name,
+					customer=getattr(doc, "kunde", "") or "",
+					wohnung=getattr(doc, "wohnung", "") or "",
+					immobilie=getattr(doc, "immobilie", "") or "",
+				),
+			}
+		)
+
+	rows.sort(key=lambda row: flt(row.get("amount")), reverse=resolved_order == "desc")
+	return {
+		"metric": resolved_metric,
+		"order": resolved_order,
+		"count": len(rows),
+		"matches": rows[:resolved_limit],
+	}
+
+
 def _get_mietvertrag_row(identifier: str) -> frappe._dict | None:
 	filters = None
 	values = {"identifier": identifier}
@@ -600,6 +697,23 @@ def _compact_open_item_row(row: dict[str, Any]) -> dict[str, Any]:
 		"route": ["Form", row.get("belegart"), row.get("belegnummer")]
 		if row.get("belegart") and row.get("belegnummer")
 		else None,
+	}
+
+
+def _rent_amounts_for_contract(doc) -> dict[str, float]:
+	staffelbetrag_am = getattr(doc, "_staffelbetrag_am", None)
+	stichtag_fn = getattr(doc, "_bruttomiete_stichtag", None)
+	return {
+		"bruttomiete": flt(getattr(doc, "bruttomiete", 0), 2),
+		"nettokaltmiete": flt(getattr(doc, "aktuelle_nettokaltmiete", 0), 2),
+		"betriebskosten": flt(getattr(doc, "aktuelle_betriebskosten", 0), 2),
+		"heizkosten": flt(getattr(doc, "aktuelle_heizkosten", 0), 2),
+		"untermietzuschlag": flt(
+			staffelbetrag_am(getattr(doc, "untermietzuschlag", None), stichtag_fn())
+			if callable(staffelbetrag_am) and callable(stichtag_fn)
+			else 0,
+			2,
+		),
 	}
 
 
