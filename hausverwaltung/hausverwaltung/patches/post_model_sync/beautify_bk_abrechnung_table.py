@@ -75,14 +75,14 @@ HTML_CONTENT = """
   </style>
 
   <h3>Betriebskostenabrechnung</h3>
-  <p class="bk-period"><strong>Zeitraum:</strong> {{ d(objekt.von) if objekt else "" }} &ndash; {{ d(objekt.bis) if objekt else "" }}</p>
+  <p class="bk-period"><strong>Ihr Abrechnungszeitraum:</strong> {{ d(objekt.von) if objekt else "" }} &ndash; {{ d(objekt.bis) if objekt else "" }}</p>
 
   <table>
     {% if matrix and matrix|length %}
       <colgroup>
-        <col style="width:33%;">
-        <col style="width:16%;">
-        <col style="width:13%;">
+        <col style="width:30%;">
+        <col style="width:14%;">
+        <col style="width:18%;">
         <col style="width:19%;">
         <col style="width:19%;">
       </colgroup>
@@ -98,7 +98,7 @@ HTML_CONTENT = """
         <tr>
           <th>Betriebskostenart</th>
           <th>Verteilung</th>
-          <th class="num">Basis</th>
+          <th class="num">Basis (Ihr/Ges.)</th>
           <th class="num">Gesamt</th>
           <th class="num">Ihr Anteil</th>
         </tr>
@@ -119,9 +119,7 @@ HTML_CONTENT = """
             <td>{{ (art.name1 if art else row.betriebskostenart) or "" }}</td>
             <td class="muted">{{ (art.verteilung if art else "") or "" }}</td>
             <td class="num muted">
-              {% if art and art.verteilung == "qm" %}{{ qm }} qm
-              {% elif art and art.verteilung == "Bewohner" %}{{ bewohner }}
-              {% else %}&nbsp;{% endif %}
+              {{ basis_label(art) }}
             </td>
             <td class="num">{{ eur(row.immobilie) }}</td>
             <td class="num">{{ eur(row.wohnung) }}</td>
@@ -170,6 +168,72 @@ HTML_CONTENT = """
 </div>
 """.strip()
 
+JINJA_CONTENT = """
+{% set objekt = betriebskostenabrechnung_mieter %}
+
+{% macro eur(v) -%}
+  {%- set n = (v or 0) | float -%}
+  {{ ('{:,.2f}'.format(n)).replace(',', 'X').replace('.', ',').replace('X', '.') }} €
+{%- endmacro %}
+
+{% macro num(v) -%}
+  {%- set n = (v or 0) | float -%}
+  {{ ('{:,.2f}'.format(n)).replace(',', 'X').replace('.', ',').replace('X', '.') }}
+{%- endmacro %}
+
+{% macro d(dt) -%}
+  {{ frappe.utils.formatdate(dt) if dt else "" }}
+{%- endmacro %}
+
+{% macro basis_label(art) -%}
+  {%- if art and art.verteilung == "qm" -%}
+    {{ num(qm) }} / {{ num(total_qm) }} qm
+  {%- elif art and art.verteilung == "Bewohner" -%}
+    {{ num(bewohner) }} / {{ num(total_bewohner) }}
+  {%- elif art and art.verteilung in ["Schlüssel", "Schluessel"] -%}
+    {%- set key = art.get("schlüssel") or art.get("schluessel") -%}
+    {%- set own = (wohnung_schluesselwerte.get(key) or 0) | float -%}
+    {%- set total = (schluessel_totals.get(key) or 0) | float -%}
+    {%- if key and (own or total) -%}
+      {{ num(own) }} / {{ num(total) }}
+    {%- else -%}
+      &nbsp;
+    {%- endif -%}
+  {%- else -%}
+    &nbsp;
+  {%- endif -%}
+{%- endmacro %}
+
+{% set matrix = (objekt.get_kostenmatrix_rows() if objekt and objekt.get_kostenmatrix_rows else []) %}
+{% set posten = (objekt.abrechnung if objekt and objekt.abrechnung else []) %}
+
+{% set basis = objekt.get_immobilien_basis() if objekt and objekt.get_immobilien_basis else {} %}
+{% set total_qm = ((basis.get("total_qm") or 0) | float) %}
+{% set total_bewohner = ((basis.get("total_bewohner") or 0) | float) %}
+{% set schluessel_totals = basis.get("schluessel_totals") or {} %}
+{% set wohnung_schluesselwerte = basis.get("wohnung_schluesselwerte") or {} %}
+
+{# Anteile/Basis #}
+{% set qm = ((objekt.get("größe") or 0) | float) if objekt else 0 %}
+{% set bewohner = (objekt.get("mieter")|length) if objekt and objekt.get("mieter") else 0 %}
+
+{# Summen: im Matrix-Fall nur "objekt.wohnung" (Mieteranteil) summieren #}
+{% set ns = namespace(summe=0) %}
+{% if matrix and matrix|length %}
+  {% for r in matrix %}
+    {% set ns.summe = ns.summe + ((r.wohnung or 0) | float) %}
+  {% endfor %}
+{% else %}
+  {% for r in posten %}
+    {% set ns.summe = ns.summe + ((r.betrag or 0) | float) %}
+  {% endfor %}
+{% endif %}
+
+{% set voraus = ((objekt.vorrauszahlungen or 0) | float) if objekt else 0 %}
+{% set diff = (ns.summe - voraus) %}
+{% set diff_label = ("Nachzahlung" if diff > 0 else "Guthaben" if diff < 0 else "Ausgeglichen") %}
+""".strip()
+
 
 def execute():
 	if not frappe.db.exists("Serienbrief Textbaustein", BLOCK_NAME):
@@ -178,7 +242,9 @@ def execute():
 	frappe.db.set_value(
 		"Serienbrief Textbaustein",
 		BLOCK_NAME,
-		"html_content",
-		HTML_CONTENT,
+		{
+			"html_content": HTML_CONTENT,
+			"jinja_content": JINJA_CONTENT,
+		},
 		update_modified=False,
 	)

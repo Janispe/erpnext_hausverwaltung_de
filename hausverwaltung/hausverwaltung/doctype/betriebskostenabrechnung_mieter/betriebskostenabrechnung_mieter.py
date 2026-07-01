@@ -172,11 +172,11 @@ class BetriebskostenabrechnungMieter(Document):
 
 		immobilien_items = []
 		if getattr(self, "immobilien_abrechnung", None):
-			try:
-				head = frappe.get_doc("Betriebskostenabrechnung Immobilie", self.immobilien_abrechnung)
-				immobilien_items = head.get("kosten_pro_art") or []
-			except Exception:
-				immobilien_items = []
+			immobilien_items = _get_abrechnungsposten_rows(
+				"Betriebskostenabrechnung Immobilie",
+				self.immobilien_abrechnung,
+				"kosten_pro_art",
+			)
 		elif getattr(self, "immobilien_kosten", None):
 			immobilien_items = self.immobilien_kosten
 
@@ -186,6 +186,10 @@ class BetriebskostenabrechnungMieter(Document):
 		from hausverwaltung.hausverwaltung.utils.bk_sort import sort_key
 
 		return [combined[key] for key in sorted(combined, key=sort_key)]
+
+	def get_immobilien_basis(self) -> Dict[str, Any]:
+		"""Basis-Summen für die Drucktabelle."""
+		return _get_immobilien_basis_for_doc(self)
 
 	def get_print_context(self) -> Dict[str, object]:
 		"""Kontext für freie BK-Print-Formate.
@@ -337,13 +341,25 @@ def get_immobilien_basis(name: str) -> Dict[str, Any]:
 	except Exception:
 		return {"total_qm": 0.0, "total_bewohner": 0.0, "schluessel_totals": {}, "wohnung_schluesselwerte": {}}
 
+	return _get_immobilien_basis_for_doc(doc)
+
+
+def _get_immobilien_basis_for_doc(doc) -> Dict[str, Any]:
+	"""Liefert Basis-Summen für die Immobilie inkl. Schlüsselwerte."""
 	head_name = doc.get("immobilien_abrechnung")
 	if not head_name:
 		return {"total_qm": 0.0, "total_bewohner": 0.0, "schluessel_totals": {}, "wohnung_schluesselwerte": {}}
 
 	try:
-		head = frappe.get_doc("Betriebskostenabrechnung Immobilie", head_name)
+		head = frappe.db.get_value(
+			"Betriebskostenabrechnung Immobilie",
+			head_name,
+			["immobilie", "stichtag", "bis"],
+			as_dict=True,
+		)
 	except Exception:
+		return {"total_qm": 0.0, "total_bewohner": 0.0, "schluessel_totals": {}, "wohnung_schluesselwerte": {}}
+	if not head:
 		return {"total_qm": 0.0, "total_bewohner": 0.0, "schluessel_totals": {}, "wohnung_schluesselwerte": {}}
 
 	from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen import (
@@ -425,3 +441,19 @@ def get_immobilien_basis(name: str) -> Dict[str, Any]:
 		"schluessel_totals": schluessel_totals,
 		"wohnung_schluesselwerte": wohnung_schluesselwerte,
 	}
+
+
+def _get_abrechnungsposten_rows(parenttype: str, parent: str, parentfield: str) -> List[Dict[str, object]]:
+	if not parent:
+		return []
+	return frappe.get_all(
+		"Abrechnungsposten",
+		filters={
+			"parenttype": parenttype,
+			"parent": parent,
+			"parentfield": parentfield,
+		},
+		fields=["betriebskostenart", "betrag"],
+		order_by="idx asc",
+		limit_page_length=0,
+	)
