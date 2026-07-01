@@ -254,6 +254,14 @@ SERIENBRIEF_PDF_OPTIONS: Dict[str, str] = {
 	"margin-left": "25mm",
 }
 
+BK_MIETER_PDF_OPTIONS: Dict[str, str] = {
+	"page-size": "A4",
+	"margin-top": "12mm",
+	"margin-right": "12mm",
+	"margin-bottom": "8mm",
+	"margin-left": "20mm",
+}
+
 
 def get_serienbrief_pdf_options() -> Dict[str, str]:
 	"""Liefert die Chrome-PDF-Optionen für den Serienbrief-Render.
@@ -1921,6 +1929,45 @@ class SerienbriefDurchlauf(Document):
 				font-size: 9.5pt;
 			}
 		""").replace("__HV_SERIENBRIEF_FONT_FAMILY__", serienbrief_font_family())
+		if self._is_bk_mieter_print():
+			custom_css += """
+			@page {
+				size: A4;
+				margin: 12mm 12mm 8mm 20mm;
+			}
+			body,
+			.serienbrief-root.hv-bk-mieter-print,
+			.print-format .serienbrief-root.hv-bk-mieter-print {
+				font-size: 10pt !important;
+				line-height: 1.22;
+			}
+			.serienbrief-root.hv-bk-mieter-print .sb-letterhead {
+				margin-top: 0.2cm;
+			}
+			.serienbrief-root.hv-bk-mieter-print .sb-address-window {
+				padding-top: 2.2cm;
+				font-size: 9pt;
+			}
+			.serienbrief-root.hv-bk-mieter-print .sb-sender {
+				font-size: 8pt;
+			}
+			.serienbrief-root.hv-bk-mieter-print .sb-office-hours,
+			.serienbrief-root.hv-bk-mieter-print .sb-return-address {
+				font-size: 7pt;
+			}
+			.serienbrief-root.hv-bk-mieter-print .sb-date {
+				margin-top: 0.2cm;
+			}
+			.serienbrief-root.hv-bk-mieter-print p {
+				line-height: 1.22;
+			}
+			.serienbrief-root.hv-bk-mieter-print .serienbrief-block {
+				margin-bottom: 6px;
+			}
+			.serienbrief-root.hv-bk-mieter-print table {
+				line-height: 1.15;
+			}
+			"""
 		return custom_css
 
 	def _default_pdf_options(self) -> dict[str, str]:
@@ -1928,10 +1975,18 @@ class SerienbriefDurchlauf(Document):
 		# auseinanderlaufen. Werte stammen jetzt aus ``Serienbrief Einstellungen``
 		# (Single) — siehe ``get_serienbrief_pdf_options``. Fallback bei Fehler
 		# auf die SERIENBRIEF_PDF_OPTIONS-Hardcodes.
+		if self._is_bk_mieter_print():
+			return dict(BK_MIETER_PDF_OPTIONS)
 		return get_serienbrief_pdf_options()
 
 	def _wrap_html_fragment(self, body_html: str) -> str:
-		return f'<div class="serienbrief-root">{body_html}</div>'
+		classes = "serienbrief-root"
+		if self._is_bk_mieter_print():
+			classes += " hv-bk-mieter-print"
+		return f'<div class="{classes}">{body_html}</div>'
+
+	def _is_bk_mieter_print(self) -> bool:
+		return cstr(getattr(self, "iteration_doctype", "") or "").strip() == "Betriebskostenabrechnung Mieter"
 
 	def _wrap_html(self, body_html: str, paged_polyfill: bool = False) -> str:
 		# paged_polyfill: nur in Browser-Previews aktivieren, NICHT in der
