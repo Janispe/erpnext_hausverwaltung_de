@@ -2,6 +2,13 @@
 // Links: Felder · Rechts: Live-A4-Brief. Layout über Tweaks umschaltbar.
 
 const { useState: useStateApp, useMemo: useMemoApp, useEffect: useEffectApp, useRef: useRefApp } = React;
+const {
+  useTweaks: useMHTweaks,
+  TweaksPanel: MHTweaksPanel,
+  TweakSection: MHTweakSection,
+  TweakRadio: MHTweakRadio,
+  TweakToggle: MHTweakToggle,
+} = window.MH_TWEAKS;
 
 const MH_TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "layout": "Brief rechts",
@@ -44,7 +51,7 @@ function EditableBlockMH({ label, value, onChange, hint, locked }) {
 }
 
 function MahnApp() {
-  const [t, setTweak] = useTweaks(MH_TWEAK_DEFAULTS);
+  const [t, setTweak] = useMHTweaks(MH_TWEAK_DEFAULTS);
   const M = window.MAHNUNG;
 
   if (!M?.mieter?.length) {
@@ -686,18 +693,18 @@ function MahnApp() {
         </div>
       </div>
 
-      <TweaksPanel title="Tweaks">
-        <TweakSection label="Layout" />
-        <TweakRadio label="Brief-Position" value={t.layout}
+      <MHTweaksPanel title="Tweaks">
+        <MHTweakSection label="Layout" />
+        <MHTweakRadio label="Brief-Position" value={t.layout}
           options={["Brief rechts", "Brief links", "Gestapelt"]}
           onChange={(v) => setTweak("layout", v)} />
-        <TweakRadio label="Dichte" value={t.density}
+        <MHTweakRadio label="Dichte" value={t.density}
           options={["compact", "regular", "comfy"]}
           onChange={(v) => setTweak("density", v)} />
-        <TweakSection label="Brief" />
-        <TweakToggle label="Papier-Look (Schatten, A4-Blatt)" value={t.papier}
+        <MHTweakSection label="Brief" />
+        <MHTweakToggle label="Papier-Look (Schatten, A4-Blatt)" value={t.papier}
           onChange={(v) => setTweak("papier", v)} />
-      </TweaksPanel>
+      </MHTweaksPanel>
 
       {toast && <ToastMH message={toast} onClose={() => setToast(null)} />}
       {sent && <SentOverlayMH data={sent} onClose={() => setSent(null)} />}

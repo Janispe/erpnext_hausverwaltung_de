@@ -1,6 +1,13 @@
 // app.jsx — Main shell + variant switcher + Tweaks.
 
 const { useState, useEffect, useRef } = React;
+const {
+  useTweaks: useMKTweaks,
+  TweaksPanel: MKTweaksPanel,
+  TweakSection: MKTweakSection,
+  TweakRadio: MKTweakRadio,
+  TweakToggle: MKTweakToggle,
+} = window.MK_TWEAKS;
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "variant": "A",
@@ -12,7 +19,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 }/*EDITMODE-END*/;
 
 function App() {
-  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const [t, setTweak] = useMKTweaks(TWEAK_DEFAULTS);
 
   // Daten-State (wird bei Filter-Änderung neu gesetzt)
   const initialData = window.MIETERKONTO || window.MK_ADAPTER?.emptyState?.() || {
@@ -263,26 +270,26 @@ function App() {
         )}
       </main>
 
-      <TweaksPanel title="Tweaks">
-        <TweakSection label="Layout" />
-        <TweakRadio label="Variante" value={t.variant}
+      <MKTweaksPanel title="Tweaks">
+        <MKTweakSection label="Layout" />
+        <MKTweakRadio label="Variante" value={t.variant}
           options={["A", "B", "C"]}
           onChange={(v) => setTweak("variant", v)} />
         <p style={{ margin: "0 0 4px", fontSize: 10.5, color: "rgba(41,38,27,.55)", lineHeight: 1.4 }}>
           A · klassischer Kontoauszug ·  B · Verlauf  ·  C · Dashboard
         </p>
-        <TweakRadio label="Dichte" value={t.density}
+        <MKTweakRadio label="Dichte" value={t.density}
           options={["compact", "regular", "comfy"]}
           onChange={(v) => setTweak("density", v)} />
 
-        <TweakSection label="Inhalt" />
-        <TweakToggle label="Offene Posten hervorheben" value={t.highlightOpen}
+        <MKTweakSection label="Inhalt" />
+        <MKTweakToggle label="Offene Posten hervorheben" value={t.highlightOpen}
           onChange={(v) => setTweak("highlightOpen", v)} />
 
-        <TweakSection label="Vorschau" />
-        <TweakToggle label="Print-Modus (A4 quer)" value={t.printMode}
+        <MKTweakSection label="Vorschau" />
+        <MKTweakToggle label="Print-Modus (A4 quer)" value={t.printMode}
           onChange={(v) => setTweak("printMode", v)} />
-      </TweaksPanel>
+      </MKTweaksPanel>
     </div>
   );
 }

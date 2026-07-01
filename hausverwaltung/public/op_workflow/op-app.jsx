@@ -1,6 +1,13 @@
 // op-app.jsx — Hauptseite "Noch offene Rechnungen und Forderungen".
 
 const { useState: useStateA0, useMemo: useMemoA0, useEffect: useEffectA0 } = React;
+const {
+  useTweaks: useOPTweaks,
+  TweaksPanel: OPTweaksPanel,
+  TweakSection: OPTweakSection,
+  TweakRadio: OPTweakRadio,
+  TweakToggle: OPTweakToggle,
+} = window.OP_TWEAKS;
 
 const OP_TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "layout": "flat",
@@ -22,7 +29,7 @@ const MODE_SUB = {
 };
 
 function OpApp() {
-  const [t, setTweak] = useTweaks(OP_TWEAK_DEFAULTS);
+  const [t, setTweak] = useOPTweaks(OP_TWEAK_DEFAULTS);
   const initialData = window.OFFENE_POSTEN || window.OP_ADAPTER?.emptyState?.() || {
     filters: {},
     rows: [],
@@ -852,24 +859,24 @@ function OpApp() {
         )}
       </main>
 
-      <TweaksPanel title="Tweaks">
-        <TweakSection label="Gruppierung" />
-        <TweakRadio label="Gruppiert nach" value={t.gruppierung}
+      <OPTweaksPanel title="Tweaks">
+        <OPTweakSection label="Gruppierung" />
+        <OPTweakRadio label="Gruppiert nach" value={t.gruppierung}
           options={["keine", "mieter", "objekt"]}
           onChange={(v) => setTweak("gruppierung", v)} />
         <p style={{ margin: "0 0 4px", fontSize: 10.5, color: "rgba(41,38,27,.55)", lineHeight: 1.4 }}>
           Mieter · pro Partei · Objekt · pro Immobilie
         </p>
-        <TweakSection label="Layout" />
-        <TweakRadio label="Dichte" value={t.density}
+        <OPTweakSection label="Layout" />
+        <OPTweakRadio label="Dichte" value={t.density}
           options={["compact", "regular", "comfy"]}
           onChange={(v) => setTweak("density", v)} />
-        <TweakSection label="Spalten" />
-        <TweakToggle label="Immobilie anzeigen" value={t.showObjekt}
+        <OPTweakSection label="Spalten" />
+        <OPTweakToggle label="Immobilie anzeigen" value={t.showObjekt}
           onChange={(v) => setTweak("showObjekt", v)} />
-        <TweakToggle label="Aktion-Spalte (Abschreiben)" value={t.showAktion}
+        <OPTweakToggle label="Aktion-Spalte (Abschreiben)" value={t.showAktion}
           onChange={(v) => setTweak("showAktion", v)} />
-      </TweaksPanel>
+      </OPTweaksPanel>
 
       {/* Modals */}
       {modal?.type === "mahnung" && <MahnungModal row={modal.row} rows={modal.rows} selectedInvoiceNames={modal.selectedInvoiceNames} onClose={() => setModal(null)} onDone={(result) => { setModal(null); setToast(result.created ? `${(result.created || []).length} Mahnung-Drafts erstellt` : `Mahnung-Draft erstellt: ${result.dunning}`); }} />}
