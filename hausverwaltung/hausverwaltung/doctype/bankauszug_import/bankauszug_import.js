@@ -858,7 +858,7 @@ function _prepareBankAccount(frm, row) {
         party_type: values.party_type || '',
       });
       frappe.new_doc('Bank Account', {
-        account_name: values.party ? `Konto ${values.party}` : '',
+        account_name: values.party || '',
         party_type: values.party_type || '',
         party: values.party || '',
         iban: values.iban || '',

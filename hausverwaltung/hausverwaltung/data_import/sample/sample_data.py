@@ -772,7 +772,7 @@ def _get_or_create_bank_account_for_customer(
     doc = frappe.get_doc(
         {
             "doctype": "Bank Account",
-            "account_name": f"Konto {customer}",
+            "account_name": customer,
             "bank": bank,
             "iban": iban_clean,
             "is_company_account": 0,
@@ -1687,7 +1687,7 @@ def _get_or_create_bank_account_for_supplier(
     doc = frappe.get_doc(
         {
             "doctype": "Bank Account",
-            "account_name": f"Konto {supplier}",
+            "account_name": supplier,
             "bank": bank,
             "iban": iban_clean,
             "is_company_account": 0,

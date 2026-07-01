@@ -566,12 +566,12 @@ def _get_or_create_party_bank_account(*, party_type: str, party: str, iban: Opti
     # mit kollidierendem Namen existiert, hängen wir die letzten 4 IBAN-
     # Zeichen an, um Eindeutigkeit zu erzwingen.
     bank_name = _get_default_bank()
-    account_name = f"Konto {party}"
+    account_name = party
     candidate_pk = f"{account_name} - {bank_name}"
     if frappe.db.exists("Bank Account", candidate_pk):
         suffix = iban_norm[-4:] if iban_norm else ""
         if suffix:
-            account_name = f"Konto {party} ({suffix})"
+            account_name = f"{party} ({suffix})"
     doc = frappe.get_doc(
         {
             "doctype": "Bank Account",
