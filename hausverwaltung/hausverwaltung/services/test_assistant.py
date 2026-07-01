@@ -466,6 +466,85 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["aggregate"]["groups"][0], {"key": "CUST-1", "count": 2, "value": 100.0})
 		self.assertEqual(result["aggregate"]["groups"][1], {"key": "CUST-2", "count": 1, "value": 50.0})
 
+	def test_hv_query_view_filters_sorts_and_returns_clickable_rows(self):
+		rows = [
+			frappe._dict(
+				name="SI-1",
+				invoice="SI-1",
+				customer="CUST-1",
+				customer_name="Anna Schmidt",
+				due_date="2026-06-01",
+				outstanding_amount=120,
+				status="Overdue",
+				mietvertrag="MV-1",
+			),
+			frappe._dict(
+				name="SI-2",
+				invoice="SI-2",
+				customer="CUST-2",
+				customer_name="Bernd Schmidt",
+				due_date="2026-05-01",
+				outstanding_amount=250,
+				status="Overdue",
+				mietvertrag="MV-2",
+			),
+		]
+
+		with patch.object(assistant.frappe, "has_permission", return_value=True), \
+			 patch.object(assistant, "_default_company", return_value="Hausverwaltung Peters"), \
+			 patch.object(assistant, "nowdate", return_value="2026-07-01"), \
+			 patch.object(assistant, "_can_read_doc", return_value=True), \
+			 patch.object(assistant.frappe.db, "sql", return_value=rows) as sql:
+			result = assistant.hv_query_view(
+				"offene_posten",
+				fields=["invoice", "customer_name", "due_date", "outstanding_amount", "secret"],
+				filters=[["due_date", "<=", "2026-07-01"], ["outstanding_amount", ">", 0.01]],
+				order_by="outstanding_amount desc",
+				limit=1,
+			)
+
+		query = sql.call_args.args[0]
+		params = sql.call_args.args[1]
+		self.assertIn("si.outstanding_amount > 0.01", query)
+		self.assertEqual(params["company"], "Hausverwaltung Peters")
+		self.assertEqual(result["view"], "open_items")
+		self.assertEqual(result["total_count"], 2)
+		self.assertEqual(result["count"], 1)
+		self.assertEqual(result["rows"][0]["invoice"], "SI-2")
+		self.assertNotIn("secret", result["fields"])
+		self.assertEqual(result["matches"][0]["routes"][0]["route"], ["Form", "Sales Invoice", "SI-2"])
+
+	def test_hv_query_view_aggregates_after_permission_filter(self):
+		rows = [
+			frappe._dict(invoice="SI-1", customer="CUST-1", customer_name="Anna Schmidt", outstanding_amount=25),
+			frappe._dict(invoice="SI-2", customer="CUST-1", customer_name="Anna Schmidt", outstanding_amount=75),
+			frappe._dict(invoice="SI-HIDDEN", customer="CUST-2", customer_name="Bernd Schmidt", outstanding_amount=50),
+		]
+
+		with patch.object(assistant.frappe, "has_permission", return_value=True), \
+			 patch.object(assistant, "_default_company", return_value="Hausverwaltung Peters"), \
+			 patch.object(assistant, "nowdate", return_value="2026-07-01"), \
+			 patch.object(assistant, "_can_read_doc", side_effect=lambda _doctype, name: name != "SI-HIDDEN"), \
+			 patch.object(assistant.frappe.db, "sql", return_value=rows):
+			result = assistant.hv_query_view(
+				"open_items",
+				fields=["invoice", "customer", "outstanding_amount"],
+				aggregate={"op": "sum", "field": "outstanding_amount", "group_by": "customer"},
+				limit=10,
+			)
+
+		self.assertEqual(result["total_count"], 2)
+		self.assertEqual(result["aggregate"]["groups"], [{"key": "CUST-1", "count": 2, "value": 100.0}])
+
+	def test_hv_query_view_rejects_unknown_view_and_filter_field(self):
+		with patch.object(assistant.frappe, "has_permission", return_value=True), \
+			 self.assertRaises(frappe.ValidationError):
+			assistant.hv_query_view("users")
+
+		with patch.object(assistant.frappe, "has_permission", return_value=True), \
+			 self.assertRaises(frappe.ValidationError):
+			assistant.hv_query_view("open_items", filters=[["password", "like", "%x%"]])
+
 	def test_hv_query_docs_rejects_unapproved_doctype_and_filter_field(self):
 		with patch.object(assistant, "_require_search_permissions"), \
 			 patch.object(assistant.frappe, "has_permission", return_value=True), \

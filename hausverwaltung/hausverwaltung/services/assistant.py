@@ -11,11 +11,13 @@ from frappe.utils import flt, getdate, now_datetime, nowdate
 
 from hausverwaltung.hausverwaltung.services import mistral_client
 
-MAX_TOOL_ROUNDS = 3
+MAX_TOOL_ROUNDS = 5
 MAX_SEARCH_LIMIT = 10
 SQL_PREFETCH_FACTOR = 4
 GENERIC_READ_LIMIT = 50
 GENERIC_CANDIDATE_LIMIT = 500
+VIEW_READ_LIMIT = 100
+VIEW_CANDIDATE_LIMIT = 3000
 LATE_PAYMENT_READ_LIMIT = 50
 LATE_PAYMENT_CANDIDATE_LIMIT = 2000
 CONVERSATION_HISTORY_LIMIT = 10
@@ -163,14 +165,252 @@ HV_OPERATOR_ALIASES = {
 	"before": "<",
 }
 
+_STATUS_NOT_OPEN = "('Paid', 'Credit Note Issued', 'Written Off', 'Partly Paid and Written Off')"
+_MAYBE_CONTRACT_JOIN = """
+left join `tabMietvertrag` mv on mv.name = (
+	select mv2.name
+	from `tabMietvertrag` mv2
+	where mv2.kunde = si.customer
+	order by
+		case mv2.status
+			when 'L\u00e4uft' then 0
+			when 'Zukunft' then 1
+			when 'Vergangenheit' then 2
+			else 3
+		end,
+		mv2.von desc
+	limit 1
+)
+left join `tabWohnung` w on w.name = mv.wohnung
+left join `tabImmobilie` im on im.name = mv.immobilie
+"""
+
+HV_QUERY_VIEWS: dict[str, dict[str, Any]] = {
+	"tenant_contracts": {
+		"description": "Mieter, Mietvertraege, Wohnungen und Immobilien in einer flachen Ansicht.",
+		"required_doctypes": ("Mietvertrag", "Customer", "Wohnung", "Immobilie"),
+		"primary_doctype": "Mietvertrag",
+		"primary_field": "mietvertrag",
+		"from": """
+			from `tabMietvertrag` mv
+			left join `tabCustomer` c on c.name = mv.kunde
+			left join `tabWohnung` w on w.name = mv.wohnung
+			left join `tabImmobilie` im on im.name = mv.immobilie
+			left join `tabVertragspartner` vp on vp.parent = mv.name and vp.parenttype = 'Mietvertrag'
+			left join `tabContact` ct on ct.name = vp.mieter
+		""",
+		"where": "mv.kunde is not null and mv.kunde != ''",
+		"group_by": """
+			mv.name, mv.kunde, c.customer_name, mv.status, mv.wohnung, mv.immobilie, mv.von, mv.bis,
+			mv.bevorzugter_versandweg, mv.modified, w.`name__lage_in_der_immobilie`, im.adresse_titel, im.bezeichnung
+		""",
+		"default_fields": ("mietvertrag", "customer_name", "status", "wohnung", "immobilie", "von", "bis"),
+		"fields": {
+			"name": "mv.name",
+			"mietvertrag": "mv.name",
+			"customer": "mv.kunde",
+			"customer_name": "coalesce(c.customer_name, mv.kunde)",
+			"status": "mv.status",
+			"wohnung": "mv.wohnung",
+			"wohnung_label": "w.`name__lage_in_der_immobilie`",
+			"immobilie": "mv.immobilie",
+			"immobilie_label": "coalesce(im.adresse_titel, im.bezeichnung, mv.immobilie)",
+			"von": "mv.von",
+			"bis": "mv.bis",
+			"bevorzugter_versandweg": "mv.bevorzugter_versandweg",
+			"kontakt_namen": "group_concat(distinct nullif(trim(concat_ws(' ', ct.first_name, ct.last_name)), '') separator ', ')",
+			"modified": "mv.modified",
+		},
+		"aliases": {
+			"mieter": "customer_name",
+			"kunde": "customer_name",
+			"vertrag": "mietvertrag",
+			"objekt": "immobilie",
+			"haus": "immobilie",
+			"lage": "wohnung_label",
+			"beginn": "von",
+			"ende": "bis",
+			"vertragsbeginn": "von",
+			"vertragsende": "bis",
+		},
+	},
+	"invoices": {
+		"description": "Gebuchte Ausgangsrechnungen mit Mieter-/Wohnungsbezug.",
+		"required_doctypes": ("Sales Invoice", "Customer", "Mietvertrag"),
+		"primary_doctype": "Sales Invoice",
+		"primary_field": "invoice",
+		"from": f"""
+			from `tabSales Invoice` si
+			left join `tabCustomer` c on c.name = si.customer
+			{_MAYBE_CONTRACT_JOIN}
+		""",
+		"where": "si.docstatus = 1 and coalesce(si.is_return, 0) = 0 and coalesce(si.grand_total, 0) > 0 and si.company = %(company)s",
+		"default_fields": ("invoice", "customer_name", "posting_date", "due_date", "grand_total", "outstanding_amount", "status"),
+		"fields": {
+			"name": "si.name",
+			"invoice": "si.name",
+			"customer": "si.customer",
+			"customer_name": "coalesce(c.customer_name, si.customer)",
+			"posting_date": "si.posting_date",
+			"due_date": "si.due_date",
+			"grand_total": "si.grand_total",
+			"outstanding_amount": "si.outstanding_amount",
+			"paid_amount": "(si.grand_total - si.outstanding_amount)",
+			"status": "si.status",
+			"currency": "si.currency",
+			"remarks": "si.remarks",
+			"mietvertrag": "mv.name",
+			"wohnung": "mv.wohnung",
+			"immobilie": "mv.immobilie",
+			"immobilie_label": "coalesce(im.adresse_titel, im.bezeichnung, mv.immobilie)",
+			"modified": "si.modified",
+		},
+		"aliases": {
+			"rechnung": "invoice",
+			"mieter": "customer_name",
+			"kunde": "customer_name",
+			"betrag": "grand_total",
+			"offen": "outstanding_amount",
+			"saldo": "outstanding_amount",
+			"faellig": "due_date",
+			"faelligkeit": "due_date",
+			"datum": "posting_date",
+		},
+	},
+	"open_items": {
+		"description": "Aktuell offene Forderungen aus Sales Invoices, OP-kompatibel gefiltert.",
+		"required_doctypes": ("Sales Invoice", "Customer", "Mietvertrag"),
+		"primary_doctype": "Sales Invoice",
+		"primary_field": "invoice",
+		"from": f"""
+			from `tabSales Invoice` si
+			left join `tabCustomer` c on c.name = si.customer
+			{_MAYBE_CONTRACT_JOIN}
+		""",
+		"where": (
+			"si.docstatus = 1 and coalesce(si.is_return, 0) = 0 and coalesce(si.grand_total, 0) > 0 "
+			"and si.company = %(company)s and si.outstanding_amount > 0.01 "
+			f"and si.status not in {_STATUS_NOT_OPEN}"
+		),
+		"default_fields": ("invoice", "customer_name", "due_date", "grand_total", "paid_amount", "outstanding_amount", "days_overdue"),
+		"fields": {
+			"name": "si.name",
+			"invoice": "si.name",
+			"customer": "si.customer",
+			"customer_name": "coalesce(c.customer_name, si.customer)",
+			"posting_date": "si.posting_date",
+			"due_date": "si.due_date",
+			"grand_total": "si.grand_total",
+			"paid_amount": "(si.grand_total - si.outstanding_amount)",
+			"outstanding_amount": "si.outstanding_amount",
+			"days_overdue": "datediff(%(today)s, coalesce(si.due_date, si.posting_date))",
+			"status": "si.status",
+			"currency": "si.currency",
+			"remarks": "si.remarks",
+			"mietvertrag": "mv.name",
+			"wohnung": "mv.wohnung",
+			"immobilie": "mv.immobilie",
+			"immobilie_label": "coalesce(im.adresse_titel, im.bezeichnung, mv.immobilie)",
+			"modified": "si.modified",
+		},
+		"aliases": {
+			"rechnung": "invoice",
+			"mieter": "customer_name",
+			"kunde": "customer_name",
+			"betrag": "grand_total",
+			"offen": "outstanding_amount",
+			"saldo": "outstanding_amount",
+			"faellig": "due_date",
+			"faelligkeit": "due_date",
+			"alter_tage": "days_overdue",
+		},
+	},
+	"payments": {
+		"description": "Zahlungen auf Sales Invoices inklusive Faelligkeit und Verspaetung.",
+		"required_doctypes": ("Payment Entry", "Sales Invoice", "Customer", "Mietvertrag"),
+		"primary_doctype": "Payment Entry",
+		"primary_field": "payment_entry",
+		"from": f"""
+			from `tabPayment Entry Reference` per
+			join `tabPayment Entry` pe on pe.name = per.parent
+			join `tabSales Invoice` si on si.name = per.reference_name
+			left join `tabCustomer` c on c.name = si.customer
+			{_MAYBE_CONTRACT_JOIN}
+		""",
+		"where": (
+			"per.reference_doctype = 'Sales Invoice' and pe.docstatus = 1 and si.docstatus = 1 "
+			"and coalesce(per.allocated_amount, 0) > 0 and si.company = %(company)s"
+		),
+		"default_fields": ("payment_entry", "payment_date", "customer_name", "invoice", "invoice_due_date", "allocated_amount", "days_late"),
+		"fields": {
+			"name": "pe.name",
+			"payment_entry": "pe.name",
+			"payment_date": "pe.posting_date",
+			"reference_no": "pe.reference_no",
+			"reference_date": "pe.reference_date",
+			"invoice": "si.name",
+			"invoice_posting_date": "si.posting_date",
+			"invoice_due_date": "si.due_date",
+			"allocated_amount": "per.allocated_amount",
+			"invoice_amount": "si.grand_total",
+			"invoice_outstanding_amount": "si.outstanding_amount",
+			"days_late": "datediff(pe.posting_date, si.due_date)",
+			"is_late": "case when pe.posting_date > si.due_date then 1 else 0 end",
+			"customer": "si.customer",
+			"customer_name": "coalesce(c.customer_name, si.customer)",
+			"mietvertrag": "mv.name",
+			"wohnung": "mv.wohnung",
+			"immobilie": "mv.immobilie",
+			"immobilie_label": "coalesce(im.adresse_titel, im.bezeichnung, mv.immobilie)",
+			"currency": "si.currency",
+		},
+		"aliases": {
+			"zahlung": "payment_entry",
+			"zahlungsdatum": "payment_date",
+			"mieter": "customer_name",
+			"kunde": "customer_name",
+			"rechnung": "invoice",
+			"faellig": "invoice_due_date",
+			"faelligkeit": "invoice_due_date",
+			"betrag": "allocated_amount",
+			"verspaetung": "days_late",
+			"verspätung": "days_late",
+		},
+	},
+}
+
+HV_QUERY_VIEW_ALIASES = {
+	"mieter": "tenant_contracts",
+	"mietvertraege": "tenant_contracts",
+	"mietvertrage": "tenant_contracts",
+	"mietvertr\u00e4ge": "tenant_contracts",
+	"contracts": "tenant_contracts",
+	"tenants": "tenant_contracts",
+	"rechnungen": "invoices",
+	"rechnung": "invoices",
+	"invoices": "invoices",
+	"offene_posten": "open_items",
+	"offene posten": "open_items",
+	"open_items": "open_items",
+	"forderungen": "open_items",
+	"zahlungen": "payments",
+	"zahlung": "payments",
+	"payment": "payments",
+	"payments": "payments",
+}
+
 
 ASSISTANT_SYSTEM_PROMPT = """Du bist der interne Hausverwaltungs-Assistent.
 Du darfst nur lesen. Du darfst keine Buchungen, Briefe, Aufgaben oder sonstige Daten aendern.
 Nutze die bereitgestellten Tools fuer Mietersuche, Mieterkonto, Salden, offene Posten,
 verspaetete Zahlungen, Miet-Ranglisten und eingeschraenkte Hausverwaltungs-Abfragen.
+Fuer offene analytische Fragen nutze bevorzugt hv_query_view mit einer passenden View und strukturierten Filtern,
+statt immer neue Spezialtools zu erwarten. Baue niemals SQL, sondern JSON-Queries gegen die erlaubten Views.
 Wenn der Nutzer aktive oder laufende Mietvertraege meint, filtere Mietvertrag immer mit status = L\u00e4uft.
 Bei Fragen nach "zu spaet gezahlt", "verspaetet gezahlt" oder Zahlungsverzug nutze search_late_payments,
 nicht search_open_items. search_open_items ist nur fuer aktuell offene Posten geeignet.
+Wenn ein Tool total_count/count groesser als returned/count der Zeilen meldet, sage nicht "alle", sondern nenne die
+Gesamtzahl und dass nur ein Ausschnitt angezeigt wird.
 Erfinde keine Datensaetze und keine Betraege.
 Wenn Treffer mehrdeutig sind, nenne die wichtigsten Treffer und frage nach einer Konkretisierung.
 Antworte knapp auf Deutsch und verweise auf die gefundenen Treffernummern, wenn vorhanden."""
@@ -388,6 +628,54 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 	{
 		"type": "function",
 		"function": {
+			"name": "hv_query_view",
+			"description": (
+				"Allgemeiner sicherer Query-Builder fuer semantische Hausverwaltungs-Views. "
+				"Nutze ihn fuer offene Analysefragen, Listen, Vergleiche, Summen, Gruppierungen und Sortierungen. "
+				"Erlaubte Views: tenant_contracts (Mieter/Vertraege/Wohnungen), invoices (Rechnungen), "
+				"open_items (offene Forderungen), payments (Zahlungen auf Rechnungen). "
+				"Schreibe JSON-Filter, kein SQL."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"view": {
+						"type": "string",
+						"description": "tenant_contracts, invoices, open_items oder payments.",
+					},
+					"fields": {
+						"type": "array",
+						"items": {"type": "string"},
+						"description": "Erlaubte Felder der View, z.B. customer_name, status, due_date, outstanding_amount.",
+					},
+					"filters": {
+						"type": ["array", "object"],
+						"description": (
+							"Filterliste oder AND/OR-Baum, z.B. [[\"status\",\"=\",\"L\u00e4uft\"]] oder "
+							"{\"and\":[{\"field\":\"due_date\",\"op\":\"<=\",\"value\":\"2026-07-01\"},"
+							"{\"field\":\"outstanding_amount\",\"op\":\">\",\"value\":0.01}]}."
+						),
+					},
+					"order_by": {
+						"type": ["string", "object"],
+						"description": "Optional '<field> asc|desc' oder {\"field\":\"outstanding_amount\",\"direction\":\"desc\"}.",
+					},
+					"aggregate": {
+						"type": "object",
+						"description": "Optional: {\"op\":\"count\"} oder sum/avg/min/max mit field und optional group_by.",
+					},
+					"limit": {
+						"type": "integer",
+						"description": "Maximal 100 zur Anzeige. Aggregation wird vor Anzeige-Limit berechnet.",
+					},
+				},
+				"required": ["view"],
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": {
 			"name": "hv_get_doc",
 			"description": "Laedt ein erlaubtes Hausverwaltungs-Dokument mit sicheren Feldern und optional erlaubten Child-Tables.",
 			"parameters": {
@@ -418,6 +706,7 @@ TOOL_FUNCTIONS = {
 	"search_late_payments": lambda **kwargs: search_late_payments(**kwargs),
 	"rank_mieter_by_rent": lambda **kwargs: rank_mieter_by_rent(**kwargs),
 	"hv_query_docs": lambda **kwargs: hv_query_docs(**kwargs),
+	"hv_query_view": lambda **kwargs: hv_query_view(**kwargs),
 	"hv_get_doc": lambda **kwargs: hv_get_doc(**kwargs),
 }
 
@@ -1077,7 +1366,8 @@ def hv_query_docs(
 			reverse=order_spec["direction"] == "desc",
 		)
 	aggregate_result = _aggregate_hv_rows(working_rows, aggregate_spec)
-	data = [_trim_hv_row(row, selected_fields) for row in working_rows[:resolved_limit]]
+	returned_rows = working_rows[:resolved_limit]
+	data = [_trim_hv_row(row, selected_fields) for row in returned_rows]
 	return {
 		"doctype": dt,
 		"fields": selected_fields,
@@ -1089,6 +1379,70 @@ def hv_query_docs(
 		"total_count": len(working_rows),
 		"candidate_limit": page_length,
 		"rows": data,
+	}
+
+
+def hv_query_view(
+	view: str,
+	fields: list[str] | str | None = None,
+	filters: list | dict | str | None = None,
+	order_by: str | dict | None = None,
+	aggregate: dict | str | None = None,
+	limit: int | None = None,
+) -> dict[str, Any]:
+	"""Safe semantic query layer for broad assistant questions."""
+	conf = _normalize_hv_query_view(view)
+	_require_view_permissions(conf)
+	selected_fields = _safe_view_fields(conf, fields)
+	filter_tree = _safe_view_filter_tree(conf, filters)
+	order_spec = _safe_view_order_spec(conf, order_by)
+	aggregate_spec = _safe_view_aggregate(conf, aggregate)
+	resolved_limit = _normalize_view_limit(limit)
+	query_fields = _view_query_fields(conf, selected_fields, filter_tree, order_spec, aggregate_spec)
+	params: dict[str, Any] = {
+		"company": _default_company(),
+		"today": nowdate(),
+		"limit": VIEW_CANDIDATE_LIMIT,
+	}
+	where_sql = _view_filter_tree_sql(conf, filter_tree, params)
+	select_sql = ",\n\t\t\t".join(
+		f"{conf['fields'][field]} as `{field}`"
+		for field in query_fields
+	)
+	sql = f"""
+		select
+			{select_sql}
+		{conf["from"]}
+		where {conf["where"]}
+		{f"and ({where_sql})" if where_sql else ""}
+		{f"group by {conf['group_by']}" if conf.get("group_by") else ""}
+		{_view_sql_order_clause(conf, order_spec)}
+		limit %(limit)s
+	"""
+	raw_rows = frappe.db.sql(sql, params, as_dict=True)
+	working_rows = [dict(row) for row in raw_rows if _can_read_view_row(conf, row)]
+	if order_spec:
+		working_rows.sort(
+			key=lambda row: _sort_value(row.get(order_spec["field"])),
+			reverse=order_spec["direction"] == "desc",
+		)
+	aggregate_result = _aggregate_hv_rows(working_rows, aggregate_spec)
+	returned_rows = working_rows[:resolved_limit]
+	data = [_trim_hv_row(row, selected_fields) for row in returned_rows]
+	return {
+		"view": conf["name"],
+		"description": conf.get("description") or "",
+		"fields": selected_fields,
+		"filters": filter_tree,
+		"order_by": order_spec["order_by"] if order_spec else "",
+		"aggregate": aggregate_result,
+		"count": len(data),
+		"returned": len(data),
+		"total_count": len(working_rows),
+		"candidate_limit": VIEW_CANDIDATE_LIMIT,
+		"truncated": len(raw_rows) >= VIEW_CANDIDATE_LIMIT,
+		"rows": data,
+		"matches": [_view_row_to_match(conf["name"], row) for row in returned_rows],
 	}
 
 
@@ -1738,6 +2092,329 @@ def _rent_amounts_for_contract(doc) -> dict[str, float]:
 			2,
 		),
 	}
+
+
+def _normalize_hv_query_view(view: str) -> dict[str, Any]:
+	raw = str(view or "").strip()
+	key = raw.lower()
+	key = HV_QUERY_VIEW_ALIASES.get(key, key)
+	if key not in HV_QUERY_VIEWS:
+		frappe.throw(_("View ist fuer den Assistenten nicht freigegeben: {0}").format(raw or "-"))
+	conf = dict(HV_QUERY_VIEWS[key])
+	conf["name"] = key
+	return conf
+
+
+def _require_view_permissions(conf: dict[str, Any]) -> None:
+	for doctype in conf.get("required_doctypes") or ():
+		if not frappe.has_permission(doctype, "read"):
+			frappe.throw(_("Keine Berechtigung fuer {0}.").format(doctype), frappe.PermissionError)
+
+
+def _normalize_view_limit(limit: int | None) -> int:
+	try:
+		value = int(limit or 25)
+	except (TypeError, ValueError):
+		value = 25
+	return min(max(value, 1), VIEW_READ_LIMIT)
+
+
+def _safe_view_fields(conf: dict[str, Any], fields: list[str] | str | None) -> list[str]:
+	parsed = _parse_jsonish(fields)
+	allowed = set(conf.get("fields") or {})
+	if not parsed:
+		return [field for field in conf.get("default_fields", ()) if field in allowed]
+	if not isinstance(parsed, list):
+		frappe.throw(_("fields muss eine Liste sein."))
+	out = []
+	for raw in parsed:
+		field = _normalize_view_field(conf, raw)
+		if field and field in allowed and field not in out:
+			out.append(field)
+	if "name" in allowed and "name" not in out:
+		out.insert(0, "name")
+	return out or [field for field in conf.get("default_fields", ()) if field in allowed]
+
+
+def _normalize_view_field(conf: dict[str, Any], fieldname: Any) -> str:
+	raw = str(fieldname or "").strip()
+	if not raw:
+		return ""
+	fields = set(conf.get("fields") or {})
+	if raw in fields:
+		return raw
+	lower = raw.lower()
+	for field in fields:
+		if field.lower() == lower:
+			return field
+	alias = (conf.get("aliases") or {}).get(lower)
+	if alias and alias in fields:
+		return alias
+	return raw
+
+
+def _safe_view_filter_tree(conf: dict[str, Any], filters: list | dict | str | None) -> dict[str, Any] | None:
+	parsed = _parse_jsonish(filters)
+	if parsed in (None, "", []):
+		return None
+	if isinstance(parsed, dict):
+		return _safe_view_filter_node(conf, parsed)
+	if isinstance(parsed, list):
+		if _looks_like_filter_leaf(parsed):
+			return _safe_view_filter_leaf(conf, parsed)
+		return {"op": "and", "items": [_safe_view_filter_node(conf, item) for item in parsed]}
+	frappe.throw(_("filters muss eine Liste oder ein Objekt sein."))
+
+
+def _safe_view_filter_node(conf: dict[str, Any], node: Any) -> dict[str, Any]:
+	if isinstance(node, dict):
+		if "and" in node or "or" in node:
+			bool_key = "and" if "and" in node else "or"
+			items = node.get(bool_key)
+			if not isinstance(items, list) or not items:
+				frappe.throw(_("Filtergruppe muss eine nicht leere Liste enthalten."))
+			return {"op": bool_key, "items": [_safe_view_filter_node(conf, item) for item in items]}
+		if "field" in node:
+			field = node.get("field")
+			op = node.get("op") or node.get("operator") or _operator_from_filter_dict(node)
+			value = node.get("value") if "value" in node else node.get(op)
+			return _safe_view_filter_leaf(conf, [field, op, value])
+		return {
+			"op": "and",
+			"items": [_safe_view_filter_from_mapping_item(conf, field, value) for field, value in node.items()],
+		}
+	if isinstance(node, list | tuple):
+		if _looks_like_filter_leaf(node):
+			return _safe_view_filter_leaf(conf, node)
+		return {"op": "and", "items": [_safe_view_filter_node(conf, item) for item in node]}
+	frappe.throw(_("Filter muss eine Liste oder ein Objekt sein."))
+
+
+def _safe_view_filter_from_mapping_item(conf: dict[str, Any], field: str, value: Any) -> dict[str, Any]:
+	if isinstance(value, dict):
+		op = _operator_from_filter_dict(value)
+		return _safe_view_filter_leaf(conf, [field, op, value.get(op)])
+	if isinstance(value, str) and ("%" in value or "_" in value):
+		return _safe_view_filter_leaf(conf, [field, "like", value])
+	return _safe_view_filter_leaf(conf, [field, "=", value])
+
+
+def _safe_view_filter_leaf(conf: dict[str, Any], item: list | tuple) -> dict[str, Any]:
+	if len(item) != 3:
+		frappe.throw(_("Filter muss [field, op, value] sein."))
+	field, op, value = item
+	field = _normalize_view_field(conf, field)
+	op = _normalize_hv_operator(op)
+	if field not in conf.get("fields", {}):
+		frappe.throw(_("Filterfeld nicht erlaubt: {0}").format(field or "-"))
+	if op not in HV_FILTER_OPERATORS:
+		frappe.throw(_("Filteroperator nicht erlaubt: {0}").format(op))
+	return {"field": field, "op": op, "value": value}
+
+
+def _safe_view_order_spec(conf: dict[str, Any], order_by: str | dict | None) -> dict[str, Any] | None:
+	if isinstance(order_by, str) and order_by.strip().startswith(("{", "[")):
+		parsed = _parse_jsonish(order_by)
+	else:
+		parsed = order_by
+	if parsed in (None, "", {}):
+		return None
+	if isinstance(parsed, dict):
+		field = (parsed.get("field") or "").strip()
+		direction = (parsed.get("direction") or parsed.get("order") or "asc").strip().lower()
+	else:
+		match = _ORDER_BY_RE.match(str(parsed or "").strip())
+		if not match:
+			frappe.throw(_("Sortierung muss '<field> asc|desc' sein."))
+		field = match.group("field")
+		direction = match.group("direction").lower()
+	field = _normalize_view_field(conf, field)
+	if field not in conf.get("fields", {}):
+		frappe.throw(_("Sortierfeld nicht erlaubt: {0}").format(field or "-"))
+	if direction not in {"asc", "desc"}:
+		frappe.throw(_("Sortierrichtung muss asc oder desc sein."))
+	return {"field": field, "direction": direction, "order_by": f"{field} {direction}"}
+
+
+def _safe_view_aggregate(conf: dict[str, Any], aggregate: dict | str | None) -> dict[str, Any] | None:
+	if isinstance(aggregate, str) and aggregate.strip().startswith("{"):
+		parsed = _parse_jsonish(aggregate)
+	else:
+		parsed = aggregate
+	if parsed in (None, "", {}):
+		return None
+	if isinstance(parsed, str):
+		parsed = {"op": parsed}
+	if not isinstance(parsed, dict):
+		frappe.throw(_("aggregate muss ein Objekt sein."))
+	op = (parsed.get("op") or parsed.get("operation") or "").strip().lower()
+	if op not in HV_AGGREGATE_OPS:
+		frappe.throw(_("Aggregation nicht erlaubt: {0}").format(op or "-"))
+	field = _normalize_view_field(conf, parsed.get("field")) if parsed.get("field") else ""
+	group_by = _normalize_view_field(conf, parsed.get("group_by")) if parsed.get("group_by") else ""
+	if op != "count" and field not in conf.get("fields", {}):
+		frappe.throw(_("Aggregationsfeld nicht erlaubt: {0}").format(field or "-"))
+	if group_by and group_by not in conf.get("fields", {}):
+		frappe.throw(_("Gruppierungsfeld nicht erlaubt: {0}").format(group_by))
+	return {"op": op, "field": field or None, "group_by": group_by or None}
+
+
+def _view_query_fields(
+	conf: dict[str, Any],
+	selected_fields: list[str],
+	filter_tree: dict[str, Any] | None,
+	order_spec: dict[str, Any] | None,
+	aggregate_spec: dict[str, Any] | None,
+) -> list[str]:
+	fields = list(selected_fields)
+	for field in (conf.get("primary_field"), "name"):
+		if field and field in conf.get("fields", {}) and field not in fields:
+			fields.append(field)
+	for field in _view_match_fields(conf["name"]):
+		if field in conf.get("fields", {}) and field not in fields:
+			fields.append(field)
+	for leaf in _filter_tree_leaves(filter_tree):
+		if leaf["field"] not in fields:
+			fields.append(leaf["field"])
+	if order_spec and order_spec["field"] not in fields:
+		fields.append(order_spec["field"])
+	if aggregate_spec:
+		for field in (aggregate_spec.get("field"), aggregate_spec.get("group_by")):
+			if field and field not in fields:
+				fields.append(field)
+	return [field for field in fields if field in conf.get("fields", {})]
+
+
+def _view_match_fields(view: str) -> tuple[str, ...]:
+	if view == "tenant_contracts":
+		return ("customer", "wohnung_label", "immobilie_label", "von", "bis", "kontakt_namen")
+	if view in {"invoices", "open_items"}:
+		return ("customer", "status", "mietvertrag", "wohnung", "immobilie")
+	if view == "payments":
+		return ("customer", "mietvertrag", "wohnung", "immobilie", "invoice")
+	return ()
+
+
+def _view_filter_tree_sql(conf: dict[str, Any], node: dict[str, Any] | None, params: dict[str, Any]) -> str:
+	if not node:
+		return ""
+	if "field" in node:
+		return _view_filter_leaf_sql(conf, node, params)
+	items = [sql for sql in (_view_filter_tree_sql(conf, item, params) for item in node.get("items") or []) if sql]
+	if not items:
+		return ""
+	joiner = " or " if node.get("op") == "or" else " and "
+	return "(" + joiner.join(items) + ")"
+
+
+def _view_filter_leaf_sql(conf: dict[str, Any], leaf: dict[str, Any], params: dict[str, Any]) -> str:
+	field = leaf["field"]
+	expr = conf["fields"][field]
+	op = leaf["op"]
+	value = leaf.get("value")
+	if op in {"like", "not like"} and isinstance(value, str) and "%" not in value and "_" not in value:
+		value = f"%{value}%"
+	if op in {"in", "not in"}:
+		values = value if isinstance(value, list | tuple | set) else [value]
+		values = list(values)
+		if not values:
+			return "1 = 0" if op == "in" else "1 = 1"
+		keys = []
+		for current in values:
+			key = _view_param_key(params)
+			params[key] = current
+			keys.append(f"%({key})s")
+		return f"{expr} {op} ({', '.join(keys)})"
+	if op == "between":
+		if not isinstance(value, list | tuple) or len(value) != 2:
+			frappe.throw(_("between braucht zwei Werte."))
+		start_key = _view_param_key(params)
+		end_key = _view_param_key(params)
+		params[start_key] = value[0]
+		params[end_key] = value[1]
+		return f"{expr} between %({start_key})s and %({end_key})s"
+	if op == "is":
+		text = str(value or "").strip().lower()
+		if text in {"set", "not null"}:
+			return f"{expr} is not null and {expr} != ''"
+		if text in {"not set", "null"}:
+			return f"({expr} is null or {expr} = '')"
+		frappe.throw(_("is-Filter erlaubt nur set/not set/null/not null."))
+	key = _view_param_key(params)
+	params[key] = value
+	return f"{expr} {op} %({key})s"
+
+
+def _view_param_key(params: dict[str, Any]) -> str:
+	return f"v{sum(1 for key in params if str(key).startswith('v'))}"
+
+
+def _view_sql_order_clause(conf: dict[str, Any], order_spec: dict[str, Any] | None) -> str:
+	if not order_spec:
+		return ""
+	expr = conf["fields"][order_spec["field"]]
+	return f"order by {expr} {order_spec['direction']}"
+
+
+def _can_read_view_row(conf: dict[str, Any], row: dict[str, Any]) -> bool:
+	doctype = conf.get("primary_doctype")
+	field = conf.get("primary_field")
+	if not doctype or not field:
+		return True
+	return _can_read_doc(doctype, row.get(field))
+
+
+def _view_row_to_match(view: str, row: dict[str, Any]) -> dict[str, Any]:
+	if view == "tenant_contracts":
+		return _format_mieter_match(
+			{
+				"mietvertrag": row.get("mietvertrag") or row.get("name"),
+				"customer": row.get("customer"),
+				"customer_name": row.get("customer_name"),
+				"status": row.get("status"),
+				"wohnung": row.get("wohnung"),
+				"wohnung_label": row.get("wohnung_label"),
+				"immobilie": row.get("immobilie"),
+				"immobilie_adresse": row.get("immobilie_label"),
+				"von": row.get("von"),
+				"bis": row.get("bis"),
+				"kontakt_namen": row.get("kontakt_namen"),
+			}
+		)
+	if view in {"invoices", "open_items"}:
+		invoice = row.get("invoice") or row.get("name")
+		return {
+			"type": "hv_query",
+			"doctype": "Sales Invoice",
+			"name": invoice,
+			"title": row.get("customer_name") or row.get("customer") or invoice,
+			"subtitle": _compact_join([row.get("due_date"), row.get("status"), row.get("outstanding_amount")]),
+			"customer": row.get("customer"),
+			"customer_name": row.get("customer_name"),
+			"mietvertrag": row.get("mietvertrag"),
+			"routes": [{"label": "Rechnung", "doctype": "Sales Invoice", "name": invoice, "route": ["Form", "Sales Invoice", invoice]}]
+			if invoice
+			else [],
+		}
+	if view == "payments":
+		payment = row.get("payment_entry") or row.get("name")
+		routes = []
+		if payment:
+			routes.append({"label": "Zahlung", "doctype": "Payment Entry", "name": payment, "route": ["Form", "Payment Entry", payment]})
+		if row.get("invoice"):
+			routes.append({"label": "Rechnung", "doctype": "Sales Invoice", "name": row.get("invoice"), "route": ["Form", "Sales Invoice", row.get("invoice")]})
+		return {
+			"type": "hv_query",
+			"doctype": "Payment Entry",
+			"name": payment,
+			"title": row.get("customer_name") or row.get("customer") or payment,
+			"subtitle": _compact_join([row.get("payment_date"), row.get("allocated_amount"), row.get("days_late")]),
+			"customer": row.get("customer"),
+			"customer_name": row.get("customer_name"),
+			"mietvertrag": row.get("mietvertrag"),
+			"routes": routes,
+		}
+	return {}
 
 
 def _normalize_hv_doctype(doctype: str) -> str:
