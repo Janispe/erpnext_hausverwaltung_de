@@ -7,8 +7,8 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import add_days, cint, cstr
-from frappe.utils.pdf import get_pdf
 
+from hausverwaltung.hausverwaltung.utils.pdf_engine import render_pdf as get_pdf
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import normalize_print_format_name
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_for_print_format
 
