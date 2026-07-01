@@ -383,6 +383,184 @@ function SystemRuleBuilder({ form }) {
 	);
 }
 
+function ConditionBuilder({ form, patch, setCondition, addCondition, removeCondition }) {
+	return (
+		<div className="editor-block">
+			<div className="eb-kicker">Wenn</div>
+			<div className="eb-title">Bedingungen</div>
+			<div className="eb-sub">Die Regel greift nur, wenn diese Prüfung für eine Bankzeile zutrifft.</div>
+			{form.builder.conditions.map((condition, index) => (
+				<div className="cond-row" key={index}>
+					<select className="text-input" value={condition.field} onChange={(e) => setCondition(index, { field: e.target.value, value: "" })}>
+						{FIELDS.map((field) => <option value={field} key={field}>{FIELD_LABELS[field]}</option>)}
+					</select>
+					<select className="text-input" value={condition.op} onChange={(e) => setCondition(index, { op: e.target.value })}>
+						{OPS.map((op) => <option value={op} key={op}>{op}</option>)}
+					</select>
+					{condition.field === "richtung" ? (
+						<select className="text-input" value={condition.value} onChange={(e) => setCondition(index, { value: e.target.value })}>
+							<option value="">Richtung</option>
+							<option value="Eingang">Eingang</option>
+							<option value="Ausgang">Ausgang</option>
+						</select>
+					) : (
+						<input className="text-input" type={condition.field === "betrag" ? "number" : "text"} value={condition.value} onChange={(e) => setCondition(index, { value: e.target.value })} />
+					)}
+					<button type="button" className="icon-btn" disabled={form.builder.conditions.length <= 1} onClick={() => removeCondition(index)}><Icon name="x" size={13} /></button>
+				</div>
+			))}
+			<div className="builder-actions">
+				<button type="button" className="btn subtle sm" onClick={addCondition}><Icon name="plus" size={13} /> Bedingung</button>
+				{form.builder.conditions.length > 1 && (
+					<div className="seg">
+						<button type="button" className={`seg-btn ${form.builder.connector === "und" ? "active" : ""}`} onClick={() => patch({ builder: { ...form.builder, connector: "und" } })}>alle Bedingungen</button>
+						<button type="button" className={`seg-btn ${form.builder.connector === "oder" ? "active" : ""}`} onClick={() => patch({ builder: { ...form.builder, connector: "oder" } })}>eine Bedingung</button>
+					</div>
+				)}
+			</div>
+		</div>
+	);
+}
+
+function ActionBuilder({ form, patch }) {
+	if (form.requiresReview) {
+		return (
+			<div className="editor-block">
+				<div className="eb-kicker">Dann</div>
+				<div className="eb-title">Zur Prüfung vorlegen</div>
+				<div className="eb-sub">Treffer werden nicht automatisch gebucht, sondern bleiben in der Prüfung.</div>
+			</div>
+		);
+	}
+	return (
+		<div className="editor-block">
+			<div className="eb-kicker">Dann</div>
+			<div className="eb-title">Aktion</div>
+			<div className="seg action-seg">
+				<button type="button" className={`seg-btn ${["buchung", "booking"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { ...form.action, type: "buchung" } })}>Auf Konto buchen</button>
+				<button type="button" className={`seg-btn ${["party", "partei"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { ...form.action, type: "party" } })}>Partei zuordnen</button>
+			</div>
+			{["party", "partei"].includes(form.action.type) ? (
+				<div className="re-grid">
+					<label><span className="field-label">Party Type</span><select className="text-input" value={form.action.party_type || ""} onChange={(e) => patch({ action: { ...form.action, party_type: e.target.value } })}>{PARTY_TYPES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+					<label><span className="field-label">Party</span><input className="text-input" value={form.action.party || ""} onChange={(e) => patch({ action: { ...form.action, party: e.target.value } })} /></label>
+				</div>
+			) : (
+				<div className="re-grid">
+					<label><span className="field-label">Gegenkonto</span><input className="text-input" value={form.action.account || ""} onChange={(e) => patch({ action: { ...form.action, account: e.target.value } })} placeholder="4970 Bankgebühren - HV" /></label>
+					<label><span className="field-label">Kostenstelle</span><input className="text-input" value={form.action.cost_center || ""} onChange={(e) => patch({ action: { ...form.action, cost_center: e.target.value } })} /></label>
+				</div>
+			)}
+		</div>
+	);
+}
+
+function BehaviorBuilder({ form, patch }) {
+	return (
+		<div className="editor-block">
+			<div className="eb-kicker">Verhalten</div>
+			<div className="eb-title">Ausführung</div>
+			<div className="option-grid">
+				<label><input type="checkbox" checked={form.enabled} onChange={(e) => patch({ enabled: e.target.checked })} /> Aktiv</label>
+				<label><input type="checkbox" checked={form.stopOnMatch} onChange={(e) => patch({ stopOnMatch: e.target.checked })} /> Stoppt bei Treffer</label>
+				{form.kind === "booking" && <label><input type="checkbox" checked={form.autoApply} onChange={(e) => patch({ autoApply: e.target.checked })} /> Automatisch anwenden</label>}
+				<label><input type="checkbox" checked={form.requiresReview} onChange={(e) => patch({ requiresReview: e.target.checked })} /> Prüfung erforderlich</label>
+			</div>
+		</div>
+	);
+}
+
+function ScopeBuilder({ form, patch, setScope }) {
+	return (
+		<div className="editor-block">
+			<div className="eb-head">
+				<div>
+					<div className="eb-kicker">Geltungsbereich</div>
+					<div className="eb-title">Scope</div>
+				</div>
+				<button type="button" className="btn subtle sm" onClick={() => patch({ scope: [...form.scope, { enabled: true, mode: "Sperren", scopeType: "IBAN", iban: "" }] })}><Icon name="plus" size={13} /> Regel</button>
+			</div>
+			{form.scope.length === 0 ? <div className="scope-empty">Gilt für alle Zeilen.</div> : form.scope.map((entry, index) => (
+				<div className="scope-row" key={index}>
+					<select className="text-input" value={entry.mode || "Sperren"} onChange={(e) => setScope(index, { mode: e.target.value })}><option>Sperren</option><option>Erlauben</option></select>
+					<select className="text-input" value={entry.scopeType || "IBAN"} onChange={(e) => setScope(index, { scopeType: e.target.value })}><option>IBAN</option><option>Party</option><option>Party Type</option></select>
+					{entry.scopeType === "Party Type" ? (
+						<select className="text-input" value={entry.partyType || ""} onChange={(e) => setScope(index, { partyType: e.target.value })}>{PARTY_TYPES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select>
+					) : entry.scopeType === "Party" ? (
+						<input className="text-input" value={entry.party || ""} onChange={(e) => setScope(index, { party: e.target.value })} placeholder={scopeLabel(entry)} />
+					) : (
+						<input className="text-input mono" value={entry.iban || ""} onChange={(e) => setScope(index, { iban: e.target.value })} />
+					)}
+					<button type="button" className="icon-btn" onClick={() => patch({ scope: form.scope.filter((_, idx) => idx !== index) })}><Icon name="trash" size={13} /></button>
+				</div>
+			))}
+		</div>
+	);
+}
+
+function RuleDesigner({ form, patch, setCondition, addCondition, removeCondition, setScope, builderError, localHits, serverPreview, preview }) {
+	return (
+		<div className="rule-designer">
+			<div className="designer-flow">
+				{form.isSystem ? (
+					<div className="editor-block">
+						<div className="eb-kicker">Regelbaustein</div>
+						<div className="eb-title">{form.systemInfo?.label || "Backend-Baustein"}</div>
+						<SystemRuleBuilder form={form} />
+						<details className="admin-code-link">
+							<summary>Admin-Fallback</summary>
+							<div className="locked-rule">
+								<span>Backend-Code · {form.ruleCodeLines || 0} Code-Zeilen</span>
+								<button
+									type="button"
+									className="btn subtle sm"
+									onClick={() => api.openDoc(form.doctype, form.name)}
+								>
+									<Icon name="file" size={13} /> Code im Formular öffnen
+								</button>
+							</div>
+						</details>
+					</div>
+				) : (
+					<ConditionBuilder form={form} patch={patch} setCondition={setCondition} addCondition={addCondition} removeCondition={removeCondition} />
+				)}
+				<div className="flow-arrow">↓</div>
+				{!form.isSystem && <ActionBuilder form={form} patch={patch} />}
+				{form.isSystem && (
+					<div className="editor-block">
+						<div className="eb-kicker">Dann</div>
+						<div className="eb-title">Aktion des Bausteins</div>
+						<div className="eb-sub">{form.systemInfo?.then || "Wird durch den Backend-Baustein ausgeführt."}</div>
+					</div>
+				)}
+				<div className="flow-arrow">↓</div>
+				<BehaviorBuilder form={form} patch={patch} />
+				<ScopeBuilder form={form} patch={patch} setScope={setScope} />
+				<div className={`re-live ${builderError ? "bad" : "ok"}`}>
+					{builderError || `gültig · trifft ${serverPreview?.ok ? serverPreview.hits : localHits} Zeilen im aktuellen Auszug`}
+					{!form.isSystem && <button type="button" className="link-btn" onClick={preview}>Server prüfen</button>}
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function MetadataEditor({ form, patch }) {
+	return (
+		<details className="metadata-panel">
+			<summary>Metadaten</summary>
+			<div className="metadata-body">
+				<div className="re-grid top">
+					<label><span className="field-label">Titel</span><input className="text-input" value={form.title} onChange={(e) => patch({ title: e.target.value })} required /></label>
+					<label><span className="field-label">Priorität</span><input className="text-input mono" type="number" value={form.priority} onChange={(e) => patch({ priority: Number(e.target.value) || 0 })} /></label>
+				</div>
+				<label className="re-field"><span className="field-label">Regel-Schlüssel</span><input className="text-input mono" value={form.ruleKey} disabled={form.isSystem} onChange={(e) => patch({ ruleKey: e.target.value })} /></label>
+				<label className="re-field"><span className="field-label">Beschreibung</span><textarea className="text-input re-textarea" value={form.description} onChange={(e) => patch({ description: e.target.value })} /></label>
+			</div>
+		</details>
+	);
+}
+
 function RuleEditor({ state, rows, onClose, onSave }) {
 	const [form, setForm] = useState(() => makeInitialEditorState(state));
 	const [saving, setSaving] = useState(false);
@@ -455,136 +633,19 @@ function RuleEditor({ state, rows, onClose, onSave }) {
 				</div>
 
 				<div className="re-body">
-					<div className="re-grid top">
-						<label><span className="field-label">Titel</span><input className="text-input" value={form.title} onChange={(e) => patch({ title: e.target.value })} required /></label>
-						<label><span className="field-label">Priorität</span><input className="text-input mono" type="number" value={form.priority} onChange={(e) => patch({ priority: Number(e.target.value) || 0 })} /></label>
-					</div>
-					<label className="re-field"><span className="field-label">Regel-Schlüssel</span><input className="text-input mono" value={form.ruleKey} disabled={form.isSystem} onChange={(e) => patch({ ruleKey: e.target.value })} /></label>
-					<label className="re-field"><span className="field-label">Beschreibung</span><textarea className="text-input re-textarea" value={form.description} onChange={(e) => patch({ description: e.target.value })} /></label>
-
-					<section className="re-section">
-						<div className="re-section-head">
-							<span>Wenn</span>
-							{!form.isSystem && (
-								<div className="seg">
-									<button type="button" className={`seg-btn ${form.mode === "einfach" ? "active" : ""}`} onClick={() => patch({ mode: "einfach" })}>Einfach</button>
-									<button type="button" className={`seg-btn ${form.mode === "erweitert" ? "active" : ""}`} onClick={() => patch({ mode: "erweitert" })}>Erweitert</button>
-								</div>
-							)}
-						</div>
-						{form.isSystem ? (
-							<>
-								<SystemRuleBuilder form={form} />
-								<details className="admin-code-link">
-									<summary>Admin-Fallback</summary>
-									<div className="locked-rule">
-										<span>Backend-Code · {form.ruleCodeLines || 0} Code-Zeilen</span>
-										<button
-											type="button"
-											className="btn subtle sm"
-											onClick={() => api.openDoc(form.doctype, form.name)}
-										>
-											<Icon name="file" size={13} /> Code im Formular öffnen
-										</button>
-									</div>
-								</details>
-							</>
-						) : form.mode === "erweitert" ? (
-							<textarea
-								className="text-input re-code"
-								value={exprText(form.builder)}
-								readOnly
-								title="Der erweiterte Freitext wird aus den strukturierten Bedingungen serialisiert."
-							/>
-						) : (
-							<>
-								{form.builder.conditions.map((condition, index) => (
-									<div className="cond-row" key={index}>
-										<select className="text-input" value={condition.field} onChange={(e) => setCondition(index, { field: e.target.value, value: "" })}>
-											{FIELDS.map((field) => <option value={field} key={field}>{FIELD_LABELS[field]}</option>)}
-										</select>
-										<select className="text-input" value={condition.op} onChange={(e) => setCondition(index, { op: e.target.value })}>
-											{OPS.map((op) => <option value={op} key={op}>{op}</option>)}
-										</select>
-										{condition.field === "richtung" ? (
-											<select className="text-input" value={condition.value} onChange={(e) => setCondition(index, { value: e.target.value })}>
-												<option value="">Richtung</option>
-												<option value="Eingang">Eingang</option>
-												<option value="Ausgang">Ausgang</option>
-											</select>
-										) : (
-											<input className="text-input" type={condition.field === "betrag" ? "number" : "text"} value={condition.value} onChange={(e) => setCondition(index, { value: e.target.value })} />
-										)}
-										<button type="button" className="icon-btn" disabled={form.builder.conditions.length <= 1} onClick={() => removeCondition(index)}><Icon name="x" size={13} /></button>
-									</div>
-								))}
-								<div className="builder-actions">
-									<button type="button" className="btn subtle sm" onClick={addCondition}><Icon name="plus" size={13} /> Bedingung</button>
-									{form.builder.conditions.length > 1 && (
-										<div className="seg">
-											<button type="button" className={`seg-btn ${form.builder.connector === "und" ? "active" : ""}`} onClick={() => patch({ builder: { ...form.builder, connector: "und" } })}>alle</button>
-											<button type="button" className={`seg-btn ${form.builder.connector === "oder" ? "active" : ""}`} onClick={() => patch({ builder: { ...form.builder, connector: "oder" } })}>eine</button>
-										</div>
-									)}
-								</div>
-							</>
-						)}
-						<div className={`re-live ${builderError ? "bad" : "ok"}`}>
-							{builderError || `gültig · trifft ${serverPreview?.ok ? serverPreview.hits : localHits} Zeilen im aktuellen Auszug`}
-							{!form.isSystem && <button type="button" className="link-btn" onClick={preview}>Server prüfen</button>}
-						</div>
-					</section>
-
-					{!form.isSystem && !form.requiresReview && (
-						<section className="re-section">
-							<div className="re-section-head"><span>Dann</span></div>
-							<div className="seg action-seg">
-								<button type="button" className={`seg-btn ${["buchung", "booking"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { ...form.action, type: "buchung" } })}>Auf Konto buchen</button>
-								<button type="button" className={`seg-btn ${["party", "partei"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { ...form.action, type: "party" } })}>Partei zuordnen</button>
-							</div>
-							{["party", "partei"].includes(form.action.type) ? (
-								<div className="re-grid">
-									<label><span className="field-label">Party Type</span><select className="text-input" value={form.action.party_type || ""} onChange={(e) => patch({ action: { ...form.action, party_type: e.target.value } })}>{PARTY_TYPES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-									<label><span className="field-label">Party</span><input className="text-input" value={form.action.party || ""} onChange={(e) => patch({ action: { ...form.action, party: e.target.value } })} /></label>
-								</div>
-							) : (
-								<div className="re-grid">
-									<label><span className="field-label">Gegenkonto</span><input className="text-input" value={form.action.account || ""} onChange={(e) => patch({ action: { ...form.action, account: e.target.value } })} placeholder="4970 Bankgebühren - HV" /></label>
-									<label><span className="field-label">Kostenstelle</span><input className="text-input" value={form.action.cost_center || ""} onChange={(e) => patch({ action: { ...form.action, cost_center: e.target.value } })} /></label>
-								</div>
-							)}
-						</section>
-					)}
-
-					<section className="re-section">
-						<div className="option-grid">
-							<label><input type="checkbox" checked={form.enabled} onChange={(e) => patch({ enabled: e.target.checked })} /> Aktiv</label>
-							<label><input type="checkbox" checked={form.stopOnMatch} onChange={(e) => patch({ stopOnMatch: e.target.checked })} /> Stoppt bei Treffer</label>
-							{form.kind === "booking" && <label><input type="checkbox" checked={form.autoApply} onChange={(e) => patch({ autoApply: e.target.checked })} /> Automatisch anwenden</label>}
-							<label><input type="checkbox" checked={form.requiresReview} onChange={(e) => patch({ requiresReview: e.target.checked })} /> Prüfung erforderlich</label>
-						</div>
-					</section>
-
-					<section className="re-section">
-						<div className="re-section-head">
-							<span>Geltungsbereich</span>
-							<button type="button" className="btn subtle sm" onClick={() => patch({ scope: [...form.scope, { enabled: true, mode: "Sperren", scopeType: "IBAN", iban: "" }] })}><Icon name="plus" size={13} /> Regel</button>
-						</div>
-						{form.scope.length === 0 ? <div className="scope-empty">Gilt für alle Zeilen.</div> : form.scope.map((entry, index) => (
-							<div className="scope-row" key={index}>
-								<select className="text-input" value={entry.mode || "Sperren"} onChange={(e) => setScope(index, { mode: e.target.value })}><option>Sperren</option><option>Erlauben</option></select>
-								<select className="text-input" value={entry.scopeType || "IBAN"} onChange={(e) => setScope(index, { scopeType: e.target.value })}><option>IBAN</option><option>Party</option><option>Party Type</option></select>
-								{entry.scopeType === "Party Type" ? (
-									<select className="text-input" value={entry.partyType || ""} onChange={(e) => setScope(index, { partyType: e.target.value })}>{PARTY_TYPES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select>
-								) : entry.scopeType === "Party" ? (
-									<input className="text-input" value={entry.party || ""} onChange={(e) => setScope(index, { party: e.target.value })} placeholder={scopeLabel(entry)} />
-								) : (
-									<input className="text-input mono" value={entry.iban || ""} onChange={(e) => setScope(index, { iban: e.target.value })} />
-								)}
-								<button type="button" className="icon-btn" onClick={() => patch({ scope: form.scope.filter((_, idx) => idx !== index) })}><Icon name="trash" size={13} /></button>
-							</div>
-						))}
-					</section>
+					<RuleDesigner
+						form={form}
+						patch={patch}
+						setCondition={setCondition}
+						addCondition={addCondition}
+						removeCondition={removeCondition}
+						setScope={setScope}
+						builderError={builderError}
+						localHits={localHits}
+						serverPreview={serverPreview}
+						preview={preview}
+					/>
+					<MetadataEditor form={form} patch={patch} />
 				</div>
 
 				<div className="re-actions">

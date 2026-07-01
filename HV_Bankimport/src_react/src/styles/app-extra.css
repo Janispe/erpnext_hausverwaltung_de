@@ -857,7 +857,7 @@
 .gn-flag.off { background: var(--surface-3); color: var(--text-faint); }
 .rule-editor-backdrop { z-index: 5100; }
 .rule-editor {
-	width: min(620px, 100%);
+	width: min(760px, 100%);
 	max-height: calc(100vh - 44px);
 	display: flex;
 	flex-direction: column;
@@ -886,6 +886,78 @@
 .re-head h2 { margin: 0; color: var(--text); font-size: 16px; font-weight: 650; }
 .re-sub { margin-top: 3px; color: var(--text-muted); font-size: 12px; }
 .re-body { padding: 15px 16px; overflow-y: auto; }
+.rule-designer {
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	background: var(--surface-2);
+	padding: 12px;
+}
+.designer-flow {
+	display: flex;
+	flex-direction: column;
+	gap: 9px;
+}
+.editor-block {
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	background: var(--surface);
+	padding: 12px;
+}
+.eb-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+}
+.eb-kicker {
+	margin-bottom: 3px;
+	color: var(--text-muted);
+	font-size: 10.5px;
+	font-weight: 650;
+	text-transform: uppercase;
+	letter-spacing: .55px;
+}
+.eb-title {
+	color: var(--text);
+	font-size: 14px;
+	font-weight: 650;
+	line-height: 1.25;
+}
+.eb-sub {
+	margin-top: 4px;
+	color: var(--text-muted);
+	font-size: 12px;
+	line-height: 1.45;
+}
+.flow-arrow {
+	display: grid;
+	place-items: center;
+	height: 14px;
+	color: var(--text-faint);
+	font-size: 14px;
+	line-height: 1;
+}
+.metadata-panel {
+	margin-top: 12px;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	background: var(--surface);
+}
+.metadata-panel summary {
+	padding: 11px 12px;
+	color: var(--text-muted);
+	font-size: 12px;
+	font-weight: 650;
+	text-transform: uppercase;
+	letter-spacing: .5px;
+	cursor: pointer;
+}
+.metadata-panel[open] summary {
+	border-bottom: 1px solid var(--border);
+}
+.metadata-body {
+	padding: 12px;
+}
 .re-grid {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -935,6 +1007,7 @@
 	display: flex;
 	flex-direction: column;
 	gap: 7px;
+	margin-top: 10px;
 }
 .sb-row {
 	display: grid;
@@ -977,6 +1050,8 @@
 	align-items: center;
 	margin-top: 7px;
 }
+.cond-row:first-of-type,
+.scope-row:first-of-type { margin-top: 10px; }
 .scope-row { grid-template-columns: 105px 110px minmax(0, 1fr) 30px; }
 .builder-actions {
 	display: flex;
@@ -996,6 +1071,10 @@
 	background: var(--surface-2);
 	color: var(--text-muted);
 	font-size: 11.5px;
+}
+.rule-designer > .re-live,
+.designer-flow > .re-live {
+	margin-top: 0;
 }
 .re-live.ok { color: var(--accent); }
 .re-live.bad { color: var(--danger); }
