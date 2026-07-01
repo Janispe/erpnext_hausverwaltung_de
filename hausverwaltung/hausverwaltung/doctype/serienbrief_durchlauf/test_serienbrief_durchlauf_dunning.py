@@ -8,6 +8,7 @@ Pro-Empfänger-Override gemergt (`row._iteration_variablen_werte`).
 
 import json
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import frappe
@@ -20,6 +21,7 @@ from hausverwaltung.hausverwaltung.doctype.dunning import (
 	validate_dunning_type_serienbrief_werte,
 )
 from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+	_IterationEmpfaengerRow,
 	SerienbriefDurchlauf,
 	_collect_dunning_auto_values,
 	_field_source_and_value,
@@ -27,6 +29,7 @@ from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_dur
 	_merge_variable_values,
 	_parse_variable_values,
 	_render_serienbrief_template,
+	_resolve_value_path,
 )
 from hausverwaltung.hausverwaltung.patches.post_model_sync.migrate_serienbrief_to_placeholder_tokens import (
 	MIETER_ANREDE_BODY,
@@ -131,6 +134,49 @@ class TestSerienbriefDurchlaufDunning(IntegrationTestCase):
 		rendered = _render_serienbrief_template("Brutto {{$ objekt.bruttomiete $}}", context)
 
 		self.assertEqual(rendered, "Brutto 1.075,00")
+
+	def test_build_context_does_not_expose_global_mietvertrag(self):
+		durchlauf = SerienbriefDurchlauf()
+		durchlauf.name = "SBD-TEST"
+		durchlauf.title = "Test Durchlauf"
+		durchlauf.date = "2026-01-01"
+		row = _IterationEmpfaengerRow(
+			{
+				"iteration_objekt": "MV-CTX-001",
+				"objekt": "MV-CTX-001",
+				"wohnung": None,
+				"mieter": None,
+				"anzeigename": "Max Mustermann",
+			}
+		)
+		row._iteration_doc = SimpleNamespace(doctype="Mietvertrag", name="MV-CTX-001")
+
+		with (
+			patch.object(durchlauf, "_load_doc", return_value=None),
+			patch.object(durchlauf, "_load_mieter", return_value=None),
+			patch.object(durchlauf, "_extract_address", return_value={}),
+			patch.object(durchlauf, "_extract_immobilie_address", return_value={}),
+			patch.object(durchlauf, "_get_mieter_doctype", return_value="Customer"),
+		):
+			context = durchlauf._build_context(row, index=1, total=1)
+
+		self.assertNotIn("mietvertrag", context)
+		self.assertEqual(context.objekt.name, "MV-CTX-001")
+		self.assertNotIn("mietvertrag", context.empfaenger)
+
+	def test_value_path_follows_link_field_for_dict_context(self):
+		source = frappe._dict(doctype="Source Doc", linked_doc="TARGET-001")
+		target = SimpleNamespace(doctype="Target Doc", name="TARGET-001")
+		link_field = SimpleNamespace(fieldname="linked_doc", fieldtype="Link", options="Target Doc")
+		meta = SimpleNamespace(get_field=lambda fieldname: link_field if fieldname == "linked_doc" else None)
+
+		with (
+			patch("frappe.get_meta", return_value=meta),
+			patch("frappe.get_cached_doc", return_value=target),
+		):
+			value = _resolve_value_path("objekt.linked_doc.name", {"objekt": source})
+
+		self.assertEqual(value, "TARGET-001")
 
 	def test_validate_blocks_scrub_collision(self):
 		"""„Frist Tage" und „frist_tage" werden beide zu `frist_tage` —

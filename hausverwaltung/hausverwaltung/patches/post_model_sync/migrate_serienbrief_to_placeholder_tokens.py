@@ -347,12 +347,17 @@ def _patch_baustein(
 
 
 def execute() -> None:
+	dunning_mietvertrag = "objekt.overdue_payments.sales_invoice.mietvertrag"
+
 	# 1) Bankverbindung Immobilie — deklarativ machen
 	_patch_baustein(
 		"Bankverbindung Immobilie",
 		html_content=BANKVERBINDUNG_BODY,
 		variables=[("immobilie", "Immobilie", "Immobilie", "Doctype")],
-		standardpfade=[("Mietvertrag", {"immobilie": "objekt.wohnung.immobilie"})],
+		standardpfade=[
+			("Mietvertrag", {"immobilie": "objekt.wohnung.immobilie"}),
+			("Dunning", {"immobilie": f"{dunning_mietvertrag}.wohnung.immobilie"}),
+		],
 	)
 
 	# 2) MieterAnredeNameAlle — deklarativ + throw bei leerer Personen-Liste
@@ -363,6 +368,7 @@ def execute() -> None:
 		standardpfade=[
 			("Mietvertrag", {"mietvertrag": "__self__"}),
 			("Betriebskostenabrechnung Mieter", {"mietvertrag": "objekt.mietvertrag"}),
+			("Dunning", {"mietvertrag": dunning_mietvertrag}),
 		],
 	)
 
@@ -386,7 +392,10 @@ def execute() -> None:
 				"var": "objekt.mietvertrag.mieter",
 				"address": "objekt.mietvertrag.kunde.briefanschrift",
 			}),
-			("Dunning", {"address": "objekt.kunde.briefanschrift"}),
+			("Dunning", {
+				"var": f"{dunning_mietvertrag}.mieter",
+				"address": "objekt.customer.briefanschrift",
+			}),
 		],
 	)
 
@@ -397,6 +406,7 @@ def execute() -> None:
 		standardpfade=[
 			("Mietvertrag", {"var": "objekt.mieter"}),
 			("Betriebskostenabrechnung Mieter", {"var": "objekt.mietvertrag.mieter"}),
+			("Dunning", {"var": f"{dunning_mietvertrag}.mieter"}),
 		],
 	)
 
@@ -404,7 +414,11 @@ def execute() -> None:
 	_patch_baustein(
 		"Miethistorie",
 		variables=[("mietvertrag", "Mietvertrag", "Mietvertrag", "Doctype")],
-		standardpfade=[("Mietvertrag", {"mietvertrag": "__self__"})],
+		standardpfade=[
+			("Mietvertrag", {"mietvertrag": "__self__"}),
+			("Betriebskostenabrechnung Mieter", {"mietvertrag": "objekt.mietvertrag"}),
+			("Dunning", {"mietvertrag": dunning_mietvertrag}),
+		],
 		body_replacements=[
 			("{% set mv = objekt or objekt %}", "{% set mv = mietvertrag %}"),
 		],

@@ -10,6 +10,7 @@ import unittest
 
 from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 	_render_serienbrief_template,
+	_wrap_jinja_value,
 )
 
 _MIETHISTORIE_HTML = """<h3>Miethistorie</h3>
@@ -125,6 +126,21 @@ class TestSerienbriefTextbaustein(unittest.TestCase):
 		rendered = _render_serienbrief_template(
 			"Aktenzeichen {{$ objekt.name $}}",
 			{"objekt": frappe._dict(doctype="Mietvertrag", name="MV-TEST-001")},
+		)
+
+		self.assertEqual(rendered, "Aktenzeichen MV-TEST-001")
+
+	def test_global_mietvertrag_is_not_available_without_mapping(self):
+		with self.assertRaises(frappe.ValidationError):
+			_render_serienbrief_template(
+				"Aktenzeichen {{ mietvertrag.name }}",
+				{"objekt": frappe._dict(doctype="Mietvertrag", name="MV-TEST-001")},
+			)
+
+	def test_explicit_mietvertrag_mapping_can_render_block_variable(self):
+		rendered = _render_serienbrief_template(
+			"Aktenzeichen {{ mietvertrag.name }}",
+			{"mietvertrag": _wrap_jinja_value(frappe._dict(doctype="Mietvertrag", name="MV-TEST-001"))},
 		)
 
 		self.assertEqual(rendered, "Aktenzeichen MV-TEST-001")

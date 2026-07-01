@@ -1105,21 +1105,8 @@ class SerienbriefDurchlauf(Document):
 		mieter_name = row.anzeigename or self._guess_person_name(mieter_doc)
 		empfaenger_data = row.as_dict() if hasattr(row, "as_dict") else {}
 
-		# Aktiven Mietvertrag als Kontext-Wurzel exponieren. Bei Mietvertrag-Iteration
-		# ist das ``objekt`` selbst; bei anderen Iterations-Objekten (z.B. Dunning)
-		# der via Empfänger-Auflösung gefundene Mietvertrag (row.mietvertrag). So
-		# können Bausteine ``mietvertrag.mieter`` / ``mietvertrag.kunde`` /
-		# ``mietvertrag.wohnung.immobilie`` auflösen, auch wenn ``objekt`` kein
-		# Mietvertrag ist.
-		mietvertrag_doc = (
-			iteration_doc
-			if getattr(iteration_doc, "doctype", "") == "Mietvertrag"
-			else self._load_doc("Mietvertrag", getattr(row, "mietvertrag", None))
-		)
-
 		context = frappe._dict(
 			objekt=_wrap_jinja_value(iteration_doc),
-			mietvertrag=_wrap_jinja_value(mietvertrag_doc),
 			datum=format_date(letter_date),
 			datum_iso=letter_date,
 			druck_schwarz_weiss=bool(getattr(self, "_druck_schwarz_weiss", False)),
@@ -2188,14 +2175,6 @@ class SerienbriefDurchlauf(Document):
 		if display_name:
 			row_data["anzeigename"] = display_name
 
-		# Aktiven Mietvertrag am Row festhalten, damit _build_context ihn als
-		# Kontext-Wurzel ``mietvertrag`` bereitstellen kann. Nötig für Iterationen
-		# über Objekte ohne direkten Mieter-/Wohnungsbezug (z.B. Dunning): die
-		# Bausteine (Briefkopf, Anrede, Bankverbindung) lösen ihre Daten dann über
-		# ``mietvertrag.…`` statt ``objekt.…`` auf.
-		if mietvertrag_name:
-			row_data["mietvertrag"] = mietvertrag_name
-
 		row = _IterationEmpfaengerRow(row_data)
 		row._iteration_doc = iteration_doc
 		row._iteration_rowname = getattr(iteration_row, "name", None)
@@ -3089,6 +3068,41 @@ def _resolve_value_path(path: str, context: Dict[str, Any]) -> Any:
 				current = object.__getattribute__(current, "_source")
 
 			if isinstance(current, dict):
+				doctype = current.get("doctype")
+				meta = None
+				if doctype:
+					try:
+						meta = frappe.get_meta(doctype)
+					except Exception:
+						meta = None
+				if meta:
+					df = meta.get_field(segment)
+					if df and df.fieldtype == "Link" and df.options:
+						link_value = current.get(segment)
+						if not link_value:
+							return None
+						if not isinstance(link_value, str) and getattr(link_value, "doctype", None):
+							current = link_value
+						else:
+							try:
+								current = frappe.get_cached_doc(df.options, link_value)
+							except Exception:
+								return None
+						idx += 1
+						continue
+					if df and df.fieldtype == "Table" and df.options:
+						child_list = current.get(segment) or []
+						if preserve_list and idx == len(segments) - 1:
+							return list(child_list)
+						lookahead = segments[idx + 1] if idx + 1 < len(segments) else None
+						child_row, consumed_numeric = pick_child_row(child_list, lookahead)
+						if not child_row:
+							return None
+						current = child_row
+						idx += 1
+						if consumed_numeric:
+							idx += 1
+						continue
 				current = current.get(segment)
 				if current is None:
 					return None
@@ -3733,7 +3747,6 @@ def _load_value_fields_context(template, iteration_doctype: str | None, iteratio
 	mock_dunning = _mock_dunning_from_context(context_data) if iteration_doctype == "Dunning" else None
 	return frappe._dict(
 		objekt=mock_dunning,
-		mietvertrag=None,
 		empfaenger=frappe._dict(),
 		serienbrief=frappe._dict(werte=frappe._dict()),
 		outputs=frappe._dict(),

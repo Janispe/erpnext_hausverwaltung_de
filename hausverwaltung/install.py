@@ -1001,7 +1001,7 @@ def _ensure_immobilie_muelltrennung_field(*, reason: str) -> None:
     Hält den hausspezifischen Mülltrennungs-Block (Tonnen-Liste + Beschreibungen +
     BSR-Recyclinghof-Hinweis + Glascontainer-Adressen), den die kanonische
     Serienbrief-Vorlage „Mülltrennung Regeln" pro Empfänger über
-    ``{{$ mietvertrag.wohnung.immobilie.muelltrennung_konfiguration $}}`` zieht.
+    ``{{$ objekt.wohnung.immobilie.muelltrennung_konfiguration $}}`` zieht.
     So entfällt der frühere Wildwuchs von Mülltrennung-G/-L/-W-Vorlagen mit
     redundantem Boilerplate.
 
@@ -1022,7 +1022,7 @@ def _ensure_immobilie_muelltrennung_field(*, reason: str) -> None:
             "description": (
                 "HTML-Block für die hausspezifische Tonnen-/Mülltrennungs-Beschreibung. "
                 "Wird vom Serienbrief 'Mülltrennung Regeln' eingebunden über den Pfad "
-                "{{$ mietvertrag.wohnung.immobilie.muelltrennung_konfiguration $}}. "
+                "{{$ objekt.wohnung.immobilie.muelltrennung_konfiguration $}}. "
                 "Inhalt: Tonnen-Liste + Beschreibungen + BSR-Recyclinghof-Hinweis. "
                 "Leer lassen wenn diese Immobilie keinen Mülltrennungs-Rundbrief bekommt."
             ),

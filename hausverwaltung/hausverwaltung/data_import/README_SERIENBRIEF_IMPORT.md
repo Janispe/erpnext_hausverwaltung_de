@@ -86,8 +86,8 @@ Das Tool ersetzt über 50 gängige Platzhalter:
 - `«B-Vorname1»` → `{{ mieter[0].first_name if mieter else '' }}`
 - `«B-PLZ-Ort»` → `{{ (address.pincode or '') + ' ' + (address.city or '') if address else '' }}`
 - `«B-Saldo»` → `{{ saldo if saldo else '' }}`
-- `«B-Einzug»` → `{{ mietvertrag.von if mietvertrag else '' }}`
-- `«B-Auszug»` → `{{ mietvertrag.bis if mietvertrag else '' }}`
+- `«B-Einzug»` → `{{ objekt.von if objekt else '' }}`
+- `«B-Auszug»` → `{{ objekt.bis if objekt else '' }}`
 
 ### Verwalter
 - `«Verw.-Name»` → `{{ verwalter.name if verwalter else 'Hausverwaltung' }}`

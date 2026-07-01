@@ -35,9 +35,9 @@ PLACEHOLDER_MAPPING = {
     "B-PLZ-Ort": "{{ mieter_plz_ort }}",
 
     # Mietvertrag
-    "B-Einzug": "{{ mietvertrag.von }}",
-    "B-Auszug": "{{ mietvertrag.bis }}",
-    "B-Vertr_Abschl": "{{ mietvertrag.creation }}",
+    "B-Einzug": "{{ objekt.von }}",
+    "B-Auszug": "{{ objekt.bis }}",
+    "B-Vertr_Abschl": "{{ objekt.creation }}",
     # `B-Anteil1` ist die Wohnungsgröße in m² — kommt aus dem aktuellen
     # Wohnungszustand (``wohnung.aktueller_zustand → Wohnungszustand.größe``).
     # Wird im Render-Context als ``wohnung_groesse`` aufgelöst.
@@ -50,7 +50,7 @@ PLACEHOLDER_MAPPING = {
     "B-VZ4": "{{ vorauszahlung_4 }}",
     # In den alten Vorlagen wird `B-SUMVZ` oft als "neue Gesamtmiete" genutzt.
     # Im Mietvertrag ist das i.d.R. die `bruttomiete` (Currency).
-    "B-SUMVZ": "{{ mietvertrag.bruttomiete }}",
+    "B-SUMVZ": "{{ objekt.bruttomiete }}",
     "B-Saldo": "{{ saldo }}",
     "B-Saldo+1.Mahng.": "{{ (saldo|float + mahngebuehr_1|float)|round(2) }}",
 

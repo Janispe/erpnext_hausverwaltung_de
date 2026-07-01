@@ -93,10 +93,14 @@ def get_footer_bankverbindung_html(doc) -> str:
 		from frappe.utils import get_url_to_form
 
 		baustein_link = get_url_to_form("Serienbrief Textbaustein", _FOOTER_BAUSTEIN)
-		# Pfad-Vorschlag: für „Dunning" zeigt der Beleg auf einen Mietvertrag,
-		# darüber kommt man auf die Immobilie. Für andere Iteration-Doctypes
-		# muss der User den passenden Attribut-Pfad selbst eintragen.
-		vorschlag = "mietvertrag.immobilie" if iteration_doctype == "Dunning" else "immobilie"
+		# Pfad-Vorschlag: für „Dunning" wird der Mietvertrag explizit über das
+		# vorhandene Rechnungs-Linkmodell aufgelöst; einen globalen
+		# ``mietvertrag``-Root gibt es im Serienbrief-Kontext nicht mehr.
+		vorschlag = (
+			"objekt.overdue_payments.sales_invoice.mietvertrag.wohnung.immobilie"
+			if iteration_doctype == "Dunning"
+			else "immobilie"
+		)
 		frappe.throw(
 			_(
 				"Footer-Bankverbindung: kein Standardpfad für Iteration-Doctype "
