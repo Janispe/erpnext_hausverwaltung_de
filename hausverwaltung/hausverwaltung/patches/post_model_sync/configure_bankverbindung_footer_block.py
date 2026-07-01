@@ -44,9 +44,10 @@ def _clean_value(value: str) -> str:
 	return cleaned
 
 
-def _clean_template_body_tokens() -> None:
+def _clean_template_body_tokens() -> set[str]:
 	if not frappe.db.exists("DocType", "Serienbrief Vorlage"):
-		return
+		return set()
+	affected_templates = set()
 	for row in frappe.get_all("Serienbrief Vorlage", fields=["name", "content", "html_content", "jinja_content"]):
 		changes = {}
 		for fieldname in ("content", "html_content", "jinja_content"):
@@ -54,8 +55,10 @@ def _clean_template_body_tokens() -> None:
 			new_value = _clean_value(old_value)
 			if new_value != old_value:
 				changes[fieldname] = new_value
+				affected_templates.add(row.name)
 		if changes:
 			frappe.db.set_value("Serienbrief Vorlage", row.name, changes, update_modified=False)
+	return affected_templates
 
 
 def _set_child_table(parent, table_field: str, rows: list[dict[str, str]]) -> None:
@@ -110,25 +113,52 @@ def _configure_block() -> None:
 		doc.save(ignore_permissions=True)
 
 
-def _remove_automatically_added_footer_rows() -> None:
+def _ensure_footer_rows(template_names: set[str]) -> None:
 	if not frappe.db.exists("DocType", "Serienbrief Vorlagenbaustein"):
 		return
-	for row in frappe.get_all(
+	for template_name in sorted(template_names):
+		if not frappe.db.exists("Serienbrief Vorlage", template_name):
+			continue
+		doc = frappe.get_doc("Serienbrief Vorlage", template_name)
+		rows = [row for row in (doc.get("textbausteine") or []) if row.baustein == BLOCK_NAME]
+		if rows:
+			changed = False
+			first = rows[0]
+			if first.baustein_key != "bankverbindung_immobilie":
+				first.baustein_key = "bankverbindung_immobilie"
+				changed = True
+			for duplicate in rows[1:]:
+				doc.get("textbausteine").remove(duplicate)
+				changed = True
+			if changed:
+				doc.save(ignore_permissions=True)
+			continue
+		doc.append(
+			"textbausteine",
+			{
+				"baustein": BLOCK_NAME,
+				"baustein_key": "bankverbindung_immobilie",
+			},
+		)
+		doc.save(ignore_permissions=True)
+
+
+def _deduplicate_footer_rows() -> None:
+	if not frappe.db.exists("DocType", "Serienbrief Vorlagenbaustein"):
+		return
+	rows = frappe.get_all(
 		"Serienbrief Vorlagenbaustein",
 		filters={"baustein": BLOCK_NAME, "baustein_key": "bankverbindung_immobilie"},
-		pluck="name",
-	):
-		frappe.delete_doc(
-			"Serienbrief Vorlagenbaustein",
-			row,
-			ignore_permissions=True,
-			force=True,
-		)
+		fields=["parent"],
+	)
+	for template_name in sorted({row.parent for row in rows if row.parent}):
+		_ensure_footer_rows({template_name})
 
 
 def execute() -> None:
-	_clean_template_body_tokens()
+	affected_templates = _clean_template_body_tokens()
 	_configure_block()
-	_remove_automatically_added_footer_rows()
+	_ensure_footer_rows(affected_templates)
+	_deduplicate_footer_rows()
 	frappe.clear_cache(doctype="Serienbrief Vorlage")
 	frappe.clear_cache(doctype="Serienbrief Textbaustein")
