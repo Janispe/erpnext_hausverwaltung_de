@@ -573,22 +573,11 @@ def _split_preview_context(druck_schwarz_weiss: bool = False) -> Dict[str, Any]:
 	immobilie = SplitPreviewImmobilie(kontakt, address)
 	wohnung = SplitPreviewWohnung(immobilie)
 	mietvertrag = SplitPreviewMietvertrag(kontakt, wohnung)
-	empfaenger = frappe._dict(
-		name="Hausverwaltung",
-		anzeigename="Hausverwaltung",
-		mieter_name="Erika Mustermann",
-		strasse=address.address_line1,
-		plz=address.pincode,
-		ort=address.city,
-		plz_ort=f"{address.pincode} {address.city}",
-		adresse=f"{address.address_line1}, {address.pincode} {address.city}",
-	)
 	return {
 		"objekt": mietvertrag,
 		"datum": "31.12.2024",
 		"datum_iso": "2024-12-31",
 		"druck_schwarz_weiss": bool(druck_schwarz_weiss),
-		"empfaenger": empfaenger,
 		"serienbrief": frappe._dict(
 			titel="Beispiel Serienbrief",
 			title="Beispiel Serienbrief",
@@ -2537,7 +2526,6 @@ def get_editor_bausteine() -> Dict[str, Any]:
 _PLACEHOLDER_ICONS = {
 	"mieter": "user",
 	"objekt": "user",
-	"empfaenger": "user",
 	"eigentuemer": "user",
 	"verwalter": "building",
 	"wohnung": "door",

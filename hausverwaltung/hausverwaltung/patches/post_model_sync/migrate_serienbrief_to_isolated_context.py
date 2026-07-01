@@ -10,12 +10,12 @@ from frappe.utils import cstr
 # damit z.B. ``mieter_strasse`` ersetzt wird bevor ``mieter`` greift.
 FIELD_REPLACEMENTS = {
 	# Mieter (zuerst die spezifischen Composite-Tokens, dann der bare-Token)
-	"mieter_strasse": "empfaenger.strasse",
-	"mieter_plz_ort": "empfaenger.plz_ort",
-	"mieter_plz": "empfaenger.plz",
-	"mieter_ort": "empfaenger.ort",
-	"mieter_adresse": "empfaenger.adresse",
-	"mieter_name": "empfaenger.mieter_name",
+	"mieter_strasse": "objekt.kunde.briefanschrift.address_line1",
+	"mieter_plz_ort": "objekt.kunde.briefanschrift.plz_ort",
+	"mieter_plz": "objekt.kunde.briefanschrift.pincode",
+	"mieter_ort": "objekt.kunde.briefanschrift.city",
+	"mieter_adresse": "objekt.kunde.briefanschrift.adresse",
+	"mieter_name": "objekt.kunde.customer_name",
 	"mieter_doc": "objekt.kunde",
 	"mieter": "objekt.kunde",
 	# Wohnung
@@ -60,7 +60,7 @@ FIELD_REPLACEMENTS = {
 	"mietvertrag_doc": "objekt",
 	"mietvertrag": "objekt",
 	# Run-Metadaten
-	"empfaenger_anzeigename": "empfaenger.anzeigename",
+	"empfaenger_anzeigename": "objekt.name",
 	"empfaenger_index": "serienbrief.index",
 	"empfaenger_count": "serienbrief.count",
 	"serienbrief_titel": "serienbrief.titel",

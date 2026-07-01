@@ -1088,39 +1088,11 @@ class SerienbriefDurchlauf(Document):
 		if not getattr(row, "wohnung", None) and getattr(iteration_doc, "doctype", "") == "Wohnung":
 			row.wohnung = iteration_doc.name
 
-		wohnungs_doc = self._load_doc("Wohnung", row.wohnung)
-		immobilie_doc = self._load_doc("Immobilie", getattr(wohnungs_doc, "immobilie", None))
-
-		mieter_doc = self._load_mieter(row)
-		mieter_address = self._extract_address(self._get_mieter_doctype(), row.mieter)
-		immobilie_address = self._extract_immobilie_address(immobilie_doc)
-
-		# Mieter wohnt in der gemieteten Wohnung — wenn keine eigene Adresse am
-		# Customer/Mieter hinterlegt ist, ist die Wohnungs-(Immobilien-)Adresse die
-		# Postanschrift. Dadurch funktioniert der Briefkopf für Mahnungen und alles
-		# andere ohne Pflege einer separaten Address-Verknüpfung am Customer.
-		if not mieter_address and immobilie_address:
-			mieter_address = immobilie_address
-
-		mieter_name = row.anzeigename or self._guess_person_name(mieter_doc)
-		empfaenger_data = row.as_dict() if hasattr(row, "as_dict") else {}
-
 		context = frappe._dict(
 			objekt=_wrap_jinja_value(iteration_doc),
 			datum=format_date(letter_date),
 			datum_iso=letter_date,
 			druck_schwarz_weiss=bool(getattr(self, "_druck_schwarz_weiss", False)),
-			empfaenger=frappe._dict(
-				empfaenger_data,
-				name=getattr(row, "iteration_objekt", None) or getattr(row, "objekt", None) or "",
-				anzeigename=row.anzeigename,
-				mieter_name=mieter_name or "",
-				strasse=mieter_address.get("street", ""),
-				plz=mieter_address.get("zip", ""),
-				ort=mieter_address.get("city", ""),
-				plz_ort=mieter_address.get("plz_ort", ""),
-				adresse=mieter_address.get("display", ""),
-			),
 			serienbrief=frappe._dict(
 				titel=self.title,
 				title=self.title,
@@ -1272,7 +1244,6 @@ class SerienbriefDurchlauf(Document):
 			datum=base_context.get("datum"),
 			datum_iso=base_context.get("datum_iso"),
 			druck_schwarz_weiss=bool(base_context.get("druck_schwarz_weiss")),
-			empfaenger=base_context.get("empfaenger"),
 			serienbrief=base_context.get("serienbrief"),
 			outputs=base_context.get("outputs") or frappe._dict(),
 			baustein=frappe._dict(key=block_key, name=getattr(block_doc, "name", None), title=getattr(block_doc, "title", None)),
@@ -3028,7 +2999,7 @@ def _resolve_value_path(path: str, context: Dict[str, Any]) -> Any:
 	if raw_segments[0] == "__self__":
 		raw_segments[0] = "objekt"
 
-	allowed_roots = {"objekt", "empfaenger", "serienbrief", "outputs", "datum", "datum_iso"}
+	allowed_roots = {"objekt", "serienbrief", "outputs", "datum", "datum_iso"}
 	has_explicit_root = raw_segments[0] in allowed_roots or (
 		isinstance(context, dict) and raw_segments[0] in context
 	)
@@ -3747,7 +3718,6 @@ def _load_value_fields_context(template, iteration_doctype: str | None, iteratio
 	mock_dunning = _mock_dunning_from_context(context_data) if iteration_doctype == "Dunning" else None
 	return frappe._dict(
 		objekt=mock_dunning,
-		empfaenger=frappe._dict(),
 		serienbrief=frappe._dict(werte=frappe._dict()),
 		outputs=frappe._dict(),
 		_serienbrief_value_overrides=overrides,

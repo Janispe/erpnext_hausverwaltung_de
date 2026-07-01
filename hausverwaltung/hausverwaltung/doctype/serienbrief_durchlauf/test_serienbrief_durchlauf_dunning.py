@@ -162,7 +162,7 @@ class TestSerienbriefDurchlaufDunning(IntegrationTestCase):
 
 		self.assertNotIn("mietvertrag", context)
 		self.assertEqual(context.objekt.name, "MV-CTX-001")
-		self.assertNotIn("mietvertrag", context.empfaenger)
+		self.assertNotIn("empfaenger", context)
 
 	def test_value_path_follows_link_field_for_dict_context(self):
 		source = frappe._dict(doctype="Source Doc", linked_doc="TARGET-001")

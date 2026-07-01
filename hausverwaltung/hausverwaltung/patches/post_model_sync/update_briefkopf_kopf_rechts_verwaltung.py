@@ -24,7 +24,8 @@ BRIEFKOPF_HTML = """<!-- Peters Briefkopf -->
       Tristanstr. 4<br/>
       14109 Berlin
       {% else %}
-      {{ empfaenger }}
+      {{ address.address_line1 if address else "" }}<br/>
+      {{ address.pincode if address else "" }} {{ address.city if address else "" }}
       {% endif %}
     </div>
   </div>

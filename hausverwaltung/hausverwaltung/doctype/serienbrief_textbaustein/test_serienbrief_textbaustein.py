@@ -137,6 +137,13 @@ class TestSerienbriefTextbaustein(unittest.TestCase):
 				{"objekt": frappe._dict(doctype="Mietvertrag", name="MV-TEST-001")},
 			)
 
+	def test_global_empfaenger_is_not_available(self):
+		with self.assertRaises(frappe.ValidationError):
+			_render_serienbrief_template(
+				"Empfänger {{ empfaenger.name }}",
+				{"objekt": frappe._dict(doctype="Mietvertrag", name="MV-TEST-001")},
+			)
+
 	def test_explicit_mietvertrag_mapping_can_render_block_variable(self):
 		rendered = _render_serienbrief_template(
 			"Aktenzeichen {{ mietvertrag.name }}",
