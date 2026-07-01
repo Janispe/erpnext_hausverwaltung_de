@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+import re
+
+import frappe
+from frappe.utils import cstr
+
+
+BLOCK_NAME = "Bankverbindung Immobilie"
+TARGET_DOCTYPES = {"Mietvertrag", "Betriebskostenabrechnung Mieter", "Dunning"}
+
+TOKEN_RE = re.compile(
+	r"""
+	(?:<p[^>]*>\s*)?
+	\{\{\s*(?:baustein|textbaustein)\(\s*["']Bankverbindung\ Immobilie["']\s*\)\s*\}\}
+	(?:\s*<br\s*/?>)?
+	(?:\s*</p>)?
+	""",
+	flags=re.I | re.S | re.X,
+)
+
+BANKVERBINDUNG_FOOTER_BODY = """\
+{%- set konto = None -%}
+{%- set nutzt_bank_konto = false -%}
+{%- if immobilie and immobilie.iban is defined and immobilie.iban -%}
+{%- set konto = immobilie -%}
+{%- elif immobilie and immobilie.bank_konto is defined -%}
+{%- set konto = immobilie.bank_konto -%}
+{%- set nutzt_bank_konto = true -%}
+{%- endif -%}
+{%- if not konto -%}
+{{ frappe.throw("Für die Immobilie ist kein Bankkonto hinterlegt — die Bankverbindung kann nicht gerendert werden.") }}
+{%- endif -%}
+Bankverbindung:
+{%- if nutzt_bank_konto and konto.account_name %} {{ konto.account_name }}{% endif -%}
+{%- if konto.iban %} IBAN {{ konto.iban }}{% endif -%}
+{%- if konto.bic %} · BIC {{ konto.bic }}{% endif -%}
+{%- if nutzt_bank_konto and konto.bank %} · {{ konto.bank.bank_name if konto.bank.bank_name is defined else konto.bank }}{%- elif not nutzt_bank_konto and konto.bank_name is defined and konto.bank_name %} · {{ konto.bank_name }}{% endif -%}
+"""
+
+
+def _clean_value(value: str) -> str:
+	cleaned = TOKEN_RE.sub("", value or "")
+	cleaned = re.sub(r"(?:<p[^>]*>\s*</p>\s*){2,}", "<p></p>", cleaned, flags=re.I | re.S)
+	return cleaned
+
+
+def _clean_template_body_tokens() -> None:
+	if not frappe.db.exists("DocType", "Serienbrief Vorlage"):
+		return
+	for row in frappe.get_all("Serienbrief Vorlage", fields=["name", "content", "html_content", "jinja_content"]):
+		changes = {}
+		for fieldname in ("content", "html_content", "jinja_content"):
+			old_value = cstr(row.get(fieldname) or "")
+			new_value = _clean_value(old_value)
+			if new_value != old_value:
+				changes[fieldname] = new_value
+		if changes:
+			frappe.db.set_value("Serienbrief Vorlage", row.name, changes, update_modified=False)
+
+
+def _set_child_table(parent, table_field: str, rows: list[dict[str, str]]) -> None:
+	parent.set(table_field, [])
+	for row in rows:
+		parent.append(table_field, row)
+
+
+def _configure_block() -> None:
+	if not frappe.db.exists("Serienbrief Textbaustein", BLOCK_NAME):
+		return
+	doc = frappe.get_doc("Serienbrief Textbaustein", BLOCK_NAME)
+	changed = False
+	for fieldname, value in {
+		"content_type": "HTML + Jinja",
+		"render_position": "Footer",
+		"html_content": BANKVERBINDUNG_FOOTER_BODY,
+	}.items():
+		if getattr(doc, fieldname, None) != value:
+			setattr(doc, fieldname, value)
+			changed = True
+
+	variables = [
+		{
+			"variable": "immobilie",
+			"label": "Immobilie",
+			"reference_doctype": "Immobilie",
+			"variable_type": "Doctype",
+		}
+	]
+	standardpfade = [
+		{"startobjekt": "Mietvertrag", "pfad_zuordnung": '{"immobilie": "objekt.wohnung.immobilie"}'},
+		{
+			"startobjekt": "Betriebskostenabrechnung Mieter",
+			"pfad_zuordnung": '{"immobilie": "objekt.mietvertrag.wohnung.immobilie"}',
+		},
+		{
+			"startobjekt": "Dunning",
+			"pfad_zuordnung": '{"immobilie": "objekt.overdue_payments.sales_invoice.mietvertrag.wohnung.immobilie"}',
+		},
+	]
+	if [row.as_dict() for row in doc.get("variables") or []] != variables:
+		_set_child_table(doc, "variables", variables)
+		changed = True
+	if [
+		{"startobjekt": row.startobjekt, "pfad_zuordnung": row.pfad_zuordnung}
+		for row in doc.get("standardpfade") or []
+	] != standardpfade:
+		_set_child_table(doc, "standardpfade", standardpfade)
+		changed = True
+	if changed:
+		doc.save(ignore_permissions=True)
+
+
+def _ensure_footer_block_rows() -> None:
+	if not frappe.db.exists("DocType", "Serienbrief Vorlage"):
+		return
+	if not frappe.db.exists("Serienbrief Textbaustein", BLOCK_NAME):
+		return
+	for name in frappe.get_all(
+		"Serienbrief Vorlage",
+		filters={"haupt_verteil_objekt": ["in", sorted(TARGET_DOCTYPES)]},
+		pluck="name",
+	):
+		doc = frappe.get_doc("Serienbrief Vorlage", name)
+		if any(cstr(getattr(row, "baustein", "") or "") == BLOCK_NAME for row in doc.get("textbausteine") or []):
+			continue
+		doc.append("textbausteine", {"baustein": BLOCK_NAME, "baustein_key": "bankverbindung_immobilie"})
+		doc.save(ignore_permissions=True)
+
+
+def execute() -> None:
+	_clean_template_body_tokens()
+	_configure_block()
+	_ensure_footer_block_rows()
+	frappe.clear_cache(doctype="Serienbrief Vorlage")
+	frappe.clear_cache(doctype="Serienbrief Textbaustein")

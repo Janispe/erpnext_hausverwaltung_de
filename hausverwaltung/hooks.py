@@ -64,10 +64,6 @@ process_engine_paperless_export_handler = [
 	"hausverwaltung.hausverwaltung.integrations.paperless.export_attachment_to_paperless",
 ]
 
-mail_merge_pdf_footer_renderers = [
-	"hausverwaltung.hausverwaltung.utils.serienbrief_footer.render_bankverbindung_footer",
-]
-
 # include js, css files in header of web template
 # web_include_css = "/assets/hausverwaltung/css/hausverwaltung.css"
 # web_include_js = "/assets/hausverwaltung/js/hausverwaltung.js"
