@@ -487,6 +487,12 @@ def save_bankimport_rule(doctype: str, values: str | dict[str, Any]) -> dict[str
 	name = (payload.get("name") or "").strip()
 	existing = frappe.get_doc(doctype, name) if name and frappe.db.exists(doctype, name) else None
 	is_system = bool(existing and existing.get("rule_key") in SYSTEM_RULE_KEYS)
+	wants_builder = bool(
+		payload.get("forceBuilder")
+		or isinstance(payload.get("builder"), dict)
+		or isinstance(payload.get("action"), dict)
+		or _coerce_optional_json_dict(payload.get("parametersJson") or payload.get("parameters_json")).get("builder")
+	)
 
 	title = (payload.get("title") or "").strip()
 	if not title:
@@ -520,6 +526,10 @@ def save_bankimport_rule(doctype: str, values: str | dict[str, Any]) -> dict[str
 		if rule_key != doc.get("rule_key") and frappe.db.exists(doctype, rule_key):
 			frappe.throw(_("Der Regel-Schlüssel existiert bereits."))
 		doc.rule_key = rule_key
+	elif payload.get("ruleKey") and payload.get("ruleKey") != doc.get("rule_key"):
+		frappe.throw(_("Der Schlüssel einer Systemregel kann nicht geändert werden."))
+
+	if not is_system or wants_builder:
 		parameters = _normalize_rule_parameters(payload, doctype)
 		doc.parameters_json = json.dumps(parameters, ensure_ascii=False, indent=2)
 		doc.rule_code = BUILDER_RULE_CODE
@@ -606,6 +616,74 @@ def preview_bankimport_rule_hits(
 	return {"ok": True, "hits": len(rows), "rows": rows}
 
 
+@frappe.whitelist()
+def search_rule_doctypes(txt: str = "", limit: int = 30) -> dict[str, Any]:
+	"""DocTypes that can be used by structured Bankimport rule queries."""
+	txt = (txt or "").strip()
+	filters = {"istable": 0}
+	or_filters = None
+	if txt:
+		or_filters = [["name", "like", f"%{txt}%"], ["module", "like", f"%{txt}%"]]
+	rows = frappe.get_all(
+		"DocType",
+		filters=filters,
+		or_filters=or_filters,
+		fields=["name", "module"],
+		order_by="name asc",
+		limit=max(1, min(int(limit or 30), 80)),
+	)
+	items = []
+	for row in rows:
+		try:
+			if not frappe.has_permission(row.name, "read"):
+				continue
+		except Exception:
+			continue
+		items.append({"value": row.name, "label": row.name, "description": row.get("module")})
+	return {"items": items}
+
+
+@frappe.whitelist()
+def get_rule_doctype_fields(doctype: str) -> dict[str, Any]:
+	"""Comparable/searchable fields for a DocType rule condition."""
+	doctype = (doctype or "").strip()
+	if not doctype:
+		frappe.throw(_("Bitte einen DocType angeben."))
+	try:
+		frappe.has_permission(doctype, "read", throw=True)
+		meta = frappe.get_meta(doctype)
+	except Exception:
+		frappe.throw(_("DocType {0} kann nicht gelesen werden.").format(doctype))
+	allowed_types = {
+		"Data",
+		"Select",
+		"Link",
+		"Dynamic Link",
+		"Currency",
+		"Float",
+		"Int",
+		"Check",
+		"Date",
+		"Datetime",
+		"Small Text",
+		"Text",
+		"Long Text",
+	}
+	items = [{"value": "name", "label": "Name", "fieldtype": "Data"}]
+	for field in meta.fields:
+		if field.fieldtype not in allowed_types or not field.fieldname:
+			continue
+		items.append(
+			{
+				"value": field.fieldname,
+				"label": field.label or field.fieldname,
+				"fieldtype": field.fieldtype,
+				"options": field.options,
+			}
+		)
+	return {"doctype": doctype, "items": items}
+
+
 def _coerce_json_dict(value) -> dict[str, Any]:
 	if not value:
 		return {}
@@ -619,6 +697,20 @@ def _coerce_json_dict(value) -> dict[str, Any]:
 		if isinstance(parsed, dict):
 			return parsed
 	frappe.throw(_("Ungültige Datenstruktur."))
+
+
+def _coerce_optional_json_dict(value) -> dict[str, Any]:
+	if not value:
+		return {}
+	if isinstance(value, dict):
+		return value
+	if isinstance(value, str):
+		try:
+			parsed = json.loads(value)
+		except Exception:
+			return {}
+		return parsed if isinstance(parsed, dict) else {}
+	return {}
 
 
 def _safe_json_dict(value) -> dict[str, Any]:
@@ -651,6 +743,17 @@ def _normalize_rule_parameters(payload: dict[str, Any], doctype: str) -> dict[st
 	elif action_type in {"party", "partei"}:
 		if action.get("party_type") not in {"Customer", "Supplier", "Eigentuemer"} or not action.get("party"):
 			frappe.throw(_("Bitte eine Partei auswählen."))
+	elif action_type in {"party_from_row", "partei_aus_zeile"}:
+		if doctype != PARTY_RULE_DOCTYPE:
+			frappe.throw(_("Diese Aktion ist nur für Party-Regeln erlaubt."))
+	elif action_type in {"party_from_doctype", "partei_aus_doctype"}:
+		if doctype != PARTY_RULE_DOCTYPE:
+			frappe.throw(_("Diese Aktion ist nur für Party-Regeln erlaubt."))
+		_validate_party_from_doctype_action(action)
+	elif action_type in {"builtin", "system"}:
+		rule_key = action.get("ruleKey") or action.get("rule_key")
+		if rule_key not in SYSTEM_RULE_KEYS:
+			frappe.throw(_("Unbekannter Backend-Baustein."))
 	elif action_type:
 		frappe.throw(_("Unbekannte Aktion."))
 	return {
@@ -661,6 +764,37 @@ def _normalize_rule_parameters(payload: dict[str, Any], doctype: str) -> dict[st
 		"action": action,
 		"ui": parameters.get("ui") if isinstance(parameters.get("ui"), dict) else {},
 	}
+
+
+def _validate_party_from_doctype_action(action: dict[str, Any]) -> None:
+	doctype = (action.get("doctype") or "").strip()
+	if not doctype:
+		frappe.throw(_("Bitte einen DocType für die Partei-Aktion auswählen."))
+	try:
+		meta = frappe.get_meta(doctype)
+	except Exception:
+		frappe.throw(_("DocType {0} wurde nicht gefunden.").format(doctype))
+	party_type_field = action.get("partyTypeField") or action.get("party_type_field") or "party_type"
+	party_field = action.get("partyField") or action.get("party_field") or "party"
+	for fieldname in (party_type_field, party_field):
+		if fieldname != "name" and not meta.has_field(fieldname):
+			frappe.throw(_("Feld {0} existiert nicht auf {1}.").format(fieldname, doctype))
+	filters = action.get("filters") or []
+	ok, message = validate_builder(
+		{
+			"connector": "und",
+			"conditions": [
+				{
+					"source": "doctype",
+					"doctype": doctype,
+					"filters": filters,
+					"matchMode": "exists",
+				}
+			],
+		}
+	)
+	if not ok:
+		frappe.throw(_(message))
 
 
 def _set_rule_scope_rows(doc, scope_rows) -> None:

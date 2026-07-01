@@ -111,6 +111,33 @@ export async function previewBankimportRuleHits(doctype, parametersJson, current
 	});
 }
 
+export async function searchRuleDoctypes(txt = "") {
+	if (!embedded) {
+		const items = [
+			{ value: "Bank Account", label: "Bank Account", description: "ERPNext" },
+			{ value: "Customer", label: "Customer", description: "ERPNext" },
+			{ value: "Supplier", label: "Supplier", description: "ERPNext" },
+		];
+		const q = txt.toLowerCase();
+		return { items: items.filter((item) => item.label.toLowerCase().includes(q)), mock: true };
+	}
+	return await rpc("search_rule_doctypes", { txt });
+}
+
+export async function getRuleDoctypeFields(doctype) {
+	if (!embedded) {
+		const common = [
+			{ value: "name", label: "Name", fieldtype: "Data" },
+			{ value: "party_type", label: "Party Type", fieldtype: "Select" },
+			{ value: "party", label: "Party", fieldtype: "Dynamic Link" },
+			{ value: "iban", label: "IBAN", fieldtype: "Data" },
+			{ value: "disabled", label: "Disabled", fieldtype: "Check" },
+		];
+		return { doctype, items: common, mock: true };
+	}
+	return await rpc("get_rule_doctype_fields", { doctype });
+}
+
 // Komplett-Übersicht: { import, rows, phaseCounts }.
 export async function loadOverview(name) {
 	if (!embedded) return { ...MOCK_OVERVIEW, mock: true };

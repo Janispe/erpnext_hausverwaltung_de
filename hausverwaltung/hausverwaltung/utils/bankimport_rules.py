@@ -146,6 +146,13 @@ def ensure_default_bankimport_rules() -> dict[str, int]:
 			if frappe.db.exists(doctype, name):
 				doc = frappe.get_doc(doctype, name)
 				changed = False
+				current_params = _safe_rule_parameters(doc.get("parameters_json"))
+				is_user_builder = (
+					(doc.get("rule_code") or "").strip() == BUILDER_RULE_CODE
+					or isinstance(current_params.get("builder"), dict)
+				)
+				if is_user_builder:
+					continue
 				for fieldname in ("rule_code", "description", "title"):
 					if doc.get(fieldname) != spec.get(fieldname):
 						doc.set(fieldname, spec.get(fieldname))
@@ -450,8 +457,10 @@ def _booking_needs_review_fallback(*, row, context):
 	}
 
 
-BUILDER_FIELDS = {"iban", "auftraggeber", "zweck", "betrag", "richtung"}
-BUILDER_OPS = {"enthält", "beginnt mit", "=", "!=", ">", "<", ">=", "<="}
+BUILDER_FIELDS = {"iban", "auftraggeber", "zweck", "betrag", "richtung", "party_type", "party"}
+BUILDER_OPS = {"enthält", "beginnt mit", "=", "!=", ">", "<", ">=", "<=", "ist leer", "ist nicht leer"}
+BUILDER_VALUE_SOURCES = {"literal", "row"}
+BUILDER_FILTER_OPS = BUILDER_OPS | {"ist leer", "ist nicht leer"}
 
 
 def evaluate_builder_rule(*, rule: dict[str, Any], row, context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -487,6 +496,24 @@ def evaluate_builder_rule(*, rule: dict[str, Any], row, context: dict[str, Any] 
 			}
 		return {"matched": False, "reason": "invalid_party_action"}
 
+	if action_type in {"party_from_doctype", "partei_aus_doctype"}:
+		return _evaluate_builder_party_from_doctype_action(row=row, action=action)
+
+	if action_type in {"party_from_row", "partei_aus_zeile"}:
+		party_type = row.get("party_type")
+		party = row.get("party")
+		if party_type in SUPPORTED_PARTY_TYPES and party:
+			return {
+				"matched": True,
+				"party_type": party_type,
+				"party": party,
+				"message": "Builder-Regel hat Partei aus der Bankzeile übernommen.",
+			}
+		return {"matched": False, "reason": "row_has_no_party"}
+
+	if action_type in {"builtin", "system"}:
+		return _evaluate_builder_builtin_action(rule=rule, row=row, context=context or {}, action=action)
+
 	if action_type in {"buchung", "booking"}:
 		return _evaluate_builder_booking_action(rule=rule, row=row, context=context or {}, action=action)
 
@@ -514,23 +541,24 @@ def validate_builder(builder: dict[str, Any]) -> tuple[bool, str]:
 	for cond in conditions:
 		if not isinstance(cond, dict):
 			return False, "Ungültige Bedingung."
-		field = str(cond.get("field") or "").strip()
-		op = str(cond.get("op") or "").strip()
-		value = cond.get("value")
-		if field not in BUILDER_FIELDS:
-			return False, f"Unbekanntes Feld: {field}"
-		if op not in BUILDER_OPS:
-			return False, f"Unbekannter Operator: {op}"
-		if value in (None, ""):
-			return False, "Jede Bedingung benötigt einen Wert."
+		ok, message = _validate_builder_condition(cond)
+		if not ok:
+			return False, message
 	return True, ""
 
 
 def _builder_condition_matches(cond: dict[str, Any], row) -> bool:
+	source = str(cond.get("source") or "row").strip().lower()
+	if source in {"doctype", "document", "doc"}:
+		return _builder_doctype_condition_matches(cond, row)
 	field = str(cond.get("field") or "").strip()
 	op = str(cond.get("op") or "").strip()
-	rhs = cond.get("value")
+	rhs = _builder_resolve_value(cond, row)
 	lhs = _builder_field_value(field, row)
+	if op == "ist leer":
+		return lhs in (None, "")
+	if op == "ist nicht leer":
+		return lhs not in (None, "")
 	if lhs is None:
 		return False
 	if field == "betrag":
@@ -561,7 +589,276 @@ def _builder_field_value(field: str, row):
 		return abs(flt(row.get("betrag")))
 	if field == "richtung":
 		return row.get("richtung") or ("Ausgang" if flt(row.get("betrag")) < 0 else "Eingang")
+	if field == "party_type":
+		return row.get("party_type")
+	if field == "party":
+		return row.get("party")
 	return None
+
+
+def _validate_builder_condition(cond: dict[str, Any]) -> tuple[bool, str]:
+	source = str(cond.get("source") or "row").strip().lower()
+	if source in {"row", "bankzeile", "bank_row", ""}:
+		field = str(cond.get("field") or "").strip()
+		op = str(cond.get("op") or "").strip()
+		if field not in BUILDER_FIELDS:
+			return False, f"Unbekanntes Feld: {field}"
+		if op not in BUILDER_OPS:
+			return False, f"Unbekannter Operator: {op}"
+		if op not in {"ist leer", "ist nicht leer"} and _builder_resolve_value(cond, None, validate_only=True) in (None, ""):
+			return False, "Jede Bedingung benötigt einen Wert."
+		return True, ""
+
+	if source not in {"doctype", "document", "doc"}:
+		return False, f"Unbekannte Bedingungsquelle: {source}"
+
+	doctype = str(cond.get("doctype") or "").strip()
+	if not doctype:
+		return False, "DocType-Bedingungen benötigen einen DocType."
+	ok, message = _validate_builder_doctype_name(doctype)
+	if not ok:
+		return False, message
+
+	filters = cond.get("filters") or []
+	if not isinstance(filters, list) or not filters:
+		return False, "DocType-Bedingungen benötigen mindestens einen Filter."
+	for flt_spec in filters:
+		if not isinstance(flt_spec, dict):
+			return False, "Ungültiger DocType-Filter."
+		ok, message = _validate_builder_doctype_field(doctype, flt_spec.get("field"))
+		if not ok:
+			return False, message
+		op = str(flt_spec.get("op") or "=").strip()
+		if op not in BUILDER_FILTER_OPS:
+			return False, f"Unbekannter DocType-Filteroperator: {op}"
+		if op not in {"ist leer", "ist nicht leer"} and _builder_resolve_value(flt_spec, None, validate_only=True) in (None, ""):
+			return False, "DocType-Filter benötigen einen Vergleichswert."
+
+	match_mode = str(cond.get("matchMode") or cond.get("match_mode") or "field").strip()
+	field = str(cond.get("field") or "").strip()
+	if match_mode == "exists" or not field:
+		return True, ""
+	ok, message = _validate_builder_doctype_field(doctype, field)
+	if not ok:
+		return False, message
+	op = str(cond.get("op") or "=").strip()
+	if op not in BUILDER_OPS:
+		return False, f"Unbekannter Operator: {op}"
+	if op not in {"ist leer", "ist nicht leer"} and _builder_resolve_value(cond, None, validate_only=True) in (None, ""):
+		return False, "Der DocType-Feldvergleich benötigt einen Wert."
+	return True, ""
+
+
+def _builder_doctype_condition_matches(cond: dict[str, Any], row) -> bool:
+	doctype = str(cond.get("doctype") or "").strip()
+	target_field = str(cond.get("field") or "").strip()
+	match_mode = str(cond.get("matchMode") or cond.get("match_mode") or "field").strip()
+	fields = [target_field] if target_field and match_mode != "exists" else []
+	matches = _builder_query_doctype(doctype, cond.get("filters") or [], row, fields=fields, limit=1)
+	if not matches:
+		return False
+	if match_mode == "exists" or not target_field:
+		return True
+	lhs = matches[0].get(target_field)
+	rhs = _builder_resolve_value(cond, row)
+	if cond.get("op") == "ist leer":
+		return lhs in (None, "")
+	if cond.get("op") == "ist nicht leer":
+		return lhs not in (None, "")
+	return _compare_builder_dynamic(lhs, rhs, str(cond.get("op") or "=").strip())
+
+
+def _builder_query_doctype(
+	doctype: str,
+	filters: list[dict[str, Any]],
+	row,
+	*,
+	fields: list[str] | None = None,
+	limit: int = 20,
+) -> list[dict[str, Any]]:
+	ok, _message = _validate_builder_doctype_name(doctype)
+	if not ok:
+		return []
+	query_fields = ["name"]
+	for fieldname in fields or []:
+		if fieldname and fieldname not in query_fields:
+			ok, _message = _validate_builder_doctype_field(doctype, fieldname)
+			if ok:
+				query_fields.append(fieldname)
+	query_filters = []
+	for flt_spec in filters or []:
+		if not isinstance(flt_spec, dict):
+			return []
+		fieldname = str(flt_spec.get("field") or "").strip()
+		ok, _message = _validate_builder_doctype_field(doctype, fieldname)
+		if not ok:
+			return []
+		op = str(flt_spec.get("op") or "=").strip()
+		value = _builder_resolve_value(flt_spec, row)
+		if op == "enthält":
+			query_filters.append([doctype, fieldname, "like", f"%{value}%"])
+		elif op == "beginnt mit":
+			query_filters.append([doctype, fieldname, "like", f"{value}%"])
+		elif op == "ist leer":
+			query_filters.append([doctype, fieldname, "in", ["", None]])
+		elif op == "ist nicht leer":
+			query_filters.append([doctype, fieldname, "not in", ["", None]])
+		elif op in {"=", "!=", ">", "<", ">=", "<="}:
+			query_filters.append([doctype, fieldname, op, value])
+		else:
+			return []
+	try:
+		return [
+			dict(item)
+			for item in frappe.get_all(
+				doctype,
+				filters=query_filters,
+				fields=query_fields,
+				limit=max(1, min(int(limit or 20), 50)),
+			)
+		]
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"Bankimport-Builder DocType-Abfrage fehlgeschlagen: {doctype}",
+		)
+		return []
+
+
+def _builder_resolve_value(spec: dict[str, Any], row, *, validate_only: bool = False):
+	source = str(spec.get("valueSource") or spec.get("value_source") or "literal").strip()
+	if source not in BUILDER_VALUE_SOURCES:
+		source = "literal"
+	if source == "row":
+		row_field = str(spec.get("rowField") or spec.get("row_field") or "").strip()
+		if row_field not in BUILDER_FIELDS:
+			return None
+		if validate_only or row is None:
+			return f"row.{row_field}"
+		return _builder_field_value(row_field, row)
+	return spec.get("value")
+
+
+def _compare_builder_dynamic(lhs, rhs, op: str) -> bool:
+	if op == "ist leer":
+		return lhs in (None, "")
+	if op == "ist nicht leer":
+		return lhs not in (None, "")
+	if op in {">", "<", ">=", "<="}:
+		return _compare_builder_values(_parse_builder_number(lhs), _parse_builder_number(rhs), op)
+	left = str(lhs or "").strip().lower()
+	right = str(rhs or "").strip().lower()
+	if op == "enthält":
+		return right in left
+	if op == "beginnt mit":
+		return left.startswith(right)
+	if op == "=":
+		return left == right
+	if op == "!=":
+		return left != right
+	return False
+
+
+def _evaluate_builder_party_from_doctype_action(*, row, action: dict[str, Any]) -> dict[str, Any]:
+	doctype = str(action.get("doctype") or "").strip()
+	party_type_field = str(action.get("partyTypeField") or action.get("party_type_field") or "party_type").strip()
+	party_field = str(action.get("partyField") or action.get("party_field") or "party").strip()
+	filters = action.get("filters") or []
+	matches = _builder_query_doctype(
+		doctype,
+		filters,
+		row,
+		fields=[party_type_field, party_field],
+		limit=2,
+	)
+	parties = {
+		(item.get(party_type_field), item.get(party_field))
+		for item in matches
+		if item.get(party_type_field) in SUPPORTED_PARTY_TYPES and item.get(party_field)
+	}
+	if len(parties) != 1:
+		return {"matched": False, "reason": "party_doctype_not_unique"}
+	party_type, party = next(iter(parties))
+	return {
+		"matched": True,
+		"party_type": party_type,
+		"party": party,
+		"message": f"Builder-Regel hat Partei aus {doctype} übernommen.",
+	}
+
+
+def _evaluate_builder_builtin_action(
+	*,
+	rule: dict[str, Any],
+	row,
+	context: dict[str, Any],
+	action: dict[str, Any],
+) -> dict[str, Any]:
+	rule_key = action.get("ruleKey") or action.get("rule_key") or rule.get("rule_key")
+	if rule_key == "party.unique_iban_to_party":
+		party_tuple = _rule_get_party_by_iban(row.get("iban"))
+		if party_tuple:
+			party_type, party = party_tuple
+			return {
+				"matched": True,
+				"party_type": party_type,
+				"party": party,
+				"message": "Builder-Regel hat eindeutige IBAN zugeordnet.",
+			}
+		return {"matched": False, "reason": "iban_not_unique_or_missing"}
+	if rule_key == "party.row_party":
+		party_type = row.get("party_type")
+		party = row.get("party")
+		if party_type in SUPPORTED_PARTY_TYPES and party:
+			return {
+				"matched": True,
+				"party_type": party_type,
+				"party": party,
+				"message": "Builder-Regel hat Partei aus der Bankzeile übernommen.",
+			}
+		return {"matched": False, "reason": "row_has_no_party"}
+	if rule_key == "booking.invoice_auto_match":
+		return _booking_invoice_auto_match(row=row, bt=context.get("bt"), context=context)
+	if rule_key == "booking.kreditrate_auto_match":
+		return _booking_kreditrate_auto_match(row=row, bt=context.get("bt"))
+	if rule_key == "booking.abschlagsplan_auto_match":
+		return _booking_abschlagsplan_auto_match(
+			doc=context.get("doc"),
+			row=row,
+			bt=context.get("bt"),
+			context=context,
+		)
+	if rule_key == "booking.needs_review_fallback":
+		return _booking_needs_review_fallback(row=row, context=context)
+	return {"matched": False, "reason": "unknown_builtin_action"}
+
+
+def _validate_builder_doctype_name(doctype: str) -> tuple[bool, str]:
+	doctype = str(doctype or "").strip()
+	if not doctype:
+		return False, "DocType fehlt."
+	try:
+		meta = frappe.get_meta(doctype)
+	except Exception:
+		return False, f"DocType nicht gefunden: {doctype}"
+	if getattr(meta, "istable", 0):
+		return False, "Child-DocTypes können nicht direkt durchsucht werden."
+	return True, ""
+
+
+def _validate_builder_doctype_field(doctype: str, fieldname) -> tuple[bool, str]:
+	fieldname = str(fieldname or "").strip()
+	if not fieldname:
+		return False, "DocType-Feld fehlt."
+	if fieldname == "name":
+		return True, ""
+	try:
+		meta = frappe.get_meta(doctype)
+	except Exception:
+		return False, f"DocType nicht gefunden: {doctype}"
+	if not meta.has_field(fieldname):
+		return False, f"Feld {fieldname} existiert nicht auf {doctype}."
+	return True, ""
 
 
 def _parse_builder_number(value) -> float:
@@ -725,17 +1022,22 @@ def _load_rules(doctype: str) -> list[dict[str, Any]]:
 
 def _prepare_rule(row, scope_rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
 	rule = dict(row)
-	params = {}
-	if rule.get("parameters_json"):
-		try:
-			params = json.loads(rule.get("parameters_json") or "{}")
-		except Exception:
-			params = {}
-		if not isinstance(params, dict):
-			params = {}
+	params = _safe_rule_parameters(rule.get("parameters_json"))
 	rule["parameters"] = params
 	rule["scope_rules"] = scope_rows or []
 	return rule
+
+
+def _safe_rule_parameters(value) -> dict[str, Any]:
+	if isinstance(value, dict):
+		return value
+	if not value:
+		return {}
+	try:
+		params = json.loads(value or "{}")
+	except Exception:
+		return {}
+	return params if isinstance(params, dict) else {}
 
 
 def _default_rule_row(doctype: str, spec: dict[str, Any]) -> dict[str, Any]:

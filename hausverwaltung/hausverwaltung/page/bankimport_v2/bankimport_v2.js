@@ -33,6 +33,8 @@ const RPC_ACTIONS = {
 	delete_bankimport_rule: PG + "delete_bankimport_rule",
 	reorder_bankimport_rule: PG + "reorder_bankimport_rule",
 	preview_bankimport_rule_hits: PG + "preview_bankimport_rule_hits",
+	search_rule_doctypes: PG + "search_rule_doctypes",
+	get_rule_doctype_fields: PG + "get_rule_doctype_fields",
 	search_parties: PG + "search_parties",
 	search_accounts: PG + "search_accounts",
 	// Globale Aktionen

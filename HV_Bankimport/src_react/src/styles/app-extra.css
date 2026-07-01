@@ -1042,6 +1042,25 @@
 .admin-code-link[open] summary {
 	margin-bottom: 7px;
 }
+.text-input.compact {
+	min-width: 92px;
+}
+.cond-card {
+	margin-top: 9px;
+	padding: 10px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--surface-2);
+}
+.cond-card.doc {
+	background: var(--surface);
+}
+.cond-toolbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
 .cond-row,
 .scope-row {
 	display: grid;
@@ -1053,6 +1072,52 @@
 .cond-row:first-of-type,
 .scope-row:first-of-type { margin-top: 10px; }
 .scope-row { grid-template-columns: 105px 110px minmax(0, 1fr) 30px; }
+.doctype-condition {
+	display: flex;
+	flex-direction: column;
+	gap: 9px;
+	margin-top: 9px;
+}
+.doc-row,
+.filter-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: 7px;
+	align-items: end;
+}
+.filter-stack {
+	display: flex;
+	flex-direction: column;
+	gap: 7px;
+}
+.filter-row {
+	grid-template-columns: minmax(0, 1fr) 118px minmax(0, 1.6fr) 30px;
+	align-items: center;
+}
+.compare-row {
+	grid-template-columns: minmax(0, 1fr) 118px minmax(0, 1.6fr);
+}
+.value-source {
+	display: grid;
+	grid-template-columns: 92px minmax(0, 1fr);
+	gap: 7px;
+}
+.value-empty-note {
+	min-height: 34px;
+	display: flex;
+	align-items: center;
+	padding: 0 10px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--surface);
+	color: var(--text-muted);
+	font-size: 12px;
+}
+.doctype-action {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
 .builder-actions {
 	display: flex;
 	align-items: center;
@@ -1122,6 +1187,10 @@
 	.re-grid,
 	.re-grid.top,
 	.cond-row,
+	.doc-row,
+	.filter-row,
+	.compare-row,
+	.value-source,
 	.scope-row,
 	.sb-row,
 	.option-grid { grid-template-columns: 1fr; }

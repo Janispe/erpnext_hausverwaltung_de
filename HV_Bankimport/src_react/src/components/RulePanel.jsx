@@ -17,9 +17,12 @@ const FIELD_LABELS = {
 	zweck: "Zweck",
 	betrag: "Betrag",
 	richtung: "Richtung",
+	party_type: "Party Type",
+	party: "Party",
 };
-const FIELDS = ["iban", "auftraggeber", "zweck", "betrag", "richtung"];
-const OPS = ["enthält", "beginnt mit", "=", "!=", ">", "<", ">=", "<="];
+const FIELDS = ["iban", "auftraggeber", "zweck", "betrag", "richtung", "party_type", "party"];
+const OPS = ["enthält", "beginnt mit", "=", "!=", ">", "<", ">=", "<=", "ist leer", "ist nicht leer"];
+const FILTER_OPS = [...OPS];
 const PARTY_TYPES = [
 	["Customer", "Mieter / Kunde"],
 	["Supplier", "Lieferant"],
@@ -89,7 +92,13 @@ function fieldValue(field, row) {
 	if (field === "zweck") return row.verwendungszweck || "";
 	if (field === "betrag") return Math.abs(Number(row.betrag) || 0);
 	if (field === "richtung") return row.richtung || ((Number(row.betrag) || 0) < 0 ? "Ausgang" : "Eingang");
+	if (field === "party_type") return row.partyTyp || row.party_type || "";
+	if (field === "party") return row.party || "";
 	return "";
+}
+
+function normalizeSource(condition) {
+	return condition?.source === "doctype" ? "doctype" : "row";
 }
 
 function parseNumber(value) {
@@ -99,8 +108,11 @@ function parseNumber(value) {
 }
 
 function conditionMatches(condition, row) {
+	if (normalizeSource(condition) === "doctype") return false;
 	const lhs = fieldValue(condition.field, row);
 	const rhs = condition.value ?? "";
+	if (condition.op === "ist leer") return lhs === null || lhs === undefined || lhs === "";
+	if (condition.op === "ist nicht leer") return !(lhs === null || lhs === undefined || lhs === "");
 	if (condition.field === "betrag") {
 		const a = Number(lhs) || 0;
 		const b = parseNumber(rhs);
@@ -128,13 +140,34 @@ function builderMatches(builder, row) {
 	return builder.connector === "oder" ? hits.some(Boolean) : hits.every(Boolean);
 }
 
+function builderNeedsServer(builder) {
+	return (builder?.conditions || []).some((condition) => normalizeSource(condition) === "doctype");
+}
+
 function validateBuilder(builder) {
 	const conditions = builder?.conditions || [];
 	if (!conditions.length) return "Mindestens eine Bedingung ist erforderlich.";
 	for (const condition of conditions) {
+		if (normalizeSource(condition) === "doctype") {
+			if (!condition.doctype) return "DocType-Bedingungen benötigen einen DocType.";
+			if (!Array.isArray(condition.filters) || !condition.filters.length) return "DocType-Bedingungen benötigen mindestens einen Filter.";
+			for (const filter of condition.filters) {
+				if (!filter.field) return "Jeder DocType-Filter benötigt ein Feld.";
+				if (!FILTER_OPS.includes(filter.op)) return "Unbekannter DocType-Filteroperator.";
+				if (!["ist leer", "ist nicht leer"].includes(filter.op) && filter.valueSource !== "row" && (filter.value === undefined || filter.value === "")) return "DocType-Filter benötigen einen Vergleichswert.";
+				if (filter.valueSource === "row" && !filter.rowField) return "DocType-Filter mit Bankzeilenwert benötigen ein Bankzeilenfeld.";
+			}
+			if ((condition.matchMode || "field") !== "exists") {
+				if (!condition.field) return "Der DocType-Feldvergleich benötigt ein Feld.";
+				if (!OPS.includes(condition.op)) return "Unbekannter Operator.";
+				if (!["ist leer", "ist nicht leer"].includes(condition.op) && condition.valueSource !== "row" && (condition.value === undefined || condition.value === "")) return "Der DocType-Feldvergleich benötigt einen Wert.";
+				if (condition.valueSource === "row" && !condition.rowField) return "Der DocType-Feldvergleich benötigt ein Bankzeilenfeld.";
+			}
+			continue;
+		}
 		if (!FIELDS.includes(condition.field)) return "Unbekanntes Feld.";
 		if (!OPS.includes(condition.op)) return "Unbekannter Operator.";
-		if (condition.value === undefined || condition.value === "") return "Jede Bedingung benötigt einen Wert.";
+		if (!["ist leer", "ist nicht leer"].includes(condition.op) && (condition.value === undefined || condition.value === "")) return "Jede Bedingung benötigt einen Wert.";
 	}
 	return "";
 }
@@ -142,13 +175,23 @@ function validateBuilder(builder) {
 function exprText(builder) {
 	const connector = ` ${builder?.connector || "und"} `;
 	return (builder?.conditions || [])
-		.map((condition) => `${FIELD_LABELS[condition.field] || condition.field} ${condition.op} "${condition.value || ""}"`)
+		.map((condition) => {
+			if (normalizeSource(condition) === "doctype") {
+				const filters = (condition.filters || []).map((filter) => `${filter.field} ${filter.op} ${filter.valueSource === "row" ? `Bankzeile.${FIELD_LABELS[filter.rowField] || filter.rowField}` : `"${filter.value || ""}"`}`).join(", ");
+				const target = (condition.matchMode || "field") === "exists" ? "Treffer existiert" : `${condition.field} ${condition.op} ${condition.valueSource === "row" ? `Bankzeile.${FIELD_LABELS[condition.rowField] || condition.rowField}` : `"${condition.value || ""}"`}`;
+				return `${condition.doctype}(${filters}) · ${target}`;
+			}
+			return `${FIELD_LABELS[condition.field] || condition.field} ${condition.op} ${["ist leer", "ist nicht leer"].includes(condition.op) ? "" : `"${condition.value || ""}"`}`.trim();
+		})
 		.join(connector);
 }
 
 function actionText(action) {
 	if (!action) return "";
 	if (["party", "partei"].includes(action.type)) return `${action.party_type || action.partyType || "Party"} · ${action.party || ""}`;
+	if (["party_from_row", "partei_aus_zeile"].includes(action.type)) return "Partei aus Bankzeile";
+	if (["party_from_doctype", "partei_aus_doctype"].includes(action.type)) return `${action.doctype || "DocType"} · ${action.partyTypeField || "party_type"} / ${action.partyField || "party"}`;
+	if (["builtin", "system"].includes(action.type)) return SYSTEM_RULES[action.ruleKey || action.rule_key]?.then || "Backend-Baustein ausführen";
 	if (["buchung", "booking"].includes(action.type)) return `${action.account || action.konto || ""}${action.cost_center || action.kostenstelle ? ` · ${action.cost_center || action.kostenstelle}` : ""}`;
 	return "";
 }
@@ -187,7 +230,8 @@ function RuleCard({ rule, rows, index, total, onEdit, onToggle, onReorder, onDel
 	const action = rule.action || params.action;
 	const isBuilder = Boolean(rule.isBuilderRule || builder);
 	const systemInfo = systemRuleInfo(rule);
-	const hits = isBuilder && rows?.length
+	const needsServerPreview = isBuilder && builderNeedsServer(builder);
+	const hits = isBuilder && rows?.length && !needsServerPreview
 		? rows.filter((row) => !isDoneRow(row) && builderMatches(builder, row)).length
 		: null;
 	const disabled = !rule.enabled;
@@ -236,7 +280,9 @@ function RuleCard({ rule, rows, index, total, onEdit, onToggle, onReorder, onDel
 			<div className="rc-foot">
 				<div className="rc-foot-left">
 					{isBuilder
-						? hits > 0 ? <span className="rp-hits has">↻ {hits} {hits === 1 ? "Zeile" : "Zeilen"} im Auszug</span> : <span className="rp-hits">keine Treffer</span>
+						? needsServerPreview
+							? <span className="rp-hits">Server-Vorschau</span>
+							: hits > 0 ? <span className="rp-hits has">↻ {hits} {hits === 1 ? "Zeile" : "Zeilen"} im Auszug</span> : <span className="rp-hits">keine Treffer</span>
 						: <span className="rc-foot-note">{systemInfo ? "Baustein-Regel" : "Backend-Regel"}</span>}
 				</div>
 				<div className="rc-actions">
@@ -311,16 +357,109 @@ function GraphColumn({ group }) {
 	);
 }
 
-function defaultCondition() {
-	return { field: "auftraggeber", op: "enthält", value: "" };
+function defaultCondition(source = "row") {
+	if (source === "doctype") {
+		return {
+			source: "doctype",
+			doctype: "Bank Account",
+			filters: [defaultDoctypeFilter()],
+			matchMode: "exists",
+			field: "",
+			op: "=",
+			valueSource: "literal",
+			value: "",
+		};
+	}
+	return { source: "row", field: "auftraggeber", op: "enthält", value: "" };
+}
+
+function defaultDoctypeFilter() {
+	return { field: "iban", op: "=", valueSource: "row", rowField: "iban", value: "" };
+}
+
+function systemBuilderTemplate(rule, kind) {
+	const key = rule?.ruleKey || rule?.name;
+	if (key === "party.unique_iban_to_party") {
+		return {
+			builder: {
+				connector: "und",
+				conditions: [
+					{
+						source: "doctype",
+						doctype: "Bank Account",
+						filters: [
+							{ field: "iban", op: "=", valueSource: "row", rowField: "iban", value: "" },
+							{ field: "party_type", op: "ist nicht leer", valueSource: "literal", value: "" },
+							{ field: "party", op: "ist nicht leer", valueSource: "literal", value: "" },
+						],
+						matchMode: "exists",
+					},
+				],
+			},
+			action: {
+				type: "party_from_doctype",
+				doctype: "Bank Account",
+				filters: [{ field: "iban", op: "=", valueSource: "row", rowField: "iban", value: "" }],
+				partyTypeField: "party_type",
+				partyField: "party",
+			},
+		};
+	}
+	if (key === "party.row_party") {
+		return {
+			builder: {
+				connector: "und",
+				conditions: [
+					{ source: "row", field: "party_type", op: "ist nicht leer", value: "" },
+					{ source: "row", field: "party", op: "ist nicht leer", value: "" },
+				],
+			},
+			action: { type: "party_from_row" },
+		};
+	}
+	if (key === "booking.kreditrate_auto_match") {
+		return {
+			builder: { connector: "und", conditions: [{ source: "row", field: "richtung", op: "=", value: "Ausgang" }] },
+			action: { type: "builtin", ruleKey: key },
+		};
+	}
+	if (key === "booking.abschlagsplan_auto_match") {
+		return {
+			builder: {
+				connector: "und",
+				conditions: [
+					{ source: "row", field: "richtung", op: "=", value: "Ausgang" },
+					{ source: "row", field: "party_type", op: "=", value: "Supplier" },
+					{ source: "row", field: "party", op: "ist nicht leer", value: "" },
+				],
+			},
+			action: { type: "builtin", ruleKey: key },
+		};
+	}
+	if (key === "booking.needs_review_fallback") {
+		return {
+			builder: { connector: "und", conditions: [{ source: "row", field: "betrag", op: ">=", value: "0" }] },
+			action: { type: "builtin", ruleKey: key },
+		};
+	}
+	return {
+		builder: {
+			connector: "und",
+			conditions: kind === "party"
+				? [{ source: "row", field: "iban", op: "ist nicht leer", value: "" }]
+				: [{ source: "row", field: "party", op: "ist nicht leer", value: "" }],
+		},
+		action: { type: "builtin", ruleKey: key },
+	};
 }
 
 function makeInitialEditorState(state) {
 	const rule = state.rule || {};
 	const kind = DOCTYPE_KIND[state.doctype || rule.doctype] || state.kind || "booking";
 	const params = parseParams(rule);
-	const builder = params.builder || { connector: "und", conditions: [defaultCondition()] };
-	const action = params.action || {
+	const template = rule.isSystem && !params.builder ? systemBuilderTemplate(rule, kind) : null;
+	const builder = params.builder || template?.builder || { connector: "und", conditions: [defaultCondition()] };
+	const action = params.action || template?.action || {
 		type: kind === "party" ? "party" : "buchung",
 		party_type: "Customer",
 		party: "",
@@ -347,7 +486,8 @@ function makeInitialEditorState(state) {
 		scope: (rule.scope || []).map((entry) => ({ enabled: entry.enabled !== false, ...entry })),
 		mode: params.ui?.mode || "einfach",
 		isSystem: Boolean(rule.isSystem),
-		isBuilderRule: Boolean(rule.isBuilderRule || params.builder),
+		isBuilderRule: Boolean(rule.isBuilderRule || params.builder || template),
+		forceBuilder: Boolean(rule.isSystem && (params.builder || template)),
 		ruleCodeLines: rule.ruleCodeLines || 0,
 		systemInfo: systemRuleInfo(rule),
 	};
@@ -383,34 +523,170 @@ function SystemRuleBuilder({ form }) {
 	);
 }
 
+function ValueSourceInput({ valueSource = "literal", value = "", rowField = "iban", op, onChange, placeholder = "Wert" }) {
+	if (["ist leer", "ist nicht leer"].includes(op)) return <div className="value-empty-note">kein Wert nötig</div>;
+	return (
+		<div className="value-source">
+			<select className="text-input compact" value={valueSource || "literal"} onChange={(e) => onChange({ valueSource: e.target.value })}>
+				<option value="literal">Wert</option>
+				<option value="row">Bankzeile</option>
+			</select>
+			{valueSource === "row" ? (
+				<select className="text-input" value={rowField || "iban"} onChange={(e) => onChange({ rowField: e.target.value })}>
+					{FIELDS.map((field) => <option value={field} key={field}>{FIELD_LABELS[field]}</option>)}
+				</select>
+			) : (
+				<input className="text-input" value={value || ""} onChange={(e) => onChange({ value: e.target.value })} placeholder={placeholder} />
+			)}
+		</div>
+	);
+}
+
+function DoctypeConditionEditor({ condition, index, doctypes, setCondition }) {
+	const [fields, setFields] = useState([]);
+	const doctype = condition.doctype || "";
+	useEffect(() => {
+		let alive = true;
+		if (!doctype) {
+			setFields([]);
+			return () => { alive = false; };
+		}
+		api.getRuleDoctypeFields(doctype)
+			.then((result) => { if (alive) setFields(result.items || []); })
+			.catch(() => { if (alive) setFields([]); });
+		return () => { alive = false; };
+	}, [doctype]);
+
+	const fieldOptions = fields.length ? fields : [
+		{ value: "name", label: "Name" },
+		{ value: "iban", label: "IBAN" },
+		{ value: "party_type", label: "Party Type" },
+		{ value: "party", label: "Party" },
+	];
+	const filters = condition.filters?.length ? condition.filters : [defaultDoctypeFilter()];
+	const patchFilter = (filterIndex, next) => setCondition(index, {
+		filters: filters.map((filter, idx) => idx === filterIndex ? { ...filter, ...next } : filter),
+	});
+	const addFilter = () => setCondition(index, { filters: [...filters, defaultDoctypeFilter()] });
+	const removeFilter = (filterIndex) => setCondition(index, { filters: filters.filter((_, idx) => idx !== filterIndex) });
+
+	return (
+		<div className="doctype-condition">
+			<div className="doc-row">
+				<label>
+					<span className="field-label">DocType</span>
+					<input className="text-input" list="rule-doctype-options" value={doctype} onChange={(e) => setCondition(index, { doctype: e.target.value })} placeholder="Bank Account" />
+				</label>
+				<datalist id="rule-doctype-options">
+					{doctypes.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}
+				</datalist>
+				<label>
+					<span className="field-label">Prüfung</span>
+					<select className="text-input" value={condition.matchMode || "exists"} onChange={(e) => setCondition(index, { matchMode: e.target.value })}>
+						<option value="exists">Treffer existiert</option>
+						<option value="field">Feld vergleichen</option>
+					</select>
+				</label>
+			</div>
+			<div className="filter-stack">
+				<div className="field-label">Filter</div>
+				{filters.map((filter, filterIndex) => (
+					<div className="filter-row" key={filterIndex}>
+						<select className="text-input" value={filter.field || ""} onChange={(e) => patchFilter(filterIndex, { field: e.target.value })}>
+							<option value="">Feld</option>
+							{fieldOptions.map((field) => <option value={field.value} key={field.value}>{field.label || field.value}</option>)}
+						</select>
+						<select className="text-input compact" value={filter.op || "="} onChange={(e) => patchFilter(filterIndex, { op: e.target.value })}>
+							{FILTER_OPS.map((op) => <option value={op} key={op}>{op}</option>)}
+						</select>
+						<ValueSourceInput
+							valueSource={filter.valueSource || "literal"}
+							rowField={filter.rowField || "iban"}
+							value={filter.value || ""}
+							op={filter.op}
+							onChange={(next) => patchFilter(filterIndex, next)}
+						/>
+						<button type="button" className="icon-btn" disabled={filters.length <= 1} onClick={() => removeFilter(filterIndex)}><Icon name="x" size={13} /></button>
+					</div>
+				))}
+				<button type="button" className="btn subtle sm" onClick={addFilter}><Icon name="plus" size={13} /> Filter</button>
+			</div>
+			{(condition.matchMode || "exists") === "field" && (
+				<div className="filter-row compare-row">
+					<select className="text-input" value={condition.field || ""} onChange={(e) => setCondition(index, { field: e.target.value })}>
+						<option value="">Vergleichsfeld</option>
+						{fieldOptions.map((field) => <option value={field.value} key={field.value}>{field.label || field.value}</option>)}
+					</select>
+					<select className="text-input compact" value={condition.op || "="} onChange={(e) => setCondition(index, { op: e.target.value })}>
+						{OPS.map((op) => <option value={op} key={op}>{op}</option>)}
+					</select>
+					<ValueSourceInput
+						valueSource={condition.valueSource || "literal"}
+						rowField={condition.rowField || "iban"}
+						value={condition.value || ""}
+						op={condition.op}
+						onChange={(next) => setCondition(index, next)}
+					/>
+				</div>
+			)}
+		</div>
+	);
+}
+
 function ConditionBuilder({ form, patch, setCondition, addCondition, removeCondition }) {
+	const [doctypes, setDoctypes] = useState([]);
+	useEffect(() => {
+		let alive = true;
+		api.searchRuleDoctypes("").then((result) => {
+			if (alive) setDoctypes(result.items || []);
+		}).catch(() => {
+			if (alive) setDoctypes([]);
+		});
+		return () => { alive = false; };
+	}, []);
+
 	return (
 		<div className="editor-block">
 			<div className="eb-kicker">Wenn</div>
 			<div className="eb-title">Bedingungen</div>
 			<div className="eb-sub">Die Regel greift nur, wenn diese Prüfung für eine Bankzeile zutrifft.</div>
 			{form.builder.conditions.map((condition, index) => (
-				<div className="cond-row" key={index}>
-					<select className="text-input" value={condition.field} onChange={(e) => setCondition(index, { field: e.target.value, value: "" })}>
-						{FIELDS.map((field) => <option value={field} key={field}>{FIELD_LABELS[field]}</option>)}
-					</select>
-					<select className="text-input" value={condition.op} onChange={(e) => setCondition(index, { op: e.target.value })}>
-						{OPS.map((op) => <option value={op} key={op}>{op}</option>)}
-					</select>
-					{condition.field === "richtung" ? (
-						<select className="text-input" value={condition.value} onChange={(e) => setCondition(index, { value: e.target.value })}>
-							<option value="">Richtung</option>
-							<option value="Eingang">Eingang</option>
-							<option value="Ausgang">Ausgang</option>
+				<div className={`cond-card ${normalizeSource(condition) === "doctype" ? "doc" : ""}`} key={index}>
+					<div className="cond-toolbar">
+						<select className="text-input compact" value={normalizeSource(condition)} onChange={(e) => setCondition(index, e.target.value === "doctype" ? defaultCondition("doctype") : defaultCondition("row"))}>
+							<option value="row">Bankzeile</option>
+							<option value="doctype">DocType</option>
 						</select>
+						<button type="button" className="icon-btn" disabled={form.builder.conditions.length <= 1} onClick={() => removeCondition(index)}><Icon name="x" size={13} /></button>
+					</div>
+					{normalizeSource(condition) === "doctype" ? (
+						<DoctypeConditionEditor condition={condition} index={index} doctypes={doctypes} setCondition={setCondition} />
 					) : (
-						<input className="text-input" type={condition.field === "betrag" ? "number" : "text"} value={condition.value} onChange={(e) => setCondition(index, { value: e.target.value })} />
+						<div className="cond-row">
+							<select className="text-input" value={condition.field} onChange={(e) => setCondition(index, { field: e.target.value, value: "" })}>
+								{FIELDS.map((field) => <option value={field} key={field}>{FIELD_LABELS[field]}</option>)}
+							</select>
+							<select className="text-input" value={condition.op} onChange={(e) => setCondition(index, { op: e.target.value })}>
+								{OPS.map((op) => <option value={op} key={op}>{op}</option>)}
+							</select>
+							{["ist leer", "ist nicht leer"].includes(condition.op) ? (
+								<div className="value-empty-note">kein Wert nötig</div>
+							) : condition.field === "richtung" ? (
+								<select className="text-input" value={condition.value} onChange={(e) => setCondition(index, { value: e.target.value })}>
+									<option value="">Richtung</option>
+									<option value="Eingang">Eingang</option>
+									<option value="Ausgang">Ausgang</option>
+								</select>
+							) : (
+								<input className="text-input" type={condition.field === "betrag" ? "number" : "text"} value={condition.value} onChange={(e) => setCondition(index, { value: e.target.value })} />
+							)}
+						</div>
 					)}
-					<button type="button" className="icon-btn" disabled={form.builder.conditions.length <= 1} onClick={() => removeCondition(index)}><Icon name="x" size={13} /></button>
 				</div>
 			))}
 			<div className="builder-actions">
-				<button type="button" className="btn subtle sm" onClick={addCondition}><Icon name="plus" size={13} /> Bedingung</button>
+				<button type="button" className="btn subtle sm" onClick={() => addCondition("row")}><Icon name="plus" size={13} /> Bankzeile</button>
+				<button type="button" className="btn subtle sm" onClick={() => addCondition("doctype")}><Icon name="plus" size={13} /> DocType</button>
 				{form.builder.conditions.length > 1 && (
 					<div className="seg">
 						<button type="button" className={`seg-btn ${form.builder.connector === "und" ? "active" : ""}`} onClick={() => patch({ builder: { ...form.builder, connector: "und" } })}>alle Bedingungen</button>
@@ -437,13 +713,54 @@ function ActionBuilder({ form, patch }) {
 			<div className="eb-kicker">Dann</div>
 			<div className="eb-title">Aktion</div>
 			<div className="seg action-seg">
-				<button type="button" className={`seg-btn ${["buchung", "booking"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { ...form.action, type: "buchung" } })}>Auf Konto buchen</button>
-				<button type="button" className={`seg-btn ${["party", "partei"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { ...form.action, type: "party" } })}>Partei zuordnen</button>
+				{form.kind === "booking" && <button type="button" className={`seg-btn ${["buchung", "booking"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { type: "buchung", account: form.action.account || "", cost_center: form.action.cost_center || "Allgemein" } })}>Auf Konto buchen</button>}
+				{form.kind === "party" && <button type="button" className={`seg-btn ${["party", "partei"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { type: "party", party_type: form.action.party_type || "Customer", party: form.action.party || "" } })}>Feste Partei</button>}
+				{form.kind === "party" && <button type="button" className={`seg-btn ${["party_from_row", "partei_aus_zeile"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { type: "party_from_row" } })}>Aus Bankzeile</button>}
+				{form.kind === "party" && <button type="button" className={`seg-btn ${["party_from_doctype", "partei_aus_doctype"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { type: "party_from_doctype", doctype: "Bank Account", filters: [defaultDoctypeFilter()], partyTypeField: "party_type", partyField: "party" } })}>Aus DocType</button>}
+				{["builtin", "system"].includes(form.action.type) && <button type="button" className="seg-btn active">Backend-Baustein</button>}
 			</div>
-			{["party", "partei"].includes(form.action.type) ? (
+			{["builtin", "system"].includes(form.action.type) ? (
+				<div className="system-builder">
+					<div className="sb-row">
+						<div className="sb-label">Baustein</div>
+						<div className="sb-value">{form.systemInfo?.then || actionText(form.action)}</div>
+					</div>
+					<div className="eb-sub">Die Bedingungen oben sind editierbar; die Ausführung nutzt weiterhin die geprüfte Backend-Logik.</div>
+				</div>
+			) : ["party", "partei"].includes(form.action.type) ? (
 				<div className="re-grid">
 					<label><span className="field-label">Party Type</span><select className="text-input" value={form.action.party_type || ""} onChange={(e) => patch({ action: { ...form.action, party_type: e.target.value } })}>{PARTY_TYPES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
 					<label><span className="field-label">Party</span><input className="text-input" value={form.action.party || ""} onChange={(e) => patch({ action: { ...form.action, party: e.target.value } })} /></label>
+				</div>
+			) : ["party_from_row", "partei_aus_zeile"].includes(form.action.type) ? (
+				<div className="scope-empty">Übernimmt Party Type und Party direkt aus der Bankimport-Zeile.</div>
+			) : ["party_from_doctype", "partei_aus_doctype"].includes(form.action.type) ? (
+				<div className="doctype-action">
+					<div className="re-grid">
+						<label><span className="field-label">DocType</span><input className="text-input" value={form.action.doctype || ""} onChange={(e) => patch({ action: { ...form.action, doctype: e.target.value } })} /></label>
+						<label><span className="field-label">Party-Type-Feld</span><input className="text-input" value={form.action.partyTypeField || ""} onChange={(e) => patch({ action: { ...form.action, partyTypeField: e.target.value } })} /></label>
+						<label><span className="field-label">Party-Feld</span><input className="text-input" value={form.action.partyField || ""} onChange={(e) => patch({ action: { ...form.action, partyField: e.target.value } })} /></label>
+					</div>
+					<div className="filter-stack">
+						<div className="field-label">Suchfilter für die Aktion</div>
+						{(form.action.filters || []).map((filter, index) => (
+							<div className="filter-row" key={index}>
+								<input className="text-input" value={filter.field || ""} onChange={(e) => patch({ action: { ...form.action, filters: form.action.filters.map((item, idx) => idx === index ? { ...item, field: e.target.value } : item) } })} placeholder="iban" />
+								<select className="text-input compact" value={filter.op || "="} onChange={(e) => patch({ action: { ...form.action, filters: form.action.filters.map((item, idx) => idx === index ? { ...item, op: e.target.value } : item) } })}>
+									{FILTER_OPS.map((op) => <option value={op} key={op}>{op}</option>)}
+								</select>
+								<ValueSourceInput
+									valueSource={filter.valueSource || "literal"}
+									rowField={filter.rowField || "iban"}
+									value={filter.value || ""}
+									op={filter.op}
+									onChange={(next) => patch({ action: { ...form.action, filters: form.action.filters.map((item, idx) => idx === index ? { ...item, ...next } : item) } })}
+								/>
+								<button type="button" className="icon-btn" disabled={(form.action.filters || []).length <= 1} onClick={() => patch({ action: { ...form.action, filters: form.action.filters.filter((_, idx) => idx !== index) } })}><Icon name="x" size={13} /></button>
+							</div>
+						))}
+						<button type="button" className="btn subtle sm" onClick={() => patch({ action: { ...form.action, filters: [...(form.action.filters || []), defaultDoctypeFilter()] } })}><Icon name="plus" size={13} /> Filter</button>
+					</div>
 				</div>
 			) : (
 				<div className="re-grid">
@@ -502,43 +819,35 @@ function RuleDesigner({ form, patch, setCondition, addCondition, removeCondition
 	return (
 		<div className="rule-designer">
 			<div className="designer-flow">
-				{form.isSystem ? (
-					<div className="editor-block">
-						<div className="eb-kicker">Regelbaustein</div>
-						<div className="eb-title">{form.systemInfo?.label || "Backend-Baustein"}</div>
-						<SystemRuleBuilder form={form} />
-						<details className="admin-code-link">
-							<summary>Admin-Fallback</summary>
-							<div className="locked-rule">
-								<span>Backend-Code · {form.ruleCodeLines || 0} Code-Zeilen</span>
-								<button
-									type="button"
-									className="btn subtle sm"
-									onClick={() => api.openDoc(form.doctype, form.name)}
-								>
-									<Icon name="file" size={13} /> Code im Formular öffnen
-								</button>
-							</div>
-						</details>
-					</div>
-				) : (
-					<ConditionBuilder form={form} patch={patch} setCondition={setCondition} addCondition={addCondition} removeCondition={removeCondition} />
-				)}
-				<div className="flow-arrow">↓</div>
-				{!form.isSystem && <ActionBuilder form={form} patch={patch} />}
 				{form.isSystem && (
-					<div className="editor-block">
-						<div className="eb-kicker">Dann</div>
-						<div className="eb-title">Aktion des Bausteins</div>
-						<div className="eb-sub">{form.systemInfo?.then || "Wird durch den Backend-Baustein ausgeführt."}</div>
-					</div>
+					<details className="admin-code-link">
+						<summary>Systemregel</summary>
+						<SystemRuleBuilder form={form} />
+						<div className="locked-rule">
+							<span>Ursprünglicher Backend-Code · {form.ruleCodeLines || 0} Code-Zeilen</span>
+							<button
+								type="button"
+								className="btn subtle sm"
+								onClick={() => api.openDoc(form.doctype, form.name)}
+							>
+								<Icon name="file" size={13} /> Formular öffnen
+							</button>
+						</div>
+					</details>
 				)}
+				<ConditionBuilder form={form} patch={patch} setCondition={setCondition} addCondition={addCondition} removeCondition={removeCondition} />
+				<div className="flow-arrow">↓</div>
+				<ActionBuilder form={form} patch={patch} />
 				<div className="flow-arrow">↓</div>
 				<BehaviorBuilder form={form} patch={patch} />
 				<ScopeBuilder form={form} patch={patch} setScope={setScope} />
 				<div className={`re-live ${builderError ? "bad" : "ok"}`}>
-					{builderError || `gültig · trifft ${serverPreview?.ok ? serverPreview.hits : localHits} Zeilen im aktuellen Auszug`}
-					{!form.isSystem && <button type="button" className="link-btn" onClick={preview}>Server prüfen</button>}
+					{builderError || (serverPreview?.ok
+						? `gültig · trifft ${serverPreview.hits} Zeilen im aktuellen Auszug`
+						: localHits === null
+							? "gültig · DocType-Abfragen bitte serverseitig prüfen"
+							: `gültig · trifft ${localHits} Zeilen im aktuellen Auszug`)}
+					<button type="button" className="link-btn" onClick={preview}>Server prüfen</button>
 				</div>
 			</div>
 		</div>
@@ -577,13 +886,15 @@ function RuleEditor({ state, rows, onClose, onSave }) {
 		return () => window.removeEventListener("keydown", onKey);
 	}, [onClose]);
 
-	const builderError = form.isSystem ? "" : validateBuilder(form.builder);
-	const localHits = !form.isSystem && !builderError ? (rows || []).filter((row) => !isDoneRow(row) && builderMatches(form.builder, row)).length : 0;
-	const actionValid = form.isSystem || form.requiresReview || (
-		["party", "partei"].includes(form.action.type)
-			? Boolean(form.action.party_type && form.action.party)
-			: Boolean(form.action.account || form.action.konto)
-	);
+	const builderError = validateBuilder(form.builder);
+	const localHits = !builderError && !builderNeedsServer(form.builder) ? (rows || []).filter((row) => !isDoneRow(row) && builderMatches(form.builder, row)).length : null;
+	const actionType = form.action.type;
+	const actionValid = form.requiresReview
+		|| (["party", "partei"].includes(actionType) && Boolean(form.action.party_type && form.action.party))
+		|| (["party_from_row", "partei_aus_zeile"].includes(actionType))
+		|| (["party_from_doctype", "partei_aus_doctype"].includes(actionType) && Boolean(form.action.doctype && form.action.partyTypeField && form.action.partyField && form.action.filters?.length))
+		|| (["builtin", "system"].includes(actionType) && Boolean(form.action.ruleKey || form.ruleKey))
+		|| (["buchung", "booking"].includes(actionType) && Boolean(form.action.account || form.action.konto));
 	const valid = form.title.trim() && (form.isSystem || form.ruleKey.trim()) && !builderError && actionValid;
 
 	const patch = (next) => setForm((current) => ({ ...current, ...next }));
@@ -593,12 +904,12 @@ function RuleEditor({ state, rows, onClose, onSave }) {
 			conditions: form.builder.conditions.map((condition, idx) => idx === index ? { ...condition, ...next } : condition),
 		},
 	});
-	const addCondition = () => patch({ builder: { ...form.builder, conditions: [...form.builder.conditions, { field: "zweck", op: "enthält", value: "" }] } });
+	const addCondition = (source = "row") => patch({ builder: { ...form.builder, conditions: [...form.builder.conditions, defaultCondition(source)] } });
 	const removeCondition = (index) => patch({ builder: { ...form.builder, conditions: form.builder.conditions.filter((_, idx) => idx !== index) } });
 	const setScope = (index, next) => patch({ scope: form.scope.map((entry, idx) => idx === index ? { ...entry, ...next } : entry) });
 
 	const preview = async () => {
-		if (builderError || form.isSystem) return;
+		if (builderError) return;
 		try {
 			const parameters = { builder: form.builder, action: form.action, ui: { mode: form.mode } };
 			setServerPreview(await api.previewBankimportRuleHits(form.doctype, parameters, undefined, form.name));
@@ -614,6 +925,7 @@ function RuleEditor({ state, rows, onClose, onSave }) {
 		try {
 			await onSave({
 				...form,
+				forceBuilder: form.forceBuilder,
 				parametersJson: { builder: form.builder, action: form.action, ui: { mode: form.mode } },
 			});
 		} finally {
