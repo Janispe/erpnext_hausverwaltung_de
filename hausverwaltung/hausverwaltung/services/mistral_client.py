@@ -176,13 +176,31 @@ def ensure_configured() -> None:
 		)
 
 
-def _post_chat(messages: list[dict], *, model: str, response_json: bool, timeout: int) -> dict:
+def _post_chat(
+	messages: list[dict],
+	*,
+	model: str,
+	response_json: bool,
+	timeout: int,
+	tools: list[dict] | None = None,
+	tool_choice: str | dict | None = None,
+	parallel_tool_calls: bool | None = None,
+	temperature: float | None = None,
+) -> dict:
 	body: dict[str, Any] = {
 		"model": model,
 		"messages": messages,
 	}
 	if response_json:
 		body["response_format"] = {"type": "json_object"}
+	if tools:
+		body["tools"] = tools
+	if tool_choice is not None:
+		body["tool_choice"] = tool_choice
+	if parallel_tool_calls is not None:
+		body["parallel_tool_calls"] = parallel_tool_calls
+	if temperature is not None:
+		body["temperature"] = temperature
 	headers = {
 		"Content-Type": "application/json",
 		"Accept": "application/json",
@@ -217,11 +235,18 @@ def _post_chat(messages: list[dict], *, model: str, response_json: bool, timeout
 		raise MistralTransientError(f"Mistral-Antwort kein gültiges JSON: {exc}") from exc
 
 
-def _extract_message_content(payload: dict) -> str:
+def _extract_choice_message(payload: dict) -> dict:
 	choices = payload.get("choices") or []
 	if not choices:
 		raise MistralTransientError("Mistral-Antwort enthält keine choices.")
 	message = choices[0].get("message") or {}
+	if not isinstance(message, dict):
+		raise MistralTransientError("Mistral-Antwort hat unerwartetes Message-Format.")
+	return message
+
+
+def _extract_message_content(payload: dict) -> str:
+	message = _extract_choice_message(payload)
 	content = message.get("content")
 	if isinstance(content, str):
 		return content
@@ -230,6 +255,38 @@ def _extract_message_content(payload: dict) -> str:
 		parts = [str(p.get("text") or "") for p in content if isinstance(p, dict)]
 		return "".join(parts)
 	raise MistralTransientError("Mistral-Antwort hat unerwartetes Content-Format.")
+
+
+def complete_chat(
+	*,
+	messages: list[dict],
+	model: str | None = None,
+	timeout: int | None = None,
+	tools: list[dict] | None = None,
+	tool_choice: str | dict | None = None,
+	parallel_tool_calls: bool | None = None,
+	temperature: float | None = None,
+) -> dict:
+	"""Allgemeiner Chat-Completions-Aufruf.
+
+	Wird von fachlichen Assistant-Flows genutzt, die Mistral Function Calling
+	verwenden. Der Aufrufer fuehrt Tools selbst aus und gibt Tool-Ergebnisse
+	ans Modell zur finalen Antwort zurueck.
+	"""
+	ensure_configured()
+	resolved_model = (model or "").strip() or _text_model()
+	resolved_timeout = timeout or _timeout()
+	payload = _post_chat(
+		messages,
+		model=resolved_model,
+		response_json=False,
+		timeout=resolved_timeout,
+		tools=tools,
+		tool_choice=tool_choice,
+		parallel_tool_calls=parallel_tool_calls,
+		temperature=temperature,
+	)
+	return _extract_choice_message(payload)
 
 
 def complete_json(

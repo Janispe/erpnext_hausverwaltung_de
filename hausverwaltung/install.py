@@ -1464,6 +1464,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         "label": "Stammdaten",
         "icon": "database",
         "links": [
+            {"label": "Mieter-Assistent", "link_type": "Page", "link_to": "hausverwaltung-assistant"},
             {"label": "Immobilie", "link_type": "DocType", "link_to": "Immobilie"},
             {"label": "Wohnung", "link_type": "DocType", "link_to": "Wohnung"},
             {"label": "Mietvertrag", "link_type": "DocType", "link_to": "Mietvertrag"},
@@ -1527,6 +1528,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
 
 _HAUSVERWALTUNG_TOP_SHORTCUTS: list[dict] = [
     {"label": "Alle Immobilien", "type": "Page", "link_to": "immobilienbaumansich", "color": "Green"},
+    {"label": "Mieter-Assistent", "type": "Page", "link_to": "hausverwaltung-assistant", "color": "Green"},
     {"label": "Mieten sollstellen", "type": "DocType", "link_to": "Mietrechnungen Durchlauf", "color": "Blue"},
     {"label": "Buchungs-Cockpit", "type": "Page", "link_to": "buchen_cockpit", "color": "Purple"},
     {"label": "Email", "type": "DocType", "link_to": "Communication", "color": "Grey"},
@@ -1652,6 +1654,7 @@ def ensure_hausverwaltung_sidebar() -> None:
 
         # Top shortcuts (daily drivers)
         add({"label": "Alle Immobilien", "type": "Link", "link_type": "Page", "link_to": "immobilienbaumansich", "icon": "list-tree"})
+        add({"label": "Mieter-Assistent", "type": "Link", "link_type": "Page", "link_to": "hausverwaltung-assistant", "icon": "search"})
         add({"label": "Mieten sollstellen", "type": "Link", "link_type": "DocType", "link_to": "Mietrechnungen Durchlauf", "icon": "calendar-sync"})
         # Sections mirror the workspace cards
         for section in _HAUSVERWALTUNG_CARD_SECTIONS:
