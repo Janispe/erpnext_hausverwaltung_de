@@ -7,16 +7,19 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import add_days, cint, cstr
+from frappe.utils import now_datetime
 
 from hausverwaltung.hausverwaltung.utils.pdf_engine import render_pdf as get_pdf
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import normalize_print_format_name
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_for_print_format
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_pdf_for_print_format
+from hausverwaltung.hausverwaltung.utils.serienbrief_print import scrub_value as hv_scrub
 
 SERIENBRIEF_PRINT_FORMAT_FIELDNAME = "hv_serienbrief_vorlage"
 PRINT_BUNDLE_CSS_PATH = "/assets/frappe/css/print.bundle.css"
 DRAFT_EMAIL_SEND_AFTER = "2099-01-01 00:00:00"
 SUMMARY_TABLE_FIELDS = ("kosten_pro_art", "zaehler_summen")
+BK_BUNDLE_PDF_PROGRESS_TTL = 60 * 60
 
 
 def _row_value(row, key: str):
@@ -572,6 +575,46 @@ def _get_mieter_abrechnung_names_for_head(name: str) -> List[str]:
 	return [row.get("name") for row in children or [] if row.get("name")]
 
 
+def _bk_bundle_pdf_progress_key(job_id: str) -> str:
+	return f"hv_bk_bundle_pdf_progress:{job_id}"
+
+
+def _set_bk_bundle_pdf_progress(job_id: str, **values) -> None:
+	current = _get_bk_bundle_pdf_progress(job_id, check_permission=False) if job_id else {}
+	current.update(values)
+	current["updated_at"] = now_datetime().isoformat()
+	frappe.cache.set_value(
+		_bk_bundle_pdf_progress_key(job_id),
+		frappe.as_json(current),
+		expires_in_sec=BK_BUNDLE_PDF_PROGRESS_TTL,
+	)
+
+
+def _get_bk_bundle_pdf_progress(job_id: str, *, check_permission: bool = True) -> Dict[str, object]:
+	if not job_id:
+		return {}
+	raw = frappe.cache.get_value(_bk_bundle_pdf_progress_key(job_id))
+	if not raw:
+		return {}
+	if isinstance(raw, bytes):
+		raw = raw.decode("utf-8", errors="replace")
+	try:
+		data = json.loads(raw) if isinstance(raw, str) else raw
+	except Exception:
+		data = {}
+	if not isinstance(data, dict):
+		return {}
+	if check_permission:
+		docname = cstr(data.get("name") or "").strip()
+		if docname:
+			head = frappe.get_doc("Betriebskostenabrechnung Immobilie", docname)
+			if not frappe.has_permission(head.doctype, "print", head) and not frappe.has_permission(
+				head.doctype, "read", head
+			):
+				raise frappe.PermissionError
+	return data
+
+
 def _get_child_print_format_for_sammeldruck(print_format: Optional[str]) -> Optional[str]:
 	print_format_name = (print_format or "").strip()
 	if not print_format_name or print_format_name.lower() == "standard":
@@ -740,6 +783,129 @@ def get_mieter_abrechnungen_print_pdf(name: str, print_format: Optional[str] = N
 			merger.close()
 		except Exception:
 			pass
+
+
+def _run_mieter_abrechnungen_pdf_job(
+	progress_id: str,
+	name: str,
+	print_format: Optional[str] = None,
+	user: Optional[str] = None,
+) -> None:
+	merger = None
+	try:
+		if user:
+			frappe.set_user(user)
+
+		child_names = _get_mieter_abrechnung_names_for_head(name)
+		child_print_format = _get_child_print_format_for_sammeldruck(print_format)
+		total = len(child_names)
+		_set_bk_bundle_pdf_progress(progress_id, status="running", done=0, total=total, current=None)
+
+		try:
+			from PyPDF2 import PdfMerger
+		except ImportError:
+			from pypdf import PdfMerger
+
+		merger = PdfMerger()
+		for idx, child_name in enumerate(child_names, start=1):
+			_set_bk_bundle_pdf_progress(
+				progress_id,
+				status="running",
+				done=idx - 1,
+				total=total,
+				current=child_name,
+			)
+			pdf = _render_abrechnung_pdf(child_name, print_format=child_print_format)
+			if pdf:
+				merger.append(BytesIO(pdf))
+			_set_bk_bundle_pdf_progress(
+				progress_id,
+				status="running",
+				done=idx,
+				total=total,
+				current=child_name,
+			)
+
+		out = BytesIO()
+		merger.write(out)
+		content = out.getvalue()
+		if not content:
+			frappe.throw(_("PDF konnte nicht erzeugt werden."))
+
+		from frappe.utils.file_manager import save_file
+
+		filename = f"Betriebskostenabrechnungen-{hv_scrub(name or '')}.pdf"
+		file_doc = save_file(
+			filename,
+			content,
+			"Betriebskostenabrechnung Immobilie",
+			name,
+			is_private=1,
+		)
+		frappe.db.commit()
+		_set_bk_bundle_pdf_progress(
+			progress_id,
+			status="finished",
+			done=total,
+			total=total,
+			current=None,
+			file_url=file_doc.file_url,
+			file_name=file_doc.file_name,
+		)
+	except Exception as exc:
+		frappe.db.rollback()
+		_set_bk_bundle_pdf_progress(
+			progress_id,
+			status="failed",
+			error=cstr(exc) or _("Unbekannter Fehler"),
+		)
+		frappe.log_error(frappe.get_traceback(), f"Betriebskostenabrechnung Sammel-PDF fehlgeschlagen: {name}")
+		raise
+	finally:
+		if merger:
+			try:
+				merger.close()
+			except Exception:
+				pass
+
+
+@frappe.whitelist()
+def start_mieter_abrechnungen_pdf_job(name: str, print_format: Optional[str] = None) -> Dict[str, object]:
+	child_names = _get_mieter_abrechnung_names_for_head(name)
+	if not child_names:
+		frappe.throw(_("Keine Mieterabrechnungen vorhanden."))
+
+	job_id = frappe.generate_hash(length=16)
+	_set_bk_bundle_pdf_progress(
+		job_id,
+		status="queued",
+		name=name,
+		done=0,
+		total=len(child_names),
+		current=None,
+		file_url=None,
+		error=None,
+	)
+	frappe.enqueue(
+		"hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_immobilie.betriebskostenabrechnung_immobilie._run_mieter_abrechnungen_pdf_job",
+		queue="long",
+		timeout=3600,
+		job_id=job_id,
+		progress_id=job_id,
+		name=name,
+		print_format=print_format,
+		user=frappe.session.user,
+		enqueue_after_commit=True,
+	)
+	return {"job_id": job_id, "status": "queued", "total": len(child_names)}
+
+
+@frappe.whitelist()
+def get_mieter_abrechnungen_pdf_progress(job_id: str) -> Dict[str, object]:
+	progress = _get_bk_bundle_pdf_progress(job_id)
+	if not progress:
+		return {"status": "missing", "done": 0, "total": 0}
+	return progress
 
 
 @frappe.whitelist()

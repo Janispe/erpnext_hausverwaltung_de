@@ -215,7 +215,10 @@ const load_verteilungsbasis = (frm) => {
 		});
 };
 
+const DOCTYPE_METHOD_PREFIX =
+	"hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_immobilie.betriebskostenabrechnung_immobilie.";
 const DISPATCH_BUTTON_LABEL = __("Abrechnungen versenden");
+const BUNDLE_PDF_BUTTON_LABEL = __("Sammel-PDF erzeugen");
 
 const ensure_dispatch_button = (frm) => {
 	if (!frm || frm.is_new() || frm.doc.docstatus !== 1) {
@@ -224,11 +227,159 @@ const ensure_dispatch_button = (frm) => {
 	try {
 		if (frm.remove_custom_button) {
 			frm.remove_custom_button(DISPATCH_BUTTON_LABEL);
+			frm.remove_custom_button(BUNDLE_PDF_BUTTON_LABEL);
 		}
 	} catch {
 		// ignore
 	}
 	frm.add_custom_button(DISPATCH_BUTTON_LABEL, () => open_dispatch_dialog(frm));
+	frm.add_custom_button(BUNDLE_PDF_BUTTON_LABEL, () => open_bundle_pdf_progress_dialog(frm));
+};
+
+const render_bundle_pdf_progress = (dialog, progress = {}) => {
+	const status = progress.status || "queued";
+	const total = parseInt(progress.total || 0, 10) || 0;
+	const done = parseInt(progress.done || 0, 10) || 0;
+	const percent = total ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : status === "finished" ? 100 : 0;
+	const running = ["queued", "running"].includes(status);
+	const statusLabel =
+		status === "finished"
+			? __("Fertig")
+			: status === "failed"
+				? __("Fehlgeschlagen")
+				: status === "running"
+					? __("PDF wird erzeugt")
+					: __("Wartet auf Verarbeitung");
+	const current = progress.current
+		? `<div class="text-muted small">${__("Aktuell")}: ${escape_html(progress.current)}</div>`
+		: "";
+	const error = progress.error
+		? `<div class="text-danger small" style="margin-top: 10px;">${escape_html(progress.error)}</div>`
+		: "";
+	const fileLink = progress.file_url
+		? `<div style="margin-top: 10px;"><a href="${escape_html(
+				frappe.urllib.get_full_url(progress.file_url)
+			)}" target="_blank" rel="noopener noreferrer">${escape_html(progress.file_name || __("PDF öffnen"))}</a></div>`
+		: "";
+
+	dialog.fields_dict.progress_html.$wrapper.html(`
+		<div style="min-width: 360px;">
+			<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:8px;">
+				<div><strong>${statusLabel}</strong></div>
+				<div class="text-muted">${done}/${total || "?"}</div>
+			</div>
+			<div class="progress" style="height:18px; margin-bottom:10px;">
+				<div
+					class="progress-bar progress-bar-striped ${running ? "active" : ""}"
+					role="progressbar"
+					aria-valuenow="${percent}"
+					aria-valuemin="0"
+					aria-valuemax="100"
+					style="width:${percent}%;">
+					${percent}%
+				</div>
+			</div>
+			${current}
+			${fileLink}
+			${error}
+		</div>
+	`);
+};
+
+const open_bundle_pdf_progress_dialog = (frm) => {
+	let jobId = null;
+	let pollTimer = null;
+	let stopped = false;
+	let fileUrl = null;
+
+	const dialog = new frappe.ui.Dialog({
+		title: __("Sammel-PDF erzeugen"),
+		fields: [{ fieldname: "progress_html", fieldtype: "HTML" }],
+		primary_action_label: __("PDF öffnen"),
+		primary_action() {
+			if (fileUrl) {
+				window.open(frappe.urllib.get_full_url(fileUrl), "_blank", "noopener,noreferrer");
+			}
+		},
+	});
+
+	const stop_polling = () => {
+		stopped = true;
+		if (pollTimer) {
+			clearTimeout(pollTimer);
+			pollTimer = null;
+		}
+	};
+
+	const schedule_poll = () => {
+		if (!stopped && jobId) {
+			pollTimer = setTimeout(poll_progress, 1000);
+		}
+	};
+
+	const poll_progress = () => {
+		frappe
+			.call({
+				method: DOCTYPE_METHOD_PREFIX + "get_mieter_abrechnungen_pdf_progress",
+				args: { job_id: jobId },
+			})
+			.then((r) => {
+				const progress = (r && r.message) || {};
+				render_bundle_pdf_progress(dialog, progress);
+				if (progress.status === "finished") {
+					fileUrl = progress.file_url || null;
+					dialog.enable_primary_action();
+					stop_polling();
+					frappe.show_alert({ message: __("Sammel-PDF ist fertig."), indicator: "green" });
+					return;
+				}
+				if (progress.status === "failed") {
+					stop_polling();
+					dialog.get_primary_btn().text(__("Schließen"));
+					dialog.set_primary_action(__("Schließen"), () => dialog.hide());
+					dialog.enable_primary_action();
+					return;
+				}
+				schedule_poll();
+			})
+			.catch((err) => {
+				console.error("Sammel-PDF Fortschritt konnte nicht geladen werden", err);
+				stop_polling();
+				dialog.get_primary_btn().text(__("Schließen"));
+				dialog.set_primary_action(__("Schließen"), () => dialog.hide());
+				dialog.enable_primary_action();
+			});
+	};
+
+	dialog.show();
+	dialog.disable_primary_action();
+	dialog.$wrapper.on("hidden.bs.modal", stop_polling);
+	render_bundle_pdf_progress(dialog, { status: "queued", done: 0, total: 0 });
+
+	frappe
+		.call({
+			method: DOCTYPE_METHOD_PREFIX + "start_mieter_abrechnungen_pdf_job",
+			args: { name: frm.doc.name },
+			freeze: false,
+		})
+		.then((r) => {
+			const res = (r && r.message) || {};
+			jobId = res.job_id;
+			render_bundle_pdf_progress(dialog, res);
+			schedule_poll();
+		})
+		.catch((err) => {
+			console.error("Sammel-PDF konnte nicht gestartet werden", err);
+			render_bundle_pdf_progress(dialog, {
+				status: "failed",
+				done: 0,
+				total: 0,
+				error: err?.message || __("Sammel-PDF konnte nicht gestartet werden."),
+			});
+			dialog.get_primary_btn().text(__("Schließen"));
+			dialog.set_primary_action(__("Schließen"), () => dialog.hide());
+			dialog.enable_primary_action();
+		});
 };
 
 const load_mieter_abrechnungen = (frm, attempt = 1) => {
