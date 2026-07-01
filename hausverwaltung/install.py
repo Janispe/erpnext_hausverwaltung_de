@@ -186,6 +186,34 @@ def ensure_zahlungshistorie_baustein() -> None:
     _ensure_zahlungshistorie_baustein(reason="hook")
 
 
+def ensure_hv_serienbrief_bausteine() -> None:
+    """Self-heal hausverwaltung-specific mail-merge blocks after migrations."""
+    try:
+        from hausverwaltung.hausverwaltung.patches.post_model_sync.fix_bk_vorauszahlung_tokens_and_preview_values import (
+            execute as fix_bk_vorauszahlung,
+        )
+        from hausverwaltung.hausverwaltung.patches.post_model_sync.fix_briefkopf_address_from_standard_paths import (
+            execute as fix_briefkopf,
+        )
+
+        fix_briefkopf()
+        fix_bk_vorauszahlung()
+        try:
+            frappe.clear_cache(doctype="Serienbrief Textbaustein")
+            frappe.clear_cache(doctype="Serienbrief Vorlage")
+            frappe.db.commit()
+        except Exception:
+            pass
+    except Exception:
+        try:
+            frappe.log_error(
+                frappe.get_traceback(),
+                "hausverwaltung Serienbrief-Bausteine self-heal failed",
+            )
+        except Exception:
+            pass
+
+
 def ensure_euer_print_format() -> None:
     _ensure_euer_print_format(reason="hook")
 

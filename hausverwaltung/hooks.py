@@ -155,6 +155,7 @@ after_migrate = [
 	"hausverwaltung.install.ensure_mietabrechnung_id_backfilled",
 	"hausverwaltung.install.ensure_sollstellung_titel_backfilled",
 	"hausverwaltung.hausverwaltung.utils.bank_account_naming.sync_all_immobilie_bank_account_names",
+	"hausverwaltung.install.ensure_hv_serienbrief_bausteine",
 ]
 # NOTE: We intentionally do not run bootstrap on every migrate.
 # If you ever need to re-apply defaults on an existing site, run `./bootstrap_site.sh`.
