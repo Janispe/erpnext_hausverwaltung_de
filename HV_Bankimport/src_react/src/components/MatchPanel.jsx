@@ -50,6 +50,45 @@ const PARTY_TYPE_OPTIONS = [
 const partyOptionLabel = (partyType) =>
 	PARTY_TYPE_OPTIONS.find((option) => option.id === partyType)?.label || partyType;
 
+const INVOICE_COLLAPSE_THRESHOLD = 5;
+
+function InvoiceListToggle({ invoices, selectedCount = 0, children }) {
+	const count = invoices.length;
+	const shouldCollapse = count > INVOICE_COLLAPSE_THRESHOLD;
+	const [open, setOpen] = useState(!shouldCollapse);
+	const total = useMemo(
+		() => invoices.reduce((sum, inv) => sum + (Number(inv.outstanding_amount) || 0), 0),
+		[invoices]
+	);
+
+	useEffect(() => {
+		setOpen(!shouldCollapse);
+	}, [shouldCollapse, count, invoices]);
+
+	if (!shouldCollapse) return <>{children}</>;
+
+	return (
+		<div className={`invoice-collapse ${open ? "is-open" : ""}`}>
+			<button
+				type="button"
+				className="invoice-collapse-toggle"
+				onClick={() => setOpen((value) => !value)}
+				aria-expanded={open}
+			>
+				<span>
+					<Icon name={open ? "chevDown" : "chev"} size={13} />
+					{count} offene Rechnungen
+				</span>
+				<strong>{fmtEUR(total)}</strong>
+			</button>
+			{selectedCount > 0 && !open && (
+				<div className="invoice-collapse-note">{selectedCount} ausgewählt</div>
+			)}
+			{open && <div className="invoice-collapse-list">{children}</div>}
+		</div>
+	);
+}
+
 // ───────────────────────── Smart-Default-Inferenz ───────────────────────────
 // Liefert für eine Phase-3-Zeile den wahrscheinlich richtigen Modus + Begründung.
 // Bezieht sich auf die Modi-IDs aus BookingActions: invoice|split|abschlag|kredit|payment|journal.
@@ -581,39 +620,41 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 					Rest <strong>{fmtEUR(remaining)}</strong>
 				</span>
 			</div>
-			{data.invoices.map((inv) => {
-				const checked = sel[inv.name] != null;
-				return (
-					<div key={inv.name} className={`invoice-card ${checked ? "suggested" : "alt"}`}>
-						<label className="row1" style={{ cursor: "pointer" }}>
-							<div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-								<input type="checkbox" checked={checked} onChange={() => toggle(inv)} />
-								<div>
-									<div className="doc-id">{inv.name}</div>
-									<div className="ref">{inv.remarks || "—"}</div>
+			<InvoiceListToggle invoices={data.invoices} selectedCount={Object.keys(sel).length}>
+				{data.invoices.map((inv) => {
+					const checked = sel[inv.name] != null;
+					return (
+						<div key={inv.name} className={`invoice-card ${checked ? "suggested" : "alt"}`}>
+							<label className="row1" style={{ cursor: "pointer" }}>
+								<div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+									<input type="checkbox" checked={checked} onChange={() => toggle(inv)} />
+									<div>
+										<div className="doc-id">{inv.name}</div>
+										<div className="ref">{inv.remarks || "—"}</div>
+									</div>
 								</div>
+								<div className="amount">{fmtEUR(inv.outstanding_amount)}</div>
+							</label>
+							<div className="meta-row">
+								<span className="due"><Icon name="file" size={11} /> {fmtDate(inv.posting_date)}</span>
+								{checked && (
+									<span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+										zuweisen
+										<input
+											className="alloc-input"
+											type="number"
+											step="0.01"
+											value={sel[inv.name]}
+											onChange={(e) => setAlloc(inv.name, e.target.value)}
+										/>
+										€
+									</span>
+								)}
 							</div>
-							<div className="amount">{fmtEUR(inv.outstanding_amount)}</div>
-						</label>
-						<div className="meta-row">
-							<span className="due"><Icon name="file" size={11} /> {fmtDate(inv.posting_date)}</span>
-							{checked && (
-								<span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
-									zuweisen
-									<input
-										className="alloc-input"
-										type="number"
-										step="0.01"
-										value={sel[inv.name]}
-										onChange={(e) => setAlloc(inv.name, e.target.value)}
-									/>
-									€
-								</span>
-							)}
 						</div>
-					</div>
-				);
-			})}
+					);
+				})}
+			</InvoiceListToggle>
 			{remaining > 0.01 && Object.keys(sel).length > 0 && (
 				<label className="advance-toggle">
 					<input type="checkbox" checked={advance} onChange={(e) => setAdvance(e.target.checked)} />
@@ -736,39 +777,43 @@ function SplitPaymentMatch({ docname, row, onActionDone, notify }) {
 			</div>
 
 			{hasInvoices && <div className="field-label" style={{ marginTop: 10 }}>Rechnungen</div>}
-			{(data?.invoices || []).map((inv) => {
-				const checked = invoiceSel[inv.name] != null;
-				return (
-					<div key={inv.name} className={`invoice-card ${checked ? "suggested" : "alt"}`}>
-						<label className="row1" style={{ cursor: "pointer" }}>
-							<div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-								<input type="checkbox" checked={checked} onChange={() => toggleInvoice(inv)} />
-								<div>
-									<div className="doc-id">{inv.name}</div>
-									<div className="ref">{inv.remarks || "—"}</div>
+			{hasInvoices && (
+				<InvoiceListToggle invoices={data.invoices} selectedCount={Object.keys(invoiceSel).length}>
+					{data.invoices.map((inv) => {
+						const checked = invoiceSel[inv.name] != null;
+						return (
+							<div key={inv.name} className={`invoice-card ${checked ? "suggested" : "alt"}`}>
+								<label className="row1" style={{ cursor: "pointer" }}>
+									<div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+										<input type="checkbox" checked={checked} onChange={() => toggleInvoice(inv)} />
+										<div>
+											<div className="doc-id">{inv.name}</div>
+											<div className="ref">{inv.remarks || "—"}</div>
+										</div>
+									</div>
+									<div className="amount">{fmtEUR(inv.outstanding_amount)}</div>
+								</label>
+								<div className="meta-row">
+									<span className="due"><Icon name="file" size={11} /> {fmtDate(inv.posting_date)}</span>
+									{checked && (
+										<span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+											zuweisen
+											<input
+												className="alloc-input"
+												type="number"
+												step="0.01"
+												value={invoiceSel[inv.name]}
+												onChange={(e) => setInvoiceAlloc(inv.name, e.target.value)}
+											/>
+											€
+										</span>
+									)}
 								</div>
 							</div>
-							<div className="amount">{fmtEUR(inv.outstanding_amount)}</div>
-						</label>
-						<div className="meta-row">
-							<span className="due"><Icon name="file" size={11} /> {fmtDate(inv.posting_date)}</span>
-							{checked && (
-								<span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
-									zuweisen
-									<input
-										className="alloc-input"
-										type="number"
-										step="0.01"
-										value={invoiceSel[inv.name]}
-										onChange={(e) => setInvoiceAlloc(inv.name, e.target.value)}
-									/>
-									€
-								</span>
-							)}
-						</div>
-					</div>
-				);
-			})}
+						);
+					})}
+				</InvoiceListToggle>
+			)}
 
 			{hasAbschlaege && <div className="field-label" style={{ marginTop: 12 }}>Abschläge</div>}
 			{(data?.abschlaege || []).map((a) => {

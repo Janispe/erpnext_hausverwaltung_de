@@ -153,6 +153,52 @@
 .match-section .sec-label { font-size: 10.5px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
 .match-section .sec-label .badge { background: var(--surface-3); padding: 1px 7px; border-radius: 999px; font-family: var(--font-mono); font-size: 10.5px; color: var(--text); }
 
+.invoice-collapse {
+	margin-bottom: 8px;
+}
+.invoice-collapse-toggle {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	width: 100%;
+	margin: 0;
+	padding: 10px 12px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--surface-2);
+	color: var(--text);
+	font-family: var(--font-sans);
+	font-size: 12px;
+	cursor: pointer;
+}
+.invoice-collapse-toggle:hover {
+	border-color: var(--border-strong);
+	background: var(--surface-3);
+}
+.invoice-collapse-toggle span {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	min-width: 0;
+	font-weight: 650;
+}
+.invoice-collapse-toggle strong {
+	flex: 0 0 auto;
+	font-family: var(--font-mono);
+	font-size: 12px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+.invoice-collapse-note {
+	margin-top: 6px;
+	font-size: 11px;
+	color: var(--text-muted);
+}
+.invoice-collapse-list {
+	margin-top: 8px;
+}
+
 .invoice-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 8px; background: var(--surface); transition: all 0.12s; }
 .invoice-card:hover { border-color: var(--border-strong); }
 .invoice-card.suggested { border-color: var(--phase3); background: linear-gradient(180deg, var(--phase3-bg) 0%, var(--surface) 80%); }
