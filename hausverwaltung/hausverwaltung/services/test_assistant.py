@@ -103,6 +103,90 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["answer"], "Ich habe einen passenden Treffer gefunden.")
 		self.assertEqual(result["matches"][0]["mietvertrag"], "MV-1")
 
+	def test_get_mieterkonto_summary_uses_existing_report(self):
+		match = {"customer": "CUST-1", "customer_name": "Anna Schmidt", "mietvertrag": "MV-1"}
+		report_result = (
+			[],
+			[
+				{
+					"datum": "2026-01-05",
+					"beschreibung": "Miete Januar",
+					"belegart": "Sales Invoice",
+					"belegnummer": "SINV-1",
+					"betrag": 500,
+					"offen": 120,
+					"kontostand": 120,
+					"waehrung": "EUR",
+				}
+			],
+			None,
+			None,
+			[
+				{"label": "Kontostand", "value": 120, "currency": "EUR", "indicator": "Red"},
+				{"label": "Miete offen (Gesamt)", "value": 120, "currency": "EUR", "indicator": "Blue"},
+			],
+		)
+
+		with patch.object(assistant, "_require_finance_permissions"), \
+			 patch.object(assistant, "_resolve_single_mieter", return_value=match), \
+			 patch.object(assistant, "_default_company", return_value="Hausverwaltung Peters"), \
+			 patch(
+				 "hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.execute",
+				 return_value=report_result,
+			 ) as execute:
+			result = assistant.get_mieterkonto_summary("MV-1", from_date="2026-01-01", to_date="2026-01-31")
+
+		execute.assert_called_once()
+		self.assertEqual(result["match"], match)
+		self.assertEqual(result["summary"][0]["label"], "Kontostand")
+		self.assertEqual(result["summary"][0]["value"], 120)
+		self.assertEqual(result["recent_rows"][0]["belegnummer"], "SINV-1")
+
+	def test_search_open_items_returns_totals_and_compact_items(self):
+		matches = [{"customer": "CUST-1", "customer_name": "Anna Schmidt", "mietvertrag": "MV-1"}]
+		open_rows = [
+			{
+				"party": "CUST-1",
+				"belegart": "Sales Invoice",
+				"belegnummer": "SINV-1",
+				"faellig_am": "2026-01-10",
+				"buchungsdatum": "2026-01-01",
+				"rechnungsbetrag": 500,
+				"bezahlt": 300,
+				"offen": 200,
+				"alter_tage": 5,
+				"waehrung": "EUR",
+				"status": "Overdue",
+			},
+			{
+				"party": "CUST-1",
+				"belegart": "Sales Invoice",
+				"belegnummer": "SINV-2",
+				"faellig_am": "2026-02-10",
+				"buchungsdatum": "2026-02-01",
+				"rechnungsbetrag": 100,
+				"bezahlt": 0,
+				"offen": 100,
+				"waehrung": "EUR",
+				"status": "Unpaid",
+			},
+		]
+
+		with patch.object(assistant, "_require_finance_permissions"), \
+			 patch.object(assistant, "search_mieter", return_value={"matches": matches}), \
+			 patch.object(assistant, "_default_company", return_value="Hausverwaltung Peters"), \
+			 patch(
+				 "hausverwaltung.hausverwaltung.page.op_workflow.op_workflow.get_open_items",
+				 return_value={"rows": open_rows},
+			 ):
+			result = assistant.search_open_items("Schmidt", limit=1)
+
+		self.assertEqual(result["count"], 2)
+		self.assertEqual(result["returned"], 1)
+		self.assertEqual(result["total_open"], 300)
+		self.assertEqual(result["items"][0]["belegnummer"], "SINV-1")
+		self.assertEqual(result["items"][0]["route"], ["Form", "Sales Invoice", "SINV-1"])
+
 	def test_ask_reports_mistral_configuration_errors(self):
 		with patch.object(
 			assistant,

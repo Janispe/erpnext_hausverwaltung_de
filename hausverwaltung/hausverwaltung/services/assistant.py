@@ -5,7 +5,7 @@ from typing import Any
 
 import frappe
 from frappe import _
-from frappe.utils import nowdate
+from frappe.utils import flt, getdate, nowdate
 
 from hausverwaltung.hausverwaltung.services import mistral_client
 
@@ -16,7 +16,8 @@ SQL_PREFETCH_FACTOR = 4
 
 ASSISTANT_SYSTEM_PROMPT = """Du bist der interne Hausverwaltungs-Assistent.
 Du darfst nur lesen. Du darfst keine Buchungen, Briefe, Aufgaben oder sonstige Daten aendern.
-Nutze die bereitgestellten Tools fuer Mietersuche und Kontext. Erfinde keine Datensaetze.
+Nutze die bereitgestellten Tools fuer Mietersuche, Mieterkonto, Salden und offene Posten.
+Erfinde keine Datensaetze und keine Betraege.
 Wenn Treffer mehrdeutig sind, nenne die wichtigsten Treffer und frage nach einer Konkretisierung.
 Antworte knapp auf Deutsch und verweise auf die gefundenen Treffernummern, wenn vorhanden."""
 
@@ -64,11 +65,59 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 			},
 		},
 	},
+	{
+		"type": "function",
+		"function": {
+			"name": "get_mieterkonto_summary",
+			"description": "Liefert Kontostand, offene Kategorien und kompakte Bewegungen fuer einen Mieter.",
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"mietvertrag_or_customer": {
+						"type": "string",
+						"description": "Mietvertrag-Name, Customer-Name oder Suchbegriff zum Mieter.",
+					},
+					"from_date": {
+						"type": "string",
+						"description": "Optionales Startdatum YYYY-MM-DD. Default ist Jahresanfang.",
+					},
+					"to_date": {
+						"type": "string",
+						"description": "Optionales Enddatum YYYY-MM-DD. Default ist heute.",
+					},
+				},
+				"required": ["mietvertrag_or_customer"],
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": {
+			"name": "search_open_items",
+			"description": "Sucht offene Forderungen/Rechnungen zu einem Mieter oder Suchbegriff.",
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"query": {
+						"type": "string",
+						"description": "Mieter, Mietvertrag, Wohnung, Immobilie oder Customer.",
+					},
+					"limit": {
+						"type": "integer",
+						"description": "Maximale Belegzeilen, 1 bis 10.",
+					},
+				},
+				"required": ["query"],
+			},
+		},
+	},
 ]
 
 TOOL_FUNCTIONS = {
 	"search_mieter": lambda **kwargs: search_mieter(**kwargs),
 	"get_mieter_context": lambda **kwargs: get_mieter_context(**kwargs),
+	"get_mieterkonto_summary": lambda **kwargs: get_mieterkonto_summary(**kwargs),
+	"search_open_items": lambda **kwargs: search_open_items(**kwargs),
 }
 
 
@@ -267,6 +316,87 @@ def get_mieter_context(mietvertrag_or_customer: str) -> dict[str, Any]:
 	return {"match": matches[0] if matches else None, "matches": matches}
 
 
+def get_mieterkonto_summary(
+	mietvertrag_or_customer: str,
+	from_date: str | None = None,
+	to_date: str | None = None,
+) -> dict[str, Any]:
+	_require_finance_permissions()
+	match = _resolve_single_mieter(mietvertrag_or_customer)
+	if not match:
+		return {
+			"match": None,
+			"summary": [],
+			"recent_rows": [],
+			"message": "Kein eindeutiger Mieter gefunden.",
+		}
+
+	company = _default_company()
+	start, end = _resolve_date_range(from_date, to_date)
+	from hausverwaltung.hausverwaltung.report.mieterkonto import mieterkonto as report_module
+
+	result = report_module.execute(
+		{
+			"company": company,
+			"customer": match.get("customer"),
+			"from_date": start,
+			"to_date": end,
+			"show_kategorien": 1,
+			"gruppieren_pro_monat": 1,
+			"offene_betraege_basis": "Gesamt",
+		}
+	)
+	rows = result[1] if len(result) > 1 else []
+	summary = result[4] if len(result) > 4 else []
+	return {
+		"match": match,
+		"summary": _compact_report_summary(summary),
+		"recent_rows": _compact_mieterkonto_rows(rows),
+		"from_date": start,
+		"to_date": end,
+		"company": company,
+		"matches": [match],
+	}
+
+
+def search_open_items(query: str, limit: int | None = None) -> dict[str, Any]:
+	_require_finance_permissions()
+	resolved_limit = _normalize_limit(limit)
+	resolved = search_mieter(query, status="Alle", limit=3)
+	matches = resolved.get("matches") or []
+	customers = [m.get("customer") for m in matches if m.get("customer")]
+	if not customers:
+		return {"query": query, "count": 0, "total_open": 0.0, "items": [], "matches": []}
+
+	from hausverwaltung.hausverwaltung.page.op_workflow import op_workflow
+
+	response = op_workflow.get_open_items(
+		{
+			"company": _default_company(),
+			"mode": "Forderungen",
+			"party": customers,
+			"invoice_only_fast_path": 1,
+			"show_settled": 0,
+			"show_written_off": 0,
+			"sortierung": "F\u00e4llig am",
+			"gruppieren_pro_monat": 0,
+		}
+	)
+	rows = response.get("rows") or []
+	rows = sorted(rows, key=lambda r: (r.get("faellig_am") or "", r.get("party") or "", r.get("belegnummer") or ""))
+	items = [_compact_open_item_row(row) for row in rows[:resolved_limit]]
+	total_open = flt(sum(flt(row.get("offen")) for row in rows), 2)
+	return {
+		"query": query,
+		"count": len(rows),
+		"returned": len(items),
+		"total_open": total_open,
+		"currency": _first_value(rows, "waehrung"),
+		"items": items,
+		"matches": matches,
+	}
+
+
 def _get_mietvertrag_row(identifier: str) -> frappe._dict | None:
 	filters = None
 	values = {"identifier": identifier}
@@ -368,6 +498,12 @@ def _require_search_permissions() -> None:
 			frappe.throw(_("Keine Berechtigung fuer {0}.").format(doctype), frappe.PermissionError)
 
 
+def _require_finance_permissions() -> None:
+	_require_search_permissions()
+	if not frappe.has_permission("Sales Invoice", "read"):
+		frappe.throw(_("Keine Berechtigung fuer Mieterkonto oder offene Posten."), frappe.PermissionError)
+
+
 def _can_read_doc(doctype: str, name: str | None) -> bool:
 	if not name:
 		return False
@@ -384,6 +520,91 @@ def _normalize_limit(limit: int | None) -> int:
 	except (TypeError, ValueError):
 		value = 5
 	return min(max(value, 1), MAX_SEARCH_LIMIT)
+
+
+def _default_company() -> str:
+	company = frappe.defaults.get_user_default("Company") or frappe.defaults.get_global_default("company")
+	if not company:
+		frappe.throw(_("Keine Standard-Firma gesetzt."))
+	return company
+
+
+def _resolve_date_range(from_date: str | None, to_date: str | None) -> tuple[str, str]:
+	today = getdate(nowdate())
+	start = getdate(from_date) if from_date else today.replace(month=1, day=1)
+	end = getdate(to_date) if to_date else today
+	if start > end:
+		frappe.throw(_("Von darf nicht nach Bis liegen."))
+	return str(start), str(end)
+
+
+def _resolve_single_mieter(value: str) -> dict[str, Any] | None:
+	context = get_mieter_context(value)
+	match = context.get("match")
+	if isinstance(match, dict) and match.get("customer"):
+		return match
+	matches = context.get("matches") or []
+	if len(matches) == 1 and matches[0].get("customer"):
+		return matches[0]
+	return None
+
+
+def _compact_report_summary(summary: list[dict[str, Any]]) -> list[dict[str, Any]]:
+	out = []
+	for row in summary or []:
+		out.append(
+			{
+				"label": row.get("label") or "",
+				"value": flt(row.get("value"), 2),
+				"currency": row.get("currency") or "",
+				"indicator": row.get("indicator") or "",
+			}
+		)
+	return out
+
+
+def _compact_mieterkonto_rows(rows: list[dict[str, Any]], limit: int = 8) -> list[dict[str, Any]]:
+	compact = []
+	for row in rows or []:
+		if row.get("is_total_row") or row.get("is_opening_row"):
+			continue
+		compact.append(
+			{
+				"datum": row.get("datum"),
+				"beschreibung": row.get("beschreibung") or row.get("beleg") or row.get("voucher_no") or "",
+				"belegart": row.get("belegart") or row.get("voucher_type") or "",
+				"belegnummer": row.get("belegnummer") or row.get("voucher_no") or "",
+				"betrag": flt(row.get("betrag") or row.get("delta"), 2),
+				"offen": flt(row.get("offen"), 2),
+				"kontostand": flt(row.get("kontostand"), 2),
+				"waehrung": row.get("waehrung") or row.get("currency") or "",
+			}
+		)
+	return compact[-limit:]
+
+
+def _compact_open_item_row(row: dict[str, Any]) -> dict[str, Any]:
+	return {
+		"party": row.get("party") or "",
+		"belegart": row.get("belegart") or "",
+		"belegnummer": row.get("belegnummer") or "",
+		"faellig_am": row.get("faellig_am"),
+		"buchungsdatum": row.get("buchungsdatum"),
+		"rechnungsbetrag": flt(row.get("rechnungsbetrag"), 2),
+		"bezahlt": flt(row.get("bezahlt"), 2),
+		"offen": flt(row.get("offen"), 2),
+		"alter_tage": row.get("alter_tage"),
+		"waehrung": row.get("waehrung") or "",
+		"status": row.get("status") or "",
+		"bemerkungen": row.get("bemerkungen") or "",
+		"route": ["Form", row.get("belegart"), row.get("belegnummer")]
+		if row.get("belegart") and row.get("belegnummer")
+		else None,
+	}
+
+
+def _first_value(rows: list[dict[str, Any]], fieldname: str) -> Any:
+	return next((row.get(fieldname) for row in rows if row.get(fieldname)), None)
 
 
 def _sanitize_assistant_message(message: dict[str, Any]) -> dict[str, Any]:
