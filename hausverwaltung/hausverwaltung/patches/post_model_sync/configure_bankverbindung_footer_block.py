@@ -7,7 +7,6 @@ from frappe.utils import cstr
 
 
 BLOCK_NAME = "Bankverbindung Immobilie"
-TARGET_DOCTYPES = {"Mietvertrag", "Betriebskostenabrechnung Mieter", "Dunning"}
 
 TOKEN_RE = re.compile(
 	r"""
@@ -111,26 +110,25 @@ def _configure_block() -> None:
 		doc.save(ignore_permissions=True)
 
 
-def _ensure_footer_block_rows() -> None:
-	if not frappe.db.exists("DocType", "Serienbrief Vorlage"):
+def _remove_automatically_added_footer_rows() -> None:
+	if not frappe.db.exists("DocType", "Serienbrief Vorlagenbaustein"):
 		return
-	if not frappe.db.exists("Serienbrief Textbaustein", BLOCK_NAME):
-		return
-	for name in frappe.get_all(
-		"Serienbrief Vorlage",
-		filters={"haupt_verteil_objekt": ["in", sorted(TARGET_DOCTYPES)]},
+	for row in frappe.get_all(
+		"Serienbrief Vorlagenbaustein",
+		filters={"baustein": BLOCK_NAME, "baustein_key": "bankverbindung_immobilie"},
 		pluck="name",
 	):
-		doc = frappe.get_doc("Serienbrief Vorlage", name)
-		if any(cstr(getattr(row, "baustein", "") or "") == BLOCK_NAME for row in doc.get("textbausteine") or []):
-			continue
-		doc.append("textbausteine", {"baustein": BLOCK_NAME, "baustein_key": "bankverbindung_immobilie"})
-		doc.save(ignore_permissions=True)
+		frappe.delete_doc(
+			"Serienbrief Vorlagenbaustein",
+			row,
+			ignore_permissions=True,
+			force=True,
+		)
 
 
 def execute() -> None:
 	_clean_template_body_tokens()
 	_configure_block()
-	_ensure_footer_block_rows()
+	_remove_automatically_added_footer_rows()
 	frappe.clear_cache(doctype="Serienbrief Vorlage")
 	frappe.clear_cache(doctype="Serienbrief Textbaustein")
