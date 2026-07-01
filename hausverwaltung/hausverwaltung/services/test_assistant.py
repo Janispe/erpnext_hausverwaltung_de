@@ -256,20 +256,84 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			result = assistant.hv_query_docs(
 				"Mietvertrag",
 				fields=["name", "kunde", "status", "notizen", "bruttomiete"],
-				filters=[["status", "=", "Lauft"], ["von", "<=", "2026-07-01"]],
+				filters=[["status", "=", "Lauft"], ["von", "<=", "2026-07-01"], ["wohnung", "like", "VH"]],
 				order_by="von desc",
 				limit=5,
 			)
 
 		get_list.assert_called_once()
 		kwargs = get_list.call_args.kwargs
-		self.assertEqual(kwargs["filters"], [["status", "=", "Lauft"], ["von", "<=", "2026-07-01"]])
+		self.assertEqual(kwargs["filters"], [["status", "=", "Lauft"], ["von", "<=", "2026-07-01"], ["wohnung", "like", "%VH%"]])
 		self.assertEqual(kwargs["order_by"], "von desc")
 		self.assertEqual(kwargs["page_length"], 5)
 		self.assertNotIn("notizen", kwargs["fields"])
 		self.assertIn("name", kwargs["fields"])
 		self.assertIn("bruttomiete", result["fields"])
 		self.assertEqual(result["rows"][0]["name"], "MV-1")
+		self.assertEqual(result["db_filters"], [["status", "=", "Lauft"], ["von", "<=", "2026-07-01"], ["wohnung", "like", "%VH%"]])
+
+	def test_hv_query_docs_supports_nested_filters_computed_sort_and_aggregate(self):
+		rows = [
+			frappe._dict(name="MV-1", kunde="CUST-1", status="Lauft", immobilie="Gropiusstr.", wohnung="G | VH"),
+			frappe._dict(name="MV-2", kunde="CUST-2", status="Lauft", immobilie="Wilhelmshavener", wohnung="W | VH"),
+			frappe._dict(name="MV-3", kunde="CUST-3", status="Beendet", immobilie="Gropiusstr.", wohnung="G | HH"),
+		]
+		docs = {
+			"MV-1": frappe._dict(name="MV-1", bruttomiete=900),
+			"MV-2": frappe._dict(name="MV-2", bruttomiete=1200),
+			"MV-3": frappe._dict(name="MV-3", bruttomiete=1500),
+		}
+
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant.frappe, "has_permission", return_value=True), \
+			 patch.object(assistant.frappe, "get_list", return_value=rows) as get_list, \
+			 patch.object(assistant.frappe, "get_doc", side_effect=lambda _doctype, name: docs[name]):
+			result = assistant.hv_query_docs(
+				"Mietvertraege",
+				fields=["name", "kunde", "bruttomiete"],
+				filters={
+					"and": [
+						{"field": "Status", "op": "=", "value": "Lauft"},
+						{
+							"or": [
+								{"Immobilie": "%Gropius%"},
+								{"field": "wohnung", "op": "like", "value": "VH"},
+							]
+						},
+					]
+				},
+				order_by={"field": "Miete", "direction": "desc"},
+				aggregate={"op": "max", "field": "bruttomiete"},
+				limit=10,
+			)
+
+		kwargs = get_list.call_args.kwargs
+		self.assertEqual(kwargs["filters"], [])
+		self.assertEqual(kwargs["page_length"], assistant.GENERIC_CANDIDATE_LIMIT)
+		self.assertEqual([row["name"] for row in result["rows"]], ["MV-2", "MV-1"])
+		self.assertEqual(result["aggregate"], {"op": "max", "field": "bruttomiete", "value": 1200.0, "count": 2})
+		self.assertEqual(result["total_count"], 2)
+
+	def test_hv_query_docs_supports_grouped_aggregates(self):
+		rows = [
+			frappe._dict(name="SI-1", customer="CUST-1", outstanding_amount=25, status="Overdue"),
+			frappe._dict(name="SI-2", customer="CUST-1", outstanding_amount=75, status="Overdue"),
+			frappe._dict(name="SI-3", customer="CUST-2", outstanding_amount=50, status="Overdue"),
+		]
+
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant.frappe, "has_permission", return_value=True), \
+			 patch.object(assistant.frappe, "get_list", return_value=rows):
+			result = assistant.hv_query_docs(
+				"Sales Invoice",
+				fields=["name", "customer", "outstanding_amount"],
+				filters=[["status", "=", "Overdue"]],
+				aggregate={"op": "sum", "field": "outstanding_amount", "group_by": "customer"},
+				limit=10,
+			)
+
+		self.assertEqual(result["aggregate"]["groups"][0], {"key": "CUST-1", "count": 2, "value": 100.0})
+		self.assertEqual(result["aggregate"]["groups"][1], {"key": "CUST-2", "count": 1, "value": 50.0})
 
 	def test_hv_query_docs_rejects_unapproved_doctype_and_filter_field(self):
 		with patch.object(assistant, "_require_search_permissions"), \
@@ -281,6 +345,11 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			 patch.object(assistant.frappe, "has_permission", return_value=True), \
 			 self.assertRaises(frappe.ValidationError):
 			assistant.hv_query_docs("Mietvertrag", filters=[["notizen", "like", "%secret%"]])
+
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant.frappe, "has_permission", return_value=True), \
+			 self.assertRaises(frappe.ValidationError):
+			assistant.hv_query_docs("Mietvertrag", aggregate={"op": "sum", "field": "notizen"})
 
 	def test_hv_get_doc_returns_only_allowed_children(self):
 		doc = frappe._dict(

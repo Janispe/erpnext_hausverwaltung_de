@@ -14,6 +14,7 @@ MAX_TOOL_ROUNDS = 3
 MAX_SEARCH_LIMIT = 10
 SQL_PREFETCH_FACTOR = 4
 GENERIC_READ_LIMIT = 50
+GENERIC_CANDIDATE_LIMIT = 500
 
 HV_READABLE_DOCTYPES: dict[str, dict[str, Any]] = {
 	"Mietvertrag": {
@@ -71,12 +72,96 @@ HV_READABLE_DOCTYPES: dict[str, dict[str, Any]] = {
 }
 
 _ORDER_BY_RE = re.compile(r"^(?P<field>[A-Za-z0-9_]+)\s+(?P<direction>asc|desc)$", re.IGNORECASE)
+HV_FILTER_OPERATORS = {"=", "!=", ">", ">=", "<", "<=", "like", "not like", "in", "not in", "is", "between"}
+HV_AGGREGATE_OPS = {"count", "sum", "avg", "min", "max"}
+HV_DOCTYPE_ALIASES = {
+	"mietvertrag": "Mietvertrag",
+	"mietvertraege": "Mietvertrag",
+	"mietvertrage": "Mietvertrag",
+	"mietvertr\u00e4ge": "Mietvertrag",
+	"vertrag": "Mietvertrag",
+	"vertraege": "Mietvertrag",
+	"vertr\u00e4ge": "Mietvertrag",
+	"wohnung": "Wohnung",
+	"wohnungen": "Wohnung",
+	"immobilie": "Immobilie",
+	"immobilien": "Immobilie",
+	"mieter": "Customer",
+	"kunde": "Customer",
+	"kunden": "Customer",
+	"customer": "Customer",
+	"rechnung": "Sales Invoice",
+	"rechnungen": "Sales Invoice",
+	"sales invoice": "Sales Invoice",
+	"sales invoices": "Sales Invoice",
+	"offene posten": "Sales Invoice",
+}
+HV_FIELD_ALIASES: dict[str, dict[str, str]] = {
+	"Mietvertrag": {
+		"mieter": "kunde",
+		"tenant": "kunde",
+		"customer": "kunde",
+		"kunde": "kunde",
+		"objekt": "immobilie",
+		"haus": "immobilie",
+		"vertragsbeginn": "von",
+		"beginn": "von",
+		"start": "von",
+		"vertragsende": "bis",
+		"ende": "bis",
+		"end": "bis",
+		"miete": "bruttomiete",
+		"warmmiete": "bruttomiete",
+		"nettokaltmiete": "aktuelle_nettokaltmiete",
+	},
+	"Wohnung": {
+		"lage": "name__lage_in_der_immobilie",
+		"adresse": "name__lage_in_der_immobilie",
+		"objekt": "immobilie",
+		"haus": "immobilie",
+	},
+	"Immobilie": {
+		"adresse": "adresse_titel",
+		"titel": "bezeichnung",
+	},
+	"Customer": {
+		"mieter": "customer_name",
+		"name": "name",
+		"kunde": "customer_name",
+	},
+	"Sales Invoice": {
+		"mieter": "customer",
+		"kunde": "customer",
+		"betrag": "grand_total",
+		"rechnungssumme": "grand_total",
+		"offen": "outstanding_amount",
+		"saldo": "outstanding_amount",
+		"offener_betrag": "outstanding_amount",
+		"faellig": "due_date",
+		"faelligkeit": "due_date",
+		"datum": "posting_date",
+	},
+}
+HV_OPERATOR_ALIASES = {
+	"contains": "like",
+	"enthaelt": "like",
+	"enth\u00e4lt": "like",
+	"not contains": "not like",
+	"not_contains": "not like",
+	"gte": ">=",
+	"lte": "<=",
+	"gt": ">",
+	"lt": "<",
+	"after": ">",
+	"before": "<",
+}
 
 
 ASSISTANT_SYSTEM_PROMPT = """Du bist der interne Hausverwaltungs-Assistent.
 Du darfst nur lesen. Du darfst keine Buchungen, Briefe, Aufgaben oder sonstige Daten aendern.
 Nutze die bereitgestellten Tools fuer Mietersuche, Mieterkonto, Salden, offene Posten,
 Miet-Ranglisten und eingeschraenkte Hausverwaltungs-Abfragen.
+Wenn der Nutzer aktive oder laufende Mietvertraege meint, filtere Mietvertrag immer mit status = L\u00e4uft.
 Erfinde keine Datensaetze und keine Betraege.
 Wenn Treffer mehrdeutig sind, nenne die wichtigsten Treffer und frage nach einer Konkretisierung.
 Antworte knapp auf Deutsch und verweise auf die gefundenen Treffernummern, wenn vorhanden."""
@@ -200,10 +285,12 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 		"function": {
 			"name": "hv_query_docs",
 			"description": (
-				"Eingeschraenkte Readonly-Abfrage auf erlaubte Hausverwaltungs-DocTypes mit Filtern, "
-				"Feldern und Sortierung. Fuer Mietvertragslisten nutze Felder wie name, kunde, wohnung, "
+				"Erlaubter Readonly-Query-Builder fuer Hausverwaltungsdaten mit Feldern, verschachtelten "
+				"AND/OR-Filtern, Sortierung und Aggregationen. Fuer Mietvertragslisten nutze Felder wie "
+				"name, kunde, wohnung, "
 				"immobilie, status, von, bis, bruttomiete. Fuer Rechnungen/offene Posten nutze Sales Invoice "
-				"mit customer, posting_date, due_date, grand_total, outstanding_amount, status."
+				"mit customer, posting_date, due_date, grand_total, outstanding_amount, status. "
+				"Bei aktiven/laufenden Mietvertraegen immer Filter {field: status, op: =, value: L\u00e4uft} setzen."
 			),
 			"parameters": {
 				"type": "object",
@@ -218,12 +305,24 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 						"description": "Whitelist-Felder. Bei Miet-/Betragsfragen bruttomiete explizit anfordern.",
 					},
 					"filters": {
-						"type": "array",
-						"description": "Frappe-Filterliste, z.B. [[\"status\",\"=\",\"L\u00e4uft\"], [\"von\",\"<=\",\"2026-07-01\"]].",
+						"type": ["array", "object"],
+						"description": (
+							"Filterliste oder Baum. Beispiele: [[\"status\",\"=\",\"L\u00e4uft\"]] oder "
+							"{\"and\":[{\"field\":\"status\",\"op\":\"=\",\"value\":\"L\u00e4uft\"},"
+							"{\"or\":[{\"field\":\"immobilie\",\"like\":\"%Gropius%\"},"
+							"{\"field\":\"wohnung\",\"like\":\"%2.OG%\"}]}]}."
+						),
 					},
 					"order_by": {
-						"type": "string",
-						"description": "Optional '<field> asc|desc' auf erlaubtem Feld.",
+						"type": ["string", "object"],
+						"description": "Optional '<field> asc|desc' oder {\"field\":\"bruttomiete\",\"direction\":\"desc\"}.",
+					},
+					"aggregate": {
+						"type": "object",
+						"description": (
+							"Optional: {\"op\":\"count\"} oder op sum/avg/min/max mit field, "
+							"optional group_by auf erlaubtem Feld."
+						),
 					},
 					"limit": {
 						"type": "integer",
@@ -621,35 +720,53 @@ def rank_mieter_by_rent(
 def hv_query_docs(
 	doctype: str,
 	fields: list[str] | str | None = None,
-	filters: list | str | None = None,
-	order_by: str | None = None,
+	filters: list | dict | str | None = None,
+	order_by: str | dict | None = None,
+	aggregate: dict | str | None = None,
 	limit: int | None = None,
 ) -> dict[str, Any]:
 	_require_search_permissions()
 	dt = _normalize_hv_doctype(doctype)
-	allowed = HV_READABLE_DOCTYPES[dt]
 	selected_fields = _safe_hv_fields(dt, fields)
-	normal_filters = _safe_hv_filters(dt, filters)
-	normal_order_by = _safe_hv_order_by(dt, order_by)
+	filter_tree = _safe_hv_filter_tree(dt, filters)
+	order_spec = _safe_hv_order_spec(dt, order_by)
+	aggregate_spec = _safe_hv_aggregate(dt, aggregate)
 	resolved_limit = _normalize_generic_limit(limit)
 
-	db_fields = [field for field in selected_fields if field in allowed.get("fields", set())]
-	if "name" not in db_fields:
-		db_fields.insert(0, "name")
+	db_filters = _db_filters_from_filter_tree(dt, filter_tree)
+	needs_local_filter = bool(filter_tree and not db_filters)
+	needs_local_sort = bool(order_spec.get("local_field"))
+	needs_local_aggregate = bool(aggregate_spec)
+	page_length = GENERIC_CANDIDATE_LIMIT if needs_local_filter or needs_local_sort or needs_local_aggregate else resolved_limit
+	db_fields = _hv_db_fields_for_query(dt, selected_fields, filter_tree, order_spec, aggregate_spec)
 	rows = frappe.get_list(
 		dt,
-		filters=normal_filters,
+		filters=db_filters,
 		fields=db_fields,
-		order_by=normal_order_by,
-		page_length=resolved_limit,
+		order_by=order_spec["db_order_by"],
+		page_length=page_length,
 	)
-	data = [_augment_hv_row(dt, dict(row), selected_fields) for row in rows]
+	computed_fields = _hv_computed_fields_for_query(dt, selected_fields, filter_tree, order_spec, aggregate_spec)
+	working_rows = [_augment_hv_row(dt, dict(row), computed_fields) for row in rows]
+	if needs_local_filter:
+		working_rows = [row for row in working_rows if _row_matches_filter_tree(row, filter_tree)]
+	if needs_local_sort:
+		working_rows.sort(
+			key=lambda row: _sort_value(row.get(order_spec["local_field"])),
+			reverse=order_spec["direction"] == "desc",
+		)
+	aggregate_result = _aggregate_hv_rows(working_rows, aggregate_spec)
+	data = [_trim_hv_row(row, selected_fields) for row in working_rows[:resolved_limit]]
 	return {
 		"doctype": dt,
 		"fields": selected_fields,
-		"filters": normal_filters,
-		"order_by": normal_order_by,
+		"filters": filter_tree,
+		"db_filters": db_filters,
+		"order_by": order_spec["order_by"],
+		"aggregate": aggregate_result,
 		"count": len(data),
+		"total_count": len(working_rows),
+		"candidate_limit": page_length,
 		"rows": data,
 	}
 
@@ -926,6 +1043,14 @@ def _rent_amounts_for_contract(doc) -> dict[str, float]:
 def _normalize_hv_doctype(doctype: str) -> str:
 	dt = (doctype or "").strip()
 	if dt not in HV_READABLE_DOCTYPES:
+		lower = dt.lower()
+		for candidate in HV_READABLE_DOCTYPES:
+			if candidate.lower() == lower:
+				dt = candidate
+				break
+		else:
+			dt = HV_DOCTYPE_ALIASES.get(lower, dt)
+	if dt not in HV_READABLE_DOCTYPES:
 		frappe.throw(_("DocType ist fuer den Assistenten nicht freigegeben: {0}").format(dt or "-"))
 	if not frappe.has_permission(dt, "read"):
 		frappe.throw(_("Keine Berechtigung fuer {0}.").format(dt), frappe.PermissionError)
@@ -960,7 +1085,7 @@ def _safe_hv_fields(doctype: str, fields: list[str] | str | None) -> list[str]:
 		frappe.throw(_("fields muss eine Liste sein."))
 	out = []
 	for raw in parsed:
-		field = (raw or "").strip()
+		field = _normalize_hv_field(doctype, raw)
 		if field and field in all_allowed and field not in out:
 			out.append(field)
 	if "name" not in out:
@@ -968,48 +1093,405 @@ def _safe_hv_fields(doctype: str, fields: list[str] | str | None) -> list[str]:
 	return out
 
 
-def _safe_hv_filters(doctype: str, filters: list | str | None) -> list:
+def _normalize_hv_field(doctype: str, fieldname: Any) -> str:
+	raw = str(fieldname or "").strip()
+	if not raw:
+		return ""
+	allowed = _hv_allowed_query_fields(doctype)
+	if raw in allowed:
+		return raw
+	lower = raw.lower()
+	for field in allowed:
+		if field.lower() == lower:
+			return field
+	alias = HV_FIELD_ALIASES.get(doctype, {}).get(lower)
+	if alias and alias in allowed:
+		return alias
+	return raw
+
+
+def _normalize_hv_operator(op: Any) -> str:
+	text = str(op or "").strip().lower()
+	return HV_OPERATOR_ALIASES.get(text, text)
+
+
+def _safe_hv_filter_tree(doctype: str, filters: list | dict | str | None) -> dict[str, Any] | None:
 	parsed = _parse_jsonish(filters)
 	if parsed in (None, "", []):
-		return []
+		return None
 	if isinstance(parsed, dict):
-		parsed = [[key, "=", value] for key, value in parsed.items()]
-	if not isinstance(parsed, list):
-		frappe.throw(_("filters muss eine Liste sein."))
-	allowed_fields = set(HV_READABLE_DOCTYPES[doctype].get("fields", set()))
-	allowed_ops = {"=", "!=", ">", ">=", "<", "<=", "like", "not like", "in", "not in", "is", "between"}
+		return _safe_hv_filter_node(doctype, parsed)
+	if isinstance(parsed, list):
+		if _looks_like_filter_leaf(parsed):
+			return _safe_hv_filter_leaf(doctype, parsed)
+		return {"op": "and", "items": [_safe_hv_filter_node(doctype, item) for item in parsed]}
+	frappe.throw(_("filters muss eine Liste oder ein Objekt sein."))
+
+
+def _safe_hv_filter_node(doctype: str, node: Any) -> dict[str, Any]:
+	if isinstance(node, dict):
+		if "and" in node or "or" in node:
+			bool_key = "and" if "and" in node else "or"
+			items = node.get(bool_key)
+			if not isinstance(items, list) or not items:
+				frappe.throw(_("Filtergruppe muss eine nicht leere Liste enthalten."))
+			return {"op": bool_key, "items": [_safe_hv_filter_node(doctype, item) for item in items]}
+		if "field" in node:
+			field = node.get("field")
+			op = node.get("op") or node.get("operator") or _operator_from_filter_dict(node)
+			value = node.get("value") if "value" in node else node.get(op)
+			return _safe_hv_filter_leaf(doctype, [field, op, value])
+		return {
+			"op": "and",
+			"items": [_safe_hv_filter_from_mapping_item(doctype, field, value) for field, value in node.items()],
+		}
+	if isinstance(node, list | tuple):
+		if _looks_like_filter_leaf(node):
+			return _safe_hv_filter_leaf(doctype, node)
+		return {"op": "and", "items": [_safe_hv_filter_node(doctype, item) for item in node]}
+	frappe.throw(_("Filter muss eine Liste oder ein Objekt sein."))
+
+
+def _operator_from_filter_dict(node: dict[str, Any]) -> str:
+	for op in set(HV_FILTER_OPERATORS) | set(HV_OPERATOR_ALIASES):
+		if op in node:
+			return op
+	frappe.throw(_("Filteroperator fehlt."))
+
+
+def _safe_hv_filter_from_mapping_item(doctype: str, field: str, value: Any) -> dict[str, Any]:
+	if isinstance(value, dict):
+		op = _operator_from_filter_dict(value)
+		return _safe_hv_filter_leaf(doctype, [field, op, value.get(op)])
+	if isinstance(value, str) and ("%" in value or "_" in value):
+		return _safe_hv_filter_leaf(doctype, [field, "like", value])
+	return _safe_hv_filter_leaf(doctype, [field, "=", value])
+
+
+def _looks_like_filter_leaf(value: list | tuple) -> bool:
+	return len(value) in (3, 4) and isinstance(value[0], str) and isinstance(value[-2], str)
+
+
+def _safe_hv_filter_leaf(doctype: str, item: list | tuple) -> dict[str, Any]:
+	if len(item) == 3:
+		field, op, value = item
+	elif len(item) == 4 and item[0] == doctype:
+		_filter_doctype, field, op, value = item
+	else:
+		frappe.throw(_("Filter muss [field, op, value] sein."))
+	field = _normalize_hv_field(doctype, field)
+	op = _normalize_hv_operator(op)
+	if not field or field not in _hv_allowed_query_fields(doctype):
+		frappe.throw(_("Filterfeld nicht erlaubt: {0}").format(field))
+	if op not in HV_FILTER_OPERATORS:
+		frappe.throw(_("Filteroperator nicht erlaubt: {0}").format(op))
+	return {"field": field, "op": op, "value": value}
+
+
+def _db_filters_from_filter_tree(doctype: str, filter_tree: dict[str, Any] | None) -> list:
+	if not filter_tree or not _is_simple_db_filter_tree(doctype, filter_tree):
+		return []
+	return [_db_filter_from_leaf(leaf) for leaf in _filter_tree_leaves(filter_tree)]
+
+
+def _db_filter_from_leaf(leaf: dict[str, Any]) -> list:
+	value = leaf["value"]
+	if leaf["op"] in {"like", "not like"} and isinstance(value, str) and "%" not in value and "_" not in value:
+		value = f"%{value}%"
+	return [leaf["field"], leaf["op"], value]
+
+
+def _is_simple_db_filter_tree(doctype: str, node: dict[str, Any]) -> bool:
+	if "field" in node:
+		return node["field"] in HV_READABLE_DOCTYPES[doctype].get("fields", set())
+	if node.get("op") != "and":
+		return False
+	return all(_is_simple_db_filter_tree(doctype, item) for item in node.get("items") or [])
+
+
+def _filter_tree_leaves(node: dict[str, Any] | None) -> list[dict[str, Any]]:
+	if not node:
+		return []
+	if "field" in node:
+		return [node]
 	out = []
-	for item in parsed:
-		if not isinstance(item, list | tuple):
-			frappe.throw(_("Jeder Filter muss eine Liste sein."))
-		if len(item) == 3:
-			field, op, value = item
-		elif len(item) == 4 and item[0] == doctype:
-			_filter_doctype, field, op, value = item
-		else:
-			frappe.throw(_("Filter muss [field, op, value] sein."))
-		field = (field or "").strip()
-		op = (op or "").strip().lower()
-		if field not in allowed_fields:
-			frappe.throw(_("Filterfeld nicht erlaubt: {0}").format(field))
-		if op not in allowed_ops:
-			frappe.throw(_("Filteroperator nicht erlaubt: {0}").format(op))
-		out.append([field, op, value])
+	for item in node.get("items") or []:
+		out.extend(_filter_tree_leaves(item))
 	return out
 
 
-def _safe_hv_order_by(doctype: str, order_by: str | None) -> str:
-	text = (order_by or "").strip()
+def _safe_hv_order_spec(doctype: str, order_by: str | dict | None) -> dict[str, Any]:
+	if isinstance(order_by, str) and order_by.strip().startswith(("{", "[")):
+		parsed = _parse_jsonish(order_by)
+	else:
+		parsed = order_by
+	text = ""
+	if isinstance(parsed, dict):
+		field = (parsed.get("field") or "").strip()
+		direction = (parsed.get("direction") or parsed.get("order") or "asc").strip().lower()
+	elif parsed is None:
+		field = ""
+		direction = ""
+	else:
+		text = str(parsed or "").strip()
+		field = ""
+		direction = ""
 	if not text:
-		return "modified desc" if "modified" in HV_READABLE_DOCTYPES[doctype].get("fields", set()) else "name asc"
-	match = _ORDER_BY_RE.match(text)
-	if not match:
-		frappe.throw(_("Sortierung muss '<field> asc|desc' sein."))
-	field = match.group("field")
-	direction = match.group("direction").lower()
-	if field not in HV_READABLE_DOCTYPES[doctype].get("fields", set()):
+		if field and direction:
+			pass
+		else:
+			default = "modified desc" if "modified" in HV_READABLE_DOCTYPES[doctype].get("fields", set()) else "name asc"
+			match = _ORDER_BY_RE.match(default)
+			field = match.group("field")
+			direction = match.group("direction").lower()
+	else:
+		match = _ORDER_BY_RE.match(text)
+		if not match:
+			frappe.throw(_("Sortierung muss '<field> asc|desc' sein."))
+		field = match.group("field")
+		direction = match.group("direction").lower()
+	if direction not in {"asc", "desc"}:
+		frappe.throw(_("Sortierrichtung muss asc oder desc sein."))
+	field = _normalize_hv_field(doctype, field)
+	if field not in _hv_allowed_query_fields(doctype):
 		frappe.throw(_("Sortierfeld nicht erlaubt: {0}").format(field))
-	return f"{field} {direction}"
+	if field in HV_READABLE_DOCTYPES[doctype].get("fields", set()):
+		return {"order_by": f"{field} {direction}", "db_order_by": f"{field} {direction}", "local_field": None, "direction": direction}
+	default_order = "modified desc" if "modified" in HV_READABLE_DOCTYPES[doctype].get("fields", set()) else "name asc"
+	return {"order_by": f"{field} {direction}", "db_order_by": default_order, "local_field": field, "direction": direction}
+
+
+def _safe_hv_aggregate(doctype: str, aggregate: dict | str | None) -> dict[str, Any] | None:
+	if isinstance(aggregate, str) and aggregate.strip().startswith("{"):
+		parsed = _parse_jsonish(aggregate)
+	else:
+		parsed = aggregate
+	if parsed in (None, "", {}):
+		return None
+	if isinstance(parsed, str):
+		parsed = {"op": parsed}
+	if not isinstance(parsed, dict):
+		frappe.throw(_("aggregate muss ein Objekt sein."))
+	op = (parsed.get("op") or parsed.get("operation") or "").strip().lower()
+	if op not in HV_AGGREGATE_OPS:
+		frappe.throw(_("Aggregation nicht erlaubt: {0}").format(op or "-"))
+	field = _normalize_hv_field(doctype, parsed.get("field")) if parsed.get("field") else ""
+	group_by = _normalize_hv_field(doctype, parsed.get("group_by")) if parsed.get("group_by") else ""
+	if op != "count" and field not in _hv_allowed_query_fields(doctype):
+		frappe.throw(_("Aggregationsfeld nicht erlaubt: {0}").format(field or "-"))
+	if group_by and group_by not in _hv_allowed_query_fields(doctype):
+		frappe.throw(_("Gruppierungsfeld nicht erlaubt: {0}").format(group_by))
+	return {"op": op, "field": field or None, "group_by": group_by or None}
+
+
+def _hv_allowed_query_fields(doctype: str) -> set[str]:
+	return set(HV_READABLE_DOCTYPES[doctype].get("fields", set())) | set(
+		HV_READABLE_DOCTYPES[doctype].get("computed_fields", set())
+	)
+
+
+def _hv_db_fields_for_query(
+	doctype: str,
+	selected_fields: list[str],
+	filter_tree: dict[str, Any] | None,
+	order_spec: dict[str, Any],
+	aggregate_spec: dict[str, Any] | None,
+) -> list[str]:
+	db_allowed = set(HV_READABLE_DOCTYPES[doctype].get("fields", set()))
+	fields = []
+	for field in selected_fields:
+		if field in db_allowed:
+			fields.append(field)
+	for leaf in _filter_tree_leaves(filter_tree):
+		if leaf["field"] in db_allowed:
+			fields.append(leaf["field"])
+	if order_spec.get("local_field") in db_allowed:
+		fields.append(order_spec["local_field"])
+	db_order_field = str(order_spec.get("db_order_by") or "").split(" ", 1)[0]
+	if db_order_field in db_allowed:
+		fields.append(db_order_field)
+	if aggregate_spec:
+		for field in (aggregate_spec.get("field"), aggregate_spec.get("group_by")):
+			if field in db_allowed:
+				fields.append(field)
+	if "name" not in fields:
+		fields.insert(0, "name")
+	return list(dict.fromkeys(fields))
+
+
+def _hv_computed_fields_for_query(
+	doctype: str,
+	selected_fields: list[str],
+	filter_tree: dict[str, Any] | None,
+	order_spec: dict[str, Any],
+	aggregate_spec: dict[str, Any] | None,
+) -> list[str]:
+	computed = set(HV_READABLE_DOCTYPES[doctype].get("computed_fields", set()))
+	fields = [field for field in selected_fields if field in computed]
+	fields.extend(leaf["field"] for leaf in _filter_tree_leaves(filter_tree) if leaf["field"] in computed)
+	if order_spec.get("local_field") in computed:
+		fields.append(order_spec["local_field"])
+	if aggregate_spec:
+		for field in (aggregate_spec.get("field"), aggregate_spec.get("group_by")):
+			if field in computed:
+				fields.append(field)
+	return list(dict.fromkeys(fields))
+
+
+def _trim_hv_row(row: dict[str, Any], selected_fields: list[str]) -> dict[str, Any]:
+	out = {field: row.get(field) for field in selected_fields if field in row}
+	if "name" not in out:
+		out["name"] = row.get("name")
+	return out
+
+
+def _row_matches_filter_tree(row: dict[str, Any], node: dict[str, Any] | None) -> bool:
+	if not node:
+		return True
+	if "field" in node:
+		return _row_matches_filter_leaf(row, node)
+	items = node.get("items") or []
+	if node.get("op") == "or":
+		return any(_row_matches_filter_tree(row, item) for item in items)
+	return all(_row_matches_filter_tree(row, item) for item in items)
+
+
+def _row_matches_filter_leaf(row: dict[str, Any], leaf: dict[str, Any]) -> bool:
+	current = row.get(leaf["field"])
+	op = leaf["op"]
+	expected = leaf.get("value")
+	if op == "=":
+		return _coerce_compare_value(current) == _coerce_compare_value(expected)
+	if op == "!=":
+		return _coerce_compare_value(current) != _coerce_compare_value(expected)
+	if op == "like":
+		return _value_like(current, expected)
+	if op == "not like":
+		return not _value_like(current, expected)
+	if op == "in":
+		values = expected if isinstance(expected, list | tuple | set) else [expected]
+		return _coerce_compare_value(current) in {_coerce_compare_value(value) for value in values}
+	if op == "not in":
+		values = expected if isinstance(expected, list | tuple | set) else [expected]
+		return _coerce_compare_value(current) not in {_coerce_compare_value(value) for value in values}
+	if op == "between":
+		if not isinstance(expected, list | tuple) or len(expected) != 2:
+			return False
+		return _compare_order(current, expected[0]) >= 0 and _compare_order(current, expected[1]) <= 0
+	if op == "is":
+		text = str(expected or "").strip().lower()
+		if text in {"set", "not null"}:
+			return current not in (None, "")
+		if text in {"not set", "null"}:
+			return current in (None, "")
+		return _coerce_compare_value(current) == _coerce_compare_value(expected)
+	if op == ">":
+		return _compare_order(current, expected) > 0
+	if op == ">=":
+		return _compare_order(current, expected) >= 0
+	if op == "<":
+		return _compare_order(current, expected) < 0
+	if op == "<=":
+		return _compare_order(current, expected) <= 0
+	return False
+
+
+def _coerce_compare_value(value: Any) -> Any:
+	if value is None:
+		return None
+	if hasattr(value, "isoformat"):
+		return value.isoformat()
+	text = str(value)
+	if re.match(r"^-?\d+(\.\d+)?$", text.strip()):
+		return flt(text)
+	return text.lower()
+
+
+def _compare_order(left: Any, right: Any) -> int:
+	left_value = _coerce_compare_value(left)
+	right_value = _coerce_compare_value(right)
+	if left_value is None and right_value is None:
+		return 0
+	if left_value is None:
+		return -1
+	if right_value is None:
+		return 1
+	try:
+		if left_value < right_value:
+			return -1
+		if left_value > right_value:
+			return 1
+		return 0
+	except TypeError:
+		left_text = str(left_value)
+		right_text = str(right_value)
+		return (left_text > right_text) - (left_text < right_text)
+
+
+def _value_like(current: Any, expected: Any) -> bool:
+	pattern = str(expected or "")
+	if "%" not in pattern and "_" not in pattern:
+		pattern = f"%{pattern}%"
+	regex = "^" + re.escape(pattern).replace("%", ".*").replace("_", ".") + "$"
+	return re.search(regex, str(current or ""), flags=re.IGNORECASE) is not None
+
+
+def _sort_value(value: Any) -> tuple[int, Any]:
+	if value in (None, ""):
+		return (1, "")
+	return (0, _coerce_compare_value(value))
+
+
+def _aggregate_hv_rows(rows: list[dict[str, Any]], aggregate_spec: dict[str, Any] | None) -> dict[str, Any] | None:
+	if not aggregate_spec:
+		return None
+	op = aggregate_spec["op"]
+	field = aggregate_spec.get("field")
+	group_by = aggregate_spec.get("group_by")
+	if group_by:
+		return _aggregate_hv_groups(rows, op, field, group_by)
+	if op == "count":
+		return {"op": op, "value": len(rows)}
+	values = [flt(row.get(field)) for row in rows if row.get(field) not in (None, "")]
+	if not values:
+		return {"op": op, "field": field, "value": 0}
+	if op == "sum":
+		value = sum(values)
+	elif op == "avg":
+		value = sum(values) / len(values)
+	elif op == "min":
+		value = min(values)
+	else:
+		value = max(values)
+	return {"op": op, "field": field, "value": flt(value, 2), "count": len(values)}
+
+
+def _aggregate_hv_groups(rows: list[dict[str, Any]], op: str, field: str | None, group_by: str) -> dict[str, Any]:
+	groups: dict[str, dict[str, Any]] = {}
+	for row in rows:
+		key = str(row.get(group_by) or "-")
+		group = groups.setdefault(key, {"key": key, "count": 0, "values": []})
+		group["count"] += 1
+		if field and row.get(field) not in (None, ""):
+			group["values"].append(flt(row.get(field)))
+	out = []
+	for group in groups.values():
+		values = group.pop("values")
+		if op == "count":
+			group["value"] = group["count"]
+		elif not values:
+			group["value"] = 0
+		elif op == "sum":
+			group["value"] = flt(sum(values), 2)
+		elif op == "avg":
+			group["value"] = flt(sum(values) / len(values), 2)
+		elif op == "min":
+			group["value"] = flt(min(values), 2)
+		else:
+			group["value"] = flt(max(values), 2)
+		out.append(group)
+	out.sort(key=lambda group: flt(group.get("value")), reverse=True)
+	return {"op": op, "field": field, "group_by": group_by, "groups": out[:20], "group_count": len(out)}
 
 
 def _augment_hv_row(doctype: str, row: dict[str, Any], selected_fields: list[str]) -> dict[str, Any]:
