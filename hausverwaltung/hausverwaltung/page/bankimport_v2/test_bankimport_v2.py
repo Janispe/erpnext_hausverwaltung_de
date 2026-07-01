@@ -58,6 +58,8 @@ class _OverviewRow:
 		self.journal_entry = None
 		self.payment_document = "PE-CANCELLED"
 		self.payment_document_type = "Payment Entry"
+		self.party_rule = None
+		self.booking_rule = None
 		self.row_status = "success"
 		self.error = None
 		self.auto_match_message = ""
@@ -76,6 +78,8 @@ class _OverviewRow:
 			"bank_transaction": self.bank_transaction,
 			"party_type": self.party_type,
 			"party": self.party,
+			"party_rule": self.party_rule,
+			"booking_rule": self.booking_rule,
 			"row_status": self.row_status,
 			"error": self.error,
 		}
@@ -865,6 +869,8 @@ class TestGetOverviewSync(unittest.TestCase):
 		done.payment_entry = "PE-1"
 		done.payment_document = "PE-1"
 		done.payment_document_type = "Payment Entry"
+		done.party_rule = "party.unique_iban_to_party"
+		done.booking_rule = "booking.invoice_auto_match"
 		done.row_status = "success"
 
 		doc = _OverviewDoc(incoming)
@@ -885,6 +891,8 @@ class TestGetOverviewSync(unittest.TestCase):
 		self.assertEqual(rows["ROW-IN"]["betrag"], 625.0)
 		self.assertEqual(rows["ROW-OUT"]["betrag"], -89.9)
 		self.assertEqual(rows["ROW-DONE"]["betrag"], 100.0)
+		self.assertEqual(rows["ROW-DONE"]["partyRule"], "party.unique_iban_to_party")
+		self.assertEqual(rows["ROW-DONE"]["bookingRule"], "booking.invoice_auto_match")
 		self.assertEqual(res["phaseCounts"], {1: 0, 2: 1, 3: 1, 4: 1})
 		self.assertEqual(rows["ROW-OUT"]["rowStatus"], "phase2-no-bt")
 		self.assertEqual(rows["ROW-DONE"]["rowStatus"], "done")

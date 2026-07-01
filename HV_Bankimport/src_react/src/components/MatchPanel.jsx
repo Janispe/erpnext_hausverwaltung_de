@@ -135,6 +135,8 @@ function AuditTrail({ row }) {
 	const items = [
 		audit.row && (audit.row.createdBy || audit.row.createdAt),
 		audit.party || (assignment.by || assignment.at || assignment.source),
+		audit.partyRule,
+		audit.bookingRule,
 		audit.bankTransaction,
 		audit.paymentDocument,
 	];
@@ -169,6 +171,16 @@ function AuditTrail({ row }) {
 						actor={assignment.by}
 						at={assignment.at}
 						source={assignment.source}
+					/>
+					<AuditItem
+						label="Party-Regel"
+						doc={audit.partyRule}
+						onOpen={() => audit.partyRule && api.openDoc(audit.partyRule.doctype, audit.partyRule.name)}
+					/>
+					<AuditItem
+						label="Buchungsregel"
+						doc={audit.bookingRule}
+						onOpen={() => audit.bookingRule && api.openDoc(audit.bookingRule.doctype, audit.bookingRule.name)}
 					/>
 					<AuditItem
 						label="Bank-Transaktion"
