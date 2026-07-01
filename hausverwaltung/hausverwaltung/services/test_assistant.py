@@ -93,6 +93,9 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		}
 
 		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant, "_get_or_create_conversation", return_value=frappe._dict(name="CONV-1")), \
+			 patch.object(assistant, "_load_conversation_history", return_value=[]), \
+			 patch.object(assistant, "_store_conversation_message"), \
 			 patch.object(assistant, "search_mieter", return_value=search_result) as search_mieter, \
 			 patch.object(mistral_client, "complete_chat", side_effect=[tool_response, final_response]):
 			result = assistant.run_assistant("suche mieter schmidt")
@@ -102,6 +105,29 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertTrue(result["read_only"])
 		self.assertEqual(result["answer"], "Ich habe einen passenden Treffer gefunden.")
 		self.assertEqual(result["matches"][0]["mietvertrag"], "MV-1")
+
+	def test_run_assistant_uses_conversation_history_and_stores_messages(self):
+		final_response = {"content": "Das ist die Folgeantwort."}
+		conversation = frappe._dict(name="CONV-1")
+		history = [
+			{"role": "user", "content": "alte Frage"},
+			{"role": "assistant", "content": "alte Antwort"},
+		]
+
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant, "_get_or_create_conversation", return_value=conversation), \
+			 patch.object(assistant, "_load_conversation_history", return_value=history), \
+			 patch.object(assistant, "_store_conversation_message") as store_message, \
+			 patch.object(mistral_client, "complete_chat", return_value=final_response) as complete_chat:
+			result = assistant.run_assistant("und jetzt?", conversation_id="CONV-1")
+
+		messages = complete_chat.call_args.kwargs["messages"]
+		self.assertEqual(messages[1:3], history)
+		self.assertIn("und jetzt?", messages[3]["content"])
+		self.assertEqual(result["conversation_id"], "CONV-1")
+		self.assertEqual(store_message.call_count, 2)
+		store_message.assert_any_call("CONV-1", "user", "und jetzt?")
+		store_message.assert_any_call("CONV-1", "assistant", "Das ist die Folgeantwort.", tool_names=[], matches=[])
 
 	def test_get_mieterkonto_summary_uses_existing_report(self):
 		match = {"customer": "CUST-1", "customer_name": "Anna Schmidt", "mietvertrag": "MV-1"}

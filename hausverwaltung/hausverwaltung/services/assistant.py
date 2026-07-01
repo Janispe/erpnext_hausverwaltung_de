@@ -6,7 +6,7 @@ from typing import Any
 
 import frappe
 from frappe import _
-from frappe.utils import flt, getdate, nowdate
+from frappe.utils import flt, getdate, now_datetime, nowdate
 
 from hausverwaltung.hausverwaltung.services import mistral_client
 
@@ -15,6 +15,10 @@ MAX_SEARCH_LIMIT = 10
 SQL_PREFETCH_FACTOR = 4
 GENERIC_READ_LIMIT = 50
 GENERIC_CANDIDATE_LIMIT = 500
+CONVERSATION_HISTORY_LIMIT = 10
+CONVERSATION_LIST_LIMIT = 30
+CONVERSATION_MESSAGE_LIMIT = 100
+STORED_MATCH_LIMIT = 10
 
 HV_READABLE_DOCTYPES: dict[str, dict[str, Any]] = {
 	"Mietvertrag": {
@@ -380,14 +384,49 @@ def ask(message: str, conversation_id: str | None = None) -> dict[str, Any]:
 		frappe.throw(_("Mistral-Aufruf fehlgeschlagen, bitte spaeter erneut versuchen: {0}").format(exc))
 
 
+@frappe.whitelist()
+def list_conversations(limit: int | None = None) -> list[dict[str, Any]]:
+	_require_search_permissions()
+	resolved_limit = _normalize_conversation_limit(limit or CONVERSATION_LIST_LIMIT, CONVERSATION_LIST_LIMIT)
+	rows = frappe.get_all(
+		"Hausverwaltung Assistant Conversation",
+		filters={"user": frappe.session.user, "status": ["!=", "Archived"]},
+		fields=["name", "title", "last_message_on", "message_count", "status"],
+		order_by="last_message_on desc, modified desc",
+		limit=resolved_limit,
+	)
+	return [dict(row) for row in rows]
+
+
+@frappe.whitelist()
+def get_conversation(conversation_id: str) -> dict[str, Any]:
+	_require_search_permissions()
+	conversation = _get_owned_conversation(conversation_id)
+	rows = frappe.get_all(
+		"Hausverwaltung Assistant Message",
+		filters={"conversation": conversation.name, "user": frappe.session.user},
+		fields=["role", "content", "tool_names", "matches_json", "creation"],
+		order_by="creation asc",
+		limit=CONVERSATION_MESSAGE_LIMIT,
+	)
+	return {
+		"name": conversation.name,
+		"title": conversation.title,
+		"messages": [_conversation_message_row(row) for row in rows],
+	}
+
+
 def run_assistant(message: str, conversation_id: str | None = None) -> dict[str, Any]:
 	user_message = (message or "").strip()
 	if not user_message:
 		frappe.throw(_("Bitte eine Frage oder Suche eingeben."))
 	_require_search_permissions()
+	conversation = _get_or_create_conversation(conversation_id, user_message)
+	history_messages = _load_conversation_history(conversation.name)
 
 	messages: list[dict[str, Any]] = [
 		{"role": "system", "content": ASSISTANT_SYSTEM_PROMPT},
+		*history_messages,
 		{
 			"role": "user",
 			"content": (
@@ -437,9 +476,17 @@ def run_assistant(message: str, conversation_id: str | None = None) -> dict[str,
 
 	answer = _message_content(final_message) or _fallback_answer(matches)
 	deduped_matches = _dedupe_matches(matches)
+	_store_conversation_message(conversation.name, "user", user_message)
+	_store_conversation_message(
+		conversation.name,
+		"assistant",
+		answer,
+		tool_names=tool_names,
+		matches=deduped_matches,
+	)
 	_log_assistant_call(
 		message_chars=len(user_message),
-		conversation_id=conversation_id,
+		conversation_id=conversation.name,
 		tool_names=tool_names,
 		result_count=len(deduped_matches),
 	)
@@ -447,10 +494,120 @@ def run_assistant(message: str, conversation_id: str | None = None) -> dict[str,
 		"ok": True,
 		"answer": answer,
 		"matches": deduped_matches,
-		"conversation_id": conversation_id or "",
+		"conversation_id": conversation.name,
 		"tool_names": tool_names,
 		"read_only": True,
 	}
+
+
+def _get_or_create_conversation(conversation_id: str | None, first_message: str):
+	if (conversation_id or "").strip():
+		return _get_owned_conversation(conversation_id)
+	title = _conversation_title(first_message)
+	doc = frappe.get_doc(
+		{
+			"doctype": "Hausverwaltung Assistant Conversation",
+			"title": title,
+			"user": frappe.session.user,
+			"status": "Open",
+			"last_message_on": now_datetime(),
+			"message_count": 0,
+		}
+	)
+	doc.insert(ignore_permissions=True)
+	return doc
+
+
+def _get_owned_conversation(conversation_id: str | None):
+	name = (conversation_id or "").strip()
+	if not name:
+		frappe.throw(_("Conversation fehlt."))
+	if not frappe.db.exists("Hausverwaltung Assistant Conversation", name):
+		frappe.throw(_("Conversation nicht gefunden."))
+	doc = frappe.get_doc("Hausverwaltung Assistant Conversation", name)
+	if getattr(doc, "user", None) != frappe.session.user:
+		frappe.throw(_("Keine Berechtigung fuer diese Conversation."), frappe.PermissionError)
+	return doc
+
+
+def _conversation_title(message: str) -> str:
+	text = " ".join((message or "").split())
+	if not text:
+		return "Neue Unterhaltung"
+	return text[:77] + "..." if len(text) > 80 else text
+
+
+def _load_conversation_history(conversation_id: str) -> list[dict[str, str]]:
+	rows = frappe.get_all(
+		"Hausverwaltung Assistant Message",
+		filters={"conversation": conversation_id, "user": frappe.session.user},
+		fields=["role", "content"],
+		order_by="creation desc",
+		limit=CONVERSATION_HISTORY_LIMIT,
+	)
+	messages = []
+	for row in reversed(rows):
+		role = row.get("role")
+		content = (row.get("content") or "").strip()
+		if role in {"user", "assistant"} and content:
+			messages.append({"role": role, "content": content[:4000]})
+	return messages
+
+
+def _store_conversation_message(
+	conversation_id: str,
+	role: str,
+	content: str,
+	*,
+	tool_names: list[str] | None = None,
+	matches: list[dict[str, Any]] | None = None,
+) -> None:
+	if role not in {"user", "assistant"}:
+		return
+	doc = frappe.get_doc(
+		{
+			"doctype": "Hausverwaltung Assistant Message",
+			"conversation": conversation_id,
+			"user": frappe.session.user,
+			"role": role,
+			"content": content or "",
+			"tool_names": ", ".join(tool_names or []),
+			"matches_json": json.dumps((matches or [])[:STORED_MATCH_LIMIT], ensure_ascii=True, default=str)
+			if matches
+			else "",
+		}
+	)
+	doc.insert(ignore_permissions=True)
+	count = frappe.db.count("Hausverwaltung Assistant Message", {"conversation": conversation_id})
+	frappe.db.set_value(
+		"Hausverwaltung Assistant Conversation",
+		conversation_id,
+		{
+			"last_message_on": now_datetime(),
+			"message_count": count,
+		},
+		update_modified=True,
+	)
+
+
+def _conversation_message_row(row: dict[str, Any]) -> dict[str, Any]:
+	return {
+		"role": row.get("role") or "",
+		"content": row.get("content") or "",
+		"tool_names": [name.strip() for name in (row.get("tool_names") or "").split(",") if name.strip()],
+		"matches": _parse_stored_matches(row.get("matches_json")),
+		"creation": row.get("creation"),
+	}
+
+
+def _parse_stored_matches(value: str | None) -> list[dict[str, Any]]:
+	if not value:
+		return []
+	try:
+		parsed = json.loads(value)
+	except Exception:
+		return []
+	return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
 
 
 def search_mieter(query: str, status: str | None = None, limit: int | None = None) -> dict[str, Any]:
@@ -940,6 +1097,14 @@ def _normalize_generic_limit(limit: int | None) -> int:
 	except (TypeError, ValueError):
 		value = 20
 	return min(max(value, 1), GENERIC_READ_LIMIT)
+
+
+def _normalize_conversation_limit(limit: int | None, default: int) -> int:
+	try:
+		value = int(limit or default)
+	except (TypeError, ValueError):
+		value = default
+	return min(max(value, 1), 100)
 
 
 def _default_company() -> str:

@@ -20,6 +20,13 @@ function renderHausverwaltungAssistant(pageBody) {
 	root.html(`
 		<div class="hv-assistant">
 			<div class="hv-assistant-shell">
+				<div class="hv-assistant-conversations">
+					<div class="hv-assistant-conversations-head">
+						<div class="hv-assistant-results-title">${__("Chats")}</div>
+						<button class="btn btn-xs btn-default hv-assistant-new" type="button">${__("Neu")}</button>
+					</div>
+					<div class="hv-assistant-conversation-list"></div>
+				</div>
 				<div class="hv-assistant-main">
 					<div class="hv-assistant-messages" aria-live="polite"></div>
 					<form class="hv-assistant-form">
@@ -42,12 +49,13 @@ function renderHausverwaltungAssistant(pageBody) {
 			}
 			.hv-assistant-shell {
 				display: grid;
-				grid-template-columns: minmax(0, 1fr) 360px;
+				grid-template-columns: 260px minmax(0, 1fr) 360px;
 				gap: 16px;
 				max-width: 1320px;
 				margin: 0 auto;
 				padding: 18px;
 			}
+			.hv-assistant-conversations,
 			.hv-assistant-main,
 			.hv-assistant-results {
 				background: #fff;
@@ -107,12 +115,54 @@ function renderHausverwaltungAssistant(pageBody) {
 				min-height: calc(100vh - 150px);
 				padding: 14px;
 			}
+			.hv-assistant-conversations {
+				min-height: calc(100vh - 150px);
+				padding: 14px;
+			}
+			.hv-assistant-conversations-head {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 8px;
+				margin-bottom: 10px;
+			}
 			.hv-assistant-results-title {
 				font-weight: 600;
 				font-size: 13px;
 				text-transform: uppercase;
 				color: #666;
 				margin-bottom: 10px;
+			}
+			.hv-assistant-conversations-head .hv-assistant-results-title {
+				margin-bottom: 0;
+			}
+			.hv-assistant-conversation {
+				width: 100%;
+				display: block;
+				text-align: left;
+				border: 1px solid transparent;
+				border-radius: 8px;
+				padding: 9px 10px;
+				margin-bottom: 6px;
+				background: transparent;
+				color: #1f2328;
+			}
+			.hv-assistant-conversation:hover,
+			.hv-assistant-conversation.active {
+				background: #f2f3ef;
+				border-color: #deded8;
+			}
+			.hv-assistant-conversation-title {
+				font-size: 13px;
+				font-weight: 600;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			.hv-assistant-conversation-meta {
+				color: #777;
+				font-size: 11px;
+				margin-top: 3px;
 			}
 			.hv-assistant-result {
 				border: 1px solid #deded8;
@@ -146,6 +196,7 @@ function renderHausverwaltungAssistant(pageBody) {
 				.hv-assistant-shell {
 					grid-template-columns: 1fr;
 				}
+				.hv-assistant-conversations,
 				.hv-assistant-main,
 				.hv-assistant-results {
 					min-height: auto;
@@ -164,8 +215,10 @@ function renderHausverwaltungAssistant(pageBody) {
 
 	const messagesEl = root.find(".hv-assistant-messages");
 	const resultsEl = root.find(".hv-assistant-results-list");
+	const conversationsEl = root.find(".hv-assistant-conversation-list");
 	const form = root.find(".hv-assistant-form");
 	const input = root.find(".hv-assistant-input");
+	let conversationId = null;
 
 	const addMessage = (kind, text) => {
 		const node = document.createElement("div");
@@ -174,6 +227,63 @@ function renderHausverwaltungAssistant(pageBody) {
 		messagesEl.append(node);
 		messagesEl.scrollTop(messagesEl[0].scrollHeight);
 		return node;
+	};
+
+	const clearChat = () => {
+		conversationId = null;
+		messagesEl.empty();
+		renderResults([]);
+		conversationsEl.find(".hv-assistant-conversation").removeClass("active");
+		input.trigger("focus");
+	};
+
+	const renderConversationList = (rows) => {
+		conversationsEl.empty();
+		if (!rows || !rows.length) {
+			conversationsEl.html(`<div class="hv-assistant-empty">${__("Keine Chats")}</div>`);
+			return;
+		}
+		rows.forEach((row) => {
+			const button = $(`
+				<button class="hv-assistant-conversation" type="button">
+					<div class="hv-assistant-conversation-title"></div>
+					<div class="hv-assistant-conversation-meta"></div>
+				</button>
+			`);
+			button.toggleClass("active", row.name === conversationId);
+			button.find(".hv-assistant-conversation-title").text(row.title || row.name);
+			button.find(".hv-assistant-conversation-meta").text(`${row.message_count || 0} ${__("Nachrichten")}`);
+			button.on("click", () => loadConversation(row.name));
+			conversationsEl.append(button);
+		});
+	};
+
+	const loadConversationList = async () => {
+		const response = await frappe.call({
+			method: "hausverwaltung.hausverwaltung.services.assistant.list_conversations",
+			args: { limit: 30 },
+		});
+		renderConversationList(response.message || []);
+	};
+
+	const loadConversation = async (name) => {
+		const response = await frappe.call({
+			method: "hausverwaltung.hausverwaltung.services.assistant.get_conversation",
+			args: { conversation_id: name },
+		});
+		const data = response.message || {};
+		conversationId = data.name || name;
+		messagesEl.empty();
+		let lastMatches = [];
+		(data.messages || []).forEach((message) => {
+			addMessage(message.role === "user" ? "user" : "assistant", message.content || "");
+			if (message.matches && message.matches.length) {
+				lastMatches = message.matches;
+			}
+		});
+		renderResults(lastMatches);
+		await loadConversationList();
+		input.trigger("focus");
 	};
 
 	const renderResults = (matches) => {
@@ -221,11 +331,13 @@ function renderHausverwaltungAssistant(pageBody) {
 		try {
 			const response = await frappe.call({
 				method: "hausverwaltung.hausverwaltung.services.assistant.ask",
-				args: { message },
+				args: { message, conversation_id: conversationId },
 			});
 			const data = response.message || {};
+			conversationId = data.conversation_id || conversationId;
 			pending.textContent = data.answer || __("Keine Antwort erhalten.");
 			renderResults(data.matches || []);
+			await loadConversationList();
 		} catch (err) {
 			const text = err?._server_messages
 				? JSON.parse(err._server_messages).map((m) => JSON.parse(m).message).join("\n")
@@ -243,6 +355,9 @@ function renderHausverwaltungAssistant(pageBody) {
 		window.hvAssistantSend(input.val());
 	});
 
+	root.find(".hv-assistant-new").on("click", clearChat);
+
 	resultsEl.html(`<div class="hv-assistant-empty">${__("Keine Treffer")}</div>`);
+	loadConversationList();
 	input.trigger("focus");
 }
