@@ -238,6 +238,94 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["matches"][0]["title"], "Bernd Schmidt")
 		self.assertEqual(result["matches"][0]["bruttomiete"], 950)
 
+	def test_hv_query_docs_applies_custom_filters_and_field_whitelist(self):
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant.frappe, "has_permission", return_value=True), \
+			 patch.object(
+				 assistant.frappe,
+				 "get_list",
+				 return_value=[
+					 frappe._dict(name="MV-1", kunde="CUST-1", status="Lauft"),
+				 ],
+			 ) as get_list, \
+			 patch.object(
+				 assistant.frappe,
+				 "get_doc",
+				 return_value=frappe._dict(name="MV-1", bruttomiete=900),
+			 ):
+			result = assistant.hv_query_docs(
+				"Mietvertrag",
+				fields=["name", "kunde", "status", "notizen", "bruttomiete"],
+				filters=[["status", "=", "Lauft"], ["von", "<=", "2026-07-01"]],
+				order_by="von desc",
+				limit=5,
+			)
+
+		get_list.assert_called_once()
+		kwargs = get_list.call_args.kwargs
+		self.assertEqual(kwargs["filters"], [["status", "=", "Lauft"], ["von", "<=", "2026-07-01"]])
+		self.assertEqual(kwargs["order_by"], "von desc")
+		self.assertEqual(kwargs["page_length"], 5)
+		self.assertNotIn("notizen", kwargs["fields"])
+		self.assertIn("name", kwargs["fields"])
+		self.assertIn("bruttomiete", result["fields"])
+		self.assertEqual(result["rows"][0]["name"], "MV-1")
+
+	def test_hv_query_docs_rejects_unapproved_doctype_and_filter_field(self):
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant.frappe, "has_permission", return_value=True), \
+			 self.assertRaises(frappe.ValidationError):
+			assistant.hv_query_docs("User", fields=["name"])
+
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant.frappe, "has_permission", return_value=True), \
+			 self.assertRaises(frappe.ValidationError):
+			assistant.hv_query_docs("Mietvertrag", filters=[["notizen", "like", "%secret%"]])
+
+	def test_hv_get_doc_returns_only_allowed_children(self):
+		doc = frappe._dict(
+			name="MV-1",
+			kunde="CUST-1",
+			status="Lauft",
+			wohnung="WHG-1",
+			bruttomiete=900,
+			miete=[frappe._dict(von="2026-01-01", miete=700, art="Monatlich", secret="x")],
+			notizen="nicht freigegeben",
+		)
+
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant.frappe, "has_permission", return_value=True), \
+			 patch.object(assistant.frappe.db, "exists", return_value=True), \
+			 patch.object(assistant.frappe, "get_doc", return_value=doc):
+			result = assistant.hv_get_doc(
+				"Mietvertrag",
+				"MV-1",
+				fields=["name", "kunde", "notizen", "bruttomiete"],
+				include_children=True,
+			)
+
+		self.assertEqual(result["data"]["name"], "MV-1")
+		self.assertEqual(result["data"]["kunde"], "CUST-1")
+		self.assertEqual(result["data"]["bruttomiete"], 900)
+		self.assertNotIn("notizen", result["data"])
+		self.assertEqual(result["children"]["miete"][0], {"art": "Monatlich", "miete": 700, "von": "2026-01-01"})
+
+	def test_hv_query_rows_are_exposed_as_clickable_matches(self):
+		result = {
+			"doctype": "Mietvertrag",
+			"rows": [
+				{"name": "MV-1", "kunde": "CUST-1", "status": "Lauft", "wohnung": "WHG-1"},
+				{"name": "MV-1", "kunde": "CUST-1", "status": "Lauft", "wohnung": "WHG-1"},
+			],
+		}
+
+		matches = assistant._dedupe_matches(assistant._extract_matches_from_tool_result(result))
+
+		self.assertEqual(len(matches), 1)
+		self.assertEqual(matches[0]["doctype"], "Mietvertrag")
+		self.assertEqual(matches[0]["mietvertrag"], "MV-1")
+		self.assertEqual(matches[0]["routes"][0]["route"], ["Form", "Mietvertrag", "MV-1"])
+
 	def test_ask_reports_mistral_configuration_errors(self):
 		with patch.object(
 			assistant,

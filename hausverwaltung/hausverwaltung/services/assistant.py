@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import frappe
@@ -12,11 +13,70 @@ from hausverwaltung.hausverwaltung.services import mistral_client
 MAX_TOOL_ROUNDS = 3
 MAX_SEARCH_LIMIT = 10
 SQL_PREFETCH_FACTOR = 4
+GENERIC_READ_LIMIT = 50
+
+HV_READABLE_DOCTYPES: dict[str, dict[str, Any]] = {
+	"Mietvertrag": {
+		"fields": {
+			"name",
+			"wohnung",
+			"immobilie",
+			"von",
+			"bis",
+			"kunde",
+			"status",
+			"bevorzugter_versandweg",
+			"modified",
+		},
+		"children": {
+			"miete": {"fields": {"von", "miete", "art"}},
+			"betriebskosten": {"fields": {"von", "miete", "art"}},
+			"heizkosten": {"fields": {"von", "miete", "art"}},
+			"untermietzuschlag": {"fields": {"von", "miete", "art"}},
+			"mieter": {"fields": {"mieter", "rolle", "eingezogen", "ausgezogen"}},
+		},
+		"computed_fields": {"bruttomiete", "aktuelle_nettokaltmiete", "aktuelle_betriebskosten", "aktuelle_heizkosten"},
+	},
+	"Wohnung": {
+		"fields": {
+			"name",
+			"name__lage_in_der_immobilie",
+			"immobilie",
+			"immobilie_knoten",
+			"gebaeudeteil",
+			"status",
+			"modified",
+		}
+	},
+	"Immobilie": {
+		"fields": {"name", "bezeichnung", "adresse_titel", "objekt", "immobilien_id", "modified"}
+	},
+	"Customer": {
+		"fields": {"name", "customer_name", "customer_group", "territory", "disabled", "modified"}
+	},
+	"Sales Invoice": {
+		"fields": {
+			"name",
+			"customer",
+			"posting_date",
+			"due_date",
+			"grand_total",
+			"outstanding_amount",
+			"status",
+			"currency",
+			"remarks",
+			"modified",
+		}
+	},
+}
+
+_ORDER_BY_RE = re.compile(r"^(?P<field>[A-Za-z0-9_]+)\s+(?P<direction>asc|desc)$", re.IGNORECASE)
 
 
 ASSISTANT_SYSTEM_PROMPT = """Du bist der interne Hausverwaltungs-Assistent.
 Du darfst nur lesen. Du darfst keine Buchungen, Briefe, Aufgaben oder sonstige Daten aendern.
-Nutze die bereitgestellten Tools fuer Mietersuche, Mieterkonto, Salden, offene Posten und Miet-Ranglisten.
+Nutze die bereitgestellten Tools fuer Mietersuche, Mieterkonto, Salden, offene Posten,
+Miet-Ranglisten und eingeschraenkte Hausverwaltungs-Abfragen.
 Erfinde keine Datensaetze und keine Betraege.
 Wenn Treffer mehrdeutig sind, nenne die wichtigsten Treffer und frage nach einer Konkretisierung.
 Antworte knapp auf Deutsch und verweise auf die gefundenen Treffernummern, wenn vorhanden."""
@@ -135,6 +195,68 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 			},
 		},
 	},
+	{
+		"type": "function",
+		"function": {
+			"name": "hv_query_docs",
+			"description": (
+				"Eingeschraenkte Readonly-Abfrage auf erlaubte Hausverwaltungs-DocTypes mit Filtern, "
+				"Feldern und Sortierung. Fuer Mietvertragslisten nutze Felder wie name, kunde, wohnung, "
+				"immobilie, status, von, bis, bruttomiete. Fuer Rechnungen/offene Posten nutze Sales Invoice "
+				"mit customer, posting_date, due_date, grand_total, outstanding_amount, status."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"doctype": {
+						"type": "string",
+						"description": "Erlaubt: Mietvertrag, Wohnung, Immobilie, Customer, Sales Invoice.",
+					},
+					"fields": {
+						"type": "array",
+						"items": {"type": "string"},
+						"description": "Whitelist-Felder. Bei Miet-/Betragsfragen bruttomiete explizit anfordern.",
+					},
+					"filters": {
+						"type": "array",
+						"description": "Frappe-Filterliste, z.B. [[\"status\",\"=\",\"L\u00e4uft\"], [\"von\",\"<=\",\"2026-07-01\"]].",
+					},
+					"order_by": {
+						"type": "string",
+						"description": "Optional '<field> asc|desc' auf erlaubtem Feld.",
+					},
+					"limit": {
+						"type": "integer",
+						"description": "Maximal 50.",
+					},
+				},
+				"required": ["doctype"],
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": {
+			"name": "hv_get_doc",
+			"description": "Laedt ein erlaubtes Hausverwaltungs-Dokument mit sicheren Feldern und optional erlaubten Child-Tables.",
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"doctype": {"type": "string"},
+					"name": {"type": "string"},
+					"fields": {
+						"type": "array",
+						"items": {"type": "string"},
+					},
+					"include_children": {
+						"type": "boolean",
+						"description": "Wenn true: nur freigegebene Child-Tables/Felder.",
+					},
+				},
+				"required": ["doctype", "name"],
+			},
+		},
+	},
 ]
 
 TOOL_FUNCTIONS = {
@@ -143,6 +265,8 @@ TOOL_FUNCTIONS = {
 	"get_mieterkonto_summary": lambda **kwargs: get_mieterkonto_summary(**kwargs),
 	"search_open_items": lambda **kwargs: search_open_items(**kwargs),
 	"rank_mieter_by_rent": lambda **kwargs: rank_mieter_by_rent(**kwargs),
+	"hv_query_docs": lambda **kwargs: hv_query_docs(**kwargs),
+	"hv_get_doc": lambda **kwargs: hv_get_doc(**kwargs),
 }
 
 
@@ -494,6 +618,80 @@ def rank_mieter_by_rent(
 	}
 
 
+def hv_query_docs(
+	doctype: str,
+	fields: list[str] | str | None = None,
+	filters: list | str | None = None,
+	order_by: str | None = None,
+	limit: int | None = None,
+) -> dict[str, Any]:
+	_require_search_permissions()
+	dt = _normalize_hv_doctype(doctype)
+	allowed = HV_READABLE_DOCTYPES[dt]
+	selected_fields = _safe_hv_fields(dt, fields)
+	normal_filters = _safe_hv_filters(dt, filters)
+	normal_order_by = _safe_hv_order_by(dt, order_by)
+	resolved_limit = _normalize_generic_limit(limit)
+
+	db_fields = [field for field in selected_fields if field in allowed.get("fields", set())]
+	if "name" not in db_fields:
+		db_fields.insert(0, "name")
+	rows = frappe.get_list(
+		dt,
+		filters=normal_filters,
+		fields=db_fields,
+		order_by=normal_order_by,
+		page_length=resolved_limit,
+	)
+	data = [_augment_hv_row(dt, dict(row), selected_fields) for row in rows]
+	return {
+		"doctype": dt,
+		"fields": selected_fields,
+		"filters": normal_filters,
+		"order_by": normal_order_by,
+		"count": len(data),
+		"rows": data,
+	}
+
+
+def hv_get_doc(
+	doctype: str,
+	name: str,
+	fields: list[str] | str | None = None,
+	include_children: bool | int = False,
+) -> dict[str, Any]:
+	_require_search_permissions()
+	dt = _normalize_hv_doctype(doctype)
+	docname = (name or "").strip()
+	if not docname:
+		frappe.throw(_("Dokumentname fehlt."))
+	if not frappe.db.exists(dt, docname):
+		frappe.throw(_("Dokument nicht gefunden: {0} {1}").format(dt, docname))
+	doc = frappe.get_doc(dt, docname)
+	if not frappe.has_permission(dt, "read", doc=doc):
+		frappe.throw(_("Keine Berechtigung fuer {0} {1}.").format(dt, docname), frappe.PermissionError)
+
+	selected_fields = _safe_hv_fields(dt, fields)
+	data = {}
+	for fieldname in selected_fields:
+		if fieldname in HV_READABLE_DOCTYPES[dt].get("computed_fields", set()):
+			data[fieldname] = _computed_hv_value(doc, fieldname)
+		else:
+			data[fieldname] = getattr(doc, fieldname, None)
+	if "name" not in data:
+		data["name"] = doc.name
+
+	children = {}
+	if include_children:
+		for table_field, conf in (HV_READABLE_DOCTYPES[dt].get("children") or {}).items():
+			child_fields = conf.get("fields", set())
+			children[table_field] = [
+				{field: getattr(row, field, None) for field in sorted(child_fields)}
+				for row in (getattr(doc, table_field, None) or [])
+			]
+	return {"doctype": dt, "name": doc.name, "data": data, "children": children}
+
+
 def _get_mietvertrag_row(identifier: str) -> frappe._dict | None:
 	filters = None
 	values = {"identifier": identifier}
@@ -619,6 +817,14 @@ def _normalize_limit(limit: int | None) -> int:
 	return min(max(value, 1), MAX_SEARCH_LIMIT)
 
 
+def _normalize_generic_limit(limit: int | None) -> int:
+	try:
+		value = int(limit or 20)
+	except (TypeError, ValueError):
+		value = 20
+	return min(max(value, 1), GENERIC_READ_LIMIT)
+
+
 def _default_company() -> str:
 	company = frappe.defaults.get_user_default("Company") or frappe.defaults.get_global_default("company")
 	if not company:
@@ -717,6 +923,121 @@ def _rent_amounts_for_contract(doc) -> dict[str, float]:
 	}
 
 
+def _normalize_hv_doctype(doctype: str) -> str:
+	dt = (doctype or "").strip()
+	if dt not in HV_READABLE_DOCTYPES:
+		frappe.throw(_("DocType ist fuer den Assistenten nicht freigegeben: {0}").format(dt or "-"))
+	if not frappe.has_permission(dt, "read"):
+		frappe.throw(_("Keine Berechtigung fuer {0}.").format(dt), frappe.PermissionError)
+	return dt
+
+
+def _parse_jsonish(value: Any) -> Any:
+	if isinstance(value, str):
+		text = value.strip()
+		if not text:
+			return None
+		try:
+			return frappe.parse_json(text)
+		except Exception:
+			frappe.throw(_("Ungueltiges JSON in Assistant-Tool-Argument."))
+	return value
+
+
+def _safe_hv_fields(doctype: str, fields: list[str] | str | None) -> list[str]:
+	parsed = _parse_jsonish(fields)
+	allowed = HV_READABLE_DOCTYPES[doctype].get("fields", set())
+	computed = HV_READABLE_DOCTYPES[doctype].get("computed_fields", set())
+	all_allowed = set(allowed) | set(computed)
+	if not parsed:
+		defaults = ["name", "modified"]
+		if doctype == "Mietvertrag":
+			defaults = ["name", "kunde", "wohnung", "immobilie", "status", "von", "bis", "bruttomiete"]
+		elif doctype == "Sales Invoice":
+			defaults = ["name", "customer", "posting_date", "due_date", "grand_total", "outstanding_amount", "status"]
+		return [field for field in defaults if field in all_allowed]
+	if not isinstance(parsed, list):
+		frappe.throw(_("fields muss eine Liste sein."))
+	out = []
+	for raw in parsed:
+		field = (raw or "").strip()
+		if field and field in all_allowed and field not in out:
+			out.append(field)
+	if "name" not in out:
+		out.insert(0, "name")
+	return out
+
+
+def _safe_hv_filters(doctype: str, filters: list | str | None) -> list:
+	parsed = _parse_jsonish(filters)
+	if parsed in (None, "", []):
+		return []
+	if isinstance(parsed, dict):
+		parsed = [[key, "=", value] for key, value in parsed.items()]
+	if not isinstance(parsed, list):
+		frappe.throw(_("filters muss eine Liste sein."))
+	allowed_fields = set(HV_READABLE_DOCTYPES[doctype].get("fields", set()))
+	allowed_ops = {"=", "!=", ">", ">=", "<", "<=", "like", "not like", "in", "not in", "is", "between"}
+	out = []
+	for item in parsed:
+		if not isinstance(item, list | tuple):
+			frappe.throw(_("Jeder Filter muss eine Liste sein."))
+		if len(item) == 3:
+			field, op, value = item
+		elif len(item) == 4 and item[0] == doctype:
+			_filter_doctype, field, op, value = item
+		else:
+			frappe.throw(_("Filter muss [field, op, value] sein."))
+		field = (field or "").strip()
+		op = (op or "").strip().lower()
+		if field not in allowed_fields:
+			frappe.throw(_("Filterfeld nicht erlaubt: {0}").format(field))
+		if op not in allowed_ops:
+			frappe.throw(_("Filteroperator nicht erlaubt: {0}").format(op))
+		out.append([field, op, value])
+	return out
+
+
+def _safe_hv_order_by(doctype: str, order_by: str | None) -> str:
+	text = (order_by or "").strip()
+	if not text:
+		return "modified desc" if "modified" in HV_READABLE_DOCTYPES[doctype].get("fields", set()) else "name asc"
+	match = _ORDER_BY_RE.match(text)
+	if not match:
+		frappe.throw(_("Sortierung muss '<field> asc|desc' sein."))
+	field = match.group("field")
+	direction = match.group("direction").lower()
+	if field not in HV_READABLE_DOCTYPES[doctype].get("fields", set()):
+		frappe.throw(_("Sortierfeld nicht erlaubt: {0}").format(field))
+	return f"{field} {direction}"
+
+
+def _augment_hv_row(doctype: str, row: dict[str, Any], selected_fields: list[str]) -> dict[str, Any]:
+	computed = set(HV_READABLE_DOCTYPES[doctype].get("computed_fields", set()))
+	if not computed.intersection(selected_fields):
+		return row
+	if doctype != "Mietvertrag":
+		return row
+	doc = frappe.get_doc("Mietvertrag", row.get("name"))
+	if not frappe.has_permission("Mietvertrag", "read", doc=doc):
+		return row
+	for field in computed.intersection(selected_fields):
+		row[field] = _computed_hv_value(doc, field)
+	return row
+
+
+def _computed_hv_value(doc, fieldname: str) -> Any:
+	if fieldname == "bruttomiete":
+		return flt(getattr(doc, "bruttomiete", 0), 2)
+	if fieldname == "aktuelle_nettokaltmiete":
+		return flt(getattr(doc, "aktuelle_nettokaltmiete", 0), 2)
+	if fieldname == "aktuelle_betriebskosten":
+		return flt(getattr(doc, "aktuelle_betriebskosten", 0), 2)
+	if fieldname == "aktuelle_heizkosten":
+		return flt(getattr(doc, "aktuelle_heizkosten", 0), 2)
+	return None
+
+
 def _first_value(rows: list[dict[str, Any]], fieldname: str) -> Any:
 	return next((row.get(fieldname) for row in rows if row.get(fieldname)), None)
 
@@ -751,16 +1072,67 @@ def _execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 def _extract_matches_from_tool_result(result: dict[str, Any]) -> list[dict[str, Any]]:
 	matches = result.get("matches") or []
 	if isinstance(matches, list):
-		return [m for m in matches if isinstance(m, dict)]
+		out = [m for m in matches if isinstance(m, dict)]
+		if out:
+			return out
 	match = result.get("match")
-	return [match] if isinstance(match, dict) else []
+	if isinstance(match, dict):
+		return [match]
+	rows = result.get("rows") or []
+	doctype = result.get("doctype")
+	if isinstance(doctype, str) and isinstance(rows, list):
+		return [_hv_row_to_match(doctype, row) for row in rows if isinstance(row, dict) and row.get("name")]
+	return []
+
+
+def _hv_row_to_match(doctype: str, row: dict[str, Any]) -> dict[str, Any]:
+	name = str(row.get("name") or "")
+	title = (
+		row.get("customer_name")
+		or row.get("kunde")
+		or row.get("customer")
+		or row.get("bezeichnung")
+		or row.get("adresse_titel")
+		or row.get("name__lage_in_der_immobilie")
+		or name
+	)
+	subtitle = _compact_join(
+		[
+			row.get("status"),
+			row.get("wohnung"),
+			row.get("immobilie"),
+			row.get("posting_date"),
+			row.get("due_date"),
+			row.get("outstanding_amount"),
+		]
+	)
+	match = {
+		"type": "hv_query",
+		"doctype": doctype,
+		"name": name,
+		"title": title,
+		"subtitle": subtitle,
+		"routes": [{"label": doctype, "doctype": doctype, "name": name, "route": ["Form", doctype, name]}],
+	}
+	if doctype == "Mietvertrag":
+		match["mietvertrag"] = name
+		match["customer"] = row.get("kunde")
+		match["wohnung"] = row.get("wohnung")
+		match["immobilie"] = row.get("immobilie")
+	elif doctype == "Customer":
+		match["customer"] = name
+		match["customer_name"] = row.get("customer_name")
+	return match
 
 
 def _dedupe_matches(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
 	out: list[dict[str, Any]] = []
 	seen: set[tuple[str, str]] = set()
 	for match in matches:
-		key = ("Mietvertrag", str(match.get("mietvertrag") or match.get("customer") or match.get("title") or ""))
+		if match.get("doctype") and match.get("name"):
+			key = (str(match.get("doctype")), str(match.get("name")))
+		else:
+			key = ("Mietvertrag", str(match.get("mietvertrag") or match.get("customer") or match.get("title") or ""))
 		if key in seen:
 			continue
 		seen.add(key)
