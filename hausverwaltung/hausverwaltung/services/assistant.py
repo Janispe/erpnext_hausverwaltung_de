@@ -186,8 +186,48 @@ left join `tabImmobilie` im on im.name = mv.immobilie
 """
 
 HV_QUERY_VIEWS: dict[str, dict[str, Any]] = {
+	"apartments": {
+		"description": (
+			"Wohnungsbestand: eine Zeile pro Wohnung. Nutze diese View fuer Fragen nach Wohnungen, "
+			"freien/vermieteten Wohnungen und Wohnungsanzahlen je Immobilie."
+		),
+		"required_doctypes": ("Wohnung", "Immobilie"),
+		"primary_doctype": "Wohnung",
+		"primary_field": "wohnung",
+		"from": """
+			from `tabWohnung` w
+			left join `tabImmobilie` im on im.name = w.immobilie
+		""",
+		"where": "1 = 1",
+		"default_fields": ("wohnung", "wohnung_label", "immobilie", "status"),
+		"fields": {
+			"name": "w.name",
+			"wohnung": "w.name",
+			"wohnung_label": "w.`name__lage_in_der_immobilie`",
+			"immobilie": "w.immobilie",
+			"immobilie_label": "coalesce(im.adresse_titel, im.bezeichnung, w.immobilie)",
+			"immobilie_knoten": "w.immobilie_knoten",
+			"gebaeudeteil": "w.gebaeudeteil",
+			"status": "w.status",
+			"modified": "w.modified",
+		},
+		"aliases": {
+			"wohnung": "wohnung",
+			"wohnungen": "wohnung",
+			"einheit": "wohnung",
+			"lage": "wohnung_label",
+			"adresse": "wohnung_label",
+			"objekt": "immobilie",
+			"haus": "immobilie",
+			"frei": "status",
+			"leerstand": "status",
+		},
+	},
 	"tenant_contracts": {
-		"description": "Mieter, Mietvertraege, Wohnungen und Immobilien in einer flachen Ansicht.",
+		"description": (
+			"Mieter und Mietvertraege in einer flachen Ansicht. Eine Zeile ist ein Mietvertrag, "
+			"nicht eine eindeutige Wohnung."
+		),
 		"required_doctypes": ("Mietvertrag", "Customer", "Wohnung", "Immobilie"),
 		"primary_doctype": "Mietvertrag",
 		"primary_field": "mietvertrag",
@@ -380,6 +420,12 @@ HV_QUERY_VIEWS: dict[str, dict[str, Any]] = {
 }
 
 HV_QUERY_VIEW_ALIASES = {
+	"wohnung": "apartments",
+	"wohnungen": "apartments",
+	"apartments": "apartments",
+	"apartment": "apartments",
+	"einheiten": "apartments",
+	"wohneinheiten": "apartments",
 	"mieter": "tenant_contracts",
 	"mietvertraege": "tenant_contracts",
 	"mietvertrage": "tenant_contracts",
@@ -406,6 +452,8 @@ Nutze die bereitgestellten Tools fuer Mietersuche, Mieterkonto, Salden, offene P
 verspaetete Zahlungen, Miet-Ranglisten und eingeschraenkte Hausverwaltungs-Abfragen.
 Fuer offene analytische Fragen nutze bevorzugt hv_query_view mit einer passenden View und strukturierten Filtern,
 statt immer neue Spezialtools zu erwarten. Baue niemals SQL, sondern JSON-Queries gegen die erlaubten Views.
+Bei Fragen nach Wohnungen, Wohneinheiten, Leerstand oder Wohnungsbestand nutze hv_query_view view=apartments.
+Zaehle Wohnungen niemals ueber tenant_contracts, ausser der Nutzer fragt ausdruecklich nach vermieteten/laufenden Vertraegen.
 Wenn der Nutzer aktive oder laufende Mietvertraege meint, filtere Mietvertrag immer mit status = L\u00e4uft.
 Bei Fragen nach "zu spaet gezahlt", "verspaetet gezahlt" oder Zahlungsverzug nutze search_late_payments,
 nicht search_open_items. search_open_items ist nur fuer aktuell offene Posten geeignet.
@@ -632,7 +680,8 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 			"description": (
 				"Allgemeiner sicherer Query-Builder fuer semantische Hausverwaltungs-Views. "
 				"Nutze ihn fuer offene Analysefragen, Listen, Vergleiche, Summen, Gruppierungen und Sortierungen. "
-				"Erlaubte Views: tenant_contracts (Mieter/Vertraege/Wohnungen), invoices (Rechnungen), "
+				"Erlaubte Views: apartments (Wohnungsbestand, eine Zeile pro Wohnung), "
+				"tenant_contracts (Mieter/Vertraege, eine Zeile pro Mietvertrag), invoices (Rechnungen), "
 				"open_items (offene Forderungen), payments (Zahlungen auf Rechnungen). "
 				"Schreibe JSON-Filter, kein SQL."
 			),
@@ -641,12 +690,12 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 				"properties": {
 					"view": {
 						"type": "string",
-						"description": "tenant_contracts, invoices, open_items oder payments.",
+						"description": "apartments, tenant_contracts, invoices, open_items oder payments.",
 					},
 					"fields": {
 						"type": "array",
 						"items": {"type": "string"},
-						"description": "Erlaubte Felder der View, z.B. customer_name, status, due_date, outstanding_amount.",
+						"description": "Erlaubte Felder der View, z.B. wohnung, immobilie, status, customer_name, due_date, outstanding_amount.",
 					},
 					"filters": {
 						"type": ["array", "object"],
@@ -2304,6 +2353,8 @@ def _view_query_fields(
 
 
 def _view_match_fields(view: str) -> tuple[str, ...]:
+	if view == "apartments":
+		return ("immobilie_label", "immobilie_knoten", "gebaeudeteil")
 	if view == "tenant_contracts":
 		return ("customer", "wohnung_label", "immobilie_label", "von", "bis", "kontakt_namen")
 	if view in {"invoices", "open_items"}:
@@ -2385,6 +2436,23 @@ def _can_read_view_row(conf: dict[str, Any], row: dict[str, Any]) -> bool:
 
 
 def _view_row_to_match(view: str, row: dict[str, Any]) -> dict[str, Any]:
+	if view == "apartments":
+		wohnung = row.get("wohnung") or row.get("name")
+		routes = []
+		if wohnung:
+			routes.append({"label": "Wohnung", "doctype": "Wohnung", "name": wohnung, "route": ["Form", "Wohnung", wohnung]})
+		if row.get("immobilie"):
+			routes.append({"label": "Immobilie", "doctype": "Immobilie", "name": row.get("immobilie"), "route": ["Form", "Immobilie", row.get("immobilie")]})
+		return {
+			"type": "hv_query",
+			"doctype": "Wohnung",
+			"name": wohnung,
+			"title": row.get("wohnung_label") or wohnung,
+			"subtitle": _compact_join([row.get("status"), row.get("immobilie_label") or row.get("immobilie"), row.get("gebaeudeteil")]),
+			"wohnung": wohnung,
+			"immobilie": row.get("immobilie"),
+			"routes": routes,
+		}
 	if view == "tenant_contracts":
 		return _format_mieter_match(
 			{
