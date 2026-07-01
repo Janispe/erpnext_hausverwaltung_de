@@ -236,15 +236,28 @@ HV_QUERY_VIEWS: dict[str, dict[str, Any]] = {
 			left join `tabCustomer` c on c.name = mv.kunde
 			left join `tabWohnung` w on w.name = mv.wohnung
 			left join `tabImmobilie` im on im.name = mv.immobilie
+			left join `tabMietvertragPersonen` mvp
+			  on mvp.parent = mv.name
+			 and mvp.parenttype = 'Mietvertrag'
+			 and mvp.parentfield = 'personen'
+			 and mvp.von = (
+			   select max(mvp2.von)
+			   from `tabMietvertragPersonen` mvp2
+			   where mvp2.parent = mv.name
+			     and mvp2.parenttype = 'Mietvertrag'
+			     and mvp2.parentfield = 'personen'
+			     and mvp2.von <= %(today)s
+			 )
 			left join `tabVertragspartner` vp on vp.parent = mv.name and vp.parenttype = 'Mietvertrag'
 			left join `tabContact` ct on ct.name = vp.mieter
 		""",
 		"where": "mv.kunde is not null and mv.kunde != ''",
 		"group_by": """
 			mv.name, mv.kunde, c.customer_name, mv.status, mv.wohnung, mv.immobilie, mv.von, mv.bis,
-			mv.bevorzugter_versandweg, mv.modified, w.`name__lage_in_der_immobilie`, im.adresse_titel, im.bezeichnung
+			mv.bevorzugter_versandweg, mv.modified, w.`name__lage_in_der_immobilie`, im.adresse_titel,
+			im.bezeichnung, mvp.personen
 		""",
-		"default_fields": ("mietvertrag", "customer_name", "status", "wohnung", "immobilie", "von", "bis"),
+		"default_fields": ("mietvertrag", "customer_name", "status", "wohnung", "immobilie", "personen", "von", "bis"),
 		"fields": {
 			"name": "mv.name",
 			"mietvertrag": "mv.name",
@@ -255,6 +268,7 @@ HV_QUERY_VIEWS: dict[str, dict[str, Any]] = {
 			"wohnung_label": "w.`name__lage_in_der_immobilie`",
 			"immobilie": "mv.immobilie",
 			"immobilie_label": "coalesce(im.adresse_titel, im.bezeichnung, mv.immobilie)",
+			"personen": "coalesce(mvp.personen, 0)",
 			"von": "mv.von",
 			"bis": "mv.bis",
 			"bevorzugter_versandweg": "mv.bevorzugter_versandweg",
@@ -267,6 +281,10 @@ HV_QUERY_VIEWS: dict[str, dict[str, Any]] = {
 			"vertrag": "mietvertrag",
 			"objekt": "immobilie",
 			"haus": "immobilie",
+			"bewohner": "personen",
+			"person": "personen",
+			"personen": "personen",
+			"anzahl_personen": "personen",
 			"lage": "wohnung_label",
 			"beginn": "von",
 			"ende": "bis",
@@ -454,6 +472,8 @@ Fuer offene analytische Fragen nutze bevorzugt hv_query_view mit einer passenden
 statt immer neue Spezialtools zu erwarten. Baue niemals SQL, sondern JSON-Queries gegen die erlaubten Views.
 Bei Fragen nach Wohnungen, Wohneinheiten, Leerstand oder Wohnungsbestand nutze hv_query_view view=apartments.
 Zaehle Wohnungen niemals ueber tenant_contracts, ausser der Nutzer fragt ausdruecklich nach vermieteten/laufenden Vertraegen.
+Bei Fragen nach Personen, Bewohnern oder "wie viele wohnen dort" nutze hv_query_view view=tenant_contracts,
+filtere aktive/laufende Vertraege und aggregiere sum ueber field=personen. Schaetze Personen niemals aus Namen.
 Wenn der Nutzer aktive oder laufende Mietvertraege meint, filtere Mietvertrag immer mit status = L\u00e4uft.
 Bei Fragen nach "zu spaet gezahlt", "verspaetet gezahlt" oder Zahlungsverzug nutze search_late_payments,
 nicht search_open_items. search_open_items ist nur fuer aktuell offene Posten geeignet.
@@ -681,7 +701,7 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 				"Allgemeiner sicherer Query-Builder fuer semantische Hausverwaltungs-Views. "
 				"Nutze ihn fuer offene Analysefragen, Listen, Vergleiche, Summen, Gruppierungen und Sortierungen. "
 				"Erlaubte Views: apartments (Wohnungsbestand, eine Zeile pro Wohnung), "
-				"tenant_contracts (Mieter/Vertraege, eine Zeile pro Mietvertrag), invoices (Rechnungen), "
+				"tenant_contracts (Mieter/Vertraege, eine Zeile pro Mietvertrag, inkl. personen), invoices (Rechnungen), "
 				"open_items (offene Forderungen), payments (Zahlungen auf Rechnungen). "
 				"Schreibe JSON-Filter, kein SQL."
 			),
@@ -695,7 +715,10 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 					"fields": {
 						"type": "array",
 						"items": {"type": "string"},
-						"description": "Erlaubte Felder der View, z.B. wohnung, immobilie, status, customer_name, due_date, outstanding_amount.",
+						"description": (
+							"Erlaubte Felder der View, z.B. wohnung, immobilie, status, customer_name, "
+							"personen, due_date, outstanding_amount."
+						),
 					},
 					"filters": {
 						"type": ["array", "object"],

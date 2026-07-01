@@ -566,6 +566,33 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["matches"][0]["title"], "Warthestr. 65")
 		self.assertEqual(result["matches"][0]["routes"][0]["route"], ["Form", "Immobilie", "Warthestr. 65"])
 
+	def test_hv_query_view_tenant_contracts_sums_personen_by_property(self):
+		rows = [
+			frappe._dict(mietvertrag="MV-1", name="MV-1", immobilie="Warthestr. 65", status="Läuft", personen=2),
+			frappe._dict(mietvertrag="MV-2", name="MV-2", immobilie="Warthestr. 65", status="Läuft", personen=3),
+			frappe._dict(mietvertrag="MV-3", name="MV-3", immobilie="Wilhelmshavener", status="Läuft", personen=1),
+		]
+
+		with patch.object(assistant.frappe, "has_permission", return_value=True), \
+			 patch.object(assistant, "_default_company", return_value="Hausverwaltung Peters"), \
+			 patch.object(assistant, "nowdate", return_value="2026-07-01"), \
+			 patch.object(assistant, "_can_read_doc", return_value=True), \
+			 patch.object(assistant.frappe.db, "sql", return_value=rows) as sql:
+			result = assistant.hv_query_view(
+				"tenant_contracts",
+				fields=["immobilie", "personen"],
+				filters=[["status", "=", "Läuft"], ["immobilie", "=", "Warthestr. 65"]],
+				aggregate={"op": "sum", "field": "personen", "group_by": "immobilie"},
+				order_by={"field": "value", "direction": "desc"},
+				limit=1,
+			)
+
+		query = sql.call_args.args[0]
+		self.assertIn("`tabMietvertragPersonen` mvp", query)
+		self.assertIn("coalesce(mvp.personen, 0) as `personen`", query)
+		self.assertEqual(result["aggregate"]["groups"], [{"key": "Warthestr. 65", "count": 2, "value": 5.0}])
+		self.assertEqual(result["matches"][0]["title"], "Warthestr. 65")
+
 	def test_hv_query_view_rejects_unknown_view_and_filter_field(self):
 		with patch.object(assistant.frappe, "has_permission", return_value=True), \
 			 self.assertRaises(frappe.ValidationError):
