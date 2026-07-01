@@ -403,6 +403,49 @@ def _render_abrechnung_pdf(name: str, print_format: Optional[str] = None) -> byt
 	return get_pdf(html)
 
 
+def _apply_draft_watermark(pdf: bytes) -> bytes:
+	if not pdf:
+		return pdf
+
+	try:
+		from PyPDF2 import PdfReader, PdfWriter
+	except ImportError:
+		from pypdf import PdfReader, PdfWriter
+	from reportlab.pdfgen import canvas
+
+	reader = PdfReader(BytesIO(pdf))
+	writer = PdfWriter()
+
+	for page in reader.pages:
+		width = float(page.mediabox.width)
+		height = float(page.mediabox.height)
+		font_size = max(64, min(width, height) * 0.18)
+
+		watermark_pdf = BytesIO()
+		c = canvas.Canvas(watermark_pdf, pagesize=(width, height))
+		c.saveState()
+		try:
+			c.setFillAlpha(0.16)
+		except Exception:
+			pass
+		c.setFillColorRGB(1, 0, 0)
+		c.setFont("Helvetica-Bold", font_size)
+		c.translate(width / 2, height / 2)
+		c.rotate(35)
+		c.drawCentredString(0, -font_size / 3, "DRAFT")
+		c.restoreState()
+		c.save()
+		watermark_pdf.seek(0)
+
+		watermark_page = PdfReader(watermark_pdf).pages[0]
+		page.merge_page(watermark_page)
+		writer.add_page(page)
+
+	out = BytesIO()
+	writer.write(out)
+	return out.getvalue()
+
+
 def _get_or_create_serienbrief_print_format(serienbrief_vorlage: str) -> str:
 	"""Gibt einen Print Format-Namen zurück, der die Serienbrief Vorlage referenziert.
 
@@ -573,6 +616,10 @@ def _get_mieter_abrechnung_names_for_head(name: str) -> List[str]:
 		order_by="wohnung asc",
 	)
 	return [row.get("name") for row in children or [] if row.get("name")]
+
+
+def _is_bk_head_draft(name: str) -> bool:
+	return cint(frappe.db.get_value("Betriebskostenabrechnung Immobilie", name, "docstatus") or 0) == 0
 
 
 def _bk_bundle_pdf_progress_key(job_id: str) -> str:
@@ -777,7 +824,8 @@ def get_mieter_abrechnungen_print_pdf(name: str, print_format: Optional[str] = N
 				merger.append(BytesIO(pdf))
 		out = BytesIO()
 		merger.write(out)
-		return out.getvalue()
+		content = out.getvalue()
+		return _apply_draft_watermark(content) if _is_bk_head_draft(name) else content
 	finally:
 		try:
 			merger.close()
@@ -799,7 +847,15 @@ def _run_mieter_abrechnungen_pdf_job(
 		child_names = _get_mieter_abrechnung_names_for_head(name)
 		child_print_format = _get_child_print_format_for_sammeldruck(print_format)
 		total = len(child_names)
-		_set_bk_bundle_pdf_progress(progress_id, status="running", done=0, total=total, current=None)
+		is_draft = _is_bk_head_draft(name)
+		_set_bk_bundle_pdf_progress(
+			progress_id,
+			status="running",
+			done=0,
+			total=total,
+			current=None,
+			is_draft=is_draft,
+		)
 
 		try:
 			from PyPDF2 import PdfMerger
@@ -831,10 +887,21 @@ def _run_mieter_abrechnungen_pdf_job(
 		content = out.getvalue()
 		if not content:
 			frappe.throw(_("PDF konnte nicht erzeugt werden."))
+		if is_draft:
+			_set_bk_bundle_pdf_progress(
+				progress_id,
+				status="running",
+				done=total,
+				total=total,
+				current=_("DRAFT-Wasserzeichen"),
+				is_draft=is_draft,
+			)
+			content = _apply_draft_watermark(content)
 
 		from frappe.utils.file_manager import save_file
 
-		filename = f"Betriebskostenabrechnungen-{hv_scrub(name or '')}.pdf"
+		filename_prefix = "Betriebskostenabrechnungen-Entwurf" if is_draft else "Betriebskostenabrechnungen"
+		filename = f"{filename_prefix}-{hv_scrub(name or '')}.pdf"
 		file_doc = save_file(
 			filename,
 			content,
@@ -876,6 +943,7 @@ def start_mieter_abrechnungen_pdf_job(name: str, print_format: Optional[str] = N
 		frappe.throw(_("Keine Mieterabrechnungen vorhanden."))
 
 	job_id = frappe.generate_hash(length=16)
+	is_draft = _is_bk_head_draft(name)
 	_set_bk_bundle_pdf_progress(
 		job_id,
 		status="queued",
@@ -885,6 +953,7 @@ def start_mieter_abrechnungen_pdf_job(name: str, print_format: Optional[str] = N
 		current=None,
 		file_url=None,
 		error=None,
+		is_draft=is_draft,
 	)
 	frappe.enqueue(
 		"hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_immobilie.betriebskostenabrechnung_immobilie._run_mieter_abrechnungen_pdf_job",
@@ -897,7 +966,7 @@ def start_mieter_abrechnungen_pdf_job(name: str, print_format: Optional[str] = N
 		user=frappe.session.user,
 		enqueue_after_commit=True,
 	)
-	return {"job_id": job_id, "status": "queued", "total": len(child_names)}
+	return {"job_id": job_id, "status": "queued", "total": len(child_names), "is_draft": is_draft}
 
 
 @frappe.whitelist()

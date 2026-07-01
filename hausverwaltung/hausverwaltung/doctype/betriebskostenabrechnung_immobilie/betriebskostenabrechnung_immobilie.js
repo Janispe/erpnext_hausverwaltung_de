@@ -221,7 +221,7 @@ const DISPATCH_BUTTON_LABEL = __("Abrechnungen versenden");
 const BUNDLE_PDF_BUTTON_LABEL = __("Sammel-PDF erzeugen");
 
 const ensure_dispatch_button = (frm) => {
-	if (!frm || frm.is_new() || frm.doc.docstatus !== 1) {
+	if (!frm || frm.is_new()) {
 		return;
 	}
 	try {
@@ -232,8 +232,12 @@ const ensure_dispatch_button = (frm) => {
 	} catch {
 		// ignore
 	}
-	frm.add_custom_button(DISPATCH_BUTTON_LABEL, () => open_dispatch_dialog(frm));
-	frm.add_custom_button(BUNDLE_PDF_BUTTON_LABEL, () => open_bundle_pdf_progress_dialog(frm));
+	if (frm.doc.docstatus === 1) {
+		frm.add_custom_button(DISPATCH_BUTTON_LABEL, () => open_dispatch_dialog(frm));
+	}
+	if (frm.doc.docstatus !== 2) {
+		frm.add_custom_button(BUNDLE_PDF_BUTTON_LABEL, () => open_bundle_pdf_progress_dialog(frm));
+	}
 };
 
 const render_bundle_pdf_progress = (dialog, progress = {}) => {
@@ -256,6 +260,11 @@ const render_bundle_pdf_progress = (dialog, progress = {}) => {
 	const error = progress.error
 		? `<div class="text-danger small" style="margin-top: 10px;">${escape_html(progress.error)}</div>`
 		: "";
+	const draftHint = progress.is_draft
+		? `<div class="text-danger small" style="margin-bottom: 10px; font-weight: 600;">${__(
+				"Entwurf: Die PDF wird mit rotem DRAFT-Wasserzeichen erzeugt."
+			)}</div>`
+		: "";
 	const fileLink = progress.file_url
 		? `<div style="margin-top: 10px;"><a href="${escape_html(
 				frappe.urllib.get_full_url(progress.file_url)
@@ -264,6 +273,7 @@ const render_bundle_pdf_progress = (dialog, progress = {}) => {
 
 	dialog.fields_dict.progress_html.$wrapper.html(`
 		<div style="min-width: 360px;">
+			${draftHint}
 			<div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:8px;">
 				<div><strong>${statusLabel}</strong></div>
 				<div class="text-muted">${done}/${total || "?"}</div>
