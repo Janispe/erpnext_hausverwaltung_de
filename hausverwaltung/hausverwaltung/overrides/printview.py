@@ -199,7 +199,7 @@ def _render_serienbrief_dokument_pdf(docname: str) -> bytes | None:
 		if not segments:
 			return _read_cached_pdf(target_doc)
 
-		return durchlauf._render_segments_pdf_bytes(segments)
+		return durchlauf._render_segments_pdf_bytes(segments, footer_doc=target_doc)
 	except Exception:
 		frappe.log_error(
 			title="Serienbrief PDF Re-Render",

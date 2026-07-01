@@ -125,7 +125,13 @@ def render_serienbrief_pdf_for_print_format(
 					"Bitte prüfen Sie die Textbausteine."
 				)
 			)
-		pdf_chunks.append(serienbrief_doc._render_segments_pdf_bytes(segments))
+		footer_doc = frappe._dict(
+			vorlage=serienbrief_doc.vorlage,
+			iteration_doctype=iteration_doctype,
+			objekt=getattr(row, "objekt", None),
+			date=serienbrief_doc.date,
+		)
+		pdf_chunks.append(serienbrief_doc._render_segments_pdf_bytes(segments, footer_doc=footer_doc))
 
 	return serienbrief_doc._merge_pdf_chunks(pdf_chunks)
 
