@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import frappe
 
-from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+from mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 	_collect_template_requirements,
 )
 from hausverwaltung.hausverwaltung.scripts.render_all_templates import (

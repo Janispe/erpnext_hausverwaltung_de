@@ -9,7 +9,7 @@ from frappe.model.document import Document
 from frappe.utils import add_days, cint, cstr
 from frappe.utils import now_datetime
 
-from hausverwaltung.hausverwaltung.utils.pdf_engine import render_pdf as get_pdf
+from mail_merge.mail_merge.utils.pdf_engine import render_pdf as get_pdf
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import normalize_print_format_name
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_for_print_format
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_pdf_for_print_format
@@ -368,7 +368,7 @@ def get_verteilungsbasis(name: str) -> Dict[str, List[Dict[str, object]]]:
 
 
 def _get_mieter_recipients(abrechnung: "Document") -> List[str]:
-	"""Ermittelt E-Mail-Empfänger aus den Vertragspartnern (Contact.email_id) der Mieterabrechnung."""
+	"""Ermittelt E-Mail-Ziel aus den Vertragspartnern (Contact.email_id) der Mieterabrechnung."""
 	recipients: Set[str] = set()
 	for row in getattr(abrechnung, "mieter", []) or []:
 		rolle = (row.get("rolle") or "").strip()
@@ -713,7 +713,7 @@ def _get_default_bk_mieter_print_format() -> Optional[str]:
 
 
 def _render_mieter_abrechnungen_serienbrief_html(child_names: List[str], vorlage: str) -> str:
-	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+	from mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 		SerienbriefDurchlauf,
 	)
 
@@ -747,13 +747,13 @@ def _render_mieter_abrechnungen_serienbrief_pdf_batch(
 	vorlage: str,
 	progress_cb: Optional[Callable[[int, int, Optional[str]], None]] = None,
 ) -> bytes:
-	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+	from mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 		_collect_template_requirements,
 	)
-	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+	from mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 		SerienbriefDurchlauf,
 	)
-	from hausverwaltung.hausverwaltung.utils.brand_print import apply_print_saving_brand_assets
+	from mail_merge.mail_merge.utils.brand_print import apply_print_saving_brand_assets
 
 	template = frappe.get_cached_doc("Serienbrief Vorlage", vorlage)
 	serienbrief_doc: SerienbriefDurchlauf = frappe.get_doc(
@@ -776,13 +776,13 @@ def _render_mieter_abrechnungen_serienbrief_pdf_batch(
 	serienbrief_doc.flags.ignore_permissions = True
 
 	template_requirements = _collect_template_requirements(template, "Betriebskostenabrechnung Mieter")
-	empfaenger_rows = serienbrief_doc._get_empfaenger_rows()
-	if not empfaenger_rows:
+	iteration_rows = serienbrief_doc._get_iteration_rows()
+	if not iteration_rows:
 		frappe.throw(_("Bitte fügen Sie mindestens ein Iterations-Objekt hinzu."))
 
 	pages: List[str] = []
-	total = len(empfaenger_rows)
-	for idx, row in enumerate(empfaenger_rows, start=1):
+	total = len(iteration_rows)
+	for idx, row in enumerate(iteration_rows, start=1):
 		current = _row_value(row, "iteration_objekt")
 		context_data = serienbrief_doc._build_context(
 			row, idx, template_requirements, template, total=total
@@ -1129,7 +1129,7 @@ def download_batch_print_html(
 
 	if effective_serienbrief_vorlage:
 		# Serienbrief: ein Dokument mit mehreren Seiten
-		from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+		from mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 			SerienbriefDurchlauf,
 		)
 

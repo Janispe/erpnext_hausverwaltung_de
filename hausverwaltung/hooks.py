@@ -10,7 +10,7 @@ app_license = "mit"
 
 # Phase 8 Stufe 1a: Process Engine ist eigenstaendige App. Frappe liest
 # required_apps aus hooks.py (NICHT aus pyproject.toml).
-required_apps = ["process_engine"]
+required_apps = ["process_engine", "mail_merge"]
 
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
@@ -37,8 +37,6 @@ app_include_js = [
 	"/assets/hausverwaltung/js/ui_helpers.js",
 	"/assets/hausverwaltung/js/payment_reconciliation_shortcut.js",
 	"/assets/hausverwaltung/js/role_based_field_visibility.js",
-	"/assets/hausverwaltung/js/serienbrief_vorlagen_browser.js",
-	"/assets/hausverwaltung/js/serienbrief_durchlauf_dialog.js",
 	"/assets/hausverwaltung/js/sales_invoice_writeoff.js",
 	"/assets/hausverwaltung/js/buchen_cockpit.js",
 	"/assets/hausverwaltung/js/buchungs_inbox.js",
@@ -127,32 +125,12 @@ doctype_tree_js = {
 # automatically create page for each record of this doctype
 # website_generators = ["Web Page"]
 
-# Jinja
-# ----------
-
-jinja = {
-	"methods": [
-		# Footer-Helper für Serienbrief-Print-Format: rendert die Bankverbindungs-
-		# Zeile, wenn die Vorlage den Baustein „Bankverbindung Immobilie"
-		# referenziert. Aufruf im Footer-HTML als
-		# ``get_footer_bankverbindung_html(doc)``.
-		"hausverwaltung.hausverwaltung.utils.serienbrief_footer.get_footer_bankverbindung_html",
-	],
-}
-
-# Boot
-# ----------
-# extend desk bootinfo with cache bust tokens
-extend_bootinfo = "hausverwaltung.hausverwaltung.utils.placeholder_cache.extend_bootinfo"
-
 # Installation
 # ------------
 
 # before_install = "hausverwaltung.install.before_install"
 after_install = "hausverwaltung.install.after_install"
-# bump placeholder cache on migrate so client-side caches invalidate
 after_migrate = [
-	"hausverwaltung.hausverwaltung.utils.placeholder_cache.bump_cache_version",
 	"hausverwaltung.install.sync_hausverwalter_permissions",
 	"hausverwaltung.install.ensure_desk_custom_permissions",
 	"hausverwaltung.install.ensure_hausverwalter_extra_permissions",
@@ -165,8 +143,6 @@ after_migrate = [
 	"hausverwaltung.install.ensure_hausverwalter_report_roles",
 	"hausverwaltung.install.ensure_dunning_serienbrief_link_fields",
 	"hausverwaltung.install.ensure_dunning_fee_invoice_fields",
-	"hausverwaltung.install.ensure_serienbrief_print_format_link_field",
-	"hausverwaltung.install.ensure_serienbrief_dokument_print_format",
 	"hausverwaltung.install.ensure_hv_dunning_print_format",
 	"hausverwaltung.install.ensure_zahlungshistorie_baustein",
 	"hausverwaltung.install.ensure_euer_print_format",
@@ -280,12 +256,6 @@ doc_events = {
 	},
 	"Sales Invoice": {
 		"before_cancel": "hausverwaltung.hausverwaltung.doctype.dunning.prevent_direct_cancel_of_dunning_fee_invoice",
-	},
-	"Serienbrief Vorlage": {
-		# Beim Save: Split-Preview-PDF als Background-Job regenerieren, damit der
-		# Vorlagen-Browser eine pre-gerenderte Vorschau zeigt statt jedesmal live
-		# durch Chrome-PDF zu rendern. Job dedupliziert per vorlage_name.
-		"on_update": "hausverwaltung.hausverwaltung.doctype.serienbrief_vorlage.serienbrief_vorlage.enqueue_preview_regeneration",
 	},
 	"Purchase Invoice": {
 		# Auto Repeat setzt nur Pflicht-Date-Felder. bill_date, due_date und

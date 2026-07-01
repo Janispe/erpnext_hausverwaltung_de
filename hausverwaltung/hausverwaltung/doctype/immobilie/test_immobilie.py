@@ -5,7 +5,7 @@ from unittest.mock import patch
 import frappe
 import unittest
 
-from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+from mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 	_render_serienbrief_template,
 )
 from hausverwaltung.hausverwaltung.utils.immobilie_accounts import (

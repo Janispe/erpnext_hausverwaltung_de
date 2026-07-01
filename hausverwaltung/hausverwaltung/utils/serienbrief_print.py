@@ -7,13 +7,13 @@ import frappe
 from frappe import _
 from frappe.utils import today
 
-from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+from mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 	SerienbriefDurchlauf,
 )
-from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+from mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 	_collect_template_requirements,
 )
-from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+from mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 	_get_template_template_source,
 )
 
@@ -101,9 +101,9 @@ def render_serienbrief_pdf_for_print_format(
 	template, serienbrief_doc = context
 	iteration_doctype = (serienbrief_doc.iteration_doctype or "").strip()
 	template_requirements = _collect_template_requirements(template, iteration_doctype)
-	empfaenger_rows = serienbrief_doc._get_empfaenger_rows()
+	iteration_rows = serienbrief_doc._get_iteration_rows()
 
-	if not empfaenger_rows:
+	if not iteration_rows:
 		frappe.throw(_("Bitte fügen Sie mindestens ein Iterations-Objekt hinzu."))
 
 	has_blocks = bool(template.get("textbausteine"))
@@ -112,8 +112,8 @@ def render_serienbrief_pdf_for_print_format(
 		frappe.throw(_("Die gewählte Vorlage enthält keinen Inhalt."))
 
 	pdf_chunks: list[bytes] = []
-	total = len(empfaenger_rows)
-	for idx, row in enumerate(empfaenger_rows, start=1):
+	total = len(iteration_rows)
+	for idx, row in enumerate(iteration_rows, start=1):
 		context_data = serienbrief_doc._build_context(
 			row, idx, template_requirements, template, total=total
 		)

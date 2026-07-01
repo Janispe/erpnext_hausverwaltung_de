@@ -499,7 +499,7 @@ def get_serienbrief_vorlage_variables(
     if not frappe.has_permission("Serienbrief Vorlage", "read"):
         frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
 
-    from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+    from mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
         get_serienbrief_value_fields,
     )
 

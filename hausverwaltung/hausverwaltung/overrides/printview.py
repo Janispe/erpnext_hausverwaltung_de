@@ -145,7 +145,7 @@ def _render_serienbrief_dokument_pdf(docname: str) -> bytes | None:
 	renders the template segments (HTML→wkhtmltopdf + raw PDF form bytes),
 	so the result always contains the correctly merged PDF form pages.
 	"""
-	from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+	from mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 		SerienbriefDurchlauf,
 		_collect_template_requirements,
 	)
@@ -188,12 +188,12 @@ def _render_serienbrief_dokument_pdf(docname: str) -> bytes | None:
 	durchlauf.flags.ignore_permissions = True
 
 	try:
-		empfaenger_rows = durchlauf._get_empfaenger_rows()
-		if not empfaenger_rows:
+		iteration_rows = durchlauf._get_iteration_rows()
+		if not iteration_rows:
 			return _read_cached_pdf(target_doc)
 
 		template_requirements = _collect_template_requirements(template, iteration_doctype)
-		row = empfaenger_rows[0]
+		row = iteration_rows[0]
 		context = durchlauf._build_context(row, 1, template_requirements, template, total=1)
 		segments = durchlauf._render_template_content(template, context)
 		if not segments:
@@ -210,7 +210,7 @@ def _render_serienbrief_dokument_pdf(docname: str) -> bytes | None:
 
 def _read_cached_pdf(target_doc) -> bytes | None:
 	"""Read the cached generated_pdf_file as fallback."""
-	from hausverwaltung.hausverwaltung.utils.serienbrief_pdf_form import read_file_url_bytes
+	from mail_merge.mail_merge.utils.serienbrief_pdf_form import read_file_url_bytes
 
 	pdf_url = cstr(getattr(target_doc, "generated_pdf_file", None) or "").strip()
 	if not pdf_url:

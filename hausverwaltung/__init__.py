@@ -7,7 +7,7 @@ __version__ = "0.0.1"
 # mit ``invalid print parameters: content area is empty`` ablehnt.
 # Der Patch ist idempotent und läuft beim ersten Import dieses Moduls.
 try:
-	from hausverwaltung.hausverwaltung.utils.frappe_chrome_footer_patch import (
+	from mail_merge.mail_merge.utils.frappe_chrome_footer_patch import (
 		apply as _apply_chrome_footer_patch,
 	)
 

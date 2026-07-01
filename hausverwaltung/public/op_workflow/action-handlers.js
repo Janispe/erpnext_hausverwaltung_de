@@ -59,7 +59,7 @@
   async function getSerienbriefValueFields(template, dunningType, context = {}) {
     if (!template) return { template: null, fields: [] };
     const result = await call(
-      "hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf.get_serienbrief_value_fields",
+      "mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf.get_serienbrief_value_fields",
       {
         template,
         iteration_doctype: "Dunning",

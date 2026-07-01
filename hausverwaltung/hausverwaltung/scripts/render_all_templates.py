@@ -16,7 +16,7 @@ from collections import Counter
 
 import frappe
 
-from hausverwaltung.hausverwaltung.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
+from mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 	_collect_template_requirements,
 )
 

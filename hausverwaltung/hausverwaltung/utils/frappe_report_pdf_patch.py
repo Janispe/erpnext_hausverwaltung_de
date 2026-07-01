@@ -35,7 +35,7 @@ def apply() -> None:
 
 	from frappe.core.doctype.access_log.access_log import make_access_log
 
-	from hausverwaltung.hausverwaltung.utils.pdf_engine import render_pdf
+	from mail_merge.mail_merge.utils.pdf_engine import render_pdf
 
 	# Frappe injectet `<div id="footer-html">` mit `Seite <span class="page">`
 	# — funktioniert nur in wkhtmltopdf's Custom-CSS-Page-Replacement, nicht
