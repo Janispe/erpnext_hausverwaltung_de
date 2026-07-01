@@ -25,6 +25,44 @@ const PARTY_TYPES = [
 	["Supplier", "Lieferant"],
 	["Eigentuemer", "Eigentümer"],
 ];
+const SYSTEM_RULES = {
+	"party.unique_iban_to_party": {
+		label: "Systembaustein",
+		when: "IBAN der Bankzeile ist genau einem Bank Account zugeordnet",
+		then: "Partei und Party-Typ aus dem Bank Account übernehmen",
+		behavior: "Stoppt die Party-Pipeline bei einem eindeutigen Treffer.",
+	},
+	"party.row_party": {
+		label: "Systembaustein",
+		when: "Bankzeile hat bereits Partei und Party-Typ",
+		then: "Vorhandene Partei der Bankzeile übernehmen",
+		behavior: "Stoppt die Party-Pipeline, wenn die Zeile schon fachlich zugeordnet ist.",
+	},
+	"booking.invoice_auto_match": {
+		label: "Systembaustein",
+		when: "Offene Sales/Purchase Invoice passt konservativ zur Bank Transaction",
+		then: "Payment Entry erstellen und mit der passenden Rechnung abstimmen",
+		behavior: "Bucht nur eindeutige Treffer automatisch.",
+	},
+	"booking.kreditrate_auto_match": {
+		label: "Systembaustein",
+		when: "Ausgang passt eindeutig zu einer Kreditrate",
+		then: "Kreditrate buchen und Journal Entry verknüpfen",
+		behavior: "Mehrdeutige Treffer bleiben zur Prüfung offen.",
+	},
+	"booking.abschlagsplan_auto_match": {
+		label: "Systembaustein",
+		when: "Supplier-Ausgang passt eindeutig zu einer offenen Abschlagsplan-Zeile",
+		then: "Abschlagsplan-Zeile zuordnen und Payment Entry erzeugen",
+		behavior: "Läuft nach Rechnungs- und Kreditraten-Match in der Buchungs-Pipeline.",
+	},
+	"booking.needs_review_fallback": {
+		label: "Systembaustein",
+		when: "Keine vorherige Buchungsregel konnte die Zeile automatisch buchen",
+		then: "Zeile zur manuellen Prüfung markieren",
+		behavior: "Fängt offene Buchungsfälle am Ende der Pipeline ab.",
+	},
+};
 
 function parseParams(rule) {
 	if (rule?.parameters && typeof rule.parameters === "object") return rule.parameters;
@@ -115,6 +153,10 @@ function actionText(action) {
 	return "";
 }
 
+function systemRuleInfo(rule) {
+	return SYSTEM_RULES[rule?.ruleKey || rule?.name] || null;
+}
+
 function scopeLabel(entry) {
 	const mode = entry.mode || "Sperren";
 	const type = entry.scopeType || "IBAN";
@@ -144,6 +186,7 @@ function RuleCard({ rule, rows, index, total, onEdit, onToggle, onReorder, onDel
 	const builder = rule.builder || params.builder;
 	const action = rule.action || params.action;
 	const isBuilder = Boolean(rule.isBuilderRule || builder);
+	const systemInfo = systemRuleInfo(rule);
 	const hits = isBuilder && rows?.length
 		? rows.filter((row) => !isDoneRow(row) && builderMatches(builder, row)).length
 		: null;
@@ -172,12 +215,21 @@ function RuleCard({ rule, rows, index, total, onEdit, onToggle, onReorder, onDel
 					<span className="fn-g">ƒ</span> wenn {exprText(builder)} <span className="fn-arrow">→</span> <span className="fn-out">{actionText(action)}</span>
 				</div>
 			)}
+			{!isBuilder && systemInfo && (
+				<div className="rc-sig rule-recipe">
+					<span>Wenn {systemInfo.when}</span>
+					<span className="fn-arrow">→</span>
+					<span className="fn-out">{systemInfo.then}</span>
+				</div>
+			)}
 
 			<div className="rc-badges">
 				{rule.stopOnMatch && <span className="rc-badge">Stoppt bei Treffer</span>}
 				{rule.autoApply && <span className="rc-badge">Automatisch</span>}
 				{rule.requiresReview && <span className="rc-badge warn">Prüfung</span>}
-				{isBuilder ? <span className="rc-badge soft">Ausdruck</span> : <span className="rc-badge soft">DB-Code · {rule.ruleCodeLines || 0}</span>}
+				{isBuilder
+					? <span className="rc-badge soft">Builder</span>
+					: <span className="rc-badge soft">{systemInfo?.label || `DB-Code · ${rule.ruleCodeLines || 0}`}</span>}
 				{scope.length > 0 && <span className="rc-badge accent">Scope · {scope.length}</span>}
 			</div>
 
@@ -185,7 +237,7 @@ function RuleCard({ rule, rows, index, total, onEdit, onToggle, onReorder, onDel
 				<div className="rc-foot-left">
 					{isBuilder
 						? hits > 0 ? <span className="rp-hits has">↻ {hits} {hits === 1 ? "Zeile" : "Zeilen"} im Auszug</span> : <span className="rp-hits">keine Treffer</span>
-						: <span className="rc-foot-note">Backend-Regel</span>}
+						: <span className="rc-foot-note">{systemInfo ? "Baustein-Regel" : "Backend-Regel"}</span>}
 				</div>
 				<div className="rc-actions">
 					<button className="btn subtle sm" onClick={() => onEdit(rule)}><Icon name="settings" size={13} /> Bearbeiten</button>
@@ -297,7 +349,38 @@ function makeInitialEditorState(state) {
 		isSystem: Boolean(rule.isSystem),
 		isBuilderRule: Boolean(rule.isBuilderRule || params.builder),
 		ruleCodeLines: rule.ruleCodeLines || 0,
+		systemInfo: systemRuleInfo(rule),
 	};
+}
+
+function SystemRuleBuilder({ form }) {
+	const info = form.systemInfo;
+	if (!info) {
+		return (
+			<div className="system-builder">
+				<div className="sb-row">
+					<div className="sb-label">Art</div>
+					<div className="sb-value">Backend-Regel mit individuellem Python-Code</div>
+				</div>
+			</div>
+		);
+	}
+	return (
+		<div className="system-builder">
+			<div className="sb-row">
+				<div className="sb-label">Wenn</div>
+				<div className="sb-value">{info.when}</div>
+			</div>
+			<div className="sb-row">
+				<div className="sb-label">Dann</div>
+				<div className="sb-value">{info.then}</div>
+			</div>
+			<div className="sb-row">
+				<div className="sb-label">Verhalten</div>
+				<div className="sb-value">{info.behavior}</div>
+			</div>
+		</div>
+	);
 }
 
 function RuleEditor({ state, rows, onClose, onSave }) {
@@ -390,16 +473,22 @@ function RuleEditor({ state, rows, onClose, onSave }) {
 							)}
 						</div>
 						{form.isSystem ? (
-							<div className="locked-rule">
-								<span>Python-Regel · {form.ruleCodeLines || 0} Code-Zeilen</span>
-								<button
-									type="button"
-									className="btn subtle sm"
-									onClick={() => api.openDoc(form.doctype, form.name)}
-								>
-									<Icon name="file" size={13} /> Python-Code öffnen
-								</button>
-							</div>
+							<>
+								<SystemRuleBuilder form={form} />
+								<details className="admin-code-link">
+									<summary>Admin-Fallback</summary>
+									<div className="locked-rule">
+										<span>Backend-Code · {form.ruleCodeLines || 0} Code-Zeilen</span>
+										<button
+											type="button"
+											className="btn subtle sm"
+											onClick={() => api.openDoc(form.doctype, form.name)}
+										>
+											<Icon name="file" size={13} /> Code im Formular öffnen
+										</button>
+									</div>
+								</details>
+							</>
 						) : form.mode === "erweitert" ? (
 							<textarea
 								className="text-input re-code"
