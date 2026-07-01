@@ -216,6 +216,108 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["items"][0]["belegnummer"], "SINV-1")
 		self.assertEqual(result["items"][0]["route"], ["Form", "Sales Invoice", "SINV-1"])
 
+	def test_search_late_payments_groups_open_and_late_paid_invoices(self):
+		invoices = [
+			_row(
+				name="SI-OPEN",
+				customer="CUST-1",
+				customer_name="Anna Schmidt",
+				posting_date="2026-01-01",
+				due_date="2026-01-05",
+				grand_total=100,
+				outstanding_amount=100,
+				status="Overdue",
+				currency="EUR",
+			),
+			_row(
+				name="SI-LATE",
+				customer="CUST-2",
+				customer_name="Bernd Schmidt",
+				posting_date="2026-06-01",
+				due_date="2026-06-03",
+				grand_total=500,
+				outstanding_amount=0,
+				status="Paid",
+				currency="EUR",
+			),
+			_row(
+				name="SI-ONTIME",
+				customer="CUST-3",
+				customer_name="Clara Schmidt",
+				posting_date="2026-06-01",
+				due_date="2026-06-03",
+				grand_total=400,
+				outstanding_amount=0,
+				status="Paid",
+				currency="EUR",
+			),
+		]
+		allocations = [
+			_row(invoice="SI-LATE", payment_entry="PE-1", posting_date="2026-07-02", allocated_amount=500),
+			_row(invoice="SI-ONTIME", payment_entry="PE-2", posting_date="2026-06-02", allocated_amount=400),
+		]
+
+		with patch.object(assistant, "_require_finance_permissions"), \
+			 patch.object(assistant, "_default_company", return_value="Hausverwaltung Peters"), \
+			 patch.object(assistant, "nowdate", return_value="2026-07-02"), \
+			 patch.object(assistant, "_can_read_doc", return_value=True), \
+			 patch.object(assistant.frappe.db, "sql", side_effect=[invoices, allocations]), \
+			 patch.object(
+				 assistant,
+				 "_late_payment_match",
+				 side_effect=lambda row: {"type": "late_payment", "customer": row["customer"], "title": row["customer_name"]},
+			 ):
+			result = assistant.search_late_payments(from_date="2026-07-01", to_date="2026-07-31")
+
+		self.assertEqual(result["period_basis"], "status_date")
+		self.assertEqual(result["count"], 2)
+		self.assertEqual(result["total_open_amount"], 100)
+		self.assertEqual(result["total_late_paid_amount"], 500)
+		self.assertEqual({row["customer"] for row in result["late_payers"]}, {"CUST-1", "CUST-2"})
+		self.assertNotIn("CUST-3", {row["customer"] for row in result["late_payers"]})
+
+	def test_search_late_payments_filters_invoices_by_permission(self):
+		invoices = [
+			_row(
+				name="SI-HIDDEN",
+				customer="CUST-1",
+				customer_name="Anna Schmidt",
+				posting_date="2026-01-01",
+				due_date="2026-01-05",
+				grand_total=100,
+				outstanding_amount=100,
+				status="Overdue",
+				currency="EUR",
+			),
+			_row(
+				name="SI-VISIBLE",
+				customer="CUST-2",
+				customer_name="Bernd Schmidt",
+				posting_date="2026-01-01",
+				due_date="2026-01-05",
+				grand_total=200,
+				outstanding_amount=200,
+				status="Overdue",
+				currency="EUR",
+			),
+		]
+
+		with patch.object(assistant, "_require_finance_permissions"), \
+			 patch.object(assistant, "_default_company", return_value="Hausverwaltung Peters"), \
+			 patch.object(assistant, "nowdate", return_value="2026-07-02"), \
+			 patch.object(assistant, "_can_read_doc", side_effect=lambda _doctype, name: name == "SI-VISIBLE"), \
+			 patch.object(assistant.frappe.db, "sql", side_effect=[invoices, []]), \
+			 patch.object(
+				 assistant,
+				 "_late_payment_match",
+				 side_effect=lambda row: {"type": "late_payment", "customer": row["customer"], "title": row["customer_name"]},
+			 ):
+			result = assistant.search_late_payments(from_date="2026-07-01", to_date="2026-07-31")
+
+		self.assertEqual(result["count"], 1)
+		self.assertEqual(result["late_payers"][0]["customer"], "CUST-2")
+		self.assertEqual(result["total_open_amount"], 200)
+
 	def test_rank_mieter_by_rent_returns_highest_active_contracts(self):
 		docs = {
 			"MV-1": frappe._dict(

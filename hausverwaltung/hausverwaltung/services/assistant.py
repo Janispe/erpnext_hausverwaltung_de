@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 import json
 import re
 from typing import Any
@@ -15,6 +16,8 @@ MAX_SEARCH_LIMIT = 10
 SQL_PREFETCH_FACTOR = 4
 GENERIC_READ_LIMIT = 50
 GENERIC_CANDIDATE_LIMIT = 500
+LATE_PAYMENT_READ_LIMIT = 50
+LATE_PAYMENT_CANDIDATE_LIMIT = 2000
 CONVERSATION_HISTORY_LIMIT = 10
 CONVERSATION_LIST_LIMIT = 30
 CONVERSATION_MESSAGE_LIMIT = 100
@@ -164,8 +167,10 @@ HV_OPERATOR_ALIASES = {
 ASSISTANT_SYSTEM_PROMPT = """Du bist der interne Hausverwaltungs-Assistent.
 Du darfst nur lesen. Du darfst keine Buchungen, Briefe, Aufgaben oder sonstige Daten aendern.
 Nutze die bereitgestellten Tools fuer Mietersuche, Mieterkonto, Salden, offene Posten,
-Miet-Ranglisten und eingeschraenkte Hausverwaltungs-Abfragen.
+verspaetete Zahlungen, Miet-Ranglisten und eingeschraenkte Hausverwaltungs-Abfragen.
 Wenn der Nutzer aktive oder laufende Mietvertraege meint, filtere Mietvertrag immer mit status = L\u00e4uft.
+Bei Fragen nach "zu spaet gezahlt", "verspaetet gezahlt" oder Zahlungsverzug nutze search_late_payments,
+nicht search_open_items. search_open_items ist nur fuer aktuell offene Posten geeignet.
 Erfinde keine Datensaetze und keine Betraege.
 Wenn Treffer mehrdeutig sind, nenne die wichtigsten Treffer und frage nach einer Konkretisierung.
 Antworte knapp auf Deutsch und verweise auf die gefundenen Treffernummern, wenn vorhanden."""
@@ -257,6 +262,49 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 					},
 				},
 				"required": ["query"],
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": {
+			"name": "search_late_payments",
+			"description": (
+				"Findet Mieter mit Zahlungsverzug in einem Zeitraum. Nutze dieses Tool fuer Fragen wie "
+				"'wer hat diesen Monat zu spaet gezahlt' oder 'welche Mieter sind mit der Miete im Verzug'. "
+				"Es unterscheidet noch offene verspaetete Rechnungen und tatsaechlich nach Faelligkeit bezahlte Rechnungen."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"from_date": {
+						"type": "string",
+						"description": "Startdatum YYYY-MM-DD. Leer = erster Tag des aktuellen Monats.",
+					},
+					"to_date": {
+						"type": "string",
+						"description": "Enddatum YYYY-MM-DD. Leer = letzter Tag des aktuellen Monats.",
+					},
+					"period_basis": {
+						"type": "string",
+						"description": (
+							"status_date fuer Zahlungsverzug am Stichtag plus spaete Zahlungseingaenge im Zeitraum; "
+							"due_date fuer im Zeitraum faellige Rechnungen; payment_date fuer spaete Zahlungseingaenge im Zeitraum."
+						),
+					},
+					"include_open": {
+						"type": "boolean",
+						"description": "Noch offene Rechnungen einschliessen, deren Faelligkeit vorbei ist. Default true.",
+					},
+					"include_late_paid": {
+						"type": "boolean",
+						"description": "Nach Faelligkeit bezahlte Rechnungen einschliessen. Default true.",
+					},
+					"limit": {
+						"type": "integer",
+						"description": "Maximale Mieterzahl, 1 bis 50.",
+					},
+				},
 			},
 		},
 	},
@@ -367,6 +415,7 @@ TOOL_FUNCTIONS = {
 	"get_mieter_context": lambda **kwargs: get_mieter_context(**kwargs),
 	"get_mieterkonto_summary": lambda **kwargs: get_mieterkonto_summary(**kwargs),
 	"search_open_items": lambda **kwargs: search_open_items(**kwargs),
+	"search_late_payments": lambda **kwargs: search_late_payments(**kwargs),
 	"rank_mieter_by_rent": lambda **kwargs: rank_mieter_by_rent(**kwargs),
 	"hv_query_docs": lambda **kwargs: hv_query_docs(**kwargs),
 	"hv_get_doc": lambda **kwargs: hv_get_doc(**kwargs),
@@ -836,6 +885,87 @@ def search_open_items(query: str, limit: int | None = None) -> dict[str, Any]:
 	}
 
 
+def search_late_payments(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	period_basis: str | None = None,
+	include_open: bool | int | str | None = True,
+	include_late_paid: bool | int | str | None = True,
+	limit: int | None = None,
+) -> dict[str, Any]:
+	"""Find tenants with overdue or late-paid receivables in a safe, read-only way."""
+	_require_finance_permissions()
+	resolved_limit = _normalize_late_payment_limit(limit)
+	start, end = _resolve_month_date_range(from_date, to_date)
+	basis = _normalize_late_payment_basis(period_basis)
+	with_open = _bool_arg(include_open, True)
+	with_late_paid = _bool_arg(include_late_paid, True)
+	if not with_open and not with_late_paid:
+		with_open = True
+	as_of = _late_payment_as_of_date(end)
+
+	invoices = _late_payment_invoice_candidates(
+		start=start,
+		end=end,
+		as_of=as_of,
+		basis=basis,
+		include_open=with_open,
+		include_late_paid=with_late_paid,
+	)
+	if not invoices:
+		return {
+			"from_date": str(start),
+			"to_date": str(end),
+			"as_of": str(as_of),
+			"period_basis": basis,
+			"count": 0,
+			"returned": 0,
+			"total_open_amount": 0.0,
+			"total_late_paid_amount": 0.0,
+			"late_payers": [],
+			"matches": [],
+			"notes": _late_payment_notes(basis, with_open, with_late_paid),
+		}
+
+	allocations = _late_payment_allocations([row.get("name") for row in invoices])
+	groups = _group_late_payment_invoices(
+		invoices=invoices,
+		allocations=allocations,
+		start=start,
+		end=end,
+		as_of=as_of,
+		basis=basis,
+		include_open=with_open,
+		include_late_paid=with_late_paid,
+	)
+	groups.sort(
+		key=lambda row: (
+			flt(row.get("open_amount")) + flt(row.get("late_paid_amount")),
+			row.get("max_days_late") or 0,
+			row.get("customer_name") or row.get("customer") or "",
+		),
+		reverse=True,
+	)
+	returned = groups[:resolved_limit]
+	matches = [_late_payment_match(row) for row in returned]
+	return {
+		"from_date": str(start),
+		"to_date": str(end),
+		"as_of": str(as_of),
+		"period_basis": basis,
+		"include_open": with_open,
+		"include_late_paid": with_late_paid,
+		"count": len(groups),
+		"returned": len(returned),
+		"total_open_amount": flt(sum(flt(row.get("open_amount")) for row in groups), 2),
+		"total_late_paid_amount": flt(sum(flt(row.get("late_paid_amount")) for row in groups), 2),
+		"currency": _first_value(groups, "currency"),
+		"late_payers": returned,
+		"matches": matches,
+		"notes": _late_payment_notes(basis, with_open, with_late_paid),
+	}
+
+
 def rank_mieter_by_rent(
 	metric: str | None = None,
 	order: str | None = None,
@@ -1157,6 +1287,38 @@ def _resolve_date_range(from_date: str | None, to_date: str | None) -> tuple[str
 	return str(start), str(end)
 
 
+def _resolve_month_date_range(from_date: str | None, to_date: str | None):
+	today = getdate(nowdate())
+	if from_date:
+		start = getdate(from_date)
+	else:
+		start = today.replace(day=1)
+	if to_date:
+		end = getdate(to_date)
+	elif from_date:
+		end = _month_end(start)
+	else:
+		end = _month_end(today)
+	if start > end:
+		frappe.throw(_("Von darf nicht nach Bis liegen."))
+	return start, end
+
+
+def _month_end(value):
+	date_value = getdate(value)
+	if date_value.month == 12:
+		next_month = date_value.replace(year=date_value.year + 1, month=1, day=1)
+	else:
+		next_month = date_value.replace(month=date_value.month + 1, day=1)
+	return next_month - timedelta(days=1)
+
+
+def _late_payment_as_of_date(end):
+	today = getdate(nowdate())
+	end_date = getdate(end)
+	return today if today <= end_date else end_date
+
+
 def _resolve_single_mieter(value: str) -> dict[str, Any] | None:
 	context = get_mieter_context(value)
 	match = context.get("match")
@@ -1220,6 +1382,345 @@ def _compact_open_item_row(row: dict[str, Any]) -> dict[str, Any]:
 		if row.get("belegart") and row.get("belegnummer")
 		else None,
 	}
+
+
+def _normalize_late_payment_limit(limit: int | None) -> int:
+	try:
+		value = int(limit or 20)
+	except (TypeError, ValueError):
+		value = 20
+	return min(max(value, 1), LATE_PAYMENT_READ_LIMIT)
+
+
+def _normalize_late_payment_basis(period_basis: str | None) -> str:
+	text = str(period_basis or "").strip().lower()
+	aliases = {
+		"": "status_date",
+		"status": "status_date",
+		"status_date": "status_date",
+		"stichtag": "status_date",
+		"zahlungsverzug": "status_date",
+		"due": "due_date",
+		"due_date": "due_date",
+		"faellig": "due_date",
+		"faelligkeit": "due_date",
+		"fälligkeit": "due_date",
+		"payment": "payment_date",
+		"payment_date": "payment_date",
+		"zahlung": "payment_date",
+		"zahlungseingang": "payment_date",
+	}
+	return aliases.get(text, "status_date")
+
+
+def _bool_arg(value: bool | int | str | None, default: bool) -> bool:
+	if value is None:
+		return default
+	if isinstance(value, str):
+		text = value.strip().lower()
+		if text in {"0", "false", "no", "nein", "aus"}:
+			return False
+		if text in {"1", "true", "yes", "ja", "an"}:
+			return True
+	return bool(value)
+
+
+def _late_payment_invoice_candidates(
+	*,
+	start,
+	end,
+	as_of,
+	basis: str,
+	include_open: bool,
+	include_late_paid: bool,
+) -> list[dict[str, Any]]:
+	conditions: list[str] = []
+	if include_open:
+		if basis == "due_date":
+			conditions.append(
+				"""(
+					si.due_date between %(from_date)s and %(to_date)s
+					and si.due_date <= %(as_of)s
+					and si.outstanding_amount > 0.01
+					and si.status not in ('Paid', 'Credit Note Issued', 'Written Off', 'Partly Paid and Written Off')
+				)"""
+			)
+		else:
+			conditions.append(
+				"""(
+					si.due_date <= %(as_of)s
+					and si.outstanding_amount > 0.01
+					and si.status not in ('Paid', 'Credit Note Issued', 'Written Off', 'Partly Paid and Written Off')
+				)"""
+			)
+	if include_late_paid:
+		late_payment_exists = """
+			exists (
+				select 1
+				from `tabPayment Entry Reference` per
+				join `tabPayment Entry` pe on pe.name = per.parent
+				where per.reference_doctype = 'Sales Invoice'
+					and per.reference_name = si.name
+					and pe.docstatus = 1
+					and coalesce(per.allocated_amount, 0) > 0
+					and pe.posting_date > si.due_date
+		"""
+		if basis in {"status_date", "payment_date"}:
+			late_payment_exists += """
+					and pe.posting_date between %(from_date)s and %(to_date)s
+			"""
+		late_payment_exists += ")"
+		if basis == "due_date":
+			conditions.append(f"(si.due_date between %(from_date)s and %(to_date)s and {late_payment_exists})")
+		else:
+			conditions.append(late_payment_exists)
+	if not conditions:
+		return []
+
+	return frappe.db.sql(
+		f"""
+		select
+			si.name,
+			si.customer,
+			coalesce(c.customer_name, si.customer) as customer_name,
+			si.posting_date,
+			si.due_date,
+			si.grand_total,
+			si.outstanding_amount,
+			si.status,
+			si.currency
+		from `tabSales Invoice` si
+		left join `tabCustomer` c on c.name = si.customer
+		where
+			si.docstatus = 1
+			and coalesce(si.is_return, 0) = 0
+			and coalesce(si.grand_total, 0) > 0
+			and si.company = %(company)s
+			and ({" or ".join(conditions)})
+		order by si.due_date asc, c.customer_name asc, si.name asc
+		limit %(limit)s
+		""",
+		{
+			"company": _default_company(),
+			"from_date": str(start),
+			"to_date": str(end),
+			"as_of": str(as_of),
+			"limit": LATE_PAYMENT_CANDIDATE_LIMIT,
+		},
+		as_dict=True,
+	)
+
+
+def _late_payment_allocations(invoice_names: list[str | None]) -> dict[str, list[dict[str, Any]]]:
+	names = [name for name in invoice_names if name]
+	if not names:
+		return {}
+	rows = frappe.db.sql(
+		"""
+		select
+			per.reference_name as invoice,
+			pe.name as payment_entry,
+			pe.posting_date,
+			pe.reference_no,
+			pe.reference_date,
+			per.allocated_amount
+		from `tabPayment Entry Reference` per
+		join `tabPayment Entry` pe on pe.name = per.parent
+		where
+			per.reference_doctype = 'Sales Invoice'
+			and per.reference_name in %(invoice_names)s
+			and pe.docstatus = 1
+			and coalesce(per.allocated_amount, 0) > 0
+		order by pe.posting_date asc, pe.name asc
+		""",
+		{"invoice_names": tuple(names)},
+		as_dict=True,
+	)
+	out: dict[str, list[dict[str, Any]]] = {}
+	for row in rows:
+		out.setdefault(row.get("invoice"), []).append(row)
+	return out
+
+
+def _group_late_payment_invoices(
+	*,
+	invoices: list[dict[str, Any]],
+	allocations: dict[str, list[dict[str, Any]]],
+	start,
+	end,
+	as_of,
+	basis: str,
+	include_open: bool,
+	include_late_paid: bool,
+) -> list[dict[str, Any]]:
+	groups: dict[str, dict[str, Any]] = {}
+	for invoice in invoices:
+		invoice_name = invoice.get("name")
+		if not _can_read_doc("Sales Invoice", invoice_name):
+			continue
+		due_date = getdate(invoice.get("due_date"))
+		late_allocations = _late_allocations_for_invoice(
+			allocations.get(invoice_name) or [],
+			due_date=due_date,
+			start=start,
+			end=end,
+			basis=basis,
+		)
+		is_open_late = (
+			include_open
+			and flt(invoice.get("outstanding_amount")) > 0.01
+			and (invoice.get("status") or "") not in {"Paid", "Credit Note Issued", "Written Off", "Partly Paid and Written Off"}
+			and due_date <= getdate(as_of)
+			and (basis != "due_date" or getdate(start) <= due_date <= getdate(end))
+		)
+		if not is_open_late and not (include_late_paid and late_allocations):
+			continue
+
+		customer = invoice.get("customer") or "-"
+		group = groups.setdefault(
+			customer,
+			{
+				"customer": customer,
+				"customer_name": invoice.get("customer_name") or customer,
+				"currency": invoice.get("currency") or "",
+				"invoice_count": 0,
+				"still_open_count": 0,
+				"late_paid_count": 0,
+				"open_amount": 0.0,
+				"late_paid_amount": 0.0,
+				"earliest_due_date": None,
+				"latest_payment_date": None,
+				"max_days_late": 0,
+				"invoices": [],
+			},
+		)
+		group["invoice_count"] += 1
+		if is_open_late:
+			group["still_open_count"] += 1
+			group["open_amount"] = flt(group["open_amount"] + flt(invoice.get("outstanding_amount")), 2)
+			group["max_days_late"] = max(group["max_days_late"], (getdate(as_of) - due_date).days)
+		if late_allocations:
+			late_paid_amount = flt(sum(flt(row.get("allocated_amount")) for row in late_allocations), 2)
+			group["late_paid_count"] += 1
+			group["late_paid_amount"] = flt(group["late_paid_amount"] + late_paid_amount, 2)
+			latest_payment_date = max(getdate(row.get("posting_date")) for row in late_allocations)
+			group["latest_payment_date"] = _max_date(group.get("latest_payment_date"), latest_payment_date)
+			group["max_days_late"] = max(
+				group["max_days_late"],
+				max((getdate(row.get("posting_date")) - due_date).days for row in late_allocations),
+			)
+		group["earliest_due_date"] = _min_date(group.get("earliest_due_date"), due_date)
+		if len(group["invoices"]) < 8:
+			group["invoices"].append(_compact_late_payment_invoice(invoice, late_allocations, is_open_late, as_of))
+	return list(groups.values())
+
+
+def _late_allocations_for_invoice(
+	rows: list[dict[str, Any]],
+	*,
+	due_date,
+	start,
+	end,
+	basis: str,
+) -> list[dict[str, Any]]:
+	late_rows = []
+	for row in rows:
+		posting_date = getdate(row.get("posting_date"))
+		if posting_date <= due_date:
+			continue
+		if basis in {"status_date", "payment_date"} and not (getdate(start) <= posting_date <= getdate(end)):
+			continue
+		late_rows.append(row)
+	return late_rows
+
+
+def _compact_late_payment_invoice(
+	invoice: dict[str, Any],
+	late_allocations: list[dict[str, Any]],
+	is_open_late: bool,
+	as_of,
+) -> dict[str, Any]:
+	due_date = getdate(invoice.get("due_date"))
+	latest_payment_date = max((getdate(row.get("posting_date")) for row in late_allocations), default=None)
+	day_counts = [(getdate(row.get("posting_date")) - due_date).days for row in late_allocations]
+	if is_open_late:
+		day_counts.append((getdate(as_of) - due_date).days)
+	return {
+		"invoice": invoice.get("name"),
+		"due_date": invoice.get("due_date"),
+		"posting_date": invoice.get("posting_date"),
+		"grand_total": flt(invoice.get("grand_total"), 2),
+		"outstanding_amount": flt(invoice.get("outstanding_amount"), 2),
+		"status": invoice.get("status") or "",
+		"is_open_late": is_open_late,
+		"late_paid_amount": flt(sum(flt(row.get("allocated_amount")) for row in late_allocations), 2),
+		"latest_payment_date": latest_payment_date,
+		"days_late": max(day_counts, default=0),
+		"route": ["Form", "Sales Invoice", invoice.get("name")] if invoice.get("name") else None,
+	}
+
+
+def _late_payment_match(row: dict[str, Any]) -> dict[str, Any]:
+	customer = row.get("customer") or ""
+	mietvertrag_row = _get_mietvertrag_row(customer) if customer else None
+	if mietvertrag_row and _can_read_doc("Mietvertrag", mietvertrag_row.get("mietvertrag")):
+		match = _format_mieter_match(mietvertrag_row)
+	else:
+		match = {
+			"type": "late_payment",
+			"doctype": "Customer",
+			"name": customer,
+			"title": row.get("customer_name") or customer,
+			"subtitle": "",
+			"customer": customer,
+			"customer_name": row.get("customer_name") or "",
+			"routes": [{"label": "Mieter", "doctype": "Customer", "name": customer, "route": ["Form", "Customer", customer]}]
+			if customer and frappe.has_permission("Customer", "read")
+			else [],
+		}
+	match["type"] = "late_payment"
+	match["open_amount"] = flt(row.get("open_amount"), 2)
+	match["late_paid_amount"] = flt(row.get("late_paid_amount"), 2)
+	match["invoice_count"] = row.get("invoice_count") or 0
+	match["still_open_count"] = row.get("still_open_count") or 0
+	match["late_paid_count"] = row.get("late_paid_count") or 0
+	match["max_days_late"] = row.get("max_days_late") or 0
+	match["subtitle"] = _compact_join(
+		[
+			match.get("subtitle"),
+			f"offen {match['open_amount']:.2f}" if match["open_amount"] else "",
+			f"spaet bezahlt {match['late_paid_amount']:.2f}" if match["late_paid_amount"] else "",
+			f"max. {match['max_days_late']} Tage" if match["max_days_late"] else "",
+		]
+	)
+	return match
+
+
+def _late_payment_notes(basis: str, include_open: bool, include_late_paid: bool) -> list[str]:
+	notes = []
+	if include_open:
+		if basis == "due_date":
+			notes.append("Noch offene Forderungen werden nur fuer Faelligkeiten im Zeitraum gezaehlt.")
+		else:
+			notes.append("Noch offene Forderungen werden als Zahlungsverzug bis zum Stichtag gezaehlt.")
+	if include_late_paid:
+		if basis == "due_date":
+			notes.append("Spaet bezahlte Forderungen werden nach Faelligkeit im Zeitraum gezaehlt.")
+		else:
+			notes.append("Spaet bezahlte Forderungen werden nach Zahlungseingang im Zeitraum gezaehlt.")
+	return notes
+
+
+def _min_date(current, candidate):
+	if not current:
+		return candidate
+	return min(getdate(current), getdate(candidate))
+
+
+def _max_date(current, candidate):
+	if not current:
+		return candidate
+	return max(getdate(current), getdate(candidate))
 
 
 def _rent_amounts_for_contract(doc) -> dict[str, float]:
