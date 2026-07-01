@@ -11,6 +11,7 @@ from frappe.utils import add_days, cint, cstr
 from hausverwaltung.hausverwaltung.utils.pdf_engine import render_pdf as get_pdf
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import normalize_print_format_name
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_for_print_format
+from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_pdf_for_print_format
 
 SERIENBRIEF_PRINT_FORMAT_FIELDNAME = "hv_serienbrief_vorlage"
 PRINT_BUNDLE_CSS_PATH = "/assets/frappe/css/print.bundle.css"
@@ -383,13 +384,13 @@ def _render_abrechnung_pdf(name: str, print_format: Optional[str] = None) -> byt
 	# Damit Serienbrief-Vorlagen auch im E-Mail-Anhang funktionieren, rendern wir bei Bedarf
 	# den Serienbrief direkt (wenn das Print Format auf eine Serienbrief Vorlage zeigt).
 	print_format_name = (print_format or "").strip() or None
-	serienbrief_html = render_serienbrief_for_print_format(
+	serienbrief_pdf = render_serienbrief_pdf_for_print_format(
 		print_format_name,
 		docname=name,
 		doctype="Betriebskostenabrechnung Mieter",
 	)
-	if serienbrief_html:
-		return get_pdf(serienbrief_html)
+	if serienbrief_pdf:
+		return serienbrief_pdf
 
 	html = frappe.get_print(
 		doctype="Betriebskostenabrechnung Mieter",
@@ -719,10 +720,6 @@ def get_mieter_abrechnungen_print_pdf(name: str, print_format: Optional[str] = N
 		frappe.throw(_("Keine Mieterabrechnungen vorhanden."))
 
 	child_print_format = _get_child_print_format_for_sammeldruck(print_format)
-	effective_serienbrief_vorlage = _get_serienbrief_vorlage_from_print_format(child_print_format)
-	if effective_serienbrief_vorlage:
-		html = _render_mieter_abrechnungen_serienbrief_html(child_names, effective_serienbrief_vorlage)
-		return get_pdf(html)
 
 	try:
 		from PyPDF2 import PdfMerger
