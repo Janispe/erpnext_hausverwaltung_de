@@ -109,8 +109,13 @@ services:
         bench set-config -gp webserver_port 8080;
         bench set-config -g developer_mode 1;
         ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/process_engine;
+        ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/mail_merge;
         ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/hausverwaltung;
         ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/hausverwaltung_peters;
+        bench setup requirements --python process_engine;
+        bench setup requirements --python mail_merge;
+        bench setup requirements --python hausverwaltung;
+        bench setup requirements --python hausverwaltung_peters;
         ls -1 apps > sites/apps.txt;
 
   create-site:
@@ -135,11 +140,16 @@ services:
         done;
         echo "sites/common_site_config.json found";
         ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/process_engine;
+        ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/mail_merge;
         ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/hausverwaltung;
         ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/hausverwaltung_peters;
+        bench setup requirements --python process_engine;
+        bench setup requirements --python mail_merge;
+        bench setup requirements --python hausverwaltung;
+        bench setup requirements --python hausverwaltung_peters;
         ls -1 apps > sites/apps.txt;
         echo "Creating site '\$\$SITE_NAME'";
-        bench new-site --mariadb-user-host-login-scope='%' --admin-password=admin --db-root-username=root --db-root-password=admin --install-app erpnext --install-app process_engine --install-app hausverwaltung --install-app hausverwaltung_peters --set-default "\$\$SITE_NAME";
+        bench new-site --mariadb-user-host-login-scope='%' --admin-password=admin --db-root-username=root --db-root-password=admin --install-app erpnext --install-app process_engine --install-app mail_merge --install-app hausverwaltung --install-app hausverwaltung_peters --set-default "\$\$SITE_NAME";
         bench use "\$\$SITE_NAME";
         if [ -n "\$\$PAPERLESS_NGX_URL" ]; then bench --site "\$\$SITE_NAME" set-config paperless_ngx_url "\$\$PAPERLESS_NGX_URL"; fi;
         if [ -n "\$\$PAPERLESS_NGX_PUBLIC_URL" ]; then bench --site "\$\$SITE_NAME" set-config paperless_ngx_public_url "\$\$PAPERLESS_NGX_PUBLIC_URL"; fi;
