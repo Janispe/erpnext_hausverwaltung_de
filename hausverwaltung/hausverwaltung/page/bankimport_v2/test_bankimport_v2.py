@@ -255,18 +255,23 @@ class TestBankimportRulesPanel(unittest.TestCase):
 
 		self.assertEqual(has_permission.call_count, 2)
 		self.assertEqual(result["groups"]["party"]["counts"]["enabled"], 1)
-		self.assertEqual(result["groups"]["party"]["items"][0]["title"], "Eindeutige IBAN")
-		self.assertNotIn("isSystem", result["groups"]["party"]["items"][0])
+		party_rule = result["groups"]["party"]["items"][0]
+		booking_rule = result["groups"]["booking"]["items"][0]
+		self.assertEqual(party_rule["title"], "Eindeutige IBAN")
+		self.assertTrue(party_rule["isBuilderRule"])
+		self.assertEqual(party_rule["builder"]["conditions"][0]["doctype"], "Bank Account")
+		self.assertEqual(party_rule["action"]["type"], "party_from_doctype")
+		self.assertEqual(party_rule["action"]["partyTypeField"], "party_type")
 		self.assertEqual(result["groups"]["booking"]["counts"]["disabled"], 1)
-		self.assertTrue(result["groups"]["party"]["items"][0]["hasRuleCode"])
+		self.assertTrue(party_rule["hasRuleCode"])
 		self.assertEqual(
-			result["groups"]["party"]["items"][0]["scope"][0]["iban"],
+			party_rule["scope"][0]["iban"],
 			"DE123456",
 		)
-		self.assertEqual(
-			result["groups"]["booking"]["items"][0]["ruleKey"],
-			"booking.invoice_auto_match",
-		)
+		self.assertEqual(booking_rule["ruleKey"], "booking.invoice_auto_match")
+		self.assertTrue(booking_rule["isBuilderRule"])
+		self.assertEqual(booking_rule["action"]["type"], "builtin")
+		self.assertEqual(booking_rule["action"]["ruleKey"], "booking.invoice_auto_match")
 
 	def test_set_bankimport_rule_enabled_validates_doctype_and_sets_value(self):
 		with patch("frappe.has_permission") as has_permission, \
@@ -303,18 +308,15 @@ class TestBankimportRulesPanel(unittest.TestCase):
 		set_value.assert_any_call("Bankimport Party Regel", "party.b", "priority", 10)
 		set_value.assert_any_call("Bankimport Party Regel", "party.a", "priority", 20)
 
-	def test_delete_bankimport_rule_rejects_system_rule(self):
-		doc = frappe._dict(
-			doctype="Bankimport Buchungsregel",
-			name="booking.invoice_auto_match",
-			rule_key="booking.invoice_auto_match",
-			rule_code="result = auto_match_invoice(row=row, bt=bt, context=context)",
-		)
-		with patch("frappe.has_permission"), \
+	def test_delete_bankimport_rule_deletes_regular_db_rule(self):
+		with patch("frappe.has_permission") as has_permission, \
 			 patch("frappe.db.exists", return_value=True), \
-			 patch("frappe.get_doc", return_value=doc):
-			with self.assertRaises(Exception):
-				bv2.delete_bankimport_rule("Bankimport Buchungsregel", "booking.invoice_auto_match")
+			 patch("frappe.delete_doc") as delete_doc:
+			result = bv2.delete_bankimport_rule("Bankimport Buchungsregel", "booking.invoice_auto_match")
+
+		has_permission.assert_called_once_with("Bankimport Buchungsregel", "delete", throw=True)
+		delete_doc.assert_called_once_with("Bankimport Buchungsregel", "booking.invoice_auto_match")
+		self.assertEqual(result["name"], "booking.invoice_auto_match")
 
 	def test_preview_bankimport_rule_hits_counts_open_matching_rows(self):
 		parameters = {

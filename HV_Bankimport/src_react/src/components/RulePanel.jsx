@@ -28,6 +28,24 @@ const PARTY_TYPES = [
 	["Supplier", "Lieferant"],
 	["Eigentuemer", "Eigentümer"],
 ];
+const BACKEND_ACTIONS = {
+	booking: [
+		["booking.invoice_auto_match", "Rechnung automatisch zuordnen"],
+		["booking.kreditrate_auto_match", "Kreditrate automatisch zuordnen"],
+		["booking.abschlagsplan_auto_match", "Abschlagsplan automatisch zuordnen"],
+		["booking.needs_review_fallback", "Zur Prüfung markieren"],
+	],
+	party: [
+		["party.unique_iban_to_party", "Eindeutige IBAN zuordnen"],
+		["party.row_party", "Partei aus Importzeile"],
+	],
+};
+
+function backendActionLabel(kind, ruleKey) {
+	const item = (BACKEND_ACTIONS[kind] || []).find(([value]) => value === ruleKey);
+	return item?.[1] || ruleKey || "Backend-Aktion";
+}
+
 function parseParams(rule) {
 	if (rule?.parameters && typeof rule.parameters === "object") return rule.parameters;
 	if (!rule?.parametersJson) return {};
@@ -152,7 +170,11 @@ function actionText(action) {
 	if (["party", "partei"].includes(action.type)) return `${action.party_type || action.partyType || "Party"} · ${action.party || ""}`;
 	if (["party_from_row", "partei_aus_zeile"].includes(action.type)) return "Partei aus Bankzeile";
 	if (["party_from_doctype", "partei_aus_doctype"].includes(action.type)) return `${action.doctype || "DocType"} · ${action.partyTypeField || "party_type"} / ${action.partyField || "party"}`;
-	if (["builtin", "system"].includes(action.type)) return action.ruleKey || action.rule_key || "Backend-Aktion";
+	if (["builtin", "system"].includes(action.type)) {
+		const ruleKey = action.ruleKey || action.rule_key;
+		const kind = action.kind || (String(ruleKey || "").startsWith("party.") ? "party" : "booking");
+		return backendActionLabel(kind, ruleKey);
+	}
 	if (["buchung", "booking"].includes(action.type)) return `${action.account || action.konto || ""}${action.cost_center || action.kostenstelle ? ` · ${action.cost_center || action.kostenstelle}` : ""}`;
 	return "";
 }
@@ -536,6 +558,8 @@ function ConditionBuilder({ form, patch, setCondition, addCondition, removeCondi
 }
 
 function ActionBuilder({ form, patch }) {
+	const backendActionKey = form.action.ruleKey || form.action.rule_key || form.ruleKey || "";
+	const backendActions = BACKEND_ACTIONS[form.kind] || [];
 	if (form.requiresReview) {
 		return (
 			<div className="editor-block">
@@ -554,13 +578,21 @@ function ActionBuilder({ form, patch }) {
 				{form.kind === "party" && <button type="button" className={`seg-btn ${["party", "partei"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { type: "party", party_type: form.action.party_type || "Customer", party: form.action.party || "" } })}>Feste Partei</button>}
 				{form.kind === "party" && <button type="button" className={`seg-btn ${["party_from_row", "partei_aus_zeile"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { type: "party_from_row" } })}>Aus Bankzeile</button>}
 				{form.kind === "party" && <button type="button" className={`seg-btn ${["party_from_doctype", "partei_aus_doctype"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { type: "party_from_doctype", doctype: "Bank Account", filters: [defaultDoctypeFilter()], partyTypeField: "party_type", partyField: "party" } })}>Aus DocType</button>}
-				{["builtin", "system"].includes(form.action.type) && <button type="button" className="seg-btn active">Backend-Aktion</button>}
+				{backendActions.length > 0 && <button type="button" className={`seg-btn ${["builtin", "system"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { type: "builtin", kind: form.kind, ruleKey: backendActionKey || backendActions[0][0] } })}>Backend-Aktion</button>}
 			</div>
 			{["builtin", "system"].includes(form.action.type) ? (
 				<div className="backend-action">
 					<div className="sb-row">
 						<div className="sb-label">Aktion</div>
-						<div className="sb-value">{actionText(form.action)}</div>
+						<div className="sb-value">
+							<select
+								className="text-input"
+								value={backendActionKey}
+								onChange={(event) => patch({ action: { ...form.action, type: "builtin", kind: form.kind, ruleKey: event.target.value } })}
+							>
+								{backendActions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+							</select>
+						</div>
 					</div>
 					<div className="eb-sub">Die Bedingungen oben sind editierbar; die Ausführung nutzt eine Backend-Aktion.</div>
 				</div>

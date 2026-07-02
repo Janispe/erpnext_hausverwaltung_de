@@ -40,6 +40,8 @@ from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import i
 from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
 	BUILDER_RULE_CODE,
 	BOOKING_RULE_DOCTYPE,
+	DEFAULT_BOOKING_RULES,
+	DEFAULT_PARTY_RULES,
 	PARTY_RULE_DOCTYPE,
 	RULE_SCOPE_DOCTYPE,
 	builder_matches_row,
@@ -826,9 +828,11 @@ def _format_rule_row(doctype: str, row, scope_rows: list[dict[str, Any]]) -> dic
 	modified = row.get("modified")
 	parameters = _safe_json_dict(row.get("parameters_json") or {})
 	rule_key = row.get("rule_key")
+	if not isinstance(parameters.get("builder"), dict):
+		parameters = _default_rule_parameters_for_key(rule_key) or parameters
 	description = row.get("description") or ""
 	title = row.get("title") or _title_from_description(description) or rule_key or row.name
-	is_builder = (row.get("rule_code") or "").strip() == BUILDER_RULE_CODE
+	is_builder = (row.get("rule_code") or "").strip() == BUILDER_RULE_CODE or isinstance(parameters.get("builder"), dict)
 	return {
 		"doctype": doctype,
 		"name": row.name,
@@ -868,6 +872,15 @@ def _format_rule_scope(row) -> dict[str, Any]:
 
 def _title_from_description(description: str) -> str:
 	return (description or "").strip().splitlines()[0][:80]
+
+
+def _default_rule_parameters_for_key(rule_key: str | None) -> dict[str, Any] | None:
+	if not rule_key:
+		return None
+	for spec in [*DEFAULT_PARTY_RULES, *DEFAULT_BOOKING_RULES]:
+		if spec.get("rule_key") == rule_key and isinstance(spec.get("parameters"), dict):
+			return spec["parameters"]
+	return None
 
 
 @frappe.whitelist()

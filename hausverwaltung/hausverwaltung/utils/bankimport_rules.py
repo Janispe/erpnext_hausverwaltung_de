@@ -21,6 +21,33 @@ DEFAULT_PARTY_RULES = [
 		"legacy_rule_key": "system.unique_iban_to_party",
 		"priority": 10,
 		"title": "Eindeutige IBAN",
+		"parameters": {
+			"builder": {
+				"connector": "und",
+				"conditions": [
+					{
+						"source": "doctype",
+						"doctype": "Bank Account",
+						"filters": [
+							{"field": "iban", "op": "=", "valueSource": "row", "rowField": "iban", "value": ""},
+							{"field": "party_type", "op": "ist nicht leer", "valueSource": "literal", "value": ""},
+							{"field": "party", "op": "ist nicht leer", "valueSource": "literal", "value": ""},
+						],
+						"matchMode": "exists",
+					},
+				],
+			},
+			"action": {
+				"type": "party_from_doctype",
+				"doctype": "Bank Account",
+				"filters": [
+					{"field": "iban", "op": "=", "valueSource": "row", "rowField": "iban", "value": ""},
+				],
+				"partyTypeField": "party_type",
+				"partyField": "party",
+			},
+			"ui": {"mode": "einfach"},
+		},
 		"rule_code": """
 party_tuple = get_party_by_iban(row.get("iban"))
 if party_tuple:
@@ -41,6 +68,17 @@ else:
 		"legacy_rule_key": "system.row_party",
 		"priority": 100,
 		"title": "Partei aus Importzeile",
+		"parameters": {
+			"builder": {
+				"connector": "und",
+				"conditions": [
+					{"source": "row", "field": "party_type", "op": "ist nicht leer", "value": ""},
+					{"source": "row", "field": "party", "op": "ist nicht leer", "value": ""},
+				],
+			},
+			"action": {"type": "party_from_row"},
+			"ui": {"mode": "einfach"},
+		},
 		"rule_code": """
 if row.get("party_type") in SUPPORTED_PARTY_TYPES and row.get("party"):
 	result = {
@@ -62,6 +100,17 @@ DEFAULT_BOOKING_RULES = [
 		"legacy_rule_key": "system.invoice_auto_match",
 		"priority": 100,
 		"title": "Rechnung automatisch zuordnen",
+		"parameters": {
+			"builder": {
+				"connector": "und",
+				"conditions": [
+					{"source": "row", "field": "party_type", "op": "ist nicht leer", "value": ""},
+					{"source": "row", "field": "party", "op": "ist nicht leer", "value": ""},
+				],
+			},
+			"action": {"type": "builtin", "ruleKey": "booking.invoice_auto_match"},
+			"ui": {"mode": "einfach"},
+		},
 		"rule_code": 'result = auto_match_invoice(row=row, bt=bt, context=context)',
 		"description": "Offene Sales/Purchase Invoice konservativ automatisch zuordnen.",
 	},
@@ -70,6 +119,16 @@ DEFAULT_BOOKING_RULES = [
 		"legacy_rule_key": "system.kreditrate_auto_match",
 		"priority": 200,
 		"title": "Kreditrate automatisch zuordnen",
+		"parameters": {
+			"builder": {
+				"connector": "und",
+				"conditions": [
+					{"source": "row", "field": "richtung", "op": "=", "value": "Ausgang"},
+				],
+			},
+			"action": {"type": "builtin", "ruleKey": "booking.kreditrate_auto_match"},
+			"ui": {"mode": "einfach"},
+		},
 		"rule_code": 'result = match_kreditrate(row=row, bt=bt)',
 		"description": "Ausgang eindeutig gegen Kreditrate buchen.",
 	},
@@ -78,6 +137,18 @@ DEFAULT_BOOKING_RULES = [
 		"legacy_rule_key": "system.abschlagsplan_auto_match",
 		"priority": 300,
 		"title": "Abschlagsplan automatisch zuordnen",
+		"parameters": {
+			"builder": {
+				"connector": "und",
+				"conditions": [
+					{"source": "row", "field": "richtung", "op": "=", "value": "Ausgang"},
+					{"source": "row", "field": "party_type", "op": "=", "value": "Supplier"},
+					{"source": "row", "field": "party", "op": "ist nicht leer", "value": ""},
+				],
+			},
+			"action": {"type": "builtin", "ruleKey": "booking.abschlagsplan_auto_match"},
+			"ui": {"mode": "einfach"},
+		},
 		"rule_code": 'result = match_abschlagsplan(doc=doc, row=row, bt=bt, context=context)',
 		"description": "Supplier-Ausgang eindeutig gegen offene Abschlagsplan-Zeile buchen.",
 	},
@@ -86,6 +157,16 @@ DEFAULT_BOOKING_RULES = [
 		"legacy_rule_key": "system.needs_review_fallback",
 		"priority": 900,
 		"title": "Zur Prüfung markieren",
+		"parameters": {
+			"builder": {
+				"connector": "und",
+				"conditions": [
+					{"source": "row", "field": "betrag", "op": ">=", "value": "0"},
+				],
+			},
+			"action": {"type": "builtin", "ruleKey": "booking.needs_review_fallback"},
+			"ui": {"mode": "einfach"},
+		},
 		"rule_code": 'result = needs_review_fallback(row=row, context=context)',
 		"description": "Offene Bankimport-Zeile ohne automatische Buchung zur Pruefung belassen.",
 	},
@@ -127,7 +208,7 @@ def get_party_by_unique_iban(iban: str | None) -> tuple[str, str] | None:
 
 
 def ensure_default_bankimport_rules() -> dict[str, int]:
-	"""Create or migrate built-in DB rule records.
+	"""Create or migrate default DB rule records.
 
 	The rule code is stored in the rule documents. Existing records keep user
 	changes for priority, enabled state, and scope.
@@ -147,16 +228,26 @@ def ensure_default_bankimport_rules() -> dict[str, int]:
 				doc = frappe.get_doc(doctype, name)
 				changed = False
 				current_params = _safe_rule_parameters(doc.get("parameters_json"))
-				is_user_builder = (
-					(doc.get("rule_code") or "").strip() == BUILDER_RULE_CODE
-					or isinstance(current_params.get("builder"), dict)
-				)
-				if is_user_builder:
+				current_has_builder = isinstance(current_params.get("builder"), dict)
+				current_uses_builder = (doc.get("rule_code") or "").strip() == BUILDER_RULE_CODE
+				if current_has_builder and current_uses_builder:
 					continue
-				for fieldname in ("rule_code", "description", "title"):
+				if current_has_builder and not current_uses_builder:
+					doc.set("rule_code", BUILDER_RULE_CODE)
+					doc.save(ignore_permissions=True)
+					updated += 1
+					continue
+				for fieldname in ("description", "title"):
 					if doc.get(fieldname) != spec.get(fieldname):
 						doc.set(fieldname, spec.get(fieldname))
 						changed = True
+				if spec.get("parameters"):
+					doc.set("parameters_json", json.dumps(spec["parameters"], ensure_ascii=False, indent=2))
+					doc.set("rule_code", BUILDER_RULE_CODE)
+					changed = True
+				elif doc.get("rule_code") != spec.get("rule_code"):
+					doc.set("rule_code", spec.get("rule_code"))
+					changed = True
 				if changed:
 					doc.save(ignore_permissions=True)
 					updated += 1
@@ -169,9 +260,11 @@ def ensure_default_bankimport_rules() -> dict[str, int]:
 				"rule_key": spec["rule_key"],
 				"priority": spec["priority"],
 				"title": spec.get("title"),
-				"rule_code": spec["rule_code"],
+				"rule_code": BUILDER_RULE_CODE if spec.get("parameters") else spec["rule_code"],
 				"description": spec["description"],
 			}
+			if spec.get("parameters"):
+				payload["parameters_json"] = json.dumps(spec["parameters"], ensure_ascii=False, indent=2)
 			if doctype == BOOKING_RULE_DOCTYPE:
 				payload["auto_apply"] = 1
 			doc = frappe.get_doc(payload)
@@ -700,9 +793,9 @@ def _builder_query_doctype(
 		elif op == "beginnt mit":
 			query_filters.append([doctype, fieldname, "like", f"{value}%"])
 		elif op == "ist leer":
-			query_filters.append([doctype, fieldname, "in", ["", None]])
+			query_filters.append([doctype, fieldname, "is", "not set"])
 		elif op == "ist nicht leer":
-			query_filters.append([doctype, fieldname, "not in", ["", None]])
+			query_filters.append([doctype, fieldname, "is", "set"])
 		elif op in {"=", "!=", ">", "<", ">=", "<="}:
 			query_filters.append([doctype, fieldname, op, value])
 		else:
