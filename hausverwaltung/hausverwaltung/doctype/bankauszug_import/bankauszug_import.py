@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import frappe
 from frappe.model.document import Document
 from frappe.model.naming import make_autoname
-from frappe.utils import flt, getdate
+from frappe.utils import add_days, flt, getdate
 
 from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
     apply_booking_rules_for_row,
@@ -3231,6 +3231,163 @@ def create_standalone_payment_for_row(
     return {"ok": True, "payment_entry": pe.name}
 
 
+def _internal_transfer_shape(bt, other_bank_account: str) -> dict[str, Any]:
+    """Expected Payment Entry shape for an internal transfer from this BT side."""
+    current_gl = frappe.db.get_value("Bank Account", bt.bank_account, "account")
+    other_gl = frappe.db.get_value("Bank Account", other_bank_account, "account")
+    if not current_gl or not other_gl:
+        return {}
+
+    deposit = flt(getattr(bt, "deposit", 0))
+    withdrawal = flt(getattr(bt, "withdrawal", 0))
+    if deposit > 0 and withdrawal == 0:
+        paid_from = other_gl
+        paid_to = current_gl
+        amount = deposit
+    elif withdrawal > 0 and deposit == 0:
+        paid_from = current_gl
+        paid_to = other_gl
+        amount = withdrawal
+    else:
+        return {}
+    return {"paid_from": paid_from, "paid_to": paid_to, "amount": amount}
+
+
+def _payment_entry_matches_internal_transfer(pe_name: str, shape: dict[str, Any]) -> bool:
+    if not pe_name or not shape:
+        return False
+    pe = frappe.db.get_value(
+        "Payment Entry",
+        pe_name,
+        ["name", "docstatus", "payment_type", "paid_from", "paid_to", "paid_amount", "received_amount"],
+        as_dict=True,
+    )
+    if not pe:
+        return False
+    return (
+        int(pe.get("docstatus") or 0) == 1
+        and pe.get("payment_type") == "Internal Transfer"
+        and pe.get("paid_from") == shape.get("paid_from")
+        and pe.get("paid_to") == shape.get("paid_to")
+        and abs(flt(pe.get("paid_amount")) - flt(shape.get("amount"))) <= 0.01
+        and abs(flt(pe.get("received_amount")) - flt(shape.get("amount"))) <= 0.01
+    )
+
+
+def _find_internal_transfer_import_counterpart(
+    *,
+    row,
+    bt,
+    other_bank_account: str,
+    require_payment_entry: bool,
+) -> dict[str, Any] | None:
+    """Find one unambiguous opposite import row for this internal transfer."""
+    if not row.get("buchungstag") or not row.get("richtung"):
+        return None
+    opposite_direction = "Eingang" if row.get("richtung") == "Ausgang" else "Ausgang"
+    amount = flt(row.get("betrag"))
+    if amount <= 0:
+        return None
+
+    payment_filter = (
+        "AND r.payment_entry IS NOT NULL AND r.payment_entry != ''"
+        if require_payment_entry
+        else "AND (r.payment_entry IS NULL OR r.payment_entry = '')"
+    )
+    rows = frappe.db.sql(
+        f"""
+        SELECT
+            r.name,
+            r.parent,
+            r.bank_transaction,
+            r.payment_entry,
+            r.buchungstag
+        FROM `tabBankauszug Import Row` r
+        INNER JOIN `tabBankauszug Import` p ON p.name = r.parent
+        WHERE
+            r.name != %(row_name)s
+            AND p.bank_account = %(other_bank_account)s
+            AND r.richtung = %(opposite_direction)s
+            AND ABS(r.betrag - %(amount)s) <= 0.01
+            AND r.buchungstag BETWEEN %(date_from)s AND %(date_to)s
+            AND r.bank_transaction IS NOT NULL
+            AND r.bank_transaction != ''
+            AND (r.journal_entry IS NULL OR r.journal_entry = '')
+            AND (r.payment_document IS NULL OR r.payment_document = '' OR r.payment_document_type = 'Payment Entry')
+            {payment_filter}
+        ORDER BY ABS(DATEDIFF(r.buchungstag, %(posting_date)s)) ASC, r.modified DESC
+        LIMIT 2
+        """,
+        {
+            "row_name": row.name,
+            "other_bank_account": other_bank_account,
+            "opposite_direction": opposite_direction,
+            "amount": amount,
+            "date_from": add_days(getdate(row.get("buchungstag")), -3),
+            "date_to": add_days(getdate(row.get("buchungstag")), 3),
+            "posting_date": getdate(row.get("buchungstag")),
+        },
+        as_dict=True,
+    )
+    if len(rows) != 1:
+        return None
+
+    candidate = rows[0]
+    shape = _internal_transfer_shape(bt, other_bank_account)
+    if require_payment_entry and not _payment_entry_matches_internal_transfer(candidate.payment_entry, shape):
+        return None
+    return candidate
+
+
+def _link_internal_transfer_counterpart_row(
+    *,
+    source_row,
+    source_bt,
+    other_bank_account: str,
+    payment_entry: str,
+) -> dict[str, Any] | None:
+    """Mark/reconcile the opposite import row with the same Internal Transfer PE."""
+    candidate = _find_internal_transfer_import_counterpart(
+        row=source_row,
+        bt=source_bt,
+        other_bank_account=other_bank_account,
+        require_payment_entry=False,
+    )
+    if not candidate:
+        return None
+
+    bt = frappe.get_doc("Bank Transaction", candidate.bank_transaction)
+    if bt.get("payment_entries"):
+        return None
+
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+        reconcile_created_voucher_or_rollback,
+    )
+
+    reconcile_created_voucher_or_rollback(
+        bt,
+        "Payment Entry",
+        payment_entry,
+        flt(source_row.get("betrag")),
+        savepoint_name="bankimport_internal_transfer_counterpart",
+    )
+    peer_row = frappe.get_doc("Bankauszug Import Row", candidate.name)
+    peer_row.db_set("payment_entry", payment_entry)
+    _set_row_payment_document(peer_row, "Payment Entry", payment_entry)
+    peer_row.db_set("row_status", "success")
+    peer_row.db_set(
+        "auto_match_message",
+        f"Interne Umbuchung: Gegenbuchung zu {source_row.name}, Payment Entry {payment_entry}",
+    )
+    _recompute_doc_status(candidate.parent)
+    _refresh_and_persist_saldo(candidate.parent)
+    return {
+        "row": candidate.name,
+        "import": candidate.parent,
+        "bank_transaction": candidate.bank_transaction,
+    }
+
+
 @frappe.whitelist()
 def create_internal_transfer_for_row(
     docname: str,
@@ -3251,27 +3408,53 @@ def create_internal_transfer_for_row(
         allow_missing_party=1,
     )
 
-    pe = create_internal_transfer_payment_entry(
+    target_amount = flt(row.betrag)
+    existing = _find_internal_transfer_import_counterpart(
+        row=row,
         bt=bt,
         other_bank_account=other_bank_account,
-        remarks=remarks or row.get("verwendungszweck") or row.get("auftraggeber") or None,
+        require_payment_entry=True,
     )
-    target_amount = flt(row.betrag)
-    reconcile_created_voucher_or_rollback(bt, "Payment Entry", pe.name, target_amount)
+    if existing:
+        pe_name = existing.payment_entry
+        reconcile_created_voucher_or_rollback(bt, "Payment Entry", pe_name, target_amount)
+        counterpart = {
+            "row": existing.name,
+            "import": existing.parent,
+            "bank_transaction": existing.bank_transaction,
+            "reused": True,
+        }
+    else:
+        pe = create_internal_transfer_payment_entry(
+            bt=bt,
+            other_bank_account=other_bank_account,
+            remarks=remarks or row.get("verwendungszweck") or row.get("auftraggeber") or None,
+        )
+        pe_name = pe.name
+        reconcile_created_voucher_or_rollback(bt, "Payment Entry", pe_name, target_amount)
+        counterpart = _link_internal_transfer_counterpart_row(
+            source_row=row,
+            source_bt=bt,
+            other_bank_account=other_bank_account,
+            payment_entry=pe_name,
+        )
 
-    row.db_set("payment_entry", pe.name)
-    _set_row_payment_document(row, "Payment Entry", pe.name)
+    row.db_set("payment_entry", pe_name)
+    _set_row_payment_document(row, "Payment Entry", pe_name)
     row.db_set("row_status", "success")
     row.db_set(
         "auto_match_message",
-        f"Interne Umbuchung: {target_amount:.2f} € mit {other_bank_account}",
+        f"Interne Umbuchung: {target_amount:.2f} € mit {other_bank_account}"
+        + (" · bestehender Payment Entry wiederverwendet" if existing else ""),
     )
     _recompute_doc_status(docname)
     _refresh_and_persist_saldo(docname)
     return {
         "ok": True,
-        "payment_entry": pe.name,
+        "payment_entry": pe_name,
         "other_bank_account": other_bank_account,
+        "counterpart": counterpart,
+        "reused": bool(existing),
     }
 
 
