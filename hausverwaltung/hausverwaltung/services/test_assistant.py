@@ -593,6 +593,49 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["aggregate"]["groups"], [{"key": "Warthestr. 65", "count": 2, "value": 5.0}])
 		self.assertEqual(result["matches"][0]["title"], "Warthestr. 65")
 
+	def test_hv_describe_query_sources_lists_allowed_views_and_fields(self):
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant.frappe, "has_permission", return_value=True):
+			result = assistant.hv_describe_query_sources(include_fields=True)
+
+		view_names = {view["name"] for view in result["views"]}
+		self.assertIn("apartments", view_names)
+		self.assertIn("tenant_contracts", view_names)
+		tenant_contracts = next(view for view in result["views"] if view["name"] == "tenant_contracts")
+		self.assertEqual(tenant_contracts["row_meaning"], "eine Zeile pro Mietvertrag")
+		field_names = {field["name"] for field in tenant_contracts["fields"]}
+		self.assertIn("personen", field_names)
+		personen = next(field for field in tenant_contracts["fields"] if field["name"] == "personen")
+		self.assertIn("sum", personen["aggregations"])
+
+	def test_hv_describe_query_source_returns_detail_for_alias(self):
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant.frappe, "has_permission", return_value=True):
+			result = assistant.hv_describe_query_source("wohnungen")
+
+		self.assertEqual(result["type"], "view")
+		self.assertEqual(result["name"], "apartments")
+		self.assertEqual(result["row_meaning"], "eine Zeile pro Wohnung")
+		self.assertIn("wohnungen", result["view_aliases"])
+		self.assertEqual(result["use_with"], "hv_query_view")
+
+	def test_hv_describe_query_source_respects_permissions(self):
+		def has_permission(doctype, ptype, doc=None):
+			return doctype not in {"Mietvertrag", "Customer"}
+
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant.frappe, "has_permission", side_effect=has_permission):
+			result = assistant.hv_describe_query_sources()
+
+		view_names = {view["name"] for view in result["views"]}
+		self.assertIn("apartments", view_names)
+		self.assertNotIn("tenant_contracts", view_names)
+
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant.frappe, "has_permission", side_effect=has_permission), \
+			 self.assertRaises(frappe.PermissionError):
+			assistant.hv_describe_query_source("tenant_contracts")
+
 	def test_hv_query_view_rejects_unknown_view_and_filter_field(self):
 		with patch.object(assistant.frappe, "has_permission", return_value=True), \
 			 self.assertRaises(frappe.ValidationError):

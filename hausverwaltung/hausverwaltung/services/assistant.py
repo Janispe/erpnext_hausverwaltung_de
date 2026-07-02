@@ -470,6 +470,9 @@ Nutze die bereitgestellten Tools fuer Mietersuche, Mieterkonto, Salden, offene P
 verspaetete Zahlungen, Miet-Ranglisten und eingeschraenkte Hausverwaltungs-Abfragen.
 Fuer offene analytische Fragen nutze bevorzugt hv_query_view mit einer passenden View und strukturierten Filtern,
 statt immer neue Spezialtools zu erwarten. Baue niemals SQL, sondern JSON-Queries gegen die erlaubten Views.
+Wenn du bei einer offenen Analysefrage unsicher bist, welche View oder welche Felder passen, nutze zuerst
+hv_describe_query_sources oder hv_describe_query_source und baue danach die eigentliche hv_query_view-Abfrage.
+Wenn der Katalog fachliche Mehrdeutigkeit zeigt, frage kurz nach, statt zu raten.
 Bei Fragen nach Wohnungen, Wohneinheiten, Leerstand oder Wohnungsbestand nutze hv_query_view view=apartments.
 Zaehle Wohnungen niemals ueber tenant_contracts, ausser der Nutzer fragt ausdruecklich nach vermieteten/laufenden Vertraegen.
 Bei Fragen nach Personen, Bewohnern oder "wie viele wohnen dort" nutze hv_query_view view=tenant_contracts,
@@ -485,6 +488,45 @@ Antworte knapp auf Deutsch und verweise auf die gefundenen Treffernummern, wenn 
 
 
 ASSISTANT_TOOLS: list[dict[str, Any]] = [
+	{
+		"type": "function",
+		"function": {
+			"name": "hv_describe_query_sources",
+			"description": (
+				"Listet die erlaubten Hausverwaltungs-Query-Quellen kompakt auf. "
+				"Nutze das zuerst, wenn unklar ist, welche View fuer eine Frage passt."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"include_fields": {
+						"type": "boolean",
+						"description": "Wenn true, enthaelt die Uebersicht auch kompakte Feldlisten. Default false.",
+					},
+				},
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": {
+			"name": "hv_describe_query_source",
+			"description": (
+				"Beschreibt eine erlaubte View oder einen erlaubten DocType mit Feldern, Aliasen, "
+				"Row-Bedeutung und erlaubten Filter-/Aggregationsmoeglichkeiten."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"source": {
+						"type": "string",
+						"description": "View-Alias/View-Name wie apartments, tenant_contracts, open_items oder DocType wie Mietvertrag.",
+					},
+				},
+				"required": ["source"],
+			},
+		},
+	},
 	{
 		"type": "function",
 		"function": {
@@ -771,6 +813,8 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 ]
 
 TOOL_FUNCTIONS = {
+	"hv_describe_query_sources": lambda **kwargs: hv_describe_query_sources(**kwargs),
+	"hv_describe_query_source": lambda **kwargs: hv_describe_query_source(**kwargs),
 	"search_mieter": lambda **kwargs: search_mieter(**kwargs),
 	"get_mieter_context": lambda **kwargs: get_mieter_context(**kwargs),
 	"get_mieterkonto_summary": lambda **kwargs: get_mieterkonto_summary(**kwargs),
@@ -823,6 +867,112 @@ def get_conversation(conversation_id: str) -> dict[str, Any]:
 		"name": conversation.name,
 		"title": conversation.title,
 		"messages": [_conversation_message_row(row) for row in rows],
+	}
+
+
+def hv_describe_query_sources(include_fields: bool | int | str = False) -> dict[str, Any]:
+	"""Return the assistant's safe query catalog without exposing raw SQL."""
+	_require_search_permissions()
+	include = _bool_arg(include_fields, False)
+	views = []
+	for name, base_conf in HV_QUERY_VIEWS.items():
+		conf = dict(base_conf)
+		conf["name"] = name
+		if not _can_use_view(conf):
+			continue
+		item = {
+			"name": name,
+			"type": "view",
+			"description": conf.get("description") or "",
+			"row_meaning": _view_row_meaning(name),
+			"default_fields": list(conf.get("default_fields") or ()),
+			"aliases": _aliases_for_query_source(name),
+			"best_for": _view_best_for(name),
+			"use_with": "hv_query_view",
+		}
+		if include:
+			item["fields"] = [
+				_view_field_description(name, field)
+				for field in conf.get("fields", {})
+			]
+		else:
+			item["field_names"] = list(conf.get("fields", {}).keys())
+		views.append(item)
+	doctypes = []
+	for doctype, conf in HV_READABLE_DOCTYPES.items():
+		if not frappe.has_permission(doctype, "read"):
+			continue
+		doctypes.append(
+			{
+				"name": doctype,
+				"type": "doctype",
+				"description": _doctype_description(doctype),
+				"field_names": sorted(_allowed_hv_field_names(doctype)),
+				"use_with": "hv_query_docs or hv_get_doc",
+			}
+		)
+	return {
+		"ok": True,
+		"generated_on": nowdate(),
+		"views": views,
+		"doctypes": doctypes,
+		"notes": [
+			"Nutze hv_query_view fuer fachliche Analysen, Listen, Gruppierungen und Summen.",
+			"Nutze hv_query_docs/hv_get_doc nur fuer direkte erlaubte Dokumentabfragen.",
+			"Wenn die passende Quelle unklar bleibt, frage den Nutzer nach der fachlichen Bedeutung.",
+		],
+		"count": len(views) + len(doctypes),
+	}
+
+
+def hv_describe_query_source(source: str) -> dict[str, Any]:
+	"""Return detailed field metadata for one safe query source."""
+	_require_search_permissions()
+	source_name = (source or "").strip()
+	if not source_name:
+		frappe.throw(_("Quelle fehlt."))
+
+	view_key = HV_QUERY_VIEW_ALIASES.get(source_name.lower(), source_name.lower())
+	if view_key in HV_QUERY_VIEWS:
+		conf = dict(HV_QUERY_VIEWS[view_key])
+		conf["name"] = view_key
+		_require_view_permissions(conf)
+		return {
+			"ok": True,
+			"type": "view",
+			"name": view_key,
+			"description": conf.get("description") or "",
+			"row_meaning": _view_row_meaning(view_key),
+			"default_fields": list(conf.get("default_fields") or ()),
+			"fields": [
+				_view_field_description(view_key, field)
+				for field in conf.get("fields", {})
+			],
+			"aliases": conf.get("aliases") or {},
+			"view_aliases": _aliases_for_query_source(view_key),
+			"examples": _view_query_examples(view_key),
+			"allowed_filter_operators": sorted(HV_FILTER_OPERATORS),
+			"allowed_aggregate_ops": sorted(HV_AGGREGATE_OPS),
+			"use_with": "hv_query_view",
+			"count": len(conf.get("fields", {})),
+		}
+
+	doctype = _normalize_hv_doctype(source_name)
+	if not frappe.has_permission(doctype, "read"):
+		frappe.throw(_("Keine Berechtigung fuer {0}.").format(doctype), frappe.PermissionError)
+	conf = HV_READABLE_DOCTYPES[doctype]
+	return {
+		"ok": True,
+		"type": "doctype",
+		"name": doctype,
+		"description": _doctype_description(doctype),
+		"fields": [_doctype_field_description(doctype, field) for field in sorted(_allowed_hv_field_names(doctype))],
+		"children": _doctype_children_description(doctype),
+		"aliases": HV_FIELD_ALIASES.get(doctype, {}),
+		"allowed_filter_operators": sorted(HV_FILTER_OPERATORS),
+		"allowed_aggregate_ops": sorted(HV_AGGREGATE_OPS),
+		"use_with": "hv_query_docs or hv_get_doc",
+		"count": len(_allowed_hv_field_names(doctype)) + len(conf.get("children") or {}),
 	}
 
 
@@ -2180,6 +2330,206 @@ def _rent_amounts_for_contract(doc) -> dict[str, float]:
 			2,
 		),
 	}
+
+
+def _can_use_view(conf: dict[str, Any]) -> bool:
+	for doctype in conf.get("required_doctypes") or ():
+		if not frappe.has_permission(doctype, "read"):
+			return False
+	return True
+
+
+def _view_row_meaning(view: str) -> str:
+	return {
+		"apartments": "eine Zeile pro Wohnung",
+		"tenant_contracts": "eine Zeile pro Mietvertrag",
+		"invoices": "eine Zeile pro gebuchter Ausgangsrechnung",
+		"open_items": "eine Zeile pro aktuell offener Forderung",
+		"payments": "eine Zeile pro Zahlung auf eine Rechnung",
+	}.get(view, "eine Zeile pro Datensatz der View")
+
+
+def _view_best_for(view: str) -> list[str]:
+	return {
+		"apartments": ["Wohnungsbestand", "Wohnungen je Immobilie", "Leerstand", "Wohnungsstatus"],
+		"tenant_contracts": ["aktive Mieter", "Mietvertraege", "Personenzahlen", "Mieter je Immobilie"],
+		"invoices": ["Rechnungen", "Rechnungssummen", "Faelligkeiten"],
+		"open_items": ["offene Posten", "aktuelle Salden", "ueberfaellige offene Forderungen"],
+		"payments": ["Zahlungen", "spaete Zahlungen", "Zahlungseingaenge"],
+	}.get(view, [])
+
+
+def _aliases_for_query_source(source: str) -> list[str]:
+	return sorted(alias for alias, target in HV_QUERY_VIEW_ALIASES.items() if target == source)
+
+
+def _view_field_description(view: str, field: str) -> dict[str, Any]:
+	kind = _query_field_kind(field)
+	return {
+		"name": field,
+		"type": kind,
+		"filterable": True,
+		"sortable": True,
+		"groupable": kind in {"text", "date", "link", "status"},
+		"aggregations": _field_aggregations(kind),
+		"aliases": _field_aliases_for_view(view, field),
+		"description": _field_description_text(view, field),
+	}
+
+
+def _doctype_field_description(doctype: str, field: str) -> dict[str, Any]:
+	kind = _query_field_kind(field)
+	return {
+		"name": field,
+		"type": kind,
+		"filterable": True,
+		"sortable": True,
+		"groupable": kind in {"text", "date", "link", "status"},
+		"aggregations": _field_aggregations(kind),
+		"aliases": _field_aliases_for_doctype(doctype, field),
+	}
+
+
+def _doctype_children_description(doctype: str) -> dict[str, Any]:
+	out = {}
+	for table_field, conf in (HV_READABLE_DOCTYPES[doctype].get("children") or {}).items():
+		out[table_field] = {
+			"field_names": sorted(conf.get("fields") or ()),
+			"note": "Child-Table ist nur ueber hv_get_doc(include_children=true) oder freigegebene Spezialfelder nutzbar.",
+		}
+	return out
+
+
+def _allowed_hv_field_names(doctype: str) -> set[str]:
+	conf = HV_READABLE_DOCTYPES[doctype]
+	return set(conf.get("fields") or set()) | set(conf.get("computed_fields") or set())
+
+
+def _query_field_kind(field: str) -> str:
+	name = (field or "").lower()
+	if name in {"status"} or name.startswith("is_"):
+		return "status"
+	if name in {"personen"} or name.endswith("_amount") or name in {
+		"grand_total",
+		"outstanding_amount",
+		"paid_amount",
+		"allocated_amount",
+		"invoice_amount",
+		"invoice_outstanding_amount",
+		"days_overdue",
+		"days_late",
+		"bruttomiete",
+		"aktuelle_nettokaltmiete",
+		"aktuelle_betriebskosten",
+		"aktuelle_heizkosten",
+	}:
+		return "number"
+	if name.endswith("_date") or name in {"von", "bis", "modified", "posting_date", "due_date", "payment_date", "invoice_due_date"}:
+		return "date"
+	if name in {
+		"name",
+		"mietvertrag",
+		"customer",
+		"wohnung",
+		"immobilie",
+		"invoice",
+		"payment_entry",
+		"immobilie_knoten",
+	}:
+		return "link"
+	return "text"
+
+
+def _field_aggregations(kind: str) -> list[str]:
+	if kind == "number":
+		return ["count", "sum", "avg", "min", "max"]
+	if kind == "date":
+		return ["count", "min", "max"]
+	return ["count"]
+
+
+def _field_aliases_for_view(view: str, field: str) -> list[str]:
+	aliases = HV_QUERY_VIEWS.get(view, {}).get("aliases") or {}
+	return sorted(alias for alias, target in aliases.items() if target == field)
+
+
+def _field_aliases_for_doctype(doctype: str, field: str) -> list[str]:
+	aliases = HV_FIELD_ALIASES.get(doctype, {})
+	return sorted(alias for alias, target in aliases.items() if target == field)
+
+
+def _field_description_text(view: str, field: str) -> str:
+	descriptions = {
+		("apartments", "wohnung"): "Wohnungs-Dokumentname; zaehlt echte Wohnungen.",
+		("apartments", "immobilie"): "Immobilie/Haus der Wohnung.",
+		("apartments", "status"): "Wohnungsstatus, z.B. Vermietet oder Leerstehend.",
+		("tenant_contracts", "mietvertrag"): "Mietvertrag-Dokumentname; zaehlt Vertraege, nicht Personen.",
+		("tenant_contracts", "personen"): "Personenanzahl aus der Mietvertrag-Personen-Tabelle zum aktuellen Stichtag.",
+		("tenant_contracts", "status"): "Mietvertragstatus; fuer aktuelle Mieter meist status = Laeuft nutzen.",
+		("open_items", "outstanding_amount"): "Aktuell offener Rechnungsbetrag.",
+		("payments", "days_late"): "Tage zwischen Rechnungsfaelligkeit und Zahlung.",
+	}
+	return descriptions.get((view, field), "")
+
+
+def _doctype_description(doctype: str) -> str:
+	return {
+		"Mietvertrag": "Mietvertrag mit Wohnung, Immobilie, Kunde, Laufzeit, Mieten und Personen-Child-Table.",
+		"Wohnung": "Wohnungsbestand und Lage innerhalb einer Immobilie.",
+		"Immobilie": "Haus/Objekt-Stammdaten.",
+		"Customer": "ERPNext Customer als Mieter/Debitor.",
+		"Sales Invoice": "Gebuchte Ausgangsrechnung.",
+	}.get(doctype, "")
+
+
+def _view_query_examples(view: str) -> list[dict[str, Any]]:
+	return {
+		"apartments": [
+			{
+				"question": "Welche Immobilie hat die meisten Wohnungen?",
+				"query": {
+					"view": "apartments",
+					"fields": ["immobilie"],
+					"aggregate": {"op": "count", "group_by": "immobilie"},
+					"order_by": {"field": "count", "direction": "desc"},
+					"limit": 1,
+				},
+			}
+		],
+		"tenant_contracts": [
+			{
+				"question": "Wie viele Personen wohnen in einem Haus?",
+				"query": {
+					"view": "tenant_contracts",
+					"fields": ["immobilie", "personen"],
+					"filters": [["status", "=", "Läuft"]],
+					"aggregate": {"op": "sum", "field": "personen", "group_by": "immobilie"},
+				},
+			}
+		],
+		"open_items": [
+			{
+				"question": "Welche Mieter haben die hoechsten offenen Posten?",
+				"query": {
+					"view": "open_items",
+					"fields": ["customer_name", "outstanding_amount"],
+					"aggregate": {"op": "sum", "field": "outstanding_amount", "group_by": "customer"},
+					"order_by": {"field": "value", "direction": "desc"},
+				},
+			}
+		],
+		"payments": [
+			{
+				"question": "Welche Zahlungen kamen verspaetet?",
+				"query": {
+					"view": "payments",
+					"fields": ["payment_entry", "customer_name", "days_late"],
+					"filters": [["days_late", ">", 0]],
+					"order_by": {"field": "days_late", "direction": "desc"},
+				},
+			}
+		],
+	}.get(view, [])
 
 
 def _normalize_hv_query_view(view: str) -> dict[str, Any]:
