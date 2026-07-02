@@ -21,3 +21,6 @@ HV_Bankimport/src_react/test-results/
 HV_Bankimport/src_react/playwright-report/
 # Frappe/bench generated asset bundles
 hausverwaltung/public/dist/
+
+# Local editor workspaces
+*.code-workspace
