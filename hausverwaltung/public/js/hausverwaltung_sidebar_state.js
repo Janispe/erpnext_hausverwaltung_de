@@ -13,7 +13,13 @@
 		"Serienbrief Durchlauf",
 		"Serienbrief Kategorie",
 		"Serienbrief Dokument",
+		"Serienbrief Textbaustein",
+		"Serienbrief Einstellungen",
+		"Serienbrief Beispielobjekt",
+		"Serienbrief Beispielwert",
 	]);
+	let enforcing_workspace = false;
+	let router_hook_installed = false;
 
 	function read_state() {
 		try {
@@ -96,10 +102,31 @@
 		setTimeout(restore_state, 100);
 	}
 
-	function is_serienbrief_route() {
-		const route = window.frappe?.get_route?.() || [];
+	function get_route_from_path() {
+		const parts = window.location.pathname.split("/").filter(Boolean);
+		const desk_index = parts.findIndex((part) => ["app", "desk"].includes(part));
+		return desk_index >= 0 ? parts[desk_index + 1] || "" : "";
+	}
+
+	function get_current_route_str() {
+		return (
+			window.frappe?.get_route_str?.() ||
+			(window.frappe?.get_route?.() || []).join("/") ||
+			get_route_from_path()
+		);
+	}
+
+	function is_serienbrief_doctype(doctype) {
+		return SERIENBRIEF_DOCTYPES.has(doctype) || String(doctype || "").startsWith("Serienbrief ");
+	}
+
+	function is_serienbrief_route(route) {
+		route = route || window.frappe?.get_route?.() || [];
+		const route_name = route[0] || get_route_from_path();
+		if (SERIENBRIEF_PAGES.has(route_name)) return true;
+		if (["Form", "List"].includes(route[0]) && is_serienbrief_doctype(route[1])) return true;
+		if (is_serienbrief_doctype(route[0])) return true;
 		if (SERIENBRIEF_PAGES.has(route[0])) return true;
-		if (["Form", "List"].includes(route[0]) && SERIENBRIEF_DOCTYPES.has(route[1])) return true;
 		return false;
 	}
 
@@ -115,7 +142,11 @@
 		}
 
 		const doctype = breadcrumb.doctype;
-		if (breadcrumb.module !== MAIL_MERGE_MODULE && !SERIENBRIEF_DOCTYPES.has(doctype)) {
+		if (
+			breadcrumb.module !== MAIL_MERGE_MODULE &&
+			breadcrumb.workspace !== MAIL_MERGE_MODULE &&
+			!is_serienbrief_doctype(doctype)
+		) {
 			return breadcrumb;
 		}
 
@@ -126,6 +157,72 @@
 		};
 	}
 
+	function get_hausverwaltung_app() {
+		return (
+			window.frappe?.workspace_map?.[HAUSVERWALTUNG_WORKSPACE]?.app ||
+			window.frappe?.boot?.module_app?.hausverwaltung ||
+			"hausverwaltung"
+		);
+	}
+
+	function force_hausverwaltung_breadcrumb() {
+		if (!window.frappe?.breadcrumbs || !is_serienbrief_route()) return false;
+
+		const route_key = get_current_route_str();
+		if (!route_key) return false;
+
+		const current = frappe.breadcrumbs.all[route_key] || {};
+		const normalized = {
+			...current,
+			module: HAUSVERWALTUNG_WORKSPACE,
+			workspace: HAUSVERWALTUNG_WORKSPACE,
+		};
+		const changed =
+			current.module !== normalized.module || current.workspace !== normalized.workspace;
+
+		if (changed || !frappe.breadcrumbs.all[route_key]) {
+			frappe.breadcrumbs.all[route_key] = normalized;
+		}
+		return changed;
+	}
+
+	function force_hausverwaltung_app() {
+		if (!window.frappe?.app?.sidebar || !is_serienbrief_route()) return;
+
+		const app = get_hausverwaltung_app();
+		if (frappe.boot?.app_data_map?.[app] && frappe.current_app !== app) {
+			frappe.app.sidebar.apps_switcher?.set_current_app?.(app);
+		}
+	}
+
+	function enforce_serienbrief_workspace() {
+		if (enforcing_workspace || !is_serienbrief_route()) return;
+
+		enforcing_workspace = true;
+		try {
+			const changed_breadcrumb = force_hausverwaltung_breadcrumb();
+			if (changed_breadcrumb) {
+				frappe.breadcrumbs.update();
+			}
+			force_hausverwaltung_app();
+			restore_soon();
+		} finally {
+			enforcing_workspace = false;
+		}
+	}
+
+	function enforce_serienbrief_workspace_soon() {
+		setTimeout(enforce_serienbrief_workspace, 0);
+		setTimeout(enforce_serienbrief_workspace, 100);
+		setTimeout(enforce_serienbrief_workspace, 300);
+	}
+
+	function install_router_hook() {
+		if (router_hook_installed || !window.frappe?.router?.on) return;
+		frappe.router.on("change", enforce_serienbrief_workspace_soon);
+		router_hook_installed = true;
+	}
+
 	function patch_breadcrumbs() {
 		if (!window.frappe?.breadcrumbs || frappe.breadcrumbs.__hausverwaltung_workspace_lock) {
 			return;
@@ -133,16 +230,19 @@
 
 		const original_add = frappe.breadcrumbs.add;
 		frappe.breadcrumbs.add = function (module, doctype, type) {
+			let result;
 			if (typeof module === "object") {
-				return original_add.call(this, normalize_serienbrief_breadcrumb(module), doctype, type);
+				result = original_add.call(this, normalize_serienbrief_breadcrumb(module), doctype, type);
+			} else {
+				const normalized = normalize_serienbrief_breadcrumb({
+					module,
+					doctype,
+					type,
+				});
+				result = original_add.call(this, normalized);
 			}
-
-			const normalized = normalize_serienbrief_breadcrumb({
-				module,
-				doctype,
-				type,
-			});
-			return original_add.call(this, normalized);
+			enforce_serienbrief_workspace_soon();
+			return result;
 		};
 
 		frappe.breadcrumbs.__hausverwaltung_workspace_lock = true;
@@ -168,6 +268,7 @@
 			} catch (e) {
 				if (!String(e && e.message).includes("isTrusted")) throw e;
 			}
+			enforce_serienbrief_workspace_soon();
 			restore_soon();
 			return result;
 		};
@@ -201,12 +302,16 @@
 	$(document).on("app_ready", function () {
 		patch_breadcrumbs();
 		patch_sidebar();
+		install_router_hook();
+		enforce_serienbrief_workspace_soon();
 		restore_soon();
 	});
 
 	if (document.readyState !== "loading") {
 		patch_breadcrumbs();
 		patch_sidebar();
+		install_router_hook();
+		enforce_serienbrief_workspace_soon();
 		restore_soon();
 	}
 })();
