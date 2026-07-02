@@ -541,6 +541,87 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertEqual(res["row_party"], "CUST-G")
         self.assertTrue(res["relink"]["updated"])
 
+    def test_sort_import_rows_by_status_persists_child_order(self):
+        rows = [
+            self._FakeRow(name="ROW-SUCCESS-A"),
+            self._FakeRow(name="ROW-FAILED-WITH-PARTY"),
+            self._FakeRow(name="ROW-EMPTY-WITH-PARTY"),
+            self._FakeRow(name="ROW-FAILED-MISSING-PARTY"),
+            self._FakeRow(name="ROW-EMPTY-MISSING-PARTY-A"),
+            self._FakeRow(name="ROW-SKIPPED"),
+            self._FakeRow(name="ROW-UNKNOWN"),
+            self._FakeRow(name="ROW-EMPTY-MISSING-PARTY-B"),
+        ]
+        for idx, row in enumerate(rows, start=1):
+            row.idx = idx
+        rows[0].row_status = "success"
+        rows[0].party = "CUST-A"
+        rows[1].row_status = "failed"
+        rows[1].party = "CUST-B"
+        rows[2].row_status = ""
+        rows[2].party = "CUST-C"
+        rows[3].row_status = "failed"
+        rows[4].row_status = ""
+        rows[5].row_status = "schon vorhanden"
+        rows[6].row_status = "needs_review"
+        rows[7].row_status = ""
+        doc = self._FakeDoc("IMP-SORT-STATUS", rows)
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True):
+            res = bi.sort_import_rows("IMP-SORT-STATUS", "status")
+
+        expected = [
+            "ROW-FAILED-MISSING-PARTY",
+            "ROW-FAILED-WITH-PARTY",
+            "ROW-EMPTY-MISSING-PARTY-A",
+            "ROW-EMPTY-MISSING-PARTY-B",
+            "ROW-EMPTY-WITH-PARTY",
+            "ROW-SKIPPED",
+            "ROW-SUCCESS-A",
+            "ROW-UNKNOWN",
+        ]
+        self.assertEqual([row.name for row in doc.rows], expected)
+        self.assertEqual(res["order"], expected)
+        self.assertEqual([row.idx for row in doc.rows], list(range(1, len(rows) + 1)))
+        self.assertTrue(doc.saved)
+        self.assertTrue(doc.ignore_permissions)
+
+    def test_sort_import_rows_by_buchungstag_persists_child_order(self):
+        rows = [
+            self._FakeRow(name="ROW-B"),
+            self._FakeRow(name="ROW-NO-DATE"),
+            self._FakeRow(name="ROW-A1"),
+            self._FakeRow(name="ROW-A2"),
+        ]
+        rows[0].buchungstag = "2026-02-01"
+        rows[1].buchungstag = None
+        rows[2].buchungstag = "2026-01-01"
+        rows[3].buchungstag = "2026-01-01"
+        doc = self._FakeDoc("IMP-SORT-DATE", rows)
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True):
+            res = bi.sort_import_rows("IMP-SORT-DATE", "buchungstag")
+
+        expected = ["ROW-A1", "ROW-A2", "ROW-B", "ROW-NO-DATE"]
+        self.assertEqual([row.name for row in doc.rows], expected)
+        self.assertEqual(res["order"], expected)
+        self.assertEqual([row.idx for row in doc.rows], [1, 2, 3, 4])
+        self.assertTrue(doc.saved)
+        self.assertTrue(doc.ignore_permissions)
+
+    def test_sort_import_rows_rejects_unknown_sorting_without_save(self):
+        doc = self._FakeDoc("IMP-SORT-BAD", [self._FakeRow(name="ROW-A")])
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe, "throw", side_effect=Exception("bad sort")):
+            with self.assertRaises(Exception):
+                bi.sort_import_rows("IMP-SORT-BAD", "anything")
+
+        self.assertFalse(doc.saved)
+
     def test_change_row_party_resets_existing_booking_before_changing_party(self):
         row = self._FakeRow(name="ROW-CHG", iban="DE10")
         row.party_type = "Customer"
@@ -1620,6 +1701,9 @@ class TestBankauszugImport(unittest.TestCase):
         row.buchungstag = "2026-05-05"
         row.bank_transaction = "BT-ABS"
         doc = self._FakeDoc("IMP-ABS", [row])
+        # bank_account des Kandidaten-Matchs kommt jetzt aus dem Import-Doc
+        # (transiente BT), nicht mehr aus einer geladenen Bank Transaction.
+        doc.bank_account = "BA-1"
         bt = type("BT", (), {"name": "BT-ABS", "bank_account": "BA-1"})()
 
         sql_rows = [
@@ -2359,6 +2443,22 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertIn("Phase 1: 0/1 Parteien zugeordnet", status)
         self.assertIn("Übersprungen: 1", status)
         self.assertEqual(set_value.call_args.args[2]["offene_buchungen"], 1)
+
+    def test_recompute_doc_status_mixed_party_and_bt_is_not_phase1(self):
+        # Regression: aggregierte Counts (with_party < total UND with_bt < total)
+        # meldeten fälschlich Phase 1, obwohl keine Zeile blockiert ist. Eine Zeile
+        # hat Party ohne BT, die andere BT ohne Party — beide sind buchbar.
+        rows = [
+            frappe._dict(row_status=None, party_type="Customer", party="C-1", bank_transaction=None),
+            frappe._dict(row_status=None, party_type=None, party=None, bank_transaction="BT-9"),
+        ]
+
+        with patch.object(bi.frappe, "get_all", return_value=rows), \
+             patch.object(bi.frappe.db, "set_value"):
+            status = bi._recompute_doc_status("IMP-MIX")
+
+        self.assertNotIn("Phase 1", status)
+        self.assertIn("Phase 3: 0/2 Belege zugeordnet", status)
 
     def test_recompute_doc_status_failed_rows_do_not_reset_processed_rows_to_phase_1(self):
         rows = [

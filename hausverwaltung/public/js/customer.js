@@ -69,11 +69,19 @@ function auto_link_import_row(frm) {
 	try {
 		ctx = JSON.parse(localStorage.getItem("hv_bankauszug_autolink_context") || "null");
 	} catch (e) {
+		localStorage.removeItem("hv_bankauszug_autolink_context");
 		ctx = null;
 	}
-	if (!ctx || ctx.done || ctx.expected_doctype !== "Customer") return;
-	if (!ctx.import_docname || !ctx.row_name) return;
-	if (Date.now() - (ctx.ts || 0) > 30 * 60 * 1000) return;
+	if (!ctx) return;
+	if (ctx.done) {
+		localStorage.removeItem("hv_bankauszug_autolink_context");
+		return;
+	}
+	if (ctx.expected_doctype !== "Customer") return;
+	if (!ctx.import_docname || !ctx.row_name || Date.now() - (ctx.ts || 0) > 30 * 60 * 1000) {
+		localStorage.removeItem("hv_bankauszug_autolink_context");
+		return;
+	}
 
 	frappe.call({
 		method: "hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.apply_party_to_row_and_relink",
@@ -86,8 +94,7 @@ function auto_link_import_row(frm) {
 		},
 	}).then((r) => {
 		try {
-			ctx.done = 1;
-			localStorage.setItem("hv_bankauszug_autolink_context", JSON.stringify(ctx));
+			localStorage.removeItem("hv_bankauszug_autolink_context");
 		} catch (e) {
 			// ignore
 		}

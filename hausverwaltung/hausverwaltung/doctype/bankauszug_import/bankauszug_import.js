@@ -1211,6 +1211,7 @@ function _openMatchInvoicesDialog(frm, row) {
       primary_action() {
         const allocations = [];
         let allocSum = 0;
+        let allocationError = false;
         d.$wrapper.find('.hv-inv-cb:checked').each(function () {
           const name = $(this).attr('data-name');
           const amountInput = d.$wrapper.find('.hv-inv-amount[data-name="' + name + '"]');
@@ -1221,12 +1222,13 @@ function _openMatchInvoicesDialog(frm, row) {
             frappe.msgprint(__('Zuweisung für {0} ({1}) übersteigt offenen Betrag ({2}).', [
               name, frappe.format(allocated, { fieldtype: 'Currency' }), frappe.format(outstanding, { fieldtype: 'Currency' }),
             ]));
-            allocations.length = 0;  // Abort
+            allocationError = true;
             return false;
           }
           allocations.push({ name, allocated_amount: allocated });
           allocSum += allocated;
         });
+        if (allocationError) return;
         if (!allocations.length) {
           frappe.msgprint(__('Bitte mindestens eine Rechnung mit Betrag > 0 auswählen.'));
           return;
@@ -1746,15 +1748,6 @@ function _assignExistingParty(frm, row, partyType) {
     },
   });
   d.show();
-
-  // Kostenstelle aus der Immobilie der BT vorbelegen (User kann überschreiben)
-  frappe.call({
-    method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.get_expected_cost_center_for_row',
-    args: { docname: frm.doc.name, row_name: row.name },
-  }).then((r) => {
-    const cc = r && r.message && r.message.cost_center;
-    if (cc) d.set_value('cost_center', cc);
-  });
 }
 
 frappe.ui.form.on('Bankauszug Import Row', {
@@ -1776,41 +1769,22 @@ frappe.ui.form.on('Bankauszug Import Row', {
   },
 });
 
-// Status-Sort-Reihenfolge: Probleme zuerst (failed/leer/missing), dann success/vorhanden.
-const _STATUS_ORDER = {
-  'failed':           0,
-  '':                 1,  // unverarbeitet
-  'schon vorhanden':  2,
-  'success':          3,
-};
-
 function sortRowsByStatus(frm) {
-  const rows = frm.doc.rows || [];
-  rows.sort((a, b) => {
-    const sa = _STATUS_ORDER[(a.row_status || '').trim()] ?? 99;
-    const sb = _STATUS_ORDER[(b.row_status || '').trim()] ?? 99;
-    if (sa !== sb) return sa - sb;
-    // Innerhalb gleicher Status-Gruppe: Probleme (kein party) zuerst
-    const pa = a.party ? 1 : 0;
-    const pb = b.party ? 1 : 0;
-    if (pa !== pb) return pa - pb;
-    return (a.idx || 0) - (b.idx || 0);
-  });
-  rows.forEach((r, i) => { r.idx = i + 1; });
-  frm.doc.rows = rows;
-  frm.refresh_field('rows');
-  frappe.show_alert({ message: __('Nach Status sortiert (Probleme zuerst).'), indicator: 'blue' });
+  sortRowsPersisted(frm, 'status', __('Nach Status sortiert (Probleme zuerst).'));
 }
 
 function sortRowsByBuchungstag(frm) {
-  const rows = frm.doc.rows || [];
-  rows.sort((a, b) => {
-    const da = (a.buchungstag || '');
-    const db = (b.buchungstag || '');
-    return da.localeCompare(db);
+  sortRowsPersisted(frm, 'buchungstag', __('Nach Buchungstag sortiert.'));
+}
+
+function sortRowsPersisted(frm, sortBy, successMessage) {
+  frappe.call({
+    method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.sort_import_rows',
+    args: { docname: frm.doc.name, sort_by: sortBy },
+    freeze: true,
+    freeze_message: __('Sortierung wird gespeichert…'),
+  }).then(() => {
+    frappe.show_alert({ message: successMessage, indicator: 'blue' });
+    frm.reload_doc();
   });
-  rows.forEach((r, i) => { r.idx = i + 1; });
-  frm.doc.rows = rows;
-  frm.refresh_field('rows');
-  frappe.show_alert({ message: __('Nach Buchungstag sortiert.'), indicator: 'blue' });
 }

@@ -216,22 +216,24 @@ def _recompute_doc_status(docname: str) -> str:
         progress_rows = [r for r in actionable_rows if (r.get("row_status") or "") != "failed"]
         progress_total = len(progress_rows)
         with_party = sum(1 for r in progress_rows if r.get("party_type") and r.get("party"))
-        with_bt = sum(1 for r in progress_rows if r.get("bank_transaction"))
         with_voucher = sum(1 for r in actionable_rows if r.get("payment_entry") or r.get("journal_entry"))
         needs_review = sum(1 for r in actionable_rows if (r.get("row_status") or "") == "needs_review")
         offene_buchungen = total - with_voucher
 
-        # Phasen-Logik hängt am bank_transaction, nicht am Party-Count: Zeilen
-        # ohne Party können trotzdem als Journal Entry verbucht werden (z.B.
-        # Bankgebühren), und wenn alle BTs erzeugt sind ist die Party-Phase
-        # vorbei — egal wie viele Parties leer sind. Fehlerzeilen werden im
-        # Header separat gezählt, sollen aber den Fortschritt der übrigen
-        # Zeilen nicht zurück in Phase 1 ziehen.
-        if progress_total and with_bt < progress_total:
-            if with_party < progress_total:
-                status = f"Phase 1: {with_party}/{total} Parteien zugeordnet"
-            else:
-                status = f"Phase 2: {with_bt}/{total} Bank-Transaktionen — {total - with_bt} bereit zum Buchen"
+        # Die Bank Transaction ist nur noch ein technisches Zwischenobjekt:
+        # Eine Zeile blockiert Phase 1 nur, solange sie WEDER eine Party NOCH
+        # eine BT hat — nur die ist noch nicht buchbar (spiegelt _row_phase()
+        # in bankimport_v2.py). Aggregierte Counts (with_party < total UND
+        # with_bt < total) würden fälschlich Phase 1 melden, wenn z.B. eine
+        # Zeile Party-ohne-BT und eine andere BT-ohne-Party ist — beide sind
+        # buchbar, keine blockiert.
+        phase1_blockers = sum(
+            1
+            for r in progress_rows
+            if not (r.get("party_type") and r.get("party")) and not r.get("bank_transaction")
+        )
+        if phase1_blockers:
+            status = f"Phase 1: {with_party}/{total} Parteien zugeordnet"
         elif with_voucher < total:
             status = f"Phase 3: {with_voucher}/{total} Belege zugeordnet — {offene_buchungen} offen"
         else:
@@ -670,6 +672,59 @@ def _get_row_by_name(doc: Document, row_name: str) -> Document:
         if row.name == row_name:
             return row
     frappe.throw(f"Zeile {row_name} wurde im Dokument {doc.name} nicht gefunden.")
+
+
+_IMPORT_ROW_STATUS_ORDER = {
+    "failed": 0,
+    "": 1,
+    "schon vorhanden": 2,
+    "success": 3,
+}
+
+
+def _sort_import_row_status_key(row: Document, original_index: int) -> Tuple[int, int, int]:
+    status = str(_doc_field(row, "row_status", "") or "").strip().lower()
+    party_missing = 0 if not _doc_field(row, "party") else 1
+    return (_IMPORT_ROW_STATUS_ORDER.get(status, 99), party_missing, original_index)
+
+
+def _sort_import_row_booking_date_key(row: Document, original_index: int) -> Tuple[int, str, int]:
+    value = _doc_field(row, "buchungstag")
+    if not value:
+        return (1, "", original_index)
+    try:
+        date_value = getdate(value)
+        return (0, date_value.isoformat(), original_index)
+    except Exception:
+        return (0, str(value), original_index)
+
+
+@frappe.whitelist()
+def sort_import_rows(docname: str, sort_by: str) -> Dict[str, Any]:
+    doc = frappe.get_doc("Bankauszug Import", docname)
+    if not frappe.has_permission("Bankauszug Import", "write", doc=doc):
+        frappe.throw("Keine Berechtigung zum Bearbeiten dieses Bankauszug Imports.")
+
+    rows = list(doc.get("rows") or [])
+    indexed_rows = list(enumerate(rows))
+    if sort_by == "status":
+        indexed_rows.sort(key=lambda item: _sort_import_row_status_key(item[1], item[0]))
+    elif sort_by == "buchungstag":
+        indexed_rows.sort(key=lambda item: _sort_import_row_booking_date_key(item[1], item[0]))
+    else:
+        frappe.throw("Unbekannte Sortierung.")
+
+    sorted_rows = [row for _, row in indexed_rows]
+    for idx, row in enumerate(sorted_rows, start=1):
+        row.idx = idx
+    doc.rows = sorted_rows
+    doc.save(ignore_permissions=True)
+
+    return {
+        "ok": True,
+        "count": len(sorted_rows),
+        "order": [row.name for row in sorted_rows],
+    }
 
 
 def _get_bt_party_fieldnames(meta) -> Tuple[Optional[str], Optional[str]]:
@@ -2429,10 +2484,10 @@ def _row_with_unreconciled_bt(
     docname: str,
     row_name: str,
     *,
-    create_missing_bank_transaction: bool = False,
+    create_missing_bank_transaction: bool = True,
     allow_missing_party: int = 1,
 ) -> Tuple[Document, Document, Document]:
-    """Lädt (doc, row, bt). Wirft, wenn Zeile keine BT hat oder bereits reconciled ist."""
+    """Lädt (doc, row, bt), erzeugt fehlende BTs bei Bedarf ohne Auto-Match."""
     doc = frappe.get_doc("Bankauszug Import", docname)
     if not frappe.has_permission("Bankauszug Import", "write", doc=doc):
         frappe.throw("Keine Berechtigung zum Bearbeiten dieses Bankauszug Imports.")
@@ -2472,6 +2527,27 @@ def _row_with_unreconciled_bt(
             "verknüpften Belege prüfen."
         )
     return doc, row, bt
+
+
+def _transient_bt_for_row(doc: Document, row: Document) -> "frappe._dict":
+    """BT-artiges Read-Only-Objekt für Lese-/Kandidaten-Endpoints.
+
+    Die Kandidaten-Matcher lesen von der Bank Transaction nur ``bank_account``,
+    ``date`` und Betrag — alles steht schon in Import-Doc + Row. Wir liefern daher
+    ein transientes ``_dict`` statt eine echte BT anzulegen; sonst würde bloßes
+    Laden der Kandidaten (Panel öffnen) eine Bank Transaction erzeugen und
+    Write-Rechte verlangen. Der Lazy-BT-Insert passiert nur in echten
+    Buchungsaktionen über ``_row_with_unreconciled_bt``.
+    """
+    betrag = flt(row.get("betrag"))
+    eingang = row.get("richtung") == "Eingang"
+    return frappe._dict(
+        bank_account=doc.bank_account,
+        date=row.get("buchungstag"),
+        deposit=betrag if eingang else 0.0,
+        withdrawal=0.0 if eingang else betrag,
+        company=None,
+    )
 
 
 @frappe.whitelist()
@@ -2568,11 +2644,7 @@ def get_abschlagsplan_candidates_for_row(docname: str, row_name: str) -> dict[st
     if row.get("richtung") != "Ausgang" or row.get("party_type") != "Supplier" or not row.get("party"):
         return {"candidates": [], "target_amount": flt(row.get("betrag")), "reason": "not_supplier_outgoing"}
 
-    bt_name = _get_row_bank_transaction_name(row)
-    if not bt_name:
-        return {"candidates": [], "target_amount": flt(row.get("betrag")), "reason": "no_bank_transaction"}
-
-    bt = frappe.get_doc("Bank Transaction", bt_name)
+    bt = _transient_bt_for_row(doc, row)
     target_amount = flt(row.get("betrag"))
     target_date = getdate(row.get("buchungstag")) if row.get("buchungstag") else None
     tolerance_days = _get_abschlag_tolerance_days()
@@ -2749,9 +2821,8 @@ def get_payment_split_options_for_row(docname: str, row_name: str) -> Dict[str, 
         frappe.throw("Keine Berechtigung.")
     row = _get_row_by_name(doc, row_name)
     abschlag_payload = {"candidates": [], "target_amount": flt(row.get("betrag"))}
-    bt_name = _get_row_bank_transaction_name(row)
-    if bt_name and row.get("richtung") == "Ausgang" and row.get("party_type") == "Supplier":
-        bt = frappe.get_doc("Bank Transaction", bt_name)
+    if row.get("richtung") == "Ausgang" and row.get("party_type") == "Supplier":
+        bt = _transient_bt_for_row(doc, row)
         abschlag_payload = _get_abschlagsplan_candidates(row=row, bt=bt, exact_amount_only=False)
 
     return {
@@ -3548,7 +3619,11 @@ def get_open_kreditraten_for_row(docname: str, row_name: str) -> Dict[str, Any]:
         get_open_rates_for_match,
     )
 
-    doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
+    doc = frappe.get_doc("Bankauszug Import", docname)
+    if not frappe.has_permission("Bankauszug Import", "read", doc=doc):
+        frappe.throw("Keine Berechtigung.")
+    row = _get_row_by_name(doc, row_name)
+    bt = _transient_bt_for_row(doc, row)
 
     supplier = row.get("party") if row.get("party_type") == "Supplier" else None
     candidates = get_open_rates_for_match(
@@ -3578,7 +3653,7 @@ def get_open_kreditraten_for_row(docname: str, row_name: str) -> Dict[str, Any]:
 
     return {
         "bank_account": bt.bank_account,
-        "bank_transaction": bt.name,
+        "bank_transaction": row.get("bank_transaction"),
         "posting_date": str(bt.date),
         "amount": flt(row.betrag),
         "supplier": supplier,
