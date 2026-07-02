@@ -160,6 +160,7 @@
 	function get_hausverwaltung_app() {
 		return (
 			window.frappe?.workspace_map?.[HAUSVERWALTUNG_WORKSPACE]?.app ||
+			window.frappe?.boot?.workspace_sidebar_item?.[HAUSVERWALTUNG_WORKSPACE.toLowerCase()]?.app ||
 			window.frappe?.boot?.module_app?.hausverwaltung ||
 			"hausverwaltung"
 		);
@@ -188,6 +189,16 @@
 
 	function force_hausverwaltung_app() {
 		if (!window.frappe?.app?.sidebar || !is_serienbrief_route()) return;
+
+		if (
+			frappe.boot?.workspace_sidebar_item?.[HAUSVERWALTUNG_WORKSPACE.toLowerCase()] &&
+			frappe.app.sidebar.sidebar_title !== HAUSVERWALTUNG_WORKSPACE
+		) {
+			frappe.app.sidebar.preferred_sidebars = [HAUSVERWALTUNG_WORKSPACE];
+			frappe.app.sidebar.setup(HAUSVERWALTUNG_WORKSPACE);
+			frappe.app.sidebar.set_active_workspace_item?.();
+			return;
+		}
 
 		const app = get_hausverwaltung_app();
 		if (frappe.boot?.app_data_map?.[app] && frappe.current_app !== app) {
@@ -251,6 +262,17 @@
 	function patch_sidebar() {
 		if (!window.frappe?.ui?.Sidebar || frappe.ui.Sidebar.__hausverwaltung_sidebar_state) {
 			return;
+		}
+
+		const original_setup = frappe.ui.Sidebar.prototype.setup;
+		if (original_setup) {
+			frappe.ui.Sidebar.prototype.setup = function (workspace_title) {
+				if (workspace_title === MAIL_MERGE_MODULE && is_serienbrief_route()) {
+					workspace_title = HAUSVERWALTUNG_WORKSPACE;
+					this.preferred_sidebars = [HAUSVERWALTUNG_WORKSPACE];
+				}
+				return original_setup.call(this, workspace_title);
+			};
 		}
 
 		const original_make_sidebar = frappe.ui.Sidebar.prototype.make_sidebar;
