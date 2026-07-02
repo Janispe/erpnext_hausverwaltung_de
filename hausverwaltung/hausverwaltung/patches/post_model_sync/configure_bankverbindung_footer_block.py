@@ -156,9 +156,7 @@ def _deduplicate_footer_rows() -> None:
 
 
 def execute() -> None:
-	affected_templates = _clean_template_body_tokens()
 	_configure_block()
-	_ensure_footer_rows(affected_templates)
 	_deduplicate_footer_rows()
 	frappe.clear_cache(doctype="Serienbrief Vorlage")
 	frappe.clear_cache(doctype="Serienbrief Textbaustein")
