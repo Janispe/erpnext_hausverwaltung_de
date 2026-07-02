@@ -249,16 +249,14 @@ class TestBankimportRulesPanel(unittest.TestCase):
 				return []
 			raise AssertionError(f"unexpected doctype {doctype}")
 
-		with patch.object(bv2, "ensure_default_bankimport_rules") as ensure_defaults, \
-			 patch("frappe.has_permission") as has_permission, \
+		with patch("frappe.has_permission") as has_permission, \
 			 patch("frappe.get_all", side_effect=fake_get_all):
 			result = bv2.list_bankimport_rules()
 
-		ensure_defaults.assert_called_once()
 		self.assertEqual(has_permission.call_count, 2)
 		self.assertEqual(result["groups"]["party"]["counts"]["enabled"], 1)
 		self.assertEqual(result["groups"]["party"]["items"][0]["title"], "Eindeutige IBAN")
-		self.assertTrue(result["groups"]["party"]["items"][0]["isSystem"])
+		self.assertNotIn("isSystem", result["groups"]["party"]["items"][0])
 		self.assertEqual(result["groups"]["booking"]["counts"]["disabled"], 1)
 		self.assertTrue(result["groups"]["party"]["items"][0]["hasRuleCode"])
 		self.assertEqual(

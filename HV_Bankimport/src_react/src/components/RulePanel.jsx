@@ -28,45 +28,6 @@ const PARTY_TYPES = [
 	["Supplier", "Lieferant"],
 	["Eigentuemer", "Eigentümer"],
 ];
-const SYSTEM_RULES = {
-	"party.unique_iban_to_party": {
-		label: "Systembaustein",
-		when: "IBAN der Bankzeile ist genau einem Bank Account zugeordnet",
-		then: "Partei und Party-Typ aus dem Bank Account übernehmen",
-		behavior: "Stoppt die Party-Pipeline bei einem eindeutigen Treffer.",
-	},
-	"party.row_party": {
-		label: "Systembaustein",
-		when: "Bankzeile hat bereits Partei und Party-Typ",
-		then: "Vorhandene Partei der Bankzeile übernehmen",
-		behavior: "Stoppt die Party-Pipeline, wenn die Zeile schon fachlich zugeordnet ist.",
-	},
-	"booking.invoice_auto_match": {
-		label: "Systembaustein",
-		when: "Offene Sales/Purchase Invoice passt konservativ zur Bank Transaction",
-		then: "Payment Entry erstellen und mit der passenden Rechnung abstimmen",
-		behavior: "Bucht nur eindeutige Treffer automatisch.",
-	},
-	"booking.kreditrate_auto_match": {
-		label: "Systembaustein",
-		when: "Ausgang passt eindeutig zu einer Kreditrate",
-		then: "Kreditrate buchen und Journal Entry verknüpfen",
-		behavior: "Mehrdeutige Treffer bleiben zur Prüfung offen.",
-	},
-	"booking.abschlagsplan_auto_match": {
-		label: "Systembaustein",
-		when: "Supplier-Ausgang passt eindeutig zu einer offenen Abschlagsplan-Zeile",
-		then: "Abschlagsplan-Zeile zuordnen und Payment Entry erzeugen",
-		behavior: "Läuft nach Rechnungs- und Kreditraten-Match in der Buchungs-Pipeline.",
-	},
-	"booking.needs_review_fallback": {
-		label: "Systembaustein",
-		when: "Keine vorherige Buchungsregel konnte die Zeile automatisch buchen",
-		then: "Zeile zur manuellen Prüfung markieren",
-		behavior: "Fängt offene Buchungsfälle am Ende der Pipeline ab.",
-	},
-};
-
 function parseParams(rule) {
 	if (rule?.parameters && typeof rule.parameters === "object") return rule.parameters;
 	if (!rule?.parametersJson) return {};
@@ -191,13 +152,9 @@ function actionText(action) {
 	if (["party", "partei"].includes(action.type)) return `${action.party_type || action.partyType || "Party"} · ${action.party || ""}`;
 	if (["party_from_row", "partei_aus_zeile"].includes(action.type)) return "Partei aus Bankzeile";
 	if (["party_from_doctype", "partei_aus_doctype"].includes(action.type)) return `${action.doctype || "DocType"} · ${action.partyTypeField || "party_type"} / ${action.partyField || "party"}`;
-	if (["builtin", "system"].includes(action.type)) return SYSTEM_RULES[action.ruleKey || action.rule_key]?.then || "Backend-Baustein ausführen";
+	if (["builtin", "system"].includes(action.type)) return action.ruleKey || action.rule_key || "Backend-Aktion";
 	if (["buchung", "booking"].includes(action.type)) return `${action.account || action.konto || ""}${action.cost_center || action.kostenstelle ? ` · ${action.cost_center || action.kostenstelle}` : ""}`;
 	return "";
-}
-
-function systemRuleInfo(rule) {
-	return SYSTEM_RULES[rule?.ruleKey || rule?.name] || null;
 }
 
 function scopeLabel(entry) {
@@ -229,7 +186,6 @@ function RuleCard({ rule, rows, index, total, onEdit, onToggle, onReorder, onDel
 	const builder = rule.builder || params.builder;
 	const action = rule.action || params.action;
 	const isBuilder = Boolean(rule.isBuilderRule || builder);
-	const systemInfo = systemRuleInfo(rule);
 	const needsServerPreview = isBuilder && builderNeedsServer(builder);
 	const hits = isBuilder && rows?.length && !needsServerPreview
 		? rows.filter((row) => !isDoneRow(row) && builderMatches(builder, row)).length
@@ -259,21 +215,13 @@ function RuleCard({ rule, rows, index, total, onEdit, onToggle, onReorder, onDel
 					<span className="fn-g">ƒ</span> wenn {exprText(builder)} <span className="fn-arrow">→</span> <span className="fn-out">{actionText(action)}</span>
 				</div>
 			)}
-			{!isBuilder && systemInfo && (
-				<div className="rc-sig rule-recipe">
-					<span>Wenn {systemInfo.when}</span>
-					<span className="fn-arrow">→</span>
-					<span className="fn-out">{systemInfo.then}</span>
-				</div>
-			)}
-
 			<div className="rc-badges">
 				{rule.stopOnMatch && <span className="rc-badge">Stoppt bei Treffer</span>}
 				{rule.autoApply && <span className="rc-badge">Automatisch</span>}
 				{rule.requiresReview && <span className="rc-badge warn">Prüfung</span>}
 				{isBuilder
 					? <span className="rc-badge soft">Builder</span>
-					: <span className="rc-badge soft">{systemInfo?.label || `DB-Code · ${rule.ruleCodeLines || 0}`}</span>}
+					: <span className="rc-badge soft">DB-Code · {rule.ruleCodeLines || 0}</span>}
 				{scope.length > 0 && <span className="rc-badge accent">Scope · {scope.length}</span>}
 			</div>
 
@@ -283,13 +231,11 @@ function RuleCard({ rule, rows, index, total, onEdit, onToggle, onReorder, onDel
 						? needsServerPreview
 							? <span className="rp-hits">Server-Vorschau</span>
 							: hits > 0 ? <span className="rp-hits has">↻ {hits} {hits === 1 ? "Zeile" : "Zeilen"} im Auszug</span> : <span className="rp-hits">keine Treffer</span>
-						: <span className="rc-foot-note">{systemInfo ? "Baustein-Regel" : "Backend-Regel"}</span>}
+						: <span className="rc-foot-note">Backend-Regel</span>}
 				</div>
 				<div className="rc-actions">
 					<button className="btn subtle sm" onClick={() => onEdit(rule)}><Icon name="settings" size={13} /> Bearbeiten</button>
-					{!rule.isSystem && isBuilder && (
-						<button className="icon-btn danger" onClick={() => onDelete(rule)} title="Löschen" aria-label="Löschen"><Icon name="trash" size={13} /></button>
-					)}
+					<button className="icon-btn danger" onClick={() => onDelete(rule)} title="Löschen" aria-label="Löschen"><Icon name="trash" size={13} /></button>
 				</div>
 			</div>
 		</div>
@@ -377,89 +323,12 @@ function defaultDoctypeFilter() {
 	return { field: "iban", op: "=", valueSource: "row", rowField: "iban", value: "" };
 }
 
-function systemBuilderTemplate(rule, kind) {
-	const key = rule?.ruleKey || rule?.name;
-	if (key === "party.unique_iban_to_party") {
-		return {
-			builder: {
-				connector: "und",
-				conditions: [
-					{
-						source: "doctype",
-						doctype: "Bank Account",
-						filters: [
-							{ field: "iban", op: "=", valueSource: "row", rowField: "iban", value: "" },
-							{ field: "party_type", op: "ist nicht leer", valueSource: "literal", value: "" },
-							{ field: "party", op: "ist nicht leer", valueSource: "literal", value: "" },
-						],
-						matchMode: "exists",
-					},
-				],
-			},
-			action: {
-				type: "party_from_doctype",
-				doctype: "Bank Account",
-				filters: [{ field: "iban", op: "=", valueSource: "row", rowField: "iban", value: "" }],
-				partyTypeField: "party_type",
-				partyField: "party",
-			},
-		};
-	}
-	if (key === "party.row_party") {
-		return {
-			builder: {
-				connector: "und",
-				conditions: [
-					{ source: "row", field: "party_type", op: "ist nicht leer", value: "" },
-					{ source: "row", field: "party", op: "ist nicht leer", value: "" },
-				],
-			},
-			action: { type: "party_from_row" },
-		};
-	}
-	if (key === "booking.kreditrate_auto_match") {
-		return {
-			builder: { connector: "und", conditions: [{ source: "row", field: "richtung", op: "=", value: "Ausgang" }] },
-			action: { type: "builtin", ruleKey: key },
-		};
-	}
-	if (key === "booking.abschlagsplan_auto_match") {
-		return {
-			builder: {
-				connector: "und",
-				conditions: [
-					{ source: "row", field: "richtung", op: "=", value: "Ausgang" },
-					{ source: "row", field: "party_type", op: "=", value: "Supplier" },
-					{ source: "row", field: "party", op: "ist nicht leer", value: "" },
-				],
-			},
-			action: { type: "builtin", ruleKey: key },
-		};
-	}
-	if (key === "booking.needs_review_fallback") {
-		return {
-			builder: { connector: "und", conditions: [{ source: "row", field: "betrag", op: ">=", value: "0" }] },
-			action: { type: "builtin", ruleKey: key },
-		};
-	}
-	return {
-		builder: {
-			connector: "und",
-			conditions: kind === "party"
-				? [{ source: "row", field: "iban", op: "ist nicht leer", value: "" }]
-				: [{ source: "row", field: "party", op: "ist nicht leer", value: "" }],
-		},
-		action: { type: "builtin", ruleKey: key },
-	};
-}
-
 function makeInitialEditorState(state) {
 	const rule = state.rule || {};
 	const kind = DOCTYPE_KIND[state.doctype || rule.doctype] || state.kind || "booking";
 	const params = parseParams(rule);
-	const template = rule.isSystem && !params.builder ? systemBuilderTemplate(rule, kind) : null;
-	const builder = params.builder || template?.builder || { connector: "und", conditions: [defaultCondition()] };
-	const action = params.action || template?.action || {
+	const builder = params.builder || { connector: "und", conditions: [defaultCondition()] };
+	const action = params.action || {
 		type: kind === "party" ? "party" : "buchung",
 		party_type: "Customer",
 		party: "",
@@ -485,42 +354,10 @@ function makeInitialEditorState(state) {
 		action,
 		scope: (rule.scope || []).map((entry) => ({ enabled: entry.enabled !== false, ...entry })),
 		mode: params.ui?.mode || "einfach",
-		isSystem: Boolean(rule.isSystem),
-		isBuilderRule: Boolean(rule.isBuilderRule || params.builder || template),
-		forceBuilder: Boolean(rule.isSystem && (params.builder || template)),
+		isBuilderRule: Boolean(rule.isBuilderRule || params.builder),
+		forceBuilder: false,
 		ruleCodeLines: rule.ruleCodeLines || 0,
-		systemInfo: systemRuleInfo(rule),
 	};
-}
-
-function SystemRuleBuilder({ form }) {
-	const info = form.systemInfo;
-	if (!info) {
-		return (
-			<div className="system-builder">
-				<div className="sb-row">
-					<div className="sb-label">Art</div>
-					<div className="sb-value">Backend-Regel mit individuellem Python-Code</div>
-				</div>
-			</div>
-		);
-	}
-	return (
-		<div className="system-builder">
-			<div className="sb-row">
-				<div className="sb-label">Wenn</div>
-				<div className="sb-value">{info.when}</div>
-			</div>
-			<div className="sb-row">
-				<div className="sb-label">Dann</div>
-				<div className="sb-value">{info.then}</div>
-			</div>
-			<div className="sb-row">
-				<div className="sb-label">Verhalten</div>
-				<div className="sb-value">{info.behavior}</div>
-			</div>
-		</div>
-	);
 }
 
 function ValueSourceInput({ valueSource = "literal", value = "", rowField = "iban", op, onChange, placeholder = "Wert" }) {
@@ -717,15 +554,15 @@ function ActionBuilder({ form, patch }) {
 				{form.kind === "party" && <button type="button" className={`seg-btn ${["party", "partei"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { type: "party", party_type: form.action.party_type || "Customer", party: form.action.party || "" } })}>Feste Partei</button>}
 				{form.kind === "party" && <button type="button" className={`seg-btn ${["party_from_row", "partei_aus_zeile"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { type: "party_from_row" } })}>Aus Bankzeile</button>}
 				{form.kind === "party" && <button type="button" className={`seg-btn ${["party_from_doctype", "partei_aus_doctype"].includes(form.action.type) ? "active" : ""}`} onClick={() => patch({ action: { type: "party_from_doctype", doctype: "Bank Account", filters: [defaultDoctypeFilter()], partyTypeField: "party_type", partyField: "party" } })}>Aus DocType</button>}
-				{["builtin", "system"].includes(form.action.type) && <button type="button" className="seg-btn active">Backend-Baustein</button>}
+				{["builtin", "system"].includes(form.action.type) && <button type="button" className="seg-btn active">Backend-Aktion</button>}
 			</div>
 			{["builtin", "system"].includes(form.action.type) ? (
-				<div className="system-builder">
+				<div className="backend-action">
 					<div className="sb-row">
-						<div className="sb-label">Baustein</div>
-						<div className="sb-value">{form.systemInfo?.then || actionText(form.action)}</div>
+						<div className="sb-label">Aktion</div>
+						<div className="sb-value">{actionText(form.action)}</div>
 					</div>
-					<div className="eb-sub">Die Bedingungen oben sind editierbar; die Ausführung nutzt weiterhin die geprüfte Backend-Logik.</div>
+					<div className="eb-sub">Die Bedingungen oben sind editierbar; die Ausführung nutzt eine Backend-Aktion.</div>
 				</div>
 			) : ["party", "partei"].includes(form.action.type) ? (
 				<div className="re-grid">
@@ -819,22 +656,6 @@ function RuleDesigner({ form, patch, setCondition, addCondition, removeCondition
 	return (
 		<div className="rule-designer">
 			<div className="designer-flow">
-				{form.isSystem && (
-					<details className="admin-code-link">
-						<summary>Systemregel</summary>
-						<SystemRuleBuilder form={form} />
-						<div className="locked-rule">
-							<span>Ursprünglicher Backend-Code · {form.ruleCodeLines || 0} Code-Zeilen</span>
-							<button
-								type="button"
-								className="btn subtle sm"
-								onClick={() => api.openDoc(form.doctype, form.name)}
-							>
-								<Icon name="file" size={13} /> Formular öffnen
-							</button>
-						</div>
-					</details>
-				)}
 				<ConditionBuilder form={form} patch={patch} setCondition={setCondition} addCondition={addCondition} removeCondition={removeCondition} />
 				<div className="flow-arrow">↓</div>
 				<ActionBuilder form={form} patch={patch} />
@@ -863,7 +684,7 @@ function MetadataEditor({ form, patch }) {
 					<label><span className="field-label">Titel</span><input className="text-input" value={form.title} onChange={(e) => patch({ title: e.target.value })} required /></label>
 					<label><span className="field-label">Priorität</span><input className="text-input mono" type="number" value={form.priority} onChange={(e) => patch({ priority: Number(e.target.value) || 0 })} /></label>
 				</div>
-				<label className="re-field"><span className="field-label">Regel-Schlüssel</span><input className="text-input mono" value={form.ruleKey} disabled={form.isSystem} onChange={(e) => patch({ ruleKey: e.target.value })} /></label>
+				<label className="re-field"><span className="field-label">Regel-Schlüssel</span><input className="text-input mono" value={form.ruleKey} onChange={(e) => patch({ ruleKey: e.target.value })} /></label>
 				<label className="re-field"><span className="field-label">Beschreibung</span><textarea className="text-input re-textarea" value={form.description} onChange={(e) => patch({ description: e.target.value })} /></label>
 			</div>
 		</details>
@@ -895,7 +716,7 @@ function RuleEditor({ state, rows, onClose, onSave }) {
 		|| (["party_from_doctype", "partei_aus_doctype"].includes(actionType) && Boolean(form.action.doctype && form.action.partyTypeField && form.action.partyField && form.action.filters?.length))
 		|| (["builtin", "system"].includes(actionType) && Boolean(form.action.ruleKey || form.ruleKey))
 		|| (["buchung", "booking"].includes(actionType) && Boolean(form.action.account || form.action.konto));
-	const valid = form.title.trim() && (form.isSystem || form.ruleKey.trim()) && !builderError && actionValid;
+	const valid = form.title.trim() && form.ruleKey.trim() && !builderError && actionValid;
 
 	const patch = (next) => setForm((current) => ({ ...current, ...next }));
 	const setCondition = (index, next) => patch({

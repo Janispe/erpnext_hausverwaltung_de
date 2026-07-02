@@ -992,12 +992,9 @@ def _execute_rule_code(rule: dict[str, Any], local_vars: dict[str, Any]) -> dict
 
 def _load_rules(doctype: str) -> list[dict[str, Any]]:
 	if not _doctype_ready(doctype):
-		return [_default_rule_row(doctype, spec) for spec in _default_specs_for_doctype(doctype)]
+		return []
 
 	try:
-		if not frappe.get_all(doctype, limit=1):
-			ensure_default_bankimport_rules()
-
 		rows = frappe.get_all(
 			doctype,
 			filters={"enabled": 1},
@@ -1016,7 +1013,11 @@ def _load_rules(doctype: str) -> list[dict[str, Any]]:
 		)
 		scope_by_parent = _load_scope_rows(doctype, [row.get("name") for row in rows])
 	except Exception:
-		return [_default_rule_row(doctype, spec) for spec in _default_specs_for_doctype(doctype)]
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"Bankimport-Regeln konnten nicht geladen werden: {doctype}",
+		)
+		return []
 	return [_prepare_rule(row, scope_by_parent.get(row.get("name"), [])) for row in rows]
 
 

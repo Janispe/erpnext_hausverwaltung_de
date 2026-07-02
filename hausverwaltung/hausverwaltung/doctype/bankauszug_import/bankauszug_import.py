@@ -2199,8 +2199,6 @@ def create_bank_transactions(
             created.append(bt.name)
 
             # Buchungsregeln laufen top-down aus `Bankimport Buchungsregel`.
-            # Die Systemregeln bilden die bisherige Reihenfolge ab:
-            # Rechnung -> Kreditrate -> Abschlagsplan -> Review-Fallback.
             try:
                 if bool(int(skip_auto_match or 0)):
                     row.db_set("auto_match_message", "Bank Transaction manuell vorbereitet.")

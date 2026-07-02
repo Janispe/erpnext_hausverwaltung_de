@@ -40,12 +40,9 @@ from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import i
 from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
 	BUILDER_RULE_CODE,
 	BOOKING_RULE_DOCTYPE,
-	DEFAULT_BOOKING_RULES,
-	DEFAULT_PARTY_RULES,
 	PARTY_RULE_DOCTYPE,
 	RULE_SCOPE_DOCTYPE,
 	builder_matches_row,
-	ensure_default_bankimport_rules,
 	normalize_iban,
 	validate_builder,
 )
@@ -425,16 +422,9 @@ RULE_CONFIG = {
 	},
 }
 
-SYSTEM_RULE_KEYS = {
-	spec["rule_key"]
-	for spec in [*DEFAULT_PARTY_RULES, *DEFAULT_BOOKING_RULES]
-}
-
-
 @frappe.whitelist()
 def list_bankimport_rules() -> dict[str, Any]:
 	"""Rule-Übersicht für die Bankimport-UI."""
-	ensure_default_bankimport_rules()
 	groups = {}
 	for doctype, config in RULE_CONFIG.items():
 		frappe.has_permission(doctype, "read", throw=True)
@@ -486,7 +476,6 @@ def save_bankimport_rule(doctype: str, values: str | dict[str, Any]) -> dict[str
 	payload = _coerce_json_dict(values)
 	name = (payload.get("name") or "").strip()
 	existing = frappe.get_doc(doctype, name) if name and frappe.db.exists(doctype, name) else None
-	is_system = bool(existing and existing.get("rule_key") in SYSTEM_RULE_KEYS)
 	wants_builder = bool(
 		payload.get("forceBuilder")
 		or isinstance(payload.get("builder"), dict)
@@ -519,17 +508,14 @@ def save_bankimport_rule(doctype: str, values: str | dict[str, Any]) -> dict[str
 	if doctype == BOOKING_RULE_DOCTYPE:
 		doc.auto_apply = 1 if payload.get("autoApply", True) else 0
 
-	if not is_system:
-		rule_key = (payload.get("ruleKey") or payload.get("rule_key") or doc.get("rule_key") or "").strip()
-		if not rule_key:
-			frappe.throw(_("Bitte einen Regel-Schlüssel eingeben."))
-		if rule_key != doc.get("rule_key") and frappe.db.exists(doctype, rule_key):
-			frappe.throw(_("Der Regel-Schlüssel existiert bereits."))
-		doc.rule_key = rule_key
-	elif payload.get("ruleKey") and payload.get("ruleKey") != doc.get("rule_key"):
-		frappe.throw(_("Der Schlüssel einer Systemregel kann nicht geändert werden."))
+	rule_key = (payload.get("ruleKey") or payload.get("rule_key") or doc.get("rule_key") or "").strip()
+	if not rule_key:
+		frappe.throw(_("Bitte einen Regel-Schlüssel eingeben."))
+	if rule_key != doc.get("rule_key") and frappe.db.exists(doctype, rule_key):
+		frappe.throw(_("Der Regel-Schlüssel existiert bereits."))
+	doc.rule_key = rule_key
 
-	if not is_system or wants_builder:
+	if wants_builder:
 		parameters = _normalize_rule_parameters(payload, doctype)
 		doc.parameters_json = json.dumps(parameters, ensure_ascii=False, indent=2)
 		doc.rule_code = BUILDER_RULE_CODE
@@ -537,7 +523,7 @@ def save_bankimport_rule(doctype: str, values: str | dict[str, Any]) -> dict[str
 	_set_rule_scope_rows(doc, payload.get("scope") or [])
 	if existing:
 		doc.save()
-		if not is_system and doc.rule_key != old_name:
+		if doc.rule_key != old_name:
 			frappe.rename_doc(doctype, old_name, doc.rule_key, force=True)
 			doc = frappe.get_doc(doctype, doc.rule_key)
 	else:
@@ -552,9 +538,6 @@ def delete_bankimport_rule(doctype: str, name: str) -> dict[str, Any]:
 	frappe.has_permission(doctype, "delete", throw=True)
 	if not name or not frappe.db.exists(doctype, name):
 		frappe.throw(_("Regel wurde nicht gefunden."))
-	doc = frappe.get_doc(doctype, name)
-	if doc.get("rule_key") in SYSTEM_RULE_KEYS or doc.get("rule_code") != BUILDER_RULE_CODE:
-		frappe.throw(_("Systemregeln können nicht gelöscht werden."))
 	frappe.delete_doc(doctype, name)
 	return {"ok": True, "doctype": doctype, "name": name}
 
@@ -752,8 +735,8 @@ def _normalize_rule_parameters(payload: dict[str, Any], doctype: str) -> dict[st
 		_validate_party_from_doctype_action(action)
 	elif action_type in {"builtin", "system"}:
 		rule_key = action.get("ruleKey") or action.get("rule_key")
-		if rule_key not in SYSTEM_RULE_KEYS:
-			frappe.throw(_("Unbekannter Backend-Baustein."))
+		if not rule_key:
+			frappe.throw(_("Bitte eine Backend-Aktion auswählen."))
 	elif action_type:
 		frappe.throw(_("Unbekannte Aktion."))
 	return {
@@ -856,7 +839,6 @@ def _format_rule_row(doctype: str, row, scope_rows: list[dict[str, Any]]) -> dic
 		"ruleCode": row.get("rule_code") or "",
 		"hasRuleCode": bool((row.get("rule_code") or "").strip()),
 		"ruleCodeLines": len((row.get("rule_code") or "").strip().splitlines()) if row.get("rule_code") else 0,
-		"isSystem": rule_key in SYSTEM_RULE_KEYS,
 		"isBuilderRule": is_builder,
 		"autoApply": bool(row.get("auto_apply")) if doctype == BOOKING_RULE_DOCTYPE else None,
 		"stopOnMatch": bool(row.get("stop_on_match")),

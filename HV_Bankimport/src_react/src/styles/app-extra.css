@@ -988,7 +988,6 @@
 	text-transform: uppercase;
 	letter-spacing: .5px;
 }
-.locked-rule,
 .scope-empty {
 	padding: 10px;
 	border: 1px solid var(--border);
@@ -997,13 +996,7 @@
 	color: var(--text-muted);
 	font-size: 12.5px;
 }
-.locked-rule {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 10px;
-}
-.system-builder {
+.backend-action {
 	display: flex;
 	flex-direction: column;
 	gap: 7px;
@@ -1030,17 +1023,6 @@
 	font-size: 12.5px;
 	line-height: 1.4;
 	overflow-wrap: anywhere;
-}
-.admin-code-link {
-	margin-top: 9px;
-}
-.admin-code-link summary {
-	color: var(--text-muted);
-	font-size: 11.5px;
-	cursor: pointer;
-}
-.admin-code-link[open] summary {
-	margin-bottom: 7px;
 }
 .text-input.compact {
 	min-width: 92px;
@@ -1194,7 +1176,6 @@
 	.scope-row,
 	.sb-row,
 	.option-grid { grid-template-columns: 1fr; }
-	.locked-rule { align-items: stretch; flex-direction: column; }
 	.cond-row .icon-btn,
 	.scope-row .icon-btn { width: 100%; }
 }
