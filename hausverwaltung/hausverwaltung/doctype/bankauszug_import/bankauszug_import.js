@@ -37,13 +37,10 @@ frappe.ui.form.on('Bankauszug Import', {
       frm.add_custom_button('Nach Buchungstag sortieren', () => sortRowsByBuchungstag(frm), 'Sortieren');
     }
 
-    // Phase-driven primary action: only in phase 2 ist „Bank Transaktionen
-    // erstellen" der wichtigste nächste Schritt.
-    if (!frm.doc.__islocal && frm.__hv_phase === 'phase2') {
-      frm.page.set_primary_action(__('Bank-Transaktionen erstellen'), () => create_transactions(frm));
-    } else if (!frm.doc.__islocal) {
-      // In allen anderen Phasen den Primary-Button entfernen, sonst bleibt der
-      // alte Save/Submit-Button von Frappe sichtbar.
+    // Kein Phasen-Primary-Button mehr: BT-Erstellung ist eine normale Aktion
+    // (Aktionen-Menü), keine eigene Pflicht-Phase. Frappes Save/Submit-Button
+    // ausblenden.
+    if (!frm.doc.__islocal) {
       try { frm.page.clear_primary_action(); } catch (e) { /* ignore */ }
     }
 
@@ -67,14 +64,12 @@ function _computePhase(frm) {
   const activeRows = rows.filter(r => !isSkippedRow(r));
   if (!rows.length) return 'empty';
   if (!activeRows.length) return 'done';
-  const allHaveParty   = activeRows.every(r => r.party_type && r.party);
-  const allHaveBT      = activeRows.every(r => r.bank_transaction || r.reference);
+  const isBookable     = (r) => (r.party_type && r.party) || r.bank_transaction || r.reference;
   const allHaveVoucher = activeRows.every(r => r.payment_entry || r.journal_entry);
-  // Phasen-Logik hängt am bank_transaction, nicht am Party-Count: Zeilen
-  // ohne Party können trotzdem als Journal Entry verbucht werden.
-  if (!allHaveBT) {
-    return allHaveParty ? 'phase2' : 'phase1';
-  }
+  // Spiegelt _recompute_doc_status im Backend: eine Zeile blockiert Phase 1 nur,
+  // solange sie WEDER Party NOCH Bank Transaction hat — nur die ist nicht buchbar.
+  // Die BT ist ein technisches Zwischenobjekt und keine eigene Phase mehr.
+  if (!activeRows.every(isBookable)) return 'phase1';
   if (!allHaveVoucher) return 'phase3';
   return 'done';
 }
@@ -92,8 +87,6 @@ function _renderInfoBanner(frm) {
   const withParty = activeRows.filter(r => r.party_type && r.party).length;
   const withoutParty = total - withParty;
   const activeWithoutParty = activeTotal - withParty;
-  const withBT    = activeRows.filter(r => r.bank_transaction || r.reference).length;
-  const withoutBT = activeTotal - withBT;
   const withVoucher    = activeRows.filter(r => r.payment_entry || r.journal_entry).length;
   const withoutVoucher = activeTotal - withVoucher;
   const eingang   = rows.filter(r => r.richtung === 'Eingang').length;
@@ -110,9 +103,8 @@ function _renderInfoBanner(frm) {
 
   // Phase-Header
   const phaseStyles = {
-    phase1: { bg: '#fff4e5', fg: '#92400e', border: '#fdba74', icon: '①', title: __('Phase 1 von 3 — Parties zuordnen') },
-    phase2: { bg: '#e6f0ff', fg: '#0c4a8b', border: '#7eb1ed', icon: '②', title: __('Phase 2 von 3 — Bank-Transaktionen erstellen') },
-    phase3: { bg: '#fef3c7', fg: '#854d0e', border: '#fcd34d', icon: '③', title: __('Phase 3 von 3 — Belege zuordnen') },
+    phase1: { bg: '#fff4e5', fg: '#92400e', border: '#fdba74', icon: '①', title: __('Phase 1 von 2 — Parties zuordnen') },
+    phase3: { bg: '#fef3c7', fg: '#854d0e', border: '#fcd34d', icon: '②', title: __('Phase 2 von 2 — Belege zuordnen') },
     done:   { bg: '#e6f7ec', fg: '#15803d', border: '#86efac', icon: '✓', title: __('Abgeschlossen — alle Zeilen gebucht') },
     empty:  { bg: '#f6f6f7', fg: '#52525b', border: '#d4d4d8', icon: '◐', title: __('Noch keine Zeilen geladen') },
   };
@@ -132,15 +124,6 @@ function _renderInfoBanner(frm) {
       +   `<strong>${activeWithoutParty}</strong> ${__('offen.')}`
       + `</div>`
       + `<div style="margin-top:2px; font-size:11px; color:${cfg.fg}; opacity:0.85;">${__('Klick auf „⋯ Aktionen" in einer roten Zeile, um Mieter oder Lieferant zuzuweisen.')}</div>`
-      + `</div>`;
-  } else if (phase === 'phase2') {
-    header = `<div style="background:${cfg.bg}; border:1px solid ${cfg.border}; border-radius:6px; padding:12px 16px; margin-bottom:10px;">`
-      + `<div style="font-size:14px; color:${cfg.fg}; font-weight:600;">${cfg.icon} ${cfg.title}</div>`
-      + `<div style="margin-top:4px; font-size:12px; color:${cfg.fg};">`
-      +   `<strong>${withBT}</strong> ${__('von')} <strong>${activeTotal}</strong> ${__('gebucht')} – `
-      +   `<strong>${withoutBT}</strong> ${__('bereit zum Buchen.')}`
-      + `</div>`
-      + `<div style="margin-top:2px; font-size:11px; color:${cfg.fg}; opacity:0.85;">${__('Oben rechts „Bank-Transaktionen erstellen" klicken.')}</div>`
       + `</div>`;
   } else if (phase === 'phase3') {
     header = `<div style="background:${cfg.bg}; border:1px solid ${cfg.border}; border-radius:6px; padding:12px 16px; margin-bottom:10px;">`
@@ -172,10 +155,7 @@ function _renderInfoBanner(frm) {
     if (eigent)    pills += pill('purple', __('{0} Eigentümer', [eigent]));
     if (vorhanden) pills += pill('gray',   __('{0} bereits vorhanden', [vorhanden]));
     if (failed)    pills += pill('red',    __('{0} Fehler', [failed]));
-    if (phase === 'phase2') {
-      if (withoutBT) pills += pill('orange', __('{0} bereit zum Buchen', [withoutBT]));
-      if (success)   pills += pill('green',  __('{0} ✓ erstellt', [success]));
-    } else if (phase === 'phase3') {
+    if (phase === 'phase3') {
       if (withVoucher)    pills += pill('green',  __('{0} ✓ verbucht', [withVoucher]));
       if (withoutVoucher) pills += pill('orange', __('{0} offen', [withoutVoucher]));
     } else if (phase === 'done') {
@@ -436,7 +416,7 @@ function _computeRowStatusPill(row, phase) {
       ? { color: colorMap.green, label: __('✓ Zugeordnet') }
       : { color: colorMap.red,   label: __('✗ Nicht zugeordnet') };
   }
-  // phase2
+  // Phase 3 ohne (noch) erzeugte Bank Transaction: buchbar, wenn Party da ist.
   return (row.party_type && row.party)
     ? { color: colorMap.blue,   label: __('• Bereit') }
     : { color: colorMap.orange, label: __('• Ohne Party') };
@@ -636,8 +616,9 @@ function rowMatchesFilter(row, mode, phase) {
   }
   if (mode === 'problems') {
     // Phase 1: Probleme = fehlende Partei (das ist hier der Hauptfokus).
-    // Phase 2/done: Probleme = failed-Status, Error, oder noch ohne Bank-Transaktion,
-    // ODER BT da aber noch keine Zahlung/Buchung zugeordnet (offene Reconciliation).
+    // Phase 3/done: Probleme = failed-Status, Error, oder noch ohne Bank-Transaktion
+    // (diese Form braucht die BT für die Reconcile-Aktionen), ODER BT da aber noch
+    // keine Zahlung/Buchung zugeordnet (offene Reconciliation).
     if (isSkippedRow(row)) return false;
     if (phase === 'phase1') {
       return !(row.party_type && row.party);

@@ -156,14 +156,6 @@ export async function refreshSaldo(name) {
 	return await rpc("refresh_saldo", { docname: name });
 }
 
-export async function createBankTransactions(name, allowMissingParty = false) {
-	if (!embedded) return { created: [], errors: [], mock: true };
-	return await rpc("create_bank_transactions", {
-		docname: name,
-		allow_missing_party: allowMissingParty ? 1 : 0,
-	});
-}
-
 export async function createBankTransactionForRow(name, rowName, allowMissingParty = false) {
 	if (!embedded) return { created: ["BT-DEMO"], errors: [], mock: true };
 	return await rpc("create_bank_transaction_for_row", {

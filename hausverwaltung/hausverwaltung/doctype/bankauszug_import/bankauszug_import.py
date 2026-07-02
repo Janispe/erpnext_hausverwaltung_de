@@ -2564,13 +2564,12 @@ def get_expected_cost_center_for_row(docname: str, row_name: str) -> Dict[str, A
     if not frappe.has_permission("Bankauszug Import", "read", doc=doc):
         frappe.throw("Keine Berechtigung.")
     row = _get_row_by_name(doc, row_name)
-    bt_name = getattr(row, "bank_transaction", None)
-    if not bt_name:
-        return {"cost_center": None}
-    try:
-        bt = frappe.get_doc("Bank Transaction", bt_name)
-    except Exception:
-        return {"cost_center": None}
+    # Die Kostenstelle hängt nur am Bankkonto (BT ist ein technisches
+    # Zwischenobjekt). Party-ohne-BT-Zeilen sind seit dem Phasen-Umbau direkt
+    # Phase 3, haben aber evtl. noch keine BT — daher über die transiente BT
+    # auflösen statt eine persistierte vorauszusetzen, sonst bleibt der
+    # JE-Dialog ohne Vorbelegung.
+    bt = _transient_bt_for_row(doc, row)
     return {"cost_center": _resolve_expected_cost_center_for_bt(bt)}
 
 

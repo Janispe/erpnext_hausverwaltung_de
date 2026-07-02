@@ -893,8 +893,8 @@ class TestGetOverviewSync(unittest.TestCase):
 		self.assertEqual(rows["ROW-DONE"]["betrag"], 100.0)
 		self.assertEqual(rows["ROW-DONE"]["partyRule"], "party.unique_iban_to_party")
 		self.assertEqual(rows["ROW-DONE"]["bookingRule"], "booking.invoice_auto_match")
-		self.assertEqual(res["phaseCounts"], {1: 0, 2: 1, 3: 1, 4: 1})
-		self.assertEqual(rows["ROW-OUT"]["rowStatus"], "phase2-no-bt")
+		self.assertEqual(res["phaseCounts"], {1: 0, 2: 0, 3: 2, 4: 1})
+		self.assertEqual(rows["ROW-OUT"]["rowStatus"], "phase3-open")
 		self.assertEqual(rows["ROW-DONE"]["rowStatus"], "done")
 
 	def test_get_overview_keeps_response_stable_when_invoice_suggestion_fails(self):

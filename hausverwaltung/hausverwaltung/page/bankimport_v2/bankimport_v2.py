@@ -58,8 +58,9 @@ def get_context(context):
 # ───────────────────────────────────────────── Zeilen-Phase / Status-Mapping ──
 
 # Spiegelt das Phasen-Modell aus bankauszug_import._recompute_doc_status:
-# Sobald eine Bank Transaction existiert, kann die Zeile gebucht werden, auch
-# wenn sie keine Party hat (z.B. Bankgebühren als Journal Entry).
+# Sobald eine Zeile eine Party hat oder bereits eine Bank Transaction existiert,
+# kann sie gebucht werden. Die Bank Transaction ist ein technisches
+# Zwischenobjekt und keine eigene UI-Phase mehr.
 def _row_phase(row: dict) -> int:
 	rs = (row.get("row_status") or "").lower()
 	if row.get("error") or rs == "failed":
@@ -72,7 +73,7 @@ def _row_phase(row: dict) -> int:
 		return 3
 	if not (row.get("party_type") and row.get("party")):
 		return 1
-	return 2
+	return 3
 
 
 def _row_status(row: dict, phase: int) -> str:
@@ -85,12 +86,10 @@ def _row_status(row: dict, phase: int) -> str:
 		return "skipped"
 	if phase == 4:
 		return "done"
-	if phase == 2:
-		return "phase2-no-bt"
 	if phase == 1:
 		return "phase1-no-party"
-	# Phase 3: Bank-Tx da, aber kein Beleg — row_status-Feld überlagert nur die
-	# Sonderfälle (Auto-Match-Misserfolg).
+	# Phase 3: Beleg offen. Eine fehlende Bank Transaction wird bei manuellen
+	# Buchungsaktionen lazily erzeugt.
 	if rs == "needs_review":
 		return "needs_review"
 	return "phase3-open"

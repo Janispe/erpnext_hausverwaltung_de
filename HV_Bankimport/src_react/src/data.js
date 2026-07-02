@@ -50,7 +50,7 @@ export const MOCK_OVERVIEW = {
 			iban: "DE12500105170648489890", auftraggeber: "Max Mustermann",
 			verwendungszweck: "Miete Mai", partyTyp: "Customer", party: "Max Mustermann",
 			bankTransaction: "", paymentEntry: "", journalEntry: "",
-			rowStatus: "phase2-no-bt", phase: 2, autoMatchMessage: "",
+			rowStatus: "phase3-open", phase: 3, autoMatchMessage: "",
 		},
 		{
 			id: "r6", buchungstag: "2026-04-28", betrag: 720.0, richtung: "Eingang",
@@ -61,7 +61,7 @@ export const MOCK_OVERVIEW = {
 			autoMatchMessage: "Auto-Match: 1 Rechnung, 720.00 €",
 		},
 	],
-	phaseCounts: { 1: 1, 2: 1, 3: 3, 4: 1 },
+	phaseCounts: { 1: 1, 3: 4, 4: 1 },
 };
 
 export const MOCK_OPEN_INVOICES = {

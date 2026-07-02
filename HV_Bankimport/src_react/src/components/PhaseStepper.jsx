@@ -1,11 +1,10 @@
 import React from "react";
 
 export function PhaseStepper({ currentPhase, setPhase, phases }) {
-	const total = (phases[1] || 0) + (phases[2] || 0) + (phases[3] || 0) + (phases[4] || 0);
+	const total = (phases[1] || 0) + (phases[3] || 0) + (phases[4] || 0);
 	const steps = [
 		{ num: 0, title: "Alle Phasen", desc: "Gesamtübersicht", cnt: total },
 		{ num: 1, title: "Parteien zuordnen", desc: "IBAN → Mieter / Lieferant", cnt: phases[1] || 0 },
-		{ num: 2, title: "Bank-Tx erstellen", desc: "Verprobte Zeilen anlegen", cnt: phases[2] || 0 },
 		{ num: 3, title: "Belege zuordnen", desc: "Rechnungen matchen", cnt: phases[3] || 0 },
 		{ num: 4, title: "Gebucht", desc: "Vollständig verarbeitet", cnt: phases[4] || 0 },
 	];

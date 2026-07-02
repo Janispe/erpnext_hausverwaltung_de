@@ -4,7 +4,7 @@ import { fmtEUR, fmtDate, fmtIban } from "../helpers.jsx";
 export function StatRow({ meta, rowsCount, phases }) {
 	const diff = Number(meta.saldoDifferenz) || 0;
 	const hasDiff = Math.abs(diff) > 0.01;
-	const offen = (phases[1] || 0) + (phases[2] || 0) + (phases[3] || 0);
+	const offen = (phases[1] || 0) + (phases[3] || 0);
 	return (
 		<div className="stat-row">
 			<div className="stat-card bank">

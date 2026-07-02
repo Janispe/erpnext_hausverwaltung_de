@@ -33,7 +33,6 @@ export const fmtIban = (iban) =>
 // hier als Fallback aus rowStatus abgeleitet.
 export const PHASE_OF = {
 	"phase1-no-party": 1,
-	"phase2-no-bt": 2,
 	"phase3-open": 3,
 	"phase3-ambiguous": 3,
 	"phase3-journal": 3,
@@ -46,7 +45,6 @@ export const PHASE_OF = {
 
 export const STATUS_PILL = {
 	"phase1-no-party": { cls: "phase1", lbl: "Partei fehlt" },
-	"phase2-no-bt": { cls: "phase2", lbl: "Bank-Tx fehlt" },
 	"phase3-open": { cls: "phase3", lbl: "Beleg zuordnen" },
 	"phase3-ambiguous": { cls: "warn", lbl: "Mehrdeutig" },
 	"phase3-journal": { cls: "phase3", lbl: "Journal nötig" },
@@ -57,7 +55,7 @@ export const STATUS_PILL = {
 	"done": { cls: "done", lbl: "Gebucht" },
 };
 
-export const rowPhase = (row) => row.phase || PHASE_OF[row.rowStatus] || 3;
+export const rowPhase = (row) => Number(row?.phase || 0) || PHASE_OF[row?.rowStatus] || 3;
 
 export const partyTypeLabel = (partyType) => ({
 	Customer: "Kunde",

@@ -331,7 +331,7 @@ export function App() {
 
 	const rows = overview?.rows || [];
 	const meta = overview?.import || {};
-	const phaseCounts = overview?.phaseCounts || { 1: 0, 2: 0, 3: 0, 4: 0 };
+	const phaseCounts = overview?.phaseCounts || { 1: 0, 3: 0, 4: 0 };
 
 	useEffect(() => { setFilter(phase === 4 ? "all" : "open"); }, [phase]);
 
@@ -398,7 +398,6 @@ export function App() {
 
 	const phaseTitles = {
 		1: "Parteien zuordnen",
-		2: "Bank-Tx erstellen",
 		3: "Belege zuordnen",
 		4: "Gebucht",
 	};
@@ -434,16 +433,7 @@ export function App() {
 		if (!docname) return;
 		setBusy(true);
 		try {
-			if (action === "create_bank_transactions") {
-				let res = await api.createBankTransactions(docname, false);
-				if (res && res.warning && (!res.created || !res.created.length)) {
-					const w = res.warning;
-					const msg = (w.message || "Es gibt Zeilen ohne Partei.") + "\n\nTrotzdem Bank-Transaktionen erstellen?";
-					if (!window.confirm(msg)) { setBusy(false); return; }
-					res = await api.createBankTransactions(docname, true);
-				}
-				notify("success", `Bank-Transaktionen erstellt: ${(res.created || []).length}`);
-			} else if (action === "parse_csv") {
+			if (action === "parse_csv") {
 				const res = await api.parseCsv(docname);
 				const auto = res.auto_create || {};
 				const created = (auto.created || []).length;
@@ -546,11 +536,6 @@ export function App() {
 			<div className="global-actions">
 				<span className="ga-status">{meta.status}</span>
 				<div className="ga-spacer" />
-				{(phaseCounts[2] || 0) > 0 && (
-					<button className="btn primary sm" onClick={() => runGlobal("create_bank_transactions")} disabled={busy}>
-						{busy ? <Spinner /> : <Icon name="bolt" />} Bank-Transaktionen erstellen
-					</button>
-				)}
 				<button className="btn subtle sm" onClick={() => runGlobal("relink_all")} disabled={busy}><Icon name="link" /> Parteien verknüpfen</button>
 				{(phaseCounts[3] || 0) > 0 && (
 					<button className="btn subtle sm" onClick={() => runGlobal("retry_auto_match")} disabled={busy}>
@@ -581,7 +566,6 @@ export function App() {
 						docname={docname}
 						row={selectedRow}
 						onActionDone={onActionDone}
-						onRunGlobal={runGlobal}
 						notify={notify}
 					/>
 				</div>

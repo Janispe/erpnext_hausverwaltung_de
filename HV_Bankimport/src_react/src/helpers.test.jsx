@@ -42,9 +42,8 @@ describe("Bankimport helper formatting", () => {
 
 describe("Bankimport phase/status edge cases", () => {
 	it("nimmt Backend-Phase vor Status-Fallback", () => {
-		expect(rowPhase({ phase: 2, rowStatus: "done" })).toBe(2);
+		expect(rowPhase({ phase: 1, rowStatus: "done" })).toBe(1);
 		expect(rowPhase({ rowStatus: "phase1-no-party" })).toBe(1);
-		expect(rowPhase({ rowStatus: "phase2-no-bt" })).toBe(2);
 		expect(rowPhase({ rowStatus: "needs_review" })).toBe(3);
 		expect(rowPhase({ rowStatus: "unknown" })).toBe(3);
 	});
