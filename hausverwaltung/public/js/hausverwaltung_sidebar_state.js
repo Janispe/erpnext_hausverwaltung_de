@@ -1,5 +1,19 @@
 (function () {
 	const STORAGE_KEY = "hausverwaltung.sidebar.open_sections.v1";
+	const HAUSVERWALTUNG_WORKSPACE = "Hausverwaltung";
+	const MAIL_MERGE_MODULE = "Mail Merge";
+	const SERIENBRIEF_PAGES = new Set([
+		"serienbrief_browser",
+		"serienbrief_editor",
+		"serienbrief_durchlauf_viewer",
+		"serienbrief_vorlagenbaum",
+	]);
+	const SERIENBRIEF_DOCTYPES = new Set([
+		"Serienbrief Vorlage",
+		"Serienbrief Durchlauf",
+		"Serienbrief Kategorie",
+		"Serienbrief Dokument",
+	]);
 
 	function read_state() {
 		try {
@@ -82,6 +96,58 @@
 		setTimeout(restore_state, 100);
 	}
 
+	function is_serienbrief_route() {
+		const route = window.frappe?.get_route?.() || [];
+		if (SERIENBRIEF_PAGES.has(route[0])) return true;
+		if (["Form", "List"].includes(route[0]) && SERIENBRIEF_DOCTYPES.has(route[1])) return true;
+		return false;
+	}
+
+	function normalize_serienbrief_breadcrumb(breadcrumb) {
+		if (!breadcrumb || !is_serienbrief_route()) return breadcrumb;
+
+		if (typeof breadcrumb === "string") {
+			if (breadcrumb !== MAIL_MERGE_MODULE) return breadcrumb;
+			return {
+				module: HAUSVERWALTUNG_WORKSPACE,
+				workspace: HAUSVERWALTUNG_WORKSPACE,
+			};
+		}
+
+		const doctype = breadcrumb.doctype;
+		if (breadcrumb.module !== MAIL_MERGE_MODULE && !SERIENBRIEF_DOCTYPES.has(doctype)) {
+			return breadcrumb;
+		}
+
+		return {
+			...breadcrumb,
+			module: HAUSVERWALTUNG_WORKSPACE,
+			workspace: HAUSVERWALTUNG_WORKSPACE,
+		};
+	}
+
+	function patch_breadcrumbs() {
+		if (!window.frappe?.breadcrumbs || frappe.breadcrumbs.__hausverwaltung_workspace_lock) {
+			return;
+		}
+
+		const original_add = frappe.breadcrumbs.add;
+		frappe.breadcrumbs.add = function (module, doctype, type) {
+			if (typeof module === "object") {
+				return original_add.call(this, normalize_serienbrief_breadcrumb(module), doctype, type);
+			}
+
+			const normalized = normalize_serienbrief_breadcrumb({
+				module,
+				doctype,
+				type,
+			});
+			return original_add.call(this, normalized);
+		};
+
+		frappe.breadcrumbs.__hausverwaltung_workspace_lock = true;
+	}
+
 	function patch_sidebar() {
 		if (!window.frappe?.ui?.Sidebar || frappe.ui.Sidebar.__hausverwaltung_sidebar_state) {
 			return;
@@ -133,11 +199,13 @@
 	$(document).on("click", '.body-sidebar .item-anchor[href*="op-workflow?view=mahnwesen"], .body-sidebar .item-anchor[href*="mahnung-workflow"]', open_mahnung_workflow);
 
 	$(document).on("app_ready", function () {
+		patch_breadcrumbs();
 		patch_sidebar();
 		restore_soon();
 	});
 
 	if (document.readyState !== "loading") {
+		patch_breadcrumbs();
 		patch_sidebar();
 		restore_soon();
 	}
