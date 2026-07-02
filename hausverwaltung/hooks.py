@@ -145,6 +145,7 @@ after_migrate = [
 	"hausverwaltung.install.ensure_dunning_fee_invoice_fields",
 	"hausverwaltung.install.ensure_hv_dunning_print_format",
 	"hausverwaltung.install.ensure_zahlungshistorie_baustein",
+	"hausverwaltung.install.ensure_mieter_anrede_vorname_nachname_baustein",
 	"hausverwaltung.install.ensure_euer_print_format",
 	"hausverwaltung.install.ensure_euer_print_format_default",
 	"hausverwaltung.install.ensure_sales_invoice_written_off_status",

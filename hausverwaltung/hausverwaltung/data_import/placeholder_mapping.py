@@ -31,6 +31,7 @@ PLACEHOLDER_MAPPING = {
     # Alle Vertragspartner im Mietvertrag (z.B. für Adresse/Anredezeile)
     # Hinweis: `baustein()` wird beim Serienbrief-Rendern in den Jinja-Kontext injiziert.
     "B-Briefanrede+NameAlle": '{{ baustein("MieterAnredeNameAlle") }}',
+    "B-AnredeVornameNachnameAlle": '{{ baustein("MieterAnredeVornameNachnameAlle") }}',
     "B-Strasse": "{{ objekt.kunde.briefanschrift.address_line1 }}",
     "B-PLZ-Ort": "{{ objekt.kunde.briefanschrift.plz_ort }}",
 

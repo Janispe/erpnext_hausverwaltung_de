@@ -152,6 +152,62 @@ def get_contact_display_name(contact_name: str | None) -> str:
 	return contact
 
 
+def get_contact_salutation_full_name(contact_name: str | None) -> str:
+	"""Return a readable Contact name as 'salutation first last' when available."""
+	contact = (contact_name or "").strip()
+	if not contact:
+		return ""
+
+	try:
+		row = frappe.db.get_value(
+			"Contact",
+			contact,
+			["salutation", "first_name", "last_name", "company_name"],
+			as_dict=True,
+		)
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"get_contact_salutation_full_name: Lookup von Contact {contact!r} fehlgeschlagen.",
+		)
+		row = None
+
+	if row:
+		salutation = (row.get("salutation") or "").strip()
+		name = " ".join(
+			part
+			for part in (
+				(row.get("first_name") or "").strip(),
+				(row.get("last_name") or "").strip(),
+			)
+			if part
+		).strip()
+		if not name:
+			name = (row.get("company_name") or "").strip()
+		display = " ".join(part for part in (salutation, name) if part).strip()
+		if display:
+			return display
+
+	return contact
+
+
+def get_hauptmieter_salutation_full_names(rows: Iterable[object] | None) -> list[str]:
+	"""Return 'salutation first last' for all Hauptmieter contacts."""
+	names: list[str] = []
+	seen: set[str] = set()
+	for contact in get_hauptmieter_contacts(rows):
+		name = sanitize_name_part(get_contact_salutation_full_name(contact))
+		if name and name not in seen:
+			names.append(name)
+			seen.add(name)
+	return names
+
+
+def get_hauptmieter_salutation_full_display(rows: Iterable[object] | None) -> str:
+	"""Return all Hauptmieter as a German natural-language list."""
+	return join_german_name_list(get_hauptmieter_salutation_full_names(rows))
+
+
 def get_hauptmieter_last_names(rows: Iterable[object] | None) -> list[str]:
 	"""Return sanitized last names for all Hauptmieter contacts."""
 	names: list[str] = []
@@ -174,6 +230,16 @@ def get_hauptmieter_display_name(rows: Iterable[object] | None) -> str:
 			parts.append(display)
 			seen.add(display)
 	return ", ".join(parts)
+
+
+def join_german_name_list(names: Iterable[str] | None) -> str:
+	"""Join names as 'A', 'A und B' or 'A, B und C'."""
+	parts = [name.strip() for name in (names or []) if name and name.strip()]
+	if len(parts) <= 1:
+		return parts[0] if parts else ""
+	if len(parts) == 2:
+		return " und ".join(parts)
+	return f"{', '.join(parts[:-1])} und {parts[-1]}"
 
 
 def sanitize_name_part(value: str | None) -> str:

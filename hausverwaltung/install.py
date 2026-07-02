@@ -30,6 +30,7 @@ def after_install() -> None:
     _ensure_serienbrief_dokument_print_format(reason="after_install")
     _ensure_hv_dunning_print_format(reason="after_install")
     _ensure_zahlungshistorie_baustein(reason="after_install")
+    _ensure_mieter_anrede_vorname_nachname_baustein(reason="after_install")
     _ensure_euer_print_format(reason="after_install")
     _ensure_euer_print_format_default(reason="after_install")
     _ensure_sales_invoice_written_off_status(reason="after_install")
@@ -60,6 +61,7 @@ def after_migrate() -> None:
     _ensure_serienbrief_dokument_print_format(reason="after_migrate")
     _ensure_hv_dunning_print_format(reason="after_migrate")
     _ensure_zahlungshistorie_baustein(reason="after_migrate")
+    _ensure_mieter_anrede_vorname_nachname_baustein(reason="after_migrate")
     _ensure_euer_print_format(reason="after_migrate")
     _ensure_sales_invoice_written_off_status(reason="after_migrate")
     _ensure_open_invoices_report_filters(reason="after_migrate")
@@ -186,6 +188,10 @@ def ensure_zahlungshistorie_baustein() -> None:
     _ensure_zahlungshistorie_baustein(reason="hook")
 
 
+def ensure_mieter_anrede_vorname_nachname_baustein() -> None:
+    _ensure_mieter_anrede_vorname_nachname_baustein(reason="hook")
+
+
 def ensure_hv_serienbrief_bausteine() -> None:
     """Self-heal hausverwaltung-specific mail-merge blocks after migrations."""
     try:
@@ -195,9 +201,13 @@ def ensure_hv_serienbrief_bausteine() -> None:
         from hausverwaltung.hausverwaltung.patches.post_model_sync.fix_briefkopf_address_from_standard_paths import (
             execute as fix_briefkopf,
         )
+        from hausverwaltung.hausverwaltung.patches.post_model_sync.create_mieter_anrede_vorname_nachname_baustein import (
+            execute as create_mieter_anrede_vorname_nachname,
+        )
 
         fix_briefkopf()
         fix_bk_vorauszahlung()
+        create_mieter_anrede_vorname_nachname()
         try:
             frappe.clear_cache(doctype="Serienbrief Textbaustein")
             frappe.clear_cache(doctype="Serienbrief Vorlage")
@@ -953,6 +963,28 @@ def _ensure_zahlungshistorie_baustein(*, reason: str) -> None:
             frappe.log_error(
                 frappe.get_traceback(),
                 f"hausverwaltung Zahlungshistorie Textbaustein setup failed ({reason})",
+            )
+        except Exception:
+            pass
+
+
+def _ensure_mieter_anrede_vorname_nachname_baustein(*, reason: str) -> None:
+    """Create or refresh the sentence-friendly tenant salutation/name block."""
+    try:
+        from hausverwaltung.hausverwaltung.patches.post_model_sync.create_mieter_anrede_vorname_nachname_baustein import (
+            execute,
+        )
+
+        execute()
+        try:
+            frappe.db.commit()
+        except Exception:
+            pass
+    except Exception:
+        try:
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"hausverwaltung MieterAnredeVornameNachnameAlle Textbaustein setup failed ({reason})",
             )
         except Exception:
             pass
@@ -2038,6 +2070,8 @@ _POST_INSTALL_PATCHES: tuple[str, ...] = (
     "hausverwaltung.hausverwaltung.patches.post_model_sync.disable_core_workflows_for_temporal",
     # Migrate legacy Immobilie account fields into child tables.
     "hausverwaltung.hausverwaltung.patches.post_model_sync.migrate_immobilie_accounts_to_child_tables",
+    # Seed sentence-friendly tenant name block for Serienbrief templates.
+    "hausverwaltung.hausverwaltung.patches.post_model_sync.create_mieter_anrede_vorname_nachname_baustein",
 )
 
 
