@@ -141,6 +141,7 @@ after_migrate = [
 	"hausverwaltung.install.ensure_hausverwalter_workspace_visibility",
 	"hausverwaltung.install.ensure_hausverwalter_desktop_icon_visibility",
 	"hausverwaltung.install.ensure_hausverwalter_report_roles",
+	"hausverwaltung.install.ensure_serienbrief_page_modules",
 	"hausverwaltung.install.ensure_dunning_serienbrief_link_fields",
 	"hausverwaltung.install.ensure_dunning_fee_invoice_fields",
 	"hausverwaltung.install.ensure_hv_dunning_print_format",

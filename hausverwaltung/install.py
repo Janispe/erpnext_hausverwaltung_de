@@ -7,6 +7,14 @@ from pathlib import Path
 import frappe
 
 
+SERIENBRIEF_MAIL_MERGE_PAGES = (
+    "serienbrief_browser",
+    "serienbrief_editor",
+    "serienbrief_durchlauf_viewer",
+    "serienbrief_vorlagenbaum",
+)
+
+
 def after_install() -> None:
     _run_bootstrap(reason="after_install")
     _run_post_install_patches(reason="after_install")
@@ -36,6 +44,7 @@ def after_install() -> None:
     _ensure_sales_invoice_written_off_status(reason="after_install")
     _ensure_open_invoices_report_filters(reason="after_install")
     _ensure_tax_features_disabled(reason="after_install")
+    _ensure_serienbrief_page_modules(reason="after_install")
     ensure_hausverwaltung_workspace_layout()
     ensure_hausverwaltung_sidebar()
 
@@ -66,11 +75,33 @@ def after_migrate() -> None:
     _ensure_sales_invoice_written_off_status(reason="after_migrate")
     _ensure_open_invoices_report_filters(reason="after_migrate")
     _ensure_tax_features_disabled(reason="after_migrate")
+    _ensure_serienbrief_page_modules(reason="after_migrate")
     _ensure_eingabequelle_fields(reason="after_migrate")
     _ensure_currency_symbol_on_right(reason="after_migrate")
     _ensure_main_cost_center_disabled(reason="after_migrate")
     ensure_sollstellung_titel_backfilled()
     _ensure_company_account_defaults(reason="after_migrate")
+
+
+def ensure_serienbrief_page_modules() -> None:
+    _ensure_serienbrief_page_modules(reason="hook")
+
+
+def _ensure_serienbrief_page_modules(*, reason: str) -> None:
+    """Keep Mail Merge pages mapped to the app that owns their filesystem assets."""
+    if not frappe.db.exists("Module Def", "Mail Merge"):
+        return
+
+    updated = False
+    for page_name in SERIENBRIEF_MAIL_MERGE_PAGES:
+        if frappe.db.exists("Page", page_name):
+            module = frappe.db.get_value("Page", page_name, "module")
+            if module != "Mail Merge":
+                frappe.db.set_value("Page", page_name, "module", "Mail Merge", update_modified=False)
+                updated = True
+
+    if updated:
+        frappe.clear_cache()
 
 
 def ensure_company_account_defaults() -> None:
