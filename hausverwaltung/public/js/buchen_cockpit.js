@@ -429,6 +429,34 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 				"Verwendungszweck / Notiz — landet im Bemerkungs-Feld der Eingangsrechnung."
 			),
 		},
+		{ fieldtype: "Section Break", label: __("Bezahlung") },
+		{
+			fieldtype: "Select",
+			fieldname: "zahlungsstatus",
+			label: __("Status"),
+			options: ["Offen lassen", "Sofort bezahlt/verrechnet"].join("\n"),
+			default: opts.zahlungsstatus || "Offen lassen",
+			description: __(
+				"Bei sofortiger Zahlung wird nach der Eingangsrechnung automatisch ein Ausgleich gegen das gewählte Konto gebucht."
+			),
+		},
+		{ fieldtype: "Column Break" },
+		{
+			fieldtype: "Link",
+			fieldname: "zahlungskonto",
+			label: __("Zahlungs-/Verrechnungskonto"),
+			options: "Account",
+			default: opts.zahlungskonto || "",
+			depends_on: "eval:doc.zahlungsstatus=='Sofort bezahlt/verrechnet'",
+			description: __("Zum Beispiel Kreditkarte Verwalter, Kasse oder Vorschuss Hauswart."),
+		},
+		{
+			fieldtype: "Small Text",
+			fieldname: "zahlungsbemerkung",
+			label: __("Zahlungsbemerkung"),
+			default: opts.zahlungsbemerkung || "",
+			depends_on: "eval:doc.zahlungsstatus=='Sofort bezahlt/verrechnet'",
+		},
 		{ fieldtype: "Section Break", label: __("Positionen") },
 		{
 			fieldtype: "Select",
@@ -880,6 +908,13 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 		frappe.msgprint({ message: __("Bitte mindestens eine Position erfassen."), indicator: "orange" });
 		return;
 	}
+	if (values.zahlungsstatus === "Sofort bezahlt/verrechnet" && !values.zahlungskonto) {
+		frappe.msgprint({
+			message: __("Bitte ein Zahlungs-/Verrechnungskonto auswählen."),
+			indicator: "orange",
+		});
+		return;
+	}
 
 	for (let i = 0; i < rows.length; i++) {
 		const r = rows[i];
@@ -906,6 +941,9 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 					wertstellungsdatum: values.wertstellungsdatum,
 					rechnungsname: values.rechnungsname,
 					remarks: values.remarks,
+					zahlungsstatus: values.zahlungsstatus,
+					zahlungskonto: values.zahlungskonto,
+					zahlungsbemerkung: values.zahlungsbemerkung,
 					positionen: JSON.stringify(rows),
 					submit_doc: submit_doc ? 1 : 0,
 					attached_file_url: dialog._hv_attached_file || null,
@@ -915,12 +953,15 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 			.then((r) => {
 				const name = r && r.message && r.message.name;
 				if (!name) return;
+				const settlement = r.message.settlement_journal_entry;
 				hv_draft_clear(HV_DRAFT_KEY_PI);
 				dialog.hide();
 				frappe.show_alert({
-					message: submit_doc
-						? __("Ausgabe {0} erstellt und gebucht.", [name])
-						: __("Ausgabe {0} als Entwurf gespeichert.", [name]),
+					message: settlement
+						? __("Ausgabe {0} erstellt, gebucht und über {1} ausgeglichen.", [name, settlement])
+						: submit_doc
+							? __("Ausgabe {0} erstellt und gebucht.", [name])
+							: __("Ausgabe {0} als Entwurf gespeichert.", [name]),
 					indicator: "green",
 				});
 				// Wenn der Dialog aus dem Bulk-Wizard heraus geöffnet wurde:

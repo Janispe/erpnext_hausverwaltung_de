@@ -12,6 +12,9 @@ class _FakeInvoice:
 		self.flags = frappe._dict()
 		self.items = []
 		self.payment_schedule = []
+		self.outstanding_amount = 99
+		self.rounded_total = 99
+		self.grand_total = 99
 		self.insert_called = False
 		self.submit_called = False
 
@@ -19,8 +22,36 @@ class _FakeInvoice:
 		for key, value in values.items():
 			setattr(self, key, value)
 
+	def get(self, key, default=None):
+		return getattr(self, key, default)
+
 	def set(self, key, value):
 		setattr(self, key, value)
+
+	def insert(self, ignore_permissions=False):
+		self.insert_called = True
+		self.ignore_permissions = ignore_permissions
+
+	def submit(self):
+		self.submit_called = True
+		self.docstatus = 1
+
+
+class _FakeJournalEntry:
+	def __init__(self):
+		self.name = "JV-COCKPIT-1"
+		self.accounts = []
+		self.insert_called = False
+		self.submit_called = False
+
+	def update(self, values):
+		for key, value in values.items():
+			setattr(self, key, value)
+
+	def append(self, key, value):
+		row = frappe._dict(value)
+		getattr(self, key).append(row)
+		return row
 
 	def insert(self, ignore_permissions=False):
 		self.insert_called = True
@@ -183,12 +214,78 @@ class TestBuchenCockpit(unittest.TestCase):
 				submit_doc=0,
 			)
 
-		self.assertEqual(result, {"name": "SINV-COCKPIT-1", "submitted": False})
+		self.assertEqual(result, {
+			"name": "SINV-COCKPIT-1",
+			"submitted": False,
+			"settlement_journal_entry": None,
+		})
 		self.assertEqual(invoice.remarks, "Kamin gereinigt")
 		self.assertNotIn("Erfasst über Buchungs-Cockpit", invoice.remarks)
 		self.assertEqual(invoice.hv_eingabequelle, cockpit.EINGABEQUELLE_EINGANG)
 		self.assertTrue(invoice.insert_called)
 		self.assertFalse(invoice.submit_called)
+
+	def test_create_purchase_invoice_can_create_immediate_settlement_journal(self):
+		invoice = _FakeInvoice()
+		journal = _FakeJournalEntry()
+
+		def db_get_value(doctype, name_or_filters, fieldname=None, as_dict=False):
+			if doctype == "Account" and fieldname == "account_currency":
+				return "EUR"
+			if doctype == "Account" and fieldname == ["company", "is_group", "account_type", "root_type"]:
+				return frappe._dict({
+					"company": "Hausverwaltung Peters",
+					"is_group": 0,
+					"account_type": "Bank",
+					"root_type": "Asset",
+				})
+			return None
+
+		with patch.object(cockpit.frappe, "new_doc", side_effect=[invoice, journal]), \
+			 patch.object(cockpit, "_derive_company_from_rows", return_value="Hausverwaltung Peters"), \
+			 patch.object(cockpit, "ensure_default_service_item", return_value="VHB-SERVICE"), \
+			 patch.object(cockpit, "_get_payable_account", return_value="1600 - Kreditoren - HV"), \
+			 patch.object(cockpit, "_get_kostenart_details", return_value={"konto": "4500 - Hausgeld - HV"}), \
+			 patch.object(cockpit, "_has_field", return_value=True), \
+			 patch.object(cockpit, "_attach_source_file"), \
+			 patch.object(cockpit.frappe.db, "get_value", side_effect=db_get_value), \
+			 patch.object(cockpit.frappe.db, "exists", return_value=True), \
+			 patch.object(cockpit.frappe, "msgprint"):
+			result = cockpit.create_purchase_invoice(
+				lieferant="SUP-1",
+				rechnungsdatum="2026-05-06",
+				rechnungsname="BON-1",
+				remarks="Lampe Baumarkt",
+				zahlungsstatus=cockpit.ZAHLUNGSSTATUS_SOFORT,
+				zahlungskonto="1360 - Kreditkarte Verwalter - HV",
+				positionen=[
+					{
+						"betrag": 99,
+						"kostenstelle": "CC-HV",
+						"umlagefaehig": "Kostenart nicht umlagefaehig",
+						"kostenart": "Instandhaltung",
+					}
+				],
+				submit_doc=1,
+			)
+
+		self.assertEqual(result, {
+			"name": "SINV-COCKPIT-1",
+			"submitted": True,
+			"settlement_journal_entry": "JV-COCKPIT-1",
+		})
+		self.assertTrue(invoice.submit_called)
+		self.assertTrue(journal.insert_called)
+		self.assertTrue(journal.submit_called)
+		self.assertEqual(journal.company, "Hausverwaltung Peters")
+		self.assertEqual(journal.accounts[0].account, "1600 - Kreditoren - HV")
+		self.assertEqual(journal.accounts[0].party_type, "Supplier")
+		self.assertEqual(journal.accounts[0].party, "SUP-1")
+		self.assertEqual(journal.accounts[0].reference_type, "Purchase Invoice")
+		self.assertEqual(journal.accounts[0].reference_name, "SINV-COCKPIT-1")
+		self.assertEqual(journal.accounts[0].debit_in_account_currency, 99)
+		self.assertEqual(journal.accounts[1].account, "1360 - Kreditkarte Verwalter - HV")
+		self.assertEqual(journal.accounts[1].credit_in_account_currency, 99)
 
 	def test_create_purchase_invoice_requires_wohnung_for_einzelverteilung(self):
 		with patch.object(cockpit, "_derive_company_from_rows", return_value="Hausverwaltung Peters"), \

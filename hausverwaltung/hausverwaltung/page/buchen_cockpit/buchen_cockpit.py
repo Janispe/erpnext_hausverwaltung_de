@@ -11,7 +11,7 @@ from datetime import timedelta
 from typing import Any
 
 import frappe
-from frappe.utils import add_days, cstr, getdate, nowdate
+from frappe.utils import add_days, cstr, flt, getdate, nowdate
 
 from hausverwaltung.hausverwaltung.utils.buchung import ensure_default_service_item
 from hausverwaltung.hausverwaltung.utils.rent_items import (
@@ -22,6 +22,7 @@ from hausverwaltung.hausverwaltung.utils.rent_items import (
 
 EINGABEQUELLE_EINGANG = "Vereinfachte Buchung"
 EINGABEQUELLE_AUSGANG = "Vereinfachte Mieterrechnung"
+ZAHLUNGSSTATUS_SOFORT = "Sofort bezahlt/verrechnet"
 
 # Mapping deutscher → englischer Ländernamen für die ERPNext-Country-Tabelle.
 # Wir nehmen die häufigsten DACH/EU-Länder, das Frontend tippt sonst sowieso
@@ -464,6 +465,99 @@ def _derive_cost_center_from_mietvertrag(mietvertrag: str) -> str | None:
     return frappe.db.get_value("Immobilie", immobilie, "kostenstelle")
 
 
+def _validate_settlement_account(account: str, *, company: str, payable_account: str) -> None:
+    if not account:
+        frappe.throw("Bitte ein Zahlungs-/Verrechnungskonto auswählen.")
+    if account == payable_account:
+        frappe.throw("Zahlungs-/Verrechnungskonto darf nicht dem Kreditorenkonto entsprechen.")
+    if not frappe.db.exists("Account", account):
+        frappe.throw(f"Konto '{account}' existiert nicht.")
+
+    values = frappe.db.get_value(
+        "Account",
+        account,
+        ["company", "is_group", "account_type", "root_type"],
+        as_dict=True,
+    ) or {}
+    if values.get("company") and values.get("company") != company:
+        frappe.throw(
+            f"Konto '{account}' gehört nicht zur Company '{company}'."
+        )
+    if flt(values.get("is_group")):
+        frappe.throw(f"Konto '{account}' ist eine Gruppe und kann nicht bebucht werden.")
+    if values.get("account_type") in {"Receivable", "Payable"}:
+        frappe.throw(
+            "Bitte ein Sachkonto für Kreditkarte/Kasse/Vorschuss wählen, "
+            "kein Debitoren-/Kreditorenkonto."
+        )
+    if values.get("root_type") in {"Income", "Expense"}:
+        frappe.throw(
+            "Bitte ein Bilanzkonto für Kreditkarte/Kasse/Vorschuss wählen, "
+            "kein Ertrags- oder Aufwandskonto."
+        )
+
+
+def _create_purchase_invoice_settlement_journal(
+    pi,
+    *,
+    settlement_account: str,
+    posting_date,
+    wertstellungsdatum=None,
+    remarks: str | None = None,
+) -> str:
+    """Gleicht eine gebuchte Eingangsrechnung gegen ein Zahlungs-/Clearingkonto aus.
+
+    Genutzt für kleine Ausgaben aus dem Cockpit: Kreditkarte, Kasse, Vorschuss
+    Hauswart oder ähnliche Konten. Wir verwenden bewusst einen Journal Entry,
+    weil diese Konten nicht zwingend ERPNext-Bankkonten sein müssen.
+    """
+    amount = (
+        flt(pi.get("outstanding_amount"))
+        or flt(pi.get("rounded_total"))
+        or flt(pi.get("grand_total"))
+    )
+    if amount <= 0:
+        frappe.throw("Die Eingangsrechnung hat keinen offenen Betrag zum Ausgleichen.")
+
+    payable_account = pi.get("credit_to")
+    _validate_settlement_account(
+        settlement_account,
+        company=pi.company,
+        payable_account=payable_account,
+    )
+
+    user_remark = (remarks or "").strip() or f"Ausgleich Eingangsrechnung {pi.name}"
+
+    je = frappe.new_doc("Journal Entry")
+    je.update({
+        "voucher_type": "Journal Entry",
+        "company": pi.company,
+        "posting_date": getdate(posting_date),
+        "user_remark": user_remark,
+        "remark": user_remark,
+        "custom_remark": 1,
+    })
+    if wertstellungsdatum and _has_field("Journal Entry", "custom_wertstellungsdatum"):
+        je.custom_wertstellungsdatum = getdate(wertstellungsdatum)
+
+    je.append("accounts", {
+        "account": payable_account,
+        "party_type": "Supplier",
+        "party": pi.supplier,
+        "reference_type": "Purchase Invoice",
+        "reference_name": pi.name,
+        "debit_in_account_currency": amount,
+    })
+    je.append("accounts", {
+        "account": settlement_account,
+        "credit_in_account_currency": amount,
+    })
+
+    je.insert(ignore_permissions=True)
+    je.submit()
+    return je.name
+
+
 # ---------------------------------------------------------------------------
 # Public endpoints
 # ---------------------------------------------------------------------------
@@ -479,6 +573,9 @@ def create_purchase_invoice(**kwargs) -> dict:
         wertstellungsdatum: ISO date (Leistungszeitraum, optional) — landet in custom_wertstellungsdatum
         rechnungsname: free-form invoice number / label
         remarks: optional Notiz / Verwendungszweck (landet in pi.remarks)
+        zahlungsstatus: "offen" | "Sofort bezahlt/verrechnet"
+        zahlungskonto: GL Account für sofortige Zahlung/Verrechnung (optional)
+        zahlungsbemerkung: optionale Bemerkung für den Ausgleichs-Journal-Entry
         positionen: list of dicts with keys
             betrag, konto, kostenstelle, umlagefaehig, kostenart, wohnung (optional)
     """
@@ -622,8 +719,18 @@ def create_purchase_invoice(**kwargs) -> dict:
         if isinstance(submit_doc_raw, str)
         else bool(submit_doc_raw)
     )
+    settlement_journal = None
     if submit_flag:
         pi.submit()
+        zahlungsstatus = kwargs.get("zahlungsstatus") or ""
+        if zahlungsstatus == ZAHLUNGSSTATUS_SOFORT:
+            settlement_journal = _create_purchase_invoice_settlement_journal(
+                pi,
+                settlement_account=kwargs.get("zahlungskonto"),
+                posting_date=posting_date,
+                wertstellungsdatum=wertstellungsdatum,
+                remarks=kwargs.get("zahlungsbemerkung") or user_remarks,
+            )
         frappe.msgprint(
             f"Eingangsrechnung {pi.name} wurde erstellt und eingereicht.", alert=True
         )
@@ -631,7 +738,11 @@ def create_purchase_invoice(**kwargs) -> dict:
         frappe.msgprint(
             f"Eingangsrechnung {pi.name} wurde als Entwurf gespeichert.", alert=True
         )
-    return {"name": pi.name, "submitted": submit_flag}
+    return {
+        "name": pi.name,
+        "submitted": submit_flag,
+        "settlement_journal_entry": settlement_journal,
+    }
 
 
 def _attach_source_file(pi, file_url: str | None) -> None:
