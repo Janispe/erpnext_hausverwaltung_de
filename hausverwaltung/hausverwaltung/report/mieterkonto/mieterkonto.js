@@ -45,6 +45,13 @@ frappe.query_reports["Mieterkonto"] = {
 			description: __("G/N-Zeilen bleiben immer separat."),
 		},
 		{
+			fieldname: "sortieren_nach_wertstellungsdatum",
+			label: __("Wertstellung anzeigen/sortieren"),
+			fieldtype: "Check",
+			default: 0,
+			description: __("Zahlungen zu Rechnungen werden nach dem Wertstellungsdatum der Rechnung einsortiert."),
+		},
+		{
 			fieldname: "offene_betraege_basis",
 			label: __("Offene Beträge"),
 			fieldtype: "Select",
@@ -92,6 +99,7 @@ frappe.query_reports["Mieterkonto"] = {
 
 const MIETERKONTO_PRINT_COLUMNS = [
 	"datum",
+	"wertstellungsdatum",
 	"art",
 	"belegnummer",
 	"beschreibung",

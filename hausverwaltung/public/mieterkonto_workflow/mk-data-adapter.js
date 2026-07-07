@@ -41,6 +41,7 @@
             to_date: to,
             show_kategorien: 1,
             gruppieren_pro_monat: options.gruppieren === false ? 0 : 1,
+            sortieren_nach_wertstellungsdatum: options.sortByWertstellung ? 1 : 0,
             offene_betraege_basis: options.openScope || "Zeitraum",
           },
         },
@@ -73,6 +74,7 @@
     if (!raw) return null;
     return {
       datum: raw.datum,
+      wertstellungsdatum: raw.wertstellungsdatum || null,
       art: raw.art,
       belegart: raw.belegart,
       belegnummer: raw.belegnummer,
@@ -135,6 +137,7 @@
   function emptyTotalRow(date) {
     return {
       datum: date,
+      wertstellungsdatum: date,
       art: "",
       belegart: "",
       belegnummer: "",

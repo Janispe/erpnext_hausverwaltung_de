@@ -68,6 +68,7 @@ TOLERANCE = 0.01
 class InvoiceInfo:
 	name: str
 	posting_date: Any
+	wertstellungsdatum: Any
 	due_date: Any
 	customer: str
 	debit_to: str
@@ -106,10 +107,10 @@ def execute(filters=None):
 	# Stand-alone Receivable-Bewegungen auf Mieterforderungen ohne
 	# SI-Referenz — z.B. nachgebuchte Mahngebühren oder Korrektur-JEs.
 	transactions.extend(standalone_transactions)
-	transactions.sort(key=_transaction_sort_key)
+	transactions.sort(key=lambda transaction: _transaction_sort_key(transaction, filters))
 
 	rows, summary_totals = _build_rows(transactions, filters)
-	rows = _sort_rows_for_display(rows)
+	rows = _sort_rows_for_display(rows, filters)
 	columns = _get_columns(filters)
 	enrich_link_titles(rows, columns)
 	return columns, rows, None, None, _get_report_summary(summary_totals, filters)
@@ -118,6 +119,9 @@ def execute(filters=None):
 def _apply_defaults(filters):
 	filters.show_kategorien = cint(filters.get("show_kategorien", 1))
 	filters.gruppieren_pro_monat = cint(filters.get("gruppieren_pro_monat", 1))
+	filters.sortieren_nach_wertstellungsdatum = cint(
+		filters.get("sortieren_nach_wertstellungsdatum", 0)
+	)
 	filters.offene_betraege_basis = filters.get("offene_betraege_basis") or "Zeitraum"
 
 
@@ -136,6 +140,23 @@ def _validate_filters(filters):
 
 
 def _get_invoices(filters) -> dict[str, InvoiceInfo]:
+	fields = [
+		"name",
+		"posting_date",
+		"due_date",
+		"customer",
+		"debit_to",
+		"currency",
+		"grand_total",
+		"outstanding_amount",
+		"status",
+		"cost_center",
+		"remarks",
+		"mietabrechnung_id",
+	]
+	if frappe.get_meta("Sales Invoice").get_field("custom_wertstellungsdatum"):
+		fields.append("custom_wertstellungsdatum")
+
 	rows = frappe.get_all(
 		"Sales Invoice",
 		filters={
@@ -145,20 +166,7 @@ def _get_invoices(filters) -> dict[str, InvoiceInfo]:
 			"is_return": 0,
 			"posting_date": ("<=", filters.to_date),
 		},
-		fields=[
-			"name",
-			"posting_date",
-			"due_date",
-			"customer",
-			"debit_to",
-			"currency",
-			"grand_total",
-			"outstanding_amount",
-			"status",
-			"cost_center",
-			"remarks",
-			"mietabrechnung_id",
-		],
+		fields=fields,
 		order_by="posting_date asc, name asc",
 	)
 	category_amounts_by_invoice = _get_invoice_category_amounts_bulk(
@@ -171,6 +179,7 @@ def _get_invoices(filters) -> dict[str, InvoiceInfo]:
 		info = InvoiceInfo(
 			name=row.name,
 			posting_date=row.posting_date,
+			wertstellungsdatum=row.get("custom_wertstellungsdatum") or row.posting_date,
 			due_date=row.due_date,
 			customer=row.customer,
 			debit_to=row.debit_to,
@@ -224,6 +233,8 @@ def _merge_invoices(group_key: str, members: list[InvoiceInfo]) -> InvoiceInfo:
 	# Posting/Due/Currency: deterministisch über die früheste SI ankern.
 	by_date = sorted(members, key=lambda m: (m.posting_date or 0, m.name))
 	anchor = by_date[0]
+	by_value_date = sorted(members, key=lambda m: (m.wertstellungsdatum or m.posting_date or 0, m.name))
+	value_anchor = by_value_date[0]
 
 	merged_categories = {category: 0.0 for category in CATEGORIES}
 	for m in members:
@@ -259,6 +270,7 @@ def _merge_invoices(group_key: str, members: list[InvoiceInfo]) -> InvoiceInfo:
 	return InvoiceInfo(
 		name=anchor.name,  # für Drill-Down: Belegnummer-Spalte zeigt erste SI
 		posting_date=anchor.posting_date,
+		wertstellungsdatum=value_anchor.wertstellungsdatum or value_anchor.posting_date,
 		due_date=anchor.due_date,
 		customer=anchor.customer,
 		debit_to=anchor.debit_to,
@@ -282,6 +294,10 @@ def _get_invoice_category_amounts(invoice_name: str, grand_total: float) -> dict
 		order_by="idx asc",
 	)
 	return _category_amounts_from_items(invoice_name, items, grand_total)
+
+
+def _invoice_value_date(invoice: InvoiceInfo):
+	return getdate(invoice.wertstellungsdatum or invoice.posting_date)
 
 
 def _get_invoice_category_amounts_bulk(
@@ -389,6 +405,7 @@ def _build_invoice_transactions(invoices: dict[str, InvoiceInfo]) -> list[dict[s
 		transactions.append(
 			{
 				"date": getdate(invoice.posting_date),
+				"wertstellungsdatum": _invoice_value_date(invoice),
 				"sort_order": 10,
 				"art": "Forderung",
 				"belegart": "Sales Invoice",
@@ -501,6 +518,7 @@ def _build_settlement_transactions(
 			if bundle is None:
 				bundle = {
 					"date": getdate(row.posting_date),
+					"wertstellungsdatum": _invoice_value_date(group),
 					"sort_order": 30 if is_writeoff else 20,
 					"art": "Abschreibung" if is_writeoff else (
 						"Gutschrift" if row.voucher_type == "Sales Invoice" else "Zahlung"
@@ -732,6 +750,7 @@ def _build_standalone_receivable_transactions(
 		transactions.append(
 			{
 				"date": getdate(row.posting_date),
+				"wertstellungsdatum": getdate(row.posting_date),
 				"sort_order": 15 if is_charge else 25,
 				"art": "Forderung" if is_charge else "Zahlung",
 				"belegart": row.voucher_type,
@@ -848,6 +867,7 @@ def _build_payment_entry_advance_transactions(
 		transactions.append(
 			{
 				"date": date_by_voucher.get(voucher_no),
+				"wertstellungsdatum": date_by_voucher.get(voucher_no),
 				"sort_order": 26,
 				"art": "Vorauszahlung",
 				"belegart": "Payment Entry",
@@ -1138,6 +1158,7 @@ def _date_in_period(value, filters) -> bool:
 def _opening_row(filters, balance: float, currency: str | None) -> dict[str, Any]:
 	return {
 		"datum": filters.from_date,
+		"wertstellungsdatum": filters.from_date,
 		"art": "Eröffnung",
 		"beschreibung": _("Anfangsbestand"),
 		"kontostand": flt(balance, 2),
@@ -1151,6 +1172,7 @@ def _total_row(rows: list[dict[str, Any]], balance: float, filters) -> dict[str,
 	finalem Kontostand. Zeile wird im JS-Formatter fett dargestellt."""
 	total: dict[str, Any] = {
 		"datum": filters.to_date,
+		"wertstellungsdatum": filters.to_date,
 		"art": "",
 		"beschreibung": _("Σ Zeitraum"),
 		"kontostand": flt(balance, 2),
@@ -1174,6 +1196,7 @@ def _total_row(rows: list[dict[str, Any]], balance: float, filters) -> dict[str,
 def _transaction_to_row(transaction: dict[str, Any], balance: float) -> dict[str, Any]:
 	row = {
 		"datum": transaction["date"],
+		"wertstellungsdatum": transaction.get("wertstellungsdatum") or transaction["date"],
 		"art": transaction["art"],
 		"belegart": transaction["belegart"],
 		"belegnummer": transaction["belegnummer"],
@@ -1210,16 +1233,22 @@ def _hide_kategorien_columns(row: dict[str, Any]) -> dict[str, Any]:
 	return row
 
 
-def _transaction_sort_key(transaction: dict[str, Any]):
+def _transaction_sort_key(transaction: dict[str, Any], filters=None):
+	primary_date = (
+		transaction.get("wertstellungsdatum") or transaction["date"]
+		if filters and filters.get("sortieren_nach_wertstellungsdatum")
+		else transaction["date"]
+	)
 	return (
-		transaction["date"],
+		primary_date,
 		transaction.get("rechnung") or "",
 		transaction.get("sort_order") or 99,
+		transaction["date"],
 		transaction.get("belegnummer") or "",
 	)
 
 
-def _sort_rows_for_display(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _sort_rows_for_display(rows: list[dict[str, Any]], filters=None) -> list[dict[str, Any]]:
 	"""Newest account rows first; keep summary rows at the end.
 
 	Kontostand values are calculated chronologically in ``_build_rows`` before
@@ -1237,10 +1266,12 @@ def _sort_rows_for_display(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 		else:
 			transaction_rows.append((index, row))
 
-	transaction_rows.sort(
-		key=lambda item: (item[1].get("datum") or getdate("1900-01-01"), item[0]),
-		reverse=True,
-	)
+	def display_sort_key(item):
+		index, row = item
+		primary = row.get("wertstellungsdatum") if filters and filters.get("sortieren_nach_wertstellungsdatum") else row.get("datum")
+		return (primary or getdate("1900-01-01"), index)
+
+	transaction_rows.sort(key=display_sort_key, reverse=True)
 	return [row for _index, row in transaction_rows] + opening_rows + total_rows
 
 
@@ -1360,6 +1391,11 @@ def _get_empty_summary() -> list[dict[str, Any]]:
 def _get_columns(filters):
 	columns = [
 		{"label": _("Datum"), "fieldname": "datum", "fieldtype": "Date", "width": 100},
+		*(
+			[{"label": _("Wertstellung"), "fieldname": "wertstellungsdatum", "fieldtype": "Date", "width": 110}]
+			if filters.get("sortieren_nach_wertstellungsdatum")
+			else []
+		),
 		{"label": _("Art"), "fieldname": "art", "fieldtype": "Data", "width": 105},
 		{
 			# Dynamic Link liest belegart aus dem Row-Dict — Spalte muss nicht

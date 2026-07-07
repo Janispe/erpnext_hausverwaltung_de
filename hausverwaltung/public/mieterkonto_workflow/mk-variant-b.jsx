@@ -46,19 +46,20 @@ function SaldoSparkline({ rows }) {
   );
 }
 
-function VariantB({ rows, totalRow }) {
+function VariantB({ rows, totalRow, sortByWertstellung }) {
+  const rowDate = (row) => sortByWertstellung ? (row.wertstellungsdatum || row.datum || "") : (row.datum || "");
   const chronologicalRows = [...rows].sort((a, b) => {
     const aOpening = a.is_opening_row ? 0 : 1;
     const bOpening = b.is_opening_row ? 0 : 1;
     if (aOpening !== bOpening) return aOpening - bOpening;
-    return (a.datum || "").localeCompare(b.datum || "");
+    return rowDate(a).localeCompare(rowDate(b));
   });
   // group by month
   const byMonth = {};
   const order = [];
   rows.forEach((r) => {
     if (r.is_opening_row) return;
-    const m = r.datum.slice(0, 7);
+    const m = rowDate(r).slice(0, 7);
     if (!byMonth[m]) { byMonth[m] = []; order.push(m); }
     byMonth[m].push(r);
   });
@@ -71,7 +72,7 @@ function VariantB({ rows, totalRow }) {
           const items = byMonth[m];
           const endSaldo = items.reduce((best, row) => {
             if (!best) return row;
-            return (row.datum || "") > (best.datum || "") ? row : best;
+            return rowDate(row) > rowDate(best) ? row : best;
           }, null)?.kontostand;
           return (
             <div key={m}>
@@ -91,7 +92,14 @@ function VariantB({ rows, totalRow }) {
                 const isOut = amount < 0;
                 return (
                   <div key={idx} className={`mk-tl-item ${cls}`}>
-                    <div className="mk-tl-item-date">{fmtDateShort(r.datum)}</div>
+                    <div className="mk-tl-item-date">
+                      {fmtDateShort(r.datum)}
+                      {sortByWertstellung && r.wertstellungsdatum && (
+                        <small style={{ display: "block", color: "var(--ink-3)", marginTop: 2 }}>
+                          W {fmtDateShort(r.wertstellungsdatum)}
+                        </small>
+                      )}
+                    </div>
                     <div className="mk-tl-item-desc">
                       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         <ArtPill art={r.art} />

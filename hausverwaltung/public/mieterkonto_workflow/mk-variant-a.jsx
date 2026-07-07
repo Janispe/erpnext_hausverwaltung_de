@@ -9,16 +9,23 @@ function formatSignedAmount(value) {
   return Math.abs(value) < 0.01 ? "" : fmtEUR(value, { signed: true });
 }
 
-function monthEndRow(rows, month) {
+function rowGroupDate(row, sortByWertstellung) {
+  return sortByWertstellung ? (row.wertstellungsdatum || row.datum || "") : (row.datum || "");
+}
+
+function monthEndRow(rows, month, sortByWertstellung) {
   return rows
-    .filter((r) => !r.is_opening_row && r.datum && r.datum.slice(0, 7) === month)
+    .filter((r) => {
+      const date = rowGroupDate(r, sortByWertstellung);
+      return !r.is_opening_row && date && date.slice(0, 7) === month;
+    })
     .reduce((best, row) => {
       if (!best) return row;
-      return row.datum > best.datum ? row : best;
+      return rowGroupDate(row, sortByWertstellung) > rowGroupDate(best, sortByWertstellung) ? row : best;
     }, null);
 }
 
-function VariantA({ rows, totalRow, density, highlightOpen, showInlineCats }) {
+function VariantA({ rows, totalRow, density, highlightOpen, showInlineCats, sortByWertstellung }) {
   // Monats-Header zwischen verschiedenen Monaten einfügen
   const grouped = [];
   let lastMonth = null;
@@ -27,10 +34,11 @@ function VariantA({ rows, totalRow, density, highlightOpen, showInlineCats }) {
       grouped.push({ type: "opening", row: r, key: `op-${i}` });
       return;
     }
-    const month = r.datum.slice(0, 7);
+    const date = rowGroupDate(r, sortByWertstellung);
+    const month = date.slice(0, 7);
     if (month !== lastMonth) {
       // monatlicher Endsaldo
-      const lastInMonth = monthEndRow(rows, month);
+      const lastInMonth = monthEndRow(rows, month, sortByWertstellung);
       grouped.push({
         type: "month", month, key: `m-${month}`,
         endSaldo: lastInMonth ? lastInMonth.kontostand : null,
@@ -53,7 +61,7 @@ function VariantA({ rows, totalRow, density, highlightOpen, showInlineCats }) {
   const totalForPeriod = () => rows
     .filter((r) => !r.is_opening_row)
     .reduce((a, r) => a + totalAmount(r), 0);
-  const colspan = splitCategories ? CATS.length + 6 : 8;
+  const colspan = (splitCategories ? CATS.length + 6 : 8) + (sortByWertstellung ? 1 : 0);
 
   return (
     <div className="mk-table-wrap">
@@ -61,6 +69,7 @@ function VariantA({ rows, totalRow, density, highlightOpen, showInlineCats }) {
         <thead>
           <tr>
             <th style={{ width: 92 }}>Datum</th>
+            {sortByWertstellung && <th style={{ width: 110 }}>Wertstellung</th>}
             <th style={{ width: 104 }}>Art</th>
             <th style={{ width: 190 }}>Beleg</th>
             <th>Beschreibung</th>
@@ -86,6 +95,7 @@ function VariantA({ rows, totalRow, density, highlightOpen, showInlineCats }) {
               return (
                 <tr key={g.key} className="mk-row-opening">
                   <td className="col-date">{fmtDate(g.row.datum)}</td>
+                  {sortByWertstellung && <td className="col-date">{fmtDate(g.row.wertstellungsdatum)}</td>}
                   <td><ArtPill art="Eröffnung" /></td>
                   <td className="col-beleg">—</td>
                   <td className="col-desc">Anfangsbestand</td>
@@ -127,6 +137,7 @@ function VariantA({ rows, totalRow, density, highlightOpen, showInlineCats }) {
               <React.Fragment key={g.key}>
                 <tr className={showOpen ? "mk-row-open" : ""}>
                   <td className="col-date">{fmtDate(r.datum)}</td>
+                  {sortByWertstellung && <td className="col-date">{fmtDate(r.wertstellungsdatum)}</td>}
                   <td><ArtPill art={r.art} /></td>
                   <td className="col-beleg">
                     <VoucherLinks
@@ -165,6 +176,7 @@ function VariantA({ rows, totalRow, density, highlightOpen, showInlineCats }) {
           {/* Summenzeile */}
           <tr className="mk-row-total">
             <td className="col-date">{fmtDate(totalRow.datum)}</td>
+            {sortByWertstellung && <td className="col-date">{fmtDate(totalRow.wertstellungsdatum)}</td>}
             <td></td>
             <td className="col-beleg"></td>
             <td className="col-desc"><strong>Σ Zeitraum</strong></td>

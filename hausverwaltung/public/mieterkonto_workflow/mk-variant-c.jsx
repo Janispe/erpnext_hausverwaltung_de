@@ -1,6 +1,7 @@
 // variant-c.jsx — Dashboard-Stil: KPI-Kacheln prominent, Tabelle kompakter.
 
-function VariantC({ rows, totalRow, summary, density }) {
+function VariantC({ rows, totalRow, summary, density, sortByWertstellung }) {
+  const rowDate = (row) => sortByWertstellung ? (row.wertstellungsdatum || row.datum || "") : (row.datum || "");
   const kontostand = getSummaryItem(summary, "Kontostand").value;
   const bezahlt = getSummaryItem(summary, "Bezahlt im Zeitraum").value;
   const offen = getOpenSummaryItems(summary);
@@ -47,8 +48,8 @@ function VariantC({ rows, totalRow, summary, density }) {
             <div className="mk-kpi-small-label">Älteste offene Forderung</div>
             <div className="mk-kpi-small-value" style={{ fontSize: 16 }}>
               {(() => {
-                const o = rows.filter(r => r.offen > 0).sort((a, b) => a.datum.localeCompare(b.datum))[0];
-                return o ? fmtDate(o.datum) : "—";
+                const o = rows.filter(r => r.offen > 0).sort((a, b) => rowDate(a).localeCompare(rowDate(b)))[0];
+                return o ? fmtDate(rowDate(o)) : "—";
               })()}
             </div>
           </div>
@@ -81,6 +82,7 @@ function VariantC({ rows, totalRow, summary, density }) {
         density="compact"
         defaultCatsOpen={false}
         highlightOpen={true}
+        sortByWertstellung={sortByWertstellung}
       />
     </div>
   );

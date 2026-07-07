@@ -360,6 +360,7 @@ function FilterBar({
   mieterSearching,
   gruppieren, setGruppieren,
   showCats, setShowCats,
+  sortByWertstellung, setSortByWertstellung,
   openScope, setOpenScope,
 }) {
   const Y = new Date().getFullYear();
@@ -434,6 +435,11 @@ function FilterBar({
         <input type="checkbox" checked={gruppieren}
           onChange={(e) => setGruppieren(e.target.checked)} />
         Mietabrechnung pro Monat zusammenfassen
+      </label>
+      <label className="mk-toggle">
+        <input type="checkbox" checked={sortByWertstellung}
+          onChange={(e) => setSortByWertstellung(e.target.checked)} />
+        Wertstellung anzeigen/sortieren
       </label>
     </div>
   );

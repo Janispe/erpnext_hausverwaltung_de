@@ -14,6 +14,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "density": "regular",
   "showCats": false,
   "gruppieren": true,
+  "sortByWertstellung": false,
   "highlightOpen": true,
   "printMode": false
 }/*EDITMODE-END*/;
@@ -46,7 +47,7 @@ function App() {
   const [mieterSearching, setMieterSearching] = useState(false);
   const [openScope, setOpenScope] = useState(_init.offene_betraege_basis || "Zeitraum");
 
-  async function applyFilters(c, f, t, gruppierenOverride, openScopeOverride) {
+  async function applyFilters(c, f, t, gruppierenOverride, openScopeOverride, sortByWertstellungOverride) {
     const seq = ++loadSeq.current;
     setLoadingData(!!c);
     setLoadError("");
@@ -54,6 +55,7 @@ function App() {
       const nextData = await window.MK_ADAPTER.load(c, f, t, {
         gruppieren: gruppierenOverride ?? gruppieren,
         openScope: openScopeOverride ?? openScope,
+        sortByWertstellung: sortByWertstellungOverride ?? sortByWertstellung,
       });
       if (seq === loadSeq.current) {
         setData(nextData || window.MIETERKONTO);
@@ -107,6 +109,7 @@ function App() {
   const [variant, setVariantLocal] = useState(t.variant);
   const [showCats, setShowCats] = useState(t.showCats);
   const [gruppieren, setGruppieren] = useState(t.gruppieren);
+  const [sortByWertstellung, setSortByWertstellung] = useState(t.sortByWertstellung);
 
   useEffect(() => {
     if (customer) {
@@ -117,6 +120,7 @@ function App() {
   useEffect(() => { setVariantLocal(t.variant); }, [t.variant]);
   useEffect(() => { setShowCats(t.showCats); }, [t.showCats]);
   useEffect(() => { setGruppieren(t.gruppieren); }, [t.gruppieren]);
+  useEffect(() => { setSortByWertstellung(t.sortByWertstellung); }, [t.sortByWertstellung]);
 
   const setVariant = (v) => {
     setVariantLocal(v);
@@ -129,6 +133,11 @@ function App() {
     setGruppieren(v);
     setTweak("gruppieren", v);
     applyFilters(customer, fromDate, toDate, v);
+  };
+  const setSortByWertstellungBoth = (v) => {
+    setSortByWertstellung(v);
+    setTweak("sortByWertstellung", v);
+    applyFilters(customer, fromDate, toDate, undefined, undefined, v);
   };
   const setOpenScopeBoth = (v) => {
     setOpenScope(v);
@@ -152,17 +161,34 @@ function App() {
       to_date: toDate,
       show_kategorien: showCats ? 1 : 0,
       gruppieren_pro_monat: gruppieren ? 1 : 0,
+      sortieren_nach_wertstellungsdatum: sortByWertstellung ? 1 : 0,
       offene_betraege_basis: openScope,
     });
   };
 
-  const printPage = () => openMieterkontoPrintWindow(data, { showCats });
+  const printPage = () => openMieterkontoPrintWindow(data, { showCats, sortByWertstellung });
 
   const exportCsv = () => {
     const csvRows = [
-      ["Datum", "Art", "Belegart", "Belegnummern", "Beschreibung", "Miete", "BK", "HK", "G/N", "VZ", "Sonstig", "Gesamt", "Kontostand"],
+      [
+        "Datum",
+        ...(sortByWertstellung ? ["Wertstellung"] : []),
+        "Art",
+        "Belegart",
+        "Belegnummern",
+        "Beschreibung",
+        "Miete",
+        "BK",
+        "HK",
+        "G/N",
+        "VZ",
+        "Sonstig",
+        "Gesamt",
+        "Kontostand",
+      ],
       ...rows.map((r) => [
         r.datum || "",
+        ...(sortByWertstellung ? [r.wertstellungsdatum || ""] : []),
         r.art || "",
         r.belegart || "",
         (r.belegnummern && r.belegnummern.length ? r.belegnummern : [r.belegnummer].filter(Boolean)).join(", "),
@@ -246,6 +272,8 @@ function App() {
           setGruppieren={setGruppierenBoth}
           showCats={showCats}
           setShowCats={setShowCatsBoth}
+          sortByWertstellung={sortByWertstellung}
+          setSortByWertstellung={setSortByWertstellungBoth}
           openScope={openScope}
           setOpenScope={setOpenScopeBoth}
         />
@@ -257,15 +285,17 @@ function App() {
             density={t.density}
             highlightOpen={t.highlightOpen}
             showInlineCats={showCats}
+            sortByWertstellung={sortByWertstellung}
           />
         )}
-        {variant === "B" && <VariantB rows={rows} totalRow={totalRow} />}
+        {variant === "B" && <VariantB rows={rows} totalRow={totalRow} sortByWertstellung={sortByWertstellung} />}
         {variant === "C" && (
           <VariantC
             rows={rows}
             totalRow={totalRow}
             summary={summary}
             density={t.density}
+            sortByWertstellung={sortByWertstellung}
           />
         )}
       </main>
@@ -324,20 +354,24 @@ function openMieterkontoPrintWindow(data, options = {}) {
 function buildMieterkontoPrintHtml(data, options = {}) {
   const { mieter = {}, filters = {}, rows = [], totalRow = {}, summary = [] } = data || {};
   const showCats = !!options.showCats;
+  const sortByWertstellung = !!options.sortByWertstellung;
   const txRows = rows || [];
   const kontostand = getSummaryItem(summary, "Kontostand");
   const bezahlt = getSummaryItem(summary, "Bezahlt im Zeitraum");
   const openItems = getOpenSummaryItems(summary);
   const title = `Mieterkonto ${mieter.name || ""}`.trim();
-  const visibleCols = showCats ? CATS.length + 6 : 8;
+  const visibleCols = (showCats ? CATS.length + 6 : 8) + (sortByWertstellung ? 1 : 0);
+  const rowDisplayDate = (row) => sortByWertstellung
+    ? (row.wertstellungsdatum || row.datum || "")
+    : (row.datum || "");
 
   const grouped = [];
   let lastMonth = null;
   const monthEndRow = (month) => txRows
-    .filter((r) => !r.is_opening_row && (r.datum || "").slice(0, 7) === month)
+    .filter((r) => !r.is_opening_row && rowDisplayDate(r).slice(0, 7) === month)
     .reduce((best, row) => {
       if (!best) return row;
-      return (row.datum || "") > (best.datum || "") ? row : best;
+      return rowDisplayDate(row) > rowDisplayDate(best) ? row : best;
     }, null);
 
   txRows.forEach((row, index) => {
@@ -345,7 +379,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
       grouped.push({ type: "opening", row, key: `op-${index}` });
       return;
     }
-    const month = (row.datum || "").slice(0, 7);
+    const month = rowDisplayDate(row).slice(0, 7);
     if (month && month !== lastMonth) {
       const lastInMonth = monthEndRow(month);
       grouped.push({
@@ -374,6 +408,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
       return `
         <tr class="opening">
           <td>${esc(fmtDate(entry.row.datum))}</td>
+          ${sortByWertstellung ? `<td>${esc(fmtDate(entry.row.wertstellungsdatum))}</td>` : ""}
           <td>Eröffnung</td>
           <td>—</td>
           <td>Anfangsbestand</td>
@@ -401,6 +436,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
     return `
       <tr>
         <td>${esc(fmtDate(row.datum))}</td>
+        ${sortByWertstellung ? `<td>${esc(fmtDate(row.wertstellungsdatum))}</td>` : ""}
         <td>${esc(row.art || "")}</td>
         <td class="voucher">${vouchers.map(esc).join("<br>")}</td>
         <td>
@@ -531,10 +567,13 @@ function buildMieterkontoPrintHtml(data, options = {}) {
     }
     tr { break-inside: avoid; page-break-inside: avoid; }
     th:nth-child(1), td:nth-child(1) { width: 18mm; }
-    th:nth-child(2), td:nth-child(2) { width: 21mm; }
-    th:nth-child(3), td:nth-child(3) { width: 32mm; }
+    ${sortByWertstellung ? "th:nth-child(2), td:nth-child(2) { width: 18mm; } th:nth-child(3), td:nth-child(3) { width: 21mm; } th:nth-child(4), td:nth-child(4) { width: 32mm; }" : "th:nth-child(2), td:nth-child(2) { width: 21mm; } th:nth-child(3), td:nth-child(3) { width: 32mm; }"}
     th:last-child, td:last-child { width: 24mm; }
-    ${showCats ? "th:nth-child(n+5):not(:last-child),td:nth-child(n+5):not(:last-child){width:17mm;}" : "th:nth-child(5),td:nth-child(5),th:nth-child(6),td:nth-child(6),th:nth-child(7),td:nth-child(7){width:21mm;}"}
+    ${showCats
+      ? `${sortByWertstellung ? "th:nth-child(n+6)" : "th:nth-child(n+5)"}:not(:last-child),${sortByWertstellung ? "td:nth-child(n+6)" : "td:nth-child(n+5)"}:not(:last-child){width:17mm;}`
+      : sortByWertstellung
+        ? "th:nth-child(6),td:nth-child(6),th:nth-child(7),td:nth-child(7),th:nth-child(8),td:nth-child(8){width:21mm;}"
+        : "th:nth-child(5),td:nth-child(5),th:nth-child(6),td:nth-child(6),th:nth-child(7),td:nth-child(7){width:21mm;}"}
     .num {
       text-align: right;
       white-space: nowrap;
@@ -629,6 +668,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
       <thead>
         <tr>
           <th>Datum</th>
+          ${sortByWertstellung ? "<th>Wertstellung</th>" : ""}
           <th>Art</th>
           <th>Beleg</th>
           <th>Beschreibung</th>
@@ -641,6 +681,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
         ${tableRows}
         <tr class="total">
           <td>${esc(fmtDate(totalRow.datum))}</td>
+          ${sortByWertstellung ? `<td>${esc(fmtDate(totalRow.wertstellungsdatum))}</td>` : ""}
           <td></td>
           <td></td>
           <td>Σ Zeitraum</td>
