@@ -225,7 +225,114 @@ class TestBuchenCockpit(unittest.TestCase):
 		self.assertTrue(invoice.insert_called)
 		self.assertFalse(invoice.submit_called)
 
-	def test_create_purchase_invoice_can_create_immediate_settlement_journal(self):
+	def test_create_purchase_invoice_leaves_bankimport_payment_open(self):
+		invoice = _FakeInvoice()
+
+		with patch.object(cockpit.frappe, "new_doc", return_value=invoice) as new_doc, \
+			 patch.object(cockpit, "_derive_company_from_rows", return_value="Hausverwaltung Peters"), \
+			 patch.object(cockpit, "ensure_default_service_item", return_value="VHB-SERVICE"), \
+			 patch.object(cockpit, "_get_payable_account", return_value="1600 - Kreditoren - HV"), \
+			 patch.object(cockpit, "_get_kostenart_details", return_value={"konto": "4500 - Hausgeld - HV"}), \
+			 patch.object(cockpit, "_has_field", return_value=True), \
+			 patch.object(cockpit, "_attach_source_file"), \
+			 patch.object(cockpit.frappe.db, "get_value", return_value="EUR"), \
+			 patch.object(cockpit.frappe, "msgprint"):
+			result = cockpit.create_purchase_invoice(
+				lieferant="SUP-1",
+				rechnungsdatum="2026-05-06",
+				zahlungsart=cockpit.ZAHLUNGSART_BANKIMPORT,
+				positionen=[
+					{
+						"betrag": 99,
+						"kostenstelle": "CC-HV",
+						"umlagefaehig": "Kostenart nicht umlagefaehig",
+						"kostenart": "Instandhaltung",
+					}
+				],
+				submit_doc=1,
+			)
+
+		self.assertEqual(result, {
+			"name": "SINV-COCKPIT-1",
+			"submitted": True,
+			"settlement_journal_entry": None,
+		})
+		self.assertEqual(new_doc.call_count, 1)
+		self.assertTrue(invoice.submit_called)
+
+	def test_create_purchase_invoice_leaves_credit_card_payment_open(self):
+		invoice = _FakeInvoice()
+
+		with patch.object(cockpit.frappe, "new_doc", return_value=invoice) as new_doc, \
+			 patch.object(cockpit, "_derive_company_from_rows", return_value="Hausverwaltung Peters"), \
+			 patch.object(cockpit, "ensure_default_service_item", return_value="VHB-SERVICE"), \
+			 patch.object(cockpit, "_get_payable_account", return_value="1600 - Kreditoren - HV"), \
+			 patch.object(cockpit, "_get_kostenart_details", return_value={"konto": "4500 - Hausgeld - HV"}), \
+			 patch.object(cockpit, "_has_field", return_value=True), \
+			 patch.object(cockpit, "_attach_source_file"), \
+			 patch.object(cockpit.frappe.db, "get_value", return_value="EUR"), \
+			 patch.object(cockpit.frappe, "msgprint"):
+			result = cockpit.create_purchase_invoice(
+				lieferant="SUP-1",
+				rechnungsdatum="2026-05-06",
+				zahlungsart="Kreditkarte",
+				zahlungskonto="1360 - Kreditkarte Verwalter - HV",
+				positionen=[
+					{
+						"betrag": 99,
+						"kostenstelle": "CC-HV",
+						"umlagefaehig": "Kostenart nicht umlagefaehig",
+						"kostenart": "Instandhaltung",
+					}
+				],
+				submit_doc=1,
+			)
+
+		self.assertEqual(result, {
+			"name": "SINV-COCKPIT-1",
+			"submitted": True,
+			"settlement_journal_entry": None,
+		})
+		self.assertEqual(new_doc.call_count, 1)
+		self.assertTrue(invoice.submit_called)
+
+	def test_create_purchase_invoice_can_leave_cash_payment_open(self):
+		invoice = _FakeInvoice()
+
+		with patch.object(cockpit.frappe, "new_doc", return_value=invoice) as new_doc, \
+			 patch.object(cockpit, "_derive_company_from_rows", return_value="Hausverwaltung Peters"), \
+			 patch.object(cockpit, "ensure_default_service_item", return_value="VHB-SERVICE"), \
+			 patch.object(cockpit, "_get_payable_account", return_value="1600 - Kreditoren - HV"), \
+			 patch.object(cockpit, "_get_kostenart_details", return_value={"konto": "4500 - Hausgeld - HV"}), \
+			 patch.object(cockpit, "_has_field", return_value=True), \
+			 patch.object(cockpit, "_attach_source_file"), \
+			 patch.object(cockpit.frappe.db, "get_value", return_value="EUR"), \
+			 patch.object(cockpit.frappe, "msgprint"):
+			result = cockpit.create_purchase_invoice(
+				lieferant="SUP-1",
+				rechnungsdatum="2026-05-06",
+				zahlungsart="Barzahlung",
+				zahlung_sofort=0,
+				positionen=[
+					{
+						"betrag": 99,
+						"kostenstelle": "CC-HV",
+						"umlagefaehig": "Kostenart nicht umlagefaehig",
+						"kostenart": "Instandhaltung",
+					}
+				],
+				submit_doc=1,
+			)
+
+		self.assertEqual(result, {
+			"name": "SINV-COCKPIT-1",
+			"submitted": True,
+			"settlement_journal_entry": None,
+		})
+		self.assertEqual(new_doc.call_count, 1)
+		self.assertTrue(invoice.submit_called)
+
+	def test_create_purchase_invoice_can_create_immediate_settlement_journal_for_cash(self):
 		invoice = _FakeInvoice()
 		journal = _FakeJournalEntry()
 
@@ -256,8 +363,8 @@ class TestBuchenCockpit(unittest.TestCase):
 				rechnungsdatum="2026-05-06",
 				rechnungsname="BON-1",
 				remarks="Lampe Baumarkt",
-				zahlungsstatus=cockpit.ZAHLUNGSSTATUS_SOFORT,
-				zahlungskonto="1360 - Kreditkarte Verwalter - HV",
+				zahlungsart="Barzahlung",
+				zahlungskonto="1000 - Kasse - HV",
 				positionen=[
 					{
 						"betrag": 99,
@@ -284,7 +391,7 @@ class TestBuchenCockpit(unittest.TestCase):
 		self.assertEqual(journal.accounts[0].reference_type, "Purchase Invoice")
 		self.assertEqual(journal.accounts[0].reference_name, "SINV-COCKPIT-1")
 		self.assertEqual(journal.accounts[0].debit_in_account_currency, 99)
-		self.assertEqual(journal.accounts[1].account, "1360 - Kreditkarte Verwalter - HV")
+		self.assertEqual(journal.accounts[1].account, "1000 - Kasse - HV")
 		self.assertEqual(journal.accounts[1].credit_in_account_currency, 99)
 
 	def test_create_purchase_invoice_requires_wohnung_for_einzelverteilung(self):

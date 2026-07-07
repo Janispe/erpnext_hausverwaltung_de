@@ -23,6 +23,12 @@ from hausverwaltung.hausverwaltung.utils.rent_items import (
 EINGABEQUELLE_EINGANG = "Vereinfachte Buchung"
 EINGABEQUELLE_AUSGANG = "Vereinfachte Mieterrechnung"
 ZAHLUNGSSTATUS_SOFORT = "Sofort bezahlt/verrechnet"
+ZAHLUNGSART_BANKIMPORT = "Überweisung / Bankimport"
+ZAHLUNGSART_SOFORT = {
+    "Barzahlung",
+    "Vorschuss/Auslage",
+    "Sonstige Verrechnung",
+}
 
 # Mapping deutscher → englischer Ländernamen für die ERPNext-Country-Tabelle.
 # Wir nehmen die häufigsten DACH/EU-Länder, das Frontend tippt sonst sowieso
@@ -558,6 +564,20 @@ def _create_purchase_invoice_settlement_journal(
     return je.name
 
 
+def _should_settle_purchase_invoice_now(kwargs: dict) -> bool:
+    """Backwards-compatible immediate-settlement switch for cockpit expenses."""
+    if "zahlung_sofort" in kwargs:
+        raw = kwargs.get("zahlung_sofort")
+        if isinstance(raw, str):
+            return raw.strip().lower() in {"1", "true", "yes", "ja", "on"}
+        return bool(raw)
+
+    zahlungsart = (kwargs.get("zahlungsart") or "").strip()
+    if zahlungsart:
+        return zahlungsart in ZAHLUNGSART_SOFORT
+    return (kwargs.get("zahlungsstatus") or "") == ZAHLUNGSSTATUS_SOFORT
+
+
 # ---------------------------------------------------------------------------
 # Public endpoints
 # ---------------------------------------------------------------------------
@@ -573,7 +593,9 @@ def create_purchase_invoice(**kwargs) -> dict:
         wertstellungsdatum: ISO date (Leistungszeitraum, optional) — landet in custom_wertstellungsdatum
         rechnungsname: free-form invoice number / label
         remarks: optional Notiz / Verwendungszweck (landet in pi.remarks)
-        zahlungsstatus: "offen" | "Sofort bezahlt/verrechnet"
+        zahlungsart: "Überweisung / Bankimport" | "Barzahlung" | "Kreditkarte" | ...
+        zahlung_sofort: 1/0, ob direkt gegen zahlungskonto ausgeglichen werden soll
+        zahlungsstatus: legacy fallback, "offen" | "Sofort bezahlt/verrechnet"
         zahlungskonto: GL Account für sofortige Zahlung/Verrechnung (optional)
         zahlungsbemerkung: optionale Bemerkung für den Ausgleichs-Journal-Entry
         positionen: list of dicts with keys
@@ -722,8 +744,7 @@ def create_purchase_invoice(**kwargs) -> dict:
     settlement_journal = None
     if submit_flag:
         pi.submit()
-        zahlungsstatus = kwargs.get("zahlungsstatus") or ""
-        if zahlungsstatus == ZAHLUNGSSTATUS_SOFORT:
+        if _should_settle_purchase_invoice_now(kwargs):
             settlement_journal = _create_purchase_invoice_settlement_journal(
                 pi,
                 settlement_account=kwargs.get("zahlungskonto"),

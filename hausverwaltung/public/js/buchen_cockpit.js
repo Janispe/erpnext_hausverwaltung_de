@@ -16,6 +16,7 @@ const HV_COCKPIT_API = "hausverwaltung.hausverwaltung.page.buchen_cockpit.buchen
 const HV_BULK_API = "hausverwaltung.hausverwaltung.services.bulk_extraction";
 const HV_DRAFT_KEY_PI = "hv_buchen_cockpit_draft_pi_v1";
 const HV_DRAFT_KEY_SI = "hv_buchen_cockpit_draft_si_v1";
+const HV_PI_DIRECT_PAYMENT_TYPES = ["Barzahlung", "Vorschuss/Auslage", "Sonstige Verrechnung"];
 
 const hv_cockpit_ensure_styles = () => {
 	if (document.getElementById(HV_COCKPIT_STYLE_ID)) return;
@@ -374,6 +375,11 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 	// set_value nötig → kein Datepicker-onChange-Loop).
 	const _default_rechnungsdatum = opts.rechnungsdatum || frappe.datetime.get_today();
 	const _default_wertstellungsdatum = opts.wertstellungsdatum || "";
+	const _default_zahlungsart = opts.zahlungsart || "Überweisung / Bankimport";
+	const _default_zahlung_sofort =
+		opts.zahlung_sofort !== undefined
+			? !!opts.zahlung_sofort
+			: HV_PI_DIRECT_PAYMENT_TYPES.includes(_default_zahlungsart);
 
 	const fields = [
 		{
@@ -432,22 +438,45 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		{ fieldtype: "Section Break", label: __("Bezahlung") },
 		{
 			fieldtype: "Select",
-			fieldname: "zahlungsstatus",
-			label: __("Status"),
-			options: ["Offen lassen", "Sofort bezahlt/verrechnet"].join("\n"),
-			default: opts.zahlungsstatus || "Offen lassen",
+			fieldname: "zahlungsart",
+			label: __("Zahlungsart"),
+			options: [
+				"Überweisung / Bankimport",
+				"Barzahlung",
+				"Kreditkarte",
+				"Vorschuss/Auslage",
+				"Sonstige Verrechnung",
+			].join("\n"),
+			default: _default_zahlungsart,
 			description: __(
-				"Bei sofortiger Zahlung wird nach der Eingangsrechnung automatisch ein Ausgleich gegen das gewählte Konto gebucht."
+				"Überweisung und Kreditkarte bleiben offen und werden später über Bank-/Kreditkartenimport ausgeglichen. Barzahlung und Vorschuss werden direkt gegen das gewählte Konto gebucht."
 			),
+			onchange() {
+				const art = dialog.get_value("zahlungsart");
+				if (dialog._hv_user_touched_zahlung_sofort) return;
+				dialog.set_value("zahlung_sofort", HV_PI_DIRECT_PAYMENT_TYPES.includes(art) ? 1 : 0);
+			},
 		},
 		{ fieldtype: "Column Break" },
+		{
+			fieldtype: "Check",
+			fieldname: "zahlung_sofort",
+			label: __("Direkt ausgleichen"),
+			default: _default_zahlung_sofort ? 1 : 0,
+			description: __(
+				"Aus: Die Eingangsrechnung bleibt offen und kann später über Bank-/Kreditkartenimport oder manuell ausgeglichen werden."
+			),
+			onchange() {
+				dialog._hv_user_touched_zahlung_sofort = true;
+			},
+		},
 		{
 			fieldtype: "Link",
 			fieldname: "zahlungskonto",
 			label: __("Zahlungs-/Verrechnungskonto"),
 			options: "Account",
 			default: opts.zahlungskonto || "",
-			depends_on: "eval:doc.zahlungsstatus=='Sofort bezahlt/verrechnet'",
+			depends_on: "eval:doc.zahlung_sofort",
 			description: __("Zum Beispiel Kreditkarte Verwalter, Kasse oder Vorschuss Hauswart."),
 		},
 		{
@@ -455,7 +484,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			fieldname: "zahlungsbemerkung",
 			label: __("Zahlungsbemerkung"),
 			default: opts.zahlungsbemerkung || "",
-			depends_on: "eval:doc.zahlungsstatus=='Sofort bezahlt/verrechnet'",
+			depends_on: "eval:doc.zahlung_sofort",
 		},
 		{ fieldtype: "Section Break", label: __("Positionen") },
 		{
@@ -908,7 +937,8 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 		frappe.msgprint({ message: __("Bitte mindestens eine Position erfassen."), indicator: "orange" });
 		return;
 	}
-	if (values.zahlungsstatus === "Sofort bezahlt/verrechnet" && !values.zahlungskonto) {
+	const zahlt_sofort = !!values.zahlung_sofort;
+	if (zahlt_sofort && !values.zahlungskonto) {
 		frappe.msgprint({
 			message: __("Bitte ein Zahlungs-/Verrechnungskonto auswählen."),
 			indicator: "orange",
@@ -941,7 +971,8 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 					wertstellungsdatum: values.wertstellungsdatum,
 					rechnungsname: values.rechnungsname,
 					remarks: values.remarks,
-					zahlungsstatus: values.zahlungsstatus,
+					zahlungsart: values.zahlungsart,
+					zahlung_sofort: values.zahlung_sofort ? 1 : 0,
 					zahlungskonto: values.zahlungskonto,
 					zahlungsbemerkung: values.zahlungsbemerkung,
 					positionen: JSON.stringify(rows),
