@@ -1,12 +1,28 @@
 frappe.ui.form.on("Purchase Invoice", {
+	setup(frm) {
+		hv_default_wertstellungsdatum_from_due_date(frm);
+	},
 	refresh(frm) {
 		window.hv_role_field_visibility?.apply(frm);
+		hv_default_wertstellungsdatum_from_due_date(frm);
 		hv_render_purchase_invoice_amendments(frm);
 	},
 	onload_post_render(frm) {
 		window.hv_role_field_visibility?.apply(frm);
+		hv_default_wertstellungsdatum_from_due_date(frm);
+	},
+	due_date(frm) {
+		hv_default_wertstellungsdatum_from_due_date(frm);
+	},
+	validate(frm) {
+		hv_default_wertstellungsdatum_from_due_date(frm);
 	},
 });
+
+function hv_default_wertstellungsdatum_from_due_date(frm) {
+	if (!frm.doc || frm.doc.custom_wertstellungsdatum || !frm.doc.due_date) return;
+	frm.set_value("custom_wertstellungsdatum", frm.doc.due_date);
+}
 
 const hv_escape_html = (value) => {
 	const text = value === undefined || value === null ? "" : String(value);

@@ -2,8 +2,10 @@
 Ermittelt Betriebskosten je Haus (Immobilie) und Kostenart aus GL-Einträgen.
 
 Wichtig: Wenn ein GL Entry auf eine Rechnung (Purchase/Sales Invoice) zeigt,
-verwenden wir das Wertstellungsdatum des Belegs (Custom-Feld `custom_wertstellungsdatum`)
-als Leistungszeitpunkt. Nur Buchungen mit Leistungszeitpunkt innerhalb des
+verwenden wir das Wertstellungsdatum des Belegs (Custom-Feld
+`custom_wertstellungsdatum`) als Leistungszeitpunkt. Bei Purchase Invoices
+fällt ein leeres Wertstellungsdatum auf das Fälligkeitsdatum zurück, danach auf
+das Buchungsdatum. Nur Buchungen mit Leistungszeitpunkt innerhalb des
 angegebenen Zeitraums [von, bis] werden berücksichtigt.
 
 Rückgabe ist sowohl als flache Liste als auch als verschachtelte Matrix möglich.
@@ -57,8 +59,9 @@ def _prefetch_wertstellungsdaten(
     """Holt Wertstellungsdaten für verknüpfte Rechnungen vorab.
 
     Liefert Mapping (voucher_type, voucher_no) -> effektives Datum (YYYY-MM-DD).
-    Für Belege ohne Custom-Feld wird auf deren posting_date zurückgegriffen.
-    Andere Belegtypen werden nicht erfasst und fallen auf GL.posting_date zurück.
+    Für Purchase Invoices wird auf due_date, dann posting_date zurückgegriffen.
+    Für andere Belegtypen wird auf deren posting_date zurückgegriffen. Andere
+    Belegtypen werden nicht erfasst und fallen auf GL.posting_date zurück.
     """
     # Relevante Voucher separieren
     per_type: Dict[str, List[str]] = defaultdict(list)
@@ -75,10 +78,10 @@ def _prefetch_wertstellungsdaten(
             "Purchase Invoice",
             filters={"name": ("in", list(set(per_type["Purchase Invoice"])))}
             ,
-            fields=["name", "custom_wertstellungsdatum", "posting_date"],
+            fields=["name", "custom_wertstellungsdatum", "due_date", "posting_date"],
         )
         for r in pris:
-            eff = r.custom_wertstellungsdatum or r.posting_date
+            eff = r.custom_wertstellungsdatum or r.due_date or r.posting_date
             result[("Purchase Invoice", r.name)] = cstr(eff)
 
     if per_type.get("Sales Invoice"):
@@ -119,7 +122,8 @@ def get_kosten_pro_haus(von: str, bis: str, company: Optional[str] = None) -> di
     - Es werden nur GL-Entries mit Account = Konto einer Betriebskostenart gezählt.
     - Zuordnung Haus via GL.cost_center == Immobilie.kostenstelle.
     - Leistungszeitpunkt ist das Wertstellungsdatum verknüpfter Rechnungen,
-      ansonsten GL.posting_date. Nur Einträge innerhalb [von, bis] werden gezählt.
+      bei Purchase Invoice danach due_date, ansonsten GL.posting_date.
+      Nur Einträge innerhalb [von, bis] werden gezählt.
 
     Args:
         von: ISO-Datum (YYYY-MM-DD)

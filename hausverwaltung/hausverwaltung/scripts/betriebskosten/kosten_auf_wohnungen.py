@@ -11,7 +11,8 @@ Nicht implementiert (wirft Fehler, wenn verwendet):
 
 Zeitfenster der Kostenbestimmung wie in gl_kosten_pro_haus:
 - Effektives Datum eines GL Entry ist Wertstellungsdatum der verknüpften Rechnung
-  (Feld custom_wertstellungsdatum), sonst posting_date.
+  (Feld custom_wertstellungsdatum); bei Purchase Invoice sonst due_date, sonst
+  posting_date.
 
 Rückgabe:
 - rows:   Liste von {wohnung, kostenart, betrag}

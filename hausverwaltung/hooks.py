@@ -261,6 +261,9 @@ doc_events = {
 		"before_cancel": "hausverwaltung.hausverwaltung.doctype.dunning.prevent_direct_cancel_of_dunning_fee_invoice",
 	},
 	"Purchase Invoice": {
+		"validate": "hausverwaltung.hausverwaltung.overrides.purchase_invoice.default_wertstellungsdatum_from_due_date",
+		"before_save": "hausverwaltung.hausverwaltung.overrides.purchase_invoice.default_wertstellungsdatum_from_due_date",
+		"before_submit": "hausverwaltung.hausverwaltung.overrides.purchase_invoice.default_wertstellungsdatum_from_due_date",
 		# Auto Repeat setzt nur Pflicht-Date-Felder. bill_date, due_date und
 		# custom_wertstellungsdatum müssen wir manuell mit dem Schedule
 		# mitziehen.
@@ -287,6 +290,9 @@ doc_events = {
 		"after_insert": "hausverwaltung.hausverwaltung.utils.kostenart_konto.auto_create_kostenart_on_account_insert",
 	},
 	"Journal Entry": {
+		"validate": "hausverwaltung.hausverwaltung.overrides.journal_entry.default_wertstellungsdatum_from_posting_date",
+		"before_save": "hausverwaltung.hausverwaltung.overrides.journal_entry.default_wertstellungsdatum_from_posting_date",
+		"before_submit": "hausverwaltung.hausverwaltung.overrides.journal_entry.default_wertstellungsdatum_from_posting_date",
 		# Bei Storno eines Journal Entry, der zu einer Kreditrate gehört:
 		# Rate zurücksetzen + Bank-Transaction-Reconciliation entkoppeln.
 		"on_cancel": [
