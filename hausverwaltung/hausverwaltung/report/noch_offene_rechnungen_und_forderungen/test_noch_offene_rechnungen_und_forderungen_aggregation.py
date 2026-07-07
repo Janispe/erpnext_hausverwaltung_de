@@ -6,6 +6,7 @@ from hausverwaltung.hausverwaltung.report.noch_offene_rechnungen_und_forderungen
 	_combine_monthly_sollstellung_remarks,
 	_group_rows_by_mietabrechnung,
 	_resolve_abschlagsplan_payment_entries,
+	_resolve_voucher_value_dates,
 )
 
 
@@ -23,6 +24,7 @@ def _row(
 		"status": "Unpaid",
 		"party_type": "Customer",
 		"faellig_am": date(2025, 11, 3),
+		"wertstellungsdatum": date(2025, 11, 1),
 		"buchungsdatum": date(2025, 11, 1),
 		"party": party,
 		"party_account": party_account,
@@ -58,6 +60,44 @@ class TestNochOffeneForderungenAggregation(TestCase):
 			side_effect=fake_sql,
 		):
 			self.assertEqual(_resolve_abschlagsplan_payment_entries(source_rows), {"PE-ABS"})
+
+	def test_value_dates_are_resolved_for_invoice_and_journal_vouchers_only(self):
+		source_rows = [
+			{"voucher_type": "Sales Invoice", "voucher_no": "SI-1"},
+			{"voucher_type": "Purchase Invoice", "voucher_no": "PI-1"},
+			{"voucher_type": "Journal Entry", "voucher_no": "JE-1"},
+			{"voucher_type": "Payment Entry", "voucher_no": "PE-1"},
+		]
+
+		def fake_get_meta(doctype):
+			class Meta:
+				def get_field(self, fieldname):
+					return fieldname == "custom_wertstellungsdatum"
+
+			return Meta()
+
+		def fake_get_all(doctype, filters=None, fields=None, as_list=False, **kwargs):
+			self.assertEqual(fields, ["name", "custom_wertstellungsdatum"])
+			values = {
+				"Sales Invoice": [("SI-1", date(2026, 4, 30))],
+				"Purchase Invoice": [("PI-1", date(2026, 5, 31))],
+				"Journal Entry": [("JE-1", date(2026, 6, 30))],
+			}
+			return values.get(doctype, [])
+
+		with patch(
+			"hausverwaltung.hausverwaltung.report.noch_offene_rechnungen_und_forderungen.noch_offene_rechnungen_und_forderungen.frappe.get_meta",
+			side_effect=fake_get_meta,
+		), patch(
+			"hausverwaltung.hausverwaltung.report.noch_offene_rechnungen_und_forderungen.noch_offene_rechnungen_und_forderungen.frappe.get_all",
+			side_effect=fake_get_all,
+		):
+			out = _resolve_voucher_value_dates(source_rows)
+
+		self.assertEqual(out[("Sales Invoice", "SI-1")], date(2026, 4, 30))
+		self.assertEqual(out[("Purchase Invoice", "PI-1")], date(2026, 5, 31))
+		self.assertEqual(out[("Journal Entry", "JE-1")], date(2026, 6, 30))
+		self.assertNotIn(("Payment Entry", "PE-1"), out)
 
 	def _patch_invoice_lookup(self, mab_mapping: dict[str, str], item_mapping: dict[str, str]):
 		def fake_get_all(doctype, filters=None, fields=None, **kwargs):
@@ -122,6 +162,7 @@ class TestNochOffeneForderungenAggregation(TestCase):
 		self.assertEqual(out[0]["belegnummer"], "SI-Miete")
 		self.assertEqual(out[0]["belegart"], "Sales Invoice")
 		self.assertEqual(out[0]["beleg_count"], 2)
+		self.assertEqual(out[0]["wertstellungsdatum"], date(2025, 11, 1))
 		self.assertEqual(out[0]["member_voucher_nos"], ["SI-Miete", "SI-BK"])
 		self.assertAlmostEqual(out[0]["rechnungsbetrag"], 620.0)
 		self.assertAlmostEqual(out[0]["offen"], 620.0)

@@ -97,6 +97,14 @@ frappe.query_reports["Noch offene Rechnungen und Forderungen"] = {
 			on_change: () => frappe.query_report.refresh(),
 		},
 		{
+			fieldname: "sortieren_nach_wertstellungsdatum",
+			label: __("Wertstellung anzeigen/sortieren"),
+			fieldtype: "Check",
+			default: 0,
+			description: __("Nutzt das Leistungs-/Wertstellungsdatum von Rechnungen und Journal Entries; offene Zahlungen ohne Rechnungsbezug bleiben beim Buchungsdatum."),
+			on_change: () => frappe.query_report.refresh(),
+		},
+		{
 			fieldname: "show_settled",
 			label: __("Auch ausgeglichene anzeigen"),
 			fieldtype: "Check",

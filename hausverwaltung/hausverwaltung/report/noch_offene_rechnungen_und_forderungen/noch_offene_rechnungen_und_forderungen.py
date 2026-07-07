@@ -108,6 +108,11 @@ def _group_rows_by_mietabrechnung(rows):
 				not merged.get("faellig_am") or row["faellig_am"] < merged["faellig_am"]
 			):
 				merged["faellig_am"] = row["faellig_am"]
+			if row.get("wertstellungsdatum") and (
+				not merged.get("wertstellungsdatum")
+				or row["wertstellungsdatum"] < merged["wertstellungsdatum"]
+			):
+				merged["wertstellungsdatum"] = row["wertstellungsdatum"]
 			if row.get("alter_tage") and (row["alter_tage"] or 0) > (merged.get("alter_tage") or 0):
 				merged["alter_tage"] = row["alter_tage"]
 			merged["status"] = _worst_status(merged.get("status"), row.get("status"))
@@ -374,6 +379,7 @@ def _filter_and_map_rows(source_rows, filters, mode):
 	cost_center_filter = filters.get("cost_center")
 	invoice_cc_map = _resolve_invoice_cost_centers(source_rows)
 	remarks_map = _resolve_voucher_remarks(source_rows)
+	value_date_map = _resolve_voucher_value_dates(source_rows)
 	abschlagsplan_payment_entries = _resolve_abschlagsplan_payment_entries(source_rows)
 
 	for row in source_rows or []:
@@ -420,6 +426,10 @@ def _filter_and_map_rows(source_rows, filters, mode):
 		if filters.get("zahlungsrichtung") and direction != filters.get("zahlungsrichtung"):
 			continue
 
+		value_date = value_date_map.get((row.get("voucher_type"), row.get("voucher_no")))
+		if not value_date:
+			value_date = getdate(row.get("posting_date") or due_date)
+
 		rows.append(
 			{
 				"aktion": "",
@@ -428,6 +438,7 @@ def _filter_and_map_rows(source_rows, filters, mode):
 				"status": invoice_status,
 				"party_type": row.get("party_type"),
 				"faellig_am": due_date,
+				"wertstellungsdatum": value_date,
 				"buchungsdatum": row.get("posting_date"),
 				"party": row.get("party"),
 				"party_account": row.get("party_account"),
@@ -446,6 +457,32 @@ def _filter_and_map_rows(source_rows, filters, mode):
 		)
 
 	return rows
+
+
+def _resolve_voucher_value_dates(source_rows):
+	"""Lädt Leistungs-/Wertstellungsdaten für Voucher, die fachlich eines haben."""
+	by_type: dict[str, set[str]] = {}
+	for row in source_rows or []:
+		vtype = (row or {}).get("voucher_type")
+		vno = (row or {}).get("voucher_no")
+		if vtype in ("Sales Invoice", "Purchase Invoice", "Journal Entry") and vno:
+			by_type.setdefault(vtype, set()).add(vno)
+
+	out: dict[tuple[str, str], object] = {}
+	for vtype, names in by_type.items():
+		if not names:
+			continue
+		if not frappe.get_meta(vtype).get_field("custom_wertstellungsdatum"):
+			continue
+		for name, value_date in frappe.get_all(
+			vtype,
+			filters={"name": ["in", list(names)]},
+			fields=["name", "custom_wertstellungsdatum"],
+			as_list=True,
+		):
+			if value_date:
+				out[(vtype, name)] = getdate(value_date)
+	return out
 
 
 def _resolve_abschlagsplan_payment_entries(source_rows):
@@ -575,8 +612,13 @@ def _get_payment_direction(mode, outstanding):
 
 def _sort_key(row, filters):
 	sortierung = filters.get("sortierung") or "Fällig am"
+	primary_date = (
+		row.get("wertstellungsdatum") or row.get("faellig_am") or getdate(nowdate())
+		if filters.get("sortieren_nach_wertstellungsdatum")
+		else row.get("faellig_am") or getdate(nowdate())
+	)
 	base = (
-		row.get("faellig_am") or getdate(nowdate()),
+		primary_date,
 		row.get("art") or "",
 		row.get("party") or "",
 		row.get("belegnummer") or "",
@@ -672,6 +714,18 @@ def _get_columns(filters):
 	columns.extend(
 		[
 			{"label": _("Buchungsdatum"), "fieldname": "buchungsdatum", "fieldtype": "Date", "width": 110},
+			*(
+				[
+					{
+						"label": _("Wertstellung"),
+						"fieldname": "wertstellungsdatum",
+						"fieldtype": "Date",
+						"width": 110,
+					}
+				]
+				if filters.get("sortieren_nach_wertstellungsdatum")
+				else []
+			),
 			{
 				"label": _("Rechnungsbetrag"),
 				"fieldname": "rechnungsbetrag",
