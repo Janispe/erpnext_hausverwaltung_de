@@ -1,6 +1,10 @@
 frappe.ui.form.on("Sales Invoice", {
+	setup(frm) {
+		hv_default_sales_invoice_wertstellungsdatum_from_posting_date(frm);
+	},
 	refresh(frm) {
 		window.hv_role_field_visibility?.apply(frm);
+		hv_default_sales_invoice_wertstellungsdatum_from_posting_date(frm);
 		apply_guthaben_labels(frm);
 
 		if (is_hv_mietrechnung(frm.doc)) {
@@ -17,9 +21,21 @@ frappe.ui.form.on("Sales Invoice", {
 	},
 	onload_post_render(frm) {
 		window.hv_role_field_visibility?.apply(frm);
+		hv_default_sales_invoice_wertstellungsdatum_from_posting_date(frm);
 		apply_guthaben_labels(frm);
 	},
+	posting_date(frm) {
+		hv_default_sales_invoice_wertstellungsdatum_from_posting_date(frm);
+	},
+	validate(frm) {
+		hv_default_sales_invoice_wertstellungsdatum_from_posting_date(frm);
+	},
 });
+
+function hv_default_sales_invoice_wertstellungsdatum_from_posting_date(frm) {
+	if (!frm.doc || frm.doc.custom_wertstellungsdatum || !frm.doc.posting_date) return;
+	frm.set_value("custom_wertstellungsdatum", frm.doc.posting_date);
+}
 
 function apply_guthaben_labels(frm) {
 	frm.set_df_property("is_return", "label", __("Ist Guthaben"));
