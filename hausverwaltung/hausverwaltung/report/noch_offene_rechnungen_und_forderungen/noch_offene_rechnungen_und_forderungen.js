@@ -29,13 +29,13 @@ frappe.query_reports["Noch offene Rechnungen und Forderungen"] = {
 			fieldname: "von_faelligkeit",
 			label: __("Von Fälligkeit"),
 			fieldtype: "Date",
-			description: __("Leer lassen → keine untere Schranke (zeigt auch historische offene Posten)."),
+			description: __("Leer lassen → keine untere Schranke. Mit Wertstellung-Häkchen gilt dieses Datum für Wertstellung statt Fälligkeit."),
 		},
 		{
 			fieldname: "bis_faelligkeit",
 			label: __("Bis Fälligkeit"),
 			fieldtype: "Date",
-			description: __("Leer lassen → keine obere Schranke. Stichtag ist immer heute."),
+			description: __("Leer lassen → keine obere Schranke. Mit Wertstellung-Häkchen gilt dieses Datum für Wertstellung statt Fälligkeit."),
 		},
 		{
 			fieldname: "party",

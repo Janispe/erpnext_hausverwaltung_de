@@ -400,9 +400,14 @@ def _filter_and_map_rows(source_rows, filters, mode):
 			continue
 
 		due_date = getdate(due_date)
-		if filters.von_faelligkeit and due_date < filters.von_faelligkeit:
+		value_date = value_date_map.get((row.get("voucher_type"), row.get("voucher_no")))
+		if not value_date:
+			value_date = getdate(row.get("posting_date") or due_date)
+
+		filter_date = value_date if filters.get("sortieren_nach_wertstellungsdatum") else due_date
+		if filters.von_faelligkeit and filter_date < filters.von_faelligkeit:
 			continue
-		if filters.bis_faelligkeit and due_date > filters.bis_faelligkeit:
+		if filters.bis_faelligkeit and filter_date > filters.bis_faelligkeit:
 			continue
 
 		if voucher_type and row.get("voucher_type") != voucher_type:
@@ -425,10 +430,6 @@ def _filter_and_map_rows(source_rows, filters, mode):
 		direction = "Abschlag" if is_abschlagszahlung else _get_payment_direction(mode, outstanding)
 		if filters.get("zahlungsrichtung") and direction != filters.get("zahlungsrichtung"):
 			continue
-
-		value_date = value_date_map.get((row.get("voucher_type"), row.get("voucher_no")))
-		if not value_date:
-			value_date = getdate(row.get("posting_date") or due_date)
 
 		rows.append(
 			{

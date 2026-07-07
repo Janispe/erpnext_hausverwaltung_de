@@ -157,18 +157,27 @@ def _get_invoices(filters) -> dict[str, InvoiceInfo]:
 	if frappe.get_meta("Sales Invoice").get_field("custom_wertstellungsdatum"):
 		fields.append("custom_wertstellungsdatum")
 
+	invoice_filters = {
+		"company": filters.company,
+		"customer": filters.customer,
+		"docstatus": 1,
+		"is_return": 0,
+	}
+	if not filters.get("sortieren_nach_wertstellungsdatum"):
+		invoice_filters["posting_date"] = ("<=", filters.to_date)
+
 	rows = frappe.get_all(
 		"Sales Invoice",
-		filters={
-			"company": filters.company,
-			"customer": filters.customer,
-			"docstatus": 1,
-			"is_return": 0,
-			"posting_date": ("<=", filters.to_date),
-		},
+		filters=invoice_filters,
 		fields=fields,
 		order_by="posting_date asc, name asc",
 	)
+	if filters.get("sortieren_nach_wertstellungsdatum"):
+		rows = [
+			row
+			for row in rows
+			if getdate(row.get("custom_wertstellungsdatum") or row.posting_date) <= filters.to_date
+		]
 	category_amounts_by_invoice = _get_invoice_category_amounts_bulk(
 		[row.name for row in rows],
 		{row.name: flt(row.grand_total) for row in rows},
@@ -455,18 +464,21 @@ def _build_settlement_transactions(
 	bundle_order: list[tuple] = []
 	voucher_remarks_all: dict = {}
 
+	ple_filters = {
+		"company": filters.company,
+		"party_type": "Customer",
+		"party": filters.customer,
+		"against_voucher_type": "Sales Invoice",
+		"delinked": 0,
+	}
+	if not filters.get("sortieren_nach_wertstellungsdatum"):
+		ple_filters["posting_date"] = ("<=", filters.to_date)
+
 	for chunk in _chunks(invoice_names, 500):
+		ple_filters["against_voucher_no"] = ("in", chunk)
 		rows = frappe.get_all(
 			"Payment Ledger Entry",
-			filters={
-				"company": filters.company,
-				"party_type": "Customer",
-				"party": filters.customer,
-				"against_voucher_type": "Sales Invoice",
-				"against_voucher_no": ("in", chunk),
-				"posting_date": ("<=", filters.to_date),
-				"delinked": 0,
-			},
+			filters=ple_filters,
 			fields=[
 				"posting_date",
 				"voucher_type",
@@ -1058,12 +1070,13 @@ def _build_rows(transactions: list[dict[str, Any]], filters) -> tuple[list[dict[
 	currency_seen: str | None = None
 
 	for transaction in transactions:
-		if transaction["date"] > filters.to_date:
+		report_date = _transaction_report_date(transaction, filters)
+		if report_date > filters.to_date:
 			continue
 		_accumulate_open_totals(open_all_totals, transaction)
 		_accumulate_open_totals(open_period_totals, transaction, filters)
 
-		if transaction["date"] < filters.from_date:
+		if report_date < filters.from_date:
 			balance += flt(transaction["delta"])
 			_accumulate_totals(all_totals, transaction)
 			if transaction.get("currency"):
@@ -1129,6 +1142,7 @@ def _accumulate_totals(totals: dict[str, Any], transaction: dict[str, Any]) -> N
 def _open_summary_part(transaction: dict[str, Any]) -> dict[str, Any]:
 	return {
 		"open_date": transaction.get("open_date") or transaction.get("date"),
+		"wertstellungsdatum": transaction.get("wertstellungsdatum"),
 		"currency": transaction.get("currency"),
 		"invoice_amounts": dict(transaction.get("invoice_amounts") or {}),
 		"paid_amounts": dict(transaction.get("paid_amounts") or {}),
@@ -1143,7 +1157,7 @@ def _accumulate_open_totals(
 ) -> None:
 	parts = transaction.get("_open_summary_parts") or [_open_summary_part(transaction)]
 	for part in parts:
-		if filters and not _date_in_period(part.get("open_date"), filters):
+		if filters and not _date_in_period(_open_summary_report_date(part, filters), filters):
 			continue
 		_accumulate_totals(totals, part)
 
@@ -1153,6 +1167,18 @@ def _date_in_period(value, filters) -> bool:
 		return False
 	value = getdate(value)
 	return filters.from_date <= value <= filters.to_date
+
+
+def _transaction_report_date(transaction: dict[str, Any], filters):
+	if filters.get("sortieren_nach_wertstellungsdatum"):
+		return getdate(transaction.get("wertstellungsdatum") or transaction.get("date"))
+	return getdate(transaction.get("date"))
+
+
+def _open_summary_report_date(part: dict[str, Any], filters):
+	if filters.get("sortieren_nach_wertstellungsdatum"):
+		return part.get("wertstellungsdatum") or part.get("open_date")
+	return part.get("open_date")
 
 
 def _opening_row(filters, balance: float, currency: str | None) -> dict[str, Any]:
