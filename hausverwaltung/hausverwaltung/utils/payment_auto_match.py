@@ -873,7 +873,9 @@ def create_internal_transfer_payment_entry(*, bt, other_bank_account: str, remar
 	return pe
 
 
-def create_journal_entry_for_bt(*, bt, account=None, cost_center=None, splits=None, remarks=None):
+def create_journal_entry_for_bt(
+	*, bt, account=None, cost_center=None, splits=None, remarks=None, wertstellungsdatum=None
+):
 	"""Buchungssatz: Bank-Konto vs. ein oder mehrere Gegenkonten.
 
 	Eingang (deposit > 0): Bank Soll, Gegenkonten Haben.
@@ -946,6 +948,8 @@ def create_journal_entry_for_bt(*, bt, account=None, cost_center=None, splits=No
 			"custom_remark": 1,
 		}
 	)
+	if wertstellungsdatum and je.meta.has_field("custom_wertstellungsdatum"):
+		je.custom_wertstellungsdatum = getdate(wertstellungsdatum)
 
 	# Bank-Seite (Gesamtbetrag in einer Zeile)
 	bank_row = {

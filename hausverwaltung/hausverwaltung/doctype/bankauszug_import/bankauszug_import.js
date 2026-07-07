@@ -1523,6 +1523,12 @@ function _openJournalEntryDialog(frm, row) {
     fields: [
       { fieldtype: 'HTML', fieldname: 'body', options: html },
       {
+        fieldtype: 'Date',
+        fieldname: 'wertstellungsdatum',
+        label: __('Wertstellungsdatum'),
+        default: row.buchungstag || frappe.datetime.get_today(),
+      },
+      {
         fieldtype: 'Small Text',
         fieldname: 'remarks',
         label: __('Bemerkung'),
@@ -1544,6 +1550,7 @@ function _openJournalEntryDialog(frm, row) {
           row_name: row.name,
           splits: JSON.stringify(splits.list),
           remarks: values.remarks || '',
+          wertstellungsdatum: values.wertstellungsdatum || row.buchungstag || '',
         },
         freeze: true,
         freeze_message: __('Buchungssatz wird gebucht…'),

@@ -826,6 +826,7 @@ function JournalEntryForm({ docname, row, onActionDone, notify }) {
 	const [account, setAccount] = useState(null);
 	const [costCenter, setCostCenter] = useState("");
 	const [remarks, setRemarks] = useState(row.verwendungszweck || "");
+	const [wertstellungsdatum, setWertstellungsdatum] = useState(row.buchungstag || "");
 	const [splitMode, setSplitMode] = useState(false);
 	const [splits, setSplits] = useState([
 		{ id: 1, account: null, costCenter: "", amount: Math.abs(Number(row.betrag) || 0).toFixed(2) },
@@ -836,11 +837,12 @@ function JournalEntryForm({ docname, row, onActionDone, notify }) {
 		setAccount(null);
 		setCostCenter("");
 		setRemarks(row.verwendungszweck || "");
+		setWertstellungsdatum(row.buchungstag || "");
 		setSplitMode(false);
 		setSplits([
 			{ id: 1, account: null, costCenter: "", amount: Math.abs(Number(row.betrag) || 0).toFixed(2) },
 		]);
-	}, [row.id, row.betrag, row.verwendungszweck]);
+	}, [row.id, row.betrag, row.buchungstag, row.verwendungszweck]);
 
 	useEffect(() => {
 		let alive = true;
@@ -885,6 +887,7 @@ function JournalEntryForm({ docname, row, onActionDone, notify }) {
 				account: splitMode ? undefined : account.value,
 				costCenter: splitMode ? undefined : costCenter || undefined,
 				remarks,
+				wertstellungsdatum,
 				splits: splitMode ? splits.map((s) => ({
 					account: s.account.value,
 					cost_center: s.costCenter || undefined,
@@ -961,6 +964,13 @@ function JournalEntryForm({ docname, row, onActionDone, notify }) {
 					</button>
 				</div>
 			)}
+			<div className="field-label" style={{ marginTop: 10 }}>Wertstellungsdatum</div>
+			<input
+				className="text-input"
+				type="date"
+				value={wertstellungsdatum}
+				onChange={(e) => setWertstellungsdatum(e.target.value)}
+			/>
 			<div className="field-label" style={{ marginTop: 10 }}>Bemerkung</div>
 			<input className="text-input" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
 			<button className="btn primary" style={{ width: "100%", justifyContent: "center", marginTop: 10 }} onClick={book} disabled={busy}>

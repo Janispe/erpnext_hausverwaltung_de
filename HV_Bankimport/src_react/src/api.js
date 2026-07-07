@@ -316,12 +316,13 @@ export async function searchAccounts(txt) {
 }
 
 // splits: optional [{ account, cost_center?, amount }]
-export async function createJournalEntry(name, rowName, { account, costCenter, remarks, splits } = {}) {
+export async function createJournalEntry(name, rowName, { account, costCenter, remarks, splits, wertstellungsdatum } = {}) {
 	if (!embedded) return { ok: true, journal_entry: "JE-DEMO", mock: true };
 	const params = { docname: name, row_name: rowName };
 	if (account) params.account = account;
 	if (costCenter) params.cost_center = costCenter;
 	if (remarks) params.remarks = remarks;
+	if (wertstellungsdatum) params.wertstellungsdatum = wertstellungsdatum;
 	if (splits && splits.length) params.splits = JSON.stringify(splits);
 	return await rpc("journal_entry", params);
 }

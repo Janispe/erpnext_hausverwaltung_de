@@ -3534,6 +3534,7 @@ def create_journal_entry_for_row(
     cost_center: Optional[str] = None,
     remarks: Optional[str] = None,
     splits: Optional[str] = None,
+    wertstellungsdatum: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Journal Entry: Bank-Konto vs. ein oder mehrere Gegenkonten.
 
@@ -3543,6 +3544,8 @@ def create_journal_entry_for_row(
     ``splits`` (JSON-Array oder Liste): ``[{account, cost_center?, amount}, ...]``.
     Summe muss dem BT-Betrag entsprechen. Wenn ``splits`` leer ist, wird der
     Single-Account-Modus mit ``account`` + ``cost_center`` genutzt.
+    ``wertstellungsdatum`` landet auf ``custom_wertstellungsdatum`` des Journal
+    Entry; ohne UI-Wert wird der Buchungstag der Bankzeile verwendet.
 
     Use-Case: Bankgebühren, Eigentümer-Entnahmen, manuelle Korrekturen — und
     Splits wie „Hauptbetrag + Bankgebühr in einem Vorgang".
@@ -3578,6 +3581,7 @@ def create_journal_entry_for_row(
         cost_center=cost_center,
         splits=parsed_splits,
         remarks=remarks,
+        wertstellungsdatum=wertstellungsdatum or row.get("buchungstag"),
     )
     target_amount = flt(row.betrag)
     reconcile_created_voucher_or_rollback(bt, "Journal Entry", je.name, target_amount)

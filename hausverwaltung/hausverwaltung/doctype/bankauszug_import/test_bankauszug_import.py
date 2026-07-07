@@ -2256,6 +2256,7 @@ class TestBankauszugImport(unittest.TestCase):
                 "6300 - Hausmeister-Vergütung - HP",
                 None,
                 "Test JE",
+                wertstellungsdatum="2026-04-30",
             )
 
         self.assertEqual(res["journal_entry"], "JE-1")
@@ -2271,6 +2272,7 @@ class TestBankauszugImport(unittest.TestCase):
             allow_missing_party=1,
         )
         create_je.assert_called_once()
+        self.assertEqual(create_je.call_args.kwargs.get("wertstellungsdatum"), "2026-04-30")
         reconcile.assert_called_once_with(bt, "Journal Entry", "JE-1", 12.34)
 
     def test_row_with_unreconciled_bt_can_create_missing_bt_without_auto_match(self):
