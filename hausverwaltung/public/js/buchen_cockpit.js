@@ -453,8 +453,13 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			),
 			onchange() {
 				const art = dialog.get_value("zahlungsart");
+				const is_direct_type = HV_PI_DIRECT_PAYMENT_TYPES.includes(art);
+				if (!is_direct_type) {
+					dialog.set_value("zahlung_sofort", 0);
+					return;
+				}
 				if (dialog._hv_user_touched_zahlung_sofort) return;
-				dialog.set_value("zahlung_sofort", HV_PI_DIRECT_PAYMENT_TYPES.includes(art) ? 1 : 0);
+				dialog.set_value("zahlung_sofort", 1);
 			},
 		},
 		{ fieldtype: "Column Break" },
@@ -463,6 +468,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			fieldname: "zahlung_sofort",
 			label: __("Direkt ausgleichen"),
 			default: _default_zahlung_sofort ? 1 : 0,
+			depends_on: "eval:['Barzahlung','Vorschuss/Auslage','Sonstige Verrechnung'].includes(doc.zahlungsart)",
 			description: __(
 				"Aus: Die Eingangsrechnung bleibt offen und kann später über Bank-/Kreditkartenimport oder manuell ausgeglichen werden."
 			),
