@@ -206,6 +206,57 @@ const hv_apply_row_defaults = (dialog, fieldname, defaults) => {
 	});
 };
 
+const hv_duplicate_last_position = (dialog) => {
+	const field = dialog.fields_dict && dialog.fields_dict.positionen;
+	const grid = field && field.grid;
+	if (!field || !grid) return;
+
+	const data = (grid.df && grid.df.data) || field.df.data || [];
+	const source = [...data]
+		.reverse()
+		.find(
+			(row) =>
+				row &&
+				!row.__islocal_empty &&
+				(row.betrag ||
+					row.kostenart ||
+					row.kostenstelle ||
+					row.betriebskostenart ||
+					row.kostenart_nicht_ul ||
+					row.konto)
+		);
+	if (!source) {
+		frappe.msgprint({
+			message: __("Bitte zuerst eine Position erfassen, die dupliziert werden kann."),
+			indicator: "orange",
+		});
+		return;
+	}
+
+	const duplicate = {};
+	[
+		"betrag",
+		"typ",
+		"kostenart",
+		"betriebskostenart",
+		"kostenart_nicht_ul",
+		"kostenstelle",
+		"konto",
+	].forEach((fieldname) => {
+		duplicate[fieldname] = source[fieldname] == null ? "" : source[fieldname];
+	});
+	if (!duplicate.typ) duplicate.typ = "umlegbar";
+
+	data.push(duplicate);
+	field.df.data = data;
+	if (grid.df) grid.df.data = data;
+	grid.refresh();
+	frappe.show_alert({
+		message: __("Position dupliziert."),
+		indicator: "green",
+	});
+};
+
 // Lädt eine Eingangsrechnung Vorlage und füllt damit den Cockpit-Dialog.
 // Wenn der Dialog schon Daten enthält, wird vorher per frappe.confirm rückgefragt.
 const hv_apply_vorlage = (dialog, vorlage_name) => {
@@ -513,6 +564,14 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			),
 			onchange() {
 				apply_eingabemodus(dialog);
+			},
+		},
+		{
+			fieldtype: "Button",
+			fieldname: "position_duplizieren",
+			label: __("Letzte Position duplizieren"),
+			click() {
+				hv_duplicate_last_position(dialog);
 			},
 		},
 		{
