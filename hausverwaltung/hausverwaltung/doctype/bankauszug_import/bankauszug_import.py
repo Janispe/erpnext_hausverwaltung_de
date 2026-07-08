@@ -2573,6 +2573,67 @@ def get_expected_cost_center_for_row(docname: str, row_name: str) -> Dict[str, A
     return {"cost_center": _resolve_expected_cost_center_for_bt(bt)}
 
 
+def _get_expected_cost_center_for_supplier_row(doc: Document, row: Document) -> Optional[str]:
+    if row.get("party_type") != "Supplier":
+        return None
+
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+        _resolve_expected_cost_center_for_bt,
+    )
+
+    return _resolve_expected_cost_center_for_bt(_transient_bt_for_row(doc, row))
+
+
+def _filter_invoices_by_expected_cost_center(
+    invoices: List[Dict[str, Any]],
+    *,
+    invoice_doctype: str,
+    expected_cost_center: Optional[str],
+) -> Tuple[List[Dict[str, Any]], int]:
+    if not expected_cost_center:
+        return invoices, 0
+
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+        _get_cost_center_of_invoice,
+    )
+
+    filtered = []
+    excluded = 0
+    for inv in invoices:
+        invoice_name = inv.get("name")
+        invoice_cost_center = _get_cost_center_of_invoice(invoice_name, invoice_doctype)
+        inv["cost_center"] = invoice_cost_center
+        inv["cost_center_match"] = bool(invoice_cost_center and invoice_cost_center == expected_cost_center)
+        if inv["cost_center_match"]:
+            filtered.append(inv)
+        else:
+            excluded += 1
+    return filtered, excluded
+
+
+def _throw_if_supplier_invoice_cost_center_mismatch(
+    *,
+    invoice_name: str,
+    invoice_doctype: str,
+    expected_cost_center: Optional[str],
+) -> Optional[str]:
+    if not expected_cost_center:
+        return None
+
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+        _get_cost_center_of_invoice,
+    )
+
+    invoice_cost_center = _get_cost_center_of_invoice(invoice_name, invoice_doctype)
+    if invoice_cost_center != expected_cost_center:
+        frappe.throw(
+            f"Rechnung {invoice_name} gehört zur Kostenstelle "
+            f"'{invoice_cost_center or 'ohne Kostenstelle'}', erwartet ist "
+            f"'{expected_cost_center}' für dieses Bankkonto."
+        )
+    return invoice_cost_center
+
+
 @frappe.whitelist()
 def get_open_invoices_for_row(docname: str, row_name: str) -> Dict[str, Any]:
     """Listet offene Rechnungen für die Party einer Bankauszug-Zeile.
@@ -2612,10 +2673,18 @@ def get_open_invoices_for_row(docname: str, row_name: str) -> Dict[str, Any]:
         order_by="posting_date asc",
         limit=200,
     )
+    expected_cost_center = _get_expected_cost_center_for_supplier_row(doc, row)
+    invoices, excluded_by_cost_center = _filter_invoices_by_expected_cost_center(
+        invoices,
+        invoice_doctype=invoice_doctype,
+        expected_cost_center=expected_cost_center,
+    )
     return {
         "invoice_doctype": invoice_doctype,
         "invoices": invoices,
         "target_amount": flt(row.betrag),
+        "expected_cost_center": expected_cost_center,
+        "excluded_by_cost_center": excluded_by_cost_center,
     }
 
 
@@ -2882,8 +2951,10 @@ def manually_reconcile_row(
 
     if row.party_type == "Customer":
         invoice_doctype = "Sales Invoice"
+        expected_cost_center = None
     elif row.party_type == "Supplier":
         invoice_doctype = "Purchase Invoice"
+        expected_cost_center = _get_expected_cost_center_for_supplier_row(doc, row)
     else:
         frappe.throw(f"Party-Typ '{row.party_type}' nicht unterstützt für manuelle Zuordnung.")
 
@@ -2906,6 +2977,13 @@ def manually_reconcile_row(
             frappe.throw(f"Rechnung {inv_name} nicht gefunden.")
         if flt(inv.outstanding_amount) <= 0:
             frappe.throw(f"Rechnung {inv_name} hat keinen offenen Betrag mehr.")
+        invoice_cost_center = _throw_if_supplier_invoice_cost_center_mismatch(
+            invoice_name=inv_name,
+            invoice_doctype=invoice_doctype,
+            expected_cost_center=expected_cost_center,
+        )
+        if invoice_cost_center:
+            inv["cost_center"] = invoice_cost_center
         # Allocation festlegen: Frontend-Wert hat Vorrang, sonst voller outstanding_amount
         explicit_alloc = item.get("allocated_amount")
         if explicit_alloc is not None:

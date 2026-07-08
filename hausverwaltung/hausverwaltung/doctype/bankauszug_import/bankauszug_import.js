@@ -1122,9 +1122,15 @@ function _openMatchInvoicesDialog(frm, row) {
     const target = parseFloat(data.target_amount || row.betrag || 0);
 
     if (!invoices.length) {
+      const filteredNote = data.excluded_by_cost_center
+        ? ' ' + __('{0} offene Rechnung(en) wurden ausgeblendet, weil ihre Kostenstelle nicht zu diesem Bankkonto passt.', [data.excluded_by_cost_center])
+        : '';
       frappe.msgprint({
         title: __('Keine offenen Rechnungen'),
-        message: __('Für {0} {1} sind keine offenen Rechnungen vorhanden. Nutze „Zahlung erstellen" für eine Vorauszahlung oder „Buchungssatz erstellen" für eine direkte GL-Buchung.', [row.party_type, row.party]),
+        message: __('Für {0} {1} sind keine passenden offenen Rechnungen vorhanden.', [row.party_type, row.party])
+          + filteredNote
+          + ' '
+          + __('Nutze „Zahlung erstellen" für eine Vorauszahlung oder „Buchungssatz erstellen" für eine direkte GL-Buchung.'),
       });
       return;
     }
@@ -1155,6 +1161,8 @@ function _openMatchInvoicesDialog(frm, row) {
       <div style="margin-bottom:10px; padding:8px 10px; background:#f6f6f7; border-radius:4px; font-size:12px;">
         <strong>${__('Bank-Betrag')}:</strong> ${fmt(target)} &nbsp;•&nbsp;
         <strong>${__('Party')}:</strong> ${frappe.utils.escape_html(row.party)} (${frappe.utils.escape_html(row.party_type)})
+        ${data.expected_cost_center ? `&nbsp;•&nbsp;<strong>${__('Kostenstelle')}:</strong> ${frappe.utils.escape_html(data.expected_cost_center)}` : ''}
+        ${data.excluded_by_cost_center ? `<div style="margin-top:4px; color:#6b7280;">${__('Ausgeblendet wegen anderer Kostenstelle')}: ${data.excluded_by_cost_center}</div>` : ''}
       </div>
       <table style="width:100%; border-collapse:collapse; font-size:12px;">
         <thead>

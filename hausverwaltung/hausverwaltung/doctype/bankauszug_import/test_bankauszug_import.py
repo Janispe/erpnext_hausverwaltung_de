@@ -1801,6 +1801,79 @@ class TestBankauszugImport(unittest.TestCase):
         recompute.assert_not_called()
         refresh.assert_not_called()
 
+    def test_get_open_invoices_for_supplier_filters_other_cost_centers(self):
+        row = self._FakeRow(name="ROW-SUP-OPEN", iban="DE16")
+        row.party_type = "Supplier"
+        row.party = "SUP-1"
+        row.richtung = "Ausgang"
+        doc = self._FakeDoc("IMP-SUP-OPEN", [row])
+        invoices = [
+            frappe._dict(name="PINV-OK", outstanding_amount=120.0, posting_date="2026-05-05"),
+            frappe._dict(name="PINV-OTHER", outstanding_amount=120.0, posting_date="2026-05-06"),
+            frappe._dict(name="PINV-NO-CC", outstanding_amount=120.0, posting_date="2026-05-07"),
+        ]
+
+        def _get_doc(doctype, name=None):
+            if doctype == "Bankauszug Import":
+                return doc
+            raise AssertionError("unexpected doctype")
+
+        def _invoice_cost_center(invoice_name, invoice_doctype):
+            return {
+                "PINV-OK": "CC-1",
+                "PINV-OTHER": "CC-2",
+                "PINV-NO-CC": None,
+            }.get(invoice_name)
+
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe, "get_all", return_value=invoices), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match._resolve_expected_cost_center_for_bt",
+                 return_value="CC-1",
+             ), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match._get_cost_center_of_invoice",
+                 side_effect=_invoice_cost_center,
+             ):
+            result = bi.get_open_invoices_for_row("IMP-SUP-OPEN", "ROW-SUP-OPEN")
+
+        self.assertEqual(result["invoice_doctype"], "Purchase Invoice")
+        self.assertEqual(result["expected_cost_center"], "CC-1")
+        self.assertEqual(result["excluded_by_cost_center"], 2)
+        self.assertEqual([inv.name for inv in result["invoices"]], ["PINV-OK"])
+        self.assertEqual(result["invoices"][0].cost_center, "CC-1")
+
+    def test_manually_reconcile_row_rejects_supplier_invoice_from_other_cost_center(self):
+        row = self._FakeRow(name="ROW-INV-CC", iban="DE17")
+        row.party_type = "Supplier"
+        row.party = "SUP-1"
+        row.richtung = "Ausgang"
+        row.betrag = 100.0
+        bt = type("BT", (), {"name": "BT-INV-CC"})()
+        invoice = frappe._dict(name="PINV-BAD", outstanding_amount=100.0, posting_date="2026-05-05")
+
+        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(self._FakeDoc("IMP-INV-CC", [row]), row, bt)), \
+             patch.object(bi.frappe.db, "get_value", return_value=invoice), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match._resolve_expected_cost_center_for_bt",
+                 return_value="CC-1",
+             ), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match._get_cost_center_of_invoice",
+                 return_value="CC-2",
+             ), \
+             patch.object(bi.frappe, "throw", side_effect=Exception) as throw, \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.create_payment_entry_for_invoices",
+             ) as create_pe:
+            with self.assertRaises(Exception):
+                bi.manually_reconcile_row("IMP-INV-CC", "ROW-INV-CC", "PINV-BAD")
+
+        create_pe.assert_not_called()
+        self.assertIn("Kostenstelle 'CC-2'", throw.call_args[0][0])
+        self.assertIn("erwartet ist 'CC-1'", throw.call_args[0][0])
+
     def test_manually_reconcile_row_rejects_explicit_allocations_above_bank_amount(self):
         import json as _json
 
