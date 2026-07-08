@@ -86,7 +86,8 @@ DESCRIPTION = (
 	"Die optionale Variable 'verknuepfungsoperator' steuert die Verbindung "
 	"zwischen mehreren Namen: 'und' (Standard), ',', oder ', und'. "
 	"Die optionale Variable 'rollen' steuert die berücksichtigten Vertragspartner-Rollen "
-	"als kommagetrennte Liste, Standard ist 'Hauptmieter'."
+	"als kommagetrennte Liste, Standard ist 'Hauptmieter'. "
+	"Der Output 'anzahl' enthält die Anzahl der berücksichtigten Personen."
 )
 
 
@@ -133,12 +134,93 @@ def execute() -> None:
 			("Dunning", {"mietvertrag": dunning_mietvertrag}),
 		],
 	)
+	_ensure_output()
 	_ensure_text_variable_defaults()
 
 	try:
 		frappe.clear_cache(doctype="Serienbrief Textbaustein")
 	except Exception:
 		pass
+
+
+def mieter_anzahl_provider(context, output_row=None) -> int:
+	return len(_matching_mieter_contacts(context))
+
+
+def _matching_mieter_contacts(context) -> list:
+	mietvertrag = _get_context_value(context, "mietvertrag")
+	if not mietvertrag:
+		return []
+
+	rollen_text = str(_get_context_value(context, "rollen") or "Hauptmieter").strip()
+	if not rollen_text:
+		rollen_text = "Hauptmieter"
+
+	include_all = rollen_text.lower() in {"*", "alle"}
+	erlaubte_rollen: list[str] = []
+	for rolle in rollen_text.replace(";", ",").split(","):
+		role = rolle.strip()
+		if role and not include_all:
+			erlaubte_rollen.append(role)
+	if not include_all and not erlaubte_rollen:
+		erlaubte_rollen.append("Hauptmieter")
+
+	personen = []
+	for vp in _get_attr(mietvertrag, "mieter", []) or []:
+		rolle = str(_get_attr(vp, "rolle", "") or "").strip()
+		kontakt = _get_attr(vp, "kontakt", None)
+		if not kontakt:
+			continue
+		if (include_all and rolle != "Ausgezogen") or (rolle in erlaubte_rollen):
+			personen.append(kontakt)
+	return personen
+
+
+def _get_context_value(context, key: str):
+	if isinstance(context, dict):
+		return context.get(key)
+	return getattr(context, key, None)
+
+
+def _get_attr(value, key: str, default=None):
+	if isinstance(value, dict):
+		return value.get(key, default)
+	get = getattr(value, "get", None)
+	if callable(get):
+		try:
+			return get(key, default)
+		except Exception:
+			pass
+	return getattr(value, key, default)
+
+
+def _ensure_output() -> None:
+	doc = frappe.get_doc("Serienbrief Textbaustein", TITLE)
+	changed = False
+	config = {
+		"output_name": "anzahl",
+		"output_type": "Zahl",
+		"label": "Anzahl Mieter",
+		"provider": (
+			"hausverwaltung.hausverwaltung.patches.post_model_sync."
+			"create_mieter_anrede_vorname_nachname_baustein.mieter_anzahl_provider"
+		),
+		"beschreibung": "Anzahl der Personen, die dieser Baustein im Namenstext berücksichtigt.",
+	}
+	for row in doc.get("outputs") or []:
+		if frappe.scrub((row.output_name or "").strip()) != "anzahl":
+			continue
+		for fieldname, value in config.items():
+			if getattr(row, fieldname, None) != value:
+				setattr(row, fieldname, value)
+				changed = True
+		break
+	else:
+		doc.append("outputs", config)
+		changed = True
+
+	if changed:
+		doc.save(ignore_permissions=True)
 
 
 def _ensure_text_variable_defaults() -> None:
