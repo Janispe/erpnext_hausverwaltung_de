@@ -3,12 +3,13 @@ import { Icon, Spinner } from "../helpers.jsx";
 
 // Schlanke Autocomplete-Eingabe. `fetcher(txt)` liefert ein Promise auf
 // [{ value, label?, description? }]. `onPick(item)` wird bei Auswahl gerufen.
-export function LinkSearch({ placeholder, fetcher, onPick, autoFocus, disabled }) {
+export function LinkSearch({ placeholder, fetcher, onPick, autoFocus, disabled, searchWhenEmpty = false }) {
 	const [txt, setTxt] = useState("");
 	const [items, setItems] = useState([]);
 	const [open, setOpen] = useState(false);
 	const [loading, setLoading] = useState(false);
 	const [active, setActive] = useState(0);
+	const [focused, setFocused] = useState(false);
 	const boxRef = useRef(null);
 	const seq = useRef(0);
 
@@ -33,15 +34,18 @@ export function LinkSearch({ placeholder, fetcher, onPick, autoFocus, disabled }
 
 	useEffect(() => {
 		const t = setTimeout(() => {
-			if (txt.trim().length >= 1) search(txt.trim());
+			if (txt.trim().length >= 1 || (searchWhenEmpty && focused)) search(txt.trim());
 			else setItems([]);
 		}, 200);
 		return () => clearTimeout(t);
-	}, [txt, search]);
+	}, [txt, search, searchWhenEmpty, focused]);
 
 	useEffect(() => {
 		const onDoc = (e) => {
-			if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false);
+			if (boxRef.current && !boxRef.current.contains(e.target)) {
+				setOpen(false);
+				setFocused(false);
+			}
 		};
 		document.addEventListener("mousedown", onDoc);
 		return () => document.removeEventListener("mousedown", onDoc);
@@ -52,6 +56,7 @@ export function LinkSearch({ placeholder, fetcher, onPick, autoFocus, disabled }
 		setTxt("");
 		setItems([]);
 		setOpen(false);
+		setFocused(false);
 	};
 
 	const onKey = (e) => {
@@ -72,7 +77,10 @@ export function LinkSearch({ placeholder, fetcher, onPick, autoFocus, disabled }
 					autoFocus={autoFocus}
 					disabled={disabled}
 					onChange={(e) => setTxt(e.target.value)}
-					onFocus={() => items.length && setOpen(true)}
+					onFocus={() => {
+						setFocused(true);
+						if (items.length) setOpen(true);
+					}}
 					onKeyDown={onKey}
 				/>
 			</div>

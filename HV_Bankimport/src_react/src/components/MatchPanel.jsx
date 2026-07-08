@@ -918,7 +918,7 @@ function JournalEntryForm({ docname, row, onActionDone, notify }) {
 							<button className="btn sm subtle" onClick={() => setAccount(null)}><Icon name="x" /></button>
 						</div>
 					) : (
-						<LinkSearch placeholder="Konto suchen (z.B. 4970)…" fetcher={api.searchAccounts} onPick={setAccount} />
+						<LinkSearch placeholder="Konto suchen (z.B. 4970)…" fetcher={api.searchAccounts} onPick={setAccount} searchWhenEmpty />
 					)}
 					<div className="field-label" style={{ marginTop: 10 }}>Kostenstelle</div>
 					<input className="text-input" value={costCenter} placeholder="(optional)" onChange={(e) => setCostCenter(e.target.value)} />
@@ -945,7 +945,7 @@ function JournalEntryForm({ docname, row, onActionDone, notify }) {
 									<button className="btn sm subtle" onClick={() => updateSplit(s.id, { account: null })}><Icon name="x" /></button>
 								</div>
 							) : (
-								<LinkSearch placeholder="Konto suchen…" fetcher={api.searchAccounts} onPick={(item) => updateSplit(s.id, { account: item })} />
+								<LinkSearch placeholder="Konto suchen…" fetcher={api.searchAccounts} onPick={(item) => updateSplit(s.id, { account: item })} searchWhenEmpty />
 							)}
 							<div className="split-row-grid">
 								<div>
@@ -1037,7 +1037,7 @@ function InternalTransferPayment({ docname, row, onActionDone, notify }) {
 					<button className="btn sm subtle" onClick={() => setBankAccount(null)}><Icon name="x" /></button>
 				</div>
 			) : (
-				<LinkSearch placeholder="Bankkonto suchen…" fetcher={api.listBankAccounts} onPick={setBankAccount} />
+				<LinkSearch placeholder="Bankkonto suchen…" fetcher={api.listBankAccounts} onPick={setBankAccount} searchWhenEmpty />
 			)}
 			<div className="field-label" style={{ marginTop: 10 }}>Bemerkung</div>
 			<input className="text-input" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
