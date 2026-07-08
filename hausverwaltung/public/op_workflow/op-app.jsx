@@ -89,6 +89,7 @@ function OpApp() {
   const [showSettled, setShowSettled] = useStateA0(false);
   const [showWrittenOff, setShowWrittenOff] = useStateA0(false);
   const [showAbschlagszahlungen, setShowAbschlagszahlungen] = useStateA0(false);
+  const [sortByWertstellung, setSortByWertstellung] = useStateA0(false);
   const [search, setSearch] = useStateA0("");
   const [activeChip, setActiveChip] = useStateA0(null);
   const [directionFilter, setDirectionFilter] = useStateA0("alle");
@@ -162,10 +163,11 @@ function OpApp() {
         show_settled: showSettled ? 1 : 0,
         show_written_off: showWrittenOff ? 1 : 0,
         hide_abschlagszahlungen: showAbschlagszahlungen ? 0 : 1,
+        sortieren_nach_wertstellungsdatum: sortByWertstellung ? 1 : 0,
       }).catch(() => {});
     }, 300);
     return () => clearTimeout(timer);
-  }, [datumVon, datumBis, showSettled, showWrittenOff, showAbschlagszahlungen]);
+  }, [datumVon, datumBis, showSettled, showWrittenOff, showAbschlagszahlungen, sortByWertstellung]);
 
   // Modal-State
   const [modal, setModal] = useStateA0(null); // { type, row }
@@ -303,11 +305,12 @@ function OpApp() {
   // Voll-Filter angewendet
   const filteredRows = useMemoA0(() => {
     let rows = modeRows;
+    const filterDate = (row) => sortByWertstellung ? (row.wertstellungsdatum || row.faellig_am || "") : (row.faellig_am || "");
     if (immoFilter.size > 0) rows = rows.filter((r) => immoFilter.has(r.kostenstelle));
     if (partyFilter) rows = rows.filter((r) => r.party === partyFilter);
     if (directionFilter !== "alle") rows = rows.filter((r) => r.zahlungsrichtung === directionFilter);
-    if (datumVon) rows = rows.filter((r) => (r.faellig_am || "") >= datumVon);
-    if (datumBis) rows = rows.filter((r) => (r.faellig_am || "") <= datumBis);
+    if (datumVon) rows = rows.filter((r) => filterDate(r) >= datumVon);
+    if (datumBis) rows = rows.filter((r) => filterDate(r) <= datumBis);
     if (!showSettled) rows = rows.filter((r) => Math.abs(r.offen) > 0.01);
     if (!showWrittenOff) rows = rows.filter((r) => r.status !== "Written Off");
     if (activeChip === "overdue") rows = rows.filter(r => r.alter_tage > 0 && r.status !== "Written Off");
@@ -342,16 +345,16 @@ function OpApp() {
         r = ka.localeCompare(kb);
       }
       else if (sortierung === "Älteste zuerst" || sortierung === "Alter") r = (b.alter_tage || 0) - (a.alter_tage || 0);
-      else /* Fällig am */ r = (a.faellig_am || "").localeCompare(b.faellig_am || "");
+      else /* Fällig am / Wertstellung */ r = filterDate(a).localeCompare(filterDate(b));
 
       // Tiebreaker für deterministische Reihenfolge
-      if (r === 0) r = (a.faellig_am || "").localeCompare(b.faellig_am || "");
+      if (r === 0) r = filterDate(a).localeCompare(filterDate(b));
       if (r === 0) r = (a.belegnummer || "").localeCompare(b.belegnummer || "");
       return sortDir === "desc" ? -r : r;
     };
     const sorted = [...rows].sort(cmp);
     return sorted;
-  }, [modeRows, immoFilter, partyFilter, directionFilter, datumVon, datumBis, showSettled, showWrittenOff, activeChip, search, sortierung, sortDir]);
+  }, [modeRows, immoFilter, partyFilter, directionFilter, datumVon, datumBis, showSettled, showWrittenOff, activeChip, search, sortierung, sortDir, sortByWertstellung]);
 
   // Aggregate für Stats + Aging
   const stats = useMemoA0(() => {
@@ -397,7 +400,7 @@ function OpApp() {
 
   const exportCsv = () => {
     const cols = [
-      ["faellig_am", "Fällig am"],
+      [sortByWertstellung ? "wertstellungsdatum" : "faellig_am", sortByWertstellung ? "Wertstellung" : "Fällig am"],
       ["alter_tage", "Alter Tage"],
       ["party", mode === "Rechnungen" ? "Lieferant" : "Mieter"],
       ["kostenstelle", "Immobilie/Kostenstelle"],
@@ -712,6 +715,8 @@ function OpApp() {
           datumBis={datumBis}
           setDatumVon={setDatumVon}
           setDatumBis={setDatumBis}
+          sortByWertstellung={sortByWertstellung}
+          setSortByWertstellung={setSortByWertstellung}
         />
 
         {/* Toolbar */}
@@ -767,7 +772,7 @@ function OpApp() {
             <input className="op-search" placeholder="Beleg oder Bemerkung suchen…"
               value={search} onChange={(e) => setSearch(e.target.value)} />
             <select className="op-sort-select" value={sortierung} onChange={(e) => { setSortierung(e.target.value); setSortDir("asc"); }}>
-              <option>Fällig am</option>
+              <option value="Fällig am">{sortByWertstellung ? "Wertstellung" : "Fällig am"}</option>
               <option>Buchungsdatum</option>
               <option>Älteste zuerst</option>
               <option>Offener Betrag absteigend</option>
@@ -821,6 +826,7 @@ function OpApp() {
             mahnCandidateByInvoice={mahnCandidateByInvoice}
             expandedMahnRows={expandedMahnRows}
             onCreateDunning={openCandidateDunning}
+            sortByWertstellung={sortByWertstellung}
           />
         ) : (
           <FlatTable
@@ -843,6 +849,7 @@ function OpApp() {
             mahnCandidateByInvoice={mahnCandidateByInvoice}
             expandedMahnRows={expandedMahnRows}
             onCreateDunning={openCandidateDunning}
+            sortByWertstellung={sortByWertstellung}
           />
         )}
 
@@ -1433,9 +1440,11 @@ function FlatTable({
   mahnCandidateByInvoice,
   expandedMahnRows,
   onCreateDunning,
+  sortByWertstellung,
 }) {
   const allChecked = selectableIds.size > 0 && selected.size === selectableIds.size;
   const someChecked = selected.size > 0 && !allChecked;
+  const displayDate = (row) => sortByWertstellung ? (row.wertstellungsdatum || row.faellig_am) : row.faellig_am;
   const SortableTh = ({ col, label, style, className = "" }) => {
     const active = sortierung === col;
     const ind = active ? (sortDir === "asc" ? "▲" : "▼") : "◇";
@@ -1476,7 +1485,7 @@ function FlatTable({
                 onChange={toggleSelAll}
                 disabled={selectableIds.size === 0} />
             </th>
-            <SortableTh col="Fällig am" label="Fällig am" />
+            <SortableTh col="Fällig am" label={sortByWertstellung ? "Wertstellung" : "Fällig am"} />
             <SortableTh col="Alter" label="Alter" />
             <SortableTh col="Mieter" label={mode === "Rechnungen" ? "Lieferant" : "Mieter"} />
             {showObjekt && <SortableTh col="Immobilie" label="Immobilie" />}
@@ -1507,7 +1516,7 @@ function FlatTable({
                       disabled={!r.can_write_off}
                       onChange={() => toggleSel(r.belegnummer)} />
                   </td>
-                  <td className="col-date">{fmtDate_op(r.faellig_am)}</td>
+                  <td className="col-date">{fmtDate_op(displayDate(r))}</td>
                   <td><AgePill age={r.alter_tage} faellig_am={r.faellig_am} /></td>
                   <td className="col-party">
                     <PartyCellLabel party={r.party} />
@@ -1571,8 +1580,10 @@ function GroupedView({
   mahnCandidateByInvoice,
   expandedMahnRows,
   onCreateDunning,
+  sortByWertstellung,
 }) {
   const [openSet, setOpenSet] = useStateA0(() => new Set(groups.map(g => g.key)));
+  const displayDate = (row) => sortByWertstellung ? (row.wertstellungsdatum || row.faellig_am) : row.faellig_am;
   const toggle = (p) => {
     setOpenSet(prev => {
       const next = new Set(prev);
@@ -1642,7 +1653,7 @@ function GroupedView({
                                 disabled={!r.can_write_off}
                                 onChange={() => toggleSel(r.belegnummer)} />
                             </td>
-                            <td className="col-date">{fmtDate_op(r.faellig_am)}</td>
+                            <td className="col-date">{fmtDate_op(displayDate(r))}</td>
                             <td><AgePill age={r.alter_tage} faellig_am={r.faellig_am} /></td>
                             <td className="col-beleg">
                               <BelegLink row={r} />
@@ -1694,7 +1705,17 @@ function GroupedView({
 
 // ───────── Filter-Zeile: Immobilie + Datum ─────────
 
-function FilterRow({ availableImmos, immoFilter, setImmoFilter, datumVon, datumBis, setDatumVon, setDatumBis }) {
+function FilterRow({
+  availableImmos,
+  immoFilter,
+  setImmoFilter,
+  datumVon,
+  datumBis,
+  setDatumVon,
+  setDatumBis,
+  sortByWertstellung,
+  setSortByWertstellung,
+}) {
   const toggleImmo = (cc) => {
     setImmoFilter((prev) => {
       const next = new Set(prev);
@@ -1706,8 +1727,9 @@ function FilterRow({ availableImmos, immoFilter, setImmoFilter, datumVon, datumB
     setImmoFilter(new Set());
     setDatumVon("");
     setDatumBis("");
+    setSortByWertstellung(false);
   };
-  const hasFilter = immoFilter.size > 0 || datumVon || datumBis;
+  const hasFilter = immoFilter.size > 0 || datumVon || datumBis || sortByWertstellung;
 
   // Datum-Presets — alles dynamisch zur Render-Zeit berechnet
   const _now = new Date();
@@ -1766,18 +1788,26 @@ function FilterRow({ availableImmos, immoFilter, setImmoFilter, datumVon, datumB
       <div className="op-filter-sep" />
 
       <div className="op-filter-group">
-        <span className="op-filter-group-label">Fälligkeit</span>
+        <span className="op-filter-group-label">{sortByWertstellung ? "Wertstellung" : "Fälligkeit"}</span>
         <DateField_op
           value={datumVon}
           onChange={setDatumVon}
-          ariaLabel="Fälligkeit von"
+          ariaLabel={sortByWertstellung ? "Wertstellung von" : "Fälligkeit von"}
         />
         <span style={{ color: "var(--ink-3)" }}>—</span>
         <DateField_op
           value={datumBis}
           onChange={setDatumBis}
-          ariaLabel="Fälligkeit bis"
+          ariaLabel={sortByWertstellung ? "Wertstellung bis" : "Fälligkeit bis"}
         />
+        <label className="mk-toggle" title="Datumsfilter und Datumsspalte auf Wertstellungsdatum umschalten">
+          <input
+            type="checkbox"
+            checked={sortByWertstellung}
+            onChange={(e) => setSortByWertstellung(e.target.checked)}
+          />
+          W-Datum
+        </label>
         <span style={{ display: "inline-flex", gap: 2, marginLeft: 4 }}>
           {presets.map((p) => (
             <button

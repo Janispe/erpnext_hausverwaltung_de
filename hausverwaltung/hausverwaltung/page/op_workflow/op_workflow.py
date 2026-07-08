@@ -120,6 +120,8 @@ def _can_use_fast_open_items(filters: dict) -> bool:
     # ERPNext's receivable/payable report semantics.
     if not filters.get("invoice_only_fast_path"):
         return False
+    if filters.get("sortieren_nach_wertstellungsdatum"):
+        return False
     if filters.get("show_settled") or filters.get("show_written_off"):
         return False
     if filters.get("party_account") or filters.get("voucher_type") or filters.get("cost_center"):

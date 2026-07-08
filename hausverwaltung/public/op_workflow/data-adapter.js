@@ -81,6 +81,7 @@
       show_settled: 0,
       show_written_off: 0,
       hide_abschlagszahlungen: 1,
+      sortieren_nach_wertstellungsdatum: 0,
       ...defaultDateFilter(),
     };
   }
@@ -159,6 +160,7 @@
       party: raw.party,
       buchungsdatum: raw.buchungsdatum,
       faellig_am: raw.faellig_am,
+      wertstellungsdatum: raw.wertstellungsdatum,
       belegart: raw.belegart,
       belegnummer: raw.belegnummer,
       member_voucher_nos: Array.isArray(raw.member_voucher_nos) ? raw.member_voucher_nos : [],
