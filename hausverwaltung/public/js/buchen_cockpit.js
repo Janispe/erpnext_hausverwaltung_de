@@ -483,7 +483,15 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			options: "Account",
 			default: opts.zahlungskonto || "",
 			depends_on: "eval:doc.zahlung_sofort",
-			description: __("Zum Beispiel Kreditkarte Verwalter, Kasse oder Vorschuss Hauswart."),
+			description: __(
+				"Bei Barzahlung Kassenkonto wählen; bei Vorschuss/Auslage oder sonstiger Verrechnung ein passendes Verrechnungskonto."
+			),
+			get_query() {
+				if (dialog.get_value("zahlungsart") === "Barzahlung") {
+					return { filters: { account_type: "Cash", is_group: 0 } };
+				}
+				return { filters: { is_group: 0 } };
+			},
 		},
 		{
 			fieldtype: "Small Text",

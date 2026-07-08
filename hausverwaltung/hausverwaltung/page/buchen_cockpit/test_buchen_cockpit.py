@@ -343,7 +343,7 @@ class TestBuchenCockpit(unittest.TestCase):
 				return frappe._dict({
 					"company": "Hausverwaltung Peters",
 					"is_group": 0,
-					"account_type": "Bank",
+					"account_type": "Cash",
 					"root_type": "Asset",
 				})
 			return None
@@ -393,6 +393,98 @@ class TestBuchenCockpit(unittest.TestCase):
 		self.assertEqual(journal.accounts[0].debit_in_account_currency, 99)
 		self.assertEqual(journal.accounts[1].account, "1000 - Kasse - HV")
 		self.assertEqual(journal.accounts[1].credit_in_account_currency, 99)
+
+	def test_create_purchase_invoice_rejects_immediate_cash_payment_with_bank_account(self):
+		invoice = _FakeInvoice()
+
+		def db_get_value(doctype, name_or_filters, fieldname=None, as_dict=False):
+			if doctype == "Account" and fieldname == "account_currency":
+				return "EUR"
+			if doctype == "Account" and fieldname == ["company", "is_group", "account_type", "root_type"]:
+				return frappe._dict({
+					"company": "Hausverwaltung Peters",
+					"is_group": 0,
+					"account_type": "Bank",
+					"root_type": "Asset",
+				})
+			return None
+
+		with patch.object(cockpit.frappe, "new_doc", return_value=invoice), \
+			 patch.object(cockpit, "_derive_company_from_rows", return_value="Hausverwaltung Peters"), \
+			 patch.object(cockpit, "ensure_default_service_item", return_value="VHB-SERVICE"), \
+			 patch.object(cockpit, "_get_payable_account", return_value="1600 - Kreditoren - HV"), \
+			 patch.object(cockpit, "_get_kostenart_details", return_value={"konto": "4500 - Hausgeld - HV"}), \
+			 patch.object(cockpit, "_has_field", return_value=True), \
+			 patch.object(cockpit, "_attach_source_file"), \
+			 patch.object(cockpit.frappe.db, "get_value", side_effect=db_get_value), \
+			 patch.object(cockpit.frappe.db, "exists", return_value=True), \
+			 self.assertRaisesRegex(frappe.ValidationError, "Bei Barzahlung bitte ein Kassenkonto wählen"):
+			cockpit.create_purchase_invoice(
+				lieferant="SUP-1",
+				rechnungsdatum="2026-05-06",
+				zahlungsart="Barzahlung",
+				zahlung_sofort=1,
+				zahlungskonto="1200 - Bank - HV",
+				positionen=[
+					{
+						"betrag": 99,
+						"kostenstelle": "CC-HV",
+						"umlagefaehig": "Kostenart nicht umlagefaehig",
+						"kostenart": "Instandhaltung",
+					}
+				],
+				submit_doc=1,
+			)
+
+	def test_create_purchase_invoice_allows_immediate_advance_with_non_cash_balance_account(self):
+		invoice = _FakeInvoice()
+		journal = _FakeJournalEntry()
+
+		def db_get_value(doctype, name_or_filters, fieldname=None, as_dict=False):
+			if doctype == "Account" and fieldname == "account_currency":
+				return "EUR"
+			if doctype == "Account" and fieldname == ["company", "is_group", "account_type", "root_type"]:
+				return frappe._dict({
+					"company": "Hausverwaltung Peters",
+					"is_group": 0,
+					"account_type": "Bank",
+					"root_type": "Asset",
+				})
+			return None
+
+		with patch.object(cockpit.frappe, "new_doc", side_effect=[invoice, journal]), \
+			 patch.object(cockpit, "_derive_company_from_rows", return_value="Hausverwaltung Peters"), \
+			 patch.object(cockpit, "ensure_default_service_item", return_value="VHB-SERVICE"), \
+			 patch.object(cockpit, "_get_payable_account", return_value="1600 - Kreditoren - HV"), \
+			 patch.object(cockpit, "_get_kostenart_details", return_value={"konto": "4500 - Hausgeld - HV"}), \
+			 patch.object(cockpit, "_has_field", return_value=True), \
+			 patch.object(cockpit, "_attach_source_file"), \
+			 patch.object(cockpit.frappe.db, "get_value", side_effect=db_get_value), \
+			 patch.object(cockpit.frappe.db, "exists", return_value=True), \
+			 patch.object(cockpit.frappe, "msgprint"):
+			result = cockpit.create_purchase_invoice(
+				lieferant="SUP-1",
+				rechnungsdatum="2026-05-06",
+				zahlungsart="Vorschuss/Auslage",
+				zahlung_sofort=1,
+				zahlungskonto="1370 - Vorschuss Hauswart - HV",
+				positionen=[
+					{
+						"betrag": 99,
+						"kostenstelle": "CC-HV",
+						"umlagefaehig": "Kostenart nicht umlagefaehig",
+						"kostenart": "Instandhaltung",
+					}
+				],
+				submit_doc=1,
+			)
+
+		self.assertEqual(result, {
+			"name": "SINV-COCKPIT-1",
+			"submitted": True,
+			"settlement_journal_entry": "JV-COCKPIT-1",
+		})
+		self.assertEqual(journal.accounts[1].account, "1370 - Vorschuss Hauswart - HV")
 
 	def test_create_purchase_invoice_requires_wohnung_for_einzelverteilung(self):
 		with patch.object(cockpit, "_derive_company_from_rows", return_value="Hausverwaltung Peters"), \

@@ -471,7 +471,13 @@ def _derive_cost_center_from_mietvertrag(mietvertrag: str) -> str | None:
     return frappe.db.get_value("Immobilie", immobilie, "kostenstelle")
 
 
-def _validate_settlement_account(account: str, *, company: str, payable_account: str) -> None:
+def _validate_settlement_account(
+    account: str,
+    *,
+    company: str,
+    payable_account: str,
+    zahlungsart: str | None = None,
+) -> None:
     if not account:
         frappe.throw("Bitte ein Zahlungs-/Verrechnungskonto auswählen.")
     if account == payable_account:
@@ -496,6 +502,8 @@ def _validate_settlement_account(account: str, *, company: str, payable_account:
             "Bitte ein Sachkonto für Kreditkarte/Kasse/Vorschuss wählen, "
             "kein Debitoren-/Kreditorenkonto."
         )
+    if (zahlungsart or "").strip() == "Barzahlung" and values.get("account_type") != "Cash":
+        frappe.throw("Bei Barzahlung bitte ein Kassenkonto wählen.")
     if values.get("root_type") in {"Income", "Expense"}:
         frappe.throw(
             "Bitte ein Bilanzkonto für Kreditkarte/Kasse/Vorschuss wählen, "
@@ -509,6 +517,7 @@ def _create_purchase_invoice_settlement_journal(
     settlement_account: str,
     posting_date,
     wertstellungsdatum=None,
+    zahlungsart: str | None = None,
     remarks: str | None = None,
 ) -> str:
     """Gleicht eine gebuchte Eingangsrechnung gegen ein Zahlungs-/Clearingkonto aus.
@@ -530,6 +539,7 @@ def _create_purchase_invoice_settlement_journal(
         settlement_account,
         company=pi.company,
         payable_account=payable_account,
+        zahlungsart=zahlungsart,
     )
 
     user_remark = (remarks or "").strip() or f"Ausgleich Eingangsrechnung {pi.name}"
@@ -750,6 +760,7 @@ def create_purchase_invoice(**kwargs) -> dict:
                 settlement_account=kwargs.get("zahlungskonto"),
                 posting_date=posting_date,
                 wertstellungsdatum=wertstellungsdatum,
+                zahlungsart=kwargs.get("zahlungsart"),
                 remarks=kwargs.get("zahlungsbemerkung") or user_remarks,
             )
         frappe.msgprint(
