@@ -44,6 +44,7 @@ def rename_bank_account_after_save(doc, method: str | None = None) -> None:
 def sync_all_immobilie_bank_account_names() -> None:
 	"""Rename all company Bank Accounts that can be mapped to an Immobilie."""
 	sync_all_immobilie_gl_bank_account_names()
+	sync_all_immobilie_gl_cash_account_names()
 
 	for row in frappe.get_all(
 		"Bank Account",
@@ -69,6 +70,7 @@ def sync_all_immobilie_bank_account_names() -> None:
 def sync_bank_account_names_for_immobilie(doc, method: str | None = None) -> None:
 	"""Refresh Bank Account names when an Immobilie's linked GL accounts change."""
 	sync_gl_bank_account_names_for_immobilie(doc)
+	sync_gl_cash_account_names_for_immobilie(doc)
 
 	accounts = [row.get("konto") for row in (doc.get("bankkonten") or []) if row.get("konto")]
 	if not accounts:
@@ -104,7 +106,19 @@ def sync_all_immobilie_gl_bank_account_names() -> None:
 		order_by="parent asc, idx asc",
 		limit_page_length=0,
 	)
-	_sync_gl_bank_account_rows(rows)
+	_sync_gl_account_rows(rows, account_type="Bank", default_label="Bank", log_label="GL-Bankkonto")
+
+
+def sync_all_immobilie_gl_cash_account_names() -> None:
+	"""Rename GL cash accounts linked from Immobilie.kassenkonten."""
+	rows = frappe.get_all(
+		"Immobilie Kassenkonto",
+		filters={"parenttype": "Immobilie", "konto": ["is", "set"]},
+		fields=["parent", "konto"],
+		order_by="parent asc, idx asc",
+		limit_page_length=0,
+	)
+	_sync_gl_account_rows(rows, account_type="Cash", default_label="Kasse", log_label="GL-Kassenkonto")
 
 
 def sync_gl_bank_account_names_for_immobilie(doc, method: str | None = None) -> None:
@@ -113,10 +127,19 @@ def sync_gl_bank_account_names_for_immobilie(doc, method: str | None = None) -> 
 		for row in (doc.get("bankkonten") or [])
 		if row.get("konto")
 	]
-	_sync_gl_bank_account_rows(rows)
+	_sync_gl_account_rows(rows, account_type="Bank", default_label="Bank", log_label="GL-Bankkonto")
 
 
-def _sync_gl_bank_account_rows(rows: list[dict]) -> None:
+def sync_gl_cash_account_names_for_immobilie(doc, method: str | None = None) -> None:
+	rows = [
+		{"parent": doc.name, "konto": row.get("konto")}
+		for row in (doc.get("kassenkonten") or [])
+		if row.get("konto")
+	]
+	_sync_gl_account_rows(rows, account_type="Cash", default_label="Kasse", log_label="GL-Kassenkonto")
+
+
+def _sync_gl_account_rows(rows: list[dict], *, account_type: str, default_label: str, log_label: str) -> None:
 	for row in rows or []:
 		immobilie = (row.get("parent") or "").strip()
 		account = (row.get("konto") or "").strip()
@@ -124,26 +147,26 @@ def _sync_gl_bank_account_rows(rows: list[dict]) -> None:
 			continue
 
 		try:
-			_sync_gl_bank_account_name(account, immobilie)
+			_sync_gl_account_name(account, immobilie, account_type=account_type, default_label=default_label)
 		except Exception:
 			frappe.log_error(
-				title=f"GL-Bankkonto Naming Sync fehlgeschlagen: {account}",
+				title=f"{log_label} Naming Sync fehlgeschlagen: {account}",
 				message=frappe.get_traceback(),
 			)
 
 
-def _sync_gl_bank_account_name(account: str, immobilie: str) -> str | None:
+def _sync_gl_account_name(account: str, immobilie: str, *, account_type: str, default_label: str) -> str | None:
 	row = frappe.db.get_value(
 		"Account",
 		account,
 		["name", "account_name", "account_number", "account_type", "is_group"],
 		as_dict=True,
 	)
-	if not row or row.get("is_group") or row.get("account_type") != "Bank":
+	if not row or row.get("is_group") or row.get("account_type") != account_type:
 		return None
 
 	old_account_name = (row.get("account_name") or "").strip()
-	new_account_name = _desired_gl_bank_account_name(old_account_name, immobilie)
+	new_account_name = _desired_gl_account_name(old_account_name, immobilie, default_label)
 	if not new_account_name or new_account_name == old_account_name:
 		return row.get("name")
 
@@ -157,17 +180,33 @@ def _sync_gl_bank_account_name(account: str, immobilie: str) -> str | None:
 
 
 def _desired_gl_bank_account_name(account_name: str, immobilie: str) -> str | None:
+	return _desired_gl_account_name(account_name, immobilie, "Bank")
+
+
+def _desired_gl_cash_account_name(account_name: str, immobilie: str) -> str | None:
+	return _desired_gl_account_name(account_name, immobilie, "Kasse")
+
+
+def _desired_gl_account_name(account_name: str, immobilie: str, default_label: str) -> str | None:
 	immo = (immobilie or "").strip()
 	if not immo:
 		return None
 
-	name = (account_name or "Bank").strip()
+	label = (default_label or "Konto").strip() or "Konto"
+	name = (account_name or label).strip()
 	if immo.lower() in name.lower():
 		return name
 
-	if name.lower().startswith("bank"):
-		return f"Bank {immo}{name[4:]}".strip()
+	if _starts_with_label_word(name, label):
+		return f"{label} {immo}{name[len(label):]}".strip()
 	return f"{name} {immo}".strip()
+
+
+def _starts_with_label_word(name: str, label: str) -> bool:
+	if not name.lower().startswith(label.lower()):
+		return False
+	remainder = name[len(label):]
+	return not remainder or not remainder[0].isalnum()
 
 
 def get_desired_account_name(doc) -> str | None:
