@@ -44,6 +44,11 @@ ITEM_CATEGORY_MAP = {
 	"HK Guthaben": "guthaben_nachzahlungen",
 	# Legacy default from Buchungs-Cockpit before it used a Mieterkonto item.
 	"VHB-SERVICE": "guthaben_nachzahlungen",
+	# Dunning fee/interest Sales Invoices. `Mahngebuehr` is the current item
+	# code; `Mahnung`/`Mahngebühr` exist in legacy data.
+	"Mahngebuehr": "guthaben_nachzahlungen",
+	"Mahnung": "guthaben_nachzahlungen",
+	"Mahngebühr": "guthaben_nachzahlungen",
 	"Sonstiges": "sonstiges",
 	"Sonstige": "sonstiges",
 }

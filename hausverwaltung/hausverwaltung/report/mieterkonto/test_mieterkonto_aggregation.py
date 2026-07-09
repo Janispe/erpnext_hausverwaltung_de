@@ -263,6 +263,24 @@ class TestGroupInvoices(TestCase):
 
 		self.assertEqual(amounts["sonstiges"], 35.0)
 
+	def test_dunning_fee_items_map_to_guthaben_nachzahlungen(self):
+		for item_code in ("Mahngebuehr", "Mahnung", "Mahngebühr"):
+			with self.subTest(item_code=item_code):
+				amounts = _category_amounts_from_items(
+					"SI-MAHNUNG",
+					[
+						{
+							"parent": "SI-MAHNUNG",
+							"item_code": item_code,
+							"amount": 12.0,
+							"base_amount": 12.0,
+						}
+					],
+					12.0,
+				)
+
+				self.assertEqual(amounts["guthaben_nachzahlungen"], 12.0)
+
 	def test_sonstiges_account_maps_to_sonstiges(self):
 		self.assertEqual(
 			_categorize_offset_accounts({"Sonstige betriebliche Ertraege - HV"}),
