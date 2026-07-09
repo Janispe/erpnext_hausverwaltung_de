@@ -29,6 +29,7 @@ CATEGORY_LABELS = {
 	"vorauszahlungen": "VZ",
 	"sonstiges": "Sonstig",
 }
+DUNNING_FEE_ITEM_CODES = ("Mahngebuehr", "Mahnung", "Mahngebühr")
 ITEM_CATEGORY_MAP = {
 	"Miete": "miete",
 	"Untermietzuschlag": "miete",
@@ -46,9 +47,9 @@ ITEM_CATEGORY_MAP = {
 	"VHB-SERVICE": "guthaben_nachzahlungen",
 	# Dunning fee/interest Sales Invoices. `Mahngebuehr` is the current item
 	# code; `Mahnung`/`Mahngebühr` exist in legacy data.
-	"Mahngebuehr": "guthaben_nachzahlungen",
-	"Mahnung": "guthaben_nachzahlungen",
-	"Mahngebühr": "guthaben_nachzahlungen",
+	"Mahngebuehr": "sonstiges",
+	"Mahnung": "sonstiges",
+	"Mahngebühr": "sonstiges",
 	"Sonstiges": "sonstiges",
 	"Sonstige": "sonstiges",
 }
@@ -85,6 +86,7 @@ class InvoiceInfo:
 	remarks: str | None
 	category_amounts: dict[str, float] = field(default_factory=dict)
 	mietabrechnung_id: str | None = None
+	is_dunning_fee_invoice: bool = False
 	# Wenn diese InvoiceInfo eine Aggregat-Gruppe ist: Original-SI-Namen.
 	# Solo-Invoices haben `[name]`. Wird beim Settlement-Lookup gebraucht,
 	# weil PLE gegen die echten SI-Namen läuft.
@@ -183,7 +185,7 @@ def _get_invoices(filters) -> dict[str, InvoiceInfo]:
 			for row in rows
 			if getdate(row.get("custom_wertstellungsdatum") or row.posting_date) <= filters.to_date
 		]
-	category_amounts_by_invoice = _get_invoice_category_amounts_bulk(
+	category_amounts_by_invoice, dunning_fee_invoices = _get_invoice_category_amounts_bulk(
 		[row.name for row in rows],
 		{row.name: flt(row.grand_total) for row in rows},
 	)
@@ -205,6 +207,7 @@ def _get_invoices(filters) -> dict[str, InvoiceInfo]:
 			remarks=row.remarks,
 			category_amounts=category_amounts_by_invoice.get(row.name, _empty_category_amounts()),
 			mietabrechnung_id=row.get("mietabrechnung_id"),
+			is_dunning_fee_invoice=row.name in dunning_fee_invoices,
 			member_invoices=[row.name],
 		)
 		invoices[info.name] = info
@@ -296,6 +299,7 @@ def _merge_invoices(group_key: str, members: list[InvoiceInfo]) -> InvoiceInfo:
 		remarks=header,
 		category_amounts=_round_amounts(merged_categories),
 		mietabrechnung_id=group_key,
+		is_dunning_fee_invoice=any(m.is_dunning_fee_invoice for m in members),
 		member_invoices=[m.name for m in members],
 	)
 
@@ -317,9 +321,9 @@ def _invoice_value_date(invoice: InvoiceInfo):
 def _get_invoice_category_amounts_bulk(
 	invoice_names: list[str],
 	grand_totals: dict[str, float],
-) -> dict[str, dict[str, float]]:
+) -> tuple[dict[str, dict[str, float]], set[str]]:
 	if not invoice_names:
-		return {}
+		return {}, set()
 
 	items_by_invoice: dict[str, list] = {name: [] for name in invoice_names}
 	for chunk in _chunks(invoice_names, 500):
@@ -331,6 +335,11 @@ def _get_invoice_category_amounts_bulk(
 		):
 			items_by_invoice.setdefault(item.parent, []).append(item)
 
+	dunning_fee_invoices = {
+		invoice_name
+		for invoice_name, items in items_by_invoice.items()
+		if _has_dunning_fee_item(items)
+	}
 	return {
 		invoice_name: _category_amounts_from_items(
 			invoice_name,
@@ -338,7 +347,7 @@ def _get_invoice_category_amounts_bulk(
 			grand_totals.get(invoice_name, 0),
 		)
 		for invoice_name, items in items_by_invoice.items()
-	}
+	}, dunning_fee_invoices
 
 
 def _category_amounts_from_items(invoice_name: str, items, grand_total: float) -> dict[str, float]:
@@ -378,6 +387,10 @@ def _get_item_category(item) -> str:
 			", ".join(ITEM_CATEGORY_MAP),
 		)
 	)
+
+
+def _has_dunning_fee_item(items) -> bool:
+	return any((item.get("item_code") or "") in DUNNING_FEE_ITEM_CODES for item in items)
 
 
 def _allocate_amount(amount: float, base_amounts: dict[str, float]) -> dict[str, float]:
@@ -431,7 +444,7 @@ def _build_invoice_transactions(invoices: dict[str, InvoiceInfo]) -> list[dict[s
 				# Output-Row geschrieben (Spalte wurde entfernt, weil sie für
 				# Rechnungs-Zeilen redundant zur ``belegnummer`` war).
 				"rechnung": invoice.name,
-				"beschreibung": invoice.remarks or _("Rechnung"),
+				"beschreibung": _invoice_description(invoice),
 				"due_date": invoice.due_date,
 				"status": invoice.status,
 				"currency": invoice.currency,
@@ -444,6 +457,12 @@ def _build_invoice_transactions(invoices: dict[str, InvoiceInfo]) -> list[dict[s
 			}
 		)
 	return transactions
+
+
+def _invoice_description(invoice: InvoiceInfo) -> str:
+	if invoice.is_dunning_fee_invoice:
+		return _("Mahnung")
+	return invoice.remarks or _("Rechnung")
 
 
 def _build_settlement_transactions(

@@ -263,7 +263,7 @@ class TestGroupInvoices(TestCase):
 
 		self.assertEqual(amounts["sonstiges"], 35.0)
 
-	def test_dunning_fee_items_map_to_guthaben_nachzahlungen(self):
+	def test_dunning_fee_items_map_to_sonstiges(self):
 		for item_code in ("Mahngebuehr", "Mahnung", "Mahngebühr"):
 			with self.subTest(item_code=item_code):
 				amounts = _category_amounts_from_items(
@@ -279,7 +279,23 @@ class TestGroupInvoices(TestCase):
 					12.0,
 				)
 
-				self.assertEqual(amounts["guthaben_nachzahlungen"], 12.0)
+				self.assertEqual(amounts["sonstiges"], 12.0)
+
+	def test_dunning_fee_invoice_description_is_mahnung(self):
+		invoice = _make_invoice(
+			"SI-MAHNUNG",
+			grand_total=12.0,
+			outstanding=12.0,
+			categories={"sonstiges": 12.0},
+		)
+		invoice.remarks = "Mahngebühr/Verzugszinsen aus Mahnung DUN-1"
+		invoice.is_dunning_fee_invoice = True
+
+		transaction = _build_invoice_transactions({"SI-MAHNUNG": invoice})[0]
+		row = _transaction_to_row(transaction, balance=12.0)
+
+		self.assertEqual(row["beschreibung"], "Mahnung")
+		self.assertEqual(row["betrag_sonstiges"], 12.0)
 
 	def test_sonstiges_account_maps_to_sonstiges(self):
 		self.assertEqual(
