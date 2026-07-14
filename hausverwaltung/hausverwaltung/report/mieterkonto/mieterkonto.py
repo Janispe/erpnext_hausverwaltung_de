@@ -64,7 +64,7 @@ ACCOUNT_CATEGORY_MAP = {
 	"heizkosten": "heizkosten",
 	"heizkostenvorauszahlung": "heizkosten",
 	"guthaben/nachzahlungen": "guthaben_nachzahlungen",
-	"mahnungen": "guthaben_nachzahlungen",
+	"mahnungen": "sonstiges",
 	"sonstig": "sonstiges",
 }
 TOLERANCE = 0.01

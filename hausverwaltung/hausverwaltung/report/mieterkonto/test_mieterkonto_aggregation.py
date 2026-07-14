@@ -303,6 +303,12 @@ class TestGroupInvoices(TestCase):
 			"sonstiges",
 		)
 
+	def test_mahnungen_account_maps_to_sonstiges(self):
+		self.assertEqual(
+			_categorize_offset_accounts({"Mahnungen - HV"}),
+			"sonstiges",
+		)
+
 	def test_payment_entry_payment_and_advance_merge_to_one_row(self):
 		base = {
 			"date": date(2025, 11, 5),
