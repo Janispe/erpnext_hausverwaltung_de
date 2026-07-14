@@ -641,6 +641,7 @@ def _make_sales_invoice(
     do_submit: bool = True,
     company: Optional[str] = None,
     due_date: Optional[str] = None,
+    wertstellungsdatum: Optional[str] = None,
     cost_center: Optional[str] = None,
     wohnung: Optional[str] = None,
 ) -> str:
@@ -654,6 +655,8 @@ def _make_sales_invoice(
     # (siehe transaction_base.py) — sonst wäre due_date inkonsistent mit posting_date.
     si.posting_date = post_date
     si.set_posting_time = 1
+    if wertstellungsdatum and _has_field("Sales Invoice", "custom_wertstellungsdatum"):
+        si.custom_wertstellungsdatum = getdate(wertstellungsdatum)
     if is_return:
         # Guthaben/Credit Notes sind sofort fällig — keine 21-Tage-Frist sinnvoll.
         si.due_date = post_date
@@ -785,7 +788,11 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
     if not customer:
         frappe.throw("Kein Mieter auf dem Mietvertrag gefunden.")
 
-    posting_date = cstr(doc.bis or doc.datum or frappe.utils.today())
+    # Die Forderung bzw. das Guthaben entsteht mit Erstellung der Abrechnung und
+    # wird deshalb heute gebucht. Das Ende des Abrechnungszeitraums dient nur als
+    # Leistungs-/Wertstellungsdatum für die periodische Zuordnung.
+    posting_date = cstr(frappe.utils.today())
+    wertstellungsdatum = cstr(doc.bis or doc.datum or posting_date)
     due_date = None
     head_name = (doc.immobilien_abrechnung or "").strip()
     if head_name:
@@ -845,6 +852,7 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
                     do_submit=True,
                     company=company,
                     due_date=due_date,
+                    wertstellungsdatum=wertstellungsdatum,
                     cost_center=cost_center,
                     wohnung=wohnung,
                 )
@@ -868,6 +876,7 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
                     is_return=1,
                     do_submit=True,
                     company=company,
+                    wertstellungsdatum=wertstellungsdatum,
                     cost_center=cost_center,
                     wohnung=wohnung,
                 )
@@ -935,7 +944,7 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
                 "credit": _quantize_money(use),
             })
             remaining = _quantize_money(remaining - use)
-        je_name = _allocate_via_journal_entry(company, entries, posting_date, posting_date)
+        je_name = _allocate_via_journal_entry(company, entries, posting_date, wertstellungsdatum)
         if je_name:
             created["journal_entry"] = je_name
 

@@ -1,7 +1,7 @@
 # See license.txt
 
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 import unittest
@@ -10,6 +10,59 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten import abrechnung_erst
 
 
 class TestBetriebskostenabrechnungMieter(unittest.TestCase):
+	def test_make_sales_invoice_sets_wertstellungsdatum(self):
+		si = MagicMock()
+		si.name = "SI-NEW"
+
+		with patch.object(bk.frappe, "new_doc", return_value=si), \
+			 patch.object(bk, "_has_field", return_value=True):
+			name = bk._make_sales_invoice(
+				"CUST-1",
+				"2026-07-15",
+				"BK Nachzahlung",
+				Decimal("100.00"),
+				wertstellungsdatum="2025-12-31",
+			)
+
+		self.assertEqual(name, "SI-NEW")
+		self.assertEqual(str(si.posting_date), "2026-07-15")
+		self.assertEqual(str(si.custom_wertstellungsdatum), "2025-12-31")
+
+	def test_settlement_uses_today_for_posting_and_period_end_for_wertstellung(self):
+		for case, prepayments, amount, expected_return in (
+			("nachzahlung", 0, 100, 0),
+			("guthaben", 100, 0, 1),
+		):
+			with self.subTest(case=case):
+				doc = frappe._dict({
+					"name": f"BKA-{case}",
+					"wohnung": "WHG-1",
+					"mietvertrag": "MV-1",
+					"customer": "CUST-1",
+					"bis": "2025-12-31",
+					"datum": "2025-12-31",
+					"von": "2025-01-01",
+					"immobilien_abrechnung": None,
+					"vorrauszahlungen": prepayments,
+					"abrechnung": [frappe._dict({"betrag": amount})],
+				})
+				doc.add_comment = lambda _kind, text: None
+				doc.db_set = lambda updates: None
+
+				with patch.object(bk.frappe, "get_doc", return_value=doc), \
+					 patch.object(bk.frappe.utils, "today", return_value="2026-07-15"), \
+					 patch.object(bk, "_run_settlement_selfcheck"), \
+					 patch.object(bk, "_get_default_company", return_value="COMP-1"), \
+					 patch.object(bk, "_cost_center_for_abrechnung_doc", return_value=None), \
+					 patch.object(bk, "_ensure_item_with_income", side_effect=lambda code, _name, _company: code), \
+					 patch.object(bk, "_bk_invoice_outstanding_shares", return_value=[]), \
+					 patch.object(bk, "_make_sales_invoice", return_value="SI-NEW") as make_si:
+					bk.create_bk_settlement_documents(doc.name)
+
+				self.assertEqual(make_si.call_args.args[1], "2026-07-15")
+				self.assertEqual(make_si.call_args.kwargs["wertstellungsdatum"], "2025-12-31")
+				self.assertEqual(make_si.call_args.kwargs["is_return"], expected_return)
+
 	def test_mietvertrag_stichtag_ignores_contracts_ended_before_stichtag(self):
 		with patch.object(bk.frappe.db, "sql", return_value=[]) as sql:
 			res = bk._bestehender_mietvertrag_fuer_stichtag("WHG-1", "2026-12-31")
@@ -44,6 +97,7 @@ class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 		doc.db_set = lambda updates: setattr(doc, "updates", updates)
 
 		with patch.object(bk.frappe, "get_doc", return_value=doc), \
+			 patch.object(bk.frappe.utils, "today", return_value="2027-07-15"), \
 			 patch.object(bk, "_run_settlement_selfcheck"), \
 			 patch.object(bk, "_get_default_company", return_value="COMP-1"), \
 			 patch.object(bk, "_cost_center_for_abrechnung_doc", return_value=None), \
@@ -61,6 +115,7 @@ class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 
 		make_si.assert_not_called()
 		make_je.assert_called_once()
+		self.assertEqual(make_je.call_args.args[2:], ("2027-07-15", "2026-12-31"))
 		self.assertIsNone(res["created"]["sales_invoice"])
 		self.assertEqual(res["created"]["journal_entry"], "JE-1")
 		self.assertIn("kein Null-Euro-Beleg", res["created"]["note"])
@@ -83,6 +138,7 @@ class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 		doc.db_set = lambda updates: setattr(doc, "updates", updates)
 
 		with patch.object(bk.frappe, "get_doc", return_value=doc), \
+			 patch.object(bk.frappe.utils, "today", return_value="2027-07-15"), \
 			 patch.object(bk, "_run_settlement_selfcheck"), \
 			 patch.object(bk, "_get_default_company", return_value="COMP-1"), \
 			 patch.object(bk, "_cost_center_for_abrechnung_doc", return_value=None), \
@@ -100,6 +156,7 @@ class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 
 		make_si.assert_not_called()
 		make_je.assert_called_once()
+		self.assertEqual(make_je.call_args.args[2:], ("2027-07-15", "2026-12-31"))
 		self.assertIsNone(res["created"]["credit_note"])
 		self.assertEqual(res["created"]["journal_entry"], "JE-2")
 		self.assertIn("kein Null-Euro-Beleg", res["created"]["note"])
