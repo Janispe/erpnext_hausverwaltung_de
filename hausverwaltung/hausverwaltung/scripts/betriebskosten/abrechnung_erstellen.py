@@ -464,11 +464,19 @@ def create_bk_abrechnung_wohnung(
         else:
             seg_stichtag = seg_end
 
-        # Segmentweise: Rechnung muss im Segment liegen, gezählt wird nur bezahlter BK-Anteil.
-        prep = get_bk_prepayment_summary(wohnung=wohnung, from_date=seg_start, to_date=seg_end)
+        mv = seg.get("mietvertrag")
+        customer = _get_customer_for_mietvertrag(mv)
+        # Vorauszahlungen gehören über Customer + Wertstellungsdatum zum Mieter.
+        # Deshalb gilt hier der volle Abrechnungszeitraum und nicht das auf die
+        # Vertragsdauer gekürzte Segment (relevant bei untermonatigem Einzug).
+        prep = get_bk_prepayment_summary(
+            wohnung=wohnung,
+            from_date=von,
+            to_date=bis,
+            customer=customer,
+        )
         paid_total = _to_decimal(prep.get("paid_total"))
 
-        mv = seg.get("mietvertrag")
         mieter_rows = _vertragspartner_rows(mv, seg_start, seg_end) if mv else []
 
         zustand = _zustand_am(wohnung, seg_stichtag)
@@ -481,7 +489,7 @@ def create_bk_abrechnung_wohnung(
             "bis": cstr(seg_end),
             "wohnung": wohnung,
             "mietvertrag": mv,
-            "customer": _get_customer_for_mietvertrag(mv),
+            "customer": customer,
             "vorrauszahlungen": _as_money(paid_total),
             "wohnungszustand": zustand,
             "größe": groesse,

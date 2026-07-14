@@ -112,11 +112,35 @@ def _customer_segments_for_wohnung(wohnung: str, from_date: Optional[str | date]
 	return segments
 
 
+def _invoice_segments_for_wohnung(
+	wohnung: str,
+	from_date: Optional[str | date],
+	to_date: Optional[str | date],
+	customer: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+	"""Rechnungsfilter für Vorauszahlungen.
+
+	Bei einer konkreten Mieterabrechnung gilt der gesamte Abrechnungszeitraum;
+	der Customer trennt die Vorauszahlungen der aufeinanderfolgenden Mieter.
+	Ohne Customer bleibt die bisherige wohnungsweite Vertragssegment-Logik.
+	"""
+	if not customer:
+		return _customer_segments_for_wohnung(wohnung, from_date, to_date)
+
+	contract_segments = _customer_segments_for_wohnung(wohnung, from_date, to_date)
+	if customer not in {segment.get("customer") for segment in contract_segments}:
+		return []
+
+	fd, td = _date_range(from_date, to_date)
+	return [{"customer": customer, "start": fd, "end": td}]
+
+
 def _bk_invoice_names_for_wohnung(
 	wohnung: str,
 	from_date: Optional[str | date],
 	to_date: Optional[str | date],
 	item_code: str = BK_ITEM_CODE,
+	customer: Optional[str] = None,
 ) -> List[str]:
 	"""Liefert alle Sales Invoice Namen (docstatus=1) für die Wohnung über Mieter/Verträge.
 
@@ -125,7 +149,7 @@ def _bk_invoice_names_for_wohnung(
 	``HK_ITEM_CODE`` übergeben.
 	"""
 	eff = _invoice_effective_date_expr("si")
-	segments = _customer_segments_for_wohnung(wohnung, from_date, to_date)
+	segments = _invoice_segments_for_wohnung(wohnung, from_date, to_date, customer)
 	if not segments:
 		return []
 
@@ -163,6 +187,7 @@ def get_bk_expected_sum(
 	from_date: Optional[str | date] = None,
 	to_date: Optional[str | date] = None,
 	item_code: str = BK_ITEM_CODE,
+	customer: Optional[str] = None,
 ) -> float:
 	"""Summe der erwarteten Vorauszahlungen über Rechnungen (via Mieter/Verträge).
 
@@ -172,7 +197,7 @@ def get_bk_expected_sum(
 	- OR‑Filter über (customer & Zeitraum je Vertrag der Wohnung).
 	"""
 	eff = _invoice_effective_date_expr("si")
-	segments = _customer_segments_for_wohnung(wohnung, from_date, to_date)
+	segments = _invoice_segments_for_wohnung(wohnung, from_date, to_date, customer)
 	if not segments:
 		return 0.0
 
@@ -219,6 +244,7 @@ def get_bk_paid_sum(
 	from_date: Optional[str | date] = None,
 	to_date: Optional[str | date] = None,
 	item_code: str = BK_ITEM_CODE,
+	customer: Optional[str] = None,
 ) -> float:
 	"""Summe der tatsächlich geleisteten Zahlungen für Rechnungen (via Mieter/Verträge).
 
@@ -230,7 +256,7 @@ def get_bk_paid_sum(
 	"""
 	eff = _payment_effective_date_expr("pe")
 	fd, td = _date_range(from_date, to_date)
-	segments = _customer_segments_for_wohnung(wohnung, from_date, to_date)
+	segments = _invoice_segments_for_wohnung(wohnung, from_date, to_date, customer)
 	if not segments:
 		return 0.0
 	customers = sorted({seg["customer"] for seg in segments})
@@ -281,6 +307,7 @@ def get_bk_paid_sum_for_period_invoices(
 	from_date: Optional[str | date] = None,
 	to_date: Optional[str | date] = None,
 	item_code: str = BK_ITEM_CODE,
+	customer: Optional[str] = None,
 ) -> float:
 	"""Summe der bezahlten Anteile für Rechnungen mit Wertstellung im Zeitraum.
 
@@ -291,7 +318,13 @@ def get_bk_paid_sum_for_period_invoices(
 	  Anteil dieser Position gezählt.
 	- Das Zahlungsdatum selbst spielt keine Rolle.
 	"""
-	names = _bk_invoice_names_for_wohnung(wohnung, from_date, to_date, item_code=item_code)
+	names = _bk_invoice_names_for_wohnung(
+		wohnung,
+		from_date,
+		to_date,
+		item_code=item_code,
+		customer=customer,
+	)
 	if not names:
 		return 0.0
 
@@ -329,9 +362,16 @@ def get_bk_invoice_details(
 	from_date: Optional[str | date] = None,
 	to_date: Optional[str | date] = None,
 	item_code: str = BK_ITEM_CODE,
+	customer: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
 	"""Details je Rechnung (Name, effektives Datum, Netto-Betrag der item_code-Position, Outstanding), via Mieter/Verträge."""
-	names = _bk_invoice_names_for_wohnung(wohnung, from_date, to_date, item_code=item_code)
+	names = _bk_invoice_names_for_wohnung(
+		wohnung,
+		from_date,
+		to_date,
+		item_code=item_code,
+		customer=customer,
+	)
 	if not names:
 		return []
 	eff = _invoice_effective_date_expr("si")
@@ -362,6 +402,7 @@ def get_bk_prepayment_summary(
 	wohnung: str,
 	from_date: Optional[str | date] = None,
 	to_date: Optional[str | date] = None,
+	customer: Optional[str] = None,
 ) -> Dict[str, Any]:
 	"""Kompakte Auswertung der BK‑Vorauszahlungen für eine Wohnung.
 
@@ -373,11 +414,23 @@ def get_bk_prepayment_summary(
 	  invoices: [...],         # Detail je Rechnung (siehe get_bk_invoice_details)
 	}
 	"""
-	expected_dec = _quantize_money(_to_decimal(get_bk_expected_sum(wohnung, from_date, to_date)))
-	paid_dec = _quantize_money(_to_decimal(get_bk_paid_sum_for_period_invoices(wohnung, from_date, to_date)))
-	details = get_bk_invoice_details(wohnung, from_date, to_date)
+	expected_dec = _quantize_money(
+		_to_decimal(get_bk_expected_sum(wohnung, from_date, to_date, customer=customer))
+	)
+	paid_dec = _quantize_money(
+		_to_decimal(
+			get_bk_paid_sum_for_period_invoices(
+				wohnung,
+				from_date,
+				to_date,
+				customer=customer,
+			)
+		)
+	)
+	details = get_bk_invoice_details(wohnung, from_date, to_date, customer=customer)
 	return {
 		"wohnung": wohnung,
+		"customer": customer,
 		"from_date": getdate(from_date).strftime("%Y-%m-%d") if from_date else None,
 		"to_date": getdate(to_date).strftime("%Y-%m-%d") if to_date else None,
 		"expected_total": _as_money(expected_dec),
@@ -415,13 +468,14 @@ def _calc_vorauszahlungen(
 	"""Generische Vorauszahlungs-Berechnung über einen Item-Code.
 
 	- Ermittelt die zugehörige Wohnung und Vertragslaufzeit.
-	- Schneidet den angefragten Zeitraum an die Vertragslaufzeit an.
-	- Nutzt die per-Wohnung-Logik:
+	- Prüft, dass der Abrechnungszeitraum den Vertrag überlappt.
+	- Nutzt für Rechnungen trotzdem den gesamten Abrechnungszeitraum und
+	  trennt die Mieter über den Customer:
 	  Rechnungs-Wertstellung bestimmt die Periode, gezählt wird nur bezahlter
 	  Anteil der jeweiligen Item-Code-Position.
 	Rückgabe: { expected_total, actual_total }
 	"""
-	mv = frappe.db.get_value("Mietvertrag", mietvertrag, ["wohnung", "von", "bis"], as_dict=True)
+	mv = frappe.db.get_value("Mietvertrag", mietvertrag, ["wohnung", "von", "bis", "kunde"], as_dict=True)
 	if not mv:
 		return {"expected_total": 0.0, "actual_total": 0.0}
 	whg = mv.get("wohnung")
@@ -432,9 +486,31 @@ def _calc_vorauszahlungen(
 	if fd is None and td is None:
 		# kein Überlapp mit Vertragszeitraum
 		return {"expected_total": 0.0, "actual_total": 0.0}
+	invoice_from = from_date or fd
+	invoice_to = to_date or td
 
-	expected = _quantize_money(_to_decimal(get_bk_expected_sum(whg, fd, td, item_code=item_code)))
-	paid = _quantize_money(_to_decimal(get_bk_paid_sum_for_period_invoices(whg, fd, td, item_code=item_code)))
+	expected = _quantize_money(
+		_to_decimal(
+			get_bk_expected_sum(
+				whg,
+				invoice_from,
+				invoice_to,
+				item_code=item_code,
+				customer=mv.get("kunde"),
+			)
+		)
+	)
+	paid = _quantize_money(
+		_to_decimal(
+			get_bk_paid_sum_for_period_invoices(
+				whg,
+				invoice_from,
+				invoice_to,
+				item_code=item_code,
+				customer=mv.get("kunde"),
+			)
+		)
+	)
 	return {"expected_total": _as_money(expected), "actual_total": _as_money(paid)}
 
 
