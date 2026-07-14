@@ -793,6 +793,9 @@ def _build_standalone_receivable_transactions(
 		return []
 
 	offset_accounts = _fetch_offset_accounts(standalone_voucher_keys, receivable_accounts)
+	sales_invoice_amounts = _get_standalone_sales_invoice_category_amounts(
+		standalone_voucher_keys
+	)
 	voucher_remarks = _fetch_voucher_remarks(
 		[frappe._dict(voucher_type=k[0], voucher_no=k[1]) for k in standalone_voucher_keys]
 	)
@@ -809,9 +812,19 @@ def _build_standalone_receivable_transactions(
 		if abs(net_charge) <= TOLERANCE:
 			continue
 
-		category = _categorize_offset_accounts(offset_accounts.get(key, set()))
-		amounts = {cat: 0.0 for cat in CATEGORIES}
-		amounts[category] = abs(net_charge)
+		invoice_amounts = sales_invoice_amounts.get(row.voucher_no)
+		if row.voucher_type == "Sales Invoice" and invoice_amounts:
+			# Gutschriften anhand ihrer Artikel zuordnen. Das Gegenkonto kann
+			# abweichend konfiguriert sein (z.B. BK Guthaben auf Mieterlös) und
+			# ist dann als fachliche Kategorie unzuverlässig.
+			amounts = {
+				category: abs(flt(invoice_amounts.get(category)))
+				for category in CATEGORIES
+			}
+		else:
+			category = _categorize_offset_accounts(offset_accounts.get(key, set()))
+			amounts = {cat: 0.0 for cat in CATEGORIES}
+			amounts[category] = abs(net_charge)
 		amounts = _round_amounts(amounts)
 
 		is_charge = net_charge > 0
@@ -829,7 +842,7 @@ def _build_standalone_receivable_transactions(
 				"date": getdate(row.posting_date),
 				"wertstellungsdatum": getdate(row.posting_date),
 				"sort_order": 15 if is_charge else 25,
-				"art": "Forderung" if is_charge else "Zahlung",
+				"art": "Forderung" if is_charge else _get_voucher_label(row.voucher_type),
 				"belegart": row.voucher_type,
 				"belegnummer": row.voucher_no,
 				"rechnung": row.voucher_no,
@@ -847,6 +860,26 @@ def _build_standalone_receivable_transactions(
 		)
 
 	return transactions
+
+
+def _get_standalone_sales_invoice_category_amounts(
+	voucher_keys: set[tuple[str, str]],
+) -> dict[str, dict[str, float]]:
+	invoice_names = [name for voucher_type, name in voucher_keys if voucher_type == "Sales Invoice"]
+	if not invoice_names:
+		return {}
+
+	invoices = frappe.get_all(
+		"Sales Invoice",
+		filters={"name": ("in", invoice_names)},
+		fields=["name", "grand_total"],
+	)
+	grand_totals = {row.name: flt(row.grand_total) for row in invoices}
+	category_amounts, _dunning_fee_invoices, _item_codes = _get_invoice_category_amounts_bulk(
+		list(grand_totals),
+		grand_totals,
+	)
+	return category_amounts
 
 
 def _build_payment_entry_advance_transactions(

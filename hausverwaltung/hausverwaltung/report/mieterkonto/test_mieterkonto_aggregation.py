@@ -1,11 +1,15 @@
 from datetime import date
 from unittest import TestCase
+from unittest.mock import patch
+
+import frappe
 
 from hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto import (
 	CATEGORIES,
 	InvoiceInfo,
 	_build_invoice_transactions,
 	_build_rows,
+	_build_standalone_receivable_transactions,
 	_categorize_offset_accounts,
 	_category_amounts_from_items,
 	_get_report_summary,
@@ -251,6 +255,41 @@ class TestGroupInvoices(TestCase):
 		transaction = _build_invoice_transactions({invoice.name: invoice})[0]
 
 		self.assertEqual(transaction["beschreibung"], "G/N")
+
+	def test_standalone_sales_invoice_credit_is_gutschrift_in_item_category(self):
+		regular_invoice = _make_invoice("SI-REGULAR")
+		filters = _filters(from_date=date(2026, 1, 1), to_date=date(2026, 7, 15))
+		filters.customer = "MIETER-A"
+		credit_note = frappe._dict(
+			posting_date=date(2026, 7, 15),
+			voucher_type="Sales Invoice",
+			voucher_no="SI-BK-GUTHABEN",
+			against_voucher_type="Sales Invoice",
+			against_voucher="SI-BK-GUTHABEN",
+			debit=0.0,
+			credit=21.17,
+			account=regular_invoice.debit_to,
+			remarks=None,
+		)
+		exact_amounts = {
+			"SI-BK-GUTHABEN": {cat: 0.0 for cat in CATEGORIES}
+			| {"guthaben_nachzahlungen": -21.17}
+		}
+
+		with patch("hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.frappe.get_all", return_value=[credit_note]), \
+			patch("hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._fetch_offset_accounts", return_value={("Sales Invoice", "SI-BK-GUTHABEN"): {"Miete - HV"}}), \
+			patch("hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._fetch_voucher_remarks", return_value={}), \
+			patch("hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._get_standalone_sales_invoice_category_amounts", return_value=exact_amounts), \
+			patch("hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._get_currency", return_value="EUR"):
+			transactions = _build_standalone_receivable_transactions(
+				{regular_invoice.name: regular_invoice}, filters
+			)
+
+		self.assertEqual(len(transactions), 1)
+		self.assertEqual(transactions[0]["art"], "Gutschrift")
+		self.assertEqual(transactions[0]["beschreibung"], "Gutschrift")
+		self.assertEqual(transactions[0]["paid_amounts"]["guthaben_nachzahlungen"], 21.17)
+		self.assertEqual(transactions[0]["paid_amounts"]["miete"], 0.0)
 
 	def test_vorauszahlung_row_exposes_vz_amount(self):
 		transaction = {
