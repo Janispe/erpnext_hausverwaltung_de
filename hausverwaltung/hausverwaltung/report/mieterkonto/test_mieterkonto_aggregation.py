@@ -35,6 +35,7 @@ def _make_invoice(
 	return InvoiceInfo(
 		name=name,
 		posting_date=posting_date,
+		wertstellungsdatum=posting_date,
 		due_date=due_date,
 		customer="MIETER-A",
 		debit_to="1410 - Forderungen - HV",
@@ -225,6 +226,31 @@ class TestGroupInvoices(TestCase):
 		self.assertEqual(row["betrag_guthaben_nachzahlungen"], 42.5)
 		self.assertEqual(row["betrag_summe"], 42.5)
 		self.assertEqual(row["offen"], 42.5)
+
+	def test_invoice_without_remarks_uses_specific_item_label(self):
+		invoice = _make_invoice(
+			"SI-BK-NACHZAHLUNG",
+			grand_total=29.71,
+			outstanding=29.71,
+			categories={"guthaben_nachzahlungen": 29.71},
+		)
+		invoice.item_codes = ["BK Nachzahlung"]
+
+		transaction = _build_invoice_transactions({invoice.name: invoice})[0]
+
+		self.assertEqual(transaction["beschreibung"], "BK Nachzahlung")
+
+	def test_generic_gn_invoice_without_remarks_uses_category_label(self):
+		invoice = _make_invoice(
+			"SI-GN",
+			grand_total=29.71,
+			outstanding=29.71,
+			categories={"guthaben_nachzahlungen": 29.71},
+		)
+
+		transaction = _build_invoice_transactions({invoice.name: invoice})[0]
+
+		self.assertEqual(transaction["beschreibung"], "G/N")
 
 	def test_vorauszahlung_row_exposes_vz_amount(self):
 		transaction = {

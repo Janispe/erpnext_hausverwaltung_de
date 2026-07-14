@@ -29,6 +29,21 @@ CATEGORY_LABELS = {
 	"vorauszahlungen": "VZ",
 	"sonstiges": "Sonstig",
 }
+ITEM_DESCRIPTION_LABELS = {
+	"Miete": "Miete",
+	"Untermietzuschlag": "Untermietzuschlag",
+	"Garage/Stellplatz": "Garage/Stellplatz",
+	"Betriebskosten": "BK",
+	"Heizkosten": "HK",
+	"Guthaben/Nachzahlungen": "G/N",
+	"BK Nachzahlung": "BK Nachzahlung",
+	"BK Guthaben": "BK Guthaben",
+	"HK Nachzahlung": "HK Nachzahlung",
+	"HK Guthaben": "HK Guthaben",
+	"VHB-SERVICE": "G/N",
+	"Sonstiges": "Sonstig",
+	"Sonstige": "Sonstig",
+}
 DUNNING_FEE_ITEM_CODES = ("Mahngebuehr", "Mahnung", "Mahngebühr")
 ITEM_CATEGORY_MAP = {
 	"Miete": "miete",
@@ -85,6 +100,7 @@ class InvoiceInfo:
 	cost_center: str | None
 	remarks: str | None
 	category_amounts: dict[str, float] = field(default_factory=dict)
+	item_codes: list[str] = field(default_factory=list)
 	mietabrechnung_id: str | None = None
 	is_dunning_fee_invoice: bool = False
 	# Wenn diese InvoiceInfo eine Aggregat-Gruppe ist: Original-SI-Namen.
@@ -185,9 +201,11 @@ def _get_invoices(filters) -> dict[str, InvoiceInfo]:
 			for row in rows
 			if getdate(row.get("custom_wertstellungsdatum") or row.posting_date) <= filters.to_date
 		]
-	category_amounts_by_invoice, dunning_fee_invoices = _get_invoice_category_amounts_bulk(
-		[row.name for row in rows],
-		{row.name: flt(row.grand_total) for row in rows},
+	category_amounts_by_invoice, dunning_fee_invoices, item_codes_by_invoice = (
+		_get_invoice_category_amounts_bulk(
+			[row.name for row in rows],
+			{row.name: flt(row.grand_total) for row in rows},
+		)
 	)
 
 	invoices: dict[str, InvoiceInfo] = {}
@@ -206,6 +224,7 @@ def _get_invoices(filters) -> dict[str, InvoiceInfo]:
 			cost_center=row.cost_center,
 			remarks=row.remarks,
 			category_amounts=category_amounts_by_invoice.get(row.name, _empty_category_amounts()),
+			item_codes=item_codes_by_invoice.get(row.name, []),
 			mietabrechnung_id=row.get("mietabrechnung_id"),
 			is_dunning_fee_invoice=row.name in dunning_fee_invoices,
 			member_invoices=[row.name],
@@ -298,6 +317,7 @@ def _merge_invoices(group_key: str, members: list[InvoiceInfo]) -> InvoiceInfo:
 		cost_center=anchor.cost_center,
 		remarks=header,
 		category_amounts=_round_amounts(merged_categories),
+		item_codes=[code for member in members for code in member.item_codes],
 		mietabrechnung_id=group_key,
 		is_dunning_fee_invoice=any(m.is_dunning_fee_invoice for m in members),
 		member_invoices=[m.name for m in members],
@@ -321,9 +341,9 @@ def _invoice_value_date(invoice: InvoiceInfo):
 def _get_invoice_category_amounts_bulk(
 	invoice_names: list[str],
 	grand_totals: dict[str, float],
-) -> tuple[dict[str, dict[str, float]], set[str]]:
+) -> tuple[dict[str, dict[str, float]], set[str], dict[str, list[str]]]:
 	if not invoice_names:
-		return {}, set()
+		return {}, set(), {}
 
 	items_by_invoice: dict[str, list] = {name: [] for name in invoice_names}
 	for chunk in _chunks(invoice_names, 500):
@@ -340,14 +360,19 @@ def _get_invoice_category_amounts_bulk(
 		for invoice_name, items in items_by_invoice.items()
 		if _has_dunning_fee_item(items)
 	}
-	return {
+	category_amounts = {
 		invoice_name: _category_amounts_from_items(
 			invoice_name,
 			items,
 			grand_totals.get(invoice_name, 0),
 		)
 		for invoice_name, items in items_by_invoice.items()
-	}, dunning_fee_invoices
+	}
+	item_codes = {
+		invoice_name: [item.get("item_code") for item in items if item.get("item_code")]
+		for invoice_name, items in items_by_invoice.items()
+	}
+	return category_amounts, dunning_fee_invoices, item_codes
 
 
 def _category_amounts_from_items(invoice_name: str, items, grand_total: float) -> dict[str, float]:
@@ -462,7 +487,23 @@ def _build_invoice_transactions(invoices: dict[str, InvoiceInfo]) -> list[dict[s
 def _invoice_description(invoice: InvoiceInfo) -> str:
 	if invoice.is_dunning_fee_invoice:
 		return _("Mahnung")
-	return invoice.remarks or _("Rechnung")
+	if invoice.remarks:
+		return invoice.remarks
+
+	labels = list(
+		dict.fromkeys(
+			ITEM_DESCRIPTION_LABELS[code] for code in invoice.item_codes if code in ITEM_DESCRIPTION_LABELS
+		)
+	)
+	if labels:
+		return " + ".join(labels)
+
+	category_labels = [
+		CATEGORY_LABELS[category]
+		for category, amount in invoice.category_amounts.items()
+		if abs(flt(amount)) > TOLERANCE
+	]
+	return " + ".join(category_labels) or _("Rechnung")
 
 
 def _build_settlement_transactions(
