@@ -48,6 +48,12 @@ class TestAgentReadApi(IntegrationTestCase):
 			self.assertIn("name", response["data"][0])
 			self.assertNotIn("api_secret", response["data"][0])
 
+	def test_list_docs_allows_standard_modified_order_by(self):
+		response = read_api.list_docs("DocType", fields=["name", "modified"], order_by="modified desc", limit=1)
+		self.assertTrue(response["ok"])
+		if response["data"]:
+			self.assertIn("modified", response["data"][0])
+
 	def test_get_doc_not_found(self):
 		response = read_api.get_doc("DocType", "__DOES_NOT_EXIST__")
 		self.assertFalse(response["ok"])

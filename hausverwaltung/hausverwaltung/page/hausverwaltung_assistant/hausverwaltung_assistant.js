@@ -313,6 +313,13 @@ function renderHausverwaltungAssistant(pageBody) {
 		} catch (error) {
 			return textFromAny(err?._server_messages);
 		}
+		if (Number(err?.status) === 0 || Number(err?.readyState) === 0) {
+			return __(
+				"Die Anfrage wurde im Browser abgebrochen oder es kam keine HTTP-Antwort zurueck. " +
+				"Bitte pruefe Netzwerk/Reload/Session und versuche es erneut. Wenn es wieder passiert, " +
+				"ist die Anfrage vermutlich zu lang oder der Proxy hat sie beendet."
+			);
+		}
 		return textFromAny(err?.message || err?.responseJSON || err) || __("Unbekannter Fehler.");
 	};
 

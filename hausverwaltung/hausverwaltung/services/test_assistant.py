@@ -109,6 +109,78 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["tool_calls"][0]["arguments"], {"query": "Schmidt", "limit": 3})
 		self.assertEqual(result["tool_calls"][0]["result_count"], 1)
 
+	def test_generic_agent_read_tools_are_registered(self):
+		tool_names = {tool["function"]["name"] for tool in assistant.ASSISTANT_TOOLS}
+
+		for name in {
+			"agent_list_doctypes",
+			"agent_get_doctype_schema",
+			"agent_list_docs",
+			"agent_get_doc",
+			"agent_search_docs",
+			"analyze_revenue_over_time",
+		}:
+			self.assertIn(name, tool_names)
+			self.assertIn(name, assistant.TOOL_FUNCTIONS)
+
+	def test_revenue_search_terms_normalize_street_and_building_part(self):
+		terms = assistant._revenue_search_terms("Wilhelmshavener Straße im Hinterhaus")
+
+		self.assertEqual(terms[0], ["Wilhelmshavener"])
+		self.assertIn("HH", terms[1])
+		self.assertIn("Hinterhaus", terms[1])
+
+	def test_revenue_tool_arguments_drop_invented_dates_without_user_range(self):
+		args = assistant._sanitize_revenue_tool_arguments(
+			{
+				"query": "Wilhelmshavener",
+				"period": "month",
+				"from_date": "2026-01-01",
+				"to_date": "2026-12-31",
+			},
+			"wie haben sich die einnahmen in der wilhelmshavener strasse ueber die zeit entwickelt",
+		)
+
+		self.assertEqual(args, {"query": "Wilhelmshavener", "period": "year"})
+
+	def test_execute_tool_routes_generic_agent_search_and_exposes_matches(self):
+		read_response = {
+			"ok": True,
+			"data": [
+				{
+					"doctype": "ToDo",
+					"name": "TODO-1",
+					"title_like": "Rueckfrage klaeren",
+					"modified": "2026-07-14 09:00:00",
+					"snippet": "Rueckfrage zum Vertrag klaeren",
+					"fields": {"status": "Open"},
+				}
+			],
+			"error": None,
+			"meta": {"pagination": {"limit": 5, "offset": 0, "returned": 1}},
+		}
+
+		with patch.object(assistant.agent_read_api, "search_docs", return_value=read_response) as search_docs:
+			result = assistant._execute_tool(
+				"agent_search_docs",
+				{"doctype": "ToDo", "query": "Rueckfrage", "limit": 5},
+			)
+
+		search_docs.assert_called_once_with(
+			doctype="ToDo",
+			query="Rueckfrage",
+			filters=None,
+			limit=5,
+			offset=0,
+			fields=None,
+			order_by=None,
+		)
+		self.assertTrue(result["ok"])
+		self.assertEqual(result["matches"][0]["doctype"], "ToDo")
+		self.assertEqual(result["matches"][0]["name"], "TODO-1")
+		self.assertEqual(result["matches"][0]["routes"][0]["route"], ["Form", "ToDo", "TODO-1"])
+		self.assertEqual(assistant._tool_result_count(result), 1)
+
 	def test_run_assistant_uses_conversation_history_and_stores_messages(self):
 		final_response = {"content": "Das ist die Folgeantwort."}
 		conversation = frappe._dict(name="CONV-1")
@@ -368,6 +440,53 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["matches"][0]["mietvertrag"], "MV-2")
 		self.assertEqual(result["matches"][0]["title"], "Bernd Schmidt")
 		self.assertEqual(result["matches"][0]["bruttomiete"], 950)
+
+	def test_rank_mieter_by_rent_filters_by_min_amount(self):
+		docs = {
+			"MV-1": frappe._dict(
+				name="MV-1",
+				kunde="CUST-1",
+				status="Lauft",
+				wohnung="WHG-1",
+				immobilie="IMM-1",
+				bruttomiete=800,
+				aktuelle_nettokaltmiete=600,
+				aktuelle_betriebskosten=120,
+				aktuelle_heizkosten=80,
+				untermietzuschlag=[],
+			),
+			"MV-2": frappe._dict(
+				name="MV-2",
+				kunde="CUST-2",
+				status="Lauft",
+				wohnung="WHG-2",
+				immobilie="IMM-1",
+				bruttomiete=950,
+				aktuelle_nettokaltmiete=700,
+				aktuelle_betriebskosten=150,
+				aktuelle_heizkosten=100,
+				untermietzuschlag=[],
+			),
+		}
+
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant.frappe, "get_all", return_value=[frappe._dict(name="MV-1"), frappe._dict(name="MV-2")]), \
+			 patch.object(assistant, "_can_read_doc", return_value=True), \
+			 patch.object(assistant.frappe, "get_doc", side_effect=lambda doctype, name: docs[name]), \
+			 patch.object(assistant.frappe.db, "get_value", side_effect=lambda doctype, name, fieldname: name), \
+			 patch.object(assistant.frappe, "has_permission", return_value=True):
+			result = assistant.rank_mieter_by_rent(
+				metric="bruttomiete",
+				order="desc",
+				min_amount=900,
+				min_exclusive=True,
+				limit=10,
+			)
+
+		self.assertEqual(result["count"], 1)
+		self.assertEqual(result["min_amount"], 900)
+		self.assertTrue(result["min_exclusive"])
+		self.assertEqual(result["matches"][0]["mietvertrag"], "MV-2")
 
 	def test_hv_query_docs_applies_custom_filters_and_field_whitelist(self):
 		with patch.object(assistant, "_require_search_permissions"), \

@@ -9,6 +9,7 @@ import frappe
 from frappe import _
 from frappe.utils import flt, getdate, now_datetime, nowdate
 
+from hausverwaltung.hausverwaltung.agent_tools import read_api as agent_read_api
 from hausverwaltung.hausverwaltung.services import mistral_client
 
 MAX_TOOL_ROUNDS = 5
@@ -468,8 +469,15 @@ ASSISTANT_SYSTEM_PROMPT = """Du bist der interne Hausverwaltungs-Assistent.
 Du darfst nur lesen. Du darfst keine Buchungen, Briefe, Aufgaben oder sonstige Daten aendern.
 Nutze die bereitgestellten Tools fuer Mietersuche, Mieterkonto, Salden, offene Posten,
 verspaetete Zahlungen, Miet-Ranglisten und eingeschraenkte Hausverwaltungs-Abfragen.
-Fuer offene analytische Fragen nutze bevorzugt hv_query_view mit einer passenden View und strukturierten Filtern,
-statt immer neue Spezialtools zu erwarten. Baue niemals SQL, sondern JSON-Queries gegen die erlaubten Views.
+Wenn eine Frage ausserhalb dieses fachlichen Katalogs liegt, nutze die generischen agent_*-Tools.
+Diese geben nur Daten zurueck, fuer die der aktuelle Frappe-Benutzer Leserechte hat, und filtern sensible Felder.
+Nutze agent_get_doctype_schema, bevor du unbekannte DocTypes oder Feldnamen abfragst.
+Wichtig: Eingangsrechnung, Lieferantenrechnung und Purchase Invoice meinen ERPNext DocType "Purchase Invoice";
+nutze dafuer agent_get_doctype_schema und agent_list_docs/agent_search_docs, nicht hv_query_view invoices.
+Ausgangsrechnung, Mieterrechnung, Forderung und Sales Invoice meinen "Sales Invoice"; dafuer darfst du
+hv_query_view invoices/open_items nutzen.
+Fuer offene analytische Hausverwaltungsfragen nutze bevorzugt hv_query_view mit einer passenden View und strukturierten
+Filtern, statt immer neue Spezialtools zu erwarten. Baue niemals SQL, sondern JSON-Queries gegen die erlaubten Views.
 Wenn du bei einer offenen Analysefrage unsicher bist, welche View oder welche Felder passen, nutze zuerst
 hv_describe_query_sources oder hv_describe_query_source und baue danach die eigentliche hv_query_view-Abfrage.
 Wenn der Katalog fachliche Mehrdeutigkeit zeigt, frage kurz nach, statt zu raten.
@@ -480,6 +488,10 @@ filtere aktive/laufende Vertraege und aggregiere sum ueber field=personen. Schae
 Wenn der Nutzer aktive oder laufende Mietvertraege meint, filtere Mietvertrag immer mit status = L\u00e4uft.
 Bei Fragen nach "zu spaet gezahlt", "verspaetet gezahlt" oder Zahlungsverzug nutze search_late_payments,
 nicht search_open_items. search_open_items ist nur fuer aktuell offene Posten geeignet.
+Bei Fragen nach Einnahmenentwicklung, Mieteinnahmen im Zeitverlauf oder Umsatz je Immobilie nutze
+analyze_revenue_over_time. Gruppiere fuer lange Zeitraeume nach year, fuer kurze Zeitraeume nach month.
+Wenn der Nutzer keinen Zeitraum nennt, setze bei analyze_revenue_over_time kein from_date/to_date; "ueber die Zeit"
+meint die komplette verfuegbare Historie und period=year.
 Wenn ein Tool total_count/count groesser als returned/count der Zeilen meldet, sage nicht "alle", sondern nenne die
 Gesamtzahl und dass nur ein Ausschnitt angezeigt wird.
 Erfinde keine Datensaetze und keine Betraege.
@@ -662,7 +674,10 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 		"type": "function",
 		"function": {
 			"name": "rank_mieter_by_rent",
-			"description": "Findet aktive Mieter mit der hoechsten oder niedrigsten aktuellen Miete.",
+			"description": (
+				"Findet aktive Mieter mit der hoechsten oder niedrigsten aktuellen Miete. "
+				"Nutze min_amount fuer Fragen wie 'ueber 700 Miete'."
+			),
 			"parameters": {
 				"type": "object",
 				"properties": {
@@ -674,11 +689,56 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 						"type": "string",
 						"description": "desc fuer hoechste Miete, asc fuer niedrigste Miete.",
 					},
+					"min_amount": {
+						"type": "number",
+						"description": "Optionale Untergrenze inklusive/exklusive je nach Frage. Bei 'ueber 700' min_amount=700 und min_exclusive=true.",
+					},
+					"min_exclusive": {
+						"type": "boolean",
+						"description": "Wenn true, muss die Miete echt groesser als min_amount sein; sonst groesser/gleich. Default false.",
+					},
 					"limit": {
 						"type": "integer",
 						"description": "Maximale Trefferzahl, 1 bis 10.",
 					},
 				},
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": {
+			"name": "analyze_revenue_over_time",
+			"description": (
+				"Analysiert gebuchte Einnahmen/Ausgangsrechnungen im Zeitverlauf fuer eine Immobilie, "
+				"Adresse oder einen Objektteil. Nutze dies fuer Fragen wie 'wie haben sich die Einnahmen "
+				"in der Wilhelmshavener Strasse ueber die Zeit entwickelt'."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"query": {
+						"type": "string",
+						"description": "Suchbegriff fuer Immobilie/Adresse/Objekt, z.B. Wilhelmshavener, Gropius oder Hinterhaus.",
+					},
+					"period": {
+						"type": "string",
+						"description": "year oder month. Default year. Bei 'ueber die Zeit' ohne konkreten Zeitraum year verwenden.",
+					},
+					"from_date": {
+						"type": "string",
+						"description": "Optionales Startdatum YYYY-MM-DD. Nur setzen, wenn der Nutzer einen Zeitraum nennt.",
+					},
+					"to_date": {
+						"type": "string",
+						"description": "Optionales Enddatum YYYY-MM-DD. Nur setzen, wenn der Nutzer einen Zeitraum nennt.",
+					},
+					"limit": {
+						"type": "integer",
+						"description": "Maximale Perioden in der Ausgabe, 1 bis 100. Default 50.",
+					},
+				},
+				"required": ["query"],
 			},
 		},
 	},
@@ -743,7 +803,8 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 				"Allgemeiner sicherer Query-Builder fuer semantische Hausverwaltungs-Views. "
 				"Nutze ihn fuer offene Analysefragen, Listen, Vergleiche, Summen, Gruppierungen und Sortierungen. "
 				"Erlaubte Views: apartments (Wohnungsbestand, eine Zeile pro Wohnung), "
-				"tenant_contracts (Mieter/Vertraege, eine Zeile pro Mietvertrag, inkl. personen), invoices (Rechnungen), "
+				"tenant_contracts (Mieter/Vertraege, eine Zeile pro Mietvertrag, inkl. personen), "
+				"invoices (Ausgangsrechnungen/Mieterrechnungen als Sales Invoice, nicht Eingangsrechnungen), "
 				"open_items (offene Forderungen), payments (Zahlungen auf Rechnungen). "
 				"Schreibe JSON-Filter, kein SQL."
 			),
@@ -810,6 +871,119 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 			},
 		},
 	},
+	{
+		"type": "function",
+		"function": {
+			"name": "agent_list_doctypes",
+			"description": (
+				"Listet alle nicht sensiblen DocTypes, die der aktuelle Benutzer lesen darf. "
+				"Nutze dies fuer Fragen ausserhalb des Hausverwaltungs-Katalogs."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {},
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": {
+			"name": "agent_get_doctype_schema",
+			"description": (
+				"Liest sichere Feld-Metadaten fuer einen DocType, sofern der aktuelle Benutzer Leserechte hat. "
+				"Nutze dies vor agent_list_docs, agent_search_docs oder agent_get_doc bei unbekannten Feldern."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"doctype": {"type": "string", "description": "DocType-Name, z.B. ToDo oder Purchase Invoice."},
+				},
+				"required": ["doctype"],
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": {
+			"name": "agent_list_docs",
+			"description": (
+				"Listet Dokumente eines DocTypes mit Frappe-Read-Permissions des aktuellen Benutzers. "
+				"Felder, Sortierung und Filter werden auf sichere Metafelder begrenzt."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"doctype": {"type": "string"},
+					"filters": {
+						"type": ["object", "array", "string"],
+						"description": "Frappe-kompatible Filter als Objekt/Liste oder JSON-String.",
+					},
+					"fields": {
+						"type": ["array", "string"],
+						"items": {"type": "string"},
+						"description": "Gewuenschte sichere Feldnamen oder JSON-Liste.",
+					},
+					"limit": {"type": "integer", "description": "1 bis 100, Default 20."},
+					"offset": {"type": "integer", "description": "Offset fuer Pagination, Default 0."},
+					"order_by": {"type": "string", "description": "Format '<field> asc|desc'."},
+				},
+				"required": ["doctype"],
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": {
+			"name": "agent_get_doc",
+			"description": (
+				"Laedt ein einzelnes Dokument mit Frappe-Read-Permissions des aktuellen Benutzers. "
+				"Sensible Felder werden entfernt; Child-Tables nur bei include_children=true."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"doctype": {"type": "string"},
+					"name": {"type": "string"},
+					"fields": {
+						"type": ["array", "string"],
+						"items": {"type": "string"},
+						"description": "Gewuenschte sichere Feldnamen oder JSON-Liste.",
+					},
+					"include_children": {"type": "boolean"},
+				},
+				"required": ["doctype", "name"],
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": {
+			"name": "agent_search_docs",
+			"description": (
+				"Sucht in einem DocType oder, ohne doctype, foederiert in lesbaren nicht sensiblen DocTypes. "
+				"Nutze dies fuer freie Suche ausserhalb der spezialisierten Hausverwaltungs-Tools."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"doctype": {"type": "string"},
+					"query": {"type": "string", "description": "Mindestens 3 Zeichen."},
+					"filters": {
+						"type": ["object", "array", "string"],
+						"description": "Nur mit doctype erlaubt.",
+					},
+					"limit": {"type": "integer", "description": "1 bis 100, Default 20."},
+					"offset": {"type": "integer", "description": "Offset fuer Pagination, Default 0."},
+					"fields": {
+						"type": ["array", "string"],
+						"items": {"type": "string"},
+					},
+					"order_by": {"type": "string", "description": "Format '<field> asc|desc'."},
+				},
+				"required": ["query"],
+			},
+		},
+	},
 ]
 
 TOOL_FUNCTIONS = {
@@ -821,9 +995,15 @@ TOOL_FUNCTIONS = {
 	"search_open_items": lambda **kwargs: search_open_items(**kwargs),
 	"search_late_payments": lambda **kwargs: search_late_payments(**kwargs),
 	"rank_mieter_by_rent": lambda **kwargs: rank_mieter_by_rent(**kwargs),
+	"analyze_revenue_over_time": lambda **kwargs: analyze_revenue_over_time(**kwargs),
 	"hv_query_docs": lambda **kwargs: hv_query_docs(**kwargs),
 	"hv_query_view": lambda **kwargs: hv_query_view(**kwargs),
 	"hv_get_doc": lambda **kwargs: hv_get_doc(**kwargs),
+	"agent_list_doctypes": lambda **kwargs: agent_list_doctypes(**kwargs),
+	"agent_get_doctype_schema": lambda **kwargs: agent_get_doctype_schema(**kwargs),
+	"agent_list_docs": lambda **kwargs: agent_list_docs(**kwargs),
+	"agent_get_doc": lambda **kwargs: agent_get_doc(**kwargs),
+	"agent_search_docs": lambda **kwargs: agent_search_docs(**kwargs),
 }
 
 
@@ -1017,6 +1197,8 @@ def run_assistant(message: str, conversation_id: str | None = None) -> dict[str,
 
 		for tool_call in tool_calls:
 			name, arguments = _parse_tool_call(tool_call)
+			if name == "analyze_revenue_over_time":
+				arguments = _sanitize_revenue_tool_arguments(arguments, user_message)
 			tool_names.append(name)
 			result = _execute_tool(name, arguments)
 			tool_calls_debug.append(_tool_call_debug(name, arguments, result))
@@ -1206,6 +1388,14 @@ def _tool_result_count(result: dict[str, Any]) -> int:
 				return int(result.get(key) or 0)
 		except (TypeError, ValueError):
 			return 0
+	meta = result.get("meta")
+	if isinstance(meta, dict):
+		pagination = meta.get("pagination")
+		if isinstance(pagination, dict):
+			try:
+				return int(pagination.get("returned") or 0)
+			except (TypeError, ValueError):
+				return 0
 	rows = result.get("rows") or result.get("matches") or result.get("items")
 	return len(rows) if isinstance(rows, list) else 0
 
@@ -1486,6 +1676,8 @@ def search_late_payments(
 def rank_mieter_by_rent(
 	metric: str | None = None,
 	order: str | None = None,
+	min_amount: float | int | str | None = None,
+	min_exclusive: bool | int | str | None = False,
 	limit: int | None = None,
 ) -> dict[str, Any]:
 	_require_search_permissions()
@@ -1496,6 +1688,11 @@ def rank_mieter_by_rent(
 	resolved_order = (order or "desc").strip().lower()
 	if resolved_order not in {"asc", "desc"}:
 		resolved_order = "desc"
+	try:
+		resolved_min = flt(min_amount) if min_amount not in (None, "") else None
+	except Exception:
+		resolved_min = None
+	resolved_min_exclusive = _bool_arg(min_exclusive, False)
 
 	candidates = frappe.get_all(
 		"Mietvertrag",
@@ -1517,6 +1714,11 @@ def rank_mieter_by_rent(
 			and (frappe.db.get_value("Customer", doc.kunde, "customer_name") or doc.kunde)
 		) or ""
 		sort_value = amounts["nettokaltmiete"] if resolved_metric == "nettokaltmiete" else amounts["bruttomiete"]
+		if resolved_min is not None:
+			if resolved_min_exclusive and sort_value <= resolved_min:
+				continue
+			if not resolved_min_exclusive and sort_value < resolved_min:
+				continue
 		rows.append(
 			{
 				"type": "rent_ranking",
@@ -1550,8 +1752,107 @@ def rank_mieter_by_rent(
 	return {
 		"metric": resolved_metric,
 		"order": resolved_order,
+		"min_amount": resolved_min,
+		"min_exclusive": resolved_min_exclusive,
 		"count": len(rows),
 		"matches": rows[:resolved_limit],
+	}
+
+
+def analyze_revenue_over_time(
+	query: str,
+	period: str | None = None,
+	from_date: str | None = None,
+	to_date: str | None = None,
+	limit: int | None = None,
+) -> dict[str, Any]:
+	_require_finance_permissions()
+	if not frappe.has_permission("Immobilie", "read"):
+		frappe.throw(_("Keine Berechtigung fuer Immobilien-Auswertungen."), frappe.PermissionError)
+
+	search_query = (query or "").strip()
+	if len(search_query) < 2:
+		frappe.throw(_("Bitte einen Suchbegriff fuer Immobilie oder Adresse angeben."))
+	resolved_period = _normalize_revenue_period(period)
+	resolved_limit = _normalize_view_limit(limit or 50)
+	start = getdate(from_date).isoformat() if from_date else None
+	end = getdate(to_date).isoformat() if to_date else None
+
+	search_sql, search_params, search_terms = _revenue_search_sql(search_query)
+	period_expr = "date_format(si.posting_date, '%%Y')" if resolved_period == "year" else "date_format(si.posting_date, '%%Y-%%m')"
+	params: dict[str, Any] = {
+		"company": _default_company(),
+		"limit": resolved_limit,
+		**search_params,
+	}
+	where = [
+		"si.docstatus = 1",
+		"coalesce(si.is_return, 0) = 0",
+		"coalesce(si.grand_total, 0) > 0",
+		"si.company = %(company)s",
+		search_sql,
+	]
+	if start:
+		where.append("si.posting_date >= %(from_date)s")
+		params["from_date"] = start
+	if end:
+		where.append("si.posting_date <= %(to_date)s")
+		params["to_date"] = end
+
+	rows = frappe.db.sql(
+		f"""
+		select
+			{period_expr} as period,
+			min(si.posting_date) as from_date,
+			max(si.posting_date) as to_date,
+			count(*) as invoice_count,
+			round(sum(si.grand_total), 2) as revenue,
+			min(si.currency) as currency
+		from `tabSales Invoice` si
+		{_MAYBE_CONTRACT_JOIN}
+		where {" and ".join(where)}
+		group by {period_expr}
+		order by period asc
+		limit %(limit)s
+		""",
+		params,
+		as_dict=True,
+	)
+	all_count_row = frappe.db.sql(
+		f"""
+		select count(distinct {period_expr}) as period_count, round(sum(si.grand_total), 2) as total_revenue
+		from `tabSales Invoice` si
+		{_MAYBE_CONTRACT_JOIN}
+		where {" and ".join(where)}
+		""",
+		params,
+		as_dict=True,
+	)
+	total_periods = int((all_count_row[0].get("period_count") if all_count_row else 0) or 0)
+	total_revenue = flt((all_count_row[0].get("total_revenue") if all_count_row else 0) or 0, 2)
+	data = [dict(row) for row in rows]
+	first = data[0] if data else {}
+	last = data[-1] if data else {}
+	change_abs = flt((last.get("revenue") or 0) - (first.get("revenue") or 0), 2) if len(data) >= 2 else 0
+	change_pct = flt(change_abs / flt(first.get("revenue")) * 100, 2) if len(data) >= 2 and flt(first.get("revenue")) else 0
+	return {
+		"query": search_query,
+		"search_terms": search_terms,
+		"period": resolved_period,
+		"from_date": start,
+		"to_date": end,
+		"count": len(data),
+		"total_count": total_periods,
+		"total_revenue": total_revenue,
+		"currency": _first_value(data, "currency") or "EUR",
+		"first_period": first.get("period"),
+		"first_revenue": flt(first.get("revenue") or 0, 2) if first else 0,
+		"last_period": last.get("period"),
+		"last_revenue": flt(last.get("revenue") or 0, 2) if last else 0,
+		"change_abs": change_abs,
+		"change_pct": change_pct,
+		"rows": data,
+		"matches": [],
 	}
 
 
@@ -1720,6 +2021,141 @@ def hv_get_doc(
 				for row in (getattr(doc, table_field, None) or [])
 			]
 	return {"doctype": dt, "name": doc.name, "data": data, "children": children}
+
+
+def agent_list_doctypes(**_kwargs) -> dict[str, Any]:
+	return agent_read_api.list_doctypes()
+
+
+def agent_get_doctype_schema(doctype: str) -> dict[str, Any]:
+	return agent_read_api.get_doctype_schema(doctype)
+
+
+def agent_list_docs(
+	doctype: str,
+	filters: dict | list | str | None = None,
+	fields: list[str] | str | None = None,
+	limit: int = 20,
+	offset: int = 0,
+	order_by: str | None = None,
+) -> dict[str, Any]:
+	result = agent_read_api.list_docs(
+		doctype=doctype,
+		filters=filters,
+		fields=fields,
+		limit=limit,
+		offset=offset,
+		order_by=order_by,
+	)
+	return _decorate_agent_doc_rows(result, doctype=(doctype or "").strip())
+
+
+def agent_get_doc(
+	doctype: str,
+	name: str,
+	fields: list[str] | str | None = None,
+	include_children: int | bool = 0,
+) -> dict[str, Any]:
+	result = agent_read_api.get_doc(
+		doctype=doctype,
+		name=name,
+		fields=fields,
+		include_children=include_children,
+	)
+	if result.get("ok") and isinstance(result.get("data"), dict):
+		match = _agent_doc_match((doctype or "").strip(), result["data"])
+		if match:
+			result["match"] = match
+			result["matches"] = [match]
+	return result
+
+
+def agent_search_docs(
+	doctype: str | None = None,
+	query: str | None = None,
+	filters: dict | list | str | None = None,
+	limit: int = 20,
+	offset: int = 0,
+	fields: list[str] | str | None = None,
+	order_by: str | None = None,
+) -> dict[str, Any]:
+	result = agent_read_api.search_docs(
+		doctype=doctype,
+		query=query,
+		filters=filters,
+		limit=limit,
+		offset=offset,
+		fields=fields,
+		order_by=order_by,
+	)
+	if result.get("ok") and isinstance(result.get("data"), list):
+		matches = []
+		for row in result["data"]:
+			if not isinstance(row, dict):
+				continue
+			match = _agent_search_match(row)
+			if match:
+				matches.append(match)
+		result["matches"] = matches
+	return result
+
+
+def _decorate_agent_doc_rows(result: dict[str, Any], *, doctype: str) -> dict[str, Any]:
+	if result.get("ok") and isinstance(result.get("data"), list):
+		result["doctype"] = doctype
+		result["rows"] = result["data"]
+		result["matches"] = [
+			match for row in result["data"]
+			if isinstance(row, dict)
+			for match in [_agent_doc_match(doctype, row)]
+			if match
+		]
+	return result
+
+
+def _agent_doc_match(doctype: str, row: dict[str, Any]) -> dict[str, Any] | None:
+	name = str(row.get("name") or "").strip()
+	dt = (doctype or row.get("doctype") or "").strip()
+	if not dt or not name:
+		return None
+	title = str(
+		row.get("title")
+		or row.get("title_like")
+		or row.get("subject")
+		or row.get("customer_name")
+		or row.get("supplier_name")
+		or row.get("full_name")
+		or row.get("email_id")
+		or name
+	)
+	subtitle_parts = [
+		str(row.get("modified") or ""),
+		str(row.get("status") or ""),
+		str(row.get("owner") or ""),
+	]
+	return {
+		"type": "agent_read",
+		"doctype": dt,
+		"name": name,
+		"title": title,
+		"subtitle": _compact_join(subtitle_parts),
+		"routes": [{"label": dt, "doctype": dt, "name": name, "route": ["Form", dt, name]}],
+	}
+
+
+def _agent_search_match(row: dict[str, Any]) -> dict[str, Any] | None:
+	fields = row.get("fields") if isinstance(row.get("fields"), dict) else {}
+	merged = {
+		**fields,
+		"doctype": row.get("doctype"),
+		"name": row.get("name"),
+		"title_like": row.get("title_like"),
+		"modified": row.get("modified"),
+	}
+	match = _agent_doc_match(str(row.get("doctype") or ""), merged)
+	if match and row.get("snippet"):
+		match["subtitle"] = _compact_join([match.get("subtitle"), row.get("snippet")])
+	return match
 
 
 def _get_mietvertrag_row(identifier: str) -> frappe._dict | None:
@@ -2555,6 +2991,76 @@ def _normalize_view_limit(limit: int | None) -> int:
 	except (TypeError, ValueError):
 		value = 25
 	return min(max(value, 1), VIEW_READ_LIMIT)
+
+
+def _normalize_revenue_period(period: str | None) -> str:
+	text = (period or "year").strip().lower()
+	if text in {"monat", "monate", "monthly", "month"}:
+		return "month"
+	return "year"
+
+
+def _revenue_search_sql(query: str) -> tuple[str, dict[str, Any], list[str]]:
+	terms = _revenue_search_terms(query)
+	if not terms:
+		frappe.throw(_("Kein auswertbarer Suchbegriff fuer die Einnahmenanalyse."))
+	params: dict[str, Any] = {}
+	clauses = []
+	search_fields = (
+		"coalesce(mv.immobilie, '')",
+		"coalesce(im.name, '')",
+		"coalesce(im.bezeichnung, '')",
+		"coalesce(im.adresse_titel, '')",
+		"coalesce(im.objekt, '')",
+		"coalesce(w.name, '')",
+		"coalesce(w.`name__lage_in_der_immobilie`, '')",
+		"coalesce(w.immobilie_knoten, '')",
+		"coalesce(w.gebaeudeteil, '')",
+	)
+	for idx, variants in enumerate(terms):
+		variant_clauses = []
+		for variant_idx, variant in enumerate(variants):
+			key = f"search_{idx}_{variant_idx}"
+			params[key] = f"%{variant}%"
+			variant_clauses.extend(f"{field} like %({key})s" for field in search_fields)
+		clauses.append("(" + " or ".join(variant_clauses) + ")")
+	return "(" + " and ".join(clauses) + ")", params, ["/".join(variants) for variants in terms]
+
+
+def _revenue_search_terms(query: str) -> list[list[str]]:
+	raw_tokens = re.split(r"[\s,;]+", (query or "").strip())
+	ignore = {
+		"strasse",
+		"straße",
+		"str.",
+		"str",
+		"street",
+		"in",
+		"der",
+		"die",
+		"das",
+		"im",
+		"am",
+		"und",
+	}
+	aliases = {
+		"hinterhaus": ["Hinterhaus", "HH"],
+		"hh": ["HH", "Hinterhaus"],
+		"vorderhaus": ["Vorderhaus", "VH"],
+		"vh": ["VH", "Vorderhaus"],
+		"seitenfluegel": ["Seitenfluegel", "Seitenflügel", "SF"],
+		"seitenflügel": ["Seitenflügel", "Seitenfluegel", "SF"],
+		"sf": ["SF", "Seitenfluegel", "Seitenflügel"],
+	}
+	terms: list[list[str]] = []
+	for token in raw_tokens:
+		clean = token.strip().strip(".").lower()
+		if not clean or clean in ignore:
+			continue
+		if len(clean) < 2:
+			continue
+		terms.append(aliases.get(clean, [token.strip().strip(".")]))
+	return terms
 
 
 def _safe_view_fields(conf: dict[str, Any], fields: list[str] | str | None) -> list[str]:
@@ -3444,13 +3950,51 @@ def _parse_tool_call(tool_call: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 	return name, arguments
 
 
-def _execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def _execute_tool(name: str, arguments: dict[str, Any], user_message: str | None = None) -> dict[str, Any]:
 	if name not in TOOL_FUNCTIONS:
 		return {"error": {"code": "UNKNOWN_TOOL", "message": f"Tool nicht erlaubt: {name}"}}
 	try:
+		if user_message is not None and name == "analyze_revenue_over_time":
+			arguments = _sanitize_revenue_tool_arguments(arguments, user_message)
 		return TOOL_FUNCTIONS[name](**arguments)
 	except Exception as exc:
 		return {"error": {"code": "TOOL_ERROR", "message": str(exc)}}
+
+
+def _sanitize_revenue_tool_arguments(arguments: dict[str, Any], user_message: str | None) -> dict[str, Any]:
+	cleaned = dict(arguments or {})
+	if _message_mentions_time_range(user_message or ""):
+		return cleaned
+	cleaned.pop("from_date", None)
+	cleaned.pop("to_date", None)
+	if str(cleaned.get("period") or "").strip().lower() in {"month", "monat", "monate", "monthly"}:
+		cleaned["period"] = "year"
+	return cleaned
+
+
+def _message_mentions_time_range(message: str) -> bool:
+	text = (message or "").lower()
+	if re.search(r"\b(?:19|20)\d{2}\b", text):
+		return True
+	return any(
+		token in text
+		for token in (
+			"dieses jahr",
+			"letztes jahr",
+			"letzten monat",
+			"letzte monat",
+			"letzten monate",
+			"vergangenen",
+			"seit ",
+			"ab ",
+			"von ",
+			"bis ",
+			"zwischen",
+			"monatlich",
+			"pro monat",
+			"quartal",
+		)
+	)
 
 
 def _extract_matches_from_tool_result(result: dict[str, Any]) -> list[dict[str, Any]]:

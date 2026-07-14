@@ -49,6 +49,14 @@ _ALLOWED_SEARCH_FIELDTYPES = {
 _DEFAULT_LIST_FIELDS = ("name", "modified")
 _DEFAULT_ORDER_BY = "modified desc"
 _ALLOWED_AGENT_API_ROLES = {"Agent Readonly API", "System Manager"}
+_STANDARD_SAFE_FIELDS = {
+	"name",
+	"owner",
+	"creation",
+	"modified",
+	"modified_by",
+	"docstatus",
+}
 
 
 def _logger():
@@ -154,7 +162,7 @@ def _ensure_agent_api_access() -> None:
 
 def _sanitize_fieldnames(doctype: str, requested_fields: list[str] | None = None) -> tuple[list[str], set[str]]:
 	meta = frappe.get_meta(doctype)
-	allowed_by_meta: dict[str, Any] = {"name": None}
+	allowed_by_meta: dict[str, Any] = {fieldname: None for fieldname in _STANDARD_SAFE_FIELDS}
 
 	for df in meta.fields or []:
 		if not df.fieldname:
