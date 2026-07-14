@@ -41,8 +41,9 @@ const _fmt_einh = (value, unit) => {
 const _collect_art_names = (rows) => {
 	const names = new Set();
 	(rows || []).forEach((r) => {
-		if (r && r.betriebskostenart) {
-			names.add(r.betriebskostenart);
+		const label = r && (r.betriebskostenart || r.bezeichnung);
+		if (label) {
+			names.add(label);
 		}
 	});
 	return Array.from(names);
@@ -146,17 +147,19 @@ const render_kostenuebersicht = async (frm) => {
 
 	const immobilien_map = {};
 	(immobilien || []).forEach((row) => {
-		if (!row?.betriebskostenart) {
+		const label = row?.betriebskostenart || row?.bezeichnung;
+		if (!label) {
 			return;
 		}
-		immobilien_map[row.betriebskostenart] = Number(row.betrag || 0);
+		immobilien_map[label] = Number(row.betrag || 0);
 	});
 	const abrechnung_map = {};
 	(abrechnung || []).forEach((row) => {
-		if (!row?.betriebskostenart) {
+		const label = row?.betriebskostenart || row?.bezeichnung;
+		if (!label) {
 			return;
 		}
-		abrechnung_map[row.betriebskostenart] = Number(row.betrag || 0);
+		abrechnung_map[label] = Number(row.betrag || 0);
 	});
 
 	let sum_gesamt = 0;
@@ -284,6 +287,7 @@ const load_immobilien_kosten = (frm, attempt = 1) => {
 			rows.forEach((row) => {
 				const child = frm.add_child("immobilien_kosten");
 				child.betriebskostenart = row.betriebskostenart;
+				child.bezeichnung = row.bezeichnung;
 				child.betrag = row.betrag;
 			});
 			frm.refresh_field("immobilien_kosten");

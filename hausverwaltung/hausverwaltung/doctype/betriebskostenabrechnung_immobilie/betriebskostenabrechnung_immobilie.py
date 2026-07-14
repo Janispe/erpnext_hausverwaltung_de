@@ -220,7 +220,12 @@ class BetriebskostenabrechnungImmobilie(Document):
 		for art, betrag in sorted(per_art.items(), key=lambda item: sort_key(item[0])):
 			amount = round(float(betrag or 0), 2)
 			total_costs += amount
-			self.append("kosten_pro_art", {"betriebskostenart": art, "betrag": amount})
+			values = {"betrag": amount}
+			if frappe.db.exists("Betriebskostenart", art):
+				values["betriebskostenart"] = art
+			else:
+				values["bezeichnung"] = art
+			self.append("kosten_pro_art", values)
 		self.gesamtkosten = round(total_costs, 2)
 
 		# Vorauszahlungen aggregieren aus Mieter-Abrechnungen

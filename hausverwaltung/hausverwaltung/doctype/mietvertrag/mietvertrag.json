@@ -295,7 +295,7 @@
    "allow_on_submit": 1,
    "fieldname": "festbetraege",
    "fieldtype": "Table",
-   "label": "Kostenart-Festbetr\u00e4ge",
+   "label": "Festbetr\u00e4ge und Zusatzposten",
    "options": "Betriebskosten Festbetrag"
   },
   {

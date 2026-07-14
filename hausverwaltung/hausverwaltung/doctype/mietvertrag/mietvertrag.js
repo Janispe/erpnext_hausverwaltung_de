@@ -143,6 +143,21 @@ frappe.ui.form.on("Mietvertrag", {
 	},
 });
 
+frappe.ui.form.on("Betriebskosten Festbetrag", {
+	betriebskostenart(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (row.betriebskostenart && row.bezeichnung) {
+			frappe.model.set_value(cdt, cdn, "bezeichnung", "");
+		}
+	},
+	bezeichnung(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (row.bezeichnung && row.betriebskostenart) {
+			frappe.model.set_value(cdt, cdn, "betriebskostenart", "");
+		}
+	},
+});
+
 function hide_staffelmiete_art_column(frm, tableFieldname) {
 	const field = frm.get_field && frm.get_field(tableFieldname);
 	const grid = field && field.grid;

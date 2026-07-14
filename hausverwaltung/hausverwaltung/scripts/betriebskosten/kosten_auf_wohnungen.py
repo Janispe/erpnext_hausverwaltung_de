@@ -219,7 +219,7 @@ def _prorated_festbetrag_rows(
             "gueltig_von": ("<=", bis),
             "gueltig_bis": (">=", von),
         },
-        fields=["parent AS mietvertrag", "betriebskostenart", "betrag", "gueltig_von", "gueltig_bis"],
+        fields=["parent AS mietvertrag", "betriebskostenart", "bezeichnung", "betrag", "gueltig_von", "gueltig_bis"],
         limit_page_length=0,
     )
     mv_to_wohnung = {
@@ -230,7 +230,7 @@ def _prorated_festbetrag_rows(
     for row in rows or []:
         mietvertrag_name = row.get("mietvertrag")
         wohnung = mv_to_wohnung.get(mietvertrag_name)
-        kostenart = row.get("betriebskostenart")
+        kostenart = row.get("betriebskostenart") or row.get("bezeichnung")
         if not (wohnung and kostenart) or wohnung not in wohnungen:
             continue
         datensatz_tage = _period_days(row.get("gueltig_von"), row.get("gueltig_bis"))
@@ -282,8 +282,8 @@ def allocate_kosten_auf_wohnungen(
     bis_d = getdate(bis)
 
     konto_map = _konto_zu_kostenart_map()
-    if not konto_map:
-        return {"rows": [], "matrix": {}, "periode": {"von": von, "bis": bis}}
+    # Auch ohne kontobasierte Kostenarten können freie Festbeträge existieren.
+    # Diese werden weiter unten direkt aus den Mietverträgen übernommen.
 
     cc_to_haus = _kostenstelle_zu_haus_map()
     if not cc_to_haus and not immobilie:
@@ -456,7 +456,9 @@ def allocate_kosten_auf_wohnungen(
             for kostenart, amount in (festbetrag_cache.get(haus, {}).get(wohnung) or {}).items():
                 meta = art_meta.get(kostenart) or {}
                 verteilung = (meta.get("verteilung") or "").strip()
-                if verteilung.lower() != "festbetrag":
+                # Freie Bezeichnungen besitzen absichtlich keine Kostenart-
+                # Metadaten und werden direkt als Zusatzposten übernommen.
+                if meta and verteilung.lower() != "festbetrag":
                     continue
                 if _to_decimal(amount).copy_abs() < MIN_SIGNIFICANT:
                     continue

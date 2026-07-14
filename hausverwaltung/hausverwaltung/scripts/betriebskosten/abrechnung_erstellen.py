@@ -293,13 +293,12 @@ def _add_abrechnungsposten(doc, posten: Dict[str, Any]):
         amount = _to_decimal(betrag)
         if amount.copy_abs() < MIN_SIGNIFICANT:
             continue
-        doc.append(
-            "abrechnung",
-            {
-                "betriebskostenart": art,
-                "betrag": _as_money(amount),
-            },
-        )
+        values = {"betrag": _as_money(amount)}
+        if frappe.db.exists("Betriebskostenart", art):
+            values["betriebskostenart"] = art
+        else:
+            values["bezeichnung"] = art
+        doc.append("abrechnung", values)
 
 
 @frappe.whitelist()
@@ -401,6 +400,14 @@ def create_bk_abrechnung_wohnung(
         )
         if row.get("name")
     }
+    # Freie Zusatzposten haben keinen Betriebskostenart-Datensatz. Sie müssen
+    # beim Mieterwechsel trotzdem wie Festbeträge dem jeweiligen Vertrag
+    # zugeordnet werden und dürfen nicht pauschal nach Tagen verteilt werden.
+    festbetrag_arten.update(
+        row.get("kostenart")
+        for row in _prorated_festbetrag_rows(immobilie=immobilie, von=von, bis=bis)
+        if row.get("kostenart")
+    )
     posten_fest = {art: amount for art, amount in posten.items() if art in festbetrag_arten}
     posten_zeitanteilig = {art: amount for art, amount in posten.items() if art not in festbetrag_arten}
 

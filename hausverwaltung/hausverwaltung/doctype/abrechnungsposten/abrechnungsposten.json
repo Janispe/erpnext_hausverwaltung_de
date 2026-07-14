@@ -7,9 +7,17 @@
  "engine": "InnoDB",
  "field_order": [
   "betriebskostenart",
+  "bezeichnung",
   "betrag"
  ],
  "fields": [
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Freie Bezeichnung",
+   "read_only": 1
+  },
   {
    "fieldname": "betriebskostenart",
    "fieldtype": "Link",

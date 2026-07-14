@@ -10,6 +10,38 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen i
 
 
 class TestBetriebskostenartFestbetrag(unittest.TestCase):
+	def test_allocate_kosten_auf_wohnungen_includes_free_festbetrag(self):
+		with patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._konto_zu_kostenart_map",
+			return_value={},
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._kostenstelle_zu_haus_map",
+			return_value={},
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._betriebsarten_map",
+			return_value={},
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._wohnungen_in_haus",
+			return_value=["W1"],
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._bk_abrechnung_aktiv_am",
+			return_value=True,
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._prorated_festbetrag_rows",
+			return_value=[{"wohnung": "W1", "kostenart": "Mahngebühr", "betrag": 10}],
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen.frappe.get_all",
+			return_value=[],
+		):
+			result = allocate_kosten_auf_wohnungen.__wrapped__(
+				von="2025-01-01",
+				bis="2025-12-31",
+				immobilie="Haus-1",
+				stichtag="2025-12-31",
+			)
+
+		self.assertEqual(result["matrix"]["W1"]["Mahngebühr"], 10.0)
+
 	def test_allocate_kosten_auf_wohnungen_uses_festbetrag_rows(self):
 		gl_rows = [
 			type(
@@ -243,3 +275,41 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 		self.assertEqual(rows[0]["wohnung"], "W1")
 		self.assertEqual(rows[0]["kostenart"], "Kamin")
 		self.assertAlmostEqual(float(rows[0]["betrag"]), 59.51, places=2)
+
+	def test_prorated_festbetrag_rows_uses_free_label(self):
+		import frappe as _frappe_mod
+
+		def fake_get_all(doctype, **kwargs):
+			if doctype == "Mietvertrag":
+				if kwargs.get("pluck") == "name":
+					return ["MV-1"]
+				return [_frappe_mod._dict({"name": "MV-1", "wohnung": "W1"})]
+			if doctype == "Betriebskosten Festbetrag":
+				return [
+					_frappe_mod._dict({
+						"mietvertrag": "MV-1",
+						"betriebskostenart": None,
+						"bezeichnung": "Mahngebühr",
+						"betrag": 10,
+						"gueltig_von": "2025-06-01",
+						"gueltig_bis": "2025-06-01",
+					})
+				]
+			return []
+
+		with patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._wohnungen_in_haus",
+			return_value=["W1"],
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen.frappe.get_all",
+			side_effect=fake_get_all,
+		):
+			rows = _prorated_festbetrag_rows(
+				immobilie="Haus-1",
+				von="2025-01-01",
+				bis="2025-12-31",
+			)
+
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(rows[0]["kostenart"], "Mahngebühr")
+		self.assertEqual(float(rows[0]["betrag"]), 10.0)

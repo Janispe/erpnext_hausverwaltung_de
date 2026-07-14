@@ -156,7 +156,7 @@ class BetriebskostenabrechnungMieter(Document):
 
 		def accumulate(items, column: str) -> None:
 			for row in items or []:
-				art = row.get("betriebskostenart")
+				art = row.get("betriebskostenart") or row.get("bezeichnung")
 				if not art:
 					continue
 				try:
@@ -165,6 +165,7 @@ class BetriebskostenabrechnungMieter(Document):
 					amount = 0.0
 				entry = combined.setdefault(art, {
 					"betriebskostenart": art,
+					"bezeichnung": row.get("bezeichnung"),
 					"immobilie": 0.0,
 					"wohnung": 0.0,
 				})
@@ -320,13 +321,14 @@ def get_immobilien_kosten(name: str) -> List[Dict[str, object]]:
 			amount = 0.0
 		rows.append({
 			"betriebskostenart": row.get("betriebskostenart"),
+			"bezeichnung": row.get("bezeichnung"),
 			"betrag": amount,
 		})
 	# Auch hier gruppiert sortieren — wirkt rückwirkend für bestehende BKs,
 	# bei denen kosten_pro_art noch alphabetisch persistiert wurde.
 	from hausverwaltung.hausverwaltung.utils.bk_sort import sort_key
 
-	rows.sort(key=lambda r: sort_key(r["betriebskostenart"]))
+	rows.sort(key=lambda r: sort_key(r.get("betriebskostenart") or r.get("bezeichnung")))
 	return rows
 
 
@@ -453,7 +455,7 @@ def _get_abrechnungsposten_rows(parenttype: str, parent: str, parentfield: str) 
 			"parent": parent,
 			"parentfield": parentfield,
 		},
-		fields=["betriebskostenart", "betrag"],
+		fields=["betriebskostenart", "bezeichnung", "betrag"],
 		order_by="idx asc",
 		limit_page_length=0,
 	)

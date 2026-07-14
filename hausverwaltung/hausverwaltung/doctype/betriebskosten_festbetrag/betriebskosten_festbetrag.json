@@ -7,19 +7,27 @@
  "engine": "InnoDB",
  "field_order": [
   "betriebskostenart",
+  "bezeichnung",
   "betrag",
   "gueltig_von",
   "gueltig_bis"
  ],
  "fields": [
   {
-   "description": "Heizkosten-Kostenarten können hier als Festbetrag gepflegt werden; sie werden nicht in der Betriebskostenabrechnung verteilt.",
+   "description": "Optional. Alternativ kann eine freie Bezeichnung ohne Kostenart, Konto oder Artikel verwendet werden.",
    "fieldname": "betriebskostenart",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Umlagefähige Kostenart",
    "options": "Betriebskostenart",
-   "reqd": 1
+   "reqd": 0
+  },
+  {
+   "description": "Freier Zusatzposten ohne Kostenart, Konto oder Artikel, z. B. Mahngebühr. Entweder Kostenart oder freie Bezeichnung ausfüllen.",
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Freie Bezeichnung"
   },
   {
    "fieldname": "betrag",

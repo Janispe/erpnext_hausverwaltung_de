@@ -45,6 +45,46 @@ class TestBetriebskostenFestbetrag(unittest.TestCase):
 			with self.assertRaisesRegex(Exception, "Gültig von"):
 				doc.validate()
 
+	def test_validate_accepts_free_label_without_cost_type(self):
+		doc = self._doc(
+			doctype="Betriebskosten Festbetrag",
+			parent="MV-1",
+			betriebskostenart=None,
+			bezeichnung="  Mahngebühr  ",
+			betrag=10,
+			gueltig_von="2025-01-01",
+			gueltig_bis="2025-12-31",
+		)
+		with patch(
+			"hausverwaltung.hausverwaltung.doctype.betriebskosten_festbetrag.betriebskosten_festbetrag.frappe",
+			self._fake_frappe(),
+		), patch(
+			"hausverwaltung.hausverwaltung.doctype.betriebskosten_festbetrag.betriebskosten_festbetrag._",
+			lambda value: value,
+		):
+			doc.validate()
+		self.assertEqual(doc.bezeichnung, "Mahngebühr")
+
+	def test_validate_requires_exactly_one_label_source(self):
+		for betriebskostenart, bezeichnung in ((None, None), ("Kamin", "Mahngebühr")):
+			doc = self._doc(
+				doctype="Betriebskosten Festbetrag",
+				parent="MV-1",
+				betriebskostenart=betriebskostenart,
+				bezeichnung=bezeichnung,
+				gueltig_von="2025-01-01",
+				gueltig_bis="2025-12-31",
+			)
+			with patch(
+				"hausverwaltung.hausverwaltung.doctype.betriebskosten_festbetrag.betriebskosten_festbetrag.frappe",
+				self._fake_frappe(),
+			), patch(
+				"hausverwaltung.hausverwaltung.doctype.betriebskosten_festbetrag.betriebskosten_festbetrag._",
+				lambda value: value,
+			):
+				with self.assertRaisesRegex(Exception, "entweder eine Kostenart"):
+					doc.validate()
+
 	def test_validate_rejects_overlap_with_sibling_row(self):
 		doc = self._doc(
 			doctype="Betriebskosten Festbetrag",
