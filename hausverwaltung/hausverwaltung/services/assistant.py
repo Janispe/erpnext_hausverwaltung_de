@@ -465,12 +465,155 @@ HV_QUERY_VIEW_ALIASES = {
 }
 
 
+AGENT_DATA_CATALOG: tuple[dict[str, Any], ...] = (
+	{
+		"group": "mieter_vertraege",
+		"group_label": "Mieter und Vertraege",
+		"doctype": "Mietvertrag",
+		"description": "Mietverhaeltnisse mit Wohnung, Immobilie, Laufzeit, Status und Mietbestandteilen.",
+		"aliases": ("mieter", "mietvertrag", "mietverhaeltnis", "bewohner", "einzug", "auszug"),
+		"key_fields": ("wohnung", "immobilie", "von", "bis", "kunde", "status"),
+		"preferred_tool": "hv_query_view tenant_contracts oder search_mieter",
+	},
+	{
+		"group": "mieter_vertraege",
+		"group_label": "Mieter und Vertraege",
+		"doctype": "Customer",
+		"description": "ERPNext-Kundenstamm; in der Hausverwaltung typischerweise Mieter oder Debitoren.",
+		"aliases": ("kunde", "kunden", "customer", "debitor", "mieter-stammdaten"),
+		"key_fields": ("customer_name", "customer_group", "disabled"),
+		"preferred_tool": "search_mieter oder agent_list_docs",
+	},
+	{
+		"group": "mieter_vertraege",
+		"group_label": "Mieter und Vertraege",
+		"doctype": "Vertragspartner",
+		"description": "Weitere Personen und Rollen an einem Vertrag.",
+		"aliases": ("vertragspartner", "ansprechpartner", "person", "kontakt"),
+		"key_fields": ("name",),
+		"preferred_tool": "agent_get_doctype_schema, dann agent_list_docs",
+	},
+	{
+		"group": "objekte_wohnungen",
+		"group_label": "Immobilien und Wohnungen",
+		"doctype": "Immobilie",
+		"description": "Verwaltete Gebaeude und Objekte mit Bezeichnung und Adresse.",
+		"aliases": ("immobilie", "objekt", "haus", "gebaeude", "adresse", "strasse"),
+		"key_fields": ("bezeichnung", "adresse_titel", "objekt", "immobilien_id"),
+		"preferred_tool": "hv_query_view apartments oder hv_query_docs",
+	},
+	{
+		"group": "objekte_wohnungen",
+		"group_label": "Immobilien und Wohnungen",
+		"doctype": "Wohnung",
+		"description": "Wohneinheiten mit Lage, Gebaeudeteil, Immobilie und Status.",
+		"aliases": ("wohnung", "wohneinheit", "einheit", "leerstand", "hinterhaus", "vorderhaus"),
+		"key_fields": ("name__lage_in_der_immobilie", "immobilie", "gebaeudeteil", "status"),
+		"preferred_tool": "hv_query_view apartments",
+	},
+	{
+		"group": "objekte_wohnungen",
+		"group_label": "Immobilien und Wohnungen",
+		"doctype": "Eigentuemer",
+		"description": "Eigentuemer verwalteter Immobilien.",
+		"aliases": ("eigentuemer", "eigentumer", "besitzer"),
+		"key_fields": ("name",),
+		"preferred_tool": "agent_get_doctype_schema, dann agent_list_docs",
+	},
+	{
+		"group": "rechnungen_forderungen",
+		"group_label": "Rechnungen und Forderungen",
+		"doctype": "Sales Invoice",
+		"description": "Ausgangsrechnungen und Forderungen an Mieter oder andere Kunden.",
+		"aliases": ("ausgangsrechnung", "mieterrechnung", "forderung", "sales invoice", "rechnung an mieter"),
+		"key_fields": ("customer", "posting_date", "due_date", "grand_total", "outstanding_amount", "status"),
+		"preferred_tool": "hv_query_view invoices oder open_items",
+	},
+	{
+		"group": "rechnungen_forderungen",
+		"group_label": "Rechnungen und Forderungen",
+		"doctype": "Purchase Invoice",
+		"priority": 200,
+		"description": "Eingangs- und Lieferantenrechnungen mit Datum, Lieferant, Betrag und Status.",
+		"aliases": ("eingangsrechnung", "lieferantenrechnung", "purchase invoice", "kreditorenrechnung"),
+		"key_fields": ("supplier", "supplier_name", "posting_date", "grand_total", "outstanding_amount", "status"),
+		"preferred_tool": "agent_get_doctype_schema, dann agent_list_docs",
+	},
+	{
+		"group": "rechnungen_forderungen",
+		"group_label": "Rechnungen und Forderungen",
+		"doctype": "Eingangsrechnung Vorlage",
+		"description": "Vorlagen fuer wiederkehrende Eingangsrechnungen; keine gebuchten Lieferantenrechnungen.",
+		"aliases": ("rechnungsvorlage", "eingangsrechnung vorlage", "wiederkehrende rechnung"),
+		"key_fields": ("name",),
+		"preferred_tool": "agent_get_doctype_schema, dann agent_list_docs",
+	},
+	{
+		"group": "zahlungen_buchhaltung",
+		"group_label": "Zahlungen und Buchhaltung",
+		"doctype": "Payment Entry",
+		"description": "ERPNext-Zahlungsbuchungen fuer Ein- und Auszahlungen.",
+		"aliases": ("zahlung", "zahlungseingang", "zahlungsausgang", "payment entry", "ueberweisung"),
+		"key_fields": ("payment_type", "posting_date", "party_type", "party", "paid_amount", "received_amount", "status"),
+		"preferred_tool": "hv_query_view payments oder agent_list_docs",
+	},
+	{
+		"group": "zahlungen_buchhaltung",
+		"group_label": "Zahlungen und Buchhaltung",
+		"doctype": "Bankauszug Import",
+		"description": "Importlaeufe und Status eingelesener Bankauszuege.",
+		"aliases": ("bankauszug", "bankimport", "kontoauszug", "bankbuchung"),
+		"key_fields": ("name", "modified"),
+		"preferred_tool": "agent_get_doctype_schema, dann agent_list_docs",
+	},
+	{
+		"group": "abrechnungen",
+		"group_label": "Betriebs- und Heizkosten",
+		"doctype": "Betriebskostenabrechnung Mieter",
+		"description": "Mieterbezogene Betriebskostenabrechnungen und deren Ergebnis.",
+		"aliases": ("betriebskostenabrechnung", "nebenkostenabrechnung", "betriebskosten", "nebenkosten"),
+		"key_fields": ("name", "modified"),
+		"preferred_tool": "agent_get_doctype_schema, dann agent_list_docs",
+	},
+	{
+		"group": "abrechnungen",
+		"group_label": "Betriebs- und Heizkosten",
+		"doctype": "Heizkostenabrechnung Mieter",
+		"description": "Mieterbezogene Heizkostenabrechnungen und deren Ergebnis.",
+		"aliases": ("heizkostenabrechnung", "heizkosten", "waermeabrechnung"),
+		"key_fields": ("name", "modified"),
+		"preferred_tool": "agent_get_doctype_schema, dann agent_list_docs",
+	},
+	{
+		"group": "aufgaben_kommunikation",
+		"group_label": "Aufgaben und Kommunikation",
+		"doctype": "ToDo",
+		"description": "Offene und erledigte Aufgaben mit Bezug zu Dokumenten.",
+		"aliases": ("aufgabe", "aufgaben", "todo", "to-do", "offene aufgabe", "wiedervorlage"),
+		"key_fields": ("description", "status", "priority", "date", "reference_type", "reference_name"),
+		"preferred_tool": "agent_get_doctype_schema, dann agent_list_docs",
+	},
+	{
+		"group": "aufgaben_kommunikation",
+		"group_label": "Aufgaben und Kommunikation",
+		"doctype": "Communication",
+		"description": "E-Mails und andere Kommunikation mit Verknuepfung zu Dokumenten.",
+		"aliases": ("kommunikation", "email", "e-mail", "nachricht", "korrespondenz"),
+		"key_fields": ("communication_type", "communication_medium", "subject", "sender", "recipients", "reference_doctype", "reference_name"),
+		"preferred_tool": "agent_get_doctype_schema, dann agent_search_docs",
+	},
+)
+
+
 ASSISTANT_SYSTEM_PROMPT = """Du bist der interne Hausverwaltungs-Assistent.
 Du darfst nur lesen. Du darfst keine Buchungen, Briefe, Aufgaben oder sonstige Daten aendern.
 Nutze die bereitgestellten Tools fuer Mietersuche, Mieterkonto, Salden, offene Posten,
 verspaetete Zahlungen, Miet-Ranglisten und eingeschraenkte Hausverwaltungs-Abfragen.
 Wenn eine Frage ausserhalb dieses fachlichen Katalogs liegt, nutze die generischen agent_*-Tools.
 Diese geben nur Daten zurueck, fuer die der aktuelle Frappe-Benutzer Leserechte hat, und filtern sensible Felder.
+Wenn die passende Datenquelle oder der DocType unklar ist, nutze zuerst agent_describe_data_catalog mit einem kurzen
+Suchbegriff. Pruefe danach nur die passenden Kandidaten mit agent_get_doctype_schema und frage erst dann Dokumente ab.
+Rufe nicht pauschal alle DocTypes oder mehrere Schemas ab. Wenn ein spezialisiertes Tool eindeutig passt, nutze es direkt.
 Nutze agent_get_doctype_schema, bevor du unbekannte DocTypes oder Feldnamen abfragst.
 Wichtig: Eingangsrechnung, Lieferantenrechnung und Purchase Invoice meinen ERPNext DocType "Purchase Invoice";
 nutze dafuer agent_get_doctype_schema und agent_list_docs/agent_search_docs, nicht hv_query_view invoices.
@@ -494,6 +637,8 @@ Wenn der Nutzer keinen Zeitraum nennt, setze bei analyze_revenue_over_time kein 
 meint die komplette verfuegbare Historie und period=year.
 Wenn ein Tool total_count/count groesser als returned/count der Zeilen meldet, sage nicht "alle", sondern nenne die
 Gesamtzahl und dass nur ein Ausschnitt angezeigt wird.
+Wenn ein Tool einen Fehler meldet, korrigiere die Argumente anhand der Fehlermeldung. Wiederhole niemals denselben
+fehlgeschlagenen Tool-Aufruf mit unveraenderten Argumenten.
 Erfinde keine Datensaetze und keine Betraege.
 Wenn Treffer mehrdeutig sind, nenne die wichtigsten Treffer und frage nach einer Konkretisierung.
 Antworte knapp auf Deutsch und verweise auf die gefundenen Treffernummern, wenn vorhanden."""
@@ -874,6 +1019,25 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 	{
 		"type": "function",
 		"function": {
+			"name": "agent_describe_data_catalog",
+			"description": (
+				"Findet passende lesbare Datenquellen anhand deutscher Fachbegriffe und gruppiert sie nach Thema. "
+				"Nutze dies bei unklarer Datenquelle vor Schema- oder Dokumentabfragen; nicht noetig, wenn ein Spezialtool eindeutig passt."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"query": {
+						"type": "string",
+						"description": "Kurzer Fachbegriff, z.B. Eingangsrechnung, offene Aufgaben oder Zaehlerstand.",
+					},
+				},
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": {
 			"name": "agent_list_doctypes",
 			"description": (
 				"Listet alle nicht sensiblen DocTypes, die der aktuelle Benutzer lesen darf. "
@@ -925,7 +1089,10 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 					},
 					"limit": {"type": "integer", "description": "1 bis 100, Default 20."},
 					"offset": {"type": "integer", "description": "Offset fuer Pagination, Default 0."},
-					"order_by": {"type": "string", "description": "Format '<field> asc|desc'."},
+					"order_by": {
+						"type": "string",
+						"description": "Genau ein Feld: '<field> asc|desc'. Keine Kommas oder zweite Sortierung.",
+					},
 				},
 				"required": ["doctype"],
 			},
@@ -978,7 +1145,10 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 						"type": ["array", "string"],
 						"items": {"type": "string"},
 					},
-					"order_by": {"type": "string", "description": "Format '<field> asc|desc'."},
+					"order_by": {
+						"type": "string",
+						"description": "Genau ein Feld: '<field> asc|desc'. Keine Kommas oder zweite Sortierung.",
+					},
 				},
 				"required": ["query"],
 			},
@@ -999,11 +1169,42 @@ TOOL_FUNCTIONS = {
 	"hv_query_docs": lambda **kwargs: hv_query_docs(**kwargs),
 	"hv_query_view": lambda **kwargs: hv_query_view(**kwargs),
 	"hv_get_doc": lambda **kwargs: hv_get_doc(**kwargs),
+	"agent_describe_data_catalog": lambda **kwargs: agent_describe_data_catalog(**kwargs),
 	"agent_list_doctypes": lambda **kwargs: agent_list_doctypes(**kwargs),
 	"agent_get_doctype_schema": lambda **kwargs: agent_get_doctype_schema(**kwargs),
 	"agent_list_docs": lambda **kwargs: agent_list_docs(**kwargs),
 	"agent_get_doc": lambda **kwargs: agent_get_doc(**kwargs),
 	"agent_search_docs": lambda **kwargs: agent_search_docs(**kwargs),
+}
+
+CORE_TOOL_NAMES = {
+	"hv_describe_query_sources",
+	"hv_describe_query_source",
+	"agent_describe_data_catalog",
+}
+TENANT_TOOL_NAMES = {
+	"search_mieter",
+	"get_mieter_context",
+	"rank_mieter_by_rent",
+	"hv_query_docs",
+	"hv_query_view",
+	"hv_get_doc",
+}
+FINANCE_TOOL_NAMES = {
+	"get_mieterkonto_summary",
+	"search_open_items",
+	"search_late_payments",
+	"analyze_revenue_over_time",
+	"hv_query_view",
+	"hv_query_docs",
+	"hv_get_doc",
+}
+GENERIC_AGENT_TOOL_NAMES = {
+	"agent_describe_data_catalog",
+	"agent_get_doctype_schema",
+	"agent_list_docs",
+	"agent_get_doc",
+	"agent_search_docs",
 }
 
 
@@ -1048,6 +1249,119 @@ def get_conversation(conversation_id: str) -> dict[str, Any]:
 		"title": conversation.title,
 		"messages": [_conversation_message_row(row) for row in rows],
 	}
+
+
+def _select_assistant_tools(message: str) -> list[dict[str, Any]]:
+	text = (message or "").lower()
+	names = set(CORE_TOOL_NAMES)
+
+	if _message_matches_any(
+		text,
+		(
+			"eingangsrechnung",
+			"eingangsrechnungen",
+			"lieferantenrechnung",
+			"lieferantenrechnungen",
+			"purchase invoice",
+			"purchase invoices",
+			"todo",
+			"aufgabe",
+			"aufgaben",
+			"wiedervorlage",
+			"kommunikation",
+			"email",
+			"e-mail",
+			"eigentuemer",
+			"eigentümer",
+			"zaehler",
+			"zähler",
+			"betriebskosten",
+			"nebenkosten",
+			"heizkosten",
+			"bankauszug",
+			"bankimport",
+			"doctype",
+			"feld",
+			"felder",
+			"schema",
+		),
+	):
+		names.update(GENERIC_AGENT_TOOL_NAMES)
+
+	if _message_matches_any(
+		text,
+		(
+			"einnahme",
+			"einnahmen",
+			"mieteinnahme",
+			"mieteinnahmen",
+			"umsatz",
+			"umsätze",
+			"entwicklung",
+			"zeitverlauf",
+			"über die zeit",
+			"ueber die zeit",
+			"zahlung",
+			"zahlungen",
+			"zahlungsverzug",
+			"verzug",
+			"offene posten",
+			"offen",
+			"forderung",
+			"forderungen",
+			"mieterkonto",
+		),
+	):
+		names.update(FINANCE_TOOL_NAMES)
+
+	if _message_matches_any(
+		text,
+		(
+			"mieter",
+			"mieterin",
+			"mietvertrag",
+			"mietverträge",
+			"mietvertraege",
+			"wohnung",
+			"wohnungen",
+			"immobilie",
+			"immobilien",
+			"haus",
+			"straße",
+			"strasse",
+			"hinterhaus",
+			"vorderhaus",
+			"leerstand",
+			"bewohner",
+			"personen",
+			"miete",
+			"bruttomiete",
+			"nettokaltmiete",
+		),
+	):
+		names.update(TENANT_TOOL_NAMES)
+
+	if names == CORE_TOOL_NAMES:
+		names.update({"search_mieter", "get_mieter_context", "hv_query_view"})
+		names.update(GENERIC_AGENT_TOOL_NAMES)
+
+	return _tools_by_name(names)
+
+
+def _message_matches_any(text: str, needles: tuple[str, ...]) -> bool:
+	return any(needle in text for needle in needles)
+
+
+def _tools_by_name(names: set[str]) -> list[dict[str, Any]]:
+	return [tool for tool in ASSISTANT_TOOLS if tool.get("function", {}).get("name") in names]
+
+
+def _tool_names(tools: list[dict[str, Any]]) -> list[str]:
+	return [tool.get("function", {}).get("name") or "" for tool in tools if tool.get("function", {}).get("name")]
+
+
+def _assistant_prompt_cache_key(conversation_id: str) -> str:
+	return f"hv-assistant:v1:{conversation_id}"[:512]
 
 
 def hv_describe_query_sources(include_fields: bool | int | str = False) -> dict[str, Any]:
@@ -1176,19 +1490,24 @@ def run_assistant(message: str, conversation_id: str | None = None) -> dict[str,
 		},
 	]
 
+	selected_tools = _select_assistant_tools(user_message)
+	prompt_cache_key = _assistant_prompt_cache_key(conversation.name)
 	tool_names: list[str] = []
 	tool_calls_debug: list[dict[str, Any]] = []
 	matches: list[dict[str, Any]] = []
+	usage_entries: list[dict[str, Any]] = []
 	final_message: dict[str, Any] | None = None
 
 	for _round in range(MAX_TOOL_ROUNDS):
 		assistant_message = mistral_client.complete_chat(
 			messages=messages,
-			tools=ASSISTANT_TOOLS,
+			tools=selected_tools,
 			tool_choice="auto",
 			parallel_tool_calls=False,
-			temperature=0.1,
+			temperature=0.2,
+			prompt_cache_key=prompt_cache_key,
 		)
+		usage_entries.append(assistant_message.get("_usage") or {})
 		messages.append(_sanitize_assistant_message(assistant_message))
 		tool_calls = assistant_message.get("tool_calls") or []
 		if not tool_calls:
@@ -1215,8 +1534,10 @@ def run_assistant(message: str, conversation_id: str | None = None) -> dict[str,
 	if final_message is None:
 		final_message = mistral_client.complete_chat(
 			messages=messages,
-			temperature=0.1,
+			temperature=0.2,
+			prompt_cache_key=prompt_cache_key,
 		)
+		usage_entries.append(final_message.get("_usage") or {})
 
 	answer = _message_content(final_message) or _fallback_answer(matches)
 	deduped_matches = _dedupe_matches(matches)
@@ -1242,6 +1563,8 @@ def run_assistant(message: str, conversation_id: str | None = None) -> dict[str,
 		"conversation_id": conversation.name,
 		"tool_names": tool_names,
 		"tool_calls": tool_calls_debug,
+		"toolset": _tool_names(selected_tools),
+		"mistral_usage": _mistral_usage_summary(usage_entries),
 		"read_only": True,
 	}
 
@@ -1396,6 +1719,12 @@ def _tool_result_count(result: dict[str, Any]) -> int:
 				return int(pagination.get("returned") or 0)
 			except (TypeError, ValueError):
 				return 0
+	data = result.get("data")
+	if isinstance(data, dict) and data.get("matched_sources") is not None:
+		try:
+			return int(data.get("matched_sources") or 0)
+		except (TypeError, ValueError):
+			return 0
 	rows = result.get("rows") or result.get("matches") or result.get("items")
 	return len(rows) if isinstance(rows, list) else 0
 
@@ -2027,8 +2356,191 @@ def agent_list_doctypes(**_kwargs) -> dict[str, Any]:
 	return agent_read_api.list_doctypes()
 
 
+def agent_describe_data_catalog(query: str | None = None, **_kwargs) -> dict[str, Any]:
+	"""Return a compact, permission-filtered map from business terms to DocTypes."""
+	result = agent_read_api.list_doctypes()
+	if not isinstance(result, dict) or not result.get("ok") or not isinstance(result.get("data"), list):
+		return result
+
+	visible_rows = [dict(row) for row in result.get("data") or [] if row.get("name")]
+	visible_by_name = {str(row["name"]): row for row in visible_rows}
+	query_text = _normalize_catalog_text(query or "")
+	entries = []
+	curated_names = set()
+	for entry in AGENT_DATA_CATALOG:
+		doctype = entry["doctype"]
+		if doctype not in visible_by_name:
+			continue
+		curated_names.add(doctype)
+		score = _catalog_entry_score(entry, query_text)
+		if query_text and score < 10:
+			continue
+		entries.append({**_catalog_entry_payload(entry), "score": score})
+
+	if query_text:
+		for row in visible_rows:
+			doctype = str(row["name"])
+			if doctype in curated_names:
+				continue
+			haystack = _normalize_catalog_text(f"{doctype} {row.get('module') or ''}")
+			score = _catalog_text_score(query_text, haystack)
+			if score < 10:
+				continue
+			entries.append(
+				{
+					"group": "weitere_daten",
+					"group_label": "Weitere lesbare Daten",
+					"doctype": doctype,
+					"description": f"Lesbarer DocType im Modul {row.get('module') or 'Unbekannt'}.",
+					"key_fields": ("name", "creation", "modified"),
+					"preferred_tool": "agent_get_doctype_schema, dann agent_list_docs oder agent_search_docs",
+					"score": score,
+				}
+			)
+		entries.sort(key=lambda item: (-int(item["score"]), item["doctype"]))
+		entries = entries[:15]
+	else:
+		entries.sort(key=lambda item: (item["group_label"], item["doctype"]))
+
+	groups: dict[str, dict[str, Any]] = {}
+	for entry in entries:
+		group = groups.setdefault(
+			entry["group"],
+			{"group": entry["group"], "label": entry["group_label"], "sources": []},
+		)
+		group["sources"].append({key: value for key, value in entry.items() if key not in {"group", "group_label", "score"}})
+
+	module_counts: dict[str, int] = {}
+	for row in visible_rows:
+		module = str(row.get("module") or "Unbekannt")
+		module_counts[module] = module_counts.get(module, 0) + 1
+
+	data = {
+		"query": query or None,
+		"total_readable_doctypes": len(visible_rows),
+		"matched_sources": len(entries),
+		"groups": list(groups.values()),
+		"next_step": (
+			"Fuer unklare Felder genau einen passenden DocType mit agent_get_doctype_schema pruefen; "
+			"danach gezielt agent_list_docs oder agent_search_docs verwenden."
+		),
+	}
+	if not query_text:
+		data["other_modules"] = [
+			{"module": module, "doctype_count": count}
+			for module, count in sorted(module_counts.items(), key=lambda item: (-item[1], item[0]))[:12]
+		]
+		data["hint"] = "Mit query suchen, um auch nicht kuratierte lesbare DocTypes nach Name oder Modul zu finden."
+	return {**result, "data": data}
+
+
+def _catalog_entry_payload(entry: dict[str, Any]) -> dict[str, Any]:
+	return {
+		"group": entry["group"],
+		"group_label": entry["group_label"],
+		"doctype": entry["doctype"],
+		"description": entry["description"],
+		"aliases": list(entry.get("aliases") or ()),
+		"key_fields": list(entry.get("key_fields") or ()),
+		"preferred_tool": entry["preferred_tool"],
+	}
+
+
+def _normalize_catalog_text(value: str) -> str:
+	normalized = (
+		str(value or "").lower()
+		.replace("ä", "ae")
+		.replace("ö", "oe")
+		.replace("ü", "ue")
+		.replace("ß", "ss")
+	)
+	return re.sub(
+		r"[^a-z0-9]+",
+		" ",
+		normalized.replace("ae", "a").replace("oe", "o").replace("ue", "u").replace("ss", "s")
+	).strip()
+
+
+def _catalog_entry_score(entry: dict[str, Any], query: str) -> int:
+	if not query:
+		return 1
+	haystack = _normalize_catalog_text(
+		" ".join(
+			[
+				entry.get("doctype") or "",
+				entry.get("description") or "",
+				entry.get("group_label") or "",
+				*(entry.get("aliases") or ()),
+			]
+		)
+	)
+	base_score = _catalog_text_score(query, haystack)
+	return base_score + int(entry.get("priority") or 0) if base_score else 0
+
+
+def _catalog_text_score(query: str, haystack: str) -> int:
+	if not query or not haystack:
+		return 0
+	score = 100 if query in haystack else 0
+	query_tokens = {token for token in query.split() if len(token) >= 3}
+	haystack_tokens = set(haystack.split())
+	for token in query_tokens:
+		if token in haystack_tokens:
+			score += 20
+		elif any(
+			(token.startswith(candidate) or candidate.startswith(token)) and min(len(token), len(candidate)) >= 8
+			for candidate in haystack_tokens
+		):
+			score += 20
+		elif any(token in candidate or candidate in token for candidate in haystack_tokens if len(candidate) >= 5):
+			score += 5
+	return score
+
+
 def agent_get_doctype_schema(doctype: str) -> dict[str, Any]:
-	return agent_read_api.get_doctype_schema(doctype)
+	return _compact_agent_schema_response(agent_read_api.get_doctype_schema(doctype))
+
+
+def _compact_agent_schema_response(result: dict[str, Any]) -> dict[str, Any]:
+	if not isinstance(result, dict) or not result.get("ok") or not isinstance(result.get("data"), dict):
+		return result
+	data = result.get("data") or {}
+	fields = data.get("fields") or []
+	compact_fields = []
+	omitted = 0
+	for field in fields:
+		if not isinstance(field, dict):
+			continue
+		fieldname = str(field.get("fieldname") or "").strip()
+		fieldtype = str(field.get("fieldtype") or "").strip()
+		if not fieldname:
+			continue
+		if field.get("hidden") or fieldtype in {"Table", "Table MultiSelect", "Button", "Column Break", "Section Break", "HTML"}:
+			omitted += 1
+			continue
+		item = {
+			"fieldname": fieldname,
+			"label": field.get("label") or fieldname,
+			"fieldtype": fieldtype,
+		}
+		options = str(field.get("options") or "").strip()
+		if options:
+			item["options"] = options[:300]
+		if field.get("reqd"):
+			item["reqd"] = 1
+		compact_fields.append(item)
+
+	compact_data = {
+		"doctype": data.get("doctype"),
+		"module": data.get("module"),
+		"title_field": data.get("title_field") or "name",
+		"search_fields": data.get("search_fields") or "",
+		"standard_fields": ["name", "creation", "modified", "docstatus"],
+		"fields": compact_fields,
+		"field_count": len(compact_fields),
+		"omitted_field_count": omitted,
+	}
+	return {**result, "data": compact_data}
 
 
 def agent_list_docs(
@@ -4078,6 +4590,34 @@ def _message_content(message: dict[str, Any] | None) -> str:
 		parts = [str(part.get("text") or "") for part in content if isinstance(part, dict)]
 		return "".join(parts).strip()
 	return ""
+
+
+def _mistral_usage_summary(entries: list[dict[str, Any]]) -> dict[str, int]:
+	out = {
+		"calls": 0,
+		"prompt_tokens": 0,
+		"completion_tokens": 0,
+		"total_tokens": 0,
+		"cached_prompt_tokens": 0,
+	}
+	for usage in entries:
+		if not isinstance(usage, dict) or not usage:
+			continue
+		out["calls"] += 1
+		out["prompt_tokens"] += _int_or_zero(usage.get("prompt_tokens"))
+		out["completion_tokens"] += _int_or_zero(usage.get("completion_tokens"))
+		out["total_tokens"] += _int_or_zero(usage.get("total_tokens"))
+		details = usage.get("prompt_tokens_details") or {}
+		if isinstance(details, dict):
+			out["cached_prompt_tokens"] += _int_or_zero(details.get("cached_tokens"))
+	return out
+
+
+def _int_or_zero(value: Any) -> int:
+	try:
+		return int(value or 0)
+	except Exception:
+		return 0
 
 
 def _fallback_answer(matches: list[dict[str, Any]]) -> str:

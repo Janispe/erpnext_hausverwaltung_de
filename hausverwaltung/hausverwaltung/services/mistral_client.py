@@ -186,11 +186,15 @@ def _post_chat(
 	tool_choice: str | dict | None = None,
 	parallel_tool_calls: bool | None = None,
 	temperature: float | None = None,
+	prompt_cache_key: str | None = None,
 ) -> dict:
 	body: dict[str, Any] = {
 		"model": model,
 		"messages": messages,
 	}
+	cache_key = (prompt_cache_key or "").strip()
+	if cache_key:
+		body["prompt_cache_key"] = cache_key[:512]
 	if response_json:
 		body["response_format"] = {"type": "json_object"}
 	if tools:
@@ -242,6 +246,10 @@ def _extract_choice_message(payload: dict) -> dict:
 	message = choices[0].get("message") or {}
 	if not isinstance(message, dict):
 		raise MistralTransientError("Mistral-Antwort hat unerwartetes Message-Format.")
+	usage = payload.get("usage")
+	if isinstance(usage, dict):
+		message = dict(message)
+		message["_usage"] = usage
 	return message
 
 
@@ -266,6 +274,7 @@ def complete_chat(
 	tool_choice: str | dict | None = None,
 	parallel_tool_calls: bool | None = None,
 	temperature: float | None = None,
+	prompt_cache_key: str | None = None,
 ) -> dict:
 	"""Allgemeiner Chat-Completions-Aufruf.
 
@@ -285,6 +294,7 @@ def complete_chat(
 		tool_choice=tool_choice,
 		parallel_tool_calls=parallel_tool_calls,
 		temperature=temperature,
+		prompt_cache_key=prompt_cache_key,
 	)
 	return _extract_choice_message(payload)
 

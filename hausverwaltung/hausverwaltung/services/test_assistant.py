@@ -79,8 +79,17 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 					},
 				}
 			],
+			"_usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
 		}
-		final_response = {"content": "Ich habe einen passenden Treffer gefunden."}
+		final_response = {
+			"content": "Ich habe einen passenden Treffer gefunden.",
+			"_usage": {
+				"prompt_tokens": 140,
+				"completion_tokens": 30,
+				"total_tokens": 170,
+				"prompt_tokens_details": {"cached_tokens": 80},
+			},
+		}
 		search_result = {
 			"matches": [
 				{
@@ -96,11 +105,20 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			 patch.object(assistant, "_get_or_create_conversation", return_value=frappe._dict(name="CONV-1")), \
 			 patch.object(assistant, "_load_conversation_history", return_value=[]), \
 			 patch.object(assistant, "_store_conversation_message"), \
+			 patch.object(assistant, "nowdate", return_value="2026-07-14"), \
 			 patch.object(assistant, "search_mieter", return_value=search_result) as search_mieter, \
-			 patch.object(mistral_client, "complete_chat", side_effect=[tool_response, final_response]):
+			 patch.object(mistral_client, "complete_chat", side_effect=[tool_response, final_response]) as complete_chat:
 			result = assistant.run_assistant("suche mieter schmidt")
 
 		search_mieter.assert_called_once_with(query="Schmidt", limit=3)
+		first_call = complete_chat.call_args_list[0].kwargs
+		first_tool_names = {tool["function"]["name"] for tool in first_call["tools"]}
+		self.assertIn("search_mieter", first_tool_names)
+		self.assertIn("hv_query_view", first_tool_names)
+		self.assertNotIn("agent_list_docs", first_tool_names)
+		self.assertLess(len(first_tool_names), len(assistant.ASSISTANT_TOOLS))
+		self.assertEqual(first_call["prompt_cache_key"], "hv-assistant:v1:CONV-1")
+		self.assertEqual(complete_chat.call_args_list[1].kwargs["prompt_cache_key"], first_call["prompt_cache_key"])
 		self.assertTrue(result["ok"])
 		self.assertTrue(result["read_only"])
 		self.assertEqual(result["answer"], "Ich habe einen passenden Treffer gefunden.")
@@ -108,11 +126,22 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["tool_calls"][0]["name"], "search_mieter")
 		self.assertEqual(result["tool_calls"][0]["arguments"], {"query": "Schmidt", "limit": 3})
 		self.assertEqual(result["tool_calls"][0]["result_count"], 1)
+		self.assertEqual(
+			result["mistral_usage"],
+			{
+				"calls": 2,
+				"prompt_tokens": 240,
+				"completion_tokens": 50,
+				"total_tokens": 290,
+				"cached_prompt_tokens": 80,
+			},
+		)
 
 	def test_generic_agent_read_tools_are_registered(self):
 		tool_names = {tool["function"]["name"] for tool in assistant.ASSISTANT_TOOLS}
 
 		for name in {
+			"agent_describe_data_catalog",
 			"agent_list_doctypes",
 			"agent_get_doctype_schema",
 			"agent_list_docs",
@@ -122,6 +151,124 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		}:
 			self.assertIn(name, tool_names)
 			self.assertIn(name, assistant.TOOL_FUNCTIONS)
+
+	def test_select_assistant_tools_keeps_revenue_questions_compact(self):
+		tools = assistant._select_assistant_tools(
+			"wie haben sich die einnahmen in der wilhelmshavener straße über die zeit entwickelt?"
+		)
+		tool_names = {tool["function"]["name"] for tool in tools}
+
+		self.assertIn("analyze_revenue_over_time", tool_names)
+		self.assertIn("hv_describe_query_sources", tool_names)
+		self.assertIn("hv_query_view", tool_names)
+		self.assertIn("search_mieter", tool_names)
+		self.assertNotIn("agent_list_docs", tool_names)
+		self.assertLess(len(tool_names), len(assistant.ASSISTANT_TOOLS))
+
+	def test_select_assistant_tools_uses_generic_tools_for_unknown_doctypes(self):
+		tools = assistant._select_assistant_tools(
+			"Zeige mir die drei neuesten Eingangsrechnungen mit Datum, Lieferant, Betrag und Status."
+		)
+		tool_names = {tool["function"]["name"] for tool in tools}
+
+		self.assertIn("agent_describe_data_catalog", tool_names)
+		self.assertIn("agent_get_doctype_schema", tool_names)
+		self.assertIn("agent_list_docs", tool_names)
+		self.assertNotIn("agent_list_doctypes", tool_names)
+		self.assertNotIn("analyze_revenue_over_time", tool_names)
+
+	def test_agent_data_catalog_resolves_aliases_and_filters_permissions(self):
+		readable = {
+			"ok": True,
+			"data": [
+				{"name": "Purchase Invoice", "module": "Accounts"},
+				{"name": "Eingangsrechnung Vorlage", "module": "Hausverwaltung"},
+				{"name": "Sales Invoice", "module": "Accounts"},
+			],
+			"meta": {"request_id": "REQ-1"},
+		}
+
+		with patch.object(assistant.agent_read_api, "list_doctypes", return_value=readable):
+			result = assistant.agent_describe_data_catalog("Eingangsrechnungen")
+
+		sources = [source for group in result["data"]["groups"] for source in group["sources"]]
+		self.assertEqual(sources[0]["doctype"], "Purchase Invoice")
+		self.assertIn("Lieferantenrechnungen", sources[0]["description"])
+		self.assertNotIn("Sales Invoice", {source["doctype"] for source in sources})
+
+	def test_select_assistant_tools_supports_catalog_follow_up_for_tasks(self):
+		tools = assistant._select_assistant_tools("Welche offenen Aufgaben gibt es?")
+		tool_names = {tool["function"]["name"] for tool in tools}
+
+		self.assertIn("agent_describe_data_catalog", tool_names)
+		self.assertIn("agent_get_doctype_schema", tool_names)
+		self.assertIn("agent_list_docs", tool_names)
+		self.assertIn("search_open_items", tool_names)
+
+	def test_agent_data_catalog_finds_uncurated_readable_doctype(self):
+		readable = {
+			"ok": True,
+			"data": [
+				{"name": "Zaehlerstand", "module": "Hausverwaltung"},
+				{"name": "User", "module": "Core"},
+			],
+		}
+
+		with patch.object(assistant.agent_read_api, "list_doctypes", return_value=readable):
+			result = assistant.agent_describe_data_catalog("Zaehlerstand")
+
+		sources = result["data"]["groups"][0]["sources"]
+		self.assertEqual(sources[0]["doctype"], "Zaehlerstand")
+		self.assertEqual(sources[0]["preferred_tool"], "agent_get_doctype_schema, dann agent_list_docs oder agent_search_docs")
+
+	def test_agent_data_catalog_overview_is_grouped_and_compact(self):
+		readable = {
+			"ok": True,
+			"data": [
+				{"name": "Mietvertrag", "module": "Hausverwaltung"},
+				{"name": "Wohnung", "module": "Hausverwaltung"},
+				{"name": "Purchase Invoice", "module": "Accounts"},
+				{"name": "Unrelated DocType", "module": "Custom"},
+			],
+		}
+
+		with patch.object(assistant.agent_read_api, "list_doctypes", return_value=readable):
+			result = assistant.agent_describe_data_catalog()
+
+		self.assertEqual(result["data"]["total_readable_doctypes"], 4)
+		self.assertEqual(result["data"]["matched_sources"], 3)
+		self.assertEqual({group["group"] for group in result["data"]["groups"]}, {
+			"mieter_vertraege", "objekte_wohnungen", "rechnungen_forderungen"
+		})
+		self.assertNotIn("Unrelated DocType", str(result["data"]["groups"]))
+		self.assertEqual(assistant._tool_result_count(result), 3)
+
+	def test_agent_get_doctype_schema_compacts_model_context(self):
+		raw_schema = {
+			"ok": True,
+			"data": {
+				"doctype": "Purchase Invoice",
+				"module": "Accounts",
+				"title_field": "supplier_name",
+				"search_fields": "supplier,supplier_name",
+				"fields": [
+					{"fieldname": "supplier", "label": "Supplier", "fieldtype": "Link", "options": "Supplier"},
+					{"fieldname": "items", "label": "Items", "fieldtype": "Table", "options": "Purchase Invoice Item"},
+					{"fieldname": "tax_id", "label": "Tax ID", "fieldtype": "Data", "hidden": 1},
+					{"fieldname": "status", "label": "Status", "fieldtype": "Select", "options": "Draft\nPaid"},
+				],
+			},
+			"meta": {"request_id": "REQ-1"},
+		}
+
+		with patch.object(assistant.agent_read_api, "get_doctype_schema", return_value=raw_schema):
+			result = assistant.agent_get_doctype_schema("Purchase Invoice")
+
+		fields = result["data"]["fields"]
+		self.assertEqual([field["fieldname"] for field in fields], ["supplier", "status"])
+		self.assertEqual(result["data"]["standard_fields"], ["name", "creation", "modified", "docstatus"])
+		self.assertEqual(result["data"]["field_count"], 2)
+		self.assertEqual(result["data"]["omitted_field_count"], 2)
 
 	def test_revenue_search_terms_normalize_street_and_building_part(self):
 		terms = assistant._revenue_search_terms("Wilhelmshavener Straße im Hinterhaus")
@@ -193,6 +340,7 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			 patch.object(assistant, "_get_or_create_conversation", return_value=conversation), \
 			 patch.object(assistant, "_load_conversation_history", return_value=history), \
 			 patch.object(assistant, "_store_conversation_message") as store_message, \
+			 patch.object(assistant, "nowdate", return_value="2026-07-14"), \
 			 patch.object(mistral_client, "complete_chat", return_value=final_response) as complete_chat:
 			result = assistant.run_assistant("und jetzt?", conversation_id="CONV-1")
 
@@ -203,6 +351,51 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(store_message.call_count, 2)
 		store_message.assert_any_call("CONV-1", "user", "und jetzt?")
 		store_message.assert_any_call("CONV-1", "assistant", "Das ist die Folgeantwort.", tool_names=[], tool_calls=[], matches=[])
+
+	def test_mistral_complete_chat_forwards_prompt_cache_key(self):
+		with patch.object(mistral_client, "ensure_configured"), \
+			 patch.object(mistral_client, "_text_model", return_value="mistral-small-latest"), \
+			 patch.object(mistral_client, "_timeout", return_value=30), \
+			 patch.object(
+				 mistral_client,
+				 "_post_chat",
+				 return_value={
+					 "choices": [{"message": {"content": "ok"}}],
+					 "usage": {"prompt_tokens": 10, "prompt_tokens_details": {"cached_tokens": 5}},
+				 },
+			 ) as post_chat:
+			result = mistral_client.complete_chat(
+				messages=[{"role": "user", "content": "Hallo"}],
+				prompt_cache_key=" hv-assistant:CONV-1:test ",
+			)
+
+		self.assertEqual(result["content"], "ok")
+		self.assertEqual(result["_usage"]["prompt_tokens_details"]["cached_tokens"], 5)
+		self.assertEqual(post_chat.call_args.kwargs["prompt_cache_key"], " hv-assistant:CONV-1:test ")
+
+	def test_mistral_post_chat_sends_bounded_prompt_cache_key(self):
+		class FakeResponse:
+			status_code = 200
+			text = ""
+
+			def json(self):
+				return {"choices": [{"message": {"content": "ok"}}]}
+
+		long_key = "x" * 600
+		with patch.object(mistral_client, "_api_key", return_value="secret"), \
+			 patch.object(mistral_client, "_base_url", return_value="https://api.mistral.ai/v1"), \
+			 patch.object(mistral_client.requests, "post", return_value=FakeResponse()) as post:
+			mistral_client._post_chat(
+				[{"role": "user", "content": "Hallo"}],
+				model="mistral-small-latest",
+				response_json=False,
+				timeout=30,
+				prompt_cache_key=long_key,
+			)
+
+		body = post.call_args.kwargs["json"]
+		self.assertEqual(body["prompt_cache_key"], long_key[:512])
+		self.assertEqual(post.call_args.kwargs["headers"]["Authorization"], "Bearer secret")
 
 	def test_get_mieterkonto_summary_uses_existing_report(self):
 		match = {"customer": "CUST-1", "customer_name": "Anna Schmidt", "mietvertrag": "MV-1"}
