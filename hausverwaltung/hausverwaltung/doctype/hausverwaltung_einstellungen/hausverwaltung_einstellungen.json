@@ -34,6 +34,8 @@
   "abschreibungskonto_forderungen",
   "income_section",
   "income_accounts",
+  "betriebskosten_section",
+  "bk_rundungsverfahren",
   "abschlagszahlung_section",
   "bankimport_abschlag_toleranz_tage",
   "bankimport_section",
@@ -227,6 +229,20 @@
    "fieldtype": "Table",
    "label": "Erlöskonten pro Company",
    "options": "Hausverwaltung Erloeskonten"
+  },
+  {
+   "fieldname": "betriebskosten_section",
+   "fieldtype": "Section Break",
+   "label": "Betriebskostenabrechnung"
+  },
+  {
+   "default": "Bisherige Restverteilung",
+   "description": "Größte-Rest-Methode verteilt Restcent nach den ungerundeten Nachkommaresten. Nur kaufmännisch runden lässt mögliche Centdifferenzen stehen. Die bisherige Restverteilung ordnet die Differenz dem betragsmäßig größten Wohnungsanteil bzw. beim Mieterwechsel dem letzten Segment zu.",
+   "fieldname": "bk_rundungsverfahren",
+   "fieldtype": "Select",
+   "label": "Rundungsverfahren",
+   "options": "Größte-Rest-Methode\nNur kaufmännisch runden\nBisherige Restverteilung",
+   "reqd": 1
   },
   {
    "fieldname": "abschlagszahlung_section",

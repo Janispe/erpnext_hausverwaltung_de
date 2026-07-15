@@ -26,6 +26,13 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen i
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaiment_calc import (
     get_bk_prepayment_summary,
 )
+from hausverwaltung.hausverwaltung.scripts.betriebskosten.rounding import (
+    ROUNDING_METHOD_LARGEST_REMAINDER,
+    ROUNDING_METHOD_LEGACY,
+    ROUNDING_METHOD_ONLY,
+    get_bk_rounding_method,
+    round_money_allocations,
+)
 
 MONEY_QUANT = Decimal("0.01")
 MIN_SIGNIFICANT = Decimal("0.000000001")
@@ -452,6 +459,18 @@ def create_bk_abrechnung_wohnung(
 
     # Zielsumme (gerundet) über alle Segmente
     target_total = _quantize_money(total_unrounded)
+    rounding_method = get_bk_rounding_method()
+    if rounding_method in {ROUNDING_METHOD_LARGEST_REMAINDER, ROUNDING_METHOD_ONLY}:
+        arts = sorted({art for amounts in seg_posten for art in amounts})
+        for art in arts:
+            entries = [
+                (index, amounts[art])
+                for index, amounts in enumerate(seg_posten)
+                if art in amounts
+            ]
+            rounded = round_money_allocations(entries, rounding_method)
+            for index, amount in rounded.items():
+                seg_posten[index][art] = amount
 
     created: List[str] = []
     sum_written = Decimal("0")
@@ -506,7 +525,7 @@ def create_bk_abrechnung_wohnung(
             })
 
         seg_amounts = seg_posten[idx]
-        if idx == len(segments) - 1 and seg_amounts:
+        if rounding_method == ROUNDING_METHOD_LEGACY and idx == len(segments) - 1 and seg_amounts:
             # Remainder auf letzte Abrechnung legen (erste Kostenart)
             current_sum = Decimal("0")
             for amt in seg_amounts.values():

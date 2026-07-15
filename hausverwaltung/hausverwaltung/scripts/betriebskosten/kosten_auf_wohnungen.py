@@ -34,6 +34,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import frappe
 from frappe.utils import cstr, getdate
 
+from hausverwaltung.hausverwaltung.scripts.betriebskosten.rounding import (
+    get_bk_rounding_method,
+    round_money_allocations,
+)
+
 # Reuse helpers from GL aggregation
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.gl_kosten_pro_haus import (
     _konto_zu_kostenart_map,
@@ -464,33 +469,19 @@ def allocate_kosten_auf_wohnungen(
                     continue
                 matrix[wohnung][kostenart] += _to_decimal(amount)
 
-    # Runden mit Restverteilung pro Kostenart
+    # Runden nach dem in den Hausverwaltung-Einstellungen gewählten Verfahren.
     per_art: Dict[str, List[Tuple[str, Decimal]]] = defaultdict(list)
     for whg, arts in matrix.items():
         for art, val in arts.items():
             per_art[art].append((whg, val))
 
     rounded_matrix: Dict[str, Dict[str, float]] = {}
+    rounding_method = get_bk_rounding_method()
     for art, entries in per_art.items():
         if not entries:
             continue
-        rounded_entries: List[Tuple[str, Decimal, Decimal]] = []
-        for whg, raw in entries:
-            rounded_entries.append((whg, raw, _quantize_money(raw)))
-        rounded_sum = sum((r for _, _, r in rounded_entries), Decimal("0"))
-        expected_total = _quantize_money(sum((raw for _, raw, _ in rounded_entries), Decimal("0")))
-        diff = expected_total - rounded_sum
-        if diff != Decimal("0"):
-            idx = max(
-                range(len(rounded_entries)),
-                key=lambda i: (
-                    rounded_entries[i][1].copy_abs(),
-                    rounded_entries[i][0],
-                ),
-            )
-            whg, raw, rounded = rounded_entries[idx]
-            rounded_entries[idx] = (whg, raw, rounded + diff)
-        for whg, _raw, rounded in rounded_entries:
+        rounded_entries = round_money_allocations(entries, rounding_method)
+        for whg, rounded in rounded_entries.items():
             amount = float(rounded)
             rounded_matrix.setdefault(whg, {})[art] = amount
 
