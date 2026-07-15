@@ -16,6 +16,49 @@ const fmtDate_op = (s) => {
   return `${d}.${m}.${y}`;
 };
 
+const docHref_op = (doctype, name) => {
+  if (!doctype || !name) return "#";
+  return `/app/${frappe.router.slug(doctype)}/${encodeURIComponent(name)}`;
+};
+
+const dunningPdfHref_op = (name) => {
+  const params = new URLSearchParams({
+    doctype: "Dunning",
+    name,
+    format: "HV Dunning Letter",
+    no_letterhead: "0",
+  });
+  return `/api/method/frappe.utils.print_format.download_pdf?${params.toString()}`;
+};
+
+function handleDocLinkClick_op(event, onOpen) {
+  event.stopPropagation();
+  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  if (!onOpen) return;
+  event.preventDefault();
+  onOpen();
+}
+
+function DocLink_op({ doctype, name, className = "op-link-btn", title, onOpen, children, style }) {
+  if (!doctype || !name) return null;
+  return (
+    <a
+      href={docHref_op(doctype, name)}
+      className={className}
+      title={title || `${doctype} ${name} öffnen`}
+      style={style}
+      onClick={(event) => handleDocLinkClick_op(event, onOpen || (() => frappe.set_route("Form", doctype, name)))}
+    >
+      {children || name}
+    </a>
+  );
+}
+
+function DunningPdfLink_op({ name, className = "op-link-btn", children = "PDF" }) {
+  if (!name) return null;
+  return <a href={dunningPdfHref_op(name)} className={className} target="_blank" rel="noopener noreferrer">{children}</a>;
+}
+
 const isIsoDate_op = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
 
 const isoToDisplayDate_op = (s) => {
@@ -267,4 +310,5 @@ function AgingStrip({ buckets }) {
 Object.assign(window, {
 	fmtEUR_op, fmtDate_op, AGING_BUCKETS, bucketOf,
 	StatusBadge, DirectionBadge, MahnstufeBadge, AgePill, AgingBar, AgingStrip, DateField_op,
+	docHref_op, dunningPdfHref_op, DocLink_op, DunningPdfLink_op,
 });

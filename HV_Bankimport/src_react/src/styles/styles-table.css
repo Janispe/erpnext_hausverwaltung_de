@@ -71,6 +71,7 @@ body[data-layout="full"] .match-panel-wrap { display: none; }
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+	text-decoration: none;
 }
 .party-link:hover {
 	color: var(--phase2);

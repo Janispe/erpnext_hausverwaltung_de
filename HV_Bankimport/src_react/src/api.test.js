@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	createImport,
+	docHref,
 	getDeleteImpact,
 	isMissingRowError,
 	listBankAccounts,
@@ -11,6 +12,12 @@ import {
 	searchParties,
 	setBankimportRuleEnabled,
 } from "./api.js";
+
+describe("Dokument-Links", () => {
+	it("erzeugt eine echte Desk-URL mit kodiertem Dokumentnamen", () => {
+		expect(docHref("Payment Entry", "PE/2026 001")).toBe("/app/payment-entry/PE%2F2026%20001");
+	});
+});
 
 describe("Bankimport standalone API fallback", () => {
 	it("liefert Mock-Importe und erkennt offene/abgeschlossene Testdaten", async () => {

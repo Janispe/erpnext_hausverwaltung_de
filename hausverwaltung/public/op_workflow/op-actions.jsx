@@ -487,7 +487,7 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
                   onChange={() => toggleInvoice(item.belegnummer)}
                 />
               </td>
-              <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openBeleg(item)}>{item.belegnummer}</button></td>
+              <td><DocLink_op doctype={String(item.belegart || "").replace(/ \(×\d+\)$/, "")} name={item.belegnummer} onOpen={() => window.OP_ACTIONS.openBeleg(item)} /></td>
               <td>{fmtDate_op(item.faellig_am)}</td>
               <td className="is-num">{fmtEUR_op(item.offen)}</td>
               <td>{item.status}</td>
@@ -519,7 +519,7 @@ function MahnungModal({ row, rows, selectedInvoiceNames, onClose, onDone }) {
                   {addableRows.length ? addableRows.map((item) => (
                     <tr key={item.belegnummer}>
                       <td><button type="button" className="op-link-btn" onClick={() => addInvoice(item.belegnummer)}>Hinzufügen</button></td>
-                      <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openBeleg(item)}>{item.belegnummer}</button></td>
+                      <td><DocLink_op doctype={String(item.belegart || "").replace(/ \(×\d+\)$/, "")} name={item.belegnummer} onOpen={() => window.OP_ACTIONS.openBeleg(item)} /></td>
                       <td>{fmtDate_op(item.faellig_am)}</td>
                       <td className="is-num">{fmtEUR_op(item.offen)}</td>
                       <td>{item.status}</td>

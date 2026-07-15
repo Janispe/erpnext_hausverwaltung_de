@@ -53,7 +53,7 @@ function render_op_workflow(page_body) {
   `);
 
   // ─── CSS + Fonts laden ──────────────────────────────────────────────────
-  const ASSET_VERSION = "20260701-scoped-tweaks";
+  const ASSET_VERSION = "20260715-document-links";
   const versioned = (src) => `${src}?v=${ASSET_VERSION}`;
   const cssHref = versioned("/assets/hausverwaltung/op_workflow/styles.css");
   if (!document.querySelector(`link[href="${cssHref}"]`)) {

@@ -32,6 +32,46 @@ const addDays_mh = (iso, days) => {
   return d.toISOString().slice(0, 10);
 };
 
+const docHref_mh = (doctype, name) =>
+  `/app/${frappe.router.slug(doctype)}/${encodeURIComponent(name)}`;
+
+function handleDocLinkClick_mh(event, doctype, name) {
+  event.stopPropagation();
+  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  frappe.set_route("Form", doctype, name);
+}
+
+function DocLinkMH({ doctype, name, className = "", children }) {
+  if (!doctype || !name) return null;
+  return (
+    <a
+      href={docHref_mh(doctype, name)}
+      className={className}
+      onClick={(event) => handleDocLinkClick_mh(event, doctype, name)}
+    >
+      {children || name}
+    </a>
+  );
+}
+
+function GeneratedDocLinkMH({ doc }) {
+  const id = doc?.id || "";
+  const desc = doc?.desc || "";
+  if (!id) return null;
+  if (id.startsWith("/") || /\.pdf(?:$|\?)/i.test(id)) {
+    return <a className="mh-sent-doc-id" href={id} target="_blank" rel="noopener noreferrer">{id}</a>;
+  }
+  const doctype = desc.startsWith("Dunning") ? "Dunning"
+    : desc.startsWith("Sales Invoice") ? "Sales Invoice"
+    : desc.startsWith("Journal Entry") ? "Journal Entry"
+    : desc.startsWith("E-Mail Queue") ? "Email Queue"
+    : "";
+  return doctype
+    ? <DocLinkMH doctype={doctype} name={id} className="mh-sent-doc-id" />
+    : <span className="mh-sent-doc-id">{id}</span>;
+}
+
 // Platzhalter im Brieftext live ersetzen
 const fillPlaceholders_mh = (text, ctx) => {
   if (!text) return "";
@@ -140,7 +180,7 @@ function SentOverlayMH({ data, onClose }) {
           <div className="mh-sent-ledger-label">Erzeugte Dokumente</div>
           {data.docs.map((d, i) => (
             <div className="mh-sent-doc" key={i}>
-              <span className="mh-sent-doc-id">{d.id}</span>
+              <GeneratedDocLinkMH doc={d} />
               <span className="mh-sent-doc-desc">{d.desc}</span>
               {d.amount != null && <span className="mh-sent-doc-amt">{fmtEUR_mh(d.amount)}</span>}
             </div>
@@ -171,7 +211,7 @@ function PastDunningOverlayMH({ entry, mieterName, onClose, onReuse, onOpenFull 
             <div className="mh-past-kicker">Gebuchte Mahnung · {mieterName}</div>
             <h3>{entry.stufe} · {fmtDate_mh(entry.datum)}</h3>
             <div className="mh-past-sub">
-              <span className="mh-past-id">{entry.beleg}</span>
+              <DocLinkMH doctype="Dunning" name={entry.beleg} className="mh-past-id" />
               <span className="mh-past-status">● {entry.status}</span>
               <span>Versand: {entry.kanal}</span>
               <span>Frist war: {fmtDate_mh(entry.frist)}</span>
@@ -189,7 +229,7 @@ function PastDunningOverlayMH({ entry, mieterName, onClose, onReuse, onOpenFull 
             <tbody>
               {entry.belege.map((b) => (
                 <tr key={b.beleg}>
-                  <td className="mono">{b.beleg}</td>
+                  <td className="mono"><DocLinkMH doctype="Sales Invoice" name={b.beleg} /></td>
                   <td className="num">{fmtEUR_mh(b.betrag)}</td>
                 </tr>
               ))}
@@ -223,7 +263,7 @@ function PastDunningOverlayMH({ entry, mieterName, onClose, onReuse, onOpenFull 
           <div className="mh-sent-ledger" style={{ marginBottom: 0 }}>
             {entry.docs.map((d, i) => (
               <div className="mh-sent-doc" key={i}>
-                <span className="mh-sent-doc-id">{d.id}</span>
+                <GeneratedDocLinkMH doc={d} />
                 <span className="mh-sent-doc-desc">{d.desc}</span>
                 {d.amount != null && <span className="mh-sent-doc-amt">{fmtEUR_mh(d.amount)}</span>}
               </div>
@@ -248,4 +288,5 @@ Object.assign(window, {
   fmtEUR_mh, fmtNum_mh, fmtDate_mh, fmtDateLong_mh, addDays_mh, fillPlaceholders_mh,
   AgePillMH, StufeBadgeMH, FieldMH, SectionMH, PlatzhalterBarMH, AutoTextareaMH,
   ToastMH, SentOverlayMH, PastDunningOverlayMH, PLATZHALTER,
+  docHref_mh, DocLinkMH, GeneratedDocLinkMH,
 });

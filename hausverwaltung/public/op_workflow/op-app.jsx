@@ -1201,9 +1201,9 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
                             Drafts prüfen
                           </button>
                         ) : draft ? (
-                          <button className="op-action-btn is-draft" onClick={() => window.OP_ACTIONS.openDunning(draft.name)}>
+                          <DocLink_op doctype="Dunning" name={draft.name} className="op-action-btn is-draft" onOpen={() => window.OP_ACTIONS.openDunning(draft.name)}>
                             Draft öffnen
-                          </button>
+                          </DocLink_op>
                         ) : (
                           <button
                             className="op-action-btn is-primary"
@@ -1249,7 +1249,7 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
                                           onChange={() => toggleInvoice(row.key, invoice.sales_invoice)}
                                         />
                                       </td>
-                                      <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openBeleg({ belegart: "Sales Invoice", belegnummer: invoice.sales_invoice })}>{invoice.sales_invoice}</button></td>
+                                      <td><DocLink_op doctype="Sales Invoice" name={invoice.sales_invoice} /></td>
                                       <td>{fmtDate_op(invoice.due_date)}</td>
                                       <td className="is-num">{fmtEUR_op(invoice.outstanding_amount)}</td>
                                       <td>{invoice.status}</td>
@@ -1270,7 +1270,7 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
                                   <tbody>
                                     {row.mahnungen.map((mahnung) => (
                                       <tr key={mahnung.name}>
-                                        <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openDunning(mahnung.name)}>{mahnung.name}</button></td>
+                                        <td><DocLink_op doctype="Dunning" name={mahnung.name} /></td>
                                         <td>
                                           {mahnung.docstatus === 0 ? <span className="op-draft-badge">Draft</span> : mahnung.status}
                                         </td>
@@ -1278,12 +1278,12 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
                                         <td>{mahnung.serienbrief_vorlage || "—"}</td>
                                         <td>
                                           {mahnung.fee_sales_invoice ? (
-                                            <button className="op-link-btn" onClick={() => window.OP_ACTIONS.openBeleg({ belegart: "Sales Invoice", belegnummer: mahnung.fee_sales_invoice })}>
+                                            <DocLink_op doctype="Sales Invoice" name={mahnung.fee_sales_invoice}>
                                               Gebühr
-                                            </button>
+                                            </DocLink_op>
                                           ) : "—"}
                                         </td>
-                                        <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openDunningPdf(mahnung.name)}>PDF</button></td>
+                                        <td><DunningPdfLink_op name={mahnung.name} /></td>
                                       </tr>
                                     ))}
                                   </tbody>
@@ -1335,13 +1335,13 @@ function MahnInlineDetail({ candidate, row, onCreateDunning }) {
           <span>{candidate.wohnung || "—"} · {candidate.mietvertrag || "—"} · {fmtEUR_op(row.offen)} offen</span>
         </div>
         {drafts.length > 1 ? (
-          <button className="op-action-btn is-draft" onClick={() => window.OP_ACTIONS.openDunning(draft.name)}>
+          <DocLink_op doctype="Dunning" name={draft.name} className="op-action-btn is-draft" onOpen={() => window.OP_ACTIONS.openDunning(draft.name)}>
             Ersten Draft öffnen
-          </button>
+          </DocLink_op>
         ) : draft ? (
-          <button className="op-action-btn is-draft" onClick={() => window.OP_ACTIONS.openDunning(draft.name)}>
+          <DocLink_op doctype="Dunning" name={draft.name} className="op-action-btn is-draft" onOpen={() => window.OP_ACTIONS.openDunning(draft.name)}>
             Draft öffnen
-          </button>
+          </DocLink_op>
         ) : (
           <button className="op-action-btn is-primary" onClick={() => onCreateDunning(candidate, [row.belegnummer])}>
             Mahnung erstellen
@@ -1358,7 +1358,7 @@ function MahnInlineDetail({ candidate, row, onCreateDunning }) {
             <tbody>
               {visibleInvoices.map((invoice) => (
                 <tr key={invoice.sales_invoice}>
-                  <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openBeleg({ belegart: "Sales Invoice", belegnummer: invoice.sales_invoice })}>{invoice.sales_invoice}</button></td>
+                  <td><DocLink_op doctype="Sales Invoice" name={invoice.sales_invoice} /></td>
                   <td>{fmtDate_op(invoice.due_date)}</td>
                   <td className="is-num">{fmtEUR_op(invoice.outstanding_amount)}</td>
                   <td>{invoice.status}</td>
@@ -1374,18 +1374,18 @@ function MahnInlineDetail({ candidate, row, onCreateDunning }) {
               <tbody>
                 {mahnungen.map((mahnung) => (
                   <tr key={mahnung.name}>
-                    <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openDunning(mahnung.name)}>{mahnung.name}</button></td>
+                    <td><DocLink_op doctype="Dunning" name={mahnung.name} /></td>
                     <td>{mahnung.docstatus === 0 ? <span className="op-draft-badge">Draft</span> : mahnung.status}</td>
                     <td>{mahnung.dunning_type || "—"}</td>
                     <td>{mahnung.serienbrief_vorlage || "—"}</td>
                     <td>
                       {mahnung.fee_sales_invoice ? (
-                        <button className="op-link-btn" onClick={() => window.OP_ACTIONS.openBeleg({ belegart: "Sales Invoice", belegnummer: mahnung.fee_sales_invoice })}>
+                        <DocLink_op doctype="Sales Invoice" name={mahnung.fee_sales_invoice}>
                           Gebühr
-                        </button>
+                        </DocLink_op>
                       ) : "—"}
                     </td>
-                    <td><button className="op-link-btn" onClick={() => window.OP_ACTIONS.openDunningPdf(mahnung.name)}>PDF</button></td>
+                    <td><DunningPdfLink_op name={mahnung.name} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -1409,15 +1409,25 @@ function BelegLink({ row }) {
     : `${row.belegart} ${row.belegnummer} öffnen`;
   return (
     <>
-      <button
-        type="button"
-        className="op-link-btn op-beleg-link"
-        onClick={() => window.OP_ACTIONS.openBeleg(row)}
-        title={title}
-      >
-        {row.belegnummer}
-        {hasMembers ? <span className="op-beleg-count">+{memberCount - 1}</span> : null}
-      </button>
+      {hasMembers ? (
+        <button
+          type="button"
+          className="op-link-btn op-beleg-link"
+          onClick={() => window.OP_ACTIONS.openBeleg(row)}
+          title={title}
+        >
+          {row.belegnummer}
+          <span className="op-beleg-count">+{memberCount - 1}</span>
+        </button>
+      ) : (
+        <DocLink_op
+          doctype={String(row.belegart || "").replace(/ \(×\d+\)$/, "")}
+          name={row.belegnummer}
+          className="op-link-btn op-beleg-link"
+          title={title}
+          onOpen={() => window.OP_ACTIONS.openBeleg(row)}
+        />
+      )}
       <span className="op-beleg-art">{row.belegart}</span>
     </>
   );

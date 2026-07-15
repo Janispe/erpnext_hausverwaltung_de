@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { fmtEUR, fmtDate, fmtDateTime, fmtIban, partyDisplayLabel, partyTypeLabel, Icon, Spinner } from "../helpers.jsx";
+import { DocLink } from "./DocLink.jsx";
 import { LinkSearch } from "./LinkSearch.jsx";
 import * as api from "../api.js";
 
@@ -126,7 +127,7 @@ function inferBestMode(row, availableModes) {
 
 // ───────────────────────── Phase 1: Partei zuordnen ─────────────────────────
 
-function AuditItem({ label, doc, actionLabel, actor, at, source, onOpen }) {
+function AuditItem({ label, doc, doctype, actionLabel, actor, at, source }) {
 	if (!doc && !actor && !at && !source) return null;
 	const created = doc && (doc.createdBy || doc.createdAt);
 	const changed = doc && (doc.modifiedBy || doc.modifiedAt);
@@ -137,10 +138,10 @@ function AuditItem({ label, doc, actionLabel, actor, at, source, onOpen }) {
 				{source && <span className="audit-source">{source}</span>}
 			</div>
 			{doc && (
-				<button className="audit-doc" onClick={onOpen} title={doc.name}>
+				<DocLink doctype={doctype || doc.doctype} docname={doc.name} className="audit-doc" title={doc.name}>
 					<span className="mono">{doc.name}</span>
 					<Icon name="link" size={12} />
-				</button>
+				</DocLink>
 			)}
 			{created && (
 				<div className="audit-line">
@@ -202,7 +203,6 @@ function AuditTrail({ row }) {
 					<AuditItem
 						label="Partei"
 						doc={audit.party}
-						onOpen={() => audit.party && api.openDoc(audit.party.doctype, audit.party.name)}
 					/>
 					<AuditItem
 						label="Zuordnung"
@@ -214,22 +214,19 @@ function AuditTrail({ row }) {
 					<AuditItem
 						label="Party-Regel"
 						doc={audit.partyRule}
-						onOpen={() => audit.partyRule && api.openDoc(audit.partyRule.doctype, audit.partyRule.name)}
 					/>
 					<AuditItem
 						label="Buchungsregel"
 						doc={audit.bookingRule}
-						onOpen={() => audit.bookingRule && api.openDoc(audit.bookingRule.doctype, audit.bookingRule.name)}
 					/>
 					<AuditItem
 						label="Bank-Transaktion"
 						doc={audit.bankTransaction}
-						onOpen={() => audit.bankTransaction && api.openDoc("Bank Transaction", audit.bankTransaction.name)}
+						doctype="Bank Transaction"
 					/>
 					<AuditItem
 						label="Zahlung"
 						doc={audit.paymentDocument}
-						onOpen={() => audit.paymentDocument && api.openDoc(audit.paymentDocument.doctype, audit.paymentDocument.name)}
 					/>
 				</div>
 			)}
@@ -1156,25 +1153,25 @@ function DoneView({ row }) {
 			<div className="sec-label">Verarbeitung abgeschlossen</div>
 			{row.autoMatchMessage && <div className="hint" style={{ marginBottom: 10 }}>{row.autoMatchMessage}</div>}
 			{row.bankTransaction && (
-				<button className="assign-row done-row" onClick={() => api.openDoc("Bank Transaction", row.bankTransaction)}>
+				<DocLink doctype="Bank Transaction" docname={row.bankTransaction} className="assign-row done-row">
 					<span className="lbl">Bank-Tx</span>
 					<span className="val mono">{row.bankTransaction}</span>
 					<Icon name="link" />
-				</button>
+				</DocLink>
 			)}
 			{row.paymentEntry && (
-				<button className="assign-row done-row" style={{ marginTop: 6 }} onClick={() => api.openDoc("Payment Entry", row.paymentEntry)}>
+				<DocLink doctype="Payment Entry" docname={row.paymentEntry} className="assign-row done-row" style={{ marginTop: 6 }}>
 					<span className="lbl">Payment</span>
 					<span className="val mono">{row.paymentEntry}</span>
 					<Icon name="link" />
-				</button>
+				</DocLink>
 			)}
 			{row.journalEntry && (
-				<button className="assign-row done-row" style={{ marginTop: 6 }} onClick={() => api.openDoc("Journal Entry", row.journalEntry)}>
+				<DocLink doctype="Journal Entry" docname={row.journalEntry} className="assign-row done-row" style={{ marginTop: 6 }}>
 					<span className="lbl">Buchung</span>
 					<span className="val mono">{row.journalEntry}</span>
 					<Icon name="link" />
-				</button>
+				</DocLink>
 			)}
 		</div>
 	);
@@ -1327,9 +1324,9 @@ export function MatchPanel({ docname, row, onActionDone, notify }) {
 				<div className={`bank-tx-ref ${row.bankTransaction ? "has-link" : "missing"}`}>
 					<span>Bank-Transaktion</span>
 					{row.bankTransaction ? (
-						<button className="link-btn" onClick={() => api.openDoc("Bank Transaction", row.bankTransaction)}>
+						<DocLink doctype="Bank Transaction" docname={row.bankTransaction} className="link-btn">
 							{row.bankTransaction}
-						</button>
+						</DocLink>
 					) : (
 						<strong>fehlt</strong>
 					)}
@@ -1337,9 +1334,9 @@ export function MatchPanel({ docname, row, onActionDone, notify }) {
 				<div className="party-line with-action">
 					<span>
 						{row.party ? (
-							<button className="party-link detail-party-link" onClick={() => api.openDoc(row.partyTyp, row.party)}>
+							<DocLink doctype={row.partyTyp} docname={row.party} className="party-link detail-party-link">
 								{row.party}{roleLabel ? ` · ${roleLabel}` : ""}
-							</button>
+							</DocLink>
 						) : partyLabel}
 					</span>
 					<button className="btn subtle sm party-edit-btn" onClick={() => setPartyDialogOpen(true)}>

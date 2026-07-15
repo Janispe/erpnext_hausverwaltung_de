@@ -111,18 +111,31 @@ function openVoucher(belegart, belegnummer) {
   frappe.set_route("Form", belegart, belegnummer);
 }
 
+function voucherHref(belegart, belegnummer) {
+  return `/app/${frappe.router.slug(belegart)}/${encodeURIComponent(belegnummer)}`;
+}
+
+function handleVoucherClick(event, belegart, belegnummer) {
+  // Modifizierte Klicks dem Browser überlassen, damit Links in einem neuen
+  // Tab/Fenster geöffnet werden können. Nur der normale Linksklick nutzt den
+  // Frappe-Router und bleibt damit in der Single-Page-App.
+  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  openVoucher(belegart, belegnummer);
+}
+
 function VoucherLink({ belegart, belegnummer, className = "" }) {
   if (!belegnummer) return null;
   if (!belegart) return <span className={className}>{belegnummer}</span>;
   return (
-    <button
-      type="button"
+    <a
+      href={voucherHref(belegart, belegnummer)}
       className={`mk-voucher-link ${className}`.trim()}
       title={`${belegart} öffnen`}
-      onClick={() => openVoucher(belegart, belegnummer)}
+      onClick={(event) => handleVoucherClick(event, belegart, belegnummer)}
     >
       {belegnummer}
-    </button>
+    </a>
   );
 }
 

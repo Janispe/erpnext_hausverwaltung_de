@@ -8,6 +8,7 @@ import { Toolbar } from "./components/Toolbar.jsx";
 import { TxTable } from "./components/TxTable.jsx";
 import { MatchPanel } from "./components/MatchPanel.jsx";
 import { RulePanel } from "./components/RulePanel.jsx";
+import { DocLink } from "./components/DocLink.jsx";
 
 // ── Toast ───────────────────────────────────────────────────────────────────
 function Toast({ toast, onClose }) {
@@ -543,7 +544,12 @@ export function App() {
 					</button>
 				)}
 				<button className="btn subtle sm" onClick={() => runGlobal("refresh_saldo")} disabled={busy}><Icon name="refresh" /> Saldo</button>
-				<button className="btn subtle sm" onClick={() => api.openImportForm(docname)}><Icon name="file" /> Formular</button>
+				<DocLink
+					doctype="Bankauszug Import"
+					docname={docname}
+					className="btn subtle sm"
+					onOpen={() => api.openImportForm(docname)}
+				><Icon name="file" /> Formular</DocLink>
 				<button className="btn danger sm" onClick={deleteCurrentImport} disabled={busy}>
 					<Icon name="trash" /> Löschen
 				</button>

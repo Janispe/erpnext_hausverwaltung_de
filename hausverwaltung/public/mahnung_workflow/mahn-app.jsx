@@ -415,7 +415,7 @@ function MahnApp() {
         </div>
         <div className="mk-topbar-actions">
           <a className="mk-btn mk-btn-ghost" href="/app/op-workflow?view=mahnwesen">← Mahnwesen</a>
-          <a className="mk-btn mk-btn-ghost" href="Mieterkonto Report.html">Mieterkonto</a>
+          <a className="mk-btn mk-btn-ghost" href={`/app/mieterkonto-workflow?customer=${encodeURIComponent(mieter.id)}`}>Mieterkonto</a>
           <button className="mk-btn mk-btn-ghost" onClick={() => window.print()}>Drucken</button>
           <button className="mk-btn" onClick={() => doSend({ finalize: false })} disabled={locked}>Als Draft speichern</button>
           <button className="mk-btn mk-btn-primary" onClick={() => doSend()} disabled={locked}>
@@ -464,7 +464,7 @@ function MahnApp() {
           <div className="mh-locked-banner">
             <div className="mh-locked-banner-text">
               <span className="mh-locked-badge">Gebucht</span>
-              <span><strong>Mahnung {viewEntry.beleg}</strong> · {viewEntry.stufe} vom {fmtDate_mh(viewEntry.datum)} — schreibgeschützt. Gebühr, Zinsen, Posten und Text sind festgeschrieben.</span>
+              <span><strong>Mahnung <DocLinkMH doctype="Dunning" name={viewEntry.beleg} /></strong> · {viewEntry.stufe} vom {fmtDate_mh(viewEntry.datum)} — schreibgeschützt. Gebühr, Zinsen, Posten und Text sind festgeschrieben.</span>
             </div>
             <div className="mh-locked-banner-actions">
               <button className="mk-btn" onClick={cancelCurrentDunning}>Stornieren</button>

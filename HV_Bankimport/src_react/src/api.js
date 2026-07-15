@@ -19,6 +19,11 @@ import {
 export const embedded = isEmbedded();
 export const importName = getImportFromUrl();
 
+export function docHref(doctype, docname) {
+	const slug = String(doctype || "").trim().toLowerCase().replace(/\s+/g, "-");
+	return `/app/${encodeURIComponent(slug)}/${encodeURIComponent(docname || "")}`;
+}
+
 export function isMissingRowError(errorOrMessage) {
 	const msg = String(errorOrMessage?.message || errorOrMessage || "");
 	return /Zeile\s+\S+\s+wurde im Dokument\s+\S+\s+nicht gefunden/i.test(msg);
