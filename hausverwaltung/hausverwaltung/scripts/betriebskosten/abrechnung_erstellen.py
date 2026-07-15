@@ -53,6 +53,19 @@ def _quantize_money(value: Decimal) -> Decimal:
     return value.quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
 
+def _build_settlement_remark(von: Any = None, bis: Any = None) -> str:
+    """Erzeugt die sichtbare Bemerkung fuer BK-Nachzahlungen/Guthaben."""
+    von_date = getdate(von) if von else None
+    bis_date = getdate(bis) if bis else None
+    if von_date and bis_date:
+        return f"Betriebskostenabrechnung {von_date:%d.%m.%Y} bis {bis_date:%d.%m.%Y}"
+    if bis_date:
+        return f"Betriebskostenabrechnung {bis_date.year}"
+    if von_date:
+        return f"Betriebskostenabrechnung ab {von_date:%d.%m.%Y}"
+    return "Betriebskostenabrechnung"
+
+
 def _as_money(value: Decimal) -> float:
     return float(_quantize_money(value))
 
@@ -678,6 +691,7 @@ def _make_sales_invoice(
     wertstellungsdatum: Optional[str] = None,
     cost_center: Optional[str] = None,
     wohnung: Optional[str] = None,
+    remarks: Optional[str] = None,
 ) -> str:
     post_date = getdate(posting_date)
     si = frappe.new_doc("Sales Invoice")
@@ -702,6 +716,8 @@ def _make_sales_invoice(
     si.set("payment_terms_template", None)
     si.set("payment_schedule", [])
     si.set("is_return", is_return)
+    if remarks:
+        si.remarks = remarks
     # Für Return-Beleg werden Mengen/Rate negativ erwartet
     qty = 1
     amount_dec = _quantize_money(_to_decimal(amount))
@@ -850,6 +866,7 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
     _run_settlement_selfcheck(doc)
     company = _get_default_company()
     cost_center = _cost_center_for_abrechnung_doc(doc)
+    settlement_remark = _build_settlement_remark(doc.von, doc.bis)
     # Sicherstellen: Artikel existieren und haben Income Account Defaults
     code_nach = _ensure_item_with_income("BK Nachzahlung", "Betriebskosten Nachzahlung", company)
     code_guth = _ensure_item_with_income("BK Guthaben", "Betriebskosten Guthaben", company)
@@ -889,6 +906,7 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
                     wertstellungsdatum=wertstellungsdatum,
                     cost_center=cost_center,
                     wohnung=wohnung,
+                    remarks=settlement_remark,
                 )
             except Exception as e:
                 frappe.throw(f"Nachzahlung konnte nicht erstellt werden: {e}")
@@ -913,6 +931,7 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
                     wertstellungsdatum=wertstellungsdatum,
                     cost_center=cost_center,
                     wohnung=wohnung,
+                    remarks=settlement_remark,
                 )
             except Exception as e:
                 frappe.throw(f"Guthaben konnte nicht erstellt werden: {e}")

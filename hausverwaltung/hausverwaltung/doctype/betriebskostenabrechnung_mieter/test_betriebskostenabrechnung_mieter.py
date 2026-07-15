@@ -22,11 +22,19 @@ class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 				"BK Nachzahlung",
 				Decimal("100.00"),
 				wertstellungsdatum="2025-12-31",
+				remarks="Betriebskostenabrechnung 01.01.2025 bis 31.12.2025",
 			)
 
 		self.assertEqual(name, "SI-NEW")
 		self.assertEqual(str(si.posting_date), "2026-07-15")
 		self.assertEqual(str(si.custom_wertstellungsdatum), "2025-12-31")
+		self.assertEqual(si.remarks, "Betriebskostenabrechnung 01.01.2025 bis 31.12.2025")
+
+	def test_build_settlement_remark_uses_full_period(self):
+		self.assertEqual(
+			bk._build_settlement_remark("2025-01-01", "2025-12-31"),
+			"Betriebskostenabrechnung 01.01.2025 bis 31.12.2025",
+		)
 
 	def test_settlement_uses_today_for_posting_and_period_end_for_wertstellung(self):
 		for case, prepayments, amount, expected_return in (
@@ -62,6 +70,10 @@ class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 				self.assertEqual(make_si.call_args.args[1], "2026-07-15")
 				self.assertEqual(make_si.call_args.kwargs["wertstellungsdatum"], "2025-12-31")
 				self.assertEqual(make_si.call_args.kwargs["is_return"], expected_return)
+				self.assertEqual(
+					make_si.call_args.kwargs["remarks"],
+					"Betriebskostenabrechnung 01.01.2025 bis 31.12.2025",
+				)
 
 	def test_mietvertrag_stichtag_ignores_contracts_ended_before_stichtag(self):
 		with patch.object(bk.frappe.db, "sql", return_value=[]) as sql:
