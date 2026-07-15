@@ -237,11 +237,11 @@
   },
   {
    "default": "Bisherige Restverteilung",
-   "description": "Größte-Rest-Methode verteilt Restcent nach den ungerundeten Nachkommaresten. Nur kaufmännisch runden lässt mögliche Centdifferenzen stehen. Die bisherige Restverteilung ordnet die Differenz dem betragsmäßig größten Wohnungsanteil bzw. beim Mieterwechsel dem letzten Segment zu.",
+   "description": "Größte-Rest-Methode verteilt Restcent nach den ungerundeten Nachkommaresten. Nur kaufmännisch runden rundet bereits die Wohnungsanteile. Kaufmännisch erst beim Mieter runden lässt die Wohnungsanteile ungerundet und rundet erst jede endgültige Mieter-Kostenposition. Die bisherige Restverteilung ordnet die Differenz dem betragsmäßig größten Wohnungsanteil bzw. beim Mieterwechsel dem letzten Segment zu.",
    "fieldname": "bk_rundungsverfahren",
    "fieldtype": "Select",
    "label": "Rundungsverfahren",
-   "options": "Größte-Rest-Methode\nNur kaufmännisch runden\nBisherige Restverteilung",
+   "options": "Größte-Rest-Methode\nNur kaufmännisch runden\nKaufmännisch erst beim Mieter runden\nBisherige Restverteilung",
    "reqd": 1
   },
   {

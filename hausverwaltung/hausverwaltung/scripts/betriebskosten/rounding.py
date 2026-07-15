@@ -7,10 +7,12 @@ import frappe
 
 ROUNDING_METHOD_LARGEST_REMAINDER = "Größte-Rest-Methode"
 ROUNDING_METHOD_ONLY = "Nur kaufmännisch runden"
+ROUNDING_METHOD_TENANT_ONLY = "Kaufmännisch erst beim Mieter runden"
 ROUNDING_METHOD_LEGACY = "Bisherige Restverteilung"
 ROUNDING_METHODS = (
 	ROUNDING_METHOD_LARGEST_REMAINDER,
 	ROUNDING_METHOD_ONLY,
+	ROUNDING_METHOD_TENANT_ONLY,
 	ROUNDING_METHOD_LEGACY,
 )
 MONEY_QUANT = Decimal("0.01")
@@ -37,6 +39,10 @@ def round_money_allocations(
 	items = [(key, Decimal(str(raw))) for key, raw in entries]
 	if not items:
 		return {}
+	if method == ROUNDING_METHOD_TENANT_ONLY:
+		# Die Wohnungsanteile bleiben exakt, damit erst die endgültigen
+		# Kostenpositionen des Mieters auf Cent gerundet werden.
+		return dict(items)
 
 	rounded = {key: _round_money(raw) for key, raw in items}
 	if method == ROUNDING_METHOD_ONLY:
