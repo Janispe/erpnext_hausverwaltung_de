@@ -1,0 +1,197 @@
+<style type="text/css">
+	@page {
+		size: A4 landscape;
+		margin: 10mm;
+	}
+
+	* {
+		box-sizing: border-box;
+	}
+
+	body {
+		color: #172033;
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+		font-size: 8pt;
+	}
+
+	.rent-report-header {
+		display: flex;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: 12mm;
+		margin-bottom: 5mm;
+		padding-bottom: 3mm;
+		border-bottom: 0.4mm solid #24324a;
+	}
+
+	.rent-report-title {
+		margin: 0 0 1mm;
+		font-size: 15pt;
+		font-weight: 700;
+		line-height: 1.1;
+	}
+
+	.rent-report-property {
+		font-size: 9pt;
+		font-weight: 600;
+	}
+
+	.rent-report-meta {
+		color: #5b6473;
+		font-size: 7.5pt;
+		line-height: 1.35;
+		text-align: right;
+		white-space: nowrap;
+	}
+
+	.rent-report-table {
+		width: 100%;
+		border-collapse: collapse;
+		table-layout: fixed;
+		font-size: 8pt;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.rent-report-table thead {
+		display: table-header-group;
+	}
+
+	.rent-report-table tr {
+		break-inside: avoid;
+		page-break-inside: avoid;
+	}
+
+	.rent-report-table th,
+	.rent-report-table td {
+		padding: 2.1mm 1.4mm;
+		border-bottom: 0.2mm solid #d8dee8;
+		vertical-align: middle;
+	}
+
+	.rent-report-table th {
+		background: #eef2f7;
+		color: #344054;
+		font-size: 7pt;
+		font-weight: 700;
+		line-height: 1.15;
+		text-align: left;
+	}
+
+	.rent-report-table th.number,
+	.rent-report-table td.number {
+		text-align: right;
+	}
+
+	.rent-report-table td.number {
+		white-space: nowrap;
+	}
+
+	.rent-report-table tbody tr:nth-child(even):not(.total-row) td {
+		background: #f8fafc;
+	}
+
+	.rent-report-table td:first-child {
+		font-weight: 600;
+		overflow-wrap: anywhere;
+	}
+
+	.rent-report-table .total-row td {
+		background: #e8eef7;
+		border-top: 0.45mm solid #60708a;
+		border-bottom: 0.45mm solid #60708a;
+		font-weight: 700;
+	}
+
+	.rent-report-empty {
+		padding: 12mm 0;
+		color: #667085;
+		text-align: center;
+	}
+
+	.rent-report-note {
+		margin-top: 3mm;
+		color: #667085;
+		font-size: 7pt;
+	}
+</style>
+
+{% var esc = function(value) {
+	return frappe.utils.escape_html(String(value === null || value === undefined ? "" : value));
+}; %}
+{% var number = function(value, suffix) {
+	if (value === null || value === undefined || value === "") { return "-"; }
+	var numeric = Number(value);
+	if (!Number.isFinite(numeric)) { return esc(value); }
+	return esc(numeric.toLocaleString("de-DE", {
+		minimumFractionDigits: 2,
+		maximumFractionDigits: 2
+	}) + (suffix || ""));
+}; %}
+{% var money = function(value) { return number(value, " €"); }; %}
+{% var area = function(value) { return number(value, " m²"); }; %}
+{% var generated_at = frappe.datetime.str_to_user(frappe.datetime.now_datetime()); %}
+{% var contract_count = data.filter(function(row) { return row.wohnung !== "Summe"; }).length; %}
+
+<div class="rent-report-header">
+	<div>
+		<h1 class="rent-report-title">{%= __("Mietenübersicht") %}</h1>
+		<div class="rent-report-property">
+			{%= __("Immobilie") %}: {%= esc(filters.immobilie || "-") %}
+		</div>
+	</div>
+	<div class="rent-report-meta">
+		<div>{%= __("Stand") %}: {%= esc(generated_at) %}</div>
+		<div>{%= __("Aktive Mietverträge") %}: {%= contract_count %}</div>
+	</div>
+</div>
+
+{% if (data.length) { %}
+	<table class="rent-report-table">
+		<colgroup>
+			<col style="width: 12%">
+			<col style="width: 7%">
+			<col style="width: 11%">
+			<col style="width: 12%">
+			<col style="width: 11%">
+			<col style="width: 10%">
+			<col style="width: 12%">
+			<col style="width: 12%">
+			<col style="width: 13%">
+		</colgroup>
+		<thead>
+			<tr>
+				<th>{%= __("Wohnung") %}</th>
+				<th class="number">{%= __("Fläche") %}</th>
+				<th class="number">{%= __("Nettokaltmiete") %}</th>
+				<th class="number">{%= __("Netto pro m²") %}</th>
+				<th class="number">{%= __("Betriebskosten") %}</th>
+				<th class="number">{%= __("Heizkosten") %}</th>
+				<th class="number">{%= __("Untermietzuschlag") %}</th>
+				<th class="number">{%= __("Bruttomiete") %}</th>
+				<th class="number">{%= __("Brutto pro m²") %}</th>
+			</tr>
+		</thead>
+		<tbody>
+			{% for (var i = 0; i < data.length; i++) { %}
+				{% var row = data[i] || {}; %}
+				{% var is_total = row.wohnung === "Summe"; %}
+				<tr{% if (is_total) { %} class="total-row"{% } %}>
+					<td>{%= esc(row.wohnung) %}</td>
+					<td class="number">{%= area(row["größe"]) %}</td>
+					<td class="number">{%= money(row.miete) %}</td>
+					<td class="number">{%= money(row.miete_pro_qm) %}</td>
+					<td class="number">{%= money(row.betriebskosten) %}</td>
+					<td class="number">{%= money(row.heizkosten) %}</td>
+					<td class="number">{%= money(row.untermietzuschlag) %}</td>
+					<td class="number">{%= money(row.bruttomiete) %}</td>
+					<td class="number">{%= money(row.bruttomiete_pro_qm) %}</td>
+				</tr>
+			{% } %}
+		</tbody>
+	</table>
+	<div class="rent-report-note">
+		{%= __("Beträge auf Basis der zum Druckzeitpunkt aktiven Mietverträge und Mietstaffeln.") %}
+	</div>
+{% } else { %}
+	<div class="rent-report-empty">{%= __("Keine Daten für die ausgewählte Immobilie vorhanden.") %}</div>
+{% } %}
