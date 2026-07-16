@@ -1183,6 +1183,7 @@ hausverwaltung.buchen_cockpit.open_mieterrechnung_dialog = (opts = {}) => {
 					label: __("Betrag"),
 					in_list_view: 1,
 					columns: 2,
+					description: __("Forderung positiv, Guthaben negativ. Guthaben bitte in einem separaten Beleg erfassen."),
 				},
 				{
 					fieldtype: "Link",
@@ -1292,14 +1293,19 @@ function submit_mieterrechnung(dialog, values, submit_doc = true) {
 				},
 			})
 			.then((r) => {
-				const name = r && r.message && r.message.name;
+				const result = (r && r.message) || {};
+				const name = result.name;
 				if (!name) return;
 				hv_draft_clear(HV_DRAFT_KEY_SI);
 				dialog.hide();
 				frappe.show_alert({
 					message: submit_doc
-						? __("Sollstellung {0} erstellt und gebucht.", [name])
-						: __("Sollstellung {0} als Entwurf gespeichert.", [name]),
+						? result.is_credit_note
+							? __("Guthaben {0} erstellt und gebucht.", [name])
+							: __("Sollstellung {0} erstellt und gebucht.", [name])
+						: result.is_credit_note
+							? __("Guthaben {0} als Entwurf gespeichert.", [name])
+							: __("Sollstellung {0} als Entwurf gespeichert.", [name]),
 					indicator: "green",
 				});
 				frappe.set_route("Form", "Sales Invoice", name);

@@ -993,6 +993,22 @@ def create_sales_invoice(**kwargs) -> dict:
     if not rows:
         frappe.throw("Es sind keine Positionen erfasst.")
 
+    amounts: list[float] = []
+    for idx, row in enumerate(rows, start=1):
+        raw_amount = row.get("betrag")
+        if raw_amount in (None, ""):
+            frappe.throw(f"Position {idx}: Betrag fehlt.")
+        amounts.append(flt(raw_amount))
+
+    has_positive_amount = any(amount > 0 for amount in amounts)
+    has_negative_amount = any(amount < 0 for amount in amounts)
+    if has_positive_amount and has_negative_amount:
+        frappe.throw(
+            "Positive Forderungen und negative Guthaben können nicht in derselben Sollstellung "
+            "gebucht werden. Bitte dafür zwei getrennte Belege erfassen."
+        )
+    is_credit_note = has_negative_amount
+
     ensure_rent_items(company=company)
     default_item_code = MISC_TENANT_ITEM_CODE
     default_cost_center = (
@@ -1008,10 +1024,7 @@ def create_sales_invoice(**kwargs) -> dict:
 
     items: list[dict] = []
     position_descriptions: list[str] = []
-    for idx, r in enumerate(rows, start=1):
-        betrag = r.get("betrag")
-        if betrag in (None, ""):
-            frappe.throw(f"Position {idx}: Betrag fehlt.")
+    for idx, (r, amount) in enumerate(zip(rows, amounts), start=1):
 
         item_code = r.get("artikel") or default_item_code
         beschreibung = (r.get("beschreibung") or "").strip()
@@ -1023,8 +1036,11 @@ def create_sales_invoice(**kwargs) -> dict:
             "item_code": item_code,
             "item_name": item_code,
             "description": desc,
-            "qty": 1,
-            "rate": float(betrag),
+            # ERPNext bildet eine Gutschrift als Return mit negativer Menge
+            # und positivem Preis ab. Der Cockpit-Nutzer gibt das Guthaben
+            # intuitiv als negativen Betrag ein; hier erfolgt die Umwandlung.
+            "qty": -1 if is_credit_note else 1,
+            "rate": abs(amount) if is_credit_note else amount,
             "cost_center": default_cost_center,
         }
 
@@ -1049,7 +1065,8 @@ def create_sales_invoice(**kwargs) -> dict:
         "company": company,
         "customer": customer,
         "posting_date": posting_date,
-        "due_date": due_date,
+        "due_date": posting_date if is_credit_note else due_date,
+        "is_return": 1 if is_credit_note else 0,
         "ignore_default_payment_terms_template": 1,
         "remarks": remarks,
     })
@@ -1084,10 +1101,12 @@ def create_sales_invoice(**kwargs) -> dict:
     )
     if submit_flag:
         si.submit()
-        frappe.msgprint(f"Rechnung {si.name} wurde erstellt und eingereicht.", alert=True)
+        belegart = "Gutschrift" if is_credit_note else "Rechnung"
+        frappe.msgprint(f"{belegart} {si.name} wurde erstellt und eingereicht.", alert=True)
     else:
-        frappe.msgprint(f"Rechnung {si.name} wurde als Entwurf gespeichert.", alert=True)
-    return {"name": si.name, "submitted": submit_flag}
+        belegart = "Gutschrift" if is_credit_note else "Rechnung"
+        frappe.msgprint(f"{belegart} {si.name} wurde als Entwurf gespeichert.", alert=True)
+    return {"name": si.name, "submitted": submit_flag, "is_credit_note": is_credit_note}
 
 
 # ---------------------------------------------------------------------------
