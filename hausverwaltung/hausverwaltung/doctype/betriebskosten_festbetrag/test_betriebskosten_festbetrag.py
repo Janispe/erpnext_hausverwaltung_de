@@ -18,14 +18,19 @@ class TestBetriebskostenFestbetrag(unittest.TestCase):
 		doc.name = values.get("name")
 		return doc
 
-	def _fake_frappe(self, *, parent_festbetraege=None):
+	def _fake_frappe(self, *, parent_festbetraege=None, existing_cost_types=None):
+		existing_cost_types = set(existing_cost_types or [])
+
 		def _throw(message):
 			raise Exception(message)
 
 		def _get_doc(_doctype, _name):
 			return SimpleNamespace(get=lambda *_a, **_kw: parent_festbetraege or [])
 
-		return SimpleNamespace(get_doc=_get_doc, throw=_throw)
+		db = SimpleNamespace(
+			exists=lambda doctype, name: doctype == "Betriebskostenart" and name in existing_cost_types
+		)
+		return SimpleNamespace(db=db, get_doc=_get_doc, throw=_throw)
 
 	def test_validate_dates_rejects_reverse_range(self):
 		doc = self._doc(
@@ -64,6 +69,26 @@ class TestBetriebskostenFestbetrag(unittest.TestCase):
 		):
 			doc.validate()
 		self.assertEqual(doc.bezeichnung, "Mahngebühr")
+
+	def test_validate_rejects_free_label_matching_cost_type(self):
+		doc = self._doc(
+			doctype="Betriebskosten Festbetrag",
+			parent="MV-1",
+			betriebskostenart=None,
+			bezeichnung="Wasser",
+			betrag=10,
+			gueltig_von="2025-01-01",
+			gueltig_bis="2025-12-31",
+		)
+		with patch(
+			"hausverwaltung.hausverwaltung.doctype.betriebskosten_festbetrag.betriebskosten_festbetrag.frappe",
+			self._fake_frappe(existing_cost_types={"Wasser"}),
+		), patch(
+			"hausverwaltung.hausverwaltung.doctype.betriebskosten_festbetrag.betriebskosten_festbetrag._",
+			lambda value: value,
+		):
+			with self.assertRaisesRegex(Exception, "vorhandenen Betriebskostenart"):
+				doc.validate()
 
 	def test_validate_requires_exactly_one_label_source(self):
 		for betriebskostenart, bezeichnung in ((None, None), ("Kamin", "Mahngebühr")):
