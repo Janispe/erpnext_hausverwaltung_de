@@ -321,6 +321,45 @@ def _add_abrechnungsposten(doc, posten: Dict[str, Any]):
         doc.append("abrechnung", values)
 
 
+def _festbetrag_gl_posten_by_segment(
+    segments: list[dict],
+    gl_rows: list[dict],
+    wohnung: str,
+    posten_fest: dict[str, Decimal],
+) -> list[dict[str, Decimal]]:
+    """Ordnet jede Festbetrag-GL-Zeile vollständig ihrem Mietvertrag zu."""
+    result: list[dict[str, Decimal]] = [{} for _segment in segments]
+    for row in gl_rows or []:
+        if row.get("wohnung") != wohnung:
+            continue
+        art = row.get("kostenart")
+        if art not in posten_fest:
+            continue
+        effective_date = getdate(row.get("effective_date")) if row.get("effective_date") else None
+        matches = [
+            index
+            for index, segment in enumerate(segments)
+            if effective_date and segment["start"] <= effective_date <= segment["end"]
+        ]
+        gl_entry = row.get("gl_entry") or "unbekannt"
+        if not matches:
+            frappe.throw(
+                f"Festbetrag-Buchung {gl_entry} für Wohnung '{wohnung}' am "
+                f"{cstr(effective_date) or 'unbekannten Datum'} kann keinem Mietvertrag zugeordnet werden."
+            )
+        if len(matches) > 1:
+            frappe.throw(
+                f"Festbetrag-Buchung {gl_entry} für Wohnung '{wohnung}' am "
+                f"{cstr(effective_date)} ist mehreren Mietverträgen zugeordnet."
+            )
+        amount = _to_decimal(row.get("betrag"))
+        if amount.copy_abs() < MIN_SIGNIFICANT:
+            continue
+        segment_amounts = result[matches[0]]
+        segment_amounts[art] = segment_amounts.get(art, Decimal("0")) + amount
+    return result
+
+
 @frappe.whitelist()
 def create_bk_abrechnung_wohnung(
     von: str,
@@ -430,6 +469,12 @@ def create_bk_abrechnung_wohnung(
     )
     posten_fest = {art: amount for art, amount in posten.items() if art in festbetrag_arten}
     posten_zeitanteilig = {art: amount for art, amount in posten.items() if art not in festbetrag_arten}
+    festbetrag_gl_by_segment = _festbetrag_gl_posten_by_segment(
+        segments=segments,
+        gl_rows=alloc.get("festbetrag_gl_rows") or [],
+        wohnung=wohnung,
+        posten_fest=posten_fest,
+    )
 
     # Tagesgenaue Verteilung gegen Gesamtzeitraum (Leerstand bleibt beim Vermieter)
     period_days = (getdate(bis) - getdate(von)).days + 1
@@ -440,11 +485,13 @@ def create_bk_abrechnung_wohnung(
     # Segmentbeträge vorbereiten (Decimal, unquantized)
     seg_posten: List[Dict[str, Decimal]] = []
     total_unrounded = Decimal("0")
-    for seg in segments:
+    for segment_index, seg in enumerate(segments):
         seg_start = seg["start"].strftime("%Y-%m-%d")
         seg_end = seg["end"].strftime("%Y-%m-%d")
         factor = Decimal(str(seg["days"])) / period_days_dec
-        seg_amounts: Dict[str, Decimal] = {}
+        seg_amounts: Dict[str, Decimal] = dict(festbetrag_gl_by_segment[segment_index])
+        for amount in seg_amounts.values():
+            total_unrounded += amount
         for art, amount in posten_zeitanteilig.items():
             amt = _to_decimal(amount) * factor
             if amt.copy_abs() < MIN_SIGNIFICANT:

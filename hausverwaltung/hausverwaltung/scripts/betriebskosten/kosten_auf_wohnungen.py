@@ -485,6 +485,7 @@ def allocate_kosten_auf_wohnungen(
     matrix: Dict[str, Dict[str, Decimal]] = defaultdict(
         lambda: defaultdict(lambda: Decimal("0"))
     )
+    festbetrag_gl_rows: list[dict] = []
 
     # Vorbereitung: Wohnungen je Haus
     whg_cache: Dict[str, List[str]] = {}
@@ -523,6 +524,16 @@ def allocate_kosten_auf_wohnungen(
                     f"GL Entry {g.get('name')} ohne 'wohnung' bei Verteilungsart '{verteilung}'."
                 )
             matrix[whg][kostenart] += betrag
+            if verteilung.lower() == "festbetrag":
+                festbetrag_gl_rows.append(
+                    {
+                        "gl_entry": g.get("name"),
+                        "wohnung": whg,
+                        "kostenart": kostenart,
+                        "betrag": float(betrag),
+                        "effective_date": cstr(eff),
+                    }
+                )
             continue
 
         if verteilung.lower() in {"bewohner", "verbrauch", "formel"}:
@@ -619,4 +630,9 @@ def allocate_kosten_auf_wohnungen(
         for art, amount in arts.items():
             rows.append({"wohnung": whg, "kostenart": art, "betrag": amount})
 
-    return {"rows": rows, "matrix": rounded_matrix, "periode": {"von": von, "bis": bis}}
+    return {
+        "rows": rows,
+        "matrix": rounded_matrix,
+        "festbetrag_gl_rows": festbetrag_gl_rows,
+        "periode": {"von": von, "bis": bis},
+    }

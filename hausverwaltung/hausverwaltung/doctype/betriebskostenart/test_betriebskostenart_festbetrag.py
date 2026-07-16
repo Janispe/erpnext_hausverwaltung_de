@@ -165,6 +165,18 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 
 		self.assertEqual(result["matrix"]["W1"]["Kamin"], 125.0)
 		self.assertEqual(result["matrix"]["W2"]["Kamin"], 35.0)
+		self.assertEqual(
+			result["festbetrag_gl_rows"],
+			[
+				{
+					"gl_entry": "GLE-1",
+					"wohnung": "W1",
+					"kostenart": "Kamin",
+					"betrag": 100.0,
+					"effective_date": "2025-01-15",
+				}
+			],
+		)
 
 	def test_allocate_kosten_auf_wohnungen_keeps_qm_and_festbetrag_together(self):
 		gl_rows = [

@@ -13,6 +13,62 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten import abrechnung_erst
 
 
 class TestBetriebskostenabrechnungMieter(unittest.TestCase):
+	def test_festbetrag_gl_booking_belongs_fully_to_tenant_at_effective_date(self):
+		segments = [
+			{
+				"mietvertrag": "MV-ALT",
+				"start": frappe.utils.getdate("2025-01-01"),
+				"end": frappe.utils.getdate("2025-06-30"),
+			},
+			{
+				"mietvertrag": "MV-NEU",
+				"start": frappe.utils.getdate("2025-07-01"),
+				"end": frappe.utils.getdate("2025-12-31"),
+			},
+		]
+
+		result = bk._festbetrag_gl_posten_by_segment(
+			segments=segments,
+			gl_rows=[
+				{
+					"gl_entry": "GLE-1",
+					"wohnung": "WHG-1",
+					"kostenart": "Kamin",
+					"betrag": 100,
+					"effective_date": "2025-08-15",
+				}
+			],
+			wohnung="WHG-1",
+			posten_fest={"Kamin": Decimal("125")},
+		)
+
+		self.assertEqual(result, [{}, {"Kamin": Decimal("100")}])
+
+	def test_festbetrag_gl_booking_without_tenant_is_rejected(self):
+		segments = [
+			{
+				"mietvertrag": "MV-NEU",
+				"start": frappe.utils.getdate("2025-07-01"),
+				"end": frappe.utils.getdate("2025-12-31"),
+			},
+		]
+
+		with self.assertRaisesRegex(frappe.ValidationError, "keinem Mietvertrag"):
+			bk._festbetrag_gl_posten_by_segment(
+				segments=segments,
+				gl_rows=[
+					{
+						"gl_entry": "GLE-LEERSTAND",
+						"wohnung": "WHG-1",
+						"kostenart": "Kamin",
+						"betrag": 100,
+						"effective_date": "2025-06-15",
+					}
+				],
+				wohnung="WHG-1",
+				posten_fest={"Kamin": Decimal("100")},
+			)
+
 	def test_kostenmatrix_preserves_free_description_without_fake_link(self):
 		doc = frappe.get_doc(
 			{
