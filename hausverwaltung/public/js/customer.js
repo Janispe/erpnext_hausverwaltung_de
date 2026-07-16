@@ -148,16 +148,17 @@ async function show_customer_festbetraege(frm) {
 	};
 
 	const load_rows = async () => {
-		const values = dialog.get_values();
-		if (!values) return;
+		const von = dialog.get_value("von");
+		const bis = dialog.get_value("bis");
+		if (!von || !bis) return;
 		wrapper.html(`<div class="text-muted text-center py-5">${__("Festbeträge werden geladen ...")}</div>`);
 		const response = await frappe.call({
 			method:
 				"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen.get_mieter_festbetrag_overview",
 			args: {
 				customer: frm.doc.name,
-				von: values.von,
-				bis: values.bis,
+				von,
+				bis,
 			},
 		});
 		render_rows(response.message || {});
