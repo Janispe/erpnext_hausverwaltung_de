@@ -7,12 +7,12 @@
 //   nicht den Parent komplett submitten will).
 //
 // Tabellen-Verhalten:
-// - `vorauszahlungen`, `customer`, `wohnung`, `mietvertrag` sind read-only
-//   (kommen aus den Mietrechnungen / Mietvertrag-Stammdaten).
-// - `kosten_gesamt` ist immer editierbar — auch bei submitteten Parents/Children.
+// - `customer`, `wohnung`, `mietvertrag` sind read-only.
+// - `kosten_gesamt` und `vorauszahlungen` sind immer editierbar — auch bei
+//   submitteten Parents/Children.
 //   Bei submitteten Parents triggert ein Save automatisch die Diff-only
 //   Korrektur: für geänderte Werte werden alte SIs storniert und neue erstellt.
-// - `differenz` wird live mitberechnet bei Edit von `kosten_gesamt`.
+// - `differenz` wird bei jeder Betragsänderung live neu berechnet.
 
 frappe.ui.form.on("Heizkostenabrechnung Immobilie", {
 	refresh(frm) {
@@ -23,14 +23,29 @@ frappe.ui.form.on("Heizkostenabrechnung Immobilie", {
 
 frappe.ui.form.on("Heizkostenabrechnung Position", {
 	kosten_gesamt(frm, cdt, cdn) {
-		const row = locals[cdt][cdn];
-		if (!row) return;
-		const vor = parseFloat(row.vorauszahlungen || 0);
-		const kos = parseFloat(row.kosten_gesamt || 0);
-		row.differenz = Math.round((kos - vor) * 100) / 100;
-		frm.refresh_field("mieter_positionen");
+		_recompute_row_difference(frm, cdt, cdn);
+	},
+
+	vorauszahlungen(frm, cdt, cdn) {
+		_recompute_row_difference(frm, cdt, cdn);
+		frappe.show_alert(
+			{
+				message: __("Vorauszahlung manuell angepasst. Die gebuchten Zahlungen bleiben unverändert; geändert wird nur diese HK-Abrechnung."),
+				indicator: "orange",
+			},
+			7,
+		);
 	},
 });
+
+function _recompute_row_difference(frm, cdt, cdn) {
+	const row = locals[cdt][cdn];
+	if (!row) return;
+	const vor = parseFloat(row.vorauszahlungen || 0);
+	const kos = parseFloat(row.kosten_gesamt || 0);
+	row.differenz = Math.round((kos - vor) * 100) / 100;
+	frm.refresh_field("mieter_positionen");
+}
 
 function _add_buttons(frm) {
 	if (frm.is_new()) return;
@@ -62,7 +77,7 @@ function _show_correction_banner(frm) {
 	// in der Tabelle automatisch alte Sales Invoices stornieren + neue erstellen.
 	if (frm.is_new() || frm.doc.docstatus !== 1) return;
 	frm.dashboard.set_headline_alert(
-		`<div>${__("Diese Abrechnung ist submittet. Du kannst die Spalte <strong>Kosten gesamt</strong> in der Tabelle weiter bearbeiten — beim Speichern werden für geänderte Werte die alten Sales Invoices storniert und neue erstellt (Diff-only).")}</div>`,
+		`<div>${__("Diese Abrechnung ist submittet. Du kannst <strong>Kosten gesamt</strong> und <strong>Vorauszahlung</strong> weiter bearbeiten — beim Speichern werden für geänderte Werte die alten Ausgleichsbelege storniert und korrekt neu erstellt. Die ursprünglichen Vorauszahlungsbuchungen bleiben unverändert.")}</div>`,
 		"blue",
 	);
 }

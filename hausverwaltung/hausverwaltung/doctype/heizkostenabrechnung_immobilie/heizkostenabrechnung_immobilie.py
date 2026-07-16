@@ -90,7 +90,8 @@ class HeizkostenabrechnungImmobilie(Document):
 
 		Wird von Frappe automatisch beim ``save()`` eines Docs mit
 		``docstatus=1`` aufgerufen — Voraussetzung: das geänderte Feld hat
-		``allow_on_submit=1`` (siehe ``mieter_positionen.kosten_gesamt``).
+		``allow_on_submit=1`` (siehe ``mieter_positionen.kosten_gesamt`` und
+		``mieter_positionen.vorauszahlungen``).
 		"""
 		# Korrektur-Summary für Frontend-Toast initialisieren
 		self.flags._correction_summary = {"unchanged": 0, "replaced": [], "errors": []}
@@ -105,7 +106,8 @@ class HeizkostenabrechnungImmobilie(Document):
 
 		Pro Tabellen-Row:
 		1. Lade aktuelle Mieter-Abrechnung (verlinkt via ``row.heizkostenabrechnung_mieter``)
-		2. Vergleiche ``row.kosten_gesamt`` mit dem Wert im Mieter-Doc
+		2. Vergleiche ``row.kosten_gesamt`` und ``row.vorauszahlungen`` mit den
+		   Werten im Mieter-Doc
 		3. Wenn unverändert → Skip (alte SI bleibt)
 		4. Wenn geändert:
 		   - **Pre-flight**: prüft ob die alte SI/CN schon eine Payment-
@@ -113,8 +115,8 @@ class HeizkostenabrechnungImmobilie(Document):
 		     (atomar) mit klarer Liste der betroffenen Mieter und Hinweis auf
 		     manuelles Vorgehen.
 		   - Alte Mieter-Abrechnung canceln (storniert alte SI via on_cancel)
-		   - Neue Mieter-Abrechnung mit identischen Stammdaten + neuem
-		     ``kosten_gesamt`` anlegen + submitten (= neue SI via on_submit)
+		   - Neue Mieter-Abrechnung mit identischen Stammdaten + korrigierten
+		     Beträgen anlegen + submitten (= neue SI/CN via on_submit)
 		   - Tabellen-Link auf die neue Mieter-Abrechnung umbiegen
 
 		Ergebnis-Counter werden in ``self.flags._correction_summary`` abgelegt
@@ -140,7 +142,11 @@ class HeizkostenabrechnungImmobilie(Document):
 
 			new_kosten = float(row.kosten_gesamt or 0)
 			old_kosten = float(old_doc.kosten_gesamt or 0)
-			if abs(new_kosten - old_kosten) < 0.005:
+			new_vorauszahlungen = float(row.vorauszahlungen or 0)
+			old_vorauszahlungen = float(old_doc.vorauszahlungen or 0)
+			kosten_changed = abs(new_kosten - old_kosten) >= 0.005
+			vorauszahlungen_changed = abs(new_vorauszahlungen - old_vorauszahlungen) >= 0.005
+			if not kosten_changed and not vorauszahlungen_changed:
 				summary["unchanged"] += 1
 				continue
 
@@ -163,6 +169,8 @@ class HeizkostenabrechnungImmobilie(Document):
 						"customer": old_doc.customer,
 						"old_kosten": old_kosten,
 						"new_kosten": new_kosten,
+						"old_vorauszahlungen": old_vorauszahlungen,
+						"new_vorauszahlungen": new_vorauszahlungen,
 						"si": si_name,
 						"cn": cn_name,
 						"allocations": paid_refs,
@@ -175,6 +183,8 @@ class HeizkostenabrechnungImmobilie(Document):
 						"old_doc": old_doc,
 						"old_kosten": old_kosten,
 						"new_kosten": new_kosten,
+						"old_vorauszahlungen": old_vorauszahlungen,
+						"new_vorauszahlungen": new_vorauszahlungen,
 					}
 				)
 
@@ -186,12 +196,20 @@ class HeizkostenabrechnungImmobilie(Document):
 			for b in paid_blockers:
 				alloc_sum = sum(a["allocated_amount"] for a in b["allocations"])
 				pe_names = ", ".join(sorted({a["payment_entry"] for a in b["allocations"]}))
+				changes = []
+				if abs(b["new_kosten"] - b["old_kosten"]) >= 0.005:
+					changes.append(f"Kosten {b['old_kosten']:.2f} → {b['new_kosten']:.2f} €")
+				if abs(b["new_vorauszahlungen"] - b["old_vorauszahlungen"]) >= 0.005:
+					changes.append(
+						"Vorauszahlung "
+						f"{b['old_vorauszahlungen']:.2f} → {b['new_vorauszahlungen']:.2f} €"
+					)
 				lines.append(
 					f"• <strong>{frappe.utils.escape_html(b['customer'])}</strong>: "
 					f"alte Rechnung <code>{b['si'] or b['cn']}</code> "
 					f"hat {alloc_sum:.2f} € allokiert "
 					f"(Payment Entry: {frappe.utils.escape_html(pe_names)}). "
-					f"Änderung {b['old_kosten']:.2f} → {b['new_kosten']:.2f} € blockiert."
+					f"Änderung ({'; '.join(changes)}) blockiert."
 				)
 			lines.append(
 				"<br><br><em>So beheben:</em> Im jeweiligen Payment Entry die Zuordnung zu dieser "
@@ -209,6 +227,8 @@ class HeizkostenabrechnungImmobilie(Document):
 			old_doc = entry["old_doc"]
 			old_kosten = entry["old_kosten"]
 			new_kosten = entry["new_kosten"]
+			old_vorauszahlungen = entry["old_vorauszahlungen"]
+			new_vorauszahlungen = entry["new_vorauszahlungen"]
 			old_name = old_doc.name
 			try:
 				old_doc.flags.allow_cancel_via_head = True
@@ -225,8 +245,8 @@ class HeizkostenabrechnungImmobilie(Document):
 				new_doc.datum = old_doc.datum
 				new_doc.waermedienst = old_doc.waermedienst
 				new_doc.waermedienst_referenz = old_doc.waermedienst_referenz
-				new_doc.vorauszahlungen = old_doc.vorauszahlungen  # bleibt
-				new_doc.kosten_gesamt = new_kosten  # NEU
+				new_doc.vorauszahlungen = new_vorauszahlungen
+				new_doc.kosten_gesamt = new_kosten
 				new_doc.heizkostenabrechnung_immobilie = self.name
 				new_doc.insert(ignore_permissions=True)
 				new_doc.submit()  # erzeugt neue SI/CN via on_submit
@@ -241,6 +261,8 @@ class HeizkostenabrechnungImmobilie(Document):
 						"customer": old_doc.customer,
 						"old_kosten": old_kosten,
 						"new_kosten": new_kosten,
+						"old_vorauszahlungen": old_vorauszahlungen,
+						"new_vorauszahlungen": new_vorauszahlungen,
 					}
 				)
 			except Exception as e:
@@ -263,11 +285,19 @@ class HeizkostenabrechnungImmobilie(Document):
 				f"<strong>{len(replaced)} Mieter neu fakturiert:</strong>"
 			)
 			for r in replaced[:20]:
-				delta = r["new_kosten"] - r["old_kosten"]
-				sign = "+" if delta > 0 else ""
+				changes = []
+				if abs(r["new_kosten"] - r["old_kosten"]) >= 0.005:
+					changes.append(f"Kosten {r['old_kosten']:.2f} → {r['new_kosten']:.2f} €")
+				if abs(r["new_vorauszahlungen"] - r["old_vorauszahlungen"]) >= 0.005:
+					changes.append(
+						"Vorauszahlung "
+						f"{r['old_vorauszahlungen']:.2f} → {r['new_vorauszahlungen']:.2f} €"
+					)
+				old_diff = r["old_kosten"] - r["old_vorauszahlungen"]
+				new_diff = r["new_kosten"] - r["new_vorauszahlungen"]
 				lines.append(
-					f"• {r['customer']}: {r['old_kosten']:.2f} € → {r['new_kosten']:.2f} € "
-					f"({sign}{delta:.2f} €) "
+					f"• {r['customer']}: {'; '.join(changes)}; "
+					f"Ergebnis {old_diff:.2f} → {new_diff:.2f} € "
 					f"[alt: {r['old']} canceled, neu: {r['new']}]"
 				)
 			if len(replaced) > 20:
@@ -412,11 +442,11 @@ class HeizkostenabrechnungImmobilie(Document):
 			)
 
 	def _sync_table_to_children(self) -> None:
-		"""Schreibt Tabellen-Edits (kosten_gesamt) zurück in die HK-Mieter-Docs.
+		"""Schreibt Tabellen-Edits (Kosten und Vorauszahlung) in die HK-Mieter-Docs.
 
 		Nur für Rows mit verknüpftem Doc + Doc noch in Draft. Submitted/Cancelled
-		Rows werden ignoriert. Wenn ``kosten_gesamt`` sich nicht geändert hat
-		(im Vergleich zum aktuellen DB-Wert), kein Save → keine unnötigen Writes.
+		Rows werden ignoriert. Wenn sich beide Beträge nicht geändert haben
+		(im Vergleich zu den aktuellen DB-Werten), gibt es keinen unnötigen Save.
 		"""
 		for row in self.mieter_positionen or []:
 			doc_name = (row.heizkostenabrechnung_mieter or "").strip()
@@ -433,10 +463,16 @@ class HeizkostenabrechnungImmobilie(Document):
 				# Inzwischen submittet/cancelled (race condition) — skip
 				continue
 			new_kosten = float(row.kosten_gesamt or 0)
-			if abs(float(doc.kosten_gesamt or 0) - new_kosten) < 0.005:
+			new_vorauszahlungen = float(row.vorauszahlungen or 0)
+			kosten_changed = abs(float(doc.kosten_gesamt or 0) - new_kosten) >= 0.005
+			vorauszahlungen_changed = (
+				abs(float(doc.vorauszahlungen or 0) - new_vorauszahlungen) >= 0.005
+			)
+			if not kosten_changed and not vorauszahlungen_changed:
 				# Keine Änderung — kein Save nötig
 				continue
 			doc.kosten_gesamt = new_kosten
+			doc.vorauszahlungen = new_vorauszahlungen
 			doc.save(ignore_permissions=True)
 
 	def _recompute_summen(self) -> None:

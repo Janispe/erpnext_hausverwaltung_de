@@ -84,8 +84,9 @@ class HeizkostenabrechnungMieter(Document):
 		if self.wohnung and not self.immobilie:
 			self.immobilie = frappe.db.get_value("Wohnung", self.wohnung, "immobilie")
 
-		# Vorauszahlungs-Vorschlag setzen wenn leer
-		if not self.vorauszahlungen and self.mietvertrag and self.von and self.bis:
+		# Vorauszahlungs-Vorschlag setzen wenn leer. 0 ist ein gültiger, bewusst
+		# gesetzter Korrekturwert und darf nicht wieder überschrieben werden.
+		if self.vorauszahlungen in (None, "") and self.mietvertrag and self.von and self.bis:
 			vz = calc_hk_vorauszahlungen(self.mietvertrag, self.von, self.bis)
 			self.vorauszahlungen = float(vz.get("actual_total") or 0.0)
 

@@ -43,13 +43,13 @@
    "columns": 2
   },
   {
-   "description": "Vorbefüllt aus den Mietrechnungen (tatsächlich bezahlt im Zeitraum). Editierbar im Mieter-Doc, nicht hier.",
+   "allow_on_submit": 1,
+   "description": "Vorbefüllt aus den Mietrechnungen. Kann korrigiert werden, wenn der Wärmedienst in seiner Abrechnung einen abweichenden Betrag angesetzt hat. Die gebuchten Vorauszahlungen werden dadurch nicht verändert; nach Submit wird der Ausgleichsbeleg neu erstellt.",
    "fieldname": "vorauszahlungen",
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Vorauszahlung",
    "precision": "2",
-   "read_only": 1,
    "columns": 1
   },
   {
