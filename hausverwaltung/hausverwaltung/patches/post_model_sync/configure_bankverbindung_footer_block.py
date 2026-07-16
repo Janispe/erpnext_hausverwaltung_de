@@ -7,6 +7,7 @@ from frappe.utils import cstr
 
 
 BLOCK_NAME = "Bankverbindung Immobilie"
+BK_TEMPLATE_NAME = "BK Abrechnung Mieter - Versand"
 
 TOKEN_RE = re.compile(
 	r"""
@@ -33,7 +34,7 @@ BANKVERBINDUNG_FOOTER_BODY = """\
 Bankverbindung:
 {%- if nutzt_bank_konto and konto.account_name %} {{ konto.account_name }}{% endif -%}
 {%- if konto.iban %} IBAN {{ konto.iban }}{% endif -%}
-{%- if konto.bic %} · BIC {{ konto.bic }}{% endif -%}
+{%- if konto.bic is defined and konto.bic %} · BIC {{ konto.bic }}{% endif -%}
 {%- if nutzt_bank_konto and konto.bank %} · {{ konto.bank.bank_name if konto.bank.bank_name is defined else konto.bank }}{%- elif not nutzt_bank_konto and konto.bank_name is defined and konto.bank_name %} · {{ konto.bank_name }}{% endif -%}
 """
 
@@ -157,6 +158,7 @@ def _deduplicate_footer_rows() -> None:
 
 def execute() -> None:
 	_configure_block()
+	_ensure_footer_rows({BK_TEMPLATE_NAME})
 	_deduplicate_footer_rows()
 	frappe.clear_cache(doctype="Serienbrief Vorlage")
 	frappe.clear_cache(doctype="Serienbrief Textbaustein")

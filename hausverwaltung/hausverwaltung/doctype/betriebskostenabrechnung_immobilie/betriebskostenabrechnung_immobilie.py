@@ -747,6 +747,21 @@ class _UnsupportedBatchSerienbriefPDF(Exception):
 	pass
 
 
+def _build_bk_batch_footer_doc(vorlage: str, child_names: List[str], serienbrief_doc):
+	"""Footer-Kontext fuer den gemeinsamen BK-Sammeldruck.
+
+	Alle Kindabrechnungen eines BK-Kopfes gehoeren zur selben Immobilie. Der
+	Serienbrief-Footer kann deshalb das erste Kind als Kontext verwenden und
+	dessen Immobilien-Bankkonto auf allen Seiten des Sammel-PDFs anzeigen.
+	"""
+	return frappe._dict(
+		vorlage=vorlage,
+		iteration_doctype="Betriebskostenabrechnung Mieter",
+		objekt=child_names[0] if child_names else None,
+		date=getattr(serienbrief_doc, "date", None),
+	)
+
+
 def _render_mieter_abrechnungen_serienbrief_pdf_batch(
 	child_names: List[str],
 	vorlage: str,
@@ -819,7 +834,8 @@ def _render_mieter_abrechnungen_serienbrief_pdf_batch(
 		if progress_cb:
 			progress_cb(idx, total, current)
 
-	page_html = serienbrief_doc._wrap_html("\n".join(pages))
+	footer_doc = _build_bk_batch_footer_doc(vorlage, child_names, serienbrief_doc)
+	page_html = serienbrief_doc._wrap_html("\n".join(pages), footer_doc=footer_doc)
 	return get_pdf(page_html, options=serienbrief_doc._default_pdf_options())
 
 

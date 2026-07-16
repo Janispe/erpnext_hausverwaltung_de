@@ -10,6 +10,21 @@ from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_immobilie im
 
 
 class TestBetriebskostenabrechnungImmobilie(unittest.TestCase):
+	def test_batch_footer_uses_first_bk_child_as_context(self):
+		serienbrief_doc = MagicMock()
+		serienbrief_doc.date = "2026-07-15"
+
+		footer_doc = module._build_bk_batch_footer_doc(
+			"BK Abrechnung Mieter - Versand",
+			["BK-MIETER-1", "BK-MIETER-2"],
+			serienbrief_doc,
+		)
+
+		self.assertEqual(footer_doc.vorlage, "BK Abrechnung Mieter - Versand")
+		self.assertEqual(footer_doc.iteration_doctype, "Betriebskostenabrechnung Mieter")
+		self.assertEqual(footer_doc.objekt, "BK-MIETER-1")
+		self.assertEqual(footer_doc.date, "2026-07-15")
+
 	def _mock_frappe_for_zaehler(self, readings: dict[tuple[str, str], float | None]):
 		frappe = MagicMock()
 		frappe.get_all.side_effect = lambda doctype, **kwargs: {
