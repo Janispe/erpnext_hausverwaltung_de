@@ -624,6 +624,13 @@ Filtern, statt immer neue Spezialtools zu erwarten. Baue niemals SQL, sondern JS
 Wenn du bei einer offenen Analysefrage unsicher bist, welche View oder welche Felder passen, nutze zuerst
 hv_describe_query_sources oder hv_describe_query_source und baue danach die eigentliche hv_query_view-Abfrage.
 Wenn der Katalog fachliche Mehrdeutigkeit zeigt, frage kurz nach, statt zu raten.
+Wenn der Nutzer eine Auswahl, Zuordnung oder einen Vorschlag fuer ein Stammdatum oder Link-Feld braucht,
+ermittle die Datenquelle selbst: Suche passende lesbare DocTypes mit agent_describe_data_catalog, pruefe das Schema
+und insbesondere Link-Ziele mit agent_get_doctype_schema und frage danach vorhandene Kandidaten mit agent_list_docs
+oder agent_search_docs ab. Verlasse dich dabei nicht auf eine feste Liste von Fachbegriffen oder DocTypes.
+Schlage nur tatsaechlich vorhandene Datensaetze vor.
+Wenn Auswahlkriterien fehlen oder mehrere Kandidaten plausibel sind, nenne eine kurze Auswahl und frage den Nutzer,
+welcher gemeint ist. Erfinde niemals einen Lieferanten oder ein anderes Stammdatum.
 Bei Fragen nach Wohnungen, Wohneinheiten, Leerstand oder Wohnungsbestand nutze hv_query_view view=apartments.
 Zaehle Wohnungen niemals ueber tenant_contracts, ausser der Nutzer fragt ausdruecklich nach vermieteten/laufenden Vertraegen.
 Bei Fragen nach Personen, Bewohnern oder "wie viele wohnen dort" nutze hv_query_view view=tenant_contracts,
@@ -1253,40 +1260,7 @@ def get_conversation(conversation_id: str) -> dict[str, Any]:
 
 def _select_assistant_tools(message: str) -> list[dict[str, Any]]:
 	text = (message or "").lower()
-	names = set(CORE_TOOL_NAMES)
-
-	if _message_matches_any(
-		text,
-		(
-			"eingangsrechnung",
-			"eingangsrechnungen",
-			"lieferantenrechnung",
-			"lieferantenrechnungen",
-			"purchase invoice",
-			"purchase invoices",
-			"todo",
-			"aufgabe",
-			"aufgaben",
-			"wiedervorlage",
-			"kommunikation",
-			"email",
-			"e-mail",
-			"eigentuemer",
-			"eigentümer",
-			"zaehler",
-			"zähler",
-			"betriebskosten",
-			"nebenkosten",
-			"heizkosten",
-			"bankauszug",
-			"bankimport",
-			"doctype",
-			"feld",
-			"felder",
-			"schema",
-		),
-	):
-		names.update(GENERIC_AGENT_TOOL_NAMES)
+	names = set(CORE_TOOL_NAMES) | set(GENERIC_AGENT_TOOL_NAMES)
 
 	if _message_matches_any(
 		text,
@@ -1341,9 +1315,8 @@ def _select_assistant_tools(message: str) -> list[dict[str, Any]]:
 	):
 		names.update(TENANT_TOOL_NAMES)
 
-	if names == CORE_TOOL_NAMES:
+	if names == CORE_TOOL_NAMES | GENERIC_AGENT_TOOL_NAMES:
 		names.update({"search_mieter", "get_mieter_context", "hv_query_view"})
-		names.update(GENERIC_AGENT_TOOL_NAMES)
 
 	return _tools_by_name(names)
 
@@ -1361,7 +1334,7 @@ def _tool_names(tools: list[dict[str, Any]]) -> list[str]:
 
 
 def _assistant_prompt_cache_key(conversation_id: str) -> str:
-	return f"hv-assistant:v1:{conversation_id}"[:512]
+	return f"hv-assistant:v2:{conversation_id}"[:512]
 
 
 def hv_describe_query_sources(include_fields: bool | int | str = False) -> dict[str, Any]:
@@ -2382,8 +2355,35 @@ def agent_describe_data_catalog(query: str | None = None, **_kwargs) -> dict[str
 			doctype = str(row["name"])
 			if doctype in curated_names:
 				continue
-			haystack = _normalize_catalog_text(f"{doctype} {row.get('module') or ''}")
+			default_label = str(row.get("label") or doctype)
+			module = str(row.get("module") or "Unbekannt")
+			module_label = str(row.get("module_label") or module)
+			labels = [str(value) for value in (row.get("translated_labels") or []) if value]
+			module_labels = [str(value) for value in (row.get("translated_module_labels") or []) if value]
+			label = max(
+				dict.fromkeys((default_label, *labels)),
+				key=lambda value: _catalog_text_score(query_text, _normalize_catalog_text(value)),
+			)
+			haystack = _normalize_catalog_text(
+				" ".join((doctype, label, module, module_label, *labels, *module_labels))
+			)
 			score = _catalog_text_score(query_text, haystack)
+			exact_source_names = {
+				_normalize_catalog_text(value)
+				for value in (doctype, label, *labels)
+				if value
+			}
+			source_name_bonuses = [
+				max(200, 700 - (40 * abs(len(query_text) - len(source_name))))
+				for source_name in exact_source_names
+				if query_text == source_name
+				or (
+					min(len(query_text), len(source_name)) >= 8
+					and (query_text.startswith(source_name) or source_name.startswith(query_text))
+				)
+			]
+			if source_name_bonuses:
+				score += max(source_name_bonuses)
 			if score < 10:
 				continue
 			entries.append(
@@ -2391,7 +2391,7 @@ def agent_describe_data_catalog(query: str | None = None, **_kwargs) -> dict[str
 					"group": "weitere_daten",
 					"group_label": "Weitere lesbare Daten",
 					"doctype": doctype,
-					"description": f"Lesbarer DocType im Modul {row.get('module') or 'Unbekannt'}.",
+					"description": f"Lesbare Datenquelle '{label}' im Modul {module}.",
 					"key_fields": ("name", "creation", "modified"),
 					"preferred_tool": "agent_get_doctype_schema, dann agent_list_docs oder agent_search_docs",
 					"score": score,

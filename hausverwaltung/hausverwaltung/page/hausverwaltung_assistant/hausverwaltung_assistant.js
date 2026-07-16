@@ -30,8 +30,8 @@ function renderHausverwaltungAssistant(pageBody) {
 				<div class="hv-assistant-main">
 					<div class="hv-assistant-messages" aria-live="polite"></div>
 					<form class="hv-assistant-form">
-						<input class="hv-assistant-input" type="search" autocomplete="off" placeholder="${__("Mieter, Wohnung oder Immobilie suchen")}">
-						<button class="btn btn-primary hv-assistant-submit" type="submit">${__("Suchen")}</button>
+						<input class="hv-assistant-input" type="search" autocomplete="off" placeholder="${__("Frage stellen oder Stammdaten suchen")}">
+						<button class="btn btn-primary hv-assistant-submit" type="submit">${__("Senden")}</button>
 					</form>
 				</div>
 				<div class="hv-assistant-results">

@@ -6,6 +6,7 @@ import uuid
 from typing import Any
 
 import frappe
+from frappe import _
 from frappe.utils import cint
 
 from hausverwaltung.hausverwaltung.agent_tools.contracts import AgentToolError
@@ -287,7 +288,13 @@ def list_doctypes() -> dict[str, Any]:
 					continue
 			except Exception:
 				continue
-			visible.append(row)
+			item = dict(row)
+			module = str(row.get("module") or "")
+			item["label"] = _(name)
+			item["module_label"] = _(module)
+			item["translated_labels"] = list(dict.fromkeys((name, _(name), _(name, lang="de"))))
+			item["translated_module_labels"] = list(dict.fromkeys((module, _(module), _(module, lang="de"))))
+			visible.append(item)
 		result_count = len(visible)
 		success = True
 		return _ok(request_id, started_at, visible)

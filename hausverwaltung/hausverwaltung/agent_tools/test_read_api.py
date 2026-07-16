@@ -19,6 +19,12 @@ class TestAgentReadApi(IntegrationTestCase):
 		names = {row.get("name") for row in (response.get("data") or [])}
 		self.assertTrue(names)
 		self.assertFalse(names.intersection(SENSITIVE_DOCTYPES))
+		self.assertTrue(
+			all(
+				"label" in row and "module_label" in row and "translated_labels" in row
+				for row in (response.get("data") or [])
+			)
+		)
 
 	def test_get_doctype_schema_blocks_sensitive_doctype(self):
 		response = read_api.get_doctype_schema("User")

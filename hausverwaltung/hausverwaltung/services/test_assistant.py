@@ -115,9 +115,9 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		first_tool_names = {tool["function"]["name"] for tool in first_call["tools"]}
 		self.assertIn("search_mieter", first_tool_names)
 		self.assertIn("hv_query_view", first_tool_names)
-		self.assertNotIn("agent_list_docs", first_tool_names)
+		self.assertIn("agent_list_docs", first_tool_names)
 		self.assertLess(len(first_tool_names), len(assistant.ASSISTANT_TOOLS))
-		self.assertEqual(first_call["prompt_cache_key"], "hv-assistant:v1:CONV-1")
+		self.assertEqual(first_call["prompt_cache_key"], "hv-assistant:v2:CONV-1")
 		self.assertEqual(complete_chat.call_args_list[1].kwargs["prompt_cache_key"], first_call["prompt_cache_key"])
 		self.assertTrue(result["ok"])
 		self.assertTrue(result["read_only"])
@@ -162,7 +162,7 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertIn("hv_describe_query_sources", tool_names)
 		self.assertIn("hv_query_view", tool_names)
 		self.assertIn("search_mieter", tool_names)
-		self.assertNotIn("agent_list_docs", tool_names)
+		self.assertIn("agent_list_docs", tool_names)
 		self.assertLess(len(tool_names), len(assistant.ASSISTANT_TOOLS))
 
 	def test_select_assistant_tools_uses_generic_tools_for_unknown_doctypes(self):
@@ -176,6 +176,39 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertIn("agent_list_docs", tool_names)
 		self.assertNotIn("agent_list_doctypes", tool_names)
 		self.assertNotIn("analyze_revenue_over_time", tool_names)
+
+	def test_select_assistant_tools_always_allow_independent_data_discovery(self):
+		tools = assistant._select_assistant_tools(
+			"Welche Optionen wuerdest du dafuer vorschlagen?"
+		)
+		tool_names = {tool["function"]["name"] for tool in tools}
+
+		self.assertIn("agent_describe_data_catalog", tool_names)
+		self.assertIn("agent_get_doctype_schema", tool_names)
+		self.assertIn("agent_list_docs", tool_names)
+		self.assertIn("agent_search_docs", tool_names)
+
+	def test_agent_data_catalog_discovers_translated_uncurated_doctype(self):
+		readable = {
+			"ok": True,
+			"data": [
+				{
+					"name": "Supplier",
+					"label": "Supplier",
+					"translated_labels": ["Supplier", "Lieferant"],
+					"module": "Buying",
+					"translated_module_labels": ["Buying", "Einkauf"],
+				},
+				{"name": "Purchase Invoice", "module": "Accounts"},
+			],
+		}
+
+		with patch.object(assistant.agent_read_api, "list_doctypes", return_value=readable):
+			result = assistant.agent_describe_data_catalog("Lieferanten")
+
+		sources = [source for group in result["data"]["groups"] for source in group["sources"]]
+		self.assertEqual(sources[0]["doctype"], "Supplier")
+		self.assertEqual(sources[0]["preferred_tool"], "agent_get_doctype_schema, dann agent_list_docs oder agent_search_docs")
 
 	def test_agent_data_catalog_resolves_aliases_and_filters_permissions(self):
 		readable = {
