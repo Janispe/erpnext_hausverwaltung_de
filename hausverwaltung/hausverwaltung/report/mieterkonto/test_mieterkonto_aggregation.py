@@ -92,6 +92,21 @@ def _filters(*, from_date: date, to_date: date, open_scope: str = "Zeitraum") ->
 
 
 class TestGroupInvoices(TestCase):
+	def test_dunning_fee_invoice_stays_separate_from_monthly_rent(self):
+		mab = "MV-2026-001|07/2026"
+		regular = _make_invoice("SI-MIETE", mab_id=mab, grand_total=500.0)
+		dunning_fee = _make_invoice("SI-MAHNUNG", mab_id=mab, grand_total=12.0)
+		dunning_fee.is_dunning_fee_invoice = True
+
+		result = _group_invoices(
+			{regular.name: regular, dunning_fee.name: dunning_fee}
+		)
+
+		self.assertEqual(list(result), [mab, dunning_fee.name])
+		self.assertEqual(result[mab].member_invoices, [regular.name])
+		self.assertEqual(result[mab].grand_total, 500.0)
+		self.assertIs(result[dunning_fee.name], dunning_fee)
+
 	def test_summary_open_amounts_default_to_period(self):
 		summary = _get_report_summary(
 			_totals(all_miete=700.0, period_miete=200.0),

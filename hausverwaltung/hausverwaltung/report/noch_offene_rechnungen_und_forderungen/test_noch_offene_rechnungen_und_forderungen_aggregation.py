@@ -139,6 +139,35 @@ class TestNochOffeneForderungenAggregation(TestCase):
 			),
 		]
 
+	def test_dunning_fee_invoice_with_same_mietabrechnung_id_stays_separate(self):
+		mab = "MV-2026-001|07/2026"
+		rows = [
+			_row("SI-Miete", 500.0, bemerkungen="Miete 07/2026"),
+			_row("SI-BK", 120.0, bemerkungen="BK 07/2026"),
+			_row("SI-MAHNUNG", 12.0, bemerkungen="Mahnung"),
+		]
+		patches = self._patch_invoice_lookup(
+			{"SI-Miete": mab, "SI-BK": mab, "SI-MAHNUNG": mab},
+			{
+				"SI-Miete": "Miete",
+				"SI-BK": "Betriebskosten",
+				"SI-MAHNUNG": "Mahngebuehr",
+			},
+		)
+		for p in patches:
+			p.start()
+		try:
+			out = _group_rows_by_mietabrechnung(rows)
+		finally:
+			for p in patches:
+				p.stop()
+
+		self.assertEqual(len(out), 2)
+		self.assertEqual(out[0]["member_voucher_nos"], ["SI-Miete", "SI-BK"])
+		self.assertAlmostEqual(out[0]["offen"], 620.0)
+		self.assertEqual(out[1]["belegnummer"], "SI-MAHNUNG")
+		self.assertAlmostEqual(out[1]["offen"], 12.0)
+
 	def test_gn_invoice_with_same_mietabrechnung_id_stays_separate(self):
 		mab = "MV-2025-001|11/2025"
 		rows = [

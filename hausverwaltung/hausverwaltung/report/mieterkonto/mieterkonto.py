@@ -237,13 +237,14 @@ def _group_invoices(invoices: dict[str, InvoiceInfo]) -> dict[str, InvoiceInfo]:
 	"""Aggregiert SIs mit gleicher `mietabrechnung_id` zu einer Gruppe.
 
 	SIs ohne `mietabrechnung_id` (manuelle, Settlement-, Cutover-SIs) bleiben
-	als Solo-Gruppen mit Original-Namen als Key. G/N-SIs bleiben ebenfalls
-	einzeln, damit Guthaben/Nachzahlungen nicht in der Monatsmiete verschwinden.
+	als Solo-Gruppen mit Original-Namen als Key. G/N- und Mahngebuehr-SIs bleiben
+	ebenfalls einzeln, damit sie nicht in der Monatsmiete verschwinden.
 	"""
 	groups: dict[str, list[InvoiceInfo]] = {}
 	order: list[str] = []
 	for inv in invoices.values():
-		key = inv.name if _is_guthaben_nachzahlung_invoice(inv) else (inv.mietabrechnung_id or inv.name)
+		stays_separate = inv.is_dunning_fee_invoice or _is_guthaben_nachzahlung_invoice(inv)
+		key = inv.name if stays_separate else (inv.mietabrechnung_id or inv.name)
 		if key not in groups:
 			groups[key] = []
 			order.append(key)
