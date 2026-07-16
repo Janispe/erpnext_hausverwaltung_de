@@ -28,13 +28,14 @@ function App() {
     filters: {},
     rows: [],
     totalRow: {},
+    totalRows: [],
     summary: [{ label: "Kontostand", value: 0 }, { label: "Bezahlt im Zeitraum", value: 0 }],
   };
   const [data, setData] = useState(initialData);
   const [loadingData, setLoadingData] = useState(false);
   const [loadError, setLoadError] = useState("");
   const loadSeq = useRef(0);
-  const { mieter, filters, rows, totalRow, summary } = data;
+  const { mieter, filters, rows, totalRow, totalRows = [], summary } = data;
 
   // Filter-State
   const _init = window.MK_INITIAL || {};
@@ -282,6 +283,7 @@ function App() {
           <VariantA
             rows={rows}
             totalRow={totalRow}
+            totalRows={totalRows}
             density={t.density}
             highlightOpen={t.highlightOpen}
             showInlineCats={showCats}
@@ -293,6 +295,7 @@ function App() {
           <VariantC
             rows={rows}
             totalRow={totalRow}
+            totalRows={totalRows}
             summary={summary}
             density={t.density}
             sortByWertstellung={sortByWertstellung}
@@ -352,7 +355,7 @@ function openMieterkontoPrintWindow(data, options = {}) {
 }
 
 function buildMieterkontoPrintHtml(data, options = {}) {
-  const { mieter = {}, filters = {}, rows = [], totalRow = {}, summary = [] } = data || {};
+  const { mieter = {}, filters = {}, rows = [], totalRow = {}, totalRows = [], summary = [] } = data || {};
   const showCats = !!options.showCats;
   const sortByWertstellung = !!options.sortByWertstellung;
   const txRows = rows || [];
@@ -393,15 +396,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
     grouped.push({ type: "row", row, key: `r-${index}` });
   });
 
-  const totalForCategory = (category) => txRows
-    .filter((r) => !r.is_opening_row)
-    .reduce((a, r) => a + Number(r[`betrag_${category.key}`] || 0), 0);
-  const totalSoll = txRows
-    .filter((r) => !r.is_opening_row && r.art === "Forderung")
-    .reduce((a, r) => a + Number(r.betrag_summe || 0), 0);
-  const totalHaben = Math.abs(txRows
-    .filter((r) => !r.is_opening_row && r.art !== "Forderung")
-    .reduce((a, r) => a + Number(r.betrag_summe || 0), 0));
+  const displayedTotalRows = totalRows.length ? totalRows : [totalRow].filter(Boolean);
 
   const tableRows = grouped.map((entry) => {
     if (entry.type === "opening") {
@@ -455,16 +450,28 @@ function buildMieterkontoPrintHtml(data, options = {}) {
       </tr>`;
   }).join("");
 
-  const totalSumme = txRows
-    .filter((r) => !r.is_opening_row)
-    .reduce((a, r) => a + Number(r.betrag_summe || 0), 0);
-  const totalCells = showCats
-    ? CATS.map((cat) => {
-        const value = totalForCategory(cat);
-        return `<td class="num">${Math.abs(value) < 0.01 ? "" : esc(fmtEUR(value, { signed: true }))}</td>`;
-      }).join("")
-    : `<td class="num">${esc(fmtEURsoll(totalSoll))}</td><td class="num">${esc(fmtEURsoll(totalHaben))}</td>`;
-  const totalSummeCell = `<td class="num">${Math.abs(totalSumme) < 0.01 ? "" : esc(fmtEUR(totalSumme, { signed: true }))}</td>`;
+  const totalTableRows = displayedTotalRows.map((row, index) => {
+    const isPaid = row.total_kind === "paid" || index === displayedTotalRows.length - 1;
+    const total = Number(row.betrag_summe || 0);
+    const amountCells = showCats
+      ? CATS.map((cat) => {
+          const value = Number(row[`betrag_${cat.key}`] || 0);
+          return `<td class="num">${Math.abs(value) < 0.01 ? "" : esc(fmtEUR(value))}</td>`;
+        }).join("")
+      : `<td class="num">${!isPaid ? esc(fmtEURsoll(total)) : ""}</td>`
+        + `<td class="num">${isPaid ? esc(fmtEURsoll(total)) : ""}</td>`;
+    return `
+      <tr class="total ${index === 0 ? "total-start" : ""}">
+        <td>${esc(fmtDate(row.datum))}</td>
+        ${sortByWertstellung ? `<td>${esc(fmtDate(row.wertstellungsdatum))}</td>` : ""}
+        <td></td>
+        <td></td>
+        <td>${esc(row.beschreibung || "")}</td>
+        ${amountCells}
+        <td class="num">${Math.abs(total) < 0.01 ? "" : esc(fmtEUR(total))}</td>
+        <td class="num saldo">${row.kontostand == null ? "" : esc(fmtEUR(row.kontostand))}</td>
+      </tr>`;
+  }).join("");
 
   return `<!doctype html>
 <html lang="de">
@@ -620,7 +627,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
       background: #f8f8f8;
       font-weight: 600;
     }
-    .total td {
+    .total-start td {
       border-top: 1.5px solid #111;
     }
     @media screen {
@@ -679,16 +686,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
       </thead>
       <tbody>
         ${tableRows}
-        <tr class="total">
-          <td>${esc(fmtDate(totalRow.datum))}</td>
-          ${sortByWertstellung ? `<td>${esc(fmtDate(totalRow.wertstellungsdatum))}</td>` : ""}
-          <td></td>
-          <td></td>
-          <td>Σ Zeitraum</td>
-          ${totalCells}
-          ${totalSummeCell}
-          <td class="num saldo">${esc(fmtEUR(totalRow.kontostand || 0))}</td>
-        </tr>
+        ${totalTableRows}
       </tbody>
     </table>
   </div>

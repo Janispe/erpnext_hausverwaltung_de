@@ -1,6 +1,6 @@
 // variant-c.jsx — Dashboard-Stil: KPI-Kacheln prominent, Tabelle kompakter.
 
-function VariantC({ rows, totalRow, summary, density, sortByWertstellung }) {
+function VariantC({ rows, totalRow, totalRows, summary, density, sortByWertstellung }) {
   const rowDate = (row) => sortByWertstellung ? (row.wertstellungsdatum || row.datum || "") : (row.datum || "");
   const kontostand = getSummaryItem(summary, "Kontostand").value;
   const bezahlt = getSummaryItem(summary, "Bezahlt im Zeitraum").value;
@@ -79,6 +79,7 @@ function VariantC({ rows, totalRow, summary, density, sortByWertstellung }) {
       <VariantA
         rows={rows}
         totalRow={totalRow}
+        totalRows={totalRows}
         density="compact"
         defaultCatsOpen={false}
         highlightOpen={true}

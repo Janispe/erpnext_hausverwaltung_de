@@ -210,6 +210,49 @@ class TestGroupInvoices(TestCase):
 		self.assertEqual(_summary_value(summary, "Bezahlt im Zeitraum"), 40.0)
 		self.assertEqual(_summary_value(summary, "Miete offen (Zeitraum)"), 0.0)
 
+	def test_period_totals_show_invoices_and_payments_in_separate_rows(self):
+		filters = _filters(from_date=date(2026, 6, 1), to_date=date(2026, 6, 30))
+		transactions = [
+			{
+				"date": date(2026, 6, 1),
+				"art": "Forderung",
+				"belegart": "Sales Invoice",
+				"belegnummer": "SI-HK-JUN",
+				"beschreibung": "Heizkosten Juni",
+				"currency": "EUR",
+				"invoice_amounts": {cat: 0.0 for cat in CATEGORIES} | {"heizkosten": 180.0},
+				"paid_amounts": {cat: 0.0 for cat in CATEGORIES},
+				"written_off_amounts": {cat: 0.0 for cat in CATEGORIES},
+				"delta": 180.0,
+				"offen": 30.0,
+			},
+			{
+				"date": date(2026, 6, 5),
+				"art": "Zahlung",
+				"belegart": "Payment Entry",
+				"belegnummer": "PAY-HK-JUN",
+				"beschreibung": "Zahlung Heizkosten Juni",
+				"currency": "EUR",
+				"invoice_amounts": {cat: 0.0 for cat in CATEGORIES},
+				"paid_amounts": {cat: 0.0 for cat in CATEGORIES} | {"heizkosten": 150.0},
+				"written_off_amounts": {cat: 0.0 for cat in CATEGORIES},
+				"delta": -150.0,
+				"offen": 0.0,
+			},
+		]
+
+		rows, _totals = _build_rows(transactions, filters)
+		total_rows = [row for row in rows if row.get("is_total_row")]
+
+		self.assertEqual([row["total_kind"] for row in total_rows], ["invoiced", "paid"])
+		self.assertEqual([row["beschreibung"] for row in total_rows], ["Σ Sollgestellt", "Σ Zahlungen"])
+		self.assertEqual(total_rows[0]["betrag_heizkosten"], 180.0)
+		self.assertEqual(total_rows[0]["betrag_summe"], 180.0)
+		self.assertIsNone(total_rows[0]["kontostand"])
+		self.assertEqual(total_rows[1]["betrag_heizkosten"], 150.0)
+		self.assertEqual(total_rows[1]["betrag_summe"], 150.0)
+		self.assertEqual(total_rows[1]["kontostand"], 30.0)
+
 	def test_buchungscockpit_default_item_maps_to_guthaben_nachzahlungen(self):
 		amounts = _category_amounts_from_items(
 			"SI-COCKPIT",
@@ -437,14 +480,18 @@ class TestGroupInvoices(TestCase):
 			{"datum": date(2025, 1, 2), "belegnummer": "OLD"},
 			{"datum": date(2025, 1, 3), "belegnummer": "MID"},
 			{"datum": date(2025, 1, 3), "belegnummer": "NEWER-SAME-DAY"},
-			{"datum": date(2025, 1, 31), "is_total_row": 1},
+			{"datum": date(2025, 1, 31), "beschreibung": "Σ Sollgestellt", "is_total_row": 1},
+			{"datum": date(2025, 1, 31), "beschreibung": "Σ Zahlungen", "is_total_row": 1},
 		]
 
 		result = _sort_rows_for_display(rows)
 
 		self.assertEqual([r.get("belegnummer") for r in result[:3]], ["NEWER-SAME-DAY", "MID", "OLD"])
-		self.assertTrue(result[-2].get("is_opening_row"))
-		self.assertTrue(result[-1].get("is_total_row"))
+		self.assertTrue(result[-3].get("is_opening_row"))
+		self.assertEqual(
+			[row.get("beschreibung") for row in result[-2:]],
+			["Σ Sollgestellt", "Σ Zahlungen"],
+		)
 
 	def test_four_sis_same_id_collapse_to_one_group(self):
 		mab = "MV-2025-001|11/2025"

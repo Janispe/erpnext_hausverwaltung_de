@@ -1203,9 +1203,12 @@ def _build_rows(transactions: list[dict[str, Any]], filters) -> tuple[list[dict[
 	if not opening_added and abs(balance) > TOLERANCE:
 		rows.append(_opening_row(filters, balance, currency_seen or _get_currency(filters.company)))
 
-	# Summenzeile am Ende (nur wenn überhaupt Bewegungen im Zeitraum waren).
+	# Getrennte Summenzeilen am Ende (nur wenn überhaupt Bewegungen im Zeitraum
+	# waren): Sollstellungen und Zahlungen dürfen hier nicht miteinander
+	# verrechnet werden. So bleiben z. B. die gesamten HK-Sollstellungen und die
+	# darauf geleisteten Zahlungen direkt vergleichbar.
 	if any(not r.get("is_opening_row") for r in rows):
-		rows.append(_total_row(rows, balance, filters))
+		rows.extend(_total_rows(period_totals, balance, filters))
 
 	all_totals["balance"] = flt(balance, 2)
 	return rows, {
@@ -1292,30 +1295,43 @@ def _opening_row(filters, balance: float, currency: str | None) -> dict[str, Any
 	}
 
 
-def _total_row(rows: list[dict[str, Any]], balance: float, filters) -> dict[str, Any]:
-	"""Letzte Zeile mit Spalten-Summen über alle in-period-Transaktionen +
-	finalem Kontostand. Zeile wird im JS-Formatter fett dargestellt."""
-	total: dict[str, Any] = {
-		"datum": filters.to_date,
-		"wertstellungsdatum": filters.to_date,
-		"art": "",
-		"beschreibung": _("Σ Zeitraum"),
-		"kontostand": flt(balance, 2),
-		"is_total_row": 1,
-	}
-	# Nur über die echten Transaktions-Zeilen summieren — Opening und vorherige
-	# Total-Zeilen ausnehmen.
-	tx_rows = [r for r in rows if not r.get("is_opening_row") and not r.get("is_total_row")]
-	for category in CATEGORIES:
-		total[f"betrag_{category}"] = flt(
-			sum(flt(r.get(f"betrag_{category}")) for r in tx_rows), 2
-		)
-	total["betrag_summe"] = flt(
-		sum(flt(r.get("betrag_summe")) for r in tx_rows), 2
+def _total_rows(
+	period_totals: dict[str, Any], balance: float, filters
+) -> list[dict[str, Any]]:
+	"""Sollstellungen und Zahlungen des Zeitraums getrennt ausweisen.
+
+	Beide Zeilen verwenden positive Beträge, damit Soll und Zahlung je Kategorie
+	direkt verglichen werden können. Der finale Kontostand steht nur in der
+	Zahlungszeile und bleibt dadurch ein eindeutiger Abschlusswert.
+	"""
+	currency = period_totals.get("currency")
+	definitions = (
+		("invoiced", "invoice", _("Σ Sollgestellt"), None),
+		("paid", "paid", _("Σ Zahlungen"), flt(balance, 2)),
 	)
-	if not filters.get("show_kategorien"):
-		total = _hide_kategorien_columns(total)
-	return total
+	rows: list[dict[str, Any]] = []
+	for total_kind, source, description, final_balance in definitions:
+		amounts = period_totals[source]
+		row: dict[str, Any] = {
+			"datum": filters.to_date,
+			"wertstellungsdatum": filters.to_date,
+			"art": "",
+			"beschreibung": description,
+			"kontostand": final_balance,
+			"waehrung": currency,
+			"is_total_row": 1,
+			"total_kind": total_kind,
+		}
+		for category in CATEGORIES:
+			row[f"betrag_{category}"] = flt(amounts.get(category), 2)
+		row["betrag_summe"] = flt(
+			sum(flt(row.get(f"betrag_{category}")) for category in CATEGORIES),
+			2,
+		)
+		if not filters.get("show_kategorien"):
+			row = _hide_kategorien_columns(row)
+		rows.append(row)
+	return rows
 
 
 def _transaction_to_row(transaction: dict[str, Any], balance: float) -> dict[str, Any]:

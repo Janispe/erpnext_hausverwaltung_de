@@ -25,7 +25,7 @@ function monthEndRow(rows, month, sortByWertstellung) {
     }, null);
 }
 
-function VariantA({ rows, totalRow, density, highlightOpen, showInlineCats, sortByWertstellung }) {
+function VariantA({ rows, totalRow, totalRows = [], density, highlightOpen, showInlineCats, sortByWertstellung }) {
   // Monats-Header zwischen verschiedenen Monaten einfügen
   const grouped = [];
   let lastMonth = null;
@@ -54,13 +54,8 @@ function VariantA({ rows, totalRow, density, highlightOpen, showInlineCats, sort
     density === "compact" ? "is-compact" : density === "comfy" ? "is-comfy" : "",
     splitCategories ? "is-cat-split" : "",
   ].filter(Boolean).join(" ");
-  const totalForCategory = (category) => rows
-    .filter((r) => !r.is_opening_row)
-    .reduce((a, r) => a + categoryAmount(r, category), 0);
   const totalAmount = (row) => Number(row?.betrag_summe || 0);
-  const totalForPeriod = () => rows
-    .filter((r) => !r.is_opening_row)
-    .reduce((a, r) => a + totalAmount(r), 0);
+  const displayedTotalRows = totalRows.length ? totalRows : [totalRow].filter(Boolean);
   const colspan = (splitCategories ? CATS.length + 6 : 8) + (sortByWertstellung ? 1 : 0);
 
   return (
@@ -173,34 +168,38 @@ function VariantA({ rows, totalRow, density, highlightOpen, showInlineCats, sort
             );
           })}
 
-          {/* Summenzeile */}
-          <tr className="mk-row-total">
-            <td className="col-date">{fmtDate(totalRow.datum)}</td>
-            {sortByWertstellung && <td className="col-date">{fmtDate(totalRow.wertstellungsdatum)}</td>}
-            <td></td>
-            <td className="col-beleg"></td>
-            <td className="col-desc"><strong>Σ Zeitraum</strong></td>
-            {splitCategories ? (
-              CATS.map((c) => (
-                <td key={c.key} className="is-num col-cat-amount">
-                  {formatSignedAmount(totalForCategory(c))}
+          {/* Sollstellungen und Zahlungen bewusst nicht miteinander verrechnen. */}
+          {displayedTotalRows.map((summaryRow, index) => {
+            const isPaid = summaryRow.total_kind === "paid" || index === displayedTotalRows.length - 1;
+            return (
+              <tr
+                key={summaryRow.total_kind || index}
+                className={`mk-row-total ${index === 0 ? "mk-row-total-start" : ""}`}
+              >
+                <td className="col-date">{fmtDate(summaryRow.datum)}</td>
+                {sortByWertstellung && <td className="col-date">{fmtDate(summaryRow.wertstellungsdatum)}</td>}
+                <td></td>
+                <td className="col-beleg"></td>
+                <td className="col-desc"><strong>{summaryRow.beschreibung}</strong></td>
+                {splitCategories ? (
+                  CATS.map((c) => (
+                    <td key={c.key} className="is-num col-cat-amount">
+                      {fmtEURsoll(categoryAmount(summaryRow, c))}
+                    </td>
+                  ))
+                ) : (
+                  <>
+                    <td className="is-num">{!isPaid ? fmtEURsoll(totalAmount(summaryRow)) : ""}</td>
+                    <td className="is-num">{isPaid ? fmtEURsoll(totalAmount(summaryRow)) : ""}</td>
+                  </>
+                )}
+                <td className="is-num col-total">{fmtEURsoll(totalAmount(summaryRow))}</td>
+                <td className="is-num col-saldo">
+                  {summaryRow.kontostand == null ? "" : fmtEUR(summaryRow.kontostand)}
                 </td>
-              ))
-            ) : (
-              <>
-                <td className="is-num">
-                  {fmtEURsoll(rows.filter(r => !r.is_opening_row && r.art === "Forderung")
-                    .reduce((a, r) => a + r.betrag_summe, 0))}
-                </td>
-                <td className="is-num">
-                  {fmtEURsoll(Math.abs(rows.filter(r => !r.is_opening_row && r.art !== "Forderung")
-                    .reduce((a, r) => a + r.betrag_summe, 0)))}
-                </td>
-              </>
-            )}
-            <td className="is-num col-total">{formatSignedAmount(totalForPeriod())}</td>
-            <td className="is-num col-saldo">{fmtEUR(totalRow.kontostand)}</td>
-          </tr>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

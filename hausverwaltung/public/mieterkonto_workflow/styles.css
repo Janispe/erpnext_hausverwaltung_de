@@ -552,9 +552,11 @@ button { font-family: inherit; }
   font-weight: 500;
 }
 .mk-row-total td {
-  border-top: 2px solid var(--ink) !important;
   font-weight: 600;
   background: var(--bg);
+}
+.mk-row-total-start td {
+  border-top: 2px solid var(--ink) !important;
 }
 .mk-row-total td.col-saldo {
   font-size: 15px;
@@ -1093,7 +1095,7 @@ button { font-family: inherit; }
   .mk-row-total td {
     background: #f8f8f8 !important;
   }
-  .mk-row-total td {
+  .mk-row-total-start td {
     border-top: 1.5px solid #111 !important;
   }
   .mk-row-total td.col-saldo {

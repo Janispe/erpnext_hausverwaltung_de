@@ -51,7 +51,9 @@
     const mieter = stammRes.message;
     const { rows = [], summary = [] } = reportRes.message || {};
 
-    const totalRow = rows.find((r) => r.is_total_row) || rows[rows.length - 1] || emptyTotalRow(to);
+    const rawTotalRows = rows.filter((r) => r.is_total_row);
+    const totalRows = rawTotalRows.length ? rawTotalRows : emptyTotalRows(to);
+    const totalRow = totalRows[totalRows.length - 1];
     const txRows = rows.filter((r) => !r.is_total_row);
 
     window.MIETERKONTO = {
@@ -65,6 +67,7 @@
       },
       rows: txRows.map(adaptRow),
       totalRow: adaptRow(totalRow),
+      totalRows: totalRows.map(adaptRow),
       summary: adaptSummary(summary),
     };
     return window.MIETERKONTO;
@@ -91,12 +94,13 @@
       betrag_vorauszahlungen: raw.betrag_vorauszahlungen || 0,
       betrag_sonstiges: raw.betrag_sonstiges || 0,
       betrag_summe: raw.betrag_summe || 0,
-      kontostand: raw.kontostand || 0,
+      kontostand: raw.kontostand == null ? null : Number(raw.kontostand) || 0,
       faellig_am: raw.faellig_am || null,
       status: raw.status || null,
       offen: raw.offen || 0,
       is_opening_row: !!raw.is_opening_row,
       is_total_row: !!raw.is_total_row,
+      total_kind: raw.total_kind || null,
     };
   }
 
@@ -129,13 +133,14 @@
         to_date: frappe.datetime.get_today(),
       },
       rows: [],
-      totalRow: emptyTotalRow(frappe.datetime.get_today()),
+      totalRow: emptyTotalRows(frappe.datetime.get_today())[1],
+      totalRows: emptyTotalRows(frappe.datetime.get_today()),
       summary: defaultSummary(),
     };
   }
 
-  function emptyTotalRow(date) {
-    return {
+  function emptyTotalRows(date) {
+    const base = {
       datum: date,
       wertstellungsdatum: date,
       art: "",
@@ -150,9 +155,12 @@
       betrag_vorauszahlungen: 0,
       betrag_sonstiges: 0,
       betrag_summe: 0,
-      kontostand: 0,
       is_total_row: true,
     };
+    return [
+      { ...base, beschreibung: "Σ Sollgestellt", kontostand: null, total_kind: "invoiced" },
+      { ...base, beschreibung: "Σ Zahlungen", kontostand: 0, total_kind: "paid" },
+    ];
   }
 
   function defaultSummary() {
