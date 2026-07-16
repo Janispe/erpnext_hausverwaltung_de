@@ -11,13 +11,96 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen i
 
 
 class TestBetriebskostenartFestbetrag(unittest.TestCase):
-	def test_mieter_overview_adds_contract_and_dimension_amounts(self):
+	def test_mieter_overview_includes_dimension_booking_without_contract_row(self):
+		import frappe as _frappe_mod
+
+		customer_doc = unittest.mock.Mock()
+
+		def fake_get_all(doctype, **kwargs):
+			if doctype == "Mietvertrag":
+				return [_frappe_mod._dict(
+					name="MV-1",
+					wohnung="W1",
+					immobilie="Haus-1",
+					von="2024-01-01",
+					bis=None,
+				)]
+			if doctype == "Betriebskosten Festbetrag":
+				return []
+			if doctype == "Betriebskostenart":
+				return [_frappe_mod._dict(name="Thermenwartung", konto="ACC-THERME")]
+			if doctype == "Immobilie":
+				return [_frappe_mod._dict(name="Haus-1", kostenstelle="CC-1")]
+			if doctype == "GL Entry":
+				return [
+					_frappe_mod._dict(
+						name="GLE-OLD",
+						posting_date="2024-06-15",
+						account="ACC-THERME",
+						cost_center="CC-1",
+						wohnung="W1",
+						debit=50,
+						credit=0,
+						voucher_type="Purchase Invoice",
+						voucher_no="PINV-OLD",
+					),
+					_frappe_mod._dict(
+						name="GLE-1",
+						posting_date="2025-06-15",
+						account="ACC-THERME",
+						cost_center="CC-1",
+						wohnung="W1",
+						debit=100,
+						credit=0,
+						voucher_type="Purchase Invoice",
+						voucher_no="PINV-1",
+					),
+				]
+			return []
+
+		with patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen.frappe.get_doc",
+			return_value=customer_doc,
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen.frappe.get_all",
+			side_effect=fake_get_all,
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._has_field",
+			return_value=True,
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._prefetch_wertstellungsdaten",
+			return_value={},
+		):
+			rows = get_mieter_festbetrag_overview.__wrapped__(
+				"MIETER-1",
+				von="2025-01-01",
+				bis="2025-12-31",
+			)
+
+		self.assertEqual(rows["manual_rows"], [])
+		self.assertEqual(rows["dimension_rows"], [{
+			"mietvertrag": "MV-1",
+			"wohnung": "W1",
+			"bezeichnung": "Thermenwartung",
+			"belegdatum": "2025-06-15",
+			"belegtyp": "Purchase Invoice",
+			"belegnummer": "PINV-1",
+			"betrag": 100.0,
+		}])
+
+	def test_mieter_overview_separates_contract_and_dimension_amounts(self):
 		import frappe as _frappe_mod
 
 		customer_doc = unittest.mock.Mock()
 		def fake_get_all(doctype, **kwargs):
 			if doctype == "Mietvertrag":
-				return [_frappe_mod._dict(name="MV-1", wohnung="W1", immobilie="Haus-1")]
+				return [_frappe_mod._dict(
+					name="MV-1",
+					wohnung="W1",
+					immobilie="Haus-1",
+					von="2025-01-01",
+					bis="2025-12-31",
+				)]
 			if doctype == "Betriebskosten Festbetrag":
 				return [_frappe_mod._dict(
 					mietvertrag="MV-1",
@@ -62,9 +145,8 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 			rows = get_mieter_festbetrag_overview.__wrapped__("MIETER-1")
 
 		customer_doc.check_permission.assert_called_once_with("read")
-		self.assertEqual(rows[0]["vertrags_festbetrag"], 25.0)
-		self.assertEqual(rows[0]["dimensionsbuchungen"], 100.0)
-		self.assertEqual(rows[0]["gesamtbetrag"], 125.0)
+		self.assertEqual(rows["manual_rows"][0]["betrag"], 25.0)
+		self.assertEqual(rows["dimension_rows"][0]["betrag"], 100.0)
 
 	def test_allocate_kosten_auf_wohnungen_includes_free_festbetrag(self):
 		with patch(

@@ -270,35 +270,47 @@ def _festbetrag_map(immobilie: str, von: str, bis: str) -> Dict[str, Dict[str, D
 
 
 @frappe.whitelist()
-def get_mieter_festbetrag_overview(customer: str) -> List[Dict[str, object]]:
-    """Zeigt Vertrags-Festbeträge und passende Dimensionsbuchungen je Mieter.
-
-    Der Zeitraum einer Zeile entspricht dem Gültigkeitszeitraum des im
-    Mietvertrag gepflegten Festbetrags. Dimensionsbuchungen werden nach
-    Kostenart, Wohnung, Immobilien-Kostenstelle und effektivem Belegdatum
-    zugeordnet – genauso wie in der BK-Allokation.
-    """
+def get_mieter_festbetrag_overview(
+    customer: str,
+    von: str | None = None,
+    bis: str | None = None,
+) -> Dict[str, List[Dict[str, object]]]:
+    """Zeigt manuelle Festbeträge und Dimensionsbuchungen getrennt je Mieter."""
+    empty_result: Dict[str, List[Dict[str, object]]] = {
+        "manual_rows": [],
+        "dimension_rows": [],
+    }
     if not customer:
-        return []
+        return empty_result
     frappe.get_doc("Customer", customer).check_permission("read")
+
+    von_d = getdate(von) if von else None
+    bis_d = getdate(bis) if bis else None
+    if von_d and bis_d and von_d > bis_d:
+        frappe.throw("Von darf nicht nach Bis liegen.")
 
     contracts = frappe.get_all(
         "Mietvertrag",
         filters={"kunde": customer},
-        fields=["name", "wohnung", "immobilie"],
+        fields=["name", "wohnung", "immobilie", "von", "bis"],
         order_by="von desc",
         limit_page_length=0,
     )
     if not contracts:
-        return []
+        return empty_result
 
     contract_by_name = {row.name: row for row in contracts}
+    fest_filters: Dict[str, object] = {
+        "parenttype": "Mietvertrag",
+        "parent": ("in", list(contract_by_name)),
+    }
+    if bis:
+        fest_filters["gueltig_von"] = ("<=", bis)
+    if von:
+        fest_filters["gueltig_bis"] = (">=", von)
     fest_rows = frappe.get_all(
         "Betriebskosten Festbetrag",
-        filters={
-            "parenttype": "Mietvertrag",
-            "parent": ("in", list(contract_by_name)),
-        },
+        filters=fest_filters,
         fields=[
             "parent AS mietvertrag",
             "betriebskostenart",
@@ -311,16 +323,12 @@ def get_mieter_festbetrag_overview(customer: str) -> List[Dict[str, object]]:
         order_by="parent asc, idx asc",
         limit_page_length=0,
     )
-    if not fest_rows:
-        return []
-
-    kostenarten = sorted({row.betriebskostenart for row in fest_rows if row.betriebskostenart})
     art_rows = frappe.get_all(
         "Betriebskostenart",
-        filters={"name": ("in", kostenarten), "verteilung": "Festbetrag"},
+        filters={"verteilung": "Festbetrag"},
         fields=["name", "konto"],
         limit_page_length=0,
-    ) if kostenarten else []
+    )
     account_to_art = {row.konto: row.name for row in art_rows if row.konto}
 
     immobilien = sorted({row.immobilie for row in contracts if row.immobilie})
@@ -359,38 +367,62 @@ def get_mieter_festbetrag_overview(customer: str) -> List[Dict[str, object]]:
         )
     wert_map = _prefetch_wertstellungsdaten(gl_rows)
 
-    result: List[Dict[str, object]] = []
+    manual_rows: List[Dict[str, object]] = []
     for row in fest_rows:
         contract = contract_by_name.get(row.mietvertrag)
         if not contract:
             continue
         art = row.betriebskostenart
-        expected_cost_center = cost_center_by_immobilie.get(contract.immobilie)
-        dimension_amount = Decimal("0")
-        if art and row.gueltig_von and row.gueltig_bis and expected_cost_center:
-            start = getdate(row.gueltig_von)
-            end = getdate(row.gueltig_bis)
-            for gl_row in gl_rows:
-                if account_to_art.get(gl_row.account) != art:
-                    continue
-                if gl_row.get("wohnung") != contract.wohnung or gl_row.cost_center != expected_cost_center:
-                    continue
-                effective_date = getdate(_effective_date(gl_row, wert_map))
-                if start <= effective_date <= end:
-                    dimension_amount += _to_decimal(gl_row.debit) - _to_decimal(gl_row.credit)
-
         contract_amount = _to_decimal(row.betrag)
-        result.append({
+        manual_rows.append({
             "mietvertrag": row.mietvertrag,
             "wohnung": contract.wohnung,
             "bezeichnung": art or row.bezeichnung or "Festbetrag",
             "gueltig_von": cstr(row.gueltig_von),
             "gueltig_bis": cstr(row.gueltig_bis),
-            "vertrags_festbetrag": float(_quantize_money(contract_amount)),
-            "dimensionsbuchungen": float(_quantize_money(dimension_amount)),
-            "gesamtbetrag": float(_quantize_money(contract_amount + dimension_amount)),
+            "betrag": float(_quantize_money(contract_amount)),
         })
-    return result
+
+    dimension_rows: List[Dict[str, object]] = []
+    for gl_row in gl_rows:
+        art = account_to_art.get(gl_row.account)
+        if not art:
+            continue
+        effective_date = getdate(_effective_date(gl_row, wert_map))
+        if von_d and effective_date < von_d:
+            continue
+        if bis_d and effective_date > bis_d:
+            continue
+        contract = next(
+            (
+                candidate
+                for candidate in contracts
+                if candidate.wohnung == gl_row.get("wohnung")
+                and cost_center_by_immobilie.get(candidate.immobilie) == gl_row.cost_center
+                and candidate.get("von")
+                and getdate(candidate.von) <= effective_date
+                and (not candidate.get("bis") or effective_date <= getdate(candidate.bis))
+            ),
+            None,
+        )
+        if not contract:
+            continue
+        dimension_amount = _to_decimal(gl_row.debit) - _to_decimal(gl_row.credit)
+        if dimension_amount.copy_abs() < MIN_SIGNIFICANT:
+            continue
+        dimension_rows.append({
+            "mietvertrag": contract.name,
+            "wohnung": contract.wohnung,
+            "bezeichnung": art,
+            "belegdatum": cstr(effective_date),
+            "belegtyp": cstr(gl_row.voucher_type),
+            "belegnummer": cstr(gl_row.voucher_no),
+            "betrag": float(_quantize_money(dimension_amount)),
+        })
+    return {
+        "manual_rows": manual_rows,
+        "dimension_rows": dimension_rows,
+    }
 
 
 @frappe.whitelist()
