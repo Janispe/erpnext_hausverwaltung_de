@@ -4,6 +4,8 @@ Teilt Betriebskosten eines Hauses auf einzelne Wohnungen auf.
 Unterstützte Verteilungsarten je Betriebskostenart:
 - "qm": anhand Wohnungsfläche (m²) aus dem Wohnungszustand zum Stichtag
 - "Einzeln": direkt über die Accounting Dimension "wohnung" auf dem GL‑Eintrag
+- "Festbetrag": dimensionsgebuchte Kosten direkt je Wohnung plus die im
+  Mietvertrag gepflegten Festbeträge
 - "Schlüssel": anhand eines Zustandsschlüssels im Wohnungszustand zum Stichtag
 
 Nicht implementiert (wirft Fehler, wenn verwendet):
@@ -268,6 +270,130 @@ def _festbetrag_map(immobilie: str, von: str, bis: str) -> Dict[str, Dict[str, D
 
 
 @frappe.whitelist()
+def get_mieter_festbetrag_overview(customer: str) -> List[Dict[str, object]]:
+    """Zeigt Vertrags-Festbeträge und passende Dimensionsbuchungen je Mieter.
+
+    Der Zeitraum einer Zeile entspricht dem Gültigkeitszeitraum des im
+    Mietvertrag gepflegten Festbetrags. Dimensionsbuchungen werden nach
+    Kostenart, Wohnung, Immobilien-Kostenstelle und effektivem Belegdatum
+    zugeordnet – genauso wie in der BK-Allokation.
+    """
+    if not customer:
+        return []
+    frappe.get_doc("Customer", customer).check_permission("read")
+
+    contracts = frappe.get_all(
+        "Mietvertrag",
+        filters={"kunde": customer},
+        fields=["name", "wohnung", "immobilie"],
+        order_by="von desc",
+        limit_page_length=0,
+    )
+    if not contracts:
+        return []
+
+    contract_by_name = {row.name: row for row in contracts}
+    fest_rows = frappe.get_all(
+        "Betriebskosten Festbetrag",
+        filters={
+            "parenttype": "Mietvertrag",
+            "parent": ("in", list(contract_by_name)),
+        },
+        fields=[
+            "parent AS mietvertrag",
+            "betriebskostenart",
+            "bezeichnung",
+            "betrag",
+            "gueltig_von",
+            "gueltig_bis",
+            "idx",
+        ],
+        order_by="parent asc, idx asc",
+        limit_page_length=0,
+    )
+    if not fest_rows:
+        return []
+
+    kostenarten = sorted({row.betriebskostenart for row in fest_rows if row.betriebskostenart})
+    art_rows = frappe.get_all(
+        "Betriebskostenart",
+        filters={"name": ("in", kostenarten), "verteilung": "Festbetrag"},
+        fields=["name", "konto"],
+        limit_page_length=0,
+    ) if kostenarten else []
+    account_to_art = {row.konto: row.name for row in art_rows if row.konto}
+
+    immobilien = sorted({row.immobilie for row in contracts if row.immobilie})
+    immobilie_rows = frappe.get_all(
+        "Immobilie",
+        filters={"name": ("in", immobilien)},
+        fields=["name", "kostenstelle"],
+        limit_page_length=0,
+    ) if immobilien else []
+    cost_center_by_immobilie = {row.name: row.kostenstelle for row in immobilie_rows if row.kostenstelle}
+
+    gl_rows = []
+    wohnungen = sorted({row.wohnung for row in contracts if row.wohnung})
+    cost_centers = sorted(set(cost_center_by_immobilie.values()))
+    if account_to_art and wohnungen and cost_centers and _has_field("GL Entry", "wohnung"):
+        gl_rows = frappe.get_all(
+            "GL Entry",
+            filters={
+                "account": ("in", list(account_to_art)),
+                "cost_center": ("in", cost_centers),
+                "wohnung": ("in", wohnungen),
+            },
+            fields=[
+                "name",
+                "posting_date",
+                "account",
+                "cost_center",
+                "wohnung",
+                "debit",
+                "credit",
+                "voucher_type",
+                "voucher_no",
+            ],
+            order_by="posting_date asc",
+            limit_page_length=0,
+        )
+    wert_map = _prefetch_wertstellungsdaten(gl_rows)
+
+    result: List[Dict[str, object]] = []
+    for row in fest_rows:
+        contract = contract_by_name.get(row.mietvertrag)
+        if not contract:
+            continue
+        art = row.betriebskostenart
+        expected_cost_center = cost_center_by_immobilie.get(contract.immobilie)
+        dimension_amount = Decimal("0")
+        if art and row.gueltig_von and row.gueltig_bis and expected_cost_center:
+            start = getdate(row.gueltig_von)
+            end = getdate(row.gueltig_bis)
+            for gl_row in gl_rows:
+                if account_to_art.get(gl_row.account) != art:
+                    continue
+                if gl_row.get("wohnung") != contract.wohnung or gl_row.cost_center != expected_cost_center:
+                    continue
+                effective_date = getdate(_effective_date(gl_row, wert_map))
+                if start <= effective_date <= end:
+                    dimension_amount += _to_decimal(gl_row.debit) - _to_decimal(gl_row.credit)
+
+        contract_amount = _to_decimal(row.betrag)
+        result.append({
+            "mietvertrag": row.mietvertrag,
+            "wohnung": contract.wohnung,
+            "bezeichnung": art or row.bezeichnung or "Festbetrag",
+            "gueltig_von": cstr(row.gueltig_von),
+            "gueltig_bis": cstr(row.gueltig_bis),
+            "vertrags_festbetrag": float(_quantize_money(contract_amount)),
+            "dimensionsbuchungen": float(_quantize_money(dimension_amount)),
+            "gesamtbetrag": float(_quantize_money(contract_amount + dimension_amount)),
+        })
+    return result
+
+
+@frappe.whitelist()
 def allocate_kosten_auf_wohnungen(
     von: str,
     bis: str,
@@ -280,7 +406,9 @@ def allocate_kosten_auf_wohnungen(
     - Filtert GL Entries auf Konten der Betriebskostenarten und Kostenstellen der Immobilien.
     - Nutzt Wertstellungsdatum der verknüpften Belege zur Periodenfilterung [von, bis].
     - Aggregiert je Immobilie (Haus) und Betriebskostenart und verteilt gemäß Verteilungsart.
-    - Für "Einzeln" werden Beträge direkt je GL‑Zeile auf das Feld "wohnung" gebucht (Accounting Dimension erforderlich).
+    - Für "Einzeln" und "Festbetrag" werden dimensionsgebuchte Beträge direkt
+      je GL‑Zeile auf das Feld "wohnung" gebucht (Accounting Dimension erforderlich).
+    - Bei "Festbetrag" kommen die im Mietvertrag gepflegten Festbeträge hinzu.
     """
     stichtag = stichtag or bis
     von_d = getdate(von)
@@ -384,20 +512,21 @@ def allocate_kosten_auf_wohnungen(
         if betrag.copy_abs() < MIN_SIGNIFICANT:
             continue
 
-        if verteilung.lower() == "einzeln":
+        if verteilung.lower() in {"einzeln", "festbetrag"}:
             if not gl_has_wohnung:
-                frappe.throw("Verteilungsart 'Einzeln' erfordert Accounting Dimension 'wohnung' auf GL Entry.")
+                frappe.throw(
+                    f"Verteilungsart '{verteilung}' erfordert Accounting Dimension 'wohnung' auf GL Entry."
+                )
             whg = g.get("wohnung")
             if not whg:
-                frappe.throw(f"GL Entry {g.get('name')} ohne 'wohnung' bei Verteilungsart 'Einzeln'.")
+                frappe.throw(
+                    f"GL Entry {g.get('name')} ohne 'wohnung' bei Verteilungsart '{verteilung}'."
+                )
             matrix[whg][kostenart] += betrag
             continue
 
         if verteilung.lower() in {"bewohner", "verbrauch", "formel"}:
             frappe.throw(f"Verteilungsart '{verteilung}' für umlagefähige Kostenart {kostenart} ist noch nicht implementiert.")
-
-        if verteilung.lower() == "festbetrag":
-            continue
 
         # Wohnungen des Hauses cachen
         if haus not in whg_cache:

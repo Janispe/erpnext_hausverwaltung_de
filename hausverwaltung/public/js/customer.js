@@ -22,6 +22,10 @@ frappe.ui.form.on("Customer", {
 				});
 		}, __("View"));
 
+		frm.add_custom_button(__("Festbeträge"), () => {
+			show_customer_festbetraege(frm);
+		}, __("View"));
+
 		frm.add_custom_button(__("Zahlungsabgleich öffnen"), () => {
 			hv_open_payment_reconciliation({
 				company: frappe.defaults.get_user_default("Company"),
@@ -40,6 +44,60 @@ frappe.ui.form.on("Customer", {
 		window.hv_role_field_visibility?.apply(frm);
 	},
 });
+
+async function show_customer_festbetraege(frm) {
+	const response = await frappe.call({
+		method:
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen.get_mieter_festbetrag_overview",
+		args: { customer: frm.doc.name },
+		freeze: true,
+		freeze_message: __("Festbeträge und Dimensionsbuchungen werden ermittelt ..."),
+	});
+	const rows = response.message || [];
+
+	const escape = (value) => frappe.utils.escape_html(String(value || ""));
+	const format_date = (value) => value ? frappe.datetime.str_to_user(value) : "–";
+	const format_amount = (value) => format_currency(value || 0, frappe.defaults.get_default("currency"));
+	let html = `<div class="table-responsive"><table class="table table-bordered">
+		<thead><tr>
+			<th>${__("Festbetrag / Zusatzposten")}</th>
+			<th>${__("Wohnung")}</th>
+			<th class="text-right">${__("Vertrags-Festbetrag")}</th>
+			<th class="text-right">${__("Dimension Wohnung")}</th>
+			<th class="text-right">${__("Gesamt")}</th>
+			<th>${__("Gültig von")}</th>
+			<th>${__("Gültig bis")}</th>
+		</tr></thead><tbody>`;
+
+	if (!rows.length) {
+		html += `<tr><td colspan="7" class="text-muted text-center">
+			${__("Für diesen Mieter sind keine Festbeträge hinterlegt.")}
+		</td></tr>`;
+	} else {
+		rows.forEach((row) => {
+			html += `<tr>
+				<td><a href="/app/mietvertrag/${encodeURIComponent(row.mietvertrag)}">${escape(row.bezeichnung)}</a></td>
+				<td>${escape(row.wohnung)}</td>
+				<td class="text-right">${escape(format_amount(row.vertrags_festbetrag))}</td>
+				<td class="text-right">${escape(format_amount(row.dimensionsbuchungen))}</td>
+				<td class="text-right"><strong>${escape(format_amount(row.gesamtbetrag))}</strong></td>
+				<td>${escape(format_date(row.gueltig_von))}</td>
+				<td>${escape(format_date(row.gueltig_bis))}</td>
+			</tr>`;
+		});
+	}
+	html += "</tbody></table></div>";
+
+	const dialog = new frappe.ui.Dialog({
+		title: __("Festbeträge – {0}", [frm.doc.customer_name || frm.doc.name]),
+		fields: [{ fieldtype: "HTML", fieldname: "festbetraege_html" }],
+		primary_action_label: __("Schließen"),
+		primary_action: () => dialog.hide(),
+		size: "large",
+	});
+	dialog.fields_dict.festbetraege_html.$wrapper.html(html);
+	dialog.show();
+}
 
 function hv_open_mieterkonto_report({ customer, from_date, to_date }) {
 	const company = frappe.defaults.get_user_default("Company");
