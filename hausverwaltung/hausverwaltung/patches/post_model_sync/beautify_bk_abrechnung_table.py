@@ -116,7 +116,7 @@ HTML_CONTENT = """
         {% for row in matrix %}
           {% set art = frappe.get_cached_doc("Betriebskostenart", row.betriebskostenart) if row.betriebskostenart else None %}
           <tr>
-            <td>{{ (art.name1 if art else row.betriebskostenart) or "" }}</td>
+            <td>{{ (art.name1 if art else row.bezeichnung or row.betriebskostenart) or "" }}</td>
             <td class="muted">{{ (art.verteilung if art else "") or "" }}</td>
             <td class="num muted">
               {{ basis_label(art) }}
@@ -135,7 +135,7 @@ HTML_CONTENT = """
         {% for row in posten %}
           {% set art = frappe.get_cached_doc("Betriebskostenart", row.betriebskostenart) if row.betriebskostenart else None %}
           <tr>
-            <td>{{ (art.name1 if art else row.betriebskostenart) or "" }}</td>
+            <td>{{ (art.name1 if art else row.bezeichnung or row.betriebskostenart) or "" }}</td>
             <td class="muted">{{ (art.verteilung if art else "") or "" }}</td>
             <td class="num">{{ eur(row.betrag) }}</td>
           </tr>

@@ -152,23 +152,36 @@ class BetriebskostenabrechnungMieter(Document):
 
 	def get_kostenmatrix_rows(self) -> List[Dict[str, object]]:
 		"""Kombiniert Immobilien- und Wohnungsanteile je Betriebskostenart für Druck und Export."""
-		combined: Dict[str, Dict[str, object]] = {}
+		combined: Dict[tuple[str, str], Dict[str, object]] = {}
 
 		def accumulate(items, column: str) -> None:
 			for row in items or []:
-				art = row.get("betriebskostenart") or row.get("bezeichnung")
-				if not art:
+				betriebskostenart = row.get("betriebskostenart")
+				bezeichnung = row.get("bezeichnung")
+				label = betriebskostenart or bezeichnung
+				if not label:
 					continue
 				try:
 					amount = round(float(row.get("betrag") or 0), 2)
 				except Exception:
 					amount = 0.0
-				entry = combined.setdefault(art, {
-					"betriebskostenart": art,
-					"bezeichnung": row.get("bezeichnung"),
-					"immobilie": 0.0,
-					"wohnung": 0.0,
-				})
+				# Freie Bezeichnungen sind keine Links auf Betriebskostenart. Der
+				# Typ ist Teil des Schlüssels, damit eine freie Position nicht mit
+				# einer gleichnamigen verlinkten Kostenart zusammenfällt.
+				key = (
+					("betriebskostenart", betriebskostenart)
+					if betriebskostenart
+					else ("bezeichnung", bezeichnung)
+				)
+				entry = combined.setdefault(
+					key,
+					{
+						"betriebskostenart": betriebskostenart,
+						"bezeichnung": None if betriebskostenart else bezeichnung,
+						"immobilie": 0.0,
+						"wohnung": 0.0,
+					},
+				)
 				entry[column] = round(float(entry.get(column) or 0) + amount, 2)
 
 		immobilien_items = []
@@ -186,7 +199,10 @@ class BetriebskostenabrechnungMieter(Document):
 
 		from hausverwaltung.hausverwaltung.utils.bk_sort import sort_key
 
-		return [combined[key] for key in sorted(combined, key=sort_key)]
+		return sorted(
+			combined.values(),
+			key=lambda row: sort_key(row.get("betriebskostenart") or row.get("bezeichnung")),
+		)
 
 	def get_immobilien_basis(self) -> Dict[str, Any]:
 		"""Basis-Summen für die Drucktabelle."""

@@ -1,15 +1,57 @@
 # See license.txt
 
+import unittest
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import frappe
-import unittest
 
+from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_mieter import (
+	betriebskostenabrechnung_mieter as abrechnung_module,
+)
 from hausverwaltung.hausverwaltung.scripts.betriebskosten import abrechnung_erstellen as bk
 
 
 class TestBetriebskostenabrechnungMieter(unittest.TestCase):
+	def test_kostenmatrix_preserves_free_description_without_fake_link(self):
+		doc = frappe.get_doc(
+			{
+				"doctype": "Betriebskostenabrechnung Mieter",
+				"abrechnung": [{"bezeichnung": "Mahngebühr", "betrag": 25}],
+			}
+		)
+
+		self.assertEqual(
+			doc.get_kostenmatrix_rows(),
+			[
+				{
+					"betriebskostenart": None,
+					"bezeichnung": "Mahngebühr",
+					"immobilie": 0.0,
+					"wohnung": 25.0,
+				}
+			],
+		)
+
+	def test_kostenmatrix_keeps_equal_link_and_free_description_separate(self):
+		doc = frappe.get_doc(
+			{
+				"doctype": "Betriebskostenabrechnung Mieter",
+				"immobilien_abrechnung": "BK-IMMO-1",
+				"abrechnung": [{"bezeichnung": "Kamin", "betrag": 25}],
+			}
+		)
+		immobilien_rows = [{"betriebskostenart": "Kamin", "bezeichnung": None, "betrag": 100}]
+
+		with patch.object(abrechnung_module, "_get_abrechnungsposten_rows", return_value=immobilien_rows):
+			rows = doc.get_kostenmatrix_rows()
+
+		self.assertEqual(len(rows), 2)
+		self.assertEqual(
+			{(row["betriebskostenart"], row["bezeichnung"]) for row in rows},
+			{("Kamin", None), (None, "Kamin")},
+		)
+
 	def test_make_sales_invoice_sets_wertstellungsdatum(self):
 		si = MagicMock()
 		si.name = "SI-NEW"
