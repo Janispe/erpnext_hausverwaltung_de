@@ -21,11 +21,34 @@ frappe.ui.form.on("Heizkostenabrechnung Immobilie", {
 		frm.ignore_doctypes_on_cancel_all = ["Heizkostenabrechnung Mieter"];
 	},
 
+	onload(frm) {
+		_prepare_amendment(frm);
+	},
+
 	refresh(frm) {
 		_add_buttons(frm);
 		_show_correction_banner(frm);
 	},
 });
+
+function _prepare_amendment(frm) {
+	if (!frm.is_new() || !frm.doc.amended_from || frm.__hk_amendment_prepared) return;
+
+	// Der Standard-Amend kopiert die Links auf die inzwischen aufgehobenen
+	// Mieter-Abrechnungen. Sie werden serverseitig ebenfalls entfernt; das
+	// sofortige Leeren verhindert aber schon im Browser eine irreführende Tabelle.
+	frm.__hk_amendment_prepared = true;
+	frm.clear_table("mieter_positionen");
+	frm.doc.status = "Eingang";
+	frm.refresh_fields(["mieter_positionen", "status"]);
+	frappe.show_alert(
+		{
+			message: __("Neuer Änderungsentwurf: Nach dem Speichern bitte „Mieter-Drafts erzeugen“ klicken. Die bisherigen Beträge werden dabei übernommen."),
+			indicator: "blue",
+		},
+		10,
+	);
+}
 
 frappe.ui.form.on("Heizkostenabrechnung Position", {
 	kosten_gesamt(frm, cdt, cdn) {

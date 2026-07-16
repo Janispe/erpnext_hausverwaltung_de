@@ -11,6 +11,72 @@ from hausverwaltung.hausverwaltung.doctype.heizkostenabrechnung_mieter import (
 
 
 class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
+	def test_amendment_drops_cancelled_child_links_before_insert(self):
+		parent = SimpleNamespace(
+			amended_from="HK-IMM-ALT",
+			status="Submittet",
+			mieter_positionen=[SimpleNamespace(heizkostenabrechnung_mieter="HK-M-ALT")],
+			set=MagicMock(),
+		)
+
+		module.HeizkostenabrechnungImmobilie._prepare_amendment_for_insert(parent)
+
+		parent.set.assert_called_once_with("mieter_positionen", [])
+		self.assertEqual(parent.status, "Eingang")
+
+	def test_regular_insert_keeps_child_table(self):
+		parent = SimpleNamespace(amended_from=None, set=MagicMock())
+
+		module.HeizkostenabrechnungImmobilie._prepare_amendment_for_insert(parent)
+
+		parent.set.assert_not_called()
+
+	def test_amendment_drafts_reuse_previous_amounts(self):
+		parent = SimpleNamespace(
+			name="HK-IMM-NEU",
+			amended_from="HK-IMM-ALT",
+			immobilie="I-1",
+			von="2025-01-01",
+			bis="2025-12-31",
+			datum="2026-07-16",
+			docstatus=0,
+			waermedienst="WD-1",
+			waermedienst_referenz="REF-1",
+			check_permission=MagicMock(),
+			db_set=MagicMock(),
+			get=lambda fieldname: "Mieter-Drafts angelegt" if fieldname == "status" else None,
+		)
+		source_parent = SimpleNamespace(
+			mieter_positionen=[
+				SimpleNamespace(
+					mietvertrag="MV-1",
+					vorauszahlungen=700.0,
+					kosten_gesamt=850.0,
+				)
+			]
+		)
+		child = SimpleNamespace(name="HK-M-NEU", insert=MagicMock())
+		frappe = MagicMock()
+		frappe.get_doc.side_effect = [parent, source_parent]
+		frappe.db.sql.return_value = [
+			{"name": "MV-1", "kunde": "Mieter 1", "wohnung": "W-1"}
+		]
+		frappe.get_all.return_value = []
+		frappe.new_doc.return_value = child
+
+		with (
+			patch.object(module, "frappe", frappe),
+			patch.object(module, "calc_hk_vorauszahlungen") as calc,
+		):
+			result = module.create_mieter_drafts("HK-IMM-NEU")
+
+		self.assertEqual(child.vorauszahlungen, 700.0)
+		self.assertEqual(child.kosten_gesamt, 850.0)
+		self.assertEqual(child.heizkostenabrechnung_immobilie, "HK-IMM-NEU")
+		child.insert.assert_called_once_with(ignore_permissions=True)
+		calc.assert_not_called()
+		self.assertEqual(result["created"], ["HK-M-NEU"])
+
 	def test_wizard_defaults_belegdatum_to_today(self):
 		parent = SimpleNamespace(name="HK-IMM-1", insert=MagicMock())
 		frappe = MagicMock()

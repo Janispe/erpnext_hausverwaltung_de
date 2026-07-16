@@ -33,6 +33,22 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaim
 
 
 class HeizkostenabrechnungImmobilie(Document):
+	def insert(self, *args: Any, **kwargs: Any) -> HeizkostenabrechnungImmobilie:
+		"""Bereinigt einen Amend-Entwurf vor Frappes erster Link-Prüfung.
+
+		Frappe kopiert beim Klick auf „Ändern“ auch die Positionstabelle. Deren
+		Links zeigen nach dem Sammelstorno auf aufgehobene Mieter-Abrechnungen und
+		würden deshalb bereits ganz am Anfang von ``Document.insert`` abgewiesen.
+		"""
+		self._prepare_amendment_for_insert()
+		return super().insert(*args, **kwargs)
+
+	def _prepare_amendment_for_insert(self) -> None:
+		if not self.amended_from:
+			return
+		self.set("mieter_positionen", [])
+		self.status = "Eingang"
+
 	def autoname(self) -> None:
 		if getattr(self, "name", None):
 			return
@@ -605,6 +621,22 @@ def create_mieter_drafts(name: str) -> Dict[str, Any]:
 
 	von = getdate(parent.von)
 	bis = getdate(parent.bis)
+	amendment_values: dict[str, dict[str, float]] = {}
+	if parent.amended_from:
+		# Beim Amend die zuletzt gespeicherten Werte des stornierten Sammelbelegs
+		# wiederverwenden. Insbesondere bleiben manuell korrigierte
+		# Vorauszahlungen erhalten; lediglich die Links auf die aufgehobenen
+		# Mieter-Belege werden durch neue Drafts ersetzt.
+		source_parent = frappe.get_doc(
+			"Heizkostenabrechnung Immobilie", parent.amended_from
+		)
+		for source_row in source_parent.mieter_positionen or []:
+			if not source_row.mietvertrag:
+				continue
+			amendment_values[source_row.mietvertrag] = {
+				"vorauszahlungen": float(source_row.vorauszahlungen or 0),
+				"kosten_gesamt": float(source_row.kosten_gesamt or 0),
+			}
 
 	# Alle Mietverträge die a) Wohnung in dieser Immobilie haben und
 	# b) im Zeitraum [von..bis] aktiv sind (Überlappung).
@@ -644,12 +676,19 @@ def create_mieter_drafts(name: str) -> Dict[str, Any]:
 			skipped.append(mv["name"])
 			continue
 
-		# Vorauszahlung vorbefüllen
-		try:
-			vz = calc_hk_vorauszahlungen(mv["name"], von, bis)
-			vorauszahlung = float(vz.get("actual_total") or 0.0)
-		except Exception:
-			vorauszahlung = 0.0
+		# Beim Amend die stornierten Werte übernehmen, bei einer neuen
+		# Abrechnung die Vorauszahlungen wie bisher aus den Mietrechnungen ziehen.
+		previous_values = amendment_values.get(mv["name"])
+		if previous_values is not None:
+			vorauszahlung = previous_values["vorauszahlungen"]
+			kosten_gesamt = previous_values["kosten_gesamt"]
+		else:
+			try:
+				vz = calc_hk_vorauszahlungen(mv["name"], von, bis)
+				vorauszahlung = float(vz.get("actual_total") or 0.0)
+			except Exception:
+				vorauszahlung = 0.0
+			kosten_gesamt = 0.0
 
 		child = frappe.new_doc("Heizkostenabrechnung Mieter")
 		child.mietvertrag = mv["name"]
@@ -661,7 +700,7 @@ def create_mieter_drafts(name: str) -> Dict[str, Any]:
 		child.waermedienst = parent.waermedienst
 		child.waermedienst_referenz = parent.waermedienst_referenz
 		child.vorauszahlungen = vorauszahlung
-		child.kosten_gesamt = 0
+		child.kosten_gesamt = kosten_gesamt
 		child.heizkostenabrechnung_immobilie = parent.name
 		child.insert(ignore_permissions=True)
 		created.append(child.name)
