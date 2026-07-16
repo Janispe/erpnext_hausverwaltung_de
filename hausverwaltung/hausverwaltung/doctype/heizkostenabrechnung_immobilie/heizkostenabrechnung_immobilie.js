@@ -28,6 +28,7 @@ frappe.ui.form.on("Heizkostenabrechnung Immobilie", {
 	refresh(frm) {
 		_add_buttons(frm);
 		_show_correction_banner(frm);
+		_ensure_amendment_drafts(frm);
 	},
 });
 
@@ -43,11 +44,36 @@ function _prepare_amendment(frm) {
 	frm.refresh_fields(["mieter_positionen", "status"]);
 	frappe.show_alert(
 		{
-			message: __("Neuer Änderungsentwurf: Nach dem Speichern bitte „Mieter-Drafts erzeugen“ klicken. Die bisherigen Beträge werden dabei übernommen."),
+			message: __("Neuer Änderungsentwurf: Beim Speichern werden automatisch neue Mieter-Drafts mit den bisherigen Beträgen erzeugt."),
 			indicator: "blue",
 		},
 		10,
 	);
+}
+
+function _ensure_amendment_drafts(frm) {
+	if (
+		frm.is_new() ||
+		frm.doc.docstatus !== 0 ||
+		!frm.doc.amended_from ||
+		(frm.doc.mieter_positionen || []).length ||
+		frm.__hk_ensuring_amendment_drafts
+	) return;
+
+	// Repariert auch einen bereits mit der früheren Logik gespeicherten,
+	// leeren Amend-Entwurf. Die API ist idempotent und legt nur fehlende Drafts an.
+	frm.__hk_ensuring_amendment_drafts = true;
+	frappe.call({
+		method: "hausverwaltung.hausverwaltung.doctype.heizkostenabrechnung_immobilie.heizkostenabrechnung_immobilie.create_mieter_drafts",
+		args: { name: frm.doc.name },
+		freeze: true,
+		freeze_message: __("Neue Mieter-Abrechnungen werden aus dem stornierten Stand erzeugt…"),
+		callback(r) {
+			const m = r && r.message;
+			if (!m || (!m.created.length && !m.skipped.length)) return;
+			frm.reload_doc();
+		},
+	});
 }
 
 frappe.ui.form.on("Heizkostenabrechnung Position", {

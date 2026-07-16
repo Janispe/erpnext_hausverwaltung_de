@@ -49,6 +49,16 @@ class HeizkostenabrechnungImmobilie(Document):
 		self.set("mieter_positionen", [])
 		self.status = "Eingang"
 
+	def after_insert(self) -> None:
+		"""Erzeugt beim Amend sofort neue Mieter-Drafts mit den alten Werten."""
+		if not self.amended_from:
+			return
+		_create_mieter_drafts_for_parent(self)
+		# Die Insert-Antwort soll bereits die neuen (nicht stornierten) Links
+		# enthalten. Beim nächsten Save werden die Tabellenzeilen regulär
+		# persistiert; die Mieter-Drafts selbst sind schon jetzt gespeichert.
+		self._hydrate_positions_from_children()
+
 	def autoname(self) -> None:
 		if getattr(self, "name", None):
 			return
@@ -482,6 +492,14 @@ class HeizkostenabrechnungImmobilie(Document):
 		(``tabHeizkostenabrechnung Position``) werden bei jedem Form-Open
 		überschrieben. Source of Truth bleibt der HK-Mieter-Doc.
 		"""
+		if int(self.docstatus or 0) == 2:
+			# Ein stornierter Sammelbeleg ist ein unveränderlicher historischer
+			# Stand. Seine gespeicherten Tabellenzeilen verweisen bewusst auf die
+			# ebenfalls stornierten Mieter-Abrechnungen und müssen sichtbar bleiben.
+			for row in self.mieter_positionen or []:
+				row.child_docstatus = 2
+			return
+
 		children = self._get_children()
 		# Existierende Tabellen-Rows wegwerfen + neu aufbauen
 		self.set("mieter_positionen", [])
@@ -613,6 +631,13 @@ def create_mieter_drafts(name: str) -> Dict[str, Any]:
 	"""
 	parent = frappe.get_doc("Heizkostenabrechnung Immobilie", name)
 	parent.check_permission("write")
+	result = _create_mieter_drafts_for_parent(parent)
+	frappe.db.commit()
+	return result
+
+
+def _create_mieter_drafts_for_parent(parent: Document) -> Dict[str, Any]:
+	"""Interner, transaktionaler Kern für manuelle und Amend-Draft-Erzeugung."""
 
 	if not (parent.immobilie and parent.von and parent.bis):
 		frappe.throw("Immobilie + Von + Bis müssen gesetzt sein.")
@@ -621,7 +646,7 @@ def create_mieter_drafts(name: str) -> Dict[str, Any]:
 
 	von = getdate(parent.von)
 	bis = getdate(parent.bis)
-	amendment_values: dict[str, dict[str, float]] = {}
+	amendment_values: dict[str, dict[str, Any]] = {}
 	if parent.amended_from:
 		# Beim Amend die zuletzt gespeicherten Werte des stornierten Sammelbelegs
 		# wiederverwenden. Insbesondere bleiben manuell korrigierte
@@ -636,6 +661,7 @@ def create_mieter_drafts(name: str) -> Dict[str, Any]:
 			amendment_values[source_row.mietvertrag] = {
 				"vorauszahlungen": float(source_row.vorauszahlungen or 0),
 				"kosten_gesamt": float(source_row.kosten_gesamt or 0),
+				"heizkostenabrechnung_mieter": source_row.heizkostenabrechnung_mieter,
 			}
 
 	# Alle Mietverträge die a) Wohnung in dieser Immobilie haben und
@@ -702,12 +728,13 @@ def create_mieter_drafts(name: str) -> Dict[str, Any]:
 		child.vorauszahlungen = vorauszahlung
 		child.kosten_gesamt = kosten_gesamt
 		child.heizkostenabrechnung_immobilie = parent.name
+		if previous_values and previous_values.get("heizkostenabrechnung_mieter"):
+			child.amended_from = previous_values["heizkostenabrechnung_mieter"]
 		child.insert(ignore_permissions=True)
 		created.append(child.name)
 
 	if created:
 		parent.db_set("status", "Mieter-Drafts angelegt")
-	frappe.db.commit()
 
 	return {
 		"created": created,

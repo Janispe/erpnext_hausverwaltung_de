@@ -31,6 +31,33 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 
 		parent.set.assert_not_called()
 
+	def test_amendment_insert_automatically_creates_and_hydrates_new_drafts(self):
+		parent = SimpleNamespace(
+			amended_from="HK-IMM-ALT",
+			_hydrate_positions_from_children=MagicMock(),
+		)
+
+		with patch.object(module, "_create_mieter_drafts_for_parent") as create:
+			module.HeizkostenabrechnungImmobilie.after_insert(parent)
+
+		create.assert_called_once_with(parent)
+		parent._hydrate_positions_from_children.assert_called_once_with()
+
+	def test_cancelled_parent_keeps_its_cancelled_child_rows_visible(self):
+		row = SimpleNamespace(child_docstatus=1)
+		parent = SimpleNamespace(
+			docstatus=2,
+			mieter_positionen=[row],
+			_get_children=MagicMock(),
+			set=MagicMock(),
+		)
+
+		module.HeizkostenabrechnungImmobilie._hydrate_positions_from_children(parent)
+
+		parent._get_children.assert_not_called()
+		parent.set.assert_not_called()
+		self.assertEqual(row.child_docstatus, 2)
+
 	def test_amendment_drafts_reuse_previous_amounts(self):
 		parent = SimpleNamespace(
 			name="HK-IMM-NEU",
@@ -52,6 +79,7 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 					mietvertrag="MV-1",
 					vorauszahlungen=700.0,
 					kosten_gesamt=850.0,
+					heizkostenabrechnung_mieter="HK-M-ALT",
 				)
 			]
 		)
@@ -73,6 +101,7 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 		self.assertEqual(child.vorauszahlungen, 700.0)
 		self.assertEqual(child.kosten_gesamt, 850.0)
 		self.assertEqual(child.heizkostenabrechnung_immobilie, "HK-IMM-NEU")
+		self.assertEqual(child.amended_from, "HK-M-ALT")
 		child.insert.assert_called_once_with(ignore_permissions=True)
 		calc.assert_not_called()
 		self.assertEqual(result["created"], ["HK-M-NEU"])
@@ -121,6 +150,37 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 		self.assertEqual(child.kosten_gesamt, 850.0)
 		self.assertEqual(child.datum, "2026-02-15")
 		child.save.assert_called_once_with(ignore_permissions=True)
+
+	def test_sync_buchungsdatum_updates_all_mieter_drafts(self):
+		rows = [
+			SimpleNamespace(
+				heizkostenabrechnung_mieter=f"HK-M-{index}",
+				child_docstatus=0,
+				kosten_gesamt=850.0,
+				vorauszahlungen=700.0,
+			)
+			for index in (1, 2)
+		]
+		children = [
+			SimpleNamespace(
+				docstatus=0,
+				kosten_gesamt=850.0,
+				vorauszahlungen=700.0,
+				datum="2026-01-31",
+				save=MagicMock(),
+			)
+			for _ in rows
+		]
+		parent = SimpleNamespace(mieter_positionen=rows, datum="2026-02-15")
+		frappe = MagicMock()
+		frappe.get_doc.side_effect = children
+
+		with patch.object(module, "frappe", frappe):
+			module.HeizkostenabrechnungImmobilie._sync_table_to_children(parent)
+
+		for child in children:
+			self.assertEqual(child.datum, "2026-02-15")
+			child.save.assert_called_once_with(ignore_permissions=True)
 
 	def test_cancel_preflight_finds_paid_settlement(self):
 		parent = SimpleNamespace(
