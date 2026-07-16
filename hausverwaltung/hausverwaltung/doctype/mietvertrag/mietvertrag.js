@@ -26,6 +26,7 @@ frappe.ui.form.on("Mietvertrag", {
 		rename_staffelmiete_miete_column(frm, "kaution", "Betrag");
 		ensure_staffel_highlight_css();
 		highlight_current_staffeln(frm);
+		setup_festbetrag_dimension_overview(frm);
 
 		// Felder ausblenden je nach Wohnung
 		if (frm.doc.wohnung) {
@@ -142,6 +143,114 @@ frappe.ui.form.on("Mietvertrag", {
 		}
 	},
 });
+
+function setup_festbetrag_dimension_overview(frm) {
+	const field = frm.get_field && frm.get_field("festbetrag_dimensionsbuchungen");
+	const wrapper = field && field.$wrapper;
+	if (!wrapper) return;
+	if (frm.is_new() || !frm.doc.kunde) {
+		wrapper.empty();
+		return;
+	}
+
+	const escape = (value) => frappe.utils.escape_html(String(value || ""));
+	const format_date = (value) => value ? frappe.datetime.str_to_user(value) : "–";
+	const format_amount = (value) => format_currency(
+		value || 0,
+		frappe.defaults.get_default("currency")
+	);
+	const defaultVon = frappe.datetime.year_start();
+	const defaultBis = frappe.datetime.year_end();
+
+	wrapper.html(`
+		<div class="mt-4">
+			<h5>${__("Dimensionsbuchungen (nicht manuell änderbar)")}</h5>
+			<p class="text-muted small">
+				${__("Diese Beträge stammen aus Buchungsbelegen mit der Abrechnungsdimension Wohnung.")}
+			</p>
+			<div class="row align-items-end mb-3">
+				<div class="col-sm-3">
+					<label class="control-label">${__("Von")}</label>
+					<input type="date" class="form-control" data-filter="von" value="${escape(defaultVon)}">
+				</div>
+				<div class="col-sm-3">
+					<label class="control-label">${__("Bis")}</label>
+					<input type="date" class="form-control" data-filter="bis" value="${escape(defaultBis)}">
+				</div>
+				<div class="col-sm-3">
+					<button type="button" class="btn btn-default btn-sm" data-action="filter">
+						${__("Filter anwenden")}
+					</button>
+				</div>
+			</div>
+			<div data-role="dimension-table"></div>
+		</div>
+	`);
+
+	const tableWrapper = wrapper.find('[data-role="dimension-table"]');
+	const render_rows = (rows) => {
+		let html = `<div class="table-responsive"><table class="table table-bordered">
+			<thead><tr>
+				<th>${__("Kostenart")}</th>
+				<th>${__("Wohnung")}</th>
+				<th class="text-right">${__("Betrag")}</th>
+				<th>${__("Belegdatum")}</th>
+				<th>${__("Belegtyp")}</th>
+				<th>${__("Belegnummer")}</th>
+			</tr></thead><tbody>`;
+
+		if (!rows.length) {
+			html += `<tr><td colspan="6" class="text-muted text-center">
+				${__("Im gewählten Zeitraum sind keine Dimensionsbuchungen vorhanden.")}
+			</td></tr>`;
+		} else {
+			rows.forEach((row) => {
+				html += `<tr>
+					<td>${escape(row.bezeichnung)}</td>
+					<td>${escape(row.wohnung)}</td>
+					<td class="text-right">${escape(format_amount(row.betrag))}</td>
+					<td>${escape(format_date(row.belegdatum))}</td>
+					<td>${escape(row.belegtyp)}</td>
+					<td>${escape(row.belegnummer)}</td>
+				</tr>`;
+			});
+		}
+
+		html += "</tbody></table></div>";
+		tableWrapper.html(html);
+	};
+
+	const load_rows = async () => {
+		const von = wrapper.find('[data-filter="von"]').val();
+		const bis = wrapper.find('[data-filter="bis"]').val();
+		if (!von || !bis) {
+			frappe.msgprint(__("Bitte Von und Bis angeben."));
+			return;
+		}
+		if (von > bis) {
+			frappe.msgprint(__("Von darf nicht nach Bis liegen."));
+			return;
+		}
+
+		tableWrapper.html(
+			`<div class="text-muted text-center py-4">${__("Dimensionsbuchungen werden geladen ...")}</div>`
+		);
+		const response = await frappe.call({
+			method:
+				"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen.get_mieter_festbetrag_overview",
+			args: {
+				customer: frm.doc.kunde,
+				mietvertrag: frm.doc.name,
+				von,
+				bis,
+			},
+		});
+		render_rows((response.message && response.message.dimension_rows) || []);
+	};
+
+	wrapper.find('[data-action="filter"]').on("click", load_rows);
+	load_rows();
+}
 
 frappe.ui.form.on("Betriebskosten Festbetrag", {
 	betriebskostenart(frm, cdt, cdn) {

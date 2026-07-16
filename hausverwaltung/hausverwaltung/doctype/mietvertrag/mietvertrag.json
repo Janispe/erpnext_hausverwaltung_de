@@ -45,6 +45,7 @@
   "kaution_notizen",
   "festbetraege_tab",
   "festbetraege",
+  "festbetrag_dimensionsbuchungen",
   "amended_from",
   "test",
   "tab_7_tab"
@@ -297,6 +298,11 @@
    "fieldtype": "Table",
    "label": "Festbetr\u00e4ge und Zusatzposten",
    "options": "Betriebskosten Festbetrag"
+  },
+  {
+   "fieldname": "festbetrag_dimensionsbuchungen",
+   "fieldtype": "HTML",
+   "label": "Dimensionsbuchungen"
   },
   {
    "allow_on_submit": 1,

@@ -18,6 +18,7 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 
 		def fake_get_all(doctype, **kwargs):
 			if doctype == "Mietvertrag":
+				self.assertEqual(kwargs["filters"], {"kunde": "MIETER-1", "name": "MV-1"})
 				return [_frappe_mod._dict(
 					name="MV-1",
 					wohnung="W1",
@@ -75,6 +76,7 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 				"MIETER-1",
 				von="2025-01-01",
 				bis="2025-12-31",
+				mietvertrag="MV-1",
 			)
 
 		self.assertEqual(rows["manual_rows"], [])

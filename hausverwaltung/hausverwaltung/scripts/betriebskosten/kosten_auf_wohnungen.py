@@ -274,6 +274,7 @@ def get_mieter_festbetrag_overview(
     customer: str,
     von: str | None = None,
     bis: str | None = None,
+    mietvertrag: str | None = None,
 ) -> Dict[str, List[Dict[str, object]]]:
     """Zeigt manuelle Festbeträge und Dimensionsbuchungen getrennt je Mieter."""
     empty_result: Dict[str, List[Dict[str, object]]] = {
@@ -289,9 +290,13 @@ def get_mieter_festbetrag_overview(
     if von_d and bis_d and von_d > bis_d:
         frappe.throw("Von darf nicht nach Bis liegen.")
 
+    contract_filters: Dict[str, object] = {"kunde": customer}
+    if mietvertrag:
+        contract_filters["name"] = mietvertrag
+
     contracts = frappe.get_all(
         "Mietvertrag",
-        filters={"kunde": customer},
+        filters=contract_filters,
         fields=["name", "wohnung", "immobilie", "von", "bis"],
         order_by="von desc",
         limit_page_length=0,
