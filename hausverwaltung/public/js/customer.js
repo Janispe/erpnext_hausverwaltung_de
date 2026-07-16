@@ -50,6 +50,8 @@ async function show_customer_festbetraege(frm) {
 	const escape = (value) => frappe.utils.escape_html(String(value || ""));
 	const format_date = (value) => value ? frappe.datetime.str_to_user(value) : "–";
 	const format_amount = (value) => format_currency(value || 0, frappe.defaults.get_default("currency"));
+	const defaultVon = frappe.datetime.year_start();
+	const defaultBis = frappe.datetime.year_end();
 	const dialog = new frappe.ui.Dialog({
 		title: __("Festbeträge – {0}", [frm.doc.customer_name || frm.doc.name]),
 		fields: [
@@ -57,7 +59,7 @@ async function show_customer_festbetraege(frm) {
 				fieldtype: "Date",
 				fieldname: "von",
 				label: __("Von"),
-				default: frappe.datetime.year_start(),
+				default: defaultVon,
 				reqd: 1,
 			},
 			{ fieldtype: "Column Break" },
@@ -65,7 +67,7 @@ async function show_customer_festbetraege(frm) {
 				fieldtype: "Date",
 				fieldname: "bis",
 				label: __("Bis"),
-				default: frappe.datetime.year_end(),
+				default: defaultBis,
 				reqd: 1,
 			},
 			{ fieldtype: "Section Break" },
@@ -147,9 +149,9 @@ async function show_customer_festbetraege(frm) {
 		});
 	};
 
-	const load_rows = async () => {
-		const von = dialog.get_value("von");
-		const bis = dialog.get_value("bis");
+	const load_rows = async (filters = {}) => {
+		const von = filters.von || dialog.fields_dict.von.get_value();
+		const bis = filters.bis || dialog.fields_dict.bis.get_value();
 		if (!von || !bis) return;
 		wrapper.html(`<div class="text-muted text-center py-5">${__("Festbeträge werden geladen ...")}</div>`);
 		const response = await frappe.call({
@@ -165,7 +167,7 @@ async function show_customer_festbetraege(frm) {
 	};
 
 	dialog.show();
-	await load_rows();
+	await load_rows({ von: defaultVon, bis: defaultBis });
 }
 
 function hv_open_mieterkonto_report({ customer, from_date, to_date }) {
