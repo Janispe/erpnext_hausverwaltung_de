@@ -114,6 +114,7 @@
   },
   {
    "default": "Today",
+   "description": "Buchungsdatum für Nachzahlung oder Gutschrift. Als Wertstellungsdatum wird weiterhin das Ende des Abrechnungszeitraums verwendet.",
    "fieldname": "datum",
    "fieldtype": "Date",
    "label": "Belegdatum"

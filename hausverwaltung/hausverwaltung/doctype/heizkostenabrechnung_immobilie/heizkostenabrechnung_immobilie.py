@@ -317,6 +317,9 @@ class HeizkostenabrechnungImmobilie(Document):
 		sind. Wenn nicht: submitte sie automatisch (Bulk-Submit-Verhalten).
 		Das matcht die BK-Pattern-UX und macht den Workflow „in einem Klick".
 		"""
+		# Insbesondere das Belegdatum noch einmal in die Mieter-Drafts übernehmen,
+		# falls der Parent direkt ohne vorheriges separates Speichern submittet wird.
+		self._sync_table_to_children()
 		open_children = self._get_children(status_filter="open")
 		if open_children:
 			# Auto-Submit der Children: für jeden Draft mit gesetztem kosten_gesamt
@@ -445,7 +448,7 @@ class HeizkostenabrechnungImmobilie(Document):
 		"""Schreibt Tabellen-Edits (Kosten und Vorauszahlung) in die HK-Mieter-Docs.
 
 		Nur für Rows mit verknüpftem Doc + Doc noch in Draft. Submitted/Cancelled
-		Rows werden ignoriert. Wenn sich beide Beträge nicht geändert haben
+		Rows werden ignoriert. Wenn sich Beträge und Belegdatum nicht geändert haben
 		(im Vergleich zu den aktuellen DB-Werten), gibt es keinen unnötigen Save.
 		"""
 		for row in self.mieter_positionen or []:
@@ -468,11 +471,14 @@ class HeizkostenabrechnungImmobilie(Document):
 			vorauszahlungen_changed = (
 				abs(float(doc.vorauszahlungen or 0) - new_vorauszahlungen) >= 0.005
 			)
-			if not kosten_changed and not vorauszahlungen_changed:
+			new_datum = self.datum or doc.datum
+			datum_changed = str(doc.datum or "") != str(new_datum or "")
+			if not kosten_changed and not vorauszahlungen_changed and not datum_changed:
 				# Keine Änderung — kein Save nötig
 				continue
 			doc.kosten_gesamt = new_kosten
 			doc.vorauszahlungen = new_vorauszahlungen
+			doc.datum = new_datum
 			doc.save(ignore_permissions=True)
 
 	def _recompute_summen(self) -> None:
@@ -609,7 +615,7 @@ def create_mieter_drafts(name: str) -> Dict[str, Any]:
 		child.wohnung = mv.get("wohnung")
 		child.von = von
 		child.bis = bis
-		child.datum = bis
+		child.datum = parent.datum or frappe.utils.today()
 		child.waermedienst = parent.waermedienst
 		child.waermedienst_referenz = parent.waermedienst_referenz
 		child.vorauszahlungen = vorauszahlung
@@ -652,7 +658,7 @@ def create_with_drafts(
 		bis: Periode-Ende YYYY-MM-DD (Pflicht)
 		waermedienst: Lieferant-Name (optional)
 		waermedienst_referenz: Sammel-Abrechnungs-Nr (optional)
-		datum: Belegdatum (optional, default = bis)
+		datum: Belegdatum (optional, default = heute)
 
 	Returns: ``{name, drafts_created, drafts_skipped, no_wohnung}``
 	"""
@@ -663,7 +669,7 @@ def create_with_drafts(
 	parent.immobilie = immobilie
 	parent.von = von
 	parent.bis = bis
-	parent.datum = datum or bis
+	parent.datum = datum or frappe.utils.today()
 	if waermedienst:
 		parent.waermedienst = waermedienst
 	if waermedienst_referenz:

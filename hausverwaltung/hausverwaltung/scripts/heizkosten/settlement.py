@@ -55,7 +55,10 @@ def create_hk_settlement_documents(abrechnung: str) -> dict:
 	if not customer:
 		frappe.throw("Kein Mieter (Customer) auf dem Mietvertrag gefunden.")
 
-	posting_date = cstr(doc.bis or doc.datum or frappe.utils.today())
+	# Die Forderung bzw. das Guthaben entsteht mit dem Belegdatum. Das Ende des
+	# Abrechnungszeitraums bleibt davon getrennt das Leistungs-/Wertstellungsdatum.
+	posting_date = cstr(doc.datum or frappe.utils.today())
+	wertstellungsdatum = cstr(doc.bis or posting_date)
 
 	# Differenz: Kosten Wärmedienst − Vorauszahlung des Mieters
 	try:
@@ -87,6 +90,7 @@ def create_hk_settlement_documents(abrechnung: str) -> dict:
 				is_return=0,
 				do_submit=True,
 				company=company,
+				wertstellungsdatum=wertstellungsdatum,
 				cost_center=cost_center,
 				wohnung=doc.wohnung,
 			)
@@ -104,6 +108,7 @@ def create_hk_settlement_documents(abrechnung: str) -> dict:
 				is_return=1,
 				do_submit=True,
 				company=company,
+				wertstellungsdatum=wertstellungsdatum,
 				cost_center=cost_center,
 				wohnung=doc.wohnung,
 			)

@@ -8,6 +8,25 @@ from hausverwaltung.hausverwaltung.doctype.heizkostenabrechnung_immobilie import
 
 
 class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
+	def test_wizard_defaults_belegdatum_to_today(self):
+		parent = SimpleNamespace(name="HK-IMM-1", insert=MagicMock())
+		frappe = MagicMock()
+		frappe.new_doc.return_value = parent
+		frappe.utils.today.return_value = "2026-07-16"
+
+		with (
+			patch.object(module, "frappe", frappe),
+			patch.object(
+				module,
+				"create_mieter_drafts",
+				return_value={"created": [], "skipped": [], "no_wohnung": []},
+			),
+		):
+			module.create_with_drafts("I-1", "2025-01-01", "2025-12-31")
+
+		self.assertEqual(parent.datum, "2026-07-16")
+		parent.insert.assert_called_once_with(ignore_permissions=True)
+
 	def test_sync_table_updates_manual_vorauszahlung_in_draft(self):
 		row = SimpleNamespace(
 			heizkostenabrechnung_mieter="HK-M-1",
@@ -15,11 +34,12 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 			kosten_gesamt=850.0,
 			vorauszahlungen=700.0,
 		)
-		parent = SimpleNamespace(mieter_positionen=[row])
+		parent = SimpleNamespace(mieter_positionen=[row], datum="2026-02-15")
 		child = SimpleNamespace(
 			docstatus=0,
 			kosten_gesamt=850.0,
 			vorauszahlungen=720.0,
+			datum="2025-12-31",
 			save=MagicMock(),
 		)
 		frappe = MagicMock()
@@ -30,6 +50,7 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 
 		self.assertEqual(child.vorauszahlungen, 700.0)
 		self.assertEqual(child.kosten_gesamt, 850.0)
+		self.assertEqual(child.datum, "2026-02-15")
 		child.save.assert_called_once_with(ignore_permissions=True)
 
 	def test_submitted_vorauszahlung_correction_replaces_settlement(self):
