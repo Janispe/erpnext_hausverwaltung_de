@@ -249,6 +249,8 @@ class HeizkostenabrechnungImmobilie(Document):
 				new_doc.kosten_gesamt = new_kosten
 				new_doc.heizkostenabrechnung_immobilie = self.name
 				new_doc.insert(ignore_permissions=True)
+				new_doc.flags.allow_submit_via_head = True
+				new_doc.flags.ignore_permissions = True
 				new_doc.submit()  # erzeugt neue SI/CN via on_submit
 
 				# Tabellen-Link umbiegen auf den neuen Doc
@@ -332,6 +334,8 @@ class HeizkostenabrechnungImmobilie(Document):
 					continue
 				try:
 					doc = frappe.get_doc("Heizkostenabrechnung Mieter", c["name"])
+					doc.flags.allow_submit_via_head = True
+					doc.flags.ignore_permissions = True
 					doc.submit()
 					submitted.append(doc.name)
 				except Exception as e:
@@ -345,11 +349,35 @@ class HeizkostenabrechnungImmobilie(Document):
 	def on_submit(self) -> None:
 		self.db_set("status", "Submittet")
 
+	def before_cancel(self) -> None:
+		"""Blockiert das gesamte Sammelstorno, sobald ein Ausgleichsbeleg bezahlt ist."""
+		blockers = self._get_cancel_payment_blockers()
+		if not blockers:
+			return
+
+		lines = [
+			"<strong>Storno nicht möglich — folgende Ausgleichsbelege haben bereits Zahlungen:</strong>"
+		]
+		for blocker in blockers:
+			pe_names = ", ".join(sorted({a["payment_entry"] for a in blocker["allocations"]}))
+			allocated = sum(a["allocated_amount"] for a in blocker["allocations"])
+			lines.append(
+				f"• <strong>{frappe.utils.escape_html(blocker['customer'] or blocker['child'])}</strong>: "
+				f"<code>{blocker['invoice']}</code>, {allocated:.2f} € allokiert "
+				f"(Payment Entry: {frappe.utils.escape_html(pe_names)})"
+			)
+		lines.append(
+			"<br>Bitte zuerst die Zahlungszuordnungen auflösen. Es wurde nichts storniert."
+		)
+		frappe.throw("<br>".join(lines), title="HK-Sammelstorno blockiert")
+
 	def on_cancel(self) -> None:
-		"""Cascade: storniere/lösche alle Mieter-Belege.
+		"""Atomare Kaskade: storniert/löscht alle Mieter-Belege.
 
 		- Submitted Children → cancel mit ``allow_cancel_via_head``-Flag
 		- Draft Children → delete
+		Jeder Fehler wird weitergeworfen, damit die gesamte DB-Transaktion
+		zurückgerollt wird und kein Teilstorno entsteht.
 		"""
 		children = frappe.get_all(
 			"Heizkostenabrechnung Mieter",
@@ -357,23 +385,17 @@ class HeizkostenabrechnungImmobilie(Document):
 			fields=["name", "docstatus"],
 		)
 		for ch in children:
-			try:
-				if int(ch.get("docstatus") or 0) == 1:
-					doc = frappe.get_doc("Heizkostenabrechnung Mieter", ch["name"])
-					doc.flags.allow_cancel_via_head = True
-					doc.flags.ignore_permissions = True
-					doc.cancel()
-				elif int(ch.get("docstatus") or 0) == 0:
-					frappe.delete_doc(
-						"Heizkostenabrechnung Mieter",
-						ch["name"],
-						ignore_permissions=True,
-						force=1,
-					)
-			except Exception as e:
-				frappe.log_error(
-					frappe.get_traceback(),
-					f"HK Immobilie cascade cancel fehlgeschlagen für {ch['name']}: {e}",
+			doc = frappe.get_doc("Heizkostenabrechnung Mieter", ch["name"])
+			doc.flags.allow_cancel_via_head = True
+			doc.flags.ignore_permissions = True
+			if int(ch.get("docstatus") or 0) == 1:
+				doc.cancel()
+			elif int(ch.get("docstatus") or 0) == 0:
+				frappe.delete_doc(
+					"Heizkostenabrechnung Mieter",
+					ch["name"],
+					ignore_permissions=True,
+					force=1,
 				)
 		self.db_set("status", "Eingang")
 
@@ -384,6 +406,26 @@ class HeizkostenabrechnungImmobilie(Document):
 			return bool(frappe.has_permission(doc=self, ptype="cancel"))
 		except Exception:
 			return False
+
+	def _get_cancel_payment_blockers(self) -> list[dict[str, Any]]:
+		"""Liefert bezahlte Ausgleichsbelege für den atomaren Cancel-Pre-flight."""
+		blockers: list[dict[str, Any]] = []
+		for child in self._get_children(status_filter="submitted"):
+			for invoice in (child.get("sales_invoice"), child.get("credit_note")):
+				invoice = (invoice or "").strip()
+				if not invoice:
+					continue
+				allocations = _get_payment_allocations(invoice)
+				if allocations:
+					blockers.append(
+						{
+							"child": child.get("name"),
+							"customer": child.get("customer"),
+							"invoice": invoice,
+							"allocations": allocations,
+						}
+					)
+		return blockers
 
 	def _get_children(self, status_filter: str = "all") -> List[Dict[str, Any]]:
 		"""Lade Mieter-Children. status_filter: 'all' / 'open' / 'submitted'.
@@ -686,41 +728,3 @@ def create_with_drafts(
 		"drafts_skipped": len(res["skipped"]),
 		"no_wohnung": res["no_wohnung"],
 	}
-
-
-@frappe.whitelist()
-def submit_all_pending(name: str) -> Dict[str, Any]:
-	"""Submittet alle noch nicht-submitteten Mieter-Children einzeln.
-
-	Praktisch nur als „letzter Klick" vor dem Parent-Submit nutzbar — beim
-	Parent-Submit selbst werden ohnehin alle Children automatisch submittet
-	(siehe ``before_submit``).
-
-	Returns: {submitted: [...], skipped: [...], errors: [...]}
-	"""
-	parent = frappe.get_doc("Heizkostenabrechnung Immobilie", name)
-	parent.check_permission("submit")
-
-	open_children = frappe.get_all(
-		"Heizkostenabrechnung Mieter",
-		filters={"heizkostenabrechnung_immobilie": parent.name, "docstatus": 0},
-		fields=["name", "kosten_gesamt"],
-	)
-	submitted: List[str] = []
-	skipped: List[Dict[str, Any]] = []
-	errors: List[Dict[str, Any]] = []
-
-	for ch in open_children:
-		if ch.get("kosten_gesamt") in (None, ""):
-			skipped.append({"name": ch["name"], "reason": "kosten_gesamt nicht gesetzt"})
-			continue
-		try:
-			doc = frappe.get_doc("Heizkostenabrechnung Mieter", ch["name"])
-			doc.submit()
-			submitted.append(doc.name)
-		except Exception as e:
-			errors.append({"name": ch["name"], "error": str(e)[:300]})
-
-	if submitted and not errors:
-		frappe.db.commit()
-	return {"submitted": submitted, "skipped": skipped, "errors": errors}

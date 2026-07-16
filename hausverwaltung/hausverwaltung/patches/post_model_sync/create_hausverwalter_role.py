@@ -5,6 +5,7 @@ from frappe.utils import cint
 
 ROLE_NAMES = ("Hausverwalter", "Hausverwalter (Buchung)")
 MODULE_NAME = "Hausverwaltung"
+INTERNAL_WORKFLOW_DOCTYPES = {"Heizkostenabrechnung Mieter"}
 BASE_PERMISSIONS = {
 	"select": 1,
 	"read": 1,
@@ -70,6 +71,12 @@ def get_target_permissions(doctype_meta: Document) -> dict[str, int]:
 		perms["import"] = 0
 
 	if not cint(doctype_meta.is_submittable):
+		perms["submit"] = 0
+		perms["cancel"] = 0
+		perms["amend"] = 0
+	elif doctype_meta.name in INTERNAL_WORKFLOW_DOCTYPES:
+		# Diese Belege sind zwar technisch submittable, werden aber ausschließlich
+		# durch ihr Sammelobjekt bzw. den internen Korrekturablauf bewegt.
 		perms["submit"] = 0
 		perms["cancel"] = 0
 		perms["amend"] = 0

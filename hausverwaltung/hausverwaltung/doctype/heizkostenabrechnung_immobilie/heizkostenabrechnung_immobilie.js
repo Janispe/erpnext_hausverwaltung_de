@@ -3,8 +3,6 @@
 // Buttons:
 // - Im Entwurf: „Mieter-Drafts erzeugen" → ruft create_mieter_drafts; Tabelle
 //   wird beim Reload aus den frischen Mieter-Docs hydriert.
-// - Im Entwurf: „Alle Mieter submitten" → submittet einzeln (Debug/Wenn HV
-//   nicht den Parent komplett submitten will).
 //
 // Tabellen-Verhalten:
 // - `customer`, `wohnung`, `mietvertrag` sind read-only.
@@ -51,24 +49,11 @@ function _add_buttons(frm) {
 	if (frm.is_new()) return;
 
 	if (frm.doc.docstatus === 0) {
-		const has_drafts = (frm.doc.mieter_positionen || []).some(
-			(r) => (r.child_docstatus || 0) === 0 && r.heizkostenabrechnung_mieter,
-		);
-		const has_unsynced = (frm.doc.mieter_positionen || []).length === 0;
-
 		frm.add_custom_button(
 			__("Mieter-Drafts erzeugen"),
 			() => _create_drafts(frm),
 			__("Aktionen"),
 		);
-
-		if (has_drafts) {
-			frm.add_custom_button(
-				__("Alle Mieter einzeln submitten"),
-				() => _submit_all(frm),
-				__("Aktionen"),
-			);
-		}
 	}
 }
 
@@ -108,49 +93,6 @@ function _create_drafts(frm) {
 								? "<br><br>" + __("Tabelle unten wurde aktualisiert. Bitte Kosten gesamt pro Mieter eintragen, dann Save + Submit.")
 								: ""),
 						indicator: m.created.length ? "green" : "blue",
-					});
-					frm.reload_doc();
-				},
-			});
-		},
-	);
-}
-
-function _submit_all(frm) {
-	frappe.confirm(
-		__("Alle Mieter-Drafts mit gesetztem kosten_gesamt werden einzeln submittet (erzeugt Sales Invoices). Beim Parent-Submit passiert das ohnehin automatisch — diese Aktion ist nur für Debug/Teil-Submits gedacht. Fortfahren?"),
-		() => {
-			frappe.call({
-				method: "hausverwaltung.hausverwaltung.doctype.heizkostenabrechnung_immobilie.heizkostenabrechnung_immobilie.submit_all_pending",
-				args: { name: frm.doc.name },
-				freeze: true,
-				freeze_message: __("Submitting…"),
-				callback(r) {
-					if (!r || !r.message) return;
-					const m = r.message;
-					const lines = [__("Submittet: {0}", [m.submitted.length])];
-					if (m.skipped.length) {
-						lines.push(
-							__("Übersprungen: {0}", [m.skipped.length]) +
-								"<br>" +
-								m.skipped
-									.map((s) => `&nbsp;&nbsp;${s.name}: ${s.reason}`)
-									.join("<br>"),
-						);
-					}
-					if (m.errors.length) {
-						lines.push(
-							__("Fehler: {0}", [m.errors.length]) +
-								"<br>" +
-								m.errors
-									.map((e) => `&nbsp;&nbsp;${e.name}: ${e.error}`)
-									.join("<br>"),
-						);
-					}
-					frappe.msgprint({
-						title: __("Ergebnis"),
-						message: lines.join("<br>"),
-						indicator: m.errors.length ? "red" : m.submitted.length ? "green" : "blue",
 					});
 					frm.reload_doc();
 				},

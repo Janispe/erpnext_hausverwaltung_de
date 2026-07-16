@@ -104,7 +104,6 @@ class HeizkostenabrechnungMieter(Document):
 			self.differenz = round(float(self.kosten_gesamt or 0) - float(self.vorauszahlungen or 0), 2)
 		except (TypeError, ValueError):
 			self.differenz = 0.0
-		self.set_onload("can_manual_cancel", self._can_manual_cancel())
 
 	def _recompute_vorauszahlungs_anzeige(self) -> None:
 		"""Ruft ``calc_hk_vorauszahlungen`` und setzt ``_ist`` + ``_soll`` virtuell."""
@@ -127,14 +126,25 @@ class HeizkostenabrechnungMieter(Document):
 		)
 		create_hk_settlement_documents(self.name)
 
+	def before_submit(self) -> None:
+		"""Einreichen nur als interner Schritt der Immobilien-Abrechnung erlauben."""
+		if not getattr(getattr(self, "flags", object()), "allow_submit_via_head", False):
+			frappe.throw(
+				"Einzelne Mieter-HK-Abrechnungen können nicht separat eingereicht werden. "
+				"Bitte die zugehörige Heizkostenabrechnung Immobilie einreichen."
+			)
+
 	def before_cancel(self) -> None:
-		"""Wenn der Cancel über die Sammel-Abrechnung (Parent) ausgelöst wird,
-		den Link zur Sammel-Abrechnung beim Cancel ignorieren — sonst blockiert
-		Frappe das Cancel der Children, weil der Parent noch submittet ist.
-		"""
-		if getattr(getattr(self, "flags", object()), "allow_cancel_via_head", False):
-			self.flags.ignore_links = True
-			self.flags.ignore_linked_doctypes = ["Heizkostenabrechnung Immobilie"]
+		"""Storno nur über Sammelabrechnung bzw. internen Korrekturablauf erlauben."""
+		if not getattr(getattr(self, "flags", object()), "allow_cancel_via_head", False):
+			frappe.throw(
+				"Einzelne Mieter-HK-Abrechnungen können nicht separat storniert werden. "
+				"Bitte die zugehörige Heizkostenabrechnung Immobilie stornieren oder dort korrigieren."
+			)
+		# Der Parent ist beim Kaskaden-Storno noch submittet; dessen Link darf das
+		# interne Storno des Child-Dokuments deshalb nicht blockieren.
+		self.flags.ignore_links = True
+		self.flags.ignore_linked_doctypes = ["Heizkostenabrechnung Immobilie"]
 
 	def on_cancel(self) -> None:
 		"""Storniert die verknüpften Sales Invoice / Credit Note mit."""
@@ -160,13 +170,6 @@ class HeizkostenabrechnungMieter(Document):
 				linked.cancel()
 		except Exception as e:
 			frappe.throw(f"Verknüpfter Beleg konnte nicht storniert werden ({doctype} {name}): {e}")
-
-	def _can_manual_cancel(self) -> bool:
-		try:
-			return bool(frappe.has_permission(doc=self, ptype="cancel"))
-		except Exception:
-			return False
-
 
 @frappe.whitelist()
 def get_vorauszahlung_vorschlag(mietvertrag: str, von: str, bis: str) -> dict[str, Any]:
