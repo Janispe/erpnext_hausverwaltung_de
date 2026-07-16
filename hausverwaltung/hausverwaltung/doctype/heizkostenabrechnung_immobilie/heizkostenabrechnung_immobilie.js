@@ -13,6 +13,14 @@
 // - `differenz` wird bei jeder Betragsänderung live neu berechnet.
 
 frappe.ui.form.on("Heizkostenabrechnung Immobilie", {
+	setup(frm) {
+		// Frappe darf die Mieter-Abrechnungen nicht über seinen generischen
+		// "Alle verknüpften Dokumente abbrechen"-Dialog stornieren. Der Parent
+		// übernimmt die Kaskade selbst, setzt dabei die internen Flags und prüft
+		// vorher atomar auf bereits zugeordnete Zahlungen.
+		frm.ignore_doctypes_on_cancel_all = ["Heizkostenabrechnung Mieter"];
+	},
+
 	refresh(frm) {
 		_add_buttons(frm);
 		_show_correction_banner(frm);
