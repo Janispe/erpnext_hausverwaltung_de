@@ -10,6 +10,7 @@ Befunden:
 
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 
 import frappe
@@ -466,4 +467,76 @@ def pruefe_mietvertrag(mietvertrag: str) -> dict:
 		"von": str(mv.von) if mv.von else None,
 		"bis": str(mv.bis) if mv.bis else None,
 		"aktivitaets_monate_geprueft": len(aktivitaet),
+	}
+
+
+@frappe.whitelist()
+def get_korrigierbare_sollstellungen_fuer_mietvertrag(
+	mietvertrag: str, scope: str | dict | None = None
+) -> dict:
+	"""Liefert gebuchte Sollstellungen, die nach einer Staffeländerung abweichen.
+
+	``scope`` ordnet den geänderten Rechnungstyp dem frühesten betroffenen Monat
+	zu, z.B. ``{"Miete": "2026-06-01"}``. So bietet der Mietvertrag nur die
+	durch die konkrete Änderung betroffenen Rechnungsarten und Monate an und
+	nicht zufällig vorhandene ältere Abweichungen anderer Staffeln.
+	"""
+	if isinstance(scope, str):
+		try:
+			scope = json.loads(scope)
+		except (TypeError, ValueError):
+			frappe.throw(_("Ungültiger Änderungsumfang für die Sollstellungsprüfung."))
+	scope = scope or {}
+	if not isinstance(scope, dict):
+		frappe.throw(_("Ungültiger Änderungsumfang für die Sollstellungsprüfung."))
+
+	normalized_scope: dict[str, date] = {}
+	for typ, start in scope.items():
+		if typ not in TYP_PARENTFIELD or not start:
+			continue
+		d = getdate(start)
+		normalized_scope[typ] = date(d.year, d.month, 1)
+
+	result = pruefe_mietvertrag(mietvertrag)
+	candidates: list[dict] = []
+	for month_result in result.get("monate") or []:
+		for row in month_result.get("abweichungen") or []:
+			if row.get("feld") != "betrag":
+				continue
+			candidates.append(row)
+		for row in month_result.get("ueberfluessig") or []:
+			candidates.append(row)
+
+	filtered: list[tuple[str, str]] = []
+	for row in candidates:
+		invoice = row.get("sales_invoice")
+		month_label = row.get("monat")
+		if not invoice or not month_label:
+			continue
+		typ = row.get("typ")
+		if normalized_scope and typ not in normalized_scope:
+			continue
+		month, year = (int(value) for value in month_label.split("/", 1))
+		if typ in normalized_scope and date(year, month, 1) < normalized_scope[typ]:
+			continue
+		filtered.append((invoice, month_label))
+
+	invoice_names = list(dict.fromkeys(invoice for invoice, _month in filtered))
+	if invoice_names:
+		submitted = set(
+			frappe.get_all(
+				"Sales Invoice",
+				filters={"name": ("in", invoice_names), "docstatus": 1, "is_return": 0},
+				pluck="name",
+			)
+		)
+		invoice_names = [name for name in invoice_names if name in submitted]
+
+	invoice_set = set(invoice_names)
+	months = list(dict.fromkeys(month for invoice, month in filtered if invoice in invoice_set))
+	return {
+		"mietvertrag": mietvertrag,
+		"sales_invoices": invoice_names,
+		"monate": months,
+		"anzahl": len(invoice_names),
 	}

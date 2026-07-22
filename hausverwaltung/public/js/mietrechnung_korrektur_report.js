@@ -30,7 +30,7 @@ window.hausverwaltung.korrektur = {
 			return;
 		}
 		frappe.confirm(
-			__(
+			opts.confirm_message || __(
 				"{0} Rechnung(en) werden storniert und aus der aktuellen Staffelmiete neu erzeugt. Bezahlte Rechnungen werden inkl. Zahlungs-Neuzuordnung behandelt, festgeschriebene per Gutschrift. Fortfahren?",
 				[sis.length]
 			),

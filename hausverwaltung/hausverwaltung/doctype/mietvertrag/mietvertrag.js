@@ -17,6 +17,22 @@ frappe.ui.form.on("Mietvertrag", {
 			filters: { verteilung: "Festbetrag" },
 		}));
 	},
+	onload(frm) {
+		remember_staffel_snapshot(frm);
+	},
+	before_save(frm) {
+		frm.__hv_sollstellung_korrektur_scope = frm.is_new()
+			? null
+			: get_changed_staffel_scope(frm.__hv_staffel_snapshot, get_staffel_snapshot(frm));
+	},
+	after_save(frm) {
+		const scope = frm.__hv_sollstellung_korrektur_scope;
+		frm.__hv_sollstellung_korrektur_scope = null;
+		remember_staffel_snapshot(frm);
+		if (scope && Object.keys(scope).length) {
+			prompt_for_existing_sollstellung_corrections(frm, scope);
+		}
+	},
 	refresh(frm) {
 		console.log("✅ mietvertrag.js wurde geladen");
 
@@ -143,6 +159,92 @@ frappe.ui.form.on("Mietvertrag", {
 		}
 	},
 });
+
+const SOLLSTELLUNG_TYP_BY_STAFFEL_FIELD = {
+	miete: "Miete",
+	betriebskosten: "Betriebskosten",
+	heizkosten: "Heizkosten",
+	untermietzuschlag: "Untermietzuschlag",
+};
+
+function canonical_staffel_rows(rows) {
+	return (rows || [])
+		.map((row) => ({
+			von: row.von || "",
+			miete: flt(row.miete),
+			art: row.art || "",
+		}))
+		.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+}
+
+function get_staffel_snapshot(frm) {
+	const snapshot = {};
+	Object.keys(SOLLSTELLUNG_TYP_BY_STAFFEL_FIELD).forEach((fieldname) => {
+		snapshot[fieldname] = canonical_staffel_rows(frm.doc[fieldname]);
+	});
+	return snapshot;
+}
+
+function remember_staffel_snapshot(frm) {
+	frm.__hv_staffel_snapshot = get_staffel_snapshot(frm);
+}
+
+function changed_staffel_rows(beforeRows, afterRows) {
+	const counts = new Map();
+	[...(beforeRows || [])].forEach((row) => {
+		const key = JSON.stringify(row);
+		counts.set(key, (counts.get(key) || 0) + 1);
+	});
+	[...(afterRows || [])].forEach((row) => {
+		const key = JSON.stringify(row);
+		counts.set(key, (counts.get(key) || 0) - 1);
+	});
+	return [...counts.entries()]
+		.filter(([, count]) => count !== 0)
+		.map(([key]) => JSON.parse(key));
+}
+
+function get_changed_staffel_scope(before, after) {
+	if (!before) return null;
+	const scope = {};
+	Object.entries(SOLLSTELLUNG_TYP_BY_STAFFEL_FIELD).forEach(([fieldname, typ]) => {
+		const changed = changed_staffel_rows(before[fieldname], after[fieldname]);
+		if (!changed.length) return;
+		const dates = changed.map((row) => row.von).filter(Boolean).sort();
+		// Sollstellungen werden monatsweise erzeugt. Auch eine Änderung innerhalb
+		// eines Monats betrifft deshalb den kompletten Prüfmonat.
+		scope[typ] = dates.length ? `${dates[0].slice(0, 7)}-01` : "1900-01-01";
+	});
+	return scope;
+}
+
+function prompt_for_existing_sollstellung_corrections(frm, scope) {
+	frappe.call({
+		method:
+			"hausverwaltung.hausverwaltung.scripts.check_mietrechnungen.get_korrigierbare_sollstellungen_fuer_mietvertrag",
+		args: {
+			mietvertrag: frm.doc.name,
+			scope: JSON.stringify(scope),
+		},
+		callback: (r) => {
+			if (r.exc || !r.message) return;
+			if (window.cur_frm && window.cur_frm !== frm) return;
+			const invoices = r.message.sales_invoices || [];
+			if (!invoices.length) return;
+
+			const months = (r.message.monate || []).join(", ");
+			const message = __(
+				"Die Mietstaffel wurde geändert. Für {0} bereits gebuchte Sollstellung(en) in {1} weicht der Betrag nun vom Mietvertrag ab. Sollen diese jetzt korrigiert werden? Bezahlte Sollstellungen werden mit Zahlungs-Neuzuordnung verarbeitet, geschlossene Perioden per Gutschrift.",
+				[invoices.length, months || __("dem betroffenen Zeitraum")]
+			);
+			frappe.require("/assets/hausverwaltung/js/mietrechnung_korrektur_report.js", () => {
+				window.hausverwaltung?.korrektur?.run_bulk(invoices, {
+					confirm_message: message,
+				});
+			});
+		},
+	});
+}
 
 function setup_festbetrag_dimension_overview(frm) {
 	const field = frm.get_field && frm.get_field("festbetrag_dimensionsbuchungen");
