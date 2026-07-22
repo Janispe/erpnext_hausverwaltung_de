@@ -180,6 +180,11 @@
  "is_submittable": 1,
  "links": [
   {
+   "group": "Technik",
+   "link_doctype": "Technische Anlage",
+   "link_fieldname": "wohnung"
+  },
+  {
    "group": "TestGruppe",
    "link_doctype": "Mietvertrag",
    "link_fieldname": "wohnung"

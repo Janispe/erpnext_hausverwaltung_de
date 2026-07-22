@@ -1,0 +1,216 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:WP-{#####}",
+ "creation": "2026-07-22 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bezeichnung",
+  "technische_anlage",
+  "massnahmenart",
+  "status",
+  "faelligkeitsstatus",
+  "intervall_section",
+  "intervall_anzahl",
+  "intervall_einheit",
+  "terminberechnung",
+  "column_break_intervall",
+  "erste_faelligkeit",
+  "letzte_durchfuehrung",
+  "naechste_faelligkeit",
+  "erinnerung_vorlauf_tage",
+  "vertrag_section",
+  "wartungsfirma",
+  "vertragsnummer",
+  "bemerkung"
+ ],
+ "fields": [
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Bezeichnung",
+   "reqd": 1
+  },
+  {
+   "fieldname": "technische_anlage",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Technische Anlage",
+   "options": "Technische Anlage",
+   "reqd": 1
+  },
+  {
+   "fieldname": "massnahmenart",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Maßnahmenart",
+   "options": "Wartung\nPrüfung\nInspektion\nReinigung\nSonstiges",
+   "reqd": 1
+  },
+  {
+   "default": "Aktiv",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Aktiv\nPausiert\nBeendet",
+   "reqd": 1
+  },
+  {
+   "fieldname": "faelligkeitsstatus",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Fälligkeitsstatus",
+   "options": "Nicht terminiert\nGeplant\nBald fällig\nÜberfällig\nInaktiv",
+   "read_only": 1
+  },
+  {
+   "fieldname": "intervall_section",
+   "fieldtype": "Section Break",
+   "label": "Intervall und Termine"
+  },
+  {
+   "fieldname": "intervall_anzahl",
+   "fieldtype": "Int",
+   "label": "Intervall",
+   "reqd": 1
+  },
+  {
+   "fieldname": "intervall_einheit",
+   "fieldtype": "Select",
+   "label": "Intervalleinheit",
+   "options": "Tage\nWochen\nMonate\nJahre",
+   "reqd": 1
+  },
+  {
+   "default": "Ab Durchführung",
+   "description": "Bei fester Fälligkeit bleibt z. B. der jährliche Prüftermin auch nach verspäteter Durchführung im gleichen Rhythmus.",
+   "fieldname": "terminberechnung",
+   "fieldtype": "Select",
+   "label": "Nächster Termin",
+   "options": "Ab Durchführung\nAb bisheriger Fälligkeit",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_intervall",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "erste_faelligkeit",
+   "fieldtype": "Date",
+   "label": "Erste Fälligkeit",
+   "reqd": 1
+  },
+  {
+   "fieldname": "letzte_durchfuehrung",
+   "fieldtype": "Date",
+   "label": "Letzte Durchführung",
+   "read_only": 1
+  },
+  {
+   "fieldname": "naechste_faelligkeit",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Nächste Fälligkeit",
+   "read_only": 1
+  },
+  {
+   "fieldname": "erinnerung_vorlauf_tage",
+   "fieldtype": "Int",
+   "label": "Erinnerungsvorlauf (Tage)"
+  },
+  {
+   "fieldname": "vertrag_section",
+   "fieldtype": "Section Break",
+   "label": "Dienstleister und Vertrag"
+  },
+  {
+   "fetch_from": "technische_anlage.wartungsfirma",
+   "fetch_if_empty": 1,
+   "fieldname": "wartungsfirma",
+   "fieldtype": "Link",
+   "label": "Wartungsfirma",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "vertragsnummer",
+   "fieldtype": "Data",
+   "label": "Vertragsnummer"
+  },
+  {
+   "fieldname": "bemerkung",
+   "fieldtype": "Small Text",
+   "label": "Bemerkung"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [
+  {
+   "group": "Durchführungen",
+   "link_doctype": "Anlagenwartung",
+   "link_fieldname": "wartungsplan"
+  }
+ ],
+ "modified": "2026-07-22 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Wartungsplan",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "naechste_faelligkeit",
+ "sort_order": "ASC",
+ "states": [
+  {
+   "color": "Red",
+   "title": "Überfällig"
+  },
+  {
+   "color": "Orange",
+   "title": "Bald fällig"
+  },
+  {
+   "color": "Blue",
+   "title": "Geplant"
+  },
+  {
+   "color": "Gray",
+   "title": "Inaktiv"
+  }
+ ],
+ "title_field": "bezeichnung"
+}

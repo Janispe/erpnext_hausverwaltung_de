@@ -1,0 +1,233 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:SW-{YYYY}-{####}",
+ "creation": "2026-07-22 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bezeichnung",
+  "status",
+  "umfang_section",
+  "immobilie",
+  "anlagenart",
+  "column_break_umfang",
+  "wartungsfirma",
+  "termin_section",
+  "termin_von",
+  "termin_bis",
+  "column_break_termin",
+  "faellig_bis",
+  "fortschritt_section",
+  "anzahl_gesamt",
+  "anzahl_gewartet",
+  "anzahl_offen",
+  "column_break_fortschritt",
+  "anzahl_ausgefallen",
+  "fortschritt",
+  "positionen_section",
+  "positionen",
+  "bemerkung"
+ ],
+ "fields": [
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Bezeichnung"
+  },
+  {
+   "default": "Entwurf",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Entwurf\nGeplant\nIn Arbeit\nAbgeschlossen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "umfang_section",
+   "fieldtype": "Section Break",
+   "label": "Haus und Anlagenumfang"
+  },
+  {
+   "description": "Die Sammelwartung umfasst ausschließlich Anlagen dieser Immobilie bzw. dieses Hauses.",
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Immobilie / Haus",
+   "options": "Immobilie",
+   "reqd": 1
+  },
+  {
+   "description": "Optional. Leer bedeutet: alle Anlagenarten des Hauses.",
+   "fieldname": "anlagenart",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Anlagenart",
+   "options": "Anlagenart"
+  },
+  {
+   "fieldname": "column_break_umfang",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "wartungsfirma",
+   "fieldtype": "Link",
+   "label": "Wartungsfirma",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "termin_section",
+   "fieldtype": "Section Break",
+   "label": "Termin"
+  },
+  {
+   "default": "Today",
+   "fieldname": "termin_von",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Termin von",
+   "reqd": 1
+  },
+  {
+   "description": "Optional bei einer mehrtägigen Wartungsaktion.",
+   "fieldname": "termin_bis",
+   "fieldtype": "Date",
+   "label": "Termin bis"
+  },
+  {
+   "fieldname": "column_break_termin",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Bis zu diesem Datum fällige Wartungspläne werden übernommen.",
+   "fieldname": "faellig_bis",
+   "fieldtype": "Date",
+   "label": "Wartungen fällig bis"
+  },
+  {
+   "fieldname": "fortschritt_section",
+   "fieldtype": "Section Break",
+   "label": "Fortschritt"
+  },
+  {
+   "fieldname": "anzahl_gesamt",
+   "fieldtype": "Int",
+   "label": "Anlagen gesamt",
+   "read_only": 1
+  },
+  {
+   "fieldname": "anzahl_gewartet",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Gewartet",
+   "read_only": 1
+  },
+  {
+   "fieldname": "anzahl_offen",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Noch nicht gewartet",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_fortschritt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "anzahl_ausgefallen",
+   "fieldtype": "Int",
+   "label": "Ausgefallen / abgebrochen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "fortschritt",
+   "fieldtype": "Percent",
+   "label": "Fortschritt",
+   "read_only": 1
+  },
+  {
+   "fieldname": "positionen_section",
+   "fieldtype": "Section Break",
+   "label": "Anlagen und Wartungsstatus"
+  },
+  {
+   "fieldname": "positionen",
+   "fieldtype": "Table",
+   "label": "Positionen",
+   "options": "Sammelwartung Position"
+  },
+  {
+   "fieldname": "bemerkung",
+   "fieldtype": "Text Editor",
+   "label": "Bemerkung"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [
+  {
+   "group": "Einzelwartungen",
+   "link_doctype": "Anlagenwartung",
+   "link_fieldname": "sammelwartung"
+  }
+ ],
+ "modified": "2026-07-22 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Sammelwartung",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "termin_von",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Gray",
+   "title": "Entwurf"
+  },
+  {
+   "color": "Blue",
+   "title": "Geplant"
+  },
+  {
+   "color": "Orange",
+   "title": "In Arbeit"
+  },
+  {
+   "color": "Green",
+   "title": "Abgeschlossen"
+  }
+ ],
+ "title_field": "bezeichnung"
+}

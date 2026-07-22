@@ -1,0 +1,86 @@
+{
+ "actions": [],
+ "creation": "2026-07-22 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "technische_anlage",
+  "wohnung",
+  "wartungsplan",
+  "faellig_am",
+  "anlagenwartung",
+  "status",
+  "notiz"
+ ],
+ "fields": [
+  {
+   "fieldname": "technische_anlage",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Technische Anlage",
+   "options": "Technische Anlage",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "wohnung",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Wohnung",
+   "options": "Wohnung",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wartungsplan",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Wartungsplan",
+   "options": "Wartungsplan",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "faellig_am",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Fällig am",
+   "read_only": 1
+  },
+  {
+   "fieldname": "anlagenwartung",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Anlagenwartung",
+   "options": "Anlagenwartung",
+   "read_only": 1
+  },
+  {
+   "default": "Offen",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Offen\nGeplant\nBeauftragt\nDurchgeführt\nAusgefallen\nAbgebrochen",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "notiz",
+   "fieldtype": "Small Text",
+   "label": "Notiz"
+  }
+ ],
+ "grid_page_length": 100,
+ "istable": 1,
+ "modified": "2026-07-22 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Sammelwartung Position",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "idx",
+ "sort_order": "ASC",
+ "states": []
+}

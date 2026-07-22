@@ -1,0 +1,158 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:bezeichnung",
+ "creation": "2026-07-22 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bezeichnung",
+  "kategorie",
+  "deaktiviert",
+  "zuordnung_section",
+  "standard_zuordnung",
+  "wartung_section",
+  "standard_massnahmenart",
+  "standard_intervall_anzahl",
+  "standard_intervall_einheit",
+  "column_break_wartung",
+  "pruefpflichtig",
+  "erinnerung_vorlauf_tage",
+  "beschreibung"
+ ],
+ "fields": [
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Bezeichnung",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "kategorie",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Kategorie",
+   "options": "Heizung und Warmwasser\nFördertechnik\nSicherheitstechnik\nLüftung und Klima\nElektrotechnik\nWasser und Abwasser\nGebäudetechnik\nSonstige",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "deaktiviert",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Deaktiviert"
+  },
+  {
+   "fieldname": "zuordnung_section",
+   "fieldtype": "Section Break",
+   "label": "Zuordnung"
+  },
+  {
+   "default": "Immobilie oder Wohnung",
+   "description": "Legt fest, ob konkrete Anlagen üblicherweise zentral oder wohnungsbezogen geführt werden.",
+   "fieldname": "standard_zuordnung",
+   "fieldtype": "Select",
+   "label": "Übliche Zuordnung",
+   "options": "Immobilie\nWohnung\nImmobilie oder Wohnung",
+   "reqd": 1
+  },
+  {
+   "fieldname": "wartung_section",
+   "fieldtype": "Section Break",
+   "label": "Wartungsstandard"
+  },
+  {
+   "fieldname": "standard_massnahmenart",
+   "fieldtype": "Select",
+   "label": "Standard-Maßnahmenart",
+   "options": "\nWartung\nPrüfung\nInspektion\nReinigung\nSonstiges"
+  },
+  {
+   "fieldname": "standard_intervall_anzahl",
+   "fieldtype": "Int",
+   "label": "Standardintervall"
+  },
+  {
+   "fieldname": "standard_intervall_einheit",
+   "fieldtype": "Select",
+   "label": "Intervalleinheit",
+   "options": "\nTage\nWochen\nMonate\nJahre"
+  },
+  {
+   "fieldname": "column_break_wartung",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "pruefpflichtig",
+   "fieldtype": "Check",
+   "label": "Prüfpflichtig"
+  },
+  {
+   "default": "30",
+   "fieldname": "erinnerung_vorlauf_tage",
+   "fieldtype": "Int",
+   "label": "Standard-Erinnerung (Tage)"
+  },
+  {
+   "fieldname": "beschreibung",
+   "fieldtype": "Text Editor",
+   "label": "Beschreibung"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [
+  {
+   "group": "Anlagen",
+   "link_doctype": "Technische Anlage",
+   "link_fieldname": "anlagenart"
+  },
+  {
+   "group": "Wartung",
+   "link_doctype": "Sammelwartung",
+   "link_fieldname": "anlagenart"
+  }
+ ],
+ "modified": "2026-07-22 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Anlagenart",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "bezeichnung",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "bezeichnung"
+}

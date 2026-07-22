@@ -317,6 +317,7 @@ scheduler_events = {
 			"hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.update_statuses_for_list",
 			"hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.create_due_purchase_invoices_global",
 			"hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag.update_statuses_for_list",
+			"hausverwaltung.hausverwaltung.doctype.wartungsplan.wartungsplan.update_faelligkeitsstatus",
 		],
 		# Bundesbank BLZ-Datei wird quartalsweise veröffentlicht — wir prüfen am
 		# 5. jedes Monats um 03:23 (Bundesbank veröffentlicht meist am 1.).

@@ -1,0 +1,247 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:AW-{#####}",
+ "creation": "2026-07-22 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bezeichnung",
+  "sammelwartung",
+  "wartungsplan",
+  "technische_anlage",
+  "massnahmenart",
+  "status",
+  "termin_section",
+  "soll_termin",
+  "durchgefuehrt_am",
+  "column_break_termin",
+  "naechster_termin",
+  "wartungsfirma",
+  "ergebnis_section",
+  "ergebnis",
+  "maengel",
+  "massnahmen",
+  "kosten_section",
+  "kosten",
+  "eingangsrechnung",
+  "column_break_kosten",
+  "wartungsprotokoll",
+  "bemerkung",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Bezeichnung",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sammelwartung",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Sammelwartung",
+   "options": "Sammelwartung"
+  },
+  {
+   "fieldname": "wartungsplan",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Wartungsplan",
+   "options": "Wartungsplan"
+  },
+  {
+   "fieldname": "technische_anlage",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Technische Anlage",
+   "options": "Technische Anlage",
+   "reqd": 1
+  },
+  {
+   "fieldname": "massnahmenart",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Maßnahmenart",
+   "options": "Wartung\nPrüfung\nInspektion\nReinigung\nReparatur\nSonstiges",
+   "reqd": 1
+  },
+  {
+   "default": "Geplant",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Geplant\nBeauftragt\nDurchgeführt\nAusgefallen\nAbgebrochen",
+   "reqd": 1
+  },
+  {
+   "fieldname": "termin_section",
+   "fieldtype": "Section Break",
+   "label": "Termin und Ausführung"
+  },
+  {
+   "fieldname": "soll_termin",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Soll-Termin"
+  },
+  {
+   "fieldname": "durchgefuehrt_am",
+   "fieldtype": "Date",
+   "in_standard_filter": 1,
+   "label": "Durchgeführt am"
+  },
+  {
+   "fieldname": "column_break_termin",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Optional. Überschreibt für diese Durchführung die automatische Intervallberechnung.",
+   "fieldname": "naechster_termin",
+   "fieldtype": "Date",
+   "label": "Abweichender nächster Termin"
+  },
+  {
+   "fieldname": "wartungsfirma",
+   "fieldtype": "Link",
+   "label": "Ausführende Firma",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "ergebnis_section",
+   "fieldtype": "Section Break",
+   "label": "Ergebnis"
+  },
+  {
+   "fieldname": "ergebnis",
+   "fieldtype": "Select",
+   "label": "Ergebnis",
+   "options": "\nOhne Mängel\nMängel festgestellt\nNicht bestanden\nNicht durchgeführt"
+  },
+  {
+   "depends_on": "eval:doc.ergebnis=='Mängel festgestellt' || doc.ergebnis=='Nicht bestanden'",
+   "fieldname": "maengel",
+   "fieldtype": "Long Text",
+   "label": "Festgestellte Mängel",
+   "mandatory_depends_on": "eval:doc.ergebnis=='Mängel festgestellt' || doc.ergebnis=='Nicht bestanden'"
+  },
+  {
+   "fieldname": "massnahmen",
+   "fieldtype": "Long Text",
+   "label": "Durchgeführte / erforderliche Maßnahmen"
+  },
+  {
+   "fieldname": "kosten_section",
+   "fieldtype": "Section Break",
+   "label": "Kosten und Dokumente"
+  },
+  {
+   "fieldname": "kosten",
+   "fieldtype": "Currency",
+   "label": "Kosten"
+  },
+  {
+   "fieldname": "eingangsrechnung",
+   "fieldtype": "Link",
+   "label": "Eingangsrechnung",
+   "options": "Purchase Invoice"
+  },
+  {
+   "fieldname": "column_break_kosten",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "wartungsprotokoll",
+   "fieldtype": "Attach",
+   "label": "Wartungs-/Prüfprotokoll"
+  },
+  {
+   "fieldname": "bemerkung",
+   "fieldtype": "Small Text",
+   "label": "Bemerkung"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Anlagenwartung",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-07-22 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Anlagenwartung",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "soll_termin",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Blue",
+   "title": "Geplant"
+  },
+  {
+   "color": "Orange",
+   "title": "Beauftragt"
+  },
+  {
+   "color": "Green",
+   "title": "Durchgeführt"
+  },
+  {
+   "color": "Red",
+   "title": "Ausgefallen"
+  },
+  {
+   "color": "Gray",
+   "title": "Abgebrochen"
+  }
+ ],
+ "title_field": "bezeichnung"
+}

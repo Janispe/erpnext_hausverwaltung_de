@@ -245,7 +245,18 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_tree": 1,
- "links": [],
+ "links": [
+  {
+   "group": "Technik",
+   "link_doctype": "Technische Anlage",
+   "link_fieldname": "immobilie"
+  },
+  {
+   "group": "Technik",
+   "link_doctype": "Sammelwartung",
+   "link_fieldname": "immobilie"
+  }
+ ],
  "modified": "2025-12-20 19:47:44.682129",
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
