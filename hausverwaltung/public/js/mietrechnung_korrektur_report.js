@@ -22,22 +22,46 @@ window.hausverwaltung.korrektur = {
 		});
 	},
 
-	// Sammel-Korrektur: Bestätigung → Backend-Bulk → Ergebnis-Dialog.
+	// Sammel-Korrektur: Dialog mit optionaler direkter Zahlungsübernahme →
+	// Backend-Bulk → Ergebnis-Dialog.
 	run_bulk(sales_invoices, opts = {}) {
 		const sis = [...new Set(sales_invoices || [])];
 		if (!sis.length) {
 			frappe.msgprint(__("Keine Rechnungen ausgewählt."));
 			return;
 		}
-		frappe.confirm(
-			opts.confirm_message || __(
-				"{0} Rechnung(en) werden storniert und aus der aktuellen Staffelmiete neu erzeugt. Bezahlte Rechnungen werden inkl. Zahlungs-Neuzuordnung behandelt, festgeschriebene per Gutschrift. Fortfahren?",
+		const message =
+			opts.confirm_message ||
+			__(
+				"{0} Rechnung(en) werden storniert und aus der aktuellen Staffelmiete neu erzeugt. Bestehende Zahlungsbuchungen bleiben erhalten und können unten direkt neu zugeordnet werden; festgeschriebene Rechnungen werden per Gutschrift korrigiert.",
 				[sis.length]
-			),
-			() => {
+			);
+		const dialog = new frappe.ui.Dialog({
+			title: __("Sollstellungen korrigieren"),
+			fields: [
+				{
+					fieldtype: "HTML",
+					options: `<p>${frappe.utils.escape_html(message)}</p>`,
+				},
+				{
+					fieldtype: "Check",
+					fieldname: "rebook_payments",
+					label: __("Bestehende Zahlungen direkt den neuen Sollstellungen zuordnen"),
+					default: opts.rebook_payments_default ? 1 : 0,
+					description: __(
+						"Die Zahlungsbuchungen und ihre Bankverknüpfungen bleiben unverändert bestehen. Ist die Zahlung höher, bleibt der Rest als offenes Guthaben stehen; ist sie niedriger, bleibt die neue Sollstellung teilweise offen."
+					),
+				},
+			],
+			primary_action_label: __("Korrigieren"),
+			primary_action(values) {
+				dialog.hide();
 				frappe.call({
 					method: "hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur.korrigiere_mietrechnungen_bulk",
-					args: { sales_invoices: JSON.stringify(sis) },
+					args: {
+						sales_invoices: JSON.stringify(sis),
+						rebook_payments: values.rebook_payments ? 1 : 0,
+					},
 					freeze: true,
 					freeze_message: __("Korrigiere {0} Rechnung(en)…", [sis.length]),
 					callback: (r) => {
@@ -47,26 +71,82 @@ window.hausverwaltung.korrektur = {
 							title: __("Korrektur abgeschlossen"),
 							message:
 								__("{0} erfolgreich, {1} Fehler von {2}.", [m.ok, m.fehler, m.total]) +
+								render_payment_rebooking(m) +
 								render_errors(m),
-							indicator: m.fehler ? "orange" : "green",
+							indicator: m.fehler || (m.zahlungsfehler || []).length ? "orange" : "green",
 						});
 						if (typeof opts.onDone === "function") opts.onDone(m);
 					},
 				});
-			}
-		);
+			},
+			secondary_action_label: __("Abbrechen"),
+			secondary_action() {
+				dialog.hide();
+			},
+		});
+		dialog.show();
 	},
 };
 
+function render_payment_rebooking(m) {
+	const rows = (m.ergebnisse || []).flatMap((e) => e.zahlungsuebernahmen || []);
+	const kept = [
+		...new Set((m.ergebnisse || []).flatMap((e) => e.beibehaltene_payment_entries || [])),
+	];
+	if (!rows.length && !kept.length) return "";
+	const keptMessage = kept.length
+		? `<div>${__("Zahlungsbuchungen blieben bestehen (nicht storniert): {0}.", [
+				frappe.utils.escape_html(kept.join(", ")),
+			])}</div>`
+		: "";
+	if (!rows.length) return `<hr>${keptMessage}`;
+	const allocated = rows.reduce((sum, row) => sum + flt(row.zugeordnet), 0);
+	const payment_open_by_name = new Map();
+	rows.forEach((row) => {
+		if (row.payment_entry) {
+			// Ein PE kann erst seinem bisherigen Typ und danach zum Ausgleich einer
+			// weiteren Sollstellung zugeordnet werden. Nur den finalen Rest zählen.
+			payment_open_by_name.set(row.payment_entry, flt(row.zahlung_offen));
+		}
+	});
+	const payment_open = [...payment_open_by_name.values()].reduce((sum, value) => sum + value, 0);
+	const invoice_open_by_name = new Map();
+	rows.forEach((row) => {
+		if (row.neue_sollstellung) {
+			// Bei mehreren Teilzahlungen derselben Rechnung enthält die letzte
+			// Übernahme deren finalen offenen Betrag; nicht Zwischenstände addieren.
+			invoice_open_by_name.set(row.neue_sollstellung, flt(row.rechnung_offen));
+		}
+	});
+	const invoice_open = [...invoice_open_by_name.values()].reduce((sum, value) => sum + value, 0);
+	return `<hr>${keptMessage}<div>${__(
+		"Bestehende Zahlungsbuchungen direkt neu zugeordnet: {0}. Zugeordnet: {1}; offenes Guthaben: {2}; offene Sollstellung: {3}.",
+		[
+			payment_open_by_name.size,
+			format_currency(allocated),
+			format_currency(payment_open),
+			format_currency(invoice_open),
+		]
+	)}</div>`;
+}
+
 function render_errors(m) {
 	const errs = (m.ergebnisse || []).filter((e) => !e.ok);
-	if (!errs.length) return "";
+	const paymentErrors = m.zahlungsfehler || [];
+	if (!errs.length && !paymentErrors.length) return "";
 	const items = errs
 		.map(
 			(e) =>
 				`<li>${frappe.utils.escape_html(e.sales_invoice)}: ${frappe.utils.escape_html(
 					e.error || ""
 				)}</li>`
+		)
+		.concat(
+			paymentErrors.map(
+				(e) =>
+					`<li>${frappe.utils.escape_html(e.payment_entry || "")}` +
+					`: ${frappe.utils.escape_html(e.error || "")}</li>`
+			)
 		)
 		.join("");
 	return `<hr><div><b>${__("Fehler")}:</b><ul>${items}</ul></div>`;

@@ -234,7 +234,7 @@ function prompt_for_existing_sollstellung_corrections(frm, scope) {
 
 			const months = (r.message.monate || []).join(", ");
 			const message = __(
-				"Die Mietstaffel wurde geändert. Für {0} bereits gebuchte Sollstellung(en) in {1} weicht der Betrag nun vom Mietvertrag ab. Sollen diese jetzt korrigiert werden? Bezahlte Sollstellungen werden mit Zahlungs-Neuzuordnung verarbeitet, geschlossene Perioden per Gutschrift.",
+				"Die Mietstaffel wurde geändert. Für {0} bereits gebuchte Sollstellung(en) in {1} weicht der Betrag nun vom Mietvertrag ab. Sollen diese jetzt korrigiert werden? Im nächsten Dialog können bestehende Zahlungen direkt neu zugeordnet werden; die Zahlungsbuchungen bleiben erhalten. Geschlossene Perioden werden per Gutschrift korrigiert.",
 				[invoices.length, months || __("dem betroffenen Zeitraum")]
 			);
 			frappe.require("/assets/hausverwaltung/js/mietrechnung_korrektur_report.js", () => {

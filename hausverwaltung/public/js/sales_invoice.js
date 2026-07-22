@@ -97,7 +97,7 @@ function show_korrektur_dialog(frm, plan) {
 	const path_label = plan.frozen
 		? __("Gutschrift (festgeschriebene Periode)")
 		: plan.paid
-			? __("Storno inkl. Zahlungs-Neuzuordnung")
+			? __("Storno; bestehende Zahlungszuordnung wird gelöst")
 			: __("Storno & Neu");
 
 	const rows = [
@@ -129,32 +129,58 @@ function show_korrektur_dialog(frm, plan) {
 
 	const d = new frappe.ui.Dialog({
 		title: __("Mietrechnung korrigieren"),
-		fields: [{ fieldtype: "HTML", options: html }],
+		fields: [
+			{ fieldtype: "HTML", options: html },
+			{
+				fieldtype: "Check",
+				fieldname: "rebook_payments",
+				label: __("Bestehende Zahlung direkt der neuen Sollstellung zuordnen"),
+				hidden: !plan.paid || plan.frozen,
+				default: 0,
+				description: __(
+					"Die Zahlungsbuchung und ihre Bankverknüpfung bleiben unverändert bestehen. Ein Überschuss bleibt als offenes Guthaben; bei einer Unterdeckung bleibt die neue Sollstellung teilweise offen."
+				),
+			},
+		],
 		primary_action_label: __("Korrigieren"),
-		primary_action() {
+		primary_action(values) {
 			d.hide();
-			run_korrektur(frm);
+			run_korrektur(frm, values.rebook_payments ? 1 : 0);
 		},
 	});
 	d.show();
 }
 
-function run_korrektur(frm) {
+function run_korrektur(frm, rebook_payments = 0) {
 	frappe.call({
 		method: KORREKTUR_METHOD,
-		args: { sales_invoice: frm.doc.name, dry_run: 0 },
+		args: { sales_invoice: frm.doc.name, dry_run: 0, rebook_payments },
 		freeze: true,
 		freeze_message: __("Korrigiere…"),
 		callback: (r) => {
 			if (r.exc || !r.message) return;
 			const m = r.message;
-			const msg =
+			let msg =
 				m.path === "gutschrift"
 					? __("Gutschrift {0} und neue Rechnung {1} erstellt.", [
 							m.gutschrift || "—",
 							m.neue_si || "—",
 						])
 					: __("Rechnung storniert. Neue Rechnung: {0}", [m.neue_si || "—"]);
+			if ((m.beibehaltene_payment_entries || []).length) {
+				msg += __(" Zahlungsbuchung(en) blieben bestehen: {0}.", [
+					m.beibehaltene_payment_entries.join(", "),
+				]);
+			}
+			if ((m.zahlungsuebernahmen || []).length) {
+				const allocated = m.zahlungsuebernahmen.reduce(
+					(sum, row) => sum + flt(row.zugeordnet),
+					0
+				);
+				msg += __(" Direkt der neuen Sollstellung zugeordnet: {0}.", [
+					format_currency(allocated, frm.doc.currency),
+				]);
+			}
 			frappe.show_alert({ message: msg, indicator: "green" }, 7);
 			if (m.neue_si) {
 				frappe.set_route("Form", "Sales Invoice", m.neue_si);

@@ -6,9 +6,10 @@ gebuchte Sales Invoice ist in ERPNext unveränderlich — der Betrag lässt sich
 nicht editieren. Dieses Modul wählt automatisch den passenden Korrektur-Weg:
 
     offen + unbezahlt   → Storno der SI, Neu-Erzeugung aus aktueller Staffelmiete
-    offen + bezahlt     → Storno der zugeordneten Payment Entries (gibt die Bank
-                          Transaction frei) + Storno SI + Neu-Erzeugung +
-                          Auto-Match der Bank Transaction auf die korrigierten SIs
+    offen + bezahlt     → Storno der SI; ERPNext löst dabei automatisch nur
+                          deren Rechnungsreferenz aus den bestehenden Payment
+                          Entries. Optional dieselben PEs direkt der neuen SI
+                          zuordnen.
     festgeschrieben     → KEIN Storno (GoBD/Unveränderbarkeit): Gutschrift
                           (is_return) im aktuellen offenen Monat + neue korrekte SI
 
@@ -198,14 +199,6 @@ def _journal_entries_for_si(si_name: str) -> list[str]:
 	)
 
 
-def _bank_transactions_for_pe(pe_name: str) -> list[str]:
-	return frappe.get_all(
-		"Bank Transaction Payments",
-		filters={"payment_document": "Payment Entry", "payment_entry": pe_name},
-		pluck="parent",
-	)
-
-
 def _find_invoice(remark_marker: str, *, is_return: int = 0) -> str | None:
 	"""Neueste submittete SI mit passendem Remark-Marker."""
 	names = frappe.get_all(
@@ -247,17 +240,24 @@ def _recompute_betrag(ctx: dict) -> float:
 
 
 @frappe.whitelist()
-def korrigiere_mietrechnung(sales_invoice: str, dry_run: int | str = 0) -> dict:
+def korrigiere_mietrechnung(
+	sales_invoice: str, dry_run: int | str = 0, rebook_payments: int | str = 0
+) -> dict:
 	"""Korrigiert eine bereits gebuchte Mietrechnung (siehe Modul-Docstring).
 
 	Args:
 	    sales_invoice: Name der fehlerhaften Sales Invoice.
 	    dry_run: Wenn truthy, wird nur der geplante Weg zurückgegeben, nichts gebucht.
+	    rebook_payments: Wenn truthy, werden die bestehenden Payment Entries direkt
+	        der neuen Sollstellung zugeordnet; Differenzen bleiben als Guthaben
+	        bzw. offener Rechnungsbetrag bestehen. Die Payment Entries selbst und
+	        ihre Banktransaktions-Verknüpfungen bleiben unverändert bestehen.
 
 	Returns: Plan-/Ergebnis-Dict mit ``path``, ``frozen``, ``paid`` und (bei
 	    Ausführung) den erzeugten/stornierten Belegen.
 	"""
 	dry = bool(int(dry_run or 0))
+	rebook = bool(int(rebook_payments or 0))
 	si = frappe.get_doc("Sales Invoice", sales_invoice)
 
 	if si.docstatus != 1:
@@ -300,6 +300,7 @@ def korrigiere_mietrechnung(sales_invoice: str, dry_run: int | str = 0) -> dict:
 		"neuer_betrag": flt(neu_betrag),
 		"path": "gutschrift" if frozen else "storno",
 		"dry_run": dry,
+		"rebook_payments": rebook,
 	}
 
 	# Journal-Entry-Verknüpfungen automatisch zu stornieren ist riskant (in dieser
@@ -317,14 +318,14 @@ def korrigiere_mietrechnung(sales_invoice: str, dry_run: int | str = 0) -> dict:
 	if frozen:
 		result = _korrektur_gutschrift(si, ctx, neu_betrag)
 	else:
-		result = _korrektur_storno(si, ctx, pes)
+		result = _korrektur_storno(si, ctx, pes, rebook_payments=rebook)
 
 	plan.update(result)
 	return plan
 
 
 @frappe.whitelist()
-def korrigiere_mietrechnungen_bulk(sales_invoices) -> dict:
+def korrigiere_mietrechnungen_bulk(sales_invoices, rebook_payments: int | str = 0) -> dict:
 	"""Korrigiert mehrere Mietrechnungen nacheinander.
 
 	Jede SI wird in einem eigenen Savepoint verarbeitet — ein Fehler bei einer
@@ -333,6 +334,7 @@ def korrigiere_mietrechnungen_bulk(sales_invoices) -> dict:
 	"""
 	if isinstance(sales_invoices, str):
 		sales_invoices = json.loads(sales_invoices)
+	rebook = bool(int(rebook_payments or 0))
 	names = list(dict.fromkeys(str(n).strip() for n in (sales_invoices or []) if str(n).strip()))
 
 	ergebnisse: list[dict] = []
@@ -341,47 +343,155 @@ def korrigiere_mietrechnungen_bulk(sales_invoices) -> dict:
 		sp = f"korr_bulk_{idx}"
 		frappe.db.savepoint(sp)
 		try:
-			res = korrigiere_mietrechnung(name, dry_run=0)
+			# Bei einer Sammelkorrektur erst alle alten Referenzen lösen und alle
+			# Ersatz-Sollstellungen erzeugen. Die gemeinsame Zuordnung danach kann
+			# Minderungen und Erhöhungen desselben Mieters miteinander ausgleichen.
+			res = korrigiere_mietrechnung(name, dry_run=0, rebook_payments=0)
 			ok += 1
 			ergebnisse.append(
 				{
 					"sales_invoice": name,
 					"ok": True,
 					"path": res.get("path"),
+					"alter_betrag": res.get("alter_betrag"),
+					"neuer_betrag": res.get("neuer_betrag"),
 					"neue_si": res.get("neue_si"),
+					"beibehaltene_payment_entries": res.get("beibehaltene_payment_entries") or [],
+					"zahlungsuebernahmen": [],
 				}
 			)
 		except Exception as e:
 			frappe.db.rollback(save_point=sp)
 			ergebnisse.append({"sales_invoice": name, "ok": False, "error": str(e)})
 
-	return {"total": len(names), "ok": ok, "fehler": len(names) - ok, "ergebnisse": ergebnisse}
+	zahlungsfehler = []
+	if rebook:
+		zahlungsfehler = _reconcile_bulk_payment_pool(ergebnisse)
+
+	return {
+		"total": len(names),
+		"ok": ok,
+		"fehler": len(names) - ok,
+		"ergebnisse": ergebnisse,
+		"zahlungsfehler": zahlungsfehler,
+	}
 
 
-def _korrektur_storno(si, ctx: dict, pes: list[str]) -> dict:
-	"""Offene Periode: PEs + SI stornieren, neu erzeugen, Bank-Zahlung neu zuordnen."""
+def _reconcile_bulk_payment_pool(ergebnisse: list[dict]) -> list[dict]:
+	"""Ordnet erhaltene PEs erst ihrem Ersatz und dann offenen Ersatz-SIs zu.
+
+	Die erste Runde wahrt die bisherige fachliche Zuordnung. Die zweite Runde
+	verwendet verbleibende Guthaben desselben Kunden/Kontos zum Ausgleich anderer
+	korrigierter Sollstellungen. Dadurch gleichen sich z.B. eine Mietminderung
+	und eine gleich hohe BK-Erhöhung unabhängig von der Reihenfolge aus.
+	"""
+	candidates = [
+		row
+		for row in ergebnisse
+		if row.get("ok")
+		and row.get("path") == "storno"
+		and row.get("neue_si")
+		and row.get("beibehaltene_payment_entries")
+	]
+	# Minderungen zuerst: so steht ihr Überschuss bereits für Erhöhungen bereit.
+	candidates.sort(key=lambda row: flt(row.get("neuer_betrag")) - flt(row.get("alter_betrag")))
+	all_payment_entries = list(
+		dict.fromkeys(pe for row in candidates for pe in row["beibehaltene_payment_entries"])
+	)
+	errors: list[dict] = []
+	failed_pairs: set[tuple[str, str]] = set()
+
+	def assign(row: dict, pe_name: str) -> bool:
+		pair = (pe_name, row["neue_si"])
+		if pair in failed_pairs:
+			return False
+		if not _payment_can_reconcile_invoice(pe_name, row["neue_si"]):
+			return False
+		try:
+			result = _reconcile_existing_payment(pe_name, row["neue_si"])
+		except Exception as exc:
+			failed_pairs.add(pair)
+			frappe.log_error(frappe.get_traceback(), f"Korrektur Zahlungszuordnung {pe_name}")
+			errors.append(
+				{
+					"payment_entry": pe_name,
+					"sales_invoice": row["neue_si"],
+					"error": str(exc),
+				}
+			)
+			return False
+		# Frühere Teilzuordnungen desselben PE bzw. derselben SI auf den jetzt
+		# finaleren Reststand aktualisieren. Die Ergebnisanzeige darf Zwischenstände
+		# nicht mehrfach oder in Eingangsreihenfolge addieren.
+		for candidate in candidates:
+			for previous in candidate["zahlungsuebernahmen"]:
+				if previous.get("payment_entry") == result.get("payment_entry"):
+					previous["zahlung_offen"] = result.get("zahlung_offen")
+				if previous.get("neue_sollstellung") == result.get("neue_sollstellung"):
+					previous["rechnung_offen"] = result.get("rechnung_offen")
+		row["zahlungsuebernahmen"].append(result)
+		return flt(result.get("zugeordnet")) > 0.01
+
+	# 1) Die zuvor auf der jeweiligen alten SI geführten PEs zuerst auf deren
+	#    direkte Ersatz-SI buchen.
+	for row in candidates:
+		for pe_name in row["beibehaltene_payment_entries"]:
+			assign(row, pe_name)
+
+	# 2) Noch offene Ersatz-SIs mit Restguthaben anderer PEs desselben
+	#    Kunden/Receivable-Kontos aus dieser Sammelkorrektur ausgleichen.
+	for row in candidates:
+		for pe_name in all_payment_entries:
+			if not _payment_can_reconcile_invoice(pe_name, row["neue_si"]):
+				continue
+			assign(row, pe_name)
+
+	return errors
+
+
+def _payment_can_reconcile_invoice(payment_entry: str, sales_invoice: str) -> bool:
+	"""Sicherer Vorabcheck für eine Zuordnung innerhalb desselben Kundenkontos."""
+	pe = frappe.get_doc("Payment Entry", payment_entry)
+	invoice = frappe.get_doc("Sales Invoice", sales_invoice)
+	party_account = pe.paid_from if pe.payment_type == "Receive" else pe.paid_to
+	return bool(
+		pe.docstatus == 1
+		and invoice.docstatus == 1
+		and pe.party_type == "Customer"
+		and pe.party == invoice.customer
+		and pe.company == invoice.company
+		and party_account == invoice.debit_to
+		and flt(pe.unallocated_amount) > 0.01
+		and flt(invoice.outstanding_amount) > 0.01
+	)
+
+
+def _korrektur_storno(si, ctx: dict, pes: list[str], *, rebook_payments: bool = False) -> dict:
+	"""Offene Periode: PE-Zuordnung lösen, SI ersetzen, optional neu zuordnen."""
 	from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
 		generate_miet_und_bk_rechnungen,
 	)
-	from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
-		auto_match_bank_transaction,
-	)
 
-	# 1) Betroffene Bank Transactions merken (vor dem PE-Storno), dann PEs stornieren.
-	bank_transactions: list[str] = []
-	for pe_name in pes:
-		bank_transactions.extend(_bank_transactions_for_pe(pe_name))
-		pe = frappe.get_doc("Payment Entry", pe_name)
-		pe.cancel()
-	bank_transactions = list(dict.fromkeys(bank_transactions))  # dedupe, Reihenfolge erhalten
-
-	# 2) Fehlerhafte SI stornieren. Das PE-Storno oben hat die SI (outstanding/status)
-	#    in der DB verändert → vorher neu laden, sonst TimestampMismatchError.
+	# 1) Fehlerhafte SI stornieren. Bei aktivierter ERPNext-Einstellung
+	#    "unlink_payment_on_cancellation_of_invoice" löst ERPNext dabei selbst
+	#    ausschließlich die Referenz zur SI. Die Payment Entries bleiben gebucht,
+	#    behalten ihre Belegnummern und bleiben mit Banktransaktionen verknüpft.
+	if pes and not frappe.db.get_single_value(
+		"Accounts Settings", "unlink_payment_on_cancellation_of_invoice"
+	):
+		frappe.throw(
+			_(
+				"Die ERPNext-Einstellung zum Lösen von Zahlungen beim Rechnungsstorno ist deaktiviert. "
+				"Die Korrektur wurde sicherheitshalber abgebrochen; Zahlungsbuchungen werden nicht storniert."
+			)
+		)
 	if pes:
+		# Das Submitten/Zuordnen eines PE aktualisiert die SI in der Datenbank.
+		# Neu laden verhindert einen TimestampMismatch beim anschließenden Storno.
 		si.reload()
 	si.cancel()
 
-	# 3) Korrigierte Rechnung neu erzeugen. Der Korrekturpfad erzeugt gezielt nur
+	# 2) Korrigierte Rechnung neu erzeugen. Der Korrekturpfad erzeugt gezielt nur
 	#    den betroffenen Typ; Draft-Dubletten dürfen den Ersatz für die stornierte
 	#    gebuchte Rechnung nicht blockieren.
 	gen = generate_miet_und_bk_rechnungen(
@@ -395,21 +505,80 @@ def _korrektur_storno(si, ctx: dict, pes: list[str]) -> dict:
 
 	neue_si = _find_invoice(f"[TYPE:{ctx['typ']}] [MV:{ctx['mietvertrag']}] {ctx['monat_str']}")
 
-	# 4) Freigewordene Bank-Zahlung(en) erneut auto-matchen (best effort).
-	rematch = []
-	for bt in bank_transactions:
-		try:
-			rematch.append({"bank_transaction": bt, "result": auto_match_bank_transaction(bt)})
-		except Exception as e:  # Re-Match darf die Korrektur nicht kippen
-			frappe.log_error(frappe.get_traceback(), f"Korrektur Re-Match {bt}")
-			rematch.append({"bank_transaction": bt, "error": str(e)})
+	# 3) Optional dieselben Payment Entries über die ERPNext-Zahlungsabstimmung
+	#    der neuen SI zuordnen. Kein Zahlungsbeleg und keine Banktransaktion wird
+	#    storniert, kopiert oder neu verknüpft. Ohne Häkchen bleibt der gelöste
+	#    Betrag als unallocated credit für "Zahlungen zuordnen" verfügbar.
+	zahlungsuebernahmen = []
+	if rebook_payments:
+		for pe_name in pes:
+			zahlungsuebernahmen.append(_reconcile_existing_payment(pe_name, neue_si))
 
 	return {
 		"stornierte_si": si.name,
-		"stornierte_payment_entries": pes,
+		"stornierte_payment_entries": [],
+		"beibehaltene_payment_entries": pes,
 		"neue_si": neue_si,
-		"rematch": rematch,
+		"zahlungsuebernahmen": zahlungsuebernahmen,
 		"generator": {"created": gen.get("created"), "durchlauf": gen.get("durchlauf")},
+	}
+
+
+def _reconcile_existing_payment(payment_entry: str, new_si: str | None) -> dict:
+	"""Ordnet denselben PE per ERPNext Payment Reconciliation einer neuen SI zu."""
+	if not new_si:
+		frappe.throw(_("Die neue Sollstellung wurde nicht gefunden."))
+
+	pe = frappe.get_doc("Payment Entry", payment_entry)
+	invoice = frappe.get_doc("Sales Invoice", new_si)
+	account = pe.paid_from if pe.payment_type == "Receive" else pe.paid_to
+	pr = frappe.get_doc(
+		{
+			"doctype": "Payment Reconciliation",
+			"company": pe.company,
+			"party_type": pe.party_type,
+			"party": pe.party,
+			"receivable_payable_account": account,
+			"payment_name": pe.name,
+			"invoice_name": invoice.name,
+		}
+	)
+	pr.get_unreconciled_entries()
+	payment_rows = [
+		row for row in pr.payments if row.reference_type == "Payment Entry" and row.reference_name == pe.name
+	]
+	invoice_rows = [
+		row
+		for row in pr.invoices
+		if row.invoice_type == "Sales Invoice" and row.invoice_number == invoice.name
+	]
+	if not payment_rows:
+		frappe.throw(_("Payment Entry {0} hat keinen offenen Betrag.").format(pe.name))
+	if not invoice_rows:
+		frappe.throw(_("Sollstellung {0} hat keinen offenen Betrag.").format(invoice.name))
+
+	available = flt(payment_rows[0].amount)
+	invoice_open = flt(invoice_rows[0].outstanding_amount)
+	allocated = min(available, invoice_open)
+	pr.allocate_entries(
+		frappe._dict(
+			{
+				"payments": [payment_rows[0].as_dict()],
+				"invoices": [invoice_rows[0].as_dict()],
+			}
+		)
+	)
+	pr.validate_allocation()
+	pr.reconcile_allocations()
+
+	pe.reload()
+	invoice.reload()
+	return {
+		"payment_entry": pe.name,
+		"neue_sollstellung": invoice.name,
+		"zugeordnet": allocated,
+		"zahlung_offen": flt(pe.unallocated_amount),
+		"rechnung_offen": flt(invoice.outstanding_amount),
 	}
 
 
