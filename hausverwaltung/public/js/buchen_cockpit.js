@@ -1330,10 +1330,49 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 				options: `
 					<p style="margin-bottom: 14px;">
 						${__(
-							"Lade hier mehrere Eingangsrechnungen als PDF hoch. Sie werden im Hintergrund analysiert; danach führt dich ein Wizard durch jeden Vorschlag."
+							"Lade hier einzelne Eingangsrechnungen oder eine große Sammel-PDF hoch. Sie werden im Hintergrund analysiert; danach führt dich ein Wizard durch jeden Vorschlag."
 						)}
 					</p>
 				`,
+			},
+			{
+				fieldtype: "Check",
+				fieldname: "auto_split",
+				label: __("Sammel-PDF automatisch in Einzelrechnungen aufteilen"),
+				default: 0,
+				description: __(
+					"Erkennt Rechnungsnummern und Seitenangaben. Wenn keine Grenzen erkennbar sind, wird jede Seite als eigene Rechnung behandelt."
+				),
+			},
+			{
+				fieldtype: "Int",
+				fieldname: "pages_per_invoice",
+				label: __("Seiten pro Rechnung"),
+				default: 0,
+				depends_on: "eval:doc.auto_split==1",
+				description: __(
+					"Optional: z. B. 2 für Seite 1-2, 3-4, 5-6 usw. Bei 0 werden die Rechnungsgrenzen automatisch erkannt."
+				),
+			},
+			{
+				fieldtype: "Data",
+				fieldname: "excluded_pages",
+				label: __("Konkrete PDF-Seiten ausschließen"),
+				depends_on: "eval:doc.auto_split==1",
+				placeholder: __("z. B. 3, 6, 9-10"),
+				description: __(
+					"Diese Seiten werden vor der Aufteilung entfernt. Bereiche können mit einem Bindestrich angegeben werden."
+				),
+			},
+			{
+				fieldtype: "Data",
+				fieldname: "excluded_page_positions",
+				label: __("Seiten innerhalb jeder Rechnung ausschließen"),
+				depends_on: "eval:doc.auto_split==1 && doc.pages_per_invoice>0",
+				placeholder: __("z. B. 2 oder -1"),
+				description: __(
+					"Beispiel: Bei 2 Seiten pro Rechnung entfernt 2 jeweils die Seiten 2, 4, 6 usw. -1 bedeutet immer die letzte Seite jedes Rechnungsblocks."
+				),
 			},
 			{
 				fieldtype: "HTML",
@@ -1348,6 +1387,13 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 		],
 		primary_action_label: __("Analysieren starten"),
 		primary_action() {
+			if (dialog._hv_pending_splits) {
+				frappe.show_alert({
+					message: __("Die Sammel-PDF wird noch aufgeteilt."),
+					indicator: "blue",
+				});
+				return;
+			}
 			const urls = (dialog._hv_uploaded_urls || []).filter(Boolean);
 			if (!urls.length) {
 				frappe.msgprint({
@@ -1389,6 +1435,7 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 		},
 	});
 	dialog._hv_uploaded_urls = [];
+	dialog._hv_pending_splits = 0;
 	dialog.show();
 
 	// Frappe FileUploader inline einhängen — Multiple aktiv.
@@ -1396,12 +1443,22 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 	const $list = dialog.$body.find(".hv-bulk-uploaded-list");
 	const render_list = () => {
 		const urls = dialog._hv_uploaded_urls || [];
+		const pending = dialog._hv_pending_splits || 0;
+		const pending_html = pending
+			? `<div style="margin-bottom: 8px; color: var(--text-muted, #666);"><i class="fa fa-spinner fa-spin"></i> ${__(
+					"Sammel-PDF wird aufgeteilt..."
+			  )}</div>`
+			: "";
 		if (!urls.length) {
-			$list.html(`<div style="color: var(--text-muted, #666);">${__("Noch keine Datei hochgeladen.")}</div>`);
+			$list.html(
+				`${pending_html}<div style="color: var(--text-muted, #666);">${__(
+					"Noch keine Einzelrechnung bereit."
+				)}</div>`
+			);
 			return;
 		}
 		$list.html(
-			`<strong>${__("Bereit zur Analyse:")} ${urls.length}</strong><ul style="margin: 6px 0 0 18px; padding: 0;">${urls
+			`${pending_html}<strong>${__("Bereit zur Analyse:")} ${urls.length}</strong><ul style="margin: 6px 0 0 18px; padding: 0;">${urls
 				.map(
 					(u) =>
 						`<li>${frappe.utils.escape_html(u.split("/").pop() || u)}</li>`
@@ -1416,10 +1473,82 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 		method: `${HV_COCKPIT_API}.upload_invoice_pdf`,
 		allow_multiple: 1,
 		on_success(file_doc) {
-			handle_uploaded_file(file_doc, dialog, render_list);
+			if (dialog.get_value("auto_split")) {
+				split_and_queue_uploaded_pdf(file_doc, dialog, render_list);
+			} else {
+				handle_uploaded_file(file_doc, dialog, render_list);
+			}
 		},
 	});
 };
+
+function split_and_queue_uploaded_pdf(file_doc, parent_dialog, render_list_fn) {
+	if (!file_doc || !file_doc.file_url) return;
+	parent_dialog._hv_pending_splits = (parent_dialog._hv_pending_splits || 0) + 1;
+	parent_dialog.disable_primary_action();
+	render_list_fn();
+
+	const split_request = frappe
+		.call({
+			method: "hausverwaltung.hausverwaltung.services.pdf_invoice_split.split_invoice_pdf",
+			args: {
+				file_url: file_doc.file_url,
+				pages_per_invoice: Math.max(
+					0,
+					parseInt(parent_dialog.get_value("pages_per_invoice"), 10) || 0
+				),
+				excluded_pages: parent_dialog.get_value("excluded_pages") || "",
+				excluded_page_positions:
+					parent_dialog.get_value("excluded_page_positions") || "",
+			},
+		})
+		.then((response) => {
+			const result = (response && response.message) || {};
+			const files = Array.isArray(result.files) ? result.files : [];
+			files.forEach((split_file) =>
+				handle_uploaded_file(split_file, parent_dialog, render_list_fn)
+			);
+			if (!files.length) {
+				frappe.msgprint({
+					title: __("Aufteilung fehlgeschlagen"),
+					message: __("Aus der Sammel-PDF konnten keine Einzelrechnungen erzeugt werden."),
+					indicator: "red",
+				});
+				return;
+			}
+			const excluded_count = Number(result.excluded_page_count || 0);
+			const success_message = excluded_count
+				? __("{0} Einzelrechnungen erzeugt; {1} von {2} Seiten verwendet, {3} ausgelassen.", [
+						files.length,
+						result.included_page_count,
+						result.source_page_count,
+						excluded_count,
+				  ])
+				: __("{0} Einzelrechnungen aus {1} Seiten erzeugt.", [
+						files.length,
+						result.source_page_count || files.length,
+				  ]);
+			frappe.show_alert({
+				message: success_message,
+				indicator: result.warning ? "orange" : "green",
+			}, 7);
+			if (result.warning) {
+				frappe.msgprint({
+					title: __("Aufteilung bitte prüfen"),
+					message: frappe.utils.escape_html(result.warning),
+					indicator: "orange",
+				});
+			}
+		});
+	hv_after_async(split_request, () => {
+		parent_dialog._hv_pending_splits = Math.max(
+			0,
+			(parent_dialog._hv_pending_splits || 1) - 1
+		);
+		if (!parent_dialog._hv_pending_splits) parent_dialog.enable_primary_action();
+		render_list_fn();
+	});
+}
 
 function handle_uploaded_file(file_doc, parent_dialog, render_list_fn) {
 	if (!file_doc || !file_doc.file_url) return;
