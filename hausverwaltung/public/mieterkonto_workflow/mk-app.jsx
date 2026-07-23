@@ -167,7 +167,7 @@ function App() {
     });
   };
 
-  const printPage = () => openMieterkontoPrintWindow(data, { showCats, sortByWertstellung });
+  const printPage = () => openMieterkontoPrintDialog(data, { showCats, sortByWertstellung });
 
   const exportCsv = () => {
     const csvRows = [
@@ -332,6 +332,32 @@ function csvCell(value) {
   return /[;"\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
+function openMieterkontoPrintDialog(data, options = {}) {
+  frappe.prompt(
+    [
+      {
+        fieldtype: "Check",
+        fieldname: "showOpeningRow",
+        label: __("Anfangsbestand-Zeile mitdrucken"),
+        default: 1,
+      },
+      {
+        fieldtype: "Check",
+        fieldname: "showVoucherColumn",
+        label: __("Beleg-Spalte mitdrucken"),
+        default: 1,
+      },
+    ],
+    (values) => openMieterkontoPrintWindow(data, {
+      ...options,
+      showOpeningRow: !!values.showOpeningRow,
+      showVoucherColumn: !!values.showVoucherColumn,
+    }),
+    __("PDF-Einstellungen"),
+    __("PDF öffnen"),
+  );
+}
+
 function openMieterkontoPrintWindow(data, options = {}) {
   const doc = buildMieterkontoPrintHtml(data, options);
   const win = window.open("", "_blank", "width=1200,height=800");
@@ -358,12 +384,19 @@ function buildMieterkontoPrintHtml(data, options = {}) {
   const { mieter = {}, filters = {}, rows = [], totalRow = {}, totalRows = [], summary = [] } = data || {};
   const showCats = !!options.showCats;
   const sortByWertstellung = !!options.sortByWertstellung;
-  const txRows = rows || [];
+  const showOpeningRow = options.showOpeningRow !== false;
+  const showVoucherColumn = options.showVoucherColumn !== false;
+  const txRows = (rows || []).filter((row) => showOpeningRow || !row.is_opening_row);
   const kontostand = getSummaryItem(summary, "Kontostand");
   const bezahlt = getSummaryItem(summary, "Bezahlt im Zeitraum");
   const openItems = getOpenSummaryItems(summary);
   const title = `Mieterkonto ${mieter.name || ""}`.trim();
-  const visibleCols = (showCats ? CATS.length + 6 : 8) + (sortByWertstellung ? 1 : 0);
+  const visibleCols = (showCats ? CATS.length + 6 : 8)
+    + (sortByWertstellung ? 1 : 0)
+    - (showVoucherColumn ? 0 : 1);
+  const artColumn = sortByWertstellung ? 3 : 2;
+  const voucherColumn = artColumn + 1;
+  const amountStartColumn = artColumn + (showVoucherColumn ? 3 : 2);
   const rowDisplayDate = (row) => sortByWertstellung
     ? (row.wertstellungsdatum || row.datum || "")
     : (row.datum || "");
@@ -405,7 +438,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
           <td>${esc(fmtDate(entry.row.datum))}</td>
           ${sortByWertstellung ? `<td>${esc(fmtDate(entry.row.wertstellungsdatum))}</td>` : ""}
           <td>Eröffnung</td>
-          <td>—</td>
+          ${showVoucherColumn ? "<td>—</td>" : ""}
           <td>Anfangsbestand</td>
           ${showCats ? CATS.map(() => "<td class=\"num muted\">—</td>").join("") : "<td class=\"num muted\">—</td><td class=\"num muted\">—</td>"}
           <td class="num muted">—</td>
@@ -433,7 +466,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
         <td>${esc(fmtDate(row.datum))}</td>
         ${sortByWertstellung ? `<td>${esc(fmtDate(row.wertstellungsdatum))}</td>` : ""}
         <td>${esc(row.art || "")}</td>
-        <td class="voucher">${vouchers.map(esc).join("<br>")}</td>
+        ${showVoucherColumn ? `<td class="voucher">${vouchers.map(esc).join("<br>")}</td>` : ""}
         <td>
           ${esc(row.beschreibung || "")}
           ${row.offen > 0 ? `<span class="open">offen ${esc(fmtEURsoll(row.offen))} EUR</span>` : ""}
@@ -465,7 +498,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
         <td>${esc(fmtDate(row.datum))}</td>
         ${sortByWertstellung ? `<td>${esc(fmtDate(row.wertstellungsdatum))}</td>` : ""}
         <td></td>
-        <td></td>
+        ${showVoucherColumn ? "<td></td>" : ""}
         <td>${esc(row.beschreibung || "")}</td>
         ${amountCells}
         <td class="num">${Math.abs(total) < 0.01 ? "" : esc(fmtEUR(total))}</td>
@@ -574,13 +607,13 @@ function buildMieterkontoPrintHtml(data, options = {}) {
     }
     tr { break-inside: avoid; page-break-inside: avoid; }
     th:nth-child(1), td:nth-child(1) { width: 18mm; }
-    ${sortByWertstellung ? "th:nth-child(2), td:nth-child(2) { width: 18mm; } th:nth-child(3), td:nth-child(3) { width: 21mm; } th:nth-child(4), td:nth-child(4) { width: 32mm; }" : "th:nth-child(2), td:nth-child(2) { width: 21mm; } th:nth-child(3), td:nth-child(3) { width: 32mm; }"}
+    ${sortByWertstellung ? "th:nth-child(2), td:nth-child(2) { width: 18mm; }" : ""}
+    th:nth-child(${artColumn}), td:nth-child(${artColumn}) { width: 21mm; }
+    ${showVoucherColumn ? `th:nth-child(${voucherColumn}), td:nth-child(${voucherColumn}) { width: 32mm; }` : ""}
     th:last-child, td:last-child { width: 24mm; }
     ${showCats
-      ? `${sortByWertstellung ? "th:nth-child(n+6)" : "th:nth-child(n+5)"}:not(:last-child),${sortByWertstellung ? "td:nth-child(n+6)" : "td:nth-child(n+5)"}:not(:last-child){width:17mm;}`
-      : sortByWertstellung
-        ? "th:nth-child(6),td:nth-child(6),th:nth-child(7),td:nth-child(7),th:nth-child(8),td:nth-child(8){width:21mm;}"
-        : "th:nth-child(5),td:nth-child(5),th:nth-child(6),td:nth-child(6),th:nth-child(7),td:nth-child(7){width:21mm;}"}
+      ? `th:nth-child(n+${amountStartColumn}):not(:last-child),td:nth-child(n+${amountStartColumn}):not(:last-child){width:17mm;}`
+      : `th:nth-child(${amountStartColumn}),td:nth-child(${amountStartColumn}),th:nth-child(${amountStartColumn + 1}),td:nth-child(${amountStartColumn + 1}),th:nth-child(${amountStartColumn + 2}),td:nth-child(${amountStartColumn + 2}){width:21mm;}`}
     .num {
       text-align: right;
       white-space: nowrap;
@@ -677,7 +710,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
           <th>Datum</th>
           ${sortByWertstellung ? "<th>Wertstellung</th>" : ""}
           <th>Art</th>
-          <th>Beleg</th>
+          ${showVoucherColumn ? "<th>Beleg</th>" : ""}
           <th>Beschreibung</th>
           ${showCats ? CATS.map((cat) => `<th class="num">${esc(cat.label)}</th>`).join("") : "<th class=\"num\">Soll</th><th class=\"num\">Haben</th>"}
           <th class="num">Gesamt</th>

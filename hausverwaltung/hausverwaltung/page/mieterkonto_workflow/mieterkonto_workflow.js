@@ -18,7 +18,14 @@ frappe.pages["mieterkonto-workflow"].on_page_load = function (wrapper) {
     single_column: true,
   });
 
-  page.set_primary_action(__("PDF erzeugen"), () => window.print());
+  page.set_primary_action(__("PDF erzeugen"), () => {
+    const pdfButton = page.body?.querySelector(".mk-topbar-actions .mk-btn-primary");
+    if (pdfButton) {
+      pdfButton.click();
+      return;
+    }
+    frappe.msgprint(__("Der Mieterreport wird noch geladen. Bitte kurz warten."));
+  });
   page.set_secondary_action(__("→ Offene Posten"), () =>
     frappe.set_route("op-workflow"),
   );
@@ -50,7 +57,7 @@ function render_mieterkonto_workflow(page_body) {
 
   // ─── Assets laden ──────────────────────────────────────────────────────
   const ASSET_BASE = "/assets/hausverwaltung/mieterkonto_workflow";
-  const ASSET_VERSION = "20260716-split-totals";
+  const ASSET_VERSION = "20260723-pdf-options";
   const versioned = (src) => `${src}?v=${ASSET_VERSION}`;
 
   const cssHref = versioned(`${ASSET_BASE}/styles.css`);
