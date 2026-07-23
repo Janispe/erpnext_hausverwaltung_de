@@ -120,7 +120,12 @@ def detect_invoice_groups(page_texts: list[str]) -> tuple[list[dict[str, Any]], 
 
 	finish(len(page_info) - 1)
 
-	if len(groups) == 1 and len(page_texts) > 1:
+	has_complete_page_sequence = all(
+		info["page_number"] == index
+		and info["page_total"] == len(page_info)
+		for index, info in enumerate(page_info, start=1)
+	)
+	if len(groups) == 1 and len(page_texts) > 1 and not has_complete_page_sequence:
 		groups = [
 			{"start": index, "end": index, "invoice_number": info["invoice_number"]}
 			for index, info in enumerate(page_info)
@@ -142,18 +147,23 @@ def _extract_page_texts(reader) -> list[str]:
 	return texts
 
 
+def _page_position_tokens(
+	value: str | list[int] | tuple[int, ...] | None,
+) -> list[str]:
+	if value is None or value == "":
+		return []
+	if isinstance(value, (list, tuple)):
+		return [str(item).strip() for item in value]
+	return [token for token in re.split(r"[,;\s]+", str(value).strip()) if token]
+
+
 def _parse_page_positions(
 	value: str | list[int] | tuple[int, ...] | None,
 	page_count: int,
 	*,
 	allow_negative: bool = False,
 ) -> list[int]:
-	if value is None or value == "":
-		return []
-	if isinstance(value, (list, tuple)):
-		tokens = [str(item).strip() for item in value]
-	else:
-		tokens = [token for token in re.split(r"[,;\s]+", str(value).strip()) if token]
+	tokens = _page_position_tokens(value)
 
 	excluded: set[int] = set()
 	for token in tokens:
@@ -241,7 +251,10 @@ def split_pdf_bytes(
 	included_texts = [page_texts[index] for index in included_indexes]
 	repeated_excluded_positions: list[int] = []
 	repeated_excluded_indexes: list[int] = []
-	has_repeated_exclusions = bool(str(excluded_page_positions or "").strip())
+	repeated_position_tokens = _page_position_tokens(excluded_page_positions)
+	has_repeated_exclusions = bool(repeated_position_tokens)
+	repeated_positive_positions: list[int] = []
+	repeated_negative_offsets: list[int] = []
 	if has_repeated_exclusions:
 		if not fixed_page_count:
 			frappe.throw(
@@ -251,15 +264,31 @@ def split_pdf_bytes(
 			excluded_page_positions,
 			fixed_page_count,
 		)
-	repeated_excluded_set = set(repeated_excluded_positions)
+		positive_tokens = [
+			token for token in repeated_position_tokens if not re.fullmatch(r"-\d+", token)
+		]
+		repeated_positive_positions = _parse_page_positions(
+			",".join(positive_tokens),
+			fixed_page_count,
+		)
+		repeated_negative_offsets = [
+			int(token) for token in repeated_position_tokens if re.fullmatch(r"-\d+", token)
+		]
 	if fixed_page_count:
 		groups = []
 		empty_blocks = 0
 		for start in range(0, len(included_indexes), fixed_page_count):
 			block_indexes = included_indexes[start : start + fixed_page_count]
+			block_excluded_positions = set(repeated_positive_positions)
+			# Negative Angaben beziehen sich auf das tatsaechliche Blockende,
+			# auch wenn der letzte Block weniger Seiten als konfiguriert hat.
+			for offset in repeated_negative_offsets:
+				position = len(block_indexes) + offset
+				if position >= 0:
+					block_excluded_positions.add(position)
 			page_indexes = []
 			for position, page_index in enumerate(block_indexes):
-				if position in repeated_excluded_set:
+				if position in block_excluded_positions:
 					repeated_excluded_indexes.append(page_index)
 				else:
 					page_indexes.append(page_index)

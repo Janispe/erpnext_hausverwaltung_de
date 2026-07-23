@@ -4,6 +4,7 @@ from unittest.mock import patch
 import frappe
 
 from hausverwaltung.hausverwaltung.page.buchen_cockpit import buchen_cockpit as cockpit
+from hausverwaltung.hausverwaltung.utils.rent_items import ITEM_CODES
 
 
 class _FakeInvoice:
@@ -212,6 +213,7 @@ class TestBuchenCockpit(unittest.TestCase):
 			"Miete": "8100 - Miete - HV",
 			"Betriebskosten": "8110 - BK - HV",
 			"Heizkosten": "8120 - HK - HV",
+			"Untermietzuschlag": "8130 - UMZ - HV",
 		}
 
 		def db_get_value(doctype, name, fields=None, as_dict=False):
@@ -235,6 +237,7 @@ class TestBuchenCockpit(unittest.TestCase):
 					{"betrag": 500, "erloeskonto": income_accounts["Miete"]},
 					{"betrag": 120, "erloeskonto": income_accounts["Betriebskosten"]},
 					{"betrag": 80, "erloeskonto": income_accounts["Heizkosten"]},
+					{"betrag": 40, "erloeskonto": income_accounts["Untermietzuschlag"]},
 					{"betrag": 25, "erloeskonto": "8400 - Sonstige Erlöse - HV"},
 				],
 				submit_doc=1,
@@ -242,8 +245,15 @@ class TestBuchenCockpit(unittest.TestCase):
 
 		self.assertEqual(
 			[item["item_code"] for item in invoice.items],
-			["Miete", "Betriebskosten", "Heizkosten", "Guthaben/Nachzahlungen"],
+			[
+				"Miete",
+				"Betriebskosten",
+				"Heizkosten",
+				"Untermietzuschlag",
+				"Guthaben/Nachzahlungen",
+			],
 		)
+		self.assertIn("Untermietzuschlag", ITEM_CODES)
 
 	def test_create_sales_invoice_rejects_mixed_claim_and_credit_rows(self):
 		with patch.object(cockpit.frappe.db, "get_value", return_value=frappe._dict(kunde="MIETER-1", wohnung="WHG-1")), \

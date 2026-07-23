@@ -202,6 +202,26 @@ class TestBulkDialogVersion(unittest.TestCase):
 		self.assertEqual(result["ok"], 0)
 		self.assertEqual(result["fehler"], 0)
 
+	def test_bulk_result_preserves_billing_month_for_payment_pool(self):
+		correction = {
+			"context": _correction_context(),
+			"path": "storno",
+			"alter_betrag": 200,
+			"neuer_betrag": 150,
+			"neue_si": "SINV-NEW",
+			"beibehaltene_payment_entries": ["PE-1"],
+		}
+		with (
+			patch("frappe.db.savepoint"),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur.korrigiere_mietrechnung",
+				return_value=correction,
+			),
+		):
+			result = korrigiere_mietrechnungen_bulk(["SINV-OLD"], dialog_version=2)
+
+		self.assertEqual(result["ergebnisse"][0]["abrechnungsmonat"], "05/2026")
+
 
 class TestKorrekturStorno(unittest.TestCase):
 	def test_suppresses_transient_unlink_message_and_restores_flag(self):
@@ -305,6 +325,71 @@ class TestKorrekturStorno(unittest.TestCase):
 		get_doc.assert_not_called()
 		self.assertEqual(result["stornierte_payment_entries"], [])
 		self.assertEqual(result["beibehaltene_payment_entries"], ["PE-EXISTING"])
+
+	def test_rebooking_skips_later_payment_after_replacement_is_fully_paid(self):
+		si = DummySalesInvoice()
+		invoice_open = 100.0
+
+		def can_reconcile(_pe_name, _si_name):
+			return invoice_open > 0.01
+
+		def reconcile(pe_name, si_name):
+			nonlocal invoice_open
+			invoice_open = 0.0
+			return {
+				"payment_entry": pe_name,
+				"neue_sollstellung": si_name,
+				"zugeordnet": 100.0,
+				"zahlung_offen": 0.0,
+				"rechnung_offen": 0.0,
+			}
+
+		with (
+			patch("frappe.db.get_single_value", return_value=1),
+			patch(
+				"hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen.generate_miet_und_bk_rechnungen",
+				return_value={"created": {"Betriebskosten": 1}, "durchlauf": "DL-1"},
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._find_generated_invoice",
+				return_value="SINV-NEW",
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._payment_can_reconcile_invoice",
+				side_effect=can_reconcile,
+			) as payment_can_reconcile,
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._reconcile_existing_payment",
+				side_effect=reconcile,
+			) as reconcile_payment,
+		):
+			result = _korrektur_storno(
+				si,
+				_correction_context(),
+				["PE-FIRST", "PE-SECOND"],
+				rebook_payments=True,
+			)
+
+		self.assertEqual(
+			payment_can_reconcile.call_args_list,
+			[
+				unittest.mock.call("PE-FIRST", "SINV-NEW"),
+				unittest.mock.call("PE-SECOND", "SINV-NEW"),
+			],
+		)
+		reconcile_payment.assert_called_once_with("PE-FIRST", "SINV-NEW")
+		self.assertEqual(
+			result["zahlungsuebernahmen"],
+			[
+				{
+					"payment_entry": "PE-FIRST",
+					"neue_sollstellung": "SINV-NEW",
+					"zugeordnet": 100.0,
+					"zahlung_offen": 0.0,
+					"rechnung_offen": 0.0,
+				}
+			],
+		)
 
 	def test_aborts_if_erpnext_cannot_unlink_safely(self):
 		si = DummySalesInvoice()
@@ -417,11 +502,230 @@ class TestPaymentReconciliation(unittest.TestCase):
 
 
 class TestBulkPaymentPool(unittest.TestCase):
+	def test_invoice_without_own_payment_receives_credit_from_other_correction(self):
+		rows = [
+			{
+				"ok": True,
+				"path": "storno",
+				"abrechnungsmonat": "05/2026",
+				"sales_invoice": "OLD-MIETE",
+				"neue_si": "NEW-MIETE",
+				"alter_betrag": 600,
+				"neuer_betrag": 650,
+				"beibehaltene_payment_entries": [],
+				"zahlungsuebernahmen": [],
+			},
+			{
+				"ok": True,
+				"path": "storno",
+				"abrechnungsmonat": "05/2026",
+				"sales_invoice": "OLD-BK",
+				"neue_si": "NEW-BK",
+				"alter_betrag": 200,
+				"neuer_betrag": 150,
+				"beibehaltene_payment_entries": ["PE-BK"],
+				"zahlungsuebernahmen": [],
+			},
+		]
+		payment_open = {"PE-BK": 200.0}
+		invoice_open = {"NEW-MIETE": 650.0, "NEW-BK": 150.0}
+		calls = []
+
+		def can_assign(pe_name, si_name):
+			return payment_open[pe_name] > 0.01 and invoice_open[si_name] > 0.01
+
+		def reconcile(pe_name, si_name):
+			amount = min(payment_open[pe_name], invoice_open[si_name])
+			payment_open[pe_name] -= amount
+			invoice_open[si_name] -= amount
+			calls.append((pe_name, si_name, amount))
+			return {
+				"payment_entry": pe_name,
+				"neue_sollstellung": si_name,
+				"zugeordnet": amount,
+				"zahlung_offen": payment_open[pe_name],
+				"rechnung_offen": invoice_open[si_name],
+			}
+
+		with (
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._payment_can_reconcile_invoice",
+				side_effect=can_assign,
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._reconcile_existing_payment",
+				side_effect=reconcile,
+			),
+			patch("frappe.db.savepoint"),
+			patch("frappe.db.rollback"),
+		):
+			errors = _reconcile_bulk_payment_pool(rows)
+
+		self.assertEqual(errors, [])
+		self.assertEqual(
+			calls,
+			[
+				("PE-BK", "NEW-BK", 150.0),
+				("PE-BK", "NEW-MIETE", 50.0),
+			],
+		)
+		self.assertEqual(rows[0]["zahlungsuebernahmen"][0]["zugeordnet"], 50.0)
+		self.assertEqual(payment_open["PE-BK"], 0.0)
+		self.assertEqual(invoice_open["NEW-MIETE"], 600.0)
+
+	def test_credit_is_not_transferred_to_a_different_billing_month(self):
+		rows = [
+			{
+				"ok": True,
+				"path": "storno",
+				"abrechnungsmonat": "05/2027",
+				"sales_invoice": "OLD-MIETE-MAI-2027",
+				"neue_si": "NEW-MIETE-MAI-2027",
+				"alter_betrag": 600,
+				"neuer_betrag": 650,
+				"beibehaltene_payment_entries": [],
+				"zahlungsuebernahmen": [],
+			},
+			{
+				"ok": True,
+				"path": "storno",
+				"abrechnungsmonat": "05/2026",
+				"sales_invoice": "OLD-BK-MAI",
+				"neue_si": "NEW-BK-MAI",
+				"alter_betrag": 200,
+				"neuer_betrag": 150,
+				"beibehaltene_payment_entries": ["PE-MAI"],
+				"zahlungsuebernahmen": [],
+			},
+		]
+		payment_open = {"PE-MAI": 200.0}
+		invoice_open = {"NEW-MIETE-MAI-2027": 650.0, "NEW-BK-MAI": 150.0}
+		calls = []
+
+		def can_assign(pe_name, si_name):
+			return payment_open[pe_name] > 0.01 and invoice_open[si_name] > 0.01
+
+		def reconcile(pe_name, si_name):
+			amount = min(payment_open[pe_name], invoice_open[si_name])
+			payment_open[pe_name] -= amount
+			invoice_open[si_name] -= amount
+			calls.append((pe_name, si_name, amount))
+			return {
+				"payment_entry": pe_name,
+				"neue_sollstellung": si_name,
+				"zugeordnet": amount,
+				"zahlung_offen": payment_open[pe_name],
+				"rechnung_offen": invoice_open[si_name],
+			}
+
+		with (
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._payment_can_reconcile_invoice",
+				side_effect=can_assign,
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._reconcile_existing_payment",
+				side_effect=reconcile,
+			),
+			patch("frappe.db.savepoint"),
+			patch("frappe.db.rollback"),
+		):
+			errors = _reconcile_bulk_payment_pool(rows)
+
+		self.assertEqual(errors, [])
+		self.assertEqual(calls, [("PE-MAI", "NEW-BK-MAI", 150.0)])
+		self.assertEqual(payment_open["PE-MAI"], 50.0)
+		self.assertEqual(invoice_open["NEW-MIETE-MAI-2027"], 650.0)
+		self.assertEqual(rows[0]["zahlungsuebernahmen"], [])
+
+	def test_payment_shared_by_multiple_months_is_not_cross_distributed(self):
+		rows = [
+			{
+				"ok": True,
+				"path": "storno",
+				"abrechnungsmonat": "05/2026",
+				"sales_invoice": "OLD-MIETE-MAI",
+				"neue_si": "NEW-MIETE-MAI",
+				"alter_betrag": 600,
+				"neuer_betrag": 650,
+				"beibehaltene_payment_entries": [],
+				"zahlungsuebernahmen": [],
+			},
+			{
+				"ok": True,
+				"path": "storno",
+				"abrechnungsmonat": "05/2026",
+				"sales_invoice": "OLD-BK-MAI",
+				"neue_si": "NEW-BK-MAI",
+				"alter_betrag": 200,
+				"neuer_betrag": 150,
+				"beibehaltene_payment_entries": ["PE-MEHRMONATIG"],
+				"zahlungsuebernahmen": [],
+			},
+			{
+				"ok": True,
+				"path": "storno",
+				"abrechnungsmonat": "06/2026",
+				"sales_invoice": "OLD-BK-JUN",
+				"neue_si": "NEW-BK-JUN",
+				"alter_betrag": 300,
+				"neuer_betrag": 250,
+				"beibehaltene_payment_entries": ["PE-MEHRMONATIG"],
+				"zahlungsuebernahmen": [],
+			},
+		]
+		payment_open = {"PE-MEHRMONATIG": 500.0}
+		invoice_open = {
+			"NEW-MIETE-MAI": 650.0,
+			"NEW-BK-MAI": 150.0,
+			"NEW-BK-JUN": 250.0,
+		}
+		calls = []
+
+		def can_assign(pe_name, si_name):
+			return payment_open[pe_name] > 0.01 and invoice_open[si_name] > 0.01
+
+		def reconcile(pe_name, si_name):
+			amount = min(payment_open[pe_name], invoice_open[si_name])
+			payment_open[pe_name] -= amount
+			invoice_open[si_name] -= amount
+			calls.append((pe_name, si_name, amount))
+			return {
+				"payment_entry": pe_name,
+				"neue_sollstellung": si_name,
+				"zugeordnet": amount,
+				"zahlung_offen": payment_open[pe_name],
+				"rechnung_offen": invoice_open[si_name],
+			}
+
+		with (
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._payment_can_reconcile_invoice",
+				side_effect=can_assign,
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._reconcile_existing_payment",
+				side_effect=reconcile,
+			),
+			patch("frappe.db.savepoint"),
+			patch("frappe.db.rollback"),
+		):
+			errors = _reconcile_bulk_payment_pool(rows)
+
+		self.assertEqual(errors, [])
+		self.assertEqual(calls, [])
+		self.assertEqual(payment_open["PE-MEHRMONATIG"], 500.0)
+		self.assertEqual(invoice_open["NEW-MIETE-MAI"], 650.0)
+		self.assertEqual(invoice_open["NEW-BK-MAI"], 150.0)
+		self.assertEqual(invoice_open["NEW-BK-JUN"], 250.0)
+		self.assertEqual(rows[0]["zahlungsuebernahmen"], [])
+
 	def test_failed_reconciliation_rolls_back_pair_and_restores_flag(self):
 		rows = [
 			{
 				"ok": True,
 				"path": "storno",
+				"abrechnungsmonat": "05/2026",
 				"sales_invoice": "OLD-MIETE",
 				"neue_si": "NEW-MIETE",
 				"alter_betrag": 600,
@@ -513,6 +817,7 @@ class TestBulkPaymentPool(unittest.TestCase):
 			{
 				"ok": True,
 				"path": "storno",
+				"abrechnungsmonat": "05/2026",
 				"sales_invoice": "OLD-MIETE",
 				"neue_si": "NEW-MIETE",
 				"alter_betrag": 600,
@@ -523,6 +828,7 @@ class TestBulkPaymentPool(unittest.TestCase):
 			{
 				"ok": True,
 				"path": "storno",
+				"abrechnungsmonat": "05/2026",
 				"sales_invoice": "OLD-BK",
 				"neue_si": "NEW-BK",
 				"alter_betrag": 200,

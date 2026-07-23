@@ -39,6 +39,50 @@ class TestPdfInvoiceSplit(unittest.TestCase):
 		self.assertEqual([(g["start"], g["end"]) for g in groups], [(0, 1), (2, 4)])
 		self.assertEqual([g["invoice_number"] for g in groups], ["A-100", "A-101"])
 
+	def test_complete_page_counter_keeps_single_multi_page_invoice_together(self):
+		groups, warning = detect_invoice_groups([
+			"Rechnung Nr. A-100\nSeite 1 von 3",
+			"Rechnung Nr. A-100\nSeite 2 von 3",
+			"Rechnung Nr. A-100\nSeite 3 von 3",
+		])
+
+		self.assertIsNone(warning)
+		self.assertEqual([(g["start"], g["end"]) for g in groups], [(0, 2)])
+		self.assertEqual(groups[0]["invoice_number"], "A-100")
+
+	def test_inconsistent_page_counter_still_uses_safe_fallback(self):
+		groups, warning = detect_invoice_groups([
+			"Rechnung Nr. A-100\nSeite 1 von 3",
+			"Rechnung Nr. A-100\nSeite 2 von 4",
+			"Rechnung Nr. A-100\nSeite 3 von 3",
+		])
+
+		self.assertTrue(warning)
+		self.assertEqual([(g["start"], g["end"]) for g in groups], [(0, 0), (1, 1), (2, 2)])
+
+	def test_split_pdf_keeps_single_multi_page_invoice_together(self):
+		try:
+			from pypdf import PdfReader
+		except ImportError:
+			from PyPDF2 import PdfReader
+		from reportlab.pdfgen import canvas
+
+		source = io.BytesIO()
+		pdf = canvas.Canvas(source, pagesize=(595, 842))
+		for page_number in range(1, 4):
+			pdf.drawString(72, 780, "Rechnung Nr. A-100")
+			pdf.drawString(72, 40, f"Seite {page_number} von 3")
+			pdf.showPage()
+		pdf.save()
+
+		parts, warning, metadata = split_pdf_bytes(source.getvalue())
+
+		self.assertIsNone(warning)
+		self.assertEqual(len(parts), 1)
+		self.assertEqual(parts[0]["source_pages"], [1, 2, 3])
+		self.assertEqual(len(PdfReader(io.BytesIO(parts[0]["content"])).pages), 3)
+		self.assertEqual(metadata["included_page_count"], 3)
+
 	def test_invoice_number_on_first_page_only_starts_next_invoice(self):
 		groups, warning = detect_invoice_groups([
 			"Rechnungsnummer 2026-001",
@@ -205,6 +249,31 @@ class TestPdfInvoiceSplit(unittest.TestCase):
 		self.assertEqual([part["source_pages"] for part in parts], [[1, 2], [4, 5]])
 		self.assertEqual(metadata["repeated_excluded_pages"], [3, 6])
 		self.assertEqual(metadata["excluded_page_positions"], [3])
+
+	def test_minus_one_removes_last_page_of_incomplete_final_block(self):
+		try:
+			from pypdf import PdfWriter
+		except ImportError:
+			from PyPDF2 import PdfWriter
+
+		writer = PdfWriter()
+		for _index in range(5):
+			writer.add_blank_page(width=595, height=842)
+		source = io.BytesIO()
+		writer.write(source)
+
+		parts, warning, metadata = split_pdf_bytes(
+			source.getvalue(),
+			pages_per_invoice=3,
+			excluded_page_positions="-1",
+		)
+
+		self.assertTrue(warning)
+		self.assertEqual([part["source_pages"] for part in parts], [[1, 2], [4]])
+		self.assertEqual(metadata["repeated_excluded_pages"], [3, 5])
+		self.assertEqual(metadata["excluded_page_positions"], [3])
+		self.assertEqual(metadata["included_page_count"], 3)
+		self.assertEqual(metadata["excluded_page_count"], 2)
 
 	def test_negative_page_positions_are_relative_to_block_end(self):
 		self.assertEqual(parse_repeated_page_positions("-1", page_count=3), [2])

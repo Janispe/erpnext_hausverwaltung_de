@@ -416,12 +416,14 @@ def korrigiere_mietrechnungen_bulk(
 			# Ersatz-Sollstellungen erzeugen. Die gemeinsame Zuordnung danach kann
 			# Minderungen und Erhöhungen desselben Mieters miteinander ausgleichen.
 			res = korrigiere_mietrechnung(name, dry_run=0, rebook_payments=0)
+			context = res.get("context") or {}
 			ok += 1
 			ergebnisse.append(
 				{
 					"sales_invoice": name,
 					"ok": True,
 					"path": res.get("path"),
+					"abrechnungsmonat": context.get("monat_str"),
 					"alter_betrag": res.get("alter_betrag"),
 					"neuer_betrag": res.get("neuer_betrag"),
 					"neue_si": res.get("neue_si"),
@@ -451,22 +453,35 @@ def _reconcile_bulk_payment_pool(ergebnisse: list[dict]) -> list[dict]:
 
 	Die erste Runde wahrt die bisherige fachliche Zuordnung. Die zweite Runde
 	verwendet verbleibende Guthaben desselben Kunden/Kontos zum Ausgleich anderer
-	korrigierter Sollstellungen. Dadurch gleichen sich z.B. eine Mietminderung
-	und eine gleich hohe BK-Erhöhung unabhängig von der Reihenfolge aus.
+	korrigierter Sollstellungen desselben Abrechnungsmonats. Dadurch gleichen
+	sich z.B. eine Mietminderung und eine gleich hohe BK-Erhöhung innerhalb eines
+	Monats unabhängig von der Reihenfolge aus.
 	"""
 	candidates = [
-		row
-		for row in ergebnisse
-		if row.get("ok")
-		and row.get("path") == "storno"
-		and row.get("neue_si")
-		and row.get("beibehaltene_payment_entries")
+		row for row in ergebnisse if row.get("ok") and row.get("path") == "storno" and row.get("neue_si")
 	]
 	# Minderungen zuerst: so steht ihr Überschuss bereits für Erhöhungen bereit.
 	candidates.sort(key=lambda row: flt(row.get("neuer_betrag")) - flt(row.get("alter_betrag")))
-	all_payment_entries = list(
-		dict.fromkeys(pe for row in candidates for pe in row["beibehaltene_payment_entries"])
-	)
+	payment_entry_months: dict[str, set[str | None]] = {}
+	for row in candidates:
+		for pe_name in row.get("beibehaltene_payment_entries") or []:
+			payment_entry_months.setdefault(pe_name, set()).add(row.get("abrechnungsmonat"))
+
+	payment_entry_month: dict[str, str] = {}
+	for pe_name, months in payment_entry_months.items():
+		# Wenn derselbe PE ursprünglich Rechnungen mehrerer Monate bedient hat,
+		# lässt sich sein Restguthaben keinem Monat eindeutig zuordnen. In diesem
+		# Fall bleibt es in dieser Sammelkorrektur bewusst vollständig unverteilt.
+		if len(months) != 1:
+			continue
+		month = next(iter(months))
+		if not month:
+			continue
+		payment_entry_month[pe_name] = month
+
+	payment_entries_by_month: dict[str, list[str]] = {}
+	for pe_name, month in payment_entry_month.items():
+		payment_entries_by_month.setdefault(month, []).append(pe_name)
 	errors: list[dict] = []
 	failed_pairs: set[tuple[str, str]] = set()
 	reconcile_attempt = 0
@@ -526,13 +541,15 @@ def _reconcile_bulk_payment_pool(ergebnisse: list[dict]) -> list[dict]:
 	# 1) Die zuvor auf der jeweiligen alten SI geführten PEs zuerst auf deren
 	#    direkte Ersatz-SI buchen.
 	for row in candidates:
-		for pe_name in row["beibehaltene_payment_entries"]:
+		for pe_name in row.get("beibehaltene_payment_entries") or []:
+			if payment_entry_month.get(pe_name) != row.get("abrechnungsmonat"):
+				continue
 			assign(row, pe_name)
 
-	# 2) Noch offene Ersatz-SIs mit Restguthaben anderer PEs desselben
-	#    Kunden/Receivable-Kontos aus dieser Sammelkorrektur ausgleichen.
+	# 2) Noch offene Ersatz-SIs mit Restguthaben anderer PEs desselben Monats
+	#    und desselben Kunden/Receivable-Kontos ausgleichen.
 	for row in candidates:
-		for pe_name in all_payment_entries:
+		for pe_name in payment_entries_by_month.get(row.get("abrechnungsmonat"), []):
 			if not _payment_can_reconcile_invoice(pe_name, row["neue_si"]):
 				continue
 			assign(row, pe_name)
@@ -624,7 +641,12 @@ def _korrektur_storno(si, ctx: dict, pes: list[str], *, rebook_payments: bool = 
 	zahlungsuebernahmen = []
 	if rebook_payments:
 		for pe_name in pes:
-			zahlungsuebernahmen.append(_reconcile_existing_payment(pe_name, neue_si))
+			# Ein früherer PE kann die Ersatzrechnung bereits vollständig decken.
+			# Weitere PEs bleiben dann als unallocated credit erhalten, statt die
+			# gesamte Korrektur wegen einer fehlenden offenen Rechnungszeile
+			# abzubrechen.
+			if _payment_can_reconcile_invoice(pe_name, neue_si):
+				zahlungsuebernahmen.append(_reconcile_existing_payment(pe_name, neue_si))
 
 	return {
 		"stornierte_si": si.name,

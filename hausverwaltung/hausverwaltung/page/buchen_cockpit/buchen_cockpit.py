@@ -92,7 +92,7 @@ def _rent_item_for_income_account(
     income_accounts: dict[str, str],
 ) -> str:
     """Map configured rent income accounts to Mieterkonto-compatible items."""
-    for item_code in ("Miete", "Betriebskosten", "Heizkosten"):
+    for item_code in ("Miete", "Betriebskosten", "Heizkosten", "Untermietzuschlag"):
         if income_account and income_account == income_accounts.get(item_code):
             return item_code
     return MISC_TENANT_ITEM_CODE

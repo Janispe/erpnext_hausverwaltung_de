@@ -53,13 +53,46 @@ class Wartungsplan(Document):
 		self._apply_anlagenart_defaults()
 		self._validate_intervall()
 
-		if not self.get("letzte_durchfuehrung"):
+		if self.get("letzte_durchfuehrung"):
+			self._set_naechste_faelligkeit_from_latest_maintenance()
+		else:
 			self.naechste_faelligkeit = self.get("erste_faelligkeit")
 
 		self.faelligkeitsstatus = berechne_faelligkeitsstatus(
 			self.get("status"),
 			self.get("naechste_faelligkeit"),
 			self.get("erinnerung_vorlauf_tage"),
+		)
+
+	def _set_naechste_faelligkeit_from_latest_maintenance(self) -> None:
+		"""Recalculate derived dates with the plan's currently configured interval."""
+		eintraege = frappe.get_all(
+			"Anlagenwartung",
+			filters={
+				"wartungsplan": self.name,
+				"docstatus": 1,
+				"status": "Durchgeführt",
+			},
+			fields=["name", "durchgefuehrt_am", "soll_termin", "naechster_termin"],
+			order_by="durchgefuehrt_am desc, name desc",
+			limit_page_length=1,
+		)
+		if not eintraege:
+			return
+
+		letzte = eintraege[0]
+		self.letzte_durchfuehrung = getdate(letzte.durchgefuehrt_am)
+		if letzte.get("naechster_termin"):
+			self.naechste_faelligkeit = getdate(letzte.naechster_termin)
+			return
+
+		basis = self.letzte_durchfuehrung
+		if self.get("terminberechnung") == "Ab bisheriger Fälligkeit":
+			basis = getdate(letzte.get("soll_termin") or self.get("erste_faelligkeit"))
+		self.naechste_faelligkeit = add_wartungsintervall(
+			basis,
+			self.get("intervall_anzahl"),
+			self.get("intervall_einheit"),
 		)
 
 	def _apply_anlagenart_defaults(self) -> None:

@@ -6,6 +6,41 @@ from frappe.model.document import Document
 from frappe.utils import cint, getdate
 
 
+def _sperre_wartungsplaene(wartungsplaene) -> None:
+	"""Serialize bulk creation for each plan until the current transaction ends."""
+	for wartungsplan in sorted({name for name in wartungsplaene if name}):
+		frappe.db.sql(
+			"""
+			SELECT name
+			FROM `tabWartungsplan`
+			WHERE name = %s
+			FOR UPDATE
+			""",
+			(wartungsplan,),
+		)
+
+
+def _finde_offene_anlagenwartung(wartungsplan: str):
+	"""Find an unfinished maintenance record with a current, locking read."""
+	treffer = frappe.db.sql(
+		"""
+		SELECT name, status, sammelwartung
+		FROM `tabAnlagenwartung`
+		WHERE wartungsplan = %(wartungsplan)s
+			AND (
+				docstatus = 0
+				OR (docstatus = 1 AND status IN ('Geplant', 'Beauftragt'))
+			)
+		ORDER BY creation, name
+		LIMIT 1
+		FOR UPDATE
+		""",
+		{"wartungsplan": wartungsplan},
+		as_dict=True,
+	)
+	return treffer[0] if treffer else None
+
+
 def berechne_fortschritt(statuswerte: list[str]) -> dict:
 	gesamt = len(statuswerte)
 	gewartet = sum(status == "Durchgeführt" for status in statuswerte)
@@ -124,14 +159,30 @@ class Sammelwartung(Document):
 		if self.is_new():
 			frappe.throw(_("Bitte die Sammelwartung zuerst speichern."))
 
+		positionen = list(self.get("positionen") or [])
+		# The locks are acquired in a stable order to avoid two overlapping
+		# bulk documents deadlocking each other. They also make the persisted
+		# duplicate check below safe against concurrent bulk creation.
+		_sperre_wartungsplaene(position.wartungsplan for position in positionen)
+
 		erstellt = []
 		uebersprungen = 0
-		for position in self.get("positionen") or []:
+		for position in positionen:
 			if position.anlagenwartung:
 				docstatus = frappe.db.get_value("Anlagenwartung", position.anlagenwartung, "docstatus")
 				if docstatus is not None and cint(docstatus) < 2:
 					uebersprungen += 1
 					continue
+
+			vorhandene_wartung = _finde_offene_anlagenwartung(position.wartungsplan)
+			if vorhandene_wartung:
+				# Repair an unlinked row in this bulk document, but never link
+				# another bulk document's work order into this one.
+				if vorhandene_wartung.sammelwartung == self.name:
+					position.anlagenwartung = vorhandene_wartung.name
+					position.status = vorhandene_wartung.status
+				uebersprungen += 1
+				continue
 
 			plan = frappe.db.get_value(
 				"Wartungsplan",

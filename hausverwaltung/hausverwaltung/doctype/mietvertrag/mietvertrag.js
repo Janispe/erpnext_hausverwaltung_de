@@ -92,9 +92,19 @@ frappe.ui.form.on("Mietvertrag", {
 
 		if (!frm.is_new()) {
 			frm.add_custom_button(__("Sollstellungen prüfen"), () => {
-				frappe.require("/assets/hausverwaltung/js/mietrechnung_korrektur_report.js", () => {
-					window.hausverwaltung?.korrektur?.run_for_mietvertrag(frm.doc.name, {
-						frm,
+				frappe.require("/assets/hausverwaltung/js/sollstellung_check.js", () => {
+					frappe.call({
+						method:
+							"hausverwaltung.hausverwaltung.scripts.check_mietrechnungen.pruefe_mietvertrag",
+						args: { mietvertrag: frm.doc.name },
+						freeze: true,
+						freeze_message: __("Prüfe Sollstellungen..."),
+						callback: (r) => {
+							if (r.exc || !r.message) return;
+							window.hausverwaltung.sollstellung_check.show_mietvertrag(r.message, {
+								title_suffix: frm.doc.name,
+							});
+						},
 					});
 				});
 			});

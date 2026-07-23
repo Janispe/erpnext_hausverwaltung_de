@@ -92,3 +92,108 @@ class TestPositionenUebernehmen(unittest.TestCase):
 		self.assertEqual(doc.positionen[0].wohnung, "Haus A | EG links")
 		self.assertIsNone(doc.positionen[1].wohnung)
 		doc.save.assert_called_once()
+
+
+class TestAnlagenwartungenAnlegen(unittest.TestCase):
+	def test_global_lookup_blocks_drafts_independent_of_their_status(self):
+		db = MagicMock()
+		db.sql.return_value = [
+			frappe._dict(
+				name="AW-DRAFT",
+				status="Durchgeführt",
+				sammelwartung="SW-2026-0001",
+			)
+		]
+
+		with patch.object(sw_mod.frappe, "db", db):
+			treffer = sw_mod._finde_offene_anlagenwartung("WP-00001")
+
+		self.assertEqual(treffer.name, "AW-DRAFT")
+		query, parameter = db.sql.call_args.args[:2]
+		self.assertIn("docstatus = 0", query)
+		self.assertIn("docstatus = 1 AND status IN ('Geplant', 'Beauftragt')", query)
+		self.assertEqual(parameter, {"wartungsplan": "WP-00001"})
+		self.assertTrue(db.sql.call_args.kwargs["as_dict"])
+
+	def test_persisted_open_work_order_from_other_bulk_document_is_skipped(self):
+		position = frappe._dict(
+			wartungsplan="WP-00001",
+			technische_anlage="ANL-00001",
+			faellig_am=datetime.date(2026, 9, 1),
+			anlagenwartung=None,
+			status="Offen",
+		)
+		doc = SimpleNamespace(name="SW-2026-0002", positionen=[position])
+		doc.get = lambda key, default=None: getattr(doc, key, default)
+		doc.check_permission = MagicMock()
+		doc.is_new = MagicMock(return_value=False)
+		doc.save = MagicMock()
+
+		db = MagicMock()
+
+		def sql(query, _values=None, **_kwargs):
+			if "FROM `tabAnlagenwartung`" in query:
+				return [
+					frappe._dict(
+						name="AW-00001",
+						status="Geplant",
+						sammelwartung="SW-2026-0001",
+					)
+				]
+			return []
+
+		db.sql.side_effect = sql
+		with (
+			patch.object(sw_mod.frappe, "db", db),
+			patch.object(sw_mod.frappe, "get_doc") as get_doc,
+		):
+			ergebnis = sw_mod.Sammelwartung.anlagenwartungen_anlegen(doc)
+
+		self.assertEqual(ergebnis, {"erstellt": [], "uebersprungen": 1})
+		get_doc.assert_not_called()
+		doc.save.assert_called_once()
+		self.assertIsNone(position.anlagenwartung)
+
+		queries = [call.args[0] for call in db.sql.call_args_list]
+		self.assertIn("FROM `tabWartungsplan`", queries[0])
+		self.assertIn("FOR UPDATE", queries[0])
+		self.assertIn("FROM `tabAnlagenwartung`", queries[1])
+		self.assertIn("docstatus = 0", queries[1])
+		self.assertIn("status IN ('Geplant', 'Beauftragt')", queries[1])
+		self.assertIn("FOR UPDATE", queries[1])
+
+	def test_existing_work_order_from_same_bulk_document_repairs_link(self):
+		position = frappe._dict(
+			wartungsplan="WP-00001",
+			technische_anlage="ANL-00001",
+			faellig_am=datetime.date(2026, 9, 1),
+			anlagenwartung=None,
+			status="Offen",
+		)
+		doc = SimpleNamespace(name="SW-2026-0001", positionen=[position])
+		doc.get = lambda key, default=None: getattr(doc, key, default)
+		doc.check_permission = MagicMock()
+		doc.is_new = MagicMock(return_value=False)
+		doc.save = MagicMock()
+
+		db = MagicMock()
+		db.sql.side_effect = [
+			[],
+			[
+				frappe._dict(
+					name="AW-00001",
+					status="Beauftragt",
+					sammelwartung=doc.name,
+				)
+			],
+		]
+		with (
+			patch.object(sw_mod.frappe, "db", db),
+			patch.object(sw_mod.frappe, "get_doc") as get_doc,
+		):
+			ergebnis = sw_mod.Sammelwartung.anlagenwartungen_anlegen(doc)
+
+		self.assertEqual(ergebnis, {"erstellt": [], "uebersprungen": 1})
+		self.assertEqual(position.anlagenwartung, "AW-00001")
+		self.assertEqual(position.status, "Beauftragt")
+		get_doc.assert_not_called()

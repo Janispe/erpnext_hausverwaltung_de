@@ -4,7 +4,13 @@ from hausverwaltung.hausverwaltung.utils.income_accounts import get_hv_income_ac
 
 
 MISC_TENANT_ITEM_CODE = "Guthaben/Nachzahlungen"
-ITEM_CODES = ("Miete", "Betriebskosten", "Heizkosten", MISC_TENANT_ITEM_CODE)
+ITEM_CODES = (
+	"Miete",
+	"Betriebskosten",
+	"Heizkosten",
+	"Untermietzuschlag",
+	MISC_TENANT_ITEM_CODE,
+)
 DUNNING_FEE_ITEM_CODE = "Mahngebuehr"
 
 

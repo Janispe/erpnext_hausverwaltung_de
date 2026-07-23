@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import datetime
 import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
+import frappe
+
+from hausverwaltung.hausverwaltung.doctype.wartungsplan import wartungsplan as wp_mod
 from hausverwaltung.hausverwaltung.doctype.wartungsplan.wartungsplan import (
+	Wartungsplan,
 	add_wartungsintervall,
 	berechne_faelligkeitsstatus,
 )
@@ -49,3 +55,73 @@ class TestFaelligkeitsstatus(unittest.TestCase):
 			berechne_faelligkeitsstatus("Aktiv", "2026-04-01", 30, heute="2026-01-02"),
 			"Geplant",
 		)
+
+
+class TestIntervallAenderung(unittest.TestCase):
+	def _plan(self, **overrides):
+		values = {
+			"name": "WP-00001",
+			"status": "Aktiv",
+			"erste_faelligkeit": "2026-03-01",
+			"letzte_durchfuehrung": "2026-03-12",
+			"naechste_faelligkeit": "2027-03-12",
+			"intervall_anzahl": 6,
+			"intervall_einheit": "Monate",
+			"terminberechnung": "Ab Durchführung",
+			"erinnerung_vorlauf_tage": 30,
+		}
+		values.update(overrides)
+		doc = SimpleNamespace(**values)
+		doc.get = lambda key, default=None: getattr(doc, key, default)
+		doc._apply_anlagenart_defaults = MagicMock()
+		doc._validate_intervall = MagicMock()
+		doc._set_naechste_faelligkeit_from_latest_maintenance = lambda: (
+			Wartungsplan._set_naechste_faelligkeit_from_latest_maintenance(doc)
+		)
+		return doc
+
+	def test_validate_recalculates_next_date_with_changed_interval(self):
+		doc = self._plan()
+		letzte = frappe._dict(
+			name="AW-00001",
+			durchgefuehrt_am="2026-03-12",
+			soll_termin="2026-03-01",
+			naechster_termin=None,
+		)
+
+		with (
+			patch.object(wp_mod.frappe, "get_all", return_value=[letzte]) as get_all,
+			patch.object(wp_mod, "berechne_faelligkeitsstatus", return_value="Geplant"),
+		):
+			Wartungsplan.validate(doc)
+
+		self.assertEqual(doc.naechste_faelligkeit, datetime.date(2026, 9, 12))
+		self.assertEqual(doc.faelligkeitsstatus, "Geplant")
+		get_all.assert_called_once_with(
+			"Anlagenwartung",
+			filters={
+				"wartungsplan": "WP-00001",
+				"docstatus": 1,
+				"status": "Durchgeführt",
+			},
+			fields=["name", "durchgefuehrt_am", "soll_termin", "naechster_termin"],
+			order_by="durchgefuehrt_am desc, name desc",
+			limit_page_length=1,
+		)
+
+	def test_explicit_next_date_still_overrides_changed_interval(self):
+		doc = self._plan()
+		letzte = frappe._dict(
+			name="AW-00001",
+			durchgefuehrt_am="2026-03-12",
+			soll_termin="2026-03-01",
+			naechster_termin="2027-01-15",
+		)
+
+		with (
+			patch.object(wp_mod.frappe, "get_all", return_value=[letzte]),
+			patch.object(wp_mod, "berechne_faelligkeitsstatus", return_value="Geplant"),
+		):
+			Wartungsplan.validate(doc)
+
+		self.assertEqual(doc.naechste_faelligkeit, datetime.date(2027, 1, 15))
