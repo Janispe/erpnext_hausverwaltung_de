@@ -580,7 +580,21 @@ def _korrektur_storno(si, ctx: dict, pes: list[str], *, rebook_payments: bool = 
 		# Das Submitten/Zuordnen eines PE aktualisiert die SI in der Datenbank.
 		# Neu laden verhindert einen TimestampMismatch beim anschließenden Storno.
 		si.reload()
-	si.cancel()
+	# ERPNext meldet beim Storno bezahlter Rechnungen vorübergehend
+	# "Payment Entries ... are un-linked". In diesem Ablauf ist das nur der
+	# erwartete Zwischenschritt vor der optionalen direkten Neuzuordnung und wirkt
+	# im abschließenden Ergebnisdialog fälschlich wie ein Fehler. Fachliche
+	# Exceptions werden durch ``mute_messages`` weiterhin ausgelöst.
+	had_mute_messages_flag = "mute_messages" in frappe.flags
+	previous_mute_messages_flag = frappe.flags.get("mute_messages")
+	frappe.flags.mute_messages = True
+	try:
+		si.cancel()
+	finally:
+		if had_mute_messages_flag:
+			frappe.flags.mute_messages = previous_mute_messages_flag
+		else:
+			frappe.flags.pop("mute_messages", None)
 
 	# 2) Korrigierte Rechnung neu erzeugen. Der Korrekturpfad erzeugt gezielt nur
 	#    den betroffenen Typ; Draft-Dubletten dürfen den Ersatz für die stornierte

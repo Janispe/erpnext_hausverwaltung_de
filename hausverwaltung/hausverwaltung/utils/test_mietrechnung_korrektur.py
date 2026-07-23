@@ -204,6 +204,41 @@ class TestBulkDialogVersion(unittest.TestCase):
 
 
 class TestKorrekturStorno(unittest.TestCase):
+	def test_suppresses_transient_unlink_message_and_restores_flag(self):
+		si = DummySalesInvoice()
+		had_flag = "mute_messages" in frappe.flags
+		previous_flag = frappe.flags.get("mute_messages")
+		frappe.flags.mute_messages = "vorheriger-wert"
+		mute_values_during_cancel = []
+
+		def restore_original_flag():
+			if had_flag:
+				frappe.flags.mute_messages = previous_flag
+			else:
+				frappe.flags.pop("mute_messages", None)
+
+		self.addCleanup(restore_original_flag)
+
+		def cancel():
+			mute_values_during_cancel.append(frappe.flags.mute_messages)
+			si.cancelled = True
+
+		si.cancel = cancel
+		with (
+			patch(
+				"hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen.generate_miet_und_bk_rechnungen",
+				return_value={"created": {"Betriebskosten": 1}, "durchlauf": "DL-1"},
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._find_generated_invoice",
+				return_value="SINV-NEW",
+			),
+		):
+			_korrektur_storno(si, _correction_context(), [])
+
+		self.assertEqual(mute_values_during_cancel, [True])
+		self.assertEqual(frappe.flags.mute_messages, "vorheriger-wert")
+
 	def test_finds_replacement_from_generator_run_instead_of_visible_remarks(self):
 		gen = {"durchlauf": "DL-1"}
 		with (
