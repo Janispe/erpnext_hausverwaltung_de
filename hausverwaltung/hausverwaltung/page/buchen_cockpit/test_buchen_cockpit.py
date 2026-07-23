@@ -136,6 +136,11 @@ class TestBuchenCockpit(unittest.TestCase):
 			 patch.object(cockpit, "_derive_cost_center_from_mietvertrag", return_value="CC-HV"), \
 			 patch.object(cockpit, "_has_field", return_value=True), \
 			 patch.object(cockpit, "ensure_rent_items") as ensure_rent_items, \
+			 patch.object(cockpit, "get_hv_income_accounts", return_value={
+				 "Miete": "8100 - Miete - HV",
+				 "Betriebskosten": "8110 - BK - HV",
+				 "Heizkosten": "8120 - HK - HV",
+			 }), \
 			 patch.object(cockpit.frappe, "msgprint"):
 			result = cockpit.create_sales_invoice(
 				mietvertrag="MV-1",
@@ -180,6 +185,11 @@ class TestBuchenCockpit(unittest.TestCase):
 			 patch.object(cockpit, "_derive_cost_center_from_mietvertrag", return_value="CC-HV"), \
 			 patch.object(cockpit, "_has_field", return_value=True), \
 			 patch.object(cockpit, "ensure_rent_items"), \
+			 patch.object(cockpit, "get_hv_income_accounts", return_value={
+				 "Miete": "8100 - Miete - HV",
+				 "Betriebskosten": "8110 - BK - HV",
+				 "Heizkosten": "8120 - HK - HV",
+			 }), \
 			 patch.object(cockpit.frappe, "msgprint"):
 			result = cockpit.create_sales_invoice(
 				mietvertrag="MV-1",
@@ -195,6 +205,45 @@ class TestBuchenCockpit(unittest.TestCase):
 		self.assertEqual(invoice.items[0]["qty"], -1)
 		self.assertEqual(invoice.items[0]["rate"], 42.5)
 		self.assertTrue(invoice.submit_called)
+
+	def test_create_sales_invoice_derives_rent_items_from_configured_income_accounts(self):
+		invoice = _FakeInvoice()
+		income_accounts = {
+			"Miete": "8100 - Miete - HV",
+			"Betriebskosten": "8110 - BK - HV",
+			"Heizkosten": "8120 - HK - HV",
+		}
+
+		def db_get_value(doctype, name, fields=None, as_dict=False):
+			if doctype == "Mietvertrag":
+				return frappe._dict(kunde="MIETER-1", wohnung="WHG-1")
+			if doctype == "Company" and fields == "default_income_account":
+				return "8400 - Sonstige Erlöse - HV"
+			return None
+
+		with patch.object(cockpit.frappe, "new_doc", return_value=invoice), \
+			 patch.object(cockpit.frappe.db, "get_value", side_effect=db_get_value), \
+			 patch.object(cockpit, "_derive_company_from_mietvertrag", return_value="Hausverwaltung Peters"), \
+			 patch.object(cockpit, "_derive_cost_center_from_mietvertrag", return_value="CC-HV"), \
+			 patch.object(cockpit, "_has_field", return_value=True), \
+			 patch.object(cockpit, "ensure_rent_items"), \
+			 patch.object(cockpit, "get_hv_income_accounts", return_value=income_accounts), \
+			 patch.object(cockpit.frappe, "msgprint"):
+			cockpit.create_sales_invoice(
+				mietvertrag="MV-1",
+				positionen=[
+					{"betrag": 500, "erloeskonto": income_accounts["Miete"]},
+					{"betrag": 120, "erloeskonto": income_accounts["Betriebskosten"]},
+					{"betrag": 80, "erloeskonto": income_accounts["Heizkosten"]},
+					{"betrag": 25, "erloeskonto": "8400 - Sonstige Erlöse - HV"},
+				],
+				submit_doc=1,
+			)
+
+		self.assertEqual(
+			[item["item_code"] for item in invoice.items],
+			["Miete", "Betriebskosten", "Heizkosten", "Guthaben/Nachzahlungen"],
+		)
 
 	def test_create_sales_invoice_rejects_mixed_claim_and_credit_rows(self):
 		with patch.object(cockpit.frappe.db, "get_value", return_value=frappe._dict(kunde="MIETER-1", wohnung="WHG-1")), \

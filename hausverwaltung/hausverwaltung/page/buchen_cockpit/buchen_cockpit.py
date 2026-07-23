@@ -14,6 +14,7 @@ import frappe
 from frappe.utils import add_days, cstr, flt, getdate, nowdate
 
 from hausverwaltung.hausverwaltung.utils.buchung import ensure_default_service_item
+from hausverwaltung.hausverwaltung.utils.income_accounts import get_hv_income_accounts
 from hausverwaltung.hausverwaltung.utils.rent_items import (
     MISC_TENANT_ITEM_CODE,
     ensure_rent_items,
@@ -84,6 +85,17 @@ def _normalize_sales_invoice_user_remark(raw: Any) -> str:
         return ""
 
     return remark
+
+
+def _rent_item_for_income_account(
+    income_account: str | None,
+    income_accounts: dict[str, str],
+) -> str:
+    """Map configured rent income accounts to Mieterkonto-compatible items."""
+    for item_code in ("Miete", "Betriebskosten", "Heizkosten"):
+        if income_account and income_account == income_accounts.get(item_code):
+            return item_code
+    return MISC_TENANT_ITEM_CODE
 
 
 def _resolve_kostenart_name(raw_name: str) -> tuple[str, str] | None:
@@ -1010,7 +1022,7 @@ def create_sales_invoice(**kwargs) -> dict:
     is_credit_note = has_negative_amount
 
     ensure_rent_items(company=company)
-    default_item_code = MISC_TENANT_ITEM_CODE
+    hv_income_accounts = get_hv_income_accounts(company)
     default_cost_center = (
         _derive_cost_center_from_mietvertrag(mietvertrag)
         or frappe.db.get_value("Company", company, "cost_center")
@@ -1026,7 +1038,11 @@ def create_sales_invoice(**kwargs) -> dict:
     position_descriptions: list[str] = []
     for idx, (r, amount) in enumerate(zip(rows, amounts), start=1):
 
-        item_code = r.get("artikel") or default_item_code
+        income_account = r.get("erloeskonto") or default_income_account
+        item_code = r.get("artikel") or _rent_item_for_income_account(
+            income_account,
+            hv_income_accounts,
+        )
         beschreibung = (r.get("beschreibung") or "").strip()
         desc = beschreibung or kwargs.get("rechnungsname") or kwargs.get("referenz") or "Sonstige Leistung"
         if beschreibung:
@@ -1044,7 +1060,6 @@ def create_sales_invoice(**kwargs) -> dict:
             "cost_center": default_cost_center,
         }
 
-        income_account = r.get("erloeskonto") or default_income_account
         if income_account:
             item_row["income_account"] = income_account
         elif not default_income_account:
