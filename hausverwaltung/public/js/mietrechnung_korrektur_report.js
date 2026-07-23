@@ -73,10 +73,10 @@ window.hausverwaltung.korrektur = {
 				{
 					fieldtype: "Check",
 					fieldname: "rebook_payments",
-					label: __("Bestehende Zahlungen direkt den neuen Sollstellungen zuordnen"),
-					default: opts.rebook_payments_default ? 1 : 0,
+					label: __("Bestehende Zahlungen direkt neu zuordnen (empfohlen)"),
+					default: opts.rebook_payments_default === false ? 0 : 1,
 					description: __(
-						"Die Zahlungsbuchungen und ihre Bankverknüpfungen bleiben unverändert bestehen. Ist die Zahlung höher, bleibt der Rest als offenes Guthaben stehen; ist sie niedriger, bleibt die neue Sollstellung teilweise offen."
+						"Aktiviert: Die bisherigen Zahlungsanteile werden direkt auf die ausgewählten neuen Sollstellungen übernommen. Deaktiviert: Die Zahlungsbuchungen und Bankverknüpfungen bleiben bestehen, der gelöste Betrag bleibt jedoch als offenes Guthaben unzugeordnet. Ist die Zahlung niedriger als die neue Sollstellung, bleibt nur die Differenz offen."
 					),
 				},
 			],
