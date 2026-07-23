@@ -347,11 +347,18 @@ function openMieterkontoPrintDialog(data, options = {}) {
         label: __("Beleg-Spalte mitdrucken"),
         default: 1,
       },
+      {
+        fieldtype: "Check",
+        fieldname: "showBankAccount",
+        label: __("Bankkonto mitdrucken"),
+        default: 1,
+      },
     ],
     (values) => openMieterkontoPrintWindow(data, {
       ...options,
       showOpeningRow: !!values.showOpeningRow,
       showVoucherColumn: !!values.showVoucherColumn,
+      showBankAccount: !!values.showBankAccount,
     }),
     __("PDF-Einstellungen"),
     __("PDF öffnen"),
@@ -386,6 +393,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
   const sortByWertstellung = !!options.sortByWertstellung;
   const showOpeningRow = options.showOpeningRow !== false;
   const showVoucherColumn = options.showVoucherColumn !== false;
+  const showBankAccount = options.showBankAccount !== false;
   const txRows = (rows || []).filter((row) => showOpeningRow || !row.is_opening_row);
   const kontostand = getSummaryItem(summary, "Kontostand");
   const bezahlt = getSummaryItem(summary, "Bezahlt im Zeitraum");
@@ -687,7 +695,7 @@ function buildMieterkontoPrintHtml(data, options = {}) {
           <div><span class="label">Vertrag seit</span><span class="value">${esc(fmtDate(mieter.vertrag_seit)) || "—"}</span></div>
           <div><span class="label">Sollmiete aktuell</span><span class="value">${esc(fmtEUR(mieter.sollmiete_aktuell)) || "—"}</span></div>
           <div><span class="label">Firma</span><span class="value">${esc(mieter.firma || filters.company || "—")}</span></div>
-          <div><span class="label">Bankkonto</span><span class="value">${esc(mieter.iban_verwendung || "—")}</span></div>
+          ${showBankAccount ? `<div><span class="label">Bankkonto</span><span class="value">${esc(mieter.iban_verwendung || "—")}</span></div>` : ""}
         </div>
       </div>
       <div class="period">
