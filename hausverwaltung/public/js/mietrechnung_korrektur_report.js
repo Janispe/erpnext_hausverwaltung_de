@@ -5,6 +5,32 @@
 
 window.hausverwaltung = window.hausverwaltung || {};
 window.hausverwaltung.korrektur = {
+	run_for_mietvertrag(mietvertrag, opts = {}) {
+		frappe.call({
+			method:
+				"hausverwaltung.hausverwaltung.scripts.check_mietrechnungen.get_korrigierbare_sollstellungen_fuer_mietvertrag",
+			args: {
+				mietvertrag,
+				scope: opts.scope ? JSON.stringify(opts.scope) : undefined,
+			},
+			freeze: true,
+			freeze_message: __("Prüfe Sollstellungen..."),
+			callback: (r) => {
+				if (r.exc || !r.message) return;
+				if (opts.frm && window.cur_frm && window.cur_frm !== opts.frm) return;
+				const invoices = r.message.sales_invoices || [];
+				if (!invoices.length) {
+					frappe.msgprint(__("Keine korrigierbaren Abweichungen gefunden."));
+					return;
+				}
+				window.hausverwaltung.korrektur.run_bulk(invoices, {
+					...opts,
+					changes: r.message.aenderungen || [],
+				});
+			},
+		});
+	},
+
 	// Report-Button: korrigiert alle FALSCHE_SUMME-Zeilen des aktuellen Reports.
 	attach_to_report(report) {
 		report.page.add_inner_button(__("Abweichungen korrigieren"), () => {
@@ -36,12 +62,13 @@ window.hausverwaltung.korrektur = {
 				"{0} Rechnung(en) werden storniert und aus der aktuellen Staffelmiete neu erzeugt. Bestehende Zahlungsbuchungen bleiben erhalten und können unten direkt neu zugeordnet werden; festgeschriebene Rechnungen werden per Gutschrift korrigiert.",
 				[sis.length]
 			);
+		const changes = render_changes(opts.changes || []);
 		const dialog = new frappe.ui.Dialog({
 			title: __("Sollstellungen korrigieren"),
 			fields: [
 				{
 					fieldtype: "HTML",
-					options: `<p>${frappe.utils.escape_html(message)}</p>`,
+					options: `<p>${frappe.utils.escape_html(message)}</p>${changes}`,
 				},
 				{
 					fieldtype: "Check",
@@ -55,15 +82,25 @@ window.hausverwaltung.korrektur = {
 			],
 			primary_action_label: __("Korrigieren"),
 			primary_action(values) {
+				const selected_invoices = opts.changes?.length
+					? dialog.$wrapper
+							.find(".hv-sollstellung-select:checked")
+							.map((_index, checkbox) => checkbox.dataset.invoice)
+							.get()
+					: sis;
+				if (!selected_invoices.length) {
+					frappe.msgprint(__("Bitte mindestens eine Sollstellung auswählen."));
+					return;
+				}
 				dialog.hide();
 				frappe.call({
 					method: "hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur.korrigiere_mietrechnungen_bulk",
 					args: {
-						sales_invoices: JSON.stringify(sis),
+						sales_invoices: JSON.stringify(selected_invoices),
 						rebook_payments: values.rebook_payments ? 1 : 0,
 					},
 					freeze: true,
-					freeze_message: __("Korrigiere {0} Rechnung(en)…", [sis.length]),
+					freeze_message: __("Korrigiere {0} Rechnung(en)…", [selected_invoices.length]),
 					callback: (r) => {
 						if (r.exc || !r.message) return;
 						const m = r.message;
@@ -85,8 +122,85 @@ window.hausverwaltung.korrektur = {
 			},
 		});
 		dialog.show();
+		if (opts.changes?.length) setup_change_selection(dialog, opts.changes.length);
 	},
 };
+
+function render_changes(changes) {
+	if (!changes.length) return "";
+	const esc = (value) => frappe.utils.escape_html(String(value ?? ""));
+	const money = (value) =>
+		Number(value || 0).toLocaleString("de-DE", {
+			minimumFractionDigits: 2,
+			maximumFractionDigits: 2,
+		}) + " €";
+	const month_key = (value) => {
+		const [month, year] = String(value || "").split("/");
+		return `${year || ""}-${String(month || "").padStart(2, "0")}`;
+	};
+	const rows = [...changes]
+		.sort((a, b) =>
+			`${month_key(a.monat)}|${a.typ}`.localeCompare(`${month_key(b.monat)}|${b.typ}`)
+		)
+		.map((change) => {
+			const current = Number(change.aktuell || 0);
+			const expected = Number(change.erwartet || 0);
+			const difference = expected - current;
+			const signedDifference = `${difference > 0 ? "+" : ""}${money(difference)}`;
+			return `<tr>
+				<td><input type="checkbox" class="hv-sollstellung-select" data-invoice="${esc(
+					change.sales_invoice
+				)}" checked aria-label="${esc(__("Sollstellung auswählen"))}: ${esc(
+					change.sales_invoice
+				)}"></td>
+				<td>${esc(change.monat)}</td>
+				<td>${esc(change.typ)}</td>
+				<td><a href="/app/sales-invoice/${encodeURIComponent(
+					change.sales_invoice
+				)}" target="_blank">${esc(change.sales_invoice)}</a></td>
+				<td class="text-right">${money(current)}</td>
+				<td class="text-right"><strong>${money(expected)}</strong></td>
+				<td class="text-right">${signedDifference}</td>
+			</tr>`;
+		})
+		.join("");
+	return `<div class="table-responsive mt-3" style="max-height:360px;overflow:auto">
+		<table class="table table-bordered table-sm">
+			<thead><tr>
+				<th><input type="checkbox" class="hv-sollstellung-select-all" checked aria-label="${esc(__(
+					"Alle Sollstellungen auswählen"
+				))}"></th>
+				<th>${__("Monat")}</th>
+				<th>${__("Art")}</th>
+				<th>${__("Sollstellung")}</th>
+				<th class="text-right">${__("Bisher")}</th>
+				<th class="text-right">${__("Neu")}</th>
+				<th class="text-right">${__("Änderung")}</th>
+			</tr></thead>
+			<tbody>${rows}</tbody>
+		</table>
+		<p class="text-muted small">${__("Ausgewählt")}: <span class="hv-sollstellung-selected-count">${
+		changes.length
+	}</span> / ${changes.length}</p>
+	</div>`;
+}
+
+function setup_change_selection(dialog, total) {
+	const select_all = dialog.$wrapper.find(".hv-sollstellung-select-all");
+	const selections = dialog.$wrapper.find(".hv-sollstellung-select");
+	const update_state = () => {
+		const selected = selections.filter(":checked").length;
+		select_all.prop("checked", selected === total);
+		select_all.prop("indeterminate", selected > 0 && selected < total);
+		dialog.$wrapper.find(".hv-sollstellung-selected-count").text(selected);
+	};
+	select_all.on("change", () => {
+		selections.prop("checked", select_all.prop("checked"));
+		update_state();
+	});
+	selections.on("change", update_state);
+	update_state();
+}
 
 function render_payment_rebooking(m) {
 	const rows = (m.ergebnisse || []).flatMap((e) => e.zahlungsuebernahmen || []);

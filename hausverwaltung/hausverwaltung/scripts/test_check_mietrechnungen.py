@@ -16,6 +16,8 @@ class TestKorrigierbareSollstellungenFuerMietvertrag(unittest.TestCase):
 							"monat": "04/2026",
 							"typ": "Miete",
 							"feld": "betrag",
+							"aktuell": 620,
+							"erwartet": 700,
 						}
 					],
 					"ueberfluessig": [],
@@ -28,6 +30,8 @@ class TestKorrigierbareSollstellungenFuerMietvertrag(unittest.TestCase):
 							"monat": "05/2026",
 							"typ": "Miete",
 							"feld": "betrag",
+							"aktuell": 620,
+							"erwartet": 700,
 						},
 						{
 							"sales_invoice": "SINV-BK-MAI",
@@ -67,6 +71,18 @@ class TestKorrigierbareSollstellungenFuerMietvertrag(unittest.TestCase):
 
 		self.assertEqual(actual["sales_invoices"], ["SINV-MIETE-MAI"])
 		self.assertEqual(actual["monate"], ["05/2026"])
+		self.assertEqual(
+			actual["aenderungen"],
+			[
+				{
+					"sales_invoice": "SINV-MIETE-MAI",
+					"monat": "05/2026",
+					"typ": "Miete",
+					"aktuell": 620,
+					"erwartet": 700,
+				}
+			],
+		)
 		get_all.assert_called_once_with(
 			"Sales Invoice",
 			filters={
@@ -88,6 +104,7 @@ class TestKorrigierbareSollstellungenFuerMietvertrag(unittest.TestCase):
 							"sales_invoice": "SINV-UMZ-JUL",
 							"monat": "07/2026",
 							"typ": "Untermietzuschlag",
+							"aktuell_betrag": 50,
 						}
 					],
 				}
@@ -107,3 +124,5 @@ class TestKorrigierbareSollstellungenFuerMietvertrag(unittest.TestCase):
 
 		self.assertEqual(actual["sales_invoices"], ["SINV-UMZ-JUL"])
 		self.assertEqual(actual["monate"], ["07/2026"])
+		self.assertEqual(actual["aenderungen"][0]["aktuell"], 50)
+		self.assertEqual(actual["aenderungen"][0]["erwartet"], 0)

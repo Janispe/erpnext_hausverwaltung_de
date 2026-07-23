@@ -507,7 +507,7 @@ def get_korrigierbare_sollstellungen_fuer_mietvertrag(
 		for row in month_result.get("ueberfluessig") or []:
 			candidates.append(row)
 
-	filtered: list[tuple[str, str]] = []
+	filtered: list[dict] = []
 	for row in candidates:
 		invoice = row.get("sales_invoice")
 		month_label = row.get("monat")
@@ -519,9 +519,9 @@ def get_korrigierbare_sollstellungen_fuer_mietvertrag(
 		month, year = (int(value) for value in month_label.split("/", 1))
 		if typ in normalized_scope and date(year, month, 1) < normalized_scope[typ]:
 			continue
-		filtered.append((invoice, month_label))
+		filtered.append(row)
 
-	invoice_names = list(dict.fromkeys(invoice for invoice, _month in filtered))
+	invoice_names = list(dict.fromkeys(row["sales_invoice"] for row in filtered))
 	if invoice_names:
 		submitted = set(
 			frappe.get_all(
@@ -533,10 +533,22 @@ def get_korrigierbare_sollstellungen_fuer_mietvertrag(
 		invoice_names = [name for name in invoice_names if name in submitted]
 
 	invoice_set = set(invoice_names)
-	months = list(dict.fromkeys(month for invoice, month in filtered if invoice in invoice_set))
+	filtered = [row for row in filtered if row["sales_invoice"] in invoice_set]
+	months = list(dict.fromkeys(row["monat"] for row in filtered))
+	changes = [
+		{
+			"sales_invoice": row["sales_invoice"],
+			"monat": row["monat"],
+			"typ": row.get("typ"),
+			"aktuell": row.get("aktuell", row.get("aktuell_betrag", 0)),
+			"erwartet": row.get("erwartet", 0),
+		}
+		for row in filtered
+	]
 	return {
 		"mietvertrag": mietvertrag,
 		"sales_invoices": invoice_names,
 		"monate": months,
 		"anzahl": len(invoice_names),
+		"aenderungen": changes,
 	}

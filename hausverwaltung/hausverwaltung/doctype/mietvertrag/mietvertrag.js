@@ -92,19 +92,9 @@ frappe.ui.form.on("Mietvertrag", {
 
 		if (!frm.is_new()) {
 			frm.add_custom_button(__("Sollstellungen prüfen"), () => {
-				frappe.require("/assets/hausverwaltung/js/sollstellung_check.js", () => {
-					frappe.call({
-						method:
-							"hausverwaltung.hausverwaltung.scripts.check_mietrechnungen.pruefe_mietvertrag",
-						args: { mietvertrag: frm.doc.name },
-						freeze: true,
-						freeze_message: __("Prüfe Sollstellungen..."),
-						callback: (r) => {
-							if (r.exc || !r.message) return;
-							window.hausverwaltung.sollstellung_check.show_mietvertrag(r.message, {
-								title_suffix: frm.doc.name,
-							});
-						},
+				frappe.require("/assets/hausverwaltung/js/mietrechnung_korrektur_report.js", () => {
+					window.hausverwaltung?.korrektur?.run_for_mietvertrag(frm.doc.name, {
+						frm,
 					});
 				});
 			});
@@ -226,30 +216,11 @@ function get_changed_staffel_scope(before, after) {
 }
 
 function prompt_for_existing_sollstellung_corrections(frm, scope) {
-	frappe.call({
-		method:
-			"hausverwaltung.hausverwaltung.scripts.check_mietrechnungen.get_korrigierbare_sollstellungen_fuer_mietvertrag",
-		args: {
-			mietvertrag: frm.doc.name,
-			scope: JSON.stringify(scope),
-		},
-		callback: (r) => {
-			if (r.exc || !r.message) return;
-			if (window.cur_frm && window.cur_frm !== frm) return;
-			const invoices = r.message.sales_invoices || [];
-			if (!invoices.length) return;
-
-			const months = (r.message.monate || []).join(", ");
-			const message = __(
-				"Die Mietstaffel wurde geändert. Für {0} bereits gebuchte Sollstellung(en) in {1} weicht der Betrag nun vom Mietvertrag ab. Sollen diese jetzt korrigiert werden? Im nächsten Dialog können bestehende Zahlungen direkt neu zugeordnet werden; die Zahlungsbuchungen bleiben erhalten. Geschlossene Perioden werden per Gutschrift korrigiert.",
-				[invoices.length, months || __("dem betroffenen Zeitraum")]
-			);
-			frappe.require("/assets/hausverwaltung/js/mietrechnung_korrektur_report.js", () => {
-				window.hausverwaltung?.korrektur?.run_bulk(invoices, {
-					confirm_message: message,
-				});
-			});
-		},
+	frappe.require("/assets/hausverwaltung/js/mietrechnung_korrektur_report.js", () => {
+		window.hausverwaltung?.korrektur?.run_for_mietvertrag(frm.doc.name, {
+			frm,
+			scope,
+		});
 	});
 }
 
