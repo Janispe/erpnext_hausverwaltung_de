@@ -124,14 +124,59 @@ function open_print_dialog(report, as_pdf) {
 					report.columns?.some((column) => column.fieldname === fieldname)
 				);
 			}
-			if (as_pdf) {
-				report.pdf_report(print_settings);
-			} else {
-				report.print_report(print_settings);
+
+			if (!print_settings.mieterkonto_beleg_spalte) {
+				print_settings.columns = (print_settings.columns || []).filter(
+					(fieldname) => fieldname !== "belegnummer"
+				);
 			}
+
+			print_mieterkonto_with_options(report, print_settings, as_pdf);
 		},
 		report.report_doc?.letter_head,
 		report.get_visible_columns()
 	);
+	add_mieterkonto_print_option(dialog, {
+		fieldtype: "Check",
+		fieldname: "mieterkonto_anfangszeile",
+		label: __("Anfangsbestand-Zeile mitdrucken"),
+		default: 1,
+	});
+	add_mieterkonto_print_option(dialog, {
+		fieldtype: "Check",
+		fieldname: "mieterkonto_beleg_spalte",
+		label: __("Beleg-Spalte mitdrucken"),
+		default: 1,
+	});
 	report.add_portrait_warning?.(dialog);
+}
+
+function add_mieterkonto_print_option(dialog, field) {
+	// get_print_settings erzeugt und öffnet den Standarddialog bereits.
+	// Die beiden report-spezifischen Felder werden deshalb nachträglich
+	// an dessen aktuelles Layout angehängt.
+	dialog.fields.push(field);
+	dialog.make_field(field, undefined, true);
+	dialog.get_field(field.fieldname)?.set_value(field.default);
+}
+
+function print_mieterkonto_with_options(report, print_settings, as_pdf) {
+	const get_data_for_print = report.get_data_for_print;
+	report.get_data_for_print = function () {
+		const rows = get_data_for_print.call(report);
+		if (print_settings.mieterkonto_anfangszeile) {
+			return rows;
+		}
+		return rows.filter((row) => !row?.is_opening_row);
+	};
+
+	try {
+		if (as_pdf) {
+			report.pdf_report(print_settings);
+		} else {
+			report.print_report(print_settings);
+		}
+	} finally {
+		report.get_data_for_print = get_data_for_print;
+	}
 }
