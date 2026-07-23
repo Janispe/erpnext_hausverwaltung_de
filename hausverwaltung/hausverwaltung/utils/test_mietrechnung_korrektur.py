@@ -10,6 +10,7 @@ from hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur import (
 	_reconcile_bulk_payment_pool,
 	_reconcile_existing_payment,
 	_si_context,
+	korrigiere_mietrechnungen_bulk,
 )
 
 
@@ -94,6 +95,25 @@ def _correction_context():
 		"jahr": 2026,
 		"monat_str": "05/2026",
 	}
+
+
+class TestBulkDialogVersion(unittest.TestCase):
+	def test_rejects_stale_dialog_before_processing_invoices(self):
+		with patch(
+			"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur.frappe.throw",
+			side_effect=RuntimeError("stale dialog"),
+		) as throw:
+			with self.assertRaisesRegex(RuntimeError, "stale dialog"):
+				korrigiere_mietrechnungen_bulk(["SINV-MUST-NOT-BE-TOUCHED"], dialog_version=1)
+
+		throw.assert_called_once()
+
+	def test_accepts_current_dialog_version(self):
+		result = korrigiere_mietrechnungen_bulk([], rebook_payments=1, dialog_version=2)
+
+		self.assertEqual(result["total"], 0)
+		self.assertEqual(result["ok"], 0)
+		self.assertEqual(result["fehler"], 0)
 
 
 class TestKorrekturStorno(unittest.TestCase):

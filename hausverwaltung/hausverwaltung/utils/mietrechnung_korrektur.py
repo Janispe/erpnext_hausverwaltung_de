@@ -34,7 +34,9 @@ from datetime import date
 
 import frappe
 from frappe import _
-from frappe.utils import flt, getdate, today
+from frappe.utils import cint, flt, getdate, today
+
+_CORRECTION_DIALOG_VERSION = 2
 
 # Item-Code == Typ-Bezeichnung (so legt der Generator die Rechnungen an).
 _TYP_BY_ITEM = {
@@ -325,13 +327,26 @@ def korrigiere_mietrechnung(
 
 
 @frappe.whitelist()
-def korrigiere_mietrechnungen_bulk(sales_invoices, rebook_payments: int | str = 0) -> dict:
+def korrigiere_mietrechnungen_bulk(
+	sales_invoices,
+	rebook_payments: int | str = 0,
+	dialog_version: int | str | None = None,
+) -> dict:
 	"""Korrigiert mehrere Mietrechnungen nacheinander.
 
 	Jede SI wird in einem eigenen Savepoint verarbeitet — ein Fehler bei einer
 	Rechnung (z.B. festgeschrieben + Journal-Entry-Verknüpfung) kippt die anderen
 	nicht. ``sales_invoices`` ist eine Liste oder ein JSON-String von SI-Namen.
+	Die Dialog-Version verhindert, dass ein noch im Browser gecachter alter Dialog
+	eine Korrektur mit veralteter Zahlungsoption startet.
 	"""
+	if cint(dialog_version) != _CORRECTION_DIALOG_VERSION:
+		frappe.throw(
+			_(
+				"Der Korrekturdialog ist veraltet. Bitte die Seite mit Strg+Umschalt+R "
+				"neu laden und die Korrektur erneut öffnen. Es wurde nichts geändert."
+			)
+		)
 	if isinstance(sales_invoices, str):
 		sales_invoices = json.loads(sales_invoices)
 	rebook = bool(int(rebook_payments or 0))

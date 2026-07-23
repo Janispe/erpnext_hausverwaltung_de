@@ -98,6 +98,7 @@ window.hausverwaltung.korrektur = {
 					args: {
 						sales_invoices: JSON.stringify(selected_invoices),
 						rebook_payments: values.rebook_payments ? 1 : 0,
+						dialog_version: 2,
 					},
 					freeze: true,
 					freeze_message: __("Korrigiere {0} Rechnung(en)…", [selected_invoices.length]),
