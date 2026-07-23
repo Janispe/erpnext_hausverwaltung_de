@@ -375,6 +375,7 @@ function FilterBar({
   showCats, setShowCats,
   sortByWertstellung, setSortByWertstellung,
   openScope, setOpenScope,
+  balanceScope, setBalanceScope,
 }) {
   const Y = new Date().getFullYear();
   const today = frappe.datetime.get_today();
@@ -436,6 +437,17 @@ function FilterBar({
           onChange={(e) => setOpenScope(e.target.value)}
         >
           <option value="Zeitraum">Zeitraum</option>
+          <option value="Gesamt">Gesamt</option>
+        </select>
+      </span>
+      <span className="mk-filter">
+        <span className="mk-filter-label">Saldo</span>
+        <select
+          className="mk-field"
+          value={balanceScope}
+          onChange={(e) => setBalanceScope(e.target.value)}
+        >
+          <option value="Zeitraum">ab Zeitraum-Beginn</option>
           <option value="Gesamt">Gesamt</option>
         </select>
       </span>

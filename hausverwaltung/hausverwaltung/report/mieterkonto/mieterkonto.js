@@ -59,6 +59,14 @@ frappe.query_reports["Mieterkonto"] = {
 			default: "Zeitraum",
 			description: __("Zeitraum zeigt offene Beträge aus Von/Bis. Gesamt zeigt den Stand bis Bis inklusive Anfangsbestand."),
 		},
+		{
+			fieldname: "saldo_basis",
+			label: __("Saldo"),
+			fieldtype: "Select",
+			options: "Zeitraum\nGesamt",
+			default: "Gesamt",
+			description: __("Zeitraum startet den Saldo am Von-Datum bei 0. Gesamt berücksichtigt den Anfangsbestand."),
+		},
 	],
 
 	onload: function (report) {

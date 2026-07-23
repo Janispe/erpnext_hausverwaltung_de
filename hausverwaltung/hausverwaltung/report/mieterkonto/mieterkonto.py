@@ -146,6 +146,7 @@ def _apply_defaults(filters):
 		filters.get("sortieren_nach_wertstellungsdatum", 0)
 	)
 	filters.offene_betraege_basis = filters.get("offene_betraege_basis") or "Zeitraum"
+	filters.saldo_basis = filters.get("saldo_basis") or "Gesamt"
 
 
 def _validate_filters(filters):
@@ -1185,6 +1186,8 @@ def _build_rows(transactions: list[dict[str, Any]], filters) -> tuple[list[dict[
 		# Erste in-period-Transaktion → Anfangsbestand davor einblenden
 		# (immer, auch bei Saldo 0 — die User wollen die Eröffnung als Anker sehen).
 		if not opening_added:
+			if _use_period_balance(filters):
+				balance = 0.0
 			rows.append(_opening_row(filters, balance, transaction.get("currency") or currency_seen))
 			opening_added = True
 
@@ -1200,6 +1203,8 @@ def _build_rows(transactions: list[dict[str, Any]], filters) -> tuple[list[dict[
 
 	# Gar keine Bewegung im Zeitraum, aber Vorperiode hat Saldo aufgebaut →
 	# trotzdem Eröffnung zeigen, damit der Bericht nicht leer wirkt.
+	if not opening_added and _use_period_balance(filters):
+		balance = 0.0
 	if not opening_added and abs(balance) > TOLERANCE:
 		rows.append(_opening_row(filters, balance, currency_seen or _get_currency(filters.company)))
 
@@ -1507,6 +1512,10 @@ def _get_report_summary(totals: dict[str, Any], filters) -> list[dict[str, Any]]
 
 def _use_period_open_totals(filters) -> bool:
 	return (filters.get("offene_betraege_basis") or "Zeitraum") != "Gesamt"
+
+
+def _use_period_balance(filters) -> bool:
+	return (filters.get("saldo_basis") or "Gesamt") == "Zeitraum"
 
 
 def _open_category_amount(totals: dict[str, Any], category: str) -> float:

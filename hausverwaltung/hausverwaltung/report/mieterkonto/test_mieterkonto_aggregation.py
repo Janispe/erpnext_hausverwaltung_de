@@ -91,6 +91,27 @@ def _filters(*, from_date: date, to_date: date, open_scope: str = "Zeitraum") ->
 	)
 
 
+def _balance_transaction(transaction_date: date, amount: float, name: str) -> dict:
+	return {
+		"date": transaction_date,
+		"art": "Forderung",
+		"belegart": "Sales Invoice",
+		"belegnummer": name,
+		"beschreibung": name,
+		"currency": "EUR",
+		"invoice_amounts": {cat: 0.0 for cat in CATEGORIES} | {"miete": amount},
+		"paid_amounts": {cat: 0.0 for cat in CATEGORIES},
+		"written_off_amounts": {cat: 0.0 for cat in CATEGORIES},
+		"delta": amount,
+		"offen": amount,
+	}
+
+
+def _standalone_flt(value, precision=None):
+	number = float(value or 0)
+	return round(number, precision) if precision is not None else number
+
+
 class TestGroupInvoices(TestCase):
 	def test_dunning_fee_invoice_stays_separate_from_monthly_rent(self):
 		mab = "MV-2026-001|07/2026"
@@ -123,6 +144,75 @@ class TestGroupInvoices(TestCase):
 		)
 
 		self.assertEqual(_summary_value(summary, "Miete offen (Gesamt)"), 700.0)
+
+	@patch(
+		"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._",
+		side_effect=lambda text: text,
+	)
+	def test_balance_defaults_to_total_including_opening_balance(self, _translate):
+		filters = _filters(from_date=date(2026, 6, 1), to_date=date(2026, 6, 30))
+		transactions = [
+			_balance_transaction(date(2026, 5, 1), 100.0, "SI-MAY"),
+			_balance_transaction(date(2026, 6, 1), 50.0, "SI-JUN"),
+		]
+
+		with patch(
+			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.flt",
+			side_effect=_standalone_flt,
+		):
+			rows, totals = _build_rows(transactions, filters)
+
+		opening = next(row for row in rows if row.get("is_opening_row"))
+		june = next(row for row in rows if row.get("belegnummer") == "SI-JUN")
+		self.assertEqual(opening["kontostand"], 100.0)
+		self.assertEqual(june["kontostand"], 150.0)
+		self.assertEqual(totals["all"]["balance"], 150.0)
+
+	@patch(
+		"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._",
+		side_effect=lambda text: text,
+	)
+	def test_period_balance_starts_at_zero_on_from_date(self, _translate):
+		filters = _filters(from_date=date(2026, 6, 1), to_date=date(2026, 6, 30))
+		filters["saldo_basis"] = "Zeitraum"
+		transactions = [
+			_balance_transaction(date(2026, 5, 1), 100.0, "SI-MAY"),
+			_balance_transaction(date(2026, 6, 1), 50.0, "SI-JUN"),
+		]
+
+		with patch(
+			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.flt",
+			side_effect=_standalone_flt,
+		):
+			rows, totals = _build_rows(transactions, filters)
+
+		opening = next(row for row in rows if row.get("is_opening_row"))
+		june = next(row for row in rows if row.get("belegnummer") == "SI-JUN")
+		total = next(row for row in rows if row.get("total_kind") == "paid")
+		self.assertEqual(opening["kontostand"], 0.0)
+		self.assertEqual(june["kontostand"], 50.0)
+		self.assertEqual(total["kontostand"], 50.0)
+		self.assertEqual(totals["all"]["balance"], 50.0)
+
+	@patch(
+		"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._",
+		side_effect=lambda text: text,
+	)
+	def test_period_balance_is_zero_without_period_transactions(self, _translate):
+		filters = _filters(from_date=date(2026, 6, 1), to_date=date(2026, 6, 30))
+		filters["saldo_basis"] = "Zeitraum"
+
+		with patch(
+			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.flt",
+			side_effect=_standalone_flt,
+		):
+			rows, totals = _build_rows(
+				[_balance_transaction(date(2026, 5, 1), 100.0, "SI-MAY")],
+				filters,
+			)
+
+		self.assertEqual(rows, [])
+		self.assertEqual(totals["all"]["balance"], 0.0)
 
 	def test_period_open_amounts_follow_invoice_date_not_payment_date(self):
 		filters = _filters(from_date=date(2026, 6, 1), to_date=date(2026, 6, 30))

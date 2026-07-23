@@ -47,8 +47,17 @@ function App() {
   const [customers, setCustomers] = useState(window.MK_CUSTOMERS || []);
   const [mieterSearching, setMieterSearching] = useState(false);
   const [openScope, setOpenScope] = useState(_init.offene_betraege_basis || "Zeitraum");
+  const [balanceScope, setBalanceScope] = useState(_init.saldo_basis || "Gesamt");
 
-  async function applyFilters(c, f, t, gruppierenOverride, openScopeOverride, sortByWertstellungOverride) {
+  async function applyFilters(
+    c,
+    f,
+    t,
+    gruppierenOverride,
+    openScopeOverride,
+    sortByWertstellungOverride,
+    balanceScopeOverride,
+  ) {
     const seq = ++loadSeq.current;
     setLoadingData(!!c);
     setLoadError("");
@@ -57,6 +66,7 @@ function App() {
         gruppieren: gruppierenOverride ?? gruppieren,
         openScope: openScopeOverride ?? openScope,
         sortByWertstellung: sortByWertstellungOverride ?? sortByWertstellung,
+        balanceScope: balanceScopeOverride ?? balanceScope,
       });
       if (seq === loadSeq.current) {
         setData(nextData || window.MIETERKONTO);
@@ -144,6 +154,10 @@ function App() {
     setOpenScope(v);
     applyFilters(customer, fromDate, toDate, undefined, v);
   };
+  const setBalanceScopeBoth = (v) => {
+    setBalanceScope(v);
+    applyFilters(customer, fromDate, toDate, undefined, undefined, undefined, v);
+  };
 
   const openLegacyReport = () => {
     if (!customer) {
@@ -164,6 +178,7 @@ function App() {
       gruppieren_pro_monat: gruppieren ? 1 : 0,
       sortieren_nach_wertstellungsdatum: sortByWertstellung ? 1 : 0,
       offene_betraege_basis: openScope,
+      saldo_basis: balanceScope,
     });
   };
 
@@ -277,6 +292,8 @@ function App() {
           setSortByWertstellung={setSortByWertstellungBoth}
           openScope={openScope}
           setOpenScope={setOpenScopeBoth}
+          balanceScope={balanceScope}
+          setBalanceScope={setBalanceScopeBoth}
         />
 
         {variant === "A" && (

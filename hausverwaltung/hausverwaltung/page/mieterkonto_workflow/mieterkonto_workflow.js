@@ -57,7 +57,7 @@ function render_mieterkonto_workflow(page_body) {
 
   // ─── Assets laden ──────────────────────────────────────────────────────
   const ASSET_BASE = "/assets/hausverwaltung/mieterkonto_workflow";
-  const ASSET_VERSION = "20260723-pdf-bank-option";
+  const ASSET_VERSION = "20260723-balance-scope";
   const versioned = (src) => `${src}?v=${ASSET_VERSION}`;
 
   const cssHref = versioned(`${ASSET_BASE}/styles.css`);
