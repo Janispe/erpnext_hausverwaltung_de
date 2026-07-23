@@ -26,8 +26,15 @@ frappe.ui.form.on("Mietvertrag", {
 			: get_changed_staffel_scope(frm.__hv_staffel_snapshot, get_staffel_snapshot(frm));
 	},
 	after_save(frm) {
-		const scope = frm.__hv_sollstellung_korrektur_scope;
-		frm.__hv_sollstellung_korrektur_scope = null;
+		// Frappe skips `before_save` for submitted documents saved via "Update".
+		// In that case, compare the snapshot here, before refreshing it.
+		const scope = Object.prototype.hasOwnProperty.call(
+			frm,
+			"__hv_sollstellung_korrektur_scope"
+		)
+			? frm.__hv_sollstellung_korrektur_scope
+			: get_changed_staffel_scope(frm.__hv_staffel_snapshot, get_staffel_snapshot(frm));
+		delete frm.__hv_sollstellung_korrektur_scope;
 		remember_staffel_snapshot(frm);
 		if (scope && Object.keys(scope).length) {
 			prompt_for_existing_sollstellung_corrections(frm, scope);
