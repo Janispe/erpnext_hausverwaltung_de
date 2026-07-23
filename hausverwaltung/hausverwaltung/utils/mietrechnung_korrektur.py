@@ -581,32 +581,32 @@ def _korrektur_storno(si, ctx: dict, pes: list[str], *, rebook_payments: bool = 
 		# Neu laden verhindert einen TimestampMismatch beim anschließenden Storno.
 		si.reload()
 	# ERPNext meldet beim Storno bezahlter Rechnungen vorübergehend
-	# "Payment Entries ... are un-linked". In diesem Ablauf ist das nur der
-	# erwartete Zwischenschritt vor der optionalen direkten Neuzuordnung und wirkt
-	# im abschließenden Ergebnisdialog fälschlich wie ein Fehler. Fachliche
+	# "Payment Entries ... are un-linked"; auch der Generator meldet separat
+	# "Mietrechnung erfolgreich erstellt". Beides sind interne Zwischenschritte,
+	# die den abschließenden Korrekturbericht sonst überlagern. Fachliche
 	# Exceptions werden durch ``mute_messages`` weiterhin ausgelöst.
 	had_mute_messages_flag = "mute_messages" in frappe.flags
 	previous_mute_messages_flag = frappe.flags.get("mute_messages")
 	frappe.flags.mute_messages = True
 	try:
 		si.cancel()
+
+		# 2) Korrigierte Rechnung neu erzeugen. Der Korrekturpfad erzeugt gezielt nur
+		#    den betroffenen Typ; Draft-Dubletten dürfen den Ersatz für die stornierte
+		#    gebuchte Rechnung nicht blockieren.
+		gen = generate_miet_und_bk_rechnungen(
+			monat=ctx["monat"],
+			jahr=ctx["jahr"],
+			company=si.company,
+			mietvertrag=ctx["mietvertrag"],
+			rechnungstyp=ctx["typ"],
+			include_drafts_in_guard=0,
+		)
 	finally:
 		if had_mute_messages_flag:
 			frappe.flags.mute_messages = previous_mute_messages_flag
 		else:
 			frappe.flags.pop("mute_messages", None)
-
-	# 2) Korrigierte Rechnung neu erzeugen. Der Korrekturpfad erzeugt gezielt nur
-	#    den betroffenen Typ; Draft-Dubletten dürfen den Ersatz für die stornierte
-	#    gebuchte Rechnung nicht blockieren.
-	gen = generate_miet_und_bk_rechnungen(
-		monat=ctx["monat"],
-		jahr=ctx["jahr"],
-		company=si.company,
-		mietvertrag=ctx["mietvertrag"],
-		rechnungstyp=ctx["typ"],
-		include_drafts_in_guard=0,
-	)
 
 	neue_si = _find_generated_invoice(gen, ctx)
 	if not neue_si:

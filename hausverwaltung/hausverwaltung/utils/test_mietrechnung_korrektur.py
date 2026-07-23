@@ -209,7 +209,7 @@ class TestKorrekturStorno(unittest.TestCase):
 		had_flag = "mute_messages" in frappe.flags
 		previous_flag = frappe.flags.get("mute_messages")
 		frappe.flags.mute_messages = "vorheriger-wert"
-		mute_values_during_cancel = []
+		mute_values_during_steps = []
 
 		def restore_original_flag():
 			if had_flag:
@@ -220,14 +220,18 @@ class TestKorrekturStorno(unittest.TestCase):
 		self.addCleanup(restore_original_flag)
 
 		def cancel():
-			mute_values_during_cancel.append(frappe.flags.mute_messages)
+			mute_values_during_steps.append(("cancel", frappe.flags.mute_messages))
 			si.cancelled = True
+
+		def generate(**_kwargs):
+			mute_values_during_steps.append(("generate", frappe.flags.mute_messages))
+			return {"created": {"Betriebskosten": 1}, "durchlauf": "DL-1"}
 
 		si.cancel = cancel
 		with (
 			patch(
 				"hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen.generate_miet_und_bk_rechnungen",
-				return_value={"created": {"Betriebskosten": 1}, "durchlauf": "DL-1"},
+				side_effect=generate,
 			),
 			patch(
 				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._find_generated_invoice",
@@ -236,7 +240,7 @@ class TestKorrekturStorno(unittest.TestCase):
 		):
 			_korrektur_storno(si, _correction_context(), [])
 
-		self.assertEqual(mute_values_during_cancel, [True])
+		self.assertEqual(mute_values_during_steps, [("cancel", True), ("generate", True)])
 		self.assertEqual(frappe.flags.mute_messages, "vorheriger-wert")
 
 	def test_finds_replacement_from_generator_run_instead_of_visible_remarks(self):

@@ -17,7 +17,10 @@ window.hausverwaltung.korrektur = {
 			freeze_message: __("Prüfe Sollstellungen..."),
 			callback: (r) => {
 				if (r.exc || !r.message) return;
-				if (opts.frm && window.cur_frm && window.cur_frm !== opts.frm) return;
+				// Frappe kann das Form-Objekt bei Update/Reload ersetzen, obwohl noch
+				// derselbe Mietvertrag geöffnet ist. Nur Antworten für ein inzwischen
+				// wirklich verlassenes Dokument verwerfen.
+				if (opts.frm && window.cur_frm && window.cur_frm.doc?.name !== mietvertrag) return;
 				const invoices = r.message.sales_invoices || [];
 				if (!invoices.length) {
 					frappe.msgprint(__("Keine korrigierbaren Abweichungen gefunden."));
