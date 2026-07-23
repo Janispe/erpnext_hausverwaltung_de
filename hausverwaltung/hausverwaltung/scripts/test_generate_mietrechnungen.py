@@ -8,6 +8,55 @@ from hausverwaltung.hausverwaltung.scripts import generate_mietrechnungen
 
 
 class TestGenerateMietrechnungen(unittest.TestCase):
+    def test_invoice_exists_ignores_credit_note_in_every_lookup_path(self):
+        sales_invoice_filters = []
+
+        def fake_get_all(doctype, *, filters, **kwargs):
+            if doctype == "Sales Invoice":
+                sales_invoice_filters.append(filters)
+                # Simuliert einen Bestand, in dem nur eine Gutschrift vorhanden ist.
+                return [] if filters.get("is_return") == 0 else ["SINV-CREDIT"]
+            if doctype == "Sales Invoice Item":
+                return [{"parent": "SINV-CREDIT"}]
+            return []
+
+        with (
+            patch.object(generate_mietrechnungen, "_has_field", return_value=True),
+            patch.object(generate_mietrechnungen.frappe, "get_all", side_effect=fake_get_all),
+        ):
+            exists = generate_mietrechnungen._invoice_exists(
+                "CUST-1",
+                date(2026, 7, 1),
+                "MV-1",
+                "Miete",
+            )
+
+        self.assertFalse(exists)
+        self.assertEqual(len(sales_invoice_filters), 3)
+        self.assertTrue(all(filters.get("is_return") == 0 for filters in sales_invoice_filters))
+
+    def test_invoice_exists_still_recognizes_regular_invoice(self):
+        def fake_get_all(doctype, *, filters, **kwargs):
+            if doctype == "Sales Invoice":
+                self.assertEqual(filters.get("is_return"), 0)
+                return ["SINV-REGULAR"]
+            if doctype == "Sales Invoice Item":
+                return [{"parent": "SINV-REGULAR"}]
+            return []
+
+        with (
+            patch.object(generate_mietrechnungen, "_has_field", return_value=True),
+            patch.object(generate_mietrechnungen.frappe, "get_all", side_effect=fake_get_all),
+        ):
+            exists = generate_mietrechnungen._invoice_exists(
+                "CUST-1",
+                date(2026, 7, 1),
+                "MV-1",
+                "Miete",
+            )
+
+        self.assertTrue(exists)
+
     def test_kunde_des_vertrags_prefers_direct_customer(self):
         row = frappe._dict(name="MV-DIREKT", kunde="CUST-DIREKT")
 

@@ -1,15 +1,18 @@
 """Tests für Kontext und sicheren Zahlungsfluss der Mietrechnungs-Korrektur."""
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 
 from hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur import (
+	_find_generated_invoice,
 	_korrektur_storno,
 	_reconcile_bulk_payment_pool,
 	_reconcile_existing_payment,
 	_si_context,
+	_validate_single_type_invoice,
+	korrigiere_mietrechnung,
 	korrigiere_mietrechnungen_bulk,
 )
 
@@ -73,6 +76,90 @@ class TestSiContext(unittest.TestCase):
 		self.assertEqual(ctx["jahr"], 2026)
 
 
+class TestSingleTypeCorrectionGuard(unittest.TestCase):
+	def test_accepts_invoice_with_one_consistent_rent_type(self):
+		si = _si(
+			remarks="[TYPE:Miete] [MV:MV-1] 03/2026",
+			items=[{"item_code": "Miete"}, {"item_code": "Miete"}],
+		)
+		si.name = "SINV-MIETE"
+
+		_validate_single_type_invoice(si, _si_context(si))
+
+	def test_rejects_combined_legacy_invoice(self):
+		si = _si(
+			remarks="[TYPE:Miete] [MV:MV-1] 03/2026",
+			items=[{"item_code": "Miete"}, {"item_code": "Betriebskosten"}],
+		)
+		si.name = "SINV-KOMBINIERT"
+
+		with patch(
+			"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur.frappe.throw",
+			side_effect=frappe.ValidationError("kombinierte Rechnung"),
+		) as throw:
+			with self.assertRaises(frappe.ValidationError):
+				_validate_single_type_invoice(si, _si_context(si))
+
+		self.assertIn("kombinierte oder widersprüchliche Positionen", throw.call_args.args[0])
+
+	def test_rejects_rent_type_mixed_with_unrelated_item(self):
+		si = _si(
+			remarks="[TYPE:Miete] [MV:MV-1] 03/2026",
+			items=[{"item_code": "Miete"}, {"item_code": "Mahngebuehr"}],
+		)
+		si.name = "SINV-GEMISCHT"
+
+		with patch(
+			"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur.frappe.throw",
+			side_effect=frappe.ValidationError("gemischte Rechnung"),
+		):
+			with self.assertRaises(frappe.ValidationError):
+				_validate_single_type_invoice(si, _si_context(si))
+
+	def test_rejects_marker_that_contradicts_invoice_items(self):
+		si = _si(
+			remarks="[TYPE:Betriebskosten] [MV:MV-1] 03/2026",
+			items=[{"item_code": "Miete"}],
+		)
+		si.name = "SINV-WIDERSPRUCH"
+
+		with patch(
+			"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur.frappe.throw",
+			side_effect=frappe.ValidationError("widersprüchliche Rechnung"),
+		):
+			with self.assertRaises(frappe.ValidationError):
+				_validate_single_type_invoice(si, _si_context(si))
+
+	def test_public_correction_blocks_before_resolving_or_mutating(self):
+		si = _si(
+			remarks="[TYPE:Miete] [MV:MV-1] 03/2026",
+			items=[{"item_code": "Miete"}, {"item_code": "Betriebskosten"}],
+		)
+		si.update({"name": "SINV-KOMBINIERT", "docstatus": 1, "is_return": 0})
+		si.cancel = MagicMock()
+
+		with (
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur.frappe.get_doc",
+				return_value=si,
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur.frappe.throw",
+				side_effect=frappe.ValidationError("kombinierte Rechnung"),
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._resolve_mietvertrag"
+			) as resolve_mietvertrag,
+			patch("hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._is_frozen") as is_frozen,
+		):
+			with self.assertRaises(frappe.ValidationError):
+				korrigiere_mietrechnung("SINV-KOMBINIERT", dry_run=1)
+
+		resolve_mietvertrag.assert_not_called()
+		is_frozen.assert_not_called()
+		si.cancel.assert_not_called()
+
+
 class DummySalesInvoice:
 	name = "SINV-OLD"
 	company = "Test Company"
@@ -117,6 +204,23 @@ class TestBulkDialogVersion(unittest.TestCase):
 
 
 class TestKorrekturStorno(unittest.TestCase):
+	def test_finds_replacement_from_generator_run_instead_of_visible_remarks(self):
+		gen = {"durchlauf": "DL-1"}
+		with (
+			patch("frappe.db.get_value", return_value="SINV-NEW") as get_value,
+			patch("hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._find_invoice") as legacy_find,
+		):
+			result = _find_generated_invoice(gen, _correction_context())
+
+		self.assertEqual(result, "SINV-NEW")
+		get_value.assert_called_once_with(
+			"Mietrechnungen Durchlauf Rechnung",
+			{"parent": "DL-1", "mietvertrag": "MV-1", "typ": "Betriebskosten"},
+			"sales_invoice",
+			order_by="idx desc",
+		)
+		legacy_find.assert_not_called()
+
 	def test_recreates_only_target_type_and_ignores_draft_blockers(self):
 		si = DummySalesInvoice()
 		with (
@@ -125,7 +229,7 @@ class TestKorrekturStorno(unittest.TestCase):
 				return_value={"created": {"Betriebskosten": 1}, "durchlauf": "DL-1"},
 			) as generate,
 			patch(
-				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._find_invoice",
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._find_generated_invoice",
 				return_value="SINV-NEW",
 			),
 		):
@@ -151,7 +255,7 @@ class TestKorrekturStorno(unittest.TestCase):
 				return_value={"created": {"Betriebskosten": 1}, "durchlauf": "DL-1"},
 			),
 			patch(
-				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._find_invoice",
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._find_generated_invoice",
 				return_value="SINV-NEW",
 			),
 			patch("frappe.get_doc") as get_doc,
@@ -169,6 +273,21 @@ class TestKorrekturStorno(unittest.TestCase):
 			with self.assertRaises(frappe.ValidationError):
 				_korrektur_storno(si, _correction_context(), ["PE-EXISTING"])
 		self.assertFalse(si.cancelled)
+
+	def test_aborts_if_generated_replacement_cannot_be_identified(self):
+		si = DummySalesInvoice()
+		with (
+			patch(
+				"hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen.generate_miet_und_bk_rechnungen",
+				return_value={"created": {"Betriebskosten": 1}, "durchlauf": "DL-1"},
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._find_generated_invoice",
+				return_value=None,
+			),
+		):
+			with self.assertRaises(frappe.ValidationError):
+				_korrektur_storno(si, _correction_context(), [])
 
 
 class DummyRow(frappe._dict):
@@ -259,6 +378,94 @@ class TestPaymentReconciliation(unittest.TestCase):
 
 
 class TestBulkPaymentPool(unittest.TestCase):
+	def test_failed_reconciliation_rolls_back_pair_and_restores_flag(self):
+		rows = [
+			{
+				"ok": True,
+				"path": "storno",
+				"sales_invoice": "OLD-MIETE",
+				"neue_si": "NEW-MIETE",
+				"alter_betrag": 600,
+				"neuer_betrag": 650,
+				"beibehaltene_payment_entries": ["PE-MIETE"],
+				"zahlungsuebernahmen": [],
+			}
+		]
+
+		events = []
+		had_flag = "ignore_party_validation" in frappe.flags
+		previous_flag = frappe.flags.get("ignore_party_validation")
+		frappe.flags.ignore_party_validation = "vorheriger-wert"
+
+		def restore_original_flag():
+			if had_flag:
+				frappe.flags.ignore_party_validation = previous_flag
+			else:
+				frappe.flags.pop("ignore_party_validation", None)
+
+		self.addCleanup(restore_original_flag)
+
+		def fail_reconciliation(pe_name, si_name):
+			events.append(("reconcile", pe_name, si_name))
+			frappe.flags.ignore_party_validation = True
+			raise RuntimeError("Abstimmung fehlgeschlagen")
+
+		def save(name):
+			events.append(("savepoint", name))
+
+		def rollback_to(*, save_point):
+			events.append(("rollback", save_point))
+
+		def get_traceback():
+			events.append(("traceback",))
+			return "traceback"
+
+		def log_error(message, title):
+			events.append(("log_error", message, title))
+
+		with (
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._payment_can_reconcile_invoice",
+				return_value=True,
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._reconcile_existing_payment",
+				side_effect=fail_reconciliation,
+			),
+			patch("frappe.db.savepoint", side_effect=save),
+			patch("frappe.db.rollback", side_effect=rollback_to),
+			patch("frappe.log_error", side_effect=log_error),
+			patch("frappe.get_traceback", side_effect=get_traceback),
+		):
+			errors = _reconcile_bulk_payment_pool(rows)
+
+		self.assertEqual(
+			errors,
+			[
+				{
+					"payment_entry": "PE-MIETE",
+					"sales_invoice": "NEW-MIETE",
+					"error": "Abstimmung fehlgeschlagen",
+				}
+			],
+		)
+		self.assertEqual(
+			events,
+			[
+				("savepoint", "korr_reconcile_0"),
+				("reconcile", "PE-MIETE", "NEW-MIETE"),
+				("traceback",),
+				("rollback", "korr_reconcile_0"),
+				(
+					"log_error",
+					"traceback",
+					"Korrektur Zahlungszuordnung PE-MIETE → NEW-MIETE",
+				),
+			],
+		)
+		self.assertEqual(frappe.flags.ignore_party_validation, "vorheriger-wert")
+		self.assertEqual(rows[0]["zahlungsuebernahmen"], [])
+
 	def test_decrease_credit_balances_increase_even_with_separate_payments(self):
 		# Eingangsreihenfolge absichtlich "Erhöhung vor Minderung". Die Funktion
 		# muss trotzdem zuerst die Minderung verarbeiten und deren 50 EUR Rest auf
@@ -314,6 +521,8 @@ class TestBulkPaymentPool(unittest.TestCase):
 				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._reconcile_existing_payment",
 				side_effect=reconcile,
 			),
+			patch("frappe.db.savepoint") as savepoint,
+			patch("frappe.db.rollback") as rollback,
 		):
 			errors = _reconcile_bulk_payment_pool(rows)
 
@@ -321,5 +530,10 @@ class TestBulkPaymentPool(unittest.TestCase):
 		self.assertEqual(calls[0], ("PE-BK", "NEW-BK", 150.0))
 		self.assertEqual(calls[1], ("PE-MIETE", "NEW-MIETE", 600.0))
 		self.assertEqual(calls[2], ("PE-BK", "NEW-MIETE", 50.0))
+		self.assertEqual(
+			[args.args[0] for args in savepoint.call_args_list],
+			["korr_reconcile_0", "korr_reconcile_1", "korr_reconcile_2"],
+		)
+		rollback.assert_not_called()
 		self.assertEqual(payment_open, {"PE-MIETE": 0.0, "PE-BK": 0.0})
 		self.assertEqual(invoice_open, {"NEW-MIETE": 0.0, "NEW-BK": 0.0})

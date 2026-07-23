@@ -1,7 +1,56 @@
 import unittest
+from datetime import date
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from hausverwaltung.hausverwaltung.scripts import check_mietrechnungen
+
+
+class TestFindExistingInvoice(unittest.TestCase):
+	def test_ignores_credit_note_as_sollstellung(self):
+		sales_invoice_filters = []
+
+		def fake_get_all(doctype, *, filters, **kwargs):
+			if doctype == "Sales Invoice":
+				sales_invoice_filters.append(filters)
+				# Simuliert einen Bestand, in dem nur eine Gutschrift vorhanden ist.
+				return [] if filters.get("is_return") == 0 else ["SINV-CREDIT"]
+			if doctype == "Sales Invoice Item":
+				return [SimpleNamespace(parent="SINV-CREDIT")]
+			return []
+
+		with patch.object(check_mietrechnungen.frappe, "get_all", side_effect=fake_get_all):
+			invoice = check_mietrechnungen._find_existing_invoice(
+				"CUST-1",
+				date(2026, 7, 1),
+				"MV-1",
+				"Miete",
+				wohnung="WOHNUNG-1",
+			)
+
+		self.assertIsNone(invoice)
+		self.assertEqual(len(sales_invoice_filters), 4)
+		self.assertTrue(all(filters.get("is_return") == 0 for filters in sales_invoice_filters))
+
+	def test_still_finds_regular_invoice(self):
+		def fake_get_all(doctype, *, filters, **kwargs):
+			if doctype == "Sales Invoice":
+				self.assertEqual(filters.get("is_return"), 0)
+				return ["SINV-REGULAR"]
+			if doctype == "Sales Invoice Item":
+				return [SimpleNamespace(parent="SINV-REGULAR")]
+			return []
+
+		with patch.object(check_mietrechnungen.frappe, "get_all", side_effect=fake_get_all):
+			invoice = check_mietrechnungen._find_existing_invoice(
+				"CUST-1",
+				date(2026, 7, 1),
+				"MV-1",
+				"Miete",
+				wohnung="WOHNUNG-1",
+			)
+
+		self.assertEqual(invoice, "SINV-REGULAR")
 
 
 class TestKorrigierbareSollstellungenFuerMietvertrag(unittest.TestCase):

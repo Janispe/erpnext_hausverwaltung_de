@@ -110,6 +110,33 @@ def _si_context(si) -> dict:
 	}
 
 
+def _validate_single_type_invoice(si, ctx: dict) -> None:
+	"""Lehnt Rechnungen ab, deren Inhalt nicht verlustfrei ersetzt werden kann.
+
+	Ergebnis und Buchungspfade modellieren genau einen Rechnungstyp und eine
+	Ersatzrechnung. Bei einer kombinierten Legacy-Rechnung würden sonst weitere
+	oder fachfremde Positionen beim Storno unbemerkt verloren gehen.
+	"""
+	item_codes = [(item.get("item_code") or "").strip() for item in si.get("items") or []]
+	unique_codes = list(dict.fromkeys(item_codes))
+	recognized_types = list(
+		dict.fromkeys(_TYP_BY_ITEM[code] for code in unique_codes if code in _TYP_BY_ITEM)
+	)
+	foreign_codes = [code or _("Position ohne Artikel") for code in unique_codes if code not in _TYP_BY_ITEM]
+
+	if len(recognized_types) == 1 and not foreign_codes and recognized_types[0] == ctx.get("typ"):
+		return
+
+	details = ", ".join(unique_codes) or _("keine erkennbaren Mietpositionen")
+	frappe.throw(
+		_(
+			"Die Rechnung {0} enthält kombinierte oder widersprüchliche Positionen ({1}). "
+			"Solche Legacy-Rechnungen können nicht automatisch korrigiert werden, weil dabei "
+			"Positionen verloren gehen könnten. Es wurde nichts geändert."
+		).format(si.name, details)
+	)
+
+
 def _resolve_mietvertrag(si, ctx: dict) -> str | None:
 	"""Echten Mietvertrag-Docnamen bestimmen.
 
@@ -217,6 +244,32 @@ def _find_invoice(remark_marker: str, *, is_return: int = 0) -> str | None:
 	return names[0] if names else None
 
 
+def _find_generated_invoice(gen: dict, ctx: dict) -> str | None:
+	"""Findet die im aktuellen Generator-Lauf erzeugte Ersatz-Sollstellung.
+
+	Neue Sollstellungen verwenden eine lesbare Bemerkung ohne technische Marker.
+	Der Generator protokolliert den exakten Beleg stattdessen strukturiert im
+	``Mietrechnungen Durchlauf``. Der alte Remark-Marker bleibt nur als Fallback
+	für ältere Generator-Versionen erhalten.
+	"""
+	durchlauf = gen.get("durchlauf")
+	if durchlauf:
+		invoice = frappe.db.get_value(
+			"Mietrechnungen Durchlauf Rechnung",
+			{
+				"parent": durchlauf,
+				"mietvertrag": ctx["mietvertrag"],
+				"typ": ctx["typ"],
+			},
+			"sales_invoice",
+			order_by="idx desc",
+		)
+		if invoice:
+			return invoice
+
+	return _find_invoice(f"[TYPE:{ctx['typ']}] [MV:{ctx['mietvertrag']}] {ctx['monat_str']}")
+
+
 def _recompute_betrag(ctx: dict) -> float:
 	"""Korrekter Betrag für (Mietvertrag, Monat, Typ) aus der aktuellen Staffelmiete."""
 	from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
@@ -275,6 +328,7 @@ def korrigiere_mietrechnung(
 				"(kein Rechnungs-Typ aus Remark oder Item ableitbar)."
 			)
 		)
+	_validate_single_type_invoice(si, ctx)
 	# Marker-MV kann vom echten Docnamen abweichen → robust auflösen.
 	ctx["mietvertrag"] = _resolve_mietvertrag(si, ctx)
 	if not ctx["mietvertrag"] or not frappe.db.exists("Mietvertrag", ctx["mietvertrag"]):
@@ -415,18 +469,33 @@ def _reconcile_bulk_payment_pool(ergebnisse: list[dict]) -> list[dict]:
 	)
 	errors: list[dict] = []
 	failed_pairs: set[tuple[str, str]] = set()
+	reconcile_attempt = 0
 
 	def assign(row: dict, pe_name: str) -> bool:
+		nonlocal reconcile_attempt
 		pair = (pe_name, row["neue_si"])
 		if pair in failed_pairs:
 			return False
 		if not _payment_can_reconcile_invoice(pe_name, row["neue_si"]):
 			return False
+		savepoint = f"korr_reconcile_{reconcile_attempt}"
+		reconcile_attempt += 1
+		frappe.db.savepoint(savepoint)
+		had_party_validation_flag = "ignore_party_validation" in frappe.flags
+		previous_party_validation_flag = frappe.flags.get("ignore_party_validation")
 		try:
 			result = _reconcile_existing_payment(pe_name, row["neue_si"])
 		except Exception as exc:
+			traceback = frappe.get_traceback()
+			# Payment Reconciliation mutiert Payment-Ledger und Payment Entry in
+			# mehreren Schritten. Da der Fehler für die übrigen Paarungen bewusst
+			# abgefangen wird, muss genau dieser Versuch vorher zurückgerollt werden.
+			frappe.db.rollback(save_point=savepoint)
 			failed_pairs.add(pair)
-			frappe.log_error(frappe.get_traceback(), f"Korrektur Zahlungszuordnung {pe_name}")
+			frappe.log_error(
+				traceback,
+				f"Korrektur Zahlungszuordnung {pe_name} → {row['neue_si']}",
+			)
 			errors.append(
 				{
 					"payment_entry": pe_name,
@@ -435,6 +504,13 @@ def _reconcile_bulk_payment_pool(ergebnisse: list[dict]) -> list[dict]:
 				}
 			)
 			return False
+		finally:
+			# ERPNext setzt das Flag innerhalb der Zahlungsabstimmung. Bei einer
+			# Exception stellt ERPNext es nicht in jedem Pfad selbst zurück.
+			if had_party_validation_flag:
+				frappe.flags.ignore_party_validation = previous_party_validation_flag
+			else:
+				frappe.flags.pop("ignore_party_validation", None)
 		# Frühere Teilzuordnungen desselben PE bzw. derselben SI auf den jetzt
 		# finaleren Reststand aktualisieren. Die Ergebnisanzeige darf Zwischenstände
 		# nicht mehrfach oder in Eingangsreihenfolge addieren.
@@ -518,7 +594,14 @@ def _korrektur_storno(si, ctx: dict, pes: list[str], *, rebook_payments: bool = 
 		include_drafts_in_guard=0,
 	)
 
-	neue_si = _find_invoice(f"[TYPE:{ctx['typ']}] [MV:{ctx['mietvertrag']}] {ctx['monat_str']}")
+	neue_si = _find_generated_invoice(gen, ctx)
+	if not neue_si:
+		frappe.throw(
+			_(
+				"Die neu erzeugte Sollstellung für {0} {1} konnte nicht eindeutig gefunden werden. "
+				"Die Korrektur wurde vollständig zurückgerollt."
+			).format(ctx["typ"], ctx["monat_str"])
+		)
 
 	# 3) Optional dieselben Payment Entries über die ERPNext-Zahlungsabstimmung
 	#    der neuen SI zuordnen. Kein Zahlungsbeleg und keine Banktransaktion wird

@@ -265,18 +265,22 @@ def _invoice_exists(customer: str, von: date, mv_name: str, typ: str, *, include
         "Heizkosten": "Heizkosten",
         "Untermietzuschlag": "Untermietzuschlag",
     }.get(typ, typ)
+    base_filters = {
+        "customer": customer,
+        "posting_date": ("between", [get_first_day(von), get_last_day(von)]),
+        "docstatus": docstatus_filter,
+        "is_return": 0,
+    }
 
     # Neuer Primärschlüssel für Sollstellungs-Rechnungen: nicht mehr aus der
     # sichtbaren Bemerkung lesen, sondern aus dem strukturierten Koppel-Feld.
     if _has_field("Sales Invoice", "mietabrechnung_id"):
         parent_names = frappe.get_all(
             "Sales Invoice",
-            filters={
-                "customer": customer,
-                "posting_date": ("between", [get_first_day(von), get_last_day(von)]),
-                "docstatus": docstatus_filter,
-                "mietabrechnung_id": f"{mv_name}|{von.strftime('%m/%Y')}",
-            },
+            filters=dict(
+                base_filters,
+                mietabrechnung_id=f"{mv_name}|{von.strftime('%m/%Y')}",
+            ),
             pluck="name",
         )
         if parent_names:
@@ -291,12 +295,10 @@ def _invoice_exists(customer: str, von: date, mv_name: str, typ: str, *, include
     # 1) Fallback für alte Rechnungen mit technischem Marker in der Bemerkung.
     existing = frappe.get_all(
         "Sales Invoice",
-        filters={
-            "customer": customer,
-            "posting_date": ("between", [get_first_day(von), get_last_day(von)]),
-            "docstatus": docstatus_filter,
-            "remarks": ("like", f"%[TYPE:{typ}] [MV:{mv_name}] {von.strftime('%m/%Y')}%"),
-        },
+        filters=dict(
+            base_filters,
+            remarks=("like", f"%[TYPE:{typ}] [MV:{mv_name}] {von.strftime('%m/%Y')}%"),
+        ),
         pluck="name",
         limit=1,
     )
@@ -306,11 +308,7 @@ def _invoice_exists(customer: str, von: date, mv_name: str, typ: str, *, include
     # 2) Fallback: Prüfen, ob in diesem Monat bereits eine Rechnung mit passendem Item existiert
     parent_names = frappe.get_all(
         "Sales Invoice",
-        filters={
-            "customer": customer,
-            "posting_date": ("between", [get_first_day(von), get_last_day(von)]),
-            "docstatus": docstatus_filter,
-        },
+        filters=base_filters,
         pluck="name",
     )
     if not parent_names:

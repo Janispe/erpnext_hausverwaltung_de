@@ -109,6 +109,7 @@ def _find_existing_invoice(
 	base_filters = {
 		"customer": customer,
 		"posting_date": ("between", posting_range),
+		"is_return": 0,
 	}
 
 	def _search(filters: dict) -> str | None:
