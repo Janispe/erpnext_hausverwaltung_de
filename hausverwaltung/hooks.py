@@ -350,7 +350,6 @@ scheduler_events = {
 #
 override_whitelisted_methods = {
 	"frappe.www.printview.get_html_and_style": "hausverwaltung.hausverwaltung.overrides.printview.get_html_and_style",
-	"frappe.www.printview.download_pdf": "hausverwaltung.hausverwaltung.overrides.printview.download_pdf",
 	"frappe.utils.print_format.download_pdf": "hausverwaltung.hausverwaltung.overrides.print_format.download_pdf",
 	"erpnext.accounts.doctype.payment_entry.payment_entry.get_payment_entry": "hausverwaltung.hausverwaltung.doctype.dunning.get_payment_entry_guarded",
 }
