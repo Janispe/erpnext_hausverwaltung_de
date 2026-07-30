@@ -537,12 +537,17 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			description: __(
 				"Bei Barzahlung Kassenkonto wählen; bei Vorschuss/Auslage oder sonstiger Verrechnung ein passendes Verrechnungskonto."
 			),
-			get_query() {
-				if (dialog.get_value("zahlungsart") === "Barzahlung") {
-					return { filters: { account_type: "Cash", is_group: 0 } };
-				}
-				return { filters: { is_group: 0 } };
-			},
+				get_query() {
+					if (dialog.get_value("zahlungsart") === "Barzahlung") {
+						return { filters: { account_type: "Cash", is_group: 0 } };
+					}
+					return {
+						filters: {
+							is_group: 0,
+							account_type: ["!=", "Bank"],
+						},
+					};
+				},
 		},
 		{
 			fieldtype: "Small Text",

@@ -90,6 +90,16 @@ def _require_document_permissions(doctype: str, *, submit: bool = False) -> None
     if submit and not frappe.has_permission(doctype, "submit"):
         frappe.throw(
             f"Keine Berechtigung zum Buchen von {doctype}.",
+			frappe.PermissionError,
+		)
+
+
+def _require_supplier_creation_permission() -> None:
+    """Authorize the privileged Supplier/Address/Bank-Account convenience flow."""
+    frappe.only_for("Hausverwalter (Buchung)")
+    if not frappe.has_permission("Supplier", "create"):
+        frappe.throw(
+            "Keine Berechtigung zum Anlegen von Lieferanten.",
             frappe.PermissionError,
         )
 
@@ -911,6 +921,12 @@ def _validate_settlement_account(
         )
     if (zahlungsart or "").strip() == "Barzahlung" and values.get("account_type") != "Cash":
         frappe.throw("Bei Barzahlung bitte ein Kassenkonto wählen.")
+    if values.get("account_type") == "Bank":
+        frappe.throw(
+            "Ein Bank-Sachkonto darf im Sofortausgleich nicht verwendet werden. "
+            "Bitte die Rechnung offen buchen und die Bankbewegung anschließend "
+            "über Bankimport oder Payment Entry zuordnen."
+        )
     if values.get("root_type") in {"Income", "Expense"}:
         frappe.throw(
             "Bitte ein Bilanzkonto für Kreditkarte/Kasse/Vorschuss wählen, "
@@ -1773,6 +1789,8 @@ def create_supplier_from_extraction(**kwargs) -> dict:
               da Bank-Account-Erstellung eine Bank-Doc voraussetzt.
         strasse, plz, ort: optional — ergeben einen Address-Doc, wenn alle drei da sind.
     """
+    _require_supplier_creation_permission()
+
     supplier_name = (kwargs.get("supplier_name") or "").strip()
     if not supplier_name:
         frappe.throw("Bitte einen Lieferantennamen angeben.")

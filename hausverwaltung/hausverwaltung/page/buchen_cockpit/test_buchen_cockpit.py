@@ -83,6 +83,39 @@ class _FakeVorlage:
 
 
 class TestBuchenCockpit(unittest.TestCase):
+	def test_page_is_restricted_to_booking_role(self):
+		page_roles = {
+			row.role
+			for row in frappe.get_doc("Page", "buchen_cockpit").roles
+		}
+		self.assertEqual(page_roles, {"Hausverwalter (Buchung)"})
+
+	def test_supplier_creation_stops_before_mutation_without_booking_role(self):
+		with patch.object(
+			cockpit.frappe,
+			"only_for",
+			side_effect=frappe.PermissionError,
+		), patch.object(cockpit.frappe, "new_doc") as new_doc, \
+			 self.assertRaises(frappe.PermissionError):
+			cockpit.create_supplier_from_extraction(
+				supplier_name="Nicht erlaubt",
+				supplier_group="Dienstleister",
+			)
+
+		new_doc.assert_not_called()
+
+	def test_supplier_creation_requires_supplier_create_permission(self):
+		with patch.object(cockpit.frappe, "only_for"), \
+			 patch.object(cockpit.frappe, "has_permission", return_value=False), \
+			 patch.object(cockpit.frappe, "new_doc") as new_doc, \
+			 self.assertRaisesRegex(frappe.PermissionError, "Lieferanten"):
+			cockpit.create_supplier_from_extraction(
+				supplier_name="Nicht erlaubt",
+				supplier_group="Dienstleister",
+			)
+
+		new_doc.assert_not_called()
+
 	def setUp(self):
 		# Most tests in this module exercise voucher construction.  Cost-Center
 		# master-data validation has focused tests below.
@@ -798,6 +831,26 @@ class TestBuchenCockpit(unittest.TestCase):
 				submit_doc=1,
 			)
 
+	def test_create_purchase_invoice_rejects_bank_account_for_advance_settlement(self):
+		values = frappe._dict(
+			company="Hausverwaltung Peters",
+			is_group=0,
+			account_type="Bank",
+			root_type="Asset",
+		)
+		with patch.object(cockpit.frappe.db, "exists", return_value=True), \
+			 patch.object(cockpit.frappe.db, "get_value", return_value=values), \
+			 self.assertRaisesRegex(
+				frappe.ValidationError,
+				"Bank-Sachkonto darf im Sofortausgleich nicht verwendet werden",
+			 ):
+			cockpit._validate_settlement_account(
+				"1200 - Bank - HV",
+				company="Hausverwaltung Peters",
+				payable_account="1600 - Kreditoren - HV",
+				zahlungsart="Vorschuss/Auslage",
+			)
+
 	def test_create_purchase_invoice_allows_immediate_advance_with_non_cash_balance_account(self):
 		invoice = _FakeInvoice()
 		journal = _FakeJournalEntry()
@@ -811,7 +864,7 @@ class TestBuchenCockpit(unittest.TestCase):
 				return frappe._dict({
 					"company": "Hausverwaltung Peters",
 					"is_group": 0,
-					"account_type": "Bank",
+					"account_type": "",
 					"root_type": "Asset",
 				})
 			return None
