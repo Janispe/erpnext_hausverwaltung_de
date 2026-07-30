@@ -19,6 +19,7 @@
   "verwendungszweck",
   "currency",
   "bank_transaction",
+  "bank_transaction_created_here",
   "payment_document_type",
   "payment_document",
   "payment_entry",
@@ -127,6 +128,15 @@
    "in_list_view": 1,
    "label": "Bank Transaction",
    "options": "Bank Transaction",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Technischer Eigentumsnachweis. Nur so markierte Bank Transactions dürfen beim vollständigen Zeilen-Reset storniert oder gelöscht werden.",
+   "fieldname": "bank_transaction_created_here",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Bank Transaction durch diesen Import erstellt",
    "read_only": 1
   },
   {

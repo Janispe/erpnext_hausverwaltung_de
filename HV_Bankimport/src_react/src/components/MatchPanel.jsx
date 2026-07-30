@@ -675,7 +675,10 @@ function SplitPaymentMatch({ docname, row, onActionDone, notify }) {
 		[invoiceSel]
 	);
 	const abschlagTotal = useMemo(
-		() => Object.keys(abschlagSel).reduce((s, name) => s + (Number(abschlagByName.get(name)?.betrag) || 0), 0),
+		() => Object.keys(abschlagSel).reduce((s, name) => {
+			const candidate = abschlagByName.get(name);
+			return s + (Number(candidate?.remaining_amount ?? candidate?.betrag) || 0);
+		}, 0),
 		[abschlagSel, abschlagByName]
 	);
 	const allocated = invoiceTotal + abschlagTotal;
@@ -793,7 +796,7 @@ function SplitPaymentMatch({ docname, row, onActionDone, notify }) {
 									<div className="ref">Fällig {fmtDate(a.faelligkeitsdatum)}{a.immobilie ? ` · ${a.immobilie}` : ""}</div>
 								</div>
 							</div>
-							<div className="amount">{fmtEUR(a.betrag)}</div>
+							<div className="amount">{fmtEUR(a.remaining_amount ?? a.betrag)}</div>
 						</label>
 					</div>
 				);
@@ -829,6 +832,10 @@ function JournalEntryForm({ docname, row, onActionDone, notify }) {
 		{ id: 1, account: null, costCenter: "", amount: Math.abs(Number(row.betrag) || 0).toFixed(2) },
 	]);
 	const [busy, run] = useAction(notify);
+	const accountFetcher = useCallback(
+		(txt) => api.searchAccounts(txt, docname),
+		[docname]
+	);
 
 	useEffect(() => {
 		setAccount(null);
@@ -915,7 +922,7 @@ function JournalEntryForm({ docname, row, onActionDone, notify }) {
 							<button className="btn sm subtle" onClick={() => setAccount(null)}><Icon name="x" /></button>
 						</div>
 					) : (
-						<LinkSearch placeholder="Konto suchen (z.B. 4970)…" fetcher={api.searchAccounts} onPick={setAccount} searchWhenEmpty />
+							<LinkSearch placeholder="Konto suchen (z.B. 4970)…" fetcher={accountFetcher} onPick={setAccount} searchWhenEmpty />
 					)}
 					<div className="field-label" style={{ marginTop: 10 }}>Kostenstelle</div>
 					<input className="text-input" value={costCenter} placeholder="(optional)" onChange={(e) => setCostCenter(e.target.value)} />
@@ -942,7 +949,7 @@ function JournalEntryForm({ docname, row, onActionDone, notify }) {
 									<button className="btn sm subtle" onClick={() => updateSplit(s.id, { account: null })}><Icon name="x" /></button>
 								</div>
 							) : (
-								<LinkSearch placeholder="Konto suchen…" fetcher={api.searchAccounts} onPick={(item) => updateSplit(s.id, { account: item })} searchWhenEmpty />
+									<LinkSearch placeholder="Konto suchen…" fetcher={accountFetcher} onPick={(item) => updateSplit(s.id, { account: item })} searchWhenEmpty />
 							)}
 							<div className="split-row-grid">
 								<div>
@@ -1079,7 +1086,12 @@ function AbschlagMatch({ docname, row, onActionDone, notify }) {
 							<div className="doc-id">{c.bezeichnung || c.zahlungsplan}</div>
 							<div className="ref">Fällig {fmtDate(c.faelligkeitsdatum)}{c.immobilie ? ` · ${c.immobilie}` : ""}</div>
 						</div>
-						<div className="amount">{fmtEUR(c.betrag)}</div>
+						<div className="amount">
+							{fmtEUR(c.remaining_amount ?? c.betrag)}
+							{c.remaining_amount != null && Math.abs(Number(c.remaining_amount) - Number(c.betrag)) > 0.01
+								? <span className="ref"> Rest</span>
+								: null}
+						</div>
 					</div>
 					<button className="btn primary sm" style={{ width: "100%", justifyContent: "center", marginTop: 8 }} onClick={() => assign(c)} disabled={busy}>
 						{busy ? <Spinner /> : <Icon name="check" />} Diesen Abschlag zuordnen
