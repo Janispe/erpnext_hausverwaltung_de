@@ -12,6 +12,7 @@
   "bis",
   "nachzahlung_faellig_am",
   "stichtag",
+  "offene_bk_vorauszahlungen_verrechnen",
   "section_break_mieter",
   "mieter_abrechnungen",
   "section_break_summary",
@@ -61,6 +62,13 @@
    "fieldname": "stichtag",
    "fieldtype": "Date",
    "label": "Stichtag"
+  },
+  {
+   "default": "0",
+   "description": "Standardmäßig aus: Offene BK-Vorauszahlungsrechnungen dieses Abrechnungszeitraums und Nachzahlung/Guthaben bleiben als getrennte offene Posten bestehen. Aktiviert: Sie werden beim Einreichen per Journal Entry miteinander verrechnet. Guthaben aus anderen Zeiträumen werden nicht einbezogen.",
+   "fieldname": "offene_bk_vorauszahlungen_verrechnen",
+   "fieldtype": "Check",
+   "label": "Offene BK-Vorauszahlungen automatisch verrechnen"
   },
   {
    "fieldname": "section_break_mieter",

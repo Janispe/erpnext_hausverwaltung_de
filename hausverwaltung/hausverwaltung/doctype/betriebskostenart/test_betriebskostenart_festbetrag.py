@@ -239,6 +239,9 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 		), patch(
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen.frappe.get_all",
 			side_effect=fake_get_all,
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen.frappe.db.get_value",
+			return_value="Haus-1",
 		):
 			result = allocate_kosten_auf_wohnungen.__wrapped__(
 				von="2025-01-01",
@@ -261,6 +264,69 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 				}
 			],
 		)
+
+	def test_allocator_rejects_wohnung_from_other_cost_center_immobilie(self):
+		import frappe as _frappe_mod
+
+		gl_rows = [
+			_frappe_mod._dict(
+				name="GLE-FALSCH",
+				posting_date="2025-01-15",
+				account="ACC-KAMIN",
+				cost_center="CC-HAUS-1",
+				wohnung="W-AUS-HAUS-2",
+				debit=100,
+				credit=0,
+				voucher_type="Purchase Invoice",
+				voucher_no="PINV-FALSCH",
+			)
+		]
+
+		def fake_get_all(doctype, **kwargs):
+			if doctype == "GL Entry":
+				return gl_rows
+			return []
+
+		with patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._konto_zu_kostenart_map",
+			return_value={"ACC-KAMIN": "Kamin"},
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._kostenstelle_zu_haus_map",
+			return_value={"CC-HAUS-1": "Haus-1"},
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._betriebsarten_map",
+			return_value={"Kamin": {"verteilung": "Festbetrag", "schluessel": None}},
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._prefetch_wertstellungsdaten",
+			return_value={},
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._effective_date",
+			return_value="2025-01-15",
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._has_field",
+			return_value=True,
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._bk_abrechnung_aktiv_am",
+			return_value=True,
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._wohnungen_in_haus",
+			return_value=["W1"],
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen.frappe.get_all",
+			side_effect=fake_get_all,
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen.frappe.db.get_value",
+			return_value="Haus-2",
+		), self.assertRaisesRegex(
+			_frappe_mod.ValidationError,
+			"GLE-FALSCH.*Haus-2.*Haus-1",
+		):
+			allocate_kosten_auf_wohnungen.__wrapped__(
+				von="2025-01-01",
+				bis="2025-12-31",
+				immobilie="Haus-1",
+				stichtag="2025-12-31",
+			)
 
 	def test_allocate_kosten_auf_wohnungen_keeps_qm_and_festbetrag_together(self):
 		gl_rows = [

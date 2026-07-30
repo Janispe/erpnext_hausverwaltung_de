@@ -45,6 +45,7 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.rounding import (
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.gl_kosten_pro_haus import (
     _konto_zu_kostenart_map,
     _kostenstelle_zu_haus_map,
+    _immobilie_zu_root_map,
     _prefetch_wertstellungsdaten,
     _effective_date,
 )
@@ -96,32 +97,254 @@ def _has_field(doctype: str, fieldname: str) -> bool:
         return False
 
 
-def _wohnungen_in_haus(immobilie: str | None = None, kostenstelle: str | None = None) -> List[str]:
-    """Liste der Wohnungen über Immobilie oder (Fallback) über Kostenstelle→Haus.
+def validate_wohnung_cost_center_pair(
+    wohnung: str,
+    cost_center: str,
+    *,
+    cost_center_to_immobilie: Optional[Dict[str, str]] = None,
+    wohnung_to_immobilie: Optional[Dict[str, Optional[str]]] = None,
+    context: Optional[str] = None,
+) -> str:
+    """Validiert eine Wohnungsdimension fail-closed gegen ihre Kostenstelle.
 
-    Mindestens einer der Parameter sollte gesetzt sein.
+    Eine dimensionsgebuchte Wohnung darf nur verwendet werden, wenn ihre
+    Stammdaten-Immobilie exakt der Immobilie entspricht, die der Kostenstelle
+    zugeordnet ist. Fehlende Stammdaten werden nicht still übersprungen.
     """
-    if immobilie:
-        # Wenn Immobilie als Baum genutzt wird, können Wohnungen optional einem Knoten zugeordnet sein.
-        # Falls der Name eine Knoten-Immobilie ist, liegen die Wohnungen unter `Wohnung.immobilie_knoten`.
-        if _has_field("Wohnung", "immobilie_knoten"):
-            rows = frappe.get_all(
-                "Wohnung",
-                filters={"immobilie_knoten": immobilie},
-                pluck="name",
-                limit=1,
+    label = f"{context}: " if context else ""
+    wohnung = cstr(wohnung).strip()
+    cost_center = cstr(cost_center).strip()
+    if not wohnung:
+        frappe.throw(f"{label}Wohnung fehlt.")
+    if not cost_center:
+        frappe.throw(f"{label}Kostenstelle fehlt.")
+
+    cc_map = (
+        cost_center_to_immobilie
+        if cost_center_to_immobilie is not None
+        else _kostenstelle_zu_haus_map()
+    )
+    expected_immobilie = cstr(cc_map.get(cost_center)).strip()
+    if not expected_immobilie:
+        frappe.throw(
+            f"{label}Kostenstelle '{cost_center}' ist keiner Immobilie zugeordnet."
+        )
+
+    wohnung_cache = (
+        wohnung_to_immobilie if wohnung_to_immobilie is not None else {}
+    )
+    if wohnung not in wohnung_cache:
+        wohnung_cache[wohnung] = frappe.db.get_value(
+            "Wohnung", wohnung, "immobilie"
+        )
+    actual_immobilie = cstr(wohnung_cache.get(wohnung)).strip()
+    if not actual_immobilie:
+        frappe.throw(
+            f"{label}Wohnung '{wohnung}' wurde nicht gefunden oder hat keine "
+            "Immobilie."
+        )
+
+    # Fast path for the normal case.  If Wohnung or Cost Center points to a
+    # building-part node, compare both through the exact same canonical-root
+    # resolver used by the GL allocator.
+    actual_root = actual_immobilie
+    expected_root = expected_immobilie
+    if actual_immobilie != expected_immobilie:
+        immobilie_roots = _immobilie_zu_root_map()
+        actual_root = cstr(immobilie_roots.get(actual_immobilie)).strip()
+        expected_root = cstr(immobilie_roots.get(expected_immobilie)).strip()
+        if not actual_root or not expected_root:
+            frappe.throw(
+                f"{label}Wohnung '{wohnung}' gehört zur Immobilie "
+                f"'{actual_immobilie}', die Kostenstelle '{cost_center}' zur "
+                f"Immobilie '{expected_immobilie}'; mindestens eine davon "
+                "konnte keiner kanonischen Root-Immobilie zugeordnet werden. "
+                "Buchung abgebrochen."
             )
-            if rows:
-                return frappe.get_all("Wohnung", filters={"immobilie_knoten": immobilie}, pluck="name")
 
-        return frappe.get_all("Wohnung", filters={"immobilie": immobilie}, pluck="name")
+    if actual_root != expected_root:
+        frappe.throw(
+            f"{label}Wohnung '{wohnung}' gehört zur Immobilie "
+            f"'{actual_immobilie}' (Root '{actual_root}'), die Kostenstelle "
+            f"'{cost_center}' aber zur Immobilie '{expected_immobilie}' "
+            f"(Root '{expected_root}'). Buchung abgebrochen."
+        )
+    return expected_root
 
-    if kostenstelle:
-        cc_to_haus = _kostenstelle_zu_haus_map()
-        haus = cc_to_haus.get(kostenstelle)
-        if haus:
-            return frappe.get_all("Wohnung", filters={"immobilie": haus}, pluck="name")
-    return []
+
+def _wohnungen_in_haus(
+    immobilie: str | None = None,
+    kostenstelle: str | None = None,
+) -> List[str]:
+    """Liefert deterministisch alle Wohnungen der kanonischen Root-Immobilie.
+
+    ``Wohnung.immobilie`` kann auf die Root-Immobilie oder einen ihrer Knoten
+    zeigen; ``immobilie_knoten`` kann zusätzlich den Gebäudeteil präzisieren.
+    Beide Zuordnungen werden über denselben Hierarchie-Resolver vereinheitlicht
+    und anschließend vereinigt. So hängt die Ergebnismenge nicht davon ab, ob
+    zufällig bereits eine Wohnung direkt auf einem einzelnen Knoten gefunden
+    wurde.
+    """
+    requested_immobilie = cstr(immobilie).strip()
+    requested_cost_center = cstr(kostenstelle).strip()
+    if not requested_immobilie and not requested_cost_center:
+        return []
+
+    immobilie_roots = _immobilie_zu_root_map()
+    roots: set[str] = set()
+    if requested_immobilie:
+        root = cstr(immobilie_roots.get(requested_immobilie)).strip()
+        if not root:
+            frappe.throw(
+                f"Immobilie '{requested_immobilie}' konnte keiner kanonischen "
+                "Root-Immobilie zugeordnet werden. Kostenverteilung abgebrochen."
+            )
+        roots.add(root)
+
+    if requested_cost_center:
+        cc_root = cstr(
+            _kostenstelle_zu_haus_map().get(requested_cost_center)
+        ).strip()
+        if not cc_root:
+            frappe.throw(
+                f"Kostenstelle '{requested_cost_center}' ist keiner Immobilie "
+                "zugeordnet. Kostenverteilung abgebrochen."
+            )
+        roots.add(cc_root)
+
+    if len(roots) != 1:
+        frappe.throw(
+            f"Immobilie '{requested_immobilie}' und Kostenstelle "
+            f"'{requested_cost_center}' gehören nicht zur selben "
+            "Root-Immobilie. Kostenverteilung abgebrochen."
+        )
+    root = next(iter(roots))
+    hierarchy_nodes = sorted(
+        name for name, node_root in immobilie_roots.items() if node_root == root
+    )
+    if not hierarchy_nodes:
+        frappe.throw(
+            f"Root-Immobilie '{root}' enthält keine auflösbaren "
+            "Hierarchieknoten. Kostenverteilung abgebrochen."
+        )
+
+    has_node_field = _has_field("Wohnung", "immobilie_knoten")
+    fields = ["name", "immobilie"]
+    if has_node_field:
+        fields.append("immobilie_knoten")
+
+    rows_by_name: Dict[str, Any] = {}
+    for fieldname in ("immobilie", "immobilie_knoten"):
+        if fieldname == "immobilie_knoten" and not has_node_field:
+            continue
+        rows = frappe.get_all(
+            "Wohnung",
+            filters={fieldname: ("in", hierarchy_nodes)},
+            fields=fields,
+            order_by="name asc",
+            limit_page_length=0,
+        )
+        for row in rows or []:
+            name = cstr(row.get("name")).strip()
+            if name:
+                rows_by_name[name] = row
+
+    result: List[str] = []
+    for name in sorted(rows_by_name):
+        row = rows_by_name[name]
+        primary = cstr(row.get("immobilie")).strip()
+        node = cstr(row.get("immobilie_knoten")).strip() if has_node_field else ""
+        assigned_roots: set[str] = set()
+        for fieldname, value in (("immobilie", primary), ("immobilie_knoten", node)):
+            if not value:
+                continue
+            assigned_root = cstr(immobilie_roots.get(value)).strip()
+            if not assigned_root:
+                frappe.throw(
+                    f"Wohnung '{name}' verweist in {fieldname} auf die nicht "
+                    f"auflösbare Immobilie '{value}'. Kostenverteilung abgebrochen."
+                )
+            assigned_roots.add(assigned_root)
+        if len(assigned_roots) > 1:
+            frappe.throw(
+                f"Wohnung '{name}' ist über Immobilie und Immobilien-Knoten "
+                "verschiedenen Root-Immobilien zugeordnet. "
+                "Kostenverteilung abgebrochen."
+            )
+        if root in assigned_roots:
+            result.append(name)
+    return result
+
+
+def _validate_gl_allocation_totals(
+    expected_by_basis: Dict[Tuple[str, str], Decimal],
+    allocation_matrix_by_basis: Dict[
+        Tuple[str, str],
+        Dict[str, Decimal],
+    ],
+) -> None:
+    """Stellt sicher, dass jede relevante GL-Kostenbasis vollständig ankommt."""
+    for (haus, kostenart), expected in sorted(expected_by_basis.items()):
+        allocated = sum(
+            allocation_matrix_by_basis.get((haus, kostenart), {}).values(),
+            Decimal("0"),
+        )
+        difference = (
+            _quantize_money(expected) - _quantize_money(allocated)
+        ).copy_abs()
+        if difference != Decimal("0.00"):
+            frappe.throw(
+                f"GL-Kosten für Haus '{haus}', Kostenart '{kostenart}' wurden "
+                "nicht vollständig auf Wohnungen verteilt "
+                f"(Basis {_quantize_money(expected):.2f}, verteilt "
+                f"{_quantize_money(allocated):.2f}, Differenz "
+                f"{difference:.2f}). Kostenverteilung abgebrochen."
+            )
+
+
+def _round_gl_allocation_bases(
+    expected_by_basis: Dict[Tuple[str, str], Decimal],
+    allocation_matrix_by_basis: Dict[
+        Tuple[str, str],
+        Dict[str, Decimal],
+    ],
+    rounding_method: str,
+) -> Dict[Tuple[str, str], Dict[str, Decimal]]:
+    """Rundet jede Haus/Kostenart-Basis ohne Centverschiebung zu anderen Häusern."""
+    rounded_by_basis: Dict[Tuple[str, str], Dict[str, Decimal]] = {}
+    for basis, expected in sorted(expected_by_basis.items()):
+        entries = sorted(
+            allocation_matrix_by_basis.get(basis, {}).items(),
+            key=lambda item: item[0],
+        )
+        rounded = round_money_allocations(
+            entries,
+            rounding_method,
+            target_total=_quantize_money(expected),
+        )
+        target = _quantize_money(expected)
+        rounded_total = _quantize_money(
+            sum(rounded.values(), Decimal("0"))
+        )
+        difference = target - rounded_total
+        if difference:
+            # Auch das ausdrücklich nicht restverteilende Rundungsverfahren
+            # darf im Accounting-Allocator keine GL-Cents verlieren. Der
+            # betragsmäßig größte Anteil ist der deterministische Ausgleich.
+            if not entries:
+                frappe.throw(
+                    f"GL-Kostenbasis {basis[0]} / {basis[1]} hat keine "
+                    "Wohnungsanteile. Kostenverteilung abgebrochen."
+                )
+            correction_key = max(
+                entries,
+                key=lambda item: (item[1].copy_abs(), str(item[0])),
+            )[0]
+            rounded[correction_key] += difference
+        rounded_by_basis[basis] = rounded
+
+    _validate_gl_allocation_totals(expected_by_basis, rounded_by_basis)
+    return rounded_by_basis
 
 
 def _zustand_am(wohnung: str, stichtag: str) -> Optional[str]:
@@ -522,11 +745,22 @@ def allocate_kosten_auf_wohnungen(
     matrix: Dict[str, Dict[str, Decimal]] = defaultdict(
         lambda: defaultdict(lambda: Decimal("0"))
     )
+    gl_expected_by_basis: Dict[Tuple[str, str], Decimal] = defaultdict(
+        lambda: Decimal("0")
+    )
+    gl_matrix_by_basis: Dict[
+        Tuple[str, str],
+        Dict[str, Decimal],
+    ] = defaultdict(lambda: defaultdict(lambda: Decimal("0")))
+    manual_matrix: Dict[str, Dict[str, Decimal]] = defaultdict(
+        lambda: defaultdict(lambda: Decimal("0"))
+    )
     festbetrag_gl_rows: list[dict] = []
 
     # Vorbereitung: Wohnungen je Haus
     whg_cache: Dict[str, List[str]] = {}
     festbetrag_cache: Dict[str, Dict[str, Dict[str, Decimal]]] = {}
+    wohnung_immobilie_cache: Dict[str, Optional[str]] = {}
 
     # Aggregiere je Haus & Kostenart (außer Einzeln) → Summe, die zu verteilen ist
     # Einzeln wird direkt auf Wohnungssumme gebucht
@@ -537,10 +771,18 @@ def allocate_kosten_auf_wohnungen(
 
         haus = cc_to_haus.get(g.cost_center)
         if not haus:
-            continue
+            frappe.throw(
+                f"GL Entry {g.get('name')} hat die nicht eindeutig einer "
+                f"Immobilie zugeordnete Kostenstelle '{g.get('cost_center')}'. "
+                "Kostenverteilung abgebrochen."
+            )
         kostenart = konto_map.get(g.account)
         if not kostenart:
-            continue
+            frappe.throw(
+                f"GL Entry {g.get('name')} verwendet das nicht eindeutig einer "
+                f"Betriebskostenart zugeordnete Konto '{g.get('account')}'. "
+                "Kostenverteilung abgebrochen."
+            )
 
         meta = art_meta.get(kostenart) or {}
         verteilung = (meta.get("verteilung") or "").strip()
@@ -549,6 +791,8 @@ def allocate_kosten_auf_wohnungen(
         betrag = _to_decimal(g.debit) - _to_decimal(g.credit)
         if betrag.copy_abs() < MIN_SIGNIFICANT:
             continue
+        basis = (haus, kostenart)
+        gl_expected_by_basis[basis] += betrag
 
         if verteilung.lower() in {"einzeln", "festbetrag"}:
             if not gl_has_wohnung:
@@ -560,7 +804,15 @@ def allocate_kosten_auf_wohnungen(
                 frappe.throw(
                     f"GL Entry {g.get('name')} ohne 'wohnung' bei Verteilungsart '{verteilung}'."
                 )
+            validate_wohnung_cost_center_pair(
+                whg,
+                g.get("cost_center"),
+                cost_center_to_immobilie=cc_to_haus,
+                wohnung_to_immobilie=wohnung_immobilie_cache,
+                context=f"GL Entry {g.get('name')}",
+            )
             matrix[whg][kostenart] += betrag
+            gl_matrix_by_basis[basis][whg] += betrag
             if verteilung.lower() == "festbetrag":
                 festbetrag_gl_rows.append(
                     {
@@ -581,8 +833,12 @@ def allocate_kosten_auf_wohnungen(
             whg_cache[haus] = _wohnungen_in_haus(immobilie=haus)
         whg_list = whg_cache[haus]
         if not whg_list:
-            # Nichts zu verteilen → überspringen
-            continue
+            frappe.throw(
+                f"GL Entry {g.get('name')} über {_quantize_money(betrag):.2f} "
+                f"für Kostenart '{kostenart}' kann nicht verteilt werden: "
+                f"Der Root-Immobilie '{haus}' sind keine Wohnungen zugeordnet. "
+                "Kostenverteilung abgebrochen."
+            )
 
         # Gewichte je Wohnung bestimmen
         weights: Dict[str, Decimal] = {}
@@ -622,6 +878,16 @@ def allocate_kosten_auf_wohnungen(
                 continue
             anteil = betrag * (wgt / total_weight)
             matrix[w][kostenart] += anteil
+            gl_matrix_by_basis[basis][w] += anteil
+
+    # Manuelle Vertrags-Festbeträge werden erst danach ergänzt. Dadurch ist
+    # dieser Abgleich ausschließlich gegen die aus GL Entries stammenden
+    # Matrixanteile gerichtet und kann keine ausgelassene GL-Kostenbasis durch
+    # einen zufällig gleich hohen Festbetrag verdecken.
+    _validate_gl_allocation_totals(
+        gl_expected_by_basis,
+        gl_matrix_by_basis,
+    )
 
     hauser_to_process = sorted(set(cc_to_haus.values()))
     if immobilie and immobilie not in hauser_to_process:
@@ -644,23 +910,43 @@ def allocate_kosten_auf_wohnungen(
                     continue
                 if _to_decimal(amount).copy_abs() < MIN_SIGNIFICANT:
                     continue
-                matrix[wohnung][kostenart] += _to_decimal(amount)
+                manual_amount = _to_decimal(amount)
+                matrix[wohnung][kostenart] += manual_amount
+                manual_matrix[wohnung][kostenart] += manual_amount
 
-    # Runden nach dem in den Hausverwaltung-Einstellungen gewählten Verfahren.
-    per_art: Dict[str, List[Tuple[str, Decimal]]] = defaultdict(list)
-    for whg, arts in matrix.items():
-        for art, val in arts.items():
-            per_art[art].append((whg, val))
-
-    rounded_matrix: Dict[str, Dict[str, float]] = {}
+    # GL-Anteile werden je Root-Haus/Kostenart separat und summenerhaltend
+    # gerundet. Andernfalls könnte eine globale Restverteilung einen Cent von
+    # Haus A nach Haus B verschieben. Manuelle Festbeträge bleiben eine eigene
+    # Rundungsbasis und können keine fehlenden GL-Anteile kaschieren.
     rounding_method = get_bk_rounding_method()
-    for art, entries in per_art.items():
+    rounded_gl_by_basis = _round_gl_allocation_bases(
+        gl_expected_by_basis,
+        gl_matrix_by_basis,
+        rounding_method,
+    )
+    rounded_matrix_decimal: Dict[str, Dict[str, Decimal]] = defaultdict(
+        lambda: defaultdict(lambda: Decimal("0"))
+    )
+    for (_haus, art), entries in rounded_gl_by_basis.items():
+        for whg, amount in entries.items():
+            rounded_matrix_decimal[whg][art] += amount
+
+    manual_per_art: Dict[str, List[Tuple[str, Decimal]]] = defaultdict(list)
+    for whg, arts in manual_matrix.items():
+        for art, val in arts.items():
+            manual_per_art[art].append((whg, val))
+
+    for art, entries in manual_per_art.items():
         if not entries:
             continue
         rounded_entries = round_money_allocations(entries, rounding_method)
         for whg, rounded in rounded_entries.items():
-            amount = float(rounded)
-            rounded_matrix.setdefault(whg, {})[art] = amount
+            rounded_matrix_decimal[whg][art] += rounded
+
+    rounded_matrix: Dict[str, Dict[str, float]] = {}
+    for whg, arts in rounded_matrix_decimal.items():
+        for art, amount in arts.items():
+            rounded_matrix.setdefault(whg, {})[art] = float(amount)
 
     rows: List[dict] = []
     for whg, arts in rounded_matrix.items():

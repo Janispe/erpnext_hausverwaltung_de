@@ -1,17 +1,20 @@
 import hashlib
 import json
+from decimal import Decimal
 from io import BytesIO
 from typing import Callable, Dict, List, Optional, Set
 
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import add_days, cint, cstr
+from frappe.utils import add_days, cint, cstr, getdate
 from frappe.utils import now_datetime
 
 from mail_merge.mail_merge.utils.pdf_engine import render_pdf as get_pdf
+from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_mieter.betriebskostenabrechnung_mieter import (
+	_get_locked_settlement_allocations,
+)
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import normalize_print_format_name
-from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_for_print_format
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_pdf_for_print_format
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import scrub_value as hv_scrub
 
@@ -103,27 +106,120 @@ class BetriebskostenabrechnungImmobilie(Document):
 		"""Virtuelles Desk-Feld; die echten Zeilen lädt das Formular per API."""
 		return []
 
+	def _get_locked_cancel_children(self) -> List[Dict[str, object]]:
+		"""Current/locking read of every active child involved in the cascade."""
+		return frappe.db.sql(
+			"""
+			SELECT
+				name,
+				docstatus,
+				customer,
+				sales_invoice,
+				credit_note,
+				consolidation_journal_entry
+			FROM `tabBetriebskostenabrechnung Mieter`
+			WHERE immobilien_abrechnung = %s
+			  AND docstatus < 2
+			ORDER BY name
+			FOR UPDATE
+			""",
+			(self.name,),
+			as_dict=True,
+		)
+
+	def _get_cancel_allocation_blockers(
+		self,
+		children: List[Dict[str, object]],
+	) -> List[Dict[str, object]]:
+		invoices: List[str] = []
+		ignored_journals: Dict[str, Set[str]] = {}
+		for child in children:
+			child_invoices = [
+				cstr(_row_value(child, fieldname) or "").strip()
+				for fieldname in ("sales_invoice", "credit_note")
+			]
+			child_invoices = [name for name in child_invoices if name]
+			invoices.extend(child_invoices)
+			own_journal = cstr(_row_value(child, "consolidation_journal_entry") or "").strip()
+			if own_journal:
+				for invoice in child_invoices:
+					ignored_journals.setdefault(invoice, set()).add(own_journal)
+
+		allocations = _get_locked_settlement_allocations(
+			invoices,
+			ignored_journal_entries_by_invoice=ignored_journals,
+		)
+		blockers: List[Dict[str, object]] = []
+		for child in children:
+			for fieldname in ("sales_invoice", "credit_note"):
+				invoice = cstr(_row_value(child, fieldname) or "").strip()
+				rows = allocations.get(invoice) or []
+				if rows:
+					blockers.append(
+						{
+							"child": _row_value(child, "name"),
+							"customer": _row_value(child, "customer"),
+							"invoice": invoice,
+							"allocations": rows,
+						}
+					)
+		return blockers
+
+	def _assert_cancel_allocations_are_clear(
+		self,
+		children: List[Dict[str, object]],
+	) -> None:
+		blockers = self._get_cancel_allocation_blockers(children)
+		if not blockers:
+			return
+
+		lines = [
+			"<strong>Storno nicht möglich — Ausgleichsbelege haben aktive "
+			"Zahlungs- oder Journal-Zuordnungen:</strong>"
+		]
+		for blocker in blockers:
+			sources = ", ".join(
+				sorted(
+					{
+						f"{row['document_type']} {row['document']}"
+						for row in blocker["allocations"]
+					}
+				)
+			)
+			allocated = sum(float(row["allocated_amount"]) for row in blocker["allocations"])
+			lines.append(
+				f"• <strong>{frappe.utils.escape_html(blocker['customer'] or blocker['child'])}</strong>: "
+				f"<code>{frappe.utils.escape_html(blocker['invoice'])}</code>, "
+				f"{allocated:.2f} € zugeordnet ({frappe.utils.escape_html(sources)})"
+			)
+		lines.append("<br>Bitte zuerst alle Zuordnungen auflösen. Es wurde nichts storniert.")
+		frappe.throw("<br>".join(lines), title="BK-Sammelstorno blockiert")
+
 	def _cleanup_mieter_abrechnungen(self, *, allow_delete: bool = True) -> None:
 		"""Storniert/loescht verknuepfte Mieter-Abrechnungen."""
-		children = frappe.get_all(
-			"Betriebskostenabrechnung Mieter",
-			filters={"immobilien_abrechnung": self.name},
-			fields=["name", "docstatus"],
-		)
+		children = self._get_locked_cancel_children()
+		self._assert_cancel_allocations_are_clear(children)
 		for row in children or []:
-			nm = row.get("name")
+			nm = _row_value(row, "name")
 			if not nm:
 				continue
 			try:
-				doc = frappe.get_doc("Betriebskostenabrechnung Mieter", nm)
+				doc = frappe.get_doc(
+					"Betriebskostenabrechnung Mieter",
+					nm,
+					for_update=True,
+				)
 				doc.flags.allow_cancel_via_head = True
 				doc.flags.ignore_permissions = True
 				if doc.docstatus == 1:
 					doc.cancel()
 					if allow_delete:
-						frappe.delete_doc("Betriebskostenabrechnung Mieter", nm, ignore_permissions=True, force=1)
+						doc.delete(ignore_permissions=True, force=True)
 				elif doc.docstatus == 0 and allow_delete:
-					frappe.delete_doc("Betriebskostenabrechnung Mieter", nm, ignore_permissions=True, force=1)
+					# Legacy drafts may still own settlement documents. Validate
+					# and cancel those while the bijective backlink still exists.
+					doc._cancel_settlement_documents()
+					doc.delete(ignore_permissions=True, force=True)
 			except Exception as e:
 				frappe.throw(f"Mieter-Abrechnung konnte nicht storniert/gelöscht werden ({nm}): {e}")
 
@@ -140,50 +236,402 @@ class BetriebskostenabrechnungImmobilie(Document):
 		for fieldname in SUMMARY_TABLE_FIELDS:
 			self.update_child_table(fieldname)
 
+	def validate(self) -> None:
+		"""Freeze the identity fields once tenant snapshots exist."""
+		get_before = getattr(self, "get_doc_before_save", None)
+		previous = get_before() if callable(get_before) else None
+		if not previous:
+			return
+
+		changed = []
+		for fieldname in ("immobilie", "von", "bis"):
+			if cstr(getattr(previous, fieldname, None)) != cstr(
+				getattr(self, fieldname, None)
+			):
+				changed.append(fieldname)
+		previous_cutoff = getdate(
+			getattr(previous, "stichtag", None)
+			or getattr(previous, "bis", None)
+		)
+		current_cutoff = getdate(self.stichtag or self.bis)
+		if previous_cutoff != current_cutoff:
+			changed.append("stichtag")
+
+		if changed and frappe.db.exists(
+			"Betriebskostenabrechnung Mieter",
+			{
+				"immobilien_abrechnung": self.name,
+				"docstatus": ("<", 2),
+			},
+		):
+			frappe.throw(
+				"Immobilie, Zeitraum und Stichtag dürfen nach Erzeugung der "
+				"Mieter-Abrechnungen nicht geändert werden "
+				f"({', '.join(changed)}). Bitte den Kopf verwerfen und neu erzeugen.",
+				frappe.ValidationError,
+			)
+
+	def _get_locked_snapshot_children(self) -> List[Dict[str, object]]:
+		return frappe.db.sql(
+			"""
+			SELECT
+				name,
+				docstatus,
+				wohnung,
+				mietvertrag,
+				customer,
+				von,
+				bis,
+				datum,
+				sales_invoice,
+				credit_note,
+				consolidation_journal_entry
+			FROM `tabBetriebskostenabrechnung Mieter`
+			WHERE immobilien_abrechnung = %s
+			ORDER BY name
+			FOR UPDATE
+			""",
+			(self.name,),
+			as_dict=True,
+		)
+
+	def _lock_current_contracts(self, wohnungen: List[str]) -> None:
+		if not wohnungen:
+			return
+		frappe.db.sql(
+			"""
+			SELECT name
+			FROM `tabMietvertrag`
+			WHERE wohnung IN %(wohnungen)s
+			  AND von <= %(bis)s
+			  AND (bis IS NULL OR bis >= %(von)s)
+			ORDER BY wohnung, von, name
+			FOR UPDATE
+			""",
+			{
+				"wohnungen": tuple(sorted(set(wohnungen))),
+				"von": getdate(self.von),
+				"bis": getdate(self.bis),
+			},
+		)
+
+	def _validate_current_child_snapshot(self) -> None:
+		"""Rebuild identities and costs immediately before financial submission."""
+		from hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen import (
+			_build_bk_segment_costs,
+			_mietvertrag_segmente_fuer_zeitraum,
+			_quantize_money,
+			_to_decimal,
+		)
+		from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen import (
+			allocate_kosten_auf_wohnungen,
+			_wohnungen_in_haus,
+		)
+
+		frappe.db.sql(
+			"""
+			SELECT name
+			FROM `tabBetriebskostenabrechnung Immobilie`
+			WHERE name = %s
+			FOR UPDATE
+			""",
+			(self.name,),
+		)
+		all_children = self._get_locked_snapshot_children()
+		linked_cancelled = [
+			cstr(_row_value(row, "name"))
+			for row in all_children
+			if cint(_row_value(row, "docstatus")) == 2
+			and any(
+				cstr(_row_value(row, fieldname) or "").strip()
+				for fieldname in (
+					"sales_invoice",
+					"credit_note",
+					"consolidation_journal_entry",
+				)
+			)
+		]
+		if linked_cancelled:
+			frappe.throw(
+				"BK-Submit abgebrochen: Historisch stornierte Children "
+				"besitzen noch aktive technische Settlement-Links "
+				f"({', '.join(linked_cancelled)}).",
+				frappe.ValidationError,
+			)
+		children = [
+			row
+			for row in all_children
+			if cint(_row_value(row, "docstatus")) < 2
+		]
+		if not children:
+			frappe.throw(
+				"BK-Submit abgebrochen: Es existiert keine Mieter-Abrechnung.",
+				frappe.ValidationError,
+			)
+		non_drafts = [
+			cstr(_row_value(row, "name"))
+			for row in children
+			if cint(_row_value(row, "docstatus")) != 0
+		]
+		if non_drafts:
+			frappe.throw(
+				"BK-Submit abgebrochen: Vor dem Kopf wurden bereits "
+				"Mieter-Abrechnungen eingereicht "
+				f"({', '.join(non_drafts)}).",
+				frappe.ValidationError,
+			)
+
+		# Use the exact canonical hierarchy resolver used by the allocator.
+		# This includes apartments assigned to building nodes and rejects
+		# conflicting primary/node roots before any contract can escape locking.
+		wohnungen = sorted(_wohnungen_in_haus(immobilie=self.immobilie))
+		self._lock_current_contracts(wohnungen)
+		alloc = allocate_kosten_auf_wohnungen(
+			von=cstr(self.von),
+			bis=cstr(self.bis),
+			immobilie=self.immobilie,
+			stichtag=cstr(self.stichtag or self.bis),
+		)
+		matrix = alloc.get("matrix") or {}
+		if not matrix:
+			frappe.throw(
+				"BK-Submit abgebrochen: Die aktuelle Kostenmatrix ist leer.",
+				frappe.ValidationError,
+			)
+		unlocked_matrix_apartments = sorted(set(matrix) - set(wohnungen))
+		if unlocked_matrix_apartments:
+			frappe.throw(
+				"BK-Submit abgebrochen: Die Kostenmatrix enthält Wohnungen "
+				"außerhalb der zuvor gesperrten kanonischen Hierarchie "
+				f"({', '.join(unlocked_matrix_apartments)}).",
+				frappe.ValidationError,
+			)
+
+		expected_identities: Dict[tuple, Dict[str, object]] = {}
+		expected_costs: Dict[tuple[tuple, str], Decimal] = {}
+		cutoff = getdate(self.stichtag or self.bis)
+		for wohnung in sorted(matrix):
+			segments = _mietvertrag_segmente_fuer_zeitraum(
+				wohnung,
+				cstr(self.von),
+				cstr(self.bis),
+			)
+			if not segments:
+				frappe.throw(
+					"BK-Submit abgebrochen: Für die kostenführende Wohnung "
+					f"{wohnung} existiert aktuell kein Mietvertragssegment.",
+					frappe.ValidationError,
+				)
+			posten = {
+				art: _to_decimal(amount)
+				for art, amount in (matrix.get(wohnung) or {}).items()
+			}
+			segment_costs = _build_bk_segment_costs(
+				alloc=alloc,
+				immobilie=self.immobilie,
+				wohnung=wohnung,
+				von=cstr(self.von),
+				bis=cstr(self.bis),
+				posten=posten,
+				segments=segments,
+			)
+			for index, segment in enumerate(segments):
+				customer = cstr(segment.get("kunde") or "").strip()
+				if not customer:
+					frappe.throw(
+						"BK-Submit abgebrochen: Mietvertrag "
+						f"{segment.get('mietvertrag')} hat keinen Customer.",
+						frappe.ValidationError,
+					)
+				identity = (
+					wohnung,
+					cstr(segment.get("mietvertrag") or "").strip(),
+					customer,
+					getdate(segment.get("start")),
+					getdate(segment.get("end")),
+					min(cutoff, getdate(segment.get("end"))),
+				)
+				if identity in expected_identities:
+					frappe.throw(
+						"BK-Submit abgebrochen: Die aktuellen Vertragssegmente "
+						"enthalten ein Duplikat.",
+						frappe.ValidationError,
+					)
+				expected_identities[identity] = segment
+				for art, amount in segment_costs[index].items():
+					key = (identity, cstr(art))
+					expected_costs[key] = _quantize_money(
+						expected_costs.get(key, Decimal("0"))
+						+ _quantize_money(_to_decimal(amount))
+					)
+
+		actual_identities: Dict[tuple, str] = {}
+		for row in children:
+			identity = (
+				cstr(_row_value(row, "wohnung") or "").strip(),
+				cstr(_row_value(row, "mietvertrag") or "").strip(),
+				cstr(_row_value(row, "customer") or "").strip(),
+				getdate(_row_value(row, "von")),
+				getdate(_row_value(row, "bis")),
+				getdate(_row_value(row, "datum")),
+			)
+			if identity in actual_identities:
+				frappe.throw(
+					"BK-Submit abgebrochen: Doppelte Mieter-Segmente "
+					f"{actual_identities[identity]} und {_row_value(row, 'name')}.",
+					frappe.ValidationError,
+				)
+			actual_identities[identity] = cstr(_row_value(row, "name"))
+		if set(actual_identities) != set(expected_identities):
+			missing = len(set(expected_identities) - set(actual_identities))
+			extra = len(set(actual_identities) - set(expected_identities))
+			frappe.throw(
+				"BK-Submit abgebrochen: Mieter-Segmente sind gegenüber den "
+				"aktuellen Mietverträgen veraltet "
+				f"(fehlend: {missing}, zusätzlich/geändert: {extra}).",
+				frappe.ValidationError,
+			)
+
+		child_names = [cstr(_row_value(row, "name")) for row in children]
+		placeholders = ", ".join(["%s"] * len(child_names))
+		cost_rows = frappe.db.sql(
+			f"""
+			SELECT parent, betriebskostenart, bezeichnung, betrag
+			FROM `tabAbrechnungsposten`
+			WHERE parenttype = 'Betriebskostenabrechnung Mieter'
+			  AND parentfield = 'abrechnung'
+			  AND parent IN ({placeholders})
+			ORDER BY parent, idx, name
+			FOR UPDATE
+			""",
+			tuple(child_names),
+			as_dict=True,
+		)
+		child_identity = {
+			name: identity for identity, name in actual_identities.items()
+		}
+		actual_costs: Dict[tuple[tuple, str], Decimal] = {}
+		for row in cost_rows:
+			art = cstr(_row_value(row, "betriebskostenart") or "").strip()
+			label = cstr(_row_value(row, "bezeichnung") or "").strip()
+			if bool(art) == bool(label):
+				frappe.throw(
+					"BK-Submit abgebrochen: Eine Kostenzeile ist nicht "
+					"eindeutig einer Kostenart zugeordnet.",
+					frappe.ValidationError,
+				)
+			key = (
+				child_identity[cstr(_row_value(row, "parent"))],
+				art or label,
+			)
+			actual_costs[key] = _quantize_money(
+				actual_costs.get(key, Decimal("0"))
+				+ _to_decimal(_row_value(row, "betrag"))
+			)
+
+		expected_costs = {
+			key: amount
+			for key, amount in expected_costs.items()
+			if amount != Decimal("0.00")
+		}
+		actual_costs = {
+			key: amount
+			for key, amount in actual_costs.items()
+			if amount != Decimal("0.00")
+		}
+		if actual_costs != expected_costs:
+			changed = sorted(set(actual_costs) | set(expected_costs))
+			details = ", ".join(
+				f"{identity[0]}/{identity[1]} {identity[3]}–{identity[4]}/{art}: "
+				f"Entwurf {actual_costs.get((identity, art), Decimal('0')):.2f}, "
+				f"aktuell {expected_costs.get((identity, art), Decimal('0')):.2f}"
+				for identity, art in changed[:8]
+				if actual_costs.get((identity, art), Decimal("0"))
+				!= expected_costs.get((identity, art), Decimal("0"))
+			)
+			frappe.throw(
+				"BK-Submit abgebrochen: Die Kostenmatrix hat sich seit der "
+				f"Erzeugung geändert ({details}).",
+				frappe.ValidationError,
+			)
+		self.flags._validated_bk_submit_children = tuple(child_names)
+
+	def before_submit(self) -> None:
+		self._validate_current_child_snapshot()
+
 	def after_insert(self):
 		"""Beim Anlegen automatisch alle Mieter‑Abrechnungen als Entwurf erzeugen."""
 		if not (self.immobilie and self.von and self.bis):
 			frappe.throw("Bitte Immobilie, Von und Bis ausfüllen.")
-		# Idempotenz: wenn bereits Child-Abrechnungen verknuepft sind (Retry,
-		# doppelter Trigger), nicht erneut erzeugen. Summary + Persistenz laufen
-		# trotzdem, damit ein abgebrochener Vorlauf konsistent fertig wird.
-		children_exist = frappe.db.exists(
-			"Betriebskostenabrechnung Mieter",
-			{"immobilien_abrechnung": self.name},
+		stichtag = self.stichtag or self.bis
+		from hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen import create_bk_abrechnungen_immobilie
+		create_bk_abrechnungen_immobilie(
+			von=cstr(self.von),
+			bis=cstr(self.bis),
+			immobilie=self.immobilie,
+			submit=False,
+			stichtag=cstr(stichtag),
+			head=self.name,
+			split_by_mietvertrag=True,
 		)
-		if not children_exist:
-			stichtag = self.stichtag or self.bis
-			from hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen import create_bk_abrechnungen_immobilie
-			create_bk_abrechnungen_immobilie(
-				von=cstr(self.von),
-				bis=cstr(self.bis),
-				immobilie=self.immobilie,
-				submit=False,
-				stichtag=cstr(stichtag),
-				head=self.name,
-				split_by_mietvertrag=True,
-			)
 		# Nach Erzeugung (oder Skip): Zusammenfassungen berechnen + persistieren.
 		self._populate_summary()
 		self._persist_summary_after_insert()
 
 	def on_submit(self):
-		"""Beim Submit: alle verknüpften Mieter-Abrechnungen einreichen und erst dann Ausgleichsbelege erzeugen."""
-		children = frappe.get_all(
-			"Betriebskostenabrechnung Mieter",
-			filters={"immobilien_abrechnung": self.name},
-			pluck="name",
+		"""Mieter-Abrechnungen und danach deren Ausgleichsbelege erzeugen.
+
+		Offene BK-Vorauszahlungen werden nur auf ausdrücklichen Wunsch des
+		Benutzers per Journal Entry mit dem Ausgleichsbeleg zusammengeführt.
+		"""
+		children = list(
+			getattr(
+				getattr(self, "flags", object()),
+				"_validated_bk_submit_children",
+				(),
+			)
+			or ()
 		)
+		if not children:
+			frappe.throw(
+				"BK-Submit abgebrochen: Es liegt keine in before_submit "
+				"validierte Child-Menge vor.",
+				frappe.ValidationError,
+			)
+		current_rows = frappe.db.sql(
+			"""
+			SELECT name, docstatus
+			FROM `tabBetriebskostenabrechnung Mieter`
+			WHERE immobilien_abrechnung = %s
+			  AND docstatus < 2
+			ORDER BY name
+			FOR UPDATE
+			""",
+			(self.name,),
+			as_dict=True,
+		)
+		current_names = [cstr(_row_value(row, "name")) for row in current_rows]
+		if current_names != sorted(children) or any(
+			cint(_row_value(row, "docstatus")) != 0
+			for row in current_rows
+		):
+			frappe.throw(
+				"BK-Submit abgebrochen: Die validierte Draft-Child-Menge hat "
+				"sich zwischen before_submit und on_submit geändert.",
+				frappe.ValidationError,
+			)
+		children = current_names
 		for nm in children:
 			# Submit, falls noch Entwurf
-			doc = frappe.get_doc("Betriebskostenabrechnung Mieter", nm)
-			if doc.docstatus == 0:
-				doc.flags.skip_auto_settle = True  # Settlement kommt nach Submit durch Header
-				doc.submit()
+				doc = frappe.get_doc("Betriebskostenabrechnung Mieter", nm)
+				if doc.docstatus == 0:
+					doc.flags.skip_auto_settle = True  # Settlement kommt nach Submit durch Header
+					doc.flags.allow_submit_via_head = True
+					doc.submit()
 		# Nach Submit aller: Ausgleichsbelege erzeugen
 		for nm in children:
-			from hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen import create_bk_settlement_documents
-			create_bk_settlement_documents(nm, consolidate_unpaid=True)
+				from hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen import create_bk_settlement_documents
+				create_bk_settlement_documents(nm)
 
 	def before_cancel(self):
 		"""Beim Storno: zuerst alle Mieter-Abrechnungen inkl. Ausgleichsbelege stornieren/löschen.
@@ -191,8 +639,6 @@ class BetriebskostenabrechnungImmobilie(Document):
 		Das verhindert, dass der Header durch verknüpfte, eingereichte Kinder am Storno gehindert wird.
 		"""
 		self._cleanup_mieter_abrechnungen(allow_delete=True)
-		# Backlink-Check bei Cancel ueberspringen, nachdem Kinder bereinigt wurden
-		self.flags.ignore_links = True
 
 	def on_trash(self):
 		"""Beim Loeschen: verknuepfte Mieter-Abrechnungen zuerst entfernen."""
