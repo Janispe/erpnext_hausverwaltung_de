@@ -1,0 +1,115 @@
+{
+ "actions": [],
+ "creation": "2026-07-30 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "plan_zeile",
+  "plan_zeile_idx",
+  "payment_entry",
+  "bank_transaction",
+  "allocated_amount",
+  "consumed_amount",
+  "released_amount",
+  "settlement_invoice",
+  "posting_date",
+  "status"
+ ],
+ "fields": [
+  {
+   "fieldname": "plan_zeile",
+   "fieldtype": "Data",
+   "label": "Plan-Zeile",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "plan_zeile_idx",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Zeile",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "payment_entry",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Payment Entry",
+   "options": "Payment Entry",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "bank_transaction",
+   "fieldtype": "Link",
+   "label": "Bank Transaction",
+   "options": "Bank Transaction",
+   "read_only": 1
+  },
+  {
+   "fieldname": "allocated_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Zugeordneter Betrag",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Betrag, der tatsächlich gegen die verknüpfte Jahresrechnung verrechnet wurde.",
+   "fieldname": "consumed_amount",
+   "fieldtype": "Currency",
+   "label": "Verrechneter Betrag",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Bei einer Jahresabrechnung nicht benötigter Teil der ursprünglichen Zuordnung. Dieser Rest bleibt als Lieferantenguthaben verfügbar.",
+   "fieldname": "released_amount",
+   "fieldtype": "Currency",
+   "label": "Freigegebener Betrag",
+   "read_only": 1
+  },
+  {
+   "description": "Jahresrechnung, mit der diese Zuordnung abgeschlossen wurde.",
+   "fieldname": "settlement_invoice",
+   "fieldtype": "Link",
+   "label": "Jahresrechnung",
+   "options": "Purchase Invoice",
+   "read_only": 1
+  },
+  {
+   "fieldname": "posting_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Buchungsdatum",
+   "read_only": 1
+  },
+  {
+   "default": "Aktiv",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Aktiv\nPrüfen\nStorniert",
+   "read_only": 1,
+   "reqd": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-07-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Zahlungsplan Zahlung Zuordnung",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
