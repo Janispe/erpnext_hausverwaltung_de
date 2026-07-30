@@ -915,7 +915,6 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		rows = [
 			frappe._dict(mietvertrag="MV-1", name="MV-1", immobilie="Warthestr. 65", status="Läuft", personen=2),
 			frappe._dict(mietvertrag="MV-2", name="MV-2", immobilie="Warthestr. 65", status="Läuft", personen=3),
-			frappe._dict(mietvertrag="MV-3", name="MV-3", immobilie="Wilhelmshavener", status="Läuft", personen=1),
 		]
 
 		with patch.object(assistant.frappe, "has_permission", return_value=True), \

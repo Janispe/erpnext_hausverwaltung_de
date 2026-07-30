@@ -165,9 +165,21 @@ class TestImmobilie(unittest.TestCase):
 			iban="DE0012345678",
 			bank="Testbank",
 		)
+		bank = frappe._dict(
+			doctype="Bank",
+			name="Testbank",
+			bank_name="Testbank",
+		)
 
-		with patch.object(frappe, "get_all", return_value=[{"name": "Test Bank Account"}]):
-			with patch.object(frappe, "get_cached_doc", return_value=bank_account):
+		def get_cached_doc(doctype, _name):
+			return bank if doctype == "Bank" else bank_account
+
+		with patch(
+			"hausverwaltung.hausverwaltung.doctype.immobilie.immobilie."
+			"_get_bank_account_for_gl_account",
+			return_value="Test Bank Account",
+		):
+			with patch.object(frappe, "get_cached_doc", side_effect=get_cached_doc):
 				rendered = _render_serienbrief_template(
 					"Bankverbindung: {{$ immobilie.bank_konto.account_name $}} · "
 					"IBAN {{$ immobilie.bank_konto.iban $}} · {{$ immobilie.bank_konto.bank $}}",
