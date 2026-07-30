@@ -250,6 +250,7 @@ doc_events = {
 	},
 	"Dunning": {
 		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning",
+		"before_submit": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning_fee_booking_before_submit",
 		"before_cancel": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning_fee_invoice_can_cancel",
 		"on_submit": "hausverwaltung.hausverwaltung.doctype.dunning.create_dunning_fee_invoice",
 		"on_cancel": "hausverwaltung.hausverwaltung.doctype.dunning.cancel_dunning_fee_invoice",
@@ -291,13 +292,21 @@ doc_events = {
 	},
 	"Journal Entry": {
 		"validate": "hausverwaltung.hausverwaltung.overrides.journal_entry.default_wertstellungsdatum_from_posting_date",
-		"before_save": "hausverwaltung.hausverwaltung.overrides.journal_entry.default_wertstellungsdatum_from_posting_date",
-		"before_submit": "hausverwaltung.hausverwaltung.overrides.journal_entry.default_wertstellungsdatum_from_posting_date",
+		"before_save": [
+			"hausverwaltung.hausverwaltung.overrides.journal_entry.default_wertstellungsdatum_from_posting_date",
+			"hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff.protect_hv_writeoff_draft_ownership",
+		],
+		"before_submit": [
+			"hausverwaltung.hausverwaltung.overrides.journal_entry.default_wertstellungsdatum_from_posting_date",
+			"hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff.validate_hv_writeoff_journal_entry_before_submit",
+		],
+		"before_cancel": "hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.prevent_historical_journal_entry_cancel_with_active_invoice",
 		# Bei Storno eines Journal Entry, der zu einer Kreditrate gehört:
 		# Rate zurücksetzen + Bank-Transaction-Reconciliation entkoppeln.
 		"on_cancel": [
 			"hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag.on_journal_entry_cancel",
 			"hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.on_journal_entry_cancel",
+			"hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.on_historical_journal_entry_cancel",
 		],
 	},
 }
