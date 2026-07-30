@@ -488,34 +488,39 @@ class TestMietvertrag(unittest.TestCase):
 class TestMietvertragDatabaseIntegration(unittest.TestCase):
 	def test_real_insert_sets_status_customer_and_sorts_staffels(self):
 		suffix = frappe.generate_hash(length=8)
-		wohnung = frappe.get_doc({
-			"doctype": "Wohnung",
-			"name__lage_in_der_immobilie": f"HV Mietvertrag Test {suffix}",
-			"gebaeudeteil": "VH",
-		}).insert(ignore_permissions=True)
-		contact = frappe.get_doc({
-			"doctype": "Contact",
-			"first_name": "Max",
-			"last_name": f"Miettest{suffix}",
-		}).insert(ignore_permissions=True)
+		savepoint = f"mietvertrag_insert_{suffix}"
+		frappe.db.savepoint(savepoint)
+		try:
+			wohnung = frappe.get_doc({
+				"doctype": "Wohnung",
+				"name__lage_in_der_immobilie": f"HV Mietvertrag Test {suffix}",
+				"gebaeudeteil": "VH",
+			}).insert(ignore_permissions=True)
+			contact = frappe.get_doc({
+				"doctype": "Contact",
+				"first_name": "Max",
+				"last_name": f"Miettest{suffix}",
+			}).insert(ignore_permissions=True)
 
-		doc = frappe.get_doc({
-			"doctype": "Mietvertrag",
-			"wohnung": wohnung.name,
-			"von": "2026-01-01",
-			"mieter": [{"mieter": contact.name, "rolle": "Hauptmieter"}],
-			"miete": [
-				{"von": "2026-05-01", "miete": 650},
-				{"von": "2026-01-01", "miete": 600},
-			],
-		}).insert(ignore_permissions=True)
+			doc = frappe.get_doc({
+				"doctype": "Mietvertrag",
+				"wohnung": wohnung.name,
+				"von": "2026-01-01",
+				"mieter": [{"mieter": contact.name, "rolle": "Hauptmieter"}],
+				"miete": [
+					{"von": "2026-05-01", "miete": 650},
+					{"von": "2026-01-01", "miete": 600},
+				],
+			}).insert(ignore_permissions=True)
 
-		self.assertTrue(doc.kunde)
-		self.assertTrue(frappe.db.exists("Customer", doc.kunde))
-		self.assertIn(f"Miettest{suffix}", doc.kunde)
-		self.assertIn(wohnung.name, doc.kunde)
-		self.assertEqual([row.von for row in doc.miete], ["2026-01-01", "2026-05-01"])
-		self.assertEqual(doc.status, mietvertrag._compute_status_value("2026-01-01", None))
+			self.assertTrue(doc.kunde)
+			self.assertTrue(frappe.db.exists("Customer", doc.kunde))
+			self.assertIn(f"Miettest{suffix}", doc.kunde)
+			self.assertIn(wohnung.name, doc.kunde)
+			self.assertEqual([row.von for row in doc.miete], ["2026-01-01", "2026-05-01"])
+			self.assertEqual(doc.status, mietvertrag._compute_status_value("2026-01-01", None))
+		finally:
+			frappe.db.rollback(save_point=savepoint)
 
 	def test_real_same_named_tenants_in_same_wohnung_never_share_customer(self):
 		suffix = frappe.generate_hash(length=8)
