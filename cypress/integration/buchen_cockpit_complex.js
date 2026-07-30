@@ -9,10 +9,6 @@ const HV_API = "hausverwaltung.hausverwaltung.page.buchen_cockpit.buchen_cockpit
 const TEST_TAG = `__cy_cockpit_complex_${Date.now()}`;
 const DRAFT_KEY_PI = "hv_buchen_cockpit_draft_pi_v1";
 
-const createdPurchaseInvoices = [];
-const createdTemplates = [];
-const createdSuppliers = [];
-
 const closeAllDialogs = () => {
 	cy.window().then((win) => {
 		const dialogs = (win.frappe?.ui?._all_dialogs || []).slice();
@@ -121,7 +117,6 @@ context("Buchungs-Cockpit — komplexer Eingangsrechnungs-UI-Flow", () => {
 			});
 		}).then((r) => {
 			supplier = r.message.name;
-			createdSuppliers.push(supplier);
 		});
 
 		cy.call("frappe.client.get_list", {
@@ -171,74 +166,13 @@ context("Buchungs-Cockpit — komplexer Eingangsrechnungs-UI-Flow", () => {
 	});
 
 	after(() => {
-		cy.then(() => {
-			createdPurchaseInvoices.forEach((name) => {
-				cy.window().its("frappe.csrf_token").then((csrfToken) => {
-					cy.request({
-						method: "POST",
-						url: "/api/method/frappe.client.get",
-						body: { doctype: "Purchase Invoice", name },
-						headers: {
-							"Content-Type": "application/json",
-							"X-Frappe-CSRF-Token": csrfToken,
-						},
-						failOnStatusCode: false,
-					}).then((getRes) => {
-						if (getRes.status === 200 && Number(getRes.body?.message?.docstatus) === 1) {
-							cy.request({
-								method: "POST",
-								url: "/api/method/frappe.client.cancel",
-								body: { doctype: "Purchase Invoice", name },
-								headers: {
-									"Content-Type": "application/json",
-									"X-Frappe-CSRF-Token": csrfToken,
-								},
-								failOnStatusCode: false,
-							});
-						}
-						cy.request({
-							method: "POST",
-							url: "/api/method/frappe.client.delete",
-							body: { doctype: "Purchase Invoice", name },
-							headers: {
-								"Content-Type": "application/json",
-								"X-Frappe-CSRF-Token": csrfToken,
-							},
-							failOnStatusCode: false,
-						});
-					});
-			});
-		});
-
-			createdTemplates.forEach((name) => {
-				cy.window().its("frappe.csrf_token").then((csrfToken) => {
-					cy.request({
-						method: "POST",
-						url: "/api/method/frappe.client.delete",
-						body: { doctype: "Eingangsrechnung Vorlage", name },
-						headers: {
-							"Content-Type": "application/json",
-							"X-Frappe-CSRF-Token": csrfToken,
-						},
-						failOnStatusCode: false,
-					});
-				});
-			});
-
-			createdSuppliers.forEach((name) => {
-				cy.window().its("frappe.csrf_token").then((csrfToken) => {
-					cy.request({
-						method: "POST",
-						url: "/api/method/frappe.client.delete",
-						body: { doctype: "Supplier", name },
-						headers: {
-							"Content-Type": "application/json",
-							"X-Frappe-CSRF-Token": csrfToken,
-						},
-						failOnStatusCode: false,
-					});
-				});
-			});
+		cy.call("hausverwaltung.cypress_fixtures.cleanup_cockpit_complex", {
+			test_tag: TEST_TAG,
+		}).then((response) => {
+			const deleted = response.message?.deleted || {};
+			expect(deleted["Purchase Invoice"] || [], "Testrechnung gelöscht").to.have.length(1);
+			expect(deleted["Eingangsrechnung Vorlage"] || [], "Testvorlage gelöscht").to.have.length(1);
+			expect(deleted.Supplier || [], "Testlieferant gelöscht").to.have.length(1);
 		});
 	});
 
@@ -343,7 +277,6 @@ context("Buchungs-Cockpit — komplexer Eingangsrechnungs-UI-Flow", () => {
 			limit_page_length: 1,
 		}).then((r) => {
 			expect(r.message || []).to.have.length(1);
-			createdTemplates.push(r.message[0].name);
 			expect(r.message[0].eingabemodus).to.eq("Konto");
 			expect(r.message[0].lieferant).to.eq(supplier);
 		});
@@ -409,7 +342,6 @@ context("Buchungs-Cockpit — komplexer Eingangsrechnungs-UI-Flow", () => {
 		}).then((r) => {
 			expect(r.message || [], "Purchase Invoice angelegt").to.have.length(1);
 			const pi = r.message[0];
-			createdPurchaseInvoices.push(pi.name);
 			expect(Number(pi.docstatus)).to.eq(0);
 			expect(Number(pi.grand_total)).to.be.closeTo(100, 0.01);
 			expect(pi.remarks || "").to.not.include("Erfasst über Buchungs-Cockpit");

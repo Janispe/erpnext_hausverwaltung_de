@@ -1,6 +1,7 @@
 """Test-Fixture-Helfer für Cypress-E2E-Tests.
 
-Nur in ``developer_mode=1`` aufrufbar. Statt Sample-Daten zu seeden (was in
+Nur mit ``developer_mode=1`` oder ``allow_tests=1`` aufrufbar. Statt
+Sample-Daten zu seeden (was in
 gewachsenen Sites mit eigenen Konten/Betriebskostenarten zu Konflikten führt)
 arbeitet ``discover_test_env`` gegen die existierenden Echtdaten der Site:
 es sucht eine Immobilie mit gesetzter Kostenstelle und GL-Aktivität im
@@ -16,6 +17,7 @@ Methoden:
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 import frappe
@@ -23,11 +25,80 @@ from frappe.utils import flt
 
 
 def _check_dev_mode() -> None:
-	if not int(frappe.conf.get("developer_mode") or 0):
+	if not (
+		int(frappe.conf.get("developer_mode") or 0)
+		or int(frappe.conf.get("allow_tests") or 0)
+	):
 		frappe.throw(
-			"hausverwaltung.cypress_fixtures: developer_mode muss aktiv sein "
-			"(site_config.json: \"developer_mode\": 1)."
+			"hausverwaltung.cypress_fixtures: developer_mode oder allow_tests "
+			"muss aktiv sein."
 		)
+
+
+_COCKPIT_COMPLEX_TAG = re.compile(r"^__cy_cockpit_complex_\d+$")
+
+
+@frappe.whitelist()
+def cleanup_cockpit_complex(test_tag: str) -> dict:
+	"""Remove only documents created by one complex cockpit Cypress run."""
+	_check_dev_mode()
+	test_tag = str(test_tag or "").strip()
+	if not _COCKPIT_COMPLEX_TAG.fullmatch(test_tag):
+		frappe.throw("Ungültiger Cypress-Test-Tag für das Buchungs-Cockpit.")
+
+	supplier = f"{test_tag} Supplier"
+	deleted = {
+		"Purchase Invoice": [],
+		"Eingangsrechnung Vorlage": [],
+		"Supplier": [],
+	}
+
+	invoices = frappe.get_all(
+		"Purchase Invoice",
+		filters={
+			"supplier": supplier,
+			"bill_no": ["like", f"{test_tag}%"],
+		},
+		pluck="name",
+		limit_page_length=0,
+	)
+	for name in invoices:
+		doc = frappe.get_doc("Purchase Invoice", name)
+		if doc.docstatus == 1:
+			doc.cancel()
+		frappe.delete_doc(
+			"Purchase Invoice",
+			name,
+			force=True,
+			ignore_permissions=True,
+		)
+		deleted["Purchase Invoice"].append(name)
+
+	templates = frappe.get_all(
+		"Eingangsrechnung Vorlage",
+		filters={"name": ["like", f"{test_tag}%"]},
+		pluck="name",
+		limit_page_length=0,
+	)
+	for name in templates:
+		frappe.delete_doc(
+			"Eingangsrechnung Vorlage",
+			name,
+			force=True,
+			ignore_permissions=True,
+		)
+		deleted["Eingangsrechnung Vorlage"].append(name)
+
+	if frappe.db.exists("Supplier", supplier):
+		frappe.delete_doc(
+			"Supplier",
+			supplier,
+			force=True,
+			ignore_permissions=True,
+		)
+		deleted["Supplier"].append(supplier)
+
+	return {"test_tag": test_tag, "deleted": deleted}
 
 
 def _resolve_company(explicit: Optional[str] = None) -> str:
