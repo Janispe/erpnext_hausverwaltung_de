@@ -2160,13 +2160,26 @@ def create_bk_settlement_documents(
             )
 
         target_after = _quantize_money(adjustment + applied_signed)
-        old_after = _quantize_money(total_out_bk - applied_signed)
-        if _quantize_money(target_after + old_after) != diff or (
+        allocated_signed = _quantize_money(
+            sum(consolidated_by_invoice.values(), Decimal("0"))
+        )
+        total_debit = _quantize_money(
+            sum((_to_decimal(entry.get("debit")) for entry in entries), Decimal("0"))
+        )
+        total_credit = _quantize_money(
+            sum((_to_decimal(entry.get("credit")) for entry in entries), Decimal("0"))
+        )
+        if allocated_signed != applied_signed or total_debit != total_credit:
+            frappe.throw(
+                "Konsolidierung abgebrochen: Quellzuordnung und Journal Entry "
+                "sind nicht centgenau ausgeglichen.",
+                frappe.ValidationError,
+            )
+        if (
             adjustment > 0 and target_after < 0
         ) or (adjustment < 0 and target_after > 0):
             frappe.throw(
-                "Konsolidierung abgebrochen: Signed OP-Invariante oder "
-                "Zielvorzeichen wäre verletzt.",
+                "Konsolidierung abgebrochen: Zielvorzeichen wäre verletzt.",
                 frappe.ValidationError,
             )
         je_name = _allocate_via_journal_entry(
