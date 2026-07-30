@@ -71,6 +71,32 @@ class _FakeSalesInvoice:
 
 
 class TestDunningFeeBookingSafety(unittest.TestCase):
+	def test_payment_override_filters_rpc_cmd_at_real_dispatch_boundary(self):
+		from frappe.handler import execute_cmd
+
+		command = (
+			"erpnext.accounts.doctype.payment_entry.payment_entry.get_payment_entry"
+		)
+		previous_form_dict = frappe.local.form_dict
+		previous_request = getattr(frappe.local, "request", None)
+		frappe.local.form_dict = frappe._dict(
+			cmd=command,
+			dt="Sales Invoice",
+			dn="SINV-DISPATCH-TEST",
+		)
+		frappe.local.request = frappe._dict(method="POST")
+		try:
+			with patch(command, return_value={"ok": True}) as upstream:
+				result = execute_cmd(command)
+		finally:
+			frappe.local.form_dict = previous_form_dict
+			frappe.local.request = previous_request
+
+		self.assertEqual(result, {"ok": True})
+		upstream.assert_called_once()
+		self.assertEqual(upstream.call_args.args, ("Sales Invoice", "SINV-DISPATCH-TEST"))
+		self.assertNotIn("cmd", upstream.call_args.kwargs)
+
 	def test_runtime_setup_check_never_calls_schema_installer(self):
 		with patch.object(
 			dunning,

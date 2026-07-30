@@ -784,4 +784,9 @@ def get_payment_entry_guarded(dt, dn, *args, **kwargs):
 
 	from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
 
+	# ``frappe.handler.execute_cmd`` keeps ``cmd`` in ``form_dict``. Because this
+	# guard deliberately accepts ``**kwargs``, Frappe cannot filter that transport
+	# key against ERPNext's stricter function signature before entering here.
+	# Never forward RPC metadata to the business method.
+	kwargs.pop("cmd", None)
 	return get_payment_entry(dt, dn, *args, **kwargs)
