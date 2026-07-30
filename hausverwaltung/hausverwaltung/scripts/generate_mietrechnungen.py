@@ -2,6 +2,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, get_first_day, get_last_day, add_months, now_datetime, getdate
 from datetime import datetime, date, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 
 
 def _parse_monat_jahr(monat: str | int | None, jahr: str | int | None) -> date:
@@ -177,6 +178,130 @@ def _cost_center_via_wohnung(wohnung: str | None) -> str | None:
     return frappe.db.get_value("Immobilie", immobilie, "kostenstelle")
 
 
+def _company_for_cost_center(cost_center: str | None) -> str | None:
+    if not cost_center:
+        return None
+    return frappe.db.get_value("Cost Center", cost_center, "company")
+
+
+def _company_via_wohnung(
+    wohnung: str | None,
+    *,
+    for_update: bool = False,
+) -> str | None:
+    """Resolve the property's company without consulting user/global defaults.
+
+    A default company is user-dependent and therefore not a safe booking
+    identity in a multi-company site. Configured property cost centers,
+    accounts and bank accounts must all point to one company. If no financial
+    link exists, only a site with exactly one active company is unambiguous.
+    """
+    if not wohnung:
+        immobilie = None
+    else:
+        immobilie = frappe.db.get_value(
+            "Wohnung",
+            wohnung,
+            "immobilie",
+            for_update=for_update,
+        )
+    origin_immobilie = immobilie
+    sources: list[tuple[str, str, str]] = []
+    visited: set[str] = set()
+    while immobilie:
+        if immobilie in visited:
+            frappe.throw(
+                _("Die Immobilien-Hierarchie enthält einen Kreis bei {0}.").format(
+                    immobilie
+                )
+            )
+        visited.add(immobilie)
+        values = frappe.db.get_value(
+            "Immobilie",
+            immobilie,
+            [
+                "kostenstelle",
+                "haupt_bank_account",
+                "konto",
+                "kassenkonto",
+                "parent_immobilie",
+                "old_parent",
+            ],
+            as_dict=True,
+            for_update=for_update,
+        ) or {}
+        if values.get("kostenstelle"):
+            sources.append(("Cost Center", values.kostenstelle, "company"))
+        if values.get("haupt_bank_account"):
+            sources.append(("Bank Account", values.haupt_bank_account, "company"))
+        for account in (values.get("konto"), values.get("kassenkonto")):
+            if account:
+                sources.append(("Account", account, "company"))
+        for child_doctype in ("Immobilie Bankkonto", "Immobilie Kassenkonto"):
+            if for_update:
+                account_rows = frappe.db.sql(
+                    f"""
+                    SELECT konto
+                    FROM `tab{child_doctype}`
+                    WHERE parent = %s
+                    ORDER BY name ASC
+                    FOR UPDATE
+                    """,
+                    (immobilie,),
+                )
+                accounts = [row[0] for row in account_rows]
+            else:
+                accounts = frappe.get_all(
+                    child_doctype,
+                    filters={"parent": immobilie},
+                    pluck="konto",
+                    order_by="name asc",
+                )
+            for account in accounts:
+                if account:
+                    sources.append(("Account", account, "company"))
+        immobilie = values.get("parent_immobilie") or values.get("old_parent")
+
+    companies: set[str] = set()
+    # Shared financial masters are always locked in one global order.  Two
+    # properties referencing the same accounts in a different child-row order
+    # must not be able to deadlock each other.
+    for doctype, name, fieldname in sorted(set(sources)):
+        company = frappe.db.get_value(
+            doctype,
+            name,
+            fieldname,
+            for_update=for_update,
+        )
+        if not company:
+            frappe.throw(
+                _(
+                    "Die Finanzzuordnung {0} {1} der Immobilie {2} hat keine "
+                    "eindeutige Company. Es wurde nichts gebucht."
+                ).format(doctype, name, origin_immobilie or "—")
+            )
+        companies.add(company)
+    if len(companies) > 1:
+        frappe.throw(
+            _(
+                "Die Finanzzuordnungen der Immobilie {0} gehören zu mehreren "
+                "Companies ({1}). Es wurde nichts gebucht."
+            ).format(origin_immobilie or "—", ", ".join(sorted(companies)))
+        )
+    if companies:
+        return next(iter(companies))
+
+    try:
+        active_companies = frappe.get_all(
+            "Company",
+            filters={"disabled": 0},
+            pluck="name",
+        )
+    except Exception:
+        active_companies = frappe.get_all("Company", pluck="name")
+    return active_companies[0] if len(active_companies) == 1 else None
+
+
 def _immobilie_via_wohnung(wohnung: str | None) -> str | None:
     if not wohnung:
         return None
@@ -219,7 +344,7 @@ def _third_working_day(month_anchor: date, company: str | None) -> date:
 
     d = start
     count = 0
-    for _ in range(31):  # max. Tage im Monat
+    for _day_index in range(31):  # max. Tage im Monat
         if d.weekday() < 5 and d not in holidays:  # Mo–Fr und kein Feiertag
             count += 1
             if count == 3:
@@ -230,95 +355,374 @@ def _third_working_day(month_anchor: date, company: str | None) -> date:
 
 
 def _kunde_des_vertrags(mv_row: frappe._dict) -> str | None:
-    # Bevorzugt das im Vertrag gepflegte Mieterfeld
-    if getattr(mv_row, "kunde", None):
-        return mv_row.kunde
-    # Fallback: Hauptmieter-Vertragspartner nehmen -> zu Customer auflösen (falls vorhanden)
-    partner = frappe.db.get_value(
-        "Vertragspartner",
-        {"parent": mv_row.name, "parenttype": "Mietvertrag", "rolle": "Hauptmieter"},
-        "mieter",
-        order_by="idx asc",
-    )
-    if not partner:
-        return None
+    """Return the single authoritative Customer stored on the contract.
 
-    customers = frappe.get_all(
-        "Dynamic Link",
-        filters={
-            "parenttype": "Contact",
-            "parent": partner,
-            "link_doctype": "Customer",
+    Contact links are deliberately not a fallback: they can point to several
+    customers and would turn a missing contract invariant into an ambiguous
+    accounting assignment.
+    """
+    return (getattr(mv_row, "kunde", None) or "").strip() or None
+
+
+def _locked_invoice_guard_rows(
+    *,
+    company: str,
+    customer: str,
+    month_start: date,
+    month_end: date,
+    target_id: str,
+    legacy_marker: str,
+    include_drafts: bool,
+    has_structured_id: bool,
+    has_wohnung: bool,
+) -> list[frappe._dict]:
+    """Liest Idempotenz-Kandidaten als Current Read unter ``FOR UPDATE``.
+
+    Das ist bei MariaDB ``REPEATABLE-READ`` nötig: Ein wartender paralleler
+    Generatorlauf darf nach dem Vertrags-Lock nicht auf seinem älteren
+    Transaktions-Snapshot weiterprüfen.
+    """
+    docstatus_sql = "IN (0, 1)" if include_drafts else "= 1"
+    structured_select = "si.mietabrechnung_id" if has_structured_id else "NULL AS mietabrechnung_id"
+    wohnung_select = "si.wohnung" if has_wohnung else "NULL AS wohnung"
+    structured_condition = "si.mietabrechnung_id = %(target_id)s OR" if has_structured_id else ""
+    return frappe.db.sql(
+        f"""
+        SELECT
+            si.name,
+            si.remarks,
+            si.docstatus,
+            si.is_return,
+            si.return_against,
+            si.posting_date,
+            {structured_select},
+            {wohnung_select}
+        FROM `tabSales Invoice` si
+        WHERE si.company = %(company)s
+          AND si.customer = %(customer)s
+          AND si.docstatus {docstatus_sql}
+          AND (
+                {structured_condition}
+                si.remarks LIKE %(legacy_marker)s
+                OR si.posting_date BETWEEN %(month_start)s AND %(month_end)s
+          )
+        FOR UPDATE
+        """,
+        {
+            "company": company,
+            "customer": customer,
+            "target_id": target_id,
+            "legacy_marker": f"%{legacy_marker}%",
+            "month_start": month_start,
+            "month_end": month_end,
         },
-        pluck="link_name",
-        order_by="idx asc",
-        limit=1,
+        as_dict=True,
     )
-    return customers[0] if customers else None
 
 
-def _invoice_exists(customer: str, von: date, mv_name: str, typ: str, *, include_drafts: bool = True) -> bool:
-    docstatus_filter = ("in", [0, 1]) if include_drafts else 1
+def _locked_linked_return_rows(
+    *,
+    company: str,
+    customer: str,
+    parent_names: tuple[str, ...],
+    has_structured_id: bool,
+    has_wohnung: bool,
+) -> list[frappe._dict]:
+    if not parent_names:
+        return []
+    structured_select = "si.mietabrechnung_id" if has_structured_id else "NULL AS mietabrechnung_id"
+    wohnung_select = "si.wohnung" if has_wohnung else "NULL AS wohnung"
+    return frappe.db.sql(
+        f"""
+        SELECT
+            si.name,
+            si.remarks,
+            si.is_return,
+            si.return_against,
+            si.posting_date,
+            {structured_select},
+            {wohnung_select}
+        FROM `tabSales Invoice` si
+        WHERE si.company = %(company)s
+          AND si.customer = %(customer)s
+          AND si.docstatus = 1
+          AND si.is_return = 1
+          AND si.return_against IN %(parent_names)s
+        FOR UPDATE
+        """,
+        {
+            "company": company,
+            "customer": customer,
+            "parent_names": parent_names,
+        },
+        as_dict=True,
+    )
+
+
+def _invoice_exists(
+    customer: str,
+    von: date,
+    mv_name: str,
+    typ: str,
+    *,
+    company: str,
+    wohnung: str | None = None,
+    include_drafts: bool = True,
+) -> bool:
     item_code = {
         "Miete": "Miete",
         "Betriebskosten": "Betriebskosten",
         "Heizkosten": "Heizkosten",
         "Untermietzuschlag": "Untermietzuschlag",
     }.get(typ, typ)
-    base_filters = {
-        "customer": customer,
-        "posting_date": ("between", [get_first_day(von), get_last_day(von)]),
-        "docstatus": docstatus_filter,
-        "is_return": 0,
+    has_structured_id = _has_field("Sales Invoice", "mietabrechnung_id")
+    has_wohnung = _has_field("Sales Invoice", "wohnung")
+
+    target_id = f"{mv_name}|{von.strftime('%m/%Y')}"
+    legacy_marker = f"[TYPE:{typ}] [MV:{mv_name}] {von.strftime('%m/%Y')}"
+    invoice_by_name = {
+        invoice.name: invoice
+        for invoice in _locked_invoice_guard_rows(
+            company=company,
+            customer=customer,
+            month_start=get_first_day(von),
+            month_end=get_last_day(von),
+            target_id=target_id,
+            legacy_marker=legacy_marker,
+            include_drafts=include_drafts,
+            has_structured_id=has_structured_id,
+            has_wohnung=has_wohnung,
+        )
+        or []
     }
 
-    # Neuer Primärschlüssel für Sollstellungs-Rechnungen: nicht mehr aus der
-    # sichtbaren Bemerkung lesen, sondern aus dem strukturierten Koppel-Feld.
-    if _has_field("Sales Invoice", "mietabrechnung_id"):
-        parent_names = frappe.get_all(
-            "Sales Invoice",
-            filters=dict(
-                base_filters,
-                mietabrechnung_id=f"{mv_name}|{von.strftime('%m/%Y')}",
-            ),
-            pluck="name",
+    candidates: dict[str, frappe._dict] = {}
+    for invoice in invoice_by_name.values():
+        # A draft credit note has no ledger effect yet.  Counting it as a
+        # negative invoice would make a submitted rent invoice appear fully
+        # cancelled and a parallel/monthly generator run could create the
+        # charge a second time.  Draft positive invoices still block retries.
+        if int(invoice.get("is_return") or 0) and int(invoice.get("docstatus") or 0) != 1:
+            continue
+        invoice_wohnung = (invoice.get("wohnung") or "").strip() if has_wohnung else ""
+        if wohnung and (not has_wohnung or invoice_wohnung != wohnung):
+            continue
+
+        structured_id = (invoice.get("mietabrechnung_id") or "").strip() if has_structured_id else ""
+        remarks = invoice.get("remarks") or ""
+        has_mv_marker = "[MV:" in remarks
+        if structured_id:
+            if structured_id != target_id:
+                continue
+            if has_mv_marker and legacy_marker not in remarks:
+                continue
+        elif has_mv_marker:
+            if legacy_marker not in remarks:
+                continue
+        elif int(invoice.get("is_return") or 0):
+            # Unmarkierte Gutschriften werden nur über return_against geerbt.
+            continue
+
+        candidates[invoice.name] = invoice
+
+    # Eine Gutschrift neutralisiert ihre Originalrechnung. Sie muss deshalb in
+    # die Netto-Wirkung einfließen, selbst wenn sie später gebucht wurde und
+    # keine eigene mietabrechnung_id trägt.
+    if candidates:
+        linked_returns = _locked_linked_return_rows(
+            company=company,
+            customer=customer,
+            parent_names=tuple(sorted(candidates)),
+            has_structured_id=has_structured_id,
+            has_wohnung=has_wohnung,
         )
-        if parent_names:
-            child = frappe.get_all(
-                "Sales Invoice Item",
-                filters={"parent": ("in", parent_names), "item_code": item_code},
-                limit=1,
-            )
-            if child:
-                return True
+        for invoice in linked_returns or []:
+            invoice_wohnung = (invoice.get("wohnung") or "").strip() if has_wohnung else ""
+            if wohnung and (not has_wohnung or invoice_wohnung != wohnung):
+                continue
+            structured_id = (invoice.get("mietabrechnung_id") or "").strip() if has_structured_id else ""
+            remarks = invoice.get("remarks") or ""
+            if structured_id and structured_id != target_id:
+                continue
+            if "[MV:" in remarks and legacy_marker not in remarks:
+                continue
+            candidates[invoice.name] = invoice
 
-    # 1) Fallback für alte Rechnungen mit technischem Marker in der Bemerkung.
-    existing = frappe.get_all(
-        "Sales Invoice",
-        filters=dict(
-            base_filters,
-            remarks=("like", f"%[TYPE:{typ}] [MV:{mv_name}] {von.strftime('%m/%Y')}%"),
-        ),
-        pluck="name",
-        limit=1,
-    )
-    if existing:
-        return True
-
-    # 2) Fallback: Prüfen, ob in diesem Monat bereits eine Rechnung mit passendem Item existiert
-    parent_names = frappe.get_all(
-        "Sales Invoice",
-        filters=base_filters,
-        pluck="name",
-    )
-    if not parent_names:
+    if not candidates:
         return False
-    child = frappe.get_all(
-        "Sales Invoice Item",
-        filters={"parent": ("in", parent_names), "item_code": item_code},
-        limit=1,
+
+    item_rows = frappe.db.sql(
+        """
+        SELECT
+            sii.parent,
+            CASE
+                WHEN si.is_return = 1 THEN -ABS(sii.amount)
+                ELSE sii.amount
+            END AS amount
+        FROM `tabSales Invoice Item` sii
+        JOIN `tabSales Invoice` si ON si.name = sii.parent
+        WHERE sii.parent IN %(parents)s
+          AND sii.item_code = %(item_code)s
+          AND (si.is_return = 0 OR si.docstatus = 1)
+        FOR UPDATE
+        """,
+        {"parents": tuple(sorted(candidates)), "item_code": item_code},
+        as_dict=True,
     )
-    return bool(child)
+    net_amount = sum((Decimal(str(row.get("amount") or 0)) for row in item_rows or []), Decimal("0"))
+    return net_amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) >= Decimal("0.01")
+
+
+def _lock_and_reload_mietvertrag(name: str) -> frappe._dict | None:
+    """Serialisiert Sollstellungsläufe pro Vertrag und lädt aktuelle Werte."""
+    rows = frappe.db.sql(
+        """
+        SELECT name, kunde, wohnung, immobilie, von, bis
+        FROM `tabMietvertrag`
+        WHERE name = %s
+          AND docstatus != 2
+        FOR UPDATE
+        """,
+        (name,),
+        as_dict=True,
+    )
+    return rows[0] if rows else None
+
+
+def _lock_property_booking_identity(wohnung: str) -> frappe._dict:
+    """Load Wohnung, Immobilie, Cost Center and Company as one locked identity."""
+    wohnung_rows = frappe.db.sql(
+        """
+        SELECT name, immobilie
+        FROM `tabWohnung`
+        WHERE name = %s
+        FOR UPDATE
+        """,
+        (wohnung,),
+        as_dict=True,
+    )
+    if not wohnung_rows or not wohnung_rows[0].get("immobilie"):
+        frappe.throw(
+            _("Wohnung {0} hat keine eindeutige Immobilie; es wurde nichts gebucht.").format(
+                wohnung or "—"
+            )
+        )
+    wohnung_row = wohnung_rows[0]
+
+    immobilie_rows = frappe.db.sql(
+        """
+        SELECT name, kostenstelle, erworben_am
+        FROM `tabImmobilie`
+        WHERE name = %s
+        FOR UPDATE
+        """,
+        (wohnung_row.immobilie,),
+        as_dict=True,
+    )
+    if not immobilie_rows:
+        frappe.throw(
+            _("Die Immobilie {0} der Wohnung {1} existiert nicht; es wurde nichts gebucht.").format(
+                wohnung_row.immobilie,
+                wohnung,
+            )
+        )
+    immobilie_row = immobilie_rows[0]
+    cost_center = (immobilie_row.get("kostenstelle") or "").strip()
+    if not cost_center:
+        frappe.throw(
+            _(
+                "Immobilie {0} hat keine Kostenstelle. Mietrechnungen dürfen "
+                "nicht auf eine Company-Standardkostenstelle fallen; es wurde nichts gebucht."
+            ).format(immobilie_row.name)
+        )
+
+    # This also locks every configured property account/bank account and
+    # rejects conflicting companies.  The required direct Cost Center prevents
+    # its single-company fallback from becoming a booking default.
+    company = _company_via_wohnung(wohnung, for_update=True)
+    cost_center_row = frappe.db.get_value(
+        "Cost Center",
+        cost_center,
+        ["name", "company", "disabled", "is_group"],
+        as_dict=True,
+        for_update=True,
+    )
+    if (
+        not cost_center_row
+        or not cost_center_row.get("company")
+        or cost_center_row.get("disabled")
+        or cost_center_row.get("is_group")
+    ):
+        frappe.throw(
+            _(
+                "Kostenstelle {0} der Immobilie {1} ist nicht als aktive "
+                "Buchungskostenstelle eingerichtet; es wurde nichts gebucht."
+            ).format(cost_center, immobilie_row.name)
+        )
+    if not company or company != cost_center_row.company:
+        frappe.throw(
+            _(
+                "Kostenstelle {0} und Finanzzuordnung der Immobilie {1} ergeben "
+                "keine identische Company; es wurde nichts gebucht."
+            ).format(cost_center, immobilie_row.name)
+        )
+
+    return frappe._dict(
+        wohnung=wohnung_row.name,
+        immobilie=immobilie_row.name,
+        cost_center=cost_center,
+        company=company,
+        immobilie_erworben_am=immobilie_row.get("erworben_am"),
+    )
+
+
+def lock_mietvertrag_booking_identity(name: str) -> frappe._dict:
+    """Lock and return the current authoritative contract/property identity.
+
+    Lock order is global and shared by the generator and the Sales Invoice
+    override: Mietvertrag -> Wohnung -> Immobilie hierarchy -> financial
+    masters.  Every value returned below came from a locking current read.
+    """
+    contract = _lock_and_reload_mietvertrag(name)
+    if not contract:
+        frappe.throw(
+            _("Mietvertrag {0} existiert nicht oder wurde storniert.").format(name)
+        )
+    customer = (contract.get("kunde") or "").strip()
+    wohnung = (contract.get("wohnung") or "").strip()
+    if not customer or not wohnung:
+        frappe.throw(
+            _(
+                "Mietvertrag {0} hat keinen eindeutigen Customer-/Wohnungskontext; "
+                "es wurde nichts gebucht."
+            ).format(contract.name)
+        )
+
+    property_identity = _lock_property_booking_identity(wohnung)
+    stored_immobilie = (contract.get("immobilie") or "").strip()
+    if stored_immobilie and stored_immobilie != property_identity.immobilie:
+        frappe.throw(
+            _(
+                "Mietvertrag {0} verweist auf Immobilie {1}, seine Wohnung aktuell "
+                "aber auf {2}; es wurde nichts gebucht."
+            ).format(
+                contract.name,
+                stored_immobilie,
+                property_identity.immobilie,
+            )
+        )
+
+    return frappe._dict(
+        name=contract.name,
+        kunde=customer,
+        wohnung=property_identity.wohnung,
+        immobilie=property_identity.immobilie,
+        von=contract.get("von"),
+        bis=contract.get("bis"),
+        cost_center=property_identity.cost_center,
+        company=property_identity.company,
+        immobilie_erworben_am=property_identity.immobilie_erworben_am,
+    )
 
 
 def _has_field(doctype: str, fieldname: str) -> bool:
@@ -557,10 +961,16 @@ def generate_miet_und_bk_rechnungen(
         "Mietvertrag",
         filters=vertrag_filters,
         fields=["name", "kunde", "wohnung", "immobilie", "von", "bis"],
+        order_by="name asc",
     )
 
     try:
-        for v in vertrage:
+        for candidate in vertrage:
+            # Der Row-Lock bleibt bis zum Request-Commit bestehen. Ein
+            # paralleler Lauf prüft deshalb erst nach der ersten Sollstellung
+            # erneut auf bereits vorhandene Rechnungen.
+            v = lock_mietvertrag_booking_identity(candidate.name)
+
             # Prüfe, ob der Monat den Vertrag schneidet (auch bei Teilmonaten zulassen)
             month_start, month_end_excl, _ = _month_window(datum)
             c_start = v.von or date(1900, 1, 1)
@@ -569,8 +979,11 @@ def generate_miet_und_bk_rechnungen(
             if ov_days == 0:
                 continue
 
-            immobilie = v.immobilie or _immobilie_via_wohnung(v.wohnung)
-            if not _immobilie_active_for_month(immobilie, datum):
+            immobilie = v.immobilie
+            if (
+                v.immobilie_erworben_am
+                and getdate(v.immobilie_erworben_am) > get_last_day(datum)
+            ):
                 add_skip(
                     reason="immobilie_nicht_aktiv",
                     mietvertrag=v.name,
@@ -593,7 +1006,18 @@ def generate_miet_und_bk_rechnungen(
                 )
                 continue
 
-            kst = _cost_center_via_wohnung(v.wohnung)
+            kst = v.cost_center
+            contract_company = v.company
+            if contract_company != company:
+                add_skip(
+                    reason="andere_company",
+                    mietvertrag=v.name,
+                    wohnung=v.wohnung,
+                    typ=None,
+                    betrag=None,
+                    message=f"{v.name}: gehört zu Company {contract_company}, nicht zu {company}",
+                )
+                continue
 
             # Beträge je Staffeltabelle holen
             # Miete: neue Logik (Monatlich pro‑rata, Gesamter Zeitraum voll)
@@ -620,7 +1044,15 @@ def generate_miet_und_bk_rechnungen(
                     betrag=0.0,
                     message=f"{v.name}: Miete Betrag 0",
                 )
-            elif _invoice_exists(kunde, datum, v.name, "Miete", include_drafts=include_drafts):
+            elif _invoice_exists(
+                kunde,
+                datum,
+                v.name,
+                "Miete",
+                company=contract_company,
+                wohnung=v.wohnung,
+                include_drafts=include_drafts,
+            ):
                 add_skip(
                     reason="rechnung_existiert",
                     mietvertrag=v.name,
@@ -642,7 +1074,7 @@ def generate_miet_und_bk_rechnungen(
                     kst,
                     remark,
                     v.wohnung,
-                    company,
+                    contract_company,
                     mietabrechnung_id=mietabrechnung_id,
                 )
                 if sinv_name:
@@ -669,7 +1101,15 @@ def generate_miet_und_bk_rechnungen(
                     betrag=0.0,
                     message=f"{v.name}: Betriebskosten Betrag 0",
                 )
-            elif _invoice_exists(kunde, datum, v.name, "Betriebskosten", include_drafts=include_drafts):
+            elif _invoice_exists(
+                kunde,
+                datum,
+                v.name,
+                "Betriebskosten",
+                company=contract_company,
+                wohnung=v.wohnung,
+                include_drafts=include_drafts,
+            ):
                 add_skip(
                     reason="rechnung_existiert",
                     mietvertrag=v.name,
@@ -691,7 +1131,7 @@ def generate_miet_und_bk_rechnungen(
                     kst,
                     remark,
                     v.wohnung,
-                    company,
+                    contract_company,
                     mietabrechnung_id=mietabrechnung_id,
                 )
                 if sinv_name:
@@ -718,7 +1158,15 @@ def generate_miet_und_bk_rechnungen(
                     betrag=0.0,
                     message=f"{v.name}: Heizkosten Betrag 0",
                 )
-            elif _invoice_exists(kunde, datum, v.name, "Heizkosten", include_drafts=include_drafts):
+            elif _invoice_exists(
+                kunde,
+                datum,
+                v.name,
+                "Heizkosten",
+                company=contract_company,
+                wohnung=v.wohnung,
+                include_drafts=include_drafts,
+            ):
                 add_skip(
                     reason="rechnung_existiert",
                     mietvertrag=v.name,
@@ -740,7 +1188,7 @@ def generate_miet_und_bk_rechnungen(
                     kst,
                     remark,
                     v.wohnung,
-                    company,
+                    contract_company,
                     mietabrechnung_id=mietabrechnung_id,
                 )
                 if sinv_name:
@@ -776,7 +1224,15 @@ def generate_miet_und_bk_rechnungen(
                         "Erlöskonto Untermietzuschlag in Hausverwaltung Einstellungen pflegen."
                     ),
                 )
-            elif _invoice_exists(kunde, datum, v.name, "Untermietzuschlag", include_drafts=include_drafts):
+            elif _invoice_exists(
+                kunde,
+                datum,
+                v.name,
+                "Untermietzuschlag",
+                company=contract_company,
+                wohnung=v.wohnung,
+                include_drafts=include_drafts,
+            ):
                 add_skip(
                     reason="rechnung_existiert",
                     mietvertrag=v.name,
@@ -798,7 +1254,7 @@ def generate_miet_und_bk_rechnungen(
                     kst,
                     remark,
                     v.wohnung,
-                    company,
+                    contract_company,
                     mietabrechnung_id=mietabrechnung_id,
                 )
                 if sinv_name:

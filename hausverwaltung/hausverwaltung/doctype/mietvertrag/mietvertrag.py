@@ -130,12 +130,15 @@ class Mietvertrag(Document):
 		if self.kunde:
 			self._sync_customer_name()
 		else:
-			cust_id = _build_customer_docname(self)
+			cust_id = _build_contract_customer_docname(self)
 			display_name = get_hauptmieter_display_name(self.mieter) or self.name
 			customer = customer_utils.get_or_create_customer(
-				cust_id, customer_name=display_name
+				cust_id,
+				customer_name=display_name,
+				reuse_existing=False,
 			)
 			self.db_set("kunde", customer, update_modified=False)
+			self.kunde = customer
 
 		if not (self.mieterwechsel or "").strip() and _is_system_manager():
 			self.add_comment(
@@ -157,55 +160,39 @@ class Mietvertrag(Document):
 			self.flags.hv_syncing_names = False
 
 	def _sync_customer_name(self) -> str | None:
-		"""Rename/create the linked Customer to the current expected tenant name."""
-		target = _build_customer_docname(self)
-		display_name = get_hauptmieter_display_name(self.mieter) or target
-		if not target:
-			return None
+		"""Keep the authoritative Customer link stable and its display name current.
+
+		Customer document names may already be referenced by posted accounting
+		entries.  They are therefore never renamed or merged as a side effect of
+		editing a contract or contact.
+		"""
+		display_name = (
+			get_hauptmieter_display_name(self.mieter)
+			or _build_customer_docname(self)
+			or self.name
+		)
 
 		current = (self.kunde or "").strip()
-		if not current:
-			customer = customer_utils.get_or_create_customer(target, customer_name=display_name)
+		if not current or not frappe.db.exists("Customer", current):
+			target = _build_contract_customer_docname(self)
+			customer = customer_utils.get_or_create_customer(
+				target,
+				customer_name=display_name,
+				reuse_existing=False,
+			)
 			self.db_set("kunde", customer, update_modified=False)
 			self.kunde = customer
 			return customer
 
-		if not frappe.db.exists("Customer", current):
-			customer = customer_utils.get_or_create_customer(target, customer_name=display_name)
-			self.db_set("kunde", customer, update_modified=False)
-			self.kunde = customer
-			return customer
-
-		final_target = _unique_docname("Customer", target, current_name=current)
-		if final_target != current:
-			try:
-				final_target = rename_doc(
-					"Customer",
-					current,
-					final_target,
-					force=True,
-					merge=False,
-					show_alert=False,
-					ignore_permissions=True,
-				)
-			except Exception:
-				frappe.log_error(
-					frappe.get_traceback(),
-					f"Mietvertrag-Sync: Customer-Rename {current!r} -> {final_target!r} fehlgeschlagen",
-				)
-				frappe.throw(
-					f"Der Customer '{current}' konnte nicht zu '{final_target}' umbenannt werden.<br><br>"
-					"Mögliche Ursachen:<br>"
-					"• anderer Customer mit gleichem Namen existiert bereits<br>"
-					"• Customer ist in offenen Sales Invoices / Payment Entries referenziert und gesperrt<br>"
-					"• Lock-Timeout (anderer User editiert gerade denselben Customer)<br><br>"
-					"Details siehe Error Log."
-				)
-			self.kunde = final_target
-
-		if frappe.db.get_value("Customer", final_target, "customer_name") != display_name:
-			frappe.db.set_value("Customer", final_target, "customer_name", display_name, update_modified=False)
-		return final_target
+		if frappe.db.get_value("Customer", current, "customer_name") != display_name:
+			frappe.db.set_value(
+				"Customer",
+				current,
+				"customer_name",
+				display_name,
+				update_modified=False,
+			)
+		return current
 
 	def _sync_mietvertrag_name(self) -> str | None:
 		"""Rename this contract if Wohnung/date/Hauptmieter changed after creation."""
@@ -289,7 +276,6 @@ class Mietvertrag(Document):
 				)
 
 	def _validate_creation_via_process(self) -> None:
-		is_new_doc = bool(self.is_new())
 		mieterwechsel_name = (self.mieterwechsel or "").strip()
 
 		# TEMPORÄR DEAKTIVIERT: Manuelle Mietvertrags-Anlage durch Hausverwalter
@@ -588,6 +574,13 @@ def _build_customer_docname(doc: object) -> str:
 	if nm:
 		return nm
 	return ""
+
+
+def _build_contract_customer_docname(doc: object) -> str:
+	return customer_utils.build_contract_customer_id(
+		_build_customer_docname(doc),
+		(getattr(doc, "name", None) or "").strip(),
+	)
 
 
 def _unique_docname(doctype: str, base_name: str, current_name: str | None = None) -> str:

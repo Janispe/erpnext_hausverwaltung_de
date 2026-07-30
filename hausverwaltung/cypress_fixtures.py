@@ -335,8 +335,6 @@ def _make_over_under_invoice(
 	)
 	si.set("payment_terms_template", None)
 	si.set("payment_schedule", [])
-	if frappe.get_meta("Sales Invoice").get_field("mietabrechnung_id"):
-		si.mietabrechnung_id = f"HV-UI-OU-{run_id}-{label}"
 	si.insert(ignore_permissions=True)
 	si.submit()
 	return si.name
@@ -549,8 +547,6 @@ def seed_real_op_dunning(run_id: str, company: Optional[str] = None) -> dict:
 	)
 	si.set("payment_terms_template", None)
 	si.set("payment_schedule", [])
-	if frappe.get_meta("Sales Invoice").get_field("mietabrechnung_id"):
-		si.mietabrechnung_id = f"HV-UI-MAHN-{run_id}"
 	si.insert(ignore_permissions=True)
 	si.submit()
 	frappe.db.commit()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 
 import frappe
@@ -105,10 +106,35 @@ def build_customer_id(wohnlabel: str, von_date: str, nachname: str) -> str:
 	return f"{base} {uuid.uuid4().hex[:6].upper()}"
 
 
+def build_contract_customer_id(base_name: str, mietvertrag: str) -> str:
+	"""Return a stable Customer ID owned by exactly one Mietvertrag.
+
+	Human-readable names are not identities: two unrelated tenants can have the
+	same surname in the same apartment at different times.  The contract digest
+	keeps the readable prefix while making the database key stable and
+	collision-resistant without renaming existing Customers.
+	"""
+	contract_name = (mietvertrag or "").strip()
+	if not contract_name:
+		frappe.throw(
+			"Ein Customer kann nicht ohne eindeutigen Mietvertrag angelegt werden.",
+			frappe.ValidationError,
+		)
+
+	base = (base_name or "").strip() or "Mieter"
+	digest = hashlib.sha256(contract_name.encode("utf-8")).hexdigest()[:32].upper()
+	suffix = f" [MV-{digest}]"
+	# Frappe document names are limited to 140 characters.
+	prefix = base[: 140 - len(suffix)].rstrip()
+	return f"{prefix}{suffix}"
+
+
 def get_or_create_customer(
 	cust_id: str,
 	customer_name: str | None = None,
 	company: str | None = None,
+	*,
+	reuse_existing: bool = True,
 ) -> str:
 	"""Erzeugt (oder holt) einen Customer-Datensatz.
 
@@ -119,10 +145,20 @@ def get_or_create_customer(
 	Schema ``{wohnung} Mieter: {nachname}``) wird als Doc-Name erzwungen,
 	auch wenn ``Selling Settings.cust_master_name`` auf "Naming Series" steht.
 	Die ``customer_name``-Anzeige bleibt der Personen-/Familienname.
+
+	Mit ``reuse_existing=False`` wird eine Namenskollision blockiert. Dieser
+	Modus ist für vertragsgebundene Customer zwingend, damit ein fremder
+	gleichnamiger Debitor niemals still übernommen wird.
 	"""
 	customer_name = (customer_name or cust_id or "").strip() or cust_id
 
 	if frappe.db.exists("Customer", cust_id):
+		if not reuse_existing:
+			frappe.throw(
+				f"Customer '{cust_id}' existiert bereits und gehört nicht nachweisbar "
+				"zu diesem Mietvertrag. Es wurde kein Customer wiederverwendet.",
+				frappe.ValidationError,
+			)
 		if frappe.db.get_value("Customer", cust_id, "customer_name") != customer_name:
 			frappe.db.set_value("Customer", cust_id, "customer_name", customer_name, update_modified=False)
 		return cust_id
