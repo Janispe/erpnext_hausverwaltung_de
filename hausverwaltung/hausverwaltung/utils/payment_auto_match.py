@@ -27,13 +27,14 @@ from datetime import timedelta
 from typing import Any
 
 import frappe
-from frappe.utils import flt, getdate
+from frappe.utils import cint, flt, getdate
 
 
 _TOLERANCE = 0.01
 _DEFAULT_EXACT_MATCH_WINDOW_DAYS = 7
 _DEFAULT_RENT_MATCH_DAYS_BEFORE_MONTH = 10
 _DEFAULT_RENT_MATCH_DAYS_IN_MONTH = 10
+_AMOUNT_EPSILON = 0.005
 
 _RENT_ITEM_LABELS = {
 	"Miete": "Miete",
@@ -50,7 +51,245 @@ _RENT_TYPE_LABELS = {
 }
 
 
-def prepare_invoice_match(bt) -> dict[str, Any]:
+def _bank_transaction_shape(bt) -> frappe._dict:
+	"""Return the only valid direction/amount shape of a Bank Transaction.
+
+	ERPNext reconciliation compares absolute amounts.  Every custom booking path
+	must therefore establish the signed bank movement itself before it creates or
+	reconciles a voucher.
+	"""
+	deposit = flt(bt.get("deposit") if hasattr(bt, "get") else getattr(bt, "deposit", 0))
+	withdrawal = flt(
+		bt.get("withdrawal") if hasattr(bt, "get") else getattr(bt, "withdrawal", 0)
+	)
+
+	has_deposit = deposit > 0
+	has_withdrawal = withdrawal > 0
+	if has_deposit == has_withdrawal or deposit < 0 or withdrawal < 0:
+		frappe.throw(
+			"Bank Transaction hat keinen eindeutigen Betrag "
+			"(genau eines von deposit/withdrawal muss positiv sein)."
+		)
+
+	if has_deposit:
+		return frappe._dict(
+			direction="in",
+			amount=deposit,
+			signed_amount=deposit,
+			payment_type="Receive",
+		)
+	return frappe._dict(
+		direction="out",
+		amount=withdrawal,
+		signed_amount=-withdrawal,
+		payment_type="Pay",
+	)
+
+
+def _amounts_equal(left, right) -> bool:
+	"""Currency-safe equality at cent precision."""
+	return abs(flt(left) - flt(right)) < _AMOUNT_EPSILON
+
+
+def _get_company_currency(company: str) -> str:
+	currency = frappe.get_cached_value("Company", company, "default_currency")
+	currency = str(currency or "").strip()
+	if not currency:
+		frappe.throw(f"Company {company} hat keine Standardwährung.")
+	return currency
+
+
+def _require_company_currency_account(
+	account: str,
+	*,
+	company: str,
+	company_currency: str | None = None,
+	label: str = "Konto",
+) -> str:
+	"""Reject accounts whose currency is not exactly the company currency."""
+	values = frappe.db.get_value(
+		"Account",
+		account,
+		["company", "account_currency"],
+		as_dict=True,
+	)
+	if not values:
+		frappe.throw(f"{label} '{account}' existiert nicht.")
+	if values.get("company") != company:
+		frappe.throw(f"{label} '{account}' gehört nicht zur Company {company}.")
+	expected = company_currency or _get_company_currency(company)
+	actual = str(values.get("account_currency") or "").strip()
+	if actual != expected:
+		frappe.throw(
+			f"{label} '{account}' hat Währung '{actual or 'nicht gesetzt'}', "
+			f"erwartet ist die Company-Währung '{expected}'. "
+			"Bankimport unterstützt keine 1:1-Fremdwährungsbuchung."
+		)
+	return expected
+
+
+def _invoice_party_field(invoice_doctype: str) -> tuple[str, str]:
+	if invoice_doctype == "Sales Invoice":
+		return "customer", "debit_to"
+	if invoice_doctype == "Purchase Invoice":
+		return "supplier", "credit_to"
+	frappe.throw(f"Rechnungstyp '{invoice_doctype}' wird nicht unterstützt.")
+
+
+def _lock_and_validate_invoices(
+	*,
+	invoices,
+	invoice_doctype: str,
+	company: str,
+	party: str,
+	company_currency: str,
+	expected_cost_center: str | None = None,
+) -> list:
+	"""Lock selected invoices and return their current outstanding amounts.
+
+	For supplier payments, ``expected_cost_center`` is the authoritative,
+	property-specific Cost Center resolved from the locked bank account.  The
+	invoice items are locked and checked here as well, so neither a stale
+	candidate list nor the split endpoint can cross-pay another property.
+	"""
+	party_field, party_account_field = _invoice_party_field(invoice_doctype)
+	requested = {}
+	for invoice in invoices:
+		name = _get_value(invoice, "name")
+		if not name or name in requested:
+			frappe.throw("Rechnungsauswahl enthält keinen eindeutigen Rechnungsnamen.")
+		requested[name] = invoice
+
+	current_by_name = {}
+	for name in sorted(requested):
+		try:
+			invoice = frappe.get_doc(invoice_doctype, name, for_update=True)
+		except frappe.DoesNotExistError:
+			frappe.throw(f"Rechnung {name} wurde nicht gefunden.")
+		if int(invoice.docstatus or 0) != 1 or flt(invoice.outstanding_amount) <= 0.001:
+			frappe.throw(f"Rechnung {name} hat keinen aktuellen offenen Betrag mehr.")
+		if invoice.company != company:
+			frappe.throw(f"Rechnung {name} gehört nicht zur Company {company}.")
+		if invoice.get(party_field) != party:
+			frappe.throw(f"Rechnung {name} gehört nicht zur ausgewählten Partei {party}.")
+		if str(invoice.currency or "").strip() != company_currency:
+			frappe.throw(
+				f"Rechnung {name} hat Währung '{invoice.currency or 'nicht gesetzt'}', "
+				f"erwartet ist '{company_currency}'. Fremdwährungsrechnungen werden "
+				"im Bankimport nicht 1:1 gebucht."
+			)
+		if not _amounts_equal(invoice.get("conversion_rate") or 1, 1):
+			frappe.throw(
+				f"Rechnung {name} hat einen Umrechnungskurs ungleich 1. "
+				"Bankimport unterstützt hier keine Fremdwährungsumrechnung."
+			)
+		party_account = invoice.get(party_account_field)
+		_require_company_currency_account(
+			party_account,
+			company=company,
+			company_currency=company_currency,
+			label=f"Party-Konto von Rechnung {name}",
+		)
+		if invoice_doctype == "Purchase Invoice" and expected_cost_center:
+			invoice_cost_center = _get_cost_center_of_invoice(
+				name,
+				invoice_doctype,
+				for_update=True,
+			)
+			if invoice_cost_center != expected_cost_center:
+				frappe.throw(
+					f"Rechnung {name} gehört zur Kostenstelle "
+					f"'{invoice_cost_center or 'ohne eindeutige Kostenstelle'}', "
+					f"erwartet ist '{expected_cost_center}' für dieses Bankkonto."
+				)
+
+		original = requested[name]
+		current_by_name[name] = frappe._dict(
+			name=name,
+			outstanding_amount=flt(invoice.outstanding_amount),
+			posting_date=invoice.posting_date,
+			allocated_amount=_get_value(original, "allocated_amount"),
+			wohnung=invoice.get("wohnung"),
+			mietabrechnung_id=invoice.get("mietabrechnung_id"),
+		)
+
+	return [current_by_name[name] for name in requested]
+
+
+def _customer_invoice_identity(
+	invoice,
+	customer: str,
+	*,
+	for_update: bool = False,
+) -> tuple[str, str | None] | None:
+	"""Resolve one invoice to exactly one Mietvertrag/Wohnung identity.
+
+	Structured IDs are validated against the authoritative contract.  Legacy
+	invoices may be resolved by Customer + posting date + optional Wohnung, but
+	only when that lookup yields exactly one contract.
+	"""
+	posting_date = _get_value(invoice, "posting_date")
+	wohnung = str(_get_value(invoice, "wohnung") or "").strip() or None
+	structured = str(_get_value(invoice, "mietabrechnung_id") or "").strip()
+	contract_name = None
+	if structured and "|" in structured:
+		contract_name = structured.rsplit("|", 1)[0].strip()
+		if not contract_name:
+			return None
+
+	if contract_name:
+		try:
+			contract = frappe.get_doc(
+				"Mietvertrag",
+				contract_name,
+				for_update=for_update,
+			)
+		except frappe.DoesNotExistError:
+			return None
+		if not contract or int(contract.get("docstatus") or 0) == 2:
+			return None
+		if contract.get("kunde") != customer:
+			return None
+		if wohnung and contract.get("wohnung") != wohnung:
+			return None
+		if posting_date:
+			d = getdate(posting_date)
+			if contract.get("von") and getdate(contract.get("von")) > d:
+				return None
+			if contract.get("bis") and getdate(contract.get("bis")) < d:
+				return None
+		return contract.name, contract.get("wohnung") or wohnung
+
+	if not posting_date:
+		return None
+	d = getdate(posting_date)
+	values: dict[str, Any] = {"customer": customer, "posting_date": d}
+	wohnung_clause = ""
+	if wohnung:
+		wohnung_clause = "AND wohnung = %(wohnung)s"
+		values["wohnung"] = wohnung
+	matches = frappe.db.sql(
+		f"""
+		SELECT name, wohnung
+		FROM `tabMietvertrag`
+		WHERE kunde = %(customer)s
+		  AND docstatus != 2
+		  AND (von IS NULL OR von <= %(posting_date)s)
+		  AND (bis IS NULL OR bis >= %(posting_date)s)
+		  {wohnung_clause}
+		ORDER BY name
+		LIMIT 2
+		{"FOR UPDATE" if for_update else ""}
+		""",
+		values,
+		as_dict=True,
+	)
+	if len(matches) != 1:
+		return None
+	return matches[0].name, matches[0].get("wohnung") or wohnung
+
+
+def prepare_invoice_match(bt, *, lock_invoices: bool = False) -> dict[str, Any]:
 	"""Bereitet einen Bank-Transaction-Match auf offene Rechnungen vor.
 
 	Macht Idempotenz/Direction-Checks, lädt offene Sales/Purchase Invoices der
@@ -79,40 +318,122 @@ def prepare_invoice_match(bt) -> dict[str, Any]:
 			"message": f"Party-Typ '{bt.party_type}' nicht unterstützt",
 		}
 
-	deposit = flt(bt.deposit)
-	withdrawal = flt(bt.withdrawal)
+	try:
+		shape = _bank_transaction_shape(bt)
+	except frappe.ValidationError as exc:
+		return {
+			"ok": False,
+			"reason": "invalid_bank_transaction_amount",
+			"message": str(exc),
+		}
+
+	try:
+		company, _bank_account_doc = _resolve_company_and_bank_account(bt)
+		company_currency = _get_company_currency(company)
+	except frappe.ValidationError as exc:
+		return {
+			"ok": False,
+			"reason": "foreign_currency_or_company_context",
+			"message": str(exc),
+		}
 
 	if bt.party_type == "Customer":
-		if deposit <= 0:
+		if shape.direction != "in":
 			return {
 				"ok": False,
 				"reason": "wrong_direction_for_customer",
 				"message": "Customer aber kein Eingang — übersprungen",
 			}
-		target_amount = deposit
+		target_amount = shape.amount
 		invoice_doctype = "Sales Invoice"
 		party_field = "customer"
 	else:  # Supplier
-		if withdrawal <= 0:
+		if shape.direction != "out":
 			return {
 				"ok": False,
 				"reason": "wrong_direction_for_supplier",
 				"message": "Supplier aber kein Ausgang — übersprungen",
 			}
-		target_amount = withdrawal
+		target_amount = shape.amount
 		invoice_doctype = "Purchase Invoice"
 		party_field = "supplier"
 
-	candidates = frappe.get_all(
-		invoice_doctype,
-		filters={
-			party_field: bt.party,
-			"docstatus": 1,
-			"outstanding_amount": [">", 0.001],
-		},
-		fields=["name", "outstanding_amount", "posting_date"],
-		order_by="posting_date asc",
-	)
+	# Resolve and (for the posting path) lock the authoritative property before
+	# invoice rows. This keeps one lock order across automatic and manual
+	# supplier matching: bank account -> property -> invoices -> invoice items.
+	expected_cc = None
+	if bt.party_type == "Supplier":
+		try:
+			expected_cc = _resolve_expected_cost_center_for_bt(
+				bt,
+				require_property=True,
+				for_update=lock_invoices,
+			)
+		except frappe.ValidationError as exc:
+			return {
+				"ok": False,
+				"reason": "ambiguous_property_context",
+				"message": (
+					f"Bankkonto lässt sich keiner eindeutigen Immobilie mit "
+					f"Kostenstelle zuordnen: {exc}"
+				),
+			}
+
+	party_account_field = "debit_to" if invoice_doctype == "Sales Invoice" else "credit_to"
+	fields = [
+		"name",
+		"outstanding_amount",
+		"posting_date",
+		"company",
+		"currency",
+		"conversion_rate",
+		party_account_field,
+	]
+	meta = frappe.get_meta(invoice_doctype)
+	for optional_field in ("wohnung", "mietabrechnung_id"):
+		if meta.has_field(optional_field):
+			fields.append(optional_field)
+
+	if lock_invoices:
+		optional_selects = [
+			f"`{fieldname}`"
+			for fieldname in ("wohnung", "mietabrechnung_id")
+			if fieldname in fields
+		]
+		candidates = frappe.db.sql(
+			f"""
+			SELECT
+				name,
+				outstanding_amount,
+				posting_date,
+				company,
+				currency,
+				conversion_rate,
+				`{party_account_field}`,
+				{", ".join(optional_selects) if optional_selects else "NULL AS invoice_identity"}
+			FROM `tab{invoice_doctype}`
+			WHERE `{party_field}` = %(party)s
+			  AND company = %(company)s
+			  AND docstatus = 1
+			  AND outstanding_amount > 0.001
+			ORDER BY posting_date ASC, name ASC
+			FOR UPDATE
+			""",
+			{"party": bt.party, "company": company},
+			as_dict=True,
+		)
+	else:
+		candidates = frappe.get_all(
+			invoice_doctype,
+			filters={
+				party_field: bt.party,
+				"company": company,
+				"docstatus": 1,
+				"outstanding_amount": [">", 0.001],
+			},
+			fields=fields,
+			order_by="posting_date asc, name asc",
+		)
 
 	if not candidates:
 		return {
@@ -121,11 +442,58 @@ def prepare_invoice_match(bt) -> dict[str, Any]:
 			"message": f"Keine offenen {invoice_doctype}s für {bt.party}",
 		}
 
+	safe_currency_candidates = []
+	for invoice in candidates:
+		invoice_currency = str(invoice.get("currency") or "").strip()
+		if invoice_currency != company_currency:
+			continue
+		if not _amounts_equal(invoice.get("conversion_rate") or 1, 1):
+			continue
+		try:
+			_require_company_currency_account(
+				invoice.get(party_account_field),
+				company=company,
+				company_currency=company_currency,
+				label=f"Party-Konto von Rechnung {invoice.get('name')}",
+			)
+		except frappe.ValidationError:
+			continue
+		safe_currency_candidates.append(invoice)
+	if not safe_currency_candidates:
+		return {
+			"ok": False,
+			"reason": "foreign_currency_invoice",
+			"message": (
+				f"{len(candidates)} offene Rechnung(en) gefunden, aber keine ist "
+				f"vollständig in Company-Währung {company_currency}. "
+				"Fremdwährungen müssen manuell mit Kurs gebucht werden."
+			),
+		}
+	candidates = safe_currency_candidates
+
+	if bt.party_type == "Customer":
+		for invoice in candidates:
+			identity = _customer_invoice_identity(
+				invoice,
+				bt.party,
+				for_update=lock_invoices,
+			)
+			if identity is None:
+				return {
+					"ok": False,
+					"reason": "ambiguous_customer_contract_identity",
+					"message": (
+						f"Rechnung {invoice.get('name')} lässt sich nicht eindeutig "
+						"einem Mietvertrag und einer Wohnung dieses Kunden zuordnen. "
+						"Automatische Zuordnung gesperrt; bitte manuell prüfen."
+					),
+				}
+			invoice["_hv_customer_identity"] = identity
+
 	# Bei Lieferanten-Auto-Match: Kostenstelle muss zur Bank-Transaction-Immobilie
 	# passen, sonst würde Bank von Immobilie A eine Rechnung für Immobilie B
 	# bezahlen. Bei Customers (Mieter) ist die IBAN-Zuordnung schon eindeutig
 	# genug — kein Filter dort.
-	expected_cc = _resolve_expected_cost_center_for_bt(bt) if bt.party_type == "Supplier" else None
 	if expected_cc:
 		filtered = []
 		for inv in candidates:
@@ -148,6 +516,8 @@ def prepare_invoice_match(bt) -> dict[str, Any]:
 		"candidates": candidates,
 		"invoice_doctype": invoice_doctype,
 		"target_amount": target_amount,
+		"company": company,
+		"company_currency": company_currency,
 	}
 
 
@@ -229,8 +599,8 @@ def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 	    reason: maschinen-lesbarer Grund bei kein Match
 	    message: kurze deutsche Zusammenfassung für UI
 	"""
-	bt = frappe.get_doc("Bank Transaction", bt_name)
-	prep = prepare_invoice_match(bt)
+	bt = frappe.get_doc("Bank Transaction", bt_name, for_update=True)
+	prep = prepare_invoice_match(bt, lock_invoices=True)
 	if not prep["ok"]:
 		return {"matched": False, "reason": prep["reason"], "message": prep["message"]}
 
@@ -297,12 +667,17 @@ def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 	# Monat automatisch gebucht werden, in dessen Zahlungsfenster die Bankbuchung
 	# liegt. Dadurch kann eine einzelne Zahlung nicht mehrere offene Mietmonate
 	# automatisch ausgleichen.
-	by_month: dict[tuple[int, int], list] = defaultdict(list)
+	by_month: dict[tuple, list] = defaultdict(list)
+	has_customer_identities = is_sales_invoice and any(
+		inv.get("_hv_customer_identity") for inv in candidates
+	)
 	for inv in candidates:
 		if inv.posting_date:
 			d = getdate(inv.posting_date)
-			by_month[(d.year, d.month)].append(inv)
+			identity = inv.get("_hv_customer_identity") if has_customer_identities else None
+			by_month[(d.year, d.month, identity)].append(inv)
 
+	matching_month_groups = []
 	for month_key, invs in by_month.items():
 		if len(invs) < 2:
 			continue  # bereits durch Strategy 1 abgedeckt
@@ -310,8 +685,25 @@ def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 			continue
 		total = sum(flt(i.outstanding_amount) for i in invs)
 		if abs(total - target_amount) < _TOLERANCE:
-			label = f"month_{month_key[0]}-{month_key[1]:02d}"
-			return _do_match(bt, invs, invoice_doctype, label, target_amount)
+			matching_month_groups.append((month_key, invs))
+
+	if len(matching_month_groups) == 1:
+		month_key, invs = matching_month_groups[0]
+		label = f"month_{month_key[0]}-{month_key[1]:02d}"
+		return _do_match(bt, invs, invoice_doctype, label, target_amount)
+	if len(matching_month_groups) > 1:
+		months = ", ".join(
+			f"{month_key[0]}-{month_key[1]:02d}"
+			for month_key, _invs in matching_month_groups
+		)
+		return {
+			"matched": False,
+			"reason": "ambiguous_month_sum",
+			"message": (
+				f"Mehrere Monatsgruppen ({months}) summieren sich jeweils auf "
+				f"{target_amount:.2f} € — bitte manuell zuordnen."
+			),
+		}
 
 	# Strategy 3: All open invoices sum. Für Mieter bewusst deaktiviert:
 	# mehrere offene Monate dürfen nicht durch eine einzige Zahlung automatisch
@@ -381,10 +773,47 @@ def _do_match(bt, invoices, invoice_doctype, strategy_label, target_amount):
 
 
 def reconcile_voucher_with_bt(bt, voucher_doctype, voucher_name, amount):
-	"""Wrapper um ERPNext ``reconcile_vouchers``: hängt einen Beleg an eine BT."""
+	"""Attach a voucher only if its signed GL bank movement matches the BT."""
 	from erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool import (
 		reconcile_vouchers,
 	)
+
+	shape = _bank_transaction_shape(bt)
+	if not _amounts_equal(abs(flt(amount)), shape.amount):
+		frappe.throw(
+			f"Reconcile-Betrag {abs(flt(amount)):.2f} € stimmt nicht mit der "
+			f"Bank Transaction ({shape.amount:.2f} €) überein."
+		)
+
+	company, bank_account_doc = _resolve_company_and_bank_account(bt)
+	gl_totals = frappe.db.sql(
+		"""
+		SELECT
+			COALESCE(SUM(debit_in_account_currency), 0) AS debit,
+			COALESCE(SUM(credit_in_account_currency), 0) AS credit
+		FROM `tabGL Entry`
+		WHERE voucher_type = %(voucher_type)s
+		  AND voucher_no = %(voucher_no)s
+		  AND account = %(account)s
+		  AND company = %(company)s
+		  AND is_cancelled = 0
+		""",
+		{
+			"voucher_type": voucher_doctype,
+			"voucher_no": voucher_name,
+			"account": bank_account_doc.account,
+			"company": company,
+		},
+		as_dict=True,
+	)
+	row = gl_totals[0] if gl_totals else frappe._dict()
+	actual_signed_amount = flt(row.get("debit")) - flt(row.get("credit"))
+	if not _amounts_equal(actual_signed_amount, shape.signed_amount):
+		frappe.throw(
+			f"{voucher_doctype} {voucher_name} bewegt das Bankkonto mit "
+			f"{actual_signed_amount:.2f} € statt erwartet {shape.signed_amount:.2f} €. "
+			"Abstimmung abgebrochen."
+		)
 
 	reconcile_vouchers(
 		bank_transaction_name=bt.name,
@@ -406,36 +835,44 @@ def reconcile_created_voucher_or_rollback(
 	voucher_name: str,
 	amount,
 	savepoint_name: str = "bankimport_reconcile_voucher",
+	*,
+	voucher_created_here: bool = True,
 ) -> None:
 	"""Reconcile a freshly submitted voucher, rolling it back on failure.
 
 	Bankimport first creates/submits the voucher and then reconciles it with the
 	Bank Transaction. If reconcile fails, the submitted voucher must not remain
 	as an orphan that can be booked a second time from the import row.
+
+	``voucher_created_here=False`` protects a pre-existing voucher that is reused
+	by a second Bank Transaction (notably the other side of an internal
+	transfer). A failed reconcile may roll back the attempted link, but must
+	never cancel accounting documents owned by an earlier operation/import.
 	"""
 	frappe.db.savepoint(savepoint_name)
 	try:
 		reconcile_voucher_with_bt(bt, voucher_doctype, voucher_name, amount)
 	except Exception:
 		frappe.db.rollback(save_point=savepoint_name)
-		try:
-			if frappe.db.exists(voucher_doctype, voucher_name):
-				voucher = frappe.get_doc(voucher_doctype, voucher_name)
-				if int(getattr(voucher, "docstatus", 0) or 0) == 1:
-					if not getattr(voucher, "flags", None):
-						voucher.flags = frappe._dict()
-					voucher.flags.ignore_permissions = True
-					voucher.cancel()
-		except Exception:
-			frappe.log_error(
-				frappe.get_traceback(),
-				f"Bankimport: konnte verwaisten {voucher_doctype} {voucher_name} nicht stornieren",
-			)
+		if voucher_created_here:
+			try:
+				if frappe.db.exists(voucher_doctype, voucher_name):
+					voucher = frappe.get_doc(voucher_doctype, voucher_name)
+					if int(getattr(voucher, "docstatus", 0) or 0) == 1:
+						if not getattr(voucher, "flags", None):
+							voucher.flags = frappe._dict()
+						voucher.flags.ignore_permissions = True
+						voucher.cancel()
+			except Exception:
+				frappe.log_error(
+					frappe.get_traceback(),
+					f"Bankimport: konnte verwaisten {voucher_doctype} {voucher_name} nicht stornieren",
+				)
 		raise
 
 
 def _resolve_company_and_bank_account(bt):
-	bank_account_doc = frappe.get_cached_doc("Bank Account", bt.bank_account)
+	bank_account_doc = frappe.get_doc("Bank Account", bt.bank_account, for_update=True)
 	company = bank_account_doc.company or bt.company
 	if not company:
 		frappe.throw(
@@ -445,70 +882,225 @@ def _resolve_company_and_bank_account(bt):
 		frappe.throw(
 			f"Bank Account {bt.bank_account} hat kein GL-Konto hinterlegt."
 		)
+	company_currency = _get_company_currency(company)
+	_require_company_currency_account(
+		bank_account_doc.account,
+		company=company,
+		company_currency=company_currency,
+		label=f"Bankkonto von {bt.bank_account}",
+	)
 	return company, bank_account_doc
 
 
-def _get_cost_center_of_invoice(invoice_name: str, invoice_doctype: str) -> str | None:
-	"""Liest die Kostenstelle aus der ersten Item-Zeile einer Rechnung.
+def _get_cost_center_of_invoice(
+	invoice_name: str,
+	invoice_doctype: str,
+	*,
+	for_update: bool = False,
+) -> str | None:
+	"""Return one unambiguous cost center shared by every invoice item.
 
-	Bei Hausverwaltung haben i.d.R. alle Items einer Rechnung dieselbe Kostenstelle
-	(eine Rechnung gehört zu einer Immobilie). Erste Item-Zeile reicht daher.
+	A missing item cost center, mixed cost centers, or an invoice without items is
+	unsafe for property-specific matching and therefore returns ``None``.
+	Database/metadata failures deliberately propagate: treating a failed lookup
+	as merely "no Cost Center" could let a fallback create a wrong posting.
 	"""
-	try:
-		item_dt = invoice_doctype + " Item"
-		return frappe.db.get_value(
-			item_dt,
+	item_dt = invoice_doctype + " Item"
+	if for_update:
+		items = frappe.db.sql(
+			f"""
+			SELECT cost_center
+			FROM `tab{item_dt}`
+			WHERE parent = %(parent)s
+			  AND parenttype = %(parenttype)s
+			ORDER BY idx ASC
+			FOR UPDATE
+			""",
 			{"parent": invoice_name, "parenttype": invoice_doctype},
-			"cost_center",
-		) or None
-	except Exception:
+			as_dict=True,
+		)
+	else:
+		items = frappe.get_all(
+			item_dt,
+			filters={"parent": invoice_name, "parenttype": invoice_doctype},
+			fields=["cost_center"],
+			order_by="idx asc",
+		)
+
+	if not items:
 		return None
 
+	cost_centers = set()
+	for item in items:
+		cost_center = (
+			item.get("cost_center")
+			if hasattr(item, "get")
+			else getattr(item, "cost_center", None)
+		)
+		cost_center = str(cost_center).strip() if cost_center else ""
+		if not cost_center:
+			return None
+		cost_centers.add(cost_center)
+		if len(cost_centers) > 1:
+			return None
 
-def _resolve_expected_cost_center_for_bt(bt) -> str | None:
+	return next(iter(cost_centers))
+
+
+def _resolve_expected_cost_center_for_bt(
+	bt,
+	*,
+	require_property: bool = False,
+	allow_company_default: bool = False,
+	for_update: bool = False,
+) -> str | None:
 	"""Bestimmt die 'Soll'-Kostenstelle für jede Buchung über diese Bank Transaction.
 
 	Auflösungs-Kette:
 	1. Bank Account → GL-Konto → Immobilie (über Immobilie Bankkonto Child-Table)
 	   → ``Immobilie.kostenstelle``
-	2. Company-Default ``cost_center`` (Fallback)
+	2. Optional Company-Default ``cost_center`` ausschließlich für ausdrücklich
+	   nicht-property-spezifische manuelle Buchungspfade.
 
-	Wird genutzt für:
-	- Cost Center auf erzeugte Payment Entries / Journal Entries
-	- Cost-Center-Filter beim Lieferanten-Auto-Match (nur Rechnungen der gleichen
-	  Kostenstelle gelten als Match-Kandidat)
+	Null, ein oder mehrere Immobilien-Mappings werden bewusst unterschieden.
+	Mehrere Mappings, eine gelöschte Immobilie oder eine gemappte Immobilie ohne
+	aktive Kostenstelle sind immer ein Fehler. Datenbank-/Metadatenfehler werden
+	niemals als "kein Mapping" oder Company-Default kaschiert.
 	"""
-	try:
-		bank_account_doc = frappe.get_cached_doc("Bank Account", bt.bank_account)
-	except Exception:
-		return None
-	gl_account = getattr(bank_account_doc, "account", None)
-	company = getattr(bank_account_doc, "company", None) or getattr(bt, "company", None)
+	bank_account_name = str(_get_value(bt, "bank_account") or "").strip()
+	if not bank_account_name:
+		frappe.throw("Bank Transaction hat kein Bankkonto.")
 
-	# 1. Über GL-Konto → Immobilie → Kostenstelle
-	if gl_account:
-		try:
-			immo = frappe.db.get_value(
-				"Immobilie Bankkonto",
-				{"konto": gl_account, "parenttype": "Immobilie"},
-				"parent",
+	bank_account_doc = frappe.get_doc(
+		"Bank Account",
+		bank_account_name,
+		for_update=for_update,
+	)
+	gl_account = str(bank_account_doc.get("account") or "").strip()
+	company = str(
+		bank_account_doc.get("company") or _get_value(bt, "company") or ""
+	).strip()
+	if not gl_account:
+		frappe.throw(f"Bank Account {bank_account_name} hat kein GL-Konto hinterlegt.")
+	if not company:
+		frappe.throw(f"Bank Account {bank_account_name} hat keine Company hinterlegt.")
+
+	bt_company = str(_get_value(bt, "company") or "").strip()
+	if bt_company and bank_account_doc.get("company") and bt_company != company:
+		frappe.throw(
+			f"Bank Transaction gehört zur Company '{bt_company}', das Bankkonto "
+			f"aber zu '{company}'."
+		)
+
+	if for_update:
+		mappings = frappe.db.sql(
+			"""
+			SELECT name, parent
+			FROM `tabImmobilie Bankkonto`
+			WHERE konto = %(konto)s
+			  AND parenttype = 'Immobilie'
+			ORDER BY parent ASC, name ASC
+			LIMIT 2
+			FOR UPDATE
+			""",
+			{"konto": gl_account},
+			as_dict=True,
+		)
+	else:
+		mappings = frappe.get_all(
+			"Immobilie Bankkonto",
+			filters={"konto": gl_account, "parenttype": "Immobilie"},
+			fields=["name", "parent"],
+			order_by="parent asc, name asc",
+			limit=2,
+		)
+
+	if len(mappings) > 1:
+		properties = ", ".join(
+			str(row.get("parent") or "?") for row in mappings
+		)
+		frappe.throw(
+			f"GL-Konto '{gl_account}' des Bankkontos '{bank_account_name}' ist "
+			f"mehrfach Immobilien zugeordnet ({properties}). Buchung abgebrochen."
+		)
+
+	if mappings:
+		immobilie = str(mappings[0].get("parent") or "").strip()
+		property_values = frappe.db.get_value(
+			"Immobilie",
+			immobilie,
+			["name", "kostenstelle"],
+			as_dict=True,
+			for_update=for_update,
+		) or {}
+		if not property_values.get("name"):
+			frappe.throw(
+				f"Die zum Bankkonto '{bank_account_name}' gemappte Immobilie "
+				f"'{immobilie}' wurde nicht gefunden."
 			)
-			if immo:
-				cc = frappe.db.get_value("Immobilie", immo, "kostenstelle")
-				if cc:
-					return cc
-		except Exception:
-			pass
+		cost_center = str(property_values.get("kostenstelle") or "").strip()
+		if not cost_center:
+			frappe.throw(
+				f"An der zum Bankkonto '{bank_account_name}' gemappten Immobilie "
+				f"'{immobilie}' fehlt die Kostenstelle. Buchung abgebrochen."
+			)
+		cost_center_values = frappe.db.get_value(
+			"Cost Center",
+			cost_center,
+			["name", "company", "is_group", "disabled"],
+			as_dict=True,
+			for_update=for_update,
+		) or {}
+		if not cost_center_values.get("name"):
+			frappe.throw(
+				f"Kostenstelle '{cost_center}' der Immobilie '{immobilie}' "
+				"wurde nicht gefunden."
+			)
+		if cint(cost_center_values.get("is_group")) or cint(
+			cost_center_values.get("disabled")
+		):
+			frappe.throw(
+				f"Kostenstelle '{cost_center}' der Immobilie '{immobilie}' "
+				"ist nicht aktiv bebuchbar."
+			)
+		if str(cost_center_values.get("company") or "").strip() != company:
+			frappe.throw(
+				f"Kostenstelle '{cost_center}' der Immobilie '{immobilie}' gehört "
+				f"nicht zur Bankkonto-Company '{company}'."
+			)
+		return cost_center
 
-	# 2. Company-Default
-	if company:
-		try:
-			cc = frappe.get_cached_value("Company", company, "cost_center")
-			if cc:
-				return cc
-		except Exception:
-			pass
-	return None
+	if require_property:
+		frappe.throw(
+			f"GL-Konto '{gl_account}' des Bankkontos '{bank_account_name}' ist "
+			"keiner Immobilie mit eindeutiger Kostenstelle zugeordnet. "
+			"Automatische Lieferantenbuchung abgebrochen."
+		)
+
+	if not allow_company_default:
+		return None
+
+	default_cost_center = frappe.db.get_value("Company", company, "cost_center")
+	if not default_cost_center:
+		return None
+	default_values = frappe.db.get_value(
+		"Cost Center",
+		default_cost_center,
+		["name", "company", "is_group", "disabled"],
+		as_dict=True,
+		for_update=for_update,
+	) or {}
+	if (
+		not default_values.get("name")
+		or str(default_values.get("company") or "").strip() != company
+		or cint(default_values.get("is_group"))
+		or cint(default_values.get("disabled"))
+	):
+		frappe.throw(
+			f"Company-Standardkostenstelle '{default_cost_center}' ist nicht "
+			f"aktiv für Company '{company}' bebuchbar."
+		)
+	return default_cost_center
 
 
 def _get_value(row, key):
@@ -617,6 +1209,9 @@ def create_payment_entry_for_invoices(
 	"""
 	from erpnext.accounts.party import get_party_account
 
+	invoices = list(invoices or [])
+	if not invoices:
+		frappe.throw("Bitte mindestens eine Rechnung auswählen.")
 	if not bt.party_type or not bt.party:
 		frappe.throw(
 			"Payment Entry braucht eine Party — bitte zuerst Mieter/Lieferant "
@@ -626,19 +1221,67 @@ def create_payment_entry_for_invoices(
 		frappe.throw(f"Party-Typ '{bt.party_type}' nicht unterstützt für Payment Entry.")
 
 	company, bank_account_doc = _resolve_company_and_bank_account(bt)
+	company_currency = _get_company_currency(company)
+	shape = _bank_transaction_shape(bt)
 
-	if bt.party_type == "Customer":
+	if bt.party_type == "Customer" and invoice_doctype == "Sales Invoice":
+		if shape.direction != "in":
+			frappe.throw(
+				"Eine positive Kundenrechnung kann nur mit einem Zahlungseingang "
+				"ausgeglichen werden. Für eine Kundenerstattung bitte eine "
+				"eigenständige Auszahlung verwenden."
+			)
 		payment_type = "Receive"
 		party_account = get_party_account("Customer", bt.party, company)
 		paid_from = party_account
 		paid_to = bank_account_doc.account
-	else:
+	elif bt.party_type == "Supplier" and invoice_doctype == "Purchase Invoice":
+		if shape.direction != "out":
+			frappe.throw(
+				"Eine positive Lieferantenrechnung kann nur mit einem Zahlungsausgang "
+				"ausgeglichen werden. Für eine Lieferantenerstattung bitte einen "
+				"eigenständigen Zahlungseingang verwenden."
+			)
 		payment_type = "Pay"
 		party_account = get_party_account("Supplier", bt.party, company)
 		paid_from = bank_account_doc.account
 		paid_to = party_account
+	else:
+		frappe.throw(
+			f"Party-Typ '{bt.party_type}' passt nicht zu {invoice_doctype}."
+		)
+	_require_company_currency_account(
+		party_account,
+		company=company,
+		company_currency=company_currency,
+		label=f"Party-Konto von {bt.party}",
+	)
+	expected_cost_center = None
+	if invoice_doctype == "Purchase Invoice":
+		expected_cost_center = _resolve_expected_cost_center_for_bt(
+			bt,
+			require_property=True,
+			for_update=True,
+		)
+	invoices = _lock_and_validate_invoices(
+		invoices=invoices,
+		invoice_doctype=invoice_doctype,
+		company=company,
+		party=bt.party,
+		company_currency=company_currency,
+		expected_cost_center=expected_cost_center,
+	)
+	if not _amounts_equal(target_amount, shape.amount):
+		frappe.throw(
+			f"Payment-Entry-Betrag {flt(target_amount):.2f} € stimmt nicht mit der "
+			f"Bank Transaction ({shape.amount:.2f} €) überein."
+		)
 
-	cost_center = _resolve_expected_cost_center_for_bt(bt)
+	cost_center = (
+		expected_cost_center
+		if invoice_doctype == "Purchase Invoice"
+		else _resolve_expected_cost_center_for_bt(bt, for_update=True)
+	)
 
 	pe = frappe.new_doc("Payment Entry")
 	pe.update(
@@ -752,26 +1395,30 @@ def create_standalone_payment_entry(*, bt, party_type=None, party=None, remarks=
 	if party_type not in ("Customer", "Supplier"):
 		frappe.throw(f"Party-Typ '{party_type}' nicht unterstützt.")
 
-	deposit = flt(bt.deposit)
-	withdrawal = flt(bt.withdrawal)
-	target_amount = deposit if deposit > 0 else withdrawal
-	if target_amount <= 0:
-		frappe.throw("Bank Transaction hat keinen Betrag (deposit/withdrawal beide 0).")
-
 	company, bank_account_doc = _resolve_company_and_bank_account(bt)
+	shape = _bank_transaction_shape(bt)
+	target_amount = shape.amount
+	payment_type = shape.payment_type
+	party_account = get_party_account(party_type, party, company)
+	_require_company_currency_account(
+		party_account,
+		company=company,
+		company_currency=_get_company_currency(company),
+		label=f"Party-Konto von {party}",
+	)
 
-	if party_type == "Customer":
-		payment_type = "Receive"
-		party_account = get_party_account("Customer", party, company)
+	if shape.direction == "in":
 		paid_from = party_account
 		paid_to = bank_account_doc.account
 	else:
-		payment_type = "Pay"
-		party_account = get_party_account("Supplier", party, company)
 		paid_from = bank_account_doc.account
 		paid_to = party_account
 
-	cost_center = _resolve_expected_cost_center_for_bt(bt)
+	cost_center = _resolve_expected_cost_center_for_bt(
+		bt,
+		allow_company_default=True,
+		for_update=True,
+	)
 
 	pe = frappe.new_doc("Payment Entry")
 	pe.update(
@@ -813,20 +1460,9 @@ def create_internal_transfer_payment_entry(*, bt, other_bank_account: str, remar
 	if not other_bank_account:
 		frappe.throw("Bitte Ziel-/Gegen-Bankkonto auswählen.")
 
-	deposit = flt(bt.deposit)
-	withdrawal = flt(bt.withdrawal)
-	if deposit > 0 and withdrawal == 0:
-		direction = "in"
-		target_amount = deposit
-	elif withdrawal > 0 and deposit == 0:
-		direction = "out"
-		target_amount = withdrawal
-	else:
-		frappe.throw(
-			"Bank Transaction hat keinen eindeutigen Betrag (deposit + withdrawal nicht klar)."
-		)
-	if target_amount <= 0:
-		frappe.throw("Bank Transaction hat keinen Betrag.")
+	shape = _bank_transaction_shape(bt)
+	direction = shape.direction
+	target_amount = shape.amount
 
 	company, bank_account_doc = _resolve_company_and_bank_account(bt)
 	if other_bank_account == bt.bank_account:
@@ -834,7 +1470,11 @@ def create_internal_transfer_payment_entry(*, bt, other_bank_account: str, remar
 	if not frappe.db.exists("Bank Account", other_bank_account):
 		frappe.throw(f"Bankkonto '{other_bank_account}' existiert nicht.")
 
-	other_bank_account_doc = frappe.get_cached_doc("Bank Account", other_bank_account)
+	other_bank_account_doc = frappe.get_doc(
+		"Bank Account",
+		other_bank_account,
+		for_update=True,
+	)
 	if getattr(other_bank_account_doc, "disabled", 0):
 		frappe.throw(f"Bankkonto '{other_bank_account}' ist deaktiviert.")
 	if getattr(other_bank_account_doc, "company", None) and other_bank_account_doc.company != company:
@@ -843,6 +1483,13 @@ def create_internal_transfer_payment_entry(*, bt, other_bank_account: str, remar
 		frappe.throw(f"Bank Account {other_bank_account} hat kein GL-Konto hinterlegt.")
 	if other_bank_account_doc.account == bank_account_doc.account:
 		frappe.throw("Das Gegen-Bankkonto verwendet dasselbe GL-Konto.")
+	company_currency = _get_company_currency(company)
+	_require_company_currency_account(
+		other_bank_account_doc.account,
+		company=company,
+		company_currency=company_currency,
+		label=f"Gegen-Bankkonto {other_bank_account}",
+	)
 
 	if direction == "out":
 		paid_from = bank_account_doc.account
@@ -873,8 +1520,58 @@ def create_internal_transfer_payment_entry(*, bt, other_bank_account: str, remar
 	return pe
 
 
+def _validate_journal_counter_account(
+	account: str,
+	*,
+	company: str,
+	current_bank_gl: str,
+	company_currency: str,
+) -> str:
+	"""Validate one free-JE counter account before any voucher is created.
+
+	The unrestricted Journal-Entry path is only for non-cash/non-bank
+	counter-accounts of the same company. Bank and cash movements must use the
+	explicit internal-transfer/payment flows so direction and reconciliation
+	stay verifiable.
+	"""
+	values = frappe.db.get_value(
+		"Account",
+		account,
+		["company", "account_type", "is_group", "disabled", "account_currency"],
+		as_dict=True,
+	)
+	if not values:
+		frappe.throw(f"Konto '{account}' existiert nicht.")
+	if values.get("company") != company:
+		frappe.throw(
+			f"Konto '{account}' gehört nicht zur Company {company}."
+		)
+	if cint(values.get("is_group")) or cint(values.get("disabled")):
+		frappe.throw(f"Konto '{account}' ist kein aktives Buchungskonto.")
+	if account == current_bank_gl or values.get("account_type") in {"Bank", "Cash"}:
+		frappe.throw(
+			f"Bank-/Kassenkonto '{account}' darf im freien Buchungssatz nicht als "
+			"Gegenkonto verwendet werden. Bitte den Zahlungs- oder Umbuchungspfad nutzen."
+		)
+	if str(values.get("account_currency") or "").strip() != company_currency:
+		frappe.throw(
+			f"Gegenkonto '{account}' hat Währung "
+			f"'{values.get('account_currency') or 'nicht gesetzt'}', erwartet ist "
+			f"'{company_currency}'. Bankimport unterstützt keine "
+			"1:1-Fremdwährungsbuchung."
+		)
+	return account
+
+
 def create_journal_entry_for_bt(
-	*, bt, account=None, cost_center=None, splits=None, remarks=None, wertstellungsdatum=None
+	*,
+	bt,
+	account=None,
+	cost_center=None,
+	splits=None,
+	remarks=None,
+	wertstellungsdatum=None,
+	allow_company_default_cost_center: bool = False,
 ):
 	"""Buchungssatz: Bank-Konto vs. ein oder mehrere Gegenkonten.
 
@@ -885,21 +1582,37 @@ def create_journal_entry_for_bt(
 	Bank-Betrag entsprechen. Wenn ``splits`` None ist, fällt der Aufruf auf den
 	Single-Account-Modus zurück (``account`` + ``cost_center`` mit Vollbetrag).
 	"""
-	deposit = flt(bt.deposit)
-	withdrawal = flt(bt.withdrawal)
-	if deposit > 0 and withdrawal == 0:
-		direction = "in"
-		amount = deposit
-	elif withdrawal > 0 and deposit == 0:
-		direction = "out"
-		amount = withdrawal
-	else:
-		frappe.throw(
-			"Bank Transaction hat keinen eindeutigen Betrag (deposit + withdrawal nicht klar)."
-		)
+	shape = _bank_transaction_shape(bt)
+	direction = shape.direction
+	amount = shape.amount
 
 	company, bank_account_doc = _resolve_company_and_bank_account(bt)
-	default_cc = _resolve_expected_cost_center_for_bt(bt)
+	company_currency = _get_company_currency(company)
+	default_cc = _resolve_expected_cost_center_for_bt(bt, for_update=True)
+	if not default_cc:
+		# In an explicit manual JE, the user's concrete Cost Center is a safer
+		# default for the bank leg than a possibly generic Company default.
+		explicit_cost_centers = {
+			str(value).strip()
+			for value in (
+				[cost_center]
+				if cost_center
+				else [
+					s.get("cost_center")
+					for s in (splits or [])
+					if s.get("cost_center")
+				]
+			)
+			if value and str(value).strip()
+		}
+		if len(explicit_cost_centers) == 1:
+			default_cc = next(iter(explicit_cost_centers))
+		elif allow_company_default_cost_center:
+			default_cc = _resolve_expected_cost_center_for_bt(
+				bt,
+				allow_company_default=True,
+				for_update=True,
+			)
 
 	if splits:
 		normalized = []
@@ -907,8 +1620,12 @@ def create_journal_entry_for_bt(
 			acc = (s.get("account") or "").strip()
 			if not acc:
 				frappe.throw("Split-Zeile ohne Konto.")
-			if not frappe.db.exists("Account", acc):
-				frappe.throw(f"Konto '{acc}' existiert nicht.")
+			_validate_journal_counter_account(
+				acc,
+				company=company,
+				current_bank_gl=bank_account_doc.account,
+				company_currency=company_currency,
+			)
 			amt = flt(s.get("amount"))
 			if amt <= 0:
 				frappe.throw(f"Split für {acc}: Betrag muss > 0 sein.")
@@ -923,8 +1640,12 @@ def create_journal_entry_for_bt(
 	else:
 		if not account:
 			frappe.throw("Bitte ein Gegenkonto angeben.")
-		if not frappe.db.exists("Account", account):
-			frappe.throw(f"Konto '{account}' existiert nicht.")
+		_validate_journal_counter_account(
+			account,
+			company=company,
+			current_bank_gl=bank_account_doc.account,
+			company_currency=company_currency,
+		)
 		normalized = [{
 			"account": account,
 			"cost_center": cost_center or default_cc,

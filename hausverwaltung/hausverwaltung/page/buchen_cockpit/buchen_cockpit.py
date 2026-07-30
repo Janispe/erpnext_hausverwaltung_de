@@ -11,15 +11,23 @@ from datetime import timedelta
 from typing import Any
 
 import frappe
-from frappe.utils import add_days, cstr, flt, getdate, nowdate
+from frappe.utils import cstr, flt, getdate, nowdate
 
+from hausverwaltung.hausverwaltung.scripts.betriebskosten.gl_kosten_pro_haus import (
+    _kostenstelle_zu_haus_map,
+)
+from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen import (
+    validate_wohnung_cost_center_pair,
+)
+from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
+    _company_via_wohnung,
+)
 from hausverwaltung.hausverwaltung.utils.buchung import ensure_default_service_item
 from hausverwaltung.hausverwaltung.utils.income_accounts import get_hv_income_accounts
 from hausverwaltung.hausverwaltung.utils.rent_items import (
     MISC_TENANT_ITEM_CODE,
     ensure_rent_items,
 )
-
 
 EINGABEQUELLE_EINGANG = "Vereinfachte Buchung"
 EINGABEQUELLE_AUSGANG = "Vereinfachte Mieterrechnung"
@@ -66,11 +74,87 @@ def _parse_rows(rows: Any) -> list[dict]:
     return [dict(r or {}) for r in rows]
 
 
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "ja", "on"}
+    return bool(value)
+
+
+def _require_document_permissions(doctype: str, *, submit: bool = False) -> None:
+    """Fail before any write when the caller may not create/submit a voucher."""
+    if not frappe.has_permission(doctype, "create"):
+        frappe.throw(
+            f"Keine Berechtigung zum Anlegen von {doctype}.",
+            frappe.PermissionError,
+        )
+    if submit and not frappe.has_permission(doctype, "submit"):
+        frappe.throw(
+            f"Keine Berechtigung zum Buchen von {doctype}.",
+            frappe.PermissionError,
+        )
+
+
+def _lock_booking_proposal(vorschlag_name: str) -> dict:
+    """Lock a proposal for the enclosing request transaction.
+
+    A submitted linked invoice is treated as an idempotent retry. All other
+    non-ready states are rejected instead of creating a second invoice.
+    """
+    if not frappe.has_permission("Buchungs Vorschlag", "read") or not frappe.has_permission(
+        "Buchungs Vorschlag", "write"
+    ):
+        frappe.throw(
+            "Keine Berechtigung zum Buchen dieses Buchungsvorschlags.",
+            frappe.PermissionError,
+        )
+
+    proposal = frappe.db.get_value(
+        "Buchungs Vorschlag",
+        vorschlag_name,
+        ["name", "status", "linked_purchase_invoice"],
+        as_dict=True,
+        for_update=True,
+    )
+    if not proposal:
+        frappe.throw(f"Buchungsvorschlag '{vorschlag_name}' wurde nicht gefunden.")
+
+    linked_invoice = proposal.get("linked_purchase_invoice")
+    if proposal.get("status") == "Booked" and linked_invoice:
+        docstatus = frappe.db.get_value("Purchase Invoice", linked_invoice, "docstatus")
+        if int(docstatus or 0) == 1:
+            return {
+                "name": linked_invoice,
+                "submitted": True,
+                "settlement_journal_entry": None,
+                "idempotent": True,
+            }
+        frappe.throw(
+            f"Buchungsvorschlag '{vorschlag_name}' ist inkonsistent: "
+            "Status 'Booked', aber keine gebuchte Eingangsrechnung ist verknüpft."
+        )
+
+    if proposal.get("status") != "Ready":
+        frappe.throw(
+            f"Buchungsvorschlag '{vorschlag_name}' kann im Status "
+            f"'{proposal.get('status') or 'unbekannt'}' nicht gebucht werden."
+        )
+    return {}
+
+
+def _link_locked_booking_proposal(vorschlag_name: str, pi_name: str) -> None:
+    """Link a previously locked proposal without committing independently."""
+    frappe.db.set_value(
+        "Buchungs Vorschlag",
+        vorschlag_name,
+        {"status": "Booked", "linked_purchase_invoice": pi_name},
+    )
+
+
 def _has_field(doctype: str, fieldname: str) -> bool:
-    try:
-        return bool(frappe.get_meta(doctype).get_field(fieldname))
-    except Exception:
-        return False
+    # A genuinely absent optional field is harmless.  A metadata/database
+    # failure is not: treating it as "field absent" could silently drop a
+    # booking dimension such as Wohnung from a voucher.
+    return bool(frappe.get_meta(doctype).get_field(fieldname))
 
 
 def _normalize_sales_invoice_user_remark(raw: Any) -> str:
@@ -393,15 +477,40 @@ def _get_kostenart_details(row: dict) -> dict | None:
 
     if not (doctype and name):
         return None
-    if not frappe.db.exists(doctype, name):
-        return None
+    allowed_doctypes = {
+        "Betriebskostenart",
+        "Kostenart nicht umlagefaehig",
+    }
+    if doctype not in allowed_doctypes:
+        frappe.throw(
+            f"Ungültiger Kostenart-Typ '{doctype}'. Bitte die Kostenart erneut auswählen."
+        )
 
-    try:
-        vals = frappe.get_value(doctype, name, ["konto", "artikel"], as_dict=True)
-    except Exception:
-        return None
-    if not vals:
-        return None
+    fields = ["name", "konto", "artikel"]
+    if doctype == "Betriebskostenart":
+        fields.append("verteilung")
+    vals = frappe.db.get_value(
+        doctype,
+        name,
+        fields,
+        as_dict=True,
+        for_update=True,
+    ) or {}
+    if not vals.get("name"):
+        frappe.throw(
+            f"Kostenart-Stammdatum '{name}' ({doctype}) wurde nicht gefunden "
+            "oder inzwischen gelöscht. Buchung abgebrochen."
+        )
+    if not cstr(vals.get("konto")).strip():
+        frappe.throw(
+            f"Kostenart '{name}' ({doctype}) hat kein Aufwandskonto. "
+            "Buchung abgebrochen."
+        )
+    if not cstr(vals.get("artikel")).strip():
+        frappe.throw(
+            f"Kostenart '{name}' ({doctype}) hat keinen Artikel. "
+            "Buchung abgebrochen."
+        )
 
     row["umlagefaehig"] = doctype
     row["kostenart"] = name
@@ -415,39 +524,108 @@ def _row_requires_wohnung(row: dict, cache: dict[str, str]) -> bool:
     if not bk:
         return False
     if bk not in cache:
-        try:
-            cache[bk] = frappe.db.get_value("Betriebskostenart", bk, "verteilung") or ""
-        except Exception:
-            cache[bk] = ""
+        values = frappe.db.get_value(
+            "Betriebskostenart",
+            bk,
+            ["name", "verteilung"],
+            as_dict=True,
+            for_update=True,
+        ) or {}
+        if not values.get("name"):
+            frappe.throw(
+                f"Umlagefähige Kostenart '{bk}' wurde nicht gefunden oder "
+                "inzwischen gelöscht. Buchung abgebrochen."
+            )
+        cache[bk] = values.get("verteilung") or ""
     return cstr(cache.get(bk) or "").lower() == "einzeln"
 
 
 def _get_payable_account(*, company: str, supplier: str) -> str:
-    candidates: list[str] = []
+    """Resolve one authoritative, current Payable account.
+
+    The Company fallback is used only when the Supplier schema verifiably has no
+    default field or that field is verifiably empty. A configured but broken
+    Supplier account, metadata failure, or database failure must abort instead
+    of silently posting to another account.
+    """
+    supplier_meta = frappe.get_meta("Supplier")
     supplier_default = None
-    try:
-        if frappe.get_meta("Supplier").has_field("default_payable_account"):
-            supplier_default = frappe.db.get_value("Supplier", supplier, "default_payable_account")
-    except Exception:
-        supplier_default = None
-    if supplier_default:
-        candidates.append(supplier_default)
-    company_default = frappe.db.get_value("Company", company, "default_payable_account")
-    if company_default:
-        candidates.append(company_default)
+    if supplier_meta.has_field("default_payable_account"):
+        supplier_default = cstr(
+            frappe.db.get_value(
+                "Supplier",
+                supplier,
+                "default_payable_account",
+            )
+            or ""
+        ).strip()
 
-    for account in candidates:
-        if not frappe.db.exists("Account", account):
-            continue
-        acc_company = frappe.db.get_value("Account", account, "company")
-        if acc_company and acc_company != company:
-            continue
-        return account
+    account_source = f"Lieferant '{supplier}'"
+    account = supplier_default
+    if not account:
+        account_source = f"Company '{company}'"
+        account = cstr(
+            frappe.db.get_value(
+                "Company",
+                company,
+                "default_payable_account",
+            )
+            or ""
+        ).strip()
+    if not account:
+        frappe.throw(
+            "Kein Kreditorenkonto (Payable Account) gefunden. Bitte beim "
+            "Lieferanten oder in der Company ein 'Default Payable Account' pflegen."
+        )
 
-    frappe.throw(
-        "Kein gültiges Kreditorenkonto (Payable Account) gefunden. "
-        "Bitte beim Lieferanten oder in der Company ein 'Default Payable Account' pflegen."
-    )
+    values = frappe.db.get_value(
+        "Account",
+        account,
+        [
+            "name",
+            "company",
+            "is_group",
+            "disabled",
+            "account_type",
+            "account_currency",
+        ],
+        as_dict=True,
+        for_update=True,
+    ) or {}
+    if not values.get("name"):
+        frappe.throw(
+            f"Das in {account_source} konfigurierte Kreditorenkonto "
+            f"'{account}' wurde nicht gefunden."
+        )
+    if cstr(values.get("company")).strip() != company:
+        frappe.throw(
+            f"Das Kreditorenkonto '{account}' aus {account_source} gehört "
+            f"nicht zur Company '{company}'."
+        )
+    if flt(values.get("is_group")) or flt(values.get("disabled")):
+        frappe.throw(
+            f"Das Kreditorenkonto '{account}' aus {account_source} ist nicht "
+            "aktiv bebuchbar."
+        )
+    if values.get("account_type") != "Payable":
+        frappe.throw(
+            f"Das Konto '{account}' aus {account_source} ist kein "
+            "Kreditorenkonto (Account Type Payable)."
+        )
+
+    company_currency = cstr(
+        frappe.db.get_value("Company", company, "default_currency") or ""
+    ).strip()
+    if not company_currency:
+        frappe.throw(f"An der Company '{company}' fehlt die Standardwährung.")
+    account_currency = cstr(values.get("account_currency")).strip()
+    if account_currency != company_currency:
+        frappe.throw(
+            f"Das Kreditorenkonto '{account}' hat Währung "
+            f"'{account_currency or 'nicht gesetzt'}', erwartet ist "
+            f"'{company_currency}'. Fremdwährungsbuchung abgebrochen."
+        )
+    return account
 
 
 def _derive_company_from_rows(rows: list[dict]) -> str | None:
@@ -481,6 +659,223 @@ def _derive_cost_center_from_mietvertrag(mietvertrag: str) -> str | None:
     if not immobilie:
         return None
     return frappe.db.get_value("Immobilie", immobilie, "kostenstelle")
+
+
+def _validate_cost_center_company(
+    cost_center: str,
+    company: str,
+    *,
+    context: str | None = None,
+    for_update: bool = False,
+) -> None:
+    """Require a concrete, non-group Cost Center of the booking company."""
+    label = f"{context}: " if context else ""
+    values = frappe.db.get_value(
+        "Cost Center",
+        cost_center,
+        ["name", "company", "is_group", "disabled"],
+        as_dict=True,
+        for_update=for_update,
+    ) or {}
+    if not values.get("name"):
+        frappe.throw(f"{label}Kostenstelle '{cost_center}' wurde nicht gefunden.")
+    if flt(values.get("is_group")):
+        frappe.throw(
+            f"{label}Kostenstelle '{cost_center}' ist eine Gruppe und kann nicht "
+            "bebucht werden."
+        )
+    if flt(values.get("disabled")):
+        frappe.throw(
+            f"{label}Kostenstelle '{cost_center}' ist deaktiviert und kann nicht "
+            "bebucht werden."
+        )
+    cost_center_company = cstr(values.get("company")).strip()
+    if not cost_center_company:
+        frappe.throw(
+            f"{label}Kostenstelle '{cost_center}' hat keine Company. "
+            "Buchung abgebrochen."
+        )
+    if cost_center_company != company:
+        frappe.throw(
+            f"{label}Kostenstelle '{cost_center}' gehört zur Company "
+            f"'{cost_center_company}', der Beleg aber zur Company '{company}'. "
+            "Buchung abgebrochen."
+        )
+
+
+def _validate_expense_account_company(
+    account: str,
+    company: str,
+    company_currency: str,
+    *,
+    context: str | None = None,
+) -> None:
+    """Lock and validate an expense/capital account before PI insertion."""
+    label = f"{context}: " if context else ""
+    values = frappe.db.get_value(
+        "Account",
+        account,
+        [
+            "name",
+            "company",
+            "is_group",
+            "disabled",
+            "account_type",
+            "account_currency",
+        ],
+        as_dict=True,
+        for_update=True,
+    ) or {}
+    if not values.get("name"):
+        frappe.throw(f"{label}Konto '{account}' wurde nicht gefunden.")
+    if cstr(values.get("company")).strip() != company:
+        frappe.throw(
+            f"{label}Konto '{account}' gehört nicht zur Company '{company}'."
+        )
+    if flt(values.get("is_group")) or flt(values.get("disabled")):
+        frappe.throw(
+            f"{label}Konto '{account}' ist nicht aktiv bebuchbar."
+        )
+    if values.get("account_type") in {"Receivable", "Payable"}:
+        frappe.throw(
+            f"{label}Konto '{account}' ist ein Debitoren-/Kreditorenkonto und "
+            "kein zulässiges Positionskonto."
+        )
+    account_currency = cstr(values.get("account_currency")).strip()
+    if account_currency != company_currency:
+        frappe.throw(
+            f"{label}Konto '{account}' hat Währung "
+            f"'{account_currency or 'nicht gesetzt'}', erwartet ist "
+            f"'{company_currency}'. Fremdwährungsbuchung abgebrochen."
+        )
+
+
+def _resolve_property_booking_identity(
+    wohnung: str,
+    *,
+    selected_cost_center: str | None = None,
+    expected_company: str | None = None,
+    cost_center_to_immobilie: dict[str, str] | None = None,
+    context: str | None = None,
+) -> dict:
+    """Resolve and lock Wohnung -> Immobilie -> Cost Center -> Company.
+
+    Property-bound vouchers must never inherit a user/global Company or a
+    Company default Cost Center.  Missing or conflicting property finance
+    master data therefore aborts before an invoice is inserted.
+    """
+    label = f"{context}: " if context else ""
+    wohnung = cstr(wohnung).strip()
+    if not wohnung:
+        frappe.throw(f"{label}Wohnung fehlt.")
+
+    wohnung_values = frappe.db.get_value(
+        "Wohnung",
+        wohnung,
+        ["name", "immobilie"],
+        as_dict=True,
+        for_update=True,
+    ) or {}
+    immobilie = cstr(wohnung_values.get("immobilie")).strip()
+    if not wohnung_values.get("name") or not immobilie:
+        frappe.throw(
+            f"{label}Wohnung '{wohnung}' wurde nicht gefunden oder hat keine "
+            "Immobilie. Buchung abgebrochen."
+        )
+
+    immobilie_values = frappe.db.get_value(
+        "Immobilie",
+        immobilie,
+        ["name", "kostenstelle"],
+        as_dict=True,
+        for_update=True,
+    ) or {}
+    property_cost_center = cstr(immobilie_values.get("kostenstelle")).strip()
+    if not immobilie_values.get("name") or not property_cost_center:
+        frappe.throw(
+            f"{label}An der Immobilie '{immobilie}' der Wohnung '{wohnung}' "
+            "ist keine Kostenstelle gepflegt. Buchung abgebrochen."
+        )
+
+    company = _company_via_wohnung(wohnung, for_update=True)
+    if not company:
+        frappe.throw(
+            f"{label}Für Wohnung '{wohnung}' konnte aus den gesperrten "
+            "Immobilien-Finanzdaten keine eindeutige Company ermittelt werden. "
+            "Buchung abgebrochen."
+        )
+    if expected_company and company != expected_company:
+        frappe.throw(
+            f"{label}Wohnung '{wohnung}' gehört zur Company '{company}', "
+            f"der Beleg aber zur Company '{expected_company}'. "
+            "Buchung abgebrochen."
+        )
+
+    cost_center = cstr(selected_cost_center).strip() or property_cost_center
+    cc_map = (
+        cost_center_to_immobilie
+        if cost_center_to_immobilie is not None
+        else _kostenstelle_zu_haus_map()
+    )
+    canonical_immobilie = validate_wohnung_cost_center_pair(
+        wohnung,
+        cost_center,
+        cost_center_to_immobilie=cc_map,
+        wohnung_to_immobilie={wohnung: immobilie},
+        context=context,
+    )
+    _validate_cost_center_company(
+        cost_center,
+        company,
+        context=context,
+        for_update=True,
+    )
+    return {
+        "wohnung": wohnung,
+        "immobilie": immobilie,
+        "canonical_immobilie": canonical_immobilie,
+        "property_cost_center": property_cost_center,
+        "cost_center": cost_center,
+        "company": company,
+    }
+
+
+def _lock_mietvertrag_booking_identity(
+    mietvertrag: str,
+    *,
+    cost_center_to_immobilie: dict[str, str] | None = None,
+) -> dict:
+    """Lock and validate the single Customer/property identity of a contract."""
+    mv = frappe.db.get_value(
+        "Mietvertrag",
+        mietvertrag,
+        ["name", "kunde", "wohnung"],
+        as_dict=True,
+        for_update=True,
+    ) or {}
+    if not mv.get("name"):
+        frappe.throw(f"Mietvertrag '{mietvertrag}' wurde nicht gefunden.")
+
+    customer = cstr(mv.get("kunde")).strip()
+    wohnung = cstr(mv.get("wohnung")).strip()
+    if not customer:
+        frappe.throw(
+            f"Mietvertrag '{mietvertrag}' hat keinen eindeutigen Kunden. "
+            "Buchung abgebrochen."
+        )
+    if not wohnung:
+        frappe.throw(
+            f"Mietvertrag '{mietvertrag}' hat keine Wohnung. "
+            "Buchung abgebrochen."
+        )
+
+    identity = _resolve_property_booking_identity(
+        wohnung,
+        cost_center_to_immobilie=cost_center_to_immobilie,
+        context=f"Mietvertrag {mietvertrag}",
+    )
+    identity.update({"mietvertrag": mietvertrag, "customer": customer})
+    return identity
 
 
 def _validate_settlement_account(
@@ -553,6 +948,19 @@ def _create_purchase_invoice_settlement_journal(
         payable_account=payable_account,
         zahlungsart=zahlungsart,
     )
+    company_currency = frappe.db.get_value("Company", pi.company, "default_currency")
+    payable_currency = frappe.db.get_value("Account", payable_account, "account_currency")
+    settlement_currency = frappe.db.get_value("Account", settlement_account, "account_currency")
+    currencies = {
+        currency
+        for currency in (company_currency, payable_currency, settlement_currency)
+        if currency
+    }
+    if len(currencies) > 1:
+        frappe.throw(
+            "Sofortausgleich in Fremdwährung wird im Buchungs-Cockpit nicht unterstützt. "
+            "Bitte die Rechnung offen buchen und über einen Payment Entry bezahlen."
+        )
 
     user_remark = (remarks or "").strip() or f"Ausgleich Eingangsrechnung {pi.name}"
 
@@ -581,7 +989,7 @@ def _create_purchase_invoice_settlement_journal(
         "credit_in_account_currency": amount,
     })
 
-    je.insert(ignore_permissions=True)
+    je.insert()
     je.submit()
     return je.name
 
@@ -623,6 +1031,23 @@ def create_purchase_invoice(**kwargs) -> dict:
         positionen: list of dicts with keys
             betrag, konto, kostenstelle, umlagefaehig, kostenart, wohnung (optional)
     """
+    submit_flag = _as_bool(kwargs.get("submit_doc", 1))
+    vorschlag_name = (kwargs.get("vorschlag_name") or "").strip()
+    if vorschlag_name and not submit_flag:
+        frappe.throw(
+            "Ein Buchungsvorschlag kann nicht als Entwurf gespeichert werden. "
+            "Bitte den Vorschlag buchen oder den Dialog ohne Vorschlag öffnen."
+        )
+
+    settle_now = submit_flag and _should_settle_purchase_invoice_now(kwargs)
+    _require_document_permissions("Purchase Invoice", submit=submit_flag)
+    if settle_now:
+        _require_document_permissions("Journal Entry", submit=True)
+
+    idempotent_result = _lock_booking_proposal(vorschlag_name) if vorschlag_name else {}
+    if idempotent_result:
+        return idempotent_result
+
     supplier = kwargs.get("lieferant")
     if not supplier:
         frappe.throw("Bitte einen Lieferanten auswählen.")
@@ -630,12 +1055,66 @@ def create_purchase_invoice(**kwargs) -> dict:
     rows = _parse_rows(kwargs.get("positionen"))
     if not rows:
         frappe.throw("Es sind keine Positionen erfasst.")
+    for idx, row in enumerate(rows, start=1):
+        if row.get("betrag") in (None, ""):
+            frappe.throw(f"Position {idx}: Betrag fehlt.")
 
-    company = _derive_company_from_rows(rows)
+    wohnung_rows = [
+        (idx, row)
+        for idx, row in enumerate(rows, start=1)
+        if cstr(row.get("wohnung")).strip()
+    ]
+    cost_center_to_immobilie: dict[str, str] | None = None
+    property_identities: dict[int, dict] = {}
+    company: str | None = None
+    if wohnung_rows:
+        cost_center_to_immobilie = _kostenstelle_zu_haus_map()
+        for idx, row in wohnung_rows:
+            identity = _resolve_property_booking_identity(
+                row.get("wohnung"),
+                selected_cost_center=row.get("kostenstelle"),
+                expected_company=company,
+                cost_center_to_immobilie=cost_center_to_immobilie,
+                context=f"Position {idx}",
+            )
+            company = company or identity["company"]
+            property_identities[idx] = identity
+    else:
+        company = _derive_company_from_rows(rows)
+
     if not company:
         frappe.throw(
-            "Konnte keine Company ermitteln. Bitte in mindestens einer Position eine Kostenstelle angeben."
+            "Konnte keine Company ermitteln. Bitte in mindestens einer Position "
+            "eine Kostenstelle angeben."
         )
+
+    first_cost_center = next(
+        (cstr(r.get("kostenstelle")).strip() for r in rows if r.get("kostenstelle")),
+        None,
+    )
+    company_default_cost_center: str | None = None
+    effective_cost_centers: dict[int, str] = {}
+    for idx, row in enumerate(rows, start=1):
+        property_identity = property_identities.get(idx)
+        if property_identity:
+            cost_center = property_identity["cost_center"]
+        else:
+            cost_center = cstr(row.get("kostenstelle")).strip() or first_cost_center
+            if not cost_center:
+                if company_default_cost_center is None:
+                    company_default_cost_center = frappe.get_cached_value(
+                        "Company", company, "cost_center"
+                    )
+                cost_center = company_default_cost_center
+        if not cost_center:
+            frappe.throw(f"Position {idx}: Bitte eine Kostenstelle wählen.")
+        _validate_cost_center_company(
+            cost_center,
+            company,
+            context=f"Position {idx}",
+            for_update=True,
+        )
+        effective_cost_centers[idx] = cost_center
 
     posting_date = kwargs.get("rechnungsdatum") or nowdate()
     bill_no = kwargs.get("rechnungsname")
@@ -656,27 +1135,37 @@ def create_purchase_invoice(**kwargs) -> dict:
     payable_account = _get_payable_account(company=company, supplier=supplier)
     pi.credit_to = payable_account
 
-    try:
-        pi_currency = frappe.db.get_value("Account", payable_account, "account_currency")
-        if not pi_currency:
-            pi_currency = frappe.db.get_value("Company", company, "default_currency")
-        if pi_currency:
-            pi.currency = pi_currency
-            pi.conversion_rate = 1
-    except Exception:
-        pass
+    company_currency = frappe.db.get_value("Company", company, "default_currency")
+    payable_currency = frappe.db.get_value("Account", payable_account, "account_currency")
+    if not company_currency:
+        frappe.throw(f"An der Company '{company}' fehlt die Standardwährung.")
+    if payable_currency and payable_currency != company_currency:
+        frappe.throw(
+            f"Das Kreditorenkonto '{payable_account}' wird in {payable_currency} geführt. "
+            "Fremdwährungsrechnungen bitte im regulären Purchase-Invoice-Formular "
+            "mit geprüftem Wechselkurs erfassen."
+        )
+    pi.currency = company_currency
+    pi.conversion_rate = 1
 
     items: list[dict] = []
     verteilung_cache: dict[str, str] = {}
-    first_cost_center = next((r.get("kostenstelle") for r in rows if r.get("kostenstelle")), None)
+    wohnung_to_immobilie: dict[str, str | None] = {}
 
     for idx, row in enumerate(rows, start=1):
         betrag = row.get("betrag")
-        if betrag in (None, ""):
-            frappe.throw(f"Position {idx}: Betrag fehlt.")
 
         kostenart_info = _get_kostenart_details(row)
-        expense_account = (kostenart_info.get("konto") if kostenart_info else None) or row.get("konto")
+        if kostenart_info:
+            # A selected Kostenart is authoritative. Never fall back to a
+            # request-row or Company account after its master-data lookup.
+            expense_account = kostenart_info.get("konto")
+            if row.get("umlagefaehig") == "Betriebskostenart":
+                verteilung_cache[row.get("kostenart")] = (
+                    kostenart_info.get("verteilung") or ""
+                )
+        else:
+            expense_account = row.get("konto")
         if not expense_account:
             expense_account = frappe.get_cached_value("Company", company, "default_expense_account")
             if not expense_account:
@@ -684,14 +1173,14 @@ def create_purchase_invoice(**kwargs) -> dict:
                     f"Position {idx}: Bitte ein Aufwandskonto wählen "
                     "(in der Kostenart oder direkt in der Position)."
                 )
-
-        cost_center = (
-            row.get("kostenstelle")
-            or first_cost_center
-            or frappe.get_cached_value("Company", company, "cost_center")
+        _validate_expense_account_company(
+            expense_account,
+            company,
+            company_currency,
+            context=f"Position {idx}",
         )
-        if not cost_center:
-            frappe.throw(f"Position {idx}: Bitte eine Kostenstelle wählen.")
+
+        cost_center = effective_cost_centers[idx]
 
         desc_parts = []
         if row.get("umlagefaehig"):
@@ -731,9 +1220,18 @@ def create_purchase_invoice(**kwargs) -> dict:
                 frappe.throw(
                     "Accounting Dimension 'Wohnung' ist nicht verfügbar (Feld 'wohnung' fehlt auf Purchase Invoice Item)."
                 )
-            item_row["wohnung"] = row.get("wohnung")
-        elif row.get("wohnung") and _has_field("Purchase Invoice Item", "wohnung"):
-            item_row["wohnung"] = row.get("wohnung")
+        if row.get("wohnung"):
+            if cost_center_to_immobilie is None:
+                cost_center_to_immobilie = _kostenstelle_zu_haus_map()
+            validate_wohnung_cost_center_pair(
+                row.get("wohnung"),
+                cost_center,
+                cost_center_to_immobilie=cost_center_to_immobilie,
+                wohnung_to_immobilie=wohnung_to_immobilie,
+                context=f"Position {idx}",
+            )
+            if _has_field("Purchase Invoice Item", "wohnung"):
+                item_row["wohnung"] = row.get("wohnung")
 
         items.append(item_row)
 
@@ -746,27 +1244,14 @@ def create_purchase_invoice(**kwargs) -> dict:
     if _has_field("Purchase Invoice", "hv_eingabequelle"):
         pi.hv_eingabequelle = EINGABEQUELLE_EINGANG
 
-    pi.insert(ignore_permissions=True)
+    pi.insert()
 
     _attach_source_file(pi, kwargs.get("attached_file_url"))
 
-    vorschlag_name = (kwargs.get("vorschlag_name") or "").strip()
-    if vorschlag_name:
-        from hausverwaltung.hausverwaltung.services.bulk_extraction import (
-            link_vorschlag_to_pi,
-        )
-        link_vorschlag_to_pi(vorschlag_name, pi.name)
-
-    submit_doc_raw = kwargs.get("submit_doc", 1)
-    submit_flag = (
-        bool(int(submit_doc_raw))
-        if isinstance(submit_doc_raw, str)
-        else bool(submit_doc_raw)
-    )
     settlement_journal = None
     if submit_flag:
         pi.submit()
-        if _should_settle_purchase_invoice_now(kwargs):
+        if settle_now:
             settlement_journal = _create_purchase_invoice_settlement_journal(
                 pi,
                 settlement_account=kwargs.get("zahlungskonto"),
@@ -775,6 +1260,8 @@ def create_purchase_invoice(**kwargs) -> dict:
                 zahlungsart=kwargs.get("zahlungsart"),
                 remarks=kwargs.get("zahlungsbemerkung") or user_remarks,
             )
+        if vorschlag_name:
+            _link_locked_booking_proposal(vorschlag_name, pi.name)
         frappe.msgprint(
             f"Eingangsrechnung {pi.name} wurde erstellt und eingereicht.", alert=True
         )
@@ -917,7 +1404,6 @@ def save_vorlage_from_cockpit(**kwargs) -> dict:
         })
 
     doc.insert()
-    frappe.db.commit()
     return {"name": doc.name, "titel": doc.titel}
 
 
@@ -984,19 +1470,22 @@ def create_sales_invoice(**kwargs) -> dict:
         positionen: list of dicts with keys
             beschreibung, betrag, artikel, erloeskonto
     """
+    submit_flag = _as_bool(kwargs.get("submit_doc", 1))
+    _require_document_permissions("Sales Invoice", submit=submit_flag)
+
     mietvertrag = kwargs.get("mietvertrag")
     if not mietvertrag:
         frappe.throw("Bitte einen Mietvertrag auswählen.")
 
-    mv = frappe.db.get_value("Mietvertrag", mietvertrag, ["kunde", "wohnung"], as_dict=True) or {}
-    customer = mv.get("kunde")
-    wohnung = mv.get("wohnung")
-    if not customer:
-        frappe.throw("Kein Mieter im Mietvertrag hinterlegt.")
-
-    company = _derive_company_from_mietvertrag(mietvertrag) or frappe.defaults.get_global_default("company")
-    if not company:
-        frappe.throw("Konnte keine Company ermitteln.")
+    cost_center_to_immobilie = _kostenstelle_zu_haus_map()
+    booking_identity = _lock_mietvertrag_booking_identity(
+        mietvertrag,
+        cost_center_to_immobilie=cost_center_to_immobilie,
+    )
+    customer = booking_identity["customer"]
+    wohnung = booking_identity["wohnung"]
+    company = booking_identity["company"]
+    default_cost_center = booking_identity["cost_center"]
 
     posting_date = getdate(kwargs.get("rechnungsdatum") or nowdate())
     due_date = getdate(kwargs.get("faellig_am") or (posting_date + timedelta(days=21)))
@@ -1023,15 +1512,6 @@ def create_sales_invoice(**kwargs) -> dict:
 
     ensure_rent_items(company=company)
     hv_income_accounts = get_hv_income_accounts(company)
-    default_cost_center = (
-        _derive_cost_center_from_mietvertrag(mietvertrag)
-        or frappe.db.get_value("Company", company, "cost_center")
-    )
-    if not default_cost_center:
-        frappe.throw(
-            "Konnte keine Kostenstelle ermitteln. Bitte an der Immobilie eine 'kostenstelle' pflegen "
-            "(oder Company.cost_center setzen)."
-        )
     default_income_account = frappe.db.get_value("Company", company, "default_income_account")
 
     items: list[dict] = []
@@ -1106,14 +1586,7 @@ def create_sales_invoice(**kwargs) -> dict:
     if _has_field("Sales Invoice", "mietabrechnung_id"):
         si.set("mietabrechnung_id", None)
 
-    si.insert(ignore_permissions=True)
-
-    submit_doc_raw = kwargs.get("submit_doc", 1)
-    submit_flag = (
-        bool(int(submit_doc_raw))
-        if isinstance(submit_doc_raw, str)
-        else bool(submit_doc_raw)
-    )
+    si.insert()
     if submit_flag:
         si.submit()
         belegart = "Gutschrift" if is_credit_note else "Rechnung"
@@ -1147,8 +1620,6 @@ def upload_invoice_pdf() -> dict:
       Status — das Frontend zeigt darauf basierend einen Duplicate-Dialog.
     """
     import hashlib
-
-    from frappe.utils.file_manager import save_file
 
     # Frappe's Standard-save_file()-Pipeline hat einen Bug bei Binary-Files:
     # File.get_content() decoded die bytes via FILE_ENCODING_OPTIONS zu str
@@ -1188,9 +1659,10 @@ def upload_invoice_pdf() -> dict:
     else:
         # Direkt auf disk schreiben + minimales File-Doc — umgeht den
         # Frappe-Decode-Encode-Bug bei Binary-Files (siehe Kommentar oben).
+        import os as _os
+
         from frappe.core.doctype.file.utils import generate_file_name
         from frappe.utils.file_manager import get_files_path
-        import os as _os
 
         target_dir = get_files_path(is_private=1)
         frappe.create_folder(target_dir)

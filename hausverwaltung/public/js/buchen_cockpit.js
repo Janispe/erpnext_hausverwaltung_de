@@ -738,11 +738,16 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 
 	apply_eingabemodus(dialog);
 
-	dialog.add_custom_action(
-		__("Als Entwurf speichern"),
-		() => submit_eingangsrechnung(dialog, dialog.get_values(true), false),
-		"btn-secondary"
-	);
+	// Ein Inbox-Vorschlag wird serverseitig exklusiv gesperrt und atomar mit
+	// einer gebuchten PI verknüpft. Ein Draft hätte keinen eindeutigen
+	// Vorschlagsstatus und könnte erneut gebucht werden.
+	if (!dialog._hv_vorschlag_name) {
+		dialog.add_custom_action(
+			__("Als Entwurf speichern"),
+			() => submit_eingangsrechnung(dialog, dialog.get_values(true), false),
+			"btn-secondary"
+		);
+	}
 
 	dialog.add_custom_action(
 		__("Als Vorlage speichern"),
