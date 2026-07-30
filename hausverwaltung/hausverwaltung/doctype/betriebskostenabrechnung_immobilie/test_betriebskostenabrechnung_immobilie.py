@@ -276,7 +276,10 @@ class TestBetriebskostenabrechnungImmobilie(unittest.TestCase):
 			start=frappe.utils.getdate("2025-07-01"),
 		)
 		segments[0]["end"] = frappe.utils.getdate("2025-06-30")
-		with self.assertRaisesRegex(frappe.ValidationError, "fehlend: 1"):
+		with self.assertRaisesRegex(
+			frappe.ValidationError,
+			"fehlend: 2, zusätzlich/geändert: 1",
+		):
 			self._run_snapshot(
 				doc,
 				segments + [second],
