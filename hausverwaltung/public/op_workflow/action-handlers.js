@@ -146,6 +146,9 @@
         use_skonto: opts.useSkonto,
         skonto_amount: opts.skontoAmount,
         mode_of_payment: opts.zahlart,
+        bank_account: opts.bankAccount || null,
+        reference_no: opts.referenceNo || null,
+        reference_date: opts.referenceDate || null,
       },
     );
     handleResult(result, `Payment Entry ${result.payment_entry} als Draft erstellt`);
@@ -162,6 +165,8 @@
         posting_date: opts.postingDate,
         bank_account: opts.bankAccount || null,
         mode_of_payment: opts.modeOfPayment || "Bank Draft",
+        reference_no: opts.referenceNo || null,
+        reference_date: opts.referenceDate || null,
       },
     );
     handleResult(result, `Auszahlung ${result.payment_entry} als Draft erstellt`);

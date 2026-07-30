@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any
 
 import frappe
 
@@ -414,22 +413,14 @@ def reactivate_vorschlag(name: str) -> dict:
 
 
 def link_vorschlag_to_pi(vorschlag_name: str, pi_name: str) -> None:
-	"""Wird vom create_purchase_invoice-Endpoint aufgerufen, sobald die PI da ist.
-
-	Direktes db.set_value: schnell, kein Doc-Lifecycle, keine Link-Validierung
-	(die PI existiert per Konstruktion — sie wurde im selben Request angelegt).
-	"""
+	"""Verknüpft Vorschlag und PI innerhalb der Transaktion des Aufrufers."""
 	if not (vorschlag_name and pi_name):
 		return
-	try:
-		frappe.db.set_value(
-			"Buchungs Vorschlag",
-			vorschlag_name,
-			{"status": "Booked", "linked_purchase_invoice": pi_name},
-		)
-		frappe.db.commit()
-	except Exception:
-		frappe.log_error(frappe.get_traceback(), "BulkExtraction: link to PI failed")
+	frappe.db.set_value(
+		"Buchungs Vorschlag",
+		vorschlag_name,
+		{"status": "Booked", "linked_purchase_invoice": pi_name},
+	)
 
 
 def on_purchase_invoice_cancel(doc, method=None):
@@ -441,16 +432,14 @@ def on_purchase_invoice_cancel(doc, method=None):
 	Vorschlag darüber und relink-t ihn auf die neue PI (siehe
 	on_purchase_invoice_submit).
 	"""
-	try:
-		name = frappe.db.get_value(
-			"Buchungs Vorschlag",
-			{"linked_purchase_invoice": doc.name, "status": "Booked"},
-			"name",
-		)
-		if name:
-			frappe.db.set_value("Buchungs Vorschlag", name, "status", "Ready")
-	except Exception:
-		frappe.log_error(frappe.get_traceback(), "BulkExtraction: PI cancel sync failed")
+	name = frappe.db.get_value(
+		"Buchungs Vorschlag",
+		{"linked_purchase_invoice": doc.name, "status": "Booked"},
+		"name",
+		for_update=True,
+	)
+	if name:
+		frappe.db.set_value("Buchungs Vorschlag", name, "status", "Ready")
 
 
 def on_purchase_invoice_submit(doc, method=None):
@@ -462,20 +451,18 @@ def on_purchase_invoice_submit(doc, method=None):
 	"""
 	if not getattr(doc, "amended_from", None):
 		return
-	try:
-		name = frappe.db.get_value(
+	name = frappe.db.get_value(
+		"Buchungs Vorschlag",
+		{"linked_purchase_invoice": doc.amended_from},
+		"name",
+		for_update=True,
+	)
+	if name:
+		frappe.db.set_value(
 			"Buchungs Vorschlag",
-			{"linked_purchase_invoice": doc.amended_from},
-			"name",
+			name,
+			{"linked_purchase_invoice": doc.name, "status": "Booked"},
 		)
-		if name:
-			frappe.db.set_value(
-				"Buchungs Vorschlag",
-				name,
-				{"linked_purchase_invoice": doc.name, "status": "Booked"},
-			)
-	except Exception:
-		frappe.log_error(frappe.get_traceback(), "BulkExtraction: PI amend relink failed")
 
 
 @frappe.whitelist()
