@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 
 import frappe
-from frappe.utils import cint, flt, getdate
+from frappe.utils import cint, cstr, flt, getdate
 
 _MV_MARKER = re.compile(r"\[MV:([^\]]+)\]")
 _MONTH_MARKER = re.compile(r"(\d{2}/\d{4})")
@@ -114,76 +114,184 @@ def _issue(
 	)
 
 
+def _load_referenced_contracts(normalized_names: set[str]) -> list[Any]:
+	"""Load only contracts named by the bounded invoice window.
+
+	The SQL normalization mirrors ``_normalize_contract_name`` closely enough
+	to retain support for historical names containing tabs or irregular spaces
+	around pipe separators without loading every contract into Python.
+	"""
+	if not normalized_names:
+		return []
+	placeholders = ", ".join(["%s"] * len(normalized_names))
+	return frappe.db.sql(
+		f"""
+		SELECT name, kunde, wohnung, von, bis
+		FROM `tabMietvertrag`
+		WHERE docstatus < 2
+		  AND REGEXP_REPLACE(
+			REGEXP_REPLACE(TRIM(name), '[[:space:]]+', ' '),
+			'[[:space:]]*\\\\|[[:space:]]*',
+			' | '
+		  ) IN ({placeholders})
+		""",
+		tuple(sorted(normalized_names)),
+		as_dict=True,
+	) or []
+
+
+def _companies_by_wohnung(
+	wohnungen: set[str],
+) -> dict[str, tuple[str | None, str | None]]:
+	"""Resolve property companies in batches instead of one query per contract."""
+	if not wohnungen:
+		return {}
+
+	wohnung_rows = frappe.get_all(
+		"Wohnung",
+		filters={"name": ("in", sorted(wohnungen))},
+		fields=["name", "immobilie"],
+		limit_page_length=0,
+	)
+	immobilie_by_wohnung = {
+		cstr(row.get("name") or "").strip(): cstr(row.get("immobilie") or "").strip()
+		for row in wohnung_rows
+	}
+
+	properties: dict[str, Any] = {}
+	pending = {
+		name for name in immobilie_by_wohnung.values() if name
+	}
+	while pending:
+		rows = frappe.get_all(
+			"Immobilie",
+			filters={"name": ("in", sorted(pending))},
+			fields=[
+				"name",
+				"kostenstelle",
+				"haupt_bank_account",
+				"konto",
+				"kassenkonto",
+				"parent_immobilie",
+				"old_parent",
+			],
+			limit_page_length=0,
+		)
+		for row in rows:
+			properties[cstr(row.get("name") or "").strip()] = row
+		loaded = set(properties)
+		pending = {
+			cstr(row.get("parent_immobilie") or row.get("old_parent") or "").strip()
+			for row in rows
+			if cstr(row.get("parent_immobilie") or row.get("old_parent") or "").strip()
+		} - loaded
+
+	all_property_names = sorted(properties)
+	child_accounts: dict[str, set[str]] = {
+		name: set() for name in all_property_names
+	}
+	for child_doctype in ("Immobilie Bankkonto", "Immobilie Kassenkonto"):
+		if not all_property_names:
+			break
+		for row in frappe.get_all(
+			child_doctype,
+			filters={"parent": ("in", all_property_names)},
+			fields=["parent", "konto"],
+			limit_page_length=0,
+		):
+			if row.get("konto"):
+				child_accounts.setdefault(row.get("parent"), set()).add(row.get("konto"))
+
+	sources_by_wohnung: dict[str, set[tuple[str, str]]] = {}
+	errors: dict[str, str] = {}
+	for wohnung in wohnungen:
+		sources: set[tuple[str, str]] = set()
+		immobilie = immobilie_by_wohnung.get(wohnung, "")
+		visited: set[str] = set()
+		while immobilie:
+			if immobilie in visited:
+				errors[wohnung] = f"Die Immobilien-Hierarchie enthält einen Kreis bei {immobilie}."
+				break
+			visited.add(immobilie)
+			row = properties.get(immobilie)
+			if not row:
+				errors[wohnung] = f"Immobilie {immobilie} wurde nicht gefunden."
+				break
+			if row.get("kostenstelle"):
+				sources.add(("Cost Center", row.get("kostenstelle")))
+			if row.get("haupt_bank_account"):
+				sources.add(("Bank Account", row.get("haupt_bank_account")))
+			for account in (row.get("konto"), row.get("kassenkonto")):
+				if account:
+					sources.add(("Account", account))
+			for account in child_accounts.get(immobilie, set()):
+				sources.add(("Account", account))
+			immobilie = cstr(
+				row.get("parent_immobilie") or row.get("old_parent") or ""
+			).strip()
+		sources_by_wohnung[wohnung] = sources
+
+	company_by_source: dict[tuple[str, str], str | None] = {}
+	for doctype in ("Cost Center", "Bank Account", "Account"):
+		names = sorted({
+			name
+			for sources in sources_by_wohnung.values()
+			for kind, name in sources
+			if kind == doctype
+		})
+		if not names:
+			continue
+		rows = frappe.get_all(
+			doctype,
+			filters={"name": ("in", names)},
+			fields=["name", "company"],
+			limit_page_length=0,
+		)
+		for row in rows:
+			company_by_source[(doctype, row.get("name"))] = row.get("company")
+
+	active_companies: list[str] | None = None
+	result: dict[str, tuple[str | None, str | None]] = {}
+	for wohnung in sorted(wohnungen):
+		if wohnung in errors:
+			result[wohnung] = (None, errors[wohnung])
+			continue
+		companies: set[str] = set()
+		for source in sorted(sources_by_wohnung.get(wohnung, set())):
+			company = cstr(company_by_source.get(source) or "").strip()
+			if not company:
+				errors[wohnung] = f"Finanzzuordnung {source[0]} {source[1]} hat keine Company."
+				break
+			companies.add(company)
+		if wohnung in errors:
+			result[wohnung] = (None, errors[wohnung])
+		elif len(companies) > 1:
+			result[wohnung] = (
+				None,
+				"Finanzzuordnungen gehören zu mehreren Companies: "
+				+ ", ".join(sorted(companies)),
+			)
+		elif companies:
+			result[wohnung] = (next(iter(companies)), None)
+		else:
+			if active_companies is None:
+				active_companies = frappe.get_all(
+					"Company",
+					filters={"disabled": 0},
+					pluck="name",
+					limit_page_length=0,
+				)
+			result[wohnung] = (
+				(active_companies[0] if len(active_companies) == 1 else None),
+				(None if len(active_companies) == 1 else "Keine eindeutige aktive Company."),
+			)
+	return result
+
+
 def _check_contract_and_rent_invoice_identity(
 	issues: list[dict[str, Any]],
 	limit: int,
 ) -> dict[str, Any]:
-	from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
-		_company_via_wohnung,
-	)
-
-	# The invoice window may reference any historical contract.  Limiting the
-	# lookup independently would report every contract outside that arbitrary
-	# slice as missing, so the identity map deliberately covers all contracts.
-	contracts = frappe.get_all(
-		"Mietvertrag",
-		filters={"docstatus": ("<", 2)},
-		fields=["name", "kunde", "wohnung", "von", "bis"],
-		limit_page_length=0,
-	)
-	contract_by_name = {
-		_normalize_contract_name(row.name): row
-		for row in contracts
-		if _normalize_contract_name(row.name)
-	}
-	company_by_wohnung: dict[str, tuple[str | None, str | None]] = {}
-	for contract in contracts:
-		if not (contract.get("kunde") or "").strip():
-			_issue(
-				issues,
-				severity="critical",
-				code="contract_without_customer",
-				doctype="Mietvertrag",
-				name=contract.name,
-				message="Der Mietvertrag hat keinen verknüpften Kunden.",
-				wohnung=contract.get("wohnung"),
-			)
-		elif not frappe.db.exists("Customer", contract.kunde):
-			_issue(
-				issues,
-				severity="critical",
-				code="contract_customer_missing",
-				doctype="Mietvertrag",
-				name=contract.name,
-				message=f"Der verknüpfte Kunde {contract.kunde} existiert nicht.",
-				customer=contract.kunde,
-			)
-		wohnung = (contract.get("wohnung") or "").strip()
-		if wohnung:
-			if wohnung not in company_by_wohnung:
-				try:
-					company_by_wohnung[wohnung] = (
-						_company_via_wohnung(wohnung),
-						None,
-					)
-				except Exception as exc:
-					company_by_wohnung[wohnung] = (None, str(exc))
-			company, error = company_by_wohnung[wohnung]
-			if not company:
-				_issue(
-					issues,
-					severity="critical",
-					code="contract_company_ambiguous",
-					doctype="Mietvertrag",
-					name=contract.name,
-					message=(
-						"Für die Wohnung des Mietvertrags ist keine eindeutige "
-						"Buchungs-Company ableitbar."
-					),
-					wohnung=wohnung,
-					error=error,
-				)
-
 	meta = frappe.get_meta("Sales Invoice")
 	wohnung_select = (
 		"si.wohnung AS wohnung"
@@ -235,6 +343,97 @@ def _check_contract_and_rent_invoice_identity(
 		},
 		as_dict=True,
 	)
+	total_contracts = frappe.db.count(
+		"Mietvertrag",
+		filters={"docstatus": ("<", 2)},
+	)
+	sampled_contracts = frappe.get_all(
+		"Mietvertrag",
+		filters={"docstatus": ("<", 2)},
+		fields=["name", "kunde", "wohnung", "von", "bis"],
+		order_by="modified desc, name",
+		limit_page_length=limit,
+	)
+	referenced_names = {
+		contract_name
+		for invoice in invoices
+		if (contract_name := _rent_identity(invoice)[0])
+	}
+	referenced_contracts = _load_referenced_contracts(referenced_names)
+	contracts_by_actual_name = {
+		cstr(contract.get("name") or "").strip(): contract
+		for contract in [*sampled_contracts, *referenced_contracts]
+	}
+	contracts = list(contracts_by_actual_name.values())
+	contract_by_name = {
+		_normalize_contract_name(row.name): row
+		for row in contracts
+		if _normalize_contract_name(row.name)
+	}
+
+	customer_names = {
+		cstr(contract.get("kunde") or "").strip()
+		for contract in contracts
+		if cstr(contract.get("kunde") or "").strip()
+	}
+	existing_customers = set(
+		frappe.get_all(
+			"Customer",
+			filters={"name": ("in", sorted(customer_names))},
+			pluck="name",
+			limit_page_length=0,
+		)
+		if customer_names
+		else []
+	)
+	wohnungen = {
+		cstr(contract.get("wohnung") or "").strip()
+		for contract in contracts
+		if cstr(contract.get("wohnung") or "").strip()
+	}
+	company_by_wohnung = _companies_by_wohnung(wohnungen)
+	for contract in contracts:
+		customer = cstr(contract.get("kunde") or "").strip()
+		if not customer:
+			_issue(
+				issues,
+				severity="critical",
+				code="contract_without_customer",
+				doctype="Mietvertrag",
+				name=contract.name,
+				message="Der Mietvertrag hat keinen verknüpften Kunden.",
+				wohnung=contract.get("wohnung"),
+			)
+		elif customer not in existing_customers:
+			_issue(
+				issues,
+				severity="critical",
+				code="contract_customer_missing",
+				doctype="Mietvertrag",
+				name=contract.name,
+				message=f"Der verknüpfte Kunde {customer} existiert nicht.",
+				customer=customer,
+			)
+		wohnung = cstr(contract.get("wohnung") or "").strip()
+		if wohnung:
+			company, error = company_by_wohnung.get(
+				wohnung,
+				(None, "Wohnung konnte nicht aufgelöst werden."),
+			)
+			if not company:
+				_issue(
+					issues,
+					severity="critical",
+					code="contract_company_ambiguous",
+					doctype="Mietvertrag",
+					name=contract.name,
+					message=(
+						"Für die Wohnung des Mietvertrags ist keine eindeutige "
+						"Buchungs-Company ableitbar."
+					),
+					wohnung=wohnung,
+					error=error,
+				)
 	for invoice in invoices:
 		contract_name, month, contradictory = _rent_identity(invoice)
 		if not contract_name:
@@ -413,7 +612,10 @@ def _check_contract_and_rent_invoice_identity(
 			)
 
 	return _combined_coverage(
-		contracts=_source_coverage(len(contracts), len(contracts)),
+		contracts=_source_coverage(
+			total_contracts,
+			min(total_contracts, len(contracts)),
+		),
 		rent_invoices=_source_coverage(total_invoices, len(invoices)),
 	)
 

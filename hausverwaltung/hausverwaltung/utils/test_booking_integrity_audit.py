@@ -142,10 +142,18 @@ class TestBookingIntegrityAudit(unittest.TestCase):
 		)
 		meta = SimpleNamespace(has_field=lambda fieldname: True)
 		issues = []
+
+		def get_all(doctype, **kwargs):
+			if doctype == "Mietvertrag":
+				return [contract]
+			if doctype == "Customer":
+				return ["CUST-1"]
+			raise AssertionError(doctype)
+
 		with (
-			patch.object(audit.frappe, "get_all", return_value=[contract]),
+			patch.object(audit.frappe, "get_all", side_effect=get_all),
 			patch.object(audit.frappe, "get_meta", return_value=meta),
-			patch.object(audit.frappe.db, "exists", return_value=True),
+			patch.object(audit.frappe.db, "count", return_value=1),
 			patch.object(
 				audit.frappe.db,
 				"sql",
@@ -154,9 +162,11 @@ class TestBookingIntegrityAudit(unittest.TestCase):
 					[invoice],
 				],
 			),
-			patch(
-				"hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen._company_via_wohnung",
-				return_value="COMP-1",
+			patch.object(audit, "_load_referenced_contracts", return_value=[]),
+			patch.object(
+				audit,
+				"_companies_by_wohnung",
+				return_value={"WHG-1": ("COMP-1", None)},
 			),
 		):
 			coverage = audit._check_contract_and_rent_invoice_identity(
@@ -189,10 +199,18 @@ class TestBookingIntegrityAudit(unittest.TestCase):
 		)
 		meta = SimpleNamespace(has_field=lambda fieldname: True)
 		issues = []
+
+		def get_all(doctype, **kwargs):
+			if doctype == "Mietvertrag":
+				return [contract]
+			if doctype == "Customer":
+				return ["CUST-1"]
+			raise AssertionError(doctype)
+
 		with (
-			patch.object(audit.frappe, "get_all", return_value=[contract]),
+			patch.object(audit.frappe, "get_all", side_effect=get_all),
 			patch.object(audit.frappe, "get_meta", return_value=meta),
-			patch.object(audit.frappe.db, "exists", return_value=True),
+			patch.object(audit.frappe.db, "count", return_value=1),
 			patch.object(
 				audit.frappe.db,
 				"sql",
@@ -201,9 +219,15 @@ class TestBookingIntegrityAudit(unittest.TestCase):
 					[invoice],
 				],
 			),
-			patch(
-				"hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen._company_via_wohnung",
-				return_value="COMP-1",
+			patch.object(
+				audit,
+				"_load_referenced_contracts",
+				return_value=[contract],
+			),
+			patch.object(
+				audit,
+				"_companies_by_wohnung",
+				return_value={"WHG-1": ("COMP-1", None)},
 			),
 		):
 			audit._check_contract_and_rent_invoice_identity(issues, 100)
@@ -225,6 +249,49 @@ class TestBookingIntegrityAudit(unittest.TestCase):
 			header_issue["details"]["expected_company"],
 			"COMP-1",
 		)
+
+	def test_contract_audit_batches_company_resolution(self):
+		def get_all(doctype, **kwargs):
+			if doctype == "Wohnung":
+				return [
+					frappe._dict(name="WHG-1", immobilie="IMMO-1"),
+					frappe._dict(name="WHG-2", immobilie="IMMO-2"),
+				]
+			if doctype == "Immobilie":
+				return [
+					frappe._dict(name="IMMO-1", kostenstelle="CC-1"),
+					frappe._dict(name="IMMO-2", kostenstelle="CC-2"),
+				]
+			if doctype in ("Immobilie Bankkonto", "Immobilie Kassenkonto"):
+				return []
+			if doctype == "Cost Center":
+				return [
+					frappe._dict(name="CC-1", company="COMP-1"),
+					frappe._dict(name="CC-2", company="COMP-2"),
+				]
+			raise AssertionError(doctype)
+
+		with patch.object(audit.frappe, "get_all", side_effect=get_all) as query:
+			result = audit._companies_by_wohnung({"WHG-1", "WHG-2"})
+
+		self.assertEqual(
+			result,
+			{
+				"WHG-1": ("COMP-1", None),
+				"WHG-2": ("COMP-2", None),
+			},
+		)
+		self.assertEqual(
+			sum(call.args[0] == "Cost Center" for call in query.call_args_list),
+			1,
+		)
+
+	def test_referenced_contract_lookup_is_bounded_to_normalized_names(self):
+		with patch.object(audit.frappe.db, "sql", return_value=[]) as sql:
+			audit._load_referenced_contracts({"MV-2", "MV-1"})
+
+		self.assertIn("REGEXP_REPLACE", sql.call_args.args[0])
+		self.assertEqual(sql.call_args.args[1], ("MV-1", "MV-2"))
 
 	def test_historical_prepayment_snapshot_checks_exact_open_ledger_balance(self):
 		plan = frappe._dict(
