@@ -2103,7 +2103,14 @@ def record_payment_allocation(
 	):
 		frappe.throw(f"Payment Entry {payment_entry} passt nicht zum Zahlungsplan.")
 
-	allocated_elsewhere = _reserved_payment_amount_from_db(payment_entry)
+	# ``pe`` serializes all reservations for the same Payment Entry.  Use a
+	# locking/current read here as well: under InnoDB REPEATABLE READ a normal
+	# aggregate could otherwise reuse an older transaction snapshot after the
+	# Payment-Entry lock had to wait for another reservation to commit.
+	allocated_elsewhere = _reserved_payment_amount_from_db(
+		payment_entry,
+		for_update=True,
+	)
 	available_for_plans = flt(pe.unallocated_amount)
 	if allocated_elsewhere + amount > available_for_plans + 0.01:
 		frappe.throw(

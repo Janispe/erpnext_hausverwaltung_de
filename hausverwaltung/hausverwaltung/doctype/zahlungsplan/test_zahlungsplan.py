@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 
@@ -1086,6 +1086,61 @@ def test_reserved_payment_current_read_locks_and_sums_live_rows():
 	assert "ORDER BY name ASC" in query
 	assert "FOR UPDATE" in query
 	assert sql.call_args.kwargs["as_dict"] is True
+
+
+def test_record_payment_allocation_uses_current_locked_reservation_read():
+	plan_row = frappe._dict({"name": "ROW-1", "idx": 1, "betrag": 100})
+	payments = []
+	plan = MagicMock()
+	plan.name = "ZP-1"
+	plan.company = "Test Company"
+	plan.lieferant = "SUP-1"
+	plan.get.side_effect = lambda fieldname: {
+		"modus": zp.MODUS_ABSCHLAGSPLAN,
+		"status": "Offen",
+		"company": "Test Company",
+		"lieferant": "SUP-1",
+		"plan": [plan_row],
+		"zahlungen": payments,
+	}.get(fieldname)
+	allocation = frappe._dict({
+		"name": "ALLOC-1",
+		"plan_zeile": "ROW-1",
+		"payment_entry": "PE-1",
+		"allocated_amount": 50,
+		"released_amount": 0,
+		"status": "Aktiv",
+	})
+	pe = frappe._dict({
+		"docstatus": 1,
+		"company": "Test Company",
+		"party_type": "Supplier",
+		"party": "SUP-1",
+		"payment_type": "Pay",
+		"unallocated_amount": 100,
+	})
+
+	def _get_doc(doctype, name, for_update=False):
+		assert for_update is True
+		return plan if doctype == "Zahlungsplan" else pe
+
+	def _append(*args, **kwargs):
+		payments.append(allocation)
+		return allocation
+
+	with (
+		patch.object(zp.frappe, "get_doc", side_effect=_get_doc),
+		patch.object(zp, "_reserved_payment_amount_from_db", return_value=0) as reserved,
+		patch.object(zp, "_append_payment_allocation", side_effect=_append),
+	):
+		zp.record_payment_allocation(
+			plan_name="ZP-1",
+			plan_row_name="ROW-1",
+			payment_entry="PE-1",
+			allocated_amount=50,
+		)
+
+	reserved.assert_called_once_with("PE-1", for_update=True)
 
 
 def test_consumed_allocation_does_not_double_reserve_payment_credit():
