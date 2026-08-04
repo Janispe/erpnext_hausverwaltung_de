@@ -10,6 +10,8 @@ from frappe.utils.file_manager import save_file
 from hausverwaltung.hausverwaltung.doctype.bankauszug_import import bankauszug_import as bi
 from hausverwaltung.hausverwaltung.page.bankimport_v2 import bankimport_v2 as bv2
 
+_lock_bank_booking_scope = bi._lock_bank_booking_scope
+
 
 class TestBankauszugImport(unittest.TestCase):
     def setUp(self):
@@ -33,6 +35,30 @@ class TestBankauszugImport(unittest.TestCase):
             "party": party,
             "rule": "test",
         }
+
+    def test_booking_scope_locks_only_source_and_explicit_counterpart(self):
+        with patch.object(
+            bi.frappe.db,
+            "sql",
+            side_effect=[
+                [("Bank A",)],
+                [("Bank A",), ("Bank B",)],
+                [("IMP-1", "Bank A")],
+                [("ROW-1",)],
+            ],
+        ) as sql:
+            _lock_bank_booking_scope(
+                "IMP-1",
+                row_name="ROW-1",
+                additional_bank_accounts=["Bank B"],
+            )
+
+        account_lock = sql.call_args_list[1]
+        self.assertIn("WHERE name IN", account_lock.args[0])
+        self.assertIn("ORDER BY name", account_lock.args[0])
+        self.assertIn("FOR UPDATE", account_lock.args[0])
+        self.assertEqual(account_lock.args[1], ("Bank A", "Bank B"))
+        self.assertNotIn("is_company_account = 1", account_lock.args[0])
 
     class _FakeRow:
         def __init__(
@@ -2623,6 +2649,7 @@ class TestBankauszugImport(unittest.TestCase):
             "ROW-TRANSFER",
             create_missing_bank_transaction=True,
             allow_missing_party=1,
+            additional_bank_accounts=["Kautionskonto - HP"],
         )
         create_pe.assert_called_once_with(
             bt=bt,
