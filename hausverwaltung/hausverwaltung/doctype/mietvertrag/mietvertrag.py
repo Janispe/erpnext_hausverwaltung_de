@@ -29,6 +29,11 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 class Mietvertrag(Document):
 	"""DocType controller for Mietvertrag."""
 
+	def before_validate(self) -> None:
+		"""Give an amendment its own Customer instead of copying the old link."""
+		if self.is_new() and (self.amended_from or "").strip():
+			self.kunde = None
+
 	def _sort_staffel_table_by_von(self, fieldname: str) -> None:
 		"""Sort a Staffelmiete child table by `von` ascending and fix `idx`."""
 		table = getattr(self, fieldname, None)
@@ -309,9 +314,81 @@ class Mietvertrag(Document):
 		self.name = new_name
 		return new_name
 
+	def _validate_customer_mietvertrag_invariant(self) -> None:
+		"""Enforce the bidirectional one-to-one Mietvertrag/Customer identity."""
+		customer = (self.kunde or "").strip()
+		wohnung = (self.wohnung or "").strip()
+		if not customer:
+			return
+
+		# Serialise creation and reassignment checks per Customer.
+		frappe.db.sql(
+			"SELECT name FROM `tabCustomer` WHERE name = %s FOR UPDATE",
+			(customer,),
+		)
+		persisted = frappe.db.sql(
+			"""
+			SELECT kunde, wohnung
+			FROM `tabMietvertrag`
+			WHERE name = %s
+			FOR UPDATE
+			""",
+			((self.name or "").strip(),),
+			as_dict=True,
+		)
+		if persisted:
+			previous_customer = (persisted[0].get("kunde") or "").strip()
+			previous_wohnung = (persisted[0].get("wohnung") or "").strip()
+			if previous_customer and previous_customer != customer:
+				frappe.throw(
+					_(
+						"Der Customer eines bestehenden Mietvertrags ist Teil seiner "
+						"buchhalterischen Identität und darf nicht geändert werden."
+					),
+					frappe.ValidationError,
+				)
+			if previous_wohnung and wohnung and previous_wohnung != wohnung:
+				frappe.throw(
+					_(
+						"Mietvertrag {0} und Customer {1} sind der Wohnung {2} zugeordnet "
+						"und dürfen nicht nachträglich nach {3} verschoben werden."
+					).format(self.name, customer, previous_wohnung, wohnung),
+					frappe.ValidationError,
+				)
+
+		conflicts = frappe.db.sql(
+			"""
+			SELECT name, wohnung
+			FROM `tabMietvertrag`
+			WHERE kunde = %(customer)s
+			  AND name != %(current_name)s
+			ORDER BY name
+			LIMIT 1
+			FOR UPDATE
+			""",
+			{
+				"customer": customer,
+				"current_name": (self.name or "").strip(),
+			},
+			as_dict=True,
+		)
+		if not conflicts:
+			return
+
+		conflict = conflicts[0]
+		frappe.throw(
+			_(
+				"Customer {0} gehört bereits exklusiv zu Mietvertrag {1} und darf "
+				"nicht für einen zweiten Mietvertrag verwendet werden. Bitte einen "
+				"eigenen Customer erzeugen."
+			).format(customer, conflict.get("name")),
+			frappe.ValidationError,
+		)
+
 	def validate(self) -> None:
 		"""Ensure that contacts are valid and validate 'Gesamter Zeitraum' in staffelmiete."""
 		self._validate_creation_via_process()
+		self._validate_customer_mietvertrag_invariant()
 		self.status = self.compute_status()
 		self.immobilie = _get_wohnung_immobilie(self.wohnung)
 		for fieldname in ("miete", "betriebskosten", "heizkosten", "untermietzuschlag", "kaution"):

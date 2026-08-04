@@ -193,6 +193,96 @@ class TestMietvertrag(unittest.TestCase):
 		self.assertEqual(doc.status, mietvertrag._compute_status_value("2026-01-01", "2026-01-31"))
 		self.assertEqual(doc.immobilie, "IMM-1")
 
+	def test_existing_contract_keeps_its_customer_and_wohnung(self):
+		doc = frappe.get_doc({
+			"doctype": "Mietvertrag",
+			"name": "MV-CURRENT",
+			"wohnung": "WHG-1",
+			"kunde": "CUST-1",
+		})
+
+		with patch.object(
+			mietvertrag.frappe.db,
+			"sql",
+			side_effect=[
+				[{"name": "CUST-1"}],
+				[frappe._dict(kunde="CUST-1", wohnung="WHG-1")],
+				[],
+			],
+		) as sql:
+			doc._validate_customer_mietvertrag_invariant()
+
+		self.assertEqual(sql.call_count, 3)
+
+	def test_customer_cannot_be_reused_for_second_contract(self):
+		doc = frappe.get_doc({
+			"doctype": "Mietvertrag",
+			"name": "MV-CURRENT",
+			"wohnung": "WHG-2",
+			"kunde": "CUST-1",
+		})
+		conflict = frappe._dict(name="MV-EXISTING", wohnung="WHG-1")
+
+		with patch.object(
+			mietvertrag.frappe.db,
+			"sql",
+			side_effect=[[{"name": "CUST-1"}], [], [conflict]],
+		), self.assertRaisesRegex(
+			frappe.ValidationError,
+			"CUST-1.*MV-EXISTING.*zweiten Mietvertrag",
+		):
+			doc._validate_customer_mietvertrag_invariant()
+
+	def test_existing_contract_cannot_change_customer(self):
+		doc = frappe.get_doc({
+			"doctype": "Mietvertrag",
+			"name": "MV-CURRENT",
+			"wohnung": "WHG-1",
+			"kunde": "CUST-NEW",
+		})
+
+		with patch.object(
+			mietvertrag.frappe.db,
+			"sql",
+			side_effect=[
+				[{"name": "CUST-NEW"}],
+				[frappe._dict(kunde="CUST-OLD", wohnung="WHG-1")],
+			],
+		), self.assertRaisesRegex(frappe.ValidationError, "darf nicht geändert werden"):
+			doc._validate_customer_mietvertrag_invariant()
+
+	def test_existing_customer_contract_cannot_change_wohnung(self):
+		doc = frappe.get_doc({
+			"doctype": "Mietvertrag",
+			"name": "MV-CURRENT",
+			"wohnung": "WHG-2",
+			"kunde": "CUST-1",
+		})
+
+		with patch.object(
+			mietvertrag.frappe.db,
+			"sql",
+			side_effect=[
+				[{"name": "CUST-1"}],
+				[frappe._dict(kunde="CUST-1", wohnung="WHG-1")],
+			],
+		), self.assertRaisesRegex(frappe.ValidationError, "WHG-1.*WHG-2"):
+			doc._validate_customer_mietvertrag_invariant()
+
+	def test_amendment_discards_copied_customer(self):
+		doc = frappe.get_doc({
+			"doctype": "Mietvertrag",
+			"name": "MV-OLD-1",
+			"amended_from": "MV-OLD",
+			"wohnung": "WHG-1",
+			"kunde": "CUST-OLD",
+		})
+
+		with patch.object(doc, "is_new", return_value=True):
+			doc.before_validate()
+
+		self.assertIsNone(doc.kunde)
+
 	def test_validate_creation_via_process_rejects_wrong_process_type(self):
 		doc = frappe.get_doc({
 			"doctype": "Mietvertrag",

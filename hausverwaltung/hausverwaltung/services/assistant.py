@@ -169,18 +169,9 @@ HV_OPERATOR_ALIASES = {
 _STATUS_NOT_OPEN = "('Paid', 'Credit Note Issued', 'Written Off', 'Partly Paid and Written Off')"
 _MAYBE_CONTRACT_JOIN = """
 left join `tabMietvertrag` mv on mv.name = (
-	select mv2.name
+	select if(count(*) = 1, min(mv2.name), null)
 	from `tabMietvertrag` mv2
 	where mv2.kunde = si.customer
-	order by
-		case mv2.status
-			when 'L\u00e4uft' then 0
-			when 'Zukunft' then 1
-			when 'Vergangenheit' then 2
-			else 3
-		end,
-		mv2.von desc
-	limit 1
 )
 left join `tabWohnung` w on w.name = mv.wohnung
 left join `tabImmobilie` im on im.name = mv.immobilie
@@ -479,7 +470,7 @@ AGENT_DATA_CATALOG: tuple[dict[str, Any], ...] = (
 		"group": "mieter_vertraege",
 		"group_label": "Mieter und Vertraege",
 		"doctype": "Customer",
-		"description": "ERPNext-Kundenstamm; in der Hausverwaltung typischerweise Mieter oder Debitoren.",
+		"description": "Wohnungsgebundene Debitoren-Entitaet; exakt ein Customer pro Mietvertrag und umgekehrt.",
 		"aliases": ("kunde", "kunden", "customer", "debitor", "mieter-stammdaten"),
 		"key_fields": ("customer_name", "customer_group", "disabled"),
 		"preferred_tool": "search_mieter oder agent_list_docs",
@@ -2717,12 +2708,13 @@ def _get_mietvertrag_row(identifier: str) -> frappe._dict | None:
 				else 3
 			end,
 			mv.von desc
-		limit 1
+		limit 2
 		""",
 		values,
 		as_dict=True,
 	)
-	return rows[0] if rows else None
+	# Mehr als eine Zeile wäre eine Verletzung der Customer↔Mietvertrag-Invariante.
+	return rows[0] if len(rows) == 1 else None
 
 
 def _format_mieter_match(row: dict[str, Any]) -> dict[str, Any]:

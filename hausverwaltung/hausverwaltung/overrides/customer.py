@@ -23,25 +23,15 @@ class Customer(ERPNextCustomer):
 		if addr_name:
 			return frappe.get_cached_doc("Address", addr_name)
 
-		# 2. Mietvertrag → Wohnung → Immobilien-Adresse.
-		# Erst aktive Verträge (zum heutigen Datum), als Fallback der zuletzt
-		# bewohnte (für ausgezogene Mieter, bei denen Briefe an ihre letzte
-		# bekannte Wohn-Adresse gehen sollen).
+		# 2. Der exakt eine Mietvertrag → Wohnung → Immobilien-Adresse.
 		try:
 			rows = frappe.db.sql(
 				"""
-				SELECT
-					wohnung,
-					CASE
-						WHEN (von IS NULL OR von <= CURDATE())
-						 AND (bis IS NULL OR bis >= CURDATE())
-						THEN 0
-						ELSE 1
-					END AS is_inactive
+				SELECT wohnung
 				FROM `tabMietvertrag`
 				WHERE kunde = %(kunde)s
-				ORDER BY is_inactive ASC, COALESCE(von, '1900-01-01') DESC
-				LIMIT 1
+				ORDER BY name
+				LIMIT 2
 				""",
 				{"kunde": self.name},
 				as_dict=True,
@@ -49,7 +39,7 @@ class Customer(ERPNextCustomer):
 		except Exception:
 			rows = []
 
-		wohnung = rows[0].get("wohnung") if rows else None
+		wohnung = rows[0].get("wohnung") if len(rows) == 1 else None
 		if not wohnung:
 			return None
 

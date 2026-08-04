@@ -453,6 +453,8 @@ def _get_invoice_map_for_month(
         f"{c.name}|{month_start.strftime('%m/%Y')}": c.name
         for c in contracts
     }
+    # Die Liste dient nur dazu, beschädigte doppelte Zuordnungen sicher
+    # abzulehnen; im gültigen Domänenmodell enthält sie exakt einen Vertrag.
     contracts_by_customer_wohnung: dict[tuple[str, str], list[str]] = {}
     for contract in contracts:
         customer = (contract.get("kunde") or "").strip()

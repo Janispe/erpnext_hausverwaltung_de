@@ -465,25 +465,32 @@ def _get_default_group(doctype: str, setting_doctype: str, setting_field: str, f
 
 
 def _create_party_if_missing(party_type: str, party_name: str) -> Tuple[str, bool]:
+    if party_type == "Customer":
+        if frappe.db.exists("Customer", party_name):
+            return party_name, False
+
+        existing_customers = frappe.get_all(
+            "Customer",
+            filters={"customer_name": party_name},
+            pluck="name",
+            order_by="name",
+            limit=2,
+        )
+        if len(existing_customers) == 1:
+            return existing_customers[0], False
+        if len(existing_customers) > 1:
+            frappe.throw(
+                f"Der Name {party_name} gehört zu mehreren Mieter-Customers. "
+                "Bitte den Customer des konkreten Mietvertrags auswählen."
+            )
+
+        frappe.throw(
+            "Ein neuer Mieter-Customer darf nicht ohne Mietvertrag angelegt werden. "
+            "Bitte zuerst den Mietvertrag anlegen und anschließend dessen Customer auswählen."
+        )
+
     if frappe.db.exists(party_type, party_name):
         return party_name, False
-
-    if party_type == "Customer":
-        existing_customer = frappe.db.get_value("Customer", {"customer_name": party_name}, "name")
-        if existing_customer:
-            return existing_customer, False
-        payload = {
-            "doctype": "Customer",
-            "customer_name": party_name,
-            "customer_type": "Individual",
-            "customer_group": _get_default_group(
-                "Customer Group", "Selling Settings", "customer_group", "All Customer Groups"
-            ),
-        }
-        if frappe.db.exists("Territory", "All Territories"):
-            payload["territory"] = "All Territories"
-        doc = frappe.get_doc(payload).insert(ignore_permissions=True)
-        return doc.name, True
 
     existing_supplier = frappe.db.get_value("Supplier", {"supplier_name": party_name}, "name")
     if existing_supplier:
@@ -611,9 +618,22 @@ def _link_customer_bank_account_to_mietvertraege(customer: str, bank_account: Op
             "docstatus": ("<", 2),
         },
         fields=["name"],
-        limit=0,
+        limit=2,
         order_by="modified desc",
     )
+
+    if len(rows) > 1:
+        return {
+            "updated": 0,
+            "unchanged": 0,
+            "errors": [{
+                "customer": customer,
+                "error": (
+                    f"Customer {customer} ist mehreren Mietverträgen zugeordnet; "
+                    "Bankkonto wurde nicht automatisch verknüpft."
+                ),
+            }],
+        }
 
     updated = 0
     unchanged = 0

@@ -269,11 +269,13 @@
    "label": "Notizen"
   },
   {
+   "description": "Buchhalterische Debitoren-Entität dieses Mietvertrags; die Zuordnung Mietvertrag ↔ Customer ist 1:1.",
    "fieldname": "kunde",
    "fieldtype": "Link",
    "label": "Mieter",
    "options": "Customer",
-   "read_only": 1
+   "read_only": 1,
+   "unique": 1
   },
   {
    "fieldname": "konten_tab",

@@ -224,9 +224,9 @@ def _customer_invoice_identity(
 ) -> tuple[str, str | None] | None:
 	"""Resolve one invoice to exactly one Mietvertrag/Wohnung identity.
 
-	Structured IDs are validated against the authoritative contract.  Legacy
-	invoices may be resolved by Customer + posting date + optional Wohnung, but
-	only when that lookup yields exactly one contract.
+	Structured IDs are validated against the authoritative contract. Legacy
+	invoices resolve through the Customer's one-to-one Mietvertrag and are then
+	validated against posting date and optional Wohnung.
 	"""
 	posting_date = _get_value(invoice, "posting_date")
 	wohnung = str(_get_value(invoice, "wohnung") or "").strip() or None
@@ -263,20 +263,13 @@ def _customer_invoice_identity(
 	if not posting_date:
 		return None
 	d = getdate(posting_date)
-	values: dict[str, Any] = {"customer": customer, "posting_date": d}
-	wohnung_clause = ""
-	if wohnung:
-		wohnung_clause = "AND wohnung = %(wohnung)s"
-		values["wohnung"] = wohnung
+	values: dict[str, Any] = {"customer": customer}
 	matches = frappe.db.sql(
 		f"""
-		SELECT name, wohnung
+		SELECT name, wohnung, von, bis
 		FROM `tabMietvertrag`
 		WHERE kunde = %(customer)s
 		  AND docstatus != 2
-		  AND (von IS NULL OR von <= %(posting_date)s)
-		  AND (bis IS NULL OR bis >= %(posting_date)s)
-		  {wohnung_clause}
 		ORDER BY name
 		LIMIT 2
 		{"FOR UPDATE" if for_update else ""}
@@ -286,7 +279,14 @@ def _customer_invoice_identity(
 	)
 	if len(matches) != 1:
 		return None
-	return matches[0].name, matches[0].get("wohnung") or wohnung
+	contract = matches[0]
+	if wohnung and contract.get("wohnung") != wohnung:
+		return None
+	if contract.get("von") and getdate(contract.get("von")) > d:
+		return None
+	if contract.get("bis") and getdate(contract.get("bis")) < d:
+		return None
+	return contract.name, contract.get("wohnung") or wohnung
 
 
 def _match_failure(reason: str, message: str) -> dict[str, Any]:

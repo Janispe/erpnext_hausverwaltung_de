@@ -134,16 +134,19 @@ def get_mieter_stammdaten(customer: str) -> dict:
 
     cust = frappe.get_doc("Customer", customer)
 
-    # Diese Felder stammen aus deinen Mietvertrag/Objekt-DocTypes.
-    # Wenn du keinen Mietvertrag hast, lass leer — der Header zeigt nur Customer-Stamm.
+    # Diese Felder stammen aus dem exakt einen Mietvertrag des Customers.
+    # Bei beschädigten Mehrfachzuordnungen nicht auf einen Vertrag raten.
     mietvertrag = None
     try:
-        # Beispiel: aktiver Vertrag des Customers
-        mietvertrag_name = frappe.db.get_value(
-            "Mietvertrag", {"kunde": customer, "status": "Läuft"}, "name"
+        contracts = frappe.get_all(
+            "Mietvertrag",
+            filters={"kunde": customer},
+            pluck="name",
+            order_by="name",
+            limit=2,
         )
-        if mietvertrag_name:
-            mietvertrag = frappe.get_doc("Mietvertrag", mietvertrag_name)
+        if len(contracts) == 1:
+            mietvertrag = frappe.get_doc("Mietvertrag", contracts[0])
     except Exception:
         pass
 

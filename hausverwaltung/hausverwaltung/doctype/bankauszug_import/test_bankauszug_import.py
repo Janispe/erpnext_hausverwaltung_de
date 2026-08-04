@@ -273,6 +273,27 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertEqual(row.party_type, "Supplier")
         self.assertEqual(row.party, "Miete Januar")
 
+    def test_create_party_if_missing_never_creates_standalone_customer(self):
+        with patch.object(bi.frappe.db, "exists", return_value=False), patch.object(
+            bi.frappe,
+            "get_all",
+            return_value=[],
+        ), patch.object(bi.frappe, "get_doc") as get_doc, self.assertRaisesRegex(
+            frappe.ValidationError,
+            "nicht ohne Mietvertrag",
+        ):
+            bi._create_party_if_missing("Customer", "Neuer Mieter")
+
+        get_doc.assert_not_called()
+
+    def test_create_party_if_missing_rejects_ambiguous_customer_display_name(self):
+        with patch.object(bi.frappe.db, "exists", return_value=False), patch.object(
+            bi.frappe,
+            "get_all",
+            return_value=["CUST-MV-1", "CUST-MV-2"],
+        ), self.assertRaisesRegex(frappe.ValidationError, "mehreren Mieter-Customers"):
+            bi._create_party_if_missing("Customer", "Max Mustermann")
+
     def test_link_customer_bank_account_adds_missing_mietvertrag_kontoverbindung(self):
         class _FakePartner:
             mieter = "CONTACT-1"
@@ -337,6 +358,19 @@ class TestBankauszugImport(unittest.TestCase):
 
         self.assertEqual(res["updated"], 0)
         self.assertEqual(res["unchanged"], 1)
+
+    def test_link_customer_bank_account_rejects_duplicate_contract_assignment(self):
+        with patch.object(
+            bi.frappe,
+            "get_all",
+            return_value=[{"name": "MV-1"}, {"name": "MV-2"}],
+        ), patch.object(bi.frappe, "get_doc") as get_doc:
+            res = bi._link_customer_bank_account_to_mietvertraege("CUST-1", "BA-1")
+
+        self.assertEqual(res["updated"], 0)
+        self.assertEqual(res["unchanged"], 0)
+        self.assertRegex(res["errors"][0]["error"], "mehreren Mietverträgen")
+        get_doc.assert_not_called()
 
     def test_create_party_requires_valid_party_type(self):
         row = self._FakeRow(name="ROW-3", auftraggeber="Test")

@@ -207,7 +207,7 @@ class TestGenerateMietrechnungen(unittest.TestCase):
 
         self.assertTrue(exists)
 
-    def test_invoice_exists_does_not_reuse_invoice_of_second_contract_for_same_customer(self):
+    def test_invoice_exists_rejects_different_structured_contract_id(self):
         invoice = frappe._dict(
             name="SINV-MV-1",
             mietabrechnung_id="MV-1|07/2026",
@@ -223,7 +223,7 @@ class TestGenerateMietrechnungen(unittest.TestCase):
             patch.object(generate_mietrechnungen.frappe.db, "sql") as sql,
         ):
             exists = generate_mietrechnungen._invoice_exists(
-                "CUST-SAME",
+                "CUST-1",
                 date(2026, 7, 1),
                 "MV-2",
                 "Miete",

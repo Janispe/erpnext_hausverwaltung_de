@@ -93,6 +93,32 @@ Zentrale DocTypes (in `hausverwaltung/doctype/`):
 - **`Serienbrief Durchlauf` → `Serienbrief Dokument`** — pro-Empfänger-Render-Pipeline mit gemerged-PDF-Output
 - **`Einnahmen Ueberschuss Rechnung`** (EÜR) — Steuerreport mit Print Format
 
+#### Zentrale Invariante: Customer ist eine wohnungsgebundene Debitoren-Entität
+
+Ein ERPNext-`Customer` repräsentiert in dieser Anwendung **nicht** allgemein die
+natürliche oder juristische Person. Er ist die buchhalterische Debitoren-Entität
+genau eines `Mietvertrag`. Die Zuordnung `Mietvertrag` ↔ `Customer` ist in beide
+Richtungen **1:1**.
+
+- Jeder Mietvertrag hat genau einen eigenen Customer; jeder Customer gehört
+  genau einem Mietvertrag und damit genau einer Wohnung.
+- Einen Customer niemals für einen zweiten Mietvertrag wiederverwenden, auch
+  nicht für dieselbe Wohnung oder dieselbe Person.
+- Bei jedem Mieterwechsel für das neue Mietverhältnis einen neuen Customer
+  erzeugen; den bisherigen Customer für historische Buchungen unverändert lassen.
+- Eine Wohnung kann im Zeitverlauf mehrere historische Customers haben, aber
+  höchstens einen aktuell dort wohnenden Customer beziehungsweise einen aktuell
+  laufenden Mietvertrag.
+- Mietet dieselbe Person mehrere Wohnungen, pro Mietverhältnis einen eigenen
+  Customer verwenden. Die gemeinsame Personenidentität wird über `Contact` und
+  die `Vertragspartner` des Mietvertrags abgebildet.
+- Buchungs-, Matching-, Mahn- und Abrechnungslogik darf nicht vorsorglich von
+  mehreren Wohnungen pro Customer ausgehen. Das wäre eine explizite Änderung des
+  Domänenmodells und muss ausdrücklich beauftragt werden.
+- Maßgeblich für die buchhalterische Identität ist der eine `Mietvertrag` mit
+  `Mietvertrag.kunde` + `Mietvertrag.wohnung`. Mehrdeutigkeit darf nicht durch
+  Raten oder Fallbacks auf einen anderen Mietvertrag aufgelöst werden.
+
 ### Render-Pipeline für Briefe (sehr fragiler Teil)
 
 Die Serienbrief-Render-Logik in `doctype/serienbrief_durchlauf/serienbrief_durchlauf.py` durchläuft drei Render-Pfade — wer hier ändert, muss beide kennen:

@@ -709,7 +709,7 @@ class TestCurrencyAndCurrentInvoiceSafety(unittest.TestCase):
 		)
 		self.assertEqual(identity, ("Haus | VH | EG", "WO-1"))
 
-	def test_legacy_customer_invoice_with_multiple_contracts_fails_closed(self):
+	def test_corrupt_duplicate_customer_contracts_fail_closed(self):
 		invoice = frappe._dict(
 			posting_date="2026-05-01",
 			wohnung=None,

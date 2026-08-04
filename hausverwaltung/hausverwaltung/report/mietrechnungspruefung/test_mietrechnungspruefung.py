@@ -118,10 +118,10 @@ class TestMietrechnungspruefung(unittest.TestCase):
             self.assertEqual(call.kwargs["filters"]["docstatus"], 1)
             self.assertNotIn("is_return", call.kwargs["filters"])
 
-    def test_invoice_map_separates_parallel_contracts_of_same_customer(self):
+    def test_invoice_map_separates_contracts_with_distinct_customers(self):
         contracts = [
             frappe._dict(name="MV-1", kunde="Customer A", wohnung="WHG-1"),
-            frappe._dict(name="MV-2", kunde="Customer A", wohnung="WHG-2"),
+            frappe._dict(name="MV-2", kunde="Customer B", wohnung="WHG-2"),
         ]
         invoices = [
             frappe._dict(
@@ -133,7 +133,7 @@ class TestMietrechnungspruefung(unittest.TestCase):
             ),
             frappe._dict(
                 name="SINV-2",
-                customer="Customer A",
+                customer="Customer B",
                 wohnung="WHG-2",
                 mietabrechnung_id="MV-2|05/2026",
                 remarks="Miete 05/2026",
@@ -162,12 +162,12 @@ class TestMietrechnungspruefung(unittest.TestCase):
     def test_legacy_invoice_without_contract_id_maps_only_by_exact_wohnung(self):
         contracts = [
             frappe._dict(name="MV-1", kunde="Customer A", wohnung="WHG-1"),
-            frappe._dict(name="MV-2", kunde="Customer A", wohnung="WHG-2"),
+            frappe._dict(name="MV-2", kunde="Customer B", wohnung="WHG-2"),
         ]
         invoices = [
             frappe._dict(
                 name="SINV-LEGACY",
-                customer="Customer A",
+                customer="Customer B",
                 wohnung="WHG-2",
                 mietabrechnung_id=None,
                 remarks="Miete 05/2026",
@@ -285,7 +285,7 @@ class TestMietrechnungspruefung(unittest.TestCase):
     def test_conflicting_structured_id_and_mv_marker_is_rejected(self):
         contracts = {
             "MV-1": frappe._dict(name="MV-1", kunde="Customer A", wohnung="WHG-1"),
-            "MV-2": frappe._dict(name="MV-2", kunde="Customer A", wohnung="WHG-2"),
+            "MV-2": frappe._dict(name="MV-2", kunde="Customer B", wohnung="WHG-2"),
         }
         invoice = frappe._dict(
             name="SINV-CONFLICT",
@@ -302,7 +302,7 @@ class TestMietrechnungspruefung(unittest.TestCase):
             structured_id_to_contract={"MV-1|05/2026": "MV-1", "MV-2|05/2026": "MV-2"},
             contracts_by_customer_wohnung={
                 ("Customer A", "WHG-1"): ["MV-1"],
-                ("Customer A", "WHG-2"): ["MV-2"],
+                ("Customer B", "WHG-2"): ["MV-2"],
             },
         )
 

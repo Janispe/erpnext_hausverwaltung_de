@@ -7,6 +7,23 @@ from hausverwaltung.hausverwaltung.overrides import customer as customer_overrid
 
 
 class TestCustomerBriefanschrift(IntegrationTestCase):
+	def test_briefanschrift_rejects_multiple_contracts_for_customer(self):
+		cust = SimpleNamespace(name="Test Customer")
+
+		with (
+			patch.object(customer_override, "get_default_address", return_value=None),
+			patch.object(
+				customer_override.frappe.db,
+				"sql",
+				return_value=[{"wohnung": "WHG-1"}, {"wohnung": "WHG-2"}],
+			),
+			patch.object(customer_override.frappe.db, "get_value") as get_value,
+		):
+			address = customer_override.Customer.briefanschrift.fget(cust)
+
+		self.assertIsNone(address)
+		get_value.assert_not_called()
+
 	def test_briefanschrift_prefers_immobilie_adresse_field_over_default_address(self):
 		cust = SimpleNamespace(name="Test Customer")
 
