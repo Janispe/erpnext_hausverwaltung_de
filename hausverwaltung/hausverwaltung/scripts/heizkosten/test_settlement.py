@@ -169,6 +169,7 @@ class TestHeizkostenSettlement(unittest.TestCase):
 
 		with (
 			patch.object(settlement, "_get_locked_settlement_document", return_value=doc),
+			patch.object(settlement, "_validate_existing_hk_settlement_links") as validate,
 			patch.object(settlement, "_run_hk_settlement_selfcheck") as selfcheck,
 			patch.object(settlement, "_get_locked_hk_prepayment_state") as snapshot,
 			patch.object(settlement, "_make_sales_invoice") as make_invoice,
@@ -178,7 +179,86 @@ class TestHeizkostenSettlement(unittest.TestCase):
 		selfcheck.assert_not_called()
 		snapshot.assert_not_called()
 		make_invoice.assert_not_called()
+		validate.assert_called_once_with(doc)
 		self.assertEqual(result["created"]["sales_invoice"], "SI-EXISTING")
+
+	def test_existing_invoice_link_is_locked_and_validated(self):
+		doc = self._doc(kosten=850, vorauszahlungen=700, datum="2026-02-15")
+		doc.sales_invoice = "SI-EXISTING"
+		voucher = SimpleNamespace(
+			name="SI-EXISTING",
+			docstatus=1,
+			is_return=0,
+			customer="Mieter 1",
+			company="HV GmbH",
+			wohnung="W-1",
+			remarks="[HK-SETTLEMENT:HK-M-1]",
+		)
+
+		with (
+			patch.object(settlement.frappe, "get_doc", return_value=voucher) as get_doc,
+			patch.object(settlement, "_get_default_company", return_value="HV GmbH"),
+		):
+			settlement._validate_existing_hk_settlement_links(doc)
+
+		get_doc.assert_called_once_with(
+			"Sales Invoice",
+			"SI-EXISTING",
+			for_update=True,
+		)
+
+	def test_existing_invoice_with_foreign_marker_is_rejected(self):
+		doc = self._doc(kosten=850, vorauszahlungen=700, datum="2026-02-15")
+		doc.sales_invoice = "SI-FOREIGN"
+		voucher = SimpleNamespace(
+			name="SI-FOREIGN",
+			docstatus=1,
+			is_return=0,
+			customer="Mieter 1",
+			company="HV GmbH",
+			wohnung="W-1",
+			remarks="[HK-SETTLEMENT:HK-M-OTHER]",
+		)
+
+		with (
+			patch.object(settlement.frappe, "get_doc", return_value=voucher),
+			self.assertRaisesRegex(frappe.ValidationError, "Ownership-Marker"),
+		):
+			settlement._validate_existing_hk_settlement_links(doc)
+
+	def test_unique_legacy_invoice_without_marker_or_wohnung_is_accepted(self):
+		doc = self._doc(kosten=850, vorauszahlungen=700, datum="2026-02-15")
+		doc.sales_invoice = "SI-LEGACY"
+		voucher = SimpleNamespace(
+			name="SI-LEGACY",
+			docstatus=1,
+			is_return=0,
+			customer="Mieter 1",
+			company="HV GmbH",
+			wohnung=None,
+			remarks=None,
+		)
+
+		with (
+			patch.object(settlement.frappe, "get_doc", return_value=voucher),
+			patch.object(
+				settlement.frappe.db,
+				"sql",
+				return_value=[("HK-M-1",)],
+			) as sql,
+			patch.object(settlement, "_get_default_company", return_value="HV GmbH"),
+		):
+			settlement._validate_existing_hk_settlement_links(doc)
+
+		self.assertIn("FOR UPDATE", sql.call_args.args[0])
+
+	def test_existing_settlement_cannot_link_invoice_and_credit_note(self):
+		doc = self._doc(kosten=850, vorauszahlungen=700, datum="2026-02-15")
+		doc.sales_invoice = "SI-1"
+		doc.credit_note = "SI-CN-1"
+
+		with self.assertRaisesRegex(frappe.ValidationError, "zugleich"):
+			settlement._validate_existing_hk_settlement_links(doc)
 
 	def test_link_failure_propagates_for_transaction_rollback(self):
 		doc = self._doc(kosten=850, vorauszahlungen=700, datum="2026-02-15")

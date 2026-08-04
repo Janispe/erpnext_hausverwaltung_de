@@ -15,7 +15,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import frappe
-from frappe.utils import cstr, getdate
+from frappe.utils import cint, cstr, getdate
 
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen import (
 	MONEY_QUANT,
@@ -635,6 +635,104 @@ def _run_hk_settlement_selfcheck(doc: object, company: str) -> None:
 		)
 
 
+def _validated_existing_hk_settlement_document(
+	doc: object,
+	*,
+	fieldname: str,
+	expected_is_return: int,
+):
+	"""Lock and validate one existing HK settlement link fail-closed."""
+	voucher_name = cstr(getattr(doc, fieldname, None) or "").strip()
+	if not voucher_name:
+		return None
+
+	voucher = frappe.get_doc("Sales Invoice", voucher_name, for_update=True)
+	label = "HK-Gutschrift" if expected_is_return else "HK-Nachzahlung"
+	if cint(getattr(voucher, "docstatus", 0) or 0) != 1:
+		frappe.throw(
+			f"Settlement-Retry abgebrochen: {label} {voucher_name} ist nicht "
+			"mehr eingereicht.",
+			frappe.ValidationError,
+		)
+	if cint(getattr(voucher, "is_return", 0) or 0) != expected_is_return:
+		frappe.throw(
+			f"Settlement-Retry abgebrochen: Belegart von {voucher_name} passt "
+			f"nicht zum Feld {fieldname}.",
+			frappe.ValidationError,
+		)
+
+	expected_marker = _hk_settlement_marker(
+		cstr(getattr(doc, "name", None) or "").strip()
+	)
+	voucher_remarks = cstr(getattr(voucher, "remarks", None) or "").strip()
+	is_legacy_link = not voucher_remarks
+	if voucher_remarks != expected_marker:
+		if voucher_remarks:
+			frappe.throw(
+				f"Settlement-Retry abgebrochen: {voucher_name} gehört laut "
+				"Ownership-Marker nicht zu dieser HK-Abrechnung.",
+				frappe.ValidationError,
+			)
+		linked_settlements = frappe.db.sql(
+			"""
+			SELECT name
+			FROM `tabHeizkostenabrechnung Mieter`
+			WHERE sales_invoice = %s OR credit_note = %s
+			ORDER BY name
+			FOR UPDATE
+			""",
+			(voucher_name, voucher_name),
+		)
+		expected_settlement = cstr(getattr(doc, "name", None) or "").strip()
+		if [row[0] for row in linked_settlements] != [expected_settlement]:
+			frappe.throw(
+				f"Settlement-Retry abgebrochen: Legacy-Beleg {voucher_name} ist "
+				"nicht eindeutig ausschließlich dieser HK-Abrechnung zugeordnet.",
+				frappe.ValidationError,
+			)
+
+	expected_customer = cstr(getattr(doc, "customer", None) or "").strip()
+	expected_wohnung = cstr(getattr(doc, "wohnung", None) or "").strip()
+	if cstr(getattr(voucher, "customer", None) or "").strip() != expected_customer:
+		frappe.throw(
+			f"Settlement-Retry abgebrochen: Customer von {voucher_name} passt "
+			"nicht zur HK-Abrechnung.",
+			frappe.ValidationError,
+		)
+	voucher_wohnung = cstr(getattr(voucher, "wohnung", None) or "").strip()
+	if voucher_wohnung != expected_wohnung and not (is_legacy_link and not voucher_wohnung):
+		frappe.throw(
+			f"Settlement-Retry abgebrochen: Wohnung von {voucher_name} passt "
+			"nicht zur HK-Abrechnung.",
+			frappe.ValidationError,
+		)
+	return voucher
+
+
+def _validate_existing_hk_settlement_links(doc: object) -> None:
+	"""Validate retry links instead of trusting mutable Link fields."""
+	existing_si = cstr(getattr(doc, "sales_invoice", None) or "").strip()
+	existing_cn = cstr(getattr(doc, "credit_note", None) or "").strip()
+	if existing_si and existing_cn:
+		frappe.throw(
+			"Settlement-Retry abgebrochen: Die HK-Abrechnung verweist zugleich "
+			"auf eine Nachzahlung und eine Gutschrift.",
+			frappe.ValidationError,
+		)
+	voucher = _validated_existing_hk_settlement_document(
+		doc,
+		fieldname="sales_invoice" if existing_si else "credit_note",
+		expected_is_return=0 if existing_si else 1,
+	)
+	company = _get_default_company(doc)
+	if cstr(getattr(voucher, "company", None) or "").strip() != cstr(company or "").strip():
+		frappe.throw(
+			f"Settlement-Retry abgebrochen: Company von {voucher.name} passt "
+			"nicht zur HK-Abrechnung.",
+			frappe.ValidationError,
+		)
+
+
 @frappe.whitelist()
 def create_hk_settlement_documents(abrechnung: str) -> dict:
 	"""Create exactly one live-state-adjusted HK invoice or credit note."""
@@ -645,6 +743,7 @@ def create_hk_settlement_documents(abrechnung: str) -> dict:
 	existing_si = cstr(getattr(doc, "sales_invoice", None) or "").strip()
 	existing_cn = cstr(getattr(doc, "credit_note", None) or "").strip()
 	if existing_si or existing_cn:
+		_validate_existing_hk_settlement_links(doc)
 		return {
 			"created": {
 				"sales_invoice": existing_si or None,
