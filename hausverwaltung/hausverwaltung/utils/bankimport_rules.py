@@ -411,11 +411,17 @@ def _booking_invoice_auto_match(*, row, bt, context):
 			"message": match_result.get("message"),
 		}
 
-	_set_row_value(row, "auto_match_message", match_result.get("message"))
+	settlement_result = context.get("customer_settlement_match_result") or {}
+	display_result = (
+		settlement_result
+		if excluded_invoice_names and settlement_result.get("message")
+		else match_result
+	)
+	_set_row_value(row, "auto_match_message", display_result.get("message"))
 	return {
 		"matched": False,
-		"reason": match_result.get("reason"),
-		"message": match_result.get("message"),
+		"reason": display_result.get("reason"),
+		"message": display_result.get("message"),
 	}
 
 

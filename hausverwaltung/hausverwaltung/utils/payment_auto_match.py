@@ -676,7 +676,7 @@ def auto_match_customer_settlement(bt_name: str) -> dict[str, Any]:
 				"customer": bt.party,
 				voucher_field: ["is", "set"],
 			},
-			fields=["name", "datum", voucher_field],
+			fields=["name", voucher_field],
 			limit_page_length=0,
 		)
 		for row in rows:
@@ -687,7 +687,6 @@ def auto_match_customer_settlement(bt_name: str) -> dict[str, Any]:
 						"doctype": doctype,
 						"label": label,
 						"name": row.get("name"),
-						"date": row.get("datum"),
 					}
 				)
 
@@ -756,17 +755,21 @@ def auto_match_customer_settlement(bt_name: str) -> dict[str, Any]:
 
 	link = links[0]
 	bt_date = _bank_transaction_date(bt)
-	settlement_date = getdate(link.get("date")) if link.get("date") else None
+	invoice_date = (
+		getdate(invoice.get("posting_date"))
+		if invoice.get("posting_date")
+		else None
+	)
 	if (
 		not bt_date
-		or not settlement_date
-		or not (settlement_date <= bt_date <= add_months(settlement_date, 1))
+		or not invoice_date
+		or not (invoice_date <= bt_date <= add_months(invoice_date, 1))
 	):
 		return _settlement_match_failure(
 			"customer_settlement_outside_one_month",
 			f"{link['label']} {link['name']} passt betragsmäßig, die Bankbuchung "
-			"liegt aber nicht zwischen Abrechnungsdatum und dem gleichen Tag des "
-			"Folgemonats — bitte manuell zuordnen.",
+			"liegt aber nicht zwischen dem Buchungsdatum des Abrechnungsbelegs und "
+			"dem gleichen Tag des Folgemonats — bitte manuell zuordnen.",
 			excluded_invoice_names=linked_open_names,
 		)
 
@@ -775,7 +778,6 @@ def auto_match_customer_settlement(bt_name: str) -> dict[str, Any]:
 		int(locked_settlement.docstatus or 0) != 1
 		or locked_settlement.get("customer") != bt.party
 		or str(locked_settlement.get(voucher_field) or "").strip() != invoice.get("name")
-		or getdate(locked_settlement.get("datum")) != settlement_date
 	):
 		return _settlement_match_failure(
 			"customer_settlement_changed",

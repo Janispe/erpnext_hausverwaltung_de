@@ -201,9 +201,10 @@ class TestCustomerSettlementRule(unittest.TestCase):
 		self,
 		*,
 		direction="in",
-		bt_date="2026-02-28",
+		bt_date="2026-08-15",
 		settlement_doctype="Betriebskostenabrechnung Mieter",
-		settlement_date="2026-01-31",
+		settlement_date="2025-12-31",
+		invoice_date="2026-07-15",
 		extra_invoices=None,
 	):
 		voucher_field = "credit_note" if direction == "out" else "sales_invoice"
@@ -227,7 +228,7 @@ class TestCustomerSettlementRule(unittest.TestCase):
 		invoice = frappe._dict(
 			name="SINV-SETTLEMENT",
 			outstanding_amount=outstanding,
-			posting_date="2026-01-31",
+			posting_date=invoice_date,
 			company="COMP-1",
 			currency="EUR",
 			conversion_rate=1,
@@ -244,10 +245,10 @@ class TestCustomerSettlementRule(unittest.TestCase):
 
 		def fake_get_all(doctype, **kwargs):
 			if doctype == settlement_doctype:
+				self.assertNotIn("datum", kwargs["fields"])
 				return [
 					frappe._dict(
 						name="SETTLEMENT-1",
-						datum=settlement_date,
 						**{voucher_field: "SINV-SETTLEMENT"},
 					)
 				]
@@ -288,14 +289,14 @@ class TestCustomerSettlementRule(unittest.TestCase):
 		result, do_match = self._run(
 			direction="out",
 			settlement_doctype="Heizkostenabrechnung Mieter",
-			bt_date="2026-02-15",
+			bt_date="2026-07-31",
 		)
 
 		self.assertTrue(result["matched"])
 		self.assertEqual(do_match.call_args[0][3], "bk_hk_credit_one_month")
 
-	def test_before_or_after_settlement_month_stays_manual(self):
-		for bt_date in ("2026-01-30", "2026-03-01"):
+	def test_before_or_after_invoice_month_stays_manual(self):
+		for bt_date in ("2026-07-14", "2026-08-16"):
 			with self.subTest(bt_date=bt_date):
 				result, do_match = self._run(bt_date=bt_date)
 

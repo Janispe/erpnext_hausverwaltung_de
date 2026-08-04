@@ -37,7 +37,14 @@ class TestBankimportRuleScope(unittest.TestCase):
 	def test_settlement_exclusions_are_forwarded_to_generic_invoice_match(self):
 		row = frappe._dict()
 		bt = frappe._dict(name="BT-1")
-		context = {"settlement_invoice_exclusions": ["SINV-BK-1"]}
+		context = {
+			"settlement_invoice_exclusions": ["SINV-BK-1"],
+			"customer_settlement_match_result": {
+				"matched": False,
+				"reason": "customer_settlement_outside_one_month",
+				"message": "BK-Abrechnung außerhalb des Zeitfensters",
+			},
+		}
 		match_result = {"matched": False, "reason": "no_exact_match", "message": "manual"}
 
 		with patch(
@@ -51,6 +58,8 @@ class TestBankimportRuleScope(unittest.TestCase):
 			excluded_invoice_names={"SINV-BK-1"},
 		)
 		self.assertFalse(result["matched"])
+		self.assertEqual(result["reason"], "customer_settlement_outside_one_month")
+		self.assertEqual(result["message"], "BK-Abrechnung außerhalb des Zeitfensters")
 
 	def test_party_rule_scope_blocks_iban_before_matcher_runs(self):
 		row = frappe._dict(iban="DE12 3456", party_type=None, party=None)
