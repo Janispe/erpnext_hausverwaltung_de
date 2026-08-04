@@ -948,7 +948,7 @@ def _build_payment_entry_advance_transactions(
 	if not net_by_voucher:
 		return []
 
-	allocated_receipts = _get_payment_entry_allocated_receipts(
+	allocated_amounts = _get_payment_entry_allocated_amounts(
 		set(net_by_voucher),
 		set(raw_invoices),
 		filters,
@@ -959,13 +959,17 @@ def _build_payment_entry_advance_transactions(
 
 	transactions: list[dict[str, Any]] = []
 	for voucher_no, receivable_net in net_by_voucher.items():
-		# receivable_net < 0: Eingang vom Mieter. receivable_net > 0: Auszahlung/Erstattung.
-		if receivable_net < -TOLERANCE:
-			advance_amount = flt(abs(receivable_net) - flt(allocated_receipts.get(voucher_no)), 2)
-		elif receivable_net > TOLERANCE:
-			advance_amount = flt(-receivable_net, 2)
-		else:
-			continue
+		# PLE-Betraege und der Netto-GL-Betrag haben dieselbe Richtung:
+		# negativ bei Zahlungseingang, positiv bei Guthabenauszahlung. Nur der
+		# nach Abzug der Rechnungszuordnungen verbleibende Betrag ist eine echte
+		# Vorauszahlung. Das ist insbesondere fuer ausgezahlte BK/HK-Guthaben
+		# wichtig: Sie werden bereits als Settlement der Gutschrift dargestellt
+		# und duerfen nicht zusaetzlich als negative Vorauszahlung erscheinen.
+		unallocated_net = flt(
+			receivable_net - flt(allocated_amounts.get(voucher_no)),
+			2,
+		)
+		advance_amount = flt(-unallocated_net, 2)
 		if abs(advance_amount) <= TOLERANCE:
 			continue
 
@@ -1001,7 +1005,7 @@ def _build_payment_entry_advance_transactions(
 	return transactions
 
 
-def _get_payment_entry_allocated_receipts(
+def _get_payment_entry_allocated_amounts(
 	payment_entries: set[str],
 	invoice_names: set[str],
 	filters,
@@ -1027,8 +1031,7 @@ def _get_payment_entry_allocated_receipts(
 	allocated: dict[str, float] = defaultdict(float)
 	for row in rows:
 		amount = flt(row.amount)
-		if amount < 0:
-			allocated[row.voucher_no] += abs(amount)
+		allocated[row.voucher_no] += amount
 	return {voucher_no: flt(amount, 2) for voucher_no, amount in allocated.items()}
 
 

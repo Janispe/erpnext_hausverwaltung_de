@@ -8,6 +8,7 @@ from hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto import (
 	CATEGORIES,
 	InvoiceInfo,
 	_build_invoice_transactions,
+	_build_payment_entry_advance_transactions,
 	_build_rows,
 	_build_standalone_receivable_transactions,
 	_categorize_offset_accounts,
@@ -459,6 +460,87 @@ class TestGroupInvoices(TestCase):
 		self.assertEqual(row["betrag_vorauszahlungen"], -120.0)
 		self.assertEqual(row["betrag_summe"], -120.0)
 		self.assertEqual(row["kontostand"], -120.0)
+
+	def test_allocated_customer_refund_is_not_shown_as_vorauszahlung(self):
+		filters = _filters(from_date=date(2026, 5, 1), to_date=date(2026, 5, 31))
+		filters["customer"] = "MIETER-A"
+		invoice = _make_invoice(
+			"SI-HK-GUTHABEN",
+			grand_total=-125.0,
+			outstanding=0.0,
+			categories={"guthaben_nachzahlungen": -125.0},
+		)
+		gl_rows = [
+			AttrDict(
+				posting_date=date(2026, 5, 8),
+				voucher_no="PE-HK-AUSZAHLUNG",
+				debit=125.0,
+				credit=0.0,
+				account=invoice.debit_to,
+				remarks=None,
+			)
+		]
+		ple_rows = [
+			AttrDict(voucher_no="PE-HK-AUSZAHLUNG", amount=125.0),
+		]
+
+		with patch(
+			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.frappe.get_all",
+			side_effect=[gl_rows, ple_rows],
+		), patch(
+			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._fetch_voucher_remarks",
+			return_value={},
+		), patch(
+			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._get_currency",
+			return_value="EUR",
+		):
+			transactions = _build_payment_entry_advance_transactions(
+				{invoice.name: invoice}, filters
+			)
+
+		self.assertEqual(transactions, [])
+
+	def test_payment_receipt_keeps_only_unallocated_remainder_as_vorauszahlung(self):
+		filters = _filters(from_date=date(2026, 5, 1), to_date=date(2026, 5, 31))
+		filters["customer"] = "MIETER-A"
+		invoice = _make_invoice(
+			"SI-MIETE",
+			grand_total=125.0,
+			outstanding=0.0,
+			categories={"miete": 125.0},
+		)
+		gl_rows = [
+			AttrDict(
+				posting_date=date(2026, 5, 8),
+				voucher_no="PE-MIETE-PLUS-VZ",
+				debit=0.0,
+				credit=150.0,
+				account=invoice.debit_to,
+				remarks=None,
+			)
+		]
+		ple_rows = [
+			AttrDict(voucher_no="PE-MIETE-PLUS-VZ", amount=-125.0),
+		]
+
+		with patch(
+			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.frappe.get_all",
+			side_effect=[gl_rows, ple_rows],
+		), patch(
+			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._fetch_voucher_remarks",
+			return_value={},
+		), patch(
+			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._get_currency",
+			return_value="EUR",
+		):
+			transactions = _build_payment_entry_advance_transactions(
+				{invoice.name: invoice}, filters
+			)
+
+		self.assertEqual(len(transactions), 1)
+		self.assertEqual(transactions[0]["art"], "Vorauszahlung")
+		self.assertEqual(transactions[0]["paid_amounts"]["vorauszahlungen"], 25.0)
+		self.assertEqual(transactions[0]["delta"], -25.0)
 
 	def test_sonstiges_item_maps_to_sonstiges(self):
 		amounts = _category_amounts_from_items(
