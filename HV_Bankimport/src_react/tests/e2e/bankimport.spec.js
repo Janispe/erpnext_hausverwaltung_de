@@ -17,6 +17,12 @@ test("Import-Picker filtert offene/abgeschlossene Importe und legt per CSV einen
 	await expect(page.getByText("Sparkasse (1804)")).toBeVisible();
 	await expect(page.getByText("Wilhelmshavener (1812)")).not.toBeVisible();
 
+	await page.getByRole("button", { name: /Alle 2/ }).click();
+	await expect(page.locator(".ip-title")).toHaveText(["Wilhelmshavener (1812) · 01.04.–30.04.2026 · 6 Buchungen", "Sparkasse (1804) · 03.2026 · 14 Buchungen"]);
+	await page.getByRole("button", { name: "Geändert" }).click();
+	await expect(page.locator(".ip-title")).toHaveText(["Sparkasse (1804) · 03.2026 · 14 Buchungen", "Wilhelmshavener (1812) · 01.04.–30.04.2026 · 6 Buchungen"]);
+	await expect(page.getByRole("columnheader", { name: "Geändert" })).toHaveAttribute("aria-sort", "ascending");
+
 	await page.getByPlaceholder("Import, Objekt, Zeitraum oder Status suchen...").fill("kein treffer");
 	await expect(page.getByText("Keine Importe für diese Auswahl.")).toBeVisible();
 

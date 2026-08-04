@@ -27,6 +27,7 @@ function ImportPicker({ onPick, onNewImport, onOpenRules }) {
 	const [items, setItems] = useState(null);
 	const [query, setQuery] = useState("");
 	const [statusFilter, setStatusFilter] = useState("open");
+	const [modifiedSort, setModifiedSort] = useState("desc");
 	useEffect(() => {
 		api.listImports().then((d) => setItems(d.items || [])).catch(() => setItems([]));
 	}, []);
@@ -41,7 +42,7 @@ function ImportPicker({ onPick, onNewImport, onOpenRules }) {
 	const filteredItems = useMemo(() => {
 		if (!items) return [];
 		const q = query.trim().toLowerCase();
-		return items.filter((it) => {
+		const matchingItems = items.filter((it) => {
 			const isClosed = isClosedImport(it);
 			if (statusFilter === "open" && isClosed) return false;
 			if (statusFilter === "closed" && !isClosed) return false;
@@ -49,7 +50,16 @@ function ImportPicker({ onPick, onNewImport, onOpenRules }) {
 			return [it.title, it.name, it.status]
 				.some((v) => String(v || "").toLowerCase().includes(q));
 		});
-	}, [items, query, statusFilter]);
+		return matchingItems.sort((a, b) => {
+			const aDate = String(a.modified || "");
+			const bDate = String(b.modified || "");
+			if (!aDate && !bDate) return String(a.name || "").localeCompare(String(b.name || ""));
+			if (!aDate) return 1;
+			if (!bDate) return -1;
+			const dateOrder = aDate.localeCompare(bDate);
+			return modifiedSort === "asc" ? dateOrder : -dateOrder;
+		});
+	}, [items, query, statusFilter, modifiedSort]);
 
 	const counts = useMemo(() => {
 		const all = items || [];
@@ -119,7 +129,17 @@ function ImportPicker({ onPick, onNewImport, onOpenRules }) {
 											<th>Status</th>
 											<th className="num">Offen</th>
 											<th className="num">Zeilen</th>
-											<th>Geändert</th>
+											<th aria-sort={modifiedSort === "asc" ? "ascending" : "descending"}>
+												<button
+													type="button"
+													className="ip-sort-button"
+													onClick={() => setModifiedSort((current) => current === "desc" ? "asc" : "desc")}
+													title={modifiedSort === "desc" ? "Älteste zuerst" : "Neueste zuerst"}
+												>
+													Geändert
+													<Icon name={modifiedSort === "desc" ? "arrowDown" : "arrowUp"} size={12} />
+												</button>
+											</th>
 										</tr>
 									</thead>
 									<tbody>

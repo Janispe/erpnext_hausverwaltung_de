@@ -95,6 +95,9 @@
 .ip-table-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
 .ip-table { width: 100%; border-collapse: collapse; }
 .ip-table th { padding: 9px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; text-align: left; }
+.ip-sort-button { display: inline-flex; align-items: center; gap: 4px; margin: -9px -12px; padding: 9px 12px; border: 0; background: transparent; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; }
+.ip-sort-button:hover { color: var(--text); }
+.ip-sort-button:focus-visible { outline: 2px solid var(--primary); outline-offset: -3px; border-radius: 3px; }
 .ip-table td { padding: 11px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .ip-table tr:last-child td { border-bottom: 0; }
 .ip-table tbody tr { cursor: pointer; transition: background .1s; }
