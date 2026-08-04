@@ -56,6 +56,38 @@ from hausverwaltung.hausverwaltung.doctype.zustandsschluessel.zustandsschluessel
 
 MONEY_QUANT = Decimal("0.01")
 MIN_SIGNIFICANT = Decimal("0.000000001")
+FESTBETRAG_DIMENSION_CUTOFF_FIELD = "bk_festbetrag_wohnungsdimension_ab"
+
+
+def _get_festbetrag_dimension_cutoff() -> Optional[date]:
+    """Liefert den ersten Tag der strikten Dimensionspflicht.
+
+    Eine leere oder ungültige Einstellung ist absichtlich strikt: Dann gibt es
+    keine Altdaten-Ausnahme.
+    """
+    try:
+        value = frappe.db.get_single_value(
+            "Hausverwaltung Einstellungen",
+            FESTBETRAG_DIMENSION_CUTOFF_FIELD,
+        )
+    except Exception:
+        return None
+    if not value:
+        return None
+    try:
+        return getdate(value)
+    except Exception:
+        return None
+
+
+def _is_legacy_dimensionless_festbetrag(
+    effective_date: str | date,
+    dimension_required_from: Optional[date],
+) -> bool:
+    return bool(
+        dimension_required_from
+        and getdate(effective_date) < dimension_required_from
+    )
 
 
 def _to_decimal(value: Any) -> Decimal:
@@ -673,6 +705,7 @@ def allocate_kosten_auf_wohnungen(
     stichtag = stichtag or bis
     von_d = getdate(von)
     bis_d = getdate(bis)
+    festbetrag_dimension_ab = _get_festbetrag_dimension_cutoff()
 
     konto_map = _konto_zu_kostenart_map()
     # Auch ohne kontobasierte Kostenarten können freie Festbeträge existieren.
@@ -712,6 +745,7 @@ def allocate_kosten_auf_wohnungen(
         gl_filters = {
             "account": ("in", list(konto_map.keys())),
             "cost_center": ("in", kostenstellen),
+            "is_cancelled": 0,
         }
         if company:
             gl_filters["company"] = company
@@ -791,6 +825,35 @@ def allocate_kosten_auf_wohnungen(
         betrag = _to_decimal(g.debit) - _to_decimal(g.credit)
         if betrag.copy_abs() < MIN_SIGNIFICANT:
             continue
+
+        # Vor der explizit konfigurierten Datumsgrenze darf historischer
+        # Festbetrag-Aufwand ohne Wohnungsdimension unberücksichtigt bleiben:
+        # Die Mieterbelastung stammt in diesem Zeitraum aus dem Mietvertrag.
+        # Ab der Grenze (und ohne konfigurierte Grenze) bleibt die
+        # Wohnungsdimension zwingend.
+        if verteilung.lower() == "festbetrag" and (
+            not gl_has_wohnung or not g.get("wohnung")
+        ):
+            if _is_legacy_dimensionless_festbetrag(
+                eff,
+                festbetrag_dimension_ab,
+            ):
+                continue
+            if festbetrag_dimension_ab:
+                grenzhinweis = (
+                    f" Die Wohnungsdimension ist ab "
+                    f"{cstr(festbetrag_dimension_ab)} verpflichtend."
+                )
+            else:
+                grenzhinweis = (
+                    " In den Hausverwaltung Einstellungen ist keine "
+                    "Altdaten-Grenze konfiguriert."
+                )
+            frappe.throw(
+                f"GL Entry {g.get('name')} ohne 'wohnung' bei "
+                f"Verteilungsart '{verteilung}'.{grenzhinweis}"
+            )
+
         basis = (haus, kostenart)
         gl_expected_by_basis[basis] += betrag
 

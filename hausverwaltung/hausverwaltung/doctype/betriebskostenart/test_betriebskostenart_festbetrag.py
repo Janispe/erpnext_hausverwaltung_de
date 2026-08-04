@@ -1,9 +1,11 @@
 # See license.txt
 
+from datetime import date
 from unittest.mock import patch
 import unittest
 
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen import (
+	_is_legacy_dimensionless_festbetrag,
 	_prorated_festbetrag_rows,
 	allocate_kosten_auf_wohnungen,
 	get_mieter_festbetrag_overview,
@@ -11,6 +13,28 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen i
 
 
 class TestBetriebskostenartFestbetrag(unittest.TestCase):
+	def test_dimensionless_festbetrag_is_legacy_only_before_cutoff(self):
+		cutoff = date(2026, 5, 1)
+
+		self.assertTrue(
+			_is_legacy_dimensionless_festbetrag(
+				date(2026, 4, 30),
+				cutoff,
+			)
+		)
+		self.assertFalse(
+			_is_legacy_dimensionless_festbetrag(
+				cutoff,
+				cutoff,
+			)
+		)
+		self.assertFalse(
+			_is_legacy_dimensionless_festbetrag(
+				date(2010, 1, 1),
+				None,
+			)
+		)
+
 	def test_mieter_overview_includes_dimension_booking_without_contract_row(self):
 		import frappe as _frappe_mod
 
@@ -198,11 +222,27 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 					"voucher_type": "Journal Entry",
 					"voucher_no": "JV-1",
 				}
-			)
+			),
+			# Historischer Aufwand ohne Wohnungsdimension: Die Belastung des
+			# Mieters stammt für diesen Fall ausschließlich aus dem Vertrag.
+			_frappe_mod._dict(
+				{
+					"name": "GLE-ALT",
+					"posting_date": "2025-01-15",
+					"account": "ACC-KAMIN",
+					"cost_center": "CC-1",
+					"wohnung": None,
+					"debit": 1000,
+					"credit": 0,
+					"voucher_type": "Journal Entry",
+					"voucher_no": "JV-ALT",
+				}
+			),
 		]
 
 		def fake_get_all(doctype, **kwargs):
 			if doctype == "GL Entry":
+				self.assertEqual(kwargs["filters"]["is_cancelled"], 0)
 				return gl_rows
 			return []
 
@@ -224,6 +264,9 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 		), patch(
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._has_field",
 			return_value=True,
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._get_festbetrag_dimension_cutoff",
+			return_value=date(2025, 2, 1),
 		), patch(
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._bk_abrechnung_aktiv_am",
 			return_value=True,

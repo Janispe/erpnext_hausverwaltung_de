@@ -36,6 +36,7 @@
   "income_accounts",
   "betriebskosten_section",
   "bk_rundungsverfahren",
+  "bk_festbetrag_wohnungsdimension_ab",
   "abschlagszahlung_section",
   "bankimport_abschlag_toleranz_tage",
   "bankimport_section",
@@ -243,6 +244,12 @@
    "label": "Rundungsverfahren",
    "options": "Größte-Rest-Methode\nNur kaufmännisch runden\nKaufmännisch erst beim Mieter runden\nBisherige Restverteilung",
    "reqd": 1
+  },
+  {
+   "description": "Dimensionslose Festbetrag-Buchungen mit Wertstellungs-/Buchungsdatum VOR diesem Datum gelten als Altdaten und werden nicht zusätzlich zum Vertrags-Festbetrag auf Mieter verteilt. Ab diesem Datum ist die Accounting Dimension 'wohnung' zwingend. Leer = immer zwingend.",
+   "fieldname": "bk_festbetrag_wohnungsdimension_ab",
+   "fieldtype": "Date",
+   "label": "Festbetrag: Wohnungsdimension erforderlich ab"
   },
   {
    "fieldname": "abschlagszahlung_section",
