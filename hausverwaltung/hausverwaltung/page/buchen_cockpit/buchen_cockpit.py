@@ -1024,6 +1024,269 @@ def _should_settle_purchase_invoice_now(kwargs: dict) -> bool:
     return (kwargs.get("zahlungsstatus") or "") == ZAHLUNGSSTATUS_SOFORT
 
 
+def _purchase_invoice_request_context(kwargs: dict) -> dict[str, Any]:
+    submit = _as_bool(kwargs.get("submit_doc", 1))
+    proposal = (kwargs.get("vorschlag_name") or "").strip()
+    if proposal and not submit:
+        frappe.throw(
+            "Ein Buchungsvorschlag kann nicht als Entwurf gespeichert werden. "
+            "Bitte den Vorschlag buchen oder den Dialog ohne Vorschlag öffnen."
+        )
+    settle_now = submit and _should_settle_purchase_invoice_now(kwargs)
+    _require_document_permissions("Purchase Invoice", submit=submit)
+    if settle_now:
+        _require_document_permissions("Journal Entry", submit=True)
+    idempotent = _lock_booking_proposal(proposal) if proposal else {}
+    if idempotent:
+        return {
+            "submit": submit,
+            "settle_now": settle_now,
+            "proposal": proposal,
+            "idempotent": idempotent,
+            "supplier": None,
+            "rows": [],
+        }
+    supplier = kwargs.get("lieferant")
+    if not supplier:
+        frappe.throw("Bitte einen Lieferanten auswählen.")
+    rows = _parse_rows(kwargs.get("positionen"))
+    if not rows:
+        frappe.throw("Es sind keine Positionen erfasst.")
+    for idx, row in enumerate(rows, start=1):
+        if row.get("betrag") in (None, ""):
+            frappe.throw(f"Position {idx}: Betrag fehlt.")
+    return {
+        "submit": submit,
+        "settle_now": settle_now,
+        "proposal": proposal,
+        "idempotent": idempotent,
+        "supplier": supplier,
+        "rows": rows,
+    }
+
+
+def _purchase_invoice_booking_context(rows: list[dict]) -> dict[str, Any]:
+    wohnung_rows = [
+        (idx, row)
+        for idx, row in enumerate(rows, start=1)
+        if cstr(row.get("wohnung")).strip()
+    ]
+    cost_center_to_immobilie = _kostenstelle_zu_haus_map() if wohnung_rows else None
+    property_identities: dict[int, dict] = {}
+    company: str | None = None
+    for idx, row in wohnung_rows:
+        identity = _resolve_property_booking_identity(
+            row.get("wohnung"),
+            selected_cost_center=row.get("kostenstelle"),
+            expected_company=company,
+            cost_center_to_immobilie=cost_center_to_immobilie,
+            context=f"Position {idx}",
+        )
+        company = company or identity["company"]
+        property_identities[idx] = identity
+    if not wohnung_rows:
+        company = _derive_company_from_rows(rows)
+    if not company:
+        frappe.throw(
+            "Konnte keine Company ermitteln. Bitte in mindestens einer Position "
+            "eine Kostenstelle angeben."
+        )
+
+    first_cost_center = next(
+        (cstr(row.get("kostenstelle")).strip() for row in rows if row.get("kostenstelle")),
+        None,
+    )
+    company_default_cost_center: str | None = None
+    effective_cost_centers: dict[int, str] = {}
+    for idx, row in enumerate(rows, start=1):
+        identity = property_identities.get(idx)
+        cost_center = identity["cost_center"] if identity else (
+            cstr(row.get("kostenstelle")).strip() or first_cost_center
+        )
+        if not cost_center:
+            if company_default_cost_center is None:
+                company_default_cost_center = frappe.get_cached_value(
+                    "Company", company, "cost_center"
+                )
+            cost_center = company_default_cost_center
+        if not cost_center:
+            frappe.throw(f"Position {idx}: Bitte eine Kostenstelle wählen.")
+        _validate_cost_center_company(
+            cost_center,
+            company,
+            context=f"Position {idx}",
+            for_update=True,
+        )
+        effective_cost_centers[idx] = cost_center
+    return {
+        "company": company,
+        "cost_centers": effective_cost_centers,
+        "cost_center_to_immobilie": cost_center_to_immobilie,
+    }
+
+
+def _new_cockpit_purchase_invoice(
+    *,
+    company: str,
+    supplier: str,
+    posting_date,
+    bill_no: str | None,
+    remarks: str,
+):
+    pi = frappe.new_doc("Purchase Invoice")
+    pi.update({
+        "company": company,
+        "supplier": supplier,
+        "posting_date": posting_date,
+        "bill_date": posting_date,
+        "bill_no": bill_no,
+        "remarks": remarks,
+    })
+    payable_account = _get_payable_account(company=company, supplier=supplier)
+    pi.credit_to = payable_account
+    company_currency = frappe.db.get_value("Company", company, "default_currency")
+    payable_currency = frappe.db.get_value("Account", payable_account, "account_currency")
+    if not company_currency:
+        frappe.throw(f"An der Company '{company}' fehlt die Standardwährung.")
+    if payable_currency and payable_currency != company_currency:
+        frappe.throw(
+            f"Das Kreditorenkonto '{payable_account}' wird in {payable_currency} geführt. "
+            "Fremdwährungsrechnungen bitte im regulären Purchase-Invoice-Formular "
+            "mit geprüftem Wechselkurs erfassen."
+        )
+    pi.currency = company_currency
+    pi.conversion_rate = 1
+    return pi, company_currency
+
+
+def _cockpit_purchase_invoice_item(
+    row: dict,
+    *,
+    idx: int,
+    company: str,
+    company_currency: str,
+    cost_center: str,
+    service_item_code: str,
+    default_description: str,
+    verteilung_cache: dict[str, str],
+    cost_center_to_immobilie: dict[str, str] | None,
+    wohnung_to_immobilie: dict[str, str | None],
+) -> dict[str, Any]:
+    kostenart_info = _get_kostenart_details(row)
+    expense_account = kostenart_info.get("konto") if kostenart_info else row.get("konto")
+    if kostenart_info and row.get("umlagefaehig") == "Betriebskostenart":
+        verteilung_cache[row.get("kostenart")] = kostenart_info.get("verteilung") or ""
+    if not expense_account:
+        expense_account = frappe.get_cached_value(
+            "Company", company, "default_expense_account"
+        )
+    if not expense_account:
+        frappe.throw(
+            f"Position {idx}: Bitte ein Aufwandskonto wählen "
+            "(in der Kostenart oder direkt in der Position)."
+        )
+    _validate_expense_account_company(
+        expense_account,
+        company,
+        company_currency,
+        context=f"Position {idx}",
+    )
+    description_parts = []
+    if row.get("umlagefaehig"):
+        description_parts.append(f"Typ: {row.get('umlagefaehig')}")
+    if row.get("kostenart"):
+        description_parts.append(f"Kostenart: {row.get('kostenart')}")
+    item = {
+        "item_code": (
+            kostenart_info.get("artikel")
+            if kostenart_info and kostenart_info.get("artikel")
+            else service_item_code
+        ),
+        "item_name": "Ausgabe",
+        "description": "; ".join(description_parts) or default_description,
+        "qty": 1,
+        "rate": float(row.get("betrag")),
+        "expense_account": expense_account,
+        "cost_center": cost_center,
+    }
+    _set_cockpit_item_dimensions(
+        item,
+        row,
+        idx=idx,
+        cost_center=cost_center,
+        verteilung_cache=verteilung_cache,
+        cost_center_to_immobilie=cost_center_to_immobilie,
+        wohnung_to_immobilie=wohnung_to_immobilie,
+    )
+    return item
+
+
+def _set_cockpit_item_dimensions(
+    item: dict[str, Any],
+    row: dict,
+    *,
+    idx: int,
+    cost_center: str,
+    verteilung_cache: dict[str, str],
+    cost_center_to_immobilie: dict[str, str] | None,
+    wohnung_to_immobilie: dict[str, str | None],
+) -> None:
+    if _has_field("Purchase Invoice Item", "hv_umlagefaehig") and row.get("umlagefaehig"):
+        item["hv_umlagefaehig"] = row.get("umlagefaehig")
+    if _has_field("Purchase Invoice Item", "hv_kostenart") and row.get("kostenart"):
+        item["hv_kostenart"] = row.get("kostenart")
+    if _row_requires_wohnung(row, verteilung_cache) and not row.get("wohnung"):
+        frappe.throw(
+            f"Position {idx}: Umlagefähige Kostenart '{row.get('kostenart')}' ist "
+            "auf 'Einzeln' verteilt — bitte eine Wohnung auswählen."
+        )
+    if row.get("wohnung"):
+        if not _has_field("Purchase Invoice Item", "wohnung"):
+            frappe.throw(
+                "Accounting Dimension 'Wohnung' ist nicht verfügbar "
+                "(Feld 'wohnung' fehlt auf Purchase Invoice Item)."
+            )
+        validate_wohnung_cost_center_pair(
+            row.get("wohnung"),
+            cost_center,
+            cost_center_to_immobilie=cost_center_to_immobilie or {},
+            wohnung_to_immobilie=wohnung_to_immobilie,
+            context=f"Position {idx}",
+        )
+        item["wohnung"] = row.get("wohnung")
+
+
+def _set_cockpit_purchase_invoice_items(
+    pi,
+    rows: list[dict],
+    *,
+    company: str,
+    company_currency: str,
+    cost_centers: dict[int, str],
+    cost_center_to_immobilie: dict[str, str] | None,
+    default_description: str,
+) -> None:
+    service_item_code = ensure_default_service_item()
+    verteilung_cache: dict[str, str] = {}
+    wohnung_to_immobilie: dict[str, str | None] = {}
+    items = [
+        _cockpit_purchase_invoice_item(
+            row,
+            idx=idx,
+            company=company,
+            company_currency=company_currency,
+            cost_center=cost_centers[idx],
+            service_item_code=service_item_code,
+            default_description=default_description,
+            verteilung_cache=verteilung_cache,
+            cost_center_to_immobilie=cost_center_to_immobilie,
+            wohnung_to_immobilie=wohnung_to_immobilie,
+        )
+        for idx, row in enumerate(rows, start=1)
+    ]
+    pi.set("items", items)
+
+
 # ---------------------------------------------------------------------------
 # Public endpoints
 # ---------------------------------------------------------------------------
@@ -1047,211 +1310,30 @@ def create_purchase_invoice(**kwargs) -> dict:
         positionen: list of dicts with keys
             betrag, konto, kostenstelle, umlagefaehig, kostenart, wohnung (optional)
     """
-    submit_flag = _as_bool(kwargs.get("submit_doc", 1))
-    vorschlag_name = (kwargs.get("vorschlag_name") or "").strip()
-    if vorschlag_name and not submit_flag:
-        frappe.throw(
-            "Ein Buchungsvorschlag kann nicht als Entwurf gespeichert werden. "
-            "Bitte den Vorschlag buchen oder den Dialog ohne Vorschlag öffnen."
-        )
-
-    settle_now = submit_flag and _should_settle_purchase_invoice_now(kwargs)
-    _require_document_permissions("Purchase Invoice", submit=submit_flag)
-    if settle_now:
-        _require_document_permissions("Journal Entry", submit=True)
-
-    idempotent_result = _lock_booking_proposal(vorschlag_name) if vorschlag_name else {}
-    if idempotent_result:
-        return idempotent_result
-
-    supplier = kwargs.get("lieferant")
-    if not supplier:
-        frappe.throw("Bitte einen Lieferanten auswählen.")
-
-    rows = _parse_rows(kwargs.get("positionen"))
-    if not rows:
-        frappe.throw("Es sind keine Positionen erfasst.")
-    for idx, row in enumerate(rows, start=1):
-        if row.get("betrag") in (None, ""):
-            frappe.throw(f"Position {idx}: Betrag fehlt.")
-
-    wohnung_rows = [
-        (idx, row)
-        for idx, row in enumerate(rows, start=1)
-        if cstr(row.get("wohnung")).strip()
-    ]
-    cost_center_to_immobilie: dict[str, str] | None = None
-    property_identities: dict[int, dict] = {}
-    company: str | None = None
-    if wohnung_rows:
-        cost_center_to_immobilie = _kostenstelle_zu_haus_map()
-        for idx, row in wohnung_rows:
-            identity = _resolve_property_booking_identity(
-                row.get("wohnung"),
-                selected_cost_center=row.get("kostenstelle"),
-                expected_company=company,
-                cost_center_to_immobilie=cost_center_to_immobilie,
-                context=f"Position {idx}",
-            )
-            company = company or identity["company"]
-            property_identities[idx] = identity
-    else:
-        company = _derive_company_from_rows(rows)
-
-    if not company:
-        frappe.throw(
-            "Konnte keine Company ermitteln. Bitte in mindestens einer Position "
-            "eine Kostenstelle angeben."
-        )
-
-    first_cost_center = next(
-        (cstr(r.get("kostenstelle")).strip() for r in rows if r.get("kostenstelle")),
-        None,
-    )
-    company_default_cost_center: str | None = None
-    effective_cost_centers: dict[int, str] = {}
-    for idx, row in enumerate(rows, start=1):
-        property_identity = property_identities.get(idx)
-        if property_identity:
-            cost_center = property_identity["cost_center"]
-        else:
-            cost_center = cstr(row.get("kostenstelle")).strip() or first_cost_center
-            if not cost_center:
-                if company_default_cost_center is None:
-                    company_default_cost_center = frappe.get_cached_value(
-                        "Company", company, "cost_center"
-                    )
-                cost_center = company_default_cost_center
-        if not cost_center:
-            frappe.throw(f"Position {idx}: Bitte eine Kostenstelle wählen.")
-        _validate_cost_center_company(
-            cost_center,
-            company,
-            context=f"Position {idx}",
-            for_update=True,
-        )
-        effective_cost_centers[idx] = cost_center
+    request = _purchase_invoice_request_context(kwargs)
+    if request["idempotent"]:
+        return request["idempotent"]
+    booking = _purchase_invoice_booking_context(request["rows"])
 
     posting_date = kwargs.get("rechnungsdatum") or nowdate()
     bill_no = kwargs.get("rechnungsname")
-
-    service_item_code = ensure_default_service_item()
-
-    pi = frappe.new_doc("Purchase Invoice")
     user_remarks = (kwargs.get("remarks") or "").strip()
-    pi.update({
-        "company": company,
-        "supplier": supplier,
-        "posting_date": posting_date,
-        "bill_date": posting_date,
-        "bill_no": bill_no,
-        "remarks": user_remarks,
-    })
-
-    payable_account = _get_payable_account(company=company, supplier=supplier)
-    pi.credit_to = payable_account
-
-    company_currency = frappe.db.get_value("Company", company, "default_currency")
-    payable_currency = frappe.db.get_value("Account", payable_account, "account_currency")
-    if not company_currency:
-        frappe.throw(f"An der Company '{company}' fehlt die Standardwährung.")
-    if payable_currency and payable_currency != company_currency:
-        frappe.throw(
-            f"Das Kreditorenkonto '{payable_account}' wird in {payable_currency} geführt. "
-            "Fremdwährungsrechnungen bitte im regulären Purchase-Invoice-Formular "
-            "mit geprüftem Wechselkurs erfassen."
-        )
-    pi.currency = company_currency
-    pi.conversion_rate = 1
-
-    items: list[dict] = []
-    verteilung_cache: dict[str, str] = {}
-    wohnung_to_immobilie: dict[str, str | None] = {}
-
-    for idx, row in enumerate(rows, start=1):
-        betrag = row.get("betrag")
-
-        kostenart_info = _get_kostenart_details(row)
-        if kostenart_info:
-            # A selected Kostenart is authoritative. Never fall back to a
-            # request-row or Company account after its master-data lookup.
-            expense_account = kostenart_info.get("konto")
-            if row.get("umlagefaehig") == "Betriebskostenart":
-                verteilung_cache[row.get("kostenart")] = (
-                    kostenart_info.get("verteilung") or ""
-                )
-        else:
-            expense_account = row.get("konto")
-        if not expense_account:
-            expense_account = frappe.get_cached_value("Company", company, "default_expense_account")
-            if not expense_account:
-                frappe.throw(
-                    f"Position {idx}: Bitte ein Aufwandskonto wählen "
-                    "(in der Kostenart oder direkt in der Position)."
-                )
-        _validate_expense_account_company(
-            expense_account,
-            company,
-            company_currency,
-            context=f"Position {idx}",
-        )
-
-        cost_center = effective_cost_centers[idx]
-
-        desc_parts = []
-        if row.get("umlagefaehig"):
-            desc_parts.append(f"Typ: {row.get('umlagefaehig')}")
-        if row.get("kostenart"):
-            desc_parts.append(f"Kostenart: {row.get('kostenart')}")
-        description = "; ".join(desc_parts) or kwargs.get("rechnungsname") or "Ausgabe"
-
-        item_code = (
-            kostenart_info.get("artikel")
-            if kostenart_info and kostenart_info.get("artikel")
-            else service_item_code
-        )
-
-        item_row: dict[str, Any] = {
-            "item_code": item_code,
-            "item_name": "Ausgabe",
-            "description": description,
-            "qty": 1,
-            "rate": float(betrag),
-            "expense_account": expense_account,
-            "cost_center": cost_center,
-        }
-
-        if _has_field("Purchase Invoice Item", "hv_umlagefaehig") and row.get("umlagefaehig"):
-            item_row["hv_umlagefaehig"] = row.get("umlagefaehig")
-        if _has_field("Purchase Invoice Item", "hv_kostenart") and row.get("kostenart"):
-            item_row["hv_kostenart"] = row.get("kostenart")
-
-        if _row_requires_wohnung(row, verteilung_cache):
-            if not row.get("wohnung"):
-                frappe.throw(
-                    f"Position {idx}: Umlagefähige Kostenart '{row.get('kostenart')}' ist auf 'Einzeln' "
-                    "verteilt — bitte eine Wohnung auswählen."
-                )
-            if not _has_field("Purchase Invoice Item", "wohnung"):
-                frappe.throw(
-                    "Accounting Dimension 'Wohnung' ist nicht verfügbar (Feld 'wohnung' fehlt auf Purchase Invoice Item)."
-                )
-        if row.get("wohnung"):
-            if cost_center_to_immobilie is None:
-                cost_center_to_immobilie = _kostenstelle_zu_haus_map()
-            validate_wohnung_cost_center_pair(
-                row.get("wohnung"),
-                cost_center,
-                cost_center_to_immobilie=cost_center_to_immobilie,
-                wohnung_to_immobilie=wohnung_to_immobilie,
-                context=f"Position {idx}",
-            )
-            if _has_field("Purchase Invoice Item", "wohnung"):
-                item_row["wohnung"] = row.get("wohnung")
-
-        items.append(item_row)
-
-    pi.set("items", items)
+    pi, company_currency = _new_cockpit_purchase_invoice(
+        company=booking["company"],
+        supplier=request["supplier"],
+        posting_date=posting_date,
+        bill_no=bill_no,
+        remarks=user_remarks,
+    )
+    _set_cockpit_purchase_invoice_items(
+        pi,
+        request["rows"],
+        company=booking["company"],
+        company_currency=company_currency,
+        cost_centers=booking["cost_centers"],
+        cost_center_to_immobilie=booking["cost_center_to_immobilie"],
+        default_description=bill_no or "Ausgabe",
+    )
 
     wertstellungsdatum = kwargs.get("wertstellungsdatum")
     if wertstellungsdatum and _has_field("Purchase Invoice", "custom_wertstellungsdatum"):
@@ -1265,9 +1347,9 @@ def create_purchase_invoice(**kwargs) -> dict:
     _attach_source_file(pi, kwargs.get("attached_file_url"))
 
     settlement_journal = None
-    if submit_flag:
+    if request["submit"]:
         pi.submit()
-        if settle_now:
+        if request["settle_now"]:
             settlement_journal = _create_purchase_invoice_settlement_journal(
                 pi,
                 settlement_account=kwargs.get("zahlungskonto"),
@@ -1276,8 +1358,8 @@ def create_purchase_invoice(**kwargs) -> dict:
                 zahlungsart=kwargs.get("zahlungsart"),
                 remarks=kwargs.get("zahlungsbemerkung") or user_remarks,
             )
-        if vorschlag_name:
-            _link_locked_booking_proposal(vorschlag_name, pi.name)
+        if request["proposal"]:
+            _link_locked_booking_proposal(request["proposal"], pi.name)
         frappe.msgprint(
             f"Eingangsrechnung {pi.name} wurde erstellt und eingereicht.", alert=True
         )
@@ -1287,7 +1369,7 @@ def create_purchase_invoice(**kwargs) -> dict:
         )
     return {
         "name": pi.name,
-        "submitted": submit_flag,
+        "submitted": request["submit"],
         "settlement_journal_entry": settlement_journal,
     }
 

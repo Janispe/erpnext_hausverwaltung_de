@@ -289,97 +289,50 @@ def _customer_invoice_identity(
 	return matches[0].name, matches[0].get("wohnung") or wohnung
 
 
-def prepare_invoice_match(bt, *, lock_invoices: bool = False) -> dict[str, Any]:
-	"""Bereitet einen Bank-Transaction-Match auf offene Rechnungen vor.
+def _match_failure(reason: str, message: str) -> dict[str, Any]:
+	return {"ok": False, "reason": reason, "message": message}
 
-	Macht Idempotenz/Direction-Checks, lädt offene Sales/Purchase Invoices der
-	Party und wendet bei Lieferanten den Cost-Center-Filter an. Reine Lese-
-	Operation — keine Buchungen, kein DB-Write.
 
-	Returns einen von:
-	    { "ok": True, "candidates": [...], "invoice_doctype": "...",
-	      "target_amount": float }
-	    { "ok": False, "reason": "...", "message": "..." }
-
-	Damit teilen sich der echte Matcher (``auto_match_bank_transaction``) und
-	der Dry-Run-Suggester (bankimport_v2.py) Setup und Cost-Center-Filter, ohne
-	die Strategie-Loops doppelt zu pflegen.
-	"""
+def _resolve_invoice_match_context(bt) -> dict[str, Any]:
 	if bt.get("payment_entries"):
-		return {"ok": False, "reason": "already_reconciled", "message": "Bereits zugeordnet"}
-
+		return _match_failure("already_reconciled", "Bereits zugeordnet")
 	if not bt.party_type or not bt.party:
-		return {"ok": False, "reason": "no_party", "message": "Keine Party an Bank Transaction"}
-
+		return _match_failure("no_party", "Keine Party an Bank Transaction")
 	if bt.party_type not in ("Customer", "Supplier"):
-		return {
-			"ok": False,
-			"reason": "unsupported_party_type",
-			"message": f"Party-Typ '{bt.party_type}' nicht unterstützt",
-		}
-
+		return _match_failure(
+			"unsupported_party_type",
+			f"Party-Typ '{bt.party_type}' nicht unterstützt",
+		)
 	try:
 		shape = _bank_transaction_shape(bt)
 	except frappe.ValidationError as exc:
-		return {
-			"ok": False,
-			"reason": "invalid_bank_transaction_amount",
-			"message": str(exc),
-		}
-
+		return _match_failure("invalid_bank_transaction_amount", str(exc))
 	try:
 		company, _bank_account_doc = _resolve_company_and_bank_account(bt)
 		company_currency = _get_company_currency(company)
 	except frappe.ValidationError as exc:
-		return {
-			"ok": False,
-			"reason": "foreign_currency_or_company_context",
-			"message": str(exc),
-		}
+		return _match_failure("foreign_currency_or_company_context", str(exc))
 
-	if bt.party_type == "Customer":
-		if shape.direction != "in":
-			return {
-				"ok": False,
-				"reason": "wrong_direction_for_customer",
-				"message": "Customer aber kein Eingang — übersprungen",
-			}
-		target_amount = shape.amount
-		invoice_doctype = "Sales Invoice"
-		party_field = "customer"
-	else:  # Supplier
-		if shape.direction != "out":
-			return {
-				"ok": False,
-				"reason": "wrong_direction_for_supplier",
-				"message": "Supplier aber kein Ausgang — übersprungen",
-			}
-		target_amount = shape.amount
-		invoice_doctype = "Purchase Invoice"
-		party_field = "supplier"
+	is_customer = bt.party_type == "Customer"
+	expected_direction = "in" if is_customer else "out"
+	if shape.direction != expected_direction:
+		return _match_failure(
+			"wrong_direction_for_customer" if is_customer else "wrong_direction_for_supplier",
+			("Customer aber kein Eingang" if is_customer else "Supplier aber kein Ausgang")
+			+ " — übersprungen",
+		)
+	return {
+		"ok": True,
+		"company": company,
+		"company_currency": company_currency,
+		"target_amount": shape.amount,
+		"invoice_doctype": "Sales Invoice" if is_customer else "Purchase Invoice",
+		"party_field": "customer" if is_customer else "supplier",
+		"party_account_field": "debit_to" if is_customer else "credit_to",
+	}
 
-	# Resolve and (for the posting path) lock the authoritative property before
-	# invoice rows. This keeps one lock order across automatic and manual
-	# supplier matching: bank account -> property -> invoices -> invoice items.
-	expected_cc = None
-	if bt.party_type == "Supplier":
-		try:
-			expected_cc = _resolve_expected_cost_center_for_bt(
-				bt,
-				require_property=True,
-				for_update=lock_invoices,
-			)
-		except frappe.ValidationError as exc:
-			return {
-				"ok": False,
-				"reason": "ambiguous_property_context",
-				"message": (
-					f"Bankkonto lässt sich keiner eindeutigen Immobilie mit "
-					f"Kostenstelle zuordnen: {exc}"
-				),
-			}
 
-	party_account_field = "debit_to" if invoice_doctype == "Sales Invoice" else "credit_to"
+def _open_invoice_fields(invoice_doctype: str, party_account_field: str) -> list[str]:
 	fields = [
 		"name",
 		"outstanding_amount",
@@ -390,40 +343,26 @@ def prepare_invoice_match(bt, *, lock_invoices: bool = False) -> dict[str, Any]:
 		party_account_field,
 	]
 	meta = frappe.get_meta(invoice_doctype)
-	for optional_field in ("wohnung", "mietabrechnung_id"):
-		if meta.has_field(optional_field):
-			fields.append(optional_field)
+	fields.extend(
+		fieldname
+		for fieldname in ("wohnung", "mietabrechnung_id")
+		if meta.has_field(fieldname)
+	)
+	return fields
 
-	if lock_invoices:
-		optional_selects = [
-			f"`{fieldname}`"
-			for fieldname in ("wohnung", "mietabrechnung_id")
-			if fieldname in fields
-		]
-		candidates = frappe.db.sql(
-			f"""
-			SELECT
-				name,
-				outstanding_amount,
-				posting_date,
-				company,
-				currency,
-				conversion_rate,
-				`{party_account_field}`,
-				{", ".join(optional_selects) if optional_selects else "NULL AS invoice_identity"}
-			FROM `tab{invoice_doctype}`
-			WHERE `{party_field}` = %(party)s
-			  AND company = %(company)s
-			  AND docstatus = 1
-			  AND outstanding_amount > 0.001
-			ORDER BY posting_date ASC, name ASC
-			FOR UPDATE
-			""",
-			{"party": bt.party, "company": company},
-			as_dict=True,
-		)
-	else:
-		candidates = frappe.get_all(
+
+def _load_open_invoice_candidates(
+	bt,
+	*,
+	company: str,
+	invoice_doctype: str,
+	party_field: str,
+	party_account_field: str,
+	lock_invoices: bool,
+) -> list[Any]:
+	fields = _open_invoice_fields(invoice_doctype, party_account_field)
+	if not lock_invoices:
+		return frappe.get_all(
 			invoice_doctype,
 			filters={
 				party_field: bt.party,
@@ -434,18 +373,39 @@ def prepare_invoice_match(bt, *, lock_invoices: bool = False) -> dict[str, Any]:
 			fields=fields,
 			order_by="posting_date asc, name asc",
 		)
+	optional_selects = [
+		f"`{fieldname}`"
+		for fieldname in ("wohnung", "mietabrechnung_id")
+		if fieldname in fields
+	]
+	return frappe.db.sql(
+		f"""
+		SELECT name, outstanding_amount, posting_date, company, currency,
+			conversion_rate, `{party_account_field}`,
+			{", ".join(optional_selects) if optional_selects else "NULL AS invoice_identity"}
+		FROM `tab{invoice_doctype}`
+		WHERE `{party_field}` = %(party)s
+		  AND company = %(company)s
+		  AND docstatus = 1
+		  AND outstanding_amount > 0.001
+		ORDER BY posting_date ASC, name ASC
+		FOR UPDATE
+		""",
+		{"party": bt.party, "company": company},
+		as_dict=True,
+	)
 
-	if not candidates:
-		return {
-			"ok": False,
-			"reason": "no_open_invoices",
-			"message": f"Keine offenen {invoice_doctype}s für {bt.party}",
-		}
 
-	safe_currency_candidates = []
+def _company_currency_candidates(
+	candidates: list[Any],
+	*,
+	company: str,
+	company_currency: str,
+	party_account_field: str,
+) -> list[Any]:
+	safe = []
 	for invoice in candidates:
-		invoice_currency = str(invoice.get("currency") or "").strip()
-		if invoice_currency != company_currency:
+		if str(invoice.get("currency") or "").strip() != company_currency:
 			continue
 		if not _amounts_equal(invoice.get("conversion_rate") or 1, 1):
 			continue
@@ -458,66 +418,124 @@ def prepare_invoice_match(bt, *, lock_invoices: bool = False) -> dict[str, Any]:
 			)
 		except frappe.ValidationError:
 			continue
-		safe_currency_candidates.append(invoice)
-	if not safe_currency_candidates:
-		return {
-			"ok": False,
-			"reason": "foreign_currency_invoice",
-			"message": (
-				f"{len(candidates)} offene Rechnung(en) gefunden, aber keine ist "
-				f"vollständig in Company-Währung {company_currency}. "
-				"Fremdwährungen müssen manuell mit Kurs gebucht werden."
-			),
-		}
-	candidates = safe_currency_candidates
+		safe.append(invoice)
+	return safe
 
-	if bt.party_type == "Customer":
-		for invoice in candidates:
-			identity = _customer_invoice_identity(
-				invoice,
-				bt.party,
+
+def _validate_customer_match_identities(
+	candidates: list[Any],
+	*,
+	customer: str,
+	lock_invoices: bool,
+) -> dict[str, Any] | None:
+	for invoice in candidates:
+		identity = _customer_invoice_identity(
+			invoice,
+			customer,
+			for_update=lock_invoices,
+		)
+		if identity is None:
+			return _match_failure(
+				"ambiguous_customer_contract_identity",
+				f"Rechnung {invoice.get('name')} lässt sich nicht eindeutig einem "
+				"Mietvertrag und einer Wohnung dieses Kunden zuordnen. Automatische "
+				"Zuordnung gesperrt; bitte manuell prüfen.",
+			)
+		invoice["_hv_customer_identity"] = identity
+	return None
+
+
+def _filter_candidates_by_cost_center(
+	candidates: list[Any],
+	*,
+	invoice_doctype: str,
+	expected_cost_center: str | None,
+) -> list[Any]:
+	if not expected_cost_center:
+		return candidates
+	return [
+		invoice
+		for invoice in candidates
+		if _get_cost_center_of_invoice(invoice["name"], invoice_doctype)
+		== expected_cost_center
+	]
+
+
+def prepare_invoice_match(bt, *, lock_invoices: bool = False) -> dict[str, Any]:
+	"""Prepare the shared, read-only candidate state for automatic matching."""
+	context = _resolve_invoice_match_context(bt)
+	if not context.get("ok"):
+		return context
+
+	expected_cc = None
+	if bt.party_type == "Supplier":
+		try:
+			expected_cc = _resolve_expected_cost_center_for_bt(
+				bt,
+				require_property=True,
 				for_update=lock_invoices,
 			)
-			if identity is None:
-				return {
-					"ok": False,
-					"reason": "ambiguous_customer_contract_identity",
-					"message": (
-						f"Rechnung {invoice.get('name')} lässt sich nicht eindeutig "
-						"einem Mietvertrag und einer Wohnung dieses Kunden zuordnen. "
-						"Automatische Zuordnung gesperrt; bitte manuell prüfen."
-					),
-				}
-			invoice["_hv_customer_identity"] = identity
+		except frappe.ValidationError as exc:
+			return _match_failure(
+				"ambiguous_property_context",
+				"Bankkonto lässt sich keiner eindeutigen Immobilie mit "
+				f"Kostenstelle zuordnen: {exc}",
+			)
 
-	# Bei Lieferanten-Auto-Match: Kostenstelle muss zur Bank-Transaction-Immobilie
-	# passen, sonst würde Bank von Immobilie A eine Rechnung für Immobilie B
-	# bezahlen. Bei Customers (Mieter) ist die IBAN-Zuordnung schon eindeutig
-	# genug — kein Filter dort.
-	if expected_cc:
-		filtered = []
-		for inv in candidates:
-			inv_cc = _get_cost_center_of_invoice(inv["name"], invoice_doctype)
-			if inv_cc and inv_cc == expected_cc:
-				filtered.append(inv)
-		if not filtered:
-			return {
-				"ok": False,
-				"reason": "no_matching_cost_center",
-				"message": (
-					f"{len(candidates)} offene Rechnung(en) für {bt.party}, "
-					f"aber keine mit Kostenstelle '{expected_cc}' — manuell prüfen."
-				),
-			}
-		candidates = filtered
+	candidates = _load_open_invoice_candidates(
+		bt,
+		company=context["company"],
+		invoice_doctype=context["invoice_doctype"],
+		party_field=context["party_field"],
+		party_account_field=context["party_account_field"],
+		lock_invoices=lock_invoices,
+	)
+	if not candidates:
+		return _match_failure(
+			"no_open_invoices",
+			f"Keine offenen {context['invoice_doctype']}s für {bt.party}",
+		)
 
+	safe_candidates = _company_currency_candidates(
+		candidates,
+		company=context["company"],
+		company_currency=context["company_currency"],
+		party_account_field=context["party_account_field"],
+	)
+	if not safe_candidates:
+		return _match_failure(
+			"foreign_currency_invoice",
+			f"{len(candidates)} offene Rechnung(en) gefunden, aber keine ist "
+			f"vollständig in Company-Währung {context['company_currency']}. "
+			"Fremdwährungen müssen manuell mit Kurs gebucht werden.",
+		)
+	if bt.party_type == "Customer":
+		identity_failure = _validate_customer_match_identities(
+			safe_candidates,
+			customer=bt.party,
+			lock_invoices=lock_invoices,
+		)
+		if identity_failure:
+			return identity_failure
+
+	filtered = _filter_candidates_by_cost_center(
+		safe_candidates,
+		invoice_doctype=context["invoice_doctype"],
+		expected_cost_center=expected_cc,
+	)
+	if expected_cc and not filtered:
+		return _match_failure(
+			"no_matching_cost_center",
+			f"{len(safe_candidates)} offene Rechnung(en) für {bt.party}, aber "
+			f"keine mit Kostenstelle '{expected_cc}' — manuell prüfen.",
+		)
 	return {
 		"ok": True,
-		"candidates": candidates,
-		"invoice_doctype": invoice_doctype,
-		"target_amount": target_amount,
-		"company": company,
-		"company_currency": company_currency,
+		"candidates": filtered,
+		"invoice_doctype": context["invoice_doctype"],
+		"target_amount": context["target_amount"],
+		"company": context["company"],
+		"company_currency": context["company_currency"],
 	}
 
 
