@@ -4,14 +4,62 @@ import unittest
 from unittest.mock import patch
 
 import frappe
-from frappe.utils import flt
+from frappe.utils import flt, now_datetime
 from frappe.utils.file_manager import save_file
 
 from hausverwaltung.hausverwaltung.doctype.bankauszug_import import bankauszug_import as bi
 from hausverwaltung.hausverwaltung.page.bankimport_v2 import bankimport_v2 as bv2
 
+_lock_bank_booking_scope = bi._lock_bank_booking_scope
+
 
 class TestBankauszugImport(unittest.TestCase):
+    def setUp(self):
+        self._scope_lock_patcher = patch.object(bi, "_lock_bank_booking_scope")
+        self.scope_lock = self._scope_lock_patcher.start()
+        self.addCleanup(self._scope_lock_patcher.stop)
+        self._bt_lock_patcher = patch.object(bi, "_lock_bank_transaction")
+        self.bt_lock = self._bt_lock_patcher.start()
+        self.addCleanup(self._bt_lock_patcher.stop)
+        self._permission_patcher = patch.object(bi.frappe, "has_permission", return_value=True)
+        self._permission_patcher.start()
+        self.addCleanup(self._permission_patcher.stop)
+
+    @staticmethod
+    def _party_match(party_type=None, party=None):
+        if not party_type or not party:
+            return {"matched": False, "reason": "test_no_match"}
+        return {
+            "matched": True,
+            "party_type": party_type,
+            "party": party,
+            "rule": "test",
+        }
+
+    def test_booking_scope_locks_only_source_and_explicit_counterpart(self):
+        with patch.object(
+            bi.frappe.db,
+            "sql",
+            side_effect=[
+                [("Bank A",)],
+                [("Bank A",), ("Bank B",)],
+                [("IMP-1", "Bank A")],
+                [("ROW-1",)],
+            ],
+        ) as sql:
+            _lock_bank_booking_scope(
+                "IMP-1",
+                row_name="ROW-1",
+                additional_bank_accounts=["Bank B"],
+            )
+
+        account_lock = sql.call_args_list[1]
+        self.assertIn("WHERE name IN", account_lock.args[0])
+        self.assertIn("ORDER BY name", account_lock.args[0])
+        self.assertIn("FOR UPDATE", account_lock.args[0])
+        self.assertEqual(account_lock.args[1], ("Bank A", "Bank B"))
+        self.assertNotIn("is_company_account = 1", account_lock.args[0])
+
     class _FakeRow:
         def __init__(
             self,
@@ -42,6 +90,7 @@ class TestBankauszugImport(unittest.TestCase):
             self.payment_document = None
             self.row_status = None
             self.auto_match_message = None
+            self.bank_transaction_created_here = 0
 
         def get(self, key, default=None):
             return getattr(self, key, default)
@@ -103,6 +152,61 @@ class TestBankauszugImport(unittest.TestCase):
         def __init__(self, fieldnames, is_submittable=0):
             self.fields = [type("F", (), {"fieldname": fieldname, "label": fieldname})() for fieldname in fieldnames]
             self.is_submittable = is_submittable
+
+    def test_parse_decimal_accepts_german_and_point_decimal_money(self):
+        cases = {
+            "1.234,56": 1234.56,
+            "1,234.56": 1234.56,
+            "1234,56": 1234.56,
+            "1234.56": 1234.56,
+            "-1234.56": -1234.56,
+            "1.234": 1234.0,
+            "EUR 12,30": 12.3,
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(bi._parse_decimal(raw), expected)
+
+    def test_parse_decimal_rejects_ambiguous_or_invalid_money(self):
+        for raw in ("1234.567", "1.23.45", "abc", "12,3456"):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                bi._parse_decimal(raw)
+
+    def test_zero_opening_and_closing_balance_are_preserved(self):
+        self.assertEqual(
+            bi._extract_csv_kontostand_opening(
+                ["Letzter Kontostand", "", "", "", "1.234,56", "EUR"]
+            ),
+            1234.56,
+        )
+        self.assertEqual(
+            bi._extract_csv_kontostand_opening(
+                ["Letzter Kontostand", "", "", "", "0,00", "EUR"]
+            ),
+            0.0,
+        )
+        self.assertEqual(
+            bi._extract_csv_kontostand_closing(
+                ["Kontostand", "05.05.2026", "", "", "0,00", "EUR"]
+            ),
+            (0.0, "2026-05-05"),
+        )
+
+    def test_parse_csv_blocks_before_reading_file_when_rows_are_processed(self):
+        row = self._FakeRow(name="ROW-PROCESSED")
+        row.bank_transaction = "BT-PROCESSED"
+        row.reference = "BT-PROCESSED"
+        row.row_status = "success"
+        doc = self._FakeDoc("IMP-PROCESSED", [row])
+        doc.csv_file = "/private/files/already-imported.csv"
+        doc.encoding = "auto"
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(bi, "_decode_file") as decode:
+            with self.assertRaisesRegex(frappe.ValidationError, "nicht neu eingelesen"):
+                bi.parse_csv(doc.name)
+
+        decode.assert_not_called()
 
     def test_get_party_by_iban_returns_single_unique_party(self):
         with patch.object(
@@ -267,7 +371,7 @@ class TestBankauszugImport(unittest.TestCase):
         bt = self._FakeBT("BT-1")
         meta = type("M", (), {"fields": [type("F", (), {"fieldname": "party_type"})(), type("F", (), {"fieldname": "party"})()]})()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Transaction":
@@ -278,7 +382,7 @@ class TestBankauszugImport(unittest.TestCase):
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
              patch.object(bi.frappe.db, "exists", return_value=True), \
-             patch.object(bi, "_get_party_by_iban", return_value=("Customer", "CUST-1")), \
+             patch.object(bi, "match_party_for_row", return_value=self._party_match("Customer", "CUST-1")), \
              patch.object(bi, "_recompute_doc_status"):
             res = bi.relink_parties_for_all_rows("IMP-A")
 
@@ -352,6 +456,21 @@ class TestBankauszugImport(unittest.TestCase):
 
         self.assertEqual(res, "BT-1")
 
+    def test_find_existing_bank_transaction_strict_mode_propagates_lookup_failure(self):
+        meta = self._FakeMeta(["date", "deposit", "withdrawal", "description"])
+
+        with patch.object(bi.frappe, "get_meta", return_value=meta), \
+             patch.object(bi.frappe.db, "sql", side_effect=RuntimeError("database unavailable")):
+            with self.assertRaisesRegex(frappe.ValidationError, "Duplikatprüfung"):
+                bi._find_existing_bank_transaction(
+                    bank_account="BANK-1",
+                    buchungstag="2026-04-10",
+                    betrag=625,
+                    richtung="Eingang",
+                    verwendungszweck="Miete April",
+                    strict=True,
+                )
+
     def test_relink_all_overwrites_existing_bt_party(self):
         row = self._FakeRow(name="ROW-B", iban="DE2")
         row.bank_transaction = "BT-2"
@@ -359,7 +478,7 @@ class TestBankauszugImport(unittest.TestCase):
         bt = self._FakeBT("BT-2", party_type="Supplier", party="SUP-OLD")
         meta = type("M", (), {"fields": [type("F", (), {"fieldname": "party_type"})(), type("F", (), {"fieldname": "party"})()]})()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Transaction":
@@ -370,7 +489,7 @@ class TestBankauszugImport(unittest.TestCase):
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
              patch.object(bi.frappe.db, "exists", return_value=True), \
-             patch.object(bi, "_get_party_by_iban", return_value=("Customer", "CUST-NEW")), \
+             patch.object(bi, "match_party_for_row", return_value=self._party_match("Customer", "CUST-NEW")), \
              patch.object(bi, "_recompute_doc_status"):
             res = bi.relink_parties_for_all_rows("IMP-B", overwrite=1)
 
@@ -388,7 +507,7 @@ class TestBankauszugImport(unittest.TestCase):
         with patch.object(bi.frappe, "get_doc", return_value=doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
-             patch.object(bi, "_get_party_by_iban", return_value=None), \
+             patch.object(bi, "match_party_for_row", return_value=self._party_match()), \
              patch.object(bi, "_recompute_doc_status"):
             res = bi.relink_parties_for_all_rows("IMP-C")
 
@@ -405,7 +524,7 @@ class TestBankauszugImport(unittest.TestCase):
         bt = self._FakeBT("BT-4")
         meta = type("M", (), {"fields": [type("F", (), {"fieldname": "party_type"})(), type("F", (), {"fieldname": "party"})()]})()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Transaction":
@@ -416,7 +535,7 @@ class TestBankauszugImport(unittest.TestCase):
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
              patch.object(bi.frappe.db, "exists", return_value=True), \
-             patch.object(bi, "_get_party_by_iban", return_value=None), \
+             patch.object(bi, "match_party_for_row", return_value=self._party_match("Supplier", "SUP-1")), \
              patch.object(bi, "_recompute_doc_status"):
             res = bi.relink_parties_for_all_rows("IMP-D")
 
@@ -436,7 +555,7 @@ class TestBankauszugImport(unittest.TestCase):
         bt2 = self._FakeBT("BT-5-2", party_type="Supplier", party="S1")
         meta = type("M", (), {"fields": [type("F", (), {"fieldname": "party_type"})(), type("F", (), {"fieldname": "party"})()]})()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Transaction" and name == "BT-5-1":
@@ -445,18 +564,18 @@ class TestBankauszugImport(unittest.TestCase):
                 return bt2
             raise AssertionError("unexpected doctype")
 
-        def _by_iban(iban):
-            if iban == "DE5":
-                return ("Customer", "C1")
-            if iban == "DE6":
-                return ("Customer", "C2")
-            return None
+        def _by_iban(row):
+            if row.iban == "DE5":
+                return self._party_match("Customer", "C1")
+            if row.iban == "DE6":
+                return self._party_match("Customer", "C2")
+            return self._party_match()
 
         with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
              patch.object(bi.frappe.db, "exists", return_value=True), \
-             patch.object(bi, "_get_party_by_iban", side_effect=_by_iban), \
+             patch.object(bi, "match_party_for_row", side_effect=_by_iban), \
              patch.object(bi, "_recompute_doc_status"):
             res = bi.relink_parties_for_all_rows("IMP-E")
 
@@ -476,7 +595,7 @@ class TestBankauszugImport(unittest.TestCase):
         bt2 = self._FakeBT("BT-OK")
         meta = type("M", (), {"fields": [type("F", (), {"fieldname": "party_type"})(), type("F", (), {"fieldname": "party"})()]})()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Transaction" and name == "BT-ERR":
@@ -490,7 +609,7 @@ class TestBankauszugImport(unittest.TestCase):
              patch.object(bi.frappe, "get_meta", return_value=meta), \
              patch.object(bi.frappe, "get_traceback", return_value="trace"), \
              patch.object(bi.frappe.db, "exists", return_value=True), \
-             patch.object(bi, "_get_party_by_iban", return_value=("Customer", "C-OK")), \
+             patch.object(bi, "match_party_for_row", return_value=self._party_match("Customer", "C-OK")), \
              patch.object(bi, "_recompute_doc_status"):
             res = bi.relink_parties_for_all_rows("IMP-F")
 
@@ -505,7 +624,7 @@ class TestBankauszugImport(unittest.TestCase):
         bt = self._FakeBT("BT-I")
         meta = type("M", (), {"fields": [type("F", (), {"fieldname": "party_type"})(), type("F", (), {"fieldname": "party"})()]})()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Transaction":
@@ -516,7 +635,7 @@ class TestBankauszugImport(unittest.TestCase):
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
              patch.object(bi.frappe.db, "exists", return_value=True), \
-             patch.object(bi, "_get_party_by_iban", return_value=("Supplier", "SUP-I")), \
+             patch.object(bi, "match_party_for_row", return_value=self._party_match("Supplier", "SUP-I")), \
              patch.object(bi, "_recompute_doc_status"):
             res = bi.relink_parties_for_all_rows("IMP-I")
 
@@ -532,7 +651,7 @@ class TestBankauszugImport(unittest.TestCase):
         with patch.object(bi.frappe, "get_doc", return_value=doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi, "_update_bt_party_from_row", return_value={"updated": True}), \
-             patch.object(bi, "_get_party_by_iban", return_value=None):
+             patch.object(bi, "match_party_for_row", return_value=self._party_match("Customer", "CUST-G")):
             res = bi.apply_party_to_row_and_relink("IMP-G", "ROW-G", "Customer", "CUST-G")
 
         self.assertEqual(row.party_type, "Customer")
@@ -725,7 +844,7 @@ class TestBankauszugImport(unittest.TestCase):
              patch.object(bi.frappe.db, "exists", return_value=True), \
              patch.object(bi, "reset_row_booking", return_value={"ok": True, "reset": False}), \
              patch.object(bi, "_set_bt_party", return_value={"updated": False}), \
-             patch.object(bi, "_get_party_by_iban", return_value=None), \
+             patch.object(bi, "match_party_for_row", return_value=self._party_match()), \
              patch.object(bi, "_auto_create_transaction_for_ready_row", return_value={"attempted": 0, "created": [], "errors": []}), \
              patch.object(bi, "_recompute_doc_status"), \
              patch.object(bi, "_refresh_and_persist_saldo"):
@@ -778,7 +897,7 @@ class TestBankauszugImport(unittest.TestCase):
         doc = self._FakeDoc("IMP-MISS", [row])
         bank_account = type("BankAccount", (), {"is_company_account": 1})()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Account":
@@ -804,7 +923,7 @@ class TestBankauszugImport(unittest.TestCase):
             ["date", "deposit", "withdrawal", "description", "party_type", "party", "status", "unallocated_amount"]
         )
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Account":
@@ -816,8 +935,12 @@ class TestBankauszugImport(unittest.TestCase):
              patch.object(bi.frappe, "new_doc", return_value=bt), \
              patch.object(bi.frappe.db, "get_single_value", return_value=None), \
              patch.object(bi, "_find_existing_bank_transaction", return_value=None), \
-             patch.object(bi, "_get_party_by_iban", return_value=None), \
-             patch("hausverwaltung.hausverwaltung.utils.payment_auto_match.auto_match_bank_transaction", return_value={"matched": False, "reason": "no_party", "message": "Keine Party"}), \
+             patch.object(bi, "match_party_for_row", return_value=self._party_match()), \
+             patch.object(
+                 bi,
+                 "apply_booking_rules_for_row",
+                 return_value={"matched": False, "auto_match_failed": []},
+             ), \
              patch.object(bi, "_refresh_saldo_fields"), \
              patch.object(bi, "_recompute_doc_status"):
             res = bi.create_bank_transactions("IMP-NEUTRAL", allow_missing_party=1)
@@ -825,6 +948,7 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertEqual(res["created"], ["BT-NEUTRAL"])
         self.assertEqual(res["created_without_party"], 1)
         self.assertEqual(row.bank_transaction, "BT-NEUTRAL")
+        self.assertEqual(row.bank_transaction_created_here, 1)
         self.assertEqual(row.row_status, "success")
         self.assertIsNone(getattr(bt, "party", None))
         self.assertEqual(bt.description, "Bankgebühr")
@@ -835,7 +959,7 @@ class TestBankauszugImport(unittest.TestCase):
         doc = self._FakeDoc("IMP-DUP", [row])
         bank_account = type("BankAccount", (), {"is_company_account": 1})()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Account":
@@ -857,6 +981,58 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertEqual(row.reference, "BT-EXISTING")
         self.assertEqual(row.row_status, "schon vorhanden")
 
+    def test_create_bank_transactions_fails_closed_when_duplicate_lookup_fails(self):
+        row = self._FakeRow(
+            name="ROW-LOOKUP-FAIL",
+            iban="DE17",
+            verwendungszweck="Miete Mai",
+        )
+        row.party_type = "Customer"
+        row.party = "CUST-1"
+        doc = self._FakeDoc("IMP-LOOKUP-FAIL", [row])
+        bank_account = type("BankAccount", (), {"is_company_account": 1})()
+        meta = self._FakeMeta(["date", "deposit", "withdrawal", "description"])
+
+        def _get_doc(doctype, name=None, **_kwargs):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Account":
+                return bank_account
+            raise AssertionError("unexpected doctype")
+
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe, "get_meta", return_value=meta), \
+             patch.object(bi.frappe.db, "get_single_value", return_value=None), \
+             patch.object(bi.frappe.db, "savepoint"), \
+             patch.object(bi.frappe.db, "rollback") as rollback, \
+             patch.object(bi, "_build_missing_party_warning_payload", return_value=None), \
+             patch.object(
+                 bi,
+                 "_find_existing_bank_transaction",
+                 side_effect=frappe.ValidationError("lookup unavailable"),
+             ) as lookup, \
+             patch.object(bi.frappe, "new_doc") as new_doc, \
+             patch.object(bi.frappe, "log_error"), \
+             patch.object(bi, "_refresh_saldo_fields"), \
+             patch.object(bi, "_recompute_doc_status"):
+            result = bi.create_bank_transactions("IMP-LOOKUP-FAIL")
+
+        lookup.assert_called_once_with(
+            bank_account="BANK-1",
+            buchungstag=row.buchungstag,
+            betrag=row.betrag,
+            richtung=row.richtung,
+            iban=row.iban,
+            verwendungszweck=row.verwendungszweck,
+            strict=True,
+        )
+        new_doc.assert_not_called()
+        rollback.assert_called_once_with(save_point="bankimport_create_transaction_row")
+        self.assertEqual(result["created"], [])
+        self.assertEqual(result["errors"], [{"row": row.name, "error": "lookup unavailable"}])
+        self.assertEqual(row.row_status, "failed")
+        self.assertIsNone(row.bank_transaction)
+
     def test_create_bank_transactions_skips_rows_before_configured_start_date(self):
         row = self._FakeRow(name="ROW-OLD", iban="DE17")
         row.party_type = "Customer"
@@ -865,7 +1041,7 @@ class TestBankauszugImport(unittest.TestCase):
         doc = self._FakeDoc("IMP-OLD", [row])
         bank_account = type("BankAccount", (), {"is_company_account": 1})()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Account":
@@ -895,7 +1071,7 @@ class TestBankauszugImport(unittest.TestCase):
         bt = self._FakeBT("BT-GOOD")
         meta = self._FakeMeta(["date", "deposit", "withdrawal", "description", "party_type", "party"])
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Account":
@@ -908,7 +1084,11 @@ class TestBankauszugImport(unittest.TestCase):
              patch.object(bi.frappe.db, "get_single_value", return_value=None), \
              patch.object(bi, "_build_missing_party_warning_payload", return_value=None), \
              patch.object(bi, "_find_existing_bank_transaction", return_value=None), \
-             patch("hausverwaltung.hausverwaltung.utils.payment_auto_match.auto_match_bank_transaction", return_value={"matched": False, "reason": "no_open_invoices", "message": "Keine Rechnung"}), \
+             patch.object(
+                 bi,
+                 "apply_booking_rules_for_row",
+                 return_value={"matched": False, "auto_match_failed": []},
+             ), \
              patch.object(bi, "_refresh_saldo_fields"), \
              patch.object(bi, "_recompute_doc_status"):
             res = bi.create_bank_transactions("IMP-MIX")
@@ -926,7 +1106,7 @@ class TestBankauszugImport(unittest.TestCase):
         with patch.object(bi.frappe, "get_doc", return_value=doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi, "_update_bt_party_from_row", return_value={"updated": True}), \
-             patch.object(bi, "_get_party_by_iban", return_value=None):
+             patch.object(bi, "match_party_for_row", return_value=self._party_match("Eigentuemer", "EIG-1")):
             res = bi.apply_party_to_row_and_relink("IMP-GE", "ROW-GE", "Eigentuemer", "EIG-1")
 
         self.assertEqual(row.party_type, "Eigentuemer")
@@ -945,7 +1125,7 @@ class TestBankauszugImport(unittest.TestCase):
         with patch.object(bi.frappe, "get_doc", return_value=doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi, "_update_bt_party_from_row", return_value={"updated": False, "reason": "unchanged"}), \
-             patch.object(bi, "_get_party_by_iban", return_value=("Supplier", "SUP-H")):
+             patch.object(bi, "match_party_for_row", return_value=self._party_match("Supplier", "SUP-H")):
             res = bi.apply_party_to_row_and_relink("IMP-H", "ROW-H", "Customer", "CUST-H")
 
         self.assertEqual(row.party_type, "Supplier")
@@ -979,7 +1159,7 @@ class TestBankauszugImport(unittest.TestCase):
         bt = self._FakeBT("BT-CHANGE-2", party_type="Customer", party="CUST-OLD")
         meta = type("M", (), {"fields": [type("F", (), {"fieldname": "party_type"})(), type("F", (), {"fieldname": "party"})()]})()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Transaction":
@@ -1009,7 +1189,7 @@ class TestBankauszugImport(unittest.TestCase):
         bt = self._FakeBT("BT-CLEAR", party_type="Customer", party="CUST-CLEAR")
         meta = type("M", (), {"fields": [type("F", (), {"fieldname": "party_type"})(), type("F", (), {"fieldname": "party"})()]})()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Transaction":
@@ -1041,6 +1221,7 @@ class TestBankauszugImport(unittest.TestCase):
 
         class _Voucher:
             name = "PE-RESET"
+            docstatus = 1
             flags = frappe._dict()
 
             def cancel(self):
@@ -1048,7 +1229,7 @@ class TestBankauszugImport(unittest.TestCase):
 
         voucher = _Voucher()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Payment Entry":
@@ -1058,6 +1239,7 @@ class TestBankauszugImport(unittest.TestCase):
         with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe.db, "get_value", return_value=1), \
+             patch.object(bi, "_other_import_row_references_voucher", return_value=False), \
              patch("hausverwaltung.hausverwaltung.utils.bank_transaction_links.remove_bank_transaction_payment_links", return_value=["BT-1"]) as remove_links, \
              patch.object(bi, "_recompute_doc_status"), \
              patch.object(bi, "_refresh_and_persist_saldo"):
@@ -1072,6 +1254,33 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertIsNone(row.row_status)
         self.assertIn("PE-RESET", row.auto_match_message)
 
+    def test_reset_row_booking_blocks_shared_voucher_without_cancelling_or_delinking(self):
+        row = self._FakeRow(name="ROW-SHARED-PE", iban="DE-SHARED")
+        row.payment_entry = "PE-SHARED"
+        row.payment_document_type = "Payment Entry"
+        row.payment_document = "PE-SHARED"
+        row.row_status = "success"
+        doc = self._FakeDoc("IMP-SHARED-PE", [row])
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(
+                 bi,
+                 "_other_import_row_references_voucher",
+                 return_value=True,
+             ), \
+             patch.object(bi, "_cancel_voucher_for_row") as cancel, \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.bank_transaction_links.remove_bank_transaction_payment_links"
+             ) as remove_links:
+            with self.assertRaisesRegex(frappe.ValidationError, "anderen.*Import"):
+                bi.reset_row_booking("IMP-SHARED-PE", "ROW-SHARED-PE")
+
+        cancel.assert_not_called()
+        remove_links.assert_not_called()
+        self.assertEqual(row.payment_entry, "PE-SHARED")
+        self.assertEqual(row.row_status, "success")
+
     def test_reset_row_processing_clears_party_and_import_owned_bank_transaction(self):
         row = self._FakeRow(name="ROW-RESET-ALL", iban="DE-RESET")
         row.party_type = "Customer"
@@ -1082,10 +1291,12 @@ class TestBankauszugImport(unittest.TestCase):
         row.payment_document_type = "Payment Entry"
         row.payment_document = "PE-RESET"
         row.row_status = "success"
+        row.bank_transaction_created_here = 1
         doc = self._FakeDoc("IMP-RESET-ALL", [row])
 
         class _BT:
             name = "BT-RESET"
+            docstatus = 1
             flags = frappe._dict()
             cancelled = False
 
@@ -1094,7 +1305,7 @@ class TestBankauszugImport(unittest.TestCase):
 
         bt = _BT()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Transaction":
@@ -1105,6 +1316,7 @@ class TestBankauszugImport(unittest.TestCase):
              patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe.db, "get_value", return_value=1), \
+             patch.object(bi, "_other_import_row_references_bank_transaction", return_value=False), \
              patch.object(bi, "_recompute_doc_status"), \
              patch.object(bi, "_refresh_and_persist_saldo"):
             res = bi.reset_row_processing("IMP-RESET-ALL", "ROW-RESET-ALL")
@@ -1117,6 +1329,72 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertIsNone(row.reference)
         self.assertIsNone(row.row_status)
         self.assertEqual(row.auto_match_message, "Zeile vollständig zurückgesetzt.")
+
+    def test_reset_does_not_delete_bank_transaction_without_ownership_flag(self):
+        row = self._FakeRow(name="ROW-FOREIGN", iban="DE-FOREIGN")
+        row.bank_transaction = "BT-FOREIGN"
+        row.row_status = "success"
+        row.bank_transaction_created_here = 0
+
+        with patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(bi.frappe, "get_doc") as get_doc:
+            result = bi._reset_import_owned_bank_transaction(row)
+
+        self.assertFalse(result["reset"])
+        self.assertEqual(result["reason"], "not_import_owned")
+        get_doc.assert_not_called()
+
+    def test_reset_does_not_delete_owned_bt_referenced_by_another_row(self):
+        row = self._FakeRow(name="ROW-SHARED", iban="DE-SHARED")
+        row.bank_transaction = "BT-SHARED"
+        row.bank_transaction_created_here = 1
+
+        with patch.object(bi.frappe.db, "exists", return_value=True), \
+             patch.object(
+                 bi,
+                 "_other_import_row_references_bank_transaction",
+                 return_value=True,
+             ), patch.object(bi.frappe, "get_doc") as get_doc:
+            result = bi._reset_import_owned_bank_transaction(row)
+
+        self.assertFalse(result["reset"])
+        self.assertEqual(result["reason"], "referenced_by_other_import_row")
+        get_doc.assert_called_once_with(
+            "Bank Transaction",
+            "BT-SHARED",
+            for_update=True,
+        )
+
+    def test_reset_processing_blocks_owned_bt_with_active_payment_links(self):
+        row = self._FakeRow(name="ROW-ACTIVE-BT", iban="DE-ACTIVE")
+        row.bank_transaction = "BT-ACTIVE"
+        row.reference = "BT-ACTIVE"
+        row.bank_transaction_created_here = 1
+        doc = self._FakeDoc("IMP-ACTIVE-BT", [row])
+        bt = frappe._dict(
+            name="BT-ACTIVE",
+            payment_entries=[frappe._dict(payment_entry="PE-ACTIVE")],
+        )
+
+        def _get_doc(doctype, name=None, **_kwargs):
+            if doctype == "Bankauszug Import":
+                return doc
+            if doctype == "Bank Transaction":
+                return bt
+            raise AssertionError(f"unexpected doctype {doctype}")
+
+        with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
+             patch.object(bi.frappe.db, "get_value", return_value=1), \
+             patch.object(
+                 bi,
+                 "_other_import_row_references_bank_transaction",
+                 return_value=False,
+             ):
+            with self.assertRaisesRegex(frappe.ValidationError, "aktive Zahlungszuordnungen"):
+                bi.reset_row_processing("IMP-ACTIVE-BT", "ROW-ACTIVE-BT")
+
+        self.assertEqual(row.bank_transaction, "BT-ACTIVE")
+        self.assertEqual(row.bank_transaction_created_here, 1)
 
     def test_change_row_party_does_not_propagate_when_iban_not_unique(self):
         row = self._FakeRow(name="ROW-AMB-1", iban="DE-AMB")
@@ -1151,7 +1429,7 @@ class TestBankauszugImport(unittest.TestCase):
         bt = self._FakeBT("BT-PROP-2")
         meta = type("M", (), {"fields": [type("F", (), {"fieldname": "party_type"})(), type("F", (), {"fieldname": "party"})()]})()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Transaction":
@@ -1186,7 +1464,7 @@ class TestBankauszugImport(unittest.TestCase):
         class _BankAccount:
             is_company_account = 1
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Account":
@@ -1211,7 +1489,7 @@ class TestBankauszugImport(unittest.TestCase):
         class _BankAccount:
             is_company_account = 1
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Account":
@@ -1416,7 +1694,7 @@ class TestBankauszugImport(unittest.TestCase):
             },
         )()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Account":
@@ -1427,9 +1705,11 @@ class TestBankauszugImport(unittest.TestCase):
              patch.object(bi.frappe, "new_doc", return_value=bt), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
              patch.object(bi.frappe.db, "get_single_value", return_value=None), \
+             patch.object(bi.frappe.db, "savepoint") as savepoint, \
+             patch.object(bi.frappe.db, "rollback") as rollback, \
              patch.object(bi, "_build_missing_party_warning_payload", return_value=None), \
              patch.object(bi, "_find_existing_bank_transaction", return_value=None), \
-             patch.object(bi, "_get_party_by_iban", return_value=("Customer", "CUST-1")), \
+             patch.object(bi, "match_party_for_row", return_value=self._party_match("Customer", "CUST-1")), \
              patch.object(bi, "_refresh_saldo_fields"), \
              patch.object(bi, "_recompute_doc_status"), \
              patch.object(bi.frappe, "log_error"), \
@@ -1445,8 +1725,9 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertIsNone(row.reference)
         self.assertEqual(res["created"], [])
         self.assertEqual(res["errors"][0]["row"], "ROW-SUBMIT-FAIL")
-        self.assertTrue(bt.deleted)
-        self.assertTrue(bt.delete_ignore_permissions)
+        self.assertFalse(getattr(bt, "deleted", False))
+        savepoint.assert_called_once_with("bankimport_create_transaction_row")
+        rollback.assert_called_once_with(save_point="bankimport_create_transaction_row")
         auto_match.assert_not_called()
 
     def test_create_bank_transactions_marks_submitted_transaction_success(self):
@@ -1496,33 +1777,36 @@ class TestBankauszugImport(unittest.TestCase):
             },
         )()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Account":
                 return _BankAccount()
             raise AssertionError(f"unexpected doctype {doctype}")
 
+        bt = _BankTransaction()
         with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
-             patch.object(bi.frappe, "new_doc", return_value=_BankTransaction()), \
+             patch.object(bi.frappe, "new_doc", return_value=bt), \
              patch.object(bi.frappe, "get_meta", return_value=meta), \
              patch.object(bi.frappe.db, "get_single_value", return_value=None), \
              patch.object(bi, "_build_missing_party_warning_payload", return_value=None), \
              patch.object(bi, "_find_existing_bank_transaction", return_value=None), \
-             patch.object(bi, "_get_party_by_iban", return_value=("Customer", "CUST-1")), \
+             patch.object(bi, "match_party_for_row", return_value=self._party_match("Customer", "CUST-1")), \
              patch.object(bi, "_refresh_saldo_fields"), \
              patch.object(bi, "_recompute_doc_status"), \
-             patch(
-                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.auto_match_bank_transaction",
-                 return_value={"matched": False, "message": "kein Match"},
-             ) as auto_match:
+             patch.object(
+                 bi,
+                 "apply_booking_rules_for_row",
+                 return_value={"matched": False, "auto_match_failed": []},
+             ) as apply_rules:
             res = bi.create_bank_transactions("IMP-SUBMIT-OK")
 
         self.assertEqual(row.row_status, "success")
         self.assertEqual(row.bank_transaction, "BT-SUBMIT-OK")
         self.assertEqual(row.reference, "BT-SUBMIT-OK")
         self.assertEqual(res["created"], ["BT-SUBMIT-OK"])
-        auto_match.assert_called_once_with("BT-SUBMIT-OK")
+        self.scope_lock.assert_called_with("IMP-SUBMIT-OK", row_name=None)
+        apply_rules.assert_called_once_with(doc, row, bt)
 
     def test_sync_cancelled_payment_entry_links_keeps_active_payment_entry(self):
         rows = [
@@ -1568,7 +1852,10 @@ class TestBankauszugImport(unittest.TestCase):
              patch.object(bi.frappe.db, "get_value", return_value=2), \
              patch.object(bi.frappe.db, "set_value") as set_value, \
              patch.object(bi, "_recompute_doc_status") as recompute, \
-             patch.object(bi, "_refresh_and_persist_saldo") as refresh:
+             patch.object(bi, "_refresh_and_persist_saldo") as refresh, \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.bank_transaction_links.remove_bank_transaction_payment_links",
+             ) as remove_links:
             res = bi.sync_cancelled_payment_entry_links(payment_entry_name="PE-CANCELLED")
 
         self.assertEqual(res["cleared"], 1)
@@ -1578,6 +1865,7 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertIsNone(updates["payment_document"])
         self.assertIsNone(updates["row_status"])
         self.assertIn("PE-CANCELLED", updates["auto_match_message"])
+        remove_links.assert_called_once_with("Payment Entry", "PE-CANCELLED")
         recompute.assert_called_once_with("IMP-CANCELLED")
         refresh.assert_called_once_with("IMP-CANCELLED")
 
@@ -1599,7 +1887,10 @@ class TestBankauszugImport(unittest.TestCase):
              patch.object(bi.frappe.db, "get_value", return_value=2), \
              patch.object(bi.frappe.db, "set_value") as set_value, \
              patch.object(bi, "_recompute_doc_status"), \
-             patch.object(bi, "_refresh_and_persist_saldo"):
+             patch.object(bi, "_refresh_and_persist_saldo"), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.bank_transaction_links.remove_bank_transaction_payment_links",
+             ) as remove_links:
             res = bi.sync_cancelled_payment_entry_links(import_name="IMP-DOC-LINK")
 
         self.assertEqual(res["cleared"], 1)
@@ -1607,6 +1898,7 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertIsNone(updates["payment_entry"])
         self.assertIsNone(updates["payment_document_type"])
         self.assertIsNone(updates["payment_document"])
+        remove_links.assert_called_once_with("Payment Entry", "PE-DOC-LINK")
 
     def test_sync_cancelled_payment_entry_links_ignores_journal_entry_rows(self):
         rows = [
@@ -1692,6 +1984,24 @@ class TestBankauszugImport(unittest.TestCase):
         updates = set_value.call_args[0][2]
         self.assertNotIn("row_status", updates)
 
+    def test_payment_entry_cancel_propagates_cleanup_failure(self):
+        with patch.object(
+            bi,
+            "sync_cancelled_payment_entry_links",
+            side_effect=RuntimeError("delink failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "delink failed"):
+                bi.on_payment_entry_cancel(frappe._dict(name="PE-FAIL"))
+
+    def test_journal_entry_cancel_propagates_cleanup_failure(self):
+        with patch.object(
+            bi,
+            "sync_cancelled_journal_entry_links",
+            side_effect=RuntimeError("delink failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "delink failed"):
+                bi.on_journal_entry_cancel(frappe._dict(name="JE-FAIL"))
+
     def test_get_abschlagsplan_candidates_filters_and_sorts_plan_rows(self):
         row = self._FakeRow(name="ROW-ABS", iban="DE16")
         row.richtung = "Ausgang"
@@ -1736,11 +2046,13 @@ class TestBankauszugImport(unittest.TestCase):
             },
         ]
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Transaction":
                 return bt
+            if doctype == "Zahlungsplan":
+                return frappe._dict(name=name)
             raise AssertionError("unexpected doctype")
 
         with patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
@@ -1750,6 +2062,10 @@ class TestBankauszugImport(unittest.TestCase):
              patch(
                  "hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan._get_abschlag_tolerance_days",
                  return_value=7,
+             ), \
+             patch(
+                 "hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan._active_allocation_amounts",
+                 return_value=({}, {}),
              ), \
              patch(
                  "hausverwaltung.hausverwaltung.utils.payment_auto_match._resolve_expected_cost_center_for_bt",
@@ -1813,7 +2129,7 @@ class TestBankauszugImport(unittest.TestCase):
             frappe._dict(name="PINV-NO-CC", outstanding_amount=120.0, posting_date="2026-05-07"),
         ]
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             raise AssertionError("unexpected doctype")
@@ -1873,6 +2189,68 @@ class TestBankauszugImport(unittest.TestCase):
         create_pe.assert_not_called()
         self.assertIn("Kostenstelle 'CC-2'", throw.call_args[0][0])
         self.assertIn("erwartet ist 'CC-1'", throw.call_args[0][0])
+
+    def test_reconcile_split_row_rejects_supplier_invoice_from_other_property(self):
+        import json as _json
+
+        row = self._FakeRow(name="ROW-SPLIT-CC", iban="DE17")
+        row.party_type = "Supplier"
+        row.party = "SUP-1"
+        row.richtung = "Ausgang"
+        row.betrag = 100.0
+        bt = frappe._dict(
+            name="BT-SPLIT-CC",
+            bank_account="BA-HAUS-A",
+        )
+        invoice = frappe._dict(
+            name="PINV-HAUS-B",
+            outstanding_amount=100.0,
+            posting_date="2026-05-05",
+        )
+        payload = _json.dumps([
+            {"name": "PINV-HAUS-B", "allocated_amount": 100.0},
+        ])
+
+        with patch.object(
+            bi,
+            "_row_with_unreconciled_bt",
+            return_value=(self._FakeDoc("IMP-SPLIT-CC", [row]), row, bt),
+        ), patch.object(
+            bi.frappe.db,
+            "get_value",
+            return_value=invoice,
+        ), patch(
+            "hausverwaltung.hausverwaltung.utils.payment_auto_match."
+            "_resolve_expected_cost_center_for_bt",
+            return_value="CC-HAUS-A",
+        ) as expected_cc, patch(
+            "hausverwaltung.hausverwaltung.utils.payment_auto_match."
+            "_get_cost_center_of_invoice",
+            return_value="CC-HAUS-B",
+        ) as invoice_cc, patch(
+            "hausverwaltung.hausverwaltung.utils.payment_auto_match."
+            "create_payment_entry_for_invoices",
+        ) as create_pe, self.assertRaisesRegex(
+            frappe.ValidationError,
+            "CC-HAUS-B.*CC-HAUS-A",
+        ):
+            bi.reconcile_split_row(
+                "IMP-SPLIT-CC",
+                "ROW-SPLIT-CC",
+                invoice_allocations=payload,
+            )
+
+        expected_cc.assert_called_once_with(
+            bt,
+            require_property=True,
+            for_update=True,
+        )
+        invoice_cc.assert_called_once_with(
+            "PINV-HAUS-B",
+            "Purchase Invoice",
+            for_update=True,
+        )
+        create_pe.assert_not_called()
 
     def test_manually_reconcile_row_rejects_explicit_allocations_above_bank_amount(self):
         import json as _json
@@ -1974,6 +2352,7 @@ class TestBankauszugImport(unittest.TestCase):
 
             def get(self, key, default=None):
                 return {
+                    "plan": [plan_row],
                     "modus": "Abschlagsplan",
                     "status": "Läuft",
                     "lieferant": "SUP-1",
@@ -1991,7 +2370,7 @@ class TestBankauszugImport(unittest.TestCase):
 
         plan_row_doc = _PlanRowDoc()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Zahlungsplan":
                 return _Plan()
             if doctype == "Zahlungsplan Zeile":
@@ -1999,7 +2378,7 @@ class TestBankauszugImport(unittest.TestCase):
             raise AssertionError("unexpected doctype")
 
         with patch.object(bi, "_row_with_unreconciled_bt", return_value=(doc, row, bt)), \
-             patch.object(bi.frappe.db, "get_value", return_value=plan_row), \
+             patch.object(bi.frappe.db, "get_value", return_value="ZP-1"), \
              patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
              patch(
                  "hausverwaltung.hausverwaltung.utils.payment_auto_match._resolve_expected_cost_center_for_bt",
@@ -2012,6 +2391,13 @@ class TestBankauszugImport(unittest.TestCase):
              patch(
                  "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_created_voucher_or_rollback",
              ) as reconcile, \
+             patch(
+                 "hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.record_payment_allocation",
+                 return_value={
+                     "allocated_amount": 120.0,
+                     "remaining_amount": 0.0,
+                 },
+             ) as record_allocation, \
              patch.object(bi, "_recompute_doc_status"), \
              patch.object(bi, "_refresh_and_persist_saldo"):
             res = bi.assign_abschlagsplan_row("IMP-ASSIGN", "ROW-ASSIGN", "PLAN-ROW-1")
@@ -2022,9 +2408,14 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertEqual(row.payment_document_type, "Payment Entry")
         self.assertEqual(row.payment_document, "PE-ASSIGN")
         self.assertEqual(row.row_status, "success")
-        self.assertEqual(plan_row_doc.payment_entry, "PE-ASSIGN")
-        self.assertEqual(plan_row_doc.bank_transaction, "BT-ASSIGN")
-        self.assertEqual(str(plan_row_doc.gebucht_am), "2026-05-05")
+        record_allocation.assert_called_once_with(
+            plan_name="ZP-1",
+            plan_row_name="PLAN-ROW-1",
+            payment_entry="PE-ASSIGN",
+            allocated_amount=120.0,
+            bank_transaction="BT-ASSIGN",
+            posting_date="2026-05-05",
+        )
         self.assertEqual(res["zahlungsplan"], "ZP-1")
 
     def test_assign_abschlagsplan_row_reconcile_failure_leaves_links_unset(self):
@@ -2063,6 +2454,7 @@ class TestBankauszugImport(unittest.TestCase):
 
             def get(self, key, default=None):
                 return {
+                    "plan": [plan_row],
                     "modus": "Abschlagsplan",
                     "status": "Läuft",
                     "lieferant": "SUP-1",
@@ -2076,7 +2468,7 @@ class TestBankauszugImport(unittest.TestCase):
 
         plan_row_doc = _PlanRowDoc()
 
-        def _get_doc(doctype, name=None):
+        def _get_doc(doctype, name=None, **_kwargs):
             if doctype == "Zahlungsplan":
                 return _Plan()
             if doctype == "Zahlungsplan Zeile":
@@ -2084,7 +2476,7 @@ class TestBankauszugImport(unittest.TestCase):
             raise AssertionError("unexpected doctype")
 
         with patch.object(bi, "_row_with_unreconciled_bt", return_value=(doc, row, bt)), \
-             patch.object(bi.frappe.db, "get_value", return_value=plan_row), \
+             patch.object(bi.frappe.db, "get_value", return_value="ZP-1"), \
              patch.object(bi.frappe, "get_doc", side_effect=_get_doc), \
              patch(
                  "hausverwaltung.hausverwaltung.utils.payment_auto_match._resolve_expected_cost_center_for_bt",
@@ -2149,6 +2541,67 @@ class TestBankauszugImport(unittest.TestCase):
         recompute.assert_not_called()
         refresh.assert_not_called()
 
+    def test_supplier_refund_does_not_link_payment_to_abschlagsplan(self):
+        row = self._FakeRow(name="ROW-SUPPLIER-REFUND", iban="DE19")
+        row.richtung = "Eingang"
+        row.party_type = "Supplier"
+        row.party = "SUP-1"
+        row.betrag = 80.0
+        bt = type("BT", (), {"name": "BT-SUPPLIER-REFUND"})()
+        pe = type("PE", (), {"name": "PE-SUPPLIER-REFUND"})()
+
+        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(object(), row, bt)), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.create_standalone_payment_entry",
+                 return_value=pe,
+             ), \
+             patch(
+                 "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_created_voucher_or_rollback",
+             ), \
+             patch(
+                 "hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan."
+                 "link_payment_entry_to_abschlagsplan_row",
+             ) as link_abschlag, \
+             patch.object(bi, "_recompute_doc_status"), \
+             patch.object(bi, "_refresh_and_persist_saldo"):
+            result = bi.create_standalone_payment_for_row(
+                "IMP-SUPPLIER-REFUND",
+                "ROW-SUPPLIER-REFUND",
+            )
+
+        self.assertEqual(result["payment_entry"], "PE-SUPPLIER-REFUND")
+        self.assertEqual(row.payment_entry, "PE-SUPPLIER-REFUND")
+        link_abschlag.assert_not_called()
+
+    def test_assign_kreditrate_rejects_incoming_bank_row(self):
+        row = self._FakeRow(name="ROW-CREDIT-IN", iban="DE20")
+        row.richtung = "Eingang"
+        bt = type(
+            "BT",
+            (),
+            {
+                "name": "BT-CREDIT-IN",
+                "bank_account": "BA-1",
+                "date": "2026-05-05",
+            },
+        )()
+
+        with patch.object(bi, "_row_with_unreconciled_bt", return_value=(object(), row, bt)), \
+             patch.object(bi.frappe, "throw", side_effect=Exception) as throw, \
+             patch(
+                 "hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag.assign_kreditrate",
+             ) as assign_rate:
+            with self.assertRaises(Exception):
+                bi.assign_kreditrate_to_bank_row(
+                    "IMP-CREDIT-IN",
+                    "ROW-CREDIT-IN",
+                    "CREDIT-1",
+                    "RATE-1",
+                )
+
+        assign_rate.assert_not_called()
+        self.assertIn("nur für Ausgänge", throw.call_args[0][0])
+
     def test_create_internal_transfer_for_row_sets_payment_entry_and_success_status(self):
         row = self._FakeRow(name="ROW-TRANSFER", iban="")
         row.bank_transaction = "BT-TRANSFER"
@@ -2196,6 +2649,7 @@ class TestBankauszugImport(unittest.TestCase):
             "ROW-TRANSFER",
             create_missing_bank_transaction=True,
             allow_missing_party=1,
+            additional_bank_accounts=["Kautionskonto - HP"],
         )
         create_pe.assert_called_once_with(
             bt=bt,
@@ -2287,7 +2741,13 @@ class TestBankauszugImport(unittest.TestCase):
             )
 
         create_pe.assert_not_called()
-        reconcile.assert_called_once_with(bt, "Payment Entry", "PE-EXISTING", 250.0)
+        reconcile.assert_called_once_with(
+            bt,
+            "Payment Entry",
+            "PE-EXISTING",
+            250.0,
+            voucher_created_here=False,
+        )
         self.assertTrue(res["reused"])
         self.assertEqual(res["payment_entry"], "PE-EXISTING")
         self.assertEqual(row.payment_entry, "PE-EXISTING")
@@ -2297,6 +2757,78 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertIn("bestehender Payment Entry", row.auto_match_message)
         recompute.assert_called_once_with("IMP-TRANSFER-2")
         refresh.assert_called_once_with("IMP-TRANSFER-2")
+
+    def test_internal_transfer_counterpart_ambiguity_is_blocked(self):
+        row = self._FakeRow(name="ROW-TRANSFER-AMB", iban="")
+        row.betrag = 250.0
+        row.richtung = "Ausgang"
+        bt = frappe._dict(name="BT-TRANSFER-AMB")
+        candidates = [
+            frappe._dict(name="ROW-CANDIDATE-1"),
+            frappe._dict(name="ROW-CANDIDATE-2"),
+        ]
+
+        with patch.object(bi.frappe.db, "sql", return_value=candidates), \
+             self.assertRaisesRegex(frappe.ValidationError, "mehrdeutig"):
+            bi._find_internal_transfer_import_counterpart(
+                row=row,
+                bt=bt,
+                other_bank_account="BA-OTHER",
+                require_payment_entry=False,
+            )
+
+    def test_link_internal_transfer_treats_payment_entry_as_reused(self):
+        source_row = self._FakeRow(name="ROW-SOURCE", iban="")
+        source_row.betrag = 250.0
+        source_bt = frappe._dict(name="BT-SOURCE")
+        candidate = frappe._dict(
+            name="ROW-PEER",
+            parent="IMP-PEER",
+            bank_transaction="BT-PEER",
+        )
+        peer_bt = frappe._dict(name="BT-PEER", payment_entries=[])
+        peer_row = self._FakeRow(name="ROW-PEER", iban="")
+
+        def _get_doc(doctype, name, **_kwargs):
+            if doctype == "Bank Transaction":
+                return peer_bt
+            if doctype == "Bankauszug Import Row":
+                return peer_row
+            raise AssertionError(f"unexpected doctype {doctype}")
+
+        with patch.object(
+            bi,
+            "_find_internal_transfer_import_counterpart",
+            return_value=candidate,
+        ), patch.object(
+            bi.frappe,
+            "get_doc",
+            side_effect=_get_doc,
+        ), patch(
+            "hausverwaltung.hausverwaltung.utils.payment_auto_match."
+            "reconcile_created_voucher_or_rollback",
+        ) as reconcile, patch.object(
+            bi,
+            "_recompute_doc_status",
+        ), patch.object(
+            bi,
+            "_refresh_and_persist_saldo",
+        ):
+            bi._link_internal_transfer_counterpart_row(
+                source_row=source_row,
+                source_bt=source_bt,
+                other_bank_account="BA-OTHER",
+                payment_entry="PE-SHARED",
+            )
+
+        reconcile.assert_called_once_with(
+            peer_bt,
+            "Payment Entry",
+            "PE-SHARED",
+            250.0,
+            savepoint_name="bankimport_internal_transfer_counterpart",
+            voucher_created_here=False,
+        )
 
     def test_create_journal_entry_for_row_sets_journal_entry_and_success_status(self):
         row = self._FakeRow(name="ROW-JE", iban="DE16")
@@ -2353,7 +2885,7 @@ class TestBankauszugImport(unittest.TestCase):
         doc = self._FakeDoc("IMP-NO-BT", [row])
         bt = type("BT", (), {"name": "BT-CREATED", "get": lambda self, key, default=None: [] if key == "payment_entries" else default})()
 
-        def get_doc(doctype, name):
+        def get_doc(doctype, name, **_kwargs):
             if doctype == "Bankauszug Import":
                 return doc
             if doctype == "Bank Transaction" and name == "BT-CREATED":
@@ -2377,6 +2909,8 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertIs(result_doc, doc)
         self.assertIs(result_row, row)
         self.assertIs(result_bt, bt)
+        self.scope_lock.assert_called_with("IMP-NO-BT", row_name="ROW-NO-BT")
+        self.bt_lock.assert_called_once_with("BT-CREATED")
         create_bank_transactions.assert_called_once_with(
             docname="IMP-NO-BT",
             row_name="ROW-NO-BT",
@@ -2591,7 +3125,11 @@ class TestBankauszugImport(unittest.TestCase):
         row.party_type = "Eigentuemer"
         row.party = "EIG-1"
 
-        with patch.object(bi, "_get_party_by_iban", return_value=None):
+        with patch.object(
+            bi,
+            "match_party_for_row",
+            return_value=self._party_match("Eigentuemer", "EIG-1"),
+        ):
             res = bi._resolve_row_party(row)
 
         self.assertEqual(res, ("Eigentuemer", "EIG-1"))
@@ -2610,7 +3148,37 @@ class TestBankauszugImport(unittest.TestCase):
 
 
 class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
+    _CLEANUP_PRIORITY = {
+        # Reconciliations have to disappear before their bank transactions.
+        "Payment Entry": 10,
+        "Journal Entry": 10,
+        # Import rows link to the Bank Transactions created from them and can
+        # otherwise prevent cancellation of the submitted transaction.
+        "Bankauszug Import": 20,
+        "Bank Transaction": 30,
+        # Remaining accounting documents must be gone before their masters.
+        "Sales Invoice": 40,
+        "Mietvertrag": 50,
+        "Bank Account": 60,
+        "Wohnung": 70,
+        "Customer": 70,
+        "File": 80,
+        "Item": 90,
+        "Account": 100,
+        "Bank": 110,
+        "Fiscal Year": 120,
+        "UOM": 130,
+    }
+    _CLEANUP_PASSES = 4
+    _LEDGER_DOCTYPES = ("GL Entry", "Payment Ledger Entry")
+    _LEDGER_VOUCHER_DOCTYPES = {
+        "Journal Entry",
+        "Payment Entry",
+        "Sales Invoice",
+    }
+
     def setUp(self):
+        self._test_started_at = now_datetime()
         self.created_docs = []
         self.suffix = frappe.generate_hash(length=8)
         company_rows = frappe.get_all("Company", pluck="name", limit=1)
@@ -2638,21 +3206,149 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         self._ensure_rent_items_for_test()
 
     def tearDown(self):
-        for doctype, name in reversed(self.created_docs):
-            if not frappe.db.exists(doctype, name):
+        # Keep cleanup strictly scoped to exact documents created by this test.
+        # dict.fromkeys also avoids retrying the same BT when duplicate import
+        # rows intentionally resolve to one transaction.
+        tracked = list(dict.fromkeys(self.created_docs))
+        original_position = {
+            key: position for position, key in enumerate(tracked)
+        }
+        ordered = sorted(
+            tracked,
+            key=lambda key: (
+                self._CLEANUP_PRIORITY.get(key[0], 75),
+                -original_position[key],
+            ),
+        )
+        last_errors = {}
+        ledger_entries = self._collect_test_ledger_entries(tracked)
+        tracked_vouchers = [
+            key for key in tracked
+            if key[0] in self._LEDGER_VOUCHER_DOCTYPES
+        ]
+
+        # A later document can still expose an indirect dependency not covered
+        # by the explicit order. Repeat the exact same bounded set so such a
+        # dependency is removed on the next pass instead of leaking test data.
+        for _pass in range(self._CLEANUP_PASSES):
+            made_progress = False
+            if not any(
+                frappe.db.exists(doctype, name)
+                for doctype, name in tracked_vouchers
+            ):
+                # Cancellation can create reversing ledger rows, so refresh the
+                # exact voucher/time-window set after all vouchers are gone.
+                current_ledger_entries = self._collect_test_ledger_entries(
+                    tracked
+                )
+                for ledger_doctype, names in current_ledger_entries.items():
+                    ledger_entries[ledger_doctype].update(names)
+                for ledger_doctype, names in ledger_entries.items():
+                    existing = [
+                        name for name in names
+                        if frappe.db.exists(ledger_doctype, name)
+                    ]
+                    if not existing:
+                        continue
+                    try:
+                        frappe.db.delete(
+                            ledger_doctype,
+                            {"name": ["in", existing]},
+                        )
+                    except Exception as exc:
+                        for name in existing:
+                            last_errors[(ledger_doctype, name)] = (
+                                f"{type(exc).__name__}: {exc}"
+                            )
+                    else:
+                        made_progress = True
+                        for name in existing:
+                            last_errors.pop((ledger_doctype, name), None)
+
+            for doctype, name in ordered:
+                key = (doctype, name)
+                if not frappe.db.exists(doctype, name):
+                    last_errors.pop(key, None)
+                    continue
+
+                try:
+                    doc = frappe.get_doc(doctype, name)
+                    if getattr(doc, "docstatus", 0) == 1:
+                        doc.cancel()
+                    if frappe.db.exists(doctype, name):
+                        frappe.delete_doc(
+                            doctype,
+                            name,
+                            ignore_permissions=True,
+                            force=True,
+                            delete_permanently=True,
+                        )
+                except frappe.DoesNotExistError:
+                    # A delete hook may already have removed the tracked doc.
+                    pass
+                except Exception as exc:
+                    last_errors[key] = (
+                        f"{type(exc).__name__}: {exc}"
+                    )
+
+                if not frappe.db.exists(doctype, name):
+                    made_progress = True
+                    last_errors.pop(key, None)
+
+            remaining = [
+                key for key in ordered
+                if frappe.db.exists(key[0], key[1])
+            ]
+            remaining.extend(
+                (ledger_doctype, name)
+                for ledger_doctype, names in ledger_entries.items()
+                for name in names
+                if frappe.db.exists(ledger_doctype, name)
+            )
+            if not remaining:
+                return
+            if not made_progress:
+                break
+
+        remaining = [
+            key for key in ordered
+            if frappe.db.exists(key[0], key[1])
+        ]
+        remaining.extend(
+            (ledger_doctype, name)
+            for ledger_doctype, names in ledger_entries.items()
+            for name in names
+            if frappe.db.exists(ledger_doctype, name)
+        )
+        details = "; ".join(
+            f"{doctype} {name} ({last_errors.get((doctype, name), 'kein Fehler protokolliert')})"
+            for doctype, name in remaining
+        )
+        self.fail(
+            "Integrationstest-Cleanup hat selbst erzeugte Dokumente "
+            f"nicht entfernt: {details}"
+        )
+
+    def _collect_test_ledger_entries(self, tracked):
+        ledger_entries = {
+            doctype: set() for doctype in self._LEDGER_DOCTYPES
+        }
+        for voucher_type, voucher_no in tracked:
+            if voucher_type not in self._LEDGER_VOUCHER_DOCTYPES:
                 continue
-            try:
-                doc = frappe.get_doc(doctype, name)
-                if getattr(doc, "docstatus", 0) == 1:
-                    doc.cancel()
-            except Exception:
-                pass
-            try:
-                frappe.delete_doc(doctype, name, ignore_permissions=True, force=True)
-            except TypeError:
-                frappe.delete_doc(doctype, name, ignore_permissions=True)
-            except Exception:
-                pass
+            for ledger_doctype in self._LEDGER_DOCTYPES:
+                ledger_entries[ledger_doctype].update(
+                    frappe.get_all(
+                        ledger_doctype,
+                        filters={
+                            "voucher_type": voucher_type,
+                            "voucher_no": voucher_no,
+                            "creation": [">=", self._test_started_at],
+                        },
+                        pluck="name",
+                    )
+                )
+        return ledger_entries
 
     def _track(self, doc):
         self.created_docs.append((doc.doctype, doc.name))
@@ -2831,6 +3527,29 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
             "party": customer.name,
         }).insert(ignore_permissions=True)
         self._track(bank_account)
+
+        # Customer auto-matching is intentionally contract/flat-aware.  Give
+        # every synthetic tenant exactly one active contract so the invoice
+        # identity is authoritative instead of relying on the IBAN alone.
+        wohnung = frappe.get_doc({
+            "doctype": "Wohnung",
+            "name__lage_in_der_immobilie": f"HV Test {label} Wohnung {self.suffix}",
+            "gebaeudeteil": "VH",
+        }).insert(ignore_permissions=True)
+        self._track(wohnung)
+        mietvertrag = frappe.get_doc({
+            "doctype": "Mietvertrag",
+            "wohnung": wohnung.name,
+            "von": "2026-01-01",
+        }).insert(ignore_permissions=True)
+        self._track(mietvertrag)
+        frappe.db.set_value(
+            "Mietvertrag",
+            mietvertrag.name,
+            "kunde",
+            customer.name,
+            update_modified=False,
+        )
         return customer.name
 
     def _get_default_bank(self):
@@ -2879,7 +3598,11 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
                     "cost_center": self.cost_center,
                 }
             ],
-            "remarks": remarks or f"[TYPE:{item_code}] [MV:HV-TEST-{self.suffix}] 05/2026",
+            # This fixture deliberately exercises the legacy Customer/date
+            # resolver.  Never attach a made-up [MV:] marker: contract-marked
+            # invoices are now centrally required to reference a real,
+            # currently locked Mietvertrag.
+            "remarks": remarks or f"[TYPE:{item_code}] 05/2026",
         })
         invoice.insert(ignore_permissions=True)
         invoice.submit()

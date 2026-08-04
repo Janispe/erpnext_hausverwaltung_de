@@ -62,6 +62,26 @@
     return docs;
   }
 
+  async function fetchPaymentAccounts(company) {
+    if (!company) return [];
+    try {
+      return await frappe.db.get_list("Account", {
+        filters: {
+          company,
+          account_type: ["in", ["Bank", "Cash"]],
+          is_group: 0,
+          disabled: 0,
+        },
+        fields: ["name", "account_name", "account_type", "account_currency"],
+        order_by: "account_type asc, name asc",
+        limit_page_length: 500,
+      });
+    } catch (error) {
+      console.warn("Bank-/Kassenkonten konnten nicht geladen werden", error);
+      return [];
+    }
+  }
+
   function defaultDateFilter() {
     const d = new Date();
     const Y = d.getFullYear();
@@ -94,6 +114,7 @@
       parties: {},
       partyName: (id) => id,
       ccLabel: {},
+      paymentAccounts: [],
       TODAY: frappe.datetime?.get_today?.() || new Date().toISOString().slice(0, 10),
     };
   }
@@ -196,6 +217,7 @@
       window.OFFENE_POSTEN.parties = partyMap;
       window.OFFENE_POSTEN.partyName = (id) => partyMap[id] || id;
       window.OFFENE_POSTEN.ccLabel = ccLabel;
+      window.OFFENE_POSTEN.paymentAccounts = await fetchPaymentAccounts(merged.company);
       if (today || mahnData?.today) window.OFFENE_POSTEN.TODAY = today || mahnData.today;
       window.dispatchEvent(new CustomEvent("op-data-refreshed"));
       window.dispatchEvent(new CustomEvent("op-mahn-data-refreshed"));
@@ -212,6 +234,9 @@
     async loadInitial() {
       ensureRootMount();
       window.OFFENE_POSTEN = window.OFFENE_POSTEN || emptyState();
+      window.OFFENE_POSTEN.paymentAccounts = await fetchPaymentAccounts(
+        window.OFFENE_POSTEN.filters?.company || frappe.defaults.get_user_default("Company")
+      );
     },
     refresh,
     emptyState,

@@ -19,7 +19,7 @@ from typing import Optional
 import frappe
 from frappe.model.document import Document
 from frappe.model.naming import make_autoname
-from frappe.utils import add_months, cint, flt, getdate, now_datetime, nowdate
+from frappe.utils import add_months, cint, flt, getdate, nowdate
 
 
 STATUS_AKTIV = "Aktiv"
@@ -158,9 +158,9 @@ class Kreditvertrag(Document):
 
 		Zwei Stufen:
 		1. **In-Memory**: Im aktuellen, noch nicht persistierten Doc darf kein JE
-		   in zwei verschiedenen Plan-Zeilen referenziert sein (auch nicht über
-		   Tilg-Feld + Zins-Feld). Wird vor der SQL-Stufe geprüft, weil DB diese
-		   Konflikte noch nicht sieht.
+		in zwei verschiedenen Plan-Zeilen referenziert sein (auch nicht über
+		Tilg-Feld + Zins-Feld). Wird vor der SQL-Stufe geprüft, weil DB diese
+		Konflikte noch nicht sieht.
 		2. **DB**: kein JE darf in einer Kreditrate eines anderen Vertrags hängen.
 
 		Beide Stufen lösen ``frappe.throw`` aus.
@@ -193,7 +193,7 @@ class Kreditvertrag(Document):
 					SELECT name, parent
 					FROM `tabKreditrate`
 					WHERE (journal_entry = %(je)s OR journal_entry_zins = %(je)s)
-					  AND (parent != %(parent)s OR name != %(row_name)s)
+					AND (parent != %(parent)s OR name != %(row_name)s)
 					LIMIT 1
 					""",
 					{
@@ -247,10 +247,22 @@ class Kreditvertrag(Document):
 			row.gesamtbetrag = flt(row.zinsanteil) + flt(row.tilgungsanteil) + flt(row.sondertilgung)
 
 	def _compute_restschuld_nach(self):
-		restschuld = flt(self.anfangs_restschuld)
+		cent = Decimal("0.01")
+		restschuld = Decimal(str(flt(self.anfangs_restschuld))).quantize(cent)
+		if restschuld < 0:
+			frappe.throw("Anfangs-Restschuld darf nicht negativ sein.")
 		for row in self.get("plan") or []:
-			restschuld = restschuld - flt(row.tilgungsanteil) - flt(row.sondertilgung)
-			row.restschuld_nach = restschuld
+			tilgung = Decimal(str(flt(row.tilgungsanteil))).quantize(cent)
+			sondertilgung = Decimal(str(flt(row.sondertilgung))).quantize(cent)
+			next_restschuld = restschuld - tilgung - sondertilgung
+			if next_restschuld < 0:
+				frappe.throw(
+					f"Plan-Zeile {row.idx} übertilgt den Kredit um "
+					f"{abs(next_restschuld):.2f} EUR. Tilgung und Sondertilgung "
+					"dürfen die verbleibende Restschuld nicht überschreiten."
+				)
+			restschuld = next_restschuld
+			row.restschuld_nach = float(restschuld)
 
 	def _compute_plausibilitaet(self):
 		"""Plausibilitäts-Felder berechnen.
@@ -293,10 +305,10 @@ class Kreditvertrag(Document):
 				SELECT COALESCE(SUM(debit), 0) AS getilgt
 				FROM `tabGL Entry`
 				WHERE account = %(account)s
-				  AND company = %(company)s
-				  AND voucher_type = 'Journal Entry'
-				  AND voucher_no IN %(je_names)s
-				  AND is_cancelled = 0
+				AND company = %(company)s
+				AND voucher_type = 'Journal Entry'
+				AND voucher_no IN %(je_names)s
+				AND is_cancelled = 0
 				""",
 				{
 					"account": self.darlehenskonto,
@@ -317,8 +329,8 @@ class Kreditvertrag(Document):
 				SELECT COALESCE(SUM(credit), 0) - COALESCE(SUM(debit), 0) AS saldo
 				FROM `tabGL Entry`
 				WHERE account = %(account)s
-				  AND company = %(company)s
-				  AND is_cancelled = 0
+				AND company = %(company)s
+				AND is_cancelled = 0
 				""",
 				{"account": self.darlehenskonto, "company": self.company},
 				as_dict=True,
@@ -375,9 +387,9 @@ class Kreditvertrag(Document):
 		starten, driften die ``restschuld_nach``-Werte sofort auseinander.
 
 		Pro Monat:
-		  zins = restschuld * (zinssatz_p_a / 100 / 12)
-		  tilgung = min(annuitaet - zins, restschuld)
-		  restschuld -= tilgung
+		zins = restschuld * (zinssatz_p_a / 100 / 12)
+		tilgung = min(annuitaet - zins, restschuld)
+		restschuld -= tilgung
 		"""
 		self.check_permission("write")
 
@@ -652,9 +664,9 @@ def _create_journal_entry_for_rate(
 	"""Erzeugt einen submitted Journal Entry für eine Kreditrate.
 
 	Buchungssatz (im Beispiel: Auszahlung der Rate):
-	  Cr.  Bankkonto                                 gesamtbetrag
-	  Dr.  Zinsaufwandskonto                          zinsanteil       (entfällt wenn 0)
-	  Dr.  Darlehenskonto (Liability, party=Bank)     tilgung+sondertilgung  (entfällt wenn 0)
+	Cr.  Bankkonto                                 gesamtbetrag
+	Dr.  Zinsaufwandskonto                          zinsanteil       (entfällt wenn 0)
+	Dr.  Darlehenskonto (Liability, party=Bank)     tilgung+sondertilgung  (entfällt wenn 0)
 
 	``voucher_type = "Bank Entry"`` erfordert in ERPNext zwingend ``cheque_no``
 	+ ``cheque_date``. ``cheque_no`` Default: Bank-Transaction-Name aus dem
@@ -671,9 +683,31 @@ def _create_journal_entry_for_rate(
 	if not doc.zinsaufwandskonto:
 		frappe.throw("Kreditvertrag ohne Zinsaufwandskonto kann nicht gebucht werden.")
 
-	bank_acc_gl = frappe.get_cached_value("Bank Account", doc.bank_account, "account")
+	bank_account_doc = frappe.get_doc("Bank Account", doc.bank_account, for_update=True)
+	bank_acc_gl = bank_account_doc.get("account")
 	if not bank_acc_gl:
 		frappe.throw(f"Bank Account '{doc.bank_account}' hat kein GL-Konto hinterlegt.")
+	if bank_account_doc.get("company") != doc.company:
+		frappe.throw(
+			f"Bank Account '{doc.bank_account}' gehört nicht zur Company {doc.company}."
+		)
+	from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+		_get_company_currency,
+		_require_company_currency_account,
+	)
+
+	company_currency = _get_company_currency(doc.company)
+	for account, label in (
+		(bank_acc_gl, "Kredit-Bankkonto"),
+		(doc.darlehenskonto, "Darlehenskonto"),
+		(doc.zinsaufwandskonto, "Zinsaufwandskonto"),
+	):
+		_require_company_currency_account(
+			account,
+			company=doc.company,
+			company_currency=company_currency,
+			label=label,
+		)
 
 	gesamt = flt(row.gesamtbetrag)
 	if gesamt <= 0:
@@ -751,12 +785,9 @@ def _candidate_rates(
 	"""Sucht offene, betrags- und datumsnahe Kreditraten.
 
 	Status wird bewusst NICHT als Hard-Filter verwendet (kann stale sein) — die
-	echte Wahrheit ist ``journal_entry IS NULL``. ``supplier`` ist ein **Soft-
-	Filter**: Alle KVs am Bankkonto werden geprüft; matchen ausschließlich
-	Kandidaten von einem anderen Supplier, gewinnen die trotzdem (z.B. wenn
-	der Supplier auf der Bankzeile falsch erkannt wurde). Wenn aber Kandidaten
-	mit passendem Supplier existieren, werden NUR diese zurückgegeben —
-	der Supplier-Hint wird als Disambiguierung genutzt, nicht als Ausschluss.
+	echte Wahrheit ist ``journal_entry IS NULL``. Ein gesetzter ``supplier``
+	ist dagegen eine harte Buchungsinvariante: Eine Bankzeile darf niemals
+	automatisch eine Kreditrate eines anderen Lieferanten buchen.
 	"""
 	if not bank_account or amount is None:
 		return []
@@ -765,10 +796,12 @@ def _candidate_rates(
 	target_date = getdate(posting_date) if posting_date else None
 	hints = _extract_loan_match_hints(reference_text)
 
-	# Immer alle Kreditverträge am Bankkonto laden — Supplier ist Soft-Filter.
+	filters = {"bank_account": bank_account}
+	if supplier:
+		filters["lieferant"] = supplier
 	kv_names = frappe.get_all(
 		"Kreditvertrag",
-		filters={"bank_account": bank_account},
+		filters=filters,
 		pluck="name",
 	)
 
@@ -822,15 +855,6 @@ def _candidate_rates(
 		split_matches = [c for c in candidates if c["split_match"]]
 		if split_matches:
 			candidates = split_matches
-
-	# Soft-Filter: wenn Supplier auf der Bankzeile erkannt UND mindestens ein
-	# Kandidat mit passendem Supplier existiert, schließen wir die anderen aus.
-	# Wenn KEIN Kandidat zum erkannten Supplier passt, behalten wir alle
-	# (der erkannte Supplier war wahrscheinlich falsch).
-	if supplier:
-		supplier_matches = [c for c in candidates if c["supplier_match"]]
-		if supplier_matches:
-			candidates = supplier_matches
 
 	candidates.sort(key=lambda c: c["delta_days"])
 	return candidates
@@ -930,6 +954,12 @@ def _book_rate_row_and_reconcile(
 		frappe.db.savepoint(savepoint_name)
 	je = None
 	try:
+		kv, rate_row, bt, target_amount = _lock_credit_booking_context(
+			kreditvertrag=kv.name,
+			rate_name=rate_row.name,
+			bank_transaction=bank_transaction,
+			amount=amount,
+		)
 		# Beim Auto-Match ist die Bank Transaction der natürliche cheque_no
 		je = _create_journal_entry_for_rate(
 			kv, rate_row, posting_date=posting_date, cheque_no=bank_transaction
@@ -939,33 +969,160 @@ def _book_rate_row_and_reconcile(
 			reconcile_voucher_with_bt,
 		)
 
-		bt = frappe.get_doc("Bank Transaction", bank_transaction)
-		reconcile_voucher_with_bt(bt, "Journal Entry", je.name, abs(flt(amount)))
+		reconcile_voucher_with_bt(bt, "Journal Entry", je.name, target_amount)
 
 		rate_row.db_set("journal_entry", je.name, update_modified=False)
 		rate_row.db_set("bank_transaction", bank_transaction, update_modified=False)
 		rate_row.db_set("gebucht_am", getdate(posting_date), update_modified=False)
+
+		# Gehört zur selben atomaren Operation: wenn die Folgewerte nicht sicher
+		# aktualisiert werden können, darf auch JE + BT-Link nicht stehen bleiben.
+		_recompute_parent_plausibilitaet(kv.name)
 	except Exception:
 		# JE submitted? Dann stornieren, sonst bleibt verwaiste Buchung hängen.
 		frappe.db.rollback(save_point=savepoint_name)
 		if je and je.name and frappe.db.exists("Journal Entry", je.name):
-			try:
-				je_doc = frappe.get_doc("Journal Entry", je.name)
-				if je_doc.docstatus == 1:
-					je_doc.cancel()
-			except Exception:
-				frappe.log_error(
-					frappe.get_traceback(),
-					f"Kredit-Match: konnte verwaisten JE {je.name} nicht stornieren",
-				)
+			je_doc = frappe.get_doc("Journal Entry", je.name)
+			if je_doc.docstatus == 1:
+				je_doc.cancel()
 		raise
-
-	# Parent-Plausibilitäts-Felder + Status nachziehen (sonst stale bis nächster Save)
-	_recompute_parent_plausibilitaet(kv.name)
 
 	return {
 		"journal_entry": je.name,
 	}
+
+
+def _lock_credit_booking_context(
+	*,
+	kreditvertrag: str,
+	rate_name: str,
+	bank_transaction: str,
+	amount: float,
+) -> tuple["Kreditvertrag", Document, Document, float]:
+	"""Lock and re-read all mutable records needed for one credit booking.
+
+	Lock order is stable for every caller: Bank Transaction, parent contract,
+	then rate row.  Re-checks happen after the locks so two requests cannot book
+	the same BT or rate from stale candidate data.
+	"""
+	locked_kv, bt, target_amount = _lock_credit_booking_roots(
+		kreditvertrag=kreditvertrag,
+		bank_transaction=bank_transaction,
+		amount=amount,
+	)
+
+	locked_rate = frappe.db.sql(
+		"""
+		SELECT name, parent, journal_entry
+		FROM `tabKreditrate`
+		WHERE name = %(rate_name)s AND parent = %(kreditvertrag)s
+		FOR UPDATE
+		""",
+		{"rate_name": rate_name, "kreditvertrag": kreditvertrag},
+		as_dict=True,
+	)
+	if not locked_rate:
+		frappe.throw(f"Rate {rate_name} gehört nicht zu Kreditvertrag {kreditvertrag}.")
+	if locked_rate[0].get("journal_entry"):
+		frappe.throw(
+			f"Rate ist bereits gebucht ({locked_rate[0].get('journal_entry')})."
+		)
+
+	locked_kv._sort_plan_and_reindex()
+	locked_kv._compute_zeilen_summen()
+	locked_kv._compute_restschuld_nach()
+	locked_row = next(
+		(row for row in (locked_kv.get("plan") or []) if row.name == rate_name),
+		None,
+	)
+	if not locked_row:
+		frappe.throw(f"Rate {rate_name} wurde nach dem Sperren nicht gefunden.")
+	if locked_row.get("journal_entry"):
+		frappe.throw(f"Rate ist bereits gebucht ({locked_row.journal_entry}).")
+	from hausverwaltung.hausverwaltung.utils.payment_auto_match import _amounts_equal
+
+	if not _amounts_equal(flt(locked_row.gesamtbetrag), target_amount):
+		frappe.throw(
+			f"Betrag der Bankzeile ({target_amount:.2f} EUR) passt nicht zur Rate "
+			f"({flt(locked_row.gesamtbetrag):.2f} EUR)."
+		)
+
+	return locked_kv, locked_row, bt, target_amount
+
+
+def _lock_credit_booking_roots(
+	*,
+	kreditvertrag: str,
+	bank_transaction: str,
+	amount: float,
+) -> tuple["Kreditvertrag", Document, float]:
+	"""Lock Bank Transaction and contract in the global credit lock order."""
+	bt_exists = frappe.db.sql(
+		"SELECT name FROM `tabBank Transaction` WHERE name = %s FOR UPDATE",
+		(bank_transaction,),
+	)
+	if not bt_exists:
+		frappe.throw(f"Bank Transaction {bank_transaction} wurde nicht gefunden.")
+
+	bt = frappe.get_doc("Bank Transaction", bank_transaction, for_update=True)
+	from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+		_bank_transaction_shape,
+		_amounts_equal,
+	)
+
+	shape = _bank_transaction_shape(bt)
+	if shape.direction != "out":
+		frappe.throw("Kreditraten-Buchung ist nur für Zahlungsausgänge möglich.")
+	if not _amounts_equal(abs(flt(amount)), shape.amount):
+		frappe.throw(
+			f"Betrag der Bank Transaction ({shape.amount:.2f} EUR) stimmt nicht mit "
+			f"dem Buchungsbetrag ({abs(flt(amount)):.2f} EUR) überein."
+		)
+	if bt.get("payment_entries"):
+		frappe.throw("Bank Transaction ist bereits einem Zahlungsbeleg zugeordnet.")
+	if cint(bt.get("docstatus")) == 2 or str(bt.get("status") or "").strip().lower() in {
+		"cancelled",
+		"reconciled",
+	}:
+		frappe.throw("Bank Transaction ist storniert oder bereits vollständig abgestimmt.")
+	unallocated_amount = bt.get("unallocated_amount")
+	if unallocated_amount is not None and not _amounts_equal(
+		flt(unallocated_amount),
+		shape.amount,
+	):
+		frappe.throw(
+			f"Bank Transaction ist nicht mehr vollständig offen "
+			f"({flt(unallocated_amount):.2f} von {shape.amount:.2f} EUR verfügbar)."
+		)
+
+	parent_exists = frappe.db.sql(
+		"SELECT name FROM `tabKreditvertrag` WHERE name = %s FOR UPDATE",
+		(kreditvertrag,),
+	)
+	if not parent_exists:
+		frappe.throw(f"Kreditvertrag {kreditvertrag} wurde nicht gefunden.")
+
+	locked_kv: Kreditvertrag = frappe.get_doc(
+		"Kreditvertrag",
+		kreditvertrag,
+		for_update=True,
+	)
+	if locked_kv.get("bank_account") != bt.get("bank_account"):
+		frappe.throw(
+			f"Bankkonto der Bank Transaction ({bt.get('bank_account')}) passt nicht "
+			f"zum Kreditvertrag ({locked_kv.get('bank_account')})."
+		)
+	if (
+		bt.get("party_type") != "Supplier"
+		or not bt.get("party")
+		or bt.get("party") != locked_kv.get("lieferant")
+	):
+		frappe.throw(
+			f"Supplier der Bank Transaction ({bt.get('party') or 'nicht gesetzt'}) "
+			f"passt nicht zum Kreditvertrag ({locked_kv.get('lieferant')})."
+		)
+
+	return locked_kv, bt, shape.amount
 
 
 def _create_or_book_rate_from_statement(
@@ -1004,6 +1161,21 @@ def _create_or_book_rate_from_statement(
 		}
 
 	kv: Kreditvertrag = contracts[0]
+	kv, _bt, _target_amount = _lock_credit_booking_roots(
+		kreditvertrag=kv.name,
+		bank_transaction=bank_transaction,
+		amount=amount,
+	)
+	if kv.get("bank_account") != bank_account:
+		frappe.throw(
+			f"Bankkonto der Bankzeile ({bank_account}) passt nicht zum Kreditvertrag "
+			f"({kv.get('bank_account')})."
+		)
+	if _normalize_match_token(kv.get("vertragsnummer")) != hints["vertragsnummer"]:
+		frappe.throw(
+			"Vertragsnummer des Kreditvertrags wurde parallel geändert; "
+			"bitte den Bank-Match erneut prüfen."
+		)
 	target_date = getdate(posting_date)
 	open_period_rows = [
 		row
@@ -1210,47 +1382,20 @@ def assign_kreditrate(
 			f"({flt(rate_row.gesamtbetrag):.2f} EUR)."
 		)
 
-	# Savepoint-Bracket: JE+Reconcile+Link rollen gemeinsam zurück, falls
-	# nach Submit etwas schiefgeht.
-	savepoint_name = "kv_assign"
-	frappe.db.savepoint(savepoint_name)
-	je = None
-	try:
-		je = _create_journal_entry_for_rate(
-			kv, rate_row, posting_date=posting_date, cheque_no=bank_transaction
-		)
-
-		from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
-			reconcile_voucher_with_bt,
-		)
-
-		bt = frappe.get_doc("Bank Transaction", bank_transaction)
-		reconcile_voucher_with_bt(bt, "Journal Entry", je.name, abs(flt(amount)))
-
-		rate_row.db_set("journal_entry", je.name, update_modified=False)
-		rate_row.db_set("bank_transaction", bank_transaction, update_modified=False)
-		rate_row.db_set("gebucht_am", getdate(posting_date), update_modified=False)
-	except Exception:
-		frappe.db.rollback(save_point=savepoint_name)
-		if je and je.name and frappe.db.exists("Journal Entry", je.name):
-			try:
-				je_doc = frappe.get_doc("Journal Entry", je.name)
-				if je_doc.docstatus == 1:
-					je_doc.cancel()
-			except Exception:
-				frappe.log_error(
-					frappe.get_traceback(),
-					f"Kredit-Assign: konnte verwaisten JE {je.name} nicht stornieren",
-				)
-		raise
-
-	_recompute_parent_plausibilitaet(kv.name)
+	result = _book_rate_row_and_reconcile(
+		kv=kv,
+		rate_row=rate_row,
+		posting_date=posting_date,
+		amount=amount,
+		bank_transaction=bank_transaction,
+		savepoint_name="kv_assign",
+	)
 
 	return {
 		"kreditvertrag": kv.name,
 		"row_name": rate_row.name,
 		"row_idx": rate_row.idx,
-		"journal_entry": je.name,
+		"journal_entry": result["journal_entry"],
 	}
 
 
@@ -1261,24 +1406,18 @@ def _recompute_parent_plausibilitaet(kreditvertrag_name: str) -> None:
 	plan_getilgt, gl_getilgt, gl_saldo_darlehenskonto, restschuld_abweichung
 	und status nicht bis zum nächsten Save oder Scheduler-Lauf stale bleiben.
 	"""
-	try:
-		kv = frappe.get_doc("Kreditvertrag", kreditvertrag_name)
-		kv._compute_plausibilitaet()
-		kv._compute_status()
-		kv.db_set("aktuelle_restschuld", kv.aktuelle_restschuld, update_modified=False)
-		kv.db_set("plan_getilgt", kv.plan_getilgt, update_modified=False)
-		kv.db_set("gl_getilgt", kv.gl_getilgt, update_modified=False)
-		kv.db_set("gl_saldo_darlehenskonto", kv.gl_saldo_darlehenskonto, update_modified=False)
-		kv.db_set("restschuld_abweichung", kv.restschuld_abweichung, update_modified=False)
-		kv.db_set("status", kv.status, update_modified=False)
-		# Listen-Felder: nach BT-Match/Storno sofort sichtbar machen
-		kv.db_set("offene_raten", kv.offene_raten, update_modified=False)
-		kv.db_set("naechste_faelligkeit", kv.naechste_faelligkeit, update_modified=False)
-	except Exception:
-		frappe.log_error(
-			frappe.get_traceback(),
-			f"Kreditvertrag Plausibilitäts-Recompute fehlgeschlagen: {kreditvertrag_name}",
-		)
+	kv = frappe.get_doc("Kreditvertrag", kreditvertrag_name, for_update=True)
+	kv._compute_plausibilitaet()
+	kv._compute_status()
+	kv.db_set("aktuelle_restschuld", kv.aktuelle_restschuld, update_modified=False)
+	kv.db_set("plan_getilgt", kv.plan_getilgt, update_modified=False)
+	kv.db_set("gl_getilgt", kv.gl_getilgt, update_modified=False)
+	kv.db_set("gl_saldo_darlehenskonto", kv.gl_saldo_darlehenskonto, update_modified=False)
+	kv.db_set("restschuld_abweichung", kv.restschuld_abweichung, update_modified=False)
+	kv.db_set("status", kv.status, update_modified=False)
+	# Listen-Felder: nach BT-Match/Storno sofort sichtbar machen
+	kv.db_set("offene_raten", kv.offene_raten, update_modified=False)
+	kv.db_set("naechste_faelligkeit", kv.naechste_faelligkeit, update_modified=False)
 
 
 # ----------------------------------------------------------------------
@@ -1294,46 +1433,101 @@ def on_journal_entry_cancel(doc, method=None):
 	if not doc or doc.doctype != "Journal Entry":
 		return
 
-	rate_rows = frappe.get_all(
-		"Kreditrate",
-		filters={"journal_entry": doc.name},
-		fields=["name", "parent"],
+	rate_rows = frappe.db.sql(
+		"""
+		SELECT name, parent, bank_transaction, journal_entry, journal_entry_zins
+		FROM `tabKreditrate`
+		WHERE journal_entry = %(journal_entry)s
+		OR journal_entry_zins = %(journal_entry)s
+		""",
+		{"journal_entry": doc.name},
+		as_dict=True,
 	)
 	if not rate_rows:
 		return
 
-	affected_parents: set[str] = set()
+	linked_bt_names = _bank_transaction_names_for_journal_entry(doc.name)
+	linked_bt_names.update(
+		r.get("bank_transaction")
+		for r in rate_rows
+		if r.get("journal_entry") == doc.name and r.get("bank_transaction")
+	)
+	_lock_named_rows("Bank Transaction", linked_bt_names)
+
+	affected_parents = {r.get("parent") for r in rate_rows if r.get("parent")}
+	_lock_named_rows("Kreditvertrag", affected_parents)
+	_lock_named_rows("Kreditrate", {r.get("name") for r in rate_rows if r.get("name")})
+
 	for r in rate_rows:
-		try:
-			rate = frappe.get_doc("Kreditrate", r.name)
-			rate.db_set("journal_entry", None, update_modified=False)
-			rate.db_set("bank_transaction", None, update_modified=False)
-			rate.db_set("gebucht_am", None, update_modified=False)
-			if r.parent:
-				affected_parents.add(r.parent)
-		except Exception:
-			frappe.log_error(
-				frappe.get_traceback(),
-				f"Kreditrate Reset nach JE-Cancel fehlgeschlagen ({doc.name} / {r.name})",
+		if r.get("journal_entry") == doc.name:
+			# Bedingtes UPDATE ist auch bei späterem Rebook sicher: ein inzwischen
+			# neu gesetzter JE-Link darf vom alten Cancel niemals gelöscht werden.
+			frappe.db.sql(
+				"""
+				UPDATE `tabKreditrate`
+				SET journal_entry = NULL,
+				bank_transaction = NULL,
+				gebucht_am = NULL
+				WHERE name = %(rate_name)s
+				AND journal_entry = %(journal_entry)s
+				""",
+				{"rate_name": r.name, "journal_entry": doc.name},
+			)
+		if r.get("journal_entry_zins") == doc.name:
+			frappe.db.sql(
+				"""
+				UPDATE `tabKreditrate`
+				SET journal_entry_zins = NULL
+				WHERE name = %(rate_name)s
+				AND journal_entry_zins = %(journal_entry)s
+				""",
+				{"rate_name": r.name, "journal_entry": doc.name},
 			)
 
 	# Bank-Transaction-Reconciliation aktiv entkoppeln, falls ERPNext es nicht
 	# selbst tut. Wir gehen über Meta-Discovery statt hardcoded Feldnamen, weil
 	# die Bank-Transaction-Payments-Tabelle versionsabhängig heißt.
-	try:
-		_cleanup_bank_transaction_link(doc.name)
-	except Exception:
-		frappe.log_error(
-			frappe.get_traceback(),
-			f"Bank Transaction Cleanup nach JE-Cancel fehlgeschlagen ({doc.name})",
-		)
+	_cleanup_bank_transaction_link(doc.name, bank_transaction_names=linked_bt_names)
 
 	# Plausibilitäts-Felder + Status pro betroffenem Kreditvertrag neu rechnen
 	for kv_name in affected_parents:
 		_recompute_parent_plausibilitaet(kv_name)
 
 
-def _cleanup_bank_transaction_link(journal_entry_name: str) -> None:
+def _lock_named_rows(doctype: str, names) -> None:
+	"""Lock known rows deterministically; callers already enforce doctype order."""
+	ordered_names = sorted({name for name in names if name})
+	if not ordered_names:
+		return
+	table = {
+		"Bank Transaction": "`tabBank Transaction`",
+		"Kreditvertrag": "`tabKreditvertrag`",
+		"Kreditrate": "`tabKreditrate`",
+	}[doctype]
+	frappe.db.sql(
+		f"SELECT name FROM {table} WHERE name IN %(names)s ORDER BY name FOR UPDATE",
+		{"names": tuple(ordered_names)},
+	)
+
+
+def _bank_transaction_names_for_journal_entry(journal_entry_name: str) -> set[str]:
+	rows = frappe.get_all(
+		"Bank Transaction Payments",
+		filters={
+			"payment_document": "Journal Entry",
+			"payment_entry": journal_entry_name,
+		},
+		pluck="parent",
+		distinct=True,
+	)
+	return {name for name in rows if name}
+
+
+def _cleanup_bank_transaction_link(
+	journal_entry_name: str,
+	*,
+	bank_transaction_names=None,
+) -> None:
 	"""Entfernt JE-Verknüpfungen aus Bank Transactions via ERPNext-API.
 
 	Nutzt ``BankTransaction.remove_payment_entry``, das ``delink_payment_entry``
@@ -1345,11 +1539,23 @@ def _cleanup_bank_transaction_link(journal_entry_name: str) -> None:
 	``payment_entry == journal_entry_name`` (statt nur nach Name zu suchen,
 	um Namens-Kollisionen mit anderen Doctypes zu vermeiden).
 	"""
-	from hausverwaltung.hausverwaltung.utils.bank_transaction_links import (
-		remove_bank_transaction_payment_links,
+	bt_names = (
+		set(bank_transaction_names)
+		if bank_transaction_names is not None
+		else _bank_transaction_names_for_journal_entry(journal_entry_name)
 	)
-
-	remove_bank_transaction_payment_links("Journal Entry", journal_entry_name)
+	for bt_name in sorted(bt_names):
+		bt = frappe.get_doc("Bank Transaction", bt_name)
+		targets = [
+			row
+			for row in bt.get("payment_entries") or []
+			if row.get("payment_document") == "Journal Entry"
+			and row.get("payment_entry") == journal_entry_name
+		]
+		for row in targets:
+			bt.remove_payment_entry(row)
+		if targets:
+			bt.save(ignore_permissions=True)
 
 
 # ----------------------------------------------------------------------
@@ -1481,7 +1687,10 @@ def _find_kreditvertraege_for_statement(
 	target = _normalize_match_token(vertragsnummer)
 	kv_names = frappe.get_all(
 		"Kreditvertrag",
-		filters={"bank_account": bank_account},
+		filters={
+			"bank_account": bank_account,
+			**({"lieferant": supplier} if supplier else {}),
+		},
 		pluck="name",
 	)
 	matches = []
@@ -1490,8 +1699,4 @@ def _find_kreditvertraege_for_statement(
 		if _normalize_match_token(kv.get("vertragsnummer")) == target:
 			matches.append(kv)
 
-	if supplier:
-		supplier_matches = [kv for kv in matches if kv.get("lieferant") == supplier]
-		if supplier_matches:
-			return supplier_matches
 	return matches

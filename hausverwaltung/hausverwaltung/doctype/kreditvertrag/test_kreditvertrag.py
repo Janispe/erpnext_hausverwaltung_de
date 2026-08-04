@@ -17,18 +17,14 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import frappe
-from frappe.tests import IntegrationTestCase
 
 from hausverwaltung.hausverwaltung.doctype.kreditvertrag import kreditvertrag as kv_mod
 from hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag import (
-	RESTSCHULD_EPSILON,
 	STATUS_ABGELOEST,
 	STATUS_AKTIV,
 	_create_journal_entry_for_rate,
 	_parse_amount,
-	assign_kreditrate,
 	link_bank_transaction_to_kreditvertrag_rate,
-	on_journal_entry_cancel,
 )
 
 
@@ -166,7 +162,11 @@ class TestLoanMatchHints(unittest.TestCase):
 		}
 
 		with patch.object(kv_mod.frappe, "get_all", return_value=["KV-1", "KV-2"]), \
-			patch.object(kv_mod.frappe, "get_doc", side_effect=lambda _doctype, name: docs[name]):
+			patch.object(
+				kv_mod.frappe,
+				"get_doc",
+				side_effect=lambda _doctype, name, **_kwargs: docs[name],
+			):
 			candidates = kv_mod._candidate_rates(
 				bank_account="BA-8090",
 				amount=10645.11,
@@ -216,6 +216,23 @@ class TestLoanMatchHints(unittest.TestCase):
 		self.assertEqual(len(candidates), 1)
 		self.assertEqual(candidates[0]["kreditvertrag"], "KV-1")
 		self.assertFalse(candidates[0]["vertragsnummer_match"])
+
+	def test_candidate_rates_never_falls_back_to_another_supplier(self):
+		with patch.object(kv_mod.frappe, "get_all", return_value=[]) as get_all, \
+			patch.object(kv_mod.frappe, "get_doc") as get_doc:
+			candidates = kv_mod._candidate_rates(
+				bank_account="BA-8090",
+				amount=10645.11,
+				posting_date=datetime.date(2026, 4, 30),
+				supplier="SUP-EXPECTED",
+			)
+
+		self.assertEqual(candidates, [])
+		self.assertEqual(
+			get_all.call_args.kwargs["filters"],
+			{"bank_account": "BA-8090", "lieferant": "SUP-EXPECTED"},
+		)
+		get_doc.assert_not_called()
 
 	def _fake_row(
 		self,
@@ -286,6 +303,11 @@ class TestLoanMatchHints(unittest.TestCase):
 			patch.object(kv_mod.frappe, "get_doc", return_value=kv), \
 			patch.object(
 				kv_mod,
+				"_lock_credit_booking_roots",
+				return_value=(kv, frappe._dict(name="BT-1"), 10645.11),
+			), \
+			patch.object(
+				kv_mod,
 				"_book_rate_row_and_reconcile",
 				return_value={"journal_entry": "JE-1"},
 			) as book:
@@ -320,6 +342,11 @@ class TestLoanMatchHints(unittest.TestCase):
 		with patch.object(kv_mod.frappe, "db", db), \
 			patch.object(kv_mod.frappe, "get_all", return_value=["KV-1"]), \
 			patch.object(kv_mod.frappe, "get_doc", return_value=kv), \
+			patch.object(
+				kv_mod,
+				"_lock_credit_booking_roots",
+				return_value=(kv, frappe._dict(name="BT-1"), 10645.11),
+			), \
 			patch.object(kv_mod, "_book_rate_row_and_reconcile") as book:
 			result = kv_mod._create_or_book_rate_from_statement(
 				bank_account="BA-8090",
@@ -349,6 +376,11 @@ class TestLoanMatchHints(unittest.TestCase):
 		with patch.object(kv_mod.frappe, "db", db), \
 			patch.object(kv_mod.frappe, "get_all", return_value=["KV-1"]), \
 			patch.object(kv_mod.frappe, "get_doc", return_value=kv), \
+			patch.object(
+				kv_mod,
+				"_lock_credit_booking_roots",
+				return_value=(kv, frappe._dict(name="BT-1"), 10645.11),
+			), \
 			patch.object(kv_mod, "_book_rate_row_and_reconcile") as book:
 			result = kv_mod._create_or_book_rate_from_statement(
 				bank_account="BA-8090",
@@ -373,6 +405,11 @@ class TestLoanMatchHints(unittest.TestCase):
 
 		with patch.object(kv_mod.frappe, "get_all", return_value=["KV-1"]), \
 			patch.object(kv_mod.frappe, "get_doc", return_value=kv), \
+			patch.object(
+				kv_mod,
+				"_lock_credit_booking_roots",
+				return_value=(kv, frappe._dict(name="BT-1"), 10645.11),
+			), \
 			patch.object(
 				kv_mod,
 				"_book_rate_row_and_reconcile",
@@ -425,6 +462,38 @@ class TestComputeRestschuld(unittest.TestCase):
 		kv_mod.Kreditvertrag._compute_restschuld_nach(doc)
 		self.assertAlmostEqual(doc._plan[0].restschuld_nach, 8800.0, places=2)
 		self.assertAlmostEqual(doc._plan[0].gesamtbetrag, 1250.0, places=2)
+
+	def test_restschuld_rejects_one_cent_overpayment(self):
+		doc = _make_fake_doc(
+			anfangs_restschuld=100.0,
+			rates=[
+				{
+					"faelligkeitsdatum": datetime.date(2026, 1, 31),
+					"zinsanteil": 0,
+					"tilgungsanteil": 100.01,
+				}
+			],
+		)
+		kv_mod.Kreditvertrag._compute_zeilen_summen(doc)
+
+		with self.assertRaisesRegex(frappe.ValidationError, "übertilgt"):
+			kv_mod.Kreditvertrag._compute_restschuld_nach(doc)
+
+	def test_restschuld_allows_exact_full_repayment(self):
+		doc = _make_fake_doc(
+			anfangs_restschuld=100.0,
+			rates=[
+				{
+					"faelligkeitsdatum": datetime.date(2026, 1, 31),
+					"zinsanteil": 5,
+					"tilgungsanteil": 100.0,
+				}
+			],
+		)
+		kv_mod.Kreditvertrag._compute_zeilen_summen(doc)
+		kv_mod.Kreditvertrag._compute_restschuld_nach(doc)
+
+		self.assertEqual(doc._plan[0].restschuld_nach, 0.0)
 
 	def test_gesamtbetrag_sums_components(self):
 		doc = _make_fake_doc(
@@ -491,6 +560,340 @@ class TestParseCsvAmount(unittest.TestCase):
 	def test_parse_amount_negative(self):
 		# Negative Beträge können in CSV vorkommen (Eingang vs. Ausgang) — wir akzeptieren sie
 		self.assertEqual(_parse_amount("-100,50"), -100.5)
+
+
+class TestCreditBookingGuards(unittest.TestCase):
+	def test_booking_roots_lock_bank_transaction_before_contract(self):
+		bt = frappe._dict(
+			name="BT-1",
+			bank_account="BA-1",
+			party_type="Supplier",
+			party="SUP-1",
+			deposit=0,
+			withdrawal=100.0,
+			payment_entries=[],
+		)
+		kv = frappe._dict(name="KV-1", bank_account="BA-1", lieferant="SUP-1")
+		sql_calls = []
+
+		def sql(query, params=None, **kwargs):
+			sql_calls.append(" ".join(query.split()))
+			return [("LOCKED",)]
+
+		with patch.object(kv_mod.frappe.db, "sql", side_effect=sql), patch.object(
+			kv_mod.frappe,
+			"get_doc",
+			side_effect=lambda doctype, _name, **_kwargs: (
+				bt if doctype == "Bank Transaction" else kv
+			),
+		):
+			locked_kv, locked_bt, amount = kv_mod._lock_credit_booking_roots(
+				kreditvertrag="KV-1",
+				bank_transaction="BT-1",
+				amount=100,
+			)
+
+		self.assertIs(locked_kv, kv)
+		self.assertIs(locked_bt, bt)
+		self.assertEqual(amount, 100)
+		self.assertIn("tabBank Transaction", sql_calls[0])
+		self.assertIn("tabKreditvertrag", sql_calls[1])
+
+	def test_lock_context_rejects_incoming_bank_transaction(self):
+		bt = frappe._dict(
+			name="BT-INCOMING",
+			bank_account="BA-1",
+			deposit=100.0,
+			withdrawal=0.0,
+			payment_entries=[],
+		)
+
+		with patch.object(
+			kv_mod.frappe.db,
+			"sql",
+			return_value=[("BT-INCOMING",)],
+		), patch.object(
+			kv_mod.frappe,
+			"get_doc",
+			return_value=bt,
+		):
+			with self.assertRaisesRegex(frappe.ValidationError, "nur für Zahlungsausgänge"):
+				kv_mod._lock_credit_booking_context(
+					kreditvertrag="KV-1",
+					rate_name="RATE-1",
+					bank_transaction="BT-INCOMING",
+					amount=100.0,
+				)
+
+	def test_booking_roots_reject_partially_allocated_bank_transaction(self):
+		bt = frappe._dict(
+			name="BT-PARTIAL",
+			bank_account="BA-1",
+			deposit=0,
+			withdrawal=100.0,
+			unallocated_amount=40.0,
+			payment_entries=[],
+			status="Unreconciled",
+		)
+
+		with patch.object(
+			kv_mod.frappe.db,
+			"sql",
+			return_value=[("BT-PARTIAL",)],
+		), patch.object(
+			kv_mod.frappe,
+			"get_doc",
+			return_value=bt,
+		):
+			with self.assertRaisesRegex(frappe.ValidationError, "nicht mehr vollständig offen"):
+				kv_mod._lock_credit_booking_roots(
+					kreditvertrag="KV-1",
+					bank_transaction="BT-PARTIAL",
+					amount=100.0,
+				)
+
+	def test_booking_roots_reject_supplier_different_from_contract(self):
+		bt = frappe._dict(
+			name="BT-WRONG-SUPPLIER",
+			bank_account="BA-1",
+			party_type="Supplier",
+			party="SUP-WRONG",
+			deposit=0,
+			withdrawal=100.0,
+			unallocated_amount=100.0,
+			payment_entries=[],
+			status="Unreconciled",
+		)
+		kv = frappe._dict(
+			name="KV-1",
+			bank_account="BA-1",
+			lieferant="SUP-EXPECTED",
+		)
+		with patch.object(
+			kv_mod.frappe.db,
+			"sql",
+			return_value=[("LOCKED",)],
+		), patch.object(
+			kv_mod.frappe,
+			"get_doc",
+			side_effect=[bt, kv],
+		), self.assertRaisesRegex(frappe.ValidationError, "passt nicht zum Kreditvertrag"):
+			kv_mod._lock_credit_booking_roots(
+				kreditvertrag="KV-1",
+				bank_transaction="BT-WRONG-SUPPLIER",
+				amount=100.0,
+			)
+
+	def test_credit_journal_rejects_foreign_currency_account_before_creation(self):
+		contract = frappe._dict(
+			name="KV-FX",
+			bezeichnung="FX Test",
+			company="COMP-1",
+			bank_account="BA-1",
+			darlehenskonto="LOAN-USD",
+			zinsaufwandskonto="INTEREST-EUR",
+			cost_center="CC-1",
+			lieferant="SUP-1",
+		)
+		rate = frappe._dict(
+			name="RATE-1",
+			idx=1,
+			faelligkeitsdatum="2026-05-05",
+			gesamtbetrag=100,
+			zinsanteil=10,
+			tilgungsanteil=90,
+			sondertilgung=0,
+		)
+		bank_account = frappe._dict(
+			name="BA-1",
+			company="COMP-1",
+			account="BANK-EUR",
+		)
+
+		def require_currency(account, **_kwargs):
+			if account == "LOAN-USD":
+				frappe.throw("Fremdwährung USD ist nicht zulässig.")
+			return "EUR"
+
+		with patch.object(kv_mod.frappe, "get_doc", return_value=bank_account), \
+			patch(
+				"hausverwaltung.hausverwaltung.utils.payment_auto_match._get_company_currency",
+				return_value="EUR",
+			), patch(
+				"hausverwaltung.hausverwaltung.utils.payment_auto_match._require_company_currency_account",
+				side_effect=require_currency,
+			), patch.object(kv_mod.frappe, "new_doc") as new_doc, \
+			self.assertRaisesRegex(frappe.ValidationError, "Fremdwährung"):
+			kv_mod._create_journal_entry_for_rate(
+				contract,
+				rate,
+				posting_date="2026-05-05",
+			)
+
+		new_doc.assert_not_called()
+
+	def test_recompute_failure_rolls_back_complete_credit_booking(self):
+		kv = frappe._dict(name="KV-1")
+		rate = frappe._dict(name="RATE-1")
+		rate.db_set = MagicMock()
+		bt = frappe._dict(name="BT-1")
+		je = frappe._dict(name="JE-1")
+
+		with patch.object(kv_mod.frappe.db, "savepoint") as savepoint, patch.object(
+			kv_mod.frappe.db,
+			"rollback",
+		) as rollback, patch.object(
+			kv_mod.frappe.db,
+			"exists",
+			return_value=False,
+		), patch.object(
+			kv_mod,
+			"_lock_credit_booking_context",
+			return_value=(kv, rate, bt, 100.0),
+		), patch.object(
+			kv_mod,
+			"_create_journal_entry_for_rate",
+			return_value=je,
+		), patch(
+			"hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_voucher_with_bt",
+		), patch.object(
+			kv_mod,
+			"_recompute_parent_plausibilitaet",
+			side_effect=RuntimeError("recompute failed"),
+		):
+			with self.assertRaisesRegex(RuntimeError, "recompute failed"):
+				kv_mod._book_rate_row_and_reconcile(
+					kv=kv,
+					rate_row=rate,
+					posting_date="2026-05-05",
+					amount=100.0,
+					bank_transaction="BT-1",
+					savepoint_name="kv_atomic_test",
+				)
+
+		savepoint.assert_called_once_with("kv_atomic_test")
+		rollback.assert_called_once_with(save_point="kv_atomic_test")
+
+	def test_cancel_interest_journal_uses_conditional_update_only(self):
+		cancelled = frappe._dict(doctype="Journal Entry", name="JE-ZINS")
+		sql_calls = []
+
+		def sql(query, params=None, **kwargs):
+			sql_calls.append((" ".join(query.split()), params))
+			if "SELECT name, parent, bank_transaction" in query:
+				return [
+					frappe._dict(
+						name="RATE-1",
+						parent="KV-1",
+						bank_transaction="BT-TILGUNG",
+						journal_entry="JE-TILGUNG",
+						journal_entry_zins="JE-ZINS",
+					)
+				]
+			return []
+
+		with patch.object(kv_mod.frappe.db, "sql", side_effect=sql), patch.object(
+			kv_mod.frappe,
+			"get_all",
+			return_value=[],
+		), patch.object(
+			kv_mod,
+			"_cleanup_bank_transaction_link",
+		) as cleanup, patch.object(
+			kv_mod,
+			"_recompute_parent_plausibilitaet",
+		) as recompute:
+			kv_mod.on_journal_entry_cancel(cancelled)
+
+		update_queries = [query for query, _params in sql_calls if query.startswith("UPDATE")]
+		self.assertEqual(len(update_queries), 1)
+		self.assertIn("SET journal_entry_zins = NULL", update_queries[0])
+		self.assertIn("AND journal_entry_zins = %(journal_entry)s", update_queries[0])
+		self.assertNotIn("bank_transaction = NULL", update_queries[0])
+		cleanup.assert_called_once_with("JE-ZINS", bank_transaction_names=set())
+		recompute.assert_called_once_with("KV-1")
+
+	def test_cancel_locks_globally_and_clears_main_link_conditionally(self):
+		cancelled = frappe._dict(doctype="Journal Entry", name="JE-ALT")
+		sql_calls = []
+
+		def sql(query, params=None, **kwargs):
+			normalized = " ".join(query.split())
+			sql_calls.append((normalized, params))
+			if "SELECT name, parent, bank_transaction" in query:
+				return [
+					frappe._dict(
+						name="RATE-1",
+						parent="KV-1",
+						bank_transaction="BT-1",
+						journal_entry="JE-ALT",
+						journal_entry_zins=None,
+					)
+				]
+			return []
+
+		with patch.object(kv_mod.frappe.db, "sql", side_effect=sql), patch.object(
+			kv_mod.frappe,
+			"get_all",
+			return_value=["BT-1"],
+		), patch.object(
+			kv_mod,
+			"_cleanup_bank_transaction_link",
+		) as cleanup, patch.object(
+			kv_mod,
+			"_recompute_parent_plausibilitaet",
+		) as recompute:
+			kv_mod.on_journal_entry_cancel(cancelled)
+
+		lock_queries = [
+			query
+			for query, _params in sql_calls
+			if query.startswith("SELECT name FROM") and query.endswith("FOR UPDATE")
+		]
+		expected_tables = [
+			"`tabBank Transaction`",
+			"`tabKreditvertrag`",
+			"`tabKreditrate`",
+		]
+		self.assertEqual(len(lock_queries), len(expected_tables))
+		for query, table in zip(lock_queries, expected_tables):
+			self.assertIn(table, query)
+		main_update = next(
+			query
+			for query, _params in sql_calls
+			if query.startswith("UPDATE") and "SET journal_entry = NULL" in query
+		)
+		self.assertIn("AND journal_entry = %(journal_entry)s", main_update)
+		cleanup.assert_called_once_with("JE-ALT", bank_transaction_names={"BT-1"})
+		recompute.assert_called_once_with("KV-1")
+
+	def test_cancel_cleanup_failure_is_not_swallowed(self):
+		cancelled = frappe._dict(doctype="Journal Entry", name="JE-FAIL")
+
+		def sql(query, params=None, **kwargs):
+			if "SELECT name, parent, bank_transaction" in query:
+				return [
+					frappe._dict(
+						name="RATE-1",
+						parent="KV-1",
+						bank_transaction="BT-1",
+						journal_entry="JE-FAIL",
+						journal_entry_zins=None,
+					)
+				]
+			return []
+
+		with patch.object(kv_mod.frappe.db, "sql", side_effect=sql), patch.object(
+			kv_mod.frappe,
+			"get_all",
+			return_value=["BT-1"],
+		), patch.object(
+			kv_mod,
+			"_cleanup_bank_transaction_link",
+			side_effect=RuntimeError("cleanup failed"),
+		):
+			with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+				kv_mod.on_journal_entry_cancel(cancelled)
 
 
 class TestImportable(unittest.TestCase):
@@ -585,10 +988,17 @@ def _make_test_kreditvertrag(
 	return kv
 
 
-def _make_test_bank_transaction(bank_account: str, posting_date, amount: float) -> object:
+def _make_test_bank_transaction(
+	bank_account: str,
+	posting_date,
+	amount: float,
+	supplier: str,
+) -> object:
 	bt = frappe.new_doc("Bank Transaction")
 	bt.date = posting_date
 	bt.bank_account = bank_account
+	bt.party_type = "Supplier"
+	bt.party = supplier
 	bt.withdrawal = abs(amount)
 	bt.deposit = 0
 	bt.description = "TEST Kreditrate"
@@ -723,7 +1133,10 @@ class TestKreditvertragIntegration(unittest.TestCase):
 		kv = self._make_kv()
 		rate = kv.plan[0]
 		bt = _make_test_bank_transaction(
-			self.bank_account, posting_date=rate.faelligkeitsdatum, amount=rate.gesamtbetrag
+			self.bank_account,
+			posting_date=rate.faelligkeitsdatum,
+			amount=rate.gesamtbetrag,
+			supplier=self.supplier,
 		)
 
 		# reconcile_voucher_with_bt patchen, sodass es nach JE-Submit fliegt
@@ -750,7 +1163,7 @@ class TestKreditvertragIntegration(unittest.TestCase):
 			"""
 			SELECT name FROM `tabJournal Entry`
 			WHERE docstatus=1
-			  AND user_remark LIKE %(remark)s
+			AND user_remark LIKE %(remark)s
 			""",
 			{"remark": f"%{kv.bezeichnung}%"},
 		)

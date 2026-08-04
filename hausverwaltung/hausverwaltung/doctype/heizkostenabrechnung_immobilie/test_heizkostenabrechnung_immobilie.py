@@ -11,6 +11,28 @@ from hausverwaltung.hausverwaltung.doctype.heizkostenabrechnung_mieter import (
 
 
 class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
+	def test_manual_cancel_permission_uses_explicit_doctype(self):
+		parent = SimpleNamespace()
+		frappe = MagicMock()
+
+		def strict_has_permission(doctype, ptype="read", doc=None):
+			self.assertEqual(doctype, "Heizkostenabrechnung Immobilie")
+			self.assertEqual(ptype, "cancel")
+			self.assertIs(doc, parent)
+			return True
+
+		frappe.has_permission.side_effect = strict_has_permission
+		with patch.object(module, "frappe", frappe):
+			self.assertTrue(
+				module.HeizkostenabrechnungImmobilie._can_manual_cancel(parent)
+			)
+
+		frappe.has_permission.assert_called_once_with(
+			"Heizkostenabrechnung Immobilie",
+			ptype="cancel",
+			doc=parent,
+		)
+
 	def test_amendment_drops_cancelled_child_links_before_insert(self):
 		parent = SimpleNamespace(
 			amended_from="HK-IMM-ALT",
@@ -86,10 +108,10 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 		child = SimpleNamespace(name="HK-M-NEU", insert=MagicMock())
 		frappe = MagicMock()
 		frappe.get_doc.side_effect = [parent, source_parent]
-		frappe.db.sql.return_value = [
-			{"name": "MV-1", "kunde": "Mieter 1", "wohnung": "W-1"}
+		frappe.db.sql.side_effect = [
+			[{"name": "MV-1", "kunde": "Mieter 1", "wohnung": "W-1"}],
+			[],
 		]
-		frappe.get_all.return_value = []
 		frappe.new_doc.return_value = child
 
 		with (
@@ -105,6 +127,57 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 		child.insert.assert_called_once_with(ignore_permissions=True)
 		calc.assert_not_called()
 		self.assertEqual(result["created"], ["HK-M-NEU"])
+		frappe.get_doc.assert_any_call(
+			"Heizkostenabrechnung Immobilie",
+			"HK-IMM-NEU",
+			for_update=True,
+		)
+		self.assertIn("FOR UPDATE", frappe.db.sql.call_args_list[0].args[0])
+		self.assertIn("FOR UPDATE", frappe.db.sql.call_args_list[1].args[0])
+		frappe.db.commit.assert_not_called()
+
+	def test_new_draft_fails_closed_when_hk_prepayment_calc_fails(self):
+		parent = SimpleNamespace(
+			name="HK-IMM-1",
+			amended_from=None,
+			immobilie="I-1",
+			von="2025-01-01",
+			bis="2025-12-31",
+			datum="2026-07-16",
+			docstatus=0,
+			waermedienst="WD-1",
+			waermedienst_referenz="REF-1",
+		)
+		frappe = MagicMock()
+		frappe.db.sql.side_effect = [
+			[
+				{
+					"name": "MV-FATAL",
+					"kunde": "Mieter 1",
+					"wohnung": "W-1",
+				}
+			],
+			[],
+		]
+		frappe.throw.side_effect = RuntimeError("draft blocked")
+
+		with (
+			patch.object(module, "frappe", frappe),
+			patch.object(
+				module,
+				"calc_hk_vorauszahlungen",
+				side_effect=RuntimeError("DB-Auswertung fehlgeschlagen"),
+			),
+			self.assertRaisesRegex(RuntimeError, "draft blocked"),
+		):
+			module._create_mieter_drafts_for_parent(parent)
+
+		frappe.new_doc.assert_not_called()
+		message = frappe.throw.call_args.args[0]
+		self.assertIn("MV-FATAL", message)
+		self.assertIn("Mieter 1", message)
+		self.assertIn("W-1", message)
+		self.assertIn("Es wurde kein Mieter-Entwurf angelegt", message)
 
 	def test_wizard_defaults_belegdatum_to_today(self):
 		parent = SimpleNamespace(name="HK-IMM-1", insert=MagicMock())
@@ -116,14 +189,15 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 			patch.object(module, "frappe", frappe),
 			patch.object(
 				module,
-				"create_mieter_drafts",
+				"_create_mieter_drafts_for_parent",
 				return_value={"created": [], "skipped": [], "no_wohnung": []},
 			),
 		):
 			module.create_with_drafts("I-1", "2025-01-01", "2025-12-31")
 
 		self.assertEqual(parent.datum, "2026-07-16")
-		parent.insert.assert_called_once_with(ignore_permissions=True)
+		parent.insert.assert_called_once_with()
+		frappe.db.commit.assert_not_called()
 
 	def test_sync_table_updates_manual_vorauszahlung_in_draft(self):
 		row = SimpleNamespace(
@@ -184,7 +258,7 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 
 	def test_cancel_preflight_finds_paid_settlement(self):
 		parent = SimpleNamespace(
-			_get_children=lambda status_filter: [
+			_get_locked_cancel_children=lambda: [
 				{
 					"name": "HK-M-1",
 					"customer": "Mieter 1",
@@ -194,10 +268,27 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 			]
 		)
 		allocations = [
-			{"payment_entry": "PE-1", "allocated_amount": 50.0, "posting_date": "2026-07-16"}
+			{
+				"document_type": "Payment Entry",
+				"document": "PE-1",
+				"payment_entry": "PE-1",
+				"allocated_amount": 50.0,
+				"posting_date": "2026-07-16",
+			},
+			{
+				"document_type": "Journal Entry",
+				"document": "JE-1",
+				"journal_entry": "JE-1",
+				"allocated_amount": 25.0,
+				"posting_date": "2026-07-16",
+			},
 		]
 
-		with patch.object(module, "_get_payment_allocations", return_value=allocations):
+		with patch.object(
+			module,
+			"_get_locked_settlement_allocations",
+			return_value={"SI-1": allocations},
+		):
 			blockers = module.HeizkostenabrechnungImmobilie._get_cancel_payment_blockers(parent)
 
 		self.assertEqual(
@@ -220,7 +311,11 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 					"customer": "Mieter 1",
 					"invoice": "SI-1",
 					"allocations": [
-						{"payment_entry": "PE-1", "allocated_amount": 50.0}
+						{
+							"document_type": "Payment Entry",
+							"document": "PE-1",
+							"allocated_amount": 50.0,
+						}
 					],
 				}
 			]
@@ -251,10 +346,14 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 		child.submit.assert_called_once_with()
 
 	def test_cancel_cascade_propagates_child_failure(self):
-		parent = SimpleNamespace(name="HK-IMM-1", db_set=MagicMock())
+		parent = SimpleNamespace(
+			name="HK-IMM-1",
+			db_set=MagicMock(),
+			_get_locked_cancel_children=lambda: [{"name": "HK-M-1", "docstatus": 1}],
+		)
 		child = SimpleNamespace(flags=SimpleNamespace(), cancel=MagicMock(side_effect=RuntimeError("bezahlt")))
 		frappe = MagicMock()
-		frappe.get_all.return_value = [{"name": "HK-M-1", "docstatus": 1}]
+		child.docstatus = 1
 		frappe.get_doc.return_value = child
 
 		with patch.object(module, "frappe", frappe):
@@ -321,6 +420,60 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 		self.assertEqual(summary["replaced"][0]["old_vorauszahlungen"], 720.0)
 		self.assertEqual(summary["replaced"][0]["new_vorauszahlungen"], 700.0)
 
+	def test_submitted_correction_propagates_replacement_failure(self):
+		row = SimpleNamespace(
+			heizkostenabrechnung_mieter="HK-M-ALT",
+			child_docstatus=1,
+			kosten_gesamt=850.0,
+			vorauszahlungen=700.0,
+		)
+		summary = {"unchanged": 0, "replaced": [], "errors": []}
+		parent = SimpleNamespace(
+			name="HK-IMM-1",
+			mieter_positionen=[row],
+			flags=SimpleNamespace(_correction_summary=summary),
+		)
+		old_doc = SimpleNamespace(
+			name="HK-M-ALT",
+			docstatus=1,
+			mietvertrag="MV-1",
+			customer="Mieter 1",
+			wohnung="W-1",
+			immobilie="I-1",
+			von="2025-01-01",
+			bis="2025-12-31",
+			datum="2026-02-01",
+			waermedienst="WD-1",
+			waermedienst_referenz="REF-1",
+			kosten_gesamt=850.0,
+			vorauszahlungen=720.0,
+			flags=SimpleNamespace(),
+			cancel=MagicMock(),
+			get=lambda fieldname: {"sales_invoice": "SI-ALT", "credit_note": None}.get(fieldname),
+		)
+		new_doc = SimpleNamespace(
+			name="HK-M-NEU",
+			flags=SimpleNamespace(),
+			insert=MagicMock(),
+			submit=MagicMock(side_effect=RuntimeError("Ersatzrechnung fehlgeschlagen")),
+		)
+		frappe = MagicMock()
+		frappe.get_doc.return_value = old_doc
+		frappe.new_doc.return_value = new_doc
+
+		with (
+			patch.object(module, "frappe", frappe),
+			patch.object(module, "_get_payment_allocations", return_value=[]),
+			self.assertRaisesRegex(RuntimeError, "Ersatzrechnung fehlgeschlagen"),
+		):
+			module.HeizkostenabrechnungImmobilie._apply_corrections_from_table(parent)
+
+		old_doc.cancel.assert_called_once_with()
+		self.assertEqual(row.heizkostenabrechnung_mieter, "HK-M-ALT")
+		self.assertEqual(row.child_docstatus, 1)
+		self.assertEqual(summary["replaced"], [])
+		self.assertEqual(summary["errors"], [])
+
 	def test_mieter_manual_submit_and_cancel_are_blocked(self):
 		child = SimpleNamespace(flags=SimpleNamespace())
 		frappe = MagicMock()
@@ -334,17 +487,24 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 
 	def test_mieter_internal_submit_and_cancel_are_allowed(self):
 		child = SimpleNamespace(
-			flags=SimpleNamespace(allow_submit_via_head=True, allow_cancel_via_head=True)
+			flags=SimpleNamespace(allow_submit_via_head=True, allow_cancel_via_head=True),
+			heizkostenabrechnung_immobilie="HK-IMM-1",
+			get=lambda _fieldname: None,
+			_validate_settlement_documents_for_cancel=lambda: [],
 		)
 		frappe = MagicMock()
 
-		with patch.object(mieter_module, "frappe", frappe):
+		with patch.object(mieter_module, "frappe", frappe), patch.object(
+			mieter_module,
+			"_get_locked_settlement_allocations",
+			return_value={},
+		):
 			mieter_module.HeizkostenabrechnungMieter.before_submit(child)
 			mieter_module.HeizkostenabrechnungMieter.before_cancel(child)
 
 		frappe.throw.assert_not_called()
-		self.assertTrue(child.flags.ignore_links)
-		self.assertEqual(child.flags.ignore_linked_doctypes, ["Heizkostenabrechnung Immobilie"])
+		self.assertFalse(hasattr(child.flags, "ignore_links"))
+		self.assertEqual(child.ignore_linked_doctypes, ["Heizkostenabrechnung Immobilie"])
 
 
 if __name__ == "__main__":

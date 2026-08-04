@@ -488,37 +488,35 @@ def _booking_abschlagsplan_auto_match(*, doc, row, bt, context):
 	if invoice_result.get("reason") not in ("no_open_invoices", "no_matching_cost_center"):
 		return {"matched": False, "reason": "invoice_result_not_abschlag_candidate"}
 
-	try:
-		from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import import (
-			assign_abschlagsplan_row,
-			get_abschlagsplan_candidates_for_row,
-		)
+	from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import import (
+		assign_abschlagsplan_row,
+		get_abschlagsplan_candidates_for_row,
+	)
 
-		candidate_payload = get_abschlagsplan_candidates_for_row(doc.name, row.name)
-		auto_tolerance = int(candidate_payload.get("auto_tolerance_days") or 0)
-		strict_candidates = [
-			c
-			for c in candidate_payload.get("candidates", [])
-			if c.get("delta_days") is None or c.get("delta_days") <= auto_tolerance
-		]
-		if len(strict_candidates) != 1:
-			return {
-				"matched": False,
-				"reason": "no_unique_abschlagsplan_candidate",
-				"message": context.get("last_message"),
-			}
-		abschlag_result = assign_abschlagsplan_row(
-			doc.name,
-			row.name,
-			strict_candidates[0].get("row_name"),
-			remarks=row.get("verwendungszweck") or row.get("auftraggeber") or None,
-		)
-	except Exception:
-		frappe.log_error(
-			frappe.get_traceback(),
-			f"Bankauszug Import: Abschlagsplan-Auto-Zuordnung fehlgeschlagen fuer {bt.name}",
-		)
-		return {"matched": False, "reason": "exception"}
+	candidate_payload = get_abschlagsplan_candidates_for_row(doc.name, row.name)
+	auto_tolerance = int(candidate_payload.get("auto_tolerance_days") or 0)
+	strict_candidates = [
+		c
+		for c in candidate_payload.get("candidates", [])
+		if c.get("delta_days") is None or c.get("delta_days") <= auto_tolerance
+	]
+	if len(strict_candidates) != 1:
+		return {
+			"matched": False,
+			"reason": "no_unique_abschlagsplan_candidate",
+			"message": context.get("last_message"),
+		}
+	candidate = strict_candidates[0]
+	# Do not catch assignment failures here.  The outer rule execution owns
+	# the savepoint and must see the exception so a PE/BT link or allocation
+	# created before the failure is rolled back as one atomic rule action.
+	abschlag_result = assign_abschlagsplan_row(
+		doc.name,
+		row.name,
+		candidate.get("row_name"),
+		remarks=row.get("verwendungszweck") or row.get("auftraggeber") or None,
+		plan_name=candidate.get("zahlungsplan"),
+	)
 
 	message = (
 		f"Abschlag automatisch zugeordnet: "
@@ -984,6 +982,8 @@ def _evaluate_builder_booking_action(*, rule: dict[str, Any], row, context: dict
 	cost_center = action.get("cost_center") or action.get("kostenstelle")
 	if not account:
 		return {"matched": False, "reason": "missing_account"}
+	savepoint_name = "bankimport_builder_booking"
+	frappe.db.savepoint(savepoint_name)
 	try:
 		from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import import (
 			_set_row_payment_document,
@@ -1014,6 +1014,9 @@ def _evaluate_builder_booking_action(*, rule: dict[str, Any], row, context: dict
 			"message": message,
 		}
 	except Exception:
+		# The builder may already have submitted a voucher before reconciliation
+		# failed. Roll the whole action back, not merely the BT link attempt.
+		frappe.db.rollback(save_point=savepoint_name)
 		frappe.log_error(
 			frappe.get_traceback(),
 			f"Bankimport-Builder-Regel fehlgeschlagen: {rule.get('name') or rule.get('rule_key')}",
@@ -1067,10 +1070,16 @@ def _execute_rule_code(rule: dict[str, Any], local_vars: dict[str, Any]) -> dict
 		"rule": rule,
 	}
 	scope = {**local_vars, "result": {"matched": False, "reason": "no_result"}}
+	savepoint_name = "bankimport_rule_execution"
+	frappe.db.savepoint(savepoint_name)
 	try:
 		compiled = compile(code, f"<bankimport-rule {rule.get('name') or rule.get('rule_key')}>", "exec")
 		exec(compiled, env, scope)
 	except Exception:
+		# Rule helpers are allowed to create submitted accounting vouchers. A
+		# rule failure must undo every such side effect before the engine tries
+		# the next rule or leaves the Bank Transaction for manual processing.
+		frappe.db.rollback(save_point=savepoint_name)
 		frappe.log_error(
 			frappe.get_traceback(),
 			f"Bankimport-Regel fehlgeschlagen: {rule.get('name') or rule.get('rule_key')}",

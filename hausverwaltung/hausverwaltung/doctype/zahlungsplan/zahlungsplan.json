@@ -24,6 +24,9 @@
   "reference_no",
   "vorzahlung_section",
   "vor_systemstart_bezahlt",
+  "vor_systemstart_buchungsdatum",
+  "vor_systemstart_gegenkonto",
+  "vor_systemstart_journal_entry",
   "vor_systemstart_bemerkung",
   "buchung_section",
   "kostenart_typ",
@@ -35,6 +38,8 @@
   "plan_section",
   "plan_vorbelegen_btn",
   "plan",
+  "zahlungen_section",
+  "zahlungen",
   "auto_pi_section",
   "pi_letzter_lauf"
  ],
@@ -153,7 +158,34 @@
    "label": "Bereits bezahlt (vor Systemstart)",
    "default": 0,
    "depends_on": "eval:doc.modus=='Abschlagsplan'",
-   "description": "Summe historischer Anzahlungen aus Zeit vor System-Einführung."
+   "description": "Summe historischer Anzahlungen aus Zeit vor System-Einführung. Der Betrag wird vor der Jahresabrechnung als echte Eröffnungsbuchung erfasst."
+  },
+  {
+   "fieldname": "vor_systemstart_buchungsdatum",
+   "fieldtype": "Date",
+   "label": "Buchungsdatum der historischen Zahlung",
+   "depends_on": "eval:doc.modus=='Abschlagsplan' && doc.vor_systemstart_bezahlt",
+   "mandatory_depends_on": "eval:doc.modus=='Abschlagsplan' && doc.vor_systemstart_bezahlt",
+   "read_only_depends_on": "eval:!!doc.vor_systemstart_journal_entry",
+   "description": "Datum, zu dem die historische Anzahlung in die Finanzbuchhaltung übernommen wird."
+  },
+  {
+   "fieldname": "vor_systemstart_gegenkonto",
+   "fieldtype": "Link",
+   "label": "Gegenkonto der historischen Zahlung",
+   "options": "Account",
+   "depends_on": "eval:doc.modus=='Abschlagsplan' && doc.vor_systemstart_bezahlt",
+   "mandatory_depends_on": "eval:doc.modus=='Abschlagsplan' && doc.vor_systemstart_bezahlt",
+   "read_only_depends_on": "eval:!!doc.vor_systemstart_journal_entry",
+   "description": "Bilanzkonto für die Übernahme, zum Beispiel ein Eröffnungs- oder Übernahme-Verrechnungskonto."
+  },
+  {
+   "fieldname": "vor_systemstart_journal_entry",
+   "fieldtype": "Link",
+   "label": "Buchung der historischen Zahlung",
+   "options": "Journal Entry",
+   "read_only": 1,
+   "depends_on": "eval:doc.modus=='Abschlagsplan' && doc.vor_systemstart_bezahlt"
   },
   {
    "fieldname": "vor_systemstart_bemerkung",
@@ -176,6 +208,22 @@
    "fieldtype": "Table",
    "label": "Plan",
    "options": "Zahlungsplan Zeile"
+  },
+  {
+   "fieldname": "zahlungen_section",
+   "fieldtype": "Section Break",
+   "label": "Zahlungszuordnungen",
+   "depends_on": "eval:doc.modus=='Abschlagsplan'",
+   "collapsible": 1,
+   "description": "Tatsächliche Zuordnung von Payment Entries zu Plan-Zeilen. Eine Rate kann mehrere Teilzahlungen und ein Payment Entry mehrere Raten enthalten."
+  },
+  {
+   "fieldname": "zahlungen",
+   "fieldtype": "Table",
+   "label": "Zahlungszuordnungen",
+   "options": "Zahlungsplan Zahlung Zuordnung",
+   "read_only": 1,
+   "depends_on": "eval:doc.modus=='Abschlagsplan'"
   },
   {
    "fieldname": "auto_pi_section",

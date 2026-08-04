@@ -27,9 +27,12 @@
   "section_break_eezj",
   "miete_pro_qm",
   "aktuelle_nettokaltmiete",
+  "aktuelle_betriebskostenregelung",
   "aktuelle_betriebskosten",
   "aktuelle_heizkosten",
   "bk_vorauszahlung_ytd_bezahlt",
+  "betriebskostenregelung_section",
+  "betriebskostenregelungen",
   "betriebskosten",
   "heizkosten",
   "untermietzuschlag",
@@ -130,13 +133,14 @@
   {
    "fieldname": "miete_tab",
    "fieldtype": "Tab Break",
-   "label": "Nettokaltmiete"
+   "label": "Miete und Betriebskosten"
   },
   {
    "allow_on_submit": 1,
+   "description": "Bei Pauschale/Inklusivmiete ist hier der gesamte inkludierende Mietbetrag einzutragen; bei Vorauszahlung die Nettokaltmiete.",
    "fieldname": "miete",
    "fieldtype": "Table",
-   "label": "Nettokaltmiete",
+   "label": "Mietbetrag",
    "options": "Staffelmiete"
   },
   {
@@ -161,14 +165,21 @@
    "fieldname": "miete_pro_qm",
    "fieldtype": "Float",
    "is_virtual": 1,
-   "label": "Nettokaltmiete pro qm",
+   "label": "Mietbetrag pro qm",
    "read_only": 1
   },
   {
    "fieldname": "aktuelle_nettokaltmiete",
    "fieldtype": "Currency",
    "is_virtual": 1,
-   "label": "Aktuelle Nettokaltmiete",
+   "label": "Aktueller Mietbetrag",
+   "read_only": 1
+  },
+  {
+   "fieldname": "aktuelle_betriebskostenregelung",
+   "fieldtype": "Data",
+   "is_virtual": 1,
+   "label": "Aktuelle BK-Regelung",
    "read_only": 1
   },
   {
@@ -193,10 +204,24 @@
    "read_only": 1
   },
   {
+   "fieldname": "betriebskostenregelung_section",
+   "fieldtype": "Section Break",
+   "label": "Betriebskostenregelung"
+  },
+  {
+   "allow_on_submit": 1,
+   "description": "Ohne Eintrag gilt aus Kompatibilitätsgründen Vorauszahlung. Bei einer Umstellung innerhalb des Vertrags eine neue Zeile zum Monatsersten ergänzen.",
+   "fieldname": "betriebskostenregelungen",
+   "fieldtype": "Table",
+   "label": "Betriebskostenregelungen",
+   "options": "Betriebskostenregelung"
+  },
+  {
    "allow_on_submit": 1,
    "fieldname": "betriebskosten",
    "fieldtype": "Table",
-   "label": "Betriebskosten",
+   "description": "Nur separat abzurechnende Betriebskostenvorauszahlungen. Bei Pauschale/Inklusivmiete keinen Betrag führen.",
+   "label": "BK-Vorauszahlung",
    "options": "Staffelmiete"
   },
   {

@@ -312,12 +312,12 @@ export async function getExpectedCostCenter(name, rowName) {
 	return await rpc("expected_cost_center", { docname: name, row_name: rowName });
 }
 
-export async function searchAccounts(txt) {
+export async function searchAccounts(txt, docname) {
 	if (!embedded) {
 		const q = (txt || "").toLowerCase();
 		return { items: MOCK_ACCOUNTS.filter((a) => a.value.toLowerCase().includes(q)) };
 	}
-	return await rpc("search_accounts", { txt: txt || "" });
+	return await rpc("search_accounts", { txt: txt || "", docname: docname || "" });
 }
 
 // splits: optional [{ account, cost_center?, amount }]

@@ -580,8 +580,35 @@ function ZahlungModal({ row, onClose, onDone }) {
   const skontoSatz = skontoMatch ? parseFloat(skontoMatch[2]) : 0;
   const [nutzeSkonto, setNutzeSkonto] = useStateAct(hasSkonto);
   const [zahldatum, setZahldatum] = useStateAct(() => frappe.datetime.get_today());
-  const [zahlart, setZahlart] = useStateAct("SEPA-Überweisung");
+  const [zahlart, setZahlart] = useStateAct("Bank Draft");
+  const paymentAccounts = window.OFFENE_POSTEN.paymentAccounts || [];
+  const expectedAccountType = zahlart === "Cash" ? "Cash" : "Bank";
+  const eligiblePaymentAccounts = paymentAccounts.filter(
+    (account) => account.account_type === expectedAccountType
+  );
+  const [bankAccount, setBankAccount] = useStateAct(
+    () => {
+      const bankAccounts = paymentAccounts.filter((account) => account.account_type === "Bank");
+      return bankAccounts.length === 1 ? bankAccounts[0].name : "";
+    }
+  );
+  const [referenceNo, setReferenceNo] = useStateAct("");
+  const [referenceDate, setReferenceDate] = useStateAct(
+    () => frappe.datetime.get_today()
+  );
   const [busy, setBusy] = useStateAct(false);
+  const isBankPayment = expectedAccountType === "Bank";
+
+  useEffectAct(() => {
+    const selectedStillFits = eligiblePaymentAccounts.some(
+      (account) => account.name === bankAccount
+    );
+    if (!selectedStillFits) {
+      setBankAccount(
+        eligiblePaymentAccounts.length === 1 ? eligiblePaymentAccounts[0].name : ""
+      );
+    }
+  }, [zahlart]);
 
   const abzug = nutzeSkonto ? row.offen * (Math.abs(skontoSatz) / 100) : 0;
   const auszahlung = row.offen - abzug;
@@ -593,6 +620,9 @@ function ZahlungModal({ row, onClose, onDone }) {
         useSkonto: nutzeSkonto,
         skontoAmount: abzug,
         zahlart,
+        bankAccount,
+        referenceNo: isBankPayment ? referenceNo : null,
+        referenceDate: isBankPayment ? referenceDate : null,
       });
       onDone?.(result);
     } finally {
@@ -608,11 +638,19 @@ function ZahlungModal({ row, onClose, onDone }) {
       footer={
         <>
           <span className="op-modal-foot-info">
-            Erzeugt 1 Payment Entry · ggf. 1 SEPA-XML
+            Erzeugt einen ausgeglichenen Payment-Entry-Draft.
           </span>
           <div className="op-modal-foot-actions">
             <button className="mk-btn" onClick={onClose} disabled={busy}>Abbrechen</button>
-            <button className="mk-btn mk-btn-primary" onClick={submit} disabled={busy}>
+            <button
+              className="mk-btn mk-btn-primary"
+              onClick={submit}
+              disabled={
+                busy ||
+                !bankAccount ||
+                (isBankPayment && (!referenceNo.trim() || !referenceDate))
+              }
+            >
               {busy ? "Draft wird angelegt …" : `Zahlung als Draft anlegen · ${fmtEUR_op(auszahlung)}`}
             </button>
           </div>
@@ -622,16 +660,54 @@ function ZahlungModal({ row, onClose, onDone }) {
       <div className="op-form-grid">
         <div className="op-field">
           <label>Zahldatum</label>
-          <input type="date" value={zahldatum} onChange={(e) => setZahldatum(e.target.value)} />
+          <input
+            type="date"
+            value={zahldatum}
+            onChange={(e) => {
+              setZahldatum(e.target.value);
+              setReferenceDate(e.target.value);
+            }}
+          />
         </div>
         <div className="op-field">
           <label>Zahlart</label>
           <select value={zahlart} onChange={(e) => setZahlart(e.target.value)}>
-            <option>SEPA-Überweisung</option>
-            <option>Lastschrift</option>
-            <option>Manuelle Überweisung</option>
+            <option value="Bank Draft">Banküberweisung</option>
+            <option value="Cash">Bar / Kasse</option>
           </select>
         </div>
+        <div className="op-field is-full">
+          <label>Firmenkonto</label>
+          <select value={bankAccount} onChange={(e) => setBankAccount(e.target.value)}>
+            <option value="">Bitte Bank-/Kassenkonto wählen</option>
+            {eligiblePaymentAccounts.map((account) => (
+              <option key={account.name} value={account.name}>
+                {account.name} · {account.account_type} · {account.account_currency}
+              </option>
+            ))}
+          </select>
+        </div>
+        {isBankPayment && (
+          <>
+            <div className="op-field">
+              <label>Bankreferenz</label>
+              <input
+                type="text"
+                value={referenceNo}
+                placeholder="z. B. Überweisungs-ID"
+                onChange={(e) => setReferenceNo(e.target.value)}
+              />
+            </div>
+            <div className="op-field">
+              <label>Referenzdatum</label>
+              <input
+                type="date"
+                value={referenceDate}
+                onChange={(e) => setReferenceDate(e.target.value)}
+              />
+            </div>
+          </>
+        )}
         {hasSkonto && (
           <div className="op-field is-full" style={{ background: "oklch(0.97 0.04 80)", padding: 12, border: "1px solid oklch(0.85 0.06 70)", borderRadius: 4 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: "oklch(0.40 0.10 70)" }}>
@@ -665,8 +741,8 @@ function ZahlungModal({ row, onClose, onDone }) {
 
       <div className="op-checklist">
         <div className="op-checklist-item">Payment Entry zu {row.belegnummer}</div>
-        {nutzeSkonto && <div className="op-checklist-item">Skonto-Buchung auf 3736 (Aufwandsminderung)</div>}
-        {zahlart === "SEPA-Überweisung" && <div className="op-checklist-item">SEPA-XML zur nächsten Zahlungsdatei hinzugefügt</div>}
+        {nutzeSkonto && <div className="op-checklist-item">Skonto auf das konfigurierte Abzugskonto</div>}
+        <div className="op-checklist-item">Bankkonto gemäß Zahlart und Firma</div>
       </div>
     </Modal>
   );
@@ -677,9 +753,36 @@ function ZahlungModal({ row, onClose, onDone }) {
 function GuthabenAuszahlenModal({ row, onClose, onDone }) {
   const [postingDate, setPostingDate] = useStateAct(() => frappe.datetime.get_today());
   const [modeOfPayment, setModeOfPayment] = useStateAct("Bank Draft");
+  const paymentAccounts = window.OFFENE_POSTEN.paymentAccounts || [];
+  const expectedAccountType = modeOfPayment === "Cash" ? "Cash" : "Bank";
+  const eligiblePaymentAccounts = paymentAccounts.filter(
+    (account) => account.account_type === expectedAccountType
+  );
+  const [bankAccount, setBankAccount] = useStateAct(
+    () => {
+      const bankAccounts = paymentAccounts.filter((account) => account.account_type === "Bank");
+      return bankAccounts.length === 1 ? bankAccounts[0].name : "";
+    }
+  );
+  const [referenceNo, setReferenceNo] = useStateAct("");
+  const [referenceDate, setReferenceDate] = useStateAct(
+    () => frappe.datetime.get_today()
+  );
   const [busy, setBusy] = useStateAct(false);
   const amount = Math.abs(row.offen || 0);
   const partyName = window.OFFENE_POSTEN.partyName(row.party);
+  const isBankPayment = expectedAccountType === "Bank";
+
+  useEffectAct(() => {
+    const selectedStillFits = eligiblePaymentAccounts.some(
+      (account) => account.name === bankAccount
+    );
+    if (!selectedStillFits) {
+      setBankAccount(
+        eligiblePaymentAccounts.length === 1 ? eligiblePaymentAccounts[0].name : ""
+      );
+    }
+  }, [modeOfPayment]);
 
   const submit = async () => {
     setBusy(true);
@@ -687,6 +790,9 @@ function GuthabenAuszahlenModal({ row, onClose, onDone }) {
       const result = await window.OP_ACTIONS.createRefundPayment(row, {
         postingDate,
         modeOfPayment,
+        bankAccount,
+        referenceNo: isBankPayment ? referenceNo : null,
+        referenceDate: isBankPayment ? referenceDate : null,
       });
       onDone?.(result);
     } finally {
@@ -706,7 +812,15 @@ function GuthabenAuszahlenModal({ row, onClose, onDone }) {
           </span>
           <div className="op-modal-foot-actions">
             <button className="mk-btn" onClick={onClose} disabled={busy}>Abbrechen</button>
-            <button className="mk-btn mk-btn-primary" onClick={submit} disabled={busy}>
+            <button
+              className="mk-btn mk-btn-primary"
+              onClick={submit}
+              disabled={
+                busy ||
+                !bankAccount ||
+                (isBankPayment && (!referenceNo.trim() || !referenceDate))
+              }
+            >
               {busy ? "Draft wird angelegt …" : `Auszahlung als Draft anlegen · ${fmtEUR_op(amount)}`}
             </button>
           </div>
@@ -716,16 +830,54 @@ function GuthabenAuszahlenModal({ row, onClose, onDone }) {
       <div className="op-form-grid">
         <div className="op-field">
           <label>Auszahlungsdatum</label>
-          <input type="date" value={postingDate} onChange={(e) => setPostingDate(e.target.value)} />
+          <input
+            type="date"
+            value={postingDate}
+            onChange={(e) => {
+              setPostingDate(e.target.value);
+              setReferenceDate(e.target.value);
+            }}
+          />
         </div>
         <div className="op-field">
           <label>Zahlart</label>
           <select value={modeOfPayment} onChange={(e) => setModeOfPayment(e.target.value)}>
-            <option>Bank Draft</option>
-            <option>SEPA-Überweisung</option>
-            <option>Manuelle Überweisung</option>
+            <option value="Bank Draft">Banküberweisung</option>
+            <option value="Cash">Bar / Kasse</option>
           </select>
         </div>
+        <div className="op-field is-full">
+          <label>Auszahlungskonto</label>
+          <select value={bankAccount} onChange={(e) => setBankAccount(e.target.value)}>
+            <option value="">Bitte Bank-/Kassenkonto wählen</option>
+            {eligiblePaymentAccounts.map((account) => (
+              <option key={account.name} value={account.name}>
+                {account.name} · {account.account_type} · {account.account_currency}
+              </option>
+            ))}
+          </select>
+        </div>
+        {isBankPayment && (
+          <>
+            <div className="op-field">
+              <label>Bankreferenz</label>
+              <input
+                type="text"
+                value={referenceNo}
+                placeholder="z. B. Überweisungs-ID"
+                onChange={(e) => setReferenceNo(e.target.value)}
+              />
+            </div>
+            <div className="op-field">
+              <label>Referenzdatum</label>
+              <input
+                type="date"
+                value={referenceDate}
+                onChange={(e) => setReferenceDate(e.target.value)}
+              />
+            </div>
+          </>
+        )}
       </div>
 
       <div className="op-preview">

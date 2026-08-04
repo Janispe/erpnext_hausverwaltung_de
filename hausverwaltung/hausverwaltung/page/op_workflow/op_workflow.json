@@ -5,7 +5,7 @@
  "doctype": "Page",
  "icon": "fa fa-list-alt",
  "idx": 0,
- "modified": "2026-05-27 12:00:00",
+ "modified": "2026-07-30 02:04:16.248065",
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
  "name": "op-workflow",
@@ -13,10 +13,7 @@
  "page_name": "op-workflow",
  "roles": [
   {
-   "role": "Accounts User"
-  },
-  {
-   "role": "Accounts Manager"
+   "role": "Hausverwalter (Buchung)"
   }
  ],
  "script": null,

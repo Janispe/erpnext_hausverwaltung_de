@@ -11,6 +11,7 @@ from hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur import (
 	_reconcile_bulk_payment_pool,
 	_reconcile_existing_payment,
 	_si_context,
+	_validate_invoice_contract_identity,
 	_validate_single_type_invoice,
 	korrigiere_mietrechnung,
 	korrigiere_mietrechnungen_bulk,
@@ -137,6 +138,7 @@ class TestSingleTypeCorrectionGuard(unittest.TestCase):
 		)
 		si.update({"name": "SINV-KOMBINIERT", "docstatus": 1, "is_return": 0})
 		si.cancel = MagicMock()
+		si.check_permission = MagicMock()
 
 		with (
 			patch(
@@ -158,6 +160,107 @@ class TestSingleTypeCorrectionGuard(unittest.TestCase):
 		resolve_mietvertrag.assert_not_called()
 		is_frozen.assert_not_called()
 		si.cancel.assert_not_called()
+
+
+class TestInvoiceContractIdentity(unittest.TestCase):
+	def test_rejects_conflicting_structured_and_remark_contract(self):
+		si = _si(
+			remarks="[TYPE:Miete] [MV:MV-B] 03/2026",
+			mietabrechnung_id="MV-A|03/2026",
+			items=[{"item_code": "Miete"}],
+		)
+		si.update({"name": "SINV-WIDERSPRUCH", "customer": "CUST-A", "wohnung": "WHG-A"})
+
+		with self.assertRaises(frappe.ValidationError):
+			_validate_invoice_contract_identity(
+				si,
+				{"mietvertrag": "MV-A"},
+			)
+
+	def test_rejects_customer_that_does_not_belong_to_contract(self):
+		si = _si(
+			remarks="[TYPE:Miete] [MV:MV-A] 03/2026",
+			mietabrechnung_id="MV-A|03/2026",
+			items=[{"item_code": "Miete"}],
+		)
+		si.update({"name": "SINV-FALSCH", "customer": "CUST-B", "wohnung": "WHG-A"})
+		contract = frappe._dict(name="MV-A", kunde="CUST-A", wohnung="WHG-A")
+
+		with (
+			patch("frappe.db.get_value", return_value=contract),
+			self.assertRaises(frappe.ValidationError),
+		):
+			_validate_invoice_contract_identity(si, {"mietvertrag": "MV-A"})
+
+	def test_frozen_correction_blocks_second_credit_note_after_row_lock(self):
+		si = _si(
+			remarks="[TYPE:Miete] [MV:MV-A] 03/2026",
+			mietabrechnung_id="MV-A|03/2026",
+			items=[{"item_code": "Miete"}],
+		)
+		si.update(
+			{
+				"name": "SINV-ALT",
+				"doctype": "Sales Invoice",
+				"docstatus": 1,
+				"is_return": 0,
+				"customer": "CUST-A",
+				"wohnung": "WHG-A",
+				"company": "Firma A",
+				"outstanding_amount": 100.0,
+				"grand_total": 100.0,
+			}
+		)
+		si.check_permission = MagicMock()
+		contract = frappe._dict(name="MV-A", kunde="CUST-A", wohnung="WHG-A")
+
+		def get_value(doctype, name_or_filters, fieldname=None, **_kwargs):
+			if doctype == "Mietvertrag":
+				return contract
+			raise AssertionError(doctype)
+
+		with (
+			patch("frappe.get_doc", return_value=si) as get_doc,
+			patch("frappe.db.sql", return_value=[("SINV-CN-1",)]) as sql,
+			patch("frappe.db.exists", return_value=True),
+			patch("frappe.db.get_value", side_effect=get_value) as get_value_mock,
+			patch("frappe.has_permission", return_value=True),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._resolve_mietvertrag",
+				return_value="MV-A",
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._is_frozen",
+				return_value=True,
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._payment_entries_for_si",
+				return_value=[],
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._journal_entries_for_si",
+				return_value=[],
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._recompute_betrag",
+				return_value=120.0,
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._korrektur_gutschrift"
+			) as create_correction,
+			self.assertRaises(frappe.ValidationError),
+		):
+			korrigiere_mietrechnung("SINV-ALT")
+
+		get_doc.assert_called_once_with(
+			"Sales Invoice",
+			"SINV-ALT",
+			for_update=True,
+		)
+		self.assertTrue(get_value_mock.call_args.kwargs["for_update"])
+		self.assertIn("FOR UPDATE", sql.call_args.args[0])
+		self.assertEqual(sql.call_args.args[1], ("SINV-ALT",))
+		create_correction.assert_not_called()
 
 
 class DummySalesInvoice:

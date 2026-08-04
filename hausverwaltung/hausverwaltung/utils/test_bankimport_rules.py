@@ -148,3 +148,21 @@ result = {
 
 		self.assertTrue(result["matched"])
 		self.assertEqual(result["rule"], "rule-code")
+
+	def test_rule_exception_rolls_back_all_rule_side_effects(self):
+		rule = {
+			"name": "rule-failing",
+			"rule_key": "rule-failing",
+			"rule_code": 'raise RuntimeError("boom")',
+			"parameters": {},
+			"scope_rules": [],
+		}
+
+		with patch.object(rules.frappe.db, "savepoint") as savepoint, \
+			patch.object(rules.frappe.db, "rollback") as rollback, \
+			patch.object(rules.frappe, "log_error"):
+			result = rules._execute_rule_code(rule, {})
+
+		self.assertEqual(result["reason"], "rule_exception")
+		savepoint.assert_called_once_with("bankimport_rule_execution")
+		rollback.assert_called_once_with(save_point="bankimport_rule_execution")

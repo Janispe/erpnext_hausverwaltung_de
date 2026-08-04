@@ -4,7 +4,7 @@ import re
 from frappe import _
 from frappe.model.document import Document
 from frappe.model.rename_doc import rename_doc
-from frappe.utils import getdate, today, get_first_day
+from frappe.utils import add_days, getdate, today, get_first_day
 from urllib.parse import urlencode
 
 from datetime import date
@@ -18,6 +18,11 @@ from hausverwaltung.hausverwaltung.integrations.paperless import PaperlessConfig
 from hausverwaltung.hausverwaltung.utils.mieter_name import (
 	get_hauptmieter_display_name,
 	get_hauptmieter_last_names,
+)
+from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
+	BK_REGELUNG_VORAUSZAHLUNG,
+	get_bk_regelung_from_rows,
+	normalize_bk_regelung,
 )
 
 
@@ -42,6 +47,79 @@ class Mietvertrag(Document):
 		table.sort(key=key)
 		for idx, row in enumerate(table, start=1):
 			row.idx = idx
+
+	def _sort_betriebskostenregelungen(self) -> None:
+		rows = list(getattr(self, "betriebskostenregelungen", None) or [])
+		rows.sort(
+			key=lambda row: (
+				getdate(row.gueltig_von) if getattr(row, "gueltig_von", None) else date.max
+			)
+		)
+		self.set("betriebskostenregelungen", rows)
+		for idx, row in enumerate(rows, start=1):
+			row.idx = idx
+
+	def _validate_betriebskostenregelungen(self) -> None:
+		"""Validiere eine lückenlose, monatsweise änderbare Vertragsregelung."""
+		rows = list(getattr(self, "betriebskostenregelungen", None) or [])
+		if not rows:
+			# Legacy-Verträge bleiben unverändert Vorauszahlungsverträge.
+			return
+		if not self.von:
+			frappe.throw(_("Für Betriebskostenregelungen muss ein Vertragsbeginn gesetzt sein."))
+
+		contract_start = getdate(self.von)
+		contract_end = getdate(self.bis) if self.bis else None
+		starts: list[date] = []
+		previous_rule = None
+		for index, row in enumerate(rows):
+			if not getattr(row, "gueltig_von", None):
+				frappe.throw(_("Jede Betriebskostenregelung benötigt ein Datum 'Gültig ab'."))
+			start = getdate(row.gueltig_von)
+			rule = normalize_bk_regelung(getattr(row, "abrechnungsart", None))
+			row.abrechnungsart = rule
+			if start in starts:
+				frappe.throw(_(f"Für den {start} existieren mehrere Betriebskostenregelungen."))
+			if index == 0 and start != contract_start:
+				frappe.throw(
+					_(f"Die erste Betriebskostenregelung muss am Vertragsbeginn {contract_start} starten.")
+				)
+			if index > 0 and start.day != 1:
+				frappe.throw(
+					_(f"Eine Änderung der Betriebskostenregelung ist nur zum Monatsersten zulässig ({start}).")
+				)
+			if contract_end and start > contract_end:
+				frappe.throw(_(f"Die Betriebskostenregelung ab {start} liegt nach Vertragsende {contract_end}."))
+			if previous_rule == rule:
+				frappe.throw(_(f"Die Betriebskostenregelung '{rule}' ab {start} wiederholt die vorherige Regelung."))
+			starts.append(start)
+			previous_rule = rule
+
+		for index, row in enumerate(rows):
+			rule = normalize_bk_regelung(row.abrechnungsart)
+			if rule == BK_REGELUNG_VORAUSZAHLUNG:
+				continue
+			start = getdate(row.gueltig_von)
+			end = (
+				getdate(add_days(rows[index + 1].gueltig_von, -1))
+				if index + 1 < len(rows)
+				else contract_end
+			)
+			if self._staffelbetrag_am(self.betriebskosten, start) > 0.004:
+				frappe.throw(
+					_(
+						f"Für '{rule}' ab {start} darf keine BK-Vorauszahlung aktiv sein. "
+						"Setzen Sie die BK-Staffel zum Regelungsbeginn auf 0."
+					)
+				)
+			for amount_row in self.betriebskosten or []:
+				if not amount_row.von or float(amount_row.miete or 0) <= 0.004:
+					continue
+				amount_start = getdate(amount_row.von)
+				if amount_start >= start and (end is None or amount_start <= end):
+					frappe.throw(
+						_(f"Die BK-Vorauszahlung ab {amount_start} liegt im Zeitraum der Regelung '{rule}'.")
+					)
 
 	def autoname(self) -> None:
 		"""Name contracts as: Haus-Code | VH/HH/SF | Lage | ab: <von> - Nachnamen.
@@ -130,12 +208,15 @@ class Mietvertrag(Document):
 		if self.kunde:
 			self._sync_customer_name()
 		else:
-			cust_id = _build_customer_docname(self)
+			cust_id = _build_contract_customer_docname(self)
 			display_name = get_hauptmieter_display_name(self.mieter) or self.name
 			customer = customer_utils.get_or_create_customer(
-				cust_id, customer_name=display_name
+				cust_id,
+				customer_name=display_name,
+				reuse_existing=False,
 			)
 			self.db_set("kunde", customer, update_modified=False)
+			self.kunde = customer
 
 		if not (self.mieterwechsel or "").strip() and _is_system_manager():
 			self.add_comment(
@@ -157,55 +238,39 @@ class Mietvertrag(Document):
 			self.flags.hv_syncing_names = False
 
 	def _sync_customer_name(self) -> str | None:
-		"""Rename/create the linked Customer to the current expected tenant name."""
-		target = _build_customer_docname(self)
-		display_name = get_hauptmieter_display_name(self.mieter) or target
-		if not target:
-			return None
+		"""Keep the authoritative Customer link stable and its display name current.
+
+		Customer document names may already be referenced by posted accounting
+		entries.  They are therefore never renamed or merged as a side effect of
+		editing a contract or contact.
+		"""
+		display_name = (
+			get_hauptmieter_display_name(self.mieter)
+			or _build_customer_docname(self)
+			or self.name
+		)
 
 		current = (self.kunde or "").strip()
-		if not current:
-			customer = customer_utils.get_or_create_customer(target, customer_name=display_name)
+		if not current or not frappe.db.exists("Customer", current):
+			target = _build_contract_customer_docname(self)
+			customer = customer_utils.get_or_create_customer(
+				target,
+				customer_name=display_name,
+				reuse_existing=False,
+			)
 			self.db_set("kunde", customer, update_modified=False)
 			self.kunde = customer
 			return customer
 
-		if not frappe.db.exists("Customer", current):
-			customer = customer_utils.get_or_create_customer(target, customer_name=display_name)
-			self.db_set("kunde", customer, update_modified=False)
-			self.kunde = customer
-			return customer
-
-		final_target = _unique_docname("Customer", target, current_name=current)
-		if final_target != current:
-			try:
-				final_target = rename_doc(
-					"Customer",
-					current,
-					final_target,
-					force=True,
-					merge=False,
-					show_alert=False,
-					ignore_permissions=True,
-				)
-			except Exception:
-				frappe.log_error(
-					frappe.get_traceback(),
-					f"Mietvertrag-Sync: Customer-Rename {current!r} -> {final_target!r} fehlgeschlagen",
-				)
-				frappe.throw(
-					f"Der Customer '{current}' konnte nicht zu '{final_target}' umbenannt werden.<br><br>"
-					"Mögliche Ursachen:<br>"
-					"• anderer Customer mit gleichem Namen existiert bereits<br>"
-					"• Customer ist in offenen Sales Invoices / Payment Entries referenziert und gesperrt<br>"
-					"• Lock-Timeout (anderer User editiert gerade denselben Customer)<br><br>"
-					"Details siehe Error Log."
-				)
-			self.kunde = final_target
-
-		if frappe.db.get_value("Customer", final_target, "customer_name") != display_name:
-			frappe.db.set_value("Customer", final_target, "customer_name", display_name, update_modified=False)
-		return final_target
+		if frappe.db.get_value("Customer", current, "customer_name") != display_name:
+			frappe.db.set_value(
+				"Customer",
+				current,
+				"customer_name",
+				display_name,
+				update_modified=False,
+			)
+		return current
 
 	def _sync_mietvertrag_name(self) -> str | None:
 		"""Rename this contract if Wohnung/date/Hauptmieter changed after creation."""
@@ -251,6 +316,8 @@ class Mietvertrag(Document):
 		self.immobilie = _get_wohnung_immobilie(self.wohnung)
 		for fieldname in ("miete", "betriebskosten", "heizkosten", "untermietzuschlag", "kaution"):
 			self._sort_staffel_table_by_von(fieldname)
+		self._sort_betriebskostenregelungen()
+		self._validate_betriebskostenregelungen()
 
 		allowed = {row.mieter for row in self.mieter}
 		for row in self.kontoverbindungen:
@@ -289,7 +356,6 @@ class Mietvertrag(Document):
 				)
 
 	def _validate_creation_via_process(self) -> None:
-		is_new_doc = bool(self.is_new())
 		mieterwechsel_name = (self.mieterwechsel or "").strip()
 
 		# TEMPORÄR DEAKTIVIERT: Manuelle Mietvertrags-Anlage durch Hausverwalter
@@ -361,12 +427,21 @@ class Mietvertrag(Document):
 
 	@property
 	def aktuelle_nettokaltmiete(self) -> float:
-		"""Aktuelle Nettokaltmiete zum Vertrags-Stichtag."""
+		"""Aktueller Mietbetrag zum Vertrags-Stichtag (Legacy-Feldname)."""
 		return self._staffelbetrag_am(self.miete, self._bruttomiete_stichtag())
+
+	@property
+	def aktuelle_betriebskostenregelung(self) -> str:
+		return get_bk_regelung_from_rows(
+			getattr(self, "betriebskostenregelungen", None) or [],
+			self._bruttomiete_stichtag(),
+		)
 
 	@property
 	def aktuelle_betriebskosten(self) -> float:
 		"""Aktuelle Betriebskosten zum Vertrags-Stichtag."""
+		if self.aktuelle_betriebskostenregelung != BK_REGELUNG_VORAUSZAHLUNG:
+			return 0.0
 		return self._staffelbetrag_am(self.betriebskosten, self._bruttomiete_stichtag())
 
 	@property
@@ -380,7 +455,7 @@ class Mietvertrag(Document):
 		stichtag = self._bruttomiete_stichtag()
 		return float(
 			(self._staffelbetrag_am(self.miete, stichtag) or 0.0)
-			+ (self._staffelbetrag_am(self.betriebskosten, stichtag) or 0.0)
+			+ (self.aktuelle_betriebskosten or 0.0)
 			+ (self._staffelbetrag_am(self.heizkosten, stichtag) or 0.0)
 			+ (self._staffelbetrag_am(self.untermietzuschlag, stichtag) or 0.0)
 		)
@@ -588,6 +663,13 @@ def _build_customer_docname(doc: object) -> str:
 	if nm:
 		return nm
 	return ""
+
+
+def _build_contract_customer_docname(doc: object) -> str:
+	return customer_utils.build_contract_customer_id(
+		_build_customer_docname(doc),
+		(getattr(doc, "name", None) or "").strip(),
+	)
 
 
 def _unique_docname(doctype: str, base_name: str, current_name: str | None = None) -> str:

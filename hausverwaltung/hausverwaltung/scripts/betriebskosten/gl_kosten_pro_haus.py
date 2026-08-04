@@ -21,7 +21,7 @@ Beispielaufruf (Bench Console):
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import frappe
 from frappe.utils import getdate, cstr
@@ -41,16 +41,121 @@ def _konto_zu_kostenart_map() -> Dict[str, str]:
     return {r.konto: r.name for r in rows if r.konto}
 
 
-def _kostenstelle_zu_haus_map() -> Dict[str, str]:
-    """Cost Center -> Immobilie (Haus).
+def _immobilien_hierarchy_maps(
+    rows: Optional[Iterable[dict]] = None,
+) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Resolve Immobilie tree nodes and Cost Centers to canonical roots.
 
-    Nimmt die in der Immobilie hinterlegte Kostenstelle als Schlüssel.
-    Nur Immobilien mit gesetzter Kostenstelle werden berücksichtigt.
+    A Cost Center is sometimes configured both on the top-level property and
+    on its building-part nodes (for example ``Haus``, ``Haus - HH``,
+    ``Haus - SF`` and ``Haus - VH``).  A plain dict comprehension made the
+    selected property depend on database row order and could therefore make
+    the allocator silently ignore all GL costs for the actual top-level
+    property.
+
+    Duplicate assignments are safe only when every owner belongs to the same
+    Immobilie tree.  Assignments spanning unrelated trees are accounting-data
+    ambiguity and fail closed.
+
+    Returns:
+        ``(immobilie_name -> root_name, cost_center -> root_name)``
     """
-    rows = frappe.get_all(
-        "Immobilie", fields=["name", "kostenstelle"], filters={}
-    )
-    return {r.kostenstelle: r.name for r in rows if r.kostenstelle}
+    if rows is None:
+        rows = frappe.get_all(
+            "Immobilie",
+            fields=[
+                "name",
+                "kostenstelle",
+                "parent_immobilie",
+                "old_parent",
+            ],
+            filters={},
+            limit_page_length=0,
+        )
+
+    nodes: Dict[str, dict] = {}
+    for raw_row in rows or []:
+        row = frappe._dict(raw_row)
+        name = cstr(row.get("name")).strip()
+        if not name:
+            continue
+        parent = cstr(row.get("parent_immobilie")).strip()
+        old_parent = cstr(row.get("old_parent")).strip()
+        if parent and old_parent and parent != old_parent:
+            frappe.throw(
+                f"Immobilie '{name}' hat widersprüchliche Eltern-Zuordnungen "
+                f"('{parent}' / '{old_parent}'). Kostenverteilung abgebrochen."
+            )
+        nodes[name] = {
+            "parent": parent or old_parent,
+            "kostenstelle": cstr(row.get("kostenstelle")).strip(),
+        }
+
+    roots: Dict[str, str] = {}
+
+    def resolve_root(name: str, path: tuple[str, ...] = ()) -> str:
+        if name in roots:
+            return roots[name]
+        if name in path:
+            cycle = " → ".join((*path, name))
+            frappe.throw(
+                f"Die Immobilien-Hierarchie enthält einen Kreis ({cycle}). "
+                "Kostenverteilung abgebrochen."
+            )
+        node = nodes.get(name)
+        if not node:
+            frappe.throw(
+                f"Immobilie '{name}' fehlt in der Immobilien-Hierarchie. "
+                "Kostenverteilung abgebrochen."
+            )
+        parent = node.get("parent")
+        if parent:
+            if parent not in nodes:
+                frappe.throw(
+                    f"Immobilie '{name}' verweist auf die fehlende "
+                    f"Parent-Immobilie '{parent}'. Kostenverteilung abgebrochen."
+                )
+            root = resolve_root(parent, (*path, name))
+        else:
+            root = name
+        roots[name] = root
+        return root
+
+    cost_center_roots: Dict[str, set[str]] = defaultdict(set)
+    cost_center_owners: Dict[str, list[str]] = defaultdict(list)
+    for name in nodes:
+        resolve_root(name)
+    for name, node in nodes.items():
+        cost_center = node.get("kostenstelle")
+        if not cost_center:
+            continue
+        root = roots[name]
+        cost_center_roots[cost_center].add(root)
+        cost_center_owners[cost_center].append(name)
+
+    cost_center_map: Dict[str, str] = {}
+    for cost_center, assigned_roots in cost_center_roots.items():
+        if len(assigned_roots) != 1:
+            owners = ", ".join(sorted(cost_center_owners[cost_center]))
+            root_names = ", ".join(sorted(assigned_roots))
+            frappe.throw(
+                f"Kostenstelle '{cost_center}' ist mehreren unverbundenen "
+                f"Immobilien zugeordnet ({owners}; Root-Immobilien: "
+                f"{root_names}). Kostenverteilung abgebrochen."
+            )
+        cost_center_map[cost_center] = next(iter(assigned_roots))
+
+    return roots, cost_center_map
+
+
+def _immobilie_zu_root_map() -> Dict[str, str]:
+    """Immobilie node -> canonical top-level Immobilie."""
+    return _immobilien_hierarchy_maps()[0]
+
+
+def _kostenstelle_zu_haus_map() -> Dict[str, str]:
+    """Cost Center -> canonical top-level Immobilie (Haus), fail closed."""
+    return _immobilien_hierarchy_maps()[1]
 
 
 def _prefetch_wertstellungsdaten(

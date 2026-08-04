@@ -23,13 +23,15 @@ from typing import Any
 
 import frappe
 from frappe import _
-from frappe.utils import flt
+from frappe.utils import cint, flt
 from frappe.utils.file_manager import save_file
 
 from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import import (
-	SKIPPED_ROW_STATUSES,
 	_cancel_voucher_for_row,
+	_get_doc_for_update_if_exists,
 	_linked_voucher_for_row,
+	_lock_bank_booking_scope,
+	_other_import_row_references_voucher,
 	_recompute_doc_status,
 	_refresh_saldo_fields,
 	_persist_saldo_fields,
@@ -951,18 +953,18 @@ def get_delete_impact(import_name: str) -> dict[str, Any]:
 	return _delete_impact_for_doc(doc)
 
 
-def _status_key(value: Any) -> str:
-	return str(value or "").strip().lower()
-
-
 def _row_value(row: Any, fieldname: str, default: Any = None) -> Any:
 	if hasattr(row, "get"):
 		return row.get(fieldname, default)
 	return getattr(row, fieldname, default)
 
 
-def _docstatus(doctype: str, name: str) -> int | None:
-	value = frappe.db.get_value(doctype, name, "docstatus")
+def _docstatus(doctype: str, name: str, *, for_update: bool = False) -> int | None:
+	if for_update:
+		doc = _get_doc_for_update_if_exists(doctype, name)
+		value = getattr(doc, "docstatus", None) if doc else None
+	else:
+		value = frappe.db.get_value(doctype, name, "docstatus")
 	if value is None:
 		return None
 	try:
@@ -987,42 +989,122 @@ def _import_owns_bank_transaction(row: Any) -> bool:
 	"""Nur Bank-Transactions zurücknehmen, die dieser Import erzeugt hat."""
 	if not (_row_value(row, "bank_transaction") or _row_value(row, "reference")):
 		return False
-	return _status_key(_row_value(row, "row_status")) not in SKIPPED_ROW_STATUSES
+	# ``row_status`` ist kein Eigentumsnachweis: Eine bereits vorhandene BT kann
+	# später durch Zuordnung/Buchung ebenfalls ``success`` erhalten. Alte Zeilen
+	# ohne das explizite Flag bleiben absichtlich konservativ bei ``False``.
+	return bool(cint(_row_value(row, "bank_transaction_created_here")))
 
 
-def _delete_impact_for_doc(doc) -> dict[str, Any]:
+def _other_import_references_bank_transaction(
+	import_name: str,
+	bank_transaction: str,
+	*,
+	for_update: bool = False,
+) -> bool:
+	"""Prüft, ob die BT außerhalb des zu löschenden Imports noch referenziert ist."""
+	lock_clause = "FOR UPDATE" if for_update else ""
+	return bool(
+		frappe.db.sql(
+			f"""
+			SELECT name
+			FROM `tabBankauszug Import Row`
+			WHERE parent != %(import_name)s
+			  AND (
+				bank_transaction = %(bank_transaction)s
+				OR reference = %(bank_transaction)s
+			  )
+			ORDER BY parent, name
+			{lock_clause}
+			""",
+			{
+				"import_name": import_name,
+				"bank_transaction": bank_transaction,
+			},
+		)
+	)
+
+
+def _delete_impact_for_doc(doc, *, current: bool = False) -> dict[str, Any]:
 	vouchers: dict[tuple[str, str], dict[str, Any]] = {}
+	vouchers_kept: dict[tuple[str, str], dict[str, Any]] = {}
 	bank_transactions_to_reverse: dict[str, dict[str, Any]] = {}
 	bank_transactions_kept: dict[str, dict[str, Any]] = {}
+	bank_transactions_forced_kept: set[str] = set()
 
 	for row in doc.get("rows") or []:
 		row_name = _row_value(row, "name")
+		shared_voucher = False
 		voucher_type, voucher_name = _linked_voucher_for_row(row)
 		if voucher_type and voucher_name:
 			key = (voucher_type, voucher_name)
-			if key not in vouchers:
-				status = _docstatus(voucher_type, voucher_name)
-				vouchers[key] = {
+			shared_voucher = _other_import_row_references_voucher(
+				voucher_type,
+				voucher_name,
+				exclude_import_name=doc.name,
+				for_update=current,
+			)
+			target_vouchers = vouchers_kept if shared_voucher else vouchers
+			if key not in target_vouchers:
+				status = _docstatus(voucher_type, voucher_name, for_update=current)
+				target_vouchers[key] = {
 					"type": voucher_type,
 					"name": voucher_name,
 					"docstatus": status,
 					"status": _docstatus_label(status),
 					"rows": [],
+					**({"reason": "referenced-by-other-import"} if shared_voucher else {}),
 				}
-			vouchers[key]["rows"].append(row_name)
+			target_vouchers[key]["rows"].append(row_name)
 
 		bt_name = _row_value(row, "bank_transaction") or _row_value(row, "reference")
 		if not bt_name:
 			continue
-		target = bank_transactions_to_reverse if _import_owns_bank_transaction(row) else bank_transactions_kept
+		import_owned = _import_owns_bank_transaction(row)
+		referenced_elsewhere = (
+			import_owned
+			and _other_import_references_bank_transaction(
+				doc.name,
+				bt_name,
+				for_update=current,
+			)
+		)
+		if shared_voucher:
+			bank_transactions_forced_kept.add(bt_name)
+			previous = bank_transactions_to_reverse.pop(bt_name, None)
+			if previous:
+				previous["reason"] = "shared-voucher"
+				bank_transactions_kept[bt_name] = previous
+		# Mehrere Importzeilen können dieselbe BT referenzieren. Ein nicht gesetztes
+		# Ownership-Flag einer bloßen Referenzzeile darf den expliziten Nachweis der
+		# Erzeugerzeile weder überschreiben noch ein zweites Impact-Objekt erzeugen.
+		if bt_name in bank_transactions_forced_kept:
+			target = bank_transactions_kept
+		elif bt_name in bank_transactions_to_reverse:
+			target = bank_transactions_to_reverse
+		elif import_owned and not referenced_elsewhere:
+			previous = bank_transactions_kept.pop(bt_name, None)
+			target = bank_transactions_to_reverse
+			if previous:
+				previous["reason"] = "import-owned"
+				target[bt_name] = previous
+		else:
+			target = bank_transactions_kept
 		if bt_name not in target:
-			status = _docstatus("Bank Transaction", bt_name)
+			status = _docstatus("Bank Transaction", bt_name, for_update=current)
 			target[bt_name] = {
 				"name": bt_name,
 				"docstatus": status,
 				"status": _docstatus_label(status),
 				"rows": [],
-				"reason": "import-owned" if target is bank_transactions_to_reverse else "already-existing",
+					"reason": (
+						"import-owned"
+						if target is bank_transactions_to_reverse
+						else "shared-voucher"
+						if bt_name in bank_transactions_forced_kept
+						else "referenced-by-other-import"
+						if referenced_elsewhere
+						else "already-existing"
+				),
 			}
 		target[bt_name]["rows"].append(row_name)
 
@@ -1031,6 +1113,7 @@ def _delete_impact_for_doc(doc) -> dict[str, Any]:
 		"title": doc.get("title"),
 		"rows": len(doc.get("rows") or []),
 		"vouchers": list(vouchers.values()),
+		"vouchersKept": list(vouchers_kept.values()),
 		"bankTransactionsToReverse": list(bank_transactions_to_reverse.values()),
 		"bankTransactionsKept": list(bank_transactions_kept.values()),
 	}
@@ -1038,6 +1121,7 @@ def _delete_impact_for_doc(doc) -> dict[str, Any]:
 		"vouchers": len(impact["vouchers"]),
 		"paymentEntries": sum(1 for item in impact["vouchers"] if item["type"] == "Payment Entry"),
 		"journalEntries": sum(1 for item in impact["vouchers"] if item["type"] == "Journal Entry"),
+		"vouchersKept": len(impact["vouchersKept"]),
 		"bankTransactionsToReverse": len(impact["bankTransactionsToReverse"]),
 		"bankTransactionsKept": len(impact["bankTransactionsKept"]),
 	}
@@ -1046,11 +1130,11 @@ def _delete_impact_for_doc(doc) -> dict[str, Any]:
 
 
 def _cleanup_bank_transaction_for_import_delete(bank_transaction: str) -> dict[str, Any]:
-	docstatus = _docstatus("Bank Transaction", bank_transaction)
-	if docstatus is None:
+	bt = _get_doc_for_update_if_exists("Bank Transaction", bank_transaction)
+	if bt is None:
 		return {"bank_transaction": bank_transaction, "status": "missing"}
 
-	bt = frappe.get_doc("Bank Transaction", bank_transaction)
+	docstatus = int(getattr(bt, "docstatus", 0) or 0)
 	if docstatus == 2:
 		return {"bank_transaction": bank_transaction, "status": "already_cancelled"}
 	if docstatus == 1:
@@ -1073,14 +1157,20 @@ def _cascade_delete_import(doc, impact: dict[str, Any]) -> dict[str, Any]:
 	frappe.db.savepoint(savepoint)
 	try:
 		voucher_results = []
-		for voucher in impact["vouchers"]:
+		for voucher in sorted(
+			impact["vouchers"],
+			key=lambda item: (item["type"], item["name"]),
+		):
 			cancel = _cancel_voucher_for_row(voucher["type"], voucher["name"])
 			delinked = remove_bank_transaction_payment_links(voucher["type"], voucher["name"])
 			voucher_results.append({**voucher, "cancel": cancel, "delinkedBankTransactions": delinked})
 
 		bank_transaction_results = [
 			_cleanup_bank_transaction_for_import_delete(item["name"])
-			for item in impact["bankTransactionsToReverse"]
+			for item in sorted(
+				impact["bankTransactionsToReverse"],
+				key=lambda item: item["name"],
+			)
 		]
 
 		frappe.delete_doc("Bankauszug Import", doc.name)
@@ -1090,6 +1180,7 @@ def _cascade_delete_import(doc, impact: dict[str, Any]) -> dict[str, Any]:
 
 	return {
 		"vouchers": voucher_results,
+		"keptVouchers": impact.get("vouchersKept") or [],
 		"bankTransactions": bank_transaction_results,
 		"keptBankTransactions": impact["bankTransactionsKept"],
 	}
@@ -1100,9 +1191,29 @@ def delete_import(import_name: str, cascade: int = 0) -> dict[str, Any]:
 	"""Löscht einen Bankauszug-Import und nimmt import-eigene Folgebelege zurück."""
 	if not import_name:
 		frappe.throw(_("Bitte einen Bankimport auswählen."))
-	doc = frappe.get_doc("Bankauszug Import", import_name)
-	frappe.has_permission("Bankauszug Import", "delete", doc=doc, throw=True)
-	impact = _delete_impact_for_doc(doc)
+	frappe.has_permission("Bankauszug Import", "delete", doc=import_name, throw=True)
+	_lock_bank_booking_scope(import_name)
+	doc = frappe.get_doc("Bankauszug Import", import_name, for_update=True)
+
+	# Stable order after the shared booking root: all currently linked BTs,
+	# then all vouchers.  The impact is recomputed only afterwards using
+	# locking/current reference checks, never from the preview shown earlier.
+	bt_names = sorted({
+		_row_value(row, "bank_transaction") or _row_value(row, "reference")
+		for row in (doc.get("rows") or [])
+		if _row_value(row, "bank_transaction") or _row_value(row, "reference")
+	})
+	for bt_name in bt_names:
+		_get_doc_for_update_if_exists("Bank Transaction", bt_name)
+	vouchers = sorted({
+		_linked_voucher_for_row(row)
+		for row in (doc.get("rows") or [])
+		if all(_linked_voucher_for_row(row))
+	})
+	for voucher_type, voucher_name in vouchers:
+		_get_doc_for_update_if_exists(voucher_type, voucher_name)
+
+	impact = _delete_impact_for_doc(doc, current=True)
 
 	if impact["requiresCascade"] and not bool(int(cascade or 0)):
 		frappe.throw(
@@ -1152,11 +1263,13 @@ def search_parties(party_type: str, txt: str = "") -> dict[str, Any]:
 
 
 @frappe.whitelist()
-def search_accounts(txt: str = "") -> dict[str, Any]:
+def search_accounts(txt: str = "", docname: str | None = None) -> dict[str, Any]:
 	"""Konto-Autocomplete für den Journal-Entry.
 
 	Die Cockpit-Logik liefert nur Kostenarten-Konten. Für freie Bankimport-
 	Buchungssätze müssen zusätzlich alle aktiven Blattkonten auffindbar sein.
+	Das GL-Konto des aktuellen Bankimports wird serverseitig ausgeschlossen,
+	damit es nicht versehentlich als eigenes Gegenkonto gewählt werden kann.
 	"""
 	from hausverwaltung.hausverwaltung.page.buchen_cockpit.buchen_cockpit import (
 		autocomplete_konten,
@@ -1164,9 +1277,22 @@ def search_accounts(txt: str = "") -> dict[str, Any]:
 
 	txt = (txt or "").strip()
 	items_by_value: dict[str, dict[str, Any]] = {}
+	current_bank_gl = None
+	if docname:
+		import_bank_account = frappe.db.get_value(
+			"Bankauszug Import",
+			docname,
+			"bank_account",
+		)
+		if import_bank_account:
+			current_bank_gl = frappe.db.get_value(
+				"Bank Account",
+				import_bank_account,
+				"account",
+			)
 
 	for item in autocomplete_konten(txt=txt, typ="alle") or []:
-		if item.get("value"):
+		if item.get("value") and item.get("value") != current_bank_gl:
 			items_by_value[item["value"]] = item
 
 	like = f"%{txt}%"
@@ -1175,6 +1301,9 @@ def search_accounts(txt: str = "") -> dict[str, Any]:
 	if txt:
 		conditions.append("(name LIKE %s OR account_name LIKE %s OR account_number LIKE %s)")
 		values.extend([like, like, like])
+	if current_bank_gl:
+		conditions.append("name != %s")
+		values.append(current_bank_gl)
 
 	accounts = frappe.db.sql(
 		f"""

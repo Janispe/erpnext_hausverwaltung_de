@@ -253,6 +253,13 @@ frappe.ui.form.on("Zahlungsplan", {
 		});
 		frm.set_query("immobilie", toplevel_immobilie);
 		frm.set_query("cost_center", toplevel_kostenstelle);
+		frm.set_query("vor_systemstart_gegenkonto", () => ({
+			filters: {
+				company: frm.doc.company || "",
+				is_group: 0,
+				root_type: ["in", ["Asset", "Liability", "Equity"]],
+			},
+		}));
 	},
 
 	refresh(frm) {

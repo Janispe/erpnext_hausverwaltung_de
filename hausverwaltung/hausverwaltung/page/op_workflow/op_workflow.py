@@ -19,8 +19,7 @@ from typing import Any
 
 import frappe
 from frappe import _
-from frappe.utils import cint, flt, formatdate, getdate, nowdate, add_days
-
+from frappe.utils import add_days, cint, flt, formatdate, getdate, nowdate
 
 _MV_MARKER_RE = re.compile(r"\[MV:([^\]]+)\]")
 _DUNNING_DOCSTATUS_LABEL = {
@@ -916,6 +915,7 @@ def _draft_response(doc, key: str, **extra) -> dict:
 
 def _require_submitted_invoice(doctype: str, name: str):
     doc = frappe.get_doc(doctype, name)
+    doc.check_permission("read")
     if cint(doc.docstatus) != 1:
         frappe.throw(_("{0} ist nicht submitted.").format(name))
     if flt(getattr(doc, "outstanding_amount", 0)) <= 0:
@@ -1000,11 +1000,260 @@ def _submitted_dunning_count(sales_invoice: str) -> int:
 
 
 def _resolve_mode_of_payment(mode_of_payment: str | None) -> str | None:
-    if mode_of_payment and frappe.db.exists("Mode of Payment", mode_of_payment):
-        return mode_of_payment
-    if mode_of_payment == "SEPA-Überweisung" and frappe.db.exists("Mode of Payment", "Bank Draft"):
+    requested = (mode_of_payment or "").strip()
+    aliases = {
+        "SEPA-Überweisung": "Bank Draft",
+        "Lastschrift": "Bank Draft",
+        "Manuelle Überweisung": "Bank Draft",
+        "Barzahlung": "Cash",
+    }
+    if requested in aliases and not frappe.db.exists("Mode of Payment", requested):
+        requested = aliases[requested]
+    if requested:
+        if not frappe.db.exists("Mode of Payment", {"name": requested, "enabled": 1}):
+            frappe.throw(_("Zahlart {0} ist nicht eingerichtet oder deaktiviert.").format(requested))
+        return requested
+    if frappe.db.exists("Mode of Payment", {"name": "Bank Draft", "enabled": 1}):
         return "Bank Draft"
-    return frappe.db.get_value("Mode of Payment", {"enabled": 1}, "name")
+    return None
+
+
+def _mode_of_payment_account_type(mode_of_payment: str | None) -> str | None:
+    if not mode_of_payment:
+        return None
+    account_type = frappe.db.get_value("Mode of Payment", mode_of_payment, "type")
+    if account_type not in {"Bank", "Cash"}:
+        frappe.throw(
+            _("Zahlart {0} ist keinem Bank- oder Kassentyp zugeordnet.").format(
+                mode_of_payment
+            )
+        )
+    return account_type
+
+
+def _validate_payment_bank_account(
+    account: str,
+    company: str,
+    mode_of_payment: str | None = None,
+) -> str:
+    values = frappe.db.get_value(
+        "Account",
+        account,
+        ["company", "is_group", "disabled", "account_type"],
+        as_dict=True,
+    )
+    if (
+        not values
+        or values.company != company
+        or cint(values.is_group)
+        or cint(values.disabled)
+        or values.account_type not in {"Bank", "Cash"}
+    ):
+        frappe.throw(
+            _("Konto {0} ist kein aktives Bank-/Kassenkonto der Firma {1}.").format(
+                account, company
+            )
+        )
+
+    expected_type = _mode_of_payment_account_type(mode_of_payment)
+    if expected_type and values.account_type != expected_type:
+        frappe.throw(
+            _("Zahlart {0} erwartet ein {1}konto; Konto {2} ist vom Typ {3}.").format(
+                mode_of_payment,
+                _("Bank") if expected_type == "Bank" else _("Kasse"),
+                account,
+                values.account_type,
+            )
+        )
+    return account
+
+
+def _resolve_payment_bank_account(company: str, mode_of_payment: str | None) -> str:
+    """Resolve one configured payment account, or fail instead of guessing."""
+    expected_type = _mode_of_payment_account_type(mode_of_payment)
+
+    if mode_of_payment:
+        mapped_account = frappe.db.get_value(
+            "Mode of Payment Account",
+            {"parent": mode_of_payment, "company": company},
+            "default_account",
+        )
+        if mapped_account:
+            return _validate_payment_bank_account(
+                mapped_account,
+                company,
+                mode_of_payment,
+            )
+
+    company_default_field = {
+        "Bank": "default_bank_account",
+        "Cash": "default_cash_account",
+    }.get(expected_type)
+    if company_default_field:
+        company_default = frappe.get_cached_value(
+            "Company",
+            company,
+            company_default_field,
+        )
+        if company_default:
+            return _validate_payment_bank_account(
+                company_default,
+                company,
+                mode_of_payment,
+            )
+
+    filters: dict[str, Any] = {
+        "company": company,
+        "is_group": 0,
+        "disabled": 0,
+    }
+    if expected_type:
+        filters["account_type"] = expected_type
+    else:
+        filters["account_type"] = ("in", ("Bank", "Cash"))
+    candidates = frappe.get_all(
+        "Account",
+        filters=filters,
+        pluck="name",
+        limit_page_length=2,
+    )
+    if len(candidates) == 1:
+        return _validate_payment_bank_account(
+            candidates[0],
+            company,
+            mode_of_payment,
+        )
+
+    if expected_type:
+        frappe.throw(
+            _(
+                "Für Zahlart {0} ist bei Firma {1} kein eindeutiges {2}konto hinterlegt. "
+                "Bitte das Firmenkonto ausdrücklich auswählen."
+            ).format(
+                mode_of_payment,
+                company,
+                _("Bank") if expected_type == "Bank" else _("Kassen"),
+            )
+        )
+    frappe.throw(
+        _(
+            "Bei Firma {0} ist kein eindeutiges Bank-/Kassenkonto hinterlegt. "
+            "Bitte das Firmenkonto ausdrücklich auswählen."
+        ).format(company)
+    )
+
+
+def _set_payment_transaction_reference(
+    pe,
+    *,
+    payment_account: str,
+    reference_no: str | None,
+    reference_date: str | None,
+) -> None:
+    """Apply ERPNext's mandatory bank reference before the draft is inserted."""
+    account_type = frappe.get_cached_value(
+        "Account",
+        payment_account,
+        "account_type",
+    )
+    if account_type != "Bank":
+        return
+
+    normalized_reference = (reference_no or "").strip()
+    if not normalized_reference or not reference_date:
+        frappe.throw(
+            _(
+                "Für eine Bankzahlung sind Referenznummer und Referenzdatum erforderlich."
+            )
+        )
+    pe.reference_no = normalized_reference
+    pe.reference_date = getdate(reference_date)
+
+
+def _validate_skonto_currency(pi, pe, discount_account: str) -> None:
+    """Skonto amounts are entered in invoice currency but posted in base currency."""
+    company_currency = frappe.get_cached_value(
+        "Company",
+        pi.company,
+        "default_currency",
+    )
+    currencies = {
+        currency
+        for currency in (
+            company_currency,
+            getattr(pi, "currency", None),
+            getattr(pi, "party_account_currency", None),
+            getattr(pe, "paid_from_account_currency", None),
+            getattr(pe, "paid_to_account_currency", None),
+            frappe.get_cached_value(
+                "Account",
+                discount_account,
+                "account_currency",
+            ),
+        )
+        if currency
+    }
+    if not company_currency or len(currencies) != 1:
+        frappe.throw(
+            _(
+                "Skonto in Fremdwährung wird in diesem Workflow nicht unterstützt. "
+                "Bitte den Payment Entry im Standardformular erstellen."
+            )
+        )
+
+
+def _discount_cost_center_weights(pi) -> list[tuple[str, float]]:
+    """Return cost-center weights based on the PI's base item amounts."""
+    grouped: dict[str, float] = {}
+    fallback = getattr(pi, "cost_center", None) or frappe.get_cached_value(
+        "Company", pi.company, "cost_center"
+    )
+    for item in getattr(pi, "items", None) or []:
+        cost_center = getattr(item, "cost_center", None) or fallback
+        if not cost_center:
+            frappe.throw(
+                _("Für Skonto fehlt an mindestens einer Rechnungsposition die Kostenstelle.")
+            )
+        weight = abs(
+            flt(
+                getattr(item, "base_net_amount", None)
+                or getattr(item, "base_amount", None)
+                or getattr(item, "net_amount", None)
+                or getattr(item, "amount", None)
+            )
+        )
+        grouped[cost_center] = grouped.get(cost_center, 0) + weight
+
+    if not grouped:
+        if not fallback:
+            frappe.throw(_("Für Skonto fehlt eine Kostenstelle an Rechnung und Firma."))
+        grouped[fallback] = 1
+    if not any(grouped.values()):
+        grouped = {cost_center: 1 for cost_center in grouped}
+    return list(grouped.items())
+
+
+def _append_skonto_deductions(pe, pi, discount_account: str, deduction_total: float) -> None:
+    """Split a negative base-currency deduction across PI cost centers."""
+    weights = _discount_cost_center_weights(pi)
+    total_weight = sum(weight for _cost_center, weight in weights)
+    precision = pe.precision("difference_amount")
+    allocated = 0.0
+    for index, (cost_center, weight) in enumerate(weights):
+        if index == len(weights) - 1:
+            amount = flt(deduction_total - allocated, precision)
+        else:
+            amount = flt(deduction_total * weight / total_weight, precision)
+            allocated += amount
+        pe.append(
+            "deductions",
+            {
+                "account": discount_account,
+                "amount": amount,
+                "cost_center": cost_center,
+                "description": _("Skonto zu {0}").format(pi.name),
+            },
+        )
 
 
 def _default_dunning_due_date(posting_date: str | None = None):
@@ -1212,11 +1461,15 @@ def create_payment_entry(
     use_skonto: bool = False,
     skonto_amount: float | None = None,
     mode_of_payment: str = "Bank Draft",
+    bank_account: str | None = None,
+    reference_no: str | None = None,
+    reference_date: str | None = None,
 ) -> dict:
     """Erzeugt einen Payment Entry für eine Lieferanten-Rechnung (Purchase Invoice).
 
     Wenn ``use_skonto=True`` und ``skonto_amount`` gesetzt, wird der Skontobetrag
-    als Aufwandsminderung gebucht.
+    als Aufwandsminderung gebucht. ``bank_account`` ist der Name eines Bank-/
+    Kassen-GL-Kontos der Firma, nicht der Name eines Bank-Account-Dokuments.
     """
     if not frappe.has_permission("Payment Entry", "create"):
         frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
@@ -1224,30 +1477,75 @@ def create_payment_entry(
     from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
 
     pi = _require_submitted_invoice("Purchase Invoice", purchase_invoice)
-    pe = get_payment_entry("Purchase Invoice", purchase_invoice)
+    resolved_mode = _resolve_mode_of_payment(mode_of_payment)
+    bank_gl_account = (
+        _validate_payment_bank_account(
+            bank_account,
+            pi.company,
+            resolved_mode,
+        )
+        if bank_account
+        else _resolve_payment_bank_account(pi.company, resolved_mode)
+    )
+    pe = get_payment_entry(
+        "Purchase Invoice",
+        purchase_invoice,
+        bank_account=bank_gl_account,
+    )
     pe.posting_date = posting_date or nowdate()
 
-    resolved_mode = _resolve_mode_of_payment(mode_of_payment)
     if resolved_mode:
         pe.mode_of_payment = resolved_mode
+    _set_payment_transaction_reference(
+        pe,
+        payment_account=bank_gl_account,
+        reference_no=reference_no,
+        reference_date=reference_date,
+    )
 
-    if _as_bool(use_skonto) and flt(skonto_amount):
+    if _as_bool(use_skonto):
+        discount = abs(flt(skonto_amount))
+        outstanding = flt(pi.outstanding_amount)
+        if discount <= 0 or discount >= outstanding:
+            frappe.throw(
+                _("Skonto muss größer als 0 und kleiner als der offene Rechnungsbetrag sein.")
+            )
         discount_account = frappe.get_cached_value(
             "Company", pi.company, "default_discount_account"
         )
         if not discount_account:
             frappe.throw(_("Für Skonto fehlt an der Firma das Default Discount Account."))
-        pe.append(
-            "deductions",
-            {
-                "account": discount_account,
-                "amount": flt(skonto_amount),
-                "cost_center": getattr(pi, "cost_center", None),
-            },
+        _validate_skonto_currency(pi, pe, discount_account)
+        if getattr(pe, "deductions", None):
+            frappe.throw(
+                _(
+                    "Der Payment Entry enthält bereits automatische Abzüge. "
+                    "Manuelles Skonto würde diese doppelt erfassen."
+                )
+            )
+
+        factor = (outstanding - discount) / outstanding
+        pe.paid_amount = flt(
+            flt(pe.paid_amount) * factor,
+            pe.precision("paid_amount"),
         )
-        pe.paid_amount = flt(pi.outstanding_amount) - flt(skonto_amount)
-        if pe.references:
-            pe.references[0].allocated_amount = flt(pi.outstanding_amount)
+        pe.received_amount = flt(
+            flt(pe.received_amount) * factor,
+            pe.precision("received_amount"),
+        )
+        pe.set_amounts()
+        deduction_total = flt(pe.difference_amount, pe.precision("difference_amount"))
+        if deduction_total >= 0:
+            frappe.throw(_("Skonto konnte nicht als Aufwandsminderung berechnet werden."))
+        _append_skonto_deductions(pe, pi, discount_account, deduction_total)
+        pe.set_amounts()
+
+    if abs(flt(pe.difference_amount)) > 0.01:
+        frappe.throw(
+            _("Payment Entry ist nicht ausgeglichen (Differenz {0}).").format(
+                pe.difference_amount
+            )
+        )
 
     pe.insert(ignore_permissions=False)
     return _draft_response(pe, "payment_entry", auszahlung=flt(pe.paid_amount), mode_of_payment=resolved_mode)
@@ -1259,18 +1557,21 @@ def create_refund_payment(
     posting_date: str | None = None,
     bank_account: str | None = None,
     mode_of_payment: str | None = None,
+    reference_no: str | None = None,
+    reference_date: str | None = None,
 ) -> dict:
     """Erzeugt einen Payment-Entry-Draft zur Auszahlung eines Mieter-Guthabens.
 
     Unterstützt bewusst nur Sales Invoices / Credit Notes mit negativem
     ``outstanding_amount``. Unzugeordnete Payment Entries/Vorauszahlungen werden
     hier nicht automatisch ausgezahlt, weil dafür ein anderer Abstimmungsprozess
-    nötig ist.
+    nötig ist. ``bank_account`` bezeichnet ein Bank-/Kassen-GL-Konto.
     """
     if not frappe.has_permission("Payment Entry", "create"):
         frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
 
     si = frappe.get_doc("Sales Invoice", sales_invoice)
+    si.check_permission("read")
     if cint(si.docstatus) != 1:
         frappe.throw(_("{0} ist nicht submitted.").format(sales_invoice))
 
@@ -1280,28 +1581,51 @@ def create_refund_payment(
 
     from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
 
-    pe = get_payment_entry("Sales Invoice", sales_invoice, bank_account=bank_account)
-    pe.posting_date = posting_date or nowdate()
-    pe.payment_type = "Pay"
-
     resolved_mode = _resolve_mode_of_payment(mode_of_payment)
+    bank_gl_account = (
+        _validate_payment_bank_account(
+            bank_account,
+            si.company,
+            resolved_mode,
+        )
+        if bank_account
+        else _resolve_payment_bank_account(si.company, resolved_mode)
+    )
+    pe = get_payment_entry(
+        "Sales Invoice",
+        sales_invoice,
+        bank_account=bank_gl_account,
+    )
+    pe.posting_date = posting_date or nowdate()
+
     if resolved_mode:
         pe.mode_of_payment = resolved_mode
+    _set_payment_transaction_reference(
+        pe,
+        payment_account=bank_gl_account,
+        reference_no=reference_no,
+        reference_date=reference_date,
+    )
 
     amount = abs(outstanding)
-    pe.paid_amount = amount
-    pe.received_amount = amount
-    for ref in pe.references:
-        if ref.reference_doctype == "Sales Invoice" and ref.reference_name == sales_invoice:
-            ref.outstanding_amount = outstanding
-            ref.allocated_amount = outstanding
+    if pe.payment_type != "Pay":
+        frappe.throw(_("Guthaben-Auszahlung muss ein ausgehender Payment Entry sein."))
+    if abs(flt(pe.difference_amount)) > 0.01:
+        frappe.throw(
+            _("Payment Entry ist nicht ausgeglichen (Differenz {0}).").format(
+                pe.difference_amount
+            )
+        )
 
     pe.remarks = _("Auszahlung Guthaben {0} an {1}").format(sales_invoice, si.customer)
     pe.insert(ignore_permissions=False)
     return _draft_response(
         pe,
         "payment_entry",
-        auszahlung=amount,
+        auszahlung=flt(pe.paid_amount),
+        auszahlung_waehrung=pe.paid_from_account_currency,
+        guthaben_betrag=amount,
+        guthaben_waehrung=pe.paid_to_account_currency,
         customer=si.customer,
         sales_invoice=sales_invoice,
         mode_of_payment=resolved_mode,
@@ -1376,36 +1700,54 @@ def write_off_invoice(
     if not frappe.has_permission("Journal Entry", "create"):
         frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
 
-    si = _require_submitted_invoice("Sales Invoice", sales_invoice)
-    write_off_account = write_off_account or frappe.get_cached_value(
-        "Company", si.company, "write_off_account"
+    permission_doc = frappe.get_doc("Sales Invoice", sales_invoice)
+    permission_doc.check_permission("read")
+    from hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff import (
+        build_hv_writeoff_remark,
+        get_locked_sales_invoice_writeoff_entry,
+        get_writeoff_journal_entry_dimensions,
     )
-    if not write_off_account:
-        frappe.throw(_("Für die Firma ist kein Write Off Account hinterlegt."))
+
+    entry = get_locked_sales_invoice_writeoff_entry(
+        sales_invoice,
+        writeoff_account=write_off_account,
+        use_company_default_account=not write_off_account,
+    )
+    if cost_center and cost_center != entry["cost_center"]:
+        frappe.throw(
+            _(
+                "Kostenstelle {0} widerspricht der eindeutigen Rechnungs-Kostenstelle {1}."
+            ).format(cost_center, entry["cost_center"])
+        )
+    dimensions = get_writeoff_journal_entry_dimensions(entry)
 
     je = frappe.new_doc("Journal Entry")
     je.voucher_type = "Write Off Entry"
-    je.company = si.company
+    je.company = entry["company"]
     je.posting_date = nowdate()
-    je.user_remark = remarks or _("Abschreibung {0}").format(sales_invoice)
-    amount = flt(si.outstanding_amount)
+    je.user_remark = build_hv_writeoff_remark(
+        sales_invoice,
+        remarks or _("Abschreibung {0}").format(sales_invoice),
+    )
+    amount = flt(entry["amount"])
     je.append(
         "accounts",
         {
-            "account": write_off_account,
+            "account": entry["writeoff_account"],
             "debit_in_account_currency": amount,
-            "cost_center": cost_center or getattr(si, "cost_center", None),
+            **dimensions,
         },
     )
     je.append(
         "accounts",
         {
-            "account": si.debit_to,
+            "account": entry["receivable_account"],
             "party_type": "Customer",
-            "party": si.customer,
+            "party": entry["customer"],
             "credit_in_account_currency": amount,
             "reference_type": "Sales Invoice",
-            "reference_name": si.name,
+            "reference_name": entry["sales_invoice"],
+            **dimensions,
         },
     )
     je.insert(ignore_permissions=False)
@@ -1448,6 +1790,7 @@ def set_klärungs_status(sales_invoice: str, grund: str, notiz: str = "") -> dic
     Sales Invoice. Falls nicht vorhanden, wird als Comment gepostet.
     """
     si = frappe.get_doc("Sales Invoice", sales_invoice)
+    si.check_permission("write")
 
     if hasattr(si, "in_klaerung_grund"):
         si.db_set("in_klaerung_grund", grund)

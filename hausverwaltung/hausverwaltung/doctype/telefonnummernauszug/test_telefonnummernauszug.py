@@ -1,29 +1,10 @@
 from __future__ import annotations
 
-import sys
 import unittest
-from importlib import import_module
-from types import ModuleType
 
-
-frappe = ModuleType("frappe")
-frappe._ = lambda value: value
-frappe.whitelist = lambda: (lambda fn: fn)
-frappe.model = ModuleType("frappe.model")
-frappe.model.document = ModuleType("frappe.model.document")
-frappe.model.document.Document = object
-frappe.utils = ModuleType("frappe.utils")
-frappe.utils.cint = int
-frappe.utils.getdate = lambda value: value
-frappe.utils.today = lambda: "2026-06-11"
-sys.modules["frappe"] = frappe
-sys.modules["frappe.model"] = frappe.model
-sys.modules["frappe.model.document"] = frappe.model.document
-sys.modules["frappe.utils"] = frappe.utils
-
-_format_phone_number = import_module(
-	"hausverwaltung.hausverwaltung.doctype.telefonnummernauszug.telefonnummernauszug"
-)._format_phone_number
+from hausverwaltung.hausverwaltung.doctype.telefonnummernauszug.telefonnummernauszug import (
+	_format_phone_number,
+)
 
 
 class TestTelefonnummernauszugPhoneFormatting(unittest.TestCase):

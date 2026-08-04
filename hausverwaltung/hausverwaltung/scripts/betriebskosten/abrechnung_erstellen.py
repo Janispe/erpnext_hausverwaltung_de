@@ -12,18 +12,21 @@ Whitelisted Endpunkte:
 
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 import frappe
-from frappe.utils import getdate, cstr
+from frappe.utils import cint, cstr, getdate
 
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen import (
     _prorated_festbetrag_rows,
     allocate_kosten_auf_wohnungen,
 )
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaiment_calc import (
+    BK_ITEM_CODE,
+    get_bk_expected_sum_for_invoice_names,
+    get_bk_paid_sum_for_invoice_names,
     get_bk_prepayment_summary,
 )
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.rounding import (
@@ -32,6 +35,16 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.rounding import (
     ROUNDING_METHOD_ONLY,
     get_bk_rounding_method,
     round_money_allocations,
+)
+from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
+    _company_via_wohnung,
+)
+from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
+    BK_REGELUNG_VORAUSZAHLUNG,
+    bk_invoice_period_for_segment,
+    get_bk_regelungen_for_contracts,
+    ist_bk_abrechenbar,
+    split_contract_segments_by_bk_regelung,
 )
 
 MONEY_QUANT = Decimal("0.01")
@@ -53,17 +66,62 @@ def _quantize_money(value: Decimal) -> Decimal:
     return value.quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
 
-def _build_settlement_remark(von: Any = None, bis: Any = None) -> str:
+def _booking_decimal(value: Any, *, field_label: str) -> Decimal:
+    """Parse a booking amount without silently converting corrupt data to zero."""
+    if value in (None, ""):
+        frappe.throw(
+            f"{field_label} hat keinen Betrag; Buchung abgebrochen.",
+            frappe.ValidationError,
+        )
+    try:
+        amount = value if isinstance(value, Decimal) else Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        frappe.throw(
+            f"{field_label} enthält einen ungültigen Betrag ({value!r}); "
+            "Buchung abgebrochen.",
+            frappe.ValidationError,
+        )
+    if not amount.is_finite():
+        frappe.throw(
+            f"{field_label} enthält keinen endlichen Betrag ({value!r}); "
+            "Buchung abgebrochen.",
+            frappe.ValidationError,
+        )
+    return amount
+
+
+def _bk_settlement_marker(abrechnung: str) -> str:
+    owner = cstr(abrechnung or "").strip()
+    if not owner or any(character in owner for character in "[]\r\n"):
+        frappe.throw(
+            "BK-Settlement abgebrochen: Der Child-Name ist für einen "
+            "eindeutigen Ownership-Marker ungeeignet.",
+            frappe.ValidationError,
+        )
+    return f"[BK-SETTLEMENT:{owner}]"
+
+
+def _build_settlement_remark(
+    von: Any = None,
+    bis: Any = None,
+    *,
+    abrechnung: Optional[str] = None,
+) -> str:
     """Erzeugt die sichtbare Bemerkung fuer BK-Nachzahlungen/Guthaben."""
     von_date = getdate(von) if von else None
     bis_date = getdate(bis) if bis else None
     if von_date and bis_date:
-        return f"Betriebskostenabrechnung {von_date:%d.%m.%Y} bis {bis_date:%d.%m.%Y}"
-    if bis_date:
-        return f"Betriebskostenabrechnung {bis_date.year}"
-    if von_date:
-        return f"Betriebskostenabrechnung ab {von_date:%d.%m.%Y}"
-    return "Betriebskostenabrechnung"
+        visible = f"Betriebskostenabrechnung {von_date:%d.%m.%Y} bis {bis_date:%d.%m.%Y}"
+    elif bis_date:
+        visible = f"Betriebskostenabrechnung {bis_date.year}"
+    elif von_date:
+        visible = f"Betriebskostenabrechnung ab {von_date:%d.%m.%Y}"
+    else:
+        visible = "Betriebskostenabrechnung"
+    settlement_name = cstr(abrechnung or "").strip()
+    if settlement_name:
+        return f"{_bk_settlement_marker(settlement_name)} {visible}"
+    return visible
 
 
 def _as_money(value: Decimal) -> float:
@@ -102,6 +160,35 @@ def _immobilie_von_wohnung(wohnung: str) -> Optional[str]:
         return None
 
 
+def _canonical_immobilie_root(immobilie: str) -> str:
+    from hausverwaltung.hausverwaltung.scripts.betriebskosten.gl_kosten_pro_haus import (
+        _immobilie_zu_root_map,
+    )
+
+    name = cstr(immobilie or "").strip()
+    root = cstr((_immobilie_zu_root_map() or {}).get(name) or "").strip()
+    if not name or not root:
+        frappe.throw(
+            f"Immobilie {name or 'leer'} kann keiner kanonischen "
+            "Root-Immobilie zugeordnet werden.",
+            frappe.ValidationError,
+        )
+    return root
+
+
+def _wohnung_belongs_to_immobilie_hierarchy(
+    wohnung: str,
+    immobilie: str,
+) -> bool:
+    from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen import (
+        _wohnungen_in_haus,
+    )
+
+    return cstr(wohnung or "").strip() in set(
+        _wohnungen_in_haus(immobilie=immobilie)
+    )
+
+
 def _has_field(doctype: str, fieldname: str) -> bool:
     try:
         return bool(frappe.get_meta(doctype).get_field(fieldname))
@@ -135,11 +222,28 @@ def _cost_center_for_abrechnung_doc(doc) -> Optional[str]:
         if cost_center:
             return cost_center
 
-    wohnung = doc.get("wohnung") if hasattr(doc, "get") else None
+    locked_identity = getattr(doc, "_locked_mietvertrag_identity", None) or {}
+    wohnung = locked_identity.get("wohnung") or (
+        doc.get("wohnung") if hasattr(doc, "get") else None
+    )
     return _cost_center_for_wohnung(wohnung)
 
 
-def _get_default_company() -> Optional[str]:
+def _get_default_company(doc: Any = None) -> Optional[str]:
+    if doc is not None:
+        locked_identity = getattr(doc, "_locked_mietvertrag_identity", None) or {}
+        wohnung = locked_identity.get("wohnung") or (
+            doc.get("wohnung") if hasattr(doc, "get") else None
+        )
+        company = _company_via_wohnung(wohnung, for_update=True)
+        if company:
+            return company
+        frappe.throw(
+            "Für die Wohnung ist keine eindeutige Company aus der Immobilie "
+            "ableitbar. In einer Multi-Company-Umgebung muss mindestens eine "
+            "Kostenstelle, ein Konto oder ein Bankkonto der Immobilie eindeutig "
+            "zugeordnet sein. Es wurde nichts gebucht."
+        )
     try:
         d = frappe.defaults.get_defaults() or {}
         comp = d.get("company")
@@ -155,24 +259,43 @@ def _find_income_account(company: Optional[str]) -> Optional[str]:
     filters = {"root_type": "Income", "is_group": 0}
     if company:
         filters["company"] = company
-    # Bevorzugt dediziertes Konto "Betriebskostenabrechnung"
-    rows = frappe.get_all("Account", filters={**filters, "account_name": "Betriebskostenabrechnung"}, pluck="name", limit=1)
-    if rows:
-        return rows[0]
-    rows = frappe.get_all("Account", filters=filters, pluck="name", limit=1)
-    return rows[0] if rows else None
+    # Only a unique, explicitly named setup may be selected automatically.
+    # Picking an arbitrary income account is an accounting mutation, not a
+    # harmless default.
+    rows = frappe.get_all(
+        "Account",
+        filters={
+            **filters,
+            "account_name": "Betriebskostenabrechnung",
+        },
+        pluck="name",
+        limit_page_length=0,
+    )
+    return rows[0] if len(rows or []) == 1 else None
 
 
 def _ensure_item_with_income(item_code: str, item_name: str, company: Optional[str]) -> str:
+    """Create/complete a settlement item using the current user's permissions.
+
+    Settlement is a user-triggered accounting operation.  Missing master data
+    must therefore never be created or changed with elevated permissions.
+    ``insert``/``save`` deliberately enforce the caller's Item permissions; the
+    surrounding self-check turns a denial into a clear setup error.
+    """
     if frappe.db.exists("Item", item_code):
         if company:
             it = frappe.get_doc("Item", item_code)
             has_def = any(d.company == company and d.income_account for d in (it.item_defaults or []))
             if not has_def:
                 inc = _find_income_account(company)
-                if inc:
-                    it.append("item_defaults", {"company": company, "income_account": inc})
-                    it.save(ignore_permissions=True)
+                if not inc:
+                    frappe.throw(
+                        f"Artikel '{item_code}' hat für {company} kein "
+                        "eindeutig konfiguriertes Income Account Default.",
+                        frappe.ValidationError,
+                    )
+                it.append("item_defaults", {"company": company, "income_account": inc})
+                it.save()
         return item_code
     it = frappe.new_doc("Item")
     it.item_code = item_code
@@ -183,9 +306,14 @@ def _ensure_item_with_income(item_code: str, item_name: str, company: Optional[s
     it.stock_uom = "Nos"
     if company:
         inc = _find_income_account(company)
-        if inc:
-            it.append("item_defaults", {"company": company, "income_account": inc})
-    it.insert(ignore_permissions=True)
+        if not inc:
+            frappe.throw(
+                f"Artikel '{item_code}' fehlt und für {company} ist kein "
+                "eindeutiges Settlement-Income-Konto konfiguriert.",
+                frappe.ValidationError,
+            )
+        it.append("item_defaults", {"company": company, "income_account": inc})
+    it.insert()
     return item_code
 
 
@@ -204,10 +332,18 @@ def _mietvertraege_fuer_zeitraum(wohnung: str, von: str, bis: str) -> List[dict]
     )
 
 
-def _mietvertrag_segmente_fuer_zeitraum(wohnung: str, von: str, bis: str) -> List[dict]:
-    """Ermittle Mietvertrags-Segmente (tageweise, inklusiv) im Zeitraum.
+def _mietvertrag_segmente_fuer_zeitraum(
+    wohnung: str,
+    von: str,
+    bis: str,
+    *,
+    lock_regelungen: bool = False,
+) -> List[dict]:
+    """Ermittle Vertrags- und BK-Regelungssegmente im Zeitraum.
 
-    Segmente werden auf [von,bis] geclippt. Überlappungen führen zu Fehler.
+    Segmente werden auf [von,bis] geclippt und an jeder Änderung zwischen
+    Vorauszahlung und Pauschale/Inklusivmiete geteilt. Vertragsüberlappungen
+    führen weiterhin zu einem Fehler.
     """
     mv_list = _mietvertraege_fuer_zeitraum(wohnung, von, bis)
     if not mv_list:
@@ -260,7 +396,15 @@ def _mietvertrag_segmente_fuer_zeitraum(wohnung: str, von: str, bis: str) -> Lis
                 f"{pv.get('name')} ({pv.get('von')} - {pv.get('bis') or 'offen'}) und "
                 f"{cv.get('name')} ({cv.get('von')} - {cv.get('bis') or 'offen'})."
             )
-    return segments
+    regelungen = get_bk_regelungen_for_contracts(
+        [segment.get("mietvertrag") for segment in segments],
+        lock=lock_regelungen,
+    )
+    return split_contract_segments_by_bk_regelung(segments, regelungen)
+
+
+def _abrechenbare_bk_segmente(segments: List[dict]) -> List[dict]:
+    return [segment for segment in segments if ist_bk_abrechenbar(segment.get("abrechnungsart"))]
 
 
 def _bestehender_mietvertrag_fuer_stichtag(wohnung: str, stichtag: str) -> Optional[str]:
@@ -360,98 +504,26 @@ def _festbetrag_gl_posten_by_segment(
     return result
 
 
-@frappe.whitelist()
-def create_bk_abrechnung_wohnung(
+def _build_bk_segment_costs(
+    *,
+    alloc: dict,
+    immobilie: str,
+    wohnung: str,
     von: str,
     bis: str,
-    wohnung: str,
-    submit: bool = False,
-    stichtag: Optional[str] = None,
-    head: Optional[str] = None,
-    split_by_mietvertrag: bool = False,
-) -> str | List[str]:
-    """Erstellt eine Betriebskostenabrechnung (Mieter) für eine Wohnung."""
-    stichtag = stichtag or bis
-
-    # Verteilte Kosten (nur für diese Wohnung herausziehen)
-    immobilie = _immobilie_von_wohnung(wohnung)
-    alloc = allocate_kosten_auf_wohnungen(von=von, bis=bis, immobilie=immobilie, stichtag=stichtag)
-    matrix: Dict[str, Dict[str, Any]] = alloc.get("matrix") or {}
-    posten_raw = matrix.get(wohnung) or {}
-    posten = {art: _to_decimal(amount) for art, amount in posten_raw.items()}
-    if not posten:
-        frappe.throw(
-            f"Keine verteilten Kosten für Wohnung '{wohnung}' im Zeitraum {von} bis {bis} (Stichtag {stichtag}). Prüfe Kostenverteilung/Verteilerschlüssel."
-        )
-
-    if not split_by_mietvertrag:
-        # Für die Abrechnung zählen BK-Rechnungen der Periode,
-        # aber nur soweit deren BK-Anteil tatsächlich bezahlt wurde.
-        prep = get_bk_prepayment_summary(wohnung=wohnung, from_date=von, to_date=bis)
-        paid_total = _to_decimal(prep.get("paid_total"))
-
-        # Mietvertrag & Mieter
-        mv = _bestehender_mietvertrag_fuer_stichtag(wohnung, stichtag)
-        # Mieter aus allen überlappenden Verträgen im Zeitraum sammeln
-        mieter_rows = _vertragspartner_rows_for_period(wohnung, von, bis)
-
-        # Zustand
-        zustand = _zustand_am(wohnung, stichtag)
-        groesse = _groesse_qm(wohnung, stichtag)
-
-        d = frappe.new_doc("Betriebskostenabrechnung Mieter")
-        d.update({
-            "datum": cstr(stichtag),
-            "von": cstr(von),
-            "bis": cstr(bis),
-            "wohnung": wohnung,
-            "mietvertrag": mv,
-            "customer": _get_customer_for_mietvertrag(mv),
-            "vorrauszahlungen": _as_money(paid_total),
-            "wohnungszustand": zustand,
-            "größe": groesse,
-        })
-        if head:
-            d.immobilien_abrechnung = head
-
-        for r in mieter_rows:
-            d.append("mieter", {
-                "mieter": r.get("mieter"),
-                "rolle": r.get("rolle"),
-                "eingezogen": r.get("eingezogen"),
-                "ausgezogen": r.get("ausgezogen"),
-            })
-
-        _add_abrechnungsposten(d, posten)
-
-        # Beim Insert die automatische after_insert vermeiden und Settlement hier explizit ausführen,
-        # damit Fehler direkt an den Aufrufer gehen.
-        d.flags.skip_auto_settle = True
-        d.flags.allow_manual_create = True
-        try:
-            d.insert(ignore_permissions=True)
-        except Exception as e:
-            frappe.throw(f"Abrechnung konnte nicht angelegt werden: {e}")
-        if submit:
-            try:
-                d.submit()
-            except Exception as e:
-                frappe.throw(f"Abrechnung konnte nicht eingereicht werden: {e}")
-        return d.name
-
-    segments = _mietvertrag_segmente_fuer_zeitraum(wohnung, von, bis)
-    if not segments:
-        frappe.throw(
-            f"Keine Mieter-Abrechnung erzeugt: Im Zeitraum {von} bis {bis} "
-            f"existiert kein Mietvertrag für Wohnung '{wohnung}'."
-        )
-
+    posten: Dict[str, Decimal],
+    segments: List[dict],
+) -> List[Dict[str, Decimal]]:
+    """Project the current apartment cost matrix onto current tenant segments."""
     festbetrag_arten = {
         row.get("name")
         for row in (
             frappe.get_all(
                 "Betriebskostenart",
-                filters={"verteilung": "Festbetrag", "kategorie": "Betriebskosten"},
+                filters={
+                    "verteilung": "Festbetrag",
+                    "kategorie": "Betriebskosten",
+                },
                 fields=["name"],
                 limit_page_length=0,
             )
@@ -459,16 +531,23 @@ def create_bk_abrechnung_wohnung(
         )
         if row.get("name")
     }
-    # Freie Zusatzposten haben keinen Betriebskostenart-Datensatz. Sie müssen
-    # beim Mieterwechsel trotzdem wie Festbeträge dem jeweiligen Vertrag
-    # zugeordnet werden und dürfen nicht pauschal nach Tagen verteilt werden.
     festbetrag_arten.update(
         row.get("kostenart")
-        for row in _prorated_festbetrag_rows(immobilie=immobilie, von=von, bis=bis)
+        for row in _prorated_festbetrag_rows(
+            immobilie=immobilie,
+            von=von,
+            bis=bis,
+        )
         if row.get("kostenart")
     )
-    posten_fest = {art: amount for art, amount in posten.items() if art in festbetrag_arten}
-    posten_zeitanteilig = {art: amount for art, amount in posten.items() if art not in festbetrag_arten}
+    posten_fest = {
+        art: amount for art, amount in posten.items() if art in festbetrag_arten
+    }
+    posten_zeitanteilig = {
+        art: amount
+        for art, amount in posten.items()
+        if art not in festbetrag_arten
+    }
     festbetrag_gl_by_segment = _festbetrag_gl_posten_by_segment(
         segments=segments,
         gl_rows=alloc.get("festbetrag_gl_rows") or [],
@@ -476,22 +555,21 @@ def create_bk_abrechnung_wohnung(
         posten_fest=posten_fest,
     )
 
-    # Tagesgenaue Verteilung gegen Gesamtzeitraum (Leerstand bleibt beim Vermieter)
     period_days = (getdate(bis) - getdate(von)).days + 1
     if period_days <= 0:
         frappe.throw(f"Ungültiger Zeitraum {von} bis {bis}.")
     period_days_dec = Decimal(str(period_days))
 
-    # Segmentbeträge vorbereiten (Decimal, unquantized)
     seg_posten: List[Dict[str, Decimal]] = []
     total_unrounded = Decimal("0")
     for segment_index, seg in enumerate(segments):
         seg_start = seg["start"].strftime("%Y-%m-%d")
         seg_end = seg["end"].strftime("%Y-%m-%d")
         factor = Decimal(str(seg["days"])) / period_days_dec
-        seg_amounts: Dict[str, Decimal] = dict(festbetrag_gl_by_segment[segment_index])
-        for amount in seg_amounts.values():
-            total_unrounded += amount
+        seg_amounts: Dict[str, Decimal] = dict(
+            festbetrag_gl_by_segment[segment_index]
+        )
+        total_unrounded += sum(seg_amounts.values(), Decimal("0"))
         for art, amount in posten_zeitanteilig.items():
             amt = _to_decimal(amount) * factor
             if amt.copy_abs() < MIN_SIGNIFICANT:
@@ -517,10 +595,12 @@ def create_bk_abrechnung_wohnung(
                 total_unrounded += amt
         seg_posten.append(seg_amounts)
 
-    # Zielsumme (gerundet) über alle Segmente
     target_total = _quantize_money(total_unrounded)
     rounding_method = get_bk_rounding_method()
-    if rounding_method in {ROUNDING_METHOD_LARGEST_REMAINDER, ROUNDING_METHOD_ONLY}:
+    if rounding_method in {
+        ROUNDING_METHOD_LARGEST_REMAINDER,
+        ROUNDING_METHOD_ONLY,
+    }:
         arts = sorted({art for amounts in seg_posten for art in amounts})
         for art in arts:
             entries = [
@@ -531,10 +611,380 @@ def create_bk_abrechnung_wohnung(
             rounded = round_money_allocations(entries, rounding_method)
             for index, amount in rounded.items():
                 seg_posten[index][art] = amount
+    elif rounding_method == ROUNDING_METHOD_LEGACY and seg_posten:
+        written = sum(
+            (
+                _quantize_money(amount)
+                for amounts in seg_posten
+                for amount in amounts.values()
+            ),
+            Decimal("0"),
+        )
+        drift = _quantize_money(target_total - written)
+        if drift.copy_abs() >= MONEY_QUANT and seg_posten[-1]:
+            first_art = next(iter(seg_posten[-1]))
+            seg_posten[-1][first_art] += drift
+    return seg_posten
+
+
+def _require_bk_generation_authorization(
+    *,
+    head: Optional[str],
+    von: str,
+    bis: str,
+    stichtag: Optional[str] = None,
+    immobilie: Optional[str] = None,
+    wohnung: Optional[str] = None,
+    submit: bool = False,
+):
+    """Authorize internal tenant-settlement generation through its exact head.
+
+    ``Betriebskostenabrechnung Mieter`` is intentionally not directly
+    createable in the role model.  Its whitelisted generator therefore needs a
+    narrow, document-bound authorization before the internal child insert may
+    bypass that create permission.
+    """
+    submit = bool(cint(submit))
+    if submit:
+        frappe.throw(
+            "Direktes Einreichen über den BK-Generator ist nicht erlaubt. "
+            "Bitte die Betriebskostenabrechnung Immobilie einreichen.",
+            frappe.ValidationError,
+        )
+
+    head_name = cstr(head or "").strip()
+    if not head_name:
+        frappe.throw(
+            "Mieter-Abrechnungen dürfen nur über eine "
+            "Betriebskostenabrechnung Immobilie erzeugt werden; 'head' fehlt.",
+            frappe.PermissionError,
+        )
+
+    try:
+        head_doc = frappe.get_doc(
+            "Betriebskostenabrechnung Immobilie",
+            head_name,
+            for_update=True,
+        )
+    except frappe.DoesNotExistError:
+        frappe.throw(
+            f"Betriebskostenabrechnung Immobilie {head_name} wurde nicht gefunden.",
+            frappe.ValidationError,
+        )
+
+    for permission_type in ("read", "write"):
+        if not frappe.has_permission(
+            "Betriebskostenabrechnung Immobilie",
+            ptype=permission_type,
+            doc=head_doc,
+        ):
+            frappe.throw(
+                "Keine Berechtigung für Betriebskostenabrechnung Immobilie: "
+                f"{permission_type}.",
+                frappe.PermissionError,
+            )
+
+    if cint(getattr(head_doc, "docstatus", 0)) != 0:
+        frappe.throw(
+            f"Betriebskostenabrechnung Immobilie {head_name} ist nicht mehr "
+            "im Entwurf. Mieter-Abrechnungen werden ausschließlich unter "
+            "einem gesperrten Entwurfs-Kopf erzeugt.",
+            frappe.ValidationError,
+        )
+
+    head_immobilie = cstr(getattr(head_doc, "immobilie", None) or "").strip()
+    claimed_immobilie = cstr(immobilie or "").strip()
+    if not head_immobilie:
+        frappe.throw(
+            f"Betriebskostenabrechnung Immobilie {head_name} hat keine Immobilie.",
+            frappe.ValidationError,
+        )
+    if claimed_immobilie and (
+        _canonical_immobilie_root(claimed_immobilie)
+        != _canonical_immobilie_root(head_immobilie)
+    ):
+        frappe.throw(
+            f"Immobilie {claimed_immobilie} passt nicht zum Kopf "
+            f"{head_name} ({head_immobilie}).",
+            frappe.ValidationError,
+        )
+
+    try:
+        requested_from = getdate(von)
+        requested_to = getdate(bis)
+        head_from = getdate(getattr(head_doc, "von", None))
+        head_to = getdate(getattr(head_doc, "bis", None))
+    except Exception:
+        frappe.throw(
+            f"Zeitraum von Kopf {head_name} oder Aufruf ist ungültig.",
+            frappe.ValidationError,
+        )
+    if requested_from != head_from or requested_to != head_to:
+        frappe.throw(
+            f"Zeitraum {requested_from} bis {requested_to} passt nicht zum "
+            f"Kopf {head_name} ({head_from} bis {head_to}).",
+            frappe.ValidationError,
+        )
+
+    requested_stichtag = getdate(stichtag or bis)
+    head_stichtag = getdate(getattr(head_doc, "stichtag", None) or head_to)
+    if requested_stichtag != head_stichtag:
+        frappe.throw(
+            f"Stichtag {requested_stichtag} passt nicht zum Kopf "
+            f"{head_name} ({head_stichtag}).",
+            frappe.ValidationError,
+        )
+
+    if wohnung:
+        if not _wohnung_belongs_to_immobilie_hierarchy(
+            wohnung,
+            head_immobilie,
+        ):
+            frappe.throw(
+                f"Wohnung {wohnung} gehört nicht zur kanonischen "
+                f"Immobilienhierarchie von Kopf {head_name} "
+                f"({head_immobilie}).",
+                frappe.ValidationError,
+            )
+
+    return head_doc
+
+
+def _existing_bk_children_for_head_wohnung(
+    head: str,
+    wohnung: str,
+    expected_segments: List[dict],
+) -> List[str]:
+    """Current/locking idempotency read for one header/apartment pair."""
+    rows = frappe.db.sql(
+        """
+        SELECT name, docstatus, wohnung, mietvertrag, von, bis
+        FROM `tabBetriebskostenabrechnung Mieter`
+        WHERE immobilien_abrechnung = %s
+          AND wohnung = %s
+          AND docstatus < 2
+        ORDER BY name
+        FOR UPDATE
+        """,
+        (head, wohnung),
+        as_dict=True,
+    )
+    non_drafts = [
+        cstr(row.get("name"))
+        for row in rows or []
+        if cint(row.get("docstatus")) != 0
+    ]
+    if non_drafts:
+        frappe.throw(
+            "Inkonsistenter BK-Entwurf: Unter dem Entwurfs-Kopf existieren "
+            "bereits eingereichte Mieter-Abrechnungen "
+            f"({', '.join(non_drafts)}). Es wurde nichts erzeugt.",
+            frappe.ValidationError,
+        )
+    if not rows:
+        return []
+
+    expected_keys = [
+        (
+            wohnung,
+            cstr(segment.get("mietvertrag") or "").strip(),
+            getdate(segment.get("start")),
+            getdate(segment.get("end")),
+        )
+        for segment in expected_segments
+    ]
+    actual_keys = [
+        (
+            cstr(row.get("wohnung") or "").strip(),
+            cstr(row.get("mietvertrag") or "").strip(),
+            getdate(row.get("von")),
+            getdate(row.get("bis")),
+        )
+        for row in rows
+    ]
+    if (
+        len(set(expected_keys)) != len(expected_keys)
+        or len(set(actual_keys)) != len(actual_keys)
+        or sorted(expected_keys) != sorted(actual_keys)
+    ):
+        frappe.throw(
+            "BK-Generator abgebrochen: Bereits vorhandene Mieter-Entwürfe "
+            f"für Kopf {head} / Wohnung {wohnung} bilden nicht exakt die "
+            "aktuellen Mietvertragssegmente ab (fehlend, zusätzlich oder "
+            "doppelt). Bitte den Kopf verwerfen und neu erzeugen.",
+            frappe.ValidationError,
+        )
+    return [cstr(row.get("name")) for row in rows if row.get("name")]
+
+
+def _insert_authorized_bk_child(doc) -> None:
+    """Insert a header-authorized child, then restore normal permissions."""
+    try:
+        # The child DocType deliberately has no public create permission.  The
+        # caller must have passed _require_bk_generation_authorization first.
+        doc.insert(ignore_permissions=True)
+    finally:
+        # ``insert(ignore_permissions=True)`` persists this flag on the
+        # Document.  Never let it leak into submit or later operations.
+        doc.flags.ignore_permissions = False
+
+
+@frappe.whitelist()
+def create_bk_abrechnung_wohnung(
+    von: str,
+    bis: str,
+    wohnung: str,
+    submit: bool = False,
+    stichtag: Optional[str] = None,
+    head: Optional[str] = None,
+    split_by_mietvertrag: bool = False,
+) -> str | List[str]:
+    """Erstellt eine Betriebskostenabrechnung (Mieter) für eine Wohnung."""
+    submit = bool(cint(submit))
+    split_by_mietvertrag = bool(cint(split_by_mietvertrag))
+    if submit:
+        frappe.throw(
+            "Direktes Einreichen über den BK-Generator ist nicht erlaubt. "
+            "Bitte die Betriebskostenabrechnung Immobilie einreichen.",
+            frappe.ValidationError,
+        )
+    stichtag = stichtag or bis
+
+    head_doc = _require_bk_generation_authorization(
+        head=head,
+        von=von,
+        bis=bis,
+        stichtag=stichtag,
+        wohnung=wohnung,
+        submit=submit,
+    )
+    generation_segments = _mietvertrag_segmente_fuer_zeitraum(
+        wohnung,
+        von,
+        bis,
+        lock_regelungen=True,
+    )
+    expected_segments = _abrechenbare_bk_segmente(generation_segments)
+    if not split_by_mietvertrag:
+        period_start = getdate(von)
+        period_end = getdate(bis)
+        if (
+            len(expected_segments) != 1
+            or len(generation_segments) != 1
+            or expected_segments[0]["start"] != period_start
+            or expected_segments[0]["end"] != period_end
+        ):
+            frappe.throw(
+                "Eine wohnungsweite BK-Abrechnung ohne Aufteilung ist nur "
+                "zulässig, wenn genau ein Mietvertrag den gesamten Zeitraum "
+                "abdeckt. Bitte nach Mietvertrag aufteilen."
+            )
+    existing = _existing_bk_children_for_head_wohnung(
+        head_doc.name,
+        wohnung,
+        expected_segments,
+    )
+    if existing:
+        return existing if split_by_mietvertrag or len(existing) != 1 else existing[0]
+    if generation_segments and not expected_segments:
+        # Die Wohnung verursacht weiterhin Hauskosten, besitzt aber im ganzen
+        # Zeitraum nur Pauschal-/Inklusiv- oder Nichtumlage-Segmente. Ihr Anteil
+        # verbleibt im Immobilienkopf als Vermieteranteil.
+        return []
+
+    # Verteilte Kosten (nur für diese Wohnung herausziehen)
+    immobilie = head_doc.immobilie
+    abrechnung_company = _get_default_company(frappe._dict(wohnung=wohnung))
+    alloc = allocate_kosten_auf_wohnungen(von=von, bis=bis, immobilie=immobilie, stichtag=stichtag)
+    matrix: Dict[str, Dict[str, Any]] = alloc.get("matrix") or {}
+    posten_raw = matrix.get(wohnung) or {}
+    posten = {art: _to_decimal(amount) for art, amount in posten_raw.items()}
+    if not posten:
+        frappe.throw(
+            f"Keine verteilten Kosten für Wohnung '{wohnung}' im Zeitraum {von} bis {bis} (Stichtag {stichtag}). Prüfe Kostenverteilung/Verteilerschlüssel."
+        )
+
+    if not split_by_mietvertrag:
+        unsplit_segments = generation_segments
+        mv = unsplit_segments[0]["mietvertrag"]
+        customer = _get_customer_for_mietvertrag(mv)
+        # Für die Abrechnung zählen BK-Rechnungen der Periode,
+        # aber nur soweit deren BK-Anteil tatsächlich bezahlt wurde.
+        prep = get_bk_prepayment_summary(
+            wohnung=wohnung,
+            from_date=von,
+            to_date=bis,
+            customer=customer,
+            mietvertrag=mv,
+            company=abrechnung_company,
+        )
+        paid_total = _to_decimal(prep.get("paid_total"))
+
+        # Mietvertrag & Mieter
+        # Mieter aus allen überlappenden Verträgen im Zeitraum sammeln
+        mieter_rows = _vertragspartner_rows_for_period(wohnung, von, bis)
+
+        # Zustand
+        zustand = _zustand_am(wohnung, stichtag)
+        groesse = _groesse_qm(wohnung, stichtag)
+
+        d = frappe.new_doc("Betriebskostenabrechnung Mieter")
+        d.update({
+            "datum": cstr(stichtag),
+            "von": cstr(von),
+            "bis": cstr(bis),
+            "wohnung": wohnung,
+            "mietvertrag": mv,
+            "customer": customer,
+            "abrechnungsart": BK_REGELUNG_VORAUSZAHLUNG,
+            "vorrauszahlungen": _as_money(paid_total),
+            "wohnungszustand": zustand,
+            "größe": groesse,
+        })
+        if head:
+            d.immobilien_abrechnung = head
+
+        for r in mieter_rows:
+            d.append("mieter", {
+                "mieter": r.get("mieter"),
+                "rolle": r.get("rolle"),
+                "eingezogen": r.get("eingezogen"),
+                "ausgezogen": r.get("ausgezogen"),
+            })
+
+        _add_abrechnungsposten(d, posten)
+
+        # Beim Insert die automatische after_insert vermeiden und Settlement hier explizit ausführen,
+        # damit Fehler direkt an den Aufrufer gehen.
+        d.flags.skip_auto_settle = True
+        d.flags.allow_manual_create = True
+        try:
+            _insert_authorized_bk_child(d)
+        except Exception as e:
+            frappe.throw(f"Abrechnung konnte nicht angelegt werden: {e}")
+        return d.name
+
+    segments = generation_segments
+    if not segments:
+        frappe.throw(
+            f"Keine Mieter-Abrechnung erzeugt: Im Zeitraum {von} bis {bis} "
+            f"existiert kein Mietvertrag für Wohnung '{wohnung}'."
+        )
+
+    seg_posten = _build_bk_segment_costs(
+        alloc=alloc,
+        immobilie=immobilie,
+        wohnung=wohnung,
+        von=von,
+        bis=bis,
+        posten=posten,
+        segments=segments,
+    )
 
     created: List[str] = []
-    sum_written = Decimal("0")
     for idx, seg in enumerate(segments):
+        if not ist_bk_abrechenbar(seg.get("abrechnungsart")):
+            continue
         seg_start = seg["start"].strftime("%Y-%m-%d")
         seg_end = seg["end"].strftime("%Y-%m-%d")
         seg_stichtag = stichtag
@@ -545,14 +995,23 @@ def create_bk_abrechnung_wohnung(
 
         mv = seg.get("mietvertrag")
         customer = _get_customer_for_mietvertrag(mv)
-        # Vorauszahlungen gehören über Customer + Wertstellungsdatum zum Mieter.
-        # Deshalb gilt hier der volle Abrechnungszeitraum und nicht das auf die
-        # Vertragsdauer gekürzte Segment (relevant bei untermonatigem Einzug).
+        # Regelungssegmente dürfen nur ihre eigenen BK-Rechnungsmonate
+        # verrechnen. Bei einem untermonatigen Vertragsbeginn liegt die
+        # monatliche Wertstellung technisch am Monatsersten; nur dort erweitern
+        # wir den Start auf diesen Monatsersten.
+        raw_contract = seg.get("raw") or {}
+        prep_from, prep_to = bk_invoice_period_for_segment(
+            seg_start,
+            seg_end,
+            raw_contract.get("von"),
+        )
         prep = get_bk_prepayment_summary(
             wohnung=wohnung,
-            from_date=von,
-            to_date=bis,
+            from_date=prep_from,
+            to_date=prep_to,
             customer=customer,
+            mietvertrag=mv,
+            company=abrechnung_company,
         )
         paid_total = _to_decimal(prep.get("paid_total"))
 
@@ -569,6 +1028,7 @@ def create_bk_abrechnung_wohnung(
             "wohnung": wohnung,
             "mietvertrag": mv,
             "customer": customer,
+            "abrechnungsart": BK_REGELUNG_VORAUSZAHLUNG,
             "vorrauszahlungen": _as_money(paid_total),
             "wohnungszustand": zustand,
             "größe": groesse,
@@ -585,35 +1045,14 @@ def create_bk_abrechnung_wohnung(
             })
 
         seg_amounts = seg_posten[idx]
-        if rounding_method == ROUNDING_METHOD_LEGACY and idx == len(segments) - 1 and seg_amounts:
-            # Remainder auf letzte Abrechnung legen (erste Kostenart)
-            current_sum = Decimal("0")
-            for amt in seg_amounts.values():
-                current_sum += _quantize_money(amt)
-            sum_written_before = sum_written + current_sum
-            drift = _quantize_money(target_total - sum_written_before)
-            if drift.copy_abs() >= MONEY_QUANT:
-                first_art = next(iter(seg_amounts.keys()))
-                seg_amounts[first_art] = seg_amounts[first_art] + drift
-
-        # Kosten schreiben und Summe merken
         _add_abrechnungsposten(d, seg_amounts)
-        seg_written = Decimal("0")
-        for amt in seg_amounts.values():
-            seg_written += _quantize_money(_to_decimal(amt))
-        sum_written += seg_written
 
         d.flags.skip_auto_settle = True
         d.flags.allow_manual_create = True
         try:
-            d.insert(ignore_permissions=True)
+            _insert_authorized_bk_child(d)
         except Exception as e:
             frappe.throw(f"Abrechnung konnte nicht angelegt werden: {e}")
-        if submit:
-            try:
-                d.submit()
-            except Exception as e:
-                frappe.throw(f"Abrechnung konnte nicht eingereicht werden: {e}")
         created.append(d.name)
 
     return created
@@ -630,16 +1069,29 @@ def create_bk_abrechnungen_immobilie(
     split_by_mietvertrag: bool = False,
 ) -> dict:
     """Erstellt alle Mieter‑Abrechnungen für ein Haus und optional den Kopfdatensatz."""
+    submit = bool(cint(submit))
+    split_by_mietvertrag = bool(cint(split_by_mietvertrag))
+    if submit:
+        frappe.throw(
+            "Direktes Einreichen über den BK-Generator ist nicht erlaubt. "
+            "Bitte die Betriebskostenabrechnung Immobilie einreichen.",
+            frappe.ValidationError,
+        )
     stichtag = stichtag or bis
+    _require_bk_generation_authorization(
+        head=head,
+        von=von,
+        bis=bis,
+        stichtag=stichtag,
+        immobilie=immobilie,
+        submit=submit,
+    )
     alloc = allocate_kosten_auf_wohnungen(von=von, bis=bis, immobilie=immobilie, stichtag=stichtag)
     matrix: Dict[str, Dict[str, float]] = alloc.get("matrix") or {}
     if not matrix:
         frappe.throw(
             f"Keine verteilten Kosten/ Wohnungen gefunden für Immobilie '{immobilie}' im Zeitraum {von} bis {bis} (Stichtag {stichtag}). Prüfe Kostenbuchungen, Verteilerschlüssel und Zuordnung der Wohnungen zur Immobilie."
         )
-
-    if not head:
-        frappe.throw("Bitte zuerst das Objekt 'Betriebskostenabrechnung Immobilie' anlegen und dessen Name als 'head' übergeben.")
 
     created: List[str] = []
     head_name = head
@@ -658,10 +1110,9 @@ def create_bk_abrechnungen_immobilie(
         else:
             created.append(res)
 
-    if not created:
-        frappe.throw(
-            f"Es konnten keine Mieter‑Abrechnungen erzeugt werden für Immobilie '{immobilie}' im Zeitraum {von} bis {bis}."
-        )
+    # Ein reines Pauschal-/Inklusivmietobjekt besitzt bewusst keine
+    # Mieter-Abrechnungen. Der Immobilienkopf bleibt trotzdem gültig und weist
+    # die vollständigen Kosten als Vermieteranteil aus.
     return {"created": created, "count": len(created)}
 
 
@@ -670,6 +1121,7 @@ def create_bk_abrechnungen_immobilie(
 # -----------------------------
 
 def _ensure_item(code: str, name: Optional[str] = None) -> str:
+    """Legacy helper kept permission-safe for any future caller."""
     name = name or code
     if frappe.db.exists("Item", code):
         return code
@@ -680,7 +1132,7 @@ def _ensure_item(code: str, name: Optional[str] = None) -> str:
     item.is_sales_item = 1
     item.maintain_stock = 0
     item.stock_uom = "Nos"
-    item.insert(ignore_permissions=True)
+    item.insert()
     return code
 
 
@@ -693,19 +1145,58 @@ def _get_customer_for_mietvertrag(mv: Optional[str]) -> Optional[str]:
         return None
 
 
-def _bk_invoice_outstanding_shares(wohnung: str, from_date: str, to_date: str) -> List[dict]:
-    """Ermittelt pro BK-Rechnung den offenen Anteil (nur BK-Anteil)."""
+def _bk_invoice_outstanding_shares(
+    wohnung: str,
+    from_date: str,
+    to_date: str,
+    customer: Optional[str] = None,
+    mietvertrag: Optional[str] = None,
+    company: Optional[str] = None,
+    contract_identity: Optional[Dict[str, Any]] = None,
+    *,
+    lock: bool = False,
+) -> List[dict]:
+    """Ermittelt pro BK-Rechnung den offenen Anteil des aktuellen Mieters.
+
+    Eine Wohnung kann im Abrechnungszeitraum mehrere Mieter haben. Deshalb darf
+    die spätere Verrechnung niemals nur über Wohnung + Zeitraum laufen, sondern
+    muss zusätzlich auf den Customer des konkreten Mietvertrags begrenzt sein.
+    """
     from .operating_cost_prepaiment_calc import _bk_invoice_names_for_wohnung
 
-    names = _bk_invoice_names_for_wohnung(wohnung, from_date, to_date)
+    names = _bk_invoice_names_for_wohnung(
+        wohnung,
+        from_date,
+        to_date,
+        customer=customer,
+        mietvertrag=mietvertrag,
+        company=company,
+        contract_identity=contract_identity,
+        lock=lock,
+    )
     if not names:
         return []
     sql = """
         SELECT si.name,
-               si.outstanding_amount,
+               si.is_return,
+               si.company,
+               si.currency,
+               si.conversion_rate,
+               si.debit_to,
+               CASE
+                   WHEN si.is_return = 1 THEN -ABS(si.outstanding_amount)
+                   ELSE si.outstanding_amount
+               END AS outstanding_amount,
                COALESCE(bki.bk_net, 0) AS bk_net,
                COALESCE(tot.total_net, 0) AS total_net,
-               COALESCE(si.outstanding_amount * COALESCE(bki.bk_net / NULLIF(tot.total_net, 0), 0), 0) AS outstanding_bk_share
+               COALESCE(
+                   CASE
+                       WHEN si.is_return = 1 THEN -ABS(si.outstanding_amount)
+                       ELSE si.outstanding_amount
+                   END
+                   * COALESCE(ABS(bki.bk_net) / NULLIF(ABS(tot.total_net), 0), 0),
+                   0
+               ) AS outstanding_bk_share
         FROM `tabSales Invoice` si
         LEFT JOIN (
             SELECT parent, SUM(net_amount) AS bk_net
@@ -720,7 +1211,9 @@ def _bk_invoice_outstanding_shares(wohnung: str, from_date: str, to_date: str) -
         ) tot ON tot.parent = si.name
         WHERE si.name in %(names)s AND si.docstatus = 1
     """
-    rows = frappe.db.sql(sql, {"names": tuple(names), "bk": "Betriebskosten"}, as_dict=True)
+    if lock:
+        sql += "\nFOR UPDATE"
+    rows = frappe.db.sql(sql, {"names": tuple(names), "bk": BK_ITEM_CODE}, as_dict=True)
     for r in rows:
         r["outstanding_bk_share"] = _as_money(_to_decimal(r.get("outstanding_bk_share")))
     return rows
@@ -744,7 +1237,21 @@ def _make_sales_invoice(
     si = frappe.new_doc("Sales Invoice")
     si.customer = customer
     if company:
+        company_currency = cstr(
+            frappe.db.get_value("Company", company, "default_currency") or ""
+        ).strip()
+        if not company_currency:
+            frappe.throw(
+                f"Company {company} hat keine Standardwährung; "
+                "Ausgleichsbeleg wurde nicht erstellt.",
+                frappe.ValidationError,
+            )
         si.company = company
+        # Settlement amounts are calculated in the canonical company currency.
+        # Never allow Customer defaults to reinterpret that amount as FX.
+        si.currency = company_currency
+        si.conversion_rate = 1
+        si.plc_conversion_rate = 1
     # Fälligkeit: 3 Wochen nach Buchung; Payment Terms Templates bewusst ignorieren.
     # set_posting_time=1 verhindert, dass ERPNext posting_date auf "heute" zurücksetzt
     # (siehe transaction_base.py) — sonst wäre due_date inkonsistent mit posting_date.
@@ -760,8 +1267,11 @@ def _make_sales_invoice(
     else:
         si.due_date = post_date + timedelta(days=21)
     si.ignore_default_payment_terms_template = 1
+    si.ignore_pricing_rule = 1
     si.set("payment_terms_template", None)
     si.set("payment_schedule", [])
+    si.set("taxes_and_charges", None)
+    si.set("taxes", [])
     si.set("is_return", is_return)
     if remarks:
         si.remarks = remarks
@@ -784,10 +1294,117 @@ def _make_sales_invoice(
     if wohnung and _has_field("Sales Invoice Item", "wohnung"):
         item_row["wohnung"] = wohnung
     si.append("items", item_row)
-    si.insert(ignore_permissions=True)
+    # Do not bypass the target user's create permission.  The explicit
+    # permission pre-check is only an early, readable error; Document.insert
+    # remains the authoritative enforcement point (including User Permissions).
+    si.insert()
+    if company:
+        _validate_target_sales_invoice_booking_context(
+            si,
+            company,
+            expected_item_code=item_code,
+            expected_amount=amount_dec,
+            expected_return=bool(is_return),
+        )
     if do_submit:
         si.submit()
     return si.name
+
+
+def _validate_target_sales_invoice_booking_context(
+    si,
+    company: str,
+    *,
+    expected_item_code: str,
+    expected_amount: Decimal,
+    expected_return: bool,
+) -> None:
+    """Validate the inserted settlement target before it can be submitted."""
+    company_currency = cstr(
+        frappe.db.get_value("Company", company, "default_currency") or ""
+    ).strip()
+    account_name = cstr(getattr(si, "debit_to", None) or "").strip()
+    account_rows = (
+        frappe.db.sql(
+            """
+            SELECT name, company, account_type, account_currency
+            FROM `tabAccount`
+            WHERE name = %s
+            FOR UPDATE
+            """,
+            (account_name,),
+            as_dict=True,
+        )
+        if account_name
+        else []
+    )
+    account = account_rows[0] if len(account_rows) == 1 else {}
+    try:
+        conversion_rate = Decimal(str(getattr(si, "conversion_rate", 0) or 0))
+        plc_conversion_rate = Decimal(
+            str(getattr(si, "plc_conversion_rate", 0) or 0)
+        )
+    except (InvalidOperation, TypeError, ValueError):
+        conversion_rate = Decimal("0")
+        plc_conversion_rate = Decimal("0")
+    expected_signed = _quantize_money(
+        -expected_amount.copy_abs()
+        if expected_return
+        else expected_amount.copy_abs()
+    )
+    items = list(getattr(si, "items", None) or [])
+    taxes = list(getattr(si, "taxes", None) or [])
+    try:
+        grand_total = _quantize_money(
+            Decimal(str(getattr(si, "grand_total", 0) or 0))
+        )
+        base_grand_total = _quantize_money(
+            Decimal(str(getattr(si, "base_grand_total", 0) or 0))
+        )
+        item_net = (
+            _quantize_money(
+                Decimal(str(getattr(items[0], "net_amount", 0) or 0))
+            )
+            if len(items) == 1
+            else Decimal("0")
+        )
+        tax_total = _quantize_money(
+            Decimal(
+                str(getattr(si, "total_taxes_and_charges", 0) or 0)
+            )
+        )
+    except (InvalidOperation, TypeError, ValueError):
+        grand_total = base_grand_total = item_net = tax_total = Decimal("0")
+    exact_item = (
+        len(items) == 1
+        and cstr(getattr(items[0], "item_code", None) or "").strip()
+        == expected_item_code
+    )
+    if (
+        not company_currency
+        or cstr(getattr(si, "company", None) or "").strip() != company
+        or cstr(getattr(si, "currency", None) or "").strip()
+        != company_currency
+        or conversion_rate != Decimal("1")
+        or plc_conversion_rate != Decimal("1")
+        or cstr(account.get("company") or "").strip() != company
+        or cstr(account.get("account_type") or "").strip() != "Receivable"
+        or cstr(account.get("account_currency") or "").strip()
+        != company_currency
+        or cint(getattr(si, "is_return", 0)) != int(expected_return)
+        or not exact_item
+        or grand_total != expected_signed
+        or base_grand_total != expected_signed
+        or item_net != expected_signed
+        or tax_total != Decimal("0.00")
+        or bool(taxes)
+    ):
+        frappe.throw(
+            "Ausgleichsbeleg wurde nicht eingereicht: Company, Währung, "
+            "Umrechnungskurs, Debitorenkonto, Betrag, Item oder Steuern "
+            f"sind nicht exakt kanonisch für {company}.",
+            frappe.ValidationError,
+        )
 
 
 def _get_si_debit_to(name: str) -> Optional[str]:
@@ -816,7 +1433,12 @@ def _receivable_account_for_existing_invoices(rows: List[dict], fallback_company
 
 
 def _allocate_via_journal_entry(
-    company: str, entries: List[dict], posting_date: str, wertstellungsdatum: Optional[str] = None
+    company: str,
+    entries: List[dict],
+    posting_date: str,
+    wertstellungsdatum: Optional[str] = None,
+    *,
+    remarks: Optional[str] = None,
 ) -> Optional[str]:
     """Erstellt und bucht einen Journal Entry mit parteibezogenen Referenzen.
 
@@ -829,6 +1451,8 @@ def _allocate_via_journal_entry(
     je.voucher_type = "Journal Entry"
     je.company = company
     je.posting_date = posting_date
+    if remarks:
+        je.user_remark = remarks
     if wertstellungsdatum:
         je.custom_wertstellungsdatum = wertstellungsdatum
     total_debit = Decimal("0")
@@ -855,35 +1479,455 @@ def _allocate_via_journal_entry(
         frappe.throw(
             f"Journal Entry nicht ausgeglichen (Debit {debit_val:.2f} != Credit {credit_val:.2f})."
         )
-    je.insert(ignore_permissions=True)
+    # Keep Frappe's document and User-Permission enforcement active.
+    je.insert()
     je.submit()
     return je.name
 
 
+def _get_locked_settlement_document(abrechnung: str):
+    """Sperrt die Mieterabrechnung bis zum Transaktionsende und lädt sie danach neu.
+
+    Dadurch kann ein zweiter, paralleler Request die Idempotenzprüfung erst
+    ausführen, nachdem der erste Request seine Beleg-Links gespeichert hat.
+    """
+    rows = frappe.db.sql(
+        """
+        SELECT name
+        FROM `tabBetriebskostenabrechnung Mieter`
+        WHERE name = %s
+        FOR UPDATE
+        """,
+        (abrechnung,),
+    )
+    if not rows:
+        frappe.throw(f"Betriebskostenabrechnung Mieter {abrechnung} wurde nicht gefunden.")
+    doc = frappe.get_doc(
+        "Betriebskostenabrechnung Mieter",
+        abrechnung,
+        for_update=True,
+    )
+    mietvertrag = cstr(doc.get("mietvertrag") or "").strip()
+    if not mietvertrag:
+        frappe.throw(
+            "Die Mieter-Abrechnung hat keinen Mietvertrag; Settlement "
+            "abgebrochen."
+        )
+    contract_rows = frappe.db.sql(
+        """
+        SELECT name, kunde, wohnung, von, bis
+        FROM `tabMietvertrag`
+        WHERE name = %s
+        FOR UPDATE
+        """,
+        (mietvertrag,),
+        as_dict=True,
+    )
+    if not contract_rows:
+        frappe.throw(
+            f"Mietvertrag {mietvertrag} wurde nicht gefunden; "
+            "Settlement abgebrochen."
+        )
+    identity = frappe._dict(contract_rows[0])
+    locked_customer = cstr(identity.get("kunde") or "").strip()
+    locked_wohnung = cstr(identity.get("wohnung") or "").strip()
+    if not locked_customer or not locked_wohnung:
+        frappe.throw(
+            f"Mietvertrag {mietvertrag} hat keinen eindeutigen Customer oder "
+            "keine Wohnung; Settlement abgebrochen."
+        )
+    document_customer = cstr(doc.get("customer") or "").strip()
+    document_wohnung = cstr(doc.get("wohnung") or "").strip()
+    if document_customer != locked_customer or document_wohnung != locked_wohnung:
+        frappe.throw(
+            "Die gespeicherte Customer-/Wohnungsidentität der "
+            f"Mieter-Abrechnung widerspricht dem aktuell gesperrten Mietvertrag "
+            f"{mietvertrag}; Settlement abgebrochen."
+        )
+    # Ausschließlich dieser Current Read darf die nachfolgende Belegauswahl,
+    # Company-Auflösung und Zielbeleg-Erstellung steuern.
+    doc._locked_mietvertrag_identity = frappe._dict(
+        name=mietvertrag,
+        kunde=locked_customer,
+        wohnung=locked_wohnung,
+        von=identity.get("von"),
+        bis=identity.get("bis"),
+    )
+    return doc
+
+
+def _get_locked_submitted_bk_head(abrechnung: str):
+    """Discover, lock and validate the mandatory submitted settlement header.
+
+    The initial child-link read is only used to discover the lock target.  The
+    relation is checked again after locking header and child so a concurrent
+    relink cannot authorize a booking.
+    """
+    head_name = cstr(
+        frappe.db.get_value(
+            "Betriebskostenabrechnung Mieter",
+            abrechnung,
+            "immobilien_abrechnung",
+        )
+        or ""
+    ).strip()
+    if not head_name:
+        frappe.throw(
+            "Buchung abgebrochen: Die Mieter-Abrechnung ist mit keiner "
+            "Betriebskostenabrechnung Immobilie verknüpft.",
+            frappe.ValidationError,
+        )
+    rows = frappe.db.sql(
+        """
+        SELECT name
+        FROM `tabBetriebskostenabrechnung Immobilie`
+        WHERE name = %s
+        FOR UPDATE
+        """,
+        (head_name,),
+    )
+    if not rows:
+        frappe.throw(
+            f"Buchung abgebrochen: Der verknüpfte BK-Kopf {head_name} fehlt.",
+            frappe.ValidationError,
+        )
+    head_doc = frappe.get_doc(
+        "Betriebskostenabrechnung Immobilie",
+        head_name,
+        for_update=True,
+    )
+    if cint(getattr(head_doc, "docstatus", 0)) != 1:
+        frappe.throw(
+            f"Buchung abgebrochen: Der verknüpfte BK-Kopf {head_name} ist "
+            "nicht eingereicht.",
+            frappe.ValidationError,
+        )
+    return head_doc
+
+
+def _authoritative_bk_consolidation_choice(
+    head_doc,
+    requested: Any = None,
+) -> bool:
+    """Return the immutable server-side choice and reject API overrides."""
+    authoritative = bool(
+        cint(getattr(head_doc, "offene_bk_vorauszahlungen_verrechnen", 0))
+    )
+    if requested not in (None, ""):
+        normalized_request = bool(cint(requested))
+        if normalized_request != authoritative:
+            frappe.throw(
+                "Der API-Parameter 'consolidate_unpaid' widerspricht dem "
+                "eingereichten BK-Kopf. Ausschließlich die Checkbox des "
+                "Kopfes ist maßgeblich.",
+                frappe.ValidationError,
+            )
+    return authoritative
+
+
+def _require_bk_settlement_head_permissions(head_doc) -> None:
+    for permission_type in ("read", "write"):
+        if not frappe.has_permission(
+            "Betriebskostenabrechnung Immobilie",
+            ptype=permission_type,
+            doc=head_doc,
+        ):
+            frappe.throw(
+                "Keine Berechtigung für den maßgeblichen BK-Kopf: "
+                f"{permission_type}.",
+                frappe.PermissionError,
+            )
+
+
+def _validate_bk_settlement_head_identity(doc, head_doc) -> None:
+    if cstr(getattr(doc, "immobilien_abrechnung", None) or "").strip() != cstr(
+        getattr(head_doc, "name", None) or ""
+    ).strip():
+        frappe.throw(
+            "Buchung abgebrochen: Die gesperrte Mieter-Abrechnung verweist "
+            "nicht mehr auf den gesperrten BK-Kopf.",
+            frappe.ValidationError,
+        )
+
+    head_immobilie = cstr(getattr(head_doc, "immobilie", None) or "").strip()
+    locked_identity = getattr(doc, "_locked_mietvertrag_identity", None) or {}
+    wohnung = cstr(
+        locked_identity.get("wohnung")
+        or getattr(doc, "wohnung", None)
+        or ""
+    ).strip()
+    if (
+        not head_immobilie
+        or not _wohnung_belongs_to_immobilie_hierarchy(
+            wohnung,
+            head_immobilie,
+        )
+    ):
+        frappe.throw(
+            "Buchung abgebrochen: Wohnung und Immobilie des BK-Kopfes sind "
+            "nicht identisch.",
+            frappe.ValidationError,
+        )
+
+    head_from = getdate(getattr(head_doc, "von", None))
+    head_to = getdate(getattr(head_doc, "bis", None))
+    child_from = getdate(getattr(doc, "von", None))
+    child_to = getdate(getattr(doc, "bis", None))
+    expected_cutoff = min(
+        getdate(getattr(head_doc, "stichtag", None) or head_to),
+        child_to,
+    )
+    if (
+        child_from < head_from
+        or child_to > head_to
+        or child_from > child_to
+        or getdate(getattr(doc, "datum", None)) != expected_cutoff
+    ):
+        frappe.throw(
+            "Buchung abgebrochen: Zeitraum oder Stichtag der "
+            "Mieter-Abrechnung passt nicht zum eingereichten BK-Kopf.",
+            frappe.ValidationError,
+        )
+
+
+def _validate_bk_prepayment_booking_context(
+    invoice_rows: List[dict],
+    company: str,
+) -> None:
+    """Fail closed before ``O`` is calculated from foreign/misconfigured SIs."""
+    if not invoice_rows:
+        return
+    company_currency = cstr(
+        frappe.db.get_value("Company", company, "default_currency") or ""
+    ).strip()
+    if not company_currency:
+        frappe.throw(
+            f"Company {company} hat keine Standardwährung; Buchung abgebrochen.",
+            frappe.ValidationError,
+        )
+
+    accounts = sorted(
+        {
+            cstr(row.get("debit_to") or "").strip()
+            for row in invoice_rows
+            if cstr(row.get("debit_to") or "").strip()
+        }
+    )
+    account_rows = (
+        frappe.get_all(
+            "Account",
+            filters={"name": ("in", accounts)},
+            fields=["name", "company", "account_type", "account_currency"],
+            limit_page_length=0,
+        )
+        if accounts
+        else []
+    )
+    account_by_name = {
+        cstr(row.get("name")): row
+        for row in account_rows or []
+        if row.get("name")
+    }
+
+    invalid: List[str] = []
+    for row in invoice_rows:
+        name = cstr(row.get("name") or "unbekannt")
+        account_name = cstr(row.get("debit_to") or "").strip()
+        account = account_by_name.get(account_name) or {}
+        try:
+            conversion_rate = Decimal(
+                str(row.get("conversion_rate") or 0)
+            )
+        except (InvalidOperation, TypeError, ValueError):
+            conversion_rate = Decimal("0")
+        if (
+            cstr(row.get("company") or "").strip() != company
+            or cstr(row.get("currency") or "").strip() != company_currency
+            or conversion_rate != Decimal("1")
+            or not account_name
+            or cstr(account.get("company") or "").strip() != company
+            or cstr(account.get("account_type") or "").strip() != "Receivable"
+            or cstr(account.get("account_currency") or "").strip()
+            != company_currency
+        ):
+            invalid.append(name)
+    if invalid:
+        frappe.throw(
+            "Buchung abgebrochen: BK-Vorauszahlungsbelege haben eine fremde "
+            "Company, Währung oder kein passendes Debitorenkonto "
+            f"({', '.join(invalid[:10])}). Sie wurden nicht in O eingerechnet.",
+            frappe.ValidationError,
+        )
+
+
+def _validate_locked_prepayment_snapshot(doc, invoice_rows: List[dict]) -> None:
+    """Prüft Soll, Zahlung und OP unter denselben Belegsperren.
+
+    Der Entwurf speichert die bis dahin bezahlten Vorauszahlungen. Vor der
+    endgültigen Buchung müssen sie noch exakt dem aktuellen Zahlungsstand
+    entsprechen. Außerdem gilt für unveränderte Vorauszahlungsrechnungen:
+    Soll = bezahlt + offen. Abweichungen (z. B. Write-off oder uneindeutige
+    Legacy-Daten) werden fail-closed behandelt.
+    """
+    names = [row.get("name") for row in invoice_rows or [] if row.get("name")]
+    live_paid = _quantize_money(
+        _to_decimal(
+            get_bk_paid_sum_for_invoice_names(
+                names,
+                item_code=BK_ITEM_CODE,
+                lock=True,
+            )
+        )
+    )
+    expected = _quantize_money(
+        _to_decimal(
+            get_bk_expected_sum_for_invoice_names(
+                names,
+                item_code=BK_ITEM_CODE,
+                lock=True,
+            )
+        )
+    )
+    outstanding = Decimal("0")
+    for row in invoice_rows or []:
+        amount = _quantize_money(_to_decimal(row.get("outstanding_bk_share")))
+        if amount.copy_abs() >= MONEY_QUANT:
+            outstanding += amount
+    outstanding = _quantize_money(outstanding)
+    stored_paid = _quantize_money(_to_decimal(getattr(doc, "vorrauszahlungen", 0)))
+
+    if live_paid != stored_paid:
+        frappe.throw(
+            "Der Zahlungsstand der BK-Vorauszahlungen hat sich seit Erstellung "
+            f"der Abrechnung geändert (Entwurf {stored_paid:.2f}, aktuell "
+            f"{live_paid:.2f}). Bitte Abrechnung neu erzeugen; es wurde nichts "
+            "gebucht."
+        )
+    if expected != _quantize_money(live_paid + outstanding):
+        frappe.throw(
+            "BK-Vorauszahlungen sind nicht eindeutig auflösbar: "
+            f"Signed Soll {expected:.2f} != signed bezahlt {live_paid:.2f} "
+            f"+ signed offen "
+            f"{outstanding:.2f}. Bitte Write-offs, Gutschriften und "
+            "Legacy-Zuordnungen prüfen; es wurde nichts gebucht."
+        )
+
+
+def _require_settlement_permissions(
+    doc,
+    source_doctype: str,
+    *,
+    require_journal_entry: bool = False,
+) -> None:
+    """Blockiert Draft-/API-Buchungen ohne explizite Quell- und Zielrechte."""
+    if cint(getattr(doc, "docstatus", 0)) != 1:
+        frappe.throw(
+            f"{source_doctype} muss vor der Belegerzeugung eingereicht sein.",
+            frappe.ValidationError,
+        )
+
+    checks = [
+        (source_doctype, "read", {"doc": doc}),
+        (source_doctype, "write", {"doc": doc}),
+        ("Sales Invoice", "create", {}),
+        ("Sales Invoice", "submit", {}),
+    ]
+    if require_journal_entry:
+        checks.extend(
+            [
+                ("Journal Entry", "create", {}),
+                ("Journal Entry", "submit", {}),
+            ]
+        )
+
+    for doctype, permission_type, kwargs in checks:
+        # Always pass the DocType explicitly.  Besides being compatible with
+        # Frappe versions where it is positional/required, this prevents mocks
+        # from hiding a production-only TypeError on document-level checks.
+        allowed = frappe.has_permission(doctype, ptype=permission_type, **kwargs)
+        if not allowed:
+            frappe.throw(
+                f"Keine Berechtigung für {doctype}: {permission_type}.",
+                frappe.PermissionError,
+            )
+
+
 @frappe.whitelist()
-def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = False) -> dict:
+def create_bk_settlement_documents(
+    abrechnung: str,
+    consolidate_unpaid: Optional[bool] = None,
+) -> dict:
     """Erstellt Nachzahlung (SI) oder Guthaben (Credit Note) für eine Mieter-Abrechnung.
 
-    Optional: listet offene BK-Rechnungen im Zeitraum (BK-Anteil) als Bericht auf.
+    Offene BK-Rechnungen des Zeitraums werden immer als Bericht ausgewiesen,
+    aber nur bei ausdrücklichem Opt-in per Journal Entry verrechnet.
     """
-    doc = frappe.get_doc("Betriebskostenabrechnung Mieter", abrechnung)
-    # Doppel-Trigger nach erfolgter Verlinkung verhindern (Button erneut klicken,
-    # Job-Retry nach erfolgreichem Lauf). Echte parallele Races (zwei Requests
-    # sehen das Doc gleichzeitig als leer) faengt dieser Check nicht ab — dafuer
-    # waere Row-Lock noetig (out-of-scope; single-user-LAN, geringes Praxisrisiko).
+    # Lock order is always header -> child -> contract -> source invoices.
+    # The API parameter is compatibility-only and can never override the head.
+    head_doc = _get_locked_submitted_bk_head(abrechnung)
+    _require_bk_settlement_head_permissions(head_doc)
+    consolidate_unpaid = _authoritative_bk_consolidation_choice(
+        head_doc,
+        consolidate_unpaid,
+    )
+    doc = _get_locked_settlement_document(abrechnung)
+    _validate_bk_settlement_head_identity(doc, head_doc)
+    _bk_settlement_marker(doc.name)
+    _require_settlement_permissions(
+        doc,
+        "Betriebskostenabrechnung Mieter",
+        require_journal_entry=consolidate_unpaid,
+    )
+    # Doppel-Trigger, Job-Retry und parallele Requests verhindern. Auch ein
+    # alleiniger Konsolidierungs-JE ist ein bereits erzeugtes Settlement.
     existing_si = (doc.get("sales_invoice") or "").strip()
     existing_cn = (doc.get("credit_note") or "").strip()
-    if existing_si or existing_cn:
+    existing_je = (doc.get("consolidation_journal_entry") or "").strip()
+    if existing_si or existing_cn or existing_je:
+        validator = getattr(doc, "_validated_settlement_documents", None)
+        if not callable(validator):
+            frappe.throw(
+                "Settlement-Retry abgebrochen: Vorhandene Beleglinks können "
+                "nicht auf Ownership geprüft werden.",
+                frappe.ValidationError,
+            )
+        validated_documents = validator()
+        if any(cint(getattr(linked, "docstatus", 0)) != 1 for linked in validated_documents):
+            frappe.throw(
+                "Settlement-Retry abgebrochen: Mindestens ein verknüpfter "
+                "Ausgleichsbeleg ist nicht mehr eingereicht.",
+                frappe.ValidationError,
+            )
         return {
-            "sales_invoice": existing_si or None,
-            "credit_note": existing_cn or None,
-            "note": "Settlement bereits erzeugt. Felder erst leeren, um neu zu generieren.",
+            "created": {
+                "sales_invoice": existing_si or None,
+                "credit_note": existing_cn or None,
+                "journal_entry": existing_je or None,
+                "note": "Settlement bereits erzeugt. Felder erst leeren, um neu zu generieren.",
+            },
+            "unpaid_report": [],
+            "unpaid_sum": 0.0,
+            "consolidate_unpaid": consolidate_unpaid,
+            "consolidated_sum": 0.0,
+            "consolidated_gross_sum": 0.0,
+            "consolidated_signed_sum": 0.0,
         }
-    wohnung = doc.wohnung
-    mv = doc.mietvertrag
-    customer = doc.customer or _get_customer_for_mietvertrag(mv)
-    if not customer:
-        frappe.throw("Kein Mieter auf dem Mietvertrag gefunden.")
+    locked_contract_identity = (
+        getattr(doc, "_locked_mietvertrag_identity", None)
+        or frappe._dict(
+            name=doc.mietvertrag,
+            kunde=doc.customer,
+            wohnung=doc.wohnung,
+        )
+    )
+    mv = cstr(locked_contract_identity.get("name") or "").strip()
+    customer = cstr(locked_contract_identity.get("kunde") or "").strip()
+    wohnung = cstr(locked_contract_identity.get("wohnung") or "").strip()
+    if not mv or not customer or not wohnung:
+        frappe.throw(
+            "Der gesperrte Mietvertrag hat keine eindeutige "
+            "Customer-/Wohnungsidentität."
+        )
 
     # Die Forderung bzw. das Guthaben entsteht mit Erstellung der Abrechnung und
     # wird deshalb heute gebucht. Das Ende des Abrechnungszeitraums dient nur als
@@ -891,29 +1935,47 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
     posting_date = cstr(frappe.utils.today())
     wertstellungsdatum = cstr(doc.bis or doc.datum or posting_date)
     due_date = None
-    head_name = (doc.immobilien_abrechnung or "").strip()
-    if head_name:
-        try:
-            head_doc = frappe.get_doc("Betriebskostenabrechnung Immobilie", head_name)
-            # Bei None faellt _make_sales_invoice auf Default (+21 Tage) zurueck.
-            due_date = getattr(head_doc, "nachzahlung_faellig_am", None) or None
-        except Exception:
-            due_date = None
-    # Differenz robust berechnen: Summe Abrechnungsposten minus Vorauszahlungen
+    invoice_from, invoice_to = bk_invoice_period_for_segment(
+        doc.von,
+        doc.bis,
+        locked_contract_identity.get("von"),
+    )
+    # Bei None faellt _make_sales_invoice auf Default (+21 Tage) zurueck.
+    due_date = getattr(head_doc, "nachzahlung_faellig_am", None) or None
+    # Kein Parse-Fehler darf aus einer kaputten Abrechnung einen vermeintlich
+    # ausgeglichenen Nullbetrag machen.
+    total = Decimal("0")
+    for index, row in enumerate(getattr(doc, "abrechnung", []) or [], start=1):
+        total += _booking_decimal(
+            row.get("betrag"),
+            field_label=f"Abrechnungsposten {index}",
+        )
+    vor = _booking_decimal(
+        getattr(doc, "vorrauszahlungen", None),
+        field_label="Vorauszahlungen",
+    )
     try:
-        total = Decimal("0")
-        for r in getattr(doc, "abrechnung", []) or []:
-            total += _to_decimal(r.get("betrag"))
-        vor = _to_decimal(getattr(doc, "vorrauszahlungen", 0))
         diff = _quantize_money(total - vor)
-    except Exception:
-        diff = Decimal("0")
+    except InvalidOperation:
+        frappe.throw(
+            "Die Differenz aus Abrechnungsposten und Vorauszahlungen konnte "
+            "nicht centgenau berechnet werden; Buchung abgebrochen.",
+            frappe.ValidationError,
+        )
 
     # Selfcheck: wirf Fehler, wenn Setup unvollständig
-    _run_settlement_selfcheck(doc)
-    company = _get_default_company()
+    company = _get_default_company(doc)
+    _run_settlement_selfcheck(
+        doc,
+        contract_identity=locked_contract_identity,
+        company=company,
+    )
     cost_center = _cost_center_for_abrechnung_doc(doc)
-    settlement_remark = _build_settlement_remark(doc.von, doc.bis)
+    settlement_remark = _build_settlement_remark(
+        doc.von,
+        doc.bis,
+        abrechnung=doc.name,
+    )
     # Sicherstellen: Artikel existieren und haben Income Account Defaults
     code_nach = _ensure_item_with_income("BK Nachzahlung", "Betriebskosten Nachzahlung", company)
     code_guth = _ensure_item_with_income("BK Guthaben", "Betriebskosten Guthaben", company)
@@ -921,177 +1983,378 @@ def create_bk_settlement_documents(abrechnung: str, consolidate_unpaid: bool = F
     created: Dict[str, Optional[str]] = {"sales_invoice": None, "credit_note": None, "journal_entry": None}
     new_doc_name = None
     base_amount = Decimal("0")
+    # Absolute/signed amounts actually consolidated by the optional JE.
     applied = Decimal("0")
+    applied_signed = Decimal("0")
 
-    # Unbezahlte BK-Anteile ermitteln (zur optionalen Konsolidierung)
+    # Vorzeichenbehaftete offene BK-Anteile ermitteln. Positive Werte sind
+    # Forderungen, negative Werte offene Gutschriften. Nur die positive
+    # Teilmenge darf später per JE konsolidiert werden.
     report: List[Dict[str, Any]] = []
     total_out_bk = Decimal("0")
+    positive_out_bk = Decimal("0")
+    negative_out_bk = Decimal("0")
     rows = []
-    if wohnung and doc.von and doc.bis:
-        rows = _bk_invoice_outstanding_shares(wohnung, cstr(doc.von), cstr(doc.bis))
+    if wohnung and invoice_from and invoice_to:
+        rows = _bk_invoice_outstanding_shares(
+            wohnung,
+            invoice_from,
+            invoice_to,
+            customer=customer,
+            mietvertrag=mv,
+            company=company,
+            contract_identity=locked_contract_identity,
+            lock=True,
+        )
+        _validate_bk_prepayment_booking_context(rows, company)
+        _validate_locked_prepayment_snapshot(doc, rows)
         for r in rows:
             amt = _quantize_money(_to_decimal(r.get("outstanding_bk_share")))
-            if amt > MONEY_QUANT:
+            if amt.copy_abs() >= MONEY_QUANT:
                 report.append({"invoice": r.get("name"), "outstanding_bk_share": _as_money(amt)})
                 total_out_bk += amt
+                if amt > 0:
+                    positive_out_bk += amt
+                else:
+                    negative_out_bk += amt.copy_abs()
+    total_out_bk = _quantize_money(total_out_bk)
+    positive_out_bk = _quantize_money(positive_out_bk)
+    negative_out_bk = _quantize_money(negative_out_bk)
 
-    if diff > MONEY_QUANT:
-        # Nachzahlung: wende offene Alt-BK bis zur Höhe der Differenz an
-        applied = min(total_out_bk, diff) if consolidate_unpaid else Decimal("0")
-        base_amount = _quantize_money(diff - applied) if diff > applied else Decimal("0")
-        if base_amount > MONEY_QUANT:
-            try:
-                new_doc_name = _make_sales_invoice(
-                    customer,
-                    posting_date,
-                    code_nach,
-                    base_amount,
-                    is_return=0,
-                    do_submit=True,
-                    company=company,
-                    due_date=due_date,
-                    wertstellungsdatum=wertstellungsdatum,
-                    cost_center=cost_center,
-                    wohnung=wohnung,
-                    remarks=settlement_remark,
-                )
-            except Exception as e:
-                frappe.throw(f"Nachzahlung konnte nicht erstellt werden: {e}")
-            created["sales_invoice"] = new_doc_name
-        elif applied > MONEY_QUANT:
-            created["note"] = "Nachzahlung vollständig durch offene BK-Anteile verrechnet; kein Null-Euro-Beleg erstellt."
-    elif diff < -MONEY_QUANT:
-        # Guthaben: Credit Note; ggfs. Teil des Guthabens zur Schließung alter Offenen verwenden
-        diff_abs = diff.copy_abs()
-        applied = min(total_out_bk, diff_abs) if consolidate_unpaid else Decimal("0")
-        base_amount = _quantize_money(diff_abs - applied) if diff_abs > applied else Decimal("0")
-        if base_amount > MONEY_QUANT:
-            try:
-                new_doc_name = _make_sales_invoice(
-                    customer,
-                    posting_date,
-                    code_guth,
-                    base_amount,
-                    is_return=1,
-                    do_submit=True,
-                    company=company,
-                    wertstellungsdatum=wertstellungsdatum,
-                    cost_center=cost_center,
-                    wohnung=wohnung,
-                    remarks=settlement_remark,
-                )
-            except Exception as e:
-                frappe.throw(f"Guthaben konnte nicht erstellt werden: {e}")
-            created["credit_note"] = new_doc_name
-        elif applied > MONEY_QUANT:
-            created["note"] = "Guthaben vollständig mit offenen BK-Anteilen verrechnet; kein Null-Euro-Beleg erstellt."
+    # Eine einzige Algebra gilt für Nachzahlung, Guthaben und gemischte
+    # Forderungs-/Gutschrift-OP:
+    #
+    #   neuer Ausgleich = (Kosten - signed bezahlt) - signed offen
+    #
+    # Dadurch neutralisiert eine offene Return-CN die zugehörige Alt-Forderung,
+    # ohne selbst als Zahlung oder als JE-Ziel missverstanden zu werden.
+    adjustment = _quantize_money(diff - total_out_bk)
+
+    if adjustment >= MONEY_QUANT:
+        base_amount = adjustment
+        try:
+            new_doc_name = _make_sales_invoice(
+                customer,
+                posting_date,
+                code_nach,
+                base_amount,
+                is_return=0,
+                do_submit=True,
+                company=company,
+                due_date=due_date,
+                wertstellungsdatum=wertstellungsdatum,
+                cost_center=cost_center,
+                wohnung=wohnung,
+                remarks=settlement_remark,
+            )
+        except Exception as e:
+            frappe.throw(f"Nachzahlung konnte nicht erstellt werden: {e}")
+        created["sales_invoice"] = new_doc_name
+    elif adjustment <= -MONEY_QUANT:
+        base_amount = adjustment.copy_abs()
+        try:
+            new_doc_name = _make_sales_invoice(
+                customer,
+                posting_date,
+                code_guth,
+                base_amount,
+                is_return=1,
+                do_submit=True,
+                company=company,
+                wertstellungsdatum=wertstellungsdatum,
+                cost_center=cost_center,
+                wohnung=wohnung,
+                remarks=settlement_remark,
+            )
+        except Exception as e:
+            frappe.throw(f"Guthaben konnte nicht erstellt werden: {e}")
+        created["credit_note"] = new_doc_name
     else:
-        created["note"] = "Abrechnung ist ausgeglichen."
+        if report:
+            created["note"] = (
+                "Abrechnung wird bereits exakt durch die signed offenen "
+                "BK-Vorauszahlungsbelege abgebildet; kein Null-Euro-Beleg und "
+                "keine Umbuchung erstellt."
+            )
+        else:
+            created["note"] = "Abrechnung ist ausgeglichen."
 
-    # Konsolidierung via Journal Entry: alte Offene schließen und auf neuen Beleg
-    # oder eine unreferenzierte Debitoren-Gegenbuchung übertragen.
-    if consolidate_unpaid and applied > MONEY_QUANT:
+    # Signed consolidation:
+    # 1. positive/negative old OPs can cross-clear each other,
+    # 2. only the signed residual is transferred to the marked target,
+    # 3. an opposite-sign target is never crossed through zero,
+    # 4. without a non-zero target reference no source-only JE is created.
+    consolidated_by_invoice: Dict[str, Decimal] = {}
+    positive_to_apply = Decimal("0")
+    negative_to_apply = Decimal("0")
+    if consolidate_unpaid and new_doc_name:
+        cross_clear = min(positive_out_bk, negative_out_bk)
+        positive_residual = _quantize_money(positive_out_bk - cross_clear)
+        negative_residual = _quantize_money(negative_out_bk - cross_clear)
+        positive_target_transfer = Decimal("0")
+        negative_target_transfer = Decimal("0")
+        if adjustment > 0:
+            if positive_residual >= MONEY_QUANT:
+                # Debit residual can safely increase a debit target.
+                positive_target_transfer = positive_residual
+            elif negative_residual >= MONEY_QUANT:
+                # Credit residual may reduce, but never invert, the target SI.
+                negative_target_transfer = min(negative_residual, base_amount)
+        elif adjustment < 0:
+            if positive_residual >= MONEY_QUANT:
+                # Debit residual may reduce, but never invert, the target CN.
+                positive_target_transfer = min(positive_residual, base_amount)
+            # A credit reference against a Credit Note is rejected by
+            # ERPNext's invoice-reference validation. Same-sign old and target
+            # Credit Notes therefore deliberately remain separate.
+
+        if (
+            positive_target_transfer >= MONEY_QUANT
+            or negative_target_transfer >= MONEY_QUANT
+        ):
+            positive_to_apply = _quantize_money(
+                cross_clear + positive_target_transfer
+            )
+            negative_to_apply = _quantize_money(
+                cross_clear + negative_target_transfer
+            )
+            applied_signed = _quantize_money(
+                positive_to_apply - negative_to_apply
+            )
+            applied = _quantize_money(positive_to_apply + negative_to_apply)
+
+    if applied >= MONEY_QUANT:
         # Konten bestimmen
         entries: List[dict] = []
-        if new_doc_name:
-            # company und receivable account vom neuen Beleg ziehen
-            si_doc = frappe.get_doc("Sales Invoice", new_doc_name)
-            company = si_doc.company
-            new_acc = si_doc.debit_to
-            new_party = si_doc.customer
-            debit_entry = {
+        # company und receivable account vom neuen Beleg ziehen
+        si_doc = frappe.get_doc("Sales Invoice", new_doc_name)
+        company = si_doc.company
+        new_acc = si_doc.debit_to
+        new_party = si_doc.customer
+        if applied_signed > 0:
+            entries.append({
                 "account": new_acc,
                 "party_type": "Customer",
                 "party": new_party,
                 "reference_type": "Sales Invoice",
                 "reference_name": new_doc_name,
-                "debit": _quantize_money(applied),
+                "debit": applied_signed,
                 "credit": Decimal("0"),
-            }
-        else:
-            if not company:
-                frappe.throw("Offene BK-Anteile konnten nicht verrechnet werden: keine Company gefunden.")
-            new_acc = _receivable_account_for_existing_invoices(rows, company)
-            if not new_acc:
-                frappe.throw("Offene BK-Anteile konnten nicht verrechnet werden: kein Debitorenkonto gefunden.")
-            new_party = customer
-            debit_entry = {
+            })
+        elif applied_signed < 0:
+            entries.append({
                 "account": new_acc,
                 "party_type": "Customer",
                 "party": new_party,
-                "debit": _quantize_money(applied),
-                "credit": Decimal("0"),
-            }
-        entries.append(debit_entry)
-        # Credits je alte Rechnung (BK-Anteil)
-        remaining = applied
+                "reference_type": "Sales Invoice",
+                "reference_name": new_doc_name,
+                "debit": Decimal("0"),
+                "credit": applied_signed.copy_abs(),
+            })
+        else:
+            frappe.throw(
+                "Konsolidierung abgebrochen: Ein source-only Journal Entry "
+                "ohne eigene Ausgleichsbeleg-Referenz ist nicht erlaubt.",
+                frappe.ValidationError,
+            )
+
+        positive_remaining = positive_to_apply
+        negative_remaining = negative_to_apply
         for r in rows:
-            if remaining <= MONEY_QUANT:
-                break
             amt = _quantize_money(_to_decimal(r.get("outstanding_bk_share")))
-            if amt <= MONEY_QUANT:
+            if amt.copy_abs() < MONEY_QUANT:
                 continue
-            use = amt if amt <= remaining else remaining
             old_name = r.get("name")
             old_acc = _get_si_debit_to(old_name) or new_acc
-            entries.append({
-                "account": old_acc,
-                "party_type": "Customer",
-                "party": new_party,
-                "reference_type": "Sales Invoice",
-                "reference_name": old_name,
-                "debit": Decimal("0"),
-                "credit": _quantize_money(use),
-            })
-            remaining = _quantize_money(remaining - use)
-        je_name = _allocate_via_journal_entry(company, entries, posting_date, wertstellungsdatum)
-        if je_name:
-            created["journal_entry"] = je_name
+            if amt > 0 and positive_remaining >= MONEY_QUANT:
+                use = min(amt, positive_remaining)
+                entries.append({
+                    "account": old_acc,
+                    "party_type": "Customer",
+                    "party": new_party,
+                    "reference_type": "Sales Invoice",
+                    "reference_name": old_name,
+                    "debit": Decimal("0"),
+                    "credit": _quantize_money(use),
+                })
+                consolidated_by_invoice[cstr(old_name)] = _quantize_money(use)
+                positive_remaining = _quantize_money(
+                    positive_remaining - use
+                )
+            elif amt < 0 and negative_remaining >= MONEY_QUANT:
+                use = min(amt.copy_abs(), negative_remaining)
+                entries.append({
+                    "account": old_acc,
+                    "party_type": "Customer",
+                    "party": new_party,
+                    "reference_type": "Sales Invoice",
+                    "reference_name": old_name,
+                    "debit": _quantize_money(use),
+                    "credit": Decimal("0"),
+                })
+                consolidated_by_invoice[cstr(old_name)] = -_quantize_money(use)
+                negative_remaining = _quantize_money(
+                    negative_remaining - use
+                )
+        if (
+            positive_remaining.copy_abs() >= MONEY_QUANT
+            or negative_remaining.copy_abs() >= MONEY_QUANT
+        ):
+            frappe.throw(
+                "Konsolidierung abgebrochen: Die signed Quellbeträge konnten "
+                "nicht exakt auf die gesperrten Belege verteilt werden.",
+                frappe.ValidationError,
+            )
+
+        target_after = _quantize_money(adjustment + applied_signed)
+        allocated_signed = _quantize_money(
+            sum(consolidated_by_invoice.values(), Decimal("0"))
+        )
+        total_debit = _quantize_money(
+            sum((_to_decimal(entry.get("debit")) for entry in entries), Decimal("0"))
+        )
+        total_credit = _quantize_money(
+            sum((_to_decimal(entry.get("credit")) for entry in entries), Decimal("0"))
+        )
+        if allocated_signed != applied_signed or total_debit != total_credit:
+            frappe.throw(
+                "Konsolidierung abgebrochen: Quellzuordnung und Journal Entry "
+                "sind nicht centgenau ausgeglichen.",
+                frappe.ValidationError,
+            )
+        if (
+            adjustment > 0 and target_after < 0
+        ) or (adjustment < 0 and target_after > 0):
+            frappe.throw(
+                "Konsolidierung abgebrochen: Zielvorzeichen wäre verletzt.",
+                frappe.ValidationError,
+            )
+        je_name = _allocate_via_journal_entry(
+            company,
+            entries,
+            posting_date,
+            wertstellungsdatum,
+            remarks=_bk_settlement_marker(doc.name),
+        )
+        if not je_name:
+            frappe.throw(
+                "Konsolidierung abgebrochen: Journal Entry wurde nicht "
+                "eindeutig erzeugt.",
+                frappe.ValidationError,
+            )
+        created["journal_entry"] = je_name
+
+    for row in report:
+        signed_amount = consolidated_by_invoice.get(
+            cstr(row.get("invoice")),
+            Decimal("0"),
+        )
+        row["consolidated_bk_share"] = _as_money(signed_amount)
 
     if report:
+        if created.get("journal_entry"):
+            settlement_status = (
+                f"\nAuf den Ausgleichsbeleg übertragen: "
+                f"{_as_money(applied_signed.copy_abs()):.2f}; "
+                f"Quell-OP brutto geschlossen: {_as_money(applied):.2f}; "
+                f"signed: {_as_money(applied_signed):.2f}"
+            )
+        elif consolidate_unpaid:
+            settlement_status = "\nKeine automatische Verrechnung durchgeführt; die Posten bleiben getrennt offen."
+        else:
+            settlement_status = "\nAutomatische Verrechnung: aus; die Posten bleiben getrennt offen."
         doc.add_comment(
             "Comment",
             text=(
-                "Offene BK-Anteile früherer Rechnungen (Bericht):\n" +
+                "Offene BK-Vorauszahlungsanteile dieses Abrechnungszeitraums:\n" +
                 "\n".join([f"- {row['invoice']}: {row['outstanding_bk_share']:.2f}" for row in report]) +
-                f"\nSumme: {_as_money(total_out_bk):.2f}"
+                f"\nSumme: {_as_money(total_out_bk):.2f}" +
+                settlement_status
             ),
         )
 
-    # Verlinkungen am Abrechnungs-Datensatz speichern (read-only Felder)
-    try:
-        updates = {}
-        if created.get("sales_invoice"):
-            updates["sales_invoice"] = created["sales_invoice"]
-        if created.get("credit_note"):
-            updates["credit_note"] = created["credit_note"]
-        if created.get("journal_entry"):
-            updates["consolidation_journal_entry"] = created["journal_entry"]
-        if updates:
-            doc.db_set(updates)
-    except Exception:
-        # Verlinkung optional; bei Fehler nicht blockieren
-        pass
+    # Die Verlinkung ist Teil derselben Transaktion wie die erzeugten Belege.
+    # Ein Fehler muss propagieren, damit Frappe alles zurückrollt und kein
+    # unverlinkter Beleg bei einem Retry doppelt gebucht wird.
+    updates = {}
+    if created.get("sales_invoice"):
+        updates["sales_invoice"] = created["sales_invoice"]
+    if created.get("credit_note"):
+        updates["credit_note"] = created["credit_note"]
+    if created.get("journal_entry"):
+        updates["consolidation_journal_entry"] = created["journal_entry"]
+    if updates:
+        doc.db_set(updates)
 
-    return {"created": created, "unpaid_report": report, "unpaid_sum": _as_money(total_out_bk)}
+    return {
+        "created": created,
+        "unpaid_report": report,
+        "unpaid_sum": _as_money(total_out_bk),
+        "consolidate_unpaid": consolidate_unpaid,
+        "consolidated_sum": (
+            _as_money(applied_signed.copy_abs())
+            if created.get("journal_entry")
+            else 0.0
+        ),
+        "consolidated_gross_sum": (
+            _as_money(applied)
+            if created.get("journal_entry")
+            else 0.0
+        ),
+        "consolidated_signed_sum": (
+            _as_money(applied_signed)
+            if created.get("journal_entry")
+            else 0.0
+        ),
+    }
 
 
-def _run_settlement_selfcheck(doc) -> None:
+def _run_settlement_selfcheck(
+    doc,
+    *,
+    contract_identity: Optional[Dict[str, Any]] = None,
+    company: Optional[str] = None,
+) -> None:
     issues: list[str] = []
     # Company vorhanden?
-    company = _get_default_company()
+    company = company or _get_default_company(doc)
     if not company:
         issues.append("Keine Company in den Standardwerten gefunden. Bitte unter System Defaults eine Company setzen.")
     # Mieter vorhanden?
     mv = doc.mietvertrag
     customer = None
-    if mv:
+    contract_wohnung = None
+    locked_identity = contract_identity or getattr(
+        doc,
+        "_locked_mietvertrag_identity",
+        None,
+    )
+    if locked_identity:
+        customer = locked_identity.get("kunde")
+        contract_wohnung = locked_identity.get("wohnung")
+    elif mv:
         try:
-            customer = frappe.get_cached_value("Mietvertrag", mv, "kunde")
+            identity = frappe.db.get_value(
+                "Mietvertrag",
+                mv,
+                ["kunde", "wohnung"],
+                as_dict=True,
+            ) or {}
+            customer = identity.get("kunde")
+            contract_wohnung = identity.get("wohnung")
         except Exception:
             customer = None
     if not customer:
         issues.append("Kein Mieter am Mietvertrag hinterlegt.")
+    elif getattr(doc, "customer", None) and doc.customer != customer:
+        issues.append(
+            f"Customer {doc.customer} passt nicht zum Mietvertrag {mv} ({customer})."
+        )
+    if contract_wohnung and getattr(doc, "wohnung", None) != contract_wohnung:
+        issues.append(
+            f"Wohnung {getattr(doc, 'wohnung', None)} passt nicht zum "
+            f"Mietvertrag {mv} ({contract_wohnung})."
+        )
     # Receivable Account vorhanden?
     if company:
         receivables = frappe.get_all(
@@ -1109,18 +2372,23 @@ def _run_settlement_selfcheck(doc) -> None:
             ("BK Guthaben", "Betriebskosten Guthaben"),
         )
         inc_acc = _find_income_account(company)
-        if not inc_acc:
-            issues.append(f"Kein Ertragskonto (Income) für Company {company} vorhanden.")
         for code, name in required_items:
             try:
                 if not frappe.db.exists("Item", code):
+                    if not inc_acc:
+                        issues.append(
+                            f"Artikel '{code}' fehlt und es existiert kein "
+                            f"eindeutig konfiguriertes Settlement-Income-Konto "
+                            f"für {company}."
+                        )
+                        continue
                     _ensure_item_with_income(code, name, company)
                 # Sicherstellen, dass ein Income Account Default gesetzt ist
                 it = frappe.get_doc("Item", code)
                 has_def = any(d.company == company and d.income_account for d in (it.item_defaults or []))
                 if not has_def and inc_acc:
                     it.append("item_defaults", {"company": company, "income_account": inc_acc})
-                    it.save(ignore_permissions=True)
+                    it.save()
                 # Nach dem Versuch erneut prüfen
                 it.reload()
                 has_def = any(d.company == company and d.income_account for d in (it.item_defaults or []))

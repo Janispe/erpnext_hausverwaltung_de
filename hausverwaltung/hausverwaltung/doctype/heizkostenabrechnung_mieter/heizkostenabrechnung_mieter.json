@@ -218,7 +218,6 @@
    "label": "Verknüpfte Belege"
   },
   {
-   "allow_on_submit": 1,
    "description": "Wird beim Bulk-Anlegen über die Sammel-Abrechnung gesetzt. Manuell angelegte HK-Mieter haben dieses Feld leer.",
    "fieldname": "heizkostenabrechnung_immobilie",
    "fieldtype": "Link",
@@ -227,7 +226,6 @@
    "read_only": 1
   },
   {
-   "allow_on_submit": 1,
    "fieldname": "sales_invoice",
    "fieldtype": "Link",
    "label": "Sales Invoice (Nachzahlung)",
@@ -235,7 +233,6 @@
    "read_only": 1
   },
   {
-   "allow_on_submit": 1,
    "fieldname": "credit_note",
    "fieldtype": "Link",
    "label": "Credit Note (Guthaben)",

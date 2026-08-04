@@ -537,12 +537,17 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			description: __(
 				"Bei Barzahlung Kassenkonto wählen; bei Vorschuss/Auslage oder sonstiger Verrechnung ein passendes Verrechnungskonto."
 			),
-			get_query() {
-				if (dialog.get_value("zahlungsart") === "Barzahlung") {
-					return { filters: { account_type: "Cash", is_group: 0 } };
-				}
-				return { filters: { is_group: 0 } };
-			},
+				get_query() {
+					if (dialog.get_value("zahlungsart") === "Barzahlung") {
+						return { filters: { account_type: "Cash", is_group: 0 } };
+					}
+					return {
+						filters: {
+							is_group: 0,
+							account_type: ["!=", "Bank"],
+						},
+					};
+				},
 		},
 		{
 			fieldtype: "Small Text",
@@ -738,11 +743,16 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 
 	apply_eingabemodus(dialog);
 
-	dialog.add_custom_action(
-		__("Als Entwurf speichern"),
-		() => submit_eingangsrechnung(dialog, dialog.get_values(true), false),
-		"btn-secondary"
-	);
+	// Ein Inbox-Vorschlag wird serverseitig exklusiv gesperrt und atomar mit
+	// einer gebuchten PI verknüpft. Ein Draft hätte keinen eindeutigen
+	// Vorschlagsstatus und könnte erneut gebucht werden.
+	if (!dialog._hv_vorschlag_name) {
+		dialog.add_custom_action(
+			__("Als Entwurf speichern"),
+			() => submit_eingangsrechnung(dialog, dialog.get_values(true), false),
+			"btn-secondary"
+		);
+	}
 
 	dialog.add_custom_action(
 		__("Als Vorlage speichern"),

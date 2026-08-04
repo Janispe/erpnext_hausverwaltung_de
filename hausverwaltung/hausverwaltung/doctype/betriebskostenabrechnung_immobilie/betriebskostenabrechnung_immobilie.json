@@ -12,11 +12,14 @@
   "bis",
   "nachzahlung_faellig_am",
   "stichtag",
+  "offene_bk_vorauszahlungen_verrechnen",
   "section_break_mieter",
   "mieter_abrechnungen",
   "section_break_summary",
   "kosten_pro_art",
   "gesamtkosten",
+  "gesamt_mieteranteile",
+  "gesamt_vermieteranteil",
   "gesamt_vorauszahlungen",
   "gesamt_differenz",
   "zaehler_summen",
@@ -63,6 +66,13 @@
    "label": "Stichtag"
   },
   {
+   "default": "0",
+   "description": "Standardmäßig aus: Offene BK-Vorauszahlungsrechnungen dieses Abrechnungszeitraums und Nachzahlung/Guthaben bleiben als getrennte offene Posten bestehen. Aktiviert: Sie werden beim Einreichen per Journal Entry miteinander verrechnet. Guthaben aus anderen Zeiträumen werden nicht einbezogen.",
+   "fieldname": "offene_bk_vorauszahlungen_verrechnen",
+   "fieldtype": "Check",
+   "label": "Offene BK-Vorauszahlungen automatisch verrechnen"
+  },
+  {
    "fieldname": "section_break_mieter",
    "fieldtype": "Section Break",
    "label": "Mieterabrechnungen"
@@ -95,6 +105,20 @@
    "read_only": 1
   },
   {
+   "description": "Summe der Kostenanteile aus abrechenbaren Vorauszahlungszeiträumen.",
+   "fieldname": "gesamt_mieteranteile",
+   "fieldtype": "Float",
+   "label": "Gesamt Mieteranteile",
+   "read_only": 1
+  },
+  {
+   "description": "Nicht mit Mietern abzurechnender Anteil, insbesondere Pauschale/Inklusivmiete und Leerstand.",
+   "fieldname": "gesamt_vermieteranteil",
+   "fieldtype": "Float",
+   "label": "Vermieteranteil",
+   "read_only": 1
+  },
+  {
    "fieldname": "gesamt_vorauszahlungen",
    "fieldtype": "Float",
    "label": "Gesamt Vorauszahlungen",
@@ -103,7 +127,7 @@
   {
    "fieldname": "gesamt_differenz",
    "fieldtype": "Float",
-   "label": "Gesamt Differenz",
+   "label": "Abrechnungssaldo Mieter",
    "read_only": 1
   },
   {

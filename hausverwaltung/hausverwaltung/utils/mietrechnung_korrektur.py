@@ -169,6 +169,99 @@ def _resolve_mietvertrag(si, ctx: dict) -> str | None:
 	return marker  # Rückfall (evtl. nicht existent) — Aufrufer prüft Existenz
 
 
+def _validate_invoice_contract_identity(
+	si,
+	ctx: dict,
+	*,
+	lock: bool = False,
+) -> None:
+	"""Require one internally consistent contract/customer/apartment identity."""
+	remarks = si.get("remarks") or ""
+	remark_mv_match = _RE_MV.search(remarks)
+	remark_month_match = _RE_MONTH.search(remarks)
+	remark_mv = remark_mv_match.group(1).strip() if remark_mv_match else None
+	remark_month = (
+		f"{int(remark_month_match.group(1)):02d}/{int(remark_month_match.group(2))}"
+		if remark_month_match
+		else None
+	)
+
+	structured_mv = None
+	structured_month = None
+	structured_id = (si.get("mietabrechnung_id") or "").strip()
+	if "|" in structured_id:
+		mv_part, _separator, month_part = structured_id.rpartition("|")
+		month_match = _RE_MONTH.search(month_part)
+		structured_mv = mv_part.strip() or None
+		if month_match:
+			structured_month = (
+				f"{int(month_match.group(1)):02d}/{int(month_match.group(2))}"
+			)
+
+	if remark_mv and structured_mv and remark_mv != structured_mv:
+		frappe.throw(
+			_(
+				"Rechnung {0} enthält widersprüchliche Mietvertrags-Referenzen "
+				"({1} / {2}). Es wurde nichts geändert."
+			).format(si.name, remark_mv, structured_mv)
+		)
+	if remark_month and structured_month and remark_month != structured_month:
+		frappe.throw(
+			_(
+				"Rechnung {0} enthält widersprüchliche Abrechnungsmonate "
+				"({1} / {2}). Es wurde nichts geändert."
+			).format(si.name, remark_month, structured_month)
+		)
+
+	contract = frappe.db.get_value(
+		"Mietvertrag",
+		ctx.get("mietvertrag"),
+		["name", "kunde", "wohnung"],
+		as_dict=True,
+		for_update=lock,
+	)
+	if not contract or not contract.get("kunde"):
+		frappe.throw(
+			_("Der Mietvertrag {0} hat keinen eindeutig verknüpften Kunden.").format(
+				ctx.get("mietvertrag")
+			)
+		)
+	invoice_customer = (si.get("customer") or "").strip()
+	invoice_wohnung = (si.get("wohnung") or "").strip()
+	if invoice_customer != (contract.get("kunde") or "").strip():
+		frappe.throw(
+			_(
+				"Rechnung {0} gehört zu Kunde {1}, Mietvertrag {2} jedoch zu Kunde {3}. "
+				"Automatische Korrektur abgebrochen."
+			).format(si.name, invoice_customer or "—", contract.name, contract.kunde)
+		)
+	if not invoice_wohnung or invoice_wohnung != (contract.get("wohnung") or "").strip():
+		frappe.throw(
+			_(
+				"Rechnung {0} und Mietvertrag {1} haben keine identische Wohnung. "
+				"Automatische Korrektur abgebrochen."
+			).format(si.name, contract.name)
+		)
+
+
+def _submitted_return_for_update(sales_invoice: str) -> str | None:
+	"""Return an existing submitted credit note using a locking current read."""
+	rows = frappe.db.sql(
+		"""
+		SELECT name
+		FROM `tabSales Invoice`
+		WHERE return_against = %s
+		  AND is_return = 1
+		  AND docstatus = 1
+		ORDER BY creation ASC, name ASC
+		LIMIT 1
+		FOR UPDATE
+		""",
+		(sales_invoice,),
+	)
+	return rows[0][0] if rows else None
+
+
 def _is_frozen(posting_date, company: str | None = None) -> bool:
 	"""True, wenn das Datum in einer aktiven Accounting Period liegt, die
 	'Sales Invoice' als geschlossenes Dokument führt.
@@ -313,7 +406,16 @@ def korrigiere_mietrechnung(
 	"""
 	dry = bool(int(dry_run or 0))
 	rebook = bool(int(rebook_payments or 0))
-	si = frappe.get_doc("Sales Invoice", sales_invoice)
+	# A normal get_doc/reload after a separate SELECT ... FOR UPDATE can keep
+	# returning the pre-lock REPEATABLE READ snapshot. For every mutating run,
+	# make the first authoritative read itself locking/current. This serializes
+	# retries on the original invoice and loads all current child rows.
+	si = frappe.get_doc(
+		"Sales Invoice",
+		sales_invoice,
+		**({} if dry else {"for_update": True}),
+	)
+	si.check_permission("read")
 
 	if si.docstatus != 1:
 		frappe.throw(_("Nur eine gebuchte Rechnung kann korrigiert werden (docstatus=1)."))
@@ -331,12 +433,23 @@ def korrigiere_mietrechnung(
 	_validate_single_type_invoice(si, ctx)
 	# Marker-MV kann vom echten Docnamen abweichen → robust auflösen.
 	ctx["mietvertrag"] = _resolve_mietvertrag(si, ctx)
-	if not ctx["mietvertrag"] or not frappe.db.exists("Mietvertrag", ctx["mietvertrag"]):
+	if not ctx["mietvertrag"]:
 		frappe.throw(
 			_("Der zugehörige Mietvertrag konnte nicht eindeutig aufgelöst werden (Wohnung/Zeitraum prüfen).")
 		)
+	# The contract is an accounting identity boundary.  A mutating correction
+	# keeps it locked from this validation through credit-note/cancel/rebooking,
+	# so Customer or Wohnung cannot change between the check and the posting.
+	_validate_invoice_contract_identity(si, ctx, lock=not dry)
 	if not frappe.has_permission("Sales Invoice", "cancel", doc=si.name):
 		frappe.throw(_("Keine Berechtigung, Rechnungen zu stornieren."), frappe.PermissionError)
+	if not dry:
+		for permission_type in ("create", "submit"):
+			if not frappe.has_permission("Sales Invoice", permission_type):
+				frappe.throw(
+					_("Keine Berechtigung, Korrekturbelege zu erstellen oder zu buchen."),
+					frappe.PermissionError,
+				)
 
 	frozen = _is_frozen(si.posting_date, si.company)
 	pes = _payment_entries_for_si(si.name)
@@ -372,6 +485,16 @@ def korrigiere_mietrechnung(
 		return plan
 
 	if frozen:
+		# Current read after the original-SI lock: a concurrent retry that
+		# waited above must see the first request's submitted return.
+		existing_return = _submitted_return_for_update(si.name)
+		if existing_return:
+			frappe.throw(
+				_(
+					"Rechnung {0} wurde bereits durch Gutschrift {1} korrigiert. "
+					"Es wurde kein weiterer Beleg erzeugt."
+				).format(si.name, existing_return)
+			)
 		result = _korrektur_gutschrift(si, ctx, neu_betrag)
 	else:
 		result = _korrektur_storno(si, ctx, pes, rebook_payments=rebook)
@@ -834,6 +957,8 @@ def _build_si(
 		si.set("wohnung", wohnung)
 		for it in si.items:
 			it.set("wohnung", wohnung)
+	if cost_center and si.meta.has_field("cost_center"):
+		si.set("cost_center", cost_center)
 	if mietabrechnung_id:
 		si.set("mietabrechnung_id", mietabrechnung_id)
 	si.insert()

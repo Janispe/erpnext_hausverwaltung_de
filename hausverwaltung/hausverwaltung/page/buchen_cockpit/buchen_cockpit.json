@@ -10,7 +10,11 @@
  "name": "buchen_cockpit",
  "owner": "Administrator",
  "page_name": "buchen_cockpit",
- "roles": [],
+ "roles": [
+  {
+   "role": "Hausverwalter (Buchung)"
+  }
+ ],
  "script": null,
  "standard": "Yes",
  "style": null,

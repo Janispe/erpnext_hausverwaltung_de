@@ -30,6 +30,9 @@ from frappe.utils import getdate
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaiment_calc import (
 	calc_hk_vorauszahlungen,
 )
+from hausverwaltung.hausverwaltung.doctype.heizkostenabrechnung_mieter.heizkostenabrechnung_mieter import (
+	_get_locked_settlement_allocations,
+)
 
 
 class HeizkostenabrechnungImmobilie(Document):
@@ -217,11 +220,20 @@ class HeizkostenabrechnungImmobilie(Document):
 		# 2) Wenn irgendein paid blocker → throw, ganze Korrektur abbrechen
 		if paid_blockers:
 			lines = [
-				"<strong>Korrektur nicht möglich — folgende Mieter haben bereits Zahlungen verbucht:</strong><br>"
+				"<strong>Korrektur nicht möglich — folgende Mieter haben bereits "
+				"Zahlungs- oder Journal-Zuordnungen:</strong><br>"
 			]
 			for b in paid_blockers:
 				alloc_sum = sum(a["allocated_amount"] for a in b["allocations"])
-				pe_names = ", ".join(sorted({a["payment_entry"] for a in b["allocations"]}))
+				sources = ", ".join(
+					sorted(
+						{
+							f"{a.get('document_type', 'Payment Entry')} "
+							f"{a.get('document') or a.get('payment_entry')}"
+							for a in b["allocations"]
+						}
+					)
+				)
 				changes = []
 				if abs(b["new_kosten"] - b["old_kosten"]) >= 0.005:
 					changes.append(f"Kosten {b['old_kosten']:.2f} → {b['new_kosten']:.2f} €")
@@ -234,17 +246,17 @@ class HeizkostenabrechnungImmobilie(Document):
 					f"• <strong>{frappe.utils.escape_html(b['customer'])}</strong>: "
 					f"alte Rechnung <code>{b['si'] or b['cn']}</code> "
 					f"hat {alloc_sum:.2f} € allokiert "
-					f"(Payment Entry: {frappe.utils.escape_html(pe_names)}). "
+					f"({frappe.utils.escape_html(sources)}). "
 					f"Änderung ({'; '.join(changes)}) blockiert."
 				)
 			lines.append(
-				"<br><br><em>So beheben:</em> Im jeweiligen Payment Entry die Zuordnung zu dieser "
-				"Sales Invoice rausnehmen (oder Payment Entry stornieren), dann die Korrektur "
-				"erneut speichern."
+				"<br><br><em>So beheben:</em> Die Zuordnung zur Sales Invoice im "
+				"jeweiligen Payment Entry oder Journal Entry entfernen bzw. den "
+				"Beleg stornieren, dann die Korrektur erneut speichern."
 			)
 			frappe.throw(
 				msg="<br>".join(lines),
-				title="Korrektur blockiert: Zahlungen vorhanden",
+				title="Korrektur blockiert: Zuordnungen vorhanden",
 			)
 
 		# 3) Pass 2 — keine Blocker, jetzt die geänderten Rows wirklich korrigieren
@@ -256,45 +268,44 @@ class HeizkostenabrechnungImmobilie(Document):
 			old_vorauszahlungen = entry["old_vorauszahlungen"]
 			new_vorauszahlungen = entry["new_vorauszahlungen"]
 			old_name = old_doc.name
-			try:
-				old_doc.flags.allow_cancel_via_head = True
-				old_doc.flags.ignore_permissions = True
-				old_doc.cancel()  # storniert old SI/CN via on_cancel
+			old_doc.flags.allow_cancel_via_head = True
+			old_doc.flags.ignore_permissions = True
+			old_doc.cancel()  # storniert old SI/CN via on_cancel
 
-				new_doc = frappe.new_doc("Heizkostenabrechnung Mieter")
-				new_doc.mietvertrag = old_doc.mietvertrag
-				new_doc.customer = old_doc.customer
-				new_doc.wohnung = old_doc.wohnung
-				new_doc.immobilie = old_doc.immobilie
-				new_doc.von = old_doc.von
-				new_doc.bis = old_doc.bis
-				new_doc.datum = old_doc.datum
-				new_doc.waermedienst = old_doc.waermedienst
-				new_doc.waermedienst_referenz = old_doc.waermedienst_referenz
-				new_doc.vorauszahlungen = new_vorauszahlungen
-				new_doc.kosten_gesamt = new_kosten
-				new_doc.heizkostenabrechnung_immobilie = self.name
-				new_doc.insert(ignore_permissions=True)
-				new_doc.flags.allow_submit_via_head = True
-				new_doc.flags.ignore_permissions = True
-				new_doc.submit()  # erzeugt neue SI/CN via on_submit
+			new_doc = frappe.new_doc("Heizkostenabrechnung Mieter")
+			new_doc.mietvertrag = old_doc.mietvertrag
+			new_doc.customer = old_doc.customer
+			new_doc.wohnung = old_doc.wohnung
+			new_doc.immobilie = old_doc.immobilie
+			new_doc.von = old_doc.von
+			new_doc.bis = old_doc.bis
+			new_doc.datum = old_doc.datum
+			new_doc.waermedienst = old_doc.waermedienst
+			new_doc.waermedienst_referenz = old_doc.waermedienst_referenz
+			new_doc.vorauszahlungen = new_vorauszahlungen
+			new_doc.kosten_gesamt = new_kosten
+			new_doc.heizkostenabrechnung_immobilie = self.name
+			new_doc.insert(ignore_permissions=True)
+			new_doc.flags.allow_submit_via_head = True
+			new_doc.flags.ignore_permissions = True
+			new_doc.submit()  # erzeugt neue SI/CN via on_submit
 
-				# Tabellen-Link umbiegen auf den neuen Doc
-				row.heizkostenabrechnung_mieter = new_doc.name
-				row.child_docstatus = 1
-				summary["replaced"].append(
-					{
-						"old": old_name,
-						"new": new_doc.name,
-						"customer": old_doc.customer,
-						"old_kosten": old_kosten,
-						"new_kosten": new_kosten,
-						"old_vorauszahlungen": old_vorauszahlungen,
-						"new_vorauszahlungen": new_vorauszahlungen,
-					}
-				)
-			except Exception as e:
-				summary["errors"].append({"row": old_name, "error": str(e)[:300]})
+			# Tabellen-Link erst nach vollständig erfolgreicher Ersatzbuchung umbiegen.
+			# Schlägt irgendein Schritt fehl, muss die Exception bis zum Save-Request
+			# durchlaufen, damit Frappe auch die vorherige Stornierung zurückrollt.
+			row.heizkostenabrechnung_mieter = new_doc.name
+			row.child_docstatus = 1
+			summary["replaced"].append(
+				{
+					"old": old_name,
+					"new": new_doc.name,
+					"customer": old_doc.customer,
+					"old_kosten": old_kosten,
+					"new_kosten": new_kosten,
+					"old_vorauszahlungen": old_vorauszahlungen,
+					"new_vorauszahlungen": new_vorauszahlungen,
+				}
+			)
 
 	def on_update_after_submit(self) -> None:
 		"""Wird nach Save eines submitteten Docs aufgerufen — wir nutzen das,
@@ -376,21 +387,29 @@ class HeizkostenabrechnungImmobilie(Document):
 		self.db_set("status", "Submittet")
 
 	def before_cancel(self) -> None:
-		"""Blockiert das gesamte Sammelstorno, sobald ein Ausgleichsbeleg bezahlt ist."""
+		"""Lock and block the full cascade for every active PE/JE allocation."""
 		blockers = self._get_cancel_payment_blockers()
 		if not blockers:
 			return
 
 		lines = [
-			"<strong>Storno nicht möglich — folgende Ausgleichsbelege haben bereits Zahlungen:</strong>"
+			"<strong>Storno nicht möglich — folgende Ausgleichsbelege haben aktive "
+			"Zahlungs- oder Journal-Zuordnungen:</strong>"
 		]
 		for blocker in blockers:
-			pe_names = ", ".join(sorted({a["payment_entry"] for a in blocker["allocations"]}))
+			sources = ", ".join(
+				sorted(
+					{
+						f"{a['document_type']} {a['document']}"
+						for a in blocker["allocations"]
+					}
+				)
+			)
 			allocated = sum(a["allocated_amount"] for a in blocker["allocations"])
 			lines.append(
 				f"• <strong>{frappe.utils.escape_html(blocker['customer'] or blocker['child'])}</strong>: "
 				f"<code>{blocker['invoice']}</code>, {allocated:.2f} € allokiert "
-				f"(Payment Entry: {frappe.utils.escape_html(pe_names)})"
+				f"({frappe.utils.escape_html(sources)})"
 			)
 		lines.append(
 			"<br>Bitte zuerst die Zahlungszuordnungen auflösen. Es wurde nichts storniert."
@@ -405,43 +424,76 @@ class HeizkostenabrechnungImmobilie(Document):
 		Jeder Fehler wird weitergeworfen, damit die gesamte DB-Transaktion
 		zurückgerollt wird und kein Teilstorno entsteht.
 		"""
-		children = frappe.get_all(
-			"Heizkostenabrechnung Mieter",
-			filters={"heizkostenabrechnung_immobilie": self.name},
-			fields=["name", "docstatus"],
-		)
+		children = self._get_locked_cancel_children()
 		for ch in children:
-			doc = frappe.get_doc("Heizkostenabrechnung Mieter", ch["name"])
+			doc = frappe.get_doc(
+				"Heizkostenabrechnung Mieter",
+				ch["name"],
+				for_update=True,
+			)
 			doc.flags.allow_cancel_via_head = True
 			doc.flags.ignore_permissions = True
-			if int(ch.get("docstatus") or 0) == 1:
+			if int(doc.docstatus or 0) == 1:
 				doc.cancel()
-			elif int(ch.get("docstatus") or 0) == 0:
-				frappe.delete_doc(
-					"Heizkostenabrechnung Mieter",
-					ch["name"],
-					ignore_permissions=True,
-					force=1,
-				)
+			elif int(doc.docstatus or 0) == 0:
+				# Remove the child backlink before cleaning any unexpectedly
+				# linked draft settlement document. A later failure rolls the
+				# whole transaction back.
+				doc.delete(ignore_permissions=True, force=True)
+				doc._cancel_settlement_documents()
 		self.db_set("status", "Eingang")
 
 	# ------------------------------------------------------------------ helpers
 
 	def _can_manual_cancel(self) -> bool:
 		try:
-			return bool(frappe.has_permission(doc=self, ptype="cancel"))
+			return bool(
+				frappe.has_permission(
+					"Heizkostenabrechnung Immobilie",
+					ptype="cancel",
+					doc=self,
+				)
+			)
 		except Exception:
 			return False
 
+	def _get_locked_cancel_children(self) -> List[Dict[str, Any]]:
+		"""Current/locking read of all active children in the cancel cascade."""
+		return frappe.db.sql(
+			"""
+			SELECT
+				name,
+				docstatus,
+				customer,
+				sales_invoice,
+				credit_note
+			FROM `tabHeizkostenabrechnung Mieter`
+			WHERE heizkostenabrechnung_immobilie = %s
+			  AND docstatus < 2
+			ORDER BY name
+			FOR UPDATE
+			""",
+			(self.name,),
+			as_dict=True,
+		)
+
 	def _get_cancel_payment_blockers(self) -> list[dict[str, Any]]:
-		"""Liefert bezahlte Ausgleichsbelege für den atomaren Cancel-Pre-flight."""
+		"""Return active PE/JE allocations from a current, locking snapshot."""
+		children = self._get_locked_cancel_children()
+		invoices = [
+			(invoice or "").strip()
+			for child in children
+			for invoice in (child.get("sales_invoice"), child.get("credit_note"))
+			if (invoice or "").strip()
+		]
+		allocations_by_invoice = _get_locked_settlement_allocations(invoices)
 		blockers: list[dict[str, Any]] = []
-		for child in self._get_children(status_filter="submitted"):
+		for child in children:
 			for invoice in (child.get("sales_invoice"), child.get("credit_note")):
 				invoice = (invoice or "").strip()
 				if not invoice:
 					continue
-				allocations = _get_payment_allocations(invoice)
+				allocations = allocations_by_invoice.get(invoice) or []
 				if allocations:
 					blockers.append(
 						{
@@ -578,38 +630,15 @@ class HeizkostenabrechnungImmobilie(Document):
 
 
 def _get_payment_allocations(sales_invoice_name: str) -> List[Dict[str, Any]]:
-	"""Liefert alle submittete Payment-Entry-Allokationen für eine Sales Invoice.
+	"""Compatibility wrapper used by the correction workflow.
 
-	Wird vom Pre-flight-Check der Korrektur-Logik genutzt: wenn diese Funktion
-	Rows liefert, kann die SI nicht ohne weiteres canceled werden — der HV
-	muss erst die Allokation manuell auflösen.
+	Despite the historic name, Journal Entry allocations are included as well.
+	The underlying helper performs current locking reads for all relevant rows.
 	"""
-	if not sales_invoice_name:
+	name = (sales_invoice_name or "").strip()
+	if not name:
 		return []
-	rows = frappe.db.sql(
-		"""
-		SELECT
-			pe.name AS payment_entry,
-			per.allocated_amount AS allocated_amount,
-			pe.posting_date AS posting_date
-		FROM `tabPayment Entry Reference` per
-		JOIN `tabPayment Entry` pe ON pe.name = per.parent
-		WHERE per.reference_doctype = 'Sales Invoice'
-		  AND per.reference_name = %(name)s
-		  AND pe.docstatus = 1
-		""",
-		{"name": sales_invoice_name},
-		as_dict=True,
-	)
-	return [
-		{
-			"payment_entry": r["payment_entry"],
-			"allocated_amount": float(r["allocated_amount"] or 0),
-			"posting_date": r["posting_date"],
-		}
-		for r in rows
-		if float(r["allocated_amount"] or 0) > 0.005
-	]
+	return _get_locked_settlement_allocations([name]).get(name) or []
 
 
 # ============================================================================
@@ -629,10 +658,15 @@ def create_mieter_drafts(name: str) -> Dict[str, Any]:
 
 	Returns: {created: [...], skipped: [...], no_wohnung: [...], parent_status}
 	"""
-	parent = frappe.get_doc("Heizkostenabrechnung Immobilie", name)
+	# The locking read is authoritative under MariaDB REPEATABLE READ and also
+	# serializes double-clicks/retries for the same parent.
+	parent = frappe.get_doc(
+		"Heizkostenabrechnung Immobilie",
+		name,
+		for_update=True,
+	)
 	parent.check_permission("write")
 	result = _create_mieter_drafts_for_parent(parent)
-	frappe.db.commit()
 	return result
 
 
@@ -675,19 +709,30 @@ def _create_mieter_drafts_for_parent(parent: Document) -> Dict[str, Any]:
 		  AND mv.von <= %(bis)s
 		  AND (mv.bis IS NULL OR mv.bis >= %(von)s)
 		ORDER BY mv.wohnung, mv.von
+		FOR UPDATE
 		""",
 		{"imm": parent.immobilie, "von": von, "bis": bis},
 		as_dict=True,
 	)
 
 	# Existierende HK-Mieter unter diesem Parent (für Idempotenz)
+	# Current/locking read after the parent lock. A normal get_all() can retain
+	# the snapshot from before a concurrent request finished and would then
+	# create a second child with an autoname suffix.
+	existing_rows = frappe.db.sql(
+		"""
+		SELECT mietvertrag, von, bis
+		FROM `tabHeizkostenabrechnung Mieter`
+		WHERE heizkostenabrechnung_immobilie = %(parent)s
+		  AND docstatus < 2
+		FOR UPDATE
+		""",
+		{"parent": parent.name},
+		as_dict=True,
+	)
 	existing = {
 		(r["mietvertrag"], str(r["von"]), str(r["bis"]))
-		for r in frappe.get_all(
-			"Heizkostenabrechnung Mieter",
-			filters={"heizkostenabrechnung_immobilie": parent.name},
-			fields=["mietvertrag", "von", "bis"],
-		)
+		for r in existing_rows
 	}
 
 	created: List[str] = []
@@ -712,8 +757,18 @@ def _create_mieter_drafts_for_parent(parent: Document) -> Dict[str, Any]:
 			try:
 				vz = calc_hk_vorauszahlungen(mv["name"], von, bis)
 				vorauszahlung = float(vz.get("actual_total") or 0.0)
-			except Exception:
-				vorauszahlung = 0.0
+			except Exception as exc:
+				# Eine technisch fehlgeschlagene Vorauszahlungs-Ermittlung darf
+				# niemals wie ein fachlich korrekter Nullbetrag aussehen. Sonst
+				# würde beim späteren Submit die volle Wärmedienst-Abrechnung
+				# nochmals als Forderung gebucht.
+				frappe.throw(
+					f"HK-Vorauszahlungen für Mietvertrag {mv['name']} "
+					f"(Customer {mv.get('kunde')}, Wohnung {mv.get('wohnung')}, "
+					f"Zeitraum {von} bis {bis}) konnten nicht sicher ermittelt "
+					f"werden: {exc}. Es wurde kein Mieter-Entwurf angelegt."
+				)
+				raise
 			kosten_gesamt = 0.0
 
 		child = frappe.new_doc("Heizkostenabrechnung Mieter")
@@ -782,11 +837,11 @@ def create_with_drafts(
 		parent.waermedienst = waermedienst
 	if waermedienst_referenz:
 		parent.waermedienst_referenz = waermedienst_referenz
-	parent.insert(ignore_permissions=True)
-	frappe.db.commit()
+	parent.insert()
 
-	# Direkt im Anschluss die Mieter-Drafts erzeugen
-	res = create_mieter_drafts(parent.name)
+	# Parent und Drafts bleiben eine Transaktion: Schlägt ein Child fehl, darf
+	# kein verwaister Sammelbeleg dauerhaft gespeichert werden.
+	res = _create_mieter_drafts_for_parent(parent)
 
 	return {
 		"name": parent.name,

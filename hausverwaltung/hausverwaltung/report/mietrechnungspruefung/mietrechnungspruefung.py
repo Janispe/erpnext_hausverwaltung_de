@@ -1,10 +1,17 @@
+import re
 from datetime import date, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 
 import frappe
 from frappe import _
 from frappe.utils import add_days, add_months, cint, flt, get_first_day, get_last_day, getdate
 
 from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
+from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
+    BK_REGELUNG_VORAUSZAHLUNG,
+    get_bk_regelung_from_rows,
+    get_bk_regelungen_for_contracts,
+)
 
 INVOICE_TYPES = ("Miete", "Betriebskosten", "Heizkosten")
 ITEM_CODE_BY_TYP = {
@@ -40,25 +47,36 @@ def execute(filters=None):
 
     contracts = _get_contracts(period_start=period_start, period_end=period_end)
     staffel_by_contract = _get_staffelmieten_by_contract([c.name for c in contracts])
+    bk_regelungen_by_contract = get_bk_regelungen_for_contracts([c.name for c in contracts])
 
     rows = []
     for month_start in month_starts:
         active_contracts = [c for c in contracts if _contract_overlaps_month(c, month_start)]
-        customers = {str(c.get("kunde") or "").strip() for c in active_contracts if c.get("kunde")}
-        month_invoice_map = _get_invoice_map_for_month(company=company, month_start=month_start, customers=customers)
+        month_invoice_map = _get_invoice_map_for_month(
+            company=company,
+            month_start=month_start,
+            contracts=active_contracts,
+        )
         month_label = month_start.strftime("%Y-%m")
 
         for contract in active_contracts:
-            expected = _expected_amounts_for_month(contract, month_start, staffel_by_contract.get(contract.name, {}))
-            customer = (contract.get("kunde") or "").strip()
+            expected = _expected_amounts_for_month(
+                contract,
+                month_start,
+                staffel_by_contract.get(contract.name, {}),
+                bk_regelungen_by_contract.get(contract.name, []),
+            )
 
             for typ in INVOICE_TYPES:
                 expected_amount = flt(expected.get(typ) or 0)
-                invoice_bucket = month_invoice_map.get((customer, typ), {"invoice_names": [], "actual_amount": 0.0})
+                invoice_bucket = month_invoice_map.get(
+                    (contract.name, typ),
+                    {"invoice_names": [], "actual_amount": 0.0},
+                )
                 has_invoice = bool(invoice_bucket.get("invoice_names"))
                 actual_amount = flt(invoice_bucket.get("actual_amount") or 0)
 
-                if expected_amount <= 0:
+                if expected_amount <= 0 and not has_invoice:
                     status = "OK"
                     delta = 0.0
                     details = _("Erwarteter Betrag ist 0.")
@@ -164,14 +182,24 @@ def _get_staffelmieten_by_contract(contract_names: list[str]) -> dict[str, dict[
     return out
 
 
-def _expected_amounts_for_month(contract: frappe._dict, month_start: date, staffel: dict[str, list[frappe._dict]]) -> dict[str, float]:
+def _expected_amounts_for_month(
+    contract: frappe._dict,
+    month_start: date,
+    staffel: dict[str, list[frappe._dict]],
+    bk_regelungen: list[dict] | None = None,
+) -> dict[str, float]:
     miete_rows = staffel.get("miete") or []
     bk_rows = staffel.get("betriebskosten") or []
     hk_rows = staffel.get("heizkosten") or []
 
     return {
         "Miete": _miete_betrag_fuer_monat_from_rows(contract.von, contract.bis, month_start, miete_rows),
-        "Betriebskosten": _staffelbetrag_from_rows(bk_rows, month_start),
+        "Betriebskosten": (
+            _staffelbetrag_from_rows(bk_rows, month_start)
+            if get_bk_regelung_from_rows(bk_regelungen or [], month_start)
+            == BK_REGELUNG_VORAUSZAHLUNG
+            else 0.0
+        ),
         "Heizkosten": _staffelbetrag_from_rows(hk_rows, month_start),
     }
 
@@ -302,21 +330,87 @@ def _contract_overlaps_month(contract: frappe._dict, month_start: date) -> bool:
 def _get_invoice_map_for_month(
     company: str,
     month_start: date,
-    customers: set[str],
+    contracts: list[frappe._dict],
 ) -> dict[tuple[str, str], dict[str, object]]:
     month_end = get_last_day(month_start)
+    customers = {str(c.get("kunde") or "").strip() for c in contracts if c.get("kunde")}
     if not customers:
         return {}
 
-    invoices = frappe.get_all(
-        "Sales Invoice",
-        filters={
-            "company": company,
-            "customer": ("in", tuple(sorted(customers))),
-            "posting_date": ("between", [month_start, month_end]),
-            "docstatus": 1,
-        },
-        fields=["name", "customer"],
+    invoice_fields = [
+        "name",
+        "customer",
+        "wohnung",
+        "mietabrechnung_id",
+        "remarks",
+        "is_return",
+        "return_against",
+        "posting_date",
+    ]
+    common_filters = {
+        "company": company,
+        "customer": ("in", tuple(sorted(customers))),
+        "docstatus": 1,
+    }
+    month_marker = month_start.strftime("%m/%Y")
+    structured_ids = tuple(sorted(f"{c.name}|{month_marker}" for c in contracts))
+    invoice_by_name: dict[str, frappe._dict] = {}
+
+    def remember(rows) -> None:
+        for row in rows or []:
+            invoice_by_name[row.name] = row
+
+    # 1) Im Zielmonat gebuchte Belege (inklusive Returns).
+    remember(
+        frappe.get_all(
+            "Sales Invoice",
+            filters={
+                **common_filters,
+                "posting_date": ("between", [month_start, month_end]),
+            },
+            fields=invoice_fields,
+        )
+    )
+    # 2) Später gebuchte Ersatz-Sollstellungen mit technischer ID des
+    # Zielmonats.
+    remember(
+        frappe.get_all(
+            "Sales Invoice",
+            filters={
+                **common_filters,
+                "mietabrechnung_id": ("in", structured_ids),
+            },
+            fields=invoice_fields,
+        )
+    )
+    # 3) Spätere Legacy-/Korrekturbelege mit eindeutigem MV-Monatsmarker.
+    remember(
+        frappe.get_all(
+            "Sales Invoice",
+            filters={
+                **common_filters,
+                "remarks": ("like", f"%[MV:%] {month_marker}%"),
+            },
+            fields=invoice_fields,
+        )
+    )
+    # 4) Returns dürfen ihre Zuordnung über das Original erben.
+    if invoice_by_name:
+        remember(
+            frappe.get_all(
+                "Sales Invoice",
+                filters={
+                    **common_filters,
+                    "is_return": 1,
+                    "return_against": ("in", tuple(sorted(invoice_by_name))),
+                },
+                fields=invoice_fields,
+            )
+        )
+
+    invoices = sorted(
+        invoice_by_name.values(),
+        key=lambda invoice: (int(invoice.get("is_return") or 0), invoice.name),
     )
 
     bucket: dict[tuple[str, str], dict[str, object]] = {}
@@ -327,33 +421,68 @@ def _get_invoice_map_for_month(
 
     item_rows = frappe.db.sql(
         """
-        SELECT parent, item_code, COALESCE(SUM(amount), 0) AS amount
-        FROM `tabSales Invoice Item`
-        WHERE parent IN %(parents)s
-          AND item_code IN ('Miete', 'Betriebskosten', 'Heizkosten')
-        GROUP BY parent, item_code
+        SELECT
+            sii.parent,
+            sii.item_code,
+            COALESCE(
+                SUM(
+                    CASE
+                        WHEN si.is_return = 1 THEN -ABS(sii.amount)
+                        ELSE sii.amount
+                    END
+                ),
+                0
+            ) AS amount
+        FROM `tabSales Invoice Item` sii
+        JOIN `tabSales Invoice` si ON si.name = sii.parent
+        WHERE sii.parent IN %(parents)s
+          AND sii.item_code IN ('Miete', 'Betriebskosten', 'Heizkosten')
+        GROUP BY sii.parent, sii.item_code
         """,
         {"parents": tuple(invoice_names)},
         as_dict=True,
     )
 
-    amount_by_invoice_and_code = {(r.parent, r.item_code): flt(r.amount) for r in (item_rows or [])}
+    amount_by_invoice_and_code = {
+        (r.parent, r.item_code): Decimal(str(r.amount or 0))
+        for r in (item_rows or [])
+    }
     invoice_code_pairs = set(amount_by_invoice_and_code.keys())
+    contract_by_id = {c.name: c for c in contracts}
+    structured_id_to_contract = {
+        f"{c.name}|{month_start.strftime('%m/%Y')}": c.name
+        for c in contracts
+    }
+    contracts_by_customer_wohnung: dict[tuple[str, str], list[str]] = {}
+    for contract in contracts:
+        customer = (contract.get("kunde") or "").strip()
+        wohnung = (contract.get("wohnung") or "").strip()
+        if customer and wohnung:
+            contracts_by_customer_wohnung.setdefault((customer, wohnung), []).append(contract.name)
 
+    contract_by_invoice: dict[str, str] = {}
     for inv in invoices or []:
-        customer = (inv.customer or "").strip()
-        if not customer:
+        contract_name = _invoice_contract_name(
+            inv,
+            month_start=month_start,
+            contract_by_id=contract_by_id,
+            structured_id_to_contract=structured_id_to_contract,
+            contracts_by_customer_wohnung=contracts_by_customer_wohnung,
+            contract_by_invoice=contract_by_invoice,
+        )
+        if not contract_name:
             continue
+        contract_by_invoice[inv.name] = contract_name
 
         for typ, item_code in ITEM_CODE_BY_TYP.items():
             pair = (inv.name, item_code)
             if pair not in invoice_code_pairs:
                 continue
 
-            key = (customer, typ)
-            entry = bucket.setdefault(key, {"invoice_names": [], "actual_amount": 0.0})
+            key = (contract_name, typ)
+            entry = bucket.setdefault(key, {"invoice_names": [], "actual_amount": Decimal("0")})
             entry["invoice_names"].append(inv.name)
-            entry["actual_amount"] = flt(entry.get("actual_amount") or 0) + _amount_for_invoice_type(
+            entry["actual_amount"] = Decimal(str(entry.get("actual_amount") or 0)) + _amount_for_invoice_type(
                 inv.name,
                 typ,
                 amount_by_invoice_and_code,
@@ -361,30 +490,100 @@ def _get_invoice_map_for_month(
 
     for entry in bucket.values():
         entry["invoice_names"] = sorted(set(entry.get("invoice_names") or []))
-        entry["actual_amount"] = round(flt(entry.get("actual_amount") or 0), 2)
+        entry["actual_amount"] = float(
+            Decimal(str(entry.get("actual_amount") or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        )
 
     return bucket
 
 
-def _amount_for_invoice_type(invoice_name: str, typ: str, amount_by_invoice_and_code: dict[tuple[str, str], float]) -> float:
+def _invoice_contract_name(
+    invoice: frappe._dict,
+    *,
+    month_start: date,
+    contract_by_id: dict[str, frappe._dict],
+    structured_id_to_contract: dict[str, str],
+    contracts_by_customer_wohnung: dict[tuple[str, str], list[str]],
+    contract_by_invoice: dict[str, str] | None = None,
+) -> str | None:
+    """Ordnet eine Rechnung genau einem aktiven Mietvertrag zu.
+
+    Strukturierte Sollstellungs-IDs haben Vorrang. Legacy-Belege werden über
+    ihren alten MV-Marker oder - nur wenn eindeutig - über Customer plus
+    Wohnung zugeordnet. Ein bloßer Customer-Treffer reicht bewusst nicht.
+    """
+    structured_id = (invoice.get("mietabrechnung_id") or "").strip()
+    remarks = invoice.get("remarks") or ""
+    month_marker = month_start.strftime("%m/%Y")
+    marker_pairs = set(re.findall(r"\[MV:([^\]]+)\]\s+(\d{2}/\d{4})", remarks))
+    has_mv_marker = "[MV:" in remarks
+    candidate: str | None = None
+
+    if structured_id:
+        candidate = structured_id_to_contract.get(structured_id)
+        if not candidate:
+            return None
+
+    if has_mv_marker:
+        if len(marker_pairs) != 1:
+            return None
+        marker_contract, marker_month = next(iter(marker_pairs))
+        if marker_month != month_marker or marker_contract not in contract_by_id:
+            return None
+        if candidate and candidate != marker_contract:
+            return None
+        candidate = marker_contract
+
+    if candidate:
+        contract = contract_by_id.get(candidate)
+        return candidate if contract and _invoice_headers_match_contract(invoice, contract) else None
+
+    return_against = (invoice.get("return_against") or "").strip()
+    if return_against:
+        inherited = (contract_by_invoice or {}).get(return_against)
+        if not inherited:
+            return None
+        contract = contract_by_id.get(inherited)
+        return inherited if contract and _invoice_headers_match_contract(invoice, contract) else None
+
+    customer = (invoice.get("customer") or "").strip()
+    wohnung = (invoice.get("wohnung") or "").strip()
+    candidates = contracts_by_customer_wohnung.get((customer, wohnung), [])
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _invoice_headers_match_contract(invoice: frappe._dict, contract: frappe._dict) -> bool:
+    return (
+        (invoice.get("customer") or "").strip() == (contract.get("kunde") or "").strip()
+        and (invoice.get("wohnung") or "").strip() == (contract.get("wohnung") or "").strip()
+    )
+
+
+def _amount_for_invoice_type(
+    invoice_name: str,
+    typ: str,
+    amount_by_invoice_and_code: dict[tuple[str, str], Decimal],
+) -> Decimal:
     item_code = ITEM_CODE_BY_TYP.get(typ)
     if not item_code:
-        return 0.0
-    return flt(amount_by_invoice_and_code.get((invoice_name, item_code), 0.0))
+        return Decimal("0")
+    return Decimal(str(amount_by_invoice_and_code.get((invoice_name, item_code), 0)))
 
 
 def _evaluate_row(expected_amount: float, actual_amount: float, has_invoice: bool, tolerance: float) -> tuple[str, float, str]:
-    expected_amount = flt(expected_amount)
-    actual_amount = flt(actual_amount)
-    delta = round(actual_amount - expected_amount, 2)
+    quant = Decimal("0.01")
+    expected = Decimal(str(expected_amount or 0)).quantize(quant, rounding=ROUND_HALF_UP)
+    actual = Decimal(str(actual_amount or 0)).quantize(quant, rounding=ROUND_HALF_UP)
+    delta = (actual - expected).quantize(quant, rounding=ROUND_HALF_UP)
 
     if not has_invoice:
-        return "FEHLT", delta, _("Keine Rechnung zum Mieter gefunden.")
+        return "FEHLT", float(delta), _("Keine Rechnung zum Mieter gefunden.")
 
-    if abs(delta) >= flt(tolerance):
-        return "FALSCHE_SUMME", delta, _("Abweichung ist größer oder gleich 0,01 EUR.")
+    tolerance_decimal = Decimal(str(tolerance or 0)).quantize(quant, rounding=ROUND_HALF_UP)
+    if abs(delta) >= tolerance_decimal:
+        return "FALSCHE_SUMME", float(delta), _("Abweichung ist größer oder gleich 0,01 EUR.")
 
-    return "OK", delta, _("Rechnungssumme entspricht dem erwarteten Betrag.")
+    return "OK", float(delta), _("Rechnungssumme entspricht dem erwarteten Betrag.")
 
 
 def _should_emit_row(status: str, show_ok_rows: int, only_issues: int) -> bool:
