@@ -1,7 +1,7 @@
+import unittest
 from unittest.mock import patch
 
 import frappe
-import unittest
 
 from hausverwaltung.hausverwaltung.utils import payment_auto_match as pam
 
@@ -193,6 +193,134 @@ class TestAutoMatchExactAmbiguity(unittest.TestCase):
 
 		self.assertFalse(result["matched"])
 		self.assertEqual(result["reason"], "ambiguous_month_sum")
+		do_match.assert_not_called()
+
+
+class TestCustomerSettlementRule(unittest.TestCase):
+	def _run(
+		self,
+		*,
+		direction="in",
+		bt_date="2026-02-28",
+		settlement_doctype="Betriebskostenabrechnung Mieter",
+		settlement_date="2026-01-31",
+		extra_invoices=None,
+	):
+		voucher_field = "credit_note" if direction == "out" else "sales_invoice"
+		outstanding = -100.0 if direction == "out" else 100.0
+		bt = frappe._dict(
+			name="BT-SETTLEMENT",
+			date=bt_date,
+			party_type="Customer",
+			party="CUST-1",
+			deposit=100.0 if direction == "in" else 0,
+			withdrawal=100.0 if direction == "out" else 0,
+			payment_entries=[],
+		)
+		settlement = frappe._dict(
+			name="SETTLEMENT-1",
+			docstatus=1,
+			customer="CUST-1",
+			datum=settlement_date,
+			**{voucher_field: "SINV-SETTLEMENT"},
+		)
+		invoice = frappe._dict(
+			name="SINV-SETTLEMENT",
+			outstanding_amount=outstanding,
+			posting_date="2026-01-31",
+			company="COMP-1",
+			currency="EUR",
+			conversion_rate=1,
+			debit_to="RECEIVABLE-1",
+		)
+		invoices = [invoice, *(extra_invoices or [])]
+
+		def fake_get_doc(doctype, name, for_update=False):
+			if doctype == "Bank Transaction":
+				return bt
+			if doctype == settlement_doctype and name == "SETTLEMENT-1":
+				return settlement
+			raise AssertionError(f"unexpected get_doc: {doctype} {name}")
+
+		def fake_get_all(doctype, **kwargs):
+			if doctype == settlement_doctype:
+				return [
+					frappe._dict(
+						name="SETTLEMENT-1",
+						datum=settlement_date,
+						**{voucher_field: "SINV-SETTLEMENT"},
+					)
+				]
+			if doctype in {
+				"Betriebskostenabrechnung Mieter",
+				"Heizkostenabrechnung Mieter",
+			}:
+				return []
+			if doctype == "Sales Invoice":
+				return invoices
+			raise AssertionError(f"unexpected get_all: {doctype}")
+
+		with patch.object(pam.frappe, "get_doc", side_effect=fake_get_doc), patch.object(
+			pam.frappe, "get_all", side_effect=fake_get_all
+		), patch.object(
+			pam, "_resolve_company_and_bank_account", return_value=("COMP-1", frappe._dict())
+		), patch.object(
+			pam, "_get_company_currency", return_value="EUR"
+		), patch.object(
+			pam, "_open_invoice_fields", return_value=["name"]
+		), patch.object(
+			pam, "_require_company_currency_account", return_value="EUR"
+		), patch.object(
+			pam, "_customer_invoice_identity", return_value=("MV-1", "WO-1")
+		), patch.object(
+			pam, "_do_match", return_value={"matched": True, "strategy": "stub"}
+		) as do_match:
+			result = pam.auto_match_customer_settlement("BT-SETTLEMENT")
+		return result, do_match
+
+	def test_bk_charge_matches_through_same_day_next_month(self):
+		result, do_match = self._run()
+
+		self.assertTrue(result["matched"])
+		self.assertEqual(do_match.call_args[0][3], "bk_hk_charge_one_month")
+
+	def test_hk_credit_matches_as_refund(self):
+		result, do_match = self._run(
+			direction="out",
+			settlement_doctype="Heizkostenabrechnung Mieter",
+			bt_date="2026-02-15",
+		)
+
+		self.assertTrue(result["matched"])
+		self.assertEqual(do_match.call_args[0][3], "bk_hk_credit_one_month")
+
+	def test_before_or_after_settlement_month_stays_manual(self):
+		for bt_date in ("2026-01-30", "2026-03-01"):
+			with self.subTest(bt_date=bt_date):
+				result, do_match = self._run(bt_date=bt_date)
+
+				self.assertFalse(result["matched"])
+				self.assertEqual(result["reason"], "customer_settlement_outside_one_month")
+				self.assertEqual(result["excluded_invoice_names"], ["SINV-SETTLEMENT"])
+				do_match.assert_not_called()
+
+	def test_same_amount_regular_invoice_makes_match_ambiguous(self):
+		result, do_match = self._run(
+			extra_invoices=[
+				frappe._dict(
+					name="SINV-RENT",
+					outstanding_amount=100.0,
+					posting_date="2026-02-01",
+					company="COMP-1",
+					currency="EUR",
+					conversion_rate=1,
+					debit_to="RECEIVABLE-1",
+				)
+			],
+		)
+
+		self.assertFalse(result["matched"])
+		self.assertEqual(result["reason"], "ambiguous_customer_settlement")
 		do_match.assert_not_called()
 
 

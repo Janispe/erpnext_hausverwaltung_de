@@ -27,8 +27,7 @@ from datetime import timedelta
 from typing import Any
 
 import frappe
-from frappe.utils import cint, flt, getdate
-
+from frappe.utils import add_months, cint, flt, getdate
 
 _TOLERANCE = 0.01
 _DEFAULT_EXACT_MATCH_WINDOW_DAYS = 7
@@ -470,7 +469,12 @@ def _filter_candidates_by_cost_center(
 	]
 
 
-def prepare_invoice_match(bt, *, lock_invoices: bool = False) -> dict[str, Any]:
+def prepare_invoice_match(
+	bt,
+	*,
+	lock_invoices: bool = False,
+	excluded_invoice_names: set[str] | None = None,
+) -> dict[str, Any]:
 	"""Prepare the shared, read-only candidate state for automatic matching."""
 	context = _resolve_invoice_match_context(bt)
 	if not context.get("ok"):
@@ -499,6 +503,12 @@ def prepare_invoice_match(bt, *, lock_invoices: bool = False) -> dict[str, Any]:
 		party_account_field=context["party_account_field"],
 		lock_invoices=lock_invoices,
 	)
+	if excluded_invoice_names:
+		candidates = [
+			invoice
+			for invoice in candidates
+			if invoice.get("name") not in excluded_invoice_names
+		]
 	if not candidates:
 		return _match_failure(
 			"no_open_invoices",
@@ -612,7 +622,192 @@ def _filter_matches_by_rent_month_window(matches, bt):
 	return [inv for inv in matches if _invoice_in_rent_month_window(inv, bt)]
 
 
-def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
+_CUSTOMER_SETTLEMENT_DOCTYPES = (
+	("Betriebskostenabrechnung Mieter", "BK-Abrechnung"),
+	("Heizkostenabrechnung Mieter", "HK-Abrechnung"),
+)
+
+
+def _settlement_match_failure(
+	reason: str,
+	message: str,
+	*,
+	excluded_invoice_names=(),
+) -> dict[str, Any]:
+	return {
+		"matched": False,
+		"reason": reason,
+		"message": message,
+		"excluded_invoice_names": sorted(set(excluded_invoice_names)),
+	}
+
+
+def auto_match_customer_settlement(bt_name: str) -> dict[str, Any]:
+	"""Match one exact BK/HK charge or credit within one calendar month.
+
+	Eligibility comes exclusively from the submitted settlement's explicit
+	``sales_invoice`` / ``credit_note`` backlink. Free text and item labels are
+	intentionally ignored. Linked settlement invoices are returned as exclusions
+	so the following generic invoice rule cannot bypass this stricter window.
+	"""
+	bt = frappe.get_doc("Bank Transaction", bt_name, for_update=True)
+	if bt.get("payment_entries"):
+		return _settlement_match_failure("already_reconciled", "Bereits zugeordnet")
+	if bt.party_type != "Customer" or not bt.party:
+		return _settlement_match_failure(
+			"not_customer",
+			"Keine Customer-Bankbuchung — BK/HK-Abrechnungsregel übersprungen.",
+		)
+
+	try:
+		shape = _bank_transaction_shape(bt)
+		company, _bank_account_doc = _resolve_company_and_bank_account(bt)
+		company_currency = _get_company_currency(company)
+	except frappe.ValidationError as exc:
+		return _settlement_match_failure("invalid_bank_context", str(exc))
+
+	voucher_field = "credit_note" if shape.direction == "out" else "sales_invoice"
+	settlement_links: dict[str, list[dict[str, Any]]] = defaultdict(list)
+	for doctype, label in _CUSTOMER_SETTLEMENT_DOCTYPES:
+		rows = frappe.get_all(
+			doctype,
+			filters={
+				"docstatus": 1,
+				"customer": bt.party,
+				voucher_field: ["is", "set"],
+			},
+			fields=["name", "datum", voucher_field],
+			limit_page_length=0,
+		)
+		for row in rows:
+			invoice_name = str(row.get(voucher_field) or "").strip()
+			if invoice_name:
+				settlement_links[invoice_name].append(
+					{
+						"doctype": doctype,
+						"label": label,
+						"name": row.get("name"),
+						"date": row.get("datum"),
+					}
+				)
+
+	if not settlement_links:
+		return _settlement_match_failure(
+			"no_customer_settlement_vouchers",
+			"Keine offene BK-/HK-Abrechnung für diese Buchungsrichtung gefunden.",
+		)
+
+	fields = _open_invoice_fields("Sales Invoice", "debit_to")
+	outstanding_filter = ["<", -0.001] if shape.direction == "out" else [">", 0.001]
+	open_invoices = frappe.get_all(
+		"Sales Invoice",
+		filters={
+			"customer": bt.party,
+			"company": company,
+			"docstatus": 1,
+			"outstanding_amount": outstanding_filter,
+		},
+		fields=fields,
+		order_by="posting_date asc, name asc",
+		limit_page_length=0,
+	)
+	safe_invoices = _company_currency_candidates(
+		open_invoices,
+		company=company,
+		company_currency=company_currency,
+		party_account_field="debit_to",
+	)
+	linked_open_names = {
+		invoice.get("name")
+		for invoice in safe_invoices
+		if invoice.get("name") in settlement_links
+	}
+	exact = [
+		invoice
+		for invoice in safe_invoices
+		if _amounts_equal(abs(flt(invoice.get("outstanding_amount"))), shape.amount)
+	]
+	exact_settlements = [
+		invoice for invoice in exact if invoice.get("name") in settlement_links
+	]
+	if not exact_settlements:
+		return _settlement_match_failure(
+			"no_exact_customer_settlement",
+			f"Keine BK-/HK-Abrechnung mit exakt {shape.amount:.2f} € gefunden.",
+			excluded_invoice_names=linked_open_names,
+		)
+	if len(exact) != 1 or len(exact_settlements) != 1:
+		return _settlement_match_failure(
+			"ambiguous_customer_settlement",
+			f"{len(exact)} offene Belege mit exakt {shape.amount:.2f} € gefunden; "
+			"Abrechnungsbeleg nicht eindeutig — bitte manuell zuordnen.",
+			excluded_invoice_names=linked_open_names,
+		)
+
+	invoice = exact_settlements[0]
+	links = settlement_links[invoice.get("name")]
+	if len(links) != 1:
+		return _settlement_match_failure(
+			"ambiguous_customer_settlement_link",
+			f"Beleg {invoice.get('name')} ist mit mehreren Abrechnungen verknüpft — "
+			"bitte manuell prüfen.",
+			excluded_invoice_names=linked_open_names,
+		)
+
+	link = links[0]
+	bt_date = _bank_transaction_date(bt)
+	settlement_date = getdate(link.get("date")) if link.get("date") else None
+	if (
+		not bt_date
+		or not settlement_date
+		or not (settlement_date <= bt_date <= add_months(settlement_date, 1))
+	):
+		return _settlement_match_failure(
+			"customer_settlement_outside_one_month",
+			f"{link['label']} {link['name']} passt betragsmäßig, die Bankbuchung "
+			"liegt aber nicht zwischen Abrechnungsdatum und dem gleichen Tag des "
+			"Folgemonats — bitte manuell zuordnen.",
+			excluded_invoice_names=linked_open_names,
+		)
+
+	locked_settlement = frappe.get_doc(link["doctype"], link["name"], for_update=True)
+	if (
+		int(locked_settlement.docstatus or 0) != 1
+		or locked_settlement.get("customer") != bt.party
+		or str(locked_settlement.get(voucher_field) or "").strip() != invoice.get("name")
+		or getdate(locked_settlement.get("datum")) != settlement_date
+	):
+		return _settlement_match_failure(
+			"customer_settlement_changed",
+			"Die verknüpfte Abrechnung wurde zwischenzeitlich geändert — bitte erneut prüfen.",
+			excluded_invoice_names=linked_open_names,
+		)
+
+	identity_failure = _validate_customer_match_identities(
+		[invoice],
+		customer=bt.party,
+		lock_invoices=True,
+	)
+	if identity_failure:
+		return _settlement_match_failure(
+			identity_failure["reason"],
+			identity_failure["message"],
+			excluded_invoice_names=linked_open_names,
+		)
+	return _do_match(
+		bt,
+		[invoice],
+		"Sales Invoice",
+		"bk_hk_credit_one_month" if shape.direction == "out" else "bk_hk_charge_one_month",
+		shape.amount,
+	)
+
+
+def auto_match_bank_transaction(
+	bt_name: str,
+	*,
+	excluded_invoice_names: set[str] | None = None,
+) -> dict[str, Any]:
 	"""Hauptentry-Point: versucht eine Bank Transaction automatisch zuzuordnen.
 
 	Idempotent — wenn die BT bereits ``payment_entries`` hat (status =
@@ -627,7 +822,11 @@ def auto_match_bank_transaction(bt_name: str) -> dict[str, Any]:
 	    message: kurze deutsche Zusammenfassung für UI
 	"""
 	bt = frappe.get_doc("Bank Transaction", bt_name, for_update=True)
-	prep = prepare_invoice_match(bt, lock_invoices=True)
+	prep = prepare_invoice_match(
+		bt,
+		lock_invoices=True,
+		excluded_invoice_names=excluded_invoice_names,
+	)
 	if not prep["ok"]:
 		return {"matched": False, "reason": prep["reason"], "message": prep["message"]}
 

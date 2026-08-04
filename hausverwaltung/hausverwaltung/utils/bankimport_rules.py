@@ -6,7 +6,6 @@ from typing import Any
 import frappe
 from frappe.utils import flt
 
-
 SUPPORTED_PARTY_TYPES = {"Customer", "Supplier", "Eigentuemer"}
 
 PARTY_RULE_DOCTYPE = "Bankimport Party Regel"
@@ -95,6 +94,30 @@ else:
 ]
 
 DEFAULT_BOOKING_RULES = [
+	{
+		"rule_key": "booking.customer_settlement_auto_match",
+		"priority": 90,
+		"title": "BK/HK-Abrechnung automatisch zuordnen",
+		"parameters": {
+			"builder": {
+				"connector": "und",
+				"conditions": [
+					{"source": "row", "field": "party_type", "op": "=", "value": "Customer"},
+					{"source": "row", "field": "party", "op": "ist nicht leer", "value": ""},
+				],
+			},
+			"action": {
+				"type": "builtin",
+				"ruleKey": "booking.customer_settlement_auto_match",
+			},
+			"ui": {"mode": "einfach"},
+		},
+		"rule_code": "result = auto_match_customer_settlement(row=row, bt=bt, context=context)",
+		"description": (
+			"Guthaben und Nachzahlungen aus eingereichten BK-/HK-Abrechnungen "
+			"nur bei eindeutigem Betrag innerhalb eines Monats automatisch zuordnen."
+		),
+	},
 	{
 		"rule_key": "booking.invoice_auto_match",
 		"legacy_rule_key": "system.invoice_auto_match",
@@ -362,14 +385,18 @@ def _resolve_party_by_iban_via_bankimport(iban: str | None) -> tuple[str, str] |
 
 
 def _booking_invoice_auto_match(*, row, bt, context):
-	from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
-		auto_match_bank_transaction,
-	)
 	from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import import (
 		_set_row_payment_document,
 	)
+	from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+		auto_match_bank_transaction,
+	)
 
-	match_result = auto_match_bank_transaction(bt.name)
+	excluded_invoice_names = set(context.get("settlement_invoice_exclusions") or [])
+	match_result = auto_match_bank_transaction(
+		bt.name,
+		excluded_invoice_names=excluded_invoice_names,
+	)
 	context["invoice_match_result"] = match_result
 	if match_result.get("matched"):
 		_set_row_value(row, "payment_entry", match_result.get("payment_entry"))
@@ -385,6 +412,38 @@ def _booking_invoice_auto_match(*, row, bt, context):
 		}
 
 	_set_row_value(row, "auto_match_message", match_result.get("message"))
+	return {
+		"matched": False,
+		"reason": match_result.get("reason"),
+		"message": match_result.get("message"),
+	}
+
+
+def _booking_customer_settlement_auto_match(*, row, bt, context):
+	from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import import (
+		_set_row_payment_document,
+	)
+	from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+		auto_match_customer_settlement,
+	)
+
+	match_result = auto_match_customer_settlement(bt.name)
+	context["customer_settlement_match_result"] = match_result
+	context["settlement_invoice_exclusions"] = match_result.get(
+		"excluded_invoice_names", []
+	)
+	if match_result.get("matched"):
+		_set_row_value(row, "payment_entry", match_result.get("payment_entry"))
+		_set_row_payment_document(row, "Payment Entry", match_result.get("payment_entry"))
+		_set_row_value(row, "auto_match_message", match_result.get("message"))
+		return {
+			"matched": True,
+			"category": "auto_matched",
+			"document_type": "Payment Entry",
+			"document": match_result.get("payment_entry"),
+			"reason": match_result.get("strategy"),
+			"message": match_result.get("message"),
+		}
 	return {
 		"matched": False,
 		"reason": match_result.get("reason"),
@@ -910,6 +969,12 @@ def _evaluate_builder_builtin_action(
 		return {"matched": False, "reason": "row_has_no_party"}
 	if rule_key == "booking.invoice_auto_match":
 		return _booking_invoice_auto_match(row=row, bt=context.get("bt"), context=context)
+	if rule_key == "booking.customer_settlement_auto_match":
+		return _booking_customer_settlement_auto_match(
+			row=row,
+			bt=context.get("bt"),
+			context=context,
+		)
 	if rule_key == "booking.kreditrate_auto_match":
 		return _booking_kreditrate_auto_match(row=row, bt=context.get("bt"))
 	if rule_key == "booking.abschlagsplan_auto_match":
@@ -1032,6 +1097,7 @@ RULE_GLOBALS = {
 	"SUPPORTED_PARTY_TYPES": SUPPORTED_PARTY_TYPES,
 	"get_party_by_iban": _rule_get_party_by_iban,
 	"auto_match_invoice": _booking_invoice_auto_match,
+	"auto_match_customer_settlement": _booking_customer_settlement_auto_match,
 	"match_kreditrate": _booking_kreditrate_auto_match,
 	"match_abschlagsplan": _booking_abschlagsplan_auto_match,
 	"needs_review_fallback": _booking_needs_review_fallback,

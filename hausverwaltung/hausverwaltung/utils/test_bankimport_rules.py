@@ -5,7 +5,6 @@ import frappe
 
 from hausverwaltung.hausverwaltung.utils import bankimport_rules as rules
 
-
 PARTY_IBAN_RULE_CODE = """
 party_tuple = get_party_by_iban(row.get("iban"))
 if party_tuple:
@@ -17,6 +16,42 @@ else:
 
 
 class TestBankimportRuleScope(unittest.TestCase):
+	def test_default_customer_settlement_rule_precedes_generic_invoice_rule(self):
+		settlement_rule = next(
+			rule
+			for rule in rules.DEFAULT_BOOKING_RULES
+			if rule["rule_key"] == "booking.customer_settlement_auto_match"
+		)
+		invoice_rule = next(
+			rule
+			for rule in rules.DEFAULT_BOOKING_RULES
+			if rule["rule_key"] == "booking.invoice_auto_match"
+		)
+
+		self.assertLess(settlement_rule["priority"], invoice_rule["priority"])
+		self.assertEqual(
+			settlement_rule["parameters"]["builder"]["conditions"][0]["value"],
+			"Customer",
+		)
+
+	def test_settlement_exclusions_are_forwarded_to_generic_invoice_match(self):
+		row = frappe._dict()
+		bt = frappe._dict(name="BT-1")
+		context = {"settlement_invoice_exclusions": ["SINV-BK-1"]}
+		match_result = {"matched": False, "reason": "no_exact_match", "message": "manual"}
+
+		with patch(
+			"hausverwaltung.hausverwaltung.utils.payment_auto_match.auto_match_bank_transaction",
+			return_value=match_result,
+		) as matcher, patch.object(rules, "_set_row_value"):
+			result = rules._booking_invoice_auto_match(row=row, bt=bt, context=context)
+
+		matcher.assert_called_once_with(
+			"BT-1",
+			excluded_invoice_names={"SINV-BK-1"},
+		)
+		self.assertFalse(result["matched"])
+
 	def test_party_rule_scope_blocks_iban_before_matcher_runs(self):
 		row = frappe._dict(iban="DE12 3456", party_type=None, party=None)
 		rule = {
