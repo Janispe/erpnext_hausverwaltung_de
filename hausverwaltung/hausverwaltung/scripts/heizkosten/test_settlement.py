@@ -207,6 +207,28 @@ class TestHeizkostenSettlement(unittest.TestCase):
 			for_update=True,
 		)
 
+	def test_existing_invoice_with_visible_remark_is_validated(self):
+		doc = self._doc(kosten=850, vorauszahlungen=700, datum="2026-02-15")
+		doc.sales_invoice = "SI-EXISTING"
+		voucher = SimpleNamespace(
+			name="SI-EXISTING",
+			docstatus=1,
+			is_return=0,
+			customer="Mieter 1",
+			company="HV GmbH",
+			wohnung="W-1",
+			remarks=(
+				"[HK-SETTLEMENT:HK-M-1] "
+				"Heizkostenabrechnung 01.01.2025 bis 31.12.2025"
+			),
+		)
+
+		with (
+			patch.object(settlement.frappe, "get_doc", return_value=voucher),
+			patch.object(settlement, "_get_default_company", return_value="HV GmbH"),
+		):
+			settlement._validate_existing_hk_settlement_links(doc)
+
 	def test_existing_invoice_with_foreign_marker_is_rejected(self):
 		doc = self._doc(kosten=850, vorauszahlungen=700, datum="2026-02-15")
 		doc.sales_invoice = "SI-FOREIGN"
@@ -333,7 +355,10 @@ class TestHeizkostenSettlement(unittest.TestCase):
 			wertstellungsdatum="2025-12-31",
 			cost_center="CC-1",
 			wohnung="W-1",
-			remarks="[HK-SETTLEMENT:HK-M-1]",
+			remarks=(
+				"[HK-SETTLEMENT:HK-M-1] "
+				"Heizkostenabrechnung 01.01.2025 bis 31.12.2025"
+			),
 		)
 
 	def test_guthaben_falls_back_to_today_and_uses_period_end_as_wertstellung(self):
@@ -353,7 +378,10 @@ class TestHeizkostenSettlement(unittest.TestCase):
 			wertstellungsdatum="2025-12-31",
 			cost_center="CC-1",
 			wohnung="W-1",
-			remarks="[HK-SETTLEMENT:HK-M-1]",
+			remarks=(
+				"[HK-SETTLEMENT:HK-M-1] "
+				"Heizkostenabrechnung 01.01.2025 bis 31.12.2025"
+			),
 		)
 
 	def test_marker_uses_locked_settlement_name_for_every_new_voucher(self):
@@ -364,7 +392,20 @@ class TestHeizkostenSettlement(unittest.TestCase):
 
 		self.assertEqual(
 			make_invoice.call_args.kwargs["remarks"],
-			"[HK-SETTLEMENT:HK-M-LOCKED]",
+			(
+				"[HK-SETTLEMENT:HK-M-LOCKED] "
+				"Heizkostenabrechnung 01.01.2025 bis 31.12.2025"
+			),
+		)
+
+	def test_visible_remark_without_owner_supports_period_fallbacks(self):
+		self.assertEqual(
+			settlement._build_hk_settlement_remark("2025-01-01", "2025-12-31"),
+			"Heizkostenabrechnung 01.01.2025 bis 31.12.2025",
+		)
+		self.assertEqual(
+			settlement._build_hk_settlement_remark(None, "2025-12-31"),
+			"Heizkostenabrechnung 2025",
 		)
 
 	def test_marker_rejects_delimiter_injection(self):

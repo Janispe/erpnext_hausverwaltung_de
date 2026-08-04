@@ -67,6 +67,30 @@ def _hk_settlement_marker(abrechnung: str) -> str:
 	return f"{HK_SETTLEMENT_MARKER_PREFIX}{name}]"
 
 
+def _build_hk_settlement_remark(
+	von: Any = None,
+	bis: Any = None,
+	*,
+	abrechnung: str | None = None,
+) -> str:
+	"""Build the visible remark for HK invoices and credit notes."""
+	von_date = getdate(von) if von else None
+	bis_date = getdate(bis) if bis else None
+	if von_date and bis_date:
+		visible = f"Heizkostenabrechnung {von_date:%d.%m.%Y} bis {bis_date:%d.%m.%Y}"
+	elif bis_date:
+		visible = f"Heizkostenabrechnung {bis_date.year}"
+	elif von_date:
+		visible = f"Heizkostenabrechnung ab {von_date:%d.%m.%Y}"
+	else:
+		visible = "Heizkostenabrechnung"
+
+	settlement_name = cstr(abrechnung or "").strip()
+	if settlement_name:
+		return f"{_hk_settlement_marker(settlement_name)} {visible}"
+	return visible
+
+
 def _get_locked_settlement_document(abrechnung: str):
 	"""Lock and reload the HK settlement and its authoritative contract."""
 	rows = frappe.db.sql(
@@ -664,9 +688,14 @@ def _validated_existing_hk_settlement_document(
 	expected_marker = _hk_settlement_marker(
 		cstr(getattr(doc, "name", None) or "").strip()
 	)
+	expected_remark = _build_hk_settlement_remark(
+		getattr(doc, "von", None),
+		getattr(doc, "bis", None),
+		abrechnung=cstr(getattr(doc, "name", None) or "").strip(),
+	)
 	voucher_remarks = cstr(getattr(voucher, "remarks", None) or "").strip()
 	is_legacy_link = not voucher_remarks
-	if voucher_remarks != expected_marker:
+	if voucher_remarks not in (expected_marker, expected_remark):
 		if voucher_remarks:
 			frappe.throw(
 				f"Settlement-Retry abgebrochen: {voucher_name} gehört laut "
@@ -788,7 +817,11 @@ def create_hk_settlement_documents(abrechnung: str) -> dict:
 		"credit_note": None,
 	}
 	settlement_name = cstr(getattr(doc, "name", None) or abrechnung).strip()
-	settlement_marker = _hk_settlement_marker(settlement_name)
+	settlement_remark = _build_hk_settlement_remark(
+		doc.von,
+		doc.bis,
+		abrechnung=settlement_name,
+	)
 
 	if adjustment >= MONEY_QUANT:
 		try:
@@ -803,7 +836,7 @@ def create_hk_settlement_documents(abrechnung: str) -> dict:
 				wertstellungsdatum=wertstellungsdatum,
 				cost_center=cost_center,
 				wohnung=doc.wohnung,
-				remarks=settlement_marker,
+				remarks=settlement_remark,
 			)
 		except Exception as exc:
 			frappe.throw(f"HK-Nachzahlung konnte nicht erstellt werden: {exc}")
@@ -820,7 +853,7 @@ def create_hk_settlement_documents(abrechnung: str) -> dict:
 				wertstellungsdatum=wertstellungsdatum,
 				cost_center=cost_center,
 				wohnung=doc.wohnung,
-				remarks=settlement_marker,
+				remarks=settlement_remark,
 			)
 		except Exception as exc:
 			frappe.throw(f"HK-Guthaben konnte nicht erstellt werden: {exc}")
