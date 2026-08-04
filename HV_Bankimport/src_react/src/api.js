@@ -254,6 +254,7 @@ export async function getOpenInvoices(name, rowName) {
 		invoiceDoctype: r.invoice_doctype,
 		invoices: r.invoices || [],
 		targetAmount: r.target_amount,
+		allocationMode: r.allocation_mode || "invoice_payment",
 	};
 }
 

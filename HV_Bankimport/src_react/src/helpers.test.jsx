@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+	allocatableInvoiceAmount,
 	fmtDate,
 	fmtDateTime,
 	fmtEUR,
 	fmtIban,
+	isCustomerRefund,
 	partyDisplayLabel,
 	partyTypeLabel,
 	rowPhase,
@@ -66,5 +68,19 @@ describe("Bankimport phase/status edge cases", () => {
 		expect(partyTypeLabel("Supplier")).toBe("Lieferant");
 		expect(partyTypeLabel("Eigentuemer")).toBe("Eigentümer");
 		expect(partyTypeLabel("")).toBe("");
+	});
+});
+
+describe("Guthaben-Zuordnung", () => {
+	it("erkennt nur Customer-Ausgaenge als Guthabenauszahlung", () => {
+		expect(isCustomerRefund({ partyTyp: "Customer", betrag: -100 })).toBe(true);
+		expect(isCustomerRefund({ partyTyp: "Customer", betrag: 100 })).toBe(false);
+		expect(isCustomerRefund({ partyTyp: "Supplier", betrag: -100 })).toBe(false);
+		expect(isCustomerRefund({}, "customer_refund")).toBe(true);
+	});
+
+	it("stellt negative Credit-Note-Outstandings als positiven Auszahlungsbetrag dar", () => {
+		expect(allocatableInvoiceAmount({ outstanding_amount: -125.5 })).toBe(125.5);
+		expect(allocatableInvoiceAmount({ allocatable_amount: 80, outstanding_amount: -100 })).toBe(80);
 	});
 });

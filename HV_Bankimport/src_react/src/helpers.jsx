@@ -76,6 +76,13 @@ export const partyDisplayLabel = (row) => {
 	return isExplicitlyPartyless ? "Ohne Partei" : "Partei fehlt";
 };
 
+export const isCustomerRefund = (row, allocationMode) =>
+	allocationMode === "customer_refund"
+	|| (row?.partyTyp === "Customer" && Number(row?.betrag) < 0);
+
+export const allocatableInvoiceAmount = (invoice) =>
+	Math.abs(Number(invoice?.allocatable_amount ?? invoice?.outstanding_amount) || 0);
+
 export const Icon = ({ name, size = 14 }) => {
 	const s = { width: size, height: size, display: "inline-block", verticalAlign: "middle" };
 	const p = { fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", strokeLinejoin: "round" };

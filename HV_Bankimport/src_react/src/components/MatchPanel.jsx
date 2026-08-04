@@ -1,5 +1,16 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { fmtEUR, fmtDate, fmtDateTime, fmtIban, partyDisplayLabel, partyTypeLabel, Icon, Spinner } from "../helpers.jsx";
+import {
+	allocatableInvoiceAmount,
+	fmtEUR,
+	fmtDate,
+	fmtDateTime,
+	fmtIban,
+	isCustomerRefund,
+	partyDisplayLabel,
+	partyTypeLabel,
+	Icon,
+	Spinner,
+} from "../helpers.jsx";
 import { DocLink } from "./DocLink.jsx";
 import { LinkSearch } from "./LinkSearch.jsx";
 import * as api from "../api.js";
@@ -53,12 +64,12 @@ const partyOptionLabel = (partyType) =>
 
 const INVOICE_COLLAPSE_THRESHOLD = 5;
 
-function InvoiceListToggle({ invoices, selectedCount = 0, children }) {
+function InvoiceListToggle({ invoices, selectedCount = 0, label = "offene Rechnungen", children }) {
 	const count = invoices.length;
 	const shouldCollapse = count > INVOICE_COLLAPSE_THRESHOLD;
 	const [open, setOpen] = useState(!shouldCollapse);
 	const total = useMemo(
-		() => invoices.reduce((sum, inv) => sum + (Number(inv.outstanding_amount) || 0), 0),
+		() => invoices.reduce((sum, inv) => sum + allocatableInvoiceAmount(inv), 0),
 		[invoices]
 	);
 
@@ -78,7 +89,7 @@ function InvoiceListToggle({ invoices, selectedCount = 0, children }) {
 			>
 				<span>
 					<Icon name={open ? "chevDown" : "chev"} size={13} />
-					{count} offene Rechnungen
+					{count} {label}
 				</span>
 				<strong>{fmtEUR(total)}</strong>
 			</button>
@@ -507,11 +518,13 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 	const [loading, setLoading] = useState(true);
 	const [busy, run] = useAction(notify);
 	const target = Math.abs(Number(row.betrag) || 0);
+	const isRefund = isCustomerRefund(row, data?.allocationMode);
 
 	useEffect(() => {
 		let alive = true;
 		setLoading(true);
 		setSel({});
+		setAdvance(false);
 		api.getOpenInvoices(docname, row.id)
 			.then((d) => alive && setData(d))
 			.catch((e) => alive && notify("error", e.message))
@@ -537,7 +550,8 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 			} else {
 				const already = Object.values(next).reduce((s, v) => s + (Number(v) || 0), 0);
 				const rem = Math.max(0, target - already);
-				next[inv.name] = Math.min(Number(inv.outstanding_amount) || 0, rem) || Number(inv.outstanding_amount) || 0;
+				const available = allocatableInvoiceAmount(inv);
+				next[inv.name] = Math.min(available, rem) || available;
 			}
 			return next;
 		});
@@ -548,30 +562,38 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 
 	const book = () => {
 		const invoices = Object.entries(sel).map(([name, allocated_amount]) => ({ name, allocated_amount }));
-		if (!invoices.length) return notify("error", "Bitte mindestens eine Rechnung auswählen.");
+		if (!invoices.length) {
+			return notify("error", isRefund ? "Bitte mindestens ein Guthaben auswählen." : "Bitte mindestens eine Rechnung auswählen.");
+		}
 		for (const inv of invoices) {
 			const amount = Number(inv.allocated_amount);
 			const source = invoiceByName.get(inv.name);
-			const outstanding = Number(source?.outstanding_amount || 0);
+			const outstanding = allocatableInvoiceAmount(source);
 			if (!Number.isFinite(amount) || amount <= 0) {
 				return notify("error", `Zuweisung für ${inv.name} muss größer als 0 € sein.`);
 			}
 			if (amount > outstanding + 0.01) {
-				return notify("error", `Zuweisung für ${inv.name} übersteigt den offenen Betrag.`);
+				return notify("error", `Zuweisung für ${inv.name} übersteigt ${isRefund ? "das Guthaben" : "den offenen Betrag"}.`);
 			}
 		}
 		if (allocated - target > 0.01) return notify("error", "Die Zuweisung übersteigt den Bankbetrag.");
+		if (isRefund && target - allocated > 0.01)
+			return notify("error", "Die Auszahlung muss vollständig einem oder mehreren Guthaben zugeordnet werden.");
 		run(() => api.reconcileInvoices(docname, row.id, invoices, advance), {
-			success: "Zahlung gebucht und Bank Transaction abgeglichen.",
+			success: isRefund
+				? "Guthaben ausgezahlt und Bank Transaction abgeglichen."
+				: "Zahlung gebucht und Bank Transaction abgeglichen.",
 		}).then((r) => r && r.ok !== false && onActionDone());
 	};
 
-	if (loading) return <div className="panel-loading"><Spinner size={18} /> Offene Rechnungen laden…</div>;
+	if (loading) return <div className="panel-loading"><Spinner size={18} /> {isRefund ? "Guthaben" : "Offene Rechnungen"} laden…</div>;
 	if (!data || !data.invoices.length) {
 		return (
 			<div className="hint">
-				Keine offenen {data && data.invoiceDoctype === "Purchase Invoice" ? "Eingangs" : "Ausgangs"}rechnungen
-				für diese Partei. Nutze „Vorauszahlung" oder „Buchungssatz".
+				{isRefund
+					? "Keine offenen auszahlbaren Guthaben für diesen Mieter."
+					: <>Keine offenen {data && data.invoiceDoctype === "Purchase Invoice" ? "Eingangs" : "Ausgangs"}rechnungen
+						für diese Partei. Nutze „Vorauszahlung" oder „Buchungssatz".</>}
 			</div>
 		);
 	}
@@ -585,7 +607,11 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 					Rest <strong>{fmtEUR(remaining)}</strong>
 				</span>
 			</div>
-			<InvoiceListToggle invoices={data.invoices} selectedCount={Object.keys(sel).length}>
+			<InvoiceListToggle
+				invoices={data.invoices}
+				selectedCount={Object.keys(sel).length}
+				label={isRefund ? "offene Guthaben" : "offene Rechnungen"}
+			>
 				{data.invoices.map((inv) => {
 					const checked = sel[inv.name] != null;
 					return (
@@ -598,7 +624,9 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 										<div className="ref">{inv.remarks || "—"}</div>
 									</div>
 								</div>
-								<div className="amount">{fmtEUR(inv.outstanding_amount)}</div>
+								<div className="amount">
+									{isRefund ? `Guthaben ${fmtEUR(allocatableInvoiceAmount(inv))}` : fmtEUR(inv.outstanding_amount)}
+								</div>
 							</label>
 							<div className="meta-row">
 								<span className="due"><Icon name="file" size={11} /> {fmtDate(inv.posting_date)}</span>
@@ -620,7 +648,7 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 					);
 				})}
 			</InvoiceListToggle>
-			{remaining > 0.01 && Object.keys(sel).length > 0 && (
+			{!isRefund && remaining > 0.01 && Object.keys(sel).length > 0 && (
 				<label className="advance-toggle">
 					<input type="checkbox" checked={advance} onChange={(e) => setAdvance(e.target.checked)} />
 					Restbetrag {fmtEUR(remaining)} als Vorauszahlung am Konto belassen
@@ -632,7 +660,7 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 				onClick={book}
 				disabled={busy || !Object.keys(sel).length}
 			>
-				{busy ? <Spinner /> : <Icon name="check" />} Zuordnen &amp; buchen
+				{busy ? <Spinner /> : <Icon name="check" />} {isRefund ? "Guthaben zuordnen & auszahlen" : "Zuordnen & buchen"}
 			</button>
 		</div>
 	);
@@ -1208,7 +1236,7 @@ function BookingActions({ docname, row, onActionDone, notify }) {
 	const modes = useMemo(() => {
 		const m = [];
 		if (hasParty && (row.partyTyp === "Customer" || row.partyTyp === "Supplier"))
-			m.push({ id: "invoice", lbl: "Rechnung" });
+			m.push({ id: "invoice", lbl: isOut && row.partyTyp === "Customer" ? "Guthaben" : "Rechnung" });
 		if (isOut && row.partyTyp === "Supplier") m.push({ id: "split", lbl: "Aufteilen" });
 		if (isOut && row.partyTyp === "Supplier") m.push({ id: "abschlag", lbl: "Abschlag" });
 		if (isOut) m.push({ id: "kredit", lbl: "Kreditrate" });

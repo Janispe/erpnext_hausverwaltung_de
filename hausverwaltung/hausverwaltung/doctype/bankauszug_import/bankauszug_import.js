@@ -1120,17 +1120,19 @@ function _openMatchInvoicesDialog(frm, row) {
     const data = (r && r.message) || {};
     const invoices = data.invoices || [];
     const target = parseFloat(data.target_amount || row.betrag || 0);
+    const isCustomerRefund = data.allocation_mode === 'customer_refund';
 
     if (!invoices.length) {
       const filteredNote = data.excluded_by_cost_center
         ? ' ' + __('{0} offene Rechnung(en) wurden ausgeblendet, weil ihre Kostenstelle nicht zu diesem Bankkonto passt.', [data.excluded_by_cost_center])
         : '';
       frappe.msgprint({
-        title: __('Keine offenen Rechnungen'),
-        message: __('Für {0} {1} sind keine passenden offenen Rechnungen vorhanden.', [row.party_type, row.party])
+        title: isCustomerRefund ? __('Keine offenen Guthaben') : __('Keine offenen Rechnungen'),
+        message: (isCustomerRefund
+          ? __('Für {0} sind keine auszahlbaren Guthaben vorhanden.', [row.party])
+          : __('Für {0} {1} sind keine passenden offenen Rechnungen vorhanden.', [row.party_type, row.party]))
           + filteredNote
-          + ' '
-          + __('Nutze „Zahlung erstellen" für eine Vorauszahlung oder „Buchungssatz erstellen" für eine direkte GL-Buchung.'),
+          + (isCustomerRefund ? '' : ' ' + __('Nutze „Zahlung erstellen" für eine Vorauszahlung oder „Buchungssatz erstellen" für eine direkte GL-Buchung.')),
       });
       return;
     }
@@ -1139,14 +1141,14 @@ function _openMatchInvoicesDialog(frm, row) {
     const fmtDate = (v) => (v ? frappe.datetime.str_to_user(v) : '-');
 
     const rowsHtml = invoices.map((inv) => {
-      const outstanding = parseFloat(inv.outstanding_amount).toFixed(2);
+      const outstanding = Math.abs(parseFloat(inv.allocatable_amount ?? inv.outstanding_amount)).toFixed(2);
       const safeName = frappe.utils.escape_html(inv.name);
       const linkPath = data.invoice_doctype.toLowerCase().replace(/ /g, '-');
       return `
         <tr>
           <td style="padding:4px 8px;"><input type="checkbox" class="hv-inv-cb" data-name="${safeName}" data-outstanding="${outstanding}"></td>
           <td style="padding:4px 8px;"><a href="/app/${linkPath}/${encodeURIComponent(inv.name)}" target="_blank">${safeName}</a></td>
-          <td style="padding:4px 8px; text-align:right; color:#888;">${fmt(inv.outstanding_amount)}</td>
+          <td style="padding:4px 8px; text-align:right; color:#888;">${fmt(outstanding)}</td>
           <td style="padding:4px 8px;">
             <input type="number" class="hv-inv-amount form-control input-sm" step="0.01" min="0" max="${outstanding}"
               data-name="${safeName}" data-outstanding="${outstanding}" disabled
@@ -1168,8 +1170,8 @@ function _openMatchInvoicesDialog(frm, row) {
         <thead>
           <tr style="background:#f6f6f7;">
             <th style="padding:4px 8px; width:30px;"></th>
-            <th style="padding:4px 8px; text-align:left;">${__('Rechnung')}</th>
-            <th style="padding:4px 8px; text-align:right;">${__('Offen')}</th>
+            <th style="padding:4px 8px; text-align:left;">${isCustomerRefund ? __('Guthabenbeleg') : __('Rechnung')}</th>
+            <th style="padding:4px 8px; text-align:right;">${isCustomerRefund ? __('Guthaben') : __('Offen')}</th>
             <th style="padding:4px 8px; text-align:left;">${__('Zuweisen')}</th>
             <th style="padding:4px 8px; text-align:left;">${__('Datum')}</th>
           </tr>
@@ -1184,7 +1186,7 @@ function _openMatchInvoicesDialog(frm, row) {
         <div><strong>${__('Bank-Betrag')}:</strong> ${fmt(target)}</div>
         <div><strong>${__('Differenz')}:</strong> <span class="hv-diff"></span> <span class="hv-diff-note" style="margin-left:8px; font-style:italic;"></span></div>
       </div>
-      <div style="margin-top:10px;">
+      <div style="margin-top:10px; ${isCustomerRefund ? 'display:none;' : ''}">
         <label style="font-size:12px;">
           <input type="checkbox" class="hv-leftover-cb">
           ${__('Restbetrag als Vorauszahlung verbuchen (bleibt am Mieter/Lieferant als offenes Guthaben)')}
@@ -1193,10 +1195,10 @@ function _openMatchInvoicesDialog(frm, row) {
     `;
 
     const d = new frappe.ui.Dialog({
-      title: __('Rechnungen zuordnen — Zeile {0}', [row.idx]),
+      title: isCustomerRefund ? __('Guthaben auszahlen — Zeile {0}', [row.idx]) : __('Rechnungen zuordnen — Zeile {0}', [row.idx]),
       size: 'large',
       fields: [{ fieldtype: 'HTML', fieldname: 'body', options: html }],
-      primary_action_label: __('Zuordnen'),
+      primary_action_label: isCustomerRefund ? __('Guthaben auszahlen') : __('Zuordnen'),
       primary_action() {
         const allocations = [];
         let allocSum = 0;
@@ -1237,7 +1239,9 @@ function _openMatchInvoicesDialog(frm, row) {
         }).then((res) => {
           const msg = (res && res.message) || {};
           frappe.show_alert({
-            message: __('Zugeordnet: {0} ({1} Rechnung(en))', [msg.payment_entry, (msg.invoices || []).length]),
+            message: isCustomerRefund
+              ? __('Guthaben ausgezahlt: {0} ({1} Beleg(e))', [msg.payment_entry, (msg.invoices || []).length])
+              : __('Zugeordnet: {0} ({1} Rechnung(en))', [msg.payment_entry, (msg.invoices || []).length]),
             indicator: 'green',
           });
           d.hide();
@@ -1269,8 +1273,12 @@ function _openMatchInvoicesDialog(frm, row) {
         note.css('color', '#15803d').text(__('exakt'));
         primary.prop('disabled', false);
       } else if (diff > 0) {
-        note.css('color', '#92400e').text(leftoverCb.is(':checked') ? __('wird als Vorauszahlung verbucht') : __('Restbetrag offen'));
-        primary.prop('disabled', !leftoverCb.is(':checked'));
+        note.css('color', '#92400e').text(
+          isCustomerRefund
+            ? __('Auszahlung noch nicht vollständig zugeordnet')
+            : (leftoverCb.is(':checked') ? __('wird als Vorauszahlung verbucht') : __('Restbetrag offen'))
+        );
+        primary.prop('disabled', isCustomerRefund || !leftoverCb.is(':checked'));
       } else {
         note.css('color', '#dc3545').text(__('Auswahl übersteigt Bank-Betrag'));
         primary.prop('disabled', true);

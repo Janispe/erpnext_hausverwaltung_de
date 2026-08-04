@@ -3155,21 +3155,25 @@ def get_open_invoices_for_row(docname: str, row_name: str) -> Dict[str, Any]:
     if not row.get("party_type") or not row.get("party"):
         return {"invoice_doctype": None, "invoices": [], "target_amount": flt(row.betrag)}
 
+    allocation_mode = "invoice_payment"
     if row.party_type == "Customer":
         invoice_doctype = "Sales Invoice"
         party_field = "customer"
+        if row.get("richtung") == "Ausgang":
+            allocation_mode = "customer_refund"
     elif row.party_type == "Supplier":
         invoice_doctype = "Purchase Invoice"
         party_field = "supplier"
     else:
         return {"invoice_doctype": None, "invoices": [], "target_amount": flt(row.betrag)}
 
+    outstanding_filter = ["<", -0.001] if allocation_mode == "customer_refund" else [">", 0.001]
     invoices = frappe.get_all(
         invoice_doctype,
         filters={
             party_field: row.party,
             "docstatus": 1,
-            "outstanding_amount": [">", 0.001],
+            "outstanding_amount": outstanding_filter,
         },
         fields=["name", "outstanding_amount", "posting_date", "remarks", "grand_total"],
         order_by="posting_date asc",
@@ -3181,10 +3185,13 @@ def get_open_invoices_for_row(docname: str, row_name: str) -> Dict[str, Any]:
         invoice_doctype=invoice_doctype,
         expected_cost_center=expected_cost_center,
     )
+    for invoice in invoices:
+        invoice["allocatable_amount"] = abs(flt(invoice.get("outstanding_amount")))
     return {
         "invoice_doctype": invoice_doctype,
         "invoices": invoices,
         "target_amount": flt(row.betrag),
+        "allocation_mode": allocation_mode,
         "expected_cost_center": expected_cost_center,
         "excluded_by_cost_center": excluded_by_cost_center,
     }
@@ -3355,7 +3362,8 @@ def manually_reconcile_row(
         reconcile_created_voucher_or_rollback,
     )
 
-    doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
+    _doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
+    customer_refund = row.party_type == "Customer" and row.get("richtung") == "Ausgang"
 
     # invoice_names parsen — drei akzeptierte Formate:
     #   1. JSON-Array von Objekten: [{"name": "SINV-1", "allocated_amount": 500}, ...] (UI sendet das)
@@ -3417,8 +3425,15 @@ def manually_reconcile_row(
         )
         if not inv:
             frappe.throw(f"Rechnung {inv_name} nicht gefunden.")
-        if flt(inv.outstanding_amount) <= 0:
-            frappe.throw(f"Rechnung {inv_name} hat keinen offenen Betrag mehr.")
+        outstanding = flt(inv.outstanding_amount)
+        if customer_refund:
+            if outstanding >= -0.001:
+                frappe.throw(f"Rechnung {inv_name} hat kein auszahlbares Guthaben mehr.")
+            available_amount = abs(outstanding)
+        else:
+            if outstanding <= 0.001:
+                frappe.throw(f"Rechnung {inv_name} hat keinen offenen Betrag mehr.")
+            available_amount = outstanding
         invoice_cost_center = _throw_if_supplier_invoice_cost_center_mismatch(
             invoice_name=inv_name,
             invoice_doctype=invoice_doctype,
@@ -3433,15 +3448,15 @@ def manually_reconcile_row(
             explicit_alloc = flt(explicit_alloc)
             if explicit_alloc <= 0:
                 frappe.throw(f"Zuweisung für {inv_name} muss größer als 0 € sein.")
-            if explicit_alloc > flt(inv.outstanding_amount) + 0.01:
+            if explicit_alloc > available_amount + 0.01:
                 frappe.throw(
                     f"Zuweisung für {inv_name} ({explicit_alloc:.2f} €) übersteigt "
-                    f"offenen Betrag ({flt(inv.outstanding_amount):.2f} €)."
+                    f"offenen Betrag ({available_amount:.2f} €)."
                 )
             inv["allocated_amount"] = explicit_alloc
             explicit_allocated_total += explicit_alloc
         else:
-            implicit_outstanding_total += flt(inv.outstanding_amount)
+            implicit_outstanding_total += available_amount
         invoices.append(inv)
 
     if has_explicit_allocations:
@@ -3456,6 +3471,12 @@ def manually_reconcile_row(
             f"Bank-Betrag ist {target_amount:.2f} €. Bitte passende Rechnungen wählen "
             "oder Teilbeträge explizit zuweisen."
         )
+    elif customer_refund and target_amount - implicit_outstanding_total > 0.01:
+        frappe.throw(
+            f"Ausgewählte Guthaben summieren auf {implicit_outstanding_total:.2f} €, "
+            f"Bank-Betrag ist {target_amount:.2f} €. Bitte weitere Guthaben wählen "
+            "oder den Auszahlungsbetrag vollständig zuordnen."
+        )
     elif target_amount - implicit_outstanding_total > 0.01 and not bool(int(leftover_as_advance or 0)):
         frappe.throw(
             f"Ausgewählte Rechnungen summieren auf {implicit_outstanding_total:.2f} €, "
@@ -3468,7 +3489,7 @@ def manually_reconcile_row(
         invoices=invoices,
         invoice_doctype=invoice_doctype,
         target_amount=target_amount,
-        leftover_as_advance=bool(int(leftover_as_advance or 0)),
+        leftover_as_advance=False if customer_refund else bool(int(leftover_as_advance or 0)),
     )
 
     reconcile_created_voucher_or_rollback(bt, "Payment Entry", pe.name, target_amount)
@@ -3478,8 +3499,12 @@ def manually_reconcile_row(
     row.db_set("row_status", "success")
     row.db_set(
         "auto_match_message",
-        f"Manuell zugeordnet: {len(invoices)} Rechnung(en), {target_amount:.2f} €"
-        + (" (mit Vorauszahlung)" if int(leftover_as_advance or 0) else ""),
+        (
+            f"Guthaben ausgezahlt: {len(invoices)} Beleg(e), {target_amount:.2f} €"
+            if customer_refund
+            else f"Manuell zugeordnet: {len(invoices)} Rechnung(en), {target_amount:.2f} €"
+            + (" (mit Vorauszahlung)" if int(leftover_as_advance or 0) else "")
+        ),
     )
     _recompute_doc_status(docname)
     _refresh_and_persist_saldo(docname)

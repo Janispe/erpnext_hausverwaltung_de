@@ -1,5 +1,6 @@
 # See license.txt
 
+import json
 import unittest
 from unittest.mock import patch
 
@@ -2194,6 +2195,87 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertEqual([inv.name for inv in result["invoices"]], ["PINV-OK"])
         self.assertEqual(result["invoices"][0].cost_center, "CC-1")
 
+    def test_get_open_invoices_for_customer_outgoing_lists_only_credit_notes(self):
+        row = self._FakeRow(name="ROW-CUST-REFUND", iban="DE16")
+        row.party_type = "Customer"
+        row.party = "CUST-1"
+        row.richtung = "Ausgang"
+        row.betrag = 125.0
+        doc = self._FakeDoc("IMP-CUST-REFUND", [row])
+        credits = [
+            frappe._dict(
+                name="SINV-CREDIT",
+                outstanding_amount=-125.0,
+                posting_date="2026-05-05",
+            ),
+        ]
+
+        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+             patch.object(bi.frappe, "has_permission", return_value=True), \
+             patch.object(bi.frappe, "get_all", return_value=credits) as get_all:
+            result = bi.get_open_invoices_for_row("IMP-CUST-REFUND", "ROW-CUST-REFUND")
+
+        self.assertEqual(result["allocation_mode"], "customer_refund")
+        self.assertEqual(result["invoice_doctype"], "Sales Invoice")
+        self.assertEqual(result["invoices"][0].outstanding_amount, -125.0)
+        self.assertEqual(result["invoices"][0].allocatable_amount, 125.0)
+        self.assertEqual(
+            get_all.call_args.kwargs["filters"]["outstanding_amount"],
+            ["<", -0.001],
+        )
+
+    def test_manually_reconcile_customer_refund_uses_credit_note(self):
+        import json as _json
+
+        row = self._FakeRow(name="ROW-CUST-REFUND", iban="DE16")
+        row.party_type = "Customer"
+        row.party = "CUST-1"
+        row.richtung = "Ausgang"
+        row.betrag = 100.0
+        row.db_set = lambda fieldname, value: setattr(row, fieldname, value)
+        bt = frappe._dict(name="BT-CUST-REFUND")
+        pe = frappe._dict(name="PE-CUST-REFUND")
+        invoice = frappe._dict(
+            name="SINV-CREDIT",
+            outstanding_amount=-100.0,
+            posting_date="2026-05-05",
+        )
+        payload = _json.dumps([{"name": "SINV-CREDIT", "allocated_amount": 100.0}])
+
+        with patch.object(
+            bi,
+            "_row_with_unreconciled_bt",
+            return_value=(self._FakeDoc("IMP-CUST-REFUND", [row]), row, bt),
+        ), patch.object(
+            bi.frappe.db,
+            "get_value",
+            return_value=invoice,
+        ), patch(
+            "hausverwaltung.hausverwaltung.utils.payment_auto_match.create_payment_entry_for_invoices",
+            return_value=pe,
+        ) as create_pe, patch(
+            "hausverwaltung.hausverwaltung.utils.payment_auto_match.reconcile_created_voucher_or_rollback",
+        ) as reconcile, patch.object(
+            bi,
+            "_recompute_doc_status",
+        ), patch.object(
+            bi,
+            "_refresh_and_persist_saldo",
+        ):
+            result = bi.manually_reconcile_row(
+                "IMP-CUST-REFUND",
+                "ROW-CUST-REFUND",
+                payload,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["payment_entry"], "PE-CUST-REFUND")
+        self.assertEqual(create_pe.call_args.kwargs["invoices"][0].outstanding_amount, -100.0)
+        self.assertEqual(create_pe.call_args.kwargs["invoices"][0].allocated_amount, 100.0)
+        self.assertFalse(create_pe.call_args.kwargs["leftover_as_advance"])
+        reconcile.assert_called_once_with(bt, "Payment Entry", "PE-CUST-REFUND", 100.0)
+        self.assertIn("Guthaben ausgezahlt", row.auto_match_message)
+
     def test_manually_reconcile_row_rejects_supplier_invoice_from_other_cost_center(self):
         row = self._FakeRow(name="ROW-INV-CC", iban="DE17")
         row.party_type = "Supplier"
@@ -3643,6 +3725,41 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         self._track(invoice)
         return invoice.name
 
+    def _make_sales_credit_note(
+        self,
+        *,
+        customer,
+        posting_date,
+        amount,
+        item_code="Betriebskosten",
+    ):
+        credit_note = frappe.get_doc({
+            "doctype": "Sales Invoice",
+            "company": self.company,
+            "customer": customer,
+            "is_return": 1,
+            "set_posting_time": 1,
+            "posting_date": posting_date,
+            "due_date": posting_date,
+            "currency": "EUR",
+            "debit_to": self.receivable_account,
+            "items": [
+                {
+                    "item_code": item_code,
+                    "description": "BK-Guthaben Integrationstest",
+                    "qty": -1,
+                    "rate": amount,
+                    "income_account": self.income_account,
+                    "cost_center": self.cost_center,
+                }
+            ],
+            "remarks": "[TYPE:BK Guthaben] 05/2026",
+        })
+        credit_note.insert(ignore_permissions=True)
+        credit_note.submit()
+        self._track(credit_note)
+        return credit_note.name
+
     def _make_file(self):
         file_doc = save_file(
             f"hv-bankimport-{self.suffix}.csv",
@@ -3739,6 +3856,67 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         self.assertEqual(bt.status, "Unreconciled")
         self.assertEqual(row.row_status, "success")
         self.assertEqual(row.reference, row.bank_transaction)
+
+    def test_real_customer_refund_reconciles_credit_note_and_bank_transaction(self):
+        iban = self._valid_test_iban(91)
+        customer = self._make_customer("BK Guthaben", iban)
+        credit_note = self._make_sales_credit_note(
+            customer=customer,
+            posting_date="2026-05-01",
+            amount=125.0,
+        )
+        self.assertEqual(
+            flt(frappe.db.get_value("Sales Invoice", credit_note, "outstanding_amount")),
+            -125.0,
+        )
+
+        doc = self._make_import([
+            self._neutral_row(
+                buchungstag="2026-05-08",
+                betrag=125.0,
+                richtung="Ausgang",
+                iban=iban,
+                auftraggeber="BK Guthaben Mieter",
+                verwendungszweck="Auszahlung BK Guthaben",
+                party_type="Customer",
+                party=customer,
+            ),
+        ])
+        row = doc.rows[0]
+
+        create_result = bi.create_bank_transaction_for_row(doc.name, row.name)
+        self.assertEqual(create_result["errors"], [])
+        bank_transaction = create_result["created"][0]
+        self.created_docs.append(("Bank Transaction", bank_transaction))
+
+        candidates = bi.get_open_invoices_for_row(doc.name, row.name)
+        self.assertEqual(candidates["allocation_mode"], "customer_refund")
+        self.assertEqual([item.name for item in candidates["invoices"]], [credit_note])
+        self.assertEqual(candidates["invoices"][0].allocatable_amount, 125.0)
+
+        result = bi.manually_reconcile_row(
+            doc.name,
+            row.name,
+            json.dumps([{"name": credit_note, "allocated_amount": 125.0}]),
+        )
+        self.created_docs.append(("Payment Entry", result["payment_entry"]))
+
+        payment = frappe.get_doc("Payment Entry", result["payment_entry"])
+        self.assertEqual(payment.docstatus, 1)
+        self.assertEqual(payment.payment_type, "Pay")
+        self.assertEqual(payment.party_type, "Customer")
+        self.assertEqual(payment.party, customer)
+        self.assertEqual(len(payment.references), 1)
+        self.assertEqual(payment.references[0].reference_name, credit_note)
+        self.assertEqual(flt(payment.references[0].allocated_amount), -125.0)
+        self.assertEqual(
+            flt(frappe.db.get_value("Sales Invoice", credit_note, "outstanding_amount")),
+            0.0,
+        )
+        self.assertEqual(
+            frappe.db.get_value("Bank Transaction", bank_transaction, "status"),
+            "Reconciled",
+        )
 
     def test_real_delete_import_blocks_without_cascade_when_import_owns_bank_transaction(self):
         doc = self._make_import([self._neutral_row(betrag=71.9)])

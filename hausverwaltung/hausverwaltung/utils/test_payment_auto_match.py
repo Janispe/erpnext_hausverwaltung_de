@@ -281,13 +281,17 @@ class TestCreatePaymentEntryForInvoices(unittest.TestCase):
 
 			self.assertIn("Auswahl summiert", throw.call_args[0][0])
 
-	def test_customer_invoice_rejects_bank_withdrawal(self):
-		with self.assertRaisesRegex(frappe.ValidationError, "Kundenrechnung"):
-			self._call_create_payment_entry(
-				invoices=[frappe._dict(name="SINV-A", outstanding_amount=100.0)],
-				target_amount=100.0,
-				direction="out",
-			)
+	def test_customer_credit_note_supports_bank_withdrawal(self):
+		pe = self._call_create_payment_entry(
+			invoices=[frappe._dict(name="SINV-CREDIT", outstanding_amount=-100.0)],
+			target_amount=100.0,
+			direction="out",
+		)
+
+		self.assertEqual(pe.payment_type, "Pay")
+		self.assertEqual(pe.paid_from, "BANK-1")
+		self.assertEqual(pe.paid_to, "RECEIVABLE-1")
+		self.assertEqual(pe.references[0]["allocated_amount"], -100.0)
 
 	def test_supplier_refund_creates_receive_payment_entry(self):
 		bt = frappe._dict(
@@ -636,6 +640,49 @@ class TestCurrencyAndCurrentInvoiceSafety(unittest.TestCase):
 				company="COMP-1",
 				party="CUST-1",
 				company_currency="EUR",
+			)
+
+	def test_selected_customer_credit_note_is_locked_with_negative_outstanding(self):
+		current = frappe._dict(
+			name="SINV-CREDIT",
+			docstatus=1,
+			outstanding_amount=-75,
+			posting_date="2026-05-01",
+			company="COMP-1",
+			customer="CUST-1",
+			currency="EUR",
+			conversion_rate=1,
+			debit_to="RECEIVABLE-1",
+		)
+		with patch.object(pam.frappe, "get_doc", return_value=current), \
+			patch.object(pam, "_require_company_currency_account"):
+			result = pam._lock_and_validate_invoices(
+				invoices=[frappe._dict(name="SINV-CREDIT", allocated_amount=50)],
+				invoice_doctype="Sales Invoice",
+				company="COMP-1",
+				party="CUST-1",
+				company_currency="EUR",
+				credit_notes=True,
+			)
+
+		self.assertEqual(result[0].outstanding_amount, -75)
+		self.assertEqual(result[0].allocated_amount, 50)
+
+	def test_positive_customer_invoice_is_rejected_for_refund(self):
+		current = frappe._dict(
+			name="SINV-POSITIVE",
+			docstatus=1,
+			outstanding_amount=75,
+		)
+		with patch.object(pam.frappe, "get_doc", return_value=current), \
+			self.assertRaisesRegex(frappe.ValidationError, "kein aktuelles auszahlbares Guthaben"):
+			pam._lock_and_validate_invoices(
+				invoices=[frappe._dict(name="SINV-POSITIVE", allocated_amount=75)],
+				invoice_doctype="Sales Invoice",
+				company="COMP-1",
+				party="CUST-1",
+				company_currency="EUR",
+				credit_notes=True,
 			)
 
 	def test_locked_supplier_invoice_must_match_bank_property_cost_center(self):

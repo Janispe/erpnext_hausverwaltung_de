@@ -144,6 +144,7 @@ def _lock_and_validate_invoices(
 	party: str,
 	company_currency: str,
 	expected_cost_center: str | None = None,
+	credit_notes: bool = False,
 ) -> list:
 	"""Lock selected invoices and return their current outstanding amounts.
 
@@ -151,6 +152,7 @@ def _lock_and_validate_invoices(
 	property-specific Cost Center resolved from the locked bank account.  The
 	invoice items are locked and checked here as well, so neither a stale
 	candidate list nor the split endpoint can cross-pay another property.
+	``credit_notes`` switches the expected sign to a negative outstanding amount.
 	"""
 	party_field, party_account_field = _invoice_party_field(invoice_doctype)
 	requested = {}
@@ -166,8 +168,15 @@ def _lock_and_validate_invoices(
 			invoice = frappe.get_doc(invoice_doctype, name, for_update=True)
 		except frappe.DoesNotExistError:
 			frappe.throw(f"Rechnung {name} wurde nicht gefunden.")
-		if int(invoice.docstatus or 0) != 1 or flt(invoice.outstanding_amount) <= 0.001:
-			frappe.throw(f"Rechnung {name} hat keinen aktuellen offenen Betrag mehr.")
+		outstanding = flt(invoice.outstanding_amount)
+		is_open = outstanding < -0.001 if credit_notes else outstanding > 0.001
+		if int(invoice.docstatus or 0) != 1 or not is_open:
+			label = (
+				"kein aktuelles auszahlbares Guthaben"
+				if credit_notes
+				else "keinen aktuellen offenen Betrag"
+			)
+			frappe.throw(f"Rechnung {name} hat {label} mehr.")
 		if invoice.company != company:
 			frappe.throw(f"Rechnung {name} gehört nicht zur Company {company}.")
 		if invoice.get(party_field) != party:
@@ -206,7 +215,7 @@ def _lock_and_validate_invoices(
 		original = requested[name]
 		current_by_name[name] = frappe._dict(
 			name=name,
-			outstanding_amount=flt(invoice.outstanding_amount),
+			outstanding_amount=outstanding,
 			posting_date=invoice.posting_date,
 			allocated_amount=_get_value(original, "allocated_amount"),
 			wohnung=invoice.get("wohnung"),
@@ -1217,6 +1226,8 @@ def create_payment_entry_for_invoices(
 	Args:
 	    bt: Bank Transaction Document.
 	    invoices: Iterable von Dicts/Records mit ``name`` und ``outstanding_amount``.
+	        Negative Sales-Invoice-Outstandings werden bei einem Customer-Ausgang
+	        als Guthabenauszahlung mit negativer Allocation verarbeitet.
 	    invoice_doctype: ``Sales Invoice`` oder ``Purchase Invoice``.
 	    target_amount: Komplett-Betrag der Bank Transaction (>= sum(allocations)).
 	    leftover_as_advance: Wenn True und ``target_amount`` > Allocation-Summe,
@@ -1242,17 +1253,21 @@ def create_payment_entry_for_invoices(
 	company_currency = _get_company_currency(company)
 	shape = _bank_transaction_shape(bt)
 
+	is_customer_refund = (
+		bt.party_type == "Customer"
+		and invoice_doctype == "Sales Invoice"
+		and shape.direction == "out"
+	)
 	if bt.party_type == "Customer" and invoice_doctype == "Sales Invoice":
-		if shape.direction != "in":
-			frappe.throw(
-				"Eine positive Kundenrechnung kann nur mit einem Zahlungseingang "
-				"ausgeglichen werden. Für eine Kundenerstattung bitte eine "
-				"eigenständige Auszahlung verwenden."
-			)
-		payment_type = "Receive"
 		party_account = get_party_account("Customer", bt.party, company)
-		paid_from = party_account
-		paid_to = bank_account_doc.account
+		if is_customer_refund:
+			payment_type = "Pay"
+			paid_from = bank_account_doc.account
+			paid_to = party_account
+		else:
+			payment_type = "Receive"
+			paid_from = party_account
+			paid_to = bank_account_doc.account
 	elif bt.party_type == "Supplier" and invoice_doctype == "Purchase Invoice":
 		if shape.direction != "out":
 			frappe.throw(
@@ -1288,6 +1303,7 @@ def create_payment_entry_for_invoices(
 		party=bt.party,
 		company_currency=company_currency,
 		expected_cost_center=expected_cost_center,
+		credit_notes=is_customer_refund,
 	)
 	if not _amounts_equal(target_amount, shape.amount):
 		frappe.throw(
@@ -1318,9 +1334,13 @@ def create_payment_entry_for_invoices(
 			"reference_date": bt.date,
 		}
 	)
-	custom_remarks = _build_customer_payment_remarks(
-		invoices=invoices,
-		invoice_doctype=invoice_doctype,
+	custom_remarks = (
+		"Auszahlung Guthaben: " + ", ".join(inv.name for inv in invoices)
+		if is_customer_refund
+		else _build_customer_payment_remarks(
+			invoices=invoices,
+			invoice_doctype=invoice_doctype,
+		)
 	)
 	if custom_remarks:
 		if pe.meta.get_field("custom_remarks"):
@@ -1341,16 +1361,17 @@ def create_payment_entry_for_invoices(
 			return inv.get(key) if hasattr(inv, "get") else getattr(inv, key, None)
 
 		outstanding = flt(_g("outstanding_amount"))
+		available = abs(outstanding) if is_customer_refund else outstanding
 		inv_name = _g("name")
 		explicit = _g("allocated_amount")
 		if explicit is not None:
 			explicit = flt(explicit)
 			if explicit <= 0:
 				frappe.throw(f"Zuweisung für {inv_name} muss größer als 0 € sein.")
-			if explicit > outstanding + _TOLERANCE:
+			if explicit > available + _TOLERANCE:
 				frappe.throw(
 					f"Zuweisung für {inv_name} ({explicit:.2f} €) übersteigt "
-					f"offenen Betrag ({outstanding:.2f} €)."
+					f"offenen Betrag ({available:.2f} €)."
 				)
 			if explicit > remaining + _TOLERANCE:
 				frappe.throw(
@@ -1359,7 +1380,7 @@ def create_payment_entry_for_invoices(
 				)
 			alloc = explicit
 		else:
-			alloc = outstanding
+			alloc = available
 		if alloc <= 0:
 			continue
 		pe.append(
@@ -1367,7 +1388,7 @@ def create_payment_entry_for_invoices(
 			{
 				"reference_doctype": invoice_doctype,
 				"reference_name": inv_name,
-				"allocated_amount": alloc,
+				"allocated_amount": -alloc if is_customer_refund else alloc,
 			},
 		)
 		remaining -= alloc
@@ -1382,6 +1403,12 @@ def create_payment_entry_for_invoices(
 		)
 
 	leftover = flt(target_amount) - flt(allocated_total)
+	if is_customer_refund and leftover > _TOLERANCE:
+		frappe.throw(
+			f"Ausgewählte Guthaben summieren auf {allocated_total:.2f} €, "
+			f"Bank-Betrag ist {target_amount:.2f} €. Die Auszahlung muss "
+			"vollständig einem oder mehreren Guthaben zugeordnet werden."
+		)
 	if leftover > _TOLERANCE and not leftover_as_advance:
 		frappe.throw(
 			f"Auswahl summiert auf {allocated_total:.2f} €, Bank-Betrag ist "
