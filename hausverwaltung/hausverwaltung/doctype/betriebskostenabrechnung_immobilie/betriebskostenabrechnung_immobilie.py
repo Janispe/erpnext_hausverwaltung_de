@@ -318,6 +318,7 @@ class BetriebskostenabrechnungImmobilie(Document):
 	def _validate_current_child_snapshot(self) -> None:
 		"""Rebuild identities and costs immediately before financial submission."""
 		from hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen import (
+			_abrechenbare_bk_segmente,
 			_build_bk_segment_costs,
 			_mietvertrag_segmente_fuer_zeitraum,
 			_quantize_money,
@@ -363,11 +364,6 @@ class BetriebskostenabrechnungImmobilie(Document):
 			for row in all_children
 			if cint(_row_value(row, "docstatus")) < 2
 		]
-		if not children:
-			frappe.throw(
-				"BK-Submit abgebrochen: Es existiert keine Mieter-Abrechnung.",
-				frappe.ValidationError,
-			)
 		non_drafts = [
 			cstr(_row_value(row, "name"))
 			for row in children
@@ -415,6 +411,7 @@ class BetriebskostenabrechnungImmobilie(Document):
 				wohnung,
 				cstr(self.von),
 				cstr(self.bis),
+				lock_regelungen=True,
 			)
 			if not segments:
 				frappe.throw(
@@ -435,7 +432,10 @@ class BetriebskostenabrechnungImmobilie(Document):
 				posten=posten,
 				segments=segments,
 			)
+			abrechenbare_segments = _abrechenbare_bk_segmente(segments)
 			for index, segment in enumerate(segments):
+				if segment not in abrechenbare_segments:
+					continue
 				customer = cstr(segment.get("kunde") or "").strip()
 				if not customer:
 					frappe.throw(
@@ -493,20 +493,22 @@ class BetriebskostenabrechnungImmobilie(Document):
 			)
 
 		child_names = [cstr(_row_value(row, "name")) for row in children]
-		placeholders = ", ".join(["%s"] * len(child_names))
-		cost_rows = frappe.db.sql(
-			f"""
-			SELECT parent, betriebskostenart, bezeichnung, betrag
-			FROM `tabAbrechnungsposten`
-			WHERE parenttype = 'Betriebskostenabrechnung Mieter'
-			  AND parentfield = 'abrechnung'
-			  AND parent IN ({placeholders})
-			ORDER BY parent, idx, name
-			FOR UPDATE
-			""",
-			tuple(child_names),
-			as_dict=True,
-		)
+		cost_rows = []
+		if child_names:
+			placeholders = ", ".join(["%s"] * len(child_names))
+			cost_rows = frappe.db.sql(
+				f"""
+				SELECT parent, betriebskostenart, bezeichnung, betrag
+				FROM `tabAbrechnungsposten`
+				WHERE parenttype = 'Betriebskostenabrechnung Mieter'
+				  AND parentfield = 'abrechnung'
+				  AND parent IN ({placeholders})
+				ORDER BY parent, idx, name
+				FOR UPDATE
+				""",
+				tuple(child_names),
+				as_dict=True,
+			)
 		child_identity = {
 			name: identity for identity, name in actual_identities.items()
 		}
@@ -555,6 +557,7 @@ class BetriebskostenabrechnungImmobilie(Document):
 				frappe.ValidationError,
 			)
 		self.flags._validated_bk_submit_children = tuple(child_names)
+		self.flags._validated_bk_submit_snapshot = True
 
 	def before_submit(self) -> None:
 		self._validate_current_child_snapshot()
@@ -584,18 +587,23 @@ class BetriebskostenabrechnungImmobilie(Document):
 		Offene BK-Vorauszahlungen werden nur auf ausdrücklichen Wunsch des
 		Benutzers per Journal Entry mit dem Ausgleichsbeleg zusammengeführt.
 		"""
-		children = list(
+		validated_children = getattr(
+			getattr(self, "flags", object()),
+			"_validated_bk_submit_children",
+			None,
+		)
+		validated_snapshot = bool(
 			getattr(
 				getattr(self, "flags", object()),
-				"_validated_bk_submit_children",
-				(),
+				"_validated_bk_submit_snapshot",
+				False,
 			)
-			or ()
 		)
-		if not children:
+		children = list(validated_children or ())
+		if not validated_snapshot and not children:
 			frappe.throw(
-				"BK-Submit abgebrochen: Es liegt keine in before_submit "
-				"validierte Child-Menge vor.",
+				"BK-Submit abgebrochen: Es liegt kein in before_submit "
+				"validierter Abrechnungsstand vor.",
 				frappe.ValidationError,
 			)
 		current_rows = frappe.db.sql(
@@ -677,7 +685,7 @@ class BetriebskostenabrechnungImmobilie(Document):
 		# Vorauszahlungen aggregieren aus Mieter-Abrechnungen
 		children = frappe.get_all(
 			"Betriebskostenabrechnung Mieter",
-			filters={"immobilien_abrechnung": self.name},
+			filters={"immobilien_abrechnung": self.name, "docstatus": ("<", 2)},
 			fields=["name", "vorrauszahlungen"],
 		)
 		total_pre = 0.0
@@ -686,8 +694,30 @@ class BetriebskostenabrechnungImmobilie(Document):
 				total_pre += float(r.get("vorrauszahlungen") or 0)
 			except Exception:
 				continue
+		child_names = [r.get("name") for r in children or [] if r.get("name")]
+		total_tenant_costs = 0.0
+		if child_names:
+			rows = frappe.db.sql(
+				"""
+				SELECT COALESCE(SUM(betrag), 0) AS total
+				FROM `tabAbrechnungsposten`
+				WHERE parenttype = 'Betriebskostenabrechnung Mieter'
+				  AND parentfield = 'abrechnung'
+				  AND parent IN %(parents)s
+				""",
+				{"parents": tuple(child_names)},
+				as_dict=True,
+			)
+			if rows:
+				total_tenant_costs = float(rows[0].get("total") or 0)
 		self.gesamt_vorauszahlungen = round(total_pre, 2)
-		self.gesamt_differenz = round(self.gesamtkosten - self.gesamt_vorauszahlungen, 2)
+		self.gesamt_mieteranteile = round(total_tenant_costs, 2)
+		owner_share = round(self.gesamtkosten - self.gesamt_mieteranteile, 2)
+		self.gesamt_vermieteranteil = 0.0 if abs(owner_share) < 0.01 else owner_share
+		self.gesamt_differenz = round(
+			self.gesamt_mieteranteile - self.gesamt_vorauszahlungen,
+			2,
+		)
 
 		# Zähler-Summen: periodengenauer Verbrauch je ZählerTyp.
 		self.set("zaehler_summen", [])

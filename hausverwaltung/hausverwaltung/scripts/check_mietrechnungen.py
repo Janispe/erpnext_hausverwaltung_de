@@ -27,6 +27,10 @@ from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
 	_staffelbetrag,
 )
 from hausverwaltung.hausverwaltung.utils.income_accounts import get_hv_income_accounts
+from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
+	BK_REGELUNG_VORAUSZAHLUNG,
+	get_bk_regelung,
+)
 
 TYP_PARENTFIELD = {
 	"Miete": "miete",
@@ -39,6 +43,8 @@ TYP_PARENTFIELD = {
 def _expected_betrag(mv_row, typ: str, anker: date) -> float:
 	if typ == "Miete":
 		return _miete_betrag_fuer_monat(mv_row, anker)
+	if typ == "Betriebskosten" and get_bk_regelung(mv_row.name, anker) != BK_REGELUNG_VORAUSZAHLUNG:
+		return 0.0
 	parentfield = TYP_PARENTFIELD[typ]
 	return _staffelbetrag(mv_row.name, parentfield, anker)
 

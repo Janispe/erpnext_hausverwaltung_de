@@ -6,6 +6,8 @@ const toggle_summary_fields = (frm) => {
 		"section_break_summary",
 		"kosten_pro_art",
 		"gesamtkosten",
+		"gesamt_mieteranteile",
+		"gesamt_vermieteranteil",
 		"gesamt_vorauszahlungen",
 		"gesamt_differenz",
 		"zaehler_summen",
@@ -442,12 +444,15 @@ const load_mieter_abrechnungen = (frm, attempt = 1) => {
 					return acc + (parseFloat(r.betrag || 0) || 0);
 				}, 0);
 			}
-			let vermieter_anteil = Math.round((total_kosten - sum_anteil) * 100) / 100;
+			let vermieter_anteil = parseFloat(frm.doc.gesamt_vermieteranteil || 0);
+			if (!frm.doc.gesamt_vermieteranteil && total_kosten) {
+				vermieter_anteil = Math.round((total_kosten - sum_anteil) * 100) / 100;
+			}
 			if (vermieter_anteil > -0.01 && vermieter_anteil < 0.01) {
 				vermieter_anteil = 0;
 			}
 			const owner_row = frm.add_child("mieter_abrechnungen");
-			owner_row.status = __("Vermieter (Leerstand)");
+			owner_row.status = __("Vermieter (Pauschale/Leerstand)");
 			owner_row.anteil = vermieter_anteil;
 		}
 		frm.refresh_field("mieter_abrechnungen");

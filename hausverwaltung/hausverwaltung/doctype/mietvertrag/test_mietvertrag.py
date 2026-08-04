@@ -4,9 +4,54 @@ from unittest.mock import patch
 import frappe
 
 from hausverwaltung.hausverwaltung.doctype.mietvertrag import mietvertrag
+from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
+	BK_REGELUNG_PAUSCHALE,
+	BK_REGELUNG_VORAUSZAHLUNG,
+)
 
 
 class TestMietvertrag(unittest.TestCase):
+	def _regelungs_doc(self, rules, bk_rows=None):
+		doc = frappe._dict(
+			von="2026-01-01",
+			bis="2026-12-31",
+			betriebskostenregelungen=[frappe._dict(row) for row in rules],
+			betriebskosten=[frappe._dict(row) for row in (bk_rows or [])],
+		)
+		doc._staffelbetrag_am = mietvertrag.Mietvertrag._staffelbetrag_am.__get__(doc)
+		return doc
+
+	def test_bk_regelung_accepts_gross_to_advance_switch(self):
+		doc = self._regelungs_doc(
+			[
+				{"gueltig_von": "2026-01-01", "abrechnungsart": BK_REGELUNG_PAUSCHALE},
+				{"gueltig_von": "2026-07-01", "abrechnungsart": BK_REGELUNG_VORAUSZAHLUNG},
+			],
+			[{"von": "2026-07-01", "miete": 150}],
+		)
+
+		mietvertrag.Mietvertrag._validate_betriebskostenregelungen(doc)
+
+	def test_bk_regelung_rejects_advance_amount_during_flat_rate(self):
+		doc = self._regelungs_doc(
+			[{"gueltig_von": "2026-01-01", "abrechnungsart": BK_REGELUNG_PAUSCHALE}],
+			[{"von": "2026-01-01", "miete": 150}],
+		)
+
+		with self.assertRaisesRegex(frappe.ValidationError, "keine BK-Vorauszahlung"):
+			mietvertrag.Mietvertrag._validate_betriebskostenregelungen(doc)
+
+	def test_bk_regelung_rejects_midmonth_change(self):
+		doc = self._regelungs_doc(
+			[
+				{"gueltig_von": "2026-01-01", "abrechnungsart": BK_REGELUNG_PAUSCHALE},
+				{"gueltig_von": "2026-07-15", "abrechnungsart": BK_REGELUNG_VORAUSZAHLUNG},
+			]
+		)
+
+		with self.assertRaisesRegex(frappe.ValidationError, "Monatsersten"):
+			mietvertrag.Mietvertrag._validate_betriebskostenregelungen(doc)
+
 	def test_sanitize_name_part_removes_control_separators(self):
 		value = mietvertrag._sanitize_name_part("G1\t| VH\t| EG links")
 

@@ -4,6 +4,12 @@ from frappe.utils import add_days, get_first_day, get_last_day, add_months, now_
 from datetime import datetime, date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
+from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
+    BK_REGELUNG_PAUSCHALE,
+    BK_REGELUNG_VORAUSZAHLUNG,
+    get_bk_regelung,
+)
+
 
 def _parse_monat_jahr(monat: str | int | None, jahr: str | int | None) -> date:
     """Ermittle das Ziel-Datum als erster Tag im Monat."""
@@ -34,6 +40,22 @@ def _staffelbetrag(mv_name: str, parentfield: str, zum: date) -> float:
         return float(betrag) if betrag else 0.0
     except Exception:
         return 0.0
+
+
+def _bk_regelung_und_betrag_fuer_monat(
+    mv_name: str,
+    anchor: date,
+    *,
+    lock: bool = False,
+) -> tuple[str, float]:
+    """Liefere Regelung und separat zu fakturierende BK-Vorauszahlung."""
+    regelung = get_bk_regelung(mv_name, anchor, lock=lock)
+    betrag = (
+        _staffelbetrag(mv_name, "betriebskosten", anchor)
+        if regelung == BK_REGELUNG_VORAUSZAHLUNG
+        else 0.0
+    )
+    return regelung, betrag
 
 
 def _month_window(anchor: date) -> tuple[date, date, int]:
@@ -1022,7 +1044,11 @@ def generate_miet_und_bk_rechnungen(
             # Beträge je Staffeltabelle holen
             # Miete: neue Logik (Monatlich pro‑rata, Gesamter Zeitraum voll)
             betrag_miete = _miete_betrag_fuer_monat(v, datum)
-            betrag_bk = _staffelbetrag(v.name, "betriebskosten", datum)
+            bk_regelung, betrag_bk = _bk_regelung_und_betrag_fuer_monat(
+                v.name,
+                datum,
+                lock=True,
+            )
             betrag_heiz = _staffelbetrag(v.name, "heizkosten", datum)
 
             # Mietabrechnungs-ID koppelt die getrennten SIs (Miete/BK/HK/UMZ)
@@ -1063,7 +1089,12 @@ def generate_miet_und_bk_rechnungen(
                 )
             else:
                 remark = _build_invoice_remark("Miete", monat_str)
-                desc = f"Nettokaltmiete {monat_str} Wohnung {v.wohnung}"
+                miet_label = (
+                    "Bruttokaltmiete/Inklusivmiete"
+                    if bk_regelung == BK_REGELUNG_PAUSCHALE
+                    else "Nettokaltmiete"
+                )
+                desc = f"{miet_label} {monat_str} Wohnung {v.wohnung}"
                 sinv_name = _create_invoice(
                     kunde,
                     datum,
@@ -1092,6 +1123,15 @@ def generate_miet_und_bk_rechnungen(
             # Betriebskosten-Vorauszahlung
             if only_typ and only_typ != "Betriebskosten":
                 pass
+            elif bk_regelung != BK_REGELUNG_VORAUSZAHLUNG:
+                add_skip(
+                    reason="bk_nicht_abrechenbar",
+                    mietvertrag=v.name,
+                    wohnung=v.wohnung,
+                    typ="Betriebskosten",
+                    betrag=0.0,
+                    message=f"{v.name}: keine BK-Vorauszahlung ({bk_regelung})",
+                )
             elif betrag_bk <= 0:
                 add_skip(
                     reason="betrag_0",

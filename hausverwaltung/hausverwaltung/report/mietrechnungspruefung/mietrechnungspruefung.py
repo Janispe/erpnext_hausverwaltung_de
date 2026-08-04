@@ -7,6 +7,11 @@ from frappe import _
 from frappe.utils import add_days, add_months, cint, flt, get_first_day, get_last_day, getdate
 
 from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
+from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
+    BK_REGELUNG_VORAUSZAHLUNG,
+    get_bk_regelung_from_rows,
+    get_bk_regelungen_for_contracts,
+)
 
 INVOICE_TYPES = ("Miete", "Betriebskosten", "Heizkosten")
 ITEM_CODE_BY_TYP = {
@@ -42,6 +47,7 @@ def execute(filters=None):
 
     contracts = _get_contracts(period_start=period_start, period_end=period_end)
     staffel_by_contract = _get_staffelmieten_by_contract([c.name for c in contracts])
+    bk_regelungen_by_contract = get_bk_regelungen_for_contracts([c.name for c in contracts])
 
     rows = []
     for month_start in month_starts:
@@ -54,7 +60,12 @@ def execute(filters=None):
         month_label = month_start.strftime("%Y-%m")
 
         for contract in active_contracts:
-            expected = _expected_amounts_for_month(contract, month_start, staffel_by_contract.get(contract.name, {}))
+            expected = _expected_amounts_for_month(
+                contract,
+                month_start,
+                staffel_by_contract.get(contract.name, {}),
+                bk_regelungen_by_contract.get(contract.name, []),
+            )
 
             for typ in INVOICE_TYPES:
                 expected_amount = flt(expected.get(typ) or 0)
@@ -171,14 +182,24 @@ def _get_staffelmieten_by_contract(contract_names: list[str]) -> dict[str, dict[
     return out
 
 
-def _expected_amounts_for_month(contract: frappe._dict, month_start: date, staffel: dict[str, list[frappe._dict]]) -> dict[str, float]:
+def _expected_amounts_for_month(
+    contract: frappe._dict,
+    month_start: date,
+    staffel: dict[str, list[frappe._dict]],
+    bk_regelungen: list[dict] | None = None,
+) -> dict[str, float]:
     miete_rows = staffel.get("miete") or []
     bk_rows = staffel.get("betriebskosten") or []
     hk_rows = staffel.get("heizkosten") or []
 
     return {
         "Miete": _miete_betrag_fuer_monat_from_rows(contract.von, contract.bis, month_start, miete_rows),
-        "Betriebskosten": _staffelbetrag_from_rows(bk_rows, month_start),
+        "Betriebskosten": (
+            _staffelbetrag_from_rows(bk_rows, month_start)
+            if get_bk_regelung_from_rows(bk_regelungen or [], month_start)
+            == BK_REGELUNG_VORAUSZAHLUNG
+            else 0.0
+        ),
         "Heizkosten": _staffelbetrag_from_rows(hk_rows, month_start),
     }
 

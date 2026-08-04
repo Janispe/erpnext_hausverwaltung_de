@@ -13,6 +13,10 @@ from hausverwaltung.hausverwaltung.utils.mieter_name import (
 	pick_preferred_mieter_contact,
 	sanitize_name_part,
 )
+from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
+	BK_REGELUNG_VORAUSZAHLUNG,
+	normalize_bk_regelung,
+)
 
 
 def _row_value(row: object, fieldname: str) -> Any:
@@ -902,6 +906,13 @@ class BetriebskostenabrechnungMieter(Document):
 		self.set_onload("can_manual_cancel", self._can_manual_cancel())
 
 	def validate(self):
+		self.abrechnungsart = normalize_bk_regelung(
+			getattr(self, "abrechnungsart", None)
+		)
+		if self.abrechnungsart != BK_REGELUNG_VORAUSZAHLUNG:
+			frappe.throw(
+				"Eine Mieter-BK-Abrechnung darf nur für Vorauszahlungszeiträume erstellt werden."
+			)
 		if self.mietvertrag:
 			mv = frappe.db.get_value(
 				"Mietvertrag",

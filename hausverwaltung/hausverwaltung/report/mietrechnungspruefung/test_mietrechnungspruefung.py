@@ -8,6 +8,25 @@ from hausverwaltung.hausverwaltung.report.mietrechnungspruefung import mietrechn
 
 
 class TestMietrechnungspruefung(unittest.TestCase):
+    def test_flat_rate_month_expects_no_bk_invoice(self):
+        expected = report._expected_amounts_for_month(
+            frappe._dict(von=date(2026, 1, 1), bis=None),
+            date(2026, 5, 1),
+            {
+                "miete": [],
+                "betriebskosten": [frappe._dict(von=date(2026, 1, 1), miete=150)],
+                "heizkosten": [],
+            },
+            [
+                {
+                    "gueltig_von": date(2026, 1, 1),
+                    "abrechnungsart": "Pauschale/Inklusivmiete",
+                }
+            ],
+        )
+
+        self.assertEqual(expected["Betriebskosten"], 0.0)
+
     def test_missing_miete_marks_fehlt(self):
         status, delta, _ = report._evaluate_row(expected_amount=500.0, actual_amount=0.0, has_invoice=False, tolerance=0.01)
         self.assertEqual(status, "FEHLT")

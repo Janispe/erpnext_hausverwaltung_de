@@ -950,6 +950,8 @@ class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 				"name": "MV-1",
 				"kunde": "CUST-1",
 				"wohnung": "WHG-1",
+				"von": None,
+				"bis": None,
 			},
 		)
 		get_doc.assert_called_once_with(
@@ -1150,7 +1152,7 @@ class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 
 		doc.db_set.assert_called_once_with({"sales_invoice": "SI-NEW"})
 
-	def test_settlement_uses_header_period_for_exact_contract_prepayments(self):
+	def test_settlement_uses_segment_months_for_exact_contract_prepayments(self):
 		doc = frappe._dict({
 			"name": "BKA-SEGMENT",
 			"wohnung": "WHG-1",
@@ -1165,6 +1167,13 @@ class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 		})
 		doc.add_comment = MagicMock()
 		doc.db_set = MagicMock()
+		doc._locked_mietvertrag_identity = frappe._dict(
+			name="MV-NEW",
+			kunde="CUST-1",
+			wohnung="WHG-1",
+			von="2025-08-16",
+			bis=None,
+		)
 		head = frappe._dict(
 			von="2025-01-01",
 			bis="2025-12-31",
@@ -1183,7 +1192,7 @@ class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 
 		outstanding.assert_called_once_with(
 			"WHG-1",
-			"2025-01-01",
+			"2025-08-01",
 			"2025-12-31",
 			customer="CUST-1",
 			mietvertrag="MV-NEW",
@@ -1192,6 +1201,8 @@ class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 				"name": "MV-NEW",
 				"kunde": "CUST-1",
 				"wohnung": "WHG-1",
+				"von": "2025-08-16",
+				"bis": None,
 			},
 			lock=True,
 		)

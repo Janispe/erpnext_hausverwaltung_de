@@ -11,6 +11,7 @@
   "bis",
   "mieter",
   "mietvertrag",
+  "abrechnungsart",
   "customer",
   "wohnung",
   "immobilien_abrechnung",
@@ -78,6 +79,13 @@
    "fieldtype": "Link",
    "label": "Mietvertrag",
    "options": "Mietvertrag",
+   "read_only": 1
+  },
+  {
+   "fieldname": "abrechnungsart",
+   "fieldtype": "Select",
+   "label": "BK-Abrechnungsart",
+   "options": "Vorauszahlung\nPauschale/Inklusivmiete\nKeine Umlage",
    "read_only": 1
   },
   {

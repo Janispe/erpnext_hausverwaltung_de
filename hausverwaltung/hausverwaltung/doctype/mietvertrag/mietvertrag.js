@@ -44,7 +44,7 @@ frappe.ui.form.on("Mietvertrag", {
 		console.log("✅ mietvertrag.js wurde geladen");
 
 		update_bruttomiete(frm);
-		rename_staffelmiete_miete_column(frm, "miete", "Nettokaltmiete");
+		rename_staffelmiete_miete_column(frm, "miete", "Mietbetrag");
 		hide_staffelmiete_art_column(frm, "kaution");
 		rename_staffelmiete_miete_column(frm, "kaution", "Betrag");
 		ensure_staffel_highlight_css();
@@ -74,6 +74,7 @@ frappe.ui.form.on("Mietvertrag", {
 		add_mieterkonto_button_from_mietvertrag(frm);
 
 		frm.add_custom_button(__("Staffelmieten sortieren"), async () => {
+			sort_betriebskostenregelungen(frm);
 			sort_staffel_table_by_von(frm, "miete");
 			sort_staffel_table_by_von(frm, "betriebskosten");
 			sort_staffel_table_by_von(frm, "heizkosten");
@@ -81,6 +82,7 @@ frappe.ui.form.on("Mietvertrag", {
 			sort_staffel_table_by_von(frm, "kaution");
 
 			frm.refresh_fields([
+				"betriebskostenregelungen",
 				"miete",
 				"betriebskosten",
 				"heizkosten",
@@ -133,6 +135,12 @@ frappe.ui.form.on("Mietvertrag", {
 	betriebskosten_remove(frm) {
 		update_bruttomiete(frm);
 	},
+	betriebskostenregelungen_add(frm) {
+		update_bruttomiete(frm);
+	},
+	betriebskostenregelungen_remove(frm) {
+		update_bruttomiete(frm);
+	},
 	heizkosten_add(frm) {
 		update_bruttomiete(frm);
 	},
@@ -167,6 +175,15 @@ frappe.ui.form.on("Mietvertrag", {
 	},
 });
 
+frappe.ui.form.on("Betriebskostenregelung", {
+	gueltig_von(frm) {
+		update_bruttomiete(frm);
+	},
+	abrechnungsart(frm) {
+		update_bruttomiete(frm);
+	},
+});
+
 const SOLLSTELLUNG_TYP_BY_STAFFEL_FIELD = {
 	miete: "Miete",
 	betriebskosten: "Betriebskosten",
@@ -189,6 +206,12 @@ function get_staffel_snapshot(frm) {
 	Object.keys(SOLLSTELLUNG_TYP_BY_STAFFEL_FIELD).forEach((fieldname) => {
 		snapshot[fieldname] = canonical_staffel_rows(frm.doc[fieldname]);
 	});
+	snapshot.betriebskostenregelungen = (frm.doc.betriebskostenregelungen || [])
+		.map((row) => ({
+			gueltig_von: row.gueltig_von || "",
+			abrechnungsart: row.abrechnungsart || "Vorauszahlung",
+		}))
+		.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 	return snapshot;
 }
 
@@ -222,6 +245,14 @@ function get_changed_staffel_scope(before, after) {
 		// eines Monats betrifft deshalb den kompletten Prüfmonat.
 		scope[typ] = dates.length ? `${dates[0].slice(0, 7)}-01` : "1900-01-01";
 	});
+	const changedRules = changed_staffel_rows(
+		before.betriebskostenregelungen,
+		after.betriebskostenregelungen
+	);
+	if (changedRules.length) {
+		const dates = changedRules.map((row) => row.gueltig_von).filter(Boolean).sort();
+		scope.Betriebskosten = dates.length ? `${dates[0].slice(0, 7)}-01` : "1900-01-01";
+	}
 	return scope;
 }
 
@@ -460,19 +491,39 @@ function _staffelbetrag_am(rows, stichtagObj) {
 	return flt(bestValue);
 }
 
+function _bk_regelung_am(rows, stichtagObj) {
+	let bestVon = null;
+	let result = "Vorauszahlung";
+	(rows || []).forEach((row) => {
+		if (!row.gueltig_von) return;
+		const vonObj = frappe.datetime.str_to_obj(row.gueltig_von);
+		if (vonObj <= stichtagObj && (bestVon === null || vonObj > bestVon)) {
+			bestVon = vonObj;
+			result = row.abrechnungsart || "Vorauszahlung";
+		}
+	});
+	return result;
+}
+
 function update_bruttomiete(frm) {
 	if (!frm || frm.doctype !== "Mietvertrag") return;
 	if (!frm.doc) return;
 
 	const stichtagObj = _bruttomiete_stichtag_obj(frm);
 	const nettokaltmiete = _staffelbetrag_am(frm.doc.miete, stichtagObj);
-	const betriebskosten = _staffelbetrag_am(frm.doc.betriebskosten, stichtagObj);
+	const bkRegelung = _bk_regelung_am(frm.doc.betriebskostenregelungen, stichtagObj);
+	const betriebskosten = bkRegelung === "Vorauszahlung"
+		? _staffelbetrag_am(frm.doc.betriebskosten, stichtagObj)
+		: 0;
 	const heizkosten = _staffelbetrag_am(frm.doc.heizkosten, stichtagObj);
 	const total =
 		nettokaltmiete +
 		betriebskosten +
 		heizkosten +
 		_staffelbetrag_am(frm.doc.untermietzuschlag, stichtagObj);
+	if (frm.doc.aktuelle_betriebskostenregelung !== bkRegelung) {
+		frm.set_value("aktuelle_betriebskostenregelung", bkRegelung);
+	}
 
 	const changed = [
 		["aktuelle_nettokaltmiete", nettokaltmiete],
@@ -646,6 +697,19 @@ function sort_staffel_table_by_von(frm, tableFieldname) {
 		return av - bv;
 	});
 
+	rows.forEach((row, idx) => {
+		row.idx = idx + 1;
+	});
+}
+
+function sort_betriebskostenregelungen(frm) {
+	const rows = (frm && frm.doc && frm.doc.betriebskostenregelungen) || [];
+	rows.sort((a, b) => {
+		if (!a.gueltig_von && !b.gueltig_von) return 0;
+		if (!a.gueltig_von) return 1;
+		if (!b.gueltig_von) return -1;
+		return frappe.datetime.str_to_obj(a.gueltig_von) - frappe.datetime.str_to_obj(b.gueltig_von);
+	});
 	rows.forEach((row, idx) => {
 		row.idx = idx + 1;
 	});

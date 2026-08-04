@@ -8,6 +8,44 @@ from hausverwaltung.hausverwaltung.scripts import generate_mietrechnungen
 
 
 class TestGenerateMietrechnungen(unittest.TestCase):
+    def test_bk_month_amount_is_suppressed_for_inclusive_rent(self):
+        with (
+            patch.object(
+                generate_mietrechnungen,
+                "get_bk_regelung",
+                return_value="Pauschale/Inklusivmiete",
+            ) as get_rule,
+            patch.object(generate_mietrechnungen, "_staffelbetrag") as get_amount,
+        ):
+            rule, amount = generate_mietrechnungen._bk_regelung_und_betrag_fuer_monat(
+                "MV-1",
+                date(2026, 6, 1),
+                lock=True,
+            )
+
+        self.assertEqual(rule, "Pauschale/Inklusivmiete")
+        self.assertEqual(amount, 0.0)
+        get_rule.assert_called_once_with("MV-1", date(2026, 6, 1), lock=True)
+        get_amount.assert_not_called()
+
+    def test_bk_month_amount_reads_staffel_for_advance_period(self):
+        with (
+            patch.object(
+                generate_mietrechnungen,
+                "get_bk_regelung",
+                return_value="Vorauszahlung",
+            ),
+            patch.object(generate_mietrechnungen, "_staffelbetrag", return_value=175.0) as get_amount,
+        ):
+            rule, amount = generate_mietrechnungen._bk_regelung_und_betrag_fuer_monat(
+                "MV-1",
+                date(2026, 7, 1),
+            )
+
+        self.assertEqual(rule, "Vorauszahlung")
+        self.assertEqual(amount, 175.0)
+        get_amount.assert_called_once_with("MV-1", "betriebskosten", date(2026, 7, 1))
+
     def test_company_via_wohnung_uses_property_financial_identity(self):
         def get_value(doctype, name, fieldname, **kwargs):
             if doctype == "Wohnung":

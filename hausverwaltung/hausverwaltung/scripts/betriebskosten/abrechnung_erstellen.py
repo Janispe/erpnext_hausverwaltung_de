@@ -39,6 +39,13 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.rounding import (
 from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
     _company_via_wohnung,
 )
+from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
+    BK_REGELUNG_VORAUSZAHLUNG,
+    bk_invoice_period_for_segment,
+    get_bk_regelungen_for_contracts,
+    ist_bk_abrechenbar,
+    split_contract_segments_by_bk_regelung,
+)
 
 MONEY_QUANT = Decimal("0.01")
 MIN_SIGNIFICANT = Decimal("0.000000001")
@@ -325,10 +332,18 @@ def _mietvertraege_fuer_zeitraum(wohnung: str, von: str, bis: str) -> List[dict]
     )
 
 
-def _mietvertrag_segmente_fuer_zeitraum(wohnung: str, von: str, bis: str) -> List[dict]:
-    """Ermittle Mietvertrags-Segmente (tageweise, inklusiv) im Zeitraum.
+def _mietvertrag_segmente_fuer_zeitraum(
+    wohnung: str,
+    von: str,
+    bis: str,
+    *,
+    lock_regelungen: bool = False,
+) -> List[dict]:
+    """Ermittle Vertrags- und BK-Regelungssegmente im Zeitraum.
 
-    Segmente werden auf [von,bis] geclippt. Überlappungen führen zu Fehler.
+    Segmente werden auf [von,bis] geclippt und an jeder Änderung zwischen
+    Vorauszahlung und Pauschale/Inklusivmiete geteilt. Vertragsüberlappungen
+    führen weiterhin zu einem Fehler.
     """
     mv_list = _mietvertraege_fuer_zeitraum(wohnung, von, bis)
     if not mv_list:
@@ -381,7 +396,15 @@ def _mietvertrag_segmente_fuer_zeitraum(wohnung: str, von: str, bis: str) -> Lis
                 f"{pv.get('name')} ({pv.get('von')} - {pv.get('bis') or 'offen'}) und "
                 f"{cv.get('name')} ({cv.get('von')} - {cv.get('bis') or 'offen'})."
             )
-    return segments
+    regelungen = get_bk_regelungen_for_contracts(
+        [segment.get("mietvertrag") for segment in segments],
+        lock=lock_regelungen,
+    )
+    return split_contract_segments_by_bk_regelung(segments, regelungen)
+
+
+def _abrechenbare_bk_segmente(segments: List[dict]) -> List[dict]:
+    return [segment for segment in segments if ist_bk_abrechenbar(segment.get("abrechnungsart"))]
 
 
 def _bestehender_mietvertrag_fuer_stichtag(wohnung: str, stichtag: str) -> Optional[str]:
@@ -835,15 +858,21 @@ def create_bk_abrechnung_wohnung(
         wohnung=wohnung,
         submit=submit,
     )
-    generation_segments = _mietvertrag_segmente_fuer_zeitraum(wohnung, von, bis)
-    expected_segments = generation_segments
+    generation_segments = _mietvertrag_segmente_fuer_zeitraum(
+        wohnung,
+        von,
+        bis,
+        lock_regelungen=True,
+    )
+    expected_segments = _abrechenbare_bk_segmente(generation_segments)
     if not split_by_mietvertrag:
         period_start = getdate(von)
         period_end = getdate(bis)
         if (
-            len(generation_segments) != 1
-            or generation_segments[0]["start"] != period_start
-            or generation_segments[0]["end"] != period_end
+            len(expected_segments) != 1
+            or len(generation_segments) != 1
+            or expected_segments[0]["start"] != period_start
+            or expected_segments[0]["end"] != period_end
         ):
             frappe.throw(
                 "Eine wohnungsweite BK-Abrechnung ohne Aufteilung ist nur "
@@ -857,6 +886,11 @@ def create_bk_abrechnung_wohnung(
     )
     if existing:
         return existing if split_by_mietvertrag or len(existing) != 1 else existing[0]
+    if generation_segments and not expected_segments:
+        # Die Wohnung verursacht weiterhin Hauskosten, besitzt aber im ganzen
+        # Zeitraum nur Pauschal-/Inklusiv- oder Nichtumlage-Segmente. Ihr Anteil
+        # verbleibt im Immobilienkopf als Vermieteranteil.
+        return []
 
     # Verteilte Kosten (nur für diese Wohnung herausziehen)
     immobilie = head_doc.immobilie
@@ -902,6 +936,7 @@ def create_bk_abrechnung_wohnung(
             "wohnung": wohnung,
             "mietvertrag": mv,
             "customer": customer,
+            "abrechnungsart": BK_REGELUNG_VORAUSZAHLUNG,
             "vorrauszahlungen": _as_money(paid_total),
             "wohnungszustand": zustand,
             "größe": groesse,
@@ -948,6 +983,8 @@ def create_bk_abrechnung_wohnung(
 
     created: List[str] = []
     for idx, seg in enumerate(segments):
+        if not ist_bk_abrechenbar(seg.get("abrechnungsart")):
+            continue
         seg_start = seg["start"].strftime("%Y-%m-%d")
         seg_end = seg["end"].strftime("%Y-%m-%d")
         seg_stichtag = stichtag
@@ -958,13 +995,20 @@ def create_bk_abrechnung_wohnung(
 
         mv = seg.get("mietvertrag")
         customer = _get_customer_for_mietvertrag(mv)
-        # Vorauszahlungen gehören über Customer + Wertstellungsdatum zum Mieter.
-        # Deshalb gilt hier der volle Abrechnungszeitraum und nicht das auf die
-        # Vertragsdauer gekürzte Segment (relevant bei untermonatigem Einzug).
+        # Regelungssegmente dürfen nur ihre eigenen BK-Rechnungsmonate
+        # verrechnen. Bei einem untermonatigen Vertragsbeginn liegt die
+        # monatliche Wertstellung technisch am Monatsersten; nur dort erweitern
+        # wir den Start auf diesen Monatsersten.
+        raw_contract = seg.get("raw") or {}
+        prep_from, prep_to = bk_invoice_period_for_segment(
+            seg_start,
+            seg_end,
+            raw_contract.get("von"),
+        )
         prep = get_bk_prepayment_summary(
             wohnung=wohnung,
-            from_date=von,
-            to_date=bis,
+            from_date=prep_from,
+            to_date=prep_to,
             customer=customer,
             mietvertrag=mv,
             company=abrechnung_company,
@@ -984,6 +1028,7 @@ def create_bk_abrechnung_wohnung(
             "wohnung": wohnung,
             "mietvertrag": mv,
             "customer": customer,
+            "abrechnungsart": BK_REGELUNG_VORAUSZAHLUNG,
             "vorrauszahlungen": _as_money(paid_total),
             "wohnungszustand": zustand,
             "größe": groesse,
@@ -1065,10 +1110,9 @@ def create_bk_abrechnungen_immobilie(
         else:
             created.append(res)
 
-    if not created:
-        frappe.throw(
-            f"Es konnten keine Mieter‑Abrechnungen erzeugt werden für Immobilie '{immobilie}' im Zeitraum {von} bis {bis}."
-        )
+    # Ein reines Pauschal-/Inklusivmietobjekt besitzt bewusst keine
+    # Mieter-Abrechnungen. Der Immobilienkopf bleibt trotzdem gültig und weist
+    # die vollständigen Kosten als Vermieteranteil aus.
     return {"created": created, "count": len(created)}
 
 
@@ -1471,7 +1515,7 @@ def _get_locked_settlement_document(abrechnung: str):
         )
     contract_rows = frappe.db.sql(
         """
-        SELECT name, kunde, wohnung
+        SELECT name, kunde, wohnung, von, bis
         FROM `tabMietvertrag`
         WHERE name = %s
         FOR UPDATE
@@ -1506,6 +1550,8 @@ def _get_locked_settlement_document(abrechnung: str):
         name=mietvertrag,
         kunde=locked_customer,
         wohnung=locked_wohnung,
+        von=identity.get("von"),
+        bis=identity.get("bis"),
     )
     return doc
 
@@ -1889,12 +1935,13 @@ def create_bk_settlement_documents(
     posting_date = cstr(frappe.utils.today())
     wertstellungsdatum = cstr(doc.bis or doc.datum or posting_date)
     due_date = None
-    invoice_from = cstr(doc.von)
-    invoice_to = cstr(doc.bis)
+    invoice_from, invoice_to = bk_invoice_period_for_segment(
+        doc.von,
+        doc.bis,
+        locked_contract_identity.get("von"),
+    )
     # Bei None faellt _make_sales_invoice auf Default (+21 Tage) zurueck.
     due_date = getattr(head_doc, "nachzahlung_faellig_am", None) or None
-    invoice_from = cstr(getattr(head_doc, "von", None) or invoice_from)
-    invoice_to = cstr(getattr(head_doc, "bis", None) or invoice_to)
     # Kein Parse-Fehler darf aus einer kaputten Abrechnung einen vermeintlich
     # ausgeglichenen Nullbetrag machen.
     total = Decimal("0")

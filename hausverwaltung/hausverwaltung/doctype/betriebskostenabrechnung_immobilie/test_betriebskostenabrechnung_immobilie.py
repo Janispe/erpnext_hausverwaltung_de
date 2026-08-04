@@ -16,6 +16,45 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten import (
 
 
 class TestBetriebskostenabrechnungImmobilie(unittest.TestCase):
+	def test_summary_separates_tenant_balance_from_owner_share(self):
+		class SummaryDoc:
+			name = "BK-HEAD"
+			immobilie = "IMMO-1"
+			von = "2026-01-01"
+			bis = "2026-12-31"
+			stichtag = None
+
+			def set(self, fieldname, value):
+				setattr(self, fieldname, value)
+
+			def append(self, fieldname, value):
+				getattr(self, fieldname).append(frappe._dict(value))
+
+		doc = SummaryDoc()
+
+		with (
+			patch(
+				"hausverwaltung.hausverwaltung.scripts.betriebskosten."
+				"kosten_auf_wohnungen.allocate_kosten_auf_wohnungen",
+				return_value={"matrix": {"WHG-1": {"Wasser": 1000}}},
+			),
+			patch.object(module.frappe.db, "exists", return_value=False),
+			patch.object(
+				module.frappe,
+				"get_all",
+				return_value=[{"name": "BK-CHILD", "vorrauszahlungen": 450}],
+			),
+			patch.object(module.frappe.db, "sql", return_value=[{"total": 600}]),
+			patch.object(module, "_calculate_zaehler_summen", return_value={}),
+		):
+			module.BetriebskostenabrechnungImmobilie._populate_summary(doc)
+
+		self.assertEqual(doc.gesamtkosten, 1000)
+		self.assertEqual(doc.gesamt_mieteranteile, 600)
+		self.assertEqual(doc.gesamt_vermieteranteil, 400)
+		self.assertEqual(doc.gesamt_vorauszahlungen, 450)
+		self.assertEqual(doc.gesamt_differenz, 150)
+
 	def test_batch_footer_uses_first_bk_child_as_context(self):
 		serienbrief_doc = MagicMock()
 		serienbrief_doc.date = "2026-07-15"
@@ -192,6 +231,24 @@ class TestBetriebskostenabrechnungImmobilie(unittest.TestCase):
 		create_settlement.assert_called_once_with("BK-DRAFT")
 		self.assertNotIn("BK-CANCELLED", str(frappe_mock.mock_calls))
 
+	def test_submit_accepts_validated_inclusive_only_snapshot_without_children(self):
+		doc = MagicMock()
+		doc.name = "BK-IMMO-1"
+		doc.flags = frappe._dict(
+			_validated_bk_submit_children=(),
+			_validated_bk_submit_snapshot=True,
+		)
+		frappe_mock = MagicMock()
+		frappe_mock.db.sql.return_value = []
+
+		with patch.object(module, "frappe", frappe_mock), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen.create_bk_settlement_documents"
+		) as create_settlement:
+			module.BetriebskostenabrechnungImmobilie.on_submit(doc)
+
+		frappe_mock.get_doc.assert_not_called()
+		create_settlement.assert_not_called()
+
 	def _snapshot_fixture(self, *, child_amount=100, segments=None, children=None):
 		doc = module.BetriebskostenabrechnungImmobilie.__new__(
 			module.BetriebskostenabrechnungImmobilie
@@ -266,6 +323,21 @@ class TestBetriebskostenabrechnungImmobilie(unittest.TestCase):
 		doc, segments, costs = self._snapshot_fixture()
 		self._run_snapshot(doc, segments, costs)
 		self.assertEqual(doc.flags._validated_bk_submit_children, ("BK-C1",))
+		self.assertTrue(doc.flags._validated_bk_submit_snapshot)
+
+	def test_snapshot_accepts_only_inclusive_segments_without_children(self):
+		doc, segments, costs = self._snapshot_fixture(children=[])
+		segments[0]["abrechnungsart"] = "Pauschale/Inklusivmiete"
+
+		self._run_snapshot(
+			doc,
+			segments,
+			costs,
+			segment_costs=[{"Wasser": Decimal("100")}],
+		)
+
+		self.assertEqual(doc.flags._validated_bk_submit_children, ())
+		self.assertTrue(doc.flags._validated_bk_submit_snapshot)
 
 	def test_snapshot_rejects_missing_current_segment(self):
 		doc, segments, costs = self._snapshot_fixture()
