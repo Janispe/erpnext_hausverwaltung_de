@@ -10,6 +10,7 @@
   "zinsanteil",
   "tilgungsanteil",
   "sondertilgung",
+  "rundungsdifferenz",
   "gesamtbetrag",
   "restschuld_nach",
   "journal_entry",
@@ -48,12 +49,20 @@
    "default": "0"
   },
   {
+   "fieldname": "rundungsdifferenz",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Rundung",
+   "default": "0",
+   "description": "Kleine Rundungsdifferenz der Schlussrate. Wird nicht als Tilgung behandelt und beim Buchen auf das Rundungsdifferenzkonto der Company gebucht."
+  },
+  {
    "fieldname": "gesamtbetrag",
    "fieldtype": "Currency",
    "in_list_view": 1,
    "label": "Gesamt",
    "read_only": 1,
-   "description": "Zinsanteil + Tilgungsanteil + Sondertilgung. Wird beim Speichern aus den Komponenten berechnet."
+   "description": "Zinsanteil + Tilgungsanteil + Sondertilgung + Rundungsdifferenz. Wird beim Speichern aus den Komponenten berechnet."
   },
   {
    "fieldname": "restschuld_nach",

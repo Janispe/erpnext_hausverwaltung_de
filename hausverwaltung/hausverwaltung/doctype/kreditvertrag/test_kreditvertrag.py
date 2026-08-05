@@ -28,12 +28,17 @@ from hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag import (
 )
 
 
+def _raise_validation(message, *_args, **_kwargs):
+	raise frappe.ValidationError(message)
+
+
 
 def _make_fake_doc(
 	anfangs_restschuld: float = 100_000.0,
 	rates: list[dict] | None = None,
 	darlehenskonto: str = "3301 - Verb Bank - TC",
 	company: str = "Test Company",
+	restschuld_unbekannt: bool = False,
 ) -> SimpleNamespace:
 	"""Baut ein minimales Doc-Stand-in, das Kreditvertrag._compute_*-Methoden konsumieren können."""
 	rates = rates or []
@@ -46,6 +51,7 @@ def _make_fake_doc(
 			zinsanteil=r.get("zinsanteil", 0),
 			tilgungsanteil=r.get("tilgungsanteil", 0),
 			sondertilgung=r.get("sondertilgung", 0),
+			rundungsdifferenz=r.get("rundungsdifferenz", 0),
 			gesamtbetrag=r.get("gesamtbetrag", 0),
 			restschuld_nach=r.get("restschuld_nach", 0),
 			journal_entry=r.get("journal_entry"),
@@ -57,6 +63,7 @@ def _make_fake_doc(
 		plan.append(row)
 	doc = SimpleNamespace(
 		anfangs_restschuld=anfangs_restschuld,
+		restschuld_unbekannt=restschuld_unbekannt,
 		darlehenskonto=darlehenskonto,
 		company=company,
 		_plan=plan,
@@ -106,6 +113,22 @@ class TestParseAmount(unittest.TestCase):
 
 
 class TestLoanMatchHints(unittest.TestCase):
+	def test_statement_tilgung_includes_internal_rounding_split(self):
+		row = frappe._dict(
+			zinsanteil=4.36,
+			tilgungsanteil=1047.31,
+			sondertilgung=0,
+			rundungsdifferenz=0.04,
+		)
+
+		self.assertTrue(
+			kv_mod._loan_split_matches(
+				row,
+				{"zinsanteil": 4.36, "tilgungsanteil": 1047.35},
+				0.01,
+			)
+		)
+
 	def test_extracts_contract_number_and_split_from_reference(self):
 		hints = kv_mod._extract_loan_match_hints(
 			"LEISTUNGEN PER 30.04.2026, IBAN DE94100400000863751405, "
@@ -463,21 +486,107 @@ class TestComputeRestschuld(unittest.TestCase):
 		self.assertAlmostEqual(doc._plan[0].restschuld_nach, 8800.0, places=2)
 		self.assertAlmostEqual(doc._plan[0].gesamtbetrag, 1250.0, places=2)
 
-	def test_restschuld_rejects_one_cent_overpayment(self):
+	def test_final_rounding_keeps_payment_and_caps_principal(self):
 		doc = _make_fake_doc(
 			anfangs_restschuld=100.0,
 			rates=[
 				{
 					"faelligkeitsdatum": datetime.date(2026, 1, 31),
-					"zinsanteil": 0,
-					"tilgungsanteil": 100.01,
+					"zinsanteil": 5,
+					"tilgungsanteil": 100.59,
 				}
 			],
 		)
+		kv_mod.Kreditvertrag._normalize_small_final_rounding(doc)
 		kv_mod.Kreditvertrag._compute_zeilen_summen(doc)
+		kv_mod.Kreditvertrag._compute_restschuld_nach(doc)
 
-		with self.assertRaisesRegex(frappe.ValidationError, "übertilgt"):
+		self.assertAlmostEqual(doc._plan[0].tilgungsanteil, 100.0, places=2)
+		self.assertAlmostEqual(doc._plan[0].rundungsdifferenz, 0.59, places=2)
+		self.assertAlmostEqual(doc._plan[0].gesamtbetrag, 105.59, places=2)
+		self.assertEqual(doc._plan[0].restschuld_nach, 0.0)
+
+	def test_non_final_overpayment_remains_invalid(self):
+		doc = _make_fake_doc(
+			anfangs_restschuld=100.0,
+			rates=[
+				{
+					"faelligkeitsdatum": datetime.date(2026, 1, 31),
+					"tilgungsanteil": 100.01,
+				},
+				{
+					"faelligkeitsdatum": datetime.date(2026, 2, 28),
+					"tilgungsanteil": 1.0,
+				},
+			],
+		)
+		kv_mod.Kreditvertrag._normalize_small_final_rounding(doc)
+
+		with patch.object(
+			kv_mod.frappe,
+			"throw",
+			side_effect=_raise_validation,
+		), self.assertRaisesRegex(frappe.ValidationError, "übertilgt"):
 			kv_mod.Kreditvertrag._compute_restschuld_nach(doc)
+
+	def test_large_final_overpayment_remains_invalid(self):
+		doc = _make_fake_doc(
+			anfangs_restschuld=100.0,
+			rates=[
+				{
+					"faelligkeitsdatum": datetime.date(2026, 1, 31),
+					"tilgungsanteil": 101.01,
+				}
+			],
+		)
+		kv_mod.Kreditvertrag._normalize_small_final_rounding(doc)
+
+		with patch.object(
+			kv_mod.frappe,
+			"throw",
+			side_effect=_raise_validation,
+		), self.assertRaisesRegex(frappe.ValidationError, "übertilgt"):
+			kv_mod.Kreditvertrag._compute_restschuld_nach(doc)
+
+	def test_zero_opening_balance_is_not_treated_as_rounding(self):
+		doc = _make_fake_doc(
+			anfangs_restschuld=0.0,
+			rates=[
+				{
+					"faelligkeitsdatum": datetime.date(2026, 1, 31),
+					"tilgungsanteil": 0.50,
+				}
+			],
+		)
+		kv_mod.Kreditvertrag._normalize_small_final_rounding(doc)
+
+		self.assertEqual(doc._plan[0].tilgungsanteil, 0.50)
+		self.assertEqual(doc._plan[0].rundungsdifferenz, 0)
+		with patch.object(
+			kv_mod.frappe,
+			"throw",
+			side_effect=_raise_validation,
+		), self.assertRaisesRegex(frappe.ValidationError, "Anfangs-Restschuld fehlt"):
+			kv_mod.Kreditvertrag._compute_restschuld_nach(doc)
+
+	def test_unknown_legacy_balance_allows_rates_without_fake_residual(self):
+		doc = _make_fake_doc(
+			anfangs_restschuld=0.0,
+			restschuld_unbekannt=True,
+			rates=[
+				{
+					"faelligkeitsdatum": datetime.date(2026, 4, 30),
+					"zinsanteil": 3858.29,
+					"tilgungsanteil": 6786.82,
+				}
+			],
+		)
+		kv_mod.Kreditvertrag._normalize_small_final_rounding(doc)
+		kv_mod.Kreditvertrag._compute_restschuld_nach(doc)
+
+		self.assertEqual(doc._plan[0].tilgungsanteil, 6786.82)
+		self.assertEqual(doc._plan[0].rundungsdifferenz, 0)
+		self.assertEqual(doc._plan[0].restschuld_nach, 0.0)
 
 	def test_restschuld_allows_exact_full_repayment(self):
 		doc = _make_fake_doc(
@@ -511,6 +620,27 @@ class TestComputeRestschuld(unittest.TestCase):
 
 
 class TestComputeStatus(unittest.TestCase):
+	def test_unknown_legacy_balance_stays_active_until_contract_end(self):
+		doc = _make_fake_doc(
+			anfangs_restschuld=0.0,
+			restschuld_unbekannt=True,
+			rates=[
+				{
+					"faelligkeitsdatum": datetime.date(2026, 6, 30),
+					"zinsanteil": 790.48,
+					"tilgungsanteil": 6771.82,
+					"journal_entry": "JE-1",
+				}
+			],
+		)
+		doc.laufzeit_ende = datetime.date(2030, 12, 31)
+		doc.aktuelle_restschuld = 0.0
+
+		with patch.object(kv_mod, "nowdate", return_value="2026-08-05"):
+			kv_mod.Kreditvertrag._compute_status(doc)
+
+		self.assertEqual(doc.status, STATUS_AKTIV)
+
 	def test_neuer_vertrag_mit_zukunftsplan_ist_aktiv(self):
 		"""Kritischer Test: ein Kreditvertrag mit Vollplan, wo letzte Restschuld=0 ist,
 		darf NICHT sofort als Abgelöst markiert werden — solange die Raten ungebucht sind.
@@ -965,6 +1095,7 @@ def _make_test_kreditvertrag(
 	zins: float = 50.0,
 	tilgung: float = 200.0,
 	sondertilgung: float = 0.0,
+	rundungsdifferenz: float = 0.0,
 ) -> object:
 	rate_date = rate_date or datetime.date(2026, 5, 31)
 	kv = frappe.new_doc("Kreditvertrag")
@@ -982,6 +1113,7 @@ def _make_test_kreditvertrag(
 			"zinsanteil": zins,
 			"tilgungsanteil": tilgung,
 			"sondertilgung": sondertilgung,
+			"rundungsdifferenz": rundungsdifferenz,
 		},
 	)
 	kv.insert(ignore_permissions=True)
@@ -1101,6 +1233,35 @@ class TestKreditvertragIntegration(unittest.TestCase):
 		je = _create_journal_entry_for_rate(kv, rate, posting_date=datetime.date(2026, 6, 1))
 		darlehen_row = next(a for a in je.accounts if a.account == self.darlehenskonto)
 		self.assertAlmostEqual(darlehen_row.debit_in_account_currency, 600.0, places=2)
+
+	def test_create_journal_entry_books_rounding_separately(self):
+		"""Rundung bleibt Teil der Bankrate, belastet aber nicht das Darlehenskonto."""
+		kv = self._make_kv(
+			zins=4.36,
+			tilgung=1047.31,
+			rundungsdifferenz=0.04,
+			anfangs_restschuld=1047.31,
+		)
+		rate = kv.plan[0]
+		je = _create_journal_entry_for_rate(kv, rate, posting_date=datetime.date(2030, 4, 30))
+		round_off_account = frappe.db.get_value("Company", self.company, "round_off_account")
+
+		self.assertTrue(round_off_account)
+		self.assertAlmostEqual(
+			next(a for a in je.accounts if a.account == self.darlehenskonto).debit_in_account_currency,
+			1047.31,
+			places=2,
+		)
+		self.assertAlmostEqual(
+			next(a for a in je.accounts if a.account == round_off_account).debit_in_account_currency,
+			0.04,
+			places=2,
+		)
+		self.assertAlmostEqual(
+			next(a for a in je.accounts if a.credit_in_account_currency > 0).credit_in_account_currency,
+			1051.71,
+			places=2,
+		)
 
 	# ------------------------------------------------------------------
 	# Payment Ledger Negativ-Test

@@ -25,6 +25,7 @@
   "cost_center",
   "konditionen_section",
   "anfangs_restschuld",
+  "restschuld_unbekannt",
   "laufzeit_start",
   "column_break_konditionen",
   "laufzeit_ende",
@@ -172,6 +173,13 @@
    "description": "Fachliche Restschuld zu Beginn der Plan-Pflege (z.B. Stand bei System-Einführung — NICHT zwingend die Original-Kreditsumme)."
   },
   {
+   "default": "0",
+   "fieldname": "restschuld_unbekannt",
+   "fieldtype": "Check",
+   "label": "Restschuld unbekannt (Bestandsvertrag)",
+   "description": "Nur für übernommene Altverträge ohne verlässlichen Anfangssaldo. Raten und Buchhaltung werden geführt, eine aktuelle Restschuld wird jedoch bewusst nicht berechnet."
+  },
+  {
    "fieldname": "laufzeit_start",
    "fieldtype": "Date",
    "label": "Laufzeit von"
@@ -203,7 +211,7 @@
    "fieldtype": "Currency",
    "label": "Aktuelle Restschuld (berechnet)",
    "read_only": 1,
-   "description": "Anfangs-Restschuld − Summe aus Tilgung + Sondertilgung der bereits gebuchten Raten."
+   "description": "Anfangs-Restschuld − Summe aus Tilgung + Sondertilgung der bereits gebuchten Raten. Bei 'Restschuld unbekannt' nicht aussagekräftig."
   },
   {
    "fieldname": "plan_getilgt",

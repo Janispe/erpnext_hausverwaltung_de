@@ -28,6 +28,11 @@ STATUS_VERGANGENHEIT = "Vergangenheit"
 
 RESTSCHULD_EPSILON = 0.01
 
+# Externe Tilgungspläne halten die Annuität häufig bis zur letzten Rate konstant.
+# Dadurch kann die letzte ausgewiesene Tilgung die Restschuld um wenige Cent
+# überschreiten. Dieser Betrag ist keine Tilgung, sondern Rundungsdifferenz.
+MAX_FINAL_ROUNDING_DIFFERENCE = Decimal("1.00")
+
 # Cap für Plan-Generator (50 Jahre monatlich)
 MAX_PLAN_ROWS = 600
 
@@ -73,6 +78,7 @@ class Kreditvertrag(Document):
 		self._validate_zeilen()
 		self._validate_keine_doppelverlinkung()
 		self._sort_plan_and_reindex()
+		self._normalize_small_final_rounding()
 		self._compute_zeilen_summen()
 		self._compute_restschuld_nach()
 		self._compute_plausibilitaet()
@@ -216,7 +222,12 @@ class Kreditvertrag(Document):
 		for row in self.get("plan") or []:
 			if not row.get("faelligkeitsdatum"):
 				frappe.throw(f"Plan-Zeile {row.idx}: Fälligkeitsdatum fehlt.")
-			for fieldname in ("zinsanteil", "tilgungsanteil", "sondertilgung"):
+			for fieldname in (
+				"zinsanteil",
+				"tilgungsanteil",
+				"sondertilgung",
+				"rundungsdifferenz",
+			):
 				v = flt(row.get(fieldname))
 				if v < 0:
 					frappe.throw(
@@ -244,13 +255,68 @@ class Kreditvertrag(Document):
 
 	def _compute_zeilen_summen(self):
 		for row in self.get("plan") or []:
-			row.gesamtbetrag = flt(row.zinsanteil) + flt(row.tilgungsanteil) + flt(row.sondertilgung)
+			row.gesamtbetrag = (
+				flt(row.zinsanteil)
+				+ flt(row.tilgungsanteil)
+				+ flt(row.sondertilgung)
+				+ flt(row.get("rundungsdifferenz"))
+			)
+
+	def _normalize_small_final_rounding(self):
+		"""Verschiebt eine kleine Übertilgung der Schlussrate in ``Rundung``.
+
+		Nur die chronologisch letzte Planzeile und höchstens 1,00 EUR werden
+		automatisch normalisiert. Der echte Zahlbetrag bleibt unverändert: die
+		Tilgung sinkt um den Rundungsrest, ``rundungsdifferenz`` steigt um
+		denselben Betrag. Größere oder zwischenzeitliche Übertilgungen bleiben
+		harte Datenfehler und werden anschließend abgelehnt.
+		"""
+		if cint(self.get("restschuld_unbekannt")):
+			return
+
+		cent = Decimal("0.01")
+		restschuld = Decimal(str(flt(self.anfangs_restschuld))).quantize(cent)
+		rows = list(self.get("plan") or [])
+		for position, row in enumerate(rows):
+			tilgung = Decimal(str(flt(row.tilgungsanteil))).quantize(cent)
+			sondertilgung = Decimal(str(flt(row.sondertilgung))).quantize(cent)
+			next_restschuld = restschuld - tilgung - sondertilgung
+			if next_restschuld < 0:
+				ueberzahlung = abs(next_restschuld)
+				is_final_row = position == len(rows) - 1
+				if (
+					is_final_row
+					and restschuld > 0
+					and ueberzahlung <= MAX_FINAL_ROUNDING_DIFFERENCE
+					and tilgung >= ueberzahlung
+				):
+					rundung = Decimal(
+						str(flt(row.get("rundungsdifferenz")))
+					).quantize(cent)
+					row.tilgungsanteil = float(tilgung - ueberzahlung)
+					row.rundungsdifferenz = float(rundung + ueberzahlung)
+					next_restschuld = Decimal("0.00")
+			restschuld = next_restschuld
 
 	def _compute_restschuld_nach(self):
+		if cint(self.get("restschuld_unbekannt")):
+			for row in self.get("plan") or []:
+				row.restschuld_nach = 0.0
+			return
+
 		cent = Decimal("0.01")
 		restschuld = Decimal(str(flt(self.anfangs_restschuld))).quantize(cent)
 		if restschuld < 0:
 			frappe.throw("Anfangs-Restschuld darf nicht negativ sein.")
+		if restschuld == 0 and any(
+			flt(row.tilgungsanteil) > 0 or flt(row.sondertilgung) > 0
+			for row in self.get("plan") or []
+		):
+			frappe.throw(
+				"Anfangs-Restschuld fehlt: Ein Tilgungsplan mit Tilgung benötigt einen "
+				"positiven Anfangssaldo. Nur bei übernommenen Altverträgen ohne "
+				"verlässlichen Saldo darf 'Restschuld unbekannt' aktiviert werden."
+			)
 		for row in self.get("plan") or []:
 			tilgung = Decimal(str(flt(row.tilgungsanteil))).quantize(cent)
 			sondertilgung = Decimal(str(flt(row.sondertilgung))).quantize(cent)
@@ -292,7 +358,10 @@ class Kreditvertrag(Document):
 				)
 				linked_je_names.append(row.journal_entry)
 
-		aktuelle = Decimal(str(flt(self.anfangs_restschuld))) - plan_getilgt
+		if cint(self.get("restschuld_unbekannt")):
+			aktuelle = Decimal("0")
+		else:
+			aktuelle = Decimal(str(flt(self.anfangs_restschuld))) - plan_getilgt
 		self.aktuelle_restschuld = float(aktuelle)
 		self.plan_getilgt = float(plan_getilgt)
 
@@ -357,6 +426,17 @@ class Kreditvertrag(Document):
 			if not r.get("journal_entry") and r.get("faelligkeitsdatum")
 		)
 		self.naechste_faelligkeit = open_dates[0] if open_dates else None
+		if cint(self.get("restschuld_unbekannt")):
+			laufzeit_aktiv = bool(
+				self.get("laufzeit_ende")
+				and getdate(self.laufzeit_ende) >= getdate(nowdate())
+			)
+			self.status = (
+				STATUS_AKTIV
+				if has_open_rates or has_future_rates or laufzeit_aktiv
+				else STATUS_VERGANGENHEIT
+			)
+			return
 
 		if rows and not has_open_rates and abs(aktuelle) <= RESTSCHULD_EPSILON:
 			self.status = STATUS_ABGELOEST
@@ -400,6 +480,11 @@ class Kreditvertrag(Document):
 		anfangsschuld = flt(self.anfangs_restschuld)
 		zinssatz = flt(zinssatz_p_a)
 		annuitaet_betrag = flt(annuitaet)
+		if cint(self.get("restschuld_unbekannt")):
+			frappe.throw(
+				"Ein Tilgungsplan kann nicht berechnet werden, solange die Restschuld "
+				"als unbekannt markiert ist. Bitte zuerst einen verlässlichen Anfangssaldo setzen."
+			)
 		if anfangsschuld <= 0:
 			frappe.throw(
 				"Anfangs-Restschuld am Kreditvertrag muss positiv sein, bevor der Plan "
@@ -697,11 +782,33 @@ def _create_journal_entry_for_rate(
 	)
 
 	company_currency = _get_company_currency(doc.company)
+	rundungsdifferenz = flt(row.get("rundungsdifferenz"))
+	round_off_account = None
+	round_off_cost_center = None
+	if rundungsdifferenz > 0:
+		company_rounding = frappe.db.get_value(
+			"Company",
+			doc.company,
+			["round_off_account", "round_off_cost_center"],
+			as_dict=True,
+		)
+		round_off_account = company_rounding.get("round_off_account") if company_rounding else None
+		round_off_cost_center = (
+			company_rounding.get("round_off_cost_center") if company_rounding else None
+		)
+		if not round_off_account:
+			frappe.throw(
+				f"Company '{doc.company}' hat kein Rundungsdifferenzkonto. "
+				"Bitte 'Round Off Account' in der Company konfigurieren."
+			)
 	for account, label in (
 		(bank_acc_gl, "Kredit-Bankkonto"),
 		(doc.darlehenskonto, "Darlehenskonto"),
 		(doc.zinsaufwandskonto, "Zinsaufwandskonto"),
+		(round_off_account, "Rundungsdifferenzkonto"),
 	):
+		if not account:
+			continue
 		_require_company_currency_account(
 			account,
 			company=doc.company,
@@ -713,7 +820,7 @@ def _create_journal_entry_for_rate(
 	if gesamt <= 0:
 		frappe.throw(
 			f"Plan-Zeile {row.idx}: Gesamtbetrag muss positiv sein "
-			"(zinsanteil + tilgungsanteil + sondertilgung)."
+			"(zinsanteil + tilgungsanteil + sondertilgung + rundungsdifferenz)."
 		)
 
 	user_remark = f"Kredit {doc.bezeichnung} – Rate vom {row.faelligkeitsdatum}"
@@ -752,6 +859,18 @@ def _create_journal_entry_for_rate(
 				"account": doc.zinsaufwandskonto,
 				"debit_in_account_currency": zins,
 				"cost_center": doc.cost_center,
+			},
+		)
+
+	# Dr. Rundungsdifferenz — hält die echte Schlussrate konstant, ohne das
+	# Darlehenskonto über die verbleibende Restschuld hinaus zu belasten.
+	if rundungsdifferenz > 0:
+		je.append(
+			"accounts",
+			{
+				"account": round_off_account,
+				"debit_in_account_currency": rundungsdifferenz,
+				"cost_center": round_off_cost_center or doc.cost_center,
 			},
 		)
 
@@ -1653,7 +1772,12 @@ def _loan_split_matches(row: Document, hints: dict, tolerance_amount: float) -> 
 	) > tolerance_amount:
 		return False
 	if hints.get("tilgungsanteil") is not None and abs(
-		(flt(row.tilgungsanteil) + flt(row.sondertilgung)) - flt(hints["tilgungsanteil"])
+		(
+			flt(row.tilgungsanteil)
+			+ flt(row.sondertilgung)
+			+ flt(row.get("rundungsdifferenz"))
+		)
+		- flt(hints["tilgungsanteil"])
 	) > tolerance_amount:
 		return False
 	return True
