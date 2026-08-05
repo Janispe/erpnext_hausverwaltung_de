@@ -272,6 +272,34 @@ class TestBetriebskostenabrechnungImmobilie(unittest.TestCase):
 		create_settlement.assert_called_once_with("BK-DRAFT")
 		self.assertNotIn("BK-CANCELLED", str(frappe_mock.mock_calls))
 
+	def test_submit_accepts_same_validated_child_set_in_database_collation_order(self):
+		doc = MagicMock()
+		doc.name = "BK-IMMO-1"
+		doc.flags = frappe._dict(
+			_validated_bk_submit_children=("BK-Ä", "BK-Z"),
+			_validated_bk_submit_snapshot=True,
+		)
+		child_z = MagicMock(docstatus=0)
+		child_z.flags = frappe._dict()
+		child_a_umlaut = MagicMock(docstatus=0)
+		child_a_umlaut.flags = frappe._dict()
+		frappe_mock = MagicMock()
+		# A database collation may order these names differently from Python.
+		frappe_mock.db.sql.return_value = [
+			{"name": "BK-Z", "docstatus": 0, "abrechnungsart": "Pauschale/Inklusivmiete"},
+			{"name": "BK-Ä", "docstatus": 0, "abrechnungsart": "Pauschale/Inklusivmiete"},
+		]
+		frappe_mock.get_doc.side_effect = [child_z, child_a_umlaut]
+
+		with patch.object(module, "frappe", frappe_mock), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen.create_bk_settlement_documents"
+		) as create_settlement:
+			module.BetriebskostenabrechnungImmobilie.on_submit(doc)
+
+		child_z.submit.assert_called_once_with()
+		child_a_umlaut.submit.assert_called_once_with()
+		create_settlement.assert_not_called()
+
 	def test_submit_submits_inclusive_information_but_creates_no_settlement(self):
 		doc = MagicMock()
 		doc.name = "BK-IMMO-1"

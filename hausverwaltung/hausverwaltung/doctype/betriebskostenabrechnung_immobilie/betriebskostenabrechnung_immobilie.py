@@ -623,9 +623,13 @@ class BetriebskostenabrechnungImmobilie(Document):
 			as_dict=True,
 		)
 		current_names = [cstr(_row_value(row, "name")) for row in current_rows]
-		if current_names != sorted(children) or any(
-			cint(_row_value(row, "docstatus")) != 0
-			for row in current_rows
+		if (
+			set(current_names) != set(children)
+			or len(current_names) != len(children)
+			or any(
+				cint(_row_value(row, "docstatus")) != 0
+				for row in current_rows
+			)
 		):
 			frappe.throw(
 				"BK-Submit abgebrochen: Die validierte Draft-Child-Menge hat "
