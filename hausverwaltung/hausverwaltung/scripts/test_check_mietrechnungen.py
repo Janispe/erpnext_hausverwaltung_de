@@ -54,6 +54,38 @@ class TestFindExistingInvoice(unittest.TestCase):
 
 
 class TestKorrigierbareSollstellungenFuerMietvertrag(unittest.TestCase):
+	def test_scope_skips_unaffected_months_and_types(self):
+		mv = SimpleNamespace(
+			name="MV-1",
+			von=date(2020, 1, 1),
+			bis=None,
+			as_dict=lambda: {"name": "MV-1", "wohnung": "WOHNUNG-1"},
+		)
+		empty = {"fehlend": [], "abweichungen": [], "ueberfluessig": [], "ok": 0}
+		with (
+			patch.object(check_mietrechnungen.frappe, "get_doc", return_value=mv),
+			patch.object(check_mietrechnungen, "_resolve_company", return_value="Company"),
+			patch.object(check_mietrechnungen, "_kunde_des_vertrags", return_value="CUST-1"),
+			patch.object(
+				check_mietrechnungen,
+				"_aktivitaets_monate_fuer_mv",
+				return_value={(2025, 12), (2026, 1), (2026, 2)},
+			),
+			patch.object(check_mietrechnungen, "_diff_for_mv_monat", return_value=empty) as diff,
+		):
+			check_mietrechnungen.pruefe_mietvertrag(
+				"MV-1",
+				scope={
+					"Miete": date(2026, 1, 1),
+					"Betriebskosten": date(2026, 2, 1),
+				},
+			)
+
+		self.assertEqual(
+			[(entry.args[1], entry.kwargs["typen"]) for entry in diff.call_args_list],
+			[(date(2026, 1, 1), ("Miete",)), (date(2026, 2, 1), ("Miete", "Betriebskosten"))],
+		)
+
 	def test_filters_by_changed_type_start_month_and_submitted_status(self):
 		result = {
 			"monate": [

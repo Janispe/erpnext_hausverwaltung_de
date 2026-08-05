@@ -197,6 +197,7 @@ def _diff_for_mv_monat(
 	*,
 	durchlauf_rechnungen: list[dict] | None = None,
 	durchlauf_skips: list[dict] | None = None,
+	typen: tuple[str, ...] | None = None,
 ) -> dict:
 	"""Diff für genau (Mietvertrag, Anker-Monat).
 
@@ -219,7 +220,7 @@ def _diff_for_mv_monat(
 
 	monat_str = anker.strftime("%m/%Y")
 
-	for typ in ("Miete", "Betriebskosten", "Heizkosten", "Untermietzuschlag"):
+	for typ in typen or tuple(TYP_PARENTFIELD):
 		expected_betrag = round(float(_expected_betrag(mv_row, typ, anker)), 2)
 		expected_account = income_accounts.get(typ)
 
@@ -430,7 +431,11 @@ def _aktivitaets_monate_fuer_mv(
 
 
 @frappe.whitelist()
-def pruefe_mietvertrag(mietvertrag: str) -> dict:
+def pruefe_mietvertrag(
+	mietvertrag: str,
+	*,
+	scope: dict[str, date] | None = None,
+) -> dict:
 	if not mietvertrag:
 		frappe.throw(_("Mietvertrag-Name fehlt."))
 	mv = frappe.get_doc("Mietvertrag", mietvertrag)
@@ -448,6 +453,13 @@ def pruefe_mietvertrag(mietvertrag: str) -> dict:
 	monate: list[dict] = []
 	for jahr, monat_nr in sorted(aktivitaet):
 		anker = date(jahr, monat_nr, 1)
+		typen = tuple(
+			typ
+			for typ in TYP_PARENTFIELD
+			if not scope or (typ in scope and anker >= scope[typ])
+		)
+		if not typen:
+			continue
 		# Kontrakt muss diesen Monat noch überschneiden — sonst macht eine
 		# Soll-Berechnung keinen Sinn (z.B. Vertrag endete 2023 aber alte SI von 2020).
 		c_start = mv.von or date(1900, 1, 1)
@@ -456,7 +468,7 @@ def pruefe_mietvertrag(mietvertrag: str) -> dict:
 		_, _, ov_days = _overlap(month_start, month_end_excl, c_start, c_end_excl)
 		if ov_days == 0:
 			continue
-		result = _diff_for_mv_monat(mv_dict, anker, company)
+		result = _diff_for_mv_monat(mv_dict, anker, company, typen=typen)
 		if result["fehlend"] or result["abweichungen"] or result["ueberfluessig"]:
 			monate.append(
 				{
@@ -504,7 +516,10 @@ def get_korrigierbare_sollstellungen_fuer_mietvertrag(
 		d = getdate(start)
 		normalized_scope[typ] = date(d.year, d.month, 1)
 
-	result = pruefe_mietvertrag(mietvertrag)
+	result = pruefe_mietvertrag(
+		mietvertrag,
+		scope=normalized_scope or None,
+	)
 	candidates: list[dict] = []
 	for month_result in result.get("monate") or []:
 		for row in month_result.get("abweichungen") or []:
