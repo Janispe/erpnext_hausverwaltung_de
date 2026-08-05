@@ -21,6 +21,7 @@
   "mistral_api_key",
   "mistral_base_url",
   "mistral_text_model",
+  "assistant_models",
   "mistral_vision_model",
   "mistral_timeout_seconds",
   "mistral_vision_fallback",
@@ -147,6 +148,13 @@
    "fieldtype": "Data",
    "label": "Mistral Text-Modell",
    "description": "Modell für Text-PDFs (z.B. mistral-small-latest, mistral-large-latest)."
+  },
+  {
+   "description": "Nur aktive Modelle werden im Assistenten angeboten. Wenn kein Standard markiert ist, wird der erste aktive Eintrag verwendet.",
+   "fieldname": "assistant_models",
+   "fieldtype": "Table",
+   "label": "Assistenten-Modelle",
+   "options": "Hausverwaltung Assistent Modell"
   },
   {
    "default": "pixtral-large-latest",

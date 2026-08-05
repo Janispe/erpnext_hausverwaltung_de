@@ -1,0 +1,55 @@
+{
+ "actions": [],
+ "creation": "2026-08-05 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "bezeichnung",
+  "modell",
+  "aktiv",
+  "standard"
+ ],
+ "fields": [
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Anzeigename",
+   "reqd": 1
+  },
+  {
+   "description": "API-Modellname, z.B. mistral-small-latest oder ein Modell des konfigurierten kompatiblen Endpunkts.",
+   "fieldname": "modell",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Modellname",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "aktiv",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Aktiv"
+  },
+  {
+   "default": "0",
+   "fieldname": "standard",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Standard"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Hausverwaltung Assistent Modell",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

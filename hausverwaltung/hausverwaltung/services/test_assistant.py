@@ -7,6 +7,9 @@ import frappe
 
 from hausverwaltung.hausverwaltung.services import assistant
 from hausverwaltung.hausverwaltung.services import mistral_client
+from hausverwaltung.hausverwaltung.doctype.hausverwaltung_einstellungen.hausverwaltung_einstellungen import (
+	HausverwaltungEinstellungen,
+)
 
 
 def _row(**kwargs):
@@ -136,6 +139,126 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 				"cached_prompt_tokens": 80,
 			},
 		)
+
+	def test_run_assistant_uses_selected_allowed_model_for_all_calls(self):
+		tool_response = {
+			"content": "",
+			"tool_calls": [
+				{
+					"id": "call-1",
+					"type": "function",
+					"function": {"name": "search_mieter", "arguments": '{"query":"Schmidt"}'},
+				}
+			],
+		}
+		final_response = {"content": "Gefunden."}
+		choices = {
+			"default": "mistral-small-latest",
+			"models": [
+				{"value": "mistral-small-latest"},
+				{"value": "mistral-large-latest"},
+			],
+		}
+
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant, "_assistant_model_choices", return_value=choices), \
+			 patch.object(assistant, "_get_or_create_conversation", return_value=frappe._dict(name="CONV-1")), \
+			 patch.object(assistant, "_load_conversation_history", return_value=[]), \
+			 patch.object(assistant, "_store_conversation_message"), \
+			 patch.object(assistant, "search_mieter", return_value={"matches": []}), \
+			 patch.object(mistral_client, "complete_chat", side_effect=[tool_response, final_response]) as complete_chat:
+			result = assistant.run_assistant("suche Schmidt", model="mistral-large-latest")
+
+		self.assertEqual(result["model"], "mistral-large-latest")
+		self.assertEqual(
+			[call.kwargs["model"] for call in complete_chat.call_args_list],
+			["mistral-large-latest", "mistral-large-latest"],
+		)
+
+	def test_assistant_model_selection_rejects_arbitrary_models(self):
+		choices = {"default": "allowed-model", "models": [{"value": "allowed-model"}]}
+		with patch.object(assistant, "_assistant_model_choices", return_value=choices), \
+			 self.assertRaises(frappe.ValidationError):
+			assistant._resolve_assistant_model("unapproved-model")
+
+	def test_get_assistant_models_returns_active_configured_choices(self):
+		settings = frappe._dict(
+			assistant_models=[
+				frappe._dict(modell="fast-model", bezeichnung="Schnell", aktiv=1, standard=0),
+				frappe._dict(modell="quality-model", bezeichnung="Qualitaet", aktiv=1, standard=1),
+				frappe._dict(modell="disabled-model", bezeichnung="Aus", aktiv=0, standard=0),
+			]
+		)
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant.frappe, "get_single", return_value=settings):
+			result = assistant.get_assistant_models()
+
+		self.assertEqual(result["default"], "quality-model")
+		self.assertEqual(
+			[item["value"] for item in result["models"]],
+			["fast-model", "quality-model"],
+		)
+
+	def test_assistant_models_fall_back_to_text_model_while_settings_table_is_empty(self):
+		settings = frappe._dict(assistant_models=[], mistral_text_model="legacy-model")
+		with patch.object(assistant.frappe, "get_single", return_value=settings):
+			result = assistant._assistant_model_choices()
+
+		self.assertEqual(result["default"], "legacy-model")
+		self.assertEqual([item["value"] for item in result["models"]], ["legacy-model"])
+
+	def test_assistant_models_do_not_fall_back_when_configured_rows_are_disabled(self):
+		settings = frappe._dict(
+			assistant_models=[
+				frappe._dict(modell="disabled-model", bezeichnung="Aus", aktiv=0, standard=0)
+			],
+			mistral_text_model="legacy-model",
+		)
+		with patch.object(assistant.frappe, "get_single", return_value=settings), \
+			 self.assertRaises(frappe.ValidationError):
+			assistant._resolve_assistant_model(None)
+
+	def test_assistant_model_settings_normalize_values(self):
+		row = frappe._dict(
+			idx=1,
+			modell="  custom-model  ",
+			bezeichnung="  Benutzerdefiniert  ",
+			aktiv=1,
+			standard=1,
+		)
+		settings = frappe._dict(assistant_models=[row])
+
+		HausverwaltungEinstellungen.validate_assistant_models(settings)
+
+		self.assertEqual(row.modell, "custom-model")
+		self.assertEqual(row.bezeichnung, "Benutzerdefiniert")
+
+	def test_assistant_model_settings_reject_duplicates(self):
+		settings = frappe._dict(
+			assistant_models=[
+				frappe._dict(idx=1, modell="same-model", bezeichnung="Eins", aktiv=1, standard=1),
+				frappe._dict(idx=2, modell="same-model", bezeichnung="Zwei", aktiv=1, standard=0),
+			]
+		)
+
+		with self.assertRaises(frappe.ValidationError):
+			HausverwaltungEinstellungen.validate_assistant_models(settings)
+
+	def test_assistant_model_settings_reject_inactive_default(self):
+		settings = frappe._dict(
+			assistant_models=[
+				frappe._dict(
+					idx=1,
+					modell="inactive-model",
+					bezeichnung="Inaktiv",
+					aktiv=0,
+					standard=1,
+				)
+			]
+		)
+
+		with self.assertRaises(frappe.ValidationError):
+			HausverwaltungEinstellungen.validate_assistant_models(settings)
 
 	def test_generic_agent_read_tools_are_registered(self):
 		tool_names = {tool["function"]["name"] for tool in assistant.ASSISTANT_TOOLS}

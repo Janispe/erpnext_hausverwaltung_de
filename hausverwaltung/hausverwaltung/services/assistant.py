@@ -7,7 +7,7 @@ from typing import Any
 
 import frappe
 from frappe import _
-from frappe.utils import flt, getdate, now_datetime, nowdate
+from frappe.utils import cint, flt, getdate, now_datetime, nowdate
 
 from hausverwaltung.hausverwaltung.agent_tools import read_api as agent_read_api
 from hausverwaltung.hausverwaltung.services import mistral_client
@@ -1207,14 +1207,71 @@ GENERIC_AGENT_TOOL_NAMES = {
 
 
 @frappe.whitelist()
-def ask(message: str, conversation_id: str | None = None) -> dict[str, Any]:
+def ask(
+	message: str,
+	conversation_id: str | None = None,
+	model: str | None = None,
+) -> dict[str, Any]:
 	"""Whitelisted Desk API for the read-only assistant."""
 	try:
-		return run_assistant(message=message, conversation_id=conversation_id)
+		return run_assistant(message=message, conversation_id=conversation_id, model=model)
 	except mistral_client.MistralPermanentError as exc:
 		frappe.throw(str(exc))
 	except mistral_client.MistralTransientError as exc:
 		frappe.throw(_("Mistral-Aufruf fehlgeschlagen, bitte spaeter erneut versuchen: {0}").format(exc))
+
+
+@frappe.whitelist()
+def get_assistant_models() -> dict[str, Any]:
+	"""Return the active model choices configured in Hausverwaltung Einstellungen."""
+	_require_search_permissions()
+	return _assistant_model_choices()
+
+
+def _assistant_model_choices() -> dict[str, Any]:
+	settings = frappe.get_single("Hausverwaltung Einstellungen")
+	configured_rows = list(getattr(settings, "assistant_models", None) or [])
+	models = [
+		{
+			"value": str(row.modell or "").strip(),
+			"label": str(row.bezeichnung or row.modell or "").strip(),
+			"description": _("Konfiguriert in den Hausverwaltung Einstellungen."),
+			"is_default": bool(cint(row.standard)),
+		}
+		for row in configured_rows
+		if cint(row.aktiv) and str(row.modell or "").strip()
+	]
+
+	if not configured_rows:
+		fallback_model = str(
+			getattr(settings, "mistral_text_model", None) or mistral_client.DEFAULT_TEXT_MODEL
+		).strip()
+		models = [
+			{
+				"value": fallback_model,
+				"label": fallback_model,
+				"description": _("Fallback aus dem Feld Mistral Text-Modell."),
+				"is_default": True,
+			}
+		]
+
+	default_model = next((item["value"] for item in models if item["is_default"]), None)
+	if not default_model and models:
+		default_model = models[0]["value"]
+	return {"default": default_model, "models": models}
+
+
+def _resolve_assistant_model(model: str | None) -> tuple[str, str | None]:
+	choices = _assistant_model_choices()
+	allowed_models = {item["value"] for item in choices["models"]}
+	selected = (model or "").strip()
+	if not selected or selected == "default":
+		selected = choices["default"] or ""
+	if not selected:
+		frappe.throw(_("In den Hausverwaltung Einstellungen ist kein aktives Assistenten-Modell konfiguriert."))
+	if selected not in allowed_models:
+		frappe.throw(_("Dieses Assistenten-Modell ist nicht freigegeben: {0}").format(selected))
+	return selected, selected
 
 
 @frappe.whitelist()
@@ -1434,11 +1491,16 @@ def hv_describe_query_source(source: str) -> dict[str, Any]:
 	}
 
 
-def run_assistant(message: str, conversation_id: str | None = None) -> dict[str, Any]:
+def run_assistant(
+	message: str,
+	conversation_id: str | None = None,
+	model: str | None = None,
+) -> dict[str, Any]:
 	user_message = (message or "").strip()
 	if not user_message:
 		frappe.throw(_("Bitte eine Frage oder Suche eingeben."))
 	_require_search_permissions()
+	selected_model, resolved_model = _resolve_assistant_model(model)
 	conversation = _get_or_create_conversation(conversation_id, user_message)
 	history_messages = _load_conversation_history(conversation.name)
 
@@ -1465,6 +1527,7 @@ def run_assistant(message: str, conversation_id: str | None = None) -> dict[str,
 	for _round in range(MAX_TOOL_ROUNDS):
 		assistant_message = mistral_client.complete_chat(
 			messages=messages,
+			model=resolved_model,
 			tools=selected_tools,
 			tool_choice="auto",
 			parallel_tool_calls=False,
@@ -1498,6 +1561,7 @@ def run_assistant(message: str, conversation_id: str | None = None) -> dict[str,
 	if final_message is None:
 		final_message = mistral_client.complete_chat(
 			messages=messages,
+			model=resolved_model,
 			temperature=0.2,
 			prompt_cache_key=prompt_cache_key,
 		)
@@ -1525,6 +1589,7 @@ def run_assistant(message: str, conversation_id: str | None = None) -> dict[str,
 		"answer": answer,
 		"matches": deduped_matches,
 		"conversation_id": conversation.name,
+		"model": selected_model,
 		"tool_names": tool_names,
 		"tool_calls": tool_calls_debug,
 		"toolset": _tool_names(selected_tools),

@@ -31,6 +31,9 @@ function renderHausverwaltungAssistant(pageBody) {
 					<div class="hv-assistant-messages" aria-live="polite"></div>
 					<form class="hv-assistant-form">
 						<input class="hv-assistant-input" type="search" autocomplete="off" placeholder="${__("Frage stellen oder Stammdaten suchen")}">
+						<select class="hv-assistant-model" aria-label="${__("Modell")}" title="${__("Modell fuer diese Anfrage")}">
+							<option value="default">${__("Standardmodell")}</option>
+						</select>
 						<button class="btn btn-primary hv-assistant-submit" type="submit">${__("Senden")}</button>
 					</form>
 				</div>
@@ -128,7 +131,7 @@ function renderHausverwaltungAssistant(pageBody) {
 			}
 			.hv-assistant-form {
 				display: grid;
-				grid-template-columns: minmax(0, 1fr) auto;
+				grid-template-columns: minmax(0, 1fr) minmax(170px, 220px) auto;
 				gap: 8px;
 				padding: 12px;
 				border-top: 1px solid #deded8;
@@ -139,6 +142,14 @@ function renderHausverwaltungAssistant(pageBody) {
 				border-radius: 6px;
 				padding: 0 12px;
 				font-size: 14px;
+				background: #fff;
+			}
+			.hv-assistant-model {
+				height: 36px;
+				border: 1px solid #cfcfc8;
+				border-radius: 6px;
+				padding: 0 30px 0 10px;
+				font-size: 13px;
 				background: #fff;
 			}
 			.hv-assistant-submit {
@@ -251,7 +262,29 @@ function renderHausverwaltungAssistant(pageBody) {
 	const conversationsEl = root.find(".hv-assistant-conversation-list");
 	const form = root.find(".hv-assistant-form");
 	const input = root.find(".hv-assistant-input");
+	const modelSelect = root.find(".hv-assistant-model");
 	let conversationId = null;
+
+	const loadAssistantModels = async () => {
+		try {
+			const response = await frappe.call({
+				method: "hausverwaltung.hausverwaltung.services.assistant.get_assistant_models",
+			});
+			const data = response.message || {};
+			modelSelect.empty();
+			(data.models || []).forEach((model) => {
+				const option = document.createElement("option");
+				option.value = model.value;
+				option.textContent = model.label || model.value;
+				option.title = model.description || "";
+				modelSelect.append(option);
+			});
+			modelSelect.val(data.default || "default");
+		} catch (error) {
+			// Das zentral konfigurierte Standardmodell bleibt als sicherer Fallback nutzbar.
+			modelSelect.val("default");
+		}
+	};
 
 	const appendToolCalls = (node, toolCalls) => {
 		if (!toolCalls || !toolCalls.length) return;
@@ -435,11 +468,15 @@ function renderHausverwaltungAssistant(pageBody) {
 		input.val("");
 		addMessage("user", message);
 		const pending = addMessage("assistant", __("Suche laeuft ..."));
-		form.find("button, input").prop("disabled", true);
+		form.find("button, input, select").prop("disabled", true);
 		try {
 			const response = await frappe.call({
 				method: "hausverwaltung.hausverwaltung.services.assistant.ask",
-				args: { message, conversation_id: conversationId },
+				args: {
+					message,
+					conversation_id: conversationId,
+					model: modelSelect.val() || "default",
+				},
 			});
 			const data = response.message || {};
 			conversationId = data.conversation_id || conversationId;
@@ -451,7 +488,7 @@ function renderHausverwaltungAssistant(pageBody) {
 			pending.className = "hv-assistant-message error";
 			pending.textContent = errorText(err);
 		} finally {
-			form.find("button, input").prop("disabled", false);
+			form.find("button, input, select").prop("disabled", false);
 			input.trigger("focus");
 		}
 	};
@@ -464,6 +501,7 @@ function renderHausverwaltungAssistant(pageBody) {
 	root.find(".hv-assistant-new").on("click", clearChat);
 
 	resultsEl.html(`<div class="hv-assistant-empty">${__("Keine Treffer")}</div>`);
+	loadAssistantModels();
 	loadConversationList();
 	input.trigger("focus");
 }
