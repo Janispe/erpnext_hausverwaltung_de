@@ -2,8 +2,6 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import nowdate
-from datetime import date
-from frappe.utils import get_first_day
 from re import sub
 from urllib.parse import urlencode
 
@@ -200,25 +198,6 @@ class Wohnung(Document):
 		doc.insert(ignore_permissions=True)
 		return doc.name
 
-
-	@property
-	def bk_vorauszahlung_ytd_bezahlt(self) -> float:
-		"""YTD gezahlte Betriebskostenvorauszahlung für den aktuellen Mietvertrag."""
-		try:
-			mv = self.aktueller_mietvertrag
-			if not mv:
-				return 0.0
-			from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaiment_calc import (
-				calc_bk_vorauszahlungen,
-			)
-			heute = date.today()
-			jahr = heute.year
-			von = str(get_first_day(f"{jahr}-01-01"))
-			bis = str(heute)
-			res = calc_bk_vorauszahlungen(mv, von, bis)
-			return float(res.get("actual_total", 0.0) or 0.0)
-		except Exception:
-			return 0.0
 
 	@property
 	def mietvertraege_alle(self) -> list[dict]:

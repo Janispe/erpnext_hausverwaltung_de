@@ -13,7 +13,6 @@
   "paperless_tag",
   "section_break_hlnu",
   "aktueller_mietvertrag",
-  "bk_vorauszahlung_ytd_bezahlt",
   "aktuelle_zaehler",
   "section_break_shze",
   "aktueller_zustand",
@@ -97,13 +96,6 @@
    "is_virtual": 1,
    "label": "Aktueller Mietvertrag",
    "options": "Mietvertrag",
-   "read_only": 1
-  },
-  {
-   "fieldname": "bk_vorauszahlung_ytd_bezahlt",
-   "fieldtype": "Currency",
-   "is_virtual": 1,
-   "label": "Betriebskostenvorauszahlung (YTD) bezahlt",
    "read_only": 1
   },
   {

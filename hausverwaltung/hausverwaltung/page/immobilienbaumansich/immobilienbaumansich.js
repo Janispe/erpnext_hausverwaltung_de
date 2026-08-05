@@ -4,6 +4,20 @@ frappe.pages["immobilienbaumansich"].on_page_load = function (wrapper) {
 		title: "Immobilien",
 		single_column: true,
 	});
+	const mietvertragMetaPromise = frappe.model.with_doctype("Mietvertrag").catch(() => null);
+	const mietvertragPrefetches = new Map();
+	const prefetchMietvertrag = (name) => {
+		if (!name) return Promise.resolve();
+		if (!mietvertragPrefetches.has(name)) {
+			mietvertragPrefetches.set(
+				name,
+				mietvertragMetaPromise
+					.then(() => frappe.model.with_doc("Mietvertrag", name))
+					.catch(() => null)
+			);
+		}
+		return mietvertragPrefetches.get(name);
+	};
 
 	// Tabelle erstellen
 	const table = $(
@@ -251,11 +265,18 @@ ${teil.name || ""}
 						});
 
 						// Click-Handler für Mietvertrag
-						whgRow.find(".mietvertrag-link").on("click", function(e) {
+						const mietvertragLink = whgRow.find(".mietvertrag-link");
+						whgRow.on("mouseenter focusin", function () {
+							prefetchMietvertrag(mietvertragName);
+						});
+						mietvertragLink.on("click", async function(e) {
 							e.preventDefault();
 							e.stopPropagation();
 							const vertrag = $(this).data("mietvertrag");
 							if (vertrag) {
+								const link = $(this);
+								link.addClass("disabled").attr("aria-disabled", "true");
+								await prefetchMietvertrag(vertrag);
 								frappe.set_route("Form", "Mietvertrag", vertrag);
 							}
 						});

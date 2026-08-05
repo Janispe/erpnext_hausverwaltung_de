@@ -30,7 +30,6 @@
   "aktuelle_betriebskostenregelung",
   "aktuelle_betriebskosten",
   "aktuelle_heizkosten",
-  "bk_vorauszahlung_ytd_bezahlt",
   "betriebskostenregelung_section",
   "betriebskostenregelungen",
   "betriebskosten",
@@ -194,13 +193,6 @@
    "fieldtype": "Currency",
    "is_virtual": 1,
    "label": "Aktuelle Heizkosten",
-   "read_only": 1
-  },
-  {
-   "fieldname": "bk_vorauszahlung_ytd_bezahlt",
-   "fieldtype": "Currency",
-   "is_virtual": 1,
-   "label": "Betriebskostenvorauszahlung (YTD) bezahlt",
    "read_only": 1
   },
   {

@@ -4,7 +4,7 @@ import re
 from frappe import _
 from frappe.model.document import Document
 from frappe.model.rename_doc import rename_doc
-from frappe.utils import add_days, getdate, today, get_first_day
+from frappe.utils import add_days, getdate, today
 from urllib.parse import urlencode
 
 from datetime import date
@@ -641,29 +641,6 @@ class Mietvertrag(Document):
 			),
 			"qr_data_url": ts.make_qr_data_url(qr_url),
 		}
-
-	@property
-	def bk_vorauszahlung_ytd_bezahlt(self) -> float:
-		"""Summe der in diesem Kalenderjahr gezahlten Betriebskostenvorauszahlungen (YTD).
-
-		Nutzt das bestehende Utility `calc_bk_vorauszahlungen` und summiert `actual_total`
-		für den Zeitraum 01.01. bis heute, zugeschnitten auf die Vertragslaufzeit.
-		"""
-		try:
-			from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaiment_calc import (
-				calc_bk_vorauszahlungen,
-			)
-
-			heute = date.today()
-			jahr = heute.year
-			von = str(get_first_day(f"{jahr}-01-01"))
-			bis = str(heute)
-			res = calc_bk_vorauszahlungen(self.name, von, bis)
-			return float(res.get("actual_total", 0.0) or 0.0)
-		except Exception:
-			# Keine harten Fehler im Formular anzeigen
-			return 0.0
-
 
 def _build_mietvertrag_base_name(doc: object) -> str:
 	wohnung_name = (getattr(doc, "wohnung", None) or "").strip()
