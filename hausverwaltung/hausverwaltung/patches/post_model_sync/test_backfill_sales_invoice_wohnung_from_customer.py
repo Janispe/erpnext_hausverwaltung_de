@@ -31,7 +31,6 @@ class TestBackfillSalesInvoiceWohnungFromCustomer(unittest.TestCase):
 					None,
 					None,
 					None,
-					None,
 				]
 			),
 		)
@@ -39,7 +38,7 @@ class TestBackfillSalesInvoiceWohnungFromCustomer(unittest.TestCase):
 			 patch("builtins.print") as output:
 			patch_module.execute()
 
-		self.assertEqual(fake_db.sql.call_count, 7)
+		self.assertEqual(fake_db.sql.call_count, 6)
 		queries = [call.args[0] for call in fake_db.sql.call_args_list]
 		create_query = queries[1]
 		item_update = queries[3]
@@ -73,7 +72,6 @@ class TestBackfillSalesInvoiceWohnungFromCustomer(unittest.TestCase):
 					None,
 					None,
 					[frappe._dict(total=0)],
-					None,
 				]
 			),
 		)
@@ -81,6 +79,7 @@ class TestBackfillSalesInvoiceWohnungFromCustomer(unittest.TestCase):
 			patch_module.execute()
 
 		queries = [call.args[0] for call in fake_db.sql.call_args_list]
-		self.assertEqual(fake_db.sql.call_count, 4)
+		self.assertEqual(fake_db.sql.call_count, 3)
 		self.assertFalse(any("UPDATE " in query.upper() for query in queries))
-		self.assertTrue(queries[-1].startswith("DROP TEMPORARY TABLE"))
+		self.assertTrue(queries[0].startswith("DROP TEMPORARY TABLE"))
+		self.assertEqual(sum("DROP TEMPORARY TABLE" in query for query in queries), 1)

@@ -68,58 +68,60 @@ def execute() -> None:
 		return
 
 	frappe.db.sql(f"DROP TEMPORARY TABLE IF EXISTS `{_TEMP_TABLE}`")
-	try:
-		frappe.db.sql(
-			f"""
-			CREATE TEMPORARY TABLE `{_TEMP_TABLE}` (
-				invoice_name VARCHAR(140) NOT NULL PRIMARY KEY,
-				wohnung VARCHAR(140) NOT NULL
-			) ENGINE=InnoDB
-			AS
-			{_candidate_select_sql()}
-			"""
-		)
-		count_row = frappe.db.sql(
-			f"SELECT COUNT(*) AS total FROM `{_TEMP_TABLE}`",
-			as_dict=True,
-		)
-		total = int(count_row[0].get("total") or 0) if count_row else 0
-		if not total:
-			return
+	frappe.db.sql(
+		f"""
+		CREATE TEMPORARY TABLE `{_TEMP_TABLE}` (
+			invoice_name VARCHAR(140) NOT NULL PRIMARY KEY,
+			wohnung VARCHAR(140) NOT NULL
+		) ENGINE=InnoDB
+		AS
+		{_candidate_select_sql()}
+		"""
+	)
+	count_row = frappe.db.sql(
+		f"SELECT COUNT(*) AS total FROM `{_TEMP_TABLE}`",
+		as_dict=True,
+	)
+	total = int(count_row[0].get("total") or 0) if count_row else 0
+	if not total:
+		return
 
-		# Zuerst Child- und Ledgerdimensionen, den sichtbaren Header zuletzt.
-		# Die Patch-Transaktion stellt sicher, dass kein Teilzustand committed wird.
-		frappe.db.sql(
-			f"""
-			UPDATE `tabSales Invoice Item` sii
-			INNER JOIN `{_TEMP_TABLE}` candidates
-			  ON candidates.invoice_name = sii.parent
-			SET sii.wohnung = candidates.wohnung
-			WHERE COALESCE(sii.wohnung, '') = ''
-			"""
-		)
-		frappe.db.sql(
-			f"""
-			UPDATE `tabGL Entry` gl
-			INNER JOIN `{_TEMP_TABLE}` candidates
-			  ON candidates.invoice_name = gl.voucher_no
-			SET gl.wohnung = candidates.wohnung
-			WHERE gl.voucher_type = 'Sales Invoice'
-			  AND COALESCE(gl.wohnung, '') = ''
-			"""
-		)
-		frappe.db.sql(
-			f"""
-			UPDATE `tabSales Invoice` si
-			INNER JOIN `{_TEMP_TABLE}` candidates
-			  ON candidates.invoice_name = si.name
-			SET si.wohnung = candidates.wohnung
-			WHERE COALESCE(si.wohnung, '') = ''
-			"""
-		)
-		print(
-			"backfill_sales_invoice_wohnung_from_customer: "
-			f"rechnungen={total}"
-		)
-	finally:
-		frappe.db.sql(f"DROP TEMPORARY TABLE IF EXISTS `{_TEMP_TABLE}`")
+	# Zuerst Child- und Ledgerdimensionen, den sichtbaren Header zuletzt.
+	# Die Patch-Transaktion stellt sicher, dass kein Teilzustand committed wird.
+	frappe.db.sql(
+		f"""
+		UPDATE `tabSales Invoice Item` sii
+		INNER JOIN `{_TEMP_TABLE}` candidates
+		  ON candidates.invoice_name = sii.parent
+		SET sii.wohnung = candidates.wohnung
+		WHERE COALESCE(sii.wohnung, '') = ''
+		"""
+	)
+	frappe.db.sql(
+		f"""
+		UPDATE `tabGL Entry` gl
+		INNER JOIN `{_TEMP_TABLE}` candidates
+		  ON candidates.invoice_name = gl.voucher_no
+		SET gl.wohnung = candidates.wohnung
+		WHERE gl.voucher_type = 'Sales Invoice'
+		  AND COALESCE(gl.wohnung, '') = ''
+		"""
+	)
+	frappe.db.sql(
+		f"""
+		UPDATE `tabSales Invoice` si
+		INNER JOIN `{_TEMP_TABLE}` candidates
+		  ON candidates.invoice_name = si.name
+		SET si.wohnung = candidates.wohnung
+		WHERE COALESCE(si.wohnung, '') = ''
+		"""
+	)
+	print(
+		"backfill_sales_invoice_wohnung_from_customer: "
+		f"rechnungen={total}"
+	)
+
+	# Kein DROP nach den Updates: Frappe blockiert DDL nach Schreibzugriffen
+	# als möglichen impliziten Commit. Die temporäre Tabelle ist
+	# verbindungsgebunden und wird beim Schließen der Migration automatisch
+	# entfernt.
