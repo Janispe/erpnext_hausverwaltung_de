@@ -51,24 +51,7 @@ frappe.ui.form.on("Mietvertrag", {
 		highlight_current_staffeln(frm);
 		setup_festbetrag_dimension_overview(frm);
 
-		// Felder ausblenden je nach Wohnung
-		if (frm.doc.wohnung) {
-			frappe.db.get_doc("Wohnung", frm.doc.wohnung).then(function (wohnung) {
-				frm.set_df_property(
-					"betriebskosten",
-					"hidden",
-					!wohnung.betriebskostenabrechnung_durch_vermieter
-				);
-				frm.set_df_property(
-					"heizkosten",
-					"hidden",
-					!wohnung.heizkostenabrechnung_durch_vermieter
-				);
-			});
-		} else {
-			frm.set_df_property("betriebskosten", "hidden", 1);
-			frm.set_df_property("heizkosten", "hidden", 1);
-		}
+		update_cost_table_visibility(frm);
 
 		add_paperless_button(frm);
 		add_mieterkonto_button_from_mietvertrag(frm);
@@ -155,25 +138,43 @@ frappe.ui.form.on("Mietvertrag", {
 	},
 
 	wohnung(frm) {
-		if (frm.doc.wohnung) {
-			frappe.db.get_doc("Wohnung", frm.doc.wohnung).then(function (wohnung) {
-				frm.set_df_property(
-					"betriebskosten",
-					"hidden",
-					!wohnung.betriebskostenabrechnung_durch_vermieter
-				);
-				frm.set_df_property(
-					"heizkosten",
-					"hidden",
-					!wohnung.heizkostenabrechnung_durch_vermieter
-				);
-			});
-		} else {
-			frm.set_df_property("betriebskosten", "hidden", 1);
-			frm.set_df_property("heizkosten", "hidden", 1);
-		}
+		update_cost_table_visibility(frm);
 	},
 });
+
+async function update_cost_table_visibility(frm) {
+	const wohnungName = frm.doc.wohnung;
+	if (!wohnungName) {
+		frm.set_df_property("betriebskosten", "hidden", 1);
+		frm.set_df_property("heizkosten", "hidden", 1);
+		return;
+	}
+
+	frm.__hv_wohnung_cost_visibility ||= {};
+	let wohnung = frm.__hv_wohnung_cost_visibility[wohnungName];
+	if (!wohnung) {
+		const response = await frappe.db.get_value("Wohnung", wohnungName, [
+			"betriebskostenabrechnung_durch_vermieter",
+			"heizkostenabrechnung_durch_vermieter",
+		]);
+		wohnung = response && response.message;
+		if (!wohnung) return;
+		frm.__hv_wohnung_cost_visibility[wohnungName] = wohnung;
+	}
+
+	// Ignore an outdated response if the user selected another Wohnung meanwhile.
+	if (frm.doc.wohnung !== wohnungName) return;
+	frm.set_df_property(
+		"betriebskosten",
+		"hidden",
+		!wohnung.betriebskostenabrechnung_durch_vermieter
+	);
+	frm.set_df_property(
+		"heizkosten",
+		"hidden",
+		!wohnung.heizkostenabrechnung_durch_vermieter
+	);
+}
 
 frappe.ui.form.on("Betriebskostenregelung", {
 	gueltig_von(frm) {
@@ -300,11 +301,13 @@ function setup_festbetrag_dimension_overview(frm) {
 				</div>
 				<div class="col-sm-3">
 					<button type="button" class="btn btn-default btn-sm" data-action="filter">
-						${__("Filter anwenden")}
+						${__("Dimensionsbuchungen laden")}
 					</button>
 				</div>
 			</div>
-			<div data-role="dimension-table"></div>
+			<div data-role="dimension-table" class="text-muted small">
+				${__("Die Buchungen werden erst bei Bedarf geladen.")}
+			</div>
 		</div>
 	`);
 
@@ -370,7 +373,6 @@ function setup_festbetrag_dimension_overview(frm) {
 	};
 
 	wrapper.find('[data-action="filter"]').on("click", load_rows);
-	load_rows();
 }
 
 frappe.ui.form.on("Betriebskosten Festbetrag", {
@@ -423,13 +425,17 @@ function hide_staffelmiete_art_column(frm, tableFieldname) {
 	}
 
 	frm.refresh_field(tableFieldname);
-	if (typeof grid.refresh === "function") grid.refresh();
 }
 
 function rename_staffelmiete_miete_column(frm, tableFieldname, newLabel) {
 	const field = frm.get_field && frm.get_field(tableFieldname);
 	const grid = field && field.grid;
 	if (!grid || typeof grid.update_docfield_property !== "function") return;
+
+	const amountField = (grid.docfields || []).find(
+		(df) => df && df.fieldname === "miete"
+	);
+	if (amountField && amountField.label === newLabel) return;
 
 	grid.update_docfield_property("miete", "label", newLabel);
 	if (Array.isArray(grid.docfields)) {
@@ -440,9 +446,6 @@ function rename_staffelmiete_miete_column(frm, tableFieldname, newLabel) {
 		});
 	}
 	frm.refresh_field(tableFieldname);
-	if (typeof grid.refresh === "function") {
-		grid.refresh();
-	}
 }
 
 frappe.ui.form.on("Staffelmiete", {
