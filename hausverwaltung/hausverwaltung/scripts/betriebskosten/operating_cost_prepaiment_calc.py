@@ -907,6 +907,16 @@ def get_bk_invoice_details(
 	)
 	if not names:
 		return []
+	return _bk_invoice_details_for_invoice_names(names, item_code=item_code)
+
+
+def _bk_invoice_details_for_invoice_names(
+	names: List[str],
+	item_code: str = BK_ITEM_CODE,
+) -> List[Dict[str, Any]]:
+	"""Liefert Details für eine bereits eindeutig bestimmte Belegmenge."""
+	if not names:
+		return []
 	eff = _invoice_effective_date_expr("si")
 	sql = f"""
 		SELECT
@@ -959,40 +969,35 @@ def get_bk_prepayment_summary(
 	  invoices: [...],         # Detail je Rechnung (siehe get_bk_invoice_details)
 	}
 	"""
+	names = _bk_invoice_names_for_wohnung(
+		wohnung,
+		from_date,
+		to_date,
+		item_code=BK_ITEM_CODE,
+		customer=customer,
+		mietvertrag=mietvertrag,
+		company=company,
+		contract_identity=contract_identity,
+	)
 	expected_dec = _quantize_money(
 		_to_decimal(
-			get_bk_expected_sum(
-				wohnung,
-				from_date,
-				to_date,
-				customer=customer,
-				mietvertrag=mietvertrag,
-				company=company,
-				contract_identity=contract_identity,
+			get_bk_expected_sum_for_invoice_names(
+				names,
+				item_code=BK_ITEM_CODE,
 			)
 		)
 	)
 	paid_dec = _quantize_money(
 		_to_decimal(
-			get_bk_paid_sum_for_period_invoices(
-				wohnung,
-				from_date,
-				to_date,
-				customer=customer,
-				mietvertrag=mietvertrag,
-				company=company,
-				contract_identity=contract_identity,
+			get_bk_paid_sum_for_invoice_names(
+				names,
+				item_code=BK_ITEM_CODE,
 			)
 		)
 	)
-	details = get_bk_invoice_details(
-		wohnung,
-		from_date,
-		to_date,
-		customer=customer,
-		mietvertrag=mietvertrag,
-		company=company,
-		contract_identity=contract_identity,
+	details = _bk_invoice_details_for_invoice_names(
+		names,
+		item_code=BK_ITEM_CODE,
 	)
 	return {
 		"wohnung": wohnung,

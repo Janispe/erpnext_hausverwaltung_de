@@ -100,7 +100,7 @@ class TestAbrechnungRegelung(unittest.TestCase):
 				"allocate_kosten_auf_wohnungen",
 				return_value={"matrix": {"WHG-1": {"Wasser": 1200}}},
 			),
-			patch.object(bk, "create_bk_abrechnung_wohnung", return_value=["BKA-INFO"]),
+			patch.object(bk, "_create_bk_abrechnung_wohnung", return_value=["BKA-INFO"]) as create_child,
 		):
 			result = bk.create_bk_abrechnungen_immobilie(
 				von="2026-01-01",
@@ -111,6 +111,16 @@ class TestAbrechnungRegelung(unittest.TestCase):
 			)
 
 		self.assertEqual(result, {"created": ["BKA-INFO"], "count": 1})
+		create_child.assert_called_once_with(
+			von="2026-01-01",
+			bis="2026-12-31",
+			wohnung="WHG-1",
+			submit=False,
+			stichtag="2026-12-31",
+			head="BK-HEAD",
+			split_by_mietvertrag=True,
+			allocation={"matrix": {"WHG-1": {"Wasser": 1200}}},
+		)
 
 	def test_inclusive_segment_creates_cost_information_without_prepayment(self):
 		segment = self._segments()[0]

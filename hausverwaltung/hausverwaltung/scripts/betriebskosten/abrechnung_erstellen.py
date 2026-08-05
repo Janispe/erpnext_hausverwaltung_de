@@ -831,8 +831,7 @@ def _insert_authorized_bk_child(doc) -> None:
         doc.flags.ignore_permissions = False
 
 
-@frappe.whitelist()
-def create_bk_abrechnung_wohnung(
+def _create_bk_abrechnung_wohnung(
     von: str,
     bis: str,
     wohnung: str,
@@ -840,8 +839,9 @@ def create_bk_abrechnung_wohnung(
     stichtag: Optional[str] = None,
     head: Optional[str] = None,
     split_by_mietvertrag: bool = False,
+    allocation: Optional[Dict[str, Any]] = None,
 ) -> str | List[str]:
-    """Erstellt eine Betriebskostenabrechnung (Mieter) für eine Wohnung."""
+    """Erstellt eine Wohnungsabrechnung mit optional vorab berechneter Verteilung."""
     submit = bool(cint(submit))
     split_by_mietvertrag = bool(cint(split_by_mietvertrag))
     if submit:
@@ -893,7 +893,14 @@ def create_bk_abrechnung_wohnung(
     # Verteilte Kosten (nur für diese Wohnung herausziehen)
     immobilie = head_doc.immobilie
     abrechnung_company = _get_default_company(frappe._dict(wohnung=wohnung))
-    alloc = allocate_kosten_auf_wohnungen(von=von, bis=bis, immobilie=immobilie, stichtag=stichtag)
+    alloc = allocation
+    if alloc is None:
+        alloc = allocate_kosten_auf_wohnungen(
+            von=von,
+            bis=bis,
+            immobilie=immobilie,
+            stichtag=stichtag,
+        )
     matrix: Dict[str, Dict[str, Any]] = alloc.get("matrix") or {}
     posten_raw = matrix.get(wohnung) or {}
     posten = {art: _to_decimal(amount) for art, amount in posten_raw.items()}
@@ -1063,6 +1070,28 @@ def create_bk_abrechnung_wohnung(
 
 
 @frappe.whitelist()
+def create_bk_abrechnung_wohnung(
+    von: str,
+    bis: str,
+    wohnung: str,
+    submit: bool = False,
+    stichtag: Optional[str] = None,
+    head: Optional[str] = None,
+    split_by_mietvertrag: bool = False,
+) -> str | List[str]:
+    """Erstellt eine Betriebskostenabrechnung (Mieter) für eine Wohnung."""
+    return _create_bk_abrechnung_wohnung(
+        von=von,
+        bis=bis,
+        wohnung=wohnung,
+        submit=submit,
+        stichtag=stichtag,
+        head=head,
+        split_by_mietvertrag=split_by_mietvertrag,
+    )
+
+
+@frappe.whitelist()
 def create_bk_abrechnungen_immobilie(
     von: str,
     bis: str,
@@ -1100,7 +1129,7 @@ def create_bk_abrechnungen_immobilie(
     created: List[str] = []
     head_name = head
     for whg in sorted(matrix.keys()):
-        res = create_bk_abrechnung_wohnung(
+        res = _create_bk_abrechnung_wohnung(
             von=von,
             bis=bis,
             wohnung=whg,
@@ -1108,6 +1137,7 @@ def create_bk_abrechnungen_immobilie(
             stichtag=stichtag,
             head=head_name,
             split_by_mietvertrag=split_by_mietvertrag,
+            allocation=alloc,
         )
         if isinstance(res, list):
             created.extend(res)

@@ -828,6 +828,59 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 		)
 		expected_sum.assert_called_once_with(["SI-PASST"], item_code=calc.BK_ITEM_CODE)
 
+	def test_prepayment_summary_reuses_one_invoice_selection(self):
+		with patch.object(
+			calc,
+			"_bk_invoice_names_for_wohnung",
+			return_value=["SI-1", "SI-2"],
+		) as invoice_names, patch.object(
+			calc,
+			"get_bk_expected_sum_for_invoice_names",
+			return_value=200.0,
+		) as expected_sum, patch.object(
+			calc,
+			"get_bk_paid_sum_for_invoice_names",
+			return_value=180.0,
+		) as paid_sum, patch.object(
+			calc,
+			"_bk_invoice_details_for_invoice_names",
+			return_value=[{"name": "SI-1"}, {"name": "SI-2"}],
+		) as invoice_details:
+			result = calc.get_bk_prepayment_summary(
+				"WHG-1",
+				"2025-01-01",
+				"2025-12-31",
+				customer="CUST-1",
+				mietvertrag="MV-1",
+				company="COMP-1",
+			)
+
+		invoice_names.assert_called_once_with(
+			"WHG-1",
+			"2025-01-01",
+			"2025-12-31",
+			item_code=calc.BK_ITEM_CODE,
+			customer="CUST-1",
+			mietvertrag="MV-1",
+			company="COMP-1",
+			contract_identity=None,
+		)
+		expected_sum.assert_called_once_with(
+			["SI-1", "SI-2"],
+			item_code=calc.BK_ITEM_CODE,
+		)
+		paid_sum.assert_called_once_with(
+			["SI-1", "SI-2"],
+			item_code=calc.BK_ITEM_CODE,
+		)
+		invoice_details.assert_called_once_with(
+			["SI-1", "SI-2"],
+			item_code=calc.BK_ITEM_CODE,
+		)
+		self.assertEqual(result["expected_total"], 200.0)
+		self.assertEqual(result["paid_total"], 180.0)
+		self.assertEqual(result["balance"], -20.0)
+
 	def test_paid_sum_query_filters_exact_wohnung(self):
 		segments = [{"customer": "CUST-1", "start": "2025-01-01", "end": "2025-12-31"}]
 		with patch.object(calc, "_invoice_segments_for_wohnung", return_value=segments), \
