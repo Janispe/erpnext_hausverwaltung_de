@@ -220,7 +220,7 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 		self.assertIn("return_source.name = si.return_against", query)
 		self.assertTrue(query.rstrip().endswith("FOR UPDATE"))
 
-	def test_exact_contract_rejects_unmarked_invoice_on_known_apartment(self):
+	def test_exact_contract_accepts_unmarked_invoice_on_known_apartment(self):
 		segments = [{"customer": "CUST-1", "start": "2025-01-01", "end": "2025-12-31"}]
 		rows = [
 			frappe._dict(
@@ -238,7 +238,35 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 		]
 		with patch.object(calc, "_invoice_segments_for_wohnung", return_value=segments), \
 			 patch.object(calc.frappe.db, "sql", return_value=rows):
-			with self.assertRaisesRegex(frappe.ValidationError, "ohne eindeutige Mietvertragskennung"):
+			result = calc._bk_invoice_names_for_wohnung(
+				"WHG-1",
+				"2025-01-01",
+				"2025-12-31",
+				customer="CUST-1",
+				mietvertrag="MV-1",
+			)
+
+		self.assertEqual(result, ["SI-AMBIGUOUS"])
+
+	def test_exact_contract_rejects_unmarked_invoice_without_apartment(self):
+		segments = [{"customer": "CUST-1", "start": "2025-01-01", "end": "2025-12-31"}]
+		rows = [
+			frappe._dict(
+				name="SI-NO-APARTMENT",
+				invoice_customer="CUST-1",
+				wohnung=None,
+				mietabrechnung_id=None,
+				remarks="BK 01/2025",
+				is_return=0,
+				effective_date="2025-01-01",
+				identity_mietvertrag=None,
+				identity_wohnung=None,
+				identity_customer=None,
+			)
+		]
+		with patch.object(calc, "_invoice_segments_for_wohnung", return_value=segments), \
+			 patch.object(calc.frappe.db, "sql", return_value=rows):
+			with self.assertRaisesRegex(frappe.ValidationError, "ohne eindeutige Wohnungskennung"):
 				calc._bk_invoice_names_for_wohnung(
 					"WHG-1",
 					"2025-01-01",

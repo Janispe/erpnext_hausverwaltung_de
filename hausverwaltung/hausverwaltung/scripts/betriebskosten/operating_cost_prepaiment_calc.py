@@ -379,8 +379,9 @@ def _bk_invoice_names_for_wohnung(
 	Korrekturen werden über den expliziten Monat in ``mietabrechnung_id`` oder
 	``[MV:...] MM/YYYY`` der ursprünglichen Periode zugeordnet.
 
-	Bei einer konkreten Mietvertragsabrechnung werden unmarkierte oder
-	widersprüchliche Legacy-/Return-Belege fail-closed behandelt.
+	Bei einer konkreten Mietvertragsabrechnung reicht für unmarkierte Belege
+	die eindeutige Kombination aus Customer und Wohnung. Explizite
+	Mietvertragskennzeichen werden weiterhin auf Widersprüche geprüft.
 	"""
 	locked_contract_identity: Dict[str, Any] = {}
 	if contract_identity:
@@ -527,7 +528,7 @@ def _bk_invoice_names_for_wohnung(
 		sql += "\nFOR UPDATE"
 	rows = frappe.db.sql(sql, params, as_dict=True)
 	selected: List[str] = []
-	ambiguous: List[str] = []
+	missing_apartment: List[str] = []
 	contract_cache: Dict[str, Dict[str, Any]] = {}
 	if mietvertrag and locked_contract_identity:
 		contract_cache[mietvertrag] = locked_contract_identity
@@ -648,10 +649,10 @@ def _bk_invoice_names_for_wohnung(
 			# als Widerspruch fail-closed behandelt.
 			continue
 		if mietvertrag:
-			if not effective.get("contract"):
-				ambiguous.append(name)
+			if effective.get("contract") and effective["contract"] != mietvertrag:
 				continue
-			if effective["contract"] != mietvertrag:
+			if not effective.get("wohnung"):
+				missing_apartment.append(name)
 				continue
 			if effective.get("wohnung") != wohnung:
 				frappe.throw(
@@ -664,11 +665,11 @@ def _bk_invoice_names_for_wohnung(
 		if effective.get("wohnung") == wohnung:
 			selected.append(name)
 
-	if ambiguous:
+	if missing_apartment:
 		frappe.throw(
 			f"{item_code}-Vorauszahlungsrechnungen ohne eindeutige "
-			"Mietvertragskennung "
-			f"gefunden: {', '.join(ambiguous[:5])}. Bitte Datenzuordnung "
+			"Wohnungskennung "
+			f"gefunden: {', '.join(missing_apartment[:5])}. Bitte Datenzuordnung "
 			"prüfen; es wurde nichts gebucht."
 		)
 	return selected
