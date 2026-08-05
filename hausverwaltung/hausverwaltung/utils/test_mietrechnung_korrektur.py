@@ -7,6 +7,7 @@ import frappe
 
 from hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur import (
 	_find_generated_invoice,
+	_korrektur_gutschrift,
 	_korrektur_storno,
 	_reconcile_bulk_payment_pool,
 	_reconcile_existing_payment,
@@ -18,12 +19,19 @@ from hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur import (
 )
 
 
-def _si(remarks="", mietabrechnung_id="", items=None, posting_date="2026-03-15"):
+def _si(
+	remarks="",
+	mietabrechnung_id="",
+	items=None,
+	posting_date="2026-03-15",
+	custom_wertstellungsdatum=None,
+):
 	return frappe._dict(
 		remarks=remarks,
 		mietabrechnung_id=mietabrechnung_id,
 		items=[frappe._dict(i) for i in (items or [])],
 		posting_date=posting_date,
+		custom_wertstellungsdatum=custom_wertstellungsdatum,
 	)
 
 
@@ -36,30 +44,30 @@ class TestSiContext(unittest.TestCase):
 		self.assertEqual(ctx["jahr"], 2026)
 		self.assertEqual(ctx["monat_str"], "03/2026")
 
-	def test_mietabrechnung_id_fallback(self):
+	def test_mietabrechnung_id_does_not_define_month(self):
 		ctx = _si_context(_si(mietabrechnung_id="MV-7|11/2025"))
 		self.assertEqual(ctx["mietvertrag"], "MV-7")
-		self.assertEqual(ctx["monat"], 11)
-		self.assertEqual(ctx["jahr"], 2025)
+		self.assertEqual(ctx["monat"], 3)
+		self.assertEqual(ctx["jahr"], 2026)
 
 	def test_typ_from_item_code(self):
 		ctx = _si_context(_si(mietabrechnung_id="MV-7|11/2025", items=[{"item_code": "Heizkosten"}]))
 		self.assertEqual(ctx["typ"], "Heizkosten")
 
-	def test_remark_wins_over_mietabrechnung_id(self):
+	def test_remark_contract_wins_over_mietabrechnung_id(self):
 		ctx = _si_context(
 			_si(remarks="[TYPE:Betriebskosten] [MV:MV-A] 05/2026", mietabrechnung_id="MV-B|01/2020")
 		)
 		self.assertEqual(ctx["typ"], "Betriebskosten")
 		self.assertEqual(ctx["mietvertrag"], "MV-A")
-		self.assertEqual(ctx["monat"], 5)
+		self.assertEqual(ctx["monat"], 3)
 		self.assertEqual(ctx["jahr"], 2026)
 
 	def test_mietabrechnung_id_with_pipes_in_mv_name(self):
 		mab = "G1\t| VH\t| EG links\t| ab: 2008-03-01 - Beganovic|05/2026"
 		ctx = _si_context(_si(mietabrechnung_id=mab, items=[{"item_code": "Miete"}]))
 		self.assertEqual(ctx["mietvertrag"], "G1\t| VH\t| EG links\t| ab: 2008-03-01 - Beganovic")
-		self.assertEqual(ctx["monat"], 5)
+		self.assertEqual(ctx["monat"], 3)
 		self.assertEqual(ctx["jahr"], 2026)
 		self.assertEqual(ctx["typ"], "Miete")
 
@@ -69,12 +77,67 @@ class TestSiContext(unittest.TestCase):
 		self.assertEqual(ctx["monat"], 7)
 		self.assertEqual(ctx["jahr"], 2026)
 
+	def test_value_date_wins_over_posting_and_text_month(self):
+		ctx = _si_context(
+			_si(
+				mietabrechnung_id="MV-7|11/2024",
+				posting_date="2026-07-09",
+				custom_wertstellungsdatum="2025-05-01",
+			)
+		)
+		self.assertEqual(ctx["monat"], 5)
+		self.assertEqual(ctx["jahr"], 2025)
+
 	def test_unresolvable_returns_none_mv_and_typ(self):
 		ctx = _si_context(_si(remarks="freier Text ohne Marker", posting_date="2026-02-01"))
 		self.assertIsNone(ctx["mietvertrag"])
 		self.assertIsNone(ctx["typ"])
 		self.assertEqual(ctx["monat"], 2)
 		self.assertEqual(ctx["jahr"], 2026)
+
+
+class TestCorrectionValueDate(unittest.TestCase):
+	def test_frozen_period_corrections_keep_original_value_date(self):
+		si = frappe._dict(
+			name="SINV-ALT",
+			customer="CUST-1",
+			company="COMP-1",
+			wohnung="WHG-1",
+			grand_total=100.0,
+			posting_date="2025-05-15",
+			custom_wertstellungsdatum="2025-05-01",
+			mietabrechnung_id="Alter Vertragstext|05/2025",
+		)
+		ctx = {
+			"typ": "Betriebskosten",
+			"mietvertrag": "Aktueller Vertragstext",
+			"monat_str": "05/2025",
+		}
+		with (
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._is_frozen",
+				return_value=False,
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen._cost_center_via_wohnung",
+				return_value="CC-1",
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.income_accounts.get_hv_income_accounts",
+				return_value={"Betriebskosten": "ERLOES-1"},
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur._build_si",
+				side_effect=["SINV-GUTSCHRIFT", "SINV-NEU"],
+			) as build_si,
+		):
+			result = _korrektur_gutschrift(si, ctx, 120.0)
+
+		self.assertEqual(result["gutschrift"], "SINV-GUTSCHRIFT")
+		self.assertEqual(result["neue_si"], "SINV-NEU")
+		self.assertEqual(build_si.call_count, 2)
+		for call in build_si.call_args_list:
+			self.assertEqual(str(call.kwargs["wertstellungsdatum"]), "2025-05-01")
 
 
 class TestSingleTypeCorrectionGuard(unittest.TestCase):

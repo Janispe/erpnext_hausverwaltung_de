@@ -1,6 +1,5 @@
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import frappe
@@ -136,27 +135,6 @@ def _invoice_segments_for_wohnung(
 	return [{"customer": customer, "start": fd, "end": td}]
 
 
-_MONTH_TOKEN_RE = re.compile(r"^(0[1-9]|1[0-2])/(\d{4})$")
-_MV_MARKER_RE = re.compile(r"\[MV:([^\]]+)\]")
-_MV_PERIOD_MARKER_RE = re.compile(r"\[MV:([^\]]+)\]\s+(\d{2}/\d{4})")
-
-
-def _structured_contract_sql(alias: str) -> str:
-	"""Extract the contract part before the last ``|`` from a billing id."""
-	return f"""
-		CASE
-			WHEN INSTR(COALESCE({alias}.mietabrechnung_id, ''), '|') > 0
-			THEN LEFT(
-				{alias}.mietabrechnung_id,
-				CHAR_LENGTH({alias}.mietabrechnung_id)
-				- CHAR_LENGTH(SUBSTRING_INDEX({alias}.mietabrechnung_id, '|', -1))
-				- 1
-			)
-			ELSE NULL
-		END
-	"""
-
-
 def _segment_invoice_predicates(alias: str, segments: List[Dict[str, Any]]) -> List[str]:
 	effective_date = _invoice_effective_date_expr(alias)
 	predicates: List[str] = []
@@ -181,33 +159,13 @@ def _segment_invoice_predicates(alias: str, segments: List[Dict[str, Any]]) -> L
 	return predicates
 
 
-def _parse_month_token(token: str, *, invoice_name: str, source: str) -> Optional[date]:
-	token = (token or "").strip()
-	if not token:
-		return None
-	match = _MONTH_TOKEN_RE.fullmatch(token)
-	if not match:
-		frappe.throw(
-			f"Sales Invoice {invoice_name} enthält einen ungültigen "
-			f"Abrechnungsmonat in {source}: {token}. Buchung abgebrochen."
-		)
-	return date(int(match.group(2)), int(match.group(1)), 1)
-
-
 def _period_overlaps(
-	month_start: Optional[date],
 	effective_date: Any,
 	from_date: Optional[str | date],
 	to_date: Optional[str | date],
 ) -> bool:
 	start = getdate(from_date) if from_date else None
 	end = getdate(to_date) if to_date else None
-	if month_start:
-		if month_start.month == 12:
-			month_end = date(month_start.year + 1, 1, 1) - timedelta(days=1)
-		else:
-			month_end = date(month_start.year, month_start.month + 1, 1) - timedelta(days=1)
-		return (not start or month_end >= start) and (not end or month_start <= end)
 	if not effective_date:
 		return False
 	value = getdate(effective_date)
@@ -218,13 +176,15 @@ def _invoice_identity_evidence(
 	row: Dict[str, Any],
 	*,
 	prefix: str,
-	invoice_name: str,
-	contract_cache: Dict[str, Dict[str, Any]],
 ) -> Dict[str, Any]:
-	"""Resolve one invoice's exact contract, apartment, customer and period.
+	"""Lese Customer, Wohnung und effektives Datum einer Rechnung.
 
 	``prefix`` is empty for the selected document and ``return_source_`` for
 	the document referenced through ``return_against``.
+
+	``mietabrechnung_id`` und Remark-Mietvertragsmarker sind bewusst keine
+	Identitäts- oder Periodenquelle. Maßgeblich sind ausschließlich Customer,
+	Wohnung und Wertstellungsdatum (mit Posting Date als Fallback).
 	"""
 	def field(name: str) -> Any:
 		if prefix:
@@ -233,128 +193,9 @@ def _invoice_identity_evidence(
 			return row.get("invoice_customer")
 		return row.get(name)
 
-	structured_id = str(field("mietabrechnung_id") or "").strip()
-	structured_contract = ""
-	structured_month: Optional[date] = None
-	if structured_id:
-		if "|" not in structured_id:
-			frappe.throw(
-				f"Sales Invoice {invoice_name} enthält eine nicht auflösbare "
-				"mietabrechnung_id. Buchung abgebrochen."
-			)
-		structured_contract, _separator, month_token = structured_id.rpartition("|")
-		structured_contract = structured_contract.strip()
-		if not structured_contract:
-			frappe.throw(
-				f"Sales Invoice {invoice_name} enthält keinen Mietvertrag in "
-				"mietabrechnung_id. Buchung abgebrochen."
-			)
-		structured_month = _parse_month_token(
-			month_token,
-			invoice_name=invoice_name,
-			source="mietabrechnung_id",
-		)
-
-	remarks = str(field("remarks") or "")
-	marker_names = {
-		value.strip()
-		for value in _MV_MARKER_RE.findall(remarks)
-		if value.strip()
-	}
-	if len(marker_names) > 1:
-		frappe.throw(
-			f"Sales Invoice {invoice_name} enthält mehrere Mietvertragsmarker. "
-			"Buchung abgebrochen."
-		)
-	marker_contract = next(iter(marker_names), "")
-	marker_periods = {
-		_parse_month_token(
-			month_token,
-			invoice_name=invoice_name,
-			source="Mietvertragsmarker",
-		)
-		for _marker_contract, month_token in _MV_PERIOD_MARKER_RE.findall(remarks)
-	}
-	marker_periods.discard(None)
-	if len(marker_periods) > 1:
-		frappe.throw(
-			f"Sales Invoice {invoice_name} enthält mehrere Abrechnungsmonate. "
-			"Buchung abgebrochen."
-		)
-	marker_month = next(iter(marker_periods), None)
-
-	contract_names = {
-		value
-		for value in (structured_contract, marker_contract)
-		if value
-	}
-	if len(contract_names) > 1:
-		frappe.throw(
-			f"Sales Invoice {invoice_name} enthält widersprüchliche "
-			"Mietvertragskennzeichen. Buchung abgebrochen."
-		)
-	if structured_month and marker_month and structured_month != marker_month:
-		frappe.throw(
-			f"Sales Invoice {invoice_name} enthält widersprüchliche "
-			"Abrechnungsmonate. Buchung abgebrochen."
-		)
-	contract_name = next(iter(contract_names), "")
-
-	joined_contract = str(field("identity_mietvertrag") or "").strip()
-	if joined_contract and contract_name and joined_contract != contract_name:
-		frappe.throw(
-			f"Sales Invoice {invoice_name} enthält eine widersprüchliche "
-			"strukturierte Mietvertragskennung. Buchung abgebrochen."
-		)
-
-	contract_identity: Dict[str, Any] = {}
-	if contract_name:
-		if contract_name not in contract_cache:
-			joined_identity = {}
-			if joined_contract == contract_name:
-				joined_identity = {
-					"wohnung": field("identity_wohnung"),
-					"kunde": field("identity_customer"),
-				}
-			if not (joined_identity.get("wohnung") and joined_identity.get("kunde")):
-				joined_identity = (
-					frappe.db.get_value(
-						"Mietvertrag",
-						contract_name,
-						["wohnung", "kunde"],
-						as_dict=True,
-					)
-					or {}
-				)
-			contract_cache[contract_name] = joined_identity
-		contract_identity = contract_cache[contract_name]
-		if not contract_identity.get("wohnung") or not contract_identity.get("kunde"):
-			frappe.throw(
-				f"Sales Invoice {invoice_name} verweist auf einen nicht eindeutig "
-				f"auflösbaren Mietvertrag {contract_name}. Buchung abgebrochen."
-			)
-
-	customer_values = {
-		str(value).strip()
-		for value in (field("customer"), contract_identity.get("kunde"))
-		if str(value or "").strip()
-	}
-	wohnung_values = {
-		str(value).strip()
-		for value in (field("wohnung"), contract_identity.get("wohnung"))
-		if str(value or "").strip()
-	}
-	if len(customer_values) > 1 or len(wohnung_values) > 1:
-		frappe.throw(
-			f"Sales Invoice {invoice_name} widerspricht ihrem Mietvertrag "
-			"(Customer/Wohnung). Buchung abgebrochen."
-		)
-
 	return {
-		"contract": contract_name,
-		"customer": next(iter(customer_values), ""),
-		"wohnung": next(iter(wohnung_values), ""),
-		"explicit_month": structured_month or marker_month,
+		"customer": str(field("customer") or "").strip(),
+		"wohnung": str(field("wohnung") or "").strip(),
 		"effective_date": field("effective_date"),
 	}
 
@@ -375,15 +216,13 @@ def _bk_invoice_names_for_wohnung(
 
 	Eingereichte Returns werden vorzeichenbehaftet Teil derselben Belegmenge.
 	Ihre Identität und Periode dürfen über ``return_against`` geerbt werden,
-	sofern Quelle und Return nicht widersprüchlich sind. Später gebuchte
-	Korrekturen werden über den expliziten Monat in ``mietabrechnung_id`` oder
-	``[MV:...] MM/YYYY`` der ursprünglichen Periode zugeordnet.
+	sofern Quelle und Return nicht widersprüchlich sind. Die Periode wird nur
+	über Wertstellungsdatum beziehungsweise Posting Date bestimmt.
 
-	Bei einer konkreten Mietvertragsabrechnung reicht für unmarkierte Belege
-	die eindeutige Kombination aus Customer und Wohnung. Explizite
-	Mietvertragskennzeichen werden weiterhin auf Widersprüche geprüft.
+	Die Rechnungszuordnung verwendet ausschließlich Customer und Wohnung.
+	``mietabrechnung_id`` und Remark-Mietvertragsmarker werden weder geladen
+	noch ausgewertet.
 	"""
-	locked_contract_identity: Dict[str, Any] = {}
 	if contract_identity:
 		identity_name = str(contract_identity.get("name") or mietvertrag or "").strip()
 		identity_customer = str(contract_identity.get("kunde") or "").strip()
@@ -411,10 +250,6 @@ def _bk_invoice_names_for_wohnung(
 		customer = identity_customer
 		fd, td = _date_range(from_date, to_date)
 		segments = [{"customer": identity_customer, "start": fd, "end": td}]
-		locked_contract_identity = {
-			"wohnung": identity_wohnung,
-			"kunde": identity_customer,
-		}
 	else:
 		segments = _invoice_segments_for_wohnung(
 			wohnung,
@@ -436,44 +271,6 @@ def _bk_invoice_names_for_wohnung(
 	own_period_candidates = _segment_invoice_predicates("si", segments)
 	return_period_candidates = _segment_invoice_predicates("return_source", segments)
 	customers = tuple(sorted({str(segment["customer"]) for segment in segments}))
-	params["candidate_customers"] = customers
-
-	structured_contract = _structured_contract_sql("si")
-	return_structured_contract = _structured_contract_sql("return_source")
-	if mietvertrag:
-		params["mietvertrag"] = mietvertrag
-		params["mietvertrag_marker"] = f"[MV:{mietvertrag}]"
-		own_identity_candidate = f"""
-			(
-				{structured_contract} = %(mietvertrag)s
-				OR LOCATE(%(mietvertrag_marker)s, COALESCE(si.remarks, '')) > 0
-			)
-		"""
-		return_identity_candidate = f"""
-			(
-				{return_structured_contract} = %(mietvertrag)s
-				OR LOCATE(%(mietvertrag_marker)s, COALESCE(return_source.remarks, '')) > 0
-			)
-		"""
-	else:
-		own_identity_candidate = """
-			(
-				si.customer IN %(candidate_customers)s
-				AND (
-					INSTR(COALESCE(si.mietabrechnung_id, ''), '|') > 0
-					OR INSTR(COALESCE(si.remarks, ''), '[MV:') > 0
-				)
-			)
-		"""
-		return_identity_candidate = """
-			(
-				return_source.customer IN %(candidate_customers)s
-				AND (
-					INSTR(COALESCE(return_source.mietabrechnung_id, ''), '|') > 0
-					OR INSTR(COALESCE(return_source.remarks, ''), '[MV:') > 0
-				)
-			)
-		"""
 
 	sql = f"""
 		SELECT
@@ -481,26 +278,16 @@ def _bk_invoice_names_for_wohnung(
 			si.customer AS invoice_customer,
 			si.company,
 			si.wohnung,
-			si.mietabrechnung_id,
-			si.remarks,
 			si.is_return,
 			si.return_against,
 			{_invoice_effective_date_expr("si")} AS effective_date,
-			identity_mv.name AS identity_mietvertrag,
-			identity_mv.wohnung AS identity_wohnung,
-			identity_mv.kunde AS identity_customer,
 			return_source.name AS return_source_name,
 			return_source.docstatus AS return_source_docstatus,
 			return_source.is_return AS return_source_is_return,
 			return_source.customer AS return_source_customer,
 			return_source.company AS return_source_company,
 			return_source.wohnung AS return_source_wohnung,
-			return_source.mietabrechnung_id AS return_source_mietabrechnung_id,
-			return_source.remarks AS return_source_remarks,
 			{_invoice_effective_date_expr("return_source")} AS return_source_effective_date,
-			return_identity_mv.name AS return_source_identity_mietvertrag,
-			return_identity_mv.wohnung AS return_source_identity_wohnung,
-			return_identity_mv.kunde AS return_source_identity_customer,
 			CASE WHEN EXISTS (
 				SELECT 1
 				FROM `tabSales Invoice Item` return_item
@@ -508,19 +295,13 @@ def _bk_invoice_names_for_wohnung(
 				  AND return_item.item_code = %(bk)s
 			) THEN 1 ELSE 0 END AS return_source_has_item
 		FROM `tabSales Invoice` si
-		LEFT JOIN `tabMietvertrag` identity_mv
-		  ON identity_mv.name = {structured_contract}
 		LEFT JOIN `tabSales Invoice` return_source
 		  ON return_source.name = si.return_against
-		LEFT JOIN `tabMietvertrag` return_identity_mv
-		  ON return_identity_mv.name = {return_structured_contract}
 		WHERE si.docstatus = 1
 		  AND EXISTS (SELECT 1 FROM `tabSales Invoice Item` sii WHERE sii.parent = si.name AND sii.item_code = %(bk)s)
 		  AND (
 				({' OR '.join(own_period_candidates)})
 				OR (si.is_return = 1 AND ({' OR '.join(return_period_candidates)}))
-				OR {own_identity_candidate}
-				OR (si.is_return = 1 AND {return_identity_candidate})
 		  )
 		ORDER BY si.name
 	"""
@@ -529,9 +310,6 @@ def _bk_invoice_names_for_wohnung(
 	rows = frappe.db.sql(sql, params, as_dict=True)
 	selected: List[str] = []
 	missing_apartment: List[str] = []
-	contract_cache: Dict[str, Dict[str, Any]] = {}
-	if mietvertrag and locked_contract_identity:
-		contract_cache[mietvertrag] = locked_contract_identity
 	expected_customers = set(customers)
 	expected_company = str(company or "").strip()
 	for row in rows or []:
@@ -539,8 +317,6 @@ def _bk_invoice_names_for_wohnung(
 		own = _invoice_identity_evidence(
 			row,
 			prefix="",
-			invoice_name=name,
-			contract_cache=contract_cache,
 		)
 		effective = own
 
@@ -562,11 +338,8 @@ def _bk_invoice_names_for_wohnung(
 				source = _invoice_identity_evidence(
 					row,
 					prefix="return_source_",
-					invoice_name=return_against,
-					contract_cache=contract_cache,
 				)
 				for key, label in (
-					("contract", "Mietvertrag"),
 					("customer", "Customer"),
 					("wohnung", "Wohnung"),
 				):
@@ -575,49 +348,36 @@ def _bk_invoice_names_for_wohnung(
 							f"Return {name} widerspricht return_against "
 							f"{return_against} ({label}). Buchung abgebrochen."
 						)
-				if (
-					own.get("explicit_month")
-					and source.get("explicit_month")
-					and own["explicit_month"] != source["explicit_month"]
-				):
-					frappe.throw(
-						f"Return {name} widerspricht return_against "
-						f"{return_against} (Abrechnungsmonat). "
-						"Buchung abgebrochen."
-					)
 				effective = {
-					"contract": own.get("contract") or source.get("contract"),
 					"customer": own.get("customer") or source.get("customer"),
 					"wohnung": own.get("wohnung") or source.get("wohnung"),
-					"explicit_month": (
-						own.get("explicit_month") or source.get("explicit_month")
-					),
-					# Ohne expliziten Abrechnungsmonat ist bei einem Return
-					# ausschließlich die Periode des Originals maßgeblich.
+					# Bei Returns bestimmt das Wertstellungsdatum des Originals die Periode.
 					"effective_date": source.get("effective_date"),
 				}
 
 		if expected_company:
 			invoice_company = str(row.get("company") or "").strip()
 			source_company = str(row.get("return_source_company") or "").strip()
-			exact_target_contract = bool(
-				mietvertrag
-				and (
-					own.get("contract") == mietvertrag
-					or effective.get("contract") == mietvertrag
-				)
+			exact_target_invoice = bool(
+				effective.get("customer") in expected_customers
+				and effective.get("wohnung") == wohnung
 			)
-			if exact_target_contract and invoice_company != expected_company:
+			if exact_target_invoice and invoice_company != expected_company:
 				frappe.throw(
 					f"Sales Invoice {name} trägt die Company "
 					f"{invoice_company or 'leer'} statt {expected_company}, "
-					f"obwohl sie Mietvertrag {mietvertrag} eindeutig zugeordnet "
+					"obwohl Customer und Wohnung eindeutig zugeordnet "
 					"ist. Buchung abgebrochen."
 				)
+			source_matches_target = bool(
+				str(row.get("return_source_customer") or "").strip()
+				in expected_customers
+				and str(row.get("return_source_wohnung") or "").strip() == wohnung
+			)
 			if (
 				int(row.get("is_return") or 0)
 				and row.get("return_against")
-				and effective.get("contract") == mietvertrag
+				and source_matches_target
 				and source_company != expected_company
 			):
 				frappe.throw(
@@ -627,7 +387,6 @@ def _bk_invoice_names_for_wohnung(
 				)
 
 		if not _period_overlaps(
-			effective.get("explicit_month"),
 			effective.get("effective_date"),
 			from_date,
 			to_date,
@@ -644,13 +403,10 @@ def _bk_invoice_names_for_wohnung(
 			continue
 
 		if expected_company and str(row.get("company") or "").strip() != expected_company:
-			# Nicht exakt zugeordnete Belege einer anderen Company sind kein
-			# Teil dieser Abrechnung. Exakte Vertragsbelege wurden oben bereits
-			# als Widerspruch fail-closed behandelt.
+			# Belege einer anderen Company sind kein Teil dieser Abrechnung.
+			# Eindeutig zugeordnete Belege wurden oben bereits abgelehnt.
 			continue
 		if mietvertrag:
-			if effective.get("contract") and effective["contract"] != mietvertrag:
-				continue
 			if not effective.get("wohnung"):
 				missing_apartment.append(name)
 				continue

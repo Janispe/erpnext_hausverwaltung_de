@@ -163,44 +163,38 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 			)
 
 		self.assertEqual(result, ["SI-PASST"])
-		self.assertIn("CHAR_LENGTH(si.mietabrechnung_id)", sql.call_args.args[0])
+		self.assertIn("COALESCE(si.custom_wertstellungsdatum, si.posting_date)", sql.call_args.args[0])
+		self.assertNotIn("mietabrechnung_id", sql.call_args.args[0])
 		self.assertIn("si.is_return", sql.call_args.args[0])
 		self.assertIn("return_against", sql.call_args.args[0])
 		self.assertEqual(sql.call_args.args[1]["wohnung"], "WHG-1")
 
-	def test_structured_identity_recovers_missing_apartment_and_separates_contracts(self):
+	def test_stale_contract_text_is_ignored_for_customer_apartment_and_date(self):
 		segments = [{"customer": "CUST-1", "start": "2025-01-01", "end": "2025-12-31"}]
 		rows = [
 			frappe._dict(
-				name="SI-MV-A",
-				wohnung=None,
-				mietabrechnung_id="Haus | Müller|01/2025",
-				remarks="BK 01/2025",
-				identity_mietvertrag="Haus | Müller",
-				identity_wohnung="WHG-1",
-				identity_customer="CUST-1",
-			),
-			frappe._dict(
-				name="SI-MV-B",
+				name="SI-EICHHORN",
+				invoice_customer="CUST-1",
 				wohnung="WHG-1",
-				mietabrechnung_id="MV-B|08/2025",
-				remarks="BK 08/2025",
-				identity_mietvertrag="MV-B",
-				identity_wohnung="WHG-1",
-				identity_customer="CUST-1",
-			),
+				mietabrechnung_id="Alter Vertragstext Eichhorn|01/2025",
+				remarks="[MV:Alter Vertragstext Eichhorn] 01/2025",
+				is_return=0,
+				effective_date="2025-01-01",
+			)
 		]
 		with patch.object(calc, "_invoice_segments_for_wohnung", return_value=segments), \
-			 patch.object(calc.frappe.db, "sql", return_value=rows):
+			 patch.object(calc.frappe.db, "sql", return_value=rows), \
+			 patch.object(calc.frappe.db, "get_value") as contract_lookup:
 			result = calc._bk_invoice_names_for_wohnung(
 				"WHG-1",
 				"2025-01-01",
 				"2025-12-31",
 				customer="CUST-1",
-				mietvertrag="Haus | Müller",
+				mietvertrag="Aktueller Vertragstext Eichhorn",
 			)
 
-		self.assertEqual(result, ["SI-MV-A"])
+		self.assertEqual(result, ["SI-EICHHORN"])
+		contract_lookup.assert_not_called()
 
 	def test_invoice_selector_lock_uses_current_read_and_includes_submitted_returns(self):
 		segments = [{"customer": "CUST-1", "start": "2025-01-01", "end": "2025-12-31"}]
@@ -275,37 +269,36 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 					mietvertrag="MV-1",
 				)
 
-	def test_exact_legacy_marker_recovers_missing_apartment(self):
+	def test_legacy_marker_does_not_replace_missing_apartment(self):
 		segments = [{"customer": "CUST-1", "start": "2025-01-01", "end": "2025-12-31"}]
 		rows = [
 			frappe._dict(
 				name="SI-MARKER",
+				invoice_customer="CUST-1",
 				wohnung=None,
-				mietabrechnung_id=None,
 				remarks="[TYPE:Betriebskosten] [MV:MV-1] 01/2025",
-				identity_mietvertrag=None,
-				identity_wohnung=None,
-				identity_customer=None,
+				is_return=0,
+				effective_date="2025-01-01",
 			)
 		]
 		with patch.object(calc, "_invoice_segments_for_wohnung", return_value=segments), \
 			 patch.object(calc.frappe.db, "sql", return_value=rows), \
-			 patch.object(
-				 calc.frappe.db,
-				 "get_value",
-				 return_value=frappe._dict(wohnung="WHG-1", kunde="CUST-1"),
-			 ):
-			result = calc._bk_invoice_names_for_wohnung(
-				"WHG-1",
-				"2025-01-01",
-				"2025-12-31",
-				customer="CUST-1",
-				mietvertrag="MV-1",
-			)
+			 patch.object(calc.frappe.db, "get_value") as contract_lookup:
+			with self.assertRaisesRegex(
+				frappe.ValidationError,
+				"ohne eindeutige Wohnungskennung",
+			):
+				calc._bk_invoice_names_for_wohnung(
+					"WHG-1",
+					"2025-01-01",
+					"2025-12-31",
+					customer="CUST-1",
+					mietvertrag="MV-1",
+				)
 
-		self.assertEqual(result, ["SI-MARKER"])
+		contract_lookup.assert_not_called()
 
-	def test_late_replacement_uses_structured_billing_month(self):
+	def test_late_replacement_uses_value_date(self):
 		segments = [{"customer": "CUST-1", "start": "2025-01-01", "end": "2025-12-31"}]
 		rows = [
 			frappe._dict(
@@ -315,7 +308,7 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 				mietabrechnung_id="MV-1|05/2025",
 				remarks="[KORREKTUR] [MV:MV-1] 05/2025",
 				is_return=0,
-				effective_date="2026-07-30",
+				effective_date="2025-05-01",
 				identity_mietvertrag="MV-1",
 				identity_wohnung="WHG-1",
 				identity_customer="CUST-1",
@@ -333,39 +326,33 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 
 		self.assertEqual(result, ["SI-REPLACEMENT"])
 
-	def test_exact_contract_candidate_with_wrong_header_customer_fails_closed(self):
-		segments = [{"customer": "CUST-1", "start": "2025-01-01", "end": "2025-12-31"}]
+	def test_invoice_with_other_customer_is_not_selected(self):
 		rows = [
 			frappe._dict(
 				name="SI-WRONG-CUSTOMER",
 				invoice_customer="CUST-OTHER",
 				company="COMP-1",
 				wohnung="WHG-1",
-				mietabrechnung_id=None,
-				remarks="[KORREKTUR] [MV:MV-1] 05/2025",
 				is_return=0,
-				effective_date="2026-07-30",
-				identity_mietvertrag=None,
-				identity_wohnung=None,
-				identity_customer=None,
+				effective_date="2025-05-01",
 			)
 		]
-		with patch.object(calc, "_invoice_segments_for_wohnung", return_value=segments), \
-			 patch.object(calc.frappe.db, "sql", return_value=rows):
-			with self.assertRaisesRegex(frappe.ValidationError, "Customer/Wohnung"):
-				calc._bk_invoice_names_for_wohnung(
-					"WHG-1",
-					"2025-01-01",
-					"2025-12-31",
-					customer="CUST-1",
-					mietvertrag="MV-1",
-					company="COMP-1",
-					contract_identity=frappe._dict(
-						name="MV-1",
-						kunde="CUST-1",
-						wohnung="WHG-1",
-					),
-				)
+		with patch.object(calc.frappe.db, "sql", return_value=rows):
+			result = calc._bk_invoice_names_for_wohnung(
+				"WHG-1",
+				"2025-01-01",
+				"2025-12-31",
+				customer="CUST-1",
+				mietvertrag="MV-1",
+				company="COMP-1",
+				contract_identity=frappe._dict(
+					name="MV-1",
+					kunde="CUST-1",
+					wohnung="WHG-1",
+				),
+			)
+
+		self.assertEqual(result, [])
 
 	def test_exact_contract_candidate_with_foreign_company_fails_closed(self):
 		rows = [
@@ -445,7 +432,7 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 					),
 				)
 
-	def test_exact_contract_invoice_with_other_explicit_month_is_not_selected(self):
+	def test_value_date_selects_invoice_despite_other_text_month(self):
 		rows = [
 			frappe._dict(
 				name="SI-OTHER-PERIOD",
@@ -476,28 +463,21 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 				),
 			)
 
-		self.assertEqual(result, [])
+		self.assertEqual(result, ["SI-OTHER-PERIOD"])
 
-	def test_correction_with_conflicting_explicit_periods_fails_closed(self):
+	def test_value_date_wins_over_conflicting_text_periods(self):
 		row = frappe._dict(
 			name="SI-CONFLICTING-PERIOD",
 			invoice_customer="CUST-1",
 			company="COMP-1",
 			wohnung="WHG-1",
-			mietabrechnung_id="MV-1|05/2025",
-			remarks="[KORREKTUR] [MV:MV-1] 06/2025",
+			mietabrechnung_id="MV-1|05/2024",
+			remarks="[KORREKTUR] [MV:MV-ALT] 06/2026",
 			is_return=0,
-			effective_date="2026-07-30",
-			identity_mietvertrag="MV-1",
-			identity_wohnung="WHG-1",
-			identity_customer="CUST-1",
+			effective_date="2025-07-01",
 		)
-		with patch.object(calc.frappe.db, "sql", return_value=[row]), \
-			 self.assertRaisesRegex(
-				 frappe.ValidationError,
-				 "widersprüchliche Abrechnungsmonate",
-			 ):
-			calc._bk_invoice_names_for_wohnung(
+		with patch.object(calc.frappe.db, "sql", return_value=[row]):
+			result = calc._bk_invoice_names_for_wohnung(
 				"WHG-1",
 				"2025-01-01",
 				"2025-12-31",
@@ -510,6 +490,8 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 					wohnung="WHG-1",
 				),
 			)
+
+		self.assertEqual(result, ["SI-CONFLICTING-PERIOD"])
 
 	def test_locked_contract_identity_replaces_stale_segment_read(self):
 		row = frappe._dict(

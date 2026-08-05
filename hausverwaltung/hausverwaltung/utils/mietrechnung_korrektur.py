@@ -54,17 +54,16 @@ _RE_MONTH = re.compile(r"(\d{2})/(\d{4})")
 def _si_context(si) -> dict:
 	"""Leitet aus einer Sales Invoice Typ, Mietvertrag und Abrechnungs-Monat ab.
 
-	Reihenfolge der Quellen: Remark-Marker `[TYPE:..] [MV:..] mm/yyyy`, dann
-	`mietabrechnung_id` (`<MV>|<mm/yyyy>`), dann Item-Code / posting_date als
-	Fallback. Liefert immer ``monat``/``jahr`` (aus posting_date als letzte
-	Rückfallebene); ``mietvertrag``/``typ`` können None sein, wenn nicht
-	auflösbar — der Aufrufer behandelt das als „keine HV-Mietrechnung".
+	Typ und Mietvertragsreferenz stammen weiterhin aus Remark beziehungsweise
+	`mietabrechnung_id`. Der Abrechnungsmonat stammt dagegen ausschließlich aus
+	`custom_wertstellungsdatum`, ersatzweise aus `posting_date`.
 	"""
 	remarks = si.get("remarks") or ""
 	typ = None
 	mv = None
-	monat = None
-	jahr = None
+	effective_date = getdate(
+		si.get("custom_wertstellungsdatum") or si.posting_date
+	)
 
 	m = _RE_TYPE.search(remarks)
 	if m:
@@ -72,22 +71,13 @@ def _si_context(si) -> dict:
 	m = _RE_MV.search(remarks)
 	if m:
 		mv = m.group(1).strip()
-	m = _RE_MONTH.search(remarks)
-	if m:
-		monat = int(m.group(1))
-		jahr = int(m.group(2))
 
 	mab = si.get("mietabrechnung_id") or ""
-	# rpartition: der Monat hängt als `|mm/yyyy` HINTEN dran — der MV-Name selbst
+	# rpartition: der Monat hängt als `|mm/yyyy` hinten dran — der MV-Name selbst
 	# kann `|` enthalten (z.B. "G1 | VH | EG links | ab: … - Beganovic").
-	if (not mv or monat is None) and "|" in mab:
-		mv_part, _, monat_part = mab.rpartition("|")
-		if not mv:
-			mv = mv_part.strip() or None
-		mm = _RE_MONTH.search(monat_part)
-		if monat is None and mm:
-			monat = int(mm.group(1))
-			jahr = int(mm.group(2))
+	if not mv and "|" in mab:
+		mv_part, _, _monat_part = mab.rpartition("|")
+		mv = mv_part.strip() or None
 
 	if not typ:
 		for it in si.get("items") or []:
@@ -96,17 +86,12 @@ def _si_context(si) -> dict:
 				typ = cand
 				break
 
-	if monat is None or jahr is None:
-		d = getdate(si.posting_date)
-		monat = monat or d.month
-		jahr = jahr or d.year
-
 	return {
 		"typ": typ,
 		"mietvertrag": mv,
-		"monat": int(monat),
-		"jahr": int(jahr),
-		"monat_str": f"{int(monat):02d}/{int(jahr)}",
+		"monat": effective_date.month,
+		"jahr": effective_date.year,
+		"monat_str": f"{effective_date.month:02d}/{effective_date.year}",
 	}
 
 
@@ -854,6 +839,9 @@ def _korrektur_gutschrift(si, ctx: dict, neu_betrag: float) -> dict:
 				"Korrektur nicht möglich — bitte zuerst eine offene Periode bereitstellen."
 			)
 		)
+	original_value_date = getdate(
+		si.get("custom_wertstellungsdatum") or si.posting_date
+	)
 
 	wohnung = si.get("wohnung")
 	cost_center = _cost_center_via_wohnung(wohnung)
@@ -875,6 +863,7 @@ def _korrektur_gutschrift(si, ctx: dict, neu_betrag: float) -> dict:
 		si.company,
 		is_return=1,
 		return_against=si.name,
+		wertstellungsdatum=original_value_date,
 	)
 
 	# 2) Neue korrekte Rechnung über den Recompute-Betrag (im aktuellen Monat).
@@ -892,6 +881,7 @@ def _korrektur_gutschrift(si, ctx: dict, neu_betrag: float) -> dict:
 			wohnung,
 			si.company,
 			mietabrechnung_id=si.get("mietabrechnung_id"),
+			wertstellungsdatum=original_value_date,
 		)
 
 	return {
@@ -921,8 +911,9 @@ def _build_si(
 	is_return: int = 0,
 	return_against: str | None = None,
 	mietabrechnung_id: str | None = None,
+	wertstellungsdatum: date | None = None,
 ) -> str:
-	"""Baut + bucht eine Sales Invoice (oder Gutschrift). Posting im aktuellen Monat."""
+	"""Bucht im aktuellen Monat; die Wertstellung bleibt im Abrechnungszeitraum."""
 	if not income_account:
 		frappe.throw(
 			_("Kein Erlöskonto für {0} hinterlegt (Hausverwaltung Einstellungen).").format(item_code)
@@ -957,6 +948,8 @@ def _build_si(
 		si.set("wohnung", wohnung)
 		for it in si.items:
 			it.set("wohnung", wohnung)
+	if wertstellungsdatum and si.meta.has_field("custom_wertstellungsdatum"):
+		si.set("custom_wertstellungsdatum", wertstellungsdatum)
 	if cost_center and si.meta.has_field("cost_center"):
 		si.set("cost_center", cost_center)
 	if mietabrechnung_id:
