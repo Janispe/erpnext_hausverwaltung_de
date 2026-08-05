@@ -534,6 +534,47 @@ class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 			self.assertEqual(doc.customer, "CUST-1")
 			self.assertEqual(doc.wohnung, "WHG-1")
 
+	def test_inclusive_statement_shows_costs_but_no_tenant_balance(self):
+		doc = frappe.get_doc(
+			{
+				"doctype": "Betriebskostenabrechnung Mieter",
+				"abrechnungsart": "Pauschale/Inklusivmiete",
+				"vorrauszahlungen": 0,
+				"abrechnung": [{"bezeichnung": "Wasser", "betrag": 300}],
+			}
+		)
+
+		doc.onload()
+
+		self.assertEqual(doc.gesamtkosten, 300)
+		self.assertEqual(doc.differenz, 0)
+
+	def test_inclusive_statement_rejects_prepayment(self):
+		doc = frappe.get_doc(
+			{
+				"doctype": "Betriebskostenabrechnung Mieter",
+				"abrechnungsart": "Pauschale/Inklusivmiete",
+				"vorrauszahlungen": 100,
+			}
+		)
+
+		with self.assertRaisesRegex(frappe.ValidationError, "keine BK-Vorauszahlungen"):
+			doc.validate()
+
+	def test_settlement_rejects_inclusive_information_statement(self):
+		with (
+			patch.object(
+				bk,
+				"_get_locked_settlement_document",
+				return_value=frappe._dict(
+					name="BKA-INFO",
+					abrechnungsart="Pauschale/Inklusivmiete",
+				),
+			),
+			self.assertRaisesRegex(frappe.ValidationError, "keine Nachzahlung"),
+		):
+			bk.create_bk_settlement_documents("BKA-INFO")
+
 	def test_manual_cancel_permission_uses_explicit_doctype(self):
 		doc = frappe.get_doc({"doctype": "Betriebskostenabrechnung Mieter"})
 

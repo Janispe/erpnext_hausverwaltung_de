@@ -1,7 +1,7 @@
 import unittest
 from datetime import date
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 
@@ -92,7 +92,7 @@ class TestAbrechnungRegelung(unittest.TestCase):
 			(date(2026, 7, 1), date(2026, 12, 31)),
 		])
 
-	def test_property_with_only_inclusive_rents_keeps_header_without_tenant_children(self):
+	def test_property_with_only_inclusive_rents_keeps_informational_child(self):
 		with (
 			patch.object(bk, "_require_bk_generation_authorization"),
 			patch.object(
@@ -100,7 +100,7 @@ class TestAbrechnungRegelung(unittest.TestCase):
 				"allocate_kosten_auf_wohnungen",
 				return_value={"matrix": {"WHG-1": {"Wasser": 1200}}},
 			),
-			patch.object(bk, "create_bk_abrechnung_wohnung", return_value=[]),
+			patch.object(bk, "create_bk_abrechnung_wohnung", return_value=["BKA-INFO"]),
 		):
 			result = bk.create_bk_abrechnungen_immobilie(
 				von="2026-01-01",
@@ -110,4 +110,47 @@ class TestAbrechnungRegelung(unittest.TestCase):
 				split_by_mietvertrag=True,
 			)
 
-		self.assertEqual(result, {"created": [], "count": 0})
+		self.assertEqual(result, {"created": ["BKA-INFO"], "count": 1})
+
+	def test_inclusive_segment_creates_cost_information_without_prepayment(self):
+		segment = self._segments()[0]
+		segment["raw"] = {"von": "2026-01-01"}
+		doc = MagicMock()
+		doc.name = "BKA-INFO"
+		doc.flags = frappe._dict()
+		head = frappe._dict(name="BK-HEAD", immobilie="IMMO-1")
+
+		with (
+			patch.object(bk, "_require_bk_generation_authorization", return_value=head),
+			patch.object(bk, "_mietvertrag_segmente_fuer_zeitraum", return_value=[segment]),
+			patch.object(bk, "_existing_bk_children_for_head_wohnung", return_value=[]),
+			patch.object(bk, "_get_default_company", return_value="COMP-1"),
+			patch.object(
+				bk,
+				"allocate_kosten_auf_wohnungen",
+				return_value={"matrix": {"WHG-1": {"Wasser": 600}}},
+			),
+			patch.object(bk, "_build_bk_segment_costs", return_value=[{"Wasser": Decimal("600")}]),
+			patch.object(bk, "_get_customer_for_mietvertrag", return_value="CUST-1"),
+			patch.object(bk, "_vertragspartner_rows", return_value=[]),
+			patch.object(bk, "_zustand_am", return_value="Vermietet"),
+			patch.object(bk, "_groesse_qm", return_value=50),
+			patch.object(bk.frappe, "new_doc", return_value=doc),
+			patch.object(bk, "_add_abrechnungsposten") as add_costs,
+			patch.object(bk, "_insert_authorized_bk_child"),
+			patch.object(bk, "get_bk_prepayment_summary") as get_prepayments,
+		):
+			result = bk.create_bk_abrechnung_wohnung(
+				von="2026-01-01",
+				bis="2026-06-30",
+				wohnung="WHG-1",
+				head="BK-HEAD",
+				split_by_mietvertrag=True,
+			)
+
+		values = doc.update.call_args.args[0]
+		self.assertEqual(result, ["BKA-INFO"])
+		self.assertEqual(values["abrechnungsart"], BK_REGELUNG_PAUSCHALE)
+		self.assertEqual(values["vorrauszahlungen"], 0.0)
+		get_prepayments.assert_not_called()
+		add_costs.assert_called_once_with(doc, {"Wasser": Decimal("600")})

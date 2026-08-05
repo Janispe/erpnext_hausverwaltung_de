@@ -899,10 +899,15 @@ class BetriebskostenabrechnungMieter(Document):
 	def onload(self):
 		# Virtuelle Felder setzen
 		self.gesamtkosten = self._sum_abrechnung()
-		try:
-			self.differenz = round(float(self.gesamtkosten or 0) - float(self.vorrauszahlungen or 0), 2)
-		except Exception:
+		if normalize_bk_regelung(getattr(self, "abrechnungsart", None)) != BK_REGELUNG_VORAUSZAHLUNG:
+			# Informationsabrechnung: Kosten sind sichtbar, werden aber vom
+			# Vermieter getragen und erzeugen keinen Mieter-Saldo.
 			self.differenz = 0.0
+		else:
+			try:
+				self.differenz = round(float(self.gesamtkosten or 0) - float(self.vorrauszahlungen or 0), 2)
+			except Exception:
+				self.differenz = 0.0
 		self.set_onload("can_manual_cancel", self._can_manual_cancel())
 
 	def validate(self):
@@ -910,9 +915,31 @@ class BetriebskostenabrechnungMieter(Document):
 			getattr(self, "abrechnungsart", None)
 		)
 		if self.abrechnungsart != BK_REGELUNG_VORAUSZAHLUNG:
-			frappe.throw(
-				"Eine Mieter-BK-Abrechnung darf nur für Vorauszahlungszeiträume erstellt werden."
-			)
+			try:
+				informations_vorauszahlungen = Decimal(
+					str(getattr(self, "vorrauszahlungen", 0) or 0)
+				)
+			except Exception:
+				frappe.throw(
+					"Die BK-Vorauszahlungen der Informationsabrechnung sind ungültig."
+				)
+			if abs(informations_vorauszahlungen) >= Decimal("0.005"):
+				frappe.throw(
+					"Eine Informationsabrechnung für Pauschale/Inklusivmiete oder "
+					"Keine Umlage darf keine BK-Vorauszahlungen verrechnen."
+				)
+			if any(
+				cstr(getattr(self, fieldname, None) or "").strip()
+				for fieldname in (
+					"sales_invoice",
+					"credit_note",
+					"consolidation_journal_entry",
+				)
+			):
+				frappe.throw(
+					"Eine Informationsabrechnung darf keine finanziellen "
+					"Ausgleichsbelege besitzen."
+				)
 		if self.mietvertrag:
 			mv = frappe.db.get_value(
 				"Mietvertrag",

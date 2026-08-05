@@ -8,6 +8,7 @@
  "field_order": [
   "mieter_abrechnung",
   "wohnung",
+  "abrechnungsart",
   "status",
   "vorauszahlung",
   "anteil",
@@ -20,6 +21,14 @@
    "in_list_view": 1,
    "label": "Mieterabrechnung",
    "options": "Betriebskostenabrechnung Mieter",
+   "columns": 1
+  },
+  {
+   "fieldname": "abrechnungsart",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "BK-Abrechnungsart",
+   "read_only": 1,
    "columns": 2
   },
   {
@@ -63,7 +72,7 @@
    "label": "Guthaben/Nachzahlung",
    "precision": "2",
    "read_only": 1,
-   "columns": 3
+   "columns": 2
   }
  ],
  "grid_page_length": 50,

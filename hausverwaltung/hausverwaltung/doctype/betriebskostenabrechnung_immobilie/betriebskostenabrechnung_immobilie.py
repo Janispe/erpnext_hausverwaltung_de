@@ -14,6 +14,11 @@ from mail_merge.mail_merge.utils.pdf_engine import render_pdf as get_pdf
 from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_mieter.betriebskostenabrechnung_mieter import (
 	_get_locked_settlement_allocations,
 )
+from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
+	BK_REGELUNG_VORAUSZAHLUNG,
+	ist_bk_abrechenbar,
+	normalize_bk_regelung,
+)
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import normalize_print_format_name
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_pdf_for_print_format
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import scrub_value as hv_scrub
@@ -283,6 +288,7 @@ class BetriebskostenabrechnungImmobilie(Document):
 				von,
 				bis,
 				datum,
+				abrechnungsart,
 				sales_invoice,
 				credit_note,
 				consolidation_journal_entry
@@ -318,7 +324,6 @@ class BetriebskostenabrechnungImmobilie(Document):
 	def _validate_current_child_snapshot(self) -> None:
 		"""Rebuild identities and costs immediately before financial submission."""
 		from hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen import (
-			_abrechenbare_bk_segmente,
 			_build_bk_segment_costs,
 			_mietvertrag_segmente_fuer_zeitraum,
 			_quantize_money,
@@ -432,10 +437,7 @@ class BetriebskostenabrechnungImmobilie(Document):
 				posten=posten,
 				segments=segments,
 			)
-			abrechenbare_segments = _abrechenbare_bk_segmente(segments)
 			for index, segment in enumerate(segments):
-				if segment not in abrechenbare_segments:
-					continue
 				customer = cstr(segment.get("kunde") or "").strip()
 				if not customer:
 					frappe.throw(
@@ -450,6 +452,7 @@ class BetriebskostenabrechnungImmobilie(Document):
 					getdate(segment.get("start")),
 					getdate(segment.get("end")),
 					min(cutoff, getdate(segment.get("end"))),
+					normalize_bk_regelung(segment.get("abrechnungsart")),
 				)
 				if identity in expected_identities:
 					frappe.throw(
@@ -474,6 +477,7 @@ class BetriebskostenabrechnungImmobilie(Document):
 				getdate(_row_value(row, "von")),
 				getdate(_row_value(row, "bis")),
 				getdate(_row_value(row, "datum")),
+				normalize_bk_regelung(_row_value(row, "abrechnungsart")),
 			)
 			if identity in actual_identities:
 				frappe.throw(
@@ -608,7 +612,7 @@ class BetriebskostenabrechnungImmobilie(Document):
 			)
 		current_rows = frappe.db.sql(
 			"""
-			SELECT name, docstatus
+			SELECT name, docstatus, abrechnungsart
 			FROM `tabBetriebskostenabrechnung Mieter`
 			WHERE immobilien_abrechnung = %s
 			  AND docstatus < 2
@@ -629,6 +633,11 @@ class BetriebskostenabrechnungImmobilie(Document):
 				frappe.ValidationError,
 			)
 		children = current_names
+		settlement_names = [
+			cstr(_row_value(row, "name"))
+			for row in current_rows
+			if ist_bk_abrechenbar(_row_value(row, "abrechnungsart"))
+		]
 		for nm in children:
 			# Submit, falls noch Entwurf
 				doc = frappe.get_doc("Betriebskostenabrechnung Mieter", nm)
@@ -637,7 +646,7 @@ class BetriebskostenabrechnungImmobilie(Document):
 					doc.flags.allow_submit_via_head = True
 					doc.submit()
 		# Nach Submit aller: Ausgleichsbelege erzeugen
-		for nm in children:
+		for nm in settlement_names:
 				from hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen import create_bk_settlement_documents
 				create_bk_settlement_documents(nm)
 
@@ -686,10 +695,12 @@ class BetriebskostenabrechnungImmobilie(Document):
 		children = frappe.get_all(
 			"Betriebskostenabrechnung Mieter",
 			filters={"immobilien_abrechnung": self.name, "docstatus": ("<", 2)},
-			fields=["name", "vorrauszahlungen"],
+			fields=["name", "vorrauszahlungen", "abrechnungsart"],
 		)
 		total_pre = 0.0
 		for r in children or []:
+			if not ist_bk_abrechenbar(r.get("abrechnungsart")):
+				continue
 			try:
 				total_pre += float(r.get("vorrauszahlungen") or 0)
 			except Exception:
@@ -699,13 +710,20 @@ class BetriebskostenabrechnungImmobilie(Document):
 		if child_names:
 			rows = frappe.db.sql(
 				"""
-				SELECT COALESCE(SUM(betrag), 0) AS total
-				FROM `tabAbrechnungsposten`
-				WHERE parenttype = 'Betriebskostenabrechnung Mieter'
-				  AND parentfield = 'abrechnung'
-				  AND parent IN %(parents)s
+				SELECT COALESCE(SUM(posten.betrag), 0) AS total
+				FROM `tabAbrechnungsposten` posten
+				INNER JOIN `tabBetriebskostenabrechnung Mieter` abrechnung
+				  ON abrechnung.name = posten.parent
+				WHERE posten.parenttype = 'Betriebskostenabrechnung Mieter'
+				  AND posten.parentfield = 'abrechnung'
+				  AND posten.parent IN %(parents)s
+				  AND COALESCE(NULLIF(abrechnung.abrechnungsart, ''), %(legacy)s) = %(advance)s
 				""",
-				{"parents": tuple(child_names)},
+				{
+					"parents": tuple(child_names),
+					"legacy": BK_REGELUNG_VORAUSZAHLUNG,
+					"advance": BK_REGELUNG_VORAUSZAHLUNG,
+				},
 				as_dict=True,
 			)
 			if rows:
@@ -736,8 +754,8 @@ def get_mieter_abrechnungen(name: str) -> List[Dict[str, object]]:
 	rows = frappe.get_all(
 		"Betriebskostenabrechnung Mieter",
 		filters={"immobilien_abrechnung": name},
-		fields=["name", "wohnung", "docstatus", "vorrauszahlungen"],
-		order_by="wohnung asc",
+		fields=["name", "wohnung", "docstatus", "vorrauszahlungen", "abrechnungsart"],
+		order_by="wohnung asc, von asc, name asc",
 	)
 	parent_names = [r.get("name") for r in rows if r.get("name")]
 	anteil_map: Dict[str, float] = {}
@@ -767,20 +785,24 @@ def get_mieter_abrechnungen(name: str) -> List[Dict[str, object]]:
 	for row in rows:
 		name = row.get("name")
 		anteil = anteil_map.get(name, 0.0)
+		abrechnungsart = normalize_bk_regelung(row.get("abrechnungsart"))
 		try:
 			vorauszahlung = round(float(row.get("vorrauszahlungen") or 0), 2)
 		except Exception:
 			vorauszahlung = 0.0
-		try:
-			guthaben_nachzahlung = round(float(anteil) - float(vorauszahlung), 2)
-		except Exception:
-			guthaben_nachzahlung = 0.0
+		guthaben_nachzahlung = 0.0
+		if ist_bk_abrechenbar(abrechnungsart):
+			try:
+				guthaben_nachzahlung = round(float(anteil) - float(vorauszahlung), 2)
+			except Exception:
+				guthaben_nachzahlung = 0.0
 		result.append(
 			{
 				"name": name,
 				"wohnung": row.get("wohnung"),
 				"docstatus": row.get("docstatus"),
 				"status_label": status_labels.get(row.get("docstatus")),
+				"abrechnungsart": abrechnungsart,
 				"vorauszahlung": vorauszahlung,
 				"anteil": anteil,
 				"guthaben_nachzahlung": guthaben_nachzahlung,

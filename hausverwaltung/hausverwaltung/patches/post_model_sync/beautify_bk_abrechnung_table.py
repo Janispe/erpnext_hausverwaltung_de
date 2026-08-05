@@ -230,8 +230,9 @@ JINJA_CONTENT = """
 {% endif %}
 
 {% set voraus = ((objekt.vorrauszahlungen or 0) | float) if objekt else 0 %}
-{% set diff = (ns.summe - voraus) %}
-{% set diff_label = ("Nachzahlung" if diff > 0 else "Guthaben" if diff < 0 else "Ausgeglichen") %}
+{% set ist_vorauszahlung = ((objekt.abrechnungsart or "Vorauszahlung") == "Vorauszahlung") if objekt else true %}
+{% set diff = ((ns.summe - voraus) if ist_vorauszahlung else 0) %}
+{% set diff_label = (("Nachzahlung" if diff > 0 else "Guthaben" if diff < 0 else "Ausgeglichen") if ist_vorauszahlung else "Vom Vermieter getragen (Information)") %}
 """.strip()
 
 

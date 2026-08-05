@@ -416,7 +416,7 @@ const load_mieter_abrechnungen = (frm, attempt = 1) => {
 	}).then((r) => {
 		const rows = (r && r.message) || [];
 		let sum_voraus = 0;
-		let sum_anteil = 0;
+		let sum_umlagefaehig = 0;
 		let sum_diff = 0;
 		frm.clear_table("mieter_abrechnungen");
 		rows.forEach((row) => {
@@ -424,18 +424,21 @@ const load_mieter_abrechnungen = (frm, attempt = 1) => {
 			child.mieter_abrechnung = row.name;
 			child.wohnung = row.wohnung;
 			child.status = row.status_label || row.status || "";
+			child.abrechnungsart = row.abrechnungsart || "Vorauszahlung";
 			child.vorauszahlung = row.vorauszahlung;
 			child.anteil = row.anteil;
 			child.guthaben_nachzahlung = row.guthaben_nachzahlung;
 			sum_voraus += parseFloat(row.vorauszahlung || 0) || 0;
-			sum_anteil += parseFloat(row.anteil || 0) || 0;
+			if ((row.abrechnungsart || "Vorauszahlung") === "Vorauszahlung") {
+				sum_umlagefaehig += parseFloat(row.anteil || 0) || 0;
+			}
 			sum_diff += parseFloat(row.guthaben_nachzahlung || 0) || 0;
 		});
 		if (rows.length) {
 			const sum_row = frm.add_child("mieter_abrechnungen");
-			sum_row.status = __("Summe");
+			sum_row.status = __("Summe umlagefähig");
 			sum_row.vorauszahlung = sum_voraus;
-			sum_row.anteil = sum_anteil;
+			sum_row.anteil = sum_umlagefaehig;
 			sum_row.guthaben_nachzahlung = sum_diff;
 
 			let total_kosten = parseFloat(frm.doc.gesamtkosten || 0) || 0;
@@ -446,7 +449,7 @@ const load_mieter_abrechnungen = (frm, attempt = 1) => {
 			}
 			let vermieter_anteil = parseFloat(frm.doc.gesamt_vermieteranteil || 0);
 			if (!frm.doc.gesamt_vermieteranteil && total_kosten) {
-				vermieter_anteil = Math.round((total_kosten - sum_anteil) * 100) / 100;
+				vermieter_anteil = Math.round((total_kosten - sum_umlagefaehig) * 100) / 100;
 			}
 			if (vermieter_anteil > -0.01 && vermieter_anteil < 0.01) {
 				vermieter_anteil = 0;

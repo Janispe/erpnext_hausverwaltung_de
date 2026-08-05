@@ -82,6 +82,7 @@
    "read_only": 1
   },
   {
+   "description": "Bei Pauschale/Inklusivmiete ist dies eine reine Kosteninformation; der Vermieter trägt den Betrag.",
    "fieldname": "abrechnungsart",
    "fieldtype": "Select",
    "label": "BK-Abrechnungsart",
@@ -141,10 +142,11 @@
    "read_only": 1
   },
   {
+   "description": "Bei Informationsabrechnungen immer 0, da keine Forderung oder Gutschrift entsteht.",
    "fieldname": "differenz",
    "fieldtype": "Float",
    "is_virtual": 1,
-   "label": "Differenz",
+   "label": "Nachzahlung/Guthaben",
    "read_only": 1
   },
   {

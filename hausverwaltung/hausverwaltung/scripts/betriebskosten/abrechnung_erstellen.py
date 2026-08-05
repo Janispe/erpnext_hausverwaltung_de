@@ -40,10 +40,10 @@ from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
     _company_via_wohnung,
 )
 from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
-    BK_REGELUNG_VORAUSZAHLUNG,
     bk_invoice_period_for_segment,
     get_bk_regelungen_for_contracts,
     ist_bk_abrechenbar,
+    normalize_bk_regelung,
     split_contract_segments_by_bk_regelung,
 )
 
@@ -758,7 +758,7 @@ def _existing_bk_children_for_head_wohnung(
     """Current/locking idempotency read for one header/apartment pair."""
     rows = frappe.db.sql(
         """
-        SELECT name, docstatus, wohnung, mietvertrag, von, bis
+        SELECT name, docstatus, wohnung, mietvertrag, von, bis, abrechnungsart
         FROM `tabBetriebskostenabrechnung Mieter`
         WHERE immobilien_abrechnung = %s
           AND wohnung = %s
@@ -790,6 +790,7 @@ def _existing_bk_children_for_head_wohnung(
             cstr(segment.get("mietvertrag") or "").strip(),
             getdate(segment.get("start")),
             getdate(segment.get("end")),
+            normalize_bk_regelung(segment.get("abrechnungsart")),
         )
         for segment in expected_segments
     ]
@@ -799,6 +800,7 @@ def _existing_bk_children_for_head_wohnung(
             cstr(row.get("mietvertrag") or "").strip(),
             getdate(row.get("von")),
             getdate(row.get("bis")),
+            normalize_bk_regelung(row.get("abrechnungsart")),
         )
         for row in rows
     ]
@@ -864,13 +866,15 @@ def create_bk_abrechnung_wohnung(
         bis,
         lock_regelungen=True,
     )
-    expected_segments = _abrechenbare_bk_segmente(generation_segments)
+    # Auch Pauschal-/Inklusivzeiträume erhalten eine reine
+    # Informationsabrechnung. Nur die spätere finanzielle Abwicklung hängt von
+    # ``abrechnungsart`` ab.
+    expected_segments = generation_segments
     if not split_by_mietvertrag:
         period_start = getdate(von)
         period_end = getdate(bis)
         if (
-            len(expected_segments) != 1
-            or len(generation_segments) != 1
+            len(generation_segments) != 1
             or expected_segments[0]["start"] != period_start
             or expected_segments[0]["end"] != period_end
         ):
@@ -886,12 +890,6 @@ def create_bk_abrechnung_wohnung(
     )
     if existing:
         return existing if split_by_mietvertrag or len(existing) != 1 else existing[0]
-    if generation_segments and not expected_segments:
-        # Die Wohnung verursacht weiterhin Hauskosten, besitzt aber im ganzen
-        # Zeitraum nur Pauschal-/Inklusiv- oder Nichtumlage-Segmente. Ihr Anteil
-        # verbleibt im Immobilienkopf als Vermieteranteil.
-        return []
-
     # Verteilte Kosten (nur für diese Wohnung herausziehen)
     immobilie = head_doc.immobilie
     abrechnung_company = _get_default_company(frappe._dict(wohnung=wohnung))
@@ -908,17 +906,22 @@ def create_bk_abrechnung_wohnung(
         unsplit_segments = generation_segments
         mv = unsplit_segments[0]["mietvertrag"]
         customer = _get_customer_for_mietvertrag(mv)
-        # Für die Abrechnung zählen BK-Rechnungen der Periode,
-        # aber nur soweit deren BK-Anteil tatsächlich bezahlt wurde.
-        prep = get_bk_prepayment_summary(
-            wohnung=wohnung,
-            from_date=von,
-            to_date=bis,
-            customer=customer,
-            mietvertrag=mv,
-            company=abrechnung_company,
+        abrechnungsart = normalize_bk_regelung(
+            unsplit_segments[0].get("abrechnungsart")
         )
-        paid_total = _to_decimal(prep.get("paid_total"))
+        paid_total = Decimal("0")
+        if ist_bk_abrechenbar(abrechnungsart):
+            # Für die Abrechnung zählen BK-Rechnungen der Periode,
+            # aber nur soweit deren BK-Anteil tatsächlich bezahlt wurde.
+            prep = get_bk_prepayment_summary(
+                wohnung=wohnung,
+                from_date=von,
+                to_date=bis,
+                customer=customer,
+                mietvertrag=mv,
+                company=abrechnung_company,
+            )
+            paid_total = _to_decimal(prep.get("paid_total"))
 
         # Mietvertrag & Mieter
         # Mieter aus allen überlappenden Verträgen im Zeitraum sammeln
@@ -936,7 +939,7 @@ def create_bk_abrechnung_wohnung(
             "wohnung": wohnung,
             "mietvertrag": mv,
             "customer": customer,
-            "abrechnungsart": BK_REGELUNG_VORAUSZAHLUNG,
+            "abrechnungsart": abrechnungsart,
             "vorrauszahlungen": _as_money(paid_total),
             "wohnungszustand": zustand,
             "größe": groesse,
@@ -983,8 +986,6 @@ def create_bk_abrechnung_wohnung(
 
     created: List[str] = []
     for idx, seg in enumerate(segments):
-        if not ist_bk_abrechenbar(seg.get("abrechnungsart")):
-            continue
         seg_start = seg["start"].strftime("%Y-%m-%d")
         seg_end = seg["end"].strftime("%Y-%m-%d")
         seg_stichtag = stichtag
@@ -995,25 +996,28 @@ def create_bk_abrechnung_wohnung(
 
         mv = seg.get("mietvertrag")
         customer = _get_customer_for_mietvertrag(mv)
-        # Regelungssegmente dürfen nur ihre eigenen BK-Rechnungsmonate
-        # verrechnen. Bei einem untermonatigen Vertragsbeginn liegt die
-        # monatliche Wertstellung technisch am Monatsersten; nur dort erweitern
-        # wir den Start auf diesen Monatsersten.
-        raw_contract = seg.get("raw") or {}
-        prep_from, prep_to = bk_invoice_period_for_segment(
-            seg_start,
-            seg_end,
-            raw_contract.get("von"),
-        )
-        prep = get_bk_prepayment_summary(
-            wohnung=wohnung,
-            from_date=prep_from,
-            to_date=prep_to,
-            customer=customer,
-            mietvertrag=mv,
-            company=abrechnung_company,
-        )
-        paid_total = _to_decimal(prep.get("paid_total"))
+        abrechnungsart = normalize_bk_regelung(seg.get("abrechnungsart"))
+        paid_total = Decimal("0")
+        if ist_bk_abrechenbar(abrechnungsart):
+            # Regelungssegmente dürfen nur ihre eigenen BK-Rechnungsmonate
+            # verrechnen. Bei einem untermonatigen Vertragsbeginn liegt die
+            # monatliche Wertstellung technisch am Monatsersten; nur dort
+            # erweitern wir den Start auf diesen Monatsersten.
+            raw_contract = seg.get("raw") or {}
+            prep_from, prep_to = bk_invoice_period_for_segment(
+                seg_start,
+                seg_end,
+                raw_contract.get("von"),
+            )
+            prep = get_bk_prepayment_summary(
+                wohnung=wohnung,
+                from_date=prep_from,
+                to_date=prep_to,
+                customer=customer,
+                mietvertrag=mv,
+                company=abrechnung_company,
+            )
+            paid_total = _to_decimal(prep.get("paid_total"))
 
         mieter_rows = _vertragspartner_rows(mv, seg_start, seg_end) if mv else []
 
@@ -1028,7 +1032,7 @@ def create_bk_abrechnung_wohnung(
             "wohnung": wohnung,
             "mietvertrag": mv,
             "customer": customer,
-            "abrechnungsart": BK_REGELUNG_VORAUSZAHLUNG,
+            "abrechnungsart": abrechnungsart,
             "vorrauszahlungen": _as_money(paid_total),
             "wohnungszustand": zustand,
             "größe": groesse,
@@ -1872,6 +1876,13 @@ def create_bk_settlement_documents(
     )
     doc = _get_locked_settlement_document(abrechnung)
     _validate_bk_settlement_head_identity(doc, head_doc)
+    if not ist_bk_abrechenbar(getattr(doc, "abrechnungsart", None)):
+        frappe.throw(
+            f"Für die Informationsabrechnung {doc.name} "
+            f"({normalize_bk_regelung(getattr(doc, 'abrechnungsart', None))}) "
+            "darf keine Nachzahlung oder Gutschrift erzeugt werden.",
+            frappe.ValidationError,
+        )
     _bk_settlement_marker(doc.name)
     _require_settlement_permissions(
         doc,

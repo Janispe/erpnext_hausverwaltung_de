@@ -42,7 +42,18 @@ class TestBetriebskostenabrechnungImmobilie(unittest.TestCase):
 			patch.object(
 				module.frappe,
 				"get_all",
-				return_value=[{"name": "BK-CHILD", "vorrauszahlungen": 450}],
+				return_value=[
+					{
+						"name": "BK-CHILD",
+						"vorrauszahlungen": 450,
+						"abrechnungsart": "Vorauszahlung",
+					},
+					{
+						"name": "BK-INFO",
+						"vorrauszahlungen": 0,
+						"abrechnungsart": "Pauschale/Inklusivmiete",
+					},
+				],
 			),
 			patch.object(module.frappe.db, "sql", return_value=[{"total": 600}]),
 			patch.object(module, "_calculate_zaehler_summen", return_value={}),
@@ -54,6 +65,36 @@ class TestBetriebskostenabrechnungImmobilie(unittest.TestCase):
 		self.assertEqual(doc.gesamt_vermieteranteil, 400)
 		self.assertEqual(doc.gesamt_vorauszahlungen, 450)
 		self.assertEqual(doc.gesamt_differenz, 150)
+
+	def test_inclusive_child_is_visible_with_zero_tenant_balance(self):
+		head = MagicMock()
+		with (
+			patch.object(module.frappe, "get_doc", return_value=head),
+			patch.object(
+				module.frappe,
+				"get_all",
+				return_value=[
+					{
+						"name": "BK-INFO",
+						"wohnung": "WHG-1",
+						"docstatus": 0,
+						"vorrauszahlungen": 0,
+						"abrechnungsart": "Pauschale/Inklusivmiete",
+					}
+				],
+			),
+			patch.object(
+				module.frappe.db,
+				"sql",
+				return_value=[{"parent": "BK-INFO", "total": 300}],
+			),
+		):
+			rows = module.get_mieter_abrechnungen("BK-HEAD")
+
+		head.check_permission.assert_called_once_with("read")
+		self.assertEqual(rows[0]["anteil"], 300)
+		self.assertEqual(rows[0]["abrechnungsart"], "Pauschale/Inklusivmiete")
+		self.assertEqual(rows[0]["guthaben_nachzahlung"], 0)
 
 	def test_batch_footer_uses_first_bk_child_as_context(self):
 		serienbrief_doc = MagicMock()
@@ -231,22 +272,31 @@ class TestBetriebskostenabrechnungImmobilie(unittest.TestCase):
 		create_settlement.assert_called_once_with("BK-DRAFT")
 		self.assertNotIn("BK-CANCELLED", str(frappe_mock.mock_calls))
 
-	def test_submit_accepts_validated_inclusive_only_snapshot_without_children(self):
+	def test_submit_submits_inclusive_information_but_creates_no_settlement(self):
 		doc = MagicMock()
 		doc.name = "BK-IMMO-1"
 		doc.flags = frappe._dict(
-			_validated_bk_submit_children=(),
+			_validated_bk_submit_children=("BK-INFO",),
 			_validated_bk_submit_snapshot=True,
 		)
+		child = MagicMock(docstatus=0)
+		child.flags = frappe._dict()
 		frappe_mock = MagicMock()
-		frappe_mock.db.sql.return_value = []
+		frappe_mock.db.sql.return_value = [
+			{
+				"name": "BK-INFO",
+				"docstatus": 0,
+				"abrechnungsart": "Pauschale/Inklusivmiete",
+			}
+		]
+		frappe_mock.get_doc.return_value = child
 
 		with patch.object(module, "frappe", frappe_mock), patch(
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen.create_bk_settlement_documents"
 		) as create_settlement:
 			module.BetriebskostenabrechnungImmobilie.on_submit(doc)
 
-		frappe_mock.get_doc.assert_not_called()
+		child.submit.assert_called_once_with()
 		create_settlement.assert_not_called()
 
 	def _snapshot_fixture(self, *, child_amount=100, segments=None, children=None):
@@ -325,9 +375,12 @@ class TestBetriebskostenabrechnungImmobilie(unittest.TestCase):
 		self.assertEqual(doc.flags._validated_bk_submit_children, ("BK-C1",))
 		self.assertTrue(doc.flags._validated_bk_submit_snapshot)
 
-	def test_snapshot_accepts_only_inclusive_segments_without_children(self):
-		doc, segments, costs = self._snapshot_fixture(children=[])
+	def test_snapshot_accepts_inclusive_information_segment(self):
+		doc, segments, costs = self._snapshot_fixture()
 		segments[0]["abrechnungsart"] = "Pauschale/Inklusivmiete"
+		doc._get_locked_snapshot_children.return_value[0]["abrechnungsart"] = (
+			"Pauschale/Inklusivmiete"
+		)
 
 		self._run_snapshot(
 			doc,
@@ -336,7 +389,7 @@ class TestBetriebskostenabrechnungImmobilie(unittest.TestCase):
 			segment_costs=[{"Wasser": Decimal("100")}],
 		)
 
-		self.assertEqual(doc.flags._validated_bk_submit_children, ())
+		self.assertEqual(doc.flags._validated_bk_submit_children, ("BK-C1",))
 		self.assertTrue(doc.flags._validated_bk_submit_snapshot)
 
 	def test_snapshot_rejects_missing_current_segment(self):
