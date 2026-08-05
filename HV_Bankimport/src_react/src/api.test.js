@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	createImport,
 	docHref,
+	getKreditrateRowName,
 	getDeleteImpact,
 	isMissingRowError,
 	listBankAccounts,
@@ -12,6 +13,18 @@ import {
 	searchParties,
 	setBankimportRuleEnabled,
 } from "./api.js";
+
+describe("Kreditraten-Kandidaten", () => {
+	it("verwendet die row_name-ID aus der Backend-Antwort", () => {
+		expect(getKreditrateRowName({ row_name: "RATE-ROW-1" })).toBe("RATE-ROW-1");
+	});
+
+	it("unterstützt ältere Kandidaten-Feldnamen als Fallback", () => {
+		expect(getKreditrateRowName({ rate_name: "RATE-2" })).toBe("RATE-2");
+		expect(getKreditrateRowName({ name: "RATE-3" })).toBe("RATE-3");
+		expect(getKreditrateRowName({})).toBe("");
+	});
+});
 
 describe("Dokument-Links", () => {
 	it("erzeugt eine echte Desk-URL mit kodiertem Dokumentnamen", () => {

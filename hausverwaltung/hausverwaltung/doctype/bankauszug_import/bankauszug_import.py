@@ -4323,7 +4323,7 @@ def assign_kreditrate_to_bank_row(
     docname: str,
     row_name: str,
     kreditvertrag: str,
-    rate_name: str,
+    rate_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Manuelle Zuordnung: erzeugt JE für die ausgewählte Rate und verlinkt alles.
 
@@ -4333,6 +4333,11 @@ def assign_kreditrate_to_bank_row(
     from hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag import (
         assign_kreditrate,
     )
+
+    if not rate_name:
+        frappe.throw(
+            "Keine Kreditrate ausgewählt. Bitte den Dialog neu laden und eine Planzeile auswählen."
+        )
 
     doc, row, bt = _row_with_unreconciled_bt(docname, row_name)
     if row.get("richtung") != "Ausgang":

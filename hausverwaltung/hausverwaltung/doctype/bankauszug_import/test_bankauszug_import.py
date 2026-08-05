@@ -2718,6 +2718,23 @@ class TestBankauszugImport(unittest.TestCase):
         assign_rate.assert_not_called()
         self.assertIn("nur für Ausgänge", throw.call_args[0][0])
 
+    def test_assign_kreditrate_requires_plan_row_name(self):
+        with patch.object(bi.frappe, "throw", side_effect=Exception) as throw, \
+             patch.object(bi, "_row_with_unreconciled_bt") as row_helper, \
+             patch(
+                 "hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag.assign_kreditrate",
+             ) as assign_rate:
+            with self.assertRaises(Exception):
+                bi.assign_kreditrate_to_bank_row(
+                    "IMP-CREDIT-MISSING-RATE",
+                    "ROW-CREDIT-MISSING-RATE",
+                    "CREDIT-1",
+                )
+
+        self.assertIn("Keine Kreditrate ausgewählt", throw.call_args[0][0])
+        row_helper.assert_not_called()
+        assign_rate.assert_not_called()
+
     def test_create_internal_transfer_for_row_sets_payment_entry_and_success_status(self):
         row = self._FakeRow(name="ROW-TRANSFER", iban="")
         row.bank_transaction = "BT-TRANSFER"

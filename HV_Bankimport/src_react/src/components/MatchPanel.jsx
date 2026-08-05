@@ -1148,7 +1148,12 @@ function KreditMatch({ docname, row, onActionDone, notify }) {
 	}, [docname, row.id, notify]);
 
 	const assign = (c) =>
-		run(() => api.assignKreditrate(docname, row.id, c.kreditvertrag, c.rate_name || c.name), {
+		run(() => api.assignKreditrate(
+			docname,
+			row.id,
+			c.kreditvertrag,
+			api.getKreditrateRowName(c)
+		), {
 			success: "Kreditrate gebucht.",
 		}).then((r) => r && r.ok !== false && onActionDone());
 
@@ -1163,13 +1168,15 @@ function KreditMatch({ docname, row, onActionDone, notify }) {
 		<div>
 			{cands.length === 0 && <div className="hint">Keine offene Kreditrate gefunden.</div>}
 			{cands.map((c, i) => (
-				<div key={(c.kreditvertrag || "") + (c.rate_name || c.name || i)} className="invoice-card alt">
+				<div key={(c.kreditvertrag || "") + (api.getKreditrateRowName(c) || i)} className="invoice-card alt">
 					<div className="row1">
 						<div>
 							<div className="doc-id">{c.kreditvertrag || c.label || "Kreditrate"}</div>
 							<div className="ref">{c.faelligkeitsdatum ? `Fällig ${fmtDate(c.faelligkeitsdatum)}` : (c.label || "")}</div>
 						</div>
-						{c.betrag != null && <div className="amount">{fmtEUR(c.betrag)}</div>}
+						{(c.gesamtbetrag ?? c.betrag) != null && (
+							<div className="amount">{fmtEUR(c.gesamtbetrag ?? c.betrag)}</div>
+						)}
 					</div>
 					<button className="btn primary sm" style={{ width: "100%", justifyContent: "center", marginTop: 8 }} onClick={() => assign(c)} disabled={busy}>
 						{busy ? <Spinner /> : <Icon name="check" />} Diese Rate buchen

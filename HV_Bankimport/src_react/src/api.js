@@ -354,7 +354,12 @@ export async function getOpenKreditraten(name, rowName) {
 	return await rpc("kreditraten", { docname: name, row_name: rowName });
 }
 
+export function getKreditrateRowName(candidate = {}) {
+	return candidate.row_name || candidate.rate_name || candidate.name || "";
+}
+
 export async function assignKreditrate(name, rowName, kreditvertrag, rateName) {
+	if (!rateName) throw new Error("Die ausgewählte Kreditrate hat keine Planzeilen-ID.");
 	if (!embedded) return { ok: true, journal_entry: "JE-DEMO", mock: true };
 	return await rpc("assign_kreditrate", {
 		docname: name, row_name: rowName, kreditvertrag, rate_name: rateName,
