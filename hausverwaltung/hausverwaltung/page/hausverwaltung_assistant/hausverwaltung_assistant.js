@@ -111,6 +111,74 @@ function renderHausverwaltungAssistant(pageBody) {
 				color: #59636e;
 				font-weight: 600;
 			}
+			.hv-assistant-analysis {
+				margin-top: 9px;
+				border: 1px solid #d7ddd8;
+				border-radius: 7px;
+				background: rgba(255, 255, 255, 0.72);
+				font-size: 12px;
+				white-space: normal;
+			}
+			.hv-assistant-analysis > summary {
+				cursor: pointer;
+				padding: 7px 9px;
+				color: #35463f;
+				font-weight: 600;
+			}
+			.hv-assistant-analysis.has-warning > summary {
+				color: #875a10;
+			}
+			.hv-assistant-analysis-step {
+				margin: 0 8px 8px;
+				padding: 8px;
+				border: 1px solid #e1e4df;
+				border-radius: 6px;
+				background: #fff;
+			}
+			.hv-assistant-analysis-step.error {
+				border-color: #efc2ba;
+				background: #fff8f6;
+			}
+			.hv-assistant-analysis-title {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 8px;
+				margin-bottom: 5px;
+				font-weight: 600;
+			}
+			.hv-assistant-analysis-status {
+				font-size: 10px;
+				font-weight: 600;
+				text-transform: uppercase;
+				letter-spacing: 0.03em;
+				color: #397353;
+			}
+			.hv-assistant-analysis-step.error .hv-assistant-analysis-status {
+				color: #a52a1a;
+			}
+			.hv-assistant-analysis-row {
+				display: grid;
+				grid-template-columns: minmax(82px, 110px) minmax(0, 1fr);
+				gap: 7px;
+				padding-top: 3px;
+			}
+			.hv-assistant-analysis-label {
+				color: #69736e;
+			}
+			.hv-assistant-analysis-value {
+				min-width: 0;
+				white-space: pre-wrap;
+				word-break: break-word;
+				font-family: var(--font-stack);
+			}
+			.hv-assistant-analysis-warning {
+				margin-top: 6px;
+				padding: 6px 7px;
+				border-radius: 5px;
+				background: #fff4d6;
+				color: #754f0d;
+			}
 			.hv-assistant-toolcall {
 				margin-top: 7px;
 				padding: 7px;
@@ -322,6 +390,109 @@ function renderHausverwaltungAssistant(pageBody) {
 		node.append(details);
 	};
 
+	const analysisFromToolCall = (toolCall) => {
+		if (toolCall.analysis && typeof toolCall.analysis === "object") {
+			return toolCall.analysis;
+		}
+		const args = toolCall.arguments || {};
+		return {
+			status: toolCall.error ? "error" : "success",
+			tool: toolCall.name || "",
+			source: args.view || args.source || args.doctype || toolCall.name || "",
+			filters: args.filters || null,
+			aggregation: args.aggregate || null,
+			order_by: args.order_by || null,
+			result_count: toolCall.result_count,
+			warnings: toolCall.error
+				? [__("Werkzeug fehlgeschlagen; das Ergebnis ist nicht belastbar.")]
+				: [],
+		};
+	};
+
+	const compactJson = (value) => {
+		if (value === null || value === undefined || value === "") return "";
+		if (typeof value === "string") return value;
+		return JSON.stringify(value, null, 2);
+	};
+
+	const aggregationLabel = (aggregation) => {
+		if (!aggregation || typeof aggregation !== "object") return "";
+		const operation = aggregation.op || aggregation.operation || "";
+		const field = aggregation.field ? `(${aggregation.field})` : "";
+		const group = aggregation.group_by ? ` ${__("nach")} ${aggregation.group_by}` : "";
+		return `${operation}${field}${group}`.trim();
+	};
+
+	const aggregationResultLabel = (aggregate) => {
+		if (!aggregate || typeof aggregate !== "object") return "";
+		if (Array.isArray(aggregate.groups)) {
+			const count = aggregate.group_count ?? aggregate.groups.length;
+			return `${count} ${__("Gruppen")}\n${compactJson(aggregate.groups)}`;
+		}
+		if (aggregate.value === undefined || aggregate.value === null) return compactJson(aggregate);
+		const count = aggregate.count !== undefined ? ` (${aggregate.count} ${__("Werte")})` : "";
+		return `${aggregate.value}${count}`;
+	};
+
+	const appendAnalysisRow = (node, label, value) => {
+		const text = compactJson(value);
+		if (!text) return;
+		const row = document.createElement("div");
+		row.className = "hv-assistant-analysis-row";
+		const labelNode = document.createElement("div");
+		labelNode.className = "hv-assistant-analysis-label";
+		labelNode.textContent = label;
+		const valueNode = document.createElement("div");
+		valueNode.className = "hv-assistant-analysis-value";
+		valueNode.textContent = text;
+		row.append(labelNode, valueNode);
+		node.append(row);
+	};
+
+	const appendAnalysis = (node, toolCalls) => {
+		if (!toolCalls || !toolCalls.length) return;
+		const steps = toolCalls.map(analysisFromToolCall);
+		const hasWarning = steps.some(
+			(step) => step.status === "error" || (step.warnings && step.warnings.length)
+		);
+		const details = document.createElement("details");
+		details.className = `hv-assistant-analysis${hasWarning ? " has-warning" : ""}`;
+		const summary = document.createElement("summary");
+		summary.textContent = hasWarning
+			? `${__("Analyse")} - ${__("Pruefung erforderlich")} (${steps.length})`
+			: `${__("Analyse")} (${steps.length} ${__("Schritte")})`;
+		details.append(summary);
+		steps.forEach((step, index) => {
+			const item = document.createElement("div");
+			item.className = `hv-assistant-analysis-step${step.status === "error" ? " error" : ""}`;
+			const title = document.createElement("div");
+			title.className = "hv-assistant-analysis-title";
+			const titleText = document.createElement("span");
+			titleText.textContent = `${index + 1}. ${step.source || step.tool || __("Abfrage")}`;
+			const status = document.createElement("span");
+			status.className = "hv-assistant-analysis-status";
+			status.textContent = step.status === "error" ? __("Fehler") : __("Erfolgreich");
+			title.append(titleText, status);
+			item.append(title);
+			appendAnalysisRow(item, __("Werkzeug"), step.tool);
+			appendAnalysisRow(item, __("Filter"), step.filters);
+			appendAnalysisRow(item, __("Berechnung"), aggregationLabel(step.aggregation));
+			appendAnalysisRow(item, __("Ergebnis"), aggregationResultLabel(step.aggregation_result));
+			appendAnalysisRow(item, __("Treffer"), step.result_count);
+			appendAnalysisRow(item, __("Sortierung"), step.order_by);
+			const error = toolCalls[index]?.error;
+			if (error) appendAnalysisRow(item, __("Fehler"), error.message || error);
+			(step.warnings || []).forEach((warning) => {
+				const warningNode = document.createElement("div");
+				warningNode.className = "hv-assistant-analysis-warning";
+				warningNode.textContent = warning;
+				item.append(warningNode);
+			});
+			details.append(item);
+		});
+		node.append(details);
+	};
+
 	const textFromAny = (value) => {
 		if (value === null || value === undefined) return "";
 		if (typeof value === "string") return value;
@@ -366,6 +537,7 @@ function renderHausverwaltungAssistant(pageBody) {
 		const node = document.createElement("div");
 		node.className = `hv-assistant-message ${kind}`;
 		node.textContent = textFromAny(text);
+		appendAnalysis(node, toolCalls);
 		appendToolCalls(node, toolCalls);
 		messagesEl.append(node);
 		messagesEl.scrollTop(messagesEl[0].scrollHeight);
@@ -499,6 +671,7 @@ function renderHausverwaltungAssistant(pageBody) {
 			const data = response.message || {};
 			conversationId = data.conversation_id || conversationId;
 			pending.textContent = textFromAny(data.answer) || __("Keine Antwort erhalten.");
+			appendAnalysis(pending, data.tool_calls || []);
 			appendToolCalls(pending, data.tool_calls || []);
 			renderResults(data.matches || []);
 			await loadConversationList();

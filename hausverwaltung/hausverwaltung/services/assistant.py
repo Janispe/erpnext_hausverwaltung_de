@@ -1969,12 +1969,106 @@ def _parse_stored_json_list(value: str | None) -> list[dict[str, Any]]:
 
 def _tool_call_debug(name: str, arguments: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
 	error = result.get("error") if isinstance(result, dict) else None
+	result_count = _tool_result_count(result)
 	return {
 		"name": name,
 		"arguments": arguments,
-		"result_count": _tool_result_count(result),
+		"result_count": result_count,
 		"error": error,
+		"analysis": _tool_call_analysis(name, arguments, result, result_count, error),
 	}
+
+
+def _tool_call_analysis(
+	name: str,
+	arguments: dict[str, Any],
+	result: dict[str, Any],
+	result_count: int,
+	error: Any,
+) -> dict[str, Any]:
+	"""Build a compact, deterministic audit trail without exposing model chain-of-thought."""
+	arguments = arguments if isinstance(arguments, dict) else {}
+	result = result if isinstance(result, dict) else {}
+	aggregation = arguments.get("aggregate") if isinstance(arguments.get("aggregate"), dict) else None
+	aggregation_result = result.get("aggregate") if isinstance(result.get("aggregate"), dict) else None
+	analysis = {
+		"status": "error" if error else "success",
+		"tool": name,
+		"source": _tool_call_source(name, arguments, result),
+		"filters": arguments.get("filters"),
+		"aggregation": aggregation,
+		"aggregation_result": _compact_tool_aggregate(aggregation_result),
+		"order_by": arguments.get("order_by"),
+		"result_count": result_count,
+		"warnings": _tool_call_analysis_warnings(aggregation, aggregation_result, result_count, error),
+	}
+	return {key: value for key, value in analysis.items() if value not in (None, "", [], {})}
+
+
+def _tool_call_source(name: str, arguments: dict[str, Any], result: dict[str, Any]) -> str:
+	for key in ("view", "source", "doctype", "report_name"):
+		value = arguments.get(key)
+		if value not in (None, ""):
+			return str(value)
+	for key in ("view", "source", "doctype"):
+		value = result.get(key)
+		if value not in (None, ""):
+			return str(value)
+	return name
+
+
+def _compact_tool_aggregate(aggregate: dict[str, Any] | None) -> dict[str, Any] | None:
+	if not aggregate:
+		return None
+	compact = {
+		key: aggregate.get(key)
+		for key in ("op", "field", "group_by", "value", "count", "group_count")
+		if aggregate.get(key) is not None
+	}
+	groups = aggregate.get("groups")
+	if isinstance(groups, list):
+		compact["groups"] = [dict(group) for group in groups[:10] if isinstance(group, dict)]
+		if len(groups) > 10:
+			compact["groups_truncated"] = True
+	return compact or None
+
+
+def _tool_call_analysis_warnings(
+	aggregation: dict[str, Any] | None,
+	aggregation_result: dict[str, Any] | None,
+	result_count: int,
+	error: Any,
+) -> list[str]:
+	warnings: list[str] = []
+	if error:
+		warnings.append("Werkzeug fehlgeschlagen; daraus darf keine belastbare Antwort abgeleitet werden.")
+	if not aggregation:
+		return warnings
+	op = str(aggregation.get("op") or "").strip().lower()
+	field = str(aggregation.get("field") or "").strip().lower()
+	date_fields = {
+		"von",
+		"bis",
+		"date",
+		"datum",
+		"posting_date",
+		"due_date",
+		"creation",
+		"modified",
+	}
+	if op in {"avg", "sum"} and (field in date_fields or field.endswith(("_date", "_datum", "_on"))):
+		warnings.append(
+			"Ein Datumsfeld wurde numerisch aggregiert; das Ergebnis darf nicht als Zeitdauer interpretiert werden."
+		)
+	if (
+		op in {"avg", "sum"}
+		and aggregation_result
+		and aggregation_result.get("value") is not None
+		and result_count > 0
+		and flt(aggregation_result.get("value")) == 0
+	):
+		warnings.append("Die Aggregation ergab 0 trotz vorhandener Datensätze; Ergebnis bitte plausibilisieren.")
+	return warnings
 
 
 def _tool_result_count(result: dict[str, Any]) -> int:

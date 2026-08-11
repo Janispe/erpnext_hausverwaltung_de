@@ -498,6 +498,60 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertNotIn("Unrelated DocType", str(result["data"]["groups"]))
 		self.assertEqual(assistant._tool_result_count(result), 3)
 
+	def test_tool_call_debug_records_aggregate_result_and_date_warning(self):
+		debug = assistant._tool_call_debug(
+			"hv_query_view",
+			{
+				"view": "tenant_contracts",
+				"filters": [["status", "=", "Läuft"]],
+				"aggregate": {"op": "avg", "field": "von"},
+			},
+			{
+				"view": "tenant_contracts",
+				"total_count": 141,
+				"aggregate": {"op": "avg", "field": "von", "value": 0.0, "count": 141},
+			},
+		)
+
+		self.assertEqual(debug["result_count"], 141)
+		self.assertEqual(debug["analysis"]["source"], "tenant_contracts")
+		self.assertEqual(debug["analysis"]["filters"], [["status", "=", "Läuft"]])
+		self.assertEqual(
+			debug["analysis"]["aggregation_result"],
+			{"op": "avg", "field": "von", "value": 0.0, "count": 141},
+		)
+		self.assertEqual(len(debug["analysis"]["warnings"]), 2)
+		self.assertIn("Datumsfeld", debug["analysis"]["warnings"][0])
+
+	def test_tool_call_debug_marks_failed_tool_as_unreliable(self):
+		debug = assistant._tool_call_debug(
+			"hv_query_view",
+			{"view": "tenant_contracts", "aggregate": {"op": "avg", "field": "mietdauer_tage"}},
+			{"error": {"code": "TOOL_ERROR", "message": "Aggregationsfeld nicht erlaubt"}},
+		)
+
+		self.assertEqual(debug["analysis"]["status"], "error")
+		self.assertIn("keine belastbare", debug["analysis"]["warnings"][0])
+
+	def test_tool_call_debug_does_not_flag_grouped_sum_as_zero(self):
+		debug = assistant._tool_call_debug(
+			"hv_query_view",
+			{"view": "open_items", "aggregate": {"op": "sum", "field": "outstanding_amount", "group_by": "customer"}},
+			{
+				"total_count": 2,
+				"aggregate": {
+					"op": "sum",
+					"field": "outstanding_amount",
+					"group_by": "customer",
+					"group_count": 1,
+					"groups": [{"key": "CUST-1", "count": 2, "value": 100.0}],
+				},
+			},
+		)
+
+		self.assertNotIn("warnings", debug["analysis"])
+		self.assertEqual(debug["analysis"]["aggregation_result"]["group_count"], 1)
+
 	def test_agent_get_doctype_schema_compacts_model_context(self):
 		raw_schema = {
 			"ok": True,
