@@ -92,6 +92,38 @@ class TestAssistantAsync(unittest.TestCase):
 		self.assertEqual(completed.kwargs["answer"], "8,5 Jahre")
 		clear_active.assert_called_once_with("HV-AST-1", "run-1")
 
+	def test_round_limit_failure_keeps_partial_rounds_in_chat_history(self):
+		progress = {
+			"tool_calls": [{"name": "agent_list_doctypes", "arguments": {"query": "Miete"}}],
+			"reasoning": "Ich suche die passende Datenquelle.",
+			"matches": [],
+			"mistral_usage": {"calls": 9, "total_tokens": 1234},
+		}
+		error = mistral_client.MistralPermanentError(assistant.TOOL_ROUND_LIMIT_ERROR)
+
+		with patch.object(assistant_async.frappe, "set_user"), \
+			 patch.object(assistant_async.frappe.db, "rollback"), \
+			 patch.object(assistant, "run_assistant", side_effect=error), \
+			 patch.object(assistant_async, "_get_run_progress", return_value=progress), \
+			 patch.object(assistant, "_store_conversation_message") as store_message, \
+			 patch.object(assistant_async, "_set_run_progress"), \
+			 patch.object(assistant_async, "_clear_active_run"), \
+			 patch.object(assistant_async.frappe, "log_error"):
+			assistant_async.run_assistant_job(
+				run_id="run-limit",
+				message="Was sind die Nettokaltmieten?",
+				conversation_id="HV-AST-LIMIT",
+				model="mistral-medium-latest",
+				engine="mistral_basic",
+				user="Administrator",
+			)
+
+		self.assertEqual(store_message.call_count, 2)
+		assistant_call = store_message.call_args_list[1]
+		self.assertEqual(assistant_call.args[:2], ("HV-AST-LIMIT", "assistant"))
+		self.assertEqual(assistant_call.kwargs["tool_calls"], progress["tool_calls"])
+		self.assertEqual(assistant_call.kwargs["mistral_usage"], progress["mistral_usage"])
+
 	def test_start_reuses_same_request_but_rejects_another_message_while_running(self):
 		conversation = frappe._dict(name="HV-AST-1", active_run_id="run-1")
 		progress = {

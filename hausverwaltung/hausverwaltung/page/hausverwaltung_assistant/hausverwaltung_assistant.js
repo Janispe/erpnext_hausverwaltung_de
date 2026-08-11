@@ -876,6 +876,7 @@ function renderHausverwaltungAssistant(pageBody) {
 			: `${__("Analyse")} (${steps.length} ${__("Schritte")})`;
 		details.append(summary);
 		steps.forEach((step, index) => {
+			const toolCall = toolCalls[index] || {};
 			const item = document.createElement("div");
 			item.className = `hv-assistant-analysis-step${step.status === "error" ? " error" : ""}`;
 			const title = document.createElement("div");
@@ -887,6 +888,11 @@ function renderHausverwaltungAssistant(pageBody) {
 			status.textContent = step.status === "error" ? __("Fehler") : __("Erfolgreich");
 			title.append(titleText, status);
 			item.append(title);
+			appendAnalysisRow(
+				item,
+				__("Mistral-Runde"),
+				toolCall.model_request_usage?.round || toolCall.model_request_round
+			);
 			appendAnalysisRow(item, __("Werkzeug"), step.tool);
 			appendAnalysisRow(item, __("Filter"), step.filters);
 			appendAnalysisRow(
@@ -912,7 +918,6 @@ function renderHausverwaltungAssistant(pageBody) {
 			appendAnalysisRow(item, __("Verwendet"), step.rows_used);
 			appendAnalysisRow(item, __("Uebersprungen"), step.rows_skipped);
 			appendAnalysisRow(item, __("Sortierung"), step.order_by);
-			const toolCall = toolCalls[index] || {};
 			const error = toolCall.error;
 			if (error) appendAnalysisRow(item, __("Fehler"), error.message || error);
 			(step.warnings || []).forEach((warning) => {
@@ -1030,7 +1035,8 @@ function renderHausverwaltungAssistant(pageBody) {
 		const answer = textFromAny(result.answer || progress.answer || "").trim();
 		const stage = textFromAny(progress.stage || "").trim();
 		const status = progress.status || "running";
-		const text = answer || stage || (status === "queued" ? __("Anfrage wartet ...") : __("Suche laeuft ..."));
+		const failure = status === "failed" ? textFromAny(progress.error || result.error || "").trim() : "";
+		const text = failure || answer || stage || (status === "queued" ? __("Anfrage wartet ...") : __("Suche laeuft ..."));
 		const reasoning = result.reasoning || progress.reasoning || "";
 		const toolCalls = result.tool_calls || progress.tool_calls || [];
 		const usage = result.mistral_usage || progress.mistral_usage || {};
@@ -1076,7 +1082,9 @@ function renderHausverwaltungAssistant(pageBody) {
 				return progress;
 			}
 			if (progress.status === "failed") {
-				throw new Error(progress.error || __("Der Assistentenlauf ist fehlgeschlagen."));
+				activeRunId = null;
+				await loadConversationList();
+				return progress;
 			}
 			if (progress.status === "missing") {
 				throw new Error(__("Der Fortschritt des Assistentenlaufs ist nicht mehr verfügbar."));

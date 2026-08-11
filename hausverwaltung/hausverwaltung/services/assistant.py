@@ -17,6 +17,7 @@ from hausverwaltung.hausverwaltung.agent_tools import read_api as agent_read_api
 from hausverwaltung.hausverwaltung.services import mistral_client
 
 MAX_TOOL_ROUNDS = 8
+TOOL_ROUND_LIMIT_ERROR = "Der Mistral-Agent hat die maximale Zahl lokaler Tool-Runden ueberschritten."
 MAX_SEARCH_LIMIT = 10
 SQL_PREFETCH_FACTOR = 4
 GENERIC_READ_LIMIT = 50
@@ -2105,6 +2106,7 @@ def _run_mistral_agent_assistant(
 			reasoning="\n\n".join(reasoning_chunks)[:MAX_STORED_REASONING_CHARS],
 			tool_calls=tool_calls_debug,
 			matches=_dedupe_matches(matches),
+			mistral_usage=_mistral_usage_summary(usage_entries),
 		)
 		remote_conversation_id = str(response.get("conversation_id") or "").strip()
 		function_calls = _mistral_conversation_function_calls(response)
@@ -2134,7 +2136,7 @@ def _run_mistral_agent_assistant(
 			break
 		if tool_round >= MAX_TOOL_ROUNDS:
 			raise mistral_client.MistralPermanentError(
-				"Der Mistral-Agent hat die maximale Zahl lokaler Tool-Runden ueberschritten."
+				TOOL_ROUND_LIMIT_ERROR
 			)
 
 		function_results = []
@@ -2154,6 +2156,7 @@ def _run_mistral_agent_assistant(
 				reasoning="\n\n".join(reasoning_chunks)[:MAX_STORED_REASONING_CHARS],
 				tool_calls=tool_calls_debug,
 				matches=_dedupe_matches(matches),
+				mistral_usage=_mistral_usage_summary(usage_entries),
 			)
 			if name == "analyze_revenue_over_time":
 				arguments = _sanitize_revenue_tool_arguments(arguments, user_message)
@@ -2190,6 +2193,7 @@ def _run_mistral_agent_assistant(
 				reasoning="\n\n".join(reasoning_chunks)[:MAX_STORED_REASONING_CHARS],
 				tool_calls=tool_calls_debug,
 				matches=_dedupe_matches(matches),
+				mistral_usage=_mistral_usage_summary(usage_entries),
 			)
 			function_results.append(
 				{

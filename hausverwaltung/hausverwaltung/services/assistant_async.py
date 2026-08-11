@@ -83,6 +83,36 @@ def _clear_active_run(conversation_id: str, run_id: str) -> None:
 	)
 
 
+def _store_round_limit_trace(
+	*,
+	conversation_id: str,
+	user_message: str,
+	error: str,
+	progress: dict[str, Any],
+) -> None:
+	"""Keep an exhausted agent's completed rounds in the local chat history."""
+	tool_calls = [item for item in (progress.get("tool_calls") or []) if isinstance(item, dict)]
+	reasoning = str(progress.get("reasoning") or "").strip()
+	if not tool_calls and not reasoning:
+		return
+	tool_names = [
+		str(item.get("name") or "").strip()
+		for item in tool_calls
+		if str(item.get("name") or "").strip()
+	]
+	assistant._store_conversation_message(conversation_id, "user", user_message)
+	assistant._store_conversation_message(
+		conversation_id,
+		"assistant",
+		_("{0} Die bis dahin abgeschlossenen Runden werden unten angezeigt.").format(error),
+		tool_names=tool_names,
+		tool_calls=tool_calls,
+		matches=progress.get("matches") or [],
+		reasoning=reasoning,
+		mistral_usage=progress.get("mistral_usage") or {},
+	)
+
+
 @frappe.whitelist()
 def start_assistant_run(
 	message: str,
@@ -182,6 +212,7 @@ def run_assistant_job(
 		)
 	except Exception as exc:
 		frappe.db.rollback()
+		partial_progress = _get_run_progress(run_id)
 		if isinstance(exc, mistral_client.MistralTransientError):
 			error = _("Mistral-Aufruf fehlgeschlagen, bitte später erneut versuchen: {0}").format(exc)
 		elif isinstance(exc, mistral_client.MistralPermanentError):
@@ -190,6 +221,16 @@ def run_assistant_job(
 			error = str(exc)
 		else:
 			error = _("Der Assistentenlauf ist fehlgeschlagen. Bitte versuche es erneut.")
+		if (
+			isinstance(exc, mistral_client.MistralPermanentError)
+			and str(exc) == assistant.TOOL_ROUND_LIMIT_ERROR
+		):
+			_store_round_limit_trace(
+				conversation_id=conversation_id,
+				user_message=message,
+				error=error,
+				progress=partial_progress,
+			)
 		_set_run_progress(
 			run_id,
 			status="failed",
