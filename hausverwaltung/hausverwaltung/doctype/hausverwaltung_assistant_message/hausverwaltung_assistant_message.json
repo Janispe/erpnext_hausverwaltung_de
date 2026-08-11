@@ -11,6 +11,7 @@
   "role",
   "content",
   "reasoning",
+  "mistral_usage_json",
   "tool_names",
   "tool_calls_json",
   "matches_json"
@@ -52,6 +53,14 @@
    "fieldtype": "Long Text",
    "hidden": 1,
    "label": "Modell-Reasoning",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mistral_usage_json",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Mistral Usage JSON",
+   "options": "JSON",
    "read_only": 1
   },
   {

@@ -101,6 +101,14 @@ function renderHausverwaltungAssistant(pageBody) {
 				color: #8a1f11;
 				border: 1px solid #f0b8ad;
 			}
+			.hv-assistant-usage {
+				margin-top: 8px;
+				padding-top: 7px;
+				border-top: 1px solid rgba(0, 0, 0, 0.08);
+				color: #68726d;
+				font-size: 11px;
+				white-space: normal;
+			}
 			.hv-assistant-toolcalls {
 				margin-top: 8px;
 				border-top: 1px solid rgba(0, 0, 0, 0.08);
@@ -590,10 +598,33 @@ function renderHausverwaltungAssistant(pageBody) {
 		node.append(details);
 	};
 
-	const addMessage = (kind, text, toolCalls, reasoning) => {
+	const formatTokenCount = (value) => {
+		const number = Number(value || 0);
+		return Number.isFinite(number) ? number.toLocaleString("de-DE") : "0";
+	};
+
+	const appendUsage = (node, usage) => {
+		if (!usage || typeof usage !== "object" || !Number(usage.calls || usage.total_tokens)) return;
+		const parts = [
+			`${__("Tokenverbrauch")}: ${formatTokenCount(usage.total_tokens)}`,
+			`${__("Eingabe")}: ${formatTokenCount(usage.prompt_tokens)}`,
+			`${__("Ausgabe")}: ${formatTokenCount(usage.completion_tokens)}`,
+			`${__("API-Aufrufe")}: ${formatTokenCount(usage.calls)}`,
+		];
+		if (Number(usage.cached_prompt_tokens || 0) > 0) {
+			parts.push(`${__("davon gecacht")}: ${formatTokenCount(usage.cached_prompt_tokens)}`);
+		}
+		const meta = document.createElement("div");
+		meta.className = "hv-assistant-usage";
+		meta.textContent = parts.join(" · ");
+		node.append(meta);
+	};
+
+	const addMessage = (kind, text, toolCalls, reasoning, usage) => {
 		const node = document.createElement("div");
 		node.className = `hv-assistant-message ${kind}`;
 		node.textContent = textFromAny(text);
+		appendUsage(node, usage);
 		appendReasoning(node, reasoning);
 		appendAnalysis(node, toolCalls);
 		appendToolCalls(node, toolCalls);
@@ -614,8 +645,10 @@ function renderHausverwaltungAssistant(pageBody) {
 		const text = answer || stage || (status === "queued" ? __("Anfrage wartet ...") : __("Suche laeuft ..."));
 		const reasoning = result.reasoning || progress.reasoning || "";
 		const toolCalls = result.tool_calls || progress.tool_calls || [];
+		const usage = result.mistral_usage || progress.mistral_usage || {};
 		node.className = `hv-assistant-message ${status === "failed" ? "error" : "assistant"}`;
 		node.textContent = text;
+		appendUsage(node, usage);
 		appendReasoning(node, reasoning);
 		appendAnalysis(node, toolCalls);
 		appendToolCalls(node, toolCalls);
@@ -740,7 +773,8 @@ function renderHausverwaltungAssistant(pageBody) {
 				message.role === "user" ? "user" : "assistant",
 				message.content || "",
 				message.tool_calls || [],
-				message.reasoning || ""
+				message.reasoning || "",
+				message.mistral_usage || {}
 			);
 			if (message.matches && message.matches.length) {
 				lastMatches = message.matches;

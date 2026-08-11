@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from unittest.mock import Mock, patch
 
@@ -285,6 +286,7 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			store_message.call_args_list[1].kwargs["reasoning"],
 			"Ich suche nach Schmidt.\n\nDer Treffer passt.",
 		)
+		self.assertEqual(store_message.call_args_list[1].kwargs["mistral_usage"], result["mistral_usage"])
 
 	def test_mistral_conversation_reasoning_ignores_answer_text(self):
 		response = {
@@ -614,6 +616,88 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["meta"]["pagination"]["pages"], 2)
 		self.assertEqual(list_docs.call_args_list[0].kwargs["limit"], 100)
 		self.assertEqual(list_docs.call_args_list[1].kwargs["offset"], 100)
+
+	def test_mistral_basic_dataset_tools_receive_hidden_conversation_binding(self):
+		with patch.object(
+			assistant,
+			"agent_create_dataset",
+			return_value={"ok": True, "dataset_id": "ds-1", "row_count": 141},
+		) as create_dataset:
+			result = assistant._execute_mistral_agent_function(
+				"agent_create_dataset",
+				{"doctype": "Mietvertrag", "fields": ["von"]},
+				engine=assistant.ASSISTANT_ENGINE_MISTRAL_BASIC,
+				conversation_id="CONV-1",
+			)
+
+		self.assertTrue(result["ok"])
+		create_dataset.assert_called_once_with(
+			doctype="Mietvertrag",
+			fields=["von"],
+			_conversation_id="CONV-1",
+		)
+
+	def test_current_contract_dataset_sanitizer_uses_authoritative_status(self):
+		arguments = {
+			"doctype": "Mietvertrag",
+			"fields": ["von", "bis"],
+			"filters": [["status", "=", "Läuft"], ["bis", ">=", "2026-08-12"]],
+		}
+
+		cleaned = assistant._sanitize_dataset_creation_arguments(
+			arguments,
+			"Berücksichtige nur momentan laufende Mietverträge.",
+		)
+
+		self.assertEqual(cleaned["filters"], [["status", "=", "Läuft"]])
+		self.assertEqual(arguments["filters"], [["status", "=", "Läuft"], ["bis", ">=", "2026-08-12"]])
+
+	def test_current_contract_duration_sanitizer_forces_elapsed_time_to_stichtag(self):
+		arguments = {
+			"dataset_id": "ds-1",
+			"operation": "avg_date_difference",
+			"start_field": "von",
+			"end_field": "bis",
+			"end_mode": "field_or_as_of",
+		}
+
+		cleaned = assistant._sanitize_dataset_analysis_arguments(
+			arguments,
+			"Wie lange wohnen Mieter in momentan laufenden Mietverträgen?",
+		)
+
+		self.assertEqual(cleaned["end_mode"], "as_of")
+		self.assertNotIn("end_field", cleaned)
+
+	def test_all_contract_dataset_sanitizer_removes_active_filter(self):
+		arguments = {
+			"doctype": "Mietvertrag",
+			"fields": ["von", "bis"],
+			"filters": [["status", "=", "Läuft"], ["bis", "is", "set"]],
+		}
+
+		cleaned = assistant._sanitize_dataset_creation_arguments(
+			arguments,
+			"Bei allen Mietverträgen, also laufenden und vergangenen zusammen.",
+		)
+
+		self.assertEqual(cleaned["filters"], [])
+
+	def test_all_contract_duration_uses_end_date_capped_at_stichtag(self):
+		arguments = {
+			"dataset_id": "ds-all",
+			"operation": "avg_date_difference",
+			"start_field": "von",
+			"end_mode": "as_of",
+		}
+
+		cleaned = assistant._sanitize_dataset_analysis_arguments(
+			arguments,
+			"Und wie ist es bei allen, laufenden und vergangenen zusammen?",
+		)
+
+		self.assertEqual(cleaned["end_mode"], "min_field_or_as_of")
+		self.assertEqual(cleaned["end_field"], "bis")
 
 	def test_mistral_basic_list_docs_respects_explicit_limit(self):
 		limited = {
@@ -1044,7 +1128,41 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["conversation_id"], "CONV-1")
 		self.assertEqual(store_message.call_count, 2)
 		store_message.assert_any_call("CONV-1", "user", "und jetzt?")
-		store_message.assert_any_call("CONV-1", "assistant", "Das ist die Folgeantwort.", tool_names=[], tool_calls=[], matches=[])
+		store_message.assert_any_call(
+			"CONV-1",
+			"assistant",
+			"Das ist die Folgeantwort.",
+			tool_names=[],
+			tool_calls=[],
+			matches=[],
+			mistral_usage={
+				"calls": 0,
+				"prompt_tokens": 0,
+				"completion_tokens": 0,
+				"total_tokens": 0,
+				"cached_prompt_tokens": 0,
+			},
+		)
+
+	def test_conversation_message_row_restores_mistral_usage(self):
+		row = {
+			"role": "assistant",
+			"content": "Antwort",
+			"mistral_usage_json": json.dumps(
+				{
+					"calls": 3,
+					"prompt_tokens": 1200,
+					"completion_tokens": 80,
+					"total_tokens": 1280,
+					"cached_prompt_tokens": 400,
+				}
+			),
+		}
+
+		message = assistant._conversation_message_row(row)
+
+		self.assertEqual(message["mistral_usage"]["total_tokens"], 1280)
+		self.assertEqual(message["mistral_usage"]["cached_prompt_tokens"], 400)
 
 	def test_mistral_complete_chat_forwards_prompt_cache_key(self):
 		with patch.object(mistral_client, "ensure_configured"), \

@@ -12,6 +12,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, getdate, now_datetime, nowdate
 
+from hausverwaltung.hausverwaltung.agent_tools import dataset_api as agent_dataset_api
 from hausverwaltung.hausverwaltung.agent_tools import read_api as agent_read_api
 from hausverwaltung.hausverwaltung.services import mistral_client
 
@@ -620,6 +621,8 @@ zugeordnet; der Mietvertrag mit seinen Feldern kunde und wohnung ist fuer diese 
 Verwende einen Customer niemals gedanklich fuer mehrere Mietvertraege oder Wohnungen und rate bei Mehrdeutigkeit nicht.
 Bei der Frage, wo ein Mieter oder Bewohner wohnt, ist Mietvertrag.wohnung die gesuchte Zuordnung. Suche dafuer den
 Mietvertrag und gib die Wohnung aus; suche nur bei ausdruecklicher Frage nach einer Postanschrift im Address-DocType.
+Bei laufenden oder momentan aktiven Mietvertraegen filtere ausschliesslich status = Läuft, sofern der Nutzer keine
+weiteren Kriterien nennt. Filtere dafuer niemals auf bis: Laufende Vertraege haben dort meistens keinen Wert.
 Nutze die bereitgestellten Tools fuer Mietersuche, Mieterkonto, Salden, offene Posten,
 verspaetete Zahlungen, Miet-Ranglisten und eingeschraenkte Hausverwaltungs-Abfragen.
 Wenn eine Frage ausserhalb dieses fachlichen Katalogs liegt, nutze die generischen agent_*-Tools.
@@ -672,24 +675,25 @@ Mietvertrag und gib die Wohnung aus; suche nur bei ausdruecklicher Frage nach ei
 Nutze nur die bereitgestellten generischen Werkzeuge. Erfinde keine DocTypes, Felder, Datensaetze oder Ergebnisse.
 Wenn der passende DocType unbekannt ist, suche ihn mit einem kurzen Fachbegriff ueber agent_list_doctypes. Lies danach immer zuerst sein Schema mit
 agent_get_doctype_schema. Verwende nur dort gelieferte, nicht sensible Felder fuer agent_list_docs, agent_search_docs
-oder agent_get_doc. Fordere mit fields nur die fuer die konkrete Antwort erforderlichen Felder an. Fordere name oder
+oder die Dataset-Werkzeuge. Fordere mit fields nur die fuer die konkrete Antwort erforderlichen Felder an. Fordere name oder
 andere Identitaetsfelder nur an, wenn die Frage oder die Antwort eine konkrete Person bzw. ein konkretes Dokument
 identifizieren muss. Uebernimm Dokumentnamen und andere Identitaetswerte exakt und unverkuerzt aus Tool-Ergebnissen.
 Wenn ein erfolgreiches Tool-Ergebnis die fuer die Antwort angeforderten Felder bereits enthaelt, antworte direkt und
 rufe dasselbe Dokument nicht noch einmal mit agent_get_doc ab. Wiederhole niemals einen fehlgeschlagenen Tool-Aufruf
 mit unveraenderten Argumenten. Nutze stattdessen sichere vorherige Ergebnisse oder sage, welche Angabe fehlt.
 Schreibe niemals SQL und aendere keine Daten.
-Beachte Feldtypen strikt. Berechne Summen, Mittelwerte, Datumsdifferenzen, Statistiken und andere Mathematik niemals
-im Kopf, sondern immer mit code_interpreter. Uebergib dem Code Interpreter nur Daten, die zuvor von den Lesewerkzeugen
-geliefert wurden. Wenn eine Frage alle passenden Datensaetze betrifft und meta.pagination.has_more=true ist, MUSST du
-bei agent_list_docs das limit weglassen: Das Werkzeug sammelt dann automatisch bis zu 500 Treffer. Wenn danach
-meta.pagination.has_more=true oder meta.pagination.truncated=true ist, rufe es erneut mit offset=next_offset und ohne
-limit auf. Verwende erst nach vollstaendiger Pagination alle Seiten gemeinsam im Code Interpreter. Setze limit nur,
-wenn der Nutzer ausdruecklich einen Ausschnitt verlangt. Gib im Code Interpreter das Endergebnis explizit aus und
-verwende es nur, wenn code_output ein erfolgreiches numerisches Ergebnis enthaelt; korrigiere Fehler und fuehre den
-Code erneut aus. Bei Fragen nach einer bereits verstrichenen Dauer (z.B. "schon", "bisher" oder "bis heute") ist
-das Ende immer der genannte oder aktuelle Stichtag; ein zukuenftiges Enddatum darf diese Dauer nicht verlaengern.
-Nenne Datengrundlage, Anzahl und Stichtag. Wenn Daten
+Beachte Feldtypen strikt. Wenn eine Frage mehrere oder alle Treffer berechnet, vergleicht oder statistisch auswertet,
+erstelle mit agent_create_dataset ein vollstaendiges lokales Dataset. Uebertrage dessen Zeilen niemals in den
+code_interpreter und berechne Datumsdifferenzen, Summen, Mittelwerte, Minima und Maxima ausschliesslich mit
+agent_analyze_dataset. Das Ergebnis ist nur gueltig, wenn complete=true und rows_used sowie rows_skipped genannt sind.
+Wenn sich bei einer Nachfrage der Umfang oder Filter aendert, erstelle dafuer ein neues Dataset. Einzelne Zeilen eines
+Datasets darfst du mit agent_list_dataset_rows suchen und danach mit agent_get_dataset_row gezielt laden. Verwende
+agent_list_docs und agent_search_docs nur fuer kleine Ergebnislisten, bei denen keine Berechnung ueber alle Treffer
+erforderlich ist. Der code_interpreter ist nur fuer Mathematik auf bereits kompakten Ergebnissen gedacht.
+Bei Fragen nach einer bereits verstrichenen Dauer (z.B. "schon", "bisher" oder "bis heute") ist
+das Ende immer der genannte oder aktuelle Stichtag. Verwende dafuer bei agent_analyze_dataset end_mode=as_of und
+setze kein end_field; ein zukuenftiges Enddatum darf diese Dauer nicht verlaengern.
+Nenne Datengrundlage, rows_used, rows_skipped und Stichtag. Wenn Daten
 fehlen oder die Bedeutung eines Feldes unklar ist, frage nach, statt zu raten. Antworte knapp auf Deutsch."""
 
 
@@ -1173,6 +1177,114 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 	{
 		"type": "function",
 		"function": {
+			"name": "agent_create_dataset",
+			"description": (
+				"Speichert alle Treffer einer strukturierten, lesenden DocType-Abfrage vollstaendig lokal und gibt "
+				"nur einen Dataset-Handle, Zeilenzahl und Feldtypen zurueck. Fuer jede Berechnung ueber mehrere "
+				"oder alle Treffer verwenden; die Zeilen nicht mit agent_list_docs zum Modell uebertragen."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"doctype": {"type": "string"},
+					"filters": {
+						"type": ["object", "array"],
+						"description": "Strukturierte Frappe-Filter; niemals SQL- oder Textsyntax.",
+					},
+					"fields": {
+						"type": ["array", "string"],
+						"items": {"type": "string"},
+						"description": "Nur die fuer Analyse oder spaeteren Zeilenzugriff erforderlichen Felder.",
+					},
+					"order_by": {
+						"type": "string",
+						"description": "Optional genau ein Feld: '<field> asc|desc'.",
+					},
+				},
+				"required": ["doctype", "fields"],
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": {
+			"name": "agent_analyze_dataset",
+			"description": (
+				"Berechnet lokal und vollstaendig count, sum, avg, min, max oder Datumsdifferenzen fuer ein Dataset. "
+				"Gibt value, dataset_row_count, rows_used und rows_skipped zurueck."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"dataset_id": {"type": "string"},
+					"operation": {
+						"type": "string",
+						"enum": [
+							"count", "sum", "avg", "min", "max",
+							"avg_date_difference", "min_date_difference", "max_date_difference",
+						],
+					},
+					"field": {"type": "string", "description": "Fuer sum, avg, min oder max."},
+					"start_field": {"type": "string", "description": "Startdatum fuer Datumsdifferenzen."},
+					"end_field": {"type": "string", "description": "Optionales Enddatumsfeld."},
+					"as_of": {"type": "string", "description": "Stichtag als YYYY-MM-DD; Default heute."},
+					"end_mode": {
+						"type": "string",
+						"enum": ["as_of", "field_or_as_of", "min_field_or_as_of"],
+						"description": (
+							"as_of ignoriert Endfelder; field_or_as_of nutzt vorhandenes Ende, sonst Stichtag; "
+							"min_field_or_as_of kappt zukuenftige Enden am Stichtag."
+						),
+					},
+					"unit": {"type": "string", "enum": ["days", "months", "years"]},
+				},
+				"required": ["dataset_id", "operation"],
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": {
+			"name": "agent_list_dataset_rows",
+			"description": (
+				"Liest einen kleinen, paginierten Ausschnitt einzelner Zeilen eines lokalen Datasets. "
+				"Echte Dokument-IDs nur ueber field=name anfordern, wenn sie fuer die Antwort erforderlich sind."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"dataset_id": {"type": "string"},
+					"fields": {"type": ["array", "string"], "items": {"type": "string"}},
+					"limit": {"type": "integer", "description": "1 bis 100, Default 20."},
+					"offset": {"type": "integer", "description": "Default 0."},
+				},
+				"required": ["dataset_id", "fields"],
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": {
+			"name": "agent_get_dataset_row",
+			"description": (
+				"Loest genau eine row_id aus einem Dataset auf und liest das ERPNext-Dokument nach erneuter "
+				"Berechtigungspruefung. Gibt dabei auch die echte Dokument-ID zurueck."
+			),
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"dataset_id": {"type": "string"},
+					"row_id": {"type": "string"},
+					"fields": {"type": ["array", "string"], "items": {"type": "string"}},
+					"include_children": {"type": "boolean"},
+				},
+				"required": ["dataset_id", "row_id", "fields"],
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": {
 			"name": "agent_get_doc",
 			"description": (
 				"Laedt ein einzelnes Dokument mit Frappe-Read-Permissions des aktuellen Benutzers. "
@@ -1232,8 +1344,18 @@ BASIC_AGENT_LOCAL_TOOL_NAMES = {
 	"agent_list_doctypes",
 	"agent_get_doctype_schema",
 	"agent_list_docs",
+	"agent_create_dataset",
+	"agent_analyze_dataset",
+	"agent_list_dataset_rows",
+	"agent_get_dataset_row",
 	"agent_get_doc",
 	"agent_search_docs",
+}
+BASIC_AGENT_DATASET_TOOL_NAMES = {
+	"agent_create_dataset",
+	"agent_analyze_dataset",
+	"agent_list_dataset_rows",
+	"agent_get_dataset_row",
 }
 BASIC_AGENT_TOOLS = [
 	tool
@@ -1258,6 +1380,10 @@ TOOL_FUNCTIONS = {
 	"agent_list_doctypes": lambda **kwargs: agent_list_doctypes(**kwargs),
 	"agent_get_doctype_schema": lambda **kwargs: agent_get_doctype_schema(**kwargs),
 	"agent_list_docs": lambda **kwargs: agent_list_docs(**kwargs),
+	"agent_create_dataset": lambda **kwargs: agent_create_dataset(**kwargs),
+	"agent_analyze_dataset": lambda **kwargs: agent_analyze_dataset(**kwargs),
+	"agent_list_dataset_rows": lambda **kwargs: agent_list_dataset_rows(**kwargs),
+	"agent_get_dataset_row": lambda **kwargs: agent_get_dataset_row(**kwargs),
 	"agent_get_doc": lambda **kwargs: agent_get_doc(**kwargs),
 	"agent_search_docs": lambda **kwargs: agent_search_docs(**kwargs),
 }
@@ -1397,7 +1523,16 @@ def get_conversation(conversation_id: str) -> dict[str, Any]:
 	rows = frappe.get_all(
 		"Hausverwaltung Assistant Message",
 		filters={"conversation": conversation.name, "user": frappe.session.user},
-		fields=["role", "content", "reasoning", "tool_names", "tool_calls_json", "matches_json", "creation"],
+		fields=[
+			"role",
+			"content",
+			"reasoning",
+			"mistral_usage_json",
+			"tool_names",
+			"tool_calls_json",
+			"matches_json",
+			"creation",
+		],
 		order_by="creation asc",
 		limit=CONVERSATION_MESSAGE_LIMIT,
 	)
@@ -1705,12 +1840,14 @@ def run_assistant(
 
 	answer = _message_content(final_message) or _fallback_answer(matches)
 	deduped_matches = _dedupe_matches(matches)
+	mistral_usage = _mistral_usage_summary(usage_entries)
 	_emit_assistant_progress(
 		progress_callback,
 		stage=_("Antwort wird gespeichert."),
 		answer=answer,
 		tool_calls=tool_calls_debug,
 		matches=deduped_matches,
+		mistral_usage=mistral_usage,
 	)
 	_store_conversation_message(conversation.name, "user", user_message)
 	_store_conversation_message(
@@ -1720,6 +1857,7 @@ def run_assistant(
 		tool_names=tool_names,
 		tool_calls=tool_calls_debug,
 		matches=deduped_matches,
+		mistral_usage=mistral_usage,
 	)
 	_log_assistant_call(
 		message_chars=len(user_message),
@@ -1739,7 +1877,7 @@ def run_assistant(
 		"tool_names": tool_names,
 		"tool_calls": tool_calls_debug,
 		"toolset": _tool_names(selected_tools),
-		"mistral_usage": _mistral_usage_summary(usage_entries),
+		"mistral_usage": mistral_usage,
 		"read_only": True,
 	}
 
@@ -1913,9 +2051,18 @@ def _run_mistral_agent_assistant(
 			)
 			if name == "analyze_revenue_over_time":
 				arguments = _sanitize_revenue_tool_arguments(arguments, user_message)
+			elif name == "agent_create_dataset":
+				arguments = _sanitize_dataset_creation_arguments(arguments, user_message)
+			elif name == "agent_analyze_dataset":
+				arguments = _sanitize_dataset_analysis_arguments(arguments, user_message)
 			elif name == "agent_get_doc":
 				arguments = _repair_agent_get_doc_identifier(arguments, matches)
-			result = _execute_mistral_agent_function(name, arguments, engine=engine)
+			result = _execute_mistral_agent_function(
+				name,
+				arguments,
+				engine=engine,
+				conversation_id=conversation.name,
+			)
 			tool_names.append(name)
 			tool_calls_debug.append(_tool_call_debug(name, arguments, result))
 			matches.extend(_extract_matches_from_tool_result(result))
@@ -1951,6 +2098,7 @@ def _run_mistral_agent_assistant(
 	deduped_matches = _dedupe_matches(matches)
 	answer = answer or _fallback_answer(deduped_matches)
 	reasoning = "\n\n".join(reasoning_chunks)[:MAX_STORED_REASONING_CHARS]
+	mistral_usage = _mistral_usage_summary(usage_entries)
 	_emit_assistant_progress(
 		progress_callback,
 		stage=_("Antwort wird gespeichert."),
@@ -1958,6 +2106,7 @@ def _run_mistral_agent_assistant(
 		reasoning=reasoning,
 		tool_calls=tool_calls_debug,
 		matches=deduped_matches,
+		mistral_usage=mistral_usage,
 	)
 	frappe.db.set_value(
 		"Hausverwaltung Assistant Conversation",
@@ -1979,6 +2128,7 @@ def _run_mistral_agent_assistant(
 		tool_calls=tool_calls_debug,
 		matches=deduped_matches,
 		reasoning=reasoning,
+		mistral_usage=mistral_usage,
 	)
 	_log_assistant_call(
 		message_chars=len(user_message),
@@ -1999,7 +2149,7 @@ def _run_mistral_agent_assistant(
 		"tool_calls": tool_calls_debug,
 		"reasoning": reasoning,
 		"toolset": _tool_names(agent_tools),
-		"mistral_usage": _mistral_usage_summary(usage_entries),
+		"mistral_usage": mistral_usage,
 		"read_only": True,
 	}
 
@@ -2342,6 +2492,7 @@ def _store_conversation_message(
 	tool_calls: list[dict[str, Any]] | None = None,
 	matches: list[dict[str, Any]] | None = None,
 	reasoning: str | None = None,
+	mistral_usage: dict[str, Any] | None = None,
 ) -> None:
 	if role not in {"user", "assistant"}:
 		return
@@ -2353,6 +2504,9 @@ def _store_conversation_message(
 			"role": role,
 			"content": content or "",
 			"reasoning": (reasoning or "")[:MAX_STORED_REASONING_CHARS],
+			"mistral_usage_json": json.dumps(mistral_usage, ensure_ascii=True, default=str)
+			if mistral_usage
+			else "",
 			"tool_names": ", ".join(tool_names or []),
 			"tool_calls_json": json.dumps(tool_calls or [], ensure_ascii=True, default=str) if tool_calls else "",
 			"matches_json": json.dumps((matches or [])[:STORED_MATCH_LIMIT], ensure_ascii=True, default=str)
@@ -2378,6 +2532,7 @@ def _conversation_message_row(row: dict[str, Any]) -> dict[str, Any]:
 		"role": row.get("role") or "",
 		"content": row.get("content") or "",
 		"reasoning": row.get("reasoning") or "",
+		"mistral_usage": _parse_stored_json_dict(row.get("mistral_usage_json")),
 		"tool_names": [name.strip() for name in (row.get("tool_names") or "").split(",") if name.strip()],
 		"tool_calls": _parse_stored_json_list(row.get("tool_calls_json")),
 		"matches": _parse_stored_matches(row.get("matches_json")),
@@ -2397,6 +2552,16 @@ def _parse_stored_json_list(value: str | None) -> list[dict[str, Any]]:
 	except Exception:
 		return []
 	return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
+
+
+def _parse_stored_json_dict(value: str | None) -> dict[str, Any]:
+	if not value:
+		return {}
+	try:
+		parsed = json.loads(value)
+	except Exception:
+		return {}
+	return parsed if isinstance(parsed, dict) else {}
 
 
 def _tool_call_debug(name: str, arguments: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
@@ -2432,6 +2597,11 @@ def _tool_call_analysis(
 		"aggregation_result": _compact_tool_aggregate(aggregation_result),
 		"order_by": arguments.get("order_by"),
 		"result_count": result_count,
+		"dataset_id": result.get("dataset_id"),
+		"operation": result.get("operation"),
+		"value": result.get("value"),
+		"rows_used": result.get("rows_used"),
+		"rows_skipped": result.get("rows_skipped"),
 		"warnings": _tool_call_analysis_warnings(aggregation, aggregation_result, result_count, error),
 	}
 	return {key: value for key, value in analysis.items() if value not in (None, "", [], {})}
@@ -2506,6 +2676,13 @@ def _tool_call_analysis_warnings(
 def _tool_result_count(result: dict[str, Any]) -> int:
 	if not isinstance(result, dict):
 		return 0
+	if result.get("dataset_id"):
+		for key in ("rows_used", "returned", "row_count"):
+			try:
+				if result.get(key) is not None:
+					return int(result.get(key) or 0)
+			except (TypeError, ValueError):
+				return 0
 	aggregate = result.get("aggregate")
 	if isinstance(aggregate, dict) and aggregate.get("group_count") is not None:
 		try:
@@ -3394,6 +3571,85 @@ def agent_list_docs(
 		order_by=order_by,
 	)
 	return _decorate_agent_doc_rows(result, doctype=(doctype or "").strip())
+
+
+def agent_create_dataset(
+	doctype: str,
+	filters: dict | list | str | None = None,
+	fields: list[str] | str | None = None,
+	order_by: str | None = None,
+	_conversation_id: str | None = None,
+) -> dict[str, Any]:
+	return agent_dataset_api.create_dataset(
+		doctype=doctype,
+		filters=filters,
+		fields=fields,
+		order_by=order_by,
+		conversation_id=_conversation_id,
+	)
+
+
+def agent_analyze_dataset(
+	dataset_id: str,
+	operation: str,
+	field: str | None = None,
+	start_field: str | None = None,
+	end_field: str | None = None,
+	as_of: str | None = None,
+	end_mode: str = "min_field_or_as_of",
+	unit: str = "years",
+	_conversation_id: str | None = None,
+) -> dict[str, Any]:
+	return agent_dataset_api.analyze_dataset(
+		dataset_id=dataset_id,
+		operation=operation,
+		field=field,
+		start_field=start_field,
+		end_field=end_field,
+		as_of=as_of,
+		end_mode=end_mode,
+		unit=unit,
+		conversation_id=_conversation_id,
+	)
+
+
+def agent_list_dataset_rows(
+	dataset_id: str,
+	fields: list[str] | str | None = None,
+	limit: int = 20,
+	offset: int = 0,
+	_conversation_id: str | None = None,
+) -> dict[str, Any]:
+	result = agent_dataset_api.list_dataset_rows(
+		dataset_id=dataset_id,
+		fields=fields,
+		limit=limit,
+		offset=offset,
+		conversation_id=_conversation_id,
+	)
+	return _decorate_agent_doc_rows(result, doctype=str(result.get("doctype") or "").strip())
+
+
+def agent_get_dataset_row(
+	dataset_id: str,
+	row_id: str,
+	fields: list[str] | str | None = None,
+	include_children: int | bool = 0,
+	_conversation_id: str | None = None,
+) -> dict[str, Any]:
+	result = agent_dataset_api.get_dataset_row(
+		dataset_id=dataset_id,
+		row_id=row_id,
+		fields=fields,
+		include_children=include_children,
+		conversation_id=_conversation_id,
+	)
+	if result.get("ok") and isinstance(result.get("data"), dict):
+		match = _agent_doc_match(str(result.get("doctype") or "").strip(), result["data"])
+		if match:
+			result["match"] = match
+			result["matches"] = [match]
+	return result
 
 
 def agent_get_doc(
@@ -5326,9 +5582,12 @@ def _execute_mistral_agent_function(
 	arguments: dict[str, Any],
 	*,
 	engine: str,
+	conversation_id: str | None = None,
 ) -> dict[str, Any]:
 	"""Execute one local Agents API function with Basic-agent batching semantics."""
 	execution_arguments = dict(arguments or {})
+	if name in BASIC_AGENT_DATASET_TOOL_NAMES:
+		execution_arguments["_conversation_id"] = conversation_id
 	auto_paginate = (
 		engine == ASSISTANT_ENGINE_MISTRAL_BASIC
 		and name == "agent_list_docs"
@@ -5426,6 +5685,137 @@ def _mistral_agent_function_result(result: dict[str, Any], *, engine: str) -> di
 	for key in ("rows", "matches", "match"):
 		compact.pop(key, None)
 	return compact
+
+
+def _sanitize_dataset_creation_arguments(
+	arguments: dict[str, Any],
+	user_message: str | None,
+) -> dict[str, Any]:
+	"""Apply authoritative current-contract semantics before materializing a dataset."""
+	cleaned = dict(arguments or {})
+	if str(cleaned.get("doctype") or "").strip() != "Mietvertrag":
+		return cleaned
+	message = str(user_message or "").casefold()
+	if _message_means_all_contracts(message):
+		blocked_fields = {"status"}
+		if not _message_explicitly_filters_contract_end(message):
+			blocked_fields.add("bis")
+		filters = cleaned.get("filters")
+		if isinstance(filters, dict):
+			cleaned["filters"] = {key: value for key, value in filters.items() if key not in blocked_fields}
+		elif isinstance(filters, list):
+			cleaned["filters"] = [
+				condition for condition in filters
+				if _dataset_filter_field(condition) not in blocked_fields
+			]
+		else:
+			cleaned["filters"] = []
+		return cleaned
+	if not _message_means_current_contracts(message):
+		return cleaned
+	filters = cleaned.get("filters")
+	if isinstance(filters, dict):
+		filters = dict(filters)
+		filters["status"] = "Läuft"
+		if not _message_explicitly_filters_contract_end(message):
+			filters.pop("bis", None)
+		cleaned["filters"] = filters
+		return cleaned
+	if not isinstance(filters, list):
+		filters = []
+	kept = []
+	has_running_status = False
+	for condition in filters:
+		fieldname = _dataset_filter_field(condition)
+		if fieldname == "bis" and not _message_explicitly_filters_contract_end(message):
+			continue
+		if fieldname == "status":
+			operator, value = _dataset_filter_operator_value(condition)
+			if operator == "=" and str(value or "").casefold() == "läuft".casefold():
+				has_running_status = True
+				kept.append(condition)
+			continue
+		kept.append(condition)
+	if not has_running_status:
+		kept.append(["status", "=", "Läuft"])
+	cleaned["filters"] = kept
+	return cleaned
+
+
+def _sanitize_dataset_analysis_arguments(
+	arguments: dict[str, Any],
+	user_message: str | None,
+) -> dict[str, Any]:
+	cleaned = dict(arguments or {})
+	operation = str(cleaned.get("operation") or "").strip().lower()
+	if operation not in {"avg_date_difference", "min_date_difference", "max_date_difference"}:
+		return cleaned
+	message = str(user_message or "").casefold()
+	if _message_means_all_contracts(message):
+		cleaned["end_mode"] = "min_field_or_as_of"
+		cleaned["end_field"] = "bis"
+	elif _message_means_current_contracts(message) and not _message_explicitly_filters_contract_end(message):
+		cleaned["end_mode"] = "as_of"
+		cleaned.pop("end_field", None)
+	return cleaned
+
+
+def _message_means_current_contracts(message: str) -> bool:
+	has_current_scope = any(
+		term in message
+		for term in (
+			"laufend",
+			"laufende",
+			"laufen",
+			"aktiver mietvertrag",
+			"aktive mietverträge",
+			"aktive mietvertraege",
+			"momentan",
+			"derzeit",
+		)
+	)
+	return has_current_scope and not _message_means_all_contracts(message)
+
+
+def _message_means_all_contracts(message: str) -> bool:
+	has_all = bool(re.search(r"\balle(?:n|r)?\b", message))
+	if not has_all:
+		return False
+	has_current = any(term in message for term in ("laufend", "aktiv", "momentan", "derzeit"))
+	has_past = any(
+		term in message
+		for term in ("vergangen", "beendet", "historisch", "ehemalig", "zusammen", "inklusive")
+	)
+	return has_past or not has_current
+
+
+def _message_explicitly_filters_contract_end(message: str) -> bool:
+	return bool(
+		re.search(
+			r"\b(?:enddatum|vertragsende|endet|enden|endende|gekündigt|gekuendigt|kündigung|kuendigung)\b",
+			message,
+		)
+	)
+
+
+def _dataset_filter_field(condition: Any) -> str:
+	if not isinstance(condition, (list, tuple)):
+		return ""
+	if len(condition) == 3:
+		return str(condition[0] or "").strip()
+	if len(condition) >= 4:
+		return str(condition[1] or "").strip()
+	return ""
+
+
+def _dataset_filter_operator_value(condition: Any) -> tuple[str, Any]:
+	if not isinstance(condition, (list, tuple)):
+		return "", None
+	if len(condition) == 3:
+		return str(condition[1] or "").strip().lower(), condition[2]
+	if len(condition) >= 4:
+		return str(condition[2] or "").strip().lower(), condition[3]
+	return "", None
 
 
 def _sanitize_revenue_tool_arguments(arguments: dict[str, Any], user_message: str | None) -> dict[str, Any]:
