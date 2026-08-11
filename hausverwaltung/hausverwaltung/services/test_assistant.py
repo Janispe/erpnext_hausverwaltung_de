@@ -136,7 +136,13 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["matches"][0]["mietvertrag"], "MV-1")
 		self.assertEqual(result["tool_calls"][0]["name"], "search_mieter")
 		self.assertEqual(result["tool_calls"][0]["arguments"], {"query": "Schmidt", "limit": 3})
+		self.assertEqual(result["tool_calls"][0]["requested_arguments"], {"query": "Schmidt", "limit": 3})
 		self.assertEqual(result["tool_calls"][0]["result_count"], 1)
+		self.assertEqual(result["tool_calls"][0]["output"], search_result)
+		self.assertEqual(result["tool_calls"][0]["model_request_usage"]["total_tokens"], 120)
+		self.assertEqual(result["tool_calls"][0]["model_followup_usage"]["total_tokens"], 170)
+		self.assertEqual(result["tool_calls"][0]["model_request_usage"]["round"], 1)
+		self.assertEqual(result["tool_calls"][0]["model_followup_usage"]["round"], 2)
 		self.assertEqual(
 			result["mistral_usage"],
 			{
@@ -270,6 +276,12 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["reasoning"], "Ich suche nach Schmidt.\n\nDer Treffer passt.")
 		self.assertEqual(result["matches"][0]["mietvertrag"], "MV-1")
 		self.assertEqual(result["mistral_usage"]["calls"], 2)
+		self.assertEqual(result["tool_calls"][0]["output"], search_result)
+		self.assertEqual(result["tool_calls"][0]["requested_arguments"], {"query": "Schmidt", "limit": 3})
+		self.assertEqual(result["tool_calls"][0]["model_request_usage"]["total_tokens"], 120)
+		self.assertEqual(result["tool_calls"][0]["model_followup_usage"]["total_tokens"], 170)
+		self.assertEqual(result["tool_calls"][0]["model_request_usage"]["round"], 1)
+		self.assertEqual(result["tool_calls"][0]["model_followup_usage"]["round"], 2)
 		set_value.assert_any_call(
 			"Hausverwaltung Assistant Conversation",
 			"CONV-AGENT-1",

@@ -188,6 +188,40 @@ function renderHausverwaltungAssistant(pageBody) {
 				background: #fff4d6;
 				color: #754f0d;
 			}
+			.hv-assistant-analysis-exchange {
+				margin-top: 7px;
+				border-top: 1px solid #e7e9e5;
+				padding-top: 6px;
+			}
+			.hv-assistant-analysis-exchange > summary {
+				cursor: pointer;
+				color: #506159;
+				font-weight: 600;
+			}
+			.hv-assistant-analysis-exchange-label {
+				margin-top: 7px;
+				color: #69736e;
+				font-weight: 600;
+			}
+			.hv-assistant-analysis-exchange pre {
+				max-height: 420px;
+				margin: 4px 0 0;
+				overflow: auto;
+				white-space: pre-wrap;
+				word-break: break-word;
+				font-size: 11px;
+				line-height: 1.35;
+				color: #3d444d;
+				background: #f7f8f6;
+				border: 1px solid #e7e9e5;
+				border-radius: 5px;
+				padding: 7px;
+			}
+			.hv-assistant-analysis-usage-note {
+				margin-top: 7px;
+				color: #69736e;
+				font-size: 11px;
+			}
 			.hv-assistant-reasoning {
 				margin-top: 9px;
 				border: 1px solid #d8d6e6;
@@ -495,6 +529,80 @@ function renderHausverwaltungAssistant(pageBody) {
 		node.append(row);
 	};
 
+	const modelRoundUsageLabel = (usage) => {
+		if (!usage || typeof usage !== "object") return "";
+		return [
+			`${__("Gesamt")}: ${formatTokenCount(usage.total_tokens)}`,
+			`${__("Eingabe")}: ${formatTokenCount(usage.prompt_tokens)}`,
+			`${__("Ausgabe")}: ${formatTokenCount(usage.completion_tokens)}`,
+		].join(" · ");
+	};
+
+	const appendToolExchange = (node, toolCall) => {
+		if (!toolCall || typeof toolCall !== "object") return;
+		const details = document.createElement("details");
+		details.className = "hv-assistant-analysis-exchange";
+		const summary = document.createElement("summary");
+		summary.textContent = `${__("Vollstaendiger Tool-Aufruf")} / ${__("Antwort an Mistral")}`;
+		details.append(summary);
+
+		const appendJson = (label, value) => {
+			const title = document.createElement("div");
+			title.className = "hv-assistant-analysis-exchange-label";
+			title.textContent = label;
+			const pre = document.createElement("pre");
+			pre.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+			details.append(title, pre);
+		};
+
+		const requestedArguments = toolCall.requested_arguments || toolCall.arguments || {};
+		appendJson(__("Vom Modell angefordert"), requestedArguments);
+		if (JSON.stringify(requestedArguments) !== JSON.stringify(toolCall.arguments || {})) {
+			appendJson(__("Tatsaechlich ausgefuehrt"), toolCall.arguments || {});
+		}
+		if (Object.prototype.hasOwnProperty.call(toolCall, "output")) {
+			appendJson(__("Antwort an Mistral"), toolCall.output);
+		} else {
+			const note = document.createElement("div");
+			note.className = "hv-assistant-analysis-usage-note";
+			note.textContent = __("Fuer diesen aelteren Aufruf wurde die Modellantwort noch nicht gespeichert.");
+			details.append(note);
+		}
+		if (toolCall.error) appendJson(__("Fehler"), toolCall.error);
+
+		const requestUsage = modelRoundUsageLabel(toolCall.model_request_usage);
+		if (requestUsage) {
+			const shared = Number(toolCall.model_request_usage_shared_calls || 0);
+			const round = Number(toolCall.model_request_usage?.round || 0);
+			const roundLabel = round ? `${__("Mistral-Runde")} ${round}: ${__("Toolwahl")}` : __("Toolwahl-Runde");
+			const label = shared > 1
+				? `${roundLabel} (${shared} ${__("Tools gemeinsam")})`
+				: roundLabel;
+			appendAnalysisRow(details, label, requestUsage);
+		}
+		const followupUsage = modelRoundUsageLabel(toolCall.model_followup_usage);
+		if (followupUsage) {
+			const shared = Number(toolCall.model_followup_usage_shared_calls || 0);
+			const round = Number(toolCall.model_followup_usage?.round || 0);
+			const roundLabel = round
+				? `${__("Mistral-Runde")} ${round}: ${__("nach Toolantwort")}`
+				: __("Folgerunde nach Toolantwort");
+			const label = shared > 1
+				? `${roundLabel} (${shared} ${__("Tools gemeinsam")})`
+				: roundLabel;
+			appendAnalysisRow(details, label, followupUsage);
+		}
+		if (requestUsage || followupUsage) {
+			const note = document.createElement("div");
+			note.className = "hv-assistant-analysis-usage-note";
+			note.textContent = __(
+				"Tokenwerte gelten fuer die gesamte Mistral-API-Runde inklusive Chatkontext, nicht nur fuer dieses Tool. Dieselbe Runde kann bei zwei benachbarten Schritten erscheinen und darf dann nicht doppelt addiert werden."
+			);
+			details.append(note);
+		}
+		node.append(details);
+	};
+
 	const appendAnalysis = (node, toolCalls) => {
 		if (!toolCalls || !toolCalls.length) return;
 		const steps = toolCalls.map(analysisFromToolCall);
@@ -526,7 +634,8 @@ function renderHausverwaltungAssistant(pageBody) {
 			appendAnalysisRow(item, __("Ergebnis"), aggregationResultLabel(step.aggregation_result));
 			appendAnalysisRow(item, __("Treffer"), step.result_count);
 			appendAnalysisRow(item, __("Sortierung"), step.order_by);
-			const error = toolCalls[index]?.error;
+			const toolCall = toolCalls[index] || {};
+			const error = toolCall.error;
 			if (error) appendAnalysisRow(item, __("Fehler"), error.message || error);
 			(step.warnings || []).forEach((warning) => {
 				const warningNode = document.createElement("div");
@@ -534,6 +643,7 @@ function renderHausverwaltungAssistant(pageBody) {
 				warningNode.textContent = warning;
 				item.append(warningNode);
 			});
+			appendToolExchange(item, toolCall);
 			details.append(item);
 		});
 		node.append(details);

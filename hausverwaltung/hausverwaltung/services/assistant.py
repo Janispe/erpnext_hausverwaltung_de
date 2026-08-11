@@ -1787,8 +1787,10 @@ def run_assistant(
 	matches: list[dict[str, Any]] = []
 	usage_entries: list[dict[str, Any]] = []
 	final_message: dict[str, Any] | None = None
+	pending_tool_usage_indexes: list[int] = []
 
 	for _round in range(MAX_TOOL_ROUNDS):
+		model_round = _round + 1
 		_emit_assistant_progress(progress_callback, stage=_("Das Modell analysiert die Anfrage."))
 		assistant_message = mistral_client.complete_chat(
 			messages=messages,
@@ -1799,20 +1801,38 @@ def run_assistant(
 			temperature=0.2,
 			prompt_cache_key=prompt_cache_key,
 		)
-		usage_entries.append(assistant_message.get("_usage") or {})
+		call_usage = assistant_message.get("_usage") or {}
+		usage_entries.append(call_usage)
+		_attach_tool_followup_usage(
+			tool_calls_debug, pending_tool_usage_indexes, call_usage, model_round=model_round
+		)
+		pending_tool_usage_indexes = []
 		messages.append(_sanitize_assistant_message(assistant_message))
 		tool_calls = assistant_message.get("tool_calls") or []
 		if not tool_calls:
 			final_message = assistant_message
 			break
 
+		current_tool_usage_indexes: list[int] = []
 		for tool_call in tool_calls:
 			name, arguments = _parse_tool_call(tool_call)
+			requested_arguments = dict(arguments)
 			if name == "analyze_revenue_over_time":
 				arguments = _sanitize_revenue_tool_arguments(arguments, user_message)
 			tool_names.append(name)
 			result = _execute_tool(name, arguments)
-			tool_calls_debug.append(_tool_call_debug(name, arguments, result))
+			tool_calls_debug.append(
+				_tool_call_debug(
+					name,
+					arguments,
+					result,
+					model_output=result,
+					model_arguments=requested_arguments,
+					model_request_usage=call_usage,
+					model_request_round=model_round,
+				)
+			)
+			current_tool_usage_indexes.append(len(tool_calls_debug) - 1)
 			matches.extend(_extract_matches_from_tool_result(result))
 			_emit_assistant_progress(
 				progress_callback,
@@ -1828,15 +1848,22 @@ def run_assistant(
 					"content": json.dumps(result, ensure_ascii=False, default=str),
 				}
 			)
+		_mark_tool_request_usage_shared(tool_calls_debug, current_tool_usage_indexes)
+		pending_tool_usage_indexes = current_tool_usage_indexes
 
 	if final_message is None:
+		model_round = MAX_TOOL_ROUNDS + 1
 		final_message = mistral_client.complete_chat(
 			messages=messages,
 			model=resolved_model,
 			temperature=0.2,
 			prompt_cache_key=prompt_cache_key,
 		)
-		usage_entries.append(final_message.get("_usage") or {})
+		call_usage = final_message.get("_usage") or {}
+		usage_entries.append(call_usage)
+		_attach_tool_followup_usage(
+			tool_calls_debug, pending_tool_usage_indexes, call_usage, model_round=model_round
+		)
 
 	answer = _message_content(final_message) or _fallback_answer(matches)
 	deduped_matches = _dedupe_matches(matches)
@@ -1912,6 +1939,7 @@ def _run_mistral_agent_assistant(
 	reasoning_chunks: list[str] = []
 	answer = ""
 	last_stream_progress_at = 0.0
+	pending_tool_usage_indexes: list[int] = []
 
 	def report_stream_event(event: dict[str, Any], partial: dict[str, Any]) -> None:
 		nonlocal last_stream_progress_at
@@ -1988,11 +2016,20 @@ def _run_mistral_agent_assistant(
 			)
 
 	for tool_round in range(MAX_TOOL_ROUNDS + 1):
-		usage_entries.append(response.get("usage") or {})
+		model_round = tool_round + 1
+		call_usage = response.get("usage") or {}
+		usage_entries.append(call_usage)
+		_attach_tool_followup_usage(
+			tool_calls_debug, pending_tool_usage_indexes, call_usage, model_round=model_round
+		)
+		pending_tool_usage_indexes = []
 		if reasoning := _mistral_conversation_reasoning(response):
 			reasoning_chunks.append(reasoning)
 		executions = _mistral_conversation_tool_executions(response)
 		for execution in executions:
+			if usage := _mistral_single_call_usage(call_usage):
+				usage["round"] = model_round
+				execution["model_request_usage"] = usage
 			tool_names.append(execution["name"])
 			tool_calls_debug.append(execution)
 		_emit_assistant_progress(
@@ -2034,6 +2071,7 @@ def _run_mistral_agent_assistant(
 			)
 
 		function_results = []
+		current_tool_usage_indexes: list[int] = []
 		for function_call in function_calls:
 			name = str(function_call.get("name") or "").strip()
 			tool_call_id = str(function_call.get("tool_call_id") or "").strip()
@@ -2042,6 +2080,7 @@ def _run_mistral_agent_assistant(
 					"Mistral Function Call enthaelt keinen Tool-Namen oder keine Call-ID."
 				)
 			arguments = _mistral_conversation_arguments(function_call.get("arguments"))
+			requested_arguments = dict(arguments)
 			_emit_assistant_progress(
 				progress_callback,
 				stage=_("Werkzeug {0} wird ausgeführt.").format(name),
@@ -2064,7 +2103,19 @@ def _run_mistral_agent_assistant(
 				conversation_id=conversation.name,
 			)
 			tool_names.append(name)
-			tool_calls_debug.append(_tool_call_debug(name, arguments, result))
+			function_result = _mistral_agent_function_result(result, engine=engine)
+			tool_calls_debug.append(
+				_tool_call_debug(
+					name,
+					arguments,
+					result,
+					model_output=function_result,
+					model_arguments=requested_arguments,
+					model_request_usage=call_usage,
+					model_request_round=model_round,
+				)
+			)
+			current_tool_usage_indexes.append(len(tool_calls_debug) - 1)
 			matches.extend(_extract_matches_from_tool_result(result))
 			_emit_assistant_progress(
 				progress_callback,
@@ -2073,7 +2124,6 @@ def _run_mistral_agent_assistant(
 				tool_calls=tool_calls_debug,
 				matches=_dedupe_matches(matches),
 			)
-			function_result = _mistral_agent_function_result(result, engine=engine)
 			function_results.append(
 				{
 					"type": "function.result",
@@ -2081,6 +2131,8 @@ def _run_mistral_agent_assistant(
 					"result": json.dumps(function_result, ensure_ascii=False, default=str),
 				}
 			)
+		_mark_tool_request_usage_shared(tool_calls_debug, current_tool_usage_indexes)
+		pending_tool_usage_indexes = current_tool_usage_indexes
 		if progress_callback:
 			response = mistral_client.append_agent_conversation_stream(
 				conversation_id=remote_conversation_id,
@@ -2346,7 +2398,7 @@ def _mistral_conversation_tool_executions(response: dict[str, Any]) -> list[dict
 			error = str(code_output)
 		debug = _tool_call_debug(name, arguments, {"count": 0 if error else 1, "error": error})
 		if code_output is not None:
-			debug["output"] = str(code_output)[:10000]
+			debug["output"] = str(code_output)
 		executions.append(debug)
 	return executions
 
@@ -2564,16 +2616,64 @@ def _parse_stored_json_dict(value: str | None) -> dict[str, Any]:
 	return parsed if isinstance(parsed, dict) else {}
 
 
-def _tool_call_debug(name: str, arguments: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+def _tool_call_debug(
+	name: str,
+	arguments: dict[str, Any],
+	result: dict[str, Any],
+	*,
+	model_output: Any = None,
+	model_arguments: dict[str, Any] | None = None,
+	model_request_usage: dict[str, Any] | None = None,
+	model_request_round: int | None = None,
+) -> dict[str, Any]:
 	error = result.get("error") if isinstance(result, dict) else None
 	result_count = _tool_result_count(result)
-	return {
+	debug = {
 		"name": name,
 		"arguments": arguments,
 		"result_count": result_count,
 		"error": error,
 		"analysis": _tool_call_analysis(name, arguments, result, result_count, error),
 	}
+	if isinstance(model_arguments, dict):
+		debug["requested_arguments"] = model_arguments
+	if model_output is not None:
+		debug["output"] = model_output
+	if usage := _mistral_single_call_usage(model_request_usage):
+		if model_request_round:
+			usage["round"] = model_request_round
+		debug["model_request_usage"] = usage
+	return debug
+
+
+def _attach_tool_followup_usage(
+	tool_calls: list[dict[str, Any]],
+	indexes: list[int],
+	usage: dict[str, Any] | None,
+	*,
+	model_round: int | None = None,
+) -> None:
+	"""Attach the API round that consumed one or more local tool results."""
+	detail = _mistral_single_call_usage(usage)
+	if not detail or not indexes:
+		return
+	shared_calls = len(indexes)
+	if model_round:
+		detail["round"] = model_round
+	for index in indexes:
+		if index < 0 or index >= len(tool_calls):
+			continue
+		tool_calls[index]["model_followup_usage"] = dict(detail)
+		if shared_calls > 1:
+			tool_calls[index]["model_followup_usage_shared_calls"] = shared_calls
+
+
+def _mark_tool_request_usage_shared(tool_calls: list[dict[str, Any]], indexes: list[int]) -> None:
+	if len(indexes) < 2:
+		return
+	for index in indexes:
+		if 0 <= index < len(tool_calls):
+			tool_calls[index]["model_request_usage_shared_calls"] = len(indexes)
 
 
 def _tool_call_analysis(
@@ -5956,6 +6056,12 @@ def _mistral_usage_summary(entries: list[dict[str, Any]]) -> dict[str, int]:
 		if isinstance(details, dict):
 			out["cached_prompt_tokens"] += _int_or_zero(details.get("cached_tokens"))
 	return out
+
+
+def _mistral_single_call_usage(usage: dict[str, Any] | None) -> dict[str, int]:
+	if not isinstance(usage, dict) or not usage:
+		return {}
+	return _mistral_usage_summary([usage])
 
 
 def _int_or_zero(value: Any) -> int:
