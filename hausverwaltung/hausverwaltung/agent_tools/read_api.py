@@ -180,8 +180,10 @@ def _sanitize_fieldnames(doctype: str, requested_fields: list[str] | None = None
 
 	allowed_fields = set(allowed_by_meta.keys())
 
-	if requested_fields:
+	if requested_fields is not None:
 		sanitized = [field for field in requested_fields if field in allowed_fields]
+		if not sanitized:
+			raise AgentToolError("INVALID_ARGUMENT", "No requested fields are readable.")
 	else:
 		sanitized = []
 		for base_field in _DEFAULT_LIST_FIELDS:
@@ -191,8 +193,6 @@ def _sanitize_fieldnames(doctype: str, requested_fields: list[str] | None = None
 		if title_field and title_field in allowed_fields and title_field not in sanitized:
 			sanitized.append(title_field)
 
-	if "name" not in sanitized:
-		sanitized.insert(0, "name")
 	return sanitized, allowed_fields
 
 

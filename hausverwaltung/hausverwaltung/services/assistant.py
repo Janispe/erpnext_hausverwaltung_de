@@ -665,7 +665,9 @@ zugeordnet; der Mietvertrag mit kunde und wohnung ist fuer diese Zuordnung massg
 Nutze nur die bereitgestellten generischen Werkzeuge. Erfinde keine DocTypes, Felder, Datensaetze oder Ergebnisse.
 Wenn der passende DocType unbekannt ist, ermittle ihn mit agent_list_doctypes. Lies danach immer zuerst sein Schema mit
 agent_get_doctype_schema. Verwende nur dort gelieferte, nicht sensible Felder fuer agent_list_docs, agent_search_docs
-oder agent_get_doc. Schreibe niemals SQL und aendere keine Daten.
+oder agent_get_doc. Fordere mit fields nur die fuer die konkrete Antwort erforderlichen Felder an. Fordere name oder
+andere Identitaetsfelder nur an, wenn die Frage oder die Antwort eine konkrete Person bzw. ein konkretes Dokument
+identifizieren muss. Schreibe niemals SQL und aendere keine Daten.
 Beachte Feldtypen strikt. Berechne Summen, Mittelwerte, Datumsdifferenzen, Statistiken und andere Mathematik niemals
 im Kopf, sondern immer mit code_interpreter. Uebergib dem Code Interpreter nur Daten, die zuvor von den Lesewerkzeugen
 geliefert wurden. Wenn eine Frage alle passenden Datensaetze betrifft und meta.pagination.has_more=true ist, MUSST du
@@ -1122,7 +1124,10 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 					"fields": {
 						"type": ["array", "string"],
 						"items": {"type": "string"},
-						"description": "Gewuenschte sichere Feldnamen oder JSON-Liste.",
+						"description": (
+							"Nur die fuer die Antwort erforderlichen sicheren Feldnamen oder eine JSON-Liste. "
+							"name nur anfordern, wenn eine Identitaet wirklich benoetigt wird."
+						),
 					},
 					"limit": {
 						"type": "integer",

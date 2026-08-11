@@ -56,6 +56,15 @@ class TestAgentReadApi(IntegrationTestCase):
 			self.assertIn("name", response["data"][0])
 			self.assertNotIn("api_secret", response["data"][0])
 
+	def test_requested_field_projection_does_not_add_name(self):
+		fields, _allowed_fields = read_api._sanitize_fieldnames("DocType", ["modified"])
+
+		self.assertEqual(fields, ["modified"])
+
+	def test_requested_field_projection_rejects_only_blocked_fields(self):
+		with self.assertRaisesRegex(read_api.AgentToolError, "No requested fields are readable"):
+			read_api._sanitize_fieldnames("DocType", ["api_secret"])
+
 	def test_list_docs_allows_standard_modified_order_by(self):
 		response = read_api.list_docs("DocType", fields=["name", "modified"], order_by="modified desc", limit=1)
 		self.assertTrue(response["ok"])
