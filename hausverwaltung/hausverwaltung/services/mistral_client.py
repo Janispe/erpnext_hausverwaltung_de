@@ -282,7 +282,12 @@ def create_agent(
 	return payload
 
 
-def start_agent_conversation(*, agent_id: str, inputs: str) -> dict[str, Any]:
+def start_agent_conversation(
+	*,
+	agent_id: str,
+	inputs: str,
+	timeout: int | None = None,
+) -> dict[str, Any]:
 	"""Start a stored Mistral Conversation backed by an Agent."""
 	ensure_configured()
 	return _validate_conversation_response(
@@ -293,6 +298,7 @@ def start_agent_conversation(*, agent_id: str, inputs: str) -> dict[str, Any]:
 				"inputs": inputs,
 				"store": True,
 			},
+			timeout=timeout,
 		)
 	)
 
@@ -301,6 +307,7 @@ def append_agent_conversation(
 	*,
 	conversation_id: str,
 	inputs: str | list[dict[str, Any]],
+	timeout: int | None = None,
 ) -> dict[str, Any]:
 	"""Append a user message or local function results to a Mistral Conversation."""
 	ensure_configured()
@@ -311,6 +318,7 @@ def append_agent_conversation(
 				"inputs": inputs,
 				"store": True,
 			},
+			timeout=timeout,
 		)
 	)
 

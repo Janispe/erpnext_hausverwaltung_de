@@ -27,6 +27,7 @@ CONVERSATION_LIST_LIMIT = 30
 CONVERSATION_MESSAGE_LIMIT = 100
 STORED_MATCH_LIMIT = 10
 MAX_STORED_REASONING_CHARS = 30000
+BASIC_AGENT_API_TIMEOUT = 180
 ASSISTANT_ENGINE_CLASSIC = "classic"
 ASSISTANT_ENGINE_MISTRAL_AGENTS = "mistral_agents"
 ASSISTANT_ENGINE_MISTRAL_BASIC = "mistral_basic"
@@ -1688,16 +1689,23 @@ def _run_mistral_agent_assistant(
 	remote_conversation_id = str(
 		getattr(conversation, "remote_conversation_id", None) or ""
 	).strip()
+	conversation_options = (
+		{"timeout": BASIC_AGENT_API_TIMEOUT}
+		if engine == ASSISTANT_ENGINE_MISTRAL_BASIC
+		else {}
+	)
 	current_input = f"Aktuelles Datum: {nowdate()}. Anfrage des Nutzers: {user_message}"
 	if remote_conversation_id:
 		response = mistral_client.append_agent_conversation(
 			conversation_id=remote_conversation_id,
 			inputs=current_input,
+			**conversation_options,
 		)
 	else:
 		response = mistral_client.start_agent_conversation(
 			agent_id=remote_agent_id,
 			inputs=current_input,
+			**conversation_options,
 		)
 
 	tool_names: list[str] = []
@@ -1749,6 +1757,7 @@ def _run_mistral_agent_assistant(
 		response = mistral_client.append_agent_conversation(
 			conversation_id=remote_conversation_id,
 			inputs=function_results,
+			**conversation_options,
 		)
 
 	deduped_matches = _dedupe_matches(matches)

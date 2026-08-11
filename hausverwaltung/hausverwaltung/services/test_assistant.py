@@ -376,6 +376,35 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			update_modified=False,
 		)
 
+	def test_mistral_basic_conversations_use_extended_timeout(self):
+		conversation = frappe._dict(
+			name="CONV-BASIC-1",
+			remote_agent_id="agent-basic",
+			remote_conversation_id="",
+		)
+		response = {
+			"conversation_id": "remote-basic-1",
+			"outputs": [{"type": "message.output", "content": [{"type": "text", "text": "42"}]}],
+		}
+
+		with patch.object(mistral_client, "start_agent_conversation", return_value=response) as start, \
+			 patch.object(assistant, "_store_conversation_message"), \
+			 patch.object(assistant, "_log_assistant_call"), \
+			 patch.object(assistant.frappe.db, "set_value"):
+			result = assistant._run_mistral_agent_assistant(
+				user_message="Berechne 6 * 7",
+				conversation=conversation,
+				selected_model="mistral-small-latest",
+				engine=assistant.ASSISTANT_ENGINE_MISTRAL_BASIC,
+			)
+
+		start.assert_called_once_with(
+			agent_id="agent-basic",
+			inputs=f"Aktuelles Datum: {assistant.nowdate()}. Anfrage des Nutzers: Berechne 6 * 7",
+			timeout=assistant.BASIC_AGENT_API_TIMEOUT,
+		)
+		self.assertEqual(result["answer"], "42")
+
 	def test_run_assistant_dispatches_mistral_basic_profile(self):
 		conversation = frappe._dict(name="CONV-BASIC-1")
 		with patch.object(assistant, "_require_search_permissions"), \
