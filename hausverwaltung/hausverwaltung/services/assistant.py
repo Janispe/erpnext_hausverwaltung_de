@@ -666,9 +666,10 @@ agent_get_doctype_schema. Verwende nur dort gelieferte, nicht sensible Felder fu
 oder agent_get_doc. Schreibe niemals SQL und aendere keine Daten.
 Beachte Feldtypen strikt. Berechne Summen, Mittelwerte, Datumsdifferenzen, Statistiken und andere Mathematik niemals
 im Kopf, sondern immer mit code_interpreter. Uebergib dem Code Interpreter nur Daten, die zuvor von den Lesewerkzeugen
-geliefert wurden. Wenn eine Liste paginiert ist und die Frage alle Datensaetze betrifft, lade mit offset alle Seiten,
-bevor du rechnest. Nenne Datengrundlage, Anzahl und Stichtag. Wenn Daten fehlen oder die Bedeutung eines Feldes unklar
-ist, frage nach, statt zu raten. Antworte knapp auf Deutsch."""
+geliefert wurden. Wenn eine Frage alle passenden Datensaetze betrifft und meta.pagination.has_more=true ist, MUSST du
+agent_list_docs erneut mit offset=meta.pagination.next_offset aufrufen. Wiederhole das, bis has_more=false ist, und
+verwende erst dann alle Seiten gemeinsam im Code Interpreter. Nenne Datengrundlage, Anzahl und Stichtag. Wenn Daten
+fehlen oder die Bedeutung eines Feldes unklar ist, frage nach, statt zu raten. Antworte knapp auf Deutsch."""
 
 
 ASSISTANT_TOOLS: list[dict[str, Any]] = [
@@ -1115,7 +1116,10 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 						"description": "Gewuenschte sichere Feldnamen oder JSON-Liste.",
 					},
 					"limit": {"type": "integer", "description": "1 bis 100, Default 20."},
-					"offset": {"type": "integer", "description": "Offset fuer Pagination, Default 0."},
+					"offset": {
+						"type": "integer",
+						"description": "Offset fuer Pagination. Bei has_more=true zwingend next_offset verwenden.",
+					},
 					"order_by": {
 						"type": "string",
 						"description": "Genau ein Feld: '<field> asc|desc'. Keine Kommas oder zweite Sortierung.",

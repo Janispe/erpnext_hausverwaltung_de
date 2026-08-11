@@ -9,14 +9,16 @@ import frappe
 from frappe import _
 from frappe.utils import cint
 
-from hausverwaltung.hausverwaltung.agent_tools.contracts import AgentToolError
-from hausverwaltung.hausverwaltung.agent_tools.contracts import is_sensitive_field
-from hausverwaltung.hausverwaltung.agent_tools.contracts import normalize_fields
-from hausverwaltung.hausverwaltung.agent_tools.contracts import normalize_filters
-from hausverwaltung.hausverwaltung.agent_tools.contracts import normalize_limit
-from hausverwaltung.hausverwaltung.agent_tools.contracts import normalize_offset
-from hausverwaltung.hausverwaltung.agent_tools.contracts import normalize_order_by
-from hausverwaltung.hausverwaltung.agent_tools.contracts import normalize_query
+from hausverwaltung.hausverwaltung.agent_tools.contracts import (
+	AgentToolError,
+	is_sensitive_field,
+	normalize_fields,
+	normalize_filters,
+	normalize_limit,
+	normalize_offset,
+	normalize_order_by,
+	normalize_query,
+)
 
 SENSITIVE_DOCTYPES = {
 	"Access Log",
@@ -380,13 +382,17 @@ def list_docs(
 			fields=safe_fields,
 			order_by=safe_order_by,
 			start=normalized_offset,
-			page_length=normalized_limit,
+			page_length=normalized_limit + 1,
 		)
+		has_more = len(rows) > normalized_limit
+		rows = rows[:normalized_limit]
 		result_count = len(rows)
 		pagination = {
 			"limit": normalized_limit,
 			"offset": normalized_offset,
 			"returned": result_count,
+			"has_more": has_more,
+			"next_offset": normalized_offset + result_count if has_more else None,
 		}
 		success = True
 		return _ok(request_id, started_at, rows, pagination=pagination)

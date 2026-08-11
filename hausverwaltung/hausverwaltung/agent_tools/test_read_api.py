@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import inspect
 import re
+from unittest.mock import patch
 
+import frappe
 from frappe.tests import IntegrationTestCase
 
 from hausverwaltung.hausverwaltung.agent_tools import read_api
@@ -59,6 +61,24 @@ class TestAgentReadApi(IntegrationTestCase):
 		self.assertTrue(response["ok"])
 		if response["data"]:
 			self.assertIn("modified", response["data"][0])
+
+	def test_list_docs_exposes_unambiguous_next_page(self):
+		rows = [frappe._dict(name="DOC-1"), frappe._dict(name="DOC-2"), frappe._dict(name="DOC-3")]
+		with patch.object(read_api, "_ensure_agent_api_access"), \
+			 patch.object(read_api, "_ensure_doctype_readable"), \
+			 patch.object(read_api, "_sanitize_fieldnames", return_value=(["name"], {"name"})), \
+			 patch.object(read_api.frappe, "get_list", return_value=rows) as get_list:
+			response = read_api.list_docs("Mietvertrag", fields=["name"], limit=2, offset=10)
+
+		self.assertEqual([row["name"] for row in response["data"]], ["DOC-1", "DOC-2"])
+		self.assertEqual(response["meta"]["pagination"], {
+			"limit": 2,
+			"offset": 10,
+			"returned": 2,
+			"has_more": True,
+			"next_offset": 12,
+		})
+		self.assertEqual(get_list.call_args.kwargs["page_length"], 3)
 
 	def test_get_doc_not_found(self):
 		response = read_api.get_doc("DocType", "__DOES_NOT_EXIST__")
