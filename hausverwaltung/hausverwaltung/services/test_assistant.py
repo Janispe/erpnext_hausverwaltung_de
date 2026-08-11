@@ -296,6 +296,23 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			"Erster Gedanke.\n\nZweiter Gedanke.",
 		)
 
+	def test_mistral_conversation_tool_executions_expose_code_and_output(self):
+		response = {
+			"outputs": [
+				{
+					"type": "tool.execution",
+					"name": "code_interpreter",
+					"info": {"code": "sum([1, 2, 3])", "code_output": "6"},
+				}
+			]
+		}
+
+		executions = assistant._mistral_conversation_tool_executions(response)
+
+		self.assertEqual(executions[0]["name"], "code_interpreter")
+		self.assertEqual(executions[0]["arguments"], {"code": "sum([1, 2, 3])"})
+		self.assertEqual(executions[0]["output"], "6")
+
 	def test_mistral_agent_registry_reuses_matching_agent_definition(self):
 		model = "mistral-small-latest"
 		signature = assistant._mistral_agent_definition_signature(model)
@@ -315,6 +332,59 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 
 		self.assertEqual(agent_id, "agent-existing")
 		create_agent.assert_not_called()
+
+	def test_mistral_basic_agent_uses_only_generic_read_tools_and_code_interpreter(self):
+		tool_names = assistant._tool_names(assistant.BASIC_AGENT_TOOLS)
+
+		self.assertEqual(set(tool_names), assistant.BASIC_AGENT_LOCAL_TOOL_NAMES | {"code_interpreter"})
+		self.assertNotIn("search_mieter", tool_names)
+		self.assertNotIn("hv_query_view", tool_names)
+
+	def test_mistral_basic_agent_registry_is_separate_and_enables_reasoning(self):
+		model = "mistral-small-latest"
+		model_row = frappe._dict(
+			name="MODEL-ROW-1",
+			modell=model,
+			mistral_agent_id="agent-full",
+			mistral_agent_signature="full-signature",
+			mistral_basic_agent_id="",
+			mistral_basic_agent_signature="",
+		)
+		settings = frappe._dict(assistant_models=[model_row])
+
+		with patch.object(assistant.frappe, "get_single", return_value=settings), \
+			 patch.object(mistral_client, "create_agent", return_value={"id": "agent-basic"}) as create_agent, \
+			 patch.object(assistant.frappe.db, "set_value") as set_value:
+			agent_id = assistant._get_or_create_mistral_agent(
+				model,
+				engine=assistant.ASSISTANT_ENGINE_MISTRAL_BASIC,
+			)
+
+		self.assertEqual(agent_id, "agent-basic")
+		self.assertEqual(create_agent.call_args.kwargs["reasoning_effort"], "high")
+		self.assertIn({"type": "code_interpreter"}, create_agent.call_args.kwargs["tools"])
+		set_value.assert_called_once_with(
+			"Hausverwaltung Assistent Modell",
+			"MODEL-ROW-1",
+			{
+				"mistral_basic_agent_id": "agent-basic",
+				"mistral_basic_agent_signature": assistant._mistral_agent_definition_signature(
+					model,
+					engine=assistant.ASSISTANT_ENGINE_MISTRAL_BASIC,
+				),
+			},
+			update_modified=False,
+		)
+
+	def test_run_assistant_dispatches_mistral_basic_profile(self):
+		conversation = frappe._dict(name="CONV-BASIC-1")
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant, "_resolve_assistant_model", return_value=("mistral-small-latest", "mistral-small-latest")), \
+			 patch.object(assistant, "_get_or_create_conversation", return_value=conversation), \
+			 patch.object(assistant, "_run_mistral_agent_assistant", return_value={"ok": True}) as run_agent:
+			assistant.run_assistant("Zeige Mietvertraege", engine="mistral_basic")
+
+		self.assertEqual(run_agent.call_args.kwargs["engine"], assistant.ASSISTANT_ENGINE_MISTRAL_BASIC)
 
 	def test_assistant_model_selection_rejects_arbitrary_models(self):
 		choices = {"default": "allowed-model", "models": [{"value": "allowed-model"}]}
@@ -763,6 +833,7 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 				description="Read only",
 				instructions="Nur lesen",
 				tools=[{"type": "function", "function": {"name": "search_mieter"}}],
+				reasoning_effort="high",
 			)
 			started = mistral_client.start_agent_conversation(agent_id=agent["id"], inputs="Hallo")
 			appended = mistral_client.append_agent_conversation(
@@ -772,6 +843,10 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 
 		self.assertEqual(appended["conversation_id"], "conv-2")
 		self.assertEqual(post_json.call_args_list[0].args[0], "agents")
+		self.assertEqual(
+			post_json.call_args_list[0].args[1]["completion_args"],
+			{"temperature": 0.2, "reasoning_effort": "high"},
+		)
 		self.assertEqual(post_json.call_args_list[1].args[0], "conversations")
 		self.assertEqual(post_json.call_args_list[2].args[0], "conversations/conv-1")
 		self.assertTrue(post_json.call_args_list[1].args[1]["store"])
@@ -1335,6 +1410,10 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			 self.assertRaises(frappe.ValidationError):
 			assistant.hv_query_view("open_items", filters=[["password", "like", "%x%"]])
 
+		with patch.object(assistant.frappe, "has_permission", return_value=True), \
+			 self.assertRaisesRegex(frappe.ValidationError, "Typ date"):
+			assistant.hv_query_view("tenant_contracts", aggregate={"op": "avg", "field": "von"})
+
 	def test_hv_query_docs_rejects_unapproved_doctype_and_filter_field(self):
 		with patch.object(assistant, "_require_search_permissions"), \
 			 patch.object(assistant.frappe, "has_permission", return_value=True), \
@@ -1350,6 +1429,11 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			 patch.object(assistant.frappe, "has_permission", return_value=True), \
 			 self.assertRaises(frappe.ValidationError):
 			assistant.hv_query_docs("Mietvertrag", aggregate={"op": "sum", "field": "notizen"})
+
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant.frappe, "has_permission", return_value=True), \
+			 self.assertRaisesRegex(frappe.ValidationError, "Typ date"):
+			assistant.hv_query_docs("Mietvertrag", aggregate={"op": "avg", "field": "von"})
 
 	def test_hv_get_doc_returns_only_allowed_children(self):
 		doc = frappe._dict(

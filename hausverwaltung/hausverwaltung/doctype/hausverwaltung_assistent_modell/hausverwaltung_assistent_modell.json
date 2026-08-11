@@ -10,7 +10,9 @@
   "aktiv",
   "standard",
   "mistral_agent_id",
-  "mistral_agent_signature"
+  "mistral_agent_signature",
+  "mistral_basic_agent_id",
+  "mistral_basic_agent_signature"
  ],
  "fields": [
   {
@@ -54,6 +56,20 @@
    "fieldtype": "Data",
    "hidden": 1,
    "label": "Mistral Agent Signatur",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mistral_basic_agent_id",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Mistral Basic Agent ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mistral_basic_agent_signature",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Mistral Basic Agent Signatur",
    "read_only": 1
   }
  ],

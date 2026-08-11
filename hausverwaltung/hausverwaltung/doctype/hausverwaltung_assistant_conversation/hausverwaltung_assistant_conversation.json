@@ -31,7 +31,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Engine",
-   "options": "classic\nmistral_agents",
+   "options": "classic\nmistral_agents\nmistral_basic",
    "reqd": 1
   },
   {

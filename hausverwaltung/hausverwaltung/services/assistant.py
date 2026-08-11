@@ -29,7 +29,12 @@ STORED_MATCH_LIMIT = 10
 MAX_STORED_REASONING_CHARS = 30000
 ASSISTANT_ENGINE_CLASSIC = "classic"
 ASSISTANT_ENGINE_MISTRAL_AGENTS = "mistral_agents"
-ASSISTANT_ENGINES = {ASSISTANT_ENGINE_CLASSIC, ASSISTANT_ENGINE_MISTRAL_AGENTS}
+ASSISTANT_ENGINE_MISTRAL_BASIC = "mistral_basic"
+ASSISTANT_ENGINES = {
+	ASSISTANT_ENGINE_CLASSIC,
+	ASSISTANT_ENGINE_MISTRAL_AGENTS,
+	ASSISTANT_ENGINE_MISTRAL_BASIC,
+}
 MISTRAL_AGENT_DEFINITION_VERSION = 1
 
 HV_READABLE_DOCTYPES: dict[str, dict[str, Any]] = {
@@ -651,6 +656,20 @@ Wenn Treffer mehrdeutig sind, nenne die wichtigsten Treffer und frage nach einer
 Antworte knapp auf Deutsch und verweise auf die gefundenen Treffernummern, wenn vorhanden."""
 
 
+BASIC_AGENT_SYSTEM_PROMPT = """Du bist ein minimalistischer, ausschliesslich lesender ERPNext-Datenassistent.
+Ein Customer ist die buchhalterische Debitoren-Entitaet genau eines Mietvertrags. Mietvertrag und Customer sind 1:1
+zugeordnet; der Mietvertrag mit kunde und wohnung ist fuer diese Zuordnung massgeblich.
+Nutze nur die bereitgestellten generischen Werkzeuge. Erfinde keine DocTypes, Felder, Datensaetze oder Ergebnisse.
+Wenn der passende DocType unbekannt ist, ermittle ihn mit agent_list_doctypes. Lies danach immer zuerst sein Schema mit
+agent_get_doctype_schema. Verwende nur dort gelieferte, nicht sensible Felder fuer agent_list_docs, agent_search_docs
+oder agent_get_doc. Schreibe niemals SQL und aendere keine Daten.
+Beachte Feldtypen strikt. Berechne Summen, Mittelwerte, Datumsdifferenzen, Statistiken und andere Mathematik niemals
+im Kopf, sondern immer mit code_interpreter. Uebergib dem Code Interpreter nur Daten, die zuvor von den Lesewerkzeugen
+geliefert wurden. Wenn eine Liste paginiert ist und die Frage alle Datensaetze betrifft, lade mit offset alle Seiten,
+bevor du rechnest. Nenne Datengrundlage, Anzahl und Stichtag. Wenn Daten fehlen oder die Bedeutung eines Feldes unklar
+ist, frage nach, statt zu raten. Antworte knapp auf Deutsch."""
+
+
 ASSISTANT_TOOLS: list[dict[str, Any]] = [
 	{
 		"type": "function",
@@ -1163,6 +1182,19 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 	},
 ]
 
+BASIC_AGENT_LOCAL_TOOL_NAMES = {
+	"agent_list_doctypes",
+	"agent_get_doctype_schema",
+	"agent_list_docs",
+	"agent_get_doc",
+	"agent_search_docs",
+}
+BASIC_AGENT_TOOLS = [
+	tool
+	for tool in ASSISTANT_TOOLS
+	if tool.get("function", {}).get("name") in BASIC_AGENT_LOCAL_TOOL_NAMES
+] + [{"type": "code_interpreter"}]
+
 TOOL_FUNCTIONS = {
 	"hv_describe_query_sources": lambda **kwargs: hv_describe_query_sources(**kwargs),
 	"hv_describe_query_source": lambda **kwargs: hv_describe_query_source(**kwargs),
@@ -1395,7 +1427,15 @@ def _tools_by_name(names: set[str]) -> list[dict[str, Any]]:
 
 
 def _tool_names(tools: list[dict[str, Any]]) -> list[str]:
-	return [tool.get("function", {}).get("name") or "" for tool in tools if tool.get("function", {}).get("name")]
+	names = []
+	for tool in tools:
+		if tool.get("type") == "function":
+			name = tool.get("function", {}).get("name") or ""
+		else:
+			name = tool.get("type") or ""
+		if name:
+			names.append(name)
+	return names
 
 
 def _assistant_prompt_cache_key(conversation_id: str) -> str:
@@ -1526,11 +1566,12 @@ def run_assistant(
 		engine=selected_engine,
 		assistant_model=selected_model,
 	)
-	if selected_engine == ASSISTANT_ENGINE_MISTRAL_AGENTS:
+	if selected_engine in {ASSISTANT_ENGINE_MISTRAL_AGENTS, ASSISTANT_ENGINE_MISTRAL_BASIC}:
 		return _run_mistral_agent_assistant(
 			user_message=user_message,
 			conversation=conversation,
 			selected_model=selected_model,
+			engine=selected_engine,
 		)
 	history_messages = _load_conversation_history(conversation.name)
 
@@ -1636,11 +1677,13 @@ def _run_mistral_agent_assistant(
 	user_message: str,
 	conversation,
 	selected_model: str,
+	engine: str = ASSISTANT_ENGINE_MISTRAL_AGENTS,
 ) -> dict[str, Any]:
-	"""Run the same read-only HV tools through Mistral Agents & Conversations."""
+	"""Run a read-only tool profile through Mistral Agents & Conversations."""
+	agent_tools = _mistral_agent_tools(engine)
 	remote_agent_id = str(getattr(conversation, "remote_agent_id", None) or "").strip()
 	if not remote_agent_id:
-		remote_agent_id = _get_or_create_mistral_agent(selected_model)
+		remote_agent_id = _get_or_create_mistral_agent(selected_model, engine=engine)
 
 	remote_conversation_id = str(
 		getattr(conversation, "remote_conversation_id", None) or ""
@@ -1668,6 +1711,9 @@ def _run_mistral_agent_assistant(
 		usage_entries.append(response.get("usage") or {})
 		if reasoning := _mistral_conversation_reasoning(response):
 			reasoning_chunks.append(reasoning)
+		for execution in _mistral_conversation_tool_executions(response):
+			tool_names.append(execution["name"])
+			tool_calls_debug.append(execution)
 		remote_conversation_id = str(response.get("conversation_id") or "").strip()
 		function_calls = _mistral_conversation_function_calls(response)
 		if not function_calls:
@@ -1733,7 +1779,7 @@ def _run_mistral_agent_assistant(
 		conversation_id=conversation.name,
 		tool_names=tool_names,
 		result_count=len(deduped_matches),
-		engine=ASSISTANT_ENGINE_MISTRAL_AGENTS,
+		engine=engine,
 		model=selected_model,
 	)
 	return {
@@ -1742,17 +1788,21 @@ def _run_mistral_agent_assistant(
 		"matches": deduped_matches,
 		"conversation_id": conversation.name,
 		"model": selected_model,
-		"engine": ASSISTANT_ENGINE_MISTRAL_AGENTS,
+		"engine": engine,
 		"tool_names": tool_names,
 		"tool_calls": tool_calls_debug,
 		"reasoning": reasoning,
-		"toolset": _tool_names(ASSISTANT_TOOLS),
+		"toolset": _tool_names(agent_tools),
 		"mistral_usage": _mistral_usage_summary(usage_entries),
 		"read_only": True,
 	}
 
 
-def _get_or_create_mistral_agent(model: str) -> str:
+def _get_or_create_mistral_agent(
+	model: str,
+	*,
+	engine: str = ASSISTANT_ENGINE_MISTRAL_AGENTS,
+) -> str:
 	settings = frappe.get_single("Hausverwaltung Einstellungen")
 	model_row = next(
 		(
@@ -1762,19 +1812,23 @@ def _get_or_create_mistral_agent(model: str) -> str:
 		),
 		None,
 	)
-	signature = _mistral_agent_definition_signature(model)
-	stored_agent_id = str(getattr(model_row, "mistral_agent_id", None) or "").strip()
-	stored_signature = str(getattr(model_row, "mistral_agent_signature", None) or "").strip()
+	definition = _mistral_agent_definition(engine)
+	signature = _mistral_agent_definition_signature(model, engine=engine)
+	agent_id_field = definition["agent_id_field"]
+	signature_field = definition["signature_field"]
+	stored_agent_id = str(getattr(model_row, agent_id_field, None) or "").strip()
+	stored_signature = str(getattr(model_row, signature_field, None) or "").strip()
 	if stored_agent_id and stored_signature == signature:
 		return stored_agent_id
 
 	agent = mistral_client.create_agent(
 		model=model,
-		name=f"Hausverwaltung Assistent ({model})"[:256],
-		description="Interner, ausschliesslich lesender Assistent fuer ERPNext-Hausverwaltungsdaten.",
-		instructions=ASSISTANT_SYSTEM_PROMPT,
-		tools=ASSISTANT_TOOLS,
+		name=definition["name"].format(model=model)[:256],
+		description=definition["description"],
+		instructions=definition["instructions"],
+		tools=definition["tools"],
 		temperature=0.2,
+		reasoning_effort=definition.get("reasoning_effort"),
 	)
 	agent_id = str(agent.get("id") or "").strip()
 	model_row_name = str(getattr(model_row, "name", None) or "").strip()
@@ -1783,21 +1837,56 @@ def _get_or_create_mistral_agent(model: str) -> str:
 			"Hausverwaltung Assistent Modell",
 			model_row_name,
 			{
-				"mistral_agent_id": agent_id,
-				"mistral_agent_signature": signature,
+				agent_id_field: agent_id,
+				signature_field: signature,
 			},
 			update_modified=False,
 		)
 	return agent_id
 
 
-def _mistral_agent_definition_signature(model: str) -> str:
+
+def _mistral_agent_definition(engine: str) -> dict[str, Any]:
+	if engine == ASSISTANT_ENGINE_MISTRAL_BASIC:
+		return {
+			"name": "Hausverwaltung Basic ({model})",
+			"description": "Minimaler Readonly-Agent mit generischen ERPNext-Lesetools und Code Interpreter.",
+			"instructions": BASIC_AGENT_SYSTEM_PROMPT,
+			"tools": BASIC_AGENT_TOOLS,
+			"reasoning_effort": "high",
+			"agent_id_field": "mistral_basic_agent_id",
+			"signature_field": "mistral_basic_agent_signature",
+		}
+	return {
+		"name": "Hausverwaltung Assistent ({model})",
+		"description": "Interner, ausschliesslich lesender Assistent fuer ERPNext-Hausverwaltungsdaten.",
+		"instructions": ASSISTANT_SYSTEM_PROMPT,
+		"tools": ASSISTANT_TOOLS,
+		"reasoning_effort": None,
+		"agent_id_field": "mistral_agent_id",
+		"signature_field": "mistral_agent_signature",
+	}
+
+
+def _mistral_agent_tools(engine: str) -> list[dict[str, Any]]:
+	return _mistral_agent_definition(engine)["tools"]
+
+
+def _mistral_agent_definition_signature(
+	model: str,
+	*,
+	engine: str = ASSISTANT_ENGINE_MISTRAL_AGENTS,
+) -> str:
+	definition = _mistral_agent_definition(engine)
 	payload = {
 		"version": MISTRAL_AGENT_DEFINITION_VERSION,
 		"model": model,
-		"instructions": ASSISTANT_SYSTEM_PROMPT,
-		"tools": ASSISTANT_TOOLS,
+		"instructions": definition["instructions"],
+		"tools": definition["tools"],
 	}
+	if engine == ASSISTANT_ENGINE_MISTRAL_BASIC:
+		payload["engine"] = engine
+		payload["reasoning_effort"] = definition.get("reasoning_effort")
 	serialized = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 	return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
@@ -1860,6 +1949,22 @@ def _mistral_conversation_reasoning(response: dict[str, Any]) -> str:
 	return "\n\n".join(parts)
 
 
+def _mistral_conversation_tool_executions(response: dict[str, Any]) -> list[dict[str, Any]]:
+	executions = []
+	for entry in response.get("outputs") or []:
+		if not isinstance(entry, dict) or entry.get("type") != "tool.execution":
+			continue
+		info = entry.get("info") if isinstance(entry.get("info"), dict) else {}
+		name = str(entry.get("name") or info.get("name") or "built_in_tool")
+		arguments = {"code": info.get("code")} if info.get("code") else {}
+		error = entry.get("error") or info.get("error")
+		debug = _tool_call_debug(name, arguments, {"count": 0 if error else 1, "error": error})
+		if info.get("code_output") is not None:
+			debug["output"] = str(info.get("code_output"))[:10000]
+		executions.append(debug)
+	return executions
+
+
 def _normalize_assistant_engine(engine: str | None) -> str:
 	selected = (engine or ASSISTANT_ENGINE_CLASSIC).strip().lower()
 	if selected not in ASSISTANT_ENGINES:
@@ -1880,7 +1985,8 @@ def _get_or_create_conversation(
 		if stored_engine != engine:
 			frappe.throw(_("Bitte fuer den Engine-Wechsel einen neuen Chat starten."))
 		stored_model = str(getattr(doc, "assistant_model", None) or "").strip()
-		if engine == ASSISTANT_ENGINE_MISTRAL_AGENTS and stored_model and stored_model != assistant_model:
+		if engine in {ASSISTANT_ENGINE_MISTRAL_AGENTS, ASSISTANT_ENGINE_MISTRAL_BASIC} \
+			and stored_model and stored_model != assistant_model:
 			frappe.throw(_("Bitte fuer den Modellwechsel im Mistral-Agent einen neuen Chat starten."))
 		return doc
 	title = _conversation_title(first_message)
@@ -4150,6 +4256,7 @@ def _safe_view_aggregate(conf: dict[str, Any], aggregate: dict | str | None) -> 
 	group_by = _normalize_view_field(conf, parsed.get("group_by")) if parsed.get("group_by") else ""
 	if op != "count" and field not in conf.get("fields", {}):
 		frappe.throw(_("Aggregationsfeld nicht erlaubt: {0}").format(field or "-"))
+	_validate_aggregate_field_type(op, field)
 	if group_by and group_by not in conf.get("fields", {}):
 		frappe.throw(_("Gruppierungsfeld nicht erlaubt: {0}").format(group_by))
 	return {"op": op, "field": field or None, "group_by": group_by or None}
@@ -4637,9 +4744,21 @@ def _safe_hv_aggregate(doctype: str, aggregate: dict | str | None) -> dict[str, 
 	group_by = _normalize_hv_field(doctype, parsed.get("group_by")) if parsed.get("group_by") else ""
 	if op != "count" and field not in _hv_allowed_query_fields(doctype):
 		frappe.throw(_("Aggregationsfeld nicht erlaubt: {0}").format(field or "-"))
+	_validate_aggregate_field_type(op, field)
 	if group_by and group_by not in _hv_allowed_query_fields(doctype):
 		frappe.throw(_("Gruppierungsfeld nicht erlaubt: {0}").format(group_by))
 	return {"op": op, "field": field or None, "group_by": group_by or None}
+
+
+def _validate_aggregate_field_type(op: str, field: str) -> None:
+	if op in {"sum", "avg"} and _query_field_kind(field) != "number":
+		frappe.throw(
+			_("Aggregation {0} ist fuer Feld {1} vom Typ {2} nicht erlaubt.").format(
+				op,
+				field or "-",
+				_query_field_kind(field),
+			)
+		)
 
 
 def _hv_allowed_query_fields(doctype: str) -> set[str]:

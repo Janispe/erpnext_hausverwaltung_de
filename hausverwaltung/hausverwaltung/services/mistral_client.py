@@ -255,6 +255,7 @@ def create_agent(
 	instructions: str,
 	tools: list[dict[str, Any]],
 	temperature: float = 0.2,
+	reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
 	"""Create a persistent Mistral Agent for the Conversations API."""
 	ensure_configured()
@@ -262,6 +263,9 @@ def create_agent(
 		raise MistralPermanentError(
 			"Der Mistral-Agents-Prototyp benötigt die Mistral Cloud als Base URL."
 		)
+	completion_args: dict[str, Any] = {"temperature": temperature}
+	if reasoning_effort:
+		completion_args["reasoning_effort"] = reasoning_effort
 	payload = _post_json(
 		"agents",
 		{
@@ -270,7 +274,7 @@ def create_agent(
 			"description": description,
 			"instructions": instructions,
 			"tools": tools,
-			"completion_args": {"temperature": temperature},
+			"completion_args": completion_args,
 		},
 	)
 	if not str(payload.get("id") or "").strip():

@@ -34,6 +34,7 @@ function renderHausverwaltungAssistant(pageBody) {
 						<select class="hv-assistant-engine" aria-label="${__("Engine")}" title="${__("Ausfuehrungsart fuer diesen Chat")}">
 							<option value="classic">${__("Bestehend")}</option>
 							<option value="mistral_agents">${__("Mistral Agents (Prototyp)")}</option>
+							<option value="mistral_basic">${__("Mistral Basic + Rechner")}</option>
 						</select>
 						<select class="hv-assistant-model" aria-label="${__("Modell")}" title="${__("Modell fuer diese Anfrage")}">
 							<option value="default">${__("Standardmodell")}</option>
@@ -410,6 +411,7 @@ function renderHausverwaltungAssistant(pageBody) {
 			pre.textContent = JSON.stringify(
 				{
 					arguments: toolCall.arguments || {},
+					output: toolCall.output || null,
 					error: toolCall.error || null,
 				},
 				null,
@@ -619,7 +621,11 @@ function renderHausverwaltungAssistant(pageBody) {
 			`);
 			button.toggleClass("active", row.name === conversationId);
 			button.find(".hv-assistant-conversation-title").text(row.title || row.name);
-			const engineLabel = row.engine === "mistral_agents" ? __("Mistral Agent") : __("Bestehend");
+			const engineLabel = row.engine === "mistral_basic"
+				? __("Mistral Basic")
+				: row.engine === "mistral_agents"
+					? __("Mistral Agent")
+					: __("Bestehend");
 			button.find(".hv-assistant-conversation-meta").text(
 				`${row.message_count || 0} ${__("Nachrichten")} · ${engineLabel}`
 			);
