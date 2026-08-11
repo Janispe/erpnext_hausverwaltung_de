@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import timedelta
+import hashlib
 import json
 import re
+from datetime import timedelta
 from typing import Any
 
 import frappe
@@ -25,6 +26,10 @@ CONVERSATION_HISTORY_LIMIT = 10
 CONVERSATION_LIST_LIMIT = 30
 CONVERSATION_MESSAGE_LIMIT = 100
 STORED_MATCH_LIMIT = 10
+ASSISTANT_ENGINE_CLASSIC = "classic"
+ASSISTANT_ENGINE_MISTRAL_AGENTS = "mistral_agents"
+ASSISTANT_ENGINES = {ASSISTANT_ENGINE_CLASSIC, ASSISTANT_ENGINE_MISTRAL_AGENTS}
+MISTRAL_AGENT_DEFINITION_VERSION = 1
 
 HV_READABLE_DOCTYPES: dict[str, dict[str, Any]] = {
 	"Mietvertrag": {
@@ -598,6 +603,9 @@ AGENT_DATA_CATALOG: tuple[dict[str, Any], ...] = (
 
 ASSISTANT_SYSTEM_PROMPT = """Du bist der interne Hausverwaltungs-Assistent.
 Du darfst nur lesen. Du darfst keine Buchungen, Briefe, Aufgaben oder sonstige Daten aendern.
+Ein Customer ist die buchhalterische Debitoren-Entitaet genau eines Mietvertrags. Mietvertrag und Customer sind 1:1
+zugeordnet; der Mietvertrag mit seinen Feldern kunde und wohnung ist fuer diese Zuordnung massgeblich.
+Verwende einen Customer niemals gedanklich fuer mehrere Mietvertraege oder Wohnungen und rate bei Mehrdeutigkeit nicht.
 Nutze die bereitgestellten Tools fuer Mietersuche, Mieterkonto, Salden, offene Posten,
 verspaetete Zahlungen, Miet-Ranglisten und eingeschraenkte Hausverwaltungs-Abfragen.
 Wenn eine Frage ausserhalb dieses fachlichen Katalogs liegt, nutze die generischen agent_*-Tools.
@@ -1211,10 +1219,16 @@ def ask(
 	message: str,
 	conversation_id: str | None = None,
 	model: str | None = None,
+	engine: str | None = None,
 ) -> dict[str, Any]:
 	"""Whitelisted Desk API for the read-only assistant."""
 	try:
-		return run_assistant(message=message, conversation_id=conversation_id, model=model)
+		return run_assistant(
+			message=message,
+			conversation_id=conversation_id,
+			model=model,
+			engine=engine,
+		)
 	except mistral_client.MistralPermanentError as exc:
 		frappe.throw(str(exc))
 	except mistral_client.MistralTransientError as exc:
@@ -1281,7 +1295,7 @@ def list_conversations(limit: int | None = None) -> list[dict[str, Any]]:
 	rows = frappe.get_all(
 		"Hausverwaltung Assistant Conversation",
 		filters={"user": frappe.session.user, "status": ["!=", "Archived"]},
-		fields=["name", "title", "last_message_on", "message_count", "status"],
+		fields=["name", "title", "last_message_on", "message_count", "status", "engine", "assistant_model"],
 		order_by="last_message_on desc, modified desc",
 		limit=resolved_limit,
 	)
@@ -1302,6 +1316,8 @@ def get_conversation(conversation_id: str) -> dict[str, Any]:
 	return {
 		"name": conversation.name,
 		"title": conversation.title,
+		"engine": getattr(conversation, "engine", None) or ASSISTANT_ENGINE_CLASSIC,
+		"assistant_model": getattr(conversation, "assistant_model", None) or "",
 		"messages": [_conversation_message_row(row) for row in rows],
 	}
 
@@ -1495,13 +1511,26 @@ def run_assistant(
 	message: str,
 	conversation_id: str | None = None,
 	model: str | None = None,
+	engine: str | None = None,
 ) -> dict[str, Any]:
 	user_message = (message or "").strip()
 	if not user_message:
 		frappe.throw(_("Bitte eine Frage oder Suche eingeben."))
 	_require_search_permissions()
+	selected_engine = _normalize_assistant_engine(engine)
 	selected_model, resolved_model = _resolve_assistant_model(model)
-	conversation = _get_or_create_conversation(conversation_id, user_message)
+	conversation = _get_or_create_conversation(
+		conversation_id,
+		user_message,
+		engine=selected_engine,
+		assistant_model=selected_model,
+	)
+	if selected_engine == ASSISTANT_ENGINE_MISTRAL_AGENTS:
+		return _run_mistral_agent_assistant(
+			user_message=user_message,
+			conversation=conversation,
+			selected_model=selected_model,
+		)
 	history_messages = _load_conversation_history(conversation.name)
 
 	messages: list[dict[str, Any]] = [
@@ -1583,6 +1612,8 @@ def run_assistant(
 		conversation_id=conversation.name,
 		tool_names=tool_names,
 		result_count=len(deduped_matches),
+		engine=selected_engine,
+		model=selected_model,
 	)
 	return {
 		"ok": True,
@@ -1590,6 +1621,7 @@ def run_assistant(
 		"matches": deduped_matches,
 		"conversation_id": conversation.name,
 		"model": selected_model,
+		"engine": selected_engine,
 		"tool_names": tool_names,
 		"tool_calls": tool_calls_debug,
 		"toolset": _tool_names(selected_tools),
@@ -1598,9 +1630,227 @@ def run_assistant(
 	}
 
 
-def _get_or_create_conversation(conversation_id: str | None, first_message: str):
+def _run_mistral_agent_assistant(
+	*,
+	user_message: str,
+	conversation,
+	selected_model: str,
+) -> dict[str, Any]:
+	"""Run the same read-only HV tools through Mistral Agents & Conversations."""
+	remote_agent_id = str(getattr(conversation, "remote_agent_id", None) or "").strip()
+	if not remote_agent_id:
+		remote_agent_id = _get_or_create_mistral_agent(selected_model)
+
+	remote_conversation_id = str(
+		getattr(conversation, "remote_conversation_id", None) or ""
+	).strip()
+	current_input = f"Aktuelles Datum: {nowdate()}. Anfrage des Nutzers: {user_message}"
+	if remote_conversation_id:
+		response = mistral_client.append_agent_conversation(
+			conversation_id=remote_conversation_id,
+			inputs=current_input,
+		)
+	else:
+		response = mistral_client.start_agent_conversation(
+			agent_id=remote_agent_id,
+			inputs=current_input,
+		)
+
+	tool_names: list[str] = []
+	tool_calls_debug: list[dict[str, Any]] = []
+	matches: list[dict[str, Any]] = []
+	usage_entries: list[dict[str, Any]] = []
+	answer = ""
+
+	for tool_round in range(MAX_TOOL_ROUNDS + 1):
+		usage_entries.append(response.get("usage") or {})
+		remote_conversation_id = str(response.get("conversation_id") or "").strip()
+		function_calls = _mistral_conversation_function_calls(response)
+		if not function_calls:
+			answer = _mistral_conversation_text(response)
+			break
+		if tool_round >= MAX_TOOL_ROUNDS:
+			raise mistral_client.MistralPermanentError(
+				"Der Mistral-Agent hat die maximale Zahl lokaler Tool-Runden ueberschritten."
+			)
+
+		function_results = []
+		for function_call in function_calls:
+			name = str(function_call.get("name") or "").strip()
+			tool_call_id = str(function_call.get("tool_call_id") or "").strip()
+			if not name or not tool_call_id:
+				raise mistral_client.MistralTransientError(
+					"Mistral Function Call enthaelt keinen Tool-Namen oder keine Call-ID."
+				)
+			arguments = _mistral_conversation_arguments(function_call.get("arguments"))
+			if name == "analyze_revenue_over_time":
+				arguments = _sanitize_revenue_tool_arguments(arguments, user_message)
+			result = _execute_tool(name, arguments)
+			tool_names.append(name)
+			tool_calls_debug.append(_tool_call_debug(name, arguments, result))
+			matches.extend(_extract_matches_from_tool_result(result))
+			function_results.append(
+				{
+					"type": "function.result",
+					"tool_call_id": tool_call_id,
+					"result": json.dumps(result, ensure_ascii=True, default=str),
+				}
+			)
+		response = mistral_client.append_agent_conversation(
+			conversation_id=remote_conversation_id,
+			inputs=function_results,
+		)
+
+	deduped_matches = _dedupe_matches(matches)
+	answer = answer or _fallback_answer(deduped_matches)
+	frappe.db.set_value(
+		"Hausverwaltung Assistant Conversation",
+		conversation.name,
+		{
+			"remote_agent_id": remote_agent_id,
+			"remote_conversation_id": remote_conversation_id,
+			"assistant_model": selected_model,
+		},
+		update_modified=False,
+	)
+	_store_conversation_message(conversation.name, "user", user_message)
+	_store_conversation_message(
+		conversation.name,
+		"assistant",
+		answer,
+		tool_names=tool_names,
+		tool_calls=tool_calls_debug,
+		matches=deduped_matches,
+	)
+	_log_assistant_call(
+		message_chars=len(user_message),
+		conversation_id=conversation.name,
+		tool_names=tool_names,
+		result_count=len(deduped_matches),
+		engine=ASSISTANT_ENGINE_MISTRAL_AGENTS,
+		model=selected_model,
+	)
+	return {
+		"ok": True,
+		"answer": answer,
+		"matches": deduped_matches,
+		"conversation_id": conversation.name,
+		"model": selected_model,
+		"engine": ASSISTANT_ENGINE_MISTRAL_AGENTS,
+		"tool_names": tool_names,
+		"tool_calls": tool_calls_debug,
+		"toolset": _tool_names(ASSISTANT_TOOLS),
+		"mistral_usage": _mistral_usage_summary(usage_entries),
+		"read_only": True,
+	}
+
+
+def _get_or_create_mistral_agent(model: str) -> str:
+	settings = frappe.get_single("Hausverwaltung Einstellungen")
+	model_row = next(
+		(
+			row
+			for row in (getattr(settings, "assistant_models", None) or [])
+			if str(getattr(row, "modell", None) or "").strip() == model
+		),
+		None,
+	)
+	signature = _mistral_agent_definition_signature(model)
+	stored_agent_id = str(getattr(model_row, "mistral_agent_id", None) or "").strip()
+	stored_signature = str(getattr(model_row, "mistral_agent_signature", None) or "").strip()
+	if stored_agent_id and stored_signature == signature:
+		return stored_agent_id
+
+	agent = mistral_client.create_agent(
+		model=model,
+		name=f"Hausverwaltung Assistent ({model})"[:256],
+		description="Interner, ausschliesslich lesender Assistent fuer ERPNext-Hausverwaltungsdaten.",
+		instructions=ASSISTANT_SYSTEM_PROMPT,
+		tools=ASSISTANT_TOOLS,
+		temperature=0.2,
+	)
+	agent_id = str(agent.get("id") or "").strip()
+	model_row_name = str(getattr(model_row, "name", None) or "").strip()
+	if model_row_name:
+		frappe.db.set_value(
+			"Hausverwaltung Assistent Modell",
+			model_row_name,
+			{
+				"mistral_agent_id": agent_id,
+				"mistral_agent_signature": signature,
+			},
+			update_modified=False,
+		)
+	return agent_id
+
+
+def _mistral_agent_definition_signature(model: str) -> str:
+	payload = {
+		"version": MISTRAL_AGENT_DEFINITION_VERSION,
+		"model": model,
+		"instructions": ASSISTANT_SYSTEM_PROMPT,
+		"tools": ASSISTANT_TOOLS,
+	}
+	serialized = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+	return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _mistral_conversation_function_calls(response: dict[str, Any]) -> list[dict[str, Any]]:
+	return [
+		entry
+		for entry in (response.get("outputs") or [])
+		if isinstance(entry, dict) and entry.get("type") == "function.call"
+	]
+
+
+def _mistral_conversation_arguments(value: Any) -> dict[str, Any]:
+	if isinstance(value, dict):
+		return dict(value)
+	if isinstance(value, str):
+		try:
+			parsed = json.loads(value)
+		except (TypeError, ValueError):
+			return {}
+		return parsed if isinstance(parsed, dict) else {}
+	return {}
+
+
+def _mistral_conversation_text(response: dict[str, Any]) -> str:
+	for entry in reversed(response.get("outputs") or []):
+		if not isinstance(entry, dict) or entry.get("type") != "message.output":
+			continue
+		content = entry.get("content")
+		if isinstance(content, str):
+			return content.strip()
+		if isinstance(content, list):
+			parts = [str(part.get("text") or "") for part in content if isinstance(part, dict)]
+			return "".join(parts).strip()
+	return ""
+
+
+def _normalize_assistant_engine(engine: str | None) -> str:
+	selected = (engine or ASSISTANT_ENGINE_CLASSIC).strip().lower()
+	if selected not in ASSISTANT_ENGINES:
+		frappe.throw(_("Unbekannte Assistenten-Engine: {0}").format(selected))
+	return selected
+
+
+def _get_or_create_conversation(
+	conversation_id: str | None,
+	first_message: str,
+	*,
+	engine: str = ASSISTANT_ENGINE_CLASSIC,
+	assistant_model: str = "",
+):
 	if (conversation_id or "").strip():
-		return _get_owned_conversation(conversation_id)
+		doc = _get_owned_conversation(conversation_id)
+		stored_engine = getattr(doc, "engine", None) or ASSISTANT_ENGINE_CLASSIC
+		if stored_engine != engine:
+			frappe.throw(_("Bitte fuer den Engine-Wechsel einen neuen Chat starten."))
+		stored_model = str(getattr(doc, "assistant_model", None) or "").strip()
+		if engine == ASSISTANT_ENGINE_MISTRAL_AGENTS and stored_model and stored_model != assistant_model:
+			frappe.throw(_("Bitte fuer den Modellwechsel im Mistral-Agent einen neuen Chat starten."))
+		return doc
 	title = _conversation_title(first_message)
 	doc = frappe.get_doc(
 		{
@@ -1610,6 +1860,8 @@ def _get_or_create_conversation(conversation_id: str | None, first_message: str)
 			"status": "Open",
 			"last_message_on": now_datetime(),
 			"message_count": 0,
+			"engine": engine,
+			"assistant_model": assistant_model,
 		}
 	)
 	doc.insert(ignore_permissions=True)
@@ -4696,6 +4948,8 @@ def _log_assistant_call(
 	conversation_id: str | None,
 	tool_names: list[str],
 	result_count: int,
+	engine: str = ASSISTANT_ENGINE_CLASSIC,
+	model: str = "",
 ) -> None:
 	try:
 		frappe.logger("hausverwaltung_assistant").info(
@@ -4705,6 +4959,8 @@ def _log_assistant_call(
 					"user": frappe.session.user,
 					"conversation_id": conversation_id or "",
 					"message_chars": message_chars,
+					"engine": engine,
+					"model": model,
 					"tools": tool_names,
 					"result_count": result_count,
 				},

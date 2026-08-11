@@ -5,11 +5,10 @@ from unittest.mock import patch
 
 import frappe
 
-from hausverwaltung.hausverwaltung.services import assistant
-from hausverwaltung.hausverwaltung.services import mistral_client
 from hausverwaltung.hausverwaltung.doctype.hausverwaltung_einstellungen.hausverwaltung_einstellungen import (
 	HausverwaltungEinstellungen,
 )
+from hausverwaltung.hausverwaltung.services import assistant, mistral_client
 
 
 def _row(**kwargs):
@@ -174,6 +173,106 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			[call.kwargs["model"] for call in complete_chat.call_args_list],
 			["mistral-large-latest", "mistral-large-latest"],
 		)
+
+	def test_run_mistral_agent_executes_local_tools_and_persists_remote_ids(self):
+		conversation = frappe._dict(
+			name="CONV-AGENT-1",
+			remote_agent_id="agent-1",
+			remote_conversation_id="",
+		)
+		tool_response = {
+			"conversation_id": "remote-conv-1",
+			"outputs": [
+				{
+					"type": "function.call",
+					"tool_call_id": "call-1",
+					"name": "search_mieter",
+					"arguments": {"query": "Schmidt", "limit": 3},
+				}
+			],
+			"usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+		}
+		final_response = {
+			"conversation_id": "remote-conv-2",
+			"outputs": [
+				{
+					"type": "message.output",
+					"content": [{"type": "text", "text": "Ich habe Anna Schmidt gefunden."}],
+				}
+			],
+			"usage": {"prompt_tokens": 140, "completion_tokens": 30, "total_tokens": 170},
+		}
+		search_result = {
+			"matches": [
+				{
+					"title": "Anna Schmidt",
+					"mietvertrag": "MV-1",
+					"customer": "CUST-1",
+					"routes": [{"label": "Mietvertrag", "doctype": "Mietvertrag", "name": "MV-1"}],
+				}
+			]
+		}
+		choices = {"default": "mistral-small-latest", "models": [{"value": "mistral-small-latest"}]}
+
+		with patch.object(assistant, "_require_search_permissions"), \
+			 patch.object(assistant, "_assistant_model_choices", return_value=choices), \
+			 patch.object(assistant, "_get_or_create_conversation", return_value=conversation), \
+			 patch.object(assistant, "_store_conversation_message") as store_message, \
+			 patch.object(assistant, "nowdate", return_value="2026-08-10"), \
+			 patch.object(assistant, "search_mieter", return_value=search_result) as search_mieter, \
+			 patch.object(assistant.frappe.db, "set_value") as set_value, \
+			 patch.object(mistral_client, "start_agent_conversation", return_value=tool_response) as start, \
+			 patch.object(mistral_client, "append_agent_conversation", return_value=final_response) as append:
+			result = assistant.run_assistant(
+				"suche mieter schmidt",
+				model="mistral-small-latest",
+				engine="mistral_agents",
+			)
+
+		start.assert_called_once_with(
+			agent_id="agent-1",
+			inputs="Aktuelles Datum: 2026-08-10. Anfrage des Nutzers: suche mieter schmidt",
+		)
+		search_mieter.assert_called_once_with(query="Schmidt", limit=3)
+		function_result = append.call_args.kwargs["inputs"][0]
+		self.assertEqual(function_result["type"], "function.result")
+		self.assertEqual(function_result["tool_call_id"], "call-1")
+		self.assertIn("MV-1", function_result["result"])
+		self.assertEqual(result["engine"], "mistral_agents")
+		self.assertEqual(result["answer"], "Ich habe Anna Schmidt gefunden.")
+		self.assertEqual(result["matches"][0]["mietvertrag"], "MV-1")
+		self.assertEqual(result["mistral_usage"]["calls"], 2)
+		set_value.assert_any_call(
+			"Hausverwaltung Assistant Conversation",
+			"CONV-AGENT-1",
+			{
+				"remote_agent_id": "agent-1",
+				"remote_conversation_id": "remote-conv-2",
+				"assistant_model": "mistral-small-latest",
+			},
+			update_modified=False,
+		)
+		self.assertEqual(store_message.call_count, 2)
+
+	def test_mistral_agent_registry_reuses_matching_agent_definition(self):
+		model = "mistral-small-latest"
+		signature = assistant._mistral_agent_definition_signature(model)
+		settings = frappe._dict(
+			assistant_models=[
+				frappe._dict(
+					name="MODEL-ROW-1",
+					modell=model,
+					mistral_agent_id="agent-existing",
+					mistral_agent_signature=signature,
+				)
+			]
+		)
+		with patch.object(assistant.frappe, "get_single", return_value=settings), \
+			 patch.object(mistral_client, "create_agent") as create_agent:
+			agent_id = assistant._get_or_create_mistral_agent(model)
+
+		self.assertEqual(agent_id, "agent-existing")
+		create_agent.assert_not_called()
 
 	def test_assistant_model_selection_rejects_arbitrary_models(self):
 		choices = {"default": "allowed-model", "models": [{"value": "allowed-model"}]}
@@ -552,6 +651,34 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		body = post.call_args.kwargs["json"]
 		self.assertEqual(body["prompt_cache_key"], long_key[:512])
 		self.assertEqual(post.call_args.kwargs["headers"]["Authorization"], "Bearer secret")
+
+	def test_mistral_agent_http_helpers_use_agents_and_conversations_endpoints(self):
+		responses = [
+			{"id": "agent-1"},
+			{"conversation_id": "conv-1", "outputs": []},
+			{"conversation_id": "conv-2", "outputs": []},
+		]
+		with patch.object(mistral_client, "ensure_configured"), \
+			 patch.object(mistral_client, "is_mistral_cloud", return_value=True), \
+			 patch.object(mistral_client, "_post_json", side_effect=responses) as post_json:
+			agent = mistral_client.create_agent(
+				model="mistral-small-latest",
+				name="HV Agent",
+				description="Read only",
+				instructions="Nur lesen",
+				tools=[{"type": "function", "function": {"name": "search_mieter"}}],
+			)
+			started = mistral_client.start_agent_conversation(agent_id=agent["id"], inputs="Hallo")
+			appended = mistral_client.append_agent_conversation(
+				conversation_id=started["conversation_id"],
+				inputs=[{"type": "function.result", "tool_call_id": "call-1", "result": "{}"}],
+			)
+
+		self.assertEqual(appended["conversation_id"], "conv-2")
+		self.assertEqual(post_json.call_args_list[0].args[0], "agents")
+		self.assertEqual(post_json.call_args_list[1].args[0], "conversations")
+		self.assertEqual(post_json.call_args_list[2].args[0], "conversations/conv-1")
+		self.assertTrue(post_json.call_args_list[1].args[1]["store"])
 
 	def test_get_mieterkonto_summary_uses_existing_report(self):
 		match = {"customer": "CUST-1", "customer_name": "Anna Schmidt", "mietvertrag": "MV-1"}

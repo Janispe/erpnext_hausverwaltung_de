@@ -14,7 +14,6 @@ from typing import Any
 
 import frappe
 import requests
-
 from frappe.utils.password import get_decrypted_password
 
 DEFAULT_MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
@@ -176,6 +175,46 @@ def ensure_configured() -> None:
 		)
 
 
+def _post_json(path: str, body: dict[str, Any], *, timeout: int | None = None) -> dict[str, Any]:
+	"""POST JSON to the configured Mistral-compatible endpoint."""
+	resolved_timeout = timeout or _timeout()
+	headers = {
+		"Content-Type": "application/json",
+		"Accept": "application/json",
+	}
+	api_key = _api_key()
+	if api_key:
+		headers["Authorization"] = f"Bearer {api_key}"
+	url = f"{_base_url()}/{path.lstrip('/')}"
+	try:
+		response = requests.post(url, headers=headers, json=body, timeout=resolved_timeout)
+	except requests.Timeout as exc:
+		raise MistralTransientError(f"Mistral-Timeout nach {resolved_timeout}s.") from exc
+	except requests.ConnectionError as exc:
+		raise MistralTransientError(f"Mistral-Endpunkt nicht erreichbar: {exc}") from exc
+	except requests.RequestException as exc:
+		raise MistralTransientError(f"Mistral-Aufruf fehlgeschlagen: {exc}") from exc
+
+	if response.status_code in (429, 502, 503, 504):
+		raise MistralTransientError(
+			f"Mistral antwortete mit {response.status_code}: {response.text[:500]}"
+		)
+	if response.status_code == 401:
+		raise MistralPermanentError("Mistral API-Key ungültig (401).")
+	if response.status_code >= 400:
+		raise MistralPermanentError(
+			f"Mistral-Fehler {response.status_code}: {response.text[:500]}"
+		)
+
+	try:
+		payload = response.json()
+	except ValueError as exc:
+		raise MistralTransientError(f"Mistral-Antwort kein gültiges JSON: {exc}") from exc
+	if not isinstance(payload, dict):
+		raise MistralTransientError("Mistral-Antwort hat unerwartetes JSON-Format.")
+	return payload
+
+
 def _post_chat(
 	messages: list[dict],
 	*,
@@ -205,38 +244,79 @@ def _post_chat(
 		body["parallel_tool_calls"] = parallel_tool_calls
 	if temperature is not None:
 		body["temperature"] = temperature
-	headers = {
-		"Content-Type": "application/json",
-		"Accept": "application/json",
-	}
-	api_key = _api_key()
-	if api_key:
-		headers["Authorization"] = f"Bearer {api_key}"
-	url = f"{_base_url()}/chat/completions"
-	try:
-		response = requests.post(url, headers=headers, json=body, timeout=timeout)
-	except requests.Timeout as exc:
-		raise MistralTransientError(f"Mistral-Timeout nach {timeout}s.") from exc
-	except requests.ConnectionError as exc:
-		raise MistralTransientError(f"Mistral-Endpunkt nicht erreichbar: {exc}") from exc
-	except requests.RequestException as exc:
-		raise MistralTransientError(f"Mistral-Aufruf fehlgeschlagen: {exc}") from exc
+	return _post_json("chat/completions", body, timeout=timeout)
 
-	if response.status_code in (429, 502, 503, 504):
-		raise MistralTransientError(
-			f"Mistral antwortete mit {response.status_code}: {response.text[:500]}"
-		)
-	if response.status_code == 401:
-		raise MistralPermanentError("Mistral API-Key ungültig (401).")
-	if response.status_code >= 400:
+
+def create_agent(
+	*,
+	model: str,
+	name: str,
+	description: str,
+	instructions: str,
+	tools: list[dict[str, Any]],
+	temperature: float = 0.2,
+) -> dict[str, Any]:
+	"""Create a persistent Mistral Agent for the Conversations API."""
+	ensure_configured()
+	if not is_mistral_cloud():
 		raise MistralPermanentError(
-			f"Mistral-Fehler {response.status_code}: {response.text[:500]}"
+			"Der Mistral-Agents-Prototyp benötigt die Mistral Cloud als Base URL."
 		)
+	payload = _post_json(
+		"agents",
+		{
+			"model": model,
+			"name": name,
+			"description": description,
+			"instructions": instructions,
+			"tools": tools,
+			"completion_args": {"temperature": temperature},
+		},
+	)
+	if not str(payload.get("id") or "").strip():
+		raise MistralTransientError("Mistral-Agent-Antwort enthält keine Agent-ID.")
+	return payload
 
-	try:
-		return response.json()
-	except ValueError as exc:
-		raise MistralTransientError(f"Mistral-Antwort kein gültiges JSON: {exc}") from exc
+
+def start_agent_conversation(*, agent_id: str, inputs: str) -> dict[str, Any]:
+	"""Start a stored Mistral Conversation backed by an Agent."""
+	ensure_configured()
+	return _validate_conversation_response(
+		_post_json(
+			"conversations",
+			{
+				"agent_id": agent_id,
+				"inputs": inputs,
+				"store": True,
+			},
+		)
+	)
+
+
+def append_agent_conversation(
+	*,
+	conversation_id: str,
+	inputs: str | list[dict[str, Any]],
+) -> dict[str, Any]:
+	"""Append a user message or local function results to a Mistral Conversation."""
+	ensure_configured()
+	return _validate_conversation_response(
+		_post_json(
+			f"conversations/{conversation_id}",
+			{
+				"inputs": inputs,
+				"store": True,
+			},
+		)
+	)
+
+
+def _validate_conversation_response(payload: dict[str, Any]) -> dict[str, Any]:
+	conversation_id = str(payload.get("conversation_id") or "").strip()
+	outputs = payload.get("outputs")
+	if not conversation_id or not isinstance(outputs, list):
+		raise MistralTransientError("Mistral-Conversation-Antwort hat ein unerwartetes Format.")
+	return payload
 
 
 def _extract_choice_message(payload: dict) -> dict:

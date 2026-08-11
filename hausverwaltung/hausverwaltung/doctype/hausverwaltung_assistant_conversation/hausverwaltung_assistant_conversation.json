@@ -7,6 +7,10 @@
  "engine": "InnoDB",
  "field_order": [
   "title",
+  "engine",
+  "assistant_model",
+  "remote_agent_id",
+  "remote_conversation_id",
   "user",
   "status",
   "last_message_on",
@@ -20,6 +24,34 @@
    "in_list_view": 1,
    "label": "Titel",
    "reqd": 1
+  },
+  {
+   "default": "classic",
+   "fieldname": "engine",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Engine",
+   "options": "classic\nmistral_agents",
+   "reqd": 1
+  },
+  {
+   "fieldname": "assistant_model",
+   "fieldtype": "Data",
+   "label": "Assistenten-Modell"
+  },
+  {
+   "fieldname": "remote_agent_id",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Mistral Agent ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "remote_conversation_id",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Mistral Conversation ID",
+   "read_only": 1
   },
   {
    "fieldname": "user",

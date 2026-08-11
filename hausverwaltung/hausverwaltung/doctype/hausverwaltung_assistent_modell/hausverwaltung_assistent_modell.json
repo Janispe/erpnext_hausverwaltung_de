@@ -8,7 +8,9 @@
   "bezeichnung",
   "modell",
   "aktiv",
-  "standard"
+  "standard",
+  "mistral_agent_id",
+  "mistral_agent_signature"
  ],
  "fields": [
   {
@@ -39,6 +41,20 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Standard"
+  },
+  {
+   "fieldname": "mistral_agent_id",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Mistral Agent ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mistral_agent_signature",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Mistral Agent Signatur",
+   "read_only": 1
   }
  ],
  "istable": 1,

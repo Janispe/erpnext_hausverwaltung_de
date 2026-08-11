@@ -31,6 +31,10 @@ function renderHausverwaltungAssistant(pageBody) {
 					<div class="hv-assistant-messages" aria-live="polite"></div>
 					<form class="hv-assistant-form">
 						<input class="hv-assistant-input" type="search" autocomplete="off" placeholder="${__("Frage stellen oder Stammdaten suchen")}">
+						<select class="hv-assistant-engine" aria-label="${__("Engine")}" title="${__("Ausfuehrungsart fuer diesen Chat")}">
+							<option value="classic">${__("Bestehend")}</option>
+							<option value="mistral_agents">${__("Mistral Agents (Prototyp)")}</option>
+						</select>
 						<select class="hv-assistant-model" aria-label="${__("Modell")}" title="${__("Modell fuer diese Anfrage")}">
 							<option value="default">${__("Standardmodell")}</option>
 						</select>
@@ -131,7 +135,7 @@ function renderHausverwaltungAssistant(pageBody) {
 			}
 			.hv-assistant-form {
 				display: grid;
-				grid-template-columns: minmax(0, 1fr) minmax(170px, 220px) auto;
+				grid-template-columns: minmax(0, 1fr) minmax(150px, 190px) minmax(170px, 220px) auto;
 				gap: 8px;
 				padding: 12px;
 				border-top: 1px solid #deded8;
@@ -144,6 +148,7 @@ function renderHausverwaltungAssistant(pageBody) {
 				font-size: 14px;
 				background: #fff;
 			}
+			.hv-assistant-engine,
 			.hv-assistant-model {
 				height: 36px;
 				border: 1px solid #cfcfc8;
@@ -262,6 +267,7 @@ function renderHausverwaltungAssistant(pageBody) {
 	const conversationsEl = root.find(".hv-assistant-conversation-list");
 	const form = root.find(".hv-assistant-form");
 	const input = root.find(".hv-assistant-input");
+	const engineSelect = root.find(".hv-assistant-engine");
 	const modelSelect = root.find(".hv-assistant-model");
 	let conversationId = null;
 
@@ -389,7 +395,10 @@ function renderHausverwaltungAssistant(pageBody) {
 			`);
 			button.toggleClass("active", row.name === conversationId);
 			button.find(".hv-assistant-conversation-title").text(row.title || row.name);
-			button.find(".hv-assistant-conversation-meta").text(`${row.message_count || 0} ${__("Nachrichten")}`);
+			const engineLabel = row.engine === "mistral_agents" ? __("Mistral Agent") : __("Bestehend");
+			button.find(".hv-assistant-conversation-meta").text(
+				`${row.message_count || 0} ${__("Nachrichten")} · ${engineLabel}`
+			);
 			button.on("click", () => loadConversation(row.name));
 			conversationsEl.append(button);
 		});
@@ -410,6 +419,14 @@ function renderHausverwaltungAssistant(pageBody) {
 		});
 		const data = response.message || {};
 		conversationId = data.name || name;
+		engineSelect.val(data.engine || "classic");
+		const hasStoredModel = modelSelect
+			.find("option")
+			.toArray()
+			.some((option) => option.value === data.assistant_model);
+		if (data.assistant_model && hasStoredModel) {
+			modelSelect.val(data.assistant_model);
+		}
 		messagesEl.empty();
 		let lastMatches = [];
 		(data.messages || []).forEach((message) => {
@@ -476,6 +493,7 @@ function renderHausverwaltungAssistant(pageBody) {
 					message,
 					conversation_id: conversationId,
 					model: modelSelect.val() || "default",
+					engine: engineSelect.val() || "classic",
 				},
 			});
 			const data = response.message || {};
@@ -499,9 +517,14 @@ function renderHausverwaltungAssistant(pageBody) {
 	});
 
 	root.find(".hv-assistant-new").on("click", clearChat);
+	engineSelect.on("change", clearChat);
+	modelSelect.on("change", clearChat);
 
 	resultsEl.html(`<div class="hv-assistant-empty">${__("Keine Treffer")}</div>`);
-	loadAssistantModels();
-	loadConversationList();
+	const initialize = async () => {
+		await loadAssistantModels();
+		await loadConversationList();
+	};
+	initialize();
 	input.trigger("focus");
 }
