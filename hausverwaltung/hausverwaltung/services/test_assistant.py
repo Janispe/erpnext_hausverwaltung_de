@@ -312,6 +312,23 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(executions[0]["name"], "code_interpreter")
 		self.assertEqual(executions[0]["arguments"], {"code": "sum([1, 2, 3])"})
 		self.assertEqual(executions[0]["output"], "6")
+		self.assertIsNone(executions[0]["error"])
+
+	def test_mistral_conversation_tool_executions_recognize_hidden_code_error(self):
+		response = {
+			"outputs": [
+				{
+					"type": "tool.execution",
+					"name": "code_interpreter",
+					"info": {"code": " broken = 1", "code_output": "NoneType: None\n"},
+				}
+			]
+		}
+
+		executions = assistant._mistral_conversation_tool_executions(response)
+
+		self.assertEqual(executions[0]["error"], "NoneType: None\n")
+		self.assertEqual(executions[0]["result_count"], 0)
 
 	def test_mistral_agent_registry_reuses_matching_agent_definition(self):
 		model = "mistral-small-latest"
@@ -404,6 +421,131 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			timeout=assistant.BASIC_AGENT_API_TIMEOUT,
 		)
 		self.assertEqual(result["answer"], "42")
+
+	def test_mistral_basic_retries_failed_code_interpreter_before_answering(self):
+		conversation = frappe._dict(
+			name="CONV-BASIC-RETRY",
+			remote_agent_id="agent-basic",
+			remote_conversation_id="",
+		)
+		failed_response = {
+			"conversation_id": "remote-basic-retry",
+			"outputs": [
+				{
+					"type": "tool.execution",
+					"name": "code_interpreter",
+					"info": {"code": " broken = 1", "code_output": "NoneType: None\n"},
+				},
+				{"type": "message.output", "content": [{"type": "text", "text": "Falsch: 14,7"}]},
+			],
+		}
+		success_response = {
+			"conversation_id": "remote-basic-retry",
+			"outputs": [
+				{
+					"type": "tool.execution",
+					"name": "code_interpreter",
+					"info": {"code": "print(8.51)", "code_output": "8.51\n"},
+				},
+				{"type": "message.output", "content": [{"type": "text", "text": "Korrekt: 8,51"}]},
+			],
+		}
+
+		with patch.object(mistral_client, "start_agent_conversation", return_value=failed_response), \
+			 patch.object(mistral_client, "append_agent_conversation", return_value=success_response) as append, \
+			 patch.object(assistant, "_store_conversation_message"), \
+			 patch.object(assistant, "_log_assistant_call"), \
+			 patch.object(assistant.frappe.db, "set_value"):
+			result = assistant._run_mistral_agent_assistant(
+				user_message="Berechne den Mittelwert",
+				conversation=conversation,
+				selected_model="mistral-small-latest",
+				engine=assistant.ASSISTANT_ENGINE_MISTRAL_BASIC,
+			)
+
+		self.assertEqual(result["answer"], "Korrekt: 8,51")
+		self.assertEqual(len(result["tool_calls"]), 2)
+		self.assertIsNotNone(result["tool_calls"][0]["error"])
+		self.assertIn("Verwirf jede daraus abgeleitete Zahl", append.call_args.kwargs["inputs"])
+
+	def test_mistral_basic_list_docs_without_limit_collects_complete_batch(self):
+		first_page = {
+			"ok": True,
+			"data": [{"name": f"MV-{index}"} for index in range(100)],
+			"error": None,
+			"meta": {
+				"pagination": {
+					"limit": 100,
+					"offset": 0,
+					"returned": 100,
+					"has_more": True,
+					"next_offset": 100,
+				}
+			},
+		}
+		second_page = {
+			"ok": True,
+			"data": [{"name": f"MV-{index}"} for index in range(100, 141)],
+			"error": None,
+			"meta": {
+				"pagination": {
+					"limit": 100,
+					"offset": 100,
+					"returned": 41,
+					"has_more": False,
+					"next_offset": None,
+				}
+			},
+		}
+
+		with patch.object(assistant, "agent_list_docs", side_effect=[first_page, second_page]) as list_docs:
+			result = assistant._execute_mistral_agent_function(
+				"agent_list_docs",
+				{"doctype": "Mietvertrag", "fields": ["name"]},
+				engine=assistant.ASSISTANT_ENGINE_MISTRAL_BASIC,
+			)
+
+		self.assertEqual(len(result["data"]), 141)
+		self.assertEqual(result["meta"]["pagination"]["returned"], 141)
+		self.assertFalse(result["meta"]["pagination"]["has_more"])
+		self.assertTrue(result["meta"]["pagination"]["auto_paginated"])
+		self.assertEqual(result["meta"]["pagination"]["pages"], 2)
+		self.assertEqual(list_docs.call_args_list[0].kwargs["limit"], 100)
+		self.assertEqual(list_docs.call_args_list[1].kwargs["offset"], 100)
+
+	def test_mistral_basic_list_docs_respects_explicit_limit(self):
+		limited = {
+			"ok": True,
+			"data": [{"name": "MV-1"}],
+			"error": None,
+			"meta": {"pagination": {"limit": 1, "offset": 0, "returned": 1, "has_more": True}},
+		}
+		with patch.object(assistant, "agent_list_docs", return_value=limited) as list_docs:
+			result = assistant._execute_mistral_agent_function(
+				"agent_list_docs",
+				{"doctype": "Mietvertrag", "limit": 1},
+				engine=assistant.ASSISTANT_ENGINE_MISTRAL_BASIC,
+			)
+
+		self.assertEqual(len(result["data"]), 1)
+		list_docs.assert_called_once_with(doctype="Mietvertrag", limit=1)
+
+	def test_mistral_basic_function_result_does_not_duplicate_rows(self):
+		result = {
+			"ok": True,
+			"data": [{"name": "MV-1"}],
+			"rows": [{"name": "MV-1"}],
+			"matches": [{"doctype": "Mietvertrag", "name": "MV-1"}],
+		}
+
+		compact = assistant._mistral_agent_function_result(
+			result,
+			engine=assistant.ASSISTANT_ENGINE_MISTRAL_BASIC,
+		)
+
+		self.assertEqual(compact["data"], [{"name": "MV-1"}])
+		self.assertNotIn("rows", compact)
+		self.assertNotIn("matches", compact)
 
 	def test_run_assistant_dispatches_mistral_basic_profile(self):
 		conversation = frappe._dict(name="CONV-BASIC-1")

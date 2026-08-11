@@ -28,6 +28,8 @@ CONVERSATION_MESSAGE_LIMIT = 100
 STORED_MATCH_LIMIT = 10
 MAX_STORED_REASONING_CHARS = 30000
 BASIC_AGENT_API_TIMEOUT = 180
+BASIC_AGENT_QUERY_PAGE_SIZE = 100
+BASIC_AGENT_QUERY_MAX_ROWS = 500
 ASSISTANT_ENGINE_CLASSIC = "classic"
 ASSISTANT_ENGINE_MISTRAL_AGENTS = "mistral_agents"
 ASSISTANT_ENGINE_MISTRAL_BASIC = "mistral_basic"
@@ -667,8 +669,14 @@ oder agent_get_doc. Schreibe niemals SQL und aendere keine Daten.
 Beachte Feldtypen strikt. Berechne Summen, Mittelwerte, Datumsdifferenzen, Statistiken und andere Mathematik niemals
 im Kopf, sondern immer mit code_interpreter. Uebergib dem Code Interpreter nur Daten, die zuvor von den Lesewerkzeugen
 geliefert wurden. Wenn eine Frage alle passenden Datensaetze betrifft und meta.pagination.has_more=true ist, MUSST du
-agent_list_docs erneut mit offset=meta.pagination.next_offset aufrufen. Wiederhole das, bis has_more=false ist, und
-verwende erst dann alle Seiten gemeinsam im Code Interpreter. Nenne Datengrundlage, Anzahl und Stichtag. Wenn Daten
+bei agent_list_docs das limit weglassen: Das Werkzeug sammelt dann automatisch bis zu 500 Treffer. Wenn danach
+meta.pagination.has_more=true oder meta.pagination.truncated=true ist, rufe es erneut mit offset=next_offset und ohne
+limit auf. Verwende erst nach vollstaendiger Pagination alle Seiten gemeinsam im Code Interpreter. Setze limit nur,
+wenn der Nutzer ausdruecklich einen Ausschnitt verlangt. Gib im Code Interpreter das Endergebnis explizit aus und
+verwende es nur, wenn code_output ein erfolgreiches numerisches Ergebnis enthaelt; korrigiere Fehler und fuehre den
+Code erneut aus. Bei Fragen nach einer bereits verstrichenen Dauer (z.B. "schon", "bisher" oder "bis heute") ist
+das Ende immer der genannte oder aktuelle Stichtag; ein zukuenftiges Enddatum darf diese Dauer nicht verlaengern.
+Nenne Datengrundlage, Anzahl und Stichtag. Wenn Daten
 fehlen oder die Bedeutung eines Feldes unklar ist, frage nach, statt zu raten. Antworte knapp auf Deutsch."""
 
 
@@ -1100,7 +1108,8 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 			"name": "agent_list_docs",
 			"description": (
 				"Listet Dokumente eines DocTypes mit Frappe-Read-Permissions des aktuellen Benutzers. "
-				"Felder, Sortierung und Filter werden auf sichere Metafelder begrenzt."
+				"Felder, Sortierung und Filter werden auf sichere Metafelder begrenzt. Im Basic-Agenten "
+				"werden ohne limit automatisch bis zu 500 passende Dokumente geliefert."
 			),
 			"parameters": {
 				"type": "object",
@@ -1115,7 +1124,13 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 						"items": {"type": "string"},
 						"description": "Gewuenschte sichere Feldnamen oder JSON-Liste.",
 					},
-					"limit": {"type": "integer", "description": "1 bis 100, Default 20."},
+					"limit": {
+						"type": "integer",
+						"description": (
+							"1 bis 100. Im Basic-Agenten fuer alle Treffer weglassen; nur fuer einen "
+							"ausdruecklich begrenzten Ausschnitt setzen."
+						),
+					},
 					"offset": {
 						"type": "integer",
 						"description": "Offset fuer Pagination. Bei has_more=true zwingend next_offset verwenden.",
@@ -1476,7 +1491,7 @@ def hv_describe_query_sources(include_fields: bool | int | str = False) -> dict[
 			item["field_names"] = list(conf.get("fields", {}).keys())
 		views.append(item)
 	doctypes = []
-	for doctype, conf in HV_READABLE_DOCTYPES.items():
+	for doctype in HV_READABLE_DOCTYPES:
 		if not frappe.has_permission(doctype, "read"):
 			continue
 		doctypes.append(
@@ -1723,12 +1738,25 @@ def _run_mistral_agent_assistant(
 		usage_entries.append(response.get("usage") or {})
 		if reasoning := _mistral_conversation_reasoning(response):
 			reasoning_chunks.append(reasoning)
-		for execution in _mistral_conversation_tool_executions(response):
+		executions = _mistral_conversation_tool_executions(response)
+		for execution in executions:
 			tool_names.append(execution["name"])
 			tool_calls_debug.append(execution)
 		remote_conversation_id = str(response.get("conversation_id") or "").strip()
 		function_calls = _mistral_conversation_function_calls(response)
 		if not function_calls:
+			execution_errors = [execution for execution in executions if execution.get("error")]
+			if execution_errors and engine == ASSISTANT_ENGINE_MISTRAL_BASIC and tool_round < MAX_TOOL_ROUNDS:
+				response = mistral_client.append_agent_conversation(
+					conversation_id=remote_conversation_id,
+					inputs=(
+						"Der letzte code_interpreter-Aufruf ist fehlgeschlagen. Verwirf jede daraus "
+						"abgeleitete Zahl, korrigiere den Code, fuehre ihn erneut aus und antworte erst, "
+						"wenn code_output ein explizites numerisches Ergebnis enthaelt."
+					),
+					**conversation_options,
+				)
+				continue
 			answer = _mistral_conversation_text(response)
 			break
 		if tool_round >= MAX_TOOL_ROUNDS:
@@ -1747,15 +1775,16 @@ def _run_mistral_agent_assistant(
 			arguments = _mistral_conversation_arguments(function_call.get("arguments"))
 			if name == "analyze_revenue_over_time":
 				arguments = _sanitize_revenue_tool_arguments(arguments, user_message)
-			result = _execute_tool(name, arguments)
+			result = _execute_mistral_agent_function(name, arguments, engine=engine)
 			tool_names.append(name)
 			tool_calls_debug.append(_tool_call_debug(name, arguments, result))
 			matches.extend(_extract_matches_from_tool_result(result))
+			function_result = _mistral_agent_function_result(result, engine=engine)
 			function_results.append(
 				{
 					"type": "function.result",
 					"tool_call_id": tool_call_id,
-					"result": json.dumps(result, ensure_ascii=True, default=str),
+					"result": json.dumps(function_result, ensure_ascii=True, default=str),
 				}
 			)
 		response = mistral_client.append_agent_conversation(
@@ -1971,11 +2000,25 @@ def _mistral_conversation_tool_executions(response: dict[str, Any]) -> list[dict
 		name = str(entry.get("name") or info.get("name") or "built_in_tool")
 		arguments = {"code": info.get("code")} if info.get("code") else {}
 		error = entry.get("error") or info.get("error")
+		code_output = info.get("code_output")
+		if not error and _looks_like_code_execution_error(code_output):
+			error = str(code_output)
 		debug = _tool_call_debug(name, arguments, {"count": 0 if error else 1, "error": error})
-		if info.get("code_output") is not None:
-			debug["output"] = str(info.get("code_output"))[:10000]
+		if code_output is not None:
+			debug["output"] = str(code_output)[:10000]
 		executions.append(debug)
 	return executions
+
+
+def _looks_like_code_execution_error(output: Any) -> bool:
+	text = str(output or "").strip().lower()
+	if not text:
+		return False
+	return (
+		text == "nonetype: none"
+		or "traceback (most recent call last)" in text
+		or bool(re.search(r"(?:^|\n)[a-z_]*(?:error|exception):", text))
+	)
 
 
 def _normalize_assistant_engine(engine: str | None) -> str:
@@ -5041,6 +5084,113 @@ def _execute_tool(name: str, arguments: dict[str, Any], user_message: str | None
 		return TOOL_FUNCTIONS[name](**arguments)
 	except Exception as exc:
 		return {"error": {"code": "TOOL_ERROR", "message": str(exc)}}
+
+
+def _execute_mistral_agent_function(
+	name: str,
+	arguments: dict[str, Any],
+	*,
+	engine: str,
+) -> dict[str, Any]:
+	"""Execute one local Agents API function with Basic-agent batching semantics."""
+	execution_arguments = dict(arguments or {})
+	auto_paginate = (
+		engine == ASSISTANT_ENGINE_MISTRAL_BASIC
+		and name == "agent_list_docs"
+		and "limit" not in execution_arguments
+	)
+	if auto_paginate:
+		execution_arguments["limit"] = BASIC_AGENT_QUERY_PAGE_SIZE
+
+	result = _execute_tool(name, execution_arguments)
+	if auto_paginate:
+		result = _auto_paginate_basic_agent_docs(execution_arguments, result)
+	return result
+
+
+def _auto_paginate_basic_agent_docs(
+	arguments: dict[str, Any],
+	first_result: dict[str, Any],
+) -> dict[str, Any]:
+	"""Collect a bounded, complete batch without relying on repeated model decisions."""
+	if not first_result.get("ok") or not isinstance(first_result.get("data"), list):
+		return first_result
+
+	rows = list(first_result["data"])
+	meta = first_result.get("meta") if isinstance(first_result.get("meta"), dict) else {}
+	pagination = meta.get("pagination") if isinstance(meta.get("pagination"), dict) else {}
+	pages = 1
+	has_more = bool(pagination.get("has_more"))
+	next_offset = pagination.get("next_offset")
+	previous_offset = int(arguments.get("offset") or 0)
+
+	while has_more and len(rows) < BASIC_AGENT_QUERY_MAX_ROWS:
+		try:
+			resolved_offset = int(next_offset)
+		except (TypeError, ValueError):
+			return _basic_agent_pagination_error(first_result, "Die Datenquelle lieferte keinen gueltigen next_offset.")
+		if resolved_offset <= previous_offset:
+			return _basic_agent_pagination_error(first_result, "Die Pagination hat keinen Fortschritt gemacht.")
+
+		page_arguments = dict(arguments)
+		page_arguments["offset"] = resolved_offset
+		page_arguments["limit"] = min(
+			BASIC_AGENT_QUERY_PAGE_SIZE,
+			BASIC_AGENT_QUERY_MAX_ROWS - len(rows),
+		)
+		page_result = _execute_tool("agent_list_docs", page_arguments)
+		if not page_result.get("ok") or not isinstance(page_result.get("data"), list):
+			error = page_result.get("error") if isinstance(page_result, dict) else None
+			message = str((error or {}).get("message") or "Eine Folgeseite konnte nicht geladen werden.")
+			return _basic_agent_pagination_error(first_result, message)
+
+		rows.extend(page_result["data"])
+		pages += 1
+		previous_offset = resolved_offset
+		page_meta = page_result.get("meta") if isinstance(page_result.get("meta"), dict) else {}
+		pagination = page_meta.get("pagination") if isinstance(page_meta.get("pagination"), dict) else {}
+		has_more = bool(pagination.get("has_more"))
+		next_offset = pagination.get("next_offset")
+
+	merged = {**first_result, "data": rows}
+	merged_meta = dict(meta)
+	merged_meta["pagination"] = {
+		"limit": BASIC_AGENT_QUERY_MAX_ROWS,
+		"page_size": BASIC_AGENT_QUERY_PAGE_SIZE,
+		"offset": int(arguments.get("offset") or 0),
+		"returned": len(rows),
+		"has_more": has_more,
+		"next_offset": next_offset if has_more else None,
+		"auto_paginated": True,
+		"pages": pages,
+		"truncated": has_more,
+	}
+	merged["meta"] = merged_meta
+	return _decorate_agent_doc_rows(merged, doctype=str(arguments.get("doctype") or "").strip())
+
+
+def _basic_agent_pagination_error(first_result: dict[str, Any], message: str) -> dict[str, Any]:
+	failed = dict(first_result)
+	failed.update(
+		{
+			"ok": False,
+			"data": None,
+			"rows": [],
+			"matches": [],
+			"error": {"code": "PAGINATION_ERROR", "message": message},
+		}
+	)
+	return failed
+
+
+def _mistral_agent_function_result(result: dict[str, Any], *, engine: str) -> dict[str, Any]:
+	if engine != ASSISTANT_ENGINE_MISTRAL_BASIC or not isinstance(result, dict):
+		return result
+	compact = dict(result)
+	# These are UI projections of data and would otherwise send every row two or three times.
+	for key in ("rows", "matches", "match"):
+		compact.pop(key, None)
+	return compact
 
 
 def _sanitize_revenue_tool_arguments(arguments: dict[str, Any], user_message: str | None) -> dict[str, Any]:
