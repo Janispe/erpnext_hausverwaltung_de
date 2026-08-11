@@ -1,0 +1,376 @@
+{
+  "actions": [],
+  "allow_rename": 0,
+  "creation": "2026-08-06 00:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": [
+    "bezeichnung",
+    "status",
+    "schadensart",
+    "schadendatum",
+    "meldedatum",
+    "abgeschlossen_am",
+    "zuordnung_section",
+    "company",
+    "immobilie",
+    "wohnung",
+    "column_break_zuordnung",
+    "mietvertrag",
+    "kunde",
+    "beguenstigter",
+    "versicherung_section",
+    "versicherer",
+    "policennummer",
+    "schadennummer",
+    "column_break_versicherung",
+    "regulierungsmitteilung",
+    "schadensdokumentation",
+    "beschreibung",
+    "betraege_section",
+    "beantragter_betrag",
+    "bewilligter_betrag",
+    "selbstbeteiligung",
+    "column_break_betraege",
+    "reparaturkosten",
+    "versicherung_erhalten",
+    "mietergutschriften",
+    "an_mieter_ausgezahlt",
+    "offen_versicherung",
+    "offen_mieter",
+    "belege_section",
+    "belege",
+    "notizen_section",
+    "notizen"
+  ],
+  "fields": [
+    {
+      "fieldname": "bezeichnung",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "in_preview": 1,
+      "label": "Bezeichnung",
+      "read_only": 1
+    },
+    {
+      "default": "Entwurf",
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "label": "Status",
+      "options": "Entwurf\nGemeldet\nIn Prüfung\nBewilligt\nTeilweise reguliert\nReguliert\nAbgelehnt\nAbgeschlossen",
+      "reqd": 1
+    },
+    {
+      "fieldname": "schadensart",
+      "fieldtype": "Select",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "label": "Schadensart",
+      "options": "Leitungswasser\nSturm / Hagel\nFeuer\nHaftpflicht\nEinbruch / Vandalismus\nElementarschaden\nGlas\nSonstiges",
+      "reqd": 1
+    },
+    {
+      "fieldname": "schadendatum",
+      "fieldtype": "Date",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "label": "Schadendatum",
+      "reqd": 1
+    },
+    {
+      "fieldname": "meldedatum",
+      "fieldtype": "Date",
+      "label": "Bei Versicherung gemeldet am"
+    },
+    {
+      "fieldname": "abgeschlossen_am",
+      "fieldtype": "Date",
+      "label": "Abgeschlossen am",
+      "read_only": 1
+    },
+    {
+      "fieldname": "zuordnung_section",
+      "fieldtype": "Section Break",
+      "label": "Zuordnung"
+    },
+    {
+      "fieldname": "company",
+      "fieldtype": "Link",
+      "in_standard_filter": 1,
+      "label": "Company",
+      "options": "Company",
+      "reqd": 1
+    },
+    {
+      "fieldname": "immobilie",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "label": "Immobilie",
+      "options": "Immobilie",
+      "reqd": 1
+    },
+    {
+      "fieldname": "wohnung",
+      "fieldtype": "Link",
+      "in_standard_filter": 1,
+      "label": "Wohnung",
+      "options": "Wohnung"
+    },
+    {
+      "fieldname": "column_break_zuordnung",
+      "fieldtype": "Column Break"
+    },
+    {
+      "description": "Führende Zuordnung für Mieterfälle. Customer und Wohnung werden ausschließlich aus diesem Mietvertrag übernommen.",
+      "fieldname": "mietvertrag",
+      "fieldtype": "Link",
+      "in_standard_filter": 1,
+      "label": "Mietvertrag",
+      "options": "Mietvertrag"
+    },
+    {
+      "description": "Buchhalterischer Customer genau dieses Mietvertrags; wird serverseitig abgeleitet und kann nicht frei gewählt werden.",
+      "fieldname": "kunde",
+      "fieldtype": "Link",
+      "label": "Mieter / Customer",
+      "options": "Customer",
+      "read_only": 1
+    },
+    {
+      "default": "Vermieter",
+      "fieldname": "beguenstigter",
+      "fieldtype": "Select",
+      "in_standard_filter": 1,
+      "label": "Begünstigter / Zahlungsempfänger",
+      "options": "Vermieter\nMieter\nHandwerker\nWEG\nSonstige",
+      "reqd": 1
+    },
+    {
+      "fieldname": "versicherung_section",
+      "fieldtype": "Section Break",
+      "label": "Versicherung und Dokumentation"
+    },
+    {
+      "fieldname": "versicherer",
+      "fieldtype": "Link",
+      "in_standard_filter": 1,
+      "label": "Versicherer",
+      "options": "Supplier"
+    },
+    {
+      "fieldname": "policennummer",
+      "fieldtype": "Data",
+      "label": "Policennummer"
+    },
+    {
+      "fieldname": "schadennummer",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "label": "Schadennummer",
+      "search_index": 1
+    },
+    {
+      "fieldname": "column_break_versicherung",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "regulierungsmitteilung",
+      "fieldtype": "Attach",
+      "label": "Regulierungsmitteilung"
+    },
+    {
+      "fieldname": "schadensdokumentation",
+      "fieldtype": "Attach",
+      "label": "Schadensdokumentation"
+    },
+    {
+      "fieldname": "beschreibung",
+      "fieldtype": "Long Text",
+      "label": "Schaden und Verlauf"
+    },
+    {
+      "fieldname": "betraege_section",
+      "fieldtype": "Section Break",
+      "label": "Beträge und offene Regulierung"
+    },
+    {
+      "default": "0",
+      "fieldname": "beantragter_betrag",
+      "fieldtype": "Currency",
+      "label": "Beantragter Betrag"
+    },
+    {
+      "default": "0",
+      "fieldname": "bewilligter_betrag",
+      "fieldtype": "Currency",
+      "label": "Bewilligter Betrag"
+    },
+    {
+      "default": "0",
+      "fieldname": "selbstbeteiligung",
+      "fieldtype": "Currency",
+      "label": "Selbstbeteiligung"
+    },
+    {
+      "fieldname": "column_break_betraege",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "reparaturkosten",
+      "fieldtype": "Currency",
+      "label": "Verknüpfte Reparaturkosten",
+      "read_only": 1
+    },
+    {
+      "fieldname": "versicherung_erhalten",
+      "fieldtype": "Currency",
+      "label": "Von Versicherung erhalten",
+      "read_only": 1
+    },
+    {
+      "fieldname": "mietergutschriften",
+      "fieldtype": "Currency",
+      "label": "Mietergutschriften",
+      "read_only": 1
+    },
+    {
+      "fieldname": "an_mieter_ausgezahlt",
+      "fieldtype": "Currency",
+      "label": "An Mieter ausgezahlt",
+      "read_only": 1
+    },
+    {
+      "fieldname": "offen_versicherung",
+      "fieldtype": "Currency",
+      "in_list_view": 1,
+      "label": "Noch von Versicherung offen",
+      "read_only": 1
+    },
+    {
+      "fieldname": "offen_mieter",
+      "fieldtype": "Currency",
+      "label": "Noch an Mieter offen",
+      "read_only": 1
+    },
+    {
+      "fieldname": "belege_section",
+      "fieldtype": "Section Break",
+      "label": "Verknüpfte Buchungsbelege"
+    },
+    {
+      "description": "Reparaturrechnungen, Forderungs-/Zahlungsbuchungen, Mietergutschriften und Auszahlungen dieses Schadensfalls.",
+      "fieldname": "belege",
+      "fieldtype": "Table",
+      "label": "Belege",
+      "options": "Versicherungsfall Beleg"
+    },
+    {
+      "fieldname": "notizen_section",
+      "fieldtype": "Section Break",
+      "label": "Interne Notizen"
+    },
+    {
+      "fieldname": "notizen",
+      "fieldtype": "Text Editor",
+      "label": "Notizen"
+    }
+  ],
+  "grid_page_length": 50,
+  "index_web_pages_for_search": 1,
+  "links": [],
+  "modified": "2026-08-06 00:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Hausverwaltung",
+  "name": "Versicherungsfall",
+  "naming_rule": "By script",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "write": 1
+    },
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "Hausverwalter",
+      "share": 1,
+      "write": 1
+    },
+    {
+      "create": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "Hausverwalter (Buchung)",
+      "share": 1,
+      "write": 1
+    },
+    {
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "Agent Readonly API",
+      "select": 1
+    }
+  ],
+  "search_fields": "bezeichnung,schadennummer,policennummer,immobilie,wohnung,mietvertrag,kunde",
+  "show_name_in_global_search": 1,
+  "show_title_field_in_link": 1,
+  "sort_field": "schadendatum",
+  "sort_order": "DESC",
+  "states": [
+    {
+      "color": "Gray",
+      "title": "Entwurf"
+    },
+    {
+      "color": "Blue",
+      "title": "Gemeldet"
+    },
+    {
+      "color": "Orange",
+      "title": "In Prüfung"
+    },
+    {
+      "color": "Blue",
+      "title": "Bewilligt"
+    },
+    {
+      "color": "Orange",
+      "title": "Teilweise reguliert"
+    },
+    {
+      "color": "Green",
+      "title": "Reguliert"
+    },
+    {
+      "color": "Red",
+      "title": "Abgelehnt"
+    },
+    {
+      "color": "Green",
+      "title": "Abgeschlossen"
+    }
+  ],
+  "title_field": "bezeichnung",
+  "track_changes": 1
+}

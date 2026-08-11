@@ -255,6 +255,11 @@
    "group": "Technik",
    "link_doctype": "Sammelwartung",
    "link_fieldname": "immobilie"
+  },
+  {
+   "group": "Versicherung",
+   "link_doctype": "Versicherungsfall",
+   "link_fieldname": "immobilie"
   }
  ],
  "modified": "2025-12-20 19:47:44.682129",

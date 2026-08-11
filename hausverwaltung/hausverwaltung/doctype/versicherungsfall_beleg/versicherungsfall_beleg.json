@@ -1,0 +1,92 @@
+{
+  "actions": [],
+  "allow_rename": 0,
+  "creation": "2026-08-06 00:00:00.000000",
+  "doctype": "DocType",
+  "editable_grid": 1,
+  "engine": "InnoDB",
+  "field_order": [
+    "belegart",
+    "referenz_doctype",
+    "referenz",
+    "belegdatum",
+    "betrag",
+    "belegstatus",
+    "bemerkung"
+  ],
+  "fields": [
+    {
+      "columns": 2,
+      "fieldname": "belegart",
+      "fieldtype": "Select",
+      "in_list_view": 1,
+      "label": "Rolle im Versicherungsfall",
+      "options": "Reparaturrechnung\nVersicherungsforderung\nVersicherungseingang\nMietergutschrift\nMieterauszahlung\nSonstiger Buchungsbeleg",
+      "reqd": 1
+    },
+    {
+      "columns": 2,
+      "fieldname": "referenz_doctype",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "label": "Belegtyp",
+      "options": "DocType",
+      "reqd": 1
+    },
+    {
+      "columns": 2,
+      "fieldname": "referenz",
+      "fieldtype": "Dynamic Link",
+      "in_list_view": 1,
+      "label": "Beleg",
+      "options": "referenz_doctype",
+      "reqd": 1
+    },
+    {
+      "columns": 1,
+      "fieldname": "belegdatum",
+      "fieldtype": "Date",
+      "in_list_view": 1,
+      "label": "Belegdatum",
+      "read_only": 1
+    },
+    {
+      "columns": 1,
+      "default": "0",
+      "fieldname": "betrag",
+      "fieldtype": "Currency",
+      "in_list_view": 1,
+      "label": "Zugeordneter Betrag",
+      "description": "Wird beim Speichern aus dem Beleg vorbelegt. Bei Teilzuordnungen kann der Betrag anschließend reduziert werden."
+    },
+    {
+      "columns": 1,
+      "fieldname": "belegstatus",
+      "fieldtype": "Select",
+      "in_list_view": 1,
+      "label": "Status",
+      "options": "Entwurf\nEingereicht\nStorniert",
+      "read_only": 1
+    },
+    {
+      "columns": 2,
+      "fieldname": "bemerkung",
+      "fieldtype": "Small Text",
+      "label": "Bemerkung"
+    }
+  ],
+  "grid_page_length": 50,
+  "index_web_pages_for_search": 1,
+  "istable": 1,
+  "links": [],
+  "modified": "2026-08-06 00:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Hausverwaltung",
+  "name": "Versicherungsfall Beleg",
+  "owner": "Administrator",
+  "permissions": [],
+  "row_format": "Dynamic",
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "states": []
+}

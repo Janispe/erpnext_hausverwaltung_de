@@ -180,6 +180,11 @@
    "group": "TestGruppe",
    "link_doctype": "Mietvertrag",
    "link_fieldname": "wohnung"
+  },
+  {
+   "group": "Versicherung",
+   "link_doctype": "Versicherungsfall",
+   "link_fieldname": "wohnung"
   }
  ],
  "modified": "2026-01-13 15:16:48.349235",

@@ -1581,6 +1581,13 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         ],
     },
     {
+        "label": "Versicherungen",
+        "icon": "shield",
+        "links": [
+            {"label": "Versicherungsfälle", "link_type": "DocType", "link_to": "Versicherungsfall"},
+        ],
+    },
+    {
         "label": "Serienbriefe",
         "icon": "mail",
         "links": [
