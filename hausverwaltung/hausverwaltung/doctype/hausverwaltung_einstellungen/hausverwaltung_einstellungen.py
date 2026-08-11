@@ -10,6 +10,12 @@ class HausverwaltungEinstellungen(Document):
 	def validate(self):
 		self.validate_abschreibungskonto_forderungen()
 		self.validate_assistant_models()
+		self.validate_mistral_conversation_retention()
+
+	def validate_mistral_conversation_retention(self):
+		days = cint(self.mistral_conversation_retention_days)
+		if days < 1 or days > 3650:
+			frappe.throw(_("Die Mistral-Conversation-Aufbewahrung muss zwischen 1 und 3650 Tagen liegen."))
 
 	def validate_assistant_models(self):
 		seen_models: set[str] = set()

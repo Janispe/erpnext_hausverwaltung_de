@@ -11,10 +11,13 @@
   "assistant_model",
   "remote_agent_id",
   "remote_conversation_id",
+  "remote_conversation_deleted_on",
   "user",
   "status",
   "last_message_on",
   "message_count",
+  "active_run_id",
+  "active_run_started_on",
   "summary"
  ],
  "fields": [
@@ -54,6 +57,13 @@
    "read_only": 1
   },
   {
+   "fieldname": "remote_conversation_deleted_on",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "Mistral Conversation gelöscht am",
+   "read_only": 1
+  },
+  {
    "fieldname": "user",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -83,6 +93,20 @@
    "fieldname": "message_count",
    "fieldtype": "Int",
    "label": "Nachrichten"
+  },
+  {
+   "fieldname": "active_run_id",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Aktiver Assistentenlauf",
+   "read_only": 1
+  },
+  {
+   "fieldname": "active_run_started_on",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "Assistentenlauf gestartet am",
+   "read_only": 1
   },
   {
    "fieldname": "summary",

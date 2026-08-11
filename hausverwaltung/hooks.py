@@ -333,6 +333,11 @@ scheduler_events = {
 		"23 3 5 * *": [
 			"hausverwaltung.hausverwaltung.services.blz_lookup.load_blz_data",
 		],
+		# Entfernte Mistral-Agent-Conversations datenschutzgerecht bereinigen;
+		# der lokale Chatverlauf in ERPNext bleibt erhalten.
+		"17 2 * * *": [
+			"hausverwaltung.hausverwaltung.services.assistant_retention.delete_expired_mistral_conversations",
+		],
 	},
 }
 

@@ -371,6 +371,10 @@ function renderHausverwaltungAssistant(pageBody) {
 	const engineSelect = root.find(".hv-assistant-engine");
 	const modelSelect = root.find(".hv-assistant-model");
 	let conversationId = null;
+	let activeRunId = null;
+	let pollGeneration = 0;
+	const ASSISTANT_POLL_INTERVAL_MS = 1000;
+	const ASSISTANT_POLL_DEADLINE_MS = 20 * 60 * 1000;
 
 	const loadAssistantModels = async () => {
 		try {
@@ -598,10 +602,78 @@ function renderHausverwaltungAssistant(pageBody) {
 		return node;
 	};
 
+	const setComposerDisabled = (disabled) => {
+		form.find("button, input, select").prop("disabled", Boolean(disabled));
+	};
+
+	const renderRunProgress = (node, progress = {}) => {
+		const result = progress.result || {};
+		const answer = textFromAny(result.answer || progress.answer || "").trim();
+		const stage = textFromAny(progress.stage || "").trim();
+		const status = progress.status || "running";
+		const text = answer || stage || (status === "queued" ? __("Anfrage wartet ...") : __("Suche laeuft ..."));
+		const reasoning = result.reasoning || progress.reasoning || "";
+		const toolCalls = result.tool_calls || progress.tool_calls || [];
+		node.className = `hv-assistant-message ${status === "failed" ? "error" : "assistant"}`;
+		node.textContent = text;
+		appendReasoning(node, reasoning);
+		appendAnalysis(node, toolCalls);
+		appendToolCalls(node, toolCalls);
+		if (progress.matches || result.matches) {
+			renderResults(result.matches || progress.matches || []);
+		}
+		messagesEl.scrollTop(messagesEl[0].scrollHeight);
+	};
+
+	const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+	const pollAssistantRun = async (runId, pending, generation, initialProgress = null) => {
+		const deadline = Date.now() + ASSISTANT_POLL_DEADLINE_MS;
+		let progress = initialProgress;
+		while (generation === pollGeneration && Date.now() < deadline) {
+			if (!progress) {
+				try {
+					const response = await frappe.call({
+						method: "hausverwaltung.hausverwaltung.services.assistant_async.get_assistant_run_progress",
+						args: { run_id: runId },
+					});
+					progress = response.message || {};
+				} catch (error) {
+					if (generation !== pollGeneration) return null;
+					pending.textContent = __("Verbindung unterbrochen; der Assistent arbeitet im Hintergrund weiter ...");
+					await wait(ASSISTANT_POLL_INTERVAL_MS * 2);
+					continue;
+				}
+			}
+
+			if (generation !== pollGeneration) return null;
+			renderRunProgress(pending, progress);
+			if (progress.status === "completed") {
+				activeRunId = null;
+				conversationId = progress.conversation_id || progress.result?.conversation_id || conversationId;
+				await loadConversationList();
+				return progress;
+			}
+			if (progress.status === "failed") {
+				throw new Error(progress.error || __("Der Assistentenlauf ist fehlgeschlagen."));
+			}
+			if (progress.status === "missing") {
+				throw new Error(__("Der Fortschritt des Assistentenlaufs ist nicht mehr verfügbar."));
+			}
+			progress = null;
+			await wait(ASSISTANT_POLL_INTERVAL_MS);
+		}
+		if (generation !== pollGeneration) return null;
+		throw new Error(__("Der Assistent arbeitet zu lange. Der Chat kann später erneut geöffnet werden."));
+	};
+
 	const clearChat = () => {
+		pollGeneration += 1;
+		activeRunId = null;
 		conversationId = null;
 		messagesEl.empty();
 		renderResults([]);
+		setComposerDisabled(false);
 		conversationsEl.find(".hv-assistant-conversation").removeClass("active");
 		input.trigger("focus");
 	};
@@ -626,8 +698,9 @@ function renderHausverwaltungAssistant(pageBody) {
 				: row.engine === "mistral_agents"
 					? __("Mistral Agent")
 					: __("Bestehend");
+			const runLabel = row.active_run_id ? ` · ${__("laeuft")}` : "";
 			button.find(".hv-assistant-conversation-meta").text(
-				`${row.message_count || 0} ${__("Nachrichten")} · ${engineLabel}`
+				`${row.message_count || 0} ${__("Nachrichten")} · ${engineLabel}${runLabel}`
 			);
 			button.on("click", () => loadConversation(row.name));
 			conversationsEl.append(button);
@@ -643,10 +716,13 @@ function renderHausverwaltungAssistant(pageBody) {
 	};
 
 	const loadConversation = async (name) => {
+		const generation = ++pollGeneration;
+		activeRunId = null;
 		const response = await frappe.call({
 			method: "hausverwaltung.hausverwaltung.services.assistant.get_conversation",
 			args: { conversation_id: name },
 		});
+		if (generation !== pollGeneration) return;
 		const data = response.message || {};
 		conversationId = data.name || name;
 		engineSelect.val(data.engine || "classic");
@@ -672,6 +748,37 @@ function renderHausverwaltungAssistant(pageBody) {
 		});
 		renderResults(lastMatches);
 		await loadConversationList();
+		if (data.active_run_id && generation === pollGeneration) {
+			activeRunId = data.active_run_id;
+			setComposerDisabled(true);
+			let initialProgress = null;
+			try {
+				const progressResponse = await frappe.call({
+					method: "hausverwaltung.hausverwaltung.services.assistant_async.get_assistant_run_progress",
+					args: { run_id: activeRunId },
+				});
+				initialProgress = progressResponse.message || {};
+			} catch (error) {
+				initialProgress = null;
+			}
+			if (generation !== pollGeneration) return;
+			if (initialProgress?.user_message) {
+				addMessage("user", initialProgress.user_message);
+			}
+			const pending = addMessage("assistant", initialProgress?.stage || __("Suche laeuft ..."));
+			try {
+				await pollAssistantRun(activeRunId, pending, generation, initialProgress);
+			} catch (error) {
+				if (generation === pollGeneration) {
+					pending.className = "hv-assistant-message error";
+					pending.textContent = errorText(error);
+				}
+			} finally {
+				if (generation === pollGeneration) setComposerDisabled(false);
+			}
+			return;
+		}
+		setComposerDisabled(false);
 		input.trigger("focus");
 	};
 
@@ -715,11 +822,12 @@ function renderHausverwaltungAssistant(pageBody) {
 		if (!message) return;
 		input.val("");
 		addMessage("user", message);
-		const pending = addMessage("assistant", __("Suche laeuft ..."));
-		form.find("button, input, select").prop("disabled", true);
+		const pending = addMessage("assistant", __("Anfrage wird gestartet ..."));
+		const generation = ++pollGeneration;
+		setComposerDisabled(true);
 		try {
 			const response = await frappe.call({
-				method: "hausverwaltung.hausverwaltung.services.assistant.ask",
+				method: "hausverwaltung.hausverwaltung.services.assistant_async.start_assistant_run",
 				args: {
 					message,
 					conversation_id: conversationId,
@@ -727,20 +835,23 @@ function renderHausverwaltungAssistant(pageBody) {
 					engine: engineSelect.val() || "classic",
 				},
 			});
-			const data = response.message || {};
-			conversationId = data.conversation_id || conversationId;
-			pending.textContent = textFromAny(data.answer) || __("Keine Antwort erhalten.");
-			appendReasoning(pending, data.reasoning || "");
-			appendAnalysis(pending, data.tool_calls || []);
-			appendToolCalls(pending, data.tool_calls || []);
-			renderResults(data.matches || []);
+			const progress = response.message || {};
+			conversationId = progress.conversation_id || conversationId;
+			activeRunId = progress.run_id || null;
+			if (!activeRunId) throw new Error(__("Der Assistentenlauf konnte nicht gestartet werden."));
+			renderRunProgress(pending, progress);
 			await loadConversationList();
+			await pollAssistantRun(activeRunId, pending, generation, progress);
 		} catch (err) {
-			pending.className = "hv-assistant-message error";
-			pending.textContent = errorText(err);
+			if (generation === pollGeneration) {
+				pending.className = "hv-assistant-message error";
+				pending.textContent = errorText(err);
+			}
 		} finally {
-			form.find("button, input, select").prop("disabled", false);
-			input.trigger("focus");
+			if (generation === pollGeneration) {
+				setComposerDisabled(false);
+				input.trigger("focus");
+			}
 		}
 	};
 

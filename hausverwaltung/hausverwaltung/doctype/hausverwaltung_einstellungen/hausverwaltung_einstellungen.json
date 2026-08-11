@@ -22,6 +22,7 @@
   "mistral_base_url",
   "mistral_text_model",
   "assistant_models",
+  "mistral_conversation_retention_days",
   "mistral_vision_model",
   "mistral_timeout_seconds",
   "mistral_vision_fallback",
@@ -155,6 +156,14 @@
    "fieldtype": "Table",
    "label": "Assistenten-Modelle",
    "options": "Hausverwaltung Assistent Modell"
+  },
+  {
+   "default": "30",
+   "description": "Mistral-Agent-Unterhaltungen werden nach dieser Zahl inaktiver Tage bei Mistral gelöscht. Der lokale Chatverlauf bleibt erhalten.",
+   "fieldname": "mistral_conversation_retention_days",
+   "fieldtype": "Int",
+   "label": "Mistral-Conversation-Aufbewahrung (Tage)",
+   "reqd": 1
   },
   {
    "default": "pixtral-large-latest",

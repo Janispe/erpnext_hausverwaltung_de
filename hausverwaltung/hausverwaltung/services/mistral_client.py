@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Callable
 from typing import Any
 
 import frappe
@@ -215,6 +216,36 @@ def _post_json(path: str, body: dict[str, Any], *, timeout: int | None = None) -
 	return payload
 
 
+def _delete(path: str, *, timeout: int | None = None) -> None:
+	"""Delete a Mistral resource; a missing resource is already deleted."""
+	resolved_timeout = timeout or _timeout()
+	headers = {"Accept": "application/json"}
+	api_key = _api_key()
+	if api_key:
+		headers["Authorization"] = f"Bearer {api_key}"
+	url = f"{_base_url()}/{path.lstrip('/')}"
+	try:
+		response = requests.delete(url, headers=headers, timeout=resolved_timeout)
+	except requests.Timeout as exc:
+		raise MistralTransientError(f"Mistral-Timeout nach {resolved_timeout}s.") from exc
+	except requests.ConnectionError as exc:
+		raise MistralTransientError(f"Mistral-Endpunkt nicht erreichbar: {exc}") from exc
+	except requests.RequestException as exc:
+		raise MistralTransientError(f"Mistral-Aufruf fehlgeschlagen: {exc}") from exc
+
+	if response.status_code in {200, 202, 204, 404}:
+		return
+	if response.status_code in (429, 502, 503, 504):
+		raise MistralTransientError(
+			f"Mistral antwortete mit {response.status_code}: {response.text[:500]}"
+		)
+	if response.status_code == 401:
+		raise MistralPermanentError("Mistral API-Key ungültig (401).")
+	raise MistralPermanentError(
+		f"Mistral-Fehler {response.status_code}: {response.text[:500]}"
+	)
+
+
 def _post_chat(
 	messages: list[dict],
 	*,
@@ -321,6 +352,253 @@ def append_agent_conversation(
 			timeout=timeout,
 		)
 	)
+
+
+def start_agent_conversation_stream(
+	*,
+	agent_id: str,
+	inputs: str,
+	timeout: int | None = None,
+	event_callback: Callable[[dict[str, Any], dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+	"""Start a stored Agent conversation and expose its SSE progress events."""
+	ensure_configured()
+	return _stream_conversation_response(
+		"conversations#stream",
+		{"agent_id": agent_id, "inputs": inputs, "store": True, "stream": True},
+		timeout=timeout,
+		event_callback=event_callback,
+	)
+
+
+def append_agent_conversation_stream(
+	*,
+	conversation_id: str,
+	inputs: str | list[dict[str, Any]],
+	timeout: int | None = None,
+	event_callback: Callable[[dict[str, Any], dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+	"""Append inputs while exposing text, reasoning and tool SSE events."""
+	ensure_configured()
+	return _stream_conversation_response(
+		f"conversations/{conversation_id}#stream",
+		{"inputs": inputs, "store": True, "stream": True},
+		timeout=timeout,
+		event_callback=event_callback,
+	)
+
+
+def _stream_conversation_response(
+	path: str,
+	body: dict[str, Any],
+	*,
+	timeout: int | None,
+	event_callback: Callable[[dict[str, Any], dict[str, Any]], None] | None,
+) -> dict[str, Any]:
+	"""Consume Mistral Conversations SSE and rebuild the normal response shape."""
+	resolved_timeout = timeout or _timeout()
+	headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+	api_key = _api_key()
+	if api_key:
+		headers["Authorization"] = f"Bearer {api_key}"
+	url = f"{_base_url()}/{path.lstrip('/')}"
+	try:
+		response = requests.post(
+			url,
+			headers=headers,
+			json=body,
+			timeout=resolved_timeout,
+			stream=True,
+		)
+	except requests.Timeout as exc:
+		raise MistralTransientError(f"Mistral-Timeout nach {resolved_timeout}s.") from exc
+	except requests.ConnectionError as exc:
+		raise MistralTransientError(f"Mistral-Endpunkt nicht erreichbar: {exc}") from exc
+	except requests.RequestException as exc:
+		raise MistralTransientError(f"Mistral-Aufruf fehlgeschlagen: {exc}") from exc
+
+	if response.status_code in (429, 502, 503, 504):
+		raise MistralTransientError(
+			f"Mistral antwortete mit {response.status_code}: {response.text[:500]}"
+		)
+	if response.status_code == 401:
+		raise MistralPermanentError("Mistral API-Key ungültig (401).")
+	if response.status_code >= 400:
+		raise MistralPermanentError(
+			f"Mistral-Fehler {response.status_code}: {response.text[:500]}"
+		)
+
+	state: dict[str, Any] = {
+		"conversation_id": "",
+		"usage": {},
+		"outputs": {},
+		"order": [],
+	}
+	event_name = ""
+	data_lines: list[str] = []
+
+	def publish() -> None:
+		nonlocal event_name, data_lines
+		if not data_lines:
+			event_name = ""
+			return
+		raw = "\n".join(data_lines)
+		published_event_name = event_name
+		event_name, data_lines = "", []
+		if raw == "[DONE]":
+			return
+		try:
+			data = json.loads(raw)
+		except json.JSONDecodeError as exc:
+			raise MistralTransientError(
+				f"Mistral-Stream enthielt ungültiges JSON: {raw[:500]}"
+			) from exc
+		if not isinstance(data, dict):
+			return
+		event = {"event": published_event_name or str(data.get("type") or ""), "data": data}
+		_update_conversation_stream_state(state, data)
+		partial = _conversation_stream_payload(state)
+		if event_callback:
+			event_callback(event, partial)
+
+	try:
+		for line in response.iter_lines(decode_unicode=True):
+			if line is None:
+				continue
+			if not line:
+				publish()
+				continue
+			if line.startswith(":"):
+				continue
+			field, separator, value = line.partition(":")
+			if not separator:
+				continue
+			value = value[1:] if value.startswith(" ") else value
+			if field == "event":
+				event_name = value
+			elif field == "data":
+				data_lines.append(value)
+		publish()
+	except requests.Timeout as exc:
+		raise MistralTransientError(f"Mistral-Stream-Timeout nach {resolved_timeout}s.") from exc
+	except requests.RequestException as exc:
+		raise MistralTransientError(f"Mistral-Stream abgebrochen: {exc}") from exc
+	finally:
+		response.close()
+
+	return _validate_conversation_response(_conversation_stream_payload(state))
+
+
+def _update_conversation_stream_state(state: dict[str, Any], data: dict[str, Any]) -> None:
+	event_type = str(data.get("type") or "")
+	if event_type == "conversation.response.started":
+		state["conversation_id"] = str(data.get("conversation_id") or "")
+		return
+	if event_type == "conversation.response.done":
+		state["usage"] = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+		return
+	if event_type == "conversation.response.error":
+		message = str(data.get("message") or "Unbekannter Mistral-Stream-Fehler.")
+		code = int(data.get("code") or 0)
+		if code in (429, 500, 502, 503, 504):
+			raise MistralTransientError(message)
+		raise MistralPermanentError(message)
+
+	output_index = int(data.get("output_index") or 0)
+	entry_id = str(data.get("id") or f"output-{output_index}")
+	key = f"{output_index}:{entry_id}"
+	outputs = state["outputs"]
+	if key not in outputs:
+		outputs[key] = {"_output_index": output_index, "id": entry_id}
+		state["order"].append(key)
+	entry = outputs[key]
+
+	if event_type == "message.output.delta":
+		entry["type"] = "message.output"
+		content = data.get("content")
+		chunks = entry.setdefault("content", [])
+		if not isinstance(chunks, list):
+			chunks = [{"type": "text", "text": str(chunks)}]
+			entry["content"] = chunks
+		content_index = int(data.get("content_index") or 0)
+		chunk_positions = entry.setdefault("_chunk_positions", {})
+		position = chunk_positions.get(content_index)
+		if isinstance(content, str):
+			if position is not None and chunks[position].get("type") == "text":
+				chunks[position]["text"] = str(chunks[position].get("text") or "") + content
+			else:
+				chunk_positions[content_index] = len(chunks)
+				chunks.append({"type": "text", "text": content})
+		elif isinstance(content, dict):
+			if (
+				position is not None
+				and content.get("type") == "text"
+				and chunks[position].get("type") == "text"
+			):
+				chunks[position]["text"] = (
+					str(chunks[position].get("text") or "") + str(content.get("text") or "")
+				)
+			elif (
+				position is not None
+				and content.get("type") == "thinking"
+				and chunks[position].get("type") == "thinking"
+			):
+				existing_thinking = chunks[position].setdefault("thinking", [])
+				incoming_thinking = content.get("thinking")
+				if isinstance(existing_thinking, list) and isinstance(incoming_thinking, list):
+					existing_thinking.extend(incoming_thinking)
+				chunks[position]["closed"] = content.get("closed", chunks[position].get("closed"))
+			else:
+				chunk_positions[content_index] = len(chunks)
+				chunks.append(content)
+	elif event_type == "function.call.delta":
+		entry.update(
+			{
+				"type": "function.call",
+				"name": data.get("name") or entry.get("name"),
+				"tool_call_id": data.get("tool_call_id") or entry.get("tool_call_id"),
+				"arguments": str(entry.get("arguments") or "") + str(data.get("arguments") or ""),
+			}
+		)
+	elif event_type.startswith("tool.execution."):
+		entry["type"] = "tool.execution"
+		entry["name"] = data.get("name") or entry.get("name")
+		if data.get("arguments") is not None:
+			entry["arguments"] = str(entry.get("arguments") or "") + str(data.get("arguments") or "")
+		if isinstance(data.get("info"), dict):
+			entry["info"] = data["info"]
+
+
+def _conversation_stream_payload(state: dict[str, Any]) -> dict[str, Any]:
+	ordered = sorted(
+		(state["outputs"][key] for key in state["order"]),
+		key=lambda entry: entry.get("_output_index", 0),
+	)
+	outputs = [
+		{key: value for key, value in entry.items() if not key.startswith("_")}
+		for entry in ordered
+	]
+	return {
+		"conversation_id": state.get("conversation_id") or "",
+		"outputs": outputs,
+		"usage": state.get("usage") or {},
+	}
+
+
+def delete_agent_conversation(conversation_id: str, *, timeout: int | None = None) -> None:
+	"""Delete one stored Mistral Conversation without touching local messages."""
+	if not is_mistral_cloud():
+		raise MistralPermanentError(
+			"Mistral-Conversations können nur am konfigurierten Mistral-Cloud-Endpunkt gelöscht werden."
+		)
+	if not _api_key():
+		raise MistralPermanentError(
+			"Mistral API-Key fehlt; gespeicherte Conversations können nicht gelöscht werden."
+		)
+	remote_id = str(conversation_id or "").strip()
+	if not remote_id:
+		return
+	_delete(f"conversations/{remote_id}", timeout=timeout)
 
 
 def _validate_conversation_response(payload: dict[str, Any]) -> dict[str, Any]:

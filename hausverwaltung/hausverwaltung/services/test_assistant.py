@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import frappe
 
@@ -264,6 +264,7 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			{
 				"remote_agent_id": "agent-1",
 				"remote_conversation_id": "remote-conv-2",
+				"remote_conversation_deleted_on": None,
 				"assistant_model": "mistral-small-latest",
 			},
 			update_modified=False,
@@ -421,6 +422,67 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			timeout=assistant.BASIC_AGENT_API_TIMEOUT,
 		)
 		self.assertEqual(result["answer"], "42")
+
+	def test_mistral_agent_restores_local_history_after_remote_deletion(self):
+		conversation = frappe._dict(
+			name="CONV-LOCAL-1",
+			remote_conversation_deleted_on="2026-08-01 02:17:00",
+		)
+		history = [
+			{"role": "user", "content": "Wie hoch ist die Miete?"},
+			{"role": "assistant", "content": "Sie beträgt 800 Euro."},
+		]
+		with patch.object(assistant, "_load_conversation_history", return_value=history):
+			result = assistant._mistral_agent_start_input(
+				conversation,
+				"Aktuelles Datum: 2026-08-11. Anfrage des Nutzers: und ab September?",
+			)
+
+		self.assertIn("Bisheriger lokaler Verlauf", result)
+		self.assertIn("Nutzer: Wie hoch ist die Miete?", result)
+		self.assertIn("Assistent: Sie beträgt 800 Euro.", result)
+		self.assertTrue(result.endswith("Anfrage des Nutzers: und ab September?"))
+
+	def test_mistral_agent_reports_reasoning_and_tools_during_run(self):
+		conversation = frappe._dict(
+			name="CONV-PROGRESS-1",
+			remote_agent_id="agent-1",
+			remote_conversation_id="",
+		)
+		response = {
+			"conversation_id": "remote-progress-1",
+			"outputs": [
+				{
+					"type": "tool.execution",
+					"name": "code_interpreter",
+					"info": {"code": "print(42)", "code_output": "42\n"},
+				},
+				{
+					"type": "message.output",
+					"content": [
+						{"type": "thinking", "thinking": "Ich rechne."},
+						{"type": "text", "text": "Das Ergebnis ist 42."},
+					],
+				},
+			],
+		}
+		progress = Mock()
+
+		with patch.object(mistral_client, "start_agent_conversation_stream", return_value=response), \
+			 patch.object(assistant, "_store_conversation_message"), \
+			 patch.object(assistant, "_log_assistant_call"), \
+			 patch.object(assistant.frappe.db, "set_value"):
+			result = assistant._run_mistral_agent_assistant(
+				user_message="Was ist 6 mal 7?",
+				conversation=conversation,
+				selected_model="mistral-small-latest",
+				engine=assistant.ASSISTANT_ENGINE_MISTRAL_BASIC,
+				progress_callback=progress,
+			)
+
+		self.assertEqual(result["answer"], "Das Ergebnis ist 42.")
+		self.assertTrue(any(call.kwargs.get("reasoning") == "Ich rechne." for call in progress.call_args_list))
+		self.assertTrue(any(call.kwargs.get("tool_calls") for call in progress.call_args_list))
 
 	def test_mistral_basic_retries_failed_code_interpreter_before_answering(self):
 		conversation = frappe._dict(
@@ -1021,6 +1083,14 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(post_json.call_args_list[1].args[0], "conversations")
 		self.assertEqual(post_json.call_args_list[2].args[0], "conversations/conv-1")
 		self.assertTrue(post_json.call_args_list[1].args[1]["store"])
+
+	def test_mistral_agent_delete_uses_conversation_endpoint(self):
+		with patch.object(mistral_client, "is_mistral_cloud", return_value=True), \
+			 patch.object(mistral_client, "_api_key", return_value="secret"), \
+			 patch.object(mistral_client, "_delete") as delete:
+			mistral_client.delete_agent_conversation("remote-conv-1")
+
+		delete.assert_called_once_with("conversations/remote-conv-1", timeout=None)
 
 	def test_get_mieterkonto_summary_uses_existing_report(self):
 		match = {"customer": "CUST-1", "customer_name": "Anna Schmidt", "mietvertrag": "MV-1"}

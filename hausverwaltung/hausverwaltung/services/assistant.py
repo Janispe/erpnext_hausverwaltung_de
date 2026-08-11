@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
@@ -27,6 +29,7 @@ CONVERSATION_LIST_LIMIT = 30
 CONVERSATION_MESSAGE_LIMIT = 100
 STORED_MATCH_LIMIT = 10
 MAX_STORED_REASONING_CHARS = 30000
+MAX_MISTRAL_REHYDRATION_CHARS = 12000
 BASIC_AGENT_API_TIMEOUT = 180
 BASIC_AGENT_QUERY_PAGE_SIZE = 100
 BASIC_AGENT_QUERY_MAX_ROWS = 500
@@ -1353,7 +1356,16 @@ def list_conversations(limit: int | None = None) -> list[dict[str, Any]]:
 	rows = frappe.get_all(
 		"Hausverwaltung Assistant Conversation",
 		filters={"user": frappe.session.user, "status": ["!=", "Archived"]},
-		fields=["name", "title", "last_message_on", "message_count", "status", "engine", "assistant_model"],
+		fields=[
+			"name",
+			"title",
+			"last_message_on",
+			"message_count",
+			"status",
+			"engine",
+			"assistant_model",
+			"active_run_id",
+		],
 		order_by="last_message_on desc, modified desc",
 		limit=resolved_limit,
 	)
@@ -1376,6 +1388,7 @@ def get_conversation(conversation_id: str) -> dict[str, Any]:
 		"title": conversation.title,
 		"engine": getattr(conversation, "engine", None) or ASSISTANT_ENGINE_CLASSIC,
 		"assistant_model": getattr(conversation, "assistant_model", None) or "",
+		"active_run_id": getattr(conversation, "active_run_id", None) or "",
 		"messages": [_conversation_message_row(row) for row in rows],
 	}
 
@@ -1578,6 +1591,7 @@ def run_assistant(
 	conversation_id: str | None = None,
 	model: str | None = None,
 	engine: str | None = None,
+	progress_callback: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
 	user_message = (message or "").strip()
 	if not user_message:
@@ -1597,6 +1611,7 @@ def run_assistant(
 			conversation=conversation,
 			selected_model=selected_model,
 			engine=selected_engine,
+			progress_callback=progress_callback,
 		)
 	history_messages = _load_conversation_history(conversation.name)
 
@@ -1621,6 +1636,7 @@ def run_assistant(
 	final_message: dict[str, Any] | None = None
 
 	for _round in range(MAX_TOOL_ROUNDS):
+		_emit_assistant_progress(progress_callback, stage=_("Das Modell analysiert die Anfrage."))
 		assistant_message = mistral_client.complete_chat(
 			messages=messages,
 			model=resolved_model,
@@ -1645,6 +1661,12 @@ def run_assistant(
 			result = _execute_tool(name, arguments)
 			tool_calls_debug.append(_tool_call_debug(name, arguments, result))
 			matches.extend(_extract_matches_from_tool_result(result))
+			_emit_assistant_progress(
+				progress_callback,
+				stage=_("Werkzeug {0} abgeschlossen.").format(name),
+				tool_calls=tool_calls_debug,
+				matches=_dedupe_matches(matches),
+			)
 			messages.append(
 				{
 					"role": "tool",
@@ -1665,6 +1687,13 @@ def run_assistant(
 
 	answer = _message_content(final_message) or _fallback_answer(matches)
 	deduped_matches = _dedupe_matches(matches)
+	_emit_assistant_progress(
+		progress_callback,
+		stage=_("Antwort wird gespeichert."),
+		answer=answer,
+		tool_calls=tool_calls_debug,
+		matches=deduped_matches,
+	)
 	_store_conversation_message(conversation.name, "user", user_message)
 	_store_conversation_message(
 		conversation.name,
@@ -1703,6 +1732,7 @@ def _run_mistral_agent_assistant(
 	conversation,
 	selected_model: str,
 	engine: str = ASSISTANT_ENGINE_MISTRAL_AGENTS,
+	progress_callback: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
 	"""Run a read-only tool profile through Mistral Agents & Conversations."""
 	agent_tools = _mistral_agent_tools(engine)
@@ -1719,25 +1749,87 @@ def _run_mistral_agent_assistant(
 		else {}
 	)
 	current_input = f"Aktuelles Datum: {nowdate()}. Anfrage des Nutzers: {user_message}"
-	if remote_conversation_id:
-		response = mistral_client.append_agent_conversation(
-			conversation_id=remote_conversation_id,
-			inputs=current_input,
-			**conversation_options,
-		)
-	else:
-		response = mistral_client.start_agent_conversation(
-			agent_id=remote_agent_id,
-			inputs=current_input,
-			**conversation_options,
-		)
-
 	tool_names: list[str] = []
 	tool_calls_debug: list[dict[str, Any]] = []
 	matches: list[dict[str, Any]] = []
 	usage_entries: list[dict[str, Any]] = []
 	reasoning_chunks: list[str] = []
 	answer = ""
+	last_stream_progress_at = 0.0
+
+	def report_stream_event(event: dict[str, Any], partial: dict[str, Any]) -> None:
+		nonlocal last_stream_progress_at
+		event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
+		event_type = str(event_data.get("type") or event.get("event") or "")
+		now = time.monotonic()
+		urgent = event_type != "message.output.delta"
+		if not urgent and now - last_stream_progress_at < 0.2:
+			return
+		last_stream_progress_at = now
+		partial_answer = _mistral_conversation_text(partial)
+		partial_reasoning = _mistral_conversation_reasoning(partial)
+		stream_tools = list(tool_calls_debug)
+		stream_tools.extend(_mistral_conversation_tool_executions(partial))
+		if event_type == "function.call.delta":
+			stream_tools.append(
+				{
+					"name": str(event_data.get("name") or "function"),
+					"arguments": _mistral_conversation_arguments(event_data.get("arguments")),
+				}
+			)
+		if event_type.startswith("tool.execution."):
+			stage = _("Mistral-Werkzeug {0} wird ausgeführt.").format(
+				str(event_data.get("name") or "built_in_tool")
+			)
+		elif event_type == "function.call.delta":
+			stage = _("Mistral plant den Werkzeugaufruf {0}.").format(
+				str(event_data.get("name") or "function")
+			)
+		elif partial_answer:
+			stage = _("Mistral formuliert die Antwort.")
+		elif partial_reasoning:
+			stage = _("Mistral analysiert die Anfrage.")
+		else:
+			stage = _("Mistral verarbeitet die Anfrage.")
+		_emit_assistant_progress(
+			progress_callback,
+			stage=stage,
+			answer=partial_answer,
+			reasoning="\n\n".join([*reasoning_chunks, partial_reasoning])[:MAX_STORED_REASONING_CHARS],
+			tool_calls=stream_tools,
+			matches=_dedupe_matches(matches),
+		)
+
+	_emit_assistant_progress(progress_callback, stage=_("Mistral verarbeitet die Anfrage."))
+	if remote_conversation_id:
+		if progress_callback:
+			response = mistral_client.append_agent_conversation_stream(
+				conversation_id=remote_conversation_id,
+				inputs=current_input,
+				event_callback=report_stream_event,
+				**conversation_options,
+			)
+		else:
+			response = mistral_client.append_agent_conversation(
+				conversation_id=remote_conversation_id,
+				inputs=current_input,
+				**conversation_options,
+			)
+	else:
+		start_input = _mistral_agent_start_input(conversation, current_input)
+		if progress_callback:
+			response = mistral_client.start_agent_conversation_stream(
+				agent_id=remote_agent_id,
+				inputs=start_input,
+				event_callback=report_stream_event,
+				**conversation_options,
+			)
+		else:
+			response = mistral_client.start_agent_conversation(
+				agent_id=remote_agent_id,
+				inputs=start_input,
+				**conversation_options,
+			)
 
 	for tool_round in range(MAX_TOOL_ROUNDS + 1):
 		usage_entries.append(response.get("usage") or {})
@@ -1747,20 +1839,36 @@ def _run_mistral_agent_assistant(
 		for execution in executions:
 			tool_names.append(execution["name"])
 			tool_calls_debug.append(execution)
+		_emit_assistant_progress(
+			progress_callback,
+			stage=_("Mistral-Agentenschritt {0} abgeschlossen.").format(tool_round + 1),
+			reasoning="\n\n".join(reasoning_chunks)[:MAX_STORED_REASONING_CHARS],
+			tool_calls=tool_calls_debug,
+			matches=_dedupe_matches(matches),
+		)
 		remote_conversation_id = str(response.get("conversation_id") or "").strip()
 		function_calls = _mistral_conversation_function_calls(response)
 		if not function_calls:
 			execution_errors = [execution for execution in executions if execution.get("error")]
 			if execution_errors and engine == ASSISTANT_ENGINE_MISTRAL_BASIC and tool_round < MAX_TOOL_ROUNDS:
-				response = mistral_client.append_agent_conversation(
-					conversation_id=remote_conversation_id,
-					inputs=(
-						"Der letzte code_interpreter-Aufruf ist fehlgeschlagen. Verwirf jede daraus "
-						"abgeleitete Zahl, korrigiere den Code, fuehre ihn erneut aus und antworte erst, "
-						"wenn code_output ein explizites numerisches Ergebnis enthaelt."
-					),
-					**conversation_options,
+				inputs = (
+					"Der letzte code_interpreter-Aufruf ist fehlgeschlagen. Verwirf jede daraus "
+					"abgeleitete Zahl, korrigiere den Code, fuehre ihn erneut aus und antworte erst, "
+					"wenn code_output ein explizites numerisches Ergebnis enthaelt."
 				)
+				if progress_callback:
+					response = mistral_client.append_agent_conversation_stream(
+						conversation_id=remote_conversation_id,
+						inputs=inputs,
+						event_callback=report_stream_event,
+						**conversation_options,
+					)
+				else:
+					response = mistral_client.append_agent_conversation(
+						conversation_id=remote_conversation_id,
+						inputs=inputs,
+						**conversation_options,
+					)
 				continue
 			answer = _mistral_conversation_text(response)
 			break
@@ -1778,12 +1886,26 @@ def _run_mistral_agent_assistant(
 					"Mistral Function Call enthaelt keinen Tool-Namen oder keine Call-ID."
 				)
 			arguments = _mistral_conversation_arguments(function_call.get("arguments"))
+			_emit_assistant_progress(
+				progress_callback,
+				stage=_("Werkzeug {0} wird ausgeführt.").format(name),
+				reasoning="\n\n".join(reasoning_chunks)[:MAX_STORED_REASONING_CHARS],
+				tool_calls=tool_calls_debug,
+				matches=_dedupe_matches(matches),
+			)
 			if name == "analyze_revenue_over_time":
 				arguments = _sanitize_revenue_tool_arguments(arguments, user_message)
 			result = _execute_mistral_agent_function(name, arguments, engine=engine)
 			tool_names.append(name)
 			tool_calls_debug.append(_tool_call_debug(name, arguments, result))
 			matches.extend(_extract_matches_from_tool_result(result))
+			_emit_assistant_progress(
+				progress_callback,
+				stage=_("Werkzeug {0} abgeschlossen.").format(name),
+				reasoning="\n\n".join(reasoning_chunks)[:MAX_STORED_REASONING_CHARS],
+				tool_calls=tool_calls_debug,
+				matches=_dedupe_matches(matches),
+			)
 			function_result = _mistral_agent_function_result(result, engine=engine)
 			function_results.append(
 				{
@@ -1792,21 +1914,38 @@ def _run_mistral_agent_assistant(
 					"result": json.dumps(function_result, ensure_ascii=True, default=str),
 				}
 			)
-		response = mistral_client.append_agent_conversation(
-			conversation_id=remote_conversation_id,
-			inputs=function_results,
-			**conversation_options,
-		)
+		if progress_callback:
+			response = mistral_client.append_agent_conversation_stream(
+				conversation_id=remote_conversation_id,
+				inputs=function_results,
+				event_callback=report_stream_event,
+				**conversation_options,
+			)
+		else:
+			response = mistral_client.append_agent_conversation(
+				conversation_id=remote_conversation_id,
+				inputs=function_results,
+				**conversation_options,
+			)
 
 	deduped_matches = _dedupe_matches(matches)
 	answer = answer or _fallback_answer(deduped_matches)
 	reasoning = "\n\n".join(reasoning_chunks)[:MAX_STORED_REASONING_CHARS]
+	_emit_assistant_progress(
+		progress_callback,
+		stage=_("Antwort wird gespeichert."),
+		answer=answer,
+		reasoning=reasoning,
+		tool_calls=tool_calls_debug,
+		matches=deduped_matches,
+	)
 	frappe.db.set_value(
 		"Hausverwaltung Assistant Conversation",
 		conversation.name,
 		{
 			"remote_agent_id": remote_agent_id,
 			"remote_conversation_id": remote_conversation_id,
+			"remote_conversation_deleted_on": None,
 			"assistant_model": selected_model,
 		},
 		update_modified=False,
@@ -2026,6 +2165,22 @@ def _looks_like_code_execution_error(output: Any) -> bool:
 	)
 
 
+def _emit_assistant_progress(
+	callback: Callable[..., None] | None,
+	**values: Any,
+) -> None:
+	if not callback:
+		return
+	try:
+		callback(**values)
+	except Exception:
+		# Fortschrittsanzeige darf die fachliche Assistentenantwort nie abbrechen.
+		frappe.logger("hausverwaltung_assistant").warning(
+			"Assistant-Fortschritt konnte nicht gespeichert werden.",
+			exc_info=True,
+		)
+
+
 def _normalize_assistant_engine(engine: str | None) -> str:
 	selected = (engine or ASSISTANT_ENGINE_CLASSIC).strip().lower()
 	if selected not in ASSISTANT_ENGINES:
@@ -2101,6 +2256,34 @@ def _load_conversation_history(conversation_id: str) -> list[dict[str, str]]:
 		if role in {"user", "assistant"} and content:
 			messages.append({"role": role, "content": content[:4000]})
 	return messages
+
+
+def _mistral_agent_start_input(conversation, current_input: str) -> str:
+	"""Restore recent local context only after a retained remote chat was deleted."""
+	if not getattr(conversation, "remote_conversation_deleted_on", None):
+		return current_input
+	history = _load_conversation_history(conversation.name)
+	if not history:
+		return current_input
+
+	prefix = (
+		"Diese Mistral-Conversation wurde aus Datenschutzgründen gelöscht und wird aus dem "
+		"lokal gespeicherten Chatverlauf fortgesetzt. Nutze den Verlauf nur als Gesprächskontext. "
+		"Prüfe aktuelle oder fachliche Daten erneut mit den verfügbaren Tools.\n\n"
+		"Bisheriger lokaler Verlauf:\n"
+	)
+	remaining = max(0, MAX_MISTRAL_REHYDRATION_CHARS - len(prefix) - len(current_input) - 2)
+	selected: list[str] = []
+	for message in reversed(history):
+		label = "Nutzer" if message["role"] == "user" else "Assistent"
+		entry = f"{label}: {message['content']}\n"
+		if len(entry) > remaining:
+			if not selected and remaining > len(label) + 4:
+				selected.append(entry[:remaining])
+			break
+		selected.append(entry)
+		remaining -= len(entry)
+	return f"{prefix}{''.join(reversed(selected))}\n{current_input}"
 
 
 def _store_conversation_message(
