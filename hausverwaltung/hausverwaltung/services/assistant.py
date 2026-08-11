@@ -15,7 +15,7 @@ from frappe.utils import cint, flt, getdate, now_datetime, nowdate
 from hausverwaltung.hausverwaltung.agent_tools import read_api as agent_read_api
 from hausverwaltung.hausverwaltung.services import mistral_client
 
-MAX_TOOL_ROUNDS = 5
+MAX_TOOL_ROUNDS = 8
 MAX_SEARCH_LIMIT = 10
 SQL_PREFETCH_FACTOR = 4
 GENERIC_READ_LIMIT = 50
@@ -618,6 +618,8 @@ Du darfst nur lesen. Du darfst keine Buchungen, Briefe, Aufgaben oder sonstige D
 Ein Customer ist die buchhalterische Debitoren-Entitaet genau eines Mietvertrags. Mietvertrag und Customer sind 1:1
 zugeordnet; der Mietvertrag mit seinen Feldern kunde und wohnung ist fuer diese Zuordnung massgeblich.
 Verwende einen Customer niemals gedanklich fuer mehrere Mietvertraege oder Wohnungen und rate bei Mehrdeutigkeit nicht.
+Bei der Frage, wo ein Mieter oder Bewohner wohnt, ist Mietvertrag.wohnung die gesuchte Zuordnung. Suche dafuer den
+Mietvertrag und gib die Wohnung aus; suche nur bei ausdruecklicher Frage nach einer Postanschrift im Address-DocType.
 Nutze die bereitgestellten Tools fuer Mietersuche, Mieterkonto, Salden, offene Posten,
 verspaetete Zahlungen, Miet-Ranglisten und eingeschraenkte Hausverwaltungs-Abfragen.
 Wenn eine Frage ausserhalb dieses fachlichen Katalogs liegt, nutze die generischen agent_*-Tools.
@@ -665,12 +667,18 @@ Antworte knapp auf Deutsch und verweise auf die gefundenen Treffernummern, wenn 
 BASIC_AGENT_SYSTEM_PROMPT = """Du bist ein minimalistischer, ausschliesslich lesender ERPNext-Datenassistent.
 Ein Customer ist die buchhalterische Debitoren-Entitaet genau eines Mietvertrags. Mietvertrag und Customer sind 1:1
 zugeordnet; der Mietvertrag mit kunde und wohnung ist fuer diese Zuordnung massgeblich.
+Bei der Frage, wo ein Mieter oder Bewohner wohnt, ist Mietvertrag.wohnung die gesuchte Zuordnung. Suche dafuer den
+Mietvertrag und gib die Wohnung aus; suche nur bei ausdruecklicher Frage nach einer Postanschrift im Address-DocType.
 Nutze nur die bereitgestellten generischen Werkzeuge. Erfinde keine DocTypes, Felder, Datensaetze oder Ergebnisse.
-Wenn der passende DocType unbekannt ist, ermittle ihn mit agent_list_doctypes. Lies danach immer zuerst sein Schema mit
+Wenn der passende DocType unbekannt ist, suche ihn mit einem kurzen Fachbegriff ueber agent_list_doctypes. Lies danach immer zuerst sein Schema mit
 agent_get_doctype_schema. Verwende nur dort gelieferte, nicht sensible Felder fuer agent_list_docs, agent_search_docs
 oder agent_get_doc. Fordere mit fields nur die fuer die konkrete Antwort erforderlichen Felder an. Fordere name oder
 andere Identitaetsfelder nur an, wenn die Frage oder die Antwort eine konkrete Person bzw. ein konkretes Dokument
-identifizieren muss. Schreibe niemals SQL und aendere keine Daten.
+identifizieren muss. Uebernimm Dokumentnamen und andere Identitaetswerte exakt und unverkuerzt aus Tool-Ergebnissen.
+Wenn ein erfolgreiches Tool-Ergebnis die fuer die Antwort angeforderten Felder bereits enthaelt, antworte direkt und
+rufe dasselbe Dokument nicht noch einmal mit agent_get_doc ab. Wiederhole niemals einen fehlgeschlagenen Tool-Aufruf
+mit unveraenderten Argumenten. Nutze stattdessen sichere vorherige Ergebnisse oder sage, welche Angabe fehlt.
+Schreibe niemals SQL und aendere keine Daten.
 Beachte Feldtypen strikt. Berechne Summen, Mittelwerte, Datumsdifferenzen, Statistiken und andere Mathematik niemals
 im Kopf, sondern immer mit code_interpreter. Uebergib dem Code Interpreter nur Daten, die zuvor von den Lesewerkzeugen
 geliefert wurden. Wenn eine Frage alle passenden Datensaetze betrifft und meta.pagination.has_more=true ist, MUSST du
@@ -1081,12 +1089,19 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 		"function": {
 			"name": "agent_list_doctypes",
 			"description": (
-				"Listet alle nicht sensiblen DocTypes, die der aktuelle Benutzer lesen darf. "
-				"Nutze dies fuer Fragen ausserhalb des Hausverwaltungs-Katalogs."
+				"Sucht nicht sensible DocTypes, die der aktuelle Benutzer lesen darf. "
+				"Uebergib einen kurzen fachlichen Suchbegriff statt den gesamten Katalog anzufordern."
 			),
 			"parameters": {
 				"type": "object",
-				"properties": {},
+				"properties": {
+					"query": {
+						"type": "string",
+						"description": "Kurzer DocType- oder Fachbegriff, zum Beispiel Mietvertrag.",
+					},
+					"limit": {"type": "integer", "description": "1 bis 100, Default 50."},
+				},
+				"required": ["query"],
 			},
 		},
 	},
@@ -1121,8 +1136,11 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 				"properties": {
 					"doctype": {"type": "string"},
 					"filters": {
-						"type": ["object", "array", "string"],
-						"description": "Frappe-kompatible Filter als Objekt/Liste oder JSON-String.",
+						"type": ["object", "array"],
+						"description": (
+							"Strukturierte Frappe-Filter als Objekt oder Liste, zum Beispiel "
+							"[[\"kunde\",\"like\",\"%Suchbegriff%\"]]. Niemals SQL- oder Textsyntax."
+						),
 					},
 					"fields": {
 						"type": ["array", "string"],
@@ -1190,8 +1208,8 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 					"doctype": {"type": "string"},
 					"query": {"type": "string", "description": "Mindestens 3 Zeichen."},
 					"filters": {
-						"type": ["object", "array", "string"],
-						"description": "Nur mit doctype erlaubt.",
+						"type": ["object", "array"],
+						"description": "Nur mit doctype erlaubt; niemals SQL- oder Textsyntax.",
 					},
 					"limit": {"type": "integer", "description": "1 bis 100, Default 20."},
 					"offset": {"type": "integer", "description": "Offset fuer Pagination, Default 0."},
@@ -1672,7 +1690,7 @@ def run_assistant(
 					"role": "tool",
 					"name": name,
 					"tool_call_id": tool_call.get("id") or name,
-					"content": json.dumps(result, ensure_ascii=True, default=str),
+					"content": json.dumps(result, ensure_ascii=False, default=str),
 				}
 			)
 
@@ -1895,6 +1913,8 @@ def _run_mistral_agent_assistant(
 			)
 			if name == "analyze_revenue_over_time":
 				arguments = _sanitize_revenue_tool_arguments(arguments, user_message)
+			elif name == "agent_get_doc":
+				arguments = _repair_agent_get_doc_identifier(arguments, matches)
 			result = _execute_mistral_agent_function(name, arguments, engine=engine)
 			tool_names.append(name)
 			tool_calls_debug.append(_tool_call_debug(name, arguments, result))
@@ -1911,7 +1931,7 @@ def _run_mistral_agent_assistant(
 				{
 					"type": "function.result",
 					"tool_call_id": tool_call_id,
-					"result": json.dumps(function_result, ensure_ascii=True, default=str),
+					"result": json.dumps(function_result, ensure_ascii=False, default=str),
 				}
 			)
 		if progress_callback:
@@ -2095,6 +2115,33 @@ def _mistral_conversation_arguments(value: Any) -> dict[str, Any]:
 			return {}
 		return parsed if isinstance(parsed, dict) else {}
 	return {}
+
+
+def _repair_agent_get_doc_identifier(
+	arguments: dict[str, Any],
+	previous_matches: list[dict[str, Any]],
+) -> dict[str, Any]:
+	"""Restore a control-corrupted document name from an unambiguous prior result."""
+	cleaned = dict(arguments or {})
+	identifier = str(cleaned.get("name") or "")
+	if not identifier or not any(ord(character) < 32 for character in identifier):
+		return cleaned
+	doctype = str(cleaned.get("doctype") or "").strip()
+	if not doctype:
+		return cleaned
+	parts = [part for part in re.split(r"[\x00-\x1f]+", identifier) if part]
+	if not parts:
+		return cleaned
+	pattern = "^" + ".".join(re.escape(part) for part in parts) + "$"
+	candidates = {
+		str(match.get("name") or "")
+		for match in previous_matches
+		if str(match.get("doctype") or "").strip() == doctype
+		and re.fullmatch(pattern, str(match.get("name") or ""), flags=re.DOTALL)
+	}
+	if len(candidates) == 1:
+		cleaned["name"] = candidates.pop()
+	return cleaned
 
 
 def _mistral_conversation_text(response: dict[str, Any]) -> str:
@@ -3112,8 +3159,8 @@ def hv_get_doc(
 	return {"doctype": dt, "name": doc.name, "data": data, "children": children}
 
 
-def agent_list_doctypes(**_kwargs) -> dict[str, Any]:
-	return agent_read_api.list_doctypes()
+def agent_list_doctypes(query: str | None = None, limit: int = 50, **_kwargs) -> dict[str, Any]:
+	return agent_read_api.list_doctypes(query=query, limit=limit)
 
 
 def agent_describe_data_catalog(query: str | None = None, **_kwargs) -> dict[str, Any]:

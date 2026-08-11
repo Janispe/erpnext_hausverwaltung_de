@@ -96,6 +96,7 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			"matches": [
 				{
 					"title": "Anna Schmidt",
+					"subtitle": "Wohnung mit Ö im Bezeichner",
 					"mietvertrag": "MV-1",
 					"customer": "CUST-1",
 					"routes": [{"label": "Mietvertrag", "doctype": "Mietvertrag", "name": "MV-1"}],
@@ -121,6 +122,13 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertLess(len(first_tool_names), len(assistant.ASSISTANT_TOOLS))
 		self.assertEqual(first_call["prompt_cache_key"], "hv-assistant:v2:CONV-1")
 		self.assertEqual(complete_chat.call_args_list[1].kwargs["prompt_cache_key"], first_call["prompt_cache_key"])
+		classic_tool_content = next(
+			message["content"]
+			for message in complete_chat.call_args_list[1].kwargs["messages"]
+			if message.get("role") == "tool"
+		)
+		self.assertIn("Ö", classic_tool_content)
+		self.assertNotIn("\\u00d6", classic_tool_content)
 		self.assertTrue(result["ok"])
 		self.assertTrue(result["read_only"])
 		self.assertEqual(result["answer"], "Ich habe einen passenden Treffer gefunden.")
@@ -221,6 +229,7 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			"matches": [
 				{
 					"title": "Anna Schmidt",
+					"subtitle": "Wohnung mit Ö im Bezeichner",
 					"mietvertrag": "MV-1",
 					"customer": "CUST-1",
 					"routes": [{"label": "Mietvertrag", "doctype": "Mietvertrag", "name": "MV-1"}],
@@ -253,6 +262,8 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(function_result["type"], "function.result")
 		self.assertEqual(function_result["tool_call_id"], "call-1")
 		self.assertIn("MV-1", function_result["result"])
+		self.assertIn("Ö", function_result["result"])
+		self.assertNotIn("\\u00d6", function_result["result"])
 		self.assertEqual(result["engine"], "mistral_agents")
 		self.assertEqual(result["answer"], "Ich habe Anna Schmidt gefunden.")
 		self.assertEqual(result["reasoning"], "Ich suche nach Schmidt.\n\nDer Treffer passt.")
@@ -483,6 +494,35 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["answer"], "Das Ergebnis ist 42.")
 		self.assertTrue(any(call.kwargs.get("reasoning") == "Ich rechne." for call in progress.call_args_list))
 		self.assertTrue(any(call.kwargs.get("tool_calls") for call in progress.call_args_list))
+
+	def test_agent_get_doc_repairs_control_corrupted_identifier_from_unique_prior_match(self):
+		arguments = {
+			"doctype": "Mietvertrag",
+			"name": "MV - Lysk, \x00zgen",
+			"fields": ["wohnung"],
+		}
+		matches = [
+			{
+				"doctype": "Mietvertrag",
+				"name": "MV - Lysk, Özgen",
+			}
+		]
+
+		repaired = assistant._repair_agent_get_doc_identifier(arguments, matches)
+
+		self.assertEqual(repaired["name"], "MV - Lysk, Özgen")
+		self.assertEqual(arguments["name"], "MV - Lysk, \x00zgen")
+
+	def test_agent_get_doc_does_not_guess_when_corrupted_identifier_is_ambiguous(self):
+		arguments = {"doctype": "Mietvertrag", "name": "MV-\x00-1"}
+		matches = [
+			{"doctype": "Mietvertrag", "name": "MV-A-1"},
+			{"doctype": "Mietvertrag", "name": "MV-B-1"},
+		]
+
+		repaired = assistant._repair_agent_get_doc_identifier(arguments, matches)
+
+		self.assertEqual(repaired["name"], "MV-\x00-1")
 
 	def test_mistral_basic_retries_failed_code_interpreter_before_answering(self):
 		conversation = frappe._dict(

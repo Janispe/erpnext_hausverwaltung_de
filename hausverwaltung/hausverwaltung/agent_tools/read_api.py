@@ -7,6 +7,7 @@ from typing import Any
 
 import frappe
 from frappe import _
+from frappe.model import get_permitted_fields
 from frappe.utils import cint
 
 from hausverwaltung.hausverwaltung.agent_tools.contracts import (
@@ -165,6 +166,14 @@ def _ensure_agent_api_access() -> None:
 
 def _sanitize_fieldnames(doctype: str, requested_fields: list[str] | None = None) -> tuple[list[str], set[str]]:
 	meta = frappe.get_meta(doctype)
+	permitted_fields = set(
+		get_permitted_fields(
+			doctype,
+			user=frappe.session.user,
+			permission_type="read",
+			ignore_virtual=True,
+		)
+	)
 	allowed_by_meta: dict[str, Any] = {fieldname: None for fieldname in _STANDARD_SAFE_FIELDS}
 
 	for df in meta.fields or []:
@@ -177,6 +186,11 @@ def _sanitize_fieldnames(doctype: str, requested_fields: list[str] | None = None
 		if df.fieldtype in {"Table", "Table MultiSelect", "Button", "Column Break", "Section Break", "HTML"}:
 			continue
 		allowed_by_meta[df.fieldname] = df
+	allowed_by_meta = {
+		fieldname: df
+		for fieldname, df in allowed_by_meta.items()
+		if fieldname in permitted_fields
+	}
 
 	allowed_fields = set(allowed_by_meta.keys())
 
@@ -198,9 +212,19 @@ def _sanitize_fieldnames(doctype: str, requested_fields: list[str] | None = None
 
 def _schema_for_doctype(doctype: str) -> dict[str, Any]:
 	meta = frappe.get_meta(doctype)
+	permitted_fields = set(
+		get_permitted_fields(
+			doctype,
+			user=frappe.session.user,
+			permission_type="read",
+			ignore_virtual=True,
+		)
+	)
 	fields = []
 	for df in meta.fields or []:
 		if not df.fieldname:
+			continue
+		if df.fieldname not in permitted_fields:
 			continue
 		if is_sensitive_field(df.fieldname, df.fieldtype):
 			continue
@@ -267,7 +291,7 @@ def _extract_snippet(row: dict[str, Any], query: str, search_fields: list[str]) 
 
 
 @frappe.whitelist()
-def list_doctypes() -> dict[str, Any]:
+def list_doctypes(query: str | None = None, limit: int = 50) -> dict[str, Any]:
 	request_id = str(uuid.uuid4())
 	started_at = time.perf_counter()
 	result_count = 0
@@ -275,6 +299,10 @@ def list_doctypes() -> dict[str, Any]:
 	error_code = None
 	try:
 		_ensure_agent_api_access()
+		query_text = str(query or "").strip().casefold()
+		resolved_limit = cint(limit)
+		if resolved_limit < 1 or resolved_limit > 100:
+			raise AgentToolError("INVALID_ARGUMENT", "limit must be between 1 and 100.")
 		all_doctypes = frappe.get_all(
 			"DocType",
 			fields=["name", "module", "istable", "custom", "modified"],
@@ -290,13 +318,22 @@ def list_doctypes() -> dict[str, Any]:
 					continue
 			except Exception:
 				continue
-			item = dict(row)
 			module = str(row.get("module") or "")
+			labels = list(dict.fromkeys((name, _(name), _(name, lang="de"))))
+			module_labels = list(dict.fromkeys((module, _(module), _(module, lang="de"))))
+			if query_text and not any(
+				query_text in str(value or "").casefold()
+				for value in (*labels, *module_labels)
+			):
+				continue
+			item = dict(row)
 			item["label"] = _(name)
 			item["module_label"] = _(module)
-			item["translated_labels"] = list(dict.fromkeys((name, _(name), _(name, lang="de"))))
-			item["translated_module_labels"] = list(dict.fromkeys((module, _(module), _(module, lang="de"))))
+			item["translated_labels"] = labels
+			item["translated_module_labels"] = module_labels
 			visible.append(item)
+			if len(visible) >= resolved_limit:
+				break
 		result_count = len(visible)
 		success = True
 		return _ok(request_id, started_at, visible)

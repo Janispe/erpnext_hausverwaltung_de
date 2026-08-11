@@ -28,6 +28,27 @@ class TestAgentReadApi(IntegrationTestCase):
 			)
 		)
 
+	def test_list_doctypes_filters_and_limits_catalog(self):
+		response = read_api.list_doctypes(query="Mietvertrag", limit=5)
+
+		self.assertTrue(response["ok"])
+		self.assertLessEqual(len(response["data"]), 5)
+		self.assertTrue(response["data"])
+		self.assertTrue(
+			all(
+				"mietvertrag" in " ".join(
+					[*row["translated_labels"], *row["translated_module_labels"]]
+				).casefold()
+				for row in response["data"]
+			)
+		)
+
+	def test_list_doctypes_rejects_invalid_limit(self):
+		response = read_api.list_doctypes(limit=101)
+
+		self.assertFalse(response["ok"])
+		self.assertEqual(response["error"]["code"], "INVALID_ARGUMENT")
+
 	def test_get_doctype_schema_blocks_sensitive_doctype(self):
 		response = read_api.get_doctype_schema("User")
 		self.assertFalse(response["ok"])
@@ -64,6 +85,22 @@ class TestAgentReadApi(IntegrationTestCase):
 	def test_requested_field_projection_rejects_only_blocked_fields(self):
 		with self.assertRaisesRegex(read_api.AgentToolError, "No requested fields are readable"):
 			read_api._sanitize_fieldnames("DocType", ["api_secret"])
+
+	def test_field_projection_excludes_fields_without_field_level_read_permission(self):
+		with patch.object(read_api, "get_permitted_fields", return_value=["name", "modified"]):
+			fields, allowed_fields = read_api._sanitize_fieldnames(
+				"Mietvertrag",
+				["name", "modified", "aktuelle_betriebskostenregelung"],
+			)
+
+		self.assertEqual(fields, ["name", "modified"])
+		self.assertNotIn("aktuelle_betriebskostenregelung", allowed_fields)
+
+	def test_schema_excludes_fields_without_field_level_read_permission(self):
+		with patch.object(read_api, "get_permitted_fields", return_value=["wohnung"]):
+			schema = read_api._schema_for_doctype("Mietvertrag")
+
+		self.assertEqual([field["fieldname"] for field in schema["fields"]], ["wohnung"])
 
 	def test_list_docs_allows_standard_modified_order_by(self):
 		response = read_api.list_docs("DocType", fields=["name", "modified"], order_by="modified desc", limit=1)
