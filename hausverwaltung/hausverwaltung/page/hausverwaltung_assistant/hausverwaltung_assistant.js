@@ -19,15 +19,28 @@ function renderHausverwaltungAssistant(pageBody) {
 	const root = $(pageBody);
 	root.html(`
 		<div class="hv-assistant">
+			<button class="hv-assistant-backdrop" type="button" aria-label="${__("Seitenbereich schliessen")}" tabindex="-1"></button>
 			<div class="hv-assistant-shell">
-				<div class="hv-assistant-conversations">
+				<aside class="hv-assistant-conversations" id="hv-assistant-conversations" aria-label="${__("Chats")}">
 					<div class="hv-assistant-conversations-head">
 						<div class="hv-assistant-results-title">${__("Chats")}</div>
-						<button class="btn btn-xs btn-default hv-assistant-new" type="button">${__("Neu")}</button>
+						<div class="hv-assistant-panel-actions">
+							<button class="btn btn-xs btn-default hv-assistant-new" type="button">${__("Neu")}</button>
+							<button class="btn btn-xs btn-default hv-assistant-panel-close" type="button" aria-label="${__("Chats schliessen")}">×</button>
+						</div>
 					</div>
 					<div class="hv-assistant-conversation-list"></div>
-				</div>
+				</aside>
 				<div class="hv-assistant-main">
+					<div class="hv-assistant-mobile-bar">
+						<button class="hv-assistant-mobile-nav hv-assistant-open-chats" type="button" aria-controls="hv-assistant-conversations" aria-expanded="false">
+							<span aria-hidden="true">☰</span> ${__("Chats")}
+						</button>
+						<div class="hv-assistant-mobile-title">${__("Neuer Chat")}</div>
+						<button class="hv-assistant-mobile-nav hv-assistant-open-results" type="button" aria-controls="hv-assistant-results" aria-expanded="false">
+							${__("Treffer")} <span class="hv-assistant-results-count">0</span>
+						</button>
+					</div>
 					<div class="hv-assistant-messages" aria-live="polite"></div>
 					<form class="hv-assistant-form">
 						<input class="hv-assistant-input" type="search" autocomplete="off" placeholder="${__("Frage stellen oder Stammdaten suchen")}">
@@ -42,10 +55,13 @@ function renderHausverwaltungAssistant(pageBody) {
 						<button class="btn btn-primary hv-assistant-submit" type="submit">${__("Senden")}</button>
 					</form>
 				</div>
-				<div class="hv-assistant-results">
-					<div class="hv-assistant-results-title">${__("Treffer")}</div>
+				<aside class="hv-assistant-results" id="hv-assistant-results" aria-label="${__("Treffer")}">
+					<div class="hv-assistant-results-head">
+						<div class="hv-assistant-results-title">${__("Treffer")}</div>
+						<button class="btn btn-xs btn-default hv-assistant-panel-close" type="button" aria-label="${__("Treffer schliessen")}">×</button>
+					</div>
 					<div class="hv-assistant-results-list"></div>
-				</div>
+				</aside>
 			</div>
 		</div>
 		<style>
@@ -54,6 +70,12 @@ function renderHausverwaltungAssistant(pageBody) {
 				min-height: calc(100vh - 110px);
 				background: #f7f7f5;
 				color: #1f2328;
+				position: relative;
+			}
+			.hv-assistant-backdrop,
+			.hv-assistant-mobile-bar,
+			.hv-assistant-panel-close {
+				display: none;
 			}
 			.hv-assistant-shell {
 				display: grid;
@@ -74,10 +96,13 @@ function renderHausverwaltungAssistant(pageBody) {
 				display: grid;
 				grid-template-rows: minmax(360px, 1fr) auto;
 				min-height: calc(100vh - 150px);
+				overflow: hidden;
 			}
 			.hv-assistant-messages {
 				padding: 18px;
 				overflow: auto;
+				min-height: 0;
+				overscroll-behavior: contain;
 			}
 			.hv-assistant-message {
 				max-width: 760px;
@@ -290,6 +315,7 @@ function renderHausverwaltungAssistant(pageBody) {
 				padding: 0 12px;
 				font-size: 14px;
 				background: #fff;
+				min-width: 0;
 			}
 			.hv-assistant-engine,
 			.hv-assistant-model {
@@ -302,6 +328,14 @@ function renderHausverwaltungAssistant(pageBody) {
 			}
 			.hv-assistant-submit {
 				height: 36px;
+			}
+			.hv-assistant-input:focus-visible,
+			.hv-assistant-engine:focus-visible,
+			.hv-assistant-model:focus-visible,
+			.hv-assistant-mobile-nav:focus-visible,
+			.hv-assistant-panel-close:focus-visible {
+				outline: 2px solid #4c8bf5;
+				outline-offset: 2px;
 			}
 			.hv-assistant-results {
 				min-height: calc(100vh - 150px);
@@ -317,6 +351,16 @@ function renderHausverwaltungAssistant(pageBody) {
 				justify-content: space-between;
 				gap: 8px;
 				margin-bottom: 10px;
+			}
+			.hv-assistant-panel-actions,
+			.hv-assistant-results-head {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 8px;
+			}
+			.hv-assistant-results-head .hv-assistant-results-title {
+				margin-bottom: 0;
 			}
 			.hv-assistant-results-title {
 				font-weight: 600;
@@ -385,21 +429,179 @@ function renderHausverwaltungAssistant(pageBody) {
 				padding: 8px 0;
 			}
 			@media (max-width: 980px) {
+				.hv-assistant {
+					margin: -15px -15px 0;
+					min-height: calc(100dvh - 98px);
+					overflow: hidden;
+				}
 				.hv-assistant-shell {
-					grid-template-columns: 1fr;
+					display: block;
+					max-width: none;
+					padding: 10px;
+				}
+				.hv-assistant-main {
+					grid-template-rows: auto minmax(0, 1fr) auto;
+					height: calc(100dvh - 118px);
+					min-height: 0;
+					border-radius: 10px;
+				}
+				.hv-assistant-mobile-bar {
+					display: grid;
+					grid-template-columns: auto minmax(0, 1fr) auto;
+					align-items: center;
+					gap: 8px;
+					min-height: 48px;
+					padding: 6px 8px;
+					border-bottom: 1px solid #deded8;
+					background: #fff;
+				}
+				.hv-assistant-mobile-nav {
+					min-height: 36px;
+					border: 1px solid #d6d8d3;
+					border-radius: 8px;
+					padding: 0 10px;
+					background: #f7f8f5;
+					color: #35423d;
+					font-size: 12px;
+					font-weight: 600;
+				}
+				.hv-assistant-results-count {
+					display: inline-flex;
+					align-items: center;
+					justify-content: center;
+					min-width: 19px;
+					height: 19px;
+					margin-left: 3px;
+					padding: 0 5px;
+					border-radius: 10px;
+					background: #20312b;
+					color: #fff;
+					font-size: 10px;
+				}
+				.hv-assistant-mobile-title {
+					overflow: hidden;
+					text-align: center;
+					text-overflow: ellipsis;
+					white-space: nowrap;
+					font-size: 13px;
+					font-weight: 600;
 				}
 				.hv-assistant-conversations,
-				.hv-assistant-main,
 				.hv-assistant-results {
-					min-height: auto;
+					position: fixed;
+					top: 0;
+					bottom: 0;
+					z-index: 1061;
+					width: min(88vw, 380px);
+					min-height: 0;
+					padding: max(16px, env(safe-area-inset-top)) 14px max(16px, env(safe-area-inset-bottom));
+					overflow: auto;
+					border-radius: 0;
+					box-shadow: 0 16px 50px rgba(20, 28, 24, 0.24);
+					transition: transform 180ms ease;
+				}
+				.hv-assistant-conversations {
+					left: 0;
+					transform: translateX(-105%);
+				}
+				.hv-assistant-results {
+					right: 0;
+					transform: translateX(105%);
+				}
+				.hv-assistant.mobile-chats-open .hv-assistant-conversations,
+				.hv-assistant.mobile-results-open .hv-assistant-results {
+					transform: translateX(0);
+				}
+				.hv-assistant-panel-close {
+					display: inline-flex;
+					align-items: center;
+					justify-content: center;
+					width: 36px;
+					height: 36px;
+					padding: 0;
+					font-size: 22px;
+					line-height: 1;
+				}
+				.hv-assistant.mobile-chats-open .hv-assistant-backdrop,
+				.hv-assistant.mobile-results-open .hv-assistant-backdrop {
+					display: block;
+					position: fixed;
+					inset: 0;
+					z-index: 1060;
+					width: 100%;
+					height: 100%;
+					border: 0;
+					background: rgba(18, 24, 21, 0.38);
+				}
+				.hv-assistant-conversation,
+				.hv-assistant-result {
+					min-height: 48px;
+				}
+				.hv-assistant-route-row .btn {
+					min-height: 40px;
 				}
 			}
 			@media (max-width: 560px) {
 				.hv-assistant-shell {
-					padding: 10px;
+					padding: 0;
+				}
+				.hv-assistant-main {
+					height: calc(100dvh - 99px);
+					min-height: 0;
+					border-left: 0;
+					border-right: 0;
+					border-radius: 0;
+				}
+				.hv-assistant-messages {
+					padding: 12px 10px 6px;
+				}
+				.hv-assistant-message {
+					max-width: 92%;
+					margin-bottom: 10px;
+					padding: 9px 10px;
+					font-size: 14px;
+					word-break: break-word;
+				}
+				.hv-assistant-message.assistant,
+				.hv-assistant-message.error {
+					max-width: 100%;
 				}
 				.hv-assistant-form {
+					grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+					gap: 7px;
+					padding: 9px 9px max(9px, env(safe-area-inset-bottom));
+					background: #fff;
+				}
+				.hv-assistant-input {
+					grid-column: 1 / -1;
+					height: 44px;
+					font-size: 16px;
+				}
+				.hv-assistant-engine,
+				.hv-assistant-model {
+					width: 100%;
+					min-width: 0;
+					height: 42px;
+					padding-left: 8px;
+					font-size: 12px;
+				}
+				.hv-assistant-submit {
+					height: 42px;
+					padding-left: 13px;
+					padding-right: 13px;
+				}
+				.hv-assistant-analysis-row {
 					grid-template-columns: 1fr;
+					gap: 1px;
+				}
+				.hv-assistant-analysis-title {
+					align-items: flex-start;
+				}
+				.hv-assistant-analysis-exchange pre,
+				.hv-assistant-reasoning-content,
+				.hv-assistant-toolcall pre {
+					max-height: 55dvh;
+					font-size: 10px;
 				}
 			}
 		</style>
@@ -408,6 +610,13 @@ function renderHausverwaltungAssistant(pageBody) {
 	const messagesEl = root.find(".hv-assistant-messages");
 	const resultsEl = root.find(".hv-assistant-results-list");
 	const conversationsEl = root.find(".hv-assistant-conversation-list");
+	const assistantRoot = root.find(".hv-assistant");
+	const conversationsPanel = root.find(".hv-assistant-conversations");
+	const resultsPanel = root.find(".hv-assistant-results");
+	const chatsToggle = root.find(".hv-assistant-open-chats");
+	const resultsToggle = root.find(".hv-assistant-open-results");
+	const mobileTitle = root.find(".hv-assistant-mobile-title");
+	const resultsCount = root.find(".hv-assistant-results-count");
 	const form = root.find(".hv-assistant-form");
 	const input = root.find(".hv-assistant-input");
 	const engineSelect = root.find(".hv-assistant-engine");
@@ -417,6 +626,56 @@ function renderHausverwaltungAssistant(pageBody) {
 	let pollGeneration = 0;
 	const ASSISTANT_POLL_INTERVAL_MS = 1000;
 	const ASSISTANT_POLL_DEADLINE_MS = 20 * 60 * 1000;
+	const mobileLayout = window.matchMedia("(max-width: 980px)");
+	const compactLayout = window.matchMedia("(max-width: 560px)");
+
+	const syncMobilePanels = () => {
+		const chatsOpen = assistantRoot.hasClass("mobile-chats-open");
+		const resultsOpen = assistantRoot.hasClass("mobile-results-open");
+		chatsToggle.attr("aria-expanded", chatsOpen ? "true" : "false");
+		resultsToggle.attr("aria-expanded", resultsOpen ? "true" : "false");
+		if (mobileLayout.matches) {
+			conversationsPanel.attr("aria-hidden", chatsOpen ? "false" : "true");
+			resultsPanel.attr("aria-hidden", resultsOpen ? "false" : "true");
+			conversationsPanel.prop("inert", !chatsOpen);
+			resultsPanel.prop("inert", !resultsOpen);
+		} else {
+			conversationsPanel.removeAttr("aria-hidden").prop("inert", false);
+			resultsPanel.removeAttr("aria-hidden").prop("inert", false);
+		}
+	};
+
+	const closeMobilePanels = () => {
+		assistantRoot.removeClass("mobile-chats-open mobile-results-open");
+		syncMobilePanels();
+	};
+
+	const openMobilePanel = (panel) => {
+		assistantRoot.toggleClass("mobile-chats-open", panel === "chats");
+		assistantRoot.toggleClass("mobile-results-open", panel === "results");
+		syncMobilePanels();
+		const target = panel === "chats" ? conversationsPanel : resultsPanel;
+		window.setTimeout(() => target.find("button:visible").first().trigger("focus"), 190);
+	};
+
+	const focusComposer = () => {
+		if (!compactLayout.matches) input.trigger("focus");
+	};
+
+	chatsToggle.on("click", () => openMobilePanel("chats"));
+	resultsToggle.on("click", () => openMobilePanel("results"));
+	root.find(".hv-assistant-backdrop, .hv-assistant-panel-close").on("click", closeMobilePanels);
+	$(document)
+		.off("keydown.hvAssistantMobile")
+		.on("keydown.hvAssistantMobile", (event) => {
+			if (event.key === "Escape") closeMobilePanels();
+		});
+	if (mobileLayout.addEventListener) {
+		mobileLayout.addEventListener("change", closeMobilePanels);
+	} else {
+		mobileLayout.addListener(closeMobilePanels);
+	}
+	syncMobilePanels();
 
 	const loadAssistantModels = async () => {
 		try {
@@ -837,7 +1096,9 @@ function renderHausverwaltungAssistant(pageBody) {
 		renderResults([]);
 		setComposerDisabled(false);
 		conversationsEl.find(".hv-assistant-conversation").removeClass("active");
-		input.trigger("focus");
+		mobileTitle.text(__("Neuer Chat"));
+		closeMobilePanels();
+		focusComposer();
 	};
 
 	const renderConversationList = (rows) => {
@@ -864,7 +1125,10 @@ function renderHausverwaltungAssistant(pageBody) {
 			button.find(".hv-assistant-conversation-meta").text(
 				`${row.message_count || 0} ${__("Nachrichten")} · ${engineLabel}${runLabel}`
 			);
-			button.on("click", () => loadConversation(row.name));
+			button.on("click", () => {
+				closeMobilePanels();
+				loadConversation(row.name);
+			});
 			conversationsEl.append(button);
 		});
 	};
@@ -887,6 +1151,7 @@ function renderHausverwaltungAssistant(pageBody) {
 		if (generation !== pollGeneration) return;
 		const data = response.message || {};
 		conversationId = data.name || name;
+		mobileTitle.text(data.title || __("Chat"));
 		engineSelect.val(data.engine || "classic");
 		const hasStoredModel = modelSelect
 			.find("option")
@@ -942,11 +1207,12 @@ function renderHausverwaltungAssistant(pageBody) {
 			return;
 		}
 		setComposerDisabled(false);
-		input.trigger("focus");
+		focusComposer();
 	};
 
 	const renderResults = (matches) => {
 		resultsEl.empty();
+		resultsCount.text((matches || []).length);
 		if (!matches || !matches.length) {
 			resultsEl.html(`<div class="hv-assistant-empty">${__("Keine Treffer")}</div>`);
 			return;
@@ -968,6 +1234,7 @@ function renderHausverwaltungAssistant(pageBody) {
 				const btn = $(`<button class="btn btn-xs btn-default" type="button"></button>`);
 				btn.text(route.label || route.doctype || __("Oeffnen"));
 				btn.on("click", () => {
+					closeMobilePanels();
 					if (route.route) {
 						frappe.set_route(route.route);
 					} else if (route.doctype && route.name) {
@@ -983,6 +1250,7 @@ function renderHausverwaltungAssistant(pageBody) {
 	window.hvAssistantSend = async (rawMessage) => {
 		const message = (rawMessage || "").trim();
 		if (!message) return;
+		closeMobilePanels();
 		input.val("");
 		addMessage("user", message);
 		const pending = addMessage("assistant", __("Anfrage wird gestartet ..."));
@@ -1013,7 +1281,7 @@ function renderHausverwaltungAssistant(pageBody) {
 		} finally {
 			if (generation === pollGeneration) {
 				setComposerDisabled(false);
-				input.trigger("focus");
+				focusComposer();
 			}
 		}
 	};
@@ -1033,5 +1301,5 @@ function renderHausverwaltungAssistant(pageBody) {
 		await loadConversationList();
 	};
 	initialize();
-	input.trigger("focus");
+	focusComposer();
 }
