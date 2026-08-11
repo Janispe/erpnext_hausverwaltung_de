@@ -179,6 +179,38 @@ function renderHausverwaltungAssistant(pageBody) {
 				background: #fff4d6;
 				color: #754f0d;
 			}
+			.hv-assistant-reasoning {
+				margin-top: 9px;
+				border: 1px solid #d8d6e6;
+				border-radius: 7px;
+				background: #faf9ff;
+				font-size: 12px;
+				white-space: normal;
+			}
+			.hv-assistant-reasoning > summary {
+				cursor: pointer;
+				padding: 7px 9px;
+				color: #51476c;
+				font-weight: 600;
+			}
+			.hv-assistant-reasoning-note {
+				margin: 0 9px 7px;
+				color: #716982;
+				line-height: 1.4;
+			}
+			.hv-assistant-reasoning-content {
+				margin: 0 8px 8px;
+				padding: 8px;
+				border: 1px solid #e4e1ef;
+				border-radius: 6px;
+				background: #fff;
+				color: #3f394d;
+				font-family: var(--font-stack);
+				font-size: 12px;
+				line-height: 1.45;
+				white-space: pre-wrap;
+				word-break: break-word;
+			}
 			.hv-assistant-toolcall {
 				margin-top: 7px;
 				padding: 7px;
@@ -533,10 +565,30 @@ function renderHausverwaltungAssistant(pageBody) {
 		return textFromAny(err?.message || err?.responseJSON || err) || __("Unbekannter Fehler.");
 	};
 
-	const addMessage = (kind, text, toolCalls) => {
+	const appendReasoning = (node, reasoning) => {
+		const text = textFromAny(reasoning).trim();
+		if (!text) return;
+		const details = document.createElement("details");
+		details.className = "hv-assistant-reasoning";
+		const summary = document.createElement("summary");
+		summary.textContent = __("Modell-Reasoning (nicht verifiziert)");
+		const note = document.createElement("div");
+		note.className = "hv-assistant-reasoning-note";
+		note.textContent = __(
+			"Von Mistral gelieferte interne Ueberlegungen; sie koennen unvollstaendig oder fehlerhaft sein."
+		);
+		const content = document.createElement("pre");
+		content.className = "hv-assistant-reasoning-content";
+		content.textContent = text;
+		details.append(summary, note, content);
+		node.append(details);
+	};
+
+	const addMessage = (kind, text, toolCalls, reasoning) => {
 		const node = document.createElement("div");
 		node.className = `hv-assistant-message ${kind}`;
 		node.textContent = textFromAny(text);
+		appendReasoning(node, reasoning);
 		appendAnalysis(node, toolCalls);
 		appendToolCalls(node, toolCalls);
 		messagesEl.append(node);
@@ -605,7 +657,8 @@ function renderHausverwaltungAssistant(pageBody) {
 			addMessage(
 				message.role === "user" ? "user" : "assistant",
 				message.content || "",
-				message.tool_calls || []
+				message.tool_calls || [],
+				message.reasoning || ""
 			);
 			if (message.matches && message.matches.length) {
 				lastMatches = message.matches;
@@ -671,6 +724,7 @@ function renderHausverwaltungAssistant(pageBody) {
 			const data = response.message || {};
 			conversationId = data.conversation_id || conversationId;
 			pending.textContent = textFromAny(data.answer) || __("Keine Antwort erhalten.");
+			appendReasoning(pending, data.reasoning || "");
 			appendAnalysis(pending, data.tool_calls || []);
 			appendToolCalls(pending, data.tool_calls || []);
 			renderResults(data.matches || []);

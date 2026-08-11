@@ -184,6 +184,15 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			"conversation_id": "remote-conv-1",
 			"outputs": [
 				{
+					"type": "message.output",
+					"content": [
+						{
+							"type": "thinking",
+							"thinking": [{"type": "text", "text": "Ich suche nach Schmidt."}],
+						}
+					],
+				},
+				{
 					"type": "function.call",
 					"tool_call_id": "call-1",
 					"name": "search_mieter",
@@ -197,7 +206,13 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			"outputs": [
 				{
 					"type": "message.output",
-					"content": [{"type": "text", "text": "Ich habe Anna Schmidt gefunden."}],
+					"content": [
+						{
+							"type": "thinking",
+							"thinking": [{"type": "text", "text": "Der Treffer passt."}],
+						},
+						{"type": "text", "text": "Ich habe Anna Schmidt gefunden."},
+					],
 				}
 			],
 			"usage": {"prompt_tokens": 140, "completion_tokens": 30, "total_tokens": 170},
@@ -240,6 +255,7 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertIn("MV-1", function_result["result"])
 		self.assertEqual(result["engine"], "mistral_agents")
 		self.assertEqual(result["answer"], "Ich habe Anna Schmidt gefunden.")
+		self.assertEqual(result["reasoning"], "Ich suche nach Schmidt.\n\nDer Treffer passt.")
 		self.assertEqual(result["matches"][0]["mietvertrag"], "MV-1")
 		self.assertEqual(result["mistral_usage"]["calls"], 2)
 		set_value.assert_any_call(
@@ -253,6 +269,32 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			update_modified=False,
 		)
 		self.assertEqual(store_message.call_count, 2)
+		self.assertEqual(
+			store_message.call_args_list[1].kwargs["reasoning"],
+			"Ich suche nach Schmidt.\n\nDer Treffer passt.",
+		)
+
+	def test_mistral_conversation_reasoning_ignores_answer_text(self):
+		response = {
+			"outputs": [
+				{
+					"type": "message.output",
+					"content": [
+						{"type": "thinking", "thinking": "Erster Gedanke."},
+						{
+							"type": "thinking",
+							"thinking": [{"type": "text", "text": "Zweiter Gedanke."}],
+						},
+						{"type": "text", "text": "Antwort."},
+					],
+				}
+			]
+		}
+
+		self.assertEqual(
+			assistant._mistral_conversation_reasoning(response),
+			"Erster Gedanke.\n\nZweiter Gedanke.",
+		)
 
 	def test_mistral_agent_registry_reuses_matching_agent_definition(self):
 		model = "mistral-small-latest"

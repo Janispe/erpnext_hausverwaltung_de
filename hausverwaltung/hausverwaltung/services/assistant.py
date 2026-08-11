@@ -26,6 +26,7 @@ CONVERSATION_HISTORY_LIMIT = 10
 CONVERSATION_LIST_LIMIT = 30
 CONVERSATION_MESSAGE_LIMIT = 100
 STORED_MATCH_LIMIT = 10
+MAX_STORED_REASONING_CHARS = 30000
 ASSISTANT_ENGINE_CLASSIC = "classic"
 ASSISTANT_ENGINE_MISTRAL_AGENTS = "mistral_agents"
 ASSISTANT_ENGINES = {ASSISTANT_ENGINE_CLASSIC, ASSISTANT_ENGINE_MISTRAL_AGENTS}
@@ -1309,7 +1310,7 @@ def get_conversation(conversation_id: str) -> dict[str, Any]:
 	rows = frappe.get_all(
 		"Hausverwaltung Assistant Message",
 		filters={"conversation": conversation.name, "user": frappe.session.user},
-		fields=["role", "content", "tool_names", "tool_calls_json", "matches_json", "creation"],
+		fields=["role", "content", "reasoning", "tool_names", "tool_calls_json", "matches_json", "creation"],
 		order_by="creation asc",
 		limit=CONVERSATION_MESSAGE_LIMIT,
 	)
@@ -1660,10 +1661,13 @@ def _run_mistral_agent_assistant(
 	tool_calls_debug: list[dict[str, Any]] = []
 	matches: list[dict[str, Any]] = []
 	usage_entries: list[dict[str, Any]] = []
+	reasoning_chunks: list[str] = []
 	answer = ""
 
 	for tool_round in range(MAX_TOOL_ROUNDS + 1):
 		usage_entries.append(response.get("usage") or {})
+		if reasoning := _mistral_conversation_reasoning(response):
+			reasoning_chunks.append(reasoning)
 		remote_conversation_id = str(response.get("conversation_id") or "").strip()
 		function_calls = _mistral_conversation_function_calls(response)
 		if not function_calls:
@@ -1703,6 +1707,7 @@ def _run_mistral_agent_assistant(
 
 	deduped_matches = _dedupe_matches(matches)
 	answer = answer or _fallback_answer(deduped_matches)
+	reasoning = "\n\n".join(reasoning_chunks)[:MAX_STORED_REASONING_CHARS]
 	frappe.db.set_value(
 		"Hausverwaltung Assistant Conversation",
 		conversation.name,
@@ -1721,6 +1726,7 @@ def _run_mistral_agent_assistant(
 		tool_names=tool_names,
 		tool_calls=tool_calls_debug,
 		matches=deduped_matches,
+		reasoning=reasoning,
 	)
 	_log_assistant_call(
 		message_chars=len(user_message),
@@ -1739,6 +1745,7 @@ def _run_mistral_agent_assistant(
 		"engine": ASSISTANT_ENGINE_MISTRAL_AGENTS,
 		"tool_names": tool_names,
 		"tool_calls": tool_calls_debug,
+		"reasoning": reasoning,
 		"toolset": _tool_names(ASSISTANT_TOOLS),
 		"mistral_usage": _mistral_usage_summary(usage_entries),
 		"read_only": True,
@@ -1828,6 +1835,31 @@ def _mistral_conversation_text(response: dict[str, Any]) -> str:
 	return ""
 
 
+def _mistral_conversation_reasoning(response: dict[str, Any]) -> str:
+	parts: list[str] = []
+	for entry in response.get("outputs") or []:
+		if not isinstance(entry, dict) or entry.get("type") != "message.output":
+			continue
+		content = entry.get("content")
+		if not isinstance(content, list):
+			continue
+		for chunk in content:
+			if not isinstance(chunk, dict) or chunk.get("type") != "thinking":
+				continue
+			thinking = chunk.get("thinking")
+			if isinstance(thinking, str) and thinking.strip():
+				parts.append(thinking.strip())
+			elif isinstance(thinking, list):
+				text = "".join(
+					str(item.get("text") or "")
+					for item in thinking
+					if isinstance(item, dict)
+				).strip()
+				if text:
+					parts.append(text)
+	return "\n\n".join(parts)
+
+
 def _normalize_assistant_engine(engine: str | None) -> str:
 	selected = (engine or ASSISTANT_ENGINE_CLASSIC).strip().lower()
 	if selected not in ASSISTANT_ENGINES:
@@ -1912,6 +1944,7 @@ def _store_conversation_message(
 	tool_names: list[str] | None = None,
 	tool_calls: list[dict[str, Any]] | None = None,
 	matches: list[dict[str, Any]] | None = None,
+	reasoning: str | None = None,
 ) -> None:
 	if role not in {"user", "assistant"}:
 		return
@@ -1922,6 +1955,7 @@ def _store_conversation_message(
 			"user": frappe.session.user,
 			"role": role,
 			"content": content or "",
+			"reasoning": (reasoning or "")[:MAX_STORED_REASONING_CHARS],
 			"tool_names": ", ".join(tool_names or []),
 			"tool_calls_json": json.dumps(tool_calls or [], ensure_ascii=True, default=str) if tool_calls else "",
 			"matches_json": json.dumps((matches or [])[:STORED_MATCH_LIMIT], ensure_ascii=True, default=str)
@@ -1946,6 +1980,7 @@ def _conversation_message_row(row: dict[str, Any]) -> dict[str, Any]:
 	return {
 		"role": row.get("role") or "",
 		"content": row.get("content") or "",
+		"reasoning": row.get("reasoning") or "",
 		"tool_names": [name.strip() for name in (row.get("tool_names") or "").split(",") if name.strip()],
 		"tool_calls": _parse_stored_json_list(row.get("tool_calls_json")),
 		"matches": _parse_stored_matches(row.get("matches_json")),

@@ -10,6 +10,7 @@
   "user",
   "role",
   "content",
+  "reasoning",
   "tool_names",
   "tool_calls_json",
   "matches_json"
@@ -45,6 +46,13 @@
    "fieldtype": "Long Text",
    "label": "Inhalt",
    "reqd": 1
+  },
+  {
+   "fieldname": "reasoning",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Modell-Reasoning",
+   "read_only": 1
   },
   {
    "fieldname": "tool_names",
