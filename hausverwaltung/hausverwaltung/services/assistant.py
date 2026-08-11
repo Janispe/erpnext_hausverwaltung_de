@@ -183,14 +183,6 @@ left join `tabWohnung` w on w.name = mv.wohnung
 left join `tabImmobilie` im on im.name = mv.immobilie
 """
 
-_CONTRACT_DURATION_DAYS_SQL = """(
-	case
-		when mv.von is null then null
-		when mv.status = 'Läuft' then greatest(datediff(%(today)s, mv.von), 0)
-		else greatest(datediff(least(coalesce(mv.bis, %(today)s), %(today)s), mv.von), 0)
-	end
-)"""
-
 HV_QUERY_VIEWS: dict[str, dict[str, Any]] = {
 	"apartments": {
 		"description": (
@@ -277,8 +269,6 @@ HV_QUERY_VIEWS: dict[str, dict[str, Any]] = {
 			"personen": "coalesce(mvp.personen, 0)",
 			"von": "mv.von",
 			"bis": "mv.bis",
-			"mietdauer_tage": _CONTRACT_DURATION_DAYS_SQL,
-			"mietdauer_jahre": f"({_CONTRACT_DURATION_DAYS_SQL} / 365.2425)",
 			"bevorzugter_versandweg": "mv.bevorzugter_versandweg",
 			"kontakt_namen": "group_concat(distinct nullif(trim(concat_ws(' ', ct.first_name, ct.last_name)), '') separator ', ')",
 			"modified": "mv.modified",
@@ -298,10 +288,6 @@ HV_QUERY_VIEWS: dict[str, dict[str, Any]] = {
 			"ende": "bis",
 			"vertragsbeginn": "von",
 			"vertragsende": "bis",
-			"mietdauer": "mietdauer_jahre",
-			"wohnsitzdauer": "mietdauer_jahre",
-			"wohnzeit": "mietdauer_jahre",
-			"vertragsalter": "mietdauer_jahre",
 		},
 	},
 	"invoices": {
@@ -3818,8 +3804,6 @@ def _query_field_kind(field: str) -> str:
 		"invoice_outstanding_amount",
 		"days_overdue",
 		"days_late",
-		"mietdauer_tage",
-		"mietdauer_jahre",
 		"bruttomiete",
 		"aktuelle_nettokaltmiete",
 		"aktuelle_betriebskosten",
@@ -3868,13 +3852,6 @@ def _field_description_text(view: str, field: str) -> str:
 		("tenant_contracts", "mietvertrag"): "Mietvertrag-Dokumentname; zaehlt Vertraege, nicht Personen.",
 		("tenant_contracts", "personen"): "Personenanzahl aus der Mietvertrag-Personen-Tabelle zum aktuellen Stichtag.",
 		("tenant_contracts", "status"): "Mietvertragstatus; fuer aktuelle Mieter meist status = Laeuft nutzen.",
-		("tenant_contracts", "mietdauer_tage"): (
-			"Vertragsdauer in Tagen: bei laufenden Vertraegen vom Feld von bis heute, sonst bis zum Vertragsende."
-		),
-		("tenant_contracts", "mietdauer_jahre"): (
-			"Vertragsdauer in Jahren: bei laufenden Vertraegen vom Feld von bis heute, sonst bis zum Vertragsende. "
-			"Fuer die durchschnittliche bisherige Wohnzeit aktiver Mieter avg auf diesem Feld und status=Laeuft nutzen."
-		),
 		("open_items", "outstanding_amount"): "Aktuell offener Rechnungsbetrag.",
 		("payments", "days_late"): "Tage zwischen Rechnungsfaelligkeit und Zahlung.",
 	}
@@ -4173,10 +4150,6 @@ def _safe_view_aggregate(conf: dict[str, Any], aggregate: dict | str | None) -> 
 	group_by = _normalize_view_field(conf, parsed.get("group_by")) if parsed.get("group_by") else ""
 	if op != "count" and field not in conf.get("fields", {}):
 		frappe.throw(_("Aggregationsfeld nicht erlaubt: {0}").format(field or "-"))
-	if op in {"sum", "avg"} and _query_field_kind(field) != "number":
-		frappe.throw(
-			_("Aggregation {0} erfordert ein numerisches Feld; {1} ist nicht numerisch.").format(op, field)
-		)
 	if group_by and group_by not in conf.get("fields", {}):
 		frappe.throw(_("Gruppierungsfeld nicht erlaubt: {0}").format(group_by))
 	return {"op": op, "field": field or None, "group_by": group_by or None}

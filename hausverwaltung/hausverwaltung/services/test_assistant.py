@@ -1283,43 +1283,6 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["aggregate"]["groups"], [{"key": "Warthestr. 65", "count": 2, "value": 5.0}])
 		self.assertEqual(result["matches"][0]["title"], "Warthestr. 65")
 
-	def test_hv_query_view_tenant_contracts_averages_server_side_duration(self):
-		rows = [
-			frappe._dict(name="MV-1", mietvertrag="MV-1", mietdauer_jahre=8.0),
-			frappe._dict(name="MV-2", mietvertrag="MV-2", mietdauer_jahre=9.0),
-		]
-
-		with patch.object(assistant.frappe, "has_permission", return_value=True), \
-			 patch.object(assistant, "_default_company", return_value="Hausverwaltung Peters"), \
-			 patch.object(assistant, "nowdate", return_value="2026-08-11"), \
-			 patch.object(assistant, "_can_read_doc", return_value=True), \
-			 patch.object(assistant.frappe.db, "sql", return_value=rows) as sql:
-			result = assistant.hv_query_view(
-				"tenant_contracts",
-				fields=["mietvertrag"],
-				filters=[["status", "=", "Läuft"]],
-				aggregate={"op": "avg", "field": "mietdauer"},
-				limit=1,
-			)
-
-		query = sql.call_args.args[0]
-		self.assertIn("datediff(%(today)s, mv.von)", query)
-		self.assertIn("as `mietdauer_jahre`", query)
-		self.assertEqual(result["aggregate"], {
-			"op": "avg",
-			"field": "mietdauer_jahre",
-			"value": 8.5,
-			"count": 2,
-		})
-
-	def test_hv_query_view_rejects_average_of_contract_start_date(self):
-		with patch.object(assistant.frappe, "has_permission", return_value=True), \
-			 self.assertRaises(frappe.ValidationError):
-			assistant.hv_query_view(
-				"tenant_contracts",
-				aggregate={"op": "avg", "field": "von"},
-			)
-
 	def test_hv_describe_query_sources_lists_allowed_views_and_fields(self):
 		with patch.object(assistant, "_require_search_permissions"), \
 			 patch.object(assistant.frappe, "has_permission", return_value=True):
@@ -1332,12 +1295,8 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(tenant_contracts["row_meaning"], "eine Zeile pro Mietvertrag")
 		field_names = {field["name"] for field in tenant_contracts["fields"]}
 		self.assertIn("personen", field_names)
-		self.assertIn("mietdauer_jahre", field_names)
 		personen = next(field for field in tenant_contracts["fields"] if field["name"] == "personen")
 		self.assertIn("sum", personen["aggregations"])
-		mietdauer = next(field for field in tenant_contracts["fields"] if field["name"] == "mietdauer_jahre")
-		self.assertIn("avg", mietdauer["aggregations"])
-		self.assertIn("wohnsitzdauer", mietdauer["aliases"])
 
 	def test_hv_describe_query_source_returns_detail_for_alias(self):
 		with patch.object(assistant, "_require_search_permissions"), \
