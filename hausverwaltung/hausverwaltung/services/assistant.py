@@ -42,7 +42,7 @@ ASSISTANT_ENGINES = {
 	ASSISTANT_ENGINE_MISTRAL_AGENTS,
 	ASSISTANT_ENGINE_MISTRAL_BASIC,
 }
-MISTRAL_AGENT_DEFINITION_VERSION = 1
+MISTRAL_AGENT_DEFINITION_VERSION = 2
 
 HV_READABLE_DOCTYPES: dict[str, dict[str, Any]] = {
 	"Mietvertrag": {
@@ -685,11 +685,20 @@ Schreibe niemals SQL und aendere keine Daten.
 Beachte Feldtypen strikt. Wenn eine Frage mehrere oder alle Treffer berechnet, vergleicht oder statistisch auswertet,
 erstelle mit agent_create_dataset ein vollstaendiges lokales Dataset. Uebertrage dessen Zeilen niemals in den
 code_interpreter und berechne Datumsdifferenzen, Summen, Mittelwerte, Minima und Maxima ausschliesslich mit
-agent_analyze_dataset. Das Ergebnis ist nur gueltig, wenn complete=true und rows_used sowie rows_skipped genannt sind.
+agent_analyze_dataset. Fuer Auswertungen je Haus, Status oder anderer Kategorie nutze group_by direkt in
+agent_analyze_dataset; lade dafuer niemals alle Dataset-Zeilen. Wenn eine erforderliche Berechnung dort nicht
+angeboten wird, nutze agent_run_dataset_code auf demselben Dataset. Fordere dabei mit fields erneut nur die wirklich
+benoetigten Dataset-Felder an. Im lokalen Python-Code stehen rows, field_types, pd, np, math, statistics, datetime und
+Decimal bereit; schreibe das kleine strukturierte Endergebnis zwingend in die Variable result. Verwende print nur fuer
+kurze Diagnoseausgaben. Gib niemals vollstaendige Eingabezeilen als result zurueck, wenn der Nutzer keinen solchen
+Einzelnachweis verlangt. Das Ergebnis ist nur gueltig, wenn complete=true und
+rows_used sowie rows_skipped genannt sind. Waehle unit passend zur gewuenschten Antwort, bei Mietdauern in der Regel
+years, damit keine nachtraegliche Umrechnung durch das Modell erforderlich ist.
 Wenn sich bei einer Nachfrage der Umfang oder Filter aendert, erstelle dafuer ein neues Dataset. Einzelne Zeilen eines
 Datasets darfst du mit agent_list_dataset_rows suchen und danach mit agent_get_dataset_row gezielt laden. Verwende
 agent_list_docs und agent_search_docs nur fuer kleine Ergebnislisten, bei denen keine Berechnung ueber alle Treffer
-erforderlich ist. Der code_interpreter ist nur fuer Mathematik auf bereits kompakten Ergebnissen gedacht.
+erforderlich ist. Es gibt keinen Cloud-Code-Interpreter; komplexe Dataset-Berechnungen laufen ausschliesslich mit
+agent_run_dataset_code im lokalen isolierten Sidecar.
 Bei Fragen nach einer bereits verstrichenen Dauer (z.B. "schon", "bisher" oder "bis heute") ist
 das Ende immer der genannte oder aktuelle Stichtag. Verwende dafuer bei agent_analyze_dataset end_mode=as_of und
 setze kein end_field; ein zukuenftiges Enddatum darf diese Dauer nicht verlaengern.
@@ -1211,7 +1220,8 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 			"name": "agent_analyze_dataset",
 			"description": (
 				"Berechnet lokal und vollstaendig count, sum, avg, min, max oder Datumsdifferenzen fuer ein Dataset. "
-				"Gibt value, dataset_row_count, rows_used und rows_skipped zurueck."
+				"Optional gruppiert group_by nach bis zu drei im Dataset vorhandenen Feldern. Gibt value oder groups "
+				"sowie dataset_row_count, rows_used und rows_skipped zurueck."
 			),
 			"parameters": {
 				"type": "object",
@@ -1237,6 +1247,14 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 						),
 					},
 					"unit": {"type": "string", "enum": ["days", "months", "years"]},
+					"group_by": {
+						"type": ["string", "array"],
+						"items": {"type": "string"},
+						"description": (
+							"Optional ein Feld oder bis zu drei Felder fuer lokale Gruppenaggregate. "
+							"Die Felder muessen bereits im Dataset enthalten sein."
+						),
+					},
 				},
 				"required": ["dataset_id", "operation"],
 			},
@@ -1340,12 +1358,48 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 	},
 ]
 
+BASIC_AGENT_INTERPRETER_TOOL = {
+	"type": "function",
+	"function": {
+		"name": "agent_run_dataset_code",
+		"description": (
+			"Fuehrt Python ausschliesslich lokal in einem isolierten, netzwerklosen Sidecar auf einem bereits "
+			"berechtigungsgeprueften Dataset aus. Nur verwenden, wenn agent_analyze_dataset die Berechnung nicht "
+			"abbildet. Der Code sieht nur die explizit angeforderten fields plus die opake row_id und muss ein "
+			"kleines JSON-kompatibles Ergebnis in result ablegen."
+		),
+		"parameters": {
+			"type": "object",
+			"properties": {
+				"dataset_id": {"type": "string"},
+				"fields": {
+					"type": ["array", "string"],
+					"items": {"type": "string"},
+					"description": (
+						"Nur die fuer den Code erforderlichen, bereits im Dataset vorhandenen Felder. "
+						"name nur fuer ausdruecklich benoetigte Dokument-IDs anfordern."
+					),
+				},
+				"code": {
+					"type": "string",
+					"description": (
+						"Python-Code. Verfuegbar sind rows (Liste von Dicts), field_types, pd, np, math, "
+						"statistics, datetime und Decimal. Das Ergebnis muss in result stehen."
+					),
+				},
+			},
+			"required": ["dataset_id", "fields", "code"],
+		},
+	},
+}
+
 BASIC_AGENT_LOCAL_TOOL_NAMES = {
 	"agent_list_doctypes",
 	"agent_get_doctype_schema",
 	"agent_list_docs",
 	"agent_create_dataset",
 	"agent_analyze_dataset",
+	"agent_run_dataset_code",
 	"agent_list_dataset_rows",
 	"agent_get_dataset_row",
 	"agent_get_doc",
@@ -1354,6 +1408,7 @@ BASIC_AGENT_LOCAL_TOOL_NAMES = {
 BASIC_AGENT_DATASET_TOOL_NAMES = {
 	"agent_create_dataset",
 	"agent_analyze_dataset",
+	"agent_run_dataset_code",
 	"agent_list_dataset_rows",
 	"agent_get_dataset_row",
 }
@@ -1361,7 +1416,7 @@ BASIC_AGENT_TOOLS = [
 	tool
 	for tool in ASSISTANT_TOOLS
 	if tool.get("function", {}).get("name") in BASIC_AGENT_LOCAL_TOOL_NAMES
-] + [{"type": "code_interpreter"}]
+] + [BASIC_AGENT_INTERPRETER_TOOL]
 
 TOOL_FUNCTIONS = {
 	"hv_describe_query_sources": lambda **kwargs: hv_describe_query_sources(**kwargs),
@@ -1382,6 +1437,7 @@ TOOL_FUNCTIONS = {
 	"agent_list_docs": lambda **kwargs: agent_list_docs(**kwargs),
 	"agent_create_dataset": lambda **kwargs: agent_create_dataset(**kwargs),
 	"agent_analyze_dataset": lambda **kwargs: agent_analyze_dataset(**kwargs),
+	"agent_run_dataset_code": lambda **kwargs: agent_run_dataset_code(**kwargs),
 	"agent_list_dataset_rows": lambda **kwargs: agent_list_dataset_rows(**kwargs),
 	"agent_get_dataset_row": lambda **kwargs: agent_get_dataset_row(**kwargs),
 	"agent_get_doc": lambda **kwargs: agent_get_doc(**kwargs),
@@ -1920,12 +1976,19 @@ def _run_mistral_agent_assistant(
 	"""Run a read-only tool profile through Mistral Agents & Conversations."""
 	agent_tools = _mistral_agent_tools(engine)
 	remote_agent_id = str(getattr(conversation, "remote_agent_id", None) or "").strip()
+	agent_definition_changed = False
+	if engine == ASSISTANT_ENGINE_MISTRAL_BASIC:
+		current_agent_id = _get_or_create_mistral_agent(selected_model, engine=engine)
+		agent_definition_changed = bool(remote_agent_id and remote_agent_id != current_agent_id)
+		remote_agent_id = current_agent_id
 	if not remote_agent_id:
 		remote_agent_id = _get_or_create_mistral_agent(selected_model, engine=engine)
 
 	remote_conversation_id = str(
 		getattr(conversation, "remote_conversation_id", None) or ""
 	).strip()
+	if agent_definition_changed:
+		remote_conversation_id = ""
 	conversation_options = (
 		{"timeout": BASIC_AGENT_API_TIMEOUT}
 		if engine == ASSISTANT_ENGINE_MISTRAL_BASIC
@@ -2000,7 +2063,11 @@ def _run_mistral_agent_assistant(
 				**conversation_options,
 			)
 	else:
-		start_input = _mistral_agent_start_input(conversation, current_input)
+		start_input = _mistral_agent_start_input(
+			conversation,
+			current_input,
+			force_rehydrate=agent_definition_changed,
+		)
 		if progress_callback:
 			response = mistral_client.start_agent_conversation_stream(
 				agent_id=remote_agent_id,
@@ -2258,7 +2325,7 @@ def _mistral_agent_definition(engine: str) -> dict[str, Any]:
 	if engine == ASSISTANT_ENGINE_MISTRAL_BASIC:
 		return {
 			"name": "Hausverwaltung Basic ({model})",
-			"description": "Minimaler Readonly-Agent mit generischen ERPNext-Lesetools und Code Interpreter.",
+			"description": "Minimaler Readonly-Agent mit generischen ERPNext-Lesetools und lokalem Dataset-Interpreter.",
 			"instructions": BASIC_AGENT_SYSTEM_PROMPT,
 			"tools": BASIC_AGENT_TOOLS,
 			"reasoning_effort": "high",
@@ -2507,9 +2574,14 @@ def _load_conversation_history(conversation_id: str) -> list[dict[str, str]]:
 	return messages
 
 
-def _mistral_agent_start_input(conversation, current_input: str) -> str:
-	"""Restore recent local context only after a retained remote chat was deleted."""
-	if not getattr(conversation, "remote_conversation_deleted_on", None):
+def _mistral_agent_start_input(
+	conversation,
+	current_input: str,
+	*,
+	force_rehydrate: bool = False,
+) -> str:
+	"""Restore local context after remote deletion or an agent-definition upgrade."""
+	if not force_rehydrate and not getattr(conversation, "remote_conversation_deleted_on", None):
 		return current_input
 	history = _load_conversation_history(conversation.name)
 	if not history:
@@ -2700,11 +2772,23 @@ def _tool_call_analysis(
 		"dataset_id": result.get("dataset_id"),
 		"operation": result.get("operation"),
 		"value": result.get("value"),
+		"group_by": result.get("group_by"),
+		"group_count": result.get("group_count"),
+		"groups": _compact_dataset_groups(result.get("groups")),
+		"groups_truncated": True
+		if isinstance(result.get("groups"), list) and len(result["groups"]) > 20
+		else None,
 		"rows_used": result.get("rows_used"),
 		"rows_skipped": result.get("rows_skipped"),
 		"warnings": _tool_call_analysis_warnings(aggregation, aggregation_result, result_count, error),
 	}
 	return {key: value for key, value in analysis.items() if value not in (None, "", [], {})}
+
+
+def _compact_dataset_groups(groups: Any) -> list[dict[str, Any]] | None:
+	if not isinstance(groups, list):
+		return None
+	return [dict(group) for group in groups[:20] if isinstance(group, dict)]
 
 
 def _tool_call_source(name: str, arguments: dict[str, Any], result: dict[str, Any]) -> str:
@@ -3698,6 +3782,7 @@ def agent_analyze_dataset(
 	as_of: str | None = None,
 	end_mode: str = "min_field_or_as_of",
 	unit: str = "years",
+	group_by: list[str] | str | None = None,
 	_conversation_id: str | None = None,
 ) -> dict[str, Any]:
 	return agent_dataset_api.analyze_dataset(
@@ -3709,6 +3794,21 @@ def agent_analyze_dataset(
 		as_of=as_of,
 		end_mode=end_mode,
 		unit=unit,
+		group_by=group_by,
+		conversation_id=_conversation_id,
+	)
+
+
+def agent_run_dataset_code(
+	dataset_id: str,
+	fields: list[str] | str | None,
+	code: str,
+	_conversation_id: str | None = None,
+) -> dict[str, Any]:
+	return agent_dataset_api.run_dataset_code(
+		dataset_id=dataset_id,
+		fields=fields,
+		code=code,
 		conversation_id=_conversation_id,
 	)
 

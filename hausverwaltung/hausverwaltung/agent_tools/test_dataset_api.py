@@ -18,13 +18,14 @@ class TestAgentDatasetApi(IntegrationTestCase):
 			"user": frappe.session.user,
 			"conversation_id": "CONV-1",
 			"doctype": "Mietvertrag",
-			"fields": ["name", "von", "bis", "status", "personen"],
+			"fields": ["name", "von", "bis", "status", "personen", "immobilie"],
 			"field_types": {
 				"name": "Data",
 				"von": "Date",
 				"bis": "Date",
 				"status": "Select",
 				"personen": "Int",
+				"immobilie": "Link",
 			},
 			"rows": [
 				{
@@ -36,6 +37,7 @@ class TestAgentDatasetApi(IntegrationTestCase):
 						"bis": None,
 						"status": "Läuft",
 						"personen": 2,
+						"immobilie": "Haus A",
 					},
 				},
 				{
@@ -47,6 +49,7 @@ class TestAgentDatasetApi(IntegrationTestCase):
 						"bis": "2021-01-01",
 						"status": "Vergangenheit",
 						"personen": 1,
+						"immobilie": "Haus A",
 					},
 				},
 				{
@@ -58,6 +61,7 @@ class TestAgentDatasetApi(IntegrationTestCase):
 						"bis": "2030-01-01",
 						"status": "Läuft",
 						"personen": None,
+						"immobilie": "Haus B",
 					},
 				},
 			],
@@ -138,6 +142,70 @@ class TestAgentDatasetApi(IntegrationTestCase):
 		self.assertEqual(result["rows_used"], 2)
 		self.assertEqual(result["rows_skipped"], 1)
 
+	def test_grouped_average_date_difference_stays_local_and_accounts_for_every_row(self):
+		dataset = self._dataset()
+		with patch.object(dataset_api, "_load_dataset", return_value=(dataset, None)):
+			result = dataset_api.analyze_dataset(
+				dataset_id="ds-test",
+				operation="avg_date_difference",
+				start_field="von",
+				end_mode="as_of",
+				as_of="2025-01-01",
+				unit="years",
+				group_by="immobilie",
+				conversation_id="CONV-1",
+			)
+
+		expected_house_a = (
+			(date(2025, 1, 1) - date(2020, 1, 1)).days * 2 / 2 / 365.2425
+		)
+		expected_house_b = (date(2025, 1, 1) - date(2024, 1, 1)).days / 365.2425
+		self.assertTrue(result["ok"])
+		self.assertTrue(result["complete"])
+		self.assertEqual(result["group_by"], ["immobilie"])
+		self.assertEqual(result["group_count"], 2)
+		self.assertEqual(result["rows_used"], 3)
+		self.assertEqual(result["rows_skipped"], 0)
+		self.assertEqual([group["key"] for group in result["groups"]], ["Haus A", "Haus B"])
+		self.assertAlmostEqual(result["groups"][0]["value"], expected_house_a, places=6)
+		self.assertAlmostEqual(result["groups"][1]["value"], expected_house_b, places=6)
+
+	def test_grouped_numeric_average_reports_skipped_values_per_group(self):
+		dataset = self._dataset()
+		with patch.object(dataset_api, "_load_dataset", return_value=(dataset, None)):
+			result = dataset_api.analyze_dataset(
+				dataset_id="ds-test",
+				operation="avg",
+				field="personen",
+				group_by=["status", "immobilie"],
+				conversation_id="CONV-1",
+			)
+
+		self.assertEqual(result["group_count"], 3)
+		self.assertEqual(result["rows_used"], 2)
+		self.assertEqual(result["rows_skipped"], 1)
+		running_house_b = next(
+			group for group in result["groups"]
+			if group["group"] == {"status": "Läuft", "immobilie": "Haus B"}
+		)
+		self.assertIsNone(running_house_b["value"])
+		self.assertEqual(running_house_b["rows_used"], 0)
+		self.assertEqual(running_house_b["rows_skipped"], 1)
+		self.assertEqual(running_house_b["error"]["code"], "NO_VALID_VALUES")
+
+	def test_group_by_requires_fields_already_materialized_in_dataset(self):
+		dataset = self._dataset()
+		with patch.object(dataset_api, "_load_dataset", return_value=(dataset, None)):
+			result = dataset_api.analyze_dataset(
+				dataset_id="ds-test",
+				operation="count",
+				group_by="wohnung",
+				conversation_id="CONV-1",
+			)
+
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["error"]["code"], "INVALID_ARGUMENT")
+
 	def test_list_dataset_rows_only_returns_requested_fields(self):
 		dataset = self._dataset()
 		with patch.object(dataset_api, "_load_dataset", return_value=(dataset, None)), \
@@ -175,6 +243,88 @@ class TestAgentDatasetApi(IntegrationTestCase):
 			fields=["wohnung"],
 			include_children=0,
 		)
+
+	def test_run_dataset_code_only_sends_explicit_projection_to_sidecar(self):
+		dataset = self._dataset()
+		with patch.object(dataset_api, "_load_dataset", return_value=(dataset, None)), \
+			 patch.object(dataset_api, "_can_still_read", return_value=True), \
+			 patch.object(
+				dataset_api.dataset_interpreter,
+				"execute",
+				return_value={"ok": True, "result": {"running": 2}, "stdout": None},
+			 ) as execute:
+			result = dataset_api.run_dataset_code(
+				dataset_id="ds-test",
+				fields=["status"],
+				code="result = {'running': len(rows)}",
+				conversation_id="CONV-1",
+			)
+
+		self.assertTrue(result["ok"])
+		self.assertTrue(result["complete"])
+		self.assertEqual(result["rows_used"], 3)
+		self.assertEqual(result["result"], {"running": 2})
+		self.assertEqual(
+			execute.call_args.kwargs["rows"],
+			[
+				{"row_id": "row-1", "status": "Läuft"},
+				{"row_id": "row-2", "status": "Vergangenheit"},
+				{"row_id": "row-3", "status": "Läuft"},
+			],
+		)
+		self.assertEqual(execute.call_args.kwargs["field_types"], {"status": "Select"})
+		self.assertNotIn("name", execute.call_args.kwargs["rows"][0])
+
+	def test_run_dataset_code_can_explicitly_receive_document_ids(self):
+		dataset = self._dataset()
+		with patch.object(dataset_api, "_load_dataset", return_value=(dataset, None)), \
+			 patch.object(dataset_api, "_can_still_read", return_value=True), \
+			 patch.object(
+				dataset_api.dataset_interpreter,
+				"execute",
+				return_value={"ok": True, "result": ["MV-1", "MV-2", "MV-3"], "stdout": None},
+			 ) as execute:
+			result = dataset_api.run_dataset_code(
+				dataset_id="ds-test",
+				fields=["name"],
+				code="result = [row['name'] for row in rows]",
+				conversation_id="CONV-1",
+			)
+
+		self.assertTrue(result["ok"])
+		self.assertEqual(execute.call_args.kwargs["rows"][0]["name"], "MV-1")
+
+	def test_run_dataset_code_stops_when_document_permission_changed(self):
+		dataset = self._dataset()
+		with patch.object(dataset_api, "_load_dataset", return_value=(dataset, None)), \
+			 patch.object(dataset_api, "_can_still_read", side_effect=[True, False]), \
+			 patch.object(dataset_api.dataset_interpreter, "execute") as execute:
+			result = dataset_api.run_dataset_code(
+				dataset_id="ds-test",
+				fields=["status"],
+				code="result = len(rows)",
+				conversation_id="CONV-1",
+			)
+
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["error"]["code"], "DATASET_PERMISSION_CHANGED")
+		execute.assert_not_called()
+
+	def test_run_dataset_code_stops_when_field_permission_changed(self):
+		dataset = self._dataset()
+		with patch.object(dataset_api, "_load_dataset", return_value=(dataset, None)), \
+			 patch.object(dataset_api.read_api, "_sanitize_fieldnames", return_value=([], set())), \
+			 patch.object(dataset_api.dataset_interpreter, "execute") as execute:
+			result = dataset_api.run_dataset_code(
+				dataset_id="ds-test",
+				fields=["status"],
+				code="result = len(rows)",
+				conversation_id="CONV-1",
+			)
+
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["error"]["code"], "DATASET_PERMISSION_CHANGED")
+		execute.assert_not_called()
 
 	def test_load_dataset_rejects_another_conversation(self):
 		payload = self._dataset()

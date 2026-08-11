@@ -630,9 +630,28 @@ function renderHausverwaltungAssistant(pageBody) {
 			item.append(title);
 			appendAnalysisRow(item, __("Werkzeug"), step.tool);
 			appendAnalysisRow(item, __("Filter"), step.filters);
-			appendAnalysisRow(item, __("Berechnung"), aggregationLabel(step.aggregation));
-			appendAnalysisRow(item, __("Ergebnis"), aggregationResultLabel(step.aggregation_result));
+			appendAnalysisRow(
+				item,
+				__("Berechnung"),
+				aggregationLabel(step.aggregation) || step.operation
+			);
+			appendAnalysisRow(
+				item,
+				__("Ergebnis"),
+				aggregationResultLabel(step.aggregation_result) || step.value
+			);
+			appendAnalysisRow(item, __("Gruppierung"), step.group_by);
+			if (Array.isArray(step.groups)) {
+				const suffix = step.groups_truncated ? `\n${__("Weitere Gruppen im vollstaendigen Tool-Ergebnis.")}` : "";
+				appendAnalysisRow(
+					item,
+					`${__("Gruppenergebnisse")} (${step.group_count ?? step.groups.length})`,
+					`${compactJson(step.groups)}${suffix}`
+				);
+			}
 			appendAnalysisRow(item, __("Treffer"), step.result_count);
+			appendAnalysisRow(item, __("Verwendet"), step.rows_used);
+			appendAnalysisRow(item, __("Uebersprungen"), step.rows_skipped);
 			appendAnalysisRow(item, __("Sortierung"), step.order_by);
 			const toolCall = toolCalls[index] || {};
 			const error = toolCall.error;

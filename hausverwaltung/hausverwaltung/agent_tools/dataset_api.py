@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -9,11 +10,14 @@ import frappe
 from frappe.utils import getdate, nowdate
 
 from hausverwaltung.hausverwaltung.agent_tools import read_api
+from hausverwaltung.hausverwaltung.services import dataset_interpreter
 
 DATASET_TTL_SECONDS = 24 * 60 * 60
 DATASET_PAGE_SIZE = 100
 DATASET_MAX_ROWS = 5000
 DATASET_ROW_LIMIT = 100
+DATASET_MAX_GROUP_FIELDS = 3
+DATASET_MAX_GROUPS = 200
 NUMERIC_FIELDTYPES = {
 	"Check",
 	"Currency",
@@ -126,28 +130,151 @@ def analyze_dataset(
 	as_of: str | None = None,
 	end_mode: str = "min_field_or_as_of",
 	unit: str = "years",
+	group_by: list[str] | str | None = None,
 	conversation_id: str | None = None,
 ) -> dict[str, Any]:
 	dataset, error = _load_dataset(dataset_id, conversation_id)
 	if error:
 		return error
-	rows = dataset["rows"]
 	op = str(operation or "").strip().lower()
+	group_fields, group_error = _normalize_group_fields(dataset, group_by)
+	if group_error:
+		return group_error
+	analysis_arguments = {
+		"field": str(field or "").strip(),
+		"start_field": str(start_field or "").strip(),
+		"end_field": str(end_field or "").strip(),
+		"as_of": as_of,
+		"end_mode": end_mode,
+		"unit": unit,
+	}
+	if group_fields:
+		return _analyze_grouped(dataset, op, group_fields, analysis_arguments)
+	return _analyze_ungrouped(dataset, op, analysis_arguments)
+
+
+def _analyze_ungrouped(
+	dataset: dict[str, Any],
+	operation: str,
+	arguments: dict[str, Any],
+) -> dict[str, Any]:
+	rows = dataset["rows"]
+	op = operation
 	if op == "count":
 		return _analysis_result(dataset, op, len(rows), len(rows), 0)
 	if op in {"sum", "avg", "min", "max"}:
-		return _analyze_numeric(dataset, op, str(field or "").strip())
+		return _analyze_numeric(dataset, op, arguments["field"])
 	if op in {"avg_date_difference", "min_date_difference", "max_date_difference"}:
 		return _analyze_date_difference(
 			dataset,
 			op,
-			start_field=str(start_field or "").strip(),
-			end_field=str(end_field or "").strip(),
-			as_of=as_of,
-			end_mode=end_mode,
-			unit=unit,
+			start_field=arguments["start_field"],
+			end_field=arguments["end_field"],
+			as_of=arguments["as_of"],
+			end_mode=arguments["end_mode"],
+			unit=arguments["unit"],
 		)
-	return _error("INVALID_ARGUMENT", f"Unbekannte Dataset-Operation: {operation}")
+	return _error("INVALID_ARGUMENT", f"Unbekannte Dataset-Operation: {op}")
+
+
+def _normalize_group_fields(
+	dataset: dict[str, Any],
+	group_by: list[str] | str | None,
+) -> tuple[list[str], dict[str, Any] | None]:
+	if group_by in (None, "", []):
+		return [], None
+	try:
+		fields = [group_by] if isinstance(group_by, str) else (read_api.normalize_fields(group_by) or [])
+	except Exception:
+		return [], _error("INVALID_ARGUMENT", "group_by muss ein Feld oder eine Feldliste sein.")
+	fields = list(dict.fromkeys(str(field or "").strip() for field in fields if str(field or "").strip()))
+	if not fields:
+		return [], _error("INVALID_ARGUMENT", "group_by muss mindestens ein Feld enthalten.")
+	if len(fields) > DATASET_MAX_GROUP_FIELDS:
+		return [], _error(
+			"INVALID_ARGUMENT",
+			f"group_by erlaubt hoechstens {DATASET_MAX_GROUP_FIELDS} Felder.",
+		)
+	unknown = [field for field in fields if field not in dataset["fields"]]
+	if unknown:
+		return [], _error(
+			"INVALID_ARGUMENT",
+			f"group_by-Felder sind nicht im Dataset vorhanden: {', '.join(unknown)}",
+		)
+	return fields, None
+
+
+def _analyze_grouped(
+	dataset: dict[str, Any],
+	operation: str,
+	group_fields: list[str],
+	arguments: dict[str, Any],
+) -> dict[str, Any]:
+	overall = _analyze_ungrouped(dataset, operation, arguments)
+	if not overall.get("ok"):
+		return overall
+
+	buckets: dict[str, dict[str, Any]] = {}
+	for row in dataset["rows"]:
+		group = {field: row["values"].get(field) for field in group_fields}
+		bucket_key = json.dumps(group, ensure_ascii=False, sort_keys=True, default=str)
+		bucket = buckets.setdefault(bucket_key, {"group": group, "rows": []})
+		bucket["rows"].append(row)
+		if len(buckets) > DATASET_MAX_GROUPS:
+			return _error(
+				"TOO_MANY_GROUPS",
+				f"Mehr als {DATASET_MAX_GROUPS} Gruppen. Bitte Dataset oder group_by eingrenzen.",
+				group_count=len(buckets),
+			)
+
+	groups = []
+	for bucket in sorted(buckets.values(), key=lambda item: _group_sort_key(item["group"])):
+		group_dataset = {**dataset, "rows": bucket["rows"]}
+		analysis = _analyze_ungrouped(group_dataset, operation, arguments)
+		item = {
+			"key": next(iter(bucket["group"].values())) if len(group_fields) == 1 else dict(bucket["group"]),
+			"group": dict(bucket["group"]),
+			"row_count": len(bucket["rows"]),
+		}
+		if analysis.get("ok"):
+			item.update(
+				{
+					"value": analysis.get("value"),
+					"rows_used": analysis.get("rows_used", 0),
+					"rows_skipped": analysis.get("rows_skipped", 0),
+				}
+			)
+			for key in ("average_days", "row_ids"):
+				if analysis.get(key) is not None:
+					item[key] = analysis[key]
+		else:
+			item.update(
+				{
+					"value": None,
+					"rows_used": 0,
+					"rows_skipped": len(bucket["rows"]),
+					"error": analysis.get("error"),
+				}
+			)
+		groups.append(item)
+
+	result = {
+		key: value
+		for key, value in overall.items()
+		if key not in {"value", "average_days", "row_ids"}
+	}
+	result.update(
+		{
+			"group_by": group_fields,
+			"group_count": len(groups),
+			"groups": groups,
+		}
+	)
+	return result
+
+
+def _group_sort_key(group: dict[str, Any]) -> tuple[str, ...]:
+	return tuple("" if value is None else str(value).casefold() for value in group.values())
 
 
 def list_dataset_rows(
@@ -230,6 +357,90 @@ def get_dataset_row(
 		"doctype": dataset["doctype"],
 		"name": stored["name"],
 		"data": data,
+	}
+
+
+def run_dataset_code(
+	*,
+	dataset_id: str,
+	code: str,
+	fields: list[str] | str | None = None,
+	conversation_id: str | None = None,
+) -> dict[str, Any]:
+	"""Run Python against an explicitly projected local dataset in the isolated sidecar."""
+	dataset, error = _load_dataset(dataset_id, conversation_id)
+	if error:
+		return error
+	selected_fields, field_error = _selected_dataset_fields(dataset, fields)
+	if field_error:
+		return field_error
+	try:
+		currently_readable_fields, _allowed_fields = read_api._sanitize_fieldnames(
+			dataset["doctype"],
+			selected_fields,
+		)
+	except Exception:
+		return _error(
+			"DATASET_PERMISSION_CHANGED",
+			"Mindestens ein Dataset-Feld ist nicht mehr lesbar. Bitte das Dataset neu erstellen.",
+		)
+	if currently_readable_fields != selected_fields:
+		return _error(
+			"DATASET_PERMISSION_CHANGED",
+			"Mindestens ein Dataset-Feld ist nicht mehr lesbar. Bitte das Dataset neu erstellen.",
+		)
+
+	rows = []
+	for stored in dataset["rows"]:
+		if not _can_still_read(dataset["doctype"], stored["name"]):
+			return _error(
+				"DATASET_PERMISSION_CHANGED",
+				"Mindestens ein Datensatz ist nicht mehr lesbar. Bitte das Dataset neu erstellen.",
+			)
+		values = stored["values"]
+		rows.append(
+			{
+				"row_id": stored["row_id"],
+				**{field: values.get(field) for field in selected_fields},
+			}
+		)
+
+	started_at = time.perf_counter()
+	try:
+		execution = dataset_interpreter.execute(
+			code=code,
+			rows=rows,
+			field_types={field: dataset["field_types"].get(field, "Data") for field in selected_fields},
+		)
+	except dataset_interpreter.DatasetInterpreterError as exc:
+		return _error("INTERPRETER_UNAVAILABLE", str(exc))
+	duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+	if not execution.get("ok"):
+		return {
+			"ok": False,
+			"dataset_id": dataset["dataset_id"],
+			"doctype": dataset["doctype"],
+			"dataset_row_count": len(dataset["rows"]),
+			"fields": selected_fields,
+			"duration_ms": duration_ms,
+			"error": execution.get("error") or {
+				"code": "INTERPRETER_ERROR",
+				"message": "Der lokale Interpreter ist fehlgeschlagen.",
+			},
+		}
+	return {
+		"ok": True,
+		"complete": True,
+		"dataset_id": dataset["dataset_id"],
+		"doctype": dataset["doctype"],
+		"dataset_row_count": len(dataset["rows"]),
+		"rows_used": len(rows),
+		"rows_skipped": 0,
+		"fields": selected_fields,
+		"result": execution.get("result"),
+		"stdout": execution.get("stdout"),
+		"stderr": execution.get("stderr"),
+		"duration_ms": duration_ms,
 	}
 
 
@@ -371,6 +582,7 @@ def _analysis_result(
 ) -> dict[str, Any]:
 	return {
 		"ok": True,
+		"complete": True,
 		"dataset_id": dataset["dataset_id"],
 		"doctype": dataset["doctype"],
 		"operation": operation,

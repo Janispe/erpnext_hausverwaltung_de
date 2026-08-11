@@ -376,12 +376,24 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(agent_id, "agent-existing")
 		create_agent.assert_not_called()
 
-	def test_mistral_basic_agent_uses_only_generic_read_tools_and_code_interpreter(self):
+	def test_mistral_basic_agent_uses_only_generic_read_tools_and_local_interpreter(self):
 		tool_names = assistant._tool_names(assistant.BASIC_AGENT_TOOLS)
 
-		self.assertEqual(set(tool_names), assistant.BASIC_AGENT_LOCAL_TOOL_NAMES | {"code_interpreter"})
+		self.assertEqual(set(tool_names), assistant.BASIC_AGENT_LOCAL_TOOL_NAMES)
+		self.assertIn("agent_run_dataset_code", tool_names)
+		self.assertNotIn("code_interpreter", tool_names)
 		self.assertNotIn("search_mieter", tool_names)
 		self.assertNotIn("hv_query_view", tool_names)
+
+	def test_mistral_basic_dataset_analysis_exposes_local_grouping(self):
+		tool = next(
+			item for item in assistant.BASIC_AGENT_TOOLS
+			if item.get("function", {}).get("name") == "agent_analyze_dataset"
+		)
+		group_by = tool["function"]["parameters"]["properties"]["group_by"]
+
+		self.assertEqual(group_by["type"], ["string", "array"])
+		self.assertIn("group_by direkt", assistant.BASIC_AGENT_SYSTEM_PROMPT)
 
 	def test_mistral_basic_agent_registry_is_separate_and_enables_reasoning(self):
 		model = "mistral-small-latest"
@@ -405,7 +417,9 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 
 		self.assertEqual(agent_id, "agent-basic")
 		self.assertEqual(create_agent.call_args.kwargs["reasoning_effort"], "high")
-		self.assertIn({"type": "code_interpreter"}, create_agent.call_args.kwargs["tools"])
+		created_tool_names = assistant._tool_names(create_agent.call_args.kwargs["tools"])
+		self.assertIn("agent_run_dataset_code", created_tool_names)
+		self.assertNotIn("code_interpreter", created_tool_names)
 		set_value.assert_called_once_with(
 			"Hausverwaltung Assistent Modell",
 			"MODEL-ROW-1",
@@ -430,7 +444,8 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			"outputs": [{"type": "message.output", "content": [{"type": "text", "text": "42"}]}],
 		}
 
-		with patch.object(mistral_client, "start_agent_conversation", return_value=response) as start, \
+		with patch.object(assistant, "_get_or_create_mistral_agent", return_value="agent-basic"), \
+			 patch.object(mistral_client, "start_agent_conversation", return_value=response) as start, \
 			 patch.object(assistant, "_store_conversation_message"), \
 			 patch.object(assistant, "_log_assistant_call"), \
 			 patch.object(assistant.frappe.db, "set_value"):
@@ -468,6 +483,42 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertIn("Assistent: Sie beträgt 800 Euro.", result)
 		self.assertTrue(result.endswith("Anfrage des Nutzers: und ab September?"))
 
+	def test_mistral_basic_agent_upgrade_starts_new_remote_chat_with_local_history(self):
+		conversation = frappe._dict(
+			name="CONV-BASIC-UPGRADE",
+			remote_agent_id="agent-basic-old",
+			remote_conversation_id="remote-old",
+			remote_conversation_deleted_on=None,
+		)
+		response = {
+			"conversation_id": "remote-new",
+			"outputs": [{"type": "message.output", "content": [{"type": "text", "text": "Aktualisiert."}]}],
+		}
+		history = [
+			{"role": "user", "content": "Berechne die Mietdauer."},
+			{"role": "assistant", "content": "Sie betraegt 8 Jahre."},
+		]
+
+		with patch.object(assistant, "_get_or_create_mistral_agent", return_value="agent-basic-new"), \
+			 patch.object(assistant, "_load_conversation_history", return_value=history), \
+			 patch.object(mistral_client, "start_agent_conversation", return_value=response) as start, \
+			 patch.object(mistral_client, "append_agent_conversation") as append, \
+			 patch.object(assistant, "_store_conversation_message"), \
+			 patch.object(assistant, "_log_assistant_call"), \
+			 patch.object(assistant.frappe.db, "set_value"):
+			result = assistant._run_mistral_agent_assistant(
+				user_message="Und pro Haus?",
+				conversation=conversation,
+				selected_model="mistral-medium-latest",
+				engine=assistant.ASSISTANT_ENGINE_MISTRAL_BASIC,
+			)
+
+		self.assertEqual(result["answer"], "Aktualisiert.")
+		self.assertEqual(start.call_args.kwargs["agent_id"], "agent-basic-new")
+		self.assertIn("Bisheriger lokaler Verlauf", start.call_args.kwargs["inputs"])
+		self.assertIn("Berechne die Mietdauer.", start.call_args.kwargs["inputs"])
+		append.assert_not_called()
+
 	def test_mistral_agent_reports_reasoning_and_tools_during_run(self):
 		conversation = frappe._dict(
 			name="CONV-PROGRESS-1",
@@ -493,7 +544,8 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		}
 		progress = Mock()
 
-		with patch.object(mistral_client, "start_agent_conversation_stream", return_value=response), \
+		with patch.object(assistant, "_get_or_create_mistral_agent", return_value="agent-1"), \
+			 patch.object(mistral_client, "start_agent_conversation_stream", return_value=response), \
 			 patch.object(assistant, "_store_conversation_message"), \
 			 patch.object(assistant, "_log_assistant_call"), \
 			 patch.object(assistant.frappe.db, "set_value"):
@@ -567,7 +619,8 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			],
 		}
 
-		with patch.object(mistral_client, "start_agent_conversation", return_value=failed_response), \
+		with patch.object(assistant, "_get_or_create_mistral_agent", return_value="agent-basic"), \
+			 patch.object(mistral_client, "start_agent_conversation", return_value=failed_response), \
 			 patch.object(mistral_client, "append_agent_conversation", return_value=success_response) as append, \
 			 patch.object(assistant, "_store_conversation_message"), \
 			 patch.object(assistant, "_log_assistant_call"), \
@@ -646,6 +699,27 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		create_dataset.assert_called_once_with(
 			doctype="Mietvertrag",
 			fields=["von"],
+			_conversation_id="CONV-1",
+		)
+
+	def test_mistral_basic_local_interpreter_receives_hidden_conversation_binding(self):
+		with patch.object(
+			assistant,
+			"agent_run_dataset_code",
+			return_value={"ok": True, "result": 3, "rows_used": 3},
+		) as run_code:
+			result = assistant._execute_mistral_agent_function(
+				"agent_run_dataset_code",
+				{"dataset_id": "ds-1", "fields": ["betrag"], "code": "result = len(rows)"},
+				engine=assistant.ASSISTANT_ENGINE_MISTRAL_BASIC,
+				conversation_id="CONV-1",
+			)
+
+		self.assertTrue(result["ok"])
+		run_code.assert_called_once_with(
+			dataset_id="ds-1",
+			fields=["betrag"],
+			code="result = len(rows)",
 			_conversation_id="CONV-1",
 		)
 
@@ -1032,6 +1106,30 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 
 		self.assertNotIn("warnings", debug["analysis"])
 		self.assertEqual(debug["analysis"]["aggregation_result"]["group_count"], 1)
+
+	def test_tool_call_debug_exposes_compact_dataset_groups(self):
+		groups = [
+			{"key": f"Haus {index}", "value": index, "rows_used": 1, "rows_skipped": 0}
+			for index in range(25)
+		]
+		debug = assistant._tool_call_debug(
+			"agent_analyze_dataset",
+			{"dataset_id": "ds-1", "operation": "avg", "group_by": "immobilie"},
+			{
+				"ok": True,
+				"dataset_id": "ds-1",
+				"operation": "avg",
+				"group_by": ["immobilie"],
+				"group_count": 25,
+				"groups": groups,
+				"rows_used": 25,
+				"rows_skipped": 0,
+			},
+		)
+
+		self.assertEqual(debug["analysis"]["group_by"], ["immobilie"])
+		self.assertEqual(len(debug["analysis"]["groups"]), 20)
+		self.assertTrue(debug["analysis"]["groups_truncated"])
 
 	def test_agent_get_doctype_schema_compacts_model_context(self):
 		raw_schema = {

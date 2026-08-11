@@ -1,0 +1,54 @@
+services:
+  backend:
+    depends_on:
+      dataset-interpreter:
+        condition: service_healthy
+    environment:
+      HV_DATASET_INTERPRETER_SOCKET: /run/hv-dataset-interpreter/interpreter.sock
+    volumes:
+      - hv-dataset-interpreter-socket:/run/hv-dataset-interpreter
+
+  queue-short:
+    depends_on:
+      dataset-interpreter:
+        condition: service_healthy
+    environment:
+      HV_DATASET_INTERPRETER_SOCKET: /run/hv-dataset-interpreter/interpreter.sock
+    volumes:
+      - hv-dataset-interpreter-socket:/run/hv-dataset-interpreter
+
+  queue-long:
+    depends_on:
+      dataset-interpreter:
+        condition: service_healthy
+    environment:
+      HV_DATASET_INTERPRETER_SOCKET: /run/hv-dataset-interpreter/interpreter.sock
+    volumes:
+      - hv-dataset-interpreter-socket:/run/hv-dataset-interpreter
+
+  dataset-interpreter:
+    build:
+      context: ${HV_DATASET_INTERPRETER_CONTEXT:-./apps/hausverwaltung/docker/dataset_interpreter}
+    restart: unless-stopped
+    environment:
+      HV_DATASET_INTERPRETER_SOCKET_GID: ${HV_DATASET_INTERPRETER_SOCKET_GID:-1000}
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 64
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m,mode=1777
+    volumes:
+      - hv-dataset-interpreter-socket:/run/hv-dataset-interpreter
+
+volumes:
+  hv-dataset-interpreter-socket:
