@@ -1562,6 +1562,23 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
             {"label": "Mieter", "link_type": "DocType", "link_to": "Customer"},
             {"label": "Eigentümer", "link_type": "DocType", "link_to": "Eigentuemer"},
             {"label": "Telefonnummern", "link_type": "DocType", "link_to": "Telefonnummernauszug"},
+            {"label": "Anlagenarten", "link_type": "DocType", "link_to": "Anlagenart"},
+            {
+                "label": "Wartungsmaßnahmen-Vorlagen",
+                "link_type": "DocType",
+                "link_to": "Wartungsmassnahme Vorlage",
+            },
+        ],
+    },
+    {
+        "label": "Anlagen & Wartung",
+        "icon": "wrench",
+        "links": [
+            {"label": "Technische Anlagen", "link_type": "DocType", "link_to": "Technische Anlage"},
+            {"label": "Wartungstermine", "link_type": "DocType", "link_to": "Wartungstermin"},
+            {"label": "Anlagenmängel", "link_type": "DocType", "link_to": "Anlagenmangel"},
+            {"label": "Sammelwartungen", "link_type": "DocType", "link_to": "Sammelwartung"},
+            {"label": "Wartungsverträge", "link_type": "DocType", "link_to": "Wartungsvertrag"},
         ],
     },
     {
