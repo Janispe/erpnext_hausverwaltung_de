@@ -14,9 +14,21 @@ SERIENBRIEF_MAIL_MERGE_PAGES = (
     "serienbrief_vorlagenbaum",
 )
 
+STANDARD_ANLAGENKATEGORIEN = (
+    "Heizung und Warmwasser",
+    "Fördertechnik",
+    "Sicherheitstechnik",
+    "Lüftung und Klima",
+    "Elektrotechnik",
+    "Wasser und Abwasser",
+    "Gebäudetechnik",
+    "Sonstige",
+)
+
 
 def after_install() -> None:
     _run_bootstrap(reason="after_install")
+    ensure_anlagenkategorien()
     _run_post_install_patches(reason="after_install")
     _ensure_party_type_eigentuemer(reason="after_install")
     _sync_hausverwalter_permissions(reason="after_install")
@@ -47,6 +59,36 @@ def after_install() -> None:
     _ensure_serienbrief_page_modules(reason="after_install")
     ensure_hausverwaltung_workspace_layout()
     ensure_hausverwaltung_sidebar()
+
+
+def ensure_anlagenkategorien() -> None:
+    """Legt die Standardkategorien an und übernimmt vorhandene Select-Werte."""
+    if not frappe.db.exists("DocType", "Anlagenkategorie"):
+        return
+
+    kategorien = list(STANDARD_ANLAGENKATEGORIEN)
+    if frappe.db.exists("DocType", "Anlagenart"):
+        for kategorie in frappe.get_all(
+            "Anlagenart",
+            filters={"kategorie": ("is", "set")},
+            pluck="kategorie",
+            distinct=True,
+        ):
+            if kategorie not in kategorien:
+                kategorien.append(kategorie)
+
+    for index, bezeichnung in enumerate(kategorien, start=1):
+        if frappe.db.exists("Anlagenkategorie", bezeichnung):
+            continue
+        frappe.get_doc(
+            {
+                "doctype": "Anlagenkategorie",
+                "bezeichnung": bezeichnung,
+                "sortierung": index * 10,
+            }
+        ).insert(ignore_permissions=True)
+
+    frappe.clear_cache(doctype="Anlagenkategorie")
 
 
 def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
@@ -1562,6 +1604,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
             {"label": "Mieter", "link_type": "DocType", "link_to": "Customer"},
             {"label": "Eigentümer", "link_type": "DocType", "link_to": "Eigentuemer"},
             {"label": "Telefonnummern", "link_type": "DocType", "link_to": "Telefonnummernauszug"},
+            {"label": "Anlagenkategorien", "link_type": "DocType", "link_to": "Anlagenkategorie"},
             {"label": "Anlagenarten", "link_type": "DocType", "link_to": "Anlagenart"},
             {
                 "label": "Wartungsmaßnahmen-Vorlagen",

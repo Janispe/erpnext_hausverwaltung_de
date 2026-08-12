@@ -2,15 +2,14 @@
  "actions": [],
  "allow_rename": 1,
  "autoname": "field:bezeichnung",
- "creation": "2026-07-22 00:00:00.000000",
+ "creation": "2026-08-12 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "bezeichnung",
-  "kategorie",
   "deaktiviert",
-  "zuordnung_section",
-  "standard_zuordnung",
+  "sortierung",
+  "farbe",
   "beschreibung"
  ],
  "fields": [
@@ -24,15 +23,6 @@
    "unique": 1
   },
   {
-   "fieldname": "kategorie",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Kategorie",
-   "options": "Anlagenkategorie",
-   "reqd": 1
-  },
-  {
    "default": "0",
    "fieldname": "deaktiviert",
    "fieldtype": "Check",
@@ -40,22 +30,20 @@
    "label": "Deaktiviert"
   },
   {
-   "fieldname": "zuordnung_section",
-   "fieldtype": "Section Break",
-   "label": "Zuordnung"
+   "default": "0",
+   "fieldname": "sortierung",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Sortierung"
   },
   {
-   "default": "Immobilie oder Wohnung",
-   "description": "Legt fest, ob konkrete Anlagen üblicherweise zentral oder wohnungsbezogen geführt werden.",
-   "fieldname": "standard_zuordnung",
-   "fieldtype": "Select",
-   "label": "Übliche Zuordnung",
-   "options": "Immobilie\nWohnung\nImmobilie oder Wohnung",
-   "reqd": 1
+   "fieldname": "farbe",
+   "fieldtype": "Color",
+   "label": "Farbe"
   },
   {
    "fieldname": "beschreibung",
-   "fieldtype": "Text Editor",
+   "fieldtype": "Small Text",
    "label": "Beschreibung"
   }
  ],
@@ -64,24 +52,14 @@
  "links": [
   {
    "group": "Anlagen",
-   "link_doctype": "Technische Anlage",
-   "link_fieldname": "anlagenart"
-  },
-  {
-   "group": "Wartung",
-   "link_doctype": "Wartungsmassnahme Vorlage",
-   "link_fieldname": "anlagenart"
-  },
-  {
-   "group": "Wartung",
-   "link_doctype": "Sammelwartung",
-   "link_fieldname": "anlagenart"
+   "link_doctype": "Anlagenart",
+   "link_fieldname": "kategorie"
   }
  ],
- "modified": "2026-07-22 00:00:00.000000",
+ "modified": "2026-08-12 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
- "name": "Anlagenart",
+ "name": "Anlagenkategorie",
  "naming_rule": "By fieldname",
  "owner": "Administrator",
  "permissions": [
@@ -111,7 +89,7 @@
   }
  ],
  "row_format": "Dynamic",
- "sort_field": "bezeichnung",
+ "sort_field": "sortierung",
  "sort_order": "ASC",
  "states": [],
  "title_field": "bezeichnung"

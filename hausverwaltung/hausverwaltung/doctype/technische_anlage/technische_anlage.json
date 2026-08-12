@@ -99,7 +99,7 @@
    "fieldname": "zuordnungstyp",
    "fieldtype": "Select",
    "label": "Zuordnungstyp",
-   "options": "Immobilie\nWohnung\nGemeinschaftsbereich",
+   "options": "Immobilie\nWohnung",
    "reqd": 1
   },
   {
@@ -112,10 +112,12 @@
    "reqd": 1
   },
   {
+   "depends_on": "eval:doc.zuordnungstyp=='Wohnung'",
    "fieldname": "wohnung",
    "fieldtype": "Link",
    "in_standard_filter": 1,
    "label": "Wohnung",
+   "mandatory_depends_on": "eval:doc.zuordnungstyp=='Wohnung'",
    "options": "Wohnung"
   },
   {
