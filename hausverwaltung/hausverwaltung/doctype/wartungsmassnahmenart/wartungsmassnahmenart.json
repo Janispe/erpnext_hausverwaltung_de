@@ -1,0 +1,121 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:bezeichnung",
+ "creation": "2026-08-12 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bezeichnung",
+  "deaktiviert",
+  "sortierung",
+  "farbe",
+  "standard_dokumentart",
+  "beschreibung"
+ ],
+ "fields": [
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Bezeichnung",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "deaktiviert",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Deaktiviert"
+  },
+  {
+   "default": "0",
+   "fieldname": "sortierung",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Sortierung"
+  },
+  {
+   "fieldname": "farbe",
+   "fieldtype": "Color",
+   "label": "Farbe"
+  },
+  {
+   "default": "Wartungsprotokoll",
+   "description": "Wird beim Ablegen des Durchführungsnachweises als Dokumentart verwendet.",
+   "fieldname": "standard_dokumentart",
+   "fieldtype": "Select",
+   "label": "Standard-Dokumentart",
+   "options": "Technische Unterlage\nWartungsprotokoll\nPrüfbescheinigung\nVertrag\nRechnung\nFoto\nSonstiges",
+   "reqd": 1
+  },
+  {
+   "fieldname": "beschreibung",
+   "fieldtype": "Small Text",
+   "label": "Beschreibung"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [
+  {
+   "group": "Wartung",
+   "link_doctype": "Wartungsmassnahme Vorlage",
+   "link_fieldname": "massnahmenart"
+  },
+  {
+   "group": "Wartung",
+   "link_doctype": "Wartungsplan",
+   "link_fieldname": "massnahmenart"
+  },
+  {
+   "group": "Wartung",
+   "link_doctype": "Wartungstermin",
+   "link_fieldname": "massnahmenart"
+  },
+  {
+   "group": "Wartung",
+   "link_doctype": "Anlagenwartung",
+   "link_fieldname": "massnahmenart"
+  }
+ ],
+ "modified": "2026-08-12 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Wartungsmassnahmenart",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "sortierung",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "bezeichnung"
+}

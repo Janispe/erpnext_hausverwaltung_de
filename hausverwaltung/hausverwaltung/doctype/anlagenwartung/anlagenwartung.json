@@ -76,10 +76,10 @@
   },
   {
    "fieldname": "massnahmenart",
-   "fieldtype": "Select",
+   "fieldtype": "Link",
    "in_standard_filter": 1,
    "label": "Maßnahmenart",
-   "options": "Wartung\nPrüfung\nInspektion\nReinigung\nReparatur\nSonstiges",
+   "options": "Wartungsmassnahmenart",
    "read_only": 1,
    "reqd": 1
   },

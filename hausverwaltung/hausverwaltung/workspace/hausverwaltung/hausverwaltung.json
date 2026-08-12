@@ -17,6 +17,7 @@
   {"hidden":0,"is_query_report":0,"label":"Anlagenstammdaten","link_count":0,"onboard":0,"type":"Card Break"},
   {"hidden":0,"is_query_report":0,"label":"Anlagenkategorien","link_count":0,"link_to":"Anlagenkategorie","link_type":"DocType","onboard":0,"type":"Link"},
   {"hidden":0,"is_query_report":0,"label":"Anlagenarten","link_count":0,"link_to":"Anlagenart","link_type":"DocType","onboard":0,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"Maßnahmenarten","link_count":0,"link_to":"Wartungsmassnahmenart","link_type":"DocType","onboard":0,"type":"Link"},
   {"hidden":0,"is_query_report":0,"label":"Maßnahmevorlagen","link_count":0,"link_to":"Wartungsmassnahme Vorlage","link_type":"DocType","onboard":0,"type":"Link"},
   {"hidden":0,"is_query_report":0,"label":"Technische Anlagen","link_count":0,"link_to":"Technische Anlage","link_type":"DocType","onboard":0,"type":"Link"},
   {"hidden":0,"is_query_report":0,"label":"Anlagendokumente","link_count":0,"link_to":"Anlagendokument","link_type":"DocType","onboard":0,"type":"Link"},

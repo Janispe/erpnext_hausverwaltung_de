@@ -14,7 +14,7 @@
   {"fieldname":"bezeichnung","fieldtype":"Data","label":"Bezeichnung","read_only":1,"in_list_view":1},
   {"fieldname":"wartungsplan","fieldtype":"Link","label":"Wartungsplan","options":"Wartungsplan","reqd":1,"in_list_view":1,"in_standard_filter":1},
   {"fieldname":"technische_anlage","fieldtype":"Link","label":"Technische Anlage","options":"Technische Anlage","reqd":1,"in_list_view":1,"in_standard_filter":1},
-  {"fieldname":"massnahmenart","fieldtype":"Select","label":"Maßnahmenart","options":"Wartung\nPrüfung\nInspektion\nReinigung\nReparatur\nSonstiges","reqd":1,"in_standard_filter":1},
+  {"fieldname":"massnahmenart","fieldtype":"Link","label":"Maßnahmenart","options":"Wartungsmassnahmenart","reqd":1,"in_standard_filter":1},
   {"fieldname":"status","fieldtype":"Select","label":"Bearbeitungsstatus","options":"Offen\nBeauftragt\nAbgeschlossen\nEntfallen","default":"Offen","reqd":1,"in_list_view":1,"in_standard_filter":1},
   {"fieldname":"ergebnis","fieldtype":"Select","label":"Ergebnis","options":"\nBestanden\nMit Mängeln\nNicht bestanden\nNicht durchgeführt","read_only":1,"in_standard_filter":1},
   {"fieldname":"termin_section","fieldtype":"Section Break","label":"Fälligkeit"},

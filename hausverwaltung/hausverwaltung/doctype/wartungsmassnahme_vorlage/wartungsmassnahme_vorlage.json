@@ -16,7 +16,7 @@
   {"fieldname":"bezeichnung","fieldtype":"Data","label":"Bezeichnung","reqd":1,"in_list_view":1,"in_standard_filter":1},
   {"fieldname":"anlagenart","fieldtype":"Link","label":"Anlagenart","options":"Anlagenart","reqd":1,"in_list_view":1,"in_standard_filter":1},
   {"fieldname":"aktiv","fieldtype":"Check","label":"Aktiv","default":"1","in_list_view":1},
-  {"fieldname":"massnahmenart","fieldtype":"Select","label":"Maßnahmenart","options":"Wartung\nPrüfung\nInspektion\nReinigung\nReparatur\nSonstiges","reqd":1,"in_list_view":1},
+  {"fieldname":"massnahmenart","fieldtype":"Link","label":"Maßnahmenart","options":"Wartungsmassnahmenart","reqd":1,"in_list_view":1},
   {"fieldname":"pflicht_section","fieldtype":"Section Break","label":"Pflicht und Nachweis"},
   {"fieldname":"pruefpflichtig","fieldtype":"Check","label":"Prüfpflichtig","default":"0"},
   {"fieldname":"gesetzliche_grundlage","fieldtype":"Small Text","label":"Gesetzliche / technische Grundlage"},

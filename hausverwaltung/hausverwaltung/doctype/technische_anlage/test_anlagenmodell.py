@@ -100,6 +100,7 @@ class TestAnlagenmodell(IntegrationTestCase):
 				"status": "Durchgeführt",
 				"durchgefuehrt_am": "2027-01-03",
 				"ergebnis": "Ohne Mängel",
+				"wartungsprotokoll": "/private/files/pruefbescheinigung.pdf",
 			}
 		).insert(ignore_permissions=True)
 		wartung.submit()
@@ -116,6 +117,14 @@ class TestAnlagenmodell(IntegrationTestCase):
 				"Wartungstermin",
 				{"wartungsplan": plan, "status": "Offen", "soll_termin": "2028-01-01"},
 			)
+		)
+		self.assertEqual(
+			frappe.db.get_value(
+				"Anlagendokument",
+				{"bezugsdoctype": "Anlagenwartung", "bezug": wartung.name},
+				"dokumentart",
+			),
+			"Prüfbescheinigung",
 		)
 
 	def test_failed_result_creates_trackable_defect(self):

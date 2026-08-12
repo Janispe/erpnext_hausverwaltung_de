@@ -241,7 +241,12 @@ class Anlagenwartung(Document):
 			},
 		):
 			return
-		dokumentart = "Prüfbescheinigung" if self.get("massnahmenart") == "Prüfung" else "Wartungsprotokoll"
+		dokumentart = (
+			frappe.db.get_value(
+				"Wartungsmassnahmenart", self.get("massnahmenart"), "standard_dokumentart"
+			)
+			or "Wartungsprotokoll"
+		)
 		frappe.get_doc(
 			{
 				"doctype": "Anlagendokument",

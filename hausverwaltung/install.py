@@ -25,10 +25,20 @@ STANDARD_ANLAGENKATEGORIEN = (
     "Sonstige",
 )
 
+STANDARD_WARTUNGSMASSNAHMENARTEN = (
+    ("Wartung", "Wartungsprotokoll"),
+    ("Prüfung", "Prüfbescheinigung"),
+    ("Inspektion", "Wartungsprotokoll"),
+    ("Reinigung", "Wartungsprotokoll"),
+    ("Reparatur", "Wartungsprotokoll"),
+    ("Sonstiges", "Wartungsprotokoll"),
+)
+
 
 def after_install() -> None:
     _run_bootstrap(reason="after_install")
     ensure_anlagenkategorien()
+    ensure_wartungsmassnahmenarten()
     _run_post_install_patches(reason="after_install")
     _ensure_party_type_eigentuemer(reason="after_install")
     _sync_hausverwalter_permissions(reason="after_install")
@@ -89,6 +99,45 @@ def ensure_anlagenkategorien() -> None:
         ).insert(ignore_permissions=True)
 
     frappe.clear_cache(doctype="Anlagenkategorie")
+
+
+def ensure_wartungsmassnahmenarten() -> None:
+    """Legt Standardmaßnahmenarten an und übernimmt vorhandene Select-Werte."""
+    if not frappe.db.exists("DocType", "Wartungsmassnahmenart"):
+        return
+
+    dokumentarten = dict(STANDARD_WARTUNGSMASSNAHMENARTEN)
+    massnahmenarten = list(dokumentarten)
+    for doctype in (
+        "Wartungsmassnahme Vorlage",
+        "Wartungsplan",
+        "Wartungstermin",
+        "Anlagenwartung",
+    ):
+        if not frappe.db.exists("DocType", doctype):
+            continue
+        for massnahmenart in frappe.get_all(
+            doctype,
+            filters={"massnahmenart": ("is", "set")},
+            pluck="massnahmenart",
+            distinct=True,
+        ):
+            if massnahmenart not in massnahmenarten:
+                massnahmenarten.append(massnahmenart)
+
+    for index, bezeichnung in enumerate(massnahmenarten, start=1):
+        if frappe.db.exists("Wartungsmassnahmenart", bezeichnung):
+            continue
+        frappe.get_doc(
+            {
+                "doctype": "Wartungsmassnahmenart",
+                "bezeichnung": bezeichnung,
+                "sortierung": index * 10,
+                "standard_dokumentart": dokumentarten.get(bezeichnung, "Wartungsprotokoll"),
+            }
+        ).insert(ignore_permissions=True)
+
+    frappe.clear_cache(doctype="Wartungsmassnahmenart")
 
 
 def _ensure_serienbrief_dokument_print_format(*, reason: str) -> None:
@@ -1606,6 +1655,11 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
             {"label": "Telefonnummern", "link_type": "DocType", "link_to": "Telefonnummernauszug"},
             {"label": "Anlagenkategorien", "link_type": "DocType", "link_to": "Anlagenkategorie"},
             {"label": "Anlagenarten", "link_type": "DocType", "link_to": "Anlagenart"},
+            {
+                "label": "Maßnahmenarten",
+                "link_type": "DocType",
+                "link_to": "Wartungsmassnahmenart",
+            },
             {
                 "label": "Wartungsmaßnahmen-Vorlagen",
                 "link_type": "DocType",
