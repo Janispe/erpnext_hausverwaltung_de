@@ -43,7 +43,7 @@ ASSISTANT_ENGINES = {
 	ASSISTANT_ENGINE_MISTRAL_AGENTS,
 	ASSISTANT_ENGINE_MISTRAL_BASIC,
 }
-MISTRAL_AGENT_DEFINITION_VERSION = 2
+MISTRAL_AGENT_DEFINITION_VERSION = 3
 
 HV_READABLE_DOCTYPES: dict[str, dict[str, Any]] = {
 	"Mietvertrag": {
@@ -679,6 +679,9 @@ agent_get_doctype_schema. Verwende nur dort gelieferte, nicht sensible Felder fu
 oder die Dataset-Werkzeuge. Fordere mit fields nur die fuer die konkrete Antwort erforderlichen Felder an. Fordere name oder
 andere Identitaetsfelder nur an, wenn die Frage oder die Antwort eine konkrete Person bzw. ein konkretes Dokument
 identifizieren muss. Uebernimm Dokumentnamen und andere Identitaetswerte exakt und unverkuerzt aus Tool-Ergebnissen.
+Schemafelder mit is_virtual=true sind berechnete, lesbare Felder und koennen wie normale Ausgabefelder angefordert sowie
+in Datasets analysiert werden. Schemafelder vom Typ Table oder Table MultiSelect beschreiben eine Child-Tabelle; ihre
+sicheren child_fields stehen im Schema und werden nur ueber das jeweilige Elterndokument gelesen.
 Wenn ein erfolgreiches Tool-Ergebnis die fuer die Antwort angeforderten Felder bereits enthaelt, antworte direkt und
 rufe dasselbe Dokument nicht noch einmal mit agent_get_doc ab. Wiederhole niemals einen fehlgeschlagenen Tool-Aufruf
 mit unveraenderten Argumenten. Nutze stattdessen sichere vorherige Ergebnisse oder sage, welche Angabe fehlt.
@@ -1124,8 +1127,10 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 		"function": {
 			"name": "agent_get_doctype_schema",
 			"description": (
-				"Liest sichere Feld-Metadaten fuer einen DocType, sofern der aktuelle Benutzer Leserechte hat. "
-				"Nutze dies vor agent_list_docs, agent_search_docs oder agent_get_doc bei unbekannten Feldern."
+				"Liest sichere Feld-Metadaten einschliesslich virtueller Felder und Child-Tabellen fuer einen "
+				"DocType, sofern der aktuelle Benutzer Leserechte hat. Virtuelle Felder sind berechnete lesbare "
+				"Ausgabefelder; Child-Felder stehen unter child_fields. Nutze dies vor agent_list_docs, "
+				"agent_search_docs oder agent_get_doc bei unbekannten Feldern."
 			),
 			"parameters": {
 				"type": "object",
@@ -3714,7 +3719,7 @@ def _compact_agent_schema_response(result: dict[str, Any]) -> dict[str, Any]:
 		fieldtype = str(field.get("fieldtype") or "").strip()
 		if not fieldname:
 			continue
-		if field.get("hidden") or fieldtype in {"Table", "Table MultiSelect", "Button", "Column Break", "Section Break", "HTML"}:
+		if field.get("hidden") or fieldtype in {"Button", "Column Break", "Section Break", "Tab Break", "HTML"}:
 			omitted += 1
 			continue
 		item = {
@@ -3727,11 +3732,27 @@ def _compact_agent_schema_response(result: dict[str, Any]) -> dict[str, Any]:
 			item["options"] = options[:300]
 		if field.get("reqd"):
 			item["reqd"] = 1
+		if field.get("read_only"):
+			item["read_only"] = 1
+		if field.get("is_virtual"):
+			item["is_virtual"] = 1
+		if fieldtype in {"Table", "Table MultiSelect"}:
+			item["read_via_parent"] = 1
+			item["child_fields"] = [
+				{
+					key: child.get(key)
+					for key in ("fieldname", "label", "fieldtype", "options", "is_virtual")
+					if child.get(key) not in (None, "", 0)
+				}
+				for child in (field.get("child_fields") or [])
+				if isinstance(child, dict)
+			]
 		compact_fields.append(item)
 
 	compact_data = {
 		"doctype": data.get("doctype"),
 		"module": data.get("module"),
+		"istable": data.get("istable") or 0,
 		"title_field": data.get("title_field") or "name",
 		"search_fields": data.get("search_fields") or "",
 		"standard_fields": ["name", "creation", "modified", "docstatus"],

@@ -1141,9 +1141,23 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 				"search_fields": "supplier,supplier_name",
 				"fields": [
 					{"fieldname": "supplier", "label": "Supplier", "fieldtype": "Link", "options": "Supplier"},
-					{"fieldname": "items", "label": "Items", "fieldtype": "Table", "options": "Purchase Invoice Item"},
+					{
+						"fieldname": "items",
+						"label": "Items",
+						"fieldtype": "Table",
+						"options": "Purchase Invoice Item",
+						"child_fields": [
+							{"fieldname": "item_code", "label": "Item", "fieldtype": "Link", "options": "Item"},
+						],
+					},
 					{"fieldname": "tax_id", "label": "Tax ID", "fieldtype": "Data", "hidden": 1},
-					{"fieldname": "status", "label": "Status", "fieldtype": "Select", "options": "Draft\nPaid"},
+					{
+						"fieldname": "status",
+						"label": "Status",
+						"fieldtype": "Select",
+						"options": "Draft\nPaid",
+						"is_virtual": 1,
+					},
 				],
 			},
 			"meta": {"request_id": "REQ-1"},
@@ -1153,10 +1167,13 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			result = assistant.agent_get_doctype_schema("Purchase Invoice")
 
 		fields = result["data"]["fields"]
-		self.assertEqual([field["fieldname"] for field in fields], ["supplier", "status"])
+		self.assertEqual([field["fieldname"] for field in fields], ["supplier", "items", "status"])
+		self.assertEqual(fields[1]["child_fields"][0]["fieldname"], "item_code")
+		self.assertEqual(fields[1]["read_via_parent"], 1)
+		self.assertEqual(fields[2]["is_virtual"], 1)
 		self.assertEqual(result["data"]["standard_fields"], ["name", "creation", "modified", "docstatus"])
-		self.assertEqual(result["data"]["field_count"], 2)
-		self.assertEqual(result["data"]["omitted_field_count"], 2)
+		self.assertEqual(result["data"]["field_count"], 3)
+		self.assertEqual(result["data"]["omitted_field_count"], 1)
 
 	def test_revenue_search_terms_normalize_street_and_building_part(self):
 		terms = assistant._revenue_search_terms("Wilhelmshavener Straße im Hinterhaus")

@@ -171,7 +171,7 @@ def _sanitize_fieldnames(doctype: str, requested_fields: list[str] | None = None
 			doctype,
 			user=frappe.session.user,
 			permission_type="read",
-			ignore_virtual=True,
+			ignore_virtual=False,
 		)
 	)
 	allowed_by_meta: dict[str, Any] = {fieldname: None for fieldname in _STANDARD_SAFE_FIELDS}
@@ -210,6 +210,79 @@ def _sanitize_fieldnames(doctype: str, requested_fields: list[str] | None = None
 	return sanitized, allowed_fields
 
 
+def _virtual_fieldnames(doctype: str) -> set[str]:
+	return {
+		df.fieldname
+		for df in (frappe.get_meta(doctype).fields or [])
+		if df.fieldname and cint(getattr(df, "is_virtual", 0))
+	}
+
+
+def _get_list_with_virtual_fields(
+	doctype: str,
+	*,
+	fields: list[str],
+	filters: dict | list | None = None,
+	or_filters: list | None = None,
+	order_by: str,
+	start: int,
+	page_length: int,
+) -> list[dict[str, Any]]:
+	"""Query stored columns first and hydrate explicitly requested virtual fields per readable document."""
+	virtual_fields = _virtual_fieldnames(doctype).intersection(fields)
+	query_fields = [field for field in fields if field not in virtual_fields]
+	if virtual_fields and "name" not in query_fields:
+		query_fields.append("name")
+	rows = frappe.get_list(
+		doctype,
+		filters=filters,
+		or_filters=or_filters,
+		fields=query_fields,
+		order_by=order_by,
+		start=start,
+		page_length=page_length,
+	)
+	if not virtual_fields:
+		return rows
+
+	projected = []
+	for row in rows:
+		name = row.get("name")
+		doc = frappe.get_doc(doctype, name)
+		if not frappe.has_permission(doctype, "read", doc=doc):
+			continue
+		values = dict(row)
+		for fieldname in virtual_fields:
+			values[fieldname] = getattr(doc, fieldname, None)
+		projected.append({fieldname: values.get(fieldname) for fieldname in fields})
+	return projected
+
+
+def _safe_child_schema(child_doctype: str) -> list[dict[str, Any]]:
+	if not child_doctype or not frappe.db.exists("DocType", child_doctype):
+		return []
+	meta = frappe.get_meta(child_doctype)
+	fields = []
+	for df in meta.fields or []:
+		if not df.fieldname or getattr(df, "hidden", 0):
+			continue
+		if is_sensitive_field(df.fieldname, df.fieldtype):
+			continue
+		if df.fieldtype in {"Button", "Column Break", "Section Break", "Tab Break", "HTML"}:
+			continue
+		item = {
+			"fieldname": df.fieldname,
+			"label": df.label,
+			"fieldtype": df.fieldtype,
+		}
+		if df.options:
+			item["options"] = df.options
+		if cint(getattr(df, "is_virtual", 0)):
+			item["is_virtual"] = 1
+		fields.append(item)
+	return fields
+
+
 def _schema_for_doctype(doctype: str) -> dict[str, Any]:
 	meta = frappe.get_meta(doctype)
 	permitted_fields = set(
@@ -217,33 +290,43 @@ def _schema_for_doctype(doctype: str) -> dict[str, Any]:
 			doctype,
 			user=frappe.session.user,
 			permission_type="read",
-			ignore_virtual=True,
+			ignore_virtual=False,
 		)
 	)
+	if cint(getattr(meta, "istable", 0)):
+		# Child rows inherit access from their parent. Their safe metadata remains useful
+		# even though Frappe does not assign standalone field permissions to the child DocType.
+		permitted_fields.update(df.fieldname for df in (meta.fields or []) if df.fieldname)
 	fields = []
 	for df in meta.fields or []:
 		if not df.fieldname:
 			continue
-		if df.fieldname not in permitted_fields:
+		# Frappe omits table fields from get_permitted_fields because they are not
+		# selectable database columns. Their metadata is nevertheless part of the
+		# readable parent schema and is required to discover child data safely.
+		if df.fieldname not in permitted_fields and df.fieldtype not in {"Table", "Table MultiSelect"}:
 			continue
 		if is_sensitive_field(df.fieldname, df.fieldtype):
 			continue
-		fields.append(
-			{
-				"fieldname": df.fieldname,
-				"label": df.label,
-				"fieldtype": df.fieldtype,
-				"options": df.options,
-				"reqd": cint(df.reqd),
-				"read_only": cint(df.read_only),
-				"hidden": cint(df.hidden),
-				"in_list_view": cint(df.in_list_view),
-			}
-		)
+		item = {
+			"fieldname": df.fieldname,
+			"label": df.label,
+			"fieldtype": df.fieldtype,
+			"options": df.options,
+			"reqd": cint(df.reqd),
+			"read_only": cint(df.read_only),
+			"hidden": cint(df.hidden),
+			"in_list_view": cint(df.in_list_view),
+			"is_virtual": cint(getattr(df, "is_virtual", 0)),
+		}
+		if df.fieldtype in {"Table", "Table MultiSelect"} and df.options:
+			item["child_fields"] = _safe_child_schema(df.options)
+		fields.append(item)
 
 	return {
 		"doctype": meta.name,
 		"module": meta.module,
+		"istable": cint(getattr(meta, "istable", 0)),
 		"title_field": meta.title_field or "name",
 		"search_fields": meta.search_fields,
 		"fields": fields,
@@ -411,9 +494,10 @@ def list_docs(
 		normalized_offset = normalize_offset(offset)
 
 		safe_fields, allowed_fields = _sanitize_fieldnames(dt, normalized_fields)
-		safe_order_by = normalize_order_by(order_by, allowed_fields) or _DEFAULT_ORDER_BY
+		stored_fields = allowed_fields - _virtual_fieldnames(dt)
+		safe_order_by = normalize_order_by(order_by, stored_fields) or _DEFAULT_ORDER_BY
 
-		rows = frappe.get_list(
+		rows = _get_list_with_virtual_fields(
 			dt,
 			filters=normalized_filters,
 			fields=safe_fields,
@@ -488,9 +572,16 @@ def get_doc(
 			success = True
 			return _ok(request_id, started_at, _strip_sensitive_keys(doc.as_dict()))
 
-		data = frappe.db.get_value(dt, docname, safe_fields, as_dict=True)
+		virtual_fields = _virtual_fieldnames(dt).intersection(safe_fields)
+		stored_fields = [field for field in safe_fields if field not in virtual_fields]
+		data = frappe.db.get_value(dt, docname, stored_fields, as_dict=True) if stored_fields else frappe._dict()
 		if not data:
-			raise AgentToolError("NOT_FOUND", f"Document '{docname}' was not found.")
+			data = frappe._dict()
+		if virtual_fields:
+			doc = frappe.get_doc(dt, docname)
+			for fieldname in virtual_fields:
+				data[fieldname] = getattr(doc, fieldname, None)
+		data = {fieldname: data.get(fieldname) for fieldname in safe_fields}
 		success = True
 		return _ok(request_id, started_at, data)
 	except AgentToolError as exc:
@@ -531,12 +622,13 @@ def _search_in_doctype(
 		if fieldname and fieldname not in requested_fields:
 			requested_fields.append(fieldname)
 	safe_fields, allowed_fields = _sanitize_fieldnames(doctype, requested_fields)
-	safe_order_by = normalize_order_by(order_by, allowed_fields) or _DEFAULT_ORDER_BY
+	stored_fields = allowed_fields - _virtual_fieldnames(doctype)
+	safe_order_by = normalize_order_by(order_by, stored_fields) or _DEFAULT_ORDER_BY
 
 	like_query = f"%{query}%"
 	or_filters = [[doctype, fieldname, "like", like_query] for fieldname in search_fields if fieldname in allowed_fields]
 
-	rows = frappe.get_list(
+	rows = _get_list_with_virtual_fields(
 		doctype,
 		fields=safe_fields,
 		filters=filters,

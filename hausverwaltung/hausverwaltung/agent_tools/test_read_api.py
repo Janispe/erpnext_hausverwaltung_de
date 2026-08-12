@@ -100,7 +100,47 @@ class TestAgentReadApi(IntegrationTestCase):
 		with patch.object(read_api, "get_permitted_fields", return_value=["wohnung"]):
 			schema = read_api._schema_for_doctype("Mietvertrag")
 
-		self.assertEqual([field["fieldname"] for field in schema["fields"]], ["wohnung"])
+		non_table_fields = [
+			field["fieldname"]
+			for field in schema["fields"]
+			if field["fieldtype"] not in {"Table", "Table MultiSelect"}
+		]
+		self.assertEqual(non_table_fields, ["wohnung"])
+		self.assertIn("miete", {field["fieldname"] for field in schema["fields"]})
+
+	def test_mietvertrag_schema_includes_virtual_fields_and_child_tables(self):
+		schema = read_api._schema_for_doctype("Mietvertrag")
+		fields = {field["fieldname"]: field for field in schema["fields"]}
+
+		self.assertEqual(fields["aktuelle_nettokaltmiete"]["is_virtual"], 1)
+		self.assertEqual(fields["aktuelle_nettokaltmiete"]["fieldtype"], "Currency")
+		self.assertEqual(fields["miete"]["fieldtype"], "Table")
+		self.assertEqual(fields["miete"]["options"], "Staffelmiete")
+		child_fields = {field["fieldname"] for field in fields["miete"]["child_fields"]}
+		self.assertEqual(child_fields, {"von", "miete", "art"})
+
+	def test_child_doctype_schema_exposes_safe_fields_inherited_from_parent(self):
+		schema = read_api._schema_for_doctype("Staffelmiete")
+
+		self.assertEqual(schema["istable"], 1)
+		self.assertEqual({field["fieldname"] for field in schema["fields"]}, {"von", "miete", "art"})
+
+	def test_list_helper_hydrates_virtual_fields_without_querying_them_as_columns(self):
+		rows = [frappe._dict(name="MV-1", immobilie="Haus 1")]
+		doc = frappe._dict(name="MV-1", aktuelle_nettokaltmiete=725.5)
+		with patch.object(read_api.frappe, "get_list", return_value=rows) as get_list, \
+			 patch.object(read_api.frappe, "get_doc", return_value=doc), \
+			 patch.object(read_api.frappe, "has_permission", return_value=True):
+			result = read_api._get_list_with_virtual_fields(
+				"Mietvertrag",
+				fields=["immobilie", "aktuelle_nettokaltmiete"],
+				order_by="modified desc",
+				start=0,
+				page_length=20,
+			)
+
+		self.assertEqual(get_list.call_args.kwargs["fields"], ["immobilie", "name"])
+		self.assertEqual(result, [{"immobilie": "Haus 1", "aktuelle_nettokaltmiete": 725.5}])
 
 	def test_list_docs_allows_standard_modified_order_by(self):
 		response = read_api.list_docs("DocType", fields=["name", "modified"], order_by="modified desc", limit=1)
