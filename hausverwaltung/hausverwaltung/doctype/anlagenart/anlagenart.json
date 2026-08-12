@@ -11,13 +11,6 @@
   "deaktiviert",
   "zuordnung_section",
   "standard_zuordnung",
-  "wartung_section",
-  "standard_massnahmenart",
-  "standard_intervall_anzahl",
-  "standard_intervall_einheit",
-  "column_break_wartung",
-  "pruefpflichtig",
-  "erinnerung_vorlauf_tage",
   "beschreibung"
  ],
  "fields": [
@@ -61,44 +54,6 @@
    "reqd": 1
   },
   {
-   "fieldname": "wartung_section",
-   "fieldtype": "Section Break",
-   "label": "Wartungsstandard"
-  },
-  {
-   "fieldname": "standard_massnahmenart",
-   "fieldtype": "Select",
-   "label": "Standard-Maßnahmenart",
-   "options": "\nWartung\nPrüfung\nInspektion\nReinigung\nSonstiges"
-  },
-  {
-   "fieldname": "standard_intervall_anzahl",
-   "fieldtype": "Int",
-   "label": "Standardintervall"
-  },
-  {
-   "fieldname": "standard_intervall_einheit",
-   "fieldtype": "Select",
-   "label": "Intervalleinheit",
-   "options": "\nTage\nWochen\nMonate\nJahre"
-  },
-  {
-   "fieldname": "column_break_wartung",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "0",
-   "fieldname": "pruefpflichtig",
-   "fieldtype": "Check",
-   "label": "Prüfpflichtig"
-  },
-  {
-   "default": "30",
-   "fieldname": "erinnerung_vorlauf_tage",
-   "fieldtype": "Int",
-   "label": "Standard-Erinnerung (Tage)"
-  },
-  {
    "fieldname": "beschreibung",
    "fieldtype": "Text Editor",
    "label": "Beschreibung"
@@ -110,6 +65,11 @@
   {
    "group": "Anlagen",
    "link_doctype": "Technische Anlage",
+   "link_fieldname": "anlagenart"
+  },
+  {
+   "group": "Wartung",
+   "link_doctype": "Wartungsmassnahme Vorlage",
    "link_fieldname": "anlagenart"
   },
   {

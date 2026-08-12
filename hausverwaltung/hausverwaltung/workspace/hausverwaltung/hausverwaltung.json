@@ -1,7 +1,7 @@
 {
  "app": "hausverwaltung",
  "charts": [],
- "content": "[]",
+ "content": "[{\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Anlagen und Wartung</b></span>\",\"col\":12}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Technische Anlagen\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Offene Wartungstermine\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Offene Mängel\",\"col\":3}},{\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Wartungsaufträge\",\"col\":3}},{\"type\":\"spacer\",\"data\":{\"col\":12}},{\"type\":\"card\",\"data\":{\"card_name\":\"Anlagenstammdaten\",\"col\":6}},{\"type\":\"card\",\"data\":{\"card_name\":\"Wartungsorganisation\",\"col\":6}}]",
  "creation": "2026-04-27 21:35:25.705285",
  "custom_blocks": [],
  "docstatus": 0,
@@ -13,7 +13,20 @@
  "is_hidden": 0,
  "label": "Hausverwaltung",
  "link_type": "DocType",
- "links": [],
+ "links": [
+  {"hidden":0,"is_query_report":0,"label":"Anlagenstammdaten","link_count":0,"onboard":0,"type":"Card Break"},
+  {"hidden":0,"is_query_report":0,"label":"Anlagenarten","link_count":0,"link_to":"Anlagenart","link_type":"DocType","onboard":0,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"Maßnahmevorlagen","link_count":0,"link_to":"Wartungsmassnahme Vorlage","link_type":"DocType","onboard":0,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"Technische Anlagen","link_count":0,"link_to":"Technische Anlage","link_type":"DocType","onboard":0,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"Anlagendokumente","link_count":0,"link_to":"Anlagendokument","link_type":"DocType","onboard":0,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"Wartungsorganisation","link_count":0,"onboard":0,"type":"Card Break"},
+  {"hidden":0,"is_query_report":0,"label":"Wartungspläne","link_count":0,"link_to":"Wartungsplan","link_type":"DocType","onboard":0,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"Wartungstermine","link_count":0,"link_to":"Wartungstermin","link_type":"DocType","onboard":0,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"Durchführungen","link_count":0,"link_to":"Anlagenwartung","link_type":"DocType","onboard":0,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"Mängel","link_count":0,"link_to":"Anlagenmangel","link_type":"DocType","onboard":0,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"Wartungsverträge","link_count":0,"link_to":"Wartungsvertrag","link_type":"DocType","onboard":0,"type":"Link"},
+  {"hidden":0,"is_query_report":0,"label":"Wartungsaufträge","link_count":0,"link_to":"Sammelwartung","link_type":"DocType","onboard":0,"type":"Link"}
+ ],
  "modified": "2026-04-27 21:35:25.705285",
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
@@ -24,7 +37,12 @@
  "quick_lists": [],
  "roles": [],
  "sequence_id": 0.0,
- "shortcuts": [],
+ "shortcuts": [
+  {"label":"Technische Anlagen","link_to":"Technische Anlage","type":"DocType"},
+  {"color":"Orange","doc_view":"List","label":"Offene Wartungstermine","link_to":"Wartungstermin","stats_filter":"{\"status\":\"Offen\"}","type":"DocType"},
+  {"color":"Red","doc_view":"List","label":"Offene Mängel","link_to":"Anlagenmangel","stats_filter":"{\"status\":\"Offen\"}","type":"DocType"},
+  {"label":"Wartungsaufträge","link_to":"Sammelwartung","type":"DocType"}
+ ],
  "title": "Hausverwaltung",
  "type": "Workspace"
 }

@@ -73,8 +73,12 @@ class TestIntervallAenderung(unittest.TestCase):
 		values.update(overrides)
 		doc = SimpleNamespace(**values)
 		doc.get = lambda key, default=None: getattr(doc, key, default)
-		doc._apply_anlagenart_defaults = MagicMock()
+		doc._apply_template_defaults = MagicMock()
+		doc._validate_links = MagicMock()
 		doc._validate_intervall = MagicMock()
+		doc._validate_dates = MagicMock()
+		doc._validate_unique_active_plan = MagicMock()
+		doc._validate_immutable_links = MagicMock()
 		doc._set_naechste_faelligkeit_from_latest_maintenance = lambda: (
 			Wartungsplan._set_naechste_faelligkeit_from_latest_maintenance(doc)
 		)

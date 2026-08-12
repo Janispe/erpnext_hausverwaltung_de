@@ -1,0 +1,56 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:AM-{#####}",
+ "creation": "2026-08-12 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bezeichnung", "technische_anlage", "status", "schweregrad", "quelle_section",
+  "wartungstermin", "anlagenwartung", "festgestellt_am", "beschreibung_section", "beschreibung",
+  "sofortmassnahme", "anlage_sperren", "bearbeitung_section", "verantwortlicher_benutzer",
+  "verantwortlicher_kontakt", "behebungsfrist", "column_break_bearbeitung", "behoben_am",
+  "behebung", "eingangsrechnung"
+ ],
+ "fields": [
+  {"fieldname":"bezeichnung","fieldtype":"Data","label":"Bezeichnung","in_list_view":1},
+  {"fieldname":"technische_anlage","fieldtype":"Link","label":"Technische Anlage","options":"Technische Anlage","reqd":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"status","fieldtype":"Select","label":"Status","options":"Offen\nIn Bearbeitung\nBehoben\nAkzeptiert","default":"Offen","reqd":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"schweregrad","fieldtype":"Select","label":"Schweregrad","options":"Hinweis\nGering\nErheblich\nKritisch","default":"Gering","reqd":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"quelle_section","fieldtype":"Section Break","label":"Feststellung"},
+  {"fieldname":"wartungstermin","fieldtype":"Link","label":"Wartungstermin","options":"Wartungstermin","in_standard_filter":1},
+  {"fieldname":"anlagenwartung","fieldtype":"Link","label":"Anlagenwartung","options":"Anlagenwartung","in_standard_filter":1},
+  {"fieldname":"festgestellt_am","fieldtype":"Date","label":"Festgestellt am","default":"Today","reqd":1},
+  {"fieldname":"beschreibung_section","fieldtype":"Section Break","label":"Mangel"},
+  {"fieldname":"beschreibung","fieldtype":"Long Text","label":"Beschreibung","reqd":1},
+  {"fieldname":"sofortmassnahme","fieldtype":"Long Text","label":"Sofortmaßnahme"},
+  {"fieldname":"anlage_sperren","fieldtype":"Check","label":"Anlage außer Betrieb setzen","default":"0"},
+  {"fieldname":"bearbeitung_section","fieldtype":"Section Break","label":"Bearbeitung"},
+  {"fieldname":"verantwortlicher_benutzer","fieldtype":"Link","label":"Verantwortlicher Benutzer","options":"User"},
+  {"fieldname":"verantwortlicher_kontakt","fieldtype":"Link","label":"Verantwortlicher Kontakt","options":"Contact"},
+  {"fieldname":"behebungsfrist","fieldtype":"Date","label":"Behebungsfrist","in_standard_filter":1},
+  {"fieldname":"column_break_bearbeitung","fieldtype":"Column Break"},
+  {"fieldname":"behoben_am","fieldtype":"Date","label":"Behoben am"},
+  {"fieldname":"behebung","fieldtype":"Long Text","label":"Behebung / Abschlussvermerk"},
+  {"fieldname":"eingangsrechnung","fieldtype":"Link","label":"Eingangsrechnung","options":"Purchase Invoice"}
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [{"group":"Dokumente","link_doctype":"Anlagendokument","link_fieldname":"bezug"}],
+ "modified": "2026-08-12 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Anlagenmangel",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {"role":"System Manager","create":1,"delete":1,"email":1,"export":1,"print":1,"read":1,"report":1,"share":1,"write":1},
+  {"role":"Hausverwalter","create":1,"email":1,"export":1,"print":1,"read":1,"report":1,"share":1,"write":1}
+ ],
+ "sort_field": "behebungsfrist",
+ "sort_order": "ASC",
+ "states": [
+  {"color":"Red","title":"Offen"},{"color":"Orange","title":"In Bearbeitung"},{"color":"Green","title":"Behoben"},{"color":"Gray","title":"Akzeptiert"}
+ ],
+ "title_field": "bezeichnung"
+}

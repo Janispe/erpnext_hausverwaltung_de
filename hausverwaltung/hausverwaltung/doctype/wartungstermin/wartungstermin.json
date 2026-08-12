@@ -1,0 +1,54 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:WT-{#####}",
+ "creation": "2026-08-12 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bezeichnung", "wartungsplan", "technische_anlage", "massnahmenart", "status", "ergebnis",
+  "termin_section", "soll_termin", "faellig_ab", "column_break_termin", "faellig_bis",
+  "abgeschlossen_am", "ausfuehrung_section", "sammelwartung", "anlagenwartung", "bemerkung"
+ ],
+ "fields": [
+  {"fieldname":"bezeichnung","fieldtype":"Data","label":"Bezeichnung","read_only":1,"in_list_view":1},
+  {"fieldname":"wartungsplan","fieldtype":"Link","label":"Wartungsplan","options":"Wartungsplan","reqd":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"technische_anlage","fieldtype":"Link","label":"Technische Anlage","options":"Technische Anlage","reqd":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"massnahmenart","fieldtype":"Select","label":"Maßnahmenart","options":"Wartung\nPrüfung\nInspektion\nReinigung\nReparatur\nSonstiges","reqd":1,"in_standard_filter":1},
+  {"fieldname":"status","fieldtype":"Select","label":"Bearbeitungsstatus","options":"Offen\nBeauftragt\nAbgeschlossen\nEntfallen","default":"Offen","reqd":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"ergebnis","fieldtype":"Select","label":"Ergebnis","options":"\nBestanden\nMit Mängeln\nNicht bestanden\nNicht durchgeführt","read_only":1,"in_standard_filter":1},
+  {"fieldname":"termin_section","fieldtype":"Section Break","label":"Fälligkeit"},
+  {"fieldname":"soll_termin","fieldtype":"Date","label":"Soll-Termin","reqd":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"faellig_ab","fieldtype":"Date","label":"Fällig ab"},
+  {"fieldname":"column_break_termin","fieldtype":"Column Break"},
+  {"fieldname":"faellig_bis","fieldtype":"Date","label":"Fällig bis"},
+  {"fieldname":"abgeschlossen_am","fieldtype":"Date","label":"Abgeschlossen am","read_only":1},
+  {"fieldname":"ausfuehrung_section","fieldtype":"Section Break","label":"Auftrag und Durchführung"},
+  {"fieldname":"sammelwartung","fieldtype":"Link","label":"Sammelwartung / Wartungsauftrag","options":"Sammelwartung","read_only":1},
+  {"fieldname":"anlagenwartung","fieldtype":"Link","label":"Durchführung","options":"Anlagenwartung","read_only":1},
+  {"fieldname":"bemerkung","fieldtype":"Small Text","label":"Bemerkung"}
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [
+  {"group":"Durchführung","link_doctype":"Anlagenwartung","link_fieldname":"wartungstermin"},
+  {"group":"Mängel","link_doctype":"Anlagenmangel","link_fieldname":"wartungstermin"},
+  {"group":"Dokumente","link_doctype":"Anlagendokument","link_fieldname":"bezug"}
+ ],
+ "modified": "2026-08-12 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Wartungstermin",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {"role":"System Manager","create":1,"delete":1,"email":1,"export":1,"print":1,"read":1,"report":1,"share":1,"write":1},
+  {"role":"Hausverwalter","create":1,"email":1,"export":1,"print":1,"read":1,"report":1,"share":1,"write":1}
+ ],
+ "sort_field": "soll_termin",
+ "sort_order": "ASC",
+ "states": [
+  {"color":"Orange","title":"Offen"},{"color":"Blue","title":"Beauftragt"},{"color":"Green","title":"Abgeschlossen"},{"color":"Gray","title":"Entfallen"}
+ ],
+ "title_field": "bezeichnung"
+}

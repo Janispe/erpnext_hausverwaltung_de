@@ -50,19 +50,45 @@ def berechne_faelligkeitsstatus(
 
 class Wartungsplan(Document):
 	def validate(self) -> None:
-		self._apply_anlagenart_defaults()
+		self._apply_template_defaults()
+		self._validate_links()
 		self._validate_intervall()
+		self._validate_dates()
+		self._validate_unique_active_plan()
+		self._validate_immutable_links()
 
 		if self.get("letzte_durchfuehrung"):
 			self._set_naechste_faelligkeit_from_latest_maintenance()
 		else:
 			self.naechste_faelligkeit = self.get("erste_faelligkeit")
+		if (
+			self.get("gueltig_bis")
+			and self.get("naechste_faelligkeit")
+			and getdate(self.naechste_faelligkeit) > getdate(self.gueltig_bis)
+		):
+			self.status = "Beendet"
 
 		self.faelligkeitsstatus = berechne_faelligkeitsstatus(
 			self.get("status"),
 			self.get("naechste_faelligkeit"),
 			self.get("erinnerung_vorlauf_tage"),
 		)
+
+	def on_update(self) -> None:
+		from hausverwaltung.hausverwaltung.doctype.wartungstermin.wartungstermin import (
+			synchronisiere_offenen_termin,
+		)
+
+		synchronisiere_offenen_termin(self.name)
+
+	def on_trash(self) -> None:
+		for doctype in ("Wartungstermin", "Anlagenwartung"):
+			if frappe.db.exists(doctype, {"wartungsplan": self.name}):
+				frappe.throw(
+					_("Der Wartungsplan besitzt verknüpfte {0} und darf nur beendet werden.").format(
+						frappe.bold(_(doctype))
+					)
+				)
 
 	def _set_naechste_faelligkeit_from_latest_maintenance(self) -> None:
 		"""Recalculate derived dates with the plan's currently configured interval."""
@@ -95,33 +121,98 @@ class Wartungsplan(Document):
 			self.get("intervall_einheit"),
 		)
 
-	def _apply_anlagenart_defaults(self) -> None:
-		if not self.get("technische_anlage"):
+	def _apply_template_defaults(self) -> None:
+		if not self.get("massnahmenvorlage"):
 			return
-
-		anlagenart = frappe.db.get_value("Technische Anlage", self.technische_anlage, "anlagenart")
-		if not anlagenart:
-			return
-
-		defaults = frappe.db.get_value(
-			"Anlagenart",
-			anlagenart,
-			[
-				"standard_massnahmenart",
-				"standard_intervall_anzahl",
-				"standard_intervall_einheit",
-				"erinnerung_vorlauf_tage",
-			],
-			as_dict=True,
-		) or {}
-		if not self.get("massnahmenart") and defaults.get("standard_massnahmenart"):
-			self.massnahmenart = defaults.get("standard_massnahmenart")
-		if not self.get("intervall_anzahl") and defaults.get("standard_intervall_anzahl"):
-			self.intervall_anzahl = defaults.get("standard_intervall_anzahl")
-		if not self.get("intervall_einheit") and defaults.get("standard_intervall_einheit"):
-			self.intervall_einheit = defaults.get("standard_intervall_einheit")
+		defaults = (
+			frappe.db.get_value(
+				"Wartungsmassnahme Vorlage",
+				self.massnahmenvorlage,
+				[
+					"massnahmenart",
+					"intervall_anzahl",
+					"intervall_einheit",
+					"terminberechnung",
+					"erinnerung_vorlauf_tage",
+					"eskalation_nach_tagen",
+				],
+				as_dict=True,
+			)
+			or {}
+		)
+		if not self.get("massnahmenart") and defaults.get("massnahmenart"):
+			self.massnahmenart = defaults.get("massnahmenart")
+		if not self.get("intervall_anzahl") and defaults.get("intervall_anzahl"):
+			self.intervall_anzahl = defaults.get("intervall_anzahl")
+		if not self.get("intervall_einheit") and defaults.get("intervall_einheit"):
+			self.intervall_einheit = defaults.get("intervall_einheit")
+		if not self.get("terminberechnung") and defaults.get("terminberechnung"):
+			self.terminberechnung = defaults.get("terminberechnung")
 		if self.get("erinnerung_vorlauf_tage") in (None, ""):
 			self.erinnerung_vorlauf_tage = defaults.get("erinnerung_vorlauf_tage") or 0
+		if self.get("eskalation_nach_tagen") in (None, ""):
+			self.eskalation_nach_tagen = defaults.get("eskalation_nach_tagen") or 0
+
+	def _validate_links(self) -> None:
+		anlage_art = frappe.db.get_value("Technische Anlage", self.technische_anlage, "anlagenart")
+		vorlage_art = frappe.db.get_value("Wartungsmassnahme Vorlage", self.massnahmenvorlage, "anlagenart")
+		if anlage_art != vorlage_art:
+			frappe.throw(_("Maßnahmevorlage und technische Anlage gehören nicht zur selben Anlagenart."))
+		anlage_status = frappe.db.get_value("Technische Anlage", self.technische_anlage, "status")
+		if self.get("status") == "Aktiv" and anlage_status != "Aktiv":
+			frappe.throw(_("Für eine nicht aktive Anlage kann kein aktiver Wartungsplan geführt werden."))
+
+	def _validate_dates(self) -> None:
+		if self.get("gueltig_von") and self.get("gueltig_bis"):
+			if getdate(self.gueltig_bis) < getdate(self.gueltig_von):
+				frappe.throw(_("Das Ende des Wartungsplans darf nicht vor seinem Beginn liegen."))
+		if self.get("gueltig_bis") and self.get("erste_faelligkeit"):
+			if getdate(self.erste_faelligkeit) > getdate(self.gueltig_bis):
+				frappe.throw(_("Die erste Fälligkeit liegt nach dem Ende des Wartungsplans."))
+		if self.get("gueltig_von") and self.get("erste_faelligkeit"):
+			if getdate(self.erste_faelligkeit) < getdate(self.gueltig_von):
+				frappe.throw(_("Die erste Fälligkeit liegt vor dem Beginn des Wartungsplans."))
+
+	def _validate_unique_active_plan(self) -> None:
+		if self.get("status") == "Beendet":
+			return
+		frappe.db.sql(
+			"SELECT name FROM `tabTechnische Anlage` WHERE name = %s FOR UPDATE",
+			(self.technische_anlage,),
+		)
+		duplikat = frappe.db.exists(
+			"Wartungsplan",
+			{
+				"technische_anlage": self.technische_anlage,
+				"massnahmenvorlage": self.massnahmenvorlage,
+				"status": ("in", ("Aktiv", "Pausiert")),
+				"name": ("!=", self.name or ""),
+			},
+		)
+		if duplikat:
+			frappe.throw(
+				_("Für diese Anlage und Maßnahmevorlage existiert bereits ein laufender Wartungsplan.")
+			)
+
+	def _validate_immutable_links(self) -> None:
+		if self.is_new():
+			return
+		geschuetzte_felder = (
+			"technische_anlage",
+			"massnahmenvorlage",
+			"intervall_anzahl",
+			"intervall_einheit",
+			"terminberechnung",
+			"erste_faelligkeit",
+		)
+		if any(self.has_value_changed(feld) for feld in geschuetzte_felder) and frappe.db.exists(
+			"Wartungstermin", {"wartungsplan": self.name}
+		):
+			frappe.throw(
+				_(
+					"Anlage, Vorlage und Terminregel können nach Erzeugung von Wartungsterminen nicht geändert werden. Beenden Sie den Plan und legen Sie einen neuen an."
+				)
+			)
 
 	def _validate_intervall(self) -> None:
 		if cint(self.get("intervall_anzahl")) <= 0:
@@ -130,6 +221,8 @@ class Wartungsplan(Document):
 			frappe.throw(_("Bitte eine gültige Intervalleinheit auswählen."))
 		if cint(self.get("erinnerung_vorlauf_tage")) < 0:
 			frappe.throw(_("Der Erinnerungsvorlauf darf nicht negativ sein."))
+		if cint(self.get("eskalation_nach_tagen")) < 0:
+			frappe.throw(_("Die Eskalationsfrist darf nicht negativ sein."))
 
 
 def update_faelligkeitsstatus() -> None:
@@ -144,6 +237,9 @@ def update_faelligkeitsstatus() -> None:
 			row.erinnerung_vorlauf_tage,
 		)
 		if neu != row.faelligkeitsstatus:
-			frappe.db.set_value(
-				"Wartungsplan", row.name, "faelligkeitsstatus", neu, update_modified=False
-			)
+			frappe.db.set_value("Wartungsplan", row.name, "faelligkeitsstatus", neu, update_modified=False)
+		from hausverwaltung.hausverwaltung.doctype.wartungstermin.wartungstermin import (
+			synchronisiere_offenen_termin,
+		)
+
+		synchronisiere_offenen_termin(row.name)

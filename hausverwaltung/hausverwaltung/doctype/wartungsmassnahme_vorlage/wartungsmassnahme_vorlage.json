@@ -1,0 +1,55 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:WMV-{#####}",
+ "creation": "2026-08-12 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bezeichnung", "anlagenart", "aktiv", "massnahmenart", "pflicht_section",
+  "pruefpflichtig", "gesetzliche_grundlage", "nachweis_erforderlich", "intervall_section",
+  "intervall_anzahl", "intervall_einheit", "terminberechnung", "column_break_intervall",
+  "erstfaelligkeit_anzahl", "erstfaelligkeit_einheit", "erinnerung_vorlauf_tage",
+  "eskalation_nach_tagen", "automatik_section", "wartungsplan_automatisch_anlegen", "beschreibung"
+ ],
+ "fields": [
+  {"fieldname":"bezeichnung","fieldtype":"Data","label":"Bezeichnung","reqd":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"anlagenart","fieldtype":"Link","label":"Anlagenart","options":"Anlagenart","reqd":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"aktiv","fieldtype":"Check","label":"Aktiv","default":"1","in_list_view":1},
+  {"fieldname":"massnahmenart","fieldtype":"Select","label":"Maßnahmenart","options":"Wartung\nPrüfung\nInspektion\nReinigung\nReparatur\nSonstiges","reqd":1,"in_list_view":1},
+  {"fieldname":"pflicht_section","fieldtype":"Section Break","label":"Pflicht und Nachweis"},
+  {"fieldname":"pruefpflichtig","fieldtype":"Check","label":"Prüfpflichtig","default":"0"},
+  {"fieldname":"gesetzliche_grundlage","fieldtype":"Small Text","label":"Gesetzliche / technische Grundlage"},
+  {"fieldname":"nachweis_erforderlich","fieldtype":"Check","label":"Nachweis erforderlich","default":"0"},
+  {"fieldname":"intervall_section","fieldtype":"Section Break","label":"Intervall und Fristen"},
+  {"fieldname":"intervall_anzahl","fieldtype":"Int","label":"Intervall","reqd":1},
+  {"fieldname":"intervall_einheit","fieldtype":"Select","label":"Intervalleinheit","options":"Tage\nWochen\nMonate\nJahre","reqd":1},
+  {"fieldname":"terminberechnung","fieldtype":"Select","label":"Nächster Termin","options":"Ab Durchführung\nAb bisheriger Fälligkeit","default":"Ab bisheriger Fälligkeit","reqd":1},
+  {"fieldname":"column_break_intervall","fieldtype":"Column Break"},
+  {"fieldname":"erstfaelligkeit_anzahl","fieldtype":"Int","label":"Erstfälligkeit nach"},
+  {"fieldname":"erstfaelligkeit_einheit","fieldtype":"Select","label":"Einheit der Erstfälligkeit","options":"\nTage\nWochen\nMonate\nJahre"},
+  {"fieldname":"erinnerung_vorlauf_tage","fieldtype":"Int","label":"Erinnerungsvorlauf (Tage)","default":"30"},
+  {"fieldname":"eskalation_nach_tagen","fieldtype":"Int","label":"Eskalation nach Überfälligkeit (Tage)","default":"0"},
+  {"fieldname":"automatik_section","fieldtype":"Section Break","label":"Automatik"},
+  {"fieldname":"wartungsplan_automatisch_anlegen","fieldtype":"Check","label":"Wartungsplan bei Anlagenanlage automatisch erzeugen","default":"1"},
+  {"fieldname":"beschreibung","fieldtype":"Text Editor","label":"Beschreibung"}
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [
+  {"group":"Wartung","link_doctype":"Wartungsplan","link_fieldname":"massnahmenvorlage"}
+ ],
+ "modified": "2026-08-12 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Wartungsmassnahme Vorlage",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {"role":"System Manager","create":1,"delete":1,"email":1,"export":1,"print":1,"read":1,"report":1,"share":1,"write":1},
+  {"role":"Hausverwalter","create":1,"delete":1,"email":1,"export":1,"print":1,"read":1,"report":1,"share":1,"write":1}
+ ],
+ "sort_field": "bezeichnung",
+ "sort_order": "ASC",
+ "title_field": "bezeichnung"
+}

@@ -8,6 +8,7 @@
  "field_order": [
   "bezeichnung",
   "sammelwartung",
+  "wartungstermin",
   "wartungsplan",
   "technische_anlage",
   "massnahmenart",
@@ -43,14 +44,25 @@
    "fieldtype": "Link",
    "in_standard_filter": 1,
    "label": "Sammelwartung",
-   "options": "Sammelwartung"
+   "options": "Sammelwartung",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wartungstermin",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Wartungstermin",
+   "options": "Wartungstermin",
+   "reqd": 1
   },
   {
    "fieldname": "wartungsplan",
    "fieldtype": "Link",
    "in_standard_filter": 1,
    "label": "Wartungsplan",
-   "options": "Wartungsplan"
+   "options": "Wartungsplan",
+   "read_only": 1
   },
   {
    "fieldname": "technische_anlage",
@@ -59,6 +71,7 @@
    "in_standard_filter": 1,
    "label": "Technische Anlage",
    "options": "Technische Anlage",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -67,6 +80,7 @@
    "in_standard_filter": 1,
    "label": "Maßnahmenart",
    "options": "Wartung\nPrüfung\nInspektion\nReinigung\nReparatur\nSonstiges",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -90,6 +104,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Soll-Termin"
+   ,"read_only": 1
   },
   {
    "fieldname": "durchgefuehrt_am",
@@ -180,7 +195,13 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
- "links": [],
+ "links": [
+  {
+   "group": "Mängel",
+   "link_doctype": "Anlagenmangel",
+   "link_fieldname": "anlagenwartung"
+  }
+ ],
  "modified": "2026-07-22 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Hausverwaltung",

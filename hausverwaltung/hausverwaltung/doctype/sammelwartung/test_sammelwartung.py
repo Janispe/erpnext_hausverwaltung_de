@@ -35,9 +35,9 @@ class TestFortschritt(unittest.TestCase):
 		werte = berechne_fortschritt(["Durchgeführt", "Offen", "Ausgefallen"])
 		self.assertEqual(werte["status"], "In Arbeit")
 		self.assertEqual(werte["anzahl_gewartet"], 1)
-		self.assertEqual(werte["anzahl_offen"], 2)
+		self.assertEqual(werte["anzahl_offen"], 1)
 		self.assertEqual(werte["anzahl_ausgefallen"], 1)
-		self.assertEqual(werte["fortschritt"], 33.3)
+		self.assertEqual(werte["fortschritt"], 66.7)
 
 
 class TestPositionenUebernehmen(unittest.TestCase):
@@ -64,17 +64,19 @@ class TestPositionenUebernehmen(unittest.TestCase):
 		db = MagicMock()
 		db.sql.return_value = [
 			frappe._dict(
+				wartungstermin="WT-00001",
 				wartungsplan="WP-00001",
 				technische_anlage="ANL-00001",
 				faellig_am=datetime.date(2026, 9, 1),
 				wohnung="Haus A | EG links",
 			),
 			frappe._dict(
+				wartungstermin="WT-00002",
 				wartungsplan="WP-00002",
 				technische_anlage="ANL-00002",
 				faellig_am=datetime.date(2026, 9, 15),
 				wohnung=None,
-			)
+			),
 		]
 
 		with patch.object(sw_mod.frappe, "db", db):
@@ -85,11 +87,12 @@ class TestPositionenUebernehmen(unittest.TestCase):
 		query, parameter = db.sql.call_args.args[:2]
 		self.assertIn("ta.immobilie = %(immobilie)s", query)
 		self.assertIn("ta.anlagenart = %(anlagenart)s", query)
-		self.assertIn("wp.naechste_faelligkeit <= %(faellig_bis)s", query)
+		self.assertIn("wt.soll_termin <= %(faellig_bis)s", query)
 		self.assertEqual(parameter["immobilie"], "Haus A")
 		self.assertEqual(parameter["anlagenart"], "Gastherme")
 		self.assertEqual(ergebnis, {"hinzugefuegt": 2, "gesamt": 2})
 		self.assertEqual(doc.positionen[0].wohnung, "Haus A | EG links")
+		self.assertEqual(doc.positionen[0].wartungstermin, "WT-00001")
 		self.assertIsNone(doc.positionen[1].wohnung)
 		doc.save.assert_called_once()
 
@@ -106,17 +109,18 @@ class TestAnlagenwartungenAnlegen(unittest.TestCase):
 		]
 
 		with patch.object(sw_mod.frappe, "db", db):
-			treffer = sw_mod._finde_offene_anlagenwartung("WP-00001")
+			treffer = sw_mod._finde_offene_anlagenwartung("WT-00001")
 
 		self.assertEqual(treffer.name, "AW-DRAFT")
 		query, parameter = db.sql.call_args.args[:2]
 		self.assertIn("docstatus = 0", query)
 		self.assertIn("docstatus = 1 AND status IN ('Geplant', 'Beauftragt')", query)
-		self.assertEqual(parameter, {"wartungsplan": "WP-00001"})
+		self.assertEqual(parameter, {"wartungstermin": "WT-00001"})
 		self.assertTrue(db.sql.call_args.kwargs["as_dict"])
 
 	def test_persisted_open_work_order_from_other_bulk_document_is_skipped(self):
 		position = frappe._dict(
+			wartungstermin="WT-00001",
 			wartungsplan="WP-00001",
 			technische_anlage="ANL-00001",
 			faellig_am=datetime.date(2026, 9, 1),
@@ -155,7 +159,7 @@ class TestAnlagenwartungenAnlegen(unittest.TestCase):
 		self.assertIsNone(position.anlagenwartung)
 
 		queries = [call.args[0] for call in db.sql.call_args_list]
-		self.assertIn("FROM `tabWartungsplan`", queries[0])
+		self.assertIn("FROM `tabWartungstermin`", queries[0])
 		self.assertIn("FOR UPDATE", queries[0])
 		self.assertIn("FROM `tabAnlagenwartung`", queries[1])
 		self.assertIn("docstatus = 0", queries[1])
@@ -164,6 +168,7 @@ class TestAnlagenwartungenAnlegen(unittest.TestCase):
 
 	def test_existing_work_order_from_same_bulk_document_repairs_link(self):
 		position = frappe._dict(
+			wartungstermin="WT-00001",
 			wartungsplan="WP-00001",
 			technische_anlage="ANL-00001",
 			faellig_am=datetime.date(2026, 9, 1),

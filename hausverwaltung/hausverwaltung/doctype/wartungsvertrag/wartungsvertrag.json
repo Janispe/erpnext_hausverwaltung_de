@@ -1,0 +1,50 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:WV-{YYYY}-{####}",
+ "creation": "2026-08-12 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bezeichnung", "status", "wartungsfirma", "vertragsnummer", "laufzeit_section", "gueltig_von",
+  "gueltig_bis", "column_break_laufzeit", "kuendigungsfrist_monate", "kaufmaennisch_section",
+  "jahrespauschale", "currency", "purchase_order", "positionen_section", "positionen", "beschreibung"
+ ],
+ "fields": [
+  {"fieldname":"bezeichnung","fieldtype":"Data","label":"Bezeichnung","reqd":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"status","fieldtype":"Select","label":"Status","options":"Entwurf\nAktiv\nBeendet","default":"Entwurf","reqd":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"wartungsfirma","fieldtype":"Link","label":"Wartungsfirma","options":"Supplier","reqd":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"vertragsnummer","fieldtype":"Data","label":"Vertragsnummer","in_list_view":1},
+  {"fieldname":"laufzeit_section","fieldtype":"Section Break","label":"Laufzeit"},
+  {"fieldname":"gueltig_von","fieldtype":"Date","label":"Gültig von","reqd":1},
+  {"fieldname":"gueltig_bis","fieldtype":"Date","label":"Gültig bis"},
+  {"fieldname":"column_break_laufzeit","fieldtype":"Column Break"},
+  {"fieldname":"kuendigungsfrist_monate","fieldtype":"Int","label":"Kündigungsfrist (Monate)"},
+  {"fieldname":"kaufmaennisch_section","fieldtype":"Section Break","label":"Kaufmännische Angaben"},
+  {"fieldname":"jahrespauschale","fieldtype":"Currency","label":"Jahrespauschale","options":"currency"},
+  {"fieldname":"currency","fieldtype":"Link","label":"Währung","options":"Currency","default":"EUR"},
+  {"fieldname":"purchase_order","fieldtype":"Link","label":"Bestellung","options":"Purchase Order"},
+  {"fieldname":"positionen_section","fieldtype":"Section Break","label":"Abgedeckte Wartungspläne"},
+  {"fieldname":"positionen","fieldtype":"Table","label":"Positionen","options":"Wartungsvertrag Position"},
+  {"fieldname":"beschreibung","fieldtype":"Text Editor","label":"Leistungsumfang / Bemerkungen"}
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [
+  {"group":"Aufträge","link_doctype":"Sammelwartung","link_fieldname":"wartungsvertrag"},
+  {"group":"Dokumente","link_doctype":"Anlagendokument","link_fieldname":"bezug"}
+ ],
+ "modified": "2026-08-12 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Wartungsvertrag",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {"role":"System Manager","create":1,"delete":1,"email":1,"export":1,"print":1,"read":1,"report":1,"share":1,"write":1},
+  {"role":"Hausverwalter","create":1,"email":1,"export":1,"print":1,"read":1,"report":1,"share":1,"write":1}
+ ],
+ "sort_field": "gueltig_bis",
+ "sort_order": "ASC",
+ "title_field": "bezeichnung"
+}

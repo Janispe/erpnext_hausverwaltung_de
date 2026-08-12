@@ -11,17 +11,24 @@ frappe.ui.form.on("Sammelwartung", {
 		frm.set_query("anlagenart", () => ({ filters: { deaktiviert: 0 } }));
 	},
 
+	wartungsvertrag(frm) {
+		if (!frm.doc.wartungsvertrag) return;
+		frappe.db.get_value("Wartungsvertrag", frm.doc.wartungsvertrag, "wartungsfirma").then((r) => {
+			frm.set_value("wartungsfirma", (r.message || {}).wartungsfirma);
+		});
+	},
+
 	refresh(frm) {
 		if (frm.is_new()) return;
 
-		frm.add_custom_button(__("Anlagen übernehmen"), () => {
+		frm.add_custom_button(__("Fälligkeiten übernehmen"), () => {
 			const dialog = new frappe.ui.Dialog({
-				title: __("Anlagen aus Wartungsplänen übernehmen"),
+				title: __("Offene Wartungstermine übernehmen"),
 				fields: [
 					{
 						fieldname: "nur_faellige",
 						fieldtype: "Check",
-						label: __("Nur fällige Anlagen"),
+						label: __("Nur bis zum Stichtag fällige Termine"),
 						default: 1,
 					},
 					{
@@ -40,7 +47,7 @@ frappe.ui.form.on("Sammelwartung", {
 						dialog.hide();
 						reload_with_message(
 							frm,
-							__("{0} Anlagen hinzugefügt, {1} insgesamt", [
+							__("{0} Termine hinzugefügt, {1} insgesamt", [
 								result.hinzugefuegt || 0,
 								result.gesamt || 0,
 							])

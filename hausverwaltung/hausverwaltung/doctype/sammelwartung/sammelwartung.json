@@ -13,6 +13,8 @@
   "anlagenart",
   "column_break_umfang",
   "wartungsfirma",
+  "wartungsvertrag",
+  "auftragsnummer",
   "termin_section",
   "termin_von",
   "termin_bis",
@@ -25,6 +27,10 @@
   "column_break_fortschritt",
   "anzahl_ausgefallen",
   "fortschritt",
+  "kaufmaennisch_section",
+  "purchase_order",
+  "purchase_invoice",
+  "gesamtbetrag",
   "positionen_section",
   "positionen",
   "bemerkung"
@@ -79,6 +85,17 @@
    "fieldtype": "Link",
    "label": "Wartungsfirma",
    "options": "Supplier"
+  },
+  {
+   "fieldname": "wartungsvertrag",
+   "fieldtype": "Link",
+   "label": "Wartungsvertrag",
+   "options": "Wartungsvertrag"
+  },
+  {
+   "fieldname": "auftragsnummer",
+   "fieldtype": "Data",
+   "label": "Externe Auftragsnummer"
   },
   {
    "fieldname": "termin_section",
@@ -148,6 +165,29 @@
    "fieldname": "fortschritt",
    "fieldtype": "Percent",
    "label": "Fortschritt",
+   "read_only": 1
+  },
+  {
+   "fieldname": "kaufmaennisch_section",
+   "fieldtype": "Section Break",
+   "label": "Auftrag und Abrechnung"
+  },
+  {
+   "fieldname": "purchase_order",
+   "fieldtype": "Link",
+   "label": "Bestellung",
+   "options": "Purchase Order"
+  },
+  {
+   "fieldname": "purchase_invoice",
+   "fieldtype": "Link",
+   "label": "Eingangsrechnung",
+   "options": "Purchase Invoice"
+  },
+  {
+   "fieldname": "gesamtbetrag",
+   "fieldtype": "Currency",
+   "label": "Gesamtbetrag",
    "read_only": 1
   },
   {

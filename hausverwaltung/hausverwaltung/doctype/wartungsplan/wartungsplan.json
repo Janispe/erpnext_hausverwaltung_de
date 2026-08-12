@@ -1,6 +1,6 @@
 {
  "actions": [],
- "allow_rename": 1,
+ "allow_rename": 0,
  "autoname": "format:WP-{#####}",
  "creation": "2026-07-22 00:00:00.000000",
  "doctype": "DocType",
@@ -8,6 +8,7 @@
  "field_order": [
   "bezeichnung",
   "technische_anlage",
+  "massnahmenvorlage",
   "massnahmenart",
   "status",
   "faelligkeitsstatus",
@@ -17,12 +18,14 @@
   "terminberechnung",
   "column_break_intervall",
   "erste_faelligkeit",
+  "gueltig_von",
+  "gueltig_bis",
   "letzte_durchfuehrung",
   "naechste_faelligkeit",
   "erinnerung_vorlauf_tage",
+  "eskalation_nach_tagen",
   "vertrag_section",
   "wartungsfirma",
-  "vertragsnummer",
   "bemerkung"
  ],
  "fields": [
@@ -41,6 +44,15 @@
    "in_standard_filter": 1,
    "label": "Technische Anlage",
    "options": "Technische Anlage",
+   "reqd": 1
+  },
+  {
+   "fieldname": "massnahmenvorlage",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Maßnahmevorlage",
+   "options": "Wartungsmassnahme Vorlage",
    "reqd": 1
   },
   {
@@ -89,7 +101,6 @@
    "reqd": 1
   },
   {
-   "default": "Ab Durchführung",
    "description": "Bei fester Fälligkeit bleibt z. B. der jährliche Prüftermin auch nach verspäteter Durchführung im gleichen Rhythmus.",
    "fieldname": "terminberechnung",
    "fieldtype": "Select",
@@ -106,6 +117,16 @@
    "fieldtype": "Date",
    "label": "Erste Fälligkeit",
    "reqd": 1
+  },
+  {
+   "fieldname": "gueltig_von",
+   "fieldtype": "Date",
+   "label": "Plan gültig von"
+  },
+  {
+   "fieldname": "gueltig_bis",
+   "fieldtype": "Date",
+   "label": "Plan gültig bis"
   },
   {
    "fieldname": "letzte_durchfuehrung",
@@ -127,6 +148,11 @@
    "label": "Erinnerungsvorlauf (Tage)"
   },
   {
+   "fieldname": "eskalation_nach_tagen",
+   "fieldtype": "Int",
+   "label": "Eskalation nach Überfälligkeit (Tage)"
+  },
+  {
    "fieldname": "vertrag_section",
    "fieldtype": "Section Break",
    "label": "Dienstleister und Vertrag"
@@ -140,11 +166,6 @@
    "options": "Supplier"
   },
   {
-   "fieldname": "vertragsnummer",
-   "fieldtype": "Data",
-   "label": "Vertragsnummer"
-  },
-  {
    "fieldname": "bemerkung",
    "fieldtype": "Small Text",
    "label": "Bemerkung"
@@ -153,6 +174,11 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [
+  {
+   "group": "Fälligkeiten",
+   "link_doctype": "Wartungstermin",
+   "link_fieldname": "wartungsplan"
+  },
   {
    "group": "Durchführungen",
    "link_doctype": "Anlagenwartung",
@@ -213,4 +239,5 @@
   }
  ],
  "title_field": "bezeichnung"
+ ,"track_changes": 1
 }

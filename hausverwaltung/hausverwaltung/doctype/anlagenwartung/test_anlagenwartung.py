@@ -39,18 +39,25 @@ def _wartung(**overrides):
 	return doc
 
 
+def _plan_update(db):
+	return next(
+		call.args[2] for call in db.set_value.call_args_list if call.args[:2] == ("Wartungsplan", "WP-00001")
+	)
+
+
 class TestWartungsplanSynchronisierung(unittest.TestCase):
 	@patch.object(aw_mod.frappe, "get_all", return_value=[])
 	@patch.object(aw_mod.frappe, "get_doc")
 	def test_completion_advances_from_actual_date(self, get_doc, _get_all):
 		get_doc.return_value = _plan()
 		db = MagicMock()
-		with patch.object(aw_mod.frappe, "db", db), patch.object(
-			aw_mod, "berechne_faelligkeitsstatus", return_value="Geplant"
+		with (
+			patch.object(aw_mod.frappe, "db", db),
+			patch.object(aw_mod, "berechne_faelligkeitsstatus", return_value="Geplant"),
 		):
 			aw_mod.synchronisiere_wartungsplan("WP-00001", aktuelle_wartung=_wartung())
 
-		werte = db.set_value.call_args.args[2]
+		werte = _plan_update(db)
 		self.assertEqual(werte["letzte_durchfuehrung"], datetime.date(2026, 3, 12))
 		self.assertEqual(werte["naechste_faelligkeit"], datetime.date(2027, 3, 12))
 
@@ -59,12 +66,13 @@ class TestWartungsplanSynchronisierung(unittest.TestCase):
 	def test_fixed_schedule_advances_from_due_date(self, get_doc, _get_all):
 		get_doc.return_value = _plan(terminberechnung="Ab bisheriger Fälligkeit")
 		db = MagicMock()
-		with patch.object(aw_mod.frappe, "db", db), patch.object(
-			aw_mod, "berechne_faelligkeitsstatus", return_value="Geplant"
+		with (
+			patch.object(aw_mod.frappe, "db", db),
+			patch.object(aw_mod, "berechne_faelligkeitsstatus", return_value="Geplant"),
 		):
 			aw_mod.synchronisiere_wartungsplan("WP-00001", aktuelle_wartung=_wartung())
 
-		werte = db.set_value.call_args.args[2]
+		werte = _plan_update(db)
 		self.assertEqual(werte["naechste_faelligkeit"], datetime.date(2027, 3, 1))
 
 	@patch.object(aw_mod.frappe, "get_all", return_value=[])
@@ -72,12 +80,13 @@ class TestWartungsplanSynchronisierung(unittest.TestCase):
 	def test_cancel_last_completion_restores_initial_due_date(self, get_doc, _get_all):
 		get_doc.return_value = _plan()
 		db = MagicMock()
-		with patch.object(aw_mod.frappe, "db", db), patch.object(
-			aw_mod, "berechne_faelligkeitsstatus", return_value="Geplant"
+		with (
+			patch.object(aw_mod.frappe, "db", db),
+			patch.object(aw_mod, "berechne_faelligkeitsstatus", return_value="Geplant"),
 		):
 			aw_mod.synchronisiere_wartungsplan("WP-00001", auszuschliessen="AW-00001")
 
-		werte = db.set_value.call_args.args[2]
+		werte = _plan_update(db)
 		self.assertIsNone(werte["letzte_durchfuehrung"])
 		self.assertEqual(werte["naechste_faelligkeit"], datetime.date(2026, 3, 1))
 
@@ -94,15 +103,16 @@ class TestWartungsplanSynchronisierung(unittest.TestCase):
 			)
 		]
 		db = MagicMock()
-		with patch.object(aw_mod.frappe, "db", db), patch.object(
-			aw_mod, "berechne_faelligkeitsstatus", return_value="Geplant"
+		with (
+			patch.object(aw_mod.frappe, "db", db),
+			patch.object(aw_mod, "berechne_faelligkeitsstatus", return_value="Geplant"),
 		):
 			aw_mod.synchronisiere_wartungsplan(
 				"WP-00001",
 				aktuelle_wartung=_wartung(durchgefuehrt_am="2026-02-01"),
 			)
 
-		werte = db.set_value.call_args.args[2]
+		werte = _plan_update(db)
 		self.assertEqual(werte["letzte_durchfuehrung"], datetime.date(2026, 5, 1))
 		self.assertEqual(werte["naechste_faelligkeit"], datetime.date(2027, 5, 1))
 
@@ -110,8 +120,9 @@ class TestWartungsplanSynchronisierung(unittest.TestCase):
 class TestAnlagenwartungValidierung(unittest.TestCase):
 	def test_next_date_must_follow_completion(self):
 		doc = _wartung(naechster_termin="2026-03-12", ergebnis=None, maengel=None, kosten=0)
-		with patch.object(aw_mod, "_", side_effect=lambda text: text), patch.object(
-			aw_mod.frappe, "throw", side_effect=ValueError
+		with (
+			patch.object(aw_mod, "_", side_effect=lambda text: text),
+			patch.object(aw_mod.frappe, "throw", side_effect=ValueError),
 		):
 			with self.assertRaises(ValueError):
 				aw_mod.Anlagenwartung._validate_completion(doc)

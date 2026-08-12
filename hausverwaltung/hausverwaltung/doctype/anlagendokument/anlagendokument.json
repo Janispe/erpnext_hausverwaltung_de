@@ -1,0 +1,45 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:AD-{#####}",
+ "creation": "2026-08-12 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bezeichnung", "dokumentart", "datei", "bezug_section", "bezugsdoctype", "bezug",
+  "gueltigkeit_section", "ausgestellt_am", "gueltig_bis", "column_break_gueltigkeit",
+  "gueltigkeitsstatus", "erinnerung_vorlauf_tage", "version", "ersetzt_dokument", "bemerkung"
+ ],
+ "fields": [
+  {"fieldname":"bezeichnung","fieldtype":"Data","label":"Bezeichnung","reqd":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"dokumentart","fieldtype":"Select","label":"Dokumentart","options":"Technische Unterlage\nWartungsprotokoll\nPrüfbescheinigung\nVertrag\nRechnung\nFoto\nSonstiges","reqd":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"datei","fieldtype":"Attach","label":"Datei","reqd":1},
+  {"fieldname":"bezug_section","fieldtype":"Section Break","label":"Bezug"},
+  {"fieldname":"bezugsdoctype","fieldtype":"Link","label":"Bezugstyp","options":"DocType","reqd":1},
+  {"fieldname":"bezug","fieldtype":"Dynamic Link","label":"Bezug","options":"bezugsdoctype","reqd":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"gueltigkeit_section","fieldtype":"Section Break","label":"Version und Gültigkeit"},
+  {"fieldname":"ausgestellt_am","fieldtype":"Date","label":"Ausgestellt am"},
+  {"fieldname":"gueltig_bis","fieldtype":"Date","label":"Gültig bis","in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"column_break_gueltigkeit","fieldtype":"Column Break"},
+  {"fieldname":"gueltigkeitsstatus","fieldtype":"Select","label":"Gültigkeitsstatus","options":"Unbefristet\nGültig\nLäuft bald ab\nAbgelaufen","read_only":1,"in_list_view":1,"in_standard_filter":1},
+  {"fieldname":"erinnerung_vorlauf_tage","fieldtype":"Int","label":"Erinnerungsvorlauf (Tage)","default":"30"},
+  {"fieldname":"version","fieldtype":"Data","label":"Version"},
+  {"fieldname":"ersetzt_dokument","fieldtype":"Link","label":"Ersetzt Dokument","options":"Anlagendokument"},
+  {"fieldname":"bemerkung","fieldtype":"Small Text","label":"Bemerkung"}
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "modified": "2026-08-12 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Anlagendokument",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {"role":"System Manager","create":1,"delete":1,"email":1,"export":1,"print":1,"read":1,"report":1,"share":1,"write":1},
+  {"role":"Hausverwalter","create":1,"email":1,"export":1,"print":1,"read":1,"report":1,"share":1,"write":1}
+ ],
+ "sort_field": "gueltig_bis",
+ "sort_order": "ASC",
+ "title_field": "bezeichnung"
+}

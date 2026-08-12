@@ -8,9 +8,11 @@
   "technische_anlage",
   "wohnung",
   "wartungsplan",
+  "wartungstermin",
   "faellig_am",
   "anlagenwartung",
   "status",
+  "kostenanteil",
   "notiz"
  ],
  "fields": [
@@ -41,6 +43,15 @@
    "reqd": 1
   },
   {
+   "fieldname": "wartungstermin",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Wartungstermin",
+   "options": "Wartungstermin",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
    "fieldname": "faellig_am",
    "fieldtype": "Date",
    "in_list_view": 1,
@@ -64,6 +75,12 @@
    "options": "Offen\nGeplant\nBeauftragt\nDurchgeführt\nAusgefallen\nAbgebrochen",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "kostenanteil",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Kostenanteil"
   },
   {
    "fieldname": "notiz",
