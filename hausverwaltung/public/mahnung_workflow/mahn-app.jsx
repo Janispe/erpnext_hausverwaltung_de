@@ -163,7 +163,7 @@ function MahnApp() {
     setKontonummer(kn ? kn.default : M.absender.iban);
     const rest = {};
     vars.forEach((x) => {
-      if (!["frist_tage", "mahngebuehr", "kontonummer"].includes(x.name)) rest[x.name] = x.default || "";
+      if (!["frist_tage", "mahngebuehr", "kontonummer"].includes(x.name)) rest[x.name] = x.default ?? "";
     });
     setVarValues(rest);
   };
@@ -648,8 +648,16 @@ function MahnApp() {
               {textVariablen.length > 0 && (
                 <div className="mh-var-grid">
                   {textVariablen.map((va) => (
-                    <FieldMH key={va.name} label={va.name} hint={va.desc}>
-                      {va.type === "Datum" ? (
+                    <FieldMH key={va.name} label={va.label || va.name} hint={va.desc}>
+                      {va.type === "Bool" ? (
+                        <label className="mh-check-inline">
+                          <input type="checkbox"
+                            checked={[true, 1, "1", "true", "yes", "ja"].includes(getVarVal(va.name))}
+                            disabled={locked}
+                            onChange={(e) => setVarVal(va.name, e.target.checked ? "1" : "0")} />
+                          aktiv
+                        </label>
+                      ) : va.type === "Datum" ? (
                         <input type="date" className="mh-input" value={getVarVal(va.name)} disabled={locked}
                           onChange={(e) => setVarVal(va.name, e.target.value)} />
                       ) : va.type === "Zahl" ? (

@@ -21,6 +21,10 @@ from hausverwaltung.hausverwaltung.page.op_workflow.op_workflow import (
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_pdf_for_print_format
 
 
+INVOICE_REMARKS_VARIABLE = "rechnungsbemerkung_statt_nummer"
+INVOICE_REMARKS_TEMPLATE = "Dunning - Miete - Mahnung (alle Stufen)"
+
+
 # ───────────────────────────────────────────────────────────────────────────
 # Phase 2 · Datenbereitstellung
 # ───────────────────────────────────────────────────────────────────────────
@@ -127,9 +131,35 @@ def _load_vorlagen() -> list[dict]:
             if not variable:
                 continue
             scrubbed = frappe.scrub(variable)
-            if scrubbed in {v["name"] for v in variablen}:
+            existing = next((v for v in variablen if v["name"] == scrubbed), None)
+            if existing:
+                existing["default"] = wert.get("wert") if wert.get("wert") is not None else ""
                 continue
-            variablen.append({"name": scrubbed, "type": "String", "default": wert.get("wert") or "", "desc": variable})
+            variablen.append(
+                {
+                    "name": scrubbed,
+                    "type": "String",
+                    "default": wert.get("wert") or "",
+                    "desc": variable,
+                }
+            )
+
+        if (
+            serienbrief_vorlage == INVOICE_REMARKS_TEMPLATE
+            and not any(v["name"] == INVOICE_REMARKS_VARIABLE for v in variablen)
+        ):
+            variablen.append(
+                {
+                    "name": INVOICE_REMARKS_VARIABLE,
+                    "label": "Rechnungsbemerkung verwenden",
+                    "type": "Bool",
+                    "default": "1",
+                    "desc": (
+                        "In der Postentabelle die Bemerkung statt der Rechnungsnummer "
+                        "anzeigen; bei leerer Bemerkung bleibt die Rechnungsnummer sichtbar."
+                    ),
+                }
+            )
 
         label = row.get("dunning_type") or row.name
         vorlagen.append(

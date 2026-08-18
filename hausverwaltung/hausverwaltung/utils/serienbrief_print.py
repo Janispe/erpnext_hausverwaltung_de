@@ -301,13 +301,18 @@ def _build_serienbrief_doc(template, iteration_doctype: str, target_doc) -> Seri
 
 
 def _attach_dunning_contract(dunning) -> None:
-	"""Expose the one authoritative contract shared by all dunned invoices."""
+	"""Expose invoice labels and the one contract shared by all dunned invoices."""
 	contracts: dict[str, Any] = {}
 	for payment in dunning.get("overdue_payments") or []:
 		invoice_name = (payment.get("sales_invoice") or "").strip()
 		if not invoice_name:
 			continue
 		invoice = frappe.get_cached_doc("Sales Invoice", invoice_name)
+		remarks = (getattr(invoice, "remarks", None) or "").strip()
+		# ``Overdue Payment`` has no field for the human-readable invoice text.
+		# Attach it only for the in-memory Serienbrief context; the Dunning schema
+		# and the persisted accounting reference remain unchanged.
+		payment.sales_invoice_remarks = remarks
 		resolver = getattr(invoice, "resolve_serienbrief_path_segment", None)
 		contract = resolver("mietvertrag") if callable(resolver) else None
 		if contract is not None:
