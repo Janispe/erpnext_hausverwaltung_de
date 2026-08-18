@@ -180,9 +180,11 @@ function MahnApp() {
     else if (name === "kontonummer") setKontonummer(raw);
     else setVarValues((m) => ({ ...m, [name]: raw }));
   };
+  const boolVarValue = (name) =>
+    ["1", "true", "yes", "ja", "wahr"].includes(String(getVarVal(name)).toLowerCase());
 
-  // reine Textvariablen der Vorlage (Frist + Gebühr sind Mahnungs-Felder, nicht hier)
-  const textVariablen = (vorlage.variablen || []).filter(
+  // zusätzliche Vorlagenvariablen (Frist + Gebühr sind Mahnungs-Felder, nicht hier)
+  const editorVariablen = (vorlage.variablen || []).filter(
     (x) => !["frist_tage", "mahngebuehr"].includes(x.name)
   );
 
@@ -641,22 +643,20 @@ function MahnApp() {
             {/* 4 · Vorlagen-Variablen (reine Textersetzung) */}
             <div className="mh-card">
               <SectionMH n="4" title="Vorlagen-Variablen"
-                right={<span className="mh-card-aside">{textVariablen.length} aus der Vorlage</span>} />
-              {textVariablen.length === 0 && (
+                right={<span className="mh-card-aside">{editorVariablen.length} aus der Vorlage</span>} />
+              {editorVariablen.length === 0 && (
                 <p className="mh-empty-hint">Diese Vorlage hat keine zusätzlichen Textvariablen.</p>
               )}
-              {textVariablen.length > 0 && (
+              {editorVariablen.length > 0 && (
                 <div className="mh-var-grid">
-                  {textVariablen.map((va) => (
+                  {editorVariablen.map((va) => (
                     <FieldMH key={va.name} label={va.label || va.name} hint={va.desc}>
                       {va.type === "Bool" ? (
-                        <label className="mh-check-inline">
-                          <input type="checkbox"
-                            checked={[true, 1, "1", "true", "yes", "ja"].includes(getVarVal(va.name))}
-                            disabled={locked}
-                            onChange={(e) => setVarVal(va.name, e.target.checked ? "1" : "0")} />
-                          aktiv
-                        </label>
+                        <select className="mh-input" value={boolVarValue(va.name) ? "1" : "0"}
+                          disabled={locked} onChange={(e) => setVarVal(va.name, e.target.value)}>
+                          <option value="1">Wahr</option>
+                          <option value="0">Falsch</option>
+                        </select>
                       ) : va.type === "Datum" ? (
                         <input type="date" className="mh-input" value={getVarVal(va.name)} disabled={locked}
                           onChange={(e) => setVarVal(va.name, e.target.value)} />

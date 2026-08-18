@@ -97,6 +97,31 @@ def _absender() -> dict:
     }
 
 
+def _serienbrief_variable_metadata(template_name: str | None) -> dict[str, dict]:
+    """Return declared types and descriptions for a Serienbrief template."""
+    if not template_name:
+        return {}
+    try:
+        template = frappe.get_cached_doc("Serienbrief Vorlage", template_name)
+    except frappe.DoesNotExistError:
+        return {}
+
+    metadata = {}
+    for variable in template.get("variables") or []:
+        raw_name = (variable.get("variable") or variable.get("label") or "").strip()
+        if not raw_name:
+            continue
+        metadata[frappe.scrub(raw_name)] = {
+            "type": (variable.get("variable_type") or "String").strip(),
+            "desc": (
+                variable.get("beschreibung")
+                or variable.get("label")
+                or raw_name
+            ),
+        }
+    return metadata
+
+
 def _load_vorlagen() -> list[dict]:
     """Mahn-Vorlagen aus echten ERPNext ``Dunning Type``-Datensätzen."""
     fields = ["name", "dunning_type", "dunning_fee", "rate_of_interest"]
@@ -110,6 +135,7 @@ def _load_vorlagen() -> list[dict]:
     for row in types:
         key = frappe.scrub(row.name)
         serienbrief_vorlage = row.get("hv_serienbrief_vorlage")
+        variable_metadata = _serienbrief_variable_metadata(serienbrief_vorlage)
         variablen = [
             {"name": "frist_tage", "type": "Zahl", "default": "7", "desc": "Zahlungsfrist in Tagen"},
             {
@@ -131,16 +157,19 @@ def _load_vorlagen() -> list[dict]:
             if not variable:
                 continue
             scrubbed = frappe.scrub(variable)
+            metadata = variable_metadata.get(scrubbed) or {}
             existing = next((v for v in variablen if v["name"] == scrubbed), None)
             if existing:
                 existing["default"] = wert.get("wert") if wert.get("wert") is not None else ""
+                existing["type"] = metadata.get("type") or existing["type"]
+                existing["desc"] = metadata.get("desc") or existing["desc"]
                 continue
             variablen.append(
                 {
                     "name": scrubbed,
-                    "type": "String",
+                    "type": metadata.get("type") or "String",
                     "default": wert.get("wert") or "",
-                    "desc": variable,
+                    "desc": metadata.get("desc") or variable,
                 }
             )
 
