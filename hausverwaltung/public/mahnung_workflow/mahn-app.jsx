@@ -682,7 +682,8 @@ function MahnApp() {
               {editorVariablen.length > 0 && (
                 <div className="mh-var-grid">
                   {editorVariablen.map((va) => (
-                    <FieldMH key={va.name} label={va.label || va.name} hint={va.desc}>
+                    <FieldMH key={va.name} label={va.label || va.name} hint={va.desc}
+                      full={va.type === "Text"}>
                       {va.type === "Bool" ? (
                         <select className="mh-input" value={boolVarValue(va.name) ? "1" : "0"}
                           disabled={locked} onChange={(e) => setVarVal(va.name, e.target.value)}>
@@ -694,6 +695,10 @@ function MahnApp() {
                           onChange={(e) => setVarVal(va.name, e.target.value)} />
                       ) : va.type === "Zahl" ? (
                         <input type="number" step="1" min="0" className="mh-input" value={getVarVal(va.name)} disabled={locked}
+                          onChange={(e) => setVarVal(va.name, e.target.value)} />
+                      ) : va.type === "Text" ? (
+                        <textarea rows="2" className="mh-input mh-variable-textarea"
+                          value={getVarVal(va.name)} disabled={locked}
                           onChange={(e) => setVarVal(va.name, e.target.value)} />
                       ) : (
                         <input type="text" className="mh-input" value={getVarVal(va.name)} disabled={locked}

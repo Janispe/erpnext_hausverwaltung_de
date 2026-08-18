@@ -2350,6 +2350,16 @@ button { font-family: inherit; }
   font-size: 11.5px;
   color: var(--ink-2);
 }
+.mh-var-grid .mh-field.is-full { grid-column: 1 / -1; }
+.mh-variable-textarea {
+  box-sizing: border-box;
+  line-height: 1.45;
+  min-height: 42px;
+  max-height: 420px;
+  overflow: auto;
+  resize: vertical;
+}
+.mh-variable-textarea:disabled { resize: none; }
 .mh-var-note {
   font-size: 11px;
   color: var(--ink-3);
