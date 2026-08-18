@@ -30,6 +30,7 @@ function LetterPreviewMH({ d }) {
     serienbriefVorlage: d.serienbriefVorlage,
     kontonummer: d.kontonummer,
     variablen: d.variablen,
+    invoiceRemarks: d.invoiceRemarks,
     dunning: d.dunning,
   };
   const signature = JSON.stringify(payload);

@@ -112,6 +112,9 @@ function MahnApp() {
     const fromUrl = [...initialInvoices].filter((name) => available.has(name));
     return new Set(fromUrl.length ? fromUrl : all);
   };
+  const invoiceRemarksFor = (m) => Object.fromEntries(
+    (m?.posten || []).map((p) => [p.beleg, p.bez || ""])
+  );
 
   const [vorlageKey, setVorlageKey] = useStateApp(() => mieter.empf_vorlage || M.naechsteVorlageKey(mieter.mahnstufe));
 
@@ -131,6 +134,7 @@ function MahnApp() {
   const [mahndatum, setMahndatum] = useStateApp(M.TODAY);
   const [kanal, setKanal] = useStateApp("Brief");
   const [selected, setSelected] = useStateApp(() => selectedPostenFor(mieter, true));
+  const [invoiceRemarks, setInvoiceRemarks] = useStateApp(() => invoiceRemarksFor(mieter));
   const [gebuehr, setGebuehr] = useStateApp(vorlage.gebuehr);
   const [zinsenAktiv, setZinsenAktiv] = useStateApp(vorlage.zinsen);
   const [zinssatz, setZinssatz] = useStateApp(M.zinssatzFuer(mieter.verbrauchertyp));
@@ -193,6 +197,7 @@ function MahnApp() {
     const empf = m.empf_vorlage || M.naechsteVorlageKey(m.mahnstufe);
     setVorlageKey(empf);
     setSelected(selectedPostenFor(m, !!options.useUrlSelection));
+    setInvoiceRemarks(invoiceRemarksFor(m));
     setZinssatz(M.zinssatzFuer(m.verbrauchertyp));
     setAnrede(m.anrede);
     const v = M.vorlageByKey[empf];
@@ -216,6 +221,10 @@ function MahnApp() {
     setGebuehr(entry.gebuehr);
     setZinsenAktiv(entry.zinsBetrag > 0);
     setSelected(new Set(entry.belege.map((b) => b.beleg)));
+    setInvoiceRemarks(Object.fromEntries(entry.belege.map((b) => {
+      const src = mieter.posten.find((p) => p.beleg === b.beleg);
+      return [b.beleg, b.bemerkung ?? src?.bez ?? ""];
+    })));
     setViewEntry(entry);
     setPastDetail(null);
     window.scrollTo(0, 0);
@@ -299,7 +308,7 @@ function MahnApp() {
       const src = mieter.posten.find((p) => p.beleg === b.beleg) || {};
       return {
         beleg: b.beleg, offen: b.betrag, betrag: b.betrag,
-        art: src.art || "Sales Invoice", bez: src.bez || "Gemahnter Posten",
+        art: src.art || "Sales Invoice", bez: b.bemerkung ?? src.bez ?? "Gemahnter Posten",
         faellig: src.faellig || viewEntry.datum, posting: src.posting || src.faellig || viewEntry.datum,
         overdue_days: src.overdue_days || 0, bezahlt: 0,
       };
@@ -321,6 +330,9 @@ function MahnApp() {
     : (zinsenAktiv ? Math.round(posten.reduce((a, p) => a + p.offen * (zinssatz / 100) * (p.overdue_days / 365), 0) * 100) / 100 : 0);
   const gebuehrEff = locked ? viewEntry.gebuehr : gebuehr;
   const summe = locked ? viewEntry.summe : Math.round((hauptforderung + zinsBetrag + gebuehrEff) * 100) / 100;
+  const selectedInvoiceRemarks = Object.fromEntries(
+    posten.map((p) => [p.beleg, invoiceRemarks[p.beleg] ?? p.bez ?? ""])
+  );
 
   const letterData = {
     mieter, vorlageLabel: vorlage.label,
@@ -333,6 +345,7 @@ function MahnApp() {
     zinsenAktiv: locked ? viewEntry.zinsBetrag > 0 : zinsenAktiv,
     zinssatz, gebuehr: gebuehrEff, summe,
     kontonummer, variablen: varValues,
+    invoiceRemarks: selectedInvoiceRemarks,
     verwendungszweck,
   };
 
@@ -350,7 +363,8 @@ function MahnApp() {
           mahndatum, fristTage, kanal,
           belege: posten.map((p) => p.beleg),
           mahngebuehr: gebuehr, zinssatz, zinsenAktiv,
-          kontonummer, variablen: varValues, summe, finalize,
+          kontonummer, variablen: varValues, invoiceRemarks: selectedInvoiceRemarks,
+          summe, finalize,
         });
         const docs = r.docs || [{ id: r.dunning, desc: `Dunning-Doc · ${vorlage.label}`, amount: r.summe }];
         setSent({ vorlage: vorlage.label, mieter: mieter.name, kanal, docs, summe: r.summe ?? summe, draft: !!r.draft, email_queue: r.email_queue });
@@ -597,8 +611,14 @@ function MahnApp() {
                 {(locked ? lockedPosten : displayPosten).map((p) => {
                   const on = locked || selected.has(p.beleg);
                   return (
-                    <label key={p.beleg} className={`mh-posten-row ${on ? "is-on" : ""} ${locked ? "is-locked" : ""}`}>
-                      <input type="checkbox" checked={on} disabled={locked} onChange={() => !locked && togglePosten(p.beleg)} />
+                    <div key={p.beleg} className={`mh-posten-row ${on ? "is-on" : ""} ${locked ? "is-locked" : ""}`}
+                      onClick={(e) => {
+                        if (locked || e.target.closest("input")) return;
+                        togglePosten(p.beleg);
+                      }}>
+                      <input type="checkbox" checked={on} disabled={locked}
+                        aria-label={`${p.beleg} auswählen`}
+                        onChange={() => !locked && togglePosten(p.beleg)} />
                       <div className="mh-posten-main">
                         <div className="mh-posten-beleg">{p.beleg}<span className="mh-posten-art">{p.art}</span></div>
                         <div className="mh-posten-bez">{p.bez}</div>
@@ -611,7 +631,19 @@ function MahnApp() {
                         {fmtEUR_mh(p.offen)}
                         {p.bezahlt > 0 && <span className="mh-posten-part">von {fmtEUR_mh(p.betrag)}</span>}
                       </div>
-                    </label>
+                      {!locked && on && boolVarValue("rechnungsbemerkung_statt_nummer") && (
+                        <label className="mh-posten-remark-editor">
+                          <span>Bemerkung im Mahnschreiben</span>
+                          <input type="text" className="mh-input mh-posten-remark-input"
+                            value={invoiceRemarks[p.beleg] ?? p.bez ?? ""}
+                            placeholder="Leer lassen, um die Rechnungsnummer anzuzeigen"
+                            onChange={(e) => setInvoiceRemarks((current) => ({
+                              ...current,
+                              [p.beleg]: e.target.value,
+                            }))} />
+                        </label>
+                      )}
+                    </div>
                   );
                 })}
               </div>

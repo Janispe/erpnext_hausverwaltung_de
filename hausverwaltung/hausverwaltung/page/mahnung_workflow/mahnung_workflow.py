@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 
 import frappe
 from frappe import _
@@ -16,10 +17,14 @@ from frappe.utils import add_days, date_diff, flt, nowdate
 
 from hausverwaltung.hausverwaltung.page.op_workflow.op_workflow import (
     _resolve_dunning_type,
+)
+from hausverwaltung.hausverwaltung.page.op_workflow.op_workflow import (
     create_bulk_dunning as create_op_bulk_dunning,
 )
-from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_pdf_for_print_format
-
+from hausverwaltung.hausverwaltung.utils.serienbrief_print import (
+    get_dunning_invoice_remark_overrides,
+    render_serienbrief_pdf_for_print_format,
+)
 
 INVOICE_REMARKS_VARIABLE = "rechnungsbemerkung_statt_nummer"
 INVOICE_REMARKS_TEMPLATE = "Dunning - Miete - Mahnung (alle Stufen)"
@@ -111,13 +116,14 @@ def _serienbrief_variable_metadata(template_name: str | None) -> dict[str, dict]
         raw_name = (variable.get("variable") or variable.get("label") or "").strip()
         if not raw_name:
             continue
+        variable_type = (variable.get("variable_type") or "String").strip()
+        description = variable.get("beschreibung") or variable.get("label") or raw_name
+        if variable_type == "Bool":
+            description = re.sub(r"^\s*1\s*=", "Wahr =", description)
+            description = re.sub(r"^\s*0\s*=", "Falsch =", description)
         metadata[frappe.scrub(raw_name)] = {
-            "type": (variable.get("variable_type") or "String").strip(),
-            "desc": (
-                variable.get("beschreibung")
-                or variable.get("label")
-                or raw_name
-            ),
+            "type": variable_type,
+            "desc": description,
         }
     return metadata
 
@@ -300,10 +306,12 @@ def _build_mieter(customer: str) -> dict | None:
 
 def _history_entry(dunning_name: str) -> dict:
     doc = frappe.get_doc("Dunning", dunning_name)
+    remark_overrides = get_dunning_invoice_remark_overrides(doc)
     belege = [
         {
             "beleg": row.get("sales_invoice"),
             "betrag": flt(row.get("outstanding") or row.get("outstanding_amount") or row.get("amount")),
+            "bemerkung": remark_overrides.get(row.get("sales_invoice")),
         }
         for row in doc.get("overdue_payments", [])
         if row.get("sales_invoice")
@@ -732,8 +740,15 @@ def get_dunning_detail(dunning: str) -> dict:
         frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
 
     doc = frappe.get_doc("Dunning", dunning)
-    belege = [{"beleg": p.sales_invoice, "betrag": flt(p.outstanding)}
-              for p in doc.get("overdue_payments", [])]
+    remark_overrides = get_dunning_invoice_remark_overrides(doc)
+    belege = [
+        {
+            "beleg": p.sales_invoice,
+            "betrag": flt(p.outstanding),
+            "bemerkung": remark_overrides.get(p.sales_invoice),
+        }
+        for p in doc.get("overdue_payments", [])
+    ]
     outstanding = flt(
         doc.get("total_outstanding_amount")
         or doc.get("total_outstanding")

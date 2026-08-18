@@ -13,9 +13,15 @@ class TestSerienbriefVariableMetadata(unittest.TestCase):
 				frappe._dict(
 					variable="zeige_posten_tabelle",
 					variable_type="Bool",
-					label="Offene Rechnungen als Tabelle",
+					label="1 = offene Rechnungen als Tabelle",
 					beschreibung="",
-				)
+				),
+				frappe._dict(
+					variable="klage_androhen",
+					variable_type="Bool",
+					label="Klage androhen",
+					beschreibung="0 = keinen Klagesatz einblenden",
+				),
 			]
 		)
 		with patch.object(
@@ -28,7 +34,11 @@ class TestSerienbriefVariableMetadata(unittest.TestCase):
 		self.assertEqual(metadata["zeige_posten_tabelle"]["type"], "Bool")
 		self.assertEqual(
 			metadata["zeige_posten_tabelle"]["desc"],
-			"Offene Rechnungen als Tabelle",
+			"Wahr = offene Rechnungen als Tabelle",
+		)
+		self.assertEqual(
+			metadata["klage_androhen"]["desc"],
+			"Falsch = keinen Klagesatz einblenden",
 		)
 
 	def test_returns_empty_metadata_without_template(self):

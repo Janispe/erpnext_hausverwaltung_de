@@ -2553,6 +2553,25 @@ button { font-family: inherit; }
   color: var(--ink-3);
 }
 .mh-posten-bez { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+.mh-posten-remark-editor {
+  display: grid;
+  grid-column: 2 / -1;
+  gap: 4px;
+  margin-top: -2px;
+  cursor: text;
+}
+.mh-posten-remark-editor > span {
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.mh-posten-remark-input {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+}
 .mh-posten-due { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
 .mh-posten-faellig { font-size: 10.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .mh-posten-amt {

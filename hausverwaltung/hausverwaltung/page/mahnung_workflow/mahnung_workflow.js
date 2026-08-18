@@ -49,7 +49,7 @@ function render_mahnung_workflow(page_body) {
   `);
 
   const ASSET_BASE = "/assets/hausverwaltung/mahnung_workflow";
-  const ASSET_VERSION = "20260818-serienbrief-pdf-preview";
+  const ASSET_VERSION = "20260818-manual-invoice-remarks-v2";
   const versioned = (src) => `${src}?v=${ASSET_VERSION}`;
 
   const cssHref = versioned(`${ASSET_BASE}/styles.css`);

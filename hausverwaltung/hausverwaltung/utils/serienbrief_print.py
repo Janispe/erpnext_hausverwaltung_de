@@ -6,18 +6,14 @@ from typing import Any
 import frappe
 from frappe import _
 from frappe.utils import today
-
 from mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 	SerienbriefDurchlauf,
-)
-from mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 	_collect_template_requirements,
-)
-from mail_merge.mail_merge.doctype.serienbrief_durchlauf.serienbrief_durchlauf import (
 	_get_template_template_source,
 )
 
 SERIENBRIEF_FIELDNAME = "hv_serienbrief_vorlage"
+INVOICE_REMARKS_OVERRIDES_VARIABLE = "rechnungsbemerkungen"
 
 
 def scrub_value(value) -> str:
@@ -303,12 +299,17 @@ def _build_serienbrief_doc(template, iteration_doctype: str, target_doc) -> Seri
 def _attach_dunning_contract(dunning) -> None:
 	"""Expose invoice labels and the one contract shared by all dunned invoices."""
 	contracts: dict[str, Any] = {}
+	remark_overrides = get_dunning_invoice_remark_overrides(dunning)
 	for payment in dunning.get("overdue_payments") or []:
 		invoice_name = (payment.get("sales_invoice") or "").strip()
 		if not invoice_name:
 			continue
 		invoice = frappe.get_cached_doc("Sales Invoice", invoice_name)
-		remarks = (getattr(invoice, "remarks", None) or "").strip()
+		remarks = (
+			remark_overrides[invoice_name]
+			if invoice_name in remark_overrides
+			else (getattr(invoice, "remarks", None) or "").strip()
+		)
 		# ``Overdue Payment`` has no field for the human-readable invoice text.
 		# Attach it only for the in-memory Serienbrief context; the Dunning schema
 		# and the persisted accounting reference remain unchanged.
@@ -325,6 +326,28 @@ def _attach_dunning_contract(dunning) -> None:
 		)
 	if contracts:
 		dunning.mietvertrag = next(iter(contracts.values()))
+
+
+def get_dunning_invoice_remark_overrides(dunning) -> dict[str, str]:
+	"""Read per-invoice display texts persisted with one Dunning document."""
+	for row in dunning.get("hv_serienbrief_werte") or []:
+		variable = (row.get("variable") or "").strip()
+		if frappe.scrub(variable) != INVOICE_REMARKS_OVERRIDES_VARIABLE:
+			continue
+		raw = row.get("wert")
+		if isinstance(raw, str):
+			try:
+				raw = json.loads(raw or "{}")
+			except (TypeError, ValueError):
+				return {}
+		if not isinstance(raw, dict):
+			return {}
+		return {
+			str(invoice_name).strip(): str(remark or "").strip()
+			for invoice_name, remark in raw.items()
+			if str(invoice_name or "").strip()
+		}
+	return {}
 
 
 def _build_target_row(serienbrief_doc, iteration_doctype: str, target_doc):

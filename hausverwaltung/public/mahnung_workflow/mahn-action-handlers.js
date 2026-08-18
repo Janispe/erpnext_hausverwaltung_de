@@ -7,7 +7,7 @@
 //   {
 //     party, vorlageKey, tpl_id, mahndatum, fristTage, kanal,
 //     belege: ["ACC-SINV-..."], mahngebuehr, zinssatz, zinsenAktiv,
-//     kontonummer, variablen: { ... }, summe
+//     kontonummer, variablen: { ... }, invoiceRemarks: { "ACC-SINV-...": "..." }, summe
 //   }
 
 (function () {
@@ -17,8 +17,15 @@
     const rows = [];
     const values = payload.variablen || {};
     Object.entries(values).forEach(([variable, wert]) => {
-      if (variable) rows.push({ variable, wert });
+      if (variable && variable !== "rechnungsbemerkungen") rows.push({ variable, wert });
     });
+    if (payload.invoiceRemarks && Object.keys(payload.invoiceRemarks).length) {
+      rows.push({
+        variable: "rechnungsbemerkungen",
+        wert: JSON.stringify(payload.invoiceRemarks),
+        beschreibung: "Manuelle Bemerkungen je Rechnung für dieses Mahnschreiben",
+      });
+    }
     if (payload.kontonummer) rows.push({ variable: "kontonummer", wert: payload.kontonummer });
     if (payload.fristTage != null) rows.push({ variable: "frist_tage", wert: String(payload.fristTage) });
     if (payload.mahngebuehr != null) rows.push({ variable: "mahngebuehr", wert: String(payload.mahngebuehr) });
