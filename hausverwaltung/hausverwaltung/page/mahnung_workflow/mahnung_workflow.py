@@ -7,11 +7,12 @@ zentral an den Dunning-DocEvents.
 
 from __future__ import annotations
 
+import base64
 import json
 
 import frappe
 from frappe import _
-from frappe.utils import flt, nowdate, add_days, date_diff
+from frappe.utils import add_days, date_diff, flt, nowdate
 
 from hausverwaltung.hausverwaltung.page.op_workflow.op_workflow import (
     _resolve_dunning_type,
@@ -286,6 +287,7 @@ def create_dunning(
     posting_date: str | None = None,
     frist_tage: int = 7,
     mahngebuehr: float | None = None,
+    zinssatz: float | None = None,
     zinsen_aktiv: bool = True,
     kanal: str = "Brief",
     serienbrief_vorlage: str | None = None,
@@ -337,6 +339,10 @@ def create_dunning(
         frappe.throw(_("Die Mahnung konnte nicht erstellt werden."))
 
     doc = frappe.get_doc("Dunning", dunning_name)
+    if zinssatz is not None:
+        doc.rate_of_interest = flt(zinssatz) if _as_bool(zinsen_aktiv) else 0
+        doc.save()
+        doc.reload()
     summe = flt(getattr(doc, "grand_total", 0) or getattr(doc, "outstanding_amount", 0) or sum(flt(si.outstanding_amount) for si in invoices))
     if not _as_bool(finalize):
         return {
@@ -405,6 +411,147 @@ def _render_dunning_pdf(doc) -> bytes:
     from frappe.utils.pdf import get_pdf
 
     return get_pdf(html)
+
+
+@frappe.whitelist()
+def render_dunning_preview_pdf(
+    sales_invoices: str | list | None = None,
+    dunning_type: str | None = None,
+    posting_date: str | None = None,
+    frist_tage: int = 7,
+    mahngebuehr: float | None = None,
+    zinssatz: float | None = None,
+    zinsen_aktiv: bool = True,
+    serienbrief_vorlage: str | None = None,
+    serienbrief_werte: str | list | dict | None = None,
+    dunning: str | None = None,
+) -> dict:
+    """Rendert die echte Mahnungs-PDF ohne ein Vorschau-Dokument zu speichern."""
+    if not frappe.has_permission("Dunning", "read"):
+        frappe.throw(_("Keine Berechtigung Mahnungen anzuzeigen."), frappe.PermissionError)
+
+    if dunning:
+        doc = frappe.get_doc("Dunning", dunning)
+        doc.check_permission("read")
+    else:
+        if not frappe.has_permission("Dunning", "create"):
+            frappe.throw(_("Keine Berechtigung Mahnungen zu erstellen."), frappe.PermissionError)
+        doc = _build_transient_dunning(
+            sales_invoices=sales_invoices,
+            dunning_type=dunning_type,
+            posting_date=posting_date,
+            frist_tage=frist_tage,
+            mahngebuehr=mahngebuehr,
+            zinssatz=zinssatz,
+            zinsen_aktiv=zinsen_aktiv,
+            serienbrief_vorlage=serienbrief_vorlage,
+            serienbrief_werte=serienbrief_werte,
+        )
+
+    pdf_content = _render_dunning_pdf(doc)
+    return {
+        "pdf_base64": base64.b64encode(pdf_content).decode("ascii"),
+        "filename": f"{doc.name or 'Mahnung-Vorschau'}.pdf",
+    }
+
+
+def _build_transient_dunning(
+    *,
+    sales_invoices: str | list | None,
+    dunning_type: str | None,
+    posting_date: str | None,
+    frist_tage: int,
+    mahngebuehr: float | None,
+    zinssatz: float | None,
+    zinsen_aktiv: bool,
+    serienbrief_vorlage: str | None,
+    serienbrief_werte: str | list | dict | None,
+):
+    """Baut denselben Dunning-Kontext wie ``create_dunning``, aber nur in-memory."""
+    if isinstance(sales_invoices, str):
+        sales_invoices = json.loads(sales_invoices or "[]")
+    invoice_names = [str(name).strip() for name in (sales_invoices or []) if str(name or "").strip()]
+    if not invoice_names:
+        frappe.throw(_("Keine Posten ausgewählt."))
+
+    invoices = [frappe.get_doc("Sales Invoice", name) for name in invoice_names]
+    for invoice in invoices:
+        invoice.check_permission("read")
+        if invoice.docstatus != 1 or flt(invoice.outstanding_amount) <= 0:
+            frappe.throw(_("{0} ist nicht offen oder nicht gebucht.").format(invoice.name))
+
+    customers = {invoice.customer for invoice in invoices}
+    companies = {invoice.company for invoice in invoices}
+    if len(customers) != 1 or len(companies) != 1:
+        frappe.throw(_("Eine Mahnung darf nur Rechnungen eines Mieters und einer Firma enthalten."))
+    if not dunning_type or not frappe.db.exists("Dunning Type", dunning_type):
+        frappe.throw(_("Bitte einen gültigen Mahnungstyp auswählen."))
+
+    type_values = frappe.db.get_value(
+        "Dunning Type", dunning_type, ["dunning_fee", "rate_of_interest"], as_dict=True
+    ) or {}
+    interest_rate = flt(zinssatz if zinssatz is not None else type_values.get("rate_of_interest"))
+    fee = flt(mahngebuehr if mahngebuehr is not None else type_values.get("dunning_fee"))
+    first = invoices[0]
+    doc = frappe.new_doc("Dunning")
+    doc.name = f"Mahnung-Vorschau-{first.customer}"
+    for fieldname, value in {
+        "customer": first.customer,
+        "company": first.company,
+        "dunning_type": dunning_type,
+        "posting_date": posting_date or nowdate(),
+        "due_date": add_days(posting_date or nowdate(), int(frist_tage or 7)),
+        "currency": first.currency,
+        "conversion_rate": flt(getattr(first, "conversion_rate", None)) or 1,
+        "outstanding_amount": sum(flt(invoice.outstanding_amount) for invoice in invoices),
+        "dunning_fee": fee,
+        "rate_of_interest": interest_rate if _as_bool(zinsen_aktiv) else 0,
+        "hv_serienbrief_vorlage": serienbrief_vorlage,
+    }.items():
+        if frappe.get_meta("Dunning").get_field(fieldname):
+            doc.set(fieldname, value)
+
+    overdue_field = frappe.get_meta("Dunning").get_field("overdue_payments")
+    overdue_fields = (
+        {field.fieldname for field in frappe.get_meta(overdue_field.options).fields}
+        if overdue_field and overdue_field.options
+        else set()
+    )
+    for invoice in invoices:
+        values = {
+            "sales_invoice": invoice.name,
+            "payment_term": None,
+            "due_date": invoice.due_date,
+            "invoice_portion": 100,
+            "outstanding": invoice.outstanding_amount,
+            "outstanding_amount": invoice.outstanding_amount,
+            "amount": invoice.outstanding_amount,
+        }
+        doc.append("overdue_payments", {key: value for key, value in values.items() if key in overdue_fields})
+
+    werte_field = frappe.get_meta("Dunning").get_field("hv_serienbrief_werte")
+    if werte_field and werte_field.options:
+        werte_fields = {field.fieldname for field in frappe.get_meta(werte_field.options).fields}
+        if isinstance(serienbrief_werte, str):
+            serienbrief_werte = json.loads(serienbrief_werte or "[]")
+        if isinstance(serienbrief_werte, dict):
+            serienbrief_werte = [
+                {"variable": variable, "wert": wert}
+                for variable, wert in serienbrief_werte.items()
+            ]
+        for row in serienbrief_werte or []:
+            if not (row.get("variable") or "").strip():
+                continue
+            doc.append(
+                "hv_serienbrief_werte",
+                {key: value for key, value in row.items() if key in werte_fields},
+            )
+
+    # Dieselben Berechnungen und Adressauflösungen wie beim späteren Insert,
+    # jedoch ohne Datenbank-Schreibvorgang.
+    doc.run_method("before_validate")
+    doc.run_method("validate")
+    return doc
 
 
 def _save_dunning_pdf(doc, pdf_content: bytes):

@@ -101,7 +101,12 @@ def render_serienbrief_pdf_for_print_format(
 	template, serienbrief_doc = context
 	iteration_doctype = (serienbrief_doc.iteration_doctype or "").strip()
 	template_requirements = _collect_template_requirements(template, iteration_doctype)
-	iteration_rows = serienbrief_doc._get_iteration_rows()
+	target_doc = getattr(serienbrief_doc, "_hv_target_doc", None)
+	iteration_rows = (
+		[_build_target_row(serienbrief_doc, iteration_doctype, target_doc)]
+		if target_doc is not None
+		else serienbrief_doc._get_iteration_rows()
+	)
 
 	if not iteration_rows:
 		frappe.throw(_("Bitte fügen Sie mindestens ein Iterations-Objekt hinzu."))
@@ -131,6 +136,7 @@ def render_serienbrief_pdf_for_print_format(
 			objekt=getattr(row, "objekt", None),
 			date=serienbrief_doc.date,
 		)
+		footer_doc._iteration_doc = getattr(row, "_iteration_doc", None)
 		pdf_chunks.append(serienbrief_doc._render_segments_pdf_bytes(segments, footer_doc=footer_doc))
 
 	return serienbrief_doc._merge_pdf_chunks(pdf_chunks)
@@ -262,6 +268,14 @@ def _build_serienbrief_doc(template, iteration_doctype: str, target_doc) -> Seri
 		or getattr(target_doc, "subject", None)
 		or getattr(target_doc, "name", None)
 	)
+	iteration_values = None
+	if getattr(target_doc, "doctype", None) == "Dunning":
+		from hausverwaltung.hausverwaltung.doctype.dunning import collect_serienbrief_werte
+
+		_attach_dunning_contract(target_doc)
+		werte = collect_serienbrief_werte(target_doc)
+		iteration_values = frappe.as_json(werte) if werte else None
+
 	serienbrief_doc = frappe.get_doc(
 		{
 			"doctype": "Serienbrief Durchlauf",
@@ -275,10 +289,73 @@ def _build_serienbrief_doc(template, iteration_doctype: str, target_doc) -> Seri
 					"doctype": "Serienbrief Iterationsobjekt",
 					"iteration_doctype": iteration_doctype,
 					"objekt": target_doc.name,
+					"variablen_werte": iteration_values,
 				}
 			],
 		}
 	)
 	serienbrief_doc.flags.ignore_mandatory = True
 	serienbrief_doc.flags.ignore_permissions = True
+	serienbrief_doc._hv_target_doc = target_doc
 	return serienbrief_doc
+
+
+def _attach_dunning_contract(dunning) -> None:
+	"""Expose the one authoritative contract shared by all dunned invoices."""
+	contracts: dict[str, Any] = {}
+	for payment in dunning.get("overdue_payments") or []:
+		invoice_name = (payment.get("sales_invoice") or "").strip()
+		if not invoice_name:
+			continue
+		invoice = frappe.get_cached_doc("Sales Invoice", invoice_name)
+		resolver = getattr(invoice, "resolve_serienbrief_path_segment", None)
+		contract = resolver("mietvertrag") if callable(resolver) else None
+		if contract is not None:
+			contracts[contract.name] = contract
+
+	if len(contracts) > 1:
+		frappe.throw(
+			_("Die Rechnungen der Mahnung gehören zu unterschiedlichen Mietverträgen."),
+			frappe.ValidationError,
+		)
+	if contracts:
+		dunning.mietvertrag = next(iter(contracts.values()))
+
+
+def _build_target_row(serienbrief_doc, iteration_doctype: str, target_doc):
+	"""Baut eine Iterationszeile direkt aus einem gespeicherten oder ephemeren Doc."""
+	row_data: dict[str, Any] = {
+		"iteration_doctype": iteration_doctype,
+		"iteration_objekt": target_doc.name,
+		"objekt": target_doc.name,
+	}
+	link_map = serienbrief_doc._get_iteration_link_field_map(iteration_doctype)
+	target_field = link_map.get(iteration_doctype)
+	if target_field:
+		row_data[target_field] = target_doc.name
+
+	for field in frappe.get_meta(iteration_doctype).fields:
+		if field.fieldtype != "Link" or not field.options:
+			continue
+		value = getattr(target_doc, field.fieldname, None)
+		if value:
+			row_data.setdefault(field.fieldname, value)
+
+	display_name = (
+		getattr(target_doc, "anzeigename", None)
+		or getattr(target_doc, "title", None)
+		or getattr(target_doc, "customer_name", None)
+		or getattr(target_doc, "name", None)
+	)
+	if display_name:
+		row_data["anzeigename"] = display_name
+
+	row = frappe._dict(row_data)
+	row._iteration_doc = target_doc
+	row._iteration_rowname = None
+	iteration_values = None
+	for iteration_row in getattr(serienbrief_doc, "iteration_objekte", []) or []:
+		iteration_values = getattr(iteration_row, "variablen_werte", None)
+		break
+	row._iteration_variablen_werte = iteration_values
+	return row

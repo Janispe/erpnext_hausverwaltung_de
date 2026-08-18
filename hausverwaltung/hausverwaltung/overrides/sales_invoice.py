@@ -464,6 +464,48 @@ def validate_mietvertrag_sales_invoice_identity(doc) -> None:
 
 
 class CustomSalesInvoice(SalesInvoice):
+	def resolve_serienbrief_path_segment(self, segment: str):
+		"""Expose the invoice's authoritative contract to Serienbrief paths."""
+		if segment != "mietvertrag":
+			return None
+
+		reference = _contract_reference(
+			mietabrechnung_id=self.get("mietabrechnung_id"),
+			remarks=self.get("remarks"),
+			document_label=cstr(self.get("name")) or _("Sales Invoice"),
+		)
+		mietvertrag = cstr(reference.get("mietvertrag")).strip()
+		if not mietvertrag:
+			return None
+
+		try:
+			contract = frappe.get_cached_doc("Mietvertrag", mietvertrag)
+		except frappe.DoesNotExistError:
+			frappe.throw(
+				_("Rechnung {0} verweist auf den fehlenden Mietvertrag {1}.").format(
+					self.name, mietvertrag
+				),
+				frappe.ValidationError,
+			)
+
+		if cstr(contract.get("kunde")).strip() != cstr(self.get("customer")).strip():
+			frappe.throw(
+				_("Rechnung {0} und Mietvertrag {1} haben unterschiedliche Customer.").format(
+					self.name, mietvertrag
+				),
+				frappe.ValidationError,
+			)
+		invoice_wohnung = cstr(self.get("wohnung")).strip()
+		contract_wohnung = cstr(contract.get("wohnung")).strip()
+		if invoice_wohnung and contract_wohnung != invoice_wohnung:
+			frappe.throw(
+				_("Rechnung {0} und Mietvertrag {1} haben unterschiedliche Wohnungen.").format(
+					self.name, mietvertrag
+				),
+				frappe.ValidationError,
+			)
+		return contract
+
 	def validate(self):
 		# Custom Accounting Dimensions may be absent on ERPNext's mapped return
 		# document.  Inherit them from a locked, fully validated source before

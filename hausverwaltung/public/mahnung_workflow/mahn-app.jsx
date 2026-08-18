@@ -322,11 +322,15 @@ function MahnApp() {
 
   const letterData = {
     mieter, vorlageLabel: vorlage.label,
+    dunningType: vorlage.dunning_type,
+    serienbriefVorlage: vorlage.serienbrief_vorlage,
+    dunning: locked ? viewEntry.beleg : null,
     mahndatum, frist, kanal, anrede, betreff, einleitung, schluss,
+    fristTage,
     posten, hauptforderung, zinsBetrag,
     zinsenAktiv: locked ? viewEntry.zinsBetrag > 0 : zinsenAktiv,
     zinssatz, gebuehr: gebuehrEff, summe,
-    kontonummer,
+    kontonummer, variablen: varValues,
     verwendungszweck,
   };
 
@@ -416,7 +420,10 @@ function MahnApp() {
         <div className="mk-topbar-actions">
           <a className="mk-btn mk-btn-ghost" href="/app/op-workflow?view=mahnwesen">← Mahnwesen</a>
           <a className="mk-btn mk-btn-ghost" href={`/app/mieterkonto-workflow?customer=${encodeURIComponent(mieter.id)}`}>Mieterkonto</a>
-          <button className="mk-btn mk-btn-ghost" onClick={() => window.print()}>Drucken</button>
+          <button
+            className="mk-btn mk-btn-ghost"
+            onClick={() => window.MAHN_PREVIEW_PRINT ? window.MAHN_PREVIEW_PRINT() : window.print()}
+          >Drucken</button>
           <button className="mk-btn" onClick={() => doSend({ finalize: false })} disabled={locked}>Als Draft speichern</button>
           <button className="mk-btn mk-btn-primary" onClick={() => doSend()} disabled={locked}>
             {kanal.includes("E-Mail") ? "Erstellen & E-Mail einreihen" : "Erstellen & PDF erzeugen"}

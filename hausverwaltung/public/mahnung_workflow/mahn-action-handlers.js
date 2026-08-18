@@ -37,12 +37,32 @@
           posting_date: payload.mahndatum,
           frist_tage: payload.fristTage,
           mahngebuehr: payload.mahngebuehr,
+          zinssatz: payload.zinssatz,
           zinsen_aktiv: payload.zinsenAktiv ? 1 : 0,
           kanal: payload.kanal,
           serienbrief_vorlage: vorlage.serienbrief_vorlage || null,
           serienbrief_werte: serializeSerienbriefWerte(payload),
           finalize: payload.finalize === false ? 0 : 1,
         },
+      });
+      return res.message;
+    },
+    async previewDunning(payload) {
+      const res = await frappe.call({
+        method: `${METHOD}.render_dunning_preview_pdf`,
+        args: {
+          sales_invoices: JSON.stringify(payload.belege || []),
+          dunning_type: payload.dunningType || null,
+          posting_date: payload.mahndatum,
+          frist_tage: payload.fristTage,
+          mahngebuehr: payload.mahngebuehr,
+          zinssatz: payload.zinssatz,
+          zinsen_aktiv: payload.zinsenAktiv ? 1 : 0,
+          serienbrief_vorlage: payload.serienbriefVorlage || null,
+          serienbrief_werte: serializeSerienbriefWerte(payload),
+          dunning: payload.dunning || null,
+        },
+        quiet: true,
       });
       return res.message;
     },
