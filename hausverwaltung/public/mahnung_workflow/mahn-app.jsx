@@ -141,6 +141,7 @@ function MahnApp() {
   const [fristTage, setFristTage] = useStateApp(7);
   const [kontonummer, setKontonummer] = useStateApp(M.absender.iban);
   const [varValues, setVarValues] = useStateApp({});
+  const [variablenbelegung, setVariablenbelegung] = useStateApp("");
   const [betreff, setBetreff] = useStateApp(vorlage.betreff);
   const [anrede, setAnrede] = useStateApp(mieter.anrede);
   const [einleitung, setEinleitung] = useStateApp(vorlage.einleitung);
@@ -159,17 +160,34 @@ function MahnApp() {
 
   // Vorlagen-Variablen initialisieren (frist_tage, mahngebuehr, kontonummer, generisch)
   const parseGeld = (s) => parseFloat(String(s).replace(/\./g, "").replace(",", ".")) || 0;
+  const applyVariablenbelegung = (v, assignment) => {
+    const vars = v.variablen || [];
+    const assignmentValues = assignment?.values || {};
+    const assignedValue = (variable) => (
+      Object.prototype.hasOwnProperty.call(assignmentValues, variable.name)
+        ? assignmentValues[variable.name]
+        : variable.default ?? ""
+    );
+    const kn = vars.find((x) => x.name === "kontonummer");
+    setKontonummer(kn ? assignedValue(kn) : M.absender.iban);
+    const rest = {};
+    vars.forEach((x) => {
+      if (!["frist_tage", "mahngebuehr", "kontonummer"].includes(x.name)) rest[x.name] = assignedValue(x);
+    });
+    setVarValues(rest);
+  };
   const initVariablen = (v) => {
     const vars = v.variablen || [];
     const fr = vars.find((x) => x.name === "frist_tage");
     setFristTage(fr ? (parseInt(fr.default, 10) || 7) : 7);
-    const kn = vars.find((x) => x.name === "kontonummer");
-    setKontonummer(kn ? kn.default : M.absender.iban);
-    const rest = {};
-    vars.forEach((x) => {
-      if (!["frist_tage", "mahngebuehr", "kontonummer"].includes(x.name)) rest[x.name] = x.default ?? "";
-    });
-    setVarValues(rest);
+    const defaultAssignment = (v.variablenbelegungen || []).find((item) => item.is_default) || null;
+    setVariablenbelegung(defaultAssignment?.label || "");
+    applyVariablenbelegung(v, defaultAssignment);
+  };
+  const selectVariablenbelegung = (label) => {
+    setVariablenbelegung(label);
+    const assignment = (vorlage.variablenbelegungen || []).find((item) => item.label === label) || null;
+    applyVariablenbelegung(vorlage, assignment);
   };
 
   // generischer Zugriff auf einen Variablenwert (mit Bindung an bestehende States)
@@ -247,7 +265,7 @@ function MahnApp() {
     const key = "custom_" + Date.now();
     const neu = { key, label: name, custom: true, stufe_nr: null, ton: "frei",
       gebuehr, zinsen: zinsenAktiv, betreff, einleitung, schluss,
-      variablen: vorlage.variablen || [] };
+      variablen: vorlage.variablen || [], variablenbelegungen: vorlage.variablenbelegungen || [] };
     setCustomVorlagen((arr) => [...arr, neu]);
     setVorlageKey(key);
     setToast(`Vorlage „${name}" gespeichert`);
@@ -676,6 +694,22 @@ function MahnApp() {
             <div className="mh-card">
               <SectionMH n="4" title="Vorlagen-Variablen"
                 right={<span className="mh-card-aside">{editorVariablen.length} aus der Vorlage</span>} />
+              {(vorlage.variablenbelegungen || []).length > 0 && (
+                <div className="mh-variable-assignment">
+                  <label htmlFor="mh-variable-assignment">Gespeicherte Belegung</label>
+                  <select id="mh-variable-assignment" className="mh-input"
+                    value={variablenbelegung} disabled={locked}
+                    onChange={(e) => selectVariablenbelegung(e.target.value)}>
+                    <option value="">Vorlagen-Standardwerte</option>
+                    {(vorlage.variablenbelegungen || []).map((item) => (
+                      <option key={item.label} value={item.label}>
+                        {item.is_default ? "★ " : ""}{item.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span>Übernimmt die gespeicherten Werte; Frist und Mahngebühr bleiben unverändert.</span>
+                </div>
+              )}
               {editorVariablen.length === 0 && (
                 <p className="mh-empty-hint">Diese Vorlage hat keine zusätzlichen Textvariablen.</p>
               )}

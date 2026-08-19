@@ -2338,6 +2338,31 @@ button { font-family: inherit; }
 
 /* Vorlagen-Variablen-Editor */
 .mh-field-row-2 { grid-template-columns: repeat(2, 1fr); }
+.mh-variable-assignment {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px dotted var(--line);
+}
+.mh-variable-assignment label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.mh-variable-assignment span {
+  grid-column: 2;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+@media (max-width: 900px) {
+  .mh-variable-assignment { grid-template-columns: 1fr; }
+  .mh-variable-assignment span { grid-column: auto; }
+}
 .mh-var-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));

@@ -45,5 +45,43 @@ class TestSerienbriefVariableMetadata(unittest.TestCase):
 		self.assertEqual(mahnung_workflow._serienbrief_variable_metadata(None), {})
 
 
+class TestSerienbriefVariableAssignments(unittest.TestCase):
+	def test_returns_named_values_and_ignores_paths(self):
+		template = frappe._dict(
+			variablenbelegungen=[
+				frappe._dict(
+					bezeichnung="Teilzahlung",
+					ist_standard=1,
+					werte=frappe.as_json(
+						{
+							"Zahlungssatz": {"value": "Bitte zahlen Sie den Restbetrag."},
+							"Klage androhen": {"value": 0},
+							"Objekt": {"path": "dunning.customer"},
+						}
+					),
+				)
+			]
+		)
+		with patch.object(mahnung_workflow.frappe, "get_cached_doc", return_value=template):
+			assignments = mahnung_workflow._serienbrief_variable_assignments("Mahnung")
+
+		self.assertEqual(
+			assignments,
+			[
+				{
+					"label": "Teilzahlung",
+					"is_default": True,
+					"values": {
+						"zahlungssatz": "Bitte zahlen Sie den Restbetrag.",
+						"klage_androhen": 0,
+					},
+				}
+			],
+		)
+
+	def test_returns_empty_assignments_without_template(self):
+		self.assertEqual(mahnung_workflow._serienbrief_variable_assignments(None), [])
+
+
 if __name__ == "__main__":
 	unittest.main()

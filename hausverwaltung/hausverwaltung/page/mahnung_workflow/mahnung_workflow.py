@@ -13,7 +13,7 @@ import re
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, date_diff, flt, nowdate
+from frappe.utils import add_days, cint, date_diff, flt, nowdate
 
 from hausverwaltung.hausverwaltung.page.op_workflow.op_workflow import (
     _resolve_dunning_type,
@@ -122,10 +122,51 @@ def _serienbrief_variable_metadata(template_name: str | None) -> dict[str, dict]
             description = re.sub(r"^\s*1\s*=", "Wahr =", description)
             description = re.sub(r"^\s*0\s*=", "Falsch =", description)
         metadata[frappe.scrub(raw_name)] = {
+            "label": variable.get("label") or raw_name,
             "type": variable_type,
             "desc": description,
         }
     return metadata
+
+
+def _serienbrief_variable_assignments(template_name: str | None) -> list[dict]:
+    """Return named value assignments; Doctype path entries are intentionally ignored."""
+    if not template_name:
+        return []
+    try:
+        template = frappe.get_cached_doc("Serienbrief Vorlage", template_name)
+    except frappe.DoesNotExistError:
+        return []
+
+    assignments = []
+    for row in template.get("variablenbelegungen") or []:
+        label = str(row.get("bezeichnung") or "").strip()
+        if not label:
+            continue
+        try:
+            raw_values = frappe.parse_json(row.get("werte") or "{}")
+        except Exception:
+            raw_values = {}
+        values = {}
+        if isinstance(raw_values, dict):
+            for raw_key, entry in raw_values.items():
+                key = frappe.scrub(str(raw_key or ""))
+                if not key:
+                    continue
+                if isinstance(entry, dict):
+                    if "value" not in entry:
+                        continue
+                    values[key] = entry.get("value")
+                else:
+                    values[key] = entry
+        assignments.append(
+            {
+                "label": label,
+                "is_default": bool(cint(row.get("ist_standard"))),
+                "values": values,
+            }
+        )
+    return assignments
 
 
 def _load_vorlagen() -> list[dict]:
@@ -142,6 +183,7 @@ def _load_vorlagen() -> list[dict]:
         key = frappe.scrub(row.name)
         serienbrief_vorlage = row.get("hv_serienbrief_vorlage")
         variable_metadata = _serienbrief_variable_metadata(serienbrief_vorlage)
+        variablenbelegungen = _serienbrief_variable_assignments(serienbrief_vorlage)
         variablen = [
             {"name": "frist_tage", "type": "Zahl", "default": "7", "desc": "Zahlungsfrist in Tagen"},
             {
@@ -179,6 +221,19 @@ def _load_vorlagen() -> list[dict]:
                 }
             )
 
+        for variable, metadata in variable_metadata.items():
+            if any(v["name"] == variable for v in variablen):
+                continue
+            variablen.append(
+                {
+                    "name": variable,
+                    "label": metadata.get("label") or variable,
+                    "type": metadata.get("type") or "String",
+                    "default": "",
+                    "desc": metadata.get("desc") or variable,
+                }
+            )
+
         if (
             serienbrief_vorlage == INVOICE_REMARKS_TEMPLATE
             and not any(v["name"] == INVOICE_REMARKS_VARIABLE for v in variablen)
@@ -210,6 +265,7 @@ def _load_vorlagen() -> list[dict]:
                 "gebuehr": flt(row.get("dunning_fee")),
                 "zinsen": flt(row.get("rate_of_interest")) > 0,
                 "variablen": variablen,
+                "variablenbelegungen": variablenbelegungen,
                 "betreff": f"{label} — Objekt {{objekt}}",
                 "einleitung": "bitte gleichen Sie die unten aufgeführten offenen Forderungen bis zum {frist} aus.",
                 "schluss": "Sollten Sie die Zahlung zwischenzeitlich veranlasst haben, betrachten Sie dieses Schreiben bitte als gegenstandslos.",
