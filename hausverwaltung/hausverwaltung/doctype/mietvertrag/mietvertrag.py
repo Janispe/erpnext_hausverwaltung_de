@@ -3,7 +3,6 @@ import frappe
 import re
 from frappe import _
 from frappe.model.document import Document
-from frappe.model.rename_doc import rename_doc
 from frappe.utils import add_days, getdate, today
 from urllib.parse import urlencode
 
@@ -127,10 +126,12 @@ class Mietvertrag(Document):
 					)
 
 	def autoname(self) -> None:
-		"""Name contracts as: Haus-Code | VH/HH/SF | Lage | ab: <von> - Nachnamen.
+		"""Give new contracts a stable, tenant-independent document ID.
 
 		Important: The "Haus-Code" includes the Immobilie-ID (if present) to avoid
 		collisions across multiple buildings that share the same initial letter.
+		The ID is deliberately not renamed after insertion; mutable labels belong
+		in ``bezeichnung``.
 		"""
 		if getattr(self, "amended_from", None):
 			# Keep Frappe's default "Amended from" naming behavior.
@@ -141,7 +142,7 @@ class Mietvertrag(Document):
 			# Fall back to DocType autoname ("format:...") if required fields are missing.
 			return
 
-		self.name = _unique_docname("Mietvertrag", _with_hauptmieter_suffix(base_name, self.mieter))
+		self.name = _unique_docname("Mietvertrag", base_name)
 
 	def _staffelbetrag_am(self, staffeln: list, stichtag) -> float:
 		"""Return last applicable `miete` value from a Staffelmiete table for a given date."""
@@ -232,13 +233,12 @@ class Mietvertrag(Document):
 			)
 
 	def on_update(self) -> None:
-		"""Keep Mietvertrag and linked Customer names aligned with Wohnung + Hauptmieter."""
+		"""Keep the linked Customer display name aligned with the Hauptmieter."""
 		if getattr(self.flags, "hv_syncing_names", False):
 			return
 		self.flags.hv_syncing_names = True
 		try:
 			self._sync_customer_name()
-			self._sync_mietvertrag_name()
 		finally:
 			self.flags.hv_syncing_names = False
 
@@ -277,42 +277,18 @@ class Mietvertrag(Document):
 			)
 		return current
 
-	def _sync_mietvertrag_name(self) -> str | None:
-		"""Rename this contract if Wohnung/date/Hauptmieter changed after creation."""
-		base_name = _build_mietvertrag_base_name(self)
-		if not base_name:
-			return None
+	def _sync_display_title(self) -> str:
+		"""Refresh the mutable title without ever changing the document ID."""
+		display_title = _build_mietvertrag_display_title(self) or (self.name or "").strip()
+		self.bezeichnung = display_title
 
-		current = (self.name or "").strip()
-		target = _unique_docname("Mietvertrag", _with_hauptmieter_suffix(base_name, self.mieter), current_name=current)
-		if not target or target == current:
-			return current
+		name = (self.name or "").strip()
+		if not name or self.is_new() or not frappe.db.exists("Mietvertrag", name):
+			return display_title
 
-		try:
-			new_name = rename_doc(
-				"Mietvertrag",
-				current,
-				target,
-				force=True,
-				merge=False,
-				show_alert=False,
-				ignore_permissions=True,
-			)
-		except Exception:
-			frappe.log_error(
-				frappe.get_traceback(),
-				f"Mietvertrag-Sync: Mietvertrag-Rename {current!r} -> {target!r} fehlgeschlagen",
-			)
-			frappe.throw(
-				f"Der Mietvertrag '{current}' konnte nicht zu '{target}' umbenannt werden.<br><br>"
-				"Mögliche Ursachen:<br>"
-				"• anderer Mietvertrag mit gleichem Namen existiert<br>"
-				"• Mietvertrag ist in submitted Buchungen referenziert<br>"
-				"• Lock-Timeout<br><br>"
-				"Details siehe Error Log."
-			)
-		self.name = new_name
-		return new_name
+		if frappe.db.get_value("Mietvertrag", name, "bezeichnung") != display_title:
+			self.db_set("bezeichnung", display_title, update_modified=False)
+		return display_title
 
 	def _validate_customer_mietvertrag_invariant(self) -> None:
 		"""Enforce the bidirectional one-to-one Mietvertrag/Customer identity."""
@@ -391,6 +367,7 @@ class Mietvertrag(Document):
 		self._validate_customer_mietvertrag_invariant()
 		self.status = self.compute_status()
 		self.immobilie = _get_wohnung_immobilie(self.wohnung)
+		self.bezeichnung = _build_mietvertrag_display_title(self) or (self.name or "").strip()
 		for fieldname in ("miete", "betriebskosten", "heizkosten", "untermietzuschlag", "kaution"):
 			self._sort_staffel_table_by_von(fieldname)
 		self._sort_betriebskostenregelungen()
@@ -693,16 +670,87 @@ def _build_mietvertrag_base_name(doc: object) -> str:
 	return f"{haus_initial} | {gebaeudeteil} | {lage} | ab: {von_str}".strip()
 
 
-def _with_hauptmieter_suffix(base_name: str, rows: object) -> str:
-	base = (base_name or "").strip()
-	if not base:
-		return ""
+def _build_mietvertrag_display_title(doc: object) -> str:
+	"""Build a readable, mutable title while keeping ``doc.name`` stable."""
+	wohnung_name = (getattr(doc, "wohnung", None) or "").strip()
+	if not wohnung_name:
+		return (getattr(doc, "name", None) or "").strip()
 
-	last_names = [_sanitize_name_part(name) for name in get_hauptmieter_last_names(rows)]
-	last_names = [name for name in last_names if name]
-	if not last_names:
-		return base
-	return f"{base} - {', '.join(last_names)}"
+	wohnung = frappe.db.get_value(
+		"Wohnung",
+		wohnung_name,
+		["immobilie", "gebaeudeteil", "name__lage_in_der_immobilie"],
+		as_dict=True,
+	) or {}
+	immobilie_name = (
+		(wohnung.get("immobilie") or "").strip()
+		or (getattr(doc, "immobilie", None) or "").strip()
+	)
+	immobilie = (
+		frappe.db.get_value(
+			"Immobilie",
+			immobilie_name,
+			["adresse", "adresse_titel", "bezeichnung", "objekt", "name"],
+			as_dict=True,
+		)
+		if immobilie_name
+		else {}
+	) or {}
+	adresse = (immobilie.get("adresse") or "").strip()
+	strasse = (
+		frappe.db.get_value("Address", adresse, "address_line1")
+		if adresse
+		else ""
+	) or ""
+
+	objekt = _clean_display_part(
+		_clean_address_part(strasse)
+		or immobilie.get("adresse_titel")
+		or immobilie.get("bezeichnung")
+		or immobilie.get("objekt")
+		or immobilie.get("name")
+		or wohnung_name
+	)
+	gebaeudeteil = _clean_display_part(
+		_normalize_gebaeudeteil(
+			(wohnung.get("gebaeudeteil") or "").strip()
+			or (wohnung.get("name__lage_in_der_immobilie") or "").strip()
+		)
+	)
+	lage = _clean_display_part(
+		_lage_ohne_gebaeudeteil((wohnung.get("name__lage_in_der_immobilie") or "").strip())
+	)
+
+	parts = []
+	for part in (objekt, gebaeudeteil, lage):
+		if part and part.casefold() not in {existing.casefold() for existing in parts}:
+			parts.append(part)
+
+	von = getattr(doc, "von", None)
+	if von:
+		try:
+			parts.append(f"seit {getdate(von).strftime('%d.%m.%Y')}")
+		except Exception:
+			parts.append(f"seit {_clean_display_part(str(von))}")
+
+	title = " · ".join(parts) or wohnung_name
+	hauptmieter = _clean_display_part(
+		get_hauptmieter_display_name(getattr(doc, "mieter", None)) or ""
+	)
+	if hauptmieter:
+		title = f"{title} — {hauptmieter}"
+	return title[:240]
+
+
+def _clean_display_part(value: str | None) -> str:
+	"""Collapse whitespace and line breaks in human-readable title parts."""
+	return re.sub(r"\s+", " ", (value or "").strip())
+
+
+def _clean_address_part(value: str | None) -> str:
+	"""Also repair missing whitespace between a street name and house number."""
+	cleaned = _clean_display_part(value)
+	return re.sub(r"(?<=[A-Za-zÄÖÜäöüß.])(?=\d)", " ", cleaned)
 
 
 def _build_customer_docname(doc: object) -> str:
@@ -754,53 +802,6 @@ def _unique_docname(doctype: str, base_name: str, current_name: str | None = Non
 			return candidate
 
 	return f"{base} {frappe.generate_hash(length=6).upper()}"
-
-
-def normalize_existing_mietvertrag_names() -> dict[str, int]:
-	"""Rename legacy Mietvertrag DocNames that contain control separators."""
-	renamed = 0
-	skipped = 0
-	rows = frappe.get_all(
-		"Mietvertrag",
-		filters={"name": ["like", "%\t%"]},
-		fields=["name"],
-		limit=0,
-	)
-	for row in rows:
-		current = (row.get("name") or "").strip()
-		if not current or not frappe.db.exists("Mietvertrag", current):
-			skipped += 1
-			continue
-
-		try:
-			doc = frappe.get_doc("Mietvertrag", current)
-			base_name = _build_mietvertrag_base_name(doc)
-			target = _unique_docname(
-				"Mietvertrag",
-				_with_hauptmieter_suffix(base_name, doc.mieter),
-				current_name=current,
-			)
-			if not target or target == current:
-				skipped += 1
-				continue
-			rename_doc(
-				"Mietvertrag",
-				current,
-				target,
-				force=True,
-				merge=False,
-				show_alert=False,
-				ignore_permissions=True,
-			)
-			renamed += 1
-		except Exception:
-			skipped += 1
-			frappe.log_error(
-				title="Mietvertrag Legacy-Name Normalisierung fehlgeschlagen",
-				message=frappe.get_traceback(),
-			)
-
-	return {"renamed": renamed, "skipped": skipped}
 
 
 def _compute_status_value(von: object, bis: object) -> str:
@@ -860,7 +861,7 @@ def update_statuses_for_list() -> dict:
 
 
 def sync_names_for_contact(doc, method: str | None = None) -> None:
-	"""Refresh linked Mietvertrag/Customer names when a tenant Contact changes."""
+	"""Refresh mutable titles for contracts/Customers linked to a Contact."""
 	_ = method
 	contact = (getattr(doc, "name", None) or "").strip()
 	if not contact:
@@ -882,10 +883,10 @@ def sync_names_for_contact(doc, method: str | None = None) -> None:
 		try:
 			mv = frappe.get_doc("Mietvertrag", parent)
 			mv._sync_customer_name()
-			mv._sync_mietvertrag_name()
+			mv._sync_display_title()
 		except Exception:
 			frappe.log_error(
-				title="Mietvertrag Naming Sync fehlgeschlagen",
+				title="Mietvertrag Anzeige-Sync fehlgeschlagen",
 				message=frappe.get_traceback(),
 			)
 

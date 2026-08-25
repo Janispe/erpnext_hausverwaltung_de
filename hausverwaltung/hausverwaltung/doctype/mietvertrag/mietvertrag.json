@@ -6,6 +6,7 @@
  "engine": "InnoDB",
  "field_order": [
   "details_section",
+  "bezeichnung",
   "wohnung",
   "immobilie",
   "keller_mitvermietet",
@@ -56,6 +57,18 @@
   {
    "fieldname": "details_section",
    "fieldtype": "Section Break"
+  },
+  {
+   "allow_on_submit": 1,
+   "description": "Lesbarer, automatisch gepflegter Titel. Die technische Dokument-ID bleibt unverändert.",
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_preview": 1,
+   "label": "Anzeigetitel",
+   "length": 240,
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "wohnung",
@@ -424,6 +437,9 @@
   }
  ],
  "row_format": "Dynamic",
+ "search_fields": "bezeichnung,wohnung,immobilie,kunde",
+ "show_name_in_global_search": 1,
+ "show_title_field_in_link": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [
@@ -440,5 +456,6 @@
    "title": "In der Zukunft"
   }
  ],
+ "title_field": "bezeichnung",
  "track_changes": 1
 }

@@ -1462,25 +1462,6 @@ def ensure_hausverwalter_extra_permissions() -> None:
     _ensure_hausverwalter_extra_permissions(reason="hook")
 
 
-def ensure_mietvertrag_docnames_are_normalized() -> None:
-    """Rename legacy Mietvertrag records whose DocNames contain tab separators."""
-    try:
-        from hausverwaltung.hausverwaltung.doctype.mietvertrag.mietvertrag import (
-            normalize_existing_mietvertrag_names,
-        )
-
-        normalize_existing_mietvertrag_names()
-        frappe.db.commit()
-    except Exception:
-        try:
-            frappe.log_error(
-                frappe.get_traceback(),
-                "hausverwaltung Mietvertrag DocName normalization failed",
-            )
-        except Exception:
-            pass
-
-
 # Modules that should NOT appear as Workspace Sidebars for Hausverwalter users.
 # Hausverwalter still has Sales Invoice, Payment Entry etc. via the HV workspace —
 # blocking the module just hides the redundant Banking/Invoicing/Buying sidebars.

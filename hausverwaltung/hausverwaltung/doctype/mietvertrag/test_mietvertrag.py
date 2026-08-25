@@ -58,12 +58,32 @@ class TestMietvertrag(unittest.TestCase):
 		self.assertNotIn("\t", value)
 		self.assertEqual(value, "G1 / VH / EG links")
 
-	def test_hauptmieter_suffix_is_url_friendly(self):
-		with patch.object(mietvertrag, "get_hauptmieter_last_names", return_value=["Bega\tnovic|Test"]):
-			value = mietvertrag._with_hauptmieter_suffix("G1 | VH | EG links | ab: 2008-03-01", [])
+	def test_build_display_title_uses_address_unit_start_and_current_tenant(self):
+		def get_value(doctype, name, fields, as_dict=False):
+			if doctype == "Wohnung":
+				return frappe._dict({
+					"immobilie": "IMM-1",
+					"gebaeudeteil": "Vorderhaus",
+					"name__lage_in_der_immobilie": "Vorderhaus, 2. OG links",
+				})
+			if doctype == "Immobilie":
+				return frappe._dict({
+					"adresse": "ADDR-1",
+					"adresse_titel": "Leinestr. 6",
+					"bezeichnung": "Leinestraße",
+					"objekt": "Haus L",
+					"name": "IMM-1",
+				})
+			if doctype == "Address":
+				return "Leinestr.6"
+			return None
 
-		self.assertNotIn("\t", value)
-		self.assertEqual(value, "G1 | VH | EG links | ab: 2008-03-01 - Bega novic/Test")
+		doc = frappe._dict(wohnung="WHG-1", immobilie="IMM-1", von="2012-03-01", mieter=[])
+		with patch("frappe.db.get_value", side_effect=get_value), \
+			 patch.object(mietvertrag, "get_hauptmieter_display_name", return_value="Frieler Franz"):
+			value = mietvertrag._build_mietvertrag_display_title(doc)
+
+		self.assertEqual(value, "Leinestr. 6 · VH · 2. OG links · seit 01.03.2012 — Frieler Franz")
 
 	def test_compute_status_value_handles_future_running_and_past_contracts(self):
 		with patch.object(mietvertrag, "today", return_value="2026-06-10"):
@@ -94,6 +114,21 @@ class TestMietvertrag(unittest.TestCase):
 			value = mietvertrag._build_mietvertrag_base_name(doc)
 
 		self.assertEqual(value, "A17 | VH | EG links | ab: 2026-03-01")
+
+	def test_autoname_is_tenant_independent(self):
+		doc = frappe.get_doc({
+			"doctype": "Mietvertrag",
+			"wohnung": "WHG-1",
+			"von": "2026-03-01",
+			"mieter": [{"mieter": "CONTACT-1", "rolle": "Hauptmieter"}],
+		})
+
+		with patch.object(mietvertrag, "_build_mietvertrag_base_name", return_value="A17 | VH | EG links | ab: 2026-03-01"), \
+			 patch.object(mietvertrag, "_unique_docname", return_value="A17 | VH | EG links | ab: 2026-03-01") as unique:
+			doc.autoname()
+
+		unique.assert_called_once_with("Mietvertrag", "A17 | VH | EG links | ab: 2026-03-01")
+		self.assertNotIn("CONTACT-1", doc.name)
 
 	def test_unique_docname_keeps_current_name_and_adds_suffix_on_collision(self):
 		def exists(doctype, name, cache=False):
@@ -355,12 +390,10 @@ class TestMietvertrag(unittest.TestCase):
 		})
 		doc.flags.hv_syncing_names = True
 
-		with patch.object(doc, "_sync_customer_name") as sync_customer, \
-			 patch.object(doc, "_sync_mietvertrag_name") as sync_contract:
+		with patch.object(doc, "_sync_customer_name") as sync_customer:
 			doc.on_update()
 
 		sync_customer.assert_not_called()
-		sync_contract.assert_not_called()
 
 	def test_sync_customer_name_creates_missing_linked_customer_and_updates_doc(self):
 		doc = frappe.get_doc({
@@ -421,11 +454,9 @@ class TestMietvertrag(unittest.TestCase):
 			patch.object(mietvertrag, "get_hauptmieter_display_name", return_value="Neuer Name Nora"), \
 			patch("frappe.db.exists", side_effect=exists), \
 			patch("frappe.db.get_value", side_effect=get_value), \
-			patch.object(mietvertrag, "rename_doc") as rename, \
 			patch("frappe.db.set_value") as set_value:
 			result = doc._sync_customer_name()
 
-		rename.assert_not_called()
 		set_value.assert_called_once_with(
 			"Customer",
 			"Alter Kunde",
@@ -475,7 +506,7 @@ class TestMietvertrag(unittest.TestCase):
 				reuse_existing=False,
 			)
 
-	def test_sync_mietvertrag_name_renames_contract_to_expected_target(self):
+	def test_sync_display_title_updates_title_without_renaming_contract(self):
 		doc = frappe.get_doc({
 			"doctype": "Mietvertrag",
 			"name": "Alter MV",
@@ -483,23 +514,20 @@ class TestMietvertrag(unittest.TestCase):
 			"von": "2026-01-01",
 		})
 
-		with patch.object(mietvertrag, "_build_mietvertrag_base_name", return_value="A1 | VH | EG | ab: 2026-01-01"), \
-			 patch.object(mietvertrag, "get_hauptmieter_last_names", return_value=["Muster"]), \
-			 patch.object(mietvertrag, "_unique_docname", return_value="A1 | VH | EG | ab: 2026-01-01 - Muster"), \
-			 patch.object(mietvertrag, "rename_doc", return_value="A1 | VH | EG | ab: 2026-01-01 - Muster") as rename:
-			result = doc._sync_mietvertrag_name()
+		with patch.object(mietvertrag, "_build_mietvertrag_display_title", return_value="Leinestr. 6 · VH · EG · Muster"), \
+			 patch.object(doc, "is_new", return_value=False), \
+			 patch("frappe.db.exists", return_value=True), \
+			 patch("frappe.db.get_value", return_value="Alter Titel"), \
+			 patch.object(doc, "db_set") as db_set:
+			result = doc._sync_display_title()
 
-		rename.assert_called_once_with(
-			"Mietvertrag",
-			"Alter MV",
-			"A1 | VH | EG | ab: 2026-01-01 - Muster",
-			force=True,
-			merge=False,
-			show_alert=False,
-			ignore_permissions=True,
+		db_set.assert_called_once_with(
+			"bezeichnung",
+			"Leinestr. 6 · VH · EG · Muster",
+			update_modified=False,
 		)
-		self.assertEqual(result, "A1 | VH | EG | ab: 2026-01-01 - Muster")
-		self.assertEqual(doc.name, "A1 | VH | EG | ab: 2026-01-01 - Muster")
+		self.assertEqual(result, "Leinestr. 6 · VH · EG · Muster")
+		self.assertEqual(doc.name, "Alter MV")
 
 	def test_vorauszahlung_slots_filters_by_date_sorts_by_idx_and_pads_missing_slots(self):
 		doc = frappe.get_doc({
@@ -552,15 +580,15 @@ class TestMietvertrag(unittest.TestCase):
 			update_modified=False,
 		)
 
-	def test_sync_names_for_contact_updates_all_linked_contracts_and_logs_per_row_errors(self):
+	def test_sync_names_for_contact_updates_mutable_titles_and_logs_per_row_errors(self):
 		contact = frappe._dict(name="CONTACT-1")
 		rows = [frappe._dict(parent="MV-1"), frappe._dict(parent="MV-MISSING"), frappe._dict(parent="MV-FAIL")]
 		mv_ok = frappe._dict()
 		mv_ok._sync_customer_name = unittest.mock.Mock()
-		mv_ok._sync_mietvertrag_name = unittest.mock.Mock()
+		mv_ok._sync_display_title = unittest.mock.Mock()
 		mv_fail = frappe._dict()
-		mv_fail._sync_customer_name = unittest.mock.Mock(side_effect=Exception("rename failed"))
-		mv_fail._sync_mietvertrag_name = unittest.mock.Mock()
+		mv_fail._sync_customer_name = unittest.mock.Mock(side_effect=Exception("sync failed"))
+		mv_fail._sync_display_title = unittest.mock.Mock()
 
 		def exists(doctype, name):
 			return name in {"MV-1", "MV-FAIL"}
@@ -575,9 +603,9 @@ class TestMietvertrag(unittest.TestCase):
 			mietvertrag.sync_names_for_contact(contact)
 
 		mv_ok._sync_customer_name.assert_called_once()
-		mv_ok._sync_mietvertrag_name.assert_called_once()
+		mv_ok._sync_display_title.assert_called_once()
 		mv_fail._sync_customer_name.assert_called_once()
-		mv_fail._sync_mietvertrag_name.assert_not_called()
+		mv_fail._sync_display_title.assert_not_called()
 		log_error.assert_called_once()
 
 	def test_get_mietvertrag_paperless_link_builds_query_and_ensures_tags(self):
@@ -621,6 +649,39 @@ class TestMietvertrag(unittest.TestCase):
 
 
 class TestMietvertragDatabaseIntegration(unittest.TestCase):
+	def test_contact_name_change_updates_title_but_keeps_contract_id(self):
+		suffix = frappe.generate_hash(length=8)
+		savepoint = f"mietvertrag_stable_id_{suffix}"
+		frappe.db.savepoint(savepoint)
+		try:
+			wohnung = frappe.get_doc({
+				"doctype": "Wohnung",
+				"name__lage_in_der_immobilie": f"HV Stable ID Test {suffix}",
+				"gebaeudeteil": "VH",
+			}).insert(ignore_permissions=True)
+			contact = frappe.get_doc({
+				"doctype": "Contact",
+				"first_name": "Max",
+				"last_name": f"Alt{suffix}",
+			}).insert(ignore_permissions=True)
+			contract = frappe.get_doc({
+				"doctype": "Mietvertrag",
+				"wohnung": wohnung.name,
+				"von": "2026-01-01",
+				"mieter": [{"mieter": contact.name, "rolle": "Hauptmieter"}],
+			}).insert(ignore_permissions=True)
+			stable_name = contract.name
+
+			contact.last_name = f"Neu{suffix}"
+			contact.save(ignore_permissions=True)
+			updated = frappe.get_doc("Mietvertrag", stable_name)
+
+			self.assertEqual(updated.name, stable_name)
+			self.assertIn(f"Neu{suffix}", updated.bezeichnung)
+			self.assertNotIn(f"Alt{suffix}", updated.bezeichnung)
+		finally:
+			frappe.db.rollback(save_point=savepoint)
+
 	def test_real_insert_sets_status_customer_and_sorts_staffels(self):
 		suffix = frappe.generate_hash(length=8)
 		savepoint = f"mietvertrag_insert_{suffix}"
