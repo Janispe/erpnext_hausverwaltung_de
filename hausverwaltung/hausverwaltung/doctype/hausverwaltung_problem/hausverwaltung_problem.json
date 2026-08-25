@@ -1,0 +1,219 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-25 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "titel",
+  "status",
+  "schweregrad",
+  "problemtyp",
+  "quelle",
+  "erkannt_am",
+  "zuletzt_erkannt_am",
+  "bezug_section",
+  "bezug_doctype",
+  "bezug_name",
+  "column_break_bezug",
+  "weiterer_bezug_doctype",
+  "weiterer_bezug_name",
+  "beschreibung_section",
+  "beschreibung",
+  "bearbeitung_section",
+  "loesung",
+  "behoben_am",
+  "technische_daten_section",
+  "problem_schluessel",
+  "details_json"
+ ],
+ "fields": [
+  {
+   "fieldname": "titel",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Problem",
+   "reqd": 1
+  },
+  {
+   "default": "Offen",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Offen\nIn Bearbeitung\nBehoben\nAkzeptiert",
+   "reqd": 1
+  },
+  {
+   "default": "Warnung",
+   "fieldname": "schweregrad",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Schweregrad",
+   "options": "Hinweis\nWarnung\nKritisch",
+   "reqd": 1
+  },
+  {
+   "fieldname": "problemtyp",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Problemtyp",
+   "reqd": 1
+  },
+  {
+   "fieldname": "quelle",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Quelle",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "erkannt_am",
+   "fieldtype": "Datetime",
+   "label": "Erstmals erkannt",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "zuletzt_erkannt_am",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Zuletzt erkannt",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "bezug_section",
+   "fieldtype": "Section Break",
+   "label": "Bezug"
+  },
+  {
+   "fieldname": "bezug_doctype",
+   "fieldtype": "Link",
+   "label": "Dokumenttyp",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bezug_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Dokument",
+   "options": "bezug_doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_bezug",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "weiterer_bezug_doctype",
+   "fieldtype": "Link",
+   "label": "Weiterer Dokumenttyp",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "weiterer_bezug_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Weiteres Dokument",
+   "options": "weiterer_bezug_doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "beschreibung_section",
+   "fieldtype": "Section Break",
+   "label": "Beschreibung"
+  },
+  {
+   "fieldname": "beschreibung",
+   "fieldtype": "Long Text",
+   "label": "Beschreibung",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "bearbeitung_section",
+   "fieldtype": "Section Break",
+   "label": "Bearbeitung"
+  },
+  {
+   "fieldname": "loesung",
+   "fieldtype": "Long Text",
+   "label": "Lösung / Begründung"
+  },
+  {
+   "fieldname": "behoben_am",
+   "fieldtype": "Datetime",
+   "label": "Behoben am",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "technische_daten_section",
+   "fieldtype": "Section Break",
+   "label": "Technische Daten"
+  },
+  {
+   "fieldname": "problem_schluessel",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Problemschlüssel",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "details_json",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Details (JSON)",
+   "options": "JSON",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 0,
+ "modified": "2026-08-25 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hausverwaltung",
+ "name": "Hausverwaltung Problem",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Hausverwalter",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "zuletzt_erkannt_am",
+ "sort_order": "DESC",
+ "states": [
+  {"color": "Red", "title": "Offen"},
+  {"color": "Orange", "title": "In Bearbeitung"},
+  {"color": "Green", "title": "Behoben"},
+  {"color": "Gray", "title": "Akzeptiert"}
+ ],
+ "title_field": "titel",
+ "track_changes": 1
+}

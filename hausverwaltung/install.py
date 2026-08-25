@@ -1649,6 +1649,13 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         ],
     },
     {
+        "label": "Probleme",
+        "icon": "error",
+        "links": [
+            {"label": "Probleme", "link_type": "DocType", "link_to": "Hausverwaltung Problem"},
+        ],
+    },
+    {
         "label": "Anlagen & Wartung",
         "icon": "wrench",
         "links": [
@@ -1722,6 +1729,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
 _HAUSVERWALTUNG_TOP_SHORTCUTS: list[dict] = [
     {"label": "Alle Immobilien", "type": "Page", "link_to": "immobilienbaumansich", "color": "Green"},
     {"label": "Assistent", "type": "Page", "link_to": "hausverwaltung-assistant", "color": "Green"},
+    {"label": "Probleme", "type": "DocType", "link_to": "Hausverwaltung Problem", "color": "Red"},
     {"label": "Mieten sollstellen", "type": "DocType", "link_to": "Mietrechnungen Durchlauf", "color": "Blue"},
     {"label": "Buchungs-Cockpit", "type": "Page", "link_to": "buchen_cockpit", "color": "Purple"},
     {"label": "Email", "type": "DocType", "link_to": "Communication", "color": "Grey"},

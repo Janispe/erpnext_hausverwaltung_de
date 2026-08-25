@@ -97,6 +97,7 @@ doctype_js = {
 doctype_list_js = {
 	"Sales Invoice": "public/js/sales_invoice_list.js",
 	"Mietvertrag": "hausverwaltung/doctype/mietvertrag/mietvertrag_list.js",
+	"Hausverwaltung Problem": "hausverwaltung/doctype/hausverwaltung_problem/hausverwaltung_problem_list.js",
 }
 doctype_tree_js = {
 	"Account": "public/js/account_tree.js",
