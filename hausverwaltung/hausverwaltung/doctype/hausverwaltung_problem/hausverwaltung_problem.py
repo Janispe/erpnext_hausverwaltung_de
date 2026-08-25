@@ -14,6 +14,8 @@ OPEN_STATUSES = {"Offen", "In Bearbeitung"}
 
 class HausverwaltungProblem(Document):
 	def validate(self) -> None:
+		if not self.problemtyp_code:
+			self.problemtyp_code = _fallback_problem_type_code(self.quelle, self.problemtyp)
 		if self.status == "Behoben" and not self.behoben_am:
 			self.behoben_am = now_datetime()
 		elif self.status in OPEN_STATUSES:
@@ -23,6 +25,11 @@ class HausverwaltungProblem(Document):
 def _problem_key(source: str, stable_key: str) -> str:
 	payload = f"{source}\0{stable_key}".encode()
 	return f"HVP-{hashlib.sha256(payload).hexdigest()[:32]}"
+
+
+def _fallback_problem_type_code(source: str, problem_type: str) -> str:
+	payload = f"{source}\0{problem_type}".encode()
+	return f"generic.{hashlib.sha256(payload).hexdigest()[:16]}"
 
 
 def sync_detected_problems(source: str, findings: list[dict[str, Any]]) -> dict[str, int]:
@@ -45,6 +52,12 @@ def sync_detected_problems(source: str, findings: list[dict[str, Any]]) -> dict[
 			"titel": str(finding.get("title") or stable_key)[:140],
 			"schweregrad": str(finding.get("severity") or "Warnung"),
 			"problemtyp": str(finding.get("problem_type") or "Allgemein")[:140],
+			"problemtyp_code": str(
+				finding.get("problem_code")
+				or _fallback_problem_type_code(
+					source, str(finding.get("problem_type") or "Allgemein")
+				)
+			)[:140],
 			"quelle": source[:140],
 			"zuletzt_erkannt_am": now,
 			"bezug_doctype": str(finding.get("reference_doctype") or ""),

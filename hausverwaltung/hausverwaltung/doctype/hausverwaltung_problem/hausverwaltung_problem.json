@@ -9,6 +9,7 @@
   "status",
   "schweregrad",
   "problemtyp",
+  "problemtyp_code",
   "quelle",
   "erkannt_am",
   "zuletzt_erkannt_am",
@@ -62,6 +63,14 @@
    "in_standard_filter": 1,
    "label": "Problemtyp",
    "reqd": 1
+  },
+  {
+   "fieldname": "problemtyp_code",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Problemtyp-Code",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "quelle",
