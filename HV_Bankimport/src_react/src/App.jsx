@@ -190,6 +190,9 @@ function NewImportDialog({ open, onClose, onCreated, notify }) {
 	const [file, setFile] = useState(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
+	const [detectingAccount, setDetectingAccount] = useState(false);
+	const [accountSuggestion, setAccountSuggestion] = useState(null);
+	const suggestionRequest = useRef(0);
 
 	useEffect(() => {
 		if (!open) return;
@@ -207,6 +210,37 @@ function NewImportDialog({ open, onClose, onCreated, notify }) {
 	}, [open]); // eslint-disable-line
 
 	if (!open) return null;
+
+	const selectFile = async (selectedFile) => {
+		setFile(selectedFile);
+		setError("");
+		setAccountSuggestion(null);
+		const requestId = ++suggestionRequest.current;
+		if (!selectedFile) {
+			setDetectingAccount(false);
+			return;
+		}
+
+		setDetectingAccount(true);
+		try {
+			const fileData = await readFileAsDataUrl(selectedFile);
+			const result = await api.suggestBankAccount({
+				filename: selectedFile.name || "bankauszug.csv",
+				fileData,
+			});
+			if (requestId !== suggestionRequest.current) return;
+			if (result.bank_account) setBankAccount(result.bank_account);
+			setAccountSuggestion(result);
+		} catch (e) {
+			if (requestId !== suggestionRequest.current) return;
+			setAccountSuggestion({
+				status: "error",
+				message: e.message || "Das Bankkonto konnte nicht aus der CSV erkannt werden.",
+			});
+		} finally {
+			if (requestId === suggestionRequest.current) setDetectingAccount(false);
+		}
+	};
 
 	const submit = async (event) => {
 		event.preventDefault();
@@ -248,7 +282,12 @@ function NewImportDialog({ open, onClose, onCreated, notify }) {
 					<select
 						className="text-input nim-select"
 						value={bankAccount}
-						onChange={(e) => setBankAccount(e.target.value)}
+						onChange={(e) => {
+							++suggestionRequest.current;
+							setDetectingAccount(false);
+							setAccountSuggestion(null);
+							setBankAccount(e.target.value);
+						}}
 						disabled={busy || accounts === null}
 						required
 					>
@@ -267,17 +306,30 @@ function NewImportDialog({ open, onClose, onCreated, notify }) {
 						className="text-input nim-file"
 						type="file"
 						accept=".csv,text/csv,text/plain"
-						onChange={(e) => setFile(e.target.files?.[0] || null)}
+						onChange={(e) => selectFile(e.target.files?.[0] || null)}
 						disabled={busy}
 						required
 					/>
 				</label>
 
+				{detectingAccount && (
+					<div className="nim-suggestion"><Spinner /> Bankkonto wird aus der CSV erkannt…</div>
+				)}
+				{!detectingAccount && accountSuggestion && (
+					<div className={`nim-suggestion ${accountSuggestion.status === "matched" ? "matched" : "warning"}`}>
+						<Icon name={accountSuggestion.status === "matched" ? "check" : "info"} />
+						<span>
+							{accountSuggestion.message}
+							{accountSuggestion.status === "matched" && " Der Vorschlag kann oben geändert werden."}
+						</span>
+					</div>
+				)}
+
 				{error && <div className="nim-error"><Icon name="info" /> {error}</div>}
 
 				<div className="nim-actions">
 					<button type="button" className="btn subtle" onClick={onClose} disabled={busy}>Abbrechen</button>
-					<button type="submit" className="btn primary" disabled={busy || !bankAccount || !file}>
+					<button type="submit" className="btn primary" disabled={busy || detectingAccount || !bankAccount || !file}>
 						{busy ? <Spinner /> : <Icon name="upload" />} Importieren
 					</button>
 				</div>

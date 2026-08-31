@@ -152,6 +152,22 @@
 .nim-field { display: block; margin-top: 14px; }
 .nim-select { height: 34px; }
 .nim-file { height: auto; min-height: 34px; padding: 6px 10px; }
+.nim-suggestion {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	margin-top: 10px;
+	padding: 9px 11px;
+	background: var(--surface-2);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	color: var(--text-muted);
+	font-size: 12px;
+	line-height: 1.45;
+}
+.nim-suggestion.matched { background: var(--done-bg); border-color: #bcdcc4; color: var(--done); }
+.nim-suggestion.warning { background: var(--warn-bg); border-color: #e7d5a2; color: var(--warn); }
+.nim-suggestion svg { flex: 0 0 auto; margin-top: 1px; }
 .nim-error {
 	display: flex;
 	align-items: flex-start;

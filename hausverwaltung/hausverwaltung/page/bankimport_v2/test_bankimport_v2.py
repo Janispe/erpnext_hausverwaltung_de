@@ -625,6 +625,54 @@ class TestCreateImport(unittest.TestCase):
 	def _raise_throw(self, msg):
 		raise frappe.ValidationError(str(msg))
 
+	def test_extracts_own_iban_from_postbank_preamble_not_transaction_rows(self):
+		text = """Umsätze
+Konto;Filial-/Kontonummer;IBAN;Währung
+Postbank Giro;397 4436242 01;DE40 1007 0324 0443 6242 01;EUR
+
+Buchungstag;Betrag;IBAN;Auftraggeber
+02.04.2026;10,00;DE30100500001480169850;Mieter
+"""
+		self.assertEqual(
+			bv2._extract_statement_account_identity(text),
+			{"iban": "DE40100703240443624201", "account_number": "397 4436242 01"},
+		)
+
+	def test_does_not_use_counterparty_iban_when_preamble_has_no_account(self):
+		text = """Buchungstag;Betrag;IBAN;Auftraggeber
+02.04.2026;10,00;DE30100500001480169850;Mieter
+"""
+		self.assertEqual(
+			bv2._extract_statement_account_identity(text),
+			{"iban": None, "account_number": None},
+		)
+
+	def test_suggests_unique_active_company_bank_account_by_normalized_iban(self):
+		csv_content = (
+			"Konto;Filial-/Kontonummer;IBAN;Währung\n"
+			"Postbank Giro;397 4436242 01;DE40100703240443624201;EUR\n"
+			"Buchungstag;Betrag\n02.04.2026;10,00\n"
+		).encode()
+		payload = base64.b64encode(csv_content).decode("ascii")
+		accounts = [
+			frappe._dict(
+				name="BANK-1",
+				account="1800",
+				iban="DE40 1007 0324 0443 6242 01",
+				bank_account_no="443624201",
+			)
+		]
+		with patch("frappe.has_permission"), \
+			 patch("frappe.get_meta", return_value=self._Meta()), \
+			 patch("frappe.get_list", return_value=accounts), \
+			 patch("frappe.db.get_value", return_value=0):
+			result = bv2.suggest_bank_account("konto.csv", payload)
+
+		self.assertEqual(result["status"], "matched")
+		self.assertEqual(result["bank_account"], "BANK-1")
+		self.assertEqual(result["detected_iban"], "DE40100703240443624201")
+		self.assertEqual(result["match_basis"], "iban")
+
 	def test_rejects_empty_file_payload(self):
 		with patch("frappe.has_permission"), \
 			 patch("frappe.throw", side_effect=self._raise_throw):

@@ -12,6 +12,7 @@ import {
 	searchAccounts,
 	searchParties,
 	setBankimportRuleEnabled,
+	suggestBankAccount,
 } from "./api.js";
 
 describe("Kreditraten-Kandidaten", () => {
@@ -44,6 +45,15 @@ describe("Bankimport standalone API fallback", () => {
 	it("stellt Bankkonto- und Importanlage-Fallback fuer den Upload-Dialog bereit", async () => {
 		const accounts = await listBankAccounts();
 		expect(accounts.items[0].value).toContain("Demo Bankkonto");
+		const suggestion = await suggestBankAccount({
+			filename: "kontoauszug.csv",
+			fileData: "data:text/csv;base64,QQ==",
+		});
+		expect(suggestion).toMatchObject({
+			status: "matched",
+			bank_account: accounts.items[0].value,
+			match_basis: "iban",
+		});
 
 		const created = await createImport({
 			bankAccount: accounts.items[0].value,

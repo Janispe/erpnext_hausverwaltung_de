@@ -49,6 +49,20 @@ export async function listBankAccounts(txt = "") {
 	return await rpc("list_bank_accounts", { txt });
 }
 
+export async function suggestBankAccount({ filename, fileData }) {
+	if (!embedded) {
+		return {
+			status: "matched",
+			bank_account: "Demo Bankkonto - Postbank",
+			detected_iban: "DE00000000000000000000",
+			match_basis: "iban",
+			message: "Bankkonto anhand der CSV eindeutig erkannt.",
+			mock: true,
+		};
+	}
+	return await rpc("suggest_bank_account", { filename, file_data: fileData });
+}
+
 export async function createImport({ bankAccount, filename, fileData }) {
 	if (!embedded) return { name: "BAI-DEMO-0001", title: "Demo Bankimport", mock: true };
 	return await rpc("create_import", {

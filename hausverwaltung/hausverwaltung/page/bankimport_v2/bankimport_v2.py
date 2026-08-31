@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+import csv
+import io
 import json
+import re
 from typing import Any
 
 import frappe
@@ -32,16 +35,16 @@ from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import i
 	_linked_voucher_for_row,
 	_lock_bank_booking_scope,
 	_other_import_row_references_voucher,
+	_persist_saldo_fields,
 	_recompute_doc_status,
 	_refresh_saldo_fields,
-	_persist_saldo_fields,
 	parse_csv,
 	sync_cancelled_journal_entry_links,
 	sync_cancelled_payment_entry_links,
 )
 from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
-	BUILDER_RULE_CODE,
 	BOOKING_RULE_DOCTYPE,
+	BUILDER_RULE_CODE,
 	DEFAULT_BOOKING_RULES,
 	DEFAULT_PARTY_RULES,
 	PARTY_RULE_DOCTYPE,
@@ -385,6 +388,152 @@ def list_bank_accounts(txt: str = "") -> dict[str, Any]:
 		)
 
 	return {"items": items}
+
+
+def _decode_uploaded_file(file_data: str) -> bytes:
+	"""Decode and validate an upload payload without persisting it."""
+	raw_data = file_data.split(",", 1)[1] if "," in file_data and file_data.startswith("data:") else file_data
+	try:
+		content = base64.b64decode(raw_data, validate=True)
+	except (binascii.Error, ValueError):
+		frappe.throw(_("Die CSV-Datei konnte nicht gelesen werden."))
+	if not content:
+		frappe.throw(_("Die CSV-Datei ist leer."))
+	if len(content) > 10 * 1024 * 1024:
+		frappe.throw(_("Die CSV-Datei ist zu groß. Maximal erlaubt sind 10 MB."))
+	return content
+
+
+def _decode_csv_preview(content: bytes) -> str:
+	for encoding in ("utf-8-sig", "cp1252", "latin-1"):
+		try:
+			return content.decode(encoding)
+		except UnicodeDecodeError:
+			continue
+	return content.decode("utf-8", errors="ignore")
+
+
+def _csv_label(value: str | None) -> str:
+	return re.sub(r"[^a-z0-9äöüß]+", "", (value or "").strip().casefold())
+
+
+def _statement_iban(value: str | None) -> str | None:
+	iban = normalize_iban(value)
+	if iban and re.fullmatch(r"[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}", iban):
+		return iban
+	return None
+
+
+def _extract_statement_account_identity(text: str) -> dict[str, str | None]:
+	"""Read the statement's own account from the preamble, never row counterpart IBANs."""
+	try:
+		sniffed = csv.Sniffer().sniff(text[:4096], delimiters=";,\t|").delimiter
+	except csv.Error:
+		sniffed = ";"
+	delimiters = list(dict.fromkeys((sniffed, ";", ",", "\t", "|")))
+
+	for delimiter in delimiters:
+		rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))[:80]
+		for index, row in enumerate(rows):
+			labels = [_csv_label(cell) for cell in row]
+			# From here on, IBAN means the counterparty account of each transaction.
+			if "buchungstag" in labels and any(label in {"betrag", "soll", "haben"} for label in labels):
+				break
+
+			iban_index = labels.index("iban") if "iban" in labels else None
+			account_index = next(
+				(i for i, label in enumerate(labels) if label in {"filialkontonummer", "kontonummer", "bankaccountno"}),
+				None,
+			)
+			if iban_index is not None or account_index is not None:
+				for value_row in rows[index + 1 :]:
+					if not any((cell or "").strip() for cell in value_row):
+						continue
+					iban = _statement_iban(
+						value_row[iban_index]
+						if iban_index is not None and iban_index < len(value_row)
+						else None
+					)
+					account_number = (
+						value_row[account_index].strip()
+						if account_index is not None and account_index < len(value_row)
+						else None
+					)
+					if iban or account_number:
+						return {"iban": iban, "account_number": account_number or None}
+					break
+
+			for cell in row:
+				match = re.search(r"\bIBAN\s*:?\s*([A-Z]{2}\s*[0-9]{2}(?:\s*[A-Z0-9]){11,30})", cell, re.IGNORECASE)
+				if match and (iban := _statement_iban(match.group(1))):
+					return {"iban": iban, "account_number": None}
+
+	return {"iban": None, "account_number": None}
+
+
+def _account_number_key(value: str | None) -> str | None:
+	key = re.sub(r"[^A-Z0-9]", "", (value or "").upper())
+	return key or None
+
+
+@frappe.whitelist()
+def suggest_bank_account(filename: str = "", file_data: str = "") -> dict[str, Any]:
+	"""Suggest one active company Bank Account from the CSV preamble."""
+	frappe.has_permission("Bankauszug Import", "create", throw=True)
+	if not file_data:
+		frappe.throw(_("Bitte eine CSV-Datei auswählen."))
+
+	content = _decode_uploaded_file(file_data)
+	identity = _extract_statement_account_identity(_decode_csv_preview(content))
+	iban = identity.get("iban")
+	account_number = identity.get("account_number")
+	if not iban and not account_number:
+		return {
+			"status": "not_detected",
+			"bank_account": None,
+			"message": _("Im Kopfbereich der CSV wurde kein eigenes Bankkonto erkannt."),
+		}
+
+	meta = frappe.get_meta("Bank Account")
+	fields = ["name", "account", "iban", "bank_account_no"]
+	filters: dict[str, Any] = {"is_company_account": 1}
+	if meta.has_field("disabled"):
+		fields.append("disabled")
+		filters["disabled"] = 0
+	rows = frappe.get_list("Bank Account", filters=filters, fields=fields, order_by="name asc", limit=0)
+
+	match_basis = "iban" if iban else "account_number"
+	if iban:
+		matches = [row for row in rows if normalize_iban(row.get("iban")) == iban]
+	else:
+		key = _account_number_key(account_number)
+		matches = [row for row in rows if _account_number_key(row.get("bank_account_no")) == key]
+
+	active_matches = [
+		row for row in matches
+		if not row.get("account") or not frappe.db.get_value("Account", row.get("account"), "disabled")
+	]
+	detected = {"detected_iban": iban, "detected_account_number": account_number, "match_basis": match_basis}
+	if len(active_matches) == 1:
+		return {
+			"status": "matched",
+			"bank_account": active_matches[0].get("name"),
+			"message": _("Bankkonto anhand der CSV eindeutig erkannt."),
+			**detected,
+		}
+	if len(active_matches) > 1:
+		return {
+			"status": "ambiguous",
+			"bank_account": None,
+			"message": _("Das Konto aus der CSV ist mehreren Firmen-Bankkonten zugeordnet. Bitte manuell wählen."),
+			**detected,
+		}
+	return {
+		"status": "not_found",
+		"bank_account": None,
+		"message": _("Das Konto aus der CSV ist keinem aktiven Firmen-Bankkonto zugeordnet."),
+		**detected,
+	}
 
 
 RULE_CONFIG = {
@@ -906,15 +1055,7 @@ def create_import(bank_account: str, filename: str, file_data: str) -> dict[str,
 	if bank_account_doc.get("account") and frappe.db.get_value("Account", bank_account_doc.account, "disabled"):
 		frappe.throw(_("Das verknüpfte Sachkonto ist deaktiviert. Bitte ein aktives Bankkonto auswählen."))
 
-	raw_data = file_data.split(",", 1)[1] if "," in file_data and file_data.startswith("data:") else file_data
-	try:
-		content = base64.b64decode(raw_data, validate=True)
-	except (binascii.Error, ValueError):
-		frappe.throw(_("Die CSV-Datei konnte nicht gelesen werden."))
-	if not content:
-		frappe.throw(_("Die CSV-Datei ist leer."))
-	if len(content) > 10 * 1024 * 1024:
-		frappe.throw(_("Die CSV-Datei ist zu groß. Maximal erlaubt sind 10 MB."))
+	content = _decode_uploaded_file(file_data)
 
 	file_doc = save_file(filename, content, "", "", is_private=1)
 	doc = frappe.get_doc(
