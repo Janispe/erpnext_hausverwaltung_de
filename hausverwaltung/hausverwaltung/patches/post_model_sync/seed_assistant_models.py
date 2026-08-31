@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import frappe
 
+GLM_5_2_LABEL = "GLM 5.2 (Mistral)"
+GLM_5_2_MODEL = "zai-glm-5-2"
 
 DEFAULT_ASSISTANT_MODELS = (
 	("Mistral Small", "mistral-small-latest"),
 	("Mistral Medium", "mistral-medium-latest"),
 	("Mistral Large", "mistral-large-latest"),
+	(GLM_5_2_LABEL, GLM_5_2_MODEL),
 )
 
 
