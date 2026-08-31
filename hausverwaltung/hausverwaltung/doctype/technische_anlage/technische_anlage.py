@@ -188,7 +188,7 @@ class TechnischeAnlage(Document):
 					"technische_anlage": self.name,
 					"massnahmenvorlage": vorlage.name,
 					"massnahmenart": vorlage.massnahmenart,
-					"status": "Aktiv",
+					"status": "Aktiv" if self.get("status") == "Aktiv" else "Pausiert",
 					"intervall_anzahl": vorlage.intervall_anzahl,
 					"intervall_einheit": vorlage.intervall_einheit,
 					"terminberechnung": vorlage.terminberechnung,

@@ -54,18 +54,37 @@ class TestAnlagenmodell(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 
-	def _make_anlage(self):
+	def _make_anlage(self, status="Aktiv"):
 		return frappe.get_doc(
 			{
 				"doctype": "Technische Anlage",
 				"bezeichnung": "Test-Heizungsanlage",
 				"anlagenart": self.anlagenart.name,
-				"status": "Aktiv",
+				"status": status,
 				"zuordnungstyp": "Immobilie",
 				"immobilie": self.immobilie.name,
 				"inbetriebnahme": "2026-01-01",
 			}
 		).insert(ignore_permissions=True)
+
+	def test_inactive_asset_creates_paused_plan_without_open_occurrence(self):
+		anlage = self._make_anlage(status="Außer Betrieb")
+		plan = frappe.db.get_value(
+			"Wartungsplan",
+			{"technische_anlage": anlage.name},
+			["name", "status", "faelligkeitsstatus"],
+			as_dict=True,
+		)
+
+		self.assertIsNotNone(plan)
+		self.assertEqual(plan.status, "Pausiert")
+		self.assertEqual(plan.faelligkeitsstatus, "Inaktiv")
+		self.assertFalse(
+			frappe.db.exists(
+				"Wartungstermin",
+				{"wartungsplan": plan.name, "status": "Offen"},
+			)
+		)
 
 	def test_asset_creates_plan_and_concrete_due_occurrence(self):
 		anlage = self._make_anlage()

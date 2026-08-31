@@ -68,6 +68,27 @@ def berechne_fortschritt(statuswerte: list[str]) -> dict:
 	}
 
 
+def _ermittle_kostenanteil(position, wartungskosten=None) -> float:
+	"""Use an entered share, or fall back to the linked maintenance costs."""
+	return flt(position.get("kostenanteil")) or flt(wartungskosten)
+
+
+def _lade_wartungskosten(positionen) -> dict[str, float]:
+	wartungen = sorted(
+		{position.get("anlagenwartung") for position in positionen if position.get("anlagenwartung")}
+	)
+	if not wartungen:
+		return {}
+	return {
+		wartung.name: flt(wartung.kosten)
+		for wartung in frappe.get_all(
+			"Anlagenwartung",
+			filters={"name": ("in", wartungen), "docstatus": ("<", 2)},
+			fields=["name", "kosten"],
+		)
+	}
+
+
 class Sammelwartung(Document):
 	def validate(self) -> None:
 		self._validate_dates()
@@ -194,10 +215,15 @@ class Sammelwartung(Document):
 			frappe.throw(_("Das Terminende darf nicht vor dem Terminbeginn liegen."))
 
 	def _set_progress_from_rows(self) -> None:
-		werte = berechne_fortschritt([row.status or "Offen" for row in self.get("positionen") or []])
+		positionen = self.get("positionen") or []
+		werte = berechne_fortschritt([row.status or "Offen" for row in positionen])
 		for feld, wert in werte.items():
 			self.set(feld, wert)
-		self.gesamtbetrag = sum(flt(row.get("kostenanteil")) for row in self.get("positionen") or [])
+		wartungskosten = _lade_wartungskosten(positionen)
+		self.gesamtbetrag = sum(
+			_ermittle_kostenanteil(row, wartungskosten.get(row.get("anlagenwartung")))
+			for row in positionen
+		)
 
 	@frappe.whitelist()
 	def positionen_uebernehmen(self, faellig_bis: str | None = None, nur_faellige: int | bool = 1):
@@ -354,16 +380,15 @@ def synchronisiere_sammelwartung(sammelwartung: str) -> dict:
 	gesamtbetrag = 0.0
 	for position in positionen:
 		status = "Offen"
-		kostenanteil = flt(position.kostenanteil) if position.get("kostenanteil") not in (None, "") else None
+		wartungskosten = None
 		if position.anlagenwartung:
 			wartung = frappe.db.get_value(
 				"Anlagenwartung", position.anlagenwartung, ["status", "docstatus", "kosten"], as_dict=True
 			)
 			if wartung and cint(wartung.docstatus) < 2:
 				status = wartung.status or "Offen"
-				if kostenanteil is None:
-					kostenanteil = flt(wartung.get("kosten"))
-		gesamtbetrag += kostenanteil or 0
+				wartungskosten = wartung.get("kosten")
+		gesamtbetrag += _ermittle_kostenanteil(position, wartungskosten)
 		if status != position.status:
 			frappe.db.set_value(
 				"Sammelwartung Position", position.name, "status", status, update_modified=False

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import frappe
 
-from hausverwaltung.hausverwaltung.services import assistant, assistant_async
+from hausverwaltung.hausverwaltung.services import assistant, assistant_async, mistral_client
 
 
 class TestAssistantAsync(unittest.TestCase):

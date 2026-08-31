@@ -40,6 +40,67 @@ class TestFortschritt(unittest.TestCase):
 		self.assertEqual(werte["fortschritt"], 66.7)
 
 
+class TestKosten(unittest.TestCase):
+	def test_sync_uses_maintenance_costs_for_empty_share_and_manual_share_as_override(self):
+		positionen = [
+			frappe._dict(
+				name="SWP-00001",
+				anlagenwartung="AW-00001",
+				status="Geplant",
+				kostenanteil=0,
+			),
+			frappe._dict(
+				name="SWP-00002",
+				anlagenwartung="AW-00002",
+				status="Geplant",
+				kostenanteil=40,
+			),
+		]
+		db = MagicMock()
+		db.get_value.side_effect = [
+			frappe._dict(status="Durchgeführt", docstatus=1, kosten=123),
+			frappe._dict(status="Durchgeführt", docstatus=1, kosten=456),
+		]
+
+		with (
+			patch.object(sw_mod.frappe, "get_all", return_value=positionen),
+			patch.object(sw_mod.frappe, "db", db),
+		):
+			ergebnis = sw_mod.synchronisiere_sammelwartung("SW-2026-0001")
+
+		self.assertEqual(ergebnis["gesamtbetrag"], 163)
+		self.assertEqual(ergebnis["status"], "Abgeschlossen")
+		db.set_value.assert_any_call(
+			"Sammelwartung", "SW-2026-0001", ergebnis, update_modified=False
+		)
+
+	def test_saving_collection_keeps_fallback_to_maintenance_costs(self):
+		positionen = [
+			frappe._dict(status="Durchgeführt", anlagenwartung="AW-00001", kostenanteil=0),
+			frappe._dict(status="Durchgeführt", anlagenwartung="AW-00002", kostenanteil=40),
+		]
+		doc = SimpleNamespace(positionen=positionen)
+		doc.get = lambda key, default=None: getattr(doc, key, default)
+		doc.set = lambda key, value: setattr(doc, key, value)
+
+		with patch.object(
+			sw_mod.frappe,
+			"get_all",
+			return_value=[
+				frappe._dict(name="AW-00001", kosten=123),
+				frappe._dict(name="AW-00002", kosten=456),
+			],
+		) as get_all:
+			sw_mod.Sammelwartung._set_progress_from_rows(doc)
+
+		self.assertEqual(doc.gesamtbetrag, 163)
+		get_all.assert_called_once_with(
+			"Anlagenwartung",
+			filters={"name": ("in", ["AW-00001", "AW-00002"]), "docstatus": ("<", 2)},
+			fields=["name", "kosten"],
+		)
+
+
 class TestPositionenUebernehmen(unittest.TestCase):
 	def test_selection_is_limited_to_house_and_type(self):
 		doc = SimpleNamespace(
