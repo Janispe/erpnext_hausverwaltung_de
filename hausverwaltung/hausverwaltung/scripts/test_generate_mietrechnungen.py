@@ -1,5 +1,7 @@
+import json
 import unittest
 from datetime import date
+from pathlib import Path
 from unittest.mock import patch
 
 import frappe
@@ -8,6 +10,30 @@ from hausverwaltung.hausverwaltung.scripts import generate_mietrechnungen
 
 
 class TestGenerateMietrechnungen(unittest.TestCase):
+    def test_all_generated_skip_reasons_are_valid_select_options(self):
+        doctype_path = (
+            Path(__file__).parents[1]
+            / "doctype"
+            / "mietrechnungen_durchlauf_skip"
+            / "mietrechnungen_durchlauf_skip.json"
+        )
+        doctype = json.loads(doctype_path.read_text(encoding="utf-8"))
+        reason_field = next(
+            field for field in doctype["fields"] if field["fieldname"] == "reason"
+        )
+        allowed_reasons = set(reason_field["options"].splitlines())
+        generated_reasons = {
+            "andere_company",
+            "betrag_0",
+            "bk_nicht_abrechenbar",
+            "immobilie_nicht_aktiv",
+            "kein_kunde",
+            "kein_umz_konto",
+            "rechnung_existiert",
+        }
+
+        self.assertTrue(generated_reasons <= allowed_reasons)
+
     def test_bk_month_amount_is_suppressed_for_inclusive_rent(self):
         with (
             patch.object(
