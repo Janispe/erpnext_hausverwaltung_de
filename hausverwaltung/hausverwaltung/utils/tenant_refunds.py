@@ -146,7 +146,9 @@ def create_refund_payment(bt, items):
 			if frappe.db.get_value(dt, name, "debit_to") != party_account:
 				frappe.throw("Die Gutschrift verwendet ein anderes Debitorenkonto.")
 		if getdate(credit.posting_date) > getdate(bt.date):
-			frappe.throw("Der Erstattungsanspruch darf nicht nach der Auszahlung gebucht sein.")
+			frappe.throw(
+				f"Die Auszahlung vom {getdate(bt.date).strftime('%d.%m.%Y')} liegt vor dem Erstattungsanspruch {name} vom {getdate(credit.posting_date).strftime('%d.%m.%Y')}. Bitte das Anspruchsdatum im Versicherungsfall über 'Ansprüche buchen / Datum korrigieren' prüfen. Das Bankdatum bleibt unverändert."
+			)
 		available = -flt(credit.outstanding_amount)
 		amount = available if item.get("allocated_amount") is None else flt(item.get("allocated_amount"))
 		if not math.isfinite(amount) or amount <= 0 or amount > available + 0.001:

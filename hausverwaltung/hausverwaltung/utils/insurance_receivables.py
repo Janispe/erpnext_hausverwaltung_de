@@ -193,10 +193,13 @@ def validate_journal(doc):
 		if credit.reference_type != "Journal Entry" or not credit.reference_name:
 			frappe.throw("Der Versicherungseingang muss die gebuchte Versicherungsforderung ausgleichen.")
 		claim = claim_balance(credit.reference_name, for_update=True, exclude_receipt=doc.name)
+		if getdate(doc.posting_date) < getdate(claim.posting_date):
+			frappe.throw(
+				f"Der Versicherungseingang vom {getdate(doc.posting_date).strftime('%d.%m.%Y')} liegt vor der Versicherungsforderung {claim.name} vom {getdate(claim.posting_date).strftime('%d.%m.%Y')}. Bitte das Anspruchsdatum im Versicherungsfall über 'Ansprüche buchen / Datum korrigieren' prüfen. Das Bankdatum bleibt unverändert."
+			)
 		if (
 			claim.versicherungsfall != case.name
 			or credit.account != claim.account
-			or getdate(doc.posting_date) < getdate(claim.posting_date)
 			or flt(credit.credit_in_account_currency) > claim.outstanding_amount + 0.001
 			or frappe.db.get_value("Account", debit.account, "account_type") != "Bank"
 			or debit.reference_type

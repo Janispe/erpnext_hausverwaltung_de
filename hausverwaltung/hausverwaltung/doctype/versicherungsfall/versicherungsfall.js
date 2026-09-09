@@ -29,35 +29,43 @@ async function set_insurance_account_defaults(frm) {
 	}
 }
 
+async function open_claim_workflow(frm) {
+	if (frm.is_dirty()) return frappe.msgprint(__("Bitte zuerst den Versicherungsfall speichern."));
+	const active = (role) => (frm.doc.belege || []).filter(r => r.belegart === role && r.belegstatus !== "Storniert");
+	const insurance = active("Versicherungsforderung");
+	const tenant = active("Mietererstattungsanspruch");
+	const hasInsurance = Number(frm.doc.bewilligter_betrag) > 0 || insurance.length > 0;
+	const hasTenant = Number(frm.doc.erstattungsbetrag) > 0 || tenant.length > 0;
+	if (!hasInsurance && !hasTenant) return frappe.msgprint(__("Bitte zuerst den bewilligten Versicherungsbetrag beziehungsweise den anerkannten Erstattungsbetrag des Mieters erfassen."));
+	const expectedModified = frm.doc.modified;
+	const fields = [{fieldtype: "HTML", fieldname: "explanation", options: `<p>${__("Vorhandene Entwürfe werden verwendet. Alle erforderlichen Ansprüche werden gemeinsam gebucht. Bei einer Datumskorrektur ersetzt das System die betroffenen unbezahlten Buchungen und erhält ihre Verknüpfung mit diesem Fall.")}</p><p>${__("Wähle das tatsächliche Datum des jeweiligen Anspruchs. Bei bereits erfolgter Zahlung darf es nicht nach dem Zahlungstag liegen.")}</p>`}];
+	if (hasInsurance) fields.push({fieldname: "insurance_date", fieldtype: "Date", label: "Buchungsdatum Versicherungsforderung", reqd: 1, default: insurance[0]?.belegdatum || undefined, description: `${frappe.utils.escape_html(frm.doc.versicherungsforderungskonto || "")} an ${frappe.utils.escape_html(frm.doc.versicherungsertragskonto || "")}`});
+	if (hasTenant) fields.push({fieldname: "tenant_date", fieldtype: "Date", label: "Buchungsdatum Mieteranspruch", reqd: 1, default: tenant[0]?.belegdatum || undefined, description: `${frappe.utils.escape_html(frm.doc.erstattungskonto || "")} an Mieterdebitor ${frappe.utils.escape_html(frm.doc.kunde || "")}`});
+	if ([...insurance, ...tenant].some(r => r.belegstatus === "Eingereicht")) fields.push({fieldname: "correction_reason", fieldtype: "Small Text", label: "Grund der Datumskorrektur", description: "Erforderlich, wenn das Datum eines bereits gebuchten Anspruchs geändert wird."});
+	const dialog = new frappe.ui.Dialog({
+		title: __("Ansprüche des Versicherungsfalls"), fields,
+		primary_action_label: __("Ansprüche buchen / Korrektur ausführen"),
+		async primary_action(values) {
+			dialog.disable_primary_action();
+			try {
+				await frappe.call({method: "hausverwaltung.hausverwaltung.utils.insurance_workflow.book_claims", args: {name: frm.doc.name, expected_modified: expectedModified, ...values}, freeze: true, freeze_message: __("Ansprüche werden gemeinsam verarbeitet …")});
+				dialog.hide();
+				await frm.reload_doc();
+				frappe.show_alert({message: __("Ansprüche gebucht und mit dem Versicherungsfall verknüpft."), indicator: "green"});
+			} finally {
+				dialog.enable_primary_action();
+			}
+		},
+	});
+	dialog.show();
+}
+
 frappe.ui.form.on("Versicherungsfall", {
 	onload: set_insurance_account_defaults,
 	company: set_insurance_account_defaults,
 	refresh(frm) {
 		if (frm.is_new()) return;
-		frm.add_custom_button(__("Versicherungsforderung vorbereiten"), () => {
-			if (frm.is_dirty()) return frappe.msgprint(__("Bitte zuerst den Versicherungsfall speichern."));
-			frappe.prompt([{fieldname: "posting_date", fieldtype: "Date", label: "Buchungsdatum der Forderung", reqd: 1, default: frappe.datetime.get_today()}], async (values) => {
-				const result = await frappe.call({method: "hausverwaltung.hausverwaltung.utils.insurance_receivables.create_insurance_claim", args: {name: frm.doc.name, ...values}, freeze: true});
-				await frm.reload_doc();
-				frappe.set_route("Form", "Journal Entry", result.message.name);
-			}, __("Versicherungsforderung als Entwurf"), __("Entwurf erstellen"));
-		});
-		frm.add_custom_button(__("Mieteranspruch vorbereiten"), () => {
-			if (frm.is_dirty()) return frappe.msgprint(__("Bitte zuerst den Versicherungsfall speichern."));
-			frappe.prompt([
-				{fieldname: "posting_date", fieldtype: "Date", label: "Buchungsdatum des Anspruchs", reqd: 1, default: frappe.datetime.get_today()},
-				{fieldname: "erstattungsbetrag", fieldtype: "Currency", label: "Anerkannter Erstattungsbetrag des Mieters", reqd: 1, default: frm.doc.erstattungsbetrag, description: "Betrag, den der Mieter von euch erhält; separat von der bewilligten Versicherungsleistung."},
-				{fieldname: "erstattungsbegruendung", fieldtype: "Small Text", label: "Begründung und Belegnummer", reqd: 1, default: frm.doc.erstattungsbegruendung, description: "Zum Beispiel: Erstattung der vom Mieter bezahlten Glasreparatur, Rechnung … ."},
-			], async (values) => {
-				if (!(Number(values.erstattungsbetrag) > 0)) return frappe.msgprint(__("Der Erstattungsbetrag muss größer als 0 sein."));
-				if (!(values.erstattungsbegruendung || "").trim()) return frappe.msgprint(__("Bitte Begründung und Belegnummer ausfüllen."));
-				await frm.set_value({erstattungsbetrag: values.erstattungsbetrag, erstattungsbegruendung: values.erstattungsbegruendung.trim()});
-				if (frm.is_dirty()) await frm.save();
-				const result = await frappe.call({method: "hausverwaltung.hausverwaltung.doctype.versicherungsfall.versicherungsfall.create_tenant_claim", args: {name: frm.doc.name, posting_date: values.posting_date}, freeze: true});
-				await frm.reload_doc();
-				frappe.set_route("Form", "Journal Entry", result.message.name);
-			}, __("Erstattungsbuchung als Entwurf"), __("Entwurf erstellen"));
-		});
+		frm.add_custom_button(__("Ansprüche buchen / Datum korrigieren"), () => open_claim_workflow(frm));
 		if (frm.doc.kunde) frm.add_custom_button(__("Mieterkonto"), () => frappe.set_route("mieterkonto-workflow", {customer: frm.doc.kunde}));
 		frm.add_custom_button(__("Bankimport / Zahlungen zuordnen"), () => frappe.set_route("bankimport_v2"));
 	},
