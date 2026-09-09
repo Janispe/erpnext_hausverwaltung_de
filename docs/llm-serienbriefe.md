@@ -25,7 +25,7 @@ Authentifizierung und bei Sitzungscookies der CSRF-Schutz entsprechen den
 | LLM-Werkzeug | HTTP-Methode | Zweck |
 | --- | --- | --- |
 | `agent_mail_merge_list_templates` | `list_templates` | Suche mit `query`, `limit`, `offset`; `has_more` beachten |
-| `agent_mail_merge_get_template` | `get_template` | Vorlage, Bausteine, `revision`, Empfängertyp und `inputs` lesen |
+| `agent_mail_merge_get_template` | `get_template` | Kompakten Steckbrief lesen; vollständiger Quelltext optional über `include_source: true` |
 | `agent_mail_merge_prepare` | `prepare` | Auswahl und Werte prüfen, PDFs erzeugen, befristetes Token zurückgeben |
 | `agent_mail_merge_execute` | `execute` | Geprüfte PDFs einmalig als Entwürfe speichern |
 | `agent_mail_merge_get_status` | `get_status` | Status und gespeicherte PDF-Links lesen, ohne Neugenerierung |
@@ -33,6 +33,25 @@ Authentifizierung und bei Sitzungscookies der CSRF-Schutz entsprechen den
 Antworten verwenden den vorhandenen Vertrag
 `{ok, data, error, meta}`. `meta` enthält Anfrage-ID und Laufzeit. Die
 Werkzeugprotokolle enthalten Aktionsmetadaten, keine Briefinhalte.
+
+`get_template` liefert standardmäßig einen Steckbrief mit Zweck, Kategorie,
+Empfängertyp, `required_inputs`, den einzelnen `inputs` und einem kurzen
+Textauszug. Der Zweck stammt aus der gepflegten Beschreibung oder, falls diese
+fehlt, aus dem Titel; `purpose_source` macht diese Herkunft sichtbar. Es wird
+kein Zweck durch ein Modell erfunden. Der Textauszug ist ungefüllt, enthält
+`[Platzhalter]` statt Jinja und ist auf 900 Zeichen begrenzt. Eine Kürzung ist
+mit `excerpt_truncated` gekennzeichnet. Bausteine werden mit Name und Titel
+aufgeführt; ihre Warnungen fließen auch ohne Quelltext in den Steckbrief ein.
+
+`inputs` enthält zusätzlich `required`, `json_type` und bei befüllbaren Feldern
+ein Formatbeispiel. **`example` ist ein künstliches Beispiel, kein Vorschlag für
+den Briefinhalt.** Nur `default` ist ein gespeicherter Vorlagenwert.
+`required_inputs` nennt alle nicht optionalen, befüllbaren Felder, einschließlich
+solcher mit einem gespeicherten Standardwert.
+
+Mit `get_template(template=..., include_source=true)` kann man zur gezielten
+Diagnose zusätzlich den vollständigen HTML/Jinja-Inhalt und die Bausteinquellen
+anfordern. Die Revision und die Berechtigungsprüfung bleiben dabei gleich.
 
 Vorbereitung mit den zuvor gelesenen Namen und der Revision:
 
@@ -63,6 +82,42 @@ Bei `data.ready: false` enthält `errors` die einzelnen Empfängerfehler. Es gib
 kein Ausführungstoken. Bei Erfolg enthält `previews` den aus dem echten PDF
 gelesenen Text, Seitenzahl, SHA-256 und einen angemeldeten Benutzern vorbehaltenen
 Vorschaulink. `preview_pdf` ist ein zusätzlicher Download-Endpunkt für diese Links.
+
+Fehlende Eingaben und eindeutig erkennbare Renderer-Fehler sind strukturiert.
+Zum Beispiel steht bei einem fehlenden Vertragsabschlussdatum in `errors`:
+
+```json
+{
+  "recipient": "EXAKTER_MIETVERTRAGSNAME",
+  "recipient_doctype": "Mietvertrag",
+  "code": "MISSING_DATA",
+  "message": "Für EXAKTER_MIETVERTRAGSNAME konnte der Pfad objekt.vertragsabschluss_am nicht aufgelöst werden.",
+  "issues": [{
+    "field": "vertragsabschluss_am",
+    "path": "objekt.vertragsabschluss_am",
+    "source": "recipient_data"
+  }],
+  "action": "check_recipient_data"
+}
+```
+
+Bei fehlenden Pflichtangaben nennt `MISSING_INPUT` alle zu diesem Zeitpunkt
+erkennbaren fehlenden Eingabefelder mit `expected_type` und gegebenenfalls
+`format`. Falsche Eingabewerte werden mit `INVALID_INPUT` im äußeren `error`
+zurückgewiesen; individuelle Werte nennen auch den betreffenden Empfänger.
+
+| `action` | Bedeutung |
+| --- | --- |
+| `provide_inputs` | Fehlende freigegebene Eingaben erfragen |
+| `correct_inputs` | Feldwert, Typ oder Eingabeschlüssel korrigieren |
+| `check_recipient_data` | Genannten Datenpfad am ausgewählten Empfänger prüfen lassen |
+| `review_template` | Vorlage im Editor prüfen lassen |
+
+`issues.source` unterscheidet `input`, `recipient_data` und `template`.
+Ein Datenpfadfehler gibt dem Modell keine zusätzlichen Schreibrechte. Nicht
+eindeutige Renderer-Fehler enthalten eine leere `issues`-Liste; Felder werden
+nicht aus Beispieltexten oder Jinja-Zeilenausschnitten geraten. Vollständige
+Vorlagenausschnitte und Tracebacks werden in diesen Antworten nicht ausgegeben.
 
 Ausführen:
 

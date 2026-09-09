@@ -30,6 +30,15 @@ from hausverwaltung.hausverwaltung.agent_tools.contracts import (
 	normalize_offset,
 	parse_json_if_needed,
 )
+from hausverwaltung.hausverwaltung.agent_tools.mail_merge_contract import (
+	JSON_TYPES,
+	MailMergeError,
+	input_description,
+	input_issue,
+	missing_inputs,
+	plain_text,
+	render_error,
+)
 
 TEMPLATE = "Serienbrief Vorlage"
 RUN = "Serienbrief Durchlauf"
@@ -53,6 +62,7 @@ def _endpoint(fn):
 			result = read_api._ok(request_id, started, fn(*args, **kwargs))
 		except AgentToolError as exc:
 			result = read_api._error(request_id, started, exc.code, exc.message)
+			result["error"].update(getattr(exc, "details", {}))
 		except frappe.PermissionError:
 			result = read_api._error(request_id, started, "PERMISSION_DENIED", "Berechtigung fehlt.")
 		except frappe.DoesNotExistError:
@@ -181,7 +191,7 @@ def _inputs(template):
 	return fields
 
 
-def _values(raw, fields):
+def _values(raw, fields, *, recipient=None):
 	values = parse_json_if_needed(raw)
 	if values is None:
 		values = {}
@@ -191,7 +201,13 @@ def _values(raw, fields):
 	out = {}
 	for key, value in values.items():
 		if key not in allowed:
-			raise AgentToolError("INVALID_INPUT", f"Eingabe nicht freigegeben: {key}.")
+			raise MailMergeError(
+				"INVALID_INPUT",
+				f"Eingabe nicht freigegeben: {key}.",
+				issues=[input_issue(key)],
+				action="correct_inputs",
+				recipient=recipient,
+			)
 		field = allowed[key]
 		kind = field["type"]
 		valid = value is not None
@@ -207,13 +223,29 @@ def _values(raw, fields):
 		else:
 			valid = isinstance(value, str) and len(value) <= 4000
 		if not valid or (isinstance(value, str) and not value.strip() and not field["optional"]):
-			raise AgentToolError("INVALID_INPUT", f"Ungültiger Wert für {key} ({kind}).")
+			raise MailMergeError(
+				"INVALID_INPUT",
+				f"Ungültiger Wert für {key} ({kind}).",
+				issues=[
+					input_issue(
+						key, expected_type=JSON_TYPES[kind], format="YYYY-MM-DD" if kind == "Datum" else None
+					)
+				],
+				action="correct_inputs",
+				recipient=recipient,
+			)
 		if isinstance(value, str):
 			# The renderer preprocesses path tokens before Jinja evaluation. Reject
 			# template syntax even when HTML-encoded; escape text for HTML attributes.
 			decoded = html.unescape(value)
 			if re.search(r"\{[\{%#]|[<>]", decoded):
-				raise AgentToolError("INVALID_INPUT", f"{key} darf nur Text ohne HTML/Jinja enthalten.")
+				raise MailMergeError(
+					"INVALID_INPUT",
+					f"{key} darf nur Text ohne HTML/Jinja enthalten.",
+					issues=[input_issue(key, expected_type="string")],
+					action="correct_inputs",
+					recipient=recipient,
+				)
 			value = html.escape(value, quote=True)
 		out[key] = {"value": value}
 	return out
@@ -284,22 +316,44 @@ def list_templates(query=None, limit=20, offset=0):
 
 @frappe.whitelist()
 @_endpoint
-def get_template(template):
+def get_template(template, include_source=False):
+	if include_source not in (True, False, 0, 1, "0", "1", "true", "false"):
+		raise AgentToolError("INVALID_ARGUMENT", "include_source muss true oder false sein.")
+	include_source = include_source in (True, 1, "1", "true")
 	doc, blocks, revision = _template(template)
 	core = _renderer()
-	return {
+	source = core._get_template_template_source(doc)
+	block_sources = [core._get_textbaustein_template_source(b) for b in blocks]
+	description, purpose_truncated = plain_text(doc.get("description") or "", 600)
+	excerpt, excerpt_truncated = plain_text(source, 900)
+	fields = [input_description(field) for field in _inputs(doc)]
+	result = {
 		"name": doc.name,
 		"title": doc.title,
+		"purpose": description or doc.title,
+		"purpose_source": "description" if description else "title",
+		"purpose_truncated": purpose_truncated,
+		"category": doc.kategorie,
 		"revision": revision,
 		"recipient_doctype": doc.haupt_verteil_objekt,
-		"inputs": _inputs(doc),
-		"source": core._get_template_template_source(doc),
-		"warnings": _content_warnings(core._get_template_template_source(doc)),
-		"blocks": [{"name": b.name, "source": core._get_textbaustein_template_source(b)} for b in blocks],
+		"inputs": fields,
+		"required_inputs": [f["key"] for f in fields if f["fillable"] and f["required"]],
+		"examples_are_illustrative": True,
+		"content_excerpt": excerpt,
+		"excerpt_truncated": excerpt_truncated,
+		"excerpt_is_unrendered": True,
+		"source_included": include_source,
+		"warnings": _content_warnings("\n".join([source, *block_sources])),
+		"blocks": [{"name": b.name, "title": b.title or b.name} for b in blocks],
 		"can_execute": bool(set(frappe.get_roles()).intersection({"System Manager", "Hausverwalter"}))
 		and all(frappe.has_permission(dt, p) for dt in (RUN, DOCUMENT) for p in ("create", "read", "write")),
 		"policy": "Nur bestehende Vorlage, deklarierte Eingaben und explizite Empfänger; Speicherung als Entwurf.",
 	}
+	if include_source:
+		result["source"] = source
+		for block, block_source in zip(result["blocks"], block_sources, strict=True):
+			block["source"] = block_source
+	return result
 
 
 @frappe.whitelist(methods=["POST"])
@@ -326,13 +380,18 @@ def prepare(template, revision, recipients, values=None, per_recipient=None, let
 		per = {}
 	if not isinstance(per, dict) or set(per) - {t.name for t in targets}:
 		raise AgentToolError("INVALID_INPUT", "Empfängerwerte gehören nicht zur Auswahl.")
-	individual = {name: _values(v, fields) for name, v in per.items()}
+	individual = {name: _values(v, fields, recipient=name) for name, v in per.items()}
 	letter_date = letter_date or nowdate()
 	try:
 		if date.fromisoformat(letter_date).isoformat() != letter_date:
 			raise ValueError
 	except (ValueError, TypeError):
-		raise AgentToolError("INVALID_INPUT", "Briefdatum muss YYYY-MM-DD sein.")
+		raise MailMergeError(
+			"INVALID_INPUT",
+			"Briefdatum muss YYYY-MM-DD sein.",
+			issues=[input_issue("letter_date", expected_type="string", format="YYYY-MM-DD")],
+			action="correct_inputs",
+		)
 	token = uuid.uuid4().hex
 	run_name = "SBDL-LLM-" + token
 	run_data = {
@@ -361,9 +420,11 @@ def prepare(template, revision, recipients, values=None, per_recipient=None, let
 	outputs, errors = [], []
 	for index, row in enumerate(rows, 1):
 		try:
-			context = run._build_context(row, index, template=doc, total=len(rows), strict_variables=True)
+			# Report all missing fillable fields before the core's generic variable
+			# error; retain its strict check for every other declared variable.
+			context = run._build_context(row, index, template=doc, total=len(rows), strict_variables=False)
 			missing = [
-				f["key"]
+				f
 				for f in fields
 				if f["fillable"]
 				and not f["optional"]
@@ -373,7 +434,8 @@ def prepare(template, revision, recipients, values=None, per_recipient=None, let
 				)
 			]
 			if missing:
-				raise AgentToolError("MISSING_INPUT", "Pflichtangaben fehlen: " + ", ".join(missing))
+				raise missing_inputs(missing)
+			run._verify_template_variables_resolved(context, doc)
 			segments = run._render_template_content(doc, context)
 			if not segments:
 				raise AgentToolError("EMPTY_DOCUMENT", "Vorlage liefert keinen Inhalt.")
@@ -406,14 +468,8 @@ def prepare(template, revision, recipients, values=None, per_recipient=None, let
 				}
 			)
 		except Exception as exc:
-			# The core sometimes embeds the whole template/traceback in errors.
-			message = html.unescape(re.sub(r"<[^>]+>", "", str(exc))).split("Traceback")[0][:500]
 			errors.append(
-				{
-					"recipient": row.iteration_objekt,
-					"code": getattr(exc, "code", "RENDER_FAILED"),
-					"message": message,
-				}
+				render_error(exc, recipient=row.iteration_objekt, recipient_doctype=doc.haupt_verteil_objekt)
 			)
 	if errors:
 		return {"ready": False, "errors": errors, "checked": len(rows), "prepared": len(outputs)}

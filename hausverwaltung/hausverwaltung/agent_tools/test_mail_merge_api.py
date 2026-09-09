@@ -173,6 +173,154 @@ class TestMailMergeApi(unittest.TestCase):
 		run.insert.assert_not_called()
 		self.cache.set_value.assert_called_once()
 
+	def test_template_brief_omits_source_and_explains_inputs(self):
+		template, core, _ = self.setup_preparation()
+		template.description = "<p>Nachweis über den Mietvertrag.</p>"
+		template.variables = [frappe._dict(variable="datum", variable_type="Datum")]
+		# Use a non-reserved key for the real declaration.
+		template.variables[0].variable = "stichtag"
+		core._get_template_template_source.return_value = (
+			"<style>.secret {color:red}</style><p>Nachweis {{ objekt.name }}</p>"
+		)
+		with (
+			patch.object(frappe, "get_roles", return_value=["System Manager"]),
+			patch.object(frappe, "has_permission", return_value=True),
+		):
+			brief = api.get_template("Test")["data"]
+			full = api.get_template("Test", include_source=True)["data"]
+		self.assertNotIn("source", brief)
+		self.assertFalse(brief["source_included"])
+		self.assertEqual(brief["purpose"], "Nachweis über den Mietvertrag.")
+		self.assertEqual(brief["purpose_source"], "description")
+		self.assertEqual(brief["content_excerpt"], "Nachweis [Platzhalter]")
+		self.assertEqual(brief["required_inputs"], ["stichtag"])
+		self.assertEqual(brief["inputs"][0]["json_type"], "string")
+		self.assertEqual(brief["inputs"][0]["format"], "YYYY-MM-DD")
+		self.assertIsNone(brief["inputs"][0]["default"])
+		self.assertTrue(brief["examples_are_illustrative"])
+		self.assertIn("{{ objekt.name }}", full["source"])
+		self.assertEqual(brief["revision"], full["revision"])
+
+	def test_brief_uses_title_without_inventing_purpose_and_bounds_excerpt(self):
+		template, core, _ = self.setup_preparation()
+		core._get_template_template_source.return_value = "Langer Brief. " * 1000
+		with patch.object(frappe, "get_roles", return_value=[]):
+			brief = api.get_template("Test")["data"]
+		self.assertEqual(brief["purpose"], template.title)
+		self.assertEqual(brief["purpose_source"], "title")
+		self.assertTrue(brief["excerpt_truncated"])
+		self.assertLessEqual(len(brief["content_excerpt"]), 900)
+
+	def test_block_sources_are_opt_in_but_warnings_remain_visible(self):
+		template, core, _ = self.setup_preparation()
+		block = frappe._dict(name="Block", title="Baustein")
+		api._template.return_value = template, [block], "revision"
+		core._get_textbaustein_template_source.return_value = "<p>Termin 01.01.2020</p>"
+		with patch.object(frappe, "get_roles", return_value=[]):
+			brief = api.get_template("Test", include_source="false")["data"]
+			full = api.get_template("Test", include_source="true")["data"]
+		self.assertEqual(brief["blocks"], [{"name": "Block", "title": "Baustein"}])
+		self.assertEqual(brief["warnings"][0]["code"], "FIXED_DATES")
+		self.assertIn("01.01.2020", full["blocks"][0]["source"])
+		self.assertEqual(api.get_template("Test", include_source="yes")["error"]["code"], "INVALID_ARGUMENT")
+
+	def test_all_missing_inputs_are_structured_without_guessing_values(self):
+		template, _, run = self.setup_preparation()
+		template.variables = [
+			frappe._dict(variable="stichtag", variable_type="Datum"),
+			frappe._dict(variable="betrag", variable_type="Zahl"),
+			frappe._dict(variable="optional_text", variable_type="Text", optional=1),
+		]
+		result = api.prepare("Test", "revision", ["MV-1"])
+		error = result["data"]["errors"][0]
+		self.assertEqual(error["action"], "provide_inputs")
+		self.assertEqual(error["recipient"], "MV-1")
+		self.assertEqual(error["recipient_doctype"], "Mietvertrag")
+		self.assertEqual(
+			error["issues"],
+			[
+				{"field": "stichtag", "source": "input", "expected_type": "string", "format": "YYYY-MM-DD"},
+				{"field": "betrag", "source": "input", "expected_type": "number"},
+			],
+		)
+		run._render_template_content.assert_not_called()
+		self.cache.set_value.assert_not_called()
+
+	def test_structured_input_errors_identify_individual_recipient(self):
+		template, _, _ = self.setup_preparation()
+		template.variables = [frappe._dict(variable="betrag", variable_type="Zahl")]
+		result = api.prepare("Test", "revision", ["MV-1"], per_recipient={"MV-1": {"betrag": "100 Euro"}})
+		self.assertEqual(result["error"]["action"], "correct_inputs")
+		self.assertEqual(result["error"]["recipient"], "MV-1")
+		self.assertEqual(result["error"]["issues"][0]["expected_type"], "number")
+		self.assertEqual(result["error"]["issues"][0]["field"], "betrag")
+
+	def test_original_strict_check_is_retained_for_nonfillable_variables(self):
+		template, _, run = self.setup_preparation()
+		template.variables = [frappe._dict(variable="vertrag", variable_type="Doctype")]
+		run._verify_template_variables_resolved.side_effect = ValueError("Unresolved required document")
+		result = api.prepare("Test", "revision", ["MV-1"])
+		self.assertFalse(result["data"]["ready"])
+		run._verify_template_variables_resolved.assert_called_once()
+		run._render_template_content.assert_not_called()
+
+	def test_missing_data_path_is_structured_for_both_core_token_spellings(self):
+		for token in ("{{$ objekt.vertragsabschluss_am $}}", "{$ objekt.vertragsabschluss_am $}"):
+			message = f"Platzhalter <code>{token}</code> konnte nicht aufgelöst werden: der Pfad liefert <strong>None</strong>."
+			error = api.render_error(ValueError(message), recipient="MV-1", recipient_doctype="Mietvertrag")
+			self.assertEqual(error["code"], "MISSING_DATA")
+			self.assertEqual(
+				error["issues"],
+				[
+					{
+						"field": "vertragsabschluss_am",
+						"path": "objekt.vertragsabschluss_am",
+						"source": "recipient_data",
+					}
+				],
+			)
+			self.assertEqual(error["action"], "check_recipient_data")
+
+	def test_undefined_variable_is_a_template_error_without_source_dump(self):
+		error = api.render_error(
+			ValueError(
+				"Fehlendes Feld im Serienbrief: Variable <code>wohnung_groesse</code> ist nicht definiert."
+				"<br>Vorlagen-Zeile 8:<pre>VERTRAULICHER BRIEFINHALT</pre>"
+			),
+			recipient="MV-1",
+			recipient_doctype="Mietvertrag",
+		)
+		self.assertEqual(error["code"], "UNDEFINED_VARIABLE")
+		self.assertEqual(error["issues"], [{"field": "wohnung_groesse", "source": "template"}])
+		self.assertEqual(error["action"], "review_template")
+		self.assertNotIn("VERTRAULICH", str(error))
+
+	def test_unknown_failure_does_not_infer_fields_from_examples_or_template_lines(self):
+		error = api.render_error(
+			ValueError(
+				"Ein Ausdruck hat den Wert None zurückgegeben. Beispiel: <code>kunde.first_name</code>"
+				"<br>Vorlagen-Zeile 8:<pre>{{ objekt.amount }}</pre><br>Kandidaten in dieser Zeile: eintrag.name"
+			),
+			recipient="MV-1",
+			recipient_doctype="Mietvertrag",
+		)
+		self.assertEqual(error["issues"], [])
+		self.assertEqual(error["action"], "review_template")
+		self.assertNotIn("first_name", str(error))
+		self.assertNotIn("eintrag", str(error))
+
+	def test_declared_path_failure_preserves_path_and_variable(self):
+		error = api.render_error(
+			ValueError(
+				"Pfad <b>objekt.wohnung.zustand_aktuell.größe</b> für Variable <b>flaeche</b> in der Vorlage Test konnte nicht aufgelöst werden."
+			),
+			recipient="MV-1",
+			recipient_doctype="Mietvertrag",
+		)
+		self.assertEqual(error["issues"][0]["path"], "objekt.wohnung.zustand_aktuell.größe")
+		self.assertEqual(error["issues"][0]["variable"], "flaeche")
+		self.assertEqual(error["action"], "check_recipient_data")
+
 	def test_failure_for_one_recipient_blocks_whole_preparation(self):
 		_, _, run = self.setup_preparation(("MV-1", "MV-2"))
 		run._build_context.side_effect = [ValueError("wohnung_groesse is undefined"), {}]
