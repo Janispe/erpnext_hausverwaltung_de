@@ -153,11 +153,9 @@ async function update_cost_table_visibility(frm) {
 	frm.__hv_wohnung_cost_visibility ||= {};
 	let wohnung = frm.__hv_wohnung_cost_visibility[wohnungName];
 	if (!wohnung) {
-		const response = await frappe.db.get_value("Wohnung", wohnungName, [
-			"betriebskostenabrechnung_durch_vermieter",
-			"heizkostenabrechnung_durch_vermieter",
-		]);
-		wohnung = response && response.message;
+		// These flags are virtual properties derived from the current Wohnungszustand.
+		// get_value only queries stored fields and does not evaluate those properties.
+		wohnung = await frappe.db.get_doc("Wohnung", wohnungName);
 		if (!wohnung) return;
 		frm.__hv_wohnung_cost_visibility[wohnungName] = wohnung;
 	}
