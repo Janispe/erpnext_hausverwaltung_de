@@ -410,8 +410,12 @@ def create_tenant_claim(name, posting_date):
 		frappe.throw(_("Der Customer gehört nicht eindeutig zum Mietvertrag."))
 	if case.status in ABSCHLUSS_STATUS:
 		frappe.throw(_("Ein abgeschlossener Fall muss vor einer neuen Buchung wieder geöffnet werden."))
-	if not posting_date or not case.erstattungsbegruendung or flt(case.erstattungsbetrag) <= 0:
-		frappe.throw(_("Bitte Buchungsdatum, anerkannten Erstattungsbetrag und Begründung erfassen."))
+	if not posting_date:
+		frappe.throw(_("Bitte im Dialog das Buchungsdatum des Mieteranspruchs angeben."))
+	if flt(case.erstattungsbetrag) <= 0:
+		frappe.throw(_("Bitte unter 'Erstattungsanspruch des Mieters' einen anerkannten Erstattungsbetrag größer als 0 erfassen. Der bewilligte Versicherungsbetrag ist eine separate Angabe."))
+	if not (case.erstattungsbegruendung or "").strip():
+		frappe.throw(_("Bitte unter 'Erstattungsanspruch des Mieters' das Feld 'Begründung und Belegnummer' ausfüllen, zum Beispiel: Erstattung der vom Mieter bezahlten Glasreparatur, Rechnung … ."))
 	for row in case.belege:
 		if row.belegart in {"Mietererstattungsanspruch", "Mietergutschrift"}:
 			if frappe.db.get_value(row.referenz_doctype, row.referenz, "docstatus") != 2:

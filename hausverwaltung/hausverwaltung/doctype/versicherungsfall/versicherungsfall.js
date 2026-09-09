@@ -44,8 +44,16 @@ frappe.ui.form.on("Versicherungsfall", {
 		});
 		frm.add_custom_button(__("Mieteranspruch vorbereiten"), () => {
 			if (frm.is_dirty()) return frappe.msgprint(__("Bitte zuerst den Versicherungsfall speichern."));
-			frappe.prompt([{fieldname: "posting_date", fieldtype: "Date", label: "Buchungsdatum des Anspruchs", reqd: 1, default: frappe.datetime.get_today()}], async (values) => {
-				const result = await frappe.call({method: "hausverwaltung.hausverwaltung.doctype.versicherungsfall.versicherungsfall.create_tenant_claim", args: {name: frm.doc.name, ...values}, freeze: true});
+			frappe.prompt([
+				{fieldname: "posting_date", fieldtype: "Date", label: "Buchungsdatum des Anspruchs", reqd: 1, default: frappe.datetime.get_today()},
+				{fieldname: "erstattungsbetrag", fieldtype: "Currency", label: "Anerkannter Erstattungsbetrag des Mieters", reqd: 1, default: frm.doc.erstattungsbetrag, description: "Betrag, den der Mieter von euch erhält; separat von der bewilligten Versicherungsleistung."},
+				{fieldname: "erstattungsbegruendung", fieldtype: "Small Text", label: "Begründung und Belegnummer", reqd: 1, default: frm.doc.erstattungsbegruendung, description: "Zum Beispiel: Erstattung der vom Mieter bezahlten Glasreparatur, Rechnung … ."},
+			], async (values) => {
+				if (!(Number(values.erstattungsbetrag) > 0)) return frappe.msgprint(__("Der Erstattungsbetrag muss größer als 0 sein."));
+				if (!(values.erstattungsbegruendung || "").trim()) return frappe.msgprint(__("Bitte Begründung und Belegnummer ausfüllen."));
+				await frm.set_value({erstattungsbetrag: values.erstattungsbetrag, erstattungsbegruendung: values.erstattungsbegruendung.trim()});
+				if (frm.is_dirty()) await frm.save();
+				const result = await frappe.call({method: "hausverwaltung.hausverwaltung.doctype.versicherungsfall.versicherungsfall.create_tenant_claim", args: {name: frm.doc.name, posting_date: values.posting_date}, freeze: true});
 				await frm.reload_doc();
 				frappe.set_route("Form", "Journal Entry", result.message.name);
 			}, __("Erstattungsbuchung als Entwurf"), __("Entwurf erstellen"));
