@@ -14,6 +14,11 @@ from frappe.utils import cint, flt, getdate, now_datetime, nowdate
 
 from hausverwaltung.hausverwaltung.agent_tools import dataset_api as agent_dataset_api
 from hausverwaltung.hausverwaltung.agent_tools import read_api as agent_read_api
+from hausverwaltung.hausverwaltung.agent_tools.mail_merge_tools import (
+	MAIL_MERGE_FUNCTIONS,
+	MAIL_MERGE_PROMPT,
+	MAIL_MERGE_TOOLS,
+)
 from hausverwaltung.hausverwaltung.services import mistral_client
 
 MAX_TOOL_ROUNDS = 8
@@ -616,7 +621,8 @@ AGENT_DATA_CATALOG: tuple[dict[str, Any], ...] = (
 
 
 ASSISTANT_SYSTEM_PROMPT = """Du bist der interne Hausverwaltungs-Assistent.
-Du darfst nur lesen. Du darfst keine Buchungen, Briefe, Aufgaben oder sonstige Daten aendern.
+Du liest Daten. Nur die unten beschriebenen Serienbrief-Werkzeuge duerfen auf Nutzerauftrag Dokumententwuerfe anlegen.
+Du darfst keine Buchungen, Stammdaten oder Aufgaben aendern.
 Ein Customer ist die buchhalterische Debitoren-Entitaet genau eines Mietvertrags. Mietvertrag und Customer sind 1:1
 zugeordnet; der Mietvertrag mit seinen Feldern kunde und wohnung ist fuer diese Zuordnung massgeblich.
 Verwende einen Customer niemals gedanklich fuer mehrere Mietvertraege oder Wohnungen und rate bei Mehrdeutigkeit nicht.
@@ -668,7 +674,7 @@ Wenn Treffer mehrdeutig sind, nenne die wichtigsten Treffer und frage nach einer
 Antworte knapp auf Deutsch und verweise auf die gefundenen Treffernummern, wenn vorhanden."""
 
 
-BASIC_AGENT_SYSTEM_PROMPT = """Du bist ein minimalistischer, ausschliesslich lesender ERPNext-Datenassistent.
+BASIC_AGENT_SYSTEM_PROMPT = """Du bist ein ERPNext-Datenassistent mit lesenden Datenwerkzeugen und begrenzten Serienbrief-Werkzeugen.
 Ein Customer ist die buchhalterische Debitoren-Entitaet genau eines Mietvertrags. Mietvertrag und Customer sind 1:1
 zugeordnet; der Mietvertrag mit kunde und wohnung ist fuer diese Zuordnung massgeblich.
 Bei der Frage, wo ein Mieter oder Bewohner wohnt, ist Mietvertrag.wohnung die gesuchte Zuordnung. Suche dafuer den
@@ -685,7 +691,7 @@ sicheren child_fields stehen im Schema und werden nur ueber das jeweilige Eltern
 Wenn ein erfolgreiches Tool-Ergebnis die fuer die Antwort angeforderten Felder bereits enthaelt, antworte direkt und
 rufe dasselbe Dokument nicht noch einmal mit agent_get_doc ab. Wiederhole niemals einen fehlgeschlagenen Tool-Aufruf
 mit unveraenderten Argumenten. Nutze stattdessen sichere vorherige Ergebnisse oder sage, welche Angabe fehlt.
-Schreibe niemals SQL und aendere keine Daten.
+Schreibe niemals SQL. Daten aenderst du nur im unten beschriebenen Serienbrief-Ablauf.
 Beachte Feldtypen strikt. Wenn eine Frage mehrere oder alle Treffer berechnet, vergleicht oder statistisch auswertet,
 erstelle mit agent_create_dataset ein vollstaendiges lokales Dataset. Uebertrage dessen Zeilen niemals in den
 code_interpreter und berechne Datumsdifferenzen, Summen, Mittelwerte, Minima und Maxima ausschliesslich mit
@@ -1364,6 +1370,10 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 	},
 ]
 
+ASSISTANT_SYSTEM_PROMPT += MAIL_MERGE_PROMPT
+BASIC_AGENT_SYSTEM_PROMPT += MAIL_MERGE_PROMPT
+ASSISTANT_TOOLS.extend(MAIL_MERGE_TOOLS)
+
 BASIC_AGENT_INTERPRETER_TOOL = {
 	"type": "function",
 	"function": {
@@ -1400,6 +1410,7 @@ BASIC_AGENT_INTERPRETER_TOOL = {
 }
 
 BASIC_AGENT_LOCAL_TOOL_NAMES = {
+	*MAIL_MERGE_FUNCTIONS,
 	"agent_list_doctypes",
 	"agent_get_doctype_schema",
 	"agent_list_docs",
@@ -1425,6 +1436,7 @@ BASIC_AGENT_TOOLS = [
 ] + [BASIC_AGENT_INTERPRETER_TOOL]
 
 TOOL_FUNCTIONS = {
+	**MAIL_MERGE_FUNCTIONS,
 	"hv_describe_query_sources": lambda **kwargs: hv_describe_query_sources(**kwargs),
 	"hv_describe_query_source": lambda **kwargs: hv_describe_query_source(**kwargs),
 	"search_mieter": lambda **kwargs: search_mieter(**kwargs),
@@ -1488,7 +1500,7 @@ def ask(
 	model: str | None = None,
 	engine: str | None = None,
 ) -> dict[str, Any]:
-	"""Whitelisted Desk API for the read-only assistant."""
+	"""Whitelisted Desk API for the assistant with controlled document generation."""
 	try:
 		return run_assistant(
 			message=message,
@@ -1610,7 +1622,7 @@ def get_conversation(conversation_id: str) -> dict[str, Any]:
 
 def _select_assistant_tools(message: str) -> list[dict[str, Any]]:
 	text = (message or "").lower()
-	names = set(CORE_TOOL_NAMES) | set(GENERIC_AGENT_TOOL_NAMES)
+	names = set(CORE_TOOL_NAMES) | set(GENERIC_AGENT_TOOL_NAMES) | set(MAIL_MERGE_FUNCTIONS)
 
 	if _message_matches_any(
 		text,
@@ -1967,7 +1979,7 @@ def run_assistant(
 		"tool_calls": tool_calls_debug,
 		"toolset": _tool_names(selected_tools),
 		"mistral_usage": mistral_usage,
-		"read_only": True,
+		"read_only": "agent_mail_merge_execute" not in tool_names,
 	}
 
 
@@ -1979,7 +1991,7 @@ def _run_mistral_agent_assistant(
 	engine: str = ASSISTANT_ENGINE_MISTRAL_AGENTS,
 	progress_callback: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
-	"""Run a read-only tool profile through Mistral Agents & Conversations."""
+	"""Run the bounded tool profile through Mistral Agents & Conversations."""
 	agent_tools = _mistral_agent_tools(engine)
 	remote_agent_id = str(getattr(conversation, "remote_agent_id", None) or "").strip()
 	agent_definition_changed = False
@@ -2278,7 +2290,7 @@ def _run_mistral_agent_assistant(
 		"reasoning": reasoning,
 		"toolset": _tool_names(agent_tools),
 		"mistral_usage": mistral_usage,
-		"read_only": True,
+		"read_only": "agent_mail_merge_execute" not in tool_names,
 	}
 
 
@@ -2334,7 +2346,7 @@ def _mistral_agent_definition(engine: str) -> dict[str, Any]:
 	if engine == ASSISTANT_ENGINE_MISTRAL_BASIC:
 		return {
 			"name": "Hausverwaltung Basic ({model})",
-			"description": "Minimaler Readonly-Agent mit generischen ERPNext-Lesetools und lokalem Dataset-Interpreter.",
+			"description": "ERPNext-Lesetools, lokaler Dataset-Interpreter und kontrollierte Serienbriefentwürfe.",
 			"instructions": BASIC_AGENT_SYSTEM_PROMPT,
 			"tools": BASIC_AGENT_TOOLS,
 			"reasoning_effort": "high",
@@ -2343,7 +2355,7 @@ def _mistral_agent_definition(engine: str) -> dict[str, Any]:
 		}
 	return {
 		"name": "Hausverwaltung Assistent ({model})",
-		"description": "Interner, ausschliesslich lesender Assistent fuer ERPNext-Hausverwaltungsdaten.",
+		"description": "Interner Assistent mit lesendem Datenzugriff und kontrollierten Serienbriefentwürfen.",
 		"instructions": ASSISTANT_SYSTEM_PROMPT,
 		"tools": ASSISTANT_TOOLS,
 		"reasoning_effort": None,

@@ -41,8 +41,8 @@ PLACEHOLDER_MAPPING = {
     "B-Vertr_Abschl": "{{ objekt.creation }}",
     # `B-Anteil1` ist die Wohnungsgröße in m² — kommt aus dem aktuellen
     # Wohnungszustand (``wohnung.aktueller_zustand → Wohnungszustand.größe``).
-    # Wird im Render-Context als ``wohnung_groesse`` aufgelöst.
-    "B-Anteil1": "{{ wohnung_groesse }}",
+    # Expliziter Pfad: Der isolierte Renderer stellt keine globalen Aliase bereit.
+    "B-Anteil1": "{{$ objekt.wohnung.zustand_aktuell.größe $}}",
 
     # Vorauszahlungen / Saldo
     "B-VZ1": "{{ vorauszahlung_1 }}",
@@ -99,13 +99,12 @@ PLACEHOLDER_MAPPING = {
     "Whg-Nr": "{{ wohnung.name }}",
 
     # === HAUS / IMMOBILIE ===
-    # Adress-Felder kommen aus dem Serienbrief-Render-Context
-    # (siehe ``_build_context`` in serienbrief_durchlauf.py).
+    # Adresse der Immobilie des ausgewählten Mietvertrags.
     "H-Bezeichnung": "{{ immobilie.name }}",
     "H-Bez": "{{ immobilie.name }}",
     "H-Nummer": "{{ immobilie.name }}",
-    "H-Strasse": "{{ immobilie_strasse }}",
-    "H-PLZ_Ort": "{{ immobilie_plz_ort }}",
+    "H-Strasse": "{{$ objekt.wohnung.immobilie.adresse.address_line1 $}}",
+    "H-PLZ_Ort": "{{$ objekt.wohnung.immobilie.adresse.plz_ort $}}",
     # Bank-Felder werden im Render-Context aus
     # ``immobilie.bankkonten[Hauptkonto] → Account → Bank Account``
     # vorab als ``bank_*``-Keys aufgelöst (siehe ``_resolve_bank_info``).
