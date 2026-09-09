@@ -317,6 +317,9 @@ doc_events = {
 # ---------------
 
 scheduler_events = {
+	"monthly_long": [
+		"hausverwaltung.hausverwaltung.services.automatic_rent.schedule_monthly_rent",
+	],
 	"hourly": [
 		"hausverwaltung.hausverwaltung.integrations.paperless.retry_failed_exports"
 	],

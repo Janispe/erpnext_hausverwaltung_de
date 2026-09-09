@@ -36,6 +36,8 @@
   "abschreibungskonto_forderungen",
   "income_section",
   "income_accounts",
+  "sollstellung_section",
+  "automatische_mietsollstellung",
   "betriebskosten_section",
   "bk_rundungsverfahren",
   "bk_festbetrag_wohnungsdimension_ab",
@@ -247,6 +249,18 @@
    "fieldtype": "Table",
    "label": "Erlöskonten pro Company",
    "options": "Hausverwaltung Erloeskonten"
+  },
+  {
+   "fieldname": "sollstellung_section",
+   "fieldtype": "Section Break",
+   "label": "Mietsollstellung"
+  },
+  {
+   "default": "0",
+   "description": "Erstellt und bucht am 1. jedes Monats die Mietrechnungen für den aktuellen Monat für alle Firmen (Miete, Betriebskosten, Heizkosten und Untermietzuschlag gemäß Mietvertrag). Bereits vorhandene Rechnungen einschließlich Entwürfen werden übersprungen. Die Ergebnisse stehen unter Mietrechnungen Durchlauf. Voraussetzung: aktiver Scheduler und Hintergrund-Worker. Nach dem Einschalten erfolgt der erste automatische Lauf zum nächsten Monatsanfang.",
+   "fieldname": "automatische_mietsollstellung",
+   "fieldtype": "Check",
+   "label": "Mieten automatisch monatlich sollstellen"
   },
   {
    "fieldname": "betriebskosten_section",

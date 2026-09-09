@@ -2,6 +2,21 @@
 
 Frappe-App für die Hausverwaltung: Mietverträge, Betriebskosten-Abrechnung, Bankabgleich, Mahnwesen, Serienbriefe.
 
+### Automatische Mietsollstellung
+
+Unter **Hausverwaltung Einstellungen → Mietsollstellung → Mieten automatisch monatlich
+sollstellen** lässt sich der monatliche Rechnungslauf einschalten (standardmäßig aus).
+Der erste automatische Lauf erfolgt zum nächsten Monatsanfang. Er erstellt und bucht
+für alle Firmen die Miete, Betriebs- und Heizkostenvorauszahlungen sowie
+Untermietzuschläge gemäß Mietvertrag. Vorhandene Rechnungen einschließlich Entwürfen
+werden durch die bestehende Dublettenprüfung berücksichtigt.
+
+Die Ergebnisse stehen unter **Mietrechnungen Durchlauf**, Fehler unter **Error Log / Failed Jobs**.
+Scheduler und Worker für die Queue `long` müssen laufen. Nach dem Einspielen der
+Änderung registriert `bench --site <site> migrate` die Einstellung und den monatlichen
+Scheduler-Job. Bei einer Scheduler-Unterbrechung wird der fällige Lauf nach dem
+Wiederanlauf für den dann aktuellen Monat ausgeführt; frühere Monate werden nicht nachgeholt.
+
 ### Temporal (Kern-Workflows)
 
 Temporal ist fuer `Mieterwechsel` und `Email Entwurf` integriert und per Feature-Flags steuerbar.
