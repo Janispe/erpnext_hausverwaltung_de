@@ -31,17 +31,33 @@
   "endwert",
   "endwert_durch_messdienst",
   "abzuege",
+  "soforthilfe",
+  "preisbremse",
   "bestaende_bestaetigt",
   "lieferungen_abschnitt",
   "lieferungen",
   "brennstoff_vollstaendig",
+  "abgaben_abschnitt",
+  "abgaben",
   "kosten_abschnitt",
   "kosten",
   "kosten_vollstaendig",
+  "summen_abschnitt",
+  "summen_html",
   "zusatz_tab",
   "zusatz_abschnitt",
   "zusatzfelder_html",
   "zusatzwerte_json",
+  "unterschriften_tab",
+  "bestaetigung_abschnitt",
+  "bestaetigung_ort",
+  "bestaetigung_datum",
+  "unterzeichner",
+  "unterschrift",
+  "co2_bestaetigung_abschnitt",
+  "co2_bestaetigung_datum",
+  "co2_unterzeichner",
+  "co2_unterschrift",
   "freigabe_tab",
   "freigabe_abschnitt",
   "pruefung_html",
@@ -197,6 +213,18 @@
    "label": "Abzüge / Gutschriften (positiver Betrag)"
   },
   {
+   "fieldname": "soforthilfe",
+   "fieldtype": "Currency",
+   "label": "Abzüge: einmalige Soforthilfe",
+   "description": "Zusätzlich zum allgemeinen Abzugsbetrag. Nicht doppelt erfassen."
+  },
+  {
+   "fieldname": "preisbremse",
+   "fieldtype": "Currency",
+   "label": "Abzüge: Preisbremse Brennstoff",
+   "description": "Zusätzlich zum allgemeinen Abzugsbetrag. Nicht doppelt erfassen."
+  },
+  {
    "fieldname": "bestaende_bestaetigt",
    "fieldtype": "Check",
    "label": "Anfangs-/Endbestand und Anfangswert geprüft"
@@ -218,6 +246,18 @@
    "label": "Lieferungen und Abzüge vollständig erfasst"
   },
   {
+   "fieldname": "abgaben_abschnitt",
+   "fieldtype": "Section Break",
+   "label": "Steuern, Abgaben und Zölle zum Brennstoff"
+  },
+  {
+   "fieldname": "abgaben",
+   "fieldtype": "Table",
+   "label": "Zusatzangaben Brennstoffkosten",
+   "options": "Heizkostenmeldung Abgabe",
+   "description": "Umsatzsteuer, Bevorratungsbeitrag und weitere Positionen jeweils mit Bruttobetrag und MwSt.-Satz. Enthaltene Beträge werden nicht erneut addiert."
+  },
+  {
    "fieldname": "kosten_abschnitt",
    "fieldtype": "Section Break",
    "label": "Heizungsnebenkosten"
@@ -232,6 +272,16 @@
    "fieldname": "kosten_vollstaendig",
    "fieldtype": "Check",
    "label": "Heizungsnebenkosten vollständig erfasst"
+  },
+  {
+   "fieldname": "summen_abschnitt",
+   "fieldtype": "Section Break",
+   "label": "Summen"
+  },
+  {
+   "fieldname": "summen_html",
+   "fieldtype": "HTML",
+   "label": "Summen aus den gespeicherten Angaben"
   },
   {
    "fieldname": "zusatz_tab",
@@ -254,6 +304,64 @@
    "label": "Zusatzwerte",
    "options": "JSON",
    "hidden": 1
+  },
+  {
+   "fieldname": "unterschriften_tab",
+   "fieldtype": "Tab Break",
+   "label": "Bestätigung"
+  },
+  {
+   "fieldname": "bestaetigung_abschnitt",
+   "fieldtype": "Section Break",
+   "label": "Heizkostenermittlung: Bestätigung der Angaben"
+  },
+  {
+   "fieldname": "bestaetigung_ort",
+   "fieldtype": "Data",
+   "label": "Ort"
+  },
+  {
+   "fieldname": "bestaetigung_datum",
+   "fieldtype": "Date",
+   "label": "Bestätigungsdatum",
+   "no_copy": 1
+  },
+  {
+   "fieldname": "unterzeichner",
+   "fieldtype": "Data",
+   "label": "Name der unterzeichnenden Person",
+   "no_copy": 1
+  },
+  {
+   "fieldname": "unterschrift",
+   "fieldtype": "Signature",
+   "label": "Unterschrift Heizkostenermittlung",
+   "no_copy": 1,
+   "description": "Hier selbst unterschreiben oder das Unterschriftsfeld im Excel-Ausdruck ausfüllen."
+  },
+  {
+   "fieldname": "co2_bestaetigung_abschnitt",
+   "fieldtype": "Section Break",
+   "label": "CO₂-Angaben: Bestätigung der Angaben"
+  },
+  {
+   "fieldname": "co2_bestaetigung_datum",
+   "fieldtype": "Date",
+   "label": "Datum CO₂-Bestätigung",
+   "no_copy": 1
+  },
+  {
+   "fieldname": "co2_unterzeichner",
+   "fieldtype": "Data",
+   "label": "Name der unterzeichnenden Person (CO₂)",
+   "no_copy": 1
+  },
+  {
+   "fieldname": "co2_unterschrift",
+   "fieldtype": "Signature",
+   "label": "Unterschrift CO₂-Angaben",
+   "no_copy": 1,
+   "description": "Hier selbst unterschreiben oder das Unterschriftsfeld im Excel-Ausdruck ausfüllen."
   },
   {
    "fieldname": "freigabe_tab",

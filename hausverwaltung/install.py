@@ -2193,6 +2193,7 @@ def _run_bootstrap(*, reason: str) -> None:
 
 _POST_INSTALL_PATCHES: tuple[str, ...] = (
     "hausverwaltung.hausverwaltung.patches.post_model_sync.seed_heizkostenmeldung_vorlage",
+    "hausverwaltung.hausverwaltung.patches.post_model_sync.seed_heizkostenmeldung_vorlage_v2",
     # These patches seed required defaults and are safe/idempotent.
     "hausverwaltung.hausverwaltung.patches.post_model_sync.create_hausverwalter_role",
     # Ensure rent-related service items exist for invoice creation.

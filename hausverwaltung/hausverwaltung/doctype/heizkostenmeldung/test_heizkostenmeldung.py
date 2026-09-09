@@ -136,6 +136,20 @@ class TestHeizkostenmeldung(unittest.TestCase):
 		self.doc.endbestand = 20
 		self.doc.endwert = 50
 		self.doc.endwert_durch_messdienst = 0
+		self.doc.soforthilfe = 10
+		self.doc.preisbremse = 20
+		self.doc.bestaetigung_datum = "2025-12-31"
+		self.doc.unterzeichner = "Testperson"
+		self.doc.append(
+			"abgaben",
+			{
+				"bezeichnung": "Umsatzsteuer",
+				"bruttobetrag": 19,
+				"mwst_satz": 19,
+				"angaben_bestaetigt": 1,
+				"behandlung": "Im Brennstoffbetrag enthalten",
+			},
+		)
 		self.doc.save()
 		next_template = frappe.get_doc("Heizkostenmeldung Vorlage", neue_version(self.template.name))
 		next_template.append(
@@ -159,7 +173,44 @@ class TestHeizkostenmeldung(unittest.TestCase):
 		self.assertEqual(next_doc.anfangswert, 50)
 		self.assertFalse(next_doc.bestaende_bestaetigt)
 		self.assertFalse(next_doc.lieferungen)
+		self.assertFalse(next_doc.abgaben)
+		self.assertFalse(next_doc.soforthilfe)
+		self.assertFalse(next_doc.preisbremse)
+		self.assertFalse(next_doc.bestaetigung_datum)
+		self.assertFalse(next_doc.unterzeichner)
 		self.assertEqual(json_object(next_doc.zusatzwerte_json), {"kontakt": "Verwaltung"})
+
+	def test_abgaben_and_deductions_validation(self):
+		self.doc.soforthilfe = -1
+		with self.assertRaises(frappe.ValidationError):
+			self.doc.save()
+		self.doc.reload()
+		self.doc.append(
+			"abgaben", {"bezeichnung": "Abgabe", "mwst_satz": 101, "behandlung": "Zusätzlich berechnen"}
+		)
+		with self.assertRaises(frappe.ValidationError):
+			self.doc.save()
+		self.doc.reload()
+		self.doc.append(
+			"abgaben", {"bezeichnung": "Abgabe", "mwst_satz": 0, "behandlung": "Zusätzlich berechnen"}
+		)
+		self.doc.save()
+		self.assertTrue(any("MwSt.-Satz prüfen" in s for s in self.doc.issues()))
+		self.doc.abgaben[0].angaben_bestaetigt = 1
+		self.doc.save()
+		self.assertFalse(any("MwSt.-Satz prüfen" in s for s in self.doc.issues()))
+
+	def test_v2_seed_preserves_published_v1_and_is_idempotent(self):
+		from hausverwaltung.hausverwaltung.patches.post_model_sync.seed_heizkostenmeldung_vorlage_v2 import (
+			execute,
+		)
+
+		before = frappe.get_doc("Heizkostenmeldung Vorlage", "ares-v1").as_json()
+		execute()
+		first = frappe.get_doc("Heizkostenmeldung Vorlage", "ares-v2").as_json()
+		execute()
+		self.assertEqual(frappe.get_doc("Heizkostenmeldung Vorlage", "ares-v1").as_json(), before)
+		self.assertEqual(frappe.get_doc("Heizkostenmeldung Vorlage", "ares-v2").as_json(), first)
 
 	def test_changed_occupancy_blocks_release(self):
 		with (
@@ -175,6 +226,7 @@ class TestHeizkostenmeldung(unittest.TestCase):
 			(module.pruefen, self.doc.name),
 			(module.export_xlsx, self.doc.name),
 			(module.daten_laden, self.doc.name),
+			(module.summen, self.doc.name),
 			(neue_version, self.template.name),
 		):
 			with self.subTest(fn=fn.__name__), self.assertRaises(frappe.PermissionError):

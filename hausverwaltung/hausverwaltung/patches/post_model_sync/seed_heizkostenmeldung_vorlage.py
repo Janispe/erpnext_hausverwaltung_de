@@ -3,9 +3,7 @@
 import frappe
 
 
-def execute():
-	if frappe.db.exists("Heizkostenmeldung Vorlage", "ares-v1"):
-		return
+def build_fields():
 	rows = []
 
 	def add(
@@ -111,6 +109,12 @@ def execute():
 	):
 		add(key, label, typ, scope="Nutzer", required=False, unit=unit)
 	add("hnd", "HND laut Formular", "Data", scope="Kosten", required=False)
+	return rows
+
+
+def execute():
+	if frappe.db.exists("Heizkostenmeldung Vorlage", "ares-v1"):
+		return
 	doc = frappe.get_doc(
 		{
 			"doctype": "Heizkostenmeldung Vorlage",
@@ -118,7 +122,7 @@ def execute():
 			"version": 1,
 			"bezeichnung": "ares: Heizöl, Nutzerliste und CO₂",
 			"beschreibung": "Feldaufbau aus den bereitgestellten ares-Formularen 2024/25. Keine automatische rechtliche Bewertung. Neue Anforderungen über eine neue Version ergänzen.",
-			"felder": rows,
+			"felder": build_fields(),
 		}
 	)
 	doc.insert(ignore_permissions=True)

@@ -26,6 +26,22 @@
 			issues.forEach(issue => $("<li>").text(issue).appendTo(list));
 		}
 	}
+	async function showTotals(frm) {
+		const $area = frm.fields_dict.summen_html.$wrapper.empty();
+		$("<p>").text(__("Summen aus den gespeicherten Angaben. Änderungen speichern, um neu zu berechnen.")).appendTo($area);
+		if (frm.is_new()) return;
+		const result = await frappe.call({method: api + "summen", args: {name: frm.doc.name}});
+		const table = $("<table class='table table-bordered'>").appendTo($area);
+		const head = $("<tr>").appendTo($("<thead>").appendTo(table));
+		["Summe", "Wert", "Hinweis"].forEach(label => $("<th>").text(__(label)).appendTo(head));
+		const body = $("<tbody>").appendTo(table);
+		result.message.forEach(row => {
+			const tr = $("<tr>").appendTo(body);
+			$("<td>").text(row.bezeichnung).appendTo(tr);
+			$("<td>").text(row.wert == null ? __("Offen") : `${format_number(row.wert, null, row.einheit === "m²" || row.einheit === "Liter" ? 3 : 2)} ${row.einheit}`).appendTo(tr);
+			$("<td>").text(row.hinweis).appendTo(tr);
+		});
+	}
 	function renderExtras(frm) {
 		const $area = frm.fields_dict.zusatzfelder_html.$wrapper.empty();
 		if (!frm.doc.vorlage_snapshot) {
@@ -78,6 +94,7 @@
 		},
 		refresh(frm) {
 			renderExtras(frm);
+			showTotals(frm);
 			frm.set_df_property("vorlage", "read_only", !frm.is_new());
 			for (const field of ["immobilie", "von", "bis"]) frm.set_df_property(field, "read_only", !!frm.doc.nutzer?.length);
 			if (frm.doc.docstatus === 0) frm.add_custom_button(__("ERP-Daten laden"), () => action(frm, "daten_laden"));

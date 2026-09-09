@@ -94,3 +94,4 @@ hausverwaltung.hausverwaltung.patches.post_model_sync.add_insurance_accounting_f
 hausverwaltung.hausverwaltung.patches.post_model_sync.seed_heizkostenmeldung_vorlage
 
 hausverwaltung.hausverwaltung.patches.post_model_sync.add_insurance_receivable_fields
+hausverwaltung.hausverwaltung.patches.post_model_sync.seed_heizkostenmeldung_vorlage_v2

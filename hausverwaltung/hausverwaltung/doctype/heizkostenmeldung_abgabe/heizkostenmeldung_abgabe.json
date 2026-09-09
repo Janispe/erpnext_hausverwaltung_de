@@ -1,0 +1,56 @@
+{
+ "doctype": "DocType",
+ "name": "Heizkostenmeldung Abgabe",
+ "module": "Hausverwaltung",
+ "istable": 1,
+ "editable_grid": 1,
+ "field_order": [
+  "bezeichnung",
+  "bruttobetrag",
+  "mwst_satz",
+  "behandlung",
+  "angaben_bestaetigt",
+  "bemerkung"
+ ],
+ "fields": [
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "label": "Bezeichnung",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "bruttobetrag",
+   "fieldtype": "Currency",
+   "label": "Bruttobetrag",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "mwst_satz",
+   "fieldtype": "Percent",
+   "label": "MwSt. (%)",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "behandlung",
+   "fieldtype": "Select",
+   "label": "Berücksichtigung",
+   "options": "Im Brennstoffbetrag enthalten\nZusätzlich berechnen",
+   "default": "Im Brennstoffbetrag enthalten",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "angaben_bestaetigt",
+   "fieldtype": "Check",
+   "label": "Betrag und MwSt.-Satz geprüft (auch bei 0)"
+  },
+  {
+   "fieldname": "bemerkung",
+   "fieldtype": "Small Text",
+   "label": "Bemerkung"
+  }
+ ],
+ "permissions": []
+}

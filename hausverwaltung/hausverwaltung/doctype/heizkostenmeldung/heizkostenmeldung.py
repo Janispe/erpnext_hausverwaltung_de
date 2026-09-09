@@ -16,6 +16,8 @@ from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_schema import (
 	normalize_definitions,
 	normalize_values,
 )
+from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_summen import summary
+from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_unterschrift import signature_bytes
 
 SOURCE_FIELDS = (
 	"zeilen_id",
@@ -68,6 +70,17 @@ class Heizkostenmeldung(Document):
 				self.set(key, 0)
 			for row in [*self.lieferungen, *self.kosten]:
 				row.betrag_bestaetigt = 0
+			for row in self.abgaben:
+				row.angaben_bestaetigt = 0
+			for key in (
+				"unterschrift",
+				"co2_unterschrift",
+				"bestaetigung_datum",
+				"co2_bestaetigung_datum",
+				"unterzeichner",
+				"co2_unterzeichner",
+			):
+				self.set(key, None)
 
 	def validate(self):
 		if getdate(self.von) > getdate(self.bis):
@@ -87,14 +100,34 @@ class Heizkostenmeldung(Document):
 			if flt(row.heizflaeche) < 0:
 				frappe.throw("Heizflächen dürfen nicht negativ sein.")
 		for row, keys in [
-			(self, ("anfangsbestand", "endbestand", "anfangswert", "endwert", "abzuege")),
+			(
+				self,
+				(
+					"anfangsbestand",
+					"endbestand",
+					"anfangswert",
+					"endwert",
+					"abzuege",
+					"soforthilfe",
+					"preisbremse",
+				),
+			),
 			*[(r, ("heizflaeche", "vorauszahlung_meldung")) for r in self.nutzer],
 			*[(r, ("menge", "betrag")) for r in self.lieferungen],
 			*[(r, ("betrag",)) for r in self.kosten],
+			*[(r, ("bruttobetrag", "mwst_satz")) for r in self.abgaben],
 		]:
 			if any(not math.isfinite(flt(row.get(key))) for key in keys):
 				frappe.throw("Beträge und Mengen müssen endliche Zahlen sein.")
-		for key in ("anfangsbestand", "endbestand", "anfangswert", "endwert", "abzuege"):
+		for key in (
+			"anfangsbestand",
+			"endbestand",
+			"anfangswert",
+			"endwert",
+			"abzuege",
+			"soforthilfe",
+			"preisbremse",
+		):
 			if flt(self.get(key)) < 0:
 				frappe.throw("Bestände, Bestandswerte und Abzüge dürfen nicht negativ sein.")
 		for row in self.lieferungen:
@@ -108,6 +141,19 @@ class Heizkostenmeldung(Document):
 				invoice.check_permission("read")
 				if invoice.docstatus == 2:
 					frappe.throw("Eine stornierte Eingangsrechnung kann nicht als Beleg verwendet werden.")
+		for row in self.abgaben:
+			if not 0 <= flt(row.mwst_satz) <= 100:
+				frappe.throw("MwSt.-Satz muss zwischen 0 und 100 liegen.")
+		for signature, person, date in (
+			("unterschrift", "unterzeichner", "bestaetigung_datum"),
+			("co2_unterschrift", "co2_unterzeichner", "co2_bestaetigung_datum"),
+		):
+			try:
+				content = signature_bytes(self.get(signature))
+			except ValueError as exc:
+				frappe.throw(str(exc))
+			if content and (not self.get(person) or not self.get(date)):
+				frappe.throw("Zu einer eingetragenen Unterschrift bitte Name und Bestätigungsdatum ergänzen.")
 		self._validate_settlement()
 
 	def _snapshot(self, before):
@@ -203,6 +249,9 @@ class Heizkostenmeldung(Document):
 			issues.extend(f"{label}: {field} fehlt." for field in missing)
 			if scope in ("Kosten", "Brennstoff") and not row.betrag_bestaetigt:
 				issues.append(f"{label}: Betrag bestätigen (auch bei 0).")
+		for row in self.abgaben:
+			if not row.angaben_bestaetigt:
+				issues.append(f"Brennstoffabgabe {row.idx}: Betrag und MwSt.-Satz prüfen (auch bei 0).")
 		return issues
 
 	def before_submit(self):
@@ -312,6 +361,11 @@ def daten_laden(name):
 def pruefen(name):
 	doc = _get(name, "read", draft=False)
 	return {"hinweise": doc.issues(), "datenstand": doc.datenstand}
+
+
+@frappe.whitelist()
+def summen(name):
+	return summary(_get(name, "read", draft=False))
 
 
 @frappe.whitelist()

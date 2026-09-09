@@ -9,11 +9,14 @@ from io import BytesIO
 from math import ceil
 
 from openpyxl import Workbook
+from openpyxl.drawing.image import Image
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_schema import json_object, typed_value
+from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_summen import get, summary
+from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_unterschrift import signature_bytes
 
-EXPORT_VERSION = 1
+EXPORT_VERSION = 2
 
 
 def _extras(definitions, scope):
@@ -184,6 +187,18 @@ def build_xlsx(doc):
 		[
 			["Abzüge / Gutschriften", None, None, doc.abzuege if doc.brennstoff_vollstaendig else None],
 			[
+				"Abzüge: einmalige Soforthilfe",
+				None,
+				None,
+				get(doc, "soforthilfe", 0) if doc.brennstoff_vollstaendig else None,
+			],
+			[
+				"Abzüge: Preisbremse Brennstoff",
+				None,
+				None,
+				get(doc, "preisbremse", 0) if doc.brennstoff_vollstaendig else None,
+			],
+			[
 				"Endbestand",
 				_date(doc.bis),
 				doc.endbestand if doc.bestaende_bestaetigt else None,
@@ -212,6 +227,21 @@ def build_xlsx(doc):
 			*[_label(d) for d in fields],
 		],
 		rows,
+	)
+	sheet(
+		"Brennstoffabgaben",
+		["Bezeichnung", "Bruttobetrag (€)", "MwSt. (%)", "Berücksichtigung", "Bemerkung"],
+		[
+			[
+				r.bezeichnung,
+				r.bruttobetrag if r.angaben_bestaetigt else None,
+				r.mwst_satz if r.angaben_bestaetigt else None,
+				r.behandlung,
+				r.bemerkung,
+			]
+			for r in get(doc, "abgaben", [])
+		],
+		{1: 40, 4: 38, 5: 60},
 	)
 	fields = _extras(definitions, "Kosten")
 	sheet(
@@ -246,6 +276,36 @@ def build_xlsx(doc):
 		],
 		{2: 65, 3: 28, 5: 65},
 	)
+	sheet(
+		"Summen",
+		["Bezeichnung", "Wert", "Einheit", "Hinweis"],
+		[[r["bezeichnung"], r["wert"], r["einheit"], r["hinweis"]] for r in summary(doc)],
+		{1: 45, 2: 22, 3: 12, 4: 90},
+	)
+	confirmation = sheet(
+		"Bestaetigung",
+		["Angaben bestätigt für", "Feld", "Eintrag"],
+		[
+			["Heizkostenermittlung", "Ort", get(doc, "bestaetigung_ort")],
+			["", "Datum", _date(get(doc, "bestaetigung_datum"))],
+			["", "Name", get(doc, "unterzeichner")],
+			["", "Unterschrift", "____________________________"],
+			["CO₂-Angaben", "Datum", _date(get(doc, "co2_bestaetigung_datum"))],
+			["", "Name", get(doc, "co2_unterzeichner")],
+			["", "Unterschrift", "____________________________"],
+		],
+		{1: 30, 2: 22, 3: 65},
+	)
+	for key, row in (("unterschrift", 8), ("co2_unterschrift", 11)):
+		confirmation.row_dimensions[row].height = 90
+		content = signature_bytes(get(doc, key))
+		if content:
+			picture = Image(BytesIO(content))
+			scale = min(420 / picture.width, 100 / picture.height, 1)
+			picture.width *= scale
+			picture.height *= scale
+			confirmation.cell(row, 3).value = None
+			confirmation.add_image(picture, f"C{row}")
 	if int(doc.docstatus) == 0:
 		sheet("Offene Angaben", ["Vor Freigabe zu erledigen"], [[s] for s in doc.issues()], {1: 110})
 	stream = BytesIO()
