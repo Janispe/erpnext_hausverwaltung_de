@@ -16,7 +16,7 @@ from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_schema import json
 from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_summen import get, summary
 from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_unterschrift import signature_bytes
 
-EXPORT_VERSION = 2
+EXPORT_VERSION = 3
 
 
 def _extras(definitions, scope):
@@ -85,7 +85,7 @@ def build_xlsx(doc):
 				for cell in row
 			)
 			ws.row_dimensions[row[0].row].height = max(22, min(400, lines * 15 + 6))
-		ws.freeze_panes = "C5" if name == "Nutzer" else "A5"
+		ws.freeze_panes = "D5" if name == "Nutzer" else "A5"
 		ws.sheet_view.showGridLines = False
 		ws.print_title_rows = "1:4"
 		ws.sheet_properties.pageSetUpPr.fitToPage = True
@@ -119,6 +119,7 @@ def build_xlsx(doc):
 		values = json_object(r.zusatzwerte_json)
 		nutzer.append(
 			[
+				get(r, "wohnung_id") or None,
 				r.nutzernummer,
 				r.wohnung,
 				r.typ,
@@ -139,7 +140,8 @@ def build_xlsx(doc):
 	ws = sheet(
 		"Nutzer",
 		[
-			"Nutzernummer",
+			"Wohnungsnummer (ERP)",
+			"Nutzernummer Messdienst (optional)",
 			"Wohnung",
 			"Nutzung",
 			"Mieter",
@@ -156,11 +158,11 @@ def build_xlsx(doc):
 			"Mietvertrag",
 		],
 		nutzer,
-		{2: 32, 4: 35},
+		{1: 22, 2: 28, 3: 32, 5: 35},
 	)
 	ws.auto_filter.ref = f"A4:{ws.cell(ws.max_row, ws.max_column).coordinate}"
 	for row in range(5, ws.max_row + 1):
-		ws.cell(row, 7).number_format = ws.cell(row, 11).number_format = "#,##0.000"
+		ws.cell(row, 8).number_format = ws.cell(row, 12).number_format = "#,##0.000"
 	fields = _extras(definitions, "Brennstoff")
 	quantities = sum(float(r.menge or 0) for r in doc.lieferungen)
 	rows = [

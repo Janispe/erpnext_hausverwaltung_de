@@ -126,6 +126,15 @@ class TestHeizkostenmeldung(unittest.TestCase):
 		self.assertFalse(module._sources_changed(browser, stored))
 		self.assertTrue(module._sources_changed(dict(browser, vorauszahlung_ist=1681), stored))
 		self.assertTrue(module._sources_changed(dict(browser, customer="another"), stored))
+		self.assertTrue(module._sources_changed(dict(browser, wohnung_id="999"), stored))
+
+	def test_internal_apartment_number_is_sufficient_without_service_number(self):
+		row = self.doc.append("nutzer", {"wohnung": "W1", "wohnung_id": "123", "typ": "Leerstand"})
+		self.assertFalse(any("Wohnungsnummer fehlt" in issue for issue in self.doc.issues()))
+		row.wohnung_id = None
+		self.assertTrue(any("Wohnungsnummer fehlt" in issue for issue in self.doc.issues()))
+		row.nutzernummer = "016"
+		self.assertFalse(any("Wohnungsnummer fehlt" in issue for issue in self.doc.issues()))
 
 	def test_required_inputs_block_submit(self):
 		with self.assertRaises(frappe.ValidationError):

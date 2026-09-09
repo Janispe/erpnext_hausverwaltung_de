@@ -100,6 +100,40 @@ def totals(doc):
 
 
 class TestMeldungV2(unittest.TestCase):
+	def test_export_keeps_apartment_number_across_tenant_change_and_vacancy(self):
+		doc = sample()
+		doc.nutzer = [
+			Row(
+				wohnung_id="123",
+				wohnung="W1",
+				nutzernummer=None,
+				typ="Mietvertrag" if contract else "Leerstand",
+				mietvertrag=contract,
+				mietername=contract or "Leerstand",
+				von="2025-01-01",
+				bis="2025-12-31",
+				heizflaeche=42,
+				wohnflaeche=42,
+				flaeche_bestaetigt=1,
+				vorauszahlung_meldung=0,
+				vorauszahlung_bestaetigt=1,
+				vorauszahlung_ist=0,
+				vorauszahlung_soll=0,
+				pruefhinweise=None,
+				pruefnotiz=None,
+				zusatzwerte_json="{}",
+			)
+			for contract in ("MV-A", None, "MV-B")
+		]
+		ws = load_workbook(BytesIO(build_xlsx(doc)))["Nutzer"]
+		self.assertEqual(ws["A4"].value, "Wohnungsnummer (ERP)")
+		self.assertEqual([ws.cell(r, 1).value for r in range(5, 8)], ["123"] * 3)
+		self.assertTrue(all(ws.cell(r, 1).data_type == "s" for r in range(5, 8)))
+		self.assertEqual([ws.cell(r, 2).value for r in range(5, 8)], [None] * 3)
+		self.assertEqual([ws.cell(r, ws.max_column).value for r in range(5, 8)], ["MV-A", None, "MV-B"])
+		self.assertEqual(ws["H5"].number_format, "#,##0.000")
+		self.assertEqual(ws["L5"].number_format, "#,##0.000")
+
 	def test_deductions_and_taxes_are_counted_exactly_once(self):
 		doc = sample()
 		total = totals(doc)

@@ -12,7 +12,11 @@ verknüpft werden.
 2. **ERP-Daten laden** ermittelt die Wohnungen und sämtliche Mietverhältnisse
    im Zeitraum. Mieterwechsel erhalten getrennte Zeilen; Vertragslücken
    erscheinen als Leerstand. Hauptmieternamen stammen aus den Vertragspartnern.
-3. Nutzernummern, Heizflächen und Meldevorauszahlungen ergänzen bzw. bestätigen.
+3. Die **Wohnungsnummer (ERP)** wird aus `Wohnung.id` übernommen und als erste
+   Spalte im Excel-Blatt **Nutzer** ausgegeben. Sie bleibt bei Mieterwechseln und
+   Leerstand gleich. Eine separate Nutzernummer beim Messdienst ist optional.
+   Bestehende Entwürfe einmal mit **ERP-Daten laden** aktualisieren; archivierte
+   Exporte bleiben unverändert. Heizflächen und Meldevorauszahlungen bestätigen.
    ERP-Wohnfläche und Heizfläche bleiben getrennt. IST und SOLL kommen aus der
    bestehenden Vorauszahlungsberechnung. Fehlende Rechnungsmonate und andere
    Hinweise benötigen eine dokumentierte Klärung.

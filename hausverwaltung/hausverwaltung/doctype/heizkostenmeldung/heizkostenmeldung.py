@@ -23,6 +23,7 @@ SOURCE_FIELDS = (
 	"zeilen_id",
 	"typ",
 	"wohnung",
+	"wohnung_id",
 	"mietvertrag",
 	"customer",
 	"mietername",
@@ -233,8 +234,10 @@ class Heizkostenmeldung(Document):
 			issues.append("Endbestand ist größer als Anfangsbestand plus Lieferungen.")
 		for row in self.nutzer:
 			label = f"{row.wohnung} ({row.mietername or row.typ}, {row.von} bis {row.bis})"
-			if not row.nutzernummer:
-				issues.append(f"{label}: Nutzernummer beim Wärmedienst fehlt.")
+			if not row.wohnung_id and not row.nutzernummer:
+				issues.append(
+					f"{label}: Wohnungsnummer fehlt. ERP-Daten laden oder Nutzernummer beim Wärmedienst ergänzen."
+				)
 			if not row.flaeche_bestaetigt:
 				issues.append(f"{label}: Heizfläche bestätigen.")
 			if row.typ == "Mietvertrag" and not row.vorauszahlung_bestaetigt:

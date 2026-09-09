@@ -6,7 +6,7 @@ import hashlib
 from datetime import timedelta
 
 import frappe
-from frappe.utils import getdate
+from frappe.utils import cstr, getdate
 
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaiment_calc import (
 	calc_hk_vorauszahlungen,
@@ -119,6 +119,9 @@ def _months(von, bis):
 def enrich_segment(row, von, bis):
 	row = dict(row)
 	warnings = []
+	wohnung = frappe.get_doc("Wohnung", row["wohnung"])
+	wohnung.check_permission("read")
+	row["wohnung_id"] = cstr(wohnung.id) if wohnung.id else None
 	states = frappe.get_all(
 		"Wohnungszustand",
 		filters={

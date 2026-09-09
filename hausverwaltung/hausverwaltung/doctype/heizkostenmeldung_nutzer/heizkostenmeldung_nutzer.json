@@ -10,6 +10,7 @@
   "zeilen_id",
   "typ",
   "wohnung",
+  "wohnung_id",
   "mietvertrag",
   "customer",
   "mietername",
@@ -54,6 +55,14 @@
    "in_list_view": 1
   },
   {
+   "fieldname": "wohnung_id",
+   "fieldtype": "Data",
+   "label": "Wohnungsnummer (ERP)",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "ID aus dem Wohnungsstammsatz; bleibt bei Mieterwechseln gleich."
+  },
+  {
    "fieldname": "mietvertrag",
    "fieldtype": "Link",
    "label": "Mietvertrag",
@@ -91,7 +100,7 @@
   {
    "fieldname": "nutzernummer",
    "fieldtype": "Data",
-   "label": "Nutzernummer beim Messdienst"
+   "label": "Nutzernummer beim Messdienst (optional)"
   },
   {
    "fieldname": "wohnflaeche",
