@@ -1,0 +1,95 @@
+{
+ "doctype": "DocType",
+ "name": "Heizkostenmeldung Vorlagenfeld",
+ "module": "Hausverwaltung",
+ "engine": "InnoDB",
+ "istable": 1,
+ "editable_grid": 1,
+ "track_changes": 0,
+ "field_order": [
+  "schluessel",
+  "bezeichnung",
+  "bereich",
+  "feldtyp",
+  "pflichtfeld",
+  "einheit",
+  "abschnitt",
+  "optionen",
+  "standardwert",
+  "folgejahr_uebernehmen",
+  "hinweis"
+ ],
+ "fields": [
+  {
+   "fieldname": "schluessel",
+   "fieldtype": "Data",
+   "label": "Feldschlüssel",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "label": "Bezeichnung",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "bereich",
+   "fieldtype": "Select",
+   "label": "Bereich",
+   "options": "Meldung\nNutzer\nKosten\nBrennstoff",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "feldtyp",
+   "fieldtype": "Select",
+   "label": "Datentyp",
+   "options": "Data\nSmall Text\nDate\nInt\nFloat\nCurrency\nSelect",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "pflichtfeld",
+   "fieldtype": "Check",
+   "label": "Pflicht bei Freigabe",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "einheit",
+   "fieldtype": "Data",
+   "label": "Einheit"
+  },
+  {
+   "fieldname": "abschnitt",
+   "fieldtype": "Data",
+   "label": "Abschnitt"
+  },
+  {
+   "fieldname": "optionen",
+   "fieldtype": "Small Text",
+   "label": "Auswahlwerte",
+   "description": "Bei Select: ein Wert pro Zeile. Für Ja/Nein zwei Zeilen verwenden."
+  },
+  {
+   "fieldname": "standardwert",
+   "fieldtype": "Data",
+   "label": "Standardwert"
+  },
+  {
+   "fieldname": "folgejahr_uebernehmen",
+   "fieldtype": "Check",
+   "label": "Wert ins Folgejahr übernehmen",
+   "description": "Nur stabile Stammdaten, keine Jahreskosten oder Verbrauchswerte."
+  },
+  {
+   "fieldname": "hinweis",
+   "fieldtype": "Small Text",
+   "label": "Ausfüllhinweis"
+  }
+ ],
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}

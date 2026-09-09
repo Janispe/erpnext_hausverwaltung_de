@@ -1,0 +1,375 @@
+{
+ "doctype": "DocType",
+ "name": "Heizkostenmeldung",
+ "module": "Hausverwaltung",
+ "engine": "InnoDB",
+ "istable": 0,
+ "editable_grid": 1,
+ "track_changes": 1,
+ "field_order": [
+  "stammdaten_tab",
+  "immobilie",
+  "von",
+  "bis",
+  "stammdaten_spalte",
+  "vorlage",
+  "waermedienst",
+  "liegenschaftsnummer",
+  "objektadresse",
+  "datenstand",
+  "vorjahresmeldung",
+  "abrechnung",
+  "nutzer_tab",
+  "nutzer_abschnitt",
+  "nutzer",
+  "heizkosten_tab",
+  "brennstoff_abschnitt",
+  "anfangsbestand",
+  "anfangswert",
+  "bestand_spalte",
+  "endbestand",
+  "endwert",
+  "endwert_durch_messdienst",
+  "abzuege",
+  "bestaende_bestaetigt",
+  "lieferungen_abschnitt",
+  "lieferungen",
+  "brennstoff_vollstaendig",
+  "kosten_abschnitt",
+  "kosten",
+  "kosten_vollstaendig",
+  "zusatz_tab",
+  "zusatz_abschnitt",
+  "zusatzfelder_html",
+  "zusatzwerte_json",
+  "freigabe_tab",
+  "freigabe_abschnitt",
+  "pruefung_html",
+  "export_datei",
+  "export_sha256",
+  "versandt_am",
+  "versandt_von",
+  "notizen",
+  "vorlage_snapshot",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "stammdaten_tab",
+   "fieldtype": "Tab Break",
+   "label": "Meldung"
+  },
+  {
+   "fieldname": "immobilie",
+   "fieldtype": "Link",
+   "label": "Immobilie",
+   "options": "Immobilie",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "von",
+   "fieldtype": "Date",
+   "label": "Abrechnung von",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "bis",
+   "fieldtype": "Date",
+   "label": "Abrechnung bis",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "stammdaten_spalte",
+   "fieldtype": "Column Break",
+   "label": ""
+  },
+  {
+   "fieldname": "vorlage",
+   "fieldtype": "Link",
+   "label": "Vorlagenversion",
+   "options": "Heizkostenmeldung Vorlage",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "waermedienst",
+   "fieldtype": "Link",
+   "label": "Wärmedienst",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "liegenschaftsnummer",
+   "fieldtype": "Data",
+   "label": "Liegenschaftsnummer beim Wärmedienst"
+  },
+  {
+   "fieldname": "objektadresse",
+   "fieldtype": "Small Text",
+   "label": "Objektadresse",
+   "read_only": 1
+  },
+  {
+   "fieldname": "datenstand",
+   "fieldtype": "Datetime",
+   "label": "ERP-Datenstand",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "vorjahresmeldung",
+   "fieldtype": "Link",
+   "label": "Vorjahresmeldung",
+   "options": "Heizkostenmeldung",
+   "read_only": 1
+  },
+  {
+   "fieldname": "abrechnung",
+   "fieldtype": "Link",
+   "label": "Fertige Heizkostenabrechnung",
+   "options": "Heizkostenabrechnung Immobilie",
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "nutzer_tab",
+   "fieldtype": "Tab Break",
+   "label": "Nutzer"
+  },
+  {
+   "fieldname": "nutzer_abschnitt",
+   "fieldtype": "Section Break",
+   "label": "Wohnungen und Nutzer"
+  },
+  {
+   "fieldname": "nutzer",
+   "fieldtype": "Table",
+   "label": "Nutzerliste",
+   "options": "Heizkostenmeldung Nutzer"
+  },
+  {
+   "fieldname": "heizkosten_tab",
+   "fieldtype": "Tab Break",
+   "label": "Heizkosten"
+  },
+  {
+   "fieldname": "brennstoff_abschnitt",
+   "fieldtype": "Section Break",
+   "label": "Heizöl / Bestände"
+  },
+  {
+   "fieldname": "anfangsbestand",
+   "fieldtype": "Float",
+   "label": "Anfangsbestand (Liter)",
+   "precision": "3"
+  },
+  {
+   "fieldname": "anfangswert",
+   "fieldtype": "Currency",
+   "label": "Wert Anfangsbestand"
+  },
+  {
+   "fieldname": "bestand_spalte",
+   "fieldtype": "Column Break",
+   "label": ""
+  },
+  {
+   "fieldname": "endbestand",
+   "fieldtype": "Float",
+   "label": "Endbestand (Liter)",
+   "precision": "3"
+  },
+  {
+   "fieldname": "endwert",
+   "fieldtype": "Currency",
+   "label": "Wert Endbestand"
+  },
+  {
+   "fieldname": "endwert_durch_messdienst",
+   "fieldtype": "Check",
+   "label": "Endbestandswert ermittelt der Messdienst",
+   "default": "1"
+  },
+  {
+   "fieldname": "abzuege",
+   "fieldtype": "Currency",
+   "label": "Abzüge / Gutschriften (positiver Betrag)"
+  },
+  {
+   "fieldname": "bestaende_bestaetigt",
+   "fieldtype": "Check",
+   "label": "Anfangs-/Endbestand und Anfangswert geprüft"
+  },
+  {
+   "fieldname": "lieferungen_abschnitt",
+   "fieldtype": "Section Break",
+   "label": "Brennstofflieferungen"
+  },
+  {
+   "fieldname": "lieferungen",
+   "fieldtype": "Table",
+   "label": "Brennstofflieferungen",
+   "options": "Heizkostenmeldung Brennstoff"
+  },
+  {
+   "fieldname": "brennstoff_vollstaendig",
+   "fieldtype": "Check",
+   "label": "Lieferungen und Abzüge vollständig erfasst"
+  },
+  {
+   "fieldname": "kosten_abschnitt",
+   "fieldtype": "Section Break",
+   "label": "Heizungsnebenkosten"
+  },
+  {
+   "fieldname": "kosten",
+   "fieldtype": "Table",
+   "label": "Heizungsnebenkosten",
+   "options": "Heizkostenmeldung Kosten"
+  },
+  {
+   "fieldname": "kosten_vollstaendig",
+   "fieldtype": "Check",
+   "label": "Heizungsnebenkosten vollständig erfasst"
+  },
+  {
+   "fieldname": "zusatz_tab",
+   "fieldtype": "Tab Break",
+   "label": "Zusatzangaben"
+  },
+  {
+   "fieldname": "zusatz_abschnitt",
+   "fieldtype": "Section Break",
+   "label": "Zusatzfelder der Vorlagenversion"
+  },
+  {
+   "fieldname": "zusatzfelder_html",
+   "fieldtype": "HTML",
+   "label": "Zusatzfelder"
+  },
+  {
+   "fieldname": "zusatzwerte_json",
+   "fieldtype": "Code",
+   "label": "Zusatzwerte",
+   "options": "JSON",
+   "hidden": 1
+  },
+  {
+   "fieldname": "freigabe_tab",
+   "fieldtype": "Tab Break",
+   "label": "Prüfung und Export"
+  },
+  {
+   "fieldname": "freigabe_abschnitt",
+   "fieldtype": "Section Break",
+   "label": "Prüfung und archivierter Export"
+  },
+  {
+   "fieldname": "pruefung_html",
+   "fieldtype": "HTML",
+   "label": "Prüfung"
+  },
+  {
+   "fieldname": "export_datei",
+   "fieldtype": "Attach",
+   "label": "Freigegebene Excel-Datei",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "export_sha256",
+   "fieldtype": "Data",
+   "label": "Export-Prüfsumme",
+   "read_only": 1,
+   "hidden": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "versandt_am",
+   "fieldtype": "Datetime",
+   "label": "Versand vermerkt am",
+   "read_only": 1,
+   "allow_on_submit": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "versandt_von",
+   "fieldtype": "Link",
+   "label": "Versand vermerkt von",
+   "options": "User",
+   "read_only": 1,
+   "allow_on_submit": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "notizen",
+   "fieldtype": "Small Text",
+   "label": "Notizen"
+  },
+  {
+   "fieldname": "vorlage_snapshot",
+   "fieldtype": "Code",
+   "label": "Verwendete Vorlagendefinition",
+   "options": "JSON",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Geändert von",
+   "options": "Heizkostenmeldung",
+   "read_only": 1,
+   "no_copy": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "submit": 1,
+   "cancel": 1,
+   "amend": 1,
+   "export": 1,
+   "print": 1,
+   "report": 1,
+   "select": 1
+  },
+  {
+   "role": "Hausverwalter",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 0,
+   "submit": 1,
+   "cancel": 1,
+   "amend": 1,
+   "export": 1,
+   "print": 1,
+   "report": 1,
+   "select": 1
+  },
+  {
+   "role": "Hausverwalter (Buchung)",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 0,
+   "submit": 1,
+   "cancel": 1,
+   "amend": 1,
+   "export": 1,
+   "print": 1,
+   "report": 1,
+   "select": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "is_submittable": 1,
+ "autoname": "format:HKM-{#####}"
+}

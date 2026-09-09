@@ -1673,6 +1673,8 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
         "links": [
             {"label": "Betriebskostenabrechnung erstellen", "link_type": "DocType", "link_to": "Betriebskostenabrechnung Immobilie"},
             {"label": "Heizkostenabrechnung erstellen", "link_type": "DocType", "link_to": "Heizkostenabrechnung Immobilie"},
+            {"label": "Heizkostenmeldungen", "link_type": "DocType", "link_to": "Heizkostenmeldung"},
+            {"label": "Heizkostenmeldung-Vorlagen", "link_type": "DocType", "link_to": "Heizkostenmeldung Vorlage"},
             {"label": "Umlagefähige Kostenart", "link_type": "DocType", "link_to": "Betriebskostenart"},
         ],
     },
@@ -2190,6 +2192,7 @@ def _run_bootstrap(*, reason: str) -> None:
 
 
 _POST_INSTALL_PATCHES: tuple[str, ...] = (
+    "hausverwaltung.hausverwaltung.patches.post_model_sync.seed_heizkostenmeldung_vorlage",
     # These patches seed required defaults and are safe/idempotent.
     "hausverwaltung.hausverwaltung.patches.post_model_sync.create_hausverwalter_role",
     # Ensure rent-related service items exist for invoice creation.

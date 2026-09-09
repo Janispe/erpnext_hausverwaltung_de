@@ -1,0 +1,117 @@
+{
+ "doctype": "DocType",
+ "name": "Heizkostenmeldung Vorlage",
+ "module": "Hausverwaltung",
+ "engine": "InnoDB",
+ "istable": 0,
+ "editable_grid": 1,
+ "track_changes": 1,
+ "field_order": [
+  "vorlagenkennung",
+  "version",
+  "bezeichnung",
+  "beschreibung",
+  "vorgaenger",
+  "felder",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "vorlagenkennung",
+   "fieldtype": "Data",
+   "label": "Vorlagenkennung",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "version",
+   "fieldtype": "Int",
+   "label": "Version",
+   "reqd": 1,
+   "default": "1",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "label": "Bezeichnung",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "beschreibung",
+   "fieldtype": "Small Text",
+   "label": "Beschreibung"
+  },
+  {
+   "fieldname": "vorgaenger",
+   "fieldtype": "Link",
+   "label": "Vorherige Version",
+   "options": "Heizkostenmeldung Vorlage",
+   "read_only": 1
+  },
+  {
+   "fieldname": "felder",
+   "fieldtype": "Table",
+   "label": "Zusätzliche Felder",
+   "options": "Heizkostenmeldung Vorlagenfeld"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Geändert von",
+   "options": "Heizkostenmeldung Vorlage",
+   "read_only": 1,
+   "no_copy": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "submit": 1,
+   "cancel": 1,
+   "amend": 1,
+   "export": 1,
+   "print": 1,
+   "report": 1,
+   "select": 1
+  },
+  {
+   "role": "Hausverwalter",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 0,
+   "submit": 1,
+   "cancel": 1,
+   "amend": 1,
+   "export": 1,
+   "print": 1,
+   "report": 1,
+   "select": 1
+  },
+  {
+   "role": "Hausverwalter (Buchung)",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 0,
+   "submit": 1,
+   "cancel": 1,
+   "amend": 1,
+   "export": 1,
+   "print": 1,
+   "report": 1,
+   "select": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "is_submittable": 1,
+ "autoname": "format:{vorlagenkennung}-v{version}",
+ "title_field": "bezeichnung"
+}
