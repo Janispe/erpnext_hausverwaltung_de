@@ -294,6 +294,22 @@ export async function getSplitOptions(name, rowName) {
 	};
 }
 
+export async function getCustomerSplitInvoices(name, rowName, customer) {
+	if (!embedded) {
+		const refund = Number(MOCK_OVERVIEW.rows.find((row) => row.id === rowName)?.betrag) < 0;
+		return {
+			customer, contract: `MV-${customer}`, wohnung: "Demo-Wohnung",
+			invoices: [{ name: `BK-${customer}`, outstanding_amount: refund ? -500 : 500, posting_date: "2026-01-01", remarks: "BK-Abrechnung" }],
+		};
+	}
+	return rpc("customer_split_invoices", { docname: name, row_name: rowName, customer });
+}
+
+export async function reconcileCustomerSplit(name, rowName, allocations) {
+	if (!embedded) return { ok: true, mock: true };
+	return rpc("reconcile_customer_split", { docname: name, row_name: rowName, allocations: JSON.stringify(allocations) });
+}
+
 export async function reconcileSplit(name, rowName, { invoices, abschlaege, leftoverAsAdvance } = {}) {
 	if (!embedded) return { ok: true, payment_entry: "PE-DEMO", mock: true };
 	return await rpc("reconcile_split", {

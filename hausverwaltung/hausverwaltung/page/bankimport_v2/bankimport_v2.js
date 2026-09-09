@@ -55,6 +55,8 @@ const RPC_ACTIONS = {
 	reconcile: DT + "manually_reconcile_row",
 	split_options: DT + "get_payment_split_options_for_row",
 	reconcile_split: DT + "reconcile_split_row",
+	customer_split_invoices: "hausverwaltung.hausverwaltung.doctype.bankauszug_import.customer_payment_split.get_customer_split_invoices",
+	reconcile_customer_split: "hausverwaltung.hausverwaltung.doctype.bankauszug_import.customer_payment_split.reconcile_customer_split",
 	standalone_payment: DT + "create_standalone_payment_for_row",
 	internal_transfer: DT + "create_internal_transfer_for_row",
 	journal_entry: DT + "create_journal_entry_for_row",

@@ -63,6 +63,10 @@ describe("Bankimport phase/status edge cases", () => {
 		expect(partyDisplayLabel({ party: "Kunde A" })).toBe("Kunde A");
 	});
 
+	it("zeigt die Customers einer Sammelzahlung trotz leerer Party", () => {
+		expect(partyDisplayLabel({ party: null, customerPayments: [{ customer: "A" }, { customer: "B" }] })).toBe("A, B");
+	});
+
 	it("uebersetzt technische Party-Typen fuer die UI", () => {
 		expect(partyTypeLabel("Customer")).toBe("Kunde");
 		expect(partyTypeLabel("Supplier")).toBe("Lieferant");

@@ -19,7 +19,9 @@ function TxRow({ row, selected, onSelect }) {
 			<td className="col-party">
 				<div className="party-cell">
 					<span className="party-name">
-						{hasParty ? (
+						{row.customerPayments?.length ? row.customerPayments.map((item) => (
+							<div key={item.payment_entry} className="party-meta"><DocLink doctype="Customer" docname={item.customer}>{item.customer}</DocLink> · {fmtEUR(item.amount)}</div>
+						)) : hasParty ? (
 							<DocLink doctype={row.partyTyp} docname={row.party} className="party-link" title={`${roleLabel || "Partei"} öffnen`}>
 								{row.party}
 							</DocLink>

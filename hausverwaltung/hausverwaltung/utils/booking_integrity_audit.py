@@ -765,6 +765,10 @@ def _check_bank_links(
 	issues: list[dict[str, Any]],
 	limit: int,
 ) -> dict[str, Any]:
+	from hausverwaltung.hausverwaltung.doctype.bankauszug_import.customer_payment_split import (
+		customer_payments,
+	)
+
 	total = cint(frappe.db.count("Bankauszug Import Row"))
 	rows = frappe.get_all(
 		"Bankauszug Import Row",
@@ -776,12 +780,41 @@ def _check_bank_links(
 			"journal_entry",
 			"payment_document_type",
 			"payment_document",
+			"customer_payments",
 		],
 		limit_page_length=limit,
 		order_by="modified desc",
 	)
-	checked_pairs: set[tuple[str, str, str]] = set()
+	rows_to_check = []
 	for row in rows:
+		parts = customer_payments(row)
+		if not parts:
+			rows_to_check.append(row)
+			continue
+		bt_amount = frappe.db.get_value(
+			"Bank Transaction", row.bank_transaction, ["deposit", "withdrawal"], as_dict=True,
+		) or {}
+		bank_total = abs(flt(bt_amount.get("deposit")) - flt(bt_amount.get("withdrawal")))
+		if (
+			abs(sum(flt(part.get("amount")) for part in parts) - bank_total) >= 0.005
+			or any(flt(part.get("amount")) <= 0 for part in parts)
+			or len({part.get("payment_entry") for part in parts}) != len(parts)
+		):
+			_issue(
+				issues, severity="critical", code="bank_split_total_mismatch",
+				doctype="Bankauszug Import Row", name=row.name,
+				message="Die Zahlungsaufteilung stimmt nicht mit dem Bankbetrag überein.",
+			)
+		for part in parts:
+			item = frappe._dict(row)
+			item.update(
+				payment_entry=part.get("payment_entry"), payment_document=part.get("payment_entry"),
+				payment_document_type="Payment Entry", _split_amount=flt(part.get("amount")),
+				_split_customer=part.get("customer"),
+			)
+			rows_to_check.append(item)
+	checked_pairs: set[tuple[str, str, str]] = set()
+	for row in rows_to_check:
 		legacy_links = [
 			("Payment Entry", row.get("payment_entry")),
 			("Journal Entry", row.get("journal_entry")),
@@ -868,6 +901,24 @@ def _check_bank_links(
 		if not bank or not bank.account:
 			continue
 		expected = flt(bt.deposit) - flt(bt.withdrawal)
+		if row.get("_split_amount") is not None:
+			expected = row._split_amount if expected > 0 else -row._split_amount
+			linked_amount = frappe.db.get_value(
+				"Bank Transaction Payments",
+				{"parent": bt_name, "payment_document": voucher_type, "payment_entry": voucher_name},
+				"allocated_amount",
+			)
+			party = frappe.db.get_value("Payment Entry", voucher_name, ["party_type", "party"], as_dict=True) or {}
+			if (
+				abs(flt(linked_amount) - row._split_amount) >= 0.005
+				or party.get("party_type") != "Customer" or party.get("party") != row._split_customer
+			):
+				_issue(
+					issues, severity="critical", code="bank_split_allocation_mismatch",
+					doctype="Bankauszug Import Row", name=row.name,
+					message="Teilzahlung, Customer oder Bankzuordnung widersprechen der gespeicherten Aufteilung.",
+					voucher=voucher_name,
+				)
 		gl_rows = frappe.db.sql(
 			"""
 			SELECT

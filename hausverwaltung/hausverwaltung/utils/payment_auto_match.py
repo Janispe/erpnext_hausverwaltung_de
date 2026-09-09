@@ -1000,14 +1000,17 @@ def _do_match(bt, invoices, invoice_doctype, strategy_label, target_amount):
 	}
 
 
-def reconcile_voucher_with_bt(bt, voucher_doctype, voucher_name, amount):
+def reconcile_voucher_with_bt(bt, voucher_doctype, voucher_name, amount, *, partial=False):
 	"""Attach a voucher only if its signed GL bank movement matches the BT."""
 	from erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool import (
 		reconcile_vouchers,
 	)
 
 	shape = _bank_transaction_shape(bt)
-	if not _amounts_equal(abs(flt(amount)), shape.amount):
+	allocation = abs(flt(amount))
+	if (partial and not 0 < allocation <= shape.amount) or (
+		not partial and not _amounts_equal(allocation, shape.amount)
+	):
 		frappe.throw(
 			f"Reconcile-Betrag {abs(flt(amount)):.2f} € stimmt nicht mit der "
 			f"Bank Transaction ({shape.amount:.2f} €) überein."
@@ -1036,10 +1039,11 @@ def reconcile_voucher_with_bt(bt, voucher_doctype, voucher_name, amount):
 	)
 	row = gl_totals[0] if gl_totals else frappe._dict()
 	actual_signed_amount = flt(row.get("debit")) - flt(row.get("credit"))
-	if not _amounts_equal(actual_signed_amount, shape.signed_amount):
+	expected_signed_amount = allocation if shape.signed_amount > 0 else -allocation
+	if not _amounts_equal(actual_signed_amount, expected_signed_amount):
 		frappe.throw(
 			f"{voucher_doctype} {voucher_name} bewegt das Bankkonto mit "
-			f"{actual_signed_amount:.2f} € statt erwartet {shape.signed_amount:.2f} €. "
+			f"{actual_signed_amount:.2f} € statt erwartet {expected_signed_amount:.2f} €. "
 			"Abstimmung abgebrochen."
 		)
 
@@ -1421,6 +1425,8 @@ def create_payment_entry_for_invoices(
 	invoice_doctype,
 	target_amount,
 	leftover_as_advance: bool = False,
+	customer: str | None = None,
+	partial: bool = False,
 ):
 	"""Baut, inseriert und submitted ein Payment Entry mit Allocation pro Rechnung.
 
@@ -1434,10 +1440,19 @@ def create_payment_entry_for_invoices(
 	    leftover_as_advance: Wenn True und ``target_amount`` > Allocation-Summe,
 	        bleibt der Rest als ``unallocated_amount`` am PE stehen (Vorauszahlung).
 	        Wenn False und Differenz > 0,01 €: Fehler — Aufrufer muss balancieren.
+	    customer: Explicit Customer for one part of a multi-Customer payment.
+	    partial: Allow a positive part of the bank amount. The caller must validate
+	        and reconcile the complete split atomically.
 
 	Raises wenn party_type/party fehlt oder GL-Konto unvollständig.
 	"""
 	from erpnext.accounts.party import get_party_account
+
+	if customer:
+		# A split has its own Customer; the persisted bank transaction has none.
+		bt = frappe._dict(bt.as_dict())
+		bt.party_type = "Customer"
+		bt.party = customer
 
 	invoices = list(invoices or [])
 	if not invoices:
@@ -1506,7 +1521,9 @@ def create_payment_entry_for_invoices(
 		expected_cost_center=expected_cost_center,
 		credit_notes=is_customer_refund,
 	)
-	if not _amounts_equal(target_amount, shape.amount):
+	if (partial and not 0 < flt(target_amount) <= shape.amount) or (
+		not partial and not _amounts_equal(target_amount, shape.amount)
+	):
 		frappe.throw(
 			f"Payment-Entry-Betrag {flt(target_amount):.2f} € stimmt nicht mit der "
 			f"Bank Transaction ({shape.amount:.2f} €) überein."

@@ -417,9 +417,9 @@ export function App() {
 		all: scope.length,
 		open: scope.filter((r) => rowPhase(r) < 4).length,
 		problem: scope.filter((r) => ["phase3-ambiguous", "error", "needs_review", "phase1-no-party"].includes(r.rowStatus)).length,
-		noparty: scope.filter((r) => !r.party).length,
+		noparty: scope.filter((r) => !r.party && !r.customerPayments?.length).length,
 		nopay: scope.filter((r) => !r.paymentEntry && !r.journalEntry && r.rowStatus !== "done").length,
-		customer: scope.filter((r) => r.partyTyp === "Customer").length,
+		customer: scope.filter((r) => r.partyTyp === "Customer" || r.customerPayments?.length).length,
 		supplier: scope.filter((r) => r.partyTyp === "Supplier").length,
 		eigentuemer: scope.filter((r) => r.partyTyp === "Eigentuemer").length,
 	}), [scope]);
@@ -434,9 +434,9 @@ export function App() {
 		let out = scope;
 		if (filter === "open") out = scope.filter((r) => rowPhase(r) < 4);
 		else if (filter === "problem") out = scope.filter((r) => ["phase3-ambiguous", "error", "needs_review", "phase1-no-party"].includes(r.rowStatus));
-		else if (filter === "noparty") out = scope.filter((r) => !r.party);
+		else if (filter === "noparty") out = scope.filter((r) => !r.party && !r.customerPayments?.length);
 		else if (filter === "nopay") out = scope.filter((r) => !r.paymentEntry && !r.journalEntry && r.rowStatus !== "done");
-		else if (filter === "customer") out = scope.filter((r) => r.partyTyp === "Customer");
+		else if (filter === "customer") out = scope.filter((r) => r.partyTyp === "Customer" || r.customerPayments?.length);
 		else if (filter === "supplier") out = scope.filter((r) => r.partyTyp === "Supplier");
 		else if (filter === "eigentuemer") out = scope.filter((r) => r.partyTyp === "Eigentuemer");
 
@@ -446,6 +446,7 @@ export function App() {
 				(r.verwendungszweck || "").toLowerCase().includes(q) ||
 				(r.auftraggeber || "").toLowerCase().includes(q) ||
 				(r.party || "").toLowerCase().includes(q) ||
+				(r.customerPayments || []).some((item) => item.customer.toLowerCase().includes(q)) ||
 				(r.iban || "").toLowerCase().includes(q)
 			);
 		}

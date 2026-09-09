@@ -13,6 +13,7 @@ import {
 } from "../helpers.jsx";
 import { DocLink } from "./DocLink.jsx";
 import { LinkSearch } from "./LinkSearch.jsx";
+import { CustomerSplitDialog, CustomerPayments } from "./CustomerSplitDialog.jsx";
 import * as api from "../api.js";
 
 // Kleiner Helfer: führt eine async-Aktion aus, setzt busy + meldet Fehler/Erfolg.
@@ -475,7 +476,7 @@ function ResetRowDialog({ row, mode, busy, onClose, onConfirm }) {
 					</button>
 				</div>
 				<div className="reset-warning">
-					<Icon name="info" /> {bookingOnly
+					<Icon name="info" /> {row.customerPayments?.length ? "Alle Teilzahlungen dieser Bankzeile werden storniert." : bookingOnly
 						? "Diese Aktion löst nur den gebuchten Beleg von der Bankzeile."
 						: "Diese Aktion nimmt die Verarbeitung dieser Zeile zurück."}
 				</div>
@@ -1206,7 +1207,8 @@ function DoneView({ row }) {
 					<Icon name="link" />
 				</DocLink>
 			)}
-			{row.paymentEntry && (
+			<CustomerPayments row={row} />
+			{row.paymentEntry && !row.customerPayments?.length && (
 				<DocLink doctype="Payment Entry" docname={row.paymentEntry} className="assign-row done-row" style={{ marginTop: 6 }}>
 					<span className="lbl">Payment</span>
 					<span className="val mono">{row.paymentEntry}</span>
@@ -1314,6 +1316,7 @@ function BookingActions({ docname, row, onActionDone, notify }) {
 // ───────────────────────── Panel-Wurzel ─────────────────────────────────────
 
 export function MatchPanel({ docname, row, onActionDone, notify }) {
+	const [splitOpen, setSplitOpen] = useState(false);
 	const [partyDialogOpen, setPartyDialogOpen] = useState(false);
 	const [resetDialogMode, setResetDialogMode] = useState(null);
 	const [resetBusy, runReset] = useAction(notify);
@@ -1334,7 +1337,7 @@ export function MatchPanel({ docname, row, onActionDone, notify }) {
 	const phase = row.phase || 3;
 	const partyLabel = partyDisplayLabel(row);
 	const roleLabel = partyTypeLabel(row.partyTyp);
-	const hasVoucher = Boolean(row.paymentEntry || row.journalEntry || row.paymentDocument);
+	const hasVoucher = Boolean(row.paymentEntry || row.journalEntry || row.paymentDocument || row.customerPayments?.length);
 	const canResetRow = Boolean(row.party || row.partyTyp || row.bankTransaction || row.paymentEntry || row.journalEntry || row.paymentDocument);
 	const resetBooking = () => {
 		if (!hasVoucher || resetBusy) return;
@@ -1386,7 +1389,7 @@ export function MatchPanel({ docname, row, onActionDone, notify }) {
 							</DocLink>
 						) : partyLabel}
 					</span>
-					<button className="btn subtle sm party-edit-btn" onClick={() => setPartyDialogOpen(true)}>
+					<button className="btn subtle sm party-edit-btn" disabled={!!row.customerPayments?.length} onClick={() => setPartyDialogOpen(true)}>
 						<Icon name="settings" /> Partei ändern
 					</button>
 				</div>
@@ -1408,13 +1411,20 @@ export function MatchPanel({ docname, row, onActionDone, notify }) {
 			</div>
 
 			<div className="match-body">
+				{!hasVoucher && row.rowStatus !== "error" && phase !== 4 && (
+					<div className="match-section"><button className="btn" onClick={() => setSplitOpen(true)}><Icon name="plus" /> Mehrere Mieter</button></div>
+				)}
+				{row.customerPayments?.length > 0 && phase !== 4 && (
+					<div className="match-section"><div className="reset-warning">{row.autoMatchMessage}</div><CustomerPayments row={row} /></div>
+				)}
 				{row.rowStatus === "error" && <ErrorView row={row} />}
 				{row.rowStatus !== "error" && phase === 1 && (
 					<PartyAssign docname={docname} row={row} onActionDone={onActionDone} notify={notify} />
 				)}
-				{row.rowStatus !== "error" && phase === 3 && <BookingActions docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
+				{row.rowStatus !== "error" && phase === 3 && !row.customerPayments?.length && <BookingActions docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 				{row.rowStatus !== "error" && phase === 4 && <DoneView row={row} />}
 			</div>
+			{splitOpen && <CustomerSplitDialog key={row.id} docname={docname} row={row} onClose={() => setSplitOpen(false)} onActionDone={onActionDone} notify={notify} />}
 			{partyDialogOpen && (
 				<PartyChangeDialog
 					docname={docname}

@@ -33,6 +33,7 @@ from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import i
 	_cancel_voucher_for_row,
 	_get_doc_for_update_if_exists,
 	_linked_voucher_for_row,
+	_linked_vouchers_for_row,
 	_lock_bank_booking_scope,
 	_other_import_row_references_voucher,
 	_persist_saldo_fields,
@@ -42,6 +43,7 @@ from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import i
 	sync_cancelled_journal_entry_links,
 	sync_cancelled_payment_entry_links,
 )
+from hausverwaltung.hausverwaltung.doctype.bankauszug_import.customer_payment_split import customer_payments
 from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
 	BOOKING_RULE_DOCTYPE,
 	BUILDER_RULE_CODE,
@@ -287,6 +289,7 @@ def get_overview(import_name: str) -> dict[str, Any]:
 				"party": row.party,
 				"bankTransaction": row.bank_transaction,
 				"paymentEntry": row.payment_entry,
+				"customerPayments": customer_payments(row),
 				"journalEntry": row.journal_entry,
 				"paymentDocument": row.payment_document,
 				"paymentDocumentType": row.payment_document_type,
@@ -1175,16 +1178,16 @@ def _delete_impact_for_doc(doc, *, current: bool = False) -> dict[str, Any]:
 	for row in doc.get("rows") or []:
 		row_name = _row_value(row, "name")
 		shared_voucher = False
-		voucher_type, voucher_name = _linked_voucher_for_row(row)
-		if voucher_type and voucher_name:
+		for voucher_type, voucher_name in _linked_vouchers_for_row(row):
 			key = (voucher_type, voucher_name)
-			shared_voucher = _other_import_row_references_voucher(
+			is_shared = _other_import_row_references_voucher(
 				voucher_type,
 				voucher_name,
 				exclude_import_name=doc.name,
 				for_update=current,
 			)
-			target_vouchers = vouchers_kept if shared_voucher else vouchers
+			shared_voucher = shared_voucher or is_shared
+			target_vouchers = vouchers_kept if is_shared else vouchers
 			if key not in target_vouchers:
 				status = _docstatus(voucher_type, voucher_name, for_update=current)
 				target_vouchers[key] = {
@@ -1193,7 +1196,7 @@ def _delete_impact_for_doc(doc, *, current: bool = False) -> dict[str, Any]:
 					"docstatus": status,
 					"status": _docstatus_label(status),
 					"rows": [],
-					**({"reason": "referenced-by-other-import"} if shared_voucher else {}),
+					**({"reason": "referenced-by-other-import"} if is_shared else {}),
 				}
 			target_vouchers[key]["rows"].append(row_name)
 

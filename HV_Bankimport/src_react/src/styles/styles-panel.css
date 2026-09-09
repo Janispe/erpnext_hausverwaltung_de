@@ -1,5 +1,25 @@
 /* Bankimport — match panel (right side) */
 
+.party-dialog.customer-split-dialog { width: min(760px, 100%); overflow-y: auto; }
+.customer-split-heading a, .customer-payments a { color: var(--text); text-decoration: none; }
+.customer-split-heading a:hover, .customer-payments a:hover { text-decoration: underline; }
+.customer-split-group { padding: 12px 0; border-bottom: 1px solid var(--border); min-width: 0; }
+.customer-split-heading { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.customer-split-heading a { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.customer-split-heading strong { white-space: nowrap; }
+.customer-split-contract { font-size: 11px; color: var(--text-muted); margin: 4px 0 8px; overflow-wrap: anywhere; }
+.customer-split-invoice { display: grid; grid-template-columns: minmax(0, 1fr) auto 90px; gap: 8px; align-items: center; padding: 8px 0; font-size: 12px; }
+.customer-split-invoice label { display: flex; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.customer-split-invoice label input { flex: 0 0 auto; }
+.customer-split-invoice small { display: block; color: var(--text-muted); margin-top: 3px; }
+.customer-split-invoice .alloc-input { width: 90px; max-width: 100%; }
+.customer-split-summary { margin-top: 14px; }
+@media (max-width: 520px) {
+	.customer-split-invoice { grid-template-columns: minmax(0, 1fr) 90px; }
+	.customer-split-invoice label { grid-column: 1 / -1; }
+	.customer-split-dialog .dialog-actions { flex-wrap: wrap; }
+}
+
 .match-panel-wrap { position: sticky; top: 16px; }
 .match-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; display: flex; flex-direction: column; max-height: calc(100vh - 40px); }
 .match-empty { padding: 50px 24px; text-align: center; color: var(--text-muted); }

@@ -289,6 +289,11 @@ def sync_cancelled_voucher_links(
     direct_field = "payment_entry" if voucher_doctype == "Payment Entry" else "journal_entry"
 
     conditions = ["parenttype = 'Bankauszug Import'"]
+    if voucher_doctype == "Payment Entry":
+        from .customer_payment_split import sync_cancelled_splits
+
+        sync_cancelled_splits(voucher_name=voucher_name, import_name=import_name)
+        conditions.append("(customer_payments IS NULL OR customer_payments = '[]')")
     values: Dict[str, Any] = {}
     if import_name:
         conditions.append("parent = %(import_name)s")
@@ -739,6 +744,8 @@ def _get_bt_party_fieldnames(meta) -> Tuple[Optional[str], Optional[str]]:
 
 
 def _resolve_row_party(row: Document) -> Optional[Tuple[str, str]]:
+    if _doc_field(row, "customer_payments"):
+        return None
     match = match_party_for_row(row)
     if match.get("matched") and match.get("party_type") and match.get("party"):
         return (match["party_type"], match["party"])
@@ -860,6 +867,8 @@ def _build_missing_party_warning_payload(doc: Document, row_name: str | None = N
 
 
 def _update_bt_party_from_row(row: Document, *, overwrite: bool = True) -> Dict[str, Any]:
+    if _doc_field(row, "customer_payments"):
+        return {"updated": False, "reason": "customer_split"}
     bt_name = _get_row_bank_transaction_name(row)
     if not bt_name:
         return {"updated": False, "reason": "no_bank_transaction"}
@@ -1784,6 +1793,8 @@ def apply_party_to_row_and_relink(
 
     row = _get_row_by_name(doc, row_name)
     changed_row = False
+    if row.get("customer_payments"):
+        frappe.throw("Bitte zuerst die Zahlungsaufteilung vollständig zurücksetzen.")
 
     # When called from Customer/Supplier auto-link with an IBAN, ensure a
     # Bank Account record exists for the party so the IBAN→party lookup works
@@ -1874,7 +1885,22 @@ def _linked_voucher_for_row(row: Document) -> Tuple[Optional[str], Optional[str]
         return "Payment Entry", _doc_field(row, "payment_entry")
     if _doc_field(row, "journal_entry"):
         return "Journal Entry", _doc_field(row, "journal_entry")
+    from .customer_payment_split import customer_payments
+
+    entries = customer_payments(row)
+    if entries:
+        return "Payment Entry", entries[0]["payment_entry"]
     return None, None
+
+
+def _linked_vouchers_for_row(row):
+    from .customer_payment_split import customer_payments
+
+    entries = customer_payments(row)
+    if entries:
+        return [("Payment Entry", entry["payment_entry"]) for entry in entries]
+    doctype, name = _linked_voucher_for_row(row)
+    return [(doctype, name)] if doctype and name else []
 
 
 def _get_doc_for_update_if_exists(doctype: str, name: str | None) -> Document | None:
@@ -1910,6 +1936,7 @@ def _cancel_voucher_for_row(voucher_type: str, voucher_name: str) -> Dict[str, A
 
 def _clear_row_booking_links(row: Document, message: str) -> None:
     for fieldname in (
+        "customer_payments",
         "payment_entry",
         "journal_entry",
         "payment_document_type",
@@ -1974,6 +2001,9 @@ def _other_import_row_references_voucher(
             FROM `tabBankauszug Import Row`
             WHERE (
                 (%(voucher_type)s = 'Payment Entry' AND payment_entry = %(voucher_name)s)
+                OR (%(voucher_type)s = 'Payment Entry' AND JSON_CONTAINS(
+                    COALESCE(customer_payments, '[]'), JSON_OBJECT('payment_entry', %(voucher_name)s)
+                ))
                 OR (%(voucher_type)s = 'Journal Entry' AND journal_entry = %(voucher_name)s)
                 OR (
                     payment_document_type = %(voucher_type)s
@@ -2059,6 +2089,11 @@ def reset_row_booking(docname: str, row_name: str) -> Dict[str, Any]:
     bt_name = _get_row_bank_transaction_name(row)
     if bt_name:
         _lock_bank_transaction(bt_name)
+
+    if row.get("customer_payments"):
+        from .customer_payment_split import reset_customer_split
+
+        return reset_customer_split(docname, row)
 
     voucher_type, voucher_name = _linked_voucher_for_row(row)
     if not voucher_type or not voucher_name:
@@ -2836,7 +2871,7 @@ def retry_auto_match(docname: str, row_name: str | None = None) -> Dict[str, Any
     for row in rows:
         if row.get("error") or not row.get("bank_transaction"):
             continue
-        if row.get("payment_entry") or row.get("journal_entry") or row.get("payment_document"):
+        if row.get("payment_entry") or row.get("journal_entry") or row.get("payment_document") or row.get("customer_payments"):
             continue
         try:
             res = _retry_auto_match_for_row(docname, row.name)
@@ -3003,6 +3038,7 @@ def _row_with_unreconciled_bt(
         getattr(row, "payment_entry", None)
         or getattr(row, "journal_entry", None)
         or getattr(row, "payment_document", None)
+        or row.get("customer_payments")
     ):
         frappe.throw(
             "Zeile ist bereits einem Beleg zugeordnet "

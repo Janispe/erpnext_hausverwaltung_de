@@ -23,6 +23,7 @@
   "payment_document_type",
   "payment_document",
   "payment_entry",
+  "customer_payments",
   "journal_entry",
   "auto_match_message",
   "party_rule",
@@ -162,6 +163,14 @@
    "options": "Payment Entry",
    "read_only": 1,
    "description": "Falls beim Erstellen eine offene Rechnung exakt zugeordnet wurde, steht hier das Payment Entry."
+  },
+  {
+   "fieldname": "customer_payments",
+   "fieldtype": "JSON",
+   "label": "Zahlungsaufteilung auf Mieter",
+   "read_only": 1,
+   "hidden": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "journal_entry",
