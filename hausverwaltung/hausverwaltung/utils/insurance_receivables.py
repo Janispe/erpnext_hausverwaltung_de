@@ -16,20 +16,35 @@ RECEIPT = "Versicherungseingang"
 
 
 def _account(name, company, root):
+	from frappe.utils import escape_html
+
+	label = "Forderungskonto Versicherung" if root == "Asset" else "Ertragskonto Versicherungserstattung"
 	if not name:
-		frappe.throw("Bitte Forderungs- und Ertragskonto der Versicherung auswählen.")
+		frappe.throw(f"Bitte das Feld '{label}' ausfüllen.")
 	a = frappe.get_doc("Account", name)
 	currency = frappe.db.get_value("Company", company, "default_currency")
-	if (
-		a.company != company
-		or a.root_type != root
-		or a.is_group
-		or a.disabled
-		or a.account_type in {"Receivable", "Payable", "Bank", "Cash"}
-		or a.account_currency != currency
-	):
+	issues = []
+	if a.company != company:
+		issues.append(f"Firma ist {a.company}; benötigt wird {company}.")
+	if a.root_type != root:
+		expected = "Aktiva (Asset)" if root == "Asset" else "Ertrag (Income)"
+		issues.append(f"Wurzeltyp ist {a.root_type or 'nicht gesetzt'}; benötigt wird {expected}.")
+	if a.is_group:
+		issues.append("Das Konto ist ein Gruppenkonto. Bitte ein buchbares Unterkonto auswählen.")
+	if a.disabled:
+		issues.append("Das Konto ist deaktiviert.")
+	if a.account_type in {"Receivable", "Payable", "Bank", "Cash"}:
+		issues.append(
+			f"Kontotyp ist {a.account_type}. Hier wird ein Sachkonto benötigt; der Kontotyp kann leer bleiben. Wurzeltyp und Kontotyp sind verschiedene Felder."
+		)
+	if a.account_currency != currency:
+		issues.append(f"Kontowährung ist {a.account_currency or 'nicht gesetzt'}; benötigt wird {currency}.")
+	if issues:
 		frappe.throw(
-			"Versicherungskonto: aktives Sachkonto der richtigen Kontoart und Company-Währung erforderlich."
+			f"{label}: {escape_html(a.name)}<br><ul>"
+			+ "".join(f"<li>{escape_html(issue)}</li>" for issue in issues)
+			+ "</ul>",
+			title="Unpassendes Versicherungskonto",
 		)
 	return a.name
 
