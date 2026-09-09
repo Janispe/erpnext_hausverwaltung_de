@@ -2,6 +2,7 @@ const VERSICHERUNGSFALL_BELEG_DOCTYPES = {
 	Reparaturrechnung: ["Purchase Invoice"],
 	Versicherungsforderung: ["Journal Entry"],
 	Versicherungseingang: ["Journal Entry", "Bank Transaction"],
+	Mietererstattungsanspruch: ["Journal Entry"],
 	Mietergutschrift: ["Sales Invoice"],
 	Mieterauszahlung: ["Payment Entry", "Bank Transaction"],
 	"Sonstiger Buchungsbeleg": [
@@ -19,8 +20,44 @@ function reset_beleg_details(cdt, cdn) {
 	frappe.model.set_value(cdt, cdn, "belegstatus", null);
 }
 
+async function set_insurance_account_defaults(frm) {
+	if (!frm.doc.company) return;
+	for (const [field, name, root] of [["versicherungsforderungskonto", "Forderungen gegen Versicherungen", "Asset"], ["versicherungsertragskonto", "Versicherungserstattungen", "Income"]]) {
+		if (frm.doc[field]) continue;
+		const result = await frappe.db.get_value("Account", {company: frm.doc.company, account_name: name, root_type: root, is_group: 0, disabled: 0}, "name");
+		if (result?.message?.name) await frm.set_value(field, result.message.name);
+	}
+}
+
 frappe.ui.form.on("Versicherungsfall", {
+	onload: set_insurance_account_defaults,
+	company: set_insurance_account_defaults,
+	refresh(frm) {
+		if (frm.is_new()) return;
+		frm.add_custom_button(__("Versicherungsforderung vorbereiten"), () => {
+			if (frm.is_dirty()) return frappe.msgprint(__("Bitte zuerst den Versicherungsfall speichern."));
+			frappe.prompt([{fieldname: "posting_date", fieldtype: "Date", label: "Buchungsdatum der Forderung", reqd: 1, default: frappe.datetime.get_today()}], async (values) => {
+				const result = await frappe.call({method: "hausverwaltung.hausverwaltung.utils.insurance_receivables.create_insurance_claim", args: {name: frm.doc.name, ...values}, freeze: true});
+				await frm.reload_doc();
+				frappe.set_route("Form", "Journal Entry", result.message.name);
+			}, __("Versicherungsforderung als Entwurf"), __("Entwurf erstellen"));
+		});
+		frm.add_custom_button(__("Mieteranspruch vorbereiten"), () => {
+			if (frm.is_dirty()) return frappe.msgprint(__("Bitte zuerst den Versicherungsfall speichern."));
+			frappe.prompt([{fieldname: "posting_date", fieldtype: "Date", label: "Buchungsdatum des Anspruchs", reqd: 1, default: frappe.datetime.get_today()}], async (values) => {
+				const result = await frappe.call({method: "hausverwaltung.hausverwaltung.doctype.versicherungsfall.versicherungsfall.create_tenant_claim", args: {name: frm.doc.name, ...values}, freeze: true});
+				await frm.reload_doc();
+				frappe.set_route("Form", "Journal Entry", result.message.name);
+			}, __("Erstattungsbuchung als Entwurf"), __("Entwurf erstellen"));
+		});
+		if (frm.doc.kunde) frm.add_custom_button(__("Mieterkonto"), () => frappe.set_route("mieterkonto-workflow", {customer: frm.doc.kunde}));
+		frm.add_custom_button(__("Bankimport / Zahlungen zuordnen"), () => frappe.set_route("bankimport_v2"));
+	},
 	setup(frm) {
+		for (const [field, root] of [["versicherungsforderungskonto", "Asset"], ["versicherungsertragskonto", "Income"]]) {
+			frm.set_query(field, () => ({filters: {company: frm.doc.company, root_type: root, is_group: 0, disabled: 0, account_type: ["not in", ["Receivable", "Payable", "Bank", "Cash"]]}}));
+		}
+		frm.set_query("erstattungskonto", () => ({filters: {company: frm.doc.company, is_group: 0, disabled: 0, root_type: ["in", frm.doc.erstattungsart === "Auslagenersatz Gebäudereparatur" ? ["Expense"] : ["Asset", "Liability"]], account_type: ["not in", ["Bank", "Cash", "Receivable", "Payable"]]}}));
 		frm.set_query("wohnung", () => ({
 			filters: frm.doc.immobilie ? { immobilie: frm.doc.immobilie } : {},
 		}));

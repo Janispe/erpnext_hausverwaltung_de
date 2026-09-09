@@ -2210,7 +2210,9 @@ class TestBankauszugImport(unittest.TestCase):
             ),
         ]
 
-        with patch.object(bi.frappe, "get_doc", return_value=doc), \
+        with patch("hausverwaltung.hausverwaltung.utils.tenant_refunds.get_journal_refund_candidates", return_value=[]), \
+             patch.object(bi.frappe.db, "get_value", return_value="Test Company"), \
+             patch.object(bi.frappe, "get_doc", return_value=doc), \
              patch.object(bi.frappe, "has_permission", return_value=True), \
              patch.object(bi.frappe, "get_all", return_value=credits) as get_all:
             result = bi.get_open_invoices_for_row("IMP-CUST-REFUND", "ROW-CUST-REFUND")

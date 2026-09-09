@@ -63,6 +63,41 @@
    "translatable": 0,
    "unique": 0,
    "width": null
+  },
+  {
+   "fieldname": "custom_mieterkonto_kategorie",
+   "fieldtype": "Select",
+   "label": "Mieterkonto-Kategorie",
+   "options": "\nMiete\nBK\nHK\nG/N\nSonstig",
+   "insert_after": "user_remark",
+   "description": "Explizite Kategorie für Debitorenbuchungen und ihre zugeordneten Zahlungen. Ohne Auswahl wird das Gegenkonto ausgewertet.",
+   "dt": "Journal Entry",
+   "name": "Journal Entry-custom_mieterkonto_kategorie",
+   "module": "Hausverwaltung"
+  },
+  {
+   "fieldname": "custom_versicherungsfall",
+   "fieldtype": "Link",
+   "label": "Versicherungsfall",
+   "options": "Versicherungsfall",
+   "insert_after": "custom_mieterkonto_kategorie",
+   "read_only": 1,
+   "no_copy": 1,
+   "dt": "Journal Entry",
+   "name": "Journal Entry-custom_versicherungsfall",
+   "module": "Hausverwaltung"
+  },
+  {
+   "fieldname": "custom_versicherungsbuchung",
+   "fieldtype": "Select",
+   "label": "Versicherungsbuchung",
+   "options": "\nVersicherungsforderung\nVersicherungseingang",
+   "insert_after": "custom_versicherungsfall",
+   "read_only": 1,
+   "no_copy": 1,
+   "dt": "Journal Entry",
+   "name": "Journal Entry-custom_versicherungsbuchung",
+   "module": "Hausverwaltung"
   }
  ],
  "custom_perms": [],

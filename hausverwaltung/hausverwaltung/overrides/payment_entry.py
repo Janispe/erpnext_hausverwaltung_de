@@ -1,13 +1,74 @@
 from __future__ import annotations
 
 import frappe
-from frappe import _
-from frappe.utils import comma_or
-
 from erpnext.accounts.doctype.payment_entry.payment_entry import PaymentEntry
+from frappe import _
+from frappe.utils import comma_or, flt, getdate
 
 
 class CustomPaymentEntry(PaymentEntry):
+	def add_party_gl_entries(self, gl_entries):
+		start = len(gl_entries)
+		super().add_party_gl_entries(gl_entries)
+		if self.party_type != "Customer" or self.payment_type != "Pay":
+			return
+		credits = {
+			r.reference_name
+			for r in self.references
+			if r.reference_doctype == "Journal Entry" and flt(r.allocated_amount) < 0
+		}
+		# Core reverses the direction for negative invoice allocations, but not
+		# negative JE allocations. Apply the identical rule to validated credits.
+		for entry in gl_entries[start:]:
+			if (
+				entry.get("against_voucher_type") == "Journal Entry"
+				and entry.get("against_voucher") in credits
+			):
+				for suffix in ("", "_in_account_currency", "_in_transaction_currency"):
+					debit, credit = "debit" + suffix, "credit" + suffix
+					entry[debit], entry[credit] = entry.get(credit, 0), entry.get(debit, 0)
+
+	def validate_allocated_amount_with_latest_data(self):
+		"""ERPNext's negative-outstanding lookup omits Journal Entries.
+
+		Validate these credits against the locked source and current payment
+		ledger. Keep the standard validator for every other reference.
+		"""
+		if self.party_type != "Customer" or self.payment_type != "Pay":
+			return super().validate_allocated_amount_with_latest_data()
+		credits = [
+			r
+			for r in self.references
+			if r.reference_doctype == "Journal Entry" and flt(r.allocated_amount) < 0
+		]
+		if not credits:
+			return super().validate_allocated_amount_with_latest_data()
+		from hausverwaltung.hausverwaltung.utils.tenant_refunds import journal_credit, tenant_contract
+
+		tenant_contract(self.party, for_update=True)
+		seen = set()
+		for row in sorted(credits, key=lambda r: r.reference_name or ""):
+			if row.reference_name in seen or row.payment_term:
+				frappe.throw(
+					_("Ein Erstattungsanspruch darf nur einmal ohne Zahlungsplan referenziert werden.")
+				)
+			seen.add(row.reference_name)
+			credit = journal_credit(row.reference_name, self.party, self.company, for_update=True)
+			if credit.account != self.paid_to or getdate(credit.posting_date) > getdate(self.posting_date):
+				frappe.throw(_("Debitorenkonto oder Buchungsdatum passen nicht zum Erstattungsanspruch."))
+			if (
+				credit.allocatable_amount <= 0
+				or -flt(row.allocated_amount) > credit.allocatable_amount + 0.001
+			):
+				frappe.throw(_("Die Auszahlung übersteigt das aktuell offene Erstattungsguthaben."))
+			row.outstanding_amount = credit.outstanding_amount
+		original = self.references
+		try:
+			self.references = [r for r in original if r not in credits]
+			return super().validate_allocated_amount_with_latest_data()
+		finally:
+			self.references = original
+
 	def get_valid_reference_doctypes(self):
 		if self.party_type == "Eigentuemer":
 			return ("Journal Entry",)

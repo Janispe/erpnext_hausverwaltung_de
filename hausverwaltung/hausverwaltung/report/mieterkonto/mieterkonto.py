@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
@@ -116,20 +117,19 @@ def execute(filters=None):
 
 	raw_invoices = _get_invoices(filters)
 	standalone_transactions = _build_standalone_receivable_transactions(raw_invoices, filters)
-	if not raw_invoices and not standalone_transactions:
-		return _get_columns(filters), [], None, None, _get_empty_summary()
+	journal_settlements, journal_allocations = _build_standalone_settlements(standalone_transactions, filters)
 
-	display_invoices = (
-		_group_invoices(raw_invoices) if filters.gruppieren_pro_monat else raw_invoices
-	)
+	display_invoices = _group_invoices(raw_invoices) if filters.gruppieren_pro_monat else raw_invoices
 
 	transactions = _build_invoice_transactions(display_invoices)
 	transactions.extend(_build_settlement_transactions(display_invoices, raw_invoices, filters))
-	transactions.extend(_build_payment_entry_advance_transactions(raw_invoices, filters))
+	transactions.extend(journal_settlements)
+	transactions.extend(_build_payment_entry_advance_transactions(raw_invoices, filters, journal_allocations))
 	transactions = _merge_payment_entry_mixed_advance_transactions(transactions)
 	# Stand-alone Receivable-Bewegungen auf Mieterforderungen ohne
 	# SI-Referenz — z.B. nachgebuchte Mahngebühren oder Korrektur-JEs.
 	transactions.extend(standalone_transactions)
+	transactions.extend(_remaining_ledger_transactions(transactions, raw_invoices, filters))
 	transactions.sort(key=lambda transaction: _transaction_sort_key(transaction, filters))
 
 	rows, summary_totals = _build_rows(transactions, filters)
@@ -139,12 +139,85 @@ def execute(filters=None):
 	return columns, rows, None, None, _get_report_summary(summary_totals, filters)
 
 
+def _remaining_ledger_transactions(transactions, raw_invoices, filters):
+	"""Represent every remaining receivable movement from its actual GL voucher.
+
+	Invoice/settlement categorization must never suppress an unallocated part
+	of a mixed voucher. These remaining amounts retain the original voucher and
+	are shown as Sonstig, rather than inventing a category or a balancing entry.
+	"""
+	represented = defaultdict(float)
+	for transaction in transactions:
+		members = transaction.get("belegnummern") or []
+		if (
+			transaction.get("belegart") == "Sales Invoice"
+			and members
+			and all(name in raw_invoices for name in members)
+		):
+			for name in members:
+				represented[("Sales Invoice", name)] += sum(raw_invoices[name].category_amounts.values())
+		else:
+			represented[(transaction.get("belegart"), transaction.get("belegnummer"))] += flt(
+				transaction.get("delta")
+			)
+	date_condition = (
+		"" if filters.get("sortieren_nach_wertstellungsdatum") else "AND g.posting_date <= %(to_date)s"
+	)
+	rows = frappe.db.sql(
+		f"""
+		SELECT g.voucher_type, g.voucher_no, MIN(g.posting_date) AS posting_date,
+		SUM(g.debit-g.credit) AS amount, MAX(g.remarks) AS remarks
+		FROM `tabGL Entry` g JOIN `tabAccount` a ON a.name=g.account
+		WHERE g.company=%(company)s AND g.party_type='Customer' AND g.party=%(customer)s
+		AND g.is_cancelled=0 AND a.account_type='Receivable' {date_condition}
+		GROUP BY g.voucher_type, g.voucher_no
+		ORDER BY posting_date, g.voucher_type, g.voucher_no
+	""",
+		dict(company=filters.company, customer=filters.customer, to_date=filters.to_date),
+		as_dict=True,
+	)
+	out = []
+	for row in rows:
+		key = (row.voucher_type, row.voucher_no)
+		remaining = flt(flt(row.amount) - represented.get(key, 0), 2)
+		if abs(remaining) < 0.005:
+			continue
+		value_date = getdate(row.posting_date)
+		if row.voucher_type == "Sales Invoice" and row.voucher_no in raw_invoices:
+			value_date = _invoice_value_date(raw_invoices[row.voucher_no])
+		elif filters.get("sortieren_nach_wertstellungsdatum") and frappe.get_meta(row.voucher_type).has_field(
+			"custom_wertstellungsdatum"
+		):
+			value_date = getdate(
+				frappe.db.get_value(row.voucher_type, row.voucher_no, "custom_wertstellungsdatum")
+				or row.posting_date
+			)
+		out.append(
+			dict(
+				date=getdate(row.posting_date),
+				wertstellungsdatum=value_date,
+				open_date=getdate(row.posting_date),
+				sort_order=35,
+				art="Sonstig",
+				belegart=row.voucher_type,
+				belegnummer=row.voucher_no,
+				rechnung=row.voucher_no,
+				beschreibung=row.remarks or _("Sonstige Debitorenbewegung"),
+				currency=_get_currency(filters.company),
+				invoice_amounts={"sonstiges": remaining} if remaining > 0 else {},
+				paid_amounts={"sonstiges": -remaining} if remaining < 0 else {},
+				written_off_amounts={},
+				delta=remaining,
+				offen=0.0,
+			)
+		)
+	return out
+
+
 def _apply_defaults(filters):
 	filters.show_kategorien = cint(filters.get("show_kategorien", 1))
 	filters.gruppieren_pro_monat = cint(filters.get("gruppieren_pro_monat", 1))
-	filters.sortieren_nach_wertstellungsdatum = cint(
-		filters.get("sortieren_nach_wertstellungsdatum", 0)
-	)
+	filters.sortieren_nach_wertstellungsdatum = cint(filters.get("sortieren_nach_wertstellungsdatum", 0))
 	filters.offene_betraege_basis = filters.get("offene_betraege_basis") or "Zeitraum"
 	filters.saldo_basis = filters.get("saldo_basis") or "Gesamt"
 
@@ -291,11 +364,7 @@ def _merge_invoices(group_key: str, members: list[InvoiceInfo]) -> InvoiceInfo:
 	# Beschreibung: Kategorien-Liste aus den Items. Die konkreten Belege
 	# werden separat in der Beleg-Spalte gezeigt, nicht im Beschreibungstext.
 	category_labels_in_group = sorted(
-		{
-			CATEGORY_LABELS[cat]
-			for cat, amt in merged_categories.items()
-			if abs(flt(amt)) > TOLERANCE
-		}
+		{CATEGORY_LABELS[cat] for cat, amt in merged_categories.items() if abs(flt(amt)) > TOLERANCE}
 	)
 	monat = anchor.posting_date.strftime("%m/%Y") if anchor.posting_date else ""
 	mv_part = group_key.split("|", 1)[0] if "|" in group_key else ""
@@ -358,9 +427,7 @@ def _get_invoice_category_amounts_bulk(
 			items_by_invoice.setdefault(item.parent, []).append(item)
 
 	dunning_fee_invoices = {
-		invoice_name
-		for invoice_name, items in items_by_invoice.items()
-		if _has_dunning_fee_item(items)
+		invoice_name for invoice_name, items in items_by_invoice.items() if _has_dunning_fee_item(items)
 	}
 	category_amounts = {
 		invoice_name: _category_amounts_from_items(
@@ -385,9 +452,7 @@ def _category_amounts_from_items(invoice_name: str, items, grand_total: float) -
 
 	item_total = sum(amounts.values())
 	if abs(item_total) <= TOLERANCE:
-		frappe.throw(
-			_("Sales Invoice {0} hat keine auswertbaren Artikelbeträge.").format(invoice_name)
-		)
+		frappe.throw(_("Sales Invoice {0} hat keine auswertbaren Artikelbeträge.").format(invoice_name))
 
 	# Taxes/rounding belong to the same functional categories as the invoice lines.
 	if abs(flt(grand_total) - item_total) > TOLERANCE:
@@ -404,16 +469,7 @@ def _get_item_category(item) -> str:
 	if item_code in ITEM_CATEGORY_MAP:
 		return ITEM_CATEGORY_MAP[item_code]
 
-	frappe.throw(
-		_(
-			"Sales Invoice {0} enthält den nicht zuordenbaren Artikel {1}. "
-			"Erlaubt sind: {2}"
-		).format(
-			item.get("parent"),
-			item_code or _("kein Artikel"),
-			", ".join(ITEM_CATEGORY_MAP),
-		)
-	)
+	return "sonstiges"
 
 
 def _has_dunning_fee_item(items) -> bool:
@@ -599,9 +655,9 @@ def _build_settlement_transactions(
 					"date": getdate(row.posting_date),
 					"wertstellungsdatum": _invoice_value_date(group),
 					"sort_order": 30 if is_writeoff else 20,
-					"art": "Abschreibung" if is_writeoff else (
-						"Gutschrift" if row.voucher_type == "Sales Invoice" else "Zahlung"
-					),
+					"art": "Abschreibung"
+					if is_writeoff
+					else ("Gutschrift" if row.voucher_type == "Sales Invoice" else "Zahlung"),
 					"belegart": row.voucher_type,
 					"belegnummer": row.voucher_no,
 					"rechnung": group.name,
@@ -678,8 +734,7 @@ def _merge_payment_entry_mixed_advance_transactions(
 		for source in ("invoice_amounts", "paid_amounts", "written_off_amounts"):
 			for category in CATEGORIES:
 				merged[source][category] = flt(
-					flt(merged[source].get(category))
-					+ flt((transaction.get(source) or {}).get(category)),
+					flt(merged[source].get(category)) + flt((transaction.get(source) or {}).get(category)),
 					2,
 				)
 
@@ -706,6 +761,14 @@ def _merge_payment_entry_mixed_advance_transactions(
 	return out
 
 
+def _receivable_accounts(company):
+	return set(
+		frappe.get_all(
+			"Account", filters={"company": company, "account_type": "Receivable", "is_group": 0}, pluck="name"
+		)
+	)
+
+
 def _build_standalone_receivable_transactions(
 	raw_invoices: dict[str, InvoiceInfo],
 	filters,
@@ -719,24 +782,7 @@ def _build_standalone_receivable_transactions(
 	bereits über SI/Settlement repräsentiert sind, und kategorisieren über
 	das Gegenkonto (BK / HK / G+N / Miete).
 	"""
-	receivable_accounts: set[str] = {inv.debit_to for inv in raw_invoices.values() if inv.debit_to}
-	if not receivable_accounts:
-		# Fallback: alle aktiven Receivable-Konten dieser Company. Damit
-		# bekommen wir auch dann etwas, wenn der Mieter (noch) keine SI hat,
-		# aber direkte JE-Buchungen.
-		receivable_accounts = {
-			row["name"]
-			for row in frappe.get_all(
-				"Account",
-				filters={
-					"company": filters.company,
-					"account_type": "Receivable",
-					"is_group": 0,
-					"disabled": 0,
-				},
-				fields=["name"],
-			)
-		}
+	receivable_accounts = _receivable_accounts(filters.company)
 	if not receivable_accounts:
 		return []
 
@@ -795,9 +841,7 @@ def _build_standalone_receivable_transactions(
 		return []
 
 	offset_accounts = _fetch_offset_accounts(standalone_voucher_keys, receivable_accounts)
-	sales_invoice_amounts = _get_standalone_sales_invoice_category_amounts(
-		standalone_voucher_keys
-	)
+	sales_invoice_amounts = _get_standalone_sales_invoice_category_amounts(standalone_voucher_keys)
 	voucher_remarks = _fetch_voucher_remarks(
 		[frappe._dict(voucher_type=k[0], voucher_no=k[1]) for k in standalone_voucher_keys]
 	)
@@ -819,25 +863,19 @@ def _build_standalone_receivable_transactions(
 			# Gutschriften anhand ihrer Artikel zuordnen. Das Gegenkonto kann
 			# abweichend konfiguriert sein (z.B. BK Guthaben auf Mieterlös) und
 			# ist dann als fachliche Kategorie unzuverlässig.
-			amounts = {
-				category: abs(flt(invoice_amounts.get(category)))
-				for category in CATEGORIES
-			}
+			amounts = {category: abs(flt(invoice_amounts.get(category))) for category in CATEGORIES}
 		else:
-			category = _categorize_offset_accounts(offset_accounts.get(key, set()))
+			explicit = voucher_remarks.get(key, {}).get("custom_mieterkonto_kategorie")
+			category = next((cat for cat, label in CATEGORY_LABELS.items() if label == explicit), None)
+			category = category or _categorize_offset_accounts(offset_accounts.get(key, set()))
 			amounts = {cat: 0.0 for cat in CATEGORIES}
 			amounts[category] = abs(net_charge)
 		amounts = _round_amounts(amounts)
 
 		is_charge = net_charge > 0
 		info = voucher_remarks.get(key, {})
-		default_label = (
-			_("Forderung") if is_charge else _get_voucher_label(row.voucher_type)
-		)
-		description = (
-			_build_voucher_suffix(row.voucher_type, info)
-			or default_label
-		)
+		default_label = _("Forderung") if is_charge else _get_voucher_label(row.voucher_type)
+		description = _build_voucher_suffix(row.voucher_type, info) or default_label
 
 		transactions.append(
 			{
@@ -884,9 +922,87 @@ def _get_standalone_sales_invoice_category_amounts(
 	return category_amounts
 
 
+def _build_standalone_settlements(standalone_transactions, filters):
+	"""Follow actual ledger allocations to JE claims, including partial refunds.
+
+	A payment takes the claim's category and open-period date. Its allocated
+	part is excluded from the advance path so every euro appears exactly once.
+	"""
+	claims = {}
+	for transaction in standalone_transactions:
+		if transaction.get("belegart") in {"Journal Entry", "Sales Invoice"}:
+			claims.setdefault((transaction["belegart"], transaction["belegnummer"]), []).append(transaction)
+	if not claims:
+		return [], {}
+	rows = frappe.get_all(
+		"Payment Ledger Entry",
+		filters={
+			"company": filters.company,
+			"party_type": "Customer",
+			"party": filters.customer,
+			"voucher_type": "Payment Entry",
+			"against_voucher_type": ("in", ["Journal Entry", "Sales Invoice"]),
+			"against_voucher_no": ("in", [name for dt, name in claims]),
+			"delinked": 0,
+			"posting_date": ("<=", filters.to_date),
+		},
+		fields=[
+			"posting_date",
+			"voucher_type",
+			"voucher_no",
+			"against_voucher_type",
+			"against_voucher_no",
+			"amount",
+		],
+	)
+	remarks = _fetch_voucher_remarks(rows)
+	transactions = []
+	allocations = defaultdict(float)
+	for row in rows:
+		amount = flt(row.amount)
+		if abs(amount) <= TOLERANCE:
+			continue
+		sources = claims.get((row.against_voucher_type, row.against_voucher_no))
+		if not sources:
+			continue
+		weights = {
+			cat: sum(
+				abs(flt(t["invoice_amounts"].get(cat))) + abs(flt(t["paid_amounts"].get(cat)))
+				for t in sources
+			)
+			for cat in CATEGORIES
+		}
+		paid = _allocate_amount(-amount, weights)
+		transactions.append(
+			{
+				"date": getdate(row.posting_date),
+				"wertstellungsdatum": getdate(row.posting_date),
+				"open_date": sources[0]["open_date"],
+				"sort_order": 26,
+				"art": "Auszahlung" if amount > 0 else "Zahlung",
+				"belegart": "Payment Entry",
+				"belegnummer": row.voucher_no,
+				"rechnung": row.against_voucher_no,
+				"beschreibung": _build_voucher_suffix(
+					"Payment Entry", remarks.get(("Payment Entry", row.voucher_no), {})
+				)
+				or _("Zahlung zu {0}").format(row.against_voucher_no),
+				"currency": _get_currency(filters.company),
+				"invoice_amounts": _empty_category_amounts(),
+				"paid_amounts": paid,
+				"written_off_amounts": _empty_category_amounts(),
+				"delta": amount,
+				"offen": 0.0,
+			}
+		)
+		allocations[row.voucher_no] += amount
+	return transactions, dict(allocations)
+
+
 def _build_payment_entry_advance_transactions(
 	raw_invoices: dict[str, InvoiceInfo],
 	filters,
+	journal_allocations: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
 	"""Zeigt unzugeordnete Mieterzahlungen/Überzahlungen als eigene VZ-Spalte.
 
@@ -894,21 +1010,7 @@ def _build_payment_entry_advance_transactions(
 	Der bereits über Payment Ledger Entries gegen Rechnungen gezeigte Anteil
 	wird abgezogen; übrig bleibt nur die tatsächliche Vorauszahlung.
 	"""
-	receivable_accounts: set[str] = {inv.debit_to for inv in raw_invoices.values() if inv.debit_to}
-	if not receivable_accounts:
-		receivable_accounts = {
-			row["name"]
-			for row in frappe.get_all(
-				"Account",
-				filters={
-					"company": filters.company,
-					"account_type": "Receivable",
-					"is_group": 0,
-					"disabled": 0,
-				},
-				fields=["name"],
-			)
-		}
+	receivable_accounts = _receivable_accounts(filters.company)
 	if not receivable_accounts:
 		return []
 
@@ -953,6 +1055,8 @@ def _build_payment_entry_advance_transactions(
 		set(raw_invoices),
 		filters,
 	)
+	for voucher_no, amount in (journal_allocations or {}).items():
+		allocated_amounts[voucher_no] = flt(allocated_amounts.get(voucher_no)) + amount
 	voucher_remarks = _fetch_voucher_remarks(
 		[frappe._dict(voucher_type="Payment Entry", voucher_no=name) for name in net_by_voucher]
 	)
@@ -975,10 +1079,9 @@ def _build_payment_entry_advance_transactions(
 
 		paid_amounts = {cat: 0.0 for cat in CATEGORIES}
 		paid_amounts["vorauszahlungen"] = advance_amount
-		description = (
-			_build_voucher_suffix("Payment Entry", voucher_remarks.get(("Payment Entry", voucher_no), {}))
-			or _("Vorauszahlung")
-		)
+		description = _build_voucher_suffix(
+			"Payment Entry", voucher_remarks.get(("Payment Entry", voucher_no), {})
+		) or _("Vorauszahlung")
 
 		transactions.append(
 			{
@@ -1070,15 +1173,22 @@ def _fetch_offset_accounts(
 
 
 def _categorize_offset_accounts(accounts: set[str]) -> str:
-	"""Wählt die Kategorie aus dem Gegenkonto-Set. Erstes match aus
-	ACCOUNT_CATEGORY_MAP gewinnt. Fallback: guthaben_nachzahlungen
-	(Sammelposten für nicht klar zuordenbare Forderungs-Bewegungen)."""
+	"""Only an unambiguous mapping selects a category; otherwise use Sonstig."""
+	categories = set()
 	for account in accounts:
 		account_lc = (account or "").lower()
+		matches = set()
 		for substr, category in ACCOUNT_CATEGORY_MAP.items():
+			if substr == "miete":
+				if re.search(r"\bmiete(?:n|rlöse|innahmen)?\b", account_lc):
+					matches.add(category)
+				continue
 			if substr in account_lc:
-				return category
-	return "guthaben_nachzahlungen"
+				matches.add(category)
+		if len(matches) != 1:
+			return "sonstiges"
+		categories.update(matches)
+	return categories.pop() if len(categories) == 1 else "sonstiges"
 
 
 def _chunks(values: list[str], size: int):
@@ -1143,6 +1253,10 @@ def _fetch_voucher_remarks(payment_ledger_rows) -> dict[tuple[str, str], dict]:
 	out: dict[tuple[str, str], dict] = {}
 	for voucher_type, names in names_by_type.items():
 		fields = ["name"] + _VOUCHER_INFO_FIELDS[voucher_type]
+		if voucher_type == "Journal Entry" and frappe.get_meta(voucher_type).has_field(
+			"custom_mieterkonto_kategorie"
+		):
+			fields.append("custom_mieterkonto_kategorie")
 		for r in frappe.get_all(
 			voucher_type,
 			filters={"name": ("in", list(names))},
@@ -1303,9 +1417,7 @@ def _opening_row(filters, balance: float, currency: str | None) -> dict[str, Any
 	}
 
 
-def _total_rows(
-	period_totals: dict[str, Any], balance: float, filters
-) -> list[dict[str, Any]]:
+def _total_rows(period_totals: dict[str, Any], balance: float, filters) -> list[dict[str, Any]]:
 	"""Sollstellungen und Zahlungen des Zeitraums getrennt ausweisen.
 
 	Beide Zeilen verwenden positive Beträge, damit Soll und Zahlung je Kategorie
@@ -1417,7 +1529,11 @@ def _sort_rows_for_display(rows: list[dict[str, Any]], filters=None) -> list[dic
 
 	def display_sort_key(item):
 		index, row = item
-		primary = row.get("wertstellungsdatum") if filters and filters.get("sortieren_nach_wertstellungsdatum") else row.get("datum")
+		primary = (
+			row.get("wertstellungsdatum")
+			if filters and filters.get("sortieren_nach_wertstellungsdatum")
+			else row.get("datum")
+		)
 		return (primary or getdate("1900-01-01"), index)
 
 	transaction_rows.sort(key=display_sort_key, reverse=True)
@@ -1545,7 +1661,14 @@ def _get_columns(filters):
 	columns = [
 		{"label": _("Datum"), "fieldname": "datum", "fieldtype": "Date", "width": 100},
 		*(
-			[{"label": _("Wertstellung"), "fieldname": "wertstellungsdatum", "fieldtype": "Date", "width": 110}]
+			[
+				{
+					"label": _("Wertstellung"),
+					"fieldname": "wertstellungsdatum",
+					"fieldtype": "Date",
+					"width": 110,
+				}
+			]
 			if filters.get("sortieren_nach_wertstellungsdatum")
 			else []
 		),
@@ -1566,9 +1689,7 @@ def _get_columns(filters):
 	# Zahlung/Abschreibung. Die "Art"-Pille zeigt zusätzlich was es ist.
 	if filters.get("show_kategorien"):
 		for category in CATEGORIES:
-			columns.append(
-				_currency_column(CATEGORY_LABELS[category], f"betrag_{category}")
-			)
+			columns.append(_currency_column(CATEGORY_LABELS[category], f"betrag_{category}"))
 	columns.append(_currency_column(_("Summe"), "betrag_summe"))
 
 	columns.append(_currency_column(_("Kontostand"), "kontostand", width=125))

@@ -21,7 +21,7 @@
       "fieldtype": "Select",
       "in_list_view": 1,
       "label": "Rolle im Versicherungsfall",
-      "options": "Reparaturrechnung\nVersicherungsforderung\nVersicherungseingang\nMietergutschrift\nMieterauszahlung\nSonstiger Buchungsbeleg",
+      "options": "Reparaturrechnung\nVersicherungsforderung\nVersicherungseingang\nMietererstattungsanspruch\nMietergutschrift\nMieterauszahlung\nSonstiger Buchungsbeleg",
       "reqd": 1
     },
     {

@@ -1121,6 +1121,7 @@ function _openMatchInvoicesDialog(frm, row) {
     const invoices = data.invoices || [];
     const target = parseFloat(data.target_amount || row.betrag || 0);
     const isCustomerRefund = data.allocation_mode === 'customer_refund';
+    const isInsuranceReceipt = data.allocation_mode === 'insurance_receipt';
 
     if (!invoices.length) {
       const filteredNote = data.excluded_by_cost_center
@@ -1143,10 +1144,12 @@ function _openMatchInvoicesDialog(frm, row) {
     const rowsHtml = invoices.map((inv) => {
       const outstanding = Math.abs(parseFloat(inv.allocatable_amount ?? inv.outstanding_amount)).toFixed(2);
       const safeName = frappe.utils.escape_html(inv.name);
-      const linkPath = data.invoice_doctype.toLowerCase().replace(/ /g, '-');
+      const referenceDoctype = inv.reference_doctype || data.invoice_doctype;
+      const safeDoctype = frappe.utils.escape_html(referenceDoctype);
+      const linkPath = referenceDoctype.toLowerCase().replace(/ /g, '-');
       return `
         <tr>
-          <td style="padding:4px 8px;"><input type="checkbox" class="hv-inv-cb" data-name="${safeName}" data-outstanding="${outstanding}"></td>
+          <td style="padding:4px 8px;"><input type="checkbox" class="hv-inv-cb" data-name="${safeName}" data-doctype="${safeDoctype}" data-outstanding="${outstanding}"></td>
           <td style="padding:4px 8px;"><a href="/app/${linkPath}/${encodeURIComponent(inv.name)}" target="_blank">${safeName}</a></td>
           <td style="padding:4px 8px; text-align:right; color:#888;">${fmt(outstanding)}</td>
           <td style="padding:4px 8px;">
@@ -1186,7 +1189,7 @@ function _openMatchInvoicesDialog(frm, row) {
         <div><strong>${__('Bank-Betrag')}:</strong> ${fmt(target)}</div>
         <div><strong>${__('Differenz')}:</strong> <span class="hv-diff"></span> <span class="hv-diff-note" style="margin-left:8px; font-style:italic;"></span></div>
       </div>
-      <div style="margin-top:10px; ${isCustomerRefund ? 'display:none;' : ''}">
+      <div style="margin-top:10px; ${isCustomerRefund || isInsuranceReceipt ? 'display:none;' : ''}">
         <label style="font-size:12px;">
           <input type="checkbox" class="hv-leftover-cb">
           ${__('Restbetrag als Vorauszahlung verbuchen (bleibt am Mieter/Lieferant als offenes Guthaben)')}
@@ -1216,7 +1219,11 @@ function _openMatchInvoicesDialog(frm, row) {
             allocationError = true;
             return false;
           }
-          allocations.push({ name, allocated_amount: allocated });
+          allocations.push({
+            name,
+            reference_doctype: $(this).attr('data-doctype') || data.invoice_doctype,
+            allocated_amount: allocated,
+          });
           allocSum += allocated;
         });
         if (allocationError) return;
@@ -1240,8 +1247,8 @@ function _openMatchInvoicesDialog(frm, row) {
           const msg = (res && res.message) || {};
           frappe.show_alert({
             message: isCustomerRefund
-              ? __('Guthaben ausgezahlt: {0} ({1} Beleg(e))', [msg.payment_entry, (msg.invoices || []).length])
-              : __('Zugeordnet: {0} ({1} Rechnung(en))', [msg.payment_entry, (msg.invoices || []).length]),
+              ? __('Guthaben ausgezahlt: {0} ({1} Beleg(e))', [msg.payment_entry || msg.journal_entry, (msg.invoices || []).length])
+              : __('Zugeordnet: {0} ({1} Rechnung(en))', [msg.payment_entry || msg.journal_entry, (msg.invoices || []).length]),
             indicator: 'green',
           });
           d.hide();
@@ -1278,7 +1285,7 @@ function _openMatchInvoicesDialog(frm, row) {
             ? __('Auszahlung noch nicht vollständig zugeordnet')
             : (leftoverCb.is(':checked') ? __('wird als Vorauszahlung verbucht') : __('Restbetrag offen'))
         );
-        primary.prop('disabled', isCustomerRefund || !leftoverCb.is(':checked'));
+        primary.prop('disabled', isCustomerRefund || isInsuranceReceipt || !leftoverCb.is(':checked'));
       } else {
         note.css('color', '#dc3545').text(__('Auswahl übersteigt Bank-Betrag'));
         primary.prop('disabled', true);

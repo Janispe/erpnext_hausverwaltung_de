@@ -232,10 +232,10 @@ class TestVersicherungsfallTotals(unittest.TestCase):
 		doc = _case(
 			bewilligter_betrag=500,
 			belege=[
-				frappe._dict(belegart="Reparaturrechnung", betrag=800),
-				frappe._dict(belegart="Versicherungseingang", betrag=300),
-				frappe._dict(belegart="Mietergutschrift", betrag=300),
-				frappe._dict(belegart="Mieterauszahlung", betrag=200),
+				frappe._dict(belegart="Reparaturrechnung", betrag=800, belegstatus="Eingereicht"),
+				frappe._dict(belegart="Versicherungseingang", betrag=300, belegstatus="Eingereicht"),
+				frappe._dict(belegart="Mietergutschrift", betrag=300, belegstatus="Eingereicht"),
+				frappe._dict(belegart="Mieterauszahlung", betrag=200, belegstatus="Eingereicht"),
 			],
 		)
 
@@ -260,3 +260,34 @@ class TestVersicherungsfallTotals(unittest.TestCase):
 			self.assertRaisesRegex(frappe.ValidationError, "offenem Mieterguthaben"),
 		):
 			Versicherungsfall._validate_completion(doc)
+
+	def test_drafts_cancelled_vouchers_and_bank_evidence_do_not_count(self):
+		doc = _case(
+			erstattungsbetrag=458.94,
+			belege=[
+				frappe._dict(belegart="Mietererstattungsanspruch", betrag=458.94, belegstatus="Entwurf"),
+				frappe._dict(belegart="Mieterauszahlung", betrag=458.94, belegstatus="Storniert"),
+				frappe._dict(
+					belegart="Versicherungseingang",
+					betrag=458.94,
+					belegstatus="Eingereicht",
+					referenz_doctype="Bank Transaction",
+				),
+			],
+		)
+		Versicherungsfall._calculate_totals(doc)
+		self.assertEqual(doc.mieteranspruch_gebucht, 0)
+		self.assertEqual(doc.an_mieter_ausgezahlt, 0)
+		self.assertEqual(doc.versicherung_erhalten, 0)
+		self.assertEqual(doc.offen_mieter, 458.94)
+
+	def test_partial_refund_leaves_correct_claim_open(self):
+		doc = _case(
+			erstattungsbetrag=458.94,
+			belege=[
+				frappe._dict(belegart="Mietererstattungsanspruch", betrag=458.94, belegstatus="Eingereicht"),
+				frappe._dict(belegart="Mieterauszahlung", betrag=200, belegstatus="Eingereicht"),
+			],
+		)
+		Versicherungsfall._calculate_totals(doc)
+		self.assertAlmostEqual(doc.offen_mieter, 258.94)

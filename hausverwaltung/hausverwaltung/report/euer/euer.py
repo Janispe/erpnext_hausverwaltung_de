@@ -1523,6 +1523,12 @@ def get_data(f):
                     }
                 )
 
+    from hausverwaltung.hausverwaltung.utils.insurance_receivables import reclassify_cash_entries
+    all_entries = reclassify_cash_entries(
+        all_entries, company, from_date, to_date, bank_accounts,
+        kostenstellen if apply_cost_center_filter else None,
+    )
+
     # Sortiere alle Einträge nach Datum
     all_entries.sort(key=lambda x: (x["posting_date"], x["account"]))
 

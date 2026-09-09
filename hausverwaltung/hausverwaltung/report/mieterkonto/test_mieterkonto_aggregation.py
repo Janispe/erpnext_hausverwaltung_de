@@ -114,15 +114,21 @@ def _standalone_flt(value, precision=None):
 
 
 class TestGroupInvoices(TestCase):
+	def setUp(self):
+		patcher = patch(
+			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._receivable_accounts",
+			return_value={"1410 - Forderungen - HV"},
+		)
+		patcher.start()
+		self.addCleanup(patcher.stop)
+
 	def test_dunning_fee_invoice_stays_separate_from_monthly_rent(self):
 		mab = "MV-2026-001|07/2026"
 		regular = _make_invoice("SI-MIETE", mab_id=mab, grand_total=500.0)
 		dunning_fee = _make_invoice("SI-MAHNUNG", mab_id=mab, grand_total=12.0)
 		dunning_fee.is_dunning_fee_invoice = True
 
-		result = _group_invoices(
-			{regular.name: regular, dunning_fee.name: dunning_fee}
-		)
+		result = _group_invoices({regular.name: regular, dunning_fee.name: dunning_fee})
 
 		self.assertEqual(list(result), [mab, dunning_fee.name])
 		self.assertEqual(result[mab].member_invoices, [regular.name])
@@ -421,15 +427,31 @@ class TestGroupInvoices(TestCase):
 			remarks=None,
 		)
 		exact_amounts = {
-			"SI-BK-GUTHABEN": {cat: 0.0 for cat in CATEGORIES}
-			| {"guthaben_nachzahlungen": -21.17}
+			"SI-BK-GUTHABEN": {cat: 0.0 for cat in CATEGORIES} | {"guthaben_nachzahlungen": -21.17}
 		}
 
-		with patch("hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.frappe.get_all", return_value=[credit_note]), \
-			patch("hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._fetch_offset_accounts", return_value={("Sales Invoice", "SI-BK-GUTHABEN"): {"Miete - HV"}}), \
-			patch("hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._fetch_voucher_remarks", return_value={}), \
-			patch("hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._get_standalone_sales_invoice_category_amounts", return_value=exact_amounts), \
-			patch("hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._get_currency", return_value="EUR"):
+		with (
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.frappe.get_all",
+				return_value=[credit_note],
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._fetch_offset_accounts",
+				return_value={("Sales Invoice", "SI-BK-GUTHABEN"): {"Miete - HV"}},
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._fetch_voucher_remarks",
+				return_value={},
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._get_standalone_sales_invoice_category_amounts",
+				return_value=exact_amounts,
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._get_currency",
+				return_value="EUR",
+			),
+		):
 			transactions = _build_standalone_receivable_transactions(
 				{regular_invoice.name: regular_invoice}, filters
 			)
@@ -484,19 +506,21 @@ class TestGroupInvoices(TestCase):
 			AttrDict(voucher_no="PE-HK-AUSZAHLUNG", amount=125.0),
 		]
 
-		with patch(
-			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.frappe.get_all",
-			side_effect=[gl_rows, ple_rows],
-		), patch(
-			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._fetch_voucher_remarks",
-			return_value={},
-		), patch(
-			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._get_currency",
-			return_value="EUR",
+		with (
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.frappe.get_all",
+				side_effect=[gl_rows, ple_rows],
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._fetch_voucher_remarks",
+				return_value={},
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._get_currency",
+				return_value="EUR",
+			),
 		):
-			transactions = _build_payment_entry_advance_transactions(
-				{invoice.name: invoice}, filters
-			)
+			transactions = _build_payment_entry_advance_transactions({invoice.name: invoice}, filters)
 
 		self.assertEqual(transactions, [])
 
@@ -523,19 +547,21 @@ class TestGroupInvoices(TestCase):
 			AttrDict(voucher_no="PE-MIETE-PLUS-VZ", amount=-125.0),
 		]
 
-		with patch(
-			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.frappe.get_all",
-			side_effect=[gl_rows, ple_rows],
-		), patch(
-			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._fetch_voucher_remarks",
-			return_value={},
-		), patch(
-			"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._get_currency",
-			return_value="EUR",
+		with (
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.frappe.get_all",
+				side_effect=[gl_rows, ple_rows],
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._fetch_voucher_remarks",
+				return_value={},
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._get_currency",
+				return_value="EUR",
+			),
 		):
-			transactions = _build_payment_entry_advance_transactions(
-				{invoice.name: invoice}, filters
-			)
+			transactions = _build_payment_entry_advance_transactions({invoice.name: invoice}, filters)
 
 		self.assertEqual(len(transactions), 1)
 		self.assertEqual(transactions[0]["art"], "Vorauszahlung")
@@ -834,3 +860,82 @@ class TestGroupInvoices(TestCase):
 		row = _transaction_to_row(transaction, balance=600.0)
 		self.assertIn(row["belegnummer"], {"SI-Miete", "SI-BK"})
 		self.assertEqual(set(row["belegnummern"]), {"SI-Miete", "SI-BK"})
+
+	def test_unknown_item_is_visible_as_sonstiges(self):
+		amounts = _category_amounts_from_items(
+			"SI-NEW", [dict(item_code="Neue Leistung", amount=458.94)], 458.94
+		)
+		self.assertEqual(amounts["sonstiges"], 458.94)
+		self.assertEqual(sum(amounts.values()), 458.94)
+
+	def test_unknown_or_ambiguous_accounts_are_sonstiges(self):
+		for accounts in ({"6810 - Instand. Glaser - HP"}, {"Miete - HP", "Heizkosten - HP"}, set()):
+			self.assertEqual(_categorize_offset_accounts(accounts), "sonstiges")
+
+	def test_journal_partial_refund_inherits_category_and_is_not_an_advance(self):
+		from hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto import _build_standalone_settlements
+
+		filters = _filters(from_date=date(2026, 7, 1), to_date=date(2026, 7, 31))
+		filters.customer = "MIETER-A"
+		claim = dict(
+			belegart="Journal Entry",
+			belegnummer="JE-CLAIM",
+			open_date=date(2026, 7, 10),
+			invoice_amounts={},
+			paid_amounts={"guthaben_nachzahlungen": 458.94},
+		)
+		ple = AttrDict(
+			posting_date=date(2026, 7, 17),
+			voucher_type="Payment Entry",
+			voucher_no="PE-REFUND",
+			against_voucher_type="Journal Entry",
+			against_voucher_no="JE-CLAIM",
+			amount=200,
+		)
+		with (
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.frappe.get_all",
+				return_value=[ple],
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._fetch_voucher_remarks",
+				return_value={},
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._get_currency",
+				return_value="EUR",
+			),
+		):
+			rows, allocations = _build_standalone_settlements([claim], filters)
+		self.assertEqual(rows[0]["paid_amounts"]["guthaben_nachzahlungen"], -200)
+		self.assertEqual(rows[0]["open_date"], claim["open_date"])
+		self.assertEqual(allocations, {"PE-REFUND": 200})
+		gl = AttrDict(posting_date=date(2026, 7, 17), voucher_no="PE-REFUND", debit=200, credit=0)
+		with (
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.frappe.get_all",
+				return_value=[gl],
+			),
+			patch(
+				"hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._fetch_voucher_remarks",
+				return_value={},
+			),
+		):
+			self.assertEqual(_build_payment_entry_advance_transactions({}, filters, allocations), [])
+
+	def test_tenant_reimbursement_account_is_not_rent(self):
+		self.assertEqual(_categorize_offset_accounts({"Erstattungen an Mieter - HP"}), "sonstiges")
+		self.assertEqual(_categorize_offset_accounts({"Miete - HP", "Unbekannt - HP"}), "sonstiges")
+
+	def test_mixed_voucher_remaining_receivable_amount_is_not_lost(self):
+		from hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto import _remaining_ledger_transactions
+		filters = _filters(from_date=date(2026, 7, 1), to_date=date(2026, 7, 31))
+		filters.customer = "MIETER-A"
+		transactions = [dict(belegart="Journal Entry", belegnummer="JE-MIXED", delta=-60)]
+		ledger = [AttrDict(voucher_type="Journal Entry",voucher_no="JE-MIXED",posting_date=date(2026,7,17),amount=-100,remarks="Gemischte Buchung")]
+		with patch("hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto.frappe.db.sql",return_value=ledger), patch("hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto._get_currency",return_value="EUR"):
+			remaining = _remaining_ledger_transactions(transactions,{},filters)
+		self.assertEqual(len(remaining),1)
+		self.assertEqual(remaining[0]["paid_amounts"],{"sonstiges":40})
+		self.assertEqual(remaining[0]["belegnummer"],"JE-MIXED")
+		self.assertEqual(sum(t['delta'] for t in transactions+remaining),-100)

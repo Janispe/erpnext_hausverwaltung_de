@@ -18,6 +18,7 @@
     "column_break_zuordnung",
     "mietvertrag",
     "kunde",
+    "anspruchsberechtigter",
     "beguenstigter",
     "versicherung_section",
     "versicherer",
@@ -38,6 +39,20 @@
     "an_mieter_ausgezahlt",
     "offen_versicherung",
     "offen_mieter",
+    "erstattung_section",
+    "erstattungsart",
+    "erstattungsbetrag",
+    "erstattungskonto",
+    "mieterkonto_kategorie",
+    "erstattungsbeleg",
+    "erstattungsbegruendung",
+    "mieteranspruch_gebucht",
+    "versicherungsforderung_section",
+    "versicherungsforderungskonto",
+    "versicherungsertragskonto",
+    "bewilligungsnachweis",
+    "versicherungsforderung_gebucht",
+    "versicherungsforderung_offen",
     "belege_section",
     "belege",
     "notizen_section",
@@ -144,7 +159,7 @@
       "fieldname": "beguenstigter",
       "fieldtype": "Select",
       "in_standard_filter": 1,
-      "label": "Begünstigter / Zahlungsempfänger",
+      "label": "Auszahlungsempfänger",
       "options": "Vermieter\nMieter\nHandwerker\nWEG\nSonstige",
       "reqd": 1
     },
@@ -261,7 +276,7 @@
       "label": "Verknüpfte Buchungsbelege"
     },
     {
-      "description": "Reparaturrechnungen, Forderungs-/Zahlungsbuchungen, Mietergutschriften und Auszahlungen dieses Schadensfalls.",
+      "description": "Buchungsbelege des Falls. Bank Transactions dienen nur als Nachweis; die Summen zählen ausschließlich eingereichte Buchungsbelege. Den Versicherungseingang als Journal Entry verknüpfen.",
       "fieldname": "belege",
       "fieldtype": "Table",
       "label": "Belege",
@@ -276,6 +291,95 @@
       "fieldname": "notizen",
       "fieldtype": "Text Editor",
       "label": "Notizen"
+    },
+    {
+      "fieldname": "anspruchsberechtigter",
+      "fieldtype": "Select",
+      "label": "Anspruchsberechtigter gegenüber der Versicherung",
+      "options": "\nVermieter\nMieter\nWEG\nSonstige"
+    },
+    {
+      "fieldname": "erstattung_section",
+      "fieldtype": "Section Break",
+      "label": "Erstattungsanspruch des Mieters"
+    },
+    {
+      "fieldname": "erstattungsart",
+      "fieldtype": "Select",
+      "label": "Grund der Erstattung",
+      "options": "\nAuslagenersatz Gebäudereparatur\nWeiterleitung Versicherungsleistung"
+    },
+    {
+      "fieldname": "erstattungsbetrag",
+      "fieldtype": "Currency",
+      "label": "Anerkannter Erstattungsbetrag",
+      "description": "Anspruch des Mieters; unabhängig von der bewilligten Versicherungsleistung."
+    },
+    {
+      "fieldname": "erstattungskonto",
+      "fieldtype": "Link",
+      "label": "Gegenkonto für den Mieteranspruch",
+      "options": "Account",
+      "description": "Bei Auslagenersatz: Reparaturaufwand. Bei reiner Weiterleitung: Verrechnungskonto."
+    },
+    {
+      "fieldname": "mieterkonto_kategorie",
+      "fieldtype": "Select",
+      "label": "Kategorie im Mieterkonto",
+      "options": "G/N\nSonstig",
+      "default": "G/N"
+    },
+    {
+      "fieldname": "erstattungsbeleg",
+      "fieldtype": "Attach",
+      "label": "Rechnung / Auslagennachweis"
+    },
+    {
+      "fieldname": "erstattungsbegruendung",
+      "fieldtype": "Small Text",
+      "label": "Begründung und Belegnummer",
+      "description": "Was wurde repariert, wer hat beauftragt und bezahlt, weshalb trägt der Vermieter die Kosten?"
+    },
+    {
+      "fieldname": "mieteranspruch_gebucht",
+      "fieldtype": "Currency",
+      "label": "Gebuchte Erstattungsansprüche",
+      "read_only": 1
+    },
+    {
+      "fieldname": "versicherungsforderung_section",
+      "fieldtype": "Section Break",
+      "label": "Forderung gegen die Versicherung"
+    },
+    {
+      "fieldname": "versicherungsforderungskonto",
+      "fieldtype": "Link",
+      "options": "Account",
+      "label": "Forderungskonto Versicherung",
+      "description": "Eigenes aktives Sachkonto unter Aktiva; kein Mieterdebitor und kein Bankkonto."
+    },
+    {
+      "fieldname": "versicherungsertragskonto",
+      "fieldtype": "Link",
+      "options": "Account",
+      "label": "Ertragskonto Versicherungserstattung"
+    },
+    {
+      "fieldname": "bewilligungsnachweis",
+      "fieldtype": "Attach",
+      "label": "Bewilligung / Regulierungszusage"
+    },
+    {
+      "fieldname": "versicherungsforderung_gebucht",
+      "fieldtype": "Currency",
+      "label": "Gebuchte Versicherungsforderung",
+      "read_only": 1
+    },
+    {
+      "fieldname": "versicherungsforderung_offen",
+      "fieldtype": "Currency",
+      "label": "Gebuchte Versicherungsforderung offen",
+      "read_only": 1
     }
   ],
   "grid_page_length": 50,

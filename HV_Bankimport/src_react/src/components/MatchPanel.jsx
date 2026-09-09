@@ -518,8 +518,10 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 	const [advance, setAdvance] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const [busy, run] = useAction(notify);
+	const keyFor = (inv) => `${inv.reference_doctype || data?.invoiceDoctype || "Sales Invoice"}:${inv.name}`;
 	const target = Math.abs(Number(row.betrag) || 0);
 	const isRefund = isCustomerRefund(row, data?.allocationMode);
+	const isInsurance = data?.allocationMode === "insurance_receipt";
 
 	useEffect(() => {
 		let alive = true;
@@ -539,20 +541,20 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 	);
 	const remaining = Math.round((target - allocated) * 100) / 100;
 	const invoiceByName = useMemo(
-		() => new Map((data?.invoices || []).map((inv) => [inv.name, inv])),
+		() => new Map((data?.invoices || []).map((inv) => [keyFor(inv), inv])),
 		[data]
 	);
 
 	const toggle = (inv) => {
 		setSel((prev) => {
 			const next = { ...prev };
-			if (next[inv.name] != null) {
-				delete next[inv.name];
+			if (next[keyFor(inv)] != null) {
+				delete next[keyFor(inv)];
 			} else {
 				const already = Object.values(next).reduce((s, v) => s + (Number(v) || 0), 0);
 				const rem = Math.max(0, target - already);
 				const available = allocatableInvoiceAmount(inv);
-				next[inv.name] = Math.min(available, rem) || available;
+				next[keyFor(inv)] = Math.min(available, rem) || available;
 			}
 			return next;
 		});
@@ -562,13 +564,16 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 		setSel((prev) => ({ ...prev, [name]: val === "" ? 0 : Number(val) }));
 
 	const book = () => {
-		const invoices = Object.entries(sel).map(([name, allocated_amount]) => ({ name, allocated_amount }));
+		const invoices = Object.entries(sel).map(([key, allocated_amount]) => {
+			const source = invoiceByName.get(key);
+			return { name: source.name, reference_doctype: source.reference_doctype || data.invoiceDoctype, allocated_amount };
+		});
 		if (!invoices.length) {
 			return notify("error", isRefund ? "Bitte mindestens ein Guthaben auswählen." : "Bitte mindestens eine Rechnung auswählen.");
 		}
 		for (const inv of invoices) {
 			const amount = Number(inv.allocated_amount);
-			const source = invoiceByName.get(inv.name);
+			const source = invoiceByName.get(keyFor(inv));
 			const outstanding = allocatableInvoiceAmount(source);
 			if (!Number.isFinite(amount) || amount <= 0) {
 				return notify("error", `Zuweisung für ${inv.name} muss größer als 0 € sein.`);
@@ -578,8 +583,8 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 			}
 		}
 		if (allocated - target > 0.01) return notify("error", "Die Zuweisung übersteigt den Bankbetrag.");
-		if (isRefund && target - allocated > 0.01)
-			return notify("error", "Die Auszahlung muss vollständig einem oder mehreren Guthaben zugeordnet werden.");
+		if ((isRefund || isInsurance) && target - allocated > 0.01)
+			return notify("error", "Die Zahlung muss vollständig den ausgewählten Belegen zugeordnet werden.");
 		run(() => api.reconcileInvoices(docname, row.id, invoices, advance), {
 			success: isRefund
 				? "Guthaben ausgezahlt und Bank Transaction abgeglichen."
@@ -611,17 +616,17 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 			<InvoiceListToggle
 				invoices={data.invoices}
 				selectedCount={Object.keys(sel).length}
-				label={isRefund ? "offene Guthaben" : "offene Rechnungen"}
+				label={isInsurance ? "offene Versicherungsforderungen" : isRefund ? "offene Guthaben" : "offene Rechnungen"}
 			>
 				{data.invoices.map((inv) => {
-					const checked = sel[inv.name] != null;
+					const checked = sel[keyFor(inv)] != null;
 					return (
-						<div key={inv.name} className={`invoice-card ${checked ? "suggested" : "alt"}`}>
+						<div key={keyFor(inv)} className={`invoice-card ${checked ? "suggested" : "alt"}`}>
 							<label className="row1" style={{ cursor: "pointer" }}>
 								<div style={{ display: "flex", gap: 8, alignItems: "center" }}>
 									<input type="checkbox" checked={checked} onChange={() => toggle(inv)} />
 									<div>
-										<div className="doc-id">{inv.name}</div>
+										<div className="doc-id">{inv.name}{inv.reference_doctype === "Journal Entry" ? (isInsurance ? " · Versicherungsforderung" : " · Erstattungsguthaben") : ""}</div>
 										<div className="ref">{inv.remarks || "—"}</div>
 									</div>
 								</div>
@@ -638,8 +643,8 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 											className="alloc-input"
 											type="number"
 											step="0.01"
-											value={sel[inv.name]}
-											onChange={(e) => setAlloc(inv.name, e.target.value)}
+											value={sel[keyFor(inv)]}
+											onChange={(e) => setAlloc(keyFor(inv), e.target.value)}
 										/>
 										€
 									</span>
@@ -649,7 +654,7 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 					);
 				})}
 			</InvoiceListToggle>
-			{!isRefund && remaining > 0.01 && Object.keys(sel).length > 0 && (
+			{!isRefund && !isInsurance && remaining > 0.01 && Object.keys(sel).length > 0 && (
 				<label className="advance-toggle">
 					<input type="checkbox" checked={advance} onChange={(e) => setAdvance(e.target.checked)} />
 					Restbetrag {fmtEUR(remaining)} als Vorauszahlung am Konto belassen

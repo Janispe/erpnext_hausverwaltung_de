@@ -281,8 +281,10 @@ doc_events = {
 		],
 	},
 	"Payment Entry": {
+		"on_submit": "hausverwaltung.hausverwaltung.doctype.versicherungsfall.versicherungsfall.sync_insurance_voucher",
 		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.validate_payment_entry_not_against_fee_dunning",
 		"on_cancel": [
+			"hausverwaltung.hausverwaltung.doctype.versicherungsfall.versicherungsfall.sync_insurance_voucher",
 			"hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.on_payment_entry_cancel",
 			"hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.on_payment_entry_cancel",
 		],
@@ -293,19 +295,25 @@ doc_events = {
 		"after_insert": "hausverwaltung.hausverwaltung.utils.kostenart_konto.auto_create_kostenart_on_account_insert",
 	},
 	"Journal Entry": {
+		"on_submit": "hausverwaltung.hausverwaltung.doctype.versicherungsfall.versicherungsfall.sync_insurance_voucher",
 		"validate": "hausverwaltung.hausverwaltung.overrides.journal_entry.default_wertstellungsdatum_from_posting_date",
 		"before_save": [
 			"hausverwaltung.hausverwaltung.overrides.journal_entry.default_wertstellungsdatum_from_posting_date",
 			"hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff.protect_hv_writeoff_draft_ownership",
 		],
 		"before_submit": [
+			"hausverwaltung.hausverwaltung.doctype.versicherungsfall.versicherungsfall.validate_insurance_journal",
 			"hausverwaltung.hausverwaltung.overrides.journal_entry.default_wertstellungsdatum_from_posting_date",
 			"hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff.validate_hv_writeoff_journal_entry_before_submit",
 		],
-		"before_cancel": "hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.prevent_historical_journal_entry_cancel_with_active_invoice",
+		"before_cancel": [
+			"hausverwaltung.hausverwaltung.utils.insurance_receivables.prevent_claim_cancel",
+			"hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.prevent_historical_journal_entry_cancel_with_active_invoice",
+		],
 		# Bei Storno eines Journal Entry, der zu einer Kreditrate gehört:
 		# Rate zurücksetzen + Bank-Transaction-Reconciliation entkoppeln.
 		"on_cancel": [
+			"hausverwaltung.hausverwaltung.doctype.versicherungsfall.versicherungsfall.sync_insurance_voucher",
 			"hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag.on_journal_entry_cancel",
 			"hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.on_journal_entry_cancel",
 			"hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.on_historical_journal_entry_cancel",

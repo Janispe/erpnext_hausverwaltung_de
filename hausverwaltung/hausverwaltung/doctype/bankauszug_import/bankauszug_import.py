@@ -3221,6 +3221,18 @@ def get_open_invoices_for_row(docname: str, row_name: str) -> Dict[str, Any]:
         invoice_doctype=invoice_doctype,
         expected_cost_center=expected_cost_center,
     )
+    if allocation_mode == "customer_refund":
+        from hausverwaltung.hausverwaltung.utils.tenant_refunds import get_journal_refund_candidates
+        company = frappe.db.get_value("Bank Account", doc.bank_account, "company")
+        invoices.extend(get_journal_refund_candidates(row.party, company))
+    if row.party_type == "Supplier" and row.get("richtung") == "Eingang":
+        from hausverwaltung.hausverwaltung.utils.insurance_receivables import get_candidates
+        company = frappe.db.get_value("Bank Account", doc.bank_account, "company")
+        insurance_claims = get_candidates(row.party, company, expected_cost_center)
+        if insurance_claims:
+            invoices = insurance_claims
+            invoice_doctype = "Journal Entry"
+            allocation_mode = "insurance_receipt"
     for invoice in invoices:
         invoice["allocatable_amount"] = abs(flt(invoice.get("outstanding_amount")))
     return {
@@ -3415,7 +3427,7 @@ def manually_reconcile_row(
     has_explicit_allocations = False
     if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
         # Format 1: explizite Allocations
-        items = [{"name": p.get("name"), "allocated_amount": flt(p.get("allocated_amount"))} for p in parsed]
+        items = [{"name": p.get("name"), "allocated_amount": flt(p.get("allocated_amount")), "reference_doctype": p.get("reference_doctype") or "Sales Invoice"} for p in parsed]
         has_explicit_allocations = any(item.get("allocated_amount") is not None for item in items)
     elif isinstance(parsed, list):
         # Format 2: nur Namen, kein Betrag → später Vollbetrag verwenden
@@ -3426,6 +3438,24 @@ def manually_reconcile_row(
 
     if not items:
         frappe.throw("Bitte mindestens eine Rechnung auswählen.")
+
+    if any(item.get("reference_doctype") == "Journal Entry" for item in items):
+        from hausverwaltung.hausverwaltung.utils.tenant_refunds import create_refund_payment
+        if row.party_type == "Supplier" and row.get("richtung") == "Eingang":
+            from hausverwaltung.hausverwaltung.utils.insurance_receivables import create_receipt
+            je = create_receipt(bt, items)
+            reconcile_created_voucher_or_rollback(bt, "Journal Entry", je.name, flt(row.betrag))
+            row.db_set("journal_entry", je.name)
+            _set_row_payment_document(row, "Journal Entry", je.name)
+            row.db_set("row_status", "success")
+            row.db_set("auto_match_message", f"Versicherungsforderung ausgeglichen: {flt(row.betrag):.2f} €")
+            _recompute_doc_status(docname)
+            _refresh_and_persist_saldo(docname)
+            return {"ok": True, "journal_entry": je.name, "invoices": [i.get("name") for i in items]}
+        if not customer_refund:
+            frappe.throw("Journal-Guthaben können hier nur bei einer Mieterauszahlung ausgewählt werden.")
+        pe = create_refund_payment(bt, items)
+        return _finish_manual_reconciliation(docname, row, bt, pe, items, True, 0)
 
     if row.party_type == "Customer":
         invoice_doctype = "Sales Invoice"
@@ -3528,6 +3558,12 @@ def manually_reconcile_row(
         leftover_as_advance=False if customer_refund else bool(int(leftover_as_advance or 0)),
     )
 
+    return _finish_manual_reconciliation(docname, row, bt, pe, invoices, customer_refund, leftover_as_advance)
+
+
+def _finish_manual_reconciliation(docname, row, bt, pe, invoices, customer_refund, leftover_as_advance):
+    from hausverwaltung.hausverwaltung.utils.payment_auto_match import reconcile_created_voucher_or_rollback
+    target_amount = flt(row.betrag)
     reconcile_created_voucher_or_rollback(bt, "Payment Entry", pe.name, target_amount)
 
     row.db_set("payment_entry", pe.name)
@@ -3548,7 +3584,7 @@ def manually_reconcile_row(
     return {
         "ok": True,
         "payment_entry": pe.name,
-        "invoices": [i.name for i in invoices],
+        "invoices": [i.get("name") for i in invoices],
     }
 
 
