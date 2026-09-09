@@ -3954,10 +3954,228 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         from .customer_payment_split import reconcile_customer_split
 
         result = reconcile_customer_split(doc.name, doc.rows[0].name, json.dumps(groups))
-        self.created_docs.extend(("Payment Entry", item["payment_entry"]) for item in result["payments"])
+        self.created_docs.extend(
+            ("Journal Entry", item["journal_entry"]) if item.get("journal_entry") else ("Payment Entry", item["payment_entry"])
+            for item in result["payments"]
+        )
         doc.reload()
         self.created_docs.append(("Bank Transaction", doc.rows[0].bank_transaction))
         return result
+
+    def _make_customer_settlement_case(self, *, incoming=False):
+        customers = [self._make_customer(f"Verrechnung {index}", self._valid_test_iban(92 + index)) for index in range(2)]
+        amounts = [300, 200] if incoming else [200, 300]
+        invoices = [
+            self._make_sales_invoice(customer=customers[0], posting_date="2026-05-01", amount=amounts[0]),
+            self._make_sales_credit_note(customer=customers[1], posting_date="2026-05-01", amount=amounts[1]),
+        ]
+        doc = self._make_import([self._neutral_row(
+            betrag=100, richtung="Eingang" if incoming else "Ausgang",
+            buchungstag="2026-05-08", verwendungszweck="Verrechnung Nachzahlung und Guthaben",
+        )])
+        groups = [{"customer": customer, "invoices": [{"name": invoice, "allocated_amount": amount}]}
+                  for customer, invoice, amount in zip(customers, invoices, amounts)]
+        return doc, groups
+
+    def _assert_settlement_balances(self, doc, groups, outstanding):
+        for group, amount in zip(groups, outstanding):
+            self.assertEqual(flt(frappe.db.get_value("Sales Invoice", group["invoices"][0]["name"], "outstanding_amount")), amount)
+        doc.reload()
+        bt = frappe.get_doc("Bank Transaction", doc.rows[0].bank_transaction)
+        self.assertEqual(bt.unallocated_amount, 0)
+        self.assertEqual(bt.status, "Reconciled")
+        self.assertEqual(len(bt.payment_entries), 1)
+        self.assertEqual(bt.payment_entries[0].payment_document, "Journal Entry")
+        self.assertEqual(bt.payment_entries[0].allocated_amount, 100)
+        self.assertFalse(bt.party)
+
+    def test_customer_settlement_net_refund_and_reset(self):
+        from .customer_payment_split import customer_payments, reconcile_customer_split
+
+        doc, groups = self._make_customer_settlement_case()
+        result = self._book_customer_split_case(doc, groups)
+        self._assert_settlement_balances(doc, groups, [0, 0])
+        journal = frappe.get_doc("Journal Entry", result["payments"][0]["journal_entry"])
+        self.assertEqual(journal.docstatus, 1)
+        self.assertEqual(len(journal.accounts), 3)
+        self.assertEqual(journal.accounts[0].credit_in_account_currency, 100)
+        self.assertEqual([item["amount"] for item in result["payments"]], [200, -300])
+        self.assertEqual(bv2.get_overview(doc.name)["rows"][0]["phase"], 4)
+        self.assertEqual(bv2._delete_impact_for_doc(doc)["counts"]["journalEntries"], 1)
+        with self.assertRaises(frappe.ValidationError):
+            reconcile_customer_split(doc.name, doc.rows[0].name, groups)
+        bi.reset_row_booking(doc.name, doc.rows[0].name)
+        doc.reload()
+        self.assertFalse(customer_payments(doc.rows[0]))
+        self.assertEqual(frappe.db.get_value("Journal Entry", journal.name, "docstatus"), 2)
+        self.assertEqual(frappe.db.get_value("Bank Transaction", doc.rows[0].bank_transaction, "unallocated_amount"), 100)
+        for group, amount in zip(groups, [200, -300]):
+            self.assertEqual(flt(frappe.db.get_value("Sales Invoice", group["invoices"][0]["name"], "outstanding_amount")), amount)
+
+    def test_customer_settlement_net_receipt(self):
+        doc, groups = self._make_customer_settlement_case(incoming=True)
+        result = self._book_customer_split_case(doc, groups)
+        self._assert_settlement_balances(doc, groups, [0, 0])
+        journal = frappe.get_doc("Journal Entry", result["payments"][0]["journal_entry"])
+        self.assertEqual(journal.accounts[0].debit_in_account_currency, 100)
+        self.assertEqual([item["amount"] for item in result["payments"]], [300, -200])
+
+    def test_customer_settlement_partial_credit_and_charge(self):
+        doc, groups = self._make_customer_settlement_case()
+        groups[0]["invoices"][0]["allocated_amount"] = 100
+        groups[1]["invoices"][0]["allocated_amount"] = 200
+        self._book_customer_split_case(doc, groups)
+        self._assert_settlement_balances(doc, groups, [100, -100])
+
+    def test_customer_settlement_lists_both_invoice_signs(self):
+        from .customer_payment_split import get_customer_split_invoices
+
+        doc, groups = self._make_customer_settlement_case()
+        customer = groups[0]["customer"]
+        credit = self._make_sales_credit_note(customer=customer, posting_date="2026-05-01", amount=80)
+        options = get_customer_split_invoices(doc.name, doc.rows[0].name, customer)
+        self.assertEqual({item.name for item in options["invoices"]}, {credit, groups[0]["invoices"][0]["name"]})
+
+    def test_customer_settlement_multiple_invoices_per_customer(self):
+        doc, groups = self._make_customer_settlement_case()
+        credit = self._make_sales_credit_note(customer=groups[0]["customer"], posting_date="2026-05-01", amount=50.35)
+        groups[0]["invoices"].append({"name": credit, "allocated_amount": 50.35})
+        groups[1]["invoices"][0]["allocated_amount"] = 249.65
+        result = self._book_customer_split_case(doc, groups)
+        self._assert_settlement_balances(doc, groups, [0, -50.35])
+        self.assertEqual(flt(frappe.db.get_value("Sales Invoice", credit, "outstanding_amount")), 0)
+        self.assertEqual([item["amount"] for item in result["payments"]], [149.65, -249.65])
+
+    def test_customer_settlement_requires_journal_permission(self):
+        from . import customer_payment_split as split
+
+        doc, groups = self._make_customer_settlement_case()
+        original = frappe.has_permission
+
+        def permission(doctype, *args, **kwargs):
+            return False if doctype == "Journal Entry" else original(doctype, *args, **kwargs)
+
+        with patch.object(split.frappe, "has_permission", side_effect=permission):
+            with self.assertRaisesRegex(frappe.ValidationError, "Keine Berechtigung"):
+                split.reconcile_customer_split(doc.name, doc.rows[0].name, groups)
+        doc.reload()
+        self.assertFalse(doc.rows[0].bank_transaction)
+
+    def test_customer_settlement_rejects_cancelled_invoice(self):
+        from .customer_payment_split import reconcile_customer_split
+
+        doc, groups = self._make_customer_settlement_case()
+        frappe.get_doc("Sales Invoice", groups[1]["invoices"][0]["name"]).cancel()
+        with self.assertRaises(frappe.ValidationError):
+            reconcile_customer_split(doc.name, doc.rows[0].name, groups)
+        doc.reload()
+        self.assertFalse(doc.rows[0].bank_transaction)
+
+    def test_customer_settlement_reconcile_failure_rolls_back_journal_and_bank(self):
+        from . import customer_payment_split as split
+
+        doc, groups = self._make_customer_settlement_case()
+        names = []
+
+        def fail(bt, doctype, name, amount):
+            names.append(name)
+            raise RuntimeError("settlement reconcile failed")
+
+        with patch.object(split.payments, "reconcile_voucher_with_bt", side_effect=fail):
+            with self.assertRaisesRegex(RuntimeError, "settlement reconcile failed"):
+                split.reconcile_customer_split(doc.name, doc.rows[0].name, groups)
+        self.assertEqual(len(names), 1)
+        doc.reload()
+        self.assertFalse(doc.rows[0].bank_transaction)
+        self.assertFalse(doc.rows[0].customer_payments)
+        self.assertFalse(frappe.db.exists("Journal Entry", names[0]))
+        for ledger in ("GL Entry", "Payment Ledger Entry"):
+            self.assertFalse(frappe.db.exists(ledger, {
+                "voucher_type": "Journal Entry", "voucher_no": names[0], "creation": [">=", self._test_started_at],
+            }))
+        for group, amount in zip(groups, [200, -300]):
+            self.assertEqual(flt(frappe.db.get_value("Sales Invoice", group["invoices"][0]["name"], "outstanding_amount")), amount)
+
+    def test_customer_settlement_external_cancellation_preserves_ownership(self):
+        from .customer_payment_split import customer_payments
+
+        doc, groups = self._make_customer_settlement_case()
+        result = self._book_customer_split_case(doc, groups)
+        frappe.get_doc("Journal Entry", result["payments"][0]["journal_entry"]).cancel()
+        doc.reload()
+        self.assertFalse(doc.rows[0].journal_entry)
+        self.assertEqual(len(customer_payments(doc.rows[0])), 2)
+        self.assertEqual(doc.rows[0].row_status, "needs_review")
+        self.assertEqual(bv2.get_overview(doc.name)["rows"][0]["phase"], 3)
+        with patch.object(bi, "_retry_auto_match_for_row") as retry:
+            bi.retry_auto_match(doc.name)
+        retry.assert_not_called()
+        bi.reset_row_booking(doc.name, doc.rows[0].name)
+        doc.reload()
+        self.assertFalse(customer_payments(doc.rows[0]))
+
+    def test_customer_settlement_reset_failure_is_atomic(self):
+        doc, groups = self._make_customer_settlement_case()
+        self._book_customer_split_case(doc, groups)
+        with patch("hausverwaltung.hausverwaltung.utils.bank_transaction_links.remove_bank_transaction_payment_links", return_value=[]), patch(
+            "erpnext.accounts.doctype.bank_transaction.bank_transaction.remove_from_bank_transaction",
+        ):
+            with self.assertRaises(frappe.ValidationError):
+                bi.reset_row_booking(doc.name, doc.rows[0].name)
+        self._assert_settlement_balances(doc, groups, [0, 0])
+        self.assertEqual(frappe.db.get_value("Journal Entry", doc.rows[0].journal_entry, "docstatus"), 1)
+
+    def test_customer_settlement_shared_journal_is_protected(self):
+        doc, groups = self._make_customer_settlement_case()
+        self._book_customer_split_case(doc, groups)
+        other = self._make_import([self._neutral_row(betrag=100)])
+        other.rows[0].db_set("customer_payments", doc.rows[0].customer_payments)
+        with self.assertRaisesRegex(frappe.ValidationError, "anderen Bankimport-Zeile"):
+            bi.reset_row_booking(doc.name, doc.rows[0].name)
+        self._assert_settlement_balances(doc, groups, [0, 0])
+
+    def test_customer_settlement_delete_cancels_journal(self):
+        doc, groups = self._make_customer_settlement_case()
+        result = self._book_customer_split_case(doc, groups)
+        bv2.delete_import(doc.name, cascade=1)
+        self.assertFalse(frappe.db.exists("Bankauszug Import", doc.name))
+        self.assertEqual(frappe.db.get_value("Journal Entry", result["payments"][0]["journal_entry"], "docstatus"), 2)
+
+    def test_customer_settlement_rejects_wrong_net_direction_and_overallocation(self):
+        from .customer_payment_split import reconcile_customer_split
+
+        doc, groups = self._make_customer_settlement_case()
+        for amounts in ([200, 299.99], [200.01, 300.01], [200, 100]):
+            for group, amount in zip(groups, amounts):
+                group["invoices"][0]["allocated_amount"] = amount
+            with self.assertRaises(frappe.ValidationError):
+                reconcile_customer_split(doc.name, doc.rows[0].name, groups)
+            doc.reload()
+            self.assertFalse(doc.rows[0].bank_transaction)
+
+    def test_customer_settlement_integrity_audit(self):
+        from hausverwaltung.hausverwaltung.utils import booking_integrity_audit as audit
+
+        doc, groups = self._make_customer_settlement_case()
+        result = self._book_customer_split_case(doc, groups)
+        original = frappe.get_all
+
+        def scoped_rows(doctype, *args, **kwargs):
+            if doctype == "Bankauszug Import Row":
+                return [frappe._dict(doc.rows[0].as_dict())]
+            return original(doctype, *args, **kwargs)
+
+        with patch.object(audit.frappe, "get_all", side_effect=scoped_rows):
+            issues = []
+            audit._check_bank_links(issues, 100)
+            self.assertEqual(issues, [])
+            wrong = json.loads(json.dumps(result["payments"]))
+            wrong[0]["customer"], wrong[1]["customer"] = wrong[1]["customer"], wrong[0]["customer"]
+            doc.rows[0].customer_payments = json.dumps(wrong)
+            issues = []
+            audit._check_bank_links(issues, 100)
+            self.assertIn("bank_split_allocation_mismatch", [issue["code"] for issue in issues])
+        doc.reload()
 
     def test_customer_split_refund_and_full_reset(self):
         from .customer_payment_split import customer_payments, get_customer_split_invoices

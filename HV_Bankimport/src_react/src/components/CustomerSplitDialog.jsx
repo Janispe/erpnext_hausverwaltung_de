@@ -11,10 +11,10 @@ export function CustomerSplitDialog({ docname, row, onClose, onActionDone, notif
 	const alive = useRef(true);
 	useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 	const search = useCallback((txt) => api.searchParties("Customer", txt), []);
-	const target = Math.round(Math.abs(Number(row.betrag)) * 100);
-	const refund = Number(row.betrag) < 0;
-	const entries = groups.flatMap((group) => Object.entries(group.selected));
-	const allocated = entries.reduce((sum, [, value]) => sum + Math.round(Number(value) * 100), 0);
+	const target = Math.round(Number(row.betrag) * 100);
+	const groupTotal = (group) => Object.entries(group.selected).reduce((sum, [name, value]) =>
+		sum + Math.round(Number(value) * 100) * Math.sign(Number(group.invoices.find((inv) => inv.name === name)?.outstanding_amount)), 0);
+	const allocated = groups.reduce((sum, group) => sum + groupTotal(group), 0);
 	const valid = groups.length >= 2 && allocated === target && groups.every((group) =>
 		!group.loading && !group.error && Object.keys(group.selected).length > 0 &&
 		Object.entries(group.selected).every(([name, value]) => {
@@ -39,7 +39,7 @@ export function CustomerSplitDialog({ docname, row, onClose, onActionDone, notif
 	};
 	const select = (group, invoice, checked) => {
 		const selected = { ...group.selected };
-		if (checked) selected[invoice.name] = Math.min(allocatableInvoiceAmount(invoice), Math.max(0, target - allocated) / 100) || allocatableInvoiceAmount(invoice);
+		if (checked) selected[invoice.name] = allocatableInvoiceAmount(invoice);
 		else delete selected[invoice.name];
 		update(group.customer, { selected });
 	};
@@ -52,7 +52,7 @@ export function CustomerSplitDialog({ docname, row, onClose, onActionDone, notif
 				invoices: Object.entries(group.selected).map(([name, value]) => ({ name, allocated_amount: Number(value) })),
 			})));
 			if (result.ok === false) throw new Error(result.message || "Aufteilung konnte nicht gebucht werden.");
-			notify("success", "Teilzahlungen gebucht und Bankumsatz vollständig abgeglichen.");
+			notify("success", "Belege ausgeglichen und Bankumsatz vollständig abgeglichen.");
 			onClose();
 			onActionDone({ advance: false });
 		} catch (error) {
@@ -73,17 +73,17 @@ export function CustomerSplitDialog({ docname, row, onClose, onActionDone, notif
 					<section key={group.customer} className="customer-split-group">
 						<div className="customer-split-heading">
 							<DocLink doctype="Customer" docname={group.customer}>{group.customer}</DocLink>
-							<strong>{fmtEUR(Object.values(group.selected).reduce((sum, value) => sum + Number(value), 0))}</strong>
+							<strong>{fmtEUR(groupTotal(group) / 100)}</strong>
 							<button className="btn subtle sm" title="Mieter entfernen" aria-label={`Mieter ${group.customer} entfernen`} disabled={busy} onClick={() => setGroups((items) => items.filter((item) => item.customer !== group.customer))}><Icon name="trash" /></button>
 						</div>
 						{group.contract && <div className="customer-split-contract">{group.contract} · {group.wohnung}</div>}
 						{group.loading && <div className="panel-loading"><Spinner /> Belege laden…</div>}
 						{group.error && <div role="alert" className="reset-warning">{group.error}</div>}
-						{!group.loading && !group.error && !group.invoices.length && <div className="hint">{refund ? "Keine offenen Guthaben." : "Keine offenen Rechnungen."}</div>}
+						{!group.loading && !group.error && !group.invoices.length && <div className="hint">Keine offenen Rechnungen oder Guthaben.</div>}
 						{group.invoices.map((invoice) => (
 							<div key={invoice.name} className="customer-split-invoice">
-								<label><input type="checkbox" checked={group.selected[invoice.name] != null} disabled={busy} onChange={(event) => select(group, invoice, event.target.checked)} /><span>{invoice.name}<small>{invoice.remarks || fmtDate(invoice.posting_date)}</small></span></label>
-								<span>{fmtEUR(allocatableInvoiceAmount(invoice))}</span>
+								<label><input type="checkbox" checked={group.selected[invoice.name] != null} disabled={busy} onChange={(event) => select(group, invoice, event.target.checked)} /><span>{invoice.name}<small>{Number(invoice.outstanding_amount) < 0 ? "Guthaben" : "Forderung"} · {invoice.remarks || fmtDate(invoice.posting_date)}</small></span></label>
+								<span>{fmtEUR(invoice.outstanding_amount)}</span>
 								{group.selected[invoice.name] != null && <input className="alloc-input" aria-label={`Teilbetrag ${invoice.name}`} type="number" min="0.01" step="0.01" max={allocatableInvoiceAmount(invoice)} disabled={busy} value={group.selected[invoice.name]} onChange={(event) => update(group.customer, { selected: { ...group.selected, [invoice.name]: event.target.value } })} />}
 							</div>
 						))}
@@ -98,10 +98,10 @@ export function CustomerSplitDialog({ docname, row, onClose, onActionDone, notif
 
 export function CustomerPayments({ row }) {
 	return <div className="customer-payments">{(row.customerPayments || []).map((item) => (
-		<div className="customer-split-group" key={item.payment_entry}>
+		<div className="customer-split-group" key={item.customer}>
 			<div className="customer-split-heading"><DocLink doctype="Customer" docname={item.customer}>{item.customer}</DocLink><strong>{fmtEUR(item.amount)}</strong></div>
 			<div className="customer-split-contract">{item.contract} · {item.wohnung}</div>
-			<DocLink doctype="Payment Entry" docname={item.payment_entry}>{item.payment_entry} <Icon name="link" size={12} /></DocLink>
+			<DocLink doctype={item.journal_entry ? "Journal Entry" : "Payment Entry"} docname={item.journal_entry || item.payment_entry}>{item.journal_entry || item.payment_entry} <Icon name="link" size={12} /></DocLink>
 		</div>
 	))}</div>;
 }

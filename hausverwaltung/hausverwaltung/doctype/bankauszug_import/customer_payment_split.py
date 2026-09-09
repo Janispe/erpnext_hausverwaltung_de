@@ -15,6 +15,17 @@ def customer_payments(row):
     return json.loads(value) if isinstance(value, str) and value else (value or [])
 
 
+def split_vouchers(row):
+    return list(
+        dict.fromkeys(
+            ("Journal Entry", item["journal_entry"])
+            if item.get("journal_entry")
+            else ("Payment Entry", item["payment_entry"])
+            for item in customer_payments(row)
+        )
+    )
+
+
 def _amount(value):
     try:
         amount = Decimal(str(value))
@@ -56,7 +67,7 @@ def _validate_contract_invoice(invoice, contract):
 def get_customer_split_invoices(docname, row_name, customer):
     doc = frappe.get_doc("Bankauszug Import", docname)
     doc.check_permission("read")
-    row = bi._get_row_by_name(doc, row_name)
+    bi._get_row_by_name(doc, row_name)
     contract = _contract(customer)
     bank = frappe.get_doc("Bank Account", doc.bank_account)
     currency = frappe.get_cached_value("Company", bank.company, "default_currency")
@@ -67,7 +78,7 @@ def get_customer_split_invoices(docname, row_name, customer):
             "company": bank.company,
             "currency": currency,
             "docstatus": 1,
-            "outstanding_amount": ["<", 0] if row.richtung == "Ausgang" else [">", 0],
+            "outstanding_amount": ["!=", 0],
         },
         fields=["name", "posting_date", "remarks", "outstanding_amount"],
         order_by="posting_date asc",
@@ -113,6 +124,62 @@ def _parse_allocations(allocations):
     return parsed
 
 
+def _create_settlement_journal(bt, groups, company, bank):
+    """One real bank movement, with signed invoice legs on separate Customers."""
+    if not frappe.has_permission("Journal Entry", "create") or not frappe.has_permission(
+        "Journal Entry", "submit"
+    ):
+        frappe.throw("Keine Berechtigung zum Erstellen und Buchen der Verrechnungsbuchung.")
+    shape = payments._bank_transaction_shape(bt)
+    cost_center = payments._resolve_expected_cost_center_for_bt(bt, for_update=True)
+    je = frappe.new_doc("Journal Entry")
+    je.update(
+        {
+            "voucher_type": "Bank Entry",
+            "company": company,
+            "posting_date": bt.date,
+            "cheque_no": bt.reference_number or bt.name,
+            "cheque_date": bt.date,
+            "user_remark": "Verrechnung Nachzahlung/Guthaben: " + (bt.description or bt.name),
+        }
+    )
+    je.append(
+        "accounts",
+        {
+            "account": bank.account,
+            "cost_center": cost_center,
+            "debit_in_account_currency": shape.amount if shape.direction == "in" else 0,
+            "credit_in_account_currency": shape.amount if shape.direction == "out" else 0,
+        },
+    )
+    for group in groups:
+        for selected in group["invoices"]:
+            amount = selected["signed_amount"]
+            je.append(
+                "accounts",
+                {
+                    "account": selected["account"],
+                    "party_type": "Customer",
+                    "party": group["customer"],
+                    "reference_type": "Sales Invoice",
+                    "reference_name": selected["name"],
+                    "cost_center": selected["cost_center"],
+                    "debit_in_account_currency": float(-amount) if amount < 0 else 0,
+                    "credit_in_account_currency": float(amount) if amount > 0 else 0,
+                },
+            )
+    je.insert()
+    je.submit()
+    for group in groups:
+        for selected in group["invoices"]:
+            outstanding = Decimal(
+                str(frappe.db.get_value("Sales Invoice", selected["name"], "outstanding_amount"))
+            )
+            if outstanding != selected["outstanding"] - selected["signed_amount"]:
+                frappe.throw(f"Der offene Betrag von {selected['name']} wurde nicht korrekt verrechnet.")
+    return je
+
+
 @frappe.whitelist()
 def reconcile_customer_split(docname, row_name, allocations):
     groups = _parse_allocations(allocations)
@@ -127,16 +194,18 @@ def reconcile_customer_split(docname, row_name, allocations):
         if customer_payments(row):
             frappe.throw("Die bisherige Zahlungsaufteilung muss zuerst vollständig zurückgesetzt werden.")
         shape = payments._bank_transaction_shape(bt)
-        total = sum((group["amount"] for group in groups), Decimal(0))
-        if total != _amount(shape.amount) or total != _amount(row.betrag):
-            frappe.throw("Die Teilbeträge müssen zusammen genau dem Bankbetrag entsprechen.")
+        if _amount(shape.amount) != _amount(row.betrag):
+            frappe.throw("Der Bankbetrag stimmt nicht mit der Importzeile überein.")
         if (row.richtung == "Ausgang") != (shape.direction == "out"):
             frappe.throw("Die Zahlungsrichtung stimmt nicht mit dem Bankumsatz überein.")
+        company, bank = payments._resolve_company_and_bank_account(bt)
+        currency = payments._get_company_currency(company)
 
         # Validate all contract identities before creating the first voucher.
         for group in sorted(groups, key=lambda item: item["customer"]):
             contract = _contract(group["customer"], for_update=True)
             group["contract"], group["wohnung"] = contract.name, contract.wohnung
+            group["signed_amount"] = Decimal(0)
             for selected in sorted(group["invoices"], key=lambda item: item["name"]):
                 invoice = frappe.get_doc("Sales Invoice", selected["name"], for_update=True)
                 invoice.check_permission("read")
@@ -145,37 +214,77 @@ def reconcile_customer_split(docname, row_name, allocations):
                 _validate_contract_invoice(invoice, contract)
                 if _amount(selected["allocated_amount"]) > abs(Decimal(str(invoice.outstanding_amount))):
                     frappe.throw(f"Teilbetrag für {invoice.name} übersteigt den aktuellen offenen Betrag.")
+                payments._lock_and_validate_invoices(
+                    invoices=[selected],
+                    invoice_doctype="Sales Invoice",
+                    company=company,
+                    party=group["customer"],
+                    company_currency=currency,
+                    credit_notes=invoice.outstanding_amount < 0,
+                )
+                selected["outstanding"] = Decimal(str(invoice.outstanding_amount))
+                selected["signed_amount"] = _amount(selected["allocated_amount"]) * (
+                    1 if invoice.outstanding_amount > 0 else -1
+                )
+                selected["account"] = invoice.debit_to
+                selected["cost_center"] = payments._get_cost_center_of_invoice(
+                    invoice.name, "Sales Invoice", for_update=True
+                )
+                group["signed_amount"] += selected["signed_amount"]
+
+        total = sum((group["signed_amount"] for group in groups), Decimal(0))
+        if total != Decimal(str(shape.signed_amount)):
+            frappe.throw(
+                "Nachzahlungen minus Guthaben müssen genau dem vorzeichenbehafteten Bankbetrag entsprechen."
+            )
+        mixed = len({selected["signed_amount"] > 0 for group in groups for selected in group["invoices"]}) > 1
 
         result = []
+        journal = _create_settlement_journal(bt, groups, company, bank) if mixed else None
+        if journal:
+            payments.reconcile_voucher_with_bt(bt, "Journal Entry", journal.name, shape.amount)
         for group in groups:
-            amount = float(group["amount"])
-            pe = payments.create_payment_entry_for_invoices(
-                bt=bt,
-                invoices=group["invoices"],
-                invoice_doctype="Sales Invoice",
-                target_amount=amount,
-                customer=group["customer"],
-                partial=True,
-            )
-            payments.reconcile_voucher_with_bt(bt, "Payment Entry", pe.name, amount, partial=True)
+            amount = float(group["signed_amount"] if mixed else group["amount"])
+            if journal:
+                voucher = {
+                    "journal_entry": journal.name,
+                    "invoices": [
+                        {"name": selected["name"], "amount": float(selected["signed_amount"])}
+                        for selected in group["invoices"]
+                    ],
+                }
+            else:
+                pe = payments.create_payment_entry_for_invoices(
+                    bt=bt,
+                    invoices=group["invoices"],
+                    invoice_doctype="Sales Invoice",
+                    target_amount=amount,
+                    customer=group["customer"],
+                    partial=True,
+                )
+                payments.reconcile_voucher_with_bt(bt, "Payment Entry", pe.name, amount, partial=True)
+                voucher = {"payment_entry": pe.name}
             result.append(
                 {
                     "customer": group["customer"],
                     "contract": group["contract"],
                     "wohnung": group["wohnung"],
-                    "payment_entry": pe.name,
+                    **voucher,
                     "amount": amount,
                 }
             )
 
         bt.reload()
-        expected = {item["payment_entry"]: item["amount"] for item in result}
+        expected = (
+            {("Journal Entry", journal.name): shape.amount}
+            if journal
+            else {("Payment Entry", item["payment_entry"]): item["amount"] for item in result}
+        )
         actual = {
-            item.payment_entry: flt(item.allocated_amount)
+            (item.payment_document, item.payment_entry): flt(item.allocated_amount)
             for item in bt.payment_entries
-            if item.payment_document == "Payment Entry"
         }
-        if actual != expected or flt(bt.unallocated_amount) != 0:
+        if actual != expected or len(bt.payment_entries) != len(expected) or flt(bt.unallocated_amount) != 0:
             frappe.throw("Die Teilzahlungen wurden nicht vollständig mit dem Bankumsatz abgeglichen.")
         # Do not run party auto-matching again on this multi-Customer bank movement.
         bt.db_set("party_type", None)
@@ -183,8 +292,15 @@ def reconcile_customer_split(docname, row_name, allocations):
         row.db_set("party_type", None)
         row.db_set("party", None)
         row.db_set("customer_payments", json.dumps(result))
-        row.db_set("payment_entry", result[0]["payment_entry"])
-        bi._set_row_payment_document(row, "Payment Entry", result[0]["payment_entry"])
+        row.db_set(
+            "journal_entry" if journal else "payment_entry",
+            journal.name if journal else result[0]["payment_entry"],
+        )
+        bi._set_row_payment_document(
+            row,
+            "Journal Entry" if journal else "Payment Entry",
+            journal.name if journal else result[0]["payment_entry"],
+        )
         row.db_set("row_status", "success")
         row.db_set("auto_match_message", f"Manuell auf {len(result)} Mieter aufgeteilt: {total:.2f} EUR.")
         bi._recompute_doc_status(docname)
@@ -195,7 +311,7 @@ def reconcile_customer_split(docname, row_name, allocations):
         raise
 
 
-def sync_cancelled_splits(voucher_name=None, import_name=None):
+def sync_cancelled_splits(voucher_name=None, import_name=None, voucher_doctype="Payment Entry"):
     """Keep ownership of every split, even after an external partial cancellation."""
     filters = {"parenttype": "Bankauszug Import", "customer_payments": ["is", "set"]}
     if import_name:
@@ -209,23 +325,24 @@ def sync_cancelled_splits(voucher_name=None, import_name=None):
     )
 
     for row in rows:
-        entries = customer_payments(row)
-        if voucher_name and not any(item["payment_entry"] == voucher_name for item in entries):
+        vouchers = split_vouchers(row)
+        if voucher_name and (voucher_doctype, voucher_name) not in vouchers:
             continue
         stale = [
-            item["payment_entry"]
-            for item in entries
-            if bi._payment_entry_is_cancelled_or_missing(item["payment_entry"])
+            (doctype, name)
+            for doctype, name in vouchers
+            if doctype == voucher_doctype and bi._voucher_is_cancelled_or_missing(doctype, name)
         ]
         if not stale:
             continue
-        for name in stale:
-            remove_bank_transaction_payment_links("Payment Entry", name)
+        for doctype, name in stale:
+            remove_bank_transaction_payment_links(doctype, name)
         frappe.db.set_value(
             "Bankauszug Import Row",
             row.name,
             {
                 "payment_entry": None,
+                "journal_entry": None,
                 "payment_document_type": None,
                 "payment_document": None,
                 "row_status": "needs_review",
@@ -244,38 +361,41 @@ def reset_customer_split(docname, row):
         remove_bank_transaction_payment_links,
     )
 
-    entries = customer_payments(row)
-    for item in sorted(entries, key=lambda item: item["payment_entry"]):
-        name = item["payment_entry"]
-        bi._get_doc_for_update_if_exists("Payment Entry", name)
+    vouchers = split_vouchers(row)
+    for doctype, name in sorted(vouchers):
+        bi._get_doc_for_update_if_exists(doctype, name)
         if bi._other_import_row_references_voucher(
-            "Payment Entry",
+            doctype,
             name,
             exclude_row_name=row.name,
             for_update=True,
         ):
-            frappe.throw(f"Payment Entry {name} wird auch von einer anderen Bankimport-Zeile verwendet.")
+            frappe.throw(f"{doctype} {name} wird auch von einer anderen Bankimport-Zeile verwendet.")
 
     savepoint = "bankimport_reset_customer_split"
     frappe.db.savepoint(savepoint)
     try:
         results = []
-        for item in entries:
-            name = item["payment_entry"]
-            results.append(bi._cancel_voucher_for_row("Payment Entry", name))
-            remove_bank_transaction_payment_links("Payment Entry", name)
+        for doctype, name in vouchers:
+            results.append(bi._cancel_voucher_for_row(doctype, name))
+            remove_bank_transaction_payment_links(doctype, name)
         # The shared delink helper logs failures. Verify the postcondition before
         # discarding ownership, otherwise a failed unlink would strand payments.
-        if frappe.get_all(
-            "Bank Transaction Payments",
-            filters={
-                "payment_document": "Payment Entry",
-                "payment_entry": ["in", [item["payment_entry"] for item in entries]],
-            },
-            pluck="name",
-            limit=1,
+        if any(
+            frappe.get_all(
+                "Bank Transaction Payments",
+                filters={
+                    "payment_document": doctype,
+                    "payment_entry": name,
+                },
+                pluck="name",
+                limit=1,
+            )
+            for doctype, name in vouchers
         ):
-            frappe.throw("Die Bankverknüpfungen konnten nicht vollständig gelöst werden. Storno zurückgerollt.")
+            frappe.throw(
+                "Die Bankverknüpfungen konnten nicht vollständig gelöst werden. Storno zurückgerollt."
+            )
         bi._clear_row_booking_links(row, "Zahlungsaufteilung vollständig zurückgesetzt.")
         bi._recompute_doc_status(docname)
         bi._refresh_and_persist_saldo(docname)

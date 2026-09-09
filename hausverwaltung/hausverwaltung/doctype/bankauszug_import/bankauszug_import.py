@@ -289,11 +289,10 @@ def sync_cancelled_voucher_links(
     direct_field = "payment_entry" if voucher_doctype == "Payment Entry" else "journal_entry"
 
     conditions = ["parenttype = 'Bankauszug Import'"]
-    if voucher_doctype == "Payment Entry":
-        from .customer_payment_split import sync_cancelled_splits
+    from .customer_payment_split import sync_cancelled_splits
 
-        sync_cancelled_splits(voucher_name=voucher_name, import_name=import_name)
-        conditions.append("(customer_payments IS NULL OR customer_payments = '[]')")
+    sync_cancelled_splits(voucher_name=voucher_name, import_name=import_name, voucher_doctype=voucher_doctype)
+    conditions.append("(customer_payments IS NULL OR customer_payments = '[]')")
     values: Dict[str, Any] = {}
     if import_name:
         conditions.append("parent = %(import_name)s")
@@ -1885,20 +1884,20 @@ def _linked_voucher_for_row(row: Document) -> Tuple[Optional[str], Optional[str]
         return "Payment Entry", _doc_field(row, "payment_entry")
     if _doc_field(row, "journal_entry"):
         return "Journal Entry", _doc_field(row, "journal_entry")
-    from .customer_payment_split import customer_payments
+    from .customer_payment_split import split_vouchers
 
-    entries = customer_payments(row)
+    entries = split_vouchers(row)
     if entries:
-        return "Payment Entry", entries[0]["payment_entry"]
+        return entries[0]
     return None, None
 
 
 def _linked_vouchers_for_row(row):
-    from .customer_payment_split import customer_payments
+    from .customer_payment_split import split_vouchers
 
-    entries = customer_payments(row)
+    entries = split_vouchers(row)
     if entries:
-        return [("Payment Entry", entry["payment_entry"]) for entry in entries]
+        return entries
     doctype, name = _linked_voucher_for_row(row)
     return [(doctype, name)] if doctype and name else []
 
@@ -2005,6 +2004,9 @@ def _other_import_row_references_voucher(
                     COALESCE(customer_payments, '[]'), JSON_OBJECT('payment_entry', %(voucher_name)s)
                 ))
                 OR (%(voucher_type)s = 'Journal Entry' AND journal_entry = %(voucher_name)s)
+                OR (%(voucher_type)s = 'Journal Entry' AND JSON_CONTAINS(
+                    COALESCE(customer_payments, '[]'), JSON_OBJECT('journal_entry', %(voucher_name)s)
+                ))
                 OR (
                     payment_document_type = %(voucher_type)s
                     AND payment_document = %(voucher_name)s

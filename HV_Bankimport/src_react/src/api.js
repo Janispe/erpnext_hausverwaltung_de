@@ -296,10 +296,12 @@ export async function getSplitOptions(name, rowName) {
 
 export async function getCustomerSplitInvoices(name, rowName, customer) {
 	if (!embedded) {
-		const refund = Number(MOCK_OVERVIEW.rows.find((row) => row.id === rowName)?.betrag) < 0;
 		return {
 			customer, contract: `MV-${customer}`, wohnung: "Demo-Wohnung",
-			invoices: [{ name: `BK-${customer}`, outstanding_amount: refund ? -500 : 500, posting_date: "2026-01-01", remarks: "BK-Abrechnung" }],
+			invoices: [
+				{ name: `BK-${customer}`, outstanding_amount: 1000, posting_date: "2026-01-01", remarks: "BK-Nachzahlung" },
+				{ name: `GUTHABEN-${customer}`, outstanding_amount: -500, posting_date: "2026-01-01", remarks: "BK-Guthaben" },
+			],
 		};
 	}
 	return rpc("customer_split_invoices", { docname: name, row_name: rowName, customer });

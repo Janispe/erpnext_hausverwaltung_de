@@ -761,6 +761,50 @@ def _active_docstatus(doctype: str, name: str | None) -> int | None:
 	return cint(value) if value is not None else None
 
 
+def _check_customer_settlement(issues, row, parts, bank_signed):
+	journal_names = {part.get("journal_entry") for part in parts}
+	journal_name = parts[0].get("journal_entry")
+	if (
+		len(journal_names) != 1 or not journal_name
+		or any(part.get("payment_entry") for part in parts)
+		or len({part.get("customer") for part in parts}) != len(parts)
+		or abs(sum(flt(part.get("amount")) for part in parts) - bank_signed) >= 0.005
+	):
+		_issue(issues, severity="critical", code="bank_split_total_mismatch",
+			doctype="Bankauszug Import Row", name=row.name,
+			message="Die Verrechnung stimmt nicht mit dem Bankbetrag überein.")
+		expected = None
+	else:
+		expected = []
+		for part in parts:
+			invoices = part.get("invoices") or []
+			if not invoices or abs(sum(flt(inv.get("amount")) for inv in invoices) - flt(part.get("amount"))) >= 0.005:
+				expected = None
+				break
+			expected.extend((part.get("customer"), inv.get("name"), round(flt(inv.get("amount")), 2)) for inv in invoices)
+	actual = [
+		(item.party, item.reference_name, round(flt(item.credit_in_account_currency) - flt(item.debit_in_account_currency), 2))
+		for item in frappe.get_all("Journal Entry Account",
+			filters={"parent": journal_name, "parenttype": "Journal Entry", "party_type": "Customer", "reference_type": "Sales Invoice"},
+			fields=["party", "reference_name", "credit_in_account_currency", "debit_in_account_currency"])
+	] if journal_name else []
+	linked = frappe.db.get_value("Bank Transaction Payments",
+		{"parent": row.bank_transaction, "payment_document": "Journal Entry", "payment_entry": journal_name}, "allocated_amount")
+	links_disagree = (
+		(row.get("journal_entry") and row.journal_entry != journal_name)
+		or (row.get("payment_document") and (
+			row.payment_document_type != "Journal Entry" or row.payment_document != journal_name
+		))
+	)
+	if expected is None or sorted(expected) != sorted(actual) or abs(flt(linked) - abs(bank_signed)) >= 0.005 or links_disagree:
+		_issue(issues, severity="critical", code="bank_split_allocation_mismatch",
+			doctype="Bankauszug Import Row", name=row.name,
+			message="Verrechnungsbelege, Customers oder Bankzuordnung widersprechen der gespeicherten Aufteilung.")
+	item = frappe._dict(row)
+	item.update(journal_entry=journal_name, payment_document_type="Journal Entry", payment_document=journal_name)
+	return item
+
+
 def _check_bank_links(
 	issues: list[dict[str, Any]],
 	limit: int,
@@ -795,6 +839,11 @@ def _check_bank_links(
 			"Bank Transaction", row.bank_transaction, ["deposit", "withdrawal"], as_dict=True,
 		) or {}
 		bank_total = abs(flt(bt_amount.get("deposit")) - flt(bt_amount.get("withdrawal")))
+		if any(part.get("journal_entry") for part in parts):
+			rows_to_check.append(_check_customer_settlement(
+				issues, row, parts, flt(bt_amount.get("deposit")) - flt(bt_amount.get("withdrawal")),
+			))
+			continue
 		if (
 			abs(sum(flt(part.get("amount")) for part in parts) - bank_total) >= 0.005
 			or any(flt(part.get("amount")) <= 0 for part in parts)
