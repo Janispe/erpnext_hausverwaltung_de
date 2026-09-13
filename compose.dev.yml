@@ -1,0 +1,279 @@
+# Dev-Stack für die App `hausverwaltung`.
+#
+# Bewusst OHNE `hausverwaltung_peters` — kein Mount, kein install-app, kein
+# Zugang zu den Produktiv-Volumes, kein `shared_net`. Diese Datei ist so
+# geschnitten, dass in der entstehenden Site keine Mandantendaten landen
+# können, weil die privaten Quellen schlicht nicht erreichbar sind.
+#
+# Start:  docker compose -f compose.dev.yml up -d --build
+# Site:   http://localhost:8180   (Administrator / admin)
+#
+# Der Projektname ist unten über `name:` fest verdrahtet. Dadurch heißen alle
+# Volumes `hv-dev_*` und können nicht mit dem Produktiv-Stack kollidieren —
+# auch dann nicht, wenn `-p` beim Aufruf vergessen wird.
+
+name: hv-dev
+
+x-image: &image
+  image: hausverwaltung/frappe-chrome:dev
+  build:
+    context: .
+    dockerfile: docker/frappe-chrome.Dockerfile
+    args:
+      FRAPPE_BASE_IMAGE: ${FRAPPE_BASE_IMAGE:-frappe/erpnext:v16.14.0}
+
+# Ein einziger Mount-Block für alle Bench-Services. Die vier App-Repos werden
+# als Geschwisterordner erwartet:
+#
+#   apps/
+#     hausverwaltung/    <- hier liegt diese Datei
+#     process_engine/    <- required_apps aus hooks.py
+#     mail_merge/        <- required_apps aus hooks.py
+x-mounts: &mounts
+  - sites:/home/frappe/frappe-bench/sites
+  - assets:/home/frappe/frappe-bench/sites/assets
+  - logs:/home/frappe/frappe-bench/logs
+  - env:/home/frappe/frappe-bench/env
+  - .:/home/frappe/frappe-bench/apps/hausverwaltung
+  - ../process_engine:/home/frappe/frappe-bench/apps/process_engine
+  - ../mail_merge:/home/frappe/frappe-bench/apps/mail_merge
+
+x-backend-env: &backend-env
+  DB_HOST: db
+  DB_PORT: "3306"
+  REDIS_CACHE: redis-cache:6379
+  REDIS_QUEUE: redis-queue:6379
+  SOCKETIO_PORT: "9000"
+  MYSQL_ROOT_PASSWORD: admin
+  MARIADB_ROOT_PASSWORD: admin
+
+# Dieser Stack installiert genau `hausverwaltung` und das, was die App laut
+# hooks.py selbst als `required_apps` deklariert — process_engine und
+# mail_merge. Nichts darüber hinaus, damit ein Clone dieses Repos allein
+# lauffähig ist.
+#
+# Apps, die umgekehrt von hausverwaltung abhängen (thunderbird_hausverwaltung,
+# hausverwaltung_peters), gehören nicht hierher. Für thunderbird gibt es
+# compose.dev.thunderbird.yml als Overlay.
+#
+# Reihenfolge zählt: required_apps müssen vor hausverwaltung installiert sein.
+x-bootstrap-env: &bootstrap-env
+  SITE_NAME: ${SITE_NAME:-frontend}
+  HV_APPS: ${HV_APPS:-process_engine mail_merge hausverwaltung}
+  HV_COMPANY: ${HV_COMPANY:-Demo Hausverwaltung}
+  HV_LANGUAGE: ${HV_LANGUAGE:-de}
+  HV_TIME_ZONE: ${HV_TIME_ZONE:-Europe/Berlin}
+  HV_COUNTRY: ${HV_COUNTRY:-Germany}
+  HV_CURRENCY: ${HV_CURRENCY:-EUR}
+  HV_COA_TEMPLATE: ${HV_COA_TEMPLATE:-SKR03 mit Kontonummern}
+  # Anders als produktiv: Dev braucht einen echten Kontenrahmen, sonst laufen
+  # Betriebskosten-, Mahn- und EÜR-Pfade mangels Konten ins Leere.
+  HV_BOOTSTRAP_CREATE_COA: ${HV_BOOTSTRAP_CREATE_COA:-1}
+  HV_BOOTSTRAP_RUN_SETUP_WIZARD: ${HV_BOOTSTRAP_RUN_SETUP_WIZARD:-0}
+  HV_BOOTSTRAP_MARK_SETUP_COMPLETE: ${HV_BOOTSTRAP_MARK_SETUP_COMPLETE:-1}
+  HV_BOOTSTRAP_FORCE: ${HV_BOOTSTRAP_FORCE:-0}
+
+services:
+  configurator:
+    <<: *image
+    restart: "no"
+    deploy:
+      restart_policy:
+        condition: none
+    volumes: *mounts
+    environment:
+      <<: [*backend-env, *bootstrap-env]
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        bench set-config -g db_host $$DB_HOST;
+        bench set-config -gp db_port $$DB_PORT;
+        bench set-config -g redis_cache "redis://$$REDIS_CACHE";
+        bench set-config -g redis_queue "redis://$$REDIS_QUEUE";
+        bench set-config -g redis_socketio "redis://$$REDIS_QUEUE";
+        bench set-config -gp socketio_port $$SOCKETIO_PORT;
+        bench set-config -g host_name "http://frontend:8080";
+        bench set-config -gp webserver_port 8080;
+        bench set-config -g developer_mode 1;
+        bench set-config -gp chromium_start_timeout 30;
+        for app in $$HV_APPS; do
+          ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/$$app;
+          bench setup requirements --python $$app;
+        done;
+        ls -1 apps > sites/apps.txt;
+
+  create-site:
+    <<: *image
+    restart: "no"
+    deploy:
+      restart_policy:
+        condition: none
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+    volumes: *mounts
+    environment:
+      <<: [*backend-env, *bootstrap-env]
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        S="$$SITE_NAME";
+        if [ -d "sites/$$S" ]; then echo "Site '$$S' existiert bereits, überspringe Anlage"; exit 0; fi;
+        wait-for-it -t 120 db:3306;
+        wait-for-it -t 120 redis-cache:6379;
+        wait-for-it -t 120 redis-queue:6379;
+        start=`date +%s`;
+        until [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".db_host // empty"` ]] &&
+              [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".redis_cache // empty"` ]] &&
+              [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".redis_queue // empty"` ]];
+        do
+          echo "Warte auf sites/common_site_config.json";
+          sleep 5;
+          if (( `date +%s`-start > 120 )); then echo "common_site_config.json unvollständig"; exit 1; fi;
+        done;
+        INSTALL="--install-app erpnext";
+        for app in $$HV_APPS; do
+          ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/$$app;
+          bench setup requirements --python $$app;
+          INSTALL="$$INSTALL --install-app $$app";
+        done;
+        echo "Lege Site '$$S' an mit: $$INSTALL";
+        bench new-site --mariadb-user-host-login-scope='%' --admin-password=admin --db-root-username=root --db-root-password=admin $$INSTALL --set-default "$$S";
+        bench use "$$S";
+        bench --site "$$S" migrate;
+        bench --site "$$S" enable-scheduler;
+        bench --site "$$S" execute frappe.client.set_value --kwargs "{'doctype': 'Print Settings', 'name': 'Print Settings', 'fieldname': 'pdf_generator', 'value': 'chrome'}";
+        bench --site "$$S" execute hausverwaltung.hausverwaltung.scripts.bootstrap_site.run;
+        bench --site "$$S" clear-cache;
+        echo "Site '$$S' bereit.";
+
+  backend:
+    <<: *image
+    restart: unless-stopped
+    depends_on:
+      create-site:
+        condition: service_completed_successfully
+    volumes: *mounts
+    environment:
+      <<: [*backend-env, *bootstrap-env]
+
+  frontend:
+    <<: *image
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+      websocket:
+        condition: service_started
+    command: ["nginx-entrypoint.sh"]
+    volumes: *mounts
+    environment:
+      BACKEND: backend:8000
+      SOCKETIO: websocket:9000
+      FRAPPE_SITE_NAME_HEADER: ${SITE_NAME:-frontend}
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      PROXY_READ_TIMEOUT: 120
+      CLIENT_MAX_BODY_SIZE: 50m
+    ports:
+      # Bewusst an 127.0.0.1 gebunden: die Dev-Site soll nicht über Tailscale
+      # oder das LAN erreichbar sein.
+      - "127.0.0.1:8180:8080"
+
+  websocket:
+    <<: *image
+    restart: unless-stopped
+    depends_on:
+      create-site:
+        condition: service_completed_successfully
+    command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
+    volumes: *mounts
+
+  queue-short:
+    <<: *image
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    command: ["bench", "worker", "--queue", "short,default"]
+    volumes: *mounts
+    environment:
+      <<: [*backend-env, *bootstrap-env]
+
+  queue-long:
+    <<: *image
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    command: ["bench", "worker", "--queue", "long,default,short"]
+    volumes: *mounts
+    environment:
+      <<: [*backend-env, *bootstrap-env]
+
+  scheduler:
+    <<: *image
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    command: ["bench", "schedule"]
+    volumes: *mounts
+    environment:
+      <<: [*backend-env, *bootstrap-env]
+
+  db:
+    image: mariadb:10.6
+    restart: unless-stopped
+    healthcheck:
+      test: mysqladmin ping -h localhost --password=admin
+      interval: 1s
+      retries: 20
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+    environment:
+      MYSQL_ROOT_PASSWORD: admin
+      MARIADB_ROOT_PASSWORD: admin
+    volumes:
+      - db-data:/var/lib/mysql
+    ports:
+      # 3307 statt 3306 — der Produktiv-Stack belegt 3306.
+      - "127.0.0.1:3307:3306"
+
+  redis-cache:
+    image: redis:6.2-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  redis-queue:
+    image: redis:6.2-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    volumes:
+      - redis-queue-data:/data
+
+volumes:
+  db-data:
+  redis-queue-data:
+  sites:
+  assets:
+  logs:
+  env:

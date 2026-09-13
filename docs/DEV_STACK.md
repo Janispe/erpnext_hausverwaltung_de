@@ -1,0 +1,196 @@
+# Entwicklungsumgebung (ohne `hausverwaltung_peters`)
+
+Zwei Wege, beide ohne die private Companion-App: es gibt keinen Mount, keine
+Installation und kein gemeinsames Volume, über das Mandantendaten in diese
+Sites gelangen könnten.
+
+| | Devcontainer | Compose-Stack |
+|---|---|---|
+| Datei | `.devcontainer/` | `compose.dev.yml` |
+| Voraussetzung | **nur dieses Repo** + Docker | dieses Repo **und** zwei Nachbar-Clones |
+| required_apps | holt sich der Container von GitHub | als Geschwisterordner gemountet |
+| Webserver | `bench start`, Port 8200 | nginx, Port 8180 |
+| Worker/Scheduler | manuell über `bench start` | eigene Services, laufen dauerhaft |
+| Projektname | `hv-devcontainer` | `hv-dev` |
+
+**Devcontainer**, wenn du in VS Code arbeitest und die Umgebung auf einem
+beliebigen Rechner in einem Rutsch stehen soll — Repo klonen, „Reopen in
+Container", fertig.
+
+**Compose-Stack**, wenn du parallel an mehreren der Apps entwickelst oder
+etwas testest, das dauerhaft laufende Worker, den Scheduler oder den nginx
+braucht (Hintergrund-Jobs, Cron, Serienbrief-Durchläufe).
+
+Beide Projekte haben eigene Volumes und stören sich gegenseitig nicht.
+
+---
+
+# Devcontainer
+
+Voraussetzung ist nur dieses Repo plus Docker. Es sind ausschließlich
+öffentliche Repos beteiligt — kein SSH-Key, kein Token, kein `gh auth login`,
+weder auf dem Host noch im Container:
+
+| App | Repo | |
+|---|---|---|
+| `hausverwaltung` | `Janispe/erpnext_hausverwaltung_de` | öffentlich |
+| `process_engine` | `Janispe/process_engine` | öffentlich |
+| `mail_merge` | `Janispe/erp_next_mail_merge` | öffentlich |
+
+Die beiden required_apps holt `.devcontainer/setup.sh` beim ersten Start über
+HTTPS, `hausverwaltung` kommt aus dem geklonten Repo selbst.
+
+```bash
+git clone https://github.com/Janispe/erpnext_hausverwaltung_de.git hausverwaltung
+code hausverwaltung
+# VS Code: "Reopen in Container"
+```
+
+Der Ordner muss `hausverwaltung` heißen — er wird als `apps/hausverwaltung`
+in den Bench gemountet, und `app_name` in `hooks.py` lautet so.
+
+> Das private Repo `Janispe/hausverwaltung` ist hier bewusst außen vor. Die
+> Entwicklungsumgebung sieht nur Öffentliches, damit über sie nichts
+> Nichtöffentliches abfließen kann.
+
+Der erste Start dauert 10–20 Minuten (Image-Build, Apps holen, Site anlegen),
+jeder weitere Sekunden. Danach im Container-Terminal:
+
+```bash
+bench start
+```
+
+→ **http://localhost:8200**, `Administrator` / `admin`. Site heißt `dev`.
+
+```bash
+bench --site dev migrate
+bench --site dev clear-cache
+bench --site dev run-tests --app hausverwaltung
+bench build --app hausverwaltung
+```
+
+Site und Datenbank liegen in den Volumes `hv-devcontainer_sites` und
+`hv-devcontainer_mariadb-data` und überleben ein Rebuild des Containers.
+Komplett zurücksetzen:
+
+```bash
+docker compose -p hv-devcontainer -f .devcontainer/docker-compose.yml down -v
+```
+
+---
+
+# Compose-Stack
+
+Vollständiger Stack mit nginx, Workern und Scheduler. Teilt weder Volumes
+noch Netzwerke mit dem Produktivsystem.
+
+## Umfang
+
+`compose.dev.yml` installiert genau `hausverwaltung` plus das, was die App in
+`hooks.py` selbst als `required_apps` deklariert: `process_engine` und
+`mail_merge`. Mehr nicht — ein Clone dieses Repos ist damit für sich allein
+lauffähig.
+
+Apps, die umgekehrt *von* hausverwaltung abhängen, gehören nicht in diese
+compose. Für `thunderbird_hausverwaltung` gibt es deshalb ein Overlay
+(`compose.dev.thunderbird.yml`), für `hausverwaltung_peters` bewusst keins.
+
+## Voraussetzung: Ordnerlayout
+
+Die Repos müssen als Geschwister liegen, Ordnername = `app_name`:
+
+```
+apps/
+  hausverwaltung/    <- hier liegt diese Datei
+  process_engine/
+  mail_merge/
+```
+
+```bash
+mkdir -p ~/dev/hv/apps && cd ~/dev/hv/apps
+git clone git@github.com:Janispe/hausverwaltung.git
+git clone git@github.com:Janispe/process_engine.git
+git clone git@github.com:Janispe/erp_next_mail_merge.git mail_merge
+```
+
+Achtung beim dritten Clone: das Repo heißt `erp_next_mail_merge`, der Ordner
+muss `mail_merge` heißen.
+
+### Mit Thunderbird-App
+
+```bash
+git clone git@github.com:Janispe/thunderbird_hausverwaltung_erpnext.git thunderbird_hausverwaltung
+HV_EXTRA=thunderbird ./dev.sh up
+```
+
+Das Overlay hängt den Mount an alle Bench-Services und erweitert `HV_APPS`.
+`HV_EXTRA` gilt für jeden `dev.sh`-Aufruf, nicht nur `up`.
+
+## Start
+
+```bash
+cd ~/dev/hv/apps/hausverwaltung
+./dev.sh up
+```
+
+Erster Lauf baut das Image (Chromium-Bibliotheken) und legt die Site an —
+je nach Maschine 10–20 Minuten. Danach:
+
+- **http://localhost:8180** — `Administrator` / `admin`
+- MariaDB auf `127.0.0.1:3307`
+
+Beide Ports hängen an `127.0.0.1`, sind also nicht über LAN oder Tailscale
+erreichbar.
+
+## Täglich
+
+```bash
+./dev.sh restart          # nach Python-Änderungen
+./dev.sh migrate          # nach DocType-Änderungen / neuen Patches
+./dev.sh cache            # nach hooks.py-, Fixture-, Print-Format-Änderungen
+./dev.sh build            # nach JS/CSS in public/
+./dev.sh test             # bench run-tests --app hausverwaltung
+./dev.sh nuke && ./dev.sh up   # Site komplett neu aufsetzen
+```
+
+Die App-Repos sind als Volume gemountet — Code-Änderungen wirken nach
+`restart` sofort, ohne Rebuild.
+
+## Wie die Trennung durchgesetzt wird
+
+| Mechanismus | Wirkung |
+|---|---|
+| `name: hv-dev` in der compose | Volumes heißen `hv-dev_*`, können die Produktiv-Volumes nicht treffen — auch ohne `-p` |
+| kein `shared_net` | keine Netzwerkverbindung zu Paperless oder zum Produktiv-Stack |
+| kein `hausverwaltung_peters`-Mount | Importer, Cleanup-Helper und `import/` sind nicht erreichbar |
+| Ports 8180 / 3307 auf `127.0.0.1` | keine Kollision mit 8080 / 3306, keine Erreichbarkeit von außen |
+| eigene Company `Demo Hausverwaltung` | keine Verwechslung mit Produktivdaten im UI |
+
+Nach Änderungen an der compose lohnt der Gegencheck:
+
+```bash
+docker compose -f compose.dev.yml config | grep -in 'peters\|shared_net\|paperless'
+```
+
+Muss leer bleiben. `config` löst Anchors, Defaults und relative Pfade auf,
+zeigt also was Docker wirklich mountet.
+
+## Unterschiede zum Produktivsystem
+
+Bewusst nicht enthalten: Caddy/TLS, Temporal (4 Services), Paperless-NGX-
+Anbindung. Wer daran entwickelt, hängt sie als Overlay-compose dazu.
+
+Anders gesetzt ist außerdem `HV_BOOTSTRAP_CREATE_COA=1`: die Dev-Site legt
+den SKR03-Kontenrahmen selbst an. Produktiv kommt er über den Import.
+
+## Offener Punkt: leere Site
+
+`hausverwaltung_peters` hängt fünf Setups in `after_migrate`, die hier
+fehlen — Brand-Assets, die BK-Serienbrief-Vorlage, die Pfad- und
+Bankverbindungs-Bausteine sowie `ensure_chrome_pdf_generator`.
+
+`pdf_generator = chrome` setzt die compose beim Anlegen der Site selbst, der
+PDF-Pfad entspricht also dem produktiven. Es fehlen aber sämtliche
+Serienbrief-Vorlagen und alle Stammdaten. Für Betriebskosten-, Mahn- und
+Serienbrief-Arbeit braucht es ein Seed-Skript mit synthetischen Immobilien,
+Wohnungen und Mietverträgen unter `scripts/` — das gibt es noch nicht.
