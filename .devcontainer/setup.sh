@@ -1,89 +1,57 @@
 #!/usr/bin/env bash
-# Einmaliges Setup im Devcontainer (postCreateCommand).
+# Läuft als postCreateCommand im Devcontainer.
 #
-# Idempotent: bereits vorhandene Apps und eine bereits angelegte Site werden
-# übersprungen, das Skript darf jederzeit erneut laufen.
+# Holt die beiden required_apps als Geschwisterordner, damit ../compose.dev.yml
+# sie mounten kann. Beide Repos sind öffentlich — der Clone braucht keine
+# Credentials, und es liegen folglich auch keine im Container.
+#
+# Der Frappe-Stack selbst wird hier NICHT gestartet. Das macht `./dev.sh up`
+# in einem Terminal, wo du den Build mitverfolgen kannst.
 set -euo pipefail
 
-BENCH=/home/frappe/frappe-bench
-SITE="${HV_SITE:-dev}"
-cd "$BENCH"
+WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PARENT="$(dirname "$WORKSPACE")"
 
 log() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 
-log "Warte auf MariaDB"
-for _ in $(seq 1 60); do
-	(echo >/dev/tcp/mariadb/3306) >/dev/null 2>&1 && break
-	sleep 2
-done
-(echo >/dev/tcp/mariadb/3306) >/dev/null 2>&1 || { echo "MariaDB nicht erreichbar"; exit 1; }
-
-log "Bench konfigurieren"
-bench set-config -g db_host mariadb
-bench set-config -gp db_port 3306
-bench set-config -g redis_cache "redis://redis-cache:6379"
-bench set-config -g redis_queue "redis://redis-queue:6379"
-bench set-config -g redis_socketio "redis://redis-queue:6379"
-bench set-config -gp socketio_port 9000
-bench set-config -g developer_mode 1
-# 3 Sekunden Default reichen für den Chromium-Start nicht aus.
-bench set-config -gp chromium_start_timeout 30
-
-# required_apps aus hausverwaltung/hooks.py.
-log "required_apps holen"
-get_app() { # $1=app-name $2=repo-url $3=branch
-	if [ -d "apps/$1" ]; then
+clone_app() { # $1=zielordner $2=repo-url $3=branch
+	local dest="$PARENT/$1"
+	if [ -d "$dest/.git" ]; then
 		echo "  $1 bereits vorhanden"
 		return
 	fi
-	bench get-app --branch "$3" "$1" "$2"
+	git clone --branch "$3" --quiet "$2" "$dest"
+	echo "  $1 ← $2 ($3)"
 }
-# Beide Repos sind öffentlich, HTTPS kommt also ohne Credentials aus. Der
-# Container braucht damit weder SSH-Key noch Agent-Forwarding.
+
+log "required_apps holen (öffentliche Repos, anonym über HTTPS)"
 # Achtung: unterschiedliche Default-Branches, und das mail-merge-Repo heißt
-# anders als die App.
-get_app process_engine https://github.com/Janispe/process_engine.git master
-get_app mail_merge https://github.com/Janispe/erp_next_mail_merge.git main
+# anders als die App. Der Ordnername muss dem app_name entsprechen.
+clone_app process_engine https://github.com/Janispe/process_engine.git master
+clone_app mail_merge https://github.com/Janispe/erp_next_mail_merge.git main
 
-log "hausverwaltung (gemountet) im Bench registrieren"
-( echo n; echo y ) | bench get-app "file://$BENCH/apps/hausverwaltung"
-
-if [ -d "sites/$SITE" ]; then
-	log "Site '$SITE' existiert bereits — überspringe Anlage"
-else
-	log "Site '$SITE' anlegen (dauert ein paar Minuten)"
-	bench new-site \
-		--mariadb-user-host-login-scope='%' \
-		--db-root-username root --db-root-password admin \
-		--admin-password admin \
-		--install-app erpnext \
-		--install-app process_engine \
-		--install-app mail_merge \
-		--install-app hausverwaltung \
-		--set-default "$SITE"
-
-	log "PDF-Engine auf Chrome stellen"
-	bench --site "$SITE" execute frappe.client.set_value --kwargs \
-		"{'doctype': 'Print Settings', 'name': 'Print Settings', 'fieldname': 'pdf_generator', 'value': 'chrome'}"
-
-	log "Grundkonfiguration (Company, Kontenrahmen, Rollen)"
-	bench --site "$SITE" execute hausverwaltung.hausverwaltung.scripts.bootstrap_site.run
-	bench --site "$SITE" clear-cache
+log "Prüfen, dass kein Host-Docker durchgereicht wurde"
+if [ -S /var/run/docker.sock ] && docker info 2>/dev/null | grep -q "Docker Root Dir: /var/lib/docker"; then
+	if [ -e /.dockerenv ] && ! pgrep -x dockerd >/dev/null 2>&1; then
+		echo "  WARNUNG: Es scheint der Docker-Daemon des HOSTS erreichbar zu sein."
+		echo "  Damit wäre die Isolation aufgehoben. Prüfe das docker-in-docker-Feature."
+	fi
 fi
-
-bench use "$SITE"
+docker version --format '  Docker-Daemon: {{.Server.Version}} (im Container)' 2>/dev/null \
+	|| echo "  Docker-Daemon noch nicht bereit — beim ersten Start normal."
 
 cat <<INFO
 
-  Fertig.
+  Vorbereitet. Es liegen jetzt nebeneinander:
 
-  Starten:   bench start
-  Site:      http://localhost:8200   (Administrator / admin)
+    $PARENT/hausverwaltung      (dieses Repo)
+    $PARENT/process_engine
+    $PARENT/mail_merge
 
-  Danach im Container z.B.:
-    bench --site $SITE migrate
-    bench --site $SITE clear-cache
-    bench --site $SITE run-tests --app hausverwaltung
-    bench build --app hausverwaltung
+  Stack starten (dauert beim ersten Mal 10-20 Minuten):
+
+    ./dev.sh up
+
+  Danach: http://localhost:8180   (Administrator / admin)
 
 INFO

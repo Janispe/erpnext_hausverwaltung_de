@@ -1,28 +1,47 @@
-// Devcontainer für die App `hausverwaltung`.
+// Isolierte Entwicklungsumgebung für die App `hausverwaltung`.
 //
-// Eigenständig: Voraussetzung ist nur dieses Repo plus Docker. Die beiden
-// required_apps (process_engine, mail_merge) holt setup.sh beim ersten Start
-// von GitHub. Nachbar-Clones oder eine bestehende Bench-Umgebung braucht es
-// nicht.
+// Zweck: eine Umgebung, in der ein Coding-Assistent arbeiten kann, ohne
+// irgendetwas Nichtöffentliches sehen zu können.
 //
-// Die private App `hausverwaltung_peters` ist hier weder gemountet noch
-// installiert — in diesem Container können keine Mandantendaten liegen.
+// Dafür gilt hier:
+//
+//   * KEIN "mounts"-Eintrag. Kein Host-Pfad wird durchgereicht — weder
+//     ~/.ssh noch ~/.gitconfig noch ein Nachbar-Repo. Der Container sieht
+//     ausschließlich dieses Repo und was er sich selbst von GitHub holt.
+//
+//   * KEIN /var/run/docker.sock. Stattdessen Docker-in-Docker, also ein
+//     eigener Daemon im Container. Der durchgereichte Host-Socket wäre ein
+//     vollständiger Ausbruch: wer ihn hat, startet einen Container mit
+//     `-v /:/host` und liest jede Datei des Hosts.
+//
+//   * Nur öffentliche Repos: erpnext_hausverwaltung_de (diese App),
+//     process_engine und erp_next_mail_merge. Alle drei sind anonym über
+//     HTTPS klonbar, es liegen also auch keine Credentials im Container.
+//
+// Nach dem Start läuft der eigentliche Frappe-Stack in Containern INNERHALB
+// dieses Containers — siehe ../compose.dev.yml und ./setup.sh.
 {
-	"name": "hausverwaltung",
+	"name": "hausverwaltung (isoliert)",
 
-	"dockerComposeFile": "docker-compose.yml",
-	"service": "frappe",
-	"workspaceFolder": "/home/frappe/frappe-bench/apps/hausverwaltung",
-	"remoteUser": "frappe",
-	"shutdownAction": "stopCompose",
+	"image": "mcr.microsoft.com/devcontainers/python:3.11-bookworm",
 
-	// Erster Start: Apps holen und Site anlegen, 10-20 Minuten.
-	// Jeder weitere Start überspringt beides.
+	"features": {
+		// Eigener Docker-Daemon im Container. Setzt --privileged voraus,
+		// das bringt das Feature selbst mit.
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {
+			"moby": true,
+			"dockerDashComposeVersion": "v2"
+		}
+	},
+
+	// Holt die beiden required_apps als Geschwisterordner. Startet den Stack
+	// bewusst NICHT — das dauert 10-20 Minuten und gehört in ein Terminal,
+	// in dem du den Fortschritt siehst.
 	"postCreateCommand": "bash .devcontainer/setup.sh",
 
-	// 8200 = bench start, 9200 = socketio. Beide bereits in der compose auf
-	// 127.0.0.1 veröffentlicht.
-	"forwardPorts": [8200, 9200],
+	// Der innere nginx veröffentlicht 8180 im Devcontainer, VS Code reicht
+	// ihn an den Host weiter.
+	"forwardPorts": [8180],
 
 	"customizations": {
 		"vscode": {
@@ -35,10 +54,9 @@
 			"settings": {
 				"terminal.integrated.defaultProfile.linux": "bash",
 				"remote.autoForwardPorts": false,
-				"python.defaultInterpreterPath": "/home/frappe/frappe-bench/env/bin/python",
 
 				// Tabs, nicht Spaces — auch in Python.
-				// Siehe pyproject.toml, [tool.ruff.format] indent-style = "tab".
+				// pyproject.toml, [tool.ruff.format] indent-style = "tab".
 				"editor.insertSpaces": false,
 				"editor.detectIndentation": false,
 				"[python]": {
