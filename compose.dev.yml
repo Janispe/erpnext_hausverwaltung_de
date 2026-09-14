@@ -26,9 +26,14 @@ x-image: &image
 # als Geschwisterordner erwartet:
 #
 #   apps/
-#     hausverwaltung/    <- hier liegt diese Datei
-#     process_engine/    <- required_apps aus hooks.py
-#     mail_merge/        <- required_apps aus hooks.py
+#     hausverwaltung/              <- hier liegt diese Datei
+#     process_engine/              <- required_apps aus hooks.py
+#     mail_merge/                  <- required_apps aus hooks.py
+#     thunderbird_hausverwaltung/  <- haengt an hausverwaltung
+#
+# Nicht ausgecheckte Apps werden beim Start uebersprungen (siehe die
+# Schleifen in configurator und create-site), der Stack laeuft also auch
+# mit weniger Repos.
 x-mounts: &mounts
   - sites:/home/frappe/frappe-bench/sites
   - assets:/home/frappe/frappe-bench/sites/assets
@@ -37,6 +42,7 @@ x-mounts: &mounts
   - .:/home/frappe/frappe-bench/apps/hausverwaltung
   - ../process_engine:/home/frappe/frappe-bench/apps/process_engine
   - ../mail_merge:/home/frappe/frappe-bench/apps/mail_merge
+  - ../thunderbird_hausverwaltung:/home/frappe/frappe-bench/apps/thunderbird_hausverwaltung
 
 x-backend-env: &backend-env
   DB_HOST: db
@@ -47,19 +53,19 @@ x-backend-env: &backend-env
   MYSQL_ROOT_PASSWORD: admin
   MARIADB_ROOT_PASSWORD: admin
 
-# Dieser Stack installiert genau `hausverwaltung` und das, was die App laut
-# hooks.py selbst als `required_apps` deklariert — process_engine und
-# mail_merge. Nichts darüber hinaus, damit ein Clone dieses Repos allein
-# lauffähig ist.
+# Alle Apps des Projekts ausser der privaten `hausverwaltung_peters`.
 #
-# Apps, die umgekehrt von hausverwaltung abhängen (thunderbird_hausverwaltung,
-# hausverwaltung_peters), gehören nicht hierher. Für thunderbird gibt es
-# compose.dev.thunderbird.yml als Overlay.
+# Reihenfolge zählt: process_engine und mail_merge sind required_apps von
+# hausverwaltung (hooks.py) und müssen vorher installiert sein;
+# thunderbird_hausverwaltung hängt umgekehrt an hausverwaltung und kommt
+# zuletzt.
 #
-# Reihenfolge zählt: required_apps müssen vor hausverwaltung installiert sein.
+# Einträge, deren Ordner nicht ausgecheckt ist, werden übersprungen — ein
+# Clone nur dieses Repos ist also ebenfalls lauffähig. Zum Weglassen einer
+# App genügt es, sie aus HV_APPS zu streichen.
 x-bootstrap-env: &bootstrap-env
   SITE_NAME: ${SITE_NAME:-frontend}
-  HV_APPS: ${HV_APPS:-process_engine mail_merge hausverwaltung}
+  HV_APPS: ${HV_APPS:-process_engine mail_merge hausverwaltung thunderbird_hausverwaltung}
   HV_COMPANY: ${HV_COMPANY:-Demo Hausverwaltung}
   HV_LANGUAGE: ${HV_LANGUAGE:-de}
   HV_TIME_ZONE: ${HV_TIME_ZONE:-Europe/Berlin}
@@ -97,6 +103,7 @@ services:
         bench set-config -g developer_mode 1;
         bench set-config -gp chromium_start_timeout 30;
         for app in $$HV_APPS; do
+          if [ ! -f "apps/$$app/pyproject.toml" ] && [ ! -f "apps/$$app/setup.py" ]; then echo "uebersprungen (nicht ausgecheckt): $$app"; continue; fi;
           ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/$$app;
           bench setup requirements --python $$app;
         done;
@@ -139,6 +146,7 @@ services:
         done;
         INSTALL="--install-app erpnext";
         for app in $$HV_APPS; do
+          if [ ! -f "apps/$$app/pyproject.toml" ] && [ ! -f "apps/$$app/setup.py" ]; then echo "uebersprungen (nicht ausgecheckt): $$app"; continue; fi;
           ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/$$app;
           bench setup requirements --python $$app;
           INSTALL="$$INSTALL --install-app $$app";

@@ -24,11 +24,12 @@ clone_app() { # $1=zielordner $2=repo-url $3=branch
 	echo "  $1 ← $2 ($3)"
 }
 
-log "required_apps holen (öffentliche Repos, anonym über HTTPS)"
+log "Apps holen (alle öffentlichen Repos des Projekts, anonym über HTTPS)"
 # Achtung: unterschiedliche Default-Branches, und das mail-merge-Repo heißt
 # anders als die App. Der Ordnername muss dem app_name entsprechen.
 clone_app process_engine https://github.com/Janispe/process_engine.git master
 clone_app mail_merge https://github.com/Janispe/erp_next_mail_merge.git main
+clone_app thunderbird_hausverwaltung https://github.com/Janispe/thunderbird_hausverwaltung_erpnext.git main
 
 log "Prüfen, dass kein Host-Docker durchgereicht wurde"
 if [ -S /var/run/docker.sock ] && docker info 2>/dev/null | grep -q "Docker Root Dir: /var/lib/docker"; then
@@ -44,9 +45,10 @@ cat <<INFO
 
   Vorbereitet. Es liegen jetzt nebeneinander:
 
-    $PARENT/hausverwaltung      (dieses Repo)
+    $PARENT/hausverwaltung              (dieses Repo)
     $PARENT/process_engine
     $PARENT/mail_merge
+    $PARENT/thunderbird_hausverwaltung
 
   Stack starten (dauert beim ersten Mal 10-20 Minuten):
 

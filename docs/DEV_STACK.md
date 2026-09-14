@@ -7,8 +7,8 @@ Sites gelangen könnten.
 | | Devcontainer | Compose-Stack |
 |---|---|---|
 | Datei | `.devcontainer/` | `compose.dev.yml` |
-| Voraussetzung | **nur dieses Repo** + Docker | dieses Repo **und** zwei Nachbar-Clones |
-| required_apps | klont der Container selbst | als Geschwisterordner gemountet |
+| Voraussetzung | **nur dieses Repo** + Docker | dieses Repo **und** drei Nachbar-Clones |
+| übrige Apps | klont der Container selbst | als Geschwisterordner gemountet |
 | Docker | eigener Daemon im Container | Daemon des Hosts |
 | Host-Pfade sichtbar | keine | die drei App-Ordner |
 | Webserver | nginx, Port 8180 (weitergereicht) | nginx, Port 8180 |
@@ -31,11 +31,15 @@ Gedacht für den Fall, dass in der Umgebung ein Coding-Assistent arbeitet, der
 nichts Nichtöffentliches sehen darf. Der Container bekommt deshalb **keinen
 einzigen Host-Pfad** durchgereicht und kennt nur öffentliche Repos.
 
+Installiert werden **alle Apps des Projekts ausser der privaten
+`hausverwaltung_peters`**:
+
 | App | Repo | |
 |---|---|---|
 | `hausverwaltung` | `Janispe/erpnext_hausverwaltung_de` | öffentlich |
 | `process_engine` | `Janispe/process_engine` | öffentlich |
 | `mail_merge` | `Janispe/erp_next_mail_merge` | öffentlich |
+| `thunderbird_hausverwaltung` | `Janispe/thunderbird_hausverwaltung_erpnext` | öffentlich |
 
 ```bash
 git clone https://github.com/Janispe/erpnext_hausverwaltung_de.git hausverwaltung
@@ -43,9 +47,8 @@ code hausverwaltung
 # VS Code: "Reopen in Container"
 ```
 
-`postCreateCommand` klont `process_engine` und `mail_merge` als
-Geschwisterordner daneben — anonym über HTTPS, also ohne Credentials im
-Container. Danach im Container-Terminal:
+`postCreateCommand` klont die übrigen drei als Geschwisterordner daneben —
+anonym über HTTPS, also ohne Credentials im Container. Danach im Container-Terminal:
 
 ```bash
 ./dev.sh up
@@ -84,14 +87,16 @@ noch Netzwerke mit dem Produktivsystem.
 
 ## Umfang
 
-`compose.dev.yml` installiert genau `hausverwaltung` plus das, was die App in
-`hooks.py` selbst als `required_apps` deklariert: `process_engine` und
-`mail_merge`. Mehr nicht — ein Clone dieses Repos ist damit für sich allein
-lauffähig.
+`compose.dev.yml` installiert **alle Apps des Projekts ausser der privaten
+`hausverwaltung_peters`**: `process_engine`, `mail_merge`, `hausverwaltung`
+und `thunderbird_hausverwaltung`, in dieser Reihenfolge.
 
-Apps, die umgekehrt *von* hausverwaltung abhängen, gehören nicht in diese
-compose. Für `thunderbird_hausverwaltung` gibt es deshalb ein Overlay
-(`compose.dev.thunderbird.yml`), für `hausverwaltung_peters` bewusst keins.
+Gesteuert wird das über `HV_APPS`. Einträge, deren Ordner nicht ausgecheckt
+ist, überspringt der Start mit einer Meldung — ein Clone nur dieses Repos ist
+also ebenfalls lauffähig, ihm fehlen dann eben die übrigen Apps.
+
+`hausverwaltung_peters` ist bewusst nicht vorgesehen: nicht in `HV_APPS`,
+nicht als Mount.
 
 ## Voraussetzung: Ordnerlayout
 
@@ -99,30 +104,23 @@ Die Repos müssen als Geschwister liegen, Ordnername = `app_name`:
 
 ```
 apps/
-  hausverwaltung/    <- hier liegt diese Datei
+  hausverwaltung/              <- hier liegt diese Datei
   process_engine/
   mail_merge/
+  thunderbird_hausverwaltung/
 ```
 
 ```bash
 mkdir -p ~/dev/hv/apps && cd ~/dev/hv/apps
-git clone git@github.com:Janispe/hausverwaltung.git
-git clone git@github.com:Janispe/process_engine.git
-git clone git@github.com:Janispe/erp_next_mail_merge.git mail_merge
+git clone https://github.com/Janispe/erpnext_hausverwaltung_de.git hausverwaltung
+git clone --branch master https://github.com/Janispe/process_engine.git
+git clone --branch main   https://github.com/Janispe/erp_next_mail_merge.git mail_merge
+git clone https://github.com/Janispe/thunderbird_hausverwaltung_erpnext.git thunderbird_hausverwaltung
 ```
 
 Achtung beim dritten Clone: das Repo heißt `erp_next_mail_merge`, der Ordner
 muss `mail_merge` heißen.
 
-### Mit Thunderbird-App
-
-```bash
-git clone git@github.com:Janispe/thunderbird_hausverwaltung_erpnext.git thunderbird_hausverwaltung
-HV_EXTRA=thunderbird ./dev.sh up
-```
-
-Das Overlay hängt den Mount an alle Bench-Services und erweitert `HV_APPS`.
-`HV_EXTRA` gilt für jeden `dev.sh`-Aufruf, nicht nur `up`.
 
 ## Start
 

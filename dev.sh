@@ -6,8 +6,6 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 DC=(docker compose -f compose.dev.yml)
-# Optionale Overlays: HV_EXTRA="thunderbird" ./dev.sh up
-for extra in ${HV_EXTRA:-}; do DC+=(-f "compose.dev.$extra.yml"); done
 SITE="${SITE_NAME:-frontend}"
 BE=hv-dev-backend-1
 
@@ -24,8 +22,6 @@ usage() {
 ./dev.sh console     bench console
 ./dev.sh shell       bash im Backend-Container
 ./dev.sh logs [svc]  Logs folgen
-
-HV_EXTRA=thunderbird ./dev.sh up   Overlay compose.dev.thunderbird.yml dazu
 USAGE
 }
 
