@@ -59,6 +59,33 @@ class TestZaehleruebersichtHaus(unittest.TestCase):
 
 		self.assertEqual(result[0]["strom"], "S-1\nS-2")
 
+	def test_historical_assignments_show_their_periods(self):
+		rows = [
+			{
+				"bezugsobjekt_typ": "Wohnung",
+				"bezugsobjekt": "Whg 1",
+				"zaehlerart": "Strom",
+				"zaehlernummer": "S-alt",
+				"von": "2020-01-01",
+				"bis": "2022-12-31",
+			},
+			{
+				"bezugsobjekt_typ": "Wohnung",
+				"bezugsobjekt": "Whg 1",
+				"zaehlerart": "Strom",
+				"zaehlernummer": "S-neu",
+				"von": "2023-01-01",
+				"bis": None,
+			},
+		]
+
+		result = report._group_by_bezugsobjekt(rows, historie=True)
+
+		self.assertEqual(
+			result[0]["strom"],
+			"S-alt (01.01.2020 – 31.12.2022)\nS-neu (01.01.2023 – offen)",
+		)
+
 
 if __name__ == "__main__":
 	unittest.main()

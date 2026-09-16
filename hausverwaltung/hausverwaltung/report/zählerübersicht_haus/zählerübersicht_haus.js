@@ -14,6 +14,12 @@ frappe.query_reports["Zählerübersicht Haus"] = {
 			default: frappe.datetime.get_today(),
 			reqd: 1,
 		},
+		{
+			fieldname: "historie",
+			label: __("Frühere Zuordnungen anzeigen"),
+			fieldtype: "Check",
+			default: 0,
+		},
 	],
 
 	formatter(value, row, column, data, default_formatter) {
