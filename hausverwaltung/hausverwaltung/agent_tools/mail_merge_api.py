@@ -367,11 +367,6 @@ def prepare(template, revision, recipients, values=None, per_recipient=None, let
 		core._get_template_template_source(doc),
 		*[core._get_textbaustein_template_source(b) for b in blocks],
 	]
-	if doc.haupt_verteil_objekt == "Mietvertrag" and any("aktueller_mietvertrag" in s for s in sources):
-		raise AgentToolError(
-			"CONTRACT_IDENTITY_INVALID",
-			"Vorlage verweist auf den aktuellen statt den ausgewählten Mietvertrag.",
-		)
 	targets = _targets(doc, recipients)
 	fields = _inputs(doc)
 	common = _values(values, fields)

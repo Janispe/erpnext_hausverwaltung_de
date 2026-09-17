@@ -348,14 +348,17 @@ class TestMailMergeApi(unittest.TestCase):
 		result = api.prepare("Test", "revision", ["MV-1"])
 		self.assertEqual(result["data"]["errors"][0]["code"], "UNRESOLVED_PLACEHOLDER")
 
-	def test_changed_template_and_current_contract_fallback_are_blocked(self):
-		_, core, run = self.setup_preparation()
+	def test_changed_template_is_blocked(self):
+		_, _, run = self.setup_preparation()
 		self.assertEqual(api.prepare("Test", "old", ["MV-1"])["error"]["code"], "TEMPLATE_CHANGED")
-		core._get_template_template_source.return_value = "objekt.wohnung.aktueller_mietvertrag"
-		self.assertEqual(
-			api.prepare("Test", "revision", ["MV-1"])["error"]["code"], "CONTRACT_IDENTITY_INVALID"
-		)
 		run._render_template_content.assert_not_called()
+
+	def test_template_paths_render_like_ui(self):
+		_, core, _ = self.setup_preparation()
+		core._get_template_template_source.return_value = (
+			"{{$ objekt.wohnung.aktueller_mietvertrag.bruttomiete $}}"
+		)
+		self.assertTrue(api.prepare("Test", "revision", ["MV-1"])["data"]["ready"])
 
 	def test_foreign_recipient_overrides_are_rejected(self):
 		self.setup_preparation()
