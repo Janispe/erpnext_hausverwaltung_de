@@ -451,3 +451,7 @@ fixtures = [
         #"filters": [["role", "in", ["Hausverwalter", "Hausverwalter (Buchung)"]]]
     }
 ]
+
+# Optional application presentation; mail_merge itself stays domain-neutral.
+mail_merge_print_profile = "hausverwaltung.hausverwaltung.services.mail_merge_extensions.print_profile"
+mail_merge_transform_html = "hausverwaltung.hausverwaltung.services.mail_merge_brand.apply_print_saving_brand_assets"

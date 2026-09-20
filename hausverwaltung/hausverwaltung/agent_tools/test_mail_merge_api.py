@@ -72,7 +72,7 @@ class TestMailMergeApi(unittest.TestCase):
 				api._values({"date": value}, fields)
 		self.assertEqual(api._values({"date": "2026-09-09"}, fields)["date"]["value"], "2026-09-09")
 
-	def test_paths_and_doctype_variables_are_readonly(self):
+	def test_scalar_paths_are_fillable_and_document_variables_use_context(self):
 		template = frappe._dict(
 			variablen_werte='{"rent":{"path":"objekt.miete"}}',
 			variables=[
@@ -82,30 +82,26 @@ class TestMailMergeApi(unittest.TestCase):
 			],
 		)
 		fields = api._inputs(template)
-		self.assertEqual([f["fillable"] for f in fields], [False, False, True])
-		with self.assertRaises(AgentToolError):
-			api._values({"rent": 10}, fields)
+		self.assertEqual([f["key"] for f in fields], ["datum", "rent", "note"])
+		self.assertTrue(all(f["fillable"] for f in fields))
+		self.assertEqual(fields[1]["path"], "objekt.miete")
+		self.assertEqual(api._values({"rent": 10}, fields), {"rent": {"value": 10}})
 
-	def test_reserved_and_colliding_variable_names_are_rejected(self):
-		for names in (("objekt",), ("rent", "rent"), ("_internal",)):
-			with self.subTest(names=names), self.assertRaises(AgentToolError):
-				api._inputs(frappe._dict(variables=[frappe._dict(variable=n) for n in names]))
+	def test_date_uses_the_shared_input_catalogue(self):
+		fields = api._inputs(frappe._dict(variables=[frappe._dict(variable="datum", variable_type="Datum")]))
+		self.assertEqual([f["key"] for f in fields], ["datum"])
+		self.assertEqual(api._values({"datum": "2030-01-15"}, fields), {"datum": {"value": "2030-01-15"}})
 
 	def test_recipient_list_is_explicit_unique_and_bounded(self):
 		for recipients in ([], ["MV"] * 2, [str(i) for i in range(11)], {"status": "Läuft"}, [1]):
 			with self.subTest(recipients=recipients), self.assertRaises(AgentToolError):
 				api._targets(frappe._dict(haupt_verteil_objekt="Mietvertrag"), recipients)
 
-	def test_customer_must_belong_to_exactly_one_contract(self):
-		contract = frappe._dict(doctype="Mietvertrag", name="MV-OLD", kunde="C-OLD", wohnung="W")
-		with (
-			patch.object(api, "_read", return_value=contract) as read,
-			patch.object(frappe.db, "count", return_value=2),
-		):
-			with self.assertRaises(AgentToolError) as error:
-				api._targets(frappe._dict(haupt_verteil_objekt="Mietvertrag"), ["MV-OLD"])
-			self.assertEqual(error.exception.code, "CONTRACT_IDENTITY_INVALID")
-			self.assertIn(unittest.mock.call("Customer", "C-OLD"), read.call_args_list)
+	def test_targets_use_the_declared_doctype_and_exact_identity(self):
+		doc = frappe._dict(doctype="Example", name="ITEM-OLD")
+		with patch.object(api, "_read", return_value=doc) as read:
+			self.assertEqual(api._targets(frappe._dict(haupt_verteil_objekt="Example"), ["ITEM-OLD"]), [doc])
+			read.assert_called_once_with("Example", "ITEM-OLD")
 
 	def test_read_checks_document_permission(self):
 		doc = Mock()
@@ -150,6 +146,7 @@ class TestMailMergeApi(unittest.TestCase):
 		).start()
 		core = patch.object(api, "_renderer", Mock()).start().return_value
 		core._get_template_template_source.return_value = "Hallo"
+		core._resolve_value_path.side_effect = lambda path, context: context.get(path)
 		run = patch.object(frappe, "get_doc", Mock()).start().return_value
 		run._get_iteration_rows.return_value = [frappe._dict(iteration_objekt=n) for n in recipients]
 		run._build_context.return_value = {}
@@ -196,7 +193,7 @@ class TestMailMergeApi(unittest.TestCase):
 		self.assertEqual(brief["required_inputs"], ["stichtag"])
 		self.assertEqual(brief["inputs"][0]["json_type"], "string")
 		self.assertEqual(brief["inputs"][0]["format"], "YYYY-MM-DD")
-		self.assertIsNone(brief["inputs"][0]["default"])
+		self.assertIsNone(next(f for f in brief["inputs"] if f["key"] == "stichtag")["default"])
 		self.assertTrue(brief["examples_are_illustrative"])
 		self.assertIn("{{ objekt.name }}", full["source"])
 		self.assertEqual(brief["revision"], full["revision"])

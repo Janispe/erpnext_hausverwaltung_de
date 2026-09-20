@@ -43,12 +43,9 @@ from hausverwaltung.hausverwaltung.agent_tools.mail_merge_contract import (
 TEMPLATE = "Serienbrief Vorlage"
 RUN = "Serienbrief Durchlauf"
 DOCUMENT = "Serienbrief Dokument"
-TARGETS = {"Mietvertrag", "Betriebskostenabrechnung Mieter", "Dunning"}
 MAX_RECIPIENTS = 10
 PREPARATION_TTL = 1800
 MAX_PDF_BYTES = 10 * 1024 * 1024
-SCALAR_TYPES = {"Text", "String", "Zahl", "Bool", "Datum"}
-RESERVED_KEYS = {"objekt", "serienbrief", "outputs", "datum", "datum_iso", "frappe", "druck_schwarz_weiss"}
 API_PATH = "hausverwaltung.hausverwaltung.agent_tools.mail_merge_api"
 
 
@@ -144,8 +141,6 @@ def _content_warnings(text):
 
 def _template(template):
 	doc = _read(TEMPLATE, template)
-	if doc.haupt_verteil_objekt not in TARGETS:
-		raise AgentToolError("UNSUPPORTED_TARGET", "Diese Vorlage hat keinen unterstützten Empfängertyp.")
 	core = _renderer()
 	blocks = []
 	seen = set()
@@ -166,29 +161,8 @@ def _template(template):
 
 
 def _inputs(template):
-	"""Only declared scalar variables without a maintained data path are writable."""
-	mapping = parse_json_if_needed(template.get("variablen_werte")) or {}
-	fields = []
-	seen = set()
-	for row in template.get("variables") or []:
-		key = frappe.scrub(row.variable)
-		kind = row.variable_type or "Text"
-		if key in seen or key in RESERVED_KEYS or key.startswith("_"):
-			raise AgentToolError("TEMPLATE_INVALID", "Mehrdeutige oder reservierte Vorlagenvariable.")
-		seen.add(key)
-		entry = mapping.get(key) or {}
-		fields.append(
-			{
-				"key": key,
-				"label": row.label or row.variable,
-				"type": kind,
-				"optional": bool(row.get("optional")),
-				"description": row.get("beschreibung") or "",
-				"fillable": kind in SCALAR_TYPES and not entry.get("path"),
-				"default": entry.get("value") if kind in SCALAR_TYPES and not entry.get("path") else None,
-			}
-		)
-	return fields
+	from mail_merge.mail_merge.utils.render_inputs import input_fields
+	return [{"key": field["name"], "path": field["path"], "label": field["label"], "type": field["type"], "optional": not field["required"], "description": field["description"], "fillable": True, "default": field["default"]} for field in input_fields(template)]
 
 
 def _values(raw, fields, *, recipient=None):
@@ -258,19 +232,6 @@ def _targets(template, recipients):
 	if any(not isinstance(n, str) for n in names) or len(set(names)) != len(names):
 		raise AgentToolError("INVALID_ARGUMENT", "Empfängernamen müssen eindeutig sein.")
 	docs = [_read(template.haupt_verteil_objekt, name) for name in names]
-	for doc in docs:
-		if doc.doctype != "Mietvertrag":
-			continue
-		if not doc.kunde or not doc.wohnung:
-			raise AgentToolError("CONTRACT_IDENTITY_INVALID", f"{doc.name}: Kunde oder Wohnung fehlt.")
-		_read("Customer", doc.kunde)
-		_read("Wohnung", doc.wohnung)
-		# Count all contracts, including historical and unreadable ones. Never
-		# disclose other IDs and never replace this contract by the current one.
-		if frappe.db.count("Mietvertrag", {"kunde": doc.kunde}) != 1:
-			raise AgentToolError(
-				"CONTRACT_IDENTITY_INVALID", f"{doc.name}: Customer ist nicht eindeutig zugeordnet."
-			)
 	return docs
 
 
@@ -295,7 +256,7 @@ def list_templates(query=None, limit=20, offset=0):
 	limit, offset = normalize_limit(limit), normalize_offset(offset)
 	if query is not None and (not isinstance(query, str) or len(query) > 140):
 		raise AgentToolError("INVALID_ARGUMENT", "Ungültiger Suchbegriff.")
-	filters = {"haupt_verteil_objekt": ["in", sorted(TARGETS)]}
+	filters = {}
 	if query:
 		filters["title"] = ["like", f"%{query}%"]
 	rows = frappe.get_list(
@@ -424,8 +385,8 @@ def prepare(template, revision, recipients, values=None, per_recipient=None, let
 				if f["fillable"]
 				and not f["optional"]
 				and (
-					context.get(f["key"]) is None
-					or (isinstance(context.get(f["key"]), str) and not context[f["key"]].strip())
+					core._resolve_value_path(f["key"], context) is None
+					or (isinstance(core._resolve_value_path(f["key"], context), str) and not core._resolve_value_path(f["key"], context).strip())
 				)
 			]
 			if missing:
@@ -440,6 +401,7 @@ def prepare(template, revision, recipients, values=None, per_recipient=None, let
 				iteration_doctype=doc.haupt_verteil_objekt,
 				objekt=row.iteration_objekt,
 				date=letter_date,
+				variablen_werte=json.dumps({**common, **individual.get(row.iteration_objekt, {})}),
 			)
 			pdf = run._render_segments_pdf_bytes(segments, footer_doc=footer)
 			from pypdf import PdfReader
