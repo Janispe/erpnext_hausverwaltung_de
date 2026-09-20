@@ -127,8 +127,8 @@ class TestMeldungV2(unittest.TestCase):
 		]
 		ws = load_workbook(BytesIO(build_xlsx(doc)))["Nutzer"]
 		self.assertEqual(ws["A4"].value, "Wohnungsnummer (ERP)")
-		self.assertEqual([ws.cell(r, 1).value for r in range(5, 8)], ["123"] * 3)
-		self.assertTrue(all(ws.cell(r, 1).data_type == "s" for r in range(5, 8)))
+		self.assertEqual([ws.cell(r, 1).value for r in range(5, 8)], [123] * 3)
+		self.assertTrue(all(ws.cell(r, 1).data_type == "n" for r in range(5, 8)))
 		self.assertEqual([ws.cell(r, 2).value for r in range(5, 8)], [None] * 3)
 		self.assertEqual([ws.cell(r, ws.max_column).value for r in range(5, 8)], ["MV-A", None, "MV-B"])
 		self.assertEqual(ws["H5"].number_format, "#,##0.000")

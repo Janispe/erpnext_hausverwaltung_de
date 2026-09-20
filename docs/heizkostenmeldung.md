@@ -49,6 +49,10 @@ Die gezahlte Vorauszahlung ist die gespeicherte ERP-IST-Summe für den
 Abrechnungszeitraum; SOLL und der bestätigte Meldebetrag sind eigene Felder.
 Wohnfläche und bestätigte Heizfläche bleiben getrennt. Je Mietverhältnis
 wird eine Zeile ausgegeben, auch bei Mieterwechseln in derselben Wohnung.
+Die Mieterliste wird numerisch nach der ERP-Wohnungsnummer und innerhalb einer
+Wohnung chronologisch nach Nutzungsbeginn sortiert. Die Wohnungsnummer steht in
+Excel als Zahl, damit eine erneute Sortierung in Excel oder Calc ebenfalls
+`1, 2, 3, …, 10` ergibt.
 Die Liste nutzt den gespeicherten Datenstand; Entwürfe bei Bedarf zuvor über
 **ERP-Daten laden** aktualisieren. Die kurze Liste ist ein separater Auszug.
 Der vollständige Download freigegebener Meldungen liefert weiterhin die

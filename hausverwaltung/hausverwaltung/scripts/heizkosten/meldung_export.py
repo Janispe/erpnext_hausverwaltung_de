@@ -16,7 +16,7 @@ from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_schema import json
 from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_summen import get, summary
 from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_unterschrift import signature_bytes
 
-EXPORT_VERSION = 3
+EXPORT_VERSION = 4
 DEFAULT_NUTZER_FIELDS = ("wohnung_id", "mietername", "vorauszahlung_ist", "wohnflaeche")
 
 
@@ -39,6 +39,25 @@ def _date(value):
 	if not value:
 		return None
 	return value if isinstance(value, (datetime, date)) else date.fromisoformat(str(value)[:10])
+
+
+def _wohnung_number(value):
+	"""Keep numeric ERP apartment IDs numeric so spreadsheet sorting works naturally."""
+	if value in (None, ""):
+		return None
+	text = str(value).strip()
+	return int(text) if text.isdecimal() else text
+
+
+def _nutzer_sort_key(row):
+	number = _wohnung_number(get(row, "wohnung_id"))
+	if isinstance(number, int):
+		apartment = (0, number)
+	elif number is None:
+		apartment = (2, "")
+	else:
+		apartment = (1, number.casefold())
+	return (*apartment, str(get(row, "von") or ""), str(get(row, "zeilen_id") or ""))
 
 
 def nutzer_columns(doc):
@@ -148,13 +167,14 @@ def build_xlsx(doc, *, nutzer_fields=None, include_vacancies=False):
 	sheet("Meldung", ["Angabe", "Wert"], meta, {1: 35, 2: 85})
 	fields = _extras(definitions, "Nutzer")
 	nutzer = []
-	for r in doc.nutzer:
+	source_rows = sorted(doc.nutzer, key=_nutzer_sort_key) if nutzer_fields is not None else doc.nutzer
+	for r in source_rows:
 		if nutzer_fields is not None and not include_vacancies and r.typ == "Leerstand":
 			continue
 		values = json_object(r.zusatzwerte_json)
 		nutzer.append(
 			[
-				get(r, "wohnung_id") or None,
+				_wohnung_number(get(r, "wohnung_id")),
 				r.nutzernummer,
 				r.wohnung,
 				r.typ,

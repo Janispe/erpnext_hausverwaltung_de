@@ -53,7 +53,8 @@ class TestMeldungAuswahl(unittest.TestCase):
 		)
 		self.assertEqual(wb.sheetnames, ["Mieterliste"])
 		ws = wb.active
-		self.assertEqual(list(ws.values)[4:], [("18", "Mieter A", 500, 42), ("18", "=1+1", 0, 42)])
+		self.assertEqual(list(ws.values)[4:], [(18, "Mieter A", 500, 42), (18, "=1+1", 0, 42)])
+		self.assertTrue(all(ws.cell(row, 1).data_type == "n" for row in range(5, 7)))
 		self.assertEqual(ws["B6"].data_type, "s")
 		self.assertEqual(ws["D5"].number_format, "#,##0.000")
 		self.assertEqual(ws["C5"].number_format, "#,##0.00")
@@ -73,7 +74,7 @@ class TestMeldungAuswahl(unittest.TestCase):
 		self.assertEqual(ws["A5"].value.date().isoformat(), "2025-01-01")
 		self.assertEqual(ws["B5"].value, 0)
 		self.assertEqual(ws["C6"].value, "Leerstand")
-		self.assertEqual(ws["D5"].value, "18")
+		self.assertEqual(ws["D5"].value, 18)
 		self.assertIsNone(ws["E5"].value)  # unconfirmed heating area
 		self.assertIsNone(ws["F5"].value)  # unconfirmed reporting amount
 		self.assertEqual(ws.auto_filter.ref, "A4:F7")
@@ -106,3 +107,21 @@ class TestMeldungAuswahl(unittest.TestCase):
 		ws = load_workbook(BytesIO(build_xlsx(doc, nutzer_fields=["wohnung_id"]))).active
 		self.assertEqual(ws.max_row, 4)
 		self.assertEqual(ws.auto_filter.ref, "A4:A4")
+
+	def test_apartment_numbers_are_sorted_numerically_and_tenant_changes_stay_chronological(self):
+		doc = sample_with_users()
+		doc.nutzer[0].wohnung_id = "10"
+		doc.nutzer[0].von = "2025-07-01"
+		doc.nutzer[1].wohnung_id = "2"
+		doc.nutzer[2].wohnung_id = "10"
+		doc.nutzer[2].von = "2025-01-01"
+		doc.nutzer.append(Row(**{**vars(doc.nutzer[0]), "wohnung_id": "1", "mietername": "Mieter 1"}))
+		ws = load_workbook(
+			BytesIO(
+				build_xlsx(doc, nutzer_fields=["wohnung_id", "mietername", "von"], include_vacancies=True)
+			)
+		).active
+		self.assertEqual([ws.cell(row, 1).value for row in range(5, 9)], [1, 2, 10, 10])
+		self.assertEqual(
+			[ws.cell(row, 3).value.date().isoformat() for row in range(7, 9)], ["2025-01-01", "2025-07-01"]
+		)
