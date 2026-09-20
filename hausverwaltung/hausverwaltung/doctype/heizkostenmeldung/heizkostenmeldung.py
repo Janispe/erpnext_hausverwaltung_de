@@ -372,6 +372,42 @@ def summen(name):
 
 
 @frappe.whitelist()
+def nutzer_export_felder(name):
+	from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_export import (
+		DEFAULT_NUTZER_FIELDS,
+		nutzer_columns,
+	)
+
+	doc = _get(name, "read", draft=False)
+	doc.check_permission("export")
+	return [
+		{"value": key, "label": label, "checked": key in DEFAULT_NUTZER_FIELDS}
+		for key, label in nutzer_columns(doc)
+	]
+
+
+@frappe.whitelist()
+def export_nutzer_xlsx(name, fields, include_vacancies=0):
+	from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_export import build_xlsx
+
+	doc = _get(name, "read", draft=False)
+	doc.check_permission("export")
+	if not doc.datenstand or not doc.nutzer:
+		frappe.throw("Bitte zuerst ERP-Daten laden, damit die Mieterliste gefüllt ist.")
+	try:
+		selected = frappe.parse_json(fields) if isinstance(fields, str) else fields
+		if selected is None:
+			raise ValueError("Bitte mindestens ein Listenfeld auswählen.")
+		content = build_xlsx(doc, nutzer_fields=selected, include_vacancies=cstr(include_vacancies) == "1")
+	except (ValueError, TypeError) as error:
+		frappe.throw(str(error))
+	frappe.local.response.filename = f"{doc.name}-Mieterliste.xlsx"
+	frappe.local.response.filecontent = content
+	frappe.local.response.type = "download"
+	frappe.local.response.content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@frappe.whitelist()
 def export_xlsx(name):
 	from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_export import build_xlsx
 

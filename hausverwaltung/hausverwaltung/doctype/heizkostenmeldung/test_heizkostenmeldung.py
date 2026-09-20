@@ -234,12 +234,39 @@ class TestHeizkostenmeldung(unittest.TestCase):
 		for fn, name in (
 			(module.pruefen, self.doc.name),
 			(module.export_xlsx, self.doc.name),
+			(module.nutzer_export_felder, self.doc.name),
 			(module.daten_laden, self.doc.name),
 			(module.summen, self.doc.name),
 			(neue_version, self.template.name),
 		):
 			with self.subTest(fn=fn.__name__), self.assertRaises(frappe.PermissionError):
 				fn(name)
+		with self.assertRaises(frappe.PermissionError):
+			module.export_nutzer_xlsx(self.doc.name, '["wohnung_id"]')
+
+	def test_selected_download_validates_fields_and_does_not_modify_archive(self):
+		from hausverwaltung.hausverwaltung.scripts.heizkosten.test_meldung_auswahl import sample_with_users
+
+		doc = sample_with_users()
+		doc.datenstand = "2026-09-20 12:00:00"
+		doc.docstatus = 1
+		doc.export_datei = "/private/files/archive.xlsx"
+		doc.export_sha256 = "unchanged"
+		doc.check_permission = lambda permission: None
+		with patch.object(module, "_get", return_value=doc):
+			for fields in ("null", "[]", '["customer"]', "not-json"):
+				with self.subTest(fields=fields), self.assertRaises(frappe.ValidationError):
+					module.export_nutzer_xlsx(doc.name, fields)
+			module.export_nutzer_xlsx(doc.name, '["mietername", "vorauszahlung_ist"]')
+			wb = load_workbook(BytesIO(frappe.local.response.filecontent))
+			self.assertEqual(wb.sheetnames, ["Mieterliste"])
+			self.assertEqual(wb.active["B5"].value, 500)
+			self.assertEqual(wb.active["C5"].value, None)
+			self.assertEqual(doc.export_datei, "/private/files/archive.xlsx")
+			self.assertEqual(doc.export_sha256, "unchanged")
+			doc.datenstand = None
+			with self.assertRaisesRegex(frappe.ValidationError, "ERP-Daten laden"):
+				module.export_nutzer_xlsx(doc.name, '["mietername"]')
 
 	def test_archive_is_private_immutable_and_download_is_same_bytes(self):
 		self.doc.zusatzwerte_json = dumps({"zahl": 0})

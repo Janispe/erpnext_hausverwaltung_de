@@ -83,6 +83,41 @@
 		dialog.set_values(values(row));
 		dialog.show();
 	}
+	async function downloadDialog(frm) {
+		await saved(frm);
+		const result = await frappe.call({ method: api + "nutzer_export_felder", args: { name: frm.doc.name } });
+		const listOnly = 'eval:doc.umfang === "Mieterliste mit Feldauswahl"';
+		const dialog = new frappe.ui.Dialog({
+			title: __("Excel herunterladen"),
+			size: "large",
+			fields: [
+				{ fieldname: "umfang", fieldtype: "Select", label: __("Inhalt"),
+					options: "Mieterliste mit Feldauswahl\nVollständige Heizkostenmeldung",
+					default: "Mieterliste mit Feldauswahl", reqd: 1 },
+				{ fieldname: "felder", fieldtype: "MultiCheck", label: __("Spalten der Mieterliste"),
+					options: result.message.map(option => ({ ...option, label: frappe.utils.escape_html(option.label) })),
+					columns: 2, sort_options: false, select_all: true, depends_on: listOnly },
+				{ fieldname: "leerstand", fieldtype: "Check", label: __("Leerstandszeiträume einschließen"),
+					default: 0, depends_on: listOnly },
+				{ fieldname: "hinweis", fieldtype: "HTML", depends_on: listOnly,
+					options: `<p class="text-muted">${__("Gezahlte Vorauszahlung = ERP-IST für den Abrechnungszeitraum. Wohnfläche stammt aus ERP; bestätigte Heizfläche ist separat auswählbar. Mieterwechsel bleiben getrennte Zeilen. Die Liste verwendet den gespeicherten Stand; bei Bedarf vorher ERP-Daten laden.")}</p>` },
+			],
+			primary_action_label: __("Herunterladen"),
+			primary_action(values) {
+				const list = values.umfang === "Mieterliste mit Feldauswahl";
+				if (list && !values.felder?.length) return frappe.msgprint(__("Bitte mindestens ein Feld auswählen."));
+				const args = new URLSearchParams({ name: frm.doc.name });
+				if (list) {
+					// Use the displayed column order, independently of the order of clicks.
+					args.set("fields", JSON.stringify(result.message.filter(option => values.felder.includes(option.value)).map(option => option.value)));
+					args.set("include_vacancies", values.leerstand ? "1" : "0");
+				}
+				window.open(`/api/method/${api}${list ? "export_nutzer_xlsx" : "export_xlsx"}?${args}`, "_blank", "noopener");
+				dialog.hide();
+			},
+		});
+		dialog.show();
+	}
 	frappe.ui.form.on("Heizkostenmeldung", {
 		setup(frm) {
 			frm.set_query("vorlage", () => ({ filters: { docstatus: 1 } }));
@@ -99,10 +134,7 @@
 			for (const field of ["immobilie", "von", "bis"]) frm.set_df_property(field, "read_only", !!frm.doc.nutzer?.length);
 			if (frm.doc.docstatus === 0) frm.add_custom_button(__("ERP-Daten laden"), () => action(frm, "daten_laden"));
 			if (frm.is_new()) return;
-			frm.add_custom_button(__("Excel herunterladen"), async () => {
-				await saved(frm);
-				window.open(`/api/method/${api}export_xlsx?name=${encodeURIComponent(frm.doc.name)}`, "_blank", "noopener");
-			});
+			frm.add_custom_button(__("Excel herunterladen"), () => downloadDialog(frm));
 			frm.add_custom_button(__("Angaben prüfen"), async () => {
 				await saved(frm);
 				const r = await frappe.call({ method: api + "pruefen", args: { name: frm.doc.name } });

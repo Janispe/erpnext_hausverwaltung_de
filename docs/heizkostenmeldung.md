@@ -37,6 +37,23 @@ bleiben die bisherigen Eingaben erhalten und die Anwendung verlangt eine neue
 Meldung. Nach Storno kann ein Änderungsentwurf angelegt werden; dabei muss die
 Belegung neu geladen und müssen die Beträge erneut bestätigt werden.
 
+## Mieterliste mit Feldauswahl
+
+**Excel herunterladen** öffnet eine Auswahl zwischen **Mieterliste mit
+Feldauswahl** und **Vollständige Heizkostenmeldung**. Für die kurze Liste sind
+Wohnungsnummer, Mieter, gezahlte HK-Vorauszahlung (ERP-IST) und Wohnfläche
+vorausgewählt. Weitere Spalten einschließlich der Nutzer-Zusatzfelder der
+Vorlage können einzeln ausgewählt werden. Leerstandszeiträume sind optional.
+
+Die gezahlte Vorauszahlung ist die gespeicherte ERP-IST-Summe für den
+Abrechnungszeitraum; SOLL und der bestätigte Meldebetrag sind eigene Felder.
+Wohnfläche und bestätigte Heizfläche bleiben getrennt. Je Mietverhältnis
+wird eine Zeile ausgegeben, auch bei Mieterwechseln in derselben Wohnung.
+Die Liste nutzt den gespeicherten Datenstand; Entwürfe bei Bedarf zuvor über
+**ERP-Daten laden** aktualisieren. Die kurze Liste ist ein separater Auszug.
+Der vollständige Download freigegebener Meldungen liefert weiterhin die
+unveränderte archivierte Datei.
+
 ## Vorlagen
 
 **Heizkostenmeldung Vorlage** repräsentiert jeweils eine Version, beispielsweise
@@ -119,6 +136,7 @@ Tests:
 
 - `hausverwaltung.hausverwaltung.scripts.heizkosten.test_meldung`
 - `hausverwaltung.hausverwaltung.scripts.heizkosten.test_meldung_v2`
+- `hausverwaltung.hausverwaltung.scripts.heizkosten.test_meldung_auswahl`
 - `hausverwaltung.hausverwaltung.doctype.heizkostenmeldung.test_heizkostenmeldung`
 
 Der DocType-Test benötigt eine initialisierte Frappe-Test-/Entwicklersite mit

@@ -17,6 +17,7 @@ from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_summen import get,
 from hausverwaltung.hausverwaltung.scripts.heizkosten.meldung_unterschrift import signature_bytes
 
 EXPORT_VERSION = 3
+DEFAULT_NUTZER_FIELDS = ("wohnung_id", "mietername", "vorauszahlung_ist", "wohnflaeche")
 
 
 def _extras(definitions, scope):
@@ -40,7 +41,39 @@ def _date(value):
 	return value if isinstance(value, (datetime, date)) else date.fromisoformat(str(value)[:10])
 
 
-def build_xlsx(doc):
+def nutzer_columns(doc):
+	"""Allowlist for the selectable list, in the same order as the full export."""
+	return [
+		("wohnung_id", "Wohnungsnummer (ERP)"),
+		("nutzernummer", "Nutzernummer Messdienst (optional)"),
+		("wohnung", "Wohnung"),
+		("typ", "Nutzung"),
+		("mietername", "Mieter"),
+		("von", "Von"),
+		("bis", "Bis"),
+		("heizflaeche", "Heizfläche (m²)"),
+		("vorauszahlung_meldung", "HK-Vorauszahlung Meldung (€)"),
+		("vorauszahlung_ist", "Gezahlte HK-Vorauszahlung (ERP-IST) (€)"),
+		("vorauszahlung_soll", "HK-SOLL ERP (€)"),
+		("wohnflaeche", "Wohnfläche ERP (m²)"),
+		*[("zusatz:" + d["schluessel"], _label(d)) for d in _extras(doc.definitions(), "Nutzer")],
+		("pruefhinweise", "Prüfhinweise"),
+		("pruefnotiz", "Klärung"),
+		("mietvertrag", "Mietvertrag"),
+	]
+
+
+def build_xlsx(doc, *, nutzer_fields=None, include_vacancies=False):
+	columns = nutzer_columns(doc)
+	if nutzer_fields is not None:
+		allowed = {key for key, _ in columns}
+		if (
+			not isinstance(nutzer_fields, list)
+			or not nutzer_fields
+			or any(not isinstance(key, str) or key not in allowed for key in nutzer_fields)
+			or len(set(nutzer_fields)) != len(nutzer_fields)
+		):
+			raise ValueError("Bitte mindestens ein gültiges Listenfeld auswählen; jedes Feld nur einmal.")
 	wb = Workbook()
 	wb.remove(wb.active)
 	definitions = doc.definitions()
@@ -116,6 +149,8 @@ def build_xlsx(doc):
 	fields = _extras(definitions, "Nutzer")
 	nutzer = []
 	for r in doc.nutzer:
+		if nutzer_fields is not None and not include_vacancies and r.typ == "Leerstand":
+			continue
 		values = json_object(r.zusatzwerte_json)
 		nutzer.append(
 			[
@@ -137,6 +172,32 @@ def build_xlsx(doc):
 				r.mietvertrag,
 			]
 		)
+	if nutzer_fields is not None:
+		indices = [
+			next(i for i, (key, _) in enumerate(columns) if key == selected) for selected in nutzer_fields
+		]
+		wb.remove(wb["Meldung"])
+		ws = sheet(
+			"Mieterliste",
+			[columns[i][1] for i in indices],
+			[[row[i] for i in indices] for row in nutzer],
+			{n: 38 if key in ("mietername", "wohnung") else 28 for n, key in enumerate(nutzer_fields, 1)},
+		)
+		ws["A1"] = f"Mieterliste {doc.name}: Auszug aus dem gespeicherten Meldungsstand"
+		ws["A3"] = (
+			f"ERP-Datenstand: {doc.datenstand or 'Noch nicht geladen'} · Eine Zeile je Mietverhältnis im Zeitraum."
+		)
+		ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=max(4, len(nutzer_fields)))
+		ws.row_dimensions[3].height = 32
+		ws.freeze_panes = "A5"
+		ws.auto_filter.ref = f"A4:{ws.cell(ws.max_row, len(nutzer_fields)).coordinate}"
+		for n, key in enumerate(nutzer_fields, 1):
+			if key in ("heizflaeche", "wohnflaeche"):
+				for row in range(5, ws.max_row + 1):
+					ws.cell(row, n).number_format = "#,##0.000"
+		stream = BytesIO()
+		wb.save(stream)
+		return stream.getvalue()
 	ws = sheet(
 		"Nutzer",
 		[
