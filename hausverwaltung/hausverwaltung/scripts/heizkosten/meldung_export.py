@@ -212,7 +212,11 @@ def build_xlsx(doc, *, nutzer_fields=None, include_vacancies=False):
 		ws.freeze_panes = "A5"
 		ws.auto_filter.ref = f"A4:{ws.cell(ws.max_row, len(nutzer_fields)).coordinate}"
 		for n, key in enumerate(nutzer_fields, 1):
-			if key in ("heizflaeche", "wohnflaeche"):
+			if key == "wohnung_id":
+				for row in range(5, ws.max_row + 1):
+					if isinstance(ws.cell(row, n).value, int):
+						ws.cell(row, n).number_format = "0"
+			elif key in ("heizflaeche", "wohnflaeche"):
 				for row in range(5, ws.max_row + 1):
 					ws.cell(row, n).number_format = "#,##0.000"
 		stream = BytesIO()
@@ -243,6 +247,8 @@ def build_xlsx(doc, *, nutzer_fields=None, include_vacancies=False):
 	)
 	ws.auto_filter.ref = f"A4:{ws.cell(ws.max_row, ws.max_column).coordinate}"
 	for row in range(5, ws.max_row + 1):
+		if isinstance(ws.cell(row, 1).value, int):
+			ws.cell(row, 1).number_format = "0"
 		ws.cell(row, 8).number_format = ws.cell(row, 12).number_format = "#,##0.000"
 	fields = _extras(definitions, "Brennstoff")
 	quantities = sum(float(r.menge or 0) for r in doc.lieferungen)

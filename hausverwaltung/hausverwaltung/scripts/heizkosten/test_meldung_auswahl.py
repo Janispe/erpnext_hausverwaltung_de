@@ -55,6 +55,7 @@ class TestMeldungAuswahl(unittest.TestCase):
 		ws = wb.active
 		self.assertEqual(list(ws.values)[4:], [(18, "Mieter A", 500, 42), (18, "=1+1", 0, 42)])
 		self.assertTrue(all(ws.cell(row, 1).data_type == "n" for row in range(5, 7)))
+		self.assertEqual(ws["A5"].number_format, "0")
 		self.assertEqual(ws["B6"].data_type, "s")
 		self.assertEqual(ws["D5"].number_format, "#,##0.000")
 		self.assertEqual(ws["C5"].number_format, "#,##0.00")
@@ -122,6 +123,7 @@ class TestMeldungAuswahl(unittest.TestCase):
 			)
 		).active
 		self.assertEqual([ws.cell(row, 1).value for row in range(5, 9)], [1, 2, 10, 10])
+		self.assertTrue(all(ws.cell(row, 1).number_format == "0" for row in range(5, 9)))
 		self.assertEqual(
 			[ws.cell(row, 3).value.date().isoformat() for row in range(7, 9)], ["2025-01-01", "2025-07-01"]
 		)
