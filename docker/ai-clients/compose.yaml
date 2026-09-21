@@ -1,0 +1,178 @@
+name: hv-ai-clients
+
+services:
+  mongodb:
+    image: mongo:8.0.20
+    restart: unless-stopped
+    volumes:
+      - librechat-mongo:/data/db
+    networks: [clients]
+    healthcheck:
+      test: [CMD, mongosh, --quiet, --eval, "quit(db.adminCommand('ping').ok ? 0 : 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  librechat:
+    image: ghcr.io/danny-avila/librechat:v0.8.7
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "8091:3080"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3080
+      MONGO_URI: mongodb://mongodb:27017/LibreChat
+      DOMAIN_CLIENT: http://100.89.21.12:8091
+      DOMAIN_SERVER: http://100.89.21.12:8091
+      ENDPOINTS: agents,custom
+      SEARCH: "false"
+      ALLOW_REGISTRATION: "false"
+      ALLOW_SOCIAL_LOGIN: "false"
+      ALLOW_SOCIAL_REGISTRATION: "false"
+      ALLOW_SHARED_LINKS: "false"
+      ALLOW_EMAIL_LOGIN: "true"
+      SECURE_COOKIES: "false"
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-user_provided}
+      MISTRAL_BASE_URL: ${MISTRAL_BASE_URL:?}
+      FAC_AUTH_HEADER: ${FAC_AUTH_HEADER:-}
+      CREDS_KEY: ${LIBRE_CREDS_KEY:?}
+      CREDS_IV: ${LIBRE_CREDS_IV:?}
+      JWT_SECRET: ${LIBRE_JWT_SECRET:?}
+      JWT_REFRESH_SECRET: ${LIBRE_JWT_REFRESH_SECRET:?}
+      # Self-hosted Code Interpreter (code-interpreter/compose.hv.yaml), reached as codeapi on the clients network
+      LIBRECHAT_CODE_BASEURL: http://codeapi:3112/v1
+      CODEAPI_AUTH_PROVIDER: librechat-jwt
+      CODEAPI_JWT_ALGORITHM: EdDSA
+      CODEAPI_JWT_ISSUER: librechat
+      CODEAPI_JWT_AUDIENCE: codeapi
+      CODEAPI_JWT_TTL_SECONDS: "300"
+      CODEAPI_JWT_MINT_CACHE_SECONDS: "30"
+      CODEAPI_JWT_SINGLE_TENANT_ID: legacy
+      CODEAPI_JWT_KID: ${LIBRECHAT_CODEAPI_JWT_KID:?}
+      CODEAPI_JWT_PRIVATE_JWK_JSON: ${LIBRECHAT_CODEAPI_JWT_PRIVATE_JWK_JSON:?}
+    volumes:
+      - ./librechat.yaml:/app/librechat.yaml:ro
+      - librechat-images:/app/client/public/images
+      - librechat-uploads:/app/uploads
+      - librechat-logs:/app/api/logs
+    networks: [clients, erp]
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.11.3
+    restart: unless-stopped
+    ports:
+      - "8092:8080"
+    environment:
+      WEBUI_URL: http://100.89.21.12:8092
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?}
+      WEBUI_ADMIN_EMAIL: ${TEST_LOGIN_EMAIL:?}
+      WEBUI_ADMIN_PASSWORD: ${TEST_LOGIN_PASSWORD:?}
+      WEBUI_ADMIN_NAME: Janis
+      ENABLE_SIGNUP: "false"
+      ENABLE_OLLAMA_API: "false"
+      OPENAI_API_BASE_URL: ${MISTRAL_BASE_URL:?}
+      OPENAI_API_KEY: ${MISTRAL_API_KEY:-}
+      DEFAULT_MODELS: hausverwaltung-glm-5-3
+      ENABLE_EVALUATION_ARENA_MODELS: "false"
+      DEFAULT_MODEL_PARAMS: '{"function_calling":"native","temperature":0.2,"max_tokens":8192}'
+      TOOL_SERVER_CONNECTIONS: ${OWUI_TOOL_SERVER_CONNECTIONS:?}
+      ENABLE_TITLE_GENERATION: "false"
+      ENABLE_FOLLOW_UP_GENERATION: "false"
+      ENABLE_TAGS_GENERATION: "false"
+      ENABLE_AUTOCOMPLETE_GENERATION: "false"
+      ENABLE_VERSION_UPDATE_CHECK: "false"
+      HF_HUB_OFFLINE: "1"
+      RAG_EMBEDDING_MODEL_AUTO_UPDATE: "false"
+      DO_NOT_TRACK: "true"
+      SCARF_NO_ANALYTICS: "true"
+      ANONYMIZED_TELEMETRY: "false"
+    volumes:
+      - open-webui-data:/app/backend/data
+    networks: [clients, erp, workspace]
+
+  # Read-only mail access for the chat clients. Only started with
+  # `--profile mail`. No port is published: the Streamable HTTP endpoint has
+  # no authentication and is reachable only as http://mail-mcp:9557/mcp on the
+  # clients network. Read-only is enforced by (1) no SMTP host and an empty
+  # recipient allowlist, (2) the tool selection in the clients and (3) a
+  # read-only mailbox permission in Stalwart.
+  mail-mcp:
+    image: ghcr.io/wh1isper/mcp-email-server:1.9.1
+    profiles: [mail]
+    restart: unless-stopped
+    command: [streamable-http]
+    environment:
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "9557"
+      MCP_ALLOWED_HOSTS: mail-mcp
+      MCP_ALLOWED_ORIGINS: http://mail-mcp
+      MCP_EMAIL_SERVER_ACCOUNT_NAME: ${MAIL_MCP_ACCOUNT_NAME:-archiv}
+      MCP_EMAIL_SERVER_EMAIL_ADDRESS: ${MAIL_MCP_EMAIL_ADDRESS:-}
+      MCP_EMAIL_SERVER_PASSWORD: ${MAIL_MCP_PASSWORD:-}
+      MCP_EMAIL_SERVER_IMAP_HOST: ${MAIL_MCP_IMAP_HOST:-}
+      MCP_EMAIL_SERVER_IMAP_PORT: ${MAIL_MCP_IMAP_PORT:-993}
+      MCP_EMAIL_SERVER_IMAP_SSL: ${MAIL_MCP_IMAP_SSL:-true}
+      MCP_EMAIL_SERVER_IMAP_START_SSL: ${MAIL_MCP_IMAP_START_SSL:-false}
+      MCP_EMAIL_SERVER_IMAP_VERIFY_SSL: ${MAIL_MCP_IMAP_VERIFY_SSL:-true}
+      MCP_EMAIL_SERVER_ALLOWED_RECIPIENTS: ""
+      MCP_EMAIL_SERVER_ENABLE_ATTACHMENT_DOWNLOAD: "false"
+      MCP_EMAIL_SERVER_ENABLE_ATTACHMENT_CONTENT: "false"
+    networks: [clients]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /root:size=16m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+
+  open-terminal:
+    image: ghcr.io/open-webui/open-terminal:0.13.0
+    restart: unless-stopped
+    # Use regular Python: the image's capability-bearing launcher is for
+    # multi-user deployments. This workspace runs as the unprivileged user.
+    entrypoint: [/usr/bin/tini, --, python3, /usr/local/bin/open-terminal]
+    command: [run, --host, 0.0.0.0, --port, "8000", --cwd, /home/user]
+    environment:
+      OPEN_TERMINAL_API_KEY: ${OPEN_TERMINAL_API_KEY:?}
+      OPEN_TERMINAL_FILE_BROWSER_ROOT: /home/user
+      OPEN_TERMINAL_LOG_DIR: /home/user/.logs
+    volumes:
+      - analysis-workspace:/home/user
+    networks: [workspace]
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 2g
+    cpus: 2
+    pids_limit: 256
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import os,requests; requests.get('http://127.0.0.1:8000/api/config', headers={'Authorization': 'Bearer '+os.environ['OPEN_TERMINAL_API_KEY']}, timeout=3).raise_for_status()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  clients:
+  workspace:
+    internal: true
+  erp:
+    external: true
+    name: hvp_default
+
+volumes:
+  librechat-mongo:
+  librechat-images:
+  librechat-uploads:
+  librechat-logs:
+  open-webui-data:
+  analysis-workspace:

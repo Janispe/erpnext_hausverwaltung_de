@@ -1,0 +1,123 @@
+# Hardening overlay for LibreChat's self-hosted Code Interpreter (v1.1.0).
+#
+#   docker compose -p hv-code-interpreter --env-file code-interpreter/.env \
+#     -f code-interpreter/src/docker-compose.yaml -f code-interpreter/compose.hv.yaml up -d --build
+#
+# Differences to the upstream local-development compose file:
+# - no published ports; only `api` joins the LibreChat network (alias `codeapi`)
+# - LibreChat JWT auth instead of LOCAL_MODE, remote bridge disabled
+# - own secrets and execution-manifest key pair instead of the shared example values
+# - at most 2 concurrent sandboxes with 1 GiB RAM each
+# - fixed egress gateway IP, because the microVM guest cannot use Docker DNS
+
+x-internal: &internal
+  CODEAPI_INTERNAL_SERVICE_TOKEN: ${CI_INTERNAL_SERVICE_TOKEN:?}
+  REDIS_PASSWORD: ${CI_REDIS_PASSWORD:?}
+
+x-no-bridge: &no-bridge
+  CODEAPI_BRIDGE_TOKEN: ""
+  CODEAPI_BRIDGE_AUTH_MODE: static
+  CODEAPI_BRIDGE_DYNAMIC_WORKERS: "false"
+
+services:
+  api:
+    container_name: !reset null
+    ports: !reset []
+    restart: unless-stopped
+    environment:
+      <<: [*internal, *no-bridge]
+      LOCAL_MODE: "false"
+      CODEAPI_HARDENED_SANDBOX_MODE: "true"
+      CODEAPI_AUTH_PROVIDER: librechat-jwt
+      CODEAPI_JWT_ISSUER: librechat
+      CODEAPI_JWT_AUDIENCE: codeapi
+      CODEAPI_JWT_ALLOWED_ALGS: EdDSA
+      CODEAPI_JWT_CLOCK_SKEW_SECONDS: "30"
+      CODEAPI_JWT_MAX_TTL_SECONDS: "300"
+      CODEAPI_JWT_KEY_CACHE_TTL_SECONDS: "30"
+      CODEAPI_JWT_JWKS_JSON: ${CI_JWT_JWKS_JSON:?}
+      CODEAPI_JWT_SINGLE_TENANT_ID: legacy
+    networks:
+      default:
+      librechat:
+        aliases: [codeapi]
+
+  service-worker:
+    container_name: !reset null
+    restart: unless-stopped
+    environment:
+      <<: [*internal, *no-bridge]
+      LOCAL_MODE: "false"
+      CODEAPI_HARDENED_SANDBOX_MODE: "true"
+      CODEAPI_AUTH_PROVIDER: librechat-jwt
+      CODEAPI_JWT_SINGLE_TENANT_ID: legacy
+      CODEAPI_EXECUTION_MANIFEST_PRIVATE_KEY: ${CI_MANIFEST_PRIVATE_KEY:?}
+      PYTHON_CONCURRENCY: "1"
+      OTHER_CONCURRENCY: "2"
+
+  egress_gateway:
+    container_name: !reset null
+    ports: !reset []
+    networks:
+      default:
+        ipv4_address: 10.203.0.10
+    restart: unless-stopped
+    environment:
+      <<: *internal
+      CODEAPI_EGRESS_GRANT_SECRET: ${CI_EGRESS_GRANT_SECRET:?}
+
+  tool_call_server:
+    container_name: !reset null
+    restart: unless-stopped
+    environment:
+      <<: *internal
+
+  sandbox-runner:
+    container_name: !reset null
+    ports: !reset []
+    environment:
+      SANDBOX_EXECUTION_MANIFEST_PUBLIC_KEY: ${CI_MANIFEST_PUBLIC_KEY:?}
+      # The libkrun guest cannot reach Docker's embedded DNS (127.0.0.11), so the
+      # sandbox addresses the egress gateway by its fixed IP instead of its name.
+      EGRESS_GATEWAY_URL: http://10.203.0.10:3190
+      SANDBOX_FORWARD_TARGET: 10.203.0.10:3190
+      SANDBOX_MAX_CONCURRENT_JOBS: "2"
+      SANDBOX_LOG_LEVEL: INFO
+      LAUNCHER_RAM_MIB: "1024"
+      SANDBOX_RUN_TIMEOUT: "120000"
+      SANDBOX_RUN_CPU_TIME: "120000"
+
+  file_server:
+    container_name: !reset null
+    ports: !reset []
+    restart: unless-stopped
+    environment:
+      <<: *internal
+      MINIO_BUCKET: codeapi-files
+      MINIO_ACCESS_KEY: ${CI_MINIO_USER:?}
+      MINIO_SECRET_KEY: ${CI_MINIO_PASSWORD:?}
+
+  redis:
+    container_name: !reset null
+    ports: !reset []
+    restart: unless-stopped
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\""]
+    environment:
+      REDIS_PASSWORD: ${CI_REDIS_PASSWORD:?}
+
+  minio:
+    container_name: !reset null
+    ports: !reset []
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${CI_MINIO_USER:?}
+      MINIO_ROOT_PASSWORD: ${CI_MINIO_PASSWORD:?}
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 10.203.0.0/24
+  librechat:
+    external: true
+    name: hv-ai-clients_clients

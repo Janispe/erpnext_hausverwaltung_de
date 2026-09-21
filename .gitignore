@@ -22,5 +22,10 @@ HV_Bankimport/src_react/playwright-report/
 # Frappe/bench generated asset bundles
 hausverwaltung/public/dist/
 
+# Local test and generated analysis artifacts
+output/
+outputs/
+thunderbird-stalwart-migration-test.tar.gz
+
 # Local editor workspaces
 *.code-workspace
