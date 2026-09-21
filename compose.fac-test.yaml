@@ -1,0 +1,110 @@
+name: hv-fac-test
+
+x-frappe: &frappe
+  image: hv-fac-test:2.5.1
+  build:
+    context: ./docker/fac-test
+    args:
+      BASE_IMAGE: ${FAC_BASE_IMAGE:-hvp:16}
+  volumes:
+    - fac-sites:/home/frappe/frappe-bench/sites
+    - fac-logs:/home/frappe/frappe-bench/logs
+    - .:/home/frappe/frappe-bench/apps/hausverwaltung:ro
+    - ../mail_merge:/home/frappe/frappe-bench/apps/mail_merge:ro
+    - ../process_engine:/home/frappe/frappe-bench/apps/process_engine:ro
+  environment:
+    PYTHONDONTWRITEBYTECODE: "1"
+
+services:
+  db:
+    image: mariadb:11.8
+    environment:
+      MARIADB_ROOT_PASSWORD: ${FAC_TEST_DB_PASSWORD:-fac-local-test}
+    command: [--character-set-server=utf8mb4, --collation-server=utf8mb4_unicode_ci]
+    volumes:
+      - fac-db:/var/lib/mysql
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 5s
+      retries: 30
+  redis:
+    image: redis:8-alpine
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      retries: 20
+  setup:
+    <<: *frappe
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      FAC_TEST_DB_PASSWORD: ${FAC_TEST_DB_PASSWORD:-fac-local-test}
+      FAC_TEST_ADMIN_PASSWORD: ${FAC_TEST_ADMIN_PASSWORD:-admin}
+      PYTHONDONTWRITEBYTECODE: "1"
+    entrypoint: [bash, -euc]
+    command:
+      - |
+        ls -1 apps > sites/apps.txt
+        bench set-config -g db_host db
+        bench set-config -g redis_cache redis://redis:6379/0
+        bench set-config -g redis_queue redis://redis:6379/1
+        bench set-config -g redis_socketio redis://redis:6379/1
+        bench set-config -gp socketio_port 9000
+        bench set-config -gp developer_mode 1
+        bench set-config -gp webserver_port 8080
+        bench build --app frappe_assistant_core
+        if [ ! -f sites/fac.localhost/site_config.json ]; then
+          bench new-site fac.localhost --db-root-password "$$FAC_TEST_DB_PASSWORD" \
+            --mariadb-user-host-login-scope='%' --admin-password "$$FAC_TEST_ADMIN_PASSWORD" \
+            --install-app erpnext --install-app process_engine --set-default
+        fi
+        bench --site fac.localhost set-config mute_emails true
+        ./env/bin/python apps/hausverwaltung/docker/fac-test/prepare_site.py
+        bench --site fac.localhost install-app mail_merge hausverwaltung frappe_assistant_core
+        bench --site fac.localhost migrate
+        bench --site fac.localhost set-config allow_tests true
+        bench --site fac.localhost set-config host_name http://fac.localhost:${FAC_TEST_PORT:-18082}
+        bench --site fac.localhost execute hausverwaltung.hausverwaltung.services.fac_test_setup.configure
+  backend:
+    <<: *frappe
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    command: [bench, --site, fac.localhost, serve, --port, "8000", --noreload]
+
+  websocket:
+    <<: *frappe
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    command: [node, /home/frappe/frappe-bench/apps/frappe/socketio.js]
+
+  frontend:
+    <<: *frappe
+    depends_on:
+      - backend
+      - websocket
+    command: [nginx-entrypoint.sh]
+    environment:
+      BACKEND: backend:8000
+      SOCKETIO: websocket:9000
+      FRAPPE_SITE_NAME_HEADER: fac.localhost
+    networks:
+      default:
+        aliases: [fac.localhost]
+    ports:
+      - "127.0.0.1:${FAC_TEST_PORT:-18082}:8080"
+  worker:
+    <<: *frappe
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    command: [bench, worker, --queue, "short,default,long"]
+
+volumes:
+  fac-sites:
+  fac-logs:
+  fac-db:
