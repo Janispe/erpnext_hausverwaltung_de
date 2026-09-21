@@ -192,3 +192,33 @@ eingespielt und die Dienste neu gestartet. Die vier Vorlagenkorrekturen sind
 in der Datenbank gespeichert. Das Docker-Image wurde dabei nicht neu gebaut:
 Für eine spätere Container-Neuerstellung muss der Code-Commit im verwendeten
 Image enthalten sein. Ein gewöhnlicher Container-Neustart behält den Hotfix.
+
+## Externe Chat-Clients über FAC (LibreChat)
+
+Dieselben fünf Werkzeuge stehen zusätzlich über den FAC-MCP-Endpunkt zur Verfügung
+(`agent_tools/fac_contract.py`, `FAC_MAIL_MERGE_TOOL_NAMES`). Es sind die einzigen schreibenden
+FAC-Werkzeuge; `agent_mail_merge_execute` ist als `write` markiert und speichert nur Entwürfe aus
+einer zuvor erfolgreich vorbereiteten Vorschau. Fehler bleiben strukturiert (`issues`, `action`),
+statt in eine FAC-Fehlermeldung umgewandelt zu werden.
+
+Links (`url`, `pdf_url`) sind in ERPNext relativ und werden für externe Clients mit dem
+Site-Config-Key `hv_agent_link_base_url` absolut gemacht (Fallback: `frappe.utils.get_url()`):
+
+```bash
+bench --site frontend set-config hv_agent_link_base_url "http://<erpnext-host>:<port>"
+```
+
+Die Vorschau-Links sind an den ERPNext-Benutzer des FAC-API-Schlüssels gebunden. Im Browser muss
+man daher in ERPNext mit diesem Benutzer angemeldet sein. LibreChat v0.8.7 hat keine Freigabe von
+Werkzeugaufrufen in der Oberfläche; die Agentenanweisung verlangt einen ausdrücklichen Auftrag
+zum Erstellen, bevor `execute` aufgerufen wird.
+
+### PDFs als Datei im Chat
+
+`mail_merge_api.get_pdf` liefert ein PDF als `content_base64` mit `filename`, `size_bytes` und `sha256`:
+entweder aus einer Vorschau (`preparation_token` + `recipient`, dieselbe Benutzer-, Ablauf- und
+Änderungsprüfung wie `preview_pdf`) oder aus einem gespeicherten `Serienbrief Dokument` (Leserecht auf das
+Dokument, nur die dort angehängte Datei). Es ist kein Werkzeug des eingebauten Assistenten, weil der
+base64-Inhalt nicht in einen Modellkontext gehört. Über FAC heißt es `agent_mail_merge_get_pdf` und steht in
+`FAC_CODE_TOOL_NAMES`; LibreChat ruft es nur aus `run_tools_with_bash` auf, dekodiert das PDF in der Sandbox und
+bietet es als Datei im Chat an. Über FAC werden höchstens 8 MB base64 übergeben.

@@ -34,7 +34,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Engine",
-   "options": "classic\nmistral_agents\nmistral_basic",
+   "options": "classic\nmistral_agents\nmistral_basic\nfac\nfac_native",
    "reqd": 1
   },
   {

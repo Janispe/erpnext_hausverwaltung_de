@@ -12,6 +12,11 @@ app_license = "mit"
 # required_apps aus hooks.py (NICHT aus pyproject.toml).
 required_apps = ["process_engine", "mail_merge"]
 
+# Optional FAC integration; importing hooks never requires FAC to be installed.
+from hausverwaltung.hausverwaltung.agent_tools.fac_contract import FAC_TOOL_HOOKS
+
+assistant_tools = FAC_TOOL_HOOKS
+
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
 # 	{

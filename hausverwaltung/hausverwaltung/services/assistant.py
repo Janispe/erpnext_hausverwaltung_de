@@ -41,9 +41,13 @@ BASIC_AGENT_API_TIMEOUT = 180
 BASIC_AGENT_QUERY_PAGE_SIZE = 100
 BASIC_AGENT_QUERY_MAX_ROWS = 500
 ASSISTANT_ENGINE_CLASSIC = "classic"
+ASSISTANT_ENGINE_FAC = "fac"
+ASSISTANT_ENGINE_FAC_NATIVE = "fac_native"
 ASSISTANT_ENGINE_MISTRAL_AGENTS = "mistral_agents"
 ASSISTANT_ENGINE_MISTRAL_BASIC = "mistral_basic"
 ASSISTANT_ENGINES = {
+	ASSISTANT_ENGINE_FAC_NATIVE,
+	ASSISTANT_ENGINE_FAC,
 	ASSISTANT_ENGINE_CLASSIC,
 	ASSISTANT_ENGINE_MISTRAL_AGENTS,
 	ASSISTANT_ENGINE_MISTRAL_BASIC,
@@ -1841,9 +1845,14 @@ def run_assistant(
 			progress_callback=progress_callback,
 		)
 	history_messages = _load_conversation_history(conversation.name)
+	fac_bridge = None
+	if selected_engine == ASSISTANT_ENGINE_FAC_NATIVE:
+		from hausverwaltung.hausverwaltung.services import fac_native_assistant as fac_bridge
+	elif selected_engine == ASSISTANT_ENGINE_FAC:
+		from hausverwaltung.hausverwaltung.services import fac_assistant as fac_bridge
 
 	messages: list[dict[str, Any]] = [
-		{"role": "system", "content": ASSISTANT_SYSTEM_PROMPT},
+		{"role": "system", "content": fac_bridge.system_prompt() if fac_bridge else ASSISTANT_SYSTEM_PROMPT},
 		*history_messages,
 		{
 			"role": "user",
@@ -1854,7 +1863,7 @@ def run_assistant(
 		},
 	]
 
-	selected_tools = _select_assistant_tools(user_message)
+	selected_tools = fac_bridge.available_tools() if fac_bridge else _select_assistant_tools(user_message)
 	prompt_cache_key = _assistant_prompt_cache_key(conversation.name)
 	tool_names: list[str] = []
 	tool_calls_debug: list[dict[str, Any]] = []
@@ -1894,7 +1903,7 @@ def run_assistant(
 			if name == "analyze_revenue_over_time":
 				arguments = _sanitize_revenue_tool_arguments(arguments, user_message)
 			tool_names.append(name)
-			result = _execute_tool(name, arguments)
+			result = fac_bridge.execute_tool(name, arguments) if fac_bridge else _execute_tool(name, arguments)
 			tool_calls_debug.append(
 				_tool_call_debug(
 					name,
@@ -1907,7 +1916,11 @@ def run_assistant(
 				)
 			)
 			current_tool_usage_indexes.append(len(tool_calls_debug) - 1)
-			matches.extend(_extract_matches_from_tool_result(result))
+			matches.extend(
+				fac_bridge.extract_matches(result)
+				if selected_engine == ASSISTANT_ENGINE_FAC_NATIVE
+				else _extract_matches_from_tool_result(result)
+			)
 			_emit_assistant_progress(
 				progress_callback,
 				stage=_("Werkzeug {0} abgeschlossen.").format(name),
@@ -1927,11 +1940,22 @@ def run_assistant(
 
 	if final_message is None:
 		model_round = MAX_TOOL_ROUNDS + 1
+		final_options = {}
+		if fac_bridge:
+			# Omitting tools does not reliably stop further tool calls after a tool history.
+			final_options = {"tools": selected_tools, "tool_choice": "none"}
+			messages.append({
+				"role": "user",
+				"content": "Das Werkzeuglimit ist erreicht. Antworte jetzt in Textform anhand der bisherigen "
+				"Ergebnisse. Benenne Fehler und fehlende Informationen; fehlgeschlagene Abfragen sind kein "
+				"Nachweis fuer fehlende Datensaetze. Keine weiteren Werkzeugaufrufe.",
+			})
 		final_message = mistral_client.complete_chat(
 			messages=messages,
 			model=resolved_model,
 			temperature=0.2,
 			prompt_cache_key=prompt_cache_key,
+			**final_options,
 		)
 		call_usage = final_message.get("_usage") or {}
 		usage_entries.append(call_usage)
@@ -1939,7 +1963,9 @@ def run_assistant(
 			tool_calls_debug, pending_tool_usage_indexes, call_usage, model_round=model_round
 		)
 
-	answer = _message_content(final_message) or _fallback_answer(matches)
+	answer = _message_content(final_message) or (
+		fac_bridge.fallback_answer(tool_calls_debug) if fac_bridge else _fallback_answer(matches)
+	)
 	deduped_matches = _dedupe_matches(matches)
 	mistral_usage = _mistral_usage_summary(usage_entries)
 	_emit_assistant_progress(
@@ -3437,20 +3463,29 @@ def hv_query_view(
 	order_by: str | dict | None = None,
 	aggregate: dict | str | None = None,
 	limit: int | None = None,
+	offset: int | None = None,
+	*,
+	max_limit: int = VIEW_READ_LIMIT,
+	candidate_limit: int = VIEW_CANDIDATE_LIMIT,
 ) -> dict[str, Any]:
-	"""Safe semantic query layer for broad assistant questions."""
+	"""Safe semantic query layer for broad assistant questions.
+
+	`max_limit` and `candidate_limit` are keyword-only and not part of the model tool schema;
+	only the code-only FAC export tool raises them.
+	"""
 	conf = _normalize_hv_query_view(view)
 	_require_view_permissions(conf)
 	selected_fields = _safe_view_fields(conf, fields)
 	filter_tree = _safe_view_filter_tree(conf, filters)
 	order_spec = _safe_view_order_spec(conf, order_by)
 	aggregate_spec = _safe_view_aggregate(conf, aggregate)
-	resolved_limit = _normalize_view_limit(limit)
+	resolved_limit = _normalize_view_limit(limit, max_limit)
+	resolved_offset = _normalize_view_offset(offset)
 	query_fields = _view_query_fields(conf, selected_fields, filter_tree, order_spec, aggregate_spec)
 	params: dict[str, Any] = {
 		"company": _default_company(),
 		"today": nowdate(),
-		"limit": VIEW_CANDIDATE_LIMIT,
+		"limit": candidate_limit,
 	}
 	where_sql = _view_filter_tree_sql(conf, filter_tree, params)
 	select_sql = ",\n\t\t\t".join(
@@ -3480,8 +3515,9 @@ def hv_query_view(
 			key=lambda group: _sort_value(group.get(order_spec["field"])),
 			reverse=order_spec["direction"] == "desc",
 		)
-	returned_rows = working_rows[:resolved_limit]
+	returned_rows = working_rows[resolved_offset : resolved_offset + resolved_limit]
 	data = [_trim_hv_row(row, selected_fields) for row in returned_rows]
+	next_offset = resolved_offset + len(data)
 	if aggregate_result and aggregate_result.get("group_by"):
 		matches = _view_aggregate_matches(conf["name"], aggregate_result)
 	else:
@@ -3495,9 +3531,12 @@ def hv_query_view(
 		"aggregate": aggregate_result,
 		"count": len(data),
 		"returned": len(data),
+		"offset": resolved_offset,
+		"has_more": next_offset < len(working_rows),
+		"next_offset": next_offset if next_offset < len(working_rows) else None,
 		"total_count": len(working_rows),
-		"candidate_limit": VIEW_CANDIDATE_LIMIT,
-		"truncated": len(raw_rows) >= VIEW_CANDIDATE_LIMIT,
+		"candidate_limit": candidate_limit,
+		"truncated": len(raw_rows) >= candidate_limit,
 		"rows": data,
 		"matches": matches,
 	}
@@ -4825,12 +4864,20 @@ def _require_view_permissions(conf: dict[str, Any]) -> None:
 			frappe.throw(_("Keine Berechtigung fuer {0}.").format(doctype), frappe.PermissionError)
 
 
-def _normalize_view_limit(limit: int | None) -> int:
+def _normalize_view_limit(limit: int | None, max_limit: int = VIEW_READ_LIMIT) -> int:
 	try:
 		value = int(limit or 25)
 	except (TypeError, ValueError):
 		value = 25
-	return min(max(value, 1), VIEW_READ_LIMIT)
+	return min(max(value, 1), max_limit)
+
+
+def _normalize_view_offset(offset: int | None) -> int:
+	try:
+		value = int(offset or 0)
+	except (TypeError, ValueError):
+		value = 0
+	return max(value, 0)
 
 
 def _normalize_revenue_period(period: str | None) -> str:

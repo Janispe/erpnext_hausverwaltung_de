@@ -46,6 +46,8 @@ function renderHausverwaltungAssistant(pageBody) {
 						<input class="hv-assistant-input" type="search" autocomplete="off" placeholder="${__("Frage stellen oder Stammdaten suchen")}">
 						<select class="hv-assistant-engine" aria-label="${__("Engine")}" title="${__("Ausfuehrungsart fuer diesen Chat")}">
 							<option value="classic">${__("Bestehend")}</option>
+							<option value="fac">${__("FAC + HV-Werkzeuge (Test)")}</option>
+							<option value="fac_native">${__("FAC Original – nur Lesen (Test)")}</option>
 							<option value="mistral_agents">${__("Mistral Agents (Prototyp)")}</option>
 							<option value="mistral_basic">${__("Mistral Basic + Rechner")}</option>
 						</select>
@@ -1124,11 +1126,15 @@ function renderHausverwaltungAssistant(pageBody) {
 			`);
 			button.toggleClass("active", row.name === conversationId);
 			button.find(".hv-assistant-conversation-title").text(row.title || row.name);
-			const engineLabel = row.engine === "mistral_basic"
-				? __("Mistral Basic")
-				: row.engine === "mistral_agents"
-					? __("Mistral Agent")
-					: __("Bestehend");
+			const engineLabel = row.engine === "fac_native"
+				? __("FAC Original")
+				: row.engine === "fac"
+				? __("FAC + HV-Werkzeuge")
+				: row.engine === "mistral_basic"
+					? __("Mistral Basic")
+					: row.engine === "mistral_agents"
+						? __("Mistral Agent")
+						: __("Bestehend");
 			const runLabel = row.active_run_id ? ` · ${__("laeuft")}` : "";
 			button.find(".hv-assistant-conversation-meta").text(
 				`${row.message_count || 0} ${__("Nachrichten")} · ${engineLabel}${runLabel}`
