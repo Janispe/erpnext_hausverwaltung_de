@@ -1,6 +1,0 @@
-.env
-credentials.local.json
-code-interpreter/src/
-agent-id.txt
-*-agent-id.txt
-code-interpreter/.env
