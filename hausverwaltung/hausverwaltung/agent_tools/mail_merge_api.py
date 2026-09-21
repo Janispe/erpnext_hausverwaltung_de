@@ -485,6 +485,57 @@ def preview_pdf(token, recipient):
 	frappe.local.response.type = "pdf"
 
 
+def _pdf_filename(label):
+	stem = re.sub(r"[^0-9A-Za-zÄÖÜäöüß._-]+", "_", str(label or "")).strip("._")[:120] or "serienbrief"
+	return f"{stem}.pdf"
+
+
+def _pdf_payload(content, label, source):
+	if len(content) > MAX_PDF_BYTES:
+		raise AgentToolError("LIMIT_EXCEEDED", "PDF ist zu groß für die Übergabe.")
+	return {
+		"source": source,
+		"filename": _pdf_filename(label),
+		"mime_type": "application/pdf",
+		"size_bytes": len(content),
+		"sha256": hashlib.sha256(content).hexdigest(),
+		"content_base64": base64.b64encode(content).decode(),
+	}
+
+
+@_endpoint
+def get_pdf(preparation_token=None, recipient=None, document=None):
+	"""PDF bytes for code callers: a prepared preview (token + recipient) or a stored draft document.
+
+	Deliberately not a model-facing tool of the built-in assistant; the base64 payload belongs in a
+	sandbox file, not in a model context.
+	"""
+	if bool(document) == bool(preparation_token):
+		raise AgentToolError(
+			"INVALID_ARGUMENT", "Entweder preparation_token mit recipient oder document angeben."
+		)
+	if document:
+		doc = _read(DOCUMENT, document)
+		file_url = doc.generated_pdf_file
+		if not file_url:
+			raise AgentToolError("NOT_FOUND", "Für dieses Serienbrief-Dokument ist kein PDF gespeichert.")
+		file_name = frappe.db.get_value(
+			"File", {"file_url": file_url, "attached_to_doctype": DOCUMENT, "attached_to_name": doc.name}
+		)
+		if not file_name:
+			raise AgentToolError("NOT_FOUND", "PDF-Datei des Serienbrief-Dokuments nicht gefunden.")
+		content = frappe.get_doc("File", file_name).get_content()
+		if isinstance(content, str):
+			content = content.encode("latin-1")
+		return _pdf_payload(content, f"{doc.name}", "document")
+	payload = _prepared(preparation_token)
+	_recheck(payload)
+	output = next((o for o in payload["outputs"] if o["recipient"] == recipient), None)
+	if not output:
+		raise AgentToolError("NOT_FOUND", "Empfänger ist nicht Teil dieser Vorschau.")
+	return _pdf_payload(base64.b64decode(output["pdf"]), f"Vorschau_{recipient}", "preview")
+
+
 def _status(run):
 	doc = _read(RUN, run)
 	names = frappe.get_all(DOCUMENT, filters={"durchlauf": run}, pluck="name", order_by="creation asc")
