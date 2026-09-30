@@ -180,7 +180,7 @@
 ]; %}
 {% var default_keys = ["wohnung", "mieter", "zeitraum", "größe", "miete", "miete_pro_qm", "betriebskosten", "heizkosten", "untermietzuschlag", "bruttomiete", "bruttomiete_pro_qm"]; %}
 {% var selected_keys = print_settings && print_settings.hv_columns && print_settings.hv_columns.length ? print_settings.hv_columns : default_keys; %}
-{% var print_columns = selected_keys.map(function(key) { return column_specs.find(function(spec) { return spec.key === key; }); }).filter(Boolean); %}
+{% var print_columns = column_specs.filter(function(spec) { return selected_keys.indexOf(spec.key) !== -1; }); %}
 {% var total_width = print_columns.reduce(function(total, spec) { return total + spec.width; }, 0); %}
 {% var cell = function(row, spec, is_total) {
 	if (is_total && spec.key === "wohnung") { return __("Summe"); }
