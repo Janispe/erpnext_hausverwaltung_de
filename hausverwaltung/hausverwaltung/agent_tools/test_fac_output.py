@@ -8,6 +8,7 @@ from hausverwaltung.hausverwaltung.agent_tools import fac_output
 from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 	FAC_CODE_TOOL_NAMES,
 	FAC_MAIL_MERGE_TOOL_NAMES,
+	FAC_REPORT_TOOL_NAMES,
 	FAC_TOOL_HOOKS,
 	FAC_TOOL_NAMES,
 )
@@ -162,6 +163,52 @@ class TestFacOutput(unittest.TestCase):
 		)
 		self.assertEqual(payload["next_offset"], 1002)
 
+	def test_budget_counts_the_indented_text_fac_sends(self):
+		result = {"rows": _rows(60)}
+		compact = fac_output.output_size(result)
+		sent = fac_output.sent_size(result)
+		self.assertGreater(sent, compact)
+
+		shaped = fac_output.enforce_output_budget(result, max_chars=(compact + sent) // 2)
+
+		self.assertTrue(shaped["output_truncated"])
+		self.assertLessEqual(fac_output.sent_size(shaped), (compact + sent) // 2)
+
+	def test_report_page_maps_dict_rows_and_pages(self):
+		result = {
+			"report_name": "General Ledger",
+			"columns": [
+				{"fieldname": "account", "label": "Konto", "fieldtype": "Link", "options": "Account", "width": 180},
+				{"fieldname": "debit", "label": "Soll", "fieldtype": "Currency"},
+			],
+			"data": [{"account": f"A{index}", "debit": index, "extra": "x"} for index in range(5)],
+			"filters_applied": {"company": "HV"},
+			"filters_auto_added": None,
+		}
+
+		page = fac_output.report_page(result, offset=2, limit=2)
+
+		self.assertEqual(page["rows"], [{"account": "A2", "debit": 2}, {"account": "A3", "debit": 3}])
+		self.assertEqual(page["columns"][0], {"fieldname": "account", "label": "Konto", "fieldtype": "Link"})
+		self.assertEqual((page["total_count"], page["has_more"], page["next_offset"]), (5, True, 4))
+		self.assertNotIn("filters_auto_added", page)
+
+		last = fac_output.report_page(result, offset=4, limit=2, columns=["debit"])
+		self.assertEqual(last["rows"], [{"debit": 4}])
+		self.assertEqual((last["has_more"], last["next_offset"]), (False, None))
+
+	def test_report_page_maps_positional_rows_with_string_columns(self):
+		result = {
+			"columns": ["Mieter:Link/Customer:200", ":Data:10", "Offen:Currency:120"],
+			"data": [["Kunde A", "ignored", 12.5]],
+		}
+
+		page = fac_output.report_page(result, offset=0, limit=20)
+
+		self.assertEqual([column["fieldname"] for column in page["columns"]], ["mieter", "offen"])
+		self.assertEqual(page["columns"][1]["fieldtype"], "Currency")
+		self.assertEqual(page["rows"], [{"mieter": "Kunde A", "offen": 12.5}])
+
 
 class TestFacContract(unittest.TestCase):
 	def test_export_tool_is_hooked_but_not_offered_to_builtin_engines(self):
@@ -172,7 +219,10 @@ class TestFacContract(unittest.TestCase):
 		)
 		self.assertEqual(
 			len(FAC_TOOL_HOOKS),
-			len(FAC_TOOL_NAMES) + len(FAC_CODE_TOOL_NAMES) + len(FAC_MAIL_MERGE_TOOL_NAMES),
+			len(FAC_TOOL_NAMES)
+			+ len(FAC_REPORT_TOOL_NAMES)
+			+ len(FAC_CODE_TOOL_NAMES)
+			+ len(FAC_MAIL_MERGE_TOOL_NAMES),
 		)
 
 	def test_mail_merge_is_the_only_writing_surface(self):
@@ -188,6 +238,58 @@ class TestFacTools(unittest.TestCase):
 		tool = fac_tools.Fac_hv_query_view()
 
 		tool.validate_arguments({"view": "tenant_contracts", "limit": 100, "offset": 200})
+
+	def test_list_tools_show_small_default_and_cap_in_schema(self):
+		from hausverwaltung.hausverwaltung.agent_tools import fac_tools
+
+		for name, (default, maximum) in fac_tools.DIRECT_LIMITS.items():
+			limit = getattr(fac_tools, f"Fac_{name}")().inputSchema["properties"]["limit"]
+			self.assertEqual((limit["default"], limit["maximum"]), (default, maximum), name)
+			self.assertIn(f"Standard {default}, höchstens {maximum}", limit["description"])
+
+	def test_missing_limit_uses_default_and_large_limit_is_clamped(self):
+		from hausverwaltung.hausverwaltung.agent_tools import fac_tools
+		from hausverwaltung.hausverwaltung.services import assistant
+
+		tool = fac_tools.Fac_agent_list_docs()
+		calls = []
+		with (
+			patch.object(tool, "check_permission"),
+			patch.dict(assistant.TOOL_FUNCTIONS, {"agent_list_docs": lambda **kw: calls.append(kw) or {"ok": True}}),
+		):
+			tool.execute({"doctype": "GL Entry"})
+			tool.execute({"doctype": "GL Entry", "limit": 5000})
+
+		self.assertEqual([call["limit"] for call in calls], [20, 100])
+
+	def test_report_tools_are_read_only_and_run_report_is_paged(self):
+		from hausverwaltung.hausverwaltung.agent_tools import fac_tools
+
+		self.assertEqual(
+			{getattr(fac_tools, f"Fac_{name}")().category for name in FAC_REPORT_TOOL_NAMES}, {"read_only"}
+		)
+		self.assertIn("hv_export_report", FAC_CODE_TOOL_NAMES)
+		executed = {
+			"success": True,
+			"report_name": "General Ledger",
+			"columns": [{"fieldname": "account", "label": "Konto", "fieldtype": "Link"}],
+			"data": [{"account": f"A{index}"} for index in range(250)],
+			"filters_applied": {},
+		}
+		tool = fac_tools.Fac_hv_run_report()
+		with patch.object(tool, "check_permission"), patch.object(fac_tools, "_run_report", return_value=executed):
+			page = tool.execute({"report_name": "General Ledger"})
+			failed = {"success": False, "error": "Invalid filter values provided", "suggestions": ["x"]}
+			with patch.object(fac_tools, "_run_report", return_value=failed):
+				error = tool.execute({"report_name": "General Ledger", "filters": {"x": 1}})
+
+		self.assertEqual((page["returned"], page["next_offset"], page["total_count"]), (20, 20, 250))
+		self.assertEqual(error, failed)
+
+		export = fac_tools.Fac_hv_export_report()
+		with patch.object(export, "check_permission"), patch.object(fac_tools, "_run_report", return_value=executed):
+			page = export.execute({"report_name": "General Ledger", "limit": 5000})
+		self.assertEqual((page["returned"], page["has_more"]), (250, False))
 
 	def test_export_view_delegates_with_raised_limits(self):
 		from hausverwaltung.hausverwaltung.agent_tools import fac_tools
@@ -219,6 +321,21 @@ class TestFacTools(unittest.TestCase):
 		self.assertEqual(query.call_args.kwargs["candidate_limit"], fac_tools.EXPORT_VIEW_CANDIDATE_LIMIT)
 		self.assertNotIn("matches", result)
 		self.assertEqual(len(result["rows"]), 2)
+
+	def test_export_view_rejects_oversized_page_without_omitting_rows(self):
+		from hausverwaltung.hausverwaltung.agent_tools import fac_tools
+		from hausverwaltung.hausverwaltung.services import assistant
+
+		tool = fac_tools.Fac_hv_export_view()
+		page = {"view": "apartments", "rows": [{"name": "W-1", "note": "x" * 200}], "returned": 1}
+		with (
+			patch.object(tool, "check_permission"),
+			patch.object(assistant, "hv_query_view", return_value=page),
+			patch.object(fac_output, "EXPORT_OUTPUT_MAX_CHARS", 100),
+		):
+			result = tool.execute({"view": "apartments", "limit": 1})
+		self.assertEqual(result["error"]["code"], "LIMIT_EXCEEDED")
+		self.assertNotIn("rows", result)
 
 	def test_export_view_rejects_unknown_arguments(self):
 		from jsonschema import ValidationError

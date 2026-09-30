@@ -207,6 +207,7 @@ left join `tabImmobilie` im on im.name = mv.immobilie
 
 HV_QUERY_VIEWS: dict[str, dict[str, Any]] = {
 	"apartments": {
+		"stable_order": "w.name",
 		"description": (
 			"Wohnungsbestand: eine Zeile pro Wohnung. Nutze diese View fuer Fragen nach Wohnungen, "
 			"freien/vermieteten Wohnungen und Wohnungsanzahlen je Immobilie."
@@ -244,6 +245,7 @@ HV_QUERY_VIEWS: dict[str, dict[str, Any]] = {
 		},
 	},
 	"tenant_contracts": {
+		"stable_order": "mv.name",
 		"description": (
 			"Mieter und Mietvertraege in einer flachen Ansicht. Eine Zeile ist ein Mietvertrag, "
 			"nicht eine eindeutige Wohnung."
@@ -313,6 +315,7 @@ HV_QUERY_VIEWS: dict[str, dict[str, Any]] = {
 		},
 	},
 	"invoices": {
+		"stable_order": "si.name",
 		"description": "Gebuchte Ausgangsrechnungen mit Mieter-/Wohnungsbezug.",
 		"required_doctypes": ("Sales Invoice", "Customer", "Mietvertrag"),
 		"primary_doctype": "Sales Invoice",
@@ -356,6 +359,7 @@ HV_QUERY_VIEWS: dict[str, dict[str, Any]] = {
 		},
 	},
 	"open_items": {
+		"stable_order": "si.name",
 		"description": "Aktuell offene Forderungen aus Sales Invoices, OP-kompatibel gefiltert.",
 		"required_doctypes": ("Sales Invoice", "Customer", "Mietvertrag"),
 		"primary_doctype": "Sales Invoice",
@@ -404,6 +408,7 @@ HV_QUERY_VIEWS: dict[str, dict[str, Any]] = {
 		},
 	},
 	"payments": {
+		"stable_order": "per.name",
 		"description": "Zahlungen auf Sales Invoices inklusive Faelligkeit und Verspaetung.",
 		"required_doctypes": ("Payment Entry", "Sales Invoice", "Customer", "Mietvertrag"),
 		"primary_doctype": "Payment Entry",
@@ -3690,12 +3695,12 @@ def agent_describe_data_catalog(query: str | None = None, **_kwargs) -> dict[str
 
 
 def _catalog_entry_payload(entry: dict[str, Any]) -> dict[str, Any]:
+	# Aliases only drive matching; returning them would repeat the catalog in every answer.
 	return {
 		"group": entry["group"],
 		"group_label": entry["group_label"],
 		"doctype": entry["doctype"],
 		"description": entry["description"],
-		"aliases": list(entry.get("aliases") or ()),
 		"key_fields": list(entry.get("key_fields") or ()),
 		"preferred_tool": entry["preferred_tool"],
 	}
@@ -5186,12 +5191,12 @@ def _view_param_key(params: dict[str, Any]) -> str:
 
 
 def _view_sql_order_clause(conf: dict[str, Any], order_spec: dict[str, Any] | None) -> str:
-	if not order_spec:
-		return ""
-	if order_spec.get("aggregate_order"):
-		return ""
+	"""Keep the candidate window and equal sort values stable across export pages."""
+	stable_order = conf["stable_order"]
+	if not order_spec or order_spec.get("aggregate_order"):
+		return f"order by {stable_order} asc"
 	expr = conf["fields"][order_spec["field"]]
-	return f"order by {expr} {order_spec['direction']}"
+	return f"order by {expr} {order_spec['direction']}, {stable_order} asc"
 
 
 def _can_read_view_row(conf: dict[str, Any], row: dict[str, Any]) -> bool:

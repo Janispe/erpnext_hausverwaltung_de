@@ -12,7 +12,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-DIRECT_OUTPUT_MAX_CHARS = 12_000
+# Measured as FAC sends it (see `sent_size`); roughly 2 500 tokens.
+DIRECT_OUTPUT_MAX_CHARS = 10_000
 MAIL_MERGE_OUTPUT_MAX_CHARS = 40_000
 EXPORT_OUTPUT_MAX_CHARS = 5_000_000
 PDF_OUTPUT_MAX_CHARS = 8_000_000
@@ -28,9 +29,19 @@ TRUNCATION_HINT = (
 	"oder Filter, Felder und limit verkleinern."
 )
 
+REPORT_TRUNCATION_HINT = (
+	"Ausgabe gekürzt, damit sie ins Modell passt. Mit columns nur benötigte Spalten anfordern, limit "
+	"verkleinern oder für viele Zeilen hv_export_report aus Code (run_tools_with_bash) verwenden."
+)
+
 
 def output_size(value: Any) -> int:
 	return len(json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":")))
+
+
+def sent_size(value: Any) -> int:
+	"""Length of the text the model receives: FAC wraps results and dumps them with indent=2."""
+	return len(json.dumps({"success": True, "result": value}, default=str, indent=2))
 
 
 def compact_direct_result(tool_name: str, arguments: dict[str, Any] | None, result: Any) -> Any:
@@ -58,7 +69,7 @@ def enforce_output_budget(
 	result: Any, max_chars: int = DIRECT_OUTPUT_MAX_CHARS, hint: str = TRUNCATION_HINT
 ) -> Any:
 	"""Shrink the largest lists (then long strings) until the JSON fits into `max_chars`."""
-	if output_size(result) <= max_chars:
+	if sent_size(result) <= max_chars:
 		return result
 	if not isinstance(result, dict):
 		return {
@@ -75,7 +86,7 @@ def enforce_output_budget(
 	shaped["hint"] = hint
 
 	for _ in range(200):
-		if output_size(shaped) <= max_chars:
+		if sent_size(shaped) <= max_chars:
 			break
 		path, items = _largest_list(shaped)
 		if not items:
@@ -86,9 +97,9 @@ def enforce_output_budget(
 	shaped["omitted_items"] = omitted
 	_realign_paging(shaped, omitted)
 
-	if output_size(shaped) > max_chars:
+	if sent_size(shaped) > max_chars:
 		_truncate_strings(shaped, MAX_STRING_CHARS)
-	if output_size(shaped) > max_chars:
+	if sent_size(shaped) > max_chars:
 		return {
 			"output_truncated": True,
 			"hint": hint,
@@ -185,3 +196,66 @@ def export_view_payload(result: dict[str, Any], limit: int) -> dict[str, Any]:
 		"candidates_truncated": bool(result.get("truncated")),
 		"rows": result.get("rows") or [],
 	}
+
+
+def report_page(
+	result: dict[str, Any], offset: int, limit: int, columns: list[str] | None = None
+) -> dict[str, Any]:
+	"""One page of an executed ERPNext report with compact column metadata.
+
+	`result` is FAC's `ReportTools.execute_report` output. Rows may be dicts or positional lists;
+	both become dicts keyed by column fieldname. `columns` optionally narrows the returned fields.
+	"""
+	raw_columns = [_report_column(column) for column in result.get("columns") or []]
+	# Positional rows follow the declared column order, including columns without a fieldname.
+	positions = {column["fieldname"]: index for index, column in enumerate(raw_columns) if column["fieldname"]}
+	all_columns = [column for column in raw_columns if column["fieldname"]]
+	selected = all_columns
+	if columns:
+		wanted = set(columns)
+		selected = [column for column in all_columns if column["fieldname"] in wanted]
+	fieldnames = [column["fieldname"] for column in selected]
+
+	rows = result.get("data") or []
+	page = []
+	for row in rows[offset : offset + limit]:
+		if isinstance(row, dict):
+			page.append({key: row.get(key) for key in fieldnames if key in row})
+		elif isinstance(row, (list, tuple)):
+			page.append({key: row[positions[key]] for key in fieldnames if positions[key] < len(row)})
+	total = len(rows)
+	next_offset = offset + len(page)
+	payload = {
+		"report_name": result.get("report_name"),
+		"columns": selected,
+		"filters_applied": result.get("filters_applied"),
+		"offset": offset,
+		"limit": limit,
+		"returned": len(page),
+		"total_count": total,
+		"has_more": next_offset < total,
+		"next_offset": next_offset if next_offset < total else None,
+		"rows": page,
+	}
+	for key in ("filters_auto_added", "message", "suggestion"):
+		if result.get(key):
+			payload[key] = result[key]
+	return payload
+
+
+def _report_column(column: Any) -> dict[str, Any]:
+	# Script reports declare columns as dicts or as "Label:Fieldtype/Options:Width" strings.
+	if isinstance(column, dict):
+		return {
+			"fieldname": column.get("fieldname") or column.get("id") or "",
+			"label": column.get("label") or "",
+			"fieldtype": column.get("fieldtype") or "Data",
+		}
+	label, _sep, rest = str(column).partition(":")
+	fieldtype = rest.split("/")[0].split(":")[0] or "Data"
+	return {"fieldname": frappe_scrub(label), "label": label, "fieldtype": fieldtype}
+
+
+def frappe_scrub(text: str) -> str:
+	"""Same as `frappe.scrub`, kept local so this module stays importable without a site."""
+	return str(text).replace(" ", "_").replace("-", "_").lower()

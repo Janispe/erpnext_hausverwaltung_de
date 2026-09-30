@@ -1758,6 +1758,20 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(result["aggregate"]["groups"][0], {"key": "CUST-1", "count": 2, "value": 100.0})
 		self.assertEqual(result["aggregate"]["groups"][1], {"key": "CUST-2", "count": 1, "value": 50.0})
 
+	def test_view_candidate_order_has_unique_tiebreaker(self):
+		for view, unique_field in (
+			("apartments", "w.name"),
+			("tenant_contracts", "mv.name"),
+			("invoices", "si.name"),
+			("open_items", "si.name"),
+			("payments", "per.name"),
+		):
+			with self.subTest(view=view):
+				conf = assistant.HV_QUERY_VIEWS[view]
+				self.assertEqual(assistant._view_sql_order_clause(conf, None), f"order by {unique_field} asc")
+				order = assistant._safe_view_order_spec(conf, "modified desc" if view != "payments" else "payment_date desc")
+				self.assertTrue(assistant._view_sql_order_clause(conf, order).endswith(f", {unique_field} asc"))
+
 	def test_hv_query_view_filters_sorts_and_returns_clickable_rows(self):
 		rows = [
 			frappe._dict(

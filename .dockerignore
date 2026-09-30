@@ -1,0 +1,14 @@
+**
+!hausverwaltung/
+!hausverwaltung/**
+!scripts/
+!scripts/verify_fac_mcp.py
+!pyproject.toml
+!package.json
+!package-lock.json
+!yarn.lock
+!docker/
+!docker/production-fac/
+!docker/production-fac/Containerfile
+**/__pycache__/
+**/*.pyc

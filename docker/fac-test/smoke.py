@@ -12,8 +12,12 @@ frappe.init(site="fac.localhost")
 frappe.connect()
 try:
 	frappe.set_user("Administrator")
-	from hausverwaltung.hausverwaltung.agent_tools.fac_contract import FAC_TOOL_NAMES
-
+	from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
+		FAC_CODE_TOOL_NAMES,
+		FAC_MAIL_MERGE_TOOL_NAMES,
+		FAC_REPORT_TOOL_NAMES,
+		FAC_TOOL_NAMES,
+	)
 	from hausverwaltung.hausverwaltung.services.fac_native_assistant import NATIVE_READ_TOOLS
 
 	user = frappe.get_doc("User", "Administrator")
@@ -60,11 +64,31 @@ try:
 	)
 	listed = rpc("tools/list")
 	names = {tool["name"] for tool in listed["tools"]}
-	assert names == set(FAC_TOOL_NAMES) | set(NATIVE_READ_TOOLS), names
-	assert all(tool.get("annotations", {}).get("readOnlyHint") for tool in listed["tools"])
+	expected = (
+		set(FAC_TOOL_NAMES)
+		| set(FAC_REPORT_TOOL_NAMES)
+		| set(FAC_CODE_TOOL_NAMES)
+		| set(FAC_MAIL_MERGE_TOOL_NAMES)
+		| set(NATIVE_READ_TOOLS)
+	)
+	assert names == expected, (sorted(expected - names), sorted(names - expected))
+	assert all(
+		tool.get("annotations", {}).get("readOnlyHint") == (tool["name"] != "agent_mail_merge_execute")
+		for tool in listed["tools"]
+	)
 	result = rpc("tools/call", {"name": "agent_get_doctype_schema", "arguments": {"doctype": "Mietvertrag"}})
 	assert not result.get("isError"), result
 	assert "wohnung" in json.dumps(result), "Mietvertrag schema did not contain wohnung"
+	for name, arguments in (("agent_mail_merge_list_templates", {}), ("hv_export_view", {"view": "apartments", "limit": 2})):
+		result = rpc("tools/call", {"name": name, "arguments": arguments})
+		assert not result.get("isError"), (name, result)
+		for item in result.get("content", []):
+			if item.get("type") != "text":
+				continue
+			payload = json.loads(item["text"])
+			assert payload.get("success") is not False, (name, payload)
+			assert not payload.get("error"), (name, payload)
+			assert (payload.get("result") or {}).get("ok") is not False, (name, payload)
 	frappe.db.rollback()  # Refresh the transaction snapshot after the HTTP call.
 	assert frappe.db.exists(
 		"Assistant Audit Log",
@@ -90,6 +114,8 @@ try:
 				"protocol": init["protocolVersion"],
 				"tools": len(names),
 				"schema_read": "passed",
+				"mail_merge_list": "passed",
+				"bulk_export": "passed",
 				"audit_log": "passed",
 				"unauthenticated_access": "denied",
 				"llm_called": False,

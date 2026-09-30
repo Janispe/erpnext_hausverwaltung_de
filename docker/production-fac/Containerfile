@@ -1,0 +1,26 @@
+ARG BASE_IMAGE=hvp:16
+FROM ${BASE_IMAGE}
+
+USER frappe
+WORKDIR /home/frappe/frappe-bench
+
+# Reinstall the reviewed FAC release even when the base image contains an older copy.
+RUN test -d apps/hausverwaltung \
+    && rm -rf apps/frappe_assistant_core \
+    && git clone --depth 1 --branch v2.5.1 \
+       https://github.com/buildswithpaul/Frappe_Assistant_Core.git apps/frappe_assistant_core \
+    && test "$(git -C apps/frappe_assistant_core rev-parse HEAD)" = \
+       7ddc433772f4ade794d9f5ee30b7d9ea0af2a487 \
+    && ./env/bin/pip install -e apps/frappe_assistant_core
+
+# The host checkout is the source of truth after git pull, independent of apps.json.
+RUN rm -rf apps/hausverwaltung/hausverwaltung
+COPY --chown=frappe:frappe hausverwaltung/ apps/hausverwaltung/hausverwaltung/
+COPY --chown=frappe:frappe pyproject.toml package.json package-lock.json yarn.lock apps/hausverwaltung/
+COPY --chown=frappe:frappe scripts/verify_fac_mcp.py apps/hausverwaltung/scripts/verify_fac_mcp.py
+
+RUN ls -1 apps > sites/apps.txt \
+    && ./env/bin/pip install -e apps/hausverwaltung \
+    && bench build --app frappe_assistant_core \
+    && bench build --app hausverwaltung \
+    && find apps/frappe_assistant_core -mindepth 1 -path '*/.git' -prune -exec rm -rf '{}' +

@@ -114,8 +114,9 @@ http://localhost:8090/api/method/frappe_assistant_core.api.fac_endpoint.handle_m
 
 Für die separate leere Testsite stattdessen `http://fac.localhost:18082` verwenden.
 
-Der HTTP-MCP-Endpunkt stellt beide freigegebenen Lesekataloge gemeinsam bereit
-(30 Werkzeuge). Die Trennung in 12 bzw. 18 Werkzeuge erfolgt für die beiden
+Der HTTP-MCP-Endpunkt stellt im reinen Lesemodus beide freigegebenen Lesekataloge
+gemeinsam bereit (30 Werkzeuge). Die isolierte Testsite aktiviert zusätzlich elf
+Berichts-, Export- und Serienbrief-Werkzeuge (41 insgesamt). Die Trennung in 12 bzw. 18 Werkzeuge erfolgt für die beiden
 Chatoptionen zusätzlich vor Modellaufruf und Werkzeugausführung.
 
 FAC unterstützt OAuth bzw. API-Key/Secret-Authentifizierung. Ein externer
@@ -139,7 +140,8 @@ docker compose -f compose.fac-test.yaml stop
 ```
 
 Der HTTP-Smoke-Test prüft den MCP-Handshake, den Werkzeugkatalog, ein echtes
-Mietvertrag-Schema und die Ablehnung nicht authentifizierter Anfragen. Er legt
+Mietvertrag-Schema, die Serienbrief-Vorlagenliste, einen Export und die Ablehnung
+nicht authentifizierter Anfragen. Er legt
 bei Bedarf API-Zugangsdaten für den lokalen Testadministrator an, gibt sie aber
 nicht aus. Die automatisierten Tests benötigen keinen Mistral-Schlüssel.
 
@@ -148,6 +150,9 @@ Mailversand ist deaktiviert. Der Bootstrap legt vor der Mail-Merge-Installation
 einen temporären Druckformat-Platzhalter an, um deren bestehenden Zyklus zwischen
 Singleton-Default und erst nach Migration erstelltem Druckformat aufzulösen.
 `mail_merge` ersetzt diesen bei der Migration durch das reguläre Format.
+Die leere Testsite erhält außerdem einen minimalen `FAC Test`-Firmendatensatz
+und einen Administrator-Default, damit der HTTP-Smoke-Test den Export wirklich
+ausführen kann. Dieser Datensatz gehört ausschließlich zur isolierten Testsite.
 
 ### Verifikation der vorhandenen Site auf 8090
 
