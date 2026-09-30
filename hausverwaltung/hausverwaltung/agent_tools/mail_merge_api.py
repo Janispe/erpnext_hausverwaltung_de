@@ -37,6 +37,7 @@ from hausverwaltung.hausverwaltung.agent_tools.mail_merge_contract import (
 	MailMergeError,
 	input_description,
 	input_issue,
+	layout_warnings,
 	missing_inputs,
 	plain_text,
 	render_error,
@@ -117,6 +118,16 @@ def _digest(value):
 	return hashlib.sha256(
 		json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode()
 	).hexdigest()
+
+
+def _layout_text(reader):
+	"""Vorschautext mit Zeilenlage: Leerzeilen und Einrückungen zeigen dem Modell die Abstände im PDF."""
+	try:
+		pages = [page.extract_text(extraction_mode="layout") or "" for page in reader.pages]
+	except Exception:
+		return ""
+	lines = [re.sub(r" {4,}", "    ", line.rstrip()) for line in "\n".join(pages).splitlines()]
+	return re.sub(r"\n{4,}", "\n\n\n", "\n".join(lines)).strip()
 
 
 def _content_warnings(text):
@@ -450,7 +461,7 @@ def get_template(template, include_source=False, vorlagenversion=None):
 		"excerpt_truncated": excerpt_truncated,
 		"excerpt_is_unrendered": True,
 		"source_included": include_source,
-		"warnings": _content_warnings("\n".join([source, *block_sources])),
+		"warnings": _content_warnings("\n".join([source, *block_sources])) + layout_warnings(source),
 		"blocks": [_block_summary(core, doc, b) for b in blocks],
 		"can_execute": bool(set(frappe.get_roles()).intersection({"System Manager", "Hausverwalter"}))
 		and all(frappe.has_permission(dt, p) for dt in (RUN, DOCUMENT) for p in ("create", "read", "write")),
@@ -582,7 +593,7 @@ def prepare(
 					"pdf": base64.b64encode(pdf).decode(),
 					"pdf_sha256": hashlib.sha256(pdf).hexdigest(),
 					"html": page_html,
-					"text": text,
+					"text": _layout_text(reader) or text,
 					"pages": len(reader.pages),
 				}
 			)

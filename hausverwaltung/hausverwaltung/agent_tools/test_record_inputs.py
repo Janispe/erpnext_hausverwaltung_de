@@ -5,6 +5,7 @@ Reine Unit-Tests mit Mocks; keine Site-Daten.
 
 import json
 import unittest
+import unittest.mock
 from unittest.mock import patch
 
 import frappe
@@ -207,3 +208,29 @@ class TestVersionGuidance(unittest.TestCase):
 			result = api.prepare("Vorlage", "a6098bac", ["MV-1"])
 		self.assertEqual(result["error"]["code"], "TEMPLATE_CHANGED")
 		self.assertIn("get_template", result["error"]["message"])
+
+
+class TestLayoutHints(unittest.TestCase):
+	def test_templates_without_blank_lines_are_flagged(self):
+		from hausverwaltung.hausverwaltung.agent_tools.mail_merge_contract import layout_warnings
+
+		dense = (
+			"<p>Betreff</p><p>Sehr geehrte Damen und Herren,</p><p>Text.</p><p>Mit freundlichen Grüßen</p>"
+		)
+		self.assertEqual([w["code"] for w in layout_warnings(dense)], ["NO_BLANK_LINES"])
+		for spaced in (
+			dense.replace("</p><p>Text", "</p><p>&nbsp;</p><p>Text"),
+			dense.replace("</p><p>Text", '</p><p style="x"><br></p><p>Text'),
+			"<p>Kurz</p><p>Gruß</p>",
+		):
+			with self.subTest(spaced=spaced):
+				self.assertEqual(layout_warnings(spaced), [])
+
+	def test_preview_text_keeps_vertical_gaps(self):
+		page = unittest.mock.Mock()
+		page.extract_text.return_value = "Anrede,      \n\n\n\n\n\nText        rechts   \n"
+		text = api._layout_text(frappe._dict(pages=[page]))
+		page.extract_text.assert_called_once_with(extraction_mode="layout")
+		self.assertEqual(text, "Anrede,\n\n\nText    rechts")
+		page.extract_text.side_effect = TypeError("alte pypdf-Version")
+		self.assertEqual(api._layout_text(frappe._dict(pages=[page])), "")

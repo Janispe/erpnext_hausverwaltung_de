@@ -7,7 +7,11 @@ import frappe
 
 from hausverwaltung.hausverwaltung.agent_tools import mail_merge_api as api
 from hausverwaltung.hausverwaltung.agent_tools.contracts import AgentToolError, parse_json_if_needed
-from hausverwaltung.hausverwaltung.agent_tools.mail_merge_contract import AI_RECORD_DOCTYPES, RECORD_TYPES
+from hausverwaltung.hausverwaltung.agent_tools.mail_merge_contract import (
+	AI_RECORD_DOCTYPES,
+	RECORD_TYPES,
+	layout_warnings,
+)
 
 # Pfadsegmente ohne führenden Unterstrich (keine internen Attribute), optional [] für Listen.
 _VARIABLE_TYPES = {"Text", "String", "Zahl", "Bool", "Datum", *RECORD_TYPES}
@@ -194,6 +198,7 @@ def _result(doc, version, *, proposal):
 		"live_template_changed": not proposal,
 		"revision": f"version:{version.name}" if proposal else api._template(doc.name)[2],
 		"url": f"/app/serienbrief-vorlage/{doc.name}",
+		"warnings": layout_warnings(doc.html_content),
 	}
 
 

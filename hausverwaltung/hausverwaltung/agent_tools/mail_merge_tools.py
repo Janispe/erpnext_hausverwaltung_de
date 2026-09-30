@@ -48,6 +48,9 @@ agent_mail_merge_list_template_versions zeigt IDs, Herkunft und den aktiven Stan
 get_template und save_draft auf genau diesen Vorschlag richten und danach ueber prepare(draft) eine PDF erzeugen.
 Der Nutzer uebernimmt einen Vorschlag selbst im Versionseditor. Keine Bausteine aendern oder Datensaetze loeschen.
 Neue Quellen duerfen nur passive HTML-Inhalte, Jinja-Lesefunktionen und feste baustein("Name")-Verweise enthalten.
+Hausstil: Absaetze haben im Druck keinen Abstand. Setze Leerzeilen wie die bestehenden Vorlagen als eigenen Absatz
+<p>&nbsp;</p>: nach dem Briefkopf, vor und nach dem Betreff (fett), nach der Anrede, zwischen Absaetzen, vor dem Gruss
+und zwei vor dem Namen. Die Vorschautexte von prepare zeigen die Zeilenlage des PDFs; pruefe dort die Abstaende.
 Aktives HTML, dynamische Ressourcen, interne Attribute, safe/attr-Filter und externe Jinja-Imports sind gesperrt.
 Beim Anlegen einer Vorlage kann im Hintergrund eine Vorschau-PDF entstehen; dabei wird kein Serienbrief-Durchlauf
 erzeugt und nichts versendet. Vorschlaege aendern die aktive Vorlage nicht. Gib ID und KI-Herkunft an.

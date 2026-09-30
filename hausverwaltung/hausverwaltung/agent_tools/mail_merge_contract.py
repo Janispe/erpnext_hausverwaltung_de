@@ -81,6 +81,23 @@ def input_description(field):
 	return out
 
 
+_PARAGRAPH_RE = re.compile(r"<p[\s>]", re.IGNORECASE)
+_BLANK_PARAGRAPH_RE = re.compile(r"<p[^>]*>(?:\s|&nbsp;|&#160;|\u00a0|<br\s*/?>)*</p>", re.IGNORECASE)
+
+
+def layout_warnings(source):
+	"""Absätze haben im Druck keinen Abstand; Vorlagen setzen Leerzeilen als eigene leere Absätze."""
+	if len(_PARAGRAPH_RE.findall(source or "")) >= 4 and not _BLANK_PARAGRAPH_RE.search(source or ""):
+		return [
+			{
+				"code": "NO_BLANK_LINES",
+				"message": "Absätze haben im Druck keinen Abstand und die Vorlage enthält keine Leerzeile. "
+				"Leerzeilen wie in den bestehenden Vorlagen als <p>&nbsp;</p> setzen.",
+			}
+		]
+	return []
+
+
 class MailMergeError(AgentToolError):
 	def __init__(self, code, message, *, issues=(), action="review_template", recipient=None):
 		super().__init__(code, message)
