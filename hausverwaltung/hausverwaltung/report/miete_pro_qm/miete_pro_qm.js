@@ -114,7 +114,15 @@ function open_miete_pro_qm_print_dialog(report, as_pdf) {
 			print_settings.include_filters = 0;
 
 			if (as_pdf) {
-				report.pdf_report(print_settings);
+				// Frappes PDF-Renderer übergibt print_settings nicht an die
+				// Berichtsvorlage. Die Auswahl für diesen Renderdurchlauf
+				// deshalb am Report bereitstellen.
+				report.hv_print_columns = selected;
+				try {
+					report.pdf_report(print_settings);
+				} finally {
+					report.hv_print_columns = null;
+				}
 			} else {
 				report.print_report(print_settings);
 			}
