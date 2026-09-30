@@ -52,6 +52,14 @@
 		font-variant-numeric: tabular-nums;
 	}
 
+	.rent-report-table.dense {
+		font-size: 7pt;
+	}
+
+	.rent-report-table.dense th {
+		font-size: 6.5pt;
+	}
+
 	.rent-report-table thead {
 		display: table-header-group;
 	}
@@ -113,6 +121,19 @@
 		color: #667085;
 		font-size: 7pt;
 	}
+
+	.rent-report-table td.muted {
+		color: #667085;
+		font-style: italic;
+	}
+
+	.rent-report-table td.period {
+		white-space: nowrap;
+	}
+
+	.rent-report-table td.text {
+		overflow-wrap: anywhere;
+	}
 </style>
 
 {% var esc = function(value) {
@@ -127,10 +148,50 @@
 		maximumFractionDigits: 2
 	}) + (suffix || ""));
 }; %}
-{% var money = function(value) { return number(value, " €"); }; %}
-{% var area = function(value) { return number(value, " m²"); }; %}
+{% var money = function(value) { return number(value, " \u20ac"); }; %}
+{% var area = function(value) { return number(value, " m\u00b2"); }; %}
+{% var day = function(value) {
+	return value ? esc(frappe.datetime.str_to_user(value)) : "";
+}; %}
+{% var period = function(row) {
+	if (!row.von && !row.bis) { return "-"; }
+	return (day(row.von) || "?") + " \u2013 " + (day(row.bis) || __("offen"));
+}; %}
 {% var generated_at = frappe.datetime.str_to_user(frappe.datetime.now_datetime()); %}
-{% var contract_count = data.filter(function(row) { return row.wohnung !== "Summe"; }).length; %}
+{% var contract_rows = data.filter(function(row) { return !row.is_total && !row.is_leerstand; }); %}
+{% var vacant_rows = data.filter(function(row) { return row.is_leerstand; }); %}
+{% var stichtag = filters.stichtag ? frappe.datetime.str_to_user(filters.stichtag) : generated_at; %}
+{% var column_specs = [
+	{ key: "wohnung", label: __("Wohnung"), kind: "text", width: 11 },
+	{ key: "wohnung_id", label: __("Wohnungs-ID"), kind: "id", width: 7 },
+	{ key: "mieter", label: __("Mieter"), kind: "text", width: 15 },
+	{ key: "zeitraum", label: __("Mietzeitraum"), kind: "period", width: 11 },
+	{ key: "von", label: __("Mietbeginn"), kind: "date", width: 8 },
+	{ key: "bis", label: __("Mietende"), kind: "date", width: 8 },
+	{ key: "größe", label: __("Fläche"), kind: "area", width: 6 },
+	{ key: "miete", label: __("Nettokaltmiete"), kind: "money", width: 8 },
+	{ key: "miete_pro_qm", label: __("Netto pro m²"), kind: "money", width: 8 },
+	{ key: "betriebskosten", label: __("Betriebskosten"), kind: "money", width: 8 },
+	{ key: "heizkosten", label: __("Heizkosten"), kind: "money", width: 7 },
+	{ key: "untermietzuschlag", label: __("Untermietzuschlag"), kind: "money", width: 8 },
+	{ key: "bruttomiete", label: __("Bruttomiete"), kind: "money", width: 9 },
+	{ key: "bruttomiete_pro_qm", label: __("Brutto pro m²"), kind: "money", width: 9 },
+	{ key: "mietvertrag", label: __("Mietvertrag"), kind: "text", width: 12 }
+]; %}
+{% var default_keys = ["wohnung", "mieter", "zeitraum", "größe", "miete", "miete_pro_qm", "betriebskosten", "heizkosten", "untermietzuschlag", "bruttomiete", "bruttomiete_pro_qm"]; %}
+{% var selected_keys = print_settings && print_settings.hv_columns && print_settings.hv_columns.length ? print_settings.hv_columns : default_keys; %}
+{% var print_columns = selected_keys.map(function(key) { return column_specs.find(function(spec) { return spec.key === key; }); }).filter(Boolean); %}
+{% var total_width = print_columns.reduce(function(total, spec) { return total + spec.width; }, 0); %}
+{% var cell = function(row, spec, is_total) {
+	if (is_total && spec.key === "wohnung") { return __("Summe"); }
+	if (is_total && (spec.kind === "text" || spec.kind === "date" || spec.kind === "period" || spec.kind === "id")) { return ""; }
+	if (spec.kind === "period") { return period(row); }
+	if (spec.kind === "date") { return day(row[spec.key]) || "-"; }
+	if (spec.kind === "area") { return area(row[spec.key]); }
+	if (spec.kind === "money") { return money(row[spec.key]); }
+	if (spec.kind === "id") { return row[spec.key] === null || row[spec.key] === undefined ? "-" : esc(row[spec.key]); }
+	return esc(row[spec.key]);
+}; %}
 
 <div class="rent-report-header">
 	<div>
@@ -140,57 +201,51 @@
 		</div>
 	</div>
 	<div class="rent-report-meta">
-		<div>{%= __("Stand") %}: {%= esc(generated_at) %}</div>
-		<div>{%= __("Aktive Mietverträge") %}: {%= contract_count %}</div>
+		<div>{%= __("Stichtag") %}: {%= esc(stichtag) %}</div>
+		<div>{%= __("Mietverträge") %}: {%= esc(filters.vertragsstatus || __("Nur aktive")) %} ({%= contract_rows.length %})</div>
+		<div>{%= __("Sortierung") %}: {%= esc(filters.sortierung || __("Gebäudeteil")) %}</div>
+		{% if (vacant_rows.length) { %}
+			<div>{%= __("Leerstand") %}: {%= vacant_rows.length %}</div>
+		{% } %}
+		<div>{%= __("Gedruckt") %}: {%= esc(generated_at) %}</div>
 	</div>
 </div>
 
 {% if (data.length) { %}
-	<table class="rent-report-table">
+	<table class="rent-report-table{% if (print_columns.length > 10) { %} dense{% } %}">
 		<colgroup>
-			<col style="width: 12%">
-			<col style="width: 7%">
-			<col style="width: 11%">
-			<col style="width: 12%">
-			<col style="width: 11%">
-			<col style="width: 10%">
-			<col style="width: 12%">
-			<col style="width: 12%">
-			<col style="width: 13%">
+			{% for (var i = 0; i < print_columns.length; i++) { %}
+				<col style="width: {%= (print_columns[i].width / total_width * 100).toFixed(2) %}%">
+			{% } %}
 		</colgroup>
 		<thead>
 			<tr>
-				<th>{%= __("Wohnung") %}</th>
-				<th class="number">{%= __("Fläche") %}</th>
-				<th class="number">{%= __("Nettokaltmiete") %}</th>
-				<th class="number">{%= __("Netto pro m²") %}</th>
-				<th class="number">{%= __("Betriebskosten") %}</th>
-				<th class="number">{%= __("Heizkosten") %}</th>
-				<th class="number">{%= __("Untermietzuschlag") %}</th>
-				<th class="number">{%= __("Bruttomiete") %}</th>
-				<th class="number">{%= __("Brutto pro m²") %}</th>
+				{% for (var i = 0; i < print_columns.length; i++) { %}
+					{% var spec = print_columns[i]; %}
+					<th{% if (spec.kind === "money" || spec.kind === "area" || spec.kind === "id") { %} class="number"{% } %}>{%= esc(spec.label) %}</th>
+				{% } %}
 			</tr>
 		</thead>
 		<tbody>
 			{% for (var i = 0; i < data.length; i++) { %}
 				{% var row = data[i] || {}; %}
-				{% var is_total = row.wohnung === "Summe"; %}
+				{% var is_total = !!row.is_total; %}
 				<tr{% if (is_total) { %} class="total-row"{% } %}>
-					<td>{%= esc(row.wohnung) %}</td>
-					<td class="number">{%= area(row["größe"]) %}</td>
-					<td class="number">{%= money(row.miete) %}</td>
-					<td class="number">{%= money(row.miete_pro_qm) %}</td>
-					<td class="number">{%= money(row.betriebskosten) %}</td>
-					<td class="number">{%= money(row.heizkosten) %}</td>
-					<td class="number">{%= money(row.untermietzuschlag) %}</td>
-					<td class="number">{%= money(row.bruttomiete) %}</td>
-					<td class="number">{%= money(row.bruttomiete_pro_qm) %}</td>
+					{% for (var j = 0; j < print_columns.length; j++) { %}
+						{% var spec = print_columns[j]; %}
+						{% var classes = []; %}
+						{% if (spec.kind === "money" || spec.kind === "area" || spec.kind === "id") { classes.push("number"); } %}
+						{% if (spec.kind === "period" || spec.kind === "date") { classes.push("period"); } %}
+						{% if (spec.kind === "text") { classes.push("text"); } %}
+						{% if (row.is_leerstand && spec.key === "mieter") { classes.push("muted"); } %}
+						<td class="{%= classes.join(" ") %}">{%= cell(row, spec, is_total) %}</td>
+					{% } %}
 				</tr>
 			{% } %}
 		</tbody>
 	</table>
 	<div class="rent-report-note">
-		{%= __("Beträge auf Basis der zum Druckzeitpunkt aktiven Mietverträge und Mietstaffeln.") %}
+		{%= __("Beträge auf Basis der zum Stichtag gültigen Mietstaffeln; die Gesamtfläche zählt jede Wohnung einmal.") %}
 	</div>
 {% } else { %}
 	<div class="rent-report-empty">{%= __("Keine Daten für die ausgewählte Immobilie vorhanden.") %}</div>
