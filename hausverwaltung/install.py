@@ -1634,6 +1634,7 @@ _HAUSVERWALTUNG_CARD_SECTIONS: list[dict] = [
             {"label": "Mieter", "link_type": "DocType", "link_to": "Customer"},
             {"label": "Eigentümer", "link_type": "DocType", "link_to": "Eigentuemer"},
             {"label": "Telefonnummern", "link_type": "DocType", "link_to": "Telefonnummernauszug"},
+            {"label": "E-Mail-Adressen", "link_type": "DocType", "link_to": "Emailauszug"},
             {"label": "Anlagenkategorien", "link_type": "DocType", "link_to": "Anlagenkategorie"},
             {"label": "Anlagenarten", "link_type": "DocType", "link_to": "Anlagenart"},
             {
