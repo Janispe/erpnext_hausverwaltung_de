@@ -29,6 +29,10 @@ Authentifizierung und bei Sitzungscookies der CSRF-Schutz entsprechen den
 | `agent_mail_merge_prepare` | `prepare` | Auswahl und Werte prüfen, PDFs erzeugen, befristetes Token zurückgeben |
 | `agent_mail_merge_execute` | `execute` | Geprüfte PDFs einmalig als Entwürfe speichern |
 | `agent_mail_merge_get_status` | `get_status` | Status und gespeicherte PDF-Links lesen, ohne Neugenerierung |
+| `agent_mail_merge_save_draft` | `save_draft` | Eingaben dauerhaft als Entwurf (Durchlauf) speichern, ohne PDFs |
+| `agent_mail_merge_get_draft` | `get_draft` | Aktuellen Stand eines Entwurfs lesen, inklusive `fingerprint` |
+| `agent_mail_merge_list_drafts` | `list_drafts` | Nicht eingereichte Durchläufe nach Titel suchen |
+| `agent_mail_merge_update_draft` | `update_draft` | Entwurf teilweise ändern, nur mit dem zuletzt gelesenen `fingerprint` |
 
 Antworten verwenden den vorhandenen Vertrag
 `{ok, data, error, meta}`. `meta` enthält Anfrage-ID und Laufzeit. Die
@@ -130,6 +134,45 @@ technisch erfolgreicher Prüflauf ist keine fachliche Prüfung alter Brieftexte,
 Beträge oder Fristen. Hinweise auf feste Datumsangaben und mögliche
 Ausfüllstellen stehen in `warnings`; das Modell soll unpassende Inhalte melden.
 
+## Entwürfe: vorbereiten, korrigieren, dann erzeugen
+
+Ein Entwurf ist ein `Serienbrief Durchlauf` mit Status „Entwurf“ und gesetztem
+„Nicht automatisch rendern“. Er hält nur die Eingaben: Vorlage, optional eine
+Vorlagenversion, Empfänger mit eigenen Werten, gemeinsame Werte, Briefdatum und
+Titel. Seine ID (z. B. `SBDL-2026-00041`) identifiziert ihn dauerhaft; der
+`fingerprint` ist eine Prüfsumme über genau diese Eingaben.
+
+1. Das Modell speichert mit `save_draft`. Unvollständige Entwürfe sind erlaubt,
+   `missing_inputs` nennt je Empfänger die fehlenden Pflichtangaben. Werte werden
+   wie bei `prepare` geprüft (Typen, kein HTML/Jinja), aber unescaped gespeichert,
+   damit sie im Viewer lesbar bleiben. Ein Kommentar vermerkt „Vom Assistenten
+   als Entwurf vorbereitet“.
+2. Der Nutzer korrigiert im Durchlauf-Viewer. Jede Korrektur wird normal
+   gespeichert und steht in der Änderungshistorie des Durchlaufs mit Benutzer,
+   altem und neuem Wert. Gerendert wird dabei nicht.
+3. Ändert das Modell später weiter, liest es den Entwurf mit `get_draft` neu und
+   übergibt bei `update_draft` den zuletzt gesehenen `fingerprint`. Hat jemand
+   inzwischen etwas geändert, antwortet die API mit `DRAFT_CHANGED` und dem
+   aktuellen Stand (`error.current`); nichts wird überschrieben. `values` und
+   `per_recipient` ändern nur die genannten Schlüssel, `null` entfernt einen
+   Wert, `recipients` ersetzt die Empfängerliste und behält vorhandene Werte.
+4. `prepare` mit nur `draft` rendert die Vorschau aus dem gespeicherten Stand.
+   Im Viewer als Text gepflegte Zahlen und Wahrheitswerte werden dabei typisiert.
+   `execute` legt die geprüften PDFs im selben Durchlauf ab, ersetzt ältere,
+   nicht eingereichte Dokumente des Entwurfs und verweigert mit `DRAFT_CHANGED`,
+   wenn der Entwurf nach der Vorschau geändert wurde. Enthält der Entwurf
+   eingereichte oder stornierte Dokumente, verweigert es mit `DRAFT_LOCKED`;
+   diese storniert oder löscht das Modell nie. `get_draft` meldet danach `rendered:
+   "aktuell"`; nach einer weiteren Korrektur `"veraltet"`.
+
+Mit `vorlagenversion` verwendet ein Entwurf (wie jeder Durchlauf) eine ältere
+Version der Vorlage: Inhalt aus dem Snapshot der Version, Bausteine im Stand
+ihrer Stückliste. `revision` entfällt dann, weil Versionen unveränderlich sind.
+
+Die `revision` einer aktuellen Vorlage ist die Prüfsumme ihres renderbaren
+Inhalts und ihrer Bausteine, wie sie die Versionshistorie bildet. Metadaten wie
+`modified` oder ein im Hintergrund neu erzeugtes Vorschau-PDF ändern sie nicht.
+
 ## Berechtigungen und Wiederholungen
 
 - Lesende Werkzeuge: Rolle `System Manager`, `Hausverwalter` oder
@@ -195,10 +238,11 @@ Image enthalten sein. Ein gewöhnlicher Container-Neustart behält den Hotfix.
 
 ## Externe Chat-Clients über FAC (LibreChat)
 
-Dieselben fünf Werkzeuge stehen zusätzlich über den FAC-MCP-Endpunkt zur Verfügung
+Dieselben Werkzeuge stehen zusätzlich über den FAC-MCP-Endpunkt zur Verfügung
 (`agent_tools/fac_contract.py`, `FAC_MAIL_MERGE_TOOL_NAMES`). Es sind die einzigen schreibenden
-FAC-Werkzeuge; `agent_mail_merge_execute` ist als `write` markiert und speichert nur Entwürfe aus
-einer zuvor erfolgreich vorbereiteten Vorschau. Fehler bleiben strukturiert (`issues`, `action`),
+FAC-Werkzeuge; `save_draft`, `update_draft` und `execute` sind als `write` markiert
+(`FAC_MAIL_MERGE_WRITE_TOOL_NAMES`) und speichern nur Entwürfe: Eingaben oder die PDFs einer zuvor
+erfolgreich vorbereiteten Vorschau. Fehler bleiben strukturiert (`issues`, `action`),
 statt in eine FAC-Fehlermeldung umgewandelt zu werden.
 
 Links (`url`, `pdf_url`) sind in ERPNext relativ und werden für externe Clients mit dem

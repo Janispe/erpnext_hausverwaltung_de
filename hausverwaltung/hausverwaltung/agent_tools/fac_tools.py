@@ -9,7 +9,11 @@ from frappe_assistant_core.core.base_tool import BaseTool
 from jsonschema import validate
 
 from hausverwaltung.hausverwaltung.agent_tools import fac_output
-from hausverwaltung.hausverwaltung.agent_tools.fac_contract import FAC_MAIL_MERGE_TOOL_NAMES, FAC_TOOL_NAMES
+from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
+	FAC_MAIL_MERGE_TOOL_NAMES,
+	FAC_MAIL_MERGE_WRITE_TOOL_NAMES,
+	FAC_TOOL_NAMES,
+)
 
 EXPORT_VIEW_MAX_LIMIT = 1000
 EXPORT_VIEW_CANDIDATE_LIMIT = 20_000
@@ -215,7 +219,7 @@ class MailMergeTool(HausverwaltungReadTool):
 		_apply_limit_schema(self.tool_name, self.inputSchema)
 		self.inputSchema["additionalProperties"] = False
 		self.source_app = "hausverwaltung"
-		self.category = "write" if self.tool_name == "agent_mail_merge_execute" else "read_only"
+		self.category = "write" if self.tool_name in FAC_MAIL_MERGE_WRITE_TOOL_NAMES else "read_only"
 		self.requires_permission = "Serienbrief Vorlage"
 
 	def execute(self, arguments):

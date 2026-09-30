@@ -139,15 +139,14 @@ def _content_warnings(text):
 	return warnings
 
 
-def _template(template):
-	doc = _read(TEMPLATE, template)
+def _collect_blocks(doc, *, historic=False):
+	"""Alle Bausteine der Vorlage im Stand, den der Kern rendern wuerde, mit stabiler Identitaet."""
 	core = _renderer()
 	blocks = []
 	identities = []
 	seen = set()
 	queue = [r.baustein for r in doc.get("textbausteine") or [] if r.baustein]
-	source = core._get_template_template_source(doc)
-	queue.extend(core._extract_inline_block_names(source))
+	queue.extend(core._extract_inline_block_names(core._get_template_template_source(doc)))
 	while queue:
 		name = queue.pop(0)
 		if name in seen:
@@ -155,17 +154,58 @@ def _template(template):
 		seen.add(name)
 		if len(seen) > 100:
 			raise AgentToolError("TEMPLATE_INVALID", "Zu viele verknüpfte Textbausteine.")
-		block = _read("Serienbrief Textbaustein", name)
-		# Fixiert die Vorlage eine Baustein-Version, rendert der Kern diese statt des aktuellen
-		# Stands. Revision und Steckbrief muessen denselben Inhalt beschreiben.
+		if historic and not frappe.db.exists("Serienbrief Textbaustein", name):
+			# Historische Versionen duerfen inzwischen geloeschte Bausteine enthalten.
+			if not frappe.has_permission("Serienbrief Textbaustein", "read"):
+				raise frappe.PermissionError
+		else:
+			_read("Serienbrief Textbaustein", name)
+		# Fixiert die Vorlage eine Baustein-Version (oder ist sie selbst historisch), rendert
+		# der Kern diesen Stand statt des aktuellen. Steckbrief und revision folgen ihm.
 		fixed = core.fixed_version_number(doc, name)
-		if fixed:
-			block = core.get_textbaustein(name, template=doc)
+		block = core.get_textbaustein(name, template=doc)
 		blocks.append(block)
 		# Fixierte Snapshots sind unveraenderlich; Name und Nummer identifizieren sie stabil.
-		identities.append({"baustein": name, "fixierte_version": fixed} if fixed else block.as_dict())
+		identities.append({"baustein": name, "fixierte_version": fixed} if fixed else _content_hash(block))
 		queue.extend(core._extract_inline_block_names(core._get_textbaustein_template_source(block)))
-	return doc, blocks, _digest([doc.as_dict(), *identities])
+	return blocks, identities
+
+
+def _content_hash(doc):
+	"""Pruefsumme des renderbaren Inhalts, wie sie die Versionshistorie bildet.
+
+	Metadaten wie modified oder ein im Hintergrund neu erzeugtes Vorschau-PDF aendern die
+	revision dadurch nicht; nur Inhalt, Variablen, Bausteine und Einstellungen.
+	"""
+	from mail_merge.mail_merge.doctype.serienbrief_vorlage.serienbrief_vorlage import TEMPLATE_VERSION_SPEC
+	from mail_merge.mail_merge.utils import textbaustein_versions, versioning
+
+	spec = TEMPLATE_VERSION_SPEC if doc.doctype == TEMPLATE else textbaustein_versions.SPEC
+	return versioning.snapshot_hash(versioning.build_snapshot(spec, doc))
+
+
+def _template(template):
+	doc = _read(TEMPLATE, template)
+	blocks, identities = _collect_blocks(doc)
+	return doc, blocks, _digest([_content_hash(doc), *identities])
+
+
+def _template_for(template, vorlagenversion=None):
+	"""Vorlage mit Bausteinen und revision; mit Version deren unveraenderlicher Stand."""
+	if not vorlagenversion:
+		return _template(template)
+	from mail_merge.mail_merge.utils.textbaustein_versions import template_at_version
+
+	_read(TEMPLATE, template)
+	if not isinstance(vorlagenversion, str) or not frappe.db.exists("Serienbrief Vorlagenversion", vorlagenversion):
+		raise AgentToolError("NOT_FOUND", "Vorlagenversion nicht gefunden.")
+	try:
+		doc = template_at_version(template, vorlagenversion)
+	except frappe.PermissionError:
+		raise AgentToolError("INVALID_ARGUMENT", "Die Vorlagenversion gehört nicht zu dieser Vorlage.") from None
+	blocks, _ = _collect_blocks(doc, historic=True)
+	# Snapshots aendern sich nie: die Version selbst ist die revision.
+	return doc, blocks, f"version:{vorlagenversion}"
 
 
 def _inputs(template):
@@ -173,7 +213,7 @@ def _inputs(template):
 	return [{"key": field["name"], "path": field["path"], "label": field["label"], "type": field["type"], "optional": not field["required"], "description": field["description"], "fillable": True, "default": field["default"]} for field in input_fields(template)]
 
 
-def _values(raw, fields, *, recipient=None):
+def _values(raw, fields, *, recipient=None, escape=True):
 	values = parse_json_if_needed(raw)
 	if values is None:
 		values = {}
@@ -228,7 +268,8 @@ def _values(raw, fields, *, recipient=None):
 					action="correct_inputs",
 					recipient=recipient,
 				)
-			value = html.escape(value, quote=True)
+			if escape:
+				value = html.escape(value, quote=True)
 		out[key] = {"value": value}
 	return out
 
@@ -256,6 +297,35 @@ def _prepared(token):
 	if data["owner"] != frappe.session.user:
 		raise AgentToolError("PERMISSION_DENIED", "Vorschau gehört einem anderen Benutzer.")
 	return data
+
+
+def _letter_date(letter_date):
+	letter_date = letter_date or nowdate()
+	try:
+		if date.fromisoformat(letter_date).isoformat() != letter_date:
+			raise ValueError
+	except (ValueError, TypeError):
+		raise MailMergeError(
+			"INVALID_INPUT",
+			"Briefdatum muss YYYY-MM-DD sein.",
+			issues=[input_issue("letter_date", expected_type="string", format="YYYY-MM-DD")],
+			action="correct_inputs",
+		) from None
+	return letter_date
+
+
+def _checked_inputs(doc, recipients, values, per_recipient, letter_date, *, escape=True):
+	"""Dieselben Regeln fuer Vorschau und Entwurf: Empfaenger, freigegebene Werte, Datum."""
+	targets = _targets(doc, recipients)
+	fields = _inputs(doc)
+	common = _values(values, fields, escape=escape)
+	per = parse_json_if_needed(per_recipient)
+	if per is None:
+		per = {}
+	if not isinstance(per, dict) or set(per) - {t.name for t in targets}:
+		raise AgentToolError("INVALID_INPUT", "Empfängerwerte gehören nicht zur Auswahl.")
+	individual = {name: _values(v, fields, recipient=name, escape=escape) for name, v in per.items()}
+	return targets, fields, common, individual, _letter_date(letter_date)
 
 
 @frappe.whitelist()
@@ -327,43 +397,47 @@ def get_template(template, include_source=False):
 
 @frappe.whitelist(methods=["POST"])
 @_endpoint
-def prepare(template, revision, recipients, values=None, per_recipient=None, letter_date=None):
-	doc, blocks, current_revision = _template(template)
-	if revision != current_revision:
-		raise AgentToolError("TEMPLATE_CHANGED", "Vorlage geändert; bitte erneut lesen.")
+def prepare(
+	template=None,
+	revision=None,
+	recipients=None,
+	values=None,
+	per_recipient=None,
+	letter_date=None,
+	draft=None,
+):
+	draft_run = None
+	if draft is not None:
+		if any(arg is not None for arg in (template, revision, recipients, values, per_recipient, letter_date)):
+			raise AgentToolError(
+				"INVALID_ARGUMENT", "Mit draft werden alle Eingaben aus dem gespeicherten Entwurf gelesen."
+			)
+		draft_run = _editable_draft(draft)
+		doc, blocks, current_revision = _template_for(draft_run.vorlage, draft_run.get("vorlagenversion"))
+		recipients, values, per_recipient, letter_date = _draft_inputs(draft_run, _inputs(doc))
+	else:
+		if not template or not revision or recipients is None:
+			raise AgentToolError("INVALID_ARGUMENT", "template, revision und recipients sind erforderlich.")
+		doc, blocks, current_revision = _template(template)
+		if revision != current_revision:
+			raise AgentToolError("TEMPLATE_CHANGED", "Vorlage geändert; bitte erneut lesen.")
 	core = _renderer()
 	sources = [
 		core._get_template_template_source(doc),
 		*[core._get_textbaustein_template_source(b) for b in blocks],
 	]
-	targets = _targets(doc, recipients)
-	fields = _inputs(doc)
-	common = _values(values, fields)
-	per = parse_json_if_needed(per_recipient)
-	if per is None:
-		per = {}
-	if not isinstance(per, dict) or set(per) - {t.name for t in targets}:
-		raise AgentToolError("INVALID_INPUT", "Empfängerwerte gehören nicht zur Auswahl.")
-	individual = {name: _values(v, fields, recipient=name) for name, v in per.items()}
-	letter_date = letter_date or nowdate()
-	try:
-		if date.fromisoformat(letter_date).isoformat() != letter_date:
-			raise ValueError
-	except (ValueError, TypeError):
-		raise MailMergeError(
-			"INVALID_INPUT",
-			"Briefdatum muss YYYY-MM-DD sein.",
-			issues=[input_issue("letter_date", expected_type="string", format="YYYY-MM-DD")],
-			action="correct_inputs",
-		)
+	targets, fields, common, individual, letter_date = _checked_inputs(
+		doc, recipients, values, per_recipient, letter_date
+	)
 	token = uuid.uuid4().hex
-	run_name = "SBDL-LLM-" + token
+	run_name = draft_run.name if draft_run else "SBDL-LLM-" + token
 	run_data = {
 		"doctype": RUN,
 		"name": run_name,
-		"title": doc.title,
+		"title": draft_run.title if draft_run else doc.title,
 		"vorlage": doc.name,
-		"kategorie": doc.kategorie,
+		"vorlagenversion": draft_run.get("vorlagenversion") if draft_run else None,
+		"kategorie": draft_run.kategorie if draft_run else doc.kategorie,
 		"date": letter_date,
 		"iteration_doctype": doc.haupt_verteil_objekt,
 		"status": "Läuft",
@@ -406,6 +480,7 @@ def prepare(template, revision, recipients, values=None, per_recipient=None, let
 			page_html = run._wrap_html_fragment("\n".join(run._render_segments_preview_pages(segments)))
 			footer = frappe._dict(
 				vorlage=doc.name,
+				vorlagenversion=run_data["vorlagenversion"],
 				iteration_doctype=doc.haupt_verteil_objekt,
 				objekt=row.iteration_objekt,
 				date=letter_date,
@@ -443,15 +518,19 @@ def prepare(template, revision, recipients, values=None, per_recipient=None, let
 	payload = {
 		"owner": frappe.session.user,
 		"expires_at": time.time() + PREPARATION_TTL,
-		"revision": revision,
+		"revision": current_revision,
 		"run": run_data,
 		"outputs": outputs,
 		"targets": {t.name: str(t.modified) for t in targets},
+		# Vorschau eines gespeicherten Entwurfs: execute legt die PDFs genau dort ab, sofern
+		# der Entwurf seitdem nicht geaendert wurde.
+		"draft": {"name": draft_run.name, "fingerprint": _fingerprint(draft_run)} if draft_run else None,
 	}
 	frappe.cache.set_value(_cache_key(token), payload, expires_in_sec=PREPARATION_TTL)
 	return {
 		"ready": True,
 		"preparation_token": token,
+		"draft": draft_run.name if draft_run else None,
 		"expires_in_seconds": PREPARATION_TTL,
 		"template": doc.name,
 		"date": letter_date,
@@ -472,7 +551,7 @@ def prepare(template, revision, recipients, values=None, per_recipient=None, let
 
 
 def _recheck(payload):
-	doc, _, revision = _template(payload["run"]["vorlage"])
+	doc, _, revision = _template_for(payload["run"]["vorlage"], payload["run"].get("vorlagenversion"))
 	if revision != payload["revision"]:
 		raise AgentToolError("TEMPLATE_CHANGED", "Vorlage geändert; bitte erneut vorbereiten.")
 	targets = _targets(doc, list(payload["targets"]))
@@ -573,6 +652,13 @@ def get_status(run):
 	return _status(run)
 
 
+def _already_executed(run_name, token, draft):
+	if not draft:
+		return frappe.db.exists(RUN, run_name)
+	summary = parse_json_if_needed(frappe.db.get_value(RUN, run_name, "run_summary")) or {}
+	return isinstance(summary, dict) and (summary.get("agent") or {}).get("token") == token
+
+
 @frappe.whitelist(methods=["POST"])
 @_endpoint
 def execute(preparation_token):
@@ -583,17 +669,35 @@ def execute(preparation_token):
 	with frappe.cache.lock(key + ":execute", timeout=120, blocking_timeout=5):
 		payload = _prepared(preparation_token)
 		run_name = payload["run"]["name"]
-		if payload.get("executed") or frappe.db.exists(RUN, run_name):
+		draft = payload.get("draft")
+		if payload.get("executed") or _already_executed(run_name, preparation_token, draft):
 			run = _read(RUN, run_name)
-			if run.owner != frappe.session.user:
+			if not draft and run.owner != frappe.session.user:
 				raise AgentToolError("PERMISSION_DENIED", "Durchlauf gehört einem anderen Benutzer.")
 			return {**_status(run_name), "reused": True}
 		_recheck(payload)
 		try:
-			# Läuft suppresses the core's on_update auto-render. Persist precisely
-			# the already inspected PDFs, without regenerating, submitting or sending.
-			run = frappe.get_doc(payload["run"])
-			run.insert(set_name=run_name)
+			if draft:
+				# Der gespeicherte Entwurf erhaelt die geprueften PDFs, sofern ihn seit der
+				# Vorschau niemand geaendert hat. Nicht eingereichte, aeltere Dokumente desselben
+				# Entwurfs werden ersetzt; eingereichte Dokumente storniert oder loescht das
+				# Modell nie.
+				run = _editable_draft(draft["name"])
+				if _fingerprint(run) != draft["fingerprint"]:
+					raise AgentToolError(
+						"DRAFT_CHANGED", "Entwurf wurde nach der Vorschau geändert; bitte erneut vorbereiten."
+					)
+				if frappe.db.exists(DOCUMENT, {"durchlauf": run.name, "docstatus": ["!=", 0]}):
+					raise AgentToolError(
+						"DRAFT_LOCKED",
+						"Der Entwurf enthält eingereichte oder stornierte Dokumente; diese ersetzt der Assistent nicht.",
+					)
+				run._remove_linked_dokumente(raise_on_failure=True)
+			else:
+				# Läuft suppresses the core's on_update auto-render. Persist precisely
+				# the already inspected PDFs, without regenerating, submitting or sending.
+				run = frappe.get_doc(payload["run"])
+				run.insert(set_name=run_name)
 			for output in payload["outputs"]:
 				document = frappe.get_doc(
 					{
@@ -635,7 +739,10 @@ def execute(preparation_token):
 						{
 							"generated": len(payload["outputs"]),
 							"error": 0,
+							# Der Viewer vergleicht damit, ob die PDFs zu den Eingaben passen.
+							"input_fingerprint": _fingerprint(run),
 							"agent": {
+								"token": preparation_token,
 								"revision": payload["revision"],
 								"prepared_by": payload["owner"],
 								"pdf_sha256": {o["recipient"]: o["pdf_sha256"] for o in payload["outputs"]},
@@ -652,3 +759,296 @@ def execute(preparation_token):
 		payload["executed"] = True
 		frappe.cache.set_value(key, payload, expires_in_sec=max(1, int(payload["expires_at"] - time.time())))
 		return {**result, "reused": False}
+
+
+# --- Gespeicherte Entwuerfe -------------------------------------------------------------
+# Ein Entwurf ist ein Serienbrief Durchlauf, der nur Eingaben haelt (Vorlage, optional eine
+# Vorlagenversion, Empfaenger, Werte, Datum) und nicht automatisch rendert. Der Nutzer kann
+# ihn im Durchlauf-Viewer korrigieren; die Aenderungshistorie zeigt, wer was geaendert hat.
+# Das Modell aendert nur mit dem zuletzt gesehenen Fingerabdruck und ueberschreibt so keine
+# Korrekturen, die es nicht kennt.
+
+
+def _fingerprint(run):
+	from mail_merge.mail_merge.utils.letter_composer_state import input_fingerprint
+
+	return input_fingerprint(run)
+
+
+def _editable_draft(name):
+	run = _read(RUN, name)
+	run.check_permission("write")
+	if run.docstatus != 0:
+		raise AgentToolError("DRAFT_LOCKED", "Der Durchlauf ist eingereicht und nicht mehr änderbar.")
+	if run.status == "Läuft":
+		raise AgentToolError("DRAFT_LOCKED", "Der Durchlauf wird gerade erzeugt; bitte später erneut.")
+	return run
+
+
+def _coerce_stored(value, kind):
+	"""Im Viewer gepflegte Werte kommen teils als Text; fuer die Pruefung typisieren."""
+	if kind == "Zahl" and isinstance(value, str):
+		text = value.strip().replace(" ", "")
+		if "," in text:
+			text = text.replace(".", "").replace(",", ".")
+		try:
+			number = float(text)
+		except ValueError:
+			return value
+		return int(number) if number.is_integer() else number
+	if kind == "Bool":
+		if isinstance(value, str) and value.strip().lower() in {"1", "true", "ja", "0", "false", "nein", ""}:
+			return value.strip().lower() in {"1", "true", "ja"}
+		if type(value) is int and value in (0, 1):
+			return bool(value)
+	if kind in {"Text", "String"} and type(value) in (int, float):
+		return str(value)
+	return value
+
+
+def _stored_values(raw, fields):
+	kinds = {f["key"]: f["type"] for f in fields}
+	data = parse_json_if_needed(raw) or {}
+	if not isinstance(data, dict):
+		return {}
+	out = {}
+	for key, entry in data.items():
+		value = entry.get("value") if isinstance(entry, dict) else entry
+		if value is not None:
+			out[key] = _coerce_stored(value, kinds.get(key))
+	return out
+
+
+def _draft_inputs(run, fields):
+	recipients = [row.objekt for row in run.get("iteration_objekte") or []]
+	per = {
+		row.objekt: _stored_values(row.variablen_werte, fields)
+		for row in run.get("iteration_objekte") or []
+		if _stored_values(row.variablen_werte, fields)
+	}
+	return recipients, _stored_values(run.variablen_werte, fields), per, str(run.date) if run.date else None
+
+
+def _merged_values(raw, updates, fields, *, recipient=None):
+	"""Teilaenderung: gesetzte Schluessel ueberschreiben, null entfernt einen Wert."""
+	updates = parse_json_if_needed(updates)
+	if not isinstance(updates, dict):
+		raise AgentToolError("INVALID_ARGUMENT", "Werte müssen ein Objekt sein.")
+	allowed = {f["key"] for f in fields if f["fillable"]}
+	removed = [key for key, value in updates.items() if value is None]
+	if set(removed) - allowed:
+		unknown = sorted(set(removed) - allowed)[0]
+		raise MailMergeError(
+			"INVALID_INPUT",
+			f"Eingabe nicht freigegeben: {unknown}.",
+			issues=[input_issue(unknown)],
+			action="correct_inputs",
+			recipient=recipient,
+		)
+	checked = _values(
+		{key: value for key, value in updates.items() if value is not None},
+		fields,
+		recipient=recipient,
+		escape=False,
+	)
+	current = parse_json_if_needed(raw) or {}
+	current = current if isinstance(current, dict) else {}
+	for key in removed:
+		current.pop(key, None)
+	current.update(checked)
+	return json.dumps(current) if current else ""
+
+
+def _draft_state(run):
+	doc, _, _ = _template_for(run.vorlage, run.get("vorlagenversion"))
+	fields = _inputs(doc)
+	recipients, common, per, letter_date = _draft_inputs(run, fields)
+	missing = []
+	for recipient in recipients:
+		filled = {**common, **per.get(recipient, {})}
+		keys = [
+			f["key"]
+			for f in fields
+			if f["fillable"]
+			and not f["optional"]
+			and f.get("default") in (None, "")
+			and (filled.get(f["key"]) is None or (isinstance(filled.get(f["key"]), str) and not filled[f["key"]].strip()))
+		]
+		if keys:
+			missing.append({"recipient": recipient, "fields": keys})
+	fingerprint = _fingerprint(run)
+	documents = frappe.db.count(DOCUMENT, {"durchlauf": run.name})
+	summary = parse_json_if_needed(run.run_summary) or {}
+	if not documents:
+		rendered = "nicht_gerendert"
+	elif isinstance(summary, dict) and summary.get("input_fingerprint") == fingerprint:
+		rendered = "aktuell"
+	else:
+		rendered = "veraltet"
+	return {
+		"draft": run.name,
+		"url": f"/app/serienbrief-durchlauf/{run.name}",
+		"title": run.title,
+		"template": run.vorlage,
+		"vorlagenversion": run.get("vorlagenversion") or None,
+		"letter_date": letter_date,
+		"values": common,
+		"recipients": [{"name": name, "values": per.get(name, {})} for name in recipients],
+		"missing_inputs": missing,
+		"fingerprint": fingerprint,
+		"modified": str(run.modified),
+		"modified_by": run.modified_by,
+		"status": run.status,
+		"editable": run.docstatus == 0 and run.status != "Läuft",
+		"documents": documents,
+		"rendered": rendered,
+	}
+
+
+def _draft_title(title, fallback):
+	if title is None:
+		return fallback
+	if not isinstance(title, str) or not title.strip() or len(title) > 140:
+		raise AgentToolError("INVALID_ARGUMENT", "title muss ein Text mit höchstens 140 Zeichen sein.")
+	return title.strip()
+
+
+@frappe.whitelist(methods=["POST"])
+@_endpoint
+def save_draft(
+	template,
+	recipients,
+	revision=None,
+	values=None,
+	per_recipient=None,
+	letter_date=None,
+	vorlagenversion=None,
+	title=None,
+):
+	"""Speichert die vorbereiteten Eingaben dauerhaft als Entwurf, ohne PDFs zu erzeugen."""
+	_access(write=True)
+	if vorlagenversion:
+		doc, _, _ = _template_for(template, vorlagenversion)
+	else:
+		doc, _, current_revision = _template(template)
+		if revision != current_revision:
+			raise AgentToolError("TEMPLATE_CHANGED", "Vorlage geändert oder revision fehlt; bitte erneut lesen.")
+	if not doc.kategorie:
+		raise AgentToolError("TEMPLATE_INVALID", "Die Vorlage hat keine Kategorie; ein Durchlauf braucht eine.")
+	# Unvollstaendige Entwuerfe sind erlaubt; fehlende Pflichtangaben meldet missing_inputs.
+	targets, _, common, individual, letter_date = _checked_inputs(
+		doc, recipients, values, per_recipient, letter_date, escape=False
+	)
+	run = frappe.get_doc(
+		{
+			"doctype": RUN,
+			"title": _draft_title(title, doc.title),
+			"vorlage": doc.name,
+			"vorlagenversion": vorlagenversion or None,
+			"kategorie": doc.kategorie,
+			"date": letter_date,
+			"iteration_doctype": doc.haupt_verteil_objekt,
+			"status": "Entwurf",
+			"ohne_auto_render": 1,
+			"variablen_werte": json.dumps(common) if common else "",
+			"iteration_objekte": [
+				{
+					"objekt": t.name,
+					"iteration_doctype": t.doctype,
+					"variablen_werte": json.dumps(individual[t.name]) if individual.get(t.name) else "",
+				}
+				for t in targets
+			],
+		}
+	)
+	run.insert()
+	run.add_comment("Info", "Vom Assistenten als Entwurf vorbereitet; noch nicht gerendert.")
+	frappe.db.commit()
+	return _draft_state(run)
+
+
+@frappe.whitelist()
+@_endpoint
+def get_draft(draft):
+	return _draft_state(_read(RUN, draft))
+
+
+@frappe.whitelist()
+@_endpoint
+def list_drafts(query=None, limit=20, offset=0):
+	limit, offset = normalize_limit(limit), normalize_offset(offset)
+	if query is not None and (not isinstance(query, str) or len(query) > 140):
+		raise AgentToolError("INVALID_ARGUMENT", "Ungültiger Suchbegriff.")
+	filters = {"docstatus": 0}
+	if query:
+		filters["title"] = ["like", f"%{query}%"]
+	rows = frappe.get_list(
+		RUN,
+		filters=filters,
+		fields=["name", "title", "vorlage", "vorlagenversion", "status", "modified", "modified_by"],
+		order_by="modified desc, name asc",
+		limit_start=offset,
+		limit_page_length=limit + 1,
+	)
+	return {"drafts": rows[:limit], "has_more": len(rows) > limit, "next_offset": offset + limit}
+
+
+@frappe.whitelist(methods=["POST"])
+@_endpoint
+def update_draft(
+	draft,
+	fingerprint,
+	values=None,
+	per_recipient=None,
+	recipients=None,
+	letter_date=None,
+	title=None,
+):
+	"""Aendert einen Entwurf teilweise; nur auf dem zuletzt gesehenen Stand (fingerprint)."""
+	_access(write=True)
+	run = _editable_draft(draft)
+	if fingerprint != _fingerprint(run):
+		exc = AgentToolError(
+			"DRAFT_CHANGED", "Der Entwurf wurde inzwischen geändert (z. B. vom Nutzer korrigiert)."
+		)
+		exc.details = {"action": "reload_draft", "current": _draft_state(run)}
+		raise exc
+	doc, _, _ = _template_for(run.vorlage, run.get("vorlagenversion"))
+	fields = _inputs(doc)
+	changes = []
+	if recipients is not None:
+		targets = _targets(doc, recipients)
+		kept = {row.objekt: row.variablen_werte for row in run.get("iteration_objekte") or []}
+		run.set(
+			"iteration_objekte",
+			[
+				{"objekt": t.name, "iteration_doctype": t.doctype, "variablen_werte": kept.get(t.name) or ""}
+				for t in targets
+			],
+		)
+		changes.append("Empfänger")
+	if values is not None:
+		run.variablen_werte = _merged_values(run.variablen_werte, values, fields)
+		changes.append("Werte")
+	if per_recipient is not None:
+		per = parse_json_if_needed(per_recipient)
+		rows = {row.objekt: row for row in run.get("iteration_objekte") or []}
+		if not isinstance(per, dict) or set(per) - set(rows):
+			raise AgentToolError("INVALID_INPUT", "Empfängerwerte gehören nicht zur Auswahl.")
+		for name, updates in per.items():
+			rows[name].variablen_werte = _merged_values(rows[name].variablen_werte, updates, fields, recipient=name)
+		changes.append("Empfängerwerte")
+	if letter_date is not None:
+		run.date = _letter_date(letter_date)
+		changes.append("Briefdatum")
+	if title is not None:
+		run.title = _draft_title(title, run.title)
+		changes.append("Titel")
+	if not changes:
+		raise AgentToolError("INVALID_ARGUMENT", "Keine Änderung angegeben.")
+	run.flags.skip_auto_render = True
+	# Die Historie ist hier der Zweck: jede Aenderung als Version (auch in Testlaeufen).
+	run.save(ignore_version=False)
+	run.add_comment("Info", "Vom Assistenten geändert: " + ", ".join(changes))
+	frappe.db.commit()
+	return _draft_state(run)

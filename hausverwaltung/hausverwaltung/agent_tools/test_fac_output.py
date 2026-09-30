@@ -393,7 +393,7 @@ class TestFacTools(unittest.TestCase):
 			result = status.execute({"run": "SBDL-1"})
 		self.assertEqual(result["data"]["url"], "http://erp.local:8090/app/serienbrief-durchlauf/SBDL-1")
 
-	def test_only_execute_is_marked_as_write(self):
+	def test_only_draft_storing_tools_are_marked_as_write(self):
 		from hausverwaltung.hausverwaltung.agent_tools import fac_tools
 
 		categories = {
@@ -402,7 +402,7 @@ class TestFacTools(unittest.TestCase):
 
 		self.assertEqual(
 			{name for name, category in categories.items() if category == "write"},
-			{"agent_mail_merge_execute"},
+			{"agent_mail_merge_execute", "agent_mail_merge_save_draft", "agent_mail_merge_update_draft"},
 		)
 
 	def test_get_pdf_is_code_only_and_capped(self):

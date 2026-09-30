@@ -5,6 +5,7 @@ import frappe
 from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 	FAC_CODE_TOOL_NAMES,
 	FAC_MAIL_MERGE_TOOL_NAMES,
+	FAC_MAIL_MERGE_WRITE_TOOL_NAMES,
 	FAC_REPORT_TOOL_NAMES,
 	FAC_TOOL_NAMES,
 )
@@ -64,7 +65,7 @@ def configure_tools(user: str, extra_tools: tuple[str, ...] = ()):
 			config.tool_name = name
 			config.plugin_name = "custom_tools"
 		config.enabled = int(name in allowed_custom_tools)
-		config.tool_category = "write" if name == "agent_mail_merge_execute" else "read_only"
+		config.tool_category = "write" if name in FAC_MAIL_MERGE_WRITE_TOOL_NAMES else "read_only"
 		config.category_override = 1
 		config.save()
 	# Configure every core tool before enabling the plugin, including disabled writes.
@@ -110,7 +111,7 @@ def enable_external_tools(user: str = "Administrator"):
 			config.tool_name = name
 		config.plugin_name = "custom_tools"
 		config.enabled = 1
-		config.tool_category = "write" if name == "agent_mail_merge_execute" else "read_only"
+		config.tool_category = "write" if name in FAC_MAIL_MERGE_WRITE_TOOL_NAMES else "read_only"
 		config.category_override = 1
 		config.save()
 	registry = get_tool_registry()

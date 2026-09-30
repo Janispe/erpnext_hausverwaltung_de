@@ -28,7 +28,18 @@ Bei einem Auftrag zur Dokumenterstellung darfst du mit dem preparation_token age
 Wenn nur eine Vorschau oder Pruefung verlangt war, fuehre nicht aus. Bei einem Wiederholungsversuch verwende denselben
 Token. Abgelaufene Vorschauen muessen neu vorbereitet werden. Bezeichne nur tatsaechlich gespeicherte Dokumente als erstellt.
 Die Ausfuehrung speichert ausschliesslich Entwuerfe mit den geprueften PDFs. Sie versendet nichts, bucht nichts und
-reicht nichts verbindlich ein. Gib den Durchlauf-Link und die erzeugten Dokumente aus. Keine anderen Schreibaktionen.
+reicht nichts verbindlich ein. Gib den Durchlauf-Link und die erzeugten Dokumente aus.
+Entwuerfe: Soll der Nutzer die Angaben vor dem Erzeugen pruefen oder spaeter korrigieren koennen, speichere sie mit
+agent_mail_merge_save_draft. Das legt einen Durchlauf als Entwurf an, erzeugt keine PDFs und liefert dessen ID (draft)
+und einen fingerprint. Fehlende Pflichtangaben stehen in missing_inputs; erfinde sie nicht, frage nach oder lass sie offen.
+Nenne dem Nutzer die ID und den Link. Mit agent_mail_merge_list_drafts findest du Entwuerfe wieder, mit
+agent_mail_merge_get_draft liest du den aktuellen Stand. Der Nutzer korrigiert Entwuerfe auch selbst: lies deshalb vor
+jeder Aenderung den Entwurf neu und uebergib bei agent_mail_merge_update_draft den zuletzt gelesenen fingerprint.
+update_draft aendert nur die genannten Angaben; null entfernt einen Wert. Bei DRAFT_CHANGED hat jemand anders geaendert:
+uebernimm den mitgelieferten aktuellen Stand, ueberschreibe keine Korrekturen des Nutzers und frage im Zweifel nach.
+Mit vorlagenversion kann ein Entwurf eine bestimmte, aeltere Version der Vorlage verwenden, aber nur auf ausdruecklichen
+Wunsch. Fuer Vorschau und Speicherung eines Entwurfs rufe agent_mail_merge_prepare nur mit draft auf und danach
+agent_mail_merge_execute; die PDFs landen dann im selben Durchlauf. Keine anderen Schreibaktionen.
 """
 
 
@@ -49,10 +60,23 @@ def _tool(name, description, properties, required=()):
 
 
 STRING = {"type": "string"}
+RECIPIENTS = {
+	"type": "array",
+	"items": STRING,
+	"minItems": 1,
+	"maxItems": 10,
+	"uniqueItems": True,
+}
+LETTER_DATE = {"type": "string", "description": "Briefdatum als YYYY-MM-DD; Standard heute."}
 VALUES = {
 	"type": "object",
 	"description": "Nur exakte fillable-Schlüssel aus get_template und skalare Werte.",
 	"additionalProperties": {"type": ["string", "number", "boolean"]},
+}
+VALUES_PATCH = {
+	"type": "object",
+	"description": "Nur zu ändernde fillable-Schlüssel; null entfernt einen gespeicherten Wert.",
+	"additionalProperties": {"type": ["string", "number", "boolean", "null"]},
 }
 MAIL_MERGE_TOOLS = [
 	_tool(
@@ -79,28 +103,72 @@ MAIL_MERGE_TOOLS = [
 	),
 	_tool(
 		"agent_mail_merge_prepare",
-		"Prüft alle Empfänger und erstellt befristete PDF-Vorschauen; speichert keinen Durchlauf.",
+		"Prüft alle Empfänger und erstellt befristete PDF-Vorschauen; speichert nichts. Entweder template, revision "
+		"und recipients (mit Werten) angeben oder nur draft, dann gelten die Angaben des gespeicherten Entwurfs.",
 		{
 			"template": STRING,
 			"revision": STRING,
-			"recipients": {
-				"type": "array",
-				"items": STRING,
-				"minItems": 1,
-				"maxItems": 10,
-				"uniqueItems": True,
-			},
+			"recipients": RECIPIENTS,
 			"values": VALUES,
 			"per_recipient": {"type": "object", "additionalProperties": VALUES},
-			"letter_date": {"type": "string", "description": "Briefdatum als YYYY-MM-DD; Standard heute."},
+			"letter_date": LETTER_DATE,
+			"draft": {"type": "string", "description": "ID eines gespeicherten Entwurfs (Serienbrief Durchlauf)."},
 		},
-		("template", "revision", "recipients"),
 	),
 	_tool(
 		"agent_mail_merge_execute",
 		"Speichert eine erfolgreiche, eigene Vorschau als Serienbriefentwurf mit privaten PDFs. Kein Versand/Submit. Wiederholung mit demselben Token liefert denselben Lauf.",
 		{"preparation_token": STRING},
 		("preparation_token",),
+	),
+	_tool(
+		"agent_mail_merge_save_draft",
+		"Speichert Vorlage, Empfänger, Werte und Briefdatum dauerhaft als Entwurf (Serienbrief Durchlauf) ohne PDFs. "
+		"Der Nutzer kann ihn später prüfen und korrigieren. Liefert draft-ID, fingerprint und missing_inputs.",
+		{
+			"template": STRING,
+			"revision": {"type": "string", "description": "revision aus get_template; entfällt mit vorlagenversion."},
+			"recipients": RECIPIENTS,
+			"values": VALUES,
+			"per_recipient": {"type": "object", "additionalProperties": VALUES},
+			"letter_date": LETTER_DATE,
+			"vorlagenversion": {
+				"type": "string",
+				"description": "Nur auf ausdrücklichen Wunsch: ID einer älteren Vorlagenversion statt des aktuellen Stands.",
+			},
+			"title": {"type": "string", "maxLength": 140, "description": "Wiedererkennbarer Titel des Entwurfs."},
+		},
+		("template", "recipients"),
+	),
+	_tool(
+		"agent_mail_merge_get_draft",
+		"Liest den aktuellen Stand eines Entwurfs: Werte, Empfänger, fehlende Angaben, fingerprint und Renderstatus.",
+		{"draft": STRING},
+		("draft",),
+	),
+	_tool(
+		"agent_mail_merge_list_drafts",
+		"Sucht nicht eingereichte Serienbrief-Durchläufe (Entwürfe) nach Titel, neueste zuerst.",
+		{
+			"query": STRING,
+			"limit": {"type": "integer", "minimum": 1, "maximum": 100},
+			"offset": {"type": "integer", "minimum": 0},
+		},
+	),
+	_tool(
+		"agent_mail_merge_update_draft",
+		"Ändert einen Entwurf teilweise. Nur mit dem zuletzt gelesenen fingerprint; wurde der Entwurf inzwischen "
+		"geändert, kommt DRAFT_CHANGED mit dem aktuellen Stand. recipients ersetzt die Empfängerliste.",
+		{
+			"draft": STRING,
+			"fingerprint": STRING,
+			"values": VALUES_PATCH,
+			"per_recipient": {"type": "object", "additionalProperties": VALUES_PATCH},
+			"recipients": RECIPIENTS,
+			"letter_date": LETTER_DATE,
+			"title": {"type": "string", "maxLength": 140},
+		},
+		("draft", "fingerprint"),
 	),
 	_tool(
 		"agent_mail_merge_get_status",
@@ -115,4 +183,8 @@ MAIL_MERGE_FUNCTIONS = {
 	"agent_mail_merge_prepare": mail_merge_api.prepare,
 	"agent_mail_merge_execute": mail_merge_api.execute,
 	"agent_mail_merge_get_status": mail_merge_api.get_status,
+	"agent_mail_merge_save_draft": mail_merge_api.save_draft,
+	"agent_mail_merge_get_draft": mail_merge_api.get_draft,
+	"agent_mail_merge_list_drafts": mail_merge_api.list_drafts,
+	"agent_mail_merge_update_draft": mail_merge_api.update_draft,
 }

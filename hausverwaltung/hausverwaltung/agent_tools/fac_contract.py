@@ -29,14 +29,24 @@ FAC_CODE_TOOL_NAMES = ("hv_export_view", "hv_export_report", "agent_mail_merge_g
 # FAC's own report tools return unbounded output; these wrap them with limits for external clients.
 FAC_REPORT_TOOL_NAMES = ("hv_report_list", "hv_report_requirements", "hv_run_report")
 
-# Controlled mail merge: the only FAC tools that write. They store drafts from a previously checked
-# preview (preparation token); nothing is sent or submitted. See docs/llm-serienbriefe.md.
+# Controlled mail merge: the only FAC tools that write. They store drafts: saved inputs (save_draft,
+# update_draft) or PDFs from a previously checked preview (execute); nothing is sent or submitted.
+# See docs/llm-serienbriefe.md.
 FAC_MAIL_MERGE_TOOL_NAMES = (
 	"agent_mail_merge_list_templates",
 	"agent_mail_merge_get_template",
 	"agent_mail_merge_prepare",
 	"agent_mail_merge_execute",
 	"agent_mail_merge_get_status",
+	"agent_mail_merge_save_draft",
+	"agent_mail_merge_get_draft",
+	"agent_mail_merge_list_drafts",
+	"agent_mail_merge_update_draft",
+)
+FAC_MAIL_MERGE_WRITE_TOOL_NAMES = (
+	"agent_mail_merge_execute",
+	"agent_mail_merge_save_draft",
+	"agent_mail_merge_update_draft",
 )
 
 # Hook imports are resolved by FAC only when its custom_tools plugin is enabled.

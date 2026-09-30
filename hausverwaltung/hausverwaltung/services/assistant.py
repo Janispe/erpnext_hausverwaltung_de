@@ -14,6 +14,7 @@ from frappe.utils import cint, flt, getdate, now_datetime, nowdate
 
 from hausverwaltung.hausverwaltung.agent_tools import dataset_api as agent_dataset_api
 from hausverwaltung.hausverwaltung.agent_tools import read_api as agent_read_api
+from hausverwaltung.hausverwaltung.agent_tools.fac_contract import FAC_MAIL_MERGE_WRITE_TOOL_NAMES
 from hausverwaltung.hausverwaltung.agent_tools.mail_merge_tools import (
 	MAIL_MERGE_FUNCTIONS,
 	MAIL_MERGE_PROMPT,
@@ -2010,7 +2011,7 @@ def run_assistant(
 		"tool_calls": tool_calls_debug,
 		"toolset": _tool_names(selected_tools),
 		"mistral_usage": mistral_usage,
-		"read_only": "agent_mail_merge_execute" not in tool_names,
+		"read_only": not set(FAC_MAIL_MERGE_WRITE_TOOL_NAMES) & set(tool_names),
 	}
 
 
@@ -2321,7 +2322,7 @@ def _run_mistral_agent_assistant(
 		"reasoning": reasoning,
 		"toolset": _tool_names(agent_tools),
 		"mistral_usage": mistral_usage,
-		"read_only": "agent_mail_merge_execute" not in tool_names,
+		"read_only": not set(FAC_MAIL_MERGE_WRITE_TOOL_NAMES) & set(tool_names),
 	}
 
 
