@@ -402,7 +402,13 @@ class TestFacTools(unittest.TestCase):
 
 		self.assertEqual(
 			{name for name, category in categories.items() if category == "write"},
-			{"agent_mail_merge_execute", "agent_mail_merge_save_draft", "agent_mail_merge_update_draft"},
+			{
+				"agent_mail_merge_create_template",
+				"agent_mail_merge_propose_template_version",
+				"agent_mail_merge_execute",
+				"agent_mail_merge_save_draft",
+				"agent_mail_merge_update_draft",
+			},
 		)
 
 	def test_get_pdf_is_code_only_and_capped(self):

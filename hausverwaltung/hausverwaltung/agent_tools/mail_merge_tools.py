@@ -48,7 +48,8 @@ get_template und save_draft auf genau diesen Vorschlag richten und danach ueber 
 Der Nutzer uebernimmt einen Vorschlag selbst im Versionseditor. Keine Bausteine aendern oder Datensaetze loeschen.
 Neue Quellen duerfen nur passive HTML-Inhalte, Jinja-Lesefunktionen und feste baustein("Name")-Verweise enthalten.
 Aktives HTML, dynamische Ressourcen, interne Attribute, safe/attr-Filter und externe Jinja-Imports sind gesperrt.
-Vorlagen und Vorschlaege werden nicht beim Anlegen ausgefuehrt. Gib ihre ID und die KI-Herkunft an.
+Beim Anlegen einer Vorlage kann im Hintergrund eine Vorschau-PDF entstehen; dabei wird kein Serienbrief-Durchlauf
+erzeugt und nichts versendet. Vorschlaege aendern die aktive Vorlage nicht. Gib ID und KI-Herkunft an.
 Fehlende Kategorie/Empfaengertypen vorab ueber die lesenden Schema- und Listenwerkzeuge ermitteln.
 """
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import time
 import unittest
 from contextlib import nullcontext
@@ -8,6 +9,7 @@ from io import BytesIO
 from unittest.mock import Mock, patch
 
 import frappe
+from mail_merge.mail_merge.utils.letter_composer_state import input_fingerprint
 from reportlab.pdfgen.canvas import Canvas
 
 from hausverwaltung.hausverwaltung.agent_tools import mail_merge_api as api
@@ -17,6 +19,9 @@ from hausverwaltung.hausverwaltung.agent_tools.mail_merge_tools import MAIL_MERG
 
 class TestMailMergeApi(unittest.TestCase):
 	def setUp(self):
+		# Datumshelfer lesen die Systemeinstellungen; bei kaltem Cache liefe das ueber das
+		# unten gemockte frappe.cache/get_doc. Vorher laden haelt sie in frappe.local.
+		frappe.get_system_settings("time_zone")
 		self.log = patch.object(api.read_api, "_finalize_log").start()
 		self.addCleanup(patch.stopall)
 		self.cache = patch.object(api.frappe, "cache", Mock()).start()
@@ -399,6 +404,19 @@ class TestMailMergeApi(unittest.TestCase):
 		patch.object(api, "_status", return_value={"run": payload["run"]["name"], "docstatus": 0}).start()
 		self.run = Mock(name="run")
 		self.run.name = payload["run"]["name"]
+		# Der gespeicherte Durchlauf liefert echte Eingaben: execute schreibt ihren
+		# Fingerabdruck in run_summary, damit der Viewer die PDFs als aktuell erkennt.
+		self.run_inputs = {
+			"vorlage": "Test",
+			"date": "2030-01-15",
+			"title": "Test",
+			"iteration_doctype": "Mietvertrag",
+			"variablen_werte": "{}",
+			"iteration_objekte": [
+				frappe._dict(objekt="MV-1", iteration_doctype="Mietvertrag", variablen_werte="{}")
+			],
+		}
+		self.run.get.side_effect = lambda key, default=None: self.run_inputs.get(key, default)
 		self.document = Mock()
 		self.file = Mock()
 		self.get_doc = patch.object(
@@ -419,6 +437,9 @@ class TestMailMergeApi(unittest.TestCase):
 		self.document.submit.assert_not_called()
 		self.commit.assert_called_once()
 		self.rollback.assert_not_called()
+		summary = json.loads(self.run.db_set.call_args.args[0]["run_summary"])
+		self.assertEqual(summary["input_fingerprint"], input_fingerprint(frappe._dict(self.run_inputs)))
+		self.assertEqual(summary["agent"]["token"], self.token)
 
 	def test_retry_finds_same_run_even_without_cache_receipt(self):
 		payload = self.setup_execution()
