@@ -143,6 +143,7 @@ def _template(template):
 	doc = _read(TEMPLATE, template)
 	core = _renderer()
 	blocks = []
+	identities = []
 	seen = set()
 	queue = [r.baustein for r in doc.get("textbausteine") or [] if r.baustein]
 	source = core._get_template_template_source(doc)
@@ -155,9 +156,16 @@ def _template(template):
 		if len(seen) > 100:
 			raise AgentToolError("TEMPLATE_INVALID", "Zu viele verknüpfte Textbausteine.")
 		block = _read("Serienbrief Textbaustein", name)
+		# Fixiert die Vorlage eine Baustein-Version, rendert der Kern diese statt des aktuellen
+		# Stands. Revision und Steckbrief muessen denselben Inhalt beschreiben.
+		fixed = core.fixed_version_number(doc, name)
+		if fixed:
+			block = core.get_textbaustein(name, template=doc)
 		blocks.append(block)
+		# Fixierte Snapshots sind unveraenderlich; Name und Nummer identifizieren sie stabil.
+		identities.append({"baustein": name, "fixierte_version": fixed} if fixed else block.as_dict())
 		queue.extend(core._extract_inline_block_names(core._get_textbaustein_template_source(block)))
-	return doc, blocks, _digest([doc.as_dict(), *[b.as_dict() for b in blocks]])
+	return doc, blocks, _digest([doc.as_dict(), *identities])
 
 
 def _inputs(template):
