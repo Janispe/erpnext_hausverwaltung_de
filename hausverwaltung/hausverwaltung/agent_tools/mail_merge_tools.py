@@ -150,9 +150,15 @@ MAIL_MERGE_TOOLS = [
 		"Legt eine unveränderliche KI-Vorschlagsversion an. Die aktive Vorlage bleibt unverändert; der Nutzer übernimmt im Editor. Liefert eine Versions-ID für Tests per save_draft.",
 		{
 			"template": STRING,
-			"revision": STRING,
+			"revision": {
+				"type": "string",
+				"description": "Wert revision aus get_template ohne vorlagenversion (nicht content_hash, keine Versions-ID).",
+			},
 			"content": SOURCE,
-			"base_version": STRING,
+			"base_version": {
+				"type": "string",
+				"description": "Optional: Versions-ID (name) aus list_template_versions; ohne Angabe der aktive Stand.",
+			},
 			"variables": TEMPLATE_VARIABLES,
 			"baustein_pfade": BAUSTEIN_PFADE,
 			"description": STRING,
@@ -198,7 +204,10 @@ MAIL_MERGE_TOOLS = [
 		"und recipients (mit Werten) angeben oder nur draft, dann gelten die Angaben des gespeicherten Entwurfs.",
 		{
 			"template": STRING,
-			"revision": STRING,
+			"revision": {
+				"type": "string",
+				"description": "revision aus get_template (aktiver Stand). Vorschlagsversionen nur über save_draft(vorlagenversion) und prepare(draft).",
+			},
 			"recipients": RECIPIENTS,
 			"values": VALUES,
 			"per_recipient": {"type": "object", "additionalProperties": VALUES},

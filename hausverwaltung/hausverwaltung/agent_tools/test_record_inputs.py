@@ -192,3 +192,18 @@ class TestRecordValues(unittest.TestCase):
 		self.readable = False
 		with self.assertRaises(AgentToolError):
 			api._values({"anwalt": "K1"}, self.fields)
+
+
+class TestVersionGuidance(unittest.TestCase):
+	def test_prepare_points_proposal_versions_to_drafts(self):
+		with patch.object(api, "_template", side_effect=AssertionError("must not read the live template")):
+			result = api.prepare("Vorlage", "version:kr46rrais1", ["MV-1"])
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["error"]["code"], "USE_DRAFT")
+		self.assertIn("save_draft", result["error"]["message"])
+
+	def test_prepare_explains_which_revision_is_expected(self):
+		with patch.object(api, "_template", return_value=(frappe._dict(), [], "aktuell")):
+			result = api.prepare("Vorlage", "a6098bac", ["MV-1"])
+		self.assertEqual(result["error"]["code"], "TEMPLATE_CHANGED")
+		self.assertIn("get_template", result["error"]["message"])

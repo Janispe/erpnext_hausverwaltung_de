@@ -486,9 +486,20 @@ def prepare(
 	else:
 		if not template or not revision or recipients is None:
 			raise AgentToolError("INVALID_ARGUMENT", "template, revision und recipients sind erforderlich.")
+		if isinstance(revision, str) and revision.startswith("version:"):
+			# Vorschlags-/Altversionen laufen nur über einen Entwurf, der die Version festhält.
+			raise AgentToolError(
+				"USE_DRAFT",
+				"Für eine bestimmte Vorlagenversion zuerst save_draft mit vorlagenversion aufrufen, "
+				"dann prepare nur mit draft.",
+			)
 		doc, blocks, current_revision = _template(template)
 		if revision != current_revision:
-			raise AgentToolError("TEMPLATE_CHANGED", "Vorlage geändert; bitte erneut lesen.")
+			raise AgentToolError(
+				"TEMPLATE_CHANGED",
+				"revision passt nicht zum aktiven Stand: den Wert revision aus get_template (ohne vorlagenversion) "
+				"verwenden, keine Versions-ID und keinen content_hash.",
+			)
 	core = _renderer()
 	sources = [
 		core._get_template_template_source(doc),

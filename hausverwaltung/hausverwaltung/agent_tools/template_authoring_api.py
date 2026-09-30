@@ -260,7 +260,9 @@ def propose_template_version(
 		live, _, current_revision = api._template(live.name)
 		if revision != current_revision:
 			raise AgentToolError(
-				"TEMPLATE_CHANGED", "Vorlage oder Bausteine wurden geändert. Aktuellen Stand erneut lesen."
+				"TEMPLATE_CHANGED",
+				"revision passt nicht zum aktiven Stand: den Wert revision aus get_template (ohne vorlagenversion) "
+				"verwenden, keine Versions-ID und keinen content_hash. Bei Änderungen durch andere neu lesen.",
 			)
 		base_version = base_version or versioning.ensure_current_version(TEMPLATE_VERSION_SPEC, live)
 		if not base_version:
@@ -268,7 +270,11 @@ def propose_template_version(
 		try:
 			versioning.require_version(TEMPLATE_VERSION_SPEC, base_version, live.name)
 		except frappe.ValidationError as exc:
-			raise AgentToolError("INVALID_ARGUMENT", str(exc)) from None
+			raise AgentToolError(
+				"INVALID_ARGUMENT",
+				f"{exc} base_version ist eine Versions-ID (name) aus list_template_versions; "
+				"weglassen, um auf dem aktiven Stand aufzubauen.",
+			) from None
 		candidate = template_at_version(live.name, base_version)
 		_set_source(candidate, content, variables, description, baustein_pfade)
 		# Candidate references keep the baseline block snapshots; new references
