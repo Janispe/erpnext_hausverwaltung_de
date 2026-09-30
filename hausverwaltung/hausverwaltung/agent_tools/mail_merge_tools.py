@@ -1,6 +1,7 @@
 """Model-facing schema and instructions for the controlled mail merge API."""
 
 from hausverwaltung.hausverwaltung.agent_tools import mail_merge_api, template_authoring_api
+from hausverwaltung.hausverwaltung.agent_tools.mail_merge_contract import AI_RECORD_DOCTYPES
 
 MAIL_MERGE_PROMPT = """
 Serienbriefe sind eine begrenzte Ausnahme vom lesenden Zugriff: Wenn der Nutzer Dokumente erstellen lassen will,
@@ -51,6 +52,12 @@ Aktives HTML, dynamische Ressourcen, interne Attribute, safe/attr-Filter und ext
 Beim Anlegen einer Vorlage kann im Hintergrund eine Vorschau-PDF entstehen; dabei wird kein Serienbrief-Durchlauf
 erzeugt und nichts versendet. Vorschlaege aendern die aktive Vorlage nicht. Gib ID und KI-Herkunft an.
 Fehlende Kategorie/Empfaengertypen vorab ueber die lesenden Schema- und Listenwerkzeuge ermitteln.
+Briefe an Dritte (z. B. Anwalt, Behoerde): Der Empfaengertyp bleibt das fachliche Objekt (z. B. Mietvertrag).
+Lege Doctype-Variablen an (variable_type Doctype, reference_doctype Contact bzw. Address) und leite die Eingaben
+des Briefkopfs mit baustein_pfade um, z. B. {"Briefkopf": {"var": "anwalt", "address": "anwalt_adresse"}}.
+get_template zeigt je Baustein die Eingaben mit ihrem wirksamen Pfad. Den konkreten Kontakt bzw. die Adresse
+uebergibst du erst in prepare/save_draft als exakten Datensatznamen unter values; ermittle ihn mit den lesenden
+Suchwerkzeugen. Lege keine Kontakte oder Adressen an: fehlen sie, bitte den Nutzer, sie anzulegen.
 """
 
 
@@ -81,13 +88,13 @@ RECIPIENTS = {
 LETTER_DATE = {"type": "string", "description": "Briefdatum als YYYY-MM-DD; Standard heute."}
 VALUES = {
 	"type": "object",
-	"description": "Nur exakte fillable-Schlüssel aus get_template und skalare Werte.",
-	"additionalProperties": {"type": ["string", "number", "boolean"]},
+	"description": "Nur exakte fillable-Schlüssel aus get_template; skalare Werte, bei Doctype ein exakter Datensatzname, bei Doctype Liste eine Namensliste.",
+	"additionalProperties": {"type": ["string", "number", "boolean", "array"], "items": STRING},
 }
 VALUES_PATCH = {
 	"type": "object",
 	"description": "Nur zu ändernde fillable-Schlüssel; null entfernt einen gespeicherten Wert.",
-	"additionalProperties": {"type": ["string", "number", "boolean", "null"]},
+	"additionalProperties": {"type": ["string", "number", "boolean", "array", "null"], "items": STRING},
 }
 TEMPLATE_VARIABLES = {
 	"type": "array",
@@ -96,7 +103,15 @@ TEMPLATE_VARIABLES = {
 		"type": "object",
 		"properties": {
 			"variable": STRING,
-			"variable_type": {"type": "string", "enum": ["Text", "String", "Zahl", "Bool", "Datum"]},
+			"variable_type": {
+				"type": "string",
+				"enum": ["Text", "String", "Zahl", "Bool", "Datum", "Doctype", "Doctype Liste"],
+			},
+			"reference_doctype": {
+				"type": "string",
+				"enum": list(AI_RECORD_DOCTYPES),
+				"description": "Nur bei Doctype/Doctype Liste: Art des Datensatzes, der beim Vorbereiten gewählt wird.",
+			},
 			"label": STRING,
 			"optional": {"type": "boolean"},
 			"beschreibung": STRING,
@@ -104,6 +119,11 @@ TEMPLATE_VARIABLES = {
 		"required": ["variable"],
 		"additionalProperties": False,
 	},
+}
+BAUSTEIN_PFADE = {
+	"type": "object",
+	"description": 'Leitet Eingaben verwendeter Bausteine um: {"Baustein": {"eingabe": "pfad"}}. Pfade beginnen bei objekt oder einer Doctype-Variable der Vorlage.',
+	"additionalProperties": {"type": "object", "additionalProperties": STRING},
 }
 SOURCE = {
 	"type": "string",
@@ -120,6 +140,7 @@ MAIL_MERGE_TOOLS = [
 			"recipient_doctype": STRING,
 			"content": SOURCE,
 			"variables": TEMPLATE_VARIABLES,
+			"baustein_pfade": BAUSTEIN_PFADE,
 			"description": STRING,
 		},
 		("title", "category", "recipient_doctype", "content"),
@@ -133,6 +154,7 @@ MAIL_MERGE_TOOLS = [
 			"content": SOURCE,
 			"base_version": STRING,
 			"variables": TEMPLATE_VARIABLES,
+			"baustein_pfade": BAUSTEIN_PFADE,
 			"description": STRING,
 			"label": STRING,
 		},

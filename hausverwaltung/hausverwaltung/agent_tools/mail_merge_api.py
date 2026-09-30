@@ -31,7 +31,9 @@ from hausverwaltung.hausverwaltung.agent_tools.contracts import (
 	parse_json_if_needed,
 )
 from hausverwaltung.hausverwaltung.agent_tools.mail_merge_contract import (
+	AI_RECORD_DOCTYPES,
 	JSON_TYPES,
+	RECORD_TYPES,
 	MailMergeError,
 	input_description,
 	input_issue,
@@ -210,7 +212,47 @@ def _template_for(template, vorlagenversion=None):
 
 def _inputs(template):
 	from mail_merge.mail_merge.utils.render_inputs import input_fields
-	return [{"key": field["name"], "path": field["path"], "label": field["label"], "type": field["type"], "optional": not field["required"], "description": field["description"], "fillable": True, "default": field["default"]} for field in input_fields(template)]
+
+	out = []
+	for field in input_fields(template, include_records=True):
+		entry = {"key": field["name"], "path": field["path"], "label": field["label"], "type": field["type"], "optional": not field["required"], "description": field["description"], "fillable": True, "default": field["default"]}
+		if field["type"] in RECORD_TYPES:
+			# Datensätze (z. B. Kontakt einer Kanzlei) nur für freigegebene Stammdaten-Doctypes;
+			# andere Doctype-Variablen kommen weiter allein aus dem Kontext.
+			entry["reference_doctype"] = field.get("reference_doctype") or ""
+			if entry["reference_doctype"] not in AI_RECORD_DOCTYPES:
+				continue
+		out.append(entry)
+	return out
+
+
+def _record_value(key, value, field, recipient=None):
+	"""Exakte Datensatz-Namen; nur existierende, für den Benutzer lesbare Datensätze."""
+	doctype = field["reference_doctype"]
+	many = field["type"] == "Doctype Liste"
+	names = value if many else [value]
+	valid = isinstance(names, list) and 1 <= len(names) <= 20 and all(
+		isinstance(name, str) and name.strip() and len(name) <= 140 for name in names
+	)
+	if not valid:
+		raise MailMergeError(
+			"INVALID_INPUT",
+			f"Ungültiger Wert für {key}: {'Liste von Namen' if many else 'Name'} eines {doctype}-Datensatzes erwartet.",
+			issues=[input_issue(key, expected_type=JSON_TYPES[field["type"]])],
+			action="correct_inputs",
+			recipient=recipient,
+		)
+	names = [name.strip() for name in names]
+	for name in names:
+		if not frappe.db.exists(doctype, name) or not frappe.has_permission(doctype, "read", doc=name):
+			raise MailMergeError(
+				"INVALID_INPUT",
+				f"{doctype} {name} für {key} nicht gefunden oder nicht lesbar. Exakten Namen über die Suche ermitteln.",
+				issues=[input_issue(key, expected_type=JSON_TYPES[field["type"]])],
+				action="correct_inputs",
+				recipient=recipient,
+			)
+	return names if many else names[0]
 
 
 def _values(raw, fields, *, recipient=None, escape=True):
@@ -232,6 +274,9 @@ def _values(raw, fields, *, recipient=None, escape=True):
 			)
 		field = allowed[key]
 		kind = field["type"]
+		if kind in RECORD_TYPES:
+			out[key] = {"value": _record_value(key, value, field, recipient)}
+			continue
 		valid = value is not None
 		if kind == "Bool":
 			valid = type(value) is bool
@@ -353,6 +398,27 @@ def list_templates(query=None, limit=20, offset=0):
 	}
 
 
+def _block_summary(core, doc, block):
+	"""Eingaben eines Bausteins mit wirksamem Pfad (Vorlage vor Standardpfad), damit
+	baustein_pfade gezielt einzelne Eingaben umleiten kann (z. B. Briefkopf an Dritte)."""
+	inline = core._parse_mapping(doc.get("inline_baustein_pfade")).get(block.name) or {}
+	defaults = core._get_block_default_path_map(block, doc.haupt_verteil_objekt)
+	inputs = []
+	for row in (block.get("variables") or [])[:20]:
+		if not row.variable:
+			continue
+		key = frappe.scrub(row.variable)
+		inputs.append(
+			{
+				"key": key,
+				"type": row.variable_type or "Text",
+				"reference_doctype": row.get("reference_doctype") or "",
+				"path": inline.get(key) or defaults.get(key) or "",
+			}
+		)
+	return {"name": block.name, "title": block.title or block.name, "inputs": inputs}
+
+
 @frappe.whitelist()
 @_endpoint
 def get_template(template, include_source=False, vorlagenversion=None):
@@ -385,7 +451,7 @@ def get_template(template, include_source=False, vorlagenversion=None):
 		"excerpt_is_unrendered": True,
 		"source_included": include_source,
 		"warnings": _content_warnings("\n".join([source, *block_sources])),
-		"blocks": [{"name": b.name, "title": b.title or b.name} for b in blocks],
+		"blocks": [_block_summary(core, doc, b) for b in blocks],
 		"can_execute": bool(set(frappe.get_roles()).intersection({"System Manager", "Hausverwalter"}))
 		and all(frappe.has_permission(dt, p) for dt in (RUN, DOCUMENT) for p in ("create", "read", "write")),
 		"policy": "Nur bestehende Vorlage, deklarierte Eingaben und explizite Empfänger; Speicherung als Entwurf.",

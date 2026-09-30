@@ -221,7 +221,7 @@ class TestMailMergeApi(unittest.TestCase):
 		with patch.object(frappe, "get_roles", return_value=[]):
 			brief = api.get_template("Test", include_source="false")["data"]
 			full = api.get_template("Test", include_source="true")["data"]
-		self.assertEqual(brief["blocks"], [{"name": "Block", "title": "Baustein"}])
+		self.assertEqual(brief["blocks"], [{"name": "Block", "title": "Baustein", "inputs": []}])
 		self.assertEqual(brief["warnings"][0]["code"], "FIXED_DATES")
 		self.assertIn("01.01.2020", full["blocks"][0]["source"])
 		self.assertEqual(api.get_template("Test", include_source="yes")["error"]["code"], "INVALID_ARGUMENT")

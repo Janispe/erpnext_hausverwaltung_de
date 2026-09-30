@@ -8,13 +8,27 @@ from html.parser import HTMLParser
 
 from hausverwaltung.hausverwaltung.agent_tools.contracts import AgentToolError
 
-JSON_TYPES = {"Text": "string", "String": "string", "Zahl": "number", "Bool": "boolean", "Datum": "string"}
+RECORD_TYPES = {"Doctype", "Doctype Liste"}
+# Fest gewählte Datensätze darf der Assistent nur für Adressaten-Stammdaten setzen,
+# nicht für Buchungs-, Vertrags- oder Systemdaten.
+AI_RECORD_DOCTYPES = ("Contact", "Address", "Customer", "Supplier")
+JSON_TYPES = {
+	"Text": "string",
+	"String": "string",
+	"Zahl": "number",
+	"Bool": "boolean",
+	"Datum": "string",
+	"Doctype": "string",
+	"Doctype Liste": "array",
+}
 EXAMPLES = {
 	"Text": "BEISPIELTEXT",
 	"String": "BEISPIELTEXT",
 	"Zahl": 125.5,
 	"Bool": False,
 	"Datum": "2030-01-15",
+	"Doctype": "EXAKTER-DATENSATZNAME",
+	"Doctype Liste": ["EXAKTER-DATENSATZNAME"],
 }
 
 
@@ -59,6 +73,8 @@ def input_description(field):
 		out["example"] = EXAMPLES[kind]
 		if kind == "Datum":
 			out["format"] = "YYYY-MM-DD"
+		elif kind in RECORD_TYPES:
+			out["format"] = f"exakter Name eines vorhandenen {field['reference_doctype']}-Datensatzes"
 		elif kind in {"Text", "String"}:
 			out["max_length"] = 4000
 			out["plain_text_only"] = True
