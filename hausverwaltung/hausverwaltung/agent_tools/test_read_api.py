@@ -192,6 +192,54 @@ class TestAgentReadApi(IntegrationTestCase):
 		self.assertIn("pagination", response["meta"])
 		self.assertIsInstance(response["data"], list)
 
+	def test_list_all_doctypes_is_not_capped_alphabetically(self):
+		# Regression: the catalog used list_doctypes() with its default limit of 50 and only
+		# ever saw Account*/Asset* DocTypes, never the Hausverwaltung ones.
+		response = read_api.list_all_doctypes()
+
+		self.assertTrue(response["ok"])
+		names = {row["name"] for row in response["data"]}
+		self.assertGreater(len(names), 50)
+		self.assertIn("Mietvertrag", names)
+		self.assertFalse(names.intersection(SENSITIVE_DOCTYPES))
+
+	def test_federated_search_doctypes_are_business_doctypes_in_priority_order(self):
+		doctypes = read_api._federated_search_doctypes()
+		modules = dict(frappe.get_all("DocType", fields=["name", "module"], as_list=True))
+
+		self.assertEqual(doctypes[:3], ["Immobilie", "Wohnung", "Mietvertrag"])
+		self.assertIn("Supplier", doctypes)
+		first_non_master = next(
+			name for name in doctypes if name not in read_api._FEDERATED_SEARCH_PRIORITY_DOCTYPES
+		)
+		self.assertEqual(modules[first_non_master], "Hausverwaltung")
+		for excluded in ("Version", "Comment", "File", "Hausverwaltung Assistant Message"):
+			self.assertNotIn(excluded, doctypes)
+		self.assertNotIn("Sales Invoice Item", doctypes)
+		self.assertNotIn("System Settings", doctypes)
+
+	def test_federated_search_reaches_hausverwaltung_and_ranks_it_first(self):
+		# Regression: federated search only scanned the first 50 DocTypes alphabetically.
+		def fake_search(*, doctype, limit, **_kwargs):
+			if doctype not in {"Address", "Mietvertrag"}:
+				return []
+			return [
+				{"doctype": doctype, "name": f"{doctype}-{index}", "modified": f"2026-01-0{index + 1}"}
+				for index in range(limit)
+			]
+
+		with patch.object(read_api, "_ensure_agent_api_access"), \
+			 patch.object(read_api, "_search_in_doctype", side_effect=fake_search):
+			response = read_api.search_docs(query="Gropius", limit=20)
+
+		self.assertTrue(response["ok"])
+		doctypes = [row["doctype"] for row in response["data"]]
+		self.assertEqual(doctypes, ["Mietvertrag"] * 5 + ["Address"] * 5)
+		self.assertEqual(response["data"][0]["modified"], "2026-01-05")
+		pagination = response["meta"]["pagination"]
+		self.assertEqual(pagination["matched_doctypes"], {"Mietvertrag": 5, "Address": 5})
+		self.assertGreater(pagination["searched_doctypes"], 50)
+
 	def test_regression_read_api_has_no_write_calls(self):
 		source = inspect.getsource(read_api)
 		for pattern in (

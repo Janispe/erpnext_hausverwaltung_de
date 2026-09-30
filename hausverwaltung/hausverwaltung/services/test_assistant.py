@@ -980,7 +980,7 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			],
 		}
 
-		with patch.object(assistant.agent_read_api, "list_doctypes", return_value=readable):
+		with patch.object(assistant.agent_read_api, "list_all_doctypes", return_value=readable):
 			result = assistant.agent_describe_data_catalog("Lieferanten")
 
 		sources = [source for group in result["data"]["groups"] for source in group["sources"]]
@@ -998,7 +998,7 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			"meta": {"request_id": "REQ-1"},
 		}
 
-		with patch.object(assistant.agent_read_api, "list_doctypes", return_value=readable):
+		with patch.object(assistant.agent_read_api, "list_all_doctypes", return_value=readable):
 			result = assistant.agent_describe_data_catalog("Eingangsrechnungen")
 
 		sources = [source for group in result["data"]["groups"] for source in group["sources"]]
@@ -1024,7 +1024,7 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			],
 		}
 
-		with patch.object(assistant.agent_read_api, "list_doctypes", return_value=readable):
+		with patch.object(assistant.agent_read_api, "list_all_doctypes", return_value=readable):
 			result = assistant.agent_describe_data_catalog("Zaehlerstand")
 
 		sources = result["data"]["groups"][0]["sources"]
@@ -1042,7 +1042,7 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 			],
 		}
 
-		with patch.object(assistant.agent_read_api, "list_doctypes", return_value=readable):
+		with patch.object(assistant.agent_read_api, "list_all_doctypes", return_value=readable):
 			result = assistant.agent_describe_data_catalog()
 
 		self.assertEqual(result["data"]["total_readable_doctypes"], 4)

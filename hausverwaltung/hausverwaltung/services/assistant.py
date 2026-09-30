@@ -3586,7 +3586,7 @@ def agent_list_doctypes(query: str | None = None, limit: int = 50, **_kwargs) ->
 
 def agent_describe_data_catalog(query: str | None = None, **_kwargs) -> dict[str, Any]:
 	"""Return a compact, permission-filtered map from business terms to DocTypes."""
-	result = agent_read_api.list_doctypes()
+	result = agent_read_api.list_all_doctypes()
 	if not isinstance(result, dict) or not result.get("ok") or not isinstance(result.get("data"), list):
 		return result
 

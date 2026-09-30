@@ -39,6 +39,54 @@ SENSITIVE_DOCTYPES = {
 	"User Permission",
 }
 
+# Federated search covers business data only: framework modules hold logs,
+# settings and UI state that would drown real matches.
+_FEDERATED_SEARCH_EXCLUDED_MODULES = {
+	"Assistant Core",
+	"Automation",
+	"Bulk Transaction",
+	"Communication",
+	"Core",
+	"Custom",
+	"Desk",
+	"Email",
+	"Geo",
+	"Integrations",
+	"Printing",
+	"Social",
+	"Telephony",
+	"Utilities",
+	"Website",
+	"Workflow",
+}
+_FEDERATED_SEARCH_EXCLUDED_DOCTYPES = {
+	"Hausverwaltung Assistant Conversation",
+	"Hausverwaltung Assistant Message",
+}
+# Master data a free-text hit most likely refers to; ranked before everything else.
+_FEDERATED_SEARCH_PRIORITY_DOCTYPES = (
+	"Immobilie",
+	"Wohnung",
+	"Mietvertrag",
+	"Customer",
+	"Eigentuemer",
+	"Supplier",
+	"Contact",
+	"Address",
+)
+# Then earlier modules rank first; unlisted business modules follow alphabetically.
+_FEDERATED_SEARCH_MODULE_PRIORITY = (
+	"Hausverwaltung",
+	"Contacts",
+	"Selling",
+	"Buying",
+	"Accounts",
+	"Mail Merge",
+	"Setup",
+	"CRM",
+)
+_FEDERATED_SEARCH_PER_DOCTYPE_LIMIT = 5
+
 _ALLOWED_SEARCH_FIELDTYPES = {
 	"Data",
 	"Small Text",
@@ -373,8 +421,44 @@ def _extract_snippet(row: dict[str, Any], query: str, search_fields: list[str]) 
 	return ""
 
 
-@frappe.whitelist()
-def list_doctypes(query: str | None = None, limit: int = 50) -> dict[str, Any]:
+def _readable_doctype_rows(query: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
+	"""Non-sensitive DocTypes the session user may read, alphabetically; ``limit=None`` returns all."""
+	query_text = str(query or "").strip().casefold()
+	all_doctypes = frappe.get_all(
+		"DocType",
+		fields=["name", "module", "istable", "custom", "modified"],
+		order_by="name asc",
+	)
+	visible = []
+	for row in all_doctypes:
+		name = (row.get("name") or "").strip()
+		if not name or name in SENSITIVE_DOCTYPES:
+			continue
+		try:
+			if not frappe.has_permission(name, "read"):
+				continue
+		except Exception:
+			continue
+		module = str(row.get("module") or "")
+		labels = list(dict.fromkeys((name, _(name), _(name, lang="de"))))
+		module_labels = list(dict.fromkeys((module, _(module), _(module, lang="de"))))
+		if query_text and not any(
+			query_text in str(value or "").casefold()
+			for value in (*labels, *module_labels)
+		):
+			continue
+		item = dict(row)
+		item["label"] = _(name)
+		item["module_label"] = _(module)
+		item["translated_labels"] = labels
+		item["translated_module_labels"] = module_labels
+		visible.append(item)
+		if limit is not None and len(visible) >= limit:
+			break
+	return visible
+
+
+def _list_doctypes_response(tool: str, query: str | None, limit: int | None) -> dict[str, Any]:
 	request_id = str(uuid.uuid4())
 	started_at = time.perf_counter()
 	result_count = 0
@@ -382,41 +466,7 @@ def list_doctypes(query: str | None = None, limit: int = 50) -> dict[str, Any]:
 	error_code = None
 	try:
 		_ensure_agent_api_access()
-		query_text = str(query or "").strip().casefold()
-		resolved_limit = cint(limit)
-		if resolved_limit < 1 or resolved_limit > 100:
-			raise AgentToolError("INVALID_ARGUMENT", "limit must be between 1 and 100.")
-		all_doctypes = frappe.get_all(
-			"DocType",
-			fields=["name", "module", "istable", "custom", "modified"],
-			order_by="name asc",
-		)
-		visible = []
-		for row in all_doctypes:
-			name = (row.get("name") or "").strip()
-			if not name or name in SENSITIVE_DOCTYPES:
-				continue
-			try:
-				if not frappe.has_permission(name, "read"):
-					continue
-			except Exception:
-				continue
-			module = str(row.get("module") or "")
-			labels = list(dict.fromkeys((name, _(name), _(name, lang="de"))))
-			module_labels = list(dict.fromkeys((module, _(module), _(module, lang="de"))))
-			if query_text and not any(
-				query_text in str(value or "").casefold()
-				for value in (*labels, *module_labels)
-			):
-				continue
-			item = dict(row)
-			item["label"] = _(name)
-			item["module_label"] = _(module)
-			item["translated_labels"] = labels
-			item["translated_module_labels"] = module_labels
-			visible.append(item)
-			if len(visible) >= resolved_limit:
-				break
+		visible = _readable_doctype_rows(query, limit)
 		result_count = len(visible)
 		success = True
 		return _ok(request_id, started_at, visible)
@@ -425,17 +475,31 @@ def list_doctypes(query: str | None = None, limit: int = 50) -> dict[str, Any]:
 		return _error(request_id, started_at, exc.code, exc.message)
 	except Exception:
 		error_code = "INTERNAL_ERROR"
-		frappe.log_error(frappe.get_traceback(), "agent_tools.list_doctypes")
+		frappe.log_error(frappe.get_traceback(), f"agent_tools.{tool}")
 		return _error(request_id, started_at, "INTERNAL_ERROR", "Unexpected internal error.")
 	finally:
 		_finalize_log(
-			tool="list_doctypes",
+			tool=tool,
 			request_id=request_id,
 			started_at=started_at,
 			success=success,
 			result_count=result_count,
 			error_code=error_code,
 		)
+
+
+@frappe.whitelist()
+def list_doctypes(query: str | None = None, limit: int = 50) -> dict[str, Any]:
+	resolved_limit = cint(limit)
+	if resolved_limit < 1 or resolved_limit > 100:
+		request_id = str(uuid.uuid4())
+		return _error(request_id, time.perf_counter(), "INVALID_ARGUMENT", "limit must be between 1 and 100.")
+	return _list_doctypes_response("list_doctypes", query, resolved_limit)
+
+
+def list_all_doctypes(query: str | None = None) -> dict[str, Any]:
+	"""Unpaged variant for server-side catalogs; not exposed over HTTP."""
+	return _list_doctypes_response("list_all_doctypes", query, None)
 
 
 @frappe.whitelist()
@@ -655,6 +719,34 @@ def _search_in_doctype(
 	return results
 
 
+def _federated_search_doctypes() -> list[str]:
+	"""Readable business DocTypes with their own records, in search priority order."""
+	flags = {
+		row.name: row
+		for row in frappe.get_all("DocType", fields=["name", "issingle", "is_virtual"])
+	}
+	doctype_priority = {name: index for index, name in enumerate(_FEDERATED_SEARCH_PRIORITY_DOCTYPES)}
+	module_priority = {module: index for index, module in enumerate(_FEDERATED_SEARCH_MODULE_PRIORITY)}
+	candidates = []
+	for row in _readable_doctype_rows():
+		name = row["name"]
+		module = str(row.get("module") or "")
+		flag = flags.get(name)
+		if row.get("istable") or not flag or flag.issingle or flag.is_virtual:
+			continue
+		if module in _FEDERATED_SEARCH_EXCLUDED_MODULES or name in _FEDERATED_SEARCH_EXCLUDED_DOCTYPES:
+			continue
+		candidates.append(
+			(
+				doctype_priority.get(name, len(doctype_priority)),
+				module_priority.get(module, len(module_priority)),
+				module,
+				name,
+			)
+		)
+	return [candidate[-1] for candidate in sorted(candidates)]
+
+
 @frappe.whitelist()
 def search_docs(
 	doctype: str | None = None,
@@ -697,13 +789,11 @@ def search_docs(
 					"INVALID_ARGUMENT",
 					"filters without a specific doctype are not supported in federated search.",
 				)
-			all_doctypes = list_doctypes()
-			if not all_doctypes.get("ok"):
-				raise AgentToolError("INTERNAL_ERROR", "Could not resolve searchable doctypes.")
-			doctypes = [row.get("name") for row in (all_doctypes.get("data") or []) if row.get("name")]
-			per_doctype_limit = min(10, normalized_limit)
+			doctypes = _federated_search_doctypes()
+			rank = {name: index for index, name in enumerate(doctypes)}
+			per_doctype_limit = min(_FEDERATED_SEARCH_PER_DOCTYPE_LIMIT, normalized_limit)
 			results = []
-			for candidate in doctypes[:50]:
+			for candidate in doctypes:
 				try:
 					found = _search_in_doctype(
 						doctype=candidate,
@@ -721,7 +811,12 @@ def search_docs(
 				if found:
 					results.extend(found)
 
-			results.sort(key=lambda row: (row.get("modified") or ""), reverse=True)
+			matched_doctypes: dict[str, int] = {}
+			for row in results:
+				matched_doctypes[row["doctype"]] = matched_doctypes.get(row["doctype"], 0) + 1
+			# Newest first within a DocType, DocTypes in business priority order.
+			results.sort(key=lambda row: str(row.get("modified") or ""), reverse=True)
+			results.sort(key=lambda row: rank[row["doctype"]])
 			results = results[normalized_offset : normalized_offset + normalized_limit]
 
 		result_count = len(results)
@@ -730,6 +825,10 @@ def search_docs(
 			"offset": normalized_offset,
 			"returned": result_count,
 		}
+		if not dt:
+			pagination["searched_doctypes"] = len(doctypes)
+			# Per-DocType hit counts (capped per DocType) show where to continue with a doctype filter.
+			pagination["matched_doctypes"] = matched_doctypes
 		success = True
 		return _ok(request_id, started_at, results, pagination=pagination)
 	except AgentToolError as exc:
