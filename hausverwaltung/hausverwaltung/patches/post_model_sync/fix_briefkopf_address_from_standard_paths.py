@@ -6,7 +6,6 @@ import json
 
 import frappe
 
-
 BRIEFKOPF_JINJA = """\
 {% set _adressfenster_zeilen = [] %}
 {% set _namen = [] %}
@@ -128,19 +127,41 @@ STANDARDPFADE = {
 	"Mietvertrag": {
 		"var": "objekt.mieter[]",
 		"address": "objekt.kunde.briefanschrift",
+		"datum": "datum",
+		"druck_schwarz_weiss": "druck_schwarz_weiss",
 	},
 	"Betriebskostenabrechnung Mieter": {
 		"var": "objekt.mietvertrag.mieter[]",
 		"address": "objekt.mietvertrag.kunde.briefanschrift",
+		"datum": "datum",
+		"druck_schwarz_weiss": "druck_schwarz_weiss",
 	},
 	"Dunning": {
 		"var": "objekt.overdue_payments.sales_invoice.mietvertrag.mieter[]",
 		"address": "objekt.overdue_payments.sales_invoice.mietvertrag.kunde.briefanschrift",
+		"datum": "datum",
+		"druck_schwarz_weiss": "druck_schwarz_weiss",
 	},
 }
 
 
 VARIABLES = {
+	"datum": {
+		"label": "Datum",
+		"variable_type": "Text",
+		"reference_doctype": "",
+		"optional": 0,
+		"preview_default": "",
+		"beschreibung": "Datum aus dem Render-Kontext, einschließlich individueller Werte.",
+	},
+	"druck_schwarz_weiss": {
+		"label": "Schwarz-Weiß-Druck",
+		"variable_type": "Bool",
+		"reference_doctype": "",
+		"optional": 0,
+		"preview_default": "",
+		"beschreibung": "Druckmodus aus dem Render-Kontext.",
+	},
 	"var": {
 		"label": "Empfaenger-Liste",
 		"variable_type": "Doctype Liste",
@@ -213,7 +234,13 @@ def _sync_standardpfade(doc) -> bool:
 			),
 			None,
 		)
-		payload = json.dumps(mapping, ensure_ascii=False)
+		# This hook runs after every migration. Fill missing defaults while
+		# preserving explicitly configured paths and additional inputs.
+		current = json.loads(row.pfad_zuordnung or "{}") if row else {}
+		if not isinstance(current, dict):
+			raise frappe.ValidationError("Briefkopf-Standardpfade müssen ein JSON-Objekt sein.")
+		merged = {**mapping, **current}
+		payload = json.dumps(merged, ensure_ascii=False)
 		if row is None:
 			doc.append(
 				"standardpfade",
@@ -221,7 +248,7 @@ def _sync_standardpfade(doc) -> bool:
 			)
 			changed = True
 			continue
-		if (row.pfad_zuordnung or "") != payload:
+		if current != merged:
 			row.pfad_zuordnung = payload
 			changed = True
 	return changed
