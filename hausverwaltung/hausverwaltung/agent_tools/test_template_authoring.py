@@ -172,3 +172,19 @@ class TestTemplateAuthoring(IntegrationTestCase):
 		self.assertTrue(frappe.db.get_value("Serienbrief Vorlage", self.live.name, "assistant_created"))
 		latest = versioning.latest_version(core.TEMPLATE_VERSION_SPEC, self.live.name)
 		self.assertEqual(latest.restored_from, proposal["vorlagenversion"])
+
+	def test_existing_footer_resources_are_guarded_when_referenced_by_ai(self):
+		block = frappe.get_doc(
+			{
+				"doctype": "Serienbrief Textbaustein",
+				"title": "KI footer " + self.suffix,
+				"content_type": "HTML + Jinja",
+				"render_position": "Footer",
+				"html_content": '<img src="/api/method/frappe.client.delete">',
+			}
+		).insert()
+		data = self._ok(self._create('{{ baustein("' + block.name + '") }}'))
+		template = template_at_version(data["template"])
+		run = frappe.get_doc({"doctype": "Serienbrief Durchlauf"})
+		with self.assertRaisesRegex(frappe.ValidationError, "Bilder"):
+			run.render_footer_blocks(template)
