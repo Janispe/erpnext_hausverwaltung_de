@@ -266,3 +266,32 @@ Dokument, nur die dort angehängte Datei). Es ist kein Werkzeug des eingebauten 
 base64-Inhalt nicht in einen Modellkontext gehört. Über FAC heißt es `agent_mail_merge_get_pdf` und steht in
 `FAC_CODE_TOOL_NAMES`; LibreChat ruft es nur aus `run_tools_with_bash` auf, dekodiert das PDF in der Sandbox und
 bietet es als Datei im Chat an. Über FAC werden höchstens 8 MB base64 übergeben.
+
+## KI-Vorlagen und Vorschlagsversionen
+
+`agent_mail_merge_create_template` legt eine neue Vorlage mit dauerhafter
+Kennzeichnung „Vom Assistenten erstellt“ und einer ersten Version „KI-Erstellung“
+an. Ein vorhandener Titel wird nie überschrieben. `agent_mail_merge_propose_template_version`
+legt bei gültiger aktueller `revision` ausschließlich eine geschützte Version
+„KI-Vorschlag“ mit `based_on` an; die aktive Vorlage bleibt unverändert.
+`agent_mail_merge_list_template_versions` zeigt die IDs, KI-Herkunft und den aktiven
+Stand. `get_template(vorlagenversion=...)` liest den vorgeschlagenen Inhalt.
+Mit `save_draft(vorlagenversion=...)`, anschließend `prepare(draft=...)`, kann
+man ihn mit echten Empfängern testen. Der Nutzer übernimmt im Versionseditor;
+der Herkunftsverweis bleibt erhalten. Vorschläge zählen nicht als Live-Stand,
+werden nicht mit gewöhnlichen Speicherungen zusammengefasst und ihre Basis
+wird durch spätere schnelle Speicherungen nicht verändert.
+
+Vorlagenwerkzeuge erfordern Hausverwalter/System-Manager-Rolle und die normalen
+Vorlagenrechte. Sie erlauben ausschließlich Inhalt, skalare Variablendefinitionen
+und Beschreibung, keine frei wählbaren DocTypes zum Schreiben, Python-Provider,
+Dokumentaktionen oder Bausteinänderungen. Beim Anlegen wird kein Inhalt gerendert.
+Die Jinja-Sandbox erlaubt nur geprüfte Lesefunktionen. Aktives HTML, Ereignishandler,
+dynamische Ressourcen, `safe`/`attr`, interne Namen und Jinja-Imports werden für
+KI-Inhalte zusätzlich abgelehnt; variable Ausgaben werden HTML-escaped.
+
+Der Chat ist damit lesend mit ausdrücklich erlaubten Serienbrief-Schreibaktionen.
+`execute` kann weiterhin die nicht eingereichten Dokumente/PDFs desselben Entwurfs
+bei einer Neugenerierung ersetzen. Es ist daher falsch, den gesamten Chat als
+„rein lesend“ oder „ohne jede Löschung“ zu beschreiben. Eingereichte Dokumente,
+allgemeine Löschwerkzeuge und Stammdatenänderungen bleiben gesperrt.

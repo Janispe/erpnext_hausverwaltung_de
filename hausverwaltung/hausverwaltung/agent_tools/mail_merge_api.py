@@ -355,11 +355,11 @@ def list_templates(query=None, limit=20, offset=0):
 
 @frappe.whitelist()
 @_endpoint
-def get_template(template, include_source=False):
+def get_template(template, include_source=False, vorlagenversion=None):
 	if include_source not in (True, False, 0, 1, "0", "1", "true", "false"):
 		raise AgentToolError("INVALID_ARGUMENT", "include_source muss true oder false sein.")
 	include_source = include_source in (True, 1, "1", "true")
-	doc, blocks, revision = _template(template)
+	doc, blocks, revision = _template_for(template, vorlagenversion)
 	core = _renderer()
 	source = core._get_template_template_source(doc)
 	block_sources = [core._get_textbaustein_template_source(b) for b in blocks]
@@ -369,6 +369,8 @@ def get_template(template, include_source=False):
 	result = {
 		"name": doc.name,
 		"title": doc.title,
+		"assistant_created": bool(doc.get("assistant_created")),
+		"vorlagenversion": vorlagenversion,
 		"purpose": description or doc.title,
 		"purpose_source": "description" if description else "title",
 		"purpose_truncated": purpose_truncated,
