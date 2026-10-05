@@ -1,17 +1,18 @@
 import re
 from datetime import date, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, add_months, cint, flt, get_first_day, get_last_day, getdate
+from frappe.utils import add_months, cint, flt, get_first_day, get_last_day, getdate
 
-from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
 from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
     BK_REGELUNG_VORAUSZAHLUNG,
     get_bk_regelung_from_rows,
     get_bk_regelungen_for_contracts,
 )
+from hausverwaltung.hausverwaltung.utils.mietberechnung import calculate_monthly_rent
+from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
 
 INVOICE_TYPES = ("Miete", "Betriebskosten", "Heizkosten")
 ITEM_CODE_BY_TYP = {
@@ -47,6 +48,7 @@ def execute(filters=None):
 
     contracts = _get_contracts(period_start=period_start, period_end=period_end)
     staffel_by_contract = _get_staffelmieten_by_contract([c.name for c in contracts])
+    part_month_by_contract = _get_part_months_by_contract([c.name for c in contracts])
     bk_regelungen_by_contract = get_bk_regelungen_for_contracts([c.name for c in contracts])
 
     rows = []
@@ -65,6 +67,7 @@ def execute(filters=None):
                 month_start,
                 staffel_by_contract.get(contract.name, {}),
                 bk_regelungen_by_contract.get(contract.name, []),
+                part_month_by_contract.get(contract.name, []),
             )
 
             for typ in INVOICE_TYPES:
@@ -182,18 +185,39 @@ def _get_staffelmieten_by_contract(contract_names: list[str]) -> dict[str, dict[
     return out
 
 
+def _get_part_months_by_contract(contract_names: list[str]) -> dict[str, list[frappe._dict]]:
+    """Batch-load explicit rent exceptions, avoiding one query per report row."""
+    if not contract_names:
+        return {}
+    rows = frappe.get_all(
+        "Miete Teilmonat",
+        filters={
+            "parent": ("in", contract_names),
+            "parenttype": "Mietvertrag",
+            "parentfield": "miete_teilmonate",
+        },
+        fields=["parent", "von", "bis", "berechnung", "betrag"],
+        order_by="parent asc, von asc, bis asc",
+    )
+    out = {}
+    for row in rows:
+        out.setdefault(row.parent, []).append(row)
+    return out
+
+
 def _expected_amounts_for_month(
     contract: frappe._dict,
     month_start: date,
     staffel: dict[str, list[frappe._dict]],
     bk_regelungen: list[dict] | None = None,
+    teilmonat_rows: list[dict] | None = None,
 ) -> dict[str, float]:
     miete_rows = staffel.get("miete") or []
     bk_rows = staffel.get("betriebskosten") or []
     hk_rows = staffel.get("heizkosten") or []
 
     return {
-        "Miete": _miete_betrag_fuer_monat_from_rows(contract.von, contract.bis, month_start, miete_rows),
+        "Miete": _miete_betrag_fuer_monat_from_rows(contract.von, contract.bis, month_start, miete_rows, teilmonat_rows),
         "Betriebskosten": (
             _staffelbetrag_from_rows(bk_rows, month_start)
             if get_bk_regelung_from_rows(bk_regelungen or [], month_start)
@@ -218,86 +242,14 @@ def _overlap(a_start: date, a_end_excl: date, b_start: date, b_end_excl: date) -
     return s, e, days
 
 
-def _miete_betrag_fuer_monat_from_rows(von: object, bis: object, anchor: date, rows: list[frappe._dict]) -> float:
-    month_start, month_end_excl, days_in_month = _month_window(anchor)
-
-    contract_start = getdate(von) if von else date(1900, 1, 1)
-    contract_end_excl = getdate(bis) + timedelta(days=1) if bis else date(9999, 12, 31)
-
-    ov_start, ov_end_excl, ov_days = _overlap(month_start, month_end_excl, contract_start, contract_end_excl)
-    if ov_days == 0:
-        return 0.0
-
-    total = 0.0
-
-    monatlich_rows = []
-    for row in rows or []:
-        art = (row.get("art") or "Monatlich").strip()
-        row_von = getdate(row.get("von")) if row.get("von") else None
-        if art == "Monatlich" and row_von and row_von < month_end_excl:
-            monatlich_rows.append({"von": row_von, "miete": flt(row.get("miete") or 0)})
-
-    current_rate = 0.0
-    for row in monatlich_rows:
-        if row["von"] <= ov_start:
-            current_rate = flt(row["miete"])
-        else:
-            break
-
-    change_points = sorted({row["von"] for row in monatlich_rows if ov_start < row["von"] < ov_end_excl})
-    segment_starts = [ov_start, *change_points]
-    segment_ends = [*segment_starts[1:], ov_end_excl]
-
-    future_rows = [row for row in monatlich_rows if row["von"] >= ov_start]
-    row_index = 0
-
-    for seg_start, seg_end in zip(segment_starts, segment_ends, strict=False):
-        while row_index < len(future_rows) and future_rows[row_index]["von"] == seg_start:
-            current_rate = flt(future_rows[row_index]["miete"])
-            row_index += 1
-
-        days = (seg_end - seg_start).days
-        if days > 0 and current_rate > 0:
-            total += current_rate * (days / days_in_month)
-
-    ges_rows = []
-    for row in rows or []:
-        art = (row.get("art") or "Monatlich").strip()
-        row_von = getdate(row.get("von")) if row.get("von") else None
-        if art == "Gesamter Zeitraum" and row_von and month_start <= row_von <= add_days(month_end_excl, -1):
-            ges_rows.append({"name": row.get("name"), "von": row_von, "miete": flt(row.get("miete") or 0)})
-
-    if ges_rows:
-        alle_ges = []
-        for row in rows or []:
-            art = (row.get("art") or "Monatlich").strip()
-            row_von = getdate(row.get("von")) if row.get("von") else None
-            if art == "Gesamter Zeitraum" and row_von:
-                alle_ges.append({"name": row.get("name"), "von": row_von, "miete": flt(row.get("miete") or 0)})
-
-        alle_ges.sort(key=lambda r: (r["von"], r.get("name") or ""))
-        index_by_name = {row.get("name"): i for i, row in enumerate(alle_ges)}
-
-        for row in ges_rows:
-            i = index_by_name.get(row.get("name"))
-            if i is None:
-                continue
-
-            if i + 1 < len(alle_ges):
-                r_end_excl = alle_ges[i + 1]["von"]
-            else:
-                if bis:
-                    r_end_excl = getdate(bis) + timedelta(days=1)
-                else:
-                    r_end_excl = add_months(get_first_day(row["von"]), 1)
-
-            end_incl = r_end_excl - timedelta(days=1)
-            if row["von"].year == end_incl.year and row["von"].month == end_incl.month:
-                _, _, cut_days = _overlap(row["von"], r_end_excl, contract_start, contract_end_excl)
-                if cut_days > 0:
-                    total += flt(row.get("miete") or 0)
-
-    return round(flt(total), 2)
+def _miete_betrag_fuer_monat_from_rows(
+    von: object,
+    bis: object,
+    anchor: date,
+    rows: list[frappe._dict],
+    teilmonat_rows: list[dict] | None = None,
+) -> float:
+    return calculate_monthly_rent(von, bis, anchor, rows, teilmonat_rows)["amount"]
 
 
 def _staffelbetrag_from_rows(rows: list[frappe._dict], zum: date) -> float:

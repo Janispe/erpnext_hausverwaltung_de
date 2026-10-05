@@ -1,32 +1,69 @@
 # import frappe
-import frappe
 import re
+from datetime import date
+from urllib.parse import urlencode
+
+import frappe
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import add_days, getdate, today
-from urllib.parse import urlencode
 
-from datetime import date
-
-from hausverwaltung.hausverwaltung.utils import customer as customer_utils
 from hausverwaltung.hausverwaltung.doctype.wohnung.wohnung import (
 	_build_paperless_tag_name as _build_wohnung_paperless_tag_name,
+)
+from hausverwaltung.hausverwaltung.doctype.wohnung.wohnung import (
 	_ensure_paperless_tag,
 )
 from hausverwaltung.hausverwaltung.integrations.paperless import PaperlessConfig
-from hausverwaltung.hausverwaltung.utils.mieter_name import (
-	get_hauptmieter_display_name,
-	get_hauptmieter_last_names,
-)
+from hausverwaltung.hausverwaltung.utils import customer as customer_utils
 from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 	BK_REGELUNG_VORAUSZAHLUNG,
 	get_bk_regelung_from_rows,
 	normalize_bk_regelung,
 )
+from hausverwaltung.hausverwaltung.utils.mietberechnung import (
+	calculate_monthly_rent,
+	validate_rent_rows,
+)
+from hausverwaltung.hausverwaltung.utils.mieter_name import (
+	get_hauptmieter_display_name,
+	get_hauptmieter_last_names,
+)
+
+
+@frappe.whitelist()
+def vorschau_teilmonatsmiete(document, month):
+	"""Preview the unsaved rent configuration without creating any accounting document."""
+	values = frappe.parse_json(document)
+	if not isinstance(values, dict) or values.get("doctype") != "Mietvertrag":
+		frappe.throw(_("Für die Vorschau muss ein Mietvertrag übergeben werden."))
+	name = values.get("name")
+	if name and not values.get("__islocal") and frappe.db.exists("Mietvertrag", name):
+		frappe.get_doc("Mietvertrag", name).check_permission("write")
+	else:
+		frappe.has_permission("Mietvertrag", "create", throw=True)
+	if not values.get("von"):
+		frappe.throw(_("Für die Vorschau bitte zuerst den Vertragsbeginn angeben."))
+	if not month:
+		frappe.throw(_("Für die Vorschau bitte einen Monat angeben."))
+	result = calculate_monthly_rent(
+		values.get("von"), values.get("bis"), month,
+		values.get("miete") or [], values.get("miete_teilmonate") or [],
+	)
+	result["breakdown"] = result["segments"]
+	return result
 
 
 class Mietvertrag(Document):
 	"""DocType controller for Mietvertrag."""
+
+	def before_update_after_submit(self) -> None:
+		"""Frappe skips validate on Update; rent rules must still be checked."""
+		validate_rent_rows(
+			self.von, self.bis, self.miete or [], getattr(self, "miete_teilmonate", None) or []
+		)
+		self._sort_staffel_table_by_von("miete")
+		self._sort_staffel_table_by_von("miete_teilmonate")
 
 	def before_validate(self) -> None:
 		"""Give an amendment its own Customer instead of copying the old link."""
@@ -378,36 +415,10 @@ class Mietvertrag(Document):
 			if row.kontakt and row.kontakt not in allowed:
 				frappe.throw(_(f"Kontakt {row.kontakt} ist kein Vertragspartner."))
 
-		# Validate Staffelmiete 'Gesamter Zeitraum': must fit in a single month.
-		# End is determined by next row's 'von' - 1 day, or contract end if last.
-		from frappe.utils import add_days
-		rows = sorted(self.miete or [], key=lambda r: getdate(r.von))
-		for idx, r in enumerate(rows):
-			if (r.art or "Monatlich").strip() != "Gesamter Zeitraum":
-				continue
-			start = getdate(r.von)
-			# determine period end (inclusive)
-			if idx + 1 < len(rows):
-				next_start = getdate(rows[idx + 1].von)
-				end_incl = add_days(next_start, -1)
-			else:
-				# last: use contract end if set, otherwise treat as same month boundary
-				if self.bis:
-					end_incl = getdate(self.bis)
-				else:
-					# open ended: we enforce same-month by using month end as effective end
-					from frappe.utils import get_last_day
-					end_incl = get_last_day(start)
-
-			if end_incl < start:
-				frappe.throw(_(f"Ungültiger Zeitraum in Staffelmiete (Gesamter Zeitraum) ab {start}: Ende vor Start."))
-			# must lie within a single month
-			if start.year != end_incl.year or start.month != end_incl.month:
-				frappe.throw(
-					_(
-						f"Staffelmiete (Gesamter Zeitraum) ab {start} muss innerhalb eines Monats liegen (ermitteltes Ende: {end_incl})."
-					)
-				)
+		validate_rent_rows(
+			self.von, self.bis, self.miete or [], getattr(self, "miete_teilmonate", None) or []
+		)
+		self._sort_staffel_table_by_von("miete_teilmonate")
 
 	def _validate_creation_via_process(self) -> None:
 		mieterwechsel_name = (self.mieterwechsel or "").strip()
@@ -589,8 +600,8 @@ class Mietvertrag(Document):
 
 	def get_trennstreifen_context(self) -> dict:
 		"""Render-Context für das Trennstreifen Print Format."""
-		from hausverwaltung.hausverwaltung.utils.mieter_name import get_hauptmieter_contacts
 		from hausverwaltung.hausverwaltung.utils import trennstreifen as ts
+		from hausverwaltung.hausverwaltung.utils.mieter_name import get_hauptmieter_contacts
 
 		hauptmieter = get_hauptmieter_display_name(self.mieter)
 		contacts = get_hauptmieter_contacts(self.mieter)

@@ -44,7 +44,7 @@ frappe.ui.form.on("Mietvertrag", {
 		console.log("✅ mietvertrag.js wurde geladen");
 
 		update_bruttomiete(frm);
-		rename_staffelmiete_miete_column(frm, "miete", "Mietbetrag");
+		setup_monthly_rent_table(frm);
 		hide_staffelmiete_art_column(frm, "kaution");
 		rename_staffelmiete_miete_column(frm, "kaution", "Betrag");
 		ensure_staffel_highlight_css();
@@ -55,6 +55,9 @@ frappe.ui.form.on("Mietvertrag", {
 
 		add_paperless_button(frm);
 		add_mieterkonto_button_from_mietvertrag(frm);
+		frm.add_custom_button(__("Teilmonatsmiete festlegen"), () => {
+			open_part_month_rent_dialog(frm);
+		});
 
 		frm.add_custom_button(__("Staffelmieten sortieren"), async () => {
 			sort_betriebskostenregelungen(frm);
@@ -99,6 +102,9 @@ frappe.ui.form.on("Mietvertrag", {
 	staffelmiete_erzeugen(frm) {
 		open_staffelmiete_generate_dialog(frm);
 	},
+	teilmonatsmiete_festlegen(frm) {
+		open_part_month_rent_dialog(frm);
+	},
 
 	von(frm) {
 		update_bruttomiete(frm);
@@ -106,10 +112,12 @@ frappe.ui.form.on("Mietvertrag", {
 	bis(frm) {
 		update_bruttomiete(frm);
 	},
-	miete_add(frm) {
+	miete_add(frm, cdt, cdn) {
+		if (cdt && cdn) frappe.model.set_value(cdt, cdn, "art", "Monatlich");
 		update_bruttomiete(frm);
 	},
 	miete_remove(frm) {
+		setup_monthly_rent_table(frm);
 		update_bruttomiete(frm);
 	},
 	betriebskosten_add(frm) {
@@ -211,6 +219,14 @@ function get_staffel_snapshot(frm) {
 			abrechnungsart: row.abrechnungsart || "Vorauszahlung",
 		}))
 		.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+	snapshot.miete_teilmonate = (frm.doc.miete_teilmonate || [])
+		.map((row) => ({
+			von: row.von || "",
+			bis: row.bis || "",
+			berechnung: row.berechnung || "Automatisch anteilig",
+			betrag: row.berechnung === "Festbetrag" ? flt(row.betrag) : null,
+		}))
+		.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 	return snapshot;
 }
 
@@ -251,6 +267,12 @@ function get_changed_staffel_scope(before, after) {
 	if (changedRules.length) {
 		const dates = changedRules.map((row) => row.gueltig_von).filter(Boolean).sort();
 		scope.Betriebskosten = dates.length ? `${dates[0].slice(0, 7)}-01` : "1900-01-01";
+	}
+	const changedPartMonths = changed_staffel_rows(before.miete_teilmonate, after.miete_teilmonate);
+	if (changedPartMonths.length) {
+		const dates = changedPartMonths.map((row) => row.von).filter(Boolean).sort();
+		const from = dates.length ? `${dates[0].slice(0, 7)}-01` : "1900-01-01";
+		scope.Miete = scope.Miete && scope.Miete < from ? scope.Miete : from;
 	}
 	return scope;
 }
@@ -388,65 +410,265 @@ frappe.ui.form.on("Betriebskosten Festbetrag", {
 	},
 });
 
+function setup_monthly_rent_table(frm) {
+	const grid = frm.get_field("miete")?.grid;
+	if (!grid) return;
+	const legacy = (frm.doc.miete || []).some((row) => row.art === "Gesamter Zeitraum");
+	// Existing fixed staffels retain their identity until they have been migrated.
+	// Never reinterpret those amounts as monthly rent just to simplify the form.
+	set_staffelmiete_grid_properties(grid, {
+		von: { label: __("Gültig ab") },
+		miete: { label: legacy ? __("Mietbetrag") : __("Monatsmiete") },
+		art: { default: "Monatlich", hidden: legacy ? 0 : 1, in_list_view: legacy ? 1 : 0, read_only: 1 },
+	});
+	frm.set_df_property("miete", "description", legacy
+		? __("Dieser Vertrag enthält ältere Festbeträge (Gesamter Zeitraum). Diese bleiben sichtbar und werden nicht automatisch in Monatsmieten umgewandelt. Für neue Vereinbarungen bitte die Monatsmiete und Teilmonatsmiete verwenden.")
+		: __("Regulärer Mietbetrag je vollem Monat. Ein- und Auszugsmonate werden automatisch anteilig berechnet; einen vereinbarten Betrag können Sie über Teilmonatsmiete festlegen eingeben. Separate Betriebs- und Heizkostenvorauszahlungen werden dadurch nicht geändert."));
+	frm.refresh_field("miete");
+}
+
+function set_staffelmiete_grid_properties(grid, properties) {
+	// Frappe shares a child DocType's parent-specific DocFields between every
+	// table of that type. Miete, BK/HK and Kaution all use Staffelmiete. Keep
+	// labels/defaults local to this grid, including after Frappe rebuilds it.
+	if (!grid.__hv_staffel_properties) {
+		grid.__hv_staffel_properties = {};
+		const setup_fields = grid.setup_fields;
+		grid.setup_fields = function () {
+			setup_fields.call(this);
+			this.docfields = this.docfields.map((df) => ({
+				...df, ...(this.__hv_staffel_properties[df.fieldname] || {}),
+			}));
+			this.docfields.forEach((df) => { this.fields_map[df.fieldname] = df; });
+		};
+		grid.get_docfield = function (fieldname) {
+			return this.docfields.find((df) => df.fieldname === fieldname);
+		};
+	}
+	Object.entries(properties).forEach(([fieldname, values]) => {
+		grid.__hv_staffel_properties[fieldname] = {
+			...(grid.__hv_staffel_properties[fieldname] || {}), ...values,
+		};
+	});
+	grid.reset_grid();
+}
+
+function part_month_end(date) {
+	const [year, month] = date.split("-").map(Number);
+	const day = new Date(Date.UTC(year, month, 0)).getUTCDate();
+	return `${date.slice(0, 7)}-${String(day).padStart(2, "0")}`;
+}
+
+function part_month_periods(frm) {
+	const periods = [];
+	const add = (label, von, bis) => {
+		if (von && bis && von <= bis && !periods.some((p) => p.von === von && p.bis === bis)) {
+			periods.push({ label, von, bis });
+		}
+	};
+	if (frm.doc.von) {
+		const firstEnd = part_month_end(frm.doc.von);
+		add(__("Erster Mietmonat"), frm.doc.von,
+			frm.doc.bis && frm.doc.bis < firstEnd ? frm.doc.bis : firstEnd);
+	}
+	if (frm.doc.bis) {
+		const lastStart = `${frm.doc.bis.slice(0, 7)}-01`;
+		add(__("Letzter Mietmonat"),
+			frm.doc.von && frm.doc.von > lastStart ? frm.doc.von : lastStart, frm.doc.bis);
+	}
+	return periods;
+}
+
+function open_part_month_rent_dialog(frm) {
+	if (!frm.doc.von) {
+		frappe.msgprint(__("Bitte zuerst den Beginn des Mietvertrags angeben."));
+		return;
+	}
+	const periods = part_month_periods(frm);
+	const first = periods.find((p) => p.von.slice(-2) !== "01" || p.bis !== part_month_end(p.von))
+		|| periods[0];
+	if (!first) return;
+	const existing_rule = (von, bis) => (frm.doc.miete_teilmonate || [])
+		.find((row) => row.von === von && row.bis === bis);
+	const initial = existing_rule(first.von, first.bis);
+	let selectedRowName = initial?.name || null;
+	const currency = frappe.defaults.get_default("currency") || "EUR";
+	const escape = (value) => frappe.utils.escape_html(String(value ?? ""));
+	let previewSequence = 0;
+	let timer;
+	let changingPeriod = false;
+	let previousMode = initial?.berechnung || "Automatisch anteilig";
+	const d = new frappe.ui.Dialog({
+		title: __("Teilmonatsmiete festlegen"),
+		fields: [
+			{ fieldtype: "HTML", fieldname: "explanation", options:
+				`<p>${__("Der Festbetrag gilt einmalig für den angezeigten Zeitraum und ersetzt dort die anteilige Monatsmiete. Die restlichen Tage des Monats werden regulär berechnet. Separate Betriebs- und Heizkostenvorauszahlungen bleiben unverändert.")}</p>` },
+			{ fieldtype: "Select", fieldname: "zeitraum", label: __("Zeitraum auswählen"),
+				options: [...periods.map((p) => p.label), __("Eigener Zeitraum")].join("\n"),
+				default: first.label,
+				onchange: async () => {
+					const period = periods.find((p) => p.label === d.get_value("zeitraum"));
+					if (!period) return;
+					changingPeriod = true;
+					const rule = existing_rule(period.von, period.bis);
+					selectedRowName = rule?.name || null;
+					await d.set_value("von", period.von);
+					await d.set_value("bis", period.bis);
+					await d.set_value("berechnung", rule?.berechnung || "Automatisch anteilig");
+					await d.set_value("betrag", rule?.berechnung === "Festbetrag" ? rule.betrag : null);
+					changingPeriod = false;
+					refresh_preview();
+				} },
+			{ fieldtype: "Date", fieldname: "von", label: __("Von (einschließlich)"),
+				reqd: 1, default: first.von, onchange: date_changed },
+			{ fieldtype: "Date", fieldname: "bis", label: __("Bis (einschließlich)"),
+				reqd: 1, default: first.bis, onchange: date_changed },
+			{ fieldtype: "Select", fieldname: "berechnung", label: __("Berechnung für diesen Zeitraum"),
+				options: "Automatisch anteilig\nFestbetrag", default: initial?.berechnung || "Automatisch anteilig",
+				onchange: async () => {
+					const mode = d.get_value("berechnung");
+					d.set_df_property("betrag", "hidden", mode !== "Festbetrag");
+					if (mode === "Festbetrag" && previousMode !== "Festbetrag" && !changingPeriod) {
+						await d.set_value("betrag", null);
+						d.fields_dict.betrag.$input.val("");
+					}
+					previousMode = mode;
+					refresh_preview();
+				} },
+			{ fieldtype: "Currency", fieldname: "betrag", label: __("Vereinbarter Mietbetrag für diesen Zeitraum"),
+				default: initial?.berechnung === "Festbetrag" ? initial.betrag : null,
+				hidden: initial?.berechnung !== "Festbetrag", onchange: refresh_preview,
+				description: __("Ein einmaliger Betrag, keine Monatsmiete. Auch 0,00 ist möglich.") },
+			{ fieldtype: "HTML", fieldname: "vorschau" },
+		],
+		primary_action_label: __("In Mietvertrag übernehmen"),
+		async primary_action() {
+			const rule = get_rule();
+			if (!rule) return;
+			d.get_primary_btn().prop("disabled", true);
+			try {
+				const preview = await calculate_preview(rule);
+				if (!preview || preview.exc) return;
+				let target = selectedRowName && (frm.doc.miete_teilmonate || [])
+					.find((row) => row.name === selectedRowName);
+				if (selectedRowName && !target) {
+					frappe.msgprint(__("Die Teilmonatsregel wurde zwischenzeitlich verändert. Bitte den Dialog erneut öffnen."));
+					return;
+				}
+				target ||= frm.add_child("miete_teilmonate");
+				Object.assign(target, rule);
+				frm.dirty();
+				frm.refresh_field("miete_teilmonate");
+				d.hide();
+				frappe.show_alert({ message: __("Teilmonatsmiete übernommen. Bitte den Mietvertrag speichern."), indicator: "green" });
+			} catch (_) {
+				// The server shows its validation message; the form remains untouched.
+			} finally {
+				d.get_primary_btn().prop("disabled", false);
+			}
+		},
+	});
+
+	function date_changed() {
+		if (changingPeriod) return;
+		d.set_value("zeitraum", __("Eigener Zeitraum"));
+		refresh_preview();
+	}
+	function get_rule() {
+		const von = d.get_value("von"), bis = d.get_value("bis");
+		const berechnung = d.get_value("berechnung");
+		if (!von || !bis || von > bis || von.slice(0, 7) !== bis.slice(0, 7)) {
+			d.fields_dict.vorschau.$wrapper.html(`<p class="text-danger">${__("Bitte einen gültigen Zeitraum innerhalb eines Kalendermonats angeben.")}</p>`);
+			return null;
+		}
+		if (berechnung === "Festbetrag" && !String(d.fields_dict.betrag.$input.val() ?? "").trim()) {
+			d.fields_dict.vorschau.$wrapper.html(`<p class="text-muted">${__("Bitte den vereinbarten Mietbetrag eingeben. Für einen mietfreien Zeitraum ausdrücklich 0 eingeben.")}</p>`);
+			return null;
+		}
+		return { von, bis, berechnung, betrag: berechnung === "Festbetrag" ? d.get_value("betrag") : 0 };
+	}
+	async function calculate_preview(rule) {
+		const document = JSON.parse(JSON.stringify(frm.doc));
+		document.miete_teilmonate = (document.miete_teilmonate || [])
+			.filter((row) => !selectedRowName || row.name !== selectedRowName);
+		document.miete_teilmonate.push({ doctype: "Miete Teilmonat", ...rule });
+		const response = await frappe.call({
+			method: "hausverwaltung.hausverwaltung.doctype.mietvertrag.mietvertrag.vorschau_teilmonatsmiete",
+			args: { document: JSON.stringify(document), month: `${rule.von.slice(0, 7)}-01` },
+		});
+		return response.exc ? null : response.message;
+	}
+	function refresh_preview() {
+		if (changingPeriod) return;
+		clearTimeout(timer);
+		const sequence = ++previewSequence;
+		timer = setTimeout(async () => {
+			const rule = get_rule();
+			if (!rule) return;
+			d.fields_dict.vorschau.$wrapper.html(`<p class="text-muted">${__("Vorschau wird berechnet …")}</p>`);
+			try {
+				const preview = await calculate_preview(rule);
+				if (sequence !== previewSequence || !preview) return;
+				const rows = (preview.segments || []).map((segment) => `<tr>
+					<td>${escape(frappe.datetime.str_to_user(segment.von))} – ${escape(frappe.datetime.str_to_user(segment.bis))}</td>
+					<td>${escape(segment.berechnung)}</td>
+					<td class="text-right">${escape(format_currency(segment.betrag, currency))}</td>
+				</tr>`).join("");
+				d.fields_dict.vorschau.$wrapper.html(`<div data-role="part-month-preview">
+					<p><strong>${__("Mietbetrag für den gesamten Monat {0}: {1}",
+						[escape(rule.von.slice(0, 7)), escape(format_currency(preview.amount, currency))])}</strong></p>
+					<div class="table-responsive"><table class="table table-bordered">
+						<thead><tr><th>${__("Zeitraum")}</th><th>${__("Berechnung")}</th><th class="text-right">${__("Mietbetrag")}</th></tr></thead>
+						<tbody>${rows}</tbody>
+					</table></div>
+				</div>`);
+			} catch (_) {
+				if (sequence === previewSequence) d.fields_dict.vorschau.$wrapper.html(
+					`<p class="text-danger">${__("Der Zeitraum konnte nicht berechnet werden. Bitte die Eingaben prüfen.")}</p>`);
+			}
+		}, 200);
+	}
+	d.onhide = () => { clearTimeout(timer); previewSequence++; };
+	d.show();
+	refresh_preview();
+}
+
 function hide_staffelmiete_art_column(frm, tableFieldname) {
 	const field = frm.get_field && frm.get_field(tableFieldname);
 	const grid = field && field.grid;
 	if (!grid) return;
 
-	// Default-Wert "Gesamter Zeitraum" auf jeder neuen Kaution-Row erzwingen,
-	// damit auch ohne sichtbares Feld konsistente Daten landen.
-	if (typeof grid.update_docfield_property === "function") {
-		grid.update_docfield_property("art", "hidden", 1);
-		grid.update_docfield_property("art", "in_list_view", 0);
-		grid.update_docfield_property("art", "default", "Gesamter Zeitraum");
-	}
-
-	// Feld komplett aus dem Grid-Model entfernen — nur dann verschwindet auch
-	// die Datenzelle (nicht nur der Header). docfields/meta filtern.
-	const removeArtField = function (arr) {
-		if (!Array.isArray(arr)) return arr;
-		return arr.filter(function (df) {
-			return !(df && df.fieldname === "art");
-		});
-	};
-	if (grid.docfields) grid.docfields = removeArtField(grid.docfields);
-	if (grid.meta && grid.meta.fields) {
-		grid.meta.fields = removeArtField(grid.meta.fields);
-	}
-	if (Array.isArray(grid.visible_columns)) {
-		grid.visible_columns = grid.visible_columns.filter(function (col) {
-			return !(col && col[0] && col[0].fieldname === "art");
-		});
-	}
-	if (grid.fields_map && grid.fields_map.art) {
-		delete grid.fields_map.art;
-	}
-
+	set_staffelmiete_grid_properties(grid, {
+		art: { hidden: 1, in_list_view: 0, default: "Gesamter Zeitraum" },
+	});
 	frm.refresh_field(tableFieldname);
 }
 
 function rename_staffelmiete_miete_column(frm, tableFieldname, newLabel) {
 	const field = frm.get_field && frm.get_field(tableFieldname);
 	const grid = field && field.grid;
-	if (!grid || typeof grid.update_docfield_property !== "function") return;
+	if (!grid) return;
 
 	const amountField = (grid.docfields || []).find(
 		(df) => df && df.fieldname === "miete"
 	);
 	if (amountField && amountField.label === newLabel) return;
 
-	grid.update_docfield_property("miete", "label", newLabel);
-	if (Array.isArray(grid.docfields)) {
-		grid.docfields.forEach(function (df) {
-			if (df && df.fieldname === "miete") {
-				df.label = newLabel;
-			}
-		});
-	}
+	set_staffelmiete_grid_properties(grid, { miete: { label: newLabel } });
 	frm.refresh_field(tableFieldname);
 }
 
 frappe.ui.form.on("Staffelmiete", {
+	miete_add(frm, cdt, cdn) {
+		if (frm.doctype !== "Mietvertrag") return;
+		frappe.model.set_value(cdt, cdn, "art", "Monatlich");
+		update_bruttomiete(frm);
+	},
+	miete_remove(frm) {
+		if (frm.doctype !== "Mietvertrag") return;
+		setup_monthly_rent_table(frm);
+		update_bruttomiete(frm);
+	},
 	von(frm) {
 		if (frm.doctype !== "Mietvertrag") return;
 		update_bruttomiete(frm);

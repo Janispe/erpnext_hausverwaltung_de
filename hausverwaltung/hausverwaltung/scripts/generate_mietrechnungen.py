@@ -1,14 +1,16 @@
+from datetime import date, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
+
 import frappe
 from frappe import _
-from frappe.utils import add_days, get_first_day, get_last_day, add_months, now_datetime, getdate
-from datetime import datetime, date, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from frappe.utils import add_months, get_first_day, get_last_day, getdate, now_datetime
 
 from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
     BK_REGELUNG_PAUSCHALE,
     BK_REGELUNG_VORAUSZAHLUNG,
     get_bk_regelung,
 )
+from hausverwaltung.hausverwaltung.utils.mietberechnung import calculate_monthly_rent
 
 
 def _parse_monat_jahr(monat: str | int | None, jahr: str | int | None) -> date:
@@ -73,122 +75,22 @@ def _overlap(a_start: date, a_end_excl: date, b_start: date, b_end_excl: date) -
 
 
 def _miete_betrag_fuer_monat(mv_row: frappe._dict, anchor: date) -> float:
-    """Berechnet den Mietbetrag für den Anker‑Monat:
-    - Art 'Monatlich': anteilig nach Tagen im Monat (inkl. Staffelwechsel innerhalb des Monats)
-    - Art 'Gesamter Zeitraum': voller Betrag, wenn Zeitraum in diesem Monat liegt
-    Berücksichtigt Vertragslaufzeit (nur überlappende Tage).
-    """
-    mv_name = mv_row.name
-    month_start, month_end_excl, days_in_month = _month_window(anchor)
-
-    # Vertragsfenster (exklusive Ende)
-    contract_start = mv_row.von or date(1900, 1, 1)
-    contract_end_excl = (mv_row.bis + timedelta(days=1)) if mv_row.bis else date(9999, 12, 31)
-
-    # Monat × Vertrag überlappen?
-    ov_start, ov_end_excl, ov_days = _overlap(month_start, month_end_excl, contract_start, contract_end_excl)
-    if ov_days == 0:
-        return 0.0
-
-    total = 0.0
-
-    # 1) Monatlich (pro‑rata)
-    monatlich_rows = frappe.get_all(
+    """Use the same exact monthly-rent calculation as preview and checking."""
+    rent_rows = frappe.get_all(
         "Staffelmiete",
-        filters={
-            "parent": mv_name,
-            "parenttype": "Mietvertrag",
-            "parentfield": "miete",
-            "art": "Monatlich",
-            # Relevanz: alle mit 'von' < Monatsende
-            "von": ("<", month_end_excl),
-        },
-        fields=["von", "miete"],
-        order_by="von asc",
+        filters={"parent": mv_row.name, "parenttype": "Mietvertrag", "parentfield": "miete"},
+        fields=["name", "von", "miete", "art", "idx"],
+        order_by="von asc, idx asc, name asc",
     )
-
-    # Aktiver Satz zu ov_start finden (letzter mit von <= ov_start)
-    current_rate = 0.0
-    for r in monatlich_rows:
-        if r.von <= ov_start:
-            current_rate = float(r.miete or 0)  # Kandidat
-        else:
-            break
-
-    # Zeitscheiben: Wechselpunkte innerhalb [ov_start, ov_end_excl)
-    change_points = [r.von for r in monatlich_rows if ov_start < r.von < ov_end_excl]
-    segment_starts = [ov_start] + sorted(change_points)
-    segment_ends = segment_starts[1:] + [ov_end_excl]
-
-    # Rate laufend aktualisieren, wenn wir an einen Wechsel kommen
-    # Dazu benötigen wir ein Iterator über alle Rows ab ov_start
-    rows_iter = iter([r for r in monatlich_rows if r.von >= ov_start])
-    next_row = next(rows_iter, None)
-
-    for seg_start, seg_end in zip(segment_starts, segment_ends):
-        # Falls ein Wechsel exakt zu seg_start vorliegt → Rate aktualisieren
-        while next_row and next_row.von == seg_start:
-            current_rate = float(next_row.miete or 0)
-            next_row = next(rows_iter, None)
-        days = (seg_end - seg_start).days
-        if days > 0 and current_rate > 0:
-            total += current_rate * (days / days_in_month)
-
-    # 2) Gesamter Zeitraum (voller Betrag, nur wenn Zeitraum innerhalb eines Monats liegt)
-    ges_rows = frappe.get_all(
-        "Staffelmiete",
-        filters={
-            "parent": mv_name,
-            "parenttype": "Mietvertrag",
-            "parentfield": "miete",
-            "art": "Gesamter Zeitraum",
-            # nur Startpunkte dieses Monats betrachten
-            "von": ("between", [month_start, add_days(month_end_excl, -1)]),
-        },
-        fields=["name", "von", "miete"],
-        order_by="von asc",
+    part_month_rows = frappe.get_all(
+        "Miete Teilmonat",
+        filters={"parent": mv_row.name, "parenttype": "Mietvertrag", "parentfield": "miete_teilmonate"},
+        fields=["von", "bis", "berechnung", "betrag"],
+        order_by="von asc, bis asc",
     )
-
-    if ges_rows:
-        # Um das Ende zu bestimmen, brauchen wir alle 'Gesamter Zeitraum'-Zeilen im Vertrag
-        alle_ges = frappe.get_all(
-            "Staffelmiete",
-            filters={
-                "parent": mv_name,
-                "parenttype": "Mietvertrag",
-                "parentfield": "miete",
-                "art": "Gesamter Zeitraum",
-            },
-            fields=["name", "von", "miete"],
-            order_by="von asc",
-        )
-        # Map name -> index
-        index_by_name = {row.name: i for i, row in enumerate(alle_ges)}
-        for r in ges_rows:
-            i = index_by_name.get(r.name)
-            if i is None:
-                continue
-            r_start = r.von
-            # Ende ist Vortag des nächsten Starts, oder Vertragsende, oder Monatsende (falls offen)
-            if i + 1 < len(alle_ges):
-                next_start = alle_ges[i + 1].von
-                r_end_excl = next_start
-            else:
-                # letztes Intervall: Vertragsende nutzen, sonst Monatsende dieses Starts
-                if mv_row.bis:
-                    r_end_excl = mv_row.bis + timedelta(days=1)
-                else:
-                    # auf Monatsende clippen
-                    r_end_excl = add_months(get_first_day(r_start), 1)
-            # Nur wenn Start und (inklusive) Ende im selben Monat liegen, gilt der volle Betrag
-            end_incl = r_end_excl - timedelta(days=1)
-            if r_start.year == end_incl.year and r_start.month == end_incl.month:
-                # und der Zeitraum muss den Vertrag schneiden
-                _, _, cut_days = _overlap(r_start, r_end_excl, contract_start, contract_end_excl)
-                if cut_days > 0:
-                    total += float(r.miete or 0)
-
-    return round(float(total), 2)
+    return calculate_monthly_rent(
+        mv_row.von, mv_row.bis, anchor, rent_rows, part_month_rows
+    )["amount"]
 
 
 def _cost_center_via_wohnung(wohnung: str | None) -> str | None:

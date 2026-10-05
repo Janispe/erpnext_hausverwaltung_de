@@ -10,6 +10,25 @@ from hausverwaltung.hausverwaltung.scripts import generate_mietrechnungen
 
 
 class TestGenerateMietrechnungen(unittest.TestCase):
+    def test_rent_generator_reads_explicit_part_month_and_replaces_prorata(self):
+        def get_all(doctype, **kwargs):
+            self.assertEqual(kwargs["filters"]["parent"], "MV-1")
+            if doctype == "Staffelmiete":
+                return [frappe._dict(von="2026-01-16", miete=620, art="Monatlich")]
+            if doctype == "Miete Teilmonat":
+                self.assertEqual(kwargs["filters"]["parentfield"], "miete_teilmonate")
+                return [frappe._dict(von="2026-01-16", bis="2026-01-31", berechnung="Festbetrag", betrag=300)]
+            self.fail(f"Unexpected doctype: {doctype}")
+
+        with (
+            patch.object(generate_mietrechnungen.frappe, "get_all", side_effect=get_all),
+            patch.object(generate_mietrechnungen.frappe, "get_system_settings", return_value="Commercial Rounding"),
+        ):
+            amount = generate_mietrechnungen._miete_betrag_fuer_monat(
+                frappe._dict(name="MV-1", von=date(2026, 1, 16), bis=None), date(2026, 1, 1)
+            )
+        self.assertEqual(amount, 300)
+
     def test_all_generated_skip_reasons_are_valid_select_options(self):
         doctype_path = (
             Path(__file__).parents[1]

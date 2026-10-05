@@ -8,6 +8,28 @@ from hausverwaltung.hausverwaltung.report.mietrechnungspruefung import mietrechn
 
 
 class TestMietrechnungspruefung(unittest.TestCase):
+    def test_expected_rent_uses_explicit_override_without_changing_advances(self):
+        expected = report._expected_amounts_for_month(
+            frappe._dict(von=date(2026, 1, 16), bis=None),
+            date(2026, 1, 1),
+            {"miete": [frappe._dict(von=date(2026, 1, 16), miete=620)],
+             "betriebskosten": [frappe._dict(von=date(2026, 1, 1), miete=150)],
+             "heizkosten": [frappe._dict(von=date(2026, 1, 1), miete=100)]},
+            [{"gueltig_von": date(2026, 1, 1), "abrechnungsart": "Vorauszahlung"}],
+            [{"von": "2026-01-16", "bis": "2026-01-31", "berechnung": "Festbetrag", "betrag": 300}],
+        )
+        self.assertEqual(expected, {"Miete": 300, "Betriebskosten": 150, "Heizkosten": 100})
+
+    def test_part_months_are_loaded_for_all_contracts_in_one_query(self):
+        rules = [frappe._dict(parent="MV-1", von="2026-01-16", bis="2026-01-31", berechnung="Festbetrag", betrag=300),
+                 frappe._dict(parent="MV-2", von="2026-01-01", bis="2026-01-15", berechnung="Festbetrag", betrag=250)]
+        with patch.object(report.frappe, "get_all", return_value=rules) as get_all:
+            result = report._get_part_months_by_contract(["MV-1", "MV-2"])
+        self.assertEqual(result, {"MV-1": [rules[0]], "MV-2": [rules[1]]})
+        self.assertEqual(get_all.call_count, 1)
+        self.assertEqual(get_all.call_args.args[0], "Miete Teilmonat")
+        self.assertEqual(get_all.call_args.kwargs["filters"]["parent"], ("in", ["MV-1", "MV-2"]))
+
     def test_flat_rate_month_expects_no_bk_invoice(self):
         expected = report._expected_amounts_for_month(
             frappe._dict(von=date(2026, 1, 1), bis=None),

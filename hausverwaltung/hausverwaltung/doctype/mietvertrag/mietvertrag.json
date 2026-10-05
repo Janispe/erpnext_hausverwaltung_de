@@ -22,6 +22,9 @@
   "status",
   "miete_tab",
   "miete",
+  "teilmonatsmiete_section",
+  "miete_teilmonate",
+  "teilmonatsmiete_festlegen",
   "section_break_oxpt",
   "staffelmiete_erzeugen",
   "column_break_limy",
@@ -149,11 +152,30 @@
   },
   {
    "allow_on_submit": 1,
-   "description": "Bei Pauschale/Inklusivmiete ist hier der gesamte inkludierende Mietbetrag einzutragen; bei Vorauszahlung die Nettokaltmiete.",
+   "description": "Regulärer Betrag pro vollem Kalendermonat; Teilmonate werden automatisch nach Kalendertagen berechnet. Vereinbarte Festbeträge unten unter Teilmonatsmiete erfassen. Bei Pauschale/Inklusivmiete ist dies der inkludierende Mietbetrag, bei Vorauszahlung die Nettokaltmiete.",
    "fieldname": "miete",
    "fieldtype": "Table",
-   "label": "Mietbetrag",
+   "label": "Monatsmieten und Mietstaffeln",
    "options": "Staffelmiete"
+  },
+  {
+   "fieldname": "teilmonatsmiete_section",
+   "fieldtype": "Section Break",
+   "label": "Miete für Teilmonate"
+  },
+  {
+   "allow_on_submit": 1,
+   "description": "Ohne Sonderregel wird automatisch anteilig gerechnet. Ein Festbetrag ersetzt die Berechnung für genau den angegebenen Zeitraum. Separate BK- und HK-Vorauszahlungen werden hier nicht geändert.",
+   "fieldname": "miete_teilmonate",
+   "fieldtype": "Table",
+   "label": "Teilmonatsregeln",
+   "options": "Miete Teilmonat"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "teilmonatsmiete_festlegen",
+   "fieldtype": "Button",
+   "label": "Teilmonatsmiete festlegen"
   },
   {
    "fieldname": "section_break_oxpt",
