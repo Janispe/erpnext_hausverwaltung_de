@@ -7,6 +7,8 @@ RUN git clone https://github.com/buildswithpaul/Frappe_Assistant_Core.git apps/f
     && git checkout 7ddc433772f4ade794d9f5ee30b7d9ea0af2a487 \
     && cd ../.. \
     && ./env/bin/pip install -e apps/frappe_assistant_core
+COPY --chown=frappe:frappe scripts/patch_fac_routing_metadata.py /tmp/patch_fac_routing_metadata.py
+RUN ./env/bin/python /tmp/patch_fac_routing_metadata.py --root apps/frappe_assistant_core/frappe_assistant_core
 # Copy only FAC integration files, preserving all other apps and image customizations.
 COPY --chown=frappe:frappe hausverwaltung/ apps/hausverwaltung/hausverwaltung/
 RUN ./env/bin/python - <<'PY'

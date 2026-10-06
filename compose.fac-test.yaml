@@ -3,7 +3,8 @@ name: hv-fac-test
 x-frappe: &frappe
   image: hv-fac-test:2.5.1
   build:
-    context: ./docker/fac-test
+    context: .
+    dockerfile: docker/fac-test/Dockerfile
     args:
       BASE_IMAGE: ${FAC_BASE_IMAGE:-hvp:16}
   volumes:

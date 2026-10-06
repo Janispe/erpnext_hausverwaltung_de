@@ -979,7 +979,7 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 				"name, kunde, wohnung, "
 				"immobilie, status, von, bis, bruttomiete. Fuer Rechnungen/offene Posten nutze Sales Invoice "
 				"mit customer, posting_date, due_date, grand_total, outstanding_amount, status. "
-				"Bei aktiven/laufenden Mietvertraegen immer Filter {field: status, op: =, value: L\u00e4uft} setzen."
+				"Vertragslaufzeit aus von/bis zum Stichtag bestimmen, stornierte Verträge ausschließen und Beginn/Ende einschließlich prüfen; status allein ist keine Laufzeitprüfung."
 			),
 			"parameters": {
 				"type": "object",
@@ -3473,6 +3473,7 @@ def hv_query_view(
 	*,
 	max_limit: int = VIEW_READ_LIMIT,
 	candidate_limit: int = VIEW_CANDIDATE_LIMIT,
+	company: str | None = None,
 ) -> dict[str, Any]:
 	"""Safe semantic query layer for broad assistant questions.
 
@@ -3488,8 +3489,10 @@ def hv_query_view(
 	resolved_limit = _normalize_view_limit(limit, max_limit)
 	resolved_offset = _normalize_view_offset(offset)
 	query_fields = _view_query_fields(conf, selected_fields, filter_tree, order_spec, aggregate_spec)
+	if company and (not frappe.db.exists("Company", company) or not _can_read_doc("Company", company)):
+		frappe.throw(_("Die angeforderte Company ist nicht vorhanden oder nicht lesbar."), frappe.PermissionError)
 	params: dict[str, Any] = {
-		"company": _default_company(),
+		"company": company or _default_company(),
 		"today": nowdate(),
 		"limit": candidate_limit,
 	}

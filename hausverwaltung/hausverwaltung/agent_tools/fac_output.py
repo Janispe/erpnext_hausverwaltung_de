@@ -49,6 +49,10 @@ def compact_direct_result(tool_name: str, arguments: dict[str, Any] | None, resu
 	if not isinstance(result, dict):
 		return result
 	compact = {key: value for key, value in result.items() if key not in _INTERNAL_KEYS}
+	# search_mieter has no rows or single match: these are its actual results,
+	# not redundant UI metadata. Keep all candidates for explicit selection.
+	if tool_name == "search_mieter" and "matches" in result:
+		compact["matches"] = result["matches"]
 	if tool_name == "hv_query_view":
 		for key in _VIEW_ECHO_KEYS:
 			compact.pop(key, None)

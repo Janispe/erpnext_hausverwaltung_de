@@ -9,3 +9,6 @@ RUN git clone https://github.com/buildswithpaul/Frappe_Assistant_Core.git apps/f
     && cd ../.. \
     && ./env/bin/pip install -e apps/frappe_assistant_core \
     && bench build --app frappe_assistant_core
+
+COPY --chown=frappe:frappe scripts/patch_fac_routing_metadata.py /tmp/patch_fac_routing_metadata.py
+RUN ./env/bin/python /tmp/patch_fac_routing_metadata.py --root apps/frappe_assistant_core/frappe_assistant_core

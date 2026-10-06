@@ -7,7 +7,9 @@ from unittest.mock import patch
 from hausverwaltung.hausverwaltung.agent_tools import fac_output
 from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 	FAC_CODE_TOOL_NAMES,
+	FAC_INVENTORY_TOOL_NAMES,
 	FAC_MAIL_MERGE_TOOL_NAMES,
+	FAC_PROTOTYPE_TOOL_NAMES,
 	FAC_REPORT_TOOL_NAMES,
 	FAC_TOOL_HOOKS,
 	FAC_TOOL_NAMES,
@@ -22,6 +24,13 @@ def _rows(count: int, text: str = "x" * 40) -> list[dict]:
 
 
 class TestFacOutput(unittest.TestCase):
+	def test_mieter_search_keeps_candidates_for_explicit_selection(self):
+		matches = [{"mietvertrag": "MV-1", "customer": "C-1"}, {"mietvertrag": "MV-2", "customer": "C-2"}]
+		result = {"query": "Müller", "count": 2, "matches": matches}
+		compact = fac_output.compact_direct_result("search_mieter", {}, result)
+		self.assertEqual(compact["matches"], matches)
+		self.assertEqual(compact["count"], 2)
+
 	def test_compact_drops_ui_keys(self):
 		result = {
 			"view": "tenant_contracts",
@@ -222,7 +231,9 @@ class TestFacContract(unittest.TestCase):
 			len(FAC_TOOL_NAMES)
 			+ len(FAC_REPORT_TOOL_NAMES)
 			+ len(FAC_CODE_TOOL_NAMES)
-			+ len(FAC_MAIL_MERGE_TOOL_NAMES),
+			+ len(FAC_MAIL_MERGE_TOOL_NAMES)
+			+ len(FAC_PROTOTYPE_TOOL_NAMES)
+			+ len(FAC_INVENTORY_TOOL_NAMES),
 		)
 
 	def test_mail_merge_is_the_only_writing_surface(self):

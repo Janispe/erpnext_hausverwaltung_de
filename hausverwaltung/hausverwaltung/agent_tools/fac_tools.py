@@ -10,8 +10,10 @@ from jsonschema import validate
 
 from hausverwaltung.hausverwaltung.agent_tools import fac_output
 from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
+	FAC_INVENTORY_TOOL_NAMES,
 	FAC_MAIL_MERGE_TOOL_NAMES,
 	FAC_MAIL_MERGE_WRITE_TOOL_NAMES,
+	FAC_PROTOTYPE_TOOL_NAMES,
 	FAC_TOOL_NAMES,
 )
 
@@ -40,6 +42,10 @@ DIRECT_LIMITS = {
 # Parameters FAC clients may send in addition to the built-in assistant's tool schema.
 _EXTRA_PARAMETERS = {
 	"hv_query_view": {
+		"company": {
+			"type": "string", "minLength": 1,
+			"description": "Exakte lesbare Company, z. B. aus rental_terms.company einer Übersicht; sonst Benutzerstandard.",
+		},
 		"offset": {
 			"type": "integer",
 			"minimum": 0,
@@ -89,6 +95,17 @@ def _raise_on_tool_error(result):
 
 class HausverwaltungReadTool(BaseTool):
 	tool_name = ""
+	mcp_audience = "code"
+	mcp_model_max_chars = fac_output.DIRECT_OUTPUT_MAX_CHARS
+
+	@property
+	def mcp_metadata(self):
+		from hausverwaltung.hausverwaltung.agent_tools.fac_catalog_policy import routing_metadata
+
+		return routing_metadata(self.mcp_audience, self.mcp_model_max_chars)
+
+	def get_metadata(self):
+		return {**super().get_metadata(), "_meta": self.mcp_metadata}
 
 	def __init__(self):
 		super().__init__()
@@ -100,6 +117,13 @@ class HausverwaltungReadTool(BaseTool):
 			if item.get("function", {}).get("name") == self.tool_name
 		)
 		self.name = self.tool_name
+		# Legacy focused tools: explicit server-owned opt-in. New OverviewTool
+		# subclasses carry their audience on the class instead of client lists.
+		if self.name in {
+			"search_mieter", "get_mieter_context", "get_mieterkonto_summary",
+			"search_open_items", "search_late_payments", "rank_mieter_by_rent", "analyze_revenue_over_time",
+		}:
+			self.mcp_audience = "model"
 		self.description = definition["description"]
 		self.inputSchema = deepcopy(definition["parameters"])
 		self.inputSchema.setdefault("properties", {}).update(
@@ -152,6 +176,7 @@ class Fac_hv_export_view(HausverwaltungReadTool):
 			for key, value in view_schema["properties"].items()
 			if key in ("view", "fields", "filters", "order_by")
 		}
+		properties["company"] = deepcopy(_EXTRA_PARAMETERS["hv_query_view"]["company"])
 		properties["offset"] = {
 			"type": "integer",
 			"minimum": 0,
@@ -195,6 +220,7 @@ class Fac_hv_export_view(HausverwaltungReadTool):
 			offset=arguments.get("offset"),
 			max_limit=EXPORT_VIEW_MAX_LIMIT,
 			candidate_limit=EXPORT_VIEW_CANDIDATE_LIMIT,
+			company=arguments.get("company"),
 		)
 		_raise_on_tool_error(result)
 		payload = fac_output.export_view_payload(result, limit)
@@ -203,8 +229,48 @@ class Fac_hv_export_view(HausverwaltungReadTool):
 		return payload
 
 
+class OverviewTool(HausverwaltungReadTool):
+	"""Focused direct tools; preserve identity, sums and explicit coverage."""
+
+	mcp_audience = "model"
+
+	def __init__(self):
+		BaseTool.__init__(self)
+		from hausverwaltung.hausverwaltung.agent_tools.fac_inventory_tools import INVENTORY_TOOLS
+		from hausverwaltung.hausverwaltung.agent_tools.fac_overview_tools import OVERVIEW_TOOLS
+
+		definition = {**OVERVIEW_TOOLS, **INVENTORY_TOOLS}[self.tool_name]
+		self.name = self.tool_name
+		self.description = definition["description"]
+		self.inputSchema = {
+			"type": "object", "properties": deepcopy(definition["properties"]),
+			"required": definition["required"], "additionalProperties": False,
+		}
+		if definition.get("allOf"):
+			self.inputSchema["allOf"] = deepcopy(definition["allOf"])
+		self.source_app = "hausverwaltung"
+		self.category = "read_only"
+		self.requires_permission = definition["doctype"]
+
+	def execute(self, arguments):
+		from hausverwaltung.hausverwaltung.agent_tools.fac_overview_tools import OVERVIEW_TOOLS
+
+		self.check_permission()
+		self.validate_arguments(arguments)
+		from hausverwaltung.hausverwaltung.agent_tools.fac_inventory_tools import INVENTORY_TOOLS
+
+		result = {**OVERVIEW_TOOLS, **INVENTORY_TOOLS}[self.name]["function"](**arguments)
+		# Never clip identity fields, sums or completeness metadata.
+		if fac_output.sent_size(result) > fac_output.DIRECT_OUTPUT_MAX_CHARS:
+			return {"ok": False, "error": {"code": "LIMIT_EXCEEDED", "message": "Übersicht zu groß; gezielte allgemeine Abfrage oder Export aus Code verwenden."}}
+		return result
+
+
 class MailMergeTool(HausverwaltungReadTool):
 	"""Controlled mail merge steps; errors stay structured so the model can explain `issues`."""
+
+	mcp_audience = "model"
+	mcp_model_max_chars = fac_output.MAIL_MERGE_OUTPUT_MAX_CHARS
 
 	def __init__(self):
 		BaseTool.__init__(self)
@@ -237,6 +303,7 @@ class Fac_agent_mail_merge_get_pdf(MailMergeTool):
 	"""PDF bytes of a preview or stored draft, for code callers that save them as chat files."""
 
 	tool_name = "agent_mail_merge_get_pdf"
+	mcp_audience = "code"
 
 	def __init__(self):
 		BaseTool.__init__(self)
@@ -275,6 +342,8 @@ class Fac_agent_mail_merge_get_pdf(MailMergeTool):
 
 class ReportTool(HausverwaltungReadTool):
 	"""ERPNext reports through FAC's report engine, with paging and output limits."""
+
+	mcp_audience = "model"
 
 	description = ""
 	properties: ClassVar[dict] = {}
@@ -443,6 +512,7 @@ class Fac_hv_export_report(ReportTool):
 	"""Paged report rows for code callers only."""
 
 	tool_name = "hv_export_report"
+	mcp_audience = "code"
 	description = (
 		"NUR AUS CODE AUFRUFEN (z. B. run_tools_with_bash), nie direkt: wie hv_run_report, aber bis zu "
 		f"{EXPORT_REPORT_MAX_LIMIT} Zeilen pro Seite. Antwort: columns, rows, total_count, has_more, "
@@ -488,4 +558,10 @@ for _name in FAC_MAIL_MERGE_TOOL_NAMES:
 for _name in FAC_TOOL_NAMES:
 	globals()[f"Fac_{_name}"] = type(
 		f"Fac_{_name}", (HausverwaltungReadTool,), {"tool_name": _name, "__module__": __name__}
+	)
+
+
+for _name in (*FAC_PROTOTYPE_TOOL_NAMES, *FAC_INVENTORY_TOOL_NAMES):
+	globals()[f"Fac_{_name}"] = type(
+		f"Fac_{_name}", (OverviewTool,), {"tool_name": _name, "__module__": __name__}
 	)

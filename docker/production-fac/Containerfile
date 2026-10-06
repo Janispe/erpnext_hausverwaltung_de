@@ -19,6 +19,9 @@ COPY --chown=frappe:frappe hausverwaltung/ apps/hausverwaltung/hausverwaltung/
 COPY --chown=frappe:frappe pyproject.toml package.json package-lock.json yarn.lock apps/hausverwaltung/
 COPY --chown=frappe:frappe scripts/verify_fac_mcp.py apps/hausverwaltung/scripts/verify_fac_mcp.py
 
+COPY --chown=frappe:frappe scripts/patch_fac_routing_metadata.py /tmp/patch_fac_routing_metadata.py
+RUN ./env/bin/python /tmp/patch_fac_routing_metadata.py --root apps/frappe_assistant_core/frappe_assistant_core
+
 RUN ls -1 apps > sites/apps.txt \
     && ./env/bin/pip install -e apps/hausverwaltung \
     && bench build --app frappe_assistant_core \

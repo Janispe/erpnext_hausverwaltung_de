@@ -690,7 +690,9 @@ def _search_in_doctype(
 	safe_order_by = normalize_order_by(order_by, stored_fields) or _DEFAULT_ORDER_BY
 
 	like_query = f"%{query}%"
-	or_filters = [[doctype, fieldname, "like", like_query] for fieldname in search_fields if fieldname in allowed_fields]
+	# Virtual Link fields are readable on documents, but cannot be used in SQL
+	# filters (Frappe v16 rejects them even for Administrator).
+	or_filters = [[doctype, fieldname, "like", like_query] for fieldname in search_fields if fieldname in stored_fields]
 
 	rows = _get_list_with_virtual_fields(
 		doctype,
