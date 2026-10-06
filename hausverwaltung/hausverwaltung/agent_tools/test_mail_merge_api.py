@@ -32,10 +32,10 @@ class TestMailMergeApi(unittest.TestCase):
 	def field(self, key="amount", kind="Zahl", optional=False, fillable=True):
 		return {"key": key, "type": kind, "optional": optional, "fillable": fillable}
 
-	def test_values_reject_unknown_paths_nested_objects_and_wrong_types(self):
+	def test_values_reject_unknown_keys_nested_objects_and_wrong_types(self):
 		for value in (
 			{"objekt.rent": 5},
-			{"amount": {"path": "objekt.rent"}},
+			{"amount": {"unexpected": "objekt.rent"}},
 			{"amount": True},
 			{"amount": float("nan")},
 			{"amount": "12,5"},
@@ -44,6 +44,48 @@ class TestMailMergeApi(unittest.TestCase):
 		):
 			with self.subTest(value=value), self.assertRaises(AgentToolError):
 				api._values(value, [self.field()])
+
+	def test_alternative_paths_use_explicit_path_objects(self):
+		self.assertEqual(api._values({"amount": {"path": "objekt.bruttomiete"}}, [self.field()]), {"amount": {"path": "objekt.bruttomiete"}})
+		for value in [{"path": ""}, {"path": "objekt.__class__"}, {"path": "frappe.db"}, {"path": "objekt.miete()"}, {"path": "objekt.rent", "value": 5}, {"path": 5}]:
+			with self.subTest(value=value), self.assertRaises(AgentToolError):
+				api._values({"amount": value}, [self.field()])
+		with self.assertRaises(AgentToolError):
+			api._values({"amount": {"path": "objekt.kunde"}}, [{**self.field(), "path_overridable": False}])
+
+	def test_direct_placeholder_paths_are_listed_and_accept_fixed_values(self):
+		template = frappe._dict(content_type="HTML + Jinja", jinja_content="{{$ objekt.bruttomiete $}}")
+		fields = api._inputs(template)
+		field = next(f for f in fields if f["key"] == "objekt.bruttomiete")
+		self.assertTrue(field["path_overridable"])
+		for value in [750, 0, False, "750 EUR"]:
+			stored = api._values({field["key"]: value}, fields)
+			self.assertEqual(stored, {field["key"]: {"value": value}})
+			self.assertEqual(api._stored_values(json.dumps(stored), fields), {field["key"]: value})
+
+	def test_draft_paths_survive_read_update_and_removal(self):
+		fields = [self.field()]
+		raw = json.dumps({"amount": {"path": "objekt.bruttomiete"}})
+		self.assertEqual(api._stored_values(raw, fields), {"amount": {"path": "objekt.bruttomiete"}})
+		updated = api._merged_values(raw, {"amount": {"path": "objekt.aktuelle_nettokaltmiete"}}, fields)
+		self.assertEqual(api._stored_values(updated, fields), {"amount": {"path": "objekt.aktuelle_nettokaltmiete"}})
+		self.assertEqual(api._merged_values(updated, {"amount": None}, fields), "")
+
+	def test_mcp_accepts_and_forwards_path_overrides(self):
+		from hausverwaltung.hausverwaltung.agent_tools import fac_tools, mail_merge_tools
+		tool = fac_tools.Fac_agent_mail_merge_prepare()
+		arguments = {"template": "T", "revision": "r", "recipients": ["MV-1"], "values": {"objekt.bruttomiete": {"path": "objekt.aktuelle_nettokaltmiete"}}, "per_recipient": {"MV-1": {"objekt.bruttomiete": 750}}}
+		called = Mock(return_value={"ok": True, "data": {"ready": True}})
+		with patch.object(tool, "check_permission"), patch.dict(mail_merge_tools.MAIL_MERGE_FUNCTIONS, {"agent_mail_merge_prepare": called}):
+			self.assertTrue(tool.execute(arguments)["ok"])
+		called.assert_called_once_with(**arguments)
+
+	def test_override_path_failures_are_input_errors(self):
+		from hausverwaltung.hausverwaltung.agent_tools.mail_merge_contract import render_error
+		error = render_error(frappe.ValidationError("Überschriebener Serienbrief-Pfad objekt.missing konnte nicht aufgelöst werden."), recipient="MV-1", recipient_doctype="Mietvertrag")
+		self.assertEqual(error["code"], "INVALID_INPUT")
+		self.assertEqual(error["action"], "correct_inputs")
+		self.assertEqual(error["issues"][0]["source"], "input")
 
 	def test_text_cannot_inject_jinja_or_html_and_attribute_values_are_escaped(self):
 		fields = [self.field("note", "Text")]

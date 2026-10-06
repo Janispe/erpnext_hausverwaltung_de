@@ -69,7 +69,9 @@ def input_description(field):
 	out = {**field, "required": not field["optional"]}
 	if field["fillable"]:
 		kind = field["type"]
-		out["json_type"] = JSON_TYPES[kind]
+		out["json_type"] = ["string", "number", "boolean"] if field.get("direct_path") else JSON_TYPES[kind]
+		if field.get("path_overridable"):
+			out["path_example"] = {"path": "objekt.FELDNAME"}
 		out["example"] = EXAMPLES[kind]
 		if kind == "Datum":
 			out["format"] = "YYYY-MM-DD"
@@ -205,6 +207,15 @@ def _classify_render_error(exc, *, recipient, recipient_doctype):
 	raw = re.sub(r"<pre\b[^>]*>.*?</pre>", "", str(exc), flags=re.DOTALL | re.IGNORECASE)
 	raw = re.split(r"Vorlagen-Zeile|Kandidaten in dieser Zeile|Traceback", raw, maxsplit=1)[0]
 	text = html.unescape(re.sub(r"<[^>]+>", "", raw)).strip()
+	override_match = re.search(r"Überschriebener Serienbrief-Pfad ([\w.\[\]]+) konnte nicht aufgelöst werden", text)
+	if override_match:
+		path = override_match[1]
+		result.update(code="INVALID_INPUT", message=f"Der gewählte Feldpfad {path} konnte für {recipient} nicht aufgelöst werden.",
+			issues=[{"field": path.rsplit(".", 1)[-1], "path": path, "source": "input"}], action="correct_inputs")
+		return result
+	if "Zirkuläre Serienbrief-Pfadzuordnung:" in text:
+		result.update(code="INVALID_INPUT", message="Die gewählten Feldpfade verweisen zirkulär aufeinander.", action="correct_inputs")
+		return result
 	path_match = re.search(
 		r"Platzhalter\s+\{\{?\s*\$\s*([^{}$]+?)\s*\$\s*\}\}?\s+konnte nicht aufgelöst werden", text
 	)

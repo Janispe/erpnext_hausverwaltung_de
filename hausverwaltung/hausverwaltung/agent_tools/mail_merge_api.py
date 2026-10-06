@@ -225,8 +225,10 @@ def _inputs(template):
 	from mail_merge.mail_merge.utils.render_inputs import input_fields
 
 	out = []
-	for field in input_fields(template, include_records=True):
+	for field in input_fields(template, include_records=True, include_paths=True):
 		entry = {"key": field["name"], "path": field["path"], "label": field["label"], "type": field["type"], "optional": not field["required"], "description": field["description"], "fillable": True, "default": field["default"]}
+		entry["path_overridable"] = field["type"] not in RECORD_TYPES
+		entry["direct_path"] = bool(field.get("direct_path"))
 		if field["type"] in RECORD_TYPES:
 			# Datensätze (z. B. Kontakt einer Kanzlei) nur für freigegebene Stammdaten-Doctypes;
 			# andere Doctype-Variablen kommen weiter allein aus dem Kontext.
@@ -234,6 +236,9 @@ def _inputs(template):
 			if entry["reference_doctype"] not in AI_RECORD_DOCTYPES:
 				continue
 		out.append(entry)
+	roots = [f["key"] for f in out if "." not in f["key"] and not f["key"].startswith("_")]
+	for field in out:
+		field["path_roots"] = roots
 	return out
 
 
@@ -266,6 +271,26 @@ def _record_value(key, value, field, recipient=None):
 	return names if many else names[0]
 
 
+def _path_value(key, value, field, *, recipient=None):
+	path = value.get("path")
+	# Only data paths rooted in this recipient or an exposed input; no Jinja,
+	# private attributes, calls, or arbitrary record identifiers.
+	segments = path.strip().split(".") if isinstance(path, str) else []
+	valid = (
+		field.get("path_overridable", field["type"] not in RECORD_TYPES)
+		and set(value) == {"path"}
+		and isinstance(path, str) and 0 < len(path) <= 500
+		and bool(segments)
+		and all(re.fullmatch(r"(?:[^\W\d]\w*|\d+)(?:\[\d+\])*", segment) and not segment.startswith("_") for segment in segments)
+		and segments[0] in {"objekt", "datum", *field.get("path_roots", [])}
+	)
+	if not valid:
+		raise MailMergeError("INVALID_INPUT", f"Ungültiger Feldpfad für {key}.",
+			issues=[input_issue(key, expected_type="object", format='{"path":"objekt.feld"}')],
+			action="correct_inputs", recipient=recipient)
+	return {"path": path.strip()}
+
+
 def _values(raw, fields, *, recipient=None, escape=True):
 	values = parse_json_if_needed(raw)
 	if values is None:
@@ -285,11 +310,16 @@ def _values(raw, fields, *, recipient=None, escape=True):
 			)
 		field = allowed[key]
 		kind = field["type"]
+		if isinstance(value, dict):
+			out[key] = _path_value(key, value, field, recipient=recipient)
+			continue
 		if kind in RECORD_TYPES:
 			out[key] = {"value": _record_value(key, value, field, recipient)}
 			continue
 		valid = value is not None
-		if kind == "Bool":
+		if field.get("direct_path"):
+			valid = (isinstance(value, str) and len(value) <= 4000) or type(value) is bool or (type(value) in (int, float) and math.isfinite(value))
+		elif kind == "Bool":
 			valid = type(value) is bool
 		elif kind == "Zahl":
 			valid = type(value) in (int, float) and math.isfinite(value)
@@ -914,14 +944,18 @@ def _coerce_stored(value, kind):
 
 def _stored_values(raw, fields):
 	kinds = {f["key"]: f["type"] for f in fields}
+	direct_keys = {f["key"] for f in fields if f.get("direct_path")}
 	data = parse_json_if_needed(raw) or {}
 	if not isinstance(data, dict):
 		return {}
 	out = {}
 	for key, entry in data.items():
+		if isinstance(entry, dict) and entry.get("path") and entry.get("value") is None:
+			out[key] = {"path": entry["path"]}
+			continue
 		value = entry.get("value") if isinstance(entry, dict) else entry
 		if value is not None:
-			out[key] = _coerce_stored(value, kinds.get(key))
+			out[key] = value if key in direct_keys else _coerce_stored(value, kinds.get(key))
 	return out
 
 

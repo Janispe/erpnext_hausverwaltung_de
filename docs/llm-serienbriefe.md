@@ -80,11 +80,32 @@ Vorbereitung mit den zuvor gelesenen Namen und der Revision:
 
 Die Eingabeschlüssel sind vorlagenspezifisch. Ausschließlich `inputs` mit
 `fillable: true` sind veränderbar. Zahlen müssen JSON-Zahlen sein, Boolesche
-Werte `true`/`false`, Datumsangaben `YYYY-MM-DD`. Text wird für HTML escaped;
-HTML/Jinja, verschachtelte Werte, Datenpfade und unbekannte Schlüssel werden
-abgewiesen. Vorhandene Datenpfad-Variablen und Doctype-Variablen bleiben unter
-Kontrolle der Vorlage. `per_recipient` ordnet exakte Empfängernamen individuellen
-Eingabeobjekten zu; diese überschreiben gemeinsame Werte.
+Werte `true`/`false`, Datumsangaben `YYYY-MM-DD`. Direkte Platzhalter-Pfade der
+Vorlage werden ebenfalls als Eingabeschlüssel angeboten; sie akzeptieren Text,
+Zahlen und Boolesche Werte. Text wird für HTML escaped; HTML/Jinja und unbekannte
+Schlüssel werden abgewiesen.
+
+Für `inputs` mit `path_overridable: true` ist statt eines festen Werts eine
+Pfadbelegung möglich:
+
+```json
+{
+  "values": {"objekt.bruttomiete": 750},
+  "per_recipient": {
+    "EXAKTER_MIETVERTRAGSNAME": {
+      "objekt.bruttomiete": {"path": "objekt.aktuelle_nettokaltmiete"}
+    }
+  }
+}
+```
+
+Pfadbelegungen enthalten ausschließlich `path`. `objekt` bezeichnet weiterhin
+den ausgewählten Empfänger; `path_roots` nennt weitere erlaubte Wurzeln.
+Private Attribute, Aufrufe und nicht auflösbare Pfade werden abgewiesen.
+Beim Auflösen verknüpfter Datensätze werden Leserechte geprüft.
+`per_recipient` überschreibt gemeinsame Werte oder Pfade für den exakten Empfänger.
+`save_draft`, `get_draft`, `update_draft` und `prepare(draft)` erhalten die
+Pfadbelegung. Bei `update_draft` entfernt `null` eine Überschreibung.
 
 Bei `data.ready: false` enthält `errors` die einzelnen Empfängerfehler. Es gibt
 kein Ausführungstoken. Bei Erfolg enthält `previews` den aus dem echten PDF
