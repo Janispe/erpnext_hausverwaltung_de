@@ -2193,6 +2193,8 @@ def _run_bootstrap(*, reason: str) -> None:
 
 
 _POST_INSTALL_PATCHES: tuple[str, ...] = (
+    # Fresh installs can mark migration patches before rule DocTypes exist.
+    "hausverwaltung.hausverwaltung.patches.post_model_sync.migrate_bankimport_rules_to_builder_config",
     "hausverwaltung.hausverwaltung.patches.post_model_sync.seed_heizkostenmeldung_vorlage",
     "hausverwaltung.hausverwaltung.patches.post_model_sync.seed_heizkostenmeldung_vorlage_v2",
     # These patches seed required defaults and are safe/idempotent.

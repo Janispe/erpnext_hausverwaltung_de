@@ -3614,6 +3614,7 @@ def reconcile_split_row(
     from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
         _resolve_expected_cost_center_for_bt,
         create_payment_entry_for_invoices,
+        create_standalone_payment_entry,
         reconcile_created_voucher_or_rollback,
     )
 
@@ -3720,7 +3721,7 @@ def reconcile_split_row(
             )
             if not plan_row:
                 frappe.throw(f"Abschlagsplan-Zeile {plan_row_name} nicht gefunden.")
-            plan = frappe.get_doc("Zahlungsplan", plan_row.parent)
+            plan = frappe.get_doc("Zahlungsplan", plan_row.parent, for_update=True)
             if plan.get("modus") != MODUS_ABSCHLAGSPLAN:
                 frappe.throw(f"Zeile {plan_row.idx} gehört nicht zu einem Abschlagsplan.")
             if plan.get("status") == "Abgerechnet":
@@ -3752,13 +3753,16 @@ def reconcile_split_row(
             "Bitte Restbetrag als Vorauszahlung aktivieren oder die Auswahl ergänzen."
         )
 
-    pe = create_payment_entry_for_invoices(
-        bt=bt,
-        invoices=invoices,
-        invoice_doctype=invoice_doctype,
-        target_amount=target_amount,
-        leftover_as_advance=advance_amount > 0.01,
-    )
+    if not invoices:
+        pe = create_standalone_payment_entry(bt=bt, party_type="Supplier", party=row.party)
+    else:
+        pe = create_payment_entry_for_invoices(
+            bt=bt,
+            invoices=invoices,
+            invoice_doctype=invoice_doctype,
+            target_amount=target_amount,
+            leftover_as_advance=advance_amount > 0.01,
+        )
     reconcile_created_voucher_or_rollback(bt, "Payment Entry", pe.name, target_amount)
 
     allocation_results = []

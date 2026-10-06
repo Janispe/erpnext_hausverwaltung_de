@@ -56,8 +56,8 @@ class TestWohnung(IntegrationTestCase):
 		wohnung = self._make_wohnung("A")
 		other_wohnung = self._make_wohnung("B")
 
-		mv_old = self._make_mietvertrag(wohnung.name, "2024-01-01")
-		mv_new = self._make_mietvertrag(wohnung.name, "2025-01-01")
+		mv_old = self._make_mietvertrag(wohnung.name, "2024-01-01", "2024-12-31")
+		mv_new = self._make_mietvertrag(wohnung.name, "2025-01-01", "2025-12-31")
 		mv_cancelled = self._make_mietvertrag(wohnung.name, "2026-01-01")
 		mv_other = self._make_mietvertrag(other_wohnung.name, "2027-01-01")
 

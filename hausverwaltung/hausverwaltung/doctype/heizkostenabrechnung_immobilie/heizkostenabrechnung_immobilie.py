@@ -102,6 +102,7 @@ class HeizkostenabrechnungImmobilie(Document):
 		if self.is_new():
 			return
 		# Korrektur-Summary für Frontend-Toast initialisieren
+		self._refresh_period_children()
 		self.flags._correction_summary = {"unchanged": 0, "replaced": [], "errors": []}
 		self._sync_table_to_children()
 		# Differenz pro Row + Summen neu berechnen
@@ -358,7 +359,17 @@ class HeizkostenabrechnungImmobilie(Document):
 		"""
 		# Insbesondere das Belegdatum noch einmal in die Mieter-Drafts übernehmen,
 		# falls der Parent direkt ohne vorheriges separates Speichern submittet wird.
+		self._refresh_period_children()
 		self._sync_table_to_children()
+		children = self._get_children()
+		if not children:
+			frappe.throw("Es sind keine Mieterabrechnungen vorhanden. Bitte zuerst Mieter-Drafts erzeugen und die Kosten erfassen.", frappe.ValidationError)
+		expected = {row.name for row in self._period_contracts()}
+		actual = {row.get("mietvertrag") for row in children}
+		if expected != actual or len(children) != len(actual):
+			frappe.throw("Die Mieterabrechnungen sind für den aktuellen Zeitraum unvollständig oder doppelt. Bitte den Abrechnungsstand berichtigen.", frappe.ValidationError)
+		if any(float(row.get("kosten_gesamt") or 0) == 0 for row in children) and not int(self.get("nullkosten_bestaetigt") or 0):
+			frappe.throw("Die erfassten Heizkosten betragen null Euro. Dadurch werden die Vorauszahlungen vollständig gutgeschrieben. Bitte die Nullkosten vor dem Einreichen ausdrücklich bestätigen.", frappe.ValidationError)
 		open_children = self._get_children(status_filter="open")
 		if open_children:
 			# Auto-Submit der Children: für jeden Draft mit gesetztem kosten_gesamt
@@ -571,6 +582,55 @@ class HeizkostenabrechnungImmobilie(Document):
 					"child_docstatus": int(c.get("docstatus") or 0),
 				},
 			)
+
+	def _period_contracts(self):
+		return frappe.db.sql(
+			"""SELECT mv.name FROM `tabMietvertrag` mv JOIN `tabWohnung` w ON w.name = mv.wohnung
+			WHERE w.immobilie = %(imm)s AND mv.docstatus < 2
+			AND mv.von <= %(bis)s AND (mv.bis IS NULL OR mv.bis >= %(von)s)
+			ORDER BY mv.name FOR UPDATE""",
+			{"imm": self.immobilie, "von": self.von, "bis": self.bis}, as_dict=True,
+		)
+
+	def _refresh_period_children(self):
+		previous = self.get_doc_before_save()
+		period_state = (self.immobilie, str(self.von), str(self.bis))
+		if not previous or getattr(self.flags, "_hk_period_updated", None) == period_state:
+			return
+		children = self._get_children()
+		if children and previous.immobilie != self.immobilie:
+			frappe.throw("Die Immobilie einer Abrechnung mit Mieter-Drafts darf nicht geändert werden.")
+		if str(previous.von) == str(self.von) and str(previous.bis) == str(self.bis):
+			return
+		if any(int(row.get("docstatus") or 0) != 0 for row in children):
+			frappe.throw("Der Zeitraum bereits eingereichter Mieterabrechnungen darf nicht geändert werden. Bitte zuerst stornieren.")
+		eligible = {row.name for row in self._period_contracts()}
+		for row in children:
+			child = frappe.get_doc("Heizkostenabrechnung Mieter", row.name, for_update=True)
+			if int(child.docstatus or 0) != 0:
+				frappe.throw("Der Zeitraum bereits eingereichter Mieterabrechnungen darf nicht geändert werden. Bitte zuerst stornieren.")
+			if child.get("sales_invoice") or child.get("credit_note"):
+				frappe.throw("Ein Mieter-Entwurf enthält bereits Buchungsverweise; Zeitraumänderung abgebrochen.")
+			if child.mietvertrag not in eligible:
+				# Remove only this draft parent's own obsolete display link. Other
+				# references still prevent deletion; no historical document is forced out.
+				frappe.db.delete("Heizkostenabrechnung Position", {
+					"parent": self.name,
+					"parenttype": self.doctype,
+					"heizkostenabrechnung_mieter": child.name,
+				})
+				child.delete(ignore_permissions=True)
+				continue
+			child.von, child.bis = self.von, self.bis
+			child.datum = self.datum or child.datum
+			child.vorauszahlungen = float(calc_hk_vorauszahlungen(child.mietvertrag, self.von, self.bis).get("actual_total") or 0)
+			child.kosten_gesamt = 0
+			child.save(ignore_permissions=True)
+		_create_mieter_drafts_for_parent(self)
+		self._hydrate_positions_from_children()
+		self.nullkosten_bestaetigt = 0
+		self.flags._hk_period_updated = period_state
+		frappe.msgprint("Der Abrechnungszeitraum wurde aktualisiert. Vorauszahlungen und Mieter wurden neu ermittelt; bitte die Wärmedienst-Kosten für den neuen Zeitraum erneut erfassen.", indicator="orange")
 
 	def _sync_table_to_children(self) -> None:
 		"""Schreibt Tabellen-Edits (Kosten und Vorauszahlung) in die HK-Mieter-Docs.

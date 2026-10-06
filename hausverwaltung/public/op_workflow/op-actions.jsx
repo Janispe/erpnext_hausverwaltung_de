@@ -610,8 +610,16 @@ function ZahlungModal({ row, onClose, onDone }) {
     }
   }, [zahlart]);
 
-  const abzug = nutzeSkonto ? row.offen * (Math.abs(skontoSatz) / 100) : 0;
-  const auszahlung = row.offen - abzug;
+  // Round the discount once, then derive the payout from the same invoice cents.
+  const invoiceCents = Math.round(Number(row.offen) * 100);
+  const rateParts = String(Math.abs(skontoSatz)).split(".");
+  const rateScale = 10n ** BigInt((rateParts[1] || "").length);
+  const rateNumerator = BigInt(rateParts.join(""));
+  const denominator = rateScale * 100n;
+  const numerator = BigInt(invoiceCents) * rateNumerator;
+  const discountCents = nutzeSkonto ? Number((numerator * 2n + denominator) / (2n * denominator)) : 0;
+  const abzug = discountCents / 100;
+  const auszahlung = (invoiceCents - discountCents) / 100;
   const submit = async () => {
     setBusy(true);
     try {
@@ -715,7 +723,7 @@ function ZahlungModal({ row, onClose, onDone }) {
               <strong>Skonto bis {skontoBis} nutzen ({Math.abs(skontoSatz)}%)</strong>
             </label>
             <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2 }}>
-              Spart {fmtEUR_op(row.offen * (Math.abs(skontoSatz) / 100))} bei dieser Rechnung.
+              Spart {fmtEUR_op(abzug)} bei dieser Rechnung.
             </div>
           </div>
         )}

@@ -40,6 +40,7 @@ def neue_version(name):
 		source.vorlagenkennung,
 	)
 	doc = frappe.copy_doc(source)
+	doc.docstatus = 0
 	doc.version = max(row[0] for row in versions) + 1
 	doc.vorgaenger = source.name
 	doc.amended_from = None

@@ -419,11 +419,8 @@ class BetriebskostenabrechnungImmobilie(Document):
 				lock_regelungen=True,
 			)
 			if not segments:
-				frappe.throw(
-					"BK-Submit abgebrochen: Für die kostenführende Wohnung "
-					f"{wohnung} existiert aktuell kein Mietvertragssegment.",
-					frappe.ValidationError,
-				)
+				# A fully vacant flat has an owner share, never a tenant invoice.
+				continue
 			posten = {
 				art: _to_decimal(amount)
 				for art, amount in (matrix.get(wohnung) or {}).items()
@@ -564,6 +561,15 @@ class BetriebskostenabrechnungImmobilie(Document):
 		self.flags._validated_bk_submit_snapshot = True
 
 	def before_submit(self) -> None:
+		frappe.db.sql("SELECT name FROM `tabImmobilie` WHERE name = %s FOR UPDATE", (self.immobilie,))
+		conflicts = frappe.db.sql(
+			"""SELECT name FROM `tabBetriebskostenabrechnung Immobilie`
+			WHERE immobilie = %(immobilie)s AND docstatus = 1 AND name != %(name)s
+			AND von <= %(bis)s AND bis >= %(von)s ORDER BY name LIMIT 1 FOR UPDATE""",
+			{"immobilie": self.immobilie, "name": self.name, "von": self.von, "bis": self.bis}, as_dict=True,
+		)
+		if conflicts:
+			frappe.throw(f"Der Zeitraum überschneidet sich mit der eingereichten Betriebskostenabrechnung {conflicts[0].name}. Bitte zuerst die bestehende Abrechnung stornieren und berichtigen.", frappe.ValidationError)
 		self._validate_current_child_snapshot()
 
 	def after_insert(self):

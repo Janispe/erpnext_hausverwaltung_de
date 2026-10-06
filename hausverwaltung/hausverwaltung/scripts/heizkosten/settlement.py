@@ -32,6 +32,8 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaim
 	HK_ITEM_CODE,
 )
 
+from hausverwaltung.hausverwaltung.utils.settlement_identity import hk_marker_owner
+
 HK_SETTLEMENT_MARKER_PREFIX = "[HK-SETTLEMENT:"
 
 
@@ -54,17 +56,7 @@ def _strict_money(value: Any, label: str) -> Decimal:
 
 
 def _hk_settlement_marker(abrechnung: str) -> str:
-	name = cstr(abrechnung or "").strip()
-	if not name:
-		frappe.throw(
-			"Die HK-Abrechnung hat keinen eindeutigen Namen; es wurde nichts gebucht."
-		)
-	if any(character in name for character in ("[", "]", "\r", "\n")):
-		frappe.throw(
-			"Der Name der HK-Abrechnung kann nicht sicher als Ownership-Marker "
-			"gespeichert werden; es wurde nichts gebucht."
-		)
-	return f"{HK_SETTLEMENT_MARKER_PREFIX}{name}]"
+	return f"{HK_SETTLEMENT_MARKER_PREFIX}{hk_marker_owner(abrechnung)}]"
 
 
 def _build_hk_settlement_remark(

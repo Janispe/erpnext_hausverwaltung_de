@@ -329,8 +329,16 @@ def validate_mietvertrag_sales_invoice_identity(doc) -> None:
 	structured_period = direct_period or source_period
 	mietvertrag = direct_mv or source_mv
 	if not mietvertrag:
-		# Ordinary ERPNext invoices and returns deliberately remain untouched.
-		return
+		# A supplied flat dimension must be checked even on an unmarked invoice.
+		if not doc.get("wohnung") and not any(item.get("wohnung") for item in (doc.get("items") or [])):
+			return
+		contracts = frappe.db.sql(
+			"SELECT name FROM `tabMietvertrag` WHERE kunde = %s ORDER BY name FOR UPDATE",
+			(doc.get("customer"),), as_dict=True,
+		)
+		if len(contracts) != 1:
+			frappe.throw(_("Die Wohnung der Rechnung lässt sich nicht eindeutig dem Mietvertrag des Customers zuordnen."), frappe.ValidationError)
+		mietvertrag = contracts[0].name
 
 	try:
 		item_meta = frappe.get_meta("Sales Invoice Item")

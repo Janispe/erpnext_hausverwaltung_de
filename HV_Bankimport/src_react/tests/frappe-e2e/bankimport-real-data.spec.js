@@ -6,6 +6,8 @@ const FRAPPE_PASSWORD = process.env.FRAPPE_PASSWORD || "admin";
 const FRAPPE_SITE = process.env.FRAPPE_SITE || "frontend";
 const FRAPPE_BACKEND_CONTAINER = process.env.FRAPPE_BACKEND_CONTAINER || "hausverwaltung_peters-backend-1";
 const FRAPPE_BENCH_DIR = process.env.FRAPPE_BENCH_DIR || "/home/frappe/frappe-bench";
+let testBankAccount;
+let testCompany;
 
 async function dismissDeskModals(page) {
 	for (let i = 0; i < 3; i += 1) {
@@ -28,9 +30,9 @@ async function login(page) {
 		return;
 	}
 
-	await page.getByRole("textbox", { name: "Email" }).fill(FRAPPE_USER);
-	await page.getByRole("textbox", { name: "Password" }).fill(FRAPPE_PASSWORD);
-	await page.getByRole("button", { name: "Login" }).click();
+	await page.locator("#login_email").fill(FRAPPE_USER);
+	await page.locator("#login_password").fill(FRAPPE_PASSWORD);
+	await page.getByRole("button", { name: /^(Login|Continue|Anmelden)$/ }).click();
 	await expect(page).toHaveURL(/\/desk\/bankimport_v2/);
 	await dismissDeskModals(page);
 }
@@ -81,7 +83,7 @@ function shellQuote(value) {
 
 function benchExecute(method, { args, kwargs } = {}) {
 	const benchCmd = [
-		`bench --site ${shellQuote(FRAPPE_SITE)} execute ${method}`,
+		`bench --site ${shellQuote(FRAPPE_SITE)} execute ${shellQuote(method)}`,
 		args ? `--args ${shellQuote(JSON.stringify(args))}` : "",
 		kwargs ? `--kwargs ${shellQuote(JSON.stringify(kwargs))}` : "",
 	].filter(Boolean).join(" ");
@@ -99,7 +101,11 @@ function benchExecute(method, { args, kwargs } = {}) {
 }
 
 test.beforeAll(() => {
-	benchExecute("hausverwaltung.cypress_fixtures.ensure_bankimport_bank_account");
+	const setup = benchExecute("hausverwaltung.cypress_fixtures.ensure_bankimport_bank_account");
+	testCompany = setup.company;
+	const accounts = benchExecute("frappe.get_all", { kwargs: { doctype: "Bank Account", filters: { company: testCompany, is_company_account: 1, disabled: 0 }, fields: ["name"], limit: 1 } });
+	expect(accounts, `Testsite requires an active Bank Account for ${testCompany}`).toHaveLength(1);
+	testBankAccount = accounts[0].name;
 });
 
 function rowsForRun(runId) {
@@ -193,7 +199,7 @@ function paymentEntryUnallocated(paymentEntryName) {
 async function uploadCsvInDialog(frame, { filename, content }) {
 	const bankAccount = frame.getByLabel("Bankkonto");
 	await expect.poll(async () => bankAccount.locator("option").count()).toBeGreaterThan(1);
-	await bankAccount.selectOption({ index: 1 });
+	await bankAccount.selectOption(testBankAccount);
 
 	await frame.getByLabel("CSV-Datei").setInputFiles({
 		name: filename,
@@ -327,10 +333,11 @@ test("erstellt echten CSV-Import, erzeugt echte Bank Transaction und löscht per
 		await frame.getByRole("row", { name: new RegExp(`HV UI Realdaten ${runId.id}`) }).click();
 		await expect(frame.getByText("Partei zuordnen")).toBeVisible();
 
-		await frame.getByRole("button", { name: /Ohne Partei als Bank-Transaktion anlegen/ }).click();
+		await frame.getByRole("button", { name: "Keine Partei", exact: true }).click();
+		await frame.getByRole("button", { name: /(?:Ohne Partei als Bank-Transaktion|Bank-Transaktion ohne Partei) anlegen/ }).click();
 		await expect(frame.getByText("Bank-Transaktion ohne Partei erstellt.")).toBeVisible();
 		await expect(frame.locator(".tx-table").getByText("Beleg zuordnen")).toBeVisible();
-		await expect(frame.getByRole("button", { name: /ACC-BTN-2026-/ }).first()).toBeVisible();
+		await expect(frame.getByRole("link", { name: /ACC-BTN-2026-/ }).first()).toBeVisible();
 
 		const rowsAfterBt = rowsForRun(runId);
 		expect(rowsAfterBt).toHaveLength(1);
@@ -403,7 +410,8 @@ test("verarbeitet Mehrzeilen-Import mit Fehlerzeile und kontrolliert DB-Zustaend
 
 		await frame.getByRole("row", { name: new RegExp(`HV UI Realdaten ${runId.id} valide`) }).click();
 		await expect(frame.getByText("Partei zuordnen")).toBeVisible();
-		await frame.getByRole("button", { name: /Ohne Partei als Bank-Transaktion anlegen/ }).click();
+		await frame.getByRole("button", { name: "Keine Partei", exact: true }).click();
+		await frame.getByRole("button", { name: /(?:Ohne Partei als Bank-Transaktion|Bank-Transaktion ohne Partei) anlegen/ }).click();
 		await expect(frame.getByText("Bank-Transaktion ohne Partei erstellt.")).toBeVisible();
 
 		const rowsAfterBt = rowsForRun(runId);
@@ -445,8 +453,20 @@ test("verrechnet Ueberzahlung nicht automatisch mit Unterzahlung im Folgemonat",
 
 	try {
 		fixture = benchExecute("hausverwaltung.cypress_fixtures.seed_bankimport_over_under", {
-			kwargs: { run_id: runId.id },
+			kwargs: { run_id: runId.id, company: testCompany },
 		});
+		// The legacy seed predates the exclusive Customer/lease identity. Give
+		// this Customer its own normal contract so the amount guard is reached.
+		const identity = benchExecute("__import__('builtins').exec", { args: [`
+import json
+import frappe
+frappe.set_user("Administrator")
+apartment = frappe.get_doc({"doctype":"Wohnung", "name__lage_in_der_immobilie":${JSON.stringify(`HV UI OverUnder ${runId.id}`)}, "gebaeudeteil":"VH"}).insert(ignore_permissions=True)
+lease = frappe.get_doc({"doctype":"Mietvertrag", "wohnung":apartment.name, "kunde":${JSON.stringify(fixture.customer)}, "von":"2026-01-01"}).insert(ignore_permissions=True)
+frappe.db.commit()
+print(json.dumps({"mietvertrag":lease.name, "wohnung":apartment.name}))
+`, {}] });
+		Object.assign(fixture, identity);
 
 		await login(page);
 		const frame = await bankimportFrame(page);
@@ -477,7 +497,10 @@ test("verrechnet Ueberzahlung nicht automatisch mit Unterzahlung im Folgemonat",
 		await expect(aprilCard).toBeVisible();
 		await aprilCard.getByRole("checkbox").check();
 		await frame.locator("label.advance-toggle", { hasText: "Restbetrag" }).getByRole("checkbox").check();
+		const bookingResponse = page.waitForResponse((response) => response.url().endsWith("bankauszug_import.manually_reconcile_row") && response.request().method() === "POST");
 		await frame.getByRole("button", { name: /Zuordnen & buchen/ }).click();
+		const booking = await bookingResponse;
+		expect(booking.status(), JSON.stringify(await booking.json())).toBe(200);
 		await expect(frame.getByText("Zahlung gebucht und Bank Transaction abgeglichen.")).toBeVisible();
 
 		aprilRows = overUnderRowsForRun(runId, "April");
@@ -520,6 +543,14 @@ test("verrechnet Ueberzahlung nicht automatisch mit Unterzahlung im Folgemonat",
 					may_invoice: fixture.may_invoice,
 				},
 			});
+			benchExecute("__import__('builtins').exec", { args: [`
+import frappe
+frappe.set_user("Administrator")
+for doctype, name in [("Mietvertrag",${JSON.stringify(fixture.mietvertrag || "")}), ("Wohnung",${JSON.stringify(fixture.wohnung || "")}), ("Customer",${JSON.stringify(fixture.customer)})]:
+    if name and frappe.db.exists(doctype, name):
+        frappe.delete_doc(doctype, name, force=True, ignore_permissions=True)
+frappe.db.commit()
+`, {}] });
 		}
 	}
 });

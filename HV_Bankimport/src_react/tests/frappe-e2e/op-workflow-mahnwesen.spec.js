@@ -222,9 +222,9 @@ async function login(page) {
 	await page.goto("/app");
 	if (!page.url().includes("/login")) return;
 
-	await page.getByRole("textbox", { name: "Email" }).fill(FRAPPE_USER);
-	await page.getByRole("textbox", { name: "Password" }).fill(FRAPPE_PASSWORD);
-	await page.getByRole("button", { name: "Login" }).click();
+	await page.locator("#login_email").fill(FRAPPE_USER);
+	await page.locator("#login_password").fill(FRAPPE_PASSWORD);
+	await page.getByRole("button", { name: /^(Login|Continue|Anmelden)$/ }).click();
 	await expect(page).toHaveURL(/\/(app|desk)/);
 }
 
@@ -234,21 +234,95 @@ function shellQuote(value) {
 
 function benchExecute(method, { args, kwargs } = {}) {
 	const benchCmd = [
-		`bench --site ${shellQuote(FRAPPE_SITE)} execute ${method}`,
+		`bench --site ${shellQuote(FRAPPE_SITE)} execute ${shellQuote(method)}`,
 		args ? `--args ${shellQuote(JSON.stringify(args))}` : "",
 		kwargs ? `--kwargs ${shellQuote(JSON.stringify(kwargs))}` : "",
 	].filter(Boolean).join(" ");
 	const cmd = `cd ${shellQuote(FRAPPE_BENCH_DIR)} && ${benchCmd}`;
-	const out = execFileSync("docker", ["exec", FRAPPE_BACKEND_CONTAINER, "sh", "-lc", cmd], {
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "pipe"],
-	}).trim();
+	let out;
+	try {
+		out = execFileSync("docker", ["exec", FRAPPE_BACKEND_CONTAINER, "sh", "-lc", cmd], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		}).trim();
+	} catch (error) {
+		throw new Error(`${error.message}\n${error.stderr || error.stdout || ""}`);
+	}
 	if (!out) return null;
 	try {
 		return JSON.parse(out);
 	} catch {
 		return out;
 	}
+}
+
+function benchPython(script) {
+	return benchExecute("__import__('builtins').exec", { args: [script, {}] });
+}
+
+function seedRealDunning(runId) {
+	// Adapt the legacy fixture to current ERPNext autonaming and the 1:1 lease
+	// invariant. These replacements are scoped to this one bench process.
+	return benchPython(`import frappe, json
+import hausverwaltung.cypress_fixtures as fixtures
+run_id = ${JSON.stringify(runId)}
+extra = {}
+def own_customer(_run_id):
+    contact = frappe.get_doc({"doctype":"Contact", "first_name":"HV UI", "last_name":"Mahnwesen Real " + run_id}).insert(ignore_permissions=True)
+    apartment = frappe.get_doc({"doctype":"Wohnung", "name__lage_in_der_immobilie":"HV UI Mahnung " + run_id, "status":"Leerstehend"}).insert(ignore_permissions=True)
+    lease = frappe.get_doc({"doctype":"Mietvertrag", "wohnung":apartment.name, "von":"2026-05-01", "vertragsabschluss_am":"2026-04-01", "mieter":[{"mieter":contact.name,"rolle":"Hauptmieter","eingezogen":"2026-05-01"}], "miete":[{"von":"2026-05-01","miete":123.45,"art":"Monatlich"}]}).insert(ignore_permissions=True)
+    extra.update({"mietvertrag":lease.name,"wohnung":apartment.name,"contact":contact.name})
+    return lease.kunde
+def current_dunning_type(company, income_account, cost_center, template):
+    actual_name = frappe.db.get_value("Dunning Type", {"dunning_type":"Zahlungserinnerung - HP", "company":company}, "name")
+    if actual_name:
+        doc = frappe.get_doc("Dunning Type", actual_name)
+        extra["original_template"] = doc.hv_serienbrief_vorlage
+        extra["type_was_created"] = False
+    else:
+        doc = frappe.get_doc({"doctype":"Dunning Type","dunning_type":"Zahlungserinnerung - HP","company":company,"dunning_fee":0,"rate_of_interest":0,"income_account":income_account,"cost_center":cost_center})
+        extra["original_template"] = None
+        extra["type_was_created"] = True
+    doc.hv_serienbrief_vorlage = template
+    if doc.is_new():
+        doc.insert(ignore_permissions=True)
+    else:
+        doc.save(ignore_permissions=True)
+    return doc.name
+fixtures._ensure_test_customer = own_customer
+fixtures._ensure_dunning_type = current_dunning_type
+result = fixtures.seed_real_op_dunning(run_id)
+invoice = frappe.get_doc("Sales Invoice", result["sales_invoice"])
+invoice.db_set("remarks", "HV UI Mahnwesen Real " + run_id + " MV:" + extra["mietvertrag"])
+if invoice.meta.has_field("wohnung"):
+    invoice.db_set("wohnung", extra["wohnung"])
+frappe.db.commit()
+result.update(extra)
+print(json.dumps(result, default=str))`);
+}
+
+function cleanupRealDunning(fixture) {
+	return benchPython(`import frappe, json
+import hausverwaltung.cypress_fixtures as fixtures
+fixture = json.loads(${JSON.stringify(JSON.stringify(fixture))})
+if frappe.db.exists("Dunning Type", fixture["dunning_type"]):
+    frappe.db.set_value("Dunning Type", fixture["dunning_type"], "hv_serienbrief_vorlage", fixture.get("original_template"))
+result = fixtures.cleanup_real_op_dunning(fixture["run_id"], sales_invoice=fixture["sales_invoice"], template=fixture.get("serienbrief_vorlage"))
+for doctype, key in [("Mietvertrag","mietvertrag"),("Customer","customer"),("Wohnung","wohnung"),("Contact","contact")]:
+    if frappe.db.exists(doctype, fixture[key]):
+        frappe.delete_doc(doctype, fixture[key], force=True, ignore_permissions=True)
+if fixture.get("type_was_created"):
+    frappe.delete_doc("Dunning Type", fixture["dunning_type"], force=True, ignore_permissions=True)
+frappe.db.commit()
+print(json.dumps(result, default=str))`);
+}
+
+function readDunningInvariant(fixture) {
+	return benchPython(`import frappe, json
+fixture = json.loads(${JSON.stringify(JSON.stringify(fixture))})
+leases = frappe.get_all("Mietvertrag", filters={"kunde":fixture["customer"]}, fields=["name","kunde","wohnung","von","bis"])
+invoice = frappe.db.get_value("Sales Invoice", fixture["sales_invoice"], ["name","customer","grand_total","outstanding_amount","docstatus","remarks"], as_dict=True)
+print(json.dumps({"leases":leases,"invoice":invoice},default=str))`);
 }
 
 function dunningsForInvoice(salesInvoice) {
@@ -261,7 +335,7 @@ function dunningsForInvoice(salesInvoice) {
 
 function parseRequestBody(request) {
 	const raw = request.postData() || "";
-	if (!raw) return {};
+	if (!raw) return Object.fromEntries(new URL(request.url()).searchParams);
 	try {
 		return JSON.parse(raw);
 	} catch {
@@ -332,7 +406,7 @@ async function installOpWorkflowMocks(page, state) {
 				});
 				return;
 			}
-			await fulfillJson(route, { columns: [], rows: openRows, today: TODAY });
+			await fulfillJson(route, { columns: [], rows: state.openRows || openRows, today: TODAY });
 			return;
 		}
 
@@ -496,6 +570,10 @@ async function installOpWorkflowMocks(page, state) {
 		}
 
 		if (method.includes("frappe.client.get_list") || method.includes("frappe.desk.reportview.get")) {
+			if (args.doctype === "Account") {
+				await fulfillJson(route, [{ name: "1200 UI Bank - HP", account_type: "Bank", account_currency: "EUR" }]);
+				return;
+			}
 			await fulfillJson(route, [
 				{ name: "W65-HP", cost_center_name: "Warthestr. 65" },
 				{ name: "P12-HP", cost_center_name: "Parkstr. 12" },
@@ -508,6 +586,9 @@ async function installOpWorkflowMocks(page, state) {
 }
 
 test("OP-Workflow deckt komplexe Mahnwesen- und Offene-Posten-UI-Kanten ab", async ({ page }) => {
+	// The fixture dates and the initial month filter must refer to the same day.
+	// setFixedTime leaves timers running (unlike a paused virtual clock).
+	await page.clock.setFixedTime(new Date(`${TODAY}T12:00:00Z`));
 	const state = {
 		openItemsCalls: [],
 		mahnCalls: [],
@@ -538,6 +619,7 @@ test("OP-Workflow deckt komplexe Mahnwesen- und Offene-Posten-UI-Kanten ab", asy
 
 	await expect(page.getByRole("heading", { name: "Noch offene Rechnungen und Forderungen" })).toBeVisible();
 	await expect(page.locator(".op-load-state")).toBeHidden();
+	await page.evaluate(() => window.OP_ADAPTER.refresh({ company: "HV Bugtest" }));
 	await expect(page.getByText("Mieter UI Mahnwesen").first()).toBeVisible();
 	await expect(page.getByText("SI-UI-MAHN-0001")).toBeVisible();
 	await expect(page.getByText("1.420,50").first()).toBeVisible();
@@ -561,10 +643,12 @@ test("OP-Workflow deckt komplexe Mahnwesen- und Offene-Posten-UI-Kanten ab", asy
 	await expect(page.getByText("SI-UI-WRITEOFF-0001")).toBeVisible();
 
 	state.failNextOpenItems = true;
-	await page.locator('input[type="date"]').first().fill("2026-06-02");
+	await page.getByRole("textbox", { name: "Fälligkeit von", exact: true }).fill("02.06.2026");
+	await page.getByRole("textbox", { name: "Fälligkeit von", exact: true }).press("Tab");
 	await expect(page.locator(".op-load-state.is-error")).toContainText(/Offene Posten konnten nicht geladen|OP UI Test Fehler/);
 	await dismissFrappeModal(page);
-	await page.locator('input[type="date"]').first().fill("2026-06-01");
+	await page.getByRole("textbox", { name: "Fälligkeit von", exact: true }).fill("01.06.2026");
+	await page.getByRole("textbox", { name: "Fälligkeit von", exact: true }).press("Tab");
 	await expect(page.locator(".op-load-state.is-error")).toBeHidden();
 	await dismissFrappeModal(page);
 
@@ -607,28 +691,44 @@ test("OP-Workflow deckt komplexe Mahnwesen- und Offene-Posten-UI-Kanten ab", asy
 
 	await page.goto("/app/op-workflow");
 	await expect(page.getByRole("heading", { name: "Noch offene Rechnungen und Forderungen" })).toBeVisible();
+	await page.evaluate(() => window.OP_ADAPTER.refresh({ company: "HV Bugtest" }));
 	await page.getByRole("button", { name: /Rechnungen/ }).click();
 	await expect(page.getByText("PI-UI-SKONTO-0001")).toBeVisible();
 	await page.getByRole("button", { name: "Zahlung anlegen" }).click();
 	await expect(page.getByRole("heading", { name: "Zahlung an Lieferant anlegen" })).toBeVisible();
 	await expect(page.getByText("Skonto bis 15.06. nutzen (2%)")).toBeVisible();
+	await expect(page.getByRole("button", { name: /Zahlung als Draft anlegen/ })).toBeDisabled();
+	await page.getByPlaceholder("z. B. Überweisungs-ID").fill("UI-SKONTO-REFERENZ");
 	await page.getByRole("button", { name: /Zahlung als Draft anlegen/ }).click();
-	await expect(page.getByText("Payment Entry Draft erstellt: PE-UI-SKONTO-0001")).toBeVisible();
+	await expect(page.getByText("Payment Entry PE-UI-SKONTO-0001 als Draft erstellt")).toBeVisible();
 	expect(state.createdPayments).toHaveLength(1);
 	expect(state.createdPayments[0]).toMatchObject({
 		purchase_invoice: "PI-UI-SKONTO-0001",
 		use_skonto: true,
-		mode_of_payment: "SEPA-Überweisung",
+		posting_date: TODAY,
+		mode_of_payment: "Bank Draft",
+		bank_account: "1200 UI Bank - HP",
+		reference_no: "UI-SKONTO-REFERENZ",
+		reference_date: TODAY,
 	});
+	expect(Number(state.createdPayments[0].skonto_amount)).toBe(17.6);
 
 	await page.getByRole("button", { name: /Forderungen/ }).click();
 	await page.locator(".op-chip", { hasText: "Guthaben" }).click();
 	await page.getByRole("button", { name: "Guthaben auszahlen" }).click();
 	await expect(page.getByRole("heading", { name: "Guthaben auszahlen" })).toBeVisible();
+	await expect(page.getByRole("button", { name: /Auszahlung als Draft anlegen/ })).toBeDisabled();
+	await page.getByPlaceholder("z. B. Überweisungs-ID").fill("UI-ERSTATTUNG-REFERENZ");
 	await page.getByRole("button", { name: /Auszahlung als Draft anlegen/ }).click();
 	await expect(page.getByText("Auszahlungs-Draft erstellt: PE-UI-REFUND-0001")).toBeVisible();
 	expect(state.createdRefunds).toHaveLength(1);
-	expect(state.createdRefunds[0]).toMatchObject({ sales_invoice: "SI-UI-GUTHABEN-0001" });
+	expect(state.createdRefunds[0]).toMatchObject({
+		sales_invoice: "SI-UI-GUTHABEN-0001",
+		mode_of_payment: "Bank Draft",
+		bank_account: "1200 UI Bank - HP",
+		reference_no: "UI-ERSTATTUNG-REFERENZ",
+		reference_date: TODAY,
+	});
 
 	expect(pageErrors, "keine ungefangenen Page-Errors").toEqual([]);
 	expect(consoleErrors, "keine unerwarteten Console-Errors").toEqual([]);
@@ -636,7 +736,38 @@ test("OP-Workflow deckt komplexe Mahnwesen- und Offene-Posten-UI-Kanten ab", asy
 	expect(state.mahnCalls.length).toBeGreaterThanOrEqual(3);
 });
 
-test("OP-Workflow erstellt echte Mahnung als Dunning-Draft in der Datenbank", async ({ page }) => {
+test("OP-Skonto-Vorschau erhält die Rechnungs-Cents bei halben Centbeträgen", async ({ page }, testInfo) => {
+	await page.clock.setFixedTime(new Date(`${TODAY}T12:00:00Z`));
+	const state = {
+		openItemsCalls: [], mahnCalls: [], createdDunnings: [], createdBulkDunnings: [],
+		createdPayments: [], createdRefunds: [], writeOffs: [], failNextOpenItems: false,
+		openRows: openRows.map((row) => row.belegart === "Purchase Invoice"
+			? { ...row, offen: 880.25, rechnungsbetrag: 880.25 } : row),
+	};
+	await login(page);
+	await installOpWorkflowMocks(page, state);
+	await page.goto("/app/op-workflow");
+	await expect(page.getByRole("heading", { name: "Noch offene Rechnungen und Forderungen" })).toBeVisible();
+	await page.evaluate(() => window.OP_ADAPTER.refresh({ company: "HV Bugtest" }));
+	await page.getByRole("button", { name: /Rechnungen/ }).click();
+	await page.getByRole("button", { name: "Zahlung anlegen" }).click();
+	await expect(page.getByRole("heading", { name: "Zahlung an Lieferant anlegen" })).toBeVisible();
+	const texts = await page.locator(".op-preview-row .op-preview-val").allTextContents();
+	const amounts = texts.map((value) => Number(value.replace(/[\s€−]/g, "").replaceAll(".", "").replace(",", ".")));
+	await page.screenshot({ path: testInfo.outputPath("skonto-preview.png") });
+	await page.getByPlaceholder("z. B. Überweisungs-ID").fill("UI-HALBCENT-SKONTO");
+	await page.getByRole("button", { name: /Zahlung als Draft anlegen/ }).click();
+	expect(state.createdPayments).toHaveLength(1);
+	await testInfo.attach("skonto-cent-readback", {
+		body: Buffer.from(JSON.stringify({ texts, amounts, rpc: state.createdPayments[0] }, null, 2)),
+		contentType: "application/json",
+	});
+	expect(amounts).toHaveLength(3);
+	expect(Math.round((amounts[1] + amounts[2]) * 100), "angezeigter Skonto + Auszahlung = Rechnungsbetrag").toBe(Math.round(amounts[0] * 100));
+	expect(Number(state.createdPayments[0].skonto_amount), "RPC-Skonto entspricht angezeigtem Centbetrag").toBe(amounts[1]);
+});
+
+test("OP-Workflow erstellt echte Mahnung als Dunning-Draft in der Datenbank", async ({ page }, testInfo) => {
 	const runId = `${Date.now()}`;
 	let fixture = null;
 
@@ -644,9 +775,7 @@ test("OP-Workflow erstellt echte Mahnung als Dunning-Draft in der Datenbank", as
 		benchExecute("hausverwaltung.cypress_fixtures.cleanup_real_op_dunning", {
 			kwargs: { run_id: runId },
 		});
-		fixture = benchExecute("hausverwaltung.cypress_fixtures.seed_real_op_dunning", {
-			kwargs: { run_id: runId },
-		});
+		fixture = seedRealDunning(runId);
 
 		expect(fixture?.sales_invoice, "Seed Sales Invoice").toBeTruthy();
 		expect(fixture?.customer_name, "Seed Customer").toContain(runId);
@@ -679,6 +808,12 @@ test("OP-Workflow erstellt echte Mahnung als Dunning-Draft in der Datenbank", as
 		}).toBe(1);
 
 		const [dunning] = dunningsForInvoice(fixture.sales_invoice);
+		const invariant = readDunningInvariant(fixture);
+		await testInfo.attach("database-readback", { body: Buffer.from(JSON.stringify({ fixture, dunning, invariant }, null, 2)), contentType: "application/json" });
+		expect(invariant.leases).toEqual([expect.objectContaining({ name: fixture.mietvertrag, kunde: fixture.customer, wohnung: fixture.wohnung })]);
+		expect(Number(invariant.invoice.grand_total)).toBe(123.45);
+		expect(Number(invariant.invoice.outstanding_amount)).toBe(123.45);
+		expect(invariant.invoice.customer).toBe(fixture.customer);
 		expect(dunning).toMatchObject({
 			docstatus: 0,
 			sales_invoice: fixture.sales_invoice,
@@ -691,19 +826,12 @@ test("OP-Workflow erstellt echte Mahnung als Dunning-Draft in der Datenbank", as
 		}
 	} finally {
 		if (fixture) {
-			benchExecute("hausverwaltung.cypress_fixtures.cleanup_real_op_dunning", {
-				kwargs: {
-					run_id: runId,
-					sales_invoice: fixture.sales_invoice,
-					customer: fixture.customer,
-					template: fixture.serienbrief_vorlage,
-				},
-			});
+			cleanupRealDunning(fixture);
 		}
 	}
 });
 
-test("Geführter Mahnungsworkflow erstellt echten Dunning-Draft in der Datenbank", async ({ page }) => {
+test("Geführter Mahnungsworkflow erstellt echten Dunning-Draft in der Datenbank", async ({ page }, testInfo) => {
 	const runId = `${Date.now()}`;
 	let fixture = null;
 
@@ -711,9 +839,7 @@ test("Geführter Mahnungsworkflow erstellt echten Dunning-Draft in der Datenbank
 		benchExecute("hausverwaltung.cypress_fixtures.cleanup_real_op_dunning", {
 			kwargs: { run_id: runId },
 		});
-		fixture = benchExecute("hausverwaltung.cypress_fixtures.seed_real_op_dunning", {
-			kwargs: { run_id: runId },
-		});
+		fixture = seedRealDunning(runId);
 
 		expect(fixture?.sales_invoice, "Seed Sales Invoice").toBeTruthy();
 		expect(dunningsForInvoice(fixture.sales_invoice), "vor UI-Aktion keine Mahnung").toHaveLength(0);
@@ -732,6 +858,12 @@ test("Geführter Mahnungsworkflow erstellt echten Dunning-Draft in der Datenbank
 		}).toBe(1);
 
 		const [dunning] = dunningsForInvoice(fixture.sales_invoice);
+		const invariant = readDunningInvariant(fixture);
+		await testInfo.attach("database-readback", { body: Buffer.from(JSON.stringify({ fixture, dunning, invariant }, null, 2)), contentType: "application/json" });
+		expect(invariant.leases).toEqual([expect.objectContaining({ name: fixture.mietvertrag, kunde: fixture.customer, wohnung: fixture.wohnung })]);
+		expect(Number(invariant.invoice.grand_total)).toBe(123.45);
+		expect(Number(invariant.invoice.outstanding_amount)).toBe(123.45);
+		expect(invariant.invoice.customer).toBe(fixture.customer);
 		expect(dunning).toMatchObject({
 			docstatus: 0,
 			sales_invoice: fixture.sales_invoice,
@@ -744,14 +876,7 @@ test("Geführter Mahnungsworkflow erstellt echten Dunning-Draft in der Datenbank
 		}
 	} finally {
 		if (fixture) {
-			benchExecute("hausverwaltung.cypress_fixtures.cleanup_real_op_dunning", {
-				kwargs: {
-					run_id: runId,
-					sales_invoice: fixture.sales_invoice,
-					customer: fixture.customer,
-					template: fixture.serienbrief_vorlage,
-				},
-			});
+			cleanupRealDunning(fixture);
 		}
 	}
 });

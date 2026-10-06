@@ -1203,6 +1203,16 @@ def _settle_payment_allocations(
 	return updated
 
 
+def _validate_payment_plan_dimensions(plan, pe) -> None:
+	"""A supplier advance must stay on its authoritative bank/property dimensions."""
+	if plan.get("bank_account"):
+		expected_account = frappe.db.get_value("Bank Account", plan.get("bank_account"), "account")
+		if (pe.get("bank_account") and pe.get("bank_account") != plan.get("bank_account")) or not expected_account or pe.get("paid_from") != expected_account:
+			frappe.throw(f"Bankkonto von Payment Entry {pe.get('name')} passt nicht zum Zahlungsplan.", frappe.ValidationError)
+	if plan.get("cost_center") and pe.get("cost_center") != plan.get("cost_center"):
+		frappe.throw(f"Kostenstelle von Payment Entry {pe.get('name')} passt nicht zum Zahlungsplan.", frappe.ValidationError)
+
+
 def _validate_payment_allocations(doc: Zahlungsplan) -> None:
 	"""Validate the many-to-many mapping without relying on legacy row links."""
 	allocations = [
@@ -1282,6 +1292,7 @@ def _validate_payment_allocations(doc: Zahlungsplan) -> None:
 				"payment_type",
 				"paid_amount",
 				"unallocated_amount",
+				"name", "bank_account", "paid_from", "cost_center",
 			],
 			as_dict=True,
 		)
@@ -1296,6 +1307,7 @@ def _validate_payment_allocations(doc: Zahlungsplan) -> None:
 			frappe.throw(
 				f"Payment Entry {payment_entry} passt nicht zu Company und Lieferant des Zahlungsplans."
 			)
+		_validate_payment_plan_dimensions(doc, pe)
 		external_reserved = _reserved_payment_amount_from_db(
 			payment_entry,
 			exclude_parent=doc.get("name") or None,
@@ -2067,6 +2079,7 @@ def record_payment_allocation(
 	if not plan_row:
 		frappe.throw(f"Plan-Zeile {plan_row_name} wurde nicht gefunden.")
 
+	_validate_payment_plan_dimensions(plan, pe)
 	amount = flt(allocated_amount)
 	for existing in plan.get("zahlungen") or []:
 		if (
@@ -2204,9 +2217,14 @@ def link_payment_entry_to_abschlagsplan_row(
 	if not plans:
 		return None
 
+	pe = frappe.get_doc("Payment Entry", payment_entry)
 	candidates = []
 	for plan_name in plans:
 		plan = frappe.get_doc("Zahlungsplan", plan_name)
+		try:
+			_validate_payment_plan_dimensions(plan, pe)
+		except frappe.ValidationError:
+			continue
 		_amount_by_payment, amount_by_row = _active_allocation_amounts(plan)
 		for row in plan.get("plan") or []:
 			row_remaining = flt(row.get("betrag")) - flt(amount_by_row.get(row.name))
@@ -2343,6 +2361,7 @@ def _create_payment_entry_for_plan_row(doc: Zahlungsplan, row: Document, posting
 		"party_type": "Supplier",
 		"party": doc.lieferant,
 		"bank_account": doc.bank_account,
+		"cost_center": doc.get("cost_center"),
 		"paid_from": paid_from,
 		"paid_to": paid_to,
 		"paid_from_account_currency": currency_context.company_currency,

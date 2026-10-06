@@ -408,17 +408,13 @@ class TestHeizkostenSettlement(unittest.TestCase):
 			"Heizkostenabrechnung 2025",
 		)
 
-	def test_marker_rejects_delimiter_injection(self):
-		for unsafe_name in (
-			"HK-M-1] [BK-SETTLEMENT:FREMD",
-			"HK-M-1 [BK-SETTLEMENT:FREMD",
-			"HK-M-1\nFREMD",
-		):
-			with (
-				self.subTest(unsafe_name=unsafe_name),
-				self.assertRaisesRegex(frappe.ValidationError, "nicht sicher"),
-			):
-				settlement._hk_settlement_marker(unsafe_name)
+	def test_marker_encodes_delimiters_without_renaming_the_document(self):
+		names = ["HK-M-1] [BK-SETTLEMENT:FREMD", "HK-M-1 [BK-SETTLEMENT:FREMD", "HK-M-1\nFREMD", "Mieter [MV-123]"]
+		markers = [settlement._hk_settlement_marker(name) for name in names]
+		self.assertEqual(len(set(markers)), len(names))
+		for marker in markers:
+			self.assertRegex(marker, r"^\[HK-SETTLEMENT:HK-ID:[a-f0-9]{64}\]$")
+		self.assertEqual(settlement._hk_settlement_marker("HK-M-1"), "[HK-SETTLEMENT:HK-M-1]")
 
 	def test_invoice_selection_includes_locked_linked_credit_note(self):
 		doc = self._doc(kosten=150, vorauszahlungen=100, datum="2026-02-15")

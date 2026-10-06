@@ -16,6 +16,10 @@ import { LinkSearch } from "./LinkSearch.jsx";
 import { CustomerSplitDialog, CustomerPayments } from "./CustomerSplitDialog.jsx";
 import * as api from "../api.js";
 
+const isCentAmount = (value) => Number.isFinite(Number(value))
+	&& Math.abs(Number(value) * 100 - Math.round(Number(value) * 100)) < 1e-7;
+const cents = (value) => Math.round(Number(value) * 100);
+
 // Kleiner Helfer: führt eine async-Aktion aus, setzt busy + meldet Fehler/Erfolg.
 function useAction(notify) {
 	const [busy, setBusy] = useState(false);
@@ -26,7 +30,7 @@ function useAction(notify) {
 				const res = await fn();
 				if (res && res.ok === false) {
 					notify("error", res.message || "Aktion nicht möglich.");
-					return res;
+					return null;
 				}
 				if (success) notify("success", success);
 				return res;
@@ -575,15 +579,15 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 			const amount = Number(inv.allocated_amount);
 			const source = invoiceByName.get(keyFor(inv));
 			const outstanding = allocatableInvoiceAmount(source);
-			if (!Number.isFinite(amount) || amount <= 0) {
-				return notify("error", `Zuweisung für ${inv.name} muss größer als 0 € sein.`);
+			if (!isCentAmount(amount) || amount <= 0) {
+				return notify("error", `Zuweisung für ${inv.name} muss ein positiver Betrag mit höchstens zwei Nachkommastellen sein.`);
 			}
-			if (amount > outstanding + 0.01) {
+			if (cents(amount) > cents(outstanding)) {
 				return notify("error", `Zuweisung für ${inv.name} übersteigt ${isRefund ? "das Guthaben" : "den offenen Betrag"}.`);
 			}
 		}
-		if (allocated - target > 0.01) return notify("error", "Die Zuweisung übersteigt den Bankbetrag.");
-		if ((isRefund || isInsurance) && target - allocated > 0.01)
+		if (cents(allocated) > cents(target)) return notify("error", "Die Zuweisung übersteigt den Bankbetrag.");
+		if ((isRefund || isInsurance || !advance) && cents(target) !== cents(allocated))
 			return notify("error", "Die Zahlung muss vollständig den ausgewählten Belegen zugeordnet werden.");
 		run(() => api.reconcileInvoices(docname, row.id, invoices, advance), {
 			success: isRefund
@@ -904,7 +908,7 @@ function JournalEntryForm({ docname, row, onActionDone, notify }) {
 	};
 	const splitTotal = splits.reduce((sum, s) => sum + parseAmount(s.amount), 0);
 	const splitDiff = Math.round((targetAmount - splitTotal) * 100) / 100;
-	const splitReady = splits.length > 0 && splits.every((s) => s.account && parseAmount(s.amount) > 0) && Math.abs(splitDiff) <= 0.01;
+	const splitReady = splits.length > 0 && splits.every((s) => s.account && isCentAmount(parseAmount(s.amount)) && parseAmount(s.amount) > 0) && splits.reduce((sum, s) => sum + cents(parseAmount(s.amount)), 0) === cents(targetAmount);
 	const updateSplit = (id, patch) => setSplits((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
 	const addSplit = () => {
 		setSplits((prev) => [
@@ -916,7 +920,7 @@ function JournalEntryForm({ docname, row, onActionDone, notify }) {
 
 	const book = () => {
 		if (splitMode && !splitReady) {
-			if (Math.abs(splitDiff) > 0.01) return notify("error", "Die Split-Summe muss dem Bankbetrag entsprechen.");
+			if (cents(splitTotal) !== cents(targetAmount)) return notify("error", "Die Split-Summe muss dem Bankbetrag entsprechen.");
 			return notify("error", "Bitte je Split-Zeile Konto und Betrag angeben.");
 		}
 		if (!splitMode && !account) return notify("error", "Bitte ein Gegenkonto wählen.");

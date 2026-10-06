@@ -330,8 +330,10 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 
 	def test_parent_submit_authorizes_internal_child_submit(self):
 		parent = SimpleNamespace(
+			_refresh_period_children=MagicMock(),
+			_period_contracts=lambda: [SimpleNamespace(name="MV-1")],
 			_sync_table_to_children=MagicMock(),
-			_get_children=lambda status_filter: [{"name": "HK-M-1", "kosten_gesamt": 850.0}],
+			_get_children=lambda status_filter="all": [{"name": "HK-M-1", "mietvertrag": "MV-1", "kosten_gesamt": 850.0}],
 		)
 		child = SimpleNamespace(name="HK-M-1", flags=SimpleNamespace(), submit=MagicMock())
 		frappe = MagicMock()

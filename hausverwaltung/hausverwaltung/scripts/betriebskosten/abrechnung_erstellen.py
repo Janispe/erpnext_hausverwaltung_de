@@ -976,10 +976,8 @@ def _create_bk_abrechnung_wohnung(
 
     segments = generation_segments
     if not segments:
-        frappe.throw(
-            f"Keine Mieter-Abrechnung erzeugt: Im Zeitraum {von} bis {bis} "
-            f"existiert kein Mietvertrag für Wohnung '{wohnung}'."
-        )
+        # The empty flat keeps its allocated owner share; never invent a tenant.
+        return []
 
     seg_posten = _build_bk_segment_costs(
         alloc=alloc,

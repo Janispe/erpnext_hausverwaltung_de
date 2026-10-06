@@ -29,6 +29,7 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen i
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaiment_calc import (
 	calc_hk_vorauszahlungen,
 )
+from hausverwaltung.hausverwaltung.utils.settlement_identity import hk_marker_owner
 from hausverwaltung.hausverwaltung.utils.mieter_name import (
 	get_contact_last_name,
 	pick_preferred_mieter_contact,
@@ -433,7 +434,7 @@ class HeizkostenabrechnungMieter(Document):
 			r"\[((?:BK|HK)-SETTLEMENT):([^\]\r\n]+)\]",
 			remarks,
 		)
-		expected_marker_owner = settlement_name
+		expected_marker_owner = hk_marker_owner(settlement_name)
 		exact_marker = (
 			marker_owners == [expected_marker_owner]
 			and all_settlement_markers

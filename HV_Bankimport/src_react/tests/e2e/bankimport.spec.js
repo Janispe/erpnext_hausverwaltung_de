@@ -61,7 +61,7 @@ test("Phase- und Suchfilter halten Detailauswahl konsistent und erlauben Partei-
 	await openDemoImport(page);
 
 	await page.getByRole("button", { name: /Parteien zuordnen/ }).click();
-	await expect(page.getByText("Phase 1 · Alle Zeilen")).toBeVisible();
+	await expect(page.getByText("Parteien zuordnen · Offen")).toBeVisible();
 	await expect(page.getByRole("row", { name: /Erika Beispiel/ })).toBeVisible();
 	await expect(page.getByText("Partei zuordnen")).toBeVisible();
 
@@ -79,15 +79,11 @@ test("Phase- und Suchfilter halten Detailauswahl konsistent und erlauben Partei-
 	await expect(page.getByText("Partei zugeordnet: Erika Beispiel.")).toBeVisible();
 });
 
-test("globale Bank-Transaktion-Aktion fragt bei fehlender Partei nach und respektiert Abbruch", async ({ page }) => {
+// Bank transactions are now created per row; the former global creation button
+// no longer exists. Exercise the current global refresh action instead.
+test("globale Saldo-Aktion aktualisiert den Import und bleibt bedienbar", async ({ page }) => {
 	await openDemoImport(page);
-
-	page.once("dialog", async (dialog) => {
-		expect(dialog.message()).toContain("Zeilen ohne Partei");
-		await dialog.dismiss();
-	});
-	await page.getByRole("button", { name: /Bank-Transaktionen erstellen/ }).click();
-
-	await expect(page.getByText("Bank-Transaktionen erstellt")).not.toBeVisible();
-	await expect(page.getByRole("button", { name: /Bank-Transaktionen erstellen/ })).toBeEnabled();
+	await page.getByRole("button", { name: "Saldo", exact: true }).click();
+	await expect(page.getByText("Saldo aktualisiert.", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Saldo", exact: true })).toBeEnabled();
 });

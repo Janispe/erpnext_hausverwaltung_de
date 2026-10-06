@@ -741,6 +741,8 @@ class TestCurrencyAndCurrentInvoiceSafety(unittest.TestCase):
 			mietabrechnung_id="MV-1|05/2026",
 		)
 		with patch.object(pam.frappe, "get_doc", return_value=current) as get_doc, \
+			patch.object(pam, "_customer_invoice_identity", return_value=("MV-1", "WO-1")), \
+			patch("hausverwaltung.hausverwaltung.overrides.sales_invoice.validate_mietvertrag_sales_invoice_identity") as validate_identity, \
 			patch.object(pam, "_require_company_currency_account") as require_account:
 			result = pam._lock_and_validate_invoices(
 				invoices=[requested],
@@ -751,6 +753,7 @@ class TestCurrencyAndCurrentInvoiceSafety(unittest.TestCase):
 			)
 
 		get_doc.assert_called_once_with("Sales Invoice", "SINV-1", for_update=True)
+		validate_identity.assert_called_once_with(current)
 		require_account.assert_called_once()
 		self.assertEqual(result[0].outstanding_amount, 75)
 		self.assertEqual(result[0].allocated_amount, 50)
@@ -784,6 +787,8 @@ class TestCurrencyAndCurrentInvoiceSafety(unittest.TestCase):
 			debit_to="RECEIVABLE-1",
 		)
 		with patch.object(pam.frappe, "get_doc", return_value=current), \
+			patch.object(pam, "_customer_invoice_identity", return_value=("MV-1", "WO-1")), \
+			patch("hausverwaltung.hausverwaltung.overrides.sales_invoice.validate_mietvertrag_sales_invoice_identity") as validate_identity, \
 			patch.object(pam, "_require_company_currency_account"):
 			result = pam._lock_and_validate_invoices(
 				invoices=[frappe._dict(name="SINV-CREDIT", allocated_amount=50)],
@@ -795,6 +800,7 @@ class TestCurrencyAndCurrentInvoiceSafety(unittest.TestCase):
 			)
 
 		self.assertEqual(result[0].outstanding_amount, -75)
+		validate_identity.assert_called_once_with(current)
 		self.assertEqual(result[0].allocated_amount, 50)
 
 	def test_positive_customer_invoice_is_rejected_for_refund(self):

@@ -21,6 +21,17 @@ frappe.ui.form.on("Heizkostenabrechnung Immobilie", {
 		frm.ignore_doctypes_on_cancel_all = ["Heizkostenabrechnung Mieter"];
 	},
 
+	async before_submit(frm) {
+		if (!(frm.doc.mieter_positionen || []).some((row) => Number(row.kosten_gesamt || 0) === 0)) return;
+		await new Promise((resolve) => {
+			frappe.confirm(
+				__("Die erfassten Heizkosten betragen null Euro. Dadurch werden die Vorauszahlungen vollständig gutgeschrieben. Möchten Sie die Abrechnung wirklich einreichen?"),
+				async () => { await frm.set_value("nullkosten_bestaetigt", 1); resolve(); },
+				() => { frappe.validated = false; resolve(); },
+			);
+		});
+	},
+
 	onload(frm) {
 		_prepare_amendment(frm);
 	},

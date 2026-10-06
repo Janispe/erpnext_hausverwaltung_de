@@ -135,10 +135,12 @@ class TestSalesInvoiceMietvertragIdentity(unittest.TestCase):
 			),
 		)
 
-	def test_unmarked_standard_erpnext_invoice_is_untouched(self):
+	def test_unmarked_invoice_without_flat_dimension_is_untouched(self):
 		doc = self._invoice(
 			mietabrechnung_id=None,
 			remarks="Normale Ausgangsrechnung",
+			wohnung=None,
+			items=[],
 		)
 		with patch.object(
 			sales_invoice,

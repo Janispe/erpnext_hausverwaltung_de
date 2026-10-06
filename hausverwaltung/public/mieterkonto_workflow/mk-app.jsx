@@ -34,6 +34,7 @@ function App() {
   const [data, setData] = useState(initialData);
   const [loadingData, setLoadingData] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [loadedSelection, setLoadedSelection] = useState(null);
   const loadSeq = useRef(0);
   const { mieter, filters, rows, totalRow, totalRows = [], summary } = data;
 
@@ -69,7 +70,13 @@ function App() {
         balanceScope: balanceScopeOverride ?? balanceScope,
       });
       if (seq === loadSeq.current) {
-        setData(nextData || window.MIETERKONTO);
+        if (!nextData) throw new Error("Mieterkonto konnte nicht geladen werden.");
+        setData(nextData);
+        setLoadedSelection({ customer: c, from: f, to: t,
+          gruppieren: gruppierenOverride ?? gruppieren,
+          openScope: openScopeOverride ?? openScope,
+          sort: sortByWertstellungOverride ?? sortByWertstellung,
+          balanceScope: balanceScopeOverride ?? balanceScope });
       }
     } catch (err) {
       console.error("mieterkonto load failed", err);
@@ -184,11 +191,18 @@ function App() {
 
   const printPage = () => openMieterkontoPrintDialog(data, { showCats, sortByWertstellung });
 
+  const canExport = !loadingData && !loadError && !!loadedSelection?.customer
+    && loadedSelection.customer === customer && loadedSelection.from === fromDate
+    && loadedSelection.to === toDate && loadedSelection.gruppieren === gruppieren
+    && loadedSelection.openScope === openScope && loadedSelection.sort === sortByWertstellung
+    && loadedSelection.balanceScope === balanceScope;
+
   const exportCsv = () => {
+    if (!canExport) return;
     const csvRows = [
       [
         "Datum",
-        ...(sortByWertstellung ? ["Wertstellung"] : []),
+        ...(loadedSelection.sort ? ["Wertstellung"] : []),
         "Art",
         "Belegart",
         "Belegnummern",
@@ -204,7 +218,7 @@ function App() {
       ],
       ...rows.map((r) => [
         r.datum || "",
-        ...(sortByWertstellung ? [r.wertstellungsdatum || ""] : []),
+        ...(loadedSelection.sort ? [r.wertstellungsdatum || ""] : []),
         r.art || "",
         r.belegart || "",
         (r.belegnummern && r.belegnummern.length ? r.belegnummern : [r.belegnummer].filter(Boolean)).join(", "),
@@ -216,16 +230,16 @@ function App() {
         r.betrag_vorauszahlungen || 0,
         r.betrag_sonstiges || 0,
         r.betrag_summe || 0,
-        r.kontostand || 0,
+        r.kontostand ?? "",
       ]),
     ];
     const csv = csvRows.map((row) => row.map(csvCell).join(";")).join("\n");
     const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    const safeCustomer = (customer || "mieterkonto").replace(/[^a-z0-9_-]+/gi, "_");
+    const safeCustomer = (loadedSelection.customer || "mieterkonto").replace(/[^a-z0-9_-]+/gi, "_");
     link.href = url;
-    link.download = `${safeCustomer}_${fromDate}_${toDate}.csv`;
+    link.download = `${safeCustomer}_${loadedSelection.from}_${loadedSelection.to}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -253,7 +267,7 @@ function App() {
         <div className="mk-topbar-actions">
           <button className="mk-btn mk-btn-ghost" onClick={openLegacyReport}>Alte Ansicht</button>
           <button className="mk-btn mk-btn-ghost" onClick={printPage}>Drucken</button>
-          <button className="mk-btn mk-btn-ghost" onClick={exportCsv}>Export CSV</button>
+          <button className="mk-btn mk-btn-ghost" onClick={exportCsv} disabled={!canExport}>Export CSV</button>
           <button className="mk-btn mk-btn-primary" onClick={printPage}>PDF</button>
         </div>
       </div>

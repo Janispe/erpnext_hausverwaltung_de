@@ -331,9 +331,6 @@ class Mietvertrag(Document):
 		"""Enforce the bidirectional one-to-one Mietvertrag/Customer identity."""
 		customer = (self.kunde or "").strip()
 		wohnung = (self.wohnung or "").strip()
-		if not customer:
-			return
-
 		# Serialise creation and reassignment checks per Customer.
 		frappe.db.sql(
 			"SELECT name FROM `tabCustomer` WHERE name = %s FOR UPDATE",
@@ -369,6 +366,9 @@ class Mietvertrag(Document):
 					frappe.ValidationError,
 				)
 
+		if not customer:
+			return
+
 		conflicts = frappe.db.sql(
 			"""
 			SELECT name, wohnung
@@ -398,10 +398,32 @@ class Mietvertrag(Document):
 			frappe.ValidationError,
 		)
 
+	def _validate_wohnung_contract_period(self) -> None:
+		"""Serialize interval checks per flat, including API writes and future leases."""
+		if not self.wohnung or not self.von or int(self.docstatus or 0) == 2:
+			return
+		frappe.db.sql("SELECT name FROM `tabWohnung` WHERE name = %s FOR UPDATE", (self.wohnung,))
+		conflicts = frappe.db.sql(
+			"""
+			SELECT name, von, bis FROM `tabMietvertrag`
+			WHERE wohnung = %(wohnung)s AND name != %(name)s AND docstatus < 2
+			  AND von <= %(bis)s AND (bis IS NULL OR bis >= %(von)s)
+			ORDER BY name LIMIT 1 FOR UPDATE
+			""",
+			{"wohnung": self.wohnung, "name": self.name or "", "von": getdate(self.von),
+			 "bis": getdate(self.bis) if self.bis else "9999-12-31"}, as_dict=True,
+		)
+		if conflicts:
+			frappe.throw(
+				_("Der Zeitraum überschneidet sich mit Mietvertrag {0} derselben Wohnung. Bitte zuerst die Vertragszeiträume berichtigen.").format(conflicts[0].name),
+				frappe.ValidationError,
+			)
+
 	def validate(self) -> None:
 		"""Ensure that contacts are valid and validate 'Gesamter Zeitraum' in staffelmiete."""
 		self._validate_creation_via_process()
 		self._validate_customer_mietvertrag_invariant()
+		self._validate_wohnung_contract_period()
 		self.status = self.compute_status()
 		self.immobilie = _get_wohnung_immobilie(self.wohnung)
 		self.bezeichnung = _build_mietvertrag_display_title(self) or (self.name or "").strip()

@@ -211,6 +211,21 @@ def _lock_and_validate_invoices(
 					f"erwartet ist '{expected_cost_center}' für dieses Bankkonto."
 				)
 
+		if invoice_doctype == "Sales Invoice":
+			from hausverwaltung.hausverwaltung.overrides.sales_invoice import (
+				validate_mietvertrag_sales_invoice_identity,
+			)
+
+			# Existing invoices may predate the creation-time guards. Validate
+			# their complete markers and dimensions before resolving any identity.
+			validate_mietvertrag_sales_invoice_identity(invoice)
+			identity = _customer_invoice_identity(invoice, party, for_update=True)
+			if identity is None or any(
+				item.get("wohnung") and item.get("wohnung") != identity[1]
+				for item in (invoice.get("items") or [])
+			):
+				frappe.throw(f"Rechnung {name} passt nicht eindeutig zum Mietvertrag und zur Wohnung dieses Kunden.", frappe.ValidationError)
+
 		original = requested[name]
 		current_by_name[name] = frappe._dict(
 			name=name,

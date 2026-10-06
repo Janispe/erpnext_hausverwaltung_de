@@ -470,10 +470,12 @@ class TestBetriebskostenabrechnungImmobilie(unittest.TestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "Kostenmatrix"):
 			self._run_snapshot(doc, segments, costs)
 
-	def test_snapshot_rejects_cost_bearing_apartment_without_contract(self):
+	def test_snapshot_allows_vacant_owner_share_without_tenant_child(self):
 		doc, _segments, costs = self._snapshot_fixture(segments=[])
-		with self.assertRaisesRegex(frappe.ValidationError, "kein Mietvertragssegment"):
-			self._run_snapshot(doc, [], costs, segment_costs=[])
+		doc._get_locked_snapshot_children.return_value = []
+		self._run_snapshot(doc, [], [], segment_costs=[])
+		self.assertTrue(doc.flags._validated_bk_submit_snapshot)
+		self.assertEqual(doc.flags._validated_bk_submit_children, ())
 
 	def test_header_identity_fields_are_immutable_after_child_generation(self):
 		doc = module.BetriebskostenabrechnungImmobilie.__new__(

@@ -21,6 +21,7 @@
   "original_pdf",
   "positionen_section",
   "mieter_positionen",
+  "nullkosten_bestaetigt",
   "summen_section",
   "mieter_count",
   "summe_kosten",
@@ -169,6 +170,14 @@
    "options": "Heizkostenabrechnung Immobilie",
    "print_hide": 1,
    "read_only": 1
+  },
+  {
+   "fieldname": "nullkosten_bestaetigt",
+   "fieldtype": "Check",
+   "default": "0",
+   "hidden": 1,
+   "label": "Nullkosten ausdrücklich bestätigt",
+   "no_copy": 1
   }
  ],
  "index_web_pages_for_search": 1,
