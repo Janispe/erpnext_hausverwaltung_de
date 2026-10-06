@@ -613,11 +613,12 @@ function ZahlungModal({ row, onClose, onDone }) {
   // Round the discount once, then derive the payout from the same invoice cents.
   const invoiceCents = Math.round(Number(row.offen) * 100);
   const rateParts = String(Math.abs(skontoSatz)).split(".");
-  const rateScale = 10n ** BigInt((rateParts[1] || "").length);
+  // BigInt calls preserve exact rounding without ES2020 literal syntax in bench build.
+  const rateScale = BigInt(10) ** BigInt((rateParts[1] || "").length);
   const rateNumerator = BigInt(rateParts.join(""));
-  const denominator = rateScale * 100n;
+  const denominator = rateScale * BigInt(100);
   const numerator = BigInt(invoiceCents) * rateNumerator;
-  const discountCents = nutzeSkonto ? Number((numerator * 2n + denominator) / (2n * denominator)) : 0;
+  const discountCents = nutzeSkonto ? Number((numerator * BigInt(2) + denominator) / (BigInt(2) * denominator)) : 0;
   const abzug = discountCents / 100;
   const auszahlung = (invoiceCents - discountCents) / 100;
   const submit = async () => {

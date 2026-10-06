@@ -25,7 +25,8 @@ const COMMON = {
   jsxFactory: "React.createElement",
   jsxFragment: "React.Fragment",
   loader: { ".jsx": "jsx" },
-  target: ["es2020"],
+  // Frappe processes these bundles again with the same ES2017 target.
+  target: ["es2017"],
   minify: isProd,
   sourcemap: !isProd,
   define: { "process.env.NODE_ENV": JSON.stringify(process.env.NODE_ENV || "development") },
