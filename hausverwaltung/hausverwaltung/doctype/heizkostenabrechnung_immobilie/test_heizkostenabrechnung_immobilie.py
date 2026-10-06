@@ -109,6 +109,7 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 		frappe = MagicMock()
 		frappe.get_doc.side_effect = [parent, source_parent]
 		frappe.db.sql.side_effect = [
+			[],
 			[{"name": "MV-1", "kunde": "Mieter 1", "wohnung": "W-1"}],
 			[],
 		]
@@ -330,6 +331,7 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 
 	def test_parent_submit_authorizes_internal_child_submit(self):
 		parent = SimpleNamespace(
+			_validate_unique_period=MagicMock(),
 			_refresh_period_children=MagicMock(),
 			_period_contracts=lambda: [SimpleNamespace(name="MV-1")],
 			_sync_table_to_children=MagicMock(),

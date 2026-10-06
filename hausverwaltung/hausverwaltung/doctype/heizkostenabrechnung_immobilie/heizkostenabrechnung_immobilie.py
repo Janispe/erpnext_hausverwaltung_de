@@ -25,7 +25,7 @@ from typing import Any, Dict, List
 
 import frappe
 from frappe.model.document import Document
-from frappe.utils import getdate
+from frappe.utils import cint, cstr, escape_html, getdate
 
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaiment_calc import (
 	calc_hk_vorauszahlungen,
@@ -36,6 +36,13 @@ from hausverwaltung.hausverwaltung.doctype.heizkostenabrechnung_mieter.heizkoste
 
 
 class HeizkostenabrechnungImmobilie(Document):
+	def _save(self, *args: Any, **kwargs: Any) -> HeizkostenabrechnungImmobilie:
+		# Frappe locks the head in check_if_latest(). Take the shared property
+		# lock first so two heads cannot deadlock against the conflict query.
+		if self.immobilie:
+			_lock_hk_property(self.immobilie)
+		return super()._save(*args, **kwargs)
+
 	def insert(self, *args: Any, **kwargs: Any) -> HeizkostenabrechnungImmobilie:
 		"""Bereinigt einen Amend-Entwurf vor Frappes erster Link-Prüfung.
 
@@ -123,6 +130,7 @@ class HeizkostenabrechnungImmobilie(Document):
 		``allow_on_submit=1`` (siehe ``mieter_positionen.kosten_gesamt`` und
 		``mieter_positionen.vorauszahlungen``).
 		"""
+		self._validate_unique_period()
 		# Korrektur-Summary für Frontend-Toast initialisieren
 		self.flags._correction_summary = {"unchanged": 0, "replaced": [], "errors": []}
 		self._apply_corrections_from_table()
@@ -357,6 +365,8 @@ class HeizkostenabrechnungImmobilie(Document):
 		sind. Wenn nicht: submitte sie automatisch (Bulk-Submit-Verhalten).
 		Das matcht die BK-Pattern-UX und macht den Workflow „in einem Klick".
 		"""
+		# Serialize separate heads before any tenant invoice can be created.
+		self._validate_unique_period()
 		# Insbesondere das Belegdatum noch einmal in die Mieter-Drafts übernehmen,
 		# falls der Parent direkt ohne vorheriges separates Speichern submittet wird.
 		self._refresh_period_children()
@@ -396,6 +406,30 @@ class HeizkostenabrechnungImmobilie(Document):
 
 	def on_submit(self) -> None:
 		self.db_set("status", "Submittet")
+
+	def _validate_unique_period(self) -> None:
+		try:
+			_lock_hk_property(self.immobilie)
+			conflicts = _submitted_period_conflicts(self, for_update=True)
+		except frappe.QueryDeadlockError:
+			# Strict snapshot isolation rejects a locking read when another
+			# request committed after this request loaded its draft. Fail closed.
+			frappe.throw(
+				"Der Heizkosten-Abrechnungsstand wurde gleichzeitig geändert. Bitte neu laden "
+				"und die bereits eingereichten Abrechnungen prüfen. Es wurde keine zusätzliche "
+				"Heizkostenbuchung vorgenommen.",
+				frappe.ValidationError,
+				title="Gleichzeitiges Einreichen verhindert",
+			)
+		if conflicts:
+			frappe.throw(
+				"Für diese Immobilie und diesen Zeitraum ist bereits die Heizkostenabrechnung "
+				f"{escape_html(conflicts[0].name)} eingereicht. Es wurde nichts zusätzlich gebucht. "
+				"Bitte die bestehende Abrechnung berichtigen. Administratoren können dort "
+				"nach Bestätigung einen Korrekturentwurf mit vorherigem Sammelstorno erstellen.",
+				frappe.ValidationError,
+				title="Doppelte Heizkostenabrechnung verhindert",
+			)
 
 	def before_cancel(self) -> None:
 		"""Lock and block the full cascade for every active PE/JE allocation."""
@@ -706,6 +740,67 @@ def _get_payment_allocations(sales_invoice_name: str) -> List[Dict[str, Any]]:
 # ============================================================================
 
 
+def _lock_hk_property(immobilie: str) -> None:
+	frappe.db.sql("SELECT name FROM `tabImmobilie` WHERE name = %s FOR UPDATE", (immobilie,))
+
+
+def _submitted_period_conflicts(parent: Document, *, for_update: bool = False) -> list:
+	rows = frappe.db.sql(
+		"""SELECT name, docstatus FROM `tabHeizkostenabrechnung Immobilie`
+		WHERE immobilie = %(immobilie)s AND von = %(von)s AND bis = %(bis)s
+		"""
+		+ (" FOR UPDATE" if for_update else ""),
+		{"immobilie": parent.immobilie, "von": parent.von, "bis": parent.bis},
+		as_dict=True,
+	)
+	# Lock the complete period range and inspect the current status afterwards.
+	return sorted((row for row in rows if cint(row.docstatus) == 1 and row.name != parent.name), key=lambda row: row.name)
+
+
+@frappe.whitelist()
+def get_duplicate_heads(name: str, von=None, bis=None) -> list[str]:
+	"""Read-only UI preflight; the authoritative check runs under the booking lock."""
+	parent = frappe.get_doc("Heizkostenabrechnung Immobilie", name)
+	parent.check_permission("read")
+	if von and bis:
+		parent.von, parent.bis = getdate(von), getdate(bis)
+	return [row.name for row in _submitted_period_conflicts(parent)]
+
+
+@frappe.whitelist()
+def create_correction_draft(name: str, reason: str, confirmed: int = 0) -> dict[str, str]:
+	"""Administrator correction replaces the old posting, never bypasses duplication checks."""
+	if "System Manager" not in frappe.get_roles():
+		frappe.throw("Nur Administratoren dürfen diesen Korrekturablauf starten.", frappe.PermissionError)
+	reason = cstr(reason).strip()
+	if cint(confirmed) != 1 or not reason or len(reason) > 1000:
+		frappe.throw("Bitte das Sammelstorno ausdrücklich bestätigen und eine Begründung mit höchstens 1.000 Zeichen angeben.", frappe.ValidationError)
+	property_name = frappe.db.get_value("Heizkostenabrechnung Immobilie", name, "immobilie")
+	_lock_hk_property(property_name)
+	parent = frappe.get_doc("Heizkostenabrechnung Immobilie", name, for_update=True)
+	parent.check_permission("cancel")
+	parent.check_permission("amend")
+	if int(parent.docstatus) != 1:
+		frappe.throw("Ein Korrekturentwurf kann nur aus einer eingereichten Abrechnung erstellt werden.", frappe.ValidationError)
+	parent._validate_unique_period()
+	frappe.db.savepoint("hk_correction_draft")
+	try:
+		parent.cancel()  # Includes the existing PE/JE allocation preflight and invoice cascade.
+		draft = frappe.copy_doc(parent)
+		draft.docstatus = 0
+		draft.amended_from = parent.name
+		draft.nullkosten_bestaetigt = 0
+		draft.insert()
+		draft.save()  # Persist the regenerated tenant links as well as the head.
+		message = f"Begründete HK-Korrektur: {escape_html(reason)}"
+		parent.add_comment("Comment", f"{message}<br>Änderungsentwurf: {escape_html(draft.name)}")
+		draft.add_comment("Comment", f"{message}<br>Stornierte Ausgangsabrechnung: {escape_html(parent.name)}")
+	except Exception:
+		frappe.db.rollback(save_point="hk_correction_draft")
+		raise
+	return {"name": draft.name, "amended_from": parent.name}
+
+
 @frappe.whitelist()
 def create_mieter_drafts(name: str) -> Dict[str, Any]:
 	"""Legt für jeden im Zeitraum [von..bis] aktiven Mietvertrag der Immobilie
@@ -718,6 +813,7 @@ def create_mieter_drafts(name: str) -> Dict[str, Any]:
 
 	Returns: {created: [...], skipped: [...], no_wohnung: [...], parent_status}
 	"""
+	_lock_hk_property(frappe.db.get_value("Heizkostenabrechnung Immobilie", name, "immobilie"))
 	# The locking read is authoritative under MariaDB REPEATABLE READ and also
 	# serializes double-clicks/retries for the same parent.
 	parent = frappe.get_doc(

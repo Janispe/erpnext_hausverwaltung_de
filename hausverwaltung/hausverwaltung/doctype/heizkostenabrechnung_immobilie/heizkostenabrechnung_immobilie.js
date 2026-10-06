@@ -22,6 +22,19 @@ frappe.ui.form.on("Heizkostenabrechnung Immobilie", {
 	},
 
 	async before_submit(frm) {
+		const response = await frappe.call({
+			method: "hausverwaltung.hausverwaltung.doctype.heizkostenabrechnung_immobilie.heizkostenabrechnung_immobilie.get_duplicate_heads",
+			args: { name: frm.doc.name, von: frm.doc.von, bis: frm.doc.bis },
+		});
+		if ((response.message || []).length) {
+			frappe.validated = false;
+			frappe.msgprint({
+				title: __("Doppelte Heizkostenabrechnung verhindert"),
+				message: __("Für diesen Zeitraum ist bereits eine Heizkostenabrechnung eingereicht: {0}. Bitte diese Abrechnung berichtigen. Administratoren können dort über „Korrekturentwurf erstellen“ zuerst ein kontrolliertes Sammelstorno ausführen.", [frappe.utils.escape_html(response.message.join(", "))]),
+				indicator: "orange",
+			});
+			return;
+		}
 		if (!(frm.doc.mieter_positionen || []).some((row) => Number(row.kosten_gesamt || 0) === 0)) return;
 		await new Promise((resolve) => {
 			frappe.confirm(
@@ -115,6 +128,9 @@ function _recompute_row_difference(frm, cdt, cdn) {
 
 function _add_buttons(frm) {
 	if (frm.is_new()) return;
+	if (frm.doc.docstatus === 1 && frappe.user_roles.includes("System Manager")) {
+		frm.add_custom_button(__("Korrekturentwurf erstellen"), () => _create_correction_draft(frm));
+	}
 
 	if (frm.doc.docstatus === 0) {
 		frm.add_custom_button(
@@ -123,6 +139,36 @@ function _add_buttons(frm) {
 			__("Aktionen"),
 		);
 	}
+}
+
+function _create_correction_draft(frm) {
+	if (frm.is_dirty()) {
+		frappe.msgprint(__("Bitte Änderungen zuerst speichern, bevor du einen Korrekturentwurf erstellst."));
+		return;
+	}
+	const dialog = new frappe.ui.Dialog({
+		title: __("Heizkostenabrechnung kontrolliert berichtigen"),
+		fields: [
+			{ fieldtype: "HTML", options: __("Die bisherige Abrechnung und ihre Ausgleichsbelege werden zuerst storniert. Bereits zugeordnete Zahlungen verhindern das Sammelstorno. Anschließend entsteht ein verknüpfter Änderungsentwurf mit den bisherigen Beträgen. Prüfe und korrigiere diesen Entwurf vor dem erneuten Einreichen.") },
+			{ fieldname: "reason", fieldtype: "Small Text", label: __("Begründung der Korrektur"), reqd: 1 },
+		],
+		primary_action_label: __("Stornieren und Entwurf erstellen"),
+		primary_action(values) {
+			dialog.disable_primary_action();
+			frappe.call({
+				method: "hausverwaltung.hausverwaltung.doctype.heizkostenabrechnung_immobilie.heizkostenabrechnung_immobilie.create_correction_draft",
+				args: { name: frm.doc.name, reason: values.reason, confirmed: 1 },
+				freeze: true,
+				freeze_message: __("Abrechnung wird storniert und Änderungsentwurf erstellt…"),
+				callback(r) {
+					if (!r.message?.name) return;
+					dialog.hide();
+					frappe.set_route("Form", "Heizkostenabrechnung Immobilie", r.message.name);
+				},
+			}).always(() => dialog.enable_primary_action());
+		},
+	});
+	dialog.show();
 }
 
 function _show_correction_banner(frm) {
