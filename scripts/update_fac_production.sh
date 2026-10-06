@@ -113,7 +113,7 @@ if ! compose_fac exec -T backend bench --site "$SITE" list-apps | awk '{print $1
   compose_fac exec -T backend bench --site "$SITE" install-app frappe_assistant_core
 fi
 compose_fac exec -T backend bench --site "$SITE" migrate
-FAC_KWARGS="$(python3 -c 'import json,sys; print(json.dumps({"user":sys.argv[1],"include_focused_tools":True}))' "$FAC_USER")"
+FAC_KWARGS="$(python3 -c 'import sys; print(repr({"user":sys.argv[1],"include_focused_tools":True}))' "$FAC_USER")"
 compose_fac exec -T backend bench --site "$SITE" execute \
   hausverwaltung.hausverwaltung.services.fac_setup.enable_external_tools \
   --kwargs "$FAC_KWARGS"

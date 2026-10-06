@@ -233,7 +233,7 @@ mit einem System-Manager-Kontext ausführen; `TESTSITE` und `API_USER` ersetzen:
 ```bash
 bench --site TESTSITE execute \
   hausverwaltung.hausverwaltung.services.fac_setup.enable_external_tools \
-  --kwargs '{"user":"API_USER","include_focused_tools":true}'
+  --kwargs '{"user":"API_USER","include_focused_tools":True}'
 ```
 
 Das aktiviert wie bisher alle regulären eigenen externen FAC-Tools und
