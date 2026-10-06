@@ -33,6 +33,10 @@ Authentifizierung und bei Sitzungscookies der CSRF-Schutz entsprechen den
 | `agent_mail_merge_get_draft` | `get_draft` | Aktuellen Stand eines Entwurfs lesen, inklusive `fingerprint` |
 | `agent_mail_merge_list_drafts` | `list_drafts` | Nicht eingereichte Durchläufe nach Titel suchen |
 | `agent_mail_merge_update_draft` | `update_draft` | Entwurf teilweise ändern, nur mit dem zuletzt gelesenen `fingerprint` |
+| `agent_mail_merge_list_textbausteine` | `list_textbausteine` | Lesbare Bausteine mit Pagination suchen |
+| `agent_mail_merge_get_textbaustein` | `get_textbaustein` | Variablen, Standardpfade, aktive `revision` und optional Quelle einer bestimmten Version lesen |
+| `agent_mail_merge_create_textbaustein` | `create_textbaustein` | Neuen gekennzeichneten KI-Baustein erstellen |
+| `agent_mail_merge_propose_textbaustein_version` | `propose_textbaustein_version` | Unveränderlichen KI-Vorschlag erstellen; aktiver Baustein bleibt erhalten |
 
 Antworten verwenden den vorhandenen Vertrag
 `{ok, data, error, meta}`. `meta` enthält Anfrage-ID und Laufzeit. Die
@@ -203,10 +207,10 @@ Inhalts und ihrer Bausteine, wie sie die Versionshistorie bildet. Metadaten wie
   private Frappe-Attachments. Die API bietet weder Versand noch Submit,
   Buchungen, Löschung oder Änderung der Vorlage an.
 
-Eigene Vorlagen werden weiterhin im Vorlageneditor gepflegt. Veränderbare
-Angaben müssen dort als skalare Vorlagenvariablen deklariert sein. Änderungen
-an Textbaustein-Definitionen, Pfaden oder Variablenprofilen gehören nicht zum
-LLM-Eingabevertrag.
+Eigene Vorlagen können im Vorlageneditor oder auf ausdrücklichen Auftrag über
+die unten beschriebenen KI-Vorlagenwerkzeuge gepflegt werden. Veränderbare
+Angaben müssen als Vorlagenvariablen deklariert sein. Änderungen an
+Textbaustein-Definitionen gehören nicht zum LLM-Eingabevertrag.
 
 ## Audit-Korrekturen
 
@@ -269,6 +273,50 @@ bietet es als Datei im Chat an. Über FAC werden höchstens 8 MB base64 übergeb
 
 ## KI-Vorlagen und Vorschlagsversionen
 
+### Eigene Textbausteine
+
+Die Bausteinmethoden liegen unter
+`hausverwaltung.hausverwaltung.agent_tools.block_authoring_api`. Schreibzugriff
+erfordert Hausverwalter/System-Manager-Rolle und die normalen Erstellungs- bzw.
+Schreibrechte am Baustein. Lesezugriff folgt den normalen Bausteinrechten,
+auch für historische Quellen und Vorschläge.
+
+`create_textbaustein(title, content, variables?, standardpfade?, description?,
+render_position?)` erstellt einen neuen Baustein mit unverlierbarer
+KI-Kennzeichnung und normaler Ausgangsversion `KI-Erstellung`. Erlaubt sind
+passives HTML/Jinja, deklarierte Variablen und `Body`/`Footer`. Die
+Doctype-Variablen können Contact, Address, Customer, Supplier, Mietvertrag,
+Wohnung und Immobilie lesen. Standardpfade beginnen bei `objekt`, etwa
+`{"Mietvertrag": {"vertrag": "objekt"}}`; sie ordnen ausschließlich deklarierte
+Variablen zu. Die 1:1-Zuordnung zwischen Customer, Mietvertrag und Wohnung
+wird dadurch nicht verändert.
+
+`get_textbaustein(baustein, include_source?, version_number?)` liefert die aktive
+`revision` auch dann, wenn eine Vorschlagsquelle gelesen wird.
+`propose_textbaustein_version(baustein, revision, content, base_version?, ...)`
+prüft diese Revision unter einer Dokumentsperre und erzeugt ausschließlich
+einen neuen Snapshot mit Herkunft `KI-Vorschlag` und `based_on`. Solche
+Vorschläge gelten nie als aktueller Bausteinstand, werden nicht mit normalen
+Speicherungen zusammengefasst und halten ihre Basisversion unveränderlich.
+Eine zwischenzeitliche Bearbeitung liefert `BLOCK_CHANGED`.
+
+Der Agent prüft die zurückgegebene `version_number` vor der Übernahme in einer
+passenden Vorlage: Vorlagenvorschlag mit
+`baustein_versionen={Bausteinname: version_number}`, dann
+`save_draft(vorlagenversion=...)` und `prepare(draft=...)`. Dies rendert genau
+den vorgeschlagenen Baustein bis zur echten PDF. Pflichtangaben und Empfänger
+müssen belegt sein; bis dahin bleibt der Vorschlag ungeprüft. Der Nutzer
+übernimmt ihn anschließend über den vorhandenen Baustein-Versionseditor.
+
+KI-Bausteine werden auch in gewöhnlichen Vorlagen mit HTML-Escaping und dem
+Schreibschutz gerendert. Die API unterstützt keine PDF-Formular-Dateien oder
+Output-Provider; entsprechende Alt-Felder werden im Vorschlag entfernt.
+Aufrufe anderer Bausteine innerhalb eines KI-Bausteins werden ausdrücklich
+abgewiesen, da der aktuelle Bausteinkontext diesen Renderpfad nicht unterstützt.
+Mehrere Bausteine können nebeneinander in der Vorlage eingebunden werden.
+
+### Vorlagen
+
 `agent_mail_merge_create_template` legt eine neue Vorlage mit dauerhafter
 Kennzeichnung „Vom Assistenten erstellt“ und einer ersten Version „KI-Erstellung“
 an. Ein vorhandener Titel wird nie überschrieben. `agent_mail_merge_propose_template_version`
@@ -282,10 +330,59 @@ der Herkunftsverweis bleibt erhalten. Vorschläge zählen nicht als Live-Stand,
 werden nicht mit gewöhnlichen Speicherungen zusammengefasst und ihre Basis
 wird durch spätere schnelle Speicherungen nicht verändert.
 
-Vorlagenwerkzeuge erfordern Hausverwalter/System-Manager-Rolle und die normalen
-Vorlagenrechte. Sie erlauben ausschließlich Inhalt, skalare Variablendefinitionen
-und Beschreibung, keine frei wählbaren DocTypes zum Schreiben, Python-Provider,
-Dokumentaktionen oder Bausteinänderungen. Beim Anlegen wird kein Inhalt gerendert.
+Die Agentenanweisung verlangt diese Renderprüfung für neue KI-Vorlagen und
+KI-Vorschläge bereits vor der Übernahme, sobald Testempfänger und Pflichtangaben
+vorliegen. Fehlende Angaben werden erfragt; bis dahin ist der Vorschlag als
+noch nicht rendergeprüft zu kennzeichnen. Bei einem Vorschlag ist exakt die
+zurückgegebene `vorlagenversion` im Testentwurf zu verwenden. `prepare` erzeugt
+daraus die echte PDF mit dem Bausteinstand des Vorschlags und liefert ihren
+Text sowie `pdf_url`. Über `agent_mail_merge_get_pdf` kann ein FAC-Code-Client
+die Vorschau auch als Datei im Chat ausgeben. `execute` ist für diese Prüfung
+nicht erforderlich. Renderfehler werden je Empfänger zurückgegeben. Auch bei
+`RENDER_FAILED` enthält `diagnostic` den ursprünglichen Fehlertyp, eine technische
+Erklärung und die Phase (`context`, `jinja`, `pdf` oder `pdf_validation`). Soweit
+bekannt werden `baustein`, `line` und `pdf_engine` ergänzt. Die Jinja-Zeile bezieht
+sich auf den vorverarbeiteten Quelltext (`line_reference=jinja_processed`);
+eingefügte Zeilen können gegenüber dem Editor zu Abweichungen führen. Bekannte
+Fehlerstellen stehen auch in `issues`, ohne daraus ein fehlendes Feld abzuleiten.
+`template` und gegebenenfalls `vorlagenversion` benennen den geprüften Stand.
+Vollständige Tracebacks, gerenderte Inhalte und beliebige Exception-Strings
+werden nicht an den Agenten übermittelt.
+
+Die PDF-Endpunkte des Editors und der Versionshistorie liefern zusätzlich
+`ready`, `inputs` und `errors`. Fehlende deklarierte Pflichtwerte ergeben
+`MISSING_INPUT` mit allen offenen Feldern und `action=provide_inputs`; nicht
+auflösbare Datenpfade ergeben `MISSING_DATA`/`UNRESOLVED_PATH`. Fehlerhafte
+Eingabetypen werden als `INVALID_INPUT` gemeldet. Bei `ready=false` ist
+`pdf_base64` leer: Ein Fehlertext wird nicht mehr zu einem scheinbar fertigen
+PDF. Echte Vorlagen- und PDF-Fehler enthalten die gemeinsame technische
+Diagnose. Die Versionshistorie zählt ausschließlich erfolgreiche PDFs als
+bereit und bietet typisierte, transiente Vorschauwerte per `preview_values`
+an. Diese Werte werden weder in der Vorlage noch im Versionssnapshot
+abgelegt. Der Editor bietet zusätzlich `placeholder_mode=1`: Fehlende deklarierte
+skalare Pflichtwerte ohne Datenpfad werden im PDF als `[variablenname]`
+gezeigt. Jinja-Ausgaben mit solchen Werten werden nur im ephemeren AST
+ersetzt; Bedingungen verwenden typisierte Beispiele. Die Antwort enthält
+`placeholder_mode`, `placeholders` und `warnings` mit `LAYOUT_ONLY`, das PDF
+einen sichtbaren Layout-Hinweis. Der Modus überspringt den gemeinsamen
+PDF-Cache und zählt in der Historie separat als Platzhaltervorschau. Er
+ersetzt weder fehlende Datensätze/Datenpfade noch unbekannte Variablen und
+ändert den Versandpfad nicht. Die Prüfung mit echten Werten bleibt nötig.
+
+Der Versandpfad des Agenten bleibt `save_draft` → `prepare`.
+
+Der Agent liest bei Vorlagenfehlern die betroffene Quelle mit
+`get_template(include_source=true, vorlagenversion=...)`, korrigiert einen
+eigenen Vorschlag als neue Vorschlagsversion und rendert erneut. Der Fehlercode
+bleibt für bestehende Clients kompatibel. `action=check_pdf_renderer` verweist
+auf die PDF-Verarbeitung; dafür soll der Agent keine Vorlagenänderung erfinden.
+
+Schreibende Vorlagenwerkzeuge erfordern Hausverwalter/System-Manager-Rolle und die normalen
+Vorlagenrechte. Sie erlauben Inhalt, Beschreibung, skalare Variablendefinitionen,
+Doctype-/Doctype-Liste-Variablen für Contact, Address, Customer und Supplier sowie
+Eingabepfade und Versionsfixierungen vorhandener Bausteine. Sie erlauben keine
+frei wählbaren DocTypes zum Schreiben, Python-Provider, Dokumentaktionen oder
+Bausteinänderungen. Beim Anlegen wird kein Inhalt gerendert.
 Die Jinja-Sandbox erlaubt nur geprüfte Lesefunktionen. Aktives HTML, Ereignishandler,
 dynamische Ressourcen, `safe`/`attr`, interne Namen und Jinja-Imports werden für
 KI-Inhalte zusätzlich abgelehnt; variable Ausgaben werden HTML-escaped.
@@ -295,3 +392,75 @@ Der Chat ist damit lesend mit ausdrücklich erlaubten Serienbrief-Schreibaktione
 bei einer Neugenerierung ersetzen. Es ist daher falsch, den gesamten Chat als
 „rein lesend“ oder „ohne jede Löschung“ zu beschreiben. Eingereichte Dokumente,
 allgemeine Löschwerkzeuge und Stammdatenänderungen bleiben gesperrt.
+
+### Bestimmte Textbausteinversionen verwenden
+
+Die KI-Vorlagenmethoden liegen unter
+`/api/method/hausverwaltung.hausverwaltung.agent_tools.template_authoring_api.`
+und stehen auch als FAC-MCP-Werkzeuge zur Verfügung:
+
+| Werkzeug | HTTP-Methode | Zweck |
+| --- | --- | --- |
+| `agent_mail_merge_list_textbaustein_versions` | `list_textbaustein_versions` | Versionen eines exakten `baustein` lesen; `limit` maximal 20, `offset`, `has_more` und `next_offset` |
+| `agent_mail_merge_create_template` | `create_template` (POST) | Neue Vorlage einschließlich gewählter Bausteinfixierungen anlegen |
+| `agent_mail_merge_propose_template_version` | `propose_template_version` (POST) | Fixierungen ausschließlich in einer KI-Vorschlagsversion ändern |
+
+Die Versionsliste liefert `items` mit `name` (Versions-ID), `number`
+(Versionsnummer), Bezeichnung, Herkunft, Änderungen, Erstellungszeitpunkt,
+`is_current`, `sealed` und einem ungefüllten Textauszug. Sie verändert und
+versiegelt keine Versionen. Das Leserecht auf den Textbaustein wird geprüft,
+wie bei der bestehenden Editor-Versionshistorie; `Agent Readonly API` darf
+die Liste bei vorhandenen Leserechten ebenfalls verwenden.
+
+Bei `create_template` und `propose_template_version` ist
+`baustein_versionen` eine optionale Zuordnung:
+
+```json
+{
+  "baustein_versionen": {
+    "Briefkopf": 3,
+    "Grußformel": 2,
+    "Hinweis": null
+  }
+}
+```
+
+Es gelten die exakten Bausteinnamen und positiven ganzzahligen **Versionsnummern**,
+nicht Versions-IDs. Nur genannte Zuordnungen werden geändert; `null` entfernt
+die Fixierung und wählt den aktuellen Bausteinstand. Ohne Angabe beziehungsweise
+mit `{}` bleiben die Fixierungen verwendeter Bausteine der Ausgangsversion
+erhalten. Fixierungen nicht mehr verwendeter Bausteine werden aus dem Vorschlag
+entfernt. Explizite Angaben für unbenutzte Bausteine, ungültige Nummern oder
+fehlende Versionen werden mit `INVALID_ARGUMENT` zurückgewiesen. Leserechte
+werden für alle tatsächlich verwendeten Bausteine geprüft, auch verschachtelte;
+deren Erreichbarkeit richtet sich nach dem ausgewählten Bausteinstand.
+Gewählte Versionen werden vor der Auflösung atomar festgeschrieben; bei einer
+gleichzeitigen Änderung eines noch nicht festgeschriebenen Arbeitsstands meldet
+die API `BLOCK_VERSION_CHANGED`. Dann muss die Versionsliste neu gelesen werden.
+Abgewiesene Schreibaktionen rollen auch diese Festschreibung zurück.
+
+Die Antworten der Schreibwerkzeuge enthalten die resultierende Zuordnung als
+`baustein_versionen`. `get_template` zeigt je Baustein `fixierte_version`,
+`version_number` und `version_source` (`fixed`, `historic` oder `current`;
+beim nicht fixierten aktuellen Stand ist `version_number` leer).
+Vorschläge lassen sich über `save_draft(vorlagenversion=...)` und `prepare(draft=...)`
+mit ihren festgehaltenen Bausteinständen prüfen. Auch nach Aufhebung einer
+Fixierung hält die Stückliste des Vorschlags den beim Erstellen gewählten Stand
+für historische Renderings fest. Beim manuellen Übernehmen im Versionseditor
+werden die Fixierungen mit übernommen; die Textbausteine selbst bleiben unverändert.
+
+Die Versionshistorie erlaubt das reversible Zusammenfassen einer lückenlosen
+KI-Vorschlagskette. `group_editor_versions(template, versions)` ordnet alle
+gewählten Zwischenstände über `history_group` der neuesten gewählten Version
+zu. Snapshot, Herkunft, Schutzstatus und bestehende Dokument-/Durchlauf-Verweise
+bleiben unverändert. `ungroup_editor_versions` hebt nur diese Darstellung auf.
+Beide Aktionen erfordern Schreibrechte auf die Vorlage. Gruppen bleiben auch
+über neue Sitzungen hinweg gespeichert; Suche und Aufklappen erschließen die
+Zwischenstände. Zusammengefasste Stände sind gegen direkte Löschung geschützt.
+
+`get_editor_version_usage` liefert die nach Leserechten gefilterten Briefe und
+Durchläufe für einen Stand, einschließlich seiner zusammengefassten
+Zwischenstände. Ohne `version` umfasst die Ansicht die gesamte Vorlage, auch
+ältere Briefe ohne gespeicherte Versionszuordnung. Die paginierte Liste zeigt
+Version, Datum, Status, Zielobjekt und bei lesbaren, zugeordneten Dateien einen
+PDF-Link. Es werden keine Briefinhalte oder E-Mail-Adressen mitgeliefert.

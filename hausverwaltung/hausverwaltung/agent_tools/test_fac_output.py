@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from hausverwaltung.hausverwaltung.agent_tools import fac_output
 from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
@@ -187,7 +187,13 @@ class TestFacOutput(unittest.TestCase):
 		result = {
 			"report_name": "General Ledger",
 			"columns": [
-				{"fieldname": "account", "label": "Konto", "fieldtype": "Link", "options": "Account", "width": 180},
+				{
+					"fieldname": "account",
+					"label": "Konto",
+					"fieldtype": "Link",
+					"options": "Account",
+					"width": 180,
+				},
 				{"fieldname": "debit", "label": "Soll", "fieldtype": "Currency"},
 			],
 			"data": [{"account": f"A{index}", "debit": index, "extra": "x"} for index in range(5)],
@@ -266,7 +272,9 @@ class TestFacTools(unittest.TestCase):
 		calls = []
 		with (
 			patch.object(tool, "check_permission"),
-			patch.dict(assistant.TOOL_FUNCTIONS, {"agent_list_docs": lambda **kw: calls.append(kw) or {"ok": True}}),
+			patch.dict(
+				assistant.TOOL_FUNCTIONS, {"agent_list_docs": lambda **kw: calls.append(kw) or {"ok": True}}
+			),
 		):
 			tool.execute({"doctype": "GL Entry"})
 			tool.execute({"doctype": "GL Entry", "limit": 5000})
@@ -288,7 +296,10 @@ class TestFacTools(unittest.TestCase):
 			"filters_applied": {},
 		}
 		tool = fac_tools.Fac_hv_run_report()
-		with patch.object(tool, "check_permission"), patch.object(fac_tools, "_run_report", return_value=executed):
+		with (
+			patch.object(tool, "check_permission"),
+			patch.object(fac_tools, "_run_report", return_value=executed),
+		):
 			page = tool.execute({"report_name": "General Ledger"})
 			failed = {"success": False, "error": "Invalid filter values provided", "suggestions": ["x"]}
 			with patch.object(fac_tools, "_run_report", return_value=failed):
@@ -298,7 +309,10 @@ class TestFacTools(unittest.TestCase):
 		self.assertEqual(error, failed)
 
 		export = fac_tools.Fac_hv_export_report()
-		with patch.object(export, "check_permission"), patch.object(fac_tools, "_run_report", return_value=executed):
+		with (
+			patch.object(export, "check_permission"),
+			patch.object(fac_tools, "_run_report", return_value=executed),
+		):
 			page = export.execute({"report_name": "General Ledger", "limit": 5000})
 		self.assertEqual((page["returned"], page["has_more"]), (250, False))
 
@@ -404,6 +418,38 @@ class TestFacTools(unittest.TestCase):
 			result = status.execute({"run": "SBDL-1"})
 		self.assertEqual(result["data"]["url"], "http://erp.local:8090/app/serienbrief-durchlauf/SBDL-1")
 
+	def test_mail_merge_tool_preserves_diagnostics_in_successful_prepare_response(self):
+		from hausverwaltung.hausverwaltung.agent_tools import fac_tools, mail_merge_tools
+
+		tool = fac_tools.Fac_agent_mail_merge_prepare()
+		preview = {
+			"ok": True,
+			"data": {
+				"ready": False,
+				"errors": [
+					{
+						"code": "RENDER_FAILED",
+						"action": "review_template",
+						"diagnostic": {
+							"phase": "jinja",
+							"exception_type": "TypeError",
+							"baustein": "BAU-1",
+							"line": 2,
+						},
+						"issues": [{"source": "template", "baustein": "BAU-1", "line": 2}],
+					}
+				],
+			},
+		}
+		with (
+			patch.object(tool, "check_permission"),
+			patch.dict(
+				mail_merge_tools.MAIL_MERGE_FUNCTIONS, {"agent_mail_merge_prepare": lambda **_: preview}
+			),
+		):
+			result = tool.execute({"draft": "SBDL-1"})
+		self.assertEqual(result["data"]["errors"], preview["data"]["errors"])
+
 	def test_only_draft_storing_tools_are_marked_as_write(self):
 		from hausverwaltung.hausverwaltung.agent_tools import fac_tools
 
@@ -414,6 +460,8 @@ class TestFacTools(unittest.TestCase):
 		self.assertEqual(
 			{name for name, category in categories.items() if category == "write"},
 			{
+				"agent_mail_merge_create_textbaustein",
+				"agent_mail_merge_propose_textbaustein_version",
 				"agent_mail_merge_create_template",
 				"agent_mail_merge_propose_template_version",
 				"agent_mail_merge_execute",
@@ -421,6 +469,52 @@ class TestFacTools(unittest.TestCase):
 				"agent_mail_merge_update_draft",
 			},
 		)
+
+	def test_block_authoring_tools_pass_arguments_and_allow_contract_inputs(self):
+		from hausverwaltung.hausverwaltung.agent_tools import fac_tools, mail_merge_tools
+
+		schemas = {tool["function"]["name"]: tool["function"] for tool in mail_merge_tools.MAIL_MERGE_TOOLS}
+		for name in ("agent_mail_merge_create_textbaustein", "agent_mail_merge_propose_textbaustein_version"):
+			with self.subTest(name=name):
+				self.assertIn(
+					"Mietvertrag",
+					schemas[name]["parameters"]["properties"]["variables"]["items"]["properties"][
+						"reference_doctype"
+					]["enum"],
+				)
+				tool = getattr(fac_tools, f"Fac_{name}")()
+				arguments = {key: "test" for key in schemas[name]["parameters"]["required"]}
+				arguments["standardpfade"] = {"Mietvertrag": {"vertrag": "objekt"}}
+				called = Mock(return_value={"ok": True, "data": {"baustein": "B", "version_number": 2}})
+				with (
+					patch.object(tool, "check_permission"),
+					patch.dict(mail_merge_tools.MAIL_MERGE_FUNCTIONS, {name: called}),
+				):
+					result = tool.execute(arguments)
+				called.assert_called_once_with(**arguments)
+				self.assertEqual(result["data"]["version_number"], 2)
+
+	def test_block_versions_are_exposed_readonly_and_pin_parameters_reach_api(self):
+		from hausverwaltung.hausverwaltung.agent_tools import fac_tools, mail_merge_tools
+
+		listing = fac_tools.Fac_agent_mail_merge_list_textbaustein_versions()
+		self.assertEqual(listing.category, "read_only")
+		schemas = {tool["function"]["name"]: tool["function"] for tool in mail_merge_tools.MAIL_MERGE_TOOLS}
+		self.assertEqual(set(schemas), set(FAC_MAIL_MERGE_TOOL_NAMES))
+		self.assertEqual(set(schemas), set(mail_merge_tools.MAIL_MERGE_FUNCTIONS))
+		for name in ("agent_mail_merge_create_template", "agent_mail_merge_propose_template_version"):
+			self.assertIn("baustein_versionen", schemas[name]["parameters"]["properties"])
+			tool = getattr(fac_tools, f"Fac_{name}")()
+			arguments = {"baustein_versionen": {"Briefkopf": 3, "Gruß": None}}
+			arguments.update({key: "test" for key in schemas[name]["parameters"]["required"]})
+			with (
+				patch.object(tool, "check_permission"),
+				patch.dict(
+					mail_merge_tools.MAIL_MERGE_FUNCTIONS,
+					{name: lambda **kwargs: {"ok": True, "data": kwargs}},
+				),
+			):
+				self.assertEqual(tool.execute(arguments)["data"], arguments)
 
 	def test_get_pdf_is_code_only_and_capped(self):
 		from hausverwaltung.hausverwaltung.agent_tools import fac_tools, mail_merge_api

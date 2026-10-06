@@ -131,7 +131,58 @@ def missing_inputs(fields):
 	)
 
 
-def render_error(exc, *, recipient, recipient_doctype):
+def render_error(exc, *, recipient, recipient_doctype, phase="render", template=None, vorlagenversion=None):
+	"""Expose the original cause and verified location, without tracebacks or data dumps."""
+	from mail_merge.mail_merge.utils.render_diagnostics import exception_chain, render_diagnostic
+
+	chain = exception_chain(exc)
+	result = _classify_render_error(exc, recipient=recipient, recipient_doctype=recipient_doctype)
+	if isinstance(exc, AgentToolError):
+		return result
+	# A Frappe wrapper may HTML-escape the original diagnostic. Classify the
+	# original exceptions directly, rather than guessing a field from that text.
+	if result["code"] == "RENDER_FAILED":
+		for cause in chain[1:]:
+			classified = _classify_render_error(
+				cause, recipient=recipient, recipient_doctype=recipient_doctype
+			)
+			if classified["code"] != "RENDER_FAILED":
+				result = classified
+				break
+	diagnostic = render_diagnostic(exc, phase=phase)
+	block = diagnostic.get("baustein")
+	result["diagnostic"] = diagnostic
+	if template is not None:
+		result["template"] = template
+	if vorlagenversion is not None:
+		result["vorlagenversion"] = vorlagenversion
+	if result["code"] == "RENDER_FAILED":
+		location = (
+			f"Textbaustein {block}"
+			if block
+			else "PDF-Erzeugung"
+			if diagnostic["phase"] in {"pdf", "pdf_validation"}
+			else "Vorlage"
+		)
+		if diagnostic.get("line"):
+			location += f", Jinja-Zeile {diagnostic['line']}"
+		result["message"] = f"{location}: {diagnostic['exception_type']}: {diagnostic['message']}"
+		if diagnostic["phase"] in {"pdf", "pdf_validation"}:
+			result["action"] = "check_pdf_renderer"
+	# Location does not imply a missing field. Preserve known field/path issues
+	# and enrich them with verified line/block coordinates only.
+	coordinates = {
+		key: diagnostic[key] for key in ("baustein", "line", "line_reference") if key in diagnostic
+	}
+	if coordinates:
+		if not result["issues"]:
+			result["issues"] = [{"source": "template", **coordinates}]
+		else:
+			result["issues"] = [{**issue, **coordinates} for issue in result["issues"]]
+	return result
+
+
+def _classify_render_error(exc, *, recipient, recipient_doctype):
 	"""Adapt only explicit renderer diagnostics; never infer a field from snippets.
 
 	The core embeds examples, whole template lines and even tracebacks in some

@@ -51,9 +51,14 @@ FAC_REPORT_TOOL_NAMES = ("hv_report_list", "hv_report_requirements", "hv_run_rep
 # update_draft) or PDFs from a previously checked preview (execute); nothing is sent or submitted.
 # See docs/llm-serienbriefe.md.
 FAC_MAIL_MERGE_TOOL_NAMES = (
+	"agent_mail_merge_create_textbaustein",
+	"agent_mail_merge_propose_textbaustein_version",
+	"agent_mail_merge_list_textbausteine",
+	"agent_mail_merge_get_textbaustein",
 	"agent_mail_merge_create_template",
 	"agent_mail_merge_propose_template_version",
 	"agent_mail_merge_list_template_versions",
+	"agent_mail_merge_list_textbaustein_versions",
 	"agent_mail_merge_list_templates",
 	"agent_mail_merge_get_template",
 	"agent_mail_merge_prepare",
@@ -65,6 +70,8 @@ FAC_MAIL_MERGE_TOOL_NAMES = (
 	"agent_mail_merge_update_draft",
 )
 FAC_MAIL_MERGE_WRITE_TOOL_NAMES = (
+	"agent_mail_merge_create_textbaustein",
+	"agent_mail_merge_propose_textbaustein_version",
 	"agent_mail_merge_create_template",
 	"agent_mail_merge_propose_template_version",
 	"agent_mail_merge_execute",

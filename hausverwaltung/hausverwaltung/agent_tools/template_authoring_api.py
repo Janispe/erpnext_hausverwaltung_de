@@ -6,11 +6,17 @@ from contextlib import contextmanager
 import frappe
 
 from hausverwaltung.hausverwaltung.agent_tools import mail_merge_api as api
-from hausverwaltung.hausverwaltung.agent_tools.contracts import AgentToolError, parse_json_if_needed
+from hausverwaltung.hausverwaltung.agent_tools.contracts import (
+	AgentToolError,
+	normalize_limit,
+	normalize_offset,
+	parse_json_if_needed,
+)
 from hausverwaltung.hausverwaltung.agent_tools.mail_merge_contract import (
 	AI_RECORD_DOCTYPES,
 	RECORD_TYPES,
 	layout_warnings,
+	plain_text,
 )
 
 # Pfadsegmente ohne führenden Unterstrich (keine internen Attribute), optional [] für Listen.
@@ -48,7 +54,7 @@ def _text(value, field, max_chars=140, required=True):
 	return value.strip()
 
 
-def _variables(raw):
+def _variables(raw, *, record_doctypes=AI_RECORD_DOCTYPES):
 	rows = parse_json_if_needed(raw)
 	if rows is None:
 		return []
@@ -96,11 +102,11 @@ def _variables(raw):
 			raise AgentToolError("INVALID_ARGUMENT", "Variablentyp oder optional ungültig.")
 		reference_doctype = row.get("reference_doctype") or ""
 		if (kind in RECORD_TYPES) != bool(reference_doctype) or (
-			reference_doctype and reference_doctype not in AI_RECORD_DOCTYPES
+			reference_doctype and reference_doctype not in record_doctypes
 		):
 			raise AgentToolError(
 				"INVALID_ARGUMENT",
-				"Doctype-Variablen brauchen reference_doctype aus: " + ", ".join(AI_RECORD_DOCTYPES) + ".",
+				"Doctype-Variablen brauchen reference_doctype aus: " + ", ".join(record_doctypes) + ".",
 			)
 		seen.add(name)
 		out.append(
@@ -163,7 +169,60 @@ def _baustein_pfade(raw, doc):
 	return out
 
 
-def _set_source(doc, content, variables=None, description=None, baustein_pfade=None):
+def _set_block_versions(doc, raw):
+	"""Patch fixations before resolving blocks, including nested historical references."""
+	from mail_merge.mail_merge.utils import textbaustein_versions as tbv
+	from mail_merge.mail_merge.utils import versioning
+	from mail_merge.mail_merge.utils.textbaustein_loader import parse_fixed_versions
+
+	patch = parse_json_if_needed(raw)
+	if not isinstance(patch, dict) or len(patch) > 100:
+		raise AgentToolError(
+			"INVALID_ARGUMENT", "baustein_versionen muss ein Objekt mit höchstens 100 Bausteinen sein."
+		)
+	fixed = parse_fixed_versions(doc.get("baustein_versionen"))
+	for name, number in patch.items():
+		if not isinstance(name, str) or not name.strip() or name != name.strip() or len(name) > 240:
+			raise AgentToolError("INVALID_ARGUMENT", "Ein exakter Bausteinname ist erforderlich.")
+		if number is not None and (type(number) is not int or number < 1):
+			raise AgentToolError(
+				"INVALID_ARGUMENT", "Bausteinversion muss eine positive Ganzzahl oder null sein."
+			)
+		api._read("Serienbrief Textbaustein", name)
+		if number is None:
+			fixed.pop(name, None)
+		else:
+			version = tbv.version_by_number(name, number)
+			if not version:
+				raise AgentToolError(
+					"INVALID_ARGUMENT", f"Textbaustein {name}: Version {number} existiert nicht."
+				)
+			# Lock and freeze the snapshot before rendering/validation can load it.
+			if not versioning._seal_if_unchanged(tbv.SPEC, version.name, version.content_hash):
+				raise AgentToolError(
+					"BLOCK_VERSION_CHANGED",
+					"Bausteinversion wurde inzwischen geändert; Versionsliste neu lesen.",
+				)
+			fixed[name] = number
+		# null means today's block, even when the candidate came from a historical bill.
+		for flag in ("textbaustein_snapshots", "textbaustein_bill_rows"):
+			rows = doc.flags.get(flag)
+			if rows is not None:
+				doc.flags[flag] = {key: value for key, value in rows.items() if key != name}
+	doc.baustein_versionen = frappe.as_json(fixed) if fixed else None
+	blocks, _ = api._collect_blocks(doc)
+	used = {block.name for block in blocks}
+	if set(patch) - used:
+		raise AgentToolError(
+			"INVALID_ARGUMENT",
+			"Bausteinversionen dürfen nur für tatsächlich verwendete Bausteine gesetzt werden.",
+		)
+	# Removed references must not retain inherited fixations in a new proposal.
+	fixed = {name: number for name, number in fixed.items() if name in used}
+	doc.baustein_versionen = frappe.as_json(fixed) if fixed else None
+
+
+def _set_source(doc, content, variables=None, description=None, baustein_pfade=None, baustein_versionen=None):
 	from mail_merge.mail_merge.utils.assistant_templates import validate_assistant_source
 
 	try:
@@ -179,14 +238,15 @@ def _set_source(doc, content, variables=None, description=None, baustein_pfade=N
 		doc.set("variables", _variables(variables))
 	if description is not None:
 		doc.description = _text(description, "description", 4000, False)
-	# Only existing blocks may be referenced. Reads honour user permissions.
-	api._collect_blocks(doc)
+	_set_block_versions(doc, baustein_versionen if baustein_versionen is not None else {})
 	if baustein_pfade is not None:
 		pfade = _baustein_pfade(baustein_pfade, doc)
 		doc.inline_baustein_pfade = frappe.as_json(pfade) if pfade else ""
 
 
 def _result(doc, version, *, proposal):
+	from mail_merge.mail_merge.utils.textbaustein_loader import parse_fixed_versions
+
 	return {
 		"template": doc.name,
 		"vorlagenversion": version.name,
@@ -199,13 +259,21 @@ def _result(doc, version, *, proposal):
 		"revision": f"version:{version.name}" if proposal else api._template(doc.name)[2],
 		"url": f"/app/serienbrief-vorlage/{doc.name}",
 		"warnings": layout_warnings(doc.html_content),
+		"baustein_versionen": parse_fixed_versions(doc.get("baustein_versionen")),
 	}
 
 
 @frappe.whitelist(methods=["POST"])
 @api._endpoint
 def create_template(
-	title, category, recipient_doctype, content, variables=None, description=None, baustein_pfade=None
+	title,
+	category,
+	recipient_doctype,
+	content,
+	variables=None,
+	description=None,
+	baustein_pfade=None,
+	baustein_versionen=None,
 ):
 	_write_access()
 	title = _text(title, "title")
@@ -228,7 +296,14 @@ def create_template(
 				"haupt_verteil_objekt": recipient_doctype,
 			}
 		)
-		_set_source(doc, content, variables if variables is not None else [], description, baustein_pfade)
+		_set_source(
+			doc,
+			content,
+			variables if variables is not None else [],
+			description,
+			baustein_pfade,
+			baustein_versionen,
+		)
 		doc.flags.version_source = "KI-Erstellung"
 		doc.flags.version_label = "Vom Assistenten erstellt"
 		doc.insert()
@@ -254,6 +329,7 @@ def propose_template_version(
 	description=None,
 	label=None,
 	baustein_pfade=None,
+	baustein_versionen=None,
 ):
 	live = _write_access(template)
 	from mail_merge.mail_merge.doctype.serienbrief_vorlage.serienbrief_vorlage import TEMPLATE_VERSION_SPEC
@@ -281,7 +357,7 @@ def propose_template_version(
 				"weglassen, um auf dem aktiven Stand aufzubauen.",
 			) from None
 		candidate = template_at_version(live.name, base_version)
-		_set_source(candidate, content, variables, description, baustein_pfade)
+		_set_source(candidate, content, variables, description, baustein_pfade, baustein_versionen)
 		# Candidate references keep the baseline block snapshots; new references
 		# resolve to existing readable blocks and are frozen by the new bill.
 		version_name = versioning.create_version(
@@ -305,3 +381,60 @@ def list_template_versions(template):
 	from mail_merge.mail_merge.doctype.serienbrief_vorlage.serienbrief_vorlage import get_editor_versions
 
 	return get_editor_versions(doc.name)
+
+
+@frappe.whitelist()
+@api._endpoint
+def list_textbaustein_versions(baustein, limit=20, offset=0):
+	"""Read-only, paged history; access follows the parent block, like the editor API."""
+	from mail_merge.mail_merge.utils import textbaustein_versions as tbv
+	from mail_merge.mail_merge.utils import versioning
+
+	doc = api._read("Serienbrief Textbaustein", baustein)
+	limit, offset = min(normalize_limit(limit), 20), normalize_offset(offset)
+	if not versioning.version_doctype_available(tbv.SPEC):
+		raise AgentToolError("NOT_READY", "Versionshistorie fehlt; zuerst migrieren.")
+	current_hash = versioning.snapshot_hash(versioning.build_snapshot(tbv.SPEC, doc))
+	latest = versioning.latest_version(tbv.SPEC, doc.name)
+	rows = frappe.get_all(
+		tbv.VERSION_DOCTYPE,
+		filters={"textbaustein": doc.name},
+		fields=[
+			"name",
+			"version_number",
+			"version_label",
+			"source",
+			"change_summary",
+			"is_protected",
+			"restored_from",
+			"content_hash",
+			"creation",
+			"owner",
+			"sealed",
+			"snapshot",
+			"based_on",
+			"assistant_created",
+		],
+		order_by="version_number desc, name asc",
+		limit_start=offset,
+		limit_page_length=limit + 1,
+	)
+	items = []
+	for row in rows[:limit]:
+		item = versioning.version_metadata(
+			row,
+			current_hash=current_hash,
+			current_version=latest.name if latest else "",
+		)
+		item["content_excerpt"], item["excerpt_truncated"] = plain_text(
+			tbv.snapshot_content(versioning.parse_snapshot(tbv.SPEC, row.snapshot)),
+			300,
+		)
+		item["excerpt_is_unrendered"] = True
+		items.append(item)
+	return {
+		"baustein": doc.name,
+		"items": items,
+		"has_more": len(rows) > limit,
+		"next_offset": offset + limit,
+	}

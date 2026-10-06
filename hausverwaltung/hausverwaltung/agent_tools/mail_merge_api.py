@@ -427,7 +427,16 @@ def _block_summary(core, doc, block):
 				"path": inline.get(key) or defaults.get(key) or "",
 			}
 		)
-	return {"name": block.name, "title": block.title or block.name, "inputs": inputs}
+	fixed = core.fixed_version_number(doc, block.name) or None
+	historic = ((getattr(doc, "flags", None) or {}).get("textbaustein_bill_rows") or {}).get(block.name) or {}
+	return {
+		"name": block.name,
+		"title": block.title or block.name,
+		"inputs": inputs,
+		"fixierte_version": fixed,
+		"version_number": fixed or historic.get("version_number"),
+		"version_source": "fixed" if fixed else "historic" if historic else "current",
+	}
 
 
 @frappe.whitelist()
@@ -547,6 +556,7 @@ def prepare(
 		raise AgentToolError("NOT_FOUND", "Nicht alle Empfänger konnten geladen werden.")
 	outputs, errors = [], []
 	for index, row in enumerate(rows, 1):
+		phase = "context"
 		try:
 			# Report all missing fillable fields before the core's generic variable
 			# error; retain its strict check for every other declared variable.
@@ -564,6 +574,7 @@ def prepare(
 			if missing:
 				raise missing_inputs(missing)
 			run._verify_template_variables_resolved(context, doc)
+			phase = "render"
 			segments = run._render_template_content(doc, context)
 			if not segments:
 				raise AgentToolError("EMPTY_DOCUMENT", "Vorlage liefert keinen Inhalt.")
@@ -576,9 +587,11 @@ def prepare(
 				date=letter_date,
 				variablen_werte=json.dumps({**common, **individual.get(row.iteration_objekt, {})}),
 			)
+			phase = "pdf"
 			pdf = run._render_segments_pdf_bytes(segments, footer_doc=footer)
 			from pypdf import PdfReader
 
+			phase = "pdf_validation"
 			reader = PdfReader(BytesIO(pdf))
 			text = "\n".join(page.extract_text() or "" for page in reader.pages)
 			if not reader.pages or re.search(r"«[^»\n]{1,160}»|\{\{|\{%", text):
@@ -599,7 +612,10 @@ def prepare(
 			)
 		except Exception as exc:
 			errors.append(
-				render_error(exc, recipient=row.iteration_objekt, recipient_doctype=doc.haupt_verteil_objekt)
+				render_error(
+					exc, recipient=row.iteration_objekt, recipient_doctype=doc.haupt_verteil_objekt,
+					phase=phase, template=doc.name, vorlagenversion=run_data["vorlagenversion"],
+				)
 			)
 	if errors:
 		return {"ready": False, "errors": errors, "checked": len(rows), "prepared": len(outputs)}

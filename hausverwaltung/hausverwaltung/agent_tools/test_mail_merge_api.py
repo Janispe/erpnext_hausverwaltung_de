@@ -151,6 +151,7 @@ class TestMailMergeApi(unittest.TestCase):
 		).start()
 		core = patch.object(api, "_renderer", Mock()).start().return_value
 		core._get_template_template_source.return_value = "Hallo"
+		core.fixed_version_number.return_value = None
 		core._resolve_value_path.side_effect = lambda path, context: context.get(path)
 		run = patch.object(frappe, "get_doc", Mock()).start().return_value
 		run._get_iteration_rows.return_value = [frappe._dict(iteration_objekt=n) for n in recipients]
@@ -221,7 +222,19 @@ class TestMailMergeApi(unittest.TestCase):
 		with patch.object(frappe, "get_roles", return_value=[]):
 			brief = api.get_template("Test", include_source="false")["data"]
 			full = api.get_template("Test", include_source="true")["data"]
-		self.assertEqual(brief["blocks"], [{"name": "Block", "title": "Baustein", "inputs": []}])
+		self.assertEqual(
+			brief["blocks"],
+			[
+				{
+					"name": "Block",
+					"title": "Baustein",
+					"inputs": [],
+					"fixierte_version": None,
+					"version_number": None,
+					"version_source": "current",
+				}
+			],
+		)
 		self.assertEqual(brief["warnings"][0]["code"], "FIXED_DATES")
 		self.assertIn("01.01.2020", full["blocks"][0]["source"])
 		self.assertEqual(api.get_template("Test", include_source="yes")["error"]["code"], "INVALID_ARGUMENT")
@@ -322,6 +335,51 @@ class TestMailMergeApi(unittest.TestCase):
 		self.assertEqual(error["issues"][0]["path"], "objekt.wohnung.zustand_aktuell.größe")
 		self.assertEqual(error["issues"][0]["variable"], "flaeche")
 		self.assertEqual(error["action"], "check_recipient_data")
+
+	def test_wrapped_jinja_failure_preserves_root_cause_and_real_location(self):
+		from jinja2 import Environment
+
+		try:
+			try:
+				Environment().from_string("Absatz\n{{ 1 / 0 }}").render()
+			except Exception as cause:
+				cause.serienbrief_render_block = "BAU-1"
+				raise ValueError("VERTRAULICHER BRIEFINHALT") from cause
+		except Exception as wrapped:
+			error = api.render_error(wrapped, recipient="MV-1", recipient_doctype="Mietvertrag")
+		self.assertEqual(error["diagnostic"]["exception_type"], "ZeroDivisionError")
+		self.assertEqual(error["diagnostic"]["line"], 2)
+		self.assertEqual(error["diagnostic"]["baustein"], "BAU-1")
+		self.assertNotIn("VERTRAULICHER", str(error))
+
+	def test_suppressed_context_is_not_reported_as_current_cause(self):
+		try:
+			try:
+				raise ZeroDivisionError()
+			except ZeroDivisionError:
+				raise RuntimeError("VERTRAULICHER INHALT") from None
+		except RuntimeError as current:
+			error = api.render_error(current, recipient="MV-1", recipient_doctype="Mietvertrag")
+		self.assertEqual(error["diagnostic"]["exception_type"], "RuntimeError")
+		self.assertNotIn("VERTRAULICHER", str(error))
+		self.assertNotIn("line", error["diagnostic"])
+
+	def test_pdf_validation_failure_is_distinct_from_template_failure(self):
+		from PyPDF2.errors import PdfReadError
+
+		error = api.render_error(
+			PdfReadError("VERTRAULICHE PDF-DATEN"),
+			recipient="MV-1",
+			recipient_doctype="Mietvertrag",
+			phase="pdf_validation",
+			template="Vorlage",
+			vorlagenversion="VERSION-1",
+		)
+		self.assertEqual(error["action"], "check_pdf_renderer")
+		self.assertEqual(error["diagnostic"]["phase"], "pdf_validation")
+		self.assertEqual(error["diagnostic"]["exception_type"], "PdfReadError")
+		self.assertEqual(error["vorlagenversion"], "VERSION-1")
+		self.assertNotIn("VERTRAULICHE", str(error))
 
 	def test_failure_for_one_recipient_blocks_whole_preparation(self):
 		_, _, run = self.setup_preparation(("MV-1", "MV-2"))
