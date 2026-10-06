@@ -1,12 +1,17 @@
-# Prototyp: direkte Modellwerkzeuge und Code-Zugriff
+# MCP: direkte Modellwerkzeuge und Code-Zugriff
 
-Die Implementierung enthält acht direkte Such-/Detailwerkzeuge und drei direkte Bestandswerkzeuge und einen
-Python-Adapter für einen bereits authentifizierten MCP-Client. Sie wurde
-mit Unit-Tests, echten Frappe-Testdatensätzen auf der isolierten Site
-`fac.localhost` und dem HTTP-MCP-Endpunkt geprüft. Die Testdaten werden
-transaktional zurückgerollt; die Werkzeuge wurden auf der Testsite aktiviert.
-Die OpenClaw-Anbindung liegt nicht in diesem Repository; dort muss die
-Katalogprojektion eingebaut werden. Die ersten acht Werkzeuge sind produktiv installiert. Die folgende Erweiterung ergänzt drei Bestandswerkzeuge und aktualisiert den Client-Adapter; OpenClaw muss den neuen Adapter übernehmen.
+Die Implementierung enthält acht direkte Such-/Detailwerkzeuge, drei direkte
+Bestandswerkzeuge und einen Python-Adapter für einen authentifizierten MCP-Client.
+Die Werkzeugklassen veröffentlichen die Routing-Metadaten über `tools/list`;
+der Adapter übernimmt daraus die Modell- und Code-Kataloge ohne eigene Namensliste.
+Alle elf Fachwerkzeuge sind auf der Produktivsite installiert und aktiviert.
+Unit-Tests, Frappe-Integrationstests auf der isolierten Site `fac.localhost`
+und der HTTP-MCP-Endpunkt wurden geprüft.
+
+Die OpenClaw-Anbindung liegt außerhalb dieses Repositorys und muss den generischen
+Adapter einmalig übernehmen. Danach entdeckt er die freigegebenen Werkzeuge über
+den Serverkatalog. `FAC_PROTOTYPE_TOOL_NAMES` und `include_prototype` bleiben nur
+als Kompatibilitätsnamen für bestehende Einrichtungsskripte erhalten.
 
 ## Direkter Bestand: Listen, Zählen und Belegung
 
@@ -228,7 +233,7 @@ mit einem System-Manager-Kontext ausführen; `TESTSITE` und `API_USER` ersetzen:
 ```bash
 bench --site TESTSITE execute \
   hausverwaltung.hausverwaltung.services.fac_setup.enable_external_tools \
-  --kwargs '{"user":"API_USER","include_prototype":true}'
+  --kwargs '{"user":"API_USER","include_focused_tools":true}'
 ```
 
 Das aktiviert wie bisher alle regulären eigenen externen FAC-Tools und
@@ -317,7 +322,7 @@ werden, die Ergebnisse wieder vervielfacht oder Code-Rohdaten ausgibt.
 ```bash
 python -m unittest \
   hausverwaltung.hausverwaltung.agent_tools.test_fac_overviews \
-  hausverwaltung.hausverwaltung.agent_tools.test_fac_prototype \
+  hausverwaltung.hausverwaltung.agent_tools.test_fac_routing \
   hausverwaltung.hausverwaltung.agent_tools.test_fac_output.TestFacOutput \
   hausverwaltung.hausverwaltung.agent_tools.test_fac_output.TestFacContract
 ```

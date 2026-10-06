@@ -301,9 +301,9 @@ class TestOverviewSite(unittest.TestCase):
 
 	def test_fac_wrappers_validate_schemas_and_preserve_response(self):
 		from hausverwaltung.hausverwaltung.agent_tools import fac_tools
-		from hausverwaltung.hausverwaltung.agent_tools.fac_contract import FAC_PROTOTYPE_TOOL_NAMES
+		from hausverwaltung.hausverwaltung.agent_tools.fac_contract import FAC_OVERVIEW_TOOL_NAMES
 
-		for name in FAC_PROTOTYPE_TOOL_NAMES:
+		for name in FAC_OVERVIEW_TOOL_NAMES:
 			tool = getattr(fac_tools, f"Fac_{name}")()
 			self.assertEqual(tool.category, "read_only")
 			self.assertFalse(tool.inputSchema["additionalProperties"])

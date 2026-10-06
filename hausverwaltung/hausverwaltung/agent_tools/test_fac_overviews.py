@@ -4,7 +4,7 @@ import unittest
 from copy import deepcopy
 
 from hausverwaltung.hausverwaltung.agent_tools import fac_overview as overview
-from hausverwaltung.hausverwaltung.agent_tools.fac_contract import FAC_PROTOTYPE_TOOL_NAMES
+from hausverwaltung.hausverwaltung.agent_tools.fac_contract import FAC_OVERVIEW_TOOL_NAMES
 from hausverwaltung.hausverwaltung.agent_tools.fac_overview_tools import OVERVIEW_TOOLS
 
 
@@ -273,4 +273,4 @@ class TestBusinessOverviews(unittest.TestCase):
 		self.assertEqual(result["code_workflows"]["bulk"], [])
 
 	def test_registered_tools_have_schemas(self):
-		self.assertEqual(set(FAC_PROTOTYPE_TOOL_NAMES), set(OVERVIEW_TOOLS))
+		self.assertEqual(set(FAC_OVERVIEW_TOOL_NAMES), set(OVERVIEW_TOOLS))

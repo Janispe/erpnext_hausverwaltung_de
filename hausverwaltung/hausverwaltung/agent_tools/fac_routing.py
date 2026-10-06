@@ -1,4 +1,4 @@
-"""Client-side prototype: expose focused tools to the model, full tools to code.
+"""Metadata-driven client adapter: expose focused tools to the model, full tools to code.
 
 No Frappe dependency. Import this in a code adapter after the authenticated MCP
 client has fetched tools/list. The server remains responsible for permissions.

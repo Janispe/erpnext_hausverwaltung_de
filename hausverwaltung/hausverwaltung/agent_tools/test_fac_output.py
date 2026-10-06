@@ -9,7 +9,7 @@ from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 	FAC_CODE_TOOL_NAMES,
 	FAC_INVENTORY_TOOL_NAMES,
 	FAC_MAIL_MERGE_TOOL_NAMES,
-	FAC_PROTOTYPE_TOOL_NAMES,
+	FAC_OVERVIEW_TOOL_NAMES,
 	FAC_REPORT_TOOL_NAMES,
 	FAC_TOOL_HOOKS,
 	FAC_TOOL_NAMES,
@@ -232,7 +232,7 @@ class TestFacContract(unittest.TestCase):
 			+ len(FAC_REPORT_TOOL_NAMES)
 			+ len(FAC_CODE_TOOL_NAMES)
 			+ len(FAC_MAIL_MERGE_TOOL_NAMES)
-			+ len(FAC_PROTOTYPE_TOOL_NAMES)
+			+ len(FAC_OVERVIEW_TOOL_NAMES)
 			+ len(FAC_INVENTORY_TOOL_NAMES),
 		)
 

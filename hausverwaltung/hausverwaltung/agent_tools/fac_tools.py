@@ -13,7 +13,7 @@ from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 	FAC_INVENTORY_TOOL_NAMES,
 	FAC_MAIL_MERGE_TOOL_NAMES,
 	FAC_MAIL_MERGE_WRITE_TOOL_NAMES,
-	FAC_PROTOTYPE_TOOL_NAMES,
+	FAC_OVERVIEW_TOOL_NAMES,
 	FAC_TOOL_NAMES,
 )
 
@@ -561,7 +561,7 @@ for _name in FAC_TOOL_NAMES:
 	)
 
 
-for _name in (*FAC_PROTOTYPE_TOOL_NAMES, *FAC_INVENTORY_TOOL_NAMES):
+for _name in (*FAC_OVERVIEW_TOOL_NAMES, *FAC_INVENTORY_TOOL_NAMES):
 	globals()[f"Fac_{_name}"] = type(
 		f"Fac_{_name}", (OverviewTool,), {"tool_name": _name, "__module__": __name__}
 	)

@@ -25,8 +25,8 @@ FAC_TOOL_NAMES = (
 # model context, so they are not part of FAC_TOOL_NAMES, which the built-in FAC engines offer to the model.
 FAC_CODE_TOOL_NAMES = ("hv_export_view", "hv_export_report", "agent_mail_merge_get_pdf")
 
-# Opt-in prototype; not advertised to existing built-in assistant engines.
-FAC_PROTOTYPE_TOOL_NAMES = (
+# Focused search and detail tools for external MCP clients.
+FAC_OVERVIEW_TOOL_NAMES = (
 	"hv_get_mieter_overview",
 	"hv_get_wohnung_overview",
 	"hv_get_immobilie_overview",
@@ -36,6 +36,9 @@ FAC_PROTOTYPE_TOOL_NAMES = (
 	"hv_search",
 	"hv_describe_capabilities",
 )
+
+# Compatibility for existing deployment scripts; use FAC_OVERVIEW_TOOL_NAMES in new code.
+FAC_PROTOTYPE_TOOL_NAMES = FAC_OVERVIEW_TOOL_NAMES
 
 # Direct inventory operations complement exact-ID overviews and free-text search.
 FAC_INVENTORY_TOOL_NAMES = ("hv_list_records", "hv_count_records", "hv_get_portfolio_summary")
@@ -72,5 +75,5 @@ FAC_MAIL_MERGE_WRITE_TOOL_NAMES = (
 # Hook imports are resolved by FAC only when its custom_tools plugin is enabled.
 FAC_TOOL_HOOKS = [
 	f"hausverwaltung.hausverwaltung.agent_tools.fac_tools.Fac_{name}"
-	for name in (*FAC_TOOL_NAMES, *FAC_REPORT_TOOL_NAMES, *FAC_CODE_TOOL_NAMES, *FAC_MAIL_MERGE_TOOL_NAMES, *FAC_PROTOTYPE_TOOL_NAMES, *FAC_INVENTORY_TOOL_NAMES)
+	for name in (*FAC_TOOL_NAMES, *FAC_REPORT_TOOL_NAMES, *FAC_CODE_TOOL_NAMES, *FAC_MAIL_MERGE_TOOL_NAMES, *FAC_OVERVIEW_TOOL_NAMES, *FAC_INVENTORY_TOOL_NAMES)
 ]

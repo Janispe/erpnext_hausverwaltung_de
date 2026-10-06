@@ -7,7 +7,7 @@ from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 	FAC_INVENTORY_TOOL_NAMES,
 	FAC_MAIL_MERGE_TOOL_NAMES,
 	FAC_MAIL_MERGE_WRITE_TOOL_NAMES,
-	FAC_PROTOTYPE_TOOL_NAMES,
+	FAC_OVERVIEW_TOOL_NAMES,
 	FAC_REPORT_TOOL_NAMES,
 	FAC_TOOL_NAMES,
 )
@@ -43,8 +43,8 @@ def configure_readonly(user: str):
 
 def configure_tools(user: str, extra_tools: tuple[str, ...] = ()):
 	frappe.only_for("System Manager")
-	all_custom_tools = (*FAC_TOOL_NAMES, *FAC_REPORT_TOOL_NAMES, *FAC_CODE_TOOL_NAMES, *FAC_MAIL_MERGE_TOOL_NAMES, *FAC_PROTOTYPE_TOOL_NAMES, *FAC_INVENTORY_TOOL_NAMES)
-	if not set(extra_tools) <= set((*FAC_REPORT_TOOL_NAMES, *FAC_CODE_TOOL_NAMES, *FAC_MAIL_MERGE_TOOL_NAMES, *FAC_PROTOTYPE_TOOL_NAMES, *FAC_INVENTORY_TOOL_NAMES)):
+	all_custom_tools = (*FAC_TOOL_NAMES, *FAC_REPORT_TOOL_NAMES, *FAC_CODE_TOOL_NAMES, *FAC_MAIL_MERGE_TOOL_NAMES, *FAC_OVERVIEW_TOOL_NAMES, *FAC_INVENTORY_TOOL_NAMES)
+	if not set(extra_tools) <= set((*FAC_REPORT_TOOL_NAMES, *FAC_CODE_TOOL_NAMES, *FAC_MAIL_MERGE_TOOL_NAMES, *FAC_OVERVIEW_TOOL_NAMES, *FAC_INVENTORY_TOOL_NAMES)):
 		frappe.throw("Unbekanntes zusaetzliches FAC-Werkzeug.")
 	allowed_custom_tools = set(FAC_TOOL_NAMES) | set(extra_tools)
 	from frappe_assistant_core.core.tool_registry import get_tool_registry
@@ -91,7 +91,9 @@ def configure_tools(user: str, extra_tools: tuple[str, ...] = ()):
 		frappe.throw("Der FAC-Werkzeugkatalog entspricht nicht dem freigegebenen Werkzeugkatalog.")
 
 
-def enable_external_tools(user: str = "Administrator", include_prototype: bool = False):
+def enable_external_tools(
+	user: str = "Administrator", include_focused_tools: bool = False, *, include_prototype: bool = False
+):
 	"""Enable this app's MCP tools without changing unrelated FAC plugins or core tools."""
 	frappe.only_for("System Manager")
 	if not frappe.db.exists("User", user):
@@ -105,8 +107,9 @@ def enable_external_tools(user: str = "Administrator", include_prototype: bool =
 	get_plugin_manager().enable_plugin("custom_tools")
 	frappe.db.set_value("User", user, "assistant_enabled", 1)
 	names = (*FAC_TOOL_NAMES, *FAC_REPORT_TOOL_NAMES, *FAC_CODE_TOOL_NAMES, *FAC_MAIL_MERGE_TOOL_NAMES)
-	if include_prototype:
-		names = (*names, *FAC_PROTOTYPE_TOOL_NAMES, *FAC_INVENTORY_TOOL_NAMES)
+	# Keep the old keyword compatible with existing deployment scripts.
+	if include_focused_tools or include_prototype:
+		names = (*names, *FAC_OVERVIEW_TOOL_NAMES, *FAC_INVENTORY_TOOL_NAMES)
 	for name in names:
 		if frappe.db.exists("FAC Tool Configuration", name):
 			config = frappe.get_doc("FAC Tool Configuration", name)
