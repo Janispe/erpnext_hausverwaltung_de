@@ -36,10 +36,10 @@ frappe.query_reports["Kautionskonten"] = {
 
 	onload: function (report) {
 		report.page.add_inner_button(__("Drucken"), () => {
-			open_kautionskonten_compact_print(report);
+			open_kautionskonten_compact_print_dialog(report, false);
 		});
 		report.page.add_inner_button(__("PDF"), () => {
-			open_kautionskonten_print_dialog(report, true);
+			open_kautionskonten_compact_print_dialog(report, true);
 		});
 	},
 
@@ -69,9 +69,6 @@ const KAUTIONSKONTEN_PRINT_COLUMNS = [
 	"kautionskonto",
 	"iban",
 	"kaution_betrag",
-	"saldo",
-	"differenz",
-	"kaution_notizen",
 ];
 
 const KAUTIONSKONTEN_COMPACT_COLUMNS = [
@@ -86,45 +83,67 @@ const KAUTIONSKONTEN_COMPACT_COLUMNS = [
 	{ fieldname: "kaution_notizen", label: __("Notizen"), type: "text" },
 ];
 
-function open_kautionskonten_print_dialog(report, as_pdf) {
-	const dialog = frappe.ui.get_print_settings(
-		false,
-		(print_settings) => {
-			print_settings.orientation = "Landscape";
-			print_settings.include_filters = 1;
-			if (!print_settings.pick_columns) {
-				print_settings.columns = KAUTIONSKONTEN_PRINT_COLUMNS.filter((fieldname) =>
-					report.columns?.some((column) => column.fieldname === fieldname)
-				);
-			}
-			if (as_pdf) {
-				report.pdf_report(print_settings);
-			} else {
-				report.print_report(print_settings);
-			}
-		},
-		report.report_doc?.letter_head,
-		report.get_visible_columns()
-	);
-	report.add_portrait_warning?.(dialog);
-}
-
-function open_kautionskonten_compact_print(report) {
-	const rows = report.data || [];
-	if (!rows.length) {
+function open_kautionskonten_compact_print_dialog(report, as_pdf) {
+	if (!report.data?.length) {
 		frappe.msgprint(__("Keine Daten zum Drucken vorhanden."));
 		return;
 	}
 
+	const dialog = new frappe.ui.Dialog({
+		title: as_pdf ? __("Spalten für das PDF") : __("Spalten für den Ausdruck"),
+		fields: [
+			{
+				fieldname: "columns",
+				fieldtype: "MultiCheck",
+				label: __("Spalten"),
+				columns: 2,
+				sort_options: false,
+				select_all: true,
+				options: KAUTIONSKONTEN_COMPACT_COLUMNS.map((column) => ({
+					label: column.label,
+					value: column.fieldname,
+					checked: KAUTIONSKONTEN_PRINT_COLUMNS.includes(column.fieldname),
+				})),
+			},
+		],
+		primary_action_label: as_pdf ? __("PDF erstellen") : __("Drucken"),
+		primary_action(values) {
+			const selected = new Set(values.columns || []);
+			const columns = KAUTIONSKONTEN_COMPACT_COLUMNS.filter((column) => selected.has(column.fieldname));
+			if (!columns.length) {
+				frappe.msgprint(__("Bitte mindestens eine Spalte auswählen."));
+				return;
+			}
+			if (as_pdf) {
+				frappe.render_pdf(build_kautionskonten_print_html(report, columns, false), {
+					orientation: "Landscape",
+					report_name: "Kautionskonten.pdf",
+				});
+			} else {
+				open_kautionskonten_compact_print(report, columns);
+			}
+			dialog.hide();
+		},
+	});
+	dialog.show();
+}
+
+function open_kautionskonten_compact_print(report, columns) {
 	const print_window = window.open("", "_blank");
 	if (!print_window) {
 		frappe.msgprint(__("Der Browser hat das Druckfenster blockiert."));
 		return;
 	}
+	print_window.document.open();
+	print_window.document.write(build_kautionskonten_print_html(report, columns, true));
+	print_window.document.close();
+}
 
+function build_kautionskonten_print_html(report, columns, auto_print) {
+	const rows = report.data || [];
 	const filters = build_kautionskonten_filter_text(report);
 	const generated_at = frappe.datetime.str_to_user(frappe.datetime.now_datetime());
-	const html = `
+	return `
 		<!doctype html>
 		<html>
 		<head>
@@ -140,13 +159,13 @@ function open_kautionskonten_compact_print(report) {
 					font-size: 10px;
 				}
 				header {
-					display: flex;
-					justify-content: space-between;
-					gap: 16px;
 					margin-bottom: 10px;
 					border-bottom: 1px solid #d1d5db;
 					padding-bottom: 8px;
 				}
+				header::after { content: ""; display: table; clear: both; }
+				header > div:first-child { float: left; }
+				header > div:last-child { float: right; }
 				h1 {
 					margin: 0 0 4px;
 					font-size: 18px;
@@ -171,8 +190,10 @@ function open_kautionskonten_compact_print(report) {
 					border: 1px solid #d1d5db;
 					padding: 4px 5px;
 					vertical-align: top;
-					overflow-wrap: anywhere;
+					word-wrap: break-word;
 				}
+				thead { display: table-header-group; }
+				tr { page-break-inside: avoid; }
 				th {
 					background: #f3f4f6;
 					font-weight: 700;
@@ -213,26 +234,19 @@ function open_kautionskonten_compact_print(report) {
 			</header>
 			<table>
 				<thead>
-					<tr>${KAUTIONSKONTEN_COMPACT_COLUMNS.map(render_print_header).join("")}</tr>
+					<tr>${columns.map(render_print_header).join("")}</tr>
 				</thead>
 				<tbody>
-					${rows.map(render_kautionskonten_print_row).join("")}
+					${rows.map((row) => render_kautionskonten_print_row(row, columns)).join("")}
 				</tbody>
-				<tfoot>
-					${render_kautionskonten_print_total_row(rows)}
-				</tfoot>
+				${columns.some((column) => column.type === "currency")
+					? `<tfoot>${render_kautionskonten_print_total_row(rows, columns)}</tfoot>`
+					: ""}
 			</table>
-			<script>
-				window.onload = function () {
-					window.print();
-				};
-			</script>
+			${auto_print ? `<script>window.onload = function () { window.print(); };</script>` : ""}
 		</body>
 		</html>
 	`;
-	print_window.document.open();
-	print_window.document.write(html);
-	print_window.document.close();
 }
 
 function render_print_header(column) {
@@ -240,11 +254,11 @@ function render_print_header(column) {
 	return `<th${cls}>${escape_html(column.label)}</th>`;
 }
 
-function render_kautionskonten_print_row(row) {
-	return `<tr>${KAUTIONSKONTEN_COMPACT_COLUMNS.map((column) => render_print_cell(row, column)).join("")}</tr>`;
+function render_kautionskonten_print_row(row, columns) {
+	return `<tr>${columns.map((column) => render_print_cell(row, column)).join("")}</tr>`;
 }
 
-function render_kautionskonten_print_total_row(rows) {
+function render_kautionskonten_print_total_row(rows, columns) {
 	const totals = rows.reduce(
 		(acc, row) => {
 			acc.kaution_betrag += Number(row.kaution_betrag || 0);
@@ -255,8 +269,9 @@ function render_kautionskonten_print_total_row(rows) {
 		},
 		{ kaution_betrag: 0, saldo: 0, differenz: 0, currency: null }
 	);
-	const cells = KAUTIONSKONTEN_COMPACT_COLUMNS.map((column, index) => {
-		if (index === 0) {
+	const label_index = columns.findIndex((column) => column.type !== "currency");
+	const cells = columns.map((column, index) => {
+		if (index === label_index) {
 			return `<td><strong>${escape_html(__("Summe"))}</strong></td>`;
 		}
 		if (["kaution_betrag", "saldo", "differenz"].includes(column.fieldname)) {
