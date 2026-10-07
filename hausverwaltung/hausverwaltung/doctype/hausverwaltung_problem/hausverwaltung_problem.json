@@ -1,6 +1,6 @@
 {
  "actions": [],
- "autoname": "hash",
+ "autoname": "",
  "creation": "2026-08-25 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -218,11 +218,27 @@
  "sort_field": "zuletzt_erkannt_am",
  "sort_order": "DESC",
  "states": [
-  {"color": "Red", "title": "Offen"},
-  {"color": "Orange", "title": "In Bearbeitung"},
-  {"color": "Green", "title": "Behoben"},
-  {"color": "Gray", "title": "Akzeptiert"}
+  {
+   "color": "Red",
+   "title": "Offen"
+  },
+  {
+   "color": "Orange",
+   "title": "In Bearbeitung"
+  },
+  {
+   "color": "Green",
+   "title": "Behoben"
+  },
+  {
+   "color": "Gray",
+   "title": "Akzeptiert"
+  }
  ],
  "title_field": "titel",
- "track_changes": 1
+ "track_changes": 1,
+ "show_title_field_in_link": 1,
+ "search_fields": "titel",
+ "naming_rule": "By script",
+ "allow_rename": 0
 }

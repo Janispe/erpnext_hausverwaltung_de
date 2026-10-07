@@ -367,7 +367,7 @@ def _merge_invoices(group_key: str, members: list[InvoiceInfo]) -> InvoiceInfo:
 		{CATEGORY_LABELS[cat] for cat, amt in merged_categories.items() if abs(flt(amt)) > TOLERANCE}
 	)
 	monat = anchor.posting_date.strftime("%m/%Y") if anchor.posting_date else ""
-	mv_part = group_key.split("|", 1)[0] if "|" in group_key else ""
+	mv_part = group_key.rsplit("|", 1)[0] if "|" in group_key else ""
 	header = f"Mietabrechnung {monat}".strip()
 	if category_labels_in_group:
 		header += f" ({' + '.join(category_labels_in_group)})"

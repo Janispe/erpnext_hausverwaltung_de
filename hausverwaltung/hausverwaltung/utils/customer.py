@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import uuid
-
 import frappe
+
+from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
 
 
 def get_or_create_customer_group() -> str:
@@ -63,56 +62,20 @@ def get_or_create_customer_group() -> str:
 
 
 def build_customer_id(wohnlabel: str, von_date: str, nachname: str) -> str:
-	"""Generiert eine sprechende Customer-ID im Schema ``{nachname} - {wohnung}``.
+	"""Reserve a new Debitor ID for an import before its contract is inserted.
 
-	Nachname zuerst, damit Listen-/Report-Sortierung alphabetisch nach Mieter
-	läuft. Bei Kollision (selber Nachname + selbe Wohnung) wird ein
-	numerischer Suffix angehängt: ``... (2)``, ``... (3)``.
-
-	Fallback (wenn weder Wohnung noch Nachname bekannt): zufällige UUID-ID.
-
-	Args:
-	    wohnlabel: Wohnungs-Name (z.B. "Kirchhof | VH | EG links").
-	    von_date: Wird aktuell nicht verwendet — bleibt für Backward-Compat im Signaturen.
-	    nachname: Nachname des Mieters (oder Vorname als Fallback).
+	The arguments remain compatible with existing importers. Person, apartment
+	and contract dates belong in display fields and do not form the database ID.
+	Every call reserves a separate ID; a second tenancy never reuses a Customer.
 	"""
-	_ = von_date  # Backward-Compat-Parameter, aktuell ungenutzt
-	wohn = (wohnlabel or "").strip()
-	nm = (nachname or "").strip()
-
-	if wohn and nm:
-		base = f"{nm} - {wohn}"
-	elif wohn:
-		base = wohn
-	elif nm:
-		base = nm
-	else:
-		# Weder Wohnung noch Nachname — Fallback auf altes UUID-Schema
-		while True:
-			candidate = f"MIETER-{uuid.uuid4().hex[:10].upper()}"
-			if not frappe.db.exists("Customer", candidate, cache=False):
-				return candidate
-
-	if not frappe.db.exists("Customer", base, cache=False):
-		return base
-
-	# Kollisionsauflösung: gleiche Wohnung + gleicher Nachname → numerisches Suffix
-	for n in range(2, 100):
-		candidate = f"{base} ({n})"
-		if not frappe.db.exists("Customer", candidate, cache=False):
-			return candidate
-
-	# Notfall-Fallback: random Suffix
-	return f"{base} {uuid.uuid4().hex[:6].upper()}"
+	return make_document_name("Customer")
 
 
 def build_contract_customer_id(base_name: str, mietvertrag: str) -> str:
-	"""Return a stable Customer ID owned by exactly one Mietvertrag.
+	"""Reserve a short Debitor ID for a persisted, uniquely identified contract.
 
-	Human-readable names are not identities: two unrelated tenants can have the
-	same surname in the same apartment at different times.  The contract digest
-	keeps the readable prefix while making the database key stable and
-	collision-resistant without renaming existing Customers.
+	The existing signature remains compatible; the readable prefix is no longer
+	part of the database ID. The contract retains its Customer link permanently.
 	"""
 	contract_name = (mietvertrag or "").strip()
 	if not contract_name:
@@ -121,12 +84,7 @@ def build_contract_customer_id(base_name: str, mietvertrag: str) -> str:
 			frappe.ValidationError,
 		)
 
-	base = (base_name or "").strip() or "Mieter"
-	digest = hashlib.sha256(contract_name.encode("utf-8")).hexdigest()[:32].upper()
-	suffix = f" [MV-{digest}]"
-	# Frappe document names are limited to 140 characters.
-	prefix = base[: 140 - len(suffix)].rstrip()
-	return f"{prefix}{suffix}"
+	return make_document_name("Customer")
 
 
 def get_or_create_customer(
@@ -134,19 +92,20 @@ def get_or_create_customer(
 	customer_name: str | None = None,
 	company: str | None = None,
 	*,
-	reuse_existing: bool = True,
+	reuse_existing: bool = False,
+	hv_display_title: str | None = None,
 ) -> str:
 	"""Erzeugt (oder holt) einen Customer-Datensatz.
 
 	Die Buchung läuft über ein Sammelkonto Debitoren (Company.default_receivable_account);
 	pro Customer wird kein eigenes Konto gepinnt.
 
-	Der ``cust_id``-Parameter (typischerweise von ``build_customer_id`` —
-	Schema ``{wohnung} Mieter: {nachname}``) wird als Doc-Name erzwungen,
+	Der ``cust_id``-Parameter (typischerweise eine reservierte ``DEB-#####``)
+	wird als Doc-Name erzwungen,
 	auch wenn ``Selling Settings.cust_master_name`` auf "Naming Series" steht.
 	Die ``customer_name``-Anzeige bleibt der Personen-/Familienname.
 
-	Mit ``reuse_existing=False`` wird eine Namenskollision blockiert. Dieser
+	Standardmäßig wird eine Namenskollision blockiert. Dieser
 	Modus ist für vertragsgebundene Customer zwingend, damit ein fremder
 	gleichnamiger Debitor niemals still übernommen wird.
 	"""
@@ -171,7 +130,8 @@ def get_or_create_customer(
 	doc.customer_group = group
 	if company:
 		doc.company = company
-	# cust_id (z. B. "Kirchhof | VH | EG links Mieter: Otto") als Doc-Name erzwingen.
+	doc.hv_display_title = (hv_display_title or customer_name).strip()[:240]
+	# Die reservierte Debitoren-ID als Doc-Name erzwingen.
 	# `flags.name_set` verhindert, dass Frappes autoname-Logik ihn überschreibt
 	# (relevant wenn Selling Settings.cust_master_name = "Naming Series").
 	doc.name = cust_id

@@ -572,7 +572,7 @@ def _resolve_invoice_mietvertrag(si) -> dict[str, str | None]:
 
     mietabrechnung_id = getattr(si, "mietabrechnung_id", None)
     if not mietvertrag and mietabrechnung_id and "|" in str(mietabrechnung_id):
-        candidate = str(mietabrechnung_id).split("|", 1)[0].strip()
+        candidate = str(mietabrechnung_id).rsplit("|", 1)[0].strip()
         if candidate:
             mietvertrag = candidate
 
@@ -589,7 +589,7 @@ def _resolve_invoice_mietvertrag(si) -> dict[str, str | None]:
                 wohnung=getattr(si, "wohnung", None) if _meta_has_field("Sales Invoice", "wohnung") else None,
             )
             if resolved and "|" in resolved:
-                mietvertrag = resolved.split("|", 1)[0].strip()
+                mietvertrag = resolved.rsplit("|", 1)[0].strip()
         except Exception:
             mietvertrag = None
 

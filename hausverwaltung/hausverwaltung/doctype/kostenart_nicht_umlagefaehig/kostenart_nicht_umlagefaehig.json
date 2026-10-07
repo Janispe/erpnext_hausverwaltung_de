@@ -59,5 +59,7 @@
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
- "title_field": "name1"
+ "title_field": "name1",
+ "show_title_field_in_link": 1,
+ "search_fields": "name1"
 }

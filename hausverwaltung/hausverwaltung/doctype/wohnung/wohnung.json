@@ -1,10 +1,11 @@
 {
  "actions": [],
- "autoname": "format:{immobilie} | {gebaeudeteil} | {name__lage_in_der_immobilie}",
+ "autoname": "",
  "creation": "2025-06-12 18:45:24.824402",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "bezeichnung",
   "name__lage_in_der_immobilie",
   "immobilie",
   "immobilie_knoten",
@@ -29,6 +30,15 @@
   "amended_from"
  ],
  "fields": [
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "label": "Bezeichnung",
+   "read_only": 1,
+   "allow_on_submit": 1,
+   "in_list_view": 1,
+   "length": 240
+  },
   {
    "fieldname": "name__lage_in_der_immobilie",
    "fieldtype": "Data",
@@ -136,8 +146,9 @@
   {
    "fieldname": "id",
    "fieldtype": "Int",
-   "label": "ID",
-   "read_only": 1
+   "label": "Alte Wohnungsnummer / Importnummer",
+   "read_only": 1,
+   "description": "Fachliche Nummer aus dem bisherigen System. Sie ist unabhängig von der Dokumentnummer."
   },
   {
    "description": "Optionaler Tag-Name in Paperless NGX f\u00fcr die Suche.",
@@ -191,7 +202,7 @@
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
  "name": "Wohnung",
- "naming_rule": "By fieldname",
+ "naming_rule": "By script",
  "owner": "Administrator",
  "permissions": [
   {
@@ -238,5 +249,9 @@
    "color": "Gray",
    "title": "Inaktiv(z.b Zusammengelegt)"
   }
- ]
+ ],
+ "allow_rename": 0,
+ "title_field": "bezeichnung",
+ "show_title_field_in_link": 1,
+ "search_fields": "bezeichnung,immobilie,name__lage_in_der_immobilie"
 }

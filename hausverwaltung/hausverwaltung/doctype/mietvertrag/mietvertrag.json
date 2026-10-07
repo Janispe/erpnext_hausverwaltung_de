@@ -1,6 +1,6 @@
 {
  "actions": [],
- "autoname": "format:{wohnung} Mietvertrag: {von}",
+ "autoname": "",
  "creation": "2025-06-13 01:36:16.093431",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -404,7 +404,7 @@
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
  "name": "Mietvertrag",
- "naming_rule": "Expression (old style)",
+ "naming_rule": "By script",
  "owner": "Administrator",
  "permissions": [
   {
@@ -479,5 +479,6 @@
   }
  ],
  "title_field": "bezeichnung",
- "track_changes": 1
+ "track_changes": 1,
+ "allow_rename": 0
 }

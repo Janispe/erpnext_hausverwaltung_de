@@ -1,11 +1,12 @@
 {
  "actions": [],
- "allow_rename": 1,
+ "allow_rename": 0,
  "creation": "2025-06-18 02:25:28.772926",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "_section",
+  "bezeichnung",
   "datum",
   "von",
   "bis",
@@ -41,6 +42,18 @@
    "fieldname": "_section",
    "fieldtype": "Section Break",
    "label": " "
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Anzeigetitel",
+   "read_only": 1,
+   "description": "Lesbarer, automatisch gepflegter Titel. Die technische Dokument-ID bleibt unverändert.",
+   "in_preview": 1,
+   "length": 240,
+   "search_index": 1
   },
   {
    "fieldname": "datum",
@@ -240,7 +253,6 @@
    "read_only": 1
   }
  ],
- "autoname": "format:{mieter}-{wohnung}-{von}-{bis}",
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
@@ -269,5 +281,9 @@
  "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "naming_rule": "By script",
+ "title_field": "bezeichnung",
+ "show_title_field_in_link": 1,
+ "search_fields": "bezeichnung,wohnung,mietvertrag,customer"
 }

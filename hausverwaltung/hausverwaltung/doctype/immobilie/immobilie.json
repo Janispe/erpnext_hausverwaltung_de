@@ -1,6 +1,6 @@
 {
  "actions": [],
- "autoname": "field:bezeichnung",
+ "autoname": "",
  "creation": "2025-06-12 18:20:16.311989",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -173,7 +173,8 @@
   {
    "fieldname": "immobilien_id",
    "fieldtype": "Int",
-   "label": "ID"
+   "label": "Alte Immobiliennummer / Importnummer",
+   "description": "Fachliche Nummer aus dem bisherigen System. Sie ist unabhängig von der Dokumentnummer."
   },
   {
    "fieldname": "gesamtwohnflaeche",
@@ -266,7 +267,7 @@
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
  "name": "Immobilie",
- "naming_rule": "By fieldname",
+ "naming_rule": "By script",
  "nsm_parent_field": "parent_immobilie",
  "owner": "Administrator",
  "permissions": [
@@ -291,5 +292,6 @@
  "sort_order": "DESC",
  "states": [],
  "title_field": "adresse_titel",
- "track_changes": 1
+ "track_changes": 1,
+ "allow_rename": 0
 }

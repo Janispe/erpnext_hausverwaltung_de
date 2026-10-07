@@ -30,11 +30,7 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaim
 	calc_hk_vorauszahlungen,
 )
 from hausverwaltung.hausverwaltung.utils.settlement_identity import hk_marker_owner
-from hausverwaltung.hausverwaltung.utils.mieter_name import (
-	get_contact_last_name,
-	pick_preferred_mieter_contact,
-	sanitize_name_part,
-)
+from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
 
 
 def _row_value(row: object, fieldname: str) -> Any:
@@ -171,39 +167,9 @@ def _settlement_marker_owners(remarks: Any) -> List[str]:
 
 class HeizkostenabrechnungMieter(Document):
 	def autoname(self) -> None:
-		if getattr(self, "name", None):
+		if getattr(self, "amended_from", None):
 			return
-
-		# Falls die UI keine Mieter-Tabelle pflegt, weichen wir auf den Customer aus.
-		mieter_contact = pick_preferred_mieter_contact(getattr(self, "mieter", None)) or self.customer or "Mieter"
-
-		# Kompakter Name: Mieter-Last-Name (oder Customer-Anfang) + Wohnung + Periode
-		# Wir vermeiden den vollen Customer-String mehrfach, weil der oft schon
-		# "G | VH | 4.OG rechts Mieter: Müller" ist (≈ 40 Zeichen).
-		last_name = sanitize_name_part(get_contact_last_name(mieter_contact))
-		short_mieter = last_name or sanitize_name_part(str(mieter_contact))[:30]
-
-		base_parts = [
-			short_mieter,
-			sanitize_name_part(str(self.wohnung)) if self.wohnung else "",
-			str(self.von) if self.von else "",
-			str(self.bis) if self.bis else "",
-		]
-		base_name = "-".join([p for p in base_parts if p]).strip()
-		if not base_name:
-			return
-
-		# MySQL `tab*.name` ist VARCHAR(140) — wir lassen Puffer für Suffix.
-		MAX_NAME_LEN = 130
-		if len(base_name) > MAX_NAME_LEN:
-			base_name = base_name[:MAX_NAME_LEN].rstrip("-")
-
-		candidate = base_name
-		suffix = 1
-		while frappe.db.exists("Heizkostenabrechnung Mieter", candidate, cache=False):
-			suffix += 1
-			candidate = f"{base_name}-{suffix}"
-		self.name = candidate
+		self.name = make_document_name(self.doctype)
 
 	def validate(self) -> None:
 		if self.von and self.bis and self.von > self.bis:

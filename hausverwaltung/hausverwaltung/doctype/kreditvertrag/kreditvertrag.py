@@ -18,9 +18,9 @@ from typing import Optional
 
 import frappe
 from frappe.model.document import Document
-from frappe.model.naming import make_autoname
 from frappe.utils import add_months, cint, flt, getdate, nowdate
 
+from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
 
 STATUS_AKTIV = "Aktiv"
 STATUS_ABGELOEST = "Abgelöst"
@@ -37,39 +37,12 @@ MAX_FINAL_ROUNDING_DIFFERENCE = Decimal("1.00")
 MAX_PLAN_ROWS = 600
 
 
-def _normalize_vertragsnummer(value: str) -> str:
-	"""Macht eine Data-Vertragsnummer URL-/Name-fähig.
-
-	Nur ``A-Z a-z 0-9`` erlauben, alles andere → ``-`` zusammengefasst, Trim
-	an den Enden. Leerer Input und nur-Sonderzeichen ergeben ``""``.
-	"""
-	if not value:
-		return ""
-	return re.sub(r"[^A-Za-z0-9]+", "-", value).strip("-")
-
-
 class Kreditvertrag(Document):
 	def autoname(self):
-		"""``KV-{vertragsnummer-norm}-{Auszahlungsjahr}-{####}`` mit graceful fallbacks.
-
-		- voll: ``KV-1-2020-0001``
-		- ohne Vertragsnummer: ``KV-2020-0001``
-		- ohne Auszahlungsdatum: ``KV-1-0001``
-		- ohne beides: ``KV-0001``
-
-		Wichtig: ``laufzeit_start`` ist beim Insert oft noch ein ISO-String
-		(Frappe konvertiert Date-Felder erst beim Save). Daher ``getdate()``
-		zwingend vor ``.year``.
-		"""
-		nr = _normalize_vertragsnummer(self.vertragsnummer or "")
-		start = getdate(self.laufzeit_start) if self.laufzeit_start else None
-		parts = ["KV"]
-		if nr:
-			parts.append(nr)
-		if start:
-			parts.append(str(start.year))
-		prefix = "-".join(parts)
-		self.name = make_autoname(f"{prefix}-.####")
+		"""Allocate a stable ID; lender, external number and dates belong in the title."""
+		if getattr(self, "amended_from", None):
+			return
+		self.name = make_document_name(self.doctype)
 
 	def validate(self):
 		# bezeichnung zuerst auto-fillen, damit nachgelagerte Logik den Wert sieht

@@ -113,5 +113,7 @@
  "sort_order": "DESC",
  "is_submittable": 1,
  "autoname": "format:{vorlagenkennung}-v{version}",
- "title_field": "bezeichnung"
+ "title_field": "bezeichnung",
+ "show_title_field_in_link": 1,
+ "search_fields": "bezeichnung"
 }

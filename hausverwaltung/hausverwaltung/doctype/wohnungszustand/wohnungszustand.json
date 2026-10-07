@@ -1,12 +1,13 @@
 {
  "actions": [],
- "allow_rename": 1,
- "autoname": "format: {wohnung} {ab}",
+ "allow_rename": 0,
+ "autoname": "",
  "creation": "2025-06-19 22:21:41.111386",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "bezeichnung",
   "vorheriger_zustand",
   "column_break_esbo",
   "folgender_zustand",
@@ -32,6 +33,15 @@
   "amended_from"
  ],
  "fields": [
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "label": "Bezeichnung",
+   "read_only": 1,
+   "allow_on_submit": 1,
+   "in_list_view": 1,
+   "length": 240
+  },
   {
    "fieldname": "gr\u00f6\u00dfe",
    "fieldtype": "Float",
@@ -183,7 +193,7 @@
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
  "name": "Wohnungszustand",
- "naming_rule": "Expression (old style)",
+ "naming_rule": "By script",
  "owner": "Administrator",
  "permissions": [
   {
@@ -203,5 +213,8 @@
  "show_preview_popup": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "title_field": "bezeichnung",
+ "show_title_field_in_link": 1,
+ "search_fields": "bezeichnung,wohnung,ab"
 }

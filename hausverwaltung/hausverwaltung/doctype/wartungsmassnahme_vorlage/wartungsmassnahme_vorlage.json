@@ -51,5 +51,7 @@
  ],
  "sort_field": "bezeichnung",
  "sort_order": "ASC",
- "title_field": "bezeichnung"
+ "title_field": "bezeichnung",
+ "show_title_field_in_link": 1,
+ "search_fields": "bezeichnung"
 }

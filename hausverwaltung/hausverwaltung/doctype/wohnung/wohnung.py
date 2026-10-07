@@ -1,9 +1,10 @@
+from re import sub
+from urllib.parse import urlencode
+
 import frappe
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import nowdate
-from re import sub
-from urllib.parse import urlencode
 
 from hausverwaltung.hausverwaltung.integrations.paperless import (
 	PaperlessConfig,
@@ -12,6 +13,7 @@ from hausverwaltung.hausverwaltung.integrations.paperless import (
 	_normalize_key,
 	_resolve_tag_id,
 )
+from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
 from hausverwaltung.hausverwaltung.utils.gebaeudeteil import (
 	normalize_gebaeudeteil_to_standard,
 	split_lage_gebaeudeteil,
@@ -77,31 +79,8 @@ def build_wohnung_name(
 
 class Wohnung(Document):
 	def autoname(self):
-		base = build_wohnung_name(
-			immobilie=getattr(self, "immobilie", None),
-			gebaeudeteil=getattr(self, "gebaeudeteil", None),
-			lage_in_der_immobilie=getattr(self, "name__lage_in_der_immobilie", None),
-			fallback_id=getattr(self, "id", None),
-		)
-
-		candidate = base
-		if not frappe.db.exists("Wohnung", candidate):
-			self.name = candidate
-			return
-
-		if getattr(self, "id", None):
-			with_id = f"{base} ({self.id})"
-			if not frappe.db.exists("Wohnung", with_id):
-				self.name = with_id
-				return
-
-		i = 2
-		while True:
-			candidate = f"{base} ({i})"
-			if not frappe.db.exists("Wohnung", candidate):
-				self.name = candidate
-				return
-			i += 1
+		if not getattr(self, "amended_from", None):
+			self.name = make_document_name("Wohnung")
 
 	@property
 	def aktueller_mietvertrag(self):

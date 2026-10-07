@@ -1,16 +1,19 @@
 import frappe
 from frappe.model.document import Document
 from frappe.utils import cstr
+
 from hausverwaltung.hausverwaltung.doctype.wohnung.wohnung import STATUS_INAKTIV
+from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
 from hausverwaltung.hausverwaltung.utils.immobilie_accounts import get_immobilie_account_map
 
 
 class Immobilie(Document):
+	def autoname(self):
+		self.name = make_document_name("Immobilie")
+
 	def validate(self):
-		if not self.adresse:
-			self.adresse_titel = None
-		else:
-			self.adresse_titel = frappe.db.get_value("Address", self.adresse, "address_title")
+		address_title = frappe.db.get_value("Address", self.adresse, "address_title") if self.adresse else None
+		self.adresse_titel = address_title or self.bezeichnung or self.objekt or self.name
 
 		_validate_account_rows(self, "bankkonten", "Bankkonto")
 		_validate_account_rows(self, "kassenkonten", "Kassenkonto")

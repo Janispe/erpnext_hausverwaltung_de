@@ -52,12 +52,6 @@ class TestMietvertrag(unittest.TestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "Monatsersten"):
 			mietvertrag.Mietvertrag._validate_betriebskostenregelungen(doc)
 
-	def test_sanitize_name_part_removes_control_separators(self):
-		value = mietvertrag._sanitize_name_part("G1\t| VH\t| EG links")
-
-		self.assertNotIn("\t", value)
-		self.assertEqual(value, "G1 / VH / EG links")
-
 	def test_build_display_title_uses_address_unit_start_and_current_tenant(self):
 		def get_value(doctype, name, fields, as_dict=False):
 			if doctype == "Wohnung":
@@ -92,29 +86,6 @@ class TestMietvertrag(unittest.TestCase):
 			self.assertEqual(mietvertrag._compute_status_value("2025-01-01", "2026-06-09"), "Vergangenheit")
 			self.assertEqual(mietvertrag._compute_status_value(None, "kein-datum"), "Läuft")
 
-	def test_build_mietvertrag_base_name_normalizes_wohnung_and_immobilie_parts(self):
-		def get_value(doctype, name, fields, as_dict=False):
-			if doctype == "Wohnung":
-				return frappe._dict({
-					"immobilie": "IMM-1",
-					"gebaeudeteil": "Vorderhaus",
-					"name__lage_in_der_immobilie": "Vorderhaus, EG links",
-				})
-			if doctype == "Immobilie":
-				return frappe._dict({
-					"objekt": "Haus A",
-					"adresse_titel": "",
-					"name": "IMM-1",
-					"immobilien_id": 17,
-				})
-			return None
-
-		doc = frappe._dict(wohnung="WHG-1", von="2026-03-01")
-		with patch("frappe.db.get_value", side_effect=get_value):
-			value = mietvertrag._build_mietvertrag_base_name(doc)
-
-		self.assertEqual(value, "A17 | VH | EG links | ab: 2026-03-01")
-
 	def test_autoname_is_tenant_independent(self):
 		doc = frappe.get_doc({
 			"doctype": "Mietvertrag",
@@ -123,27 +94,12 @@ class TestMietvertrag(unittest.TestCase):
 			"mieter": [{"mieter": "CONTACT-1", "rolle": "Hauptmieter"}],
 		})
 
-		with patch.object(mietvertrag, "_build_mietvertrag_base_name", return_value="A17 | VH | EG links | ab: 2026-03-01"), \
-			 patch.object(mietvertrag, "_unique_docname", return_value="A17 | VH | EG links | ab: 2026-03-01") as unique:
+		with patch.object(mietvertrag, "make_document_name", return_value="MV-00365") as allocate:
 			doc.autoname()
 
-		unique.assert_called_once_with("Mietvertrag", "A17 | VH | EG links | ab: 2026-03-01")
+		allocate.assert_called_once_with("Mietvertrag")
+		self.assertEqual(doc.name, "MV-00365")
 		self.assertNotIn("CONTACT-1", doc.name)
-
-	def test_unique_docname_keeps_current_name_and_adds_suffix_on_collision(self):
-		def exists(doctype, name, cache=False):
-			return name in {"Basis", "Basis (2)"}
-
-		def get_value(doctype, name, fieldname, cache=False):
-			return "CURRENT" if name == "Basis" else None
-
-		with patch("frappe.db.exists", side_effect=exists), \
-			 patch("frappe.db.get_value", side_effect=get_value):
-			self.assertEqual(
-				mietvertrag._unique_docname("Mietvertrag", "Basis", current_name="CURRENT"),
-				"CURRENT",
-			)
-			self.assertEqual(mietvertrag._unique_docname("Mietvertrag", "Basis"), "Basis (3)")
 
 	def test_sort_staffel_table_orders_valid_dates_and_moves_empty_dates_last(self):
 		doc = frappe.get_doc({
@@ -409,28 +365,30 @@ class TestMietvertrag(unittest.TestCase):
 			patch.object(
 				mietvertrag,
 				"_build_contract_customer_docname",
-				return_value="Mustermann - WHG-1 [MV-ABC]",
+				return_value="DEB-00001",
 			), \
+			patch.object(mietvertrag, "_build_customer_display_title", return_value="WHG-1 · seit 01.01.2026 — Mustermann Max"), \
 			patch("frappe.db.exists", return_value=False), \
 			patch(
 				"hausverwaltung.hausverwaltung.utils.customer.get_or_create_customer",
-				return_value="Mustermann - WHG-1 [MV-ABC]",
+				return_value="DEB-00001",
 			) as get_or_create, \
 			patch.object(doc, "db_set") as db_set:
 			result = doc._sync_customer_name()
 
 		get_or_create.assert_called_once_with(
-			"Mustermann - WHG-1 [MV-ABC]",
+			"DEB-00001",
 			customer_name="Mustermann Max",
 			reuse_existing=False,
+			hv_display_title="WHG-1 · seit 01.01.2026 — Mustermann Max",
 		)
 		db_set.assert_called_once_with(
 			"kunde",
-			"Mustermann - WHG-1 [MV-ABC]",
+			"DEB-00001",
 			update_modified=False,
 		)
-		self.assertEqual(result, "Mustermann - WHG-1 [MV-ABC]")
-		self.assertEqual(doc.kunde, "Mustermann - WHG-1 [MV-ABC]")
+		self.assertEqual(result, "DEB-00001")
+		self.assertEqual(doc.kunde, "DEB-00001")
 
 	def test_sync_customer_name_preserves_existing_customer_id_and_updates_display_name(self):
 		doc = frappe.get_doc({
@@ -445,13 +403,14 @@ class TestMietvertrag(unittest.TestCase):
 		def exists(doctype, name, cache=False):
 			return doctype == "Customer" and name == "Alter Kunde"
 
-		def get_value(doctype, name, fieldname, cache=False):
-			if doctype == "Customer" and name == "Alter Kunde" and fieldname == "customer_name":
-				return "Alter Anzeigename"
+		def get_value(doctype, name, fieldname, cache=False, as_dict=False):
+			if doctype == "Customer" and name == "Alter Kunde":
+				return {"customer_name": "Alter Anzeigename", "hv_display_title": "Alter Titel"}
 			return None
 
 		with patch.object(mietvertrag, "get_hauptmieter_last_names", return_value=["Neuer Name"]), \
 			patch.object(mietvertrag, "get_hauptmieter_display_name", return_value="Neuer Name Nora"), \
+			patch.object(mietvertrag, "_build_customer_display_title", return_value="WHG-1 · seit 01.01.2026 — Neuer Name Nora"), \
 			patch("frappe.db.exists", side_effect=exists), \
 			patch("frappe.db.get_value", side_effect=get_value), \
 			patch("frappe.db.set_value") as set_value:
@@ -460,14 +419,16 @@ class TestMietvertrag(unittest.TestCase):
 		set_value.assert_called_once_with(
 			"Customer",
 			"Alter Kunde",
-			"customer_name",
-			"Neuer Name Nora",
+			{
+				"customer_name": "Neuer Name Nora",
+				"hv_display_title": "WHG-1 · seit 01.01.2026 — Neuer Name Nora",
+			},
 			update_modified=False,
 		)
 		self.assertEqual(result, "Alter Kunde")
 		self.assertEqual(doc.kunde, "Alter Kunde")
 
-	def test_same_named_tenants_in_same_wohnung_get_distinct_stable_customer_ids(self):
+	def test_same_named_tenants_in_same_wohnung_get_distinct_customer_ids(self):
 		first = frappe._dict(
 			name="MV-2025-001",
 			wohnung="WHG-1",
@@ -482,26 +443,24 @@ class TestMietvertrag(unittest.TestCase):
 			mietvertrag,
 			"get_hauptmieter_last_names",
 			return_value=["Mustermann"],
-		):
+		), patch.object(
+			mietvertrag.customer_utils,
+			"make_document_name",
+			side_effect=["DEB-00001", "DEB-00002"],
+		) as make_name:
 			first_id = mietvertrag._build_contract_customer_docname(first)
 			second_id = mietvertrag._build_contract_customer_docname(second)
 
 		self.assertNotEqual(first_id, second_id)
-		self.assertEqual(
-			first_id,
-			mietvertrag.customer_utils.build_contract_customer_id(
-				"Mustermann - WHG-1",
-				"MV-2025-001",
-			),
-		)
-		self.assertTrue(first_id.startswith("Mustermann - WHG-1 [MV-"))
-		self.assertTrue(second_id.startswith("Mustermann - WHG-1 [MV-"))
+		self.assertEqual(first_id, "DEB-00001")
+		self.assertEqual(second_id, "DEB-00002")
+		self.assertEqual(make_name.call_args_list, [unittest.mock.call("Customer"), unittest.mock.call("Customer")])
 
 	def test_contract_customer_creation_never_reuses_existing_id(self):
 		with patch("frappe.db.exists", return_value=True), \
 			self.assertRaisesRegex(frappe.ValidationError, "nicht nachweisbar"):
 			mietvertrag.customer_utils.get_or_create_customer(
-				"Mustermann - WHG-1 [MV-ABC]",
+				"DEB-00001",
 				customer_name="Mustermann Max",
 				reuse_existing=False,
 			)
@@ -711,8 +670,10 @@ class TestMietvertragDatabaseIntegration(unittest.TestCase):
 
 			self.assertTrue(doc.kunde)
 			self.assertTrue(frappe.db.exists("Customer", doc.kunde))
-			self.assertIn(f"Miettest{suffix}", doc.kunde)
-			self.assertIn(wohnung.name, doc.kunde)
+			self.assertRegex(doc.kunde, r"^DEB-\d{5,}$")
+			customer = frappe.get_doc("Customer", doc.kunde)
+			self.assertIn(f"Miettest{suffix}", customer.customer_name)
+			self.assertEqual(customer.hv_display_title, doc.bezeichnung)
 			self.assertEqual([row.von for row in doc.miete], ["2026-01-01", "2026-05-01"])
 			self.assertEqual(doc.status, mietvertrag._compute_status_value("2026-01-01", None))
 		finally:
@@ -756,7 +717,11 @@ class TestMietvertragDatabaseIntegration(unittest.TestCase):
 			self.assertNotEqual(first.kunde, second.kunde)
 			self.assertTrue(frappe.db.exists("Customer", first.kunde))
 			self.assertTrue(frappe.db.exists("Customer", second.kunde))
-			self.assertTrue(first.kunde.startswith(f"Gleichname{suffix} - {wohnung.name} [MV-"))
-			self.assertTrue(second.kunde.startswith(f"Gleichname{suffix} - {wohnung.name} [MV-"))
+			self.assertRegex(first.kunde, r"^DEB-\d{5,}$")
+			self.assertRegex(second.kunde, r"^DEB-\d{5,}$")
+			self.assertNotEqual(
+				frappe.db.get_value("Customer", first.kunde, "hv_display_title"),
+				frappe.db.get_value("Customer", second.kunde, "hv_display_title"),
+			)
 		finally:
 			frappe.db.rollback(save_point=savepoint)

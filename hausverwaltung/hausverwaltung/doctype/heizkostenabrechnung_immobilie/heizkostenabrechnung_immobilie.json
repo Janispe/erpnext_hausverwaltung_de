@@ -1,13 +1,13 @@
 {
  "actions": [],
- "allow_rename": 1,
- "autoname": "Prompt",
+ "allow_rename": 0,
  "creation": "2026-04-30 05:00:00.000000",
  "doctype": "DocType",
  "editable_grid": 0,
  "engine": "InnoDB",
  "field_order": [
   "stammdaten_section",
+  "bezeichnung",
   "immobilie",
   "status",
   "column_break_stamm",
@@ -35,6 +35,18 @@
    "fieldname": "stammdaten_section",
    "fieldtype": "Section Break",
    "label": "Stammdaten"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Anzeigetitel",
+   "read_only": 1,
+   "description": "Lesbarer, automatisch gepflegter Titel. Die technische Dokument-ID bleibt unverändert.",
+   "in_preview": 1,
+   "length": 240,
+   "search_index": 1
   },
   {
    "fieldname": "immobilie",
@@ -192,7 +204,7 @@
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
  "name": "Heizkostenabrechnung Immobilie",
- "naming_rule": "Expression (old style)",
+ "naming_rule": "By script",
  "owner": "Administrator",
  "permissions": [
   {
@@ -237,5 +249,8 @@
  "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "title_field": "bezeichnung",
+ "show_title_field_in_link": 1,
+ "search_fields": "bezeichnung,immobilie"
 }

@@ -56,6 +56,17 @@ def _make_invoice(
 	)
 
 
+class TestContractNamesInMonthlyGroups(TestCase):
+	def test_group_description_contains_complete_contract_id(self):
+		for contract in ("G12 | VH | EG links | ab: 2025-01-01", "MV-2026-00001"):
+			with self.subTest(contract=contract):
+				monthly_id = f"{contract}|11/2025"
+				invoice = _make_invoice("SI-MIETE", mab_id=monthly_id, grand_total=500)
+				group = _group_invoices({invoice.name: invoice})[monthly_id]
+				self.assertTrue(group.remarks.endswith(f" - {contract}"), group.remarks)
+				self.assertEqual(group.member_invoices, [invoice.name])
+
+
 def _totals(*, all_miete: float, period_miete: float) -> dict:
 	return {
 		"all": {

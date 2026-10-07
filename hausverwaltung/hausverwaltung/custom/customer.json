@@ -1,5 +1,23 @@
 {
- "custom_fields": [],
+ "custom_fields": [
+  {
+   "dt": "Customer",
+   "fieldname": "hv_display_title",
+   "fieldtype": "Data",
+   "label": "Anzeigetitel",
+   "description": "Automatisch gepflegter Titel mit Wohnung und Vertragsbeginn. Die Debitoren-ID und der Name auf Belegen bleiben getrennt.",
+   "name": "Customer-hv_display_title",
+   "insert_after": "customer_name",
+   "read_only": 1,
+   "length": 240,
+   "in_global_search": 1,
+   "in_list_view": 1,
+   "in_preview": 1,
+   "search_index": 1,
+   "print_hide": 1,
+   "no_copy": 1
+  }
+ ],
  "custom_perms": [
   {
    "_assign": null,
@@ -356,6 +374,30 @@
   }
  ],
  "property_setters": [
+  {
+   "doc_type": "Customer",
+   "doctype_or_field": "DocType",
+   "name": "Customer-main-allow_rename",
+   "property": "allow_rename",
+   "property_type": "Check",
+   "value": "0"
+  },
+  {
+   "doc_type": "Customer",
+   "doctype_or_field": "DocType",
+   "name": "Customer-main-title_field",
+   "property": "title_field",
+   "property_type": "Data",
+   "value": "hv_display_title"
+  },
+  {
+   "doc_type": "Customer",
+   "doctype_or_field": "DocType",
+   "name": "Customer-main-show_title_field_in_link",
+   "property": "show_title_field_in_link",
+   "property_type": "Check",
+   "value": "1"
+  },
   {
    "_assign": null,
    "_comments": null,

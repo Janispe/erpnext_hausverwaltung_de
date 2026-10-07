@@ -21,6 +21,7 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 	get_bk_regelung_from_rows,
 	normalize_bk_regelung,
 )
+from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
 from hausverwaltung.hausverwaltung.utils.mietberechnung import (
 	calculate_monthly_rent,
 	validate_rent_rows,
@@ -163,23 +164,11 @@ class Mietvertrag(Document):
 					)
 
 	def autoname(self) -> None:
-		"""Give new contracts a stable, tenant-independent document ID.
-
-		Important: The "Haus-Code" includes the Immobilie-ID (if present) to avoid
-		collisions across multiple buildings that share the same initial letter.
-		The ID is deliberately not renamed after insertion; mutable labels belong
-		in ``bezeichnung``.
-		"""
+		"""Allocate an immutable contract number; mutable context belongs in the title."""
 		if getattr(self, "amended_from", None):
 			# Keep Frappe's default "Amended from" naming behavior.
 			return
-
-		base_name = _build_mietvertrag_base_name(self)
-		if not base_name:
-			# Fall back to DocType autoname ("format:...") if required fields are missing.
-			return
-
-		self.name = _unique_docname("Mietvertrag", base_name)
+		self.name = make_document_name("Mietvertrag")
 
 	def _staffelbetrag_am(self, staffeln: list, stichtag) -> float:
 		"""Return last applicable `miete` value from a Staffelmiete table for a given date."""
@@ -257,6 +246,7 @@ class Mietvertrag(Document):
 				cust_id,
 				customer_name=display_name,
 				reuse_existing=False,
+				hv_display_title=_build_customer_display_title(self),
 			)
 			self.db_set("kunde", customer, update_modified=False)
 			self.kunde = customer
@@ -299,17 +289,26 @@ class Mietvertrag(Document):
 				target,
 				customer_name=display_name,
 				reuse_existing=False,
+				hv_display_title=_build_customer_display_title(self),
 			)
 			self.db_set("kunde", customer, update_modified=False)
 			self.kunde = customer
 			return customer
 
-		if frappe.db.get_value("Customer", current, "customer_name") != display_name:
+		display_title = _build_customer_display_title(self)
+		current_values = frappe.db.get_value(
+			"Customer", current, ["customer_name", "hv_display_title"], as_dict=True
+		) or {}
+		values = {}
+		if current_values.get("customer_name") != display_name:
+			values["customer_name"] = display_name
+		if current_values.get("hv_display_title") != display_title:
+			values["hv_display_title"] = display_title
+		if values:
 			frappe.db.set_value(
 				"Customer",
 				current,
-				"customer_name",
-				display_name,
+				values,
 				update_modified=False,
 			)
 		return current
@@ -652,57 +651,6 @@ class Mietvertrag(Document):
 			"qr_data_url": ts.make_qr_data_url(qr_url),
 		}
 
-def _build_mietvertrag_base_name(doc: object) -> str:
-	wohnung_name = (getattr(doc, "wohnung", None) or "").strip()
-	von = getattr(doc, "von", None)
-	if not wohnung_name or not von:
-		return ""
-
-	wohnung = frappe.db.get_value(
-		"Wohnung",
-		wohnung_name,
-		["immobilie", "gebaeudeteil", "name__lage_in_der_immobilie"],
-		as_dict=True,
-	) or {}
-	immobilie_name = (wohnung.get("immobilie") or "").strip()
-	immobilie = (
-		frappe.db.get_value(
-			"Immobilie",
-			immobilie_name,
-			["objekt", "adresse_titel", "name", "immobilien_id"],
-			as_dict=True,
-		)
-		if immobilie_name
-		else {}
-	) or {}
-
-	haus_src = (immobilie.get("objekt") or immobilie.get("adresse_titel") or immobilie.get("name") or "").strip()
-	haus_initial = _first_letter(haus_src)
-	try:
-		immobilien_id = int(immobilie.get("immobilien_id") or 0) or None
-	except Exception:
-		immobilien_id = None
-	if immobilien_id:
-		haus_initial = f"{haus_initial}{immobilien_id}" if haus_initial else str(immobilien_id)
-
-	gebaeudeteil = _normalize_gebaeudeteil(
-		(wohnung.get("gebaeudeteil") or "").strip() or (wohnung.get("name__lage_in_der_immobilie") or "").strip()
-	)
-	lage = _lage_ohne_gebaeudeteil((wohnung.get("name__lage_in_der_immobilie") or "").strip())
-
-	try:
-		von_str = getdate(von).strftime("%Y-%m-%d")
-	except Exception:
-		von_str = str(von)
-
-	haus_initial = _sanitize_name_part(haus_initial)
-	gebaeudeteil = _sanitize_name_part(gebaeudeteil)
-	lage = _sanitize_name_part(lage)
-	von_str = _sanitize_name_part(von_str)
-
-	return f"{haus_initial} | {gebaeudeteil} | {lage} | ab: {von_str}".strip()
-
-
 def _build_mietvertrag_display_title(doc: object) -> str:
 	"""Build a readable, mutable title while keeping ``doc.name`` stable."""
 	wohnung_name = (getattr(doc, "wohnung", None) or "").strip()
@@ -800,41 +748,16 @@ def _build_customer_docname(doc: object) -> str:
 	return ""
 
 
+def _build_customer_display_title(doc: object) -> str:
+	"""Disambiguate a Debitor by its contract without changing its billing name."""
+	return _build_mietvertrag_display_title(doc)
+
+
 def _build_contract_customer_docname(doc: object) -> str:
 	return customer_utils.build_contract_customer_id(
 		_build_customer_docname(doc),
 		(getattr(doc, "name", None) or "").strip(),
 	)
-
-
-def _unique_docname(doctype: str, base_name: str, current_name: str | None = None) -> str:
-	base = (base_name or "").strip()
-	if not base:
-		return ""
-
-	current = (current_name or "").strip()
-	if current and base == current:
-		return current
-
-	if not frappe.db.exists(doctype, base, cache=False):
-		return base
-
-	if current:
-		try:
-			existing = frappe.db.get_value(doctype, base, "name", cache=False)
-		except TypeError:
-			existing = frappe.db.get_value(doctype, base, "name")
-		if existing == current:
-			return current
-
-	for n in range(2, 1000):
-		candidate = f"{base} ({n})"
-		if candidate == current:
-			return current
-		if not frappe.db.exists(doctype, candidate, cache=False):
-			return candidate
-
-	return f"{base} {frappe.generate_hash(length=6).upper()}"
 
 
 def _compute_status_value(von: object, bis: object) -> str:
@@ -1005,19 +928,6 @@ def _build_mietvertrag_tag_name(
 	return f"Mietvertrag {suffix}" if suffix else "Mietvertrag"
 
 
-def _first_letter(value: str | None) -> str:
-	"""Return the first house identifier letter (uppercased) from the given value."""
-	s = (value or "").strip()
-	if not s:
-		return ""
-	# Prefer patterns like "Haus A" -> "A" (avoid returning "H").
-	m = re.search(r"\bhaus\s*([A-Za-zÄÖÜäöü])\b", s, flags=re.IGNORECASE)
-	if m:
-		return m.group(1).upper()
-	m = re.search(r"[A-Za-zÄÖÜäöü]", s)
-	return (m.group(0) if m else "").upper()
-
-
 def _normalize_gebaeudeteil(value: str | None) -> str:
 	"""Map inputs like 'Vorderhaus' to 'VH' (also supports 'HH'/'SF')."""
 	from hausverwaltung.hausverwaltung.utils.gebaeudeteil import normalize_gebaeudeteil_to_standard
@@ -1047,17 +957,6 @@ def _lage_ohne_gebaeudeteil(lage: str | None) -> str:
 		tail = s.split(",", 1)[1].strip()
 		return tail or s
 	return s
-
-
-def _sanitize_name_part(value: str | None) -> str:
-	"""Prevent separators from leaking into the DocName parts."""
-	s = (value or "").strip()
-	if not s:
-		return ""
-	s = s.replace("\t", " ").replace("|", "/")
-	# Collapse spaces (but don't introduce tabs here).
-	s = re.sub(r" +", " ", s)
-	return s.strip()
 
 
 def _is_system_manager() -> bool:

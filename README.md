@@ -2,6 +2,97 @@
 
 Frappe-App für die Hausverwaltung: Mietverträge, Betriebskosten-Abrechnung, Bankabgleich, Mahnwesen, Serienbriefe.
 
+### Dokumentnummern und Production-Migration
+
+Neue fachliche Dokumente erhalten eine kurze, unveränderliche Nummer. Der separat
+gespeicherte Titel enthält Namen, Adresse, Lage oder Zeitraum und wird in Listen
+und Link-Auswahlen angezeigt. `customer_name` bleibt der Personen-/Firmenname für
+Belege; `Customer.hv_display_title` zeigt den Vertragskontext. Jeder Mietvertrag
+erhält weiterhin einen eigenen Customer, auch bei derselben Person oder Wohnung.
+
+| Dokument | Neue Nummer |
+|---|---|
+| Immobilie / Wohnung / Mietvertrag / Debitor | `IMM-00001` / `WHG-00001` / `MV-00001` / `DEB-00001` |
+| Zähler / Zählerzuordnung / Wohnungszustand | `ZAE-00001` / `ZAZ-00001` / `WZS-00001` |
+| Bankauszug / Kreditvertrag / Vertragsbuilder | `BAI-00001` / `KV-00001` / `MVB-00001` |
+| BK-Abrechnung Immobilie / Mieter | `BKAI-2026-00001` / `BKAM-2026-00001` |
+| HK-Abrechnung Immobilie / Mieter | `HKAI-2026-00001` / `HKAM-2026-00001` |
+| Problem / EÜR / alte BK-Rechnung | `PROB-2026-00001` / `EUER-2026-00001` / `BKR-00001` |
+
+Jahresserien beziehen sich auf das Kalenderjahr der Anlage, nicht auf den
+Abrechnungszeitraum. Nummern werden über Frappes transaktional gesperrten
+Serienzähler vergeben; auch die erste gleichzeitige Verwendung eines neuen
+Jahrespräfixes wird serialisiert. Amendments behalten Frappes Suffix-Regel.
+Vorhandene kurze Serien für Wartung, Anlagen und Prozesse sowie die
+ERPNext-Belegnummern bleiben bestehen. Fachliche Codes von Regeltypen/Vorlagen
+und technische Hashes für Mail-Synchronisation behalten ihren Zweck.
+
+Die Migration `migrate_document_naming` benennt **keinen Bestandsdatensatz um**.
+Sie ergänzt Titel und Metadaten und erhöht Serienzähler bei Bedarf auf bereits
+vorhandene Nummern. Wiederholte Ausführung senkt keine Zähler und lässt IDs,
+`creation`, `modified`, Buchungsreferenzen sowie die Vertragszuordnung bestehen.
+Es werden keine fachlichen Dokumente gespeichert oder gebucht und keine
+Archiv-/Mail-Synchronisationshooks ausgelöst. Eingebettete Abrechnungskennungen,
+QR-Links und externe Mail-Tags bleiben dadurch gültig.
+
+Der reguläre Updatepfad baut Images aus veröffentlichten Repository-Ständen.
+Zum Release gehören die Änderungen in **hausverwaltung, hausverwaltung_peters,
+process_engine und mail_merge**. Lokale Arbeitskopien gelangen nicht automatisch
+in das Produktionsimage. Build, Snapshot, Sicherung und Rollback sind in der
+Production-Datei `docs/hausverwaltung-deployment.md` beschrieben.
+
+Für ein Upgrade:
+
+1. Kandidatenimage bauen und auf einer getrennten Datenbankkopie prüfen. Ein
+   anderer Compose-Projektname allein isoliert die vorhandene Production-Compose
+   nicht: deren Sites-/DB-/Redis-Volumes und Netzwerk haben feste Namen. Für den
+   Test eigene Volumes und ein eigenes Netzwerk ohne Worker/Scheduler verwenden.
+2. Den Kandidaten-Vorabcheck auf der Kopie ausführen. Aktive abweichende
+   `Document Naming Rule`/Namens-Overrides, fehlende Vertragslinks und mehrfach
+   verwendete Customers müssen vor dem Upgrade bereinigt werden. Der Check
+   errät keine Zuordnung und schreibt keine Geschäftsdaten:
+
+   ```sh
+   bench --site <site> execute hausverwaltung.hausverwaltung.patches.post_model_sync.migrate_document_naming.preflight
+   ```
+
+   Für den zusätzlichen Vergleich von Zeitstempeln und Buchungs-/Mailreferenzen
+   den Kandidatencode auf derselben Kopie vor und nach `migrate` aufrufen und die
+   Ergebnisse vergleichen:
+
+   ```sh
+   bench --site <site> execute hausverwaltung.hausverwaltung.utils.document_naming_audit.reference_snapshot
+   ```
+
+   Das Ergebnis enthält ausschließlich Anzahlen und Prüfsummen. Diese optionale
+   Prüfung liest auch die Hauptbuchtabelle und benötigt entsprechend Speicher.
+
+3. Im Wartungsfenster Worker/Scheduler anhalten, ein vollständiges
+   `bench --site <site> backup --with-files` samt Site-Konfiguration und altem
+   Image sichern, dann das Kandidatenimage über den regulären Updatepfad
+   installieren und `bench --site <site> migrate` ausführen. Bei einem
+   Migrationsfehler abbrechen; diese Migration nicht mit `--skip-failing` umgehen.
+4. Den Vorabcheck erneut ausführen. `document_ids_sha256` und
+   `contract_links_sha256` müssen während desselben schreibfreien Wartungsfensters
+   vor/nach dem Upgrade übereinstimmen. Die Titelanzeige eines alten Vertrags und
+   die Anlage eines neuen Vertrags einschließlich eigenem `DEB-…` kontrollieren.
+   Danach Worker/Scheduler wieder starten.
+
+Ein reiner Image-Rollback stellt die Datenbank nicht zurück. Falls eine
+Datenbankwiederherstellung nötig ist, die zugehörige Sicherung und
+Site-Konfiguration verwenden; neuere Buchungen müssen dabei berücksichtigt
+werden. Bestehende IDs werden auch im Fehlerfall nicht durch eine allgemeine
+Umbenennung oder Customer-Zusammenführung ersetzt.
+
+Die Umstellung wurde am 7. Oktober 2026 auf einer isolierten Kopie des
+Produktionsbestands mit 364 Mietverträgen geprüft. Der Vergleich von 33 Tabellen
+einschließlich 241.766 Hauptbuchzeilen ergab unveränderte Identitäten,
+Zeitstempel und Referenzen. Zweimaliges erneutes Backfill lieferte identische
+Titel; zwei parallele Erstanlagen eines neuen Jahrespräfixes erhielten getrennte
+Nummern. Die Produktionsdatenbank wurde für diesen Test nicht migriert.
+Zusätzlich bestanden 217 gezielte Tests, einschließlich wiederholter CSV- und
+Sample-Importe mit kurzen IDs und der Abweisung mehrdeutiger Zuordnungen.
+
 ### Automatische Mietsollstellung
 
 Unter **Hausverwaltung Einstellungen → Mietsollstellung → Mieten automatisch monatlich

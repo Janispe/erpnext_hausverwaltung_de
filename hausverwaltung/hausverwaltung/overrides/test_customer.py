@@ -7,6 +7,14 @@ from hausverwaltung.hausverwaltung.overrides import customer as customer_overrid
 
 
 class TestCustomerBriefanschrift(IntegrationTestCase):
+	def test_new_manual_customer_uses_same_debitor_series_as_contract_creation(self):
+		cust = SimpleNamespace(name=None)
+		with patch.object(customer_override, "make_document_name", return_value="DEB-00042") as make_name:
+			customer_override.Customer.autoname(cust)
+
+		self.assertEqual(cust.name, "DEB-00042")
+		make_name.assert_called_once_with("Customer")
+
 	def test_briefanschrift_rejects_multiple_contracts_for_customer(self):
 		cust = SimpleNamespace(name="Test Customer")
 

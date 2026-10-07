@@ -7,11 +7,9 @@ from frappe.contacts.doctype.address.address import get_default_address
 from frappe.model.document import Document
 from frappe.utils import cint, cstr, getdate
 
+from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
 from hausverwaltung.hausverwaltung.utils.mieter_name import (
-	get_contact_last_name,
 	get_hauptmieter_display_name,
-	pick_preferred_mieter_contact,
-	sanitize_name_part,
 )
 from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 	BK_REGELUNG_VORAUSZAHLUNG,
@@ -152,31 +150,9 @@ def _get_locked_settlement_allocations(
 
 class BetriebskostenabrechnungMieter(Document):
 	def autoname(self) -> None:
-		if getattr(self, "name", None):
+		if getattr(self, "amended_from", None):
 			return
-
-		mieter_contact = pick_preferred_mieter_contact(getattr(self, "mieter", None))
-		base_parts = [
-			mieter_contact or "Mieter",
-			self.wohnung,
-			self.von,
-			self.bis,
-		]
-		base_parts = [sanitize_name_part(str(p)) for p in base_parts if p]
-		base_name = "-".join([p for p in base_parts if p]).strip()
-		if not base_name:
-			return
-
-		last_name = sanitize_name_part(get_contact_last_name(mieter_contact))
-		if last_name:
-			base_name = f"{base_name} - {last_name}"
-
-		candidate = base_name
-		suffix = 1
-		while frappe.db.exists("Betriebskostenabrechnung Mieter", candidate, cache=False):
-			suffix += 1
-			candidate = f"{base_name}-{suffix}"
-		self.name = candidate
+		self.name = make_document_name(self.doctype)
 
 	def _cancel_linked_document(self, linked) -> None:
 		"""Cancel an already ownership-validated document."""

@@ -19,6 +19,7 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 	ist_bk_abrechenbar,
 	normalize_bk_regelung,
 )
+from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import normalize_print_format_name
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_pdf_for_print_format
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import scrub_value as hv_scrub
@@ -106,6 +107,11 @@ def _calculate_zaehler_summen(immobilie: str | None, von, bis) -> Dict[str, floa
 
 
 class BetriebskostenabrechnungImmobilie(Document):
+	def autoname(self) -> None:
+		if getattr(self, "amended_from", None):
+			return
+		self.name = make_document_name(self.doctype)
+
 	@property
 	def mieter_abrechnungen(self) -> List[Dict[str, object]]:
 		"""Virtuelles Desk-Feld; die echten Zeilen lädt das Formular per API."""

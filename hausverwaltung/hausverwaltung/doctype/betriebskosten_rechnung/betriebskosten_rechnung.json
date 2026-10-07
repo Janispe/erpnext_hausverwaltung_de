@@ -1,6 +1,6 @@
 {
  "actions": [],
- "allow_rename": 1,
+ "allow_rename": 0,
  "creation": "2025-06-18 00:06:17.860273",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -38,5 +38,7 @@
  "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "autoname": "",
+ "naming_rule": "By script"
 }

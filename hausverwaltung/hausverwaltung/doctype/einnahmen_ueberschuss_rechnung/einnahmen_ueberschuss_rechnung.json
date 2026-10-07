@@ -1,7 +1,7 @@
 {
  "actions": [],
- "allow_rename": 1,
- "autoname": "hash",
+ "allow_rename": 0,
+ "autoname": "",
  "creation": "2026-04-18 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -168,5 +168,8 @@
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
- "title_field": "titel"
+ "title_field": "titel",
+ "show_title_field_in_link": 1,
+ "search_fields": "titel",
+ "naming_rule": "By script"
 }

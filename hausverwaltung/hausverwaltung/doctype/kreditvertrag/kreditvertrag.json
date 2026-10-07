@@ -1,6 +1,6 @@
 {
  "actions": [],
- "allow_rename": 1,
+ "allow_rename": 0,
  "creation": "2026-05-13 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -306,5 +306,7 @@
  "sort_order": "DESC",
  "states": [],
  "title_field": "bezeichnung",
- "track_changes": 1
+ "track_changes": 1,
+ "show_title_field_in_link": 1,
+ "search_fields": "bezeichnung,vertragsnummer,lieferant,immobilie"
 }

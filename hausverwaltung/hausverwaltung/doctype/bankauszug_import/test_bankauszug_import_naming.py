@@ -1,4 +1,4 @@
-"""Tests für sprechende Namen + Title-Berechnung + offene_buchungen-Counter.
+"""Tests für stabile Dokumentnummern + Title-Berechnung + offene_buchungen-Counter.
 
 Mockt die DB-Zugriffe, weil die Tests nur die Berechnungslogik prüfen — keine
 Fixtures (Bank Account, Immobilie) anzulegen ist deutlich schneller und
@@ -14,6 +14,7 @@ from unittest.mock import patch
 import frappe
 
 from hausverwaltung.hausverwaltung.doctype.bankauszug_import import bankauszug_import as bi
+from hausverwaltung.hausverwaltung.utils import document_naming
 
 
 def _make_doc(bank_account: str | None, rows: list[dict] | None = None):
@@ -196,34 +197,58 @@ class TestEindeutigeImmobilie(TestCase):
 
 
 class TestAutonameFormat(TestCase):
-	def test_with_bank_no(self):
-		doc = _make_doc("BA-1")
-		with patch.object(doc, "_bank_account_number", return_value="1812"), \
-				patch.object(bi, "make_autoname", return_value="BAI-1812-0001") as mk:
-			doc.autoname()
-		mk.assert_called_once_with("BAI-1812-.####")
-		self.assertEqual(doc.name, "BAI-1812-0001")
-
-	def test_with_bank_no_and_rows(self):
-		doc = _make_doc(
-			"BA-1",
-			rows=[
-				{"buchungstag": date(2026, 4, 15)},
-				{"buchungstag": date(2026, 5, 5)},
-			],
+	def test_one_series_before_and_after_loading_csv_rows(self):
+		contexts = (
+			(None, []),
+			("Bank A - Deutsche Bank", []),
+			("Bank B - Sparkasse", [{"buchungstag": date(1998, 4, 15)}]),
+			("Bank B - Sparkasse", [{"buchungstag": date(2026, 5, 5)}]),
 		)
-		with patch.object(doc, "_bank_account_number", return_value="1812"), \
-				patch.object(bi, "make_autoname", return_value="BAI-1812-20260415-20260505-0001") as mk:
-			doc.autoname()
-		mk.assert_called_once_with("BAI-1812-20260415-20260505-.####")
-		self.assertEqual(doc.name, "BAI-1812-20260415-20260505-0001")
+		for index, (bank, rows) in enumerate(contexts, 1):
+			with self.subTest(bank=bank, index=index):
+				doc = _make_doc(bank, rows=rows)
+				expected = f"BAI-{index:05d}"
+				with (
+					patch.object(document_naming, "make_autoname", return_value=expected) as allocate,
+					patch.object(document_naming.frappe.db, "exists", return_value=False),
+				):
+					doc.autoname()
+				self.assertEqual(doc.name, expected)
+				allocate.assert_called_once_with("BAI-.#####")
 
-	def test_fallback_xxxx(self):
-		doc = _make_doc(None)
-		with patch.object(doc, "_bank_account_number", return_value=None), \
-				patch.object(bi, "make_autoname", return_value="BAI-XXXX-0001") as mk:
+	def test_imported_rows_and_bank_correction_update_title_without_renaming_legacy_document(self):
+		doc = _make_doc("Bank A - Deutsche Bank")
+		doc.name = "BAI-1812-0001"
+		with (
+			patch.object(doc, "_bank_account_number", return_value="1812"),
+			patch.object(doc, "_eindeutige_immobilie", return_value=None),
+		):
+			doc.validate()
+		old_title = doc.title
+
+		doc.bank_account = "Bank B - Sparkasse"
+		doc.append("rows", {"buchungstag": date(2026, 4, 15)})
+		doc.append("rows", {"buchungstag": date(2026, 5, 5)})
+		with (
+			patch.object(doc, "_bank_account_number", return_value="2000"),
+			patch.object(doc, "_eindeutige_immobilie", return_value=None),
+		):
+			doc.validate()
+
+		self.assertEqual(doc.name, "BAI-1812-0001")
+		self.assertNotEqual(doc.title, old_title)
+		self.assertIn("Bank B (2000)", doc.title)
+		self.assertIn("15.04.–05.05.2026", doc.title)
+		self.assertIn("2 Buchungen", doc.title)
+
+	def test_amendment_leaves_name_generation_to_frappe(self):
+		doc = _make_doc("Bank B - Sparkasse")
+		doc.amended_from = "BAI-1812-0001"
+		doc.name = "BAI-1812-0001-1"
+		with patch.object(bi, "make_document_name") as allocate:
 			doc.autoname()
-		mk.assert_called_once_with("BAI-XXXX-.####")
+		allocate.assert_not_called()
+		self.assertEqual(doc.name, "BAI-1812-0001-1")
 
 
 class TestRecomputeDocStatus(TestCase):

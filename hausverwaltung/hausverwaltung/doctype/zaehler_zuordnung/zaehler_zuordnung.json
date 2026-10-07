@@ -1,10 +1,11 @@
 {
  "actions": [],
- "allow_rename": 1,
+ "allow_rename": 0,
  "creation": "2025-12-14 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "bezeichnung",
   "zaehler",
   "bezugsobjekt_typ",
   "bezugsobjekt",
@@ -13,6 +14,15 @@
   "notiz"
  ],
  "fields": [
+  {
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "label": "Bezeichnung",
+   "read_only": 1,
+   "allow_on_submit": 1,
+   "in_list_view": 1,
+   "length": 240
+  },
   {
    "fieldname": "zaehler",
    "fieldtype": "Link",
@@ -82,5 +92,10 @@
  "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "autoname": "",
+ "naming_rule": "By script",
+ "title_field": "bezeichnung",
+ "show_title_field_in_link": 1,
+ "search_fields": "bezeichnung,zaehler,bezugsobjekt,von"
 }

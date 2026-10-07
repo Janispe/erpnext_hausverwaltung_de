@@ -640,26 +640,26 @@ def _ensure_address_link(address_name: str, link_doctype: str, link_name: str) -
         pass
 
 
-def _get_or_create_customer(name: str, company: str) -> str:
-    """Ensure a Customer exists.
+def _get_or_create_customer(name: str, company: str, *, mietvertrag: str | None = None) -> str:
+    """Keep an existing sample contract's Debitor or create a fresh one.
 
-    Buchung läuft über das Sammelkonto Debitoren (Company.default_receivable_account);
-    pro Customer wird kein eigenes Konto gepinnt.
+    A matching person name never authorizes sharing a Customer with another
+    tenancy. Idempotent seed runs resolve identity through the existing contract.
     """
-    if frappe.db.exists("Customer", name):
-        return name
+    if mietvertrag:
+        customer = frappe.db.get_value("Mietvertrag", mietvertrag, "kunde")
+        if not customer or not frappe.db.exists("Customer", customer):
+            frappe.throw(f"Sample-Mietvertrag {mietvertrag} hat keinen gültigen eigenen Customer.")
+        return customer
 
-    group = _ensure_customer_group_mieter()
-    return (
-        frappe.get_doc(
-            {
-                "doctype": "Customer",
-                "customer_name": name,
-                "customer_type": "Individual",
-                "customer_group": group,
-            }
-        ).insert(ignore_permissions=True)
-    ).name
+    from hausverwaltung.hausverwaltung.utils.customer import build_customer_id, get_or_create_customer
+
+    return get_or_create_customer(
+        build_customer_id("", "", name),
+        customer_name=name,
+        company=company,
+        reuse_existing=False,
+    )
 
 
 def _ensure_default_bank() -> str:
@@ -1972,6 +1972,75 @@ def _create_payment_for_invoice(inv_name: str, *, submit: bool = True) -> Option
         return None
 
 
+def _get_or_create_sample_immobilie(
+    *,
+    label: str,
+    import_id: int,
+    address: str,
+    hausmeister: str | None = None,
+    cost_center: str | None = None,
+    account: str | None = None,
+) -> tuple[str, bool]:
+    """Resolve sample identity through business fields and return the actual ID."""
+    existing = frappe.get_all(
+        "Immobilie",
+        or_filters={
+            "bezeichnung": label,
+            "immobilien_id": import_id,
+            "adresse": address,
+        },
+        fields=["name", "immobilien_id", "adresse"],
+        limit=2,
+    )
+    if len(existing) > 1:
+        frappe.throw("Mehrere Immobilien passen zu den Sample-Stammdaten; keine eindeutige Zuordnung möglich.")
+    if existing:
+        immo = existing[0]
+        if immo["immobilien_id"] != import_id or immo["adresse"] != address:
+            frappe.throw("Bestehende Immobilie passt nicht zur Sample-Importnummer und -Adresse.")
+        return immo["name"], False
+
+    fields = {
+        "doctype": "Immobilie",
+        "bezeichnung": label,
+        "immobilien_id": import_id,
+        "adresse": address,
+        "hausmeister": hausmeister,
+        "kostenstelle": cost_center,
+    }
+    if account:
+        fields["bankkonten"] = [{"konto": account, "ist_hauptkonto": 1}]
+    immo = frappe.get_doc(fields).insert(ignore_permissions=True)
+    return immo.name, True
+
+
+def _get_or_create_sample_wohnung(
+    *, immobilie: str, import_id: int, lage: str
+) -> tuple[str, bool]:
+    """Resolve an apartment by its property's actual ID and its import number."""
+    existing = frappe.get_all(
+        "Wohnung",
+        filters={"id": import_id, "immobilie": immobilie},
+        pluck="name",
+        limit=2,
+    )
+    if len(existing) > 1:
+        frappe.throw(f"Mehrere Sample-Wohnungen für Immobilie {immobilie} und Importnummer {import_id} gefunden.")
+    if existing:
+        return existing[0], False
+
+    wohnung = frappe.get_doc(
+        {
+            "doctype": "Wohnung",
+            "id": import_id,
+            "name__lage_in_der_immobilie": lage,
+            "immobilie": immobilie,
+            "long_text_mthg": "Sample dataset",
+        }
+    ).insert(ignore_permissions=True)
+    return wohnung.name, True
+
+
 def create_sample_data(
     company: str | None = None,
     *,
@@ -2015,38 +2084,15 @@ def create_sample_data(
         city="Berlin",
     )
 
-    # create Immobilie if absent
-    immo_name = None
-    existing_immo = frappe.get_all(
-        "Immobilie", filters={"adresse": immo_address}, pluck="name"
+    immo_name, immo_created = _get_or_create_sample_immobilie(
+        label=immo_label,
+        import_id=1001,
+        address=immo_address,
+        hausmeister=hausmeister,
+        cost_center=kst,
+        account=immo_account,
     )
-    if not existing_immo:
-        existing_immo = frappe.get_all(
-            "Immobilie", filters={"name": immo_label}, pluck="name"
-        )
-    if not existing_immo:
-        try:
-            existing_immo = frappe.get_all(
-                "Immobilie", filters={"adresse__name": immo_label}, pluck="name"
-            )
-        except Exception:
-            existing_immo = []
-    if existing_immo:
-        immo_name = existing_immo[0]
-    else:
-        immo_fields = {
-            "doctype": "Immobilie",
-            "immobilien_id": 1001,
-            "adresse": immo_address,
-            "hausmeister": hausmeister,
-            "kostenstelle": kst,
-        }
-        if immo_account:
-            immo_fields["bankkonten"] = [{"konto": immo_account, "ist_hauptkonto": 1}]
-        immo = frappe.get_doc(
-            immo_fields
-        ).insert(ignore_permissions=True)
-        immo_name = immo.name
+    if immo_created:
         created["Immobilie"].append(immo_name)
 
     if immo_name and immo_address:
@@ -2074,24 +2120,10 @@ def create_sample_data(
     ]
     wohnung_names: List[str] = []
     for wid, lage, groesse in wohnungen_seed:
-        rows = frappe.get_all(
-            "Wohnung",
-            filters={"id": wid, "immobilie": immo_name},
-            pluck="name",
+        wohnung_name, wohnung_created = _get_or_create_sample_wohnung(
+            immobilie=immo_name, import_id=wid, lage=lage
         )
-        if rows:
-            wohnung_name = rows[0]
-        else:
-            wohnung = frappe.get_doc(
-                {
-                    "doctype": "Wohnung",
-                    "id": wid,
-                    "name__lage_in_der_immobilie": lage,
-                    "immobilie": immo_name,
-                    "long_text_mthg": "Sample dataset",
-                }
-            ).insert(ignore_permissions=True)
-            wohnung_name = wohnung.name
+        if wohnung_created:
             created["Wohnung"].append(wohnung_name)
         wohnung_names.append(wohnung_name)
         if with_zustand:
@@ -2116,7 +2148,17 @@ def create_sample_data(
 
     for idx, wohnung_name in enumerate(wohnung_names):
         cust_name = f"Muster_Mieter_{idx+1}"
-        customer = _get_or_create_customer(cust_name, company)
+        existing_mv = frappe.get_all(
+            "Mietvertrag",
+            filters={"wohnung": wohnung_name, "von": getdate(start_dates[idx])},
+            pluck="name",
+            limit=2,
+        )
+        if len(existing_mv) > 1:
+            frappe.throw(f"Mehrere Sample-Mietverträge für Wohnung {wohnung_name} und Vertragsbeginn gefunden.")
+        customer = _get_or_create_customer(
+            cust_name, company, mietvertrag=existing_mv[0] if existing_mv else None
+        )
         contact = _get_or_create_contact(f"{cust_name} Kontakt", customer=customer)
         _ensure_contact_email(contact, DEMO_MIETER_EMAIL)
         created["Customer"].append(customer)
@@ -2200,12 +2242,6 @@ def create_sample_data(
                         created["Payment Entry"].append(pe)
 
         # Idempotent: skip if a contract for this Wohnung and start date already exists
-        existing_mv = frappe.get_all(
-            "Mietvertrag",
-            filters={"wohnung": wohnung_name, "von": getdate(start_dates[idx])},
-            pluck="name",
-            limit=1,
-        )
         if existing_mv:
             created["Mietvertrag"].append(existing_mv[0])
             _ensure_mietvertrag_kontoverbindung(existing_mv[0])

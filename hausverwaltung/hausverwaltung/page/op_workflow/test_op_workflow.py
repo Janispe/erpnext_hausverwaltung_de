@@ -1,9 +1,44 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import frappe
 
 from hausverwaltung.hausverwaltung.page.op_workflow import op_workflow
+
+
+class TestInvoiceContractNames(unittest.TestCase):
+	def test_monthly_id_preserves_contract_names_with_internal_separators(self):
+		for contract in ("G12 | VH | EG links | ab: 2025-01-01", "MV-2026-00001"):
+			with self.subTest(contract=contract):
+				invoice = SimpleNamespace(remarks="", mietabrechnung_id=f"{contract}|10/2026")
+				with (
+					patch.object(op_workflow.frappe.db, "exists", return_value=True) as exists,
+					patch.object(op_workflow.frappe.db, "get_value", return_value="WHG-1"),
+				):
+					self.assertEqual(
+						op_workflow._resolve_invoice_mietvertrag(invoice),
+						{"mietvertrag": contract, "wohnung": "WHG-1"},
+					)
+				exists.assert_called_once_with("Mietvertrag", contract)
+
+	def test_resolved_monthly_id_preserves_complete_legacy_contract_name(self):
+		contract = "G12 | VH | EG links | ab: 2025-01-01"
+		invoice = SimpleNamespace(remarks="", mietabrechnung_id=None, customer="KND-1")
+		with (
+			patch.object(op_workflow, "_meta_has_field", return_value=False),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.mietabrechnung.resolve_mietabrechnung_id",
+				return_value=f"{contract}|10/2026",
+			),
+			patch.object(op_workflow.frappe.db, "exists", return_value=True) as exists,
+			patch.object(op_workflow.frappe.db, "get_value", return_value="WHG-1"),
+		):
+			self.assertEqual(
+				op_workflow._resolve_invoice_mietvertrag(invoice),
+				{"mietvertrag": contract, "wohnung": "WHG-1"},
+			)
+		exists.assert_called_once_with("Mietvertrag", contract)
 
 
 class TestOPWorkflowPageRoleContract(unittest.TestCase):

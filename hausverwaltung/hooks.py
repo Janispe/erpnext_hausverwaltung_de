@@ -136,7 +136,10 @@ doctype_tree_js = {
 # ------------
 
 # before_install = "hausverwaltung.install.before_install"
-after_install = "hausverwaltung.install.after_install"
+after_install = [
+	"hausverwaltung.install.after_install",
+	"hausverwaltung.hausverwaltung.utils.document_naming.seed_document_series",
+]
 after_migrate = [
 	"hausverwaltung.install.sync_hausverwalter_permissions",
 	"hausverwaltung.install.ensure_desk_custom_permissions",
@@ -326,6 +329,22 @@ doc_events = {
 		],
 	},
 }
+
+# Titles are refreshed from structured fields without changing document IDs.
+from hausverwaltung.hausverwaltung.utils.document_titles import TITLE_DOCTYPES as _TITLE_DOCTYPES
+
+for _doctype in _TITLE_DOCTYPES:
+	_events = doc_events.setdefault(_doctype, {})
+	for _event in ("before_save", "before_update_after_submit"):
+		_events[_event] = "hausverwaltung.hausverwaltung.utils.document_titles.set_document_title"
+
+for _doctype in (
+	"Wohnungszustand", "Zaehler Zuordnung", "Mietvertragsbuilder", "Betriebskosten rechnung",
+	"Hausverwaltung Problem", "Einnahmen Ueberschuss Rechnung",
+):
+	doc_events.setdefault(_doctype, {})["autoname"] = (
+		"hausverwaltung.hausverwaltung.utils.document_naming.set_document_name"
+	)
 
 # Scheduled Tasks
 # ---------------

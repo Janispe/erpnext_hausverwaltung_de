@@ -52,5 +52,7 @@
  "states": [
   {"color":"Red","title":"Offen"},{"color":"Orange","title":"In Bearbeitung"},{"color":"Green","title":"Behoben"},{"color":"Gray","title":"Akzeptiert"}
  ],
- "title_field": "bezeichnung"
+ "title_field": "bezeichnung",
+ "show_title_field_in_link": 1,
+ "search_fields": "bezeichnung"
 }

@@ -7,9 +7,9 @@ from typing import List, Dict, Any, Optional, Tuple
 
 import frappe
 from frappe.model.document import Document
-from frappe.model.naming import make_autoname
 from frappe.utils import add_days, cint, flt, getdate
 
+from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
 from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
     apply_booking_rules_for_row,
     get_party_by_unique_iban,
@@ -44,23 +44,10 @@ def _row_is_skipped(row: Any) -> bool:
 
 class BankauszugImport(Document):
     def autoname(self):
-        """Generiert einen sprechenden Namen aus Bank-Nr + Datumsrange + Counter.
-
-        Wenn Rows beim Insert bereits vorhanden sind:
-        ``BAI-{bank_no}-{YYYYMMDD}-{YYYYMMDD}-{####}``
-
-        Im aktuellen CSV-Flow sind Rows bei ``autoname()`` meist noch leer
-        (``parse_csv()`` läuft nach dem Insert). Dann fällt der Name bewusst
-        auf ``BAI-{bank_no}-{####}`` zurück; der Zeitraum landet zuverlässig
-        im ``title``.
-        """
-        bank_no = self._bank_account_number() or "XXXX"
-        date_from, date_to = self._row_date_range()
-        if date_from and date_to:
-            prefix = f"BAI-{bank_no}-{date_from:%Y%m%d}-{date_to:%Y%m%d}"
-        else:
-            prefix = f"BAI-{bank_no}"
-        self.name = make_autoname(f"{prefix}-.####")
+        """Allocate a stable ID independently of the bank and loaded CSV period."""
+        if getattr(self, "amended_from", None):
+            return
+        self.name = make_document_name(self.doctype)
 
     def before_save(self):
         # update info and clear rows if file changed

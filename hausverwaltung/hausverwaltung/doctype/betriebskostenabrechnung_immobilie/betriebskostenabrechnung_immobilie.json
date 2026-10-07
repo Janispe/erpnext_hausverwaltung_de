@@ -1,12 +1,12 @@
 {
  "actions": [],
- "allow_rename": 1,
- "autoname": "format:{immobilie} von {von} bis {bis}",
+ "allow_rename": 0,
  "creation": "2025-09-08 14:24:02.329504",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "section_break_b1o3",
+  "bezeichnung",
   "immobilie",
   "von",
   "bis",
@@ -32,6 +32,18 @@
   {
    "fieldname": "section_break_b1o3",
    "fieldtype": "Section Break"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "bezeichnung",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Anzeigetitel",
+   "read_only": 1,
+   "description": "Lesbarer, automatisch gepflegter Titel. Die technische Dokument-ID bleibt unverändert.",
+   "in_preview": 1,
+   "length": 240,
+   "search_index": 1
   },
   {
    "fieldname": "immobilie",
@@ -172,7 +184,7 @@
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
  "name": "Betriebskostenabrechnung Immobilie",
- "naming_rule": "Expression",
+ "naming_rule": "By script",
  "owner": "Administrator",
  "permissions": [
   {
@@ -194,5 +206,8 @@
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
- "track_changes": 1
+ "track_changes": 1,
+ "title_field": "bezeichnung",
+ "show_title_field_in_link": 1,
+ "search_fields": "bezeichnung,immobilie"
 }

@@ -2,6 +2,8 @@ import frappe
 from erpnext.selling.doctype.customer.customer import Customer as ERPNextCustomer
 from frappe.contacts.doctype.address.address import get_default_address
 
+from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
+
 
 class Customer(ERPNextCustomer):
 	"""Erweitert Customer um eine ``briefanschrift``-Property mit Wohnung-
@@ -15,6 +17,16 @@ class Customer(ERPNextCustomer):
 	wirft im Strict-Mode wenn nicht gepflegt) liefert ``briefanschrift`` eine
 	konstruierte Adresse mit Fallback-Logik.
 	"""
+
+	def autoname(self):
+		self.name = make_document_name("Customer")
+
+	def validate(self):
+		super().validate()
+		# Customers inserted before their Mietvertrag (imports/manual creation)
+		# still need a useful title. The contract subsequently supplies the context.
+		if not self.get("hv_display_title"):
+			self.hv_display_title = self.customer_name
 
 	@property
 	def briefanschrift(self):

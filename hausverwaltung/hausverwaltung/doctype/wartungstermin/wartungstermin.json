@@ -50,5 +50,7 @@
  "states": [
   {"color":"Orange","title":"Offen"},{"color":"Blue","title":"Beauftragt"},{"color":"Green","title":"Abgeschlossen"},{"color":"Gray","title":"Entfallen"}
  ],
- "title_field": "bezeichnung"
+ "title_field": "bezeichnung",
+ "show_title_field_in_link": 1,
+ "search_fields": "bezeichnung"
 }

@@ -33,6 +33,7 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaim
 from hausverwaltung.hausverwaltung.doctype.heizkostenabrechnung_mieter.heizkostenabrechnung_mieter import (
 	_get_locked_settlement_allocations,
 )
+from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
 
 
 class HeizkostenabrechnungImmobilie(Document):
@@ -70,22 +71,9 @@ class HeizkostenabrechnungImmobilie(Document):
 		self._hydrate_positions_from_children()
 
 	def autoname(self) -> None:
-		if getattr(self, "name", None):
+		if getattr(self, "amended_from", None):
 			return
-		base_parts = [str(p) for p in (self.immobilie, self.von, self.bis) if p]
-		base_name = " ".join(base_parts).strip()
-		if not base_name:
-			return
-		# MySQL `tab*.name` ist VARCHAR(140)
-		MAX_NAME_LEN = 130
-		if len(base_name) > MAX_NAME_LEN:
-			base_name = base_name[:MAX_NAME_LEN].rstrip("-").rstrip()
-		candidate = base_name
-		suffix = 1
-		while frappe.db.exists("Heizkostenabrechnung Immobilie", candidate, cache=False):
-			suffix += 1
-			candidate = f"{base_name}-{suffix}"
-		self.name = candidate
+		self.name = make_document_name(self.doctype)
 
 	def validate(self) -> None:
 		if self.von and self.bis and self.von > self.bis:

@@ -103,8 +103,8 @@
    "fieldtype": "Date",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "label": "Soll-Termin"
-   ,"read_only": 1
+   "label": "Soll-Termin",
+   "read_only": 1
   },
   {
    "fieldname": "durchgefuehrt_am",
@@ -264,5 +264,7 @@
    "title": "Abgebrochen"
   }
  ],
- "title_field": "bezeichnung"
+ "title_field": "bezeichnung",
+ "show_title_field_in_link": 1,
+ "search_fields": "bezeichnung"
 }

@@ -238,6 +238,8 @@
    "title": "Inaktiv"
   }
  ],
- "title_field": "bezeichnung"
- ,"track_changes": 1
+ "title_field": "bezeichnung",
+ "track_changes": 1,
+ "show_title_field_in_link": 1,
+ "search_fields": "bezeichnung"
 }
