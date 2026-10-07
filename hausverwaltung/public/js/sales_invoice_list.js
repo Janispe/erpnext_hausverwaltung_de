@@ -104,4 +104,98 @@ sales_invoice_list_settings.onload = function (listview) {
 			});
 		});
 	});
+
+	if (frappe.user.has_role(["Accounts Manager", "System Manager"])) {
+		listview.page.add_menu_item(__("Kostenstellen korrigieren"), () =>
+			show_cost_center_repair_dialog(listview)
+		);
+	}
 };
+
+const COST_CENTER_REPAIR_MODULE =
+	"hausverwaltung.hausverwaltung.utils.sales_invoice_cost_center_repair";
+
+// Gebuchte Rechnungen, deren Kopf-/Positions-Kostenstelle nicht zur Immobilie
+// der Wohnung passt, blockieren den Bankimport. Die Korrektur setzt die
+// Property-Kostenstelle; ERPNext erzeugt die Buchungssätze im Hintergrund neu.
+function show_cost_center_repair_dialog(listview) {
+	frappe.call({
+		method: `${COST_CENTER_REPAIR_MODULE}.get_cost_center_repair_preview`,
+		freeze: true,
+		callback: (r) => {
+			const invoices = r.message?.invoices || [];
+			if (!invoices.length) {
+				frappe.msgprint(__("Alle gebuchten Rechnungen mit Wohnung haben die richtige Kostenstelle."));
+				return;
+			}
+			const esc = frappe.utils.escape_html;
+			const rows = invoices
+				.map(
+					(inv) => `<tr>
+						<td><a href="/app/sales-invoice/${encodeURIComponent(inv.name)}">${esc(inv.name)}</a></td>
+						<td>${esc(frappe.datetime.str_to_user(inv.posting_date))}</td>
+						<td>${esc(inv.customer || "")}</td>
+						<td>${esc(inv.remarks || "")}</td>
+						<td class="text-right">${format_currency(inv.outstanding_amount)}</td>
+						<td>${esc(inv.header_cost_center || __("leer"))}</td>
+						<td>${esc(inv.item_cost_centers || __("leer"))}</td>
+						<td><b>${esc(inv.target_cost_center)}</b></td>
+					</tr>`
+				)
+				.join("");
+			const dialog = new frappe.ui.Dialog({
+				title: __("Kostenstellen korrigieren ({0} Rechnungen)", [invoices.length]),
+				size: "extra-large",
+				fields: [{ fieldtype: "HTML", fieldname: "table" }],
+				primary_action_label: __("Alle {0} korrigieren", [invoices.length]),
+				primary_action: () => {
+					dialog.hide();
+					run_cost_center_repair(listview);
+				},
+			});
+			dialog.fields_dict.table.$wrapper.html(`
+				<p class="text-muted">${__(
+					"Kopf und Positionen bekommen die Kostenstelle der Immobilie. Betrag, offener Posten und Zahlungen bleiben unverändert; die Buchungssätze werden im Hintergrund neu erzeugt."
+				)}</p>
+				<div style="max-height: 60vh; overflow: auto">
+					<table class="table table-bordered table-condensed">
+						<thead><tr>
+							<th>${__("Rechnung")}</th><th>${__("Datum")}</th><th>${__("Kunde")}</th>
+							<th>${__("Bemerkung")}</th><th>${__("Offen")}</th><th>${__("Kopf")}</th>
+							<th>${__("Positionen")}</th><th>${__("Soll")}</th>
+						</tr></thead>
+						<tbody>${rows}</tbody>
+					</table>
+				</div>`);
+			dialog.show();
+		},
+	});
+}
+
+function run_cost_center_repair(listview) {
+	frappe.call({
+		method: `${COST_CENTER_REPAIR_MODULE}.repair_sales_invoice_cost_centers`,
+		freeze: true,
+		freeze_message: __("Kostenstellen werden korrigiert …"),
+		callback: (r) => {
+			const res = r.message || {};
+			const repaired = (res.repaired || []).length;
+			const failed = res.failed || [];
+			let message = __("{0} Rechnungen korrigiert. Die Buchungssätze werden im Hintergrund neu erzeugt.", [
+				repaired,
+			]);
+			if (failed.length) {
+				const esc = frappe.utils.escape_html;
+				message += `<br><br><b>${__("Nicht korrigiert ({0}):", [failed.length])}</b><ul>${failed
+					.map((f) => `<li>${esc(f.name)}: ${esc(f.error)}</li>`)
+					.join("")}</ul>`;
+			}
+			frappe.msgprint({
+				title: __("Kostenstellen korrigieren"),
+				message,
+				indicator: failed.length ? "orange" : "green",
+			});
+			listview.refresh();
+		},
+	});
+}
