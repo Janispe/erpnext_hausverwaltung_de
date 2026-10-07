@@ -35,18 +35,18 @@ Es werden keine fachlichen Dokumente gespeichert oder gebucht und keine
 Archiv-/Mail-Synchronisationshooks ausgelöst. Eingebettete Abrechnungskennungen,
 QR-Links und externe Mail-Tags bleiben dadurch gültig.
 
-Der reguläre Updatepfad baut Images aus veröffentlichten Repository-Ständen.
-Zum Release gehören die Änderungen in **hausverwaltung, hausverwaltung_peters,
-process_engine und mail_merge**. Lokale Arbeitskopien gelangen nicht automatisch
-in das Produktionsimage. Build, Snapshot, Sicherung und Rollback sind in der
-Production-Datei `docs/hausverwaltung-deployment.md` beschrieben.
+Der Updatepfad muss die zusammengehörigen Stände von Hausverwaltung,
+Process Engine und Mail Merge sowie gegebenenfalls die standortspezifische
+Import-App verwenden. Lokale Arbeitskopien gelangen nicht automatisch in ein
+aus Repository-Ständen gebautes Image. Build, Sicherung und Rollback richten
+sich nach der Deployment-Dokumentation der jeweiligen Installation.
 
 Für ein Upgrade:
 
 1. Kandidatenimage bauen und auf einer getrennten Datenbankkopie prüfen. Ein
-   anderer Compose-Projektname allein isoliert die vorhandene Production-Compose
-   nicht: deren Sites-/DB-/Redis-Volumes und Netzwerk haben feste Namen. Für den
-   Test eigene Volumes und ein eigenes Netzwerk ohne Worker/Scheduler verwenden.
+   anderer Compose-Projektname allein isoliert eine Compose-Konfiguration mit
+   expliziten Volume- oder Netzwerknamen nicht. Für den Test eigene Volumes und
+   ein eigenes Netzwerk ohne Worker/Scheduler verwenden.
 2. Den Kandidaten-Vorabcheck auf der Kopie ausführen. Aktive abweichende
    `Document Naming Rule`/Namens-Overrides, fehlende Vertragslinks und mehrfach
    verwendete Customers müssen vor dem Upgrade bereinigt werden. Der Check
@@ -84,14 +84,16 @@ Site-Konfiguration verwenden; neuere Buchungen müssen dabei berücksichtigt
 werden. Bestehende IDs werden auch im Fehlerfall nicht durch eine allgemeine
 Umbenennung oder Customer-Zusammenführung ersetzt.
 
-Die Umstellung wurde am 7. Oktober 2026 auf einer isolierten Kopie des
-Produktionsbestands mit 364 Mietverträgen geprüft. Der Vergleich von 33 Tabellen
-einschließlich 241.766 Hauptbuchzeilen ergab unveränderte Identitäten,
-Zeitstempel und Referenzen. Zweimaliges erneutes Backfill lieferte identische
-Titel; zwei parallele Erstanlagen eines neuen Jahrespräfixes erhielten getrennte
-Nummern. Die Produktionsdatenbank wurde für diesen Test nicht migriert.
-Zusätzlich bestanden 217 gezielte Tests, einschließlich wiederholter CSV- und
-Sample-Importe mit kurzen IDs und der Abweisung mehrdeutiger Zuordnungen.
+Die Umstellung wurde auf einer isolierten Bestandskopie geprüft: Identitäten,
+Zeitstempel und Referenzen blieben erhalten. Wiederholtes Backfill lieferte
+identische Titel; parallele Erstanlagen erhielten getrennte Nummern. Gezielte
+Regressionstests decken Nummernvergabe, Migration und wiederholte Importe ab.
+
+Adress-, Immobilien- und Wohnungsänderungen aktualisieren abhängige Titel über
+explizite Links. Dabei werden ausschließlich Anzeigefelder geschrieben, ohne
+Zeitstempel, IDs oder Buchungsreferenzen zu ändern oder Dokumenthooks erneut
+auszulösen. Ein zusätzlicher Upgrade-Patch aktualisiert auch bestehende Titel
+auf Sites, auf denen die erste Namensmigration bereits gelaufen ist.
 
 ### Automatische Mietsollstellung
 

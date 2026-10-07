@@ -346,6 +346,15 @@ for _doctype in (
 		"hausverwaltung.hausverwaltung.utils.document_naming.set_document_name"
 	)
 
+# Preserve existing handlers; dependency refresh writes only display fields.
+for _doctype in ("Address", "Immobilie", "Wohnung", "Zaehler", "Customer", "Contact", "Mietvertrag"):
+	for _event in ("on_update", "on_update_after_submit"):
+		_events = doc_events.setdefault(_doctype, {})
+		_existing = _events.get(_event, [])
+		_events[_event] = ([_existing] if isinstance(_existing, str) else list(_existing)) + [
+			"hausverwaltung.hausverwaltung.utils.document_title_sync.refresh_dependent_titles"
+		]
+
 # Scheduled Tasks
 # ---------------
 
