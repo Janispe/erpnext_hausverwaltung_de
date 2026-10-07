@@ -37,6 +37,10 @@ function App() {
   const [loadedSelection, setLoadedSelection] = useState(null);
   const loadSeq = useRef(0);
   const { mieter, filters, rows, totalRow, totalRows = [], summary } = data;
+  // Keep grouping and balances tied to the loaded report while a new sort
+  // request is pending (or fails). Regrouping old rows can create duplicate
+  // month keys and leave orphaned headers in React's DOM.
+  const loadedSortByWertstellung = !!filters?.sortieren_nach_wertstellungsdatum;
 
   // Filter-State
   const _init = window.MK_INITIAL || {};
@@ -189,7 +193,9 @@ function App() {
     });
   };
 
-  const printPage = () => openMieterkontoPrintDialog(data, { showCats, sortByWertstellung });
+  const printPage = () => openMieterkontoPrintDialog(data, {
+    showCats, sortByWertstellung: loadedSortByWertstellung,
+  });
 
   const canExport = !loadingData && !loadError && !!loadedSelection?.customer
     && loadedSelection.customer === customer && loadedSelection.from === fromDate
@@ -318,10 +324,10 @@ function App() {
             density={t.density}
             highlightOpen={t.highlightOpen}
             showInlineCats={showCats}
-            sortByWertstellung={sortByWertstellung}
+            sortByWertstellung={loadedSortByWertstellung}
           />
         )}
-        {variant === "B" && <VariantB rows={rows} totalRow={totalRow} sortByWertstellung={sortByWertstellung} />}
+        {variant === "B" && <VariantB rows={rows} totalRow={totalRow} sortByWertstellung={loadedSortByWertstellung} />}
         {variant === "C" && (
           <VariantC
             rows={rows}
@@ -329,7 +335,7 @@ function App() {
             totalRows={totalRows}
             summary={summary}
             density={t.density}
-            sortByWertstellung={sortByWertstellung}
+            sortByWertstellung={loadedSortByWertstellung}
           />
         )}
       </main>

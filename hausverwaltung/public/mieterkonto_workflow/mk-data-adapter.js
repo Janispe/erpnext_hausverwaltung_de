@@ -66,6 +66,7 @@
         to_date: to,
         offene_betraege_basis: options.openScope || "Zeitraum",
         saldo_basis: options.balanceScope || "Gesamt",
+        sortieren_nach_wertstellungsdatum: options.sortByWertstellung ? 1 : 0,
       },
       rows: txRows.map(adaptRow),
       totalRow: adaptRow(totalRow),
