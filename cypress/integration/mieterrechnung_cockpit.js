@@ -44,10 +44,15 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 		cy.visit("/app");
 		cy.get("body").should("have.attr", "data-ajax-state", "complete");
 
-		// Aktiven Mietvertrag finden (kunde gesetzt, status != 'Beendet')
+		// Vollständigen Musterhaus-Vertrag wählen. Parallel laufende Specs
+		// erzeugen auch Verträge ohne Immobilie; diese sind nicht buchbar.
 		cy.call("frappe.client.get_list", {
 			doctype: "Mietvertrag",
-			filters: [["kunde", "is", "set"]],
+			filters: [
+				["kunde", "is", "set"],
+				["name", "like", "M1001%"],
+				["von", "<=", "2026-05-01"],
+			],
 			fields: ["name", "kunde", "wohnung"],
 			limit_page_length: 1,
 			order_by: "modified desc",

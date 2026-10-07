@@ -84,9 +84,15 @@ const setMietvertragRows = (frm, { mieter, personen, miete, betriebskosten, heiz
 };
 
 const createMietvertragInUi = (payload) => {
-	cy.visit("/app/mietvertrag/new");
+	// Frappe 16 generates a unique new-mietvertrag-* route from frappe.new_doc.
+	// A literal /new is treated as a document name and does not open a new form.
+	cy.visit("/app/mietvertrag");
+	cy.get(".frappe-list", { timeout: 30000 }).should("exist");
+	cy.window().then((win) => win.frappe.new_doc("Mietvertrag", { wohnung: payload.wohnung }));
 	cy.get("body").should("have.attr", "data-ajax-state", "complete");
 	cy.window({ timeout: 30000 }).its("cur_frm").should("exist");
+	cy.window().its("cur_frm.doc.doctype").should("equal", "Mietvertrag");
+	cy.window().its("cur_frm.doc.__islocal").should("equal", 1);
 
 	cy.window().then((win) => {
 		const frm = win.cur_frm;
@@ -116,7 +122,17 @@ const expectCurrencyClose = (value, expected, label) => {
 	expect(Number(value || 0), label).to.be.closeTo(expected, 0.01);
 };
 
-context("Mieterwechsel — komplexer UI-Flow", () => {
+const openDocInUi = (doctype, name) => {
+	// Use Frappe's router so punctuation in generated apartment/lease IDs is
+	// encoded according to the current Desk route format.
+	cy.window().then((win) => win.frappe.set_route("Form", doctype, name));
+	cy.window({ timeout: 30000 }).should((win) => {
+		expect(win.cur_frm?.doc?.doctype).to.eq(doctype);
+		expect(win.cur_frm?.doc?.name).to.eq(name);
+	});
+};
+
+context("Mieterwechsel — komplexer UI-Flow", { retries: 0 }, () => {
 	let wohnung;
 	let altKontakt;
 	let neuKontaktA;
@@ -267,7 +283,7 @@ context("Mieterwechsel — komplexer UI-Flow", () => {
 			expect(altVertrag).to.not.eq(neuVertrag);
 		});
 
-		cy.then(() => cy.open_doc("Mietvertrag", altVertrag));
+		cy.then(() => openDocInUi("Mietvertrag", altVertrag));
 		cy.window().its("cur_frm.doc").then((doc) => {
 			expect(doc.wohnung).to.eq(wohnung);
 			expect(doc.status).to.eq("Vergangenheit");
@@ -280,7 +296,7 @@ context("Mieterwechsel — komplexer UI-Flow", () => {
 		cy.get(".page-container:visible").should("contain", "Mieterkonto");
 		cy.get(".page-container:visible").should("contain", "Sollstellungen prüfen");
 
-		cy.then(() => cy.open_doc("Mietvertrag", neuVertrag));
+		cy.then(() => openDocInUi("Mietvertrag", neuVertrag));
 		cy.window().its("cur_frm.doc").then((doc) => {
 			expect(doc.wohnung).to.eq(wohnung);
 			expect(doc.status).to.eq("Läuft");
@@ -294,7 +310,7 @@ context("Mieterwechsel — komplexer UI-Flow", () => {
 		});
 		cy.get(".page-container:visible").should("contain", "Staffelmieten sortieren");
 
-		cy.then(() => cy.open_doc("Wohnung", wohnung));
+		cy.then(() => openDocInUi("Wohnung", wohnung));
 		cy.window().its("cur_frm.doc").then((doc) => {
 			expect(doc.status).to.eq("Vermietet");
 			expect(doc.aktueller_mietvertrag).to.eq(neuVertrag);
@@ -307,7 +323,26 @@ context("Mieterwechsel — komplexer UI-Flow", () => {
 				"Läuft",
 			]);
 		});
-		cy.get(".page-container:visible").should("contain", neuVertrag);
-		cy.get(".page-container:visible").should("contain", altVertrag);
+		// Link fields render the readable lease title, while doc.name stays the
+		// stable accounting identity already checked above.
+		cy.get('[data-fieldname="aktueller_mietvertrag"]:visible').should("contain", TEST_TAG);
+		cy.contains('.form-tabs .nav-link', 'Mietverträge').click();
+		cy.get('[data-fieldname="mietvertraege_alle"]:visible').should("contain", "Vergangenheit").and("contain", "Läuft");
+
+		cy.get_list("Mietvertrag", ["name", "kunde", "wohnung", "status"], [["wohnung", "=", wohnung]]).then((result) => {
+			const rows = result.data;
+			expect(rows, "genau Alt- und Neuvertrag für dieselbe Wohnung").to.have.length(2);
+			expect(new Set(rows.map((row) => row.kunde)).size, "eigener Customer pro Mietverhältnis").to.eq(2);
+			rows.forEach((row) => {
+				cy.get_list("Mietvertrag", ["name", "wohnung"], [["kunde", "=", row.kunde]]).then((customerLeases) => {
+					expect(customerLeases.data, "Customer gehört genau einem Mietvertrag").to.deep.eq([{ name: row.name, wohnung }]);
+				});
+			});
+			cy.writeFile("output/playwright/bugtesting-2026-10-04/mieterwechsel-database-readback.json", {
+				test_tag: TEST_TAG, wohnung, altVertrag, neuVertrag, contracts: rows,
+				verified_rent: { old: 970, current: 1015 },
+				verified_customer_contract_invariant: "1:1; historical and current customers are distinct",
+			});
+		});
 	});
 });

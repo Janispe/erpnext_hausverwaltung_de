@@ -9,7 +9,7 @@ context("E2E: EÜR mit Wertprüfung gegen Echtdaten", () => {
 		cy.visit("/app");
 		cy.get("body").should("have.attr", "data-ajax-state", "complete");
 
-		cy.api_post(`${FIX}.seed`).then((res) => {
+		cy.api_post(`${FIX}.seed`, { company: Cypress.env("hv_company") || "Hausverwaltung Peters" }).then((res) => {
 			expect(
 				res.status,
 				`seed failed (${res.status}): ${JSON.stringify(res.body).slice(0, 400)}`
@@ -49,8 +49,13 @@ context("E2E: EÜR mit Wertprüfung gegen Echtdaten", () => {
 			expect(res.status).to.eq(200);
 			const expected = res.body.message;
 			cy.log(`expected: ${JSON.stringify(expected)}`);
+			if (Cypress.env("hv_known_eur_totals")) {
+				expect(expected.einnahmen, "unabhängige Testfixture Einnahmen").to.eq(123.45);
+				expect(expected.ausgaben, "unabhängige Testfixture Ausgaben").to.eq(40);
+				expect(expected.ueberschuss, "unabhängige Testfixture Überschuss").to.eq(83.45);
+			}
 
-			cy.visit("/app/einnahmen-ueberschuss-rechnung/new");
+			cy.visit("/app/einnahmen-ueberschuss-rechnung/new-einnahmen-ueberschuss-rechnung-1");
 			cy.get("body").should("have.attr", "data-ajax-state", "complete");
 			cy.window().its("cur_frm").should("not.be.null");
 

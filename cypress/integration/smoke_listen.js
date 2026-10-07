@@ -26,7 +26,8 @@ context("Smoke: Listenansichten öffnen", () => {
 	it('Seite "Serienbrief Vorlage" öffnet den Vorlagen-Browser ohne Fehler', () => {
 		cy.visit("/app/serienbrief-vorlage");
 		cy.location("pathname", { timeout: 10000 }).should("include", "serienbrief_browser");
-		cy.get(".hv-serienbrief-browser-frame", { timeout: 30000 }).should("exist");
+		// Current mail_merge host embeds the browser with this documented class.
+		cy.get('iframe.mail-merge-browser-frame[title="Serienbrief Vorlagen-Browser"]', { timeout: 30000 }).should("exist");
 		cy.get(".error-message:visible").should("not.exist");
 	});
 });

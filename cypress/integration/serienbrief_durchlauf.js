@@ -15,22 +15,27 @@ context("Serienbrief Durchlauf", () => {
 	// ── Neuer Durchlauf Dialog ─────────────────────────────────
 
 	context("Neuer Durchlauf Dialog", () => {
-		let hasVorlage = false;
 		let vorlageName = "";
+		let vorlage = null;
 
 		before(() => {
 			cy.login();
 			cy.visit("/app");
 			cy.get("body").should("have.attr", "data-ajax-state", "complete");
 
-			// Prüfe ob eine Serienbrief Vorlage existiert
-			cy.get_list("Serienbrief Vorlage", ["name", "haupt_verteil_objekt"], []).then(
+			// A valid fixture is required: missing data must fail instead of
+			// silently leaving the template-loading behavior untested.
+			const filters = Cypress.env("hv_serienbrief_template_title")
+				? [["title", "=", Cypress.env("hv_serienbrief_template_title")]]
+				: [["haupt_verteil_objekt", "=", "Mietvertrag"]];
+			cy.get_list("Serienbrief Vorlage", ["name", "title", "kategorie", "haupt_verteil_objekt"], filters).then(
 				(r) => {
 					const data = r.data || [];
-					if (data.length > 0) {
-						hasVorlage = true;
-						vorlageName = data[0].name;
-					}
+					expect(data, "valid Mietvertrag template fixture").to.have.length.greaterThan(0);
+					vorlage = data[0];
+					expect(vorlage.haupt_verteil_objekt).to.eq("Mietvertrag");
+					expect(vorlage.kategorie).to.be.a("string").and.not.be.empty;
+					vorlageName = vorlage.name;
 				}
 			);
 		});
@@ -50,28 +55,31 @@ context("Serienbrief Durchlauf", () => {
 			});
 		});
 
-		it("Dialog mit Vorlage: Iterations-Doctype wird gesetzt", function () {
-			if (!hasVorlage) this.skip();
-
+		(Cypress.env("hv_only_pending") ? it.only : it)("Dialog mit Vorlage: Iterations-Doctype wird gesetzt", () => {
 			cy.window().then((win) => {
-				if (typeof win.hausverwaltung?.serienbrief?.open_new_durchlauf_dialog !== "function") {
-					this.skip();
-					return;
-				}
-				win.hausverwaltung.serienbrief.open_new_durchlauf_dialog({
+				expect(win.mail_merge?.serienbrief?.open_new_durchlauf_dialog, "current Mail Merge dialog API").to.be.a("function");
+				win.mail_merge.serienbrief.open_new_durchlauf_dialog({
 					vorlage: vorlageName,
 				});
 			});
 
 			cy.get(".modal:visible").should("exist");
-			// Warten bis Vorlage geladen
-			cy.wait(1000);
 			cy.get(".modal:visible")
 				.find('[data-fieldname="iteration_doctype"]')
 				.should("exist");
+			// Retry the actual values populated asynchronously from the template.
+			// Merely finding the always-present field does not test template loading.
+			cy.window().should((win) => {
+				expect(win.cur_dialog.get_value("vorlage")).to.eq(vorlageName);
+				expect(win.cur_dialog.get_value("iteration_doctype")).to.eq("Mietvertrag");
+				expect(win.cur_dialog.get_value("title")).to.eq(vorlage.title);
+				expect(win.cur_dialog.get_value("kategorie")).to.eq(vorlage.kategorie);
+			});
+			cy.screenshot("serienbrief-template-values-loaded");
 
 			// Dialog schließen
 			cy.get(".modal:visible .btn-modal-close").click();
+			cy.get(".modal:visible").should("not.exist");
 		});
 	});
 

@@ -48,12 +48,12 @@ context("Picker Modal Width Diagnose", () => {
 		cy.visit("/app");
 		cy.get("body").should("have.attr", "data-ajax-state", "complete");
 		cy.window({ timeout: 30000 })
-			.its("hausverwaltung.serienbrief.open_new_durchlauf_dialog")
+			.its("mail_merge.serienbrief.open_new_durchlauf_dialog")
 			.should("be.a", "function");
 
 		// Den Serienbrief-Durchlauf-Dialog öffnen
 		cy.window().then((win) => {
-			win.hausverwaltung.serienbrief.open_new_durchlauf_dialog({
+			win.mail_merge.serienbrief.open_new_durchlauf_dialog({
 				vorlage: vorlage_with_mietvertrag,
 			});
 		});
