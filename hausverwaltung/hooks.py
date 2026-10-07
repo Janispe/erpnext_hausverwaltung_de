@@ -17,16 +17,17 @@ from hausverwaltung.hausverwaltung.agent_tools.fac_contract import FAC_TOOL_HOOK
 
 assistant_tools = FAC_TOOL_HOOKS
 
-# Each item in the list will be shown as an app in the apps page
-# add_to_apps_screen = [
-# 	{
-# 		"name": "hausverwaltung",
-# 		"logo": "/assets/hausverwaltung/logo.png",
-# 		"title": "Hausverwaltung",
-# 		"route": "/hausverwaltung",
-# 		"has_permission": "hausverwaltung.api.permission.has_app_permission"
-# 	}
-# ]
+app_logo_url = "/assets/hausverwaltung/icons/desktop_icons/solid/hausverwaltung.svg"
+app_home = "/desk/hausverwaltung"
+add_to_apps_screen = [
+	{
+		"name": app_name,
+		"logo": app_logo_url,
+		"title": app_title,
+		"route": app_home,
+		"sequence_id": 2,
+	}
+]
 
 # Includes in <head>
 # ------------------

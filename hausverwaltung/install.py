@@ -1832,21 +1832,27 @@ def _slug(text: str) -> str:
 
 
 def ensure_hausverwaltung_sidebar() -> None:
-    """Rebuild the v16 Workspace Sidebar for Hausverwaltung to match the workspace layout."""
+    """Sync the sidebar, using the current model when available."""
     try:
-        if not frappe.db.exists("DocType", "Workspace Sidebar"):
+        sidebar_doctype = (
+            "Sidebar" if frappe.db.exists("DocType", "Sidebar") else "Workspace Sidebar"
+        )
+        if not frappe.db.exists("DocType", sidebar_doctype):
             return  # older versions
         if not frappe.db.exists("Workspace", "Hausverwaltung"):
             return
 
-        # Recreate from scratch so order/labels match code.
-        if frappe.db.exists("Workspace Sidebar", "Hausverwaltung"):
-            frappe.delete_doc("Workspace Sidebar", "Hausverwaltung", force=True, ignore_permissions=True)
-
-        sidebar = frappe.new_doc("Workspace Sidebar")
+        exists = frappe.db.exists(sidebar_doctype, "Hausverwaltung")
+        sidebar = (
+            frappe.get_doc(sidebar_doctype, "Hausverwaltung")
+            if exists else frappe.new_doc(sidebar_doctype)
+        )
+        sidebar.set("items", [])
         sidebar.title = "Hausverwaltung"
         sidebar.module = "Hausverwaltung"
         sidebar.header_icon = "table"
+        if sidebar_doctype == "Sidebar":
+            sidebar.app = "hausverwaltung"
 
         items: list[dict] = []
         idx = 0
@@ -1884,7 +1890,10 @@ def ensure_hausverwaltung_sidebar() -> None:
         for data in items:
             sidebar.append("items", data)
 
-        sidebar.insert(ignore_permissions=True)
+        if exists:
+            sidebar.save(ignore_permissions=True)
+        else:
+            sidebar.insert(ignore_permissions=True)
         frappe.clear_cache()
         frappe.db.commit()
     except Exception:

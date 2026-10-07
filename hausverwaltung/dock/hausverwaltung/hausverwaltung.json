@@ -1,0 +1,17 @@
+{
+ "doctype": "Dock",
+ "name": "hausverwaltung",
+ "app": "hausverwaltung",
+ "standard": 1,
+ "user": "",
+ "items": [
+  {
+   "title": "Hausverwaltung",
+   "link_type": "Sidebar",
+   "link_to": "Hausverwaltung",
+   "icon": "hausverwaltung",
+   "hidden": 0,
+   "added": 0
+  }
+ ]
+}
