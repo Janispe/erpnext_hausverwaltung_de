@@ -11,6 +11,7 @@ import {
 	Icon,
 	Spinner,
 } from "../helpers.jsx";
+import { InvoiceDateWarning } from "./InvoiceDateWarning.jsx";
 import { DocLink } from "./DocLink.jsx";
 import { LinkSearch } from "./LinkSearch.jsx";
 import { CustomerSplitDialog, CustomerPayments } from "./CustomerSplitDialog.jsx";
@@ -518,9 +519,10 @@ function ResetRowDialog({ row, mode, busy, onClose, onConfirm }) {
 
 // ───────────────────────── Phase 3: Rechnungen matchen ──────────────────────
 
-function InvoiceMatch({ docname, row, onActionDone, notify }) {
+export function InvoiceMatch({ docname, row, onActionDone, notify }) {
 	const [data, setData] = useState(null);
 	const [sel, setSel] = useState({}); // name -> allocated_amount
+	const [dateConfirmations, setDateConfirmations] = useState({});
 	const [advance, setAdvance] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const [busy, run] = useAction(notify);
@@ -533,6 +535,7 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 		let alive = true;
 		setLoading(true);
 		setSel({});
+		setDateConfirmations({});
 		setAdvance(false);
 		api.getOpenInvoices(docname, row.id)
 			.then((d) => alive && setData(d))
@@ -552,6 +555,8 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 	);
 
 	const toggle = (inv) => {
+		if (inv.allocation_blocked_reason) return;
+		setDateConfirmations({});
 		setSel((prev) => {
 			const next = { ...prev };
 			if (next[keyFor(inv)] != null) {
@@ -566,10 +571,23 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 		});
 	};
 
-	const setAlloc = (name, val) =>
+	const setAlloc = (name, val) => {
+		setDateConfirmations({});
 		setSel((prev) => ({ ...prev, [name]: val === "" ? 0 : Number(val) }));
+	};
+	const reviewKey = (inv, amount) => JSON.stringify([inv.after_contract_end_review, Number(amount)]);
+	const missingDateConfirmation = Object.entries(sel).some(([key, amount]) => {
+		const inv = invoiceByName.get(key);
+		return inv?.after_contract_end_review && dateConfirmations[key] !== reviewKey(inv, amount);
+	});
 
 	const book = () => {
+		if (busy) return;
+		if (missingDateConfirmation) return notify("error", "Bitte die nachträgliche Abrechnung ausdrücklich bestätigen.");
+		const confirmations = Object.entries(sel).flatMap(([key, amount]) => {
+			const inv = invoiceByName.get(key);
+			return inv.after_contract_end_review ? [{ ...inv.after_contract_end_review, allocated_amount: Number(amount) }] : [];
+		});
 		const invoices = Object.entries(sel).map(([key, allocated_amount]) => {
 			const source = invoiceByName.get(key);
 			return { name: source.name, reference_doctype: source.reference_doctype || data.invoiceDoctype, allocated_amount };
@@ -580,6 +598,7 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 		for (const inv of invoices) {
 			const amount = Number(inv.allocated_amount);
 			const source = invoiceByName.get(keyFor(inv));
+			if (source.allocation_blocked_reason) return notify("error", source.allocation_blocked_reason);
 			const outstanding = allocatableInvoiceAmount(source);
 			if (!isCentAmount(amount) || amount <= 0) {
 				return notify("error", `Zuweisung für ${inv.name} muss ein positiver Betrag mit höchstens zwei Nachkommastellen sein.`);
@@ -591,7 +610,7 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 		if (cents(allocated) > cents(target)) return notify("error", "Die Zuweisung übersteigt den Bankbetrag.");
 		if ((isRefund || isInsurance || !advance) && cents(target) !== cents(allocated))
 			return notify("error", "Die Zahlung muss vollständig den ausgewählten Belegen zugeordnet werden.");
-		run(() => api.reconcileInvoices(docname, row.id, invoices, advance), {
+		run(() => api.reconcileInvoices(docname, row.id, invoices, advance, confirmations), {
 			success: isRefund
 				? "Guthaben ausgezahlt und Bank Transaction abgeglichen."
 				: "Zahlung gebucht und Bank Transaction abgeglichen.",
@@ -630,7 +649,7 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 						<div key={keyFor(inv)} className={`invoice-card ${checked ? "suggested" : "alt"}`}>
 							<label className="row1" style={{ cursor: "pointer" }}>
 								<div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-									<input type="checkbox" checked={checked} onChange={() => toggle(inv)} />
+									<input type="checkbox" checked={checked} disabled={busy || !!inv.allocation_blocked_reason} onChange={() => toggle(inv)} />
 									<div>
 										<div className="doc-id">{inv.name}{inv.reference_doctype === "Journal Entry" ? (isInsurance ? " · Versicherungsforderung" : " · Erstattungsguthaben") : ""}</div>
 										<div className="ref">{inv.remarks || "—"}</div>
@@ -640,6 +659,11 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 									{isRefund ? `Guthaben ${fmtEUR(allocatableInvoiceAmount(inv))}` : fmtEUR(inv.outstanding_amount)}
 								</div>
 							</label>
+							{inv.allocation_blocked_reason && <div className="reset-warning" role="alert">{inv.allocation_blocked_reason}</div>}
+							{checked && <InvoiceDateWarning invoice={inv} amount={sel[keyFor(inv)]}
+								checked={dateConfirmations[keyFor(inv)] === reviewKey(inv, sel[keyFor(inv)])}
+								onChange={(confirmed) => setDateConfirmations((prev) => ({ ...prev, [keyFor(inv)]: confirmed ? reviewKey(inv, sel[keyFor(inv)]) : null }))}
+								disabled={busy} />}
 							<div className="meta-row">
 								<span className="due"><Icon name="file" size={11} /> {fmtDate(inv.posting_date)}</span>
 								{checked && (
@@ -670,7 +694,7 @@ function InvoiceMatch({ docname, row, onActionDone, notify }) {
 				className="btn primary"
 				style={{ width: "100%", justifyContent: "center", marginTop: 8 }}
 				onClick={book}
-				disabled={busy || !Object.keys(sel).length}
+				disabled={busy || !Object.keys(sel).length || missingDateConfirmation}
 			>
 				{busy ? <Spinner /> : <Icon name="check" />} {isRefund ? "Guthaben zuordnen & auszahlen" : "Zuordnen & buchen"}
 			</button>

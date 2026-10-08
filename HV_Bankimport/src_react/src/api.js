@@ -273,12 +273,13 @@ export async function getOpenInvoices(name, rowName) {
 }
 
 // invoices: [{ name, allocated_amount }]
-export async function reconcileInvoices(name, rowName, invoices, leftoverAsAdvance = false) {
+export async function reconcileInvoices(name, rowName, invoices, leftoverAsAdvance = false, confirmedAfterContractEndInvoices = []) {
 	if (!embedded) return { ok: true, payment_entry: "PE-DEMO", mock: true };
 	return await rpc("reconcile", {
 		docname: name,
 		row_name: rowName,
 		invoice_names: JSON.stringify(invoices),
+		confirmed_after_contract_end_invoices: JSON.stringify(confirmedAfterContractEndInvoices),
 		leftover_as_advance: leftoverAsAdvance ? 1 : 0,
 	});
 }
@@ -307,9 +308,12 @@ export async function getCustomerSplitInvoices(name, rowName, customer) {
 	return rpc("customer_split_invoices", { docname: name, row_name: rowName, customer });
 }
 
-export async function reconcileCustomerSplit(name, rowName, allocations, advanceCustomer = null) {
+export async function reconcileCustomerSplit(name, rowName, allocations, advanceCustomer = null, confirmedAfterContractEndInvoices = []) {
 	if (!embedded) return { ok: true, mock: true };
-	return rpc("reconcile_customer_split", { docname: name, row_name: rowName, allocations: JSON.stringify(allocations), advance_customer: advanceCustomer });
+	return rpc("reconcile_customer_split", {
+		docname: name, row_name: rowName, allocations: JSON.stringify(allocations), advance_customer: advanceCustomer,
+		confirmed_after_contract_end_invoices: JSON.stringify(confirmedAfterContractEndInvoices),
+	});
 }
 
 export async function reconcileSplit(name, rowName, { invoices, abschlaege, leftoverAsAdvance } = {}) {

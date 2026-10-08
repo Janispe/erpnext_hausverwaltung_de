@@ -85,6 +85,7 @@ def get_customer_split_invoices(docname, row_name, customer):
         order_by="posting_date asc",
         limit=200,
     )
+    payments.annotate_customer_invoice_reviews(invoices, customer=customer, company=bank.company)
     return {
         "invoices": invoices,
         "customer": customer,
@@ -162,6 +163,15 @@ def _create_settlement_journal(bt, groups, company, bank, advance=None):
             "user_remark": "Verrechnung Nachzahlung/Guthaben: " + (bt.description or bt.name),
         }
     )
+    notes = [
+        f"{selected['name']}: Rechnungsdatum {review['posting_date']}, "
+        f"Vertragsende {review['contract_end']}, Mietvertrag {review['contract']}, "
+        f"Zuordnung {selected['allocated_amount']:.2f}; ausdrücklich bestätigt durch {frappe.session.user}"
+        for group in groups for selected in group['invoices']
+        if (review := selected.get('after_contract_end_review'))
+    ]
+    if notes:
+        je.user_remark += "\nNachträgliche Abrechnung: " + "; ".join(notes)
     je.append(
         "accounts",
         {
@@ -223,7 +233,9 @@ def _create_settlement_journal(bt, groups, company, bank, advance=None):
 
 
 @frappe.whitelist()
-def reconcile_customer_split(docname, row_name, allocations, advance_customer=None):
+def reconcile_customer_split(
+    docname, row_name, allocations, advance_customer=None, confirmed_after_contract_end_invoices=None,
+):
     groups = _parse_allocations(allocations)
     if not frappe.has_permission("Payment Entry", "create") or not frappe.has_permission(
         "Payment Entry", "submit"
@@ -236,7 +248,7 @@ def reconcile_customer_split(docname, row_name, allocations, advance_customer=No
         if customer_payments(row):
             frappe.throw("Die bisherige Zahlungsaufteilung muss zuerst vollständig zurückgesetzt werden.")
         shape = payments._bank_transaction_shape(bt)
-        if _amount(shape.amount) != _amount(row.betrag):
+        if _amount(shape.amount) != _amount(abs(Decimal(str(row.betrag)))):
             frappe.throw("Der Bankbetrag stimmt nicht mit der Importzeile überein.")
         if (row.richtung == "Ausgang") != (shape.direction == "out"):
             frappe.throw("Die Zahlungsrichtung stimmt nicht mit dem Bankumsatz überein.")
@@ -256,14 +268,16 @@ def reconcile_customer_split(docname, row_name, allocations, advance_customer=No
                 _validate_contract_invoice(invoice, contract)
                 if _amount(selected["allocated_amount"]) > abs(Decimal(str(invoice.outstanding_amount))):
                     frappe.throw(f"Teilbetrag für {invoice.name} übersteigt den aktuellen offenen Betrag.")
-                payments._lock_and_validate_invoices(
+                validated = payments._lock_and_validate_invoices(
                     invoices=[selected],
                     invoice_doctype="Sales Invoice",
                     company=company,
                     party=group["customer"],
                     company_currency=currency,
                     credit_notes=invoice.outstanding_amount < 0,
+                    confirmed_after_contract_end_invoices=confirmed_after_contract_end_invoices,
                 )
+                selected['after_contract_end_review'] = validated[0].get('after_contract_end_review')
                 selected["outstanding"] = Decimal(str(invoice.outstanding_amount))
                 selected["signed_amount"] = _amount(selected["allocated_amount"]) * (
                     1 if invoice.outstanding_amount > 0 else -1
@@ -301,6 +315,7 @@ def reconcile_customer_split(docname, row_name, allocations, advance_customer=No
                     target_amount=amount,
                     customer=group["customer"],
                     partial=True,
+                    confirmed_after_contract_end_invoices=confirmed_after_contract_end_invoices,
                 )
                 payments.reconcile_voucher_with_bt(bt, "Payment Entry", pe.name, amount, partial=True)
                 voucher = {"payment_entry": pe.name}

@@ -1149,7 +1149,7 @@ function _openMatchInvoicesDialog(frm, row) {
       const linkPath = referenceDoctype.toLowerCase().replace(/ /g, '-');
       return `
         <tr>
-          <td style="padding:4px 8px;"><input type="checkbox" class="hv-inv-cb" data-name="${safeName}" data-doctype="${safeDoctype}" data-outstanding="${outstanding}"></td>
+          <td style="padding:4px 8px;"><input type="checkbox" class="hv-inv-cb" data-name="${safeName}" data-doctype="${safeDoctype}" data-outstanding="${outstanding}" ${inv.allocation_blocked_reason ? "disabled" : ""}></td>
           <td style="padding:4px 8px;"><a href="/app/${linkPath}/${encodeURIComponent(inv.name)}" target="_blank">${safeName}</a></td>
           <td style="padding:4px 8px; text-align:right; color:#888;">${fmt(outstanding)}</td>
           <td style="padding:4px 8px;">
@@ -1159,6 +1159,13 @@ function _openMatchInvoicesDialog(frm, row) {
           </td>
           <td style="padding:4px 8px; white-space:nowrap;">${fmtDate(inv.posting_date)}</td>
         </tr>
+        ${inv.allocation_blocked_reason ? `<tr><td colspan="5" style="color:#b91c1c; padding:8px;">${frappe.utils.escape_html(inv.allocation_blocked_reason)}</td></tr>` : ''}
+        ${inv.after_contract_end_review ? `<tr class="hv-date-warning" data-name="${safeName}" style="display:none;"><td colspan="5" style="padding:8px; background:#fff7ed;">
+          <div>${frappe.utils.escape_html(inv.date_warning)}</div>
+          <div>${safeName} · ${frappe.utils.escape_html(inv.after_contract_end_review.contract)} · ${frappe.utils.escape_html(inv.after_contract_end_review.wohnung)}</div>
+          <div>Rechnungsdatum ${fmtDate(inv.posting_date)} · Vertragsende ${fmtDate(inv.after_contract_end_review.contract_end)} · Zuordnung <span class="hv-confirm-amount"></span></div>
+          <label><input type="checkbox" class="hv-date-confirm" data-name="${safeName}"> Ich habe geprüft, dass diese Rechnung eine nachträgliche Abrechnung dieses Mietverhältnisses betrifft, und bestätige diese Zuordnung.</label>
+        </td></tr>` : ''}
       `;
     }).join('');
 
@@ -1231,6 +1238,15 @@ function _openMatchInvoicesDialog(frm, row) {
           frappe.msgprint(__('Bitte mindestens eine Rechnung mit Betrag > 0 auswählen.'));
           return;
         }
+        const confirmations = [];
+        for (const allocation of allocations) {
+          const invoice = invoices.find((inv) => inv.name === allocation.name);
+          if (invoice.allocation_blocked_reason) return frappe.msgprint(invoice.allocation_blocked_reason);
+          if (!invoice.after_contract_end_review) continue;
+          const confirmed = d.$wrapper.find('.hv-date-confirm').filter(function () { return $(this).attr('data-name') === invoice.name; }).is(':checked');
+          if (!confirmed) return frappe.msgprint(__('Bitte die nachträgliche Abrechnung ausdrücklich bestätigen.'));
+          confirmations.push({ ...invoice.after_contract_end_review, allocated_amount: allocation.allocated_amount });
+        }
         const leftover = d.$wrapper.find('.hv-leftover-cb').is(':checked') ? 1 : 0;
         d.disable_primary_action();
         frappe.call({
@@ -1239,6 +1255,7 @@ function _openMatchInvoicesDialog(frm, row) {
             docname: frm.doc.name,
             row_name: row.name,
             invoice_names: JSON.stringify(allocations),
+            confirmed_after_contract_end_invoices: JSON.stringify(confirmations),
             leftover_as_advance: leftover,
           },
           freeze: true,
@@ -1290,10 +1307,19 @@ function _openMatchInvoicesDialog(frm, row) {
         note.css('color', '#dc3545').text(__('Auswahl übersteigt Bank-Betrag'));
         primary.prop('disabled', true);
       }
+      d.$wrapper.find('.hv-date-warning').each(function () {
+        const name = $(this).attr('data-name');
+        const selected = d.$wrapper.find('.hv-inv-cb').filter(function () { return $(this).attr('data-name') === name; }).is(':checked');
+        $(this).toggle(selected);
+        const amount = d.$wrapper.find('.hv-inv-amount').filter(function () { return $(this).attr('data-name') === name; }).val();
+        $(this).find('.hv-confirm-amount').html(fmt(parseFloat(amount) || 0));
+        if (selected && !$(this).find('.hv-date-confirm').is(':checked')) primary.prop('disabled', true);
+      });
     };
 
     // Checkbox-Toggle: Input enablen/disablen, beim Aktivieren Beträge auto-füllen
     d.$wrapper.on('change', '.hv-inv-cb', function () {
+      d.$wrapper.find('.hv-date-confirm').prop('checked', false);
       const name = $(this).attr('data-name');
       const input = d.$wrapper.find('.hv-inv-amount[data-name="' + name + '"]');
       if (this.checked) {
@@ -1316,7 +1342,8 @@ function _openMatchInvoicesDialog(frm, row) {
       }
       recalc();
     });
-    d.$wrapper.on('input', '.hv-inv-amount', recalc);
+    d.$wrapper.on('input', '.hv-inv-amount', () => { d.$wrapper.find('.hv-date-confirm').prop('checked', false); recalc(); });
+    d.$wrapper.on('change', '.hv-date-confirm', recalc);
     d.$wrapper.on('change', '.hv-leftover-cb', recalc);
     recalc();
   });

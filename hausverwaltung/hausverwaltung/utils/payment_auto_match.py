@@ -28,6 +28,7 @@ from typing import Any
 
 import frappe
 from frappe.utils import add_months, cint, flt, getdate
+
 from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 _TOLERANCE = 0.01
@@ -145,6 +146,7 @@ def _lock_and_validate_invoices(
 	company_currency: str,
 	expected_cost_center: str | None = None,
 	credit_notes: bool = False,
+	confirmed_after_contract_end_invoices=None,
 ) -> list:
 	"""Lock selected invoices and return their current outstanding amounts.
 
@@ -153,8 +155,11 @@ def _lock_and_validate_invoices(
 	invoice items are locked and checked here as well, so neither a stale
 	candidate list nor the split endpoint can cross-pay another property.
 	``credit_notes`` switches the expected sign to a negative outstanding amount.
+	Late invoices require their read-only preview snapshot and allocated amount
+	in ``confirmed_after_contract_end_invoices``; every other check still applies.
 	"""
 	party_field, party_account_field = _invoice_party_field(invoice_doctype)
+	confirmations = _parse_invoice_date_confirmations(confirmed_after_contract_end_invoices)
 	requested = {}
 	for invoice in invoices:
 		name = _get_value(invoice, "name")
@@ -164,6 +169,7 @@ def _lock_and_validate_invoices(
 
 	current_by_name = {}
 	for name in sorted(requested):
+		review = None
 		try:
 			invoice = frappe.get_doc(invoice_doctype, name, for_update=True)
 		except frappe.DoesNotExistError:
@@ -227,6 +233,13 @@ def _lock_and_validate_invoices(
 			):
 				frappe.throw(f"Rechnung {name} passt nicht eindeutig zum Mietvertrag und zur Wohnung dieses Kunden.", frappe.ValidationError)
 
+			review = _invoice_contract_date_review(invoice, identity, for_update=True)
+			if review:
+				_validate_customer_invoice_dimensions(invoice, identity, for_update=True)
+			_require_invoice_date_confirmation(
+				invoice, review, confirmations, _get_value(requested[name], "allocated_amount"),
+			)
+
 		original = requested[name]
 		current_by_name[name] = frappe._dict(
 			name=name,
@@ -235,6 +248,7 @@ def _lock_and_validate_invoices(
 			allocated_amount=_get_value(original, "allocated_amount"),
 			wohnung=invoice.get("wohnung"),
 			mietabrechnung_id=invoice.get("mietabrechnung_id"),
+			after_contract_end_review=review,
 		)
 
 	return [current_by_name[name] for name in requested]
@@ -246,71 +260,231 @@ def _customer_invoice_identity(
 	*,
 	for_update: bool = False,
 ) -> tuple[str, str | None] | None:
-	"""Resolve one invoice to exactly one Mietvertrag/Wohnung identity.
+	"""Resolve identity independently of the invoice's creation date.
 
-	Structured IDs are validated against the authoritative contract. Legacy
-	invoices resolve through the Customer's one-to-one Mietvertrag and are then
-	validated against posting date and optional Wohnung.
+	A Customer identifies exactly one contract, including after that contract
+	ends. Explicit references must agree with this mapping, never disambiguate
+	corrupt duplicate mappings. Date policy is enforced separately by callers.
 	"""
-	posting_date = _get_value(invoice, "posting_date")
-	wohnung = str(_get_value(invoice, "wohnung") or "").strip() or None
-	structured = str(_get_value(invoice, "mietabrechnung_id") or "").strip()
-	contract_name = None
-	if structured and "|" in structured:
-		contract_name = structured.rsplit("|", 1)[0].strip()
-		if not contract_name:
-			return None
+	from hausverwaltung.hausverwaltung.overrides.sales_invoice import _contract_reference
 
-	if contract_name:
-		try:
-			contract = frappe.get_doc(
-				"Mietvertrag",
-				contract_name,
-				for_update=for_update,
-			)
-		except frappe.DoesNotExistError:
-			return None
-		if not contract or int(contract.get("docstatus") or 0) == 2:
-			return None
-		if contract.get("kunde") != customer:
-			return None
-		if wohnung and contract.get("wohnung") != wohnung:
-			return None
-		if posting_date:
-			d = getdate(posting_date)
-			if contract.get("von") and getdate(contract.get("von")) > d:
-				return None
-			if contract.get("bis") and getdate(contract.get("bis")) < d:
-				return None
-		return contract.name, contract.get("wohnung") or wohnung
-
-	if not posting_date:
-		return None
-	d = getdate(posting_date)
-	values: dict[str, Any] = {"customer": customer}
+	reference = _contract_reference(
+		mietabrechnung_id=_get_value(invoice, "mietabrechnung_id"),
+		remarks=_get_value(invoice, "remarks"),
+		document_label=_get_value(invoice, "name") or "Rechnung",
+	)
 	matches = frappe.db.sql(
 		f"""
-		SELECT name, wohnung, von, bis
-		FROM `tabMietvertrag`
-		WHERE kunde = %(customer)s
-		  AND docstatus != 2
-		ORDER BY name
-		LIMIT 2
-		{"FOR UPDATE" if for_update else ""}
+		SELECT name, wohnung FROM `tabMietvertrag`
+		WHERE kunde = %(customer)s AND docstatus != 2
+		ORDER BY name LIMIT 2 {"FOR UPDATE" if for_update else ""}
 		""",
-		values,
+		{"customer": customer},
 		as_dict=True,
 	)
-	if len(matches) != 1:
+	if len(matches) != 1 or not matches[0].get("wohnung"):
 		return None
 	contract = matches[0]
-	if wohnung and contract.get("wohnung") != wohnung:
+	if reference.mietvertrag and reference.mietvertrag != contract.name:
 		return None
-	if contract.get("von") and getdate(contract.get("von")) > d:
+	direct_contract = str(_get_value(invoice, "mietvertrag") or "").strip()
+	if direct_contract and direct_contract != contract.name:
 		return None
-	if contract.get("bis") and getdate(contract.get("bis")) < d:
+	if _get_value(invoice, "customer") and _get_value(invoice, "customer") != customer:
 		return None
-	return contract.name, contract.get("wohnung") or wohnung
+	wohnung = str(_get_value(invoice, "wohnung") or "").strip()
+	if wohnung and wohnung != contract.wohnung:
+		return None
+	return contract.name, contract.wohnung
+
+
+_AFTER_CONTRACT_END_MESSAGE = (
+	"Diese Rechnung wurde nach Vertragsende erstellt. Bitte prüfen, ob sie "
+	"eine nachträgliche Abrechnung dieses Mietverhältnisses betrifft."
+)
+
+
+def _invoice_contract_date_review(invoice, identity, *, for_update=False):
+	"""Return a confirmation snapshot, or None for an ordinary invoice.
+
+	Missing/invalid dates and dates before the contract start remain hard errors.
+	The snapshot is compared against locked current data at booking time.
+	"""
+	contract = frappe.get_doc("Mietvertrag", identity[0], for_update=for_update)
+	if (
+		cint(contract.get("docstatus")) == 2
+		or contract.get("wohnung") != identity[1]
+		or (_get_value(invoice, "customer") and contract.get("kunde") != _get_value(invoice, "customer"))
+	):
+		frappe.throw("Die Mietvertragsidentität hat sich geändert.", frappe.ValidationError)
+	try:
+		if not _get_value(invoice, "posting_date") or not contract.get("von"):
+			raise ValueError
+		posting_date = getdate(_get_value(invoice, "posting_date"))
+		start = getdate(contract.von)
+		end = getdate(contract.bis) if contract.get("bis") else None
+		if end and end < start:
+			raise ValueError
+	except (ValueError, TypeError):
+		frappe.throw("Rechnungsdatum oder Vertragszeitraum ist nicht prüfbar.", frappe.ValidationError)
+	if posting_date < start:
+		frappe.throw("Das Rechnungsdatum liegt vor Vertragsbeginn.", frappe.ValidationError)
+	if not end or posting_date <= end:
+		return None
+	return {
+		"name": _get_value(invoice, "name"),
+		"customer": contract.kunde,
+		"contract": contract.name,
+		"wohnung": identity[1],
+		"company": _get_value(invoice, "company"),
+		"posting_date": str(posting_date),
+		"contract_start": str(start),
+		"contract_end": str(end),
+		"invoice_modified": str(_get_value(invoice, "modified") or ""),
+		"contract_modified": str(contract.get("modified") or ""),
+	}
+
+
+def _parse_invoice_date_confirmations(value):
+	if isinstance(value, str):
+		try:
+			value = json.loads(value)
+		except (ValueError, TypeError):
+			frappe.throw("Ungültige Bestätigung für nachträgliche Rechnungen.")
+	if value is None:
+		return {}
+	if not isinstance(value, list):
+		frappe.throw("Bestätigungen müssen eine Liste konkreter Rechnungen sein.")
+	result = {}
+	for entry in value:
+		if (
+			not isinstance(entry, dict) or not isinstance(entry.get("name"), str)
+			or not entry["name"] or entry["name"] in result
+		):
+			frappe.throw("Ungültige oder doppelte Rechnungsbestätigung.")
+		result[entry["name"]] = entry
+	return result
+
+
+def _require_invoice_date_confirmation(invoice, review, confirmations, allocated_amount):
+	if not review:
+		return
+	confirmation = confirmations.get(invoice.name) or {}
+	if any(confirmation.get(key) != value for key, value in review.items()) or not _amounts_equal(
+		confirmation.get("allocated_amount") or 0,
+		allocated_amount if allocated_amount is not None else abs(flt(invoice.outstanding_amount)),
+	):
+		frappe.throw(
+			f"Rechnung {invoice.name}: {_AFTER_CONTRACT_END_MESSAGE} "
+			"Bitte die Auswahl neu laden und die konkrete Zuordnung ausdrücklich bestätigen.",
+			frappe.ValidationError,
+		)
+
+
+def _validate_customer_invoice_dimensions(invoice, identity, *, for_update=False):
+	from hausverwaltung.hausverwaltung.overrides.sales_invoice import (
+		_contract_reference,
+		_validate_contract_period,
+		_validate_invoice_values,
+	)
+	from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
+		_company_via_wohnung,
+		lock_mietvertrag_booking_identity,
+	)
+
+	if for_update:
+		context = lock_mietvertrag_booking_identity(identity[0])
+	else:
+		contract = frappe.get_doc("Mietvertrag", identity[0])
+		property_name = frappe.db.get_value("Wohnung", identity[1], "immobilie")
+		cost_center = frappe.db.get_value("Immobilie", property_name, "kostenstelle") if property_name else None
+		if not property_name or not cost_center:
+			frappe.throw("Die Wohnung hat keine eindeutige Immobilien-/Kostenstellenzuordnung.")
+		context = frappe._dict(
+			name=identity[0], kunde=contract.kunde, wohnung=contract.wohnung,
+			company=_company_via_wohnung(identity[1]), cost_center=cost_center,
+			von=contract.get("von"), bis=contract.get("bis"),
+		)
+	if context.wohnung != identity[1]:
+		frappe.throw("Die Mietvertragsidentität hat sich geändert.")
+	reference = _contract_reference(
+		mietabrechnung_id=invoice.get("mietabrechnung_id"),
+		remarks=invoice.get("remarks"), document_label=invoice.name,
+	)
+	values = {key: invoice.get(key) for key in ("customer", "company", "wohnung", "cost_center")}
+	items = [frappe._dict(item if isinstance(item, dict) else item.as_dict()) for item in (invoice.get("items") or [])]
+	has_header_cost_center = invoice.meta.has_field("cost_center")
+	has_item_cost_center = frappe.get_meta("Sales Invoice Item").has_field("cost_center")
+	period = reference.period_start
+	if cint(invoice.get("is_return")) and invoice.get("return_against"):
+		source = frappe.get_doc("Sales Invoice", invoice.return_against, for_update=for_update)
+		if cint(source.docstatus) != 1:
+			frappe.throw("Die Ursprungsrechnung der Gutschrift ist nicht gebucht.")
+		source_reference = _contract_reference(
+			mietabrechnung_id=source.get("mietabrechnung_id"),
+			remarks=source.get("remarks"), document_label=source.name,
+		)
+		if source_reference.mietvertrag and source_reference.mietvertrag != identity[0]:
+			frappe.throw("Die Ursprungsrechnung verweist auf einen anderen Mietvertrag.")
+		if period and source_reference.period_start and period != source_reference.period_start:
+			frappe.throw("Gutschrift und Ursprungsrechnung verwenden verschiedene Abrechnungsmonate.")
+		period = period or source_reference.period_start
+		_validate_invoice_values(
+			customer=source.customer, company=source.company, wohnung=source.get("wohnung"),
+			cost_center=source.get("cost_center"), items=source.get("items"), identity=context,
+			document_label=source.name, has_header_cost_center=has_header_cost_center,
+			has_item_cost_center=has_item_cost_center,
+		)
+		# Match creation-time inheritance on copies only. Neither the source nor
+		# the submitted return is mutated by this read-only preflight.
+		values["wohnung"] = values["wohnung"] or context.wohnung
+		if has_header_cost_center:
+			values["cost_center"] = values["cost_center"] or context.cost_center
+		for item in items:
+			item.wohnung = item.get("wohnung") or context.wohnung
+			if has_item_cost_center:
+				item.cost_center = item.get("cost_center") or context.cost_center
+	_validate_contract_period(context, period, document_label=invoice.name)
+	_validate_invoice_values(
+		**values, items=items, identity=context, document_label=invoice.name,
+		has_header_cost_center=has_header_cost_center, has_item_cost_center=has_item_cost_center,
+	)
+
+
+
+def annotate_customer_invoice_reviews(invoices, *, customer, company):
+	"""Read-only UI preflight: annotate warnings and hard identity failures.
+
+	Do not call the locking Sales Invoice validator here: linked returns may
+	inherit dimensions in memory there. Pure validators use current read data.
+	Booking still performs all locked checks, irrespective of this preview.
+	"""
+
+	for candidate in invoices:
+		for key in ("after_contract_end_review", "date_warning", "allocation_blocked_reason"):
+			candidate.pop(key, None)
+		if candidate.get("reference_doctype") == "Journal Entry":
+			continue
+		try:
+			invoice = frappe.get_doc("Sales Invoice", candidate.name)
+			identity = _customer_invoice_identity(invoice, customer)
+			if not identity or invoice.customer != customer or invoice.company != company:
+				frappe.throw("Rechnung passt nicht eindeutig zu Kunde, Mietvertrag, Wohnung und Firma.")
+			review = _invoice_contract_date_review(invoice, identity)
+			# Preserve existing unmarked legacy invoices inside the period. A late
+			# invoice, or any invoice with dimensions/references, needs full checks.
+			if (
+				review or invoice.get("mietabrechnung_id") or "[MV:" in str(invoice.get("remarks") or "")
+				or invoice.get("wohnung") or any(item.get("wohnung") for item in (invoice.get("items") or []))
+				or (cint(invoice.get("is_return")) and invoice.get("return_against"))
+			):
+				_validate_customer_invoice_dimensions(invoice, identity)
+			candidate["after_contract_end_review"] = review
+			candidate["date_warning"] = _AFTER_CONTRACT_END_MESSAGE if review else None
+		except (frappe.ValidationError, frappe.DoesNotExistError) as exc:
+			candidate["allocation_blocked_reason"] = str(exc)
+			frappe.clear_last_message()
+	return invoices
 
 
 def _match_failure(reason: str, message: str) -> dict[str, Any]:
@@ -453,17 +627,25 @@ def _validate_customer_match_identities(
 	lock_invoices: bool,
 ) -> dict[str, Any] | None:
 	for invoice in candidates:
-		identity = _customer_invoice_identity(
-			invoice,
-			customer,
-			for_update=lock_invoices,
-		)
+		try:
+			identity = _customer_invoice_identity(invoice, customer, for_update=lock_invoices)
+		except frappe.ValidationError as exc:
+			return _match_failure("ambiguous_customer_contract_identity", str(exc))
 		if identity is None:
 			return _match_failure(
 				"ambiguous_customer_contract_identity",
 				f"Rechnung {invoice.get('name')} lässt sich nicht eindeutig einem "
 				"Mietvertrag und einer Wohnung dieses Kunden zuordnen. Automatische "
 				"Zuordnung gesperrt; bitte manuell prüfen.",
+			)
+		try:
+			review = _invoice_contract_date_review(invoice, identity, for_update=lock_invoices)
+		except frappe.ValidationError as exc:
+			return _match_failure("invalid_invoice_contract_date", str(exc))
+		if review:
+			return _match_failure(
+				"invoice_after_contract_end_requires_confirmation",
+				f"Rechnung {invoice.get('name')}: {_AFTER_CONTRACT_END_MESSAGE} Bitte manuell zuordnen.",
 			)
 		invoice["_hv_customer_identity"] = identity
 	return None
@@ -1443,6 +1625,7 @@ def create_payment_entry_for_invoices(
 	leftover_as_advance: bool = False,
 	customer: str | None = None,
 	partial: bool = False,
+	confirmed_after_contract_end_invoices=None,
 ):
 	"""Baut, inseriert und submitted ein Payment Entry mit Allocation pro Rechnung.
 
@@ -1459,6 +1642,9 @@ def create_payment_entry_for_invoices(
 	    customer: Explicit Customer for one part of a multi-Customer payment.
 	    partial: Allow a positive part of the bank amount. The caller must validate
 	        and reconcile the complete split atomically.
+	    confirmed_after_contract_end_invoices: Explicit manual confirmations,
+	        each containing the current preview snapshot and allocated_amount.
+	        The empty default keeps invoices after contract end blocked.
 
 	Raises wenn party_type/party fehlt oder GL-Konto unvollständig.
 	"""
@@ -1536,6 +1722,7 @@ def create_payment_entry_for_invoices(
 		company_currency=company_currency,
 		expected_cost_center=expected_cost_center,
 		credit_notes=is_customer_refund,
+		confirmed_after_contract_end_invoices=confirmed_after_contract_end_invoices,
 	)
 	if (partial and not 0 < flt(target_amount) <= shape.amount) or (
 		not partial and not _amounts_equal(target_amount, shape.amount)
@@ -1650,6 +1837,18 @@ def create_payment_entry_for_invoices(
 			f"Rechnungen wählen oder 'Restbetrag als Vorauszahlung' aktivieren."
 		)
 
+	notes = [
+		f"{inv.name}: Rechnungsdatum {inv.after_contract_end_review['posting_date']}, "
+		f"Vertragsende {inv.after_contract_end_review['contract_end']}, "
+		f"Mietvertrag {inv.after_contract_end_review['contract']}, "
+		f"Zuordnung {flt(inv.allocated_amount) if inv.allocated_amount is not None else abs(flt(inv.outstanding_amount)):.2f}; "
+		f"ausdrücklich bestätigt durch {frappe.session.user}"
+		for inv in invoices if inv.get("after_contract_end_review")
+	]
+	if notes:
+		if pe.meta.get_field("custom_remarks"):
+			pe.custom_remarks = 1
+		pe.remarks = (pe.get("remarks") or "") + "\nNachträgliche Abrechnung: " + "; ".join(notes)
 	pe.insert(ignore_permissions=True)
 	pe.submit()
 	return pe

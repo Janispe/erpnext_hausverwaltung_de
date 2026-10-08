@@ -3223,6 +3223,10 @@ def get_open_invoices_for_row(docname: str, row_name: str) -> Dict[str, Any]:
             invoices = insurance_claims
             invoice_doctype = "Journal Entry"
             allocation_mode = "insurance_receipt"
+    if row.party_type == "Customer":
+        from hausverwaltung.hausverwaltung.utils.payment_auto_match import annotate_customer_invoice_reviews
+        company = frappe.db.get_value("Bank Account", doc.bank_account, "company")
+        annotate_customer_invoice_reviews(invoices, customer=row.party, company=company)
     for invoice in invoices:
         invoice["allocatable_amount"] = abs(flt(invoice.get("outstanding_amount")))
     return {
@@ -3387,6 +3391,7 @@ def manually_reconcile_row(
     row_name: str,
     invoice_names: str,
     leftover_as_advance: int = 0,
+    confirmed_after_contract_end_invoices=None,
 ) -> Dict[str, Any]:
     """Erstellt Payment Entry mit Allocations gegen die ausgewählten Rechnungen.
 
@@ -3547,6 +3552,7 @@ def manually_reconcile_row(
         invoice_doctype=invoice_doctype,
         target_amount=target_amount,
         leftover_as_advance=False if customer_refund else bool(int(leftover_as_advance or 0)),
+        confirmed_after_contract_end_invoices=confirmed_after_contract_end_invoices,
     )
 
     return _finish_manual_reconciliation(docname, row, bt, pe, invoices, customer_refund, leftover_as_advance)

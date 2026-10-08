@@ -48,7 +48,7 @@ async function renderSplit(amount = -100, props = {}) {
 	/>));
 	await click(button("Add A"));
 	await click(button("Add B"));
-	for (const checkbox of document.querySelectorAll('input[type="checkbox"]')) await click(checkbox);
+	for (const checkbox of document.querySelectorAll('.customer-split-invoice input[type="checkbox"]')) await click(checkbox);
 }
 
 describe("Customer settlement dialog", () => {
@@ -60,7 +60,7 @@ describe("Customer settlement dialog", () => {
 		expect(api.reconcileCustomerSplit).toHaveBeenCalledWith("IMPORT", "ROW", [
 			{ customer: "A", invoices: [{ name: "INV-A", allocated_amount: 200 }] },
 			{ customer: "B", invoices: [{ name: "INV-B", allocated_amount: 300 }] },
-		], null);
+		], null, []);
 	});
 	it("rejects the opposite bank direction", async () => {
 		await renderSplit(100);
@@ -84,7 +84,40 @@ describe("Customer settlement dialog", () => {
 		expect(api.reconcileCustomerSplit).toHaveBeenCalledWith("IMPORT", "ROW", [
 			{ customer: "A", invoices: [{ name: "INV-A", allocated_amount: 200 }] },
 			{ customer: "B", invoices: [{ name: "INV-B", allocated_amount: 10 }] },
-		], "B");
+		], "B", []);
+	});
+	it("requires confirmation of a late credit and resets it when the allocated amount changes", async () => {
+		const review = { name: "INV-A", contract: "MV-A", wohnung: "W-A", posting_date: "2026-08-05", contract_end: "2025-04-15" };
+		api.getCustomerSplitInvoices.mockImplementation(async (_, __, customer) => ({
+			customer, contract: `MV-${customer}`, wohnung: `W-${customer}`,
+			invoices: [{ name: `INV-${customer}`, outstanding_amount: customer === "A" ? -88.06 : 7.21,
+				...(customer === "A" ? { after_contract_end_review: review, date_warning: "Nachträgliche Abrechnung prüfen" } : {}) }],
+		}));
+		await renderSplit(-80.75);
+		await change("INV-A", "87.96");
+		const confirmation = document.querySelector('[aria-label="Nachträgliche Abrechnung INV-A bestätigen"]');
+		expect(button(" Aufteilung buchen").disabled).toBe(true);
+		await click(confirmation);
+		expect(button(" Aufteilung buchen").disabled).toBe(false);
+		await change("INV-A", "87.95");
+		await change("INV-A", "87.96");
+		expect(confirmation.checked).toBe(false);
+		expect(button(" Aufteilung buchen").disabled).toBe(true);
+		await click(confirmation);
+		await click(button(" Aufteilung buchen"));
+		expect(api.reconcileCustomerSplit).toHaveBeenCalledWith("IMPORT", "ROW", [
+			{ customer: "A", invoices: [{ name: "INV-A", allocated_amount: 87.96 }] },
+			{ customer: "B", invoices: [{ name: "INV-B", allocated_amount: 7.21 }] },
+		], null, [{ ...review, allocated_amount: 87.96 }]);
+	});
+	it("shows identity mismatches and prevents selecting those invoices", async () => {
+		api.getCustomerSplitInvoices.mockImplementation(async (_, __, customer) => ({
+			customer, invoices: [{ name: `INV-${customer}`, outstanding_amount: 50, allocation_blocked_reason: "Falsche Wohnung" }],
+		}));
+		await act(async () => root.render(<CustomerSplitDialog docname="IMPORT" row={{ id: "ROW", betrag: 100 }} />));
+		await click(button("Add A"));
+		expect(document.querySelector('.customer-split-invoice input[type="checkbox"]').disabled).toBe(true);
+		expect(document.querySelector('[role="alert"]').textContent).toBe("Falsche Wohnung");
 	});
 	it("does not offer an advance for outgoing payments or underpayments", async () => {
 		await renderSplit(-99.90);

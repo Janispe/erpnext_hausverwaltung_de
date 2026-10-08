@@ -273,7 +273,7 @@ class TestCustomerSettlementRule(unittest.TestCase):
 			pam, "_require_company_currency_account", return_value="EUR"
 		), patch.object(
 			pam, "_customer_invoice_identity", return_value=("MV-1", "WO-1")
-		), patch.object(
+		), patch.object(pam, "_invoice_contract_date_review", return_value=None), patch.object(
 			pam, "_do_match", return_value={"matched": True, "strategy": "stub"}
 		) as do_match:
 			result = pam.auto_match_customer_settlement("BT-SETTLEMENT")
@@ -371,6 +371,7 @@ class TestCreatePaymentEntryForInvoices(unittest.TestCase):
 			patch.object(pam, "_require_company_currency_account", return_value="RECEIVABLE-1"), \
 			patch.object(pam, "_lock_and_validate_invoices", side_effect=lambda **kwargs: list(kwargs["invoices"])), \
 			patch.object(pam, "_resolve_expected_cost_center_for_bt", return_value=None), \
+			patch.object(pam, "_build_customer_payment_remarks", return_value=None), \
 			patch("erpnext.accounts.party.get_party_account", return_value="RECEIVABLE-1"), \
 			patch.object(pam.frappe, "new_doc", return_value=pe):
 			result = pam.create_payment_entry_for_invoices(
@@ -742,6 +743,7 @@ class TestCurrencyAndCurrentInvoiceSafety(unittest.TestCase):
 		)
 		with patch.object(pam.frappe, "get_doc", return_value=current) as get_doc, \
 			patch.object(pam, "_customer_invoice_identity", return_value=("MV-1", "WO-1")), \
+			patch.object(pam, "_invoice_contract_date_review", return_value=None), \
 			patch("hausverwaltung.hausverwaltung.overrides.sales_invoice.validate_mietvertrag_sales_invoice_identity") as validate_identity, \
 			patch.object(pam, "_require_company_currency_account") as require_account:
 			result = pam._lock_and_validate_invoices(
@@ -788,6 +790,7 @@ class TestCurrencyAndCurrentInvoiceSafety(unittest.TestCase):
 		)
 		with patch.object(pam.frappe, "get_doc", return_value=current), \
 			patch.object(pam, "_customer_invoice_identity", return_value=("MV-1", "WO-1")), \
+			patch.object(pam, "_invoice_contract_date_review", return_value=None), \
 			patch("hausverwaltung.hausverwaltung.overrides.sales_invoice.validate_mietvertrag_sales_invoice_identity") as validate_identity, \
 			patch.object(pam, "_require_company_currency_account"):
 			result = pam._lock_and_validate_invoices(
@@ -877,18 +880,15 @@ class TestCurrencyAndCurrentInvoiceSafety(unittest.TestCase):
 			wohnung="WO-1",
 			mietabrechnung_id="Haus | VH | EG|05/2026",
 		)
-		with patch.object(pam.frappe, "get_doc", return_value=contract) as get_doc:
+		with patch.object(pam.frappe.db, "sql", return_value=[contract]) as sql:
 			identity = pam._customer_invoice_identity(
 				invoice,
 				"CUST-1",
 				for_update=True,
 			)
 
-		get_doc.assert_called_once_with(
-			"Mietvertrag",
-			"Haus | VH | EG",
-			for_update=True,
-		)
+		self.assertIn("FOR UPDATE", sql.call_args.args[0])
+		self.assertEqual(sql.call_args.args[1], {"customer": "CUST-1"})
 		self.assertEqual(identity, ("Haus | VH | EG", "WO-1"))
 
 	def test_corrupt_duplicate_customer_contracts_fail_closed(self):
@@ -956,7 +956,7 @@ class TestCurrencyAndCurrentInvoiceSafety(unittest.TestCase):
 			pam,
 			"_customer_invoice_identity",
 			return_value=("MV-1", "WO-1"),
-		):
+		), patch.object(pam, "_invoice_contract_date_review", return_value=None):
 			result = pam.prepare_invoice_match(bt)
 
 		self.assertTrue(result["ok"])
