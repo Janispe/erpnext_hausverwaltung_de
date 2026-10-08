@@ -125,7 +125,25 @@ def _parse_allocations(allocations):
     return parsed
 
 
-def _create_settlement_journal(bt, groups, company, bank):
+def _advance_allocation(groups, total, bank_amount, customer):
+    """Attribute an incoming surplus only to an explicitly selected contract."""
+    remainder = bank_amount - total
+    if not customer:
+        if remainder != 0:
+            frappe.throw(
+                "Nachzahlungen minus Guthaben müssen genau dem vorzeichenbehafteten Bankbetrag entsprechen. "
+                "Einen Überschuss können Sie einem Mieter als Vorauszahlung zuordnen."
+            )
+        return None
+    if bank_amount <= 0 or total <= 0 or remainder <= 0:
+        frappe.throw("Eine Vorauszahlung ist nur bei einem Zahlungseingang mit positivem Restbetrag möglich.")
+    group = next((item for item in groups if item["customer"] == customer), None)
+    if not group:
+        frappe.throw("Bitte die Vorauszahlung einem der ausgewählten Mieter zuordnen.")
+    return {"customer": customer, "amount": _amount(remainder)}
+
+
+def _create_settlement_journal(bt, groups, company, bank, advance=None):
     """One real bank movement, with signed invoice legs on separate Customers."""
     if not frappe.has_permission("Journal Entry", "create") or not frappe.has_permission(
         "Journal Entry", "submit"
@@ -169,6 +187,29 @@ def _create_settlement_journal(bt, groups, company, bank):
                     "credit_in_account_currency": float(amount) if amount > 0 else 0,
                 },
             )
+    if advance:
+        from erpnext.accounts.party import get_party_account
+
+        account = get_party_account("Customer", advance["customer"], company)
+        payments._require_company_currency_account(
+            account,
+            company=company,
+            company_currency=payments._get_company_currency(company),
+            label=f"Party-Konto von {advance['customer']}",
+        )
+        # No invoice reference: this credit remains available for later allocation.
+        je.append(
+            "accounts",
+            {
+                "account": account,
+                "party_type": "Customer",
+                "party": advance["customer"],
+                "is_advance": "Yes",
+                "cost_center": cost_center,
+                "credit_in_account_currency": float(advance["amount"]),
+                "debit_in_account_currency": 0,
+            },
+        )
     je.insert()
     je.submit()
     for group in groups:
@@ -182,7 +223,7 @@ def _create_settlement_journal(bt, groups, company, bank):
 
 
 @frappe.whitelist()
-def reconcile_customer_split(docname, row_name, allocations):
+def reconcile_customer_split(docname, row_name, allocations, advance_customer=None):
     groups = _parse_allocations(allocations)
     if not frappe.has_permission("Payment Entry", "create") or not frappe.has_permission(
         "Payment Entry", "submit"
@@ -234,18 +275,16 @@ def reconcile_customer_split(docname, row_name, allocations):
                 group["signed_amount"] += selected["signed_amount"]
 
         total = sum((group["signed_amount"] for group in groups), Decimal(0))
-        if total != Decimal(str(shape.signed_amount)):
-            frappe.throw(
-                "Nachzahlungen minus Guthaben müssen genau dem vorzeichenbehafteten Bankbetrag entsprechen."
-            )
+        advance = _advance_allocation(groups, total, Decimal(str(shape.signed_amount)), advance_customer)
         mixed = len({selected["signed_amount"] > 0 for group in groups for selected in group["invoices"]}) > 1
 
         result = []
-        journal = _create_settlement_journal(bt, groups, company, bank) if mixed else None
+        journal = _create_settlement_journal(bt, groups, company, bank, advance) if mixed or advance else None
         if journal:
             payments.reconcile_voucher_with_bt(bt, "Journal Entry", journal.name, shape.amount)
         for group in groups:
-            amount = float(group["signed_amount"] if mixed else group["amount"])
+            advance_amount = advance["amount"] if advance and advance["customer"] == group["customer"] else Decimal(0)
+            amount = float(group["signed_amount"] + advance_amount if journal else group["amount"])
             if journal:
                 voucher = {
                     "journal_entry": journal.name,
@@ -272,6 +311,7 @@ def reconcile_customer_split(docname, row_name, allocations):
                     "wohnung": group["wohnung"],
                     **voucher,
                     "amount": amount,
+                    "advance_amount": float(advance_amount),
                 }
             )
 
@@ -303,7 +343,10 @@ def reconcile_customer_split(docname, row_name, allocations):
             journal.name if journal else result[0]["payment_entry"],
         )
         row.db_set("row_status", "success")
-        row.db_set("auto_match_message", f"Manuell auf {len(result)} Mieter aufgeteilt: {total:.2f} EUR.")
+        message = f"Manuell auf {len(result)} Mieter aufgeteilt: {shape.signed_amount:.2f} EUR."
+        if advance:
+            message += f" Davon {advance['amount']:.2f} EUR Vorauszahlung für {label_with_id('Customer', advance['customer'])}."
+        row.db_set("auto_match_message", message)
         bi._recompute_doc_status(docname)
         bi._refresh_and_persist_saldo(docname)
         return {"ok": True, "payments": result}

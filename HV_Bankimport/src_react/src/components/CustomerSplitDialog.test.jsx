@@ -60,10 +60,53 @@ describe("Customer settlement dialog", () => {
 		expect(api.reconcileCustomerSplit).toHaveBeenCalledWith("IMPORT", "ROW", [
 			{ customer: "A", invoices: [{ name: "INV-A", allocated_amount: 200 }] },
 			{ customer: "B", invoices: [{ name: "INV-B", allocated_amount: 300 }] },
-		]);
+		], null);
 	});
 	it("rejects the opposite bank direction", async () => {
 		await renderSplit(100);
+		expect(button(" Aufteilung buchen").disabled).toBe(true);
+	});
+	it("assigns a ten-cent surplus to an explicitly selected Customer", async () => {
+		api.getCustomerSplitInvoices.mockImplementation(async (_, __, customer) => ({
+			customer, contract: `MV-${customer}`, wohnung: `W-${customer}`,
+			invoices: [{ name: `INV-${customer}`, outstanding_amount: customer === "A" ? 200 : -10 }],
+		}));
+		await renderSplit(190.10);
+		expect(button(" Aufteilung buchen").disabled).toBe(true);
+		const select = document.querySelector('[aria-label="Vorauszahlung für"]');
+		expect(select.textContent).toContain("B · W-B");
+		await act(async () => {
+			select.value = "B";
+			select.dispatchEvent(new Event("change", { bubbles: true }));
+		});
+		expect(button(" Aufteilung buchen").disabled).toBe(false);
+		await click(button(" Aufteilung buchen"));
+		expect(api.reconcileCustomerSplit).toHaveBeenCalledWith("IMPORT", "ROW", [
+			{ customer: "A", invoices: [{ name: "INV-A", allocated_amount: 200 }] },
+			{ customer: "B", invoices: [{ name: "INV-B", allocated_amount: 10 }] },
+		], "B");
+	});
+	it("does not offer an advance for outgoing payments or underpayments", async () => {
+		await renderSplit(-99.90);
+		expect(document.querySelector('[aria-label="Vorauszahlung für"]')).toBeNull();
+		expect(button(" Aufteilung buchen").disabled).toBe(true);
+		await change("INV-B", "100");
+		expect(document.querySelector('[aria-label="Vorauszahlung für"]')).toBeNull();
+	});
+	it("clears the advance Customer when that Customer is removed", async () => {
+		api.getCustomerSplitInvoices.mockImplementation(async (_, __, customer) => ({
+			customer, invoices: [{ name: `INV-${customer}`, outstanding_amount: customer === "A" ? 200 : -10 }],
+		}));
+		await renderSplit(190.10);
+		const select = document.querySelector('[aria-label="Vorauszahlung für"]');
+		await act(async () => {
+			select.value = "B";
+			select.dispatchEvent(new Event("change", { bubbles: true }));
+		});
+		await click(document.querySelector('[aria-label="Mieter B entfernen"]'));
+		await click(button("Add B"));
+		await click(document.querySelectorAll('input[type="checkbox"]')[1]);
+		expect(document.querySelector('[aria-label="Vorauszahlung für"]').value).toBe("");
 		expect(button(" Aufteilung buchen").disabled).toBe(true);
 	});
 	it("accepts partial netting but rejects overallocations and fractional cents", async () => {

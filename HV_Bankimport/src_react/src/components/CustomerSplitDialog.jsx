@@ -8,6 +8,7 @@ import * as api from "../api.js";
 export function CustomerSplitDialog({ docname, row, onClose, onActionDone, notify }) {
 	const [groups, setGroups] = useState([]);
 	const [busy, setBusy] = useState(false);
+	const [advanceCustomer, setAdvanceCustomer] = useState("");
 	const alive = useRef(true);
 	useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 	const search = useCallback((txt) => api.searchParties("Customer", txt), []);
@@ -15,7 +16,13 @@ export function CustomerSplitDialog({ docname, row, onClose, onActionDone, notif
 	const groupTotal = (group) => Object.entries(group.selected).reduce((sum, [name, value]) =>
 		sum + Math.round(Number(value) * 100) * Math.sign(Number(group.invoices.find((inv) => inv.name === name)?.outstanding_amount)), 0);
 	const allocated = groups.reduce((sum, group) => sum + groupTotal(group), 0);
-	const valid = groups.length >= 2 && allocated === target && groups.every((group) =>
+	const remainder = target - allocated;
+	const canAdvance = target > 0 && allocated > 0 && remainder > 0;
+	const advanceValid = canAdvance && groups.some((group) => group.customer === advanceCustomer);
+	useEffect(() => {
+		if (!canAdvance || !groups.some((group) => group.customer === advanceCustomer)) setAdvanceCustomer("");
+	}, [canAdvance, groups, advanceCustomer]);
+	const valid = groups.length >= 2 && (remainder === 0 || advanceValid) && groups.every((group) =>
 		!group.loading && !group.error && Object.keys(group.selected).length > 0 &&
 		Object.entries(group.selected).every(([name, value]) => {
 			const amount = Number(value);
@@ -50,7 +57,7 @@ export function CustomerSplitDialog({ docname, row, onClose, onActionDone, notif
 			const result = await api.reconcileCustomerSplit(docname, row.id, groups.map((group) => ({
 				customer: group.customer,
 				invoices: Object.entries(group.selected).map(([name, value]) => ({ name, allocated_amount: Number(value) })),
-			})));
+			})), advanceValid ? advanceCustomer : null);
 			if (result.ok === false) throw new Error(result.message || "Aufteilung konnte nicht gebucht werden.");
 			notify("success", "Belege ausgeglichen und Bankumsatz vollständig abgeglichen.");
 			onClose();
@@ -89,7 +96,15 @@ export function CustomerSplitDialog({ docname, row, onClose, onActionDone, notif
 						))}
 					</section>
 				))}
-				<div className="alloc-summary customer-split-summary"><span>Zugewiesen <strong>{fmtEUR(allocated / 100)}</strong></span><span className={allocated === target ? "ok" : "bad"}>Rest <strong>{fmtEUR((target - allocated) / 100)}</strong></span></div>
+				<div className="alloc-summary customer-split-summary"><span>Zugewiesen <strong>{fmtEUR(allocated / 100)}</strong></span><span className={remainder === 0 || advanceValid ? "ok" : "bad"}>Rest <strong>{fmtEUR(remainder / 100)}</strong></span></div>
+				{canAdvance && <div className="customer-split-group customer-split-advance">
+					<label>Restbetrag {fmtEUR(remainder / 100)} als Vorauszahlung für
+						<select aria-label="Vorauszahlung für" value={advanceCustomer} disabled={busy} onChange={(event) => setAdvanceCustomer(event.target.value)}>
+							<option value="">Mieter auswählen…</option>
+								{groups.map((group) => <option key={group.customer} value={group.customer}>{group.customer} · {group.wohnung}</option>)}
+						</select>
+					</label>
+				</div>}
 				<div className="dialog-actions"><button className="btn" onClick={onClose} disabled={busy}>Abbrechen</button><button className="btn primary" disabled={busy || !valid} onClick={book}>{busy ? <Spinner /> : <Icon name="check" />} Aufteilung buchen</button></div>
 			</div>
 		</div>, document.body
@@ -101,6 +116,7 @@ export function CustomerPayments({ row }) {
 		<div className="customer-split-group" key={item.customer}>
 			<div className="customer-split-heading"><DocLink doctype="Customer" docname={item.customer}>{item.customer}</DocLink><strong>{fmtEUR(item.amount)}</strong></div>
 			<div className="customer-split-contract">{item.contract} · {item.wohnung}</div>
+			{Number(item.advance_amount) > 0 && <div className="hint">Davon {fmtEUR(item.advance_amount)} Vorauszahlung</div>}
 			<DocLink doctype={item.journal_entry ? "Journal Entry" : "Payment Entry"} docname={item.journal_entry || item.payment_entry}>{item.journal_entry || item.payment_entry} <Icon name="link" size={12} /></DocLink>
 		</div>
 	))}</div>;

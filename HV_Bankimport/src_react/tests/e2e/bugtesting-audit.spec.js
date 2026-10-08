@@ -24,7 +24,7 @@ async function openHost(page, options = {}) {
 		  if(action === 'overview') data = overview;
 		  else if(action === 'open_invoices') data = {invoice_doctype: 'Sales Invoice', invoices: options.invoices || MOCK_OPEN_INVOICES.invoices, target_amount: Math.abs(overview.rows[0].betrag), allocation_mode: options.allocationMode || 'invoice_payment'};
 		  else if(action === 'search_parties') data = {items: ['A','B','Erika Beispiel'].filter(x => x.toLowerCase().includes(params.txt.toLowerCase())).map(value => ({value,label:value}))};
-		  else if(action === 'customer_split_invoices') data = {customer:params.customer, contract:'MV-'+params.customer, wohnung:'W-'+params.customer, invoices:[{name:'INV-'+params.customer,outstanding_amount:params.customer === 'A' ? 200 : -300,posting_date:'2026-01-01'}]};
+		  else if(action === 'customer_split_invoices') data = {customer:params.customer, contract:'MV-'+params.customer, wohnung:'W-'+params.customer, invoices:[{name:'INV-'+params.customer,outstanding_amount:options.splitAmounts?.[params.customer] ?? (params.customer === 'A' ? 200 : -300),posting_date:'2026-01-01'}]};
 		  else if(action === 'search_accounts') data = {items:[{value:'4970 Bankgebühren - HV',label:'4970 Bankgebühren - HV'}]};
 		  else if(action === 'expected_cost_center') data = {cost_center:null};
 		  else data = {ok:true};
@@ -62,6 +62,27 @@ async function selectNet(dialog) {
 	await dialog.getByRole("checkbox", { name: /INV-A/ }).check();
 	await dialog.getByRole("checkbox", { name: /INV-B/ }).check();
 }
+
+test("Customer split sends a ten-cent advance to the selected contract", async ({ page }) => {
+	const { dialog } = await openSplit(page, {
+		row: { betrag: 190.10, richtung: "Eingang" }, splitAmounts: { A: 200, B: -10 },
+	});
+	await selectNet(dialog);
+	const book = dialog.getByRole("button", { name: "Aufteilung buchen", exact: true });
+	await expect(book).toBeDisabled();
+	await expect(dialog.locator(".customer-split-advance")).toContainText("Restbetrag 0,10 € als Vorauszahlung für");
+	await dialog.getByRole("combobox", { name: "Vorauszahlung für", exact: true }).selectOption("B");
+	await expect(book).toBeEnabled();
+	await book.click();
+	await expect(dialog).not.toBeVisible();
+	const calls = await requests(page, "reconcile_customer_split");
+	expect(calls).toHaveLength(1);
+	expect(calls[0].params.advance_customer).toBe("B");
+	expect(JSON.parse(calls[0].params.allocations)).toEqual([
+		{ customer: "A", invoices: [{ name: "INV-A", allocated_amount: 200 }] },
+		{ customer: "B", invoices: [{ name: "INV-B", allocated_amount: 10 }] },
+	]);
+});
 
 test("current phase and search filters retain valid selection and assign a party", async ({ page }) => {
 	const frame = await openHost(page);
@@ -187,6 +208,7 @@ test("Customer split busy state prevents a second booking request", async ({ pag
 	await book.click();
 	await expect(book).toBeDisabled();
 	await expect(dialog.getByRole("button", { name: "Abbrechen", exact: true })).toBeDisabled();
+	await expect.poll(() => page.evaluate(() => window.auditPending.length)).toBe(1);
 	await page.evaluate(() => window.auditPending.shift()());
 	await expect(dialog).not.toBeVisible();
 	expect(await requests(page, "reconcile_customer_split")).toHaveLength(1);

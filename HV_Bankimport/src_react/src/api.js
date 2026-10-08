@@ -307,9 +307,9 @@ export async function getCustomerSplitInvoices(name, rowName, customer) {
 	return rpc("customer_split_invoices", { docname: name, row_name: rowName, customer });
 }
 
-export async function reconcileCustomerSplit(name, rowName, allocations) {
+export async function reconcileCustomerSplit(name, rowName, allocations, advanceCustomer = null) {
 	if (!embedded) return { ok: true, mock: true };
-	return rpc("reconcile_customer_split", { docname: name, row_name: rowName, allocations: JSON.stringify(allocations) });
+	return rpc("reconcile_customer_split", { docname: name, row_name: rowName, allocations: JSON.stringify(allocations), advance_customer: advanceCustomer });
 }
 
 export async function reconcileSplit(name, rowName, { invoices, abschlaege, leftoverAsAdvance } = {}) {

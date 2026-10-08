@@ -14,6 +14,8 @@
 .customer-split-invoice small { display: block; color: var(--text-muted); margin-top: 3px; }
 .customer-split-invoice .alloc-input { width: 90px; max-width: 100%; }
 .customer-split-summary { margin-top: 14px; }
+.customer-split-advance label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.customer-split-advance select { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); }
 @media (max-width: 520px) {
 	.customer-split-invoice { grid-template-columns: minmax(0, 1fr) 90px; }
 	.customer-split-invoice label { grid-column: 1 / -1; }
