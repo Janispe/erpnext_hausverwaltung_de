@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, List, Optional
+from typing import Any
 
 import frappe
 from frappe import _
@@ -18,8 +18,7 @@ BACKEND_LOCAL = "local"
 BACKEND_TEMPORAL = "temporal"
 
 
-
-def _parse_emails(value: str | None) -> List[str]:
+def _parse_emails(value: str | None) -> list[str]:
 	if not value:
 		return []
 	raw = value.replace(";", ",")
@@ -27,14 +26,13 @@ def _parse_emails(value: str | None) -> List[str]:
 	return [p for p in parts if p]
 
 
-
-def _get_attached_files(doctype: str, name: str) -> List[dict]:
+def _get_attached_files(doctype: str, name: str) -> list[dict]:
 	files = frappe.get_all(
 		"File",
 		filters={"attached_to_doctype": doctype, "attached_to_name": name},
 		fields=["file_url", "file_name"],
 	)
-	attachments: List[dict] = []
+	attachments: list[dict] = []
 	for f in files or []:
 		file_url = (f.get("file_url") or "").strip()
 		if not file_url:
@@ -47,15 +45,14 @@ def _get_attached_files(doctype: str, name: str) -> List[dict]:
 	return attachments
 
 
-
 def _create_or_update_communication(
 	*,
 	existing_name: str | None,
 	subject: str,
 	message: str,
-	recipients: List[str],
-	cc: List[str],
-	bcc: List[str],
+	recipients: list[str],
+	cc: list[str],
+	bcc: list[str],
 	reference_doctype: str | None,
 	reference_name: str | None,
 ) -> str:
@@ -95,7 +92,6 @@ def _create_or_update_communication(
 	return comm.name
 
 
-
 def _relink_attachments(from_doctype: str, from_name: str, to_doctype: str, to_name: str) -> None:
 	file_names = frappe.get_all(
 		"File",
@@ -111,18 +107,21 @@ def _relink_attachments(from_doctype: str, from_name: str, to_doctype: str, to_n
 		)
 
 
-
 def _is_temporal(doc: Document) -> bool:
 	return (doc.get("orchestrator_backend") or "").strip() == BACKEND_TEMPORAL
 
+
+def _require_local_delivery(doc: Document) -> None:
+	if doc.get("delivery_backend") == "Stalwart":
+		frappe.throw(_("Dieser Entwurf liegt im Postfach. Bitte in Thunderbird bearbeiten und versenden."))
 
 
 def _backend_default() -> str:
 	return get_default_backend_for_doctype("Email Entwurf")
 
 
-
-def _enqueue_email_document(doc: Document, send_after: Optional[str] = None) -> dict:
+def _enqueue_email_document(doc: Document, send_after: str | None = None) -> dict:
+	_require_local_delivery(doc)
 	if (doc.status or "").strip() in {"Sent", "Cancelled"}:
 		frappe.throw(_("Dieser Entwurf kann nicht mehr versendet werden (Status: {0}).").format(doc.status))
 
@@ -198,8 +197,8 @@ def _enqueue_email_document(doc: Document, send_after: Optional[str] = None) -> 
 	}
 
 
-
 def _mark_email_sent_document(doc: Document) -> dict:
+	_require_local_delivery(doc)
 	doc.db_set("sent_on", now_datetime(), update_modified=False)
 	doc.db_set("status", "Sent", update_modified=False)
 	if doc.communication:
@@ -214,8 +213,8 @@ def _mark_email_sent_document(doc: Document) -> dict:
 	return {"status": "Sent", "sent_on": doc.sent_on}
 
 
-
 def _cancel_email_document(doc: Document) -> dict:
+	_require_local_delivery(doc)
 	doc.db_set("status", "Cancelled", update_modified=False)
 	if doc.communication:
 		try:
@@ -227,7 +226,6 @@ def _cancel_email_document(doc: Document) -> dict:
 		except Exception:
 			pass
 	return {"status": "Cancelled"}
-
 
 
 def _dispatch_email_action_local(doc: Document, action: str, payload: dict[str, Any] | None = None) -> dict:
@@ -244,6 +242,9 @@ def _dispatch_email_action_local(doc: Document, action: str, payload: dict[str, 
 
 class EmailEntwurf(Document):
 	def _ensure_orchestrator_backend_default(self) -> None:
+		if self.get("delivery_backend") == "Stalwart":
+			self.orchestrator_backend = BACKEND_LOCAL
+			return
 		configured_default = _backend_default()
 		current = (self.orchestrator_backend or "").strip()
 		if not current:
@@ -259,6 +260,42 @@ class EmailEntwurf(Document):
 
 	def validate(self) -> None:
 		self._ensure_orchestrator_backend_default()
+		previous = self.get_doc_before_save() if not self.is_new() else None
+		if previous and previous.get("delivery_backend") == "Stalwart":
+			immutable_fields = (
+				"delivery_backend",
+				"sender",
+				"recipients",
+				"cc",
+				"bcc",
+				"subject",
+				"message",
+				"reference_doctype",
+				"reference_name",
+				"mail_account_doctype",
+				"mail_archive_account",
+				"source_mail_doctype",
+				"source_mail_message",
+				"draft_request_key",
+				"draft_fingerprint",
+				"draft_token",
+				"draft_rfc_message_id",
+				"remote_creation_started",
+				"provider_draft_id",
+				"sent_provider_message_id",
+				"mailbox_sync_status",
+				"mailbox_checked_on",
+				"status",
+				"communication",
+			)
+			if any(previous.get(field) != self.get(field) for field in immutable_fields):
+				frappe.throw(
+					_(
+						"Postfachentwürfe werden in Thunderbird bearbeitet; ihre ERP-Zuordnung wird durch den Abgleich aktualisiert."
+					)
+				)
+		if self.get("delivery_backend") == "Stalwart" and (self.status == "Queued" or self.email_queue):
+			frappe.throw(_("Postfachentwürfe dürfen nicht über die ERPNext-Versandqueue versendet werden."))
 
 		if not self.is_new() and _is_temporal(self):
 			before = None
@@ -267,7 +304,9 @@ class EmailEntwurf(Document):
 			except Exception:
 				before = None
 			if before and (before.get("status") or "") != (self.get("status") or ""):
-				frappe.throw(_("Status kann fuer Temporal-Dokumente nur ueber Workflow-Aktionen geaendert werden."))
+				frappe.throw(
+					_("Status kann fuer Temporal-Dokumente nur ueber Workflow-Aktionen geaendert werden.")
+				)
 
 	def after_insert(self) -> None:
 		if _is_temporal(self):
@@ -301,8 +340,9 @@ class EmailEntwurf(Document):
 			_cancel_email_document(self)
 
 	@frappe.whitelist()
-	def enqueue_email(self, send_after: Optional[str] = None) -> dict:
+	def enqueue_email(self, send_after: str | None = None) -> dict:
 		self.check_permission("write")
+		_require_local_delivery(self)
 		if _is_temporal(self):
 			return dispatch_action_and_wait(
 				doctype=self.doctype,
@@ -317,6 +357,7 @@ class EmailEntwurf(Document):
 	@frappe.whitelist()
 	def mark_sent(self) -> dict:
 		self.check_permission("write")
+		_require_local_delivery(self)
 		if _is_temporal(self):
 			return dispatch_action_and_wait(
 				doctype=self.doctype,
@@ -331,6 +372,7 @@ class EmailEntwurf(Document):
 	@frappe.whitelist()
 	def cancel(self) -> dict:
 		self.check_permission("write")
+		_require_local_delivery(self)
 		if _is_temporal(self):
 			return dispatch_action_and_wait(
 				doctype=self.doctype,
@@ -344,9 +386,12 @@ class EmailEntwurf(Document):
 
 
 @frappe.whitelist()
-def dispatch_workflow_action(docname: str, action: str, payload_json: str | None = None, timeout_seconds: int = 5) -> dict:
+def dispatch_workflow_action(
+	docname: str, action: str, payload_json: str | None = None, timeout_seconds: int = 5
+) -> dict:
 	doc = frappe.get_doc("Email Entwurf", docname)
 	doc.check_permission("write")
+	_require_local_delivery(doc)
 	payload: dict[str, Any] = {}
 	if payload_json:
 		try:

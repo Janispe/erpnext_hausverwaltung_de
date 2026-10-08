@@ -1,5 +1,10 @@
 frappe.ui.form.on("Email Entwurf", {
 	refresh(frm) {
+		if (frm.doc.delivery_backend === "Stalwart") {
+			["recipients", "cc", "bcc", "subject", "message", "reference_doctype", "reference_name", "status", "send_after"].forEach((field) => frm.set_df_property(field, "read_only", 1));
+			frm.set_intro(__("Der Entwurf liegt im Mailpostfach. Bitte in Thunderbird bearbeiten und versenden. Dieser Text zeigt den ursprünglich erzeugten Vorschlag."), "blue");
+			return;
+		}
 		if (frm.is_new()) {
 			return;
 		}

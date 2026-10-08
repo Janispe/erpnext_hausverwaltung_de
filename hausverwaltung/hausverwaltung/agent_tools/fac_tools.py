@@ -10,6 +10,8 @@ from jsonschema import validate
 
 from hausverwaltung.hausverwaltung.agent_tools import fac_output
 from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
+	FAC_EMAIL_TOOL_NAMES,
+	FAC_EMAIL_WRITE_TOOL_NAMES,
 	FAC_INVENTORY_TOOL_NAMES,
 	FAC_MAIL_MERGE_TOOL_NAMES,
 	FAC_MAIL_MERGE_WRITE_TOOL_NAMES,
@@ -299,6 +301,63 @@ class MailMergeTool(HausverwaltungReadTool):
 		return fac_output.enforce_output_budget(result, fac_output.MAIL_MERGE_OUTPUT_MAX_CHARS)
 
 
+class EmailTool(HausverwaltungReadTool):
+	"""Optional mailbox reads and draft creation; no send or destructive operation."""
+
+	mcp_audience = "model"
+
+	def __init__(self):
+		BaseTool.__init__(self)
+		from hausverwaltung.hausverwaltung.agent_tools.email_tools import EMAIL_TOOLS, input_schema
+
+		definition = EMAIL_TOOLS[self.tool_name]
+		self.name = self.tool_name
+		self.description = definition["description"]
+		self.inputSchema = input_schema(self.tool_name)
+		self.source_app = "hausverwaltung"
+		is_write = self.tool_name in FAC_EMAIL_WRITE_TOOL_NAMES
+		self.category = "write" if is_write else "read_only"
+		self.requires_permission = definition["doctype"]
+		self.annotations = {
+			"readOnlyHint": not is_write,
+			"destructiveHint": False,
+			"idempotentHint": True,
+			"openWorldHint": True,
+		}
+
+	def check_permission(self):
+		from hausverwaltung.hausverwaltung.agent_tools import email_api
+
+		# FAC otherwise enables newly discovered hook tools with no configuration.
+		# Mail access is opt-in even on sites with an already enabled custom plugin.
+		if not frappe.db.get_value("FAC Tool Configuration", self.tool_name, "enabled"):
+			frappe.throw(
+				"Dieses E-Mail-Werkzeug ist nicht ausdrücklich freigeschaltet.", frappe.PermissionError
+			)
+		email_api._access(write=self.name in FAC_EMAIL_WRITE_TOOL_NAMES)
+		BaseTool.check_permission(self)
+
+	def execute(self, arguments):
+		from hausverwaltung.hausverwaltung.agent_tools import email_api
+		from hausverwaltung.hausverwaltung.agent_tools.email_tools import EMAIL_TOOLS
+
+		self.check_permission()
+		self.validate_arguments(arguments)
+		function = getattr(email_api, EMAIL_TOOLS[self.name]["function"])
+		result = function(**arguments)
+		result = fac_output.absolutize_urls(result, _link_base_url())
+		# Avoid cutting source mail or status/identity fields without an explicit marker.
+		if fac_output.sent_size(result) > self.mcp_model_max_chars:
+			return {
+				"ok": False,
+				"error": {
+					"code": "LIMIT_EXCEEDED",
+					"message": "E-Mail-Antwort zu groß; weniger Nachrichten mit kleinerem limit abrufen.",
+				},
+			}
+		return result
+
+
 class Fac_agent_mail_merge_get_pdf(MailMergeTool):
 	"""PDF bytes of a preview or stored draft, for code callers that save them as chat files."""
 
@@ -552,6 +611,12 @@ def _link_base_url():
 for _name in FAC_MAIL_MERGE_TOOL_NAMES:
 	globals()[f"Fac_{_name}"] = type(
 		f"Fac_{_name}", (MailMergeTool,), {"tool_name": _name, "__module__": __name__}
+	)
+
+
+for _name in FAC_EMAIL_TOOL_NAMES:
+	globals()[f"Fac_{_name}"] = type(
+		f"Fac_{_name}", (EmailTool,), {"tool_name": _name, "__module__": __name__}
 	)
 
 

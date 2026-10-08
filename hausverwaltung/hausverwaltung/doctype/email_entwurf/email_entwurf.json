@@ -19,6 +19,21 @@
   "queued_on",
   "sent_on",
   "last_send_error",
+  "delivery_backend",
+  "sender",
+  "mail_account_doctype",
+  "mail_archive_account",
+  "source_mail_doctype",
+  "source_mail_message",
+  "provider_draft_id",
+  "sent_provider_message_id",
+  "mailbox_sync_status",
+  "mailbox_checked_on",
+  "draft_request_key",
+  "draft_fingerprint",
+  "draft_token",
+  "draft_rfc_message_id",
+  "remote_creation_started",
   "content_section",
   "recipients",
   "cc",
@@ -141,7 +156,8 @@
    "fieldname": "subject",
    "fieldtype": "Data",
    "in_list_view": 1,
-   "label": "Betreff"
+   "label": "Betreff",
+   "length": 500
   },
   {
    "fieldname": "message",
@@ -164,6 +180,115 @@
    "fieldtype": "Dynamic Link",
    "label": "Referenz-Dokument",
    "options": "reference_doctype"
+  },
+  {
+   "fieldname": "delivery_backend",
+   "fieldtype": "Select",
+   "label": "Entwurf gespeichert in",
+   "options": "ERPNext\nStalwart",
+   "default": "ERPNext",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "sender",
+   "fieldtype": "Data",
+   "label": "Absender",
+   "options": "Email",
+   "read_only": 1,
+   "length": 254
+  },
+  {
+   "fieldname": "mail_account_doctype",
+   "fieldtype": "Select",
+   "default": "Mail Archive Account",
+   "hidden": 1,
+   "read_only": 1,
+   "options": "Mail Archive Account"
+  },
+  {
+   "fieldname": "mail_archive_account",
+   "fieldtype": "Dynamic Link",
+   "options": "mail_account_doctype",
+   "label": "Mail-Archiv-Konto",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_mail_doctype",
+   "fieldtype": "Select",
+   "default": "Mail Archive Message",
+   "hidden": 1,
+   "read_only": 1,
+   "options": "Mail Archive Message"
+  },
+  {
+   "fieldname": "source_mail_message",
+   "fieldtype": "Dynamic Link",
+   "options": "source_mail_doctype",
+   "label": "Ausgangsmail",
+   "read_only": 1
+  },
+  {
+   "fieldname": "provider_draft_id",
+   "fieldtype": "Data",
+   "label": "Postfach Message-ID",
+   "read_only": 1,
+   "length": 255
+  },
+  {
+   "fieldname": "sent_provider_message_id",
+   "fieldtype": "Data",
+   "label": "Gesendete Message-ID",
+   "read_only": 1,
+   "length": 255
+  },
+  {
+   "fieldname": "mailbox_sync_status",
+   "fieldtype": "Select",
+   "options": "Pending\nDraft\nSent\nMissing\nError",
+   "label": "Postfachstatus",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mailbox_checked_on",
+   "fieldtype": "Datetime",
+   "label": "Postfach zuletzt geprüft",
+   "read_only": 1
+  },
+  {
+   "fieldname": "draft_request_key",
+   "fieldtype": "Data",
+   "length": 64,
+   "unique": 1,
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "draft_fingerprint",
+   "fieldtype": "Data",
+   "length": 64,
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "draft_token",
+   "fieldtype": "Data",
+   "length": 64,
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "draft_rfc_message_id",
+   "fieldtype": "Data",
+   "length": 998,
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "remote_creation_started",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
@@ -185,6 +310,14 @@
    "role": "System Manager",
    "share": 1,
    "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Agent Email Drafts"
+  },
+  {
+   "read": 1,
+   "role": "Hausverwalter"
   }
  ],
  "sort_field": "modified",

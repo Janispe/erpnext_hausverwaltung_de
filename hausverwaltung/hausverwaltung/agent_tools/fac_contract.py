@@ -1,4 +1,4 @@
-"""Optional FAC pilot: an explicit, read-only tool surface shared by both clients."""
+"""Explicit FAC surfaces with separate read and narrowly scoped draft actions."""
 
 FAC_TOOL_NAMES = (
 	"hv_describe_query_sources",
@@ -47,7 +47,7 @@ FAC_INVENTORY_TOOL_NAMES = ("hv_list_records", "hv_count_records", "hv_get_portf
 # FAC's own report tools return unbounded output; these wrap them with limits for external clients.
 FAC_REPORT_TOOL_NAMES = ("hv_report_list", "hv_report_requirements", "hv_run_report")
 
-# Controlled mail merge: the only FAC tools that write. They store drafts: saved inputs (save_draft,
+# Controlled mail merge tools store drafts: saved inputs (save_draft,
 # update_draft) or PDFs from a previously checked preview (execute); nothing is sent or submitted.
 # See docs/llm-serienbriefe.md.
 FAC_MAIL_MERGE_TOOL_NAMES = (
@@ -79,8 +79,26 @@ FAC_MAIL_MERGE_WRITE_TOOL_NAMES = (
 	"agent_mail_merge_update_draft",
 )
 
+# Optional Stalwart mail access through ERPNext. Creating a mailbox draft is the only
+# mail write action; the surface does not expose sending, submission or deletion.
+FAC_EMAIL_TOOL_NAMES = (
+	"hv_list_mieter_emails",
+	"hv_get_email_context",
+	"hv_create_email_draft",
+	"hv_get_email_draft",
+)
+FAC_EMAIL_WRITE_TOOL_NAMES = ("hv_create_email_draft",)
+
 # Hook imports are resolved by FAC only when its custom_tools plugin is enabled.
 FAC_TOOL_HOOKS = [
 	f"hausverwaltung.hausverwaltung.agent_tools.fac_tools.Fac_{name}"
-	for name in (*FAC_TOOL_NAMES, *FAC_REPORT_TOOL_NAMES, *FAC_CODE_TOOL_NAMES, *FAC_MAIL_MERGE_TOOL_NAMES, *FAC_OVERVIEW_TOOL_NAMES, *FAC_INVENTORY_TOOL_NAMES)
+	for name in (
+		*FAC_TOOL_NAMES,
+		*FAC_REPORT_TOOL_NAMES,
+		*FAC_CODE_TOOL_NAMES,
+		*FAC_MAIL_MERGE_TOOL_NAMES,
+		*FAC_OVERVIEW_TOOL_NAMES,
+		*FAC_INVENTORY_TOOL_NAMES,
+		*FAC_EMAIL_TOOL_NAMES,
+	)
 ]

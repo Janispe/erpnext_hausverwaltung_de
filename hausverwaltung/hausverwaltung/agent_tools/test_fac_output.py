@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from hausverwaltung.hausverwaltung.agent_tools import fac_output
 from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 	FAC_CODE_TOOL_NAMES,
+	FAC_EMAIL_TOOL_NAMES,
 	FAC_INVENTORY_TOOL_NAMES,
 	FAC_MAIL_MERGE_TOOL_NAMES,
 	FAC_OVERVIEW_TOOL_NAMES,
@@ -239,7 +240,8 @@ class TestFacContract(unittest.TestCase):
 			+ len(FAC_CODE_TOOL_NAMES)
 			+ len(FAC_MAIL_MERGE_TOOL_NAMES)
 			+ len(FAC_OVERVIEW_TOOL_NAMES)
-			+ len(FAC_INVENTORY_TOOL_NAMES),
+			+ len(FAC_INVENTORY_TOOL_NAMES)
+			+ len(FAC_EMAIL_TOOL_NAMES),
 		)
 
 	def test_mail_merge_is_the_only_writing_surface(self):

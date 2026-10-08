@@ -366,6 +366,9 @@ scheduler_events = {
 		"hausverwaltung.hausverwaltung.integrations.paperless.retry_failed_exports"
 	],
 	"cron": {
+		"*/5 * * * *": [
+			"hausverwaltung.hausverwaltung.agent_tools.email_api.sync_stalwart_email_drafts",
+		],
 		# Run shortly after midnight so reports are correct even without opening the list.
 		"1 0 * * *": [
 			"hausverwaltung.hausverwaltung.doctype.mietvertrag.mietvertrag.update_statuses_for_list",
