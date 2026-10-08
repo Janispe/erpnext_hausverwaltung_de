@@ -1276,3 +1276,75 @@ class TestStalwartControllerGuards(TestCase):
 				with self.assertRaisesRegex(frappe.ValidationError, "ERPNext-Versandqueue"):
 					controller.EmailEntwurf.validate(doc)
 				doc.db_set.assert_not_called()
+
+
+class TestEmailAttachmentAPI(TestCase):
+	setUp = TestEmailAPI.setUp
+	remote = TestEmailAPI.remote
+
+	def test_external_bytes_go_to_provider_but_only_hashes_into_payload(self):
+		self.roles.return_value = ["Agent Email Drafts"]
+		self.account.email_addresses = "verwaltung@example.test"
+		backend = SimpleNamespace(provider=self.provider)
+		with (
+			patch.object(api, "_account", return_value=self.account),
+			patch.object(
+				api, "_partner_addresses", return_value=(["mieter@example.test"], ["mieter@example.test"])
+			),
+			patch.object(api, "_DraftBackend", return_value=backend),
+			patch.object(api, "create_remote_draft", return_value={"draft": "ED-1"}) as create,
+		):
+			result = api.create_email_draft(
+				"MV-1",
+				"MAIL-1",
+				"Betreff",
+				"Antwort",
+				"request-file",
+				attachments=[{"filename": "a.bin", "content_base64": "AP8="}],
+			)
+		self.assertTrue(result["ok"], result)
+		self.assertEqual(result["data"]["attachment_count"], 1)
+		self.assertEqual(create.call_args.kwargs["attachments"][0]["content"], b"\x00\xff")
+		self.assertNotIn("content", create.call_args.args[1]["attachments"][0])
+		self.assertEqual(create.call_args.args[1]["attachments"][0]["size"], 2)
+
+	def test_existing_file_checks_parent_and_reads_bounded_binary(self):
+		from unittest.mock import mock_open
+
+		file = SimpleNamespace(
+			is_folder=False,
+			file_url="/private/files/a.bin",
+			attached_to_doctype="Mietvertrag",
+			attached_to_name="MV-1",
+			file_name="a.bin",
+			validate_file_url=Mock(),
+			get_full_path=Mock(return_value="/site/private/files/a.bin"),
+		)
+		with (
+			patch.object(api, "_read", return_value=file) as read,
+			patch("builtins.open", mock_open(read_data=b"\xef\xbb\xbf\xff")) as opened,
+		):
+			self.assertEqual(api._attachment_file("F-1"), ("a.bin", b"\xef\xbb\xbf\xff"))
+		self.assertEqual(read.call_args_list[1].args, ("Mietvertrag", "MV-1"))
+		opened().read.assert_called_once_with(api.MAX_ATTACHMENT_BYTES + 1)
+
+	def test_denied_parent_and_remote_file_never_read_bytes(self):
+		file = SimpleNamespace(
+			is_folder=False,
+			file_url="/private/files/a",
+			attached_to_doctype="Mietvertrag",
+			attached_to_name="MV-other",
+			file_name="a",
+		)
+		with (
+			patch.object(api, "_read", side_effect=[file, api.frappe.PermissionError()]),
+			patch("builtins.open") as opened,
+		):
+			with self.assertRaises(api.frappe.PermissionError):
+				api._attachment_file("F-1")
+			opened.assert_not_called()
+		file.file_url = "https://other.example/a"
+		with patch.object(api, "_read", return_value=file), patch("builtins.open") as opened:
+			with self.assertRaises(EmailDraftError):
+				api._attachment_file("F-1")
+			opened.assert_not_called()

@@ -708,3 +708,48 @@ class TestRemoteDraftLifecycle(DraftAssertions):
 			self.backend.provider.create_calls[0]["draft_token"],
 			self.backend.provider.create_calls[1]["draft_token"],
 		)
+
+
+class TestAttachedDraftLifecycle(TestCase):
+	def test_same_attachments_retry_once_changed_bytes_conflict(self):
+		from .email_attachments import attachment_manifest
+
+		backend = BackendFixture()
+		files = [{"filename": "a.pdf", "content_type": "application/pdf", "content": b"%PDF-one"}]
+		prepared = payload() | {"attachments": attachment_manifest(files)}
+		create_remote_draft(backend, prepared, "request-attachments", attachments=files)
+		create_remote_draft(backend, prepared, "request-attachments", attachments=files)
+		self.assertEqual(len(backend.provider.create_calls), 1)
+		self.assertEqual(backend.provider.create_calls[0]["attachments"], files)
+		changed = [files[0] | {"content": b"%PDF-two"}]
+		with self.assertRaises(EmailDraftError) as raised:
+			create_remote_draft(
+				backend,
+				payload() | {"attachments": attachment_manifest(changed)},
+				"request-attachments",
+				attachments=changed,
+			)
+		self.assertEqual(raised.exception.code, "REQUEST_CONFLICT")
+		self.assertEqual(len(backend.provider.create_calls), 1)
+
+	def test_upload_failure_releases_claim_and_retries_same_attachment_request(self):
+		from .email_attachments import attachment_manifest
+
+		backend = BackendFixture()
+		files = [{"filename": "a.pdf", "content_type": "application/pdf", "content": b"pdf"}]
+		prepared = payload() | {"attachments": attachment_manifest(files)}
+		backend.provider.failure_before_create = DraftCreationRejected("upload failed before Email/set")
+		with self.assertRaises(DraftCreationRejected):
+			create_remote_draft(backend, prepared, "request-attachments", attachments=files)
+		self.assertFalse(next(iter(backend.records.values()))["creation_started"])
+		backend.provider.failure_before_create = None
+		create_remote_draft(backend, prepared, "request-attachments", attachments=files)
+		self.assertEqual(len(backend.provider.messages), 1)
+
+	def test_manifest_without_matching_bytes_rejects_before_reservation(self):
+		backend = BackendFixture()
+		with self.assertRaises(EmailDraftError):
+			create_remote_draft(
+				backend, payload() | {"attachments": [{"sha256": "invented"}]}, "request-attachments"
+			)
+		self.assertFalse(backend.records)

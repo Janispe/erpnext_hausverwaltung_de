@@ -2,6 +2,8 @@
 
 from copy import deepcopy
 
+from hausverwaltung.hausverwaltung.services.email_attachments import MAX_BASE64_CHARS
+
 _NAME = {
 	"type": "string",
 	"minLength": 1,
@@ -103,6 +105,31 @@ EMAIL_TOOLS = {
 			"message": {"type": "string", "minLength": 1, "maxLength": 20_000},
 			"request_id": {"type": "string", "minLength": 1, "maxLength": 128},
 			"recipients": _ADDRESSES,
+			"attachments": {
+				"type": "array",
+				"maxItems": 10,
+				"description": "Optionale Anhänge: lesbare ERPNext File-ID oder Datei aus OpenClaw als filename/content_base64, optional content_type. Maximal 10 MiB je Datei, 20 MiB insgesamt. Binärdaten durch Code übertragen, nicht vom Modell erfinden. Keine URLs oder lokalen Pfade. Dateiinhalte bei derselben request_id unverändert lassen.",
+				"items": {
+					"oneOf": [
+						{
+							"type": "object",
+							"properties": {"file": _NAME},
+							"required": ["file"],
+							"additionalProperties": False,
+						},
+						{
+							"type": "object",
+							"properties": {
+								"filename": {"type": "string", "minLength": 1, "maxLength": 200},
+								"content_base64": {"type": "string", "maxLength": MAX_BASE64_CHARS},
+								"content_type": {"type": "string", "maxLength": 161},
+							},
+							"required": ["filename", "content_base64"],
+							"additionalProperties": False,
+						},
+					]
+				},
+			},
 			"cc": {
 				**_ADDRESSES,
 				"minItems": 0,

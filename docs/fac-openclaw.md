@@ -75,7 +75,7 @@ und versendet sie selbst. Die Werkzeuge enthalten keine Versandfunktion.
 |---|---|---|
 | `hv_list_mieter_emails` | `mietvertrag`, `archive_account`, optional `limit`, `offset` | Begrenzte Seite der zum Mietverhältnis abgelegten Nachrichten |
 | `hv_get_email_context` | `mietvertrag`, `message`, optional `limit`, `body_offset`, `body_limit` | Ausgangsmail aus Stalwart und begrenzter Gesprächsausschnitt |
-| `hv_create_email_draft` | `mietvertrag`, `archive_account`, `subject`, `message`, `request_id`, optional `recipients`, `cc`, `reply_to_message`, `sender` | Klartextentwurf im Postfach erzeugen und in ERPNext verknüpfen |
+| `hv_create_email_draft` | `mietvertrag`, `archive_account`, `subject`, `message`, `request_id`, optional `recipients`, `cc`, `reply_to_message`, `sender`, `attachments` | Entwurf mit optionalen Anhängen im Postfach erzeugen und in ERPNext verknüpfen |
 | `hv_get_email_draft` | `draft` | Verknüpfung und aktuellen Postfachstatus lesend prüfen |
 
 `mietvertrag` ist eine exakte Mietvertrag-ID, keine Customer-ID und kein
@@ -122,8 +122,8 @@ die Metadaten einer einzelnen Nachricht das Budget, wird der Aufruf mit
 `LIMIT_EXCEEDED` abgelehnt.
 
 Der Entwurfstext ist Klartext, höchstens 20000 Zeichen / 50000 UTF-8-Bytes,
-der Betreff höchstens 500 Zeichen. Anhänge werden in dieser Version
-manuell in Thunderbird ergänzt. To-Empfänger müssen zu den lesbaren Contacts
+der Betreff höchstens 500 Zeichen. Anhänge können über `attachments`
+übergeben oder später in Thunderbird ergänzt werden. To-Empfänger müssen zu den lesbaren Contacts
 der Vertragspartner gehören; CC darf zusätzlich eigene Postfachadressen
 enthalten. Auch ein Reply-To der Ausgangsmail muss diese Prüfung bestehen.
 To und CC enthalten zusammen höchstens zwanzig Adressen.
@@ -157,6 +157,83 @@ akzeptiert den Ordner aber nicht als Versandbeleg. Der Auftrag meldet dann
 ursprüngliche Vorschlag im ERP-Datensatz bleibt als Auftragsstand erhalten.
 Stalwart-Entwürfe können nicht durch den bisherigen ERPNext-Queue-Workflow
 versendet werden.
+
+### Anhänge aus ERPNext und OpenClaw
+
+`attachments` ist eine optionale Liste mit höchstens zehn Dateien, maximal
+10 MiB je Datei und 20 MiB insgesamt. Beliebige Dateiformate sind möglich,
+beispielsweise PDF, Word, Tabellen, Bilder und ZIP. Kleinere Mailserver- oder
+HTTP-/MCP-Transportlimits gelten zusätzlich. Die Werkzeuge erzeugen die
+Dateiformate nicht selbst: Ein erzeugtes PDF aus dem Serienbrief-Werkzeug kann
+als Datei oder mit dessen `content_base64` übernommen werden.
+
+Vorhandene ERPNext-Datei (exakte **File-Datensatz-ID**, keine URL):
+
+```json
+{"attachments": [{"file": "EXAKTE-FILE-ID"}]}
+```
+
+Datei aus OpenClaw (Dateiname ohne Pfad, Inhalt als kanonisches Base64):
+
+```json
+{"attachments": [{"filename": "Notiz.txt", "content_base64": "SGFsbG8=", "content_type": "text/plain"}]}
+```
+
+Beide Varianten dürfen gemischt werden. `content_type` ist bei Base64 optional;
+ERPNext bestimmt dann den MIME-Typ aus dem Dateinamen oder verwendet
+`application/octet-stream`. Bytes aus OpenClaw müssen dessen Code-/Dateiadapter
+lesen und kodieren; das Sprachmodell darf weder Base64 erfinden noch große
+Dateiinhalte in seinen Gesprächskontext kopieren. Große Dateien bevorzugt zuvor
+über den bestehenden authentifizierten ERPNext-Dateiupload als private `File`
+speichern und dann die zurückgegebene File-ID übergeben. Ein lokaler
+OpenClaw-Dateipfad ist auf dem ERPNext-Server nicht verfügbar. URL-Downloads
+werden durch dieses Werkzeug nicht angeboten.
+
+Beispiel im OpenClaw-Code-Adapter mit dem bereits authentifizierten `rpc`
+und dem entdeckten Werkzeugkatalog `tools`:
+
+```python
+import base64
+from pathlib import Path
+from hv_fac_adapter import call_tool
+
+data = Path("/OPENCLAW-WORKSPACE/Abrechnung.pdf").read_bytes()
+result = call_tool(rpc, tools, "hv_create_email_draft", {
+    "mietvertrag": "EXAKTE-MIETVERTRAG-ID",
+    "archive_account": "EXAKTES-MAILKONTO",
+    "subject": "Ihre Abrechnung",
+    "message": "Guten Tag, anbei die angeforderte Abrechnung.",
+    "request_id": "EINDEUTIGER-AUFTRAG",
+    "attachments": [{
+        "filename": "Abrechnung.pdf",
+        "content_type": "application/pdf",
+        "content_base64": base64.b64encode(data).decode("ascii"),
+    }],
+}, audience="code")
+```
+
+Bei File-Referenzen prüft ERPNext Leserecht auf die Datei und das zugehörige
+Dokument. Die Binärdaten werden begrenzt gelesen und ohne Textdekodierung
+übertragen. Der Inhalts-Hash, Dateiname, MIME-Typ und die Größe werden im
+unveränderlichen `draft_attachment_manifest` des Auftrags gespeichert und in
+seinen Fingerprint aufgenommen. Mit derselben `request_id` müssen dieselben
+Bytes und Metadaten übergeben werden; geänderte Anhänge führen zu
+`REQUEST_CONFLICT`. Ohne Anhänge bleibt der bisherige Fingerprint unverändert.
+Das Manifest beschreibt den ursprünglichen Vorschlag, nicht spätere Änderungen
+in Thunderbird. Direkte Base64-Inhalte werden nicht zusätzlich als ERPNext-Datei
+archiviert; die tatsächlichen Anhänge liegen im Stalwart-Entwurf.
+
+ERPNext lädt die Bytes über die vom JMAP-Server veröffentlichte `uploadUrl`
+hoch und gibt die bestätigten Blob-IDs als `attachments` an `Email/set` weiter
+([RFC 8620, Abschnitt 6.1](https://www.rfc-editor.org/rfc/rfc8620.html#section-6.1),
+[RFC 8621, Abschnitt 4.6](https://www.rfc-editor.org/rfc/rfc8621.html#section-4.6)).
+Der Upload muss denselben Ursprung wie die JMAP-API verwenden; Weiterleitungen
+werden nicht verfolgt. Thunderbird muss dafür nicht laufen. Scheitert ein
+Upload, wird kein `Email/set` ausgeführt und der Erstellungs-Claim freigegeben;
+der Auftrag kann mit derselben `request_id` wiederholt werden. Bereits
+hochgeladene, unreferenzierte Blobs werden vom Mailserver verwaltet. Bleibt erst
+die Antwort auf `Email/set` unklar, gelten weiterhin die bisherigen Regeln für
+unklare Erstellungen: kein blindes zweites Anlegen. Es gibt keinen Versandpfad.
 
 Das zugehörige Thunderbird-Add-on enthält dafür den Helfer
 `extension/lib/draft-marker.js`. Er übernimmt die Entwurfskennung beim

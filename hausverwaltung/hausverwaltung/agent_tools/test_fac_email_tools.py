@@ -85,6 +85,35 @@ class TestEmailContract(unittest.TestCase):
 				validate(invalid, schema)
 
 	@unittest.skipUnless(validate, "jsonschema is not installed")
+	def test_attachment_schema_accepts_both_sources_and_rejects_mixed_items(self):
+		arguments = {
+			"mietvertrag": "MV-1",
+			"archive_account": "MAIL-1",
+			"subject": "Betreff",
+			"message": "Antwort",
+			"request_id": "r",
+		}
+		schema = input_schema("hv_create_email_draft")
+		validate(
+			{
+				**arguments,
+				"attachments": [
+					{"file": "F-1"},
+					{"filename": "a.pdf", "content_base64": "AA==", "content_type": "application/pdf"},
+				],
+			},
+			schema,
+		)
+		for attachments in (
+			[{"file": "F-1", "content_base64": "AA=="}],
+			[{"url": "https://example.test/a"}],
+			[{"filename": "a.pdf"}],
+			[{"file": "F-1"}] * 11,
+		):
+			with self.subTest(attachments=attachments), self.assertRaises(ValidationError):
+				validate({**arguments, "attachments": attachments}, schema)
+
+	@unittest.skipUnless(validate, "jsonschema is not installed")
 	def test_bounded_read_schemas_reject_invalid_pages_and_provider_selector(self):
 		for name, arguments, field, value in (
 			("hv_list_mieter_emails", {"mietvertrag": "MV-1", "archive_account": "MAIL-1"}, "limit", 21),

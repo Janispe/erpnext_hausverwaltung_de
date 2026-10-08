@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import json
 import uuid
 from datetime import timedelta
 from functools import wraps
@@ -14,6 +15,11 @@ from hausverwaltung.hausverwaltung.agent_tools.contracts import AgentToolError
 from hausverwaltung.hausverwaltung.agent_tools.email_budget import fit_context, fit_preview, fits_data
 from hausverwaltung.hausverwaltung.agent_tools.fac_overview import OverviewError, _exact_identity
 from hausverwaltung.hausverwaltung.agent_tools.fac_overview_backend import OverviewBackend
+from hausverwaltung.hausverwaltung.services.email_attachments import (
+	MAX_ATTACHMENT_BYTES,
+	attachment_manifest,
+	prepare_attachments,
+)
 from hausverwaltung.hausverwaltung.services.email_draft_contract import (
 	DraftCreationRejected,
 	EmailDraftError,
@@ -155,6 +161,28 @@ def _provider(account):
 	from thunderbird_hausverwaltung.thunderbird_hausverwaltung.mail_archive.providers import get_provider
 
 	return get_provider(account)
+
+
+def _attachment_file(name):
+	file = _read("File", name)
+	if (
+		file.is_folder
+		or not isinstance(file.file_url, str)
+		or not file.file_url.startswith(("/files/", "/private/files/"))
+	):
+		raise EmailDraftError("INVALID_ATTACHMENT", "Nur lokal gespeicherte ERPNext-Dateien sind erlaubt.")
+	if bool(file.attached_to_doctype) != bool(file.attached_to_name):
+		raise EmailDraftError("INVALID_ATTACHMENT", "Die Dateizuordnung ist unvollständig.")
+	if file.attached_to_doctype:
+		_read(file.attached_to_doctype, file.attached_to_name)
+	# Bounded binary read: File.get_content() can decode text and alter BOM/encoding.
+	file.validate_file_url()
+	try:
+		with open(file.get_full_path(), "rb") as stream:
+			content = stream.read(MAX_ATTACHMENT_BYTES + 1)
+	except OSError:
+		raise EmailDraftError("INVALID_ATTACHMENT", "Die Anhangsdatei ist nicht verfügbar.") from None
+	return file.file_name, content
 
 
 def _partner_addresses(contract):
@@ -469,7 +497,9 @@ class _DraftBackend:
 	def lock(self, key):
 		return frappe.cache().lock(
 			f"hv-email-draft:{key}",
-			timeout=max(300, int(self.account.request_timeout or 30) * 8),
+			timeout=max(
+				300, int(self.account.request_timeout or 30) * (8 + 2 * getattr(self, "attachment_count", 0))
+			),
 			blocking_timeout=5,
 		)
 
@@ -510,6 +540,7 @@ class _DraftBackend:
 				"source_mail_message": payload["reply_to_message"],
 				"draft_request_key": key,
 				"draft_fingerprint": digest,
+				"draft_attachment_manifest": json.dumps(payload.get("attachments", []), ensure_ascii=False),
 				"draft_token": token,
 				"draft_rfc_message_id": f"{token}@{payload['sender'].split('@', 1)[1]}",
 				"mailbox_sync_status": "Pending",
@@ -686,11 +717,14 @@ def create_email_draft(
 	cc=None,
 	reply_to_message=None,
 	sender=None,
+	attachments=None,
 ):
 	contract, identity = _contract(mietvertrag)
 	account = _account(archive_account)
 	partners, defaults = _partner_addresses(contract)
+	files = prepare_attachments(attachments, _attachment_file)
 	backend = _DraftBackend(account)
+	backend.attachment_count = len(files)
 	reply = None
 	if reply_to_message:
 		_source_doc, reply = _source(reply_to_message, account, identity, backend.provider)
@@ -708,7 +742,10 @@ def create_email_draft(
 		reply=reply,
 		reply_to_message=reply_to_message,
 	)
-	return create_remote_draft(backend, payload, request_id)
+	if files:
+		payload["attachments"] = attachment_manifest(files)
+	result = create_remote_draft(backend, payload, request_id, **({"attachments": files} if files else {}))
+	return {**result, "attachment_count": len(files)}
 
 
 def _live_state(doc, account):

@@ -221,8 +221,12 @@ def classify_remote(messages, *, draft_token, sender, mailboxes):
 	return "Missing", None
 
 
-def create_remote_draft(backend, payload, request_id):
+def create_remote_draft(backend, payload, request_id, *, attachments=None):
 	"""Reserve before the remote side effect, reconcile retries, never blindly repeat a create."""
+	from .email_attachments import attachment_manifest
+
+	if payload.get("attachments", []) != attachment_manifest(attachments or []):
+		raise EmailDraftError("INVALID_ATTACHMENT", "Anhangsinhalt stimmt nicht mit dem Auftrag überein.")
 	key = request_key(backend.site, backend.user, request_id)
 	digest = fingerprint(payload)
 	with backend.lock(key):
@@ -265,6 +269,7 @@ def create_remote_draft(backend, payload, request_id):
 				rfc_message_id=record["rfc_message_id"],
 				in_reply_to=tuple(payload["in_reply_to"]),
 				references=tuple(payload["references"]),
+				**({"attachments": attachments} if attachments else {}),
 			)
 		except DraftCreationRejected:
 			backend.release_creation_claim(record)

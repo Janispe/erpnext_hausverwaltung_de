@@ -278,6 +278,7 @@ class EmailEntwurf(Document):
 				"source_mail_message",
 				"draft_request_key",
 				"draft_fingerprint",
+				"draft_attachment_manifest",
 				"draft_token",
 				"draft_rfc_message_id",
 				"remote_creation_started",
