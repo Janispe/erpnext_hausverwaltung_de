@@ -14,6 +14,12 @@ Adapter einmalig übernehmen. Danach entdeckt er die freigegebenen Werkzeuge üb
 den Serverkatalog. `FAC_PROTOTYPE_TOOL_NAMES` und `include_prototype` bleiben nur
 als Kompatibilitätsnamen für bestehende Einrichtungsskripte erhalten.
 
+Allgemeine, ordnerübergreifende Mailsuchen laufen über den separaten Mail-MCP:
+`search_all_emails` und `get_archive_emails_content`. Der portable Updateweg für
+den getrennten Produktionsserver steht in [mail-mcp-production.md](mail-mcp-production.md).
+Tests und Containeränderungen am Entwicklungsrechner aktivieren die Erweiterung
+nicht auf dem Produktionsserver.
+
 ## Direkter Bestand: Listen, Zählen und Belegung
 
 Für bekannte Standardfragen keine Quellen-/Schemaabfrage vorschalten. Die
