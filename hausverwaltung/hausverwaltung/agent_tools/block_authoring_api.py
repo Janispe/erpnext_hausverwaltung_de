@@ -47,9 +47,7 @@ def _paths(raw, doc):
 	for doctype, mapping in paths.items():
 		if doctype not in BLOCK_RECORD_DOCTYPES and doctype != "User":
 			raise AgentToolError("INVALID_ARGUMENT", "Empfängertyp für Standardpfade ist nicht freigegeben.")
-		api._read("DocType", doctype)
-		if not frappe.has_permission(doctype, "read"):
-			raise frappe.PermissionError
+		author._require_doctype_read(doctype)
 		if not isinstance(mapping, dict) or set(mapping) - keys:
 			raise AgentToolError(
 				"INVALID_ARGUMENT", "Standardpfade dürfen nur deklarierte Bausteinvariablen zuordnen."
@@ -117,9 +115,7 @@ def _set_source(
 		doc.set("variables", author._variables(variables, record_doctypes=BLOCK_RECORD_DOCTYPES))
 		for row in doc.variables:
 			if row.reference_doctype:
-				api._read("DocType", row.reference_doctype)
-				if not frappe.has_permission(row.reference_doctype, "read"):
-					raise frappe.PermissionError
+				author._require_doctype_read(row.reference_doctype)
 	if description is not None:
 		doc.description = author._text(description, "description", 4000, False)
 	if render_position is not None:

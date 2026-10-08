@@ -54,6 +54,19 @@ def _text(value, field, max_chars=140, required=True):
 	return value.strip()
 
 
+def _require_doctype_read(doctype):
+	"""Validate a type internally, then require read access to its records.
+
+	DocType definitions are administrative metadata, not the referenced records.
+	Actual documents must still pass api._read and its document permission check.
+	Callers retain their existing type allowlists and input validation.
+	"""
+	if not frappe.db.exists("DocType", doctype):
+		raise frappe.DoesNotExistError
+	if not frappe.has_permission(doctype, "read"):
+		raise frappe.PermissionError
+
+
 def _variables(raw, *, record_doctypes=AI_RECORD_DOCTYPES):
 	rows = parse_json_if_needed(raw)
 	if rows is None:
@@ -280,9 +293,7 @@ def create_template(
 	category = _text(category, "category", 240)
 	recipient_doctype = _text(recipient_doctype, "recipient_doctype", 140)
 	api._read("Serienbrief Kategorie", category)
-	api._read("DocType", recipient_doctype)
-	if not frappe.has_permission(recipient_doctype, "read"):
-		raise frappe.PermissionError
+	_require_doctype_read(recipient_doctype)
 	if frappe.db.exists(api.TEMPLATE, title):
 		raise AgentToolError(
 			"TEMPLATE_EXISTS", "Titel existiert bereits. Für Änderungen einen KI-Vorschlag anlegen."

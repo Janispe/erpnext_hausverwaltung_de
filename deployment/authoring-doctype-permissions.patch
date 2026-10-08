@@ -1,0 +1,61 @@
+diff --git a/hausverwaltung/hausverwaltung/agent_tools/block_authoring_api.py b/hausverwaltung/hausverwaltung/agent_tools/block_authoring_api.py
+index 26f2c3aa..b25fe741 100644
+--- a/hausverwaltung/hausverwaltung/agent_tools/block_authoring_api.py
++++ b/hausverwaltung/hausverwaltung/agent_tools/block_authoring_api.py
+@@ -47,9 +47,7 @@ def _paths(raw, doc):
+ 	for doctype, mapping in paths.items():
+ 		if doctype not in BLOCK_RECORD_DOCTYPES and doctype != "User":
+ 			raise AgentToolError("INVALID_ARGUMENT", "Empfängertyp für Standardpfade ist nicht freigegeben.")
+-		api._read("DocType", doctype)
+-		if not frappe.has_permission(doctype, "read"):
+-			raise frappe.PermissionError
++		author._require_doctype_read(doctype)
+ 		if not isinstance(mapping, dict) or set(mapping) - keys:
+ 			raise AgentToolError(
+ 				"INVALID_ARGUMENT", "Standardpfade dürfen nur deklarierte Bausteinvariablen zuordnen."
+@@ -117,9 +115,7 @@ def _set_source(
+ 		doc.set("variables", author._variables(variables, record_doctypes=BLOCK_RECORD_DOCTYPES))
+ 		for row in doc.variables:
+ 			if row.reference_doctype:
+-				api._read("DocType", row.reference_doctype)
+-				if not frappe.has_permission(row.reference_doctype, "read"):
+-					raise frappe.PermissionError
++				author._require_doctype_read(row.reference_doctype)
+ 	if description is not None:
+ 		doc.description = author._text(description, "description", 4000, False)
+ 	if render_position is not None:
+diff --git a/hausverwaltung/hausverwaltung/agent_tools/template_authoring_api.py b/hausverwaltung/hausverwaltung/agent_tools/template_authoring_api.py
+index 83ac61b7..99b53979 100644
+--- a/hausverwaltung/hausverwaltung/agent_tools/template_authoring_api.py
++++ b/hausverwaltung/hausverwaltung/agent_tools/template_authoring_api.py
+@@ -54,6 +54,19 @@ def _text(value, field, max_chars=140, required=True):
+ 	return value.strip()
+ 
+ 
++def _require_doctype_read(doctype):
++	"""Validate a type internally, then require read access to its records.
++
++	DocType definitions are administrative metadata, not the referenced records.
++	Actual documents must still pass api._read and its document permission check.
++	Callers retain their existing type allowlists and input validation.
++	"""
++	if not frappe.db.exists("DocType", doctype):
++		raise frappe.DoesNotExistError
++	if not frappe.has_permission(doctype, "read"):
++		raise frappe.PermissionError
++
++
+ def _variables(raw, *, record_doctypes=AI_RECORD_DOCTYPES):
+ 	rows = parse_json_if_needed(raw)
+ 	if rows is None:
+@@ -280,9 +293,7 @@ def create_template(
+ 	category = _text(category, "category", 240)
+ 	recipient_doctype = _text(recipient_doctype, "recipient_doctype", 140)
+ 	api._read("Serienbrief Kategorie", category)
+-	api._read("DocType", recipient_doctype)
+-	if not frappe.has_permission(recipient_doctype, "read"):
+-		raise frappe.PermissionError
++	_require_doctype_read(recipient_doctype)
+ 	if frappe.db.exists(api.TEMPLATE, title):
+ 		raise AgentToolError(
+ 			"TEMPLATE_EXISTS", "Titel existiert bereits. Für Änderungen einen KI-Vorschlag anlegen."
