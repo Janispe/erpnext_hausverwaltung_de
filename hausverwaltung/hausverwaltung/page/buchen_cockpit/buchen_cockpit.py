@@ -28,6 +28,7 @@ from hausverwaltung.hausverwaltung.utils.rent_items import (
     MISC_TENANT_ITEM_CODE,
     ensure_rent_items,
 )
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 EINGABEQUELLE_EINGANG = "Vereinfachte Buchung"
 EINGABEQUELLE_AUSGANG = "Vereinfachte Mieterrechnung"
@@ -789,7 +790,7 @@ def _resolve_property_booking_identity(
     immobilie = cstr(wohnung_values.get("immobilie")).strip()
     if not wohnung_values.get("name") or not immobilie:
         frappe.throw(
-            f"{label}Wohnung '{wohnung}' wurde nicht gefunden oder hat keine "
+            f"{label}Wohnung '{label_with_id('Wohnung', wohnung)}' wurde nicht gefunden oder hat keine "
             "Immobilie. Buchung abgebrochen."
         )
 
@@ -803,20 +804,20 @@ def _resolve_property_booking_identity(
     property_cost_center = cstr(immobilie_values.get("kostenstelle")).strip()
     if not immobilie_values.get("name") or not property_cost_center:
         frappe.throw(
-            f"{label}An der Immobilie '{immobilie}' der Wohnung '{wohnung}' "
+            f"{label}An der Immobilie '{label_with_id('Immobilie', immobilie)}' der Wohnung '{label_with_id('Wohnung', wohnung)}' "
             "ist keine Kostenstelle gepflegt. Buchung abgebrochen."
         )
 
     company = _company_via_wohnung(wohnung, for_update=True)
     if not company:
         frappe.throw(
-            f"{label}Für Wohnung '{wohnung}' konnte aus den gesperrten "
+            f"{label}Für Wohnung '{label_with_id('Wohnung', wohnung)}' konnte aus den gesperrten "
             "Immobilien-Finanzdaten keine eindeutige Company ermittelt werden. "
             "Buchung abgebrochen."
         )
     if expected_company and company != expected_company:
         frappe.throw(
-            f"{label}Wohnung '{wohnung}' gehört zur Company '{company}', "
+            f"{label}Wohnung '{label_with_id('Wohnung', wohnung)}' gehört zur Company '{company}', "
             f"der Beleg aber zur Company '{expected_company}'. "
             "Buchung abgebrochen."
         )
@@ -864,18 +865,18 @@ def _lock_mietvertrag_booking_identity(
         for_update=True,
     ) or {}
     if not mv.get("name"):
-        frappe.throw(f"Mietvertrag '{mietvertrag}' wurde nicht gefunden.")
+        frappe.throw(f"Mietvertrag '{label_with_id('Mietvertrag', mietvertrag)}' wurde nicht gefunden.")
 
     customer = cstr(mv.get("kunde")).strip()
     wohnung = cstr(mv.get("wohnung")).strip()
     if not customer:
         frappe.throw(
-            f"Mietvertrag '{mietvertrag}' hat keinen eindeutigen Kunden. "
+            f"Mietvertrag '{label_with_id('Mietvertrag', mietvertrag)}' hat keinen eindeutigen Kunden. "
             "Buchung abgebrochen."
         )
     if not wohnung:
         frappe.throw(
-            f"Mietvertrag '{mietvertrag}' hat keine Wohnung. "
+            f"Mietvertrag '{label_with_id('Mietvertrag', mietvertrag)}' hat keine Wohnung. "
             "Buchung abgebrochen."
         )
 

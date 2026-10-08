@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import frappe
 from frappe.utils import getdate
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 
 BK_ITEM_CODE = "Betriebskosten"
@@ -234,18 +235,18 @@ def _bk_invoice_names_for_wohnung(
 			)
 		if not identity_customer or not identity_wohnung:
 			frappe.throw(
-				f"Mietvertrag {mietvertrag} hat keinen eindeutigen Customer "
+				f"Mietvertrag {label_with_id('Mietvertrag', mietvertrag)} hat keinen eindeutigen Customer "
 				"oder keine Wohnung. Buchung abgebrochen."
 			)
 		if identity_wohnung != wohnung:
 			frappe.throw(
-				f"Mietvertrag {mietvertrag} gehört zu Wohnung "
-				f"{identity_wohnung} statt {wohnung}. Buchung abgebrochen."
+				f"Mietvertrag {label_with_id('Mietvertrag', mietvertrag)} gehört zu Wohnung "
+				f"{label_with_id('Wohnung', identity_wohnung)} statt {label_with_id('Wohnung', wohnung)}. Buchung abgebrochen."
 			)
 		if customer and customer != identity_customer:
 			frappe.throw(
-				f"Customer {customer} passt nicht zum gesperrten Mietvertrag "
-				f"{mietvertrag} ({identity_customer}). Buchung abgebrochen."
+				f"Customer {label_with_id('Customer', customer)} passt nicht zum gesperrten Mietvertrag "
+				f"{label_with_id('Mietvertrag', mietvertrag)} ({label_with_id('Customer', identity_customer)}). Buchung abgebrochen."
 			)
 		customer = identity_customer
 		fd, td = _date_range(from_date, to_date)
@@ -412,7 +413,7 @@ def _bk_invoice_names_for_wohnung(
 				continue
 			if effective.get("wohnung") != wohnung:
 				frappe.throw(
-					f"Sales Invoice {name} und Mietvertrag {mietvertrag} "
+					f"Sales Invoice {name} und Mietvertrag {label_with_id('Mietvertrag', mietvertrag)} "
 					"haben keine identische Wohnung. Buchung abgebrochen."
 				)
 			selected.append(name)

@@ -25,6 +25,7 @@ from typing import Any
 import frappe
 from frappe import _
 from frappe.utils import cstr
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 REPAIR_ROLES = ("Accounts Manager", "System Manager")
 
@@ -133,7 +134,7 @@ def repair_sales_invoice_cost_center(invoice_name: str) -> dict[str, Any]:
 	if identity.company != si.company:
 		frappe.throw(
 			_("{0}: Company {1} passt nicht zur Immobilie {2} ({3}).").format(
-				invoice_name, si.company, identity.immobilie, identity.company
+				invoice_name, si.company, label_with_id("Immobilie", identity.immobilie), identity.company
 			)
 		)
 

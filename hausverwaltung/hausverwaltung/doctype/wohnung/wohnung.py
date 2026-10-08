@@ -18,6 +18,7 @@ from hausverwaltung.hausverwaltung.utils.gebaeudeteil import (
 	normalize_gebaeudeteil_to_standard,
 	split_lage_gebaeudeteil,
 )
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 STATUS_VERMIETET = "Vermietet"
 STATUS_LEERSTEHEND = "Leerstehend"
@@ -396,7 +397,7 @@ def get_paperless_link(wohnung: str) -> str | None:
 
 	values = frappe.db.get_value("Wohnung", wohnung, fields, as_dict=True)
 	if not values:
-		frappe.throw(_("Wohnung '{0}' wurde nicht gefunden.").format(wohnung))
+		frappe.throw(_("Wohnung '{0}' wurde nicht gefunden.").format(label_with_id("Wohnung", wohnung)))
 
 	tag = (values.get("paperless_tag") or "").strip() if has_paperless_column else ""
 	needs_lookup = not has_paperless_column or not tag

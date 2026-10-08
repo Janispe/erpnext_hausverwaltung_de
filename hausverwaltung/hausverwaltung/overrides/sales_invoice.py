@@ -15,6 +15,7 @@ from hausverwaltung.hausverwaltung.utils.sollstellung_titel import build_sollste
 from hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff import (
 	get_sales_invoice_writeoff_status,
 )
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 _MV_MARKER_RE = re.compile(r"\[MV:([^\]\r\n]+)\]")
 _MIETABRECHNUNG_PERIOD_RE = re.compile(r"(?:0[1-9]|1[0-2])/\d{4}")
@@ -87,7 +88,7 @@ def _contract_reference(
 			_(
 				"{0} enthält widersprüchliche Mietvertragsreferenzen "
 				"({1} / {2}); es wurde nichts gebucht."
-			).format(document_label, structured_mv, marker_mv),
+			).format(document_label, label_with_id("Mietvertrag", structured_mv), label_with_id("Mietvertrag", marker_mv)),
 			frappe.ValidationError,
 		)
 	return frappe._dict(
@@ -163,7 +164,7 @@ def _validate_invoice_values(
 			_(
 				"{0} verwendet nicht den aktuellen Customer {1} des Mietvertrags "
 				"{2}; es wurde nichts gebucht."
-			).format(document_label, expected_customer, identity.name),
+			).format(document_label, label_with_id("Customer", expected_customer), identity.name),
 			frappe.ValidationError,
 		)
 	if cstr(company or "").strip() != expected_company:
@@ -179,7 +180,7 @@ def _validate_invoice_values(
 			_(
 				"{0} verwendet am Belegkopf nicht die aktuelle Wohnung {1} des "
 				"Mietvertrags {2}; es wurde nichts gebucht."
-			).format(document_label, expected_wohnung, identity.name),
+			).format(document_label, label_with_id("Wohnung", expected_wohnung), identity.name),
 			frappe.ValidationError,
 		)
 	if (
@@ -209,7 +210,7 @@ def _validate_invoice_values(
 				_(
 					"{0}, Position {1}, verwendet nicht die aktuelle Wohnung {2} "
 					"des Mietvertrags {3}; es wurde nichts gebucht."
-				).format(document_label, index, expected_wohnung, identity.name),
+				).format(document_label, index, label_with_id("Wohnung", expected_wohnung), identity.name),
 				frappe.ValidationError,
 			)
 		if has_item_cost_center:
@@ -394,7 +395,7 @@ def validate_mietvertrag_sales_invoice_identity(doc) -> None:
 				_(
 					"Die Ursprungsrechnung {0} verweist aktuell auf Mietvertrag {1}, "
 					"der Return aber auf {2}; es wurde nichts gebucht."
-				).format(return_against, locked_mv, identity.name),
+				).format(return_against, label_with_id("Mietvertrag", locked_mv), identity.name),
 				frappe.ValidationError,
 			)
 		locked_period = locked_reference.get("period_start")
@@ -491,7 +492,7 @@ class CustomSalesInvoice(SalesInvoice):
 		except frappe.DoesNotExistError:
 			frappe.throw(
 				_("Rechnung {0} verweist auf den fehlenden Mietvertrag {1}.").format(
-					self.name, mietvertrag
+					self.name, label_with_id("Mietvertrag", mietvertrag)
 				),
 				frappe.ValidationError,
 			)
@@ -499,7 +500,7 @@ class CustomSalesInvoice(SalesInvoice):
 		if cstr(contract.get("kunde")).strip() != cstr(self.get("customer")).strip():
 			frappe.throw(
 				_("Rechnung {0} und Mietvertrag {1} haben unterschiedliche Customer.").format(
-					self.name, mietvertrag
+					self.name, label_with_id("Mietvertrag", mietvertrag)
 				),
 				frappe.ValidationError,
 			)
@@ -508,7 +509,7 @@ class CustomSalesInvoice(SalesInvoice):
 		if invoice_wohnung and contract_wohnung != invoice_wohnung:
 			frappe.throw(
 				_("Rechnung {0} und Mietvertrag {1} haben unterschiedliche Wohnungen.").format(
-					self.name, mietvertrag
+					self.name, label_with_id("Mietvertrag", mietvertrag)
 				),
 				frappe.ValidationError,
 			)

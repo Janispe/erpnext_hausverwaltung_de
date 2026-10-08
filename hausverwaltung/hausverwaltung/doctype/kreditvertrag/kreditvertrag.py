@@ -21,6 +21,7 @@ from frappe.model.document import Document
 from frappe.utils import add_months, cint, flt, getdate, nowdate
 
 from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 STATUS_AKTIV = "Aktiv"
 STATUS_ABGELOEST = "Abgelöst"
@@ -1114,7 +1115,7 @@ def _lock_credit_booking_context(
 		as_dict=True,
 	)
 	if not locked_rate:
-		frappe.throw(f"Rate {rate_name} gehört nicht zu Kreditvertrag {kreditvertrag}.")
+		frappe.throw(f"Rate {rate_name} gehört nicht zu Kreditvertrag {label_with_id('Kreditvertrag', kreditvertrag)}.")
 	if locked_rate[0].get("journal_entry"):
 		frappe.throw(
 			f"Rate ist bereits gebucht ({locked_rate[0].get('journal_entry')})."
@@ -1192,7 +1193,7 @@ def _lock_credit_booking_roots(
 		(kreditvertrag,),
 	)
 	if not parent_exists:
-		frappe.throw(f"Kreditvertrag {kreditvertrag} wurde nicht gefunden.")
+		frappe.throw(f"Kreditvertrag {label_with_id('Kreditvertrag', kreditvertrag)} wurde nicht gefunden.")
 
 	locked_kv: Kreditvertrag = frappe.get_doc(
 		"Kreditvertrag",
@@ -1461,7 +1462,7 @@ def assign_kreditrate(
 			rate_row = r
 			break
 	if rate_row is None:
-		frappe.throw(f"Rate {rate_name} nicht im Kreditvertrag {kreditvertrag} gefunden.")
+		frappe.throw(f"Rate {rate_name} nicht im Kreditvertrag {label_with_id('Kreditvertrag', kreditvertrag)} gefunden.")
 
 	if rate_row.get("journal_entry"):
 		frappe.throw(

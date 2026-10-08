@@ -35,6 +35,7 @@ from datetime import date
 import frappe
 from frappe import _
 from frappe.utils import cint, flt, getdate, today
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 _CORRECTION_DIALOG_VERSION = 2
 
@@ -188,7 +189,7 @@ def _validate_invoice_contract_identity(
 			_(
 				"Rechnung {0} enthält widersprüchliche Mietvertrags-Referenzen "
 				"({1} / {2}). Es wurde nichts geändert."
-			).format(si.name, remark_mv, structured_mv)
+			).format(si.name, label_with_id("Mietvertrag", remark_mv), label_with_id("Mietvertrag", structured_mv))
 		)
 	if remark_month and structured_month and remark_month != structured_month:
 		frappe.throw(
@@ -208,7 +209,7 @@ def _validate_invoice_contract_identity(
 	if not contract or not contract.get("kunde"):
 		frappe.throw(
 			_("Der Mietvertrag {0} hat keinen eindeutig verknüpften Kunden.").format(
-				ctx.get("mietvertrag")
+				label_with_id("Mietvertrag", ctx.get("mietvertrag"))
 			)
 		)
 	invoice_customer = (si.get("customer") or "").strip()
@@ -218,7 +219,12 @@ def _validate_invoice_contract_identity(
 			_(
 				"Rechnung {0} gehört zu Kunde {1}, Mietvertrag {2} jedoch zu Kunde {3}. "
 				"Automatische Korrektur abgebrochen."
-			).format(si.name, invoice_customer or "—", contract.name, contract.kunde)
+			).format(
+				si.name,
+				label_with_id("Customer", invoice_customer) or "—",
+				label_with_id("Mietvertrag", contract.name),
+				label_with_id("Customer", contract.kunde),
+			)
 		)
 	if not invoice_wohnung or invoice_wohnung != (contract.get("wohnung") or "").strip():
 		frappe.throw(

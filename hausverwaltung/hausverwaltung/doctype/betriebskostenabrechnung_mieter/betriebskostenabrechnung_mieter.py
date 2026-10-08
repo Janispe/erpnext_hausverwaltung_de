@@ -15,6 +15,7 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 	BK_REGELUNG_VORAUSZAHLUNG,
 	normalize_bk_regelung,
 )
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 
 def _row_value(row: object, fieldname: str) -> Any:
@@ -925,18 +926,18 @@ class BetriebskostenabrechnungMieter(Document):
 			) or {}
 			if not mv.get("kunde"):
 				frappe.throw(
-					f"Mietvertrag {self.mietvertrag} hat keinen Customer; "
+					f"Mietvertrag {label_with_id('Mietvertrag', self.mietvertrag)} hat keinen Customer; "
 					"die Abrechnung kann nicht sicher gebucht werden."
 				)
 			if self.customer and self.customer != mv.get("kunde"):
 				frappe.throw(
-					f"Customer {self.customer} passt nicht zum Mietvertrag "
-					f"{self.mietvertrag} ({mv.get('kunde')})."
+					f"Customer {label_with_id('Customer', self.customer)} passt nicht zum Mietvertrag "
+					f"{label_with_id('Mietvertrag', self.mietvertrag)} ({label_with_id('Customer', mv.get('kunde'))})."
 				)
 			if self.wohnung and self.wohnung != mv.get("wohnung"):
 				frappe.throw(
-					f"Wohnung {self.wohnung} passt nicht zum Mietvertrag "
-					f"{self.mietvertrag} ({mv.get('wohnung')})."
+					f"Wohnung {label_with_id('Wohnung', self.wohnung)} passt nicht zum Mietvertrag "
+					f"{label_with_id('Mietvertrag', self.mietvertrag)} ({label_with_id('Wohnung', mv.get('wohnung'))})."
 				)
 			self.customer = mv.get("kunde")
 			self.wohnung = mv.get("wohnung")

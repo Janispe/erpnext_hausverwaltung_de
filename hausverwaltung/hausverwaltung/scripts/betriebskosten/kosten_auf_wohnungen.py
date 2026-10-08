@@ -53,6 +53,7 @@ from hausverwaltung.hausverwaltung.doctype.zustandsschluessel.zustandsschluessel
     get_effective_zustandsschluessel_value,
 )
 from hausverwaltung.hausverwaltung.utils.display_titles import with_display_titles
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 
 MONEY_QUANT = Decimal("0.01")
@@ -173,7 +174,7 @@ def validate_wohnung_cost_center_pair(
     actual_immobilie = cstr(wohnung_cache.get(wohnung)).strip()
     if not actual_immobilie:
         frappe.throw(
-            f"{label}Wohnung '{wohnung}' wurde nicht gefunden oder hat keine "
+            f"{label}Wohnung '{label_with_id('Wohnung', wohnung)}' wurde nicht gefunden oder hat keine "
             "Immobilie."
         )
 
@@ -188,18 +189,18 @@ def validate_wohnung_cost_center_pair(
         expected_root = cstr(immobilie_roots.get(expected_immobilie)).strip()
         if not actual_root or not expected_root:
             frappe.throw(
-                f"{label}Wohnung '{wohnung}' gehört zur Immobilie "
-                f"'{actual_immobilie}', die Kostenstelle '{cost_center}' zur "
-                f"Immobilie '{expected_immobilie}'; mindestens eine davon "
+                f"{label}Wohnung '{label_with_id('Wohnung', wohnung)}' gehört zur Immobilie "
+                f"'{label_with_id('Immobilie', actual_immobilie)}', die Kostenstelle '{cost_center}' zur "
+                f"Immobilie '{label_with_id('Immobilie', expected_immobilie)}'; mindestens eine davon "
                 "konnte keiner kanonischen Root-Immobilie zugeordnet werden. "
                 "Buchung abgebrochen."
             )
 
     if actual_root != expected_root:
         frappe.throw(
-            f"{label}Wohnung '{wohnung}' gehört zur Immobilie "
-            f"'{actual_immobilie}' (Root '{actual_root}'), die Kostenstelle "
-            f"'{cost_center}' aber zur Immobilie '{expected_immobilie}' "
+            f"{label}Wohnung '{label_with_id('Wohnung', wohnung)}' gehört zur Immobilie "
+            f"'{label_with_id('Immobilie', actual_immobilie)}' (Root '{actual_root}'), die Kostenstelle "
+            f"'{cost_center}' aber zur Immobilie '{label_with_id('Immobilie', expected_immobilie)}' "
             f"(Root '{expected_root}'). Buchung abgebrochen."
         )
     return expected_root
@@ -229,7 +230,7 @@ def _wohnungen_in_haus(
         root = cstr(immobilie_roots.get(requested_immobilie)).strip()
         if not root:
             frappe.throw(
-                f"Immobilie '{requested_immobilie}' konnte keiner kanonischen "
+                f"Immobilie '{label_with_id('Immobilie', requested_immobilie)}' konnte keiner kanonischen "
                 "Root-Immobilie zugeordnet werden. Kostenverteilung abgebrochen."
             )
         roots.add(root)
@@ -247,7 +248,7 @@ def _wohnungen_in_haus(
 
     if len(roots) != 1:
         frappe.throw(
-            f"Immobilie '{requested_immobilie}' und Kostenstelle "
+            f"Immobilie '{label_with_id('Immobilie', requested_immobilie)}' und Kostenstelle "
             f"'{requested_cost_center}' gehören nicht zur selben "
             "Root-Immobilie. Kostenverteilung abgebrochen."
         )
@@ -729,7 +730,7 @@ def allocate_kosten_auf_wohnungen(
         if not_enabled:
             names = ", ".join(not_enabled)
             frappe.throw(
-                f"Betriebskostenabrechnung für Haus {immobilie} kann nicht erstellt werden: "
+                f"Betriebskostenabrechnung für Haus {label_with_id('Immobilie', immobilie)} kann nicht erstellt werden: "
                 f"In folgenden Wohnungen ist 'Betriebskostenabrechnung durch Vermieter' zum Stichtag {stichtag} nicht aktiviert: {names}."
             )
 

@@ -33,6 +33,7 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaim
 )
 
 from hausverwaltung.hausverwaltung.utils.settlement_identity import hk_marker_owner
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 HK_SETTLEMENT_MARKER_PREFIX = "[HK-SETTLEMENT:"
 
@@ -149,7 +150,7 @@ def _get_locked_settlement_document(abrechnung: str):
 	)
 	if not contract_rows:
 		frappe.throw(
-			f"Mietvertrag {mietvertrag} wurde nicht gefunden; es wurde nichts gebucht."
+			f"Mietvertrag {label_with_id('Mietvertrag', mietvertrag)} wurde nicht gefunden; es wurde nichts gebucht."
 		)
 	contract = contract_rows[0]
 	contract_customer = cstr(_row_value(contract, "kunde") or "").strip()
@@ -158,21 +159,21 @@ def _get_locked_settlement_document(abrechnung: str):
 	doc_wohnung = cstr(getattr(doc, "wohnung", None) or "").strip()
 	if not contract_customer:
 		frappe.throw(
-			f"Mietvertrag {mietvertrag} hat keinen Customer; es wurde nichts gebucht."
+			f"Mietvertrag {label_with_id('Mietvertrag', mietvertrag)} hat keinen Customer; es wurde nichts gebucht."
 		)
 	if not contract_wohnung:
 		frappe.throw(
-			f"Mietvertrag {mietvertrag} hat keine Wohnung; es wurde nichts gebucht."
+			f"Mietvertrag {label_with_id('Mietvertrag', mietvertrag)} hat keine Wohnung; es wurde nichts gebucht."
 		)
 	if doc_customer != contract_customer:
 		frappe.throw(
 			f"Customer {doc_customer or '—'} der HK-Abrechnung passt nicht zum "
-			f"Mietvertrag {mietvertrag} ({contract_customer}); es wurde nichts gebucht."
+			f"Mietvertrag {label_with_id('Mietvertrag', mietvertrag)} ({label_with_id('Customer', contract_customer)}); es wurde nichts gebucht."
 		)
 	if doc_wohnung != contract_wohnung:
 		frappe.throw(
 			f"Wohnung {doc_wohnung or '—'} der HK-Abrechnung passt nicht zum "
-			f"Mietvertrag {mietvertrag} ({contract_wohnung}); es wurde nichts gebucht."
+			f"Mietvertrag {label_with_id('Mietvertrag', mietvertrag)} ({label_with_id('Wohnung', contract_wohnung)}); es wurde nichts gebucht."
 		)
 	return doc
 
@@ -233,7 +234,7 @@ def _invoice_belongs_to_period(row: object, mietvertrag: str, von: Any, bis: Any
 	if not invoice_contract:
 		frappe.throw(
 			f"HK-Vorauszahlungsbeleg {_row_value(row, 'name')} ist dem "
-			f"Mietvertrag {mietvertrag} nicht eindeutig zugeordnet; es wurde nichts gebucht."
+			f"Mietvertrag {label_with_id('Mietvertrag', mietvertrag)} nicht eindeutig zugeordnet; es wurde nichts gebucht."
 		)
 
 	identity_months = set(marker_months)
@@ -275,12 +276,12 @@ def _validate_invoice_identity(
 	if actual_customer != customer:
 		frappe.throw(
 			f"Customer von HK-Vorauszahlungsbeleg {name} ({actual_customer or '—'}) "
-			f"passt nicht zum Mietvertrag ({customer}); es wurde nichts gebucht."
+			f"passt nicht zum Mietvertrag ({label_with_id('Customer', customer)}); es wurde nichts gebucht."
 		)
 	if actual_wohnung != wohnung:
 		frappe.throw(
 			f"Wohnung von HK-Vorauszahlungsbeleg {name} ({actual_wohnung or '—'}) "
-			f"passt nicht zum Mietvertrag ({wohnung}); es wurde nichts gebucht."
+			f"passt nicht zum Mietvertrag ({label_with_id('Wohnung', wohnung)}); es wurde nichts gebucht."
 		)
 
 

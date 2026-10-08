@@ -7,6 +7,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.model.naming import make_autoname
 from frappe.utils import flt, getdate, nowdate
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 BELEG_DOCTYPES: dict[str, tuple[str, ...]] = {
 	"Reparaturrechnung": ("Purchase Invoice",),
@@ -90,15 +91,15 @@ class Versicherungsfall(Document):
 			if not contract:
 				frappe.throw(_("Der ausgewählte Mietvertrag wurde nicht gefunden."))
 			if not contract.get("kunde"):
-				frappe.throw(_("Mietvertrag {0} hat keinen eigenen Customer.").format(self.mietvertrag))
+				frappe.throw(_("Mietvertrag {0} hat keinen eigenen Customer.").format(label_with_id("Mietvertrag", self.mietvertrag)))
 			if not contract.get("wohnung"):
-				frappe.throw(_("Mietvertrag {0} hat keine Wohnung.").format(self.mietvertrag))
+				frappe.throw(_("Mietvertrag {0} hat keine Wohnung.").format(label_with_id("Mietvertrag", self.mietvertrag)))
 
 			wohnung_immobilie = frappe.db.get_value("Wohnung", contract.get("wohnung"), "immobilie")
 			immobilie = wohnung_immobilie or contract.get("immobilie")
 			if not immobilie:
 				frappe.throw(
-					_("Die Wohnung von Mietvertrag {0} hat keine Immobilie.").format(self.mietvertrag)
+					_("Die Wohnung von Mietvertrag {0} hat keine Immobilie.").format(label_with_id("Mietvertrag", self.mietvertrag))
 				)
 
 			# Deliberately overwrite payload values. A caller may never attach a

@@ -8,6 +8,7 @@ from frappe.utils import flt
 
 from hausverwaltung.hausverwaltung.doctype.bankauszug_import import bankauszug_import as bi
 from hausverwaltung.hausverwaltung.utils import payment_auto_match as payments
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 
 def customer_payments(row):
@@ -45,11 +46,11 @@ def _contract(customer, *, for_update=False):
         limit=2,
     )
     if len(contracts) != 1:
-        frappe.throw(f"Customer {customer} muss genau einem Mietvertrag zugeordnet sein.")
+        frappe.throw(f"Customer {label_with_id('Customer', customer)} muss genau einem Mietvertrag zugeordnet sein.")
     contract = frappe.get_doc("Mietvertrag", contracts[0], for_update=for_update)
     contract.check_permission("read")
     if contract.kunde != customer or not contract.wohnung or contract.docstatus == 2:
-        frappe.throw(f"Mietvertrag von {customer} hat keine eindeutige Wohnungszuordnung.")
+        frappe.throw(f"Mietvertrag von {label_with_id('Customer', customer)} hat keine eindeutige Wohnungszuordnung.")
     return contract
 
 
@@ -105,11 +106,11 @@ def _parse_allocations(allocations):
             frappe.throw("Jede Teilzahlung braucht einen Customer.")
         customer = group["customer"]
         if customer in customers:
-            frappe.throw(f"Customer {customer} wurde mehrfach ausgewählt.")
+            frappe.throw(f"Customer {label_with_id('Customer', customer)} wurde mehrfach ausgewählt.")
         customers.add(customer)
         invoices = group.get("invoices")
         if not isinstance(invoices, list) or not invoices:
-            frappe.throw(f"Bitte für {customer} mindestens einen Beleg auswählen.")
+            frappe.throw(f"Bitte für {label_with_id('Customer', customer)} mindestens einen Beleg auswählen.")
         total, selected = Decimal(0), []
         for inv in invoices:
             if not isinstance(inv, dict) or not isinstance(inv.get("name"), str) or not inv["name"]:
@@ -210,7 +211,7 @@ def reconcile_customer_split(docname, row_name, allocations):
                 invoice = frappe.get_doc("Sales Invoice", selected["name"], for_update=True)
                 invoice.check_permission("read")
                 if invoice.customer != group["customer"]:
-                    frappe.throw(f"Rechnung {invoice.name} gehört nicht zu {group['customer']}.")
+                    frappe.throw(f"Rechnung {invoice.name} gehört nicht zu {label_with_id('Customer', group['customer'])}.")
                 _validate_contract_invoice(invoice, contract)
                 if _amount(selected["allocated_amount"]) > abs(Decimal(str(invoice.outstanding_amount))):
                     frappe.throw(f"Teilbetrag für {invoice.name} übersteigt den aktuellen offenen Betrag.")

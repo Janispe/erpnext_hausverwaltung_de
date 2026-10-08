@@ -34,6 +34,7 @@ from hausverwaltung.hausverwaltung.doctype.heizkostenabrechnung_mieter.heizkoste
 	_get_locked_settlement_allocations,
 )
 from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 
 class HeizkostenabrechnungImmobilie(Document):
@@ -908,7 +909,7 @@ def _create_mieter_drafts_for_parent(parent: Document) -> Dict[str, Any]:
 				# nochmals als Forderung gebucht.
 				frappe.throw(
 					f"HK-Vorauszahlungen für Mietvertrag {mv['name']} "
-					f"(Customer {mv.get('kunde')}, Wohnung {mv.get('wohnung')}, "
+					f"(Customer {label_with_id('Customer', mv.get('kunde'))}, Wohnung {label_with_id('Wohnung', mv.get('wohnung'))}, "
 					f"Zeitraum {von} bis {bis}) konnten nicht sicher ermittelt "
 					f"werden: {exc}. Es wurde kein Mieter-Entwurf angelegt."
 				)

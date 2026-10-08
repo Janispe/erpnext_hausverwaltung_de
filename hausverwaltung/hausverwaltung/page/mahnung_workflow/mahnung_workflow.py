@@ -26,6 +26,7 @@ from hausverwaltung.hausverwaltung.utils.serienbrief_print import (
     get_dunning_invoice_remark_overrides,
     render_serienbrief_pdf_for_print_format,
 )
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 INVOICE_REMARKS_VARIABLE = "rechnungsbemerkung_statt_nummer"
 INVOICE_REMARKS_TEMPLATE = "Dunning - Miete - Mahnung (alle Stufen)"
@@ -443,7 +444,7 @@ def create_dunning(
     customer = invoices[0].customer
     email_recipients = _customer_email_recipients(customer) if "E-Mail" in (kanal or "") else []
     if "E-Mail" in (kanal or "") and not email_recipients:
-        frappe.throw(_("Für {0} ist keine E-Mail-Adresse hinterlegt.").format(customer))
+        frappe.throw(_("Für {0} ist keine E-Mail-Adresse hinterlegt.").format(label_with_id("Customer", customer)))
     new_due_date = add_days(posting_date or nowdate(), int(frist_tage or 7))
 
     result = create_op_bulk_dunning(

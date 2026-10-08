@@ -46,6 +46,7 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
     normalize_bk_regelung,
     split_contract_segments_by_bk_regelung,
 )
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 MONEY_QUANT = Decimal("0.01")
 MIN_SIGNIFICANT = Decimal("0.000000001")
@@ -488,12 +489,12 @@ def _festbetrag_gl_posten_by_segment(
         gl_entry = row.get("gl_entry") or "unbekannt"
         if not matches:
             frappe.throw(
-                f"Festbetrag-Buchung {gl_entry} für Wohnung '{wohnung}' am "
+                f"Festbetrag-Buchung {gl_entry} für Wohnung '{label_with_id('Wohnung', wohnung)}' am "
                 f"{cstr(effective_date) or 'unbekannten Datum'} kann keinem Mietvertrag zugeordnet werden."
             )
         if len(matches) > 1:
             frappe.throw(
-                f"Festbetrag-Buchung {gl_entry} für Wohnung '{wohnung}' am "
+                f"Festbetrag-Buchung {gl_entry} für Wohnung '{label_with_id('Wohnung', wohnung)}' am "
                 f"{cstr(effective_date)} ist mehreren Mietverträgen zugeordnet."
             )
         amount = _to_decimal(row.get("betrag"))
@@ -704,8 +705,8 @@ def _require_bk_generation_authorization(
         != _canonical_immobilie_root(head_immobilie)
     ):
         frappe.throw(
-            f"Immobilie {claimed_immobilie} passt nicht zum Kopf "
-            f"{head_name} ({head_immobilie}).",
+            f"Immobilie {label_with_id('Immobilie', claimed_immobilie)} passt nicht zum Kopf "
+            f"{head_name} ({label_with_id('Immobilie', head_immobilie)}).",
             frappe.ValidationError,
         )
 
@@ -741,9 +742,9 @@ def _require_bk_generation_authorization(
             head_immobilie,
         ):
             frappe.throw(
-                f"Wohnung {wohnung} gehört nicht zur kanonischen "
+                f"Wohnung {label_with_id('Wohnung', wohnung)} gehört nicht zur kanonischen "
                 f"Immobilienhierarchie von Kopf {head_name} "
-                f"({head_immobilie}).",
+                f"({label_with_id('Immobilie', head_immobilie)}).",
                 frappe.ValidationError,
             )
 
@@ -811,7 +812,7 @@ def _existing_bk_children_for_head_wohnung(
     ):
         frappe.throw(
             "BK-Generator abgebrochen: Bereits vorhandene Mieter-Entwürfe "
-            f"für Kopf {head} / Wohnung {wohnung} bilden nicht exakt die "
+            f"für Kopf {head} / Wohnung {label_with_id('Wohnung', wohnung)} bilden nicht exakt die "
             "aktuellen Mietvertragssegmente ab (fehlend, zusätzlich oder "
             "doppelt). Bitte den Kopf verwerfen und neu erzeugen.",
             frappe.ValidationError,
@@ -906,7 +907,7 @@ def _create_bk_abrechnung_wohnung(
     posten = {art: _to_decimal(amount) for art, amount in posten_raw.items()}
     if not posten:
         frappe.throw(
-            f"Keine verteilten Kosten für Wohnung '{wohnung}' im Zeitraum {von} bis {bis} (Stichtag {stichtag}). Prüfe Kostenverteilung/Verteilerschlüssel."
+            f"Keine verteilten Kosten für Wohnung '{label_with_id('Wohnung', wohnung)}' im Zeitraum {von} bis {bis} (Stichtag {stichtag}). Prüfe Kostenverteilung/Verteilerschlüssel."
         )
 
     if not split_by_mietvertrag:
@@ -1121,7 +1122,7 @@ def create_bk_abrechnungen_immobilie(
     matrix: Dict[str, Dict[str, float]] = alloc.get("matrix") or {}
     if not matrix:
         frappe.throw(
-            f"Keine verteilten Kosten/ Wohnungen gefunden für Immobilie '{immobilie}' im Zeitraum {von} bis {bis} (Stichtag {stichtag}). Prüfe Kostenbuchungen, Verteilerschlüssel und Zuordnung der Wohnungen zur Immobilie."
+            f"Keine verteilten Kosten/ Wohnungen gefunden für Immobilie '{label_with_id('Immobilie', immobilie)}' im Zeitraum {von} bis {bis} (Stichtag {stichtag}). Prüfe Kostenbuchungen, Verteilerschlüssel und Zuordnung der Wohnungen zur Immobilie."
         )
 
     created: List[str] = []
@@ -1557,7 +1558,7 @@ def _get_locked_settlement_document(abrechnung: str):
     )
     if not contract_rows:
         frappe.throw(
-            f"Mietvertrag {mietvertrag} wurde nicht gefunden; "
+            f"Mietvertrag {label_with_id('Mietvertrag', mietvertrag)} wurde nicht gefunden; "
             "Settlement abgebrochen."
         )
     identity = frappe._dict(contract_rows[0])
@@ -1565,7 +1566,7 @@ def _get_locked_settlement_document(abrechnung: str):
     locked_wohnung = cstr(identity.get("wohnung") or "").strip()
     if not locked_customer or not locked_wohnung:
         frappe.throw(
-            f"Mietvertrag {mietvertrag} hat keinen eindeutigen Customer oder "
+            f"Mietvertrag {label_with_id('Mietvertrag', mietvertrag)} hat keinen eindeutigen Customer oder "
             "keine Wohnung; Settlement abgebrochen."
         )
     document_customer = cstr(doc.get("customer") or "").strip()
@@ -1574,7 +1575,7 @@ def _get_locked_settlement_document(abrechnung: str):
         frappe.throw(
             "Die gespeicherte Customer-/Wohnungsidentität der "
             f"Mieter-Abrechnung widerspricht dem aktuell gesperrten Mietvertrag "
-            f"{mietvertrag}; Settlement abgebrochen."
+            f"{label_with_id('Mietvertrag', mietvertrag)}; Settlement abgebrochen."
         )
     # Ausschließlich dieser Current Read darf die nachfolgende Belegauswahl,
     # Company-Auflösung und Zielbeleg-Erstellung steuern.

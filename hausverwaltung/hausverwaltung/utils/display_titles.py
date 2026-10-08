@@ -80,11 +80,20 @@ def title_of(doctype: str | None, name: str | None) -> str:
 	return get_titles(doctype, [name]).get(name) or name
 
 
-def label_with_id(doctype: str | None, name: str | None) -> str:
-	"""``Title (ID)`` for messages where the exact record must stay traceable."""
-	if not name:
+def label_with_id(doctype: str | None, name: Any) -> str:
+	"""``Title (ID)`` for messages where the exact record must stay traceable.
+
+	Safe in error paths: non-text values are returned as text, lookups that
+	fail fall back to the plain ID.
+	"""
+	if name is None or name == "":
 		return ""
-	title = title_of(doctype, name)
+	if not isinstance(name, str):
+		return str(name)
+	try:
+		title = title_of(doctype, name)
+	except Exception:
+		return name
 	return f"{title} ({name})" if title != name else name
 
 

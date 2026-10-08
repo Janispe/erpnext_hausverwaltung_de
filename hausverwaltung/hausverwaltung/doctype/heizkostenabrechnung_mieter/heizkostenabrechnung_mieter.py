@@ -31,6 +31,7 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaim
 )
 from hausverwaltung.hausverwaltung.utils.settlement_identity import hk_marker_owner
 from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 
 def _row_value(row: object, fieldname: str) -> Any:
@@ -183,18 +184,18 @@ class HeizkostenabrechnungMieter(Document):
 			) or {}
 			if not mv.get("kunde"):
 				frappe.throw(
-					f"Mietvertrag {self.mietvertrag} hat keinen Customer; "
+					f"Mietvertrag {label_with_id('Mietvertrag', self.mietvertrag)} hat keinen Customer; "
 					"die Abrechnung kann nicht sicher gebucht werden."
 				)
 			if self.customer and self.customer != mv.get("kunde"):
 				frappe.throw(
-					f"Customer {self.customer} passt nicht zum Mietvertrag "
-					f"{self.mietvertrag} ({mv.get('kunde')})."
+					f"Customer {label_with_id('Customer', self.customer)} passt nicht zum Mietvertrag "
+					f"{label_with_id('Mietvertrag', self.mietvertrag)} ({label_with_id('Customer', mv.get('kunde'))})."
 				)
 			if self.wohnung and self.wohnung != mv.get("wohnung"):
 				frappe.throw(
-					f"Wohnung {self.wohnung} passt nicht zum Mietvertrag "
-					f"{self.mietvertrag} ({mv.get('wohnung')})."
+					f"Wohnung {label_with_id('Wohnung', self.wohnung)} passt nicht zum Mietvertrag "
+					f"{label_with_id('Mietvertrag', self.mietvertrag)} ({label_with_id('Wohnung', mv.get('wohnung'))})."
 				)
 			self.customer = mv.get("kunde")
 			self.wohnung = mv.get("wohnung")
@@ -508,7 +509,7 @@ class HeizkostenabrechnungMieter(Document):
 		)
 		if len(contract_rows or []) != 1:
 			frappe.throw(
-				f"Mietvertrag {mietvertrag} von markerlosem HK-Altbeleg {name} "
+				f"Mietvertrag {label_with_id('Mietvertrag', mietvertrag)} von markerlosem HK-Altbeleg {name} "
 				"konnte nicht eindeutig gesperrt werden; es wurde nichts storniert."
 			)
 		contract = contract_rows[0]

@@ -11,6 +11,7 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
     get_bk_regelung,
 )
 from hausverwaltung.hausverwaltung.utils.mietberechnung import calculate_monthly_rent
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 
 def _parse_monat_jahr(monat: str | int | None, jahr: str | int | None) -> date:
@@ -136,7 +137,7 @@ def _company_via_wohnung(
         if immobilie in visited:
             frappe.throw(
                 _("Die Immobilien-Hierarchie enthält einen Kreis bei {0}.").format(
-                    immobilie
+                    label_with_id("Immobilie", immobilie)
                 )
             )
         visited.add(immobilie)
@@ -546,8 +547,8 @@ def _lock_property_booking_identity(wohnung: str) -> frappe._dict:
     if not immobilie_rows:
         frappe.throw(
             _("Die Immobilie {0} der Wohnung {1} existiert nicht; es wurde nichts gebucht.").format(
-                wohnung_row.immobilie,
-                wohnung,
+                label_with_id("Immobilie", wohnung_row.immobilie),
+                label_with_id("Wohnung", wohnung),
             )
         )
     immobilie_row = immobilie_rows[0]
@@ -631,8 +632,8 @@ def lock_mietvertrag_booking_identity(name: str) -> frappe._dict:
                 "aber auf {2}; es wurde nichts gebucht."
             ).format(
                 contract.name,
-                stored_immobilie,
-                property_identity.immobilie,
+                label_with_id("Immobilie", stored_immobilie),
+                label_with_id("Immobilie", property_identity.immobilie),
             )
         )
 

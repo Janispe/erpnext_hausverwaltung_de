@@ -4,6 +4,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import getdate, nowdate
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 
 class ZaehlerZuordnung(Document):
@@ -42,7 +43,7 @@ class ZaehlerZuordnung(Document):
 				frappe.throw(
 					_(
 						"Z\u00e4hler {0} ist im Zeitraum bereits zugeordnet ({1})."
-					).format(self.zaehler, row.get("name"))
+					).format(label_with_id("Zaehler", self.zaehler), row.get("name"))
 				)
 
 

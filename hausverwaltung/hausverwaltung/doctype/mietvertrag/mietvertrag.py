@@ -30,6 +30,7 @@ from hausverwaltung.hausverwaltung.utils.mieter_name import (
 	get_hauptmieter_display_name,
 	get_hauptmieter_last_names,
 )
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 
 @frappe.whitelist()
@@ -361,7 +362,7 @@ class Mietvertrag(Document):
 					_(
 						"Mietvertrag {0} und Customer {1} sind der Wohnung {2} zugeordnet "
 						"und dürfen nicht nachträglich nach {3} verschoben werden."
-					).format(self.name, customer, previous_wohnung, wohnung),
+					).format(self.name, label_with_id("Customer", customer), label_with_id("Wohnung", previous_wohnung), label_with_id("Wohnung", wohnung)),
 					frappe.ValidationError,
 				)
 
@@ -393,7 +394,7 @@ class Mietvertrag(Document):
 				"Customer {0} gehört bereits exklusiv zu Mietvertrag {1} und darf "
 				"nicht für einen zweiten Mietvertrag verwendet werden. Bitte einen "
 				"eigenen Customer erzeugen."
-			).format(customer, conflict.get("name")),
+			).format(label_with_id("Customer", customer), conflict.get("name")),
 			frappe.ValidationError,
 		)
 
@@ -867,7 +868,7 @@ def get_mietvertrag_paperless_link(mietvertrag: str) -> str | None:
 
 	mv = frappe.db.get_value("Mietvertrag", mietvertrag, ["wohnung", "von", "name"], as_dict=True)
 	if not mv:
-		frappe.throw(_("Mietvertrag '{0}' wurde nicht gefunden.").format(mietvertrag))
+		frappe.throw(_("Mietvertrag '{0}' wurde nicht gefunden.").format(label_with_id("Mietvertrag", mietvertrag)))
 	if not mv.wohnung:
 		frappe.throw(_("Dem Mietvertrag ist keine Wohnung zugeordnet."))
 
@@ -877,7 +878,7 @@ def get_mietvertrag_paperless_link(mietvertrag: str) -> str | None:
 		whg_fields.insert(0, "paperless_tag")
 	wohnung = frappe.db.get_value("Wohnung", mv.wohnung, whg_fields, as_dict=True)
 	if not wohnung:
-		frappe.throw(_("Wohnung '{0}' wurde nicht gefunden.").format(mv.wohnung))
+		frappe.throw(_("Wohnung '{0}' wurde nicht gefunden.").format(label_with_id("Wohnung", mv.wohnung)))
 
 	if not config:
 		frappe.throw(_("Paperless NGX ist nicht vollständig konfiguriert (URL + Token) – Tag konnte nicht abgefragt oder angelegt werden."))

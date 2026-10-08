@@ -61,6 +61,12 @@ class TestDisplayTitles(unittest.TestCase):
 		self.assertEqual(dt.title_of("Wohnung", "WHG-404"), "WHG-404")
 		self.assertEqual(dt.label_with_id("Wohnung", "WHG-00001"), "Musterstr. 1 · VH · EG links (WHG-00001)")
 
+	def test_message_labels_never_fail_in_error_paths(self):
+		self.assertEqual(dt.label_with_id("Wohnung", None), "")
+		self.assertEqual(dt.label_with_id("Wohnung", {"name": "x"}), "{'name': 'x'}")
+		with patch.object(dt, "title_of", side_effect=RuntimeError("db gone")):
+			self.assertEqual(dt.label_with_id("Wohnung", "WHG-00001"), "WHG-00001")
+
 	def test_voucher_numbers_stay_ids(self):
 		self.assertIsNone(dt.title_field_for("Sales Invoice"))
 		self.assertEqual(dt.get_titles("Sales Invoice", ["ACC-SINV-1"]), {})

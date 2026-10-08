@@ -28,6 +28,7 @@ from typing import Any
 
 import frappe
 from frappe.utils import add_months, cint, flt, getdate
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 _TOLERANCE = 0.01
 _DEFAULT_EXACT_MATCH_WINDOW_DAYS = 7
@@ -1283,13 +1284,13 @@ def _resolve_expected_cost_center_for_bt(
 		if not property_values.get("name"):
 			frappe.throw(
 				f"Die zum Bankkonto '{bank_account_name}' gemappte Immobilie "
-				f"'{immobilie}' wurde nicht gefunden."
+				f"'{label_with_id('Immobilie', immobilie)}' wurde nicht gefunden."
 			)
 		cost_center = str(property_values.get("kostenstelle") or "").strip()
 		if not cost_center:
 			frappe.throw(
 				f"An der zum Bankkonto '{bank_account_name}' gemappten Immobilie "
-				f"'{immobilie}' fehlt die Kostenstelle. Buchung abgebrochen."
+				f"'{label_with_id('Immobilie', immobilie)}' fehlt die Kostenstelle. Buchung abgebrochen."
 			)
 		cost_center_values = frappe.db.get_value(
 			"Cost Center",
@@ -1300,19 +1301,19 @@ def _resolve_expected_cost_center_for_bt(
 		) or {}
 		if not cost_center_values.get("name"):
 			frappe.throw(
-				f"Kostenstelle '{cost_center}' der Immobilie '{immobilie}' "
+				f"Kostenstelle '{cost_center}' der Immobilie '{label_with_id('Immobilie', immobilie)}' "
 				"wurde nicht gefunden."
 			)
 		if cint(cost_center_values.get("is_group")) or cint(
 			cost_center_values.get("disabled")
 		):
 			frappe.throw(
-				f"Kostenstelle '{cost_center}' der Immobilie '{immobilie}' "
+				f"Kostenstelle '{cost_center}' der Immobilie '{label_with_id('Immobilie', immobilie)}' "
 				"ist nicht aktiv bebuchbar."
 			)
 		if str(cost_center_values.get("company") or "").strip() != company:
 			frappe.throw(
-				f"Kostenstelle '{cost_center}' der Immobilie '{immobilie}' gehört "
+				f"Kostenstelle '{cost_center}' der Immobilie '{label_with_id('Immobilie', immobilie)}' gehört "
 				f"nicht zur Bankkonto-Company '{company}'."
 			)
 		return cost_center

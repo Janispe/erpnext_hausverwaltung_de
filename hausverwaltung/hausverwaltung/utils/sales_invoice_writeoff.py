@@ -8,6 +8,7 @@ from typing import Any
 import frappe
 from frappe import _
 from frappe.utils import cint, cstr, flt, getdate, nowdate
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 WRITTEN_OFF_STATUS = "Abgeschrieben"
 PARTLY_PAID_AND_WRITTEN_OFF_STATUS = "Teilweise bezahlt und abgeschrieben"
@@ -172,7 +173,7 @@ def _lock_property_booking_identity(
 	if not _dict_value(wohnung_values, "name") or not immobilie:
 		frappe.throw(
 			_("{0}: Wohnung {1} wurde nicht gefunden oder hat keine Immobilie.").format(
-				context, wohnung
+				context, label_with_id("Wohnung", wohnung)
 			)
 		)
 
@@ -188,7 +189,7 @@ def _lock_property_booking_identity(
 		frappe.throw(
 			_(
 				"{0}: Immobilie {1} der Wohnung {2} hat keine eindeutige Kostenstelle."
-			).format(context, immobilie, wohnung)
+			).format(context, label_with_id("Immobilie", immobilie), label_with_id("Wohnung", wohnung))
 		)
 
 	_validate_locked_cost_center(cost_center, company, context=context)
@@ -231,7 +232,7 @@ def _resolve_locked_invoice_booking_context(invoice: Any, items: list[Any]) -> d
 				_(
 					"{0}: Header-Wohnung {1} und die Wohnungen aller Positionen "
 					"müssen exakt übereinstimmen."
-				).format(context, header_wohnung)
+				).format(context, label_with_id("Wohnung", header_wohnung))
 			)
 		wohnung = header_wohnung
 	elif any(item_wohnungen):
@@ -256,7 +257,7 @@ def _resolve_locked_invoice_booking_context(invoice: Any, items: list[Any]) -> d
 			frappe.throw(
 				_(
 					"{0}: Header-Kostenstelle muss für Wohnung {1} exakt {2} sein."
-				).format(context, wohnung, property_cost_center)
+				).format(context, label_with_id("Wohnung", wohnung), property_cost_center)
 			)
 		for item in items:
 			if cstr(_dict_value(item, "cost_center")).strip() != property_cost_center:
@@ -264,14 +265,14 @@ def _resolve_locked_invoice_booking_context(invoice: Any, items: list[Any]) -> d
 					_(
 						"{0}: Jede Position muss für Wohnung {1} exakt die "
 						"Property-Kostenstelle {2} tragen."
-					).format(context, wohnung, property_cost_center)
+					).format(context, label_with_id("Wohnung", wohnung), property_cost_center)
 				)
 		header_immobilie = cstr(_dict_value(invoice, "immobilie")).strip()
 		if header_immobilie and header_immobilie != property_context["immobilie"]:
 			frappe.throw(
 				_(
 					"{0}: Immobilie {1} widerspricht der Wohnung {2}."
-				).format(context, header_immobilie, wohnung)
+				).format(context, label_with_id("Immobilie", header_immobilie), label_with_id("Wohnung", wohnung))
 			)
 		return property_context
 

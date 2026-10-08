@@ -24,6 +24,7 @@ from hausverwaltung.hausverwaltung.utils.serienbrief_print import normalize_prin
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_pdf_for_print_format
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import scrub_value as hv_scrub
 from hausverwaltung.hausverwaltung.utils.display_titles import with_display_titles
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 SERIENBRIEF_PRINT_FORMAT_FIELDNAME = "hv_serienbrief_vorlage"
 PRINT_BUNDLE_CSS_PATH = "/assets/frappe/css/print.bundle.css"
@@ -446,7 +447,7 @@ class BetriebskostenabrechnungImmobilie(Document):
 				if not customer:
 					frappe.throw(
 						"BK-Submit abgebrochen: Mietvertrag "
-						f"{segment.get('mietvertrag')} hat keinen Customer.",
+						f"{label_with_id('Mietvertrag', segment.get('mietvertrag'))} hat keinen Customer.",
 						frappe.ValidationError,
 					)
 				identity = (

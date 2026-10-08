@@ -6,6 +6,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, getdate, nowdate
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 
 class TechnischeAnlage(Document):
@@ -55,7 +56,7 @@ class TechnischeAnlage(Document):
 			frappe.throw(_("Die ausgewählte Wohnung besitzt keine Immobilienzuordnung."))
 		if wohnung_immobilie != self.get("immobilie"):
 			frappe.throw(
-				_("Die Wohnung {0} gehört nicht zur Immobilie {1}.").format(self.wohnung, self.immobilie)
+				_("Die Wohnung {0} gehört nicht zur Immobilie {1}.").format(label_with_id("Wohnung", self.wohnung), label_with_id("Immobilie", self.immobilie))
 			)
 
 	def _validate_dates(self) -> None:
