@@ -139,6 +139,7 @@ class TestEmailFacWrapper(unittest.TestCase):
 			db=SimpleNamespace(get_value=Mock(return_value=1)),
 			throw=_throw,
 			PermissionError=PermissionError,
+			ValidationError=ValueError,
 		)
 		base_permission = self.base_permission
 
@@ -148,6 +149,11 @@ class TestEmailFacWrapper(unittest.TestCase):
 
 			def check_permission(self):
 				base_permission()
+
+			def _sanitize_arguments(self, arguments):
+				return {
+					key: "***REDACTED***" if key == "password" else value for key, value in arguments.items()
+				}
 
 		self.api = _module("hausverwaltung.hausverwaltung.agent_tools.email_api", _access=self.agent_gate)
 		for definition in EMAIL_TOOLS.values():
@@ -175,6 +181,39 @@ class TestEmailFacWrapper(unittest.TestCase):
 
 	def tool(self, name):
 		return getattr(self.tools, f"Fac_{name}")()
+
+	def test_audit_redacts_attachment_bytes_without_mutating_execution_arguments(self):
+		import hashlib
+		import json
+		from copy import deepcopy
+
+		arguments = {
+			"password": "secret",
+			"attachments": [{"filename": "a.bin", "content_base64": "AP8="}, {"file": "F-1"}],
+		}
+		original = deepcopy(arguments)
+		tool = self.tool("hv_create_email_draft")
+		sanitized = tool._sanitize_arguments(arguments)
+		self.assertEqual(arguments, original)
+		self.assertNotIn("AP8=", json.dumps(sanitized))
+		self.assertEqual(sanitized["password"], "***REDACTED***")
+		self.assertEqual(sanitized["attachments"][0]["size"], 2)
+		self.assertEqual(sanitized["attachments"][0]["sha256"], hashlib.sha256(b"\x00\xff").hexdigest())
+		self.assertEqual(sanitized["attachments"][1], {"file": "F-1"})
+
+	def test_audit_also_redacts_rejected_attachment_inputs(self):
+		import json
+
+		tool = self.tool("hv_create_email_draft")
+		for attachments in [
+			"sensitive-invalid-base64",
+			[{"content_base64": "sensitive-invalid-base64", "nested": {"content_base64": "secret"}}],
+			[{"content_base64": {"data": "secret"}}],
+		]:
+			with self.subTest(attachments=attachments):
+				logged = json.dumps(tool._sanitize_arguments({"attachments": attachments}))
+				self.assertNotIn("sensitive-invalid-base64", logged)
+				self.assertNotIn("secret", logged)
 
 	def test_categories_annotations_and_model_code_routing(self):
 		for name in FAC_EMAIL_TOOL_NAMES:
@@ -211,7 +250,7 @@ class TestEmailFacWrapper(unittest.TestCase):
 
 	def test_invalid_write_arguments_do_not_reach_api(self):
 		tool = self.tool("hv_create_email_draft")
-		with self.assertRaises(ValidationError):
+		with self.assertRaises(self.frappe.ValidationError):
 			tool.execute({"mietvertrag": "MV-1", "archive_account": "MAIL-1", "subject": "A", "message": "B"})
 		self.api.create_email_draft.assert_not_called()
 
@@ -355,3 +394,86 @@ class TestExplicitEmailActivation(unittest.TestCase):
 		self.frappe.only_for.assert_called_once_with("System Manager")
 		self.user.add_roles.assert_not_called()
 		self.assertFalse(self.configs)
+
+
+class TestEmailRealFacAudit(unittest.TestCase):
+	def test_real_fac_logging_uses_redacted_arguments_on_success_and_error(self):
+		try:
+			import frappe
+
+			from hausverwaltung.hausverwaltung.agent_tools.fac_tools import EmailTool
+		except ImportError:
+			self.skipTest("Real Frappe/FAC dependencies are required")
+		import hashlib
+		import json
+		from copy import deepcopy
+
+		tool = object.__new__(EmailTool)
+		tool.name = "hv_create_email_draft"
+		tool.source_app = "hausverwaltung"
+		tool.logger = Mock()
+		arguments = {"password": "hidden", "attachments": [{"filename": "a.bin", "content_base64": "AP8="}]}
+		original = deepcopy(arguments)
+		with (
+			patch.object(frappe, "session", SimpleNamespace(user="unit@example.test")),
+			patch("frappe_assistant_core.utils.audit_trail.log_tool_execution") as write,
+		):
+			for status in ("Success", "Error"):
+				write.reset_mock()
+				tool.log_execution(
+					arguments,
+					{"error": "test"}
+					if status == "Error"
+					else {"success": True, "result": {"draft": "ED-1"}},
+					0.1,
+					status=status,
+				)
+				write.assert_called_once()
+				logged = write.call_args.kwargs["arguments"]
+				self.assertNotIn("AP8=", json.dumps(logged))
+				self.assertEqual(logged["password"], "***REDACTED***")
+				self.assertEqual(logged["attachments"][0]["size"], 2)
+				self.assertEqual(logged["attachments"][0]["sha256"], hashlib.sha256(b"\x00\xff").hexdigest())
+		tool.logger.warning.assert_not_called()
+		self.assertEqual(arguments, original)
+
+	def test_real_safe_execute_does_not_echo_invalid_attachment_bytes_in_error_logs(self):
+		try:
+			import frappe
+
+			from hausverwaltung.hausverwaltung.agent_tools.fac_tools import EmailTool
+		except ImportError:
+			self.skipTest("Real Frappe/FAC dependencies are required")
+		import json
+
+		tool = object.__new__(EmailTool)
+		tool.name = "hv_create_email_draft"
+		tool.source_app = "hausverwaltung"
+		tool.inputSchema = input_schema(tool.name)
+		tool.logger = Mock()
+		tool.validate_dependencies = Mock(return_value=(True, None))
+		tool.check_permission = Mock()
+		tool.execute = Mock()
+		arguments = {
+			"mietvertrag": "MV-1",
+			"archive_account": "MAIL-1",
+			"subject": "Betreff",
+			"message": "Antwort",
+			"request_id": "r",
+			"attachments": [{"filename": "a.txt", "content_base64": "U0VOU0lUSVZFLURPQ1VNRU5U"}] * 11,
+		}
+		with (
+			patch.object(frappe, "session", SimpleNamespace(user="unit@example.test")),
+			patch.object(frappe, "log_error") as error_log,
+			patch("frappe_assistant_core.core.base_tool._", side_effect=lambda text: text),
+			patch("frappe_assistant_core.utils.audit_trail.log_tool_execution") as audit,
+		):
+			result = tool._safe_execute(arguments)
+			self.assertFalse(result["success"])
+			self.assertEqual(result["error_type"], "ValidationError")
+			audit.assert_called_once()
+			error_log.assert_called_once()
+			self.assertNotIn("U0VOU0lUSVZFLURPQ1VNRU5U", json.dumps(audit.call_args.kwargs))
+			self.assertNotIn("U0VOU0lUSVZFLURPQ1VNRU5U", str(error_log.call_args))
+		tool.execute.assert_not_called()
+		tool.logger.warning.assert_not_called()

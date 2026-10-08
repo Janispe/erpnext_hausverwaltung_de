@@ -96,3 +96,39 @@ def attachment_manifest(attachments):
 		}
 		for item in attachments
 	]
+
+
+def audit_attachments(values):
+	"""Bounded audit metadata, including rejected calls; never retain binary input."""
+	if not isinstance(values, list):
+		return {"redacted": True, "invalid_structure": True}
+	result = []
+	for value in values[:MAX_ATTACHMENTS]:
+		if not isinstance(value, dict):
+			result.append({"redacted": True, "invalid_structure": True})
+			continue
+		item = {
+			key: value[key][:limit]
+			for key, limit in (("file", 140), ("filename", 200), ("content_type", 161))
+			if isinstance(value.get(key), str)
+		}
+		# Use an allowlist so malformed/unknown nested fields cannot carry file data.
+		if "content_base64" in value:
+			encoded = value["content_base64"]
+			item["content_redacted"] = True
+			item["encoded_chars"] = len(encoded) if isinstance(encoded, str) else None
+			if isinstance(encoded, str) and len(encoded) <= MAX_BASE64_CHARS:
+				try:
+					content = base64.b64decode(encoded, validate=True)
+					if base64.b64encode(content).decode("ascii") != encoded:
+						raise ValueError("Non-canonical Base64")
+					item["size"] = len(content)
+					item["sha256"] = hashlib.sha256(content).hexdigest()
+				except (ValueError, binascii.Error):
+					item["invalid_content"] = True
+			else:
+				item["invalid_or_oversized_content"] = True
+		result.append(item)
+	if len(values) > MAX_ATTACHMENTS:
+		result.append({"omitted_attachments": len(values) - MAX_ATTACHMENTS})
+	return result

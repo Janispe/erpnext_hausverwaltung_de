@@ -83,3 +83,43 @@ class TestEmailAttachments(TestCase):
 		self.assertEqual(attachments.prepare_attachments([], Mock()), [])
 		with self.assertRaises(EmailDraftError):
 			attachments.prepare_attachments([{"file": "F"}] * 11, Mock())
+
+
+class TestAttachmentAudit(TestCase):
+	def test_valid_bytes_are_replaced_with_size_and_actual_content_hash(self):
+		import hashlib
+
+		values = [{"filename": "a.bin", "content_base64": "AP8="}]
+		logged = attachments.audit_attachments(values)
+		self.assertEqual(logged[0]["size"], 2)
+		self.assertEqual(logged[0]["sha256"], hashlib.sha256(b"\x00\xff").hexdigest())
+		self.assertNotIn("content_base64", logged[0])
+		self.assertEqual(values[0]["content_base64"], "AP8=")
+
+	def test_invalid_oversized_and_unknown_fields_never_retain_content(self):
+		import json
+
+		for value in [
+			"SECRET!",
+			{"content_base64": "SECRET!"},
+			{"content_base64": {"nested": "SECRET!"}},
+			{"unknown": "SECRET!"},
+		]:
+			with self.subTest(value=value):
+				self.assertNotIn("SECRET!", json.dumps(attachments.audit_attachments([value])))
+		with (
+			patch.object(attachments, "MAX_BASE64_CHARS", 2),
+			patch.object(attachments.base64, "b64decode") as decode,
+		):
+			logged = attachments.audit_attachments([{"content_base64": "SECRET!"}])
+			decode.assert_not_called()
+			self.assertTrue(logged[0]["invalid_or_oversized_content"])
+
+	def test_audit_output_is_bounded_even_for_rejected_argument_lists(self):
+		import json
+
+		logged = attachments.audit_attachments(
+			[{"filename": "A" * 10000, "content_base64": "!" * 10000}] * 20
+		)
+		self.assertEqual(logged[-1], {"omitted_attachments": 10})
+		self.assertLess(len(json.dumps(logged)), 5000)

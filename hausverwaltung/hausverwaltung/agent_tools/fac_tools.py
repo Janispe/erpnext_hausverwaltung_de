@@ -6,6 +6,7 @@ from typing import ClassVar
 import frappe
 from frappe.utils import get_url
 from frappe_assistant_core.core.base_tool import BaseTool
+from jsonschema import ValidationError as JSONSchemaValidationError
 from jsonschema import validate
 
 from hausverwaltung.hausverwaltung.agent_tools import fac_output
@@ -305,6 +306,25 @@ class EmailTool(HausverwaltungReadTool):
 	"""Optional mailbox reads and draft creation; no send or destructive operation."""
 
 	mcp_audience = "model"
+
+	def validate_arguments(self, arguments):
+		try:
+			validate(instance=arguments, schema=self.inputSchema)
+		except JSONSchemaValidationError:
+			# jsonschema embeds the original instance in its error/traceback. FAC
+			# stores those separately from sanitized input_data, so do not leak it.
+			raise frappe.ValidationError(
+				"Ungültige E-Mail-Eingaben; Pflichtfelder, Typen und Anhangsgrenzen prüfen."
+			) from None
+
+	def _sanitize_arguments(self, arguments):
+		from hausverwaltung.hausverwaltung.services.email_attachments import audit_attachments
+
+		sanitized = super()._sanitize_arguments(arguments)
+		if "attachments" in sanitized:
+			# Keep execution arguments untouched: this copy is only for FAC's audit log.
+			sanitized = {**sanitized, "attachments": audit_attachments(sanitized["attachments"])}
+		return sanitized
 
 	def __init__(self):
 		BaseTool.__init__(self)

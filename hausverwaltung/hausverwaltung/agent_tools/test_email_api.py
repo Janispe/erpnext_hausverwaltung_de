@@ -1324,7 +1324,7 @@ class TestEmailAttachmentAPI(TestCase):
 			patch.object(api, "_read", return_value=file) as read,
 			patch("builtins.open", mock_open(read_data=b"\xef\xbb\xbf\xff")) as opened,
 		):
-			self.assertEqual(api._attachment_file("F-1"), ("a.bin", b"\xef\xbb\xbf\xff"))
+			self.assertEqual(api._attachment_file("F-1", self.identity), ("a.bin", b"\xef\xbb\xbf\xff"))
 		self.assertEqual(read.call_args_list[1].args, ("Mietvertrag", "MV-1"))
 		opened().read.assert_called_once_with(api.MAX_ATTACHMENT_BYTES + 1)
 
@@ -1341,10 +1341,109 @@ class TestEmailAttachmentAPI(TestCase):
 			patch("builtins.open") as opened,
 		):
 			with self.assertRaises(api.frappe.PermissionError):
-				api._attachment_file("F-1")
+				api._attachment_file("F-1", self.identity)
 			opened.assert_not_called()
 		file.file_url = "https://other.example/a"
 		with patch.object(api, "_read", return_value=file), patch("builtins.open") as opened:
 			with self.assertRaises(EmailDraftError):
-				api._attachment_file("F-1")
+				api._attachment_file("F-1", self.identity)
 			opened.assert_not_called()
+
+
+class TestAttachmentContractScope(TestCase):
+	setUp = TestEmailAPI.setUp
+	remote = TestEmailAPI.remote
+
+	def test_only_exact_contract_and_debtor_are_allowed_even_with_read_permission(self):
+		with patch.object(api, "_read") as read:
+			api._attachment_scope("Mietvertrag", "MV-1", self.identity)
+			api._attachment_scope("Customer", "C-MV-1", self.identity)
+			for doctype, name in [
+				("Mietvertrag", "MV-old"),
+				("Customer", "C-old"),
+				("Wohnung", "W-1"),
+				("Contact", "same-person"),
+				("", ""),
+			]:
+				with self.subTest(doctype=doctype), self.assertRaises(EmailDraftError) as raised:
+					api._attachment_scope(doctype, name, self.identity)
+				self.assertEqual(raised.exception.code, "ATTACHMENT_SCOPE_MISMATCH")
+		self.assertNotIn(("Wohnung", "W-1"), [call.args for call in read.call_args_list])
+
+	def test_invoice_uses_full_contract_identity_and_rejects_conflicting_items(self):
+		own = self.identity | {"immobilie": "I-1"}
+		other = {"mietvertrag": "MV-old", "customer": "C-old", "wohnung": "W-1", "immobilie": "I-1"}
+		invoice = {"customer": "C-MV-1", "items": []}
+		backend = Mock()
+		backend.read_doc.return_value = invoice
+		backend._get_mietvertrag_row.side_effect = lambda name: own if name in {"MV-1", "C-MV-1"} else other
+		backend._can_read_doc.return_value = True
+		backend.invoice_reference.return_value = "MV-1"
+		with patch.object(api, "_read"), patch.object(api, "_EmailIdentityBackend", return_value=backend):
+			api._attachment_scope("Sales Invoice", "INV-1", self.identity)
+			for changed, reference in [
+				(invoice | {"customer": "C-old"}, "MV-old"),
+				(invoice | {"mietvertrag": "MV-old"}, "MV-1"),
+				(invoice | {"items": [{"mietvertrag": "MV-old"}]}, "MV-1"),
+				(invoice, "MV-old"),
+			]:
+				backend.read_doc.return_value = changed
+				backend.invoice_reference.return_value = reference
+				with self.subTest(changed=changed), self.assertRaises((EmailDraftError, api.OverviewError)):
+					api._attachment_scope("Sales Invoice", "INV-1", self.identity)
+
+	def test_serienbrief_requires_exact_recipient_identity_not_apartment(self):
+		for target, name, allowed in [
+			("Mietvertrag", "MV-1", True),
+			("Customer", "C-MV-1", True),
+			("Customer", "C-old", False),
+			("Wohnung", "W-1", False),
+			("Contact", "same-person", False),
+			("Serienbrief Dokument", "cycle", False),
+		]:
+			letter = SimpleNamespace(iteration_doctype=target, objekt=name)
+			with self.subTest(target=target), patch.object(api, "_read", return_value=letter):
+				if allowed:
+					api._attachment_scope("Serienbrief Dokument", "LETTER-1", self.identity)
+				else:
+					with self.assertRaises(EmailDraftError):
+						api._attachment_scope("Serienbrief Dokument", "LETTER-1", self.identity)
+
+	def test_out_of_scope_or_unattached_file_never_reads_bytes(self):
+		file = SimpleNamespace(
+			is_folder=False,
+			file_url="/private/files/a.bin",
+			attached_to_doctype="Mietvertrag",
+			attached_to_name="MV-old",
+			file_name="a.bin",
+		)
+		for doctype, name in [("Mietvertrag", "MV-old"), ("Customer", "C-old"), ("Wohnung", "W-1"), ("", "")]:
+			file.attached_to_doctype, file.attached_to_name = doctype, name
+			with (
+				self.subTest(doctype=doctype),
+				patch.object(api, "_read", return_value=file),
+				patch("builtins.open") as opened,
+			):
+				with self.assertRaises(EmailDraftError):
+					api._attachment_file("F-1", self.identity)
+				opened.assert_not_called()
+
+	def test_create_passes_selected_contract_to_file_loader_and_stops_before_provider_on_mismatch(self):
+		self.roles.return_value = ["Agent Email Drafts"]
+		with (
+			patch.object(api, "_account", return_value=self.account),
+			patch.object(api, "_partner_addresses", return_value=([], [])),
+			patch.object(
+				api,
+				"_attachment_file",
+				side_effect=EmailDraftError("ATTACHMENT_SCOPE_MISMATCH", "other contract"),
+			) as loader,
+			patch.object(api, "_DraftBackend") as backend,
+		):
+			result = api.create_email_draft(
+				"MV-1", "MAIL-1", "Betreff", "Antwort", "r", attachments=[{"file": "F-other"}]
+			)
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["error"]["code"], "ATTACHMENT_SCOPE_MISMATCH")
+		loader.assert_called_once_with("F-other", self.identity)
+		backend.assert_not_called()

@@ -108,7 +108,7 @@ EMAIL_TOOLS = {
 			"attachments": {
 				"type": "array",
 				"maxItems": 10,
-				"description": "Optionale Anhänge: lesbare ERPNext File-ID oder Datei aus OpenClaw als filename/content_base64, optional content_type. Maximal 10 MiB je Datei, 20 MiB insgesamt. Binärdaten durch Code übertragen, nicht vom Modell erfinden. Keine URLs oder lokalen Pfade. Dateiinhalte bei derselben request_id unverändert lassen.",
+				"description": "Optionale Anhänge: ERPNext File-ID am exakten Mietvertrag, dessen Customer, einer eindeutig zugehörigen Sales Invoice oder einem vertragsgebundenen Serienbrief Dokument; keine Wohnung allein oder ungebundene Datei. Alternativ Datei aus OpenClaw auf Nutzerauftrag als filename/content_base64, optional content_type. Maximal 10 MiB je Datei, 20 MiB insgesamt; bei 25-MiB-Requestlimit direktes Base64 auf etwa 18 MiB insgesamt begrenzen oder vorher am Mietvertrag hochladen. Binärdaten durch Code übertragen, nicht vom Modell erfinden. Keine URLs oder lokalen Pfade. Dateiinhalte bei derselben request_id unverändert lassen.",
 				"items": {
 					"oneOf": [
 						{

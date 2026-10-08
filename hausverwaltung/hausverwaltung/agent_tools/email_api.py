@@ -13,7 +13,11 @@ from frappe.utils import get_datetime, getdate, now_datetime
 
 from hausverwaltung.hausverwaltung.agent_tools.contracts import AgentToolError
 from hausverwaltung.hausverwaltung.agent_tools.email_budget import fit_context, fit_preview, fits_data
-from hausverwaltung.hausverwaltung.agent_tools.fac_overview import OverviewError, _exact_identity
+from hausverwaltung.hausverwaltung.agent_tools.fac_overview import (
+	OverviewError,
+	_exact_identity,
+	_invoice_identity,
+)
 from hausverwaltung.hausverwaltung.agent_tools.fac_overview_backend import OverviewBackend
 from hausverwaltung.hausverwaltung.services.email_attachments import (
 	MAX_ATTACHMENT_BYTES,
@@ -163,7 +167,39 @@ def _provider(account):
 	return get_provider(account)
 
 
-def _attachment_file(name):
+def _attachment_scope(doctype, name, identity):
+	"""Accept exact lease/debtor identities; an apartment is never sufficient."""
+	if doctype not in {"Mietvertrag", "Customer", "Sales Invoice", "Serienbrief Dokument"}:
+		raise EmailDraftError("ATTACHMENT_SCOPE_MISMATCH", "Anhang hat keinen erlaubten Mietvertragsbezug.")
+	doc = _read(doctype, name)
+	if doctype == "Mietvertrag":
+		valid = name == identity["mietvertrag"]
+	elif doctype == "Customer":
+		valid = name == identity["customer"]
+	elif doctype == "Sales Invoice":
+		backend = _EmailIdentityBackend()
+		invoice = backend.read_doc(
+			"Sales Invoice",
+			name,
+			["name", "customer", "wohnung", "immobilie", "mietvertrag", "mietabrechnung_id", "remarks"],
+			children={"items": ["idx", "wohnung", "immobilie", "mietvertrag"]},
+		)
+		matched = _invoice_identity(backend, invoice, invoice.get("items", []))
+		valid = all(matched.get(key) == value for key, value in identity.items())
+	else:
+		if doc.iteration_doctype not in {"Mietvertrag", "Customer", "Sales Invoice"} or not doc.objekt:
+			raise EmailDraftError(
+				"ATTACHMENT_SCOPE_MISMATCH", "Serienbrief hat keinen eindeutigen Mietvertragsbezug."
+			)
+		_attachment_scope(doc.iteration_doctype, doc.objekt, identity)
+		return
+	if not valid:
+		raise EmailDraftError(
+			"ATTACHMENT_SCOPE_MISMATCH", "Anhang gehört nicht zum ausgewählten Mietvertrag."
+		)
+
+
+def _attachment_file(name, identity):
 	file = _read("File", name)
 	if (
 		file.is_folder
@@ -171,10 +207,11 @@ def _attachment_file(name):
 		or not file.file_url.startswith(("/files/", "/private/files/"))
 	):
 		raise EmailDraftError("INVALID_ATTACHMENT", "Nur lokal gespeicherte ERPNext-Dateien sind erlaubt.")
-	if bool(file.attached_to_doctype) != bool(file.attached_to_name):
-		raise EmailDraftError("INVALID_ATTACHMENT", "Die Dateizuordnung ist unvollständig.")
-	if file.attached_to_doctype:
-		_read(file.attached_to_doctype, file.attached_to_name)
+	if not file.attached_to_doctype or not file.attached_to_name:
+		raise EmailDraftError(
+			"ATTACHMENT_SCOPE_MISMATCH", "Anhang benötigt einen eindeutigen Mietvertragsbezug."
+		)
+	_attachment_scope(file.attached_to_doctype, file.attached_to_name, identity)
 	# Bounded binary read: File.get_content() can decode text and alter BOM/encoding.
 	file.validate_file_url()
 	try:
@@ -722,7 +759,7 @@ def create_email_draft(
 	contract, identity = _contract(mietvertrag)
 	account = _account(archive_account)
 	partners, defaults = _partner_addresses(contract)
-	files = prepare_attachments(attachments, _attachment_file)
+	files = prepare_attachments(attachments, lambda name: _attachment_file(name, identity))
 	backend = _DraftBackend(account)
 	backend.attachment_count = len(files)
 	reply = None

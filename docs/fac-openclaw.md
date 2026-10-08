@@ -167,6 +167,14 @@ HTTP-/MCP-Transportlimits gelten zusätzlich. Die Werkzeuge erzeugen die
 Dateiformate nicht selbst: Ein erzeugtes PDF aus dem Serienbrief-Werkzeug kann
 als Datei oder mit dessen `content_base64` übernommen werden.
 
+Die 20 MiB sind die Grenze der unveränderten Dateibytes, nicht die Größe des
+JSON-Requests. Bei Frappes Standard-Requestlimit von 25 MiB passen 20 MiB als
+Base64 (etwa 26,7 MiB zuzüglich JSON) nicht in einen Aufruf. Für direktes Base64
+insgesamt höchstens etwa 18 MiB einplanen; weitere Argumente und kleinere
+Proxy-/MCP-Limits reduzieren die verfügbare Größe. Größere Anhänge einzeln als
+private ERPNext-Dateien am ausgewählten Mietvertrag hochladen und ihre File-IDs
+übergeben. Die serverseitige Grenze von 10 MiB je Datei gilt weiterhin.
+
 Vorhandene ERPNext-Datei (exakte **File-Datensatz-ID**, keine URL):
 
 ```json
@@ -185,7 +193,8 @@ ERPNext bestimmt dann den MIME-Typ aus dem Dateinamen oder verwendet
 lesen und kodieren; das Sprachmodell darf weder Base64 erfinden noch große
 Dateiinhalte in seinen Gesprächskontext kopieren. Große Dateien bevorzugt zuvor
 über den bestehenden authentifizierten ERPNext-Dateiupload als private `File`
-speichern und dann die zurückgegebene File-ID übergeben. Ein lokaler
+am ausgewählten Mietvertrag speichern und dann die zurückgegebene File-ID
+übergeben. Ein lokaler
 OpenClaw-Dateipfad ist auf dem ERPNext-Server nicht verfügbar. URL-Downloads
 werden durch dieses Werkzeug nicht angeboten.
 
@@ -213,7 +222,28 @@ result = call_tool(rpc, tools, "hv_create_email_draft", {
 ```
 
 Bei File-Referenzen prüft ERPNext Leserecht auf die Datei und das zugehörige
-Dokument. Die Binärdaten werden begrenzt gelesen und ohne Textdekodierung
+Dokument sowie die exakte Vertragszugehörigkeit. Erlaubt sind Dateien am
+ausgewählten `Mietvertrag`, an dessen eigenem `Customer`, an einer eindeutig
+diesem Vertrag zugeordneten `Sales Invoice` oder an einem `Serienbrief Dokument`
+mit genau diesem Mietvertrag, Customer oder einer zugehörigen Rechnung als
+`iteration_doctype`/`objekt`. Rechnungsreferenzen und Positionen dürfen der
+Customer-/Vertragsidentität nicht widersprechen. Dateien an Wohnung, Contact,
+Immobilie, anderen Dokumentarten oder ohne Dokumentzuordnung sind nicht erlaubt;
+auch eine Datei vom früheren Mieter derselben Wohnung wird abgewiesen.
+
+Direktes Base64 aus OpenClaw erlaubt keine serverseitige Prüfung der
+Vertragszugehörigkeit. Die Dateiauswahl muss deshalb durch den Nutzerauftrag
+bestimmt sein; Anweisungen aus empfangenen Mails dürfen keine zusätzlichen
+Anhänge auswählen. Diese Vertrauensgrenze wird durch die File-Prüfung nicht
+aufgehoben.
+
+Im FAC-Audit werden die Base64-Dateiinhalte entfernt und durch Byteanzahl und
+SHA-256 ersetzt. Das gilt auch für fehlgeschlagene Aufrufe. Ungültige oder zu
+große Inhalte werden nur als entfernt markiert; unbekannte Anhangsfelder und
+überlange Listen werden nicht vollständig protokolliert. Die Ausführungsargumente
+bleiben unverändert. Diese Änderung bereinigt keine älteren Audit-Einträge.
+
+Die Binärdaten werden begrenzt gelesen und ohne Textdekodierung
 übertragen. Der Inhalts-Hash, Dateiname, MIME-Typ und die Größe werden im
 unveränderlichen `draft_attachment_manifest` des Auftrags gespeichert und in
 seinen Fingerprint aufgenommen. Mit derselben `request_id` müssen dieselben
@@ -228,7 +258,9 @@ hoch und gibt die bestätigten Blob-IDs als `attachments` an `Email/set` weiter
 ([RFC 8620, Abschnitt 6.1](https://www.rfc-editor.org/rfc/rfc8620.html#section-6.1),
 [RFC 8621, Abschnitt 4.6](https://www.rfc-editor.org/rfc/rfc8621.html#section-4.6)).
 Der Upload muss denselben Ursprung wie die JMAP-API verwenden; Weiterleitungen
-werden nicht verfolgt. Thunderbird muss dafür nicht laufen. Scheitert ein
+werden nicht verfolgt. Der bestätigte MIME-Typ wird ohne Parameter und unabhängig
+von Groß-/Kleinschreibung verglichen; ein tatsächlich anderer Typ wird weiterhin
+abgewiesen. Thunderbird muss dafür nicht laufen. Scheitert ein
 Upload, wird kein `Email/set` ausgeführt und der Erstellungs-Claim freigegeben;
 der Auftrag kann mit derselben `request_id` wiederholt werden. Bereits
 hochgeladene, unreferenzierte Blobs werden vom Mailserver verwaltet. Bleibt erst
