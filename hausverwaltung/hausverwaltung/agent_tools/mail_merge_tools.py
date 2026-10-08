@@ -54,6 +54,12 @@ Mit vorlagenversion kann ein Entwurf eine bestimmte, aeltere Version der Vorlage
 Wunsch. Fuer Vorschau und Speicherung eines Entwurfs rufe agent_mail_merge_prepare nur mit draft auf und danach
 agent_mail_merge_execute; die PDFs landen dann im selben Durchlauf.
 KI-Vorlagen: agent_mail_merge_create_template legt eine neue, dauerhaft gekennzeichnete Vorlage an.
+Dateien: Externe Code-Clients laden Bilder/PDFs mit agent_mail_merge_upload_asset an eine vorhandene
+Vorlage oder einen Baustein. Base64 bleibt ausschliesslich im Code. Bilder: lokale file_url als img-src.
+PDFs: create_textbaustein mit content_type="PDF Formular", pdf_file=File-ID, ohne content;
+pdf_pages und pdf_field_mappings sind optional. Formularwerte lesen deklarierte Bausteinvariablen;
+Empfaengerpfade werden ueber standardpfade zugeordnet. Vorhandene PDF-Bausteine nur als
+propose_textbaustein_version aendern und den Vorschlag vor der Uebernahme als Brief-PDF pruefen.
 Fuer vorhandene Vorlagen rufe agent_mail_merge_propose_template_version mit der aktuellen revision auf:
 Es wird ausschliesslich eine gekennzeichnete Vorschlagsversion angelegt; die aktive Vorlage bleibt unveraendert.
 agent_mail_merge_list_template_versions zeigt IDs, Herkunft und den aktiven Stand. Mit vorlagenversion kannst du
@@ -196,13 +202,34 @@ BLOCK_SOURCE = {
 	**SOURCE,
 	"description": "Passives HTML/Jinja und lesende Funktionen. Keine Aufrufe anderer Bausteine, kein aktives HTML und kein safe-Filter.",
 }
+PDF_BLOCK_PROPERTIES = {
+	"content_type": {"type": "string", "enum": ["HTML + Jinja", "PDF Formular"], "default": "HTML + Jinja"},
+	"pdf_file": {"type": "string", "description": "Exakte File-ID aus agent_mail_merge_upload_asset; keine URL. Für neue PDF-Bausteine erforderlich."},
+	"pdf_pages": {"type": "string", "maxLength": 400, "description": "Leer = alle Seiten; z. B. 1,3-5."},
+	"pdf_flatten": {"type": "boolean", "description": "Formularfelder nach Befüllung sperren; Standard true."},
+	"pdf_field_mappings": {
+		"type": "array", "maxItems": 100,
+		"items": {
+			"type": "object",
+			"properties": {
+				"pdf_field_name": STRING,
+				"value_path": {"type": "string", "maxLength": 240, "description": "Pfad ab deklarierter Bausteinvariable. Empfängerpfade über standardpfade zuordnen, z. B. person → objekt.full_name und value_path=person."},
+				"fallback_value": {"type": "string", "maxLength": 4000},
+				"required": {"type": "boolean"},
+				"value_type": {"type": "string", "enum": ["String", "Zahl", "Bool", "Datum"]},
+			},
+			"required": ["pdf_field_name"], "additionalProperties": False,
+		},
+	},
+}
 MAIL_MERGE_TOOLS = [
 	_tool(
 		"agent_mail_merge_create_textbaustein",
-		"Erstellt einen neuen, dauerhaft als KI gekennzeichneten HTML/Jinja-Textbaustein mit Variablen und Standardpfaden. Prüfe ihn in einem Vorlagenvorschlag mit baustein_versionen={Name: gelieferte version_number}, dann save_draft(vorlagenversion) und prepare(draft); gib PDF oder Fehler aus.",
+		"Erstellt einen KI-Textbaustein: HTML/Jinja mit content oder PDF Formular mit content_type und pdf_file (File-ID aus Code-Upload). PDF-Seiten und Feldzuordnungen optional; content bei PDF weglassen. Prüfe ihn in einem Vorlagenvorschlag mit baustein_versionen={Name: gelieferte version_number}, dann save_draft(vorlagenversion) und prepare(draft).",
 		{
 			"title": STRING,
 			"content": BLOCK_SOURCE,
+			**PDF_BLOCK_PROPERTIES,
 			"variables": BLOCK_VARIABLES,
 			"standardpfade": {
 				"type": "object",
@@ -212,15 +239,16 @@ MAIL_MERGE_TOOLS = [
 			"description": STRING,
 			"render_position": {"type": "string", "enum": ["Body", "Footer"]},
 		},
-		("title", "content"),
+		("title",),
 	),
 	_tool(
 		"agent_mail_merge_propose_textbaustein_version",
-		"Erstellt einen unveränderlichen KI-Vorschlag für einen vorhandenen Textbaustein, ohne den aktiven Stand zu ändern. revision aus get_textbaustein verwenden. Prüfe die gelieferte version_number als Fixierung in einem Vorlagenvorschlag und rendere dessen Testentwurf vor der Übernahme; der Nutzer übernimmt im Baustein-Versionseditor.",
+		"Erstellt einen unveränderlichen KI-Vorschlag, ohne den aktiven Baustein zu ändern. revision aus get_textbaustein verwenden. HTML: content; PDF: content_type=PDF Formular und optionale pdf_file/Seiten/Feldzuordnungen, content weglassen. Prüfe version_number als Fixierung in einem Vorlagenvorschlag und rendere dessen Testentwurf; Nutzer übernimmt im Versionseditor.",
 		{
 			"baustein": STRING,
 			"revision": STRING,
 			"content": BLOCK_SOURCE,
+			**PDF_BLOCK_PROPERTIES,
 			"base_version": {
 				"type": "string",
 				"description": "Versions-ID name aus list_textbaustein_versions; ohne Angabe aktiver Stand.",
@@ -234,7 +262,7 @@ MAIL_MERGE_TOOLS = [
 			"render_position": {"type": "string", "enum": ["Body", "Footer"]},
 			"label": STRING,
 		},
-		("baustein", "revision", "content"),
+		("baustein", "revision"),
 	),
 	_tool(
 		"agent_mail_merge_list_textbausteine",

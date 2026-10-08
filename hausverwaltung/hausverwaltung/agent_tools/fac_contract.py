@@ -23,7 +23,7 @@ FAC_TOOL_NAMES = (
 
 # Bulk tools for code callers (e.g. LibreChat run_tools_with_bash). Their results are too large for a
 # model context, so they are not part of FAC_TOOL_NAMES, which the built-in FAC engines offer to the model.
-FAC_CODE_TOOL_NAMES = ("hv_export_view", "hv_export_report", "agent_mail_merge_get_pdf")
+FAC_CODE_TOOL_NAMES = ("hv_export_view", "hv_export_report", "agent_mail_merge_get_pdf", "agent_mail_merge_upload_asset")
 
 # Focused search and detail tools for external MCP clients.
 FAC_OVERVIEW_TOOL_NAMES = (
@@ -70,6 +70,7 @@ FAC_MAIL_MERGE_TOOL_NAMES = (
 	"agent_mail_merge_update_draft",
 )
 FAC_MAIL_MERGE_WRITE_TOOL_NAMES = (
+	"agent_mail_merge_upload_asset",
 	"agent_mail_merge_create_textbaustein",
 	"agent_mail_merge_propose_textbaustein_version",
 	"agent_mail_merge_create_template",

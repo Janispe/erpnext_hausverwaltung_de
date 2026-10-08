@@ -378,6 +378,55 @@ class EmailTool(HausverwaltungReadTool):
 		return result
 
 
+class Fac_agent_mail_merge_upload_asset(HausverwaltungReadTool):
+	"""Private binary uploads; only code clients receive the input schema."""
+
+	tool_name = "agent_mail_merge_upload_asset"
+	mcp_audience = "code"
+
+	def __init__(self):
+		from hausverwaltung.hausverwaltung.agent_tools.mail_merge_asset_api import MAX_BASE64_CHARS, TARGETS
+
+		BaseTool.__init__(self)
+		self.name = self.tool_name
+		self.description = (
+			"NUR AUS CODE AUFRUFEN: lokale Chatdatei als Base64 hochladen, niemals Base64 ins Modell ausgeben. "
+			"Erlaubt PDF (10 MiB/100 Seiten), PNG/JPG/GIF/WebP (5 MiB). Speichert privat an einer vorhandenen "
+			"Serienbrief Vorlage oder einem Textbaustein mit Schreibrechten. Antwort nur Metadaten: file (File-ID), "
+			"file_url (Bild-src), PDF page_count/field_names. PDF mit create_textbaustein(content_type='PDF Formular', "
+			"pdf_file=file) einbinden; Bilder per img src=file_url in Vorlagenvorschlag. Danach Vorschau prüfen."
+		)
+		self.inputSchema = {
+			"type": "object", "additionalProperties": False,
+			"properties": {
+				"filename": {"type": "string", "minLength": 1, "maxLength": 200},
+				"content_base64": {"type": "string", "minLength": 1, "maxLength": MAX_BASE64_CHARS},
+				"attached_to_doctype": {"type": "string", "enum": list(TARGETS)},
+				"attached_to_name": {"type": "string", "minLength": 1, "maxLength": 240},
+			},
+			"required": ["filename", "content_base64", "attached_to_doctype", "attached_to_name"],
+		}
+		self.source_app, self.category, self.requires_permission = "hausverwaltung", "write", "File"
+		self.annotations = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
+
+	def validate_arguments(self, arguments):
+		try:
+			super().validate_arguments(arguments)
+		except JSONSchemaValidationError:
+			# jsonschema errors embed the full instance; never expose binary payloads.
+			raise frappe.ValidationError("Ungültige Serienbrief-Datei; Pflichtfelder, Typen und Dateigröße prüfen.") from None
+
+	def _sanitize_arguments(self, arguments):
+		return super()._sanitize_arguments({key: value for key, value in arguments.items() if key != "content_base64"})
+
+	def execute(self, arguments):
+		from hausverwaltung.hausverwaltung.agent_tools.mail_merge_asset_api import upload_asset
+
+		self.check_permission()
+		self.validate_arguments(arguments)
+		return upload_asset(**arguments)
+
+
 class Fac_agent_mail_merge_get_pdf(MailMergeTool):
 	"""PDF bytes of a preview or stored draft, for code callers that save them as chat files."""
 

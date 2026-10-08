@@ -552,6 +552,7 @@ def describe_capabilities(*, backend=None):
 		"read": ["agent_get_doc", "agent_list_docs", "agent_search_docs"],
 		"bulk": ["hv_export_view", "hv_export_report"],
 		"pdf": ["agent_mail_merge_get_pdf"],
+		"letter_assets": ["agent_mail_merge_upload_asset"],
 	}
 	return {
 		"ok": True,

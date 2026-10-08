@@ -69,7 +69,7 @@ def _paths(raw, doc):
 	return rows
 
 
-def _set_source(doc, content, variables=None, description=None, standardpfade=None, render_position=None):
+def _set_html_source(doc, content):
 	from mail_merge.mail_merge.utils.assistant_templates import validate_assistant_source
 
 	try:
@@ -92,6 +92,26 @@ def _set_source(doc, content, variables=None, description=None, standardpfade=No
 			"KI-Textbausteine dürfen keine anderen Bausteine aufrufen; binde sie nebeneinander in der Vorlage ein.",
 		)
 	doc.content_type, doc.html_content, doc.jinja_content, doc.text_content = "HTML + Jinja", content, "", ""
+	for field in ("outputs", "pdf_field_mappings"):
+		doc.set(field, [])
+	doc.pdf_file, doc.pdf_pages = None, None
+
+
+def _set_source(
+	doc,
+	content,
+	variables=None,
+	description=None,
+	standardpfade=None,
+	render_position=None,
+	content_type="HTML + Jinja",
+	pdf_file=None,
+	pdf_pages=None,
+	pdf_flatten=None,
+	pdf_field_mappings=None,
+):
+	if content_type not in {"HTML + Jinja", "PDF Formular"}:
+		raise AgentToolError("INVALID_ARGUMENT", "Bausteintyp muss HTML + Jinja oder PDF Formular sein.")
 	doc.assistant_created = 1
 	if variables is not None:
 		doc.set("variables", author._variables(variables, record_doctypes=BLOCK_RECORD_DOCTYPES))
@@ -114,11 +134,49 @@ def _set_source(doc, content, variables=None, description=None, standardpfade=No
 		for row in doc.get("standardpfade") or []:
 			mapping = parse_json_if_needed(row.pfad_zuordnung) or {}
 			row.pfad_zuordnung = frappe.as_json({k: v for k, v in mapping.items() if k in keys})
-	# An assistant HTML proposal does not retain an old PDF form or executable
-	# output providers from its baseline.
-	for field in ("outputs", "pdf_field_mappings"):
-		doc.set(field, [])
-	doc.pdf_file, doc.pdf_pages = None, None
+	if content_type == "HTML + Jinja":
+		if any(value is not None for value in (pdf_file, pdf_pages, pdf_flatten, pdf_field_mappings)):
+			raise AgentToolError("INVALID_ARGUMENT", "PDF-Einstellungen benötigen content_type=PDF Formular.")
+		_set_html_source(doc, content)
+		return
+	if content not in (None, "") or render_position == "Footer":
+		raise AgentToolError(
+			"INVALID_ARGUMENT", "PDF-Bausteine brauchen keinen HTML-Inhalt und dürfen kein Footer sein."
+		)
+	from mail_merge.mail_merge.utils.assistant_assets import local_file_content, pdf_info, validate_pdf_block
+
+	if pdf_file is not None:
+		file_doc = api._read("File", pdf_file)
+		try:
+			pdf_info(local_file_content(file_doc))
+		except frappe.ValidationError as exc:
+			raise AgentToolError("INVALID_ASSET", str(exc)) from None
+		doc.pdf_file = file_doc.file_url
+	elif doc.content_type != "PDF Formular":
+		raise AgentToolError("INVALID_ARGUMENT", "pdf_file benötigt die File-ID aus upload_asset.")
+	doc.content_type, doc.html_content, doc.jinja_content, doc.text_content = "PDF Formular", "", "", ""
+	doc.render_position = "Body"
+	doc.set("outputs", [])
+	if pdf_pages is not None:
+		doc.pdf_pages = pdf_pages
+	if pdf_flatten is not None:
+		doc.pdf_flatten = pdf_flatten
+	elif doc.pdf_flatten is None:
+		doc.pdf_flatten = 1
+	if pdf_field_mappings is not None:
+		rows = parse_json_if_needed(pdf_field_mappings)
+		allowed = {"pdf_field_name", "value_path", "fallback_value", "required", "value_type"}
+		if (
+			not isinstance(rows, list)
+			or len(rows) > 100
+			or any(not isinstance(row, dict) or set(row) - allowed for row in rows)
+		):
+			raise AgentToolError("INVALID_ARGUMENT", "Ungültige PDF-Feldzuordnungen (maximal 100).")
+		doc.set("pdf_field_mappings", [{"required": 0, "value_type": "String", **row} for row in rows])
+	try:
+		validate_pdf_block(doc)
+	except frappe.ValidationError as exc:
+		raise AgentToolError("INVALID_ARGUMENT", str(exc)) from None
 
 
 def _result(doc, version, proposal):
@@ -199,13 +257,35 @@ def get_textbaustein(baustein, include_source=False, version_number=None):
 	}
 	if include_source in (True, 1, "1", "true"):
 		result["source"] = source
+	if doc.content_type == "PDF Formular":
+		from mail_merge.mail_merge.utils.assistant_assets import pdf_file_info
+
+		result["pdf"] = {
+			"file_url": doc.pdf_file,
+			"pages": doc.pdf_pages or "",
+			"flatten": bool(doc.pdf_flatten),
+			"field_mappings": [
+				versioning.snapshot_child_row(row) for row in doc.get("pdf_field_mappings") or []
+			],
+			**pdf_file_info(doc.pdf_file),
+		}
 	return result
 
 
 @frappe.whitelist(methods=["POST"])
 @api._endpoint
 def create_textbaustein(
-	title, content, variables=None, description=None, standardpfade=None, render_position="Body"
+	title,
+	content=None,
+	variables=None,
+	description=None,
+	standardpfade=None,
+	render_position="Body",
+	content_type="HTML + Jinja",
+	pdf_file=None,
+	pdf_pages=None,
+	pdf_flatten=None,
+	pdf_field_mappings=None,
 ):
 	from mail_merge.mail_merge.utils import textbaustein_versions as tbv
 	from mail_merge.mail_merge.utils import versioning
@@ -223,6 +303,11 @@ def create_textbaustein(
 			description,
 			standardpfade,
 			render_position,
+			content_type,
+			pdf_file,
+			pdf_pages,
+			pdf_flatten,
+			pdf_field_mappings,
 		)
 		doc.flags.version_source, doc.flags.version_label = "KI-Erstellung", "Vom Assistenten erstellt"
 		doc.insert()
@@ -237,13 +322,18 @@ def create_textbaustein(
 def propose_textbaustein_version(
 	baustein,
 	revision,
-	content,
+	content=None,
 	base_version=None,
 	variables=None,
 	description=None,
 	standardpfade=None,
 	render_position=None,
 	label=None,
+	content_type="HTML + Jinja",
+	pdf_file=None,
+	pdf_pages=None,
+	pdf_flatten=None,
+	pdf_field_mappings=None,
 ):
 	from mail_merge.mail_merge.utils import textbaustein_versions as tbv
 	from mail_merge.mail_merge.utils import versioning
@@ -264,7 +354,19 @@ def propose_textbaustein_version(
 		except frappe.ValidationError as exc:
 			raise AgentToolError("INVALID_ARGUMENT", str(exc)) from None
 		candidate = tbv.doc_from_snapshot(live.name, versioning.parse_snapshot(tbv.SPEC, base.snapshot))
-		_set_source(candidate, content, variables, description, standardpfade, render_position)
+		_set_source(
+			candidate,
+			content,
+			variables,
+			description,
+			standardpfade,
+			render_position,
+			content_type,
+			pdf_file,
+			pdf_pages,
+			pdf_flatten,
+			pdf_field_mappings,
+		)
 		name = versioning.create_version(
 			tbv.SPEC,
 			candidate,

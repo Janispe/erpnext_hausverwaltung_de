@@ -264,8 +264,9 @@ Image enthalten sein. Ein gewöhnlicher Container-Neustart behält den Hotfix.
 ## Externe Chat-Clients über FAC (LibreChat)
 
 Dieselben Werkzeuge stehen zusätzlich über den FAC-MCP-Endpunkt zur Verfügung
-(`agent_tools/fac_contract.py`, `FAC_MAIL_MERGE_TOOL_NAMES`). Es sind die einzigen schreibenden
-FAC-Werkzeuge; `save_draft`, `update_draft` und `execute` sind als `write` markiert
+(`agent_tools/fac_contract.py`, `FAC_MAIL_MERGE_TOOL_NAMES`). Serienbrief-Schreibaktionen einschließlich
+Vorlagen, Bausteinen und Datei-Uploads sind als `write` markiert;
+`save_draft`, `update_draft` und `execute`
 (`FAC_MAIL_MERGE_WRITE_TOOL_NAMES`) und speichern nur Entwürfe: Eingaben oder die PDFs einer zuvor
 erfolgreich vorbereiteten Vorschau. Fehler bleiben strukturiert (`issues`, `action`),
 statt in eine FAC-Fehlermeldung umgewandelt zu werden.
@@ -291,6 +292,81 @@ Dokument, nur die dort angehängte Datei). Es ist kein Werkzeug des eingebauten 
 base64-Inhalt nicht in einen Modellkontext gehört. Über FAC heißt es `agent_mail_merge_get_pdf` und steht in
 `FAC_CODE_TOOL_NAMES`; LibreChat ruft es nur aus `run_tools_with_bash` auf, dekodiert das PDF in der Sandbox und
 bietet es als Datei im Chat an. Über FAC werden höchstens 8 MB base64 übergeben.
+
+### Bilder und PDF-Anlagen über MCP
+
+`agent_mail_merge_upload_asset` ist ein schreibendes **Code-Werkzeug**, ebenso in
+`FAC_CODE_TOOL_NAMES` registriert. Es ist nicht Teil des direkten Modellkatalogs.
+Ein Code-Client liest die lokale Chatdatei und sendet `filename`, `content_base64`,
+`attached_to_doctype` (`Serienbrief Vorlage` oder `Serienbrief Textbaustein`) und
+`attached_to_name` (exakte vorhandene ID). Die API liegt unter
+`hausverwaltung.hausverwaltung.agent_tools.mail_merge_asset_api.upload_asset` (POST).
+Benötigt werden System Manager/Hausverwalter, Lese-/Schreibrechte auf den Zielbeleg
+und File-Anlagerechte. Uploads sind privat und ändern keinen Vorlageninhalt.
+Sie sind im Anhangsbereich des Zielbelegs nachvollziehbar.
+
+Erlaubt sind PNG, JPG, GIF und WebP bis 5 MiB/40 Megapixel sowie PDFs bis
+10 MiB/100 Seiten/100 Formularfelder. Format und PDF-Struktur werden am Inhalt
+geprüft; Dateiendungen werden korrigiert. Verschlüsselte PDFs und XFA sind
+ausgeschlossen. Beliebige URLs, Serverpfade und SVG-Uploads sind nicht vorgesehen.
+Base64 wird weder zurückgegeben noch im FAC-Eingabeprotokoll gespeichert;
+Schemafehler geben den Dateiinhalt ebenfalls nicht aus. Die Antwort enthält
+`file` (File-ID), relative `file_url`, Dateiname, Größe, SHA-256 und
+bei PDFs `page_count`/`field_names`, bei Bildern Breite/Höhe.
+
+Für Bilder die relative `file_url` in `<img src="/private/files/…">` im Inhalt
+einer neuen Vorlage oder Vorschlagsversion verwenden. Der PDF-Renderer lädt
+private Bilder mit den vorhandenen Dateirechten; anschließend `prepare` prüfen.
+
+Für PDF-Anlagen `agent_mail_merge_create_textbaustein` mit
+`content_type="PDF Formular"`, `pdf_file` als **File-ID** aus dem Upload und ohne
+`content` aufrufen. Leere `pdf_pages` übernimmt alle Seiten; `1,3-5` wählt Seiten
+aus. `pdf_flatten` sperrt Formularfelder nach Befüllung (Standard true).
+Auch PDFs ohne Formularfelder funktionieren. PDF-Bausteine liegen im Body.
+
+Formularwerte werden im isolierten Bausteinkontext aufgelöst. Beispiel:
+
+```json
+{
+  "title": "PDF-Anlage",
+  "content_type": "PDF Formular",
+  "pdf_file": "FILE-ID-AUS-UPLOAD",
+  "variables": [{"variable": "mietername"}],
+  "standardpfade": {"Mietvertrag": {"mietername": "objekt.kunde.customer_name"}},
+  "pdf_field_mappings": [{
+    "pdf_field_name": "Name",
+    "value_path": "mietername",
+    "required": true,
+    "value_type": "String"
+  }]
+}
+```
+
+`pdf_field_name` muss in `field_names` existieren; Wertpfade beginnen bei
+deklarierten Bausteinvariablen. Optional sind `fallback_value`, `required` und
+`value_type` (String/Zahl/Bool/Datum). Ein Baustein mit Formular kann alternativ
+eine Doctype-Variable und einen Pfad darunter verwenden. Eine natürliche Person
+wird dadurch nicht zu einem wohnungsübergreifenden Customer zusammengefasst.
+
+Den gelieferten Baustein mit `{{ baustein("Name") }}` in eine neue Vorlage oder
+Vorschlagsversion einbinden, `baustein_versionen={Name: version_number}` setzen,
+`save_draft(vorlagenversion=…)`, dann `prepare(draft=…)` ausführen. PDFs werden
+als eigene Seiten in das Brief-PDF eingefügt. `get_textbaustein` liefert für
+PDF-Bausteine zusätzlich `pdf` mit Seiten, Feldnamen und gespeicherten Zuordnungen.
+
+`propose_textbaustein_version` unterstützt dieselben PDF-Parameter. Bei
+`content_type="PDF Formular"` bleiben nicht übergebene PDF-Einstellungen der
+Basisversion erhalten; `pdf_file` ersetzt die Datei, `pdf_field_mappings=[]`
+entfernt Zuordnungen. Der aktive Baustein bleibt unverändert. Die normale
+Versionshistorie hält PDF-Dateien fest und erlaubt Vorschau/Wiederherstellung.
+HTML-Bausteinaufrufe ohne `content_type` bleiben kompatibel.
+
+Nach Ausrollen beider Apps (`hausverwaltung` und `mail_merge`) muss der FAC-Katalog
+erneuert und das Upload-Werkzeug in der vorhandenen Tool-Konfiguration als
+`write` freigeschaltet werden. `fac_setup.configure_external_chat` registriert
+auch dieses Code-Werkzeug; ein reiner Quellcodewechsel aktiviert keine laufende
+Installation. Tests: `agent_tools.test_mail_merge_assets` plus die bisherigen
+Baustein-/FAC-Regressionstests.
 
 ## KI-Vorlagen und Vorschlagsversionen
 
