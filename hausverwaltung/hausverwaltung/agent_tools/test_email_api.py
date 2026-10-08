@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
-from contextlib import ExitStack
-from datetime import datetime
+from contextlib import ExitStack, nullcontext
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
 import frappe
-from thunderbird_hausverwaltung.thunderbird_hausverwaltung.mail_archive.providers.base import ArchiveMessage
+from thunderbird_hausverwaltung.thunderbird_hausverwaltung.mail_archive.providers.base import (
+	ArchiveMessage,
+	DraftNotCreatedError,
+)
 
 from hausverwaltung.hausverwaltung.agent_tools import email_api as api
+from hausverwaltung.hausverwaltung.agent_tools.email_budget import MAIL_OUTPUT_MAX_CHARS
+from hausverwaltung.hausverwaltung.agent_tools.fac_output import sent_size
 from hausverwaltung.hausverwaltung.doctype.email_entwurf import email_entwurf as controller
-from hausverwaltung.hausverwaltung.services.email_draft_contract import EmailDraftError
+from hausverwaltung.hausverwaltung.services.email_draft_contract import (
+	DraftCreationRejected,
+	EmailDraftError,
+)
 
 
 class TestEmailAPI(TestCase):
@@ -51,7 +59,14 @@ class TestEmailAPI(TestCase):
 				return_value=datetime(2026, 10, 8, 11),
 			)
 		)
-		self.account = SimpleNamespace(name="MAIL-1", request_timeout=30)
+		self.account = SimpleNamespace(
+			name="MAIL-1",
+			request_timeout=30,
+			enabled=1,
+			provider="JMAP",
+			initial_sync_completed=True,
+			last_sync_on=None,
+		)
 		self.identity = {"mietvertrag": "MV-1", "customer": "C-MV-1", "wohnung": "W-1"}
 		self.source = SimpleNamespace(
 			name="MAM-1", archive_account="MAIL-1", provider_message_id="E1", status="Archiviert"
@@ -65,6 +80,7 @@ class TestEmailAPI(TestCase):
 			provider_exists=1,
 		)
 		self.provider = Mock()
+		self.db.sql.return_value = [("ED-1",)]
 
 	def remote(self, **values):
 		return ArchiveMessage(
@@ -342,6 +358,8 @@ class TestEmailAPI(TestCase):
 		self.assertEqual(data["reference_name"], "MV-1")
 		self.assertEqual(data["source_mail_message"], "MAM-1")
 		self.assertEqual(data["draft_fingerprint"], "fingerprint")
+		self.assertEqual(data["mailbox_sync_paused"], 1)
+		self.assertEqual(data["mailbox_pause_reason"], "Rejected")
 		self.assertEqual(data["message"], "&lt;Text&gt;<br>Antwort")
 		self.db.commit.assert_called_once()
 		self.provider.create_draft.assert_not_called()
@@ -363,8 +381,14 @@ class TestEmailAPI(TestCase):
 		self.provider.create_draft.assert_not_called()
 
 	def test_record_created_persists_remote_identity_without_sending(self):
-		doc = Mock()
-		record = {"doc": doc, "provider_message_id": ""}
+		doc = self.draft_doc(remote_creation_started=1, remote_creation_attempt="attempt-1")
+		record = {
+			"name": doc.name,
+			"doc": doc,
+			"provider_message_id": "",
+			"creation_attempt": "attempt-1",
+			"fingerprint": "fingerprint",
+		}
 		with patch.object(api, "_provider", return_value=self.provider):
 			api._DraftBackend(self.account).record_created(record, "REMOTE-DRAFT-1")
 		updates = doc.db_set.call_args.args[0]
@@ -372,28 +396,37 @@ class TestEmailAPI(TestCase):
 		self.assertEqual(updates["mailbox_sync_status"], "Draft")
 		self.assertNotIn("status", updates)
 		self.assertEqual(record["provider_message_id"], "REMOTE-DRAFT-1")
+		self.assertTrue(doc.flags.for_update)
+		doc.reload.assert_called_once()
 		self.db.commit.assert_called_once()
 
 	def test_transactional_claim_blocks_a_second_create_even_with_a_stale_record(self):
-		doc = Mock()
-		record = {"name": "ED-1", "doc": doc, "creation_started": False}
-		self.db.sql.return_value = [(1,)]
+		doc = self.draft_doc(remote_creation_started=1)
+		record = {"name": "ED-1", "doc": doc, "creation_started": False, "fingerprint": "fingerprint"}
 		with patch.object(api, "_provider", return_value=self.provider):
 			with self.assertRaises(EmailDraftError) as raised:
 				api._DraftBackend(self.account).mark_creation_started(record)
 		self.assertEqual(raised.exception.code, "REMOTE_STATE_UNCERTAIN")
 		self.assertIn("FOR UPDATE", self.db.sql.call_args.args[0])
+		self.assertIn("SELECT name", self.db.sql.call_args.args[0])
+		doc.reload.assert_called_once()
+		self.assertTrue(doc.flags.for_update)
 		doc.db_set.assert_not_called()
 		self.db.commit.assert_not_called()
 		self.provider.create_draft.assert_not_called()
 
 	def test_first_transactional_claim_is_committed_before_remote_creation(self):
-		doc = Mock()
-		record = {"name": "ED-1", "doc": doc, "creation_started": False}
-		self.db.sql.return_value = [(0,)]
+		doc = self.draft_doc()
+		record = {"name": "ED-1", "doc": doc, "creation_started": False, "fingerprint": "fingerprint"}
 		with patch.object(api, "_provider", return_value=self.provider):
 			api._DraftBackend(self.account).mark_creation_started(record)
-		doc.db_set.assert_called_once_with("remote_creation_started", 1, update_modified=False)
+		updates = doc.db_set.call_args.args[0]
+		self.assertEqual(updates["remote_creation_started"], 1)
+		self.assertTrue(updates["remote_creation_attempt"])
+		self.assertEqual(record["creation_attempt"], updates["remote_creation_attempt"])
+		self.assertEqual(updates["mailbox_sync_paused"], 0)
+		doc.reload.assert_called_once()
+		self.assertTrue(doc.flags.for_update)
 		self.assertTrue(record["creation_started"])
 		self.db.commit.assert_called_once()
 		self.provider.create_draft.assert_not_called()
@@ -410,8 +443,24 @@ class TestEmailAPI(TestCase):
 					"sent_on": None,
 					"db_set": Mock(),
 					"reload": Mock(),
+					"flags": frappe._dict(),
 					"delivery_backend": "Stalwart",
 					"mail_archive_account": "MAIL-1",
+					"owner": "agent@example.test",
+					"status": "Draft",
+					"remote_creation_started": 0,
+					"remote_creation_attempt": "",
+					"provider_draft_id": "",
+					"sent_provider_message_id": "",
+					"draft_request_key": "request-key",
+					"draft_fingerprint": "fingerprint",
+					"draft_token": "token",
+					"draft_rfc_message_id": "token@example.test",
+					"mailbox_sync_paused": 0,
+					"mailbox_pause_reason": "",
+					"mailbox_missing_count": 0,
+					"mailbox_next_check_on": None,
+					"mailbox_checked_on": None,
 				}
 				| values
 			)
@@ -455,6 +504,7 @@ class TestEmailAPI(TestCase):
 		self.assertEqual(raised.exception.code, "REMOTE_CONFLICT")
 		self.assertIn("FOR UPDATE", self.db.sql.call_args.args[0])
 		doc.reload.assert_called_once()
+		self.assertTrue(doc.flags.for_update)
 		doc.db_set.assert_not_called()
 
 	def test_truncated_sent_text_never_becomes_a_complete_communication(self):
@@ -467,7 +517,7 @@ class TestEmailAPI(TestCase):
 		new_doc.assert_not_called()
 		doc.db_set.assert_not_called()
 
-	def context_for_mail(self, mail):
+	def context_response(self, mail, **arguments):
 		with (
 			patch.object(api, "_read", return_value=self.source),
 			patch.object(api, "_account", return_value=self.account),
@@ -476,8 +526,12 @@ class TestEmailAPI(TestCase):
 			patch.object(api, "_source", return_value=(self.source, mail)),
 			patch.object(api.frappe, "get_list", return_value=[]),
 		):
-			result = api.get_email_context("MV-1", "MAM-1")
+			result = api.get_email_context("MV-1", "MAM-1", **arguments)
 		self.assertTrue(result["ok"], result)
+		return result
+
+	def context_for_mail(self, mail):
+		result = self.context_response(mail)
 		return result["data"]["source"]
 
 	def quality_mail(self, *, plain_flags=None, html_flags=None):
@@ -576,6 +630,25 @@ class TestEmailAPI(TestCase):
 		self.assertFalse(preview["provider_body_truncated"])
 		self.assertTrue(preview["provider_body_encoding_problem"])
 
+	def test_draft_preview_does_not_report_missing_declared_body_as_complete(self):
+		for parts, available in (
+			({"textBody": [{"partId": "missing", "type": "text/plain"}]}, False),
+			({}, True),
+		):
+			with (
+				self.subTest(parts=parts),
+				patch.object(api, "_read", return_value=self.draft_doc()),
+				patch.object(api, "_account", return_value=self.account),
+				patch.object(
+					api, "_live_state", return_value=("Draft", self.remote(text_body="", raw=parts))
+				),
+			):
+				result = api.get_email_draft("ED-1")
+				self.assertTrue(result["ok"], result)
+				preview = result["data"]["message"]
+				self.assertEqual(preview["body_available"], available)
+				self.assertEqual(preview["body_complete"], available)
+
 	def test_declared_but_unavailable_sent_body_never_creates_blank_communication(self):
 		doc = self.draft_doc()
 		remote = self.remote(text_body="", raw={"textBody": [{"partId": "missing", "type": "text/plain"}]})
@@ -613,6 +686,504 @@ class TestEmailAPI(TestCase):
 		self.assertNotIn("status", updates)
 		self.assertNotIn("communication", updates)
 		self.assertNotIn("sent_provider_message_id", updates)
+
+	def test_agent_mail_functions_have_no_rest_whitelist_bypass(self):
+		for function in (
+			api.list_mieter_emails,
+			api.get_email_context,
+			api.create_email_draft,
+			api.get_email_draft,
+		):
+			with self.subTest(function=function.__name__):
+				self.assertNotIn(function, frappe.whitelisted)
+
+	def test_endpoint_budgets_the_actual_fac_serialization_of_unicode(self):
+		data = {"body": "ü" * 2_000}
+		self.assertGreater(sent_size({"ok": True, "data": data}), MAIL_OUTPUT_MAX_CHARS)
+		result = api._endpoint()(lambda: data)()
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["error"]["code"], "LIMIT_EXCEEDED")
+		self.assertNotIn("body", result)
+
+	def test_unicode_context_default_and_max_pages_fit_and_reconstruct_without_gaps(self):
+		text = "ü" * 8_000
+		mail = self.remote(text_body=text, subject="Ungekürzter Betreff")
+		for requested_limit in (None, 6_000):
+			with self.subTest(body_limit=requested_limit):
+				offset, chunks = 0, []
+				while offset is not None:
+					arguments = {"body_offset": offset}
+					if requested_limit is not None:
+						arguments["body_limit"] = requested_limit
+					result = self.context_response(mail, **arguments)
+					self.assertLessEqual(sent_size(result), MAIL_OUTPUT_MAX_CHARS)
+					source = result["data"]["source"]
+					self.assertEqual(source["subject"], mail.subject)
+					self.assertEqual(source["message"], "MAM-1")
+					self.assertEqual(source["body_offset"], offset)
+					self.assertEqual(source["body"], text[offset : offset + len(source["body"])])
+					self.assertGreater(len(source["body"]), 0)
+					if not chunks:
+						self.assertTrue(result["data"]["output_budget_limited"])
+						self.assertFalse(source["body_complete"])
+					chunks.append(source["body"])
+					next_offset = source["next_body_offset"]
+					if next_offset is not None:
+						self.assertEqual(next_offset, offset + len(source["body"]))
+						self.assertGreater(next_offset, offset)
+					offset = next_offset
+				self.assertEqual("".join(chunks), text)
+
+	def test_list_budget_continuation_preserves_live_metadata_and_advances_stale_candidates(self):
+		rows = [frappe._dict(name=f"MAM-{index}") for index in range(5)]
+		mails = {
+			row.name: self.remote(id=f"E{index}", subject="ü" * 600)
+			for index, row in enumerate(rows)
+			if index
+		}
+
+		def source(name, *args):
+			if name == "MAM-0":
+				raise EmailDraftError("MESSAGE_MISMATCH", "stale index")
+			return SimpleNamespace(name=name), mails[name]
+
+		with (
+			patch.object(api, "_account", return_value=self.account),
+			patch.object(api, "_provider", return_value=self.provider),
+			patch.object(api, "_folder_scope", return_value=self.source_scope()),
+			patch.object(api.frappe, "get_list", return_value=rows),
+			patch.object(api, "_source", side_effect=source),
+		):
+			first = api.list_mieter_emails("MV-1", "MAIL-1", limit=5)
+			self.assertTrue(first["ok"], first)
+			data = first["data"]
+			self.assertTrue(data["output_budget_limited"])
+			self.assertTrue(data["has_more"])
+			self.assertEqual(data["next_offset"], len(data["messages"]) + 1)
+			self.assertEqual(data["returned"], len(data["messages"]))
+			returned = list(data["messages"])
+			offset = data["next_offset"]
+			while offset is not None:
+				page = api.list_mieter_emails("MV-1", "MAIL-1", limit=5, offset=offset)
+				self.assertTrue(page["ok"], page)
+				self.assertLessEqual(sent_size(page), MAIL_OUTPUT_MAX_CHARS)
+				returned.extend(page["data"]["messages"])
+				offset = page["data"]["next_offset"]
+		self.assertLessEqual(sent_size(first), MAIL_OUTPUT_MAX_CHARS)
+		self.assertEqual([item["message"] for item in returned], [row.name for row in rows[1:]])
+		self.assertTrue(all(item["subject"] == "ü" * 600 for item in returned))
+		self.assertEqual(returned[-1]["provider_message_id"], "E4")
+
+	def test_backend_maps_only_provider_proven_not_created_exception(self):
+		with patch.object(api, "_provider", return_value=self.provider):
+			backend = api._DraftBackend(self.account)
+		self.provider.create_draft.side_effect = DraftNotCreatedError("Proven preflight rejection")
+		with self.assertRaises(DraftCreationRejected) as raised:
+			backend.create_draft(mailbox_id="D1")
+		self.assertEqual(raised.exception.code, "DRAFT_NOT_CREATED")
+		for error in (TimeoutError("Unknown outcome"), RuntimeError("Unknown outcome")):
+			with self.subTest(error=type(error).__name__):
+				self.provider.create_draft.side_effect = error
+				with self.assertRaises(type(error)) as propagated:
+					backend.create_draft(mailbox_id="D1")
+				self.assertIs(propagated.exception, error)
+
+	def claim_record(self, doc=None):
+		doc = doc or self.draft_doc(remote_creation_started=1, remote_creation_attempt="attempt-1")
+		return {
+			"name": doc.name,
+			"doc": doc,
+			"fingerprint": "fingerprint",
+			"creation_started": True,
+			"creation_attempt": "attempt-1",
+		}
+
+	def test_proven_rejection_resets_only_the_owned_uncreated_claim_and_pauses_tracking(self):
+		record = self.claim_record()
+		with patch.object(api, "_provider", return_value=self.provider):
+			api._DraftBackend(self.account).release_creation_claim(record)
+		doc = record["doc"]
+		doc.reload.assert_called_once()
+		self.assertIn("FOR UPDATE", self.db.sql.call_args.args[0])
+		updates = doc.db_set.call_args.args[0]
+		self.assertEqual(updates["remote_creation_started"], 0)
+		self.assertEqual(updates["remote_creation_attempt"], "")
+		self.assertEqual(updates["mailbox_sync_status"], "Rejected")
+		self.assertEqual(updates["mailbox_pause_reason"], "Rejected")
+		self.assertEqual(updates["mailbox_sync_paused"], 1)
+		self.assertFalse(record["creation_started"])
+		self.assertEqual(record["creation_attempt"], "")
+		self.db.commit.assert_called_once()
+		self.provider.create_draft.assert_not_called()
+
+	def test_claim_reset_refuses_stale_closed_changed_and_known_remote_records(self):
+		for change in (
+			{"remote_creation_attempt": "other-attempt"},
+			{"remote_creation_started": 0},
+			{"status": "Cancelled"},
+			{"delivery_backend": "ERPNext"},
+			{"mail_archive_account": "OTHER"},
+			{"draft_fingerprint": "changed"},
+			{"provider_draft_id": "DRAFT-1"},
+			{"sent_provider_message_id": "SENT-1"},
+			{"communication": "COMM-1"},
+		):
+			with self.subTest(change=change):
+				doc = self.draft_doc(remote_creation_started=1, remote_creation_attempt="attempt-1")
+				for key, value in change.items():
+					setattr(doc, key, value)
+				record = self.claim_record(doc)
+				with patch.object(api, "_provider", return_value=self.provider):
+					with self.assertRaises(EmailDraftError) as raised:
+						api._DraftBackend(self.account).release_creation_claim(record)
+				self.assertEqual(raised.exception.code, "REMOTE_STATE_UNCERTAIN")
+				doc.db_set.assert_not_called()
+				self.assertTrue(record["creation_started"])
+		self.db.commit.assert_not_called()
+
+	def test_rejected_request_can_reserve_and_claim_again_but_manual_pauses_and_discard_cannot(self):
+		self.db.get_value.return_value = "ED-1"
+		doc = self.draft_doc(mailbox_sync_paused=1, mailbox_pause_reason="Rejected")
+		with (
+			patch.object(api, "_provider", return_value=self.provider),
+			patch.object(api, "_read", return_value=doc),
+		):
+			backend = api._DraftBackend(self.account)
+			record, reused = backend.reserve("request-key", "fingerprint", {"identity": self.identity})
+			self.assertTrue(reused)
+			backend.mark_creation_started(record)
+		self.assertTrue(record["creation_started"])
+		self.assertEqual(doc.db_set.call_args.args[0]["mailbox_sync_paused"], 0)
+		for changes, code in (
+			({"mailbox_sync_paused": 1, "mailbox_pause_reason": "Manual"}, "TRACKING_PAUSED"),
+			({"mailbox_sync_paused": 1, "mailbox_pause_reason": "Missing"}, "TRACKING_PAUSED"),
+			({"status": "Cancelled"}, "REQUEST_CLOSED"),
+		):
+			with self.subTest(changes=changes):
+				closed = self.draft_doc(**changes)
+				with patch.object(api, "_read", return_value=closed):
+					with self.assertRaises(EmailDraftError) as raised:
+						backend.reserve("request-key", "fingerprint", {"identity": self.identity})
+				self.assertEqual(raised.exception.code, code)
+				closed.db_set.assert_not_called()
+
+	def test_claim_reloads_closed_or_paused_state_before_mutating(self):
+		for changes in (
+			{"status": "Cancelled"},
+			{"mailbox_sync_paused": 1, "mailbox_pause_reason": "Manual"},
+			{"mailbox_sync_paused": 1, "mailbox_pause_reason": "Missing"},
+		):
+			with self.subTest(changes=changes):
+				doc = self.draft_doc()
+				doc.reload.side_effect = lambda: doc.__dict__.update(changes)
+				record = {"name": doc.name, "doc": doc, "fingerprint": "fingerprint"}
+				with patch.object(api, "_provider", return_value=self.provider):
+					with self.assertRaises(EmailDraftError) as raised:
+						api._DraftBackend(self.account).mark_creation_started(record)
+				self.assertEqual(raised.exception.code, "TRACKING_PAUSED")
+				doc.db_set.assert_not_called()
+		self.db.commit.assert_not_called()
+
+	def scheduler_fixture(self, doc):
+		self.stack.enter_context(
+			patch.object(api.frappe, "get_all", return_value=[frappe._dict(name=doc.name)])
+		)
+		self.stack.enter_context(
+			patch.object(
+				api.frappe,
+				"get_doc",
+				side_effect=lambda doctype, name: doc if doctype == api.DRAFT else self.account,
+			)
+		)
+		backend = Mock()
+		backend.lock.return_value = nullcontext()
+		self.stack.enter_context(patch.object(api, "_DraftBackend", return_value=backend))
+		return backend
+
+	def test_scheduler_filters_paused_and_future_checks_and_rechecks_after_lock(self):
+		for changes in (
+			{"status": "Cancelled"},
+			{"mailbox_sync_paused": 1},
+			{"mailbox_next_check_on": datetime(2026, 10, 8, 13)},
+			{"remote_creation_started": 0, "provider_draft_id": ""},
+		):
+			with self.subTest(changes=changes), ExitStack() as stack:
+				doc = self.draft_doc(remote_creation_started=1)
+				doc.reload.side_effect = lambda: doc.__dict__.update(changes)
+				get_all = stack.enter_context(
+					patch.object(api.frappe, "get_all", return_value=[frappe._dict(name=doc.name)])
+				)
+				stack.enter_context(
+					patch.object(
+						api.frappe,
+						"get_doc",
+						side_effect=lambda doctype, name: doc if doctype == api.DRAFT else self.account,
+					)
+				)
+				backend = Mock()
+				backend.lock.return_value = nullcontext()
+				stack.enter_context(patch.object(api, "_DraftBackend", return_value=backend))
+				live = stack.enter_context(patch.object(api, "_live_state"))
+				persist = stack.enter_context(patch.object(api, "_persist_remote"))
+				api.sync_stalwart_email_drafts()
+				self.assertEqual(get_all.call_args.kwargs["filters"]["mailbox_sync_paused"], 0)
+				self.assertIn(
+					["mailbox_next_check_on", "<=", datetime(2026, 10, 8, 12)],
+					get_all.call_args.kwargs["or_filters"],
+				)
+				backend.lock.assert_called_once_with(doc.draft_request_key)
+				doc.reload.assert_called_once()
+				live.assert_not_called()
+				persist.assert_not_called()
+				self.assertTrue(doc.flags.for_update)
+				if "remote_creation_started" in changes:
+					self.assertEqual(doc.db_set.call_args.args[0]["mailbox_sync_paused"], 1)
+					self.assertEqual(doc.db_set.call_args.args[0]["mailbox_pause_reason"], "Rejected")
+				else:
+					doc.db_set.assert_not_called()
+		self.db.set_value.assert_not_called()
+
+	def test_scheduler_reconciles_due_claimed_draft_and_commits_without_delivery(self):
+		doc = self.draft_doc(remote_creation_started=1, mailbox_next_check_on=datetime(2026, 10, 8, 11))
+		self.scheduler_fixture(doc)
+		remote = self.remote()
+		with (
+			patch.object(api, "_live_state", return_value=("Draft", remote)) as live,
+			patch.object(api, "_persist_remote") as persist,
+		):
+			api.sync_stalwart_email_drafts()
+		live.assert_called_once_with(doc, self.account)
+		persist.assert_called_once_with(doc, "Draft", remote, self.account)
+		self.assertEqual(self.db.commit.call_count, 2)
+
+	def test_repeated_missing_mail_backs_off_then_pauses_without_changing_business_status(self):
+		doc = self.draft_doc(remote_creation_started=1, provider_draft_id="DRAFT-1")
+		with patch.object(api.frappe, "new_doc") as new_doc:
+			for count in range(1, api.MISSING_PAUSE_THRESHOLD + 1):
+				api._persist_remote(doc, "Missing", None, self.account)
+				updates = doc.db_set.call_args.args[0]
+				self.assertEqual(updates["mailbox_missing_count"], count)
+				self.assertNotIn("status", updates)
+				self.assertNotIn("remote_creation_started", updates)
+				self.assertNotIn("provider_draft_id", updates)
+				if count < api.MISSING_PAUSE_THRESHOLD:
+					self.assertEqual(
+						updates["mailbox_next_check_on"],
+						datetime(2026, 10, 8, 12) + timedelta(minutes=5 * 2 ** (count - 1)),
+					)
+				else:
+					self.assertEqual(updates["mailbox_sync_paused"], 1)
+					self.assertEqual(updates["mailbox_pause_reason"], "Missing")
+					self.assertIsNone(updates["mailbox_next_check_on"])
+				doc.__dict__.update(updates)
+		new_doc.assert_not_called()
+		self.assertEqual(doc.status, "Draft")
+		self.assertEqual(doc.provider_draft_id, "DRAFT-1")
+
+	def tracking_fixture(self, doc):
+		self.stack.enter_context(
+			patch.object(
+				api, "_read", side_effect=lambda doctype, name: doc if doctype == api.DRAFT else self.account
+			)
+		)
+		self.stack.enter_context(patch.object(api._DraftBackend, "lock", return_value=nullcontext()))
+		return self.stack.enter_context(patch.object(api, "_provider", return_value=self.provider))
+
+	def test_human_tracking_actions_require_human_role_and_document_read_permission(self):
+		with (
+			patch.object(
+				api.frappe, "only_for", side_effect=frappe.PermissionError("human role required")
+			) as only_for,
+			patch.object(api, "_read") as read,
+			patch.object(api, "_provider") as provider,
+		):
+			with self.assertRaises(frappe.PermissionError):
+				api.manage_mailbox_tracking("ED-1", "pause")
+		only_for.assert_called_once_with(("System Manager", "Hausverwalter"))
+		read.assert_not_called()
+		provider.assert_not_called()
+		with (
+			patch.object(api.frappe, "only_for"),
+			patch.object(api, "_read", side_effect=frappe.PermissionError("document read denied")),
+			patch.object(api, "_provider") as provider,
+		):
+			with self.assertRaises(frappe.PermissionError):
+				api.manage_mailbox_tracking("ED-1", "pause")
+		provider.assert_not_called()
+
+	def test_human_pause_resume_and_discard_only_change_tracking_and_never_access_provider(self):
+		for action in ("pause", "resume", "discard"):
+			with self.subTest(action=action), ExitStack() as stack:
+				doc = self.draft_doc(
+					remote_creation_started=1,
+					remote_creation_attempt="attempt-1",
+					provider_draft_id="DRAFT-1",
+				)
+				read = stack.enter_context(
+					patch.object(
+						api,
+						"_read",
+						side_effect=lambda doctype, name: doc if doctype == api.DRAFT else self.account,
+					)
+				)
+				stack.enter_context(patch.object(api.frappe, "only_for"))
+				stack.enter_context(patch.object(api._DraftBackend, "lock", return_value=nullcontext()))
+				provider = stack.enter_context(patch.object(api, "_provider"))
+				result = api.manage_mailbox_tracking("ED-1", action)
+				self.assertFalse(result["mailbox_changed"])
+				self.assertEqual(
+					[call.args for call in read.call_args_list],
+					[(api.DRAFT, "ED-1"), (api.ACCOUNT, "MAIL-1"), ("Mietvertrag", "MV-1")],
+				)
+				provider.assert_not_called()
+				updates = doc.db_set.call_args.args[0]
+				self.assertEqual(updates["mailbox_sync_paused"], int(action != "resume"))
+				self.assertEqual(updates["mailbox_missing_count"], 0)
+				self.assertIsNone(updates["mailbox_next_check_on"])
+				self.assertNotIn("remote_creation_started", updates)
+				self.assertNotIn("remote_creation_attempt", updates)
+				self.assertNotIn("provider_draft_id", updates)
+				self.assertNotIn("sent_provider_message_id", updates)
+				if action == "discard":
+					self.assertEqual(updates["status"], "Cancelled")
+				else:
+					self.assertNotIn("status", updates)
+				self.assertEqual(doc.remote_creation_attempt, "attempt-1")
+				self.assertEqual(doc.provider_draft_id, "DRAFT-1")
+
+	def test_human_resume_rejects_an_order_whose_remote_creation_never_started(self):
+		doc = self.draft_doc(mailbox_sync_paused=1, mailbox_pause_reason="Rejected")
+		provider = self.tracking_fixture(doc)
+		with patch.object(api.frappe, "only_for"):
+			with self.assertRaises(EmailDraftError) as raised:
+				api.manage_mailbox_tracking("ED-1", "resume")
+		self.assertEqual(raised.exception.code, "DRAFT_NOT_CREATED")
+		doc.db_set.assert_not_called()
+		self.db.commit.assert_not_called()
+		provider.assert_not_called()
+
+	def test_manual_pause_is_preserved_when_a_proven_rejection_releases_its_claim(self):
+		doc = self.draft_doc(
+			remote_creation_started=1,
+			remote_creation_attempt="attempt-1",
+			mailbox_sync_paused=1,
+			mailbox_pause_reason="Manual",
+		)
+		record = self.claim_record(doc)
+		with patch.object(api, "_provider", return_value=self.provider):
+			api._DraftBackend(self.account).release_creation_claim(record)
+		updates = doc.db_set.call_args.args[0]
+		self.assertEqual(updates["remote_creation_started"], 0)
+		self.assertEqual(updates["remote_creation_attempt"], "")
+		self.assertEqual(updates.get("mailbox_sync_paused", doc.mailbox_sync_paused), 1)
+		self.assertEqual(updates.get("mailbox_pause_reason", doc.mailbox_pause_reason), "Manual")
+
+	def test_sent_persistence_never_changes_a_concurrently_closed_or_paused_order(self):
+		for changes in (
+			{"status": "Cancelled"},
+			{"status": "Sent"},
+			{"mailbox_sync_paused": 1, "mailbox_pause_reason": "Manual"},
+		):
+			with self.subTest(changes=changes):
+				doc = self.draft_doc(**changes)
+				with patch.object(api.frappe, "new_doc") as new_doc:
+					api._persist_remote(doc, "Sent", self.remote(id="SENT-1"), self.account)
+				new_doc.assert_not_called()
+				doc.db_set.assert_not_called()
+
+	def test_scheduler_error_does_not_overwrite_a_concurrent_sent_discard_or_pause(self):
+		for changes in (
+			{"status": "Sent"},
+			{"status": "Cancelled"},
+			{"mailbox_sync_paused": 1, "mailbox_pause_reason": "Manual"},
+		):
+			with self.subTest(changes=changes), ExitStack() as stack:
+				doc = self.draft_doc(remote_creation_started=1)
+				stack.enter_context(
+					patch.object(api.frappe, "get_all", return_value=[frappe._dict(name=doc.name)])
+				)
+				stack.enter_context(
+					patch.object(
+						api.frappe,
+						"get_doc",
+						side_effect=lambda doctype, name, **kwargs: (
+							doc if doctype == api.DRAFT else self.account
+						),
+					)
+				)
+				backend = Mock()
+				backend.lock.return_value = nullcontext()
+				stack.enter_context(patch.object(api, "_DraftBackend", return_value=backend))
+
+				def fail_after_concurrent_change(*args):
+					doc.__dict__.update(changes)
+					raise RuntimeError("Server outcome unknown")
+
+				stack.enter_context(
+					patch.object(api, "_live_state", side_effect=fail_after_concurrent_change)
+				)
+				api.sync_stalwart_email_drafts()
+				doc.db_set.assert_not_called()
+		self.db.set_value.assert_not_called()
+
+	def test_human_can_resume_a_manual_pause_before_creation_without_creating_mail(self):
+		doc = self.draft_doc(mailbox_sync_paused=1, mailbox_pause_reason="Manual")
+		provider = self.tracking_fixture(doc)
+		with patch.object(api.frappe, "only_for"):
+			result = api.manage_mailbox_tracking("ED-1", "resume")
+		self.assertFalse(result["mailbox_changed"])
+		updates = doc.db_set.call_args.args[0]
+		self.assertEqual(updates["mailbox_sync_paused"], 0)
+		self.assertEqual(updates["mailbox_pause_reason"], "")
+		self.assertNotIn("remote_creation_started", updates)
+		provider.assert_not_called()
+
+	def test_late_create_acknowledgement_preserves_an_already_sent_copy_and_status(self):
+		doc = self.draft_doc(
+			status="Sent",
+			remote_creation_started=1,
+			remote_creation_attempt="attempt-1",
+			provider_draft_id="SENT-1",
+			sent_provider_message_id="SENT-1",
+		)
+		record = self.claim_record(doc)
+		with patch.object(api, "_provider", return_value=self.provider):
+			backend = api._DraftBackend(self.account)
+			backend.record_created(record, "ORIGINAL-DRAFT-1")
+			result = backend.result(record, "Draft", None, reused=False)
+		doc.db_set.assert_not_called()
+		self.assertEqual(result["mailbox_state"], "Sent")
+		self.assertEqual(result["provider_message_id"], "SENT-1")
+		self.assertTrue(doc.flags.for_update)
+
+	def test_late_create_after_discard_or_pause_only_retains_missing_remote_identity(self):
+		for changes in (
+			{"status": "Cancelled"},
+			{"mailbox_sync_paused": 1, "mailbox_pause_reason": "Manual"},
+		):
+			with self.subTest(changes=changes):
+				doc = self.draft_doc(
+					remote_creation_started=1, remote_creation_attempt="attempt-1", **changes
+				)
+				record = self.claim_record(doc)
+				with patch.object(api, "_provider", return_value=self.provider):
+					api._DraftBackend(self.account).record_created(record, "REMOTE-DRAFT-1")
+				doc.db_set.assert_called_once_with(
+					"provider_draft_id", "REMOTE-DRAFT-1", update_modified=False
+				)
+				self.assertEqual(record["provider_message_id"], "REMOTE-DRAFT-1")
+				self.assertEqual(doc.status, changes.get("status", "Draft"))
+				self.assertEqual(doc.mailbox_sync_paused, changes.get("mailbox_sync_paused", 0))
+
+	def test_late_create_acknowledgement_with_stale_attempt_keeps_existing_state(self):
+		doc = self.draft_doc(remote_creation_started=1, remote_creation_attempt="other-attempt")
+		record = self.claim_record(doc)
+		with patch.object(api, "_provider", return_value=self.provider):
+			with self.assertRaises(EmailDraftError) as raised:
+				api._DraftBackend(self.account).record_created(record, "REMOTE-DRAFT-1")
+		self.assertEqual(raised.exception.code, "REMOTE_STATE_UNCERTAIN")
+		doc.db_set.assert_not_called()
+		self.db.commit.assert_not_called()
 
 
 class TestStalwartControllerGuards(TestCase):

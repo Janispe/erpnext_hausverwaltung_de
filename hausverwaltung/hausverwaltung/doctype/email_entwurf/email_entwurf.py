@@ -281,6 +281,11 @@ class EmailEntwurf(Document):
 				"draft_token",
 				"draft_rfc_message_id",
 				"remote_creation_started",
+				"remote_creation_attempt",
+				"mailbox_sync_paused",
+				"mailbox_pause_reason",
+				"mailbox_next_check_on",
+				"mailbox_missing_count",
 				"provider_draft_id",
 				"sent_provider_message_id",
 				"mailbox_sync_status",
@@ -383,6 +388,17 @@ class EmailEntwurf(Document):
 				timeout_seconds=5,
 			)
 		return _cancel_email_document(self)
+
+
+@frappe.whitelist(methods=["POST"])
+def manage_mailbox_tracking(docname: str, action: str) -> dict:
+	from hausverwaltung.hausverwaltung.agent_tools.email_api import manage_mailbox_tracking as manage
+	from hausverwaltung.hausverwaltung.services.email_draft_contract import EmailDraftError
+
+	try:
+		return manage(docname, action)
+	except EmailDraftError as error:
+		frappe.throw(str(error))
 
 
 @frappe.whitelist()

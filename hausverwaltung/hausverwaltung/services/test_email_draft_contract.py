@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from unittest import TestCase
 
 from .email_draft_contract import (
+	DraftCreationRejected,
 	EmailDraftError,
 	addresses,
 	classify_remote,
@@ -129,6 +130,10 @@ class BackendFixture:
 		self.lock_active = False
 		self.active_key = None
 		self.creation_claimed_elsewhere = False
+		self.creation_attempts = 0
+		self.claims = {}
+		self.preflight_failure = None
+		self.release_failure = None
 		self.provider = ProviderFixture(self)
 
 	@contextmanager
@@ -171,6 +176,27 @@ class BackendFixture:
 		if self.creation_claimed_elsewhere:
 			raise EmailDraftError("REMOTE_STATE_UNCERTAIN", "A concurrent worker already claimed creation.")
 		record["creation_started"] = True
+		self.creation_attempts += 1
+		record["creation_attempt"] = f"attempt-{self.creation_attempts}"
+		self.claims[self.active_key] = record["creation_attempt"]
+
+	def create_draft(self, **arguments):
+		self.assert_locked()
+		if self.preflight_failure is not None:
+			self.events.append("preflight_rejected")
+			raise self.preflight_failure
+		return self.provider.create_draft(**arguments)
+
+	def release_creation_claim(self, record):
+		self.assert_locked()
+		self.events.append("release_creation_claim")
+		if self.release_failure is not None:
+			raise self.release_failure
+		if self.claims.get(self.active_key) != record.get("creation_attempt"):
+			raise EmailDraftError("REMOTE_STATE_UNCERTAIN", "Creation claim belongs to another worker.")
+		self.claims.pop(self.active_key)
+		record["creation_started"] = False
+		record["creation_attempt"] = None
 
 	def record_created(self, record, message_id):
 		self.assert_locked()
@@ -495,6 +521,9 @@ class TestRemoteDraftLifecycle(DraftAssertions):
 			self.create()
 		self.assertEqual(len(self.backend.provider.messages), 1)
 		self.assertNotIn("provider_message_id", next(iter(self.backend.records.values())))
+		self.assertTrue(next(iter(self.backend.records.values()))["creation_started"])
+		self.assertEqual(len(self.backend.claims), 1)
+		self.assertNotIn("release_creation_claim", self.backend.events)
 		self.assertFalse(self.backend.lock_active)
 		result = self.create()
 		self.assertEqual(result["status"], "Draft")
@@ -519,12 +548,85 @@ class TestRemoteDraftLifecycle(DraftAssertions):
 		self.assertEqual(len(self.backend.provider.create_calls), 1)
 		self.assertEqual(next(iter(self.backend.records.values()))["status"], "Draft")
 
-	def test_definitive_provider_failure_is_not_blindly_repeated(self):
-		self.backend.provider.failure_before_create = RuntimeError("overQuota")
-		with self.assertRaisesRegex(RuntimeError, "overQuota"):
+	def test_unknown_provider_failure_without_remote_match_is_not_blindly_repeated(self):
+		self.backend.provider.failure_before_create = RuntimeError("Unknown server outcome")
+		with self.assertRaisesRegex(RuntimeError, "Unknown server outcome"):
 			self.create()
+		self.assertEqual(self.backend.provider.messages, [])
+		self.assertTrue(next(iter(self.backend.records.values()))["creation_started"])
+		self.assertNotIn("release_creation_claim", self.backend.events)
 		self.assert_error("REMOTE_STATE_UNCERTAIN", self.create)
 		self.assertEqual(len(self.backend.provider.create_calls), 1)
+
+	def test_proven_preflight_rights_rejection_releases_claim_and_allows_same_request_retry(self):
+		self.backend.preflight_failure = DraftCreationRejected("Mailbox rights do not permit drafts.")
+		self.assert_error("DRAFT_NOT_CREATED", self.create)
+		record = next(iter(self.backend.records.values()))
+		self.assertFalse(record["creation_started"])
+		self.assertIsNone(record["creation_attempt"])
+		self.assertEqual(self.backend.claims, {})
+		self.assertEqual(self.backend.provider.create_calls, [])
+		self.assertEqual(self.backend.provider.messages, [])
+		token = record["draft_token"]
+		self.backend.preflight_failure = None
+		result = self.create()
+		self.assertEqual(result["status"], "Draft")
+		self.assertTrue(result["reused"])
+		self.assertEqual(self.backend.provider.create_calls[0]["draft_token"], token)
+		self.assertEqual(len(self.backend.provider.messages), 1)
+		self.assertEqual(self.backend.creation_attempts, 2)
+
+	def test_explicit_server_rejection_can_retry_same_request_without_duplicate_draft(self):
+		self.backend.provider.failure_before_create = DraftCreationRejected(
+			"The server explicitly rejected creation."
+		)
+		self.assert_error("DRAFT_NOT_CREATED", self.create)
+		self.assertEqual(self.backend.provider.messages, [])
+		record = next(iter(self.backend.records.values()))
+		self.assertFalse(record["creation_started"])
+		self.assertEqual(self.backend.claims, {})
+		first_arguments = self.backend.provider.create_calls[0]
+		self.backend.provider.failure_before_create = None
+		self.assertEqual(self.create()["status"], "Draft")
+		self.assertEqual(len(self.backend.provider.create_calls), 2)
+		self.assertEqual(self.backend.provider.create_calls[1], first_arguments)
+		self.assertEqual(len(self.backend.provider.messages), 1)
+
+	def test_same_error_code_without_proven_rejection_type_keeps_creation_claim(self):
+		self.backend.provider.failure_before_create = EmailDraftError(
+			"DRAFT_NOT_CREATED", "Unproven rejection"
+		)
+		self.assert_error("DRAFT_NOT_CREATED", self.create)
+		self.assertTrue(next(iter(self.backend.records.values()))["creation_started"])
+		self.assertNotIn("release_creation_claim", self.backend.events)
+		self.assert_error("REMOTE_STATE_UNCERTAIN", self.create)
+		self.assertEqual(len(self.backend.provider.create_calls), 1)
+
+	def test_failed_claim_release_never_opens_another_create_attempt(self):
+		self.backend.provider.failure_before_create = DraftCreationRejected(
+			"The server explicitly rejected creation."
+		)
+		self.backend.release_failure = RuntimeError("Database release failed")
+		with self.assertRaisesRegex(RuntimeError, "Database release failed"):
+			self.create()
+		self.assertTrue(next(iter(self.backend.records.values()))["creation_started"])
+		self.assertEqual(len(self.backend.claims), 1)
+		self.assertFalse(self.backend.lock_active)
+		self.backend.release_failure = None
+		self.backend.provider.failure_before_create = None
+		self.assert_error("REMOTE_STATE_UNCERTAIN", self.create)
+		self.assertEqual(len(self.backend.provider.create_calls), 1)
+		self.assertEqual(self.backend.provider.messages, [])
+
+	def test_proven_rejection_does_not_allow_request_content_to_change(self):
+		self.backend.preflight_failure = DraftCreationRejected("Mailbox rights do not permit drafts.")
+		self.assert_error("DRAFT_NOT_CREATED", self.create)
+		self.backend.preflight_failure = None
+		queries = len(self.backend.provider.query_calls)
+		self.assert_error("REQUEST_CONFLICT", self.create, prepared=payload(message="Anderer Inhalt"))
+		self.assertEqual(len(self.backend.provider.query_calls), queries)
+		self.assertEqual(self.backend.provider.create_calls, [])
+		self.assertEqual(self.create()["status"], "Draft")
 
 	def test_missing_or_multiple_draft_folders_fail_before_creation_starts(self):
 		for mailboxes in (

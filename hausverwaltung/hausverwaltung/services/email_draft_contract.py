@@ -15,6 +15,16 @@ class EmailDraftError(Exception):
 		self.message = message
 
 
+class DraftCreationRejected(EmailDraftError):
+	"""The backend proved that its creation attempt made no remote message."""
+
+	def __init__(
+		self,
+		message: str = "Der Mailserver hat keinen Entwurf erstellt. Ursache beheben und mit derselben request_id erneut versuchen.",
+	):
+		super().__init__("DRAFT_NOT_CREATED", message)
+
+
 def exact_name(value, label):
 	if not isinstance(value, str) or not value.strip() or len(value) > 240:
 		raise EmailDraftError("INVALID_ARGUMENT", f"{label}: exakte ID erforderlich.")
@@ -243,18 +253,22 @@ def create_remote_draft(backend, payload, request_id):
 				"DRAFT_MAILBOX_CONFLICT", "Genau ein Entwürfe-Ordner im Postfach erforderlich."
 			)
 		backend.mark_creation_started(record)
-		remote_id = backend.provider.create_draft(
-			mailbox_id=mailboxes[0].id,
-			sender=payload["sender"],
-			recipients=payload["recipients"],
-			cc=payload["cc"],
-			subject=payload["subject"],
-			text_body=payload["message"],
-			draft_token=record["draft_token"],
-			rfc_message_id=record["rfc_message_id"],
-			in_reply_to=tuple(payload["in_reply_to"]),
-			references=tuple(payload["references"]),
-		)
+		try:
+			remote_id = backend.create_draft(
+				mailbox_id=mailboxes[0].id,
+				sender=payload["sender"],
+				recipients=payload["recipients"],
+				cc=payload["cc"],
+				subject=payload["subject"],
+				text_body=payload["message"],
+				draft_token=record["draft_token"],
+				rfc_message_id=record["rfc_message_id"],
+				in_reply_to=tuple(payload["in_reply_to"]),
+				references=tuple(payload["references"]),
+			)
+		except DraftCreationRejected:
+			backend.release_creation_claim(record)
+			raise
 		# Persist the provider ID even if the subsequent read fails or is temporarily stale.
 		backend.record_created(record, remote_id)
 		return backend.result(record, "Draft", None, reused=reused)

@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import html
-import json
 import uuid
+from datetime import timedelta
 from functools import wraps
 
 import frappe
-from frappe.utils import getdate, now_datetime
+from frappe.utils import get_datetime, getdate, now_datetime
 
 from hausverwaltung.hausverwaltung.agent_tools.contracts import AgentToolError
+from hausverwaltung.hausverwaltung.agent_tools.email_budget import fit_context, fit_preview, fits_data
 from hausverwaltung.hausverwaltung.agent_tools.fac_overview import OverviewError, _exact_identity
 from hausverwaltung.hausverwaltung.agent_tools.fac_overview_backend import OverviewBackend
 from hausverwaltung.hausverwaltung.services.email_draft_contract import (
+	DraftCreationRejected,
 	EmailDraftError,
 	addresses,
 	classify_remote,
@@ -27,6 +29,15 @@ DRAFT = "Email Entwurf"
 ACCOUNT = "Mail Archive Account"
 SOURCE = "Mail Archive Message"
 FOLDER = "Mail Archive Folder"
+MISSING_PAUSE_THRESHOLD = 6
+
+
+def _reload_locked(doc):
+	# A locking read sees the latest row even under MariaDB REPEATABLE READ.
+	# Merely locking name followed by a normal reload can read an old snapshot.
+	doc.flags.for_update = True
+	doc.reload()
+	return doc
 
 
 def _access(write=False):
@@ -48,12 +59,12 @@ def _endpoint(*, write=False):
 		def wrapped(*args, **kwargs):
 			try:
 				_access(write)
-				result = {"ok": True, "data": function(*args, **kwargs)}
-				if len(json.dumps(result, ensure_ascii=False, default=str)) > 9_500:
+				data = function(*args, **kwargs)
+				if not fits_data(data):
 					raise EmailDraftError(
 						"LIMIT_EXCEEDED", "Mailantwort zu groß; limit oder body_limit verkleinern."
 					)
-				return result
+				return {"ok": True, "data": data}
 			except (EmailDraftError, AgentToolError, OverviewError) as error:
 				return {"ok": False, "error": {"code": error.code, "message": str(error)}}
 			except frappe.PermissionError:
@@ -305,7 +316,6 @@ def _body_quality(mail):
 	}
 
 
-@frappe.whitelist()
 @_endpoint()
 def list_mieter_emails(mietvertrag, archive_account, limit=10, offset=0):
 	_contract_doc, identity = _contract(mietvertrag)
@@ -329,37 +339,50 @@ def list_mieter_emails(mietvertrag, archive_account, limit=10, offset=0):
 		raise EmailDraftError("LIMIT_EXCEEDED", "Mehr als 1.000 Archivnachrichten; Scope eingrenzen.")
 	rows = [row for row in rows if frappe.has_permission(SOURCE, "read", doc=row.name)]
 	candidates = rows[offset : offset + limit]
-	page = []
+	page, next_offset = [], offset
+
+	def result(budget_limited=False):
+		return {
+			"identity": identity,
+			"archive_account": account.name,
+			"messages": page,
+			"indexed_total_count": len(rows),
+			"returned": len(page),
+			"has_more": next_offset < len(rows),
+			"next_offset": next_offset if next_offset < len(rows) else None,
+			"output_budget_limited": budget_limited,
+			"coverage": {
+				"source": "permission_checked_archive_index",
+				"scope": "explicit_contract_folders",
+				"mailbox_complete": False,
+				"returned_messages_verified_live": True,
+				"initial_sync_completed": bool(account.initial_sync_completed),
+				"last_sync_on": account.last_sync_on,
+			},
+		}
+
 	provider = _provider(account) if candidates else None
 	for candidate in candidates:
 		try:
 			_source_doc, mail = _source(candidate.name, account, identity, provider, (scope, _folders))
 		except EmailDraftError as error:
 			if error.code in {"MESSAGE_MISMATCH", "MESSAGE_NOT_FOUND", "INVALID_SOURCE"}:
+				next_offset += 1
 				continue
 			raise
 		page.append(_summary(mail, candidate.name))
-	next_offset = offset + len(candidates)
-	return {
-		"identity": identity,
-		"archive_account": account.name,
-		"messages": page,
-		"indexed_total_count": len(rows),
-		"returned": len(page),
-		"has_more": next_offset < len(rows),
-		"next_offset": next_offset if next_offset < len(rows) else None,
-		"coverage": {
-			"source": "permission_checked_archive_index",
-			"scope": "explicit_contract_folders",
-			"mailbox_complete": False,
-			"returned_messages_verified_live": True,
-			"initial_sync_completed": bool(account.initial_sync_completed),
-			"last_sync_on": account.last_sync_on,
-		},
-	}
+		next_offset += 1
+		if not fits_data(result(True)):
+			page.pop()
+			next_offset -= 1
+			if not page:
+				raise EmailDraftError(
+					"LIMIT_EXCEEDED", "Metadaten einer Mail überschreiten das Ausgabebudget."
+				)
+			return result(True)
+	return result()
 
 
-@frappe.whitelist()
 @_endpoint()
 def get_email_context(mietvertrag, message, limit=5, body_offset=0, body_limit=4000):
 	_contract_doc, identity = _contract(mietvertrag)
@@ -408,35 +431,39 @@ def get_email_context(mietvertrag, message, limit=5, body_offset=0, body_limit=4
 		)
 	body_quality = _body_quality(mail)
 	next_offset = min(body_offset + body_limit, len(text))
-	return {
-		"identity": identity,
-		"archive_account": account.name,
-		"source": {
-			**_summary(mail, source.name),
-			"body": text[body_offset:next_offset],
-			"body_offset": body_offset,
-			"body_characters_available": len(text),
-			"body_complete": body_offset == 0 and next_offset == len(text) and not any(body_quality.values()),
-			"next_body_offset": next_offset if next_offset < len(text) else None,
-			"provider_body_truncated": body_quality["truncated"],
-			"provider_body_encoding_problem": body_quality["encoding_problem"],
-			"body_text_source": mail.raw.get("body_text_source", "plain"),
-		},
-		"thread": thread,
-		"coverage": {
-			"thread_complete": False,
-			"thread_has_more": len(rows) > limit,
-			"scope": "indexed_contract_folder_messages",
-			"attachments_loaded": False,
-			"content_is_external": True,
-		},
-	}
+	return fit_context(
+		{
+			"identity": identity,
+			"archive_account": account.name,
+			"source": {
+				**_summary(mail, source.name),
+				"body": text[body_offset:next_offset],
+				"body_offset": body_offset,
+				"body_characters_available": len(text),
+				"body_complete": body_offset == 0
+				and next_offset == len(text)
+				and not any(body_quality.values()),
+				"next_body_offset": next_offset if next_offset < len(text) else None,
+				"provider_body_truncated": body_quality["truncated"],
+				"provider_body_encoding_problem": body_quality["encoding_problem"],
+				"body_text_source": mail.raw.get("body_text_source", "plain"),
+			},
+			"thread": thread,
+			"coverage": {
+				"thread_complete": False,
+				"thread_has_more": len(rows) > limit,
+				"scope": "indexed_contract_folder_messages",
+				"attachments_loaded": False,
+				"content_is_external": True,
+			},
+		}
+	)
 
 
 class _DraftBackend:
-	def __init__(self, account):
+	def __init__(self, account, *, connect=True):
 		self.account = account
-		self.provider = _provider(account)
+		self.provider = _provider(account) if connect else None
 		self.site, self.user = frappe.local.site, frappe.session.user
 
 	def lock(self, key):
@@ -456,6 +483,14 @@ class _DraftBackend:
 				or doc.reference_name != payload["identity"]["mietvertrag"]
 			):
 				raise EmailDraftError("REQUEST_CONFLICT", "request_id ist bereits anders gebunden.")
+			if doc.status == "Cancelled":
+				raise EmailDraftError(
+					"REQUEST_CLOSED", "Dieser Auftrag wurde manuell verworfen; kein neuer Entwurf erstellt."
+				)
+			if doc.mailbox_sync_paused and doc.mailbox_pause_reason != "Rejected":
+				raise EmailDraftError(
+					"TRACKING_PAUSED", "Abgleich pausiert. In ERPNext prüfen und bei Bedarf fortsetzen."
+				)
 			return self._record(doc), True
 		token = uuid.uuid4().hex
 		doc = frappe.get_doc(
@@ -478,6 +513,8 @@ class _DraftBackend:
 				"draft_token": token,
 				"draft_rfc_message_id": f"{token}@{payload['sender'].split('@', 1)[1]}",
 				"mailbox_sync_status": "Pending",
+				"mailbox_sync_paused": 1,
+				"mailbox_pause_reason": "Rejected",
 			}
 		).insert(ignore_permissions=True)
 		# A remote create may succeed even if the HTTP reply or later DB write fails.
@@ -498,29 +535,125 @@ class _DraftBackend:
 	def mark_creation_started(self, record):
 		# Redis leases can expire during slow mailbox queries. This row lock
 		# is the final, transactional guard against a second remote create.
-		rows = frappe.db.sql(
-			"SELECT remote_creation_started FROM `tabEmail Entwurf` WHERE name=%s FOR UPDATE",
-			(record["name"],),
-		)
-		if not rows or rows[0][0]:
+		self._lock_record(record["name"])
+		doc = record["doc"]
+		_reload_locked(doc)
+		if doc.remote_creation_started or doc.provider_draft_id or doc.sent_provider_message_id:
 			raise EmailDraftError(
 				"REMOTE_STATE_UNCERTAIN",
 				"Entwurfserstellung bereits beansprucht; dieselbe request_id später prüfen.",
 			)
-		record["doc"].db_set("remote_creation_started", 1, update_modified=False)
-		record["creation_started"] = True
-		frappe.db.commit()
-
-	def record_created(self, record, remote_id):
-		record["doc"].db_set(
+		if (
+			doc.status != "Draft"
+			or doc.delivery_backend != "Stalwart"
+			or doc.mail_archive_account != self.account.name
+			or doc.draft_fingerprint != record["fingerprint"]
+			or (doc.mailbox_sync_paused and doc.mailbox_pause_reason != "Rejected")
+		):
+			raise EmailDraftError(
+				"TRACKING_PAUSED", "Auftrag ist geschlossen, pausiert oder wurde verändert."
+			)
+		attempt = uuid.uuid4().hex
+		doc.db_set(
 			{
-				"provider_draft_id": remote_id,
-				"mailbox_sync_status": "Draft",
-				"mailbox_checked_on": now_datetime(),
+				"remote_creation_started": 1,
+				"remote_creation_attempt": attempt,
+				"mailbox_sync_paused": 0,
+				"mailbox_pause_reason": "",
+				"mailbox_missing_count": 0,
+				"mailbox_next_check_on": None,
 			},
 			update_modified=False,
 		)
-		record["provider_message_id"] = remote_id
+		record["creation_started"] = True
+		record["creation_attempt"] = attempt
+		frappe.db.commit()
+
+	def _lock_record(self, name):
+		rows = frappe.db.sql("SELECT name FROM `tabEmail Entwurf` WHERE name=%s FOR UPDATE", (name,))
+		if not rows:
+			raise EmailDraftError("NOT_FOUND", "Entwurfsauftrag nicht verfügbar.")
+
+	def create_draft(self, **arguments):
+		from thunderbird_hausverwaltung.thunderbird_hausverwaltung.mail_archive.providers.base import (
+			DraftNotCreatedError,
+		)
+
+		try:
+			return self.provider.create_draft(**arguments)
+		except DraftNotCreatedError as error:
+			raise DraftCreationRejected(str(error)) from error
+
+	def release_creation_claim(self, record):
+		self._lock_record(record["name"])
+		doc = record["doc"]
+		_reload_locked(doc)
+		if (
+			not record.get("creation_attempt")
+			or doc.remote_creation_attempt != record["creation_attempt"]
+			or not doc.remote_creation_started
+			or doc.status != "Draft"
+			or doc.delivery_backend != "Stalwart"
+			or doc.mail_archive_account != self.account.name
+			or doc.draft_fingerprint != record["fingerprint"]
+			or doc.provider_draft_id
+			or doc.sent_provider_message_id
+			or doc.communication
+		):
+			raise EmailDraftError(
+				"REMOTE_STATE_UNCERTAIN",
+				"Erstellungsversuch nicht eindeutig zugeordnet; Claim bleibt erhalten.",
+			)
+		pause_reason = (
+			"Manual" if doc.mailbox_sync_paused and doc.mailbox_pause_reason == "Manual" else "Rejected"
+		)
+		doc.db_set(
+			{
+				"remote_creation_started": 0,
+				"remote_creation_attempt": "",
+				"mailbox_sync_status": "Rejected",
+				"mailbox_sync_paused": 1,
+				"mailbox_pause_reason": pause_reason,
+				"mailbox_next_check_on": None,
+				"mailbox_checked_on": now_datetime(),
+				"last_send_error": "Kein Entwurf angelegt. Ursache beheben und dieselbe request_id erneut verwenden.",
+			},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		record["creation_started"] = False
+		record["creation_attempt"] = ""
+
+	def record_created(self, record, remote_id):
+		self._lock_record(record["name"])
+		doc = _reload_locked(record["doc"])
+		if (
+			doc.remote_creation_attempt != record.get("creation_attempt")
+			or not doc.remote_creation_started
+			or doc.delivery_backend != "Stalwart"
+			or doc.mail_archive_account != self.account.name
+			or doc.draft_fingerprint != record["fingerprint"]
+		):
+			raise EmailDraftError(
+				"REMOTE_STATE_UNCERTAIN",
+				"Erfolgreicher Mailserver-Aufruf gehört nicht zum aktuellen Erstellungsversuch.",
+			)
+		if doc.status == "Sent":
+			record["mailbox_state"] = "Sent"
+		elif doc.status == "Draft" and not doc.mailbox_sync_paused:
+			doc.db_set(
+				{
+					"provider_draft_id": remote_id,
+					"mailbox_sync_status": "Draft",
+					"mailbox_checked_on": now_datetime(),
+				},
+				update_modified=False,
+			)
+		elif not doc.provider_draft_id:
+			# Keep a late successful create identifiable even after human discard/pause.
+			# Do not reopen or change the user's tracking decision.
+			doc.db_set("provider_draft_id", remote_id, update_modified=False)
+		record["provider_message_id"] = doc.provider_draft_id or remote_id
 		frappe.db.commit()
 
 	def record_remote(self, record, state, remote):
@@ -529,6 +662,8 @@ class _DraftBackend:
 		frappe.db.commit()
 
 	def result(self, record, state, remote, reused):
+		if remote is None:
+			state = record.get("mailbox_state", state)
 		return {
 			"draft": record["name"],
 			"archive_account": self.account.name,
@@ -540,7 +675,6 @@ class _DraftBackend:
 		}
 
 
-@frappe.whitelist(methods=["POST"])
 @_endpoint(write=True)
 def create_email_draft(
 	mietvertrag,
@@ -585,7 +719,6 @@ def _live_state(doc, account):
 	)
 
 
-@frappe.whitelist()
 @_endpoint()
 def get_email_draft(draft):
 	doc = _read(DRAFT, draft)
@@ -595,39 +728,73 @@ def get_email_draft(draft):
 	account = _account(doc.mail_archive_account)
 	state, remote = _live_state(doc, account)
 	body_quality = _body_quality(remote) if remote else {"truncated": False, "encoding_problem": False}
-	return {
-		"draft": doc.name,
-		"identity": identity,
-		"archive_account": account.name,
-		"mailbox_state": state,
-		"provider_message_id": remote.id if remote else None,
-		"message": {
-			**_summary(remote),
-			"body_preview": remote.text_body[:2000],
-			"body_complete": len(remote.text_body) <= 2000 and not any(body_quality.values()),
-			"provider_body_truncated": body_quality["truncated"],
-			"provider_body_encoding_problem": body_quality["encoding_problem"],
+	body_available = bool(
+		remote and (remote.text_body or not (remote.raw.get("textBody") or remote.raw.get("htmlBody")))
+	)
+	return fit_preview(
+		{
+			"draft": doc.name,
+			"identity": identity,
+			"archive_account": account.name,
+			"mailbox_state": state,
+			"provider_message_id": remote.id if remote else None,
+			"message": {
+				**_summary(remote),
+				"body_preview": remote.text_body[:2000],
+				"body_available": body_available,
+				"body_complete": body_available
+				and len(remote.text_body) <= 2000
+				and not any(body_quality.values()),
+				"provider_body_truncated": body_quality["truncated"],
+				"provider_body_encoding_problem": body_quality["encoding_problem"],
+			}
+			if remote
+			else None,
+			"stored_status": doc.status,
+			"sync_paused": bool(doc.mailbox_sync_paused),
+			"pause_reason": doc.mailbox_pause_reason,
+			"next_check_on": doc.mailbox_next_check_on,
+			"communication": doc.communication,
+			"review_in": "Thunderbird",
+			"coverage": {
+				"live_mailbox_read": True,
+				"database_updated": False,
+				"send_evidence": "sent_folder_copy",
+				"delivery_confirmed": False,
+			},
 		}
-		if remote
-		else None,
-		"stored_status": doc.status,
-		"communication": doc.communication,
-		"review_in": "Thunderbird",
-		"coverage": {
-			"live_mailbox_read": True,
-			"database_updated": False,
-			"send_evidence": "sent_folder_copy",
-			"delivery_confirmed": False,
-		},
-	}
+	)
 
 
 def _persist_remote(doc, state, remote, account):
 	frappe.db.sql("SELECT name FROM `tabEmail Entwurf` WHERE name=%s FOR UPDATE", (doc.name,))
-	doc.reload()
+	_reload_locked(doc)
 	if doc.delivery_backend != "Stalwart" or doc.mail_archive_account != account.name:
 		raise EmailDraftError("REMOTE_CONFLICT", "Postfachzuordnung wurde während des Abgleichs geändert.")
-	updates = {"mailbox_sync_status": state, "mailbox_checked_on": now_datetime(), "last_send_error": ""}
+	if doc.status != "Draft" or doc.mailbox_sync_paused:
+		return
+	now = now_datetime()
+	updates = {"mailbox_sync_status": state, "mailbox_checked_on": now, "last_send_error": ""}
+	if state == "Missing":
+		missing_count = int(doc.mailbox_missing_count or 0) + 1
+		updates.update(
+			{
+				"mailbox_missing_count": missing_count,
+				"mailbox_next_check_on": now
+				+ timedelta(minutes=min(5 * 2 ** min(missing_count - 1, 8), 1440)),
+			}
+		)
+		if missing_count >= MISSING_PAUSE_THRESHOLD:
+			updates.update(
+				{
+					"mailbox_sync_paused": 1,
+					"mailbox_pause_reason": "Missing",
+					"mailbox_next_check_on": None,
+					"last_send_error": "Entwurfskennung mehrfach nicht gefunden. Abgleich pausiert; bitte manuell prüfen.",
+				}
+			)
+	else:
+		updates.update({"mailbox_missing_count": 0, "mailbox_next_check_on": None})
 	if remote:
 		updates["provider_draft_id"] = remote.id
 	if state == "Sent" and remote:
@@ -691,13 +858,60 @@ def _persist_remote(doc, state, remote, account):
 	doc.db_set(updates, update_modified=False)
 
 
+def manage_mailbox_tracking(draft, action):
+	"""Human Desk action; changes ERP tracking only, never mail or the creation claim."""
+	frappe.only_for(("System Manager", "Hausverwalter"))
+	if not isinstance(action, str) or action not in {"pause", "resume", "discard"}:
+		raise EmailDraftError("INVALID_ARGUMENT", "Unbekannte Abgleichsaktion.")
+	doc = _read(DRAFT, draft)
+	if doc.delivery_backend != "Stalwart" or doc.reference_doctype != "Mietvertrag":
+		raise EmailDraftError("INVALID_DRAFT", "Kein Stalwart-Mieterauftrag.")
+	account = _read(ACCOUNT, doc.mail_archive_account)
+	_read("Mietvertrag", doc.reference_name)
+	backend = _DraftBackend(account, connect=False)
+	with backend.lock(doc.draft_request_key):
+		backend._lock_record(doc.name)
+		_reload_locked(doc)
+		if (
+			doc.delivery_backend != "Stalwart"
+			or doc.mail_archive_account != account.name
+			or doc.status != "Draft"
+		):
+			raise EmailDraftError("INVALID_DRAFT", "Nur offene Stalwart-Aufträge können verwaltet werden.")
+		if (
+			action == "resume"
+			and not doc.remote_creation_started
+			and not doc.provider_draft_id
+			and doc.mailbox_pause_reason != "Manual"
+		):
+			raise EmailDraftError(
+				"DRAFT_NOT_CREATED",
+				"Noch kein Entwurf angelegt. Erstellung mit derselben request_id erneut versuchen.",
+			)
+		updates = {
+			"mailbox_sync_paused": int(action != "resume"),
+			"mailbox_pause_reason": "Manual" if action != "resume" else "",
+			"mailbox_next_check_on": None,
+			"mailbox_missing_count": 0,
+		}
+		if action == "discard":
+			updates["status"] = "Cancelled"
+		doc.db_set(updates, update_modified=False)
+		frappe.db.commit()
+	return {"draft": doc.name, "action": action, "mailbox_changed": False}
+
+
 def sync_stalwart_email_drafts():
 	"""Scheduler: reconcile actual sent copies; no enqueue/send actions."""
 	if "thunderbird_hausverwaltung" not in frappe.get_installed_apps():
 		return
 	for row in frappe.get_all(
 		DRAFT,
-		filters={"delivery_backend": "Stalwart", "status": "Draft"},
+		filters={"delivery_backend": "Stalwart", "status": "Draft", "mailbox_sync_paused": 0},
+		or_filters=[
+			["mailbox_next_check_on", "is", "not set"],
+			["mailbox_next_check_on", "<=", now_datetime()],
+		],
 		fields=["name"],
 		order_by="mailbox_checked_on asc, creation asc",
 		limit_page_length=50,
@@ -708,20 +922,41 @@ def sync_stalwart_email_drafts():
 			if not account.enabled:
 				continue
 			with _DraftBackend(account).lock(doc.draft_request_key):
-				doc.reload()
+				_reload_locked(doc)
+				if doc.status != "Draft" or doc.mailbox_sync_paused:
+					continue
+				if doc.mailbox_next_check_on and get_datetime(doc.mailbox_next_check_on) > now_datetime():
+					continue
+				if not doc.remote_creation_started and not doc.provider_draft_id:
+					doc.db_set(
+						{
+							"mailbox_sync_paused": 1,
+							"mailbox_pause_reason": "Rejected",
+							"mailbox_next_check_on": None,
+							"last_send_error": "Erstellung noch nicht gestartet. Dieselbe request_id erneut verwenden.",
+						},
+						update_modified=False,
+					)
+					frappe.db.commit()
+					continue
+				frappe.db.commit()
 				state, remote = _live_state(doc, account)
 				_persist_remote(doc, state, remote, account)
 				frappe.db.commit()
 		except Exception:
 			frappe.db.rollback()
-			frappe.db.set_value(
-				DRAFT,
-				row.name,
-				{
-					"mailbox_sync_status": "Error",
-					"mailbox_checked_on": now_datetime(),
-					"last_send_error": "Postfachstatus konnte nicht eindeutig abgeglichen werden.",
-				},
-				update_modified=False,
-			)
-			frappe.log_error(title="Stalwart Entwurfsabgleich", message=frappe.get_traceback())
+			error_traceback = frappe.get_traceback()
+			frappe.db.sql("SELECT name FROM `tabEmail Entwurf` WHERE name=%s FOR UPDATE", (row.name,))
+			_reload_locked(doc)
+			if doc.delivery_backend == "Stalwart" and doc.status == "Draft" and not doc.mailbox_sync_paused:
+				doc.db_set(
+					{
+						"mailbox_sync_status": "Error",
+						"mailbox_checked_on": now_datetime(),
+						"mailbox_next_check_on": now_datetime() + timedelta(hours=1),
+						"last_send_error": "Postfachstatus konnte nicht eindeutig abgeglichen werden.",
+					},
+					update_modified=False,
+				)
+			frappe.db.commit()
+			frappe.log_error(title="Stalwart Entwurfsabgleich", message=error_traceback)

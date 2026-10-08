@@ -34,6 +34,11 @@
   "draft_token",
   "draft_rfc_message_id",
   "remote_creation_started",
+  "remote_creation_attempt",
+  "mailbox_sync_paused",
+  "mailbox_pause_reason",
+  "mailbox_next_check_on",
+  "mailbox_missing_count",
   "content_section",
   "recipients",
   "cc",
@@ -245,7 +250,7 @@
   {
    "fieldname": "mailbox_sync_status",
    "fieldtype": "Select",
-   "options": "Pending\nDraft\nSent\nMissing\nError",
+   "options": "Pending\nDraft\nSent\nMissing\nError\nRejected",
    "label": "Postfachstatus",
    "read_only": 1
   },
@@ -288,6 +293,40 @@
    "fieldname": "remote_creation_started",
    "fieldtype": "Check",
    "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "remote_creation_attempt",
+   "fieldtype": "Data",
+   "length": 64,
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "mailbox_sync_paused",
+   "fieldtype": "Check",
+   "label": "Abgleich pausiert",
+   "default": "0",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mailbox_pause_reason",
+   "fieldtype": "Select",
+   "label": "Abgleich pausiert wegen",
+   "options": "\nManual\nMissing\nRejected",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mailbox_next_check_on",
+   "fieldtype": "Datetime",
+   "label": "Nächster Postfachabgleich",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mailbox_missing_count",
+   "fieldtype": "Int",
+   "label": "Folgende Abgleiche ohne Treffer",
+   "default": "0",
    "read_only": 1
   }
  ],

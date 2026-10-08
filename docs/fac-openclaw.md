@@ -95,7 +95,7 @@ Archivsuche bleibt für die Suche nach solchen Nachrichten nutzbar.
 Eine gemeinsam genutzte E-Mail-Adresse ersetzt keine Vertragszuordnung;
 Mehrdeutigkeit wird abgelehnt.
 
-Listen liefern standardmäßig zehn, höchstens zwanzig Nachrichten,
+Listen fordern standardmäßig zehn, höchstens zwanzig Nachrichten an,
 `offset` maximal 1000. `indexed_total_count` zählt lesbare Indexkandidaten;
 die zurückgegebenen Nachrichten werden zusätzlich anhand ihres aktuellen
 Stalwart-Ordners geprüft. Während eines laufenden Archivabgleichs können
@@ -108,8 +108,18 @@ Nachrichten-ID erneut lesen. `body_complete`, `provider_body_truncated`
 und `provider_body_encoding_problem` prüfen. Ein Ausschnitt darf nicht als
 vollständiger Gesprächsverlauf ausgegeben werden. Alle vier Werkzeuge sind
 für Modell und Code vorgesehen und haben das Modellbudget von 10000
-Zeichen; zu große Antworten werden mit einem strukturierten Fehler
-abgelehnt.
+Zeichen. Die API misst mit derselben FAC-Serialisierung einschließlich
+Unicode-Escapes und Einrückung und hält ihre Ergebnisse bei höchstens 9500 Zeichen.
+Passt eine Seite nicht, liefert sie weniger Listeneinträge oder einen
+kürzeren Textausschnitt. `output_budget_limited=true` kennzeichnet die
+Anpassung; die Fortsetzungsposition liegt genau hinter den verarbeiteten
+Kandidaten beziehungsweise dem gelieferten Text. Noch nicht gelieferte
+Nachrichten werden auf der Folgeseite erneut berücksichtigt. Beim Kontext
+kann auch der Gesprächsausschnitt verkleinert werden;
+`thread_has_more=true` und `thread_complete=false` bleiben dabei ehrlich.
+IDs, Betreff und Adressen werden nicht abgeschnitten. Überschreiten bereits
+die Metadaten einer einzelnen Nachricht das Budget, wird der Aufruf mit
+`LIMIT_EXCEEDED` abgelehnt.
 
 Der Entwurfstext ist Klartext, höchstens 20000 Zeichen / 50000 UTF-8-Bytes,
 der Betreff höchstens 500 Zeichen. Anhänge werden in dieser Version
@@ -133,12 +143,17 @@ Datenbankänderung; die spätere Synchronisierung übernimmt die gespeicherte
 Status- und Schriftverkehrszuordnung. Die in Thunderbird tatsächlich
 bearbeitete Nachricht ist dabei maßgeblich.
 
-Ein Scheduler gleicht bis zu 50 offene Aufträge alle fünf Minuten ab. Eine
+Ein Scheduler gleicht alle fünf Minuten bis zu 50 fällige, nicht pausierte
+offene Aufträge ab. Eine
 an der Entwurfskennung erkannte Kopie im Gesendet-Ordner wird mit dem
 tatsächlich bearbeiteten Inhalt als `Communication` am Mietvertrag
 verknüpft. Das ist eine beobachtete gesendete Kopie, keine Bestätigung der
 Zustellung beim Empfänger. Fehlende, verschobene, mehrdeutige, gekürzte oder
-fehlerhaft dekodierte Nachrichten werden nicht durch Namens-/Betreffvergleiche erraten. Der
+fehlerhaft dekodierte Nachrichten werden nicht durch Namens-/Betreffvergleiche
+erraten. Wird eine gesendete Mail vor diesem Abgleich aus „Gesendet“ in
+einen Mieterordner verschoben, findet die Suche zwar weiterhin die Kennung,
+akzeptiert den Ordner aber nicht als Versandbeleg. Der Auftrag meldet dann
+`REMOTE_CONFLICT`; eine automatische Versandzuordnung erfolgt nicht. Der
 ursprüngliche Vorschlag im ERP-Datensatz bleibt als Auftragsstand erhalten.
 Stalwart-Entwürfe können nicht durch den bisherigen ERPNext-Queue-Workflow
 versendet werden.
@@ -161,7 +176,29 @@ Bei einem abgebrochenen Mailserver-Aufruf wird die dauerhafte Kennung
 kontoweit gesucht. Bleibt der Ausgang unklar, liefert die Wiederholung
 `REMOTE_STATE_UNCERTAIN` und erzeugt keinen weiteren Entwurf. Ein
 transaktionaler Claim schützt zusätzlich vor gleichzeitig laufenden
-Wiederholungen nach Ablauf einer Redis-Sperre.
+Wiederholungen nach Ablauf einer Redis-Sperre. Nachweislich fehlgeschlagene
+Erstellungen vor dem Schreibaufruf oder ein eindeutiges JMAP-`notCreated`
+liefern dagegen `DRAFT_NOT_CREATED`. Der Claim wird mit Zeilensperre und
+Prüfung der eigenen Versuchskennung freigegeben; nach Beheben der Ursache
+kann derselbe Auftrag mit derselben `request_id` wiederholt werden.
+Abgelehnte und noch nicht gestartete Aufträge pausieren bis zum erneuten
+Erstellungsversuch.
+Timeouts nach dem Schreibaufruf, fehlerhafte Antworten und `alreadyExists`
+geben den Claim nicht frei. Ein leerer Suchtreffer allein erlaubt keine
+Neuerstellung.
+
+Bei `Missing` wächst der Abstand bis zum nächsten Abgleich von fünf auf
+zehn, zwanzig, vierzig und achtzig Minuten. Nach sechs Abgleichen mit
+`Missing` ohne zwischenzeitlichen Fund pausiert der Auftrag. Er bleibt als `Draft`
+gespeichert: fehlende Kennungen beweisen weder Löschung noch Versand.
+Fehlerabgleiche werden frühestens nach einer Stunde erneut versucht.
+System Manager und Hausverwalter mit den nötigen Dokumentrechten können
+in Desk den Abgleich pausieren, fortsetzen oder den ERPNext-Auftrag
+verwerfen. Verwerfen setzt den Auftrag auf `Cancelled` und beendet den
+Abgleich; eine vorhandene Mail bleibt im Postfach. Die ursprüngliche
+`request_id` wird dadurch nicht für eine neue Erstellung freigegeben.
+Fortsetzen setzt keinen Erstellungs-Claim zurück. Diese Verwaltungsaktionen
+gehören nicht zum FAC-Werkzeugkatalog.
 
 Die E-Mail-Werkzeuge werden nicht durch `configure_readonly` oder die
 standardmäßige externe Aktivierung eingeschaltet. Ohne vorhandene,
@@ -169,10 +206,18 @@ aktivierte `FAC Tool Configuration` verweigert die Werkzeugklasse den
 Zugriff auch dann, wenn FAC neue Hook-Werkzeuge standardmäßig anbietet.
 Die erlaubten Agentrollen und die Dokument-/Postfachrechte gelten weiterhin;
 ein Werkzeugschalter erweitert keine Leseberechtigung für fremde Postfächer.
-Lesen ist für `Agent Readonly API`, `Agent Email Drafts`, `System Manager`
-und `Hausverwalter` mit den entsprechenden Dokumentrechten möglich.
+Standardmäßig haben `Agent Email Drafts`, `System Manager` und
+`Hausverwalter` Leserecht auf `Email Entwurf`; zusätzliche Vertrags- und
+Postfachrechte bleiben erforderlich. Die Rolle `Agent Readonly API` allein
+genügt nicht. Sie kann nur lesen, wenn zusätzlich ausdrücklich Leserechte
+auf `Email Entwurf` und die benötigten Dokumente eingerichtet wurden.
 Zum Erzeugen eines Entwurfs ist die Rolle `Agent Email Drafts`
-erforderlich, außer für `System Manager` und `Hausverwalter`.
+erforderlich, außer für `System Manager` und `Hausverwalter`. Die vier
+E-Mail-Funktionen sind interne FAC-Aufrufe und nicht als REST-Methoden
+freigegeben; `/api/method/...email_api...` kann die FAC-Aktivierung daher
+nicht umgehen. Der separate Desk-Aufruf zur Abgleichsverwaltung ist auf
+die genannten menschlichen Verwaltungsrollen begrenzt und verändert
+weder Postfachinhalte noch Erstellungs-Claims.
 
 Nach Bereitstellung des geänderten Codes und Migration der DocTypes kann
 ein System Manager den externen Benutzer ausdrücklich aktivieren:
@@ -468,7 +513,9 @@ python -m unittest \
   hausverwaltung.hausverwaltung.agent_tools.test_fac_routing \
   hausverwaltung.hausverwaltung.agent_tools.test_fac_output.TestFacOutput \
   hausverwaltung.hausverwaltung.agent_tools.test_fac_output.TestFacContract \
-  hausverwaltung.hausverwaltung.agent_tools.test_fac_email_tools
+  hausverwaltung.hausverwaltung.agent_tools.test_fac_email_tools \
+  hausverwaltung.hausverwaltung.agent_tools.test_email_budget \
+  hausverwaltung.hausverwaltung.services.test_email_draft_contract
 ```
 
 Für den Live-Test zusätzlich mit dem tatsächlichen API-Benutzer die Übersicht
