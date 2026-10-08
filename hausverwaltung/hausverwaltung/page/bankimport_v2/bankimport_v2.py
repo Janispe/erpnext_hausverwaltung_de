@@ -44,6 +44,7 @@ from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import i
 	sync_cancelled_payment_entry_links,
 )
 from hausverwaltung.hausverwaltung.doctype.bankauszug_import.customer_payment_split import customer_payments
+from hausverwaltung.hausverwaltung.utils.display_titles import get_titles, title_of
 from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
 	BOOKING_RULE_DOCTYPE,
 	BUILDER_RULE_CODE,
@@ -135,6 +136,7 @@ def _doc_audit(doctype: str | None, name: str | None) -> dict[str, Any] | None:
 	return {
 		"doctype": doctype,
 		"name": name,
+		"title": title_of(doctype, name),
 		"createdBy": values.get("owner"),
 		"createdAt": str(values.get("creation")) if values.get("creation") else None,
 		"modifiedBy": values.get("modified_by"),
@@ -318,9 +320,43 @@ def get_overview(import_name: str) -> dict[str, Any]:
 			"status": doc.status,
 			"offeneBuchungen": doc.get("offene_buchungen"),
 		},
-		"rows": rows_out,
+		"rows": _with_party_labels(rows_out),
 		"phaseCounts": counts,
 	}
+
+
+# Customers are shown by person name (the tenancy is visible elsewhere); other
+# parties by their title. The IDs remain the values the actions work with.
+_PARTY_NAME_FIELDS = {"Customer": "customer_name", "Supplier": "supplier_name"}
+
+
+def _party_names(party_type: str, names: set[str]) -> dict[str, str]:
+	field = _PARTY_NAME_FIELDS.get(party_type)
+	if not field or not names:
+		return get_titles(party_type, names)
+	return {
+		row.name: row.get(field)
+		for row in frappe.get_all(party_type, filters={"name": ["in", sorted(names)]}, fields=["name", field])
+		if row.get(field)
+	}
+
+
+def _with_party_labels(rows: list[dict]) -> list[dict]:
+	wanted: dict[str, set[str]] = {}
+	for row in rows:
+		if row.get("partyTyp") and row.get("party"):
+			wanted.setdefault(row["partyTyp"], set()).add(row["party"])
+		for item in row.get("customerPayments") or []:
+			if item.get("customer"):
+				wanted.setdefault("Customer", set()).add(item["customer"])
+	labels = {party_type: _party_names(party_type, names) for party_type, names in wanted.items()}
+	for row in rows:
+		if row.get("party"):
+			row["partyLabel"] = labels.get(row.get("partyTyp"), {}).get(row["party"]) or row["party"]
+		for item in row.get("customerPayments") or []:
+			if item.get("customer"):
+				item["customerLabel"] = labels.get("Customer", {}).get(item["customer"]) or item["customer"]
+	return rows
 
 
 @frappe.whitelist()
@@ -1383,15 +1419,22 @@ def search_parties(party_type: str, txt: str = "") -> dict[str, Any]:
 		frappe.throw(_("Party-Typ muss Customer, Supplier oder Eigentuemer sein."))
 
 	title_field = title_fields[party_type]
+	# Customers additionally carry their tenancy as context (apartment, start).
+	context_field = "hv_display_title" if party_type == "Customer" else None
 	txt = (txt or "").strip()
 	or_filters = None
 	if txt:
 		or_filters = [["name", "like", f"%{txt}%"], [title_field, "like", f"%{txt}%"]]
+		if context_field:
+			or_filters.append([context_field, "like", f"%{txt}%"])
 
+	fields = ["name", f"{title_field} as title"]
+	if context_field:
+		fields.append(f"{context_field} as context")
 	rows = frappe.get_list(
 		party_type,
 		or_filters=or_filters,
-		fields=["name", f"{title_field} as title"],
+		fields=fields,
 		order_by="modified desc",
 		limit=20,
 	)
@@ -1399,11 +1442,19 @@ def search_parties(party_type: str, txt: str = "") -> dict[str, Any]:
 		{
 			"value": r["name"],
 			"label": r.get("title") or r["name"],
-			"description": r["name"] if r.get("title") and r["title"] != r["name"] else None,
+			"description": _party_context(r) or None,
 		}
 		for r in rows
 	]
 	return {"items": items}
+
+
+def _party_context(row: dict) -> str:
+	"""Tenancy context without the repeated person name; never the bare ID."""
+	context = (row.get("context") or "").strip()
+	if " — " in context:
+		context = context.rsplit(" — ", 1)[0].strip()
+	return context
 
 
 @frappe.whitelist()

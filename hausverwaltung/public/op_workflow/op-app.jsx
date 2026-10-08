@@ -35,6 +35,7 @@ function OpApp() {
     rows: [],
     mahnkandidaten: [],
     partyName: (id) => id,
+    partyContext: () => "",
     ccLabel: {},
     TODAY: frappe.datetime?.get_today?.() || new Date().toISOString().slice(0, 10),
   };
@@ -286,6 +287,7 @@ function OpApp() {
         map.set(r.party, {
           id: r.party,
           label: partyName(r.party) || r.party,
+          context: window.OFFENE_POSTEN.partyContext?.(r.party) || "",
           count: 0,
         });
       }
@@ -321,6 +323,7 @@ function OpApp() {
       const q = search.toLowerCase();
       rows = rows.filter(r =>
         (partyName(r.party) || "").toLowerCase().includes(q) ||
+        (window.OFFENE_POSTEN.partyContext?.(r.party) || "").toLowerCase().includes(q) ||
         (r.belegnummer || "").toLowerCase().includes(q) ||
         (r.party || "").toLowerCase().includes(q) ||
         (r.bemerkungen || "").toLowerCase().includes(q));
@@ -898,17 +901,19 @@ function OpApp() {
 
 function partyPickerLabel(party) {
   if (!party) return "";
-  return party.label && party.label !== party.id ? `${party.label} (${party.id})` : party.id;
+  const label = party.label || party.id;
+  return party.context ? `${label} · ${party.context}` : label;
 }
 
+// Name first, tenancy context below; the document ID only as tooltip.
 function PartyCellLabel({ party }) {
   const label = window.OFFENE_POSTEN.partyName(party) || party;
-  const showId = party && label !== party;
+  const context = window.OFFENE_POSTEN.partyContext?.(party) || "";
   return (
-    <>
+    <span title={party}>
       {label}
-      {showId && <span className="op-party-id">{party}</span>}
-    </>
+      {context && <span className="op-party-id">{context}</span>}
+    </span>
   );
 }
 
@@ -922,6 +927,7 @@ function PartyPicker({ value, searchText, parties, mode, onSearchChange, onChang
     if (!q) return parties.slice(0, 80);
     return parties.filter((party) =>
       (party.label || "").toLowerCase().includes(q) ||
+      (party.context || "").toLowerCase().includes(q) ||
       (party.id || "").toLowerCase().includes(q)
     ).slice(0, 80);
   }, [parties, q]);
@@ -1022,6 +1028,7 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
       (row.customer || "").toLowerCase().includes(q) ||
       (row.mietvertrag || "").toLowerCase().includes(q) ||
       (row.wohnung || "").toLowerCase().includes(q) ||
+      (row.wohnung_title || "").toLowerCase().includes(q) ||
       (row.serienbrief_vorlage || "").toLowerCase().includes(q) ||
       (row.invoices || []).some((invoice) =>
         (invoice.sales_invoice || "").toLowerCase().includes(q) ||
@@ -1165,12 +1172,11 @@ function MahnwesenView({ rows, search, setSearch, onCreateDunning, onCreateBulkD
                       <td>
                         <button className="op-row-toggle" onClick={() => toggle(row.key)}>{open ? "▾" : "▸"}</button>
                       </td>
-                      <td className="col-party">
+                      <td className="col-party" title={row.customer}>
                         {row.customer_name || row.customer}
-                        <span className="op-party-id">{row.customer}</span>
                       </td>
-                      <td>{row.wohnung || "—"}</td>
-                      <td>{row.mietvertrag || "—"}</td>
+                      <td title={row.wohnung || ""}>{row.wohnung_title || row.wohnung || "—"}</td>
+                      <td title={row.mietvertrag || ""}>{row.mietvertrag_title || row.mietvertrag || "—"}</td>
                       <td className="is-num col-offen">
                         {fmtEUR_op(invoiceFilter === "current" ? visibleSum : row.offen)}
                         {invoiceFilter === "current" && Math.abs((row.offen || 0) - visibleSum) > 0.01 && (
@@ -1332,7 +1338,7 @@ function MahnInlineDetail({ candidate, row, onCreateDunning }) {
       <div className="op-mahn-inline-head">
         <div>
           <strong>{candidate.customer_name || candidate.customer}</strong>
-          <span>{candidate.wohnung || "—"} · {candidate.mietvertrag || "—"} · {fmtEUR_op(row.offen)} offen</span>
+          <span>{candidate.wohnung_title || candidate.wohnung || "—"} · {candidate.mietvertrag_title || candidate.mietvertrag || "—"} · {fmtEUR_op(row.offen)} offen</span>
         </div>
         {drafts.length > 1 ? (
           <DocLink_op doctype="Dunning" name={draft.name} className="op-action-btn is-draft" onOpen={() => window.OP_ACTIONS.openDunning(draft.name)}>

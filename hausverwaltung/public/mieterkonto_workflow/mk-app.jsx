@@ -243,7 +243,8 @@ function App() {
     const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    const safeCustomer = (loadedSelection.customer || "mieterkonto").replace(/[^a-z0-9_-]+/gi, "_");
+    const fileLabel = mieter?.name && mieter.name !== "Bitte Mieter auswählen" ? mieter.name : loadedSelection.customer;
+    const safeCustomer = (fileLabel || "mieterkonto").replace(/[^a-z0-9äöüß_-]+/gi, "_");
     link.href = url;
     link.download = `${safeCustomer}_${loadedSelection.from}_${loadedSelection.to}.csv`;
     document.body.appendChild(link);

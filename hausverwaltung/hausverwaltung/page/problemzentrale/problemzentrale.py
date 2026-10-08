@@ -7,6 +7,8 @@ import frappe
 from frappe import _
 from frappe.utils import cint, now_datetime
 
+from hausverwaltung.hausverwaltung.utils.display_titles import send_titles
+
 from ...doctype.hausverwaltung_problem.hausverwaltung_problem import (
 	OPEN_STATUSES,
 	_fallback_problem_type_code,
@@ -233,6 +235,12 @@ def get_problem_detail(name: str) -> dict[str, Any]:
 	definition["code"] = type_code
 	ui = handler.get_ui(problem, details) or {}
 	ui["actions"] = list(ui.get("actions") or []) + _base_actions(problem)
+	send_titles(
+		[
+			(problem.get("bezug_doctype"), problem.get("bezug_name")),
+			(problem.get("weiterer_bezug_doctype"), problem.get("weiterer_bezug_name")),
+		]
+	)
 
 	return {
 		"problem": {

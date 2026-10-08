@@ -21,6 +21,8 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, cint, flt, formatdate, getdate, nowdate
 
+from hausverwaltung.hausverwaltung.utils.display_titles import add_titles
+
 _MV_MARKER_RE = re.compile(r"\[MV:([^\]]+)\]")
 _DUNNING_DOCSTATUS_LABEL = {
     0: "Draft",
@@ -834,12 +836,30 @@ def get_mahnkandidaten(filters: str | dict | None = None) -> dict:
             }
         )
 
+    _add_display_labels(list(groups.values()))
     candidates = sorted(
         groups.values(),
         key=lambda row: (row.get("oldest_age_days") or 0, row.get("offen") or 0),
         reverse=True,
     )
     return {"rows": candidates, "today": nowdate()}
+
+
+def _add_display_labels(rows: list[dict]) -> None:
+    """Readable apartment and contract labels; the IDs stay the action keys."""
+    add_titles(rows, {"wohnung": "Wohnung"})
+    contracts = sorted({row["mietvertrag"] for row in rows if row.get("mietvertrag")})
+    starts = dict(
+        frappe.get_all(
+            "Mietvertrag", filters={"name": ["in", contracts]}, fields=["name", "von"], as_list=True
+        )
+    ) if contracts else {}
+    for row in rows:
+        start = starts.get(row.get("mietvertrag"))
+        if start:
+            row["mietvertrag_title"] = _("Vertrag seit {0}").format(formatdate(start, "dd.MM.yyyy"))
+        elif row.get("mietvertrag"):
+            row["mietvertrag_title"] = row["mietvertrag"]
 
 
 # ───────────────────────────────────────────────────────────────────────────

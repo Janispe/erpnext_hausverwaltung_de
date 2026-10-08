@@ -14,6 +14,8 @@ import frappe
 from frappe import _
 from frappe.utils import nowdate
 
+from hausverwaltung.hausverwaltung.utils.display_titles import apartment_location
+
 
 @frappe.whitelist()
 def get_mieterkonto(filters: str | dict | None = None) -> dict:
@@ -78,8 +80,11 @@ def search_mieter(txt: str = "", status: str = "Läuft", limit: int = 30) -> lis
                 mv.name like %(search)s
                 or mv.kunde like %(search)s
                 or coalesce(c.customer_name, '') like %(search)s
+                or coalesce(mv.bezeichnung, '') like %(search)s
                 or coalesce(mv.wohnung, '') like %(search)s
+                or coalesce(w.bezeichnung, '') like %(search)s
                 or coalesce(mv.immobilie, '') like %(search)s
+                or coalesce(i.adresse_titel, '') like %(search)s
             )"""
         )
 
@@ -91,9 +96,13 @@ def search_mieter(txt: str = "", status: str = "Läuft", limit: int = 30) -> lis
             mv.name as mietvertrag,
             mv.status,
             mv.wohnung,
-            mv.immobilie
+            mv.immobilie,
+            coalesce(nullif(w.bezeichnung, ''), mv.wohnung) as wohnung_title,
+            coalesce(nullif(i.adresse_titel, ''), mv.immobilie) as immobilie_title
         from `tabMietvertrag` mv
         left join `tabCustomer` c on c.name = mv.kunde
+        left join `tabWohnung` w on w.name = mv.wohnung
+        left join `tabImmobilie` i on i.name = mv.immobilie
         where {" and ".join(filters)}
         order by
             case mv.status
@@ -153,8 +162,8 @@ def get_mieter_stammdaten(customer: str) -> dict:
     return {
         "customer_id": cust.name,
         "name": cust.customer_name,
-        "objekt": getattr(mietvertrag, "immobilie", None) if mietvertrag else None,
-        "einheit": getattr(mietvertrag, "wohnung", None) if mietvertrag else None,
+        # Readable labels; the IDs are only needed as link targets.
+        **(apartment_location(mietvertrag.wohnung) if mietvertrag else {"objekt": None, "einheit": None}),
         "vertrag_seit": getattr(mietvertrag, "von", None) if mietvertrag else None,
         "sollmiete_aktuell": getattr(mietvertrag, "bruttomiete", None) if mietvertrag else None,
         "aufteilung_aktuell": {

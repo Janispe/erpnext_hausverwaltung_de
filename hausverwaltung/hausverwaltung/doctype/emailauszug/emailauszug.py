@@ -10,6 +10,7 @@ from hausverwaltung.hausverwaltung.doctype.telefonnummernauszug.telefonnummernau
 	_normalize_sort_value,
 	_wohnung_key,
 )
+from hausverwaltung.hausverwaltung.utils.display_titles import title_of, wohnung_position_label
 from hausverwaltung.hausverwaltung.utils.gebaeudeteil import split_lage_gebaeudeteil
 
 
@@ -25,20 +26,22 @@ class Emailauszug(Document):
 		d = getdate(self.stichtag)
 		monat_jahr = f"{GERMAN_MONTHS[d.month]} {d.year}"
 		if self.immobilie:
-			return f"E-Mail-Liste {monat_jahr} - {self.immobilie}"
+			return f"E-Mail-Liste {monat_jahr} - {title_of('Immobilie', self.immobilie)}"
 		return f"E-Mail-Liste {monat_jahr}"
 
 	def get_grouped_eintraege(self) -> list[dict]:
 		"""Einträge nach Wohnung gruppieren — eine Druckzeile pro Wohnung."""
 		wohnungs_namen = {row.wohnung for row in (self.eintraege or []) if row.wohnung}
 		wohnung_id_map: dict[str, int | None] = {}
+		wohnung_label_map: dict[str, str] = {}
 		if wohnungs_namen:
 			for row in frappe.get_all(
 				"Wohnung",
 				filters={"name": ("in", list(wohnungs_namen))},
-				fields=["name", "id"],
+				fields=["name", "id", "gebaeudeteil", "name__lage_in_der_immobilie"],
 			):
 				wohnung_id_map[row["name"]] = row.get("id")
+				wohnung_label_map[row["name"]] = wohnung_position_label(row)
 
 		groups: list[dict] = []
 		current_key = None
@@ -50,6 +53,7 @@ class Emailauszug(Document):
 						"immobilie": row.immobilie or "",
 						"gebaeudeteil": (row.gebaeudeteil or "").strip(),
 						"wohnung": row.wohnung or "",
+						"wohnung_label": wohnung_label_map.get(row.wohnung) or row.wohnung or "",
 						"wohnung_id": wohnung_id_map.get(row.wohnung),
 						"mieter": [],
 					}

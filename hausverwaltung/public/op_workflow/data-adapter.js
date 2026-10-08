@@ -113,14 +113,24 @@
       mahnkandidaten: [],
       parties: {},
       partyName: (id) => id,
+      partyContext: () => "",
       ccLabel: {},
       paymentAccounts: [],
       TODAY: frappe.datetime?.get_today?.() || new Date().toISOString().slice(0, 10),
     };
   }
 
+  // Customer.hv_display_title = "<Wohnung> · seit <Datum> — <Name>".
+  // The name is shown separately, so keep only the tenancy context.
+  function tenancyContext(title) {
+    const text = String(title || "");
+    const cut = text.lastIndexOf(" — ");
+    return (cut > 0 ? text.slice(0, cut) : "").trim();
+  }
+
   async function hydrateLookups(rows) {
     const partyMap = {};
+    const partyContextMap = {};
     const partiesByType = {};
     for (const r of rows) {
       if (r.party && r.party_name) partyMap[r.party] = r.party_name;
@@ -131,14 +141,21 @@
     }
 
     const partyConfig = {
-      Customer: { fields: ["name", "customer_name"], label: (doc) => doc.customer_name || doc.name },
+      Customer: {
+        fields: ["name", "customer_name", "hv_display_title"],
+        label: (doc) => doc.customer_name || doc.hv_display_title || doc.name,
+        context: (doc) => tenancyContext(doc.hv_display_title),
+      },
       Supplier: { fields: ["name", "supplier_name"], label: (doc) => doc.supplier_name || doc.name },
     };
     for (const [doctype, names] of Object.entries(partiesByType)) {
       const cfg = partyConfig[doctype];
       if (!cfg || !names.size) continue;
       const docs = await getListInBatches(doctype, names, cfg.fields);
-      for (const doc of docs) partyMap[doc.name] = cfg.label(doc);
+      for (const doc of docs) {
+        partyMap[doc.name] = cfg.label(doc);
+        if (cfg.context) partyContextMap[doc.name] = cfg.context(doc);
+      }
     }
 
     const ccLabel = {};
@@ -148,7 +165,7 @@
       for (const cc of ccDocs) ccLabel[cc.name] = cc.cost_center_name || cc.name;
     }
 
-    return { partyMap, ccLabel };
+    return { partyMap, partyContextMap, ccLabel };
   }
 
   async function loadReal() {
@@ -157,7 +174,7 @@
       fetchRows(filters),
       fetchMahnkandidaten(filters),
     ]);
-    const { partyMap, ccLabel } = await hydrateLookups(rows);
+    const { partyMap, partyContextMap, ccLabel } = await hydrateLookups(rows);
 
     window.OFFENE_POSTEN = {
       filters,
@@ -165,6 +182,7 @@
       mahnkandidaten: mahnData?.rows || [],
       parties: partyMap,
       partyName: (id) => partyMap[id] || id,
+      partyContext: (id) => partyContextMap[id] || "",
       ccLabel,
       TODAY: today || mahnData?.today,
     };
@@ -210,12 +228,13 @@
     try {
       const { rows, today } = await fetchRows(merged);
       const mahnData = await fetchMahnkandidaten(merged);
-      const { partyMap, ccLabel } = await hydrateLookups(rows);
+      const { partyMap, partyContextMap, ccLabel } = await hydrateLookups(rows);
       window.OFFENE_POSTEN.filters = merged;
       window.OFFENE_POSTEN.rows = rows.map(adaptRow);
       window.OFFENE_POSTEN.mahnkandidaten = mahnData?.rows || [];
       window.OFFENE_POSTEN.parties = partyMap;
       window.OFFENE_POSTEN.partyName = (id) => partyMap[id] || id;
+      window.OFFENE_POSTEN.partyContext = (id) => partyContextMap[id] || "";
       window.OFFENE_POSTEN.ccLabel = ccLabel;
       window.OFFENE_POSTEN.paymentAccounts = await fetchPaymentAccounts(merged.company);
       if (today || mahnData?.today) window.OFFENE_POSTEN.TODAY = today || mahnData.today;

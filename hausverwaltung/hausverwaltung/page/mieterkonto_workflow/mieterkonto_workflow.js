@@ -57,7 +57,7 @@ function render_mieterkonto_workflow(page_body) {
 
   // ─── Assets laden ──────────────────────────────────────────────────────
   const ASSET_BASE = "/assets/hausverwaltung/mieterkonto_workflow";
-  const ASSET_VERSION = "20260921-month-order";
+  const ASSET_VERSION = "20261008-display-titles";
   const versioned = (src) => `${src}?v=${ASSET_VERSION}`;
 
   const cssHref = versioned(`${ASSET_BASE}/styles.css`);

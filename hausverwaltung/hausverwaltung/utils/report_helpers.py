@@ -22,25 +22,10 @@ from typing import Any
 
 import frappe
 
-
-# Transaktionale Doctypes wo die Doc-ID (z.B. ``ACC-SINV-2026-25510``) der
-# semantisch wichtige Identifier ist — der ``title_field`` ist dort meist nur
-# eine historische Customer-Name-Kopie. Diese Doctypes werden vom Helper
-# übersprungen, sonst landen Personennamen statt Beleg-Nummern in den Spalten.
-TRANSACTIONAL_DOCTYPES_NO_ENRICH = frozenset({
-	"Sales Invoice",
-	"Purchase Invoice",
-	"Payment Entry",
-	"Journal Entry",
-	"Delivery Note",
-	"Sales Order",
-	"Purchase Order",
-	"Purchase Receipt",
-	"Stock Entry",
-	"Quotation",
-	"Material Request",
-	"Dunning",
-})
+from hausverwaltung.hausverwaltung.utils.display_titles import (
+	ID_IS_TITLE_DOCTYPES as TRANSACTIONAL_DOCTYPES_NO_ENRICH,
+)
+from hausverwaltung.hausverwaltung.utils.display_titles import send_report_titles
 
 
 def enrich_link_titles(
@@ -74,6 +59,9 @@ def enrich_link_titles(
 	"""
 	if not rows or not columns:
 		return
+
+	# Frappe formatiert Link- und Dynamic-Link-Spalten mit diesen Titeln.
+	send_report_titles(columns, rows)
 
 	# Pro Link-Spalte: (fieldname, target_doctype, title_field)
 	enrichments: list[tuple[str, str, str]] = []

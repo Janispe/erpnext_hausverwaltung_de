@@ -90,7 +90,7 @@ frappe.ui.form.on("Mietvertrag", {
 						callback: (r) => {
 							if (r.exc || !r.message) return;
 							window.hausverwaltung.sollstellung_check.show_mietvertrag(r.message, {
-								title_suffix: frm.doc.name,
+								title_suffix: frm.doc.bezeichnung || frm.doc.name,
 							});
 						},
 					});
@@ -351,7 +351,7 @@ function setup_festbetrag_dimension_overview(frm) {
 			rows.forEach((row) => {
 				html += `<tr>
 					<td>${escape(row.bezeichnung)}</td>
-					<td>${escape(row.wohnung)}</td>
+					<td>${escape(frappe.utils.get_link_title("Wohnung", row.wohnung) || row.wohnung)}</td>
 					<td class="text-right">${escape(format_amount(row.betrag))}</td>
 					<td>${escape(format_date(row.belegdatum))}</td>
 					<td>${escape(row.belegtyp)}</td>

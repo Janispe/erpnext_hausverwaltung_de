@@ -2028,7 +2028,7 @@ hausverwaltung.buchen_cockpit.mount = ($container) => {
 							<div class="hv-cockpit-row">
 								<span>
 									<a href="${link}">${frappe.utils.escape_html(row.name)}</a>
-									<span class="text-muted"> · ${frappe.utils.escape_html(row.customer || "")}</span>
+									<span class="text-muted"> · ${frappe.utils.escape_html(row.customer_name || row.customer || "")}</span>
 								</span>
 								<span>${format_currency(row.grand_total)} · ${date}</span>
 							</div>

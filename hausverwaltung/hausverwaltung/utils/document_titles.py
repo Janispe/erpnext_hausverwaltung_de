@@ -42,10 +42,9 @@ def build_document_title(doc) -> str:
 	"""Describe a document using its explicit links and fields, never its ID syntax."""
 	doctype = doc.doctype
 	if doctype == "Wohnung":
-		return _join(
-			_label("Immobilie", doc.get("immobilie")),
-			doc.get("gebaeudeteil"), doc.get("name__lage_in_der_immobilie"),
-		)
+		from hausverwaltung.hausverwaltung.utils.display_titles import property_label, wohnung_position
+
+		return _join(property_label(doc.get("immobilie")), *wohnung_position(doc))
 	if doctype == "Zaehler":
 		return _join(doc.get("zaehlerart"), doc.get("zaehlernummer"), doc.get("standort_beschreibung"))
 	if doctype == "Wohnungszustand":

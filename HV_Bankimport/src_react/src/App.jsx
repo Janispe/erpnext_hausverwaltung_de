@@ -446,6 +446,7 @@ export function App() {
 				(r.verwendungszweck || "").toLowerCase().includes(q) ||
 				(r.auftraggeber || "").toLowerCase().includes(q) ||
 				(r.party || "").toLowerCase().includes(q) ||
+				(r.partyLabel || "").toLowerCase().includes(q) ||
 				(r.customerPayments || []).some((item) => item.customer.toLowerCase().includes(q)) ||
 				(r.iban || "").toLowerCase().includes(q)
 			);

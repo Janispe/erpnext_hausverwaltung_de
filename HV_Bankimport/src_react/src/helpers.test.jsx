@@ -61,10 +61,15 @@ describe("Bankimport phase/status edge cases", () => {
 		expect(partyDisplayLabel({ bankTransaction: "BT-1" })).toBe("Ohne Partei");
 		expect(partyDisplayLabel({ journalEntry: "JE-1" })).toBe("Ohne Partei");
 		expect(partyDisplayLabel({ party: "Kunde A" })).toBe("Kunde A");
+		expect(partyDisplayLabel({ party: "DEB-00001", partyLabel: "Max Mustermann" })).toBe("Max Mustermann");
 	});
 
 	it("zeigt die Customers einer Sammelzahlung trotz leerer Party", () => {
 		expect(partyDisplayLabel({ party: null, customerPayments: [{ customer: "A" }, { customer: "B" }] })).toBe("A, B");
+		expect(partyDisplayLabel({
+			party: null,
+			customerPayments: [{ customer: "DEB-1", customerLabel: "Anna" }, { customer: "DEB-2" }],
+		})).toBe("Anna, DEB-2");
 	});
 
 	it("uebersetzt technische Party-Typen fuer die UI", () => {

@@ -155,7 +155,9 @@ function AuditItem({ label, doc, doctype, actionLabel, actor, at, source }) {
 			</div>
 			{doc && (
 				<DocLink doctype={doctype || doc.doctype} docname={doc.name} className="audit-doc" title={doc.name}>
-					<span className="mono">{doc.name}</span>
+					{doc.title && doc.title !== doc.name
+						? <span>{doc.title}</span>
+						: <span className="mono">{doc.name}</span>}
 					<Icon name="link" size={12} />
 				</DocLink>
 			)}
@@ -1035,7 +1037,7 @@ function StandalonePayment({ docname, row, onActionDone, notify }) {
 		<div>
 			<div className="hint" style={{ marginBottom: 10 }}>
 				Bucht den vollen Betrag {fmtEUR(Math.abs(row.betrag))} als unverrechnete Zahlung auf
-				{row.party ? ` ${row.party}` : " die Partei"}. Verrechnung mit einer Rechnung später möglich.
+				{row.party ? ` ${row.partyLabel || row.party}` : " die Partei"}. Verrechnung mit einer Rechnung später möglich.
 			</div>
 			<div className="field-label">Bemerkung</div>
 			<input className="text-input" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
@@ -1394,7 +1396,7 @@ export function MatchPanel({ docname, row, onActionDone, notify }) {
 					<span>
 						{row.party ? (
 							<DocLink doctype={row.partyTyp} docname={row.party} className="party-link detail-party-link">
-								{row.party}{roleLabel ? ` · ${roleLabel}` : ""}
+								{row.partyLabel || row.party}{roleLabel ? ` · ${roleLabel}` : ""}
 							</DocLink>
 						) : partyLabel}
 					</span>

@@ -129,7 +129,7 @@
       },
     );
     if (result.errors && result.errors.length) {
-      result.errors.forEach((e) => toast(`Fehler bei ${e.customer}: ${e.msg}`, "red"));
+      result.errors.forEach((e) => toast(`Fehler bei ${window.OFFENE_POSTEN?.partyName?.(e.customer) || e.customer}: ${e.msg}`, "red"));
     }
     handleResult(result, `${(result.created || []).length} Mahnungen als Draft erstellt`);
     await window.OP_ADAPTER.refresh({});

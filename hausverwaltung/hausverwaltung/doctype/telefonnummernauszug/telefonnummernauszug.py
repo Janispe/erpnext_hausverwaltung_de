@@ -5,6 +5,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, getdate, today
 
+from hausverwaltung.hausverwaltung.utils.display_titles import title_of, wohnung_position_label
 from hausverwaltung.hausverwaltung.utils.gebaeudeteil import (
 	normalize_gebaeudeteil_to_standard,
 	split_lage_gebaeudeteil,
@@ -41,7 +42,7 @@ class Telefonnummernauszug(Document):
 		d = getdate(self.stichtag)
 		monat_jahr = f"{GERMAN_MONTHS[d.month]} {d.year}"
 		if self.immobilie:
-			return f"Telefonliste {monat_jahr} – {self.immobilie}"
+			return f"Telefonliste {monat_jahr} – {title_of('Immobilie', self.immobilie)}"
 		return f"Telefonliste {monat_jahr}"
 
 	def get_grouped_eintraege(self) -> list[dict]:
@@ -50,14 +51,16 @@ class Telefonnummernauszug(Document):
 		# die ID selbst nicht speichert.
 		wohnungs_namen = {row.wohnung for row in (self.eintraege or []) if row.wohnung}
 		wohnung_id_map: dict[str, int | None] = {}
+		wohnung_label_map: dict[str, str] = {}
 		if wohnungs_namen:
 			id_rows = frappe.get_all(
 				"Wohnung",
 				filters={"name": ("in", list(wohnungs_namen))},
-				fields=["name", "id"],
+				fields=["name", "id", "gebaeudeteil", "name__lage_in_der_immobilie"],
 			)
 			for r in id_rows:
 				wohnung_id_map[r["name"]] = r.get("id")
+				wohnung_label_map[r["name"]] = wohnung_position_label(r)
 
 		groups: list[dict] = []
 		current_key = None
@@ -73,6 +76,7 @@ class Telefonnummernauszug(Document):
 						"immobilie": row.immobilie or "",
 						"gebaeudeteil": (row.gebaeudeteil or "").strip(),
 						"wohnung": row.wohnung or "",
+						"wohnung_label": wohnung_label_map.get(row.wohnung) or row.wohnung or "",
 						"wohnung_id": wohnung_id_map.get(row.wohnung),
 						"mieter": [],
 					}

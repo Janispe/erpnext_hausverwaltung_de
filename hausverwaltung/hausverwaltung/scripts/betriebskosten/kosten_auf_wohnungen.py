@@ -52,6 +52,7 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.gl_kosten_pro_haus imp
 from hausverwaltung.hausverwaltung.doctype.zustandsschluessel.zustandsschluessel import (
     get_effective_zustandsschluessel_value,
 )
+from hausverwaltung.hausverwaltung.utils.display_titles import with_display_titles
 
 
 MONEY_QUANT = Decimal("0.01")
@@ -525,6 +526,7 @@ def _festbetrag_map(immobilie: str, von: str, bis: str) -> Dict[str, Dict[str, D
 
 
 @frappe.whitelist()
+@with_display_titles
 def get_mieter_festbetrag_overview(
     customer: str,
     von: str | None = None,

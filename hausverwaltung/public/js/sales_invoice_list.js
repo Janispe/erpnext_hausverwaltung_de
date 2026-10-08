@@ -37,6 +37,8 @@ sales_invoice_list_settings.formatters.customer_name = function (value, _df, doc
 	return customer_name;
 };
 
+// "<Mietvertrag-ID>|<MM/YYYY>": the contract ID is a technical key and the
+// tenant is already shown by name, so only the billing period is displayed.
 function format_mietabrechnung_id(value) {
 	if (!value) return "";
 
@@ -45,12 +47,7 @@ function format_mietabrechnung_id(value) {
 		.map((part) => part.trim())
 		.filter(Boolean);
 
-	if (!parts.length) return "";
-
-	const period = parts[parts.length - 1];
-	const contract = parts.length > 1 ? parts.slice(0, -1).join(" | ") : "";
-
-	return contract ? `${contract} · ${period}` : period;
+	return parts.length ? parts[parts.length - 1] : "";
 }
 
 sales_invoice_list_settings.get_indicator = function (doc) {

@@ -21,6 +21,7 @@ from hausverwaltung.hausverwaltung.page.op_workflow.op_workflow import (
 from hausverwaltung.hausverwaltung.page.op_workflow.op_workflow import (
     create_bulk_dunning as create_op_bulk_dunning,
 )
+from hausverwaltung.hausverwaltung.utils.display_titles import apartment_location
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import (
     get_dunning_invoice_remark_overrides,
     render_serienbrief_pdf_for_print_format,
@@ -348,8 +349,7 @@ def _build_mieter(customer: str) -> dict | None:
         "name": cust.customer_name,
         "anrede": f"Sehr geehrte Damen und Herren,",
         "adresse": [cust.customer_name],
-        "objekt": "",
-        "einheit": "",
+        **_tenancy_location(customer),
         "kostenstelle": "",
         "email": getattr(cust, "email_id", "") or "",
         "verbrauchertyp": "gewerbe" if cust.customer_type == "Company" else "privat",
@@ -358,6 +358,11 @@ def _build_mieter(customer: str) -> dict | None:
         "historie": historie,
         "posten": posten,
     }
+
+
+def _tenancy_location(customer: str) -> dict:
+    """Readable property and unit of the Customer's one tenancy (never its IDs)."""
+    return apartment_location(frappe.db.get_value("Mietvertrag", {"kunde": customer}, "wohnung"))
 
 
 def _history_entry(dunning_name: str) -> dict:

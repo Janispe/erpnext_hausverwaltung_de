@@ -12,13 +12,25 @@ class TestDocumentTitles(unittest.TestCase):
 	def test_context_changes_title_without_changing_identity(self):
 		doc = frappe._dict(doctype="Wohnung", name="WHG-00141", immobilie="IMM-00016",
 			gebaeudeteil="VH", name__lage_in_der_immobilie="EG links")
-		with patch.object(titles, "_label", return_value="Musterstraße 12"):
+		with patch(
+			"hausverwaltung.hausverwaltung.utils.display_titles.property_label",
+			return_value="Musterstraße 12",
+		):
 			titles.set_document_title(doc)
 			self.assertEqual(doc.bezeichnung, "Musterstraße 12 · VH · EG links")
 			doc.name__lage_in_der_immobilie = "EG rechts"
 			titles.set_document_title(doc)
 		self.assertEqual(doc.bezeichnung, "Musterstraße 12 · VH · EG rechts")
 		self.assertEqual(doc.name, "WHG-00141")
+
+	def test_apartment_title_shows_building_part_once(self):
+		doc = frappe._dict(doctype="Wohnung", name="WHG-00142", immobilie="IMM-00016",
+			gebaeudeteil="HH", name__lage_in_der_immobilie="Hinterhaus, 1.OG links")
+		with patch(
+			"hausverwaltung.hausverwaltung.utils.display_titles.property_label",
+			return_value="Gropiusstr. 5",
+		):
+			self.assertEqual(titles.build_document_title(doc), "Gropiusstr. 5 · HH · 1.OG links")
 
 	def test_settlement_uses_explicit_links_not_name_syntax(self):
 		doc = frappe._dict(doctype="Heizkostenabrechnung Mieter", name="Legacy | separators",

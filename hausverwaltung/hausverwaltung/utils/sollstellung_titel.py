@@ -45,7 +45,9 @@ def _get_wohnung_label(doc: Any) -> str:
 	except Exception:
 		pass
 
-	return str(wohnung)
+	from hausverwaltung.hausverwaltung.utils.display_titles import title_of
+
+	return title_of("Wohnung", wohnung)
 
 
 def _get_customer_label(doc: Any) -> str:

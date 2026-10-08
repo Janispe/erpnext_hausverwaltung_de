@@ -160,11 +160,10 @@ function VoucherLinks({ belegart, belegnummer, belegnummern, className = "" }) {
   );
 }
 
+// Tenant name; the apartment is shown as meta line, the Customer ID nowhere.
 function mieterOptionLabel(mieter) {
   if (!mieter) return "";
-  return mieter.customer_name && mieter.customer_name !== mieter.name
-    ? `${mieter.customer_name} (${mieter.name})`
-    : mieter.name;
+  return mieter.customer_name || mieter.name;
 }
 
 function MieterPicker({
@@ -252,7 +251,7 @@ function MieterPicker({
               >
                 <span className="mk-combobox-title">{mieterOptionLabel(mieter)}</span>
                 <span className="mk-combobox-meta">
-                  {[mieter.status, mieter.wohnung, mieter.immobilie].filter(Boolean).join(" · ")}
+                  {[mieter.status, mieter.wohnung_title || mieter.wohnung].filter(Boolean).join(" · ")}
                 </span>
               </button>
             ))}

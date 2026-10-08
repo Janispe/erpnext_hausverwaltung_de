@@ -2037,7 +2037,7 @@ def get_cockpit_overview(limit: int = 10) -> dict:
         recent_si = frappe.get_all(
             "Sales Invoice",
             filters={"hv_eingabequelle": EINGABEQUELLE_AUSGANG, "docstatus": ["<", 2]},
-            fields=["name", "customer", "grand_total", "posting_date", "docstatus"],
+            fields=["name", "customer", "customer_name", "grand_total", "posting_date", "docstatus"],
             order_by="posting_date desc, creation desc",
             limit_page_length=limit,
         )

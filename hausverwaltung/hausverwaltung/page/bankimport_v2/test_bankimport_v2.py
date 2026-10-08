@@ -1158,10 +1158,14 @@ class TestSearchPartiesAndAccounts(unittest.TestCase):
 
 		get_list.assert_not_called()
 
-	def test_search_parties_maps_titles_and_descriptions(self):
+	def test_search_parties_maps_titles_and_tenancy_context_without_ids(self):
 		rows = [
-			frappe._dict(name="CUST-1", title="Max Mustermann"),
-			frappe._dict(name="CUST-2", title="CUST-2"),
+			frappe._dict(
+				name="DEB-00001",
+				title="Max Mustermann",
+				context="Musterstr. 1 · VH · EG links · seit 01.01.2026 — Max Mustermann",
+			),
+			frappe._dict(name="DEB-00002", title="DEB-00002", context=None),
 		]
 
 		with patch("frappe.get_list", return_value=rows) as get_list:
@@ -1169,12 +1173,27 @@ class TestSearchPartiesAndAccounts(unittest.TestCase):
 
 		self.assertEqual(
 			get_list.call_args.kwargs["or_filters"],
-			[["name", "like", "%max%"], ["customer_name", "like", "%max%"]],
+			[
+				["name", "like", "%max%"],
+				["customer_name", "like", "%max%"],
+				["hv_display_title", "like", "%max%"],
+			],
 		)
 		self.assertEqual(result["items"], [
-			{"value": "CUST-1", "label": "Max Mustermann", "description": "CUST-1"},
-			{"value": "CUST-2", "label": "CUST-2", "description": None},
+			{
+				"value": "DEB-00001",
+				"label": "Max Mustermann",
+				"description": "Musterstr. 1 · VH · EG links · seit 01.01.2026",
+			},
+			{"value": "DEB-00002", "label": "DEB-00002", "description": None},
 		])
+
+	def test_search_parties_supplier_has_no_tenancy_context(self):
+		rows = [frappe._dict(name="SUP-1", title="Stadtwerke")]
+		with patch("frappe.get_list", return_value=rows) as get_list:
+			result = bv2.search_parties("Supplier", "stadt")
+		self.assertEqual(get_list.call_args.kwargs["fields"], ["name", "supplier_name as title"])
+		self.assertEqual(result["items"], [{"value": "SUP-1", "label": "Stadtwerke", "description": None}])
 
 	def test_search_accounts_merges_cockpit_and_leaf_accounts_without_duplicates(self):
 		cockpit_item = {

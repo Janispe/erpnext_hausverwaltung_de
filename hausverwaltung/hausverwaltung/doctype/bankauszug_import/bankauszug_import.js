@@ -855,7 +855,7 @@ function _openRowActions(frm, row) {
   const fmtDate = (v) => (v ? frappe.datetime.str_to_user(v) : '-');
   const escape = (v) => frappe.utils.escape_html(v || '-');
   const partyText = row.party
-    ? `${escape(row.party_type)}: ${escape(row.party)}`
+    ? `${escape(row.party_type)}: ${escape(frappe.utils.get_link_title(row.party_type, row.party) || row.party)}`
     : __('nicht zugeordnet');
 
   const isAusgang = row.richtung === 'Ausgang';
@@ -1025,7 +1025,7 @@ function _openKreditrateDialog(frm, row) {
               data-kreditvertrag="${safeKv}" data-rate-name="${safeRow}">
           </td>
           <td style="padding:4px 8px;">
-            <a href="/app/kreditvertrag/${encodeURIComponent(c.kreditvertrag)}" target="_blank">${safeKv}</a>
+            <a href="/app/kreditvertrag/${encodeURIComponent(c.kreditvertrag)}" target="_blank" title="${safeKv}">${escape(frappe.utils.get_link_title("Kreditvertrag", c.kreditvertrag) || c.kreditvertrag)}</a>
             <span style="color:#888;"> · Zeile ${c.row_idx}</span>
           </td>
           <td style="padding:4px 8px; white-space:nowrap;">${fmtDate(c.faelligkeitsdatum)}</td>
@@ -1165,7 +1165,7 @@ function _openMatchInvoicesDialog(frm, row) {
     const html = `
       <div style="margin-bottom:10px; padding:8px 10px; background:#f6f6f7; border-radius:4px; font-size:12px;">
         <strong>${__('Bank-Betrag')}:</strong> ${fmt(target)} &nbsp;•&nbsp;
-        <strong>${__('Party')}:</strong> ${frappe.utils.escape_html(row.party)} (${frappe.utils.escape_html(row.party_type)})
+        <strong>${__('Party')}:</strong> ${frappe.utils.escape_html(frappe.utils.get_link_title(row.party_type, row.party) || row.party)} (${frappe.utils.escape_html(row.party_type)})
         ${data.expected_cost_center ? `&nbsp;•&nbsp;<strong>${__('Kostenstelle')}:</strong> ${frappe.utils.escape_html(data.expected_cost_center)}` : ''}
         ${data.excluded_by_cost_center ? `<div style="margin-top:4px; color:#6b7280;">${__('Ausgeblendet wegen anderer Kostenstelle')}: ${data.excluded_by_cost_center}</div>` : ''}
       </div>
@@ -1364,7 +1364,7 @@ function _openAbschlagDialog(frm, row) {
           <td style="padding:4px 8px; text-align:right;">${fmt(c.betrag)}</td>
           <td style="padding:4px 8px; white-space:nowrap;">${fmtDate(c.faelligkeitsdatum)}</td>
           <td style="padding:4px 8px; text-align:right; color:#888;">${delta}</td>
-          <td style="padding:4px 8px;">${escape(c.immobilie)}</td>
+          <td style="padding:4px 8px;">${escape(frappe.utils.get_link_title("Immobilie", c.immobilie) || c.immobilie)}</td>
           <td style="padding:4px 8px;">${escape(badges)}</td>
         </tr>
       `;
@@ -1373,7 +1373,7 @@ function _openAbschlagDialog(frm, row) {
     const html = `
       <div style="margin-bottom:10px; padding:8px 10px; background:#f6f6f7; border-radius:4px; font-size:12px;">
         <strong>${__('Bank-Betrag')}:</strong> ${fmt(target)} &nbsp;•&nbsp;
-        <strong>${__('Lieferant')}:</strong> ${escape(row.party)} &nbsp;•&nbsp;
+        <strong>${__('Lieferant')}:</strong> ${escape(frappe.utils.get_link_title(row.party_type, row.party) || row.party)} &nbsp;•&nbsp;
         <strong>${__('Buchungstag')}:</strong> ${fmtDate(row.buchungstag)}
       </div>
       <table style="width:100%; border-collapse:collapse; font-size:12px;">

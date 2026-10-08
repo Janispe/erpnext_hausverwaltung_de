@@ -90,19 +90,19 @@ PLACEHOLDER_MAPPING = {
     "Verw.-Zusatz": "{{ verwalter.zusatz if verwalter is defined and verwalter else '' }}",
 
     # === WOHNUNG ===
-    # Hinweis: Das `Wohnung`-Doctype hat kein Feld `art` oder `nummer`. Wir
-    # rendern stattdessen die sprechende Bezeichnung (`name__lage_in_der_immobilie`,
-    # mit Fallback auf den Doc-Namen) und unterdrücken `Whg-Art`/`Whg-Nr` —
-    # WinCASA-Mandanten haben in Mama's Bestand ausschließlich Wohnungen.
-    "Whg-Bez": "{{ wohnung.name__lage_in_der_immobilie or wohnung.name }}",
+    # Hinweis: Das `Wohnung`-Doctype hat kein Feld `art`. Die Dokument-ID
+    # (``WHG-00001``) wird nie gedruckt: Bezeichnung ist die Lage, die Nummer
+    # die fachliche WinCASA-Wohnungsnummer (`id`).
+    "Whg-Bez": "{{ wohnung.name__lage_in_der_immobilie or wohnung.bezeichnung }}",
     "Whg-Art": "",
-    "Whg-Nr": "{{ wohnung.name }}",
+    "Whg-Nr": "{{ wohnung.id or wohnung.name__lage_in_der_immobilie }}",
 
     # === HAUS / IMMOBILIE ===
-    # Adresse der Immobilie des ausgewählten Mietvertrags.
-    "H-Bezeichnung": "{{ immobilie.name }}",
-    "H-Bez": "{{ immobilie.name }}",
-    "H-Nummer": "{{ immobilie.name }}",
+    # Adresse der Immobilie des ausgewählten Mietvertrags. Nummer ist die
+    # fachliche WinCASA-Objektnummer, nicht die Dokument-ID (``IMM-00001``).
+    "H-Bezeichnung": "{{ immobilie.bezeichnung }}",
+    "H-Bez": "{{ immobilie.bezeichnung }}",
+    "H-Nummer": "{{ immobilie.immobilien_id or immobilie.bezeichnung }}",
     "H-Strasse": "{{$ objekt.wohnung.immobilie.adresse.address_line1 $}}",
     "H-PLZ_Ort": "{{$ objekt.wohnung.immobilie.adresse.plz_ort $}}",
     # Bank-Felder werden im Render-Context aus

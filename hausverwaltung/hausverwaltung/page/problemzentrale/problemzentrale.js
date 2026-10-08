@@ -257,7 +257,7 @@ class HausverwaltungProblemCenter {
 			[problem.secondary_doctype, problem.secondary_name],
 		].filter(([doctype, name]) => doctype && name);
 		const actionHtml = actions.map((action) => `<button type="button" class="hv-btn ${action.variant === "primary" ? "hv-btn-primary" : "hv-btn-ghost"} hv-problem-action" data-action="${this.esc(action.key)}">${this.esc(action.label)}</button>`).join("");
-		const referenceHtml = references.map(([doctype, name]) => `<button type="button" class="hv-problem-reference" data-doctype="${this.esc(doctype)}" data-name="${this.esc(name)}">${this.esc(doctype)}: ${this.esc(name)}</button>`).join("");
+		const referenceHtml = references.map(([doctype, name]) => `<button type="button" class="hv-problem-reference" data-doctype="${this.esc(doctype)}" data-name="${this.esc(name)}" title="${this.esc(name)}">${this.esc(__(doctype))}: ${this.esc(frappe.utils.get_link_title(doctype, name) || name)}</button>`).join("");
 		this.$root.find(".hv-problem-detail").html(`
 			<div class="hv-problem-detail-head">
 				<div>

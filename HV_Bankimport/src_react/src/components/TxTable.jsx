@@ -20,10 +20,10 @@ function TxRow({ row, selected, onSelect }) {
 				<div className="party-cell">
 					<span className="party-name">
 						{row.customerPayments?.length ? row.customerPayments.map((item) => (
-							<div key={item.payment_entry} className="party-meta"><DocLink doctype="Customer" docname={item.customer}>{item.customer}</DocLink> · {fmtEUR(item.amount)}</div>
+							<div key={item.payment_entry} className="party-meta"><DocLink doctype="Customer" docname={item.customer}>{item.customerLabel || item.customer}</DocLink> · {fmtEUR(item.amount)}</div>
 						)) : hasParty ? (
 							<DocLink doctype={row.partyTyp} docname={row.party} className="party-link" title={`${roleLabel || "Partei"} öffnen`}>
-								{row.party}
+								{row.partyLabel || row.party}
 							</DocLink>
 						) : (
 							<em style={{ color: "var(--text-faint)" }}>{partyLabel}</em>

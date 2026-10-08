@@ -9,6 +9,8 @@ import frappe
 from frappe import _
 from frappe.utils import getdate, today
 
+from hausverwaltung.hausverwaltung.utils.display_titles import send_report_titles
+
 
 def execute(filters: dict | None = None):
 	filters = frappe._dict(filters or {})
@@ -77,7 +79,9 @@ def execute(filters: dict | None = None):
 			"datatype": "Int",
 		},
 	]
-	return get_columns(), data, None, None, summary
+	columns = get_columns()
+	send_report_titles(columns, data)
+	return columns, data, None, None, summary
 
 
 def _group_by_bezugsobjekt(rows: list[dict[str, Any]], historie: bool = False) -> list[dict[str, Any]]:

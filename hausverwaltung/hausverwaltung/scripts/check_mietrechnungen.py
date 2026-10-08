@@ -26,6 +26,7 @@ from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
 	_resolve_company,
 	_staffelbetrag,
 )
+from hausverwaltung.hausverwaltung.utils.display_titles import send_payload_titles
 from hausverwaltung.hausverwaltung.utils.income_accounts import get_hv_income_accounts
 from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 	BK_REGELUNG_VORAUSZAHLUNG,
@@ -360,15 +361,17 @@ def pruefe_durchlauf(durchlauf: str) -> dict:
 		ueberfluessig.extend(result["ueberfluessig"])
 		ok += result["ok"]
 
-	return {
-		"durchlauf": durchlauf,
-		"monat": anker.strftime("%Y-%m"),
-		"company": company,
-		"fehlend": fehlend,
-		"abweichungen": abweichungen,
-		"ueberfluessig": ueberfluessig,
-		"ok_count": ok,
-	}
+	return send_payload_titles(
+		{
+			"durchlauf": durchlauf,
+			"monat": anker.strftime("%Y-%m"),
+			"company": company,
+			"fehlend": fehlend,
+			"abweichungen": abweichungen,
+			"ueberfluessig": ueberfluessig,
+			"ok_count": ok,
+		}
+	)
 
 
 def _aktivitaets_monate_fuer_mv(
@@ -480,13 +483,15 @@ def pruefe_mietvertrag(
 				}
 			)
 
-	return {
-		"mietvertrag": mietvertrag,
-		"monate": monate,
-		"von": str(mv.von) if mv.von else None,
-		"bis": str(mv.bis) if mv.bis else None,
-		"aktivitaets_monate_geprueft": len(aktivitaet),
-	}
+	return send_payload_titles(
+		{
+			"mietvertrag": mietvertrag,
+			"monate": monate,
+			"von": str(mv.von) if mv.von else None,
+			"bis": str(mv.bis) if mv.bis else None,
+			"aktivitaets_monate_geprueft": len(aktivitaet),
+		}
+	)
 
 
 @frappe.whitelist()

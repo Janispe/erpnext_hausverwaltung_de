@@ -151,16 +151,17 @@ class TestDependentDocumentTitles(TestCase):
 		address.save(ignore_permissions=True)
 		for doc in self.targets:
 			self.assertEqual(self._identity(doc), before[doc.name], doc.doctype)
+		# Apartment-based titles show the street; the property itself its address title.
 		for doc in (
 			self.apartment,
 			self.state,
 			self.assignment,
 			self.tenant_settlement,
-			self.property_settlement,
+			self.contract,
+			self.customer,
 		):
-			self.assertIn("Neue Adresse", self._title(doc))
-		for doc in (self.contract, self.customer):
 			self.assertIn("Neustraße 8", self._title(doc))
+		self.assertIn("Neue Adresse", self._title(self.property_settlement))
 
 	def test_apartment_save_refreshes_contract_customer_and_submitted_dependencies(self):
 		dependencies = (self.contract, self.customer, self.state, self.assignment, self.tenant_settlement)

@@ -23,6 +23,7 @@ from hausverwaltung.hausverwaltung.utils.document_naming import make_document_na
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import normalize_print_format_name
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_pdf_for_print_format
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import scrub_value as hv_scrub
+from hausverwaltung.hausverwaltung.utils.display_titles import with_display_titles
 
 SERIENBRIEF_PRINT_FORMAT_FIELDNAME = "hv_serienbrief_vorlage"
 PRINT_BUNDLE_CSS_PATH = "/assets/frappe/css/print.bundle.css"
@@ -828,6 +829,7 @@ def get_mieter_abrechnungen(name: str) -> List[Dict[str, object]]:
 
 
 @frappe.whitelist()
+@with_display_titles
 def get_verteilungsbasis(name: str) -> Dict[str, List[Dict[str, object]]]:
 	"""Liefert Wohnflächen und Festbeträge zum Stichtag für die Verteilungsbasis."""
 	if not name:

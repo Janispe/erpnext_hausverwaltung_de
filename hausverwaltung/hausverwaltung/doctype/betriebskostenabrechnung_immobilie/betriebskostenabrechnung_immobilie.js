@@ -108,7 +108,7 @@ const render_verteilungsbasis = (frm, data = {}) => {
 							.map(
 								(row) => `
 									<tr>
-										<td>${escape_html(row.wohnung || "")}</td>
+										<td title="${escape_html(row.wohnung || "")}">${escape_html(frappe.utils.get_link_title("Wohnung", row.wohnung) || row.wohnung || "")}</td>
 										<td style="text-align:right;">${fmt_qm(row.qm)}</td>
 									</tr>
 								`
@@ -163,7 +163,7 @@ const render_verteilungsbasis = (frm, data = {}) => {
 									.map(
 										(row) => `
 											<tr>
-												<td>${escape_html(row.wohnung || "")}</td>
+												<td title="${escape_html(row.wohnung || "")}">${escape_html(frappe.utils.get_link_title("Wohnung", row.wohnung) || row.wohnung || "")}</td>
 												<td style="text-align:right;">${fmt_money(row.betrag)}</td>
 											</tr>
 										`

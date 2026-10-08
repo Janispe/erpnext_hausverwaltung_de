@@ -20,14 +20,19 @@
 		return `<a href="/app/sales-invoice/${encodeURIComponent(name)}" target="_blank">${esc(name)}</a>`;
 	}
 
+	// The server sends link titles with the payload; IDs stay the link target.
+	function title(doctype, name) {
+		return frappe.utils.get_link_title(doctype, name) || name;
+	}
+
 	function mv_link(name) {
 		if (!name) return "";
-		return `<a href="/app/mietvertrag/${encodeURIComponent(name)}" target="_blank">${esc(name)}</a>`;
+		return `<a href="/app/mietvertrag/${encodeURIComponent(name)}" target="_blank" title="${esc(name)}">${esc(title("Mietvertrag", name))}</a>`;
 	}
 
 	function whg_link(name) {
 		if (!name) return "";
-		return `<a href="/app/wohnung/${encodeURIComponent(name)}" target="_blank">${esc(name)}</a>`;
+		return `<a href="/app/wohnung/${encodeURIComponent(name)}" target="_blank" title="${esc(name)}">${esc(title("Wohnung", name))}</a>`;
 	}
 
 	function render_fehlend(rows) {
@@ -172,7 +177,7 @@
 			body = summary + blocks;
 		}
 		const dlg = new frappe.ui.Dialog({
-			title: __("Sollstellungs-Prüfung — {0}", [esc((opts && opts.title_suffix) || payload.mietvertrag || "")]),
+			title: __("Sollstellungs-Prüfung — {0}", [esc((opts && opts.title_suffix) || title("Mietvertrag", payload.mietvertrag) || "")]),
 			size: "extra-large",
 		});
 		dlg.$body.html(body);

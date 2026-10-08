@@ -16,6 +16,7 @@ from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
     match_party_for_row,
     normalize_iban,
 )
+from hausverwaltung.hausverwaltung.utils.display_titles import with_display_titles
 
 
 RELEVANT_HEADERS = {
@@ -3235,6 +3236,7 @@ def get_open_invoices_for_row(docname: str, row_name: str) -> Dict[str, Any]:
 
 
 @frappe.whitelist()
+@with_display_titles
 def get_abschlagsplan_candidates_for_row(docname: str, row_name: str) -> dict[str, Any]:
     """Listet offene Abschlagsplan-Zeilen für eine Supplier-Ausgangszeile.
 
@@ -4324,6 +4326,7 @@ def create_journal_entry_for_row(
 
 
 @frappe.whitelist()
+@with_display_titles
 def get_open_kreditraten_for_row(docname: str, row_name: str) -> Dict[str, Any]:
     """Liefert die Kandidatenliste offener Kreditraten für eine Bankimport-Zeile.
 

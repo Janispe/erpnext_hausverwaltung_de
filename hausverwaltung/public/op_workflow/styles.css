@@ -1685,7 +1685,6 @@ button { font-family: inherit; }
   font-size: 11px;
   color: var(--ink-3);
   font-weight: 400;
-  font-family: ui-monospace, monospace;
   margin-top: 1px;
 }
 .op-table td.col-beleg {

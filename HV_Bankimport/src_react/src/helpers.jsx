@@ -64,8 +64,10 @@ export const partyTypeLabel = (partyType) => ({
 }[partyType] || partyType || "");
 
 export const partyDisplayLabel = (row) => {
-	if (row?.customerPayments?.length) return row.customerPayments.map((item) => item.customer).join(", ");
-	if (row?.party) return row.party;
+	if (row?.customerPayments?.length) {
+		return row.customerPayments.map((item) => item.customerLabel || item.customer).join(", ");
+	}
+	if (row?.party) return row.partyLabel || row.party;
 	const isExplicitlyPartyless = Boolean(
 		row?.bankTransaction ||
 		row?.paymentEntry ||
