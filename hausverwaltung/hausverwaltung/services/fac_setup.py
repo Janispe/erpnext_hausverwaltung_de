@@ -6,6 +6,7 @@ from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 	FAC_CODE_TOOL_NAMES,
 	FAC_EMAIL_TOOL_NAMES,
 	FAC_EMAIL_WRITE_TOOL_NAMES,
+	FAC_FORM_TOOL_NAMES,
 	FAC_INVENTORY_TOOL_NAMES,
 	FAC_MAIL_MERGE_TOOL_NAMES,
 	FAC_MAIL_MERGE_WRITE_TOOL_NAMES,
@@ -53,6 +54,7 @@ def configure_tools(user: str, extra_tools: tuple[str, ...] = ()):
 		*FAC_OVERVIEW_TOOL_NAMES,
 		*FAC_INVENTORY_TOOL_NAMES,
 		*FAC_EMAIL_TOOL_NAMES,
+		*FAC_FORM_TOOL_NAMES,
 	)
 	if not set(extra_tools) <= set(
 		(
@@ -62,6 +64,7 @@ def configure_tools(user: str, extra_tools: tuple[str, ...] = ()):
 			*FAC_OVERVIEW_TOOL_NAMES,
 			*FAC_INVENTORY_TOOL_NAMES,
 			*FAC_EMAIL_TOOL_NAMES,
+			*FAC_FORM_TOOL_NAMES,
 		)
 	):
 		frappe.throw("Unbekanntes zusaetzliches FAC-Werkzeug.")
@@ -133,7 +136,13 @@ def enable_external_tools(
 	settings.save()
 	get_plugin_manager().enable_plugin("custom_tools")
 	frappe.db.set_value("User", user, "assistant_enabled", 1)
-	names = (*FAC_TOOL_NAMES, *FAC_REPORT_TOOL_NAMES, *FAC_CODE_TOOL_NAMES, *FAC_MAIL_MERGE_TOOL_NAMES)
+	names = (
+		*FAC_TOOL_NAMES,
+		*FAC_REPORT_TOOL_NAMES,
+		*FAC_CODE_TOOL_NAMES,
+		*FAC_MAIL_MERGE_TOOL_NAMES,
+		*FAC_FORM_TOOL_NAMES,
+	)
 	# Keep the old keyword compatible with existing deployment scripts.
 	if include_focused_tools or include_prototype:
 		names = (*names, *FAC_OVERVIEW_TOOL_NAMES, *FAC_INVENTORY_TOOL_NAMES)

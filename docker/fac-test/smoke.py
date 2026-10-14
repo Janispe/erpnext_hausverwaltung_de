@@ -14,7 +14,9 @@ try:
 	frappe.set_user("Administrator")
 	from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 		FAC_CODE_TOOL_NAMES,
+		FAC_FORM_TOOL_NAMES,
 		FAC_MAIL_MERGE_TOOL_NAMES,
+		FAC_MAIL_MERGE_WRITE_TOOL_NAMES,
 		FAC_REPORT_TOOL_NAMES,
 		FAC_TOOL_NAMES,
 	)
@@ -69,11 +71,12 @@ try:
 		| set(FAC_REPORT_TOOL_NAMES)
 		| set(FAC_CODE_TOOL_NAMES)
 		| set(FAC_MAIL_MERGE_TOOL_NAMES)
+		| set(FAC_FORM_TOOL_NAMES)
 		| set(NATIVE_READ_TOOLS)
 	)
 	assert names == expected, (sorted(expected - names), sorted(names - expected))
 	assert all(
-		tool.get("annotations", {}).get("readOnlyHint") == (tool["name"] != "agent_mail_merge_execute")
+		tool.get("annotations", {}).get("readOnlyHint") == (tool["name"] not in FAC_MAIL_MERGE_WRITE_TOOL_NAMES)
 		for tool in listed["tools"]
 	)
 	result = rpc("tools/call", {"name": "agent_get_doctype_schema", "arguments": {"doctype": "Mietvertrag"}})

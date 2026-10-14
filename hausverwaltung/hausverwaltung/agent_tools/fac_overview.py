@@ -565,6 +565,8 @@ def describe_capabilities(*, backend=None):
 				"count_inventory": ["hv_count_records"],
 				"portfolio_occupancy": ["hv_get_portfolio_summary"],
 				"find_identifier": ["hv_search", "search_mieter"],
+				"find_form_fields": ["hv_find_fields"],
+				"explain_form_field": ["hv_get_form_context"],
 				"read_exact_identifier": ["hv_get_mieter_overview", "hv_get_wohnung_overview", "hv_get_immobilie_overview", "hv_get_invoice_overview", "hv_get_contact_overview", "hv_get_payment_overview"],
 			}.items()
 		},

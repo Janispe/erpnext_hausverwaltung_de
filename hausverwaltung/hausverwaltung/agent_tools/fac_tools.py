@@ -13,6 +13,7 @@ from hausverwaltung.hausverwaltung.agent_tools import fac_output
 from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 	FAC_EMAIL_TOOL_NAMES,
 	FAC_EMAIL_WRITE_TOOL_NAMES,
+	FAC_FORM_TOOL_NAMES,
 	FAC_INVENTORY_TOOL_NAMES,
 	FAC_MAIL_MERGE_TOOL_NAMES,
 	FAC_MAIL_MERGE_WRITE_TOOL_NAMES,
@@ -266,6 +267,52 @@ class OverviewTool(HausverwaltungReadTool):
 		# Never clip identity fields, sums or completeness metadata.
 		if fac_output.sent_size(result) > fac_output.DIRECT_OUTPUT_MAX_CHARS:
 			return {"ok": False, "error": {"code": "LIMIT_EXCEEDED", "message": "Übersicht zu groß; gezielte allgemeine Abfrage oder Export aus Code verwenden."}}
+		return result
+
+
+class FormMetadataTool(HausverwaltungReadTool):
+	"""Never pass form/schema definitions through generic list/string truncation."""
+
+	mcp_audience = "model"
+
+	def __init__(self):
+		BaseTool.__init__(self)
+		from hausverwaltung.hausverwaltung.agent_tools.form_metadata_tools import (
+			FORM_TOOLS,
+			SCHEMA_DESCRIPTION,
+			SCHEMA_PROPERTIES,
+		)
+
+		definition = FORM_TOOLS.get(self.tool_name) or {
+			"description": SCHEMA_DESCRIPTION,
+			"properties": SCHEMA_PROPERTIES,
+			"required": ["doctype"],
+		}
+		self.name = self.tool_name
+		self.description = definition["description"]
+		self.inputSchema = {
+			"type": "object",
+			"properties": deepcopy(definition["properties"]),
+			"required": definition["required"],
+			"additionalProperties": False,
+		}
+		self.source_app = "hausverwaltung"
+		self.category = "read_only"
+		self.requires_permission = ""
+
+	def execute(self, arguments):
+		from hausverwaltung.hausverwaltung.agent_tools.form_metadata import get_schema
+		from hausverwaltung.hausverwaltung.agent_tools.form_metadata_tools import FORM_TOOLS
+
+		self.check_permission()
+		self.validate_arguments(arguments)
+		function = get_schema if self.name == "agent_get_doctype_schema" else FORM_TOOLS[self.name]["function"]
+		result = function(**arguments)
+		if fac_output.sent_size(result) > fac_output.DIRECT_OUTPUT_MAX_CHARS:
+			return {
+				"ok": False,
+				"error": {"code": "LIMIT_EXCEEDED", "message": "Metadaten-Seite zu groß; keine Definition wurde gekürzt."},
+			}
 		return result
 
 
@@ -699,3 +746,14 @@ for _name in (*FAC_OVERVIEW_TOOL_NAMES, *FAC_INVENTORY_TOOL_NAMES):
 	globals()[f"Fac_{_name}"] = type(
 		f"Fac_{_name}", (OverviewTool,), {"tool_name": _name, "__module__": __name__}
 	)
+
+
+for _name in FAC_FORM_TOOL_NAMES:
+	globals()[f"Fac_{_name}"] = type(
+		f"Fac_{_name}", (FormMetadataTool,), {"tool_name": _name, "__module__": __name__}
+	)
+
+
+class Fac_agent_get_doctype_schema(FormMetadataTool):
+	tool_name = "agent_get_doctype_schema"
+	mcp_audience = "code"

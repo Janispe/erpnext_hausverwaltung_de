@@ -4,6 +4,7 @@ import frappe
 
 from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 	FAC_CODE_TOOL_NAMES,
+	FAC_FORM_TOOL_NAMES,
 	FAC_MAIL_MERGE_TOOL_NAMES,
 	FAC_REPORT_TOOL_NAMES,
 	FAC_TOOL_NAMES,
@@ -36,7 +37,7 @@ def configure():
 	from hausverwaltung.hausverwaltung.services.fac_native_assistant import NATIVE_READ_TOOLS
 	from hausverwaltung.hausverwaltung.services.fac_setup import configure_tools
 
-	extra_tools = (*FAC_REPORT_TOOL_NAMES, *FAC_CODE_TOOL_NAMES, *FAC_MAIL_MERGE_TOOL_NAMES)
+	extra_tools = (*FAC_REPORT_TOOL_NAMES, *FAC_CODE_TOOL_NAMES, *FAC_MAIL_MERGE_TOOL_NAMES, *FAC_FORM_TOOL_NAMES)
 	configure_tools("Administrator", extra_tools=extra_tools)
 	actual = set(FAC_TOOL_NAMES) | set(extra_tools) | set(NATIVE_READ_TOOLS)
 	company = frappe.db.get_value("Company", {}, "name")
