@@ -38,7 +38,7 @@ context("Mietvertrag: Monatsmiete und Teilmonatsmiete", { retries: 0 }, () => {
 	function openDialog() {
 		cy.get('.page-container:visible [data-fieldname="teilmonatsmiete_festlegen"] button').click();
 		cy.window().should((win) => {
-			expect(win.cur_dialog?.title).to.eq("Teilmonatsmiete festlegen");
+			expect(win.cur_dialog?.title).to.eq("Teilmonat festlegen");
 			expect(win.cur_dialog?.display).to.eq(true);
 		});
 		cy.wait("@partMonthPreview").its("response.body.message.amount").should("eq", 320);
@@ -91,7 +91,7 @@ context("Mietvertrag: Monatsmiete und Teilmonatsmiete", { retries: 0 }, () => {
 		mode("Festbetrag");
 		field("betrag").should("have.value", "");
 		cy.contains(".modal:visible .btn-modal-primary", "In Mietvertrag übernehmen").click();
-		cy.get(".modal:visible").should("contain", "Bitte den vereinbarten Mietbetrag eingeben");
+		cy.get(".modal:visible").should("contain", "Bitte den vereinbarten Betrag eingeben");
 		cy.window().then((win) => expect(win.cur_frm.doc.miete_teilmonate || []).to.have.length(0));
 		field("betrag").clear().type("300").blur();
 		previewAmount(300);
@@ -144,6 +144,33 @@ context("Mietvertrag: Monatsmiete und Teilmonatsmiete", { retries: 0 }, () => {
 		}));
 	});
 
+	it("legt einen BK-Festbetrag getrennt von der Miete fest", () => {
+		cy.window().then(async (win) => {
+			const frm = win.cur_frm;
+			Object.assign(frm.add_child("betriebskosten"), { von: "2027-01-16", miete: 105 });
+			frm.refresh_field("betriebskosten");
+		});
+		openDialog();
+		cy.get('.modal:visible [data-fieldname="kostenart"] select').select("Betriebskosten");
+		previewAmount(54.19); // 105 * 16 / 31, prorated like the rent
+		cy.get("@partMonthPreview.all").should((requests) => {
+			expect(requests[requests.length - 1].request.body).to.include("kostenart=Betriebskosten");
+		});
+		mode("Festbetrag");
+		field("betrag").clear().type("55").blur();
+		previewAmount(55);
+		adopt();
+		cy.window().then((win) => {
+			expect(win.cur_frm.doc.miete_teilmonate).to.have.length(1);
+			expect(win.cur_frm.doc.miete_teilmonate[0]).to.include({
+				kostenart: "Betriebskosten", von: "2027-01-16", bis: "2027-01-31", berechnung: "Festbetrag", betrag: 55,
+			});
+		});
+		// The rent of the same month is still prorated; the BK rule does not apply to it.
+		openDialog();
+		cy.get('.modal:visible [data-fieldname="berechnung"] select').should("have.value", "Automatisch anteilig");
+	});
+
 	it("zeigt ältere Feststaffeln ohne sie als Monatsmieten umzudeuten", () => {
 		cy.window().then(async (win) => {
 			const frm = win.cur_frm;
@@ -169,7 +196,7 @@ context("Mietvertrag: Monatsmiete und Teilmonatsmiete", { retries: 0 }, () => {
 		});
 		cy.get(".modal:visible").last().should("contain", "Bitte zuerst").and("contain", "Monatsmiete");
 		cy.window().should((win) => {
-			expect(win.cur_dialog?.title).not.to.eq("Teilmonatsmiete festlegen");
+			expect(win.cur_dialog?.title).not.to.eq("Teilmonat festlegen");
 			expect(win.cur_dialog?.display).to.eq(true);
 		});
 		cy.contains(".modal:visible", "Bitte zuerst").find(".btn-modal-close").click();

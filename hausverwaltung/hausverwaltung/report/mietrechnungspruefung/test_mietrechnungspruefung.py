@@ -8,7 +8,7 @@ from hausverwaltung.hausverwaltung.report.mietrechnungspruefung import mietrechn
 
 
 class TestMietrechnungspruefung(unittest.TestCase):
-    def test_initial_bk_and_hk_staffels_are_not_missing_in_move_in_month(self):
+    def test_move_in_month_prorates_rent_and_advances_alike(self):
         staffel = {
             "miete": [frappe._dict(von="2026-01-16", miete=620)],
             "betriebskosten": [frappe._dict(von="2026-01-16", miete=150)],
@@ -16,10 +16,13 @@ class TestMietrechnungspruefung(unittest.TestCase):
         }
         rules = [{"gueltig_von": "2026-01-16", "abrechnungsart": "Vorauszahlung"}]
         contract = frappe._dict(von="2026-01-16", bis=None)
-        for month, rent in ((date(2026, 1, 1), 320), (date(2026, 2, 1), 620)):
+        for month, expected_amounts in (
+            (date(2026, 1, 1), {"Miete": 320, "Betriebskosten": 77.42, "Heizkosten": 51.61}),
+            (date(2026, 2, 1), {"Miete": 620, "Betriebskosten": 150, "Heizkosten": 100}),
+        ):
             with self.subTest(month=month):
                 expected = report._expected_amounts_for_month(contract, month, staffel, rules)
-                self.assertEqual(expected, {"Miete": rent, "Betriebskosten": 150, "Heizkosten": 100})
+                self.assertEqual(expected, expected_amounts)
 
     def test_initial_inclusive_rule_is_respected_in_move_in_month(self):
         expected = report._expected_amounts_for_month(
@@ -29,17 +32,26 @@ class TestMietrechnungspruefung(unittest.TestCase):
         )
         self.assertEqual(expected["Betriebskosten"], 0)
 
-    def test_expected_rent_uses_explicit_override_without_changing_advances(self):
-        expected = report._expected_amounts_for_month(
-            frappe._dict(von=date(2026, 1, 16), bis=None),
-            date(2026, 1, 1),
-            {"miete": [frappe._dict(von=date(2026, 1, 16), miete=620)],
-             "betriebskosten": [frappe._dict(von=date(2026, 1, 1), miete=150)],
-             "heizkosten": [frappe._dict(von=date(2026, 1, 1), miete=100)]},
-            [{"gueltig_von": date(2026, 1, 1), "abrechnungsart": "Vorauszahlung"}],
-            [{"von": "2026-01-16", "bis": "2026-01-31", "berechnung": "Festbetrag", "betrag": 300}],
-        )
-        self.assertEqual(expected, {"Miete": 300, "Betriebskosten": 150, "Heizkosten": 100})
+    def test_part_month_rule_only_overrides_its_own_kostenart(self):
+        staffel = {
+            "miete": [frappe._dict(von=date(2026, 1, 16), miete=620)],
+            "betriebskosten": [frappe._dict(von=date(2026, 1, 1), miete=150)],
+            "heizkosten": [frappe._dict(von=date(2026, 1, 1), miete=100)],
+        }
+        contract = frappe._dict(von=date(2026, 1, 16), bis=None)
+        bk_rules = [{"gueltig_von": date(2026, 1, 16), "abrechnungsart": "Vorauszahlung"}]
+        rent_rule = {"von": "2026-01-16", "bis": "2026-01-31", "berechnung": "Festbetrag", "betrag": 300}
+        bk_rule = {**rent_rule, "kostenart": "Betriebskosten", "betrag": 75}
+        for part_months, expected_amounts in (
+            ([rent_rule], {"Miete": 300, "Betriebskosten": 77.42, "Heizkosten": 51.61}),
+            ([bk_rule], {"Miete": 320, "Betriebskosten": 75, "Heizkosten": 51.61}),
+            ([rent_rule, bk_rule], {"Miete": 300, "Betriebskosten": 75, "Heizkosten": 51.61}),
+        ):
+            with self.subTest(part_months=part_months):
+                expected = report._expected_amounts_for_month(
+                    contract, date(2026, 1, 1), staffel, bk_rules, part_months
+                )
+                self.assertEqual(expected, expected_amounts)
 
     def test_part_months_are_loaded_for_all_contracts_in_one_query(self):
         rules = [frappe._dict(parent="MV-1", von="2026-01-16", bis="2026-01-31", berechnung="Festbetrag", betrag=300),
@@ -107,27 +119,23 @@ class TestMietrechnungspruefung(unittest.TestCase):
 
     def test_miete_prorata_for_partial_month(self):
         rows = [{"von": date(2026, 1, 1), "miete": 900.0, "art": "Monatlich", "name": "SM-1"}]
-        amount = report._miete_betrag_fuer_monat_from_rows(
-            von=date(2026, 1, 16),
-            bis=None,
-            anchor=date(2026, 1, 1),
-            rows=rows,
-        )
+        amount = report._expected_amounts_for_month(
+            frappe._dict(von=date(2026, 1, 16), bis=None), date(2026, 1, 1), {"miete": rows}
+        )["Miete"]
         self.assertEqual(amount, round(900.0 * (16 / 31), 2))
 
     def test_miete_gesamter_zeitraum_full_amount_in_month(self):
         rows = [{"von": date(2026, 1, 10), "miete": 400.0, "art": "Gesamter Zeitraum", "name": "SM-2"}]
-        amount = report._miete_betrag_fuer_monat_from_rows(
-            von=date(2026, 1, 1),
-            bis=date(2026, 1, 20),
-            anchor=date(2026, 1, 1),
-            rows=rows,
-        )
+        amount = report._expected_amounts_for_month(
+            frappe._dict(von=date(2026, 1, 1), bis=date(2026, 1, 20)), date(2026, 1, 1), {"miete": rows}
+        )["Miete"]
         self.assertEqual(amount, 400.0)
 
     def test_bk_hk_zero_no_issue_row(self):
-        expected_zero = report._staffelbetrag_from_rows([], date(2026, 1, 1))
-        self.assertEqual(expected_zero, 0.0)
+        expected = report._expected_amounts_for_month(
+            frappe._dict(von=date(2026, 1, 1), bis=None), date(2026, 1, 1), {}
+        )
+        self.assertEqual((expected["Betriebskosten"], expected["Heizkosten"]), (0.0, 0.0))
 
         should_emit = report._should_emit_row(status="OK", show_ok_rows=0, only_issues=1)
         self.assertFalse(should_emit)

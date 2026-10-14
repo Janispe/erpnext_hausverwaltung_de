@@ -41,7 +41,8 @@ class TestTeilmonatsmietePreview(unittest.TestCase):
 		)
 		template = json.loads(template_path.read_text())["html"]
 		html = frappe.render_template(template, {"doc": doc})
-		self.assertIn("Miete für Teilmonate", html)
+		self.assertIn("Teilmonate (Ein- und Auszug)", html)
+		self.assertIn("<td>Miete</td>", html)
 		self.assertIn(frappe.utils.formatdate("2026-01-16"), html)
 		self.assertIn(frappe.utils.formatdate("2026-01-31"), html)
 		self.assertIn(frappe.utils.fmt_money(0, currency="EUR"), html)
@@ -53,6 +54,47 @@ class TestTeilmonatsmietePreview(unittest.TestCase):
 		self.assertEqual(result["amount"], 300)
 		self.assertEqual(result["segments"][0]["berechnung"], "Festbetrag")
 		self.assertEqual(result["segments"], result["breakdown"])
+
+	def test_preview_calculates_each_kostenart_with_its_own_rule(self):
+		values = rent_configuration(betriebskosten=[{"von": "2026-01-16", "miete": 105}])
+		with patch.object(frappe, "has_permission", return_value=True):
+			prorated = mietvertrag.vorschau_teilmonatsmiete(
+				json.dumps(values), "2026-01-01", "Betriebskosten"
+			)
+			values["miete_teilmonate"].append(
+				{
+					"kostenart": "Betriebskosten",
+					"von": "2026-01-16",
+					"bis": "2026-01-31",
+					"berechnung": "Festbetrag",
+					"betrag": 55,
+				}
+			)
+			fixed = mietvertrag.vorschau_teilmonatsmiete(json.dumps(values), "2026-01-01", "Betriebskosten")
+			rent = mietvertrag.vorschau_teilmonatsmiete(json.dumps(values), "2026-01-01")
+		self.assertEqual(prorated["amount"], 54.19)  # 105 * 16 / 31; the rent rule is not applied
+		self.assertEqual(prorated["kostenart"], "Betriebskosten")
+		self.assertEqual(fixed["amount"], 55)
+		self.assertEqual(rent["amount"], 300)
+
+	def test_preview_shows_no_bk_advance_under_inclusive_rule(self):
+		values = rent_configuration(
+			betriebskosten=[{"von": "2026-01-16", "miete": 0}],
+			betriebskostenregelungen=[
+				{"gueltig_von": "2026-01-16", "abrechnungsart": "Pauschale/Inklusivmiete"}
+			],
+		)
+		with patch.object(frappe, "has_permission", return_value=True):
+			result = mietvertrag.vorschau_teilmonatsmiete(json.dumps(values), "2026-01-01", "Betriebskosten")
+		self.assertEqual(result["amount"], 0)
+		self.assertIn("Pauschale", result["hinweis"])
+
+	def test_preview_rejects_unknown_kostenart(self):
+		with (
+			patch.object(frappe, "has_permission", return_value=True),
+			self.assertRaisesRegex(frappe.ValidationError, "Kostenart"),
+		):
+			mietvertrag.vorschau_teilmonatsmiete(json.dumps(rent_configuration()), "2026-01-01", "Kaution")
 
 	def test_preview_of_existing_contract_requires_write_permission(self):
 		values = rent_configuration(name="MV-1")
@@ -137,6 +179,72 @@ class TestTeilmonatsmieteDatabase(unittest.TestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "überschneiden"):
 			contract.save(ignore_permissions=True)
 		self.assertEqual(frappe.db.count("Miete Teilmonat", {"parent": contract.name}), 1)
+
+	def test_rules_of_different_kostenarten_may_cover_the_same_days(self):
+		contract = self.make_contract()
+		contract.append("betriebskosten", {"von": "2026-01-16", "miete": 105})
+		contract.append(
+			"miete_teilmonate",
+			{
+				"kostenart": "Betriebskosten",
+				"von": "2026-01-16",
+				"bis": "2026-01-31",
+				"berechnung": "Festbetrag",
+				"betrag": 55,
+			},
+		)
+		contract.save(ignore_permissions=True)
+		loaded = frappe.get_doc("Mietvertrag", contract.name)
+		self.assertEqual(rent._miete_betrag_fuer_monat(loaded, date(2026, 1, 1)), 300)
+		self.assertEqual(rent._monatsbetrag_fuer_kostenart(loaded, "Betriebskosten", date(2026, 1, 1)), 55)
+		self.assertEqual(rent._monatsbetrag_fuer_kostenart(loaded, "Betriebskosten", date(2026, 3, 1)), 50.81)
+		loaded.append(
+			"miete_teilmonate",
+			{
+				"kostenart": "Betriebskosten",
+				"von": "2026-01-20",
+				"bis": "2026-01-25",
+				"berechnung": "Festbetrag",
+				"betrag": 5,
+			},
+		)
+		with self.assertRaisesRegex(frappe.ValidationError, "überschneiden"):
+			loaded.save(ignore_permissions=True)
+
+	def test_fixed_rule_requires_monthly_basis_of_its_kostenart(self):
+		contract = self.make_contract()
+		contract.append(
+			"miete_teilmonate",
+			{
+				"kostenart": "Heizkosten",
+				"von": "2026-01-16",
+				"bis": "2026-01-31",
+				"berechnung": "Festbetrag",
+				"betrag": 40,
+			},
+		)
+		with self.assertRaisesRegex(frappe.ValidationError, "Heizkostenvorauszahlung"):
+			contract.save(ignore_permissions=True)
+
+	def test_bk_fixed_amount_is_rejected_in_inclusive_period(self):
+		contract = self.make_contract()
+		contract.append("betriebskosten", {"von": "2026-01-16", "miete": 0})
+		contract.append(
+			"betriebskostenregelungen",
+			{"gueltig_von": "2026-01-16", "abrechnungsart": "Pauschale/Inklusivmiete"},
+		)
+		contract.append(
+			"miete_teilmonate",
+			{
+				"kostenart": "Betriebskosten",
+				"von": "2026-01-16",
+				"bis": "2026-01-31",
+				"berechnung": "Festbetrag",
+				"betrag": 55,
+			},
+		)
+		with self.assertRaisesRegex(frappe.ValidationError, "BK-Festbetrag"):
+			contract.save(ignore_permissions=True)
 
 	def test_submitted_contract_update_validates_rules_and_allows_explicit_zero(self):
 		contract = self.make_contract()

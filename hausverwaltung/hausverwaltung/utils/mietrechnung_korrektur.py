@@ -355,35 +355,25 @@ def _find_generated_invoice(gen: dict, ctx: dict) -> str | None:
 
 
 def _recompute_betrag(ctx: dict) -> float:
-	"""Korrekter Betrag für (Mietvertrag, Monat, Typ) aus der aktuellen Staffelmiete."""
+	"""Korrekter Betrag für (Mietvertrag, Monat, Typ) aus dem aktuellen Mietvertrag.
+
+	Nutzt exakt die Berechnung des Generators, inklusive anteiliger Ein-/Auszugs-
+	monate und Teilmonatsregeln je Kostenart.
+	"""
 	from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
-		_miete_betrag_fuer_monat,
-		_staffelbetrag,
+		_bk_regelung_und_betrag_fuer_monat,
+		_monatsbetrag_fuer_kostenart,
 	)
-	from hausverwaltung.hausverwaltung.utils.mietberechnung import monthly_charge_reference_date
-	from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
-		BK_REGELUNG_VORAUSZAHLUNG,
-		get_bk_regelung,
-	)
+	from hausverwaltung.hausverwaltung.utils.mietberechnung import KOSTENARTEN
 
 	anchor = date(ctx["jahr"], ctx["monat"], 1)
-	mv_name = ctx["mietvertrag"]
 	typ = ctx["typ"]
-	mv_row = frappe.db.get_value("Mietvertrag", mv_name, ["name", "von", "bis"], as_dict=True)
-
-	if typ == "Miete":
-		return _miete_betrag_fuer_monat(mv_row, anchor)
-	reference_date = monthly_charge_reference_date(mv_row.von, anchor)
-	if typ == "Betriebskosten" and get_bk_regelung(mv_name, reference_date) != BK_REGELUNG_VORAUSZAHLUNG:
+	if typ not in KOSTENARTEN:
 		return 0.0
-	parentfield = {
-		"Betriebskosten": "betriebskosten",
-		"Heizkosten": "heizkosten",
-		"Untermietzuschlag": "untermietzuschlag",
-	}.get(typ)
-	if not parentfield:
-		return 0.0
-	return _staffelbetrag(mv_name, parentfield, reference_date)
+	mv_row = frappe.db.get_value("Mietvertrag", ctx["mietvertrag"], ["name", "von", "bis"], as_dict=True)
+	if typ == "Betriebskosten":
+		return _bk_regelung_und_betrag_fuer_monat(mv_row, anchor)[1]
+	return _monatsbetrag_fuer_kostenart(mv_row, typ, anchor)
 
 
 @frappe.whitelist()

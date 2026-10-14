@@ -11,7 +11,12 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
     get_bk_regelung,
 )
 from hausverwaltung.hausverwaltung.utils.mietberechnung import (
-    calculate_monthly_rent,
+    KOSTENART_BK,
+    KOSTENART_HK,
+    KOSTENART_MIETE,
+    KOSTENART_UMZ,
+    STAFFEL_FIELD_BY_KOSTENART,
+    calculate_monthly_charge,
     monthly_charge_reference_date,
 )
 from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
@@ -25,41 +30,53 @@ def _parse_monat_jahr(monat: str | int | None, jahr: str | int | None) -> date:
     return date(j, m, 1)
 
 
-def _staffelbetrag(mv_name: str, parentfield: str, zum: date) -> float:
-    """Hole den Betrag aus der Staffeltabelle (miete|betriebskosten|heizkosten), der am Datum gilt.
-
-    Hinweis: Für Miete wird in dieser Datei eine spezielle Monatsberechnung verwendet.
-    Diese generische Funktion bleibt für BK/Heizkosten erhalten (kein Pro‑Rata).
-    """
-    betrag = frappe.db.get_value(
-        "Staffelmiete",
-        {
-            "parent": mv_name,
-            "parenttype": "Mietvertrag",
-            "parentfield": parentfield,
-            "von": ("<=", zum),
-        },
-        "miete",
-        order_by="von desc",
+def _teilmonat_rows(mv_name: str) -> list[frappe._dict]:
+    """Part-month rules of every Kostenart; the calculation filters by Kostenart."""
+    return frappe.get_all(
+        "Miete Teilmonat",
+        filters={"parent": mv_name, "parenttype": "Mietvertrag", "parentfield": "miete_teilmonate"},
+        fields=["kostenart", "von", "bis", "berechnung", "betrag"],
+        order_by="von asc, bis asc",
     )
-    try:
-        return float(betrag) if betrag else 0.0
-    except Exception:
-        return 0.0
+
+
+def _monatsbetrag_fuer_kostenart(mv_row: frappe._dict, kostenart: str, anchor: date) -> float:
+    """Exact monthly charge of one Kostenart, shared by generator, checks and correction.
+
+    Move-in and move-out months are prorated by calendar days unless a
+    part-month rule of the same Kostenart fixes the amount.
+    """
+    staffel_rows = frappe.get_all(
+        "Staffelmiete",
+        filters={
+            "parent": mv_row.name,
+            "parenttype": "Mietvertrag",
+            "parentfield": STAFFEL_FIELD_BY_KOSTENART[kostenart],
+        },
+        fields=["name", "von", "miete", "art", "idx"],
+        order_by="von asc, idx asc, name asc",
+    )
+    return calculate_monthly_charge(
+        mv_row.von,
+        mv_row.bis,
+        anchor,
+        staffel_rows,
+        _teilmonat_rows(mv_row.name),
+        kostenart=kostenart,
+    )["amount"]
 
 
 def _bk_regelung_und_betrag_fuer_monat(
-    mv_name: str,
+    mv_row: frappe._dict,
     anchor: date,
     *,
     lock: bool = False,
-    contract_start=None,
 ) -> tuple[str, float]:
     """Liefere Regelung und separat zu fakturierende BK-Vorauszahlung."""
-    reference_date = monthly_charge_reference_date(contract_start, anchor)
-    regelung = get_bk_regelung(mv_name, reference_date, lock=lock)
+    reference_date = monthly_charge_reference_date(mv_row.von, anchor)
+    regelung = get_bk_regelung(mv_row.name, reference_date, lock=lock)
     betrag = (
-        _staffelbetrag(mv_name, "betriebskosten", reference_date)
+        _monatsbetrag_fuer_kostenart(mv_row, KOSTENART_BK, anchor)
         if regelung == BK_REGELUNG_VORAUSZAHLUNG
         else 0.0
     )
@@ -82,21 +99,7 @@ def _overlap(a_start: date, a_end_excl: date, b_start: date, b_end_excl: date) -
 
 def _miete_betrag_fuer_monat(mv_row: frappe._dict, anchor: date) -> float:
     """Use the same exact monthly-rent calculation as preview and checking."""
-    rent_rows = frappe.get_all(
-        "Staffelmiete",
-        filters={"parent": mv_row.name, "parenttype": "Mietvertrag", "parentfield": "miete"},
-        fields=["name", "von", "miete", "art", "idx"],
-        order_by="von asc, idx asc, name asc",
-    )
-    part_month_rows = frappe.get_all(
-        "Miete Teilmonat",
-        filters={"parent": mv_row.name, "parenttype": "Mietvertrag", "parentfield": "miete_teilmonate"},
-        fields=["von", "bis", "berechnung", "betrag"],
-        order_by="von asc, bis asc",
-    )
-    return calculate_monthly_rent(
-        mv_row.von, mv_row.bis, anchor, rent_rows, part_month_rows
-    )["amount"]
+    return _monatsbetrag_fuer_kostenart(mv_row, KOSTENART_MIETE, anchor)
 
 
 def _cost_center_via_wohnung(wohnung: str | None) -> str | None:
@@ -952,14 +955,14 @@ def generate_miet_und_bk_rechnungen(
             # Beträge je Staffeltabelle holen
             # Miete: neue Logik (Monatlich pro‑rata, Gesamter Zeitraum voll)
             betrag_miete = _miete_betrag_fuer_monat(v, datum)
-            staffel_stichtag = monthly_charge_reference_date(v.von, datum)
+            # BK/HK/UMZ: Ein-/Auszugsmonate anteilig wie die Miete, außer eine
+            # Teilmonatsregel derselben Kostenart legt einen Festbetrag fest.
             bk_regelung, betrag_bk = _bk_regelung_und_betrag_fuer_monat(
-                v.name,
+                v,
                 datum,
                 lock=True,
-                contract_start=v.von,
             )
-            betrag_heiz = _staffelbetrag(v.name, "heizkosten", staffel_stichtag)
+            betrag_heiz = _monatsbetrag_fuer_kostenart(v, KOSTENART_HK, datum)
 
             # Mietabrechnungs-ID koppelt die getrennten SIs (Miete/BK/HK/UMZ)
             # eines Mietvertrag-Monats für die Display-Aggregation in
@@ -1154,7 +1157,7 @@ def generate_miet_und_bk_rechnungen(
                     )
 
             # Untermietzuschlag (nur wenn Staffel-Eintrag UND Erlöskonto konfiguriert)
-            betrag_umz = _staffelbetrag(v.name, "untermietzuschlag", staffel_stichtag)
+            betrag_umz = _monatsbetrag_fuer_kostenart(v, KOSTENART_UMZ, datum)
             umz_account = income_accounts.get("Untermietzuschlag")
             if only_typ and only_typ != "Untermietzuschlag":
                 pass

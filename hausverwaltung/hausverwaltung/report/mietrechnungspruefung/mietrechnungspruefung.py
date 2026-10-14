@@ -12,7 +12,10 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
     get_bk_regelungen_for_contracts,
 )
 from hausverwaltung.hausverwaltung.utils.mietberechnung import (
-    calculate_monthly_rent,
+    KOSTENART_BK,
+    KOSTENART_HK,
+    KOSTENART_MIETE,
+    calculate_monthly_charge,
     monthly_charge_reference_date,
 )
 from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
@@ -189,7 +192,7 @@ def _get_staffelmieten_by_contract(contract_names: list[str]) -> dict[str, dict[
 
 
 def _get_part_months_by_contract(contract_names: list[str]) -> dict[str, list[frappe._dict]]:
-    """Batch-load explicit rent exceptions, avoiding one query per report row."""
+    """Batch-load part-month rules of all Kostenarten, avoiding one query per row."""
     if not contract_names:
         return {}
     rows = frappe.get_all(
@@ -199,7 +202,7 @@ def _get_part_months_by_contract(contract_names: list[str]) -> dict[str, list[fr
             "parenttype": "Mietvertrag",
             "parentfield": "miete_teilmonate",
         },
-        fields=["parent", "von", "bis", "berechnung", "betrag"],
+        fields=["parent", "kostenart", "von", "bis", "berechnung", "betrag"],
         order_by="parent asc, von asc, bis asc",
     )
     out = {}
@@ -220,15 +223,20 @@ def _expected_amounts_for_month(
     hk_rows = staffel.get("heizkosten") or []
     reference_date = monthly_charge_reference_date(contract.von, month_start)
 
+    def charge(rows: list[frappe._dict], kostenart: str) -> float:
+        return calculate_monthly_charge(
+            contract.von, contract.bis, month_start, rows, teilmonat_rows, kostenart=kostenart
+        )["amount"]
+
     return {
-        "Miete": _miete_betrag_fuer_monat_from_rows(contract.von, contract.bis, month_start, miete_rows, teilmonat_rows),
+        "Miete": charge(miete_rows, KOSTENART_MIETE),
         "Betriebskosten": (
-            _staffelbetrag_from_rows(bk_rows, reference_date)
+            charge(bk_rows, KOSTENART_BK)
             if get_bk_regelung_from_rows(bk_regelungen or [], reference_date)
             == BK_REGELUNG_VORAUSZAHLUNG
             else 0.0
         ),
-        "Heizkosten": _staffelbetrag_from_rows(hk_rows, reference_date),
+        "Heizkosten": charge(hk_rows, KOSTENART_HK),
     }
 
 
@@ -244,33 +252,6 @@ def _overlap(a_start: date, a_end_excl: date, b_start: date, b_end_excl: date) -
     e = min(a_end_excl, b_end_excl)
     days = max((e - s).days, 0)
     return s, e, days
-
-
-def _miete_betrag_fuer_monat_from_rows(
-    von: object,
-    bis: object,
-    anchor: date,
-    rows: list[frappe._dict],
-    teilmonat_rows: list[dict] | None = None,
-) -> float:
-    return calculate_monthly_rent(von, bis, anchor, rows, teilmonat_rows)["amount"]
-
-
-def _staffelbetrag_from_rows(rows: list[frappe._dict], zum: date) -> float:
-    anchor = getdate(zum)
-    best_von = None
-    best_value = 0.0
-
-    for row in rows or []:
-        row_von = row.get("von")
-        if not row_von:
-            continue
-        row_von = getdate(row_von)
-        if row_von <= anchor and (best_von is None or row_von > best_von):
-            best_von = row_von
-            best_value = flt(row.get("miete") or 0)
-
-    return round(flt(best_value), 2)
 
 
 def _contract_overlaps_month(contract: frappe._dict, month_start: date) -> bool:

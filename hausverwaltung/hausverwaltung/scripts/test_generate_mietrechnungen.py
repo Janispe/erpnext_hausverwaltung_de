@@ -10,34 +10,88 @@ from hausverwaltung.hausverwaltung.scripts import generate_mietrechnungen
 
 
 class TestGenerateMietrechnungen(unittest.TestCase):
-    def test_move_in_month_uses_first_active_day_for_bk_staffel_and_rule(self):
-        def get_value(doctype, filters, fieldname, **_kwargs):
-            self.assertEqual(doctype, "Staffelmiete")
-            self.assertEqual(filters["parentfield"], "betriebskosten")
-            return 175 if filters["von"][1] >= date(2026, 1, 16) else None
+    def _charge_tables(self, staffels, part_months=()):
+        """Mock frappe.get_all for one contract's staffel tables and part-month rules."""
 
+        def get_all(doctype, **kwargs):
+            self.assertEqual(kwargs["filters"]["parent"], "MV-1")
+            if doctype == "Staffelmiete":
+                return [frappe._dict(row) for row in staffels.get(kwargs["filters"]["parentfield"], [])]
+            if doctype == "Miete Teilmonat":
+                self.assertIn("kostenart", kwargs["fields"])
+                return [frappe._dict(row) for row in part_months]
+            self.fail(f"Unexpected doctype: {doctype}")
+
+        return (
+            patch.object(generate_mietrechnungen.frappe, "get_all", side_effect=get_all),
+            patch.object(generate_mietrechnungen.frappe, "get_system_settings", return_value="Commercial Rounding"),
+        )
+
+    def test_move_in_month_prorates_bk_advance_and_uses_initial_rule(self):
+        contract = frappe._dict(name="MV-1", von=date(2026, 1, 16), bis=None)
+        get_all, settings = self._charge_tables({"betriebskosten": [{"von": "2026-01-16", "miete": 175}]})
         with (
             patch.object(generate_mietrechnungen, "get_bk_regelung", return_value="Vorauszahlung") as get_rule,
-            patch.object(generate_mietrechnungen.frappe.db, "get_value", side_effect=get_value),
+            get_all,
+            settings,
         ):
             rule, amount = generate_mietrechnungen._bk_regelung_und_betrag_fuer_monat(
-                "MV-1", date(2026, 1, 1), contract_start=date(2026, 1, 16), lock=True,
+                contract, date(2026, 1, 1), lock=True,
             )
 
-        self.assertEqual((rule, amount), ("Vorauszahlung", 175.0))
+        # 16 of 31 January days: 175 * 16 / 31 = 90.32
+        self.assertEqual((rule, amount), ("Vorauszahlung", 90.32))
         get_rule.assert_called_once_with("MV-1", date(2026, 1, 16), lock=True)
+
+    def test_bk_fixed_part_month_replaces_prorata_without_touching_rent(self):
+        contract = frappe._dict(name="MV-1", von=date(2026, 1, 16), bis=None)
+        get_all, settings = self._charge_tables(
+            {
+                "miete": [{"von": "2026-01-16", "miete": 610, "art": "Monatlich"}],
+                "betriebskosten": [{"von": "2026-01-16", "miete": 105}],
+            },
+            [{"kostenart": "Betriebskosten", "von": "2026-01-16", "bis": "2026-01-31", "berechnung": "Festbetrag", "betrag": 55}],
+        )
+        with (
+            patch.object(generate_mietrechnungen, "get_bk_regelung", return_value="Vorauszahlung"),
+            get_all,
+            settings,
+        ):
+            _rule, bk = generate_mietrechnungen._bk_regelung_und_betrag_fuer_monat(contract, date(2026, 1, 1))
+            rent = generate_mietrechnungen._miete_betrag_fuer_monat(contract, date(2026, 1, 1))
+            february_bk = generate_mietrechnungen._bk_regelung_und_betrag_fuer_monat(contract, date(2026, 2, 1))[1]
+
+        self.assertEqual(bk, 55)
+        self.assertEqual(rent, 314.84)  # 610 * 16 / 31, the BK rule never changes rent
+        self.assertEqual(february_bk, 105)
+
+    def test_hk_and_umz_move_out_month_are_prorated(self):
+        contract = frappe._dict(name="MV-1", von=date(2025, 1, 1), bis=date(2026, 1, 15))
+        get_all, settings = self._charge_tables(
+            {
+                "heizkosten": [{"von": "2025-01-01", "miete": 80}],
+                "untermietzuschlag": [{"von": "2025-01-01", "miete": 31}],
+            }
+        )
+        with get_all, settings:
+            heating = generate_mietrechnungen._monatsbetrag_fuer_kostenart(contract, "Heizkosten", date(2026, 1, 1))
+            surcharge = generate_mietrechnungen._monatsbetrag_fuer_kostenart(contract, "Untermietzuschlag", date(2026, 1, 1))
+            after_end = generate_mietrechnungen._monatsbetrag_fuer_kostenart(contract, "Heizkosten", date(2026, 2, 1))
+
+        self.assertEqual(heating, 38.71)  # 80 * 15 / 31
+        self.assertEqual(surcharge, 15)
+        self.assertEqual(after_end, 0)
 
     def test_move_in_month_respects_initial_inclusive_rule(self):
         def get_rule(_name, reference_date, **_kwargs):
             return "Pauschale/Inklusivmiete" if reference_date >= date(2026, 1, 16) else "Vorauszahlung"
 
+        contract = frappe._dict(name="MV-1", von="2026-01-16", bis=None)
         with (
             patch.object(generate_mietrechnungen, "get_bk_regelung", side_effect=get_rule),
-            patch.object(generate_mietrechnungen, "_staffelbetrag", return_value=175.0) as get_amount,
+            patch.object(generate_mietrechnungen, "_monatsbetrag_fuer_kostenart", return_value=175.0) as get_amount,
         ):
-            rule, amount = generate_mietrechnungen._bk_regelung_und_betrag_fuer_monat(
-                "MV-1", date(2026, 1, 1), contract_start="2026-01-16",
-            )
+            rule, amount = generate_mietrechnungen._bk_regelung_und_betrag_fuer_monat(contract, date(2026, 1, 1))
 
         self.assertEqual((rule, amount), ("Pauschale/Inklusivmiete", 0.0))
         get_amount.assert_not_called()
@@ -92,10 +146,10 @@ class TestGenerateMietrechnungen(unittest.TestCase):
                 "get_bk_regelung",
                 return_value="Pauschale/Inklusivmiete",
             ) as get_rule,
-            patch.object(generate_mietrechnungen, "_staffelbetrag") as get_amount,
+            patch.object(generate_mietrechnungen, "_monatsbetrag_fuer_kostenart") as get_amount,
         ):
             rule, amount = generate_mietrechnungen._bk_regelung_und_betrag_fuer_monat(
-                "MV-1",
+                frappe._dict(name="MV-1", von=date(2020, 1, 1), bis=None),
                 date(2026, 6, 1),
                 lock=True,
             )
@@ -112,16 +166,17 @@ class TestGenerateMietrechnungen(unittest.TestCase):
                 "get_bk_regelung",
                 return_value="Vorauszahlung",
             ),
-            patch.object(generate_mietrechnungen, "_staffelbetrag", return_value=175.0) as get_amount,
+            patch.object(generate_mietrechnungen, "_monatsbetrag_fuer_kostenart", return_value=175.0) as get_amount,
         ):
+            contract = frappe._dict(name="MV-1", von=date(2020, 1, 1), bis=None)
             rule, amount = generate_mietrechnungen._bk_regelung_und_betrag_fuer_monat(
-                "MV-1",
+                contract,
                 date(2026, 7, 1),
             )
 
         self.assertEqual(rule, "Vorauszahlung")
         self.assertEqual(amount, 175.0)
-        get_amount.assert_called_once_with("MV-1", "betriebskosten", date(2026, 7, 1))
+        get_amount.assert_called_once_with(contract, "Betriebskosten", date(2026, 7, 1))
 
     def test_company_via_wohnung_uses_property_financial_identity(self):
         def get_value(doctype, name, fieldname, **kwargs):

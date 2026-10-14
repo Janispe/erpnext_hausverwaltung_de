@@ -18,21 +18,16 @@ from frappe import _
 from frappe.utils import get_first_day, getdate
 
 from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
+	_bk_regelung_und_betrag_fuer_monat,
 	_cost_center_via_wohnung,
 	_kunde_des_vertrags,
-	_miete_betrag_fuer_monat,
+	_monatsbetrag_fuer_kostenart,
 	_month_window,
 	_overlap,
 	_resolve_company,
-	_staffelbetrag,
 )
 from hausverwaltung.hausverwaltung.utils.display_titles import send_payload_titles
 from hausverwaltung.hausverwaltung.utils.income_accounts import get_hv_income_accounts
-from hausverwaltung.hausverwaltung.utils.mietberechnung import monthly_charge_reference_date
-from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
-	BK_REGELUNG_VORAUSZAHLUNG,
-	get_bk_regelung,
-)
 
 TYP_PARENTFIELD = {
 	"Miete": "miete",
@@ -43,13 +38,10 @@ TYP_PARENTFIELD = {
 
 
 def _expected_betrag(mv_row, typ: str, anker: date) -> float:
-	if typ == "Miete":
-		return _miete_betrag_fuer_monat(mv_row, anker)
-	reference_date = monthly_charge_reference_date(mv_row.von, anker)
-	if typ == "Betriebskosten" and get_bk_regelung(mv_row.name, reference_date) != BK_REGELUNG_VORAUSZAHLUNG:
-		return 0.0
-	parentfield = TYP_PARENTFIELD[typ]
-	return _staffelbetrag(mv_row.name, parentfield, reference_date)
+	"""Expected amount with exactly the generator's calculation (incl. part months)."""
+	if typ == "Betriebskosten":
+		return _bk_regelung_und_betrag_fuer_monat(mv_row, anker)[1]
+	return _monatsbetrag_fuer_kostenart(mv_row, typ, anker)
 
 
 def _load_si_data(si_name: str | None, typ: str | None = None) -> dict | None:

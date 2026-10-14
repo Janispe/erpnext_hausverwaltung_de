@@ -22,24 +22,34 @@ from hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur import (
 
 
 class TestInitialMonthlyChargeCorrection(unittest.TestCase):
-	def test_correction_uses_active_initial_staffel_for_monthly_charges(self):
+	GENERATOR = "hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen"
+
+	def test_correction_prorates_monthly_charges_like_the_generator(self):
 		contract = frappe._dict(name="MV-1", von="2026-01-16", bis=None)
-		def get_amount(_name, field, reference_date):
-			return {"betriebskosten": 150, "heizkosten": 100, "untermietzuschlag": 30}[field] if reference_date >= date(2026, 1, 16) else 0
+		staffels = {"betriebskosten": 150, "heizkosten": 100, "untermietzuschlag": 30}
+
+		def get_all(doctype, **kwargs):
+			if doctype == "Miete Teilmonat":
+				return [frappe._dict(kostenart="Heizkosten", von="2026-01-16", bis="2026-01-31", berechnung="Festbetrag", betrag=40)]
+			field = kwargs["filters"]["parentfield"]
+			return [frappe._dict(von="2026-01-16", miete=staffels[field], art="Monatlich")]
+
 		with (
 			patch.object(frappe.db, "get_value", return_value=contract),
-			patch("hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen._staffelbetrag", side_effect=get_amount),
-			patch("hausverwaltung.hausverwaltung.utils.betriebskostenregelung.get_bk_regelung", return_value="Vorauszahlung"),
+			patch(f"{self.GENERATOR}.frappe.get_all", side_effect=get_all),
+			patch(f"{self.GENERATOR}.frappe.get_system_settings", return_value="Commercial Rounding"),
+			patch(f"{self.GENERATOR}.get_bk_regelung", return_value="Vorauszahlung"),
 		):
-			for typ, amount in (("Betriebskosten", 150), ("Heizkosten", 100), ("Untermietzuschlag", 30)):
+			# 16 of 31 days; the HK fixed part-month amount replaces its proration.
+			for typ, amount in (("Betriebskosten", 77.42), ("Heizkosten", 40), ("Untermietzuschlag", 15.48)):
 				with self.subTest(typ=typ):
 					self.assertEqual(_recompute_betrag({"mietvertrag": "MV-1", "typ": typ, "jahr": 2026, "monat": 1}), amount)
 
 	def test_correction_does_not_reintroduce_advance_for_inclusive_rent(self):
 		with (
 			patch.object(frappe.db, "get_value", return_value=frappe._dict(name="MV-1", von="2026-01-16", bis=None)),
-			patch("hausverwaltung.hausverwaltung.utils.betriebskostenregelung.get_bk_regelung", return_value="Pauschale/Inklusivmiete"),
-			patch("hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen._staffelbetrag", return_value=150) as get_amount,
+			patch(f"{self.GENERATOR}.get_bk_regelung", return_value="Pauschale/Inklusivmiete"),
+			patch(f"{self.GENERATOR}._monatsbetrag_fuer_kostenart", return_value=150) as get_amount,
 		):
 			self.assertEqual(_recompute_betrag({"mietvertrag": "MV-1", "typ": "Betriebskosten", "jahr": 2026, "monat": 1}), 0)
 		get_amount.assert_not_called()
