@@ -101,6 +101,9 @@ frappe.query_reports["Mieterkonto"] = {
 		if (data?.is_total_row || data?.is_opening_row) {
 			return `<strong>${value || ""}</strong>`;
 		}
+		if (column.fieldname === "beschreibung" && data?.art === "Forderung" && data.status === "Paid") {
+			return `${value || ""} <span class="indicator-pill green">${__("bezahlt")}</span>`;
+		}
 		return value;
 	},
 };

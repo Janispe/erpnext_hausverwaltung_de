@@ -105,6 +105,7 @@ function VariantB({ rows, totalRow, sortByWertstellung }) {
                         <ArtPill art={r.art} />
                         <span>{r.beschreibung}</span>
                         {isOpen && <OpenBadge amount={r.offen} />}
+                        <InvoicePaidBadge row={r} />
                       </div>
                       <VoucherLinks
                         belegart={r.belegart}

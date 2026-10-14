@@ -126,7 +126,7 @@ def execute(filters=None):
 	transactions.extend(_build_settlement_transactions(display_invoices, raw_invoices, filters))
 	transactions.extend(journal_settlements)
 	transactions.extend(_build_payment_entry_advance_transactions(raw_invoices, filters, journal_allocations))
-	transactions = _merge_payment_entry_mixed_advance_transactions(transactions)
+	transactions = _merge_payment_entry_mixed_advance_transactions(transactions, filters)
 	# Stand-alone Receivable-Bewegungen auf Mieterforderungen ohne
 	# SI-Referenz — z.B. nachgebuchte Mahngebühren oder Korrektur-JEs.
 	transactions.extend(standalone_transactions)
@@ -693,8 +693,14 @@ def _build_settlement_transactions(
 
 def _merge_payment_entry_mixed_advance_transactions(
 	transactions: list[dict[str, Any]],
+	filters=None,
 ) -> list[dict[str, Any]]:
-	"""Zeigt Zahlung + Rest-Vorauszahlung desselben Payment Entry in einer Zeile."""
+	"""Merge mixed payments only within the active report date.
+
+	In value-date mode, invoice allocations retain their invoice value date;
+	any unallocated advance retains its posting date. Merging across these
+	dates would also move amounts across report periods and opening balances.
+	"""
 	advance_vouchers = {
 		transaction.get("belegnummer")
 		for transaction in transactions
@@ -704,8 +710,7 @@ def _merge_payment_entry_mixed_advance_transactions(
 	if not advance_vouchers:
 		return transactions
 
-	merged_by_voucher: dict[str, dict[str, Any]] = {}
-	order: list[str] = []
+	merged_by_date: dict[tuple, dict[str, Any]] = {}
 	out: list[dict[str, Any]] = []
 
 	for transaction in transactions:
@@ -714,7 +719,8 @@ def _merge_payment_entry_mixed_advance_transactions(
 			out.append(transaction)
 			continue
 
-		merged = merged_by_voucher.get(voucher_no)
+		merge_key = (voucher_no, _transaction_report_date(transaction, filters or {}))
+		merged = merged_by_date.get(merge_key)
 		if merged is None:
 			merged = {
 				**transaction,
@@ -727,8 +733,7 @@ def _merge_payment_entry_mixed_advance_transactions(
 				"_open_summary_parts": [],
 				"_has_regular_payment": False,
 			}
-			merged_by_voucher[voucher_no] = merged
-			order.append(voucher_no)
+			merged_by_date[merge_key] = merged
 
 		merged.setdefault("_open_summary_parts", []).append(_open_summary_part(transaction))
 
@@ -753,8 +758,7 @@ def _merge_payment_entry_mixed_advance_transactions(
 			merged["art"] = "Zahlung"
 			merged["beschreibung"] = transaction.get("beschreibung") or merged.get("beschreibung")
 
-	for voucher_no in order:
-		merged = merged_by_voucher[voucher_no]
+	for merged in merged_by_date.values():
 		if not merged.pop("_has_regular_payment", False):
 			merged["art"] = "Vorauszahlung"
 		out.append(merged)
