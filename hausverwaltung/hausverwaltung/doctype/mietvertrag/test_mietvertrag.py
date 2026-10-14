@@ -11,6 +11,67 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 
 
 class TestMietvertrag(unittest.TestCase):
+	def _submitted_doc(self, **values):
+		return frappe.get_doc({
+			"doctype": "Mietvertrag",
+			"name": "MV-SUBMITTED",
+			"docstatus": 1,
+			"wohnung": "WHG-1",
+			"kunde": "CUST-1",
+			"von": "2026-01-01",
+			"bis": "2026-12-31",
+			**values,
+		})
+
+	def test_submitted_contract_extension_rejects_overlap_with_successor(self):
+		doc = self._submitted_doc(bis="2027-01-31")
+		with patch.object(doc, "_validate_customer_mietvertrag_invariant"), \
+			patch.object(mietvertrag.frappe.db, "sql", side_effect=[
+				[], [frappe._dict(name="MV-SUCCESSOR", von="2027-01-01", bis=None)],
+			]), self.assertRaisesRegex(frappe.ValidationError, "überschneidet.*MV-SUCCESSOR"):
+			doc.before_update_after_submit()
+
+	def test_submitted_contract_bk_rule_rejects_advance_during_flat_rate(self):
+		doc = self._submitted_doc(
+			betriebskostenregelungen=[{"gueltig_von": "2026-01-01", "abrechnungsart": BK_REGELUNG_PAUSCHALE}],
+			betriebskosten=[{"von": "2026-01-01", "miete": 150}],
+		)
+		with patch.object(doc, "_validate_customer_mietvertrag_invariant"), \
+			patch.object(doc, "_validate_wohnung_contract_period"), \
+			patch.object(mietvertrag, "_get_wohnung_immobilie", return_value="IMM-1"), \
+			patch.object(mietvertrag, "_build_mietvertrag_display_title", return_value="Contract"), \
+			self.assertRaisesRegex(frappe.ValidationError, "keine BK-Vorauszahlung"):
+			doc.before_update_after_submit()
+
+	def test_submitted_contract_rejects_non_partner_bank_contact(self):
+		doc = self._submitted_doc(
+			mieter=[{"mieter": "CONTACT-ALLOWED", "rolle": "Hauptmieter"}],
+			kontoverbindungen=[{"kontakt": "CONTACT-OTHER"}],
+		)
+		with patch.object(doc, "_validate_customer_mietvertrag_invariant"), \
+			patch.object(doc, "_validate_wohnung_contract_period"), \
+			patch.object(mietvertrag, "_get_wohnung_immobilie", return_value="IMM-1"), \
+			patch.object(mietvertrag, "_build_mietvertrag_display_title", return_value="Contract"), \
+			self.assertRaisesRegex(frappe.ValidationError, "kein Vertragspartner"):
+			doc.before_update_after_submit()
+
+	def test_submitted_contract_allows_valid_bk_switch_and_sorts_staffels(self):
+		doc = self._submitted_doc(
+			betriebskostenregelungen=[
+				{"gueltig_von": "2026-07-01", "abrechnungsart": BK_REGELUNG_VORAUSZAHLUNG},
+				{"gueltig_von": "2026-01-01", "abrechnungsart": BK_REGELUNG_PAUSCHALE},
+			],
+			betriebskosten=[{"von": "2026-07-01", "miete": 150}],
+			miete=[{"von": "2026-07-01", "miete": 650}, {"von": "2026-01-01", "miete": 500}],
+		)
+		with patch.object(doc, "_validate_customer_mietvertrag_invariant"), \
+			patch.object(doc, "_validate_wohnung_contract_period"), \
+			patch.object(mietvertrag, "_get_wohnung_immobilie", return_value="IMM-1"), \
+			patch.object(mietvertrag, "_build_mietvertrag_display_title", return_value="Contract"):
+			doc.before_update_after_submit()
+		self.assertEqual([str(row.von) for row in doc.miete], ["2026-01-01", "2026-07-01"])
+		self.assertEqual([str(row.gueltig_von) for row in doc.betriebskostenregelungen], ["2026-01-01", "2026-07-01"])
+
 	def _regelungs_doc(self, rules, bk_rows=None):
 		doc = frappe._dict(
 			von="2026-01-01",

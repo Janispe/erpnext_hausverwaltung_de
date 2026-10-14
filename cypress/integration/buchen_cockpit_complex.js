@@ -5,6 +5,7 @@
  * Vorlagen speichern/laden und finaler Purchase-Invoice-Erzeugung.
  */
 
+const TEST_COMPANY = Cypress.env("hv_company") || "Hausverwaltung Peters";
 const HV_API = "hausverwaltung.hausverwaltung.page.buchen_cockpit.buchen_cockpit";
 const TEST_TAG = `__cy_cockpit_complex_${Date.now()}`;
 const DRAFT_KEY_PI = "hv_buchen_cockpit_draft_pi_v1";
@@ -112,7 +113,7 @@ context("Buchungs-Cockpit — komplexer Eingangsrechnungs-UI-Flow", () => {
 					supplier_name: supplierName,
 					supplier_group: r.message[0].name,
 					supplier_type: "Company",
-					companies: [{ company: "Hausverwaltung Peters" }],
+					companies: [{ company: TEST_COMPANY }],
 				},
 			});
 		}).then((r) => {
@@ -121,7 +122,7 @@ context("Buchungs-Cockpit — komplexer Eingangsrechnungs-UI-Flow", () => {
 
 		cy.call("frappe.client.get_list", {
 			doctype: "Cost Center",
-			filters: { company: "Hausverwaltung Peters", is_group: 0 },
+			filters: { company: TEST_COMPANY, is_group: 0 },
 			fields: ["name"],
 			limit_page_length: 1,
 			order_by: "name asc",
@@ -166,13 +167,35 @@ context("Buchungs-Cockpit — komplexer Eingangsrechnungs-UI-Flow", () => {
 	});
 
 	after(() => {
+		let expectedInvoices;
+		let expectedTemplates;
+		// Auch bei einem früheren UI-Fehler nur tatsächlich entstandene
+		// Testdokumente verlangen; ihre vollständige Entfernung bleibt Pflicht.
+		cy.call("frappe.client.get_list", {
+			doctype: "Purchase Invoice",
+			filters: { supplier: `${TEST_TAG} Supplier`, bill_no: ["like", `${TEST_TAG}%`] },
+			fields: ["name"],
+			limit_page_length: 0,
+		}).then((response) => {
+			expectedInvoices = (response.message || []).map((row) => row.name).sort();
+		});
+		cy.call("frappe.client.get_list", {
+			doctype: "Eingangsrechnung Vorlage",
+			filters: { name: ["like", `${TEST_TAG}%`] },
+			fields: ["name"],
+			limit_page_length: 0,
+		}).then((response) => {
+			expectedTemplates = (response.message || []).map((row) => row.name).sort();
+		});
 		cy.call("hausverwaltung.cypress_fixtures.cleanup_cockpit_complex", {
 			test_tag: TEST_TAG,
 		}).then((response) => {
 			const deleted = response.message?.deleted || {};
-			expect(deleted["Purchase Invoice"] || [], "Testrechnung gelöscht").to.have.length(1);
-			expect(deleted["Eingangsrechnung Vorlage"] || [], "Testvorlage gelöscht").to.have.length(1);
-			expect(deleted.Supplier || [], "Testlieferant gelöscht").to.have.length(1);
+			expect((deleted["Purchase Invoice"] || []).sort(), "Alle entstandenen Testrechnungen gelöscht")
+				.to.deep.eq(expectedInvoices);
+			expect((deleted["Eingangsrechnung Vorlage"] || []).sort(), "Alle entstandenen Testvorlagen gelöscht")
+				.to.deep.eq(expectedTemplates);
+			expect(deleted.Supplier || [], "Testlieferant gelöscht").to.deep.eq(supplier ? [supplier] : []);
 		});
 	});
 
@@ -257,15 +280,15 @@ context("Buchungs-Cockpit — komplexer Eingangsrechnungs-UI-Flow", () => {
 			});
 		});
 
-		cy.get(".modal:visible .btn").contains("Als Vorlage speichern").click();
+		cy.contains(".modal:visible button", "Als Vorlage speichern").click();
 		cy.get(".modal:visible", { timeout: 10000 })
 			.last()
 			.within(() => {
 				cy.get('[data-fieldname="titel"] input').clear().type(templateTitle);
-				cy.get(".btn-primary").contains("Speichern").click();
+				cy.contains("button", /^Speichern$/).click();
 			});
 		cy.contains(
-			".alert, .desk-alert, .frappe-toast, .toast-message, .text-medium",
+			".es-toast__message, .alert, .desk-alert, .frappe-toast, .toast-message, .text-medium",
 			templateTitle,
 			{ timeout: 10000 }
 		).should("exist");
@@ -298,7 +321,7 @@ context("Buchungs-Cockpit — komplexer Eingangsrechnungs-UI-Flow", () => {
 		});
 
 		cy.contains(".modal:visible", "überschrieben", { timeout: 10000 }).should("exist");
-		cy.contains(".modal:visible .btn", /^(No|Nein)$/).click({ force: true });
+		cy.contains(".modal:visible button", /^(No|Nein)$/).click({ force: true });
 		closeAllDialogs();
 
 		openEingangsrechnungDialog();
@@ -306,7 +329,7 @@ context("Buchungs-Cockpit — komplexer Eingangsrechnungs-UI-Flow", () => {
 			dialog.set_value("aus_vorlage", templateTitle);
 		});
 		cy.contains(
-			".alert, .desk-alert, .frappe-toast, .toast-message, .text-medium",
+			".es-toast__message, .alert, .desk-alert, .frappe-toast, .toast-message, .text-medium",
 			templateTitle,
 			{ timeout: 10000 }
 		).should("exist");
@@ -326,9 +349,9 @@ context("Buchungs-Cockpit — komplexer Eingangsrechnungs-UI-Flow", () => {
 			dialog.set_value("rechnungsname", `${TEST_TAG}-pi`);
 		});
 
-		cy.get(".modal:visible .btn").contains("Als Entwurf speichern").click();
+		cy.contains(".modal:visible button", "Als Entwurf speichern").click();
 		cy.contains(
-			".alert, .desk-alert, .frappe-toast, .toast-message, .text-medium",
+			".es-toast__message, .alert, .desk-alert, .frappe-toast, .toast-message, .text-medium",
 			"als Entwurf",
 			{ timeout: 15000 }
 		).should("exist");
@@ -381,7 +404,7 @@ context("Buchungs-Cockpit — komplexer Eingangsrechnungs-UI-Flow", () => {
 			]);
 		});
 
-		cy.get(".modal:visible .btn").contains("Als Entwurf speichern").click();
+		cy.contains(".modal:visible button", "Als Entwurf speichern").click();
 		cy.contains(
 			".modal:visible, .msgprint-dialog, .frappe-msgprint, .modal-body",
 			"Betrag fehlt",

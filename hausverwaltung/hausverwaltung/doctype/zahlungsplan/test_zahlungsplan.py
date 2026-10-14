@@ -7,6 +7,82 @@ import frappe
 from hausverwaltung.hausverwaltung.doctype.zahlungsplan import zahlungsplan as zp
 
 
+class TestPaymentAllocationCentIntegrity(unittest.TestCase):
+	def _plan(self, amount=50, payments=None):
+		row = frappe._dict(name="ROW-CENT", idx=1, betrag=amount, faelligkeitsdatum="2026-07-15")
+		payments = payments if payments is not None else []
+		plan = MagicMock(name="cent plan")
+		plan.name, plan.company, plan.lieferant = "PLAN-CENT", "COMP-CENT", "SUP-CENT"
+		values = dict(name=plan.name, company=plan.company, lieferant=plan.lieferant,
+			modus=zp.MODUS_ABSCHLAGSPLAN, status="Offen", plan=[row], zahlungen=payments)
+		plan.get.side_effect = lambda key, default=None: values.get(key, default)
+		def append(_field, value):
+			allocation = frappe._dict(name="ALLOC-CENT", **value)
+			payments.append(allocation)
+			return allocation
+		plan.append.side_effect = append
+		return plan, row
+
+	def _record(self, amount, *, planned=50, available=100):
+		plan, row = self._plan(planned)
+		pe = frappe._dict(name="PE-CENT", docstatus=1, company=plan.company, party_type="Supplier",
+			party=plan.lieferant, payment_type="Pay", unallocated_amount=available)
+		with patch.object(zp.frappe, "get_doc", side_effect=lambda dt, name, **kw: plan if dt == "Zahlungsplan" else pe), \
+			patch.object(zp, "_reserved_payment_amount_from_db", return_value=0):
+			result = zp.record_payment_allocation(plan_name=plan.name, plan_row_name=row.name,
+				payment_entry=pe.name, allocated_amount=amount)
+		return result, row
+
+	def test_plan_cannot_receive_one_cent_more_than_its_open_amount(self):
+		plan, row = self._plan()
+		with self.assertRaisesRegex(frappe.ValidationError, "nur noch"):
+			zp._append_payment_allocation(plan, row, payment_entry="PE-CENT", allocated_amount=50.01)
+
+	def test_retry_with_different_cent_amount_is_not_idempotent(self):
+		payment = frappe._dict(status="Aktiv", plan_zeile="ROW-CENT", payment_entry="PE-CENT", allocated_amount=50)
+		plan, row = self._plan(payments=[payment])
+		with self.assertRaisesRegex(frappe.ValidationError, "anderen Betrag"):
+			zp._append_payment_allocation(plan, row, payment_entry="PE-CENT", allocated_amount=50.01)
+
+	def test_plan_cannot_reserve_one_cent_more_than_payment_credit(self):
+		with self.assertRaisesRegex(frappe.ValidationError, "Vorschuss"):
+			self._record(50.01, planned=100, available=50)
+
+	def test_last_cent_keeps_partial_payment_open(self):
+		result, row = self._record(49.99)
+		self.assertAlmostEqual(result["remaining_amount"], 0.01)
+		self.assertIsNone(row.payment_entry)
+
+	def test_settlement_cannot_consume_an_untracked_extra_cent(self):
+		with patch.object(zp.frappe.db, "set_value") as write:
+			with self.assertRaisesRegex(frappe.ValidationError, "nachverfolgbar"):
+				zp._settle_payment_allocations({"PE-CENT": [_FakeAllocation("ALLOC-CENT", 50)]},
+					settlement_invoice="PI-CENT", reconciled_by_payment={"PE-CENT": 50.01})
+		write.assert_not_called()
+
+	def test_auto_match_does_not_accept_one_cent_difference(self):
+		for amount in (49.99, 50.01):
+			with self.subTest(amount=amount):
+				plan, _row = _auto_match_plan(50)
+				with patch.object(zp.frappe, "get_all", return_value=[plan.name]), \
+					patch.object(zp.frappe, "get_doc", return_value=plan), \
+					patch.object(zp, "record_payment_allocation") as record:
+					result = zp.link_payment_entry_to_abschlagsplan_row(supplier="SUP", posting_date="2026-07-15",
+						amount=amount, payment_entry="PE-CENT")
+				self.assertIsNone(result)
+				record.assert_not_called()
+
+	def test_auto_match_does_not_discard_exact_one_cent_payment(self):
+		plan, _row = _auto_match_plan(0.01)
+		with patch.object(zp.frappe, "get_all", return_value=[plan.name]), \
+			patch.object(zp.frappe, "get_doc", return_value=plan), \
+			patch.object(zp, "record_payment_allocation", return_value={"plan": plan.name}) as record:
+			result = zp.link_payment_entry_to_abschlagsplan_row(supplier="SUP", posting_date="2026-07-15",
+				amount=0.01, payment_entry="PE-CENT")
+		self.assertIsNotNone(result)
+		record.assert_called_once()
+
+
 def load_tests(loader, tests, pattern):
 	"""Expose the existing function-style tests to Frappe's unittest runner."""
 	for name, value in sorted(globals().items()):

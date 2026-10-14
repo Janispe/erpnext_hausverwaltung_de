@@ -8,6 +8,27 @@ from hausverwaltung.hausverwaltung.report.mietrechnungspruefung import mietrechn
 
 
 class TestMietrechnungspruefung(unittest.TestCase):
+    def test_initial_bk_and_hk_staffels_are_not_missing_in_move_in_month(self):
+        staffel = {
+            "miete": [frappe._dict(von="2026-01-16", miete=620)],
+            "betriebskosten": [frappe._dict(von="2026-01-16", miete=150)],
+            "heizkosten": [frappe._dict(von="2026-01-16", miete=100)],
+        }
+        rules = [{"gueltig_von": "2026-01-16", "abrechnungsart": "Vorauszahlung"}]
+        contract = frappe._dict(von="2026-01-16", bis=None)
+        for month, rent in ((date(2026, 1, 1), 320), (date(2026, 2, 1), 620)):
+            with self.subTest(month=month):
+                expected = report._expected_amounts_for_month(contract, month, staffel, rules)
+                self.assertEqual(expected, {"Miete": rent, "Betriebskosten": 150, "Heizkosten": 100})
+
+    def test_initial_inclusive_rule_is_respected_in_move_in_month(self):
+        expected = report._expected_amounts_for_month(
+            frappe._dict(von="2026-01-16", bis=None), date(2026, 1, 1),
+            {"betriebskosten": [frappe._dict(von="2026-01-01", miete=150)]},
+            [{"gueltig_von": "2026-01-16", "abrechnungsart": "Pauschale/Inklusivmiete"}],
+        )
+        self.assertEqual(expected["Betriebskosten"], 0)
+
     def test_expected_rent_uses_explicit_override_without_changing_advances(self):
         expected = report._expected_amounts_for_month(
             frappe._dict(von=date(2026, 1, 16), bis=None),

@@ -1,9 +1,59 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 
 from hausverwaltung.hausverwaltung.page.mahnung_workflow import mahnung_workflow
+
+
+class TestDunningAccessAndTenancyIdentity(unittest.TestCase):
+	def test_dunning_candidates_use_permission_filtered_invoice_query(self):
+		with patch.object(mahnung_workflow.frappe, "get_list", return_value=[frappe._dict(customer="CUST-ALLOWED")]) as get_list, \
+			patch.object(mahnung_workflow.frappe.db, "sql") as sql:
+			self.assertEqual(mahnung_workflow._mahnreife_customers(), ["CUST-ALLOWED"])
+		sql.assert_not_called()
+		self.assertEqual(get_list.call_args.args, ("Sales Invoice",))
+		self.assertTrue(get_list.call_args.kwargs["distinct"])
+		self.assertEqual(get_list.call_args.kwargs["limit_page_length"], 0)
+
+	def test_customer_without_document_read_permission_cannot_expose_invoices(self):
+		customer = MagicMock()
+		customer.check_permission.side_effect = frappe.PermissionError
+		with patch.object(mahnung_workflow.frappe, "get_doc", return_value=customer), \
+			patch.object(mahnung_workflow.frappe, "get_list") as get_list, \
+			self.assertRaises(frappe.PermissionError):
+			mahnung_workflow._build_mieter("CUST-DENIED")
+		get_list.assert_not_called()
+
+	def test_ambiguous_customer_contract_is_never_guessed_for_dunning_location(self):
+		with patch.object(mahnung_workflow.frappe, "get_all", return_value=[frappe._dict(name="MV-1", wohnung="WHG-1"), frappe._dict(name="MV-2", wohnung="WHG-2")]), \
+			patch.object(mahnung_workflow, "apartment_location") as location, \
+			self.assertRaisesRegex(frappe.ValidationError, "nicht eindeutig"):
+			mahnung_workflow._tenancy_location("CUST-1")
+		location.assert_not_called()
+
+	def test_dunning_detail_checks_the_specific_document_before_reading_amounts(self):
+		doc = MagicMock()
+		doc.check_permission.side_effect = frappe.PermissionError
+		with patch.object(mahnung_workflow.frappe, "has_permission", return_value=True), \
+			patch.object(mahnung_workflow.frappe, "get_doc", return_value=doc), \
+			patch.object(mahnung_workflow, "get_dunning_invoice_remark_overrides") as remarks, \
+			self.assertRaises(frappe.PermissionError):
+			mahnung_workflow.get_dunning_detail("DUNNING-DENIED")
+		doc.check_permission.assert_called_once_with("read")
+		remarks.assert_not_called()
+
+	def test_dunning_creation_checks_invoice_access_before_creating_or_emailing(self):
+		invoice = MagicMock()
+		invoice.check_permission.side_effect = frappe.PermissionError
+		with patch.object(mahnung_workflow.frappe, "has_permission", return_value=True), \
+			patch.object(mahnung_workflow.frappe, "get_doc", return_value=invoice), \
+			patch.object(mahnung_workflow, "create_op_bulk_dunning") as create, \
+			patch.object(mahnung_workflow, "_customer_email_recipients") as email, \
+			self.assertRaises(frappe.PermissionError):
+			mahnung_workflow.create_dunning(["SI-DENIED"], "Mahnung", kanal="E-Mail")
+		create.assert_not_called()
+		email.assert_not_called()
 
 
 class TestSerienbriefVariableMetadata(unittest.TestCase):

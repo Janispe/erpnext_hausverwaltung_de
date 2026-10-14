@@ -74,6 +74,16 @@ try:
 
 		BaseDocument.db_insert = track
 		_, _, prop, _, _ = fixture()
+		# Each independent property needs its own leaf accounting dimension.
+		# Two persisted HK fixtures must not share the Company default center.
+		company = frappe.db.get_value("Cost Center", prop.kostenstelle, "company")
+		parent_cc = frappe.db.get_value("Cost Center", {"company": company, "is_group": 1}, "name")
+		center = frappe.get_doc({
+			"doctype": "Cost Center", "cost_center_name": f"Bugtest HK UI {prop.name}",
+			"company": company, "parent_cost_center": parent_cc, "is_group": 0,
+		}).insert()
+		prop.kostenstelle = center.name
+		prop.save()
 		head = hk_head(prop, costs=100 if duplicate_mode else 0)
 		if duplicate_mode:
 			duplicate = hk_head(prop, costs=100)

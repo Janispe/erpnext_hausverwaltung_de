@@ -205,6 +205,23 @@ def _ensure_default_price_lists(*, currency: str) -> dict:
     return {"created": created}
 
 
+def _ensure_default_address_template(*, country: str) -> dict:
+    """Make addresses usable when the setup wizard has already been marked complete."""
+    current = frappe.db.get_value("Address Template", {"is_default": 1}, "name")
+    if current:
+        return {"name": current, "created": False, "set_default": False}
+
+    name = country or "Germany"
+    created = not frappe.db.exists("Address Template", name)
+    doc = (
+        frappe.get_doc({"doctype": "Address Template", "country": name, "is_default": 1})
+        if created else frappe.get_doc("Address Template", name)
+    )
+    doc.is_default = 1
+    doc.save(ignore_permissions=True)
+    return {"name": doc.name, "created": created, "set_default": True}
+
+
 _HV_PARTY_TYPES: tuple[tuple[str, str], ...] = (
     ("Customer", "Receivable"),
     ("Supplier", "Payable"),
@@ -635,6 +652,13 @@ def run(config: Optional[BootstrapConfig] = None) -> dict:
             changed.append({"doctype": "Price List", **pl_res})
     except Exception as exc:
         changed.append({"doctype": "Price List", "error": str(exc)})
+
+    try:
+        address_res = _ensure_default_address_template(country=cfg.country)
+        if address_res.get("created") or address_res.get("set_default"):
+            changed.append({"doctype": "Address Template", **address_res})
+    except Exception as exc:
+        changed.append({"doctype": "Address Template", "error": str(exc)})
 
     try:
         pt_res = _ensure_default_party_types()

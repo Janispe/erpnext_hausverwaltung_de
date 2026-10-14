@@ -10,6 +10,38 @@ from hausverwaltung.hausverwaltung.scripts import generate_mietrechnungen
 
 
 class TestGenerateMietrechnungen(unittest.TestCase):
+    def test_move_in_month_uses_first_active_day_for_bk_staffel_and_rule(self):
+        def get_value(doctype, filters, fieldname, **_kwargs):
+            self.assertEqual(doctype, "Staffelmiete")
+            self.assertEqual(filters["parentfield"], "betriebskosten")
+            return 175 if filters["von"][1] >= date(2026, 1, 16) else None
+
+        with (
+            patch.object(generate_mietrechnungen, "get_bk_regelung", return_value="Vorauszahlung") as get_rule,
+            patch.object(generate_mietrechnungen.frappe.db, "get_value", side_effect=get_value),
+        ):
+            rule, amount = generate_mietrechnungen._bk_regelung_und_betrag_fuer_monat(
+                "MV-1", date(2026, 1, 1), contract_start=date(2026, 1, 16), lock=True,
+            )
+
+        self.assertEqual((rule, amount), ("Vorauszahlung", 175.0))
+        get_rule.assert_called_once_with("MV-1", date(2026, 1, 16), lock=True)
+
+    def test_move_in_month_respects_initial_inclusive_rule(self):
+        def get_rule(_name, reference_date, **_kwargs):
+            return "Pauschale/Inklusivmiete" if reference_date >= date(2026, 1, 16) else "Vorauszahlung"
+
+        with (
+            patch.object(generate_mietrechnungen, "get_bk_regelung", side_effect=get_rule),
+            patch.object(generate_mietrechnungen, "_staffelbetrag", return_value=175.0) as get_amount,
+        ):
+            rule, amount = generate_mietrechnungen._bk_regelung_und_betrag_fuer_monat(
+                "MV-1", date(2026, 1, 1), contract_start="2026-01-16",
+            )
+
+        self.assertEqual((rule, amount), ("Pauschale/Inklusivmiete", 0.0))
+        get_amount.assert_not_called()
+
     def test_rent_generator_reads_explicit_part_month_and_replaces_prorata(self):
         def get_all(doctype, **kwargs):
             self.assertEqual(kwargs["filters"]["parent"], "MV-1")

@@ -182,7 +182,7 @@ context("Eingangsrechnung Vorlage — Buchungs-Cockpit", () => {
 
 		// Erfolgs-Alert "übernommen" — bestätigt async load_vorlage_for_cockpit roundtrip
 		cy.contains(
-			".alert, .desk-alert, .frappe-toast, .toast-message, .text-medium",
+			".es-toast__message, .alert, .desk-alert, .frappe-toast, .toast-message, .text-medium",
 			VORLAGE_TITEL,
 			{ timeout: 10000 }
 		).should("exist");
@@ -271,13 +271,11 @@ context("Eingangsrechnung Vorlage — Buchungs-Cockpit", () => {
 		);
 
 		// "Ja" / "Yes" Button im Confirm-Dialog
-		cy.get(".modal:visible .btn-primary:contains('Yes'), .modal:visible .btn-primary:contains('Ja')")
-			.first()
-			.click();
+		cy.contains(".modal:visible button", /^(Yes|Ja)$/).click();
 
 		// Erfolgs-Alert sollte erscheinen
 		cy.contains(
-			".alert, .desk-alert, .frappe-toast, .toast-message, .text-medium",
+			".es-toast__message, .alert, .desk-alert, .frappe-toast, .toast-message, .text-medium",
 			VORLAGE_TITEL,
 			{ timeout: 10000 }
 		).should("exist");

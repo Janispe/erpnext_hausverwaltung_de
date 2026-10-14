@@ -27,6 +27,9 @@ BRIEFKOPF = frappe._dict(
 
 
 class FakeCore:
+	def fixed_version_number(self, doc, name):
+		return None
+
 	def _extract_inline_block_names(self, source):
 		return ["Briefkopf"] if 'baustein("Briefkopf")' in source else []
 

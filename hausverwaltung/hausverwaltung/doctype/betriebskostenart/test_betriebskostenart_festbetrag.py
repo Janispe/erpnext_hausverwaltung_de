@@ -1,6 +1,7 @@
 # See license.txt
 
 from datetime import date
+from inspect import unwrap
 from unittest.mock import patch
 import unittest
 
@@ -96,7 +97,7 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._prefetch_wertstellungsdaten",
 			return_value={},
 		):
-			rows = get_mieter_festbetrag_overview.__wrapped__(
+			rows = unwrap(get_mieter_festbetrag_overview)(
 				"MIETER-1",
 				von="2025-01-01",
 				bis="2025-12-31",
@@ -168,7 +169,7 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._prefetch_wertstellungsdaten",
 			return_value={},
 		):
-			rows = get_mieter_festbetrag_overview.__wrapped__("MIETER-1")
+			rows = unwrap(get_mieter_festbetrag_overview)("MIETER-1")
 
 		customer_doc.check_permission.assert_called_once_with("read")
 		self.assertEqual(rows["manual_rows"][0]["betrag"], 25.0)

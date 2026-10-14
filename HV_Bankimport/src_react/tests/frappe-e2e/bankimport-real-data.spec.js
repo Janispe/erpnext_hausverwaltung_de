@@ -103,7 +103,7 @@ function benchExecute(method, { args, kwargs } = {}) {
 test.beforeAll(() => {
 	const setup = benchExecute("hausverwaltung.cypress_fixtures.ensure_bankimport_bank_account");
 	testCompany = setup.company;
-	const accounts = benchExecute("frappe.get_all", { kwargs: { doctype: "Bank Account", filters: { company: testCompany, is_company_account: 1, disabled: 0 }, fields: ["name"], limit: 1 } });
+	const accounts = benchExecute("frappe.get_all", { kwargs: { doctype: "Bank Account", filters: { name: setup.bank_account, company: testCompany, is_company_account: 1, disabled: 0 }, fields: ["name"], limit: 1 } });
 	expect(accounts, `Testsite requires an active Bank Account for ${testCompany}`).toHaveLength(1);
 	testBankAccount = accounts[0].name;
 });
@@ -455,19 +455,6 @@ test("verrechnet Ueberzahlung nicht automatisch mit Unterzahlung im Folgemonat",
 		fixture = benchExecute("hausverwaltung.cypress_fixtures.seed_bankimport_over_under", {
 			kwargs: { run_id: runId.id, company: testCompany },
 		});
-		// The legacy seed predates the exclusive Customer/lease identity. Give
-		// this Customer its own normal contract so the amount guard is reached.
-		const identity = benchExecute("__import__('builtins').exec", { args: [`
-import json
-import frappe
-frappe.set_user("Administrator")
-apartment = frappe.get_doc({"doctype":"Wohnung", "name__lage_in_der_immobilie":${JSON.stringify(`HV UI OverUnder ${runId.id}`)}, "gebaeudeteil":"VH"}).insert(ignore_permissions=True)
-lease = frappe.get_doc({"doctype":"Mietvertrag", "wohnung":apartment.name, "kunde":${JSON.stringify(fixture.customer)}, "von":"2026-01-01"}).insert(ignore_permissions=True)
-frappe.db.commit()
-print(json.dumps({"mietvertrag":lease.name, "wohnung":apartment.name}))
-`, {}] });
-		Object.assign(fixture, identity);
-
 		await login(page);
 		const frame = await bankimportFrame(page);
 
@@ -483,11 +470,13 @@ print(json.dumps({"mietvertrag":lease.name, "wohnung":apartment.name}))
 		});
 		await dismissDeskModals(page);
 		await selectRowByPurpose(frame, `HV UI OverUnder ${runId.id} April`);
-		await expect(frame.getByText(fixture.customer).first()).toBeVisible();
+		await expect(frame.getByText(fixture.customer_name).first()).toBeVisible();
 		await ensureSelectedRowHasBankTransaction(frame);
 
 		let aprilRows = overUnderRowsForRun(runId, "April");
 		expect(aprilRows).toHaveLength(1);
+		expect(aprilRows[0].party_type).toBe("Customer");
+		expect(aprilRows[0].party).toBe(fixture.customer);
 		expect(aprilRows[0].payment_entry).toBeFalsy();
 		expect(invoiceOutstanding(fixture.april_invoice)).toBeCloseTo(100, 2);
 		expect(invoiceOutstanding(fixture.may_invoice)).toBeCloseTo(100, 2);
@@ -522,11 +511,13 @@ print(json.dumps({"mietvertrag":lease.name, "wohnung":apartment.name}))
 		});
 		await dismissDeskModals(page);
 		await selectRowByPurpose(frame, `HV UI OverUnder ${runId.id} Mai`);
-		await expect(frame.getByText(fixture.customer).first()).toBeVisible();
+		await expect(frame.getByText(fixture.customer_name).first()).toBeVisible();
 		await ensureSelectedRowHasBankTransaction(frame);
 
 		const mayRows = overUnderRowsForRun(runId, "Mai");
 		expect(mayRows).toHaveLength(1);
+		expect(mayRows[0].party_type).toBe("Customer");
+		expect(mayRows[0].party).toBe(fixture.customer);
 		expect(mayRows[0].bank_transaction).toMatch(/^ACC-BTN-2026-/);
 		expect(mayRows[0].payment_entry).toBeFalsy();
 		expect(mayRows[0].auto_match_message).toContain("≠ 85.00");
@@ -541,16 +532,13 @@ print(json.dumps({"mietvertrag":lease.name, "wohnung":apartment.name}))
 					party_bank_account: fixture.party_bank_account,
 					april_invoice: fixture.april_invoice,
 					may_invoice: fixture.may_invoice,
+					mietvertrag: fixture.mietvertrag,
+					wohnung: fixture.wohnung,
+					immobilie: fixture.immobilie,
+					address: fixture.address,
+					cost_center: fixture.cost_center,
 				},
 			});
-			benchExecute("__import__('builtins').exec", { args: [`
-import frappe
-frappe.set_user("Administrator")
-for doctype, name in [("Mietvertrag",${JSON.stringify(fixture.mietvertrag || "")}), ("Wohnung",${JSON.stringify(fixture.wohnung || "")}), ("Customer",${JSON.stringify(fixture.customer)})]:
-    if name and frappe.db.exists(doctype, name):
-        frappe.delete_doc(doctype, name, force=True, ignore_permissions=True)
-frappe.db.commit()
-`, {}] });
 		}
 	}
 });

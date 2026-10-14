@@ -313,6 +313,7 @@ doc_events = {
 		"before_submit": [
 			"hausverwaltung.hausverwaltung.doctype.versicherungsfall.versicherungsfall.validate_insurance_journal",
 			"hausverwaltung.hausverwaltung.overrides.journal_entry.default_wertstellungsdatum_from_posting_date",
+			"hausverwaltung.hausverwaltung.overrides.journal_entry.validate_mietvertrag_journal_entry_identity",
 			"hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff.validate_hv_writeoff_journal_entry_before_submit",
 		],
 		"before_cancel": [

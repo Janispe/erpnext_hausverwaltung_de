@@ -3,10 +3,43 @@ from __future__ import annotations
 import frappe
 from erpnext.accounts.doctype.payment_entry.payment_entry import PaymentEntry
 from frappe import _
-from frappe.utils import comma_or, flt, getdate
+from frappe.utils import cint, comma_or, flt, getdate
+
+from hausverwaltung.hausverwaltung.utils.customer_booking_identity import lock_customer_booking_identity
+
+
+def validate_customer_payment_identity(doc):
+	"""Keep tenant advances and refunds on their contract's financial identity."""
+	if cint(doc.get("docstatus")) == 2:
+		return  # Historical cancellation reverses the original dimensions.
+	if doc.get("party_type") != "Customer" or not doc.get("party"):
+		return
+	identity = lock_customer_booking_identity(doc.party)
+	if doc.get("company") != identity.company:
+		frappe.throw(_("Die Company der Mieterzahlung passt nicht zum Mietvertrag."))
+	if doc.get("cost_center") and doc.cost_center != identity.cost_center:
+		frappe.throw(_("Die Kostenstelle der Mieterzahlung passt nicht zur Wohnung des Mietvertrags."))
+	if doc.get("wohnung") and doc.wohnung != identity.wohnung:
+		frappe.throw(_("Die Wohnung der Mieterzahlung passt nicht zum Mietvertrag."))
+	# This is the contract's authoritative dimension, not a Company default.
+	doc.cost_center = identity.cost_center
+	doc.wohnung = identity.wohnung
+	for row in doc.get("deductions") or []:
+		if row.get("cost_center") and row.cost_center != identity.cost_center:
+			frappe.throw(_("Die Kostenstelle einer Zahlungsdifferenz passt nicht zum Mietvertrag."))
 
 
 class CustomPaymentEntry(PaymentEntry):
+	def validate(self):
+		validate_customer_payment_identity(self)
+		super().validate()
+
+	def before_update_after_submit(self):
+		validate_customer_payment_identity(self)
+		parent = getattr(super(), "before_update_after_submit", None)
+		if parent:
+			parent()
+
 	def add_party_gl_entries(self, gl_entries):
 		start = len(gl_entries)
 		super().add_party_gl_entries(gl_entries)

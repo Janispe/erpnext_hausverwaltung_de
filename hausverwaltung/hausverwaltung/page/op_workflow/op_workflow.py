@@ -136,7 +136,7 @@ def _base_invoice_filters(filters: dict, party_field: str) -> dict[str, Any]:
     out: dict[str, Any] = {
         "company": filters.get("company"),
         "docstatus": 1,
-        "outstanding_amount": (">", 0.01),
+        "outstanding_amount": (">", 0.005),
     }
     if filters.get("von_faelligkeit") and filters.get("bis_faelligkeit"):
         out["due_date"] = ("between", [filters.get("von_faelligkeit"), filters.get("bis_faelligkeit")])
@@ -1560,7 +1560,7 @@ def create_payment_entry(
         _append_skonto_deductions(pe, pi, discount_account, deduction_total)
         pe.set_amounts()
 
-    if abs(flt(pe.difference_amount)) > 0.01:
+    if abs(flt(pe.difference_amount)) > 0.005:
         frappe.throw(
             _("Payment Entry ist nicht ausgeglichen (Differenz {0}).").format(
                 pe.difference_amount
@@ -1596,7 +1596,7 @@ def create_refund_payment(
         frappe.throw(_("{0} ist nicht submitted.").format(sales_invoice))
 
     outstanding = flt(si.outstanding_amount)
-    if outstanding >= -0.01:
+    if outstanding >= -0.005:
         frappe.throw(_("{0} hat kein auszahlbares Guthaben.").format(sales_invoice))
 
     from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
@@ -1630,7 +1630,7 @@ def create_refund_payment(
     amount = abs(outstanding)
     if pe.payment_type != "Pay":
         frappe.throw(_("Guthaben-Auszahlung muss ein ausgehender Payment Entry sein."))
-    if abs(flt(pe.difference_amount)) > 0.01:
+    if abs(flt(pe.difference_amount)) > 0.005:
         frappe.throw(
             _("Payment Entry ist nicht ausgeglichen (Differenz {0}).").format(
                 pe.difference_amount

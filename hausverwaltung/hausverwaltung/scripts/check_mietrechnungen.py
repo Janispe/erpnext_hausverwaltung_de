@@ -28,6 +28,7 @@ from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
 )
 from hausverwaltung.hausverwaltung.utils.display_titles import send_payload_titles
 from hausverwaltung.hausverwaltung.utils.income_accounts import get_hv_income_accounts
+from hausverwaltung.hausverwaltung.utils.mietberechnung import monthly_charge_reference_date
 from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 	BK_REGELUNG_VORAUSZAHLUNG,
 	get_bk_regelung,
@@ -44,10 +45,11 @@ TYP_PARENTFIELD = {
 def _expected_betrag(mv_row, typ: str, anker: date) -> float:
 	if typ == "Miete":
 		return _miete_betrag_fuer_monat(mv_row, anker)
-	if typ == "Betriebskosten" and get_bk_regelung(mv_row.name, anker) != BK_REGELUNG_VORAUSZAHLUNG:
+	reference_date = monthly_charge_reference_date(mv_row.von, anker)
+	if typ == "Betriebskosten" and get_bk_regelung(mv_row.name, reference_date) != BK_REGELUNG_VORAUSZAHLUNG:
 		return 0.0
 	parentfield = TYP_PARENTFIELD[typ]
-	return _staffelbetrag(mv_row.name, parentfield, anker)
+	return _staffelbetrag(mv_row.name, parentfield, reference_date)
 
 
 def _load_si_data(si_name: str | None, typ: str | None = None) -> dict | None:

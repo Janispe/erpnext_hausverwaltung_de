@@ -13,6 +13,47 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 
 
 class TestAbrechnungRegelung(unittest.TestCase):
+	def test_legacy_rest_across_many_cost_types_preserves_positive_amounts(self):
+		def fixed_rows(**kwargs):
+			return [{"kostenart": f"Fest-{index}", "betrag": Decimal("0.005")} for index in range(5)] if kwargs.get("mietvertrag") == "MV-1" else []
+		with (
+			patch.object(bk.frappe, "get_all", return_value=[{"name": f"Fest-{index}"} for index in range(5)]),
+			patch.object(bk, "_prorated_festbetrag_rows", side_effect=fixed_rows),
+			patch.object(bk, "get_bk_rounding_method", return_value=bk.ROUNDING_METHOD_LEGACY),
+		):
+			result = bk._build_bk_segment_costs(
+				alloc={}, immobilie="IMMO-1", wohnung="WHG-1", von="2026-01-01", bis="2026-01-31",
+				posten={f"Fest-{index}": Decimal("0.005") for index in range(5)},
+				segments=[{"mietvertrag": "MV-1", "start": date(2026, 1, 1), "end": date(2026, 1, 31), "days": 31}],
+			)
+		self.assertEqual(sum(result[0].values()), Decimal("0.03"))
+		self.assertTrue(all(value >= 0 for value in result[0].values()))
+
+	def test_legacy_half_cent_correction_never_creates_negative_costs(self):
+		for trailing_empty in (False, True):
+			segments = [
+				{"mietvertrag": f"MV-{index}", "start": date(2026, 1, index),
+				 "end": date(2026, 1, index), "days": 1}
+				for index in range(1, 4 if trailing_empty else 3)
+			]
+			def fixed_rows(**kwargs):
+				return [{"kostenart": "Fest", "betrag": Decimal("0.005")}] if kwargs.get("mietvertrag") in {"MV-1", "MV-2"} else []
+			with (
+				self.subTest(trailing_empty=trailing_empty),
+				patch.object(bk.frappe, "get_all", return_value=[{"name": "Fest"}]),
+				patch.object(bk, "_prorated_festbetrag_rows", side_effect=fixed_rows),
+				patch.object(bk, "get_bk_rounding_method", return_value=bk.ROUNDING_METHOD_LEGACY),
+			):
+				result = bk._build_bk_segment_costs(
+					alloc={}, immobilie="IMMO-1", wohnung="WHG-1", von="2026-01-01",
+					bis="2026-01-03", posten={"Fest": Decimal("0.01")}, segments=segments,
+				)
+				written = [bk._quantize_money(amount) for row in result for amount in row.values()]
+				self.assertEqual(sum(written, Decimal("0")), Decimal("0.01"))
+				self.assertTrue(all(amount >= 0 for amount in written))
+				if trailing_empty:
+					self.assertEqual(result[-1], {})
+
 	def _segments(self):
 		return [
 			{

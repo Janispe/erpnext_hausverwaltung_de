@@ -22,6 +22,17 @@ LEGACY_FIXED = "Gesamter Zeitraum"
 CENT = Decimal("0.01")
 
 
+def monthly_charge_reference_date(von, anchor) -> date:
+	"""Use the first occupied day for full monthly BK/HK/UMZ installments.
+
+	The invoice still belongs to the calendar month. In the move-in month,
+	staffels and the first BK rule may only start on the contract's first day.
+	For subsequent months the usual first-of-month lookup remains unchanged.
+	"""
+	month_start = getdate(anchor).replace(day=1)
+	return max(month_start, getdate(von)) if von else month_start
+
+
 def _money(value, label: str, *, required: bool = False) -> Decimal:
 	if value is None or value == "":
 		if required:

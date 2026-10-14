@@ -33,6 +33,18 @@ def sample_image():
 
 
 class TestAssetValidation(unittest.TestCase):
+	def test_private_image_embedding_rejects_missing_read_access(self):
+		with patch.object(frappe, "get_list", return_value=[]), self.assertRaises(frappe.PermissionError):
+			assets.inline_private_image_assets('<img src="/private/files/secret.png">')
+
+	def test_external_image_path_is_not_treated_as_a_local_private_file(self):
+		html = '<img src="https://external.example/private/files/image.png">'
+		with patch.object(frappe, "get_list") as get_list:
+			result = assets.inline_private_image_assets(html)
+		get_list.assert_not_called()
+		self.assertIn("https://external.example/private/files/image.png", result)
+		self.assertNotIn("data:image", result)
+
 	def test_formats_are_detected_from_content(self):
 		info = assets.asset_info(sample_image())
 		self.assertEqual((info["extension"], info["width"], info["height"]), ("png", 40, 30))
@@ -184,6 +196,20 @@ class TestMailMergeAssets(unittest.TestCase):
 		reader = self._preview('<p>Mit Bild</p><img src="' + upload["file_url"] + '" width="40" height="30">')
 		images = [image for page in reader.pages for image in page.images]
 		self.assertTrue(images, "Privates Bild fehlt im Brief-PDF")
+
+	def test_private_image_embedding_uses_original_binary_when_file_content_decodes_to_text(self):
+		upload = self._ok(self._upload(sample_image(), filename="raw-logo.png"))
+		file_doc = frappe.get_doc("File", upload["file"])
+		original_get_doc = frappe.get_doc
+
+		def get_doc(*args, **kwargs):
+			return file_doc if args == ("File", upload["file"]) else original_get_doc(*args, **kwargs)
+
+		with patch.object(frappe, "get_doc", side_effect=get_doc), \
+			patch.object(file_doc, "get_content", return_value="Decoded binary") as get_content:
+			html = assets.inline_private_image_assets('<img src="' + upload["file_url"] + '">')
+		get_content.assert_not_called()
+		self.assertIn("data:image/png;base64," + base64.b64encode(sample_image()).decode(), html)
 
 	def test_rejects_unknown_fields_bad_paths_pages_and_wrong_file(self):
 		upload = self._ok(self._upload(sample_pdf(form=True, label=self.suffix)))

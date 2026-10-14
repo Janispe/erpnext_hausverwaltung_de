@@ -5,7 +5,7 @@ Zuordnung zu offenen Sales/Purchase Invoices zu finden und legt — bei
 Erfolg — ein passendes Payment Entry an, das gegen die Bank Transaction
 reconciled wird.
 
-Strategien für Mieter-Zahlungen (in dieser Reihenfolge, jeweils mit Toleranz ≤ 0,01 €):
+Strategien für Mieter-Zahlungen (in dieser Reihenfolge, jeweils centgenau):
 
 1. **Single match** — eine offene Rechnung mit ``outstanding_amount`` =
    Bank-Betrag, deren Rechnungsmonat zur Bankbuchung passt.
@@ -21,6 +21,7 @@ bleibt dann unreconciled und der User kann manuell zuordnen.
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections import defaultdict
 from datetime import timedelta
@@ -30,8 +31,8 @@ import frappe
 from frappe.utils import add_months, cint, flt, getdate
 
 from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
+from hausverwaltung.hausverwaltung.utils.customer_booking_identity import lock_customer_booking_identity
 
-_TOLERANCE = 0.01
 _DEFAULT_EXACT_MATCH_WINDOW_DAYS = 7
 _DEFAULT_RENT_MATCH_DAYS_BEFORE_MONTH = 10
 _DEFAULT_RENT_MATCH_DAYS_IN_MONTH = 10
@@ -52,6 +53,19 @@ _RENT_TYPE_LABELS = {
 }
 
 
+def _cent_amount(value, *, label="Geldbetrag") -> float:
+	"""Reject subcent input before ERPNext rounds individual ledger legs."""
+	try:
+		if isinstance(value, bool):
+			raise ValueError("boolean amount")
+		amount = 0.0 if value is None or value == "" else float(value)
+	except (TypeError, ValueError, OverflowError):
+		frappe.throw(f"{label}: Geldbetrag muss eine gültige Zahl mit Dezimalpunkt sein.")
+	if not math.isfinite(amount) or abs(amount - flt(amount, 2)) > 1e-9:
+		frappe.throw(f"{label}: Geldbetrag muss endlich sein und darf höchstens zwei Nachkommastellen haben.")
+	return amount
+
+
 def _bank_transaction_shape(bt) -> frappe._dict:
 	"""Return the only valid direction/amount shape of a Bank Transaction.
 
@@ -59,8 +73,8 @@ def _bank_transaction_shape(bt) -> frappe._dict:
 	must therefore establish the signed bank movement itself before it creates or
 	reconciles a voucher.
 	"""
-	deposit = flt(bt.get("deposit") if hasattr(bt, "get") else getattr(bt, "deposit", 0))
-	withdrawal = flt(
+	deposit = _cent_amount(bt.get("deposit") if hasattr(bt, "get") else getattr(bt, "deposit", 0))
+	withdrawal = _cent_amount(
 		bt.get("withdrawal") if hasattr(bt, "get") else getattr(bt, "withdrawal", 0)
 	)
 
@@ -193,7 +207,8 @@ def _lock_and_validate_invoices(
 				f"erwartet ist '{company_currency}'. Fremdwährungsrechnungen werden "
 				"im Bankimport nicht 1:1 gebucht."
 			)
-		if not _amounts_equal(invoice.get("conversion_rate") or 1, 1):
+		conversion_rate = invoice.get("conversion_rate")
+		if not math.isclose(flt(1 if conversion_rate is None else conversion_rate), 1, rel_tol=0, abs_tol=1e-9):
 			frappe.throw(
 				f"Rechnung {name} hat einen Umrechnungskurs ungleich 1. "
 				"Bankimport unterstützt hier keine Fremdwährungsumrechnung."
@@ -1042,7 +1057,7 @@ def auto_match_bank_transaction(
 	exact = [
 		inv
 		for inv in candidates
-		if abs(flt(inv.outstanding_amount) - target_amount) < _TOLERANCE
+		if _amounts_equal(inv.outstanding_amount, target_amount)
 	]
 	if is_sales_invoice and exact:
 		window_matches = _filter_matches_by_rent_month_window(exact, bt)
@@ -1110,7 +1125,7 @@ def auto_match_bank_transaction(
 		if is_sales_invoice and not any(_invoice_in_rent_month_window(inv, bt) for inv in invs):
 			continue
 		total = sum(flt(i.outstanding_amount) for i in invs)
-		if abs(total - target_amount) < _TOLERANCE:
+		if _amounts_equal(total, target_amount):
 			matching_month_groups.append((month_key, invs))
 
 	if len(matching_month_groups) == 1:
@@ -1136,12 +1151,12 @@ def auto_match_bank_transaction(
 	# geschlossen werden.
 	if (not is_sales_invoice) and len(candidates) >= 2:
 		total = sum(flt(i.outstanding_amount) for i in candidates)
-		if abs(total - target_amount) < _TOLERANCE:
+		if _amounts_equal(total, target_amount):
 			return _do_match(bt, candidates, invoice_doctype, "all", target_amount)
 
 	# Sum-Diagnose für die Message (hilft beim manuellen Zuordnen)
 	candidates_sum = sum(flt(i.outstanding_amount) for i in candidates)
-	if is_sales_invoice and len(candidates) >= 2 and abs(candidates_sum - target_amount) < _TOLERANCE:
+	if is_sales_invoice and len(candidates) >= 2 and _amounts_equal(candidates_sum, target_amount):
 		months = {
 			(getdate(inv.posting_date).year, getdate(inv.posting_date).month)
 			for inv in candidates
@@ -1304,6 +1319,9 @@ def reconcile_created_voucher_or_rollback(
 def _resolve_company_and_bank_account(bt):
 	bank_account_doc = frappe.get_doc("Bank Account", bt.bank_account, for_update=True)
 	company = bank_account_doc.company or bt.company
+	bt_company = _get_value(bt, "company")
+	if bt_company and bank_account_doc.company and bt_company != bank_account_doc.company:
+		frappe.throw("Bank Transaction und Bankkonto gehören nicht zur gleichen Company.")
 	if not company:
 		frappe.throw(
 			f"Bank Account {bt.bank_account} hat keine Company hinterlegt."
@@ -1638,7 +1656,7 @@ def create_payment_entry_for_invoices(
 	    target_amount: Komplett-Betrag der Bank Transaction (>= sum(allocations)).
 	    leftover_as_advance: Wenn True und ``target_amount`` > Allocation-Summe,
 	        bleibt der Rest als ``unallocated_amount`` am PE stehen (Vorauszahlung).
-	        Wenn False und Differenz > 0,01 €: Fehler — Aufrufer muss balancieren.
+	        Wenn False und Differenz mindestens 0,01 €: Fehler — Aufrufer muss balancieren.
 	    customer: Explicit Customer for one part of a multi-Customer payment.
 	    partial: Allow a positive part of the bank amount. The caller must validate
 	        and reconcile the complete split atomically.
@@ -1786,15 +1804,15 @@ def create_payment_entry_for_invoices(
 		inv_name = _g("name")
 		explicit = _g("allocated_amount")
 		if explicit is not None:
-			explicit = flt(explicit)
+			explicit = _cent_amount(explicit, label=f"Zuweisung für {inv_name}")
 			if explicit <= 0:
 				frappe.throw(f"Zuweisung für {inv_name} muss größer als 0 € sein.")
-			if explicit > available + _TOLERANCE:
+			if explicit > available and not _amounts_equal(explicit, available):
 				frappe.throw(
 					f"Zuweisung für {inv_name} ({explicit:.2f} €) übersteigt "
 					f"offenen Betrag ({available:.2f} €)."
 				)
-			if explicit > remaining + _TOLERANCE:
+			if explicit > remaining and not _amounts_equal(explicit, remaining):
 				frappe.throw(
 					f"Zuweisung für {inv_name} ({explicit:.2f} €) übersteigt "
 					f"verbleibenden Bank-Betrag ({remaining:.2f} €)."
@@ -1817,20 +1835,20 @@ def create_payment_entry_for_invoices(
 
 	# Sanity-Check: Differenz Bank-Betrag vs. zuteilbare Summe
 	over_allocated = flt(allocated_total) - flt(target_amount)
-	if over_allocated > _TOLERANCE:
+	if over_allocated > 0 and not _amounts_equal(allocated_total, target_amount):
 		frappe.throw(
 			f"Auswahl summiert auf {allocated_total:.2f} €, Bank-Betrag ist "
 			f"{target_amount:.2f} €. Bitte Teilbeträge explizit reduzieren."
 		)
 
 	leftover = flt(target_amount) - flt(allocated_total)
-	if is_customer_refund and leftover > _TOLERANCE:
+	if is_customer_refund and leftover > 0 and not _amounts_equal(target_amount, allocated_total):
 		frappe.throw(
 			f"Ausgewählte Guthaben summieren auf {allocated_total:.2f} €, "
 			f"Bank-Betrag ist {target_amount:.2f} €. Die Auszahlung muss "
 			"vollständig einem oder mehreren Guthaben zugeordnet werden."
 		)
-	if leftover > _TOLERANCE and not leftover_as_advance:
+	if leftover > 0 and not _amounts_equal(target_amount, allocated_total) and not leftover_as_advance:
 		frappe.throw(
 			f"Auswahl summiert auf {allocated_total:.2f} €, Bank-Betrag ist "
 			f"{target_amount:.2f} €. Differenz {leftover:.2f} € — bitte mehr "
@@ -1862,6 +1880,7 @@ def create_standalone_payment_entry(*, bt, party_type=None, party=None, remarks=
 	Wenn party_type/party None: vom BT übernehmen.
 	"""
 	from erpnext.accounts.party import get_party_account
+	from hausverwaltung.hausverwaltung.overrides.payment_entry import validate_customer_payment_identity
 
 	party_type = party_type or bt.party_type
 	party = party or bt.party
@@ -1873,7 +1892,12 @@ def create_standalone_payment_entry(*, bt, party_type=None, party=None, remarks=
 	if party_type not in ("Customer", "Supplier"):
 		frappe.throw(f"Party-Typ '{party_type}' nicht unterstützt.")
 
+	# Match the generator/direct-PE lock order: contract and property before
+	# bank/financial masters. The unique tenancy also supplies central-bank CC.
+	identity = lock_customer_booking_identity(party) if party_type == "Customer" else None
 	company, bank_account_doc = _resolve_company_and_bank_account(bt)
+	if identity and identity.company != company:
+		frappe.throw("Die Company des Bankkontos passt nicht zum Mietvertrag der Mieterzahlung.")
 	shape = _bank_transaction_shape(bt)
 	target_amount = shape.amount
 	payment_type = shape.payment_type
@@ -1894,9 +1918,13 @@ def create_standalone_payment_entry(*, bt, party_type=None, party=None, remarks=
 
 	cost_center = _resolve_expected_cost_center_for_bt(
 		bt,
-		allow_company_default=True,
+		allow_company_default=identity is None,
 		for_update=True,
 	)
+	if identity:
+		if cost_center and cost_center != identity.cost_center:
+			frappe.throw("Die Kostenstelle der Bankkonto-Immobilie passt nicht zum Mietvertrag der Mieterzahlung.")
+		cost_center = identity.cost_center
 
 	pe = frappe.new_doc("Payment Entry")
 	pe.update(
@@ -1922,6 +1950,7 @@ def create_standalone_payment_entry(*, bt, party_type=None, party=None, remarks=
 	if cost_center and pe.meta.get_field("cost_center"):
 		pe.cost_center = cost_center
 	# bewusst keine references — alles bleibt unallocated_amount
+	validate_customer_payment_identity(pe)
 	pe.insert(ignore_permissions=True)
 	pe.submit()
 	return pe
@@ -2104,13 +2133,13 @@ def create_journal_entry_for_bt(
 				current_bank_gl=bank_account_doc.account,
 				company_currency=company_currency,
 			)
-			amt = flt(s.get("amount"))
+			amt = _cent_amount(s.get("amount"), label=f"Split für {acc}")
 			if amt <= 0:
 				frappe.throw(f"Split für {acc}: Betrag muss > 0 sein.")
 			cc = (s.get("cost_center") or "").strip() or default_cc
 			normalized.append({"account": acc, "cost_center": cc, "amount": amt})
 		total_split = sum(s["amount"] for s in normalized)
-		if abs(total_split - amount) > 0.01:
+		if not _amounts_equal(total_split, amount):
 			frappe.throw(
 				f"Split-Summe ({total_split:.2f} €) stimmt nicht mit Bank-Betrag "
 				f"({amount:.2f} €) überein."

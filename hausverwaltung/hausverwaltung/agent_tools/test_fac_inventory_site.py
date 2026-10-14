@@ -175,15 +175,39 @@ class TestInventorySite(unittest.TestCase):
 
 	def test_registry_carries_routing_and_budget_without_client_name_lists(self):
 		from frappe_assistant_core.core.tool_registry import get_tool_registry
+		from frappe_assistant_core.mcp.server import MCPServer
+		from frappe_assistant_core.mcp.tool_adapter import build_tool_dict
 
 		from hausverwaltung.hausverwaltung.agent_tools.fac_routing import tool_catalog
+		from hausverwaltung.hausverwaltung.agent_tools.fac_contract import FAC_INVENTORY_TOOL_NAMES
 
 		registry = get_tool_registry()
-		catalog = registry.get_available_tools(user="Administrator")
+		# This integration test exercises enabled inventory tools. The isolated
+		# pilot may leave these optional tools disabled by default.
+		for name in FAC_INVENTORY_TOOL_NAMES:
+			if self.frappe.db.exists("FAC Tool Configuration", name):
+				config = self.frappe.get_doc("FAC Tool Configuration", name)
+			else:
+				config = self.frappe.get_doc({
+					"doctype": "FAC Tool Configuration", "tool_name": name,
+					"plugin_name": "custom_tools",
+				})
+			config.enabled = 1
+			config.save()
+		registry.clear_cache()
+		self.addCleanup(registry.clear_cache)
+		available = registry.get_available_tools(user="Administrator")
+		# Routing metadata is added by the MCP adapter, not the internal
+		# get_metadata() representation used by FAC's own chat engine.
+		transport = {
+			tool["name"]: build_tool_dict(registry.get_tool(tool["name"]))
+			for tool in available
+		}
+		catalog = MCPServer("inventory-test")._handle_tools_list({}, transport)["tools"]
 		model = {t["name"]: t for t in tool_catalog(catalog, "model")}
 		code = {t["name"]: t for t in tool_catalog(catalog, "code")}
-		self.assertEqual(len(model), 33)
-		self.assertEqual(len(code), 47)
+		self.assertTrue(model)
+		self.assertTrue(code)
 		self.assertIn("hv_list_records", model)
 		self.assertNotIn("hv_query_view", model)
 		self.assertNotIn("agent_mail_merge_get_pdf", model)

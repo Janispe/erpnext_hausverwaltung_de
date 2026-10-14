@@ -119,12 +119,16 @@ def _aggregate_mietlauf_rows(data):
 	# Mehrere SIs eines Monats gegen das gleiche Konto/Party werden summiert.
 	buckets: dict[tuple, dict] = {}
 	out: list = []
-	bucket_position: dict[tuple, int] = {}
+	section = 0
 
 	for row in data:
 		if not isinstance(row, dict):
 			out.append(row)
+			section += 1
 			continue
+		if not row.get("posting_date"):
+			# Opening/total/section rows delimit independent ledger balances.
+			section += 1
 
 		mab_id = mab_map.get(row.get("voucher_no")) if row.get("voucher_type") == "Sales Invoice" else None
 		if not mab_id:
@@ -132,10 +136,17 @@ def _aggregate_mietlauf_rows(data):
 			continue
 
 		key = (
+			section,
 			mab_id,
 			row.get("account"),
 			row.get("posting_date"),
+			row.get("party_type"),
 			row.get("party"),
+			row.get("cost_center"),
+			row.get("wohnung"),
+			row.get("immobilie"),
+			row.get("project"),
+			row.get("account_currency"),
 		)
 
 		if key not in buckets:
@@ -145,12 +156,15 @@ def _aggregate_mietlauf_rows(data):
 			merged["_member_against"] = {row.get("against")} if row.get("against") else set()
 			merged["_member_voucher_nos"] = [row.get("voucher_no")]
 			buckets[key] = merged
-			bucket_position[key] = len(out)
 			out.append(merged)
 		else:
 			merged = buckets[key]
-			merged["debit"] = flt(merged.get("debit")) + flt(row.get("debit"))
-			merged["credit"] = flt(merged.get("credit")) + flt(row.get("credit"))
+			for fieldname in (
+				"debit", "credit", "debit_in_account_currency", "credit_in_account_currency",
+				"debit_in_transaction_currency", "credit_in_transaction_currency",
+			):
+				if fieldname in merged or fieldname in row:
+					merged[fieldname] = flt(merged.get(fieldname)) + flt(row.get(fieldname))
 			merged["_member_count"] += 1
 			if row.get("against"):
 				merged["_member_against"].add(row.get("against"))
@@ -171,6 +185,20 @@ def _aggregate_mietlauf_rows(data):
 			if against_set:
 				merged["against"] = " | ".join(sorted(against_set))
 
+	# ERPNext calculated the balances before we removed and reordered member
+	# rows. Recompute them in the displayed order using its same section-reset
+	# rule, so a grouped 730 EUR rent charge cannot retain the first 500 EUR
+	# invoice's balance.
+	if any(isinstance(row, dict) and "balance" in row for row in out):
+		balance = 0.0
+		for row in out:
+			if not isinstance(row, dict):
+				continue
+			if not row.get("posting_date"):
+				balance = 0.0
+			balance += flt(row.get("debit")) - flt(row.get("credit"))
+			if "balance" in row:
+				row["balance"] = balance
 	return out
 
 

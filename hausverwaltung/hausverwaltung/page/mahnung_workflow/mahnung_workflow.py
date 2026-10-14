@@ -293,16 +293,10 @@ def _vorlage_key_for_dunning_type(dunning_type: str | None) -> str | None:
 
 def _mahnreife_customers() -> list[str]:
     """Kunden mit mindestens einer überfälligen, offenen Sales Invoice."""
-    rows = frappe.db.sql(
-        """
-        SELECT DISTINCT customer
-        FROM `tabSales Invoice`
-        WHERE docstatus = 1
-          AND outstanding_amount > 0
-          AND due_date < %(today)s
-        """,
-        {"today": nowdate()},
-        as_dict=True,
+    rows = frappe.get_list(
+        "Sales Invoice",
+        filters={"docstatus": 1, "outstanding_amount": [">", 0], "due_date": ["<", nowdate()]},
+        fields=["customer"], distinct=True, order_by="customer asc", limit_page_length=0,
     )
     return [r.customer for r in rows]
 
@@ -312,13 +306,15 @@ def _build_mieter(customer: str) -> dict | None:
     if not customer:
         return None
     cust = frappe.get_doc("Customer", customer)
+    cust.check_permission("read")
 
-    invoices = frappe.get_all(
+    invoices = frappe.get_list(
         "Sales Invoice",
         filters={"customer": customer, "docstatus": 1, "outstanding_amount": [">", 0]},
         fields=["name", "posting_date", "due_date", "grand_total",
                 "outstanding_amount", "remarks"],
         order_by="due_date asc",
+        limit_page_length=0,
     )
     posten = [{
         "beleg": inv.name,
@@ -332,11 +328,12 @@ def _build_mieter(customer: str) -> dict | None:
         "overdue_days": max(0, date_diff(nowdate(), inv.due_date)),
     } for inv in invoices]
 
-    history = frappe.get_all(
+    history = frappe.get_list(
         "Dunning",
         filters={"customer": customer, "docstatus": 1},
         fields=["name", "posting_date", "dunning_type"],
         order_by="posting_date asc",
+        limit_page_length=0,
     )
     historie = [_history_entry(h.name) for h in history]
 
@@ -363,11 +360,15 @@ def _build_mieter(customer: str) -> dict | None:
 
 def _tenancy_location(customer: str) -> dict:
     """Readable property and unit of the Customer's one tenancy (never its IDs)."""
-    return apartment_location(frappe.db.get_value("Mietvertrag", {"kunde": customer}, "wohnung"))
+    contracts = frappe.get_all("Mietvertrag", filters={"kunde": customer}, fields=["name", "wohnung"], limit_page_length=2)
+    if len(contracts) > 1:
+        frappe.throw(_("Customer {0} ist mehreren Mietverträgen zugeordnet; die Mahnungsanschrift ist nicht eindeutig.").format(customer), frappe.ValidationError)
+    return apartment_location(contracts[0].wohnung if contracts else None)
 
 
 def _history_entry(dunning_name: str) -> dict:
     doc = frappe.get_doc("Dunning", dunning_name)
+    doc.check_permission("read")
     remark_overrides = get_dunning_invoice_remark_overrides(doc)
     belege = [
         {
@@ -438,6 +439,8 @@ def create_dunning(
         frappe.throw(_("Keine Posten ausgewählt."))
 
     invoices = [frappe.get_doc("Sales Invoice", name) for name in sales_invoices]
+    for invoice in invoices:
+        invoice.check_permission("read")
     customers = {si.customer for si in invoices}
     if len(customers) != 1:
         frappe.throw(_("Eine Mahnung darf nur Rechnungen eines Mieters enthalten."))
@@ -802,6 +805,7 @@ def get_dunning_detail(dunning: str) -> dict:
         frappe.throw(_("Keine Berechtigung."), frappe.PermissionError)
 
     doc = frappe.get_doc("Dunning", dunning)
+    doc.check_permission("read")
     remark_overrides = get_dunning_invoice_remark_overrides(doc)
     belege = [
         {

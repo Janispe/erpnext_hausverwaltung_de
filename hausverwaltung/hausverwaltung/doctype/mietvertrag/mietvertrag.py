@@ -60,12 +60,13 @@ class Mietvertrag(Document):
 	"""DocType controller for Mietvertrag."""
 
 	def before_update_after_submit(self) -> None:
-		"""Frappe skips validate on Update; rent rules must still be checked."""
-		validate_rent_rows(
-			self.von, self.bis, self.miete or [], getattr(self, "miete_teilmonate", None) or []
-		)
-		self._sort_staffel_table_by_von("miete")
-		self._sort_staffel_table_by_von("miete_teilmonate")
+		"""Apply all domain checks to the fields editable after submission.
+
+		Frappe skips ``validate`` on this save path. In particular, changing
+		``bis`` must not create overlapping leases, and BK rules must not
+		allow advances during a flat-rate/inclusive period.
+		"""
+		self.validate()
 
 	def before_validate(self) -> None:
 		"""Give an amendment its own Customer instead of copying the old link."""

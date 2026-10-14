@@ -38,6 +38,7 @@ from frappe.utils import cstr, getdate
 
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.rounding import (
     get_bk_rounding_method,
+    reconcile_rounding_difference,
     round_money_allocations,
 )
 
@@ -370,11 +371,12 @@ def _round_gl_allocation_bases(
                     f"GL-Kostenbasis {basis[0]} / {basis[1]} hat keine "
                     "Wohnungsanteile. Kostenverteilung abgebrochen."
                 )
-            correction_key = max(
+            priority = sorted(
                 entries,
                 key=lambda item: (item[1].copy_abs(), str(item[0])),
-            )[0]
-            rounded[correction_key] += difference
+                reverse=True,
+            )
+            rounded = reconcile_rounding_difference(priority, rounded, difference)
         rounded_by_basis[basis] = rounded
 
     _validate_gl_allocation_totals(expected_by_basis, rounded_by_basis)

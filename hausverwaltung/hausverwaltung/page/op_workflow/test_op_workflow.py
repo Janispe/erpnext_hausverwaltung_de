@@ -86,6 +86,13 @@ class TestOPWorkflowPageRoleContract(unittest.TestCase):
 
 
 class TestOPWorkflowFastPathGuards(unittest.TestCase):
+	def test_fast_invoice_filter_includes_one_cent_receivable(self):
+		filters = op_workflow._base_invoice_filters({"company": "HV"}, "customer")
+		operator, minimum = filters["outstanding_amount"]
+		self.assertEqual(operator, ">")
+		self.assertLess(minimum, 0.01)
+		self.assertGreaterEqual(minimum, 0)
+
 	def test_fast_path_is_off_by_default_to_keep_non_invoice_open_items(self):
 		filters = frappe._dict({"company": "Test Company"})
 
@@ -182,6 +189,42 @@ class _FakeInvoice:
 
 
 class TestOPWorkflowPayments(unittest.TestCase):
+	def test_one_cent_customer_credit_can_be_refunded_without_amount_change(self):
+		si = _FakeInvoice(outstanding=-0.01)
+		si.name = "SI-CENT"
+		pe = _FakePaymentEntry()
+		pe.paid_amount = pe.received_amount = 0.01
+		with patch.object(op_workflow.frappe, "has_permission", return_value=True), \
+			patch.object(op_workflow.frappe, "get_doc", return_value=si), \
+			patch.object(op_workflow, "_resolve_mode_of_payment", return_value=None), \
+			patch.object(op_workflow, "_resolve_payment_bank_account", return_value="BANK"), \
+			patch.object(op_workflow, "_set_payment_transaction_reference"), \
+			patch("erpnext.accounts.doctype.payment_entry.payment_entry.get_payment_entry", return_value=pe):
+			result = op_workflow.create_refund_payment("SI-CENT")
+		self.assertTrue(pe.insert_called)
+		self.assertEqual(result["auszahlung"], 0.01)
+		self.assertEqual(result["guthaben_betrag"], 0.01)
+
+	def test_one_cent_payment_difference_blocks_supplier_payment_and_customer_refund(self):
+		for refund in (False, True):
+			with self.subTest(refund=refund):
+				invoice = _FakeInvoice(outstanding=-1 if refund else 1)
+				pe = _FakePaymentEntry()
+				pe.difference_amount = 0.01
+				with patch.object(op_workflow.frappe, "has_permission", return_value=True), \
+					patch.object(op_workflow.frappe, "get_doc", return_value=invoice), \
+					patch.object(op_workflow, "_require_submitted_invoice", return_value=invoice), \
+					patch.object(op_workflow, "_resolve_mode_of_payment", return_value=None), \
+					patch.object(op_workflow, "_resolve_payment_bank_account", return_value="BANK"), \
+					patch.object(op_workflow, "_set_payment_transaction_reference"), \
+					patch("erpnext.accounts.doctype.payment_entry.payment_entry.get_payment_entry", return_value=pe), \
+					self.assertRaisesRegex(frappe.ValidationError, "nicht ausgeglichen"):
+					if refund:
+						op_workflow.create_refund_payment(invoice.name)
+					else:
+						op_workflow.create_payment_entry(invoice.name)
+				self.assertFalse(pe.insert_called)
+
 	@staticmethod
 	def _cached_value(doctype, _name, fieldname):
 		values = {

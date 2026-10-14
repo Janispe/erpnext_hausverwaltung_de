@@ -60,8 +60,11 @@ context("Betriebskostenabrechnung Immobilie", () => {
 
 		methods.forEach((m) => {
 			it(`${m}: nonexistent doc → kein 200`, () => {
-				cy.api_post(`${API_BASE}.${m}`, { docname: "NONEXISTENT-BKI-999" }).then((res) => {
-					expect(res.status).to.not.eq(200);
+				const args = m === "download_batch_print_html"
+					? { doctype: "Betriebskostenabrechnung Mieter", names: JSON.stringify(["NONEXISTENT-BKM-999"]) }
+					: { name: "NONEXISTENT-BKI-999" };
+				cy.api_post(`${API_BASE}.${m}`, args).then((res) => {
+					expect(res.status).to.be.oneOf([403, 404, 417]);
 				});
 			});
 		});

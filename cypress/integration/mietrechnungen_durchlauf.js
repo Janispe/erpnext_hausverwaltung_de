@@ -19,13 +19,12 @@ context("Mietrechnungen Durchlauf", () => {
 		cy.get(".modal:visible").find('[data-fieldname="jahr"]').should("exist");
 	});
 
-	// Skip-Grund: das Mietrechnungen-Durchlauf-Modal lässt sich auf dieser Site
-	// nicht über Standard-Mechanismen (Close-Button, cur_dialog.hide()) zuverlässig
-	// schließen — vermutlich überschreibt Custom-JS die Dismiss-Logik. Reaktivieren
-	// wenn der Dialog-Lifecycle stabilisiert ist.
-	it.skip("Dialog ist schließbar", () => {
+	it("Dialog ist schließbar", () => {
 		cy.new_form("Mietrechnungen Durchlauf");
 		cy.get(".modal:visible", { timeout: 10000 }).should("exist");
+		cy.window().should((win) => {
+			expect(win.cur_dialog?.display).to.eq(true);
+		});
 		cy.get(".modal:visible .btn-modal-close").click();
 		cy.get(".modal.show", { timeout: 15000 }).should("not.exist");
 	});

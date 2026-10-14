@@ -1,6 +1,7 @@
 """Tests für Kontext und sicheren Zahlungsfluss der Mietrechnungs-Korrektur."""
 
 import unittest
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -11,12 +12,37 @@ from hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur import (
 	_korrektur_storno,
 	_reconcile_bulk_payment_pool,
 	_reconcile_existing_payment,
+	_recompute_betrag,
 	_si_context,
 	_validate_invoice_contract_identity,
 	_validate_single_type_invoice,
 	korrigiere_mietrechnung,
 	korrigiere_mietrechnungen_bulk,
 )
+
+
+class TestInitialMonthlyChargeCorrection(unittest.TestCase):
+	def test_correction_uses_active_initial_staffel_for_monthly_charges(self):
+		contract = frappe._dict(name="MV-1", von="2026-01-16", bis=None)
+		def get_amount(_name, field, reference_date):
+			return {"betriebskosten": 150, "heizkosten": 100, "untermietzuschlag": 30}[field] if reference_date >= date(2026, 1, 16) else 0
+		with (
+			patch.object(frappe.db, "get_value", return_value=contract),
+			patch("hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen._staffelbetrag", side_effect=get_amount),
+			patch("hausverwaltung.hausverwaltung.utils.betriebskostenregelung.get_bk_regelung", return_value="Vorauszahlung"),
+		):
+			for typ, amount in (("Betriebskosten", 150), ("Heizkosten", 100), ("Untermietzuschlag", 30)):
+				with self.subTest(typ=typ):
+					self.assertEqual(_recompute_betrag({"mietvertrag": "MV-1", "typ": typ, "jahr": 2026, "monat": 1}), amount)
+
+	def test_correction_does_not_reintroduce_advance_for_inclusive_rent(self):
+		with (
+			patch.object(frappe.db, "get_value", return_value=frappe._dict(name="MV-1", von="2026-01-16", bis=None)),
+			patch("hausverwaltung.hausverwaltung.utils.betriebskostenregelung.get_bk_regelung", return_value="Pauschale/Inklusivmiete"),
+			patch("hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen._staffelbetrag", return_value=150) as get_amount,
+		):
+			self.assertEqual(_recompute_betrag({"mietvertrag": "MV-1", "typ": "Betriebskosten", "jahr": 2026, "monat": 1}), 0)
+		get_amount.assert_not_called()
 
 
 def _si(

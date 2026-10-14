@@ -608,6 +608,15 @@ def prepare(
 			segments = run._render_template_content(doc, context)
 			if not segments:
 				raise AgentToolError("EMPTY_DOCUMENT", "Vorlage liefert keinen Inhalt.")
+			from hausverwaltung.hausverwaltung.agent_tools.mail_merge_asset_api import (
+				inline_private_image_assets,
+			)
+
+			segments = [
+				{**segment, "html": inline_private_image_assets(segment.get("html") or "")}
+				if segment.get("type") == "html" else segment
+				for segment in segments
+			]
 			page_html = run._wrap_html_fragment("\n".join(run._render_segments_preview_pages(segments)))
 			footer = frappe._dict(
 				vorlage=doc.name,

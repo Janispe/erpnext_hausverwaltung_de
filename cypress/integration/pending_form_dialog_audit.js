@@ -11,7 +11,7 @@ context("Pending audit: Mietvertrag and Mietrechnungen-Durchlauf", { retries: 0 
 
 	auditCase("form", "Mietvertrag: existing fixture form initializes and exposes real custom buttons", () => {
 		cy.get_list("Mietvertrag", ["name", "kunde", "wohnung"], [
-			["name", "like", "M1001%"], ["kunde", "is", "set"], ["wohnung", "is", "set"],
+			["name", Cypress.env("hv_mietvertrag") ? "=" : "like", Cypress.env("hv_mietvertrag") || "M1001%"], ["kunde", "is", "set"], ["wohnung", "is", "set"],
 		]).then((result) => {
 			const fixture = result.data[0];
 			expect(fixture, "complete isolated sample lease").to.exist;
@@ -26,10 +26,10 @@ context("Pending audit: Mietvertrag and Mietrechnungen-Durchlauf", { retries: 0 
 			});
 			cy.get(".page-container:visible").should("contain", "Staffelmieten sortieren").and("contain", "Sollstellungen prüfen");
 			cy.get(".page-container:visible .inner-group-button").should("exist");
-			cy.contains(".page-container:visible .inner-group-button .btn", /Accounting|Buchhaltung/).click();
-			cy.get(".page-container:visible .dropdown-menu:visible").should("contain", "Mieterkonto");
+			cy.contains(".page-container:visible .inner-group-button button", /Accounting|Buchhaltung/).click();
+			cy.get('[role="menu"]:visible').should("contain", "Mieterkonto");
 			cy.get(".error-message:visible").should("not.exist");
-			cy.writeFile("output/playwright/bugtesting-2026-10-04/pending-mietvertrag-readback.json", fixture);
+			cy.writeFile("output/playwright/bugtesting-2026-10-10/pending-mietvertrag-readback.json", fixture);
 		});
 	});
 
@@ -60,7 +60,7 @@ context("Pending audit: Mietvertrag and Mietrechnungen-Durchlauf", { retries: 0 
 		cy.window().then((win) => win.cur_frm.refresh());
 		cy.get(".modal:visible").should("not.exist");
 		cy.then(() => expect(generatorCalls, "closing created no invoices").to.have.length(0));
-		cy.window().then((win) => cy.writeFile("output/playwright/bugtesting-2026-10-04/pending-dialog-readback.json", {
+		cy.window().then((win) => cy.writeFile("output/playwright/bugtesting-2026-10-10/pending-dialog-readback.json", {
 			closed: win.cur_dialog === null,
 			modal_count: win.document.querySelectorAll(".modal.show").length,
 			backdrop_count: win.document.querySelectorAll(".modal-backdrop.show").length,

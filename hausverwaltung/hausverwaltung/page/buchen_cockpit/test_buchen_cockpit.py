@@ -83,6 +83,36 @@ class _FakeVorlage:
 
 
 class TestBuchenCockpit(unittest.TestCase):
+	def test_booking_amount_rejects_malformed_locale_and_nonfinite_values(self):
+		for value in ("invalid", "42,50", "1.234,56", "NaN", "Infinity", float("nan"), float("inf"), True, {}):
+			with self.subTest(value=value), self.assertRaisesRegex(frappe.ValidationError, "Position 2: Betrag"):
+				cockpit._validated_booking_amount(value, index=2)
+
+	def test_booking_amount_preserves_positive_negative_and_decimal_values(self):
+		for value, expected in ((42.5, 42.5), ("42.50", 42.5), (-42.5, -42.5), (0, 0)):
+			with self.subTest(value=value):
+				self.assertEqual(cockpit._validated_booking_amount(value, index=1), expected)
+
+	def test_invalid_sales_amount_stops_before_invoice_or_item_creation(self):
+		with patch.object(cockpit, "_require_document_permissions"), \
+			patch.object(cockpit, "_kostenstelle_zu_haus_map", return_value={}), \
+			patch.object(cockpit, "_lock_mietvertrag_booking_identity", return_value=self._sales_booking_identity()), \
+			patch.object(cockpit, "ensure_rent_items") as ensure_items, \
+			patch.object(cockpit.frappe, "new_doc") as new_doc, \
+			self.assertRaisesRegex(frappe.ValidationError, "Betrag"):
+			cockpit.create_sales_invoice(mietvertrag="MV-1", positionen=[{"betrag": "42,50"}])
+		ensure_items.assert_not_called()
+		new_doc.assert_not_called()
+
+	def test_invalid_purchase_amount_stops_before_booking_identity_or_mutation(self):
+		with patch.object(cockpit, "_require_document_permissions"), \
+			patch.object(cockpit, "_purchase_invoice_booking_context") as booking_context, \
+			patch.object(cockpit.frappe, "new_doc") as new_doc, \
+			self.assertRaisesRegex(frappe.ValidationError, "Betrag"):
+			cockpit.create_purchase_invoice(lieferant="SUP-1", positionen=[{"betrag": float("nan")}])
+		booking_context.assert_not_called()
+		new_doc.assert_not_called()
+
 	def test_page_is_restricted_to_booking_role(self):
 		page_roles = {
 			row.role
@@ -456,6 +486,31 @@ class TestBuchenCockpit(unittest.TestCase):
 		company_default.assert_not_called()
 		self.assertEqual(invoice.company, "Hausverwaltung Peters")
 		self.assertEqual(invoice.items[0]["cost_center"], "CC-HAUS-1")
+
+	def test_create_sales_invoice_header_uses_property_cost_center_not_company_default(self):
+		for amount in (42.5, -42.5):
+			with self.subTest(amount=amount):
+				invoice = _FakeInvoice()
+				invoice.cost_center = "CC-COMPANY-DEFAULT"
+				with patch.object(cockpit.frappe, "new_doc", return_value=invoice), \
+					patch.object(cockpit.frappe.db, "get_value", return_value="8400 - Erlöse - HV"), \
+					patch.object(cockpit, "_kostenstelle_zu_haus_map", return_value={"CC-HV": "Haus-1"}), \
+					patch.object(cockpit, "_lock_mietvertrag_booking_identity", return_value=self._sales_booking_identity()), \
+					patch.object(cockpit, "_has_field", return_value=True), \
+					patch.object(cockpit, "ensure_rent_items"), \
+					patch.object(cockpit, "get_hv_income_accounts", return_value={}), \
+					patch.object(cockpit.frappe, "msgprint"):
+					cockpit.create_sales_invoice(
+						mietvertrag="MV-1",
+						rechnungsdatum="2026-05-06",
+						faellig_am="2026-05-27",
+						positionen=[{"beschreibung": "Buchung", "betrag": amount}],
+						submit_doc=0,
+					)
+				self.assertEqual(invoice.cost_center, "CC-HV")
+				self.assertNotEqual(invoice.cost_center, "CC-COMPANY-DEFAULT")
+				self.assertEqual(invoice.items[0]["cost_center"], invoice.cost_center)
+				self.assertTrue(invoice.insert_called)
 
 	def test_create_sales_invoice_converts_negative_amount_to_credit_note(self):
 		invoice = _FakeInvoice()

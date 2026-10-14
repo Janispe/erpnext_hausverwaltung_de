@@ -2371,6 +2371,33 @@ class TestBankauszugImport(unittest.TestCase):
         )
         create_pe.assert_not_called()
 
+    def _assert_allocation_api_rejects_raw_invalid_money(self, endpoint):
+        row = self._FakeRow(name="ROW-RAW-MONEY", iban="DE17")
+        row.party_type = "Customer"
+        row.party = "CUST-1"
+        row.richtung = "Eingang"
+        row.betrag = 10000
+        invoice = frappe._dict(name="SINV-RAW-MONEY", outstanding_amount=10000, posting_date="2026-05-05")
+        for raw_amount in ("42,50", "foo", True, "42.501"):
+            payload = json.dumps([{"name": invoice.name, "allocated_amount": raw_amount}])
+            with self.subTest(endpoint=endpoint.__name__, raw_amount=raw_amount), \
+                 patch.object(bi, "_row_with_unreconciled_bt", return_value=(object(), row, frappe._dict(name="BT-RAW-MONEY"))), \
+                 patch.object(bi.frappe.db, "get_value", return_value=invoice), \
+                 patch("hausverwaltung.hausverwaltung.utils.payment_auto_match.create_payment_entry_for_invoices",
+                     side_effect=RuntimeError("invalid amount reached booking")) as create_pe:
+                with self.assertRaisesRegex(frappe.ValidationError, "Geldbetrag"):
+                    if endpoint is bi.manually_reconcile_row:
+                        endpoint("IMP-RAW-MONEY", row.name, payload, leftover_as_advance=1)
+                    else:
+                        endpoint("IMP-RAW-MONEY", row.name, invoice_allocations=payload, leftover_as_advance=1)
+                create_pe.assert_not_called()
+
+    def test_manual_allocation_api_rejects_raw_invalid_money_before_booking(self):
+        self._assert_allocation_api_rejects_raw_invalid_money(bi.manually_reconcile_row)
+
+    def test_split_allocation_api_rejects_raw_invalid_money_before_booking(self):
+        self._assert_allocation_api_rejects_raw_invalid_money(bi.reconcile_split_row)
+
     def test_manually_reconcile_row_rejects_explicit_allocations_above_bank_amount(self):
         import json as _json
 
@@ -3298,11 +3325,16 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         "Bank Account": 60,
         "Wohnung": 70,
         "Customer": 70,
+        "Immobilie": 80,
         "File": 80,
         "Item": 90,
         "Account": 100,
+        "Address": 100,
+        "Cost Center": 110,
         "Bank": 110,
         "Fiscal Year": 120,
+        "Address Template": 120,
+        "Country": 130,
         "UOM": 130,
     }
     _CLEANUP_PASSES = 4
@@ -3667,8 +3699,27 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         # Customer auto-matching is intentionally contract/flat-aware.  Give
         # every synthetic tenant exactly one active contract so the invoice
         # identity is authoritative instead of relying on the IBAN alone.
+        if not getattr(self, "tenant_property", None):
+            country = self._track(frappe.get_doc({
+                "doctype": "Country", "country_name": f"HV Banktest {self.suffix}", "code": "DE",
+            }).insert(ignore_permissions=True))
+            self._track(frappe.get_doc({
+                "doctype": "Address Template", "country": country.name, "is_default": 0,
+                "template": "{{ address_line1 }}<br>{{ city }}",
+            }).insert(ignore_permissions=True))
+            address = self._track(frappe.get_doc({
+                "doctype": "Address", "address_title": f"HV Banktest {self.suffix}",
+                "address_type": "Billing", "address_line1": "Teststraße 1", "city": "Berlin",
+                "country": country.name,
+            }).insert(ignore_permissions=True))
+            property_doc = self._track(frappe.get_doc({
+                "doctype": "Immobilie", "bezeichnung": f"HV Banktest {self.suffix}",
+                "adresse": address.name, "kostenstelle": self.cost_center,
+            }).insert(ignore_permissions=True))
+            self.tenant_property = property_doc.name
         wohnung = frappe.get_doc({
             "doctype": "Wohnung",
+            "immobilie": self.tenant_property,
             "name__lage_in_der_immobilie": f"HV Test {label} Wohnung {self.suffix}",
             "gebaeudeteil": "VH",
         }).insert(ignore_permissions=True)
@@ -3937,6 +3988,53 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
             frappe.db.get_value("Bank Transaction", bank_transaction, "status"),
             "Reconciled",
         )
+
+    def test_standalone_customer_payment_uses_tenancy_cost_center_for_unmapped_central_bank(self):
+        customer = self._make_customer("Zentralbank Kostenstelle", self._valid_test_iban(94))
+        cost_center_parent = frappe.get_all(
+            "Cost Center", filters={"company": self.company, "is_group": 1}, pluck="name", limit=1,
+        )[0]
+        other_cost_center = self._track(frappe.get_doc({
+            "doctype": "Cost Center", "cost_center_name": f"HV andere Wohnung {self.suffix}",
+            "company": self.company, "parent_cost_center": cost_center_parent, "is_group": 0,
+        }).insert(ignore_permissions=True))
+        frappe.db.set_value("Immobilie", self.tenant_property, "kostenstelle", other_cost_center.name)
+        doc = self._make_import([self._neutral_row(party_type="Customer", party=customer, betrag=50)])
+        result = bi.create_standalone_payment_for_row(doc.name, doc.rows[0].name)
+        self.created_docs.append(("Payment Entry", result["payment_entry"]))
+        doc.reload()
+        if doc.rows[0].bank_transaction:
+            self.created_docs.append(("Bank Transaction", doc.rows[0].bank_transaction))
+        payment = frappe.get_doc("Payment Entry", result["payment_entry"])
+        self.assertEqual(payment.cost_center, other_cost_center.name)
+        self.assertEqual(payment.paid_to, self.bank_gl_account)
+        self.assertEqual(flt(payment.unallocated_amount), 50)
+        self.assertEqual(frappe.db.get_value("Bank Transaction", doc.rows[0].bank_transaction, "status"), "Reconciled")
+        entries = frappe.get_all("GL Entry", filters={"voucher_type": "Payment Entry", "voucher_no": payment.name,
+            "party": customer, "is_cancelled": 0}, fields=["cost_center", "credit_in_account_currency"])
+        self.assertTrue(entries)
+        self.assertTrue(all(entry.cost_center == other_cost_center.name for entry in entries))
+        self.assertEqual(sum(flt(entry.credit_in_account_currency) for entry in entries), 50)
+
+    def test_one_cent_standalone_advance_is_fully_booked_and_reconciled(self):
+        customer = self._make_customer("Cent Vorauszahlung", self._valid_test_iban(95))
+        doc = self._make_import([self._neutral_row(party_type="Customer", party=customer, betrag=0.01)])
+        result = bi.create_standalone_payment_for_row(doc.name, doc.rows[0].name)
+        self.created_docs.append(("Payment Entry", result["payment_entry"]))
+        doc.reload()
+        self.created_docs.append(("Bank Transaction", doc.rows[0].bank_transaction))
+        payment = frappe.get_doc("Payment Entry", result["payment_entry"])
+        self.assertEqual(flt(payment.unallocated_amount), 0.01)
+        self.assertEqual(payment.cost_center, self.cost_center)
+        bank = frappe.get_doc("Bank Transaction", doc.rows[0].bank_transaction)
+        self.assertEqual(bank.status, "Reconciled")
+        self.assertEqual(flt(bank.unallocated_amount), 0)
+        customer_credit = frappe.db.sql(
+            "SELECT SUM(credit_in_account_currency-debit_in_account_currency) FROM `tabGL Entry` "
+            "WHERE voucher_type='Payment Entry' AND voucher_no=%s AND party=%s AND is_cancelled=0",
+            (payment.name, customer),
+        )[0][0]
+        self.assertEqual(flt(customer_credit), 0.01)
 
     def _make_customer_split_case(self, *, refund=True):
         customers = [self._make_customer(f"Split {index}", self._valid_test_iban(92 + index)) for index in range(2)]

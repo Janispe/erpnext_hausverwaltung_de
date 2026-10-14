@@ -30,6 +30,20 @@ class TestBookingIntegrityAudit(unittest.TestCase):
 		)
 		self.assertEqual(identity, ("MV-1", "05/2026", True))
 
+	def test_free_import_remarks_do_not_override_structured_billing_month(self):
+		identity = _rent_identity({
+			"mietabrechnung_id": "MV-1|02/2012",
+			"remarks": "Import BNR 39226: Miete 11 u.12/2011, Nachzahlung",
+		})
+		self.assertEqual(identity, ("MV-1", "02/2012", False))
+
+	def test_formal_rent_marker_keeps_month_conflict_detection(self):
+		identity = _rent_identity({
+			"mietabrechnung_id": "MV-1|02/2012",
+			"remarks": "[TYPE:Miete] [MV:MV-1] 12/2011",
+		})
+		self.assertEqual(identity, ("MV-1", "02/2012", True))
+
 	def test_rent_identity_supports_pipes_in_contract_name(self):
 		identity = _rent_identity(
 			{

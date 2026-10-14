@@ -10,7 +10,10 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
     BK_REGELUNG_VORAUSZAHLUNG,
     get_bk_regelung,
 )
-from hausverwaltung.hausverwaltung.utils.mietberechnung import calculate_monthly_rent
+from hausverwaltung.hausverwaltung.utils.mietberechnung import (
+    calculate_monthly_rent,
+    monthly_charge_reference_date,
+)
 from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 
@@ -50,11 +53,13 @@ def _bk_regelung_und_betrag_fuer_monat(
     anchor: date,
     *,
     lock: bool = False,
+    contract_start=None,
 ) -> tuple[str, float]:
     """Liefere Regelung und separat zu fakturierende BK-Vorauszahlung."""
-    regelung = get_bk_regelung(mv_name, anchor, lock=lock)
+    reference_date = monthly_charge_reference_date(contract_start, anchor)
+    regelung = get_bk_regelung(mv_name, reference_date, lock=lock)
     betrag = (
-        _staffelbetrag(mv_name, "betriebskosten", anchor)
+        _staffelbetrag(mv_name, "betriebskosten", reference_date)
         if regelung == BK_REGELUNG_VORAUSZAHLUNG
         else 0.0
     )
@@ -947,12 +952,14 @@ def generate_miet_und_bk_rechnungen(
             # Beträge je Staffeltabelle holen
             # Miete: neue Logik (Monatlich pro‑rata, Gesamter Zeitraum voll)
             betrag_miete = _miete_betrag_fuer_monat(v, datum)
+            staffel_stichtag = monthly_charge_reference_date(v.von, datum)
             bk_regelung, betrag_bk = _bk_regelung_und_betrag_fuer_monat(
                 v.name,
                 datum,
                 lock=True,
+                contract_start=v.von,
             )
-            betrag_heiz = _staffelbetrag(v.name, "heizkosten", datum)
+            betrag_heiz = _staffelbetrag(v.name, "heizkosten", staffel_stichtag)
 
             # Mietabrechnungs-ID koppelt die getrennten SIs (Miete/BK/HK/UMZ)
             # eines Mietvertrag-Monats für die Display-Aggregation in
@@ -1147,7 +1154,7 @@ def generate_miet_und_bk_rechnungen(
                     )
 
             # Untermietzuschlag (nur wenn Staffel-Eintrag UND Erlöskonto konfiguriert)
-            betrag_umz = _staffelbetrag(v.name, "untermietzuschlag", datum)
+            betrag_umz = _staffelbetrag(v.name, "untermietzuschlag", staffel_stichtag)
             umz_account = income_accounts.get("Untermietzuschlag")
             if only_typ and only_typ != "Untermietzuschlag":
                 pass

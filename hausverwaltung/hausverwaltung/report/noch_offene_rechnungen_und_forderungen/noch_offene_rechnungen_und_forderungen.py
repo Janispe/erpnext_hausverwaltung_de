@@ -15,7 +15,8 @@ from hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff import (
 	WRITTEN_OFF_STATUS,
 )
 
-OUTSTANDING_TOLERANCE = 0.01
+# Keep one-cent receivables and credits visible and actionable.
+OUTSTANDING_TOLERANCE = 0.005
 
 
 def execute(filters=None):

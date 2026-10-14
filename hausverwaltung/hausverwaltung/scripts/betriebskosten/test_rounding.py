@@ -43,3 +43,13 @@ class TestBKRounding(TestCase):
 		self.assertEqual(result["B"], Decimal("25.01"))
 		self.assertEqual(result["C"], Decimal("14.99"))
 		self.assertEqual(sum(result.values()), Decimal("100.00"))
+
+	def test_legacy_rest_never_turns_small_positive_costs_into_a_credit(self):
+		for sign in (Decimal("1"), Decimal("-1")):
+			with self.subTest(sign=sign):
+				result = round_money_allocations(
+					[(key, sign * Decimal("0.005")) for key in ("A", "B", "C", "D")],
+					ROUNDING_METHOD_LEGACY,
+				)
+				self.assertEqual(sum(result.values()), sign * Decimal("0.02"))
+				self.assertTrue(all(value * sign >= 0 for value in result.values()))

@@ -19,6 +19,19 @@ class TestHeizkostenmeldung(unittest.TestCase):
 	def setUp(self):
 		if not getattr(frappe.local, "site", None):
 			self.skipTest("Frappe-Testsite erforderlich")
+		# Export methods are request handlers. unittest.TestCase does not set
+		# up the request response that IntegrationTestCase normally provides.
+		missing_response = object()
+		previous_response = getattr(frappe.local, "response", missing_response)
+		frappe.local.response = frappe._dict({"docs": []})
+
+		def restore_response():
+			if previous_response is missing_response:
+				del frappe.local.response
+			else:
+				frappe.local.response = previous_response
+
+		self.addCleanup(restore_response)
 		self.user = frappe.session.user
 		frappe.set_user("Administrator")
 		self.point = "hk_meldung_test"

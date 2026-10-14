@@ -6,6 +6,76 @@ import frappe
 from hausverwaltung.hausverwaltung.utils import payment_auto_match as pam
 
 
+class TestStrictCentAmount(unittest.TestCase):
+	def test_rejects_locale_amount_without_silently_removing_comma(self):
+		with self.assertRaises(frappe.ValidationError):
+			pam._cent_amount("50,01")
+
+	def test_rejects_invalid_text_and_boolean_amounts(self):
+		for value in ("foo", True, False, {}, []):
+			with self.subTest(value=value), self.assertRaises(frappe.ValidationError):
+				pam._cent_amount(value)
+
+	def test_accepts_optional_zero_and_numeric_cent_values(self):
+		for value, expected in ((None, 0), ("", 0), ("50.01", 50.01), (50.01, 50.01), (0.1 + 0.2, 0.3)):
+			with self.subTest(value=value):
+				self.assertAlmostEqual(pam._cent_amount(value), expected)
+
+	def test_rejects_nonfinite_and_subcent_values(self):
+		for value in ("nan", "inf", -float("inf"), "50.001"):
+			with self.subTest(value=value), self.assertRaises(frappe.ValidationError):
+				pam._cent_amount(value)
+
+
+class TestStandaloneTenantBankIdentity(unittest.TestCase):
+	def _create(self, *, mapped_cost_center=None, company="COMP-1", direction="in"):
+		from hausverwaltung.hausverwaltung.overrides import payment_entry as override
+		events = []
+		identity = frappe._dict(name="MV-1", kunde="CUST-1", wohnung="WO-1", company="COMP-1", cost_center="CC-TENANT")
+		bt = frappe._dict(name="BT-1", party_type="Customer", party="CUST-1", bank_account="BA-1", date="2026-05-05",
+			deposit=50 if direction == "in" else 0, withdrawal=50 if direction == "out" else 0)
+		pe = TestCreatePaymentEntryForInvoices._FakePaymentEntry()
+		pe.meta.get_field = lambda field: field == "cost_center"
+		def lock_identity(*args, **kwargs):
+			events.append("identity")
+			return identity
+		def resolve_bank(*args, **kwargs):
+			events.append("bank")
+			return company, frappe._dict(company=company, account="BANK-1")
+		def resolve_mapping(*args, **kwargs):
+			events.append("mapping")
+			return mapped_cost_center or ("CC-DEFAULT" if kwargs.get("allow_company_default") else None)
+		with patch.object(pam, "lock_customer_booking_identity", side_effect=lock_identity, create=True), \
+			patch.object(override, "lock_customer_booking_identity", side_effect=lock_identity), \
+			patch.object(pam, "_resolve_company_and_bank_account", side_effect=resolve_bank), \
+			patch.object(pam, "_resolve_expected_cost_center_for_bt", side_effect=resolve_mapping), \
+			patch.object(pam, "_get_company_currency", return_value="EUR"), \
+			patch.object(pam, "_require_company_currency_account"), \
+			patch("erpnext.accounts.party.get_party_account", return_value="RECEIVABLE-1"), \
+			patch.object(pam.frappe, "new_doc", return_value=pe):
+			pam.create_standalone_payment_entry(bt=bt)
+		return pe, events
+
+	def test_central_bank_uses_exact_tenant_cost_center(self):
+		for direction in ("in", "out"):
+			with self.subTest(direction=direction):
+				pe, _ = self._create(direction=direction)
+				self.assertEqual(pe.cost_center, "CC-TENANT")
+				self.assertTrue(pe.submitted)
+
+	def test_tenancy_lock_precedes_bank_and_mapping_locks(self):
+		_, events = self._create(mapped_cost_center="CC-TENANT")
+		self.assertEqual(events[:3], ["identity", "bank", "mapping"])
+
+	def test_explicit_other_property_mapping_is_rejected(self):
+		with self.assertRaisesRegex(frappe.ValidationError, "Kostenstelle|Bankkonto"):
+			self._create(mapped_cost_center="CC-OTHER")
+
+	def test_bank_company_must_match_exact_tenancy(self):
+		with self.assertRaisesRegex(frappe.ValidationError, "Company"):
+			self._create(company="COMP-OTHER")
+
+
 class TestPaymentAutoMatchRemarks(unittest.TestCase):
 	def test_builds_rent_payment_remarks_from_sales_invoice_items(self):
 		invoices = [
@@ -51,6 +121,7 @@ class TestAutoMatchExactAmbiguity(unittest.TestCase):
 		bt_date="2026-03-05",
 		invoices,
 		invoice_doctype="Sales Invoice",
+		target_amount=100.0,
 	):
 		bt = frappe._dict(name="BT-EXACT", date=bt_date)
 		with patch.object(pam.frappe, "get_doc", return_value=bt), \
@@ -61,7 +132,7 @@ class TestAutoMatchExactAmbiguity(unittest.TestCase):
 					"ok": True,
 					"candidates": invoices,
 						"invoice_doctype": invoice_doctype,
-					"target_amount": 100.0,
+					"target_amount": target_amount,
 				},
 			), \
 			patch.object(pam, "_get_exact_match_window_days", return_value=7), \
@@ -194,6 +265,27 @@ class TestAutoMatchExactAmbiguity(unittest.TestCase):
 		self.assertFalse(result["matched"])
 		self.assertEqual(result["reason"], "ambiguous_month_sum")
 		do_match.assert_not_called()
+
+	def test_one_cent_difference_is_never_an_exact_match(self):
+		for outstanding in (49.99, 50.01):
+			with self.subTest(outstanding=outstanding):
+				result, do_match = self._run_auto_match(
+					invoices=[frappe._dict(name="SINV-CENT", outstanding_amount=outstanding, posting_date="2026-03-01")], target_amount=50,
+				)
+				self.assertFalse(result["matched"])
+				do_match.assert_not_called()
+
+	def test_one_cent_difference_in_month_sum_stays_manual(self):
+		for remainder in (39.99, 40.01):
+			with self.subTest(remainder=remainder):
+				result, do_match = self._run_auto_match(
+					invoices=[
+						frappe._dict(name="SINV-RENT", outstanding_amount=10, posting_date="2026-03-01"),
+						frappe._dict(name="SINV-COST", outstanding_amount=remainder, posting_date="2026-03-01"),
+					], target_amount=50,
+				)
+				self.assertFalse(result["matched"])
+				do_match.assert_not_called()
 
 
 class TestCustomerSettlementRule(unittest.TestCase):
@@ -341,6 +433,9 @@ class TestCreatePaymentEntryForInvoices(unittest.TestCase):
 			for key, value in values.items():
 				setattr(self, key, value)
 
+		def get(self, key, default=None):
+			return getattr(self, key, default)
+
 		def append(self, fieldname, value):
 			if fieldname != "references":
 				raise AssertionError(f"unexpected child table {fieldname}")
@@ -353,7 +448,7 @@ class TestCreatePaymentEntryForInvoices(unittest.TestCase):
 		def submit(self):
 			self.submitted = True
 
-	def _call_create_payment_entry(self, *, invoices, target_amount, direction="in"):
+	def _call_create_payment_entry(self, *, invoices, target_amount, direction="in", leftover_as_advance=False):
 		bt = frappe._dict(
 			name="BT-ALLOC",
 			party_type="Customer",
@@ -379,6 +474,7 @@ class TestCreatePaymentEntryForInvoices(unittest.TestCase):
 				invoices=invoices,
 				invoice_doctype="Sales Invoice",
 				target_amount=target_amount,
+				leftover_as_advance=leftover_as_advance,
 			)
 		return result
 
@@ -410,6 +506,57 @@ class TestCreatePaymentEntryForInvoices(unittest.TestCase):
 				)
 
 			self.assertIn("Auswahl summiert", throw.call_args[0][0])
+
+	def test_one_cent_overallocation_is_rejected(self):
+		for explicit in (False, True):
+			with self.subTest(explicit=explicit):
+				invoice = frappe._dict(name="SINV-CENT", outstanding_amount=50.01)
+				if explicit:
+					invoice.allocated_amount = 50.01
+				with self.assertRaisesRegex(frappe.ValidationError, "Bank-Betrag"):
+					self._call_create_payment_entry(invoices=[invoice], target_amount=50)
+
+	def test_one_cent_above_invoice_outstanding_is_rejected(self):
+		with self.assertRaisesRegex(frappe.ValidationError, "offenen Betrag"):
+			self._call_create_payment_entry(
+				invoices=[frappe._dict(name="SINV-CENT", outstanding_amount=100, allocated_amount=100.01)],
+				target_amount=100.01,
+			)
+
+	def test_one_cent_leftover_requires_explicit_advance(self):
+		with self.assertRaisesRegex(frappe.ValidationError, "Vorauszahlung"):
+			self._call_create_payment_entry(
+				invoices=[frappe._dict(name="SINV-CENT", outstanding_amount=49.99)], target_amount=50,
+			)
+		pe = self._call_create_payment_entry(
+			invoices=[frappe._dict(name="SINV-CENT", outstanding_amount=49.99)], target_amount=50,
+			leftover_as_advance=True,
+		)
+		self.assertTrue(pe.submitted)
+		self.assertEqual(pe.references[0]["allocated_amount"], 49.99)
+
+	def test_refund_cannot_pay_one_cent_above_selected_credits(self):
+		with self.assertRaisesRegex(frappe.ValidationError, "vollständig"):
+			self._call_create_payment_entry(
+				invoices=[frappe._dict(name="SINV-CREDIT", outstanding_amount=-49.99)],
+				target_amount=50, direction="out", leftover_as_advance=True,
+			)
+
+	def test_explicit_allocations_reject_nonfinite_and_subcent_amounts(self):
+		for amount in (float("nan"), float("inf"), 49.999):
+			with self.subTest(amount=amount):
+				with self.assertRaisesRegex(frappe.ValidationError, "Geldbetrag"):
+					self._call_create_payment_entry(
+						invoices=[frappe._dict(name="SINV-INVALID", outstanding_amount=50, allocated_amount=amount)],
+						target_amount=50,
+					)
+
+	def test_float_representation_noise_in_cent_allocation_is_allowed(self):
+		pe = self._call_create_payment_entry(
+			invoices=[frappe._dict(name="SINV-FLOAT", outstanding_amount=0.3, allocated_amount=0.1 + 0.2)],
+			target_amount=0.3,
+		)
+		self.assertTrue(pe.submitted)
 
 	def test_customer_credit_note_supports_bank_withdrawal(self):
 		pe = self._call_create_payment_entry(
@@ -481,7 +628,13 @@ class TestCreatePaymentEntryForInvoices(unittest.TestCase):
 		)
 		bank_account_doc = frappe._dict(company="COMP-1", account="BANK-1")
 		pe = self._FakePaymentEntry()
-		with patch.object(
+		identity = frappe._dict(
+			name="MV-1", kunde="CUST-1", wohnung="WO-1", immobilie="IMM-1",
+			company="COMP-1", cost_center="CC-TENANT", von="2026-01-01", bis=None,
+		)
+		with patch.object(pam, "lock_customer_booking_identity", return_value=identity), \
+			patch("hausverwaltung.hausverwaltung.overrides.payment_entry.lock_customer_booking_identity", return_value=identity), \
+			patch.object(
 			pam,
 			"_resolve_company_and_bank_account",
 			return_value=("COMP-1", bank_account_doc),
@@ -510,6 +663,8 @@ class TestCreatePaymentEntryForInvoices(unittest.TestCase):
 		self.assertEqual(pe.payment_type, "Pay")
 		self.assertEqual(pe.paid_from, "BANK-1")
 		self.assertEqual(pe.paid_to, "RECEIVABLE-1")
+		self.assertEqual(pe.cost_center, identity.cost_center)
+		self.assertEqual(pe.wohnung, identity.wohnung)
 
 
 class TestInvoiceCostCenterSafety(unittest.TestCase):
@@ -713,6 +868,26 @@ class TestInvoiceCostCenterSafety(unittest.TestCase):
 
 
 class TestCurrencyAndCurrentInvoiceSafety(unittest.TestCase):
+	def test_bank_transaction_cannot_override_bank_account_company(self):
+		bt = frappe._dict(bank_account="BA-1", company="COMP-OTHER")
+		bank = frappe._dict(company="COMP-1", account="BANK-1")
+		with patch.object(pam.frappe, "get_doc", return_value=bank), \
+			patch.object(pam, "_get_company_currency", return_value="EUR"), \
+			patch.object(pam, "_require_company_currency_account"):
+			with self.assertRaisesRegex(frappe.ValidationError, "Company"):
+				pam._resolve_company_and_bank_account(bt)
+
+	def test_one_to_one_currency_booking_requires_exchange_rate_exactly_one(self):
+		for rate in (1.001, 0.999, 0):
+			with self.subTest(rate=rate):
+				invoice = frappe._dict(name="PI-RATE", docstatus=1, outstanding_amount=100, posting_date="2026-05-01",
+					company="COMP-1", supplier="SUP-1", currency="EUR", conversion_rate=rate, credit_to="PAYABLE")
+				with patch.object(pam.frappe, "get_doc", return_value=invoice), \
+					patch.object(pam, "_require_company_currency_account"):
+					with self.assertRaisesRegex(frappe.ValidationError, "Umrechnungskurs"):
+						pam._lock_and_validate_invoices(invoices=[frappe._dict(name=invoice.name)],
+							invoice_doctype="Purchase Invoice", company="COMP-1", party="SUP-1", company_currency="EUR")
+
 	def test_rejects_foreign_currency_account(self):
 		with patch.object(
 			pam.frappe.db,
@@ -1177,6 +1352,26 @@ class TestCreateJournalEntryForBt(unittest.TestCase):
 					bt=bt,
 					account=counter_account,
 				)
+
+	def test_journal_split_rejects_one_cent_difference(self):
+		for last_amount in (39.99, 40.01):
+			with self.subTest(last_amount=last_amount):
+				bt = frappe._dict(name="BT-CENT", deposit=0, withdrawal=50, date="2026-05-05")
+				with self.assertRaisesRegex(frappe.ValidationError, "Split-Summe"):
+					self._call_create_journal_entry(bt=bt, splits=[
+						{"account": "6300 - Hausmeister - HP", "amount": 10},
+						{"account": "4970 - Bankgebuehren - HP", "amount": last_amount},
+					])
+
+	def test_journal_splits_reject_subcent_or_nonfinite_amounts(self):
+		for amounts in ((0.005, 0.005), (float("nan"), 0.01)):
+			with self.subTest(amounts=amounts):
+				bt = frappe._dict(name="BT-SUBCENT", deposit=0, withdrawal=0.01, date="2026-05-05")
+				with self.assertRaisesRegex(frappe.ValidationError, "Geldbetrag"):
+					self._call_create_journal_entry(bt=bt, splits=[
+						{"account": "6300 - Hausmeister - HP", "amount": amounts[0]},
+						{"account": "4970 - Bankgebuehren - HP", "amount": amounts[1]},
+					])
 
 	def test_rejects_counter_account_from_other_company(self):
 		bt = frappe._dict(

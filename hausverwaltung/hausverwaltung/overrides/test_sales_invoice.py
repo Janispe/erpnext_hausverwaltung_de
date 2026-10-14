@@ -125,7 +125,7 @@ class TestSalesInvoiceMietvertragIdentity(unittest.TestCase):
 		return (
 			patch.object(
 				sales_invoice,
-				"lock_mietvertrag_booking_identity",
+				"lock_customer_booking_identity",
 				return_value=self._identity(),
 			),
 			patch.object(
@@ -135,20 +135,62 @@ class TestSalesInvoiceMietvertragIdentity(unittest.TestCase):
 			),
 		)
 
-	def test_unmarked_invoice_without_flat_dimension_is_untouched(self):
-		doc = self._invoice(
-			mietabrechnung_id=None,
-			remarks="Normale Ausgangsrechnung",
-			wohnung=None,
-			items=[],
-		)
-		with patch.object(
-			sales_invoice,
-			"lock_mietvertrag_booking_identity",
-		) as lock_identity:
+	def test_unmarked_invoice_without_contract_is_rejected(self):
+		doc = self._invoice(mietabrechnung_id=None, remarks="Direkte Rechnung", wohnung=None, items=[])
+		with (
+			patch.object(sales_invoice.frappe, "get_meta", return_value=_FakeMeta({"wohnung"})),
+			patch.object(sales_invoice.frappe.db, "sql", return_value=[]),
+			self.assertRaisesRegex(frappe.ValidationError, "eindeutige 1:1"),
+		):
 			validate_mietvertrag_sales_invoice_identity(doc)
 
-		lock_identity.assert_not_called()
+	def test_unmarked_invoice_fills_only_missing_authoritative_dimensions(self):
+		doc = self._invoice(
+			fields={"wohnung", "cost_center"}, mietabrechnung_id=None,
+			remarks="Direkte Rechnung", wohnung=None, cost_center=None,
+			items=[_FakeItem(wohnung=None, cost_center=None)],
+		)
+		with (
+			patch.object(sales_invoice, "lock_customer_booking_identity", return_value=self._identity()) as lock,
+			patch.object(sales_invoice.frappe, "get_meta", return_value=_FakeMeta({"wohnung", "cost_center"})),
+		):
+			validate_mietvertrag_sales_invoice_identity(doc)
+		lock.assert_called_once_with("CUST-1")
+		self.assertEqual(doc.wohnung, "WHG-1")
+		self.assertEqual(doc.cost_center, "CC-1")
+		self.assertEqual(doc.items[0]["wohnung"], "WHG-1")
+		self.assertEqual(doc.items[0]["cost_center"], "CC-1")
+
+	def test_unmarked_invoice_conflicting_dimensions_are_never_overwritten(self):
+		for overrides, message in (
+			({"company": "COMP-WRONG"}, "Property-Company"),
+			({"wohnung": "WHG-WRONG"}, "Wohnung"),
+			({"cost_center": "CC-WRONG"}, "Belegkopf.*Kostenstelle"),
+			({"items": [_FakeItem(wohnung="WHG-OTHER", cost_center="CC-1")]}, "Position 1"),
+			({"items": [_FakeItem(wohnung="WHG-1", cost_center="CC-OTHER")]}, "Position 1.*Kostenstelle"),
+		):
+			with self.subTest(overrides=overrides):
+				doc = self._invoice(fields={"wohnung", "cost_center"}, mietabrechnung_id=None,
+					remarks="Direkte Rechnung", **overrides)
+				with (
+					patch.object(sales_invoice, "lock_customer_booking_identity", return_value=self._identity()),
+					patch.object(sales_invoice.frappe, "get_meta", return_value=_FakeMeta({"wohnung", "cost_center"})),
+					self.assertRaisesRegex(frappe.ValidationError, message),
+				):
+					validate_mietvertrag_sales_invoice_identity(doc)
+
+	def test_formal_contract_reference_must_match_exact_customer_contract(self):
+		doc = self._invoice(mietabrechnung_id="MV-OTHER|07/2026")
+		lock_context, meta_context = self._validation_context()
+		with lock_context, meta_context, self.assertRaisesRegex(frappe.ValidationError, "MV-OTHER.*MV-1"):
+			validate_mietvertrag_sales_invoice_identity(doc)
+
+	def test_historical_invoice_cancellation_does_not_reload_current_contract(self):
+		doc = self._invoice()
+		doc.docstatus = 2
+		with patch.object(sales_invoice, "lock_customer_booking_identity") as lock:
+			validate_mietvertrag_sales_invoice_identity(doc)
+		lock.assert_not_called()
 
 	def test_desk_api_marked_invoice_with_wrong_customer_fails_closed(self):
 		doc = self._invoice(customer="CUST-WRONG")
@@ -190,7 +232,7 @@ class TestSalesInvoiceMietvertragIdentity(unittest.TestCase):
 		with (
 			patch.object(
 				sales_invoice,
-				"lock_mietvertrag_booking_identity",
+				"lock_customer_booking_identity",
 				return_value=self._identity(),
 			),
 			patch.object(
@@ -211,7 +253,7 @@ class TestSalesInvoiceMietvertragIdentity(unittest.TestCase):
 		with (
 			patch.object(
 				sales_invoice,
-				"lock_mietvertrag_booking_identity",
+				"lock_customer_booking_identity",
 				return_value=self._identity(),
 			),
 			patch.object(
@@ -230,7 +272,7 @@ class TestSalesInvoiceMietvertragIdentity(unittest.TestCase):
 		with (
 			patch.object(
 				sales_invoice,
-				"lock_mietvertrag_booking_identity",
+				"lock_customer_booking_identity",
 				return_value=identity,
 			),
 			patch.object(
@@ -263,14 +305,14 @@ class TestSalesInvoiceMietvertragIdentity(unittest.TestCase):
 		with lock_context as lock_identity, meta_context:
 			validate_mietvertrag_sales_invoice_identity(doc)
 
-		lock_identity.assert_called_once_with("MV-1")
+		lock_identity.assert_called_once_with("CUST-1")
 
 	def test_malformed_structured_id_fails_before_any_booking_lock(self):
 		doc = self._invoice(mietabrechnung_id="arbitrary-ui-id")
 		with (
 			patch.object(
 				sales_invoice,
-				"lock_mietvertrag_booking_identity",
+				"lock_customer_booking_identity",
 			) as lock_identity,
 			self.assertRaisesRegex(frappe.ValidationError, "ungültige mietabrechnung_id"),
 		):
@@ -302,7 +344,7 @@ class TestSalesInvoiceMietvertragIdentity(unittest.TestCase):
 		with (
 			patch.object(
 				sales_invoice,
-				"lock_mietvertrag_booking_identity",
+				"lock_customer_booking_identity",
 				return_value=self._identity(),
 			),
 			patch.object(

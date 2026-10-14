@@ -320,12 +320,13 @@ def ensure_bankimport_bank_account(company: Optional[str] = None) -> dict:
 
 	def is_active_account(account: str | None) -> bool:
 		if not account:
-			return True
-		return not bool(frappe.db.get_value("Account", account, "disabled"))
+			return False
+		values = frappe.db.get_value("Account", account, ["company", "account_type", "disabled", "is_group"], as_dict=True)
+		return bool(values and values.company == company and values.account_type == "Bank" and not values.disabled and not values.is_group)
 
 	existing = frappe.get_all(
 		"Bank Account",
-		filters={"is_company_account": 1},
+		filters={"is_company_account": 1, "company": company, "disabled": 0},
 		fields=["name", "account"],
 		order_by="name asc",
 		limit=50,
@@ -334,22 +335,22 @@ def ensure_bankimport_bank_account(company: Optional[str] = None) -> dict:
 		if is_active_account(row.get("account")):
 			return {"bank_account": row["name"], "created": False, "company": company}
 
-	from hausverwaltung.hausverwaltung.data_import.sample.sample_data import (
-		_ensure_bank_cash_defaults,
-		_ensure_default_bank,
-	)
+	from hausverwaltung.hausverwaltung.data_import.sample.sample_data import _ensure_default_bank
 
-	gl_account = (
-		frappe.db.get_value("Company", company, "default_bank_account")
-		or _ensure_bank_cash_defaults(company)
-	)
+	gl_account = _leaf_account(company, account_type="Bank")
 	if not gl_account:
-		frappe.throw("hausverwaltung.cypress_fixtures: kein Bank-/Kasse-Sachkonto gefunden.")
+		parent = _first_value("Account", {"company": company, "is_group": 1, "account_type": "Bank"})
+		if not parent:
+			frappe.throw("hausverwaltung.cypress_fixtures: keine Bank-Kontengruppe gefunden.")
+		gl_account = frappe.get_doc({
+			"doctype": "Account", "account_name": "HV UI Test Bank GL", "company": company,
+			"parent_account": parent, "is_group": 0, "account_type": "Bank",
+		}).insert(ignore_permissions=True).name
 
 	bank = _ensure_default_bank()
 	payload = {
 		"doctype": "Bank Account",
-		"account_name": "HV UI Test Bankkonto",
+		"account_name": "HV UI Test Bankkonto Bank",
 		"bank": bank,
 		"is_company_account": 1,
 		"company": company,
@@ -373,6 +374,7 @@ def _make_over_under_invoice(
 	income_account: str,
 	receivable_account: str,
 	cost_center: str,
+	wohnung: str,
 	item_code: str,
 	label: str,
 	posting_date: str,
@@ -387,6 +389,8 @@ def _make_over_under_invoice(
 			"posting_date": posting_date,
 			"due_date": due_date,
 			"debit_to": receivable_account,
+			"wohnung": wohnung,
+			"cost_center": cost_center,
 			"currency": frappe.db.get_value("Company", company, "default_currency") or "EUR",
 			"ignore_default_payment_terms_template": 1,
 			"allocate_advances_automatically": 0,
@@ -400,6 +404,7 @@ def _make_over_under_invoice(
 					"rate": amount,
 					"income_account": income_account,
 					"cost_center": cost_center,
+					"wohnung": wohnung,
 				}
 			],
 		}
@@ -422,10 +427,33 @@ def seed_bankimport_over_under(run_id: str, company: Optional[str] = None) -> di
 	company = _resolve_company(company)
 	income_account = _ensure_income_account(company)
 	receivable_account = _ensure_receivable_account(company)
-	cost_center = _ensure_cost_center(company)
 	item_code = _ensure_test_item(company, income_account)
 	customer = _ensure_test_customer(f"OverUnder {run_id}")
 	iban = _make_de_iban_from_run_id(run_id)
+	fixture_label = f"HV UI OverUnder {run_id}"
+	parent_cost_center = _first_value("Cost Center", {"company": company, "is_group": 1})
+	if not parent_cost_center:
+		frappe.throw(f"hausverwaltung.cypress_fixtures: keine Kostenstellen-Gruppe für {company} gefunden.")
+	cost_center = frappe.get_doc({
+		"doctype": "Cost Center", "cost_center_name": fixture_label,
+		"company": company, "parent_cost_center": parent_cost_center, "is_group": 0,
+	}).insert(ignore_permissions=True).name
+	address = frappe.get_doc({
+		"doctype": "Address", "address_title": fixture_label, "address_type": "Billing",
+		"address_line1": "Synthetische Teststraße 1", "city": "Berlin", "pincode": "10115",
+		"country": frappe.db.get_value("Company", company, "country") or "Germany",
+	}).insert(ignore_permissions=True)
+	immobilie = frappe.get_doc({
+		"doctype": "Immobilie", "bezeichnung": fixture_label,
+		"adresse": address.name, "kostenstelle": cost_center,
+	}).insert(ignore_permissions=True)
+	wohnung = frappe.get_doc({
+		"doctype": "Wohnung", "immobilie": immobilie.name,
+		"name__lage_in_der_immobilie": fixture_label, "gebaeudeteil": "VH",
+	}).insert(ignore_permissions=True)
+	mietvertrag = frappe.get_doc({
+		"doctype": "Mietvertrag", "wohnung": wohnung.name, "kunde": customer, "von": "2026-01-01",
+	}).insert(ignore_permissions=True)
 
 	bank = _first_value("Bank", {}) or _first_value("Bank", None)
 	if not bank:
@@ -449,6 +477,7 @@ def seed_bankimport_over_under(run_id: str, company: Optional[str] = None) -> di
 		income_account=income_account,
 		receivable_account=receivable_account,
 		cost_center=cost_center,
+		wohnung=wohnung.name,
 		item_code=item_code,
 		label="April",
 		posting_date="2026-04-01",
@@ -461,6 +490,7 @@ def seed_bankimport_over_under(run_id: str, company: Optional[str] = None) -> di
 		income_account=income_account,
 		receivable_account=receivable_account,
 		cost_center=cost_center,
+		wohnung=wohnung.name,
 		item_code=item_code,
 		label="Mai",
 		posting_date="2026-05-01",
@@ -471,6 +501,11 @@ def seed_bankimport_over_under(run_id: str, company: Optional[str] = None) -> di
 		"company": company,
 		"customer": customer,
 		"customer_name": frappe.db.get_value("Customer", customer, "customer_name") or customer,
+		"mietvertrag": mietvertrag.name,
+		"wohnung": wohnung.name,
+		"immobilie": immobilie.name,
+		"address": address.name,
+		"cost_center": cost_center,
 		"iban": iban,
 		"party_bank_account": party_bank_account.name,
 		"april_invoice": april_invoice,
@@ -486,6 +521,11 @@ def cleanup_bankimport_over_under(
 	party_bank_account: Optional[str] = None,
 	april_invoice: Optional[str] = None,
 	may_invoice: Optional[str] = None,
+	mietvertrag: Optional[str] = None,
+	wohnung: Optional[str] = None,
+	immobilie: Optional[str] = None,
+	address: Optional[str] = None,
+	cost_center: Optional[str] = None,
 ) -> dict:
 	"""Best-effort cleanup for ``seed_bankimport_over_under``."""
 	_check_dev_mode()
@@ -495,6 +535,11 @@ def cleanup_bankimport_over_under(
 		"Payment Entry": [],
 		"Sales Invoice": [],
 		"Bank Account": [],
+		"Mietvertrag": [],
+		"Wohnung": [],
+		"Immobilie": [],
+		"Address": [],
+		"Cost Center": [],
 		"Customer": [],
 	}
 
@@ -532,6 +577,13 @@ def cleanup_bankimport_over_under(
 				f"cleanup_bankimport_over_under failed for Bankauszug Import {import_name}",
 			)
 
+	fixture_label = f"HV UI OverUnder {run_id}"
+	immobilie = immobilie or frappe.db.get_value("Immobilie", {"bezeichnung": fixture_label}, "name")
+	wohnung = wohnung or frappe.db.get_value(
+		"Wohnung", {"immobilie": immobilie, "name__lage_in_der_immobilie": fixture_label}, "name"
+	)
+	if not customer and wohnung:
+		customer = frappe.db.get_value("Mietvertrag", {"wohnung": wohnung}, "kunde")
 	if not customer and run_id:
 		customer = frappe.db.get_value("Customer", {"customer_name": f"HV UI Mahnwesen Real OverUnder {run_id}"}, "name")
 
@@ -565,7 +617,15 @@ def cleanup_bankimport_over_under(
 		):
 			delete_doc("Bank Account", bank_account)
 
+	mietvertrag = mietvertrag or frappe.db.get_value("Mietvertrag", {"wohnung": wohnung, "kunde": customer}, "name")
+	address = address or frappe.db.get_value("Address", {"address_title": fixture_label}, "name")
+	cost_center = cost_center or frappe.db.get_value("Cost Center", {"cost_center_name": fixture_label}, "name")
+	delete_doc("Mietvertrag", mietvertrag)
+	delete_doc("Wohnung", wohnung)
 	delete_doc("Customer", customer)
+	delete_doc("Immobilie", immobilie)
+	delete_doc("Address", address)
+	delete_doc("Cost Center", cost_center)
 	frappe.db.commit()
 	return {"deleted": deleted}
 

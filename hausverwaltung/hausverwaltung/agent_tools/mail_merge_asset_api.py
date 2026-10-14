@@ -5,6 +5,7 @@ import binascii
 import hashlib
 import re
 from io import BytesIO
+from urllib.parse import parse_qs, urlparse
 
 import frappe
 from PIL import Image
@@ -17,6 +18,44 @@ MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_BASE64_CHARS = 4 * ((MAX_FILE_BYTES + 2) // 3)
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 TARGETS = ("Serienbrief Vorlage", "Serienbrief Textbaustein")
+
+
+def inline_private_image_assets(html: str) -> str:
+	"""Embed authorized local images using raw bytes instead of File.get_content.
+
+	Frappe can decode binary image files as Windows-1252 strings. Its PDF
+	inliner then drops these images when base64 encoding fails. Read through
+	the permission-checked, path-bounded local asset helper instead.
+	"""
+	if "/private/files/" not in html:
+		return html
+	from bs4 import BeautifulSoup
+	from mail_merge.mail_merge.utils.assistant_assets import local_file_content
+
+	soup = BeautifulSoup(html, "html.parser")
+	inlined: dict[str, str] = {}
+	for image in soup.find_all("img"):
+		src = str(image.get("src") or "")
+		parsed = urlparse(src)
+		# The upload API returns relative site-local URLs. Never read an
+		# external URL as a local file just because its path looks similar.
+		if parsed.scheme or parsed.netloc or not parsed.path.startswith("/private/files/"):
+			continue
+		if src not in inlined:
+			filters = {"file_url": parsed.path, "is_folder": 0}
+			file_names = parse_qs(parsed.query).get("fid")
+			if file_names:
+				filters["name"] = file_names[0]
+			names = frappe.get_list("File", filters=filters, pluck="name", limit_page_length=1)
+			if not names:
+				raise frappe.PermissionError("Privates Briefbild ist nicht lesbar oder fehlt.")
+			content = local_file_content(frappe.get_doc("File", names[0]))
+			info = asset_info(content)
+			if not info["mime_type"].startswith("image/"):
+				raise AgentToolError("INVALID_ASSET", "Das Briefbild muss eine gültige Bilddatei sein.")
+			inlined[src] = f"data:{info['mime_type']};base64,{base64.b64encode(content).decode()}"
+		image["src"] = inlined[src]
+	return str(soup)
 
 
 def _decode(content_base64):

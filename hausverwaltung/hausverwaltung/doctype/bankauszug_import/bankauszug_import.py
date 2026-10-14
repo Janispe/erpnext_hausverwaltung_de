@@ -17,6 +17,7 @@ from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
     normalize_iban,
 )
 from hausverwaltung.hausverwaltung.utils.display_titles import with_display_titles
+from hausverwaltung.hausverwaltung.utils.payment_auto_match import _AMOUNT_EPSILON, _amounts_equal, _cent_amount
 
 
 RELEVANT_HEADERS = {
@@ -3323,12 +3324,12 @@ def _get_abschlagsplan_candidates(
         _plan, amount_by_row = cached_plan
         row_amount = flt(item.get("betrag"))
         remaining_amount = row_amount - flt(amount_by_row.get(item.get("row_name")))
-        if remaining_amount <= 0.01:
+        if remaining_amount <= _AMOUNT_EPSILON:
             continue
         if exact_amount_only:
-            if abs(target_amount - remaining_amount) > 0.01:
+            if not _amounts_equal(target_amount, remaining_amount):
                 continue
-        elif remaining_amount > target_amount + 0.01:
+        elif remaining_amount > target_amount + _AMOUNT_EPSILON:
             continue
         if bank_account and item.get("bank_account") and item.get("bank_account") != bank_account:
             continue
@@ -3423,7 +3424,14 @@ def manually_reconcile_row(
     has_explicit_allocations = False
     if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
         # Format 1: explizite Allocations
-        items = [{"name": p.get("name"), "allocated_amount": flt(p.get("allocated_amount")), "reference_doctype": p.get("reference_doctype") or "Sales Invoice"} for p in parsed]
+        items = [
+            {
+                "name": p.get("name"),
+                "allocated_amount": _cent_amount(p.get("allocated_amount"), label=f"Zuweisung für {p.get('name')}"),
+                "reference_doctype": p.get("reference_doctype") or "Sales Invoice",
+            }
+            for p in parsed
+        ]
         has_explicit_allocations = any(item.get("allocated_amount") is not None for item in items)
     elif isinstance(parsed, list):
         # Format 2: nur Namen, kein Betrag → später Vollbetrag verwenden
@@ -3470,7 +3478,7 @@ def manually_reconcile_row(
     else:
         frappe.throw(f"Party-Typ '{row.party_type}' nicht unterstützt für manuelle Zuordnung.")
 
-    target_amount = flt(row.betrag)
+    target_amount = _cent_amount(row.betrag, label="Bankbetrag")
 
     # Rechnungen einzeln laden, um aktuelle outstanding_amount zu prüfen.
     # Allocation pro Rechnung: explizit aus Frontend (falls gesetzt) sonst Vollbetrag.
@@ -3507,10 +3515,10 @@ def manually_reconcile_row(
         # Allocation festlegen: Frontend-Wert hat Vorrang, sonst voller outstanding_amount
         explicit_alloc = item.get("allocated_amount")
         if explicit_alloc is not None:
-            explicit_alloc = flt(explicit_alloc)
+            explicit_alloc = _cent_amount(explicit_alloc, label=f"Zuweisung für {inv_name}")
             if explicit_alloc <= 0:
                 frappe.throw(f"Zuweisung für {inv_name} muss größer als 0 € sein.")
-            if explicit_alloc > available_amount + 0.01:
+            if explicit_alloc > available_amount + _AMOUNT_EPSILON:
                 frappe.throw(
                     f"Zuweisung für {inv_name} ({explicit_alloc:.2f} €) übersteigt "
                     f"offenen Betrag ({available_amount:.2f} €)."
@@ -3522,24 +3530,24 @@ def manually_reconcile_row(
         invoices.append(inv)
 
     if has_explicit_allocations:
-        if explicit_allocated_total > target_amount + 0.01:
+        if explicit_allocated_total > target_amount + _AMOUNT_EPSILON:
             frappe.throw(
                 f"Zuweisungen summieren auf {explicit_allocated_total:.2f} €, "
                 f"Bank-Betrag ist {target_amount:.2f} €. Bitte Beträge reduzieren."
             )
-    elif implicit_outstanding_total > target_amount + 0.01:
+    elif implicit_outstanding_total > target_amount + _AMOUNT_EPSILON:
         frappe.throw(
             f"Ausgewählte Rechnungen summieren auf {implicit_outstanding_total:.2f} €, "
             f"Bank-Betrag ist {target_amount:.2f} €. Bitte passende Rechnungen wählen "
             "oder Teilbeträge explizit zuweisen."
         )
-    elif customer_refund and target_amount - implicit_outstanding_total > 0.01:
+    elif customer_refund and target_amount - implicit_outstanding_total > _AMOUNT_EPSILON:
         frappe.throw(
             f"Ausgewählte Guthaben summieren auf {implicit_outstanding_total:.2f} €, "
             f"Bank-Betrag ist {target_amount:.2f} €. Bitte weitere Guthaben wählen "
             "oder den Auszahlungsbetrag vollständig zuordnen."
         )
-    elif target_amount - implicit_outstanding_total > 0.01 and not bool(int(leftover_as_advance or 0)):
+    elif target_amount - implicit_outstanding_total > _AMOUNT_EPSILON and not bool(int(leftover_as_advance or 0)):
         frappe.throw(
             f"Ausgewählte Rechnungen summieren auf {implicit_outstanding_total:.2f} €, "
             f"Bank-Betrag ist {target_amount:.2f} €. Bitte weitere Rechnungen wählen "
@@ -3652,14 +3660,14 @@ def reconcile_split_row(
             for_update=True,
         )
 
-    target_amount = flt(row.betrag)
+    target_amount = _cent_amount(row.betrag, label="Bankbetrag")
     invoices = []
     invoice_total = 0.0
     for item in invoice_items:
         if not isinstance(item, dict):
             frappe.throw("Rechnungs-Split muss Name und Betrag enthalten.")
         inv_name = item.get("name")
-        allocated_amount = flt(item.get("allocated_amount"))
+        allocated_amount = _cent_amount(item.get("allocated_amount"), label=f"Zuweisung für {inv_name}")
         if not inv_name:
             frappe.throw("Rechnung ohne Namen im Split.")
         if allocated_amount <= 0:
@@ -3682,7 +3690,7 @@ def reconcile_split_row(
         )
         if invoice_cost_center:
             inv["cost_center"] = invoice_cost_center
-        if allocated_amount > flt(inv.outstanding_amount) + 0.01:
+        if allocated_amount > flt(inv.outstanding_amount) + _AMOUNT_EPSILON:
             frappe.throw(
                 f"Zuweisung für {inv_name} ({allocated_amount:.2f} €) übersteigt "
                 f"offenen Betrag ({flt(inv.outstanding_amount):.2f} €)."
@@ -3691,7 +3699,7 @@ def reconcile_split_row(
         invoices.append(inv)
         invoice_total += allocated_amount
 
-    if invoice_total > target_amount + 0.01:
+    if invoice_total > target_amount + _AMOUNT_EPSILON:
         frappe.throw(
             f"Rechnungszuweisungen summieren auf {invoice_total:.2f} €, "
             f"Bank-Betrag ist {target_amount:.2f} €."
@@ -3731,18 +3739,18 @@ def reconcile_split_row(
             remaining_amount = flt(plan_row.get("betrag")) - flt(
                 amount_by_row.get(plan_row.name)
             )
-            if remaining_amount <= 0.01:
+            if remaining_amount <= _AMOUNT_EPSILON:
                 frappe.throw(f"Abschlagsplan-Zeile {plan_row.idx} ist bereits vollständig bezahlt.")
             plan_rows.append((plan, plan_row, remaining_amount))
             plan_total += remaining_amount
 
     advance_amount = target_amount - invoice_total
-    if plan_total > advance_amount + 0.01:
+    if plan_total > advance_amount + _AMOUNT_EPSILON:
         frappe.throw(
             f"Ausgewählte Abschläge summieren auf {plan_total:.2f} €, "
             f"nach Rechnungen bleiben nur {advance_amount:.2f} €."
         )
-    if advance_amount - plan_total > 0.01 and not bool(int(leftover_as_advance or 0)):
+    if advance_amount - plan_total > _AMOUNT_EPSILON and not bool(int(leftover_as_advance or 0)):
         frappe.throw(
             f"Nach Rechnungen und Abschlägen bleiben {advance_amount - plan_total:.2f} € übrig. "
             "Bitte Restbetrag als Vorauszahlung aktivieren oder die Auswahl ergänzen."
@@ -3756,7 +3764,7 @@ def reconcile_split_row(
             invoices=invoices,
             invoice_doctype=invoice_doctype,
             target_amount=target_amount,
-            leftover_as_advance=advance_amount > 0.01,
+            leftover_as_advance=advance_amount > _AMOUNT_EPSILON,
         )
     reconcile_created_voucher_or_rollback(bt, "Payment Entry", pe.name, target_amount)
 
@@ -3850,9 +3858,9 @@ def assign_abschlagsplan_row(
         frappe.throw("Lieferant der Bankzeile passt nicht zum Abschlagsplan.")
     _amount_by_payment, amount_by_row = _active_allocation_amounts(plan)
     remaining_amount = flt(plan_row.get("betrag")) - flt(amount_by_row.get(plan_row.name))
-    if remaining_amount <= 0.01:
+    if remaining_amount <= _AMOUNT_EPSILON:
         frappe.throw("Diese Abschlagsplan-Zeile ist bereits vollständig bezahlt.")
-    if flt(row.get("betrag")) > remaining_amount + 0.01:
+    if flt(row.get("betrag")) > remaining_amount + _AMOUNT_EPSILON:
         frappe.throw(
             f"Die Bankzeile übersteigt den offenen Restbetrag der Plan-Zeile "
             f"({remaining_amount:.2f} €)."
@@ -4022,8 +4030,8 @@ def _payment_entry_matches_internal_transfer(pe_name: str, shape: dict[str, Any]
         and pe.get("payment_type") == "Internal Transfer"
         and pe.get("paid_from") == shape.get("paid_from")
         and pe.get("paid_to") == shape.get("paid_to")
-        and abs(flt(pe.get("paid_amount")) - flt(shape.get("amount"))) <= 0.01
-        and abs(flt(pe.get("received_amount")) - flt(shape.get("amount"))) <= 0.01
+        and _amounts_equal(pe.get("paid_amount"), shape.get("amount"))
+        and _amounts_equal(pe.get("received_amount"), shape.get("amount"))
     )
 
 
@@ -4061,7 +4069,7 @@ def _find_internal_transfer_import_counterpart(
             r.name != %(row_name)s
             AND p.bank_account = %(other_bank_account)s
             AND r.richtung = %(opposite_direction)s
-            AND ABS(r.betrag - %(amount)s) <= 0.01
+            AND ABS(r.betrag - %(amount)s) < 0.005
             AND r.buchungstag BETWEEN %(date_from)s AND %(date_to)s
             AND r.bank_transaction IS NOT NULL
             AND r.bank_transaction != ''

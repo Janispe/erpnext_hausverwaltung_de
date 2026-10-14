@@ -11,7 +11,10 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
     get_bk_regelung_from_rows,
     get_bk_regelungen_for_contracts,
 )
-from hausverwaltung.hausverwaltung.utils.mietberechnung import calculate_monthly_rent
+from hausverwaltung.hausverwaltung.utils.mietberechnung import (
+    calculate_monthly_rent,
+    monthly_charge_reference_date,
+)
 from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
 
 INVOICE_TYPES = ("Miete", "Betriebskosten", "Heizkosten")
@@ -215,16 +218,17 @@ def _expected_amounts_for_month(
     miete_rows = staffel.get("miete") or []
     bk_rows = staffel.get("betriebskosten") or []
     hk_rows = staffel.get("heizkosten") or []
+    reference_date = monthly_charge_reference_date(contract.von, month_start)
 
     return {
         "Miete": _miete_betrag_fuer_monat_from_rows(contract.von, contract.bis, month_start, miete_rows, teilmonat_rows),
         "Betriebskosten": (
-            _staffelbetrag_from_rows(bk_rows, month_start)
-            if get_bk_regelung_from_rows(bk_regelungen or [], month_start)
+            _staffelbetrag_from_rows(bk_rows, reference_date)
+            if get_bk_regelung_from_rows(bk_regelungen or [], reference_date)
             == BK_REGELUNG_VORAUSZAHLUNG
             else 0.0
         ),
-        "Heizkosten": _staffelbetrag_from_rows(hk_rows, month_start),
+        "Heizkosten": _staffelbetrag_from_rows(hk_rows, reference_date),
     }
 
 

@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import frappe
 
+from hausverwaltung.hausverwaltung.report.mieterkonto import mieterkonto as report
 from hausverwaltung.hausverwaltung.report.mieterkonto.mieterkonto import (
 	CATEGORIES,
 	InvoiceInfo,
@@ -65,6 +66,35 @@ class TestContractNamesInMonthlyGroups(TestCase):
 				group = _group_invoices({invoice.name: invoice})[monthly_id]
 				self.assertTrue(group.remarks.endswith(f" - {contract}"), group.remarks)
 				self.assertEqual(group.member_invoices, [invoice.name])
+
+
+class TestOneCentBalances(TestCase):
+	def test_one_cent_invoice_is_categorized_and_can_be_allocated(self):
+		amounts = _category_amounts_from_items("SI-CENT", [{"item_code": "Miete", "base_amount": 0.01}], 0.01)
+		self.assertEqual(amounts["miete"], 0.01)
+		self.assertEqual(report._allocate_amount(0.01, amounts)["miete"], 0.01)
+
+	def test_one_cent_payment_is_represented_in_its_invoice_category(self):
+		invoice = _make_invoice("SI-CENT", grand_total=0.01, categories={"miete": 0.01})
+		ple = frappe._dict(posting_date=date(2025, 11, 2), voucher_type="Payment Entry", voucher_no="PE-CENT", against_voucher_no=invoice.name, amount=-0.01)
+		filters = frappe._dict(company="HV", customer="MIETER-A", to_date=date(2025, 11, 30))
+		with patch.object(report.frappe, "get_all", return_value=[ple]), \
+			patch.object(report, "_fetch_voucher_remarks", return_value={}):
+			transactions = report._build_settlement_transactions({invoice.name: invoice}, {invoice.name: invoice}, filters)
+		self.assertEqual(len(transactions), 1)
+		self.assertEqual(transactions[0]["paid_amounts"]["miete"], 0.01)
+		self.assertEqual(transactions[0]["delta"], -0.01)
+
+	def test_one_cent_opening_is_visible_when_period_has_no_movement(self):
+		transaction = {
+			"date": date(2025, 10, 1), "delta": 0.01, "currency": "EUR",
+			"invoice_amounts": {"miete": 0.01}, "paid_amounts": {},
+		}
+		filters = _filters(from_date=date(2025, 11, 1), to_date=date(2025, 11, 30))
+		rows, _totals_result = _build_rows([transaction], filters)
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(rows[0]["kontostand"], 0.01)
+		self.assertEqual(rows[0]["is_opening_row"], 1)
 
 
 def _totals(*, all_miete: float, period_miete: float) -> dict:

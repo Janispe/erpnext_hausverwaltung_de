@@ -50,7 +50,7 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 			doctype: "Mietvertrag",
 			filters: [
 				["kunde", "is", "set"],
-				["name", "like", "M1001%"],
+				["name", Cypress.env("hv_mietvertrag") ? "=" : "like", Cypress.env("hv_mietvertrag") || "M1001%"],
 				["von", "<=", "2026-05-01"],
 			],
 			fields: ["name", "kunde", "wohnung"],
@@ -66,11 +66,11 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 
 		// Die Sales Invoice wird in dieser Dev-Umgebung für "Hausverwaltung Peters"
 		// erstellt. _Test-Company-Konten sind in ERPNext nicht kompatibel.
-		company = "Hausverwaltung Peters";
+		company = Cypress.env("hv_company") || "Hausverwaltung Peters";
 		cy.call("frappe.client.get_list", {
 			doctype: "Account",
 			filters: {
-				name: "1495 - Guthaben/Nachzahlungen(Bew.) - HP",
+				name: Cypress.env("hv_income_account") || "1495 - Guthaben/Nachzahlungen(Bew.) - HP",
 				company,
 				root_type: "Income",
 				is_group: 0,
@@ -534,13 +534,11 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 			});
 
 		// "Als Entwurf speichern" Custom Action klicken
-		cy.get(".modal:visible .btn:contains('Als Entwurf speichern')")
-			.first()
-			.click();
+		cy.contains(".modal:visible button", "Als Entwurf speichern").click();
 
 		// Auf Erfolgs-Alert + Routing zur SI warten
 		cy.contains(
-			".alert, .desk-alert, .frappe-toast, .toast-message, .text-medium",
+			".es-toast__message, .alert, .desk-alert, .frappe-toast, .toast-message, .text-medium",
 			"Entwurf",
 			{ timeout: 10000 }
 		).should("exist");
@@ -632,9 +630,9 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 			grid.refresh();
 		});
 
-		cy.get(".modal:visible .modal-footer .btn-primary").contains("Buchen").click();
+		cy.contains(".modal:visible .modal-footer button", /^Buchen$/).click();
 		cy.contains(
-			".alert, .desk-alert, .frappe-toast, .toast-message, .text-medium",
+			".es-toast__message, .alert, .desk-alert, .frappe-toast, .toast-message, .text-medium",
 			"erstellt und gebucht",
 			{ timeout: 15000 }
 		).should("exist");
@@ -690,7 +688,7 @@ context("Rechnung an Mieter — Buchungs-Cockpit", () => {
 			dialog.fields_dict.positionen.grid.refresh();
 		});
 
-		cy.get(".modal:visible .modal-footer .btn-primary").contains("Buchen").click();
+		cy.contains(".modal:visible .modal-footer button", /^Buchen$/).click();
 		cy.contains(
 			".modal:visible, .msgprint-dialog, .frappe-msgprint, .modal-body",
 			"Bitte mindestens eine Position erfassen",

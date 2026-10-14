@@ -2,6 +2,11 @@ from datetime import date
 from unittest import TestCase
 from unittest.mock import patch
 
+import frappe
+
+from hausverwaltung.hausverwaltung.report.noch_offene_rechnungen_und_forderungen import (
+	noch_offene_rechnungen_und_forderungen as report,
+)
 from hausverwaltung.hausverwaltung.report.noch_offene_rechnungen_und_forderungen.noch_offene_rechnungen_und_forderungen import (
 	_combine_monthly_sollstellung_remarks,
 	_group_rows_by_mietabrechnung,
@@ -42,6 +47,27 @@ def _row(
 
 
 class TestNochOffeneForderungenAggregation(TestCase):
+	def test_one_cent_receivable_and_credit_have_real_payment_directions(self):
+		self.assertEqual(report._get_payment_direction("Forderungen", 0.01), "Geld bekommen")
+		self.assertEqual(report._get_payment_direction("Forderungen", -0.01), "Geld bezahlen / erstatten")
+		self.assertEqual(report._get_payment_direction("Rechnungen", 0.01), "Geld bezahlen / erstatten")
+		self.assertEqual(report._get_payment_direction("Forderungen", 0), "Ausgeglichen")
+
+	def test_one_cent_remaining_invoice_is_visible_and_can_be_written_off(self):
+		row = frappe._dict(voucher_type="Sales Invoice", voucher_no="SI-CENT", party="CUST-1", outstanding=0.01, posting_date=date(2025, 11, 1), invoiced=1, paid=0.99)
+		filters = frappe._dict(von_faelligkeit=None, bis_faelligkeit=None)
+		with patch.object(report, "_resolve_invoice_cost_centers", return_value={}), \
+			patch.object(report, "_resolve_voucher_remarks", return_value={}), \
+			patch.object(report, "_resolve_voucher_value_dates", return_value={}), \
+			patch.object(report, "_resolve_abschlagsplan_payment_entries", return_value=set()), \
+			patch.object(report, "_get_sales_invoice_status", return_value="Partly Paid"), \
+			patch.object(report, "_get_mahnstufe_row", return_value=0), \
+			patch.object(report.frappe.db, "get_value", return_value=frappe._dict(docstatus=1, is_return=0, status="Partly Paid")):
+			rows = report._filter_and_map_rows([row], filters, "Forderungen")
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(rows[0]["offen"], 0.01)
+		self.assertEqual(rows[0]["can_write_off"], 1)
+
 	def test_abschlagsplan_payment_entries_are_resolved_from_plan_rows(self):
 		source_rows = [
 			{"voucher_type": "Payment Entry", "voucher_no": "PE-ABS"},

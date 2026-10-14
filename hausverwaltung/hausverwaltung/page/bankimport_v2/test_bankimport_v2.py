@@ -811,6 +811,22 @@ class TestSuggestInvoiceForRow(unittest.TestCase):
 
 		self.assertIsNone(result)
 
+	def test_one_cent_difference_is_never_an_exact_invoice_suggestion(self):
+		for outstanding in (49.99, 50.01, 100.01):
+			target = 100 if outstanding == 100.01 else 50
+			with self.subTest(outstanding=outstanding, target=target), \
+				patch("frappe.get_doc", return_value=_FakeBT(deposit=target)), \
+				patch("hausverwaltung.hausverwaltung.utils.payment_auto_match.prepare_invoice_match",
+					return_value=self._prepared([_FakeInvoice("SI-CENT", outstanding)], target)):
+				self.assertIsNone(bv2._suggest_invoice_for_row("BT-1"))
+
+	def test_exact_invoice_remains_unique_beside_one_cent_different_invoices(self):
+		invoices = [_FakeInvoice("SI-LESS", 49.99), _FakeInvoice("SI-EXACT", 50), _FakeInvoice("SI-MORE", 50.01)]
+		with patch("frappe.get_doc", return_value=_FakeBT(deposit=50)), \
+			patch("hausverwaltung.hausverwaltung.utils.payment_auto_match.prepare_invoice_match",
+				return_value=self._prepared(invoices, 50)):
+			self.assertEqual(bv2._suggest_invoice_for_row("BT-1")["rechnungId"], "SI-EXACT")
+
 	def test_returns_none_when_multiple_exact_matches(self):
 		"""Ambiguität ist keine Empfehlung — bei mehreren gleichbetraglichen
 		offenen Rechnungen wählt der User selbst im Rechnungs-Tab."""

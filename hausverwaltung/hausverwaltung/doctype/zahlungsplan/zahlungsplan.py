@@ -9,6 +9,11 @@ from hausverwaltung.hausverwaltung.utils.buchung import (
 	ensure_default_service_item,
 )
 from hausverwaltung.hausverwaltung.utils.immobilie_accounts import get_immobilie_primary_bank_account
+from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+	_AMOUNT_EPSILON,
+	_amounts_equal,
+	_cent_amount,
+)
 
 RHYTHMUS_MONTHS: dict[str, int] = {
 	"Monatlich": 1,
@@ -253,7 +258,7 @@ class Zahlungsplan(Document):
 				or row_date > getdate(self.ja_bis)
 			):
 				continue
-			if amount_by_plan_row.get(plan_row.name, 0.0) < flt(plan_row.get("betrag")) - 0.01:
+			if amount_by_plan_row.get(plan_row.name, 0.0) < flt(plan_row.get("betrag")) - _AMOUNT_EPSILON:
 				unlinked_abschlagsplan_rows.append(plan_row.idx)
 
 		pes_by_name = {}
@@ -310,7 +315,7 @@ class Zahlungsplan(Document):
 		)
 
 		for pe in pes:
-			if remaining <= 0.01:
+			if remaining <= _AMOUNT_EPSILON:
 				break
 			linked_plan_amount = flt(pe.get("linked_plan_amount")) or flt(pe.unallocated_amount)
 			alloc = min(float(pe.unallocated_amount), linked_plan_amount, remaining)
@@ -345,7 +350,7 @@ class Zahlungsplan(Document):
 
 		historical_available = flt(historical_advance.get("available"))
 		for advance_row in historical_advance.get("rows") or []:
-			if remaining <= 0.01:
+			if remaining <= _AMOUNT_EPSILON:
 				break
 			available = flt(advance_row.get("available"))
 			alloc = min(available, remaining)
@@ -387,9 +392,9 @@ class Zahlungsplan(Document):
 		vorzahlung = historical_available
 		summe_anzahlungen = summe_abschlaege + historical_available
 		differenz = float(self.ja_betrag) - summe_anzahlungen
-		if differenz > 0.01:
+		if differenz > _AMOUNT_EPSILON:
 			status = f"Nachzahlung: {differenz:,.2f} EUR"
-		elif differenz < -0.01:
+		elif differenz < -_AMOUNT_EPSILON:
 			status = f"Guthaben: {abs(differenz):,.2f} EUR"
 		else:
 			status = "Ausgeglichen"
@@ -398,7 +403,7 @@ class Zahlungsplan(Document):
 			frappe.db.get_value("Purchase Invoice", pi.name, "outstanding_amount")
 		)
 		expected_outstanding = max(differenz, 0.0)
-		if abs(actual_outstanding - expected_outstanding) > 0.01:
+		if not _amounts_equal(actual_outstanding, expected_outstanding):
 			frappe.throw(
 				"Die Jahresabrechnung konnte nicht konsistent verrechnet werden: "
 				f"erwartet offen {expected_outstanding:.2f} EUR, tatsächlich "
@@ -845,7 +850,7 @@ def _historical_advance_rows(
 			continue
 		if (
 			ledger_available <= 0.005
-			or abs(row_amount - ledger_available) > 0.01
+			or not _amounts_equal(row_amount, ledger_available)
 		):
 			frappe.throw(
 				f"Der offene Lieferantenvorschuss in Journal Entry {journal_entry} "
@@ -922,7 +927,7 @@ def _ensure_historical_advance_journal(
 			if (
 				len(counter_rows) != 1
 				or counter_rows[0].get("account") != doc.vor_systemstart_gegenkonto
-				or abs(flt(counter_rows[0].get("credit_in_account_currency")) - amount) > 0.01
+				or not _amounts_equal(counter_rows[0].get("credit_in_account_currency"), amount)
 				or flt(counter_rows[0].get("debit_in_account_currency")) > 0.005
 			):
 				frappe.throw(f"Journal Entry {existing_name} hat ein unerwartetes Gegenkonto.")
@@ -931,7 +936,7 @@ def _ensure_historical_advance_journal(
 				- flt(row.get("credit_in_account_currency"))
 				for row in all_party_rows
 			)
-			if abs(booked_amount - amount) > 0.01:
+			if not _amounts_equal(booked_amount, amount):
 				frappe.throw(
 					f"Journal Entry {existing_name} enthält {booked_amount:.2f} EUR, "
 					f"im Zahlungsplan stehen {amount:.2f} EUR."
@@ -1009,7 +1014,7 @@ def _ensure_historical_advance_journal(
 			"es wurde nichts gespeichert."
 		)
 	available = sum(flt(row.get("available")) for row in rows)
-	if abs(available - amount) > 0.01:
+	if not _amounts_equal(available, amount):
 		frappe.throw(
 			"Die historische Zahlung wurde nicht als offener Lieferantenvorschuss gebucht. "
 			"Es wurde nichts gespeichert."
@@ -1127,7 +1132,7 @@ def _get_trackable_settlement_rows(
 	for payment_entry, expected in sorted(payment_amounts.items()):
 		rows = rows_by_payment.get(payment_entry) or []
 		tracked = sum(_allocation_claim_amount(row) for row in rows)
-		if abs(tracked - flt(expected)) > 0.01:
+		if not _amounts_equal(tracked, expected):
 			frappe.throw(
 				f"Payment Entry {payment_entry} enthält eine nicht eindeutig "
 				"nachverfolgbare Alt-Zuordnung. Bitte zuerst die "
@@ -1164,7 +1169,7 @@ def _settle_payment_allocations(
 	for payment_entry, rows in sorted(rows_by_payment.items()):
 		remaining_consumption = flt(reconciled_by_payment.get(payment_entry))
 		total_claim = sum(_allocation_claim_amount(row) for row in rows)
-		if remaining_consumption > total_claim + 0.01:
+		if remaining_consumption > total_claim + _AMOUNT_EPSILON:
 			frappe.throw(
 				f"Payment Entry {payment_entry} sollte mit {remaining_consumption:.2f} EUR "
 				f"verrechnet werden, ist im Zahlungsplan aber nur mit "
@@ -1195,7 +1200,7 @@ def _settle_payment_allocations(
 				allocation.set(fieldname, value)
 			updated.append(allocation.name)
 
-		if remaining_consumption > 0.01:
+		if remaining_consumption > _AMOUNT_EPSILON:
 			frappe.throw(
 				f"Payment Entry {payment_entry} konnte nicht vollständig einer "
 				"Zahlungszuordnung zugeordnet werden."
@@ -1233,9 +1238,9 @@ def _validate_payment_allocations(doc: Zahlungsplan) -> None:
 	for allocation in allocations:
 		row_name = (allocation.get("plan_zeile") or "").strip()
 		payment_entry = (allocation.get("payment_entry") or "").strip()
-		amount = flt(allocation.get("allocated_amount"))
-		consumed = flt(allocation.get("consumed_amount"))
-		released = flt(allocation.get("released_amount"))
+		amount = _cent_amount(allocation.get("allocated_amount"))
+		consumed = _cent_amount(allocation.get("consumed_amount"))
+		released = _cent_amount(allocation.get("released_amount"))
 		if row_name not in plan_rows:
 			frappe.throw("Eine Zahlungszuordnung verweist auf eine unbekannte Plan-Zeile.")
 		if not payment_entry:
@@ -1245,7 +1250,7 @@ def _validate_payment_allocations(doc: Zahlungsplan) -> None:
 		if (
 			consumed < -0.005
 			or released < -0.005
-			or consumed + released > amount + 0.01
+			or consumed + released > amount + _AMOUNT_EPSILON
 		):
 			frappe.throw(
 				f"Zahlungszuordnung für Payment Entry {payment_entry} enthält "
@@ -1274,7 +1279,7 @@ def _validate_payment_allocations(doc: Zahlungsplan) -> None:
 
 	for row_name, allocated in amount_by_plan_row.items():
 		planned = flt(plan_rows[row_name].get("betrag"))
-		if allocated > planned + 0.01:
+		if allocated > planned + _AMOUNT_EPSILON:
 			frappe.throw(
 				f"Plan-Zeile {plan_rows[row_name].idx} ist mit {allocated:.2f} EUR "
 				f"über ihren Betrag von {planned:.2f} EUR hinaus bezahlt."
@@ -1313,7 +1318,7 @@ def _validate_payment_allocations(doc: Zahlungsplan) -> None:
 			exclude_parent=doc.get("name") or None,
 		)
 		total_reserved = reserved + external_reserved
-		if total_reserved > flt(pe.unallocated_amount) + 0.01:
+		if total_reserved > flt(pe.unallocated_amount) + _AMOUNT_EPSILON:
 			frappe.throw(
 				f"Payment Entry {payment_entry} reserviert planübergreifend "
 				f"{total_reserved:.2f} EUR, hat im Ledger aber nur "
@@ -1514,7 +1519,7 @@ def _sync_purchase_invoices_for_plan(doc: Zahlungsplan) -> dict:
 
 def _purchase_invoice_is_unreconciled(pi: Document) -> bool:
 	total = flt(pi.get("rounded_total")) or flt(pi.get("grand_total"))
-	return abs(flt(pi.get("outstanding_amount")) - total) <= 0.01
+	return _amounts_equal(pi.get("outstanding_amount"), total)
 
 
 def _purchase_invoice_matches_plan_row(doc: Zahlungsplan, row: Document, pi: Document) -> bool:
@@ -1545,7 +1550,7 @@ def _purchase_invoice_matches_plan_row(doc: Zahlungsplan, row: Document, pi: Doc
 	item = items[0]
 	if item.get("item_code") != item_code:
 		return False
-	if abs(flt(item.get("rate")) - expected_amount) > 0.01:
+	if not _amounts_equal(item.get("rate"), expected_amount):
 		return False
 	if item.get("expense_account") != expense_account:
 		return False
@@ -1612,7 +1617,7 @@ def _release_settlement_allocations(purchase_invoice_name: str) -> list[str]:
 			payment_entry,
 			for_update=True,
 		)
-		if already_reserved + restored > flt(pe.get("unallocated_amount")) + 0.01:
+		if already_reserved + restored > flt(pe.get("unallocated_amount")) + _AMOUNT_EPSILON:
 			frappe.throw(
 				f"Storno von {purchase_invoice_name} würde Payment Entry "
 				f"{payment_entry} doppelt reservieren: verfügbar "
@@ -1950,7 +1955,7 @@ def on_historical_journal_entry_cancel(doc, method=None) -> None:
 				updates["ja_differenz"] = outstanding
 				updates["ja_status"] = (
 					f"Nachzahlung: {outstanding:,.2f} EUR"
-					if outstanding > 0.01
+					if outstanding > _AMOUNT_EPSILON
 					else "Ausgeglichen"
 				)
 		frappe.db.set_value(
@@ -2018,7 +2023,7 @@ def _append_payment_allocation(
 	bank_transaction: str | None = None,
 	posting_date=None,
 ) -> Document:
-	amount = flt(allocated_amount)
+	amount = _cent_amount(allocated_amount)
 	if amount <= 0:
 		frappe.throw("Der zugeordnete Zahlungsbetrag muss positiv sein.")
 
@@ -2028,7 +2033,7 @@ def _append_payment_allocation(
 			and existing.get("plan_zeile") == plan_row.name
 			and existing.get("payment_entry") == payment_entry
 		):
-			if abs(flt(existing.get("allocated_amount")) - amount) <= 0.01:
+			if _amounts_equal(existing.get("allocated_amount"), amount):
 				return existing
 			frappe.throw(
 				f"Payment Entry {payment_entry} ist Plan-Zeile {plan_row.idx} "
@@ -2037,7 +2042,7 @@ def _append_payment_allocation(
 
 	_amount_by_payment, amount_by_row = _active_allocation_amounts(plan)
 	remaining = flt(plan_row.get("betrag")) - flt(amount_by_row.get(plan_row.name))
-	if amount > remaining + 0.01:
+	if amount > remaining + _AMOUNT_EPSILON:
 		frappe.throw(
 			f"Plan-Zeile {plan_row.idx} hat nur noch {max(remaining, 0):.2f} EUR offen."
 		)
@@ -2080,14 +2085,14 @@ def record_payment_allocation(
 		frappe.throw(f"Plan-Zeile {plan_row_name} wurde nicht gefunden.")
 
 	_validate_payment_plan_dimensions(plan, pe)
-	amount = flt(allocated_amount)
+	amount = _cent_amount(allocated_amount)
 	for existing in plan.get("zahlungen") or []:
 		if (
 			(existing.get("status") or "Aktiv") == "Aktiv"
 			and existing.get("plan_zeile") == plan_row.name
 			and existing.get("payment_entry") == payment_entry
 		):
-			if abs(flt(existing.get("allocated_amount")) - amount) > 0.01:
+			if not _amounts_equal(existing.get("allocated_amount"), amount):
 				frappe.throw(
 					f"Payment Entry {payment_entry} ist Plan-Zeile {plan_row.idx} "
 					"bereits mit einem anderen Betrag zugeordnet."
@@ -2125,7 +2130,7 @@ def record_payment_allocation(
 		for_update=True,
 	)
 	available_for_plans = flt(pe.unallocated_amount)
-	if allocated_elsewhere + amount > available_for_plans + 0.01:
+	if allocated_elsewhere + amount > available_for_plans + _AMOUNT_EPSILON:
 		frappe.throw(
 			f"Payment Entry {payment_entry} hat nur {available_for_plans:.2f} EUR "
 			"unzugeordneten Vorschuss; die Zahlungspläne würden zusammen "
@@ -2153,7 +2158,7 @@ def record_payment_allocation(
 	total_for_row = sum(_allocation_claim_amount(row) for row in active_for_row)
 	if (
 		len(active_for_row) == 1
-		and abs(total_for_row - flt(plan_row.get("betrag"))) <= 0.01
+		and _amounts_equal(total_for_row, plan_row.get("betrag"))
 	):
 		plan_row.payment_entry = payment_entry
 		plan_row.bank_transaction = bank_transaction
@@ -2183,7 +2188,7 @@ def link_payment_entry_to_abschlagsplan_row(
 	payment_entry: str,
 	bank_transaction: str | None = None,
 	tolerance_days: int | None = None,
-	tolerance_amount: float = 0.01,
+	tolerance_amount: float = _AMOUNT_EPSILON,
 ) -> dict | None:
 	"""Find a matching Abschlagsplan plan row for a freshly-created advance PE.
 
@@ -2199,7 +2204,7 @@ def link_payment_entry_to_abschlagsplan_row(
 	if not supplier or not payment_entry or amount is None:
 		return None
 	target_date = getdate(posting_date) if posting_date else None
-	target_amount = float(amount)
+	target_amount = _cent_amount(amount)
 	if target_amount <= 0:
 		return None
 	if tolerance_days is None:
@@ -2228,9 +2233,9 @@ def link_payment_entry_to_abschlagsplan_row(
 		_amount_by_payment, amount_by_row = _active_allocation_amounts(plan)
 		for row in plan.get("plan") or []:
 			row_remaining = flt(row.get("betrag")) - flt(amount_by_row.get(row.name))
-			if row_remaining <= tolerance_amount:
+			if row_remaining <= _AMOUNT_EPSILON:
 				continue
-			if abs(target_amount - row_remaining) > tolerance_amount:
+			if not _amounts_equal(target_amount, row_remaining) or abs(target_amount - row_remaining) > tolerance_amount:
 				continue
 			row_date = getdate(row.faelligkeitsdatum) if row.get("faelligkeitsdatum") else None
 			if target_date and row_date:

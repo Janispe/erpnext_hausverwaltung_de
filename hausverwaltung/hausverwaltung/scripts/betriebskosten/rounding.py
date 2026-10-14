@@ -58,9 +58,30 @@ def round_money_allocations(
 	if method == ROUNDING_METHOD_LARGEST_REMAINDER:
 		return _distribute_by_largest_remainder(items, rounded, diff)
 
-	# Bisheriges Verhalten: gesamte Differenz auf den betragsmäßig größten Anteil.
-	key = max(items, key=lambda item: (item[1].copy_abs(), str(item[0])))[0]
-	rounded[key] += diff
+	# Prefer the historically largest share, but never turn positive costs
+	# into a credit (or a credit into costs) just to reconcile rounded cents.
+	priority = sorted(items, key=lambda item: (item[1].copy_abs(), str(item[0])), reverse=True)
+	return reconcile_rounding_difference(priority, rounded, diff)
+
+
+def reconcile_rounding_difference(
+	items: Iterable[tuple[Hashable, Decimal]],
+	rounded: dict[Hashable, Decimal],
+	diff: Decimal,
+) -> dict[Hashable, Decimal]:
+	"""Reconcile cents in priority order without crossing an original sign."""
+	for key, raw in items:
+		if not diff:
+			break
+		if not raw:
+			continue
+		adjustment = diff
+		if (rounded[key] + adjustment) * raw < 0:
+			adjustment = -rounded[key]
+		rounded[key] += adjustment
+		diff -= adjustment
+	if diff:
+		frappe.throw("Die Rundungsdifferenz kann ohne Vorzeichenwechsel nicht verteilt werden.")
 	return rounded
 
 

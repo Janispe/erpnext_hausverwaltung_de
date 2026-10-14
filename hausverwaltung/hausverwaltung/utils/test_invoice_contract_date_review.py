@@ -11,6 +11,19 @@ from hausverwaltung.hausverwaltung.utils import payment_auto_match as pam
 from hausverwaltung.hausverwaltung.utils import test_payment_auto_match as payment_tests
 
 
+class _FakeSalesInvoice(frappe._dict):
+	def set(self, key, value):
+		self[key] = value
+
+
+class _FakePaymentEntry(payment_tests.TestCreatePaymentEntryForInvoices._FakePaymentEntry):
+	def insert(self, ignore_permissions=False):
+		from hausverwaltung.hausverwaltung.overrides.payment_entry import validate_customer_payment_identity
+
+		validate_customer_payment_identity(self)
+		return super().insert(ignore_permissions=ignore_permissions)
+
+
 class TestInvoiceContractDateReview(unittest.TestCase):
 	def setUp(self):
 		self.contract = frappe._dict(
@@ -18,8 +31,8 @@ class TestInvoiceContractDateReview(unittest.TestCase):
 			kunde="Giese - G | SF | 1.OG rechts", wohnung="G1 | SF | 1.OG rechts",
 			von="2012-04-01", bis="2026-05-31", docstatus=0, modified="2026-06-01 12:00:00",
 		)
-		self.context = frappe._dict(self.contract, company="COMP-1", cost_center="CC-1")
-		self.meta = SimpleNamespace(has_field=lambda field: field == "wohnung")
+		self.context = frappe._dict(self.contract, company="COMP-1", cost_center="CC-1", immobilie="PROPERTY")
+		self.meta = SimpleNamespace(has_field=lambda field: field in {"wohnung", "cost_center"})
 		self.rent = self.invoice("ACC-SINV-2026-54479", "2026-04-01")
 		self.settlement = self.invoice("ACC-SINV-2026-56320", "2026-09-24")
 		self.docs = {self.rent.name: self.rent, self.settlement.name: self.settlement}
@@ -34,14 +47,25 @@ class TestInvoiceContractDateReview(unittest.TestCase):
 		stack.enter_context(patch.object(pam.frappe, "get_meta", return_value=self.meta))
 		stack.enter_context(patch.object(pam.frappe.db, "get_value", side_effect=lambda dt, *args, **kwargs: "PROPERTY" if dt == "Wohnung" else "CC-1"))
 		stack.enter_context(patch("hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen.lock_mietvertrag_booking_identity", return_value=self.context))
-		stack.enter_context(patch("hausverwaltung.hausverwaltung.overrides.sales_invoice.lock_mietvertrag_booking_identity", return_value=self.context))
+		for target in (
+			"hausverwaltung.hausverwaltung.overrides.sales_invoice.lock_customer_booking_identity",
+			"hausverwaltung.hausverwaltung.overrides.payment_entry.lock_customer_booking_identity",
+			"hausverwaltung.hausverwaltung.utils.payment_auto_match.lock_customer_booking_identity",
+		):
+			stack.enter_context(patch(target, side_effect=self.lock_customer_identity))
 		stack.enter_context(patch("hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen._company_via_wohnung", return_value="COMP-1"))
 		stack.enter_context(patch.object(pam, "_require_company_currency_account"))
 
+	def lock_customer_identity(self, customer):
+		if customer != self.contract.kunde:
+			raise frappe.ValidationError("Customer hat keine eindeutige 1:1-Zuordnung zu einem Mietvertrag.")
+		return self.context
+
 	def invoice(self, name, posting_date):
-		return frappe._dict(
+		return _FakeSalesInvoice(
 			name=name, posting_date=posting_date, company="COMP-1", customer=self.contract.kunde,
-			wohnung=self.contract.wohnung, items=[frappe._dict(wohnung=self.contract.wohnung)],
+			wohnung=self.contract.wohnung, cost_center="CC-1",
+			items=[frappe._dict(wohnung=self.contract.wohnung, cost_center="CC-1")],
 			docstatus=1, outstanding_amount=100, currency="EUR", conversion_rate=1,
 			debit_to="DEBTOR", modified="2026-09-24 12:00:00", meta=self.meta,
 		)
@@ -120,12 +144,19 @@ class TestInvoiceContractDateReview(unittest.TestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "Abrechnungsmonat"):
 			self.lock([confirmation])
 
-	def test_missing_dimensions_are_not_confirmable(self):
+	def test_missing_dimensions_are_filled_only_from_exact_contract(self):
 		confirmation = self.confirmation()
 		self.settlement.wohnung = None
-		self.settlement.items = []
-		with self.assertRaises(frappe.ValidationError):
-			self.lock([confirmation])
+		self.settlement.cost_center = None
+		self.settlement.items = [frappe._dict(wohnung=None, cost_center=None)]
+		invoices = self.lock([confirmation])
+		self.assertEqual(invoices[1].wohnung, self.contract.wohnung)
+		self.assertEqual(self.settlement.wohnung, self.contract.wohnung)
+		self.assertEqual(self.settlement.cost_center, "CC-1")
+		self.assertEqual(self.settlement.get("items")[0].wohnung, self.contract.wohnung)
+		self.assertEqual(self.settlement.get("items")[0].cost_center, "CC-1")
+		self.assertEqual(self.settlement.posting_date, "2026-09-24")
+		self.assertEqual([inv.allocated_amount for inv in invoices], [25, 25])
 
 	def test_before_start_and_missing_dates_remain_blocked(self):
 		for field, value in (("posting_date", "2012-03-31"), ("posting_date", None)):
@@ -159,7 +190,7 @@ class TestInvoiceContractDateReview(unittest.TestCase):
 				pam._parse_invoice_date_confirmations(value)
 
 	def create_payment(self, confirmations=None, allocations=(25, 25)):
-		pe = payment_tests.TestCreatePaymentEntryForInvoices._FakePaymentEntry()
+		pe = _FakePaymentEntry()
 		pe.get = lambda key: getattr(pe, key, None)
 		with patch.object(pam, "_resolve_company_and_bank_account", return_value=("COMP-1", frappe._dict(account="BANK"))), \
 			patch.object(pam, "_get_company_currency", return_value="EUR"), \
@@ -181,6 +212,8 @@ class TestInvoiceContractDateReview(unittest.TestCase):
 		self.assertEqual([ref["allocated_amount"] for ref in pe.references], [25, 25])
 		self.assertIn(self.settlement.name, pe.remarks)
 		self.assertIn("ausdrücklich bestätigt", pe.remarks)
+		self.assertEqual(pe.wohnung, self.contract.wohnung)
+		self.assertEqual(pe.cost_center, "CC-1")
 
 	def test_confirmation_does_not_bypass_overallocation_or_payment_total(self):
 		self.settlement.outstanding_amount = 20
@@ -208,13 +241,18 @@ class TestInvoiceContractDateReview(unittest.TestCase):
 		pam.annotate_customer_invoice_reviews([candidate], customer=self.contract.kunde, company="COMP-1")
 		self.assertTrue(candidate.allocation_blocked_reason)
 
-	def test_ordinary_unmarked_legacy_invoice_keeps_existing_behavior(self):
+	def test_unmarked_legacy_preview_requires_exact_customer_contract_and_stays_read_only(self):
 		self.rent.wohnung = None
-		self.rent.items = []
+		self.rent.items = [frappe._dict(wohnung=None, cost_center="CC-1")]
+		before = copy.deepcopy(self.rent)
 		candidate = frappe._dict(name=self.rent.name)
 		pam.annotate_customer_invoice_reviews([candidate], customer=self.contract.kunde, company="COMP-1")
 		self.assertFalse(candidate.allocation_blocked_reason)
 		self.assertIsNone(candidate.after_contract_end_review)
+		self.assertEqual(self.rent, before)
+		with patch.object(pam.frappe.db, "sql", return_value=[]):
+			pam.annotate_customer_invoice_reviews([candidate], customer=self.contract.kunde, company="COMP-1")
+		self.assertTrue(candidate.allocation_blocked_reason)
 
 
 class TestInvoiceReviewEndpointWiring(unittest.TestCase):

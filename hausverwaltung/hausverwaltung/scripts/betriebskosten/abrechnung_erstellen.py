@@ -613,6 +613,17 @@ def _build_bk_segment_costs(
             for index, amount in rounded.items():
                 seg_posten[index][art] = amount
     elif rounding_method == ROUNDING_METHOD_LEGACY and seg_posten:
+        # Apply the reconciliation to the cents that will actually be saved.
+        # Correcting an unrounded +0.005 by -0.01 first would turn it into
+        # -0.005 and HALF_UP would save -0.01 instead of the intended 0.00.
+        exact_amounts = {
+            (index, art): amount
+            for index, amounts in enumerate(seg_posten)
+            for art, amount in amounts.items()
+        }
+        for amounts in seg_posten:
+            for art, amount in amounts.items():
+                amounts[art] = _quantize_money(amount)
         written = sum(
             (
                 _quantize_money(amount)
@@ -622,9 +633,18 @@ def _build_bk_segment_costs(
             Decimal("0"),
         )
         drift = _quantize_money(target_total - written)
-        if drift.copy_abs() >= MONEY_QUANT and seg_posten[-1]:
-            first_art = next(iter(seg_posten[-1]))
-            seg_posten[-1][first_art] += drift
+        if drift.copy_abs() >= MONEY_QUANT:
+            from .rounding import reconcile_rounding_difference
+
+            entries = [
+                ((index, art), exact_amounts[(index, art)])
+                for index in reversed(range(len(seg_posten)))
+                for art, amount in seg_posten[index].items()
+            ]
+            rounded = {key: seg_posten[key[0]][key[1]] for key, _raw in entries}
+            corrected = reconcile_rounding_difference(entries, rounded, drift)
+            for (index, art), amount in corrected.items():
+                seg_posten[index][art] = amount
     return seg_posten
 
 

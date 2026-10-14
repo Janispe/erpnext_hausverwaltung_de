@@ -83,7 +83,8 @@ ACCOUNT_CATEGORY_MAP = {
 	"mahnungen": "sonstiges",
 	"sonstig": "sonstiges",
 }
-TOLERANCE = 0.01
+# A complete cent is a real receivable/payment, never numerical noise.
+TOLERANCE = 0.005
 
 
 @dataclass

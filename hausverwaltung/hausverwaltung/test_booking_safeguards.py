@@ -471,18 +471,27 @@ class TestBookingSafeguards(unittest.TestCase):
 		self.assertEqual(invoice.grand_total, 100)
 
 	def test_bracketed_automatic_customer_can_book_and_cancel_without_renaming(self):
-		_, _, prop, _, _contract = fixture(auto_customer=True, with_contact=True)
+		_, _, prop, _, contract = fixture(auto_customer=True, with_contact=True)
+		customer_name = "Bugtest [HK] " + frappe.generate_hash(length=10)
+		frappe.db.set_value("Customer", contract.kunde, "customer_name", customer_name)
 		doc = hk_head(prop)
 		original = doc.mieter_positionen[0].heizkostenabrechnung_mieter
-		self.assertIn("[", original)
+		child = frappe.get_doc("Heizkostenabrechnung Mieter", original)
+		self.assertIn(customer_name, child.bezeichnung)
+		original_title = child.bezeichnung
+		self.assertNotIn("[", original)
 		doc.submit()
 		child = frappe.get_doc("Heizkostenabrechnung Mieter", original)
 		self.assertEqual(child.name, original)
+		self.assertEqual(child.bezeichnung, original_title)
 		invoice = frappe.get_doc("Sales Invoice", child.sales_invoice)
-		self.assertIn("[HK-SETTLEMENT:HK-ID:", invoice.remarks)
+		self.assertIn(f"[HK-SETTLEMENT:{original}]", invoice.remarks)
 		doc.cancel()
 		invoice.reload()
 		self.assertEqual(invoice.docstatus, 2)
+		child.reload()
+		self.assertEqual(child.name, original)
+		self.assertEqual(child.bezeichnung, original_title)
 
 	def test_bk_overlap_is_blocked_without_second_invoice(self):
 		prop, _flat, contract, _flats = bk_fixture()

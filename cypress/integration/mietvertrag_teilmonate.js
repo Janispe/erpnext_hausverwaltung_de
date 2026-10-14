@@ -58,7 +58,7 @@ context("Mietvertrag: Monatsmiete und Teilmonatsmiete", { retries: 0 }, () => {
 		cy.get('[data-role="part-month-preview"]').should("contain", "2027-01");
 	}
 	function adopt() {
-		cy.contains(".modal:visible .btn-primary", "In Mietvertrag übernehmen").click();
+		cy.contains(".modal:visible .btn-modal-primary", "In Mietvertrag übernehmen").click();
 		cy.wait("@partMonthPreview").its("response.statusCode").should("eq", 200);
 		cy.get(".modal:visible").should("not.exist");
 		cy.then(() => expect(invoiceCalls, "editing does not create invoices").to.have.length(0));
@@ -90,7 +90,7 @@ context("Mietvertrag: Monatsmiete und Teilmonatsmiete", { retries: 0 }, () => {
 		openDialog();
 		mode("Festbetrag");
 		field("betrag").should("have.value", "");
-		cy.contains(".modal:visible .btn-primary", "In Mietvertrag übernehmen").click();
+		cy.contains(".modal:visible .btn-modal-primary", "In Mietvertrag übernehmen").click();
 		cy.get(".modal:visible").should("contain", "Bitte den vereinbarten Mietbetrag eingeben");
 		cy.window().then((win) => expect(win.cur_frm.doc.miete_teilmonate || []).to.have.length(0));
 		field("betrag").clear().type("300").blur();
@@ -174,7 +174,7 @@ context("Mietvertrag: Monatsmiete und Teilmonatsmiete", { retries: 0 }, () => {
 		});
 		cy.contains(".modal:visible", "Bitte zuerst").find(".btn-modal-close").click();
 		cy.get(".modal:visible").should("have.length", 1);
-		cy.contains(".modal:visible .btn-primary", "In Mietvertrag übernehmen").click();
+		cy.contains(".modal:visible .btn-modal-primary", "In Mietvertrag übernehmen").click();
 		cy.wait("@partMonthPreview").its("response.statusCode").should("be.oneOf", [417, 422]);
 		cy.get(".modal:visible").last().should("contain", "Bitte zuerst");
 		cy.window().then((win) => {

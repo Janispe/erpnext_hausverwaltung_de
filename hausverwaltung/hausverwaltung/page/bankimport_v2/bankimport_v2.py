@@ -203,7 +203,7 @@ def _suggest_invoice_for_row(bt_name: str) -> dict[str, Any] | None:
 	Returns ``{ "rechnungId": "...", "reason": "..." }`` oder ``None``.
 	"""
 	from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
-		_TOLERANCE,
+		_amounts_equal,
 		prepare_invoice_match,
 	)
 
@@ -218,7 +218,7 @@ def _suggest_invoice_for_row(bt_name: str) -> dict[str, Any] | None:
 	target = prep["target_amount"]
 	exact = [
 		inv for inv in prep["candidates"]
-		if abs(flt(inv.outstanding_amount) - target) < _TOLERANCE
+		if _amounts_equal(inv.outstanding_amount, target)
 	]
 	if len(exact) != 1:
 		return None

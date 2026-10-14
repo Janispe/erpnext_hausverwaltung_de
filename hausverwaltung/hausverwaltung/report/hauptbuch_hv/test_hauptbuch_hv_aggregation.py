@@ -37,6 +37,60 @@ def _gle_row(
 
 
 class TestHauptbuchAggregation(unittest.TestCase):
+	def test_grouped_balance_matches_combined_debits_and_following_payment(self):
+		mapping = {"SI-1": "MV-A|11/2025", "SI-2": "MV-A|11/2025"}
+		data = [
+			{**_gle_row(voucher_no="SI-1", account="1410", debit=500), "balance": 500},
+			{**_gle_row(voucher_no="SI-2", account="1410", debit=120), "balance": 620},
+			{**_gle_row(voucher_no="PE-1", voucher_type="Payment Entry", account="1410", credit=100), "balance": 520},
+		]
+		first, second = self._patch_si_lookup(mapping)
+		with first, second:
+			out = _aggregate_mietlauf_rows(data)
+		self.assertEqual([row["balance"] for row in out], [620, 520])
+		self.assertEqual(sum(row["debit"] - row["credit"] for row in out), 520)
+
+	def test_dimensions_are_not_merged_even_with_same_month_account_and_party(self):
+		mapping = {"SI-1": "MV-A|11/2025", "SI-2": "MV-A|11/2025"}
+		for dimension in ("cost_center", "wohnung", "immobilie", "project", "party_type"):
+			with self.subTest(dimension=dimension):
+				data = [
+					{**_gle_row(voucher_no="SI-1", account="1410", debit=500), dimension: "A"},
+					{**_gle_row(voucher_no="SI-2", account="1410", debit=120), dimension: "B"},
+				]
+				first, second = self._patch_si_lookup(mapping)
+				with first, second:
+					out = _aggregate_mietlauf_rows(data)
+				self.assertEqual(len(out), 2)
+				self.assertEqual(sum(row["debit"] for row in out), 620)
+
+	def test_currency_amounts_are_summed_with_company_amounts(self):
+		mapping = {"SI-1": "MV-A|11/2025", "SI-2": "MV-A|11/2025"}
+		data = [
+			{**_gle_row(voucher_no="SI-1", account="1410", debit=500), "debit_in_account_currency": 550, "debit_in_transaction_currency": 600},
+			{**_gle_row(voucher_no="SI-2", account="1410", debit=120), "debit_in_account_currency": 132, "debit_in_transaction_currency": 144},
+		]
+		first, second = self._patch_si_lookup(mapping)
+		with first, second:
+			out = _aggregate_mietlauf_rows(data)
+		self.assertEqual(out[0]["debit"], 620)
+		self.assertEqual(out[0]["debit_in_account_currency"], 682)
+		self.assertEqual(out[0]["debit_in_transaction_currency"], 744)
+
+	def test_monthly_group_does_not_cross_ledger_section_totals(self):
+		mapping = {"SI-1": "MV-A|11/2025", "SI-2": "MV-A|11/2025"}
+		data = [
+			{**_gle_row(voucher_no="SI-1", account="1410", debit=500), "balance": 500},
+			{"account": "Closing", "debit": 500, "credit": 0, "balance": 500},
+			{"account": "Opening", "debit": 100, "credit": 0, "balance": 100},
+			{**_gle_row(voucher_no="SI-2", account="1410", debit=120), "balance": 220},
+		]
+		first, second = self._patch_si_lookup(mapping)
+		with first, second:
+			out = _aggregate_mietlauf_rows(data)
+		self.assertEqual(len(out), 4)
+		self.assertEqual([row["balance"] for row in out], [500, 500, 100, 220])
+
 	def _patch_si_lookup(self, mapping: dict[str, str]):
 		"""Mock frappe.get_all('Sales Invoice', ...) und has_column."""
 		def fake_get_all(doctype, filters=None, fields=None, **kwargs):

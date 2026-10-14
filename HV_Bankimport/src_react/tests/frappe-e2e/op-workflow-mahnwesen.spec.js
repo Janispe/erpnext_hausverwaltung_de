@@ -266,36 +266,51 @@ function seedRealDunning(runId) {
 	return benchPython(`import frappe, json
 import hausverwaltung.cypress_fixtures as fixtures
 run_id = ${JSON.stringify(runId)}
+company = fixtures._resolve_company()
+label = "HV UI Mahnung " + run_id
+parent_cc = frappe.db.get_value("Cost Center", {"company":company,"is_group":1}, "name")
+assert parent_cc, "Testcompany benötigt eine Kostenstellen-Gruppe"
+cost_center = frappe.get_doc({"doctype":"Cost Center","cost_center_name":label,"company":company,"parent_cost_center":parent_cc,"is_group":0}).insert(ignore_permissions=True)
+address = frappe.get_doc({"doctype":"Address","address_title":label,"address_type":"Billing","address_line1":"Synthetische Mahn-Teststraße 1","city":"Berlin","pincode":"10115","country":frappe.db.get_value("Company",company,"country") or "Germany"}).insert(ignore_permissions=True)
+property_doc = frappe.get_doc({"doctype":"Immobilie","bezeichnung":label,"adresse":address.name,"kostenstelle":cost_center.name}).insert(ignore_permissions=True)
 extra = {}
 def own_customer(_run_id):
     contact = frappe.get_doc({"doctype":"Contact", "first_name":"HV UI", "last_name":"Mahnwesen Real " + run_id}).insert(ignore_permissions=True)
-    apartment = frappe.get_doc({"doctype":"Wohnung", "name__lage_in_der_immobilie":"HV UI Mahnung " + run_id, "status":"Leerstehend"}).insert(ignore_permissions=True)
+    apartment = frappe.get_doc({"doctype":"Wohnung", "immobilie":property_doc.name,"name__lage_in_der_immobilie":label,"gebaeudeteil":"VH","status":"Leerstehend"}).insert(ignore_permissions=True)
     lease = frappe.get_doc({"doctype":"Mietvertrag", "wohnung":apartment.name, "von":"2026-05-01", "vertragsabschluss_am":"2026-04-01", "mieter":[{"mieter":contact.name,"rolle":"Hauptmieter","eingezogen":"2026-05-01"}], "miete":[{"von":"2026-05-01","miete":123.45,"art":"Monatlich"}]}).insert(ignore_permissions=True)
-    extra.update({"mietvertrag":lease.name,"wohnung":apartment.name,"contact":contact.name})
+    extra.update({"mietvertrag":lease.name,"wohnung":apartment.name,"contact":contact.name,"immobilie":property_doc.name,"address":address.name,"cost_center":cost_center.name})
     return lease.kunde
 def current_dunning_type(company, income_account, cost_center, template):
     actual_name = frappe.db.get_value("Dunning Type", {"dunning_type":"Zahlungserinnerung - HP", "company":company}, "name")
     if actual_name:
         doc = frappe.get_doc("Dunning Type", actual_name)
         extra["original_template"] = doc.hv_serienbrief_vorlage
+        extra["original_cost_center"] = doc.cost_center
         extra["type_was_created"] = False
     else:
         doc = frappe.get_doc({"doctype":"Dunning Type","dunning_type":"Zahlungserinnerung - HP","company":company,"dunning_fee":0,"rate_of_interest":0,"income_account":income_account,"cost_center":cost_center})
         extra["original_template"] = None
+        extra["original_cost_center"] = None
         extra["type_was_created"] = True
     doc.hv_serienbrief_vorlage = template
+    doc.cost_center = cost_center
     if doc.is_new():
         doc.insert(ignore_permissions=True)
     else:
         doc.save(ignore_permissions=True)
     return doc.name
-fixtures._ensure_test_customer = own_customer
-fixtures._ensure_dunning_type = current_dunning_type
-result = fixtures.seed_real_op_dunning(run_id)
-invoice = frappe.get_doc("Sales Invoice", result["sales_invoice"])
-invoice.db_set("remarks", "HV UI Mahnwesen Real " + run_id + " MV:" + extra["mietvertrag"])
-if invoice.meta.has_field("wohnung"):
-    invoice.db_set("wohnung", extra["wohnung"])
+customer = own_customer(run_id)
+income_account = fixtures._ensure_income_account(company)
+receivable_account = fixtures._ensure_receivable_account(company)
+item_code = fixtures._ensure_test_item(company, income_account)
+template = fixtures._ensure_serienbrief_vorlage(run_id)
+dunning_type = current_dunning_type(company, income_account, cost_center.name, template)
+invoice = frappe.get_doc({"doctype":"Sales Invoice","company":company,"customer":customer,"wohnung":extra["wohnung"],"cost_center":cost_center.name,"posting_date":"2026-05-01","due_date":"2026-05-15","debit_to":receivable_account,"currency":frappe.db.get_value("Company",company,"default_currency") or "EUR","ignore_default_payment_terms_template":1,"remarks":"HV UI Mahnwesen Real " + run_id + " [MV:" + extra["mietvertrag"] + "]","items":[{"item_code":item_code,"item_name":item_code,"description":"HV UI Mahnwesen Real " + run_id,"qty":1,"rate":123.45,"income_account":income_account,"cost_center":cost_center.name,"wohnung":extra["wohnung"]}]})
+invoice.set("payment_terms_template", None)
+invoice.set("payment_schedule", [])
+invoice.insert(ignore_permissions=True)
+invoice.submit()
+result = {"company":company,"customer":customer,"customer_name":frappe.db.get_value("Customer",customer,"customer_name"),"sales_invoice":invoice.name,"dunning_type":dunning_type,"serienbrief_vorlage":template,"outstanding_amount":invoice.outstanding_amount,"run_id":run_id}
 frappe.db.commit()
 result.update(extra)
 print(json.dumps(result, default=str))`);
@@ -307,12 +322,16 @@ import hausverwaltung.cypress_fixtures as fixtures
 fixture = json.loads(${JSON.stringify(JSON.stringify(fixture))})
 if frappe.db.exists("Dunning Type", fixture["dunning_type"]):
     frappe.db.set_value("Dunning Type", fixture["dunning_type"], "hv_serienbrief_vorlage", fixture.get("original_template"))
+    frappe.db.set_value("Dunning Type", fixture["dunning_type"], "cost_center", fixture.get("original_cost_center"))
 result = fixtures.cleanup_real_op_dunning(fixture["run_id"], sales_invoice=fixture["sales_invoice"], template=fixture.get("serienbrief_vorlage"))
 for doctype, key in [("Mietvertrag","mietvertrag"),("Customer","customer"),("Wohnung","wohnung"),("Contact","contact")]:
     if frappe.db.exists(doctype, fixture[key]):
         frappe.delete_doc(doctype, fixture[key], force=True, ignore_permissions=True)
 if fixture.get("type_was_created"):
     frappe.delete_doc("Dunning Type", fixture["dunning_type"], force=True, ignore_permissions=True)
+for doctype, key in [("Immobilie","immobilie"),("Address","address"),("Cost Center","cost_center")]:
+    if frappe.db.exists(doctype, fixture[key]):
+        frappe.delete_doc(doctype, fixture[key], force=True, ignore_permissions=True)
 frappe.db.commit()
 print(json.dumps(result, default=str))`);
 }
@@ -321,8 +340,10 @@ function readDunningInvariant(fixture) {
 	return benchPython(`import frappe, json
 fixture = json.loads(${JSON.stringify(JSON.stringify(fixture))})
 leases = frappe.get_all("Mietvertrag", filters={"kunde":fixture["customer"]}, fields=["name","kunde","wohnung","von","bis"])
-invoice = frappe.db.get_value("Sales Invoice", fixture["sales_invoice"], ["name","customer","grand_total","outstanding_amount","docstatus","remarks"], as_dict=True)
-print(json.dumps({"leases":leases,"invoice":invoice},default=str))`);
+invoice = frappe.db.get_value("Sales Invoice", fixture["sales_invoice"], ["name","customer","grand_total","outstanding_amount","docstatus","remarks","company","wohnung","cost_center"], as_dict=True)
+items = frappe.get_all("Sales Invoice Item", filters={"parent":fixture["sales_invoice"]}, fields=["wohnung","cost_center"])
+property_doc = frappe.db.get_value("Immobilie", fixture["immobilie"], ["name","kostenstelle"], as_dict=True)
+print(json.dumps({"leases":leases,"invoice":invoice,"items":items,"property":property_doc},default=str))`);
 }
 
 function dunningsForInvoice(salesInvoice) {
@@ -814,6 +835,9 @@ test("OP-Workflow erstellt echte Mahnung als Dunning-Draft in der Datenbank", as
 		expect(Number(invariant.invoice.grand_total)).toBe(123.45);
 		expect(Number(invariant.invoice.outstanding_amount)).toBe(123.45);
 		expect(invariant.invoice.customer).toBe(fixture.customer);
+		expect(invariant.invoice).toMatchObject({ company: fixture.company, wohnung: fixture.wohnung, cost_center: fixture.cost_center });
+		expect(invariant.items).toEqual([{ wohnung: fixture.wohnung, cost_center: fixture.cost_center }]);
+		expect(invariant.property).toEqual({ name: fixture.immobilie, kostenstelle: fixture.cost_center });
 		expect(dunning).toMatchObject({
 			docstatus: 0,
 			sales_invoice: fixture.sales_invoice,
@@ -864,6 +888,9 @@ test("Geführter Mahnungsworkflow erstellt echten Dunning-Draft in der Datenbank
 		expect(Number(invariant.invoice.grand_total)).toBe(123.45);
 		expect(Number(invariant.invoice.outstanding_amount)).toBe(123.45);
 		expect(invariant.invoice.customer).toBe(fixture.customer);
+		expect(invariant.invoice).toMatchObject({ company: fixture.company, wohnung: fixture.wohnung, cost_center: fixture.cost_center });
+		expect(invariant.items).toEqual([{ wohnung: fixture.wohnung, cost_center: fixture.cost_center }]);
+		expect(invariant.property).toEqual({ name: fixture.immobilie, kostenstelle: fixture.cost_center });
 		expect(dunning).toMatchObject({
 			docstatus: 0,
 			sales_invoice: fixture.sales_invoice,

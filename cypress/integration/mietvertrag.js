@@ -21,17 +21,12 @@ context("Mietvertrag", () => {
 
 		before(() => {
 			cy.login();
-			cy.first_doc_name("Mietvertrag").then((name) => {
+			(Cypress.env("hv_mietvertrag") ? cy.wrap(Cypress.env("hv_mietvertrag")) : cy.first_doc_name("Mietvertrag")).then((name) => {
 				docName = name;
 			});
 		});
 
-		// Skip-Grund: cur_frm-Initialisierung der Mietvertrag-Form ist auf
-		// produktiver Datenmenge zu langsam für stabile Cypress-Assertions
-		// (Paperless-Link-Fetch, Staffelmieten-Sortierung, Custom-Button-Setup).
-		// Reaktivieren wenn die Form-Init beschleunigt oder gegen leere Test-Daten
-		// gelaufen wird.
-		it.skip("Form öffnet und zeigt Custom Buttons", function () {
+		it("Form öffnet und zeigt Custom Buttons", function () {
 			if (!docName) this.skip();
 
 			cy.visit(`/app/mietvertrag/${encodeURIComponent(docName)}`);
@@ -55,7 +50,7 @@ context("Mietvertrag", () => {
 		it("get_mietvertrag_paperless_link erzeugt keinen 500er für nonexistent doc", () => {
 			cy.api_post(
 				"hausverwaltung.hausverwaltung.doctype.mietvertrag.mietvertrag.get_mietvertrag_paperless_link",
-				{ docname: "NONEXISTENT-MV-999" }
+				{ mietvertrag: "NONEXISTENT-MV-999" }
 			).then((res) => {
 				expect(res.status).to.not.eq(500);
 			});

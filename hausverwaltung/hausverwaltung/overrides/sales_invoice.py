@@ -8,14 +8,14 @@ from erpnext.accounts.doctype.sales_invoice.sales_invoice import SalesInvoice
 from frappe import _
 from frappe.utils import cint, cstr, get_last_day, getdate
 
-from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
-	lock_mietvertrag_booking_identity,
+from hausverwaltung.hausverwaltung.utils.customer_booking_identity import (
+	lock_customer_booking_identity,
 )
-from hausverwaltung.hausverwaltung.utils.sollstellung_titel import build_sollstellung_titel
+from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 from hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff import (
 	get_sales_invoice_writeoff_status,
 )
-from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
+from hausverwaltung.hausverwaltung.utils.sollstellung_titel import build_sollstellung_titel
 
 _MV_MARKER_RE = re.compile(r"\[MV:([^\]\r\n]+)\]")
 _MIETABRECHNUNG_PERIOD_RE = re.compile(r"(?:0[1-9]|1[0-2])/\d{4}")
@@ -280,7 +280,9 @@ def _validate_contract_period(
 
 
 def validate_mietvertrag_sales_invoice_identity(doc) -> None:
-	"""Validate every contract-marked Sales Invoice against locked live data."""
+	"""Validate every Customer invoice against its one locked contract."""
+	if cint(doc.get("docstatus")) == 2:
+		return  # Never replace historical dimensions during cancellation.
 	label = cstr(getattr(doc, "name", None) or _("Neue Sales Invoice"))
 	direct_reference = _contract_reference(
 		mietabrechnung_id=doc.get("mietabrechnung_id"),
@@ -329,18 +331,6 @@ def validate_mietvertrag_sales_invoice_identity(doc) -> None:
 		)
 	structured_period = direct_period or source_period
 	mietvertrag = direct_mv or source_mv
-	if not mietvertrag:
-		# A supplied flat dimension must be checked even on an unmarked invoice.
-		if not doc.get("wohnung") and not any(item.get("wohnung") for item in (doc.get("items") or [])):
-			return
-		contracts = frappe.db.sql(
-			"SELECT name FROM `tabMietvertrag` WHERE kunde = %s ORDER BY name FOR UPDATE",
-			(doc.get("customer"),), as_dict=True,
-		)
-		if len(contracts) != 1:
-			frappe.throw(_("Die Wohnung der Rechnung lässt sich nicht eindeutig dem Mietvertrag des Customers zuordnen."), frappe.ValidationError)
-		mietvertrag = contracts[0].name
-
 	try:
 		item_meta = frappe.get_meta("Sales Invoice Item")
 		has_header_wohnung = bool(doc.meta.has_field("wohnung"))
@@ -366,7 +356,14 @@ def validate_mietvertrag_sales_invoice_identity(doc) -> None:
 
 	# First and globally deterministic lock: Mietvertrag.  The helper then locks
 	# Wohnung, Immobilie and financial masters in the same order as the generator.
-	identity = lock_mietvertrag_booking_identity(mietvertrag)
+	identity = lock_customer_booking_identity(doc.get("customer"))
+	if mietvertrag and mietvertrag != identity.name:
+		frappe.throw(
+			_("Rechnung {0} verweist auf Mietvertrag {1}, Customer {2} gehört aber zu Mietvertrag {3}; es wurde nichts gebucht.").format(
+				label, mietvertrag, identity.kunde, identity.name
+			),
+			frappe.ValidationError,
+		)
 
 	locked_source = None
 	source_items: list[frappe._dict] = []
@@ -408,14 +405,6 @@ def validate_mietvertrag_sales_invoice_identity(doc) -> None:
 				frappe.ValidationError,
 			)
 		structured_period = direct_period or locked_period
-		if not direct_mv and not locked_mv:
-			frappe.throw(
-				_(
-					"Die Mietvertragsidentität der Ursprungsrechnung {0} ist nicht "
-					"mehr eindeutig; Return abgebrochen."
-				).format(return_against),
-				frappe.ValidationError,
-			)
 		source_items = _return_source_items(
 			return_against,
 			include_cost_center=has_item_cost_center,
@@ -432,18 +421,6 @@ def validate_mietvertrag_sales_invoice_identity(doc) -> None:
 			has_item_cost_center=has_item_cost_center,
 		)
 
-		# ERPNext returns may omit custom accounting dimensions during mapping.
-		# Missing values are inherited only after the locked source itself passed
-		# all identity checks; conflicting non-empty values are never overwritten.
-		if not cstr(doc.get("wohnung")).strip():
-			doc.set("wohnung", identity.wohnung)
-		if has_header_cost_center and not cstr(doc.get("cost_center")).strip():
-			doc.set("cost_center", identity.cost_center)
-		for item in doc.get("items") or []:
-			if not cstr(item.get("wohnung")).strip():
-				item.set("wohnung", identity.wohnung)
-			if has_item_cost_center and not cstr(item.get("cost_center")).strip():
-				item.set("cost_center", identity.cost_center)
 		if (
 			not cstr(doc.get("mietabrechnung_id")).strip()
 			and locked_reference.get("mietabrechnung_id")
@@ -453,6 +430,23 @@ def validate_mietvertrag_sales_invoice_identity(doc) -> None:
 				"mietabrechnung_id",
 				locked_reference.mietabrechnung_id,
 			)
+
+	# Desk/mapped invoices may omit dimensions. Only the one locked contract
+	# supplies missing values; conflicting nonempty values are never changed.
+	if not cstr(doc.get("wohnung")).strip():
+		doc.set("wohnung", identity.wohnung)
+	if has_header_cost_center and not cstr(doc.get("cost_center")).strip():
+		doc.set("cost_center", identity.cost_center)
+	for item in doc.get("items") or []:
+		for fieldname, value, enabled in (
+			("wohnung", identity.wohnung, has_item_wohnung),
+			("cost_center", identity.cost_center, has_item_cost_center),
+		):
+			if enabled and not cstr(item.get(fieldname)).strip():
+				if isinstance(item, dict):
+					item[fieldname] = value
+				else:
+					item.set(fieldname, value)
 
 	_validate_contract_period(
 		identity,
@@ -516,11 +510,9 @@ class CustomSalesInvoice(SalesInvoice):
 		return contract
 
 	def validate(self):
-		# Custom Accounting Dimensions may be absent on ERPNext's mapped return
-		# document.  Inherit them from a locked, fully validated source before
-		# standard validation can reject the otherwise safe return.
-		if cint(self.get("is_return")) and cstr(self.get("return_against")).strip():
-			validate_mietvertrag_sales_invoice_identity(self)
+		# Set authoritative missing dimensions before ERPNext supplies Company
+		# defaults, then re-check after all standard validation and setters.
+		validate_mietvertrag_sales_invoice_identity(self)
 
 		super().validate()
 

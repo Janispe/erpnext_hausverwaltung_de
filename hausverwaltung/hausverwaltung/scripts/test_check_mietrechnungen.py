@@ -6,6 +6,20 @@ from unittest.mock import patch
 from hausverwaltung.hausverwaltung.scripts import check_mietrechnungen
 
 
+class TestInitialMonthlyCharges(unittest.TestCase):
+	def test_initial_staffels_are_expected_for_all_monthly_charge_types(self):
+		contract = SimpleNamespace(name="MV-1", von=date(2026, 1, 16), bis=None)
+		def get_amount(_name, field, reference_date):
+			return {"betriebskosten": 150, "heizkosten": 100, "untermietzuschlag": 30}[field] if reference_date >= contract.von else 0
+		with (
+			patch.object(check_mietrechnungen, "_staffelbetrag", side_effect=get_amount),
+			patch.object(check_mietrechnungen, "get_bk_regelung", return_value="Vorauszahlung"),
+		):
+			for typ, amount in (("Betriebskosten", 150), ("Heizkosten", 100), ("Untermietzuschlag", 30)):
+				with self.subTest(typ=typ):
+					self.assertEqual(check_mietrechnungen._expected_betrag(contract, typ, date(2026, 1, 1)), amount)
+
+
 class TestFindExistingInvoice(unittest.TestCase):
 	def test_ignores_credit_note_as_sollstellung(self):
 		sales_invoice_filters = []

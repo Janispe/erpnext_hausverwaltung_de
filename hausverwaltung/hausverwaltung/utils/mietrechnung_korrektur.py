@@ -360,14 +360,22 @@ def _recompute_betrag(ctx: dict) -> float:
 		_miete_betrag_fuer_monat,
 		_staffelbetrag,
 	)
+	from hausverwaltung.hausverwaltung.utils.mietberechnung import monthly_charge_reference_date
+	from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
+		BK_REGELUNG_VORAUSZAHLUNG,
+		get_bk_regelung,
+	)
 
 	anchor = date(ctx["jahr"], ctx["monat"], 1)
 	mv_name = ctx["mietvertrag"]
 	typ = ctx["typ"]
+	mv_row = frappe.db.get_value("Mietvertrag", mv_name, ["name", "von", "bis"], as_dict=True)
 
 	if typ == "Miete":
-		mv_row = frappe.db.get_value("Mietvertrag", mv_name, ["name", "von", "bis"], as_dict=True)
 		return _miete_betrag_fuer_monat(mv_row, anchor)
+	reference_date = monthly_charge_reference_date(mv_row.von, anchor)
+	if typ == "Betriebskosten" and get_bk_regelung(mv_name, reference_date) != BK_REGELUNG_VORAUSZAHLUNG:
+		return 0.0
 	parentfield = {
 		"Betriebskosten": "betriebskosten",
 		"Heizkosten": "heizkosten",
@@ -375,7 +383,7 @@ def _recompute_betrag(ctx: dict) -> float:
 	}.get(typ)
 	if not parentfield:
 		return 0.0
-	return _staffelbetrag(mv_name, parentfield, anchor)
+	return _staffelbetrag(mv_name, parentfield, reference_date)
 
 
 @frappe.whitelist()

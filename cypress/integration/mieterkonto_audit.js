@@ -62,7 +62,7 @@ describe("Mieterkonto CSV matches the successfully loaded report", () => {
       expect(csv).to.contain(";-29.5;29.5");
       expect(csv).to.contain("INV-A-1");
     });
-    cy.window().its("auditDownload").should("equal", "A_2026-01-01_2026-05-31.csv");
+    cy.window().its("auditDownload").should("equal", "Mieter_A_2026-01-01_2026-05-31.csv");
   });
 
   it("does not name old Customer A data as Customer B after B fails to load", () => {
@@ -78,7 +78,7 @@ describe("Mieterkonto CSV matches the successfully loaded report", () => {
     cy.get(".mk-mieter-search").clear().type("A");
     cy.contains(".mk-combobox-option", /^A$/).click();
     exportedCsv().then((csv) => expect(csv).to.contain("INV-A-1"));
-    cy.window().its("auditDownload").should("equal", "A_2026-01-01_2026-05-31.csv");
+    cy.window().its("auditDownload").should("equal", "Mieter_A_2026-01-01_2026-05-31.csv");
   });
 
   it("keeps CSV columns tied to the loaded sort while the next report is pending", () => {

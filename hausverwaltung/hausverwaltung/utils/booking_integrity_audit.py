@@ -73,7 +73,13 @@ def _rent_identity(row: dict[str, Any]) -> tuple[str | None, str | None, bool]:
 
 	remarks = str(row.get("remarks") or "")
 	contract_match = _MV_MARKER.search(remarks)
-	month_match = _MONTH_MARKER.search(remarks)
+	# Free import remarks can describe older arrears. Only a formal rent marker
+	# makes a month in remarks part of the invoice identity.
+	month_match = (
+		_MONTH_MARKER.search(remarks)
+		if contract_match or "[TYPE:Miete]" in remarks
+		else None
+	)
 	remark_contract = (
 		_normalize_contract_name(contract_match.group(1))
 		if contract_match

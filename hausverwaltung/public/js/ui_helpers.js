@@ -61,4 +61,11 @@
 	window.hausverwaltung = window.hausverwaltung || {};
 	window.hausverwaltung.ui = window.hausverwaltung.ui || {};
 	window.hausverwaltung.ui.widen_modal = widen_modal;
+
+	// Mail Merge exposes this optional UI hook for its iteration picker.
+	// Supply the Hausverwaltung setting here so its domain-neutral wrapper
+	// uses the same width as pickers opened directly in this app.
+	window.mail_merge = window.mail_merge || {};
+	window.mail_merge.ui = window.mail_merge.ui || {};
+	window.mail_merge.ui.widen_modal = widen_modal;
 })();

@@ -7,6 +7,7 @@ by creating Purchase Invoice / Sales Invoice directly from the submitted tool di
 from __future__ import annotations
 
 import json
+import math
 from datetime import timedelta
 from typing import Any
 
@@ -79,6 +80,25 @@ def _as_bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "ja", "on"}
     return bool(value)
+
+
+def _validated_booking_amount(raw: Any, *, index: int) -> float:
+    """Reject malformed amounts instead of silently converting them to zero.
+
+    The UI submits numbers; textual API input must use a decimal point.
+    Frappe's ``flt`` strips commas, which would turn '42,50' into 4250 EUR.
+    """
+    if raw in (None, ""):
+        frappe.throw(f"Position {index}: Betrag fehlt.")
+    try:
+        if isinstance(raw, bool):
+            raise ValueError
+        amount = float(raw)
+    except (TypeError, ValueError, OverflowError):
+        frappe.throw(f"Position {index}: Betrag muss eine gültige Zahl mit Dezimalpunkt sein.")
+    if not math.isfinite(amount):
+        frappe.throw(f"Position {index}: Betrag muss eine endliche Zahl sein.")
+    return amount
 
 
 def _require_document_permissions(doctype: str, *, submit: bool = False) -> None:
@@ -1054,8 +1074,7 @@ def _purchase_invoice_request_context(kwargs: dict) -> dict[str, Any]:
     if not rows:
         frappe.throw("Es sind keine Positionen erfasst.")
     for idx, row in enumerate(rows, start=1):
-        if row.get("betrag") in (None, ""):
-            frappe.throw(f"Position {idx}: Betrag fehlt.")
+        row["betrag"] = _validated_booking_amount(row.get("betrag"), index=idx)
     return {
         "submit": submit,
         "settle_now": settle_now,
@@ -1595,10 +1614,7 @@ def create_sales_invoice(**kwargs) -> dict:
 
     amounts: list[float] = []
     for idx, row in enumerate(rows, start=1):
-        raw_amount = row.get("betrag")
-        if raw_amount in (None, ""):
-            frappe.throw(f"Position {idx}: Betrag fehlt.")
-        amounts.append(flt(raw_amount))
+        amounts.append(_validated_booking_amount(row.get("betrag"), index=idx))
 
     has_positive_amount = any(amount > 0 for amount in amounts)
     has_negative_amount = any(amount < 0 for amount in amounts)
@@ -1666,6 +1682,8 @@ def create_sales_invoice(**kwargs) -> dict:
     })
     si.set("payment_terms_template", None)
     si.set("payment_schedule", [])
+    if _has_field("Sales Invoice", "cost_center"):
+        si.set("cost_center", default_cost_center)
 
     wertstellungsdatum = kwargs.get("wertstellungsdatum")
     if wertstellungsdatum and _has_field("Sales Invoice", "custom_wertstellungsdatum"):
