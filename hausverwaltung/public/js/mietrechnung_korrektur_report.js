@@ -1,7 +1,8 @@
 // Sammel-Korrektur für die Mietrechnungsprüfung-Reports.
 // Hängt einen Button „Abweichungen korrigieren" in die Report-Toolbar, der alle
 // FALSCHE_SUMME-Zeilen (mit Sales Invoice) storniert und aus der aktuellen
-// Staffelmiete neu erzeugt. FEHLT-Zeilen haben keine Rechnung → nicht korrigierbar.
+// Staffelmiete neu erzeugt. NACH_VERTRAGSENDE-Zeilen werden nur storniert bzw.
+// gutgeschrieben (Soll 0). FEHLT-Zeilen haben keine Rechnung → nicht korrigierbar.
 
 window.hausverwaltung = window.hausverwaltung || {};
 window.hausverwaltung.korrektur = {
@@ -34,16 +35,16 @@ window.hausverwaltung.korrektur = {
 		});
 	},
 
-	// Report-Button: korrigiert alle FALSCHE_SUMME-Zeilen des aktuellen Reports.
+	// Report-Button: korrigiert alle korrigierbaren Zeilen des aktuellen Reports.
 	attach_to_report(report) {
 		report.page.add_inner_button(__("Abweichungen korrigieren"), () => {
 			const rows = (report.data || []).filter(
-				(r) => r.status === "FALSCHE_SUMME" && r.sales_invoice
+				(r) => ["FALSCHE_SUMME", "NACH_VERTRAGSENDE"].includes(r.status) && r.sales_invoice
 			);
 			const sis = [...new Set(rows.map((r) => r.sales_invoice))];
 			if (!sis.length) {
 				frappe.msgprint(
-					__("Keine korrigierbaren Abweichungen (Status FALSCHE_SUMME) im aktuellen Report.")
+					__("Keine korrigierbaren Abweichungen (Status FALSCHE_SUMME oder NACH_VERTRAGSENDE) im aktuellen Report.")
 				);
 				return;
 			}

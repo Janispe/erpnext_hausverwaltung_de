@@ -1,7 +1,6 @@
 """Tests für Kontext und sicheren Zahlungsfluss der Mietrechnungs-Korrektur."""
 
 import unittest
-from datetime import date
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -506,6 +505,19 @@ class TestKorrekturStorno(unittest.TestCase):
 			include_drafts_in_guard=0,
 		)
 		self.assertEqual(result["neue_si"], "SINV-NEW")
+
+	def test_zero_amount_only_cancels_and_does_not_require_a_replacement(self):
+		# E.g. an invoice for a month after the contract end: nothing to regenerate.
+		si = DummySalesInvoice()
+		with patch(
+			"hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen.generate_miet_und_bk_rechnungen"
+		) as generate:
+			result = _korrektur_storno(si, _correction_context(), ["PE-EXISTING"], neu_betrag=0)
+
+		self.assertTrue(si.cancelled)
+		generate.assert_not_called()
+		self.assertEqual(result["neue_si"], "")
+		self.assertEqual(result["beibehaltene_payment_entries"], ["PE-EXISTING"])
 
 	def test_payment_entries_are_never_cancelled_or_replaced(self):
 		si = DummySalesInvoice()

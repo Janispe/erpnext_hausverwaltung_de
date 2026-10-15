@@ -486,7 +486,7 @@ def korrigiere_mietrechnung(
 			)
 		result = _korrektur_gutschrift(si, ctx, neu_betrag)
 	else:
-		result = _korrektur_storno(si, ctx, pes, rebook_payments=rebook)
+		result = _korrektur_storno(si, ctx, pes, rebook_payments=rebook, neu_betrag=neu_betrag)
 
 	plan.update(result)
 	return plan
@@ -686,8 +686,14 @@ def _payment_can_reconcile_invoice(payment_entry: str, sales_invoice: str) -> bo
 	)
 
 
-def _korrektur_storno(si, ctx: dict, pes: list[str], *, rebook_payments: bool = False) -> dict:
-	"""Offene Periode: PE-Zuordnung lösen, SI ersetzen, optional neu zuordnen."""
+def _korrektur_storno(
+	si, ctx: dict, pes: list[str], *, rebook_payments: bool = False, neu_betrag: float | None = None
+) -> dict:
+	"""Offene Periode: PE-Zuordnung lösen, SI ersetzen, optional neu zuordnen.
+
+	Ist der korrekte Betrag 0 (z.B. Monat nach Vertragsende), wird nur storniert;
+	gelöste Zahlungen bleiben wie im Gutschrift-Pfad als Guthaben unzugeordnet.
+	"""
 	from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
 		generate_miet_und_bk_rechnungen,
 	)
@@ -719,6 +725,17 @@ def _korrektur_storno(si, ctx: dict, pes: list[str], *, rebook_payments: bool = 
 	frappe.flags.mute_messages = True
 	try:
 		si.cancel()
+
+		if neu_betrag is not None and flt(neu_betrag) <= 0:
+			# Ohne Soll gibt es keine Ersatzrechnung, die der Generator erzeugen könnte.
+			return {
+				"stornierte_si": si.name,
+				"stornierte_payment_entries": [],
+				"beibehaltene_payment_entries": pes,
+				"neue_si": "",
+				"zahlungsuebernahmen": [],
+				"generator": None,
+			}
 
 		# 2) Korrigierte Rechnung neu erzeugen. Der Korrekturpfad erzeugt gezielt nur
 		#    den betroffenen Typ; Draft-Dubletten dürfen den Ersatz für die stornierte

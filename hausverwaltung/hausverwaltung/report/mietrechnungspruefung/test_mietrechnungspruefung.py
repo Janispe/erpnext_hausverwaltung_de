@@ -400,3 +400,35 @@ class TestMietrechnungspruefung(unittest.TestCase):
         )
 
         self.assertIsNone(result)
+
+
+class TestRechnungNachVertragsende(unittest.TestCase):
+    def _run(self, invoice_map):
+        ended = frappe._dict(name="MV-1", kunde="Customer A", wohnung="WHG-1", von=date(2025, 1, 1), bis=date(2026, 10, 15))
+        with (
+            patch.object(report, "_get_contracts", return_value=[]),
+            patch.object(report, "_get_contracts_ended_before", return_value=[ended]) as ended_loader,
+            patch.object(report, "_get_staffelmieten_by_contract", return_value={}),
+            patch.object(report, "_get_part_months_by_contract", return_value={}),
+            patch.object(report, "get_bk_regelungen_for_contracts", return_value={}),
+            patch.object(report, "_get_invoice_map_for_month", return_value=invoice_map) as invoice_loader,
+            patch.object(report, "enrich_link_titles"),
+        ):
+            _columns, rows = report.execute(
+                {"company": "Test Company", "from_month": "2026-11-01", "to_month": "2026-11-01"}
+            )
+        ended_loader.assert_called_once_with(date(2026, 11, 1))
+        self.assertEqual([c.name for c in invoice_loader.call_args.kwargs["contracts"]], ["MV-1"])
+        return rows
+
+    def test_open_invoice_after_contract_end_is_reported(self):
+        rows = self._run({("MV-1", "Miete"): {"invoice_names": ["SINV-NOV"], "actual_amount": 800.0}})
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "NACH_VERTRAGSENDE")
+        self.assertEqual(rows[0]["expected_amount"], 0.0)
+        self.assertEqual(rows[0]["actual_amount"], 800.0)
+        self.assertEqual(rows[0]["sales_invoice"], "SINV-NOV")
+
+    def test_fully_credited_invoice_after_contract_end_is_not_an_issue(self):
+        rows = self._run({("MV-1", "Miete"): {"invoice_names": ["SINV-NOV", "SINV-NOV-RET"], "actual_amount": 0.0}})
+        self.assertEqual(rows, [])

@@ -228,6 +228,7 @@ function get_staffel_snapshot(frm) {
 			betrag: row.berechnung === "Festbetrag" ? flt(row.betrag) : null,
 		}))
 		.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+	snapshot.vertragszeitraum = { von: frm.doc.von || "", bis: frm.doc.bis || "" };
 	return snapshot;
 }
 
@@ -275,6 +276,19 @@ function get_changed_staffel_scope(before, after) {
 		const from = row.von ? `${row.von.slice(0, 7)}-01` : "1900-01-01";
 		scope[typ] = scope[typ] && scope[typ] < from ? scope[typ] : from;
 	});
+	// Ein geänderter Vertragsbeginn oder ein geändertes Vertragsende betrifft ab
+	// dem früheren Monat alle Kostenarten (Teilmonate, Rechnungen nach Vertragsende).
+	const periodDates = ["von", "bis"]
+		.filter((key) => (before.vertragszeitraum?.[key] || "") !== (after.vertragszeitraum?.[key] || ""))
+		.flatMap((key) => [before.vertragszeitraum?.[key], after.vertragszeitraum?.[key]])
+		.filter(Boolean)
+		.sort();
+	if (periodDates.length) {
+		const from = `${periodDates[0].slice(0, 7)}-01`;
+		Object.values(SOLLSTELLUNG_TYP_BY_STAFFEL_FIELD).forEach((typ) => {
+			scope[typ] = scope[typ] && scope[typ] < from ? scope[typ] : from;
+		});
+	}
 	return scope;
 }
 

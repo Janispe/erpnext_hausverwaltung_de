@@ -230,3 +230,60 @@ class TestKorrigierbareSollstellungenFuerMietvertrag(unittest.TestCase):
 		self.assertEqual(actual["monate"], ["07/2026"])
 		self.assertEqual(actual["aenderungen"][0]["aktuell"], 50)
 		self.assertEqual(actual["aenderungen"][0]["erwartet"], 0)
+
+
+def _empty_diff():
+	return {"fehlend": [], "abweichungen": [], "ueberfluessig": [], "ok": 0}
+
+
+class TestMonateNachVertragsende(unittest.TestCase):
+	def test_pruefe_mietvertrag_checks_months_after_end_but_not_before_start(self):
+		mv = SimpleNamespace(
+			name="MV-1",
+			von=date(2026, 2, 1),
+			bis=date(2026, 10, 15),
+			as_dict=lambda: {"name": "MV-1", "wohnung": "WOHNUNG-1"},
+		)
+		with (
+			patch.object(check_mietrechnungen.frappe, "get_doc", return_value=mv),
+			patch.object(check_mietrechnungen, "_resolve_company", return_value="Company"),
+			patch.object(check_mietrechnungen, "_kunde_des_vertrags", return_value="CUST-1"),
+			patch.object(
+				check_mietrechnungen,
+				"_aktivitaets_monate_fuer_mv",
+				return_value={(2026, 1), (2026, 10), (2026, 11)},
+			),
+			patch.object(check_mietrechnungen, "_diff_for_mv_monat", return_value=_empty_diff()) as diff,
+		):
+			check_mietrechnungen.pruefe_mietvertrag("MV-1")
+
+		# January lies before the start (legacy imports); November after the end
+		# must be checked so that an invoice there is reported as superfluous.
+		self.assertEqual(
+			[entry.args[1] for entry in diff.call_args_list], [date(2026, 10, 1), date(2026, 11, 1)]
+		)
+
+	def test_pruefe_durchlauf_checks_ended_contract_only_with_invoice_in_run(self):
+		doc = SimpleNamespace(
+			jahr=2026,
+			monat=11,
+			company="Company",
+			get=lambda field: (
+				[SimpleNamespace(as_dict=lambda: {"mietvertrag": "MV-ENDED", "typ": "Miete"})]
+				if field == "rechnungen"
+				else []
+			),
+		)
+		vertraege = [
+			SimpleNamespace(name="MV-ENDED", von=date(2020, 1, 1), bis=date(2026, 10, 15)),
+			SimpleNamespace(name="MV-OLD", von=date(2020, 1, 1), bis=date(2024, 5, 31)),
+			SimpleNamespace(name="MV-LATER", von=date(2027, 1, 1), bis=None),
+		]
+		with (
+			patch.object(check_mietrechnungen.frappe, "get_doc", return_value=doc),
+			patch.object(check_mietrechnungen.frappe, "get_all", return_value=vertraege),
+			patch.object(check_mietrechnungen, "_diff_for_mv_monat", return_value=_empty_diff()) as diff,
+		):
+			check_mietrechnungen.pruefe_durchlauf("DL-1")
+
+		self.assertEqual([entry.args[0].name for entry in diff.call_args_list], ["MV-ENDED"])

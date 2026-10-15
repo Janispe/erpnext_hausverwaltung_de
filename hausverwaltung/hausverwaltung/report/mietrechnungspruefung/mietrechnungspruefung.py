@@ -4,7 +4,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 import frappe
 from frappe import _
-from frappe.utils import add_months, cint, flt, get_first_day, get_last_day, getdate
+from frappe.utils import add_months, cint, flt, formatdate, get_first_day, get_last_day, getdate
 
 from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
     BK_REGELUNG_VORAUSZAHLUNG,
@@ -56,14 +56,16 @@ def execute(filters=None):
     staffel_by_contract = _get_staffelmieten_by_contract([c.name for c in contracts])
     part_month_by_contract = _get_part_months_by_contract([c.name for c in contracts])
     bk_regelungen_by_contract = get_bk_regelungen_for_contracts([c.name for c in contracts])
+    ended_contracts = _get_contracts_ended_before(to_month)
 
     rows = []
     for month_start in month_starts:
         active_contracts = [c for c in contracts if _contract_overlaps_month(c, month_start)]
+        ended_in_month = [c for c in ended_contracts if getdate(c.bis) < month_start]
         month_invoice_map = _get_invoice_map_for_month(
             company=company,
             month_start=month_start,
-            contracts=active_contracts,
+            contracts=active_contracts + ended_in_month,
         )
         month_label = month_start.strftime("%Y-%m")
 
@@ -95,25 +97,36 @@ def execute(filters=None):
                 if not _should_emit_row(status, show_ok_rows, only_issues):
                     continue
 
-                invoice_names = invoice_bucket.get("invoice_names") or []
-                sales_invoice = invoice_names[0] if invoice_names else ""
-                if len(invoice_names) > 1:
-                    details = f"{details} | Weitere Rechnungen: {', '.join(invoice_names[1:])}"
-
                 rows.append(
-                    {
-                        "monat": month_label,
-                        "mietvertrag": contract.name,
-                        "wohnung": contract.wohnung,
-                        "kunde": contract.kunde,
-                        "typ": typ,
-                        "status": status,
-                        "expected_amount": round(expected_amount, 2),
-                        "actual_amount": round(actual_amount, 2),
-                        "delta": round(delta, 2),
-                        "sales_invoice": sales_invoice,
-                        "details": details,
-                    }
+                    _report_row(
+                        month_label, contract, typ, status, expected_amount, actual_amount, delta,
+                        invoice_bucket.get("invoice_names") or [], details,
+                    )
+                )
+
+        # Rechnungen für Monate nach Vertragsende (z.B. Auszug nach bereits
+        # erzeugter Sollstellung): Das Soll ist 0, jede Restforderung fällt auf.
+        for contract in ended_in_month:
+            for typ in INVOICE_TYPES:
+                invoice_bucket = month_invoice_map.get((contract.name, typ))
+                if not invoice_bucket or not invoice_bucket.get("invoice_names"):
+                    continue
+                actual_amount = flt(invoice_bucket.get("actual_amount") or 0)
+                if abs(actual_amount) >= SUM_TOLERANCE:
+                    status = "NACH_VERTRAGSENDE"
+                    details = _("Rechnung für einen Monat nach Vertragsende ({0}).").format(
+                        formatdate(contract.bis)
+                    )
+                else:
+                    status = "OK"
+                    details = _("Rechnung nach Vertragsende ist vollständig gutgeschrieben.")
+                if not _should_emit_row(status, show_ok_rows, only_issues):
+                    continue
+                rows.append(
+                    _report_row(
+                        month_label, contract, typ, status, 0.0, actual_amount, actual_amount,
+                        invoice_bucket["invoice_names"], details,
+                    )
                 )
 
     rows.sort(key=lambda r: (r.get("monat") or "", r.get("wohnung") or "", r.get("mietvertrag") or "", r.get("typ") or ""))
@@ -166,6 +179,51 @@ def _get_contracts(period_start: date, period_end: date) -> list[frappe._dict]:
         {"period_start": period_start, "period_end": period_end},
         as_dict=True,
     )
+
+
+def _get_contracts_ended_before(month_start: date) -> list[frappe._dict]:
+    """Verträge, die vor ``month_start`` enden; ihre Rechnungen danach sind überflüssig."""
+    return frappe.db.sql(
+        """
+        SELECT name, kunde, wohnung, von, bis
+        FROM `tabMietvertrag`
+        WHERE docstatus != 2
+          AND bis IS NOT NULL
+          AND bis < %(month_start)s
+        ORDER BY wohnung ASC, name ASC
+        """,
+        {"month_start": month_start},
+        as_dict=True,
+    )
+
+
+def _report_row(
+    month_label: str,
+    contract: frappe._dict,
+    typ: str,
+    status: str,
+    expected_amount: float,
+    actual_amount: float,
+    delta: float,
+    invoice_names: list[str],
+    details: str,
+) -> dict:
+    sales_invoice = invoice_names[0] if invoice_names else ""
+    if len(invoice_names) > 1:
+        details = f"{details} | Weitere Rechnungen: {', '.join(invoice_names[1:])}"
+    return {
+        "monat": month_label,
+        "mietvertrag": contract.name,
+        "wohnung": contract.wohnung,
+        "kunde": contract.kunde,
+        "typ": typ,
+        "status": status,
+        "expected_amount": round(expected_amount, 2),
+        "actual_amount": round(actual_amount, 2),
+        "delta": round(delta, 2),
+        "sales_invoice": sales_invoice,
+        "details": details,
+    }
 
 
 def _get_staffelmieten_by_contract(contract_names: list[str]) -> dict[str, dict[str, list[frappe._dict]]]:

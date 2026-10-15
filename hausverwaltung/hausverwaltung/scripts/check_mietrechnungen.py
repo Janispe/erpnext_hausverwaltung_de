@@ -337,11 +337,14 @@ def pruefe_durchlauf(durchlauf: str) -> dict:
 	ok = 0
 
 	month_start, month_end_excl, _days = _month_window(anker)
+	vertraege_mit_rechnung = {r.get("mietvertrag") for r in rechnungen_rows if r.get("mietvertrag")}
 	for v in vertrage:
 		c_start = v.von or date(1900, 1, 1)
 		c_end_excl = (v.bis + timedelta(days=1)) if v.bis else date(9999, 12, 31)
 		_, _, ov_days = _overlap(month_start, month_end_excl, c_start, c_end_excl)
-		if ov_days == 0:
+		# Nach Vertragsende nur Verträge mit Rechnung in diesem Durchlauf prüfen:
+		# Soll ist 0, die Rechnung wird als überflüssig gemeldet.
+		if ov_days == 0 and (_month_before_contract_start(v, anker) or v.name not in vertraege_mit_rechnung):
 			continue
 		result = _diff_for_mv_monat(
 			v,
@@ -366,6 +369,17 @@ def pruefe_durchlauf(durchlauf: str) -> dict:
 			"ok_count": ok,
 		}
 	)
+
+
+def _month_before_contract_start(mv_row, anker: date) -> bool:
+	"""Monate vor Vertragsbeginn bleiben außen vor (Legacy-Importe mit früheren SIs).
+
+	Monate nach Vertragsende werden dagegen geprüft: Das Soll ist dort 0, eine
+	vorhandene Rechnung (z.B. Auszug nach bereits erzeugter Sollstellung) wird
+	als überflüssig gemeldet.
+	"""
+	_month_start, month_end_excl, _days = _month_window(anker)
+	return bool(mv_row.von) and month_end_excl <= getdate(mv_row.von)
 
 
 def _aktivitaets_monate_fuer_mv(
@@ -457,13 +471,7 @@ def pruefe_mietvertrag(
 		)
 		if not typen:
 			continue
-		# Kontrakt muss diesen Monat noch überschneiden — sonst macht eine
-		# Soll-Berechnung keinen Sinn (z.B. Vertrag endete 2023 aber alte SI von 2020).
-		c_start = mv.von or date(1900, 1, 1)
-		c_end_excl = (mv.bis + timedelta(days=1)) if mv.bis else date(9999, 12, 31)
-		month_start, month_end_excl, _days = _month_window(anker)
-		_, _, ov_days = _overlap(month_start, month_end_excl, c_start, c_end_excl)
-		if ov_days == 0:
+		if _month_before_contract_start(mv, anker):
 			continue
 		result = _diff_for_mv_monat(mv_dict, anker, company, typen=typen)
 		if result["fehlend"] or result["abweichungen"] or result["ueberfluessig"]:
