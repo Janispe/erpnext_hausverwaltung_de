@@ -18,6 +18,7 @@
   "auftraggeber",
   "verwendungszweck",
   "currency",
+  "transaction_id",
   "bank_transaction",
   "bank_transaction_created_here",
   "payment_document_type",
@@ -219,6 +220,13 @@
    "fieldtype": "Data",
    "label": "Fehler",
    "read_only": 1
+  },
+  {
+   "fieldname": "transaction_id",
+   "fieldtype": "Data",
+   "label": "Bank-Transaktions-ID",
+   "read_only": 1,
+   "no_copy": 1
   }
  ],
  "istable": 1,

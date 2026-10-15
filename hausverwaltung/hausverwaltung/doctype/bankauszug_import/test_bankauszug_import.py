@@ -16,6 +16,14 @@ _lock_bank_booking_scope = bi._lock_bank_booking_scope
 
 class TestBankauszugImport(unittest.TestCase):
     def setUp(self):
+        # This class uses fake import documents. Status persistence must not
+        # escape those fakes and write to a connected site.
+        status_patcher = patch.object(bi.frappe.db, "set_value")
+        status_patcher.start()
+        self.addCleanup(status_patcher.stop)
+        accounting_patcher = patch.object(bi, "lock_accounting_scope")
+        self.accounting_lock = accounting_patcher.start()
+        self.addCleanup(accounting_patcher.stop)
         self._scope_lock_patcher = patch.object(bi, "_lock_bank_booking_scope")
         self.scope_lock = self._scope_lock_patcher.start()
         self.addCleanup(self._scope_lock_patcher.stop)
@@ -43,7 +51,8 @@ class TestBankauszugImport(unittest.TestCase):
             "sql",
             side_effect=[
                 [("Bank A",)],
-                [("Bank A",), ("Bank B",)],
+                [("Bank A", "Company A"), ("Bank B", "Company B")],
+                [("Bank A", "Company A"), ("Bank B", "Company B")],
                 [("IMP-1", "Bank A")],
                 [("ROW-1",)],
             ],
@@ -54,12 +63,134 @@ class TestBankauszugImport(unittest.TestCase):
                 additional_bank_accounts=["Bank B"],
             )
 
-        account_lock = sql.call_args_list[1]
+        self.accounting_lock.assert_called_once()
+        self.assertEqual(set(self.accounting_lock.call_args.args[0]), {"Company A", "Company B"})
+        account_lock = sql.call_args_list[2]
         self.assertIn("WHERE name IN", account_lock.args[0])
         self.assertIn("ORDER BY name", account_lock.args[0])
         self.assertIn("FOR UPDATE", account_lock.args[0])
         self.assertEqual(account_lock.args[1], ("Bank A", "Bank B"))
         self.assertNotIn("is_company_account = 1", account_lock.args[0])
+
+    def test_identical_csv_payments_are_preserved_and_reimported_one_to_one(self):
+        stored = []
+        meta = self._FakeMeta(["date", "deposit", "withdrawal", "description", "bank_party_iban"])
+
+        def lookup(query, values, **kwargs):
+            excluded = set(values.get("exclude_names", ()))
+            return [item for item in stored if item["name"] not in excluded]
+
+        def insert(doc, row, *args):
+            name = f"BT-{len(stored) + 1}"
+            stored.append({"name": name, "description": row.verwendungszweck})
+            return frappe._dict(name=name), True
+
+        with (
+            patch.object(bi.frappe, "get_meta", return_value=meta),
+            patch.object(bi.frappe.db, "sql", side_effect=lookup),
+            patch.object(bi.frappe.db, "savepoint"),
+            patch.object(bi, "_insert_bank_transaction_from_row", side_effect=insert),
+            patch.object(bi, "_apply_rules_to_created_bank_transaction", return_value={}),
+        ):
+            for attempt in range(2):
+                rows = [self._FakeRow(name=f"ROW-{attempt}-{i}", verwendungszweck="Miete") for i in range(2)]
+                for i, row in enumerate(rows):
+                    row.idx = i + 1
+                    row.betrag = 50
+                doc = self._FakeDoc(f"IMP-{attempt}", rows)
+                outcomes = [bi._process_bankimport_row(
+                    doc, row, meta=meta, fieldnames=set(), cutoff_date=None, skip_auto_match=True,
+                ) for row in rows]
+                self.assertEqual([row.bank_transaction for row in rows], ["BT-1", "BT-2"])
+                self.assertEqual(len(stored), 2)
+                self.assertEqual(sum(row.betrag for row in rows), 100)
+                self.assertTrue(all(outcome.get("created" if attempt == 0 else "existing") for outcome in outcomes))
+
+    def test_bank_id_has_priority_over_exclusion_and_description(self):
+        meta = self._FakeMeta(["date", "deposit", "withdrawal", "description", "transaction_id"])
+        with patch.object(bi.frappe, "get_meta", return_value=meta), patch.object(
+            bi.frappe.db, "sql", return_value=[{
+                "name": "BT-ID", "date": "2026-10-10", "deposit": 50, "description": "Alter Text",
+            }],
+        ) as sql:
+            result = bi._find_existing_bank_transaction(
+                bank_account="BANK-1", buchungstag="2026-10-10", betrag=50,
+                richtung="Eingang", verwendungszweck="Neuer Text", transaction_id="ID-1",
+                exclude_names={"BT-ID"}, strict=True,
+            )
+        self.assertEqual(result, "BT-ID")
+        self.assertEqual(sql.call_args.args[1]["transaction_id"], "ID-1")
+        self.assertNotIn("exclude_names", sql.call_args.args[1])
+
+    def test_csv_preview_preserves_bank_ids_and_matches_identical_rows_one_to_one(self):
+        for bank_ids in (("", ""), ("ID-1", "ID-2")):
+            with self.subTest(bank_ids=bank_ids):
+                doc = self._FakeDoc("IMP-PREVIEW", [])
+                doc.csv_file, doc.encoding, doc.delimiter = "test.csv", "auto", ";"
+                doc.set = lambda key, value: setattr(doc, key, value)
+                doc.append = lambda key, value: getattr(doc, key).append(frappe._dict(value))
+                csv_text = "Buchungstag;Betrag;IBAN;Verwendungszweck;Transaktions-ID\n" + "".join(
+                    f"10.10.2026;50,00;DE123;Miete;{bank_id}\n" for bank_id in bank_ids
+                )
+                candidates = [
+                    {"name": f"BT-{i}", "description": "Miete", "date": "2026-10-10", "deposit": 50}
+                    for i in (1, 2)
+                ]
+
+                def lookup(query, values, **kwargs):
+                    if values.get("transaction_id"):
+                        return [candidates[int(values["transaction_id"][-1]) - 1]]
+                    return [item for item in candidates if item["name"] not in values.get("exclude_names", ())]
+
+                with (
+                    patch.object(bi.frappe, "get_doc", return_value=doc),
+                    patch.object(bi, "_decode_file", return_value=csv_text),
+                    patch.object(bi, "match_party_for_row", return_value=self._party_match()),
+                    patch.object(bi.frappe, "get_meta", return_value=self._FakeMeta([
+                        "date", "deposit", "withdrawal", "description", "transaction_id",
+                    ])),
+                    patch.object(bi.frappe.db, "sql", side_effect=lookup),
+                    patch.object(bi.frappe.db, "get_value", return_value=None),
+                    patch.object(bi, "_auto_create_transactions_for_ready_rows", return_value={}),
+                    patch.object(bi, "_recompute_doc_status"),
+                ):
+                    result = bi.parse_csv(doc.name)
+                self.assertEqual([row["bank_transaction"] for row in result["rows"]], ["BT-1", "BT-2"])
+                self.assertEqual([row["transaction_id"] for row in result["rows"]], list(bank_ids))
+
+    def test_conflicting_bank_id_fails_closed(self):
+        meta = self._FakeMeta(["date", "deposit", "withdrawal", "transaction_id"])
+        with patch.object(bi.frappe, "get_meta", return_value=meta), patch.object(
+            bi.frappe.db, "sql", return_value=[{"name": "BT-ID", "date": "2026-10-10", "deposit": 75}],
+        ):
+            with self.assertRaises(frappe.ValidationError):
+                bi._find_existing_bank_transaction(
+                    bank_account="BANK-1", buchungstag="2026-10-10", betrag=50,
+                    richtung="Eingang", transaction_id="ID-1", strict=True,
+                )
+
+    def test_distinct_payment_confirmation_rejects_retry_and_bank_id(self):
+        row = self._FakeRow(name="ROW-1")
+        row.bank_transaction = "BT-OLD"
+        row.row_status = "schon vorhanden"
+        doc = self._FakeDoc("IMP-1", [row])
+        with patch.object(bi.frappe, "get_doc", return_value=doc), patch.object(
+            bi, "_process_bankimport_row", return_value={"created": "BT-NEW"},
+        ) as process, patch.object(bi.frappe, "get_meta", return_value=self._FakeMeta([])), patch.object(
+            bi.frappe.db, "savepoint",
+        ), patch.object(bi, "_bankimport_start_date", return_value=None), patch.object(
+            bi, "_recompute_doc_status",
+        ), patch.object(bi, "_refresh_and_persist_saldo"):
+            row.transaction_id = "ID-1"
+            with self.assertRaises(frappe.ValidationError):
+                bi.create_distinct_bank_transaction_for_row("IMP-1", row.name, "BT-OLD")
+            row.transaction_id = None
+            result = bi.create_distinct_bank_transaction_for_row("IMP-1", row.name, "BT-OLD")
+            self.assertEqual(result["bank_transaction"], "BT-NEW")
+            self.assertTrue(process.call_args.kwargs["force_new"])
+            with self.assertRaises(frappe.ValidationError):
+                bi.create_distinct_bank_transaction_for_row("IMP-1", row.name, "BT-OLD")
+            process.assert_called_once()
 
     class _FakeRow:
         def __init__(
@@ -1060,6 +1191,8 @@ class TestBankauszugImport(unittest.TestCase):
             iban=row.iban,
             verwendungszweck=row.verwendungszweck,
             strict=True,
+            transaction_id=None,
+            exclude_names=set(),
         )
         new_doc.assert_not_called()
         rollback.assert_called_once_with(save_point="bankimport_create_transaction_row")
@@ -2994,6 +3127,9 @@ class TestBankauszugImport(unittest.TestCase):
         )
 
     def test_create_journal_entry_for_row_sets_journal_entry_and_success_status(self):
+        refresh_patch = patch.object(bi, "_refresh_and_persist_saldo")
+        refresh_patch.start()
+        self.addCleanup(refresh_patch.stop)
         row = self._FakeRow(name="ROW-JE", iban="DE16")
         row.bank_transaction = "BT-JE"
         row.betrag = 12.34
@@ -3125,6 +3261,9 @@ class TestBankauszugImport(unittest.TestCase):
         refresh.assert_not_called()
 
     def test_create_journal_entry_for_row_with_splits_passes_list_to_backend(self):
+        refresh_patch = patch.object(bi, "_refresh_and_persist_saldo")
+        refresh_patch.start()
+        self.addCleanup(refresh_patch.stop)
         import json as _json
 
         row = self._FakeRow(name="ROW-JE-SPLIT", iban="DE16")
@@ -4890,7 +5029,7 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         for bt_name in result["created"]:
             self.created_docs.append(("Bank Transaction", bt_name))
 
-        self.assertEqual(len(result["created"]), 21)
+        self.assertEqual(len(result["created"]), 23)
         self.assertEqual(len(result["errors"]), 3)
         self.assertEqual(result["created_without_party"], 6)
         self.assertEqual(result["skipped_before_cutoff"], 4)
@@ -4938,9 +5077,9 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
             duplicate_rows = self._rows_by_purpose(doc, purpose)
             self.assertEqual(len(duplicate_rows), 2)
             statuses = sorted(row.row_status for row in duplicate_rows)
-            self.assertEqual(statuses, ["schon vorhanden", "success"])
+            self.assertEqual(statuses, ["success", "success"])
             bt_names = {row.bank_transaction for row in duplicate_rows}
-            self.assertEqual(len(bt_names), 1)
+            self.assertEqual(len(bt_names), 2)
 
         for idx in range(5):
             row = self._row_by_purpose(doc, f"Chaos ohne Party {idx}")

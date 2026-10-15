@@ -10,6 +10,19 @@ from hausverwaltung.hausverwaltung.scripts import generate_mietrechnungen
 
 
 class TestGenerateMietrechnungen(unittest.TestCase):
+    def test_run_acquires_entry_lock_before_financial_setup(self):
+        events = []
+        with patch.object(generate_mietrechnungen, "_resolve_company", return_value="COMP-1"), patch.object(
+            generate_mietrechnungen, "lock_accounting_scope", side_effect=lambda: events.append("lock"),
+        ), patch(
+            "hausverwaltung.hausverwaltung.utils.income_accounts.get_hv_income_accounts",
+            side_effect=RuntimeError("stop before setup"),
+        ) as setup:
+            with self.assertRaisesRegex(RuntimeError, "stop before setup"):
+                generate_mietrechnungen.generate_miet_und_bk_rechnungen(monat=10, jahr=2026)
+            self.assertEqual(events, ["lock"])
+            setup.assert_called_once_with("COMP-1")
+
     def _charge_tables(self, staffels, part_months=()):
         """Mock frappe.get_all for one contract's staffel tables and part-month rules."""
 

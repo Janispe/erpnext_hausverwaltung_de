@@ -184,6 +184,13 @@ export async function createBankTransactionForRow(name, rowName, allowMissingPar
 	});
 }
 
+export async function confirmDistinctPayment(name, rowName, bankTransaction) {
+	if (!embedded) return { ok: true, bank_transaction: "BT-DEMO-DISTINCT", mock: true };
+	return await rpc("confirm_distinct_payment", {
+		docname: name, row_name: rowName, existing_bank_transaction: bankTransaction,
+	});
+}
+
 export async function retryAutoMatch(name, rowName = "") {
 	if (!embedded) return { processed: 0, matched: [], unmatched: [], errors: [], mock: true };
 	return await rpc("retry_auto_match", { docname: name, row_name: rowName || "" });

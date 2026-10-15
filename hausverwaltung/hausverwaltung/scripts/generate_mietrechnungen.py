@@ -20,6 +20,7 @@ from hausverwaltung.hausverwaltung.utils.mietberechnung import (
     monthly_charge_reference_date,
 )
 from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
+from hausverwaltung.hausverwaltung.utils.booking_locks import lock_accounting_scope
 
 
 def _parse_monat_jahr(monat: str | int | None, jahr: str | int | None) -> date:
@@ -794,6 +795,9 @@ def generate_miet_und_bk_rechnungen(
     """
     datum = _parse_monat_jahr(monat, jahr)
     company = _resolve_company(company)
+    # The bank import takes this same entry lock before locking Bank Accounts.
+    # Acquire it before touching any contract/property/account, including setup.
+    lock_accounting_scope()
     only_typ = (rechnungstyp or "").strip() or None
     if only_typ and only_typ not in {"Miete", "Betriebskosten", "Heizkosten", "Untermietzuschlag"}:
         frappe.throw(_("Unbekannter Rechnungstyp: {0}").format(only_typ))

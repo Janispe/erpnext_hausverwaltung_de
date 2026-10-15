@@ -1350,6 +1350,28 @@ function BookingActions({ docname, row, onActionDone, notify }) {
 
 // ───────────────────────── Panel-Wurzel ─────────────────────────────────────
 
+export function DistinctPaymentConfirmation({ docname, row, onActionDone, notify }) {
+	const [confirmed, setConfirmed] = useState(false);
+	const [busy, run] = useAction(notify);
+	return (
+		<div className="match-section">
+			<div className="sec-label">Identische weitere Zahlung</div>
+			<p>Ohne eindeutige Bank-ID kann eine weitere Zahlung dieselben Angaben wie eine bereits importierte Zahlung haben. Prüfe den Kontoauszug, bevor du einen zusätzlichen Eingang oder Ausgang anlegst.</p>
+			<label>
+				<input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
+				 Diese Zeile ist eine weitere echte Zahlung und kein erneuter Import derselben Zahlung.
+			</label>
+			<button className="btn sm" disabled={!confirmed || busy} onClick={() =>
+				run(() => api.confirmDistinctPayment(docname, row.id, row.bankTransaction), {
+					success: "Zusätzliche Bank-Transaktion angelegt. Bitte jetzt zuordnen.",
+				}).then((result) => { if (result) onActionDone({ advance: false }); })
+			}>
+				{busy ? <Spinner /> : null} Als zusätzliche Zahlung anlegen
+			</button>
+		</div>
+	);
+}
+
 export function MatchPanel({ docname, row, onActionDone, notify }) {
 	const [splitOpen, setSplitOpen] = useState(false);
 	const [partyDialogOpen, setPartyDialogOpen] = useState(false);
@@ -1458,6 +1480,9 @@ export function MatchPanel({ docname, row, onActionDone, notify }) {
 				)}
 				{row.rowStatus !== "error" && phase === 3 && !row.customerPayments?.length && <BookingActions docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 				{row.rowStatus !== "error" && phase === 4 && <DoneView row={row} />}
+				{row.rowStatus === "existing" && !row.transactionId && !hasVoucher && (
+					<DistinctPaymentConfirmation key={`${row.id}:${row.bankTransaction}`} docname={docname} row={row} onActionDone={onActionDone} notify={notify} />
+				)}
 			</div>
 			{splitOpen && <CustomerSplitDialog key={row.id} docname={docname} row={row} onClose={() => setSplitOpen(false)} onActionDone={onActionDone} notify={notify} />}
 			{partyDialogOpen && (
