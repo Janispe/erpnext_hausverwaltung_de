@@ -314,39 +314,66 @@ def delete_vorschlag(name: str, also_delete_file: int = 0) -> dict:
 	- Booked-Vorschläge werden NICHT gelöscht (sie sind über
 	  ``linked_purchase_invoice`` mit einer PI verknüpft).
 	- ``also_delete_file=1``: zusätzlich das verknüpfte File-Doc löschen,
-	  aber nur wenn kein anderer Vorschlag noch auf die Datei verweist.
+	  aber nur wenn weder Belege noch andere Dokumente die Datei verwenden.
 	"""
-	v = frappe.get_doc("Buchungs Vorschlag", name)
+	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
 	if v.status == "Booked":
 		frappe.throw(
 			"Bereits gebuchter Vorschlag kann nicht gelöscht werden — bitte zuerst die verknüpfte Eingangsrechnung stornieren."
 		)
 	file_url = v.file_url
+	files = []
+	if file_url:
+		files = frappe.db.sql(
+			"""SELECT name, attached_to_doctype, attached_to_name
+			FROM `tabFile` WHERE file_url = %s ORDER BY name FOR UPDATE""",
+			(file_url,),
+			as_dict=True,
+		)
+	# Frappe deletes a document's attachments automatically. Detach this upload
+	# first so deleting just the proposal also honours the unchecked file option.
+	for file in files:
+		if file.attached_to_doctype == "Buchungs Vorschlag" and file.attached_to_name == name:
+			frappe.db.set_value(
+				"File",
+				file.name,
+				{"attached_to_doctype": None, "attached_to_name": None, "attached_to_field": None},
+				update_modified=False,
+			)
+			file.attached_to_doctype = file.attached_to_name = None
 	frappe.delete_doc("Buchungs Vorschlag", name, force=1, ignore_permissions=True)
 
 	deleted_file = False
+	file_preserved_reason = None
 	if int(also_delete_file or 0) and file_url:
-		# Nur löschen wenn KEIN anderer Vorschlag mehr auf die Datei zeigt.
-		others = frappe.get_all(
-			"Buchungs Vorschlag",
-			filters={"file_url": file_url},
-			limit_page_length=1,
-		)
-		if not others:
-			try:
-				file_names = frappe.get_all(
-					"File",
-					filters={"file_url": file_url},
-					pluck="name",
-				)
-				for fname in file_names:
-					frappe.delete_doc("File", fname, force=1, ignore_permissions=True)
-					deleted_file = True
-			except Exception:
-				pass
+		if v.get("linked_purchase_invoice"):
+			# Cancellation deliberately leaves this historical invoice link intact.
+			file_preserved_reason = "linked_invoice"
+		elif frappe.db.exists("Buchungs Vorschlag", {"file_url": file_url}):
+			file_preserved_reason = "other_proposal"
+		elif any(file.attached_to_doctype or file.attached_to_name for file in files):
+			file_preserved_reason = "attached_document"
+		else:
+			from frappe.model.delete_doc import check_if_doc_is_dynamically_linked, check_if_doc_is_linked
+
+			# File.on_trash removes bytes before Frappe checks Link fields. Preflight
+			# every copy before deleting any so another document's File link is safe.
+			for file in files:
+				file_doc = frappe.get_doc("File", file.name, for_update=True)
+				try:
+					check_if_doc_is_linked(file_doc)
+					check_if_doc_is_dynamically_linked(file_doc)
+				except frappe.LinkExistsError:
+					frappe.clear_last_message()
+					file_preserved_reason = "linked_document"
+					break
+			if not file_preserved_reason:
+				for file in files:
+					frappe.delete_doc("File", file.name, ignore_permissions=True)
+				deleted_file = bool(files)
 
 	frappe.db.commit()
-	return {"name": name, "deleted_file": deleted_file}
+	return {"name": name, "deleted_file": deleted_file, "file_preserved_reason": file_preserved_reason}
 
 
 @frappe.whitelist()

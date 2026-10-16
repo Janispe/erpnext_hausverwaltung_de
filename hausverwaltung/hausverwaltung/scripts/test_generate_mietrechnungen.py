@@ -2,7 +2,7 @@ import json
 import unittest
 from datetime import date
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 
@@ -10,6 +10,75 @@ from hausverwaltung.hausverwaltung.scripts import generate_mietrechnungen
 
 
 class TestGenerateMietrechnungen(unittest.TestCase):
+    def test_monthly_run_excludes_cancelled_contract_and_bills_its_replacement(self):
+        contracts = [
+            frappe._dict(name="MV-HISTORY", docstatus=1, von=date(2025, 1, 1), bis=date(2026, 6, 30)),
+            frappe._dict(name="MV-CANCELLED", docstatus=2, von=date(2026, 7, 1), bis=None),
+            frappe._dict(name="MV-REPLACEMENT", docstatus=0, von=date(2026, 7, 1), bis=None),
+            frappe._dict(name="MV-REGULAR", docstatus=1, von=date(2025, 1, 1), bis=None),
+            frappe._dict(name="MV-FUTURE", docstatus=0, von=date(2027, 1, 1), bis=None),
+        ]
+        by_name = {contract.name: contract for contract in contracts}
+
+        def get_contracts(doctype, *, filters, **kwargs):
+            self.assertEqual(doctype, "Mietvertrag")
+            selected = contracts
+            for field, condition in filters.items():
+                if isinstance(condition, (list, tuple)):
+                    operator, value = condition
+                    self.assertEqual(operator, "<")
+                    selected = [row for row in selected if row[field] < value]
+                else:
+                    selected = [row for row in selected if row[field] == condition]
+            return selected
+
+        def lock_contract(name):
+            contract = by_name[name]
+            if contract.docstatus == 2:
+                raise AssertionError("A cancelled contract must not enter the invoice run")
+            return frappe._dict(
+                contract,
+                kunde=f"CUSTOMER-{name}",
+                wohnung="WHG-2" if name == "MV-REGULAR" else "WHG-1",
+                immobilie="IMMO-1",
+                cost_center="CC-1",
+                company="COMP-1",
+                immobilie_erworben_am=None,
+            )
+
+        for month, contract_name, expected in (
+            (10, None, {"MV-REPLACEMENT", "MV-REGULAR"}),
+            (6, None, {"MV-HISTORY", "MV-REGULAR"}),
+            (10, "MV-REPLACEMENT", {"MV-REPLACEMENT"}),
+        ):
+            with (
+                self.subTest(month=month, contract=contract_name),
+                patch.object(generate_mietrechnungen, "_resolve_company", return_value="COMP-1"),
+                patch.object(generate_mietrechnungen, "lock_accounting_scope"),
+                patch("hausverwaltung.hausverwaltung.utils.income_accounts.get_hv_income_accounts", return_value={}),
+                patch("hausverwaltung.hausverwaltung.utils.rent_items.ensure_rent_items"),
+                patch.object(generate_mietrechnungen.frappe, "get_doc", return_value=MagicMock(name="run_log")),
+                patch.object(generate_mietrechnungen.frappe, "get_all", side_effect=get_contracts),
+                patch.object(generate_mietrechnungen, "lock_mietvertrag_booking_identity", side_effect=lock_contract),
+                patch.object(generate_mietrechnungen, "_miete_betrag_fuer_monat", return_value=600),
+                patch.object(generate_mietrechnungen, "_bk_regelung_und_betrag_fuer_monat", return_value=("Vorauszahlung", 100)),
+                patch.object(generate_mietrechnungen, "_monatsbetrag_fuer_kostenart", side_effect=lambda mv, typ, anchor: 50 if typ == "Heizkosten" else 0),
+                patch.object(generate_mietrechnungen, "_invoice_exists", return_value=False),
+                patch.object(generate_mietrechnungen, "_create_invoice", side_effect=lambda *args, **kwargs: f"SI-{args[0]}-{args[2]}") as create,
+            ):
+                result = generate_mietrechnungen.generate_miet_und_bk_rechnungen(
+                    monat=month, jahr=2026, company="COMP-1", mietvertrag=contract_name,
+                )
+
+            self.assertEqual(
+                {(call.args[0], call.args[2]) for call in create.call_args_list},
+                {(f"CUSTOMER-{name}", typ) for name in expected for typ in ("Miete", "Betriebskosten", "Heizkosten")},
+            )
+            self.assertEqual(result["created"], {
+                "Miete": len(expected), "Betriebskosten": len(expected),
+                "Heizkosten": len(expected), "Untermietzuschlag": 0,
+            })
+
     def test_run_acquires_entry_lock_before_financial_setup(self):
         events = []
         with patch.object(generate_mietrechnungen, "_resolve_company", return_value="COMP-1"), patch.object(

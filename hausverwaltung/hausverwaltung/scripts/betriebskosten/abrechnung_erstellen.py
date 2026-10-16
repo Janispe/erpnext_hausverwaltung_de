@@ -322,7 +322,7 @@ def _ensure_item_with_income(item_code: str, item_name: str, company: Optional[s
 
 
 def _mietvertraege_fuer_zeitraum(wohnung: str, von: str, bis: str) -> List[dict]:
-    where = ["wohnung = %(whg)s", "von <= %(bis)s", "(bis IS NULL OR bis >= %(von)s)"]
+    where = ["wohnung = %(whg)s", "docstatus < 2", "von <= %(bis)s", "(bis IS NULL OR bis >= %(von)s)"]
     params = {"whg": wohnung, "von": getdate(von), "bis": getdate(bis)}
     return frappe.db.sql(
         f"""
@@ -417,6 +417,7 @@ def _bestehender_mietvertrag_fuer_stichtag(wohnung: str, stichtag: str) -> Optio
         SELECT name
         FROM `tabMietvertrag`
         WHERE wohnung = %(wohnung)s
+          AND docstatus < 2
           AND von <= %(stichtag)s
           AND (bis IS NULL OR bis >= %(stichtag)s)
         ORDER BY von DESC

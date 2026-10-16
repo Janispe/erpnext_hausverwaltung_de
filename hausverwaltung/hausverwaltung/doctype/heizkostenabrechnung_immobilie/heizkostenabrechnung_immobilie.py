@@ -851,6 +851,7 @@ def _create_mieter_drafts_for_parent(parent: Document) -> Dict[str, Any]:
 		FROM `tabMietvertrag` mv
 		JOIN `tabWohnung` w ON w.name = mv.wohnung
 		WHERE w.immobilie = %(imm)s
+		  AND mv.docstatus < 2
 		  AND mv.von <= %(bis)s
 		  AND (mv.bis IS NULL OR mv.bis >= %(von)s)
 		ORDER BY mv.wohnung, mv.von

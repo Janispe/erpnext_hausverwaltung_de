@@ -419,6 +419,154 @@ def _gl_distinct_vouchers_subquery(
         params,
     )
 
+
+def _journal_invoice_cash_entries(rows, company, include_non_euer_accounts, cost_centers=None):
+    """Replace cash JE party legs with their invoice accounts, once per GL row.
+
+    The caller selects only live GL entries of journals with an actual bank/cash
+    leg. GL debit/credit and invoice base amounts use the company currency.
+    Signed party legs preserve mixed invoices/credit notes and partial refunds;
+    no allocation is inferred from the net bank amount or another Customer.
+    """
+    from collections import defaultdict
+    from decimal import Decimal
+
+    from hausverwaltung.hausverwaltung.scripts.betriebskosten.rounding import (
+        ROUNDING_METHOD_LARGEST_REMAINDER,
+        round_money_allocations,
+    )
+
+    entries, handled = [], set()
+    cost_centers = set(_normalize_cost_centers(cost_centers))
+    references = defaultdict(list)
+    advances = []
+    invoice_types = {
+        "Sales Invoice": ("customer", "debit_to", "Customer", "Receivable", "income_account"),
+        "Purchase Invoice": ("supplier", "credit_to", "Supplier", "Payable", "expense_account"),
+    }
+    for row in rows:
+        reference_type = row.get("reference_type")
+        if reference_type in invoice_types and row.get("reference_name"):
+            handled.add(row["name"])
+            if not cost_centers or row.get("cost_center") in cost_centers:
+                references[reference_type].append(row)
+        elif (
+            not reference_type and not row.get("reference_name")
+            and row.get("account_type") == "Receivable"
+            and row.get("party_type") == "Customer" and row.get("party")
+        ):
+            advances.append(row)
+
+    def append(row, account, root_type, cash_amount, *, tenant_credit=False):
+        if not cash_amount:
+            return
+        if root_type == "Income":
+            income, expense = cash_amount, 0.0
+        elif root_type == "Expense":
+            income, expense = 0.0, -cash_amount
+        elif include_non_euer_accounts:
+            income, expense = _split_cash_in_out(cash_amount)
+        else:
+            return
+        entry = {
+            "posting_date": row["posting_date"],
+            "account": account,
+            "voucher_type": "Journal Entry",
+            "voucher_no": row["voucher_no"],
+            "remarks": row.get("remarks") or "",
+            "income": income,
+            "expense": expense,
+            "root_type": root_type,
+        }
+        if tenant_credit:
+            entry["euer_relevant_override"] = 1
+        entries.append(entry)
+
+    for doctype, payment_rows in references.items():
+        party_field, party_account, party_type, account_type, item_account = invoice_types[doctype]
+        names = tuple(sorted({row["reference_name"] for row in payment_rows}))
+        params = {"names": names, "company": company}
+        # A later invoice cancellation does not erase earlier cash. Immutable
+        # ledgers retain both the original GL row and its dated reversal.
+        invoices = frappe.db.sql(
+            f"""
+            SELECT name, {party_field} AS party, {party_account} AS party_account
+            FROM `tab{doctype}`
+            WHERE name IN %(names)s AND company = %(company)s AND docstatus IN (1, 2)
+            """,
+            params, as_dict=True,
+        )
+        invoices = {invoice["name"]: invoice for invoice in invoices}
+        components = frappe.db.sql(
+            f"""
+            SELECT item.parent, item.{item_account} AS account,
+                   item.base_net_amount AS amount, acc.root_type
+            FROM `tab{doctype} Item` item
+            INNER JOIN `tabAccount` acc ON acc.name = item.{item_account}
+            WHERE item.parent IN %(names)s AND acc.company = %(company)s
+            UNION ALL
+            SELECT tax.parent, tax.account_head AS account,
+                   tax.base_tax_amount_after_discount_amount
+                   {"* CASE WHEN tax.add_deduct_tax = 'Deduct' THEN -1 ELSE 1 END" if doctype == "Purchase Invoice" else ""} AS amount,
+                   acc.root_type
+            FROM `tab{doctype.replace('Invoice', 'Taxes and Charges')}` tax
+            INNER JOIN `tabAccount` acc ON acc.name = tax.account_head
+            WHERE tax.parent IN %(names)s AND tax.parenttype = '{doctype}'
+              AND acc.company = %(company)s
+              {"AND tax.category != 'Valuation'" if doctype == "Purchase Invoice" else ""}
+            """,
+            params, as_dict=True,
+        )
+        by_invoice = defaultdict(list)
+        for component in components:
+            by_invoice[component["parent"]].append(component)
+        for row in payment_rows:
+            invoice = invoices.get(row["reference_name"])
+            if (
+                not invoice or row.get("party_type") != party_type
+                or row.get("party") != invoice.get("party")
+                or row.get("account") != invoice.get("party_account")
+                or row.get("account_type") != account_type
+            ):
+                frappe.throw(
+                    _("EÜR: Rechnungsreferenz in Journal Entry {0} passt nicht zu einer gebuchten Rechnung dieser Company und Partei.").format(row["voucher_no"]),
+                    frappe.ValidationError,
+                )
+            items = by_invoice[row["reference_name"]]
+            amounts = [Decimal(str(item.get("amount") or 0)) for item in items]
+            total = sum(amounts, Decimal("0"))
+            if not total:
+                frappe.throw(
+                    _("EÜR: Die bezahlte Rechnung {0} hat keine eindeutig aufteilbaren Rechnungsbeträge.").format(row["reference_name"]),
+                    frappe.ValidationError,
+                )
+            # Normalize the billed components, including taxes and header
+            # discounts. This also distributes invoice rounding proportionally.
+            cash = Decimal(str(row.get("credit") or 0)) - Decimal(str(row.get("debit") or 0))
+            allocated = round_money_allocations(
+                ((index, cash * amount / total) for index, amount in enumerate(amounts)),
+                ROUNDING_METHOD_LARGEST_REMAINDER,
+                target_total=cash,
+            )
+            for index, item in enumerate(items):
+                append(row, item["account"], item["root_type"], float(allocated[index]))
+
+    if advances:
+        bounds = _get_mieterforderungen_bounds(company)
+        tenant_accounts = _accounts_in_bounds(company, {row["account"] for row in advances}, bounds) if bounds else set()
+        for row in advances:
+            if row["account"] not in tenant_accounts:
+                continue
+            handled.add(row["name"])
+            if cost_centers and row.get("cost_center") not in cost_centers:
+                continue
+            cash = flt(row.get("credit")) - flt(row.get("debit"))
+            # Keep receipts and refunds in the same income bucket, as the PE
+            # summary does, so neither direction becomes a second expense.
+            append(row, "Guthaben Mieter", "Income", cash, tenant_credit=True)
+    return entries, handled
+
+
 def get_data(f):
     company = f.get("company")
     immobilie = f.get("immobilie")
@@ -1256,12 +1404,19 @@ def get_data(f):
     journal_entries = frappe.db.sql(
         f"""
         SELECT
+            gle.name,
             gle.posting_date,
             gle.account,
             gle.debit,
             gle.credit,
             gle.voucher_no,
             gle.remarks,
+            gle.cost_center,
+            gle.party_type,
+            gle.party,
+            gle.against_voucher_type AS reference_type,
+            gle.against_voucher AS reference_name,
+            acc.account_type,
             acc.root_type
         FROM `tabGL Entry` gle
         {" ".join(je_joins)}
@@ -1273,7 +1428,14 @@ def get_data(f):
         as_dict=True,
     )
 
+    invoice_cash_entries, handled_journal_rows = _journal_invoice_cash_entries(
+        journal_entries, company, include_non_euer_accounts,
+        kostenstellen if apply_cost_center_filter else None,
+    )
+    all_entries.extend(invoice_cash_entries)
     for je in journal_entries:
+        if je.get("name") in handled_journal_rows:
+            continue
         root_type = je.get("root_type")
         if root_type == "Income":
             income_val = flt(je.credit) - flt(je.debit)

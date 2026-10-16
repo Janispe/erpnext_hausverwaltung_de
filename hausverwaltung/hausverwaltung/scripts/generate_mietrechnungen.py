@@ -891,7 +891,7 @@ def generate_miet_und_bk_rechnungen(
             },
         )
 
-    vertrag_filters: dict = {}
+    vertrag_filters: dict = {"docstatus": ["<", 2]}
     if mietvertrag:
         vertrag_filters["name"] = mietvertrag
     vertrage = frappe.get_all(

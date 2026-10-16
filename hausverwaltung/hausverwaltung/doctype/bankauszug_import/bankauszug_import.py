@@ -699,9 +699,12 @@ def _sort_import_row_booking_date_key(row: Document, original_index: int) -> Tup
 
 @frappe.whitelist()
 def sort_import_rows(docname: str, sort_by: str) -> Dict[str, Any]:
-    doc = frappe.get_doc("Bankauszug Import", docname)
-    if not frappe.has_permission("Bankauszug Import", "write", doc=doc):
+    if not frappe.has_permission("Bankauszug Import", "write", doc=docname):
         frappe.throw("Keine Berechtigung zum Bearbeiten dieses Bankauszug Imports.")
+    # Saving the parent also writes every child field. Read only after the
+    # booking locks, otherwise a concurrent reconciliation can lose its links.
+    _lock_bank_booking_scope(docname)
+    doc = frappe.get_doc("Bankauszug Import", docname, for_update=True)
 
     rows = list(doc.get("rows") or [])
     indexed_rows = list(enumerate(rows))
@@ -856,9 +859,28 @@ def _build_missing_party_warning_payload(doc: Document, row_name: str | None = N
     }
 
 
-def _update_bt_party_from_row(row: Document, *, overwrite: bool = True) -> Dict[str, Any]:
+def _party_relink_block_reason(row: Document, *, bt=None) -> Optional[str]:
+    """Keep a booked identity stable, including reconciliations made outside the import."""
     if _doc_field(row, "customer_payments"):
-        return {"updated": False, "reason": "customer_split"}
+        return "customer_split"
+    if any(_doc_field(row, field) for field in ("payment_entry", "journal_entry", "payment_document")):
+        return "row_has_voucher"
+    bt_name = _get_row_bank_transaction_name(row)
+    if bt is None and bt_name:
+        bt = frappe.get_doc("Bank Transaction", bt_name, for_update=True)
+    if bt is not None and (
+        _doc_field(bt, "payment_entries")
+        or flt(_doc_field(bt, "allocated_amount")) > 0
+        or str(_doc_field(bt, "status") or "").strip().lower() in {"reconciled", "partially reconciled"}
+    ):
+        return "bank_transaction_reconciled"
+    return None
+
+
+def _update_bt_party_from_row(row: Document, *, overwrite: bool = True) -> Dict[str, Any]:
+    blocked = _party_relink_block_reason(row)
+    if blocked:
+        return {"updated": False, "reason": blocked}
     bt_name = _get_row_bank_transaction_name(row)
     if not bt_name:
         return {"updated": False, "reason": "no_bank_transaction"}
@@ -1716,6 +1738,8 @@ def create_party_and_bank_for_row(
         frappe.throw("Party Typ muss Mieter oder Supplier sein.")
 
     row = _get_row_by_name(doc, row_name)
+    if _party_relink_block_reason(row):
+        frappe.throw("Die Partei einer gebuchten oder abgestimmten Zeile kann nicht neu verknüpft werden. Bitte zuerst die Buchung sicher zurücksetzen.")
     name_input = (party_name or row.auftraggeber or row.verwendungszweck or "").strip()
     if not name_input:
         frappe.throw("Kein Name vorhanden. Bitte Name im Dialog eingeben.")
@@ -1769,6 +1793,11 @@ def relink_parties_for_all_rows(docname: str, overwrite: int = 1) -> Dict[str, A
     for row in doc.get("rows") or []:
         processed += 1
         try:
+            blocked = _party_relink_block_reason(row)
+            if blocked:
+                skipped += 1
+                skipped_rows.append({"row": row.name, "reason": blocked})
+                continue
             # Keep row view in sync with the mapping candidate.
             row_target = _resolve_row_party(row)
             if row_target and (row.party_type != row_target[0] or row.party != row_target[1]):
@@ -1833,8 +1862,8 @@ def apply_party_to_row_and_relink(
 
     row = _get_row_by_name(doc, row_name)
     changed_row = False
-    if row.get("customer_payments"):
-        frappe.throw("Bitte zuerst die Zahlungsaufteilung vollständig zurücksetzen.")
+    if _party_relink_block_reason(row):
+        frappe.throw("Die Partei einer gebuchten oder abgestimmten Zeile kann nicht neu verknüpft werden. Bitte zuerst die Buchung sicher zurücksetzen.")
 
     # When called from Customer/Supplier auto-link with an IBAN, ensure a
     # Bank Account record exists for the party so the IBAN→party lookup works
@@ -1883,6 +1912,8 @@ def apply_party_to_row_and_relink(
         any_change = False
         for other in doc.get("rows") or []:
             if other.name == row.name:
+                continue
+            if _party_relink_block_reason(other):
                 continue
             target = _resolve_row_party(other)
             if target and (other.party_type != target[0] or other.party != target[1]):
@@ -4156,13 +4187,34 @@ def _find_internal_transfer_import_counterpart(
     other_bank_account: str,
     require_payment_entry: bool,
 ) -> dict[str, Any] | None:
-    """Find one unambiguous opposite import row for this internal transfer."""
+    """Find a proven own-account counter-entry, never just an equal tenant receipt."""
     if not row.get("buchungstag") or not row.get("richtung"):
         return None
     opposite_direction = "Eingang" if row.get("richtung") == "Ausgang" else "Ausgang"
     amount = flt(row.get("betrag"))
     if amount <= 0:
         return None
+
+    # An existing submitted Internal Transfer supplies explicit account evidence
+    # below. An unbooked row needs reciprocal statement IBANs instead; equal
+    # amounts/dates on another company account are not evidence of a transfer.
+    own_iban = None
+    iban_filter = ""
+    if not require_payment_entry:
+        source_bank = frappe.get_doc("Bank Account", bt.bank_account, for_update=True)
+        other_bank = frappe.get_doc("Bank Account", other_bank_account, for_update=True)
+        own_iban = _normalize_iban(source_bank.get("iban"))
+        other_iban = _normalize_iban(other_bank.get("iban"))
+        if (
+            not own_iban or not other_iban
+            or _normalize_iban(row.get("iban")) != other_iban
+            or _normalize_iban(bt.get("bank_party_iban")) != other_iban
+        ):
+            return None
+        iban_filter = """
+            AND UPPER(REPLACE(TRIM(COALESCE(r.iban, '')), ' ', '')) = %(own_iban)s
+            AND UPPER(REPLACE(TRIM(COALESCE(b.bank_party_iban, '')), ' ', '')) = %(own_iban)s
+        """
 
     payment_filter = (
         "AND r.payment_entry IS NOT NULL AND r.payment_entry != ''"
@@ -4176,9 +4228,17 @@ def _find_internal_transfer_import_counterpart(
             r.parent,
             r.bank_transaction,
             r.payment_entry,
-            r.buchungstag
+            r.buchungstag,
+            r.party_type,
+            r.party,
+            r.customer_payments,
+            r.iban,
+            b.party_type AS bt_party_type,
+            b.party AS bt_party,
+            b.bank_party_iban AS bt_iban
         FROM `tabBankauszug Import Row` r
         INNER JOIN `tabBankauszug Import` p ON p.name = r.parent
+        INNER JOIN `tabBank Transaction` b ON b.name = r.bank_transaction
         WHERE
             r.name != %(row_name)s
             AND p.bank_account = %(other_bank_account)s
@@ -4187,9 +4247,17 @@ def _find_internal_transfer_import_counterpart(
             AND r.buchungstag BETWEEN %(date_from)s AND %(date_to)s
             AND r.bank_transaction IS NOT NULL
             AND r.bank_transaction != ''
+            AND b.bank_account = p.bank_account
+            AND b.docstatus = 1
+            AND COALESCE(r.party_type, '') = ''
+            AND COALESCE(r.party, '') = ''
+            AND COALESCE(b.party_type, '') = ''
+            AND COALESCE(b.party, '') = ''
+            AND (r.customer_payments IS NULL OR r.customer_payments = '' OR r.customer_payments = '[]')
             AND (r.journal_entry IS NULL OR r.journal_entry = '')
             AND (r.payment_document IS NULL OR r.payment_document = '' OR r.payment_document_type = 'Payment Entry')
             {payment_filter}
+            {iban_filter}
         ORDER BY ABS(DATEDIFF(r.buchungstag, %(posting_date)s)) ASC, r.modified DESC
         LIMIT 2
         FOR UPDATE
@@ -4199,12 +4267,22 @@ def _find_internal_transfer_import_counterpart(
             "other_bank_account": other_bank_account,
             "opposite_direction": opposite_direction,
             "amount": amount,
+            "own_iban": own_iban,
             "date_from": add_days(getdate(row.get("buchungstag")), -3),
             "date_to": add_days(getdate(row.get("buchungstag")), 3),
             "posting_date": getdate(row.get("buchungstag")),
         },
         as_dict=True,
     )
+    rows = [
+        candidate for candidate in rows
+        if not any(candidate.get(field) for field in ("party_type", "party", "bt_party_type", "bt_party"))
+        and candidate.get("customer_payments") in (None, "", "[]", [])
+        and (require_payment_entry or (
+            _normalize_iban(candidate.get("iban")) == own_iban
+            and _normalize_iban(candidate.get("bt_iban")) == own_iban
+        ))
+    ]
     if len(rows) > 1:
         candidate_names = ", ".join(row.get("name") or "?" for row in rows)
         frappe.throw(
