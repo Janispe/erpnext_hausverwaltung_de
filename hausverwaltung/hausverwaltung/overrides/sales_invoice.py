@@ -16,6 +16,7 @@ from hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff import (
 	get_sales_invoice_writeoff_status,
 )
 from hausverwaltung.hausverwaltung.utils.sollstellung_titel import build_sollstellung_titel
+from hausverwaltung.hausverwaltung.utils.rental_invoice_policy import validate_untaxed_rental_invoice
 
 _MV_MARKER_RE = re.compile(r"\[MV:([^\]\r\n]+)\]")
 _MIETABRECHNUNG_PERIOD_RE = re.compile(r"(?:0[1-9]|1[0-2])/\d{4}")
@@ -515,6 +516,9 @@ class CustomSalesInvoice(SalesInvoice):
 		validate_mietvertrag_sales_invoice_identity(self)
 
 		super().validate()
+		# ERPNext has now applied templates and calculated every tax row. Reject
+		# a mistaken tax configuration before insert/submit can persist a bill.
+		validate_untaxed_rental_invoice(self)
 
 		default_wertstellungsdatum_from_posting_date(self)
 		# Re-check after ERPNext's setters/defaults so no standard validation

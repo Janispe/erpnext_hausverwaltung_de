@@ -13,6 +13,10 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 	@staticmethod
 	def _payment_row(**overrides):
 		row = frappe._dict(
+			name="SI-1",
+			total_taxes_and_charges=Decimal("0.00"),
+			base_total_taxes_and_charges=Decimal("0.00"),
+			has_tax_amount=0,
 			payment_entry="PE-1",
 			payment_company="COMP-1",
 			payment_type="Receive",
@@ -40,6 +44,10 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 	@staticmethod
 	def _journal_row(**overrides):
 		row = frappe._dict(
+			name="SI-1",
+			total_taxes_and_charges=Decimal("0.00"),
+			base_total_taxes_and_charges=Decimal("0.00"),
+			has_tax_amount=0,
 			journal_entry="JE-1",
 			journal_company="COMP-1",
 			account="DEBTORS-1",
@@ -647,6 +655,58 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 			sql.call_args_list[0].args[0],
 		)
 
+	def test_untaxed_prepayments_keep_full_partial_and_mixed_invoice_shares(self):
+		for payment_amount, bk_net, total_net, expected in (
+			("100", "100", "100", 100.0),
+			("50", "100", "100", 50.0),
+			("1000", "100", "1000", 100.0),
+		):
+			with self.subTest(payment=payment_amount, total_net=total_net):
+				payment = self._payment_row(
+					allocated_amount=Decimal(payment_amount), bk_net=Decimal(bk_net),
+					total_net=Decimal(total_net),
+				)
+				with patch.object(calc.frappe.db, "sql", side_effect=[[payment], []]) as sql:
+					self.assertEqual(calc.get_bk_paid_sum_for_invoice_names(["SI-1"]), expected)
+				self.assertIn("tot.total_net", sql.call_args_list[0].args[0])
+				self.assertNotIn("si.grand_total", sql.call_args_list[0].args[0])
+
+	def test_paid_allocations_reject_tax_instead_of_converting_payment_to_net(self):
+		for tax_fields in (
+			{"total_taxes_and_charges": Decimal("19")},
+			{"total_taxes_and_charges": Decimal("-19")},
+			{"total_taxes_and_charges": Decimal("0.0001")},
+			{"base_total_taxes_and_charges": Decimal("19")},
+			{"total_taxes_and_charges": 0, "has_tax_amount": 1},
+		):
+			for source in ("payment", "journal"):
+				with self.subTest(source=source, tax_fields=tax_fields):
+					if source == "payment":
+						rows = [[self._payment_row(allocated_amount=Decimal("119"), **tax_fields)], []]
+					else:
+						rows = [[], [self._journal_row(credit_in_account_currency=Decimal("119"), **tax_fields)]]
+					with patch.object(calc.frappe.db, "sql", side_effect=rows):
+						with self.assertRaisesRegex(frappe.ValidationError, "ohne Umsatzsteuer.*SI-1"):
+							calc.get_bk_paid_sum_for_invoice_names(["SI-1"])
+
+	def test_preview_expected_and_details_reject_taxed_source_invoices(self):
+		for helper in (calc.get_bk_expected_sum_for_invoice_names, calc._bk_invoice_details_for_invoice_names):
+			for tax_fields in (
+				{"total_taxes_and_charges": Decimal("19")},
+				{"base_total_taxes_and_charges": Decimal("0.0001")},
+				{"total_taxes_and_charges": 0, "has_tax_amount": 1},
+			):
+				with self.subTest(helper=helper.__name__, tax_fields=tax_fields):
+					row = frappe._dict(name="SI-TAXED", bk_amount=100, **tax_fields)
+					with patch.object(calc.frappe.db, "sql", return_value=[row]) as sql:
+						with self.assertRaisesRegex(frappe.ValidationError, "SI-TAXED"):
+							helper(["SI-TAXED"])
+					query = sql.call_args.args[0]
+					self.assertIn("tax.tax_amount_after_discount_amount", query)
+					self.assertIn("tax.base_tax_amount", query)
+					self.assertIn("tax.base_tax_amount_after_discount_amount", query)
+					self.assertIn("COALESCE(tax.rate, 0) != 0", query)
+
 	def test_paid_sum_includes_signed_proportional_journal_allocations(self):
 		payment_rows = [
 			self._payment_row(
@@ -884,7 +944,7 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 	def test_paid_sum_query_filters_exact_wohnung(self):
 		segments = [{"customer": "CUST-1", "start": "2025-01-01", "end": "2025-12-31"}]
 		with patch.object(calc, "_invoice_segments_for_wohnung", return_value=segments), \
-			 patch.object(calc.frappe.db, "sql", return_value=[(0,)]) as sql:
+			 patch.object(calc.frappe.db, "sql", return_value=[]) as sql:
 			result = calc.get_bk_paid_sum(
 				"WHG-1",
 				"2025-01-01",
@@ -895,3 +955,29 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 		self.assertEqual(result, 0.0)
 		self.assertIn("si.wohnung = %(wohnung)s", sql.call_args.args[0])
 		self.assertEqual(sql.call_args.args[1]["wohnung"], "WHG-1")
+
+	def test_legacy_paid_sum_keeps_partial_allocations_and_refunds_without_vat_conversion(self):
+		segments = [{"customer": "CUST-1", "start": "2025-01-01", "end": "2025-12-31"}]
+		rows = [
+			self._payment_row(allocated_amount=80, bk_net=50, total_net=100),
+			self._payment_row(name="CN-1", is_return=1, allocated_amount=20, bk_net=-50, total_net=-100),
+		]
+		with patch.object(calc, "_invoice_segments_for_wohnung", return_value=segments), \
+			 patch.object(calc.frappe.db, "sql", return_value=rows) as sql:
+			self.assertEqual(calc.get_bk_paid_sum("WHG-1", "2025-01-01", "2025-12-31"), 30.0)
+		self.assertNotIn("si.grand_total", sql.call_args.args[0])
+		self.assertIn("tax.tax_amount", sql.call_args.args[0])
+
+	def test_legacy_paid_sum_rejects_taxed_source_invoice(self):
+		segments = [{"customer": "CUST-1", "start": "2025-01-01", "end": "2025-12-31"}]
+		for tax_fields in (
+			{"total_taxes_and_charges": Decimal("19")},
+			{"base_total_taxes_and_charges": Decimal("0.0001")},
+			{"total_taxes_and_charges": 0, "has_tax_amount": 1},
+		):
+			with self.subTest(tax_fields=tax_fields):
+				row = self._payment_row(allocated_amount=119, **tax_fields)
+				with patch.object(calc, "_invoice_segments_for_wohnung", return_value=segments), \
+					 patch.object(calc.frappe.db, "sql", return_value=[row]):
+					with self.assertRaisesRegex(frappe.ValidationError, "ohne Umsatzsteuer.*SI-1"):
+						calc.get_bk_paid_sum("WHG-1", "2025-01-01", "2025-12-31")

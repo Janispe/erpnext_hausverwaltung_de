@@ -40,6 +40,58 @@ def _warthestrasse_rows():
 	]
 
 
+class TestSupplierInvoiceCosts(unittest.TestCase):
+	def test_booked_supplier_costs_preserve_included_vat(self):
+		supplier_invoice = frappe._dict(
+			name="PINV-VAT-19",
+			posting_date="2024-12-31",
+			custom_wertstellungsdatum="2025-01-15",
+			due_date="2025-02-01",
+			net_total=100,
+			total_taxes_and_charges=19,
+			grand_total=119,
+			taxes=[frappe._dict(rate=19, tax_amount=19)],
+		)
+		# The expense was booked as 119; allocation must use that booked amount.
+		gl_row = frappe._dict(
+			posting_date=supplier_invoice.posting_date,
+			account="4400 - Hausmeister - HP",
+			cost_center="CC-1",
+			debit=119,
+			credit=0,
+			voucher_type="Purchase Invoice",
+			voucher_no=supplier_invoice.name,
+		)
+
+		def get_all(doctype, **_kwargs):
+			if doctype == "GL Entry":
+				return [gl_row]
+			if doctype == "Purchase Invoice":
+				return [supplier_invoice]
+			raise AssertionError(f"Unexpected DocType: {doctype}")
+
+		with (
+			patch.object(
+				gl_costs,
+				"_konto_zu_kostenart_map",
+				return_value={"4400 - Hausmeister - HP": "Hausmeister"},
+			),
+			patch.object(
+				gl_costs, "_kostenstelle_zu_haus_map", return_value={"CC-1": "Haus-1"},
+			),
+			patch.object(gl_costs.frappe, "get_all", side_effect=get_all),
+		):
+			result = gl_costs.get_kosten_pro_haus.__wrapped__(
+				von="2025-01-01", bis="2025-12-31",
+			)
+
+		self.assertEqual(result["matrix"], {"Haus-1": {"Hausmeister": 119.0}})
+		self.assertEqual(supplier_invoice.total_taxes_and_charges, 19)
+		self.assertEqual(supplier_invoice.taxes, [{"rate": 19, "tax_amount": 19}])
+		self.assertEqual(supplier_invoice.grand_total, 119)
+		self.assertEqual(gl_row.debit, 119)
+
+
 class TestCanonicalImmobilieCostCenterMapping(unittest.TestCase):
 	def test_four_hierarchical_assignments_resolve_to_canonical_root(self):
 		roots, cost_centers = gl_costs._immobilien_hierarchy_maps(

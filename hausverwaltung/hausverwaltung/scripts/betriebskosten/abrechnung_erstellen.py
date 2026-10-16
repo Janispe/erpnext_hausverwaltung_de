@@ -25,10 +25,13 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen i
 )
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaiment_calc import (
     BK_ITEM_CODE,
+    _invoice_tax_columns,
     get_bk_expected_sum_for_invoice_names,
     get_bk_paid_sum_for_invoice_names,
     get_bk_prepayment_summary,
+    require_untaxed_settlement_invoices,
 )
+from hausverwaltung.hausverwaltung.utils.rental_invoice_policy import validate_untaxed_rental_invoice
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.rounding import (
     ROUNDING_METHOD_LARGEST_REMAINDER,
     ROUNDING_METHOD_LEGACY,
@@ -1229,13 +1232,14 @@ def _bk_invoice_outstanding_shares(
     )
     if not names:
         return []
-    sql = """
+    sql = f"""
         SELECT si.name,
                si.is_return,
                si.company,
                si.currency,
                si.conversion_rate,
                si.debit_to,
+               {_invoice_tax_columns()},
                CASE
                    WHEN si.is_return = 1 THEN -ABS(si.outstanding_amount)
                    ELSE si.outstanding_amount
@@ -1323,8 +1327,8 @@ def _make_sales_invoice(
     si.ignore_pricing_rule = 1
     si.set("payment_terms_template", None)
     si.set("payment_schedule", [])
-    si.set("taxes_and_charges", None)
-    si.set("taxes", [])
+    # Preserve inherited tax settings so the central Sales Invoice validation
+    # reports an invalid rental configuration instead of silently clearing it.
     si.set("is_return", is_return)
     if remarks:
         si.remarks = remarks
@@ -1373,6 +1377,7 @@ def _validate_target_sales_invoice_booking_context(
     expected_return: bool,
 ) -> None:
     """Validate the inserted settlement target before it can be submitted."""
+    validate_untaxed_rental_invoice(si)
     company_currency = cstr(
         frappe.db.get_value("Company", company, "default_currency") or ""
     ).strip()
@@ -1406,7 +1411,6 @@ def _validate_target_sales_invoice_booking_context(
         else expected_amount.copy_abs()
     )
     items = list(getattr(si, "items", None) or [])
-    taxes = list(getattr(si, "taxes", None) or [])
     try:
         grand_total = _quantize_money(
             Decimal(str(getattr(si, "grand_total", 0) or 0))
@@ -1450,7 +1454,6 @@ def _validate_target_sales_invoice_booking_context(
         or base_grand_total != expected_signed
         or item_net != expected_signed
         or tax_total != Decimal("0.00")
-        or bool(taxes)
     ):
         frappe.throw(
             "Ausgleichsbeleg wurde nicht eingereicht: Company, Währung, "
@@ -1750,6 +1753,7 @@ def _validate_bk_prepayment_booking_context(
     """Fail closed before ``O`` is calculated from foreign/misconfigured SIs."""
     if not invoice_rows:
         return
+    require_untaxed_settlement_invoices(invoice_rows, label="BK")
     company_currency = cstr(
         frappe.db.get_value("Company", company, "default_currency") or ""
     ).strip()

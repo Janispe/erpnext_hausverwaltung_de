@@ -2,6 +2,7 @@
 
 import unittest
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -13,6 +14,15 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten import abrechnung_erst
 
 
 class TestBetriebskostenabrechnungMieter(unittest.TestCase):
+	def test_taxed_prepayment_has_explicit_unsupported_tax_error_before_booking(self):
+		for tax, has_tax in ((19, 1), (0, 1), (-19, 1)):
+			with self.subTest(tax=tax), self.assertRaisesRegex(
+				frappe.ValidationError, "ohne Umsatzsteuer",
+			):
+				self.validate_booking_context([
+					{"name": "SI-TAX", "total_taxes_and_charges": tax, "has_tax_amount": has_tax},
+				], "COMP-1")
+
 	def setUp(self):
 		# Settlement-Betragstests isolieren die Ausgleichsalgebra. Die
 		# Live-Snapshot-Prüfung wird separat mit ihren Invarianten getestet.
@@ -886,6 +896,55 @@ class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 		self.assertEqual(str(si.posting_date), "2026-07-15")
 		self.assertEqual(str(si.custom_wertstellungsdatum), "2025-12-31")
 		self.assertEqual(si.remarks, "Betriebskostenabrechnung 01.01.2025 bis 31.12.2025")
+
+	def test_bk_hk_invoice_factory_preserves_wrong_tax_defaults_for_validation(self):
+		from hausverwaltung.hausverwaltung.utils.rental_invoice_policy import (
+			validate_untaxed_rental_invoice,
+		)
+
+		for item_code in ("BK Nachzahlung", "HK Nachzahlung"):
+			with self.subTest(item_code=item_code):
+				si = MagicMock()
+				si.name = "SI-WRONG-DEFAULT"
+				si.docstatus = 0
+				si.total_taxes_and_charges = si.base_total_taxes_and_charges = 0
+				si.taxes_and_charges = "Accidental VAT 19%"
+				si.taxes = [frappe._dict(rate=19, tax_amount=0)]
+				si.get.side_effect = lambda field: si.__dict__.get(field)
+				si.set.side_effect = lambda field, value: setattr(si, field, value)
+				# Simulate the central validation called by Document.insert().
+				si.insert.side_effect = lambda: validate_untaxed_rental_invoice(si)
+				with (
+					patch.object(bk.frappe, "new_doc", return_value=si),
+					patch.object(bk, "_has_field", return_value=False),
+					self.assertRaisesRegex(frappe.ValidationError, "ohne Umsatzsteuer"),
+				):
+					bk._make_sales_invoice("CUST-1", "2026-10-16", item_code, Decimal("100"))
+				self.assertEqual(si.taxes_and_charges, "Accidental VAT 19%")
+				self.assertEqual(si.taxes, [{"rate": 19, "tax_amount": 0}])
+				si.submit.assert_not_called()
+
+	def test_zero_rate_template_is_valid_for_canonical_settlement_target(self):
+		si = SimpleNamespace(
+			company="COMP-1", currency="EUR", conversion_rate=1, plc_conversion_rate=1,
+			debit_to="DEBTORS-1", is_return=0, grand_total=100, base_grand_total=100,
+			total_taxes_and_charges=0, taxes=[frappe._dict(rate=0, tax_amount=0)],
+			items=[SimpleNamespace(item_code="BK Nachzahlung", net_amount=100)],
+		)
+		si.get = lambda field: getattr(si, field, None)
+		with (
+			patch.object(bk.frappe.db, "get_value", return_value="EUR"),
+			patch.object(bk.frappe.db, "sql", return_value=[{
+				"name": "DEBTORS-1", "company": "COMP-1",
+				"account_type": "Receivable", "account_currency": "EUR",
+			}]),
+		):
+			bk._validate_target_sales_invoice_booking_context(
+				si, "COMP-1", expected_item_code="BK Nachzahlung",
+				expected_amount=Decimal("100"), expected_return=False,
+			)
+		self.assertEqual(si.grand_total, 100)
+		self.assertEqual(si.taxes, [{"rate": 0, "tax_amount": 0}])
 
 	def test_allocate_journal_entry_does_not_bypass_permissions(self):
 		je = MagicMock()

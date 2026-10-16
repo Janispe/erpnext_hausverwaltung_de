@@ -30,6 +30,8 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen i
 )
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaiment_calc import (
 	HK_ITEM_CODE,
+	_invoice_tax_columns,
+	require_untaxed_settlement_invoices,
 )
 
 from hausverwaltung.hausverwaltung.utils.settlement_identity import hk_marker_owner
@@ -306,7 +308,7 @@ def _locked_hk_prepayment_invoice_rows(
 	# Diese werden anschließend bewusst fail-closed abgelehnt. Die beiden
 	# Identitätszweige finden auch spätere Korrekturbelege mit Periodenmarker.
 	candidates = frappe.db.sql(
-		"""
+		f"""
 		SELECT
 			si.name,
 			si.company,
@@ -317,6 +319,7 @@ def _locked_hk_prepayment_invoice_rows(
 			si.is_return,
 			si.return_against,
 			si.outstanding_amount,
+			{_invoice_tax_columns()},
 			COALESCE(si.custom_wertstellungsdatum, si.posting_date) AS effective_date
 		FROM `tabSales Invoice` si
 		WHERE si.docstatus = 1
@@ -376,7 +379,7 @@ def _locked_hk_prepayment_invoice_rows(
 	# von ihrem gesperrten Originalbeleg.
 	if selected:
 		linked_returns = frappe.db.sql(
-			"""
+			f"""
 			SELECT
 				si.name,
 				si.company,
@@ -387,6 +390,7 @@ def _locked_hk_prepayment_invoice_rows(
 				si.is_return,
 				si.return_against,
 				si.outstanding_amount,
+				{_invoice_tax_columns()},
 				COALESCE(si.custom_wertstellungsdatum, si.posting_date) AS effective_date
 			FROM `tabSales Invoice` si
 			WHERE si.docstatus = 1
@@ -506,6 +510,7 @@ def _locked_hk_reference_rows(
 def _get_locked_hk_prepayment_state(doc: object, *, company: str) -> dict[str, Any]:
 	"""Return signed HK expected/paid/open amounts from one locked snapshot."""
 	invoice_rows = _locked_hk_prepayment_invoice_rows(doc, company=company)
+	require_untaxed_settlement_invoices(invoice_rows, label="HK")
 	names = [cstr(_row_value(row, "name")) for row in invoice_rows]
 	if not names:
 		stored = _strict_money(getattr(doc, "vorauszahlungen", None), "Vorauszahlungen")

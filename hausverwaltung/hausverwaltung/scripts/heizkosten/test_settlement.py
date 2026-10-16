@@ -9,6 +9,13 @@ from hausverwaltung.hausverwaltung.scripts.heizkosten import settlement
 
 
 class TestHeizkostenSettlement(unittest.TestCase):
+	def test_taxed_prepayment_stops_before_creating_hk_settlement(self):
+		with patch.object(
+			settlement, "_locked_hk_prepayment_invoice_rows",
+			return_value=[{"name": "SI-TAX", "total_taxes_and_charges": 19}],
+		), self.assertRaisesRegex(frappe.ValidationError, "ohne Umsatzsteuer"):
+			settlement._get_locked_hk_prepayment_state(object(), company="COMP-1")
+
 	def setUp(self):
 		permission_patch = patch.object(
 			settlement,

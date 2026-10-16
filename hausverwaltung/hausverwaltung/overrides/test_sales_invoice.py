@@ -95,6 +95,52 @@ class TestSalesInvoiceWertstellungsdatumDefault(unittest.TestCase):
 		self.assertIsNone(doc.custom_wertstellungsdatum)
 
 
+class TestSalesInvoiceNoVATLifecycle(unittest.TestCase):
+	@staticmethod
+	def _invoice(item_code):
+		doc = object.__new__(sales_invoice.CustomSalesInvoice)
+		doc.__dict__.update(
+			doctype="Sales Invoice", name="SI-NO-VAT", docstatus=0,
+			meta=_FakeMeta(), taxes=[], total_taxes_and_charges=0,
+			items=[frappe._dict(item_code=item_code, net_amount=100)],
+			grand_total=100,
+		)
+		return doc
+
+	def test_erpnext_default_tax_is_rejected_after_standard_calculation(self):
+		for item_code in ("Miete", "Betriebskosten", "Heizkosten", "BK Nachzahlung", "HK Guthaben"):
+			with self.subTest(item_code=item_code):
+				doc = self._invoice(item_code)
+
+				def calculate_with_accidental_default(invoice):
+					invoice.taxes = [frappe._dict(rate=19, tax_amount=19)]
+					invoice.total_taxes_and_charges = 19
+					invoice.grand_total = 119
+
+				with (
+					patch.object(sales_invoice, "validate_mietvertrag_sales_invoice_identity"),
+					patch.object(sales_invoice.SalesInvoice, "validate", autospec=True,
+						side_effect=calculate_with_accidental_default) as standard,
+					self.assertRaisesRegex(frappe.ValidationError, "ohne Umsatzsteuer"),
+				):
+					doc.validate()
+				standard.assert_called_once_with(doc)
+				self.assertEqual(doc.grand_total, 119)
+				self.assertEqual(doc.taxes[0].tax_amount, 19)
+
+	def test_ordinary_rent_invoice_keeps_100_euro_after_validation(self):
+		doc = self._invoice("Miete")
+		with (
+			patch.object(sales_invoice, "validate_mietvertrag_sales_invoice_identity"),
+			patch.object(sales_invoice.SalesInvoice, "validate"),
+			patch.object(sales_invoice, "default_wertstellungsdatum_from_posting_date"),
+		):
+			doc.validate()
+		self.assertEqual(doc.grand_total, 100)
+		self.assertEqual(doc.items[0].net_amount, 100)
+		self.assertEqual(doc.taxes, [])
+
+
 class TestSalesInvoiceMietvertragIdentity(unittest.TestCase):
 	def _identity(self):
 		return frappe._dict(
