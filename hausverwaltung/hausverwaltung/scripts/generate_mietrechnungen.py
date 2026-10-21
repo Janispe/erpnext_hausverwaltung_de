@@ -906,7 +906,11 @@ def generate_miet_und_bk_rechnungen(
             # Der Row-Lock bleibt bis zum Request-Commit bestehen. Ein
             # paralleler Lauf prüft deshalb erst nach der ersten Sollstellung
             # erneut auf bereits vorhandene Rechnungen.
-            v = lock_mietvertrag_booking_identity(candidate.name)
+            v = _lock_and_reload_mietvertrag(candidate.name)
+            if not v:
+                # Zwischen Kandidatenabfrage und Lock stornierte Verträge
+                # gehören nicht mehr zum Lauf.
+                continue
 
             # Prüfe, ob der Monat den Vertrag schneidet (auch bei Teilmonaten zulassen)
             month_start, month_end_excl, _ = _month_window(datum)
@@ -915,6 +919,30 @@ def generate_miet_und_bk_rechnungen(
             _, _, ov_days = _overlap(month_start, month_end_excl, c_start, c_end_excl)
             if ov_days == 0:
                 continue
+
+            # Erst den Laufumfang bestimmen, dann die vollständige
+            # Buchungsfähigkeit verlangen. Eine andere Company kann sich
+            # auch ohne direkte Kostenstelle bereits aus den Finanzlinks
+            # der Wohnung ergeben. Der zwischengespeicherte Immobilienlink
+            # des Vertrags ist dafür ausdrücklich nicht maßgeblich.
+            scope_company = (
+                _company_via_wohnung(v.wohnung, for_update=True) if v.wohnung else None
+            )
+            if scope_company and scope_company != company:
+                add_skip(
+                    reason="andere_company",
+                    mietvertrag=v.name,
+                    wohnung=v.wohnung,
+                    typ=None,
+                    betrag=None,
+                    message=f"{v.name}: gehört zu Company {scope_company}, nicht zu {company}",
+                )
+                continue
+
+            # Ungeklärte Zuordnungen dürfen nicht als fremde Company
+            # verschwinden. Die gemeinsame Prüfung lädt unter den bereits
+            # gehaltenen Locks erneut und muss weiterhin geschlossen scheitern.
+            v = lock_mietvertrag_booking_identity(v.name)
 
             immobilie = v.immobilie
             if (

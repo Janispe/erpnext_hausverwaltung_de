@@ -13,6 +13,69 @@ from hausverwaltung.hausverwaltung.doctype.heizkostenabrechnung_mieter import (
 
 
 class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
+	def test_submitted_period_conflicts_use_inclusive_interval_overlap(self):
+		parent = SimpleNamespace(
+			name="HK-NEW", immobilie="I-1", von="2026-01-01", bis="2026-12-31", amended_from="HK-SOURCE",
+		)
+		with sqlite3.connect(":memory:") as connection:
+			self.addCleanup(connection.close)
+			connection.row_factory = sqlite3.Row
+			connection.execute(
+				"CREATE TABLE `tabHeizkostenabrechnung Immobilie` (name TEXT, immobilie TEXT, docstatus INTEGER, von TEXT, bis TEXT)"
+			)
+
+			def sql(query, params, **kwargs):
+				self.assertIn("FOR UPDATE", query)
+				query = re.sub(r"%\((\w+)\)s", r":\1", query).replace("FOR UPDATE", "")
+				return [SimpleNamespace(**dict(row)) for row in connection.execute(query, params)]
+
+			cases = [
+				("equal", "2026-01-01", "2026-12-31", 1, "I-1", "HK-OTHER", True),
+				("partial_start", "2025-07-01", "2026-06-30", 1, "I-1", "HK-OTHER", True),
+				("partial_end", "2026-07-01", "2027-06-30", 1, "I-1", "HK-OTHER", True),
+				("contained", "2026-03-01", "2026-09-30", 1, "I-1", "HK-OTHER", True),
+				("enclosing", "2025-01-01", "2027-12-31", 1, "I-1", "HK-OTHER", True),
+				("shared_first_day", "2025-01-01", "2026-01-01", 1, "I-1", "HK-OTHER", True),
+				("shared_last_day", "2026-12-31", "2027-12-31", 1, "I-1", "HK-OTHER", True),
+				("previous_day", "2025-01-01", "2025-12-31", 1, "I-1", "HK-OTHER", False),
+				("next_day", "2027-01-01", "2027-12-31", 1, "I-1", "HK-OTHER", False),
+				("draft", "2026-01-01", "2026-12-31", 0, "I-1", "HK-OTHER", False),
+				("cancelled_amend_source", "2026-01-01", "2026-12-31", 2, "I-1", "HK-SOURCE", False),
+				("other_property", "2026-01-01", "2026-12-31", 1, "I-2", "HK-OTHER", False),
+				("self", "2026-01-01", "2026-12-31", 1, "I-1", "HK-NEW", False),
+			]
+			frappe = MagicMock()
+			frappe.db.sql.side_effect = sql
+			with patch.object(module, "frappe", frappe):
+				for label, start, end, status, property_name, name, blocked in cases:
+					with self.subTest(case=label):
+						connection.execute("DELETE FROM `tabHeizkostenabrechnung Immobilie`")
+						connection.execute(
+							"INSERT INTO `tabHeizkostenabrechnung Immobilie` VALUES (?, ?, ?, ?, ?)",
+							(name, property_name, status, start, end),
+						)
+						conflicts = module._submitted_period_conflicts(parent, for_update=True)
+						self.assertEqual([row.name for row in conflicts], [name] if blocked else [])
+
+	def test_overlap_is_rejected_before_any_tenant_posting_and_under_property_lock(self):
+		parent = SimpleNamespace(
+			name="HK-NEW", immobilie="I-1", von="2026-07-01", bis="2027-06-30",
+			_refresh_period_children=MagicMock(), _sync_table_to_children=MagicMock(), _get_children=MagicMock(),
+		)
+		parent._validate_unique_period = lambda: module.HeizkostenabrechnungImmobilie._validate_unique_period(parent)
+		events = []
+		with (
+			patch.object(module, "_lock_hk_property", side_effect=lambda name: events.append("property_lock")),
+			patch.object(module, "_submitted_period_conflicts", side_effect=lambda *args, **kwargs: events.append("conflicts") or [SimpleNamespace(name="HK-EXISTING")]),
+			patch.object(module.frappe, "throw", side_effect=module.frappe.ValidationError),
+			self.assertRaises(module.frappe.ValidationError),
+		):
+			module.HeizkostenabrechnungImmobilie.before_submit(parent)
+		self.assertEqual(events, ["property_lock", "conflicts"])
+		parent._refresh_period_children.assert_not_called()
+		parent._sync_table_to_children.assert_not_called()
+		parent._get_children.assert_not_called()
+
 	def test_hk_drafts_and_period_validation_exclude_cancelled_contracts(self):
 		parent = SimpleNamespace(
 			name="HK-IMM-1", amended_from=None, immobilie="I-1",

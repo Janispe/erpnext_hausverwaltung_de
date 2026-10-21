@@ -412,12 +412,12 @@ class HeizkostenabrechnungImmobilie(Document):
 			)
 		if conflicts:
 			frappe.throw(
-				"Für diese Immobilie und diesen Zeitraum ist bereits die Heizkostenabrechnung "
+				"Für diese Immobilie ist in einem überschneidenden Zeitraum bereits die Heizkostenabrechnung "
 				f"{escape_html(conflicts[0].name)} eingereicht. Es wurde nichts zusätzlich gebucht. "
 				"Bitte die bestehende Abrechnung berichtigen. Administratoren können dort "
 				"nach Bestätigung einen Korrekturentwurf mit vorherigem Sammelstorno erstellen.",
 				frappe.ValidationError,
-				title="Doppelte Heizkostenabrechnung verhindert",
+				title="Überlappende Heizkostenabrechnung verhindert",
 			)
 
 	def before_cancel(self) -> None:
@@ -736,13 +736,14 @@ def _lock_hk_property(immobilie: str) -> None:
 def _submitted_period_conflicts(parent: Document, *, for_update: bool = False) -> list:
 	rows = frappe.db.sql(
 		"""SELECT name, docstatus FROM `tabHeizkostenabrechnung Immobilie`
-		WHERE immobilie = %(immobilie)s AND von = %(von)s AND bis = %(bis)s
+		WHERE immobilie = %(immobilie)s AND von <= %(bis)s AND bis >= %(von)s
 		"""
 		+ (" FOR UPDATE" if for_update else ""),
 		{"immobilie": parent.immobilie, "von": parent.von, "bis": parent.bis},
 		as_dict=True,
 	)
-	# Lock the complete period range and inspect the current status afterwards.
+	# Inclusive endpoints: even one shared billing day must not be settled twice.
+	# Lock the overlapping range and inspect the current status afterwards.
 	return sorted((row for row in rows if cint(row.docstatus) == 1 and row.name != parent.name), key=lambda row: row.name)
 
 

@@ -20,6 +20,7 @@ from hausverwaltung.hausverwaltung.integrations.temporal.site_context import act
 class ExtractInvoiceInput:
 	vorschlag_name: str
 	actor: str = "Administrator"
+	extraction_job_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -55,37 +56,34 @@ def extract_invoice_activity(inp: ExtractInvoiceInput) -> ExtractInvoiceResult:
 	with activate_site():
 		_set_system_user(inp.actor)
 		try:
-			process_vorschlag(inp.vorschlag_name)
+			final_status = process_vorschlag(
+				inp.vorschlag_name,
+				extraction_job_id=inp.extraction_job_id,
+				raise_errors=True,
+				retry_processing=activity.info().attempt > 1,
+			)
 		except MistralPermanentError as exc:
-			# permanent fail → status auf Error setzen UND Temporal sagen "nicht retryen"
-			_persist_terminal_error(inp.vorschlag_name, f"Permanent: {exc}")
+			# The worker has already persisted this attempt's guarded Error state.
 			raise ApplicationError(
 				str(exc), type="MistralPermanentError", non_retryable=True
 			)
 		except MistralTransientError as exc:
-			# transient → status bleibt Processing, Temporal retried
+			# Error is visible in the inbox; the next activity attempt claims it.
 			raise ApplicationError(str(exc), type="MistralTransientError")
 		except Exception as exc:
-			# Sicherheitsnetz: bei unerwarteten Fehlern als terminal werten
-			_persist_terminal_error(inp.vorschlag_name, f"Unerwartet: {exc}")
+			# Database/transport failures can be temporary as well. Retry is bounded
+			# by the workflow policy, while the worker protects terminal statuses.
 			raise ApplicationError(
-				str(exc), type="UnexpectedError", non_retryable=True
+				str(exc), type="UnexpectedError"
 			)
 
-		final_status = frappe.db.get_value("Buchungs Vorschlag", inp.vorschlag_name, "status")
+		if final_status == "Processing":
+			# A start acknowledgement can time out after Temporal accepted it and
+			# the RQ fallback can win the first claim. Keep Temporal retries alive;
+			# the next attempt has its own claim and cannot publish stale results.
+			raise ApplicationError("Eine Extraktion dieses Auftrags läuft bereits.", type="ExtractionInProgress")
+
 		return ExtractInvoiceResult(
 			ok=final_status == "Ready",
 			status=final_status or "",
 		)
-
-
-def _persist_terminal_error(vorschlag_name: str, message: str) -> None:
-	try:
-		frappe.db.set_value(
-			"Buchungs Vorschlag",
-			vorschlag_name,
-			{"status": "Error", "error_message": (message or "")[:5000]},
-		)
-		frappe.db.commit()
-	except Exception:
-		frappe.log_error(frappe.get_traceback(), "extract_invoice_activity persist error failed")

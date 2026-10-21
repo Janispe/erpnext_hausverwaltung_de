@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from functools import partial
 
 import frappe
 
@@ -75,9 +76,10 @@ def bulk_create_vorschlaege(file_urls) -> dict:
 		v.original_filename = filename
 		v.file_url = url
 		v.status = "Pending"
+		v.extraction_job_id = uuid.uuid4().hex
 		v.insert(ignore_permissions=True)
 		vorschlag_names.append(v.name)
-		_dispatch_vorschlag_worker(v.name)
+		_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
 	frappe.db.commit()
 	return {
 		"session_id": session_id,
@@ -86,7 +88,19 @@ def bulk_create_vorschlaege(file_urls) -> dict:
 	}
 
 
-def _dispatch_vorschlag_worker(vorschlag_name: str) -> None:
+def _dispatch_vorschlag_worker(vorschlag_name: str, extraction_job_id: str | None = None) -> None:
+	"""Publish either worker only after its proposal transaction has committed."""
+	frappe.db.after_commit.add(partial(
+		_dispatch_committed_vorschlag_worker,
+		vorschlag_name,
+		extraction_job_id,
+		frappe.session.user or "Administrator",
+	))
+
+
+def _dispatch_committed_vorschlag_worker(
+	vorschlag_name: str, extraction_job_id: str | None, actor: str,
+) -> None:
 	"""Startet die Extraktion entweder als Temporal-Workflow (wenn aktiviert
 	für 'Buchungs Vorschlag') oder als simpler frappe.enqueue-Job (Fallback).
 
@@ -100,7 +114,7 @@ def _dispatch_vorschlag_worker(vorschlag_name: str) -> None:
 
 	if is_temporal_enabled_for_doctype("Buchungs Vorschlag"):
 		try:
-			_start_temporal_extraction(vorschlag_name)
+			_start_temporal_extraction(vorschlag_name, extraction_job_id, actor)
 			return
 		except Exception:
 			# Wenn Temporal-Start failt (Worker down, Connection-Issue etc.):
@@ -109,15 +123,25 @@ def _dispatch_vorschlag_worker(vorschlag_name: str) -> None:
 				frappe.get_traceback(),
 				f"Temporal-Start für {vorschlag_name} fehlgeschlagen — Fallback enqueue",
 			)
-	frappe.enqueue(
-		"hausverwaltung.hausverwaltung.services.bulk_extraction.process_vorschlag",
-		queue="long",
-		timeout=600,
-		vorschlag_name=vorschlag_name,
-	)
+	try:
+		frappe.enqueue(
+			"hausverwaltung.hausverwaltung.services.bulk_extraction.process_vorschlag",
+			queue="long",
+			timeout=600,
+			vorschlag_name=vorschlag_name,
+			extraction_job_id=extraction_job_id,
+		)
+	except Exception as exc:
+		# The proposal is already committed. Leave a retryable, visible failure
+		# rather than an indefinitely Pending document with no dispatched worker.
+		_persist_error(vorschlag_name, f"Worker konnte nicht gestartet werden: {exc}",
+			extraction_job_id=extraction_job_id, expected_statuses=("Pending",))
+		frappe.log_error(frappe.get_traceback(), "BulkExtraction: worker dispatch failed")
 
 
-def _start_temporal_extraction(vorschlag_name: str) -> None:
+def _start_temporal_extraction(
+	vorschlag_name: str, extraction_job_id: str | None = None, actor: str | None = None,
+) -> None:
 	"""Startet den BulkInvoiceExtractionWorkflow asynchron.
 
 	Synchroner Wrapper um den async Temporal-Client. Wir starten und vergessen
@@ -128,29 +152,52 @@ def _start_temporal_extraction(vorschlag_name: str) -> None:
 
 	from hausverwaltung.hausverwaltung.integrations.temporal.client import get_temporal_client
 	from hausverwaltung.hausverwaltung.integrations.temporal.config import get_temporal_settings
+	from temporalio.exceptions import WorkflowAlreadyStartedError
 
 	async def _start():
 		client = await get_temporal_client()
 		settings = get_temporal_settings()
-		await client.start_workflow(
-			"HausverwaltungBulkInvoiceExtractionWorkflow",
-			args=[vorschlag_name, frappe.session.user or "Administrator"],
-			id=f"bulk-invoice-{vorschlag_name}",
-			task_queue=settings.task_queue_process,
-		)
+		try:
+			await client.start_workflow(
+				"HausverwaltungBulkInvoiceExtractionWorkflow",
+				args=[vorschlag_name, actor or frappe.session.user or "Administrator", extraction_job_id],
+				id=f"bulk-invoice-{vorschlag_name}" + (f"-{extraction_job_id}" if extraction_job_id else ""),
+				task_queue=settings.task_queue_process,
+			)
+		except WorkflowAlreadyStartedError:
+			# An uncertain start acknowledgement must not also launch an RQ job.
+			pass
 
 	asyncio.run(_start())
 
 
-def process_vorschlag(vorschlag_name: str) -> None:
-	"""Background-Worker: führt die LLM-Extraktion aus und persistiert das Ergebnis."""
+def _job_generation(job_id: str | None, vorschlag_name: str) -> str:
+	return (job_id or f"legacy-{vorschlag_name}").split(":", 1)[0]
+
+
+def process_vorschlag(
+	vorschlag_name: str, extraction_job_id: str | None = None, *,
+	raise_errors: bool = False, retry_processing: bool = False,
+) -> str:
+	"""Claim one attempt, release the DB lock during extraction, then publish if still owned.
+
+	RQ keeps failures as Error for manual retry. Temporal requests exception
+	propagation and can reclaim an interrupted Processing attempt. The stable
+	job generation prevents an old retry taking over a later reprocess request.
+	"""
+	generation = _job_generation(extraction_job_id, vorschlag_name)
 	try:
-		doc = frappe.get_doc("Buchungs Vorschlag", vorschlag_name)
-	except Exception:
-		return
-	if doc.status not in ("Pending", "Error"):
-		# Schon verarbeitet oder vom User skipped — nichts zu tun.
-		return
+		doc = frappe.get_doc("Buchungs Vorschlag", vorschlag_name, for_update=True)
+	except frappe.DoesNotExistError:
+		return ""
+	if _job_generation(doc.get("extraction_job_id"), vorschlag_name) != generation:
+		return doc.status
+	if doc.status not in ("Pending", "Error") and not (retry_processing and doc.status == "Processing"):
+		return doc.status
+	previous_attempt = str(doc.get("extraction_job_id") or "").partition(":")[2]
+	attempt = int(previous_attempt) + 1 if previous_attempt.isdigit() else 1
+	claim = f"{generation}:{attempt}"
+	doc.extraction_job_id = claim
 	doc.status = "Processing"
 	doc.error_message = ""
 	doc.save(ignore_permissions=True)
@@ -158,34 +205,54 @@ def process_vorschlag(vorschlag_name: str) -> None:
 
 	try:
 		result = invoice_extraction.extract_from_file_url(doc.file_url)
+		extracted_data = json.dumps(result, ensure_ascii=False, default=str)
 	except mistral_client.MistralPermanentError as exc:
-		_persist_error(vorschlag_name, f"Permanent: {exc}")
-		return
+		changed, status = _persist_error(vorschlag_name, f"Permanent: {exc}", extraction_job_id=claim)
+		if changed and raise_errors:
+			raise
+		return status
 	except mistral_client.MistralTransientError as exc:
-		_persist_error(vorschlag_name, f"Temporär: {exc}")
-		return
+		changed, status = _persist_error(vorschlag_name, f"Temporär: {exc}", extraction_job_id=claim)
+		if changed and raise_errors:
+			raise
+		return status
 	except Exception as exc:
-		_persist_error(vorschlag_name, f"Unerwartet: {exc}")
-		return
+		changed, status = _persist_error(vorschlag_name, f"Unerwartet: {exc}", extraction_job_id=claim)
+		if changed and raise_errors:
+			raise
+		return status
 
-	# Erfolgreich.
-	doc = frappe.get_doc("Buchungs Vorschlag", vorschlag_name)
-	doc.status = "Ready"
-	doc.extracted_data = json.dumps(result, ensure_ascii=False, default=str)
-	doc.error_message = ""
+	_changed, status = _finish_extraction_attempt(vorschlag_name, claim, extracted_data=extracted_data)
+	return status
+
+
+def _finish_extraction_attempt(
+	vorschlag_name: str, extraction_job_id: str | None, *, extracted_data: str | None = None,
+	error_message: str | None = None, expected_statuses=("Processing",),
+) -> tuple[bool, str]:
+	try:
+		doc = frappe.get_doc("Buchungs Vorschlag", vorschlag_name, for_update=True)
+	except frappe.DoesNotExistError:
+		return False, ""
+	if doc.status not in expected_statuses or doc.get("extraction_job_id") != extraction_job_id:
+		return False, doc.status
+	doc.status = "Error" if error_message is not None else "Ready"
+	if extracted_data is not None:
+		doc.extracted_data = extracted_data
+	doc.error_message = (error_message or "")[:5000]
 	doc.save(ignore_permissions=True)
 	frappe.db.commit()
+	return True, doc.status
 
 
-def _persist_error(vorschlag_name: str, message: str) -> None:
-	try:
-		doc = frappe.get_doc("Buchungs Vorschlag", vorschlag_name)
-		doc.status = "Error"
-		doc.error_message = (message or "")[:5000]
-		doc.save(ignore_permissions=True)
-		frappe.db.commit()
-	except Exception:
-		frappe.log_error(frappe.get_traceback(), "BulkExtraction: persist error failed")
+def _persist_error(
+	vorschlag_name: str, message: str, *, extraction_job_id: str | None = None,
+	expected_statuses=("Processing",),
+) -> tuple[bool, str]:
+	return _finish_extraction_attempt(
+		vorschlag_name, extraction_job_id, error_message=message,
+		expected_statuses=expected_statuses,
+	)
 
 
 @frappe.whitelist()
@@ -298,7 +365,7 @@ def mark_vorschlag_skipped(name: str) -> dict:
 	Daten + PDF bleiben unverändert — der Vorschlag kann via
 	``reactivate_vorschlag`` jederzeit wieder zurück auf 'Ready' geholt werden.
 	"""
-	v = frappe.get_doc("Buchungs Vorschlag", name)
+	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
 	if v.status == "Booked":
 		frappe.throw("Bereits gebuchter Vorschlag kann nicht übersprungen werden.")
 	v.status = "Skipped"
@@ -387,7 +454,7 @@ def reprocess_vorschlag(name: str) -> dict:
 	Use-Case: nach Wechsel des LLM-Anbieters (Ollama → Mistral) bestehende
 	Vorschläge neu durchjagen, ohne sie löschen + erneut hochladen zu müssen.
 	"""
-	v = frappe.get_doc("Buchungs Vorschlag", name)
+	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
 	if v.status == "Booked":
 		frappe.throw(
 			"Bereits gebuchter Vorschlag kann nicht neu analysiert werden — "
@@ -396,9 +463,10 @@ def reprocess_vorschlag(name: str) -> dict:
 	v.status = "Pending"
 	v.extracted_data = ""
 	v.error_message = ""
+	v.extraction_job_id = uuid.uuid4().hex
 	v.save(ignore_permissions=True)
+	_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
 	frappe.db.commit()
-	_dispatch_vorschlag_worker(v.name)
 	return {"name": v.name, "status": v.status}
 
 
@@ -411,30 +479,28 @@ def reactivate_vorschlag(name: str) -> dict:
 	- Ready/Pending/Processing → no-op (schon aktiv)
 	- Booked → Fehler (zu spät, PI existiert)
 	"""
-	v = frappe.get_doc("Buchungs Vorschlag", name)
+	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
 	if v.status == "Booked":
 		frappe.throw(
 			"Vorschlag ist bereits als Eingangsrechnung gebucht und kann nicht reaktiviert werden."
 		)
 	if v.status == "Skipped":
 		v.status = "Ready" if v.extracted_data else "Pending"
+		if v.status == "Pending":
+			v.extraction_job_id = uuid.uuid4().hex
 		v.save(ignore_permissions=True)
-		frappe.db.commit()
 		# Falls noch nie extrahiert (z.B. Skip vor Worker-Run), Worker neu queuen.
 		if v.status == "Pending":
-			frappe.enqueue(
-				"hausverwaltung.hausverwaltung.services.bulk_extraction.process_vorschlag",
-				queue="long",
-				timeout=300,
-				vorschlag_name=v.name,
-			)
+			_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
+		frappe.db.commit()
 		return {"name": v.name, "status": v.status}
 	if v.status == "Error":
 		v.status = "Pending"
 		v.error_message = ""
+		v.extraction_job_id = uuid.uuid4().hex
 		v.save(ignore_permissions=True)
+		_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
 		frappe.db.commit()
-		_dispatch_vorschlag_worker(v.name)
 		return {"name": v.name, "status": v.status}
 	return {"name": v.name, "status": v.status}
 

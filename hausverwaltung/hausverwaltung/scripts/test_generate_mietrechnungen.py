@@ -1,5 +1,6 @@
 import json
 import unittest
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -59,6 +60,8 @@ class TestGenerateMietrechnungen(unittest.TestCase):
                 patch("hausverwaltung.hausverwaltung.utils.rent_items.ensure_rent_items"),
                 patch.object(generate_mietrechnungen.frappe, "get_doc", return_value=MagicMock(name="run_log")),
                 patch.object(generate_mietrechnungen.frappe, "get_all", side_effect=get_contracts),
+                patch.object(generate_mietrechnungen, "_lock_and_reload_mietvertrag", side_effect=lock_contract),
+                patch.object(generate_mietrechnungen, "_company_via_wohnung", return_value="COMP-1"),
                 patch.object(generate_mietrechnungen, "lock_mietvertrag_booking_identity", side_effect=lock_contract),
                 patch.object(generate_mietrechnungen, "_miete_betrag_fuer_monat", return_value=600),
                 patch.object(generate_mietrechnungen, "_bk_regelung_und_betrag_fuer_monat", return_value=("Vorauszahlung", 100)),
@@ -78,6 +81,147 @@ class TestGenerateMietrechnungen(unittest.TestCase):
                 "Miete": len(expected), "Betriebskosten": len(expected),
                 "Heizkosten": len(expected), "Untermietzuschlag": 0,
             })
+
+    @contextmanager
+    def _monthly_scope_run(self, candidate, current_contract):
+        """Exercise the generator and identity validation without persistent writes."""
+        with (
+            patch.object(generate_mietrechnungen, "_resolve_company", return_value="COMP-A"),
+            patch.object(generate_mietrechnungen, "lock_accounting_scope"),
+            patch("hausverwaltung.hausverwaltung.utils.income_accounts.get_hv_income_accounts", return_value={}),
+            patch("hausverwaltung.hausverwaltung.utils.rent_items.ensure_rent_items"),
+            patch.object(generate_mietrechnungen.frappe, "get_doc", return_value=MagicMock(name="run_log")),
+            patch.object(generate_mietrechnungen.frappe, "get_all", return_value=[candidate]),
+            patch.object(generate_mietrechnungen, "_lock_and_reload_mietvertrag", return_value=current_contract),
+            patch.object(generate_mietrechnungen, "_miete_betrag_fuer_monat", return_value=600),
+            patch.object(generate_mietrechnungen, "_bk_regelung_und_betrag_fuer_monat", return_value=("Vorauszahlung", 0)),
+            patch.object(generate_mietrechnungen, "_monatsbetrag_fuer_kostenart", return_value=0),
+            patch.object(generate_mietrechnungen, "_invoice_exists", return_value=False),
+            patch.object(generate_mietrechnungen, "_create_invoice", return_value="SI-1") as create,
+        ):
+            yield create
+
+    def test_monthly_run_ignores_out_of_period_contract_before_property_validation(self):
+        for start, end in ((date(2026, 11, 1), None), (date(2025, 1, 1), date(2026, 9, 30))):
+            contract = frappe._dict(name="MV-1", von=start, bis=end, kunde=None, wohnung="WHG-UNCONFIGURED")
+            with (
+                self.subTest(start=start, end=end),
+                self._monthly_scope_run(contract, contract) as create,
+                patch.object(generate_mietrechnungen, "_company_via_wohnung") as resolve_company,
+                patch.object(generate_mietrechnungen, "lock_mietvertrag_booking_identity") as validate,
+            ):
+                result = generate_mietrechnungen.generate_miet_und_bk_rechnungen(monat=10, jahr=2026, company="COMP-A")
+
+            resolve_company.assert_not_called()
+            validate.assert_not_called()
+            create.assert_not_called()
+            self.assertEqual(sum(result["created"].values()), 0)
+
+    def test_monthly_run_skips_other_company_without_cost_center_using_wohnung(self):
+        # The contract's cached property belongs to A, but its authoritative
+        # Wohnung currently belongs to B and has a bank account, no cost center.
+        contract = frappe._dict(
+            name="MV-1", kunde="CUST-1", wohnung="WHG-B", immobilie="IMM-A",
+            von=date(2026, 1, 1), bis=None,
+        )
+
+        def get_value(doctype, name, _fieldname, **kwargs):
+            self.assertTrue(kwargs["for_update"])
+            if doctype == "Wohnung":
+                self.assertEqual(name, "WHG-B")
+                return "IMM-B"
+            if doctype == "Immobilie":
+                self.assertEqual(name, "IMM-B")
+                return frappe._dict(kostenstelle=None, haupt_bank_account="BANK-B")
+            if doctype == "Bank Account":
+                return "COMP-B"
+            self.fail(f"Unexpected company lookup: {doctype} {name}")
+
+        with (
+            self._monthly_scope_run(contract, contract) as create,
+            patch.object(generate_mietrechnungen.frappe.db, "get_value", side_effect=get_value),
+            patch.object(generate_mietrechnungen.frappe.db, "sql", return_value=[]),
+            patch.object(generate_mietrechnungen, "lock_mietvertrag_booking_identity") as validate,
+        ):
+            result = generate_mietrechnungen.generate_miet_und_bk_rechnungen(monat=10, jahr=2026, company="COMP-A")
+
+        validate.assert_not_called()
+        create.assert_not_called()
+        self.assertEqual(result["skipped_details"][0]["reason"], "andere_company")
+        self.assertIn("COMP-B", result["skipped_details"][0]["message"])
+
+    def test_monthly_run_still_rejects_missing_cost_center_for_relevant_or_unknown_company(self):
+        contract = frappe._dict(
+            name="MV-1", kunde="CUST-1", wohnung="WHG-A", immobilie="IMM-A",
+            von=date(2026, 1, 1), bis=None,
+        )
+        for resolved_company in ("COMP-A", None):
+            with (
+                self.subTest(company=resolved_company),
+                self._monthly_scope_run(contract, contract) as create,
+                patch.object(generate_mietrechnungen, "_company_via_wohnung", return_value=resolved_company),
+                patch.object(
+                    generate_mietrechnungen, "_lock_property_booking_identity",
+                    side_effect=frappe.ValidationError("Immobilie IMM-A hat keine Kostenstelle"),
+                ) as validate_property,
+                self.assertRaisesRegex(frappe.ValidationError, "keine Kostenstelle"),
+            ):
+                generate_mietrechnungen.generate_miet_und_bk_rechnungen(monat=10, jahr=2026, company="COMP-A")
+
+            validate_property.assert_called_once_with("WHG-A")
+            create.assert_not_called()
+
+    def test_monthly_run_still_rejects_in_scope_contract_property_mismatch(self):
+        contract = frappe._dict(
+            name="MV-1", kunde="CUST-1", wohnung="WHG-A", immobilie="IMM-STALE",
+            von=date(2026, 1, 1), bis=None,
+        )
+        property_identity = frappe._dict(
+            wohnung="WHG-A", immobilie="IMM-A", company="COMP-A", cost_center="CC-A", immobilie_erworben_am=None,
+        )
+        with (
+            self._monthly_scope_run(contract, contract) as create,
+            patch.object(generate_mietrechnungen, "_company_via_wohnung", return_value="COMP-A"),
+            patch.object(generate_mietrechnungen, "_lock_property_booking_identity", return_value=property_identity),
+            self.assertRaisesRegex(frappe.ValidationError, "IMM-STALE"),
+        ):
+            generate_mietrechnungen.generate_miet_und_bk_rechnungen(monat=10, jahr=2026, company="COMP-A")
+
+        create.assert_not_called()
+
+    def test_monthly_run_still_rejects_in_scope_contract_without_customer(self):
+        contract = frappe._dict(
+            name="MV-1", kunde=None, wohnung="WHG-A", immobilie="IMM-A",
+            von=date(2026, 1, 1), bis=None,
+        )
+        with (
+            self._monthly_scope_run(contract, contract) as create,
+            patch.object(generate_mietrechnungen, "_company_via_wohnung", return_value="COMP-A"),
+            self.assertRaisesRegex(frappe.ValidationError, "Customer-/Wohnungskontext"),
+        ):
+            generate_mietrechnungen.generate_miet_und_bk_rechnungen(monat=10, jahr=2026, company="COMP-A")
+
+        create.assert_not_called()
+
+    def test_monthly_run_uses_current_contract_period_after_lock(self):
+        candidate = frappe._dict(name="MV-1", von=date(2027, 1, 1), bis=None)
+        current = frappe._dict(
+            name="MV-1", kunde="CUST-1", wohnung="WHG-A", immobilie="IMM-A",
+            von=date(2026, 10, 1), bis=None,
+        )
+        property_identity = frappe._dict(
+            wohnung="WHG-A", immobilie="IMM-A", company="COMP-A", cost_center="CC-A", immobilie_erworben_am=None,
+        )
+        with (
+            self._monthly_scope_run(candidate, current) as create,
+            patch.object(generate_mietrechnungen, "_company_via_wohnung", return_value="COMP-A"),
+            patch.object(generate_mietrechnungen, "_lock_property_booking_identity", return_value=property_identity),
+        ):
+            result = generate_mietrechnungen.generate_miet_und_bk_rechnungen(monat=10, jahr=2026, company="COMP-A")
+
+        self.assertEqual(result["created"]["Miete"], 1)
+        self.assertEqual(create.call_args.args[0], "CUST-1")
+        self.assertEqual(create.call_args.args[8:10], ("WHG-A", "COMP-A"))
 
     def test_run_acquires_entry_lock_before_financial_setup(self):
         events = []

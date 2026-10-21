@@ -11,6 +11,7 @@
   "file_url",
   "column_break_1",
   "status",
+  "extraction_job_id",
   "linked_purchase_invoice",
   "section_break_extraction",
   "extracted_data",
@@ -50,6 +51,14 @@
    "default": "Pending",
    "in_list_view": 1,
    "in_standard_filter": 1
+  },
+  {
+   "fieldname": "extraction_job_id",
+   "fieldtype": "Data",
+   "label": "Extraktionsauftrag",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "linked_purchase_invoice",

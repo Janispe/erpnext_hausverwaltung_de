@@ -261,7 +261,10 @@ doc_events = {
 	},
 	"Dunning": {
 		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning",
-		"before_submit": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning_fee_booking_before_submit",
+		"before_submit": [
+			"hausverwaltung.hausverwaltung.utils.dunning_creation.validate_dunning_before_submit",
+			"hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning_fee_booking_before_submit",
+		],
 		"before_cancel": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning_fee_invoice_can_cancel",
 		"on_submit": "hausverwaltung.hausverwaltung.doctype.dunning.create_dunning_fee_invoice",
 		"on_cancel": "hausverwaltung.hausverwaltung.doctype.dunning.cancel_dunning_fee_invoice",

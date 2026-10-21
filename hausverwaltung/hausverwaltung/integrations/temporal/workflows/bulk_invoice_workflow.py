@@ -25,7 +25,9 @@ with workflow.unsafe.imports_passed_through():
 @workflow.defn(name="HausverwaltungBulkInvoiceExtractionWorkflow")
 class BulkInvoiceExtractionWorkflow:
 	@workflow.run
-	async def run(self, vorschlag_name: str, actor: str = "Administrator") -> ExtractInvoiceResult:
+	async def run(
+		self, vorschlag_name: str, actor: str = "Administrator", extraction_job_id: str | None = None,
+	) -> ExtractInvoiceResult:
 		retry_policy = RetryPolicy(
 			maximum_attempts=5,
 			initial_interval=timedelta(seconds=10),
@@ -33,12 +35,11 @@ class BulkInvoiceExtractionWorkflow:
 			maximum_interval=timedelta(minutes=10),
 			non_retryable_error_types=[
 				"MistralPermanentError",
-				"UnexpectedError",
 			],
 		)
 		return await workflow.execute_activity(
 			extract_invoice_activity,
-			ExtractInvoiceInput(vorschlag_name=vorschlag_name, actor=actor),
+			ExtractInvoiceInput(vorschlag_name=vorschlag_name, actor=actor, extraction_job_id=extraction_job_id),
 			start_to_close_timeout=timedelta(minutes=10),
 			retry_policy=retry_policy,
 		)

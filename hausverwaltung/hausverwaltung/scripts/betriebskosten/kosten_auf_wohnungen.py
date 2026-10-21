@@ -720,6 +720,18 @@ def allocate_kosten_auf_wohnungen(
     if not cc_to_haus and not immobilie:
         return {"rows": [], "matrix": {}, "periode": {"von": von, "bis": bis}}
 
+    # Kostenstellen und Wohnungen werden auf Root-Häuser aufgelöst. Dieselbe
+    # kanonische Immobilie muss auch für GL-Filter und Vertrags-Festbeträge
+    # gelten, wenn der Aufruf einen Gebäudeteil übergibt.
+    if immobilie:
+        requested_immobilie = cstr(immobilie).strip()
+        immobilie = cstr(_immobilie_zu_root_map().get(requested_immobilie)).strip()
+        if not immobilie:
+            frappe.throw(
+                f"Immobilie '{label_with_id('Immobilie', requested_immobilie)}' konnte keiner kanonischen "
+                "Root-Immobilie zugeordnet werden. Kostenverteilung abgebrochen."
+            )
+
     # Vorab-Validierung: Wenn für ein konkretes Haus (Immobilie) abgerechnet werden soll,
     # muss in allen Wohnungen dieses Hauses im Zustand zum Stichtag die Option
     # "Betriebskostenabrechnung durch Vermieter" aktiviert sein.

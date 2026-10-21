@@ -15,6 +15,35 @@
 
   const METHOD = "hausverwaltung.hausverwaltung.page.mahnung_workflow.mahnung_workflow";
 
+  function recommendationFor(mieter, selected, fallback) {
+    const posten = (mieter?.posten || []).filter((p) => selected.has(p.beleg));
+    const hasInvoiceStages = (mieter?.posten || []).some((p) => Number.isFinite(p.mahnstufe));
+    if (!hasInvoiceStages) {
+      const mahnstufe = Number(mieter?.mahnstufe || 0);
+      return { mahnstufe, vorlageKey: mieter?.empf_vorlage || fallback(mahnstufe) };
+    }
+    const mahnstufe = Math.max(0, ...posten.map((p) => Number(p.mahnstufe || 0)));
+    const advanced = posten.find((p) => p.mahnstufe === mahnstufe && p.empf_vorlage);
+    return { mahnstufe, vorlageKey: advanced?.empf_vorlage || fallback(mahnstufe) };
+  }
+
+  const templateAfterSelection = (currentKey, recommendedKey, manual) => manual ? currentKey : recommendedKey;
+
+  function createSubmissionGate() {
+    let pending = false;
+    return async (action, onBusy) => {
+      if (pending) return;
+      pending = true;
+      onBusy(true);
+      try {
+        return await action();
+      } finally {
+        pending = false;
+        onBusy(false);
+      }
+    };
+  }
+
   // ─── ROOT-ID-Shim ──────────────────────────────────────────────────────
   // mahn-app.jsx mounted auf #root — Frappe-Page hat #mahnung-workflow-root.
   function ensureRootMount() {
@@ -78,6 +107,9 @@
   }
 
   window.MAHN_ADAPTER = {
+    recommendationFor,
+    templateAfterSelection,
+    createSubmissionGate,
     async loadInitial() {
       ensureRootMount();
       if (USE_MOCK_DATA) await loadMock();

@@ -116,7 +116,9 @@ function MahnApp() {
     (m?.posten || []).map((p) => [p.beleg, p.bez || ""])
   );
 
-  const [vorlageKey, setVorlageKey] = useStateApp(() => mieter.empf_vorlage || M.naechsteVorlageKey(mieter.mahnstufe));
+  const recommendationFor = (m, selection) => window.MAHN_ADAPTER.recommendationFor(m, selection, M.naechsteVorlageKey);
+  const [automaticVorlage, setAutomaticVorlage] = useStateApp(true);
+  const [vorlageKey, setVorlageKey] = useStateApp(() => recommendationFor(mieter, selectedPostenFor(mieter, true)).vorlageKey);
 
   // Eigene, benannte Vorlagen (frei anlegbar, persistent)
   const [customVorlagen, setCustomVorlagen] = useStateApp(() => {
@@ -134,6 +136,7 @@ function MahnApp() {
   const [mahndatum, setMahndatum] = useStateApp(M.TODAY);
   const [kanal, setKanal] = useStateApp("Brief");
   const [selected, setSelected] = useStateApp(() => selectedPostenFor(mieter, true));
+  const recommendation = useMemoApp(() => recommendationFor(mieter, selected), [mieter, selected]);
   const [invoiceRemarks, setInvoiceRemarks] = useStateApp(() => invoiceRemarksFor(mieter));
   const [gebuehr, setGebuehr] = useStateApp(vorlage.gebuehr);
   const [zinsenAktiv, setZinsenAktiv] = useStateApp(vorlage.zinsen);
@@ -155,6 +158,8 @@ function MahnApp() {
 
   const [toast, setToast] = useStateApp(null);
   const [sent, setSent] = useStateApp(null);
+  const [sending, setSending] = useStateApp(false);
+  const submitOnce = useRefApp(window.MAHN_ADAPTER.createSubmissionGate());
   const [pastDetail, setPastDetail] = useStateApp(null);
   const [viewEntry, setViewEntry] = useStateApp(null); // gebuchte Mahnung im Editor (gesperrt)
 
@@ -212,9 +217,11 @@ function MahnApp() {
 
   // Editor frisch aufsetzen (für aktuellen Mieter)
   const setupFresh = (m, options = {}) => {
-    const empf = m.empf_vorlage || M.naechsteVorlageKey(m.mahnstufe);
+    const selection = selectedPostenFor(m, !!options.useUrlSelection);
+    const empf = recommendationFor(m, selection).vorlageKey;
+    setAutomaticVorlage(true);
     setVorlageKey(empf);
-    setSelected(selectedPostenFor(m, !!options.useUrlSelection));
+    setSelected(selection);
     setInvoiceRemarks(invoiceRemarksFor(m));
     setZinssatz(M.zinssatzFuer(m.verbrauchertyp));
     setAnrede(m.anrede);
@@ -249,7 +256,8 @@ function MahnApp() {
   };
 
   // Vorlagenwechsel → Textbausteine + Gebühr/Zinsen laden (Mieter bleibt)
-  const applyVorlage = (key) => {
+  const applyVorlage = (key, { manual = true } = {}) => {
+    setAutomaticVorlage(!manual);
     setVorlageKey(key);
     const v = vorlageMap[key] || M.vorlageByKey[key];
     if (!v) return;
@@ -257,6 +265,12 @@ function MahnApp() {
     setGebuehr(v.gebuehr); setZinsenAktiv(v.zinsen);
     initVariablen(v);
   };
+
+  useEffectApp(() => {
+    if (viewEntry) return;
+    const next = window.MAHN_ADAPTER.templateAfterSelection(vorlageKey, recommendation.vorlageKey, !automaticVorlage);
+    if (next !== vorlageKey) applyVorlage(next, { manual: false });
+  }, [recommendation.vorlageKey, automaticVorlage, viewEntry, vorlageKey]);
 
   // aktuelle Eingaben als eigene, benannte Vorlage speichern
   const saveAsVorlage = () => {
@@ -267,13 +281,14 @@ function MahnApp() {
       gebuehr, zinsen: zinsenAktiv, betreff, einleitung, schluss,
       variablen: vorlage.variablen || [], variablenbelegungen: vorlage.variablenbelegungen || [] };
     setCustomVorlagen((arr) => [...arr, neu]);
+    setAutomaticVorlage(false);
     setVorlageKey(key);
     setToast(`Vorlage „${name}" gespeichert`);
   };
 
   const deleteVorlage = (key) => {
     setCustomVorlagen((arr) => arr.filter((v) => v.key !== key));
-    if (vorlageKey === key) applyVorlage(M.naechsteVorlageKey(mieter.mahnstufe));
+    if (vorlageKey === key) applyVorlage(recommendation.vorlageKey, { manual: false });
   };
 
   const togglePosten = (beleg) => {
@@ -368,7 +383,7 @@ function MahnApp() {
   };
 
   // ── Dunning-Draft anlegen ──
-  const doSend = async (options = {}) => {
+  const doSend = (options = {}) => submitOnce.current(async () => {
     if (posten.length === 0) { setToast("Bitte mindestens einen Posten auswählen."); return; }
     const finalize = options.finalize !== false;
 
@@ -400,7 +415,7 @@ function MahnApp() {
     if (zinsenAktiv && zinsBetrag > 0) docs.push({ id: "ACC-JV-2026-00119", desc: "Journal Entry · Verzugszinsen", amount: zinsBetrag });
     docs.push({ id: "Mahnung.pdf", desc: `PDF-Anhang · ${kanal}`, amount: null });
     setSent({ vorlage: vorlage.label, mieter: mieter.name, kanal, docs, summe });
-  };
+  }, setSending);
 
   const cancelCurrentDunning = async () => {
     if (!viewEntry?.beleg) return;
@@ -458,9 +473,9 @@ function MahnApp() {
             className="mk-btn mk-btn-ghost"
             onClick={() => window.MAHN_PREVIEW_PRINT ? window.MAHN_PREVIEW_PRINT() : window.print()}
           >Drucken</button>
-          <button className="mk-btn" onClick={() => doSend({ finalize: false })} disabled={locked}>Als Draft speichern</button>
-          <button className="mk-btn mk-btn-primary" onClick={() => doSend()} disabled={locked}>
-            {kanal.includes("E-Mail") ? "Erstellen & E-Mail einreihen" : "Erstellen & PDF erzeugen"}
+          <button className="mk-btn" onClick={() => doSend({ finalize: false })} disabled={locked || sending}>Als Draft speichern</button>
+          <button className="mk-btn mk-btn-primary" onClick={() => doSend()} disabled={locked || sending}>
+            {sending ? "Wird erstellt …" : kanal.includes("E-Mail") ? "Erstellen & E-Mail einreihen" : "Erstellen & PDF erzeugen"}
           </button>
         </div>
       </div>
@@ -476,7 +491,7 @@ function MahnApp() {
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
               </select>
-              <StufeBadgeMH stufe={mieter.mahnstufe} label={`Erreichte Stufe: M${mieter.mahnstufe}`} />
+              <StufeBadgeMH stufe={recommendation.mahnstufe} label={`Erreichte Stufe der Auswahl: M${recommendation.mahnstufe}`} />
               <span className="mh-tenant-typ">{mieter.verbrauchertyp === "gewerbe" ? "Gewerbe · §288 II BGB" : "Privat · §288 I BGB"}</span>
             </div>
             <div className="mh-tenant-meta">
@@ -531,14 +546,14 @@ function MahnApp() {
                   </div>
                 )} />
               <FieldMH label={'Vorlage wählen · Bibliothek › Kategorie „Mahnungen"'} full
-                hint={`Empfohlen nach erreichter Stufe M${mieter.mahnstufe}: „${M.vorlageByKey[mieter.empf_vorlage || M.naechsteVorlageKey(mieter.mahnstufe)].label}". Alle Vorlagen stammen aus dem Serienbrief-Modul.`}>
+                hint={`Empfohlen für die Auswahl nach Stufe M${recommendation.mahnstufe}: „${M.vorlageByKey[recommendation.vorlageKey]?.label || ""}". Alle Vorlagen stammen aus dem Serienbrief-Modul.`}>
                 <div className="mh-vorlage-pick">
                   <select className="mh-vorlage-select" value={vorlageKey} disabled={locked}
                     onChange={(e) => applyVorlage(e.target.value)}>
                     <optgroup label="Kategorie · Mahnungen">
                       {M.vorlagen.map((v) => (
                         <option key={v.key} value={v.key}>
-                          {v.label}{(mieter.empf_vorlage || M.naechsteVorlageKey(mieter.mahnstufe)) === v.key ? "  ★ empfohlen" : ""}
+                          {v.label}{recommendation.vorlageKey === v.key ? "  ★ empfohlen" : ""}
                         </option>
                       ))}
                     </optgroup>
@@ -550,9 +565,9 @@ function MahnApp() {
                       </optgroup>
                     )}
                   </select>
-                  {!locked && vorlageKey !== (mieter.empf_vorlage || M.naechsteVorlageKey(mieter.mahnstufe)) && (
+                  {!locked && vorlageKey !== recommendation.vorlageKey && (
                     <button type="button" className="mh-mini-btn" title="Empfohlene Vorlage wählen"
-                      onClick={() => applyVorlage(mieter.empf_vorlage || M.naechsteVorlageKey(mieter.mahnstufe))}>★ Empfehlung</button>
+                      onClick={() => applyVorlage(recommendation.vorlageKey, { manual: false })}>★ Empfehlung</button>
                   )}
                   {!locked && vorlage.custom && (
                     <button type="button" className="mh-mini-btn" title="Eigene Vorlage löschen"
@@ -772,8 +787,8 @@ function MahnApp() {
               Ansicht schließen
             </button>
           ) : (
-            <button className="mk-btn mk-btn-primary mh-actionbar-cta" onClick={() => doSend()}>
-              {kanal.includes("E-Mail") ? `${vorlage.label} erstellen & E-Mail einreihen →` : `${vorlage.label} erstellen & PDF erzeugen →`}
+            <button className="mk-btn mk-btn-primary mh-actionbar-cta" onClick={() => doSend()} disabled={sending}>
+              {sending ? "Wird erstellt …" : kanal.includes("E-Mail") ? `${vorlage.label} erstellen & E-Mail einreihen →` : `${vorlage.label} erstellen & PDF erzeugen →`}
             </button>
           )}
         </div>

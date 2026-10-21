@@ -7,6 +7,161 @@ import frappe
 from hausverwaltung.hausverwaltung.doctype.zahlungsplan import zahlungsplan as zp
 
 
+class TestPlanVorbelegung(unittest.TestCase):
+	def _row(self, date="2026-07-15", amount=100, **values):
+		return frappe._dict(name="ROW-PREFILL", idx=1, faelligkeitsdatum=date, betrag=amount, **values)
+
+	def _plan(self, rows, payments=None):
+		plan = SimpleNamespace(
+			name="PLAN-PREFILL", modus=zp.MODUS_ZAHLUNGSPLAN, betrag=100,
+			plan=list(rows), zahlungen=list(payments or []),
+			check_permission=MagicMock(), save=MagicMock(), db_set=MagicMock(),
+		)
+		plan.get = lambda key, default=None: getattr(plan, key, default)
+		plan.set = lambda key, value: setattr(plan, key, value)
+		def append(field, value):
+			row = value if isinstance(value, frappe._dict) else frappe._dict(value)
+			if not row.get("idx"):
+				row.idx = len(plan.get(field)) + 1
+			plan.get(field).append(row)
+			return row
+		plan.append = append
+		return plan
+
+	def _prefill(self, plan, *, amount=100, first="2026-07-15", last="2026-07-15", replace=1):
+		return zp.Zahlungsplan.plan_vorbelegen(
+			plan, rhythmus="Monatlich", von=first, bis=last, betrag=amount, replace=replace,
+		)
+
+	def test_replacement_keeps_submitted_paid_and_draft_invoice_identity(self):
+		for status, outstanding in ((1, 100), (1, 0), (0, 100)):
+			with self.subTest(docstatus=status, outstanding=outstanding):
+				row = self._row(purchase_invoice="PI-PREFILL", pi_erstellt_am="2026-07-15 10:00:00")
+				plan = self._plan([row])
+				# A browser document loaded before invoice creation must not be used.
+				stale_plan = self._plan([self._row()])
+				with patch.object(zp.frappe, "get_doc", return_value=plan) as get_doc:
+					result = self._prefill(stale_plan)
+				get_doc.assert_called_once_with("Zahlungsplan", plan.name, for_update=True)
+				self.assertIs(plan.plan[0], row)
+				self.assertEqual(row.name, "ROW-PREFILL")
+				self.assertEqual(row.purchase_invoice, "PI-PREFILL")
+				self.assertEqual(row.pi_erstellt_am, "2026-07-15 10:00:00")
+				self.assertEqual(result, {"added": 0, "skipped": 1, "total_rows": 1})
+				plan.save.assert_called_once_with(ignore_permissions=True)
+				stale_plan.save.assert_not_called()
+				invoice = frappe._dict(name="PI-PREFILL", docstatus=status, outstanding_amount=outstanding)
+				with patch.object(zp.frappe, "get_doc", side_effect=[plan, invoice]), \
+					patch.object(zp.frappe.db, "savepoint"), \
+					patch.object(zp, "_require_doctype_permissions"), \
+					patch.object(zp, "nowdate", return_value="2026-07-30"), \
+					patch.object(zp, "_create_purchase_invoice_for_plan_row") as create_pi:
+					result = zp.Zahlungsplan.create_due_purchase_invoices(plan)
+				create_pi.assert_not_called()
+				self.assertEqual(result["created"], [])
+				self.assertEqual(result["skipped_count"], 1)
+
+	def test_replacement_rejects_invoice_amount_change_and_removal_before_mutation(self):
+		for invoice in ("PI-SUBMITTED", "PI-PAID", "PI-DRAFT"):
+			for values in ({"amount": 120}, {"first": "2026-08-15", "last": "2026-08-15"}):
+				with self.subTest(invoice=invoice, values=values):
+					row = self._row(purchase_invoice=invoice)
+					plan = self._plan([row])
+					with patch.object(zp.frappe, "get_doc", return_value=plan):
+						with self.assertRaisesRegex(frappe.ValidationError, "ausdrücklich korrigieren"):
+							self._prefill(plan, **values)
+					self.assertEqual(plan.plan, [row])
+					self.assertEqual(row.betrag, 100)
+					self.assertEqual(row.purchase_invoice, invoice)
+					plan.save.assert_not_called()
+
+	def test_replacement_preserves_payment_allocations_and_updates_display_index(self):
+		row = self._row(payment_entry="PE-PREFILL", bank_transaction="BT-PREFILL", gebucht_am="2026-07-15")
+		allocation = frappe._dict(name="ALLOCATION-PREFILL", plan_zeile=row.name, plan_zeile_idx=1,
+			payment_entry="PE-PREFILL", allocated_amount=100, status="Aktiv")
+		plan = self._plan([row], [allocation])
+		with patch.object(zp.frappe, "get_doc", return_value=plan):
+			result = self._prefill(plan, first="2026-06-15", last="2026-07-15")
+		self.assertEqual(result, {"added": 1, "skipped": 1, "total_rows": 2})
+		self.assertIs(plan.plan[1], row)
+		self.assertIs(plan.zahlungen[0], allocation)
+		self.assertEqual(row.payment_entry, "PE-PREFILL")
+		self.assertEqual(row.bank_transaction, "BT-PREFILL")
+		self.assertEqual(row.gebucht_am, "2026-07-15")
+		self.assertEqual(allocation.plan_zeile, row.name)
+		self.assertEqual(allocation.allocated_amount, 100)
+		self.assertEqual(allocation.plan_zeile_idx, 2)
+
+	def test_replacement_rejects_removing_payment_history_and_changing_its_amount(self):
+		for status in ("Aktiv", "Prüfen", "Storniert"):
+			for values in ({"amount": 120}, {"first": "2026-08-15", "last": "2026-08-15"}):
+				with self.subTest(status=status, values=values):
+					row = self._row()
+					allocation = frappe._dict(plan_zeile=row.name, payment_entry="PE-PREFILL",
+						allocated_amount=50, status=status)
+					plan = self._plan([row], [allocation])
+					with patch.object(zp.frappe, "get_doc", return_value=plan):
+						with self.assertRaisesRegex(frappe.ValidationError, "verknüpft"):
+							self._prefill(plan, **values)
+					self.assertIs(plan.plan[0], row)
+					self.assertIs(plan.zahlungen[0], allocation)
+					plan.save.assert_not_called()
+
+	def test_replacement_rejects_removing_legacy_payment_link(self):
+		plan = self._plan([self._row(payment_entry="PE-LEGACY")])
+		with patch.object(zp.frappe, "get_doc", return_value=plan):
+			with self.assertRaisesRegex(frappe.ValidationError, "verknüpft"):
+				self._prefill(plan, first="2026-08-15", last="2026-08-15")
+		plan.save.assert_not_called()
+
+	def test_replacement_updates_and_removes_unlinked_rows(self):
+		retained = self._row()
+		removed = self._row(date="2026-06-15")
+		removed.name = "ROW-REMOVED"
+		plan = self._plan([removed, retained])
+		with patch.object(zp.frappe, "get_doc", return_value=plan):
+			result = self._prefill(plan, amount=120, last="2026-08-15")
+		self.assertIs(plan.plan[0], retained)
+		self.assertEqual(retained.betrag, 120)
+		self.assertEqual(plan.plan[1].betrag, 120)
+		self.assertNotIn(removed, plan.plan)
+		self.assertEqual(result, {"added": 1, "skipped": 1, "total_rows": 2})
+
+	def test_append_uses_current_plan_and_does_not_change_existing_invoice_row(self):
+		row = self._row(purchase_invoice="PI-PREFILL")
+		plan = self._plan([row])
+		with patch.object(zp.frappe, "get_doc", return_value=plan):
+			result = self._prefill(plan, amount=120, last="2026-08-15", replace=0)
+		self.assertIs(plan.plan[0], row)
+		self.assertEqual(row.betrag, 100)
+		self.assertEqual(row.purchase_invoice, "PI-PREFILL")
+		self.assertEqual(plan.plan[1].betrag, 120)
+		self.assertEqual(result, {"added": 1, "skipped": 1, "total_rows": 2})
+
+	def test_replacement_rejects_truncated_generation_before_changing_rows(self):
+		row = self._row()
+		plan = self._plan([row])
+		with patch.object(zp.frappe, "get_doc", return_value=plan):
+			with self.assertRaisesRegex(frappe.ValidationError, "höchstens 120"):
+				self._prefill(plan, first="2026-01-01", last="2036-01-01")
+		self.assertEqual(plan.plan, [row])
+		plan.save.assert_not_called()
+
+	def test_invoice_match_ignores_display_index_but_requires_the_other_remarks(self):
+		row = self._row(bemerkung="Unverändert")
+		plan = self._plan([row])
+		plan.company, plan.lieferant = "COMP-PREFILL", "SUP-PREFILL"
+		invoice = frappe._dict(company=plan.company, supplier=plan.lieferant,
+			posting_date="2026-07-15", bill_date="2026-07-15",
+			remarks=zp._build_remarks(plan) + " | Plan-Zeile 9 | Unverändert",
+			items=[frappe._dict(item_code="ITEM", rate=100, expense_account="EXP", cost_center="CC")],
+			meta=SimpleNamespace(get_field=lambda _field: None))
+		with patch.object(zp, "_resolve_pi_fields", return_value=("ITEM", "EXP", "CC")):
+			self.assertTrue(zp._purchase_invoice_matches_plan_row(plan, row, invoice))
+			invoice.remarks = invoice.remarks.replace("Unverändert", "Anderer Text")
+			self.assertFalse(zp._purchase_invoice_matches_plan_row(plan, row, invoice))
+
+
 class TestPaymentAllocationCentIntegrity(unittest.TestCase):
 	def _plan(self, amount=50, payments=None):
 		row = frappe._dict(name="ROW-CENT", idx=1, betrag=amount, faelligkeitsdatum="2026-07-15")
