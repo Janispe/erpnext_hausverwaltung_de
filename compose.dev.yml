@@ -177,7 +177,7 @@ services:
         bench --site "$$S" clear-cache;
         if [ "$$HV_PREVIEW_MOUNTED_APPS" = 1 ]; then
           export NVM_DIR="$$HOME/.nvm"; . "$$NVM_DIR/nvm.sh";
-          bench build;
+          bench build --apps "$${HV_APPS// /,}";
           touch "sites/$$S/.hv-preview-ready";
         fi;
         echo "Site '$$S' bereit.";
