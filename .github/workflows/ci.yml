@@ -70,7 +70,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: Janispe/erp_next_mail_merge
-          ref: e6cbb93cdc33c6d48396a0dcde85bb1d096962b2
+          ref: 46af214d91712cedb58b6fcb52a819373dc7fc2e
           path: mail_merge
           persist-credentials: false
 
