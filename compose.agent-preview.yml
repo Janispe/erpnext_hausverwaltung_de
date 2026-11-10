@@ -6,6 +6,7 @@ services:
     image: *preview-image
     environment:
       HV_PREVIEW_MOUNTED_APPS: '1'
+      CYPRESS_INSTALL_BINARY: '0'
     volumes: !override &preview-mounts
       - sites:/home/frappe/frappe-bench/sites
       - assets:/home/frappe/frappe-bench/sites/assets
@@ -45,6 +46,11 @@ services:
     ports: !reset []
 
 volumes:
-  db-data:
+  db-data: &preview-volume
     labels:
       de.hausverwaltung.preview.checkout: ${HV_PREVIEW_WORKSPACE:?Preview-Checkout fehlt}
+  redis-queue-data: *preview-volume
+  sites: *preview-volume
+  assets: *preview-volume
+  logs: *preview-volume
+  env: *preview-volume

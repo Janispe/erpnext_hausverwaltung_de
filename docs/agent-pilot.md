@@ -5,14 +5,15 @@ Orchestrator organisiert die Worker und ihre Git-Arbeitskopien. Compose startet 
 ## Workspace und Docker
 
 - Einen eigenen Ordner mit den Git-Repos `hausverwaltung`, `process_engine`, `mail_merge` und `thunderbird_hausverwaltung` als direkten Unterordnern in Orchestrator als **Workspace** öffnen. In **Add project → Open a workspace** vor dem Bestätigen die vier Repos prüfen.
-- Orchestrator, die Arbeitskopien und der Dev-Docker-Daemon müssen auf demselben Dev-System verfügbar sein. Der Pilot verlangt den expliziten Docker-Kontext `hv-preview`. Auf einem physischen Host kommt dafür ein eigener Rootless-Daemon unter dem Dev-Benutzer infrage. In einer dedizierten Dev-VM ist auch deren lokaler Standardsocket möglich. In beiden Fällen braucht der Worker eine echte Berechtigungsgrenze gegenüber der Produktion.
+- Die Arbeitskopien müssen auf dem Rechner des Docker-Daemons liegen. Auf dem freigegebenen Dev-Rechner aktiviert `HV_PREVIEW_LOCAL_DOCKER=1` den lokalen Docker-Kontext `default`. Jede Vorschau verwendet ein eigenes `hv-qa-<ticket>`-Compose-Projekt. Die vorhandene Dev-Site auf 8090 bleibt separat. Für einen dedizierten Daemon unterstützt der Launcher weiterhin den Kontext `hv-preview`.
 - Nur synthetische Geschäftsdaten verwenden. Der Pilot verwendet seine eigenen Datenbank- und Site-Volumes. Produktionsverzeichnisse, Produktionsnetz, Produktionssocket, echte Backups, Zugangsdaten und die private Peters-App gehören außerhalb des Workspaces. Lokale Worker und Freigaben verwenden.
 
 ## Eine Vorschau prüfen
 
-Im `hausverwaltung`-Worktree der Orchestrator-Session ausführen, sobald der separate Dev-Daemon bereitsteht:
+Im `hausverwaltung`-Worktree der Orchestrator-Session ausführen, auf dem freigegebenen Dev-Rechner.
 
 ```bash
+export HV_PREVIEW_LOCAL_DOCKER=1
 ./scripts/agent_preview.sh up pilot-1
 ./scripts/agent_preview.sh seed pilot-1
 ./scripts/agent_preview.sh test pilot-1

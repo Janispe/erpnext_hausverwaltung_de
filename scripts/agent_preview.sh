@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Aufruf: ./scripts/agent_preview.sh <up|status|seed|test|restart|migrate|build|stop> <ticket> [test-modul]
-Docker-Kontext: hv-preview
+Docker-Kontext: hv-preview oder mit HV_PREVIEW_LOCAL_DOCKER=1 der lokale Kontext default
 HTTP-Port: HV_PREVIEW_HTTP_PORT (Standard 8180, nur Loopback)
 USAGE
 }
@@ -40,13 +40,16 @@ repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 workspace=$(dirname -- "$repo")
 project=hv-qa-$ticket
 context=hv-preview
+if [[ ${HV_PREVIEW_LOCAL_DOCKER:-0} == 1 ]]; then
+  context=default
+fi
 site=frontend
 apps=(process_engine mail_merge hausverwaltung thunderbird_hausverwaltung)
 
 # Resolve the dedicated context before any request to its daemon.
 unset DOCKER_HOST DOCKER_CONTEXT DOCKER_TLS_VERIFY DOCKER_CERT_PATH
 endpoint=$(docker context inspect --format '{{(index .Endpoints "docker").Host}}' "$context") ||
-  fail 'Docker-Kontext hv-preview ist nicht verfügbar.'
+  fail "Docker-Kontext $context ist nicht verfügbar."
 rootless_socket=/run/user/$(id -u)/docker.sock
 docker_cli=(docker --context "$context")
 case "$endpoint" in
@@ -60,19 +63,22 @@ case "$endpoint" in
       fail 'Der gewählte Docker-Daemon läuft ohne Rootless-Modus.'
     ;;
   unix:///var/run/docker.sock|unix:///run/docker.sock)
-    if ! systemd-detect-virt --vm --quiet || systemd-detect-virt --container --quiet; then
-      fail 'Der systemweite Docker-Socket ist nur direkt in einer erkannten VM zulässig.'
+    if systemd-detect-virt --container --quiet ||
+       { [[ "$context" != default ]] && ! systemd-detect-virt --vm --quiet; }; then
+      fail 'Der systemweite Docker-Socket erfordert einen lokalen Dev-Daemon oder eine direkte Dev-VM.'
     fi
     [[ -S /run/docker.sock && "$(realpath -e -- "${endpoint#unix://}")" == /run/docker.sock ]] ||
-      fail 'Der VM-Docker-Socket fehlt oder verweist auf einen anderen Pfad.'
+      fail 'Der lokale Docker-Socket fehlt oder verweist auf einen anderen Pfad.'
     ;;
-  *) fail 'hv-preview muss auf den lokalen VM- oder eigenen Rootless-Socket zeigen.' ;;
+  *) fail 'Der Preview-Kontext muss auf einen lokalen Docker-Socket zeigen.' ;;
 esac
 
-containers=$("${docker_cli[@]}" ps --all --format '{{.Names}}') ||
-  fail 'Container im Preview-Kontext konnten nicht geprüft werden.'
-if grep -Eq '^(hvp|frappe)(-|$)' <<< "$containers"; then
-  fail 'Produktionscontainer im gewählten Docker-Kontext erkannt.'
+if [[ "$context" != default ]]; then
+  containers=$("${docker_cli[@]}" ps --all --format '{{.Names}}') ||
+    fail 'Container im Preview-Kontext konnten nicht geprüft werden.'
+  if grep -Eq '^(hvp|frappe)(-|$)' <<< "$containers"; then
+    fail 'Ein bestehender hvp- oder frappe-Stack wurde im dedizierten Kontext erkannt.'
+  fi
 fi
 
 if [[ "$action" != stop && "$action" != status ]]; then
@@ -110,14 +116,16 @@ while IFS=$'\t' read -r name owner; do
   fi
 done <<< "$project_containers"
 
-volume=${project}_db-data
-volumes=$("${docker_cli[@]}" volume ls --quiet --filter "name=$volume") ||
+volumes=$("${docker_cli[@]}" volume ls --quiet --filter "name=^${project}_") ||
   fail 'Preview-Volumes konnten nicht geprüft werden.'
-if grep -Fxq "$volume" <<< "$volumes"; then
-  owner=$("${docker_cli[@]}" volume inspect --format '{{index .Labels "de.hausverwaltung.preview.checkout"}}' "$volume")
-  [[ "$owner" == "$repo" ]] ||
-    fail 'Das Projekt hat bereits ein Datenbank-Volume aus einem anderen Checkout.'
-fi
+for suffix in db-data redis-queue-data sites assets logs env; do
+  volume=${project}_$suffix
+  if grep -Fxq "$volume" <<< "$volumes"; then
+    owner=$("${docker_cli[@]}" volume inspect --format '{{index .Labels "de.hausverwaltung.preview.checkout"}}' "$volume")
+    [[ "$owner" == "$repo" ]] ||
+      fail "Das Projekt hat bereits ein Volume aus einem anderen Checkout: $volume."
+  fi
+done
 
 preview_url() {
   local address
