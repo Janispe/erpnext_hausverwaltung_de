@@ -41,7 +41,7 @@ workspace=$(dirname -- "$repo")
 project=hv-qa-$ticket
 context=hv-preview
 site=frontend
-apps=(hausverwaltung process_engine mail_merge)
+apps=(process_engine mail_merge hausverwaltung thunderbird_hausverwaltung)
 
 # Resolve the dedicated context before any request to its daemon.
 unset DOCKER_HOST DOCKER_CONTEXT DOCKER_TLS_VERIFY DOCKER_CERT_PATH
@@ -91,7 +91,7 @@ unset FRAPPE_BASE_IMAGE COMPOSE_ENV_FILES COMPOSE_PROFILES
 unset HV_LANGUAGE HV_TIME_ZONE HV_COUNTRY HV_CURRENCY HV_COA_TEMPLATE
 unset HV_BOOTSTRAP_CREATE_COA HV_BOOTSTRAP_RUN_SETUP_WIZARD HV_BOOTSTRAP_MARK_SETUP_COMPLETE HV_BOOTSTRAP_FORCE
 export SITE_NAME=$site
-export HV_APPS='process_engine mail_merge hausverwaltung'
+export HV_APPS="${apps[*]}"
 export HV_COMPANY='Demo Hausverwaltung'
 export HV_PREVIEW_PROJECT=$project
 export HV_PREVIEW_WORKSPACE=$repo
@@ -141,13 +141,13 @@ wait_for_site() {
 }
 
 check_apps() {
-  local apps app
-  apps=$("${bench[@]}" list-apps)
-  for app in frappe erpnext process_engine mail_merge hausverwaltung; do
-    grep -Eq "^[[:space:]]*$app([[:space:]]|$)" <<< "$apps" ||
-      fail "Auf der Preview-Site fehlt $app."
+  local installed app
+  installed=$("${bench[@]}" list-apps)
+  for app in frappe erpnext "${apps[@]}"; do
+    grep -Eq "^[[:space:]]*$app([[:space:]]|$)" <<< "$installed" ||
+      fail "Auf der Preview-Site fehlt $app. Für den erweiterten App-Satz eine neue Vorschau starten."
   done
-  printf '%s\n' "$apps"
+  printf '%s\n' "$installed"
 }
 
 report_revisions() {
@@ -211,7 +211,7 @@ SEED
     ;;
   build)
     "${compose[@]}" exec -T backend bash -lc \
-      'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; bench build --app hausverwaltung'
+      'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; bench build --apps "$1"' _ "${HV_APPS// /,}"
     ;;
   stop)
     "${compose[@]}" stop

@@ -14,6 +14,7 @@ services:
       - .:/home/frappe/frappe-bench/apps/hausverwaltung
       - ../process_engine:/home/frappe/frappe-bench/apps/process_engine
       - ../mail_merge:/home/frappe/frappe-bench/apps/mail_merge
+      - ../thunderbird_hausverwaltung:/home/frappe/frappe-bench/apps/thunderbird_hausverwaltung
   create-site:
     image: *preview-image
     environment:
