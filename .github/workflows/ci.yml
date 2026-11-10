@@ -1,106 +1,121 @@
-
 name: CI
 
 on:
   push:
     branches:
-      - develop
+      - main
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
-  group: develop-hausverwaltung-${{ github.event.number }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-    name: Server
+    name: Mietvertrag (Frappe v16)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BENCH_PATH: /home/runner/frappe-bench
+      FRAPPE_VERSION: v16.14.0
+      ERPNEXT_VERSION: v16.14.0
+      SITE_NAME: test_site
+      # Disposable local service and site credentials for this job only.
+      DB_ROOT_PASSWORD: ci-root
+      SITE_ADMIN_PASSWORD: ci-admin
+      HV_COMPANY: CI Hausverwaltung
+      HV_BOOTSTRAP_CREATE_COA: '1'
+      CYPRESS_INSTALL_BINARY: '0'
 
     services:
       redis-cache:
-        image: redis:alpine
+        image: redis:8-alpine
         ports:
-          - 13000:6379
+          - '127.0.0.1:13000:6379'
       redis-queue:
-        image: redis:alpine
+        image: redis:8-alpine
         ports:
-          - 11000:6379
+          - '127.0.0.1:11000:6379'
       mariadb:
-        image: mariadb:10.6
+        image: mariadb:11.8
         env:
-          MYSQL_ROOT_PASSWORD: root
+          MARIADB_ROOT_PASSWORD: ${{ env.DB_ROOT_PASSWORD }}
         ports:
-          - 3306:3306
-        options: --health-cmd="mariadb-admin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+          - '127.0.0.1:3306:3306'
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=2s --health-retries=10
 
     steps:
-      - name: Clone
-        uses: actions/checkout@v3
+      - name: Check out Hausverwaltung
+        uses: actions/checkout@v6
+        with:
+          path: hausverwaltung
+          persist-credentials: false
 
-      - name: Find tests
+      # These pinned app revisions must be publicly fetchable by the runner.
+      - name: Check out Process Engine
+        uses: actions/checkout@v6
+        with:
+          repository: Janispe/process_engine
+          ref: 9546be8c2443596d3a60e7b8a12bf01f182a8f4a
+          path: process_engine
+          persist-credentials: false
+
+      - name: Check out Mail Merge
+        uses: actions/checkout@v6
+        with:
+          repository: Janispe/erp_next_mail_merge
+          ref: e6cbb93cdc33c6d48396a0dcde85bb1d096962b2
+          path: mail_merge
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Install system dependencies
         run: |
-          echo "Finding tests"
-          grep -rn "def test" > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y mariadb-client libmariadb-dev pkg-config libpango-1.0-0 libpangoft2-1.0-0
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: Setup Node
-        uses: actions/setup-node@v3
-        with:
-          node-version: 18
-          check-latest: true
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/*requirements.txt', '**/pyproject.toml', '**/setup.py', '**/setup.cfg') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-            ${{ runner.os }}-
-
-      - name: Get yarn cache directory path
-        id: yarn-cache-dir-path
-        run: 'echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT'
-
-      - uses: actions/cache@v4
-        id: yarn-cache
-        with:
-          path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
-          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-yarn-
-
-      - name: Install MariaDB Client
-        run: sudo apt-get install mariadb-client-10.6
-
-      - name: Setup
+      - name: Initialize Bench
         run: |
-          pip install frappe-bench
-          bench init --skip-redis-config-generation --skip-assets --python "$(which python)" ~/frappe-bench
-          mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL character_set_server = 'utf8mb4'"
-          mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL collation_server = 'utf8mb4_unicode_ci'"
+          python -m pip install frappe-bench==5.31.1
+          bench init --frappe-branch "$FRAPPE_VERSION" --skip-redis-config-generation \
+            --skip-assets --python "$(command -v python)" "$BENCH_PATH"
+          MYSQL_PWD="$DB_ROOT_PASSWORD" mariadb --host 127.0.0.1 --user root --execute \
+            "SET GLOBAL character_set_server = 'utf8mb4';
+             SET GLOBAL collation_server = 'utf8mb4_unicode_ci';
+             SET GLOBAL innodb_snapshot_isolation = OFF;"
 
-      - name: Install
-        working-directory: /home/runner/frappe-bench
+      - name: Install apps and create test site
+        working-directory: ${{ env.BENCH_PATH }}
         run: |
-          bench get-app hausverwaltung $GITHUB_WORKSPACE
+          bench get-app --skip-assets --branch "$ERPNEXT_VERSION" https://github.com/frappe/erpnext.git
+          bench get-app --skip-assets "$GITHUB_WORKSPACE/process_engine"
+          bench get-app --skip-assets "$GITHUB_WORKSPACE/mail_merge"
+          bench get-app --skip-assets "$GITHUB_WORKSPACE/hausverwaltung"
           bench setup requirements --dev
-          bench new-site --db-root-password root --admin-password admin test_site
-          bench --site test_site install-app hausverwaltung
+          bench new-site --db-host 127.0.0.1 --mariadb-user-host-login-scope='%' \
+            --db-root-password "$DB_ROOT_PASSWORD" --admin-password "$SITE_ADMIN_PASSWORD" \
+            --install-app erpnext --install-app process_engine --install-app mail_merge \
+            --install-app hausverwaltung "$SITE_NAME"
+          bench --site "$SITE_NAME" migrate
           bench build
-        env:
-          CI: 'Yes'
 
-      - name: Run Tests
-        working-directory: /home/runner/frappe-bench
+      - name: Run Mietvertrag database tests
+        working-directory: ${{ env.BENCH_PATH }}
         run: |
-          bench --site test_site set-config allow_tests true
-          bench --site test_site run-tests --app hausverwaltung
-        env:
-          TYPE: server
+          bench --site "$SITE_NAME" set-config --parse allow_tests 1
+          bench --site "$SITE_NAME" run-tests --app hausverwaltung \
+            --module hausverwaltung.hausverwaltung.doctype.mietvertrag.test_mietvertrag \
+            --case TestMietvertragDatabaseIntegration

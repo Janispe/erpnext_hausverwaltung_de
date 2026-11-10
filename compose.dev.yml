@@ -92,6 +92,7 @@ services:
     entrypoint: ["bash", "-c"]
     command:
       - >
+        if [ "$$HV_PREVIEW_MOUNTED_APPS" = 1 ]; then set -e; fi;
         bench set-config -g db_host $$DB_HOST;
         bench set-config -gp db_port $$DB_PORT;
         bench set-config -g redis_cache "redis://$$REDIS_CACHE";
@@ -104,8 +105,13 @@ services:
         bench set-config -gp chromium_start_timeout 30;
         for app in $$HV_APPS; do
           if [ ! -f "apps/$$app/pyproject.toml" ] && [ ! -f "apps/$$app/setup.py" ]; then echo "uebersprungen (nicht ausgecheckt): $$app"; continue; fi;
-          ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/$$app;
-          bench setup requirements --python $$app;
+          if [ "$$HV_PREVIEW_MOUNTED_APPS" = 1 ]; then
+            bench setup requirements --python "$$app";
+            if [ -f "apps/$$app/package.json" ]; then bench setup requirements --node "$$app"; fi;
+          else
+            ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/$$app;
+            bench setup requirements --python $$app;
+          fi;
         done;
         ls -1 apps > sites/apps.txt;
 
@@ -130,6 +136,7 @@ services:
     entrypoint: ["bash", "-c"]
     command:
       - >
+        if [ "$$HV_PREVIEW_MOUNTED_APPS" = 1 ]; then set -e; fi;
         S="$$SITE_NAME";
         if [ -d "sites/$$S" ]; then echo "Site '$$S' existiert bereits, überspringe Anlage"; exit 0; fi;
         wait-for-it -t 120 db:3306;
@@ -147,8 +154,10 @@ services:
         INSTALL="--install-app erpnext";
         for app in $$HV_APPS; do
           if [ ! -f "apps/$$app/pyproject.toml" ] && [ ! -f "apps/$$app/setup.py" ]; then echo "uebersprungen (nicht ausgecheckt): $$app"; continue; fi;
-          ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/$$app;
-          bench setup requirements --python $$app;
+          if [ "$$HV_PREVIEW_MOUNTED_APPS" != 1 ]; then
+            ( echo n; echo y ) | bench get-app file:///home/frappe/frappe-bench/apps/$$app;
+            bench setup requirements --python $$app;
+          fi;
           INSTALL="$$INSTALL --install-app $$app";
         done;
         echo "Lege Site '$$S' an mit: $$INSTALL";
@@ -159,6 +168,10 @@ services:
         bench --site "$$S" execute frappe.client.set_value --kwargs "{'doctype': 'Print Settings', 'name': 'Print Settings', 'fieldname': 'pdf_generator', 'value': 'chrome'}";
         bench --site "$$S" execute hausverwaltung.hausverwaltung.scripts.bootstrap_site.run;
         bench --site "$$S" clear-cache;
+        if [ "$$HV_PREVIEW_MOUNTED_APPS" = 1 ]; then
+          export NVM_DIR="$$HOME/.nvm"; . "$$NVM_DIR/nvm.sh";
+          bench build;
+        fi;
         echo "Site '$$S' bereit.";
 
   backend:

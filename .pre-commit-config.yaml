@@ -15,6 +15,11 @@ repos:
       - id: check-json
       - id: check-toml
       - id: check-yaml
+        exclude: ^compose\.agent-preview\.yml$
+      - id: check-yaml
+        name: Check Compose preview YAML syntax
+        files: ^compose\.agent-preview\.yml$
+        args: [--unsafe]
       - id: debug-statements
 
   - repo: https://github.com/astral-sh/ruff-pre-commit

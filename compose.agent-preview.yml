@@ -1,0 +1,49 @@
+# Use with compose.dev.yml and an explicit hv-qa-* project.
+x-preview-image: &preview-image hausverwaltung/frappe-chrome:${HV_PREVIEW_PROJECT:?Preview-Projekt fehlt}
+
+services:
+  configurator:
+    image: *preview-image
+    environment:
+      HV_PREVIEW_MOUNTED_APPS: '1'
+    volumes: !override &preview-mounts
+      - sites:/home/frappe/frappe-bench/sites
+      - assets:/home/frappe/frappe-bench/sites/assets
+      - logs:/home/frappe/frappe-bench/logs
+      - env:/home/frappe/frappe-bench/env
+      - .:/home/frappe/frappe-bench/apps/hausverwaltung
+      - ../process_engine:/home/frappe/frappe-bench/apps/process_engine
+      - ../mail_merge:/home/frappe/frappe-bench/apps/mail_merge
+  create-site:
+    image: *preview-image
+    environment:
+      HV_PREVIEW_MOUNTED_APPS: '1'
+    volumes: *preview-mounts
+  backend:
+    image: *preview-image
+    volumes: *preview-mounts
+  frontend:
+    image: *preview-image
+    volumes: *preview-mounts
+    ports: !override
+      - "127.0.0.1:${HV_PREVIEW_HTTP_PORT:-8180}:8080"
+  websocket:
+    image: *preview-image
+    volumes: *preview-mounts
+  queue-short:
+    image: *preview-image
+    volumes: *preview-mounts
+  queue-long:
+    image: *preview-image
+    volumes: *preview-mounts
+  scheduler:
+    image: *preview-image
+    volumes: *preview-mounts
+  db:
+    image: mariadb:11.8
+    ports: !reset []
+
+volumes:
+  db-data:
+    labels:
+      de.hausverwaltung.preview.checkout: ${HV_PREVIEW_WORKSPACE:?Preview-Checkout fehlt}
