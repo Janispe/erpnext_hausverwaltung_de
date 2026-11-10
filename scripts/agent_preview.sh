@@ -6,6 +6,7 @@ usage() {
 Aufruf: ./scripts/agent_preview.sh <up|status|seed|test|restart|migrate|build|stop> <ticket> [test-modul]
 Docker-Kontext: hv-preview oder mit HV_PREVIEW_LOCAL_DOCKER=1 der lokale Kontext default
 HTTP-Port: HV_PREVIEW_HTTP_PORT (Standard 8180, nur Loopback)
+Vorhandene Basisimages ohne PDF-Image-Build: HV_PREVIEW_USE_BASE_IMAGE=1
 USAGE
 }
 
@@ -93,7 +94,7 @@ fi
   fail 'Das Skript muss aus dem hausverwaltung-Checkout des Ticket-Workspaces laufen.'
 
 # Compose should use only the preview files and their explicit settings.
-unset FRAPPE_BASE_IMAGE COMPOSE_ENV_FILES COMPOSE_PROFILES
+unset FRAPPE_BASE_IMAGE HV_PREVIEW_IMAGE COMPOSE_ENV_FILES COMPOSE_PROFILES
 unset HV_LANGUAGE HV_TIME_ZONE HV_COUNTRY HV_CURRENCY HV_COA_TEMPLATE
 unset HV_BOOTSTRAP_CREATE_COA HV_BOOTSTRAP_RUN_SETUP_WIZARD HV_BOOTSTRAP_MARK_SETUP_COMPLETE HV_BOOTSTRAP_FORCE
 export SITE_NAME=$site
@@ -175,8 +176,14 @@ report_revisions() {
 case "$action" in
   up)
     "${compose[@]}" config --quiet
-    "${compose[@]}" build configurator
-    "${compose[@]}" up --detach --no-build
+    if [[ ${HV_PREVIEW_USE_BASE_IMAGE:-0} == 1 ]]; then
+      HV_PREVIEW_IMAGE=$("${compose[@]}" config --format json | jq -er '.services.configurator.build.args.FRAPPE_BASE_IMAGE')
+      export HV_PREVIEW_IMAGE
+      "${compose[@]}" up --detach --no-build --pull never
+    else
+      "${compose[@]}" build configurator
+      "${compose[@]}" up --detach --no-build
+    fi
     url=$(preview_url)
     wait_for_site "$url"
     check_apps

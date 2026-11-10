@@ -1,5 +1,5 @@
 # Use with compose.dev.yml and an explicit hv-qa-* project.
-x-preview-image: &preview-image hausverwaltung/frappe-chrome:${HV_PREVIEW_PROJECT:?Preview-Projekt fehlt}
+x-preview-image: &preview-image "${HV_PREVIEW_IMAGE:-hausverwaltung/frappe-chrome:${HV_PREVIEW_PROJECT:?Preview-Projekt fehlt}}"
 
 services:
   configurator:
@@ -43,6 +43,9 @@ services:
     volumes: *preview-mounts
   db:
     image: mariadb:11.8
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      start_period: 20s
     ports: !reset []
 
 volumes:

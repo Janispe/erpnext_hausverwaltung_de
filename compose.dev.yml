@@ -138,7 +138,14 @@ services:
       - >
         if [ "$$HV_PREVIEW_MOUNTED_APPS" = 1 ]; then set -e; fi;
         S="$$SITE_NAME";
-        if [ -d "sites/$$S" ]; then echo "Site '$$S' existiert bereits, überspringe Anlage"; exit 0; fi;
+        if [ -d "sites/$$S" ]; then
+          if [ "$$HV_PREVIEW_MOUNTED_APPS" = 1 ] && [ ! -f "sites/$$S/.hv-preview-ready" ]; then
+            echo "Preview-Site '$$S' ist unvollständig. Neues Preview-Ticket verwenden." >&2;
+            exit 1;
+          fi;
+          echo "Site '$$S' existiert bereits, überspringe Anlage";
+          exit 0;
+        fi;
         wait-for-it -t 120 db:3306;
         wait-for-it -t 120 redis-cache:6379;
         wait-for-it -t 120 redis-queue:6379;
@@ -171,6 +178,7 @@ services:
         if [ "$$HV_PREVIEW_MOUNTED_APPS" = 1 ]; then
           export NVM_DIR="$$HOME/.nvm"; . "$$NVM_DIR/nvm.sh";
           bench build;
+          touch "sites/$$S/.hv-preview-ready";
         fi;
         echo "Site '$$S' bereit.";
 

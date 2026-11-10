@@ -20,6 +20,8 @@ export HV_PREVIEW_LOCAL_DOCKER=1
 ao preview http://127.0.0.1:8180
 ```
 
+Für einen Desk-Test mit bereits lokal vorhandenen Images `HV_PREVIEW_USE_BASE_IMAGE=1` zusammen mit `HV_PREVIEW_LOCAL_DOCKER=1` setzen. Damit startet Compose das in der Konfiguration gepinnte ERPNext-Basisimage und überspringt den zusätzlichen Chromium-Image-Build. Die PDF-Ausgabe wird in diesem Modus separat geprüft.
+
 Der Entwickler öffnet im Desk einen synthetischen Mietvertrag und prüft den betroffenen Ablauf. Bei Python-Änderungen `./scripts/agent_preview.sh restart pilot-1` ausführen. Für Schemaänderungen gibt es `migrate`, für Assets der vier Apps `build`. Anschließend den Ablauf im Desk wiederholen.
 
 Der QA-Worker erhält die Preview-URL, die Commit-SHAs aller vier Repos und die konkreten Schritte. Für die Abschlussprüfung mit einer frischen Datenbank aus diesen Commits starten und den Ablauf selbst ausführen. Ein AO-PR-Reviewer ergänzt das Code-Review. Die interaktive Abnahme läuft als eigene Worker-Aufgabe. Screenshots und Testausgabe bleiben Belege zum getesteten Stand.
