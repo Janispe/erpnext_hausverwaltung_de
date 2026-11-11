@@ -17,14 +17,14 @@ def prepare_mail_merge():
 		frappe.throw("Nur fuer die isolierte FAC-Testsite.")
 	frappe.only_for("System Manager")
 	if not frappe.db.exists("Print Format", "Serienbrief Dokument"):
-		# mail_merge's installer replaces this placeholder with its actual format.
+		# Empty HTML lets mail_merge fill its default without overwriting custom layouts.
 		frappe.get_doc(
 			{
 				"doctype": "Print Format",
 				"name": "Serienbrief Dokument",
 				"doc_type": "DocType",
 				"custom_format": 1,
-				"html": "<!-- Replaced by mail_merge after_migrate -->",
+				"html": "",
 			}
 		).insert()
 		frappe.db.commit()
