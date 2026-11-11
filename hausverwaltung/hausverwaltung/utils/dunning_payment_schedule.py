@@ -94,7 +94,8 @@ def match_dunning_rows(invoice, payments, posting_date=None, *, allow_legacy=Fal
 	if legacy:
 		schedules = invoice.get("payment_schedule") or []
 		invalid_amount = any(
-			not math.isfinite(flt(row.outstanding)) or flt(row.outstanding) < 0
+			not math.isfinite(flt(row.outstanding)) or not math.isfinite(flt(row.payment_amount))
+			or flt(row.outstanding) < 0
 			or flt(row.outstanding) > flt(row.payment_amount) + 0.005
 			for row in schedules
 		)
@@ -146,6 +147,8 @@ def _matches_dunning_row(payment, current, *, legacy):
 			return False
 	for field in ("payment_amount", "invoice_portion"):
 		value = payment.get(field)
+		if not math.isfinite(flt(current.get(field))):
+			return False
 		if legacy and not value:
 			continue
 		if not math.isfinite(flt(value)) or abs(flt(value) - flt(current.get(field))) >= 0.005:

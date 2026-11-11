@@ -106,5 +106,15 @@ class TestDunningInstallments(unittest.TestCase):
 	def test_legacy_reference_resolution_recomputes_level_after_all_checks(self):
 		doc=self._submit(self._invoice())
 		doc.set_dunning_level.assert_called_once_with()
+
+	def test_nonfinite_schedule_metadata_is_rejected_for_current_and_legacy_rows(self):
+		for field in ("payment_amount", "invoice_portion"):
+			for value in (float("nan"), float("inf")):
+				for reference in (None, "PS-1"):
+					with self.subTest(field=field, value=value, reference=reference):
+						invoice = self._invoice()
+						invoice.payment_schedule[0][field] = value
+						with self.assertRaises(frappe.ValidationError):
+							self._submit(invoice, [self._row(payment_schedule=reference)])
 		explicit=self._submit(self._invoice(),[self._row(payment_schedule="PS-1")])
 		explicit.set_dunning_level.assert_not_called()
