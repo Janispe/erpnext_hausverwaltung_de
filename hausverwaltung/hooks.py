@@ -261,6 +261,7 @@ doc_events = {
 		"on_trash": "hausverwaltung.hausverwaltung.doctype.wohnung.wohnung.update_wohnung_status_from_zustand",
 	},
 	"Dunning": {
+		"before_validate": "hausverwaltung.hausverwaltung.utils.dunning_creation.resolve_legacy_dunning_before_validate",
 		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning",
 		"before_submit": [
 			"hausverwaltung.hausverwaltung.utils.dunning_creation.validate_dunning_before_submit",

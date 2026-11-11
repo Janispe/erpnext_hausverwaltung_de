@@ -469,6 +469,14 @@ def validate_mietvertrag_sales_invoice_identity(doc) -> None:
 
 
 class CustomSalesInvoice(SalesInvoice):
+	def _set_defaults(self):
+		# Document.insert/_save apply child defaults before before_validate.
+		# Fill only missing dimensions from the locked tenancy before a generic
+		# Company/User default can hide their absence. Conflicts still fail.
+		if not self.flags.in_print:
+			validate_mietvertrag_sales_invoice_identity(self)
+		return super()._set_defaults()
+
 	def _lock_invoice_accounting_scope(self):
 		if not self.flags.in_print:
 			company = self.get("company")

@@ -71,6 +71,21 @@ def reject_duplicate_dunning(invoice_names, posting_date=None, *, exclude_dunnin
 		)
 
 
+def resolve_legacy_dunning_before_validate(doc, method=None) -> None:
+	"""Resolve stored legacy drafts before ERPNext validates schedule links.
+
+	Draft saves retain normal Core validation. At submit use the same locked
+	matching/duplicate guard as before_submit, without relaxing Core checks.
+	"""
+	if doc.get("docstatus") != 1 or getattr(doc, "_action", None) != "submit":
+		return
+	# These Core setters normally precede reference validation. Run them here
+	# too so current currency/type fees cannot enter the fee-free fallback.
+	doc.validate_currency()
+	doc.set_dunning_fee()
+	validate_dunning_before_submit(doc)
+
+
 def validate_dunning_before_submit(doc, method=None) -> None:
 	"""Recheck drafts at submit, including letters edited in the standard form."""
 	payments = doc.get("overdue_payments") or []

@@ -102,3 +102,16 @@ class TestDunningCreation(unittest.TestCase):
 					name="DUN-1", posting_date="2026-10-16", company="COMP-1", customer="CUST-1",
 					overdue_payments=[frappe._dict(sales_invoice="SI-1")],
 				))
+
+
+class TestEarlyDunningLifecycle(unittest.TestCase):
+	def test_only_submit_runs_early_guard_after_core_fee_and_currency_setters(self):
+		for action, status in (("save", 0), ("update_after_submit", 1), ("cancel", 2), ("submit", 1)):
+			with self.subTest(action=action):
+				events = []
+				doc = frappe._dict(docstatus=status, _action=action,
+					validate_currency=lambda: events.append("currency"),
+					set_dunning_fee=lambda: events.append("fee"))
+				with patch.object(guard, "validate_dunning_before_submit", side_effect=lambda current: events.append("guard")):
+					guard.resolve_legacy_dunning_before_validate(doc)
+				self.assertEqual(events, ["currency", "fee", "guard"] if action == "submit" else [])
