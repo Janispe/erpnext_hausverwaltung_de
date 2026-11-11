@@ -94,7 +94,7 @@ def validate_dunning_before_submit(doc, method=None) -> None:
 	for payment, current in resolved:
 		if not payment.get("payment_schedule") and current["payment_schedule"]:
 			for field in ("payment_schedule", "payment_amount", "invoice_portion", "payment_term", "mode_of_payment"):
-				payment[field] = current.get(field)
+				setattr(payment, field, current.get(field))
 			references_changed = True
 	if references_changed:
 		# Older ERPNext versions compute levels before this before_submit hook.
