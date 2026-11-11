@@ -6,7 +6,7 @@ import frappe
 from frappe import _
 from frappe.utils import flt, getdate, nowdate
 
-from hausverwaltung.hausverwaltung.utils.dunning_payment_schedule import require_overdue_payment_rows
+from hausverwaltung.hausverwaltung.utils.dunning_payment_schedule import match_dunning_rows, require_overdue_payment_rows
 
 
 def validate_dunning_invoice(invoice, posting_date=None) -> None:
@@ -83,22 +83,19 @@ def validate_dunning_before_submit(doc, method=None) -> None:
 		or invoice.currency != doc.currency for invoice in invoices
 	):
 		frappe.throw(_("Mahnung und Rechnungen müssen zu derselben Firma und demselben Mieter gehören."))
+	free = not any(flt(doc.get(field)) for field in ("dunning_amount", "dunning_fee", "rate_of_interest"))
+	resolved = []
 	for invoice in invoices:
-		current = {row["payment_schedule"]: row for row in require_overdue_payment_rows(invoice, doc.posting_date)}
-		seen = set()
-		for row in (row for row in payments if row.sales_invoice == invoice.name):
-			schedule = current.get(row.get("payment_schedule"))
-			matches = schedule is not None and row.get("payment_schedule") not in seen
-			if matches:
-				matches = (
-					row.get("due_date") and getdate(row.due_date) == getdate(schedule["due_date"])
-					and all((row.get(field) or "") == (schedule.get(field) or "") for field in ("payment_term", "mode_of_payment"))
-					and all(abs(flt(row.get(field)) - flt(schedule.get(field))) < 0.005 for field in ("outstanding", "payment_amount", "invoice_portion"))
-				)
-			if not matches:
-				frappe.throw(
-					_("Rechnung {0} oder ihr Zahlungsplan hat sich seit Anlage des Mahnentwurfs geändert. Bitte den Entwurf mit den aktuellen Zahlungsplan-Raten aktualisieren.")
-					.format(invoice.name)
-				)
-			seen.add(row.payment_schedule)
+		rows = [row for row in payments if row.sales_invoice == invoice.name]
+		resolved.extend(match_dunning_rows(invoice, rows, doc.posting_date, allow_legacy=free))
 	reject_duplicate_dunning(names, doc.posting_date, exclude_dunning=doc.name)
+	# Mutate only after all source rows and the duplicate check have passed.
+	references_changed = False
+	for payment, current in resolved:
+		if not payment.get("payment_schedule") and current["payment_schedule"]:
+			for field in ("payment_schedule", "payment_amount", "invoice_portion", "payment_term", "mode_of_payment"):
+				payment[field] = current.get(field)
+			references_changed = True
+	if references_changed:
+		# Older ERPNext versions compute levels before this before_submit hook.
+		doc.set_dunning_level()

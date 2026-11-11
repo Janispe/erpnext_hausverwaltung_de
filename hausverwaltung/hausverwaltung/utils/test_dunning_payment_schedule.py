@@ -211,7 +211,7 @@ class TestDunningInstallmentSubmit(unittest.TestCase):
 		invoice = _invoice()
 		doc = self._doc(invoice)
 		for values in (
-			{"payment_schedule": None}, {"payment_schedule": "OTHER-SCHEDULE"},
+			{"payment_schedule": "OTHER-SCHEDULE"},
 			{"payment_term": "Other term"}, {"mode_of_payment": "Cash"},
 			{"payment_amount": 250}, {"invoice_portion": 100},
 			{"due_date": "2026-10-02"}, {"outstanding": 250},
@@ -223,6 +223,16 @@ class TestDunningInstallmentSubmit(unittest.TestCase):
 		invoice.outstanding_amount = 200
 		with patch.object(frappe, "get_doc", return_value=invoice), self.assertRaises(frappe.ValidationError):
 			dunning_creation.validate_dunning_before_submit(doc)
+
+	def test_fee_free_legacy_row_recovers_its_unique_reference(self):
+		invoice = _invoice()
+		doc = self._doc(invoice)
+		doc.overdue_payments[0].payment_schedule = None
+		doc.set_dunning_level = MagicMock()
+		with patch.object(frappe, "get_doc", return_value=invoice), patch.object(dunning_creation, "reject_duplicate_dunning"):
+			dunning_creation.validate_dunning_before_submit(doc)
+		self.assertEqual(doc.overdue_payments[0].payment_schedule, "PS-1")
+		doc.set_dunning_level.assert_called_once_with()
 
 	def test_submit_rejects_a_repeated_installment(self):
 		invoice = _invoice()
