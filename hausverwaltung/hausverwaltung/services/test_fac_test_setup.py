@@ -17,6 +17,7 @@ class TestMailMergeBootstrap(unittest.TestCase):
 			fac_test_setup.prepare_mail_merge()
 			fields = frappe.get_doc.call_args.args[0]
 			self.assertEqual(fields["html"], "")
+			self.assertEqual(fields["custom_format"], 0)
 			frappe.get_doc.return_value.insert.assert_called_once_with()
 			frappe.db.commit.assert_called_once_with()
 
@@ -30,6 +31,7 @@ class TestMailMergeBootstrap(unittest.TestCase):
 			install.ensure_serienbrief_dokument_print_format()
 			self.assertIn("{{ (doc.html or '') | safe }}", doc.html)
 			self.assertEqual(doc.doc_type, "Serienbrief Dokument")
+			self.assertEqual(doc.custom_format, 1)
 			doc.save.assert_called_once_with(ignore_permissions=True)
 			frappe.log_error.assert_not_called()
 
