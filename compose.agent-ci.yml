@@ -1,0 +1,9 @@
+# CI reuses downloaded packages. Each run has its own Bench and site volumes.
+services:
+  configurator:
+    volumes:
+      - type: bind
+        source: ${HV_PREVIEW_CI_CACHE:?CI-Paketcache fehlt}
+        target: /home/frappe/.cache/uv
+        bind:
+          create_host_path: false

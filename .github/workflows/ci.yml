@@ -5,6 +5,8 @@ on:
     branches:
       - main
   pull_request:
+    branches-ignore:
+      - codex/agent-loop-base
   workflow_dispatch:
 
 permissions:

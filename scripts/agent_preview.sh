@@ -4,6 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Aufruf: ./scripts/agent_preview.sh <up|status|seed|test|restart|migrate|build|stop> <ticket> [test-modul]
+Lokaler CI-Lauf: ./scripts/agent_ci.sh
 Docker-Kontext: hv-preview oder mit HV_PREVIEW_LOCAL_DOCKER=1 der lokale Kontext default
 HTTP-Port: HV_PREVIEW_HTTP_PORT (Standard 8180, nur Loopback)
 Vorhandene Basisimages ohne PDF-Image-Build: HV_PREVIEW_USE_BASE_IMAGE=1
@@ -24,7 +25,7 @@ action=${1:-}
 ticket=${2:-}
 test_module=${3:-hausverwaltung.hausverwaltung.doctype.mietvertrag.test_mietvertrag}
 case "$action" in
-  up|status|seed|test|restart|migrate|build|stop) ;;
+  up|status|seed|test|restart|migrate|build|stop|ci) ;;
   *) usage >&2; exit 2 ;;
 esac
 [[ "$ticket" =~ ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$ ]] ||
@@ -105,6 +106,15 @@ export HV_PREVIEW_WORKSPACE=$repo
 export HV_PREVIEW_HTTP_PORT=$port
 compose=("${docker_cli[@]}" compose --project-name "$project" --project-directory "$repo"
   --env-file /dev/null -f "$repo/compose.dev.yml" -f "$repo/compose.agent-preview.yml")
+if [[ "$action" == ci ]]; then
+  [[ "$ticket" == ci-* && -d ${HV_PREVIEW_CI_CACHE:-} ]] ||
+    fail 'CI erfordert ein ci-Ticket und einen Paketcache. agent_ci.sh verwenden.'
+  if [[ "$context" != default ]]; then
+    [[ "$endpoint" == "unix://$rootless_socket" && ${HV_PREVIEW_USE_BASE_IMAGE:-0} == 1 ]] ||
+      fail 'CI im Kontext hv-preview erfordert Rootless Docker und ein vorhandenes Basisimage.'
+  fi
+  compose+=(-f "$repo/compose.agent-ci.yml")
+fi
 bench=("${compose[@]}" exec -T backend bench --site "$site")
 
 # A ticket can be restarted from the same checkout only.
@@ -173,22 +183,73 @@ report_revisions() {
   done
 }
 
+prepare_rootless_ci() {
+  local cache=$HV_PREVIEW_CI_CACHE mapping frappe_host_uid worker_uid checkout app
+  [[ -O "$workspace" && -O "$cache" && ! -L "$cache" &&
+     "$cache" == "$(dirname -- "$workspace")/uv-rootless" && ${workspace##*/} == run.* ]] ||
+    fail 'Rootless-CI erwartet temporäre Checkouts und einen eigenen Paketcache.'
+  worker_uid=$(id -u)
+  mapping=$("${docker_cli[@]}" run --rm --network none --pull never --entrypoint /bin/sh \
+    "$HV_PREVIEW_IMAGE" -c 'id -u; cat /proc/self/uid_map') ||
+    fail 'Das Basisimage konnte die Rootless-UID-Zuordnung nicht melden.'
+  frappe_host_uid=$(awk 'NR == 1 {uid = $1; next} $1 <= uid && uid < $1 + $3 {print $2 + uid - $1; exit}' <<< "$mapping")
+  [[ "$frappe_host_uid" =~ ^[0-9]+$ && "$frappe_host_uid" != "$worker_uid" && "$frappe_host_uid" != 0 ]] ||
+    fail 'Die Host-UID des Frappe-Benutzers konnte nicht ermittelt werden.'
+
+  local directory_acl="u:$frappe_host_uid:rwx,d:u:$frappe_host_uid:rwx,d:u:$worker_uid:rwx"
+  setfacl -m "$directory_acl" -- "$cache"
+  for app in "${apps[@]}"; do
+    checkout=$workspace/$app
+    find "$checkout" -path "$checkout/.git" -prune -o -type d \
+      -exec setfacl -m "$directory_acl" -- {} +
+    find "$checkout" -path "$checkout/.git" -prune -o -type f \
+      -exec setfacl -m "u:$frappe_host_uid:rwX" -- {} +
+  done
+}
+
+start_preview() {
+  local url
+  "${compose[@]}" config --quiet
+  if [[ ${HV_PREVIEW_USE_BASE_IMAGE:-0} == 1 ]]; then
+    HV_PREVIEW_IMAGE=$("${compose[@]}" config --format json | jq -er '.services.configurator.build.args.FRAPPE_BASE_IMAGE')
+    export HV_PREVIEW_IMAGE
+    if [[ "$action" == ci && "$context" != default ]]; then
+      prepare_rootless_ci
+    fi
+    "${compose[@]}" up --detach --no-build --pull never
+  else
+    "${compose[@]}" build configurator
+    "${compose[@]}" up --detach --no-build
+  fi
+  url=$(preview_url)
+  wait_for_site "$url"
+  check_apps
+  report_revisions
+  printf 'Preview %s ist erreichbar: %s\n' "$project" "$url"
+}
+
+run_tests() {
+  "${bench[@]}" set-config --parse allow_tests 1
+  "${bench[@]}" run-tests --module "$test_module"
+}
+
+cleanup_ci_preview() {
+  local result=$?
+  "${compose[@]}" down --volumes || exit 125
+  exit "$result"
+}
+
 case "$action" in
   up)
-    "${compose[@]}" config --quiet
-    if [[ ${HV_PREVIEW_USE_BASE_IMAGE:-0} == 1 ]]; then
-      HV_PREVIEW_IMAGE=$("${compose[@]}" config --format json | jq -er '.services.configurator.build.args.FRAPPE_BASE_IMAGE')
-      export HV_PREVIEW_IMAGE
-      "${compose[@]}" up --detach --no-build --pull never
-    else
-      "${compose[@]}" build configurator
-      "${compose[@]}" up --detach --no-build
-    fi
-    url=$(preview_url)
-    wait_for_site "$url"
-    check_apps
-    report_revisions
-    printf 'Preview %s ist erreichbar: %s\n' "$project" "$url"
+    start_preview
+    ;;
+  ci)
+    networks=$("${docker_cli[@]}" network ls --quiet --filter "name=^${project}_default$")
+    [[ -z "$project_containers" && -z "$volumes" && -z "$networks" ]] ||
+      fail 'CI benötigt ein frisches Projekt.'
+    trap cleanup_ci_preview EXIT
+    start_preview
+    run_tests
     ;;
   status)
     "${compose[@]}" ps --all
@@ -214,8 +275,7 @@ count=$(bench --site "$site" execute "str(frappe.db.count('Mietvertrag'))")
 SEED
     ;;
   test)
-    "${bench[@]}" set-config --parse allow_tests 1
-    "${bench[@]}" run-tests --module "$test_module"
+    run_tests
     ;;
   restart)
     "${compose[@]}" restart backend queue-short queue-long scheduler frontend
