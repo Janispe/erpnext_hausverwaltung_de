@@ -37,10 +37,16 @@ class TestDunningInstallmentsIntegration(payment_tests.TestPaymentDimensionsInte
 		type_name="Synthetic " + frappe.generate_hash(length=10)
 		t=frappe.get_doc({"doctype":"Dunning Type","dunning_type":type_name,"company":self.company,
 			"dunning_fee":fee,"income_account":income,"cost_center":self.cc}).insert()
+		payment = {"sales_invoice": invoice.name, "outstanding": amount,
+			"due_date": due, "payment_schedule": reference}
+		if reference:
+			schedule = next(row for row in invoice.payment_schedule if row.name == reference)
+			payment.update({field: schedule.get(field) for field in
+				("payment_amount", "invoice_portion", "payment_term", "mode_of_payment")})
 		d=frappe.get_doc({"doctype":"Dunning","company":self.company,"customer":self.contract.kunde,
 			"posting_date":"2026-10-16","currency":"EUR","conversion_rate":1,"dunning_type":t.name,
 			"dunning_fee":fee,"rate_of_interest":0,"income_account":income,"cost_center":self.cc,
-			"overdue_payments":[{"sales_invoice":invoice.name,"outstanding":amount,"due_date":due,"payment_schedule":reference}]})
+			"overdue_payments":[payment]})
 		d.insert();self.assertEqual(flt(d.dunning_amount),fee)
 		return d
 
