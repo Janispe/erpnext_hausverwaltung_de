@@ -50,8 +50,40 @@ class TestDunningInstallmentsIntegration(payment_tests.TestPaymentDimensionsInte
 		d.insert();self.assertEqual(flt(d.dunning_amount),fee)
 		return d
 
+	def _legacy_draft(self, invoice, amount=50, *, due="2026-10-10", posting_date="2026-10-16"):
+		"""Save a valid draft first; only then reproduce historical missing links.
+
+		Core 16.54 correctly rejects new reference-less drafts during insert.
+		The measured submit below always uses the unmodified Core validation.
+		"""
+		from hausverwaltung.hausverwaltung.utils.dunning_payment_schedule import overdue_payment_rows
+		current = overdue_payment_rows(invoice, "2026-10-16")[0]
+		doc = self._dunning(invoice, current["outstanding"], reference=current["payment_schedule"])
+		frappe.db.set_value("Overdue Payment", doc.overdue_payments[0].name,
+			{"payment_schedule": None, "payment_amount": 0, "invoice_portion": 0,
+			 "outstanding": amount, "due_date": due}, update_modified=False)
+		frappe.db.set_value("Dunning", doc.name, "posting_date", posting_date, update_modified=False)
+		doc.reload()
+		# Reproduce the historical NULL-reference level with the real Core helper.
+		# It must be recalculated after the actual submit resolves the reference.
+		doc.set_dunning_level()
+		frappe.db.set_value("Overdue Payment", doc.overdue_payments[0].name,
+			"dunning_level", doc.overdue_payments[0].dunning_level, update_modified=False)
+		return doc.reload()
+
+	def _stored_without_schedule(self, amount, *, fee=0):
+		"""Historical source corruption only after a regular invoice/draft insert."""
+		invoice = self._invoice()
+		doc = self._dunning(invoice, reference=invoice.payment_schedule[0].name, fee=fee)
+		frappe.db.delete("Payment Schedule", {"parent": invoice.name, "parenttype": "Sales Invoice"})
+		frappe.db.set_value("Sales Invoice", invoice.name, "due_date", "2026-10-10", update_modified=False)
+		frappe.db.set_value("Overdue Payment", doc.overdue_payments[0].name,
+			{"payment_schedule": None, "outstanding": amount, "payment_amount": 0, "invoice_portion": 0},
+			update_modified=False)
+		return invoice.reload(), doc.reload()
+
 	def test_real_legacy_draft_resolves_50_due_of_100_and_submits(self):
-		invoice=self._invoice();d=self._dunning(invoice);d.submit().reload()
+		invoice=self._invoice();d=self._legacy_draft(invoice);d.submit().reload()
 		self.assertEqual(d.docstatus,1)
 		self.assertEqual(d.overdue_payments[0].payment_schedule,invoice.payment_schedule[0].name)
 		self.assertEqual(flt(invoice.reload().outstanding_amount),100)
@@ -65,24 +97,23 @@ class TestDunningInstallmentsIntegration(payment_tests.TestPaymentDimensionsInte
 		self.assertEqual(d.docstatus,1)
 
 	def test_real_ambiguous_legacy_reference_is_rejected(self):
-		invoice=self._invoice(same_dates=True);d=self._dunning(invoice)
+		invoice=self._invoice(same_dates=True);d=self._legacy_draft(invoice)
 		with self.assertRaisesRegex(frappe.ValidationError,"nicht eindeutig"):d.submit()
 
 	def test_real_overstated_and_future_installments_are_rejected(self):
 		for amount,due in ((51,"2026-10-10"),(50,"2026-11-10")):
-			invoice=self._invoice();d=self._dunning(invoice,amount,due=due)
+			invoice=self._invoice();d=self._legacy_draft(invoice,amount,due=due)
 			with self.assertRaises(frappe.ValidationError):d.submit()
 
 	def test_real_no_schedule_full_balance_allowed_partial_balance_rejected(self):
-		invoice=self._invoice(schedule=False);d=self._dunning(invoice,100);d.submit();self.assertEqual(d.docstatus,1)
-		other=self._invoice(schedule=False);partial=self._dunning(other,50)
+		invoice,d=self._stored_without_schedule(100);d.submit();self.assertEqual(d.docstatus,1)
+		other,partial=self._stored_without_schedule(50)
 		with self.assertRaises(frappe.ValidationError):partial.submit()
 
 	def test_real_positive_fee_keeps_requiring_a_payment_schedule(self):
 		for amount in (50, 100):
 			with self.subTest(amount=amount):
-				invoice = self._invoice(schedule=False)
-				doc = self._dunning(invoice, amount, fee=5)
+				invoice, doc = self._stored_without_schedule(amount, fee=5)
 				with self.assertRaises(frappe.ValidationError):
 					doc.submit()
 
@@ -92,10 +123,10 @@ class TestDunningInstallmentsIntegration(payment_tests.TestPaymentDimensionsInte
 		p.paid_amount=25;p.received_amount=25
 		p.append("references",{"reference_doctype":"Sales Invoice","reference_name":invoice.name,"allocated_amount":25})
 		p.insert().submit();invoice.reload();self.assertEqual(flt(invoice.outstanding_amount),75)
-		stale=self._dunning(invoice,50)
+		stale=self._legacy_draft(invoice,50)
 		with self.assertRaises(frappe.ValidationError):stale.submit()
 		stale.reload().delete()
-		current=self._dunning(invoice,25);current.submit().reload()
+		current=self._legacy_draft(invoice,25);current.submit().reload()
 		self.assertEqual(current.docstatus,1)
 		self.assertEqual(current.overdue_payments[0].payment_schedule,invoice.payment_schedule[0].name)
 
@@ -106,10 +137,13 @@ class TestDunningInstallmentsIntegration(payment_tests.TestPaymentDimensionsInte
 		# Other invoices without schedules retain genuine NULL-reference
 		# dunning history, which must never determine this installment's level.
 		for _ in range(2):
-			other=self._invoice(schedule=False);foreign=self._dunning(other,100)
-			foreign.submit().reload();self.assertFalse(foreign.overdue_payments[0].payment_schedule)
-		legacy=self._dunning(invoice)
-		legacy.posting_date="2026-10-17";legacy.save()
+			other=self._invoice();foreign=self._dunning(other,reference=other.payment_schedule[0].name)
+			foreign.submit()
+			# Historical submitted NULL-reference rows, not newly invalid submissions.
+			frappe.db.set_value("Overdue Payment",foreign.overdue_payments[0].name,"payment_schedule",None,update_modified=False)
+			frappe.db.delete("Payment Schedule",{"parent":other.name,"parenttype":"Sales Invoice"})
+			foreign.reload();self.assertFalse(foreign.overdue_payments[0].payment_schedule)
+		legacy=self._legacy_draft(invoice,posting_date="2026-10-17")
 		self.assertFalse(legacy.overdue_payments[0].payment_schedule)
 		self.assertNotEqual(legacy.overdue_payments[0].dunning_level,2)
 		legacy.submit().reload()
