@@ -2213,20 +2213,13 @@ _POST_INSTALL_PATCHES: tuple[str, ...] = (
     "hausverwaltung.hausverwaltung.patches.post_model_sync.ensure_rent_items",
     # Ensure accounting dimension exists even when Patch Handler isn't executed on fresh installs.
     "hausverwaltung.hausverwaltung.patches.post_model_sync.add_accounting_dimension_wohnung",
-    # Ensure workflow exists on fresh installs as well.
-    "hausverwaltung.hausverwaltung.patches.post_model_sync.create_mieterwechsel_workflow",
-    # Seed default process versions for the Mieterwechsel builder.
-    "hausverwaltung.hausverwaltung.patches.post_model_sync.create_mieterwechsel_process_versions",
-    # Seed v2 typed task versions for the Mieterwechsel builder.
-    "hausverwaltung.hausverwaltung.patches.post_model_sync.create_mieterwechsel_process_versions_v2",
-    # Reset broken custom permission overrides for Mieterwechsel/Wohnung where Hausverwalter rights are missing.
-    "hausverwaltung.hausverwaltung.patches.post_model_sync.reset_mieterwechsel_permissions",
+    # Mieterwechsel initialization belongs to the optional Peters companion's
+    # install/migrate hooks. Its extracted legacy workflow/version/reset patches
+    # are history only; do not replay them or require Peters from this core app.
     # Remove the deprecated generic process doctypes from active development sites.
     "hausverwaltung.hausverwaltung.patches.post_model_sync.remove_legacy_vorgang_components",
     # Remove legacy agent custom overrides and normalize as DocPerm on install.
     "hausverwaltung.hausverwaltung.patches.post_model_sync.normalize_agent_readonly_permissions",
-    # Temporal orchestration owns transitions; keep workflow records as history only.
-    "hausverwaltung.hausverwaltung.patches.post_model_sync.disable_core_workflows_for_temporal",
     # Migrate legacy Immobilie account fields into child tables.
     "hausverwaltung.hausverwaltung.patches.post_model_sync.migrate_immobilie_accounts_to_child_tables",
     # Seed sentence-friendly tenant name block for Serienbrief templates.
