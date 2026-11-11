@@ -78,6 +78,40 @@ def vorschau_teilmonatsmiete(document, month, kostenart=KOSTENART_MIETE):
 	return result
 
 
+def update_contract_end(contract_name, target, expected_wohnung):
+	"""Change only the end date under the flat's interval lock; never commit.
+
+	Process consumers must use this operation instead of bypassing the normal
+	interval/charge guards with db.set_value. The caller owns the transaction.
+	"""
+	if not contract_name or not expected_wohnung or not target:
+		frappe.throw(_("Mietvertrag, Wohnung und Auszugsdatum müssen angegeben werden."))
+	end = getdate(target)
+	locked = frappe.db.sql(
+		"SELECT name FROM `tabWohnung` WHERE name = %s FOR UPDATE", (expected_wohnung,)
+	)
+	if not locked:
+		frappe.throw(_("Die ausgewählte Wohnung wurde nicht gefunden."))
+	contract = frappe.get_doc("Mietvertrag", contract_name, for_update=True)
+	contract.check_permission("write")
+	if contract.wohnung != expected_wohnung or int(contract.docstatus or 0) == 2:
+		frappe.throw(_("Der Mietvertrag gehört nicht zur ausgewählten Wohnung oder ist storniert."))
+	if not contract.von or end < getdate(contract.von):
+		frappe.throw(_("Das Auszugsdatum darf nicht vor dem Vertragsbeginn liegen."))
+	previous = contract.bis
+	contract.bis = end
+	contract._validate_wohnung_contract_period()
+	validate_contract_charges(
+		contract.von, end,
+		{kostenart: contract.get(fieldname) or [] for kostenart, fieldname in STAFFEL_FIELD_BY_KOSTENART.items()},
+		contract.get("miete_teilmonate") or [],
+	)
+	# Even an unchanged date must pass all checks, including current conflicts.
+	if not previous or getdate(previous) != end:
+		frappe.db.set_value("Mietvertrag", contract.name, "bis", end, update_modified=False)
+	return end
+
+
 class Mietvertrag(Document):
 	"""DocType controller for Mietvertrag."""
 

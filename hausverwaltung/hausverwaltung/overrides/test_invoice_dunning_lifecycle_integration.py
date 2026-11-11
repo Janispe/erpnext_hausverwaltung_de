@@ -91,3 +91,24 @@ class TestInvoiceDunningLifecycleIntegration(unittest.TestCase):
 					doc.submit()
 				self.assertEqual(frappe.db.get_value("Dunning", doc.name, "docstatus"), 0)
 				self.assertFalse(frappe.db.get_value("Overdue Payment", doc.overdue_payments[0].name, "payment_schedule"))
+
+	def test_contract_end_uses_inclusive_interval_guard_and_preserves_identity_and_gl(self):
+		from hausverwaltung.hausverwaltung.doctype.mietvertrag.mietvertrag import update_contract_end
+		invoice = self._invoice()
+		before_gl = frappe.get_all("GL Entry", filters={"voucher_type": "Sales Invoice", "voucher_no": invoice.name},
+			fields=["*"], order_by="name")
+		customer = self.contract.kunde
+		update_contract_end(self.contract.name, "2027-01-31", self.flat.name)
+		next_contract = frappe.get_doc({"doctype": "Mietvertrag", "wohnung": self.flat.name, "von": "2027-02-01"}).insert()
+		self.assertNotEqual(next_contract.kunde, customer)
+		for end in ("2027-02-01", "2027-02-15"):
+			with self.subTest(end=end), self.assertRaisesRegex(frappe.ValidationError, "überschneidet"):
+				update_contract_end(self.contract.name, end, self.flat.name)
+		with patch.object(frappe.db, "set_value", wraps=frappe.db.set_value) as write:
+			update_contract_end(self.contract.name, "2027-01-31", self.flat.name)
+			write.assert_not_called()
+		self.contract.reload()
+		self.assertEqual(str(self.contract.bis), "2027-01-31")
+		self.assertEqual((self.contract.kunde, self.contract.wohnung), (customer, self.flat.name))
+		self.assertEqual(frappe.get_all("GL Entry", filters={"voucher_type": "Sales Invoice", "voucher_no": invoice.name},
+			fields=["*"], order_by="name"), before_gl)
