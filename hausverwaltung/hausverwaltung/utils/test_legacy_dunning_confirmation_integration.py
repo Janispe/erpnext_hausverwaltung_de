@@ -1,4 +1,6 @@
 """Real confirmation/submit regressions, only on the explicit synthetic test site."""
+import hashlib
+import json
 import threading
 import time
 import unittest
@@ -141,6 +143,60 @@ class TestLegacyDunningConfirmationIntegration(unittest.TestCase):
 		with self.assertRaises(frappe.ValidationError):
 			confirmation.submit_confirmed_legacy_dunning(doc.name, second, confirmed=True)
 		self.assertEqual((frappe.db.count("Dunning"), self.gl(invoice)), before)
+
+	def test_reapproved_inventory_change_invalidates_existing_confirmation(self):
+		invoice, doc = self._stored_without_schedule(100)
+		token = self.prepare(doc)
+		before = (self.gl(invoice), frappe.db.count("Comment"), frappe.db.count("Dunning"))
+		path = self._legacy_origin_fixture["path"]
+		inventory = json.loads(path.read_bytes())
+		inventory["source"]["fixture_id"] += "-second-capture"
+		inventory["source"]["sha256"] = hashlib.sha256(b"second independent synthetic inventory").hexdigest()
+		content = json.dumps(inventory, sort_keys=True).encode()
+		path.write_bytes(content)
+		frappe.conf.hv_legacy_dunning_inventory_sha256 = hashlib.sha256(content).hexdigest()
+		# The replacement is itself valid and approved, but not the evidence
+		# which the user saw when preparing the previous confirmation.
+		confirmation.require_legacy_origin(invoice)
+		with self.assertRaises(frappe.ValidationError):
+			confirmation.submit_confirmed_legacy_dunning(doc.name, token, confirmed=True)
+		self.assertEqual(doc.reload().docstatus, 0)
+		self.assertEqual((self.gl(invoice), frappe.db.count("Comment"), frappe.db.count("Dunning")), before)
+
+	def test_real_read_write_submit_permission_revocation_after_dialog(self):
+		import frappe.share
+		administrator = frappe.session.user
+		user = frappe.get_doc({"doctype": "User", "email": "confirmation-" + frappe.generate_hash(length=12) + "@example.invalid",
+			"first_name": "Synthetic confirmation permission", "send_welcome_email": 0,
+			"user_type": "System User"}).insert(ignore_permissions=True)
+		try:
+			for permission in ("read", "write", "submit"):
+				with self.subTest(permission=permission):
+					frappe.set_user(administrator)
+					invoice, doc = self._stored_without_schedule(100)
+					frappe.share.add("Sales Invoice", invoice.name, user=user.name, read=1, notify=0)
+					share = frappe.share.add("Dunning", doc.name, user=user.name, read=1, write=1, submit=1, notify=0)
+					before = (self.gl(invoice), frappe.db.count("Comment"), frappe.db.count("Dunning"))
+					frappe.set_user(user.name)
+					for right in ("read", "write", "submit"):
+						self.assertTrue(frappe.has_permission("Dunning", right, doc=doc))
+					token = self.prepare(doc)
+					frappe.set_user(administrator)
+					# A real share revocation, not a mocked permission answer.
+					rights = {"read": 1, "write": 1, "submit": 1}
+					for right in ("read", "write", "submit")[("read", "write", "submit").index(permission):]:
+						rights[right] = 0
+					frappe.db.set_value("DocShare", share.name, rights)
+					frappe.clear_cache(user=user.name)
+					frappe.set_user(user.name)
+					self.assertFalse(frappe.has_permission("Dunning", permission, doc=doc))
+					with self.assertRaises(frappe.PermissionError):
+						confirmation.submit_confirmed_legacy_dunning(doc.name, token, confirmed=True)
+					frappe.set_user(administrator)
+					self.assertEqual(doc.reload().docstatus, 0)
+					self.assertEqual((self.gl(invoice), frappe.db.count("Comment"), frappe.db.count("Dunning")), before)
+		finally:
+			frappe.set_user(administrator)
 
 
 class TestLegacyConfirmationConcurrency(unittest.TestCase):
