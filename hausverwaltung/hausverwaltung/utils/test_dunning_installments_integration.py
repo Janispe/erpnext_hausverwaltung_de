@@ -71,7 +71,7 @@ class TestDunningInstallmentsIntegration(payment_tests.TestPaymentDimensionsInte
 			"dunning_level", doc.overdue_payments[0].dunning_level, update_modified=False)
 		return doc.reload()
 
-	def _stored_without_schedule(self, amount, *, fee=0):
+	def _stored_without_schedule(self, amount, *, fee=0, legacy_evidence=True):
 		"""Historical source corruption only after a regular invoice/draft insert."""
 		invoice = self._invoice()
 		doc = self._dunning(invoice, reference=invoice.payment_schedule[0].name, fee=fee)
@@ -80,7 +80,11 @@ class TestDunningInstallmentsIntegration(payment_tests.TestPaymentDimensionsInte
 		frappe.db.set_value("Overdue Payment", doc.overdue_payments[0].name,
 			{"payment_schedule": None, "outstanding": amount, "payment_amount": 0, "invoice_portion": 0},
 			update_modified=False)
-		return invoice.reload(), doc.reload()
+		invoice.reload()
+		if legacy_evidence:
+			from hausverwaltung.hausverwaltung.utils.test_legacy_dunning_origin_fixture import approve_synthetic_legacy_invoice
+			approve_synthetic_legacy_invoice(self, invoice)
+		return invoice, doc.reload()
 
 	def test_real_legacy_draft_resolves_50_due_of_100_and_submits(self):
 		invoice=self._invoice();d=self._legacy_draft(invoice);d.submit().reload()
@@ -106,7 +110,16 @@ class TestDunningInstallmentsIntegration(payment_tests.TestPaymentDimensionsInte
 			with self.assertRaises(frappe.ValidationError):d.submit()
 
 	def test_real_no_schedule_full_balance_allowed_partial_balance_rejected(self):
-		invoice,d=self._stored_without_schedule(100);d.submit();self.assertEqual(d.docstatus,1)
+		from hausverwaltung.hausverwaltung.utils.legacy_dunning_confirmation import (
+			prepare_legacy_dunning_confirmation, submit_confirmed_legacy_dunning,
+		)
+		invoice,d=self._stored_without_schedule(100)
+		with self.assertRaises(frappe.ValidationError):d.submit()
+		d.reload()
+		prepared=prepare_legacy_dunning_confirmation(d.name)
+		self.assertTrue(prepared["required"])
+		submit_confirmed_legacy_dunning(d.name,prepared["token"],confirmed=True)
+		d.reload();self.assertEqual(d.docstatus,1)
 		other,partial=self._stored_without_schedule(50)
 		with self.assertRaises(frappe.ValidationError):partial.submit()
 

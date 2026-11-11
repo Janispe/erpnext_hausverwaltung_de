@@ -218,6 +218,7 @@ after_migrate = [
 # Override standard doctype classes
 
 override_doctype_class = {
+	"Dunning": "hausverwaltung.hausverwaltung.overrides.dunning.CustomDunning",
 	"Payment Entry": "hausverwaltung.hausverwaltung.overrides.payment_entry.CustomPaymentEntry",
 	"Journal Entry": "hausverwaltung.hausverwaltung.overrides.journal_entry.CustomJournalEntry",
 	"Sales Invoice": "hausverwaltung.hausverwaltung.overrides.sales_invoice.CustomSalesInvoice",

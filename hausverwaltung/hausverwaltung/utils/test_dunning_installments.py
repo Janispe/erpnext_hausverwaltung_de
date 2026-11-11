@@ -1,11 +1,17 @@
 """Safety and legacy compatibility of the fee-free submit boundary."""
 
 import unittest
+import time
 from unittest.mock import MagicMock, patch
 
 import frappe
 
 from hausverwaltung.hausverwaltung.utils import dunning_creation as guard
+
+
+class _Invoice(frappe._dict):
+	def as_dict(self):
+		return {key: value for key, value in self.items() if not callable(value)}
 
 
 class TestDunningInstallments(unittest.TestCase):
@@ -15,7 +21,7 @@ class TestDunningInstallments(unittest.TestCase):
 			invoice_portion=50, **values)
 
 	def _invoice(self, **values):
-		return frappe._dict({"name":"SI-1", "docstatus":1, "is_return":0, "outstanding_amount":100,
+		return _Invoice({"name":"SI-1", "docstatus":1, "is_return":0, "outstanding_amount":100,
 			"due_date":"2026-11-10", "company":"COMP-1", "customer":"CUST-1", "currency":"EUR",
 			"party_account_currency":"EUR", "payment_schedule":[self._schedule("PS-1","2026-10-10"),self._schedule("PS-2","2026-11-10")],
 			"check_permission":lambda *args:None, **values})
@@ -26,12 +32,24 @@ class TestDunningInstallments(unittest.TestCase):
 			row.update(payment_amount=50, invoice_portion=50)
 		return row
 
-	def _submit(self, invoice, rows=None, fee=0):
+	def _submit(self, invoice, rows=None, fee=0, *, confirmed=False):
 		doc=frappe._dict(name="DUN-1", customer="CUST-1", company="COMP-1", currency="EUR",posting_date="2026-10-16",
-			dunning_amount=fee, overdue_payments=rows if rows is not None else [self._row()],
+			docstatus=1, _action="submit", dunning_amount=fee, overdue_payments=rows if rows is not None else [self._row()],
 			set_dunning_level=MagicMock())
 		with patch.object(guard.frappe,"get_doc",return_value=invoice), patch.object(guard,"reject_duplicate_dunning"):
-			guard.validate_dunning_before_submit(doc)
+			if confirmed:
+				from hausverwaltung.hausverwaltung.utils import legacy_dunning_confirmation as confirmation
+				with patch.object(confirmation, "_user", return_value="unit-user"), \
+					patch.object(confirmation, "require_legacy_origin", return_value={"inventory_sha256": "synthetic-unit-inventory"}):
+					proof = confirmation._proof.set({"name": doc.name, "user": "unit-user",
+						"action": confirmation._ACTION, "expires_at": time.time() + 300,
+						"fingerprint": confirmation._fingerprint(doc, [invoice])})
+					try:
+						guard.validate_dunning_before_submit(doc)
+					finally:
+						confirmation._proof.reset(proof)
+			else:
+				guard.validate_dunning_before_submit(doc)
 		return doc
 
 	def test_legacy_exact_due_installment_gets_its_unique_reference_despite_future_header(self):
@@ -78,7 +96,9 @@ class TestDunningInstallments(unittest.TestCase):
 
 	def test_missing_schedule_allows_only_one_current_full_balance_at_header_due_date(self):
 		invoice=self._invoice(payment_schedule=[],due_date="2026-10-10")
-		self._submit(invoice,[self._row(outstanding=100)])
+		with self.assertRaises(frappe.ValidationError):
+			self._submit(invoice,[self._row(outstanding=100)])
+		self._submit(invoice,[self._row(outstanding=100)],confirmed=True)
 		for rows in ([self._row()], [self._row(outstanding=100,payment_schedule="invented")], [self._row(),self._row()]):
 			with self.subTest(rows=rows),self.assertRaises(frappe.ValidationError):self._submit(invoice,rows)
 

@@ -98,6 +98,9 @@ def validate_dunning_before_submit(doc, method=None) -> None:
 		or invoice.currency != doc.currency for invoice in invoices
 	):
 		frappe.throw(_("Mahnung und Rechnungen müssen zu derselben Firma und demselben Mieter gehören."))
+	if any(not invoice.get("payment_schedule") for invoice in invoices):
+		from hausverwaltung.hausverwaltung.utils.legacy_dunning_confirmation import require_confirmation
+		require_confirmation(doc, invoices)
 	free = not any(flt(doc.get(field)) for field in ("dunning_amount", "dunning_fee", "rate_of_interest"))
 	resolved = []
 	for invoice in invoices:
