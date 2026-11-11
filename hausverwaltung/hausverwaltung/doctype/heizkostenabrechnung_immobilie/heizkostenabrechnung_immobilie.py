@@ -35,10 +35,13 @@ from hausverwaltung.hausverwaltung.doctype.heizkostenabrechnung_mieter.heizkoste
 )
 from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
 from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
+from hausverwaltung.hausverwaltung.utils.booking_locks import lock_accounting_scope
 
 
 class HeizkostenabrechnungImmobilie(Document):
 	def _save(self, *args: Any, **kwargs: Any) -> HeizkostenabrechnungImmobilie:
+		if not self.flags.in_print:
+			lock_accounting_scope()
 		# Frappe locks the head in check_if_latest(). Take the shared property
 		# lock first so two heads cannot deadlock against the conflict query.
 		if self.immobilie:
@@ -52,6 +55,8 @@ class HeizkostenabrechnungImmobilie(Document):
 		Links zeigen nach dem Sammelstorno auf aufgehobene Mieter-Abrechnungen und
 		würden deshalb bereits ganz am Anfang von ``Document.insert`` abgewiesen.
 		"""
+		if not self.flags.in_print:
+			lock_accounting_scope()
 		self._prepare_amendment_for_insert()
 		return super().insert(*args, **kwargs)
 
@@ -77,7 +82,7 @@ class HeizkostenabrechnungImmobilie(Document):
 		self.name = make_document_name(self.doctype)
 
 	def validate(self) -> None:
-		if self.von and self.bis and self.von > self.bis:
+		if self.von and self.bis and getdate(self.von) > getdate(self.bis):
 			frappe.throw("'Von' muss vor oder gleich 'Bis' liegen.")
 
 	def onload(self) -> None:
@@ -159,10 +164,7 @@ class HeizkostenabrechnungImmobilie(Document):
 			old_name = (row.heizkostenabrechnung_mieter or "").strip()
 			if not old_name:
 				continue
-			try:
-				old_doc = frappe.get_doc("Heizkostenabrechnung Mieter", old_name)
-			except frappe.DoesNotExistError:
-				continue
+			old_doc = _get_owned_mieter_document(self, old_name)
 			# Nur submittete Mieter-Docs werden hier verarbeitet
 			if int(old_doc.docstatus or 0) != 1:
 				continue
@@ -363,6 +365,8 @@ class HeizkostenabrechnungImmobilie(Document):
 		children = self._get_children()
 		if not children:
 			frappe.throw("Es sind keine Mieterabrechnungen vorhanden. Bitte zuerst Mieter-Drafts erzeugen und die Kosten erfassen.", frappe.ValidationError)
+		for child in children:
+			_validate_mieter_period(self, child)
 		expected = {row.name for row in self._period_contracts()}
 		actual = {row.get("mietvertrag") for row in children}
 		if expected != actual or len(children) != len(actual):
@@ -380,7 +384,8 @@ class HeizkostenabrechnungImmobilie(Document):
 					errors.append(f"{c['name']}: kosten_gesamt nicht gesetzt")
 					continue
 				try:
-					doc = frappe.get_doc("Heizkostenabrechnung Mieter", c["name"])
+					doc = _get_owned_mieter_document(self, c["name"])
+					_validate_mieter_period(self, doc)
 					doc.flags.allow_submit_via_head = True
 					doc.flags.ignore_permissions = True
 					doc.submit()
@@ -563,6 +568,8 @@ class HeizkostenabrechnungImmobilie(Document):
 				"mietvertrag",
 				"customer",
 				"wohnung",
+				"von",
+				"bis",
 				"vorauszahlungen",
 				"kosten_gesamt",
 				"sales_invoice",
@@ -669,10 +676,7 @@ class HeizkostenabrechnungImmobilie(Document):
 			if int(row.child_docstatus or 0) != 0:
 				# Submittet oder cancelled — keine Edits erlaubt
 				continue
-			try:
-				doc = frappe.get_doc("Heizkostenabrechnung Mieter", doc_name)
-			except frappe.DoesNotExistError:
-				continue
+			doc = _get_owned_mieter_document(self, doc_name)
 			if int(doc.docstatus or 0) != 0:
 				# Inzwischen submittet/cancelled (race condition) — skip
 				continue
@@ -710,6 +714,34 @@ class HeizkostenabrechnungImmobilie(Document):
 # ============================================================================
 # Module-level helpers
 # ============================================================================
+
+
+def _validate_mieter_period(parent: Document, child) -> None:
+	for fieldname in ("von", "bis"):
+		child_date = child.get(fieldname) if callable(getattr(child, "get", None)) else getattr(child, fieldname, None)
+		parent_date = getattr(parent, fieldname, None)
+		if not parent_date or not child_date or getdate(parent_date) != getdate(child_date):
+			frappe.throw(
+				"Der Zeitraum einer HK-Mieterabrechnung stimmt nicht mit der "
+				"Heizkostenabrechnung Immobilie überein. Bitte den Abrechnungsstand berichtigen.",
+				frappe.ValidationError,
+			)
+
+
+def _get_owned_mieter_document(parent: Document, name: str):
+	"""Resolve editable table links against their authoritative owner before writes.
+
+	The table is submitted by the client. Its read-only Link field does not
+	authorize changing or cancelling a child of a different settlement head.
+	"""
+	doc = frappe.get_doc("Heizkostenabrechnung Mieter", name, for_update=True)
+	if doc.heizkostenabrechnung_immobilie != parent.name:
+		frappe.throw(
+			f"Mieterabrechnung {name} gehört nicht zur Heizkostenabrechnung {parent.name}. "
+			"Bitte die Positionen neu laden; es wurde nichts geändert.",
+			frappe.ValidationError,
+		)
+	return doc
 
 
 def _get_payment_allocations(sales_invoice_name: str) -> List[Dict[str, Any]]:
@@ -765,6 +797,7 @@ def create_correction_draft(name: str, reason: str, confirmed: int = 0) -> dict[
 	reason = cstr(reason).strip()
 	if cint(confirmed) != 1 or not reason or len(reason) > 1000:
 		frappe.throw("Bitte das Sammelstorno ausdrücklich bestätigen und eine Begründung mit höchstens 1.000 Zeichen angeben.", frappe.ValidationError)
+	lock_accounting_scope()
 	property_name = frappe.db.get_value("Heizkostenabrechnung Immobilie", name, "immobilie")
 	_lock_hk_property(property_name)
 	parent = frappe.get_doc("Heizkostenabrechnung Immobilie", name, for_update=True)
@@ -803,6 +836,7 @@ def create_mieter_drafts(name: str) -> Dict[str, Any]:
 
 	Returns: {created: [...], skipped: [...], no_wohnung: [...], parent_status}
 	"""
+	lock_accounting_scope()
 	_lock_hk_property(frappe.db.get_value("Heizkostenabrechnung Immobilie", name, "immobilie"))
 	# The locking read is authoritative under MariaDB REPEATABLE READ and also
 	# serializes double-clicks/retries for the same parent.

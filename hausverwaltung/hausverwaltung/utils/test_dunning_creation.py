@@ -9,11 +9,17 @@ from hausverwaltung.hausverwaltung.utils import dunning_creation as guard
 
 class TestDunningCreation(unittest.TestCase):
 	def _invoice(self, name="SI-1", **values):
-		return frappe._dict({
+		invoice = frappe._dict({
 			"name": name, "docstatus": 1, "outstanding_amount": 600,
 			"due_date": "2026-10-01", "company": "COMP-1", "customer": "CUST-1",
+			"currency": "EUR", "party_account_currency": "EUR",
 			"check_permission": MagicMock(), **values,
 		})
+		invoice.payment_schedule = [frappe._dict(
+			name=f"PS-{name}", parent=name, parenttype="Sales Invoice", parentfield="payment_schedule",
+			idx=1, outstanding=600, due_date=invoice.due_date, payment_amount=600, invoice_portion=100,
+		)]
+		return invoice
 
 	def test_only_positive_submitted_debt_before_the_letter_date_is_allowed(self):
 		guard.validate_dunning_invoice(self._invoice(), "2026-10-16")
@@ -62,8 +68,9 @@ class TestDunningCreation(unittest.TestCase):
 
 	def test_submit_rechecks_due_date_and_excludes_its_own_draft(self):
 		doc = frappe._dict(
-			name="DUN-1", posting_date="2026-10-16", customer="CUST-1", company="COMP-1",
-			overdue_payments=[frappe._dict(sales_invoice="SI-1", outstanding=600, due_date="2026-10-01")],
+			name="DUN-1", posting_date="2026-10-16", customer="CUST-1", company="COMP-1", currency="EUR",
+			overdue_payments=[frappe._dict(sales_invoice="SI-1", payment_schedule="PS-SI-1", outstanding=600,
+				payment_amount=600, invoice_portion=100, due_date="2026-10-01")],
 		)
 		with patch.object(guard.frappe, "get_doc", return_value=self._invoice()), \
 			patch.object(guard, "reject_duplicate_dunning") as duplicates:
@@ -79,9 +86,10 @@ class TestDunningCreation(unittest.TestCase):
 				patch.object(guard.frappe, "get_doc", return_value=self._invoice(**values)), \
 				self.assertRaisesRegex(frappe.ValidationError, "seit Anlage des Mahnentwurfs geändert"):
 				guard.validate_dunning_before_submit(frappe._dict(
-					name="DUN-1", posting_date="2026-10-16", customer="CUST-1", company="COMP-1",
+					name="DUN-1", posting_date="2026-10-16", customer="CUST-1", company="COMP-1", currency="EUR",
 					dunning_amount=0, overdue_payments=[frappe._dict(
-						sales_invoice="SI-1", outstanding=600, due_date="2026-10-01",
+						sales_invoice="SI-1", payment_schedule="PS-SI-1", outstanding=600,
+						payment_amount=600, invoice_portion=100, due_date="2026-10-01",
 					)],
 				))
 

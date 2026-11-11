@@ -1,3 +1,5 @@
+import re
+import sqlite3
 from decimal import Decimal
 from unittest import TestCase
 from unittest.mock import patch
@@ -10,6 +12,27 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten import (
 
 
 class TestOperatingCostPrepaymentCalc(TestCase):
+	def test_cancelled_contract_is_excluded_from_apartment_prepayment_customers(self):
+		with sqlite3.connect(":memory:") as connection:
+			connection.row_factory = sqlite3.Row
+			connection.execute("CREATE TABLE tabMietvertrag (wohnung TEXT, kunde TEXT, von TEXT, bis TEXT, docstatus INT)")
+			connection.executemany("INSERT INTO tabMietvertrag VALUES (?,?,?,?,?)", [
+				("WHG-1", "CUST-CANCELLED", "2026-01-01", None, 2),
+				("WHG-1", "CUST-CURRENT", "2026-01-01", None, 0),
+				("WHG-1", "CUST-HISTORICAL", "2025-01-01", "2025-12-31", 1),
+			])
+
+			def sql(query, params, **kwargs):
+				query = re.sub(r"%\((\w+)\)s", r":\1", query)
+				return [frappe._dict(dict(row)) for row in connection.execute(query, params)]
+
+			with patch.object(calc.frappe.db, "sql", side_effect=sql):
+				segments = calc._customer_segments_for_wohnung("WHG-1", "2025-01-01", "2026-12-31")
+				self.assertEqual([row["customer"] for row in segments], ["CUST-HISTORICAL", "CUST-CURRENT"])
+				self.assertEqual(calc._invoice_segments_for_wohnung(
+					"WHG-1", "2026-01-01", "2026-12-31", customer="CUST-CANCELLED",
+				), [])
+
 	@staticmethod
 	def _payment_row(**overrides):
 		row = frappe._dict(
@@ -655,6 +678,30 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 			sql.call_args_list[0].args[0],
 		)
 
+	def test_refund_of_overpaid_regular_invoice_reduces_actual_prepayments(self):
+		for allocated in (-20, 20):
+			with self.subTest(allocated=allocated):
+				rows = [
+					self._payment_row(allocated_amount=120),
+					self._payment_row(
+						payment_type="Pay", allocated_amount=allocated, is_return=0,
+						paid_from="BANK-1", paid_to="DEBTORS-1",
+						paid_from_type="Bank", paid_to_type="Receivable",
+					),
+				]
+				with patch.object(calc.frappe.db, "sql", side_effect=[rows, []]):
+					self.assertEqual(calc.get_bk_paid_sum_for_invoice_names(["SI-1"]), 100.0)
+				with (
+					patch.object(calc, "_invoice_segments_for_wohnung", return_value=[{"customer": "CUST-1"}]),
+					patch.object(calc.frappe.db, "sql", return_value=rows),
+				):
+					self.assertEqual(calc.get_bk_paid_sum("WHG-1"), 100.0)
+
+	def test_negative_receive_allocation_reduces_actual_prepayments(self):
+		rows = [self._payment_row(allocated_amount=120), self._payment_row(allocated_amount=-20)]
+		with patch.object(calc.frappe.db, "sql", side_effect=[rows, []]):
+			self.assertEqual(calc.get_bk_paid_sum_for_invoice_names(["SI-1"]), 100.0)
+
 	def test_untaxed_prepayments_keep_full_partial_and_mixed_invoice_shares(self):
 		for payment_amount, bk_net, total_net, expected in (
 			("100", "100", "100", 100.0),
@@ -960,7 +1007,7 @@ class TestOperatingCostPrepaymentCalc(TestCase):
 		segments = [{"customer": "CUST-1", "start": "2025-01-01", "end": "2025-12-31"}]
 		rows = [
 			self._payment_row(allocated_amount=80, bk_net=50, total_net=100),
-			self._payment_row(name="CN-1", is_return=1, allocated_amount=20, bk_net=-50, total_net=-100),
+			self._payment_row(name="CN-1", is_return=1, payment_type="Pay", allocated_amount=20, bk_net=-50, total_net=-100),
 		]
 		with patch.object(calc, "_invoice_segments_for_wohnung", return_value=segments), \
 			 patch.object(calc.frappe.db, "sql", return_value=rows) as sql:

@@ -32,10 +32,12 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaim
 	HK_ITEM_CODE,
 	_invoice_tax_columns,
 	require_untaxed_settlement_invoices,
+	signed_customer_payment_allocation,
 )
 
 from hausverwaltung.hausverwaltung.utils.settlement_identity import hk_marker_owner
 from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
+from hausverwaltung.hausverwaltung.utils.booking_locks import lock_accounting_scope
 
 HK_SETTLEMENT_MARKER_PREFIX = "[HK-SETTLEMENT:"
 
@@ -120,7 +122,7 @@ def _get_locked_settlement_document(abrechnung: str):
 		)
 	parent_rows = frappe.db.sql(
 		"""
-		SELECT name, docstatus
+		SELECT name, docstatus, von, bis
 		FROM `tabHeizkostenabrechnung Immobilie`
 		WHERE name = %s
 		FOR UPDATE
@@ -136,6 +138,19 @@ def _get_locked_settlement_document(abrechnung: str):
 			f"Die zugehörige Heizkostenabrechnung Immobilie {parent_name} "
 			"fehlt oder ist storniert; es wurde nichts gebucht."
 		)
+	parent = parent_rows[0]
+	# While the head is being submitted its current dates have not yet been
+	# written by Frappe. That path validates against the in-memory head before
+	# each child submit. Retries/corrections of a booked head use its DB dates.
+	for fieldname in ("von", "bis") if int(_row_value(parent, "docstatus") or 0) == 1 else ():
+		parent_date = _row_value(parent, fieldname)
+		child_date = getattr(doc, fieldname, None)
+		if not parent_date or not child_date or getdate(parent_date) != getdate(child_date):
+			frappe.throw(
+				"Der Zeitraum der HK-Mieterabrechnung stimmt nicht mit der "
+				f"Heizkostenabrechnung Immobilie {parent_name} überein. "
+				"Bitte den Abrechnungsstand berichtigen; es wurde nichts gebucht."
+			)
 
 	mietvertrag = cstr(getattr(doc, "mietvertrag", None) or "").strip()
 	if not mietvertrag:
@@ -585,10 +600,10 @@ def _get_locked_hk_prepayment_state(doc: object, *, company: str) -> dict[str, A
 		invoice = row_by_name.get(name)
 		if not invoice:
 			continue
-		sign = Decimal("-1") if int(_row_value(invoice, "is_return") or 0) else Decimal("1")
 		live_paid += (
-			sign
-			* abs(_to_decimal(_row_value(row, "allocated_amount")))
+			signed_customer_payment_allocation(
+				_row_value(row, "payment_type"), _row_value(row, "allocated_amount")
+			)
 			* ratio_by_invoice[name]
 		)
 	for row in journal_rows:
@@ -763,6 +778,8 @@ def _validate_existing_hk_settlement_links(doc: object) -> None:
 @frappe.whitelist()
 def create_hk_settlement_documents(abrechnung: str) -> dict:
 	"""Create exactly one live-state-adjusted HK invoice or credit note."""
+	# Same entry lock as direct invoice/payment saves, before the HK/contract rows.
+	lock_accounting_scope()
 	doc = _get_locked_settlement_document(abrechnung)
 	_require_settlement_permissions(doc, "Heizkostenabrechnung Mieter")
 

@@ -4,11 +4,13 @@ import json
 import threading
 import unittest
 import uuid
+from io import BytesIO
 from queue import Queue
 from unittest.mock import patch
 
 import frappe
 from frappe.utils import cint
+from frappe.utils.file_manager import save_file
 
 from hausverwaltung.hausverwaltung.services import bulk_extraction as bulk
 
@@ -24,12 +26,16 @@ class TestBulkExtractionIntegration(unittest.TestCase):
 		self.assertTrue(frappe.get_meta("Buchungs Vorschlag").has_field("extraction_job_id"))
 		self.site, self.sites_path = frappe.local.site, frappe.local.sites_path
 		self.names = []
+		self.files = []
 		self.addCleanup(self._cleanup)
 
 	def _cleanup(self):
 		frappe.db.rollback()
 		for name in self.names:
 			frappe.db.delete("Buchungs Vorschlag", {"name": name})
+		for name in self.files:
+			if frappe.db.exists("File", name):
+				frappe.delete_doc("File", name, ignore_permissions=True)
 		frappe.db.commit()
 
 	def _other_connection(self, action):
@@ -59,9 +65,18 @@ class TestBulkExtractionIntegration(unittest.TestCase):
 		return results.get_nowait()
 
 	def _proposal(self):
+		from pypdf import PdfWriter
+
+		writer = PdfWriter()
+		writer.add_blank_page(width=100, height=100)
+		writer.add_metadata({"/Subject": uuid.uuid4().hex})
+		content = BytesIO()
+		writer.write(content)
+		upload = save_file(f"bulk-lifecycle-{uuid.uuid4().hex}.pdf", content.getvalue(), "", "", is_private=1)
+		self.files.append(upload.name)
 		proposal = frappe.get_doc({
 			"doctype": "Buchungs Vorschlag", "status": "Pending",
-			"file_url": f"/private/files/bulk-lifecycle-{uuid.uuid4().hex}.pdf",
+			"file_url": upload.file_url,
 			"original_filename": "bulk-lifecycle-test.pdf", "extraction_job_id": uuid.uuid4().hex,
 			"extracted_data": "retained data", "error_message": "",
 		}).insert(ignore_permissions=True)

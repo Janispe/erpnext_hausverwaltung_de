@@ -2,7 +2,7 @@
 // Uses the actual Frappe submit lifecycle and real confirmation dialog.
 describe('Heizkosten Nullkosten-Bestätigung', () => {
   before(() => {
-    expect(Cypress.config('baseUrl')).to.be.oneOf(['http://127.0.0.1:18084', 'http://127.0.0.1:18086']);
+    expect(Cypress.config('baseUrl')).to.be.oneOf(['http://127.0.0.1:18083', 'http://127.0.0.1:18084', 'http://127.0.0.1:18086']);
     cy.login('Administrator', 'admin');
     cy.readFile(Cypress.env('hv_hk_fixture') || 'output/bugfix-2026-10-06/hk-ui-fixture.json').then(({head}) => {
       cy.visit(`/app/heizkostenabrechnung-immobilie/${encodeURIComponent(head)}`);

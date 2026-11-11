@@ -370,6 +370,7 @@ def _store_private_pdf(content: bytes, filename: str) -> dict[str, Any]:
 		as_dict=True,
 	)
 	if existing:
+		frappe.get_doc("File", existing.name).check_permission("read")
 		return {
 			"doctype": "File",
 			"file_url": existing.file_url,
@@ -405,7 +406,7 @@ def _store_private_pdf(content: bytes, filename: str) -> dict[str, Any]:
 
 
 def _lookup_vorschlag(file_url: str) -> dict[str, Any] | None:
-	rows = frappe.get_all(
+	rows = frappe.get_list(
 		"Buchungs Vorschlag",
 		filters={"file_url": file_url},
 		fields=[
@@ -430,6 +431,7 @@ def split_invoice_pdf(
 	excluded_page_positions: str | None = None,
 ) -> dict[str, Any]:
 	"""Teilt eine zuvor hochgeladene private PDF in einzelne File-Dokumente."""
+	frappe.has_permission("File", "create", throw=True)
 	file_url = (file_url or "").strip()
 	if not file_url:
 		frappe.throw("Bitte zuerst eine PDF-Datei hochladen.")

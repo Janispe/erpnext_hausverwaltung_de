@@ -26,6 +26,10 @@ def _new_session_id() -> str:
 	return f"BS-{uuid.uuid4().hex[:10].upper()}"
 
 
+def _require_proposal_permission(permission_type: str, doc=None) -> None:
+	frappe.has_permission("Buchungs Vorschlag", permission_type, doc=doc, throw=True)
+
+
 @frappe.whitelist()
 def bulk_create_vorschlaege(file_urls) -> dict:
 	"""Erstellt für jede File-URL einen Buchungs Vorschlag und queued den Worker.
@@ -39,6 +43,7 @@ def bulk_create_vorschlaege(file_urls) -> dict:
 	"Trotzdem nochmal analysieren"-Aktion → der alte Vorschlag wurde bereits
 	auf Skipped gesetzt, neuer wird sauber angelegt.
 	"""
+	_require_proposal_permission("create")
 	if isinstance(file_urls, str):
 		try:
 			file_urls = json.loads(file_urls)
@@ -57,8 +62,9 @@ def bulk_create_vorschlaege(file_urls) -> dict:
 		url = (raw_url or "").strip()
 		if not url:
 			continue
+		invoice_extraction.check_invoice_file_permission(url)
 		# Idempotenz: aktiver Vorschlag für diese URL?
-		existing = frappe.get_all(
+		existing = frappe.get_list(
 			"Buchungs Vorschlag",
 			filters={
 				"file_url": url,
@@ -268,7 +274,8 @@ def get_session_status(session_id: str) -> dict:
 	  "stats": {pending, processing, ready, booked, skipped, error, total}
 	}
 	"""
-	rows = frappe.get_all(
+	_require_proposal_permission("read")
+	rows = frappe.get_list(
 		"Buchungs Vorschlag",
 		filters={"session_id": session_id},
 		fields=[
@@ -281,6 +288,7 @@ def get_session_status(session_id: str) -> dict:
 			"extracted_data",
 		],
 		order_by="creation asc",
+		limit_page_length=0,
 	)
 	stats = {
 		"pending": 0,
@@ -343,6 +351,7 @@ def get_vorschlag_full(name: str) -> dict:
 	"""Liefert den kompletten extrahierten Datensatz inkl. Original-Datei-URL —
 	für den Cockpit-Dialog beim Klick auf 'Buchen'."""
 	v = frappe.get_doc("Buchungs Vorschlag", name)
+	_require_proposal_permission("read", v)
 	data = {}
 	if v.extracted_data:
 		try:
@@ -366,6 +375,7 @@ def mark_vorschlag_skipped(name: str) -> dict:
 	``reactivate_vorschlag`` jederzeit wieder zurück auf 'Ready' geholt werden.
 	"""
 	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
+	_require_proposal_permission("write", v)
 	if v.status == "Booked":
 		frappe.throw("Bereits gebuchter Vorschlag kann nicht übersprungen werden.")
 	v.status = "Skipped"
@@ -384,6 +394,7 @@ def delete_vorschlag(name: str, also_delete_file: int = 0) -> dict:
 	  aber nur wenn weder Belege noch andere Dokumente die Datei verwenden.
 	"""
 	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
+	_require_proposal_permission("delete", v)
 	if v.status == "Booked":
 		frappe.throw(
 			"Bereits gebuchter Vorschlag kann nicht gelöscht werden — bitte zuerst die verknüpfte Eingangsrechnung stornieren."
@@ -427,6 +438,7 @@ def delete_vorschlag(name: str, also_delete_file: int = 0) -> dict:
 			# every copy before deleting any so another document's File link is safe.
 			for file in files:
 				file_doc = frappe.get_doc("File", file.name, for_update=True)
+				frappe.has_permission("File", "delete", doc=file_doc, throw=True)
 				try:
 					check_if_doc_is_linked(file_doc)
 					check_if_doc_is_dynamically_linked(file_doc)
@@ -455,6 +467,8 @@ def reprocess_vorschlag(name: str) -> dict:
 	Vorschläge neu durchjagen, ohne sie löschen + erneut hochladen zu müssen.
 	"""
 	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
+	_require_proposal_permission("write", v)
+	invoice_extraction.check_invoice_file_permission(v.file_url)
 	if v.status == "Booked":
 		frappe.throw(
 			"Bereits gebuchter Vorschlag kann nicht neu analysiert werden — "
@@ -480,6 +494,8 @@ def reactivate_vorschlag(name: str) -> dict:
 	- Booked → Fehler (zu spät, PI existiert)
 	"""
 	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
+	_require_proposal_permission("write", v)
+	invoice_extraction.check_invoice_file_permission(v.file_url)
 	if v.status == "Booked":
 		frappe.throw(
 			"Vorschlag ist bereits als Eingangsrechnung gebucht und kann nicht reaktiviert werden."
@@ -576,6 +592,7 @@ def list_vorschlaege(
 		sort_order: 'asc' oder 'desc'.
 		limit: max. Anzahl Zeilen.
 	"""
+	_require_proposal_permission("read")
 	allowed_sort_fields = {"creation", "status", "original_filename", "session_id"}
 	if sort_by not in allowed_sort_fields:
 		sort_by = "creation"
@@ -591,7 +608,7 @@ def list_vorschlaege(
 	if session_id:
 		filters["session_id"] = session_id
 
-	rows = frappe.get_all(
+	rows = frappe.get_list(
 		"Buchungs Vorschlag",
 		filters=filters,
 		fields=[
@@ -609,16 +626,13 @@ def list_vorschlaege(
 	)
 
 	# Distinct Sessions für Dropdown — sortiert nach jüngstem Vorschlag pro Session.
-	all_sessions = frappe.db.sql(
-		"""
-		SELECT session_id
-		FROM `tabBuchungs Vorschlag`
-		WHERE session_id IS NOT NULL AND session_id != ''
-		GROUP BY session_id
-		ORDER BY MAX(creation) DESC
-		LIMIT 50
-		""",
-		as_dict=True,
+	all_sessions = frappe.get_list(
+		"Buchungs Vorschlag",
+		filters={"session_id": ["is", "set"]},
+		fields=["session_id", {"MAX": "creation", "as": "latest"}],
+		group_by="session_id",
+		order_by="latest desc",
+		limit_page_length=50,
 	)
 
 	out_rows: list[dict] = []
@@ -644,21 +658,29 @@ def list_vorschlaege(
 @frappe.whitelist()
 def get_open_sessions(limit: int = 10) -> list[dict]:
 	"""Liefert Sessions mit noch nicht abgearbeiteten Vorschlägen — fürs Resume."""
-	rows = frappe.db.sql(
-		"""
-		SELECT session_id,
-		       MIN(original_filename) AS sample_filename,
-		       MIN(creation) AS started_at,
-		       COUNT(*) AS total,
-		       SUM(CASE WHEN status IN ('Pending', 'Processing', 'Ready') THEN 1 ELSE 0 END) AS open_count
-		FROM `tabBuchungs Vorschlag`
-		WHERE session_id IS NOT NULL AND session_id != ''
-		GROUP BY session_id
-		HAVING open_count > 0
-		ORDER BY started_at DESC
-		LIMIT %(limit)s
-		""",
-		{"limit": int(limit or 10)},
-		as_dict=True,
+	_require_proposal_permission("read")
+	rows = frappe.get_list(
+		"Buchungs Vorschlag",
+		filters={"session_id": ["is", "set"]},
+		fields=["session_id", "original_filename", "creation", "status"],
+		limit_page_length=0,
 	)
-	return list(rows or [])
+	# Aggregate only records visible to this user; raw SQL bypasses owner and
+	# document sharing restrictions, including in the session dropdown.
+	sessions = {}
+	for row in rows:
+		if not row.session_id:
+			continue
+		session = sessions.setdefault(row.session_id, {
+			"session_id": row.session_id, "sample_filename": row.original_filename,
+			"started_at": row.creation, "total": 0, "open_count": 0,
+		})
+		session["total"] += 1
+		session["open_count"] += row.status in {"Pending", "Processing", "Ready"}
+		session["started_at"] = min(session["started_at"], row.creation)
+		session["sample_filename"] = min(session["sample_filename"] or "", row.original_filename or "")
+	open_sessions = sorted(
+		(session for session in sessions.values() if session["open_count"]),
+		key=lambda session: session["started_at"], reverse=True,
+	)
+	return open_sessions[:max(1, min(int(limit or 10), 200))]

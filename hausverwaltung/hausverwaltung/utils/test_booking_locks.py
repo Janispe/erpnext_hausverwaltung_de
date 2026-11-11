@@ -12,6 +12,11 @@ from hausverwaltung.hausverwaltung.utils import booking_locks
 
 
 class TestBookingLocks(unittest.TestCase):
+	def test_delete_scope_never_waits_after_document_lock(self):
+		with patch.object(frappe.db, "sql", return_value=[("A",)]) as sql:
+			lock_accounting_scope(wait=False)
+		self.assertTrue(sql.call_args.args[0].endswith("ORDER BY name FOR UPDATE NOWAIT"))
+
 	def test_multi_company_transfer_acquires_companies_in_one_stable_order(self):
 		with patch.object(frappe.db, "sql", return_value=[("A",), ("B",)]) as sql:
 			lock_accounting_scope(["B", "A", "B"])
@@ -121,6 +126,33 @@ class TestBookingLockConcurrency(unittest.TestCase):
 		self.assertEqual(len(completed), 1)
 		self.assertEqual(len(errors), 1)
 		self.assertEqual(errors[0].args[0], 1213)
+
+	def test_delete_scope_nowait_fails_immediately_if_company_is_busy(self):
+		import MySQLdb
+		owner = self.connect(db="hv_booking_lock_regression")
+		deleting = self.connect(db="hv_booking_lock_regression")
+		try:
+			with owner.cursor() as cursor:
+				cursor.execute("SELECT name FROM `tabCompany` FOR UPDATE")
+			with deleting.cursor() as cursor:
+				cursor.execute("SET innodb_lock_wait_timeout = 5")
+				cursor.execute("SELECT name FROM `tabMietvertrag` FOR UPDATE")
+				def sql(query, values=None):
+					cursor.execute(query, values)
+					return cursor.fetchall()
+				start = time.monotonic()
+				with (
+					patch.object(booking_locks, "frappe", SimpleNamespace(db=SimpleNamespace(sql=sql))),
+					self.assertRaises(MySQLdb.OperationalError) as error,
+				):
+					lock_accounting_scope(["TEST"], wait=False)
+				self.assertEqual(error.exception.args[0], 1205)
+				self.assertLess(time.monotonic() - start, 2)
+		finally:
+			deleting.rollback()
+			deleting.close()
+			owner.rollback()
+			owner.close()
 
 	def test_entry_lock_prevents_deadlock_with_opposite_row_orders(self):
 		for _ in range(5):

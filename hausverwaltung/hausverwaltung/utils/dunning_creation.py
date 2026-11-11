@@ -6,14 +6,18 @@ import frappe
 from frappe import _
 from frappe.utils import flt, getdate, nowdate
 
+from hausverwaltung.hausverwaltung.utils.dunning_payment_schedule import require_overdue_payment_rows
+
 
 def validate_dunning_invoice(invoice, posting_date=None) -> None:
-	if int(invoice.docstatus) != 1 or flt(invoice.outstanding_amount) <= 0:
+	if int(invoice.docstatus) != 1 or invoice.get("is_return") or flt(invoice.outstanding_amount) <= 0:
 		frappe.throw(_("{0} ist nicht offen oder nicht gebucht.").format(invoice.name))
-	if not invoice.due_date or getdate(invoice.due_date) >= getdate(posting_date or nowdate()):
-		frappe.throw(
-			_("Rechnung {0} ist zum Mahndatum noch nicht überfällig.").format(invoice.name)
-		)
+	if invoice.get("payment_schedule"):
+		require_overdue_payment_rows(invoice, posting_date)
+	elif not invoice.due_date or getdate(invoice.due_date) >= getdate(posting_date or nowdate()):
+		frappe.throw(_("Rechnung {0} ist zum Mahndatum noch nicht überfällig.").format(invoice.name))
+	# Legacy invoices without a schedule can still be inspected/locked. The
+	# row builder rejects them before creating a draft or submitting a letter.
 
 
 def lock_dunning_invoices(invoice_names, posting_date=None):
@@ -69,20 +73,32 @@ def reject_duplicate_dunning(invoice_names, posting_date=None, *, exclude_dunnin
 
 def validate_dunning_before_submit(doc, method=None) -> None:
 	"""Recheck drafts at submit, including letters edited in the standard form."""
-	names = [row.sales_invoice for row in doc.get("overdue_payments") or [] if row.sales_invoice]
-	if not names:
+	payments = doc.get("overdue_payments") or []
+	names = [row.sales_invoice for row in payments if row.sales_invoice]
+	if not names or len(names) != len(payments):
 		frappe.throw(_("Die Mahnung enthält keine verknüpfte Sales Invoice."))
 	invoices = lock_dunning_invoices(names, doc.posting_date)
-	if any(invoice.customer != doc.customer or invoice.company != doc.company for invoice in invoices):
+	if any(
+		invoice.customer != doc.customer or invoice.company != doc.company
+		or invoice.currency != doc.currency for invoice in invoices
+	):
 		frappe.throw(_("Mahnung und Rechnungen müssen zu derselben Firma und demselben Mieter gehören."))
 	for invoice in invoices:
-		rows = [row for row in doc.get("overdue_payments") or [] if row.sales_invoice == invoice.name]
-		stored_outstanding = sum(flt(row.get("outstanding")) for row in rows)
-		if abs(stored_outstanding - flt(invoice.outstanding_amount)) >= 0.005 or any(
-			not row.get("due_date") or getdate(row.due_date) != getdate(invoice.due_date) for row in rows
-		):
-			frappe.throw(
-				_("Rechnung {0} hat sich seit Anlage des Mahnentwurfs geändert. Bitte den Entwurf aktualisieren.")
-				.format(invoice.name)
-			)
+		current = {row["payment_schedule"]: row for row in require_overdue_payment_rows(invoice, doc.posting_date)}
+		seen = set()
+		for row in (row for row in payments if row.sales_invoice == invoice.name):
+			schedule = current.get(row.get("payment_schedule"))
+			matches = schedule is not None and row.get("payment_schedule") not in seen
+			if matches:
+				matches = (
+					row.get("due_date") and getdate(row.due_date) == getdate(schedule["due_date"])
+					and all((row.get(field) or "") == (schedule.get(field) or "") for field in ("payment_term", "mode_of_payment"))
+					and all(abs(flt(row.get(field)) - flt(schedule.get(field))) < 0.005 for field in ("outstanding", "payment_amount", "invoice_portion"))
+				)
+			if not matches:
+				frappe.throw(
+					_("Rechnung {0} oder ihr Zahlungsplan hat sich seit Anlage des Mahnentwurfs geändert. Bitte den Entwurf mit den aktuellen Zahlungsplan-Raten aktualisieren.")
+					.format(invoice.name)
+				)
+			seen.add(row.payment_schedule)
 	reject_duplicate_dunning(names, doc.posting_date, exclude_dunning=doc.name)

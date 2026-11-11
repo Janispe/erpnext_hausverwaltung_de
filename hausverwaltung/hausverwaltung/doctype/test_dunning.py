@@ -139,6 +139,45 @@ class TestDunningFeeBookingSafety(unittest.TestCase):
 			 self.assertRaisesRegex(frappe.ValidationError, "Mahnung: 100"):
 			dunning._validate_and_lock_dunning_fee_context(doc)
 
+	def test_fee_context_allows_an_overdue_installment_below_the_total_invoice_balance(self):
+		doc = _dunning_doc(rows=[frappe._dict(
+			sales_invoice="SINV-1", payment_schedule="PS-OVERDUE", outstanding=50,
+		)])
+		# The other 200 EUR are on a future installment. The preceding common
+		# submit guard checks the selected schedule and its 50 EUR live balance.
+		contexts = {"SINV-1": _locked_context("SINV-1", outstanding=250)}
+		with (
+			patch.object(dunning, "_require_dunning_fee_invoice_fields"),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff.lock_current_sales_invoice_contexts",
+				return_value=contexts,
+			),
+			patch.object(dunning, "_validate_dunning_income_account", return_value="Dunning Income - TC"),
+			patch.object(dunning, "_meta_has_field", return_value=True),
+		):
+			context = dunning._validate_and_lock_dunning_fee_context(doc)
+		self.assertEqual(context["amount"], 10)
+		self.assertEqual(context["invoice_names"], ["SINV-1"])
+		self.assertEqual(context["cost_center"], "CC-1")
+
+	def test_fee_context_does_not_compare_transaction_currency_to_receivable_account_currency(self):
+		doc = _dunning_doc(rows=[frappe._dict(
+			sales_invoice="SINV-1", payment_schedule="PS-USD", outstanding=100,
+		)])
+		doc.currency = "USD"
+		contexts = {"SINV-1": _locked_context("SINV-1", outstanding=90)}
+		contexts["SINV-1"]["invoice"].update(currency="USD", party_account_currency="EUR")
+		with (
+			patch.object(dunning, "_require_dunning_fee_invoice_fields"),
+			patch(
+				"hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff.lock_current_sales_invoice_contexts",
+				return_value=contexts,
+			),
+			patch.object(dunning, "_validate_dunning_income_account", return_value="Dunning Income - TC"),
+			patch.object(dunning, "_meta_has_field", return_value=True),
+		):
+			self.assertIsNotNone(dunning._validate_and_lock_dunning_fee_context(doc))
+
 	def test_mixed_apartments_cannot_share_one_fee_invoice(self):
 		doc = _dunning_doc(
 			rows=[
@@ -179,6 +218,7 @@ class TestDunningFeeBookingSafety(unittest.TestCase):
 			result = dunning._create_fee_sales_invoice_doc(doc, context)
 
 		self.assertIs(result, target)
+		self.assertEqual(target.set_posting_time, 1)
 		self.assertEqual(target.wohnung, "W-1")
 		self.assertEqual(target.cost_center, "CC-PROPERTY")
 		self.assertEqual(target.items[0].wohnung, "W-1")

@@ -20,6 +20,7 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 	normalize_bk_regelung,
 )
 from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
+from hausverwaltung.hausverwaltung.utils.booking_locks import lock_accounting_scope
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import normalize_print_format_name
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import render_serienbrief_pdf_for_print_format
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import scrub_value as hv_scrub
@@ -109,6 +110,17 @@ def _calculate_zaehler_summen(immobilie: str | None, von, bis) -> Dict[str, floa
 
 
 class BetriebskostenabrechnungImmobilie(Document):
+	def insert(self, *args, **kwargs):
+		if not self.flags.in_print:
+			lock_accounting_scope()
+		return super().insert(*args, **kwargs)
+
+	def _save(self, ignore_permissions=None, ignore_version=None):
+		# Cover submit/cancel before Frappe locks this head and its children.
+		if not self.flags.in_print:
+			lock_accounting_scope()
+		return super()._save(ignore_permissions=ignore_permissions, ignore_version=ignore_version)
+
 	def autoname(self) -> None:
 		if getattr(self, "amended_from", None):
 			return
@@ -677,6 +689,15 @@ class BetriebskostenabrechnungImmobilie(Document):
 
 	def on_trash(self):
 		"""Beim Loeschen: verknuepfte Mieter-Abrechnungen zuerst entfernen."""
+		# delete_doc already holds the head: never wait for Company against a
+		# concurrent submit/cancel request that is waiting for this head.
+		try:
+			lock_accounting_scope(wait=False)
+		except frappe.QueryTimeoutError:
+			frappe.throw(
+				_("Die Abrechnung kann gerade nicht gelöscht werden, weil eine Buchung läuft. Bitte versuchen Sie es erneut, sobald diese abgeschlossen ist."),
+				title=_("Buchung läuft"),
+			)
 		self._cleanup_mieter_abrechnungen(allow_delete=True)
 
 	def _populate_summary(self):

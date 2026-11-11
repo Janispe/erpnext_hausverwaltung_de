@@ -16,6 +16,9 @@ _lock_bank_booking_scope = bi._lock_bank_booking_scope
 
 class TestBankauszugImport(unittest.TestCase):
     def setUp(self):
+        # flt(..., 2) reads the rounding method lazily from System Settings.
+        # Load it before frappe.db is patched, independent of test order.
+        frappe.get_system_settings("rounding_method")
         # This class uses fake import documents. Status persistence must not
         # escape those fakes and write to a connected site.
         status_patcher = patch.object(bi.frappe.db, "set_value")
@@ -5417,7 +5420,9 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         self.assertEqual(flt(retry_journal.total_credit), 19.99)
 
         doc.reload()
-        self.assertEqual(doc.offene_buchungen, 15)
+        # 26 actionable rows (30 minus 4 before cutoff) minus 9 vouchers. The
+        # identical duplicate rows are two distinct open payments, not skipped.
+        self.assertEqual(doc.offene_buchungen, 17)
         self.assertIn("Phase 3", doc.status)
-        self.assertIn("15 offen", doc.status)
+        self.assertIn("17 offen", doc.status)
         self.assertIn("Fehler: 3", doc.status)

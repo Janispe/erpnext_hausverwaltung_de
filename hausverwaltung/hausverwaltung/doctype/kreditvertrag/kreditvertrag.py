@@ -446,6 +446,10 @@ class Kreditvertrag(Document):
 		restschuld -= tilgung
 		"""
 		self.check_permission("write")
+		# Bank matching updates child links without changing the parent timestamp.
+		# A stale browser document must not overwrite those booked rate identities.
+		self = frappe.get_doc("Kreditvertrag", self.name, for_update=True)
+		self.check_permission("write")
 
 		start_d = getdate(start)
 		ende_d = getdate(ende)
@@ -470,20 +474,37 @@ class Kreditvertrag(Document):
 		monthly_rate = zinssatz / 100.0 / 12.0
 
 		if cint(replace):
+			_validate_unbooked_plan_replacement(self)
 			self.set("plan", [])
 
-		existing = {
-			str(getdate(r.faelligkeitsdatum))
-			for r in (self.get("plan") or [])
-			if r.get("faelligkeitsdatum")
-		}
+		existing_rows = sorted(
+			(r for r in (self.get("plan") or []) if r.get("faelligkeitsdatum")),
+			key=lambda row: getdate(row.faelligkeitsdatum),
+		)
+		existing_index = 0
 
 		restschuld = anfangsschuld
 		current = start_d
 		added = 0
 		skipped = 0
 		while current <= ende_d and (added + skipped) < MAX_PLAN_ROWS and restschuld > RESTSCHULD_EPSILON:
-			key = str(current)
+			# Continue from the actual existing plan, including special repayments
+			# and rows before the requested range or between generated due dates.
+			already_planned = False
+			while existing_index < len(existing_rows):
+				row = existing_rows[existing_index]
+				row_date = getdate(row.faelligkeitsdatum)
+				if row_date > current:
+					break
+				restschuld = round(restschuld - flt(row.tilgungsanteil) - flt(row.sondertilgung), 2)
+				already_planned = already_planned or row_date == current
+				existing_index += 1
+			if already_planned:
+				skipped += 1
+				current = getdate(add_months(current, 1))
+				continue
+			if restschuld <= RESTSCHULD_EPSILON:
+				break
 			zins = round(restschuld * monthly_rate, 2)
 			tilgung = round(min(annuitaet_betrag - zins, restschuld), 2)
 			if tilgung < 0:
@@ -494,20 +515,16 @@ class Kreditvertrag(Document):
 					"Plan kann nicht aufgebaut werden."
 				)
 
-			if key not in existing:
-				self.append(
-					"plan",
-					{
-						"faelligkeitsdatum": current,
-						"zinsanteil": zins,
-						"tilgungsanteil": tilgung,
-						"sondertilgung": 0,
-					},
-				)
-				existing.add(key)
-				added += 1
-			else:
-				skipped += 1
+			self.append(
+				"plan",
+				{
+					"faelligkeitsdatum": current,
+					"zinsanteil": zins,
+					"tilgungsanteil": tilgung,
+					"sondertilgung": 0,
+				},
+			)
+			added += 1
 
 			restschuld = round(restschuld - tilgung, 2)
 			current = getdate(add_months(current, 1))
@@ -523,6 +540,8 @@ class Kreditvertrag(Document):
 		optional sondertilgung, optional restschuld (zur Cross-Validation).
 		Delimiter ; oder , wird automatisch erkannt. Beträge mit Punkt oder Komma.
 		"""
+		self.check_permission("write")
+		self = frappe.get_doc("Kreditvertrag", self.name, for_update=True)
 		self.check_permission("write")
 
 		if mode not in ("extend", "replace"):
@@ -582,6 +601,7 @@ class Kreditvertrag(Document):
 				)
 
 		if mode == "replace":
+			_validate_unbooked_plan_replacement(self)
 			self.set("plan", [])
 
 		existing_dates = {
@@ -677,6 +697,18 @@ class Kreditvertrag(Document):
 # ----------------------------------------------------------------------
 # Module-level Scheduler & Utility-Funktionen
 # ----------------------------------------------------------------------
+
+
+def _validate_unbooked_plan_replacement(doc) -> None:
+	if any(
+		row.get(field)
+		for row in doc.get("plan") or []
+		for field in ("journal_entry", "journal_entry_zins", "bank_transaction")
+	):
+		frappe.throw(
+			"Der Tilgungsplan enthält bereits verknüpfte Buchungen oder Banktransaktionen "
+			"und darf nicht ersetzt werden. Bitte den bestehenden Plan ergänzen."
+		)
 
 
 def update_statuses_for_list():

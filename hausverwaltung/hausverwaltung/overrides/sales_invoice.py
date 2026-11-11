@@ -8,6 +8,7 @@ from erpnext.accounts.doctype.sales_invoice.sales_invoice import SalesInvoice
 from frappe import _
 from frappe.utils import cint, cstr, get_last_day, getdate
 
+from hausverwaltung.hausverwaltung.utils.booking_locks import lock_accounting_scope
 from hausverwaltung.hausverwaltung.utils.customer_booking_identity import (
 	lock_customer_booking_identity,
 )
@@ -355,8 +356,8 @@ def validate_mietvertrag_sales_invoice_identity(doc) -> None:
 			frappe.ValidationError,
 		)
 
-	# First and globally deterministic lock: Mietvertrag.  The helper then locks
-	# Wohnung, Immobilie and financial masters in the same order as the generator.
+	# The save/insert entry point already holds Company. Resolve Mietvertrag,
+	# Wohnung and financial masters in the same order as the generator.
 	identity = lock_customer_booking_identity(doc.get("customer"))
 	if mietvertrag and mietvertrag != identity.name:
 		frappe.throw(
@@ -468,6 +469,21 @@ def validate_mietvertrag_sales_invoice_identity(doc) -> None:
 
 
 class CustomSalesInvoice(SalesInvoice):
+	def _lock_invoice_accounting_scope(self):
+		if not self.flags.in_print:
+			company = self.get("company")
+			lock_accounting_scope([company] if company else None)
+
+	def insert(self, *args, **kwargs):
+		self._lock_invoice_accounting_scope()
+		return super().insert(*args, **kwargs)
+
+	def _save(self, ignore_permissions=None, ignore_version=None):
+		# check_if_latest locks the invoice before validation locks its tenancy.
+		# Bank matching takes Company -> tenancy -> invoice, so enter there first.
+		self._lock_invoice_accounting_scope()
+		return super()._save(ignore_permissions=ignore_permissions, ignore_version=ignore_version)
+
 	def resolve_serienbrief_path_segment(self, segment: str):
 		"""Expose the invoice's authoritative contract to Serienbrief paths."""
 		if segment != "mietvertrag":

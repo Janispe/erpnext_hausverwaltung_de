@@ -32,6 +32,22 @@ def _as_money(value: Decimal) -> float:
 	return float(_quantize_money(value))
 
 
+def signed_customer_payment_allocation(payment_type: str, allocated_amount: Any) -> Decimal:
+	"""Mirror ERPNext's receivable GL direction, including overpayment refunds.
+
+	Receive allocations retain their sign. For Customer Pay entries ERPNext
+	posts a receivable debit for either allocation sign, including the negative
+	amount returned by get_payment_entry for an overpaid ordinary invoice.
+	The invoice's return flag does not determine the direction of cash flow.
+	"""
+	amount = _to_decimal(allocated_amount)
+	if payment_type == "Receive":
+		return amount
+	if payment_type == "Pay":
+		return -amount.copy_abs()
+	frappe.throw("BK/HK-Vorauszahlung hat keine eindeutige Zahlungsrichtung.", frappe.ValidationError)
+
+
 def require_untaxed_settlement_invoices(invoice_rows, *, label="BK/HK"):
 	"""Vorauszahlungen dürfen in unserem Mietmodell keine Umsatzsteuer enthalten."""
 	taxable = [
@@ -101,7 +117,7 @@ def _customer_segments_for_wohnung(wohnung: str, from_date: Optional[str | date]
 	td = getdate(to_date) if to_date else None
 
 	# Verträge mit Überlappung holen (ähnlich Report)
-	where = ["wohnung = %(whg)s"]
+	where = ["wohnung = %(whg)s", "docstatus < 2"]
 	params: Dict[str, Any] = {"whg": wohnung}
 	if td:
 		where.append("von <= %(td)s")
@@ -554,7 +570,7 @@ def get_bk_paid_sum(
 ) -> float:
 	"""Summe der tatsächlich geleisteten Zahlungen für Rechnungen (via Mieter/Verträge).
 
-	- Payment Entries (docstatus=1, payment_type='Receive').
+	- Eingereichte Payment Entries (Receive/Pay), Rückzahlungen werden abgezogen.
 	- Zahlungen im Zeitraum per Zahlungs‑Wertstellung (Fallback Posting).
 	- Nur der Anteil der Zahlung, der auf den gewünschten ``item_code``-Positionen
 	  der Rechnung entfällt, wird gezählt (proportionaler Anteil:
@@ -592,6 +608,7 @@ def get_bk_paid_sum(
 		SELECT
 			si.name,
 			si.is_return,
+			pe.payment_type,
 			{_invoice_tax_columns()},
 			per.allocated_amount,
 			COALESCE(bki.bk_net, 0) AS bk_net,
@@ -620,9 +637,7 @@ def get_bk_paid_sum(
 		if total_net == 0:
 			continue
 		item_share = _to_decimal(row.get("bk_net")).copy_abs() / total_net.copy_abs()
-		allocation = _to_decimal(row.get("allocated_amount")).copy_abs()
-		if int(row.get("is_return") or 0):
-			allocation = -allocation
+		allocation = signed_customer_payment_allocation(row.get("payment_type"), row.get("allocated_amount"))
 		total += allocation * item_share
 	return _as_money(total)
 
@@ -678,7 +693,7 @@ def get_bk_paid_sum_for_invoice_names(
 	auf Vorauszahlungsrechnungen führen zum Abbruch. Die Zahlung wird nach dem
 	Anteil der BK/HK-Positionen an der Summe aller Rechnungspositionen aufgeteilt.
 
-	Payment Entries werden anhand des Return-Kennzeichens der Rechnung
+	Payment Entries werden anhand ihrer Debitoren-Buchungsrichtung
 	vorzeichenbehaftet. Es zählen ausschließlich Zahlungen mit einem eindeutigen
 	Bank-/Kassen-Gegenkonto und ohne Differenz-/Abschreibungszeilen. Bei Journal
 	Entries ist ``credit - debit`` auf der Debitorenzeile bereits der
@@ -898,9 +913,7 @@ def get_bk_paid_sum_for_invoice_names(
 		if total_net == 0:
 			continue
 		item_share = _to_decimal(row.get("bk_net")).copy_abs() / total_net.copy_abs()
-		signed_allocation = _to_decimal(row.get("allocated_amount")).copy_abs()
-		if int(row.get("is_return") or 0):
-			signed_allocation = -signed_allocation
+		signed_allocation = signed_customer_payment_allocation(payment_type, row.get("allocated_amount"))
 		total += signed_allocation * item_share
 	if invalid_payments:
 		frappe.throw(

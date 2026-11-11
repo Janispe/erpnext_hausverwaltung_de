@@ -18,6 +18,11 @@ from hausverwaltung.hausverwaltung.utils.mietberechnung import (
 
 
 class TestMietberechnung(unittest.TestCase):
+	def test_contract_validation_rejects_end_before_start_without_part_month_rules(self):
+		for tables in ({}, {"Miete": [{"von": "2026-07-01", "miete": 620}]}):
+			with self.subTest(tables=tables), self.assertRaisesRegex(frappe.ValidationError, "Vertragsende.*Vertragsbeginn"):
+				validate_contract_charges("2026-07-01", "2026-06-30", tables)
+
 	def calculate(self, von="2026-01-01", bis=None, anchor="2026-01-01", rates=None, rules=None, **kwargs):
 		return calculate_monthly_rent(
 			von,

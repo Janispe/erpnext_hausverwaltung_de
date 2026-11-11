@@ -7,6 +7,49 @@ import frappe
 from hausverwaltung.hausverwaltung.doctype.zahlungsplan import zahlungsplan as zp
 
 
+class TestGeneratedInvoiceLinkGuard(unittest.TestCase):
+	def plan(self, rows, *, new=False):
+		doc = SimpleNamespace(name="PLAN-1", plan=rows, is_new=lambda: new)
+		doc.get = lambda field, default=None: getattr(doc, field, default)
+		return doc
+
+	def test_new_plan_cannot_inject_an_existing_invoice_link(self):
+		doc = self.plan([frappe._dict(name="ROW-1", purchase_invoice="PI-FOREIGN")], new=True)
+		with patch.object(zp, "_sync_purchase_invoices_for_plan") as sync, \
+			self.assertRaisesRegex(frappe.ValidationError, "Rechnungsverknüpfung"):
+			zp.Zahlungsplan.validate(doc)
+		sync.assert_not_called()
+
+	def test_replacement_removal_and_stale_browser_clear_are_rejected(self):
+		stored = frappe._dict(name="ROW-1", purchase_invoice="PI-ORIGINAL")
+		for rows in (
+			[frappe._dict(name="ROW-1", purchase_invoice="PI-FOREIGN")],
+			[frappe._dict(name="ROW-1", purchase_invoice=None)],
+			[],
+		):
+			with self.subTest(rows=rows), patch.object(zp.frappe.db, "sql", return_value=[stored]) as load, \
+				self.assertRaisesRegex(frappe.ValidationError, "Rechnungsverknüpfung"):
+				zp._validate_generated_invoice_links(self.plan(rows))
+			self.assertIn("FOR UPDATE", load.call_args.args[0])
+
+	def test_unchanged_generated_link_allows_normal_plan_edits(self):
+		stored = frappe._dict(name="ROW-1", purchase_invoice="PI-ORIGINAL")
+		rows = [frappe._dict(stored, betrag=120), frappe._dict(name="ROW-NEW", purchase_invoice=None)]
+		with patch.object(zp.frappe.db, "sql", return_value=[stored]):
+			zp._validate_generated_invoice_links(self.plan(rows))
+
+	def test_new_rows_cannot_attach_foreign_invoice_to_existing_plan(self):
+		rows = [frappe._dict(name="ROW-NEW", purchase_invoice="PI-FOREIGN")]
+		with patch.object(zp.frappe.db, "sql", return_value=[]), \
+			self.assertRaisesRegex(frappe.ValidationError, "Rechnungsverknüpfung"):
+			zp._validate_generated_invoice_links(self.plan(rows))
+
+	def test_unsaved_rows_without_names_are_each_checked(self):
+		rows = [frappe._dict(purchase_invoice="PI-FOREIGN"), frappe._dict(purchase_invoice=None)]
+		with self.assertRaisesRegex(frappe.ValidationError, "Rechnungsverknüpfung"):
+			zp._validate_generated_invoice_links(self.plan(rows, new=True))
+
+
 class TestPlanVorbelegung(unittest.TestCase):
 	def _row(self, date="2026-07-15", amount=100, **values):
 		return frappe._dict(name="ROW-PREFILL", idx=1, faelligkeitsdatum=date, betrag=amount, **values)

@@ -1,6 +1,7 @@
 """Real accounting regressions; refuse to run outside the isolated test site."""
 
 import unittest
+from datetime import date
 
 import frappe
 from frappe.utils import cint
@@ -64,3 +65,40 @@ class TestHeatingPeriodOverlapIntegration(unittest.TestCase):
 		self.assertEqual(amended.docstatus, 1)
 		self.assertEqual(amended.amended_from, first.name)
 		self.assertEqual(frappe.db.count("Sales Invoice", {"customer": contract.kunde, "docstatus": 1}), 1)
+
+	def test_child_period_cannot_escape_the_heads_overlap_protection(self):
+		_, _, prop, _, contract = fixture(compact=True)
+		head = hk_head(prop)
+		child = frappe.get_doc("Heizkostenabrechnung Mieter", head.mieter_positionen[0].heizkostenabrechnung_mieter)
+		child.bis = "2026-12-31"
+		child.save()
+		with self.assertRaisesRegex(frappe.ValidationError, "Zeitraum.*stimmt nicht"):
+			head.submit()
+		self.assertEqual(frappe.db.get_value(head.doctype, head.name, "docstatus"), 0)
+		self.assertEqual(frappe.db.get_value(child.doctype, child.name, "docstatus"), 0)
+		self.assertEqual(frappe.db.count("Sales Invoice", {"customer": contract.kunde}), 0)
+
+	def test_foreign_table_link_cannot_update_another_heads_child(self):
+		_, _, prop, _, _ = fixture(compact=True)
+		first, second = hk_head(prop, costs=100), hk_head(prop, costs=200)
+		foreign_child = second.mieter_positionen[0].heizkostenabrechnung_mieter
+		first.mieter_positionen[0].heizkostenabrechnung_mieter = foreign_child
+		first.mieter_positionen[0].kosten_gesamt = 300
+		with self.assertRaisesRegex(frappe.ValidationError, "gehört nicht"):
+			first.save()
+		self.assertEqual(frappe.db.get_value("Heizkostenabrechnung Mieter", foreign_child, "kosten_gesamt"), 200)
+
+	def test_changing_only_the_end_date_refreshes_children_without_mixed_date_type_failure(self):
+		_, _, prop, _, _ = fixture(compact=True)
+		head = hk_head(prop)
+		head.reload()
+		self.assertIsInstance(head.von, date)
+		head.bis = "2026-12-31"
+		head.save()
+		children = frappe.get_all("Heizkostenabrechnung Mieter", filters={
+			"heizkostenabrechnung_immobilie": head.name, "docstatus": 0,
+		}, fields=["von", "bis", "kosten_gesamt"])
+		self.assertEqual(len(children), 1)
+		self.assertEqual(children[0].von, date(2025, 1, 1))
+		self.assertEqual(children[0].bis, date(2026, 12, 31))
+		self.assertEqual(children[0].kosten_gesamt, 0)

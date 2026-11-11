@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import frappe
 from frappe.utils import cint, cstr, getdate
+from hausverwaltung.hausverwaltung.utils.booking_locks import lock_accounting_scope
 
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen import (
     _prorated_festbetrag_rows,
@@ -677,6 +678,8 @@ def _require_bk_generation_authorization(
             frappe.ValidationError,
         )
 
+    # Child insert also takes this scope. Acquire it before the head row.
+    lock_accounting_scope()
     head_name = cstr(head or "").strip()
     if not head_name:
         frappe.throw(
@@ -1920,7 +1923,9 @@ def create_bk_settlement_documents(
     Offene BK-Rechnungen des Zeitraums werden immer als Bericht ausgewiesen,
     aber nur bei ausdrücklichem Opt-in per Journal Entry verrechnet.
     """
-    # Lock order is always header -> child -> contract -> source invoices.
+    # Match direct PE/JE writes before locking the head, contract or invoices.
+    lock_accounting_scope()
+    # Lock order is Company -> header -> child -> contract -> source invoices.
     # The API parameter is compatibility-only and can never override the head.
     head_doc = _get_locked_submitted_bk_head(abrechnung)
     _require_bk_settlement_head_permissions(head_doc)

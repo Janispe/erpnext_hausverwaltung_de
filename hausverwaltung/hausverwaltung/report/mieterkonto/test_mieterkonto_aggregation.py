@@ -1,7 +1,7 @@
 from datetime import date
 from itertools import permutations
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import frappe
 
@@ -96,6 +96,79 @@ class TestOneCentBalances(TestCase):
 		self.assertEqual(len(rows), 1)
 		self.assertEqual(rows[0]["kontostand"], 0.01)
 		self.assertEqual(rows[0]["is_opening_row"], 1)
+
+
+class TestStandaloneValueDates(TestCase):
+	def standalone(self, *, posting_date, value_date, voucher_type="Journal Entry", value_sort=True):
+		filters = _filters(from_date=date(2026, 1, 1), to_date=date(2026, 1, 31))
+		filters.customer = "MIETER-A"
+		filters["sortieren_nach_wertstellungsdatum"] = int(value_sort)
+		ledger = frappe._dict(
+			posting_date=posting_date, voucher_type=voucher_type, voucher_no="CLAIM-1",
+			against_voucher_type=voucher_type, against_voucher="CLAIM-1",
+			debit=0, credit=100, account="AR", remarks="Guthaben",
+		)
+
+		def get_all(doctype, **kwargs):
+			self.assertEqual(doctype, "GL Entry")
+			cutoff = kwargs["filters"].get("posting_date")
+			return [] if cutoff and posting_date > cutoff[1] else [ledger]
+
+		with patch.object(report, "_receivable_accounts", return_value={"AR"}), \
+			patch.object(report.frappe, "get_all", side_effect=get_all), \
+			patch.object(report, "_fetch_offset_accounts", return_value={}), \
+			patch.object(report, "_get_standalone_sales_invoice_category_amounts", return_value={}), \
+			patch.object(report, "_fetch_voucher_remarks", return_value={
+				(voucher_type, "CLAIM-1"): {"custom_wertstellungsdatum": value_date, "custom_mieterkonto_kategorie": report.CATEGORY_LABELS["guthaben_nachzahlungen"]},
+			}), patch.object(report, "_get_currency", return_value="EUR"):
+			return report._build_standalone_receivable_transactions({}, filters), filters
+
+	def test_backdated_journal_and_credit_note_belong_to_their_value_period(self):
+		for voucher_type in ("Journal Entry", "Sales Invoice"):
+			with self.subTest(voucher_type=voucher_type):
+				transactions, filters = self.standalone(
+					posting_date=date(2026, 2, 15), value_date=date(2026, 1, 31), voucher_type=voucher_type,
+				)
+				self.assertEqual(len(transactions), 1)
+				self.assertEqual(transactions[0]["wertstellungsdatum"], date(2026, 1, 31))
+				self.assertEqual(transactions[0]["paid_amounts"]["guthaben_nachzahlungen"], 100)
+				_rows, totals = report._build_rows(transactions, filters)
+				self.assertEqual(totals["all"]["balance"], -100)
+
+	def test_future_value_date_is_excluded_even_if_already_posted(self):
+		transactions, filters = self.standalone(posting_date=date(2026, 1, 15), value_date=date(2026, 2, 1))
+		self.assertEqual(transactions, [])
+		_rows, totals = report._build_rows(transactions, filters)
+		self.assertEqual(totals["all"]["balance"], 0)
+
+	def test_posting_date_mode_still_excludes_later_postings(self):
+		transactions, _filters_result = self.standalone(
+			posting_date=date(2026, 2, 15), value_date=date(2026, 1, 31), value_sort=False,
+		)
+		self.assertEqual(transactions, [])
+
+	def test_refund_inherits_claim_value_date_and_is_counted_in_value_period(self):
+		claims, filters = self.standalone(posting_date=date(2026, 2, 15), value_date=date(2026, 1, 31))
+		payment = frappe._dict(
+			posting_date=date(2026, 3, 1), voucher_type="Payment Entry", voucher_no="PE-1",
+			against_voucher_type="Journal Entry", against_voucher_no="CLAIM-1", amount=40,
+		)
+		with patch.object(report.frappe, "get_all", return_value=[payment]) as load, \
+			patch.object(report, "_fetch_voucher_remarks", return_value={}), \
+			patch.object(report, "_get_currency", return_value="EUR"):
+			payments, allocation = report._build_standalone_settlements(claims, filters)
+		self.assertNotIn("posting_date", load.call_args.kwargs["filters"])
+		self.assertEqual(allocation, {"PE-1": 40})
+		self.assertEqual(payments[0]["wertstellungsdatum"], date(2026, 1, 31))
+		_rows, totals = report._build_rows(claims + payments, filters)
+		self.assertEqual(totals["all"]["balance"], -60)
+
+	def test_source_metadata_fetches_custom_value_date_when_available(self):
+		with patch.object(report.frappe, "get_meta", return_value=Mock(has_field=lambda field: field == "custom_wertstellungsdatum")), \
+			patch.object(report.frappe, "get_all", return_value=[{"name": "JE-1", "custom_wertstellungsdatum": "2026-01-31"}]) as load:
+			metadata = report._fetch_voucher_remarks([frappe._dict(voucher_type="Journal Entry", voucher_no="JE-1")])
+		self.assertIn("custom_wertstellungsdatum", load.call_args.kwargs["fields"])
+		self.assertEqual(metadata[("Journal Entry", "JE-1")]["custom_wertstellungsdatum"], "2026-01-31")
 
 
 class TestMixedPaymentValueDates(TestCase):

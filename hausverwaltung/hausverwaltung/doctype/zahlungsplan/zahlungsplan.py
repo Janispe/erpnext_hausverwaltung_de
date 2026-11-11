@@ -31,6 +31,7 @@ MODUS_ZAHLUNGSPLAN = "Zahlungsplan"
 
 class Zahlungsplan(Document):
 	def validate(self):
+		_validate_generated_invoice_links(self)
 		# Backward-compat: existing records ohne modus bekommen Default
 		if not self.get("modus"):
 			self.modus = MODUS_ABSCHLAGSPLAN
@@ -540,6 +541,35 @@ class Zahlungsplan(Document):
 			"errors": errors,
 			"skipped_count": skipped,
 		}
+
+
+def _validate_generated_invoice_links(doc: Zahlungsplan) -> None:
+	"""Only server booking/cancellation workflows may assign row invoices.
+
+	Read-only form fields still arrive in API payloads. Accepting an arbitrary
+	invoice here would let on_update cancel that unrelated invoice and replace
+	it from this plan. A stale browser must also not erase a scheduler's link.
+	"""
+	persisted = [] if doc.is_new() else frappe.db.sql(
+		"""SELECT name, purchase_invoice FROM `tabZahlungsplan Zeile`
+		WHERE parent = %s AND parenttype = 'Zahlungsplan' AND parentfield = 'plan'
+		ORDER BY name FOR UPDATE""",
+		(doc.name,), as_dict=True,
+	)
+	previous_links = {row.name: cstr(row.get("purchase_invoice")).strip() for row in persisted}
+	current_rows = doc.get("plan") or []
+	current_names = {row.get("name") for row in current_rows}
+	links_changed = any(
+		previous_links.get(row.get("name"), "") != cstr(row.get("purchase_invoice")).strip()
+		for row in current_rows
+	)
+	linked_row_removed = any(link and name not in current_names for name, link in previous_links.items())
+	if links_changed or linked_row_removed:
+		frappe.throw(
+			"Die Rechnungsverknüpfung einer Zahlungsplan-Zeile darf nicht manuell geändert "
+			"oder durch Entfernen der Zeile gelöscht werden. Bitte den Plan neu laden und "
+			"Rechnungen über die vorgesehenen Buchungs- bzw. Stornofunktionen bearbeiten."
+		)
 
 
 def _validate_plan_replacement(doc: Zahlungsplan, dates: list, amount: float) -> None:

@@ -8,6 +8,7 @@ from frappe.model.document import Document
 from frappe.utils import cint, cstr, getdate
 
 from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
+from hausverwaltung.hausverwaltung.utils.booking_locks import lock_accounting_scope
 from hausverwaltung.hausverwaltung.utils.mieter_name import (
 	get_hauptmieter_display_name,
 )
@@ -150,6 +151,18 @@ def _get_locked_settlement_allocations(
 
 
 class BetriebskostenabrechnungMieter(Document):
+	def insert(self, *args, **kwargs):
+		if not self.flags.in_print:
+			lock_accounting_scope()
+		return super().insert(*args, **kwargs)
+
+	def _save(self, ignore_permissions=None, ignore_version=None):
+		# check_if_latest locks this child before before_submit/cancel; its
+		# linked Journal Entry requires Company to have been locked first.
+		if not self.flags.in_print:
+			lock_accounting_scope()
+		return super()._save(ignore_permissions=ignore_permissions, ignore_version=ignore_version)
+
 	def autoname(self) -> None:
 		if getattr(self, "amended_from", None):
 			return

@@ -106,6 +106,8 @@ def validate_part_month_rows(von, bis, rows=None) -> list[dict]:
 		frappe.throw(_("Für Teilmonatsregeln wird ein Vertragsbeginn benötigt."))
 	contract_start = _required_date(von, _("Vertragsbeginn")) if von else None
 	contract_end = _required_date(bis, _("Vertragsende")) if bis else None
+	if contract_start and contract_end and contract_end < contract_start:
+		frappe.throw(_("Das Vertragsende darf nicht vor dem Vertragsbeginn liegen."))
 	normalized = []
 	for index, row in enumerate(rows or [], 1):
 		start = _required_date(row.get("von"), _("Teilmonat {0}: Von").format(index))

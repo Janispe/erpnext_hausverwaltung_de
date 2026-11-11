@@ -3,15 +3,20 @@ from __future__ import annotations
 import frappe
 from erpnext.accounts.doctype.payment_entry.payment_entry import PaymentEntry
 from frappe import _
-from frappe.utils import cint, comma_or, flt, getdate
+from frappe.utils import cint, comma_or, cstr, flt, getdate
 
+from hausverwaltung.hausverwaltung.utils.booking_locks import lock_accounting_scope
 from hausverwaltung.hausverwaltung.utils.customer_booking_identity import lock_customer_booking_identity
 
 
-def validate_customer_payment_identity(doc):
+def validate_customer_payment_identity(doc, *, fill_missing_dimensions=True):
 	"""Keep tenant advances and refunds on their contract's financial identity."""
 	if cint(doc.get("docstatus")) == 2:
 		return  # Historical cancellation reverses the original dimensions.
+	if not fill_missing_dimensions:
+		previous = doc.get_doc_before_save()
+		if doc.get("party_type") == "Customer" or (previous and previous.get("party_type") == "Customer"):
+			validate_unchanged_booking_dimensions(doc, previous)
 	if doc.get("party_type") != "Customer" or not doc.get("party"):
 		return
 	identity = lock_customer_booking_identity(doc.party)
@@ -21,21 +26,134 @@ def validate_customer_payment_identity(doc):
 		frappe.throw(_("Die Kostenstelle der Mieterzahlung passt nicht zur Wohnung des Mietvertrags."))
 	if doc.get("wohnung") and doc.wohnung != identity.wohnung:
 		frappe.throw(_("Die Wohnung der Mieterzahlung passt nicht zum Mietvertrag."))
-	# This is the contract's authoritative dimension, not a Company default.
-	doc.cost_center = identity.cost_center
-	doc.wohnung = identity.wohnung
+	# Initial booking derives the authoritative dimensions. Updating a legacy
+	# submitted voucher must not silently backfill it or trigger a GL repost.
+	if fill_missing_dimensions:
+		doc.cost_center = identity.cost_center
+		doc.wohnung = identity.wohnung
 	for row in doc.get("deductions") or []:
 		if row.get("cost_center") and row.cost_center != identity.cost_center:
 			frappe.throw(_("Die Kostenstelle einer Zahlungsdifferenz passt nicht zum Mietvertrag."))
+	_validate_customer_payment_references(doc, identity)
+
+
+def validate_unchanged_booking_dimensions(current, previous):
+	"""Preserve stored tenant dimensions during an ordinary submitted update."""
+	if current is None or previous is None or any(
+		cstr(current.get(field)).strip() != cstr(previous.get(field)).strip()
+		for field in ("party_type", "party", "company", "wohnung", "cost_center")
+	):
+		frappe.throw(
+			_("Partei, Firma, Wohnung und Kostenstelle eines gebuchten Mieterbelegs dürfen nicht verändert werden."),
+			frappe.ValidationError,
+		)
+
+
+def _validate_customer_payment_references(doc, identity):
+	"""Validate historical source dimensions before a direct payment/reallocation.
+
+	ERPNext checks the party and receivable account, but neither identifies a
+	flat. Old invoices and vouchers may predate our creation-time safeguards.
+	This guard also runs before updates to an already submitted Payment Entry.
+	"""
+	references = {
+		(row.get("reference_doctype"), row.get("reference_name"))
+		for row in (doc.get("references") or [])
+		if flt(row.get("allocated_amount"))
+		and row.get("reference_name")
+		and row.get("reference_doctype") in ("Sales Invoice", "Journal Entry", "Payment Entry")
+	}
+	validate_customer_booking_references(references, identity)
+
+
+def validate_customer_booking_references(references, identity):
+	"""Validate source vouchers shared by direct Payment and Journal Entries."""
+	for doctype, name in sorted(set(references)):
+		source = frappe.get_doc(doctype, name, for_update=True)
+		if cint(source.docstatus) != 1 or source.company != identity.company:
+			frappe.throw(
+				_("Der Zahlungsreferenzbeleg {0} muss gebucht sein und zur Company des Mietvertrags gehören.").format(name)
+			)
+		if doctype == "Sales Invoice":
+			from hausverwaltung.hausverwaltung.utils.payment_auto_match import (
+				_customer_invoice_identity,
+				_validate_customer_invoice_dimensions,
+			)
+
+			expected = (identity.name, identity.wohnung)
+			if _customer_invoice_identity(source, identity.kunde, for_update=True) != expected:
+				frappe.throw(
+					_("Die referenzierte Rechnung {0} passt nicht zum Mietvertrag der Zahlung.").format(name)
+				)
+			_validate_customer_invoice_dimensions(source, expected, for_update=True)
+			continue
+		if doctype == "Journal Entry":
+			rows = [
+				row
+				for row in (source.get("accounts") or [])
+				if row.get("party_type") == "Customer" and row.get("party") == identity.kunde
+			]
+		else:
+			rows = [source] if source.party_type == "Customer" and source.party == identity.kunde else []
+		if not rows:
+			frappe.throw(
+				_("Der Zahlungsreferenzbeleg {0} gehört nicht zum Customer des Mietvertrags.").format(name)
+			)
+		# Historical PE/JE vouchers may lack dimensions. Their exact Customer
+		# and Company plus the caller's locked 1:1 tenancy identify the debt;
+		# nonempty contradictions still fail, and source rows are never filled.
+		for row in rows:
+			if any(
+				cstr(row.get(field)).strip()
+				and cstr(row.get(field)).strip() != cstr(identity.get(field)).strip()
+				for field in ("wohnung", "cost_center")
+			):
+				frappe.throw(
+					_("Wohnung oder Kostenstelle des Zahlungsreferenzbelegs {0} passen nicht zum Mietvertrag.").format(name)
+				)
 
 
 class CustomPaymentEntry(PaymentEntry):
+	def _lock_payment_accounting_scope(self):
+		if self.flags.in_print or self.get("party_type") != "Customer":
+			return
+		# Frappe locks an existing Payment Entry in check_if_latest(), before
+		# validate(). Acquire the same entry lock as rent correction/bankimport
+		# before that first row lock, including submitted reallocation/cancel.
+		# Keep this company-scoped: bankimport may already hold this Company's
+		# lock, so expanding it to all Companies here could invert lock order.
+		company = self.get("company")
+		lock_accounting_scope([company] if company else None)
+
+	def insert(
+		self,
+		ignore_permissions=None,
+		ignore_links=None,
+		ignore_if_duplicate=False,
+		ignore_mandatory=None,
+		set_name=None,
+		set_child_names=True,
+	):
+		self._lock_payment_accounting_scope()
+		return super().insert(
+			ignore_permissions=ignore_permissions,
+			ignore_links=ignore_links,
+			ignore_if_duplicate=ignore_if_duplicate,
+			ignore_mandatory=ignore_mandatory,
+			set_name=set_name,
+			set_child_names=set_child_names,
+		)
+
+	def _save(self, ignore_permissions=None, ignore_version=None):
+		self._lock_payment_accounting_scope()
+		return super()._save(ignore_permissions=ignore_permissions, ignore_version=ignore_version)
+
 	def validate(self):
 		validate_customer_payment_identity(self)
 		super().validate()
 
 	def before_update_after_submit(self):
-		validate_customer_payment_identity(self)
+		validate_customer_payment_identity(self, fill_missing_dimensions=False)
 		parent = getattr(super(), "before_update_after_submit", None)
 		if parent:
 			parent()

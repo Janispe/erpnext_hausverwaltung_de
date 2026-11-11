@@ -26,6 +26,7 @@ from hausverwaltung.hausverwaltung.utils.dunning_creation import (
     lock_dunning_invoices,
     reject_duplicate_dunning,
 )
+from hausverwaltung.hausverwaltung.utils.dunning_payment_schedule import require_overdue_payment_rows
 
 _MV_MARKER_RE = re.compile(r"\[MV:([^\]]+)\]")
 _DUNNING_DOCSTATUS_LABEL = {
@@ -1316,6 +1317,7 @@ def create_dunning(
     reject_duplicate_dunning([si.name], posting_date)
     level = min(4, _submitted_dunning_count(sales_invoice) + 1)
     resolved_type = _resolve_dunning_type(level, dunning_type)
+    overdue_rows = require_overdue_payment_rows(si, posting_date)
 
     dunning = frappe.new_doc("Dunning")
     for fieldname, value in {
@@ -1325,7 +1327,7 @@ def create_dunning(
         "dunning_type": resolved_type,
         "posting_date": posting_date or nowdate(),
         "due_date": new_due_date or _default_dunning_due_date(posting_date),
-        "outstanding_amount": si.outstanding_amount,
+        "outstanding_amount": sum(row["outstanding"] for row in overdue_rows),
         "currency": si.currency,
         "conversion_rate": flt(getattr(si, "conversion_rate", None)) or 1,
         "dunning_fee": flt(mahngebuehr) if mahngebuehr is not None else None,
@@ -1334,26 +1336,15 @@ def create_dunning(
     }.items():
         _set_if_field(dunning, fieldname, value)
 
-    _append_child_if_table(
-        dunning,
-        "overdue_payments",
-        {
-            "sales_invoice": si.name,
-            "payment_term": None,
-            "due_date": si.due_date,
-            "invoice_portion": 100,
-            "outstanding": si.outstanding_amount,
-            "outstanding_amount": si.outstanding_amount,
-            "amount": si.outstanding_amount,
-        },
-    )
+    for row in overdue_rows:
+        _append_child_if_table(dunning, "overdue_payments", row)
     _append_serienbrief_werte(dunning, serienbrief_werte)
 
     dunning.insert(ignore_permissions=False)
     return _draft_response(
         dunning,
         "dunning",
-        summe=flt(getattr(dunning, "grand_total", 0) or getattr(si, "outstanding_amount", 0)),
+        summe=flt(getattr(dunning, "grand_total", 0) or sum(row["outstanding"] for row in overdue_rows)),
         dunning_type=resolved_type,
         serienbrief_vorlage=getattr(dunning, "hv_serienbrief_vorlage", None),
         mahnstufe=level,
@@ -1436,6 +1427,9 @@ def create_bulk_dunning(
                 explicit_fee = mahngebuehr_per_customer.get(customer)
             elif mahngebuehr is not None:
                 explicit_fee = mahngebuehr
+            overdue_rows = [
+                row for si in sales_invoices for row in require_overdue_payment_rows(si, posting_date)
+            ]
 
             dunning = frappe.new_doc("Dunning")
             first = sales_invoices[0]
@@ -1447,27 +1441,15 @@ def create_bulk_dunning(
                 "due_date": new_due_date or _default_dunning_due_date(posting_date),
                 "currency": first.currency,
                 "conversion_rate": flt(getattr(first, "conversion_rate", None)) or 1,
-                "outstanding_amount": sum(flt(si.outstanding_amount) for si in sales_invoices),
+                "outstanding_amount": sum(row["outstanding"] for row in overdue_rows),
                 "dunning_fee": flt(explicit_fee) if explicit_fee is not None else None,
                 "rate_of_interest": None if zinsen_aktiv is None or _as_bool(zinsen_aktiv) else 0,
                 "hv_serienbrief_vorlage": effective_template,
             }.items():
                 _set_if_field(dunning, fieldname, value)
 
-            for si in sales_invoices:
-                _append_child_if_table(
-                    dunning,
-                    "overdue_payments",
-                    {
-                        "sales_invoice": si.name,
-                        "payment_term": None,
-                        "due_date": si.due_date,
-                        "invoice_portion": 100,
-                        "outstanding": si.outstanding_amount,
-                        "outstanding_amount": si.outstanding_amount,
-                        "amount": si.outstanding_amount,
-                    },
-                )
+            for row in overdue_rows:
+                _append_child_if_table(dunning, "overdue_payments", row)
             customer_werte = (serienbrief_werte_per_customer or {}).get(customer) if serienbrief_werte_per_customer else None
             _append_serienbrief_werte(dunning, customer_werte or serienbrief_werte)
 

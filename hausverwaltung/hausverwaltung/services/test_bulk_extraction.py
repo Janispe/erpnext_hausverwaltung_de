@@ -14,6 +14,7 @@ class TestDeleteVorschlag(TestCase):
 	def setUp(self):
 		self.stack = ExitStack()
 		self.addCleanup(self.stack.close)
+		self.permission = self.stack.enter_context(patch.object(bulk.frappe, "has_permission", return_value=True))
 		self.proposal = frappe._dict(
 			name="BV-1",
 			status="Ready",
@@ -107,6 +108,7 @@ class TestDeleteVorschlag(TestCase):
 		self.files.append(self._file("COPY"))
 		result = bulk.delete_vorschlag("BV-1", also_delete_file=1)
 		self.assertTrue(result["deleted_file"])
+
 		self.assertIsNone(result["file_preserved_reason"])
 		self.delete.assert_has_calls(
 			[
@@ -124,6 +126,18 @@ class TestDeleteVorschlag(TestCase):
 		)
 		self.get_doc.assert_any_call("Buchungs Vorschlag", "BV-1", for_update=True)
 		self.commit.assert_called_once()
+
+	def test_optional_file_deletion_requires_separate_file_permission(self):
+		def permission(doctype, *args, **kwargs):
+			if doctype == "File":
+				raise frappe.PermissionError
+			return True
+
+		self.permission.side_effect = permission
+		with self.assertRaises(frappe.PermissionError):
+			bulk.delete_vorschlag("BV-1", also_delete_file=1)
+		self.assertNotIn(("delete", "File", "UPLOAD"), self.events)
+		self.commit.assert_not_called()
 
 	def test_link_to_any_copy_preserves_all_files_before_physical_deletion(self):
 		self.files.append(self._file("LINKED-COPY"))
@@ -171,11 +185,13 @@ class TestBulkExtractionLifecycle(TestCase):
 	def setUp(self):
 		self.stack = ExitStack()
 		self.addCleanup(self.stack.close)
+		self.stack.enter_context(patch.object(bulk.frappe, "has_permission", return_value=True))
+		self.stack.enter_context(patch.object(bulk.invoice_extraction, "check_invoice_file_permission"))
 		self.rows, self.committed, self.callbacks, self.events = {}, {}, [], []
 		self.stack.enter_context(patch.object(bulk.frappe, "session", SimpleNamespace(user="accountant@example.test")))
 		self.stack.enter_context(patch.object(bulk.frappe, "get_doc", side_effect=self._get_doc))
 		self.stack.enter_context(patch.object(bulk.frappe, "new_doc", side_effect=lambda dt: self.Proposal(self, {})))
-		self.stack.enter_context(patch.object(bulk.frappe, "get_all", side_effect=self._get_all))
+		self.stack.enter_context(patch.object(bulk.frappe, "get_list", side_effect=self._get_all))
 		self.stack.enter_context(patch.object(bulk.frappe, "throw", side_effect=frappe.ValidationError))
 		self.stack.enter_context(patch.object(bulk.frappe, "log_error"))
 		self.stack.enter_context(patch.object(bulk.frappe, "get_traceback", return_value="test traceback"))

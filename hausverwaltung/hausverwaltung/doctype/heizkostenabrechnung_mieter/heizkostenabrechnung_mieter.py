@@ -32,6 +32,7 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaim
 from hausverwaltung.hausverwaltung.utils.settlement_identity import hk_marker_owner
 from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
 from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
+from hausverwaltung.hausverwaltung.utils.booking_locks import lock_accounting_scope
 
 
 def _row_value(row: object, fieldname: str) -> Any:
@@ -167,13 +168,24 @@ def _settlement_marker_owners(remarks: Any) -> List[str]:
 
 
 class HeizkostenabrechnungMieter(Document):
+	def insert(self, *args, **kwargs):
+		if not self.flags.in_print:
+			lock_accounting_scope()
+		return super().insert(*args, **kwargs)
+
+	def _save(self, *args, **kwargs):
+		# Frappe locks this settlement before submitting/cancelling its invoice.
+		if not self.flags.in_print:
+			lock_accounting_scope()
+		return super()._save(*args, **kwargs)
+
 	def autoname(self) -> None:
 		if getattr(self, "amended_from", None):
 			return
 		self.name = make_document_name(self.doctype)
 
 	def validate(self) -> None:
-		if self.von and self.bis and self.von > self.bis:
+		if self.von and self.bis and getdate(self.von) > getdate(self.bis):
 			frappe.throw("'Von' muss vor oder gleich 'Bis' liegen.")
 
 		# Der Mietvertrag ist die Buchungsidentität und besitzt genau einen

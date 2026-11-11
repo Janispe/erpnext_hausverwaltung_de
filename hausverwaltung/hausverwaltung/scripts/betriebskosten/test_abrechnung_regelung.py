@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import frappe
 
 from hausverwaltung.hausverwaltung.scripts.betriebskosten import abrechnung_erstellen as bk
+from hausverwaltung.hausverwaltung.scripts.betriebskosten import kosten_auf_wohnungen as allocation
 from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 	BK_REGELUNG_PAUSCHALE,
 	BK_REGELUNG_VORAUSZAHLUNG,
@@ -15,6 +16,38 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 
 
 class TestAbrechnungRegelung(unittest.TestCase):
+	def test_cancelled_contract_fixed_costs_are_excluded_from_house_and_contract_allocations(self):
+		contracts = [
+			frappe._dict(name="MV-CANCELLED", wohnung="WHG-1", docstatus=2),
+			frappe._dict(name="MV-CURRENT", wohnung="WHG-1", docstatus=0),
+		]
+
+		def get_all(doctype, filters, **kwargs):
+			if doctype == "Mietvertrag":
+				rows = contracts
+				for field, condition in filters.items():
+					if isinstance(condition, tuple):
+						op, value = condition
+						rows = [row for row in rows if (row[field] in value if op == "in" else row[field] < value)]
+					else:
+						rows = [row for row in rows if row[field] == condition]
+				return [row.name for row in rows] if kwargs.get("pluck") else rows
+			self.assertEqual(doctype, "Betriebskosten Festbetrag")
+			return [frappe._dict(
+				mietvertrag=name, betriebskostenart="Kamin", betrag=120,
+				gueltig_von="2026-01-01", gueltig_bis="2026-12-31",
+			) for name in filters["parent"][1]]
+
+		with (
+			patch.object(allocation, "_wohnungen_in_haus", return_value=["WHG-1"]),
+			patch.object(allocation.frappe, "get_all", side_effect=get_all),
+		):
+			for contract in (None, "MV-CURRENT", "MV-CANCELLED"):
+				with self.subTest(contract=contract):
+					rows = allocation._prorated_festbetrag_rows("IMMO-1", "2026-01-01", "2026-12-31", mietvertrag=contract)
+					self.assertEqual([row["mietvertrag"] for row in rows], [] if contract == "MV-CANCELLED" else ["MV-CURRENT"])
+					self.assertEqual(sum(row["betrag"] for row in rows), 0 if contract == "MV-CANCELLED" else 120)
+
 	def test_cancelled_contract_does_not_overlap_replacement_in_bk_segments(self):
 		with sqlite3.connect(":memory:") as connection:
 			self.addCleanup(connection.close)

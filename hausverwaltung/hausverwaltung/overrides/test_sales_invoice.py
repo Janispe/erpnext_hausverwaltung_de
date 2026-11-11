@@ -1,4 +1,5 @@
 import unittest
+from contextlib import ExitStack
 from unittest.mock import patch
 
 import frappe
@@ -8,6 +9,28 @@ from hausverwaltung.hausverwaltung.overrides.sales_invoice import (
 	default_wertstellungsdatum_from_posting_date,
 	validate_mietvertrag_sales_invoice_identity,
 )
+
+
+class TestSalesInvoiceAccountingLockOrder(unittest.TestCase):
+	def test_save_insert_submit_and_cancel_lock_company_before_frappe_row_lock(self):
+		class StopAtRowLock(Exception):
+			pass
+
+		for method, status in (("insert", 0), ("_save", 0), ("_save", 1), ("_save", 2)):
+			with self.subTest(method=method, status=status), ExitStack() as stack:
+				doc = sales_invoice.CustomSalesInvoice.__new__(sales_invoice.CustomSalesInvoice)
+				doc.__dict__.update(name="SI-1", doctype="Sales Invoice", company="HV", docstatus=status, flags=frappe._dict(), _table_fieldnames={})
+				events = []
+				stack.enter_context(patch.object(sales_invoice, "lock_accounting_scope", side_effect=lambda companies: events.append(("company", companies))))
+				for preparatory in ("check_if_locked", "_set_defaults", "check_permission", "set_user_and_timestamp", "set_docstatus"):
+					stack.enter_context(patch.object(doc, preparatory))
+				def row_lock():
+					events.append("invoice")
+					raise StopAtRowLock
+				stack.enter_context(patch.object(doc, "check_if_latest", side_effect=row_lock))
+				with self.assertRaises(StopAtRowLock):
+					getattr(doc, method)()
+				self.assertEqual(events, [("company", ["HV"]), "invoice"])
 
 
 class _FakeMeta:

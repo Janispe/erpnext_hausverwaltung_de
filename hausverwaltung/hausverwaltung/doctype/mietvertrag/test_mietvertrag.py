@@ -31,6 +31,23 @@ class TestMietvertrag(unittest.TestCase):
 			]), self.assertRaisesRegex(frappe.ValidationError, "überschneidet.*MV-SUCCESSOR"):
 			doc.before_update_after_submit()
 
+	def test_submitted_contract_cannot_be_ended_before_it_started(self):
+		# This regression exercises the real submit-update hook and validation
+		# without loading DocType metadata or requiring a database fixture.
+		doc = object.__new__(mietvertrag.Mietvertrag)
+		doc.__dict__.update(
+			name="MV-SUBMITTED", docstatus=1, wohnung="WHG-1", kunde="CUST-1",
+			von="2026-01-01", bis="2025-12-31", mieterwechsel=None,
+			mieter=[], kontoverbindungen=[], betriebskostenregelungen=[],
+		)
+		with patch.object(doc, "_validate_customer_mietvertrag_invariant"), \
+			patch.object(doc, "_validate_wohnung_contract_period"), \
+			patch.object(doc, "_sort_betriebskostenregelungen"), \
+			patch.object(mietvertrag, "_get_wohnung_immobilie", return_value="IMM-1"), \
+			patch.object(mietvertrag, "_build_mietvertrag_display_title", return_value="Contract"), \
+			self.assertRaisesRegex(frappe.ValidationError, "Vertragsende.*Vertragsbeginn"):
+			doc.before_update_after_submit()
+
 	def test_submitted_contract_bk_rule_rejects_advance_during_flat_rate(self):
 		doc = self._submitted_doc(
 			betriebskostenregelungen=[{"gueltig_von": "2026-01-01", "abrechnungsart": BK_REGELUNG_PAUSCHALE}],

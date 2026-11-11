@@ -213,7 +213,7 @@ def bk_fixture(*, with_vacancy=False, compact=True):
 		).insert().submit()
 	cash = frappe.get_all(
 		"Account",
-		filters={"company": company, "is_group": 0, "account_type": ["in", ["Bank", "Cash"]]},
+		filters={"company": company, "is_group": 0, "disabled": 0, "account_type": ["in", ["Bank", "Cash"]]},
 		pluck="name",
 		limit=1,
 	)[0]

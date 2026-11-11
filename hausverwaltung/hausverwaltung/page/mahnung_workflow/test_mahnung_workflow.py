@@ -20,6 +20,7 @@ class TestDunningRecommendations(unittest.TestCase):
 		]
 		history = [frappe._dict(name=f"DUNNING-HISTORY-{index}") for index in range(historic_count)]
 		with (
+			patch.object(mahnung_workflow, "nowdate", return_value="2026-10-16"),
 			patch.object(mahnung_workflow.frappe, "get_doc", return_value=customer),
 			patch.object(mahnung_workflow.frappe, "get_list", side_effect=lambda doctype, **kwargs: invoices if doctype == "Sales Invoice" else history),
 			patch.object(mahnung_workflow, "_history_entry", side_effect=lambda name: {"beleg": name}),
@@ -104,6 +105,7 @@ class TestDunningAccessAndTenancyIdentity(unittest.TestCase):
 
 	def test_dunning_candidates_use_permission_filtered_invoice_query(self):
 		with patch.object(mahnung_workflow.frappe, "get_list", return_value=[frappe._dict(customer="CUST-ALLOWED")]) as get_list, \
+			patch.object(mahnung_workflow, "nowdate", return_value="2026-10-16"), \
 			patch.object(mahnung_workflow.frappe.db, "sql") as sql:
 			self.assertEqual(mahnung_workflow._mahnreife_customers(), ["CUST-ALLOWED"])
 		sql.assert_not_called()

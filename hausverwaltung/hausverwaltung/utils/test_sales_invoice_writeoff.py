@@ -18,6 +18,46 @@ from hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff import (
 
 
 class TestSalesInvoiceWriteoff(unittest.TestCase):
+	def test_company_scope_precedes_invoice_and_item_locks(self):
+		events = []
+		rows = {
+			"SI-1": frappe._dict(name="SI-1", company="B"),
+			"SI-2": frappe._dict(name="SI-2", company="A"),
+		}
+		with (
+			patch.object(frappe, "get_all", return_value=list(rows.values())),
+			patch.object(sales_invoice_writeoff, "lock_accounting_scope", side_effect=lambda companies: events.append(("company", companies))),
+			patch.object(sales_invoice_writeoff, "_lock_current_sales_invoice_rows", side_effect=lambda names: events.append("invoices") or rows),
+			patch.object(sales_invoice_writeoff, "_lock_current_sales_invoice_items", side_effect=lambda names: events.append("items") or {}),
+			patch.object(sales_invoice_writeoff, "_resolve_locked_invoice_booking_context", return_value={}),
+		):
+			contexts = sales_invoice_writeoff.lock_current_sales_invoice_contexts(["SI-2", "SI-1"])
+		self.assertEqual(set(contexts), set(rows))
+		self.assertEqual(events, [("company", ["A", "B"]), "invoices", "items"])
+
+	def test_changed_invoice_company_does_not_expand_scope_after_invoice_lock(self):
+		with (
+			patch.object(frappe, "get_all", return_value=[frappe._dict(name="SI-1", company="A")]),
+			patch.object(sales_invoice_writeoff, "lock_accounting_scope") as scope,
+			patch.object(sales_invoice_writeoff, "_lock_current_sales_invoice_rows", return_value={"SI-1": frappe._dict(company="B")}),
+			patch.object(sales_invoice_writeoff, "_lock_current_sales_invoice_items") as items,
+			self.assertRaisesRegex(frappe.ValidationError, "Firma.*geändert"),
+		):
+			sales_invoice_writeoff.lock_current_sales_invoice_contexts(["SI-1"])
+		scope.assert_called_once_with(["A"])
+		items.assert_not_called()
+
+	def test_nested_journal_guard_rejects_other_company_before_taking_more_locks(self):
+		with (
+			patch.object(frappe, "get_all", return_value=[frappe._dict(name="SI-1", company="B")]),
+			patch.object(sales_invoice_writeoff, "lock_accounting_scope") as scope,
+			patch.object(sales_invoice_writeoff, "_lock_current_sales_invoice_rows") as invoices,
+			self.assertRaisesRegex(frappe.ValidationError, "selben Firma"),
+		):
+			sales_invoice_writeoff.get_locked_sales_invoice_writeoff_entry("SI-1", expected_company="A")
+		scope.assert_not_called()
+		invoices.assert_not_called()
+
 	def test_sales_invoice_writeoff_requires_closed_submitted_invoice(self):
 		with patch("hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff.frappe") as frappe:
 			frappe.db.get_value.return_value = {

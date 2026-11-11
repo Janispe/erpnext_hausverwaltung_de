@@ -32,10 +32,9 @@ class ExtractInvoiceResult:
 
 def _set_system_user(actor: str | None = None) -> None:
 	user = (actor or "").strip() or "Administrator"
-	try:
-		frappe.set_user(user)
-	except Exception:
-		frappe.set_user("Administrator")
+	# File access must retain the requesting user's permissions. A failed
+	# context switch must never turn an extraction into an Administrator job.
+	frappe.set_user(user)
 
 
 @activity.defn(name="extract_invoice")

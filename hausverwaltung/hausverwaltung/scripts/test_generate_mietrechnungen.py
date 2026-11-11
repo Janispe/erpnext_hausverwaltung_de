@@ -65,7 +65,7 @@ class TestGenerateMietrechnungen(unittest.TestCase):
                 patch.object(generate_mietrechnungen, "lock_mietvertrag_booking_identity", side_effect=lock_contract),
                 patch.object(generate_mietrechnungen, "_miete_betrag_fuer_monat", return_value=600),
                 patch.object(generate_mietrechnungen, "_bk_regelung_und_betrag_fuer_monat", return_value=("Vorauszahlung", 100)),
-                patch.object(generate_mietrechnungen, "_monatsbetrag_fuer_kostenart", side_effect=lambda mv, typ, anchor: 50 if typ == "Heizkosten" else 0),
+                patch.object(generate_mietrechnungen, "_monatsbetrag_fuer_kostenart", side_effect=lambda mv, typ, anchor, **kwargs: 50 if typ == "Heizkosten" else 0),
                 patch.object(generate_mietrechnungen, "_invoice_exists", return_value=False),
                 patch.object(generate_mietrechnungen, "_create_invoice", side_effect=lambda *args, **kwargs: f"SI-{args[0]}-{args[2]}") as create,
             ):
@@ -248,10 +248,48 @@ class TestGenerateMietrechnungen(unittest.TestCase):
                 return [frappe._dict(row) for row in part_months]
             self.fail(f"Unexpected doctype: {doctype}")
 
+        def sql(query, params, **kwargs):
+            self.assertIn("FOR UPDATE", query)
+            self.assertEqual(params[0], "MV-1")
+            if "`tabStaffelmiete`" in query:
+                return [frappe._dict(row) for row in staffels.get(params[1], [])]
+            if "`tabMiete Teilmonat`" in query:
+                return [frappe._dict(row) for row in part_months]
+            self.fail(f"Unexpected query: {query}")
+
+        @contextmanager
+        def charge_rows():
+            with patch.object(generate_mietrechnungen.frappe, "get_all", side_effect=get_all), \
+                patch.object(generate_mietrechnungen.frappe.db, "sql", side_effect=sql):
+                yield
+
         return (
-            patch.object(generate_mietrechnungen.frappe, "get_all", side_effect=get_all),
+            charge_rows(),
             patch.object(generate_mietrechnungen.frappe, "get_system_settings", return_value="Commercial Rounding"),
         )
+
+    def test_booking_amount_reads_current_staffels_and_part_months_after_contract_lock(self):
+        contract = frappe._dict(name="MV-1", von=date(2026, 1, 1), bis=None)
+
+        def sql(query, params, **kwargs):
+            self.assertIn("FOR UPDATE", query)
+            self.assertIn("parenttype = 'Mietvertrag'", query)
+            self.assertEqual(params[0], contract.name)
+            if "`tabStaffelmiete`" in query:
+                self.assertEqual(params[1], "miete")
+                return [frappe._dict(von="2026-01-01", miete=930)]
+            self.assertIn("`tabMiete Teilmonat`", query)
+            self.assertIn("parentfield = 'miete_teilmonate'", query)
+            return [frappe._dict(von="2026-01-16", bis="2026-01-31", berechnung="Festbetrag", betrag=200)]
+
+        with (
+            patch.object(generate_mietrechnungen.frappe, "get_all", side_effect=AssertionError("stale snapshot read")),
+            patch.object(generate_mietrechnungen.frappe.db, "sql", side_effect=sql),
+            patch.object(generate_mietrechnungen.frappe, "get_system_settings", return_value="Commercial Rounding"),
+        ):
+            amount = generate_mietrechnungen._miete_betrag_fuer_monat(contract, date(2026, 1, 1), lock=True)
+
+        self.assertEqual(amount, 650)  # New monthly rate for 15 days plus the new fixed interval.
 
     def test_move_in_month_prorates_bk_advance_and_uses_initial_rule(self):
         contract = frappe._dict(name="MV-1", von=date(2026, 1, 16), bis=None)
@@ -402,7 +440,7 @@ class TestGenerateMietrechnungen(unittest.TestCase):
 
         self.assertEqual(rule, "Vorauszahlung")
         self.assertEqual(amount, 175.0)
-        get_amount.assert_called_once_with(contract, "Betriebskosten", date(2026, 7, 1))
+        get_amount.assert_called_once_with(contract, "Betriebskosten", date(2026, 7, 1), lock=False)
 
     def test_company_via_wohnung_uses_property_financial_identity(self):
         def get_value(doctype, name, fieldname, **kwargs):

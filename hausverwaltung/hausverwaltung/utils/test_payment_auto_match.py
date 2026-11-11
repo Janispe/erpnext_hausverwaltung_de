@@ -1185,11 +1185,20 @@ class TestCreateJournalEntryForBt(unittest.TestCase):
 			}
 			return frappe._dict(values) if as_dict else values
 
+		get_system_settings = pam.frappe.get_system_settings
+
+		def _system_settings(key):
+			# The Account-only db.get_value fixture must not intercept rounding.
+			if key == "rounding_method":
+				return "Commercial Rounding"
+			return get_system_settings(key)
+
 		with patch.object(
 			pam,
 			"_resolve_company_and_bank_account",
 			return_value=("COMP-1", bank_account_doc),
 		), \
+			patch.object(pam.frappe, "get_system_settings", side_effect=_system_settings), \
 			patch.object(pam, "_get_company_currency", return_value="EUR"), \
 			patch.object(pam, "_resolve_expected_cost_center_for_bt", return_value="CC-DEFAULT"), \
 			patch.object(pam.frappe.db, "get_value", side_effect=_account_values), \

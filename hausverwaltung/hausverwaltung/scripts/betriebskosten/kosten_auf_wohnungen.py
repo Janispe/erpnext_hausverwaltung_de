@@ -466,15 +466,17 @@ def _prorated_festbetrag_rows(
     wohnungen = _wohnungen_in_haus(immobilie=immobilie)
     if not wohnungen:
         return []
+    contract_filters = {"wohnung": ("in", wohnungen), "docstatus": ("<", 2)}
     if mietvertrag:
-        mv_names = [mietvertrag]
-    else:
-        mv_names = frappe.get_all(
-            "Mietvertrag",
-            filters={"wohnung": ("in", wohnungen)},
-            pluck="name",
-            limit_page_length=0,
-        )
+        contract_filters["name"] = mietvertrag
+    contracts = frappe.get_all(
+        "Mietvertrag",
+        filters=contract_filters,
+        fields=["name", "wohnung"],
+        limit_page_length=0,
+    )
+    mv_to_wohnung = {row.name: row.wohnung for row in contracts}
+    mv_names = list(mv_to_wohnung)
     if not mv_names:
         return []
     rows = frappe.get_all(
@@ -488,10 +490,6 @@ def _prorated_festbetrag_rows(
         fields=["parent AS mietvertrag", "betriebskostenart", "bezeichnung", "betrag", "gueltig_von", "gueltig_bis"],
         limit_page_length=0,
     )
-    mv_to_wohnung = {
-        r.name: r.wohnung
-        for r in frappe.get_all("Mietvertrag", filters={"name": ("in", mv_names)}, fields=["name", "wohnung"])
-    }
     result: List[Dict[str, object]] = []
     for row in rows or []:
         mietvertrag_name = row.get("mietvertrag")

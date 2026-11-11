@@ -1,6 +1,7 @@
 # See license.txt
 
 import unittest
+from contextlib import ExitStack
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -11,6 +12,81 @@ from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_mieter impor
 	betriebskostenabrechnung_mieter as abrechnung_module,
 )
 from hausverwaltung.hausverwaltung.scripts.betriebskosten import abrechnung_erstellen as bk
+
+
+class TestBetriebskostenAccountingLockOrder(unittest.TestCase):
+	def test_save_insert_submit_and_cancel_lock_companies_before_frappe_row_lock(self):
+		from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_immobilie import (
+			betriebskostenabrechnung_immobilie as head_module,
+		)
+
+		class StopAtRowLock(Exception):
+			pass
+
+		for module, controller in (
+			(abrechnung_module, abrechnung_module.BetriebskostenabrechnungMieter),
+			(head_module, head_module.BetriebskostenabrechnungImmobilie),
+		):
+			for method, status in (("insert", 0), ("_save", 0), ("_save", 1), ("_save", 2)):
+				with self.subTest(controller=controller.__name__, method=method, status=status), ExitStack() as stack:
+					doc = controller.__new__(controller)
+					doc.__dict__.update(name="BK-1", doctype=controller.__name__, docstatus=status, flags=frappe._dict(), _table_fieldnames={})
+					events = []
+					stack.enter_context(patch.object(module, "lock_accounting_scope", side_effect=lambda: events.append("company")))
+					for preparatory in ("check_if_locked", "_set_defaults", "check_permission", "set_user_and_timestamp", "set_docstatus"):
+						stack.enter_context(patch.object(doc, preparatory))
+					def row_lock():
+						events.append("document")
+						raise StopAtRowLock
+					stack.enter_context(patch.object(doc, "check_if_latest", side_effect=row_lock))
+					with self.assertRaises(StopAtRowLock):
+						getattr(doc, method)()
+					self.assertEqual(events, ["company", "document"])
+
+	def test_direct_settlement_and_generation_take_scope_before_head_lock(self):
+		class StopAtHeadLock(Exception):
+			pass
+		for function, kwargs, head_loader in (
+			(bk.create_bk_settlement_documents, {"abrechnung": "BK-1"}, "_get_locked_submitted_bk_head"),
+			(bk._require_bk_generation_authorization, {"head": "BK-1", "von": "2025-01-01", "bis": "2025-12-31"}, None),
+		):
+			with self.subTest(function=function.__name__):
+				events = []
+				def head_lock(*args, **kwargs):
+					events.append("head")
+					raise StopAtHeadLock
+				with (
+					patch.object(bk, "lock_accounting_scope", side_effect=lambda: events.append("company")),
+					patch.object(bk if head_loader else frappe, head_loader or "get_doc", side_effect=head_lock),
+					self.assertRaises(StopAtHeadLock),
+				):
+					function(**kwargs)
+				self.assertEqual(events, ["company", "head"])
+
+	def test_delete_with_locked_head_fails_without_waiting_or_cancelling_children(self):
+		from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_immobilie import (
+			betriebskostenabrechnung_immobilie as head_module,
+		)
+		doc = SimpleNamespace(_cleanup_mieter_abrechnungen=MagicMock())
+		with (
+			patch.object(head_module, "lock_accounting_scope", side_effect=frappe.QueryTimeoutError) as scope,
+			self.assertRaisesRegex(frappe.ValidationError, "weil eine Buchung läuft"),
+		):
+			head_module.BetriebskostenabrechnungImmobilie.on_trash(doc)
+		scope.assert_called_once_with(wait=False)
+		doc._cleanup_mieter_abrechnungen.assert_not_called()
+
+	def test_delete_propagates_unrelated_database_errors_before_cleanup(self):
+		from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_immobilie import (
+			betriebskostenabrechnung_immobilie as head_module,
+		)
+		doc = SimpleNamespace(_cleanup_mieter_abrechnungen=MagicMock())
+		with (
+			patch.object(head_module, "lock_accounting_scope", side_effect=RuntimeError("unexpected")),
+			self.assertRaisesRegex(RuntimeError, "unexpected"),
+		):
+			head_module.BetriebskostenabrechnungImmobilie.on_trash(doc)
+		doc._cleanup_mieter_abrechnungen.assert_not_called()
 
 
 class TestBetriebskostenabrechnungMieter(unittest.TestCase):
@@ -24,6 +100,9 @@ class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 				], "COMP-1")
 
 	def setUp(self):
+		scope_patch = patch.object(bk, "lock_accounting_scope")
+		scope_patch.start()
+		self.addCleanup(scope_patch.stop)
 		# Settlement-Betragstests isolieren die Ausgleichsalgebra. Die
 		# Live-Snapshot-Prüfung wird separat mit ihren Invarianten getestet.
 		self.validate_snapshot = bk._validate_locked_prepayment_snapshot
