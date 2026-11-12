@@ -217,6 +217,10 @@ after_migrate = [
 # ---------------
 # Override standard doctype classes
 
+extend_doctype_class = {
+	"Company": ["hausverwaltung.hausverwaltung.overrides.company.CompanyDepartmentRootMixin"],
+}
+
 override_doctype_class = {
 	"Dunning": "hausverwaltung.hausverwaltung.overrides.dunning.CustomDunning",
 	"Payment Entry": "hausverwaltung.hausverwaltung.overrides.payment_entry.CustomPaymentEntry",
