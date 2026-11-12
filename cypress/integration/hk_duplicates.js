@@ -3,7 +3,7 @@
 describe('Heizkosten Doppelbuchung und Admin-Korrektur', () => {
   let fixture;
   before(() => {
-    expect(Cypress.config('baseUrl')).to.be.oneOf(['http://127.0.0.1:18084', 'http://127.0.0.1:18086']);
+    expect(Cypress.config('baseUrl')).to.be.oneOf(['http://127.0.0.1:18083', 'http://127.0.0.1:18084', 'http://127.0.0.1:18086']);
     cy.login('Administrator', 'admin');
     cy.readFile(Cypress.env('hv_hk_duplicate_fixture') || 'output/bugfix-2026-10-06/hk-duplicate-ui-fixture.json').then((data) => { fixture = data; });
   });

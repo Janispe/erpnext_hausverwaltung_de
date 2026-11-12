@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from functools import partial
 
 import frappe
 
@@ -23,6 +24,10 @@ from hausverwaltung.hausverwaltung.services import invoice_extraction, mistral_c
 def _new_session_id() -> str:
 	"""Kurze gut lesbare Session-ID für die Gruppierung der Vorschläge eines Uploads."""
 	return f"BS-{uuid.uuid4().hex[:10].upper()}"
+
+
+def _require_proposal_permission(permission_type: str, doc=None) -> None:
+	frappe.has_permission("Buchungs Vorschlag", permission_type, doc=doc, throw=True)
 
 
 @frappe.whitelist()
@@ -38,6 +43,7 @@ def bulk_create_vorschlaege(file_urls) -> dict:
 	"Trotzdem nochmal analysieren"-Aktion → der alte Vorschlag wurde bereits
 	auf Skipped gesetzt, neuer wird sauber angelegt.
 	"""
+	_require_proposal_permission("create")
 	if isinstance(file_urls, str):
 		try:
 			file_urls = json.loads(file_urls)
@@ -56,8 +62,9 @@ def bulk_create_vorschlaege(file_urls) -> dict:
 		url = (raw_url or "").strip()
 		if not url:
 			continue
+		invoice_extraction.check_invoice_file_permission(url)
 		# Idempotenz: aktiver Vorschlag für diese URL?
-		existing = frappe.get_all(
+		existing = frappe.get_list(
 			"Buchungs Vorschlag",
 			filters={
 				"file_url": url,
@@ -75,9 +82,10 @@ def bulk_create_vorschlaege(file_urls) -> dict:
 		v.original_filename = filename
 		v.file_url = url
 		v.status = "Pending"
+		v.extraction_job_id = uuid.uuid4().hex
 		v.insert(ignore_permissions=True)
 		vorschlag_names.append(v.name)
-		_dispatch_vorschlag_worker(v.name)
+		_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
 	frappe.db.commit()
 	return {
 		"session_id": session_id,
@@ -86,7 +94,19 @@ def bulk_create_vorschlaege(file_urls) -> dict:
 	}
 
 
-def _dispatch_vorschlag_worker(vorschlag_name: str) -> None:
+def _dispatch_vorschlag_worker(vorschlag_name: str, extraction_job_id: str | None = None) -> None:
+	"""Publish either worker only after its proposal transaction has committed."""
+	frappe.db.after_commit.add(partial(
+		_dispatch_committed_vorschlag_worker,
+		vorschlag_name,
+		extraction_job_id,
+		frappe.session.user or "Administrator",
+	))
+
+
+def _dispatch_committed_vorschlag_worker(
+	vorschlag_name: str, extraction_job_id: str | None, actor: str,
+) -> None:
 	"""Startet die Extraktion entweder als Temporal-Workflow (wenn aktiviert
 	für 'Buchungs Vorschlag') oder als simpler frappe.enqueue-Job (Fallback).
 
@@ -100,7 +120,7 @@ def _dispatch_vorschlag_worker(vorschlag_name: str) -> None:
 
 	if is_temporal_enabled_for_doctype("Buchungs Vorschlag"):
 		try:
-			_start_temporal_extraction(vorschlag_name)
+			_start_temporal_extraction(vorschlag_name, extraction_job_id, actor)
 			return
 		except Exception:
 			# Wenn Temporal-Start failt (Worker down, Connection-Issue etc.):
@@ -109,15 +129,25 @@ def _dispatch_vorschlag_worker(vorschlag_name: str) -> None:
 				frappe.get_traceback(),
 				f"Temporal-Start für {vorschlag_name} fehlgeschlagen — Fallback enqueue",
 			)
-	frappe.enqueue(
-		"hausverwaltung.hausverwaltung.services.bulk_extraction.process_vorschlag",
-		queue="long",
-		timeout=600,
-		vorschlag_name=vorschlag_name,
-	)
+	try:
+		frappe.enqueue(
+			"hausverwaltung.hausverwaltung.services.bulk_extraction.process_vorschlag",
+			queue="long",
+			timeout=600,
+			vorschlag_name=vorschlag_name,
+			extraction_job_id=extraction_job_id,
+		)
+	except Exception as exc:
+		# The proposal is already committed. Leave a retryable, visible failure
+		# rather than an indefinitely Pending document with no dispatched worker.
+		_persist_error(vorschlag_name, f"Worker konnte nicht gestartet werden: {exc}",
+			extraction_job_id=extraction_job_id, expected_statuses=("Pending",))
+		frappe.log_error(frappe.get_traceback(), "BulkExtraction: worker dispatch failed")
 
 
-def _start_temporal_extraction(vorschlag_name: str) -> None:
+def _start_temporal_extraction(
+	vorschlag_name: str, extraction_job_id: str | None = None, actor: str | None = None,
+) -> None:
 	"""Startet den BulkInvoiceExtractionWorkflow asynchron.
 
 	Synchroner Wrapper um den async Temporal-Client. Wir starten und vergessen
@@ -128,29 +158,52 @@ def _start_temporal_extraction(vorschlag_name: str) -> None:
 
 	from hausverwaltung.hausverwaltung.integrations.temporal.client import get_temporal_client
 	from hausverwaltung.hausverwaltung.integrations.temporal.config import get_temporal_settings
+	from temporalio.exceptions import WorkflowAlreadyStartedError
 
 	async def _start():
 		client = await get_temporal_client()
 		settings = get_temporal_settings()
-		await client.start_workflow(
-			"HausverwaltungBulkInvoiceExtractionWorkflow",
-			args=[vorschlag_name, frappe.session.user or "Administrator"],
-			id=f"bulk-invoice-{vorschlag_name}",
-			task_queue=settings.task_queue_process,
-		)
+		try:
+			await client.start_workflow(
+				"HausverwaltungBulkInvoiceExtractionWorkflow",
+				args=[vorschlag_name, actor or frappe.session.user or "Administrator", extraction_job_id],
+				id=f"bulk-invoice-{vorschlag_name}" + (f"-{extraction_job_id}" if extraction_job_id else ""),
+				task_queue=settings.task_queue_process,
+			)
+		except WorkflowAlreadyStartedError:
+			# An uncertain start acknowledgement must not also launch an RQ job.
+			pass
 
 	asyncio.run(_start())
 
 
-def process_vorschlag(vorschlag_name: str) -> None:
-	"""Background-Worker: führt die LLM-Extraktion aus und persistiert das Ergebnis."""
+def _job_generation(job_id: str | None, vorschlag_name: str) -> str:
+	return (job_id or f"legacy-{vorschlag_name}").split(":", 1)[0]
+
+
+def process_vorschlag(
+	vorschlag_name: str, extraction_job_id: str | None = None, *,
+	raise_errors: bool = False, retry_processing: bool = False,
+) -> str:
+	"""Claim one attempt, release the DB lock during extraction, then publish if still owned.
+
+	RQ keeps failures as Error for manual retry. Temporal requests exception
+	propagation and can reclaim an interrupted Processing attempt. The stable
+	job generation prevents an old retry taking over a later reprocess request.
+	"""
+	generation = _job_generation(extraction_job_id, vorschlag_name)
 	try:
-		doc = frappe.get_doc("Buchungs Vorschlag", vorschlag_name)
-	except Exception:
-		return
-	if doc.status not in ("Pending", "Error"):
-		# Schon verarbeitet oder vom User skipped — nichts zu tun.
-		return
+		doc = frappe.get_doc("Buchungs Vorschlag", vorschlag_name, for_update=True)
+	except frappe.DoesNotExistError:
+		return ""
+	if _job_generation(doc.get("extraction_job_id"), vorschlag_name) != generation:
+		return doc.status
+	if doc.status not in ("Pending", "Error") and not (retry_processing and doc.status == "Processing"):
+		return doc.status
+	previous_attempt = str(doc.get("extraction_job_id") or "").partition(":")[2]
+	attempt = int(previous_attempt) + 1 if previous_attempt.isdigit() else 1
+	claim = f"{generation}:{attempt}"
+	doc.extraction_job_id = claim
 	doc.status = "Processing"
 	doc.error_message = ""
 	doc.save(ignore_permissions=True)
@@ -158,34 +211,54 @@ def process_vorschlag(vorschlag_name: str) -> None:
 
 	try:
 		result = invoice_extraction.extract_from_file_url(doc.file_url)
+		extracted_data = json.dumps(result, ensure_ascii=False, default=str)
 	except mistral_client.MistralPermanentError as exc:
-		_persist_error(vorschlag_name, f"Permanent: {exc}")
-		return
+		changed, status = _persist_error(vorschlag_name, f"Permanent: {exc}", extraction_job_id=claim)
+		if changed and raise_errors:
+			raise
+		return status
 	except mistral_client.MistralTransientError as exc:
-		_persist_error(vorschlag_name, f"Temporär: {exc}")
-		return
+		changed, status = _persist_error(vorschlag_name, f"Temporär: {exc}", extraction_job_id=claim)
+		if changed and raise_errors:
+			raise
+		return status
 	except Exception as exc:
-		_persist_error(vorschlag_name, f"Unerwartet: {exc}")
-		return
+		changed, status = _persist_error(vorschlag_name, f"Unerwartet: {exc}", extraction_job_id=claim)
+		if changed and raise_errors:
+			raise
+		return status
 
-	# Erfolgreich.
-	doc = frappe.get_doc("Buchungs Vorschlag", vorschlag_name)
-	doc.status = "Ready"
-	doc.extracted_data = json.dumps(result, ensure_ascii=False, default=str)
-	doc.error_message = ""
+	_changed, status = _finish_extraction_attempt(vorschlag_name, claim, extracted_data=extracted_data)
+	return status
+
+
+def _finish_extraction_attempt(
+	vorschlag_name: str, extraction_job_id: str | None, *, extracted_data: str | None = None,
+	error_message: str | None = None, expected_statuses=("Processing",),
+) -> tuple[bool, str]:
+	try:
+		doc = frappe.get_doc("Buchungs Vorschlag", vorschlag_name, for_update=True)
+	except frappe.DoesNotExistError:
+		return False, ""
+	if doc.status not in expected_statuses or doc.get("extraction_job_id") != extraction_job_id:
+		return False, doc.status
+	doc.status = "Error" if error_message is not None else "Ready"
+	if extracted_data is not None:
+		doc.extracted_data = extracted_data
+	doc.error_message = (error_message or "")[:5000]
 	doc.save(ignore_permissions=True)
 	frappe.db.commit()
+	return True, doc.status
 
 
-def _persist_error(vorschlag_name: str, message: str) -> None:
-	try:
-		doc = frappe.get_doc("Buchungs Vorschlag", vorschlag_name)
-		doc.status = "Error"
-		doc.error_message = (message or "")[:5000]
-		doc.save(ignore_permissions=True)
-		frappe.db.commit()
-	except Exception:
-		frappe.log_error(frappe.get_traceback(), "BulkExtraction: persist error failed")
+def _persist_error(
+	vorschlag_name: str, message: str, *, extraction_job_id: str | None = None,
+	expected_statuses=("Processing",),
+) -> tuple[bool, str]:
+	return _finish_extraction_attempt(
+		vorschlag_name, extraction_job_id, error_message=message,
+		expected_statuses=expected_statuses,
+	)
 
 
 @frappe.whitelist()
@@ -201,7 +274,8 @@ def get_session_status(session_id: str) -> dict:
 	  "stats": {pending, processing, ready, booked, skipped, error, total}
 	}
 	"""
-	rows = frappe.get_all(
+	_require_proposal_permission("read")
+	rows = frappe.get_list(
 		"Buchungs Vorschlag",
 		filters={"session_id": session_id},
 		fields=[
@@ -214,6 +288,7 @@ def get_session_status(session_id: str) -> dict:
 			"extracted_data",
 		],
 		order_by="creation asc",
+		limit_page_length=0,
 	)
 	stats = {
 		"pending": 0,
@@ -276,6 +351,7 @@ def get_vorschlag_full(name: str) -> dict:
 	"""Liefert den kompletten extrahierten Datensatz inkl. Original-Datei-URL —
 	für den Cockpit-Dialog beim Klick auf 'Buchen'."""
 	v = frappe.get_doc("Buchungs Vorschlag", name)
+	_require_proposal_permission("read", v)
 	data = {}
 	if v.extracted_data:
 		try:
@@ -298,7 +374,8 @@ def mark_vorschlag_skipped(name: str) -> dict:
 	Daten + PDF bleiben unverändert — der Vorschlag kann via
 	``reactivate_vorschlag`` jederzeit wieder zurück auf 'Ready' geholt werden.
 	"""
-	v = frappe.get_doc("Buchungs Vorschlag", name)
+	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
+	_require_proposal_permission("write", v)
 	if v.status == "Booked":
 		frappe.throw("Bereits gebuchter Vorschlag kann nicht übersprungen werden.")
 	v.status = "Skipped"
@@ -314,39 +391,68 @@ def delete_vorschlag(name: str, also_delete_file: int = 0) -> dict:
 	- Booked-Vorschläge werden NICHT gelöscht (sie sind über
 	  ``linked_purchase_invoice`` mit einer PI verknüpft).
 	- ``also_delete_file=1``: zusätzlich das verknüpfte File-Doc löschen,
-	  aber nur wenn kein anderer Vorschlag noch auf die Datei verweist.
+	  aber nur wenn weder Belege noch andere Dokumente die Datei verwenden.
 	"""
-	v = frappe.get_doc("Buchungs Vorschlag", name)
+	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
+	_require_proposal_permission("delete", v)
 	if v.status == "Booked":
 		frappe.throw(
 			"Bereits gebuchter Vorschlag kann nicht gelöscht werden — bitte zuerst die verknüpfte Eingangsrechnung stornieren."
 		)
 	file_url = v.file_url
+	files = []
+	if file_url:
+		files = frappe.db.sql(
+			"""SELECT name, attached_to_doctype, attached_to_name
+			FROM `tabFile` WHERE file_url = %s ORDER BY name FOR UPDATE""",
+			(file_url,),
+			as_dict=True,
+		)
+	# Frappe deletes a document's attachments automatically. Detach this upload
+	# first so deleting just the proposal also honours the unchecked file option.
+	for file in files:
+		if file.attached_to_doctype == "Buchungs Vorschlag" and file.attached_to_name == name:
+			frappe.db.set_value(
+				"File",
+				file.name,
+				{"attached_to_doctype": None, "attached_to_name": None, "attached_to_field": None},
+				update_modified=False,
+			)
+			file.attached_to_doctype = file.attached_to_name = None
 	frappe.delete_doc("Buchungs Vorschlag", name, force=1, ignore_permissions=True)
 
 	deleted_file = False
+	file_preserved_reason = None
 	if int(also_delete_file or 0) and file_url:
-		# Nur löschen wenn KEIN anderer Vorschlag mehr auf die Datei zeigt.
-		others = frappe.get_all(
-			"Buchungs Vorschlag",
-			filters={"file_url": file_url},
-			limit_page_length=1,
-		)
-		if not others:
-			try:
-				file_names = frappe.get_all(
-					"File",
-					filters={"file_url": file_url},
-					pluck="name",
-				)
-				for fname in file_names:
-					frappe.delete_doc("File", fname, force=1, ignore_permissions=True)
-					deleted_file = True
-			except Exception:
-				pass
+		if v.get("linked_purchase_invoice"):
+			# Cancellation deliberately leaves this historical invoice link intact.
+			file_preserved_reason = "linked_invoice"
+		elif frappe.db.exists("Buchungs Vorschlag", {"file_url": file_url}):
+			file_preserved_reason = "other_proposal"
+		elif any(file.attached_to_doctype or file.attached_to_name for file in files):
+			file_preserved_reason = "attached_document"
+		else:
+			from frappe.model.delete_doc import check_if_doc_is_dynamically_linked, check_if_doc_is_linked
+
+			# File.on_trash removes bytes before Frappe checks Link fields. Preflight
+			# every copy before deleting any so another document's File link is safe.
+			for file in files:
+				file_doc = frappe.get_doc("File", file.name, for_update=True)
+				frappe.has_permission("File", "delete", doc=file_doc, throw=True)
+				try:
+					check_if_doc_is_linked(file_doc)
+					check_if_doc_is_dynamically_linked(file_doc)
+				except frappe.LinkExistsError:
+					frappe.clear_last_message()
+					file_preserved_reason = "linked_document"
+					break
+			if not file_preserved_reason:
+				for file in files:
+					frappe.delete_doc("File", file.name, ignore_permissions=True)
+				deleted_file = bool(files)
 
 	frappe.db.commit()
-	return {"name": name, "deleted_file": deleted_file}
+	return {"name": name, "deleted_file": deleted_file, "file_preserved_reason": file_preserved_reason}
 
 
 @frappe.whitelist()
@@ -360,7 +466,9 @@ def reprocess_vorschlag(name: str) -> dict:
 	Use-Case: nach Wechsel des LLM-Anbieters (Ollama → Mistral) bestehende
 	Vorschläge neu durchjagen, ohne sie löschen + erneut hochladen zu müssen.
 	"""
-	v = frappe.get_doc("Buchungs Vorschlag", name)
+	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
+	_require_proposal_permission("write", v)
+	invoice_extraction.check_invoice_file_permission(v.file_url)
 	if v.status == "Booked":
 		frappe.throw(
 			"Bereits gebuchter Vorschlag kann nicht neu analysiert werden — "
@@ -369,9 +477,10 @@ def reprocess_vorschlag(name: str) -> dict:
 	v.status = "Pending"
 	v.extracted_data = ""
 	v.error_message = ""
+	v.extraction_job_id = uuid.uuid4().hex
 	v.save(ignore_permissions=True)
+	_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
 	frappe.db.commit()
-	_dispatch_vorschlag_worker(v.name)
 	return {"name": v.name, "status": v.status}
 
 
@@ -384,30 +493,30 @@ def reactivate_vorschlag(name: str) -> dict:
 	- Ready/Pending/Processing → no-op (schon aktiv)
 	- Booked → Fehler (zu spät, PI existiert)
 	"""
-	v = frappe.get_doc("Buchungs Vorschlag", name)
+	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
+	_require_proposal_permission("write", v)
+	invoice_extraction.check_invoice_file_permission(v.file_url)
 	if v.status == "Booked":
 		frappe.throw(
 			"Vorschlag ist bereits als Eingangsrechnung gebucht und kann nicht reaktiviert werden."
 		)
 	if v.status == "Skipped":
 		v.status = "Ready" if v.extracted_data else "Pending"
+		if v.status == "Pending":
+			v.extraction_job_id = uuid.uuid4().hex
 		v.save(ignore_permissions=True)
-		frappe.db.commit()
 		# Falls noch nie extrahiert (z.B. Skip vor Worker-Run), Worker neu queuen.
 		if v.status == "Pending":
-			frappe.enqueue(
-				"hausverwaltung.hausverwaltung.services.bulk_extraction.process_vorschlag",
-				queue="long",
-				timeout=300,
-				vorschlag_name=v.name,
-			)
+			_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
+		frappe.db.commit()
 		return {"name": v.name, "status": v.status}
 	if v.status == "Error":
 		v.status = "Pending"
 		v.error_message = ""
+		v.extraction_job_id = uuid.uuid4().hex
 		v.save(ignore_permissions=True)
+		_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
 		frappe.db.commit()
-		_dispatch_vorschlag_worker(v.name)
 		return {"name": v.name, "status": v.status}
 	return {"name": v.name, "status": v.status}
 
@@ -483,6 +592,7 @@ def list_vorschlaege(
 		sort_order: 'asc' oder 'desc'.
 		limit: max. Anzahl Zeilen.
 	"""
+	_require_proposal_permission("read")
 	allowed_sort_fields = {"creation", "status", "original_filename", "session_id"}
 	if sort_by not in allowed_sort_fields:
 		sort_by = "creation"
@@ -498,7 +608,7 @@ def list_vorschlaege(
 	if session_id:
 		filters["session_id"] = session_id
 
-	rows = frappe.get_all(
+	rows = frappe.get_list(
 		"Buchungs Vorschlag",
 		filters=filters,
 		fields=[
@@ -516,16 +626,13 @@ def list_vorschlaege(
 	)
 
 	# Distinct Sessions für Dropdown — sortiert nach jüngstem Vorschlag pro Session.
-	all_sessions = frappe.db.sql(
-		"""
-		SELECT session_id
-		FROM `tabBuchungs Vorschlag`
-		WHERE session_id IS NOT NULL AND session_id != ''
-		GROUP BY session_id
-		ORDER BY MAX(creation) DESC
-		LIMIT 50
-		""",
-		as_dict=True,
+	all_sessions = frappe.get_list(
+		"Buchungs Vorschlag",
+		filters={"session_id": ["is", "set"]},
+		fields=["session_id", {"MAX": "creation", "as": "latest"}],
+		group_by="session_id",
+		order_by="latest desc",
+		limit_page_length=50,
 	)
 
 	out_rows: list[dict] = []
@@ -551,21 +658,29 @@ def list_vorschlaege(
 @frappe.whitelist()
 def get_open_sessions(limit: int = 10) -> list[dict]:
 	"""Liefert Sessions mit noch nicht abgearbeiteten Vorschlägen — fürs Resume."""
-	rows = frappe.db.sql(
-		"""
-		SELECT session_id,
-		       MIN(original_filename) AS sample_filename,
-		       MIN(creation) AS started_at,
-		       COUNT(*) AS total,
-		       SUM(CASE WHEN status IN ('Pending', 'Processing', 'Ready') THEN 1 ELSE 0 END) AS open_count
-		FROM `tabBuchungs Vorschlag`
-		WHERE session_id IS NOT NULL AND session_id != ''
-		GROUP BY session_id
-		HAVING open_count > 0
-		ORDER BY started_at DESC
-		LIMIT %(limit)s
-		""",
-		{"limit": int(limit or 10)},
-		as_dict=True,
+	_require_proposal_permission("read")
+	rows = frappe.get_list(
+		"Buchungs Vorschlag",
+		filters={"session_id": ["is", "set"]},
+		fields=["session_id", "original_filename", "creation", "status"],
+		limit_page_length=0,
 	)
-	return list(rows or [])
+	# Aggregate only records visible to this user; raw SQL bypasses owner and
+	# document sharing restrictions, including in the session dropdown.
+	sessions = {}
+	for row in rows:
+		if not row.session_id:
+			continue
+		session = sessions.setdefault(row.session_id, {
+			"session_id": row.session_id, "sample_filename": row.original_filename,
+			"started_at": row.creation, "total": 0, "open_count": 0,
+		})
+		session["total"] += 1
+		session["open_count"] += row.status in {"Pending", "Processing", "Ready"}
+		session["started_at"] = min(session["started_at"], row.creation)
+		session["sample_filename"] = min(session["sample_filename"] or "", row.original_filename or "")
+	open_sessions = sorted(
+		(session for session in sessions.values() if session["open_count"]),
+		key=lambda session: session["started_at"], reverse=True,
+	)
+	return open_sessions[:max(1, min(int(limit or 10), 200))]

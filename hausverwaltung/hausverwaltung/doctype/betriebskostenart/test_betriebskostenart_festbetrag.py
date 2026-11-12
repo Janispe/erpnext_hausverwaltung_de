@@ -183,6 +183,9 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._kostenstelle_zu_haus_map",
 			return_value={},
 		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._immobilie_zu_root_map",
+			return_value={"Haus-1": "Haus-1", "Haus-2": "Haus-2"},
+		), patch(
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._betriebsarten_map",
 			return_value={},
 		), patch(
@@ -253,6 +256,9 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 		), patch(
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._kostenstelle_zu_haus_map",
 			return_value={"CC-1": "Haus-1"},
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._immobilie_zu_root_map",
+			return_value={"Haus-1": "Haus-1", "Haus-2": "Haus-2"},
 		), patch(
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._betriebsarten_map",
 			return_value={"Kamin": {"verteilung": "Festbetrag", "schluessel": None}},
@@ -338,6 +344,9 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._kostenstelle_zu_haus_map",
 			return_value={"CC-HAUS-1": "Haus-1"},
 		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._immobilie_zu_root_map",
+			return_value={"Haus-1": "Haus-1", "Haus-2": "Haus-2"},
+		), patch(
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._betriebsarten_map",
 			return_value={"Kamin": {"verteilung": "Festbetrag", "schluessel": None}},
 		), patch(
@@ -401,6 +410,9 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 		), patch(
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._kostenstelle_zu_haus_map",
 			return_value={"CC-1": "Haus-1"},
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._immobilie_zu_root_map",
+			return_value={"Haus-1": "Haus-1", "Haus-2": "Haus-2"},
 		), patch(
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._betriebsarten_map",
 			return_value={
@@ -469,6 +481,9 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 		), patch(
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._kostenstelle_zu_haus_map",
 			return_value={"CC-1": "Haus-1"},
+		), patch(
+			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._immobilie_zu_root_map",
+			return_value={"Haus-1": "Haus-1", "Haus-2": "Haus-2"},
 		), patch(
 			"hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen._betriebsarten_map",
 			return_value={

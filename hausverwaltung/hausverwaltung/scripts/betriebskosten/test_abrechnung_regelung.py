@@ -1,3 +1,5 @@
+import re
+import sqlite3
 import unittest
 from datetime import date
 from decimal import Decimal
@@ -6,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import frappe
 
 from hausverwaltung.hausverwaltung.scripts.betriebskosten import abrechnung_erstellen as bk
+from hausverwaltung.hausverwaltung.scripts.betriebskosten import kosten_auf_wohnungen as allocation
 from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 	BK_REGELUNG_PAUSCHALE,
 	BK_REGELUNG_VORAUSZAHLUNG,
@@ -13,6 +16,78 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 
 
 class TestAbrechnungRegelung(unittest.TestCase):
+	def test_cancelled_contract_fixed_costs_are_excluded_from_house_and_contract_allocations(self):
+		contracts = [
+			frappe._dict(name="MV-CANCELLED", wohnung="WHG-1", docstatus=2),
+			frappe._dict(name="MV-CURRENT", wohnung="WHG-1", docstatus=0),
+		]
+
+		def get_all(doctype, filters, **kwargs):
+			if doctype == "Mietvertrag":
+				rows = contracts
+				for field, condition in filters.items():
+					if isinstance(condition, tuple):
+						op, value = condition
+						rows = [row for row in rows if (row[field] in value if op == "in" else row[field] < value)]
+					else:
+						rows = [row for row in rows if row[field] == condition]
+				return [row.name for row in rows] if kwargs.get("pluck") else rows
+			self.assertEqual(doctype, "Betriebskosten Festbetrag")
+			return [frappe._dict(
+				mietvertrag=name, betriebskostenart="Kamin", betrag=120,
+				gueltig_von="2026-01-01", gueltig_bis="2026-12-31",
+			) for name in filters["parent"][1]]
+
+		with (
+			patch.object(allocation, "_wohnungen_in_haus", return_value=["WHG-1"]),
+			patch.object(allocation.frappe, "get_all", side_effect=get_all),
+		):
+			for contract in (None, "MV-CURRENT", "MV-CANCELLED"):
+				with self.subTest(contract=contract):
+					rows = allocation._prorated_festbetrag_rows("IMMO-1", "2026-01-01", "2026-12-31", mietvertrag=contract)
+					self.assertEqual([row["mietvertrag"] for row in rows], [] if contract == "MV-CANCELLED" else ["MV-CURRENT"])
+					self.assertEqual(sum(row["betrag"] for row in rows), 0 if contract == "MV-CANCELLED" else 120)
+
+	def test_cancelled_contract_does_not_overlap_replacement_in_bk_segments(self):
+		with sqlite3.connect(":memory:") as connection:
+			self.addCleanup(connection.close)
+			connection.row_factory = sqlite3.Row
+			connection.execute(
+				"CREATE TABLE tabMietvertrag (name TEXT, wohnung TEXT, kunde TEXT, docstatus INTEGER, von TEXT, bis TEXT)"
+			)
+			connection.executemany(
+				"INSERT INTO tabMietvertrag VALUES (?, ?, ?, ?, ?, ?)",
+				[
+					("MV-HISTORY", "WHG-1", "CUST-HISTORY", 1, "2025-01-01", "2026-06-30"),
+					("MV-CANCELLED", "WHG-1", "CUST-CANCELLED", 2, "2026-07-01", None),
+					("MV-REPLACEMENT", "WHG-1", "CUST-REPLACEMENT", 0, "2026-07-01", None),
+					("MV-LATE-CANCELLED", "WHG-1", "CUST-LATE-CANCELLED", 2, "2026-10-01", None),
+					("MV-FUTURE", "WHG-1", "CUST-FUTURE", 0, "2027-01-01", None),
+					("MV-OTHER-FLAT", "WHG-2", "CUST-OTHER-FLAT", 1, "2026-01-01", None),
+				],
+			)
+
+			def sql(query, params, **kwargs):
+				query = re.sub(r"%\((\w+)\)s", r":\1", query)
+				return [frappe._dict(dict(row)) for row in connection.execute(
+					query, {key: str(value) for key, value in params.items()},
+				)]
+
+			with (
+				patch.object(bk.frappe.db, "sql", side_effect=sql),
+				patch.object(bk, "get_bk_regelungen_for_contracts", return_value={}),
+			):
+				segments = bk._mietvertrag_segmente_fuer_zeitraum("WHG-1", "2026-01-01", "2026-12-31")
+				self.assertEqual(
+					[(row["mietvertrag"], row["kunde"], row["start"], row["end"]) for row in segments],
+					[
+						("MV-HISTORY", "CUST-HISTORY", date(2026, 1, 1), date(2026, 6, 30)),
+						("MV-REPLACEMENT", "CUST-REPLACEMENT", date(2026, 7, 1), date(2026, 12, 31)),
+					],
+				)
+				self.assertEqual(bk._bestehender_mietvertrag_fuer_stichtag("WHG-1", "2026-12-31"), "MV-REPLACEMENT")
+				self.assertEqual(bk._bestehender_mietvertrag_fuer_stichtag("WHG-1", "2026-06-30"), "MV-HISTORY")
+
 	def test_legacy_rest_across_many_cost_types_preserves_positive_amounts(self):
 		def fixed_rows(**kwargs):
 			return [{"kostenart": f"Fest-{index}", "betrag": Decimal("0.005")} for index in range(5)] if kwargs.get("mietvertrag") == "MV-1" else []

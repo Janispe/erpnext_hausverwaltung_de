@@ -466,15 +466,17 @@ def _prorated_festbetrag_rows(
     wohnungen = _wohnungen_in_haus(immobilie=immobilie)
     if not wohnungen:
         return []
+    contract_filters = {"wohnung": ("in", wohnungen), "docstatus": ("<", 2)}
     if mietvertrag:
-        mv_names = [mietvertrag]
-    else:
-        mv_names = frappe.get_all(
-            "Mietvertrag",
-            filters={"wohnung": ("in", wohnungen)},
-            pluck="name",
-            limit_page_length=0,
-        )
+        contract_filters["name"] = mietvertrag
+    contracts = frappe.get_all(
+        "Mietvertrag",
+        filters=contract_filters,
+        fields=["name", "wohnung"],
+        limit_page_length=0,
+    )
+    mv_to_wohnung = {row.name: row.wohnung for row in contracts}
+    mv_names = list(mv_to_wohnung)
     if not mv_names:
         return []
     rows = frappe.get_all(
@@ -488,10 +490,6 @@ def _prorated_festbetrag_rows(
         fields=["parent AS mietvertrag", "betriebskostenart", "bezeichnung", "betrag", "gueltig_von", "gueltig_bis"],
         limit_page_length=0,
     )
-    mv_to_wohnung = {
-        r.name: r.wohnung
-        for r in frappe.get_all("Mietvertrag", filters={"name": ("in", mv_names)}, fields=["name", "wohnung"])
-    }
     result: List[Dict[str, object]] = []
     for row in rows or []:
         mietvertrag_name = row.get("mietvertrag")
@@ -719,6 +717,18 @@ def allocate_kosten_auf_wohnungen(
     cc_to_haus = _kostenstelle_zu_haus_map()
     if not cc_to_haus and not immobilie:
         return {"rows": [], "matrix": {}, "periode": {"von": von, "bis": bis}}
+
+    # Kostenstellen und Wohnungen werden auf Root-Häuser aufgelöst. Dieselbe
+    # kanonische Immobilie muss auch für GL-Filter und Vertrags-Festbeträge
+    # gelten, wenn der Aufruf einen Gebäudeteil übergibt.
+    if immobilie:
+        requested_immobilie = cstr(immobilie).strip()
+        immobilie = cstr(_immobilie_zu_root_map().get(requested_immobilie)).strip()
+        if not immobilie:
+            frappe.throw(
+                f"Immobilie '{label_with_id('Immobilie', requested_immobilie)}' konnte keiner kanonischen "
+                "Root-Immobilie zugeordnet werden. Kostenverteilung abgebrochen."
+            )
 
     # Vorab-Validierung: Wenn für ein konkretes Haus (Immobilie) abgerechnet werden soll,
     # muss in allen Wohnungen dieses Hauses im Zustand zum Stichtag die Option

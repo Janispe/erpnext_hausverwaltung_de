@@ -35,6 +35,7 @@ from datetime import date
 import frappe
 from frappe import _
 from frappe.utils import cint, flt, getdate, today
+from hausverwaltung.hausverwaltung.utils.booking_locks import lock_accounting_scope
 from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 _CORRECTION_DIALOG_VERSION = 2
@@ -124,35 +125,28 @@ def _validate_single_type_invoice(si, ctx: dict) -> None:
 
 
 def _resolve_mietvertrag(si, ctx: dict) -> str | None:
-	"""Echten Mietvertrag-Docnamen bestimmen.
+	"""Resolve only the Customer's one contract, then validate invoice references.
 
-	Der Marker-Wert aus Remark/``mietabrechnung_id`` kann vom Docnamen abweichen
-	(Alt-Importe haben Tabs statt Leerzeichen im Namen), darum: erst prüfen, ob
-	der Marker als Docname existiert, sonst über Wohnung + Zeitraum (+ Kunde)
-	auflösen — wie ``resolve_mietabrechnung_id``.
+	Dates must not select a different tenancy: corrections can concern a
+	move-in month or an invoice incorrectly issued after the tenancy ended.
+	An explicit foreign or broken marker is an error, never a fallback hint.
 	"""
-	marker = ctx.get("mietvertrag")
-	if marker and frappe.db.exists("Mietvertrag", marker):
-		return marker
-
-	anchor = date(ctx["jahr"], ctx["monat"], 1)
-	base: dict = {"von": ["<=", anchor]}
-	or_f = [["bis", "is", "not set"], ["bis", ">=", anchor]]
-	if si.get("wohnung"):
-		base["wohnung"] = si.get("wohnung")
-
-	# Erst mit Kunde (disambiguiert parallele Verträge), dann ohne.
-	for extra in ({"kunde": si.customer}, {}):
-		matches = frappe.get_all(
-			"Mietvertrag",
-			filters={**base, **extra},
-			or_filters=or_f,
-			pluck="name",
-			limit=2,
+	customer = (si.get("customer") or "").strip()
+	if not customer:
+		return None
+	matches = frappe.get_all(
+		"Mietvertrag", filters={"kunde": customer}, pluck="name", limit=2,
+	)
+	if len(matches) != 1:
+		frappe.throw(_("Customer {0} hat keine eindeutige 1:1-Zuordnung zu einem Mietvertrag.").format(customer))
+	marker = (ctx.get("mietvertrag") or "").strip()
+	if marker and marker != matches[0]:
+		frappe.throw(
+			_("Rechnung {0} verweist auf Mietvertrag {1}, Customer {2} gehört aber zu Mietvertrag {3}. Es wurde nichts geändert.").format(
+				si.name, marker, customer, matches[0],
+			)
 		)
-		if len(matches) == 1:
-			return matches[0]
-	return marker  # Rückfall (evtl. nicht existent) — Aufrufer prüft Existenz
+	return matches[0]
 
 
 def _validate_invoice_contract_identity(
@@ -354,36 +348,28 @@ def _find_generated_invoice(gen: dict, ctx: dict) -> str | None:
 	return _find_invoice(f"[TYPE:{ctx['typ']}] [MV:{ctx['mietvertrag']}] {ctx['monat_str']}")
 
 
-def _recompute_betrag(ctx: dict) -> float:
-	"""Korrekter Betrag für (Mietvertrag, Monat, Typ) aus der aktuellen Staffelmiete."""
+def _recompute_betrag(ctx: dict, *, lock: bool = False) -> float:
+	"""Korrekter Betrag für (Mietvertrag, Monat, Typ) aus dem aktuellen Mietvertrag.
+
+	Nutzt exakt die Berechnung des Generators, inklusive anteiliger Ein-/Auszugs-
+	monate und Teilmonatsregeln je Kostenart.
+	"""
 	from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
-		_miete_betrag_fuer_monat,
-		_staffelbetrag,
+		_bk_regelung_und_betrag_fuer_monat,
+		_monatsbetrag_fuer_kostenart,
 	)
-	from hausverwaltung.hausverwaltung.utils.mietberechnung import monthly_charge_reference_date
-	from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
-		BK_REGELUNG_VORAUSZAHLUNG,
-		get_bk_regelung,
-	)
+	from hausverwaltung.hausverwaltung.utils.mietberechnung import KOSTENARTEN
 
 	anchor = date(ctx["jahr"], ctx["monat"], 1)
-	mv_name = ctx["mietvertrag"]
 	typ = ctx["typ"]
-	mv_row = frappe.db.get_value("Mietvertrag", mv_name, ["name", "von", "bis"], as_dict=True)
-
-	if typ == "Miete":
-		return _miete_betrag_fuer_monat(mv_row, anchor)
-	reference_date = monthly_charge_reference_date(mv_row.von, anchor)
-	if typ == "Betriebskosten" and get_bk_regelung(mv_name, reference_date) != BK_REGELUNG_VORAUSZAHLUNG:
+	if typ not in KOSTENARTEN:
 		return 0.0
-	parentfield = {
-		"Betriebskosten": "betriebskosten",
-		"Heizkosten": "heizkosten",
-		"Untermietzuschlag": "untermietzuschlag",
-	}.get(typ)
-	if not parentfield:
-		return 0.0
-	return _staffelbetrag(mv_name, parentfield, reference_date)
+	mv_row = frappe.db.get_value(
+		"Mietvertrag", ctx["mietvertrag"], ["name", "von", "bis"], as_dict=True, for_update=lock,
+	)
+	if typ == "Betriebskosten":
+		return _bk_regelung_und_betrag_fuer_monat(mv_row, anchor, lock=lock)[1]
+	return _monatsbetrag_fuer_kostenart(mv_row, typ, anchor, lock=lock)
 
 
 @frappe.whitelist()
@@ -405,6 +391,10 @@ def korrigiere_mietrechnung(
 	"""
 	dry = bool(int(dry_run or 0))
 	rebook = bool(int(rebook_payments or 0))
+	if not dry:
+		# The replacement generator takes this lock too. Acquire it before
+		# invoice/contract locks to avoid deadlocks with a parallel rent run.
+		lock_accounting_scope()
 	# A normal get_doc/reload after a separate SELECT ... FOR UPDATE can keep
 	# returning the pre-lock REPEATABLE READ snapshot. For every mutating run,
 	# make the first authoritative read itself locking/current. This serializes
@@ -430,7 +420,7 @@ def korrigiere_mietrechnung(
 			)
 		)
 	_validate_single_type_invoice(si, ctx)
-	# Marker-MV kann vom echten Docnamen abweichen → robust auflösen.
+	# Der Customer bestimmt den Vertrag; Rechnungsmarker sind dagegen zu prüfen.
 	ctx["mietvertrag"] = _resolve_mietvertrag(si, ctx)
 	if not ctx["mietvertrag"]:
 		frappe.throw(
@@ -455,7 +445,7 @@ def korrigiere_mietrechnung(
 	jes = _journal_entries_for_si(si.name)
 	paid = bool(pes) or flt(si.outstanding_amount) < flt(si.grand_total) - 0.01
 
-	neu_betrag = _recompute_betrag(ctx)
+	neu_betrag = _recompute_betrag(ctx, lock=not dry)
 
 	plan = {
 		"sales_invoice": si.name,
@@ -496,7 +486,7 @@ def korrigiere_mietrechnung(
 			)
 		result = _korrektur_gutschrift(si, ctx, neu_betrag)
 	else:
-		result = _korrektur_storno(si, ctx, pes, rebook_payments=rebook)
+		result = _korrektur_storno(si, ctx, pes, rebook_payments=rebook, neu_betrag=neu_betrag)
 
 	plan.update(result)
 	return plan
@@ -696,8 +686,14 @@ def _payment_can_reconcile_invoice(payment_entry: str, sales_invoice: str) -> bo
 	)
 
 
-def _korrektur_storno(si, ctx: dict, pes: list[str], *, rebook_payments: bool = False) -> dict:
-	"""Offene Periode: PE-Zuordnung lösen, SI ersetzen, optional neu zuordnen."""
+def _korrektur_storno(
+	si, ctx: dict, pes: list[str], *, rebook_payments: bool = False, neu_betrag: float | None = None
+) -> dict:
+	"""Offene Periode: PE-Zuordnung lösen, SI ersetzen, optional neu zuordnen.
+
+	Ist der korrekte Betrag 0 (z.B. Monat nach Vertragsende), wird nur storniert;
+	gelöste Zahlungen bleiben wie im Gutschrift-Pfad als Guthaben unzugeordnet.
+	"""
 	from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
 		generate_miet_und_bk_rechnungen,
 	)
@@ -729,6 +725,17 @@ def _korrektur_storno(si, ctx: dict, pes: list[str], *, rebook_payments: bool = 
 	frappe.flags.mute_messages = True
 	try:
 		si.cancel()
+
+		if neu_betrag is not None and flt(neu_betrag) <= 0:
+			# Ohne Soll gibt es keine Ersatzrechnung, die der Generator erzeugen könnte.
+			return {
+				"stornierte_si": si.name,
+				"stornierte_payment_entries": [],
+				"beibehaltene_payment_entries": pes,
+				"neue_si": "",
+				"zahlungsuebernahmen": [],
+				"generator": None,
+			}
 
 		# 2) Korrigierte Rechnung neu erzeugen. Der Korrekturpfad erzeugt gezielt nur
 		#    den betroffenen Typ; Draft-Dubletten dürfen den Ersatz für die stornierte

@@ -1,7 +1,6 @@
 """Tests für Kontext und sicheren Zahlungsfluss der Mietrechnungs-Korrektur."""
 
 import unittest
-from datetime import date
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -13,6 +12,7 @@ from hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur import (
 	_reconcile_bulk_payment_pool,
 	_reconcile_existing_payment,
 	_recompute_betrag,
+	_resolve_mietvertrag,
 	_si_context,
 	_validate_invoice_contract_identity,
 	_validate_single_type_invoice,
@@ -22,24 +22,48 @@ from hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur import (
 
 
 class TestInitialMonthlyChargeCorrection(unittest.TestCase):
-	def test_correction_uses_active_initial_staffel_for_monthly_charges(self):
+	GENERATOR = "hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen"
+
+	def test_mutating_correction_recomputes_from_current_contract_and_charge_rows(self):
 		contract = frappe._dict(name="MV-1", von="2026-01-16", bis=None)
-		def get_amount(_name, field, reference_date):
-			return {"betriebskosten": 150, "heizkosten": 100, "untermietzuschlag": 30}[field] if reference_date >= date(2026, 1, 16) else 0
+		for typ in ("Miete", "Betriebskosten", "Heizkosten", "Untermietzuschlag"):
+			with self.subTest(typ=typ), \
+				patch.object(frappe.db, "get_value", return_value=contract) as get_contract, \
+				patch(f"{self.GENERATOR}._monatsbetrag_fuer_kostenart", return_value=150) as get_amount, \
+				patch(f"{self.GENERATOR}.get_bk_regelung", return_value="Vorauszahlung") as get_rule:
+				amount = _recompute_betrag({"mietvertrag": "MV-1", "typ": typ, "jahr": 2026, "monat": 1}, lock=True)
+				self.assertEqual(amount, 150)
+				self.assertTrue(get_contract.call_args.kwargs["for_update"])
+				self.assertTrue(get_amount.call_args.kwargs["lock"])
+				if typ == "Betriebskosten":
+					self.assertTrue(get_rule.call_args.kwargs["lock"])
+
+	def test_correction_prorates_monthly_charges_like_the_generator(self):
+		contract = frappe._dict(name="MV-1", von="2026-01-16", bis=None)
+		staffels = {"betriebskosten": 150, "heizkosten": 100, "untermietzuschlag": 30}
+
+		def get_all(doctype, **kwargs):
+			if doctype == "Miete Teilmonat":
+				return [frappe._dict(kostenart="Heizkosten", von="2026-01-16", bis="2026-01-31", berechnung="Festbetrag", betrag=40)]
+			field = kwargs["filters"]["parentfield"]
+			return [frappe._dict(von="2026-01-16", miete=staffels[field], art="Monatlich")]
+
 		with (
 			patch.object(frappe.db, "get_value", return_value=contract),
-			patch("hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen._staffelbetrag", side_effect=get_amount),
-			patch("hausverwaltung.hausverwaltung.utils.betriebskostenregelung.get_bk_regelung", return_value="Vorauszahlung"),
+			patch(f"{self.GENERATOR}.frappe.get_all", side_effect=get_all),
+			patch(f"{self.GENERATOR}.frappe.get_system_settings", return_value="Commercial Rounding"),
+			patch(f"{self.GENERATOR}.get_bk_regelung", return_value="Vorauszahlung"),
 		):
-			for typ, amount in (("Betriebskosten", 150), ("Heizkosten", 100), ("Untermietzuschlag", 30)):
+			# 16 of 31 days; the HK fixed part-month amount replaces its proration.
+			for typ, amount in (("Betriebskosten", 77.42), ("Heizkosten", 40), ("Untermietzuschlag", 15.48)):
 				with self.subTest(typ=typ):
 					self.assertEqual(_recompute_betrag({"mietvertrag": "MV-1", "typ": typ, "jahr": 2026, "monat": 1}), amount)
 
 	def test_correction_does_not_reintroduce_advance_for_inclusive_rent(self):
 		with (
 			patch.object(frappe.db, "get_value", return_value=frappe._dict(name="MV-1", von="2026-01-16", bis=None)),
-			patch("hausverwaltung.hausverwaltung.utils.betriebskostenregelung.get_bk_regelung", return_value="Pauschale/Inklusivmiete"),
-			patch("hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen._staffelbetrag", return_value=150) as get_amount,
+			patch(f"{self.GENERATOR}.get_bk_regelung", return_value="Pauschale/Inklusivmiete"),
+			patch(f"{self.GENERATOR}._monatsbetrag_fuer_kostenart", return_value=150) as get_amount,
 		):
 			self.assertEqual(_recompute_betrag({"mietvertrag": "MV-1", "typ": "Betriebskosten", "jahr": 2026, "monat": 1}), 0)
 		get_amount.assert_not_called()
@@ -252,6 +276,38 @@ class TestSingleTypeCorrectionGuard(unittest.TestCase):
 
 
 class TestInvoiceContractIdentity(unittest.TestCase):
+	def test_mutating_correction_takes_accounting_lock_before_loading_invoice(self):
+		events = []
+		with patch(
+			"hausverwaltung.hausverwaltung.utils.mietrechnung_korrektur.lock_accounting_scope",
+			side_effect=lambda: events.append("scope"),
+		), patch.object(frappe, "get_doc", side_effect=RuntimeError("stop before loading invoice")):
+			with self.assertRaisesRegex(RuntimeError, "stop before loading invoice"):
+				korrigiere_mietrechnung("SI-1")
+		self.assertEqual(events, ["scope"])
+
+	def test_unmarked_invoice_resolves_by_customer_even_for_move_in_or_after_contract_end(self):
+		si = frappe._dict(name="SI-1", customer="CUST-1", wohnung="WHG-1")
+		for month in (1, 12):
+			with self.subTest(month=month), patch.object(frappe, "get_all", return_value=["MV-1"]) as get_contracts:
+				self.assertEqual(_resolve_mietvertrag(si, {"monat": month, "jahr": 2026}), "MV-1")
+			get_contracts.assert_called_once_with("Mietvertrag", filters={"kunde": "CUST-1"}, pluck="name", limit=2)
+
+	def test_unknown_or_foreign_marker_never_falls_back_to_another_contract(self):
+		si = frappe._dict(name="SI-1", customer="CUST-1", wohnung="WHG-1")
+		for marker in ("MV-DOES-NOT-EXIST", "MV-OTHER-CUSTOMER"):
+			with self.subTest(marker=marker), patch.object(frappe, "get_all", return_value=["MV-1"]), \
+				self.assertRaisesRegex(frappe.ValidationError, "Es wurde nichts geändert"):
+				_resolve_mietvertrag(si, {"mietvertrag": marker, "monat": 1, "jahr": 2026})
+
+	def test_customer_without_exactly_one_contract_cannot_fall_back_to_flat(self):
+		si = frappe._dict(name="SI-1", customer="CUST-1", wohnung="WHG-1")
+		for matches in ([], ["MV-1", "MV-2"]):
+			with self.subTest(matches=matches), patch.object(frappe, "get_all", return_value=matches) as get_contracts, \
+				self.assertRaisesRegex(frappe.ValidationError, "1:1-Zuordnung"):
+				_resolve_mietvertrag(si, {"monat": 1, "jahr": 2026})
+			get_contracts.assert_called_once()
+
 	def test_rejects_conflicting_structured_and_remark_contract(self):
 		si = _si(
 			remarks="[TYPE:Miete] [MV:MV-B] 03/2026",
@@ -496,6 +552,19 @@ class TestKorrekturStorno(unittest.TestCase):
 			include_drafts_in_guard=0,
 		)
 		self.assertEqual(result["neue_si"], "SINV-NEW")
+
+	def test_zero_amount_only_cancels_and_does_not_require_a_replacement(self):
+		# E.g. an invoice for a month after the contract end: nothing to regenerate.
+		si = DummySalesInvoice()
+		with patch("frappe.db.get_single_value", return_value=1), patch(
+			"hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen.generate_miet_und_bk_rechnungen"
+		) as generate:
+			result = _korrektur_storno(si, _correction_context(), ["PE-EXISTING"], neu_betrag=0)
+
+		self.assertTrue(si.cancelled)
+		generate.assert_not_called()
+		self.assertEqual(result["neue_si"], "")
+		self.assertEqual(result["beibehaltene_payment_entries"], ["PE-EXISTING"])
 
 	def test_payment_entries_are_never_cancelled_or_replaced(self):
 		si = DummySalesInvoice()

@@ -864,6 +864,8 @@ function _openRowActions(frm, row) {
 
   const hasBT = !!row.bank_transaction;
   const alreadyReconciled = !!row.payment_entry || !!row.journal_entry;
+  const canConfirmDistinct = row.row_status === 'schon vorhanden' && hasBT && !row.transaction_id
+    && !alreadyReconciled && !row.payment_document && !row.customer_payments;
   const showReconcileSection = hasBT && !alreadyReconciled;
   const showAbschlagAction = showReconcileSection && row.richtung === 'Ausgang' && row.party_type === 'Supplier' && row.party;
   // Kreditrate funktioniert auch ohne erkannte Party — Match läuft über Bankkonto+Betrag+Datum
@@ -907,6 +909,10 @@ function _openRowActions(frm, row) {
     </div>
     ${reconcileSectionHtml}
     ${reconciledNoticeHtml}
+    ${canConfirmDistinct ? `<div style="margin-top:14px;">
+      <p>${__('Identische weitere Zahlung? Ohne eindeutige Bank-ID bitte anhand des Kontoauszugs prüfen.')}</p>
+      <button type="button" class="btn btn-default" data-hv-action="confirm_distinct">${__('Als zusätzliche Zahlung anlegen')}</button>
+    </div>` : ''}
   `;
 
   const d = new frappe.ui.Dialog({
@@ -917,6 +923,17 @@ function _openRowActions(frm, row) {
   });
 
   d.show();
+
+  d.$wrapper.find('[data-hv-action="confirm_distinct"]').on('click', () => {
+    frappe.confirm(__('Diese Zeile ist eine weitere echte Zahlung und kein erneuter Import derselben Zahlung. Zusätzliche Banktransaktion anlegen?'), () => {
+      d.hide();
+      frappe.call({
+        method: 'hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.create_distinct_bank_transaction_for_row',
+        args: { docname: frm.doc.name, row_name: row.name, existing_bank_transaction: row.bank_transaction },
+        freeze: true,
+      }).then(() => frm.reload_doc());
+    });
+  });
 
   d.$wrapper.find('[data-hv-action="assign_customer"]').on('click', () => { d.hide(); _assignExistingParty(frm, row, 'Customer'); });
   d.$wrapper.find('[data-hv-action="assign_supplier"]').on('click', () => { d.hide(); _assignExistingParty(frm, row, 'Supplier'); });

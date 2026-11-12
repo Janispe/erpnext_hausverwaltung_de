@@ -7,17 +7,26 @@ from hausverwaltung.hausverwaltung.scripts import check_mietrechnungen
 
 
 class TestInitialMonthlyCharges(unittest.TestCase):
-	def test_initial_staffels_are_expected_for_all_monthly_charge_types(self):
+	def test_expected_amounts_use_the_generators_calculation_for_every_type(self):
 		contract = SimpleNamespace(name="MV-1", von=date(2026, 1, 16), bis=None)
-		def get_amount(_name, field, reference_date):
-			return {"betriebskosten": 150, "heizkosten": 100, "untermietzuschlag": 30}[field] if reference_date >= contract.von else 0
+		amounts = {"Miete": 314.84, "Heizkosten": 51.61, "Untermietzuschlag": 15.48}
 		with (
-			patch.object(check_mietrechnungen, "_staffelbetrag", side_effect=get_amount),
-			patch.object(check_mietrechnungen, "get_bk_regelung", return_value="Vorauszahlung"),
+			patch.object(
+				check_mietrechnungen,
+				"_monatsbetrag_fuer_kostenart",
+				side_effect=lambda row, typ, anchor: amounts[typ],
+			) as charge,
+			patch.object(
+				check_mietrechnungen,
+				"_bk_regelung_und_betrag_fuer_monat",
+				return_value=("Vorauszahlung", 77.42),
+			) as bk,
 		):
-			for typ, amount in (("Betriebskosten", 150), ("Heizkosten", 100), ("Untermietzuschlag", 30)):
+			for typ, amount in (*amounts.items(), ("Betriebskosten", 77.42)):
 				with self.subTest(typ=typ):
 					self.assertEqual(check_mietrechnungen._expected_betrag(contract, typ, date(2026, 1, 1)), amount)
+		bk.assert_called_once_with(contract, date(2026, 1, 1))
+		self.assertEqual(charge.call_count, 3)
 
 
 class TestFindExistingInvoice(unittest.TestCase):
@@ -221,3 +230,60 @@ class TestKorrigierbareSollstellungenFuerMietvertrag(unittest.TestCase):
 		self.assertEqual(actual["monate"], ["07/2026"])
 		self.assertEqual(actual["aenderungen"][0]["aktuell"], 50)
 		self.assertEqual(actual["aenderungen"][0]["erwartet"], 0)
+
+
+def _empty_diff():
+	return {"fehlend": [], "abweichungen": [], "ueberfluessig": [], "ok": 0}
+
+
+class TestMonateNachVertragsende(unittest.TestCase):
+	def test_pruefe_mietvertrag_checks_months_after_end_but_not_before_start(self):
+		mv = SimpleNamespace(
+			name="MV-1",
+			von=date(2026, 2, 1),
+			bis=date(2026, 10, 15),
+			as_dict=lambda: {"name": "MV-1", "wohnung": "WOHNUNG-1"},
+		)
+		with (
+			patch.object(check_mietrechnungen.frappe, "get_doc", return_value=mv),
+			patch.object(check_mietrechnungen, "_resolve_company", return_value="Company"),
+			patch.object(check_mietrechnungen, "_kunde_des_vertrags", return_value="CUST-1"),
+			patch.object(
+				check_mietrechnungen,
+				"_aktivitaets_monate_fuer_mv",
+				return_value={(2026, 1), (2026, 10), (2026, 11)},
+			),
+			patch.object(check_mietrechnungen, "_diff_for_mv_monat", return_value=_empty_diff()) as diff,
+		):
+			check_mietrechnungen.pruefe_mietvertrag("MV-1")
+
+		# January lies before the start (legacy imports); November after the end
+		# must be checked so that an invoice there is reported as superfluous.
+		self.assertEqual(
+			[entry.args[1] for entry in diff.call_args_list], [date(2026, 10, 1), date(2026, 11, 1)]
+		)
+
+	def test_pruefe_durchlauf_checks_ended_contract_only_with_invoice_in_run(self):
+		doc = SimpleNamespace(
+			jahr=2026,
+			monat=11,
+			company="Company",
+			get=lambda field: (
+				[SimpleNamespace(as_dict=lambda: {"mietvertrag": "MV-ENDED", "typ": "Miete"})]
+				if field == "rechnungen"
+				else []
+			),
+		)
+		vertraege = [
+			SimpleNamespace(name="MV-ENDED", von=date(2020, 1, 1), bis=date(2026, 10, 15)),
+			SimpleNamespace(name="MV-OLD", von=date(2020, 1, 1), bis=date(2024, 5, 31)),
+			SimpleNamespace(name="MV-LATER", von=date(2027, 1, 1), bis=None),
+		]
+		with (
+			patch.object(check_mietrechnungen.frappe, "get_doc", return_value=doc),
+			patch.object(check_mietrechnungen.frappe, "get_all", return_value=vertraege),
+			patch.object(check_mietrechnungen, "_diff_for_mv_monat", return_value=_empty_diff()) as diff,
+		):
+			check_mietrechnungen.pruefe_durchlauf("DL-1")
+
+		self.assertEqual([entry.args[0].name for entry in diff.call_args_list], ["MV-ENDED"])

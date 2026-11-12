@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import frappe
 from frappe.model.document import Document
 from frappe.utils import add_months, cstr, flt, getdate, now_datetime, nowdate
@@ -29,6 +31,7 @@ MODUS_ZAHLUNGSPLAN = "Zahlungsplan"
 
 class Zahlungsplan(Document):
 	def validate(self):
+		_validate_generated_invoice_links(self)
 		# Backward-compat: existing records ohne modus bekommen Default
 		if not self.get("modus"):
 			self.modus = MODUS_ABSCHLAGSPLAN
@@ -112,6 +115,11 @@ class Zahlungsplan(Document):
 	def plan_vorbelegen(self, rhythmus: str, von: str, bis: str, betrag: float | None = None, replace: int | bool = 0):
 		"""Generate plan rows for a fixed monthly rhythm."""
 		self.check_permission("write")
+		# The scheduler and payment allocation endpoints lock the same parent.
+		# Read its children only after acquiring that lock, otherwise a stale
+		# browser document could erase an invoice/payment created in the meantime.
+		self = frappe.get_doc("Zahlungsplan", self.name, for_update=True)
+		self.check_permission("write")
 
 		if rhythmus not in RHYTHMUS_MONTHS:
 			frappe.throw(f"Unbekannter Rhythmus: {rhythmus}")
@@ -127,24 +135,50 @@ class Zahlungsplan(Document):
 
 		step = RHYTHMUS_MONTHS[rhythmus]
 
-		if int(replace or 0):
+		dates = []
+		current = von_d
+		while current <= bis_d and len(dates) < 120:
+			dates.append(current)
+			current = getdate(add_months(current, step))
+		if current <= bis_d:
+			frappe.throw("Pro Aufruf können höchstens 120 Plan-Zeilen vorbelegt werden.")
+
+		rows = self.get("plan") or []
+		existing = {}
+		for row in rows:
+			if not row.get("faelligkeitsdatum"):
+				continue
+			key = getdate(row.faelligkeitsdatum)
+			if key in existing:
+				frappe.throw(f"Plan enthält das Datum {key} mehrfach.")
+			existing[key] = row
+
+		replacing = bool(int(replace or 0))
+		if replacing:
+			_validate_plan_replacement(self, dates, amount)
 			self.set("plan", [])
 
-		existing = {str(getdate(r.faelligkeitsdatum)) for r in (self.get("plan") or []) if r.get("faelligkeitsdatum")}
-
-		current = von_d
 		added = 0
 		skipped = 0
-		# Safety cap: max 120 rows generated per call
-		while current <= bis_d and added + skipped < 120:
-			key = str(current)
-			if key in existing:
+		for current in dates:
+			if current in existing:
+				if replacing:
+					# Keep the child name and every accounting/payment link. A new
+					# child with the same due date is not the same booking identity.
+					row = existing[current]
+					row.betrag = amount
+					row.idx = len(self.get("plan") or []) + 1
+					self.append("plan", row)
 				skipped += 1
 			else:
 				self.append("plan", {"faelligkeitsdatum": current, "betrag": amount})
-				existing.add(key)
 				added += 1
-			current = getdate(add_months(current, step))
+
+		if replacing:
+			row_indices = {row.name: row.idx for row in self.get("plan") or [] if row.get("name")}
+			for allocation in self.get("zahlungen") or []:
+				if allocation.get("plan_zeile") in row_indices:
+					allocation.plan_zeile_idx = row_indices[allocation.plan_zeile]
 
 		self.save(ignore_permissions=True)
 		return {"added": added, "skipped": skipped, "total_rows": len(self.get("plan") or [])}
@@ -507,6 +541,61 @@ class Zahlungsplan(Document):
 			"errors": errors,
 			"skipped_count": skipped,
 		}
+
+
+def _validate_generated_invoice_links(doc: Zahlungsplan) -> None:
+	"""Only server booking/cancellation workflows may assign row invoices.
+
+	Read-only form fields still arrive in API payloads. Accepting an arbitrary
+	invoice here would let on_update cancel that unrelated invoice and replace
+	it from this plan. A stale browser must also not erase a scheduler's link.
+	"""
+	persisted = [] if doc.is_new() else frappe.db.sql(
+		"""SELECT name, purchase_invoice FROM `tabZahlungsplan Zeile`
+		WHERE parent = %s AND parenttype = 'Zahlungsplan' AND parentfield = 'plan'
+		ORDER BY name FOR UPDATE""",
+		(doc.name,), as_dict=True,
+	)
+	previous_links = {row.name: cstr(row.get("purchase_invoice")).strip() for row in persisted}
+	current_rows = doc.get("plan") or []
+	current_names = {row.get("name") for row in current_rows}
+	links_changed = any(
+		previous_links.get(row.get("name"), "") != cstr(row.get("purchase_invoice")).strip()
+		for row in current_rows
+	)
+	linked_row_removed = any(link and name not in current_names for name, link in previous_links.items())
+	if links_changed or linked_row_removed:
+		frappe.throw(
+			"Die Rechnungsverknüpfung einer Zahlungsplan-Zeile darf nicht manuell geändert "
+			"oder durch Entfernen der Zeile gelöscht werden. Bitte den Plan neu laden und "
+			"Rechnungen über die vorgesehenen Buchungs- bzw. Stornofunktionen bearbeiten."
+		)
+
+
+def _validate_plan_replacement(doc: Zahlungsplan, dates: list, amount: float) -> None:
+	"""A bulk prefill must never remove or alter an accounting-linked row."""
+	allocated_rows = {
+		allocation.get("plan_zeile")
+		for allocation in doc.get("zahlungen") or []
+		if allocation.get("plan_zeile")
+	}
+	wanted_dates = set(dates)
+	for row in doc.get("plan") or []:
+		linked = any(
+			row.get(fieldname)
+			for fieldname in ("purchase_invoice", "payment_entry", "bank_transaction", "gebucht_am")
+		) or row.get("name") in allocated_rows
+		if not linked:
+			continue
+		row_date = getdate(row.faelligkeitsdatum) if row.get("faelligkeitsdatum") else None
+		if row_date in wanted_dates and _amounts_equal(row.get("betrag"), amount):
+			continue
+		frappe.throw(
+			f"Plan-Zeile {row.idx} ({row_date or 'ohne Datum'}) ist bereits mit einer "
+			"Rechnung oder Zahlung verknüpft und kann beim Vorbelegen nicht entfernt "
+			"oder im Betrag geändert werden. Bitte den betroffenen Beleg und seine "
+			"Zuordnung zuerst ausdrücklich korrigieren bzw. stornieren."
+		)
 
 
 def _require_doctype_permissions(doctype: str, permission_types: tuple[str, ...]) -> None:
@@ -1530,7 +1619,12 @@ def _purchase_invoice_matches_plan_row(doc: Zahlungsplan, row: Document, pi: Doc
 
 	expected_amount = flt(row.get("betrag"))
 	expected_date = getdate(row.get("faelligkeitsdatum")) if row.get("faelligkeitsdatum") else None
-	expected_remarks = _build_plan_row_pi_remarks(doc, row)
+	# The row number is a display position, not an accounting identity. Reusing
+	# existing rows while adding/removing unbooked dates can change that position
+	# and must not cancel an otherwise unchanged submitted invoice.
+	remarks_pattern = re.escape(_build_remarks(doc)) + r" \| Plan-Zeile \d+"
+	if extra_remarks := (row.get("bemerkung") or "").strip():
+		remarks_pattern += re.escape(f" | {extra_remarks}")
 	items = pi.get("items") or []
 
 	if pi.get("company") != doc.get("company") or pi.get("supplier") != doc.get("lieferant"):
@@ -1542,7 +1636,7 @@ def _purchase_invoice_matches_plan_row(doc: Zahlungsplan, row: Document, pi: Doc
 	if pi.meta.get_field("custom_wertstellungsdatum") and expected_date:
 		if getdate(pi.get("custom_wertstellungsdatum")) != expected_date:
 			return False
-	if (pi.get("remarks") or "") != expected_remarks:
+	if re.fullmatch(remarks_pattern, pi.get("remarks") or "") is None:
 		return False
 	if len(items) != 1:
 		return False

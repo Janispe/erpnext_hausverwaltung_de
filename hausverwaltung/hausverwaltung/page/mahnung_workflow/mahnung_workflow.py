@@ -17,16 +17,18 @@ from frappe.utils import add_days, cint, date_diff, flt, nowdate
 
 from hausverwaltung.hausverwaltung.page.op_workflow.op_workflow import (
     _resolve_dunning_type,
+    _submitted_dunning_count,
 )
 from hausverwaltung.hausverwaltung.page.op_workflow.op_workflow import (
     create_bulk_dunning as create_op_bulk_dunning,
 )
-from hausverwaltung.hausverwaltung.utils.display_titles import apartment_location
+from hausverwaltung.hausverwaltung.utils.display_titles import apartment_location, label_with_id
+from hausverwaltung.hausverwaltung.utils.dunning_creation import validate_dunning_invoice
+from hausverwaltung.hausverwaltung.utils.dunning_payment_schedule import require_overdue_payment_rows
 from hausverwaltung.hausverwaltung.utils.serienbrief_print import (
     get_dunning_invoice_remark_overrides,
     render_serienbrief_pdf_for_print_format,
 )
-from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 INVOICE_REMARKS_VARIABLE = "rechnungsbemerkung_statt_nummer"
 INVOICE_REMARKS_TEMPLATE = "Dunning - Miete - Mahnung (alle Stufen)"
@@ -310,12 +312,19 @@ def _build_mieter(customer: str) -> dict | None:
 
     invoices = frappe.get_list(
         "Sales Invoice",
-        filters={"customer": customer, "docstatus": 1, "outstanding_amount": [">", 0]},
+        filters={"customer": customer, "docstatus": 1, "outstanding_amount": [">", 0], "due_date": ["<", nowdate()]},
         fields=["name", "posting_date", "due_date", "grand_total",
                 "outstanding_amount", "remarks"],
         order_by="due_date asc",
         limit_page_length=0,
     )
+    dunning_counts = {invoice.name: _submitted_dunning_count(invoice.name) for invoice in invoices}
+    recommendations = {}
+    for count in sorted(set(dunning_counts.values()) or {0}):
+        try:
+            recommendations[count] = _vorlage_key_for_dunning_type(_resolve_dunning_type(min(4, count + 1)))
+        except Exception:
+            recommendations[count] = None
     posten = [{
         "beleg": inv.name,
         "art": "Sales Invoice",
@@ -326,6 +335,8 @@ def _build_mieter(customer: str) -> dict | None:
         "bezahlt": flt(inv.grand_total) - flt(inv.outstanding_amount),
         "offen": flt(inv.outstanding_amount),
         "overdue_days": max(0, date_diff(nowdate(), inv.due_date)),
+        "mahnstufe": dunning_counts[inv.name],
+        "empf_vorlage": recommendations[dunning_counts[inv.name]],
     } for inv in invoices]
 
     history = frappe.get_list(
@@ -337,15 +348,15 @@ def _build_mieter(customer: str) -> dict | None:
     )
     historie = [_history_entry(h.name) for h in history]
 
-    mahnstufe = len([h for h in history])
-    try:
-        empf_vorlage = _vorlage_key_for_dunning_type(_resolve_dunning_type(min(4, mahnstufe + 1)))
-    except Exception:
-        empf_vorlage = None
+    # Settled invoices remain visible in history but must not escalate new debt.
+    # Match the OP workflow: the most advanced open invoice determines the
+    # recommendation, while creation evaluates the actually selected invoices.
+    mahnstufe = max(dunning_counts.values(), default=0)
+    empf_vorlage = recommendations[mahnstufe]
     return {
         "id": cust.name,
         "name": cust.customer_name,
-        "anrede": f"Sehr geehrte Damen und Herren,",
+        "anrede": "Sehr geehrte Damen und Herren,",
         "adresse": [cust.customer_name],
         **_tenancy_location(customer),
         "kostenstelle": "",
@@ -385,7 +396,7 @@ def _history_entry(dunning_name: str) -> dict:
         or doc.get("outstanding_amount")
         or sum(row["betrag"] for row in belege)
     )
-    zinsbetrag = flt(doc.get("interest_amount"))
+    zinsbetrag = flt(doc.get("total_interest"))
     gebuehr = flt(doc.get("dunning_fee"))
     summe = flt(doc.get("grand_total") or outstanding + zinsbetrag + gebuehr)
     return {
@@ -441,6 +452,7 @@ def create_dunning(
     invoices = [frappe.get_doc("Sales Invoice", name) for name in sales_invoices]
     for invoice in invoices:
         invoice.check_permission("read")
+        validate_dunning_invoice(invoice, posting_date)
     customers = {si.customer for si in invoices}
     if len(customers) != 1:
         frappe.throw(_("Eine Mahnung darf nur Rechnungen eines Mieters enthalten."))
@@ -609,8 +621,7 @@ def _build_transient_dunning(
     invoices = [frappe.get_doc("Sales Invoice", name) for name in invoice_names]
     for invoice in invoices:
         invoice.check_permission("read")
-        if invoice.docstatus != 1 or flt(invoice.outstanding_amount) <= 0:
-            frappe.throw(_("{0} ist nicht offen oder nicht gebucht.").format(invoice.name))
+        validate_dunning_invoice(invoice, posting_date)
 
     customers = {invoice.customer for invoice in invoices}
     companies = {invoice.company for invoice in invoices}
@@ -625,6 +636,9 @@ def _build_transient_dunning(
     interest_rate = flt(zinssatz if zinssatz is not None else type_values.get("rate_of_interest"))
     fee = flt(mahngebuehr if mahngebuehr is not None else type_values.get("dunning_fee"))
     first = invoices[0]
+    overdue_rows = [
+        row for invoice in invoices for row in require_overdue_payment_rows(invoice, posting_date)
+    ]
     doc = frappe.new_doc("Dunning")
     doc.name = f"Mahnung-Vorschau-{first.customer}"
     for fieldname, value in {
@@ -635,7 +649,7 @@ def _build_transient_dunning(
         "due_date": add_days(posting_date or nowdate(), int(frist_tage or 7)),
         "currency": first.currency,
         "conversion_rate": flt(getattr(first, "conversion_rate", None)) or 1,
-        "outstanding_amount": sum(flt(invoice.outstanding_amount) for invoice in invoices),
+        "outstanding_amount": sum(row["outstanding"] for row in overdue_rows),
         "dunning_fee": fee,
         "rate_of_interest": interest_rate if _as_bool(zinsen_aktiv) else 0,
         "hv_serienbrief_vorlage": serienbrief_vorlage,
@@ -649,17 +663,8 @@ def _build_transient_dunning(
         if overdue_field and overdue_field.options
         else set()
     )
-    for invoice in invoices:
-        values = {
-            "sales_invoice": invoice.name,
-            "payment_term": None,
-            "due_date": invoice.due_date,
-            "invoice_portion": 100,
-            "outstanding": invoice.outstanding_amount,
-            "outstanding_amount": invoice.outstanding_amount,
-            "amount": invoice.outstanding_amount,
-        }
-        doc.append("overdue_payments", {key: value for key, value in values.items() if key in overdue_fields})
+    for row in overdue_rows:
+        doc.append("overdue_payments", {key: value for key, value in row.items() if key in overdue_fields})
 
     werte_field = frappe.get_meta("Dunning").get_field("hv_serienbrief_werte")
     if werte_field and werte_field.options:
@@ -821,7 +826,7 @@ def get_dunning_detail(dunning: str) -> dict:
         or doc.get("outstanding_amount")
         or sum(row["betrag"] for row in belege)
     )
-    zinsbetrag = flt(doc.get("interest_amount"))
+    zinsbetrag = flt(doc.get("total_interest"))
     gebuehr = flt(doc.get("dunning_fee"))
     summe = flt(doc.get("grand_total") or outstanding + zinsbetrag + gebuehr)
     return {

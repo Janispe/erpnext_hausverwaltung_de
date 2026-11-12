@@ -9,7 +9,17 @@ from hausverwaltung.hausverwaltung.scripts.heizkosten import settlement
 
 
 class TestHeizkostenSettlement(unittest.TestCase):
+	def test_taxed_prepayment_stops_before_creating_hk_settlement(self):
+		with patch.object(
+			settlement, "_locked_hk_prepayment_invoice_rows",
+			return_value=[{"name": "SI-TAX", "total_taxes_and_charges": 19}],
+		), self.assertRaisesRegex(frappe.ValidationError, "ohne Umsatzsteuer"):
+			settlement._get_locked_hk_prepayment_state(object(), company="COMP-1")
+
 	def setUp(self):
+		entry_lock = patch.object(settlement, "lock_accounting_scope")
+		entry_lock.start()
+		self.addCleanup(entry_lock.stop)
 		permission_patch = patch.object(
 			settlement,
 			"_require_settlement_permissions",
@@ -70,7 +80,9 @@ class TestHeizkostenSettlement(unittest.TestCase):
 		frappe_mock = MagicMock()
 		frappe_mock.db.sql.side_effect = [
 			[("HK-M-1",)],
-			[{"name": "HK-I-1", "docstatus": 0}],
+			# In before_submit the child already has the new period while the
+			# draft head still has its old dates in the database.
+			[{"name": "HK-I-1", "docstatus": 0, "von": "2024-01-01", "bis": "2024-12-31"}],
 			[{"name": "MV-1", "kunde": "Mieter 1", "wohnung": "W-1"}],
 		]
 		doc = self._doc(kosten=100, vorauszahlungen=0, datum="2026-02-15")
@@ -98,7 +110,7 @@ class TestHeizkostenSettlement(unittest.TestCase):
 		frappe_mock = MagicMock()
 		frappe_mock.db.sql.side_effect = [
 			[("HK-M-1",)],
-			[{"name": "HK-I-1", "docstatus": 1}],
+			[{"name": "HK-I-1", "docstatus": 1, "von": "2025-01-01", "bis": "2025-12-31"}],
 			[{"name": "MV-1", "kunde": "Anderer Mieter", "wohnung": "W-1"}],
 		]
 		frappe_mock.get_doc.return_value = self._doc(
@@ -118,7 +130,7 @@ class TestHeizkostenSettlement(unittest.TestCase):
 		frappe_mock = MagicMock()
 		frappe_mock.db.sql.side_effect = [
 			[("HK-M-1",)],
-			[{"name": "HK-I-1", "docstatus": 1}],
+			[{"name": "HK-I-1", "docstatus": 1, "von": "2025-01-01", "bis": "2025-12-31"}],
 			[{"name": "MV-1", "kunde": "Mieter 1", "wohnung": "W-2"}],
 		]
 		frappe_mock.get_doc.return_value = self._doc(
@@ -133,6 +145,24 @@ class TestHeizkostenSettlement(unittest.TestCase):
 				settlement._get_locked_settlement_document("HK-M-1")
 
 		self.assertIn("Wohnung", frappe_mock.throw.call_args.args[0])
+
+	def test_child_period_cannot_bypass_the_heads_duplicate_period_guard(self):
+		for fieldname, value in (("von", "2024-01-01"), ("bis", "2026-12-31"), ("bis", None)):
+			with self.subTest(fieldname=fieldname, value=value):
+				doc = self._doc(kosten=100, vorauszahlungen=0, datum="2026-02-15")
+				setattr(doc, fieldname, value)
+				with (
+					patch.object(settlement.frappe.db, "sql", side_effect=[
+						[(doc.name,)],
+						[{"name": "HK-I-1", "docstatus": 1, "von": "2025-01-01", "bis": "2025-12-31"}],
+					]) as sql,
+					patch.object(settlement.frappe, "get_doc", return_value=doc),
+					patch.object(settlement, "_make_sales_invoice") as invoice,
+					self.assertRaisesRegex(frappe.ValidationError, "Zeitraum.*stimmt nicht"),
+				):
+					settlement.create_hk_settlement_documents(doc.name)
+				self.assertEqual(sql.call_count, 2)
+				invoice.assert_not_called()
 
 	def test_draft_or_unlinked_settlement_cannot_reach_booking(self):
 		for docstatus, parent, expected_message in (
@@ -562,6 +592,7 @@ class TestHeizkostenSettlement(unittest.TestCase):
 				"invoice": "SI-ORIG",
 				"allocated_amount": 100,
 				"docstatus": 1,
+				"payment_type": "Receive",
 			}
 		]
 		with (
@@ -586,6 +617,23 @@ class TestHeizkostenSettlement(unittest.TestCase):
 		self.assertEqual(state["live_paid"], Decimal("100.00"))
 		self.assertEqual(state["signed_open"], Decimal("-100.00"))
 		self.assertIn("FOR UPDATE", item_sql.call_args.args[0])
+
+	def test_live_state_deducts_refund_of_overpaid_regular_invoice(self):
+		doc = self._doc(kosten=150, vorauszahlungen=100, datum="2026-02-15")
+		invoices = [{"name": "SI-ORIG", "is_return": 0, "outstanding_amount": 0}]
+		items = [{"parent": "SI-ORIG", "item_code": "Heizkosten", "net_amount": 100}]
+		payments = [
+			{"invoice": "SI-ORIG", "allocated_amount": 120, "docstatus": 1, "payment_type": "Receive"},
+			{"invoice": "SI-ORIG", "allocated_amount": -20, "docstatus": 1, "payment_type": "Pay"},
+		]
+		with (
+			patch.object(settlement, "_locked_hk_prepayment_invoice_rows", return_value=invoices),
+			patch.object(settlement, "_locked_hk_reference_rows", return_value=(payments, [])),
+			patch.object(settlement.frappe.db, "sql", return_value=items),
+		):
+			state = settlement._get_locked_hk_prepayment_state(doc, company="HV GmbH")
+		self.assertEqual(state["live_paid"], Decimal("100.00"))
+		self.assertEqual(state["signed_open"], Decimal("0.00"))
 
 	def test_live_state_counts_submitted_journal_reference(self):
 		doc = self._doc(kosten=150, vorauszahlungen=100, datum="2026-02-15")
@@ -623,7 +671,7 @@ class TestHeizkostenSettlement(unittest.TestCase):
 		doc = self._doc(kosten=150, vorauszahlungen=90, datum="2026-02-15")
 		invoices = [{"name": "SI-ORIG", "is_return": 0, "outstanding_amount": 20}]
 		items = [{"parent": "SI-ORIG", "item_code": "Heizkosten", "net_amount": 120}]
-		payments = [{"invoice": "SI-ORIG", "allocated_amount": 100, "docstatus": 1}]
+		payments = [{"invoice": "SI-ORIG", "allocated_amount": 100, "docstatus": 1, "payment_type": "Receive"}]
 
 		with (
 			patch.object(
@@ -648,7 +696,7 @@ class TestHeizkostenSettlement(unittest.TestCase):
 		doc = self._doc(kosten=150, vorauszahlungen=100, datum="2026-02-15")
 		invoices = [{"name": "SI-ORIG", "is_return": 0, "outstanding_amount": 10}]
 		items = [{"parent": "SI-ORIG", "item_code": "Heizkosten", "net_amount": 120}]
-		payments = [{"invoice": "SI-ORIG", "allocated_amount": 100, "docstatus": 1}]
+		payments = [{"invoice": "SI-ORIG", "allocated_amount": 100, "docstatus": 1, "payment_type": "Receive"}]
 
 		with (
 			patch.object(

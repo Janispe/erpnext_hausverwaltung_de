@@ -1,7 +1,9 @@
 # See license.txt
 
 import unittest
+from contextlib import ExitStack
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -12,8 +14,95 @@ from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_mieter impor
 from hausverwaltung.hausverwaltung.scripts.betriebskosten import abrechnung_erstellen as bk
 
 
+class TestBetriebskostenAccountingLockOrder(unittest.TestCase):
+	def test_save_insert_submit_and_cancel_lock_companies_before_frappe_row_lock(self):
+		from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_immobilie import (
+			betriebskostenabrechnung_immobilie as head_module,
+		)
+
+		class StopAtRowLock(Exception):
+			pass
+
+		for module, controller in (
+			(abrechnung_module, abrechnung_module.BetriebskostenabrechnungMieter),
+			(head_module, head_module.BetriebskostenabrechnungImmobilie),
+		):
+			for method, status in (("insert", 0), ("_save", 0), ("_save", 1), ("_save", 2)):
+				with self.subTest(controller=controller.__name__, method=method, status=status), ExitStack() as stack:
+					doc = controller.__new__(controller)
+					doc.__dict__.update(name="BK-1", doctype=controller.__name__, docstatus=status, flags=frappe._dict(), _table_fieldnames={})
+					events = []
+					stack.enter_context(patch.object(module, "lock_accounting_scope", side_effect=lambda: events.append("company")))
+					for preparatory in ("check_if_locked", "_set_defaults", "check_permission", "set_user_and_timestamp", "set_docstatus"):
+						stack.enter_context(patch.object(doc, preparatory))
+					def row_lock():
+						events.append("document")
+						raise StopAtRowLock
+					stack.enter_context(patch.object(doc, "check_if_latest", side_effect=row_lock))
+					with self.assertRaises(StopAtRowLock):
+						getattr(doc, method)()
+					self.assertEqual(events, ["company", "document"])
+
+	def test_direct_settlement_and_generation_take_scope_before_head_lock(self):
+		class StopAtHeadLock(Exception):
+			pass
+		for function, kwargs, head_loader in (
+			(bk.create_bk_settlement_documents, {"abrechnung": "BK-1"}, "_get_locked_submitted_bk_head"),
+			(bk._require_bk_generation_authorization, {"head": "BK-1", "von": "2025-01-01", "bis": "2025-12-31"}, None),
+		):
+			with self.subTest(function=function.__name__):
+				events = []
+				def head_lock(*args, **kwargs):
+					events.append("head")
+					raise StopAtHeadLock
+				with (
+					patch.object(bk, "lock_accounting_scope", side_effect=lambda: events.append("company")),
+					patch.object(bk if head_loader else frappe, head_loader or "get_doc", side_effect=head_lock),
+					self.assertRaises(StopAtHeadLock),
+				):
+					function(**kwargs)
+				self.assertEqual(events, ["company", "head"])
+
+	def test_delete_with_locked_head_fails_without_waiting_or_cancelling_children(self):
+		from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_immobilie import (
+			betriebskostenabrechnung_immobilie as head_module,
+		)
+		doc = SimpleNamespace(_cleanup_mieter_abrechnungen=MagicMock())
+		with (
+			patch.object(head_module, "lock_accounting_scope", side_effect=frappe.QueryTimeoutError) as scope,
+			self.assertRaisesRegex(frappe.ValidationError, "weil eine Buchung läuft"),
+		):
+			head_module.BetriebskostenabrechnungImmobilie.on_trash(doc)
+		scope.assert_called_once_with(wait=False)
+		doc._cleanup_mieter_abrechnungen.assert_not_called()
+
+	def test_delete_propagates_unrelated_database_errors_before_cleanup(self):
+		from hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_immobilie import (
+			betriebskostenabrechnung_immobilie as head_module,
+		)
+		doc = SimpleNamespace(_cleanup_mieter_abrechnungen=MagicMock())
+		with (
+			patch.object(head_module, "lock_accounting_scope", side_effect=RuntimeError("unexpected")),
+			self.assertRaisesRegex(RuntimeError, "unexpected"),
+		):
+			head_module.BetriebskostenabrechnungImmobilie.on_trash(doc)
+		doc._cleanup_mieter_abrechnungen.assert_not_called()
+
+
 class TestBetriebskostenabrechnungMieter(unittest.TestCase):
+	def test_taxed_prepayment_has_explicit_unsupported_tax_error_before_booking(self):
+		for tax, has_tax in ((19, 1), (0, 1), (-19, 1)):
+			with self.subTest(tax=tax), self.assertRaisesRegex(
+				frappe.ValidationError, "ohne Umsatzsteuer",
+			):
+				self.validate_booking_context([
+					{"name": "SI-TAX", "total_taxes_and_charges": tax, "has_tax_amount": has_tax},
+				], "COMP-1")
+
 	def setUp(self):
+		scope_patch = patch.object(bk, "lock_accounting_scope")
+		scope_patch.start()
+		self.addCleanup(scope_patch.stop)
 		# Settlement-Betragstests isolieren die Ausgleichsalgebra. Die
 		# Live-Snapshot-Prüfung wird separat mit ihren Invarianten getestet.
 		self.validate_snapshot = bk._validate_locked_prepayment_snapshot
@@ -886,6 +975,55 @@ class TestBetriebskostenabrechnungMieter(unittest.TestCase):
 		self.assertEqual(str(si.posting_date), "2026-07-15")
 		self.assertEqual(str(si.custom_wertstellungsdatum), "2025-12-31")
 		self.assertEqual(si.remarks, "Betriebskostenabrechnung 01.01.2025 bis 31.12.2025")
+
+	def test_bk_hk_invoice_factory_preserves_wrong_tax_defaults_for_validation(self):
+		from hausverwaltung.hausverwaltung.utils.rental_invoice_policy import (
+			validate_untaxed_rental_invoice,
+		)
+
+		for item_code in ("BK Nachzahlung", "HK Nachzahlung"):
+			with self.subTest(item_code=item_code):
+				si = MagicMock()
+				si.name = "SI-WRONG-DEFAULT"
+				si.docstatus = 0
+				si.total_taxes_and_charges = si.base_total_taxes_and_charges = 0
+				si.taxes_and_charges = "Accidental VAT 19%"
+				si.taxes = [frappe._dict(rate=19, tax_amount=0)]
+				si.get.side_effect = lambda field: si.__dict__.get(field)
+				si.set.side_effect = lambda field, value: setattr(si, field, value)
+				# Simulate the central validation called by Document.insert().
+				si.insert.side_effect = lambda: validate_untaxed_rental_invoice(si)
+				with (
+					patch.object(bk.frappe, "new_doc", return_value=si),
+					patch.object(bk, "_has_field", return_value=False),
+					self.assertRaisesRegex(frappe.ValidationError, "ohne Umsatzsteuer"),
+				):
+					bk._make_sales_invoice("CUST-1", "2026-10-16", item_code, Decimal("100"))
+				self.assertEqual(si.taxes_and_charges, "Accidental VAT 19%")
+				self.assertEqual(si.taxes, [{"rate": 19, "tax_amount": 0}])
+				si.submit.assert_not_called()
+
+	def test_zero_rate_template_is_valid_for_canonical_settlement_target(self):
+		si = SimpleNamespace(
+			company="COMP-1", currency="EUR", conversion_rate=1, plc_conversion_rate=1,
+			debit_to="DEBTORS-1", is_return=0, grand_total=100, base_grand_total=100,
+			total_taxes_and_charges=0, taxes=[frappe._dict(rate=0, tax_amount=0)],
+			items=[SimpleNamespace(item_code="BK Nachzahlung", net_amount=100)],
+		)
+		si.get = lambda field: getattr(si, field, None)
+		with (
+			patch.object(bk.frappe.db, "get_value", return_value="EUR"),
+			patch.object(bk.frappe.db, "sql", return_value=[{
+				"name": "DEBTORS-1", "company": "COMP-1",
+				"account_type": "Receivable", "account_currency": "EUR",
+			}]),
+		):
+			bk._validate_target_sales_invoice_booking_context(
+				si, "COMP-1", expected_item_code="BK Nachzahlung",
+				expected_amount=Decimal("100"), expected_return=False,
+			)
+		self.assertEqual(si.grand_total, 100)
+		self.assertEqual(si.taxes, [{"rate": 0, "tax_amount": 0}])
 
 	def test_allocate_journal_entry_does_not_bypass_permissions(self):
 		je = MagicMock()

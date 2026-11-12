@@ -1,4 +1,5 @@
 import unittest
+from contextlib import ExitStack
 from unittest.mock import patch
 
 import frappe
@@ -8,6 +9,28 @@ from hausverwaltung.hausverwaltung.overrides.sales_invoice import (
 	default_wertstellungsdatum_from_posting_date,
 	validate_mietvertrag_sales_invoice_identity,
 )
+
+
+class TestSalesInvoiceAccountingLockOrder(unittest.TestCase):
+	def test_save_insert_submit_and_cancel_lock_company_before_frappe_row_lock(self):
+		class StopAtRowLock(Exception):
+			pass
+
+		for method, status in (("insert", 0), ("_save", 0), ("_save", 1), ("_save", 2)):
+			with self.subTest(method=method, status=status), ExitStack() as stack:
+				doc = sales_invoice.CustomSalesInvoice.__new__(sales_invoice.CustomSalesInvoice)
+				doc.__dict__.update(name="SI-1", doctype="Sales Invoice", company="HV", docstatus=status, flags=frappe._dict(), _table_fieldnames={})
+				events = []
+				stack.enter_context(patch.object(sales_invoice, "lock_accounting_scope", side_effect=lambda companies: events.append(("company", companies))))
+				for preparatory in ("check_if_locked", "_set_defaults", "check_permission", "set_user_and_timestamp", "set_docstatus"):
+					stack.enter_context(patch.object(doc, preparatory))
+				def row_lock():
+					events.append("invoice")
+					raise StopAtRowLock
+				stack.enter_context(patch.object(doc, "check_if_latest", side_effect=row_lock))
+				with self.assertRaises(StopAtRowLock):
+					getattr(doc, method)()
+				self.assertEqual(events, [("company", ["HV"]), "invoice"])
 
 
 class _FakeMeta:
@@ -93,6 +116,52 @@ class TestSalesInvoiceWertstellungsdatumDefault(unittest.TestCase):
 		default_wertstellungsdatum_from_posting_date(doc)
 
 		self.assertIsNone(doc.custom_wertstellungsdatum)
+
+
+class TestSalesInvoiceNoVATLifecycle(unittest.TestCase):
+	@staticmethod
+	def _invoice(item_code):
+		doc = object.__new__(sales_invoice.CustomSalesInvoice)
+		doc.__dict__.update(
+			doctype="Sales Invoice", name="SI-NO-VAT", docstatus=0,
+			meta=_FakeMeta(), taxes=[], total_taxes_and_charges=0,
+			items=[frappe._dict(item_code=item_code, net_amount=100)],
+			grand_total=100,
+		)
+		return doc
+
+	def test_erpnext_default_tax_is_rejected_after_standard_calculation(self):
+		for item_code in ("Miete", "Betriebskosten", "Heizkosten", "BK Nachzahlung", "HK Guthaben"):
+			with self.subTest(item_code=item_code):
+				doc = self._invoice(item_code)
+
+				def calculate_with_accidental_default(invoice):
+					invoice.taxes = [frappe._dict(rate=19, tax_amount=19)]
+					invoice.total_taxes_and_charges = 19
+					invoice.grand_total = 119
+
+				with (
+					patch.object(sales_invoice, "validate_mietvertrag_sales_invoice_identity"),
+					patch.object(sales_invoice.SalesInvoice, "validate", autospec=True,
+						side_effect=calculate_with_accidental_default) as standard,
+					self.assertRaisesRegex(frappe.ValidationError, "ohne Umsatzsteuer"),
+				):
+					doc.validate()
+				standard.assert_called_once_with(doc)
+				self.assertEqual(doc.grand_total, 119)
+				self.assertEqual(doc.taxes[0].tax_amount, 19)
+
+	def test_ordinary_rent_invoice_keeps_100_euro_after_validation(self):
+		doc = self._invoice("Miete")
+		with (
+			patch.object(sales_invoice, "validate_mietvertrag_sales_invoice_identity"),
+			patch.object(sales_invoice.SalesInvoice, "validate"),
+			patch.object(sales_invoice, "default_wertstellungsdatum_from_posting_date"),
+		):
+			doc.validate()
+		self.assertEqual(doc.grand_total, 100)
+		self.assertEqual(doc.items[0].net_amount, 100)
+		self.assertEqual(doc.taxes, [])
 
 
 class TestSalesInvoiceMietvertragIdentity(unittest.TestCase):

@@ -35,13 +35,30 @@ context("Mietvertrag: Monatsmiete und Teilmonatsmiete", { retries: 0 }, () => {
 		cy.contains(".form-tabs .nav-link", "Miete und Betriebskosten").click();
 	});
 
+	// cy.wait() would yield the oldest unconsumed request; debounced previews can
+	// queue several. Check the newest response sent after the action instead.
+	function afterPreview(action, check = () => {}) {
+		let before;
+		cy.get("@partMonthPreview.all").then((requests) => {
+			before = requests.length;
+		});
+		action();
+		cy.get("@partMonthPreview.all").should((requests) => {
+			expect(requests.length, "new preview request").to.be.greaterThan(before);
+			const response = requests[requests.length - 1].response;
+			expect(response, "preview response").to.exist;
+			check(response);
+		});
+	}
+	function openDialogButton() {
+		return cy.get('.page-container:visible [data-fieldname="teilmonatsmiete_festlegen"] button').click();
+	}
 	function openDialog() {
-		cy.get('.page-container:visible [data-fieldname="teilmonatsmiete_festlegen"] button').click();
+		afterPreview(openDialogButton, (response) => expect(response.body.message.amount).to.eq(320));
 		cy.window().should((win) => {
-			expect(win.cur_dialog?.title).to.eq("Teilmonatsmiete festlegen");
+			expect(win.cur_dialog?.title).to.eq("Teilmonat festlegen");
 			expect(win.cur_dialog?.display).to.eq(true);
 		});
-		cy.wait("@partMonthPreview").its("response.body.message.amount").should("eq", 320);
 	}
 	function field(name) {
 		return cy.get(`.modal:visible [data-fieldname="${name}"] input`);
@@ -58,8 +75,10 @@ context("Mietvertrag: Monatsmiete und Teilmonatsmiete", { retries: 0 }, () => {
 		cy.get('[data-role="part-month-preview"]').should("contain", "2027-01");
 	}
 	function adopt() {
-		cy.contains(".modal:visible .btn-modal-primary", "In Mietvertrag übernehmen").click();
-		cy.wait("@partMonthPreview").its("response.statusCode").should("eq", 200);
+		afterPreview(
+			() => cy.contains(".modal:visible .btn-modal-primary", "In Mietvertrag übernehmen").click(),
+			(response) => expect(response.statusCode).to.eq(200),
+		);
 		cy.get(".modal:visible").should("not.exist");
 		cy.then(() => expect(invoiceCalls, "editing does not create invoices").to.have.length(0));
 	}
@@ -91,7 +110,7 @@ context("Mietvertrag: Monatsmiete und Teilmonatsmiete", { retries: 0 }, () => {
 		mode("Festbetrag");
 		field("betrag").should("have.value", "");
 		cy.contains(".modal:visible .btn-modal-primary", "In Mietvertrag übernehmen").click();
-		cy.get(".modal:visible").should("contain", "Bitte den vereinbarten Mietbetrag eingeben");
+		cy.get(".modal:visible").should("contain", "Bitte den vereinbarten Betrag eingeben");
 		cy.window().then((win) => expect(win.cur_frm.doc.miete_teilmonate || []).to.have.length(0));
 		field("betrag").clear().type("300").blur();
 		previewAmount(300);
@@ -108,9 +127,8 @@ context("Mietvertrag: Monatsmiete und Teilmonatsmiete", { retries: 0 }, () => {
 		field("betrag").clear().type("0").blur();
 		previewAmount(0);
 		adopt();
-		cy.get('.page-container:visible [data-fieldname="teilmonatsmiete_festlegen"] button').click();
+		afterPreview(openDialogButton, (response) => expect(response.body.message.amount).to.eq(0));
 		cy.window().should((win) => expect(win.cur_dialog?.display).to.eq(true));
-		cy.wait("@partMonthPreview").its("response.body.message.amount").should("eq", 0);
 		mode("Automatisch anteilig");
 		previewAmount(320);
 		adopt();
@@ -122,17 +140,19 @@ context("Mietvertrag: Monatsmiete und Teilmonatsmiete", { retries: 0 }, () => {
 
 	it("bietet den letzten Mietmonat an und zeigt bei kurzem Festzeitraum auch die übrigen Monatstage", () => {
 		openDialog();
-		cy.get('.modal:visible [data-fieldname="zeitraum"] select').select("Letzter Mietmonat");
-		cy.wait("@partMonthPreview").its("response.body.message.amount").should("eq", 300);
+		afterPreview(
+			() => cy.get('.modal:visible [data-fieldname="zeitraum"] select').select("Letzter Mietmonat"),
+			(response) => expect(response.body.message.amount).to.eq(300),
+		);
 		field("von").should("have.value", "01.03.2027");
 		field("bis").should("have.value", "15.03.2027");
-		cy.get('.modal:visible [data-fieldname="zeitraum"] select').select("Erster Mietmonat");
-		cy.wait("@partMonthPreview");
-		field("bis").click();
-		cy.get('.datepicker--cell-day[data-date="20"][data-month="0"][data-year="2027"]:visible').click();
+		afterPreview(() => cy.get('.modal:visible [data-fieldname="zeitraum"] select').select("Erster Mietmonat"));
+		afterPreview(() => {
+			field("bis").click();
+			cy.get('.datepicker--cell-day[data-date="20"][data-month="0"][data-year="2027"]:visible').click();
+		});
 		field("bis").should("have.value", "20.01.2027");
 		cy.window().should((win) => expect(win.cur_dialog.fields_dict.bis.value).to.eq("2027-01-20"));
-		cy.wait("@partMonthPreview");
 		mode("Festbetrag");
 		field("betrag").should("have.value", "").type("100", { delay: 100 }).blur();
 		previewAmount(320);
@@ -142,6 +162,57 @@ context("Mietvertrag: Monatsmiete und Teilmonatsmiete", { retries: 0 }, () => {
 		cy.window().then((win) => expect(win.cur_frm.doc.miete_teilmonate[0]).to.include({
 			von: "2027-01-16", bis: "2027-01-20", berechnung: "Festbetrag", betrag: 100,
 		}));
+	});
+
+	it("legt einen BK-Festbetrag getrennt von der Miete fest", () => {
+		cy.window().then(async (win) => {
+			const frm = win.cur_frm;
+			Object.assign(frm.add_child("betriebskosten"), { von: "2027-01-16", miete: 105 });
+			frm.refresh_field("betriebskosten");
+		});
+		openDialog();
+		cy.get('.modal:visible [data-fieldname="kostenart"] select').select("Betriebskosten");
+		previewAmount(54.19); // 105 * 16 / 31, prorated like the rent
+		cy.get("@partMonthPreview.all").should((requests) => {
+			expect(requests[requests.length - 1].request.body).to.include("kostenart=Betriebskosten");
+		});
+		mode("Festbetrag");
+		field("betrag").clear().type("55").blur();
+		previewAmount(55);
+		adopt();
+		cy.window().then((win) => {
+			expect(win.cur_frm.doc.miete_teilmonate).to.have.length(1);
+			expect(win.cur_frm.doc.miete_teilmonate[0]).to.include({
+				kostenart: "Betriebskosten", von: "2027-01-16", bis: "2027-01-31", berechnung: "Festbetrag", betrag: 55,
+			});
+		});
+		// The rent of the same month is still prorated; the BK rule does not apply to it.
+		openDialog();
+		cy.get('.modal:visible [data-fieldname="berechnung"] select').should("have.value", "Automatisch anteilig");
+	});
+
+	it("bietet nach geändertem Vertragsende die Korrektur aller Kostenarten an", () => {
+		cy.window().then(async (win) => {
+			const frm = win.cur_frm;
+			// The scope is only computed for saved contracts; simulate one without saving.
+			frm.is_new = () => false;
+			try {
+				await frm.script_manager.trigger("onload");
+				await frm.script_manager.trigger("before_save");
+				expect(frm.__hv_sollstellung_korrektur_scope).to.deep.eq({});
+				frm.doc.bis = "2027-02-10";
+				await frm.script_manager.trigger("before_save");
+				expect(frm.__hv_sollstellung_korrektur_scope).to.deep.eq({
+					Miete: "2027-02-01",
+					Betriebskosten: "2027-02-01",
+					Heizkosten: "2027-02-01",
+					Untermietzuschlag: "2027-02-01",
+				});
+			} finally {
+				delete frm.is_new;
+				delete frm.__hv_sollstellung_korrektur_scope;
+			}
+		});
 	});
 
 	it("zeigt ältere Feststaffeln ohne sie als Monatsmieten umzudeuten", () => {
@@ -162,20 +233,21 @@ context("Mietvertrag: Monatsmiete und Teilmonatsmiete", { retries: 0 }, () => {
 			win.cur_frm.refresh_field("miete");
 			await win.cur_frm.script_manager.trigger("refresh");
 		});
-		cy.get('.page-container:visible [data-fieldname="teilmonatsmiete_festlegen"] button').click();
-		cy.wait("@partMonthPreview").then(({ response }) => {
+		afterPreview(openDialogButton, (response) => {
 			expect(response.statusCode).to.be.oneOf([417, 422]);
 			expect(JSON.stringify(response.body)).to.contain("Monatsmiete");
 		});
 		cy.get(".modal:visible").last().should("contain", "Bitte zuerst").and("contain", "Monatsmiete");
 		cy.window().should((win) => {
-			expect(win.cur_dialog?.title).not.to.eq("Teilmonatsmiete festlegen");
+			expect(win.cur_dialog?.title).not.to.eq("Teilmonat festlegen");
 			expect(win.cur_dialog?.display).to.eq(true);
 		});
 		cy.contains(".modal:visible", "Bitte zuerst").find(".btn-modal-close").click();
 		cy.get(".modal:visible").should("have.length", 1);
-		cy.contains(".modal:visible .btn-modal-primary", "In Mietvertrag übernehmen").click();
-		cy.wait("@partMonthPreview").its("response.statusCode").should("be.oneOf", [417, 422]);
+		afterPreview(
+			() => cy.contains(".modal:visible .btn-modal-primary", "In Mietvertrag übernehmen").click(),
+			(response) => expect(response.statusCode).to.be.oneOf([417, 422]),
+		);
 		cy.get(".modal:visible").last().should("contain", "Bitte zuerst");
 		cy.window().then((win) => {
 			expect(win.cur_frm.doc.miete_teilmonate || []).to.have.length(0);
@@ -199,9 +271,8 @@ context("Mietvertrag: Monatsmiete und Teilmonatsmiete", { retries: 0 }, () => {
 			otherName = otherRule.name;
 			frm.refresh_field("miete_teilmonate");
 		});
-		cy.get('.page-container:visible [data-fieldname="teilmonatsmiete_festlegen"] button').click();
+		afterPreview(openDialogButton, (response) => expect(response.body.message.amount).to.eq(300));
 		cy.window().should((win) => expect(win.cur_dialog?.display).to.eq(true));
-		cy.wait("@partMonthPreview").its("response.body.message.amount").should("eq", 300);
 		field("bis").click();
 		cy.get('.datepicker--cell-day[data-date="25"][data-month="0"][data-year="2027"]:visible').click();
 		field("bis").should("have.value", "25.01.2027");

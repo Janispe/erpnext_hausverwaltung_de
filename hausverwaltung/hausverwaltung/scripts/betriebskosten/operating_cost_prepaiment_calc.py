@@ -32,6 +32,60 @@ def _as_money(value: Decimal) -> float:
 	return float(_quantize_money(value))
 
 
+def signed_customer_payment_allocation(payment_type: str, allocated_amount: Any) -> Decimal:
+	"""Mirror ERPNext's receivable GL direction, including overpayment refunds.
+
+	Receive allocations retain their sign. For Customer Pay entries ERPNext
+	posts a receivable debit for either allocation sign, including the negative
+	amount returned by get_payment_entry for an overpaid ordinary invoice.
+	The invoice's return flag does not determine the direction of cash flow.
+	"""
+	amount = _to_decimal(allocated_amount)
+	if payment_type == "Receive":
+		return amount
+	if payment_type == "Pay":
+		return -amount.copy_abs()
+	frappe.throw("BK/HK-Vorauszahlung hat keine eindeutige Zahlungsrichtung.", frappe.ValidationError)
+
+
+def require_untaxed_settlement_invoices(invoice_rows, *, label="BK/HK"):
+	"""Vorauszahlungen dürfen in unserem Mietmodell keine Umsatzsteuer enthalten."""
+	taxable = [
+		str(row.get("name") or "unbekannt") for row in invoice_rows
+		if _to_decimal(row.get("total_taxes_and_charges")) != 0
+		or _to_decimal(row.get("base_total_taxes_and_charges")) != 0
+		or int(row.get("has_tax_amount") or 0)
+	]
+	if taxable:
+		frappe.throw(
+			f"{label}-Abrechnung abgebrochen: Unsere Mietverhältnisse werden ohne "
+			"Umsatzsteuer abgerechnet. Bitte die Steuerkonfiguration und die "
+			"betroffenen Vorauszahlungsrechnungen prüfen und korrigieren. "
+			f"Betroffene Vorauszahlungsrechnungen: {', '.join(taxable[:10])}. "
+			"Es wurde nichts gebucht.",
+			frappe.ValidationError,
+		)
+
+
+def _invoice_tax_columns() -> str:
+	"""Prüfe auch einzelne Steuerzeilen, deren Beträge sich insgesamt aufheben."""
+	return """
+		si.total_taxes_and_charges,
+		si.base_total_taxes_and_charges,
+		EXISTS (
+			SELECT 1 FROM `tabSales Taxes and Charges` tax
+			WHERE tax.parent = si.name AND tax.parenttype = 'Sales Invoice'
+			  AND (
+				COALESCE(tax.tax_amount, 0) != 0
+				OR COALESCE(tax.tax_amount_after_discount_amount, 0) != 0
+				OR COALESCE(tax.base_tax_amount, 0) != 0
+				OR COALESCE(tax.base_tax_amount_after_discount_amount, 0) != 0
+				OR COALESCE(tax.rate, 0) != 0
+			  )
+		) AS has_tax_amount
+	"""
+
+
 def _date_range(from_date: Optional[str | date], to_date: Optional[str | date]) -> Tuple[Optional[str], Optional[str]]:
 	"""Normalisiere from/to in YYYY-MM-DD Strings (oder None)."""
 	fd = getdate(from_date).strftime("%Y-%m-%d") if from_date else None
@@ -63,7 +117,7 @@ def _customer_segments_for_wohnung(wohnung: str, from_date: Optional[str | date]
 	td = getdate(to_date) if to_date else None
 
 	# Verträge mit Überlappung holen (ähnlich Report)
-	where = ["wohnung = %(whg)s"]
+	where = ["wohnung = %(whg)s", "docstatus < 2"]
 	params: Dict[str, Any] = {"whg": wohnung}
 	if td:
 		where.append("von <= %(td)s")
@@ -477,6 +531,7 @@ def get_bk_expected_sum_for_invoice_names(
 	sql = f"""
 		SELECT
 			si.name,
+			{_invoice_tax_columns()},
 			CASE
 				WHEN si.is_return = 1 THEN -ABS(sii.net_amount)
 				ELSE sii.net_amount
@@ -492,6 +547,7 @@ def get_bk_expected_sum_for_invoice_names(
 		{"bk": item_code, "names": tuple(names)},
 		as_dict=True,
 	)
+	require_untaxed_settlement_invoices(rows)
 	by_invoice: Dict[str, Decimal] = {}
 	for row in rows or []:
 		name = row.get("name")
@@ -514,11 +570,12 @@ def get_bk_paid_sum(
 ) -> float:
 	"""Summe der tatsächlich geleisteten Zahlungen für Rechnungen (via Mieter/Verträge).
 
-	- Payment Entries (docstatus=1, payment_type='Receive').
+	- Eingereichte Payment Entries (Receive/Pay), Rückzahlungen werden abgezogen.
 	- Zahlungen im Zeitraum per Zahlungs‑Wertstellung (Fallback Posting).
 	- Nur der Anteil der Zahlung, der auf den gewünschten ``item_code``-Positionen
 	  der Rechnung entfällt, wird gezählt (proportionaler Anteil:
-	  Sum(item net) / Sum(alle net) je Rechnung).
+	  Summe der BK/HK-Positionen / Summe aller Positionen je Rechnung).
+	- Vorauszahlungsrechnungen mit Umsatzsteuer werden abgewiesen.
 	"""
 	eff = _payment_effective_date_expr("pe")
 	fd, td = _date_range(from_date, to_date)
@@ -548,11 +605,14 @@ def get_bk_paid_sum(
 		params.update({"td": td})
 
 	sql = f"""
-		SELECT COALESCE(SUM(
-			CASE WHEN si.is_return = 1 THEN -1 ELSE 1 END
-			* ABS(per.allocated_amount)
-			* COALESCE(ABS(bki.bk_net) / NULLIF(ABS(tot.total_net), 0), 0)
-		), 0)
+		SELECT
+			si.name,
+			si.is_return,
+			pe.payment_type,
+			{_invoice_tax_columns()},
+			per.allocated_amount,
+			COALESCE(bki.bk_net, 0) AS bk_net,
+			COALESCE(tot.total_net, 0) AS total_net
 		FROM `tabPayment Entry` pe
 		JOIN `tabPayment Entry Reference` per ON per.parent = pe.name
 		JOIN `tabSales Invoice` si ON si.name = per.reference_name
@@ -569,8 +629,17 @@ def get_bk_paid_sum(
 		) tot ON tot.parent = si.name
 		WHERE {' AND '.join(where)}
 	"""
-	val = frappe.db.sql(sql, params)[0][0]
-	return _as_money(_to_decimal(val))
+	rows = frappe.db.sql(sql, params, as_dict=True)
+	require_untaxed_settlement_invoices(rows)
+	total = Decimal("0")
+	for row in rows or []:
+		total_net = _to_decimal(row.get("total_net"))
+		if total_net == 0:
+			continue
+		item_share = _to_decimal(row.get("bk_net")).copy_abs() / total_net.copy_abs()
+		allocation = signed_customer_payment_allocation(row.get("payment_type"), row.get("allocated_amount"))
+		total += allocation * item_share
+	return _as_money(total)
 
 
 def get_bk_paid_sum_for_period_invoices(
@@ -620,7 +689,11 @@ def get_bk_paid_sum_for_invoice_names(
 	verwendet dies zusammen mit gesperrten Sales Invoices, damit Zahlung und
 	Outstanding aus demselben Buchungsstand stammen.
 
-	Payment Entries werden anhand des Return-Kennzeichens der Rechnung
+	Unsere Mietverhältnisse werden ohne Umsatzsteuer abgerechnet. Steuerbeträge
+	auf Vorauszahlungsrechnungen führen zum Abbruch. Die Zahlung wird nach dem
+	Anteil der BK/HK-Positionen an der Summe aller Rechnungspositionen aufgeteilt.
+
+	Payment Entries werden anhand ihrer Debitoren-Buchungsrichtung
 	vorzeichenbehaftet. Es zählen ausschließlich Zahlungen mit einem eindeutigen
 	Bank-/Kassen-Gegenkonto und ohne Differenz-/Abschreibungszeilen. Bei Journal
 	Entries ist ``credit - debit`` auf der Debitorenzeile bereits der
@@ -634,6 +707,8 @@ def get_bk_paid_sum_for_invoice_names(
 	lock_clause = " FOR UPDATE" if lock else ""
 	payment_sql = f"""
 		SELECT
+			si.name,
+			{_invoice_tax_columns()},
 			pe.name AS payment_entry,
 			pe.company AS payment_company,
 			pe.payment_type,
@@ -690,6 +765,8 @@ def get_bk_paid_sum_for_invoice_names(
 	)
 	journal_sql = f"""
 		SELECT
+			si.name,
+			{_invoice_tax_columns()},
 			je.name AS journal_entry,
 			je.company AS journal_company,
 			jea.account,
@@ -784,6 +861,7 @@ def get_bk_paid_sum_for_invoice_names(
 		{"bk": item_code, "names": tuple(names)},
 		as_dict=True,
 	)
+	require_untaxed_settlement_invoices([*(payment_rows or []), *(journal_rows or [])])
 	total = Decimal("0")
 	invalid_payments = set()
 	for row in payment_rows or []:
@@ -835,9 +913,7 @@ def get_bk_paid_sum_for_invoice_names(
 		if total_net == 0:
 			continue
 		item_share = _to_decimal(row.get("bk_net")).copy_abs() / total_net.copy_abs()
-		signed_allocation = _to_decimal(row.get("allocated_amount")).copy_abs()
-		if int(row.get("is_return") or 0):
-			signed_allocation = -signed_allocation
+		signed_allocation = signed_customer_payment_allocation(payment_type, row.get("allocated_amount"))
 		total += signed_allocation * item_share
 	if invalid_payments:
 		frappe.throw(
@@ -923,6 +999,7 @@ def _bk_invoice_details_for_invoice_names(
 		SELECT
 			si.name,
 			si.is_return,
+			{_invoice_tax_columns()},
 			{eff} AS effective_date,
 			si.posting_date,
 			si.custom_wertstellungsdatum,
@@ -943,6 +1020,7 @@ def _bk_invoice_details_for_invoice_names(
 		ORDER BY effective_date ASC, si.name ASC
 	"""
 	rows = frappe.db.sql(sql, {"names": tuple(names), "bk": item_code}, as_dict=True)
+	require_untaxed_settlement_invoices(rows)
 	# cast types
 	for r in rows:
 		r["bk_amount"] = _as_money(_to_decimal(r.get("bk_amount")))

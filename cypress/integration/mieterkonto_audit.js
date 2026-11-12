@@ -27,7 +27,7 @@ function mountAudit(options = {}) {
             return Promise.resolve({ message: { name: `Mieter ${args.customer}`, customer_id: args.customer, aufteilung_aktuell: {} } });
           }
           if (args.filters.customer === win.rejectCustomer) return Promise.reject(new Error("Audit: Bericht fehlgeschlagen"));
-          const rows = [
+          const rows = options.rows ? [...options.rows] : [
             { datum: "2026-05-10", wertstellungsdatum: "2026-01-10", belegart: "Sales Invoice", belegnummer: `INV-${args.filters.customer}-1`, art: "Forderung", beschreibung: 'A; "quoted"', betrag_summe: 12.5, kontostand: options.nullBalance ? null : 42 },
             { datum: "2026-04-01", wertstellungsdatum: "2026-04-01", belegart: "Payment Entry", belegnummer: `PE-${args.filters.customer}-2`, art: "Zahlung", beschreibung: "Zahlung", betrag_summe: -29.5, kontostand: 29.5 },
           ];
@@ -45,7 +45,7 @@ function mountAudit(options = {}) {
   });
   cy.readFile(`${assets}/mk-data-adapter.js`).then((source) => cy.window().then((win) => win.eval(source)));
   cy.readFile(`${assets}/mk-workflow.bundle.js`).then((source) => cy.window().then((win) => win.eval(source)));
-  cy.get(".mk-table tbody .col-beleg a").should("have.length", 2);
+  cy.get(".mk-table tbody .col-beleg a").should("have.length", options.rows?.length || 2);
 }
 
 function exportedCsv() {
@@ -99,5 +99,52 @@ describe("Mieterkonto CSV matches the successfully loaded report", () => {
       const invoiceRow = csv.split("\n").find((row) => row.includes("INV-A-1"));
       expect(invoiceRow.split(";").at(-1)).to.equal("");
     });
+  });
+});
+
+describe("Mieterkonto paid invoice status", () => {
+  it("shows the invoice status in the legacy report formatter", () => {
+    mountAudit();
+    cy.readFile("hausverwaltung/hausverwaltung/report/mieterkonto/mieterkonto.js").then((source) => {
+      cy.window().then((win) => {
+        win.frappe.query_reports = {};
+        win.frappe.datetime.month_start = () => "2026-05-01";
+        win.eval(source);
+        const formatter = win.frappe.query_reports.Mieterkonto.formatter;
+        const render = (art, status) => formatter("Miete", null, { fieldname: "beschreibung" },
+          { art, status }, (value) => value);
+        expect(render("Forderung", "Paid")).to.contain("bezahlt");
+        for (const status of ["Unpaid", "Partly Paid", "Written Off", null]) {
+          expect(render("Forderung", status)).to.equal("Miete");
+        }
+        expect(render("Zahlung", "Paid")).to.equal("Miete");
+      });
+    });
+  });
+
+  it("shows bezahlt only on invoices with Paid status in all three views", () => {
+    const rows = [
+      ["Paid", "Forderung", 0],
+      ["Unpaid", "Forderung", 10],
+      ["Partly Paid", "Forderung", 5],
+      ["Written Off", "Forderung", 0],
+      [null, "Forderung", 0],
+      ["Paid", "Zahlung", 0],
+    ].map(([status, art, offen], index) => ({
+      datum: "2026-05-10", wertstellungsdatum: "2026-05-01",
+      belegart: art === "Forderung" ? "Sales Invoice" : "Payment Entry",
+      belegnummer: `STATUS-${index}`, beschreibung: `Status ${index}`,
+      art, status, offen, betrag_summe: art === "Forderung" ? 10 : -10, kontostand: 0,
+    }));
+    mountAudit({ rows });
+    const expectPaid = () => {
+      cy.get(".mk-pill-paid").should("have.length", 1).and("have.text", "bezahlt");
+      cy.contains("Status 0").parent().should("contain", "bezahlt");
+    };
+    expectPaid();
+    cy.contains("button.mk-tab", "Verlauf").click();
+    expectPaid();
+    cy.contains("button.mk-tab", "Dashboard").click();
+    expectPaid();
   });
 });

@@ -22,6 +22,11 @@ from frappe import _
 from frappe.utils import add_days, cint, flt, formatdate, getdate, nowdate
 
 from hausverwaltung.hausverwaltung.utils.display_titles import add_titles
+from hausverwaltung.hausverwaltung.utils.dunning_creation import (
+    lock_dunning_invoices,
+    reject_duplicate_dunning,
+)
+from hausverwaltung.hausverwaltung.utils.dunning_payment_schedule import require_overdue_payment_rows
 
 _MV_MARKER_RE = re.compile(r"\[MV:([^\]]+)\]")
 _DUNNING_DOCSTATUS_LABEL = {
@@ -1308,9 +1313,11 @@ def create_dunning(
     if not frappe.has_permission("Dunning", "create"):
         frappe.throw(_("Keine Berechtigung Mahnungen zu erstellen."), frappe.PermissionError)
 
-    si = _require_submitted_invoice("Sales Invoice", sales_invoice)
+    si = lock_dunning_invoices([sales_invoice], posting_date)[0]
+    reject_duplicate_dunning([si.name], posting_date)
     level = min(4, _submitted_dunning_count(sales_invoice) + 1)
     resolved_type = _resolve_dunning_type(level, dunning_type)
+    overdue_rows = require_overdue_payment_rows(si, posting_date)
 
     dunning = frappe.new_doc("Dunning")
     for fieldname, value in {
@@ -1320,7 +1327,7 @@ def create_dunning(
         "dunning_type": resolved_type,
         "posting_date": posting_date or nowdate(),
         "due_date": new_due_date or _default_dunning_due_date(posting_date),
-        "outstanding_amount": si.outstanding_amount,
+        "outstanding_amount": sum(row["outstanding"] for row in overdue_rows),
         "currency": si.currency,
         "conversion_rate": flt(getattr(si, "conversion_rate", None)) or 1,
         "dunning_fee": flt(mahngebuehr) if mahngebuehr is not None else None,
@@ -1329,26 +1336,15 @@ def create_dunning(
     }.items():
         _set_if_field(dunning, fieldname, value)
 
-    _append_child_if_table(
-        dunning,
-        "overdue_payments",
-        {
-            "sales_invoice": si.name,
-            "payment_term": None,
-            "due_date": si.due_date,
-            "invoice_portion": 100,
-            "outstanding": si.outstanding_amount,
-            "outstanding_amount": si.outstanding_amount,
-            "amount": si.outstanding_amount,
-        },
-    )
+    for row in overdue_rows:
+        _append_child_if_table(dunning, "overdue_payments", row)
     _append_serienbrief_werte(dunning, serienbrief_werte)
 
     dunning.insert(ignore_permissions=False)
     return _draft_response(
         dunning,
         "dunning",
-        summe=flt(getattr(dunning, "grand_total", 0) or getattr(si, "outstanding_amount", 0)),
+        summe=flt(getattr(dunning, "grand_total", 0) or sum(row["outstanding"] for row in overdue_rows)),
         dunning_type=resolved_type,
         serienbrief_vorlage=getattr(dunning, "hv_serienbrief_vorlage", None),
         mahnstufe=level,
@@ -1383,6 +1379,8 @@ def create_bulk_dunning(
     Returns:
         ``{"created": [<dunning-names>], "errors": [{"customer": ..., "msg": ...}]}``
     """
+    if not frappe.has_permission("Dunning", "create"):
+        frappe.throw(_("Keine Berechtigung Mahnungen zu erstellen."), frappe.PermissionError)
     if isinstance(invoices_by_customer, str):
         invoices_by_customer = json.loads(invoices_by_customer)
     if isinstance(dunning_type_per_customer, str):
@@ -1398,17 +1396,24 @@ def create_bulk_dunning(
     errors: list[dict] = []
     docs: list[dict] = []
 
+    # Lock in a stable order across customers, before any per-customer reads.
+    # Validation remains per customer so one invalid group does not prevent
+    # the other selected groups from being prepared.
+    for name in sorted({name for names in (invoices_by_customer or {}).values() for name in names if name}):
+        frappe.db.get_value("Sales Invoice", name, "name", for_update=True)
+
     for customer, invoices in (invoices_by_customer or {}).items():
         try:
             invoice_names = [name for name in invoices if name]
             if not invoice_names:
                 continue
 
-            sales_invoices = [_require_submitted_invoice("Sales Invoice", name) for name in invoice_names]
+            sales_invoices = lock_dunning_invoices(invoice_names, posting_date)
             companies = {si.company for si in sales_invoices}
             customers = {si.customer for si in sales_invoices}
             if len(companies) != 1 or len(customers) != 1 or customer not in customers:
                 frappe.throw(_("Sammelmahnung darf nur Rechnungen einer Firma und eines Mieters enthalten."))
+            reject_duplicate_dunning(invoice_names, posting_date)
 
             next_level = min(4, max(_submitted_dunning_count(si.name) for si in sales_invoices) + 1)
             explicit_type = (dunning_type_per_customer or {}).get(customer) if dunning_type_per_customer else None
@@ -1422,6 +1427,9 @@ def create_bulk_dunning(
                 explicit_fee = mahngebuehr_per_customer.get(customer)
             elif mahngebuehr is not None:
                 explicit_fee = mahngebuehr
+            overdue_rows = [
+                row for si in sales_invoices for row in require_overdue_payment_rows(si, posting_date)
+            ]
 
             dunning = frappe.new_doc("Dunning")
             first = sales_invoices[0]
@@ -1433,27 +1441,15 @@ def create_bulk_dunning(
                 "due_date": new_due_date or _default_dunning_due_date(posting_date),
                 "currency": first.currency,
                 "conversion_rate": flt(getattr(first, "conversion_rate", None)) or 1,
-                "outstanding_amount": sum(flt(si.outstanding_amount) for si in sales_invoices),
+                "outstanding_amount": sum(row["outstanding"] for row in overdue_rows),
                 "dunning_fee": flt(explicit_fee) if explicit_fee is not None else None,
                 "rate_of_interest": None if zinsen_aktiv is None or _as_bool(zinsen_aktiv) else 0,
                 "hv_serienbrief_vorlage": effective_template,
             }.items():
                 _set_if_field(dunning, fieldname, value)
 
-            for si in sales_invoices:
-                _append_child_if_table(
-                    dunning,
-                    "overdue_payments",
-                    {
-                        "sales_invoice": si.name,
-                        "payment_term": None,
-                        "due_date": si.due_date,
-                        "invoice_portion": 100,
-                        "outstanding": si.outstanding_amount,
-                        "outstanding_amount": si.outstanding_amount,
-                        "amount": si.outstanding_amount,
-                    },
-                )
+            for row in overdue_rows:
+                _append_child_if_table(dunning, "overdue_payments", row)
             customer_werte = (serienbrief_werte_per_customer or {}).get(customer) if serienbrief_werte_per_customer else None
             _append_serienbrief_werte(dunning, customer_werte or serienbrief_werte)
 
@@ -1468,6 +1464,12 @@ def create_bulk_dunning(
                     mahnstufe=next_level,
                 )
             )
+        except frappe.QueryDeadlockError:
+            # MariaDB snapshot isolation can reject a current read after a
+            # competing commit (1020), and deadlocks abort the transaction.
+            # Let Frappe roll back the entire request instead of reporting
+            # earlier groups as created after their transaction was aborted.
+            raise
         except Exception as e:
             errors.append({"customer": customer, "msg": str(e)})
 

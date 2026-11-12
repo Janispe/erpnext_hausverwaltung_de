@@ -43,6 +43,9 @@ FAC_PROTOTYPE_TOOL_NAMES = FAC_OVERVIEW_TOOL_NAMES
 # Direct inventory operations complement exact-ID overviews and free-text search.
 FAC_INVENTORY_TOOL_NAMES = ("hv_list_records", "hv_count_records", "hv_get_portfolio_summary")
 
+# Small form discovery tools available directly to external models.
+FAC_FORM_TOOL_NAMES = ("hv_find_fields", "hv_get_form_context")
+
 # ERPNext reports (General Ledger, Accounts Receivable, own script reports, ...), read-only and paged.
 # FAC's own report tools return unbounded output; these wrap them with limits for external clients.
 FAC_REPORT_TOOL_NAMES = ("hv_report_list", "hv_report_requirements", "hv_run_report")
@@ -100,6 +103,7 @@ FAC_TOOL_HOOKS = [
 		*FAC_MAIL_MERGE_TOOL_NAMES,
 		*FAC_OVERVIEW_TOOL_NAMES,
 		*FAC_INVENTORY_TOOL_NAMES,
+		*FAC_FORM_TOOL_NAMES,
 		*FAC_EMAIL_TOOL_NAMES,
 	)
 ]

@@ -536,11 +536,20 @@ def _coerce_iso_date(value: Any) -> str | None:
 	return None
 
 
+def check_invoice_file_permission(file_url: str) -> None:
+	"""Authorize private-file reads before sending invoice contents to a model."""
+	file_name = frappe.db.get_value("File", {"file_url": file_url}, "name")
+	if not file_name:
+		frappe.throw("Die hochgeladene Datei wurde nicht gefunden.")
+	frappe.get_doc("File", file_name).check_permission("read")
+
+
 def extract_from_file_url(file_url: str) -> dict:
 	"""Hauptfunktion: file_url → strukturiertes Vorschlags-Dict für den Cockpit-Dialog."""
 	if not file_url:
 		raise mistral_client.MistralPermanentError("file_url fehlt.")
 
+	check_invoice_file_permission(file_url)
 	mistral_client.ensure_configured()
 
 	# 1. File laden.

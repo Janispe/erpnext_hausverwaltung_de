@@ -7,6 +7,10 @@ cd "$APP_DIR"
 FILES=(
   hausverwaltung/hausverwaltung/agent_tools/fac_contract.py
   hausverwaltung/hausverwaltung/agent_tools/fac_tools.py
+  hausverwaltung/hausverwaltung/agent_tools/fac_overview.py
+  hausverwaltung/hausverwaltung/agent_tools/form_metadata.py
+  hausverwaltung/hausverwaltung/agent_tools/form_metadata_backend.py
+  hausverwaltung/hausverwaltung/agent_tools/form_metadata_tools.py
   hausverwaltung/hausverwaltung/services/fac_native_assistant.py
   hausverwaltung/hausverwaltung/services/fac_assistant.py
   hausverwaltung/hausverwaltung/services/fac_setup.py

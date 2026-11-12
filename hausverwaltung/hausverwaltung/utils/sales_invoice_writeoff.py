@@ -8,6 +8,7 @@ from typing import Any
 import frappe
 from frappe import _
 from frappe.utils import cint, cstr, flt, getdate, nowdate
+from hausverwaltung.hausverwaltung.utils.booking_locks import lock_accounting_scope
 from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 WRITTEN_OFF_STATUS = "Abgeschrieben"
@@ -314,9 +315,26 @@ def _resolve_locked_invoice_booking_context(invoice: Any, items: list[Any]) -> d
 
 def lock_current_sales_invoice_contexts(
 	invoice_names: list[str],
+	*,
+	expected_company: str | None = None,
 ) -> dict[str, dict[str, Any]]:
 	"""Lock current invoice/item rows and derive one fail-closed booking identity."""
+	names = sorted({cstr(name).strip() for name in invoice_names if cstr(name).strip()})
+	if not names:
+		return {}
+	# Choose the scope without taking invoice locks. Recheck the locked rows
+	# below rather than acquiring a different Company after an invoice lock.
+	preflight = frappe.get_all("Sales Invoice", filters={"name": ["in", names]}, fields=["name", "company"])
+	companies_by_invoice = {row.name: cstr(row.company).strip() for row in preflight}
+	if set(companies_by_invoice) != set(names) or not all(companies_by_invoice.values()):
+		frappe.throw(_("Rechnung oder Firma für die Buchungssperre wurde nicht gefunden."))
+	companies = sorted(set(companies_by_invoice.values()))
+	if expected_company is not None and companies != [cstr(expected_company).strip()]:
+		frappe.throw(_("Journal Entry und Sales Invoice gehören nicht zur selben Firma."))
+	lock_accounting_scope(companies)
 	rows = _lock_current_sales_invoice_rows(invoice_names)
+	if any(cstr(row.get("company")).strip() != companies_by_invoice.get(name) for name, row in rows.items()):
+		frappe.throw(_("Die Firma einer Rechnung hat sich geändert. Bitte erneut versuchen."))
 	items_by_parent = _lock_current_sales_invoice_items(list(rows))
 	contexts: dict[str, dict[str, Any]] = {}
 	for invoice_name in sorted(rows):
@@ -771,8 +789,11 @@ def get_locked_sales_invoice_writeoff_entry(
 	*,
 	writeoff_account: str | None = None,
 	use_company_default_account: bool = False,
+	expected_company: str | None = None,
 ) -> dict[str, Any]:
-	locked_context = lock_current_sales_invoice_contexts([invoice_name]).get(invoice_name)
+	locked_context = lock_current_sales_invoice_contexts(
+		[invoice_name], expected_company=expected_company,
+	).get(invoice_name)
 	if not locked_context:
 		frappe.throw(_("Sales Invoice {0} wurde nicht gefunden.").format(invoice_name))
 	if not writeoff_account and use_company_default_account:
@@ -996,6 +1017,7 @@ def validate_hv_writeoff_journal_entry_before_submit(doc, method=None) -> None:
 	entry = get_locked_sales_invoice_writeoff_entry(
 		invoice_name,
 		writeoff_account=writeoff_account,
+		expected_company=cstr(doc.get("company")).strip(),
 	)
 	if cstr(_dict_value(doc, "company")).strip() != entry["company"]:
 		frappe.throw(

@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 const FRAPPE_USER = process.env.FRAPPE_USER || "Administrator";
 const FRAPPE_PASSWORD = process.env.FRAPPE_PASSWORD || "admin";
 const FRAPPE_SITE = process.env.FRAPPE_SITE || "frontend";
+const FRAPPE_COMPANY = process.env.FRAPPE_COMPANY;
 const FRAPPE_BACKEND_CONTAINER = process.env.FRAPPE_BACKEND_CONTAINER || "hausverwaltung_peters-backend-1";
 const FRAPPE_BENCH_DIR = process.env.FRAPPE_BENCH_DIR || "/home/frappe/frappe-bench";
 let testBankAccount;
@@ -101,7 +102,9 @@ function benchExecute(method, { args, kwargs } = {}) {
 }
 
 test.beforeAll(() => {
-	const setup = benchExecute("hausverwaltung.cypress_fixtures.ensure_bankimport_bank_account");
+	const setup = benchExecute("hausverwaltung.cypress_fixtures.ensure_bankimport_bank_account", {
+		kwargs: { company: FRAPPE_COMPANY },
+	});
 	testCompany = setup.company;
 	const accounts = benchExecute("frappe.get_all", { kwargs: { doctype: "Bank Account", filters: { name: setup.bank_account, company: testCompany, is_company_account: 1, disabled: 0 }, fields: ["name"], limit: 1 } });
 	expect(accounts, `Testsite requires an active Bank Account for ${testCompany}`).toHaveLength(1);

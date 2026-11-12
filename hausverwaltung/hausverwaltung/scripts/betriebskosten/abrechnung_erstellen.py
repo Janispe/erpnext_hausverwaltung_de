@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import frappe
 from frappe.utils import cint, cstr, getdate
+from hausverwaltung.hausverwaltung.utils.booking_locks import lock_accounting_scope
 
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen import (
     _prorated_festbetrag_rows,
@@ -25,10 +26,13 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen i
 )
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.operating_cost_prepaiment_calc import (
     BK_ITEM_CODE,
+    _invoice_tax_columns,
     get_bk_expected_sum_for_invoice_names,
     get_bk_paid_sum_for_invoice_names,
     get_bk_prepayment_summary,
+    require_untaxed_settlement_invoices,
 )
+from hausverwaltung.hausverwaltung.utils.rental_invoice_policy import validate_untaxed_rental_invoice
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.rounding import (
     ROUNDING_METHOD_LARGEST_REMAINDER,
     ROUNDING_METHOD_LEGACY,
@@ -319,7 +323,7 @@ def _ensure_item_with_income(item_code: str, item_name: str, company: Optional[s
 
 
 def _mietvertraege_fuer_zeitraum(wohnung: str, von: str, bis: str) -> List[dict]:
-    where = ["wohnung = %(whg)s", "von <= %(bis)s", "(bis IS NULL OR bis >= %(von)s)"]
+    where = ["wohnung = %(whg)s", "docstatus < 2", "von <= %(bis)s", "(bis IS NULL OR bis >= %(von)s)"]
     params = {"whg": wohnung, "von": getdate(von), "bis": getdate(bis)}
     return frappe.db.sql(
         f"""
@@ -414,6 +418,7 @@ def _bestehender_mietvertrag_fuer_stichtag(wohnung: str, stichtag: str) -> Optio
         SELECT name
         FROM `tabMietvertrag`
         WHERE wohnung = %(wohnung)s
+          AND docstatus < 2
           AND von <= %(stichtag)s
           AND (bis IS NULL OR bis >= %(stichtag)s)
         ORDER BY von DESC
@@ -673,6 +678,8 @@ def _require_bk_generation_authorization(
             frappe.ValidationError,
         )
 
+    # Child insert also takes this scope. Acquire it before the head row.
+    lock_accounting_scope()
     head_name = cstr(head or "").strip()
     if not head_name:
         frappe.throw(
@@ -1229,13 +1236,14 @@ def _bk_invoice_outstanding_shares(
     )
     if not names:
         return []
-    sql = """
+    sql = f"""
         SELECT si.name,
                si.is_return,
                si.company,
                si.currency,
                si.conversion_rate,
                si.debit_to,
+               {_invoice_tax_columns()},
                CASE
                    WHEN si.is_return = 1 THEN -ABS(si.outstanding_amount)
                    ELSE si.outstanding_amount
@@ -1323,8 +1331,8 @@ def _make_sales_invoice(
     si.ignore_pricing_rule = 1
     si.set("payment_terms_template", None)
     si.set("payment_schedule", [])
-    si.set("taxes_and_charges", None)
-    si.set("taxes", [])
+    # Preserve inherited tax settings so the central Sales Invoice validation
+    # reports an invalid rental configuration instead of silently clearing it.
     si.set("is_return", is_return)
     if remarks:
         si.remarks = remarks
@@ -1373,6 +1381,7 @@ def _validate_target_sales_invoice_booking_context(
     expected_return: bool,
 ) -> None:
     """Validate the inserted settlement target before it can be submitted."""
+    validate_untaxed_rental_invoice(si)
     company_currency = cstr(
         frappe.db.get_value("Company", company, "default_currency") or ""
     ).strip()
@@ -1406,7 +1415,6 @@ def _validate_target_sales_invoice_booking_context(
         else expected_amount.copy_abs()
     )
     items = list(getattr(si, "items", None) or [])
-    taxes = list(getattr(si, "taxes", None) or [])
     try:
         grand_total = _quantize_money(
             Decimal(str(getattr(si, "grand_total", 0) or 0))
@@ -1450,7 +1458,6 @@ def _validate_target_sales_invoice_booking_context(
         or base_grand_total != expected_signed
         or item_net != expected_signed
         or tax_total != Decimal("0.00")
-        or bool(taxes)
     ):
         frappe.throw(
             "Ausgleichsbeleg wurde nicht eingereicht: Company, Währung, "
@@ -1750,6 +1757,7 @@ def _validate_bk_prepayment_booking_context(
     """Fail closed before ``O`` is calculated from foreign/misconfigured SIs."""
     if not invoice_rows:
         return
+    require_untaxed_settlement_invoices(invoice_rows, label="BK")
     company_currency = cstr(
         frappe.db.get_value("Company", company, "default_currency") or ""
     ).strip()
@@ -1915,7 +1923,9 @@ def create_bk_settlement_documents(
     Offene BK-Rechnungen des Zeitraums werden immer als Bericht ausgewiesen,
     aber nur bei ausdrücklichem Opt-in per Journal Entry verrechnet.
     """
-    # Lock order is always header -> child -> contract -> source invoices.
+    # Match direct PE/JE writes before locking the head, contract or invoices.
+    lock_accounting_scope()
+    # Lock order is Company -> header -> child -> contract -> source invoices.
     # The API parameter is compatibility-only and can never override the head.
     head_doc = _get_locked_submitted_bk_head(abrechnung)
     _require_bk_settlement_head_permissions(head_doc)

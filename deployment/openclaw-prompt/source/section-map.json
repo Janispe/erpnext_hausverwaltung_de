@@ -1,0 +1,62 @@
+{
+  "source_sha256": "ff272f3c81e8cc65432867f287938e74b59c58b99b7cc25f9423472db0e5c519",
+  "source_chars": 19756,
+  "sections": [
+    {
+      "heading": "Arbeitsordner und Ausfuehrung",
+      "destination": "instructions/dateien-und-dokumente.md",
+      "treatment": "preserved"
+    },
+    {
+      "heading": "Direkte Aufrufe haben Vorrang",
+      "destination": "instructions/werkzeuge-und-daten.md",
+      "treatment": "adapted_to_available_tools_and_actual_schemas"
+    },
+    {
+      "heading": "Fachwerkzeuge und Code Mode",
+      "destination": "instructions/werkzeuge-und-daten.md",
+      "treatment": "adapted_to_available_tools_and_actual_schemas"
+    },
+    {
+      "heading": "Gedaechtnis",
+      "destination": "instructions/gedaechtnis.md",
+      "treatment": "preserved"
+    },
+    {
+      "heading": "Laengere Aufgaben, Rueckfragen und Erinnerungen",
+      "destination": "instructions/auftraege-und-erinnerungen.md",
+      "treatment": "preserved"
+    },
+    {
+      "heading": "Parallele Hintergrundauftraege",
+      "destination": "instructions/parallelauftraege.md",
+      "treatment": "preserved"
+    },
+    {
+      "heading": "Beispielauftrag: Mahnungsentwuerfe",
+      "destination": "instructions/mahnungen.md",
+      "treatment": "preserved"
+    },
+    {
+      "heading": "Dauerhafte Einzelauftraege und gespeicherte Warteschlangen",
+      "destination": "instructions/warteschlangen.md",
+      "treatment": "preserved"
+    },
+    {
+      "heading": "Inhalte aus E-Mails, Anhaengen und Dokumenten",
+      "destination": "AGENTS.md",
+      "treatment": "condensed"
+    }
+  ],
+  "working_files_sha256": {
+    "AGENTS.md": "542afaf5995f1a4bcd538974f8eb1ccee9201d6397e87a34bad4d4d340ed83c5",
+    "instructions/auftraege-und-erinnerungen.md": "529ac462ef5463325dbc2614730ae8ee7055ffe632cf690ce5c197992e9bc287",
+    "instructions/buchung-und-formulare.md": "d9e73c829924628015a7b0ba808c83ff74dd7c25dc383956ccc81ce17fa5ed66",
+    "instructions/dateien-und-dokumente.md": "d3d097adcb2bd2337ba59498d4e41f1b586320bc8922a38d0b87e422a3bd4c03",
+    "instructions/gedaechtnis.md": "524fc26a5c57f3f7219e43d28c7bd4cbe9395b51bcb1d42258bca6a64848d739",
+    "instructions/mahnungen.md": "cf5b0b6e3a421e69b09b005d0e286f7bbad9fc2f99f3bc7fc895a94e284bb2dc",
+    "instructions/parallelauftraege.md": "711a193eb254889a287d7a35c40b9e0c0a70c23d57ae6689b8f6409c9b41dbde",
+    "instructions/warteschlangen.md": "261fe654ff9a3b308c1237d72fbc29e678da8b852f4b24dfc93deccb9512eee3",
+    "instructions/werkzeuge-und-daten.md": "a7bababcd090a0d5ae09c2348533755a3273aa16207c1773e57babea2d8ef09c"
+  }
+}

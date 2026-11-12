@@ -152,7 +152,7 @@
   },
   {
    "allow_on_submit": 1,
-   "description": "Regulärer Betrag pro vollem Kalendermonat; Teilmonate werden automatisch nach Kalendertagen berechnet. Vereinbarte Festbeträge unten unter Teilmonatsmiete erfassen. Bei Pauschale/Inklusivmiete ist dies der inkludierende Mietbetrag, bei Vorauszahlung die Nettokaltmiete.",
+   "description": "Regulärer Betrag pro vollem Kalendermonat; Teilmonate werden automatisch nach Kalendertagen berechnet. Vereinbarte Festbeträge unter Teilmonatsregeln erfassen. Bei Pauschale/Inklusivmiete ist dies der inkludierende Mietbetrag, bei Vorauszahlung die Nettokaltmiete.",
    "fieldname": "miete",
    "fieldtype": "Table",
    "label": "Monatsmieten und Mietstaffeln",
@@ -161,11 +161,11 @@
   {
    "fieldname": "teilmonatsmiete_section",
    "fieldtype": "Section Break",
-   "label": "Miete für Teilmonate"
+   "label": "Teilmonate (Ein- und Auszug)"
   },
   {
    "allow_on_submit": 1,
-   "description": "Ohne Sonderregel wird automatisch anteilig gerechnet. Ein Festbetrag ersetzt die Berechnung für genau den angegebenen Zeitraum. Separate BK- und HK-Vorauszahlungen werden hier nicht geändert.",
+   "description": "Ohne Sonderregel werden Miete, BK- und HK-Vorauszahlung sowie Untermietzuschlag in Teilmonaten automatisch anteilig berechnet. Ein Festbetrag ersetzt die Berechnung der gewählten Kostenart für genau den angegebenen Zeitraum.",
    "fieldname": "miete_teilmonate",
    "fieldtype": "Table",
    "label": "Teilmonatsregeln",
@@ -175,7 +175,7 @@
    "allow_on_submit": 1,
    "fieldname": "teilmonatsmiete_festlegen",
    "fieldtype": "Button",
-   "label": "Teilmonatsmiete festlegen"
+   "label": "Teilmonat festlegen"
   },
   {
    "fieldname": "section_break_oxpt",
@@ -247,7 +247,7 @@
    "allow_on_submit": 1,
    "fieldname": "betriebskosten",
    "fieldtype": "Table",
-   "description": "Nur separat abzurechnende Betriebskostenvorauszahlungen. Bei Pauschale/Inklusivmiete keinen Betrag führen.",
+   "description": "Nur separat abzurechnende Betriebskostenvorauszahlungen. Bei Pauschale/Inklusivmiete keinen Betrag führen. Ein- und Auszugsmonate werden automatisch nach Kalendertagen anteilig berechnet; abweichende Beträge über „Teilmonat festlegen“.",
    "label": "BK-Vorauszahlung",
    "options": "Staffelmiete"
   },
@@ -256,14 +256,16 @@
    "fieldname": "heizkosten",
    "fieldtype": "Table",
    "label": "Heizkosten",
-   "options": "Staffelmiete"
+   "options": "Staffelmiete",
+   "description": "Ein- und Auszugsmonate werden automatisch nach Kalendertagen anteilig berechnet; abweichende Beträge über „Teilmonat festlegen“."
   },
   {
    "allow_on_submit": 1,
    "fieldname": "untermietzuschlag",
    "fieldtype": "Table",
    "label": "Untermietzuschlag",
-   "options": "Staffelmiete"
+   "options": "Staffelmiete",
+   "description": "Ein- und Auszugsmonate werden automatisch nach Kalendertagen anteilig berechnet; abweichende Beträge über „Teilmonat festlegen“."
   },
   {
    "fieldname": "bruttomiete",
@@ -344,13 +346,13 @@
   {
    "fieldname": "festbetraege_tab",
    "fieldtype": "Tab Break",
-   "label": "Festbetr\u00e4ge"
+   "label": "Festbeträge"
   },
   {
    "allow_on_submit": 1,
    "fieldname": "festbetraege",
    "fieldtype": "Table",
-   "label": "Festbetr\u00e4ge und Zusatzposten",
+   "label": "Festbeträge und Zusatzposten",
    "options": "Betriebskosten Festbetrag"
   },
   {
@@ -366,7 +368,7 @@
    "in_preview": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "L\u00e4uft\nVergangenheit\nZukunft",
+   "options": "Läuft\nVergangenheit\nZukunft",
    "read_only": 1
   },
   {
@@ -400,7 +402,7 @@
    "link_fieldname": "mietvertrag"
   }
  ],
- "modified": "2026-04-28 16:40:00.000000",
+ "modified": "2026-10-14 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Hausverwaltung",
  "name": "Mietvertrag",
@@ -467,7 +469,7 @@
  "states": [
   {
    "color": "Green",
-   "title": "L\u00e4uft"
+   "title": "Läuft"
   },
   {
    "color": "Gray",

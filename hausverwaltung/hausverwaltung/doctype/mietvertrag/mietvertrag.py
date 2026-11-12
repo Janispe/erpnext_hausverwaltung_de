@@ -23,8 +23,15 @@ from hausverwaltung.hausverwaltung.utils.betriebskostenregelung import (
 )
 from hausverwaltung.hausverwaltung.utils.document_naming import make_document_name
 from hausverwaltung.hausverwaltung.utils.mietberechnung import (
-	calculate_monthly_rent,
-	validate_rent_rows,
+	FIXED,
+	KOSTENART_BK,
+	KOSTENART_MIETE,
+	KOSTENARTEN,
+	STAFFEL_FIELD_BY_KOSTENART,
+	calculate_monthly_charge,
+	monthly_charge_reference_date,
+	part_month_kostenart,
+	validate_contract_charges,
 )
 from hausverwaltung.hausverwaltung.utils.mieter_name import (
 	get_hauptmieter_display_name,
@@ -34,8 +41,8 @@ from hausverwaltung.hausverwaltung.utils.display_titles import label_with_id
 
 
 @frappe.whitelist()
-def vorschau_teilmonatsmiete(document, month):
-	"""Preview the unsaved rent configuration without creating any accounting document."""
+def vorschau_teilmonatsmiete(document, month, kostenart=KOSTENART_MIETE):
+	"""Preview one Kostenart of the unsaved contract without creating any accounting document."""
 	values = frappe.parse_json(document)
 	if not isinstance(values, dict) or values.get("doctype") != "Mietvertrag":
 		frappe.throw(_("Für die Vorschau muss ein Mietvertrag übergeben werden."))
@@ -48,12 +55,61 @@ def vorschau_teilmonatsmiete(document, month):
 		frappe.throw(_("Für die Vorschau bitte zuerst den Vertragsbeginn angeben."))
 	if not month:
 		frappe.throw(_("Für die Vorschau bitte einen Monat angeben."))
-	result = calculate_monthly_rent(
+	kostenart = kostenart or KOSTENART_MIETE
+	if kostenart not in KOSTENARTEN:
+		frappe.throw(_("Unbekannte Kostenart {0}.").format(kostenart))
+	result = calculate_monthly_charge(
 		values.get("von"), values.get("bis"), month,
-		values.get("miete") or [], values.get("miete_teilmonate") or [],
+		values.get(STAFFEL_FIELD_BY_KOSTENART[kostenart]) or [], values.get("miete_teilmonate") or [],
+		kostenart=kostenart,
 	)
+	result["kostenart"] = kostenart
+	if kostenart == KOSTENART_BK:
+		rule = get_bk_regelung_from_rows(
+			values.get("betriebskostenregelungen") or [],
+			monthly_charge_reference_date(values.get("von"), month),
+		)
+		if rule != BK_REGELUNG_VORAUSZAHLUNG:
+			# The generator invoices no separate BK advance for this regime.
+			result.update(amount=0.0, segments=[], hinweis=_(
+				"Für diesen Monat gilt die Betriebskostenregelung „{0}“; es wird keine separate BK-Vorauszahlung berechnet."
+			).format(rule))
 	result["breakdown"] = result["segments"]
 	return result
+
+
+def update_contract_end(contract_name, target, expected_wohnung):
+	"""Change only the end date under the flat's interval lock; never commit.
+
+	Process consumers must use this operation instead of bypassing the normal
+	interval/charge guards with db.set_value. The caller owns the transaction.
+	"""
+	if not contract_name or not expected_wohnung or not target:
+		frappe.throw(_("Mietvertrag, Wohnung und Auszugsdatum müssen angegeben werden."))
+	end = getdate(target)
+	locked = frappe.db.sql(
+		"SELECT name FROM `tabWohnung` WHERE name = %s FOR UPDATE", (expected_wohnung,)
+	)
+	if not locked:
+		frappe.throw(_("Die ausgewählte Wohnung wurde nicht gefunden."))
+	contract = frappe.get_doc("Mietvertrag", contract_name, for_update=True)
+	contract.check_permission("write")
+	if contract.wohnung != expected_wohnung or int(contract.docstatus or 0) == 2:
+		frappe.throw(_("Der Mietvertrag gehört nicht zur ausgewählten Wohnung oder ist storniert."))
+	if not contract.von or end < getdate(contract.von):
+		frappe.throw(_("Das Auszugsdatum darf nicht vor dem Vertragsbeginn liegen."))
+	previous = contract.bis
+	contract.bis = end
+	contract._validate_wohnung_contract_period()
+	validate_contract_charges(
+		contract.von, end,
+		{kostenart: contract.get(fieldname) or [] for kostenart, fieldname in STAFFEL_FIELD_BY_KOSTENART.items()},
+		contract.get("miete_teilmonate") or [],
+	)
+	# Even an unchanged date must pass all checks, including current conflicts.
+	if not previous or getdate(previous) != end:
+		frappe.db.set_value("Mietvertrag", contract.name, "bis", end, update_modified=False)
+	return end
 
 
 class Mietvertrag(Document):
@@ -163,6 +219,19 @@ class Mietvertrag(Document):
 				if amount_start >= start and (end is None or amount_start <= end):
 					frappe.throw(
 						_(f"Die BK-Vorauszahlung ab {amount_start} liegt im Zeitraum der Regelung '{rule}'.")
+					)
+			for part_month in getattr(self, "miete_teilmonate", None) or []:
+				if (
+					part_month_kostenart(part_month) != KOSTENART_BK
+					or part_month.get("berechnung") != FIXED
+					or not part_month.get("von")
+					or float(part_month.get("betrag") or 0) <= 0.004
+				):
+					continue
+				part_start = getdate(part_month.von)
+				if part_start >= start and (end is None or part_start <= end):
+					frappe.throw(
+						_(f"Der BK-Festbetrag ab {part_start} liegt im Zeitraum der Regelung '{rule}'.")
 					)
 
 	def autoname(self) -> None:
@@ -438,9 +507,17 @@ class Mietvertrag(Document):
 			if row.kontakt and row.kontakt not in allowed:
 				frappe.throw(_(f"Kontakt {row.kontakt} ist kein Vertragspartner."))
 
-		validate_rent_rows(
-			self.von, self.bis, self.miete or [], getattr(self, "miete_teilmonate", None) or []
+		validate_contract_charges(
+			self.von,
+			self.bis,
+			{
+				kostenart: getattr(self, fieldname, None) or []
+				for kostenart, fieldname in STAFFEL_FIELD_BY_KOSTENART.items()
+			},
+			getattr(self, "miete_teilmonate", None) or [],
 		)
+		for row in getattr(self, "miete_teilmonate", None) or []:
+			row.kostenart = part_month_kostenart(row)
 		self._sort_staffel_table_by_von("miete_teilmonate")
 
 	def _validate_creation_via_process(self) -> None:

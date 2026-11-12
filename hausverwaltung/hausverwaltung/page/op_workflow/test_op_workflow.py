@@ -7,6 +7,47 @@ import frappe
 from hausverwaltung.hausverwaltung.page.op_workflow import op_workflow
 
 
+class TestDunningCreationSafeguards(unittest.TestCase):
+	def _invoice(self, **values):
+		return frappe._dict({
+			"name": "SI-1", "docstatus": 1, "outstanding_amount": 600,
+			"due_date": "2026-10-01", "customer": "CUST-1", "company": "COMP-1",
+			"check_permission": MagicMock(), **values,
+		})
+
+	def test_single_and_bulk_apis_refuse_future_invoices_before_inserting(self):
+		with patch.object(op_workflow.frappe, "has_permission", return_value=True), \
+			patch.object(op_workflow.frappe, "get_doc", return_value=self._invoice(due_date="2026-11-01")), \
+			patch.object(op_workflow.frappe.db, "get_value", return_value="SI-1"), \
+			patch.object(op_workflow.frappe, "new_doc") as new_doc:
+			with self.assertRaisesRegex(frappe.ValidationError, "noch nicht überfällig"):
+				op_workflow.create_dunning("SI-1", "Mahnung", posting_date="2026-10-16")
+			result = op_workflow.create_bulk_dunning({"CUST-1": ["SI-1"]}, posting_date="2026-10-16")
+		new_doc.assert_not_called()
+		self.assertEqual(result["created"], [])
+		self.assertIn("noch nicht überfällig", result["errors"][0]["msg"])
+
+	def test_repeated_single_and_bulk_requests_cannot_create_another_draft(self):
+		with patch.object(op_workflow.frappe, "has_permission", return_value=True), \
+			patch.object(op_workflow.frappe, "get_doc", return_value=self._invoice()), \
+			patch.object(op_workflow.frappe.db, "get_value", return_value="SI-1"), \
+			patch.object(op_workflow.frappe.db, "sql", return_value=[frappe._dict(name="DUN-EXISTING")]), \
+			patch.object(op_workflow.frappe, "new_doc") as new_doc:
+			with self.assertRaisesRegex(frappe.ValidationError, "DUN-EXISTING"):
+				op_workflow.create_dunning("SI-1", "Mahnung", posting_date="2026-10-16")
+			result = op_workflow.create_bulk_dunning({"CUST-1": ["SI-1"]}, posting_date="2026-10-16")
+		new_doc.assert_not_called()
+		self.assertEqual(result["created"], [])
+		self.assertIn("DUN-EXISTING", result["errors"][0]["msg"])
+
+	def test_bulk_snapshot_conflict_propagates_for_request_rollback(self):
+		with patch.object(op_workflow.frappe, "has_permission", return_value=True), \
+			patch.object(op_workflow.frappe.db, "get_value", return_value="SI-1"), \
+			patch.object(op_workflow, "lock_dunning_invoices", side_effect=frappe.QueryDeadlockError), \
+			self.assertRaises(frappe.QueryDeadlockError):
+			op_workflow.create_bulk_dunning({"CUST-1": ["SI-1"]}, posting_date="2026-10-16")
+
+
 class TestInvoiceContractNames(unittest.TestCase):
 	def test_monthly_id_preserves_contract_names_with_internal_separators(self):
 		for contract in ("G12 | VH | EG links | ab: 2025-01-01", "MV-2026-00001"):

@@ -7,7 +7,7 @@ from typing import Any
 
 import frappe
 from frappe import _
-from frappe.utils import cint, flt, getdate, nowdate
+from frappe.utils import cint, flt, getdate
 
 from hausverwaltung.hausverwaltung.utils.report_helpers import enrich_link_titles
 from hausverwaltung.hausverwaltung.utils.sales_invoice_writeoff import (
@@ -126,7 +126,7 @@ def execute(filters=None):
 	transactions.extend(_build_settlement_transactions(display_invoices, raw_invoices, filters))
 	transactions.extend(journal_settlements)
 	transactions.extend(_build_payment_entry_advance_transactions(raw_invoices, filters, journal_allocations))
-	transactions = _merge_payment_entry_mixed_advance_transactions(transactions)
+	transactions = _merge_payment_entry_mixed_advance_transactions(transactions, filters)
 	# Stand-alone Receivable-Bewegungen auf Mieterforderungen ohne
 	# SI-Referenz — z.B. nachgebuchte Mahngebühren oder Korrektur-JEs.
 	transactions.extend(standalone_transactions)
@@ -693,8 +693,14 @@ def _build_settlement_transactions(
 
 def _merge_payment_entry_mixed_advance_transactions(
 	transactions: list[dict[str, Any]],
+	filters=None,
 ) -> list[dict[str, Any]]:
-	"""Zeigt Zahlung + Rest-Vorauszahlung desselben Payment Entry in einer Zeile."""
+	"""Merge mixed payments only within the active report date.
+
+	In value-date mode, invoice allocations retain their invoice value date;
+	any unallocated advance retains its posting date. Merging across these
+	dates would also move amounts across report periods and opening balances.
+	"""
 	advance_vouchers = {
 		transaction.get("belegnummer")
 		for transaction in transactions
@@ -704,8 +710,7 @@ def _merge_payment_entry_mixed_advance_transactions(
 	if not advance_vouchers:
 		return transactions
 
-	merged_by_voucher: dict[str, dict[str, Any]] = {}
-	order: list[str] = []
+	merged_by_date: dict[tuple, dict[str, Any]] = {}
 	out: list[dict[str, Any]] = []
 
 	for transaction in transactions:
@@ -714,7 +719,8 @@ def _merge_payment_entry_mixed_advance_transactions(
 			out.append(transaction)
 			continue
 
-		merged = merged_by_voucher.get(voucher_no)
+		merge_key = (voucher_no, _transaction_report_date(transaction, filters or {}))
+		merged = merged_by_date.get(merge_key)
 		if merged is None:
 			merged = {
 				**transaction,
@@ -727,8 +733,7 @@ def _merge_payment_entry_mixed_advance_transactions(
 				"_open_summary_parts": [],
 				"_has_regular_payment": False,
 			}
-			merged_by_voucher[voucher_no] = merged
-			order.append(voucher_no)
+			merged_by_date[merge_key] = merged
 
 		merged.setdefault("_open_summary_parts", []).append(_open_summary_part(transaction))
 
@@ -753,8 +758,7 @@ def _merge_payment_entry_mixed_advance_transactions(
 			merged["art"] = "Zahlung"
 			merged["beschreibung"] = transaction.get("beschreibung") or merged.get("beschreibung")
 
-	for voucher_no in order:
-		merged = merged_by_voucher[voucher_no]
+	for merged in merged_by_date.values():
 		if not merged.pop("_has_regular_payment", False):
 			merged["art"] = "Vorauszahlung"
 		out.append(merged)
@@ -793,15 +797,17 @@ def _build_standalone_receivable_transactions(
 	for invoice in raw_invoices.values():
 		covered_voucher_keys.add(("Sales Invoice", invoice.name))
 
+	ledger_filters = {
+		"account": ("in", list(receivable_accounts)),
+		"party_type": "Customer",
+		"party": filters.customer,
+		"is_cancelled": 0,
+	}
+	if not filters.get("sortieren_nach_wertstellungsdatum"):
+		ledger_filters["posting_date"] = ("<=", filters.to_date)
 	gle_rows = frappe.get_all(
 		"GL Entry",
-		filters={
-			"account": ("in", list(receivable_accounts)),
-			"party_type": "Customer",
-			"party": filters.customer,
-			"is_cancelled": 0,
-			"posting_date": ("<=", filters.to_date),
-		},
+		filters=ledger_filters,
 		fields=[
 			"posting_date",
 			"voucher_type",
@@ -852,6 +858,10 @@ def _build_standalone_receivable_transactions(
 		key = (row.voucher_type, row.voucher_no)
 		if key not in standalone_voucher_keys:
 			continue
+		info = voucher_remarks.get(key, {})
+		value_date = getdate(info.get("custom_wertstellungsdatum") or row.posting_date)
+		if filters.get("sortieren_nach_wertstellungsdatum") and value_date > filters.to_date:
+			continue
 
 		debit = flt(row.debit)
 		credit = flt(row.credit)
@@ -874,14 +884,13 @@ def _build_standalone_receivable_transactions(
 		amounts = _round_amounts(amounts)
 
 		is_charge = net_charge > 0
-		info = voucher_remarks.get(key, {})
 		default_label = _("Forderung") if is_charge else _get_voucher_label(row.voucher_type)
 		description = _build_voucher_suffix(row.voucher_type, info) or default_label
 
 		transactions.append(
 			{
 				"date": getdate(row.posting_date),
-				"wertstellungsdatum": getdate(row.posting_date),
+				"wertstellungsdatum": value_date,
 				"sort_order": 15 if is_charge else 25,
 				"art": "Forderung" if is_charge else _get_voucher_label(row.voucher_type),
 				"belegart": row.voucher_type,
@@ -935,18 +944,20 @@ def _build_standalone_settlements(standalone_transactions, filters):
 			claims.setdefault((transaction["belegart"], transaction["belegnummer"]), []).append(transaction)
 	if not claims:
 		return [], {}
+	ledger_filters = {
+		"company": filters.company,
+		"party_type": "Customer",
+		"party": filters.customer,
+		"voucher_type": "Payment Entry",
+		"against_voucher_type": ("in", ["Journal Entry", "Sales Invoice"]),
+		"against_voucher_no": ("in", [name for dt, name in claims]),
+		"delinked": 0,
+	}
+	if not filters.get("sortieren_nach_wertstellungsdatum"):
+		ledger_filters["posting_date"] = ("<=", filters.to_date)
 	rows = frappe.get_all(
 		"Payment Ledger Entry",
-		filters={
-			"company": filters.company,
-			"party_type": "Customer",
-			"party": filters.customer,
-			"voucher_type": "Payment Entry",
-			"against_voucher_type": ("in", ["Journal Entry", "Sales Invoice"]),
-			"against_voucher_no": ("in", [name for dt, name in claims]),
-			"delinked": 0,
-			"posting_date": ("<=", filters.to_date),
-		},
+		filters=ledger_filters,
 		fields=[
 			"posting_date",
 			"voucher_type",
@@ -977,7 +988,7 @@ def _build_standalone_settlements(standalone_transactions, filters):
 		transactions.append(
 			{
 				"date": getdate(row.posting_date),
-				"wertstellungsdatum": getdate(row.posting_date),
+				"wertstellungsdatum": getdate(sources[0].get("wertstellungsdatum") or sources[0]["open_date"]),
 				"open_date": sources[0]["open_date"],
 				"sort_order": 26,
 				"art": "Auszahlung" if amount > 0 else "Zahlung",
@@ -1254,6 +1265,10 @@ def _fetch_voucher_remarks(payment_ledger_rows) -> dict[tuple[str, str], dict]:
 	out: dict[tuple[str, str], dict] = {}
 	for voucher_type, names in names_by_type.items():
 		fields = ["name"] + _VOUCHER_INFO_FIELDS[voucher_type]
+		if voucher_type in {"Sales Invoice", "Journal Entry"} and frappe.get_meta(voucher_type).has_field(
+			"custom_wertstellungsdatum"
+		):
+			fields.append("custom_wertstellungsdatum")
 		if voucher_type == "Journal Entry" and frappe.get_meta(voucher_type).has_field(
 			"custom_mieterkonto_kategorie"
 		):

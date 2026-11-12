@@ -1174,10 +1174,28 @@ class TestKreditvertragIntegration(unittest.TestCase):
 		cls.company = _find_test_company()
 		if not cls.company:
 			raise unittest.SkipTest("Keine Company auf der Site — Integration-Tests skipped.")
+		frappe.db.savepoint("kv_test_masters")
+		cls.addClassCleanup(frappe.db.rollback, save_point="kv_test_masters")
 		cls.darlehenskonto = _find_account(cls.company, "Liability", exclude_account_type="Payable")
 		cls.zinsaufwandskonto = _find_account(cls.company, "Expense")
 		cls.bank_account = _find_bank_account(cls.company)
 		cls.supplier = _find_supplier()
+		if not cls.bank_account:
+			bank_gl = frappe.db.get_value("Account", {
+				"company": cls.company, "account_type": "Bank", "is_group": 0, "disabled": 0,
+			}, "name")
+			if bank_gl:
+				bank = frappe.get_doc({"doctype": "Bank", "bank_name": "_Test Loan Bank " + frappe.generate_hash(length=8)}).insert(ignore_permissions=True)
+				cls.bank_account = frappe.get_doc({
+					"doctype": "Bank Account", "account_name": "_Test Loan Account " + frappe.generate_hash(length=8),
+					"bank": bank.name, "is_company_account": 1, "company": cls.company, "account": bank_gl,
+				}).insert(ignore_permissions=True).name
+		if not cls.supplier:
+			cls.supplier = frappe.get_doc({
+				"doctype": "Supplier", "supplier_name": "_Test Loan Supplier " + frappe.generate_hash(length=8),
+				"supplier_type": "Company",
+				"supplier_group": frappe.db.get_value("Supplier Group", {"is_group": 0}, "name") or "All Supplier Groups",
+			}).insert(ignore_permissions=True).name
 		if not all([cls.darlehenskonto, cls.zinsaufwandskonto, cls.bank_account, cls.supplier]):
 			raise unittest.SkipTest(
 				f"Site-Daten unvollständig (darlehenskonto={cls.darlehenskonto}, "
@@ -1243,7 +1261,7 @@ class TestKreditvertragIntegration(unittest.TestCase):
 			anfangs_restschuld=1047.31,
 		)
 		rate = kv.plan[0]
-		je = _create_journal_entry_for_rate(kv, rate, posting_date=datetime.date(2030, 4, 30))
+		je = _create_journal_entry_for_rate(kv, rate, posting_date=rate.faelligkeitsdatum)
 		round_off_account = frappe.db.get_value("Company", self.company, "round_off_account")
 
 		self.assertTrue(round_off_account)
@@ -1414,6 +1432,31 @@ class TestKreditvertragIntegration(unittest.TestCase):
 		kv.reload()
 		self.assertEqual(len(kv.plan), 1)
 		self.assertEqual(str(kv.plan[0].faelligkeitsdatum), "2027-01-31")
+
+	def test_generator_replace_keeps_booked_rate_and_journal_link(self):
+		kv = self._make_kv()
+		rate_name = kv.plan[0].name
+		journal = self._book_rate(kv, kv.plan[0])
+		# The original browser object predates the db_set link, like a bank match
+		# that finishes while the user has the contract open.
+		with self.assertRaisesRegex(frappe.ValidationError, "darf nicht ersetzt"):
+			kv.plan_vorbelegen("2027-01-01", "2027-02-01", 3, 300, replace=1)
+		kv.reload()
+		self.assertEqual(kv.plan[0].name, rate_name)
+		self.assertEqual(kv.plan[0].journal_entry, journal.name)
+		self.assertEqual(frappe.db.get_value("Journal Entry", journal.name, "docstatus"), 1)
+
+	def test_csv_replace_keeps_booked_rate_and_journal_link(self):
+		kv = self._make_kv()
+		rate_name = kv.plan[0].name
+		journal = self._book_rate(kv, kv.plan[0])
+		file_url = self._upload_csv("datum;zinsanteil;tilgungsanteil\n2027-01-31;10;100\n")
+		with self.assertRaisesRegex(frappe.ValidationError, "darf nicht ersetzt"):
+			kv.plan_csv_import(file_url, mode="replace")
+		kv.reload()
+		self.assertEqual(kv.plan[0].name, rate_name)
+		self.assertEqual(kv.plan[0].journal_entry, journal.name)
+		self.assertEqual(frappe.db.get_value("Journal Entry", journal.name, "docstatus"), 1)
 
 	def test_plan_csv_import_invalid_file_url_throws(self):
 		"""Nicht-existente file_url → klare Fehlermeldung (nicht silently fail)."""

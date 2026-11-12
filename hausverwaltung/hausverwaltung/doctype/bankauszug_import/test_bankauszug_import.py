@@ -16,6 +16,17 @@ _lock_bank_booking_scope = bi._lock_bank_booking_scope
 
 class TestBankauszugImport(unittest.TestCase):
     def setUp(self):
+        # flt(..., 2) reads the rounding method lazily from System Settings.
+        # Load it before frappe.db is patched, independent of test order.
+        frappe.get_system_settings("rounding_method")
+        # This class uses fake import documents. Status persistence must not
+        # escape those fakes and write to a connected site.
+        status_patcher = patch.object(bi.frappe.db, "set_value")
+        status_patcher.start()
+        self.addCleanup(status_patcher.stop)
+        accounting_patcher = patch.object(bi, "lock_accounting_scope")
+        self.accounting_lock = accounting_patcher.start()
+        self.addCleanup(accounting_patcher.stop)
         self._scope_lock_patcher = patch.object(bi, "_lock_bank_booking_scope")
         self.scope_lock = self._scope_lock_patcher.start()
         self.addCleanup(self._scope_lock_patcher.stop)
@@ -43,7 +54,8 @@ class TestBankauszugImport(unittest.TestCase):
             "sql",
             side_effect=[
                 [("Bank A",)],
-                [("Bank A",), ("Bank B",)],
+                [("Bank A", "Company A"), ("Bank B", "Company B")],
+                [("Bank A", "Company A"), ("Bank B", "Company B")],
                 [("IMP-1", "Bank A")],
                 [("ROW-1",)],
             ],
@@ -54,12 +66,134 @@ class TestBankauszugImport(unittest.TestCase):
                 additional_bank_accounts=["Bank B"],
             )
 
-        account_lock = sql.call_args_list[1]
+        self.accounting_lock.assert_called_once()
+        self.assertEqual(set(self.accounting_lock.call_args.args[0]), {"Company A", "Company B"})
+        account_lock = sql.call_args_list[2]
         self.assertIn("WHERE name IN", account_lock.args[0])
         self.assertIn("ORDER BY name", account_lock.args[0])
         self.assertIn("FOR UPDATE", account_lock.args[0])
         self.assertEqual(account_lock.args[1], ("Bank A", "Bank B"))
         self.assertNotIn("is_company_account = 1", account_lock.args[0])
+
+    def test_identical_csv_payments_are_preserved_and_reimported_one_to_one(self):
+        stored = []
+        meta = self._FakeMeta(["date", "deposit", "withdrawal", "description", "bank_party_iban"])
+
+        def lookup(query, values, **kwargs):
+            excluded = set(values.get("exclude_names", ()))
+            return [item for item in stored if item["name"] not in excluded]
+
+        def insert(doc, row, *args):
+            name = f"BT-{len(stored) + 1}"
+            stored.append({"name": name, "description": row.verwendungszweck})
+            return frappe._dict(name=name), True
+
+        with (
+            patch.object(bi.frappe, "get_meta", return_value=meta),
+            patch.object(bi.frappe.db, "sql", side_effect=lookup),
+            patch.object(bi.frappe.db, "savepoint"),
+            patch.object(bi, "_insert_bank_transaction_from_row", side_effect=insert),
+            patch.object(bi, "_apply_rules_to_created_bank_transaction", return_value={}),
+        ):
+            for attempt in range(2):
+                rows = [self._FakeRow(name=f"ROW-{attempt}-{i}", verwendungszweck="Miete") for i in range(2)]
+                for i, row in enumerate(rows):
+                    row.idx = i + 1
+                    row.betrag = 50
+                doc = self._FakeDoc(f"IMP-{attempt}", rows)
+                outcomes = [bi._process_bankimport_row(
+                    doc, row, meta=meta, fieldnames=set(), cutoff_date=None, skip_auto_match=True,
+                ) for row in rows]
+                self.assertEqual([row.bank_transaction for row in rows], ["BT-1", "BT-2"])
+                self.assertEqual(len(stored), 2)
+                self.assertEqual(sum(row.betrag for row in rows), 100)
+                self.assertTrue(all(outcome.get("created" if attempt == 0 else "existing") for outcome in outcomes))
+
+    def test_bank_id_has_priority_over_exclusion_and_description(self):
+        meta = self._FakeMeta(["date", "deposit", "withdrawal", "description", "transaction_id"])
+        with patch.object(bi.frappe, "get_meta", return_value=meta), patch.object(
+            bi.frappe.db, "sql", return_value=[{
+                "name": "BT-ID", "date": "2026-10-10", "deposit": 50, "description": "Alter Text",
+            }],
+        ) as sql:
+            result = bi._find_existing_bank_transaction(
+                bank_account="BANK-1", buchungstag="2026-10-10", betrag=50,
+                richtung="Eingang", verwendungszweck="Neuer Text", transaction_id="ID-1",
+                exclude_names={"BT-ID"}, strict=True,
+            )
+        self.assertEqual(result, "BT-ID")
+        self.assertEqual(sql.call_args.args[1]["transaction_id"], "ID-1")
+        self.assertNotIn("exclude_names", sql.call_args.args[1])
+
+    def test_csv_preview_preserves_bank_ids_and_matches_identical_rows_one_to_one(self):
+        for bank_ids in (("", ""), ("ID-1", "ID-2")):
+            with self.subTest(bank_ids=bank_ids):
+                doc = self._FakeDoc("IMP-PREVIEW", [])
+                doc.csv_file, doc.encoding, doc.delimiter = "test.csv", "auto", ";"
+                doc.set = lambda key, value: setattr(doc, key, value)
+                doc.append = lambda key, value: getattr(doc, key).append(frappe._dict(value))
+                csv_text = "Buchungstag;Betrag;IBAN;Verwendungszweck;Transaktions-ID\n" + "".join(
+                    f"10.10.2026;50,00;DE123;Miete;{bank_id}\n" for bank_id in bank_ids
+                )
+                candidates = [
+                    {"name": f"BT-{i}", "description": "Miete", "date": "2026-10-10", "deposit": 50}
+                    for i in (1, 2)
+                ]
+
+                def lookup(query, values, **kwargs):
+                    if values.get("transaction_id"):
+                        return [candidates[int(values["transaction_id"][-1]) - 1]]
+                    return [item for item in candidates if item["name"] not in values.get("exclude_names", ())]
+
+                with (
+                    patch.object(bi.frappe, "get_doc", return_value=doc),
+                    patch.object(bi, "_decode_file", return_value=csv_text),
+                    patch.object(bi, "match_party_for_row", return_value=self._party_match()),
+                    patch.object(bi.frappe, "get_meta", return_value=self._FakeMeta([
+                        "date", "deposit", "withdrawal", "description", "transaction_id",
+                    ])),
+                    patch.object(bi.frappe.db, "sql", side_effect=lookup),
+                    patch.object(bi.frappe.db, "get_value", return_value=None),
+                    patch.object(bi, "_auto_create_transactions_for_ready_rows", return_value={}),
+                    patch.object(bi, "_recompute_doc_status"),
+                ):
+                    result = bi.parse_csv(doc.name)
+                self.assertEqual([row["bank_transaction"] for row in result["rows"]], ["BT-1", "BT-2"])
+                self.assertEqual([row["transaction_id"] for row in result["rows"]], list(bank_ids))
+
+    def test_conflicting_bank_id_fails_closed(self):
+        meta = self._FakeMeta(["date", "deposit", "withdrawal", "transaction_id"])
+        with patch.object(bi.frappe, "get_meta", return_value=meta), patch.object(
+            bi.frappe.db, "sql", return_value=[{"name": "BT-ID", "date": "2026-10-10", "deposit": 75}],
+        ):
+            with self.assertRaises(frappe.ValidationError):
+                bi._find_existing_bank_transaction(
+                    bank_account="BANK-1", buchungstag="2026-10-10", betrag=50,
+                    richtung="Eingang", transaction_id="ID-1", strict=True,
+                )
+
+    def test_distinct_payment_confirmation_rejects_retry_and_bank_id(self):
+        row = self._FakeRow(name="ROW-1")
+        row.bank_transaction = "BT-OLD"
+        row.row_status = "schon vorhanden"
+        doc = self._FakeDoc("IMP-1", [row])
+        with patch.object(bi.frappe, "get_doc", return_value=doc), patch.object(
+            bi, "_process_bankimport_row", return_value={"created": "BT-NEW"},
+        ) as process, patch.object(bi.frappe, "get_meta", return_value=self._FakeMeta([])), patch.object(
+            bi.frappe.db, "savepoint",
+        ), patch.object(bi, "_bankimport_start_date", return_value=None), patch.object(
+            bi, "_recompute_doc_status",
+        ), patch.object(bi, "_refresh_and_persist_saldo"):
+            row.transaction_id = "ID-1"
+            with self.assertRaises(frappe.ValidationError):
+                bi.create_distinct_bank_transaction_for_row("IMP-1", row.name, "BT-OLD")
+            row.transaction_id = None
+            result = bi.create_distinct_bank_transaction_for_row("IMP-1", row.name, "BT-OLD")
+            self.assertEqual(result["bank_transaction"], "BT-NEW")
+            self.assertTrue(process.call_args.kwargs["force_new"])
+            with self.assertRaises(frappe.ValidationError):
+                bi.create_distinct_bank_transaction_for_row("IMP-1", row.name, "BT-OLD")
+            process.assert_called_once()
 
     class _FakeRow:
         def __init__(
@@ -533,6 +667,81 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertEqual(bt.party, "CUST-NEW")
         self.assertEqual(res["changes"][0]["from_party"], "SUP-OLD")
 
+    def test_relink_preserves_booked_and_externally_reconciled_identities(self):
+        states = [
+            {"payment_entry": "PE-BOOKED"},
+            {"journal_entry": "JE-BOOKED"},
+            {"payment_document": "PE-BOOKED"},
+            {"customer_payments": '[{"customer":"CUST-B","payment_entry":"PE-B"}]'},
+            {"bt_payment_entries": [frappe._dict(payment_entry="PE-EXTERNAL")]},
+            {"bt_allocated_amount": 10},
+            {"bt_status": "Reconciled"},
+        ]
+        for state in states:
+            with self.subTest(state=state):
+                row = self._FakeRow(name="ROW-BOOKED", iban="DE-OLD-MAPPING")
+                row.party_type, row.party, row.bank_transaction = "Customer", "CUST-B", "BT-BOOKED"
+                bt = self._FakeBT("BT-BOOKED", "Customer", "CUST-B")
+                for key, value in state.items():
+                    setattr(bt if key.startswith("bt_") else row, key.removeprefix("bt_"), value)
+                doc = self._FakeDoc("IMP-BOOKED", [row])
+
+                def get_doc(doctype, name, **kwargs):
+                    self.assertTrue(kwargs.get("for_update"))
+                    return doc if doctype == "Bankauszug Import" else bt
+
+                with patch.object(bi.frappe, "get_doc", side_effect=get_doc), \
+                     patch.object(bi, "match_party_for_row", return_value=self._party_match("Customer", "CUST-A")) as match, \
+                     patch.object(bi, "_recompute_doc_status"):
+                    result = bi.relink_parties_for_all_rows(doc.name)
+                    direct_result = bi._update_bt_party_from_row(row)
+
+                self.assertEqual((row.party, bt.party), ("CUST-B", "CUST-B"))
+                self.assertEqual(bt.values, {})
+                self.assertFalse(doc.saved)
+                self.assertEqual(result["skipped"], 1)
+                self.assertEqual(result["updated"], 0)
+                self.assertFalse(direct_result["updated"])
+                match.assert_not_called()
+
+    def test_assign_party_rejects_booked_row_before_changing_bank_mapping(self):
+        for assign in (bi.apply_party_to_row_and_relink, bi.create_party_and_bank_for_row):
+            with self.subTest(assign=assign.__name__):
+                row = self._FakeRow(name="ROW-BOOKED", iban="DE-OLD-MAPPING")
+                row.party_type, row.party, row.payment_entry = "Customer", "CUST-B", "PE-B"
+                doc = self._FakeDoc("IMP-BOOKED", [row])
+                with patch.object(bi.frappe, "get_doc", return_value=doc), \
+                     patch.object(bi, "_get_or_create_party_bank_account") as link_bank, \
+                     patch.object(bi, "_create_party_if_missing") as create_party, \
+                     self.assertRaisesRegex(frappe.ValidationError, "gebuchten oder abgestimmten"):
+                    assign(doc.name, row.name, "Customer", "CUST-A")
+                self.assertEqual(row.party, "CUST-B")
+                self.assertFalse(doc.saved)
+                link_bank.assert_not_called()
+                create_party.assert_not_called()
+
+    def test_assign_party_propagation_preserves_other_reconciled_row(self):
+        row = self._FakeRow(name="ROW-NEW", iban="DE-SHARED")
+        booked = self._FakeRow(name="ROW-EXTERNAL", iban="DE-SHARED")
+        booked.party_type, booked.party, booked.bank_transaction = "Customer", "CUST-B", "BT-EXTERNAL"
+        bt = self._FakeBT("BT-EXTERNAL", "Customer", "CUST-B")
+        bt.payment_entries = [frappe._dict(payment_entry="PE-B")]
+        doc = self._FakeDoc("IMP-PROPAGATE", [row, booked])
+
+        def get_doc(doctype, name, **kwargs):
+            return doc if doctype == "Bankauszug Import" else bt
+
+        with patch.object(bi.frappe, "get_doc", side_effect=get_doc), \
+             patch.object(bi, "_get_or_create_party_bank_account", return_value=(None, False)), \
+             patch.object(bi, "match_party_for_row", return_value=self._party_match("Customer", "CUST-A")), \
+             patch.object(bi, "_auto_create_transaction_for_ready_row", return_value={}), \
+             patch.object(bi, "_recompute_doc_status"):
+            bi.apply_party_to_row_and_relink(doc.name, row.name, "Customer", "CUST-A")
+
+        self.assertEqual(row.party, "CUST-A")
+        self.assertEqual((booked.party, bt.party), ("CUST-B", "CUST-B"))
+        self.assertEqual(bt.values, {})
+
     def test_relink_all_skips_without_bank_transaction(self):
         row = self._FakeRow(name="ROW-C", iban="DE3")
         row.bank_transaction = None
@@ -764,6 +973,37 @@ class TestBankauszugImport(unittest.TestCase):
         self.assertEqual([row.idx for row in doc.rows], [1, 2, 3, 4])
         self.assertTrue(doc.saved)
         self.assertTrue(doc.ignore_permissions)
+
+    def test_sort_reads_booking_links_after_waiting_for_booking_scope(self):
+        stored = {"payment_entry": None, "payment_document": None, "row_status": None}
+        events = []
+
+        def finish_concurrent_booking(docname):
+            events.append("booking_scope")
+            stored.update(payment_entry="PE-CONCURRENT", payment_document="PE-CONCURRENT", row_status="success")
+
+        def get_doc(doctype, name, **kwargs):
+            events.append("read")
+            self.assertTrue(kwargs.get("for_update"))
+            row = self._FakeRow(name="ROW-CONCURRENT")
+            for field, value in stored.items():
+                setattr(row, field, value)
+            doc = self._FakeDoc(name, [row])
+
+            def save(**kwargs):
+                events.append("save")
+                stored.update({field: getattr(row, field) for field in stored})
+            doc.save = save
+            return doc
+
+        self.scope_lock.side_effect = finish_concurrent_booking
+        with patch.object(bi.frappe, "get_doc", side_effect=get_doc):
+            bi.sort_import_rows("IMP-CONCURRENT", "buchungstag")
+
+        self.assertEqual(events, ["booking_scope", "read", "save"])
+        self.assertEqual(stored, {
+            "payment_entry": "PE-CONCURRENT", "payment_document": "PE-CONCURRENT", "row_status": "success",
+        })
 
     def test_sort_import_rows_rejects_unknown_sorting_without_save(self):
         doc = self._FakeDoc("IMP-SORT-BAD", [self._FakeRow(name="ROW-A")])
@@ -1060,6 +1300,8 @@ class TestBankauszugImport(unittest.TestCase):
             iban=row.iban,
             verwendungszweck=row.verwendungszweck,
             strict=True,
+            transaction_id=None,
+            exclude_names=set(),
         )
         new_doc.assert_not_called()
         rollback.assert_called_once_with(save_point="bankimport_create_transaction_row")
@@ -2921,17 +3163,186 @@ class TestBankauszugImport(unittest.TestCase):
         recompute.assert_called_once_with("IMP-TRANSFER-2")
         refresh.assert_called_once_with("IMP-TRANSFER-2")
 
-    def test_internal_transfer_counterpart_ambiguity_is_blocked(self):
-        row = self._FakeRow(name="ROW-TRANSFER-AMB", iban="")
+    def _own_transfer_counterpart_fixture(self):
+        row = self._FakeRow(name="ROW-TRANSFER", iban="de22 ")
         row.betrag = 250.0
         row.richtung = "Ausgang"
-        bt = frappe._dict(name="BT-TRANSFER-AMB")
+        bt = frappe._dict(name="BT-TRANSFER", bank_account="BA-SOURCE", bank_party_iban="DE22")
+        banks = {
+            "BA-SOURCE": frappe._dict(name="BA-SOURCE", iban="DE11"),
+            "BA-OTHER": frappe._dict(name="BA-OTHER", iban="DE22"),
+        }
+        candidate = frappe._dict(
+            name="ROW-COUNTERPART", parent="IMP-COUNTERPART", bank_transaction="BT-COUNTERPART",
+            iban="de11 ", bt_iban="DE11", payment_entry=None,
+        )
+        return row, bt, banks, candidate
+
+    def test_internal_transfer_only_links_unbooked_rows_with_own_account_evidence(self):
+        for empty_split in (None, "", "[]", []):
+            with self.subTest(customer_payments=empty_split):
+                row, bt, banks, candidate = self._own_transfer_counterpart_fixture()
+                candidate.customer_payments = empty_split
+                with patch.object(bi.frappe, "get_doc", side_effect=lambda doctype, name, **kwargs: banks[name]), \
+                     patch.object(bi.frappe.db, "sql", return_value=[candidate]) as sql, \
+                     patch.object(bi, "_internal_transfer_shape", return_value={}):
+                    result = bi._find_internal_transfer_import_counterpart(
+                        row=row, bt=bt, other_bank_account="BA-OTHER", require_payment_entry=False,
+                    )
+                self.assertEqual(result.name, candidate.name)
+                query, values = sql.call_args.args
+                self.assertEqual(values["own_iban"], "DE11")
+                self.assertIn("b.bank_account = p.bank_account", query)
+                self.assertIn("COALESCE(r.party, '') = ''", query)
+                self.assertIn("COALESCE(b.party, '') = ''", query)
+                self.assertIn("r.customer_payments IS NULL OR r.customer_payments = '' OR r.customer_payments = '[]'", query)
+                self.assertIn("FOR UPDATE", query)
+
+    def test_internal_transfer_sql_selects_only_proven_own_account_rows(self):
+        import re
+        import sqlite3
+        from datetime import date
+
+        row, bt, banks, _candidate = self._own_transfer_counterpart_fixture()
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        connection.row_factory = sqlite3.Row
+        connection.create_function(
+            "DATEDIFF", 2,
+            lambda left, right: (date.fromisoformat(left) - date.fromisoformat(right)).days,
+        )
+        connection.executescript("""
+            CREATE TABLE `tabBankauszug Import` (name TEXT PRIMARY KEY, bank_account TEXT);
+            CREATE TABLE `tabBankauszug Import Row` (
+                name TEXT PRIMARY KEY, parent TEXT, bank_transaction TEXT, payment_entry TEXT,
+                buchungstag TEXT, party_type TEXT, party TEXT, customer_payments TEXT, iban TEXT,
+                richtung TEXT, betrag REAL, journal_entry TEXT, payment_document TEXT,
+                payment_document_type TEXT, modified TEXT
+            );
+            CREATE TABLE `tabBank Transaction` (
+                name TEXT PRIMARY KEY, bank_account TEXT, docstatus INTEGER,
+                party_type TEXT, party TEXT, bank_party_iban TEXT
+            );
+            INSERT INTO `tabBankauszug Import` VALUES ('IMP-OTHER', 'BA-OTHER');
+        """)
+
+        # Unsafe rows sort ahead of the genuine counterpart. Filtering must
+        # happen inside SQL before LIMIT 2, not after fetching those two rows.
+        cases = (
+            ("OWN", None, None, "de11 ", "de11 ", "2026-01-01"),
+            ("TENANT", "Customer", "CUST-1", "DE11", "DE11", "2026-01-04"),
+            ("SUPPLIER", "Supplier", "SUP-1", "DE11", "DE11", "2026-01-03"),
+            ("THIRD-PARTY", None, None, "DE-THIRD-PARTY", "DE-THIRD-PARTY", "2026-01-02"),
+        )
+        for name, party_type, party, iban, bt_iban, modified in cases:
+            connection.execute(
+                "INSERT INTO `tabBankauszug Import Row` "
+                "(name, parent, bank_transaction, buchungstag, party_type, party, iban, richtung, betrag, modified) "
+                "VALUES (?, 'IMP-OTHER', ?, ?, ?, ?, ?, 'Eingang', 250, ?)",
+                (name, f"BT-{name}", row.buchungstag, party_type, party, iban, modified),
+            )
+            connection.execute(
+                "INSERT INTO `tabBank Transaction` VALUES (?, 'BA-OTHER', 1, ?, ?, ?)",
+                (f"BT-{name}", party_type, party, bt_iban),
+            )
+
+        def execute_sql(query, values, **kwargs):
+            query = re.sub(r"%\((\w+)\)s", r":\1", query)
+            query = re.sub(r"\bFOR\s+UPDATE\b", "", query)
+            return [frappe._dict(dict(result)) for result in connection.execute(query, values).fetchall()]
+
+        with patch.object(bi.frappe, "get_doc", side_effect=lambda doctype, name, **kwargs: banks[name]), \
+             patch.object(bi.frappe.db, "sql", side_effect=execute_sql), \
+             patch.object(bi, "_internal_transfer_shape", return_value={}):
+            def find():
+                return bi._find_internal_transfer_import_counterpart(
+                    row=row, bt=bt, other_bank_account="BA-OTHER", require_payment_entry=False,
+                )
+
+            for empty_split in (None, "", "[]"):
+                with self.subTest(customer_payments=empty_split):
+                    connection.execute(
+                        "UPDATE `tabBankauszug Import Row` SET customer_payments = ? WHERE name = 'OWN'",
+                        (empty_split,),
+                    )
+                    self.assertEqual(find().name, "OWN")
+
+            for table, field, name in (
+                ("tabBankauszug Import Row", "iban", "OWN"),
+                ("tabBank Transaction", "bank_party_iban", "BT-OWN"),
+            ):
+                for invalid_iban in (None, "DE-THIRD-PARTY"):
+                    with self.subTest(table=table, iban=invalid_iban):
+                        connection.execute(f"UPDATE `{table}` SET {field} = ? WHERE name = ?", (invalid_iban, name))
+                        self.assertIsNone(find())
+                        connection.execute(f"UPDATE `{table}` SET {field} = 'DE11' WHERE name = ?", (name,))
+
+            banks["BA-SOURCE"].iban = None
+            self.assertIsNone(find())
+            banks["BA-SOURCE"].iban = "DE11"
+            row.iban = "DE-THIRD-PARTY"
+            self.assertIsNone(find())
+
+    def test_internal_transfer_does_not_consume_tenant_or_supplier_counterpart(self):
+        for field, value in (
+            ("party_type", "Customer"), ("party", "CUST-TENANT"),
+            ("bt_party_type", "Supplier"), ("bt_party", "SUP-1"),
+            ("customer_payments", '[{"customer":"CUST-TENANT","payment_entry":"PE-1"}]'),
+            ("iban", "DE-TENANT"), ("bt_iban", "DE-TENANT"),
+        ):
+            with self.subTest(field=field):
+                row, bt, banks, candidate = self._own_transfer_counterpart_fixture()
+                candidate[field] = value
+                with patch.object(bi.frappe, "get_doc", side_effect=lambda doctype, name, **kwargs: banks[name]), \
+                     patch.object(bi.frappe.db, "sql", return_value=[candidate]):
+                    result = bi._find_internal_transfer_import_counterpart(
+                        row=row, bt=bt, other_bank_account="BA-OTHER", require_payment_entry=False,
+                    )
+                self.assertIsNone(result)
+
+    def test_internal_transfer_without_reciprocal_ibans_does_not_find_unbooked_counterpart(self):
+        for missing in ("source_iban", "other_iban", "row_iban", "bt_iban", "conflicting_row_iban", "conflicting_bt_iban"):
+            with self.subTest(missing=missing):
+                row, bt, banks, candidate = self._own_transfer_counterpart_fixture()
+                if missing == "source_iban":
+                    banks["BA-SOURCE"].iban = None
+                elif missing == "other_iban":
+                    banks["BA-OTHER"].iban = None
+                elif missing.endswith("bt_iban"):
+                    bt.bank_party_iban = "DE-THIRD-PARTY" if missing == "conflicting_bt_iban" else None
+                else:
+                    row.iban = "DE-THIRD-PARTY" if missing == "conflicting_row_iban" else None
+                with patch.object(bi.frappe, "get_doc", side_effect=lambda doctype, name, **kwargs: banks[name]), \
+                     patch.object(bi.frappe.db, "sql") as sql:
+                    result = bi._find_internal_transfer_import_counterpart(
+                        row=row, bt=bt, other_bank_account="BA-OTHER", require_payment_entry=False,
+                    )
+                self.assertIsNone(result)
+                sql.assert_not_called()
+
+    def test_internal_transfer_reuses_proven_submitted_transfer_without_statement_ibans(self):
+        row, bt, _banks, candidate = self._own_transfer_counterpart_fixture()
+        row.iban = None
+        candidate.payment_entry = "PE-PROVEN-TRANSFER"
+        shape = {"paid_from": "BANK-A", "paid_to": "BANK-B", "amount": 250}
+        with patch.object(bi.frappe.db, "sql", return_value=[candidate]), \
+             patch.object(bi, "_internal_transfer_shape", return_value=shape), \
+             patch.object(bi, "_payment_entry_matches_internal_transfer", return_value=True) as validate_pe:
+            result = bi._find_internal_transfer_import_counterpart(
+                row=row, bt=bt, other_bank_account="BA-OTHER", require_payment_entry=True,
+            )
+        self.assertEqual(result.payment_entry, "PE-PROVEN-TRANSFER")
+        validate_pe.assert_called_once_with("PE-PROVEN-TRANSFER", shape)
+
+    def test_internal_transfer_counterpart_ambiguity_is_blocked(self):
+        row, bt, banks, candidate = self._own_transfer_counterpart_fixture()
         candidates = [
-            frappe._dict(name="ROW-CANDIDATE-1"),
-            frappe._dict(name="ROW-CANDIDATE-2"),
+            frappe._dict({**candidate, "name": "ROW-CANDIDATE-1"}),
+            frappe._dict({**candidate, "name": "ROW-CANDIDATE-2"}),
         ]
 
-        with patch.object(bi.frappe.db, "sql", return_value=candidates), \
+        with patch.object(bi.frappe, "get_doc", side_effect=lambda doctype, name, **kwargs: banks[name]), \
+             patch.object(bi.frappe.db, "sql", return_value=candidates), \
              self.assertRaisesRegex(frappe.ValidationError, "mehrdeutig"):
             bi._find_internal_transfer_import_counterpart(
                 row=row,
@@ -2994,6 +3405,9 @@ class TestBankauszugImport(unittest.TestCase):
         )
 
     def test_create_journal_entry_for_row_sets_journal_entry_and_success_status(self):
+        refresh_patch = patch.object(bi, "_refresh_and_persist_saldo")
+        refresh_patch.start()
+        self.addCleanup(refresh_patch.stop)
         row = self._FakeRow(name="ROW-JE", iban="DE16")
         row.bank_transaction = "BT-JE"
         row.betrag = 12.34
@@ -3125,6 +3539,9 @@ class TestBankauszugImport(unittest.TestCase):
         refresh.assert_not_called()
 
     def test_create_journal_entry_for_row_with_splits_passes_list_to_backend(self):
+        refresh_patch = patch.object(bi, "_refresh_and_persist_saldo")
+        refresh_patch.start()
+        self.addCleanup(refresh_patch.stop)
         import json as _json
 
         row = self._FakeRow(name="ROW-JE-SPLIT", iban="DE16")
@@ -4890,7 +5307,7 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         for bt_name in result["created"]:
             self.created_docs.append(("Bank Transaction", bt_name))
 
-        self.assertEqual(len(result["created"]), 21)
+        self.assertEqual(len(result["created"]), 23)
         self.assertEqual(len(result["errors"]), 3)
         self.assertEqual(result["created_without_party"], 6)
         self.assertEqual(result["skipped_before_cutoff"], 4)
@@ -4938,9 +5355,9 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
             duplicate_rows = self._rows_by_purpose(doc, purpose)
             self.assertEqual(len(duplicate_rows), 2)
             statuses = sorted(row.row_status for row in duplicate_rows)
-            self.assertEqual(statuses, ["schon vorhanden", "success"])
+            self.assertEqual(statuses, ["success", "success"])
             bt_names = {row.bank_transaction for row in duplicate_rows}
-            self.assertEqual(len(bt_names), 1)
+            self.assertEqual(len(bt_names), 2)
 
         for idx in range(5):
             row = self._row_by_purpose(doc, f"Chaos ohne Party {idx}")
@@ -5003,7 +5420,9 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         self.assertEqual(flt(retry_journal.total_credit), 19.99)
 
         doc.reload()
-        self.assertEqual(doc.offene_buchungen, 15)
+        # 26 actionable rows (30 minus 4 before cutoff) minus 9 vouchers. The
+        # identical duplicate rows are two distinct open payments, not skipped.
+        self.assertEqual(doc.offene_buchungen, 17)
         self.assertIn("Phase 3", doc.status)
-        self.assertIn("15 offen", doc.status)
+        self.assertIn("17 offen", doc.status)
         self.assertIn("Fehler: 3", doc.status)

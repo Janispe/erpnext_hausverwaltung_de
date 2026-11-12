@@ -1131,49 +1131,12 @@ class TestHausverwaltungAssistant(unittest.TestCase):
 		self.assertEqual(len(debug["analysis"]["groups"]), 20)
 		self.assertTrue(debug["analysis"]["groups_truncated"])
 
-	def test_agent_get_doctype_schema_compacts_model_context(self):
-		raw_schema = {
-			"ok": True,
-			"data": {
-				"doctype": "Purchase Invoice",
-				"module": "Accounts",
-				"title_field": "supplier_name",
-				"search_fields": "supplier,supplier_name",
-				"fields": [
-					{"fieldname": "supplier", "label": "Supplier", "fieldtype": "Link", "options": "Supplier"},
-					{
-						"fieldname": "items",
-						"label": "Items",
-						"fieldtype": "Table",
-						"options": "Purchase Invoice Item",
-						"child_fields": [
-							{"fieldname": "item_code", "label": "Item", "fieldtype": "Link", "options": "Item"},
-						],
-					},
-					{"fieldname": "tax_id", "label": "Tax ID", "fieldtype": "Data", "hidden": 1},
-					{
-						"fieldname": "status",
-						"label": "Status",
-						"fieldtype": "Select",
-						"options": "Draft\nPaid",
-						"is_virtual": 1,
-					},
-				],
-			},
-			"meta": {"request_id": "REQ-1"},
-		}
-
-		with patch.object(assistant.agent_read_api, "get_doctype_schema", return_value=raw_schema):
-			result = assistant.agent_get_doctype_schema("Purchase Invoice")
-
-		fields = result["data"]["fields"]
-		self.assertEqual([field["fieldname"] for field in fields], ["supplier", "items", "status"])
-		self.assertEqual(fields[1]["child_fields"][0]["fieldname"], "item_code")
-		self.assertEqual(fields[1]["read_via_parent"], 1)
-		self.assertEqual(fields[2]["is_virtual"], 1)
-		self.assertEqual(result["data"]["standard_fields"], ["name", "creation", "modified", "docstatus"])
-		self.assertEqual(result["data"]["field_count"], 3)
-		self.assertEqual(result["data"]["omitted_field_count"], 1)
+	def test_agent_get_doctype_schema_forwards_paging_and_filters(self):
+		response = {"ok": True, "data": {"fields": [], "complete": False, "next_offset": 20}}
+		with patch("hausverwaltung.hausverwaltung.agent_tools.form_metadata.get_schema", return_value=response) as get_schema:
+			result = assistant.agent_get_doctype_schema("Sales Invoice", fields=["payment_schedule"], offset=20)
+		get_schema.assert_called_once_with("Sales Invoice", fields=["payment_schedule"], offset=20)
+		self.assertIs(result, response)
 
 	def test_revenue_search_terms_normalize_street_and_building_part(self):
 		terms = assistant._revenue_search_terms("Wilhelmshavener Straße im Hinterhaus")

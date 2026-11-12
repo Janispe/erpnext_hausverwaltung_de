@@ -5,14 +5,18 @@ from __future__ import annotations
 from contextlib import ExitStack, nullcontext
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-from unittest import TestCase
+from unittest import TestCase, skipUnless
 from unittest.mock import Mock, patch
 
 import frappe
-from thunderbird_hausverwaltung.thunderbird_hausverwaltung.mail_archive.providers.base import (
-	ArchiveMessage,
-	DraftNotCreatedError,
-)
+
+try:
+	from thunderbird_hausverwaltung.thunderbird_hausverwaltung.mail_archive.providers.base import (
+		ArchiveMessage,
+		DraftNotCreatedError,
+	)
+except ImportError:  # Optional app missing or older than its draft API: skip only these tests.
+	ArchiveMessage = DraftNotCreatedError = None
 
 from hausverwaltung.hausverwaltung.agent_tools import email_api as api
 from hausverwaltung.hausverwaltung.agent_tools.email_budget import MAIL_OUTPUT_MAX_CHARS
@@ -24,6 +28,7 @@ from hausverwaltung.hausverwaltung.services.email_draft_contract import (
 )
 
 
+@skipUnless(DraftNotCreatedError, "thunderbird_hausverwaltung mit Entwurfs-API ist nicht installiert.")
 class TestEmailAPI(TestCase):
 	def setUp(self):
 		self.stack = ExitStack()

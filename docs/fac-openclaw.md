@@ -14,6 +14,68 @@ Adapter einmalig übernehmen. Danach entdeckt er die freigegebenen Werkzeuge üb
 den Serverkatalog. `FAC_PROTOTYPE_TOOL_NAMES` und `include_prototype` bleiben nur
 als Kompatibilitätsnamen für bestehende Einrichtungsskripte erhalten.
 
+## Formularfragen und Feldsuche
+
+Die Erweiterung bietet zwei zusätzliche direkte Lesewerkzeuge. Nach Installation
+des neuen Servercodes `enable_external_tools` erneut ausführen und in OpenClaw
+`tools/list` neu laden. Die Erweiterung ist in der isolierten Testsite abnehmbar;
+die bisherigen Hinweise zur Produktivinstallation oben belegen nicht deren Rollout.
+
+| Frage | Aufruf |
+|---|---|
+| Wo steht der Ratenplan der Ausgangsrechnung? | `hv_find_fields(doctype="Sales Invoice", query="Raten Zahlungsplan")` |
+| Welche Spalten muss ich ausfüllen? | `hv_get_form_context(doctype="Sales Invoice", fieldname="payment_schedule")` |
+| Was bedeutet eine einzelne Tabellenspalte? | `hv_get_form_context(doctype="Sales Invoice", table_field="payment_schedule", fieldname="due_date")` |
+| Wofür ist der eigenständige Zahlungsplan? | `hv_find_fields(doctype="Zahlungsplan", query="Lieferant Aufwandskonto")` |
+
+`form_path` enthält Reiter/Abschnitt aus den effektiven installierten Metadaten
+einschließlich Custom Fields und Property Setters. `label` ist übersetzt
+(`language="de"`, alternativ `en`), `label_original` bleibt der Ausgangstext.
+Die Suche prüft Namen, Labels und Options sowie ausgewiesene Suchaliases
+(`matched_aliases`), etwa „Raten“ für `payment_schedule`. Child-Treffer tragen
+`table_field`; dieser Elternbezug ist bei Detailaufrufen zu übernehmen.
+Es werden keine Rechnungen, Zahlungen oder Ratenpläne angelegt.
+
+`hidden`, `read_only`, `reqd`, `allow_on_submit`, `depends_on`,
+`mandatory_depends_on` und `read_only_depends_on` beschreiben Metadaten.
+Auch Reiter/Abschnitte können `hidden`/`depends_on` enthalten. Bedingungen werden
+nicht ausgeführt; zusätzliche Client-Scripts und die Bearbeitbarkeit eines
+konkreten Dokuments sind **nicht geprüft**. Aus `allow_on_submit` allein folgt
+keine Schreibberechtigung. `coverage` benennt diese Grenzen ausdrücklich.
+
+Für vollständige Schemas bleibt `agent_get_doctype_schema` ein Code-Werkzeug.
+Es akzeptiert jetzt `fields`, `query`, `language`, `table_field`, `limit`
+(Standard 20, maximal 50), `offset` und `schema_version`. Der bestehende Aufruf
+mit nur `doctype` liefert die erste Seite im bisherigen `ok/data`-Envelope.
+**Migration für Schema-Consumer:** `data.fields` ist eine Seite, keine vollständige
+Liste. Die bisherigen eingebetteten `child_fields` werden durch separate Abrufe
+am Eltern-DocType mit `table_field` ersetzt; `child_field_count` weist deren
+Umfang aus. Direkte Child-DocType-Abfragen sind nicht erlaubt. Parent- und
+Child-Feldberechtigungen werden beim Abruf berücksichtigt.
+
+Alle drei Werkzeuge liefern `complete`, `has_more`, `next_offset` und `next`
+(bei der Schemaabfrage unter `data`). `next` enthält einen ausführbaren
+Folgeaufruf einschließlich `schema_version`. `complete=true` gilt nur für einen
+vollständigen Abruf ab offset 0; auch die letzte Seite einer mehrseitigen
+Antwort ist allein kein Gesamtschema. Der Versionshash berücksichtigt die
+lesbaren Metadaten einschließlich Tabellen und Formularpfaden. Änderungen
+zwischen Seiten liefern `SCHEMA_CHANGED`; dann ab offset 0 neu laden.
+
+Seiten werden vor dem Ausgabe-Limit verkleinert, ohne Felddefinitionen oder
+Options zu kürzen. Ein einzelner zu großer Eintrag liefert `LIMIT_EXCEEDED`.
+Ein fehlender Treffer auf einer Schema-Seite beweist nicht das Fehlen des Feldes.
+Eine leere, vollständige Suche betrifft nur den lesbaren Scope.
+
+In die OpenClaw-Anweisungen aufnehmen:
+
+> Bei Bedienungs- und Feldfragen zuerst hv_find_fields am passenden DocType
+> verwenden, anschließend hv_get_form_context für das konkrete Feld. Formularpfade
+> und Bedingungen als Metadaten behandeln; tatsächliche Sichtbarkeit durch
+> Client-Scripts oder Bearbeitbarkeit gebuchter Dokumente nicht behaupten.
+> complete/has_more beachten und next einschließlich schema_version übernehmen.
+> Vollständige Schemas aus Code seitenweise lesen; Child-Spalten über den
+> lesbaren Eltern-DocType und table_field nachladen.
+
 Allgemeine, ordnerübergreifende Mailsuchen laufen über den separaten Mail-MCP:
 `search_all_emails` und `get_archive_emails_content`. Der portable Updateweg für
 den getrennten Produktionsserver steht in [mail-mcp-production.md](mail-mcp-production.md).

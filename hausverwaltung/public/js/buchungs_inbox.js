@@ -723,7 +723,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 					label: __("Auch hochgeladene PDF-Datei löschen"),
 					default: 0,
 					description: __(
-						"Datei wird nur gelöscht, wenn kein anderer Vorschlag noch darauf verweist."
+						"Datei wird nur gelöscht, wenn sie zu keinem Beleg gehört und kein anderes Dokument sie verwendet."
 					),
 				},
 			],
@@ -741,9 +741,11 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 					.then((r) => {
 						const res = (r && r.message) || {};
 						frappe.show_alert({
-							message: res.deleted_file
-								? __("Vorschlag und Datei gelöscht.")
-								: __("Vorschlag gelöscht."),
+							message: res.file_preserved_reason
+								? __("Vorschlag gelöscht. Die Datei bleibt erhalten, da sie zu einem Beleg gehört oder noch verwendet wird.")
+								: res.deleted_file
+									? __("Vorschlag und Datei gelöscht.")
+									: __("Vorschlag gelöscht."),
 							indicator: "blue",
 						});
 						delete state.full_cache[row.name];

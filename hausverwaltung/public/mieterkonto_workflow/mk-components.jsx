@@ -106,6 +106,15 @@ function OpenBadge({ amount }) {
   );
 }
 
+function InvoicePaidBadge({ row }) {
+  if (row.art !== "Forderung" || row.status !== "Paid") return null;
+  return (
+    <span className="mk-pill mk-pill-zahlung mk-pill-paid" style={{ marginLeft: 8 }}>
+      bezahlt
+    </span>
+  );
+}
+
 function openVoucher(belegart, belegnummer) {
   if (!belegart || !belegnummer) return;
   frappe.set_route("Form", belegart, belegnummer);
@@ -577,6 +586,6 @@ function getOpenSummaryItem(summary, label) {
 
 Object.assign(window, {
   fmtEUR, fmtEURsoll, fmtDate, fmtDateShort, monthLabel, CATS,
-  ArtPill, OpenBadge, VoucherLink, VoucherLinks, openVoucher, DateField, FilterBar, MieterHeader, SummaryCards,
+  ArtPill, OpenBadge, InvoicePaidBadge, VoucherLink, VoucherLinks, openVoucher, DateField, FilterBar, MieterHeader, SummaryCards,
   getSummaryItem, getOpenSummaryItems,
 });

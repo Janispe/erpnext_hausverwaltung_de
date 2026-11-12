@@ -305,9 +305,17 @@ def _validate_and_lock_dunning_fee_context(doc) -> dict[str, Any] | None:
 
 		current_outstanding = _money_cents(invoice.get("outstanding_amount"))
 		snapshot_outstanding = row_amounts[invoice_name]
+		# The preceding validate_dunning_before_submit hook checks every selected
+		# schedule against its locked live installment. Future installments need
+		# not be included in this letter, so its principal can be less than the
+		# complete invoice balance. Still reject any excess before booking fees.
+		# Like ERPNext's schedule validator, compare that total only when the
+		# invoice and receivable account use the same currency. Foreign-currency
+		# installments are bounded by their own transaction-currency schedule.
+		same_currency = not invoice.get("party_account_currency") or invoice.get("party_account_currency") == invoice.get("currency")
 		if (
 			current_outstanding <= Decimal("0.00")
-			or current_outstanding != snapshot_outstanding
+			or (same_currency and snapshot_outstanding > current_outstanding)
 		):
 			frappe.throw(
 				_(
@@ -415,6 +423,7 @@ def _create_fee_sales_invoice_doc(doc, context: dict[str, Any]):
 	si.customer = doc.customer
 	si.customer_name = doc.get("customer_name")
 	si.company = doc.company
+	si.set_posting_time = 1
 	si.posting_date = doc.get("posting_date") or nowdate()
 	si.due_date = si.posting_date
 	si.ignore_pricing_rule = 1

@@ -29,7 +29,12 @@ class TestOverviewSite(unittest.TestCase):
 		self.day = today()
 		self.company = frappe.db.get_value("Company", {}, "name")
 		self.currency = frappe.db.get_value("Company", self.company, "default_currency")
-		self.property = self.make("Immobilie", "HOUSE", bezeichnung="FAC Overview", adresse_titel="Test")
+		self.cost_center = self.make(
+			"Cost Center", "COST-CENTER", cost_center_name="FAC Overview", company=self.company, is_group=0
+		)
+		self.property = self.make(
+			"Immobilie", "HOUSE", bezeichnung="FAC Overview", adresse_titel="Test", kostenstelle=self.cost_center
+		)
 		self.unit = self.make(
 			"Wohnung", "UNIT", immobilie=self.property, name__lage_in_der_immobilie="EG", status="Vermietet"
 		)

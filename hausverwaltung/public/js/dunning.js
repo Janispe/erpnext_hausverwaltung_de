@@ -17,6 +17,7 @@ frappe.ui.form.on("Dunning", {
 		toggle_standard_letter_fields(frm);
 		guard_dunning_payment_button(frm);
 		add_fee_invoice_action(frm);
+		add_legacy_confirmation_action(frm);
 		add_template_actions(frm);
 		render_pdf_preview(frm);
 	},
@@ -262,4 +263,68 @@ function set_template_from_dunning_type(frm) {
 			frm.__hv_last_auto_template = template;
 			frm.set_value("hv_serienbrief_vorlage", template);
 		});
+}
+
+
+function add_legacy_confirmation_action(frm) {
+	if (frm.is_new() || frm.doc.docstatus !== 0 || !frappe.model.can_submit(frm.doctype)) return;
+	if (!(frm.doc.overdue_payments || []).some((row) => !row.payment_schedule)) return;
+	frm.add_custom_button(__("Altmahnung prüfen und bestätigen"), () => confirm_legacy_dunning(frm));
+}
+
+async function confirm_legacy_dunning(frm) {
+	if (frm.is_new() || frm.is_dirty()) {
+		frappe.throw(__("Bitte einen bereits gespeicherten, unveränderten Altentwurf öffnen."));
+		return;
+	}
+	const method = "hausverwaltung.hausverwaltung.utils.legacy_dunning_confirmation.";
+	const response = await frappe.call({
+		method: method + "prepare_legacy_dunning_confirmation",
+		args: { dunning: frm.doc.name },
+		freeze: true,
+	});
+	const prepared = response.message;
+	if (!prepared?.required) {
+		frappe.msgprint(__("Die Rechnung hat einen Zahlungsplan. Bitte die Mahnung regulär einreichen."));
+		return;
+	}
+	const escape = frappe.utils.escape_html;
+	const message = __(
+		"Rechnung {0} hat keine interne Zahlungsplanzeile und keine prüfbare Aufteilung in Raten. " +
+		"Mahnung {1} wird ausschließlich über den gesamten aktuell offenen Betrag von {2} {3} " +
+		"(fällig am {4}, Mahndatum {5}) ohne Gebühren oder Zinsen eingereicht. " +
+		"Es wird kein Zahlungsplan ergänzt. Bei Änderungen muss erneut geprüft werden. " +
+		"Mit Abbrechen oder Schließen bleibt der Entwurf unverändert.",
+		[prepared.invoice, prepared.dunning, prepared.amount, prepared.currency,
+			prepared.due_date, prepared.posting_date].map((value) => escape(String(value)))
+	);
+	let running = false;
+	let closed = false;
+	const dialog = new frappe.ui.Dialog({
+		title: __("Alte Rechnung ohne Zahlungsplan"),
+		fields: [{ fieldtype: "HTML", options: `<p>${message}</p>` }],
+		primary_action_label: __("Vollsaldo-Mahnung verbindlich einreichen"),
+		secondary_action_label: __("Abbrechen"),
+		onhide: () => { closed = true; },
+		secondary_action: () => dialog.hide(),
+		primary_action: async () => {
+			if (running || closed) return;
+			running = true;
+			dialog.get_primary_btn().prop("disabled", true);
+			try {
+				await frappe.call({
+					method: method + "submit_confirmed_legacy_dunning",
+					args: { dunning: prepared.dunning, token: prepared.token, confirmed: true },
+					freeze: true,
+				});
+				dialog.hide();
+				await frm.reload_doc();
+			} catch (error) {
+				// Frappe displays the server error. A retry must prepare a fresh dialog.
+				dialog.hide();
+			}
+		},
+	});
+	dialog.show();
+	return dialog;
 }

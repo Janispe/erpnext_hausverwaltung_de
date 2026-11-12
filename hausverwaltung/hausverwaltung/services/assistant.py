@@ -15,6 +15,10 @@ from frappe.utils import cint, flt, getdate, now_datetime, nowdate
 from hausverwaltung.hausverwaltung.agent_tools import dataset_api as agent_dataset_api
 from hausverwaltung.hausverwaltung.agent_tools import read_api as agent_read_api
 from hausverwaltung.hausverwaltung.agent_tools.fac_contract import FAC_MAIL_MERGE_WRITE_TOOL_NAMES
+from hausverwaltung.hausverwaltung.agent_tools.form_metadata_tools import (
+	SCHEMA_DESCRIPTION,
+	SCHEMA_PROPERTIES,
+)
 from hausverwaltung.hausverwaltung.agent_tools.mail_merge_tools import (
 	MAIL_MERGE_FUNCTIONS,
 	MAIL_MERGE_PROMPT,
@@ -53,7 +57,7 @@ ASSISTANT_ENGINES = {
 	ASSISTANT_ENGINE_MISTRAL_AGENTS,
 	ASSISTANT_ENGINE_MISTRAL_BASIC,
 }
-MISTRAL_AGENT_DEFINITION_VERSION = 3
+MISTRAL_AGENT_DEFINITION_VERSION = 4
 
 HV_READABLE_DOCTYPES: dict[str, dict[str, Any]] = {
 	"Mietvertrag": {
@@ -697,7 +701,9 @@ andere Identitaetsfelder nur an, wenn die Frage oder die Antwort eine konkrete P
 identifizieren muss. Uebernimm Dokumentnamen und andere Identitaetswerte exakt und unverkuerzt aus Tool-Ergebnissen.
 Schemafelder mit is_virtual=true sind berechnete, lesbare Felder und koennen wie normale Ausgabefelder angefordert sowie
 in Datasets analysiert werden. Schemafelder vom Typ Table oder Table MultiSelect beschreiben eine Child-Tabelle; ihre
-sicheren child_fields stehen im Schema und werden nur ueber das jeweilige Elterndokument gelesen.
+Tabellenspalten werden mit agent_get_doctype_schema am Eltern-DocType und table_field separat nachgeladen.
+Schemaantworten sind seitenweise: data.has_more/data.next beachten und schema_version bei Folgeseiten uebernehmen.
+Eine fehlende Felddefinition auf einer einzelnen Seite beweist nicht, dass das Feld nicht existiert.
 Wenn ein erfolgreiches Tool-Ergebnis die fuer die Antwort angeforderten Felder bereits enthaelt, antworte direkt und
 rufe dasselbe Dokument nicht noch einmal mit agent_get_doc ab. Wiederhole niemals einen fehlgeschlagenen Tool-Aufruf
 mit unveraenderten Argumenten. Nutze stattdessen sichere vorherige Ergebnisse oder sage, welche Angabe fehlt.
@@ -1142,17 +1148,10 @@ ASSISTANT_TOOLS: list[dict[str, Any]] = [
 		"type": "function",
 		"function": {
 			"name": "agent_get_doctype_schema",
-			"description": (
-				"Liest sichere Feld-Metadaten einschliesslich virtueller Felder und Child-Tabellen fuer einen "
-				"DocType, sofern der aktuelle Benutzer Leserechte hat. Virtuelle Felder sind berechnete lesbare "
-				"Ausgabefelder; Child-Felder stehen unter child_fields. Nutze dies vor agent_list_docs, "
-				"agent_search_docs oder agent_get_doc bei unbekannten Feldern."
-			),
+			"description": SCHEMA_DESCRIPTION,
 			"parameters": {
 				"type": "object",
-				"properties": {
-					"doctype": {"type": "string", "description": "DocType-Name, z.B. ToDo oder Purchase Invoice."},
-				},
+				"properties": SCHEMA_PROPERTIES,
 				"required": ["doctype"],
 			},
 		},
@@ -3761,66 +3760,10 @@ def _catalog_text_score(query: str, haystack: str) -> int:
 	return score
 
 
-def agent_get_doctype_schema(doctype: str) -> dict[str, Any]:
-	return _compact_agent_schema_response(agent_read_api.get_doctype_schema(doctype))
+def agent_get_doctype_schema(doctype: str, **kwargs) -> dict[str, Any]:
+	from hausverwaltung.hausverwaltung.agent_tools.form_metadata import get_schema
 
-
-def _compact_agent_schema_response(result: dict[str, Any]) -> dict[str, Any]:
-	if not isinstance(result, dict) or not result.get("ok") or not isinstance(result.get("data"), dict):
-		return result
-	data = result.get("data") or {}
-	fields = data.get("fields") or []
-	compact_fields = []
-	omitted = 0
-	for field in fields:
-		if not isinstance(field, dict):
-			continue
-		fieldname = str(field.get("fieldname") or "").strip()
-		fieldtype = str(field.get("fieldtype") or "").strip()
-		if not fieldname:
-			continue
-		if field.get("hidden") or fieldtype in {"Button", "Column Break", "Section Break", "Tab Break", "HTML"}:
-			omitted += 1
-			continue
-		item = {
-			"fieldname": fieldname,
-			"label": field.get("label") or fieldname,
-			"fieldtype": fieldtype,
-		}
-		options = str(field.get("options") or "").strip()
-		if options:
-			item["options"] = options[:300]
-		if field.get("reqd"):
-			item["reqd"] = 1
-		if field.get("read_only"):
-			item["read_only"] = 1
-		if field.get("is_virtual"):
-			item["is_virtual"] = 1
-		if fieldtype in {"Table", "Table MultiSelect"}:
-			item["read_via_parent"] = 1
-			item["child_fields"] = [
-				{
-					key: child.get(key)
-					for key in ("fieldname", "label", "fieldtype", "options", "is_virtual")
-					if child.get(key) not in (None, "", 0)
-				}
-				for child in (field.get("child_fields") or [])
-				if isinstance(child, dict)
-			]
-		compact_fields.append(item)
-
-	compact_data = {
-		"doctype": data.get("doctype"),
-		"module": data.get("module"),
-		"istable": data.get("istable") or 0,
-		"title_field": data.get("title_field") or "name",
-		"search_fields": data.get("search_fields") or "",
-		"standard_fields": ["name", "creation", "modified", "docstatus"],
-		"fields": compact_fields,
-		"field_count": len(compact_fields),
-		"omitted_field_count": omitted,
-	}
-	return {**result, "data": compact_data}
+	return get_schema(doctype, **kwargs)
 
 
 def agent_list_docs(

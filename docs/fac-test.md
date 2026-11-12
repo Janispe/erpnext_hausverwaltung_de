@@ -145,6 +145,26 @@ nicht authentifizierter Anfragen. Er legt
 bei Bedarf API-Zugangsdaten für den lokalen Testadministrator an, gibt sie aber
 nicht aus. Die automatisierten Tests benötigen keinen Mistral-Schlüssel.
 
+### Abnahme der Formularwerkzeuge
+
+Nach Aktualisierung des Codes die isolierte Werkzeugkonfiguration erneuern und
+den Backend-Prozess neu laden:
+
+```bash
+docker compose -f compose.fac-test.yaml exec -T backend \
+  bench --site fac.localhost execute hausverwaltung.hausverwaltung.services.fac_test_setup.configure
+docker compose -f compose.fac-test.yaml restart backend
+docker compose -f compose.fac-test.yaml exec -T backend \
+  ./env/bin/python apps/hausverwaltung/docker/fac-test/smoke_forms.py
+```
+
+Der HTTP-Test verwendet denselben Metadaten-Routingadapter wie OpenClaw. Er prüft
+direkte Modellverfügbarkeit, deutschen Rechnungs-Formularpfad, Pflichtspalten,
+Abgrenzung zum Lieferantenplan, vollständiges Schema-Paging, Modell-Ausgabelimit
+und Ablehnung sensibler beziehungsweise nicht authentifizierter Zugriffe. Er
+erzeugt keine Buchungsbelege und ruft kein LLM auf. Weitere Prüfungen liegen in
+`agent_tools/test_form_metadata.py` und `agent_tools/test_form_metadata_site.py`.
+
 `up -d` startet erneut, `stop` erhält die Testdaten. Es läuft kein Scheduler;
 Mailversand ist deaktiviert. Der Bootstrap legt vor der Mail-Merge-Installation
 einen temporären Druckformat-Platzhalter an, um deren bestehenden Zyklus zwischen

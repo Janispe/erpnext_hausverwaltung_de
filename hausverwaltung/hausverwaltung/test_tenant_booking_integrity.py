@@ -21,6 +21,7 @@ class TestTenantBookingIntegrity(unittest.TestCase):
 		)
 		return frappe.get_doc({
 			"doctype": "Sales Invoice", "company": company, "customer": customer,
+			"set_posting_time": 1,
 			"posting_date": "2026-10-04", "due_date": "2026-10-25",
 			"cost_center": None, "wohnung": None, "remarks": "Direkte unmarkierte Testrechnung",
 			"items": [{"item_code": item, "qty": 1, "rate": 42.5, "income_account": income,

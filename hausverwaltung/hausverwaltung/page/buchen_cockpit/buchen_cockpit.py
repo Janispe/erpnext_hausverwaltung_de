@@ -1157,6 +1157,7 @@ def _new_cockpit_purchase_invoice(
     pi.update({
         "company": company,
         "supplier": supplier,
+        "set_posting_time": 1,
         "posting_date": posting_date,
         "bill_date": posting_date,
         "bill_no": bill_no,
@@ -1674,6 +1675,7 @@ def create_sales_invoice(**kwargs) -> dict:
     si.update({
         "company": company,
         "customer": customer,
+        "set_posting_time": 1,
         "posting_date": posting_date,
         "due_date": posting_date if is_credit_note else due_date,
         "is_return": 1 if is_credit_note else 0,
@@ -1738,6 +1740,8 @@ def upload_invoice_pdf() -> dict:
     """
     import hashlib
 
+    _require_document_permissions("File")
+
     # Frappe's Standard-save_file()-Pipeline hat einen Bug bei Binary-Files:
     # File.get_content() decoded die bytes via FILE_ENCODING_OPTIONS zu str
     # (utf-8/windows-1252), dann encoded write_file() das wieder als utf-8 —
@@ -1770,6 +1774,7 @@ def upload_invoice_pdf() -> dict:
         as_dict=True,
     )
     if existing_file:
+        frappe.get_doc("File", existing_file.name).check_permission("read")
         file_url = existing_file.file_url
         file_name = existing_file.file_name
         is_new_file = False
@@ -1832,7 +1837,7 @@ def _lookup_vorschlag_by_file_url(file_url: str) -> dict | None:
     """
     if not file_url:
         return None
-    rows = frappe.get_all(
+    rows = frappe.get_list(
         "Buchungs Vorschlag",
         filters={"file_url": file_url},
         fields=[
@@ -1863,6 +1868,7 @@ def extract_invoice_from_file(file_url: str) -> dict:
         MistralTransientError,
     )
 
+    _require_document_permissions("Purchase Invoice")
     if not (file_url or "").strip():
         frappe.throw("Bitte eine PDF-Datei hochladen.")
     try:

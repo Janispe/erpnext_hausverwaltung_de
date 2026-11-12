@@ -217,8 +217,14 @@ after_migrate = [
 # ---------------
 # Override standard doctype classes
 
+extend_doctype_class = {
+	"Company": ["hausverwaltung.hausverwaltung.overrides.company.CompanyDepartmentRootMixin"],
+}
+
 override_doctype_class = {
+	"Dunning": "hausverwaltung.hausverwaltung.overrides.dunning.CustomDunning",
 	"Payment Entry": "hausverwaltung.hausverwaltung.overrides.payment_entry.CustomPaymentEntry",
+	"Journal Entry": "hausverwaltung.hausverwaltung.overrides.journal_entry.CustomJournalEntry",
 	"Sales Invoice": "hausverwaltung.hausverwaltung.overrides.sales_invoice.CustomSalesInvoice",
 	# composite Properties (plz_ort / adresse) für Serienbrief-Pfade
 	"Address": "hausverwaltung.hausverwaltung.overrides.address.Address",
@@ -260,8 +266,12 @@ doc_events = {
 		"on_trash": "hausverwaltung.hausverwaltung.doctype.wohnung.wohnung.update_wohnung_status_from_zustand",
 	},
 	"Dunning": {
+		"before_validate": "hausverwaltung.hausverwaltung.utils.dunning_creation.resolve_legacy_dunning_before_validate",
 		"validate": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning",
-		"before_submit": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning_fee_booking_before_submit",
+		"before_submit": [
+			"hausverwaltung.hausverwaltung.utils.dunning_creation.validate_dunning_before_submit",
+			"hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning_fee_booking_before_submit",
+		],
 		"before_cancel": "hausverwaltung.hausverwaltung.doctype.dunning.validate_dunning_fee_invoice_can_cancel",
 		"on_submit": "hausverwaltung.hausverwaltung.doctype.dunning.create_dunning_fee_invoice",
 		"on_cancel": "hausverwaltung.hausverwaltung.doctype.dunning.cancel_dunning_fee_invoice",

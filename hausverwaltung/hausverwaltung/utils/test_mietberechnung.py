@@ -10,12 +10,19 @@ import frappe
 from hausverwaltung.hausverwaltung.utils.mietberechnung import (
 	AUTOMATIC,
 	FIXED,
+	calculate_monthly_charge,
 	calculate_monthly_rent,
+	validate_contract_charges,
 	validate_rent_rows,
 )
 
 
 class TestMietberechnung(unittest.TestCase):
+	def test_contract_validation_rejects_end_before_start_without_part_month_rules(self):
+		for tables in ({}, {"Miete": [{"von": "2026-07-01", "miete": 620}]}):
+			with self.subTest(tables=tables), self.assertRaisesRegex(frappe.ValidationError, "Vertragsende.*Vertragsbeginn"):
+				validate_contract_charges("2026-07-01", "2026-06-30", tables)
+
 	def calculate(self, von="2026-01-01", bis=None, anchor="2026-01-01", rates=None, rules=None, **kwargs):
 		return calculate_monthly_rent(
 			von,
@@ -356,3 +363,86 @@ class TestMietberechnung(unittest.TestCase):
 					rules=[{"von": "2026-01-16", "bis": "2026-01-31", "berechnung": mode, "betrag": 300}],
 				)
 				self.assertEqual(actual["amount"], expected)
+
+
+class TestMonthlyChargesPerKostenart(unittest.TestCase):
+	BK_RATE = ({"von": "2026-01-01", "miete": 155, "art": "Monatlich"},)
+
+	def charge(self, kostenart, rates, rules=None, von="2026-01-16", bis=None, anchor="2026-01-01"):
+		return calculate_monthly_charge(
+			von, bis, anchor, rates, rules, kostenart=kostenart, rounding_method="Commercial Rounding"
+		)
+
+	def test_advances_and_surcharge_are_prorated_like_rent(self):
+		for kostenart in ("Betriebskosten", "Heizkosten", "Untermietzuschlag"):
+			with self.subTest(kostenart=kostenart):
+				self.assertEqual(self.charge(kostenart, self.BK_RATE)["amount"], 80)  # 155 * 16 / 31
+				self.assertEqual(self.charge(kostenart, self.BK_RATE, anchor="2026-02-01")["amount"], 155)
+				self.assertEqual(
+					self.charge(kostenart, self.BK_RATE, von="2025-01-01", bis="2026-01-15")["amount"], 75
+				)
+
+	def test_rule_applies_only_to_its_kostenart(self):
+		rent_rule = {"von": "2026-01-16", "bis": "2026-01-31", "berechnung": FIXED, "betrag": 300}
+		bk_rule = {**rent_rule, "kostenart": "Betriebskosten", "betrag": 70}
+		rules = [rent_rule, bk_rule]
+		self.assertEqual(self.charge("Betriebskosten", self.BK_RATE, rules)["amount"], 70)
+		self.assertEqual(self.charge("Heizkosten", self.BK_RATE, rules)["amount"], 80)
+		self.assertEqual(self.charge("Miete", self.BK_RATE, rules)["amount"], 300)
+		self.assertEqual(
+			calculate_monthly_rent(
+				"2026-01-16", None, "2026-01-01", self.BK_RATE, rules, rounding_method="Commercial Rounding"
+			)["amount"],
+			300,
+		)
+
+	def test_same_kostenart_rules_must_not_overlap(self):
+		rules = [
+			{
+				"kostenart": "Heizkosten",
+				"von": "2026-01-16",
+				"bis": "2026-01-31",
+				"berechnung": FIXED,
+				"betrag": 40,
+			},
+			{
+				"kostenart": "Heizkosten",
+				"von": "2026-01-20",
+				"bis": "2026-01-25",
+				"berechnung": FIXED,
+				"betrag": 5,
+			},
+		]
+		with self.assertRaisesRegex(frappe.ValidationError, "Heizkosten.*überschneiden"):
+			self.charge("Miete", self.BK_RATE, rules)
+
+	def test_unknown_kostenart_is_rejected(self):
+		with self.assertRaises(frappe.ValidationError):
+			self.charge("Kaution", self.BK_RATE)
+		rule = {"kostenart": "Kaution", "von": "2026-01-16", "bis": "2026-01-31", "berechnung": AUTOMATIC}
+		with self.assertRaisesRegex(frappe.ValidationError, "Kostenart"):
+			self.charge("Miete", self.BK_RATE, [rule])
+
+	def test_hidden_legacy_type_never_turns_an_advance_into_a_fixed_amount(self):
+		rates = [{"von": "2026-01-01", "miete": 155, "art": "Gesamter Zeitraum"}]
+		self.assertEqual(
+			self.charge("Betriebskosten", rates, von="2025-01-01", anchor="2026-03-01")["amount"], 155
+		)
+
+	def test_contract_validation_checks_every_charge_table(self):
+		rule = {
+			"kostenart": "Untermietzuschlag",
+			"von": "2026-01-16",
+			"bis": "2026-01-31",
+			"berechnung": FIXED,
+			"betrag": 10,
+		}
+		with self.assertRaisesRegex(frappe.ValidationError, "Untermietzuschlag"):
+			validate_contract_charges("2026-01-16", None, {"Miete": self.BK_RATE}, [rule])
+		validate_contract_charges(
+			"2026-01-16", None, {"Miete": self.BK_RATE, "Untermietzuschlag": self.BK_RATE}, [rule]
+		)
+		with self.assertRaisesRegex(frappe.ValidationError, "BK-Staffel"):
+			validate_contract_charges(
+				"2026-01-16", None, {"Betriebskosten": [{"von": "2026-01-01", "miete": "10.001"}]}, []
+			)

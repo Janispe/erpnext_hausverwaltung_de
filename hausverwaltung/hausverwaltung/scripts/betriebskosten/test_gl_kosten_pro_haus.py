@@ -40,6 +40,58 @@ def _warthestrasse_rows():
 	]
 
 
+class TestSupplierInvoiceCosts(unittest.TestCase):
+	def test_booked_supplier_costs_preserve_included_vat(self):
+		supplier_invoice = frappe._dict(
+			name="PINV-VAT-19",
+			posting_date="2024-12-31",
+			custom_wertstellungsdatum="2025-01-15",
+			due_date="2025-02-01",
+			net_total=100,
+			total_taxes_and_charges=19,
+			grand_total=119,
+			taxes=[frappe._dict(rate=19, tax_amount=19)],
+		)
+		# The expense was booked as 119; allocation must use that booked amount.
+		gl_row = frappe._dict(
+			posting_date=supplier_invoice.posting_date,
+			account="4400 - Hausmeister - HP",
+			cost_center="CC-1",
+			debit=119,
+			credit=0,
+			voucher_type="Purchase Invoice",
+			voucher_no=supplier_invoice.name,
+		)
+
+		def get_all(doctype, **_kwargs):
+			if doctype == "GL Entry":
+				return [gl_row]
+			if doctype == "Purchase Invoice":
+				return [supplier_invoice]
+			raise AssertionError(f"Unexpected DocType: {doctype}")
+
+		with (
+			patch.object(
+				gl_costs,
+				"_konto_zu_kostenart_map",
+				return_value={"4400 - Hausmeister - HP": "Hausmeister"},
+			),
+			patch.object(
+				gl_costs, "_kostenstelle_zu_haus_map", return_value={"CC-1": "Haus-1"},
+			),
+			patch.object(gl_costs.frappe, "get_all", side_effect=get_all),
+		):
+			result = gl_costs.get_kosten_pro_haus.__wrapped__(
+				von="2025-01-01", bis="2025-12-31",
+			)
+
+		self.assertEqual(result["matrix"], {"Haus-1": {"Hausmeister": 119.0}})
+		self.assertEqual(supplier_invoice.total_taxes_and_charges, 19)
+		self.assertEqual(supplier_invoice.taxes, [{"rate": 19, "tax_amount": 19}])
+		self.assertEqual(supplier_invoice.grand_total, 119)
+		self.assertEqual(gl_row.debit, 119)
+
+
 class TestCanonicalImmobilieCostCenterMapping(unittest.TestCase):
 	def test_four_hierarchical_assignments_resolve_to_canonical_root(self):
 		roots, cost_centers = gl_costs._immobilien_hierarchy_maps(
@@ -220,6 +272,10 @@ class TestCanonicalImmobilieCostCenterMapping(unittest.TestCase):
 			"_kostenstelle_zu_haus_map",
 			return_value={"CC-1": "Haus-1"},
 		), patch.object(
+			allocator,
+			"_immobilie_zu_root_map",
+			return_value={"Haus-1": "Haus-1"},
+		), patch.object(
 			allocator.frappe,
 			"get_all",
 			side_effect=get_all,
@@ -323,3 +379,100 @@ class TestCanonicalImmobilieCostCenterMapping(unittest.TestCase):
 			result["matrix"],
 			{"W | HH | 1. li": {"Hausmeister": 100.0}},
 		)
+
+	def test_root_and_building_part_keep_same_gl_costs_with_and_without_fixed_amounts(self):
+		properties = _warthestrasse_rows() + [
+			frappe._dict(name="Anderes Haus", kostenstelle="CC-ANDERS")
+		]
+		wohnungen = [
+			frappe._dict(name="W-1", immobilie="Warthestr. 65"),
+			frappe._dict(name="W-2", immobilie="Warthestr. 65 - HH"),
+		]
+		gl_queries = []
+
+		def get_all(doctype, **kwargs):
+			if doctype == "Immobilie":
+				return properties
+			if doctype == "Wohnung":
+				self.assertEqual(
+					set(kwargs["filters"]["immobilie"][1]),
+					{row.name for row in _warthestrasse_rows()},
+				)
+				return wohnungen
+			if doctype == "GL Entry":
+				gl_queries.append(kwargs["filters"])
+				self.assertEqual(
+					kwargs["filters"]["cost_center"],
+					("in", ["Warthestr. 65 - HP"]),
+				)
+				return [frappe._dict(
+					name="GL-1",
+					posting_date="2025-06-01",
+					account="ACC-HAUSMEISTER",
+					cost_center="Warthestr. 65 - HP",
+					debit=100,
+					credit=0,
+				)]
+			raise AssertionError(f"Unexpected DocType: {doctype}")
+
+		with (
+			patch.object(allocator.frappe, "get_all", side_effect=get_all),
+			patch.object(allocator, "_get_festbetrag_dimension_cutoff", return_value=None),
+			patch.object(allocator, "_konto_zu_kostenart_map", return_value={"ACC-HAUSMEISTER": "Hausmeister"}),
+			patch.object(allocator, "_prefetch_wertstellungsdaten", return_value={}),
+			patch.object(allocator, "_betriebsarten_map", return_value={"Hausmeister": {"verteilung": "qm"}}),
+			patch.object(allocator, "_has_field", return_value=False),
+			patch.object(allocator, "_bk_abrechnung_aktiv_am", return_value=True),
+			patch.object(allocator, "_flaeche_qm", side_effect=lambda wohnung, _tag: {"W-1": 60, "W-2": 40}[wohnung]),
+			patch.object(allocator, "get_bk_rounding_method", return_value="Kaufmännisch"),
+		):
+			for fixed_amount in (0, 25):
+				with self.subTest(fixed_amount=fixed_amount), patch.object(
+					allocator,
+					"_prorated_festbetrag_rows",
+					return_value=[{"wohnung": "W-2", "kostenart": "Freier Festbetrag", "betrag": fixed_amount}],
+				) as fixed_rows:
+					results = [
+						allocator.allocate_kosten_auf_wohnungen.__wrapped__(
+							von="2025-01-01", bis="2025-12-31", immobilie=immobilie,
+						)
+						for immobilie in ("Warthestr. 65", "Warthestr. 65 - HH")
+					]
+					self.assertEqual(results[0], results[1])
+					self.assertEqual(results[1]["matrix"]["W-1"]["Hausmeister"], 60.0)
+					self.assertEqual(results[1]["matrix"]["W-2"]["Hausmeister"], 40.0)
+					self.assertEqual(
+						sum(sum(arts.values()) for arts in results[1]["matrix"].values()),
+						100.0 + fixed_amount,
+					)
+					self.assertEqual(fixed_rows.call_count, 2)
+					for call in fixed_rows.call_args_list:
+						self.assertEqual(call.kwargs["immobilie"], "Warthestr. 65")
+		self.assertEqual(len(gl_queries), 4)
+
+	def test_allocator_rejects_unknown_requested_property_before_loading_costs(self):
+		with (
+			patch.object(allocator, "_get_festbetrag_dimension_cutoff", return_value=None),
+			patch.object(allocator, "_konto_zu_kostenart_map", return_value={}),
+			patch.object(allocator.frappe, "get_all", return_value=_warthestrasse_rows()) as get_all,
+			patch.object(allocator, "label_with_id", side_effect=lambda _doctype, name: name),
+			self.assertRaisesRegex(frappe.ValidationError, "Unbekannt.*Root-Immobilie"),
+		):
+			allocator.allocate_kosten_auf_wohnungen.__wrapped__(
+				von="2025-01-01", bis="2025-12-31", immobilie="Unbekannt",
+			)
+		self.assertTrue(all(call.args[0] == "Immobilie" for call in get_all.call_args_list))
+
+	def test_allocator_rejects_conflicting_hierarchy_before_loading_costs(self):
+		properties = _warthestrasse_rows()
+		properties[1].old_parent = "Anderes Haus"
+		with (
+			patch.object(allocator, "_get_festbetrag_dimension_cutoff", return_value=None),
+			patch.object(allocator, "_konto_zu_kostenart_map", return_value={}),
+			patch.object(allocator.frappe, "get_all", return_value=properties) as get_all,
+			self.assertRaisesRegex(frappe.ValidationError, "widersprüchliche Eltern-Zuordnungen"),
+		):
+			allocator.allocate_kosten_auf_wohnungen.__wrapped__(
+				von="2025-01-01", bis="2025-12-31", immobilie="Warthestr. 65 - HH",
+			)
+		self.assertTrue(all(call.args[0] == "Immobilie" for call in get_all.call_args_list))

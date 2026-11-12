@@ -290,6 +290,7 @@ def get_overview(import_name: str) -> dict[str, Any]:
 				"partyTyp": row.party_type,
 				"party": row.party,
 				"bankTransaction": row.bank_transaction,
+				"transactionId": row.get("transaction_id"),
 				"paymentEntry": row.payment_entry,
 				"customerPayments": customer_payments(row),
 				"journalEntry": row.journal_entry,

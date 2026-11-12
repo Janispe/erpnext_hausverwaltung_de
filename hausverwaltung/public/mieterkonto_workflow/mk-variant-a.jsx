@@ -146,6 +146,7 @@ function VariantA({ rows, totalRow, totalRows = [], density, highlightOpen, show
                       <span className="mk-desc-main">
                         {r.beschreibung}
                         {showOpen && <OpenBadge amount={r.offen} />}
+                        <InvoicePaidBadge row={r} />
                       </span>
                     </div>
                   </td>

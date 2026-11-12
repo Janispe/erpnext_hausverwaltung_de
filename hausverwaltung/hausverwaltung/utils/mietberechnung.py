@@ -1,8 +1,10 @@
-"""Shared, exact rent calculation for invoices, checks and the contract preview.
+"""Shared, exact monthly charge calculation for invoices, checks and previews.
 
-Monthly rates cover calendar days. An explicit fixed amount replaces the rent
-for its inclusive interval; it is never added on top of the monthly rate.
-Legacy fixed staffels remain readable until they have been migrated.
+Rent, BK and HK advances and the subletting surcharge use the same rules:
+monthly rates cover calendar days, so move-in and move-out months are prorated.
+An explicit fixed amount (part-month rule of the same Kostenart) replaces the
+charge for its inclusive interval; it is never added on top of the monthly
+rate. Legacy fixed rent staffels remain readable until they have been migrated.
 """
 
 from calendar import monthrange
@@ -21,13 +23,46 @@ MONTHLY = "Monatlich"
 LEGACY_FIXED = "Gesamter Zeitraum"
 CENT = Decimal("0.01")
 
+KOSTENART_MIETE = "Miete"
+KOSTENART_BK = "Betriebskosten"
+KOSTENART_HK = "Heizkosten"
+KOSTENART_UMZ = "Untermietzuschlag"
+KOSTENARTEN = (KOSTENART_MIETE, KOSTENART_BK, KOSTENART_HK, KOSTENART_UMZ)
+# Mietvertrag staffel table per Kostenart; all use the Staffelmiete child DocType.
+STAFFEL_FIELD_BY_KOSTENART = {
+	KOSTENART_MIETE: "miete",
+	KOSTENART_BK: "betriebskosten",
+	KOSTENART_HK: "heizkosten",
+	KOSTENART_UMZ: "untermietzuschlag",
+}
+_STAFFEL_LABEL_BY_KOSTENART = {
+	KOSTENART_MIETE: "Mietstaffel",
+	KOSTENART_BK: "BK-Staffel",
+	KOSTENART_HK: "HK-Staffel",
+	KOSTENART_UMZ: "Untermietzuschlag-Staffel",
+}
+_MONTHLY_BASIS_LABEL_BY_KOSTENART = {
+	KOSTENART_MIETE: ("eine reguläre Monatsmiete", "die"),
+	KOSTENART_BK: ("eine reguläre monatliche BK-Vorauszahlung", "die"),
+	KOSTENART_HK: ("eine reguläre monatliche Heizkostenvorauszahlung", "die"),
+	KOSTENART_UMZ: ("einen regulären monatlichen Untermietzuschlag", "der"),
+}
+
+
+def part_month_kostenart(row) -> str:
+	"""Return the Kostenart of a part-month rule; rows from before the field are rent."""
+	value = (row.get("kostenart") or KOSTENART_MIETE).strip()
+	if value not in KOSTENARTEN:
+		frappe.throw(_("Teilmonatsregel: Unbekannte Kostenart {0}.").format(value))
+	return value
+
 
 def monthly_charge_reference_date(von, anchor) -> date:
-	"""Use the first occupied day for full monthly BK/HK/UMZ installments.
+	"""Return the first occupied day of a month, e.g. for the month's BK rule.
 
-	The invoice still belongs to the calendar month. In the move-in month,
-	staffels and the first BK rule may only start on the contract's first day.
-	For subsequent months the usual first-of-month lookup remains unchanged.
+	The invoice still belongs to the calendar month. In the move-in month the
+	first BK rule only starts on the contract's first day; for subsequent months
+	the usual first-of-month lookup remains unchanged.
 	"""
 	month_start = getdate(anchor).replace(day=1)
 	return max(month_start, getdate(von)) if von else month_start
@@ -62,11 +97,17 @@ def _required_date(value, label: str) -> date:
 
 
 def validate_part_month_rows(von, bis, rows=None) -> list[dict]:
-	"""Return normalized part-month rules; reject ambiguous or invalid intervals."""
+	"""Return normalized part-month rules of every Kostenart.
+
+	Ambiguous or invalid intervals are rejected. Rules of different Kostenarten
+	may cover the same days (e.g. fixed rent and fixed BK for the move-in month).
+	"""
 	if rows and not von:
 		frappe.throw(_("Für Teilmonatsregeln wird ein Vertragsbeginn benötigt."))
 	contract_start = _required_date(von, _("Vertragsbeginn")) if von else None
 	contract_end = _required_date(bis, _("Vertragsende")) if bis else None
+	if contract_start and contract_end and contract_end < contract_start:
+		frappe.throw(_("Das Vertragsende darf nicht vor dem Vertragsbeginn liegen."))
 	normalized = []
 	for index, row in enumerate(rows or [], 1):
 		start = _required_date(row.get("von"), _("Teilmonat {0}: Von").format(index))
@@ -85,52 +126,72 @@ def validate_part_month_rows(von, bis, rows=None) -> list[dict]:
 			if mode == FIXED
 			else Decimal(0)
 		)
-		normalized.append({"von": start, "bis": end, "berechnung": mode, "betrag": amount})
-	normalized.sort(key=lambda row: (row["von"], row["bis"]))
+		normalized.append(
+			{
+				"kostenart": part_month_kostenart(row),
+				"von": start,
+				"bis": end,
+				"berechnung": mode,
+				"betrag": amount,
+			}
+		)
+	normalized.sort(key=lambda row: (row["kostenart"], row["von"], row["bis"]))
 	for previous, current in pairwise(normalized):
-		if current["von"] <= previous["bis"]:
+		if current["kostenart"] == previous["kostenart"] and current["von"] <= previous["bis"]:
 			frappe.throw(
-				_("Teilmonatsregeln dürfen sich nicht überschneiden ({0} bis {1}).").format(
-					current["von"], previous["bis"]
+				_("Teilmonatsregeln ({0}) dürfen sich nicht überschneiden ({1} bis {2}).").format(
+					current["kostenart"], current["von"], previous["bis"]
 				)
 			)
+	normalized.sort(key=lambda row: (row["von"], row["bis"], KOSTENARTEN.index(row["kostenart"])))
 	return normalized
 
 
-def _rent_rows(rows) -> list[dict]:
+def _rent_rows(rows, kostenart: str = KOSTENART_MIETE) -> list[dict]:
+	label = _STAFFEL_LABEL_BY_KOSTENART[kostenart]
 	normalized = []
 	for index, row in enumerate(rows or [], 1):
-		start = _required_date(row.get("von"), _("Mietstaffel {0}: Gültig ab").format(index))
-		mode = (row.get("art") or MONTHLY).strip()
+		start = _required_date(row.get("von"), _("{0} {1}: Gültig ab").format(label, index))
+		# Only rent knows legacy fixed sections. BK/HK/UMZ staffels have always
+		# been monthly installments, whatever their hidden ``art`` value says.
+		mode = (row.get("art") or MONTHLY).strip() if kostenart == KOSTENART_MIETE else MONTHLY
 		if mode not in (MONTHLY, LEGACY_FIXED):
-			frappe.throw(_("Mietstaffel {0}: Unbekannte Berechnungsart.").format(index))
+			frappe.throw(_("{0} {1}: Unbekannte Berechnungsart.").format(label, index))
 		normalized.append(
 			{
 				"von": start,
 				"art": mode,
-				"miete": _money(row.get("miete"), _("Mietstaffel {0}: Betrag").format(index)),
+				"miete": _money(row.get("miete"), _("{0} {1}: Betrag").format(label, index)),
 			}
 		)
 	normalized.sort(key=lambda row: row["von"])
 	for previous, current in pairwise(normalized):
 		if previous["von"] == current["von"]:
-			frappe.throw(
-				_("Mietstaffeln benötigen unterschiedliche Startdaten ({0}).").format(current["von"])
-			)
+			frappe.throw(_("{0}n benötigen unterschiedliche Startdaten ({1}).").format(label, current["von"]))
 	return normalized
 
 
-def validate_rent_rows(von, bis, miete_rows, teilmonat_rows=None) -> dict:
-	"""Validate both tables, including legacy fixed intervals and their boundaries."""
-	staffels = _rent_rows(miete_rows)
-	rules = validate_part_month_rows(von, bis, teilmonat_rows)
+def validate_charge_rows(
+	von, bis, staffel_rows, teilmonat_rows=None, *, kostenart: str = KOSTENART_MIETE
+) -> dict:
+	"""Validate one Kostenart's staffels and the part-month rules of all Kostenarten.
+
+	Returns the normalized staffels and only the rules of ``kostenart``.
+	"""
+	if kostenart not in KOSTENARTEN:
+		frappe.throw(_("Unbekannte Kostenart {0}.").format(kostenart))
+	staffels = _rent_rows(staffel_rows, kostenart)
+	rules = [
+		rule for rule in validate_part_month_rows(von, bis, teilmonat_rows) if rule["kostenart"] == kostenart
+	]
 	for rule in rules:
 		active_rate = next((row for row in reversed(staffels) if row["von"] <= rule["von"]), None)
 		if active_rate is None or active_rate["art"] != MONTHLY:
+			basis, pronoun = _MONTHLY_BASIS_LABEL_BY_KOSTENART[kostenart]
 			frappe.throw(
 				_(
-					"Bitte zuerst eine reguläre Monatsmiete hinterlegen, die am Beginn der Teilmonatsregel ({0}) gilt. Auch 0 € ist zulässig."
-				).format(rule["von"])
+					"Bitte zuerst {0} hinterlegen, {1} am Beginn der Teilmonatsregel ({2}) gilt. Auch 0 € ist zulässig."
+				).format(basis, pronoun, rule["von"])
 			)
 	contract_end = getdate(bis) if bis else date.max
 	for index, row in enumerate(staffels):
@@ -152,7 +213,24 @@ def validate_rent_rows(von, bis, miete_rows, teilmonat_rows=None) -> dict:
 					"Ein bisheriger Festbetrag und eine Teilmonatsregel dürfen denselben Zeitraum nicht abdecken."
 				)
 			)
-	return {"miete": staffels, "miete_teilmonate": rules}
+	return {"staffeln": staffels, "teilmonate": rules}
+
+
+def validate_rent_rows(von, bis, miete_rows, teilmonat_rows=None) -> dict:
+	"""Validate the rent staffels plus all part-month rules (rent rules returned)."""
+	validated = validate_charge_rows(von, bis, miete_rows, teilmonat_rows, kostenart=KOSTENART_MIETE)
+	return {"miete": validated["staffeln"], "miete_teilmonate": validated["teilmonate"]}
+
+
+def validate_contract_charges(von, bis, staffel_tables: dict, teilmonat_rows=None) -> None:
+	"""Validate every charge table of a contract together with its part-month rules.
+
+	``staffel_tables`` maps each Kostenart to its staffel rows.
+	"""
+	for kostenart in KOSTENARTEN:
+		validate_charge_rows(
+			von, bis, staffel_tables.get(kostenart) or [], teilmonat_rows, kostenart=kostenart
+		)
 
 
 def _round_fraction(amount: Fraction, rounding_method: str) -> Decimal:
@@ -181,13 +259,36 @@ def _end_of_month(value: date) -> date:
 def calculate_monthly_rent(
 	von, bis, anchor, miete_rows, teilmonat_rows=None, *, rounding_method=None
 ) -> dict:
-	"""Calculate rent once and return the same cent-safe breakdown for the UI.
+	"""Calculate the rent of one month (see ``calculate_monthly_charge``)."""
+	return calculate_monthly_charge(
+		von,
+		bis,
+		anchor,
+		miete_rows,
+		teilmonat_rows,
+		kostenart=KOSTENART_MIETE,
+		rounding_method=rounding_method,
+	)
+
+
+def calculate_monthly_charge(
+	von,
+	bis,
+	anchor,
+	staffel_rows,
+	teilmonat_rows=None,
+	*,
+	kostenart: str = KOSTENART_MIETE,
+	rounding_method=None,
+) -> dict:
+	"""Calculate one Kostenart's charge once and return a cent-safe UI breakdown.
 
 	``von`` and ``bis`` are inclusive contract dates. Row inputs may be ordinary
-	dicts or Frappe child documents. Legacy rows delimit one another regardless
-	of their type, preventing a monthly rate from continuing through a fixed
-	period. All intermediate amounts are rational; rounding happens only once
-	for the total. Breakdown cents are reconciled to that total.
+	dicts or Frappe child documents; ``teilmonat_rows`` may contain the rules of
+	every Kostenart, only those of ``kostenart`` apply. Legacy rows delimit one
+	another regardless of their type, preventing a monthly rate from continuing
+	through a fixed period. All intermediate amounts are rational; rounding
+	happens only once for the total. Breakdown cents are reconciled to that total.
 	"""
 	month_start = getdate(anchor).replace(day=1)
 	month_end = _end_of_month(month_start)
@@ -196,9 +297,9 @@ def calculate_monthly_rent(
 	contract_end = getdate(bis) if bis else date.max
 	if contract_end < contract_start:
 		frappe.throw(_("Das Vertragsende darf nicht vor dem Vertragsbeginn liegen."))
-	validated = validate_rent_rows(von, bis, miete_rows, teilmonat_rows)
-	staffels = validated["miete"]
-	rules = validated["miete_teilmonate"]
+	validated = validate_charge_rows(von, bis, staffel_rows, teilmonat_rows, kostenart=kostenart)
+	staffels = validated["staffeln"]
+	rules = validated["teilmonate"]
 	rounding = _rounding_mode(rounding_method)
 	start, end = max(month_start, contract_start), min(month_end, contract_end)
 	if start > end:

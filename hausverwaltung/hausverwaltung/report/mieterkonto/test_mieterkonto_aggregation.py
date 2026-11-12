@@ -1,6 +1,7 @@
 from datetime import date
+from itertools import permutations
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import frappe
 
@@ -95,6 +96,224 @@ class TestOneCentBalances(TestCase):
 		self.assertEqual(len(rows), 1)
 		self.assertEqual(rows[0]["kontostand"], 0.01)
 		self.assertEqual(rows[0]["is_opening_row"], 1)
+
+
+class TestStandaloneValueDates(TestCase):
+	def standalone(self, *, posting_date, value_date, voucher_type="Journal Entry", value_sort=True):
+		filters = _filters(from_date=date(2026, 1, 1), to_date=date(2026, 1, 31))
+		filters.customer = "MIETER-A"
+		filters["sortieren_nach_wertstellungsdatum"] = int(value_sort)
+		ledger = frappe._dict(
+			posting_date=posting_date, voucher_type=voucher_type, voucher_no="CLAIM-1",
+			against_voucher_type=voucher_type, against_voucher="CLAIM-1",
+			debit=0, credit=100, account="AR", remarks="Guthaben",
+		)
+
+		def get_all(doctype, **kwargs):
+			self.assertEqual(doctype, "GL Entry")
+			cutoff = kwargs["filters"].get("posting_date")
+			return [] if cutoff and posting_date > cutoff[1] else [ledger]
+
+		with patch.object(report, "_receivable_accounts", return_value={"AR"}), \
+			patch.object(report.frappe, "get_all", side_effect=get_all), \
+			patch.object(report, "_fetch_offset_accounts", return_value={}), \
+			patch.object(report, "_get_standalone_sales_invoice_category_amounts", return_value={}), \
+			patch.object(report, "_fetch_voucher_remarks", return_value={
+				(voucher_type, "CLAIM-1"): {"custom_wertstellungsdatum": value_date, "custom_mieterkonto_kategorie": report.CATEGORY_LABELS["guthaben_nachzahlungen"]},
+			}), patch.object(report, "_get_currency", return_value="EUR"):
+			return report._build_standalone_receivable_transactions({}, filters), filters
+
+	def test_backdated_journal_and_credit_note_belong_to_their_value_period(self):
+		for voucher_type in ("Journal Entry", "Sales Invoice"):
+			with self.subTest(voucher_type=voucher_type):
+				transactions, filters = self.standalone(
+					posting_date=date(2026, 2, 15), value_date=date(2026, 1, 31), voucher_type=voucher_type,
+				)
+				self.assertEqual(len(transactions), 1)
+				self.assertEqual(transactions[0]["wertstellungsdatum"], date(2026, 1, 31))
+				self.assertEqual(transactions[0]["paid_amounts"]["guthaben_nachzahlungen"], 100)
+				_rows, totals = report._build_rows(transactions, filters)
+				self.assertEqual(totals["all"]["balance"], -100)
+
+	def test_future_value_date_is_excluded_even_if_already_posted(self):
+		transactions, filters = self.standalone(posting_date=date(2026, 1, 15), value_date=date(2026, 2, 1))
+		self.assertEqual(transactions, [])
+		_rows, totals = report._build_rows(transactions, filters)
+		self.assertEqual(totals["all"]["balance"], 0)
+
+	def test_posting_date_mode_still_excludes_later_postings(self):
+		transactions, _filters_result = self.standalone(
+			posting_date=date(2026, 2, 15), value_date=date(2026, 1, 31), value_sort=False,
+		)
+		self.assertEqual(transactions, [])
+
+	def test_refund_inherits_claim_value_date_and_is_counted_in_value_period(self):
+		claims, filters = self.standalone(posting_date=date(2026, 2, 15), value_date=date(2026, 1, 31))
+		payment = frappe._dict(
+			posting_date=date(2026, 3, 1), voucher_type="Payment Entry", voucher_no="PE-1",
+			against_voucher_type="Journal Entry", against_voucher_no="CLAIM-1", amount=40,
+		)
+		with patch.object(report.frappe, "get_all", return_value=[payment]) as load, \
+			patch.object(report, "_fetch_voucher_remarks", return_value={}), \
+			patch.object(report, "_get_currency", return_value="EUR"):
+			payments, allocation = report._build_standalone_settlements(claims, filters)
+		self.assertNotIn("posting_date", load.call_args.kwargs["filters"])
+		self.assertEqual(allocation, {"PE-1": 40})
+		self.assertEqual(payments[0]["wertstellungsdatum"], date(2026, 1, 31))
+		_rows, totals = report._build_rows(claims + payments, filters)
+		self.assertEqual(totals["all"]["balance"], -60)
+
+	def test_source_metadata_fetches_custom_value_date_when_available(self):
+		with patch.object(report.frappe, "get_meta", return_value=Mock(has_field=lambda field: field == "custom_wertstellungsdatum")), \
+			patch.object(report.frappe, "get_all", return_value=[{"name": "JE-1", "custom_wertstellungsdatum": "2026-01-31"}]) as load:
+			metadata = report._fetch_voucher_remarks([frappe._dict(voucher_type="Journal Entry", voucher_no="JE-1")])
+		self.assertIn("custom_wertstellungsdatum", load.call_args.kwargs["fields"])
+		self.assertEqual(metadata[("Journal Entry", "JE-1")]["custom_wertstellungsdatum"], "2026-01-31")
+
+
+class TestMixedPaymentValueDates(TestCase):
+	def _execute_payment(self, *, value_sort=True, grouped=True, advance=14.57, settlement=True,
+		from_date=date(2025, 12, 1)):
+		"""Build the report from invoice, PLE and GL fixtures, without a site DB."""
+		posting_date = date(2026, 8, 31)
+		invoices = {
+			name: _make_invoice(
+				name, mab_id="MV-TEST|09/2026" if category != "guthaben_nachzahlungen" else None,
+				posting_date=posting_date, grand_total=amount, status="Paid",
+				categories={category: amount},
+			)
+			for name, category, amount in (
+				("SI-BK-NACHZAHLUNG", "guthaben_nachzahlungen", 85.43),
+				("SI-MIETE", "miete", 750.0),
+				("SI-BK", "betriebskosten", 125.0),
+			)
+			if settlement or category != "guthaben_nachzahlungen"
+		}
+		for invoice in invoices.values():
+			invoice.wertstellungsdatum = (
+				date(2025, 12, 31) if invoice.name == "SI-BK-NACHZAHLUNG" else date(2026, 9, 1)
+			)
+		allocated = sum(invoice.grand_total for invoice in invoices.values())
+		ledger = [frappe._dict(
+			posting_date=posting_date, voucher_type="Payment Entry", voucher_no="PE-MIXED",
+			against_voucher_no=invoice.name, amount=-invoice.grand_total,
+		) for invoice in invoices.values()]
+		gl = [frappe._dict(
+			posting_date=posting_date, voucher_no="PE-MIXED", debit=0, credit=allocated + advance,
+		)]
+		filters = dict(
+			company="HV", customer="MIETER-A", from_date=from_date, to_date=date(2026, 9, 30),
+			sortieren_nach_wertstellungsdatum=int(value_sort), gruppieren_pro_monat=int(grouped),
+		)
+		with (
+			patch.object(report, "_get_invoices", return_value=invoices),
+			patch.object(report, "_build_standalone_receivable_transactions", return_value=[]),
+			patch.object(report, "_build_standalone_settlements", return_value=([], {})),
+			patch.object(report, "_remaining_ledger_transactions", return_value=[]) as remaining,
+			patch.object(report, "_receivable_accounts", return_value={"1410"}),
+			patch.object(report, "_fetch_voucher_remarks", return_value={}),
+			patch.object(report, "_get_currency", return_value="EUR"),
+			patch.object(report, "enrich_link_titles"),
+			patch.object(report.frappe, "get_all", side_effect=lambda doctype, **kwargs:
+				ledger if doctype == "Payment Ledger Entry" else gl),
+		):
+			result = report.execute(filters)
+		transactions = remaining.call_args.args[0]
+		self.assertAlmostEqual(sum(t["delta"] for t in transactions), -advance)
+		return result, transactions
+
+	def test_report_keeps_september_payment_and_advance_in_their_value_periods(self):
+		for grouped in (True, False):
+			with self.subTest(grouped=grouped):
+				result, transactions = self._execute_payment(grouped=grouped)
+				payments = [r for r in result[1] if r.get("belegart") == "Payment Entry"]
+				self.assertEqual(len(payments), 3)
+				by_date = {r["wertstellungsdatum"]: r for r in payments}
+				self.assertEqual(by_date[date(2026, 9, 1)]["betrag_summe"], -875.0)
+				self.assertEqual(by_date[date(2025, 12, 31)]["betrag_summe"], -85.43)
+				self.assertEqual(by_date[date(2026, 8, 31)]["betrag_vorauszahlungen"], -14.57)
+				self.assertEqual(by_date[date(2026, 8, 31)]["art"], "Vorauszahlung")
+				self.assertAlmostEqual(sum(r["betrag_summe"] for r in payments), -975.0)
+				self.assertEqual(_summary_value(result[4], "Kontostand"), -14.57)
+				self.assertTrue(all(r["datum"] == date(2026, 8, 31) for r in payments))
+				self.assertTrue(all(r["belegnummer"] == "PE-MIXED" for r in payments))
+				self.assertTrue(all(r["status"] == "Paid" and r["offen"] == 0
+					for r in result[1] if r.get("art") == "Forderung"))
+				september = next(t for t in transactions if t.get("art") == "Zahlung"
+					and t["wertstellungsdatum"] == date(2026, 9, 1))
+				self.assertEqual(september["paid_amounts"]["miete"], 750.0)
+				self.assertEqual(september["paid_amounts"]["betriebskosten"], 125.0)
+
+	def test_september_only_report_includes_payment_and_preserves_opening_credit(self):
+		result, _ = self._execute_payment(from_date=date(2026, 9, 1))
+		payments = [r for r in result[1] if r.get("belegart") == "Payment Entry"]
+		self.assertEqual([r["betrag_summe"] for r in payments], [-875.0])
+		opening = next(r for r in result[1] if r.get("is_opening_row"))
+		self.assertEqual(opening["kontostand"], -14.57)
+		self.assertEqual(_summary_value(result[4], "Kontostand"), -14.57)
+		self.assertEqual(_summary_value(result[4], "Bezahlt im Zeitraum"), 875.0)
+		self.assertEqual(_summary_value(result[4], "Miete offen (Zeitraum)"), 0.0)
+		self.assertEqual(_summary_value(result[4], "BK offen (Zeitraum)"), 0.0)
+
+	def test_report_cutoff_does_not_pull_september_payment_into_december(self):
+		_, transactions = self._execute_payment()
+		filters = _filters(from_date=date(2025, 12, 1), to_date=date(2025, 12, 31))
+		filters["sortieren_nach_wertstellungsdatum"] = 1
+		rows, totals = _build_rows(transactions, filters)
+		payments = [r for r in rows if r.get("belegart") == "Payment Entry"]
+		self.assertEqual([r["betrag_summe"] for r in payments], [-85.43])
+		self.assertEqual(totals["all"]["balance"], 0.0)
+
+	def test_posting_date_mode_still_shows_one_complete_mixed_payment(self):
+		result, _ = self._execute_payment(value_sort=False)
+		payments = [r for r in result[1] if r.get("belegart") == "Payment Entry"]
+		self.assertEqual(len(payments), 1)
+		self.assertEqual(payments[0]["betrag_summe"], -975.0)
+		self.assertEqual(payments[0]["betrag_vorauszahlungen"], -14.57)
+		self.assertEqual(_summary_value(result[4], "Kontostand"), -14.57)
+
+	def test_pure_rent_and_fully_allocated_mixed_payments_keep_all_allocations(self):
+		for settlement in (True, False):
+			for grouped in (True, False):
+				with self.subTest(settlement=settlement, grouped=grouped):
+					result, _ = self._execute_payment(settlement=settlement, grouped=grouped, advance=0)
+					payments = [r for r in result[1] if r.get("belegart") == "Payment Entry"]
+					september = [r for r in payments if r["wertstellungsdatum"] == date(2026, 9, 1)]
+					self.assertEqual(sum(r["betrag_summe"] for r in september), -875.0)
+					self.assertAlmostEqual(sum(r["betrag_summe"] for r in payments),
+						-960.43 if settlement else -875.0)
+					self.assertEqual(_summary_value(result[4], "Kontostand"), 0.0)
+
+	def test_rent_with_advance_keeps_receipt_date_and_invoice_value_date(self):
+		for value_sort in (True, False):
+			with self.subTest(value_sort=value_sort):
+				result, _ = self._execute_payment(settlement=False, value_sort=value_sort)
+				payments = [r for r in result[1] if r.get("belegart") == "Payment Entry"]
+				self.assertEqual(len(payments), 2 if value_sort else 1)
+				self.assertAlmostEqual(sum(r["betrag_summe"] for r in payments), -889.57)
+				self.assertEqual(_summary_value(result[4], "Kontostand"), -14.57)
+
+	def test_merge_is_independent_of_input_order_and_uses_effective_date(self):
+		base = dict(date=date(2026, 9, 1), belegart="Payment Entry", belegnummer="PE-MIXED",
+			currency="EUR", invoice_amounts={}, written_off_amounts={}, offen=0)
+		transactions = [
+			dict(base, wertstellungsdatum="2025-12-31", art="Zahlung", delta=-85.43,
+				paid_amounts={"guthaben_nachzahlungen": 85.43}),
+			dict(base, wertstellungsdatum=date(2026, 9, 1), art="Zahlung", delta=-875,
+				paid_amounts={"miete": 750, "betriebskosten": 125}),
+			dict(base, art="Vorauszahlung", delta=-14.57, paid_amounts={"vorauszahlungen": 14.57}),
+		]
+		for ordering in permutations(transactions):
+			merged = _merge_payment_entry_mixed_advance_transactions(list(ordering),
+				{"sortieren_nach_wertstellungsdatum": 1})
+			self.assertEqual(len(merged), 2)
+			by_date = {report._transaction_report_date(t, {"sortieren_nach_wertstellungsdatum": 1}): t
+				for t in merged}
+			self.assertEqual(by_date[date(2025, 12, 31)]["delta"], -85.43)
+			self.assertEqual(by_date[date(2026, 9, 1)]["delta"], -889.57)
+			self.assertEqual(by_date[date(2026, 9, 1)]["art"], "Zahlung")
+			self.assertEqual(len(by_date[date(2026, 9, 1)]["_open_summary_parts"]), 2)
+		self.assertNotIn("_open_summary_parts", transactions[0])
 
 
 def _totals(*, all_miete: float, period_miete: float) -> dict:

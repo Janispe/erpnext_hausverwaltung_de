@@ -26,6 +26,7 @@ export function isEmbedded() {
 
 if (typeof window !== "undefined") {
 	window.addEventListener("message", (event) => {
+		if (event.source !== window.parent || event.origin !== window.location.origin) return;
 		const msg = event.data;
 		if (!msg || msg.source !== HOST || msg.type !== "rpc-result") return;
 		const entry = _pending.get(msg.id);

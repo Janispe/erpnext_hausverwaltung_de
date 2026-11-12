@@ -4,6 +4,7 @@ import frappe
 
 from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 	FAC_CODE_TOOL_NAMES,
+	FAC_FORM_TOOL_NAMES,
 	FAC_MAIL_MERGE_TOOL_NAMES,
 	FAC_REPORT_TOOL_NAMES,
 	FAC_TOOL_NAMES,
@@ -16,14 +17,15 @@ def prepare_mail_merge():
 		frappe.throw("Nur fuer die isolierte FAC-Testsite.")
 	frappe.only_for("System Manager")
 	if not frappe.db.exists("Print Format", "Serienbrief Dokument"):
-		# mail_merge's installer replaces this placeholder with its actual format.
+		# A standard placeholder permits empty HTML. Migration supplies the layout
+		# and enables custom_format together, preserving existing custom layouts.
 		frappe.get_doc(
 			{
 				"doctype": "Print Format",
 				"name": "Serienbrief Dokument",
 				"doc_type": "DocType",
-				"custom_format": 1,
-				"html": "<!-- Replaced by mail_merge after_migrate -->",
+				"custom_format": 0,
+				"html": "",
 			}
 		).insert()
 		frappe.db.commit()
@@ -36,7 +38,7 @@ def configure():
 	from hausverwaltung.hausverwaltung.services.fac_native_assistant import NATIVE_READ_TOOLS
 	from hausverwaltung.hausverwaltung.services.fac_setup import configure_tools
 
-	extra_tools = (*FAC_REPORT_TOOL_NAMES, *FAC_CODE_TOOL_NAMES, *FAC_MAIL_MERGE_TOOL_NAMES)
+	extra_tools = (*FAC_REPORT_TOOL_NAMES, *FAC_CODE_TOOL_NAMES, *FAC_MAIL_MERGE_TOOL_NAMES, *FAC_FORM_TOOL_NAMES)
 	configure_tools("Administrator", extra_tools=extra_tools)
 	actual = set(FAC_TOOL_NAMES) | set(extra_tools) | set(NATIVE_READ_TOOLS)
 	company = frappe.db.get_value("Company", {}, "name")
