@@ -1,0 +1,119 @@
+{
+ "doctype": "DocType",
+ "name": "HV Action Proposal",
+ "module": "HV Proposals",
+ "engine": "InnoDB",
+ "autoname": "hash",
+ "field_order": [
+  "target",
+  "package",
+  "action",
+  "current_revision",
+  "revision_hash",
+  "status",
+  "decision_by",
+  "decision_at",
+  "result",
+  "request_id",
+  "request_hash",
+  "submitter",
+  "event_sequence"
+ ],
+ "fields": [
+  {
+   "fieldname": "target",
+   "label": "Target",
+   "fieldtype": "Link",
+   "options": "HV Synthetic Note",
+   "reqd": 1
+  },
+  {
+   "fieldname": "package",
+   "label": "Package",
+   "fieldtype": "Link",
+   "options": "HV Proposal Package",
+   "reqd": 1
+  },
+  {
+   "fieldname": "action",
+   "label": "Action",
+   "fieldtype": "Data",
+   "reqd": 1
+  },
+  {
+   "fieldname": "current_revision",
+   "label": "Current Revision",
+   "fieldtype": "Int"
+  },
+  {
+   "fieldname": "revision_hash",
+   "label": "Revision Hash",
+   "fieldtype": "Data"
+  },
+  {
+   "fieldname": "status",
+   "label": "Status",
+   "fieldtype": "Select",
+   "options": "Pending\nApproved\nRejected\nStale\nSucceeded"
+  },
+  {
+   "fieldname": "decision_by",
+   "label": "Decision By",
+   "fieldtype": "Link",
+   "options": "User"
+  },
+  {
+   "fieldname": "decision_at",
+   "label": "Decision At",
+   "fieldtype": "Datetime"
+  },
+  {
+   "fieldname": "result",
+   "label": "Result",
+   "fieldtype": "Code",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "request_id",
+   "label": "Request Id",
+   "fieldtype": "Data",
+   "unique": 1
+  },
+  {
+   "fieldname": "request_hash",
+   "label": "Request Hash",
+   "fieldtype": "Data"
+  },
+  {
+   "fieldname": "submitter",
+   "label": "Submitter",
+   "fieldtype": "Link",
+   "options": "User"
+  },
+  {
+   "fieldname": "event_sequence",
+   "label": "Event Sequence",
+   "fieldtype": "Int",
+   "default": "0"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "HV Proposal Agent",
+   "read": 1,
+   "create": 1,
+   "write": 1,
+   "permlevel": 0
+  },
+  {
+   "role": "HV Proposal Reviewer",
+   "read": 1,
+   "create": 1,
+   "write": 1,
+   "permlevel": 0
+  }
+ ],
+ "track_changes": 0,
+ "allow_rename": 0,
+ "index_web_pages_for_search": 0
+}

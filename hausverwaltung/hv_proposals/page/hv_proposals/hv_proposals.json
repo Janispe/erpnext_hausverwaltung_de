@@ -1,0 +1,16 @@
+{
+ "doctype": "Page",
+ "name": "hv-proposals",
+ "page_name": "hv-proposals",
+ "module": "HV Proposals",
+ "standard": "Yes",
+ "title": "KI-Vorschl\u00e4ge \u00b7 Synthetischer Pilot",
+ "roles": [
+  {
+   "role": "HV Proposal Agent"
+  },
+  {
+   "role": "HV Proposal Reviewer"
+  }
+ ]
+}
