@@ -514,3 +514,5 @@ has_permission = {
 	name: "hausverwaltung.proposals.frappe_guards.can_read"
 	for name in ("HV Action Proposal", "HV Proposal Revision", "HV Proposal Audit", "HV Proposal Package")
 }
+
+before_migrate = ["hausverwaltung.proposals.install.refresh_module_map"]
