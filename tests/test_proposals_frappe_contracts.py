@@ -90,10 +90,12 @@ class AdapterContracts(unittest.TestCase):
 		self.fake.DoesNotExistError = Missing
 		self.fake.conf = {"hv_proposals_synthetic_enabled": True}
 		self.fake.session = self.session
-		self.fake.local = SimpleNamespace(request=self.request, login_manager=SimpleNamespace(user=self.session.user))
+		self.fake.local = SimpleNamespace(request=self.request, login_manager=SimpleNamespace(user=self.session.user), message_log=[])
 		self.fake.db = SimpleNamespace(get_value=lambda *a, **kw: self.user)
 		self.fake.get_roles = lambda user=None: list(self.roles)
-		def throw(message, exception=ValueError): raise exception(message)
+		def throw(message, exception=ValueError):
+			self.fake.local.message_log.append({"message": message})
+			raise exception(message)
 		self.fake.throw = throw
 		self.fake.whitelist = lambda **kwargs: lambda f: f
 		utils = ModuleType("frappe.utils");utils.now_datetime = lambda: None
@@ -150,6 +152,22 @@ class AdapterContracts(unittest.TestCase):
 		with self.assertRaises(self.Denied) as forbidden:
 			self.service._note("SYN-HIDDEN")
 		self.assertEqual(str(absent.exception), str(forbidden.exception))
+
+	def test_api_normalizes_core_emitted_messages_and_exception_context(self):
+		@self.service._api
+		def endpoint(): return self.service._note("SYN-PRIVATE")
+		def missing(*args, **kwargs): self.fake.throw("HV Synthetic Note SYN-PRIVATE not found", self.fake.DoesNotExistError)
+		self.fake.get_doc = missing
+		with self.assertRaises(self.Denied) as absent: endpoint()
+		absent_messages = list(self.fake.local.message_log)
+		self.assertTrue(absent.exception.__suppress_context__)
+		self.fake.local.message_log = []
+		self.fake.get_doc = lambda *a, **kw: SimpleNamespace()
+		self.fake.has_permission = lambda *a, **kw: False
+		with self.assertRaises(self.Denied) as forbidden: endpoint()
+		self.assertEqual(self.fake.local.message_log, absent_messages)
+		self.assertEqual(absent_messages, [{"message": "Proposal operation unavailable"}])
+		self.assertTrue(forbidden.exception.__suppress_context__)
 
 	def test_managed_records_reject_direct_mutation_and_history_edits(self):
 		guards = importlib.import_module("hausverwaltung.proposals.frappe_guards")

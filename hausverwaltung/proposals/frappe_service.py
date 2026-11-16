@@ -55,9 +55,19 @@ def _actor(human=False):
 def _api(function):
 	@wraps(function)
 	def wrapped(*args, **kwargs):
-		_actor()
-		with service_scope():
-			return function(*args, **kwargs)
+		previous_messages = list(frappe.local.message_log)
+		try:
+			_actor()
+			with service_scope():
+				return function(*args, **kwargs)
+		except (frappe.PermissionError, frappe.DoesNotExistError):
+			# Core get_doc/permission checks can emit messages before raising.
+			# Replace both those messages and exception context at one API boundary.
+			frappe.local.message_log = previous_messages
+			try:
+				_deny()
+			except frappe.PermissionError as denied:
+				raise denied from None
 	return frappe.whitelist(methods=["POST"])(wrapped)
 
 
@@ -141,6 +151,7 @@ def _read_graph(body, user, seen=None):
 
 
 def readable_record(doc, user):
+	previous_messages = list(frappe.local.message_log)
 	try:
 		enabled()
 		if doc.doctype == PACKAGE:
@@ -154,6 +165,7 @@ def readable_record(doc, user):
 		_read_graph(body, user)
 		return True
 	except (frappe.PermissionError, frappe.DoesNotExistError):
+		frappe.local.message_log = previous_messages
 		return False
 
 
