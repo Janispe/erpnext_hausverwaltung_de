@@ -21,6 +21,10 @@ AGENT = "HV Proposal Agent"
 REVIEWER = "HV Proposal Reviewer"
 
 
+class ConcurrentRevisionRetry(frappe.ValidationError):
+	http_status_code = 409
+
+
 def enabled():
 	if frappe.conf.get("hv_proposals_synthetic_enabled") is not True:
 		frappe.throw("Synthetic proposal pilot is disabled", frappe.PermissionError)
@@ -68,6 +72,14 @@ def _api(function):
 				_deny()
 			except frappe.PermissionError as denied:
 				raise denied from None
+		except frappe.QueryDeadlockError:
+			# Includes MariaDB CHECKREAD: retry must be a NEW request/transaction,
+			# never the same statement in this snapshot. Frappe rolls this back.
+			frappe.local.message_log = previous_messages
+			try:
+				frappe.throw("Concurrent snapshot changed. Retry the same revision and hash.", ConcurrentRevisionRetry)
+			except ConcurrentRevisionRetry as conflict:
+				raise conflict from None
 	return frappe.whitelist(methods=["POST"])(wrapped)
 
 

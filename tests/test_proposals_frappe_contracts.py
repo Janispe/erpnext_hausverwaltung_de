@@ -87,6 +87,8 @@ class AdapterContracts(unittest.TestCase):
 		self.request = SimpleNamespace(cookies={"sid": "synthetic-session"}, headers={})
 		self.fake = ModuleType("frappe")
 		self.fake.PermissionError = Denied
+		self.fake.ValidationError = ValueError
+		self.fake.QueryDeadlockError = RuntimeError
 		self.fake.DoesNotExistError = Missing
 		self.fake.conf = {"hv_proposals_synthetic_enabled": True}
 		self.fake.session = self.session
@@ -168,6 +170,14 @@ class AdapterContracts(unittest.TestCase):
 		self.assertEqual(self.fake.local.message_log, absent_messages)
 		self.assertEqual(absent_messages, [{"message": "Proposal operation unavailable"}])
 		self.assertTrue(forbidden.exception.__suppress_context__)
+
+	def test_concurrent_snapshot_error_requires_new_request_and_hides_db_detail(self):
+		@self.service._api
+		def endpoint(): raise self.fake.QueryDeadlockError("synthetic SQL detail")
+		with self.assertRaises(self.service.ConcurrentRevisionRetry) as retry: endpoint()
+		self.assertEqual(retry.exception.http_status_code, 409)
+		self.assertTrue(retry.exception.__suppress_context__)
+		self.assertNotIn("SQL", str(retry.exception))
 
 	def test_managed_records_reject_direct_mutation_and_history_edits(self):
 		guards = importlib.import_module("hausverwaltung.proposals.frappe_guards")
