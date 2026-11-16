@@ -36,6 +36,6 @@ def no_generic_listing(user=None):
 
 def can_read(doc, user=None, ptype=None):
 	if ptype not in (None, "read", "select", "print", "export"):
-		return None  # normal role/object permission evaluation still applies
+		return True  # hooks can only deny; normal role/object checks still apply
 	from .frappe_service import readable_record
 	return readable_record(doc, user or frappe.session.user)

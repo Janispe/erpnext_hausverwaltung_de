@@ -5,7 +5,6 @@ hv_proposals_synthetic_enabled. The request commits core+business+audit together
 No method here commits, changes users or bypasses normal document permissions.
 """
 from functools import wraps
-from uuid import uuid4
 
 import frappe
 from frappe.utils import now_datetime
@@ -264,8 +263,8 @@ def submit(key, package, payload, dependencies=None, action=domain.ACTION):
 		frappe.throw("Unknown action or invalid request key")
 	operation = _payload(payload)
 	dependencies = _json(dependencies if dependencies is not None else [], list)
-	_note(operation["target"], "write")
 	_lock_package(package, create=True)
+	_note(operation["target"], "write")
 	request_id = domain.digest([frappe.session.user, key])
 	request_hash = domain.digest([action, package, operation, dependencies])
 	previous = frappe.db.get_value(PROPOSAL, {"request_id": request_id}, "name")

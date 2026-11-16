@@ -152,7 +152,7 @@ class AdapterContracts(unittest.TestCase):
 
 	def test_permission_hook_does_not_replace_normal_write_rights(self):
 		guards = importlib.import_module("hausverwaltung.proposals.frappe_guards")
-		self.assertIsNone(guards.can_read(SimpleNamespace(), ptype="write"))
+		self.assertIs(guards.can_read(SimpleNamespace(), ptype="write"), True)
 		self.assertEqual(guards.no_generic_listing(), "1=0")
 
 	def test_no_identity_claims_or_bypass_in_service_and_normal_save(self):
