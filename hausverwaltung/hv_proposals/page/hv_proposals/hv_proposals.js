@@ -65,9 +65,12 @@ frappe.pages["hv-proposals"].on_page_load = function (wrapper) {
 				selected = null;
 				try {
 					const result = await call("view", { proposal_id: p.id });
-					await show(result);
 					target.set_value(result.preview.target);
 					label.set_value(result.preview.after.label);
+					pkg.set_value(result.package);
+					dependencies = result.dependencies.map(({ id, revision, hash }) => ({ id, revision, hash }));
+					showDependencies();
+					await show(result);
 				} catch (e) { status.text(__("Vorschlag konnte nicht geladen werden; Servermeldung beachten.")); }
 			});
 			$("<button class='btn btn-default btn-sm ml-2'>").text(__("Als Vorgänger auswählen")).appendTo(row).on("click", () => {

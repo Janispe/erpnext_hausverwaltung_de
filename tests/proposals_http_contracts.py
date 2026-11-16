@@ -230,6 +230,45 @@ class SiteContracts(unittest.TestCase):
 		self.assertEqual(self.execute(p)["status"], "Succeeded")
 		self.assertEqual(self.note()["generation"], 1)
 
+	def upstream_only_editor(self, reject):
+		# Exactly two users: reviewer A may see only target A; agent B can read A
+		# and creates a dependent proposal for target B. No downstream business
+		# rights are granted to A, before or after graph invalidation.
+		target_b = "SYN-DOWNSTREAM-" + uuid4().hex[:12]
+		note_b = self.reviewer.resource("HV Synthetic Note", data={"synthetic_id":target_b,"label":"private downstream"})
+		permission = self.admin.resource("User Permission", data={"user":"reviewer@hv4.invalid","allow":"HV Synthetic Note","for_value":self.target,"apply_to_all_doctypes":1})
+		try:
+			a = self.reviewer.api("submit",key=uuid4().hex,package=self.package,payload={"target":self.target,"label":"upstream"})
+			b = self.agent.api("submit",key=uuid4().hex,package=self.package,payload={"target":target_b,"label":"downstream planned"},dependencies=[binding(a)])
+			with self.assertRaises(HTTPFailure): self.reviewer.resource("HV Synthetic Note",target_b)
+			if reject:
+				changed = self.reviewer.api("review",binding=binding(a),approve=False)
+				self.assertEqual(changed["status"],"Rejected")
+			else:
+				changed = self.reviewer.api("revise",binding=binding(a),payload={"target":self.target,"label":"upstream revised"})
+				self.assertEqual(changed["revision"],2)
+			self.assertNotIn(target_b,json.dumps(changed))
+			self.assertNotIn(b["id"],json.dumps(changed))
+			self.assertEqual(self.agent.api("view",proposal_id=b["id"])["status"],"Stale")
+			events = self.agent.api("audit",proposal_id=b["id"])
+			self.assertEqual(events[-1]["kind"],"Stale")
+			self.assertEqual(events[-1]["actor"],"reviewer@hv4.invalid")
+			with self.assertRaises(HTTPFailure): self.reviewer.resource("HV Synthetic Note",target_b)
+			with self.assertRaises(HTTPFailure): self.reviewer.api("view",proposal_id=b["id"])
+			visible = self.reviewer.call(PREFIX+"list_proposals",{})
+			self.assertNotIn(b["id"],json.dumps(visible))
+			self.assertNotIn("_server_messages",visible)
+			after = self.agent.resource("HV Synthetic Note",target_b)
+			self.assertEqual({k:after[k] for k in ("label","generation","modified")},{k:note_b[k] for k in ("label","generation","modified")})
+		finally:
+			self.admin.resource("User Permission",permission["name"],method="DELETE")
+
+	def test_10_upstream_revision_invalidates_unreadable_downstream(self):
+		self.upstream_only_editor(reject=False)
+
+	def test_11_upstream_rejection_invalidates_unreadable_downstream(self):
+		self.upstream_only_editor(reject=True)
+
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser()

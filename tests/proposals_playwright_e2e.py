@@ -136,6 +136,68 @@ def main(args):
 			proof["visible_audit"] = reviewer_page.locator('[aria-label="Audit"]').inner_text()
 			reviewer_page.locator("p[role=status]").scroll_into_view_if_needed()
 			reviewer_page.screenshot(path=str(output / "03-reviewer-executed.png"))
+			# Reopening must replace the entire editor, including only the DIRECT
+			# immutable dependencies, and must discard unrelated draft selection.
+			record("dependent_editor_reopen")
+			target_a, target_b = "SYN-PW-A-"+uuid4().hex[:10], "SYN-PW-B-"+uuid4().hex[:10]
+			dag_package = "pw-dag-"+uuid4().hex[:10]
+			for name in (target_a,target_b):
+				r = agent.request.post(note_url,headers=headers,data=json.dumps({"synthetic_id":name,"label":"unverändert"}))
+				assert r.status == 200
+			agent_page.get_by_label("Synthetische Notiz",exact=True).fill(target_a)
+			agent_page.get_by_label("Synthetische Notiz",exact=True).press("Tab")
+			agent_page.get_by_label("Neue Bezeichnung",exact=True).fill("Vorgänger A")
+			agent_page.get_by_label("Paket",exact=True).fill(dag_package)
+			with agent_page.expect_response(lambda r:r.url.endswith(API+"submit")) as submitted_a:
+				agent_page.get_by_role("button",name="Vorschlag einreichen",exact=True).click()
+			assert submitted_a.value.status == 200
+			proposal_a = submitted_a.value.json()["message"]
+			ref_a = {k:proposal_a[k] for k in ("id","revision","hash")}
+			row_a = agent_page.locator('[aria-label="Vorschlagsliste"] > div').filter(has_text=target_a)
+			row_a.get_by_role("button",name="Als Vorgänger auswählen",exact=True).click()
+			agent_page.get_by_label("Synthetische Notiz",exact=True).fill(target_b)
+			agent_page.get_by_label("Synthetische Notiz",exact=True).press("Tab")
+			agent_page.get_by_label("Neue Bezeichnung",exact=True).fill("Nachfolger B")
+			with agent_page.expect_response(lambda r:r.url.endswith(API+"submit")) as submitted_b:
+				agent_page.get_by_role("button",name="Vorschlag einreichen",exact=True).click()
+			assert submitted_b.value.status == 200
+			proposal_b = submitted_b.value.json()["message"]
+			assert proposal_b["dependencies"] == [ref_a]
+			agent_page.reload(wait_until="domcontentloaded")
+			row_b = agent_page.locator('[aria-label="Vorschlagsliste"] > div').filter(has_text=target_b)
+			with agent_page.expect_response(lambda r:r.url.endswith(API+"view")):
+				row_b.get_by_role("button",name="Ansehen",exact=True).click()
+			expect(agent_page.get_by_label("Paket",exact=True)).to_have_value(dag_package)
+			deps = agent_page.locator('[aria-label="Explizite Vorgänger"]')
+			assert json.loads(deps.inner_text()) == [ref_a]
+			# Select a proposal from another package as draft, then reopen B.
+			agent_page.locator('[aria-label="Vorschlagsliste"] > div').filter(has_text=target).get_by_role("button",name="Als Vorgänger auswählen",exact=True).click()
+			assert any(x["id"]==proposal["id"] for x in json.loads(deps.inner_text()))
+			with agent_page.expect_response(lambda r:r.url.endswith(API+"view")):
+				row_b.get_by_role("button",name="Ansehen",exact=True).click()
+			assert json.loads(deps.inner_text()) == [ref_a]
+			agent_page.get_by_label("Neue Bezeichnung",exact=True).fill("B nur Bezeichnung geändert")
+			with agent_page.expect_response(lambda r:r.url.endswith(API+"revise")) as revised_b:
+				agent_page.get_by_role("button",name="Neue Revision mit Preview",exact=True).click()
+			assert revised_b.value.status == 200
+			proposal_b = revised_b.value.json()["message"]
+			assert proposal_b["revision"]==2 and proposal_b["dependencies"]==[ref_a]
+			agent_page.locator("p[role=status]").scroll_into_view_if_needed()
+			agent_page.screenshot(path=str(output/"04-dependent-editor.png"))
+			before_b = agent.request.get(note_url+"/"+target_b).json()["data"]
+			reviewer_page.reload(wait_until="domcontentloaded")
+			with reviewer_page.expect_response(lambda r:r.url.endswith(API+"view")):
+				reviewer_page.locator('[aria-label="Vorschlagsliste"] > div').filter(has_text=target_b).get_by_role("button",name="Ansehen",exact=True).click()
+			expect(reviewer_page.locator("p[role=status]")).to_contain_text("Revision 2")
+			with reviewer_page.expect_response(lambda r:r.url.endswith(API+"review")) as review_b:
+				reviewer_page.get_by_role("button",name="Diese Revision freigeben",exact=True).click()
+			assert review_b.value.status == 200
+			with reviewer_page.expect_response(lambda r:r.url.endswith(API+"execute")) as blocked_b:
+				reviewer_page.get_by_role("button",name="Genehmigte Revision ausführen",exact=True).click()
+			assert blocked_b.value.status != 200
+			after_b = agent.request.get(note_url+"/"+target_b).json()["data"]
+			assert all(before_b[k]==after_b[k] for k in ("label","generation","modified"))
+			proof["dependent_editor"]={"reopened_direct_binding":ref_a,"revised_child":{k:proposal_b[k] for k in ("id","revision","hash")},"unrelated_draft_discarded":True,"label_only_revision_preserved_direct_binding":True,"execute_before_predecessor_status":blocked_b.value.status,"business_record_unchanged":True}
 			proof["success"] = True
 			record("complete")
 			browser.close()

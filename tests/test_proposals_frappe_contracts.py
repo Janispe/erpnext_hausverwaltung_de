@@ -179,6 +179,15 @@ class AdapterContracts(unittest.TestCase):
 		self.assertTrue(retry.exception.__suppress_context__)
 		self.assertNotIn("SQL", str(retry.exception))
 
+	def test_response_exposes_direct_bindings_separately_from_transitive_preview(self):
+		direct = {"id": "direct", "revision": 2, "hash": "a" * 64}
+		body = {"dependencies": [direct], "preview": {"dependencies": [direct, {"id": "ancestor"}]}}
+		doc = SimpleNamespace(name="child",current_revision=1,revision_hash="b"*64,status="Pending",package="group",result=None)
+		response = self.service._response(doc, body)
+		self.assertEqual(response["dependencies"], [direct])
+		self.assertEqual(response["package"], "group")
+		self.assertNotEqual(response["dependencies"], response["preview"]["dependencies"])
+
 	def test_managed_records_reject_direct_mutation_and_history_edits(self):
 		guards = importlib.import_module("hausverwaltung.proposals.frappe_guards")
 		doc = guards.ManagedDocument();doc.is_new = lambda: True

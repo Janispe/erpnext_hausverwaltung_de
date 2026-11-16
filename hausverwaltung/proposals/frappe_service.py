@@ -5,6 +5,7 @@ hv_proposals_synthetic_enabled. The request commits core+business+audit together
 No method here commits, changes users or bypasses normal document permissions.
 """
 from functools import wraps
+from uuid import uuid4
 
 import frappe
 from frappe.utils import now_datetime
@@ -237,6 +238,36 @@ def _event(doc, kind, detail=None):
 	doc.save()
 
 
+
+def _invalidate_metadata(child, parent):
+	"""Service-owned graph bookkeeping, never a business-document write.
+
+	Caller already holds the package/child locks and verified the immutable edge.
+	Downstream target rights must not veto an authorized upstream revision or
+	rejection. Only fixed managed-core columns and one append-only audit are
+	written here; no downstream business APIs, permissions or payloads change.
+	Normal user-facing core writes and every business save retain their gates.
+	"""
+	sequence = int(child.event_sequence or 0) + 1
+	now, actor = now_datetime(), frappe.session.user
+	frappe.db.sql(
+		"""UPDATE `tabHV Action Proposal`
+		SET status='Stale', decision_by=NULL, decision_at=NULL,
+		    event_sequence=%s, modified=%s, modified_by=%s
+		WHERE name=%s AND current_revision=%s AND revision_hash=%s""",
+		(sequence, now, actor, child.name, child.current_revision, child.revision_hash),
+	)
+	frappe.db.sql(
+		"""INSERT INTO `tabHV Proposal Audit`
+		(`name`,`creation`,`modified`,`modified_by`,`owner`,`docstatus`,`idx`,`target`,`proposal`,
+		 `number`,`revision_hash`,`sequence`,`kind`,`actor`,`detail`)
+		VALUES (%s,%s,%s,%s,%s,0,0,%s,%s,%s,%s,%s,'Stale',%s,%s)""",
+		(uuid4().hex, now, now, actor, actor, child.target, child.name,
+		 child.current_revision, child.revision_hash, sequence, actor, domain.encode({"cause": parent})),
+	)
+	frappe.clear_document_cache(PROPOSAL, child.name)
+
+
 def _invalidate(doc):
 	# Package cap bounds scanning; only the affected transitive subgraph is changed.
 	rows = frappe.get_all(PROPOSAL, filters={"package": doc.package}, pluck="name", limit_page_length=129)
@@ -251,13 +282,13 @@ def _invalidate(doc):
 			if child.status != "Succeeded" and any(d["id"] == parent for d in body["dependencies"]):
 				seen.add(pid)
 				pending.append(pid)
-				child.status, child.decision_by, child.decision_at = "Stale", None, None
-				_event(child, "Stale", {"cause": parent})
+				_invalidate_metadata(child, parent)
 
 
 def _response(doc, body, current=None):
 	return {"id": doc.name, "revision": doc.current_revision, "hash": doc.revision_hash,
 		"status": doc.status, "approvable": doc.status in {"Pending", "Approved"},
+		"package": doc.package, "dependencies": body["dependencies"],
 		"preview": body["preview"], "current_preview": current,
 		"conflicts": ["New revision and review required"] if doc.status == "Stale" else [],
 		"result": frappe.parse_json(doc.result) if doc.result else None}
@@ -395,9 +426,11 @@ def list_proposals():
 	result = []
 	# get_all is limited to fixed internal tables; every returned record is checked.
 	for pid in frappe.get_all(PROPOSAL, pluck="name", order_by="modified desc", limit_page_length=100):
+		previous_messages = list(frappe.local.message_log)
 		try:
 			doc, body = _load(pid)
 		except frappe.PermissionError:
+			frappe.local.message_log = previous_messages
 			continue
 		result.append({"id": pid, "target": doc.target, "status": doc.status,
 			"revision": doc.current_revision, "hash": doc.revision_hash})
