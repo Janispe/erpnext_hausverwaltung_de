@@ -1,5 +1,4 @@
 """Real SQLite contracts, synthetic data only; no Frappe imports or site."""
-import importlib.util
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -9,10 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 import unittest
 
 SOURCE = Path(__file__).resolve().parents[1] / "hausverwaltung/proposals/pilot.py"
-spec = importlib.util.spec_from_file_location("proposal_pilot", SOURCE)
-m = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = m
-spec.loader.exec_module(m)
+sys.path.insert(0, str(SOURCE.parents[2]))
+from hausverwaltung.proposals import pilot as m
 
 
 def bind(p):

@@ -5,12 +5,12 @@ not an authentication adapter, RPC endpoint, or production ERPNext executor.
 All data in the supplied SQLite file must be synthetic. No dynamic handlers.
 """
 
-from contextlib import contextmanager
-from dataclasses import dataclass
 import hashlib
 import json
-import sqlite3
 from uuid import uuid4
+
+from .authorization import Denied, Identity, SyntheticAuthorization
+from .local_store import SQLiteStore
 
 
 ACTION = "synthetic.note.set_label/v1"
@@ -22,10 +22,6 @@ class Conflict(ValueError):
 	pass
 
 
-class Denied(PermissionError):
-	pass
-
-
 def encode(value):
 	return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
@@ -34,56 +30,18 @@ def digest(value):
 	return hashlib.sha256(encode(value).encode()).hexdigest()
 
 
-@dataclass(frozen=True)
-class Identity:
-	"""Trusted host identity, never deserialize this from agent/client input."""
-
-	name: str
-	human: bool = False
-
-
 class Pilot:
 	def __init__(self, path, *, synthetic=False):
 		if synthetic is not True:
 			raise Denied("Explicit synthetic opt-in required")
-		self.db = sqlite3.connect(path, isolation_level=None, timeout=5)
-		self.db.row_factory = sqlite3.Row
-		self.db.executescript("""
-			PRAGMA foreign_keys=ON;
-			CREATE TABLE IF NOT EXISTS note(id TEXT PRIMARY KEY, label TEXT NOT NULL, version INTEGER NOT NULL);
-			CREATE TABLE IF NOT EXISTS grant_rule(actor TEXT, target TEXT, capability TEXT,
-				PRIMARY KEY(actor,target,capability));
-			CREATE TABLE IF NOT EXISTS proposal(id TEXT PRIMARY KEY, package TEXT NOT NULL,
-				revision INTEGER NOT NULL, status TEXT NOT NULL, decision_actor TEXT, result TEXT);
-			CREATE TABLE IF NOT EXISTS revision(proposal TEXT REFERENCES proposal(id), number INTEGER,
-				hash TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(proposal,number));
-			CREATE TABLE IF NOT EXISTS request(actor TEXT, key TEXT, hash TEXT, proposal TEXT,
-				PRIMARY KEY(actor,key));
-			CREATE TABLE IF NOT EXISTS event(sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-				proposal TEXT, actor TEXT, kind TEXT, revision INTEGER, hash TEXT, detail TEXT,
-				at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
-			CREATE TRIGGER IF NOT EXISTS revision_no_update BEFORE UPDATE ON revision
-				BEGIN SELECT RAISE(ABORT,'immutable revision'); END;
-			CREATE TRIGGER IF NOT EXISTS revision_no_delete BEFORE DELETE ON revision
-				BEGIN SELECT RAISE(ABORT,'immutable revision'); END;
-			CREATE TRIGGER IF NOT EXISTS event_no_update BEFORE UPDATE ON event
-				BEGIN SELECT RAISE(ABORT,'append only audit'); END;
-			CREATE TRIGGER IF NOT EXISTS event_no_delete BEFORE DELETE ON event
-				BEGIN SELECT RAISE(ABORT,'append only audit'); END;
-		""")
-
+		self.store = SQLiteStore(path)
+		self.db = self.store.db
+		self.authorization = SyntheticAuthorization(self.store)
 	def close(self):
-		self.db.close()
+		self.store.close()
 
-	@contextmanager
 	def _transaction(self):
-		self.db.execute("BEGIN IMMEDIATE")
-		try:
-			yield
-			self.db.execute("COMMIT")
-		except BaseException:
-			self.db.execute("ROLLBACK")
-			raise
+		return self.store.transaction()
 
 	def seed(self, target, label, grants):
 		"""Trusted fixture setup only, deliberately absent from any client API."""
@@ -99,11 +57,7 @@ class Pilot:
 					self.db.execute("INSERT INTO grant_rule VALUES(?,?,?)", (actor, target, capability))
 
 	def _permission(self, actor, target, capability):
-		if not isinstance(actor, Identity) or not actor.name:
-			raise Denied("Authenticated host identity required")
-		if not self.db.execute("SELECT 1 FROM grant_rule WHERE actor=? AND target=? AND capability=?",
-							   (actor.name, target, capability)).fetchone():
-			raise Denied("Operation unavailable")
+		self.authorization.require(actor, target, capability)
 
 	def _validate(self, payload):
 		if not isinstance(payload, dict) or set(payload) != {"target", "label"}:
