@@ -81,7 +81,10 @@ def _binding(value):
 
 def _note(target, permission="read", user=None):
 	# Locking read sees current committed data even under repeatable-read snapshots.
-	doc = frappe.get_doc(NOTE, target, for_update=True)
+	try:
+		doc = frappe.get_doc(NOTE, target, for_update=True)
+	except frappe.DoesNotExistError:
+		_deny()
 	if not frappe.has_permission(NOTE, "read", doc=doc, user=user):
 		_deny()
 	if not frappe.has_permission(NOTE, permission, doc=doc, user=user):
@@ -155,7 +158,10 @@ def readable_record(doc, user):
 
 
 def _load(pid):
-	doc = frappe.get_doc(PROPOSAL, pid, for_update=True)
+	try:
+		doc = frappe.get_doc(PROPOSAL, pid, for_update=True)
+	except frappe.DoesNotExistError:
+		_deny()
 	_note(doc.target)
 	body = _body(doc)
 	_read_graph(body, frappe.session.user)

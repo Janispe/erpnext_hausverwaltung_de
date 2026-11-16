@@ -140,6 +140,17 @@ class AdapterContracts(unittest.TestCase):
 		allowed.add("label");self.fake.has_permission = lambda *a, **kw: False
 		with self.assertRaises(self.Denied): self.service._note("SYN-A", "write")
 
+	def test_missing_and_forbidden_targets_have_identical_error(self):
+		def missing(*args, **kwargs): raise self.fake.DoesNotExistError("synthetic missing")
+		self.fake.get_doc = missing
+		with self.assertRaises(self.Denied) as absent:
+			self.service._note("SYN-MISSING")
+		self.fake.get_doc = lambda *a, **kw: SimpleNamespace()
+		self.fake.has_permission = lambda *a, **kw: False
+		with self.assertRaises(self.Denied) as forbidden:
+			self.service._note("SYN-HIDDEN")
+		self.assertEqual(str(absent.exception), str(forbidden.exception))
+
 	def test_managed_records_reject_direct_mutation_and_history_edits(self):
 		guards = importlib.import_module("hausverwaltung.proposals.frappe_guards")
 		doc = guards.ManagedDocument();doc.is_new = lambda: True
