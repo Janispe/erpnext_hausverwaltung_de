@@ -182,6 +182,8 @@ def _read_graph(body, user, seen=None):
 
 def readable_record(doc, user):
 	previous_messages = list(frappe.local.message_log)
+	permission_logs = frappe.flags.get("has_permission_check_logs")
+	previous_permission_logs = list(permission_logs) if permission_logs is not None else None
 	try:
 		enabled()
 		if doc.doctype == PACKAGE:
@@ -202,6 +204,15 @@ def readable_record(doc, user):
 	except (frappe.PermissionError, frappe.DoesNotExistError):
 		frappe.local.message_log = previous_messages
 		return False
+	finally:
+		# Core's outer permission decorator prints its diagnostic list after
+		# this hook returns. Nested reference/graph checks must not leave
+		# private document names there, even when no msgprint ran here.
+		if previous_permission_logs is None:
+			frappe.flags.pop("has_permission_check_logs", None)
+		else:
+			permission_logs[:] = previous_permission_logs
+			frappe.flags["has_permission_check_logs"] = permission_logs
 
 
 def _load(pid):
