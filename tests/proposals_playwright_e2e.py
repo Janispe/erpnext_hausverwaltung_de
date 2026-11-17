@@ -296,6 +296,30 @@ def run(args):
     lambda: page.get_by_role('button',name='Freigaben bestätigen',exact=True).click())
    assert all(client.api('view',proposal_id=node['id'])['status']=='Approved' for node in approval_nodes)
    proof['batch_results_stay_with_origin_package']=True
+   proof['phase']='op_checkbox_contrast'
+   set_theme(page, 'dark')
+   page.add_style_tag(url=args.base_url+'/assets/hausverwaltung/op_workflow/styles.css')
+   # Render the real OP styles without creating invoices or changing workflow data.
+   proof['op_checkboxes_dark'] = page.evaluate("""() => {
+    const root = document.createElement('div');
+    root.id = 'op-workflow-root';
+    document.body.append(root);
+    const states = {};
+    for (const state of ['checked', 'indeterminate']) {
+     const checkbox = document.createElement('input');
+     checkbox.type = 'checkbox';
+     checkbox[state] = true;
+     root.append(checkbox);
+     const style = getComputedStyle(checkbox);
+     states[state] = { background: style.backgroundColor, mark: decodeURIComponent(style.backgroundImage) };
+    }
+    root.remove();
+    return states;
+   }""")
+   for state in proof['op_checkboxes_dark'].values():
+    assert "stroke='white'" in state['mark']
+    assert contrast('rgb(255, 255, 255)', state['background']) >= 3
+    assert contrast(state['background'], proof['theme_colors']['dark']['card']) >= 3
    proof.update(success=True,full_acceptance_passed=True,phase='complete',package=package,rejected_package=rejected,normal_separate_logins=True,bulk_confirmation=True,ordered_execution=True,rejection_stales_successor=True,list_toggle=True,responsive=True);browser.close()
  except BaseException as e:
   proof.update(error_type=type(e).__name__,frames=[{'file':f.filename,'line':f.lineno,'function':f.name} for f in traceback.extract_tb(e.__traceback__)])

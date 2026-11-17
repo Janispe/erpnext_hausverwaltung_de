@@ -2246,13 +2246,13 @@ button { font-family: inherit; }
   vertical-align: -3px;
 }
 #op-workflow-root input[type="checkbox"]:checked {
-  border-color: var(--hv-primary);
-  background-color: var(--hv-primary);
+  border-color: var(--hv-selection-fill);
+  background-color: var(--hv-selection-fill);
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3.5 8.2 6.6 11.3 12.8 4.7' fill='none' stroke='white' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 #op-workflow-root input[type="checkbox"]:indeterminate {
-  border-color: var(--hv-primary);
-  background-color: var(--hv-primary);
+  border-color: var(--hv-selection-fill);
+  background-color: var(--hv-selection-fill);
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M4 8h8' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E");
 }
 #op-workflow-root input[type="checkbox"]:focus-visible {
