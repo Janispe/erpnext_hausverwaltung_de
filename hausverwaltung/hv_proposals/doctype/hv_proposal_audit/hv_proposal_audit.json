@@ -1,0 +1,89 @@
+{
+ "doctype": "DocType",
+ "name": "HV Proposal Audit",
+ "module": "HV Proposals",
+ "engine": "InnoDB",
+ "autoname": "hash",
+ "field_order": [
+  "target",
+  "proposal",
+  "number",
+  "revision_hash",
+  "sequence",
+  "kind",
+  "actor",
+  "detail"
+ ],
+ "fields": [
+  {
+   "fieldname": "target",
+   "label": "Target",
+   "fieldtype": "Link",
+   "options": "HV Synthetic Note",
+   "reqd": 1
+  },
+  {
+   "fieldname": "proposal",
+   "label": "Proposal",
+   "fieldtype": "Link",
+   "options": "HV Action Proposal",
+   "reqd": 1
+  },
+  {
+   "fieldname": "number",
+   "label": "Number",
+   "fieldtype": "Int",
+   "reqd": 1
+  },
+  {
+   "fieldname": "revision_hash",
+   "label": "Revision Hash",
+   "fieldtype": "Data",
+   "reqd": 1
+  },
+  {
+   "fieldname": "sequence",
+   "label": "Sequence",
+   "fieldtype": "Int",
+   "reqd": 1
+  },
+  {
+   "fieldname": "kind",
+   "label": "Kind",
+   "fieldtype": "Data",
+   "reqd": 1
+  },
+  {
+   "fieldname": "actor",
+   "label": "Actor",
+   "fieldtype": "Link",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "detail",
+   "label": "Detail",
+   "fieldtype": "Code",
+   "options": "JSON"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "HV Proposal Agent",
+   "read": 1,
+   "create": 1,
+   "write": 0,
+   "permlevel": 0
+  },
+  {
+   "role": "HV Proposal Reviewer",
+   "read": 1,
+   "create": 1,
+   "write": 0,
+   "permlevel": 0
+  }
+ ],
+ "track_changes": 0,
+ "allow_rename": 0,
+ "index_web_pages_for_search": 0
+}

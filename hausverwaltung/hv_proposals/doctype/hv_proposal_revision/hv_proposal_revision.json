@@ -1,0 +1,68 @@
+{
+ "doctype": "DocType",
+ "name": "HV Proposal Revision",
+ "module": "HV Proposals",
+ "engine": "InnoDB",
+ "autoname": "hash",
+ "field_order": [
+  "target",
+  "proposal",
+  "number",
+  "revision_hash",
+  "body"
+ ],
+ "fields": [
+  {
+   "fieldname": "target",
+   "label": "Target",
+   "fieldtype": "Link",
+   "options": "HV Synthetic Note",
+   "reqd": 1
+  },
+  {
+   "fieldname": "proposal",
+   "label": "Proposal",
+   "fieldtype": "Link",
+   "options": "HV Action Proposal",
+   "reqd": 1
+  },
+  {
+   "fieldname": "number",
+   "label": "Number",
+   "fieldtype": "Int",
+   "reqd": 1
+  },
+  {
+   "fieldname": "revision_hash",
+   "label": "Revision Hash",
+   "fieldtype": "Data",
+   "reqd": 1
+  },
+  {
+   "fieldname": "body",
+   "label": "Body",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "reqd": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "HV Proposal Agent",
+   "read": 1,
+   "create": 1,
+   "write": 0,
+   "permlevel": 0
+  },
+  {
+   "role": "HV Proposal Reviewer",
+   "read": 1,
+   "create": 1,
+   "write": 0,
+   "permlevel": 0
+  }
+ ],
+ "track_changes": 0,
+ "allow_rename": 0,
+ "index_web_pages_for_search": 0
+}
