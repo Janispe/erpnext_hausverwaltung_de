@@ -173,5 +173,7 @@ Hauptansicht.
   4. Sammelfreigabe
   5. Liste umschalten
 - Screenshots beider Ansichten in hell und dunkel im PR.
-- Bei 1440 px Breite passt der Graph des synthetischen Pakets (Wurzel + 3 Zeilen × 3 Schritte) ohne
-  waagerechtes Scrollen. Unter 1100 px steht das Detail unter dem Graph.
+- Bei 1440 px Breite und eingeklapptem Desk-Seitenmenü passt der Graph des synthetischen Pakets (Wurzel +
+  3 Zeilen × 3 Schritte) ohne waagerechtes Scrollen. Bei offenem Seitenmenü darf er waagerecht scrollen;
+  Knoten (200 px) und Detail (360 px) werden dafür nicht verkleinert. Unter 1100 px steht das Detail unter
+  dem Graph.
