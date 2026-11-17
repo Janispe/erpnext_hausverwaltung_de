@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>KI-Vorschläge · Paket mit Graph</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/hausverwaltung/styles.css">
+<link rel="stylesheet" href="ds/hausverwaltung/colors_and_type.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/frappe-theme-shim.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-tokens.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-components.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:#faf9f7}
+a{color:#2f6db5}a:hover{color:#1f4f88}
+.pnode{appearance:none;-webkit-appearance:none;color:var(--text);transition:border-color .12s ease,box-shadow .12s ease}
+.pnode:hover{border-color:var(--border-strong) !important}
+.pnode.is-sel{border-color:var(--accent) !important;box-shadow:0 0 0 1px var(--accent),0 6px 18px -6px rgba(0,0,0,.14)}
+.pnode:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.pnode.s-Stale{border-style:dashed !important}
+.pnode .rail{background:oklch(82% 0.008 80)}
+.pnode .glyph{background:oklch(95.5% 0.004 80);color:oklch(45% 0 0)}
+.pill-s{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;line-height:1.7;white-space:nowrap;border:1px solid oklch(82% 0.008 80);background:oklch(95.5% 0.004 80);color:oklch(40% 0 0)}
+.s-Pending .rail{background:oklch(78% 0.07 245)}
+.s-Pending .glyph,.pill-s.s-Pending{background:oklch(96% 0.04 245);color:oklch(45% 0.13 245)}
+.s-Pending .stl{color:oklch(45% 0.13 245)}
+.pill-s.s-Pending{border-color:oklch(78% 0.07 245)}
+.s-Approved .rail{background:oklch(78% 0.07 60)}
+.s-Approved .glyph,.pill-s.s-Approved{background:oklch(96% 0.04 60);color:oklch(45% 0.13 60)}
+.s-Approved .stl{color:oklch(45% 0.13 60)}
+.pill-s.s-Approved{border-color:oklch(78% 0.07 60)}
+.s-Succeeded .rail{background:oklch(78% 0.07 150)}
+.s-Succeeded .glyph,.pill-s.s-Succeeded{background:oklch(96% 0.04 150);color:oklch(45% 0.13 150)}
+.s-Succeeded .stl{color:oklch(45% 0.13 150)}
+.pill-s.s-Succeeded{border-color:oklch(78% 0.07 150)}
+.s-Stale .rail{background:oklch(78% 0.09 25)}
+.s-Stale .glyph,.pill-s.s-Stale{background:oklch(96% 0.04 25);color:oklch(45% 0.16 25)}
+.s-Stale .stl{color:oklch(45% 0.16 25)}
+.pill-s.s-Stale{border-color:oklch(78% 0.09 25)}
+.s-Rejected .stl{color:oklch(45% 0 0)}
+.s-Rejected .ttl{text-decoration:line-through;color:var(--text-muted)}
+.edge{position:relative;display:block;height:0;border-top:1.5px solid oklch(72% 0.01 60)}
+.edge.e-wait{border-top-style:dashed}
+.edge .arrow,.stub .arrow{position:absolute;right:-1px;top:-5px;width:0;height:0;border-left:6px solid oklch(72% 0.01 60);border-top:4px solid transparent;border-bottom:4px solid transparent}
+.bus{position:absolute;left:0;width:0;border-left:1.5px solid oklch(72% 0.01 60)}
+.bus-first{top:62px;bottom:-7px}
+.bus-mid{top:-7px;bottom:-7px}
+.bus-last{top:-7px;bottom:42px}
+.stub{position:absolute;left:0;top:61px;width:34px;height:0;border-top:1.5px solid oklch(72% 0.01 60)}
+.lrow{all:unset;box-sizing:border-box;cursor:pointer;background:var(--surface)}
+.lrow:hover{background:var(--surface-2)}
+.lrow.is-sel{background:var(--accent-bg);box-shadow:inset 3px 0 0 var(--accent)}
+.lrow:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.seg-Pending{background:oklch(58% 0.14 245)}
+.seg-Approved{background:oklch(76% 0.13 70)}
+.seg-Succeeded{background:oklch(64% 0.13 150)}
+.seg-Stale{background:oklch(50% 0.18 25)}
+.seg-Rejected{background:oklch(84% 0.008 80)}
+.hv-btn{font-family:var(--font-sans)}
+</style>
+</helmet>
+<div class="hv" data-theme="editor" style="min-height: 100vh; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 13.5px; line-height: 1.4;">
+
+<header style="display: flex; align-items: center; gap: 16px; min-height: 48px; padding: 6px 20px; box-sizing: border-box; background: var(--surface); border-bottom: 1px solid var(--border); flex-wrap: wrap;">
+<div style="display: flex; align-items: center; gap: 10px;">
+<span aria-hidden="true" style="display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 6px; background: var(--text); color: #ffffff; font-family: var(--font-mono); font-size: 11px; font-weight: 600;">HV</span>
+<span style="font-weight: 600;">Hausverwaltung</span>
+</div>
+<div style="flex: 1 1 240px; max-width: 420px;">
+<input type="search" class="hv-field" aria-label="Suchen" placeholder="Suchen oder Befehl eingeben (Strg + G)" style="width: 100%; box-sizing: border-box; background: var(--surface-2); font-family: var(--font-sans);">
+</div>
+<div style="margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-muted);">
+<span>M. Krüger · Prüfer</span>
+<span aria-hidden="true" style="display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 999px; background: var(--surface-3); color: var(--text); font-size: 11px; font-weight: 600;">MK</span>
+</div>
+</header>
+
+<main style="max-width: 1500px; margin: 0 auto; padding: 16px 24px 40px; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px;">
+
+<nav aria-label="Brotkrumen" style="font-size: 12px; color: var(--text-muted);"><a href="#">Hausverwaltung</a> / <a href="Pakete.dc.html">KI-Vorschläge</a> / BK-Abrechnung 2025 · Lindenstraße 14</nav>
+
+<section aria-label="Paket" style="display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;">
+<div style="display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px;">
+<div style="display: flex; flex-direction: column; gap: 4px; min-width: 0;">
+<span class="label">Paket · Graph mit 12 Zeilen</span>
+<h1 style="margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.01em;">BK-Abrechnung 2025 · Lindenstraße 14</h1>
+<span style="font-size: 12.5px; color: var(--text-muted);">Agent Betriebskosten · Anlass: Abrechnungsfrist 31.12.2026 · eingereicht 17.11.2026 09:02 · 37 Vorschläge in 12 Mietverträgen</span>
+</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+<div role="tablist" aria-label="Ansicht" class="hv-tabs">
+<button type="button" role="tab" aria-selected="{{ isGraph }}" class="hv-tab {{ graphTabCls }}" onClick="{{ showGraph }}" style="font-family: var(--font-sans);">Graph</button>
+<button type="button" role="tab" aria-selected="{{ isList }}" class="hv-tab {{ listTabCls }}" onClick="{{ showList }}" style="font-family: var(--font-sans);">Liste</button>
+</div>
+<button type="button" class="hv-btn" disabled="{{ noPending }}" onClick="{{ openBulk }}">Offene freigeben …</button>
+<button type="button" class="hv-btn hv-btn-primary" disabled="{{ noApproved }}" onClick="{{ executeAll }}">Freigegebene ausführen ({{ approvedTotal }})</button>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px;">
+<div role="img" aria-label="{{ legendText }}" style="display: flex; gap: 2px; height: 8px; border-radius: 999px; overflow: hidden; background: var(--surface-3);">
+<sc-for list="{{ segments }}" as="s" hint-placeholder-count="4"><span class="{{ s.cls }}" style="flex-grow: {{ s.n }}; flex-basis: 0;"></span></sc-for>
+</div>
+<span style="font-size: 12px; color: var(--text-muted);">{{ legendText }}</span>
+</div>
+<sc-if value="{{ bulk }}" hint-placeholder-val="{{ false }}">
+<div role="alertdialog" aria-label="Offene freigeben" style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-radius: 6px; background: var(--accent-bg); border: 1px solid var(--accent);">
+<span style="font-size: 12.5px; max-width: 760px;"><strong>{{ pendingTotal }} offene Vorschläge freigeben?</strong> Jede Freigabe wird einzeln für ihre Revision und ihren Hash protokolliert. Veraltete und abgelehnte Vorschläge bleiben unverändert. Ausgeführt wird erst mit „Freigegebene ausführen“.</span>
+<span style="display: flex; gap: 8px;">
+<button type="button" class="hv-btn hv-btn-primary" onClick="{{ approveAll }}">{{ pendingTotal }} freigeben</button>
+<button type="button" class="hv-btn" onClick="{{ closeBulk }}">Abbrechen</button>
+</span>
+</div>
+</sc-if>
+</section>
+
+<div style="display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px;">
+
+<section aria-label="Vorschläge im Paket" style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 11.5px; color: var(--text-muted);">
+<span class="pill-s s-Pending">▶ Prüfung offen</span>
+<span class="pill-s s-Approved">◐ Freigegeben</span>
+<span class="pill-s s-Succeeded">✓ Ausgeführt</span>
+<span class="pill-s s-Stale">! Veraltet</span>
+<span class="pill-s s-Rejected">/ Abgelehnt</span>
+<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="edge" style="width: 22px;"></span>Vorgänger ausgeführt</span>
+<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="edge e-wait" style="width: 22px;"></span>wartet auf Vorgänger</span>
+</div>
+
+<sc-if value="{{ isGraph }}" hint-placeholder-val="{{ true }}">
+<div style="overflow: auto; padding: 24px 20px; background-color: var(--bg); background-image: radial-gradient(var(--border-strong) 1px, transparent 1px); background-size: 18px 18px;">
+<div style="display: flex; align-items: center; width: max-content;">
+
+<button type="button" class="pnode s-{{ root.status }} {{ root.selCls }}" aria-pressed="{{ root.isSel }}" aria-label="{{ root.aria }}" onClick="{{ root.pick }}" style="position: relative; flex: none; width: 200px; height: 84px; box-sizing: border-box; padding: 0; display: flex; flex-direction: column; text-align: left; font-family: var(--font-sans); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; cursor: pointer;">
+<span class="rail" style="position: absolute; left: 0; top: 0; bottom: 0; width: 4px;"></span>
+<span style="display: flex; align-items: center; gap: 8px; padding: 9px 10px 8px 13px; border-bottom: 1px solid var(--border);">
+<span class="glyph" style="flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 6px; font-size: 11px; font-weight: 700;">{{ root.glyph }}</span>
+<span style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+<span class="ttl" style="font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ root.title }}</span>
+<span style="font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);">{{ root.id }}</span>
+</span>
+</span>
+<span style="display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 7px 10px 0 13px; font-size: 11.5px;">
+<span style="font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ root.change }}</span>
+<span class="stl" style="flex: none; font-size: 10.5px; font-weight: 600;">{{ root.statusLabel }}</span>
+</span>
+</button>
+
+<span class="edge" style="flex: none; width: 24px;"></span>
+
+<div style="display: flex; flex-direction: column; gap: 14px;">
+<sc-for list="{{ lanes }}" as="l" hint-placeholder-count="5">
+<div style="position: relative; display: flex; flex-direction: column; gap: 4px; padding-left: 40px;">
+<span class="{{ l.busCls }}"></span>
+<span class="stub"><span class="arrow"></span></span>
+<span style="height: 16px; width: 664px; font-size: 11.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><strong style="color: var(--text); font-family: var(--font-mono); font-weight: 600;">{{ l.key }}</strong> · {{ l.unit }} · {{ l.tenant }}</span>
+<div style="display: flex; align-items: center;">
+<sc-for list="{{ l.cells }}" as="n" hint-placeholder-count="3">
+<sc-if value="{{ n.hasEdge }}" hint-placeholder-val="{{ false }}"><span class="{{ n.edgeCls }}" style="flex: none; width: 32px;"><span class="arrow"></span></span></sc-if>
+<button type="button" class="pnode s-{{ n.status }} {{ n.selCls }}" aria-pressed="{{ n.isSel }}" aria-label="{{ n.aria }}" onClick="{{ n.pick }}" style="position: relative; flex: none; width: 200px; height: 84px; box-sizing: border-box; padding: 0; display: flex; flex-direction: column; text-align: left; font-family: var(--font-sans); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; cursor: pointer;">
+<span class="rail" style="position: absolute; left: 0; top: 0; bottom: 0; width: 4px;"></span>
+<span style="display: flex; align-items: center; gap: 8px; padding: 9px 10px 8px 13px; border-bottom: 1px solid var(--border);">
+<span class="glyph" style="flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 6px; font-size: 11px; font-weight: 700;">{{ n.glyph }}</span>
+<span style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+<span class="ttl" style="font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ n.title }}</span>
+<span style="font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);">{{ n.id }}</span>
+</span>
+</span>
+<span style="display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 7px 10px 0 13px; font-size: 11.5px;">
+<span style="font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ n.change }}</span>
+<span class="stl" style="flex: none; font-size: 10.5px; font-weight: 600;">{{ n.statusLabel }}</span>
+</span>
+</button>
+</sc-for>
+</div>
+</div>
+</sc-for>
+<div style="position: relative; display: flex; flex-direction: column; gap: 4px; padding-left: 40px;">
+<span class="bus bus-last"></span>
+<span class="stub"><span class="arrow"></span></span>
+<span style="height: 16px; font-size: 11.5px; color: var(--text-muted);">7 weitere Mietverträge</span>
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 664px; height: 84px; box-sizing: border-box; padding: 0 16px; border: 1.5px dashed var(--border-strong); border-radius: 10px; background: var(--surface); font-size: 12.5px; color: var(--text-muted);">
+<span>{{ hiddenText }}</span>
+<span style="font-family: var(--font-mono); font-size: 11.5px;">MV-0177 · MV-0178 · MV-0186 · …</span>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isList }}" hint-placeholder-val="{{ false }}">
+<div style="overflow-x: auto;">
+<div style="min-width: 680px;">
+<div aria-hidden="true" style="display: grid; grid-template-columns: 210px minmax(0, 1fr) minmax(0, 1fr) 132px; gap: 12px; padding: 9px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border);">
+<span class="label">Zeile</span>
+<span class="label">Schritt</span>
+<span class="label">Änderung</span>
+<span class="label">Status</span>
+</div>
+<sc-for list="{{ listRows }}" as="r" hint-placeholder-count="6">
+<button type="button" class="lrow {{ r.selCls }}" aria-pressed="{{ r.isSel }}" onClick="{{ r.pick }}" style="display: grid; grid-template-columns: 210px minmax(0, 1fr) minmax(0, 1fr) 132px; gap: 12px; align-items: center; width: 100%; min-height: 44px; padding: 8px 16px; border-bottom: 1px solid var(--border); font-family: var(--font-sans); font-size: 13px; color: var(--text);">
+<span style="font-family: var(--font-mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ r.laneText }}</span>
+<span style="display: flex; flex-direction: column; min-width: 0;"><span style="font-weight: 600;">{{ r.title }}</span><span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-faint);">{{ r.id }}</span></span>
+<span style="font-family: var(--font-mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ r.change }}</span>
+<span><span class="pill-s s-{{ r.status }}">{{ r.glyph }} {{ r.statusLabel }}</span></span>
+</button>
+</sc-for>
+<div style="padding: 12px 16px; font-size: 12px; color: var(--text-muted);">{{ hiddenText }} · in der Liste nicht ausgeklappt</div>
+</div>
+</div>
+</sc-if>
+</section>
+
+<aside aria-label="Vorschlag im Detail" style="flex: 1 1 360px; min-width: 0; max-width: 460px; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;">
+
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; border-bottom: 1px solid var(--border);">
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+<span class="label">{{ sel.objType }}</span>
+<span class="pill-s s-{{ sel.status }}">{{ sel.glyph }} {{ sel.statusLabel }}</span>
+</div>
+<h2 style="margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.01em;">{{ sel.title }}</h2>
+<span style="font-size: 12.5px; color: var(--text-muted);">{{ sel.objTitle }}</span>
+<div style="display: flex; flex-wrap: wrap; gap: 2px 12px; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted);">
+<span>{{ sel.id }}</span>
+<span>Revision {{ sel.rev }}</span>
+<span>{{ sel.hash }}</span>
+<span>{{ sel.posText }}</span>
+</div>
+</div>
+
+<sc-if value="{{ sel.isApproved }}" hint-placeholder-val="{{ false }}">
+<div role="note" style="margin: 14px 18px 0; padding: 10px 12px; border-radius: 6px; background: oklch(96% 0.04 60); color: oklch(42% 0.13 60); font-size: 12.5px;"><strong>Freigegeben</strong> · {{ sel.decidedLine }}. Gilt nur für Revision {{ sel.rev }}.</div>
+</sc-if>
+<sc-if value="{{ sel.isStale }}" hint-placeholder-val="{{ false }}">
+<div role="note" style="margin: 14px 18px 0; padding: 10px 12px; border-radius: 6px; background: oklch(96% 0.04 25); color: oklch(42% 0.16 25); font-size: 12.5px; display: flex; flex-direction: column; gap: 4px;">
+<strong>Veraltet · neue Revision nötig</strong>
+<span style="color: var(--text);">{{ sel.staleCause }}</span>
+</div>
+</sc-if>
+<sc-if value="{{ sel.isDone }}" hint-placeholder-val="{{ false }}">
+<div role="note" style="margin: 14px 18px 0; padding: 10px 12px; border-radius: 6px; background: oklch(96% 0.04 150); color: oklch(40% 0.13 150); font-size: 12.5px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px;">
+<span><strong>Ausgeführt</strong> · {{ sel.doneAt }} · {{ sel.result }}</span>
+<a href="#">Dokument öffnen →</a>
+</div>
+</sc-if>
+<sc-if value="{{ sel.isRejected }}" hint-placeholder-val="{{ false }}">
+<div role="note" style="margin: 14px 18px 0; padding: 10px 12px; border-radius: 6px; background: oklch(95.5% 0.004 80); color: oklch(35% 0 0); font-size: 12.5px; display: flex; flex-direction: column; gap: 4px;">
+<strong>Abgelehnt · {{ sel.decidedLine }}</strong>
+<span style="font-style: italic;">{{ sel.rejectReason }}</span>
+</div>
+</sc-if>
+
+<section style="display: flex; flex-direction: column; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border);">
+<h3 class="label" style="margin: 0;">Änderung</h3>
+<div style="display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr); border: 1px solid var(--border); border-radius: 6px; overflow: hidden;">
+<span class="label" style="padding: 7px 10px; background: var(--surface-2); border-bottom: 1px solid var(--border);">Feld</span>
+<span class="label" style="padding: 7px 10px; background: var(--surface-2); border-bottom: 1px solid var(--border);">Bisher</span>
+<span class="label" style="padding: 7px 10px; background: var(--surface-2); border-bottom: 1px solid var(--border);">Neu</span>
+<sc-for list="{{ sel.fields }}" as="f" hint-placeholder-count="2">
+<span style="padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 12.5px; color: var(--text-muted);">{{ f.label }}</span>
+<span style="padding: 8px 10px; border-bottom: 1px solid var(--border); font-family: {{ f.font }}; font-size: 12.5px; color: var(--text-muted); text-decoration: line-through; text-decoration-color: var(--text-faint);">{{ f.before }}</span>
+<span style="padding: 8px 10px; border-bottom: 1px solid var(--border); font-family: {{ f.font }}; font-size: 12.5px; font-weight: 700; color: var(--accent);">{{ f.after }}</span>
+</sc-for>
+</div>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--border);">
+<h3 class="label" style="margin: 0;">Begründung des Agenten</h3>
+<p style="margin: 0; font-style: italic;">{{ sel.reason }}</p>
+<ul style="margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--text-muted);">
+<sc-for list="{{ sel.sources }}" as="src" hint-placeholder-count="2"><li>{{ src }}</li></sc-for>
+</ul>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--border);">
+<h3 class="label" style="margin: 0;">Im Graph</h3>
+<div style="display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 8px 10px; align-items: start; font-size: 12.5px;">
+<span style="color: var(--text-muted);">Vorgänger</span>
+<span style="display: flex; flex-direction: column; gap: 6px;">
+<sc-for list="{{ sel.depList }}" as="d" hint-placeholder-count="1">
+<button type="button" onClick="{{ d.pick }}" style="all: unset; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; align-items: center;"><span><span style="font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted);">{{ d.id }}</span> {{ d.title }}</span><span class="pill-s s-{{ d.status }}">{{ d.glyph }} {{ d.statusLabel }}</span></button>
+</sc-for>
+<sc-if value="{{ sel.noDeps }}" hint-placeholder-val="{{ false }}"><span style="color: var(--text-faint);">keine</span></sc-if>
+</span>
+<span style="color: var(--text-muted);">Nachfolger</span>
+<span style="display: flex; flex-direction: column; gap: 6px;">
+<sc-for list="{{ sel.nextList }}" as="d" hint-placeholder-count="1">
+<button type="button" onClick="{{ d.pick }}" style="all: unset; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; align-items: center;"><span><span style="font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted);">{{ d.id }}</span> {{ d.title }}</span><span class="pill-s s-{{ d.status }}">{{ d.glyph }} {{ d.statusLabel }}</span></button>
+</sc-for>
+<sc-if value="{{ sel.hasNextMore }}" hint-placeholder-val="{{ false }}"><span style="font-size: 12px; color: var(--text-muted);">{{ sel.nextMoreText }}</span></sc-if>
+<sc-if value="{{ sel.noNext }}" hint-placeholder-val="{{ false }}"><span style="color: var(--text-faint);">keine</span></sc-if>
+</span>
+</div>
+<sc-if value="{{ sel.depsBlock }}" hint-placeholder-val="{{ false }}">
+<p style="margin: 0; font-size: 12px; color: oklch(45% 0.13 60);">Ausführen erst, wenn alle Vorgänger ausgeführt sind. Freigeben geht schon jetzt.</p>
+</sc-if>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--border);">
+<h3 class="label" style="margin: 0;">Beim Ausführen</h3>
+<ul style="margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px;">
+<sc-for list="{{ sel.effects }}" as="fx" hint-placeholder-count="2"><li>{{ fx }}</li></sc-for>
+</ul>
+</section>
+
+<div style="display: flex; flex-direction: column; gap: 10px; padding: 14px 18px; background: var(--surface-2); border-bottom: 1px solid var(--border);">
+<sc-if value="{{ sel.isPending }}" hint-placeholder-val="{{ true }}">
+<sc-if value="{{ notRejecting }}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; flex-wrap: wrap; gap: 8px;">
+<button type="button" class="hv-btn hv-btn-primary" onClick="{{ approve }}">Revision {{ sel.rev }} freigeben</button>
+<button type="button" class="hv-btn" onClick="{{ openReject }}">Ablehnen …</button>
+</div>
+<p style="margin: 0; font-size: 11.5px; color: var(--text-muted);">Ablehnen macht alle Nachfolger in dieser Zeile veraltet.</p>
+</sc-if>
+<sc-if value="{{ rejecting }}" hint-placeholder-val="{{ false }}">
+<label for="grund" class="label">Begründung der Ablehnung</label>
+<textarea id="grund" class="hv-field" value="{{ reason }}" onChange="{{ setReason }}" placeholder="Pflichtangabe, geht ins Prüfprotokoll und an den Agenten" style="height: 72px; padding: 8px 10px; box-sizing: border-box; resize: vertical; font-family: var(--font-sans);"></textarea>
+<div style="display: flex; flex-wrap: wrap; gap: 8px;">
+<button type="button" class="hv-btn hv-btn-danger" disabled="{{ reasonMissing }}" onClick="{{ reject }}">Ablehnung bestätigen</button>
+<button type="button" class="hv-btn" onClick="{{ cancelReject }}">Abbrechen</button>
+</div>
+</sc-if>
+</sc-if>
+<sc-if value="{{ sel.isApproved }}" hint-placeholder-val="{{ false }}">
+<div style="display: flex; flex-wrap: wrap; gap: 8px;">
+<button type="button" class="hv-btn hv-btn-primary" disabled="{{ sel.depsBlock }}" onClick="{{ execute }}">Diesen Vorschlag ausführen</button>
+</div>
+<p style="margin: 0; font-size: 11.5px; color: var(--text-muted);">Speichert über die normale Frappe-Validierung. Ergebnis und Prüfprotokoll in derselben Transaktion.</p>
+</sc-if>
+<sc-if value="{{ sel.isStale }}" hint-placeholder-val="{{ false }}">
+<sc-if value="{{ sel.notRequested }}" hint-placeholder-val="{{ true }}">
+<div><button type="button" class="hv-btn" onClick="{{ requestRevision }}">Neue Revision anfordern</button></div>
+</sc-if>
+<sc-if value="{{ sel.requested }}" hint-placeholder-val="{{ false }}">
+<p style="margin: 0; font-size: 12px; color: var(--text-muted);">Neue Revision beim Agenten angefordert.</p>
+</sc-if>
+</sc-if>
+<sc-if value="{{ sel.isClosed }}" hint-placeholder-val="{{ false }}">
+<p style="margin: 0; font-size: 12px; color: var(--text-muted);">Abgeschlossen. Keine weiteren Aktionen.</p>
+</sc-if>
+</div>
+
+<section style="display: flex; flex-direction: column; gap: 10px; padding: 14px 18px 18px;">
+<h3 class="label" style="margin: 0;">Verlauf</h3>
+<ol style="list-style: none; margin: 0 0 0 4px; padding: 0; border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px;">
+<sc-for list="{{ sel.history }}" as="h" hint-placeholder-count="2">
+<li style="position: relative; padding-left: 16px; display: flex; flex-direction: column; gap: 1px;">
+<span aria-hidden="true" style="position: absolute; left: -5px; top: 4px; width: 9px; height: 9px; box-sizing: border-box; border-radius: 999px; background: var(--surface); border: 2px solid var(--text-faint);"></span>
+<span style="font-weight: 600;">{{ h.title }}</span>
+<span style="font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted);">{{ h.meta }}</span>
+<sc-if value="{{ h.hasNote }}" hint-placeholder-val="{{ false }}">
+<span style="font-size: 12px; font-style: italic; color: var(--text-muted);">{{ h.note }}</span>
+</sc-if>
+</li>
+</sc-for>
+</ol>
+</section>
+
+</aside>
+</div>
+</main>
+
+<sc-if value="{{ hasToast }}" hint-placeholder-val="{{ false }}">
+<div role="status" style="position: fixed; right: 24px; bottom: 24px; max-width: 440px; padding: 10px 14px; border-radius: 6px; background: var(--text); color: #ffffff; font-size: 12.5px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);">{{ toast }}</div>
+</sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1300}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      selected: 'VOR-0415', view: 'graph', over: {}, extra: {},
+      hidden: { Pending: 18, Approved: 3, Succeeded: 0 },
+      rejecting: false, reason: '', bulk: false, toast: ''
+    };
+  }
+
+  componentWillUnmount() {
+    clearTimeout(this.toastTimer);
+  }
+
+  notify(text) {
+    this.setState({ toast: text });
+    clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => this.setState({ toast: '' }), 3500);
+  }
+
+  hashOf(id) {
+    const n = parseInt(id.slice(4), 10);
+    const a = ((n * 2654435761) >>> 0).toString(16).padStart(8, '0');
+    const b = ((n * 40503 + 977) >>> 0).toString(16).padStart(4, '0');
+    return a.slice(0, 4) + '…' + b.slice(-4);
+  }
+
+  history(status, result, rejectReason) {
+    const h = [{ title: 'Eingereicht', meta: 'Agent Betriebskosten · 17.11.2026 09:02 · r1' }];
+    if (status === 'Approved' || status === 'Succeeded') h.push({ title: 'Revision 1 freigegeben', meta: 'M. Krüger · 17.11.2026 09:20' });
+    if (status === 'Succeeded') h.push({ title: 'Ausgeführt', meta: 'M. Krüger · 17.11.2026 09:25', note: result });
+    if (status === 'Rejected') h.push({ title: 'Revision 1 abgelehnt', meta: 'M. Krüger · 17.11.2026 09:22', note: rejectReason });
+    if (status === 'Stale') h.push({ title: 'Veraltet', meta: 'System · 17.11.2026 09:22', note: 'Vorgänger abgelehnt' });
+    return h;
+  }
+
+  model() {
+    if (this._model) return this._model;
+    const lanes = [
+      { key: 'MV-0182', unit: 'VH 2. OG links', tenant: 'Fam. Özdemir', ids: ['VOR-0414', 'VOR-0415', 'VOR-0416'], st: ['Approved', 'Pending', 'Pending'], abr: 'Nachzahlung 312,40 €', vz: ['95,00 €', '110,00 €'] },
+      { key: 'MV-0175', unit: 'VH EG rechts', tenant: 'Brandt, Thomas', ids: ['VOR-0417', 'VOR-0418', 'VOR-0419'], st: ['Succeeded', 'Succeeded', 'Approved'], abr: 'Guthaben 84,20 €', vz: ['80,00 €', '75,00 €'] },
+      { key: 'MV-0190', unit: 'HH 1. OG', tenant: 'Weber, Jana', ids: ['VOR-0420', 'VOR-0421', 'VOR-0422'], st: ['Pending', 'Pending', 'Pending'], abr: 'Nachzahlung 41,10 €', vz: ['120,00 €', '125,00 €'] },
+      { key: 'MV-0201', unit: 'VH 3. OG links', tenant: 'Nowak, Piotr', ids: ['VOR-0423', 'VOR-0424', 'VOR-0425'], st: ['Rejected', 'Stale', 'Stale'], abr: 'Nachzahlung 198,60 €', vz: ['110,00 €', '125,00 €'], rejectReason: 'Leerstand Januar bis Februar 2025 nicht berücksichtigt.' },
+      { key: 'MV-0207', unit: 'SF 2. OG', tenant: 'Lehmann, Sabine', ids: ['VOR-0426', 'VOR-0427', 'VOR-0428'], st: ['Pending', 'Pending', 'Pending'], abr: 'Guthaben 12,90 €', vz: ['105,00 €', '100,00 €'] }
+    ];
+    const nodes = {};
+    const root = 'VOR-0410';
+    nodes[root] = {
+      id: root, lane: null, pos: 'Paket-Wurzel', title: 'Gesamtabrechnung 2025', objType: 'Betriebskostenabrechnung Immobilie',
+      objTitle: 'BKA-2025-0014 · Lindenstraße 14', change: 'Kosten 18.412,70 €', status: 'Succeeded', deps: [],
+      fields: [
+        { label: 'Gesamtkosten 2025', before: '—', after: '18.412,70 €', mono: true },
+        { label: 'Verteilung', before: '—', after: 'Wohnfläche, 512,30 m²' }
+      ],
+      reason: 'Alle Kostenarten 2025 sind gebucht. Verteilungsschlüssel unverändert gegenüber 2024.',
+      sources: ['Kostenaufstellung Lindenstraße 14, Jahr 2025', 'Verteilungsschlüssel VS-LIN14 (Wohnfläche)'],
+      effects: ['Legt die Betriebskostenabrechnung Immobilie an', 'Keine Buchung, kein Versand'],
+      result: 'BKA-2025-0014 gespeichert'
+    };
+    lanes.forEach((l) => {
+      const [a, v, b] = l.ids;
+      const objTitle = l.key + ' · ' + l.unit + ' · ' + l.tenant;
+      nodes[a] = {
+        id: a, lane: l.key, pos: 'Zeile ' + l.key + ' · Schritt 1 von 3', title: 'Mieter-Abrechnung', objType: 'Sales Invoice · Entwurf', objTitle,
+        change: l.abr, status: l.st[0], deps: [root], rejectReason: l.rejectReason,
+        fields: [
+          { label: 'Ergebnis', before: '—', after: l.abr, mono: true },
+          { label: 'Rechnung', before: '—', after: 'Entwurf, fällig 31.12.2026' }
+        ],
+        reason: 'Anteil nach Wohnfläche, Vorauszahlungen 2025 verrechnet.',
+        sources: ['BKA-2025-0014, Verteilung für ' + l.key, 'Vorauszahlungen 2025 laut Mieterkonto'],
+        effects: ['Erzeugt eine Sales Invoice als Entwurf', 'Keine Buchung, kein Versand'],
+        result: 'Sales Invoice als Entwurf erzeugt'
+      };
+      nodes[v] = {
+        id: v, lane: l.key, pos: 'Zeile ' + l.key + ' · Schritt 2 von 3', title: 'Vorauszahlung anpassen', objType: 'Mietvertrag · Festbetrag', objTitle,
+        change: l.vz[0] + ' → ' + l.vz[1], status: l.st[1], deps: [a],
+        staleCause: l.st[1] === 'Stale' ? 'Vorgänger ' + a + ' wurde abgelehnt. Der Agent muss die Abrechnung neu einreichen.' : '',
+        fields: [
+          { label: 'Vorauszahlung Heizkosten', before: l.vz[0], after: l.vz[1], mono: true },
+          { label: 'Gültig ab', before: '01.01.2025', after: '01.02.2027', mono: true }
+        ],
+        reason: 'Anpassung auf ein Zwölftel der Jahreskosten nach § 560 Abs. 4 BGB, gerundet.',
+        sources: ['Ergebnis aus ' + a, 'Verbrauch 2025 laut Heizkostenabrechnung'],
+        effects: ['Neuer Festbetrag ab 01.02.2027, der bisherige endet am 31.01.2027', 'Mietrechnungen ab Februar 2027 enthalten den neuen Betrag'],
+        result: 'Festbetrag ab 01.02.2027 angelegt'
+      };
+      nodes[b] = {
+        id: b, lane: l.key, pos: 'Zeile ' + l.key + ' · Schritt 3 von 3', title: 'Brief erzeugen', objType: 'Serienbrief Dokument', objTitle,
+        change: 'PDF, kein Versand', status: l.st[2], deps: [a, v],
+        staleCause: l.st[2] === 'Stale' ? 'Vorgänger ' + a + ' wurde abgelehnt, ' + v + ' ist veraltet.' : '',
+        fields: [
+          { label: 'Vorlage', before: '—', after: 'Abrechnung und Vorauszahlung' },
+          { label: 'Empfänger', before: '—', after: l.tenant },
+          { label: 'Ausgabe', before: '—', after: 'PDF, kein Versand' }
+        ],
+        reason: 'Abrechnung und neue Vorauszahlung werden in einem Brief mitgeteilt.',
+        sources: ['Ergebnis aus ' + a + ' und ' + v, 'Vorlage SB-VORL-0044, Version 3'],
+        effects: ['Erzeugt ein Serienbrief Dokument als PDF', 'Kein E-Mail- oder Postversand'],
+        result: 'Serienbrief Dokument erzeugt'
+      };
+    });
+    Object.values(nodes).forEach((n) => {
+      n.rev = 1;
+      n.hash = this.hashOf(n.id);
+      n.baseHistory = this.history(n.status, n.result, n.rejectReason);
+      if (n.status === 'Approved' || n.status === 'Succeeded' || n.status === 'Rejected') n.decidedLine = 'M. Krüger · 17.11.2026 09:20';
+      if (n.status === 'Succeeded') n.doneAt = '17.11.2026 09:25';
+    });
+    const order = [root].concat(...lanes.map((l) => l.ids));
+    this._model = { lanes, nodes, order, root };
+    return this._model;
+  }
+
+  statusFn(over) {
+    const { nodes } = this.model();
+    return (id) => (over[id] && over[id].status) || nodes[id].status;
+  }
+
+  mark(over, extra, id, patch, entry) {
+    over[id] = { ...(over[id] || {}), ...patch };
+    extra[id] = (extra[id] || []).concat([entry]);
+  }
+
+  approve(id) {
+    const over = { ...this.state.over };
+    const extra = { ...this.state.extra };
+    this.mark(over, extra, id, { status: 'Approved', decidedLine: 'M. Krüger · gerade eben' }, { title: 'Revision 1 freigegeben', meta: 'M. Krüger · gerade eben' });
+    this.setState({ over, extra, rejecting: false, reason: '' });
+    this.notify(id + ' · Revision 1 freigegeben');
+  }
+
+  execute(id) {
+    const { nodes } = this.model();
+    const over = { ...this.state.over };
+    const extra = { ...this.state.extra };
+    this.mark(over, extra, id, { status: 'Succeeded', doneAt: '17.11.2026 · gerade eben' }, { title: 'Ausgeführt', meta: 'M. Krüger · gerade eben', note: nodes[id].result });
+    this.setState({ over, extra });
+    this.notify(id + ' ausgeführt · ' + nodes[id].result);
+  }
+
+  reject(id) {
+    const reason = this.state.reason.trim();
+    if (!reason) return;
+    const { nodes, order } = this.model();
+    const over = { ...this.state.over };
+    const extra = { ...this.state.extra };
+    const st = this.statusFn(over);
+    this.mark(over, extra, id, { status: 'Rejected', decidedLine: 'M. Krüger · gerade eben', rejectReason: reason }, { title: 'Revision 1 abgelehnt', meta: 'M. Krüger · gerade eben', note: reason });
+    let stale = 0;
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const x of order) {
+        const s = st(x);
+        if (s === 'Succeeded' || s === 'Stale' || s === 'Rejected') continue;
+        const hit = nodes[x].deps.find((d) => st(d) === 'Rejected' || st(d) === 'Stale');
+        if (hit) {
+          this.mark(over, extra, x, { status: 'Stale', staleCause: 'Vorgänger ' + hit + ' wurde abgelehnt oder ist veraltet.' }, { title: 'Veraltet', meta: 'System · gerade eben', note: 'Vorgänger ' + hit + ' nicht mehr gültig' });
+          stale += 1;
+          changed = true;
+        }
+      }
+    }
+    this.setState({ over, extra, rejecting: false, reason: '' });
+    this.notify(id + ' abgelehnt' + (stale ? ' · ' + stale + ' Nachfolger veraltet' : ''));
+  }
+
+  approveAll() {
+    const { order } = this.model();
+    const over = { ...this.state.over };
+    const extra = { ...this.state.extra };
+    const st = this.statusFn(over);
+    let n = 0;
+    for (const x of order) {
+      if (st(x) === 'Pending') {
+        this.mark(over, extra, x, { status: 'Approved', decidedLine: 'M. Krüger · gerade eben' }, { title: 'Revision 1 freigegeben', meta: 'M. Krüger · gerade eben · Sammelfreigabe' });
+        n += 1;
+      }
+    }
+    const hidden = { ...this.state.hidden };
+    n += hidden.Pending;
+    hidden.Approved += hidden.Pending;
+    hidden.Pending = 0;
+    this.setState({ over, extra, hidden, bulk: false });
+    this.notify(n + ' Vorschläge einzeln freigegeben');
+  }
+
+  executeAll() {
+    const { nodes, order } = this.model();
+    const over = { ...this.state.over };
+    const extra = { ...this.state.extra };
+    const st = this.statusFn(over);
+    let n = 0;
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const x of order) {
+        if (st(x) === 'Approved' && nodes[x].deps.every((d) => st(d) === 'Succeeded')) {
+          this.mark(over, extra, x, { status: 'Succeeded', doneAt: '17.11.2026 · gerade eben' }, { title: 'Ausgeführt', meta: 'M. Krüger · gerade eben', note: nodes[x].result });
+          n += 1;
+          changed = true;
+        }
+      }
+    }
+    const hidden = { ...this.state.hidden };
+    n += hidden.Approved;
+    hidden.Succeeded += hidden.Approved;
+    hidden.Approved = 0;
+    const waiting = order.filter((x) => st(x) === 'Approved').length;
+    this.setState({ over, extra, hidden });
+    this.notify(n + ' in Reihenfolge ausgeführt' + (waiting ? ' · ' + waiting + ' warten auf Vorgänger' : ''));
+  }
+
+  renderVals() {
+    const S = this.state;
+    const { lanes, nodes, order, root } = this.model();
+    const st = this.statusFn(S.over);
+    const LABEL = { Pending: 'Prüfung offen', Approved: 'Freigegeben', Succeeded: 'Ausgeführt', Stale: 'Veraltet', Rejected: 'Abgelehnt' };
+    const GLYPH = { Pending: '▶', Approved: '◐', Succeeded: '✓', Stale: '!', Rejected: '/' };
+    const select = (id) => () => this.setState({ selected: id, rejecting: false, reason: '' });
+
+    const view = (id) => {
+      const base = nodes[id];
+      const o = S.over[id] || {};
+      const status = st(id);
+      const isSel = id === S.selected;
+      return {
+        ...base,
+        ...o,
+        status,
+        statusLabel: LABEL[status],
+        glyph: GLYPH[status],
+        isSel,
+        selCls: isSel ? 'is-sel' : '',
+        aria: id + ' ' + base.title + ', ' + LABEL[status],
+        pick: select(id)
+      };
+    };
+
+    const rootView = view(root);
+    const lanesView = lanes.map((l, i) => ({
+      key: l.key,
+      unit: l.unit,
+      tenant: l.tenant,
+      busCls: i === 0 ? 'bus bus-first' : 'bus bus-mid',
+      cells: l.ids.map((id, j) => {
+        const prev = j > 0 ? l.ids[j - 1] : null;
+        return {
+          ...view(id),
+          hasEdge: j > 0,
+          edgeCls: prev && st(prev) === 'Succeeded' ? 'edge' : 'edge e-wait'
+        };
+      })
+    }));
+
+    const counts = { Pending: 0, Approved: 0, Succeeded: 0, Stale: 0, Rejected: 0 };
+    order.forEach((id) => { counts[st(id)] += 1; });
+    counts.Pending += S.hidden.Pending;
+    counts.Approved += S.hidden.Approved;
+    counts.Succeeded += S.hidden.Succeeded;
+    const ORDER = ['Succeeded', 'Approved', 'Pending', 'Stale', 'Rejected'];
+    const segments = ORDER.filter((k) => counts[k]).map((k) => ({ cls: 'seg-' + k, n: counts[k] }));
+    const legendText = ['Pending', 'Approved', 'Succeeded', 'Stale', 'Rejected']
+      .filter((k) => counts[k]).map((k) => counts[k] + ' ' + LABEL[k].toLowerCase()).join(' · ');
+    const hiddenTotal = S.hidden.Pending + S.hidden.Approved + S.hidden.Succeeded;
+    const hiddenParts = [];
+    if (S.hidden.Pending) hiddenParts.push(S.hidden.Pending + ' Prüfung offen');
+    if (S.hidden.Approved) hiddenParts.push(S.hidden.Approved + ' freigegeben');
+    if (S.hidden.Succeeded) hiddenParts.push(S.hidden.Succeeded + ' ausgeführt');
+    const hiddenText = hiddenTotal + ' Vorschläge · ' + hiddenParts.join(' · ');
+
+    const s = view(S.selected);
+    const short = (id) => {
+      const v = view(id);
+      return { id, title: v.title + (v.lane ? ' · ' + v.lane : ''), status: v.status, statusLabel: v.statusLabel, glyph: v.glyph, pick: select(id) };
+    };
+    const depList = s.deps.map(short);
+    const successors = order.filter((x) => nodes[x].deps.includes(s.id));
+    const nextList = successors.slice(0, 4).map(short);
+    const nextMore = successors.length - nextList.length;
+    const isRoot = s.id === root;
+    const nextMoreText = isRoot
+      ? '+ ' + nextMore + ' weitere und die Zeilen der 7 eingeklappten Mietverträge'
+      : '+ ' + nextMore + ' weitere';
+    const sel = {
+      ...s,
+      posText: s.pos,
+      isPending: s.status === 'Pending',
+      isApproved: s.status === 'Approved',
+      isStale: s.status === 'Stale',
+      isDone: s.status === 'Succeeded',
+      isRejected: s.status === 'Rejected',
+      isClosed: s.status === 'Succeeded' || s.status === 'Rejected',
+      depsBlock: s.deps.some((d) => st(d) !== 'Succeeded') && s.status !== 'Succeeded',
+      requested: !!(S.over[s.id] && S.over[s.id].requested),
+      notRequested: !(S.over[s.id] && S.over[s.id].requested),
+      fields: s.fields.map((f) => ({ ...f, font: f.mono ? 'var(--font-mono)' : 'var(--font-sans)' })),
+      history: s.baseHistory.concat(S.extra[s.id] || []).map((h) => ({ ...h, hasNote: !!h.note })),
+      depList,
+      nextList,
+      hasNextMore: nextMore > 0 || isRoot,
+      nextMoreText,
+      noDeps: depList.length === 0,
+      noNext: nextList.length === 0
+    };
+
+    const listRows = order.map((id) => {
+      const v = view(id);
+      return { ...v, laneText: v.lane ? v.lane : 'Paket' };
+    });
+
+    const pendingTotal = counts.Pending;
+    const approvedTotal = counts.Approved;
+
+    return {
+      root: rootView,
+      lanes: lanesView,
+      listRows,
+      sel,
+      segments,
+      legendText,
+      hiddenText,
+      pendingTotal,
+      approvedTotal,
+      noPending: pendingTotal === 0,
+      noApproved: approvedTotal === 0,
+      isGraph: S.view === 'graph',
+      isList: S.view === 'list',
+      graphTabCls: S.view === 'graph' ? 'is-active' : '',
+      listTabCls: S.view === 'list' ? 'is-active' : '',
+      showGraph: () => this.setState({ view: 'graph' }),
+      showList: () => this.setState({ view: 'list' }),
+      bulk: S.bulk,
+      openBulk: () => this.setState({ bulk: true }),
+      closeBulk: () => this.setState({ bulk: false }),
+      approveAll: () => this.approveAll(),
+      executeAll: () => this.executeAll(),
+      rejecting: S.rejecting,
+      notRejecting: !S.rejecting,
+      reason: S.reason,
+      reasonMissing: !S.reason.trim(),
+      approve: () => { if (sel.isPending) this.approve(sel.id); },
+      openReject: () => this.setState({ rejecting: true }),
+      cancelReject: () => this.setState({ rejecting: false, reason: '' }),
+      setReason: (e) => this.setState({ reason: e.target.value }),
+      reject: () => this.reject(sel.id),
+      execute: () => { if (sel.isApproved && !sel.depsBlock) this.execute(sel.id); },
+      requestRevision: () => {
+        const over = { ...S.over };
+        const extra = { ...S.extra };
+        this.mark(over, extra, sel.id, { requested: true }, { title: 'Neue Revision angefordert', meta: 'M. Krüger · gerade eben' });
+        this.setState({ over, extra });
+        this.notify('Neue Revision für ' + sel.id + ' angefordert');
+      },
+      toast: S.toast,
+      hasToast: !!S.toast
+    };
+  }
+}
+</script>
+</body>
+</html>

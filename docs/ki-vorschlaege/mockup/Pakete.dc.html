@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>KI-Vorschläge · Pakete</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/hausverwaltung/styles.css">
+<link rel="stylesheet" href="ds/hausverwaltung/colors_and_type.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/frappe-theme-shim.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-tokens.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-components.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:#f7f6f3}
+a{color:#1a4d8c}a:hover{color:#123a6b}
+.prow:hover{background:var(--surface-2)}
+.seg-Pending{background:oklch(58% 0.14 245)}
+.seg-Approved{background:oklch(76% 0.13 70)}
+.seg-Succeeded{background:oklch(64% 0.13 150)}
+.seg-Stale{background:oklch(50% 0.18 25)}
+.seg-Rejected{background:oklch(84% 0.008 80)}
+</style>
+</helmet>
+<div class="hv" style="min-height: 100vh; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 13.5px; line-height: 1.4;">
+
+<header style="display: flex; align-items: center; gap: 16px; min-height: 48px; padding: 6px 20px; box-sizing: border-box; background: var(--surface); border-bottom: 1px solid var(--border); flex-wrap: wrap;">
+<div style="display: flex; align-items: center; gap: 10px;">
+<span aria-hidden="true" style="display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 6px; background: var(--text); color: #ffffff; font-family: var(--font-mono); font-size: 11px; font-weight: 600;">HV</span>
+<span style="font-weight: 600;">Hausverwaltung</span>
+</div>
+<div style="flex: 1 1 240px; max-width: 420px;">
+<input type="search" class="hv-field" aria-label="Suchen" placeholder="Suchen oder Befehl eingeben (Strg + G)" style="width: 100%; box-sizing: border-box; background: var(--surface-2);">
+</div>
+<div style="margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-muted);">
+<span>M. Krüger · Prüfer</span>
+<span aria-hidden="true" style="display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 999px; background: var(--surface-3); color: var(--text); font-size: 11px; font-weight: 600;">MK</span>
+</div>
+</header>
+
+<main style="max-width: 1500px; margin: 0 auto; padding: 20px 24px 40px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px;">
+
+<div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px;">
+<div style="display: flex; flex-direction: column; gap: 4px;">
+<nav aria-label="Brotkrumen" style="font-size: 12px; color: var(--text-muted);"><a href="#">Hausverwaltung</a> / KI-Vorschläge</nav>
+<h1 style="margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.2px;">KI-Vorschläge</h1>
+<p style="margin: 0; font-size: 12px; color: var(--text-muted);">Pakete bündeln, was ein Agent zusammen vorschlägt. Einzelvorschläge sind Pakete mit einem Vorschlag.</p>
+</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+<label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted);">Agent
+<select class="hv-field">
+<option>Alle Agenten</option>
+<option>Agent Betriebskosten</option>
+<option>Agent Bankabgleich</option>
+<option>Agent Serienbrief</option>
+<option>Agent Mahnwesen</option>
+<option>Agent Postfach</option>
+</select>
+</label>
+</div>
+</div>
+
+<div role="tablist" aria-label="Paketstatus" class="hv-tabs" style="align-self: flex-start; flex-wrap: wrap;">
+<sc-for list="{{ tabs }}" as="t" hint-placeholder-count="4">
+<button type="button" role="tab" aria-selected="{{ t.selected }}" class="hv-tab {{ t.cls }}" onClick="{{ t.pick }}">{{ t.label }} <span class="hv-count num">{{ t.count }}</span></button>
+</sc-for>
+</div>
+
+<section aria-label="Pakete" style="background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;">
+<div style="overflow-x: auto;">
+<div style="min-width: 1000px;">
+<div aria-hidden="true" style="display: grid; grid-template-columns: minmax(0, 2.2fr) 150px 130px minmax(220px, 1.6fr) 140px 92px; gap: 16px; padding: 9px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border);">
+<span class="label">Paket</span>
+<span class="label">Agent</span>
+<span class="label">Umfang</span>
+<span class="label">Stand</span>
+<span class="label">Nächster Schritt</span>
+<span class="label" style="text-align: right;">Eingang</span>
+</div>
+<sc-for list="{{ rows }}" as="p" hint-placeholder-count="5">
+<div class="prow" style="display: grid; grid-template-columns: minmax(0, 2.2fr) 150px 130px minmax(220px, 1.6fr) 140px 92px; gap: 16px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border);">
+<div style="display: flex; flex-direction: column; gap: 3px; min-width: 0;">
+<span style="font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ p.title }}</span>
+<span style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted);">
+<span class="hv-pill hv-pill-muted">{{ p.kind }}</span>
+<span>{{ p.ref }}</span>
+</span>
+</div>
+<span style="font-size: 12.5px; color: var(--text-muted);">{{ p.agent }}</span>
+<span class="mono" style="font-size: 12.5px;">{{ p.count }}</span>
+<div style="display: flex; flex-direction: column; gap: 5px; min-width: 0;">
+<div role="img" aria-label="{{ p.legend }}" style="display: flex; gap: 2px; height: 8px; border-radius: 999px; overflow: hidden; background: var(--surface-3);">
+<sc-for list="{{ p.segments }}" as="s" hint-placeholder-count="3"><span class="{{ s.cls }}" style="flex-grow: {{ s.n }}; flex-basis: 0;"></span></sc-for>
+</div>
+<span style="font-size: 11.5px; color: var(--text-muted);">{{ p.legend }}</span>
+</div>
+<div>
+<sc-if value="{{ p.linked }}" hint-placeholder-val="{{ false }}">
+<a href="Paket.dc.html" class="hv-btn hv-btn-primary" style="text-decoration: none;">{{ p.next }} →</a>
+</sc-if>
+<sc-if value="{{ p.unlinked }}" hint-placeholder-val="{{ true }}">
+<button type="button" class="hv-btn" onClick="{{ p.notice }}">{{ p.next }}</button>
+</sc-if>
+<sc-if value="{{ p.closed }}" hint-placeholder-val="{{ false }}">
+<span style="font-size: 12.5px; color: var(--text-muted);">{{ p.next }}</span>
+</sc-if>
+</div>
+<span class="mono" style="font-size: 12px; color: var(--text-muted); text-align: right;">{{ p.age }}</span>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 10px 16px; border-top: 1px solid var(--border); background: var(--surface-2); font-size: 11.5px; color: var(--text-muted);">
+<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="seg-Pending" style="width: 10px; height: 10px; border-radius: 3px;"></span>Prüfung offen</span>
+<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="seg-Approved" style="width: 10px; height: 10px; border-radius: 3px;"></span>Freigegeben</span>
+<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="seg-Succeeded" style="width: 10px; height: 10px; border-radius: 3px;"></span>Ausgeführt</span>
+<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="seg-Stale" style="width: 10px; height: 10px; border-radius: 3px;"></span>Veraltet</span>
+<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="seg-Rejected" style="width: 10px; height: 10px; border-radius: 3px;"></span>Abgelehnt</span>
+</div>
+</section>
+
+</main>
+
+<sc-if value="{{ hasToast }}" hint-placeholder-val="{{ false }}">
+<div role="status" style="position: fixed; right: 24px; bottom: 24px; max-width: 420px; padding: 10px 14px; border-radius: 6px; background: var(--text); color: #ffffff; font-size: 12.5px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);">{{ toast }}</div>
+</sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":860}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { tab: 'open', toast: '' };
+  }
+
+  componentWillUnmount() {
+    clearTimeout(this.toastTimer);
+  }
+
+  notify(text) {
+    this.setState({ toast: text });
+    clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => this.setState({ toast: '' }), 3500);
+  }
+
+  packages() {
+    return [
+      { cat: 'open', title: 'BK-Abrechnung 2025 · Lindenstraße 14', ref: 'BKA-2025-0014 · Frist 31.12.2026', kind: 'Graph · 12 Mietverträge', agent: 'Agent Betriebskosten', count: '37 Vorschläge', counts: { Pending: 26, Approved: 5, Succeeded: 3, Stale: 2, Rejected: 1 }, next: '26 prüfen', linked: true, age: 'heute 09:02' },
+      { cat: 'open', title: 'Mieterhöhungen 2027 · Am Mühlbach 3', ref: 'Mietspiegel 2026 · 4 Mietverträge', kind: 'Graph · 4 Mietverträge', agent: 'Agent Serienbrief', count: '9 Vorschläge', counts: { Pending: 8, Succeeded: 1 }, next: '8 prüfen', age: 'vor 12 Min.' },
+      { cat: 'open', title: 'Kontoauszug 14.11.2026', ref: 'Hausbank · 14 Umsätze', kind: 'ohne Abhängigkeiten', agent: 'Agent Bankabgleich', count: '14 Vorschläge', counts: { Pending: 11, Succeeded: 3 }, next: '11 prüfen', age: 'vor 38 Min.' },
+      { cat: 'open', title: 'Mahnlauf November', ref: '6 Mietverträge mit Rückstand', kind: 'ohne Abhängigkeiten', agent: 'Agent Mahnwesen', count: '6 Vorschläge', counts: { Pending: 3, Succeeded: 1, Stale: 2 }, next: '3 prüfen', age: 'heute 07:02' },
+      { cat: 'open', title: 'Brandt, Thomas · E-Mail-Adresse', ref: 'Kontakt CONT-0388', kind: 'Einzelvorschlag', agent: 'Agent Postfach', count: '1 Vorschlag', counts: { Pending: 1 }, next: 'Prüfen', age: 'vor 4 Min.' },
+      { cat: 'exec', title: 'Vorauszahlungen 2027 · Am Mühlbach 3', ref: 'Folgepaket zu BKA-2025-0009', kind: 'Graph · 4 Mietverträge', agent: 'Agent Betriebskosten', count: '8 Vorschläge', counts: { Approved: 6, Succeeded: 2 }, next: '6 ausführen', age: 'gestern 16:20' },
+      { cat: 'done', title: 'Kontoauszug 07.11.2026', ref: 'Hausbank · 12 Umsätze', kind: 'ohne Abhängigkeiten', agent: 'Agent Bankabgleich', count: '12 Vorschläge', counts: { Succeeded: 11, Rejected: 1 }, next: 'Abgeschlossen', age: '08.11.' },
+      { cat: 'done', title: 'Whg. 7 · Wohnfläche', ref: 'Wohnung WHG-LIN14-07', kind: 'Einzelvorschlag', agent: 'Agent Stammdaten', count: '1 Vorschlag', counts: { Rejected: 1 }, next: 'Abgeschlossen', age: '15.11.' }
+    ];
+  }
+
+  renderVals() {
+    const S = this.state;
+    const all = this.packages();
+    const ORDER = [['Succeeded', 'ausgeführt'], ['Approved', 'freigegeben'], ['Pending', 'offen'], ['Stale', 'veraltet'], ['Rejected', 'abgelehnt']];
+    const LEGEND = [['Pending', 'offen'], ['Approved', 'freigegeben'], ['Succeeded', 'ausgeführt'], ['Stale', 'veraltet'], ['Rejected', 'abgelehnt']];
+    const TABS = [['open', 'Offen'], ['exec', 'Wartet auf Ausführung'], ['done', 'Abgeschlossen'], ['all', 'Alle']];
+    const tabs = TABS.map(([key, label]) => ({
+      label,
+      count: key === 'all' ? all.length : all.filter((p) => p.cat === key).length,
+      cls: S.tab === key ? 'is-active' : '',
+      selected: S.tab === key,
+      pick: () => this.setState({ tab: key })
+    }));
+    const rows = all
+      .filter((p) => S.tab === 'all' || p.cat === S.tab)
+      .map((p) => ({
+        ...p,
+        segments: ORDER.filter(([k]) => p.counts[k]).map(([k]) => ({ cls: 'seg-' + k, n: p.counts[k] })),
+        legend: LEGEND.filter(([k]) => p.counts[k]).map(([k, l]) => p.counts[k] + ' ' + l).join(' · '),
+        linked: !!p.linked,
+        closed: p.cat === 'done',
+        unlinked: !p.linked && p.cat !== 'done',
+        notice: () => this.notify('Im Entwurf ist nur „BK-Abrechnung 2025 · Lindenstraße 14“ ausgearbeitet.')
+      }));
+    return { tabs, rows, toast: S.toast, hasToast: !!S.toast };
+  }
+}
+</script>
+</body>
+</html>
