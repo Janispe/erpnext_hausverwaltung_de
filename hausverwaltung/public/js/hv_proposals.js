@@ -5,6 +5,8 @@ frappe.provide("hausverwaltung.hv_proposals");
 	const bind = ({ id, revision, hash }) => ({ id, revision, hash });
 	const el = (tag, parent, text, cls) => $(document.createElement(tag)).addClass(cls || "").text(text == null ? "" : text).appendTo(parent);
 	const button = (parent, text, fn, primary = false) => el("button", parent, text, "hv-btn" + (primary ? " hv-btn-primary" : "")).attr("type", "button").on("click", fn);
+	const tab = (parent, text, fn) => el("button", parent, text, "hv-tab").attr("type", "button").on("click", fn);
+	const setActive = (tab, active) => tab.attr("aria-pressed", active).toggleClass("is-active", active);
 	const pill = (parent, status) => el("span", parent, `${symbols[status]} ${labels[status]}`, `hv-pill hv-prop-${status}`);
 	const person = (p) => p?.label || frappe.user.full_name(p?.name || "") || p?.name || "";
 	const time = (value) => value ? frappe.datetime.str_to_user(value) : "";
@@ -59,7 +61,8 @@ frappe.provide("hausverwaltung.hv_proposals");
 			el("p", this.root, "Pakete bündeln die Vorschläge eines Agenten. Jede Revision wird einzeln geprüft.", "hv-prop-muted");
 			const tabs = el("div", this.root, "", "hv-tabs");
 			for (const [status, title] of [["offen","Offen"],["wartet auf Ausführung","Wartet auf Ausführung"],["abgeschlossen","Abgeschlossen"],["","Alle"]]) {
-				button(tabs, `${title} (${this.packages.filter(p => !status || p.status === status).length})`, () => { this.filter = status; this.renderPackages(); }).addClass("hv-tab").attr("aria-pressed", this.filter === status);
+				const filterTab = tab(tabs, `${title} (${this.packages.filter(p => !status || p.status === status).length})`, () => { this.filter = status; this.renderPackages(); });
+				setActive(filterTab, this.filter === status);
 			}
 			const agent = el("select", this.root, "", "hv-field").attr("aria-label", "Agent"); el("option", agent, "Alle Agenten").val("");
 			for (const [id,name] of new Map(this.packages.map(p => [p.agent.name, person(p.agent)]))) el("option", agent, name).val(id);
@@ -93,7 +96,7 @@ frappe.provide("hausverwaltung.hv_proposals");
 			const controls = el("div", this.root, "", "hv-prop-controls");
 			const switcher = el("div", controls, "", "hv-tabs").attr("aria-label", "Ansicht");
 			this.viewButtons = new Map();
-			for (const mode of (this.graph.nodes.length > 1 ? ["Graph","Liste"] : [])) this.viewButtons.set(mode, button(switcher, mode, () => { this.mode = mode; this.draw(); }).addClass("hv-tab"));
+			for (const mode of (this.graph.nodes.length > 1 ? ["Graph","Liste"] : [])) this.viewButtons.set(mode, tab(switcher, mode, () => { this.mode = mode; this.draw(); }));
 			if (this.reviewer) button(controls, "Offene freigeben …", () => this.bulkReview()).prop("disabled", !this.graph.nodes.some(n => n.status === "Pending"));
 			const approved = this.graph.nodes.filter(n => n.status === "Approved");
 			button(controls, `Freigegebene ausführen (${approved.length})`, () => this.batchExecute(approved.map(bind)), true).prop("disabled", !approved.length);
@@ -105,7 +108,7 @@ frappe.provide("hausverwaltung.hv_proposals");
 		}
 		draw() {
 			this.canvas.empty();
-			for (const [mode, tab] of this.viewButtons) tab.attr("aria-pressed", mode === this.mode).toggleClass("hv-prop-view-active", mode === this.mode);
+			for (const [mode, tab] of this.viewButtons) setActive(tab, mode === this.mode);
 			if (this.mode === "Liste") {
 				const table = el("table", this.canvas, "", "table").attr("aria-label", "Vorschlagsliste"), header = el("tr", el("thead", table)), body = el("tbody", table);
 				for (const t of ["Zeile","Schritt","Änderung","Status"]) el("th", header, t);
@@ -161,7 +164,13 @@ frappe.provide("hausverwaltung.hv_proposals");
 			el("h4",box,"Änderung"); const table = el("table",box,"","table"), header = el("tr",table); for (const t of ["Feld","Bisher","Neu"]) el("th",header,t);
 			for (const c of p.changes) { const row = el("tr",table); el("td",row,c.label); el("td",row,c.before); const after = el("td",row); if (c.kind === "text" && c.segments) for (const seg of c.segments) el(seg.op === "del" ? "del" : seg.op === "ins" ? "ins" : "span",after,seg.text); else after.text(c.after); }
 			el("h4",box,"Begründung des Agenten"); el("em",box,p.rationale || "Keine Begründung angegeben."); for (const source of p.sources || []) link(el("p",box),source.label,source.doctype,source.name);
-			el("h4",box,"Im Graph"); for (const [title, items] of [["Vorgänger",p.predecessors],["Nachfolger",p.successors]]) { el("small",box,title); for (const n of items) button(box,`${n.title} · ${labels[n.status]}`,() => this.select(n.id)); }
+			el("h4", box, "Im Graph");
+			for (const [title, items] of [["Vorgänger", p.predecessors], ["Nachfolger", p.successors]]) {
+				const group = el("div", box, "", "hv-prop-neighbors").attr({ role: "group", "aria-label": title });
+				el("small", group, title);
+				if (!items.length) el("span", group, "keine");
+				for (const n of items) button(group, `${n.title} · ${labels[n.status]}`, () => this.select(n.id));
+			}
 			if (p.status === "Approved" && !node.executable) el("p",box,"Ausführen erst, wenn alle Vorgänger ausgeführt sind. Freigeben geht schon jetzt.");
 			el("h4",box,"Beim Ausführen"); const effects = el("ul",box).attr("aria-label", "Auswirkungen"); for (const effect of p.effects) el("li",effects,this.translateEffect(effect));
 			const actions = el("div",box,"","hv-prop-controls");
