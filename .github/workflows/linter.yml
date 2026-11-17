@@ -3,8 +3,6 @@ name: Linters
 
 on:
   pull_request:
-    branches-ignore:
-      - codex/agent-loop-base
   workflow_dispatch:
 
 permissions:
@@ -18,7 +16,9 @@ jobs:
   linter:
     name: 'Frappe Linter'
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    # Actions run only in the public repository. The private repository has no Actions budget;
+    # agent PRs there are verified locally with scripts/agent_ci.sh.
+    if: github.repository == 'Janispe/erpnext_hausverwaltung_de' && github.event_name == 'pull_request'
 
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +39,7 @@ jobs:
   deps-vulnerable-check:
     name: 'Vulnerable Dependency Check'
     runs-on: ubuntu-latest
+    if: github.repository == 'Janispe/erpnext_hausverwaltung_de'
 
     steps:
       - uses: actions/setup-python@v5

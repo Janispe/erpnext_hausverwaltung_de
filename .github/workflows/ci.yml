@@ -5,8 +5,6 @@ on:
     branches:
       - main
   pull_request:
-    branches-ignore:
-      - codex/agent-loop-base
   workflow_dispatch:
 
 permissions:
@@ -19,6 +17,9 @@ concurrency:
 jobs:
   tests:
     name: Mietvertrag (Frappe v16)
+    # Actions run only in the public repository. The private repository has no Actions budget;
+    # agent PRs there are verified locally with scripts/agent_ci.sh.
+    if: github.repository == 'Janispe/erpnext_hausverwaltung_de'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -72,7 +73,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: Janispe/erp_next_mail_merge
-          ref: 46af214d91712cedb58b6fcb52a819373dc7fc2e
+          ref: 134adc792d478147bf64d90f36fde5a1bc3206ff
           path: mail_merge
           persist-credentials: false
 
