@@ -198,6 +198,40 @@ def main(args):
 			after_b = agent.request.get(note_url+"/"+target_b).json()["data"]
 			assert all(before_b[k]==after_b[k] for k in ("label","generation","modified"))
 			proof["dependent_editor"]={"reopened_direct_binding":ref_a,"revised_child":{k:proposal_b[k] for k in ("id","revision","hash")},"unrelated_draft_discarded":True,"label_only_revision_preserved_direct_binding":True,"execute_before_predecessor_status":blocked_b.value.status,"business_record_unchanged":True}
+			# A descriptive package created through the API must also accept
+			# further normal Desk submissions without metadata mutation.
+			record("existing_descriptive_package_desk_submit")
+			descriptive_package="pw-descriptive-"+uuid4().hex[:10]
+			package_meta={"title":"Synthetik · beschreibender Titel","reason":"Synthetischer Anlass für den Pilot","lane_label":"Synthetische Zeilen"}
+			seed_target,new_target=["SYN-PW-META-"+uuid4().hex[:10] for _ in range(2)]
+			for name in (seed_target,new_target):
+				r=agent.request.post(note_url,headers=headers,data=json.dumps({"synthetic_id":name,"label":"vorher"}))
+				assert r.status==200
+			seed=agent.request.post(args.base_url+API+"submit",headers=headers,data=json.dumps({"key":uuid4().hex,"package":descriptive_package,"package_meta":package_meta,"payload":{"target":seed_target,"label":"Seed"},"metadata":{"title":"Seed","summary":"Synthetischer Start"}}))
+			assert seed.status==200
+			before_new=agent.request.get(note_url+"/"+new_target).json()["data"]
+			agent_page.get_by_role("button",name="Vorgängerauswahl leeren",exact=True).click()
+			agent_page.get_by_label("Synthetische Notiz",exact=True).fill(new_target)
+			agent_page.get_by_label("Synthetische Notiz",exact=True).press("Tab")
+			agent_page.get_by_label("Neue Bezeichnung",exact=True).fill("Weitere synthetische Vorschau")
+			agent_page.get_by_label("Paket",exact=True).fill(descriptive_package)
+			with agent_page.expect_response(lambda r:r.url.endswith(API+"submit")) as submitted_existing:
+				agent_page.get_by_role("button",name="Vorschlag einreichen",exact=True).click()
+			assert submitted_existing.value.status==200
+			posted=parse_qs(submitted_existing.value.request.post_data or "")
+			if not posted:posted=submitted_existing.value.request.post_data_json
+			assert "package_meta" not in posted
+			new_proposal=submitted_existing.value.json()["message"]
+			expect(agent_page.locator("p[role=status]")).to_contain_text(new_proposal["id"])
+			after_new=agent.request.get(note_url+"/"+new_target).json()["data"]
+			assert all(before_new[k]==after_new[k] for k in ("label","generation","modified"))
+			graph=agent.request.post(args.base_url+API+"package_graph",headers=headers,data=json.dumps({"package":descriptive_package})).json()["message"]
+			assert graph["package"]["total"]==2
+			assert all(graph["package"][key]==value for key,value in package_meta.items())
+			proof["existing_descriptive_package"]={"package":descriptive_package,"metadata":package_meta,"submit_omitted_package_meta":True,"metadata_unchanged":True,"business_record_unchanged":True,"proposal":{k:new_proposal[k] for k in ("id","revision","hash")}}
+			agent_page.locator("p[role=status]").scroll_into_view_if_needed()
+			agent_page.screenshot(path=str(output/"05-existing-descriptive-package.png"))
+
 			proof["success"] = True
 			record("complete")
 			browser.close()

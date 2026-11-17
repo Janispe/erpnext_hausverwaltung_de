@@ -83,20 +83,38 @@ frappe.pages["hv-proposals"].on_page_load = function (wrapper) {
 	const button = (title, fn) => $("<button class='btn btn-default'>").text(__(title)).appendTo(buttons).on("click", async () => {
 		try { await fn(); } catch (e) { status.text(__("Aktion blockiert oder fehlgeschlagen; Servermeldung beachten.")); }
 	});
+	const metadata = () => ({ title: "Bezeichnung ändern", summary: label.get_value() });
 	const requireSelected = () => { if (!selected) throw new Error("Select a proposal"); return binding(selected); };
+	const packageMetaForSubmit = async (packageId) => {
+		// Existing visible packages keep their immutable descriptive metadata.
+		// Use the scoped API, including pagination; generic listings are blocked.
+		for (let start = 0; ; start += 100) {
+			const packages = await call("list_packages", { start, limit: 100 });
+			if (packages.some((p) => p.package === packageId)) return {};
+			if (packages.length < 100) return { package_meta: { title: packageId } };
+		}
+	};
 	button("Vorschlag einreichen", async () => {
-		await show(await call("submit", { key: requestKey, package: pkg.get_value(), payload: { target: target.get_value(), label: label.get_value() }, dependencies }));
+		const packageId = pkg.get_value();
+		const packageMeta = await packageMetaForSubmit(packageId);
+		await show(await call("submit", { key: requestKey, package: packageId, ...packageMeta, metadata: metadata(), payload: { target: target.get_value(), label: label.get_value() }, dependencies }));
 		requestKey = crypto.randomUUID();
 		await load();
 	});
 	button("Neue Revision mit Preview", async () => {
-		await show(await call("revise", { binding: requireSelected(), payload: { target: target.get_value(), label: label.get_value() }, dependencies }));
+		await show(await call("revise", { binding: requireSelected(), metadata: metadata(), payload: { target: target.get_value(), label: label.get_value() }, dependencies }));
 		await load();
 	});
 	const roles = frappe.user_roles || [];
 	if (roles.includes("HV Proposal Reviewer") && !roles.includes("HV Proposal Agent")) {
 		for (const [title, approve] of [["Diese Revision freigeben", true], ["Diese Revision ablehnen", false]]) {
-			button(title, async () => { await show(await call("review", { binding: requireSelected(), approve })); await load(); });
+			button(title, async () => {
+				if (!approve) {
+					frappe.prompt([{ fieldname: "reason", fieldtype: "Small Text", label: __("Ablehnungsgrund"), reqd: 1 }], async ({ reason }) => {
+						await show(await call("review", { binding: requireSelected(), approve, reason })); await load();
+					}, __("Revision ablehnen"));
+				} else { await show(await call("review", { binding: requireSelected(), approve })); await load(); }
+			});
 		}
 	}
 	button("Genehmigte Revision ausführen", async () => { await show(await call("execute", { binding: requireSelected() })); await load(); });

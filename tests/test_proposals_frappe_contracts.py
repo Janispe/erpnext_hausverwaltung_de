@@ -91,6 +91,7 @@ class AdapterContracts(unittest.TestCase):
 		self.fake.QueryDeadlockError = RuntimeError
 		self.fake.DoesNotExistError = Missing
 		self.fake.conf = {"hv_proposals_synthetic_enabled": True}
+		self.fake.flags = {}
 		self.fake.session = self.session
 		self.fake.local = SimpleNamespace(request=self.request, login_manager=SimpleNamespace(user=self.session.user), message_log=[])
 		self.fake.db = SimpleNamespace(get_value=lambda *a, **kw: self.user)
@@ -221,6 +222,121 @@ class AdapterContracts(unittest.TestCase):
 		for slug in ["hv_proposal_revision", "hv_proposal_audit"]:
 			schema = json.loads((base / slug / (slug + ".json")).read_text())
 			self.assertTrue(all(not perm["write"] for perm in schema["permissions"]))
+
+
+
+
+class PackageContracts(unittest.TestCase):
+	setUp = AdapterContracts.setUp
+	tearDown = AdapterContracts.tearDown
+	def test_metadata_limits_and_hash_binding(self):
+		base = {"title": "T", "summary": "S"}
+		valid = d.metadata(base | {"lane":{"key":"K","label":"L"},"sources":[{"label":"Evidence"}]})
+		for field, maximum in (("title",80),("summary",140),("rationale",2000)):
+			with self.assertRaises(ValueError): d.metadata(base | {field:"x"*(maximum+1)})
+		with self.assertRaises(ValueError): d.metadata(base | {"sources":[{"label":"x"}]*11})
+		with self.assertRaises(ValueError): d.metadata(base | {"lane":{"key":"x"*81,"label":"x"}})
+		for field in ("title","summary","rationale","sources","lane"):
+			other = valid | {field: "different"}
+			self.assertNotEqual(d.digest(valid),d.digest(other))
+
+	def test_read_endpoints_never_enable_write_context(self):
+		for method,args,helper in [("view",("p",),"_load"),("audit",("p",),"_load"),
+			("list_proposals",(),"get_all"),("list_packages",(),"get_all"),("package_graph",("g",),"_visible")]:
+			def guard(*a, **kw):
+				self.assertFalse(self.service._writing.get())
+				raise LookupError("read reached")
+			target = self.fake if helper == "get_all" else self.service
+			with patch.object(target,helper,guard,create=True):
+				with self.assertRaises(LookupError): getattr(self.service,method)(*args)
+
+	def test_note_and_body_read_without_rowlocks(self):
+		calls=[]
+		note=SimpleNamespace(docstatus=0,synthetic_id="SYN-A",meta=SimpleNamespace(get_permitted_fieldnames=lambda **kw:{"label","generation","synthetic_id"}))
+		body={"dependencies":[]}
+		rev=SimpleNamespace(body=json.dumps(body),revision_hash=d.digest(body))
+		def get_doc(doctype,*a,**kw):
+			calls.append(kw);return note if doctype==self.service.NOTE else rev
+		self.fake.get_doc=get_doc;self.fake.has_permission=lambda *a,**kw:True;self.fake.parse_json=json.loads
+		self.service._note("SYN-A");self.service._body(SimpleNamespace(name="p",current_revision=1,revision_hash=rev.revision_hash))
+		self.assertTrue(all(c.get("for_update") is False for c in calls))
+
+	def test_effective_stale_read_does_not_write_and_write_returns_normally(self):
+		doc=SimpleNamespace(name="p",current_revision=1,revision_hash="a"*64,status="Pending",package="g",result=None)
+		cause={"cause":"baseline_changed","proposal":None,"detail":"changed"}
+		with patch.object(self.service,"_stale_cause",return_value=cause),patch.object(self.service,"_event") as event,patch.object(self.service,"_invalidate"):
+			self.assertEqual(self.service._checked(doc,{"preview":{},"dependencies":[]},persist=False)["status"],"Stale")
+			self.assertEqual(doc.status,"Pending");event.assert_not_called()
+			self.assertEqual(self.service._checked(doc,{"preview":{},"dependencies":[]})["status"],"Stale")
+			event.assert_called_once_with(doc,"Stale",cause)
+
+	def test_rejection_requires_reason_before_any_lock(self):
+		with patch.object(self.service,"_lock_for") as lock:
+			with self.assertRaises(ValueError): self.service.review({"id":"p","revision":1,"hash":"a"*64},False)
+			lock.assert_not_called()
+
+	def test_review_many_savepoint_partial_success(self):
+		self.fake.db.savepoint=lambda x:None;rolled=[];self.fake.db.rollback=lambda **kw:rolled.append(kw)
+		refs=[{"id":x,"revision":1,"hash":"a"*64} for x in "abc"]
+		with patch.object(self.service,"review",side_effect=[{"status":"Approved"},ValueError("bad"),{"status":"Stale"}]):
+			result=self.service.review_many(refs)
+		self.assertEqual([r["ok"] for r in result],[True,False,False]);self.assertEqual(len(rolled),1)
+
+	def test_execute_ready_topological_skip_and_stop(self):
+		refs={x:{"id":x,"revision":1,"hash":"a"*64} for x in "abc"}
+		docs={x:SimpleNamespace(name=x,target="SYN-"+x,package="g",status="Approved") for x in refs}
+		bodies={x:{"dependencies":[refs["a"]] if x=="b" else []} for x in refs}
+		self.fake.db.savepoint=lambda x:None;self.fake.db.rollback=lambda **kw:None
+		def execute(ref):
+			if ref["id"]=="b": raise ValueError("stop")
+			docs[ref["id"]].status="Succeeded";return {"status":"Succeeded"}
+		with patch.object(self.service,"_note"),patch.object(self.service,"_checked",side_effect=lambda doc,body:{"status":doc.status}),patch.object(self.service,"_lock_package"),patch.object(self.service,"_exact",side_effect=lambda ref:(docs[ref["id"]],bodies[ref["id"]])),patch.object(self.service,"execute",side_effect=execute):
+			result=self.service.execute_ready("g",[refs[x] for x in "bac"])
+		self.assertEqual([r["id"] for r in result],["a","b"])
+		self.assertTrue(result[0]["ok"]);self.assertFalse(result[1]["ok"])
+
+	def test_each_dependency_stale_cause(self):
+		ref={"id":"parent","revision":1,"hash":"a"*64}
+		doc=SimpleNamespace(name="child",status="Pending")
+		parent=SimpleNamespace(name="parent",target="SYN-PARENT",current_revision=1,revision_hash="a"*64,status="Rejected")
+		with patch.object(self.fake,"get_doc",return_value=parent,create=True),patch.object(self.service,"_note"):
+			self.assertEqual(self.service._stale_cause(doc,{"dependencies":[ref]})["cause"],"dependency_rejected")
+			parent.status="Stale"
+			self.assertEqual(self.service._stale_cause(doc,{"dependencies":[ref]})["cause"],"dependency_stale")
+			parent.current_revision=2
+			self.assertEqual(self.service._stale_cause(doc,{"dependencies":[ref]})["cause"],"dependency_revised")
+
+	def test_invalidation_audit_has_cause_id_and_detail(self):
+		child=SimpleNamespace(name="child",event_sequence=1,target="SYN-B",current_revision=1,revision_hash="a"*64)
+		queries=[];self.fake.db.sql=lambda query,args:queries.append((query,args));self.fake.clear_document_cache=lambda *a:None
+		for cause in ("dependency_rejected","dependency_revised","dependency_stale"):
+			self.service._invalidate_metadata(child,"parent",cause)
+			detail=json.loads(queries[-1][1][-1])
+			self.assertEqual(detail["cause"],cause);self.assertEqual(detail["proposal"],"parent");self.assertTrue(detail["detail"])
+
+	def test_core_has_no_pe_or_sqlite_import_and_one_action(self):
+		for path in (APP / "proposals").glob("*.py"):
+			for node in ast.walk(ast.parse(path.read_text())):
+				if isinstance(node,ast.Import): names=[a.name for a in node.names]
+				elif isinstance(node,ast.ImportFrom): names=[node.module or ""]
+				else: continue
+				self.assertFalse(any(n.startswith(("process_engine","sqlite3")) for n in names))
+		self.assertEqual(d.ACTION,"hv.synthetic_note.set_label/v1")
+
+	def test_generic_package_read_requires_reference_rights_for_requested_user(self):
+		doc=SimpleNamespace(doctype=self.service.PACKAGE,name="package",reference_doctype="HV Synthetic Note",reference_name="SYN-PRIVATE")
+		self.fake.local.message_log=[{"message":"existing"}]
+		self.fake.flags["has_permission_check_logs"]=["existing permission"]
+		def deny_reference(*args,**kwargs):
+			self.fake.flags["has_permission_check_logs"].append("private reference name")
+			self.fake.throw("private reference",self.Denied)
+		with patch.object(self.service,"_visible",return_value=[object()]),patch.object(self.service,"_reference",side_effect=deny_reference) as reference:
+			self.assertFalse(self.service.readable_record(doc,"other-user"))
+			reference.assert_called_once_with("HV Synthetic Note","SYN-PRIVATE",user="other-user")
+		self.assertEqual(self.fake.local.message_log,[{"message":"existing"}])
+		self.assertEqual(self.fake.flags["has_permission_check_logs"],["existing permission"])
+		with patch.object(self.service,"_visible",return_value=[object()]),patch.object(self.service,"_reference",return_value=None):
+			self.assertTrue(self.service.readable_record(doc,"other-user"))
 
 
 if __name__ == "__main__": unittest.main()
