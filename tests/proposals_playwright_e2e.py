@@ -61,7 +61,7 @@ def run(args):
     page.keyboard.press('Escape')
     expect(dialog).to_be_hidden()
     expect(page.locator('.modal-backdrop:visible')).to_have_count(0)
-    page.locator('.frappe-alert').first.wait_for(state='hidden')
+    expect(page.locator('.es-toast:visible, .frappe-alert:visible')).to_have_count(0, timeout=12000)
 
    def snapshot(page, filename, theme, tab_name):
     set_theme(page, theme)
@@ -222,6 +222,54 @@ def run(args):
    expect(canvas_nodes).to_have_count(8)
    expect(page.get_by_role('button',name='Freigegebene ausführen (1)',exact=True)).to_be_enabled()
    proof['bulk_bindings_match_visible_nodes']=True
+   proof['phase']='batch_navigation'
+   destination, _ = seed(lanes=1, steps=1)
+
+   def switch_before_response(method, action):
+    pattern = '**/api/method/hausverwaltung.proposals.frappe_service.' + method
+    held = []
+    def hold(route):
+     held.append(route)
+    page.route(pattern, hold, times=1)
+    with page.expect_request(lambda request: request.url.endswith('.'+method)):
+     action()
+    page.get_by_role('button',name='← Alle Pakete',exact=True).click()
+    page.locator(f'[data-package="{destination}"]').click()
+    expect(page.get_by_role('heading',name=f'Synthetik · UI {destination}',exact=True)).to_be_visible()
+    expect(page.get_by_role('heading',name='Änderung',exact=True)).to_be_visible()
+    assert len(held) == 1
+    graph_requests = []
+    def record_graph(request):
+     if request.url.endswith('.package_graph'):
+      graph_requests.append(request.url)
+    page.on('request', record_graph)
+    try:
+     with page.expect_response(lambda response: response.url.endswith('.'+method)) as released:
+      held[0].continue_()
+     assert released.value.ok
+     assert released.value.finished() is None
+     page.evaluate("""async () => {
+      await frappe.after_ajax();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+     }""")
+     expect(page.get_by_role('heading',name=f'Synthetik · UI {destination}',exact=True)).to_be_visible()
+     expect(page.locator('.hv-prop-root [role="status"]')).to_be_empty()
+     assert not graph_requests
+    finally:
+     page.remove_listener('request', record_graph)
+
+   switch_before_response('execute_ready',
+    lambda: page.get_by_role('button',name='Freigegebene ausführen (1)',exact=True).click())
+   assert client.api('view',proposal_id=hidden_id)['status'] == 'Succeeded'
+   approval_package, approval_nodes = seed(lanes=1,steps=1)
+   page.locator('.hv-prop-root').get_by_role('button',name='← Alle Pakete',exact=True).click()
+   page.locator(f'[data-package="{approval_package}"]').click()
+   page.get_by_role('button',name='Offene freigeben …',exact=True).click()
+   expect(page.get_by_text('2 offene Vorschläge freigeben',exact=True)).to_be_visible()
+   switch_before_response('review_many',
+    lambda: page.get_by_role('button',name='Freigaben bestätigen',exact=True).click())
+   assert all(client.api('view',proposal_id=node['id'])['status']=='Approved' for node in approval_nodes)
+   proof['batch_results_stay_with_origin_package']=True
    proof.update(success=True,full_acceptance_passed=True,phase='complete',package=package,rejected_package=rejected,normal_separate_logins=True,bulk_confirmation=True,ordered_execution=True,rejection_stales_successor=True,list_toggle=True,responsive=True);browser.close()
  except BaseException as e:
   proof.update(error_type=type(e).__name__,frames=[{'file':f.filename,'line':f.lineno,'function':f.name} for f in traceback.extract_tb(e.__traceback__)])

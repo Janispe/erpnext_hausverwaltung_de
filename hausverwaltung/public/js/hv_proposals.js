@@ -30,12 +30,15 @@ frappe.provide("hausverwaltung.hv_proposals");
 			this.generation = 0; this.selection = 0; this.filter = "offen"; this.agent = "";
 			this.root.on("keydown", (e) => this.key(e));
 		}
-		async call(method, args = {}) {
+		async call(method, args = {}, context) {
 			try { return (await frappe.call({ method: `hausverwaltung.proposals.frappe_service.${method}`, args, type: "POST" })).message; }
 			catch (e) {
+				if (context && !this.isCurrentPackage(context)) throw e;
 				const conflict = e.status === 409 || e.responseJSON?.exc_type === "ConcurrentRevisionRetry";
 				frappe.show_alert({ message: conflict ? "Die Daten haben sich gleichzeitig geändert. Bitte erneut versuchen." : "Vorgang nicht verfügbar", indicator: "red" });
-				if (conflict) setTimeout(() => this.route(), 0);
+				if (conflict) setTimeout(() => {
+					if (!context || this.isCurrentPackage(context)) this.route();
+				}, 0);
 				throw e;
 			}
 		}
@@ -251,12 +254,49 @@ frappe.provide("hausverwaltung.hv_proposals");
 		bulkReview() {
 			const refs = this.displayedBindings("Pending");
 			if (!refs.length) return;
-			const dialog = new frappe.ui.Dialog({ title:`${refs.length} offene Vorschläge freigeben`,fields:[{fieldtype:"HTML",fieldname:"notice"}],primary_action_label:"Freigaben bestätigen",primary_action:async()=>{ dialog.hide(); try { const result = await this.call("review_many",{bindings:refs}); await this.route(); this.results(result, true); } catch (_) {} } });
+			const context = this.packageContext();
+			const dialog = new frappe.ui.Dialog({
+				title: `${refs.length} offene Vorschläge freigeben`,
+				fields: [{fieldtype:"HTML",fieldname:"notice"}],
+				primary_action_label: "Freigaben bestätigen",
+				primary_action: async () => {
+					dialog.hide();
+					if (!this.isCurrentPackage(context)) return;
+					try {
+						const result = await this.call("review_many", {bindings:refs}, context);
+						await this.showBatchResult(context, result, true);
+					} catch (_) { /* The normal API error is already presented. */ }
+				}
+			});
 			dialog.fields_dict.notice.$wrapper.text("Jede Freigabe wird einzeln für ihre Revision und ihren Hash protokolliert. Freigegeben werden nur sichtbare Vorschläge. Veraltete und abgelehnte Vorschläge bleiben unverändert. Ausgeführt wird erst mit ‚Freigegebene ausführen‘."); dialog.show();
 		}
 		async batchExecute(refs) {
 			if (!refs.length) return;
-			try { const result = await this.call("execute_ready",{package:this.package,bindings:refs}); await this.route(); this.results(result); const failed = result.find(r=>!r.ok && !r.skipped_reason); if (failed) await this.select(failed.id); } catch (_) {}
+			const context = this.packageContext();
+			try {
+				const result = await this.call("execute_ready", {package:context.package, bindings:refs}, context);
+				await this.showBatchResult(context, result);
+			} catch (_) { /* The normal API error is already presented. */ }
+		}
+		packageContext() {
+			return {package:this.package, generation:this.generation};
+		}
+		isCurrentPackage(context) {
+			const [page, packageId] = frappe.get_route();
+			return page === "hv-proposals" && packageId === context.package
+				&& this.package === context.package && this.generation === context.generation;
+		}
+		async showBatchResult(context, rows, reviewing = false) {
+			if (!this.isCurrentPackage(context)) return;
+			const refresh = this.route();
+			const refreshedContext = this.packageContext();
+			await refresh;
+			if (!this.isCurrentPackage(refreshedContext) || !this.feedback?.[0]?.isConnected) return;
+			this.results(rows, reviewing);
+			if (!reviewing) {
+				const failed = rows.find(row => !row.ok && !row.skipped_reason);
+				if (failed) await this.select(failed.id);
+			}
 		}
 		results(rows, review = false) {
 			this.feedback.empty(); const ok = rows.filter(r=>r.ok).length, waiting = rows.filter(r=>r.skipped_reason).length;
