@@ -1,260 +1,333 @@
-"""Explicit real Desk E2E on a newly bootstrapped synthetic loopback site.
-
-Use the existing Chromium executable and a separately staged, pinned Playwright
-wheel target. No browser downloads, global installs, traces or password captures.
-Errors intentionally report phase/type/frame metadata only, never login values.
-"""
-import argparse
-import contextlib
-import json
+"""Opt-in UI acceptance on the existing isolated synthetic site; no auth output."""
+import argparse,contextlib,json,re,sys,traceback
 from pathlib import Path
-import sys
-import traceback
-from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
+from urllib.parse import urlsplit
+from proposals_http_contracts import Client,binding
 
 
-API = "/api/method/hausverwaltung.proposals.frappe_service."
+def contrast(first, second):
+ def luminance(color):
+  channels = [int(channel) / 255 for channel in re.findall(r'\d+', color)]
+  assert len(channels) == 3, color
+  linear = [channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+            for channel in channels]
+  return sum(channel * weight for channel, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+ dark, light = sorted((luminance(first), luminance(second)))
+ return (light + 0.05) / (dark + 0.05)
 
 
-def main(args):
-	from playwright.sync_api import sync_playwright, expect
+def run(args):
+ from playwright.sync_api import sync_playwright,expect
+ out=Path(args.output_dir);out.mkdir(parents=True,exist_ok=True)
+ auth=json.loads(Path(args.auth_file).read_text());assert auth['purpose']=='hv-proposals-disposable-testauth'
+ client=Client(args.base_url);client.login('agent@hv4.invalid',auth['agent'])
+ proof={'success':False,'phase':'seed','full_acceptance_passed':False}
+ def note():
+  target='SYN-UI-'+uuid4().hex[:10]
+  client.resource('HV Synthetic Note',data={'synthetic_id':target,'label':'Unverändert'})
+  return target
 
-	auth = json.loads(Path(args.auth_file).read_text())
-	assert auth.get("purpose") == "hv-proposals-disposable-testauth"
-	output = Path(args.output_dir)
-	output.mkdir(parents=True, exist_ok=True)
-	target = "SYN-PW-" + uuid4().hex[:12]
-	package = "pw-" + uuid4().hex[:12]
-	proof = {"success": False, "phase": "launch", "target": target, "package": package}
-	origin = urlsplit(args.base_url)
+ def submit(package, target, dependencies, lane=None, title='Bezeichnung anpassen'):
+  return client.api('submit', key=uuid4().hex, package=package,
+   package_meta={'title':'Synthetik · UI '+package,'reason':'Ausschließlich synthetischer Oberflächentest','lane_label':'Notizen'},
+   payload={'target':target,'label':'Neue Bezeichnung'}, dependencies=dependencies,
+   metadata={'title':title,'summary':'Unverändert → Neu','lane':lane,'rationale':'Synthetische Prüfung','sources':[{'label':'Synthetische Quelle'}]})
 
-	def record(phase):
-		proof["phase"] = phase
-		(output / "desk-e2e.json").write_text(json.dumps(proof, ensure_ascii=False, indent=2))
+ def seed(lanes=3,steps=3):
+  package='ui-'+uuid4().hex[:10]
+  root=submit(package,note(),[])
+  nodes=[root]
+  for i in range(lanes):
+   target=note();parent=root
+   for j in range(steps):
+    parent=submit(package,target,[binding(parent)],{'key':str(i),'label':'Synthetische Zeile '+str(i+1)})
+    nodes.append(parent)
+  return package,nodes
+ package,nodes=seed();rejected,small=seed(1,1)
+ try:
+  with sync_playwright() as pw:
+   browser=pw.chromium.launch(executable_path=args.chromium,headless=True,args=['--disable-dev-shm-usage','--disable-background-networking','--disable-sync','--no-first-run'])
+   def login(account):
+    ctx=browser.new_context(viewport={'width':1440,'height':1100},locale='de-DE')
+    origin=urlsplit(args.base_url)
+    ctx.route('**/*',lambda route:route.continue_() if urlsplit(route.request.url).netloc==origin.netloc or urlsplit(route.request.url).scheme in ('data','blob') else route.abort())
+    page=ctx.new_page();page.goto(args.base_url+'/login');page.locator('#login_email:visible').fill(account+'@hv4.invalid');page.locator('#login_password:visible').fill(auth[account]);page.locator('.for-login button[type=submit]:visible').click();page.wait_for_url('**/desk*');page.goto(args.base_url+'/desk/hv-proposals');page.get_by_role('table',name='Paketliste').wait_for();return page
+   def collapse_sidebar(page):
+    if page.evaluate("() => frappe.app.sidebar.sidebar_expanded"):
+     page.locator('.sidebar-edge:visible').click()
+    page.wait_for_function("() => frappe.app.sidebar.sidebar_expanded === false")
+    assert 'sidebar-collapsed' in page.locator('body').get_attribute('class').split()
 
-	try:
-		with sync_playwright() as playwright:
-			browser = playwright.chromium.launch(executable_path=args.chromium, headless=True,
-				args=["--disable-dev-shm-usage", "--disable-background-networking", "--disable-sync", "--no-first-run"])
-			proof["browser_version"] = browser.version
+   def set_theme(page, theme):
+    page.locator('.dock-user-button:visible, .sidebar-user-button:visible').first.click()
+    page.get_by_text(re.compile(r'^(Einstellungen|Settings)$')).filter(visible=True).click()
+    dialog = page.locator('.settings-dialog-wrapper:visible')
+    dialog.locator('[data-tab-id="appearance"]').click()
+    card = dialog.locator('.theme-card').filter(
+     has=page.locator(f'.theme-card-preview > [data-theme="{theme}"]:only-child'))
+    card.click()
+    expect(page.locator('html')).to_have_attribute('data-theme-mode', theme)
+    expect(page.locator('html')).to_have_attribute('data-theme', theme)
+    page.keyboard.press('Escape')
+    expect(dialog).to_be_hidden()
+    expect(page.locator('.modal-backdrop:visible')).to_have_count(0)
+    expect(page.locator('.es-toast:visible, .frappe-alert:visible')).to_have_count(0, timeout=12000)
 
-			def context():
-				ctx = browser.new_context(viewport={"width": 1400, "height": 1000}, locale="de-DE")
-				def isolated(route):
-					url = urlsplit(route.request.url)
-					if url.scheme in ("data", "blob") or (url.scheme, url.netloc) == (origin.scheme, origin.netloc): route.continue_()
-					else: route.abort()
-				ctx.route("**/*", isolated)
-				return ctx
+   def snapshot(page, filename, theme, tab_name):
+    set_theme(page, theme)
+    active = page.locator('.hv-prop-root .hv-tab.is-active')
+    expect(active).to_have_count(1)
+    expect(active).to_have_attribute('aria-pressed', 'true')
+    expect(active).to_contain_text(tab_name)
+    page.screenshot(path=str(out / f'{filename}-{theme}.png'), full_page=True, animations='disabled')
 
-			def login(ctx, account):
-				page = ctx.new_page()
-				page.goto(args.base_url + "/login", wait_until="domcontentloaded")
-				page.locator("#login_email:visible").fill(account + "@hv4.invalid")
-				page.locator("#login_password:visible").fill(auth[account])
-				with page.expect_response(lambda r: r.url.endswith("/api/method/login")) as response:
-					page.locator(".for-login button[type=submit]:visible").click()
-				assert response.value.status == 200
-				page.goto(args.base_url + "/desk/hv-proposals", wait_until="domcontentloaded")
-				page.get_by_role("button", name="Vorschlag einreichen", exact=True).wait_for()
-				return page
+   def dimensions(page):
+    return page.locator('.hv-prop-scroll').evaluate("""e => ({
+     client: e.clientWidth, scroll: e.scrollWidth,
+     node: e.querySelector('[data-node]').getBoundingClientRect().width,
+     detail: document.querySelector('.hv-prop-detail').getBoundingClientRect().width
+    })""")
 
-			agent = context()
-			record("agent_normal_ui_login")
-			agent_page = login(agent, "agent")
-			expect(agent_page.get_by_role("button", name="Diese Revision freigeben", exact=True)).to_have_count(0)
-			csrf = agent_page.evaluate("frappe.csrf_token")
-			headers = {"X-Frappe-CSRF-Token": csrf, "Content-Type": "application/json"}
-			note_url = args.base_url + "/api/resource/HV%20Synthetic%20Note"
-			created = agent.request.post(note_url, headers=headers,
-				data=json.dumps({"synthetic_id": target, "label": "Bezeichnung vorher"}))
-			assert created.status == 200
-			initial = created.json()["data"]
-			proof["before"] = {key: initial[key] for key in ("label", "generation", "modified")}
-			agent_page.get_by_label("Synthetische Notiz", exact=True).fill(target)
-			agent_page.get_by_label("Synthetische Notiz", exact=True).press("Tab")
-			agent_page.get_by_label("Neue Bezeichnung", exact=True).fill("Bezeichnung nach Freigabe")
-			agent_page.get_by_label("Paket", exact=True).fill(package)
-			record("agent_desk_submit")
-			with agent_page.expect_response(lambda r: r.url.endswith(API + "submit")) as submitted:
-				agent_page.get_by_role("button", name="Vorschlag einreichen", exact=True).click()
-			assert submitted.value.status == 200
-			proposal = submitted.value.json()["message"]
-			binding = {key: proposal[key] for key in ("id", "revision", "hash")}
-			proof["binding"] = binding
-			expect(agent_page.locator("p[role=status]")).to_contain_text("Prüfung offen")
-			expect(agent_page.locator('[aria-label="Vorher"]')).to_have_text("Bezeichnung vorher")
-			expect(agent_page.locator('[aria-label="Nachher"]')).to_have_text("Bezeichnung nach Freigabe")
-			actual = agent.request.get(note_url + "/" + target).json()["data"]
-			assert {key: actual[key] for key in proof["before"]} == proof["before"]
-			proof["preview_without_business_save_including_modified"] = True
-			agent_page.locator("p[role=status]").scroll_into_view_if_needed()
-			agent_page.screenshot(path=str(output / "01-agent-preview.png"))
+   proof['phase']='agent';agent=login('agent');agent.locator(f'[data-package="{package}"]').click();expect(agent.locator('[data-node]')).to_have_count(10);expect(agent.get_by_role('button',name='Offene freigeben …',exact=True)).to_have_count(0);expect(agent.get_by_text('Nur Prüfer können freigeben.',exact=True)).to_be_visible()
+   proof['phase']='reviewer';page=login('reviewer')
+   page.get_by_role('button', name='Alle (', exact=False).click()
+   expect(page.locator('.hv-prop-root .hv-tab.is-active')).to_contain_text('Alle')
+   page.get_by_role('button', name='Offen (', exact=False).click()
+   for theme in ('light','dark'):
+    snapshot(page, 'paketliste', theme, 'Offen')
+   page.locator(f'[data-package="{package}"]').click();expect(page.locator('[data-node]')).to_have_count(10);page.get_by_role('heading',name='Änderung',exact=True).wait_for()
+   expect(page.get_by_role('button',name='Graph',exact=True)).to_have_attribute('aria-pressed','true')
+   expect(page.get_by_role('button',name='Liste',exact=True)).to_have_attribute('aria-pressed','false')
+   expect(page.locator('.hv-prop-node-glyph')).to_have_count(10)
+   assert page.locator('.hv-prop-node-glyph').first.evaluate('(e)=>e.offsetWidth===22 && e.offsetHeight===22')
+   actual=client.api('view',proposal_id=nodes[0]['id'])
+   expect(page.locator('.hv-prop-detail')).to_contain_text(actual['target']['doctype'])
+   # Isolated rendering contract with two effects and a different doctype.
+   # No request, approval or business save uses this component-only fixture.
+   assert page.evaluate("""(p)=>{const x=Object.create(hausverwaltung.hv_proposals.Inbox.prototype);x.detail=$('<aside>');x.graph={nodes:[{id:p.id,lane:null,executable:false}]};x.reviewer=false;x.renderDetail({...p,target:{...p.target,doctype:'Synthetischer Prüftyp'},effects:['Wirkung eins','Wirkung zwei']},[]);return x.detail.find('ul[aria-label="Auswirkungen"]').length===1 && x.detail.find('ul[aria-label="Auswirkungen"] > li').length===2 && x.detail.text().includes('Synthetischer Prüftyp');}""",actual)
+   predecessors = page.get_by_role('group', name='Vorgänger')
+   successors = page.get_by_role('group', name='Nachfolger')
+   expect(predecessors.get_by_text('keine', exact=True)).to_be_visible()
+   expect(successors.get_by_role('button')).to_have_count(3)
+   assert successors.bounding_box()['y'] >= predecessors.bounding_box()['y'] + predecessors.bounding_box()['height']
+   assert page.locator('.hv-prop-detail td').first.evaluate("""cell => {
+    const table = cell.closest('table');
+    return [...table.querySelectorAll('td')].every(td =>
+     [...td.childNodes].filter(node => node.nodeType === Node.TEXT_NODE).every(node =>
+      [...node.textContent.matchAll(/[^\\s]+/g)].every(word => {
+       const range = document.createRange();
+       range.setStart(node, word.index);
+       range.setEnd(node, word.index + word[0].length);
+       return range.getClientRects().length === 1;
+      })
+     )
+    );
+   }""")
+   if page.evaluate("() => frappe.app.sidebar.sidebar_expanded"):
+    proof['graph_width_sidebar_open'] = dimensions(page)
+    assert proof['graph_width_sidebar_open']['node'] == 200 and proof['graph_width_sidebar_open']['detail'] == 360
+   collapse_sidebar(page)
+   page.wait_for_function("() => { const e = document.querySelector('.hv-prop-scroll'); return e.clientWidth >= e.scrollWidth; }")
+   proof['graph_width'] = dimensions(page)
+   assert proof['graph_width']['node'] == 200 and proof['graph_width']['detail'] == 360
+   proof['theme_colors'] = {}
+   for theme in ('light','dark'):
+    snapshot(page, 'paket', theme, 'Graph')
+    colors = page.locator('.hv-prop-root').evaluate("""root => {
+     const background = element => getComputedStyle(element).backgroundColor;
+     const primary = getComputedStyle(root.querySelector('.hv-prop-detail .hv-btn-primary'));
+     const selected = getComputedStyle(root.querySelector('[data-node][aria-pressed="true"]'));
+     return { card: background(root), page: background(document.body),
+      node: background(root.querySelector('[data-node]')), button: background(root.querySelector('.hv-btn')),
+      primary_background: primary.backgroundColor, primary_text: primary.color,
+      outline: selected.outlineColor, outline_width: parseFloat(selected.outlineWidth), outline_style: selected.outlineStyle,
+      tab_background: background(root.querySelector('.hv-tab.is-active')),
+      tab_text: getComputedStyle(root.querySelector('.hv-tab.is-active')).color };
+    }""")
+    proof['theme_colors'][theme] = colors
+    assert colors['card'] == colors['node'] == colors['button']
+    assert contrast(colors['primary_background'], colors['card']) >= 3
+    assert contrast(colors['primary_background'], colors['page']) >= 3
+    assert contrast(colors['primary_background'], colors['primary_text']) >= 4.5
+    assert colors['outline_style'] == 'solid' and colors['outline_width'] >= 2
+    assert contrast(colors['outline'], colors['node']) >= 3
+   assert proof['theme_colors']['light']['card'] != proof['theme_colors']['dark']['card']
+   for group in (predecessors, successors):
+    assert group.evaluate("""element => {
+     const bounds = [...element.children].map(child => child.getBoundingClientRect());
+     return bounds.every((box, index) => !index || box.top >= bounds[index - 1].bottom);
+    }""")
+   proof['primary_and_selected_node_contrast']=True
+   page.set_viewport_size({'width':1000,'height':1100});positions=page.locator('.hv-prop-layout').evaluate('(e)=>{const [a,b]=e.children;return {graph:a.getBoundingClientRect().bottom,detail:b.getBoundingClientRect().top}}');assert positions['detail']>=positions['graph'];page.set_viewport_size({'width':1440,'height':1100})
+   proof['phase']='approve';page.get_by_role('button',name='Revision 1 freigeben',exact=True).click();page.get_by_text('gilt nur für Revision 1',exact=False).wait_for()
+   page.get_by_role('button',name='Offene freigeben …',exact=True).click();page.get_by_text('Jede Freigabe wird einzeln',exact=False).wait_for()
+   assert client.api('view',proposal_id=nodes[1]['id'])['status']=='Pending'
+   with page.expect_response(lambda r:r.url.endswith('.review_many')) as response:page.get_by_role('button',name='Freigaben bestätigen',exact=True).click()
+   assert response.value.status==200;assert all(r['ok'] for r in response.value.json()['message'])
+   page.get_by_role('button',name='Freigegebene ausführen (10)',exact=True).wait_for()
+   expect(page.get_by_role('button',name='Offene freigeben …',exact=True)).to_be_disabled()
+   proof['phase']='execute';page.get_by_role('button',name='Freigegebene ausführen (10)',exact=True).click();page.get_by_role('button',name='Freigegebene ausführen (0)',exact=True).wait_for()
+   assert all(n['status']=='Succeeded' for n in client.api('package_graph',package=package)['nodes'])
+   page.get_by_role('button',name='Liste',exact=True).click();expect(page.get_by_role('table',name='Vorschlagsliste')).to_be_visible()
+   expect(page.get_by_role('button',name='Liste',exact=True)).to_have_attribute('aria-pressed','true')
+   expect(page.get_by_role('button',name='Graph',exact=True)).to_have_attribute('aria-pressed','false')
+   rows=page.locator('table[aria-label="Vorschlagsliste"] tbody tr');expect(rows).to_have_count(10)
+   assert rows.first.evaluate('(e)=>getComputedStyle(e).cursor')=='pointer'
+   rows.first.hover();assert rows.first.evaluate('(e)=>getComputedStyle(e).backgroundColor') not in ('transparent','rgba(0, 0, 0, 0)')
+   for theme in ('light','dark'):
+    snapshot(page, 'paket-liste', theme, 'Liste')
+   proof['six_ui_corrections']=True
+   proof['phase']='reject';page.goto(args.base_url+'/desk/hv-proposals/'+rejected);page.get_by_role('button',name='Ablehnen …',exact=True).wait_for();page.get_by_role('button',name='Ablehnen …',exact=True).click();page.locator('.modal:visible textarea').fill('Synthetischer Ablehnungsgrund');page.get_by_role('button',name='Ablehnung bestätigen',exact=True).click()
+   page.get_by_text('Synthetischer Ablehnungsgrund',exact=False).first.wait_for();graph=client.api('package_graph',package=rejected);assert [n['status'] for n in graph['nodes']]==['Rejected','Stale']
+   page.locator(f'[data-node="{small[1]["id"]}"]').click();page.get_by_role('button',name='Neue Revision anfordern',exact=True).click();page.locator('.modal:visible textarea').fill('Bitte synthetisch überarbeiten');page.get_by_role('button',name='Anfordern',exact=True).click();page.get_by_text('Nachbesserung angefordert',exact=False).wait_for()
+   proof['phase']='review_regressions'
+   wide, wide_nodes = seed(lanes=6, steps=1)
+   root, first = wide_nodes[:2]
+   page.goto(args.base_url+'/desk/hv-proposals/'+wide)
+   canvas_nodes = page.locator('[data-node]')
+   expect(canvas_nodes).to_have_count(6)
+   root_node = page.locator(f'[data-node="{root["id"]}"]')
+   root_node.click()
+   successors = page.get_by_role('group', name='Nachfolger')
+   expect(successors.get_by_role('button')).to_have_count(6)
 
-			reviewer = context()
-			record("separate_reviewer_normal_ui_login")
-			reviewer_page = login(reviewer, "reviewer")
-			row = reviewer_page.locator('[aria-label="Vorschlagsliste"] > div').filter(has_text=target)
-			record("reviewer_load_exact_proposal")
-			with reviewer_page.expect_response(lambda r: r.url.endswith(API + "view")) as viewed:
-				row.get_by_role("button", name="Ansehen", exact=True).click()
-			assert viewed.value.status == 200
-			expect(reviewer_page.locator("p[role=status]")).to_contain_text(proposal["id"])
-			expect(reviewer_page.locator("p[role=status]")).to_contain_text("Revision 1")
-			record("reviewer_exact_revision_approval")
-			with reviewer_page.expect_response(lambda r: r.url.endswith(API + "review")) as reviewed:
-				reviewer_page.get_by_role("button", name="Diese Revision freigeben", exact=True).click()
-			assert reviewed.value.status == 200
-			request = reviewed.value.request
-			data = parse_qs(request.post_data or "")
-			if "binding" in data: actual_binding = json.loads(data["binding"][0])
-			else:
-				data = request.post_data_json
-				actual_binding = json.loads(data["binding"]) if isinstance(data["binding"], str) else data["binding"]
-			assert actual_binding == binding
-			proof["actual_review_request_binding_matches"] = True
-			expect(reviewer_page.locator("p[role=status]")).to_contain_text("Freigegeben")
-			reviewer_page.locator("p[role=status]").scroll_into_view_if_needed()
-			reviewer_page.screenshot(path=str(output / "02-reviewer-approved.png"))
+   late = submit(wide, note(), [binding(root)], {'key':'0','label':'Synthetische Zeile 1'}, 'Neue Verzweigung')
+   late_node = page.locator(f'[data-node="{late["id"]}"]')
+   root_node.click()
+   expect(successors.get_by_role('button')).to_have_count(7)
+   expect(late_node).to_have_count(0)
+   with page.expect_response(lambda r: r.url.endswith('.package_graph')) as refreshed:
+    successors.get_by_role('button', name='Neue Verzweigung', exact=False).click()
+   assert refreshed.value.ok
+   expect(late_node).to_have_attribute('aria-pressed','true')
+   expect(page.get_by_role('heading',name='Neue Verzweigung',exact=True)).to_be_visible()
+   first_box = page.locator(f'[data-node="{first["id"]}"]').bounding_box()
+   late_box = late_node.bounding_box()
+   assert first_box['x'] == late_box['x']
+   assert abs(first_box['y'] - late_box['y']) >= max(first_box['height'], late_box['height'])
+   proof['late_branch_visible_without_overlap']=True
 
-			record("reviewer_normal_save_execute")
-			with reviewer_page.expect_response(lambda r: r.url.endswith(API + "execute")) as executed:
-				reviewer_page.get_by_role("button", name="Genehmigte Revision ausführen", exact=True).click()
-			assert executed.value.status == 200
-			result = executed.value.json()["message"]
-			assert result["status"] == "Succeeded"
-			proof["result"] = result["result"]
-			expect(reviewer_page.locator("p[role=status]")).to_contain_text("Ausgeführt")
-			expect(reviewer_page.locator('[aria-label="Ausführungsergebnis"]')).to_contain_text(target)
-			expect(reviewer_page.locator('[aria-label="Audit"]')).to_contain_text("Revision freigegeben")
-			expect(reviewer_page.locator('[aria-label="Audit"]')).to_contain_text("Änderung ausgeführt")
-			actual = agent.request.get(note_url + "/" + target).json()["data"]
-			assert actual["label"] == "Bezeichnung nach Freigabe" and actual["generation"] == 1
-			assert actual["modified"] != proof["before"]["modified"]
-			proof["after"] = {key: actual[key] for key in ("label", "generation", "modified")}
-			proof["visible_audit"] = reviewer_page.locator('[aria-label="Audit"]').inner_text()
-			reviewer_page.locator("p[role=status]").scroll_into_view_if_needed()
-			reviewer_page.screenshot(path=str(output / "03-reviewer-executed.png"))
-			# Reopening must replace the entire editor, including only the DIRECT
-			# immutable dependencies, and must discard unrelated draft selection.
-			record("dependent_editor_reopen")
-			target_a, target_b = "SYN-PW-A-"+uuid4().hex[:10], "SYN-PW-B-"+uuid4().hex[:10]
-			dag_package = "pw-dag-"+uuid4().hex[:10]
-			for name in (target_a,target_b):
-				r = agent.request.post(note_url,headers=headers,data=json.dumps({"synthetic_id":name,"label":"unverändert"}))
-				assert r.status == 200
-			agent_page.get_by_label("Synthetische Notiz",exact=True).fill(target_a)
-			agent_page.get_by_label("Synthetische Notiz",exact=True).press("Tab")
-			agent_page.get_by_label("Neue Bezeichnung",exact=True).fill("Vorgänger A")
-			agent_page.get_by_label("Paket",exact=True).fill(dag_package)
-			with agent_page.expect_response(lambda r:r.url.endswith(API+"submit")) as submitted_a:
-				agent_page.get_by_role("button",name="Vorschlag einreichen",exact=True).click()
-			assert submitted_a.value.status == 200
-			proposal_a = submitted_a.value.json()["message"]
-			ref_a = {k:proposal_a[k] for k in ("id","revision","hash")}
-			row_a = agent_page.locator('[aria-label="Vorschlagsliste"] > div').filter(has_text=target_a)
-			row_a.get_by_role("button",name="Als Vorgänger auswählen",exact=True).click()
-			agent_page.get_by_label("Synthetische Notiz",exact=True).fill(target_b)
-			agent_page.get_by_label("Synthetische Notiz",exact=True).press("Tab")
-			agent_page.get_by_label("Neue Bezeichnung",exact=True).fill("Nachfolger B")
-			with agent_page.expect_response(lambda r:r.url.endswith(API+"submit")) as submitted_b:
-				agent_page.get_by_role("button",name="Vorschlag einreichen",exact=True).click()
-			assert submitted_b.value.status == 200
-			proposal_b = submitted_b.value.json()["message"]
-			assert proposal_b["dependencies"] == [ref_a]
-			agent_page.reload(wait_until="domcontentloaded")
-			row_b = agent_page.locator('[aria-label="Vorschlagsliste"] > div').filter(has_text=target_b)
-			with agent_page.expect_response(lambda r:r.url.endswith(API+"view")):
-				row_b.get_by_role("button",name="Ansehen",exact=True).click()
-			expect(agent_page.get_by_label("Paket",exact=True)).to_have_value(dag_package)
-			deps = agent_page.locator('[aria-label="Explizite Vorgänger"]')
-			assert json.loads(deps.inner_text()) == [ref_a]
-			# Select a proposal from another package as draft, then reopen B.
-			agent_page.locator('[aria-label="Vorschlagsliste"] > div').filter(has_text=target).get_by_role("button",name="Als Vorgänger auswählen",exact=True).click()
-			assert any(x["id"]==proposal["id"] for x in json.loads(deps.inner_text()))
-			with agent_page.expect_response(lambda r:r.url.endswith(API+"view")):
-				row_b.get_by_role("button",name="Ansehen",exact=True).click()
-			assert json.loads(deps.inner_text()) == [ref_a]
-			agent_page.get_by_label("Neue Bezeichnung",exact=True).fill("B nur Bezeichnung geändert")
-			with agent_page.expect_response(lambda r:r.url.endswith(API+"revise")) as revised_b:
-				agent_page.get_by_role("button",name="Neue Revision mit Preview",exact=True).click()
-			assert revised_b.value.status == 200
-			proposal_b = revised_b.value.json()["message"]
-			assert proposal_b["revision"]==2 and proposal_b["dependencies"]==[ref_a]
-			agent_page.locator("p[role=status]").scroll_into_view_if_needed()
-			agent_page.screenshot(path=str(output/"04-dependent-editor.png"))
-			before_b = agent.request.get(note_url+"/"+target_b).json()["data"]
-			reviewer_page.reload(wait_until="domcontentloaded")
-			with reviewer_page.expect_response(lambda r:r.url.endswith(API+"view")):
-				reviewer_page.locator('[aria-label="Vorschlagsliste"] > div').filter(has_text=target_b).get_by_role("button",name="Ansehen",exact=True).click()
-			expect(reviewer_page.locator("p[role=status]")).to_contain_text("Revision 2")
-			with reviewer_page.expect_response(lambda r:r.url.endswith(API+"review")) as review_b:
-				reviewer_page.get_by_role("button",name="Diese Revision freigeben",exact=True).click()
-			assert review_b.value.status == 200
-			with reviewer_page.expect_response(lambda r:r.url.endswith(API+"execute")) as blocked_b:
-				reviewer_page.get_by_role("button",name="Genehmigte Revision ausführen",exact=True).click()
-			assert blocked_b.value.status != 200
-			after_b = agent.request.get(note_url+"/"+target_b).json()["data"]
-			assert all(before_b[k]==after_b[k] for k in ("label","generation","modified"))
-			proof["dependent_editor"]={"reopened_direct_binding":ref_a,"revised_child":{k:proposal_b[k] for k in ("id","revision","hash")},"unrelated_draft_discarded":True,"label_only_revision_preserved_direct_binding":True,"execute_before_predecessor_status":blocked_b.value.status,"business_record_unchanged":True}
-			# A descriptive package created through the API must also accept
-			# further normal Desk submissions without metadata mutation.
-			record("existing_descriptive_package_desk_submit")
-			descriptive_package="pw-descriptive-"+uuid4().hex[:10]
-			package_meta={"title":"Synthetik · beschreibender Titel","reason":"Synthetischer Anlass für den Pilot","lane_label":"Synthetische Zeilen"}
-			seed_target,new_target=["SYN-PW-META-"+uuid4().hex[:10] for _ in range(2)]
-			for name in (seed_target,new_target):
-				r=agent.request.post(note_url,headers=headers,data=json.dumps({"synthetic_id":name,"label":"vorher"}))
-				assert r.status==200
-			seed=agent.request.post(args.base_url+API+"submit",headers=headers,data=json.dumps({"key":uuid4().hex,"package":descriptive_package,"package_meta":package_meta,"payload":{"target":seed_target,"label":"Seed"},"metadata":{"title":"Seed","summary":"Synthetischer Start"}}))
-			assert seed.status==200
-			before_new=agent.request.get(note_url+"/"+new_target).json()["data"]
-			agent_page.get_by_role("button",name="Vorgängerauswahl leeren",exact=True).click()
-			agent_page.get_by_label("Synthetische Notiz",exact=True).fill(new_target)
-			agent_page.get_by_label("Synthetische Notiz",exact=True).press("Tab")
-			agent_page.get_by_label("Neue Bezeichnung",exact=True).fill("Weitere synthetische Vorschau")
-			agent_page.get_by_label("Paket",exact=True).fill(descriptive_package)
-			with agent_page.expect_response(lambda r:r.url.endswith(API+"submit")) as submitted_existing:
-				agent_page.get_by_role("button",name="Vorschlag einreichen",exact=True).click()
-			assert submitted_existing.value.status==200
-			posted=parse_qs(submitted_existing.value.request.post_data or "")
-			if not posted:posted=submitted_existing.value.request.post_data_json
-			assert "package_meta" not in posted
-			new_proposal=submitted_existing.value.json()["message"]
-			expect(agent_page.locator("p[role=status]")).to_contain_text(new_proposal["id"])
-			after_new=agent.request.get(note_url+"/"+new_target).json()["data"]
-			assert all(before_new[k]==after_new[k] for k in ("label","generation","modified"))
-			graph=agent.request.post(args.base_url+API+"package_graph",headers=headers,data=json.dumps({"package":descriptive_package})).json()["message"]
-			assert graph["package"]["total"]==2
-			assert all(graph["package"][key]==value for key,value in package_meta.items())
-			proof["existing_descriptive_package"]={"package":descriptive_package,"metadata":package_meta,"submit_omitted_package_meta":True,"metadata_unchanged":True,"business_record_unchanged":True,"proposal":{k:new_proposal[k] for k in ("id","revision","hash")}}
-			agent_page.locator("p[role=status]").scroll_into_view_if_needed()
-			agent_page.screenshot(path=str(output/"05-existing-descriptive-package.png"))
+   def sent_bindings(response):
+    assert response.ok
+    refs = response.request.post_data_json['bindings']
+    return json.loads(refs) if isinstance(refs, str) else refs
 
-			proof["success"] = True
-			record("complete")
-			browser.close()
-		return True
-	except BaseException as failure:
-		proof["error_type"] = type(failure).__name__
-		proof["frames"] = [{"file": f.filename, "line": f.lineno, "function": f.name} for f in traceback.extract_tb(failure.__traceback__)]
-		(output / "desk-e2e.json").write_text(json.dumps(proof, ensure_ascii=False, indent=2))
-		return False
+   expect(canvas_nodes).to_have_count(7)
+   visible_ids = set(canvas_nodes.evaluate_all("nodes => nodes.map(node => node.dataset.node)"))
+   all_refs = {node['id']:binding(node) for node in [*wide_nodes, late]}
+   hidden_ids = all_refs.keys() - visible_ids
+   assert len(hidden_ids) == 1
+   hidden_id = next(iter(hidden_ids))
+   page.get_by_role('button',name='Offene freigeben …',exact=True).click()
+   expect(page.get_by_text('7 offene Vorschläge freigeben',exact=True)).to_be_visible()
+   with page.expect_response(lambda r:r.url.endswith('.review_many')) as response:
+    page.get_by_role('button',name='Freigaben bestätigen',exact=True).click()
+   refs = sent_bindings(response.value)
+   assert len(refs) == len(visible_ids)
+   assert {ref['id']:ref for ref in refs} == {id:all_refs[id] for id in visible_ids}
+   assert client.api('view',proposal_id=hidden_id)['status'] == 'Pending'
 
+   reviewer = Client(args.base_url)
+   reviewer.login('reviewer@hv4.invalid',auth['reviewer'])
+   reviewer.api('review',binding=all_refs[hidden_id],approve=True)
+   page.reload()
+   execute_visible = page.get_by_role('button',name='Freigegebene ausführen (7)',exact=True)
+   expect(execute_visible).to_be_enabled()
+   page.get_by_role('button',name='Liste',exact=True).click()
+   expect(page.get_by_role('button',name='Freigegebene ausführen (8)',exact=True)).to_be_enabled()
+   page.get_by_role('button',name='Graph',exact=True).click()
+   with page.expect_response(lambda r:r.url.endswith('.execute_ready')) as executed:
+    execute_visible.click()
+   refs = sent_bindings(executed.value)
+   assert len(refs) == len(visible_ids)
+   assert {ref['id']:ref for ref in refs} == {id:all_refs[id] for id in visible_ids}
+   assert client.api('view',proposal_id=hidden_id)['status'] == 'Approved'
+   expect(page.get_by_role('button',name='Freigegebene ausführen (0)',exact=True)).to_be_disabled()
+   page.get_by_role('button',name='1 weitere Notizen',exact=False).click()
+   expect(canvas_nodes).to_have_count(8)
+   expect(page.get_by_role('button',name='Freigegebene ausführen (1)',exact=True)).to_be_enabled()
+   proof['bulk_bindings_match_visible_nodes']=True
+   proof['phase']='batch_navigation'
+   destination, _ = seed(lanes=1, steps=1)
 
-if __name__ == "__main__":
-	parser = argparse.ArgumentParser()
-	parser.add_argument("--synthetic", action="store_true", required=True)
-	parser.add_argument("--base-url", required=True)
-	parser.add_argument("--auth-file", required=True)
-	parser.add_argument("--dependencies", required=True)
-	parser.add_argument("--chromium", default="/usr/bin/chromium")
-	parser.add_argument("--output-dir", required=True)
-	args = parser.parse_args()
-	url = urlsplit(args.base_url)
-	if url.scheme != "http" or url.hostname != "127.0.0.1": parser.error("Own synthetic loopback site only")
-	sys.path.insert(0, args.dependencies)
-	with open("/dev/null", "w") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
-		ok = main(args)
-	raise SystemExit(0 if ok else 1)
+   def switch_before_response(method, action):
+    pattern = '**/api/method/hausverwaltung.proposals.frappe_service.' + method
+    held = []
+    def hold(route):
+     held.append(route)
+    page.route(pattern, hold, times=1)
+    with page.expect_request(lambda request: request.url.endswith('.'+method)):
+     action()
+    page.get_by_role('button',name='← Alle Pakete',exact=True).click()
+    page.locator(f'[data-package="{destination}"]').click()
+    expect(page.get_by_role('heading',name=f'Synthetik · UI {destination}',exact=True)).to_be_visible()
+    expect(page.get_by_role('heading',name='Änderung',exact=True)).to_be_visible()
+    assert len(held) == 1
+    graph_requests = []
+    def record_graph(request):
+     if request.url.endswith('.package_graph'):
+      graph_requests.append(request.url)
+    page.on('request', record_graph)
+    try:
+     with page.expect_response(lambda response: response.url.endswith('.'+method)) as released:
+      held[0].continue_()
+     assert released.value.ok
+     assert released.value.finished() is None
+     page.evaluate("""async () => {
+      await frappe.after_ajax();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+     }""")
+     expect(page.get_by_role('heading',name=f'Synthetik · UI {destination}',exact=True)).to_be_visible()
+     expect(page.locator('.hv-prop-root [role="status"]')).to_be_empty()
+     assert not graph_requests
+    finally:
+     page.remove_listener('request', record_graph)
+
+   switch_before_response('execute_ready',
+    lambda: page.get_by_role('button',name='Freigegebene ausführen (1)',exact=True).click())
+   assert client.api('view',proposal_id=hidden_id)['status'] == 'Succeeded'
+   approval_package, approval_nodes = seed(lanes=1,steps=1)
+   page.locator('.hv-prop-root').get_by_role('button',name='← Alle Pakete',exact=True).click()
+   page.locator(f'[data-package="{approval_package}"]').click()
+   page.get_by_role('button',name='Offene freigeben …',exact=True).click()
+   expect(page.get_by_text('2 offene Vorschläge freigeben',exact=True)).to_be_visible()
+   switch_before_response('review_many',
+    lambda: page.get_by_role('button',name='Freigaben bestätigen',exact=True).click())
+   assert all(client.api('view',proposal_id=node['id'])['status']=='Approved' for node in approval_nodes)
+   proof['batch_results_stay_with_origin_package']=True
+   proof['phase']='op_checkbox_contrast'
+   set_theme(page, 'dark')
+   page.add_style_tag(url=args.base_url+'/assets/hausverwaltung/op_workflow/styles.css')
+   # Render the real OP styles without creating invoices or changing workflow data.
+   proof['op_checkboxes_dark'] = page.evaluate("""() => {
+    const root = document.createElement('div');
+    root.id = 'op-workflow-root';
+    document.body.append(root);
+    const states = {};
+    for (const state of ['checked', 'indeterminate']) {
+     const checkbox = document.createElement('input');
+     checkbox.type = 'checkbox';
+     checkbox[state] = true;
+     root.append(checkbox);
+     const style = getComputedStyle(checkbox);
+     states[state] = { background: style.backgroundColor, mark: decodeURIComponent(style.backgroundImage) };
+    }
+    root.remove();
+    return states;
+   }""")
+   for state in proof['op_checkboxes_dark'].values():
+    assert "stroke='white'" in state['mark']
+    assert contrast('rgb(255, 255, 255)', state['background']) >= 3
+    assert contrast(state['background'], proof['theme_colors']['dark']['card']) >= 3
+   proof.update(success=True,full_acceptance_passed=True,phase='complete',package=package,rejected_package=rejected,normal_separate_logins=True,bulk_confirmation=True,ordered_execution=True,rejection_stales_successor=True,list_toggle=True,responsive=True);browser.close()
+ except BaseException as e:
+  proof.update(error_type=type(e).__name__,frames=[{'file':f.filename,'line':f.lineno,'function':f.name} for f in traceback.extract_tb(e.__traceback__)])
+ (out/'desk-e2e.json').write_text(json.dumps(proof,indent=2,ensure_ascii=False));return proof['success']
+
+if __name__=='__main__':
+ p=argparse.ArgumentParser();p.add_argument('--synthetic',action='store_true',required=True)
+ for field in ('base-url','auth-file','dependencies','output-dir'):p.add_argument('--'+field,required=True)
+ p.add_argument('--chromium',default='/usr/bin/chromium');a=p.parse_args();assert urlsplit(a.base_url).hostname=='127.0.0.1';sys.path.insert(0,a.dependencies)
+ with open('/dev/null','w') as sink,contextlib.redirect_stdout(sink),contextlib.redirect_stderr(sink):ok=run(a)
+ raise SystemExit(0 if ok else 1)

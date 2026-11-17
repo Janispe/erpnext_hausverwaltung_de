@@ -60,7 +60,7 @@
 .hv-btn-danger {
 	background: var(--hv-danger);
 	border-color: var(--hv-danger);
-	color: var(--hv-on-primary);
+	color: var(--hv-on-status);
 }
 .hv-btn-danger:hover { background: var(--hv-danger-hover); border-color: var(--hv-danger-hover); }
 

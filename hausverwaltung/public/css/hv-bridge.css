@@ -74,7 +74,7 @@
 .op-action-btn.is-draft {
 	background: var(--hv-danger);
 	border-color: var(--hv-danger);
-	color: var(--hv-on-primary);
+	color: var(--hv-on-status);
 }
 .op-action-btn.is-warn {
 	background: var(--hv-warning-soft);
@@ -210,7 +210,7 @@
 .op-mahn-badge,
 .op-draft-badge {
 	background: var(--hv-danger);
-	color: var(--hv-on-primary);
+	color: var(--hv-on-status);
 }
 .op-mahn-banner-secondary {
 	color: var(--hv-danger);
