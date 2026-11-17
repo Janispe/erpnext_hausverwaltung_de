@@ -91,8 +91,10 @@ frappe.provide("hausverwaltung.hv_proposals");
 			el("p", this.root, `${person(p.agent)} · ${p.reason || "Kein Anlass angegeben"} · ${time(p.created)} · ${p.total} Vorschläge in ${p.lanes} ${p.lane_label || "Zeilen"}`);
 			this.bar(this.root, p);
 			const controls = el("div", this.root, "", "hv-prop-controls");
-			for (const mode of (this.graph.nodes.length > 1 ? ["Graph","Liste"] : [])) button(controls, mode, () => { this.mode = mode; this.draw(); }).addClass("hv-tab");
-			if (this.reviewer) button(controls, "Offene freigeben …", () => this.bulkReview());
+			const switcher = el("div", controls, "", "hv-tabs").attr("aria-label", "Ansicht");
+			this.viewButtons = new Map();
+			for (const mode of (this.graph.nodes.length > 1 ? ["Graph","Liste"] : [])) this.viewButtons.set(mode, button(switcher, mode, () => { this.mode = mode; this.draw(); }).addClass("hv-tab"));
+			if (this.reviewer) button(controls, "Offene freigeben …", () => this.bulkReview()).prop("disabled", !this.graph.nodes.some(n => n.status === "Pending"));
 			const approved = this.graph.nodes.filter(n => n.status === "Approved");
 			button(controls, `Freigegebene ausführen (${approved.length})`, () => this.batchExecute(approved.map(bind)), true).prop("disabled", !approved.length);
 			this.feedback = el("div", this.root).attr("role", "status");
@@ -103,10 +105,11 @@ frappe.provide("hausverwaltung.hv_proposals");
 		}
 		draw() {
 			this.canvas.empty();
+			for (const [mode, tab] of this.viewButtons) tab.attr("aria-pressed", mode === this.mode).toggleClass("hv-prop-view-active", mode === this.mode);
 			if (this.mode === "Liste") {
-				const table = el("table", this.canvas, "", "table").attr("aria-label", "Vorschlagsliste"), header = el("tr", table);
+				const table = el("table", this.canvas, "", "table").attr("aria-label", "Vorschlagsliste"), header = el("tr", el("thead", table)), body = el("tbody", table);
 				for (const t of ["Zeile","Schritt","Änderung","Status"]) el("th", header, t);
-				for (const n of this.graph.nodes) { const row = el("tr", table).attr({ tabindex:"0", "aria-selected": this.selected === n.id }); el("td", row, n.lane?.label || "Wurzel"); el("td", row, `${n.title} · ${n.id}`); el("td", row, n.summary); pill(el("td", row), n.status); row.on("click", () => this.select(n.id)).on("keydown", e => { if (e.key === "Enter") this.select(n.id); }); }
+				for (const n of this.graph.nodes) { const row = el("tr", body).attr({ tabindex:"0", "aria-selected": this.selected === n.id }); el("td", row, n.lane?.label || "Wurzel"); el("td", row, `${n.title} · ${n.id}`); el("td", row, n.summary); pill(el("td", row), n.status); row.on("click", () => this.select(n.id)).on("keydown", e => { if (e.key === "Enter") this.select(n.id); }); }
 				return;
 			}
 			el("p", this.canvas, "Durchgezogen: Vorgänger ausgeführt · Gestrichelt: wartet auf Ausführung", "hv-prop-muted");
@@ -130,7 +133,10 @@ frappe.provide("hausverwaltung.hv_proposals");
 			for (let i=0;i<shown.length;i++) el("span", board, shown[i][1], "hv-prop-lane").css({ left:216,top:i*128 });
 			for (const n of visible) {
 				const pos = positions.get(n.id), node = button(board, "", () => this.select(n.id)).addClass(`hv-prop-node hv-prop-${n.status}`).css({ left:pos.x,top:pos.y }).attr({ "aria-label": `${n.id} ${n.title}, ${labels[n.status]}`, "aria-pressed": n.id === this.selected, "data-node":n.id });
-				el("strong",node,`${symbols[n.status]} ${n.title}`,"hv-prop-node-title"); el("small",node,n.id); el("span",node,n.summary,"hv-prop-summary"); el("small",node,labels[n.status]);
+				const head = el("span", node, "", "hv-prop-node-head");
+				el("span", head, symbols[n.status], "hv-prop-node-glyph").attr("aria-hidden", "true");
+				const title = el("span", head, "", "hv-prop-node-caption");
+				el("strong",title,n.title,"hv-prop-node-title"); el("small",title,n.id); el("span",node,n.summary,"hv-prop-summary"); el("small",node,labels[n.status]);
 			}
 			if (lanes.length > 5 && !this.expanded) { const hidden = this.graph.nodes.filter(n => n.lane && !shown.some(([k]) => k === n.lane.key)); button(this.canvas, `${lanes.length-5} weitere ${this.graph.package.lane_label || "Zeilen"} · ${Object.keys(labels).map(s => `${hidden.filter(n => n.status===s).length} ${labels[s]}`).join(" · ")}`, () => { this.expanded = true; this.draw(); }); }
 		}
@@ -146,7 +152,7 @@ frappe.provide("hausverwaltung.hv_proposals");
 		}
 		renderDetail(p, events) {
 			this.detail.empty(); const box = this.detail, node = this.graph.nodes.find(n => n.id === p.id);
-			el("small",box,"Synthetische Notiz"); pill(box,p.status); el("h3",box,p.title); link(box,p.target.label,p.target.doctype,p.target.name);
+			el("small",box,p.target.doctype); pill(box,p.status); el("h3",box,p.title); link(box,p.target.label,p.target.doctype,p.target.name);
 			const siblings = this.graph.nodes.filter(n => n.lane?.key === node.lane?.key);
 			el("p",box,`${p.id} · Revision ${p.revision} · ${p.hash.slice(0,10)} · Zeile ${p.lane?.label || "Wurzel"} · Schritt ${siblings.findIndex(n=>n.id===p.id)+1} von ${siblings.length}`,"hv-prop-muted");
 			if (p.status === "Approved" || p.status === "Rejected") el("p",box,`${person(p.decision_by)} · ${time(p.decision_at)} · gilt nur für Revision ${p.revision}${p.reject_reason ? " · "+p.reject_reason : ""}`);
@@ -157,7 +163,7 @@ frappe.provide("hausverwaltung.hv_proposals");
 			el("h4",box,"Begründung des Agenten"); el("em",box,p.rationale || "Keine Begründung angegeben."); for (const source of p.sources || []) link(el("p",box),source.label,source.doctype,source.name);
 			el("h4",box,"Im Graph"); for (const [title, items] of [["Vorgänger",p.predecessors],["Nachfolger",p.successors]]) { el("small",box,title); for (const n of items) button(box,`${n.title} · ${labels[n.status]}`,() => this.select(n.id)); }
 			if (p.status === "Approved" && !node.executable) el("p",box,"Ausführen erst, wenn alle Vorgänger ausgeführt sind. Freigeben geht schon jetzt.");
-			el("h4",box,"Beim Ausführen"); for (const effect of p.effects) el("li",el("ul",box),this.translateEffect(effect));
+			el("h4",box,"Beim Ausführen"); const effects = el("ul",box).attr("aria-label", "Auswirkungen"); for (const effect of p.effects) el("li",effects,this.translateEffect(effect));
 			const actions = el("div",box,"","hv-prop-controls");
 			if (p.status === "Pending" && this.reviewer) { button(actions,`Revision ${p.revision} freigeben`,()=>this.review(p,true),true); button(actions,"Ablehnen …",()=>this.reasonDialog(p,false)).addClass("hv-btn-danger"); el("p",box,"Ablehnen macht alle Nachfolger veraltet."); }
 			else if (p.status === "Stale" && this.reviewer) button(actions,"Neue Revision anfordern",()=>this.reasonDialog(p,true),true);
@@ -177,6 +183,7 @@ frappe.provide("hausverwaltung.hv_proposals");
 		async review(p, approve) { try { await this.call("review",{binding:bind(p),approve}); await this.route(); } catch (_) {} }
 		bulkReview() {
 			const refs = this.graph.nodes.filter(n=>n.status === "Pending").map(bind);
+			if (!refs.length) return;
 			const dialog = new frappe.ui.Dialog({ title:`${refs.length} offene Vorschläge freigeben`,fields:[{fieldtype:"HTML",fieldname:"notice"}],primary_action_label:"Freigaben bestätigen",primary_action:async()=>{ dialog.hide(); try { const result = await this.call("review_many",{bindings:refs}); await this.route(); this.results(result, true); } catch (_) {} } });
 			dialog.fields_dict.notice.$wrapper.text("Jede Freigabe wird einzeln für ihre Revision und ihren Hash protokolliert. Veraltete und abgelehnte Vorschläge bleiben unverändert. Ausgeführt wird erst mit ‚Freigegebene ausführen‘."); dialog.show();
 		}
