@@ -12,16 +12,26 @@ def run(args):
  auth=json.loads(Path(args.auth_file).read_text());assert auth['purpose']=='hv-proposals-disposable-testauth'
  client=Client(args.base_url);client.login('agent@hv4.invalid',auth['agent'])
  proof={'success':False,'phase':'seed','full_acceptance_passed':False}
+ def note():
+  target='SYN-UI-'+uuid4().hex[:10]
+  client.resource('HV Synthetic Note',data={'synthetic_id':target,'label':'Unverändert'})
+  return target
+
+ def submit(package, target, dependencies, lane=None, title='Bezeichnung anpassen'):
+  return client.api('submit', key=uuid4().hex, package=package,
+   package_meta={'title':'Synthetik · UI '+package,'reason':'Ausschließlich synthetischer Oberflächentest','lane_label':'Notizen'},
+   payload={'target':target,'label':'Neue Bezeichnung'}, dependencies=dependencies,
+   metadata={'title':title,'summary':'Unverändert → Neu','lane':lane,'rationale':'Synthetische Prüfung','sources':[{'label':'Synthetische Quelle'}]})
+
  def seed(lanes=3,steps=3):
-  package='ui-'+uuid4().hex[:10];nodes=[]
-  def note():
-   target='SYN-UI-'+uuid4().hex[:10];client.resource('HV Synthetic Note',data={'synthetic_id':target,'label':'Unverändert'});return target
-  def add(target,deps,lane=None):
-   p=client.api('submit',key=uuid4().hex,package=package,package_meta={'title':'Synthetik · UI '+package,'reason':'Ausschließlich synthetischer Oberflächentest','lane_label':'Notizen'},payload={'target':target,'label':'Neue Bezeichnung'},dependencies=deps,metadata={'title':'Bezeichnung anpassen','summary':'Unverändert → Neu','lane':lane,'rationale':'Synthetische Prüfung','sources':[{'label':'Synthetische Quelle'}]});nodes.append(p);return p
-  root=add(note(),[])
+  package='ui-'+uuid4().hex[:10]
+  root=submit(package,note(),[])
+  nodes=[root]
   for i in range(lanes):
    target=note();parent=root
-   for j in range(steps):parent=add(target,[binding(parent)],{'key':str(i),'label':'Synthetische Zeile '+str(i+1)})
+   for j in range(steps):
+    parent=submit(package,target,[binding(parent)],{'key':str(i),'label':'Synthetische Zeile '+str(i+1)})
+    nodes.append(parent)
   return package,nodes
  package,nodes=seed();rejected,small=seed(1,1)
  try:
@@ -145,6 +155,73 @@ def run(args):
    proof['phase']='reject';page.goto(args.base_url+'/desk/hv-proposals/'+rejected);page.get_by_role('button',name='Ablehnen …',exact=True).wait_for();page.get_by_role('button',name='Ablehnen …',exact=True).click();page.locator('.modal:visible textarea').fill('Synthetischer Ablehnungsgrund');page.get_by_role('button',name='Ablehnung bestätigen',exact=True).click()
    page.get_by_text('Synthetischer Ablehnungsgrund',exact=False).first.wait_for();graph=client.api('package_graph',package=rejected);assert [n['status'] for n in graph['nodes']]==['Rejected','Stale']
    page.locator(f'[data-node="{small[1]["id"]}"]').click();page.get_by_role('button',name='Neue Revision anfordern',exact=True).click();page.locator('.modal:visible textarea').fill('Bitte synthetisch überarbeiten');page.get_by_role('button',name='Anfordern',exact=True).click();page.get_by_text('Nachbesserung angefordert',exact=False).wait_for()
+   proof['phase']='review_regressions'
+   wide, wide_nodes = seed(lanes=6, steps=1)
+   root, first = wide_nodes[:2]
+   page.goto(args.base_url+'/desk/hv-proposals/'+wide)
+   canvas_nodes = page.locator('[data-node]')
+   expect(canvas_nodes).to_have_count(6)
+   root_node = page.locator(f'[data-node="{root["id"]}"]')
+   root_node.click()
+   successors = page.get_by_role('group', name='Nachfolger')
+   expect(successors.get_by_role('button')).to_have_count(6)
+
+   late = submit(wide, note(), [binding(root)], {'key':'0','label':'Synthetische Zeile 1'}, 'Neue Verzweigung')
+   late_node = page.locator(f'[data-node="{late["id"]}"]')
+   root_node.click()
+   expect(successors.get_by_role('button')).to_have_count(7)
+   expect(late_node).to_have_count(0)
+   with page.expect_response(lambda r: r.url.endswith('.package_graph')) as refreshed:
+    successors.get_by_role('button', name='Neue Verzweigung', exact=False).click()
+   assert refreshed.value.ok
+   expect(late_node).to_have_attribute('aria-pressed','true')
+   expect(page.get_by_role('heading',name='Neue Verzweigung',exact=True)).to_be_visible()
+   first_box = page.locator(f'[data-node="{first["id"]}"]').bounding_box()
+   late_box = late_node.bounding_box()
+   assert first_box['x'] == late_box['x']
+   assert abs(first_box['y'] - late_box['y']) >= max(first_box['height'], late_box['height'])
+   proof['late_branch_visible_without_overlap']=True
+
+   def sent_bindings(response):
+    assert response.ok
+    refs = response.request.post_data_json['bindings']
+    return json.loads(refs) if isinstance(refs, str) else refs
+
+   expect(canvas_nodes).to_have_count(7)
+   visible_ids = set(canvas_nodes.evaluate_all("nodes => nodes.map(node => node.dataset.node)"))
+   all_refs = {node['id']:binding(node) for node in [*wide_nodes, late]}
+   hidden_ids = all_refs.keys() - visible_ids
+   assert len(hidden_ids) == 1
+   hidden_id = next(iter(hidden_ids))
+   page.get_by_role('button',name='Offene freigeben …',exact=True).click()
+   expect(page.get_by_text('7 offene Vorschläge freigeben',exact=True)).to_be_visible()
+   with page.expect_response(lambda r:r.url.endswith('.review_many')) as response:
+    page.get_by_role('button',name='Freigaben bestätigen',exact=True).click()
+   refs = sent_bindings(response.value)
+   assert len(refs) == len(visible_ids)
+   assert {ref['id']:ref for ref in refs} == {id:all_refs[id] for id in visible_ids}
+   assert client.api('view',proposal_id=hidden_id)['status'] == 'Pending'
+
+   reviewer = Client(args.base_url)
+   reviewer.login('reviewer@hv4.invalid',auth['reviewer'])
+   reviewer.api('review',binding=all_refs[hidden_id],approve=True)
+   page.reload()
+   execute_visible = page.get_by_role('button',name='Freigegebene ausführen (7)',exact=True)
+   expect(execute_visible).to_be_enabled()
+   page.get_by_role('button',name='Liste',exact=True).click()
+   expect(page.get_by_role('button',name='Freigegebene ausführen (8)',exact=True)).to_be_enabled()
+   page.get_by_role('button',name='Graph',exact=True).click()
+   with page.expect_response(lambda r:r.url.endswith('.execute_ready')) as executed:
+    execute_visible.click()
+   refs = sent_bindings(executed.value)
+   assert len(refs) == len(visible_ids)
+   assert {ref['id']:ref for ref in refs} == {id:all_refs[id] for id in visible_ids}
+   assert client.api('view',proposal_id=hidden_id)['status'] == 'Approved'
+   expect(page.get_by_role('button',name='Freigegebene ausführen (0)',exact=True)).to_be_disabled()
+   page.get_by_role('button',name='1 weitere Notizen',exact=False).click()
+   expect(canvas_nodes).to_have_count(8)
+   expect(page.get_by_role('button',name='Freigegebene ausführen (1)',exact=True)).to_be_enabled()
+   proof['bulk_bindings_match_visible_nodes']=True
    proof.update(success=True,full_acceptance_passed=True,phase='complete',package=package,rejected_package=rejected,normal_separate_logins=True,bulk_confirmation=True,ordered_execution=True,rejection_stales_successor=True,list_toggle=True,responsive=True);browser.close()
  except BaseException as e:
   proof.update(error_type=type(e).__name__,frames=[{'file':f.filename,'line':f.lineno,'function':f.name} for f in traceback.extract_tb(e.__traceback__)])

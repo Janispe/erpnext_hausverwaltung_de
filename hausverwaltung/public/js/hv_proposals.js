@@ -14,6 +14,14 @@ frappe.provide("hausverwaltung.hv_proposals");
 		if (!doctype || !name) return el("span", parent, text);
 		return el("a", parent, text).attr("href", frappe.utils.get_form_link(doctype, name));
 	};
+	const byColumn = (nodes) => {
+		const columns = new Map();
+		for (const node of nodes) {
+			if (!columns.has(node.column)) columns.set(node.column, []);
+			columns.get(node.column).push(node);
+		}
+		return columns;
+	};
 	class Inbox {
 		constructor(wrapper) {
 			this.page = frappe.ui.make_app_page({ parent: wrapper, title: "KI-Vorschläge", single_column: true });
@@ -31,8 +39,10 @@ frappe.provide("hausverwaltung.hv_proposals");
 				throw e;
 			}
 		}
-		async route() {
+		async route(preferredId) {
 			const token = ++this.generation;
+			this.displayedNodes = [];
+			this.current = null;
 			this.package = frappe.get_route()[1] || null;
 			this.root.empty(); el("p", this.root, "Pakete werden geladen …");
 			try {
@@ -44,9 +54,16 @@ frappe.provide("hausverwaltung.hv_proposals");
 				} else {
 					const graph = await this.call("package_graph", { package: this.package });
 					if (token !== this.generation) return;
-					this.graph = graph; this.mode = graph.edges.length ? "Graph" : "Liste";
-					const id = new URLSearchParams(location.search).get("vorschlag") || this.selected;
+					if (this.graph?.package.package !== this.package) {
+						this.mode = graph.edges.length ? "Graph" : "Liste";
+						this.expanded = false;
+					}
+					this.graph = graph;
+					const id = preferredId || new URLSearchParams(location.search).get("vorschlag") || this.selected;
 					this.selected = graph.nodes.some(n => n.id === id) ? id : graph.nodes[0]?.id;
+					if (preferredId && this.selected !== preferredId) {
+						frappe.show_alert({ message: "Vorgang nicht verfügbar", indicator: "red" });
+					}
 					this.renderGraph(); if (this.selected) await this.select(this.selected);
 				}
 			} catch (_) { if (token === this.generation) this.root.empty().append(el("p", null, "Vorgang nicht verfügbar")); }
@@ -97,9 +114,8 @@ frappe.provide("hausverwaltung.hv_proposals");
 			const switcher = el("div", controls, "", "hv-tabs").attr("aria-label", "Ansicht");
 			this.viewButtons = new Map();
 			for (const mode of (this.graph.nodes.length > 1 ? ["Graph","Liste"] : [])) this.viewButtons.set(mode, tab(switcher, mode, () => { this.mode = mode; this.draw(); }));
-			if (this.reviewer) button(controls, "Offene freigeben …", () => this.bulkReview()).prop("disabled", !this.graph.nodes.some(n => n.status === "Pending"));
-			const approved = this.graph.nodes.filter(n => n.status === "Approved");
-			button(controls, `Freigegebene ausführen (${approved.length})`, () => this.batchExecute(approved.map(bind)), true).prop("disabled", !approved.length);
+			this.bulkButton = this.reviewer ? button(controls, "Offene freigeben …", () => this.bulkReview()) : null;
+			this.executeButton = button(controls, "", () => this.batchExecute(this.displayedBindings("Approved")), true);
 			this.feedback = el("div", this.root).attr("role", "status");
 			const layout = el("div", this.root, "", "hv-prop-layout");
 			this.canvas = el("div", layout, "", "hv-prop-canvas"); this.detail = el("aside", layout, "", "hv-prop-detail").attr("aria-label", "Vorschlagsdetail");
@@ -109,22 +125,23 @@ frappe.provide("hausverwaltung.hv_proposals");
 		draw() {
 			this.canvas.empty();
 			for (const [mode, tab] of this.viewButtons) setActive(tab, mode === this.mode);
+			const lanes = [...new Map(this.graph.nodes.filter(n => n.lane).map(n => [n.lane.key, n.lane.label]))];
+			const shown = this.expanded ? lanes : lanes.slice(0, 5);
+			const shownKeys = new Set(shown.map(([key]) => key));
+			const isDisplayed = n => this.mode === "Liste" || !n.lane || shownKeys.has(n.lane.key);
+			this.displayedNodes = this.graph.nodes.filter(isDisplayed);
+			this.bulkButton?.prop("disabled", !this.displayedBindings("Pending").length);
+			const approvedCount = this.displayedBindings("Approved").length;
+			this.executeButton.text(`Freigegebene ausführen (${approvedCount})`).prop("disabled", !approvedCount);
 			if (this.mode === "Liste") {
 				const table = el("table", this.canvas, "", "table").attr("aria-label", "Vorschlagsliste"), header = el("tr", el("thead", table)), body = el("tbody", table);
 				for (const t of ["Zeile","Schritt","Änderung","Status"]) el("th", header, t);
-				for (const n of this.graph.nodes) { const row = el("tr", body).attr({ tabindex:"0", "aria-selected": this.selected === n.id }); el("td", row, n.lane?.label || "Wurzel"); el("td", row, `${n.title} · ${n.id}`); el("td", row, n.summary); pill(el("td", row), n.status); row.on("click", () => this.select(n.id)).on("keydown", e => { if (e.key === "Enter") this.select(n.id); }); }
+				for (const n of this.displayedNodes) { const row = el("tr", body).attr({ tabindex:"0", "aria-selected": this.selected === n.id }); el("td", row, n.lane?.label || "Wurzel"); el("td", row, `${n.title} · ${n.id}`); el("td", row, n.summary); pill(el("td", row), n.status); row.on("click", () => this.select(n.id)).on("keydown", e => { if (e.key === "Enter") this.select(n.id); }); }
 				return;
 			}
 			el("p", this.canvas, "Durchgezogen: Vorgänger ausgeführt · Gestrichelt: wartet auf Ausführung", "hv-prop-muted");
-			const lanes = [...new Map(this.graph.nodes.filter(n => n.lane).map(n => [n.lane.key,n.lane.label]))];
-			const shown = this.expanded ? lanes : lanes.slice(0,5), visible = this.graph.nodes.filter(n => !n.lane || shown.some(([key]) => key === n.lane.key));
 			const scroll = el("div", this.canvas, "", "hv-prop-scroll"), board = el("div", scroll, "", "hv-prop-board");
-			const positions = new Map(), cols = new Map();
-			for (const n of visible) {
-				const count = cols.get(n.column) || 0; cols.set(n.column,count+1);
-				const row = lanes.length ? (n.lane ? shown.findIndex(([k]) => k === n.lane.key) : (shown.length-1)/2) : count;
-				positions.set(n.id, { x: n.column*216, y: 32+row*128 });
-			}
+			const { positions, laneTops } = this.positionGraph(shown);
 			const width = Math.max(200,...[...positions.values()].map(p => p.x+200)), height = Math.max(150,...[...positions.values()].map(p => p.y+100));
 			board.css({ width, height });
 			const svg = document.createElementNS("http://www.w3.org/2000/svg","svg"); $(svg).attr({ width, height, "aria-hidden":"true" }).appendTo(board);
@@ -133,17 +150,58 @@ frappe.provide("hausverwaltung.hv_proposals");
 				const path = document.createElementNS(svg.namespaceURI,"path"), mid = a.x+208;
 				$(path).attr({ d:`M${a.x+200},${a.y+42} H${mid} V${b.y+42} H${b.x}`, class: edge.satisfied ? "hv-prop-edge" : "hv-prop-edge hv-prop-edge-pending" }).appendTo(svg);
 			}
-			for (let i=0;i<shown.length;i++) el("span", board, shown[i][1], "hv-prop-lane").css({ left:216,top:i*128 });
-			for (const n of visible) {
+			for (const [key, label] of shown) el("span", board, label, "hv-prop-lane").css({ left:216, top:laneTops.get(key) });
+			for (const n of this.displayedNodes) {
 				const pos = positions.get(n.id), node = button(board, "", () => this.select(n.id)).addClass(`hv-prop-node hv-prop-${n.status}`).css({ left:pos.x,top:pos.y }).attr({ "aria-label": `${n.id} ${n.title}, ${labels[n.status]}`, "aria-pressed": n.id === this.selected, "data-node":n.id });
 				const head = el("span", node, "", "hv-prop-node-head");
 				el("span", head, symbols[n.status], "hv-prop-node-glyph").attr("aria-hidden", "true");
 				const title = el("span", head, "", "hv-prop-node-caption");
 				el("strong",title,n.title,"hv-prop-node-title"); el("small",title,n.id); el("span",node,n.summary,"hv-prop-summary"); el("small",node,labels[n.status]);
 			}
-			if (lanes.length > 5 && !this.expanded) { const hidden = this.graph.nodes.filter(n => n.lane && !shown.some(([k]) => k === n.lane.key)); button(this.canvas, `${lanes.length-5} weitere ${this.graph.package.lane_label || "Zeilen"} · ${Object.keys(labels).map(s => `${hidden.filter(n => n.status===s).length} ${labels[s]}`).join(" · ")}`, () => { this.expanded = true; this.draw(); }); }
+			if (lanes.length > shown.length) {
+				const hidden = this.graph.nodes.filter(n => !isDisplayed(n));
+				const counts = Object.keys(labels).map(s => `${hidden.filter(n => n.status === s).length} ${labels[s]}`);
+				button(this.canvas, `${lanes.length - shown.length} weitere ${this.graph.package.lane_label || "Zeilen"} · ${counts.join(" · ")}`, () => {
+					this.expanded = true;
+					this.draw();
+				});
+			}
+		}
+		positionGraph(shown) {
+			const positions = new Map();
+			const laneTops = new Map();
+			const laneColumns = new Set();
+			const groups = new Map(shown.map(([key]) => [key, []]));
+			const unlaned = [];
+			for (const node of this.displayedNodes) {
+				(node.lane ? groups.get(node.lane.key) : unlaned).push(node);
+			}
+			const place = (column, nodes, row) => {
+				nodes.forEach((node, index) => positions.set(node.id, { x: column * 216, y: 32 + (row + index) * 128 }));
+			};
+			let row = 0;
+			for (const [key, nodes] of groups) {
+				laneTops.set(key, row * 128);
+				let slots = 1;
+				for (const [column, stack] of byColumn(nodes)) {
+					laneColumns.add(column);
+					place(column, stack, row);
+					slots = Math.max(slots, stack.length);
+				}
+				row += slots;
+			}
+			for (const [column, stack] of byColumn(unlaned)) {
+				// Keep roots centered unless that column already contains lane nodes.
+				place(column, stack, laneColumns.has(column) ? row : Math.max(0, (row - stack.length) / 2));
+			}
+			return { positions, laneTops };
+		}
+		displayedBindings(status) {
+			return this.displayedNodes.filter(node => node.status === status).map(bind);
 		}
 		async select(id) {
+			if (!this.graph.nodes.some(node => node.id === id)) return this.route(id);
+			if (this.mode === "Graph" && !this.displayedNodes.some(node => node.id === id)) this.expanded = true;
 			const focused = this.root[0].contains(document.activeElement);
 			this.current = null; this.selected = id; const token = ++this.selection, generation = this.generation;
 			this.draw(); this.detail.empty(); if (focused) this.root.trigger("focus");
@@ -191,12 +249,13 @@ frappe.provide("hausverwaltung.hv_proposals");
 		}
 		async review(p, approve) { try { await this.call("review",{binding:bind(p),approve}); await this.route(); } catch (_) {} }
 		bulkReview() {
-			const refs = this.graph.nodes.filter(n=>n.status === "Pending").map(bind);
+			const refs = this.displayedBindings("Pending");
 			if (!refs.length) return;
 			const dialog = new frappe.ui.Dialog({ title:`${refs.length} offene Vorschläge freigeben`,fields:[{fieldtype:"HTML",fieldname:"notice"}],primary_action_label:"Freigaben bestätigen",primary_action:async()=>{ dialog.hide(); try { const result = await this.call("review_many",{bindings:refs}); await this.route(); this.results(result, true); } catch (_) {} } });
-			dialog.fields_dict.notice.$wrapper.text("Jede Freigabe wird einzeln für ihre Revision und ihren Hash protokolliert. Veraltete und abgelehnte Vorschläge bleiben unverändert. Ausgeführt wird erst mit ‚Freigegebene ausführen‘."); dialog.show();
+			dialog.fields_dict.notice.$wrapper.text("Jede Freigabe wird einzeln für ihre Revision und ihren Hash protokolliert. Freigegeben werden nur sichtbare Vorschläge. Veraltete und abgelehnte Vorschläge bleiben unverändert. Ausgeführt wird erst mit ‚Freigegebene ausführen‘."); dialog.show();
 		}
 		async batchExecute(refs) {
+			if (!refs.length) return;
 			try { const result = await this.call("execute_ready",{package:this.package,bindings:refs}); await this.route(); this.results(result); const failed = result.find(r=>!r.ok && !r.skipped_reason); if (failed) await this.select(failed.id); } catch (_) {}
 		}
 		results(rows, review = false) {
@@ -206,9 +265,9 @@ frappe.provide("hausverwaltung.hv_proposals");
 			frappe.show_alert({message:`${ok} Vorschläge verarbeitet`,indicator:"green"});
 		}
 		key(e) {
-			if (e.ctrlKey || e.altKey || e.metaKey || $(e.target).is("input,textarea,select,[contenteditable=true]") || $(".modal:visible").length || !this.graph || !this.package) return;
-			const index = this.graph.nodes.findIndex(n=>n.id===this.selected);
-			if (["j","k"].includes(e.key.toLowerCase())) { e.preventDefault(); this.select(this.graph.nodes[Math.max(0,Math.min(this.graph.nodes.length-1,index+(e.key.toLowerCase()==="j"?1:-1)))].id); }
+			if (e.ctrlKey || e.altKey || e.metaKey || $(e.target).is("input,textarea,select,[contenteditable=true]") || $(".modal:visible").length || !this.displayedNodes?.length || !this.package) return;
+			const index = this.displayedNodes.findIndex(n=>n.id===this.selected);
+			if (["j","k"].includes(e.key.toLowerCase())) { e.preventDefault(); this.select(this.displayedNodes[Math.max(0,Math.min(this.displayedNodes.length-1,index+(e.key.toLowerCase()==="j"?1:-1)))].id); }
 			else if (this.current?.id === this.selected) { const p=this.current; if (e.key.toLowerCase()==="a" && this.reviewer && p.status==="Pending") this.review(p,true); if(e.key.toLowerCase()==="r" && this.reviewer && p.status==="Pending") this.reasonDialog(p,false); if(e.key.toLowerCase()==="e" && p.status==="Approved" && this.graph.nodes.find(n=>n.id===p.id).executable) this.batchExecute([bind(p)]); }
 		}
 	}
