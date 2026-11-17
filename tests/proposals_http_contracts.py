@@ -53,6 +53,9 @@ class Client:
 		self.csrf = match.group(1)
 
 	def api(self, method, **data):
+		if method in {"submit", "revise"}:
+			data.setdefault("metadata", {"title": "Synthetic label", "summary": data["payload"]["label"]})
+		if method == "submit": data.setdefault("package_meta", {"title": "Synthetik " + data["package"]})
 		return self.call(PREFIX + method, data)["message"]
 
 	def resource(self, doctype, name=None, data=None, method=None):
@@ -117,7 +120,7 @@ class SiteContracts(unittest.TestCase):
 		p = self.submit()
 		wrong = binding(p) | {"hash": "0" * 64}
 		with self.assertRaises(HTTPFailure): self.reviewer.api("review", binding=wrong, approve=True)
-		self.reviewer.api("review", binding=binding(p), approve=False)
+		self.reviewer.api("review", binding=binding(p), approve=False, reason="Synthetic rejection")
 		with self.assertRaises(HTTPFailure): self.execute(p)
 		r = self.agent.api("revise", binding=binding(p), payload={"target": self.target, "label": "revised"})
 		self.assertEqual(r["revision"], 2)
@@ -160,7 +163,7 @@ class SiteContracts(unittest.TestCase):
 		with self.assertRaises(HTTPFailure): self.submit("different", key=key)
 		self.approve(p)
 		self.reviewer.resource("HV Synthetic Note", self.target, {"label": "concurrent"}, "PUT")
-		with self.assertRaises(HTTPFailure): self.execute(p)
+		self.assertEqual(self.execute(p)["status"], "Stale")
 		self.assertEqual(self.agent.api("view", proposal_id=p["id"])["status"], "Stale")
 
 	def test_06_object_permissions_missing_and_hidden_http_messages(self):
@@ -242,7 +245,7 @@ class SiteContracts(unittest.TestCase):
 			b = self.agent.api("submit",key=uuid4().hex,package=self.package,payload={"target":target_b,"label":"downstream planned"},dependencies=[binding(a)])
 			with self.assertRaises(HTTPFailure): self.reviewer.resource("HV Synthetic Note",target_b)
 			if reject:
-				changed = self.reviewer.api("review",binding=binding(a),approve=False)
+				changed = self.reviewer.api("review",binding=binding(a),approve=False, reason="Synthetic rejection")
 				self.assertEqual(changed["status"],"Rejected")
 			else:
 				changed = self.reviewer.api("revise",binding=binding(a),payload={"target":self.target,"label":"upstream revised"})
@@ -268,6 +271,104 @@ class SiteContracts(unittest.TestCase):
 
 	def test_11_upstream_rejection_invalidates_unreadable_downstream(self):
 		self.upstream_only_editor(reject=True)
+
+	def test_12_packages_graph_metadata_and_ten_node_fixture(self):
+		root = self.agent.api("submit",key=uuid4().hex,package=self.package,package_meta={"title":"Synthetik · 3 Zeilen"},payload={"target":self.target,"label":"Root"})
+		proposals = [root]
+		for lane in range(3):
+			target = "SYN-LANE-" + uuid4().hex[:12]
+			self.agent.resource("HV Synthetic Note", data={"synthetic_id":target,"label":"initial"})
+			parent = root
+			for step in range(3):
+				parent = self.agent.api("submit",key=uuid4().hex,package=self.package,
+					package_meta={"title":"Synthetik · 3 Zeilen"},payload={"target":target,"label":f"Step {step}"},
+					dependencies=[binding(parent)],metadata={"title":f"Step {step}","summary":f"Lane {lane}",
+						"lane":{"key":str(lane),"label":f"Synthetische Zeile {lane}"},"rationale":"Synthetic test","sources":[{"label":"Synthetic evidence"}]})
+				proposals.append(parent)
+		graph = self.reviewer.api("package_graph",package=self.package)
+		self.assertEqual(len(graph["nodes"]),10);self.assertEqual(len(graph["edges"]),9)
+		self.assertEqual(graph["package"]["lanes"],3)
+		self.assertEqual(sorted(n["column"] for n in graph["nodes"]),[0,1,1,1,2,2,2,3,3,3])
+		packages = self.reviewer.api("list_packages",agent="agent@hv4.invalid",status="offen")
+		self.assertIn(self.package,[p["package"] for p in packages])
+		view = self.reviewer.api("view",proposal_id=proposals[-1]["id"])
+		self.assertEqual(view["changes"][0]["label"],"Bezeichnung")
+		self.assertEqual(view["target"]["name"],proposals[-1]["preview"]["target"])
+		self.assertEqual(len(view["predecessors"]),1)
+		approved = self.reviewer.api("review_many",bindings=[binding(p) for p in proposals])
+		self.assertTrue(all(p["ok"] for p in approved))
+		executed = self.agent.api("execute_ready",package=self.package,bindings=[binding(p) for p in reversed(proposals)])
+		self.assertTrue(all(p["ok"] for p in executed));self.assertEqual(len(executed),10)
+		self.assertEqual(self.agent.api("package_graph",package=self.package)["package"]["status"],"abgeschlossen")
+
+	def test_13_reject_reason_request_revision_and_partial_review(self):
+		a,b=self.submit("a"),self.submit("b")
+		with self.assertRaises(HTTPFailure): self.reviewer.api("review",binding=binding(a),approve=False)
+		requested=self.reviewer.api("request_revision",binding=binding(a),note="Please clarify")
+		self.assertTrue(requested["revision_requested"])
+		self.assertTrue(self.agent.api("view",proposal_id=a["id"])["revision_requested"])
+		revised=self.agent.api("revise",binding=binding(a),payload={"target":self.target,"label":"a2"})
+		self.assertFalse(self.agent.api("view",proposal_id=a["id"])["revision_requested"])
+		result=self.reviewer.api("review_many",bindings=[binding(a),binding(b)])
+		self.assertFalse(result[0]["ok"]);self.assertTrue(result[1]["ok"])
+		rejected=self.reviewer.api("review",binding=binding(revised),approve=False,reason="Not justified")
+		self.assertEqual(rejected["reject_reason"],"Not justified")
+		self.assertEqual(self.agent.api("view",proposal_id=a["id"])["reject_reason"],"Not justified")
+		self.assertTrue(self.agent.api("audit",proposal_id=a["id"])[-1]["actor_name"])
+
+	def test_14_effective_stale_is_read_only_then_persisted_normally(self):
+		p=self.submit()
+		before=self.admin.resource("HV Action Proposal",p["id"])
+		events_before=self.agent.api("audit",proposal_id=p["id"])
+		self.reviewer.resource("HV Synthetic Note",self.target,{"label":"changed"},"PUT")
+		for method,args in [("view",{"proposal_id":p["id"]}),("audit",{"proposal_id":p["id"]}),
+			("list_proposals",{}),("package_graph",{"package":self.package}),("list_packages",{})]:
+			self.agent.api(method,**args)
+		after=self.admin.resource("HV Action Proposal",p["id"])
+		self.assertEqual(before["modified"],after["modified"]);self.assertEqual(after["status"],"Pending")
+		self.assertEqual(self.agent.api("audit",proposal_id=p["id"]),events_before)
+		view=self.agent.api("view",proposal_id=p["id"])
+		self.assertEqual(view["stale_cause"]["cause"],"baseline_changed")
+		response=self.reviewer.api("review",binding=binding(p),approve=True)
+		self.assertEqual(response["status"],"Stale")
+		self.assertEqual(self.admin.resource("HV Action Proposal",p["id"])["status"],"Stale")
+		self.assertEqual(json.loads(self.agent.api("audit",proposal_id=p["id"])[-1]["detail"])["cause"],"baseline_changed")
+
+	def test_15_graph_omits_unreadable_ancestor_and_edges(self):
+		a=self.submit("a")
+		target="SYN-VISIBLE-"+uuid4().hex[:12]
+		self.agent.resource("HV Synthetic Note",data={"synthetic_id":target,"label":"visible"})
+		b=self.submit("b",[binding(a)],target=target)
+		c=self.submit("c",target=target)
+		permission=self.admin.resource("User Permission",data={"user":"blocked@hv4.invalid","allow":"HV Synthetic Note","for_value":target,"apply_to_all_doctypes":1})
+		try:
+			graph=self.clients["blocked"].api("package_graph",package=self.package)
+			self.assertEqual([n["id"] for n in graph["nodes"]],[c["id"]]);self.assertEqual(graph["edges"],[])
+			self.assertEqual(graph["package"]["total"],1)
+			self.assertNotIn(a["id"],json.dumps(graph));self.assertNotIn(b["id"],json.dumps(graph))
+		finally:self.admin.resource("User Permission",permission["name"],method="DELETE")
+
+	def test_16_execute_ready_skip_and_first_error(self):
+		a=self.submit("a");b=self.submit("b",[binding(a)])
+		self.approve(b)
+		result=self.agent.api("execute_ready",package=self.package,bindings=[binding(b)])
+		self.assertEqual(result[0]["skipped_reason"],"predecessors_not_executed")
+		c=self.submit("c")
+		result=self.agent.api("execute_ready",package=self.package,bindings=[binding(a),binding(c)])
+		self.assertEqual(len(result),1);self.assertFalse(result[0]["ok"])
+		self.assertEqual(self.note()["generation"],0)
+
+	def test_17_dependency_stale_cause_and_execute_stale_commit(self):
+		a=self.submit("a");b=self.submit("b",[binding(a)])
+		self.reviewer.resource("HV Synthetic Note",self.target,{"label":"external change"},"PUT")
+		self.assertEqual(self.reviewer.api("review",binding=binding(a),approve=True)["status"],"Stale")
+		event=self.agent.api("audit",proposal_id=b["id"])[-1]
+		self.assertEqual(json.loads(event["detail"])["cause"],"dependency_stale")
+		self.assertEqual(self.agent.api("view",proposal_id=b["id"])["stale_cause"]["proposal"],a["id"])
+		p=self.submit("fresh");self.approve(p)
+		self.reviewer.resource("HV Synthetic Note",self.target,{"label":"changed again"},"PUT")
+		self.assertEqual(self.execute(p)["status"],"Stale")
+		self.assertEqual(self.admin.resource("HV Action Proposal",p["id"])["status"],"Stale")
 
 
 if __name__ == "__main__":

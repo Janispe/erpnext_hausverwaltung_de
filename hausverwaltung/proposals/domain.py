@@ -99,7 +99,51 @@ def project(real, nodes, operation):
 	target = operation["target"]
 	return {"doctype": "HV Synthetic Note", "target": target, "real": real[target],
 		"before": states[target], "after": {"label": operation["label"], "generation": states[target]["generation"] + 1},
+		"changes": [{"field": "label", "label": "Bezeichnung", "before": states[target]["label"], "after": operation["label"], "kind": "value"}],
 		"dependencies": modes, "effects": ["Normal save updates modified/modified_by and generation"],
 		"limits": ["Synthetic local label only", "No financial, mail, jobs or external actions",
 			"Normal validation/hooks run only at execute; unknown hook effects are not simulated"],
 		"projection_version": ACTION, "complete": True}
+
+
+def text(value, name, minimum, maximum):
+	if not isinstance(value, str) or not minimum <= len(value) <= maximum or (minimum and not value.strip()):
+		raise ValueError(f"{name} must contain {minimum}..{maximum} characters")
+	return value
+
+
+def metadata(value):
+	if not isinstance(value, dict) or set(value) - {"title", "summary", "lane", "rationale", "sources"}:
+		raise ValueError("Invalid revision metadata")
+	result = {"title": text(value.get("title"), "title", 1, 80),
+		"summary": text(value.get("summary"), "summary", 1, 140),
+		"rationale": text(value.get("rationale", ""), "rationale", 0, 2000), "lane": None, "sources": []}
+	lane = value.get("lane")
+	if lane is not None:
+		if not isinstance(lane, dict) or set(lane) != {"key", "label"}:
+			raise ValueError("Invalid lane")
+		result["lane"] = {"key": text(lane["key"], "lane.key", 1, 80), "label": text(lane["label"], "lane.label", 1, 140)}
+	sources = value.get("sources", [])
+	if not isinstance(sources, list) or len(sources) > 10:
+		raise ValueError("At most 10 sources")
+	for source in sources:
+		if not isinstance(source, dict) or set(source) - {"label", "doctype", "name"}:
+			raise ValueError("Invalid source")
+		item = {"label": text(source.get("label"), "source.label", 1, 200)}
+		for key in ("doctype", "name"):
+			if key in source: item[key] = text(source[key], key, 1, 140)
+		if ("doctype" in item) != ("name" in item):
+			raise ValueError("Source reference requires doctype and name")
+		result["sources"].append(item)
+	return result
+
+
+def package_metadata(value):
+	if not isinstance(value, dict) or set(value) - {"title", "reason", "reference_doctype", "reference_name", "lane_label"}:
+		raise ValueError("Invalid package metadata")
+	result = {"title": text(value.get("title"), "title", 1, 140)}
+	for key, maximum in (("reason", 2000), ("reference_doctype", 140), ("reference_name", 140), ("lane_label", 140)):
+		result[key] = text(value.get(key, ""), key, 0, maximum)
+	if bool(result["reference_doctype"]) != bool(result["reference_name"]):
+		raise ValueError("Package reference requires doctype and name")
+	return result
