@@ -31,6 +31,9 @@ def run(site, auth_path):
 	assert listed, "Seed the isolated synthetic fixture first"
 	pid = listed[0]["id"]
 	item = client.post(prefix+"view",json={"proposal_id":pid},headers=headers).json["message"]
+	packages = client.post(prefix+"list_packages", json={"limit":100}, headers=headers).json["message"]
+	readable_reference_package = next((p["package"] for p in packages if p["reference"] is not None), None)
+	assert readable_reference_package, "Run HTTP reference contracts before this SQL check"
 	observed = []
 	original = Database.sql
 	def sql(db, query, *args, **kwargs):
@@ -56,6 +59,10 @@ def run(site, auth_path):
 		response=client.get('/api/resource/HV%20Action%20Proposal/'+pid)
 		assert response.status_code==200
 		counts['readable_record']=len(observed)-before
+		before=len(observed)
+		response=client.get('/api/resource/HV%20Proposal%20Package/'+readable_reference_package)
+		assert response.status_code==200
+		counts['readable_package_record']=len(observed)-before
 		assert sum(counts.values())>0, 'SQL spy did not observe any service reads'
 	return {"passed":True,"endpoints":counts,"for_update":0,"service_sql_writes":0}
 

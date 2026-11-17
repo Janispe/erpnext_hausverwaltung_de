@@ -85,8 +85,19 @@ frappe.pages["hv-proposals"].on_page_load = function (wrapper) {
 	});
 	const metadata = () => ({ title: "Bezeichnung ändern", summary: label.get_value() });
 	const requireSelected = () => { if (!selected) throw new Error("Select a proposal"); return binding(selected); };
+	const packageMetaForSubmit = async (packageId) => {
+		// Existing visible packages keep their immutable descriptive metadata.
+		// Use the scoped API, including pagination; generic listings are blocked.
+		for (let start = 0; ; start += 100) {
+			const packages = await call("list_packages", { start, limit: 100 });
+			if (packages.some((p) => p.package === packageId)) return {};
+			if (packages.length < 100) return { package_meta: { title: packageId } };
+		}
+	};
 	button("Vorschlag einreichen", async () => {
-		await show(await call("submit", { key: requestKey, package: pkg.get_value(), package_meta: { title: pkg.get_value() }, metadata: metadata(), payload: { target: target.get_value(), label: label.get_value() }, dependencies }));
+		const packageId = pkg.get_value();
+		const packageMeta = await packageMetaForSubmit(packageId);
+		await show(await call("submit", { key: requestKey, package: packageId, ...packageMeta, metadata: metadata(), payload: { target: target.get_value(), label: label.get_value() }, dependencies }));
 		requestKey = crypto.randomUUID();
 		await load();
 	});

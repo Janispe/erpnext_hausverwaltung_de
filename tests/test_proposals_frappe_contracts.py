@@ -322,5 +322,16 @@ class PackageContracts(unittest.TestCase):
 				self.assertFalse(any(n.startswith(("process_engine","sqlite3")) for n in names))
 		self.assertEqual(d.ACTION,"hv.synthetic_note.set_label/v1")
 
+	def test_generic_package_read_requires_reference_rights_for_requested_user(self):
+		doc=SimpleNamespace(doctype=self.service.PACKAGE,name="package",reference_doctype="HV Synthetic Note",reference_name="SYN-PRIVATE")
+		self.fake.local.message_log=[{"message":"existing"}]
+		def deny_reference(*args,**kwargs):self.fake.throw("private reference",self.Denied)
+		with patch.object(self.service,"_visible",return_value=[object()]),patch.object(self.service,"_reference",side_effect=deny_reference) as reference:
+			self.assertFalse(self.service.readable_record(doc,"other-user"))
+			reference.assert_called_once_with("HV Synthetic Note","SYN-PRIVATE",user="other-user")
+		self.assertEqual(self.fake.local.message_log,[{"message":"existing"}])
+		with patch.object(self.service,"_visible",return_value=[object()]),patch.object(self.service,"_reference",return_value=None):
+			self.assertTrue(self.service.readable_record(doc,"other-user"))
+
 
 if __name__ == "__main__": unittest.main()

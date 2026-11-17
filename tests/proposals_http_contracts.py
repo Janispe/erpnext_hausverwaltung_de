@@ -386,6 +386,52 @@ class SiteContracts(unittest.TestCase):
 			self.assertEqual(self.clients["blocked"].api("view",proposal_id=b["id"])["status"],"Stale")
 		finally:self.admin.resource("User Permission",permission["name"],method="DELETE")
 
+	def assert_reference_redacted(self, client, package, hidden_name):
+		with self.assertRaises(HTTPFailure) as denied:client.resource("HV Proposal Package",package)
+		self.assertEqual(denied.exception.status,403)
+		self.assertNotIn(hidden_name,json.dumps(denied.exception.body))
+		graph=client.api("package_graph",package=package)
+		self.assertIsNone(graph["package"]["reference"])
+		self.assertEqual(graph["package"]["total"],1)
+		listed=client.api("list_packages",limit=100)
+		self.assertIsNone(next(p for p in listed if p["package"]==package)["reference"])
+		self.assertNotIn(hidden_name,json.dumps(graph))
+
+	def test_19_generic_package_get_cannot_leak_hidden_reference_document(self):
+		private="SYN-REFERENCE-"+uuid4().hex[:12]
+		self.agent.resource("HV Synthetic Note",data={"synthetic_id":private,"label":"Private reference"})
+		self.agent.api("submit",key=uuid4().hex,package=self.package,package_meta={"title":"Reference test","reference_doctype":"HV Synthetic Note","reference_name":private},payload={"target":self.target,"label":"planned"})
+		permission=self.admin.resource("User Permission",data={"user":"blocked@hv4.invalid","allow":"HV Synthetic Note","for_value":self.target,"apply_to_all_doctypes":1})
+		try:
+			with self.assertRaises(HTTPFailure):self.clients["blocked"].resource("HV Synthetic Note",private)
+			self.assert_reference_redacted(self.clients["blocked"],self.package,private)
+			# Normal access remains possible when the reference is readable.
+			self.assertEqual(self.agent.resource("HV Proposal Package",self.package)["reference_name"],private)
+		finally:self.admin.resource("User Permission",permission["name"],method="DELETE")
+
+	def test_20_generic_package_get_cannot_leak_unreadable_reference_doctype(self):
+		role="HV Synthetic Reference "+uuid4().hex[:10]
+		self.admin.resource("Role",data={"role_name":role,"desk_access":0})
+		manager="/api/method/frappe.core.page.permission_manager.permission_manager."
+		self.admin.call(manager+"add",{"parent":"Role","role":"HV Proposal Reviewer","permlevel":0})
+		try:
+			self.permission("Role","HV Proposal Reviewer",0,"read",1)
+			self.reviewer.api("submit",key=uuid4().hex,package=self.package,package_meta={"title":"Private role reference","reference_doctype":"Role","reference_name":role},payload={"target":self.target,"label":"planned"})
+			self.permission("Role","HV Proposal Reviewer",0,"read",0)
+			with self.assertRaises(HTTPFailure):self.reviewer.resource("Role",role)
+			self.assert_reference_redacted(self.reviewer,self.package,role)
+		finally:
+			self.admin.call(manager+"remove",{"doctype":"Role","role":"HV Proposal Reviewer","permlevel":0})
+			# Keep the unassigned synthetic Role as the package's immutable reference.
+
+	def test_21_existing_descriptive_package_accepts_metadata_omission(self):
+		meta={"title":"Synthetisches Paket mit beschreibendem Titel","reason":"Synthetischer Anlass","lane_label":"Synthetische Zeilen"}
+		self.agent.api("submit",key=uuid4().hex,package=self.package,package_meta=meta,payload={"target":self.target,"label":"first"})
+		second=self.agent.call(PREFIX+"submit",{"key":uuid4().hex,"package":self.package,"payload":{"target":self.target,"label":"second"},"metadata":{"title":"Second","summary":"Second proposal"}})["message"]
+		self.assertEqual(second["status"],"Pending")
+		package=self.agent.api("package_graph",package=self.package)["package"]
+		self.assertTrue(all(package[key]==value for key,value in meta.items()))
+
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser()

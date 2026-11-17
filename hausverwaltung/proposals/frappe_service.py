@@ -185,7 +185,12 @@ def readable_record(doc, user):
 	try:
 		enabled()
 		if doc.doctype == PACKAGE:
-			return bool(_visible(doc.name, user=user))
+			if not _visible(doc.name, user=user):
+				return False
+			# Generic resource serialization cannot redact reference fields.
+			# Scoped list/graph APIs retain visibility and redact separately.
+			_reference(doc.reference_doctype, doc.reference_name, user=user)
+			return True
 		_note(doc.target, user=user, lock=False)
 		if doc.doctype == REVISION:
 			body = frappe.parse_json(doc.body)
@@ -509,14 +514,14 @@ def _user_label(user):
 	return frappe.db.get_value("User", user, "full_name") or user
 
 
-def _reference(doctype, name):
+def _reference(doctype, name, user=None):
 	if not doctype and not name:
 		return None
 	doc = frappe.get_doc(doctype, name)
-	if not frappe.has_permission(doctype, "read", doc=doc):
+	if not frappe.has_permission(doctype, "read", doc=doc, user=user):
 		_deny()
 	title_field = doc.meta.title_field
-	fields = doc.meta.get_permitted_fieldnames(permission_type="read")
+	fields = doc.meta.get_permitted_fieldnames(user=user, permission_type="read")
 	return {"doctype": doctype, "name": name,
 		"label": doc.get(title_field) if title_field and title_field in fields else name}
 
