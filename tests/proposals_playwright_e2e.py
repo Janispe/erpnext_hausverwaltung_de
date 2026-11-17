@@ -6,6 +6,17 @@ from urllib.parse import urlsplit
 from proposals_http_contracts import Client,binding
 
 
+def contrast(first, second):
+ def luminance(color):
+  channels = [int(channel) / 255 for channel in re.findall(r'\d+', color)]
+  assert len(channels) == 3, color
+  linear = [channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+            for channel in channels]
+  return sum(channel * weight for channel, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+ dark, light = sorted((luminance(first), luminance(second)))
+ return (light + 0.05) / (dark + 0.05)
+
+
 def run(args):
  from playwright.sync_api import sync_playwright,expect
  out=Path(args.output_dir);out.mkdir(parents=True,exist_ok=True)
@@ -125,14 +136,29 @@ def run(args):
     snapshot(page, 'paket', theme, 'Graph')
     colors = page.locator('.hv-prop-root').evaluate("""root => {
      const background = element => getComputedStyle(element).backgroundColor;
-     return { card: background(root), node: background(root.querySelector('[data-node]')),
-      button: background(root.querySelector('.hv-btn')),
+     const primary = getComputedStyle(root.querySelector('.hv-prop-detail .hv-btn-primary'));
+     const selected = getComputedStyle(root.querySelector('[data-node][aria-pressed="true"]'));
+     return { card: background(root), page: background(document.body),
+      node: background(root.querySelector('[data-node]')), button: background(root.querySelector('.hv-btn')),
+      primary_background: primary.backgroundColor, primary_text: primary.color,
+      outline: selected.outlineColor, outline_width: parseFloat(selected.outlineWidth), outline_style: selected.outlineStyle,
       tab_background: background(root.querySelector('.hv-tab.is-active')),
       tab_text: getComputedStyle(root.querySelector('.hv-tab.is-active')).color };
     }""")
     proof['theme_colors'][theme] = colors
     assert colors['card'] == colors['node'] == colors['button']
+    assert contrast(colors['primary_background'], colors['card']) >= 3
+    assert contrast(colors['primary_background'], colors['page']) >= 3
+    assert contrast(colors['primary_background'], colors['primary_text']) >= 4.5
+    assert colors['outline_style'] == 'solid' and colors['outline_width'] >= 2
+    assert contrast(colors['outline'], colors['node']) >= 3
    assert proof['theme_colors']['light']['card'] != proof['theme_colors']['dark']['card']
+   for group in (predecessors, successors):
+    assert group.evaluate("""element => {
+     const bounds = [...element.children].map(child => child.getBoundingClientRect());
+     return bounds.every((box, index) => !index || box.top >= bounds[index - 1].bottom);
+    }""")
+   proof['primary_and_selected_node_contrast']=True
    page.set_viewport_size({'width':1000,'height':1100});positions=page.locator('.hv-prop-layout').evaluate('(e)=>{const [a,b]=e.children;return {graph:a.getBoundingClientRect().bottom,detail:b.getBoundingClientRect().top}}');assert positions['detail']>=positions['graph'];page.set_viewport_size({'width':1440,'height':1100})
    proof['phase']='approve';page.get_by_role('button',name='Revision 1 freigeben',exact=True).click();page.get_by_text('gilt nur für Revision 1',exact=False).wait_for()
    page.get_by_role('button',name='Offene freigeben …',exact=True).click();page.get_by_text('Jede Freigabe wird einzeln',exact=False).wait_for()

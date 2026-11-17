@@ -22,12 +22,13 @@
    ============================================================================ */
 
 :root {
-	/* ---- Marke / Primär (Frappe-Primärfarbe = Blau-Ramp) ---------------- */
-	--hv-primary:        var(--primary, #2490ef);              /* Frappe-Blau */
+	/* ---- Marke / Primär ------------------------------------------------ */
+	--hv-primary:        var(--primary, #2490ef);
 	--hv-primary-hover:  var(--blue-600, #1670c8);
 	--hv-primary-soft:   var(--bg-light-blue, #eaf4ff);        /* aktive Chips/Tabs */
 	--hv-primary-ink:    var(--text-on-light-blue, #1670c8);   /* Text auf soft */
-	--hv-on-primary:     #ffffff;                              /* Text auf Primär */
+	--hv-on-primary:     #ffffff;                             /* Text auf Primär */
+	--hv-on-status:      #ffffff;                             /* Text auf satten Status-/Akzentflächen */
 
 	/* ---- HV-Akzent (z. B. fällige Beträge) ------------------------------ */
 	--hv-accent:         #d65a31;
@@ -78,4 +79,11 @@
 	/* ---- Maße ---------------------------------------------------------- */
 	--hv-control-h: 32px;
 	--hv-gap:       12px;
+}
+
+/* Use the Desk button pair in dark mode: --primary alone matches the card. */
+:root[data-theme="dark"] {
+	--hv-primary:       var(--btn-primary, #f8f8f8);
+	--hv-primary-hover: var(--surface-gray-9, #d9d9d9);
+	--hv-on-primary:    var(--neutral, #171717);
 }

@@ -224,7 +224,7 @@ button { font-family: inherit; }
   padding: 0 6px;
   border-radius: 4px;
   background: var(--hv-danger);
-  color: var(--hv-on-primary);
+  color: var(--hv-on-status);
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
@@ -243,7 +243,7 @@ button { font-family: inherit; }
 }
 .op-action-btn.is-draft {
   background: var(--hv-danger);
-  color: var(--hv-on-primary);
+  color: var(--hv-on-status);
 }
 .op-action-btn.is-draft:hover {
   background: var(--hv-danger-hover);
@@ -1040,7 +1040,7 @@ button { font-family: inherit; }
   justify-content: center;
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
-  color: var(--hv-on-primary);
+  color: var(--hv-on-status);
   font-weight: 500;
   min-width: 0;
   position: relative;
@@ -1249,7 +1249,7 @@ button { font-family: inherit; }
   padding: 0 7px;
   border-radius: 11px;
   background: var(--accent);
-  color: var(--hv-on-primary);
+  color: var(--hv-on-status);
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -1283,7 +1283,7 @@ button { font-family: inherit; }
 .op-mahn-banner-cta {
   appearance: none;
   background: var(--accent);
-  color: var(--hv-on-primary);
+  color: var(--hv-on-status);
   border: 0;
   padding: 6px 12px;
   font-family: inherit;
@@ -1985,7 +1985,7 @@ button { font-family: inherit; }
 .op-action-btn.is-warn:hover { background: var(--hv-warning-soft); }
 .op-action-btn.is-late {
   background: var(--accent);
-  color: var(--hv-on-primary);
+  color: var(--hv-on-status);
   border-color: var(--accent);
 }
 .op-action-btn.is-late:hover { background: var(--hv-danger-hover); }
