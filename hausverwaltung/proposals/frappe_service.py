@@ -325,12 +325,16 @@ def _stale_cause(doc, body, memo=None):
 
 def _stale_cause_inner(doc, body, memo):
 	for dep in body["dependencies"]:
-		parent, parent_body = _load(dep["id"])
+		# The caller already authorized the immutable bound graph. A later
+		# revision may have NEW private ancestry: do not load/disclose it just
+		# to report that the old binding became stale.
+		parent = frappe.get_doc(PROPOSAL, dep["id"], for_update=_writing.get())
+		_note(parent.target)
 		if parent.current_revision != dep["revision"] or parent.revision_hash != dep["hash"]:
 			return {"cause": "dependency_revised", "proposal": parent.name, "detail": "Bound revision changed"}
 		if parent.status == "Rejected":
 			return {"cause": "dependency_rejected", "proposal": parent.name, "detail": "Bound predecessor rejected"}
-		if parent.status == "Stale" or _stale_cause(parent, parent_body, memo):
+		if parent.status == "Stale" or _stale_cause(parent, _body(parent), memo):
 			return {"cause": "dependency_stale", "proposal": parent.name, "detail": "Bound predecessor stale"}
 	if doc.status in {"Succeeded", "Rejected", "Stale"}:
 		return None

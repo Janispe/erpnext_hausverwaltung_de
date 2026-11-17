@@ -370,6 +370,22 @@ class SiteContracts(unittest.TestCase):
 		self.assertEqual(self.execute(p)["status"],"Stale")
 		self.assertEqual(self.admin.resource("HV Action Proposal",p["id"])["status"],"Stale")
 
+	def test_18_old_bound_graph_survives_new_private_parent_ancestry(self):
+		a=self.submit("a");b=self.submit("b",[binding(a)])
+		private_target="SYN-NEW-PRIVATE-"+uuid4().hex[:12]
+		self.agent.resource("HV Synthetic Note",data={"synthetic_id":private_target,"label":"private"})
+		c=self.submit("c",target=private_target)
+		permission=self.admin.resource("User Permission",data={"user":"blocked@hv4.invalid","allow":"HV Synthetic Note","for_value":self.target,"apply_to_all_doctypes":1})
+		try:
+			self.agent.api("revise",binding=binding(a),payload={"target":self.target,"label":"a2"},dependencies=[binding(c)])
+			graph=self.clients["blocked"].api("package_graph",package=self.package)
+			self.assertEqual([n["id"] for n in graph["nodes"]],[b["id"]])
+			self.assertEqual(graph["nodes"][0]["status"],"Stale")
+			self.assertEqual(graph["edges"],[])
+			self.assertNotIn(private_target,json.dumps(graph));self.assertNotIn(c["id"],json.dumps(graph))
+			self.assertEqual(self.clients["blocked"].api("view",proposal_id=b["id"])["status"],"Stale")
+		finally:self.admin.resource("User Permission",permission["name"],method="DELETE")
+
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser()

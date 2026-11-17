@@ -297,8 +297,8 @@ class PackageContracts(unittest.TestCase):
 	def test_each_dependency_stale_cause(self):
 		ref={"id":"parent","revision":1,"hash":"a"*64}
 		doc=SimpleNamespace(name="child",status="Pending")
-		parent=SimpleNamespace(name="parent",current_revision=1,revision_hash="a"*64,status="Rejected")
-		with patch.object(self.service,"_load",return_value=(parent,{"dependencies":[]})):
+		parent=SimpleNamespace(name="parent",target="SYN-PARENT",current_revision=1,revision_hash="a"*64,status="Rejected")
+		with patch.object(self.fake,"get_doc",return_value=parent,create=True),patch.object(self.service,"_note"):
 			self.assertEqual(self.service._stale_cause(doc,{"dependencies":[ref]})["cause"],"dependency_rejected")
 			parent.status="Stale"
 			self.assertEqual(self.service._stale_cause(doc,{"dependencies":[ref]})["cause"],"dependency_stale")
