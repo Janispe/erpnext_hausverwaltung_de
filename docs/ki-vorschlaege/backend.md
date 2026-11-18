@@ -12,6 +12,8 @@ Das Sicherheitsmodell aus PR #44 bleibt unverändert:
 - Das Prüfprotokoll wird nur ergänzt, nie geändert.
 - Ein Vorschlag ist nur lesbar, wenn sein ganzer Vorgänger-Graph lesbar ist.
 - Freigeben darf nur ein Mensch mit `HV Proposal Reviewer` ohne `HV Proposal Agent`, über eine echte Browser-Sitzung.
+  Ausnahme: `Administrator` bekommt in Frappe jede Rolle. Für die Engine zählt bei ihm die Agentenrolle nicht
+  (`frappe_service.roles_of`). Er darf prüfen und übernehmen, aber nie als Agent einreichen.
 
 **Nicht Teil dieses Auftrags:**
 

@@ -144,6 +144,22 @@ class AdapterContracts(unittest.TestCase):
 		self.request.headers.clear();self.request.cookies.clear()
 		with self.assertRaises(self.Denied): self.service._actor(human=True)
 
+	def test_administrator_reviews_but_never_acts_as_agent(self):
+		# Frappe gibt Administrator jede Rolle, auch die Agentenrolle.
+		self.roles.update({"HV Proposal Agent", "System Manager"})
+		self.session.user = "Administrator"
+		self.fake.local.login_manager.user = "Administrator"
+		try:
+			self.assertEqual(self.service._actor(human=True), "Administrator")
+			self.assertIn("HV Proposal Reviewer", self.service.roles_of("Administrator"))
+			self.assertNotIn("HV Proposal Agent", self.service.roles_of("Administrator"))
+			self.assertIn("HV Proposal Agent", self.service.roles_of("reviewer-synthetic"))
+		finally:
+			del self.session.user
+			self.fake.local.login_manager.user = self.session.user
+		with self.assertRaises(self.Denied):
+			self.service._actor(human=True)
+
 	def test_disabled_guest_disabled_user_and_website_user_block(self):
 		self.fake.conf["hv_proposals_synthetic_enabled"] = False
 		with self.assertRaises(self.Denied): self.service._actor()

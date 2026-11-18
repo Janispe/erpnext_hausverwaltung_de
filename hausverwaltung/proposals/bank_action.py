@@ -235,7 +235,7 @@ def authorize_preview(body, user=None):
 
 
 def can_accept(user=None):
-	roles = set(frappe.get_roles(user))
+	roles = core.roles_of(user)
 	return core.REVIEWER in roles and core.AGENT not in roles and all(
 		frappe.has_permission(doctype, right, user=user) for doctype in VOUCHERS for right in ("create", "submit")
 	)

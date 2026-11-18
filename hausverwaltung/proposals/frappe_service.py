@@ -56,6 +56,19 @@ def _deny():
 	frappe.throw("Proposal operation unavailable", frappe.PermissionError)
 
 
+def roles_of(user=None):
+	"""Rollen eines Benutzers für die Vorschlags-Engine.
+
+	Frappe gibt Administrator jede Rolle, also auch die Agentenrolle. Administrator ist ein
+	Mensch: Er darf prüfen und übernehmen, handelt aber nie als Agent.
+	"""
+	user = user or frappe.session.user
+	roles = set(frappe.get_roles(user))
+	if user == "Administrator":
+		roles.discard(AGENT)
+	return roles
+
+
 def _actor(human=False):
 	enabled()
 	user = frappe.session.user
@@ -64,7 +77,7 @@ def _actor(human=False):
 	info = frappe.db.get_value("User", user, ["enabled", "user_type"], as_dict=True)
 	if not info or not info.enabled or info.user_type != "System User":
 		_deny()
-	roles = set(frappe.get_roles(user))
+	roles = roles_of(user)
 	if not roles.intersection({AGENT, REVIEWER}):
 		_deny()
 	if human:
@@ -662,7 +675,7 @@ def execute(binding):
 	if doc.status != "Approved":
 		frappe.throw("Exact human approval required")
 	reviewer = frappe.db.get_value("User", doc.decision_by, ["enabled", "user_type"], as_dict=True)
-	roles = set(frappe.get_roles(doc.decision_by))
+	roles = roles_of(doc.decision_by)
 	if not reviewer or not reviewer.enabled or REVIEWER not in roles or AGENT in roles:
 		_deny()
 	_check_target_write(doc.action, body["payload"], user=doc.decision_by, for_human=doc.action in domain.DOC_ACTIONS)
