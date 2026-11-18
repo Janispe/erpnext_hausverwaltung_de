@@ -35,6 +35,8 @@ for (const [source, accountKey, person] of [
 		const downloaded = await desk.request.get(url);
 		expect(await downloaded.body()).toEqual(original);
 		await desk.getByRole("button", { name: "Bon prüfen", exact: true }).click();
+		await expect(dialog(desk)).toBeVisible();
+		await desk.waitForFunction(() => window.cur_dialog?.fields_dict?.beleg_eur_bestaetigt);
 		await setDialog(desk, { beleg_brutto_bestaetigt: 42.50, beleg_eur_bestaetigt: 1 });
 		const execution = desk.waitForResponse((response) =>
 			new URL(response.url()).pathname === `/api/method/${engine}.execute`);
