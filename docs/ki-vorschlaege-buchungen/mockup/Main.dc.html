@@ -37,7 +37,9 @@ a{color:#1a4d8c}a:hover{color:#123a6b}
 .ki-stat{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);white-space:nowrap}
 .ki-stat b{font-family:var(--font-mono);font-weight:600;color:var(--text)}
 @media (max-width: 1000px){.stat-row{grid-template-columns:repeat(2,minmax(0,1fr))}.phase-stepper{grid-template-columns:1fr 1fr}}
-@media (max-width: 760px){.txh{display:none}.txr{grid-template-columns:62px 10px minmax(0,1fr) 96px}.txr .hide-s{display:none}}
+.txw{min-width:640px}
+.kim{display:none;align-items:center;gap:5px;margin-top:2px;font-size:10.5px;color:var(--text-muted);white-space:nowrap}
+@media (max-width: 760px){.txh{display:none}.txw{min-width:0}.txr{grid-template-columns:48px 10px 88px minmax(0,1fr)}.txr .hide-s{display:none}.kim{display:inline-flex}}
 </style>
 </helmet>
 <div class="hv" style="min-height: 100vh; background: var(--bg); color: var(--text); font-family: var(--font-sans);">
@@ -67,6 +69,7 @@ a{color:#1a4d8c}a:hover{color:#123a6b}
 <div class="stat-card"><div class="label">Zeilen / offen</div><div class="value">{{ openCount }}<span style="color: var(--text-faint); font-size: 14px;"> / 9</span></div><div class="sub">{{ doneCount }} bereits gebucht</div></div>
 </div>
 
+<sc-if value="{{ bannerReady }}" hint-placeholder-val="{{ true }}">
 <section aria-label="KI-Vorschläge zu diesem Auszug" style="display: flex; align-items: center; gap: 12px 18px; flex-wrap: wrap; padding: 12px 16px; margin-bottom: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);">
 <div style="display: flex; align-items: center; gap: 10px; flex: 1 1 300px; min-width: 0;">
 <span class="ki-tag">KI</span>
@@ -87,6 +90,22 @@ a{color:#1a4d8c}a:hover{color:#123a6b}
 <a href="Sammeluebernahme.dc.html" class="btn" style="text-decoration: none; border-color: var(--text);">Vorschläge übernehmen … <span class="kbd">{{ hochCount }}</span></a>
 </div>
 </section>
+</sc-if>
+<sc-if value="{{ bannerRunning }}" hint-placeholder-val="{{ false }}">
+<section aria-label="KI-Agent prüft den Auszug" role="status" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 16px; margin-bottom: 16px; background: var(--surface); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg);">
+<span class="spin" aria-hidden="true"></span>
+<span class="ki-tag">KI</span>
+<div style="min-width: 0; flex: 1 1 260px;">
+<div style="font-weight: 600; font-size: 13.5px;">Agent prüft den Auszug … <span style="font-weight: 400; color: var(--text-muted);">5 von 9 Zeilen</span></div>
+<div class="meta">Startet automatisch nach dem CSV-Import · Selbst zuordnen geht jederzeit</div>
+</div>
+</section>
+</sc-if>
+<sc-if value="{{ bannerDone }}" hint-placeholder-val="{{ false }}">
+<section aria-label="KI-Vorschläge erledigt" style="display: flex; align-items: center; gap: 10px; padding: 8px 16px; margin-bottom: 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); font-size: 12.5px; color: var(--text-muted);">
+<span class="ki-tag">KI</span> Alle Vorschläge erledigt · 6 übernommen · 1 abgelehnt
+</section>
+</sc-if>
 
 <nav class="phase-stepper" aria-label="Phasen">
 <button type="button" class="phase-step all-phases active"><div class="num">∗</div><div class="meta"><div class="title">Alle Phasen</div><div class="desc">Gesamtübersicht</div></div><div class="count">9</div></button>
@@ -113,16 +132,18 @@ a{color:#1a4d8c}a:hover{color:#123a6b}
 <div class="tx-card">
 <div class="tx-card-head"><div class="title">{{ filterTitle }}</div><div class="count">{{ shownCount }} Zeilen</div></div>
 <div style="overflow-x: auto;">
-<div style="min-width: 640px;">
+<div class="txw">
 <div class="txh" aria-hidden="true"><span>Datum</span><span></span><span style="text-align: right;">Betrag</span><span>Partei / IBAN</span><span>Verwendungszweck</span><span>KI-Vorschlag</span><span>Status</span></div>
 <sc-for list="{{ rows }}" as="x" hint-placeholder-count="9">
 <button type="button" class="txr {{ x.cls }}" aria-pressed="{{ x.isSel }}" aria-label="{{ x.aria }}" onClick="{{ x.pick }}">
 <span style="font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted);">{{ x.datum }}</span>
 <span class="dir-dot {{ x.dir }}" aria-hidden="true"></span>
-<span class="hide-s" style="font-family: var(--font-mono); font-weight: 500; text-align: right; white-space: nowrap; color: {{ x.amountColor }};">{{ x.betrag }}</span>
+<span style="font-family: var(--font-mono); font-weight: 500; text-align: right; white-space: nowrap; color: {{ x.amountColor }};">{{ x.betrag }}</span>
 <span style="display: flex; flex-direction: column; gap: 1px; min-width: 0;">
 <span class="cell-trunc" style="font-weight: 500; {{ x.partyStyle }}">{{ x.party }}</span>
 <span class="cell-trunc" style="font-size: 10.5px; color: var(--text-muted); font-family: var(--font-mono);">{{ x.partyMeta }}</span>
+<sc-if value="{{ x.kiPending }}" hint-placeholder-val="{{ false }}"><span class="kim"><span class="ki-tag">KI</span><span class="conf c-{{ x.conf }}" aria-hidden="true"><i></i><i></i><i></i></span>{{ x.conf }}</span></sc-if>
+<sc-if value="{{ x.kiStale }}" hint-placeholder-val="{{ false }}"><span class="kim" style="color: var(--danger);"><span class="ki-tag" style="border-color: var(--danger); color: var(--danger);">KI</span>veraltet</span></sc-if>
 </span>
 <span class="cell-trunc hide-s" style="color: var(--text-muted); font-size: 12px;">{{ x.zweck }}</span>
 <span class="kic hide-s">
@@ -156,7 +177,7 @@ a{color:#1a4d8c}a:hover{color:#123a6b}
 </div>
 </div>
 
-<div class="match-panel-wrap">
+<div class="match-panel-wrap" id="ki-panel">
 <dc-import name="Matchpanel" row-id="{{ sel }}" booked="{{ selBooked }}" on-accept="{{ accept }}" hint-size="380px,900px"></dc-import>
 </div>
 </div>
@@ -168,7 +189,7 @@ a{color:#1a4d8c}a:hover{color:#123a6b}
 </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1280}}'>
+<script type="text/x-dc" data-dc-script data-props='{"banner":{"editor":"enum","options":["vorschlaege","laeuft","erledigt"],"default":"vorschlaege"},"$preview":{"width":1440,"height":1280}}'>
 class Component extends DCLogic {
   constructor(props) {
     super(props);
@@ -199,7 +220,10 @@ class Component extends DCLogic {
     const open = all.filter((r) => r.phase !== 4);
     const pending = all.filter((r) => r.ki === 'Pending');
     const visible = all.filter((r) => this.state.filter === 'all' ? true : this.state.filter === 'ki' ? r.ki === 'Pending' : r.phase !== 4);
-    const pick = (id) => () => this.setState({ sel: id });
+    const pick = (id) => () => this.setState({ sel: id }, () => {
+      const panel = document.getElementById('ki-panel');
+      if (panel && window.matchMedia('(max-width: 1100px)').matches) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
     const rows = visible.map((r) => {
       const isSel = r.id === this.state.sel;
       const done = r.phase === 4;
@@ -255,7 +279,11 @@ class Component extends DCLogic {
       this._t = setTimeout(() => this.setState({ toast: '' }), 3500);
       this.setState({ booked: nb, sel: next || id, toast: row && row.toast ? row.toast : 'Gebucht' });
     };
+    const banner = this.props.banner || 'vorschlaege';
     return {
+      bannerReady: banner === 'vorschlaege',
+      bannerRunning: banner === 'laeuft',
+      bannerDone: banner === 'erledigt',
       rows,
       chips,
       sel: this.state.sel,

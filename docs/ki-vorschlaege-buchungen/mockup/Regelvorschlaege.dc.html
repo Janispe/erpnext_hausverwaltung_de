@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Regelvorschläge im Regel-Fenster</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/hausverwaltung/styles.css">
+<link rel="stylesheet" href="ds/hausverwaltung/colors_and_type.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/frappe-theme-shim.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-tokens.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-components.css">
+<link rel="stylesheet" href="ds/hausverwaltung/ui_kits/bankimport/bankimport-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:#f7f6f3}
+a{color:#1a4d8c}a:hover{color:#123a6b}
+.skel{background:var(--surface-3);border-radius:4px}
+.rm{width:100%;max-width:1320px;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow-pop);overflow:hidden}
+.rm-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:16px 18px;background:var(--surface);border-bottom:1px solid var(--border)}
+.rm-head h2{margin:0;font-size:17px;font-weight:650}
+.rm-sub{margin-top:4px;color:var(--text-muted);font-size:12.5px}
+.rm-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.seg-btn .cnt{display:inline-block;margin-left:5px;padding:0 5px;border-radius:999px;background:var(--text);color:var(--surface);font-family:var(--font-mono);font-size:10px;font-weight:600}
+.mu-tag{display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:4px;border:1px dashed var(--border-strong);background:var(--surface);color:var(--text-muted);font-family:var(--font-mono);font-size:9.5px;font-weight:600;letter-spacing:.4px;flex:none}
+.rv-strip{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;padding:10px 18px;background:var(--surface-2);border-bottom:1px solid var(--border);font-size:12.5px}
+.rv-grid{display:grid;grid-template-columns:minmax(260px,360px) minmax(0,1fr);gap:18px;padding:18px;align-items:start}
+.rv-list{display:flex;flex-direction:column;gap:9px}
+.rv-item{all:unset;box-sizing:border-box;display:flex;flex-direction:column;gap:6px;width:100%;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);cursor:pointer}
+.rv-item:hover{border-color:var(--border-strong)}
+.rv-item.on{border-color:var(--text);box-shadow:inset 3px 0 0 var(--text)}
+.rv-item:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.rv-item.closed .rv-title,.rv-item.closed .rv-sig{color:var(--text-muted)}
+.rv-kicker{font-size:10.5px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--text-muted)}
+.rv-title{font-size:13.5px;font-weight:650;line-height:1.25;color:var(--text)}
+.rv-sig{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);line-height:1.45;overflow-wrap:anywhere}
+.rv-meter{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text-muted)}
+.rv-bar{flex:1;height:5px;border-radius:3px;background:var(--surface-3);overflow:hidden;display:flex;gap:1px}
+.rv-bar i{display:block;height:100%;flex-basis:0}
+.rv-bar .s{background:var(--done)}.rv-bar .d{background:var(--warn)}
+.rv-detail{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.rv-sec{padding:14px 18px;border-bottom:1px solid var(--border)}
+.rv-sec:last-child{border-bottom:none}
+.rv-h{margin:0 0 8px;font-size:10.5px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--text-muted)}
+.rv-rule{padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text-muted);font-family:var(--font-mono);font-size:11.5px;line-height:1.6;overflow-wrap:anywhere}
+.rv-rule b{color:var(--text);font-weight:650}
+.months{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:4px;margin-top:10px}
+.mc{display:flex;flex-direction:column;align-items:center;gap:3px;font-family:var(--font-mono);font-size:9.5px;color:var(--text-faint)}
+.mc i{display:block;width:100%;height:14px;border-radius:3px;border:1px dashed var(--border-strong);box-sizing:border-box}
+.mc.s i{background:var(--done);border:1px solid var(--done)}
+.mc.d i{background:var(--warn);border:1px solid var(--warn)}
+.hist{display:grid;grid-template-columns:84px 92px minmax(0,1fr) minmax(0,1.3fr);gap:10px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;align-items:baseline}
+.hist.h{font-size:10px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:var(--text-muted)}
+.hist .n{font-family:var(--font-mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.dev{display:flex;gap:10px;align-items:flex-start;margin-top:12px;padding:8px 10px;border:1px solid var(--warn);border-radius:6px;background:var(--warn-bg);font-size:12px;line-height:1.5}
+.opt{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12.5px;line-height:1.45}
+.opt.on{border-color:var(--text);background:var(--surface-2)}
+.opt.off{opacity:.55;cursor:not-allowed}
+.opt input{margin:2px 0 0;accent-color:#1a1a17;flex:none}
+.chip-radio{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--border);border-radius:999px;font-size:12px;background:var(--surface);color:var(--text-muted);cursor:pointer}
+.chip-radio.on{border-color:var(--text);color:var(--text);background:var(--surface-3)}
+.state-ok{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius);background:var(--done-bg);color:var(--done);font-weight:600;font-size:13px}
+.state-off{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius);background:var(--surface-3);color:var(--text-muted);font-weight:600;font-size:13px}
+@media (max-width: 900px){.rv-grid{grid-template-columns:minmax(0,1fr)}.hist{grid-template-columns:76px 86px minmax(0,1fr)}.hist .hs{display:none}}
+</style>
+</helmet>
+<div class="hv" style="position: relative; min-height: 1250px; background: var(--bg); color: var(--text); font-family: var(--font-sans); overflow: hidden;">
+
+<div aria-hidden="true" style="max-width: 1500px; margin: 0 auto; padding: 22px 24px; display: flex; flex-direction: column; gap: 16px;">
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 18px; border-bottom: 1px solid var(--border);">
+<div style="display: flex; align-items: center; gap: 12px;"><div style="width: 30px; height: 30px; border-radius: 6px; background: var(--text);"></div><div style="font-weight: 600; font-size: 17px;">Bankimport</div></div>
+<div class="btn">Regeln <span class="kbd">3</span></div>
+</div>
+<div class="skel" style="height: 86px;"></div>
+<div class="skel" style="height: 62px;"></div>
+<div style="display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px;"><div class="skel" style="height: 720px;"></div><div class="skel" style="height: 720px;"></div></div>
+</div>
+
+<div style="position: absolute; inset: 0; background: rgba(26,26,23,.18); backdrop-filter: blur(2px); display: flex; align-items: flex-start; justify-content: center; padding: 40px 16px 24px; overflow-y: auto;">
+<section class="rm" role="dialog" aria-modal="true" aria-labelledby="rm-title">
+
+<div class="rm-head">
+<div>
+<h2 id="rm-title">Bankimport-Regeln</h2>
+<div class="rm-sub">Priorisierte Zuordnung für Party Matching und Buchungs-Matching.</div>
+</div>
+<div class="rm-actions">
+<div class="seg" role="group" aria-label="Ansicht">
+<button type="button" class="seg-btn">Liste</button>
+<button type="button" class="seg-btn">Graph</button>
+<button type="button" class="seg-btn active" aria-pressed="true">Vorschläge<span class="cnt">{{ openCount }}</span></button>
+</div>
+<button type="button" class="btn subtle">Neu laden</button>
+<button type="button" class="icon-btn" aria-label="Schließen">✕</button>
+</div>
+</div>
+
+<div class="rv-strip">
+<span class="mu-tag">MUSTER</span>
+<span><b>{{ openCount }} offene Regelvorschläge</b> aus gebuchten Zeilen der letzten 12 Monate</span>
+<span class="meta">Mustersuche ohne KI · läuft nach jedem Import · zuletzt heute 09:10 · 1 Muster früher verworfen</span>
+</div>
+
+<div class="rv-grid">
+
+<div class="rv-list">
+<sc-for list="{{ items }}" as="p" hint-placeholder-count="3">
+<button type="button" class="rv-item {{ p.cls }}" aria-pressed="{{ p.on }}" onClick="{{ p.pick }}">
+<span style="display: flex; align-items: center; gap: 8px;"><span class="rv-kicker">{{ p.group }}</span><span class="pill {{ p.pillCls }}" style="margin-left: auto;">{{ p.pillText }}</span></span>
+<span class="rv-title">{{ p.title }}</span>
+<span class="rv-sig">{{ p.sigShort }}</span>
+<span class="rv-meter"><span class="rv-bar" aria-hidden="true"><i class="s" style="flex-grow: {{ p.same }};"></i><i class="d" style="flex-grow: {{ p.dev }};"></i></span>{{ p.meterText }}</span>
+</button>
+</sc-for>
+</div>
+
+<div class="rv-detail">
+
+<div class="rv-sec">
+<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;"><span class="rv-kicker">{{ d.group }} · neue {{ d.kindLabel }}</span><span class="pill {{ d.pillCls }}" style="margin-left: auto;">{{ d.pillText }}</span></div>
+<h3 style="margin: 6px 0 4px; font-size: 16px; font-weight: 650;">{{ d.title }}</h3>
+<div class="meta">Vorgeschlagene Priorität {{ d.prio }} · {{ d.prioNote }}</div>
+</div>
+
+<div class="rv-sec">
+<h4 class="rv-h">Regel</h4>
+<div class="rv-rule"><b>ƒ wenn</b> {{ d.cond }} <b>→</b> {{ d.action }}</div>
+<sc-if value="{{ d.hasHint }}" hint-placeholder-val="{{ false }}">
+<p class="meta" style="margin: 8px 0 0; line-height: 1.5;">{{ d.hint }}</p>
+</sc-if>
+</div>
+
+<div class="rv-sec">
+<h4 class="rv-h">Beleg aus der Historie</h4>
+<div style="font-size: 13px;"><b>{{ d.hits }} Treffer</b> seit {{ d.since }} · <span style="color: var(--done); font-weight: 600;">{{ d.same }} genauso gebucht</span> · <span style="color: {{ d.devColor }}; font-weight: 600;">{{ d.dev }} abweichend</span></div>
+<div class="months" role="img" aria-label="{{ d.monthsAria }}">
+<sc-for list="{{ d.months }}" as="m" hint-placeholder-count="12"><span class="mc {{ m.cls }}"><i></i>{{ m.label }}</span></sc-for>
+</div>
+<div style="margin-top: 14px;">
+<div class="hist h" aria-hidden="true"><span>Datum</span><span style="text-align: right;">Betrag</span><span>Beleg</span><span class="hs">Gebucht als</span></div>
+<sc-for list="{{ d.recent }}" as="x" hint-placeholder-count="4">
+<div class="hist"><span class="mono" style="color: var(--text-muted);">{{ x.datum }}</span><span class="n">{{ x.betrag }}</span><a href="#" class="mono">{{ x.beleg }}</a><span class="hs">{{ x.als }}</span></div>
+</sc-for>
+<p class="meta" style="margin: 6px 0 0;">{{ d.moreText }}</p>
+</div>
+<sc-if value="{{ d.hasDev }}" hint-placeholder-val="{{ false }}">
+<div class="dev"><span aria-hidden="true" style="font-weight: 700; color: var(--warn);">!</span><span>{{ d.devText }}</span></div>
+</sc-if>
+</div>
+
+<div class="rv-sec">
+<h4 class="rv-h">Wirkung</h4>
+<ul style="margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6;">
+<li>{{ d.current }}</li>
+<li>{{ d.overlap }}</li>
+</ul>
+</div>
+
+<sc-if value="{{ d.isOpen }}" hint-placeholder-val="{{ true }}">
+<div class="rv-sec">
+<h4 class="rv-h">Anlegen als</h4>
+<div style="display: flex; flex-direction: column; gap: 8px;">
+<label class="opt {{ d.optReviewCls }}"><input type="radio" name="rv-mode" checked="{{ d.modeReview }}" onChange="{{ setReview }}"><span><b>Zur Prüfung vorlegen</b> (empfohlen)<br><span class="meta">{{ d.reviewText }}</span></span></label>
+<label class="opt {{ d.optAutoCls }}"><input type="radio" name="rv-mode" checked="{{ d.modeAuto }}" disabled="{{ d.autoDisabled }}" onChange="{{ setAuto }}"><span><b>{{ d.autoLabel }}</b><br><span class="meta">{{ d.autoNote }}</span></span></label>
+</div>
+</div>
+<div class="rv-sec" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+<button type="button" class="btn primary" onClick="{{ create }}">Regel anlegen</button>
+<button type="button" class="btn">Bearbeiten …</button>
+<button type="button" class="btn danger" onClick="{{ startReject }}">Verwerfen …</button>
+<span class="meta" style="margin-left: auto;">„Bearbeiten“ öffnet den bestehenden Regel-Editor, vorausgefüllt.</span>
+</div>
+</sc-if>
+
+<sc-if value="{{ d.isRejecting }}" hint-placeholder-val="{{ false }}">
+<div class="rv-sec">
+<h4 class="rv-h">Verwerfen</h4>
+<fieldset style="border: 0; margin: 0; padding: 0;">
+<legend class="field-label" style="margin-bottom: 6px;">Warum nicht?</legend>
+<div style="display: flex; flex-wrap: wrap; gap: 6px;">
+<label class="chip-radio on"><input type="radio" name="rv-grund" checked> Zufall, kein echtes Muster</label>
+<label class="chip-radio"><input type="radio" name="rv-grund"> Ändert sich bald</label>
+<label class="chip-radio"><input type="radio" name="rv-grund"> Lieber von Hand</label>
+<label class="chip-radio"><input type="radio" name="rv-grund"> Sonstiges</label>
+</div>
+</fieldset>
+<label style="display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12.5px;"><input type="checkbox" checked style="accent-color: #1a1a17;"> Dieses Muster nicht wieder vorschlagen</label>
+<div style="display: flex; gap: 8px; margin-top: 12px;">
+<button type="button" class="btn danger" style="border-color: var(--danger);" onClick="{{ confirmReject }}">Verwerfen</button>
+<button type="button" class="btn subtle" onClick="{{ cancelReject }}">Abbrechen</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ d.isCreated }}" hint-placeholder-val="{{ false }}">
+<div class="rv-sec">
+<div class="state-ok" role="status">✓ Regel angelegt · <span class="mono">{{ d.createdKey }}</span> · {{ d.createdMode }}</div>
+<p class="meta" style="margin: 8px 0 10px; line-height: 1.5;">Steht jetzt in der Liste unter {{ d.group }}. Ausschalten oder löschen geht dort wie bei jeder Regel.</p>
+<button type="button" class="btn sm" onClick="{{ undo }}">Rückgängig</button>
+</div>
+</sc-if>
+
+<sc-if value="{{ d.isRejected }}" hint-placeholder-val="{{ false }}">
+<div class="rv-sec">
+<div class="state-off" role="status">Verworfen · wird nicht wieder vorgeschlagen</div>
+<div style="margin-top: 10px;"><button type="button" class="btn sm" onClick="{{ undo }}">Wiederherstellen</button></div>
+</div>
+</sc-if>
+
+</div>
+</div>
+
+</section>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1250}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { sel: 'p1', status: {}, mode: {}, rejecting: false };
+  }
+  data() {
+    return [
+      { id: 'p1', group: 'Buchungs-Matching', kindLabel: 'Buchungsregel', title: 'Kontoführungsgebühr Postbank',
+        sigShort: 'Postbank · „Kontoführung“ → Nebenkosten des Geldverkehrs',
+        cond: 'Auftraggeber enthält "Postbank" und Verwendungszweck enthält "Kontoführung"',
+        action: 'Buchungssatz · Nebenkosten des Geldverkehrs · KSt Hauptstr. 5',
+        hint: '',
+        prio: 40, prioNote: 'vor „Zur Prüfung markieren“',
+        hits: 12, same: 12, dev: 0, since: '04/2025',
+        months: ['s', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's'],
+        recent: [
+          { datum: '07.03.2026', betrag: '−12,50 €', beleg: 'JV-2026-0031', als: 'Nebenkosten des Geldverkehrs' },
+          { datum: '06.02.2026', betrag: '−12,50 €', beleg: 'JV-2026-0019', als: 'Nebenkosten des Geldverkehrs' },
+          { datum: '07.01.2026', betrag: '−12,50 €', beleg: 'JV-2026-0006', als: 'Nebenkosten des Geldverkehrs' },
+          { datum: '05.12.2025', betrag: '−11,90 €', beleg: 'JV-2025-0388', als: 'Nebenkosten des Geldverkehrs' }
+        ],
+        devText: '',
+        current: 'Im aktuellen Auszug: 1 Zeile (07.04., −12,50 €). Für sie liegt heute ein KI-Vorschlag vor. Mit der Regel wäre er überflüssig.',
+        overlap: 'Keine Überschneidung mit bestehenden Regeln.',
+        reviewText: 'Treffer werden im Bankimport vorbelegt, gebucht wird per Klick.',
+        autoLabel: 'Automatisch buchen',
+        autoNote: 'Bucht Treffer beim Import ohne Klick. Erst sinnvoll, wenn die Regel einige Auszüge ohne Abweichung lief.',
+        autoDone: 'bucht automatisch', createdKey: 'BR-0012' },
+      { id: 'p2', group: 'Party Matching', kindLabel: 'Party-Regel', title: 'Jobcenter-Zahlung für Max Mustermann',
+        sigShort: 'IBAN Jobcenter · „BG 98765“ → Max Mustermann (MV-0182)',
+        cond: 'IBAN = DE21 7605 0000 0012 3456 78 und Verwendungszweck enthält "BG 98765"',
+        action: 'Kunde · Max Mustermann · Mietvertrag MV-0182',
+        hint: 'Von dieser IBAN kommen Zahlungen für 4 verschiedene Mieter. Die IBAN allein reicht deshalb nicht, die Regel unterscheidet über die BG-Nummer im Verwendungszweck.',
+        prio: 20, prioNote: 'vor „Eindeutige IBAN zuordnen“',
+        hits: 6, same: 6, dev: 0, since: '10/2025',
+        months: ['', '', '', '', '', '', 's', 's', 's', 's', 's', 's'],
+        recent: [
+          { datum: '31.03.2026', betrag: '+412,00 €', beleg: 'BT-2026-0094', als: 'Max Mustermann · MV-0182' },
+          { datum: '27.02.2026', betrag: '+412,00 €', beleg: 'BT-2026-0062', als: 'Max Mustermann · MV-0182' },
+          { datum: '30.01.2026', betrag: '+412,00 €', beleg: 'BT-2026-0031', als: 'Max Mustermann · MV-0182' },
+          { datum: '30.12.2025', betrag: '+398,00 €', beleg: 'BT-2025-0412', als: 'Max Mustermann · MV-0182' }
+        ],
+        devText: '',
+        current: 'Im aktuellen Auszug: keine Zeile. Die April-Zahlung kam schon am 31.03.',
+        overlap: 'Bindet an genau einen Mietvertrag. Endet MV-0182, greift die Regel nicht mehr und die Zeile geht in die Prüfung.',
+        reviewText: 'Partei wird im Bankimport vorbelegt, zugeordnet wird per Klick.',
+        autoLabel: 'Automatisch zuordnen',
+        autoNote: 'Ordnet die Partei beim Import ohne Klick zu. Gebucht wird weiter über die Beleg-Zuordnung.',
+        autoDone: 'ordnet automatisch zu', createdKey: 'PR-0007' },
+      { id: 'p3', group: 'Buchungs-Matching', kindLabel: 'Buchungsregel', title: 'Hausgeld WEG Lindenstraße 14',
+        sigShort: 'WEG Lindenstr. 14 · −310,00 € → Hausgeld-Vorauszahlungen',
+        cond: 'Auftraggeber enthält "WEG Lindenstr" und Betrag = -310,00',
+        action: 'Buchungssatz · Hausgeld-Vorauszahlungen · KSt Lindenstraße 14',
+        hint: 'Die Bedingung „Betrag = −310,00“ schließt die Sonderumlage vom 13.03.2026 (−1.450,00 €) aus.',
+        prio: 45, prioNote: 'nach „Kontoführungsgebühr Postbank“',
+        hits: 12, same: 11, dev: 1, since: '04/2025',
+        months: ['s', 's', 's', 's', 's', 's', 's', 's', 's', 'd', 's', 's'],
+        recent: [
+          { datum: '02.03.2026', betrag: '−310,00 €', beleg: 'JV-2026-0024', als: 'Hausgeld-Vorauszahlungen' },
+          { datum: '02.02.2026', betrag: '−310,00 €', beleg: 'JV-2026-0013', als: 'Hausgeld-Vorauszahlungen' },
+          { datum: '02.01.2026', betrag: '−310,00 €', beleg: 'JV-2026-0002', als: 'Hausgeld-Nachzahlung 2025' },
+          { datum: '01.12.2025', betrag: '−310,00 €', beleg: 'JV-2025-0371', als: 'Hausgeld-Vorauszahlungen' }
+        ],
+        devText: '02.01.2026 · −310,00 € · auf „Hausgeld-Nachzahlung 2025“ gebucht (JV-2026-0002), Verwendungszweck „Hausgeld 01/2026 inkl. Abrechnung“. Wegen dieser Abweichung nur als Prüfregel empfohlen.',
+        current: 'Im aktuellen Auszug: keine Zeile.',
+        overlap: 'Keine Überschneidung mit bestehenden Regeln.',
+        reviewText: 'Treffer werden im Bankimport vorbelegt, gebucht wird per Klick.',
+        autoLabel: 'Automatisch buchen',
+        autoNote: 'Nicht wählbar, solange in der Historie eine Abweichung steht.',
+        autoDone: 'bucht automatisch', createdKey: 'BR-0013' }
+    ];
+  }
+  renderVals() {
+    const all = this.data();
+    const st = this.state.status;
+    const labels = ['Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez', 'Jan', 'Feb', 'Mär'];
+    const pill = (s) => s === 'created' ? ['done', 'Angelegt'] : s === 'rejected' ? ['ghost', 'Verworfen'] : ['phase2', 'Neu'];
+    const items = all.map((p) => {
+      const s = st[p.id];
+      const on = p.id === this.state.sel;
+      const pl = pill(s);
+      return {
+        group: p.group, title: p.title, sigShort: p.sigShort, same: p.same, dev: p.dev,
+        on, cls: (on ? 'on ' : '') + (s ? 'closed' : ''), pillCls: pl[0], pillText: pl[1],
+        meterText: p.same + ' von ' + p.hits + ' gleich gebucht',
+        pick: () => this.setState({ sel: p.id, rejecting: false })
+      };
+    });
+    const p = all.find((x) => x.id === this.state.sel) || all[0];
+    const s = st[p.id];
+    const pl = pill(s);
+    const mode = this.state.mode[p.id] || 'review';
+    const autoDisabled = p.dev > 0;
+    const setStatus = (val) => {
+      const next = Object.assign({}, st);
+      if (val) next[p.id] = val; else delete next[p.id];
+      this.setState({ status: next, rejecting: false });
+    };
+    const setMode = (m) => () => {
+      if (m === 'auto' && autoDisabled) return;
+      this.setState({ mode: Object.assign({}, this.state.mode, { [p.id]: m }) });
+    };
+    const d = Object.assign({}, p, {
+      pillCls: pl[0], pillText: pl[1],
+      hasHint: !!p.hint,
+      hasDev: p.dev > 0,
+      devColor: p.dev > 0 ? 'var(--warn)' : 'var(--text-muted)',
+      months: p.months.map((m, i) => ({ cls: m, label: labels[i] })),
+      monthsAria: 'Treffer je Monat von April 2025 bis März 2026: ' + p.same + ' gleich gebucht, ' + p.dev + ' abweichend',
+      moreText: p.hits > p.recent.length ? '+ ' + (p.hits - p.recent.length) + ' weitere Treffer' : '',
+      isOpen: !s && !this.state.rejecting,
+      isRejecting: !s && this.state.rejecting,
+      isCreated: s === 'created',
+      isRejected: s === 'rejected',
+      modeReview: mode === 'review',
+      modeAuto: mode === 'auto',
+      autoDisabled,
+      optReviewCls: mode === 'review' ? 'on' : '',
+      optAutoCls: autoDisabled ? 'off' : mode === 'auto' ? 'on' : '',
+      createdMode: mode === 'auto' ? 'aktiv, ' + p.autoDone : 'aktiv, Treffer zur Prüfung'
+    });
+    return {
+      items,
+      d,
+      openCount: all.filter((x) => !st[x.id]).length,
+      setReview: setMode('review'),
+      setAuto: setMode('auto'),
+      create: () => setStatus('created'),
+      startReject: () => this.setState({ rejecting: true }),
+      cancelReject: () => this.setState({ rejecting: false }),
+      confirmReject: () => setStatus('rejected'),
+      undo: () => setStatus(null)
+    };
+  }
+}
+</script>
+</body>
+</html>

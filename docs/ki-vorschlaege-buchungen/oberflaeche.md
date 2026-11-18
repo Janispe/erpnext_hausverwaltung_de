@@ -1,10 +1,10 @@
 # KI-Buchungsvorschläge: Oberfläche
 
-Stand 18.11.2026. Vorlage ist der Design-Canvas „KI-Buchungsvorschläge“ (Markup in [mockup/](mockup/), siehe
+Stand 18.11.2026, überarbeitet nach dem Review von Auftrag 1. Vorlage ist der Design-Canvas „KI-Buchungsvorschläge“ (Markup in [mockup/](mockup/), siehe
 [README.md](README.md)). Die Datenform steht in [schnittstelle.md](schnittstelle.md).
 
-Teil A betrifft den Bankimport und ist Auftrag 1. Teil B betrifft die Vorschläge-Seite und gehört zu
-Auftrag 2.
+Teil A betrifft den Bankimport (Auftrag 1, überarbeitet in Auftrag 1b). Teil B betrifft die Vorschläge-Seite
+und gehört zu Auftrag 2. Teil C beschreibt die Regelvorschläge im Regel-Fenster (Auftrag 3).
 
 ---
 
@@ -43,6 +43,7 @@ Auftrag 2.
 | `Stale` | Veraltet | `pill danger` | „! Veraltet“, darunter Kurzgrund |
 | `Succeeded` | Gebucht | `pill done` | „✓ übernommen“, darunter Belegnummer |
 | `Rejected` | Abgelehnt | `pill ghost` | „Abgelehnt“ |
+| `Rejected` mit Kategorie `adjusted_booked` | Angepasst gebucht | `pill ghost` „Abgelehnt“ | „Angepasst gebucht“, darunter Belegnummer |
 | kein Vorschlag, Agent läuft | Agent prüft … | — | „Agent prüft …“ |
 | kein Vorschlag, Agent enthält sich | Kein Vorschlag | — | „Kein Vorschlag“, darunter „Agent unsicher“ |
 
@@ -55,8 +56,8 @@ es aus wie „Prüfung offen“, mit Pill „Freigegeben“, dem Hinweis „Frei
 - **KI-Marke:** kleines Etikett „KI“ in Mono, neutraler Rahmen (`--border-strong`), keine Farbe. Sie steht
   überall, wo ein Wert vom Agenten stammt: Banner, Filter, Tabellenzelle, Panel-Abschnitt.
 - **Sicherheit:** drei Stufen hoch, mittel, niedrig. Darstellung als 3-Segment-Balken plus Text, nie nur
-  Farbe. Farben `--done`, `--warn`, `--danger`. Im Panel zusätzlich die Prozentzahl, falls vorhanden
-  (offene Entscheidung 4).
+  Farbe. Farben `--done`, `--warn`, `--danger`. Eine Prozentzahl wird nirgends angezeigt, auch wenn
+  `confidence.score` geliefert wird. Sie stammt vom Agenten und ist keine geprüfte Wahrscheinlichkeit.
 - Die Vorschlagskarte nutzt den vorhandenen Stil `invoice-card suggested` (Gold-Tönung). Keine neue
   Akzentfarbe für KI.
 
@@ -70,7 +71,9 @@ Zwischen Statistik-Karten und Phasen-Stepper, volle Breite (Artboard A1).
     `open_proposals` in `NAV_ACTIONS`. Die Navigation gehört zu Auftrag 1.
   - „Vorschläge übernehmen …“ mit Zahl der hohen Vorschläge: öffnet den Sammeldialog. Sekundärer Button;
     der einzige Primärbutton der Seite bleibt „Neuer Import“.
-- **Agent läuft:** Spinner, „Agent prüft den Auszug … x von y Zeilen“. Keine Buttons.
+- **Agent läuft:** Spinner, „Agent prüft den Auszug … x von y Zeilen“, darunter „Startet automatisch nach dem
+  CSV-Import · Selbst zuordnen geht jederzeit“. Keine Buttons. Der Agent startet nach jedem CSV-Import von
+  selbst; einen Knopf „Vorschläge anfordern“ gibt es nicht. In A1 über den Tweak `banner` zu sehen.
 - **Alles erledigt:** einzeilig, gedämpft: „Alle Vorschläge erledigt · n übernommen · m abgelehnt“.
 - **Kein Paket:** kein Banner.
 
@@ -90,7 +93,10 @@ Neuer Chip „KI Vorschlag“ mit Zahl, direkt nach „Alle“. Er zeigt Zeilen 
 - Die Partei-Spalte zeigt bei Zeilen ohne Partei weiterhin „Keine Partei“ bzw. den Auftraggeber. Ein
   Parteivorschlag steht nur in der KI-Spalte, nie so, als wäre er schon zugeordnet.
 - Unter 760 px Breite werden „KI-Vorschlag“ und „Verwendungszweck“ ausgeblendet. Der Betrag bleibt in
-  jeder Tabellenzeile sichtbar. Der Vorschlag bleibt im Seitenpanel erreichbar.
+  jeder Tabellenzeile sichtbar, die Tabelle scrollt nicht seitlich. Unter der Partei steht dann eine
+  kompakte **KI-Marke**: Etikett „KI“, Sicherheitsbalken und Stufe bei `Pending` und `Approved`, „KI
+  veraltet“ in Rot bei `Stale`. Andere Zustände zeigen keine Marke (Artboard D2). Der Vorschlag selbst
+  steht im Panel unter der Tabelle.
 - Unter der Tabelle eine Zeile mit Tastenhinweisen (siehe 6).
 
 ## 4. Seitenpanel
@@ -100,22 +106,30 @@ Alle acht Zustände zeigt Artboard B1, die Komponente B2.
 
 ### Prüfung offen
 
-Karte `invoice-card suggested`:
+Karte `invoice-card suggested`, kompakt (Artboard B1, Zustände 1–5):
 
 1. Kopfzeile: KI-Marke, „Vorschlag“, Badge „Rev. n“, Pill „Prüfung offen“.
 2. Art als Etikett, z. B. „Rechnung zuordnen“, „Partei und Rechnung · 2 Schritte“, „Buchungssatz“.
 3. **Schritte** als nummerierte Liste (1 oder 2): Art, Ziel fett, Unterzeile, Betrag rechts.
-4. **Buchung (Vorschau):** Tabelle Konto | Soll | Haben aus `postings`, darunter ein Satz zur Wirkung
-   (`effect`), z. B. „Zahlung wird angelegt und gebucht. SINV-2026-0041 ist danach ausgeglichen.“
-5. **Sicherheit** als Balken plus Text.
-6. **Begründung** kursiv in Anführungszeichen, darunter „Belege:“ mit Links (`DocLink`).
+4. **Sicherheit** als Balken plus Stufe.
+5. **Details**, aufklappbar:
+   - **Buchung (Vorschau):** Tabelle Konto | Soll | Haben aus `postings`, darunter ein Satz zur Wirkung
+     (`effect`), z. B. „Zahlung wird angelegt und gebucht. SINV-2026-0041 ist danach ausgeglichen.“
+   - **Begründung** kursiv in Anführungszeichen, darunter „Belege:“ mit Links (`DocLink`).
+6. Umschalter am Kartenende: Button mit `aria-expanded`, Text „Details · Buchung, Begründung, Belege ▾“
+   bzw. „Details ausblenden ▴“.
+
+Startzustand der Details: bei Sicherheit `hoch` eingeklappt, bei `mittel` und `niedrig` aufgeklappt. Die
+Wahl des Benutzers gilt nur für die aktuelle Zeile; beim Zeilenwechsel gilt wieder der Startzustand. Das
+Gleiche gilt für `Approved`. Die kompakte Karte einschließlich Kopfzeile und Aktionen ist bei einem Schritt
+höchstens 320 px hoch.
 
 Darunter die Aktionen:
 
 | Aktion | Wirkung |
 |---|---|
 | **Übernehmen & buchen** (primär, `↵`) | `kiAccept`: Freigabe und Ausführung in einem Request. Bei zwei Schritten heißt der Button „Beide übernehmen & buchen“ und führt in Reihenfolge aus. |
-| **Anpassen** | Klappt „Selbst zuordnen“ auf, wählt den passenden Modus und füllt ihn vor: Rechnung angehakt, Gegenkonto und Kostenstelle eingetragen, Abschlags- bzw. Kreditrate gewählt. Gebucht wird dann mit den heutigen Knöpfen. |
+| **Anpassen** | Klappt „Selbst zuordnen“ auf, wählt den passenden Modus und füllt ihn vor: Rechnung angehakt, Gegenkonto und Kostenstelle eingetragen, Abschlags- bzw. Kreditrate gewählt. Gebucht wird dann mit den heutigen Knöpfen. Über dem Formular steht der Hinweis „Vom KI-Vorschlag vorausgefüllt. Wird hier abweichend gebucht, schließt das den Vorschlag automatisch als ‚Abgelehnt‘ mit dem Grund ‚Angepasst gebucht: Beleg‘. Das geht als Rückmeldung an den Agenten.“ (B1, Zustand 7) |
 | **Ablehnen …** (`R`) | Wechselt die Karte in das Ablehnungsformular. |
 
 Fußzeile: „Freigabe und Buchung werden einzeln für Revision n protokolliert. Im Paket ansehen →“.
@@ -145,12 +159,22 @@ vorgeschlagene Rechnung ACC-PINV-2026-0090 wurde am 17.04. mit PE-2026-0052 ausg
 Wie die heutigen erledigten Zeilen (`assign-row done-row` für Bank-Tx und Beleg), dazu die Herkunft:
 „Freigegeben und gebucht von M. Krüger · Zeit · Vorschlag HVP-… →“. „Beleg lösen …“ bleibt wie heute.
 
+### Angepasst gebucht
+
+`Rejected` mit `decision.category = "adjusted_booked"` (B1, Zustand 8). Aufbau wie „Gebucht aus Vorschlag“,
+aber mit Pill „Abgelehnt“ (`pill ghost`) und statt der Herkunft:
+
+- „Selbst gebucht: <`decision.voucher.summary`>“
+- „Vorschlag war: <`summary`>“, durchgestrichen
+- „Automatisch abgelehnt mit Grund ‚Angepasst gebucht: <Beleg>‘ · <wer> · <wann> · Vorschlag HVP-… →“
+- „Beleg lösen …“ wie heute
+
 ### Agent prüft / Kein Vorschlag
 
 - **Agent prüft:** gestrichelter Kasten mit Spinner „Agent prüft diese Zeile …“ und Hinweis „Selbst zuordnen
   geht jederzeit. Kommt der Vorschlag danach, gilt er als veraltet.“
-- **Kein Vorschlag:** die Begründung des Agenten kursiv, darunter Agent und Zeit, Button „Erneut anfordern“
-  (nur sichtbar, wenn offene Entscheidung 1 einen Knopf vorsieht).
+- **Kein Vorschlag:** die Begründung des Agenten kursiv, darunter Agent und Zeit, Button „Erneut anfordern“.
+  Er ruft `kiRequestRevision` ohne Bindung auf; danach zeigt die Zeile „Agent prüft …“.
 
 In beiden Fällen ist „Selbst zuordnen“ aufgeklappt.
 
@@ -159,8 +183,9 @@ In beiden Fällen ist „Selbst zuordnen“ aufgeklappt.
 - Bei „Prüfung offen“ und „Freigegeben“ eingeklappt: ein Button mit `aria-expanded`, Titel „Selbst
   zuordnen“ und den Modi als Kurztext („Rechnung · Aufteilen · Abschlag · …“).
 - In allen anderen Zuständen aufgeklappt, Inhalt wie heute (`PartyAssign` bzw. `BookingActions`).
-- Wird manuell gebucht, während ein Vorschlag offen ist, behandelt das Backend den Vorschlag (offene
-  Entscheidung 2). Die Oberfläche lädt danach nur neu.
+- Wird manuell gebucht, während ein Vorschlag `Pending` oder `Approved` ist, schließt das Backend ihn als
+  `Rejected` mit Kategorie `adjusted_booked` (schnittstelle.md 4.6). Die Oberfläche lädt danach nur neu und
+  zeigt „Angepasst gebucht“.
 
 ### Nach dem Übernehmen
 
@@ -196,11 +221,16 @@ Artboard A2. Öffnet über den Banner.
 Neu im Bankimport, nur wenn der Fokus in Tabelle oder Panel liegt und nicht in einem Eingabefeld:
 
 - `J` / `K`: nächste / vorherige Zeile
-- `↵`: „Übernehmen & buchen“, nur wenn eine Karte „Prüfung offen“ sichtbar ist
+- `↵`: „Übernehmen & buchen“, nur wenn die Karte „Prüfung offen“ im sichtbaren Bereich liegt. Liegt sie
+  außerhalb (schmale Ansicht), scrollt `↵` zuerst die Karte ins Bild und bucht erst beim nächsten `↵`.
 - `R`: Ablehnungsformular öffnen
 - `Esc`: Ablehnungsformular schließen
 
 Der Handler hängt am App-Wurzelelement im iframe, nicht an `window` der Desk-Seite.
+
+**Schmale Ansicht** (Artboard D1): Unter 1100 px steht das Panel unter der Tabelle. Jeder Zeilenwechsel per
+Klick, `J`/`K` oder Zeilenlink scrollt das Panel ins Bild (`scrollIntoView`, Anfang des Panels oben). Ab
+1100 px steht das Panel wie heute daneben und es wird nicht gescrollt.
 
 ## 7. Tiefer Link
 
@@ -231,6 +261,27 @@ Ein unbekanntes `row` lässt den Import normal öffnen. Die Vorschläge-Seite nu
 - **Bilder im PR:** A1-Zustand bei 1440 px und bei 1100 px (Panel unter der Tabelle), Panel in allen acht
   Zuständen, Sammeldialog vor und nach dem Lauf.
 
+## 9. Abnahme Auftrag 1b
+
+- **Vitest:**
+  - Details bei `hoch` eingeklappt, bei `mittel` und `niedrig` aufgeklappt; Umschalten mit `aria-expanded`;
+    beim Zeilenwechsel wieder Startzustand
+  - `KiConfidence` gibt nie eine Prozentzahl aus, auch nicht mit `score`
+  - „Angepasst gebucht“ aus `Rejected` mit `adjusted_booked`, in Panel und Tabellenzelle
+  - „Erneut anfordern“ bei `state: "none"` ruft `kiRequestRevision` ohne Bindung auf
+- **Playwright** gegen den Mock-Dev-Server:
+  1. Zeile mit hoher Sicherheit: Details zu, kompakte Karte mit Aktionen höchstens 320 px hoch
+  2. Zeile mit mittlerer Sicherheit: Details offen; Umschalten und Zeilenwechsel setzen zurück
+  3. „Anpassen“ zeigt den Hinweis zur abweichenden Buchung
+  4. Bei 1024 px scrollt ein Zeilenklick das Panel ins Bild. `↵` bei nicht sichtbarer Karte bucht nicht,
+     sondern scrollt; das zweite `↵` bucht.
+  5. Bei 390 px zeigt jede Zeile mit offenem Vorschlag die KI-Marke mit Stufe. Alle Beträge sichtbar, kein
+     seitliches Scrollen.
+  6. „Kein Vorschlag“ → „Erneut anfordern“ → „Agent prüft …“
+- **Regression:** alle Tests aus Abschnitt 8 bleiben grün.
+- **Bilder im PR:** Karte kompakt und aufgeklappt, „Anpassen“ mit Hinweis, „Angepasst gebucht“, Bankimport
+  bei 1024 px und 390 px.
+
 ---
 
 # Teil B: Vorschläge-Seite (`/app/hv-proposals`), Auftrag 2
@@ -252,7 +303,7 @@ Ergänzungen. Jede Ergänzung erscheint nur, wenn die Daten dafür da sind.
   ohne Wurzel beginnen links mit den Zeilen.
 - Detailspalte, zusätzlich:
   - **„Buchung (Vorschau)“** aus `preview.postings` als Tabelle Konto | Soll | Haben, nach „Änderung“
-  - **Sicherheit** (KI-Marke, Balken, Text) als erste Zeile in „Begründung des Agenten“
+  - **Sicherheit** (KI-Marke, Balken, Stufe, keine Prozentzahl) als erste Zeile in „Begründung des Agenten“
   - Zieldokument-Link führt auf die Bankimport-Zeile (`?import=…&row=…`)
   - Hinweis bei offenen Buchungsvorschlägen: „Ausgeführt wird über dieselbe Logik wie ‚Übernehmen &
     buchen‘ im Bankimport.“
@@ -265,3 +316,64 @@ Ergänzungen. Jede Ergänzung erscheint nur, wenn die Daten dafür da sind.
   [schnittstelle.md](schnittstelle.md), Abschnitt „Testdaten“): Paket in der Liste mit Art „Buchungen“,
   Paketansicht mit Zeilen, Detail mit „Buchung (Vorschau)“, Sprung in den Bankimport auf die richtige Zeile.
 - Bestehende Proposals-Tests (`tests/proposals_*`) bleiben grün.
+
+---
+
+# Teil C: Regelvorschläge im Regel-Fenster, Auftrag 3
+
+Artboard E1. Wiederkehrende Muster in gebuchten Zeilen werden als Bankimport-Regel vorgeschlagen, damit
+solche Zeilen künftig ohne KI zugeordnet werden. Kein Agent, kein LLM.
+
+## Ort
+
+- Das bestehende Regel-Fenster (`RulePanel.jsx`, Knopf „Regeln“ in der Kopfleiste). Neben „Liste“ und
+  „Graph“ kommt eine dritte Ansicht **„Vorschläge“** mit der Zahl offener Vorschläge.
+- Der Knopf „Regeln“ zeigt die Zahl offener Regelvorschläge als `kbd`-Badge. Sind welche offen, öffnet das
+  Fenster direkt auf „Vorschläge“.
+- Nicht auf der Vorschläge-Seite (`hv-proposals`). Dort stehen Agenten-Pakete mit Freigabe und
+  Prüfprotokoll.
+
+## Aufbau der Ansicht
+
+- Leiste oben: Marke „MUSTER“ (gestrichelter Rahmen, bewusst nicht „KI“), „n offene Regelvorschläge aus
+  gebuchten Zeilen der letzten 12 Monate“, daneben „Mustersuche ohne KI · läuft nach jedem Import · zuletzt
+  <Zeit> · m Muster früher verworfen“.
+- Links die Vorschläge als Karten: Gruppe („Party Matching“ oder „Buchungs-Matching“), Pill „Neu“,
+  „Angelegt“ oder „Verworfen“, Titel, Kurzform der Regel, Balken „x von n gleich gebucht“ (grün gleich, gelb
+  abweichend).
+- Rechts das Detail des gewählten Vorschlags:
+  1. Kopf: Gruppe und Regelart, Titel, vorgeschlagene Priorität mit Einordnung, z. B. „vor ‚Zur Prüfung
+     markieren‘“.
+  2. **Regel** im Format der Regelkarten: „ƒ wenn <Bedingungen> → <Aktion>“, optional ein Hinweis, z. B.
+     warum die IBAN allein nicht reicht.
+  3. **Beleg aus der Historie:** „n Treffer seit MM/JJJJ · x genauso gebucht · y abweichend“, Monatsleiste
+     über 12 Monate (grün gleich gebucht, gelb abweichend, gestrichelt kein Treffer), die letzten vier
+     Treffer mit Datum, Betrag, Beleg und „Gebucht als“, darunter „+ k weitere Treffer“. Abweichungen als
+     gelber Hinweis mit Datum, Betrag, Beleg und Erklärung.
+  4. **Wirkung:** Treffer im aktuellen Auszug, Überschneidung mit bestehenden Regeln bzw. Bindung an einen
+     Mietvertrag.
+  5. **Anlegen als:** Radio „Zur Prüfung vorlegen (empfohlen)“ und „Automatisch buchen“ (Buchungsregel) bzw.
+     „Automatisch zuordnen“ (Party-Regel). Standard ist „Zur Prüfung vorlegen“. Gibt es eine Abweichung, ist
+     „Automatisch“ deaktiviert und erklärt warum.
+  6. Aktionen: „Regel anlegen“ (primär), „Bearbeiten …“ (öffnet den bestehenden `RuleEditor`
+     vorausgefüllt), „Verwerfen …“.
+- **Verwerfen** inline: Radio-Chips „Zufall, kein echtes Muster“ · „Ändert sich bald“ · „Lieber von Hand“ ·
+  „Sonstiges“, Checkbox „Dieses Muster nicht wieder vorschlagen“ (vorausgewählt), Buttons „Verwerfen“ und
+  „Abbrechen“.
+- Nach dem Anlegen: Erfolgszeile „✓ Regel angelegt · <Schlüssel> · aktiv, Treffer zur Prüfung“ bzw. „…
+  bucht automatisch“, Hinweis auf die Liste, Button „Rückgängig“. Nach dem Verwerfen: „Verworfen · wird
+  nicht wieder vorgeschlagen“, Button „Wiederherstellen“.
+- Unter 900 px stehen Liste und Detail untereinander, die Spalte „Gebucht als“ entfällt.
+
+## Was „Regel anlegen“ erzeugt
+
+Eine normale `Bankimport Party Regel` bzw. `Bankimport Buchungsregel` im Builder-Format, wie sie der
+`RuleEditor` heute speichert: Bedingungen, Aktion, Priorität und `requires_review` bzw. `auto_apply` nach der
+Wahl „Anlegen als“. Danach steht sie in Liste und Graph wie jede andere Regel.
+
+## Abnahme Teil C
+
+- Vitest für Liste, Detail, Anlegen, Verwerfen, Rückgängig und das deaktivierte „Automatisch“ bei
+  Abweichung.
+- Playwright gegen den Mock-Dev-Server mit den drei Vorschlägen aus E1.
+- Bestehende Regel-Tests bleiben grün.
