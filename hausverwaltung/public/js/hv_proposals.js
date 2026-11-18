@@ -3,6 +3,11 @@ frappe.provide("hausverwaltung.hv_proposals");
 	const labels = { Pending: "Prüfung offen", Approved: "Freigegeben", Succeeded: "Ausgeführt", Stale: "Veraltet", Rejected: "Abgelehnt" };
 	const symbols = { Pending: "▶", Approved: "◐", Succeeded: "✓", Stale: "!", Rejected: "/" };
 	const bind = ({ id, revision, hash }) => ({ id, revision, hash });
+	const renderValue = (cell, value) => {
+		const text = value == null ? "" : String(value);
+		if (text.includes("\n") || text.length > 80) el("pre", cell, text, "hv-prop-diff-pre");
+		else cell.text(text);
+	};
 	const el = (tag, parent, text, cls) => $(document.createElement(tag)).addClass(cls || "").text(text == null ? "" : text).appendTo(parent);
 	const button = (parent, text, fn, primary = false) => el("button", parent, text, "hv-btn" + (primary ? " hv-btn-primary" : "")).attr("type", "button").on("click", fn);
 	const tab = (parent, text, fn) => el("button", parent, text, "hv-tab").attr("type", "button").on("click", fn);
@@ -223,7 +228,7 @@ frappe.provide("hausverwaltung.hv_proposals");
 			if (p.status === "Stale") { const causes = { baseline_changed:"Das Zieldokument hat sich geändert.",dependency_revised:"Ein Vorgänger wurde überarbeitet.",dependency_rejected:"Ein Vorgänger wurde abgelehnt.",dependency_stale:"Ein Vorgänger ist veraltet." }; el("p",box,causes[p.stale_cause?.cause] || "Die Vorschau ist veraltet."); }
 			if (p.status === "Succeeded") { const event = events.find(e => e.kind === "Succeeded"); el("p",box,`Ausgeführt ${time(event?.creation)}`); if (p.result?.doctype && p.result?.id) link(box,"Dokument öffnen →",p.result.doctype,p.result.id); }
 			el("h4",box,"Änderung"); const table = el("table",box,"","table"), header = el("tr",table); for (const t of ["Feld","Bisher","Neu"]) el("th",header,t);
-			for (const c of p.changes) { const row = el("tr",table); el("td",row,c.label); el("td",row,c.before); const after = el("td",row); if (c.kind === "text" && c.segments) for (const seg of c.segments) el(seg.op === "del" ? "del" : seg.op === "ins" ? "ins" : "span",after,seg.text); else after.text(c.after); }
+			for (const c of p.changes) { const row = el("tr",table); el("td",row,c.label); renderValue(el("td",row), c.before); const after = el("td",row); if (c.kind === "text" && c.segments) for (const seg of c.segments) el(seg.op === "del" ? "del" : seg.op === "ins" ? "ins" : "span",after,seg.text); else renderValue(after, c.after); }
 			el("h4",box,"Begründung des Agenten"); el("em",box,p.rationale || "Keine Begründung angegeben."); for (const source of p.sources || []) link(el("p",box),source.label,source.doctype,source.name);
 			el("h4", box, "Im Graph");
 			for (const [title, items] of [["Vorgänger", p.predecessors], ["Nachfolger", p.successors]]) {

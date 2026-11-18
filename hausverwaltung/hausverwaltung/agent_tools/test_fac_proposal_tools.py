@@ -507,3 +507,212 @@ class TestDocActionsSite(unittest.TestCase):
 		)
 		with self.assertRaises(frappe.PermissionError):
 			frappe_service.package_graph(package)
+
+	def test_submit_retry_reuses_result_and_manual_submit_marks_stale(self):
+		from hausverwaltung.hausverwaltung.agent_tools.proposal_tools import submit_doc
+		from hausverwaltung.hausverwaltung.test_booking_safeguards import fixture
+		from hausverwaltung.proposals import frappe_service
+
+		frappe = self.frappe
+		frappe.set_user("Administrator")
+		company, _center, _unit, _customer, _contract = fixture(compact=True)
+		debit = frappe.db.get_value("Account", {"company": company, "is_group": 0, "root_type": "Asset"}, "name")
+		credit = frappe.db.get_value("Account", {"company": company, "is_group": 0, "root_type": "Income"}, "name")
+		if not credit:
+			credit = frappe.db.get_value("Account", {"company": company, "is_group": 0, "name": ["!=", debit]}, "name")
+
+		submit_role = frappe.get_doc(
+			{"doctype": "Role", "role_name": f"DocProp JE {self.point}"}
+		).insert(ignore_permissions=True).name
+		for role, write_flag in ((submit_role, 1),):
+			frappe.get_doc(
+				{
+					"doctype": "Custom DocPerm",
+					"parent": "Journal Entry",
+					"parenttype": "DocType",
+					"parentfield": "permissions",
+					"role": role,
+					"permlevel": 0,
+					"read": 1,
+					"create": write_flag,
+					"write": write_flag,
+					"submit": write_flag,
+				}
+			).insert(ignore_permissions=True)
+		frappe.clear_cache(doctype="Journal Entry")
+		self.addCleanup(frappe.clear_cache, doctype="Journal Entry")
+		frappe.get_doc("User", self.agent_user).add_roles(submit_role)
+		frappe.get_doc("User", self.reviewer_user).add_roles(submit_role)
+
+		def make_draft(tag):
+			return frappe.get_doc(
+				{
+					"doctype": "Journal Entry",
+					"company": company,
+					"posting_date": "2026-10-04",
+					"user_remark": f"Draft {tag} {self.point}",
+					"accounts": [
+						{"account": debit, "debit_in_account_currency": 10.0, "credit_in_account_currency": 0.0},
+						{"account": credit, "debit_in_account_currency": 0.0, "credit_in_account_currency": 10.0},
+					],
+				}
+			).insert(ignore_permissions=True)
+
+		je_retry = make_draft("retry")
+		je_review_stale = make_draft("rev-stale")
+		je_exec_stale = make_draft("exec-stale")
+
+		frappe.set_user(self.agent_user)
+		package = f"sub-{self.point}"
+		p_retry = submit_doc(
+			key=f"sub-retry-{self.point}",
+			package=package,
+			package_meta={"title": f"Submit {self.point}"},
+			operation="submit",
+			doctype="Journal Entry",
+			name=je_retry.name,
+			metadata={"title": "JE buchen", "summary": je_retry.name},
+		)
+		p_rev_stale = submit_doc(
+			key=f"sub-rev-{self.point}",
+			package=package,
+			operation="submit",
+			doctype="Journal Entry",
+			name=je_review_stale.name,
+			metadata={"title": "JE stale review", "summary": je_review_stale.name},
+		)
+		p_exec_stale = submit_doc(
+			key=f"sub-exec-{self.point}",
+			package=package,
+			operation="submit",
+			doctype="Journal Entry",
+			name=je_exec_stale.name,
+			metadata={"title": "JE stale exec", "summary": je_exec_stale.name},
+		)
+
+		# Path A: approve, execute, then retry both execute and execute_ready after docstatus == 1.
+		self._human_session(self.reviewer_user)
+		b_retry = {"id": p_retry["id"], "revision": p_retry["revision"], "hash": p_retry["hash"]}
+		self.assertEqual(frappe_service.review(b_retry, True)["status"], "Approved")
+		first_exec = frappe_service.execute(b_retry)
+		self.assertEqual(first_exec["status"], "Succeeded")
+		retried = frappe_service.execute(b_retry)
+		self.assertEqual(retried["status"], "Succeeded")
+		self.assertEqual(retried["result"], first_exec["result"])
+		batch_retry = frappe_service.execute_ready(package, [b_retry])
+		self.assertEqual(batch_retry, [{"id": p_retry["id"], "ok": True, "status": "Succeeded"}])
+
+		# Path B: approve p_exec_stale before manual submit, leave p_rev_stale Pending.
+		b_exec_stale = {"id": p_exec_stale["id"], "revision": p_exec_stale["revision"], "hash": p_exec_stale["hash"]}
+		self.assertEqual(frappe_service.review(b_exec_stale, True)["status"], "Approved")
+
+		frappe.set_user("Administrator")
+		je_review_stale.submit()
+		je_exec_stale.submit()
+
+		self._human_session(self.reviewer_user)
+		b_rev_stale = {"id": p_rev_stale["id"], "revision": p_rev_stale["revision"], "hash": p_rev_stale["hash"]}
+		self.assertEqual(frappe_service.review(b_rev_stale, True)["status"], "Stale")
+		self.assertEqual(frappe_service.execute(b_exec_stale)["status"], "Stale")
+
+	def test_unreadable_or_deleted_create_result_keeps_package_accessible_and_redacts_id(self):
+		from hausverwaltung.hausverwaltung.agent_tools.proposal_tools import submit_doc
+		from hausverwaltung.proposals import frappe_service
+
+		frappe = self.frappe
+		frappe.set_user(self.agent_user)
+		package = f"res-{self.point}"
+		p1 = submit_doc(
+			key=f"res1-{self.point}",
+			package=package,
+			package_meta={"title": f"Ergebnisschutz {self.point}"},
+			operation="create",
+			doctype="Supplier",
+			values={
+				"supplier_name": f"Erstellt {self.point}",
+				"supplier_type": "Company",
+				"supplier_group": self.supplier_group,
+			},
+			metadata={"title": "Lieferant 1", "summary": "Erster"},
+		)
+		p2 = submit_doc(
+			key=f"res2-{self.point}",
+			package=package,
+			operation="create",
+			doctype="Supplier",
+			values={
+				"supplier_name": f"Offen {self.point}",
+				"supplier_type": "Company",
+				"supplier_group": self.supplier_group,
+			},
+			metadata={"title": "Lieferant 2", "summary": "Zweiter"},
+		)
+
+		self._human_session(self.reviewer_user)
+		b1 = {"id": p1["id"], "revision": p1["revision"], "hash": p1["hash"]}
+		self.assertEqual(frappe_service.review(b1, True)["status"], "Approved")
+		executed = frappe_service.execute(b1)
+		created_id = executed["result"]["id"]
+
+		# Second viewer has Supplier DocType read rights, but a User Permission restricts them to another Supplier.
+		frappe.set_user("Administrator")
+		allowed_sup = frappe.get_doc(
+			{
+				"doctype": "Supplier",
+				"supplier_name": f"Sichtbar {self.point}",
+				"supplier_type": "Company",
+				"supplier_group": self.supplier_group,
+			}
+		).insert(ignore_permissions=True).name
+		viewer_role = frappe.get_doc(
+			{"doctype": "Role", "role_name": f"DocProp View {self.point}"}
+		).insert(ignore_permissions=True).name
+		frappe.get_doc(
+			{
+				"doctype": "Custom DocPerm",
+				"parent": "Supplier",
+				"parenttype": "DocType",
+				"parentfield": "permissions",
+				"role": viewer_role,
+				"permlevel": 0,
+				"read": 1,
+			}
+		).insert(ignore_permissions=True)
+		frappe.clear_cache(doctype="Supplier")
+		self.addCleanup(frappe.clear_cache, doctype="Supplier")
+		viewer_user = f"{self.point}_view@hv4.invalid"
+		frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": viewer_user,
+				"first_name": self.point,
+				"enabled": 1,
+				"user_type": "System User",
+				"send_welcome_email": 0,
+				"roles": [{"role": "HV Proposal Reviewer"}, {"role": viewer_role}],
+			}
+		).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "User Permission",
+				"user": viewer_user,
+				"allow": "Supplier",
+				"for_value": allowed_sup,
+				"apply_to_all_doctypes": 1,
+			}
+		).insert(ignore_permissions=True)
+
+		frappe.set_user(viewer_user)
+		self.assertFalse(frappe.has_permission("Supplier", "read", doc=created_id, user=viewer_user))
+		graph = frappe_service.package_graph(package)
+		self.assertEqual(len(graph["nodes"]), 2)
+		node1 = next(n for n in graph["nodes"] if n["id"] == p1["id"])
+		self.assertIsNone(node1["target"]["name"])
+		detail = frappe_service.view(p1["id"])
+		self.assertIsNone(detail["target"]["name"])
+		self.assertIsNone(detail["result"]["id"])
+		self.assertTrue(detail["result"]["redacted"])
+		events = frappe_service.audit(p1["id"])
+		succeeded_event = next(e for e in events if e["kind"] == "Succeeded")
+		self.assertIsNone(frappe.parse_json(succeeded_event["detail"])["id"])
+		self.assertEqual(frappe_service.view(p2["id"])["id"], p2["id"])

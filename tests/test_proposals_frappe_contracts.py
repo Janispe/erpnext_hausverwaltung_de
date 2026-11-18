@@ -440,5 +440,17 @@ class PackageContracts(unittest.TestCase):
 		with self.assertRaises(self.Denied):
 			doc_actions.check_read_access(d.DOC_UPDATE_ACTION, table_payload, user="restricted")
 
+	def test_doc_actions_preview_formats_full_tables_and_long_strings(self):
+		doc_actions = importlib.import_module("hausverwaltung.proposals.doc_actions")
+		table_a = doc_actions._format_value([{"account": "4000", "amount": 100}, {"account": "4100", "amount": 200}])
+		table_b = doc_actions._format_value([{"account": "4000", "amount": 100}, {"account": "4100", "amount": 999}])
+		self.assertNotEqual(table_a, table_b)
+		self.assertIn("999", table_b)
+		self.assertIn("200", table_a)
+		long_a = "A" * 300 + "TAIL_ONE"
+		long_b = "A" * 300 + "TAIL_TWO"
+		self.assertEqual(doc_actions._format_value(long_a), long_a)
+		self.assertNotEqual(doc_actions._format_value(long_a), doc_actions._format_value(long_b))
+
 
 if __name__ == "__main__": unittest.main()

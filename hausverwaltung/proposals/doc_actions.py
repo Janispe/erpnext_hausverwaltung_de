@@ -103,7 +103,6 @@ BLOCKED_FIELDTYPES = frozenset(
 )
 
 MAX_TABLE_ROWS = 200
-MAX_PREVIEW_CHARS = 240
 
 
 def _label(text):
@@ -143,19 +142,12 @@ def _format_value(value):
 	if isinstance(value, bool):
 		return "Ja" if value else "Nein"
 	if isinstance(value, list):
-		summary = f"{len(value)} Einträge"
-		if value and isinstance(value[0], dict):
-			sample = ", ".join(f"{k}={v}" for k, v in list(value[0].items())[:3])
-			text = f"{summary} ({sample})"
-		else:
-			text = summary
-	elif isinstance(value, dict):
-		text = domain.encode(value)
-	else:
-		text = str(value)
-	if len(text) > MAX_PREVIEW_CHARS:
-		return text[: MAX_PREVIEW_CHARS - 1] + "…"
-	return text
+		if not value:
+			return "— (0 Einträge)"
+		return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+	if isinstance(value, dict):
+		return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+	return str(value)
 
 
 def _validate_link(link_doctype, link_name, user):
@@ -213,7 +205,7 @@ def _validate_table_rows(df, rows, user, *, parent_doctype, permission_type="rea
 				_validate_link(link_doctype, val, user)
 
 
-def _validate_values(meta, values, user, *, doc=None, permission_type="read"):
+def _validate_values(meta, values, user, *, doc=None, permission_type="read", check_state=True):
 	permitted = set(meta.get_permitted_fieldnames(user=user, permission_type=permission_type))
 	for fieldname, value in values.items():
 		if fieldname in BLOCKED_FIELDS:
@@ -223,7 +215,7 @@ def _validate_values(meta, values, user, *, doc=None, permission_type="read"):
 			raise ValueError(f"Field {fieldname} is not editable on {meta.name}")
 		if fieldname not in permitted:
 			_deny()
-		if doc is not None and int(doc.docstatus) == 1 and not df.allow_on_submit:
+		if check_state and doc is not None and int(doc.docstatus) == 1 and not df.allow_on_submit:
 			raise ValueError(f"Field {fieldname} cannot be updated after submit")
 		if df.fieldtype in ("Table", "Table MultiSelect"):
 			_validate_table_rows(
@@ -322,7 +314,7 @@ def check_read_access(action, payload, user=None, lock=False, *, preview=None):
 
 
 def check_reviewer_write_access(action, payload, user):
-	"""Verify the human reviewer holds real ERPNext create/write/submit and field rights."""
+	"""Verify only doctype/document/field permissions (not mutable docstatus)."""
 	meta = _allowed_doctype(payload["doctype"])
 	if action == domain.DOC_CREATE_ACTION:
 		if not frappe.has_permission(meta.name, "create", user=user):
@@ -331,22 +323,18 @@ def check_reviewer_write_access(action, payload, user):
 			not meta.is_submittable or not frappe.has_permission(meta.name, "submit", user=user)
 		):
 			_deny()
-		_validate_values(meta, payload["values"], user, permission_type="write")
+		_validate_values(meta, payload["values"], user, permission_type="write", check_state=False)
 		return None
 	doc = check_read_access(action, payload, user=user, lock=False)
 	if action == domain.DOC_UPDATE_ACTION:
 		if not frappe.has_permission(meta.name, "write", doc=doc, user=user):
 			_deny()
-		if int(doc.docstatus) == 2:
-			raise ValueError("Cancelled documents cannot be updated")
-		_validate_values(meta, payload["values"], user, doc=doc, permission_type="write")
+		_validate_values(meta, payload["values"], user, doc=doc, permission_type="write", check_state=False)
 		return doc
 	if not meta.is_submittable:
 		raise ValueError(f"{meta.name} is not submittable")
 	if not frappe.has_permission(meta.name, "submit", doc=doc, user=user):
 		_deny()
-	if int(doc.docstatus) != 0:
-		raise ValueError("Only draft documents can be submitted")
 	return doc
 
 
@@ -523,12 +511,30 @@ def execute(doc, body):
 
 	target_doc = frappe.get_doc(meta.name, payload["name"], for_update=True)
 	if action == domain.DOC_UPDATE_ACTION:
+		if int(target_doc.docstatus) == 2:
+			raise ValueError("Cancelled documents cannot be updated")
+		_validate_values(meta, payload["values"], user, doc=target_doc, permission_type="write")
 		_apply_values(target_doc, meta, payload["values"])
 		target_doc.save()
 		return {"doctype": meta.name, "id": target_doc.name, "docstatus": int(target_doc.docstatus)}
 
+	if int(target_doc.docstatus) != 0:
+		raise ValueError("Only draft documents can be submitted")
 	target_doc.submit()
 	return {"doctype": meta.name, "id": target_doc.name, "docstatus": int(target_doc.docstatus)}
+
+
+def can_read_result(doctype, name, user=None):
+	"""Check whether the user may read an executed result record without throwing."""
+	if not doctype or not name:
+		return False
+	messages = list(frappe.local.message_log)
+	try:
+		doc = frappe.get_doc(doctype, name)
+		return bool(frappe.has_permission(doctype, "read", doc=doc, user=user))
+	except (frappe.PermissionError, frappe.DoesNotExistError):
+		frappe.local.message_log = messages
+		return False
 
 
 def target_info(doc, body, reference_fn):
@@ -540,6 +546,11 @@ def target_info(doc, body, reference_fn):
 			result = frappe.parse_json(doc.result)
 			created_name = result.get("id")
 			if created_name:
-				return reference_fn(doctype, created_name)
+				messages = list(frappe.local.message_log)
+				try:
+					return reference_fn(doctype, created_name)
+				except (frappe.PermissionError, frappe.DoesNotExistError):
+					frappe.local.message_log = messages
+					return {"doctype": doctype, "name": None, "label": f"Erstellt: {doctype}"}
 		return {"doctype": doctype, "name": None, "label": f"Neu: {doctype}"}
 	return reference_fn(doctype, payload["name"])

@@ -403,6 +403,16 @@ def _invalidate(doc, cause="dependency_stale"):
 				_invalidate_metadata(child, parent, cause if parent == doc.name else "dependency_stale")
 
 
+def _visible_result(doc):
+	if not doc.result:
+		return None
+	result = frappe.parse_json(doc.result)
+	if getattr(doc, "action", domain.ACTION) in domain.DOC_ACTIONS and isinstance(result, dict):
+		if result.get("id") and not doc_actions.can_read_result(result.get("doctype"), result.get("id")):
+			return {"doctype": result.get("doctype"), "id": None, "docstatus": result.get("docstatus"), "redacted": True}
+	return result
+
+
 def _response(doc, body, current=None, stale_cause=None):
 	status = "Stale" if stale_cause else doc.status
 	return {"id": doc.name, "revision": doc.current_revision, "hash": doc.revision_hash,
@@ -414,7 +424,7 @@ def _response(doc, body, current=None, stale_cause=None):
 		"effects": body["preview"].get("effects", []), "limits": body["preview"].get("limits", []),
 		"stale_cause": stale_cause,
 		"conflicts": ["New revision and review required"] if status == "Stale" else [],
-		"result": frappe.parse_json(doc.result) if doc.result else None}
+		"result": _visible_result(doc)}
 
 
 def _stale_cause(doc, body, memo=None):
@@ -640,6 +650,14 @@ def list_proposals():
 	return result
 
 
+def _visible_audit_detail(doc, event):
+	if getattr(doc, "action", domain.ACTION) in domain.DOC_ACTIONS and event.kind in ("Succeeded", "ResultReused") and event.detail:
+		detail = frappe.parse_json(event.detail)
+		if isinstance(detail, dict) and detail.get("id") and not doc_actions.can_read_result(detail.get("doctype"), detail.get("id")):
+			return domain.encode({"doctype": detail.get("doctype"), "id": None, "docstatus": detail.get("docstatus"), "redacted": True})
+	return event.detail
+
+
 @_api
 def audit(proposal_id):
 	doc, body = _load(proposal_id)
@@ -648,7 +666,7 @@ def audit(proposal_id):
 		fields=["sequence", "kind", "actor", "creation", "number", "revision_hash", "detail"],
 		order_by="sequence", limit_page_length=1000)
 
-	return [dict(e, actor_name=_user_label(e.actor)) for e in events]
+	return [dict(e, detail=_visible_audit_detail(doc, e), actor_name=_user_label(e.actor)) for e in events]
 
 
 def _user_label(user):
