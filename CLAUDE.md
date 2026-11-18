@@ -68,9 +68,8 @@ docker exec hausverwaltung_peters-backend-1 \
 # im Workspace mit allen vier App-Repos; Details in docs/agent-pilot.md:
 ./scripts/agent_ci.sh --all
 
-# Cypress E2E (vom Host; wird nach Playwright umgezogen)
-yarn cy:run     # headless
-yarn cy:open    # interaktiv
+# E2E mit Playwright gegen eine frische Frappe-Testsite
+HV_PREVIEW_LOCAL_DOCKER=0 ./scripts/agent_ci.sh --e2e
 ```
 
 Convenience-Skripte unter `apps/hausverwaltung_peters/`:

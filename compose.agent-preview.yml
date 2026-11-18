@@ -6,7 +6,6 @@ services:
     image: *preview-image
     environment:
       HV_PREVIEW_MOUNTED_APPS: '1'
-      CYPRESS_INSTALL_BINARY: '0'
     volumes: !override &preview-mounts
       - sites:/home/frappe/frappe-bench/sites
       - assets:/home/frappe/frappe-bench/sites/assets

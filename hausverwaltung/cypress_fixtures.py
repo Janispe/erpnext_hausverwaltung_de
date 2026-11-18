@@ -1,4 +1,4 @@
-"""Test-Fixture-Helfer für Cypress-E2E-Tests.
+"""Test-Fixture-Helfer für Browser-E2E-Tests.
 
 Nur mit ``developer_mode=1`` oder ``allow_tests=1`` aufrufbar. Statt
 Sample-Daten zu seeden (was in
@@ -40,11 +40,11 @@ _COCKPIT_COMPLEX_TAG = re.compile(r"^__cy_cockpit_complex_\d+$")
 
 @frappe.whitelist()
 def cleanup_cockpit_complex(test_tag: str) -> dict:
-	"""Remove only documents created by one complex cockpit Cypress run."""
+	"""Remove only documents created by one complex cockpit test run."""
 	_check_dev_mode()
 	test_tag = str(test_tag or "").strip()
 	if not _COCKPIT_COMPLEX_TAG.fullmatch(test_tag):
-		frappe.throw("Ungültiger Cypress-Test-Tag für das Buchungs-Cockpit.")
+		frappe.throw("Ungültiger Test-Tag für das Buchungs-Cockpit.")
 
 	supplier = f"{test_tag} Supplier"
 	deleted = {
@@ -869,7 +869,7 @@ def seed(company: Optional[str] = None) -> dict:
 	Sucht eine Immobilie mit gesetzter Kostenstelle, deren Cost Center im
 	letzten vollständigen Geschäftsjahr GL-Entries auf Income- oder
 	Expense-Konten hat. Liefert ``None``-Werte falls keine geeignete Immobilie
-	gefunden — Tests skippen sich dann via ``this.skip()``.
+	gefunden — der Aufrufer entscheidet über einen Skip.
 
 	(Heißt ``seed`` aus historischen Gründen; legt KEINE Sample-Daten an.)
 	"""
@@ -996,7 +996,7 @@ def get_expected_eur_totals(
 def cleanup_test_eur(name: str) -> dict:
 	"""Löscht ein vom Test angelegtes EÜR-Dokument (Draft).
 
-	Best-effort: ignoriert Fehler, damit Cypress-after-Hooks nicht hart blocken.
+	Best-effort: ignoriert Fehler, damit Test-Cleanup nicht hart blocken.
 	"""
 	_check_dev_mode()
 	if not name:
@@ -1016,3 +1016,178 @@ def cleanup_test_eur(name: str) -> dict:
 		return {"deleted": False, "reason": "not found"}
 	except Exception as exc:
 		return {"deleted": False, "reason": str(exc)}
+
+
+def _check_disposable_site() -> None:
+	if not frappe.conf.get("hv_disposable_test_site"):
+		frappe.throw("Diese E2E-Fixture braucht eine Wegwerf-Testsite.", frappe.PermissionError)
+
+
+def seed_e2e_bankauszug() -> dict:
+	_check_disposable_site()
+	setup = ensure_bankimport_bank_account()
+	file = frappe.get_doc({
+		"doctype": "File", "file_name": "e2e-bankauszug.csv", "content": "Buchungstag;Betrag\n10.06.2026;1,00\n",
+		"is_private": 1,
+	}).insert()
+	doc = frappe.get_doc({
+		"doctype": "Bankauszug Import", "company": setup["company"],
+		"bank_account": setup["bank_account"], "csv_file": file.file_url,
+	}).insert()
+	return {"name": doc.name}
+
+
+def seed_e2e_betriebskostenabrechnung() -> dict:
+	from hausverwaltung.hausverwaltung.test_booking_safeguards import bk_fixture, bk_head
+
+	_check_disposable_site()
+	immobilie, _, _, _ = bk_fixture()
+	head = bk_head(immobilie)
+	head.submit()
+	return {"name": head.name}
+
+
+def seed_e2e_eur() -> dict:
+	from hausverwaltung.hausverwaltung.test_booking_safeguards import fixture
+
+	_check_disposable_site()
+	company, cost_center, immobilie, _, _ = fixture(compact=True)
+	_ensure_fiscal_year(company, 2025)
+	income = _ensure_income_account(company)
+	expense = _leaf_account(company, root_type="Expense")
+	cash = _leaf_account(company, account_type="Cash") or _leaf_account(company, account_type="Bank")
+	frappe.get_doc({
+		"doctype": "Journal Entry", "voucher_type": "Journal Entry", "company": company,
+		"posting_date": "2025-06-15", "accounts": [
+			{"account": cash, "debit_in_account_currency": 123.45, "cost_center": cost_center},
+			{"account": income, "credit_in_account_currency": 123.45, "cost_center": cost_center},
+			{"account": expense, "debit_in_account_currency": 40, "cost_center": cost_center},
+			{"account": cash, "credit_in_account_currency": 40, "cost_center": cost_center},
+		],
+	}).insert().submit()
+	return {"company": company, "immobilie": immobilie.name, "from_date": "2025-01-01", "to_date": "2025-12-31"}
+
+
+def seed_e2e_heizkosten(mode: str) -> dict:
+	from hausverwaltung.hausverwaltung.test_booking_safeguards import fixture, hk_head
+
+	_check_disposable_site()
+	if mode not in ("nullkosten", "doppelbuchung"):
+		frappe.throw("Unbekannter Modus für die Heizkosten-Fixture.")
+	duplicate = mode == "doppelbuchung"
+	_, _, immobilie, _, _ = fixture(compact=True)
+	head = hk_head(immobilie, costs=100 if duplicate else 0)
+	result = {"head": head.name}
+	if duplicate:
+		result["duplicate"] = hk_head(immobilie).name
+		head.submit()
+	return result
+
+
+def seed_e2e_lease() -> dict:
+	from hausverwaltung.hausverwaltung.test_booking_safeguards import fixture
+
+	_check_disposable_site()
+	_, _, _, _, lease = fixture(compact=True)
+	leases = frappe.get_all("Mietvertrag", filters={"kunde": lease.kunde}, fields=["name", "wohnung"])
+	return {"lease": {"name": lease.name, "kunde": lease.kunde, "wohnung": lease.wohnung}, "leases": leases}
+
+
+def seed_e2e_serienbrief() -> dict:
+	_check_disposable_site()
+	name = "HV UI Mietvertrag " + frappe.generate_hash(length=8)
+	template = frappe.get_doc({
+		"doctype": "Serienbrief Vorlage", "title": name, "haupt_verteil_objekt": "Mietvertrag",
+		"kategorie": _ensure_serienbrief_category(), "content_type": "Textbaustein (Rich Text)",
+		"content": "<p>E2E Mietvertrag</p>",
+	}).insert()
+	return {"vorlage": template.name, "title": template.title, "kategorie": template.kategorie}
+
+
+def seed_e2e_mieterwechsel(tag: str, zustand_ab: str) -> dict:
+	from hausverwaltung.hausverwaltung.test_booking_safeguards import fixture
+
+	_check_disposable_site()
+	_, _, immobilie, _, _ = fixture(compact=True)
+	flat = frappe.get_doc({
+		"doctype": "Wohnung", "immobilie": immobilie.name,
+		"name__lage_in_der_immobilie": tag, "gebaeudeteil": "VH",
+	}).insert()
+	frappe.get_doc({
+		"doctype": "Wohnungszustand", "wohnung": flat.name, "ab": zustand_ab,
+		"größe": 82.5, "anzahl_zimmer": 3, "betriebskostenabrechnung_durch_vermieter": 1,
+		"heizkostenabrechnung_durch_vermieter": 1, "wohnung_aktiv_genutzt": 1,
+	}).insert().submit()
+
+	def contact(first_name):
+		return frappe.get_doc({"doctype": "Contact", "first_name": first_name, "last_name": tag}).insert().name
+
+	return {"wohnung": flat.name, "altKontakt": contact("Alma"), "neuKontaktA": contact("Nora"), "neuKontaktB": contact("Milan")}
+
+
+def seed_e2e_purchase_cockpit() -> dict:
+	_check_disposable_site()
+	company = _resolve_company()
+	tag = "HV UI PI " + frappe.generate_hash(length=8)
+	supplier = frappe.get_doc({
+		"doctype": "Supplier", "supplier_name": tag, "supplier_type": "Company",
+		"supplier_group": frappe.db.get_value("Supplier Group", {"is_group": 0}),
+	}).insert()
+	parent = frappe.db.get_value("Account", {"company": company, "root_type": "Expense", "is_group": 1})
+	item = frappe.get_doc({
+		"doctype": "Item", "item_code": tag, "item_name": tag, "item_group": "All Item Groups",
+		"stock_uom": "Nos", "is_stock_item": 0,
+	}).insert()
+
+	def cost_type(doctype, suffix):
+		account = frappe.get_doc({
+			"doctype": "Account", "account_name": tag + suffix, "company": company,
+			"parent_account": parent, "root_type": "Expense", "is_group": 0,
+		}).insert()
+		values = {"doctype": doctype, "name1": tag + suffix, "konto": account.name, "artikel": item.name}
+		if doctype == "Betriebskostenart":
+			values.update(kategorie="Betriebskosten", verteilung="qm")
+		art = frappe.get_doc(values).insert()
+		return {"name": art.name, "konto": account.name}
+
+	return {
+		"tag": tag, "supplier": supplier.name, "costCenter": _ensure_cost_center(company),
+		"bk": cost_type("Betriebskostenart", " BK"), "nonBk": cost_type("Kostenart nicht umlagefaehig", " Sonstige"),
+	}
+
+
+def _ensure_e2e_rent_income_accounts(company: str) -> None:
+	settings = frappe.get_single("Hausverwaltung Einstellungen")
+	if any(row.company == company for row in settings.income_accounts):
+		return
+
+	parent = frappe.db.get_value(
+		"Account", {"company": company, "root_type": "Income", "is_group": 1}, order_by="lft desc"
+	)
+	accounts = {}
+	for field, name in (
+		("miete_income_account", "HV UI Miete"),
+		("bk_income_account", "HV UI Betriebskosten"),
+		("hk_income_account", "HV UI Heizkosten"),
+	):
+		accounts[field] = frappe.get_doc({
+			"doctype": "Account", "account_name": name, "company": company,
+			"parent_account": parent, "root_type": "Income", "is_group": 0,
+		}).insert().name
+	settings.append("income_accounts", {"company": company, **accounts})
+	if not settings.abschreibungskonto_forderungen:
+		settings.abschreibungskonto_forderungen = _leaf_account(company, root_type="Expense")
+	settings.save()
+
+
+def seed_e2e_sales_cockpit() -> dict:
+	from hausverwaltung.hausverwaltung.test_booking_safeguards import fixture
+
+	_check_disposable_site()
+	company, _, _, _, lease = fixture(compact=True)
+	account = _ensure_income_account(company)
+	if not frappe.db.get_value("Company", company, "default_income_account"):
+		frappe.db.set_value("Company", company, "default_income_account", account)
+	_ensure_e2e_rent_income_accounts(company)
+	item = _ensure_test_item(company, account)
+	return {"company": company, "mietvertrag": lease.name, "kunde": lease.kunde, "account": account, "item": item}

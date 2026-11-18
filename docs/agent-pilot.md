@@ -54,7 +54,7 @@ Alle Tests laufen über einen Einstieg: `./scripts/agent_ci.sh`. Er baut für je
 - Parallele Läufe aus verschiedenen Arbeitsordnern brauchen verschiedene Ports über `HV_PREVIEW_HTTP_PORT`.
 - Fehlersuche: `HV_TEST_MODULE=<modul> ./scripts/agent_ci.sh` führt statt des Smoke-Tests ein einzelnes Testmodul aus. Abgefangene Fehler der Site stehen in `error-log.json` im Bericht.
 - Ein Schritt kann „übersprungen“ melden. Derzeit betrifft das Playwright für die KI-Vorschläge: Der Test wechselt das Theme über den Einstellungsdialog neuerer Frappe-Versionen (Produktion 16.55), den das CI-Image mit Frappe 16.16 noch nicht hat. Er läuft wieder mit, sobald Dev und CI ein produktionsnahes Image nutzen.
-- Die alten Cypress-Specs unter `cypress/` laufen nicht mit. Sie werden nach Playwright umgezogen.
+- Die Playwright-Suite unter `HV_Bankimport/src_react/tests/frappe-e2e/` prüft Bankimport und Hausverwaltung gegen die von der E2E-Stufe vorbereitete Frappe-Site.
 
 ## Aufgaben für den ersten Durchlauf
 

@@ -28,7 +28,6 @@ RUN_UI_TESTS="${RUN_UI_TESTS:-1}"
 RUN_ALL_TESTS="${RUN_ALL_TESTS:-0}"
 KEEP_STACK="${KEEP_STACK:-0}"
 KEEP_ON_FAIL="${KEEP_ON_FAIL:-0}"
-CYPRESS_SPECS="${CYPRESS_SPECS:-cypress/integration/mieterwechsel_complex_ui.js}"
 
 TEST_MODULES_DEFAULT=(
 	"hausverwaltung.hausverwaltung.doctype.bankauszug_import.test_bankauszug_import"
@@ -234,24 +233,18 @@ else
 fi
 
 if [[ "${RUN_UI_TESTS}" == "1" ]]; then
+	compose exec -T backend bench --site "${SITE_NAME}" set-config --parse hv_disposable_test_site 1
+	compose exec -T backend bench --site "${SITE_NAME}" execute hausverwaltung.cypress_fixtures.prepare_e2e_site
 	log "Running real Frappe Playwright UI tests against isolated stack..."
 	(
 		cd "${REACT_DIR}"
 		FRAPPE_BASE_URL="http://127.0.0.1:${HTTP_PORT}" \
+		DOCKER_CONTEXT="$(docker context show)" \
 		FRAPPE_SITE="${SITE_NAME}" \
 		FRAPPE_BACKEND_CONTAINER="${PROJECT_NAME}-backend-1" \
 		FRAPPE_USER="Administrator" \
 		FRAPPE_PASSWORD="${ADMIN_PASSWORD}" \
 			npm run test:e2e:frappe
-	)
-
-	log "Running Cypress UI tests against isolated stack..."
-	(
-		cd "${APP_DIR}"
-		CYPRESS_BASE_URL="http://127.0.0.1:${HTTP_PORT}" \
-			npx cypress run \
-				--spec "${CYPRESS_SPECS}" \
-				--env "hv_user=Administrator,hv_password=${ADMIN_PASSWORD}"
 	)
 fi
 
