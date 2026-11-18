@@ -14,6 +14,20 @@ frappe.provide("hausverwaltung.hv_proposals");
 		if (!doctype || !name) return el("span", parent, text);
 		return el("a", parent, text).attr("href", frappe.utils.get_form_link(doctype, name));
 	};
+	const bankLink = (parent, text, name, row) => {
+		const params = new URLSearchParams({ import: name });
+		if (row) params.set("row", row);
+		return el("a", parent, text).attr("href", `/app/bankimport_v2?${params}`);
+	};
+	const money = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
+	const confidence = (parent, level) => {
+		const line = el("div", parent, "", "hv-prop-confidence");
+		el("span", line, "KI", "hv-pill");
+		const graph = el("span", line, "", `hv-prop-confidence-bars ${level}`).attr("aria-hidden", "true");
+		const active = { niedrig: 1, mittel: 2, hoch: 3 }[level];
+		for (let i = 0; i < 3; i++) el("span", graph, "", i < active ? "active" : "");
+		el("span", line, level);
+	};
 	const byColumn = (nodes) => {
 		const columns = new Map();
 		for (const node of nodes) {
@@ -27,7 +41,7 @@ frappe.provide("hausverwaltung.hv_proposals");
 			this.page = frappe.ui.make_app_page({ parent: wrapper, title: "KI-Vorschläge", single_column: true });
 			this.root = el("div", this.page.body, "", "hv hv-prop-root").attr({ tabindex: "0", "aria-label": "KI-Vorschläge" });
 			this.reviewer = frappe.user_roles.includes("HV Proposal Reviewer") && !frappe.user_roles.includes("HV Proposal Agent");
-			this.generation = 0; this.selection = 0; this.filter = "offen"; this.agent = "";
+			this.generation = 0; this.selection = 0; this.filter = "offen"; this.agent = ""; this.kind = "";
 			this.root.on("keydown", (e) => this.key(e));
 		}
 		async call(method, args = {}, context) {
@@ -87,7 +101,13 @@ frappe.provide("hausverwaltung.hv_proposals");
 			const agent = el("select", this.root, "", "hv-field").attr("aria-label", "Agent"); el("option", agent, "Alle Agenten").val("");
 			for (const [id,name] of new Map(this.packages.map(p => [p.agent.name, person(p.agent)]))) el("option", agent, name).val(id);
 			agent.val(this.agent).on("change", () => { this.agent = agent.val(); this.renderPackages(); });
-			const rows = this.packages.filter(p => (!this.filter || p.status === this.filter) && (!this.agent || p.agent.name === this.agent));
+			const kind = el("select", this.root, "", "hv-field").attr("aria-label", "Art");
+			for (const [value, title] of [["", "Alle Arten"], ["booking", "Buchungen"], ["contract", "Verträge"], ["letter", "Briefe"]]) {
+				el("option", kind, title).val(value);
+			}
+			kind.val(this.kind).on("change", () => { this.kind = kind.val(); this.renderPackages(); });
+			const rows = this.packages.filter(p => (!this.filter || p.status === this.filter)
+				&& (!this.agent || p.agent.name === this.agent) && (!this.kind || p.kind === this.kind));
 			if (!rows.length) return void el("p", this.root, "Keine Pakete in diesem Status.");
 			const table = el("table", this.root, "", "table").attr("aria-label", "Paketliste"), head = el("tr", el("thead", table));
 			for (const title of ["Paket","Agent","Umfang","Stand","Nächster Schritt","Eingang"]) el("th", head, title);
@@ -98,7 +118,11 @@ frappe.provide("hausverwaltung.hv_proposals");
 				row.on("click", open).on("keydown", e => { if (e.key === "Enter") open(); });
 				const title = el("td", row); el("strong", title, p.title);
 				el("div", title, p.total === 1 ? "Einzelvorschlag" : p.has_edges ? `Graph · ${p.lanes} ${p.lane_label || "Zeilen"}` : "ohne Abhängigkeiten", "hv-pill");
-				if (p.reference) el("p", title, p.reference.label);
+				if (p.reference) {
+					const reference = el("p", title, p.reference.label);
+					if (p.kind === "booking") bankLink(reference, " · im Bankimport öffnen", p.reference.name)
+						.on("click keydown", e => e.stopPropagation());
+				}
 				el("td", row, person(p.agent)); el("td", row, `${p.total} Vorschläge`); this.bar(el("td", row), p);
 				const action = el("td", row), pending = p.counts.Pending + p.counts.Stale;
 				if (pending || p.counts.Approved) button(action, pending ? `${pending} prüfen →` : `${p.counts.Approved} ausführen`, e => { e.stopPropagation(); open(); }, true);
@@ -117,6 +141,9 @@ frappe.provide("hausverwaltung.hv_proposals");
 			const switcher = el("div", controls, "", "hv-tabs").attr("aria-label", "Ansicht");
 			this.viewButtons = new Map();
 			for (const mode of (this.graph.nodes.length > 1 ? ["Graph","Liste"] : [])) this.viewButtons.set(mode, tab(switcher, mode, () => { this.mode = mode; this.draw(); }));
+			if (p.kind === "booking" && p.reference) {
+				bankLink(controls, "Im Bankimport öffnen →", p.reference.name).addClass("hv-btn");
+			}
 			this.bulkButton = this.reviewer ? button(controls, "Offene freigeben …", () => this.bulkReview()) : null;
 			this.executeButton = button(controls, "", () => this.batchExecute(this.displayedBindings("Approved")), true);
 			this.feedback = el("div", this.root).attr("role", "status");
@@ -216,15 +243,31 @@ frappe.provide("hausverwaltung.hv_proposals");
 		}
 		renderDetail(p, events) {
 			this.detail.empty(); const box = this.detail, node = this.graph.nodes.find(n => n.id === p.id);
-			el("small",box,p.target.doctype); pill(box,p.status); el("h3",box,p.title); link(box,p.target.label,p.target.doctype,p.target.name);
+			el("small",box,p.target.doctype); pill(box,p.status); el("h3",box,p.title); if (p.target.row) bankLink(box, p.target.label, p.target.name, p.target.row);
+			else link(box,p.target.label,p.target.doctype,p.target.name);
 			const siblings = this.graph.nodes.filter(n => n.lane?.key === node.lane?.key);
 			el("p",box,`${p.id} · Revision ${p.revision} · ${p.hash.slice(0,10)} · Zeile ${p.lane?.label || "Wurzel"} · Schritt ${siblings.findIndex(n=>n.id===p.id)+1} von ${siblings.length}`,"hv-prop-muted");
 			if (p.status === "Approved" || p.status === "Rejected") el("p",box,`${person(p.decision_by)} · ${time(p.decision_at)} · gilt nur für Revision ${p.revision}${p.reject_reason ? " · "+p.reject_reason : ""}`);
-			if (p.status === "Stale") { const causes = { baseline_changed:"Das Zieldokument hat sich geändert.",dependency_revised:"Ein Vorgänger wurde überarbeitet.",dependency_rejected:"Ein Vorgänger wurde abgelehnt.",dependency_stale:"Ein Vorgänger ist veraltet." }; el("p",box,causes[p.stale_cause?.cause] || "Die Vorschau ist veraltet."); }
-			if (p.status === "Succeeded") { const event = events.find(e => e.kind === "Succeeded"); el("p",box,`Ausgeführt ${time(event?.creation)}`); link(box,"Dokument öffnen →",p.result.doctype,p.result.id); }
+			if (p.status === "Stale") { const causes = { baseline_changed:"Das Zieldokument hat sich geändert.",dependency_revised:"Ein Vorgänger wurde überarbeitet.",dependency_rejected:"Ein Vorgänger wurde abgelehnt.",dependency_stale:"Ein Vorgänger ist veraltet.",superseded:"Ein neuer Lauf hat das Vorschlagspaket ersetzt." }; el("p",box,causes[p.stale_cause?.cause] || "Die Vorschau ist veraltet."); }
+			if (p.status === "Succeeded" && p.result) { const event = events.find(e => e.kind === "Succeeded"); el("p",box,`Ausgeführt ${time(event?.creation)}`); link(box,"Dokument öffnen →",p.result.doctype,p.result.id); }
 			el("h4",box,"Änderung"); const table = el("table",box,"","table"), header = el("tr",table); for (const t of ["Feld","Bisher","Neu"]) el("th",header,t);
 			for (const c of p.changes) { const row = el("tr",table); el("td",row,c.label); el("td",row,c.before); const after = el("td",row); if (c.kind === "text" && c.segments) for (const seg of c.segments) el(seg.op === "del" ? "del" : seg.op === "ins" ? "ins" : "span",after,seg.text); else after.text(c.after); }
-			el("h4",box,"Begründung des Agenten"); el("em",box,p.rationale || "Keine Begründung angegeben."); for (const source of p.sources || []) link(el("p",box),source.label,source.doctype,source.name);
+			if (p.postings?.length) {
+				el("h4", box, "Buchung (Vorschau)");
+				const postings = el("table", box, "", "table").attr("aria-label", "Buchung (Vorschau)");
+				const header = el("tr", el("thead", postings));
+				for (const label of ["Konto", "Soll", "Haben"]) el("th", header, label);
+				const body = el("tbody", postings);
+				for (const entry of p.postings) {
+					const row = el("tr", body);
+					el("td", row, entry.label);
+					el("td", row, entry.debit ? money.format(entry.debit) : "–");
+					el("td", row, entry.credit ? money.format(entry.credit) : "–");
+				}
+			}
+			el("h4",box,"Begründung des Agenten");
+			if (p.confidence) confidence(box, p.confidence.level);
+			el("em",box,p.rationale || "Keine Begründung angegeben."); for (const source of p.sources || []) link(el("p",box),source.label,source.doctype,source.name);
 			el("h4", box, "Im Graph");
 			for (const [title, items] of [["Vorgänger", p.predecessors], ["Nachfolger", p.successors]]) {
 				const group = el("div", box, "", "hv-prop-neighbors").attr({ role: "group", "aria-label": title });
@@ -234,18 +277,30 @@ frappe.provide("hausverwaltung.hv_proposals");
 			}
 			if (p.status === "Approved" && !node.executable) el("p",box,"Ausführen erst, wenn alle Vorgänger ausgeführt sind. Freigeben geht schon jetzt.");
 			el("h4",box,"Beim Ausführen"); const effects = el("ul",box).attr("aria-label", "Auswirkungen"); for (const effect of p.effects) el("li",effects,this.translateEffect(effect));
+			if (p.target.row && ["Pending", "Approved"].includes(p.status)) {
+				el("p", box, "Ausgeführt wird über dieselbe Logik wie ‚Übernehmen & buchen‘ im Bankimport.");
+			}
 			const actions = el("div",box,"","hv-prop-controls");
 			if (p.status === "Pending" && this.reviewer) { button(actions,`Revision ${p.revision} freigeben`,()=>this.review(p,true),true); button(actions,"Ablehnen …",()=>this.reasonDialog(p,false)).addClass("hv-btn-danger"); el("p",box,"Ablehnen macht alle Nachfolger veraltet."); }
 			else if (p.status === "Stale" && this.reviewer) button(actions,"Neue Revision anfordern",()=>this.reasonDialog(p,true),true);
 			else if (p.status === "Pending" || p.status === "Stale") el("p",box,"Nur Prüfer können freigeben.");
 			if (p.status === "Approved") { button(actions,"Ausführen",()=>this.batchExecute([bind(p)]),true).prop("disabled",!node.executable); el("p",box,"Speichert über die normale Frappe-Validierung."); }
 			el("h4",box,"Verlauf"); const history = el("ol",box).attr("aria-label","Verlauf");
-			const titles = { Created:"Vorschlag eingereicht",Revised:"Neue Revision",Approved:"Freigegeben",Rejected:"Abgelehnt",Stale:"Veraltet",Succeeded:"Ausgeführt",RevisionRequested:"Nachbesserung angefordert",ResultReused:"Ergebnis erneut abgerufen" };
-			for (const e of events) { const d = (e.detail ? JSON.parse(e.detail) : null) || {}; el("li",history,`${titles[e.kind] || "Ereignis"} · ${e.actor_name || frappe.user.full_name(e.actor)} · ${time(e.creation)}${d.note || d.reason ? " · "+(d.note || d.reason) : ""}`); }
+			const titles = { Created:"Vorschlag eingereicht",Revised:"Neue Revision",Approved:"Freigegeben",Rejected:"Abgelehnt",Stale:"Veraltet",Succeeded:"Ausgeführt",RevisionRequested:"Nachbesserung angefordert",ResultReused:"Ergebnis erneut abgerufen",ExecutionFailed:"Buchung fehlgeschlagen" };
+			for (const e of events) { const d = (e.detail ? JSON.parse(e.detail) : null) || {}; el("li",history,`${titles[e.kind] || "Ereignis"}${e.kind === "Approved" && d.surface === "bankimport" ? " (im Bankimport)" : ""} · ${e.actor_name || frappe.user.full_name(e.actor)} · ${time(e.creation)}${d.note || d.reason ? " · "+(d.note || d.reason) : ""}`); }
 			const technical = el("details",box); el("summary",technical,"Technische Details"); el("p",technical,p.hash); for (const limit of p.limits) el("p",technical,this.translateEffect(limit));
 		}
 		translateEffect(text) {
-			return ({ "Normal save updates modified/modified_by and generation":"Normales Speichern aktualisiert Änderungszeit, Bearbeiter und Generation.","Synthetic local label only":"Nur die Bezeichnung einer synthetischen Notiz.","No financial, mail, jobs or external actions":"Keine Buchungen, E-Mails, Jobs oder externen Aktionen.","Normal validation/hooks run only at execute; unknown hook effects are not simulated":"Validierungen und Hooks laufen erst beim Ausführen; unbekannte Hookfolgen werden nicht simuliert." })[text] || text;
+			return ({
+				bankimport_party: "Die Partei wird zugeordnet und die Banktransaktion angelegt.",
+				bankimport_invoice: "Die Zahlung wird gebucht und den ausgewählten Rechnungen zugeordnet.",
+				bankimport_split: "Die Zahlung wird gebucht und auf die ausgewählten Positionen verteilt.",
+				bankimport_abschlag: "Die Anzahlung wird gebucht und dem Abschlagsplan zugeordnet.",
+				bankimport_kredit: "Die Kreditrate wird gebucht und mit dem Bankumsatz verknüpft.",
+				bankimport_payment: "Die Zahlung wird als Vorauszahlung gebucht.",
+				bankimport_transfer: "Die interne Umbuchung wird gebucht.",
+				bankimport_journal: "Der Buchungssatz wird als Journalbuchung gebucht.",
+				"Normal save updates modified/modified_by and generation":"Normales Speichern aktualisiert Änderungszeit, Bearbeiter und Generation.","Synthetic local label only":"Nur die Bezeichnung einer synthetischen Notiz.","No financial, mail, jobs or external actions":"Keine Buchungen, E-Mails, Jobs oder externen Aktionen.","Normal validation/hooks run only at execute; unknown hook effects are not simulated":"Validierungen und Hooks laufen erst beim Ausführen; unbekannte Hookfolgen werden nicht simuliert." })[text] || text;
 		}
 		reasonDialog(p, request) {
 			const dialog = new frappe.ui.Dialog({ title:request ? "Neue Revision anfordern" : "Vorschlag ablehnen", fields:[{ fieldname:"reason",label:request ? "Notiz" : "Ablehnungsgrund",fieldtype:"Small Text",reqd:1 }],primary_action_label:request ? "Anfordern" : "Ablehnung bestätigen",primary_action:async values => { dialog.hide(); try { if (request) await this.call("request_revision",{binding:bind(p),note:values.reason}); else await this.call("review",{binding:bind(p),approve:false,reason:values.reason}); await this.route(); } catch (_) {} } }); dialog.show();

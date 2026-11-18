@@ -285,7 +285,7 @@ class PackageContracts(unittest.TestCase):
 	def test_execute_ready_topological_skip_and_stop(self):
 		refs={x:{"id":x,"revision":1,"hash":"a"*64} for x in "abc"}
 		docs={x:SimpleNamespace(name=x,target="SYN-"+x,package="g",status="Approved") for x in refs}
-		bodies={x:{"dependencies":[refs["a"]] if x=="b" else []} for x in refs}
+		bodies={x:{"action":d.ACTION,"payload":{"target":"SYN-"+x},"dependencies":[refs["a"]] if x=="b" else []} for x in refs}
 		self.fake.db.savepoint=lambda x:None;self.fake.db.rollback=lambda **kw:None
 		def execute(ref):
 			if ref["id"]=="b": raise ValueError("stop")

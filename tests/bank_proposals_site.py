@@ -1,0 +1,167 @@
+"""Authenticated Bankimport contracts on a disposable site's WSGI application."""
+import argparse
+import inspect
+import json
+from pathlib import Path
+import re
+from unittest.mock import patch
+
+CORE = "/api/method/hausverwaltung.proposals.frappe_service."
+BANK = "/api/method/hausverwaltung.proposals.bank_packages."
+PAGE = "/api/method/hausverwaltung.hausverwaltung.page.bankimport_v2.bankimport_v2."
+BOOKING = "/api/method/hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import."
+
+
+def run(site, auth_file, fixture_file):
+	import frappe
+	import frappe.app
+	from frappe.database.database import Database
+	from werkzeug.test import Client
+	from werkzeug.wrappers import Response
+	from hausverwaltung.proposals import bank_action
+	from hausverwaltung.hausverwaltung.utils import bankimport_rules
+
+	auth = json.loads(Path(auth_file).read_text())
+	assert auth["purpose"] == "hv-proposals-disposable-testauth"
+	fixture = json.loads(Path(fixture_file).read_text())
+	import_name, package, lanes = (fixture[key] for key in ("import_name", "package", "lanes"))
+	frappe.app._site = site
+	frappe.app._sites_path = str(Path.cwd())
+
+	def session(role):
+		client = Client(frappe.app.application, Response)
+		login = client.post("/api/method/login", json={"usr": f"bank-{role}@hv4.invalid", "pwd": auth[role]})
+		assert login.status_code == 200
+		desk = client.get("/desk/hv-proposals").get_data(as_text=True)
+		csrf = re.search(r'frappe\.csrf_token\s*=\s*["\']([^"\']+)', desk).group(1)
+
+		def post(path, data, status=200):
+			response = client.post(path, json=data, headers={"X-Frappe-CSRF-Token": csrf})
+			assert response.status_code == status, (
+				f"{path.rsplit('.', 1)[-1]}: HTTP {response.status_code}, "
+				f"{(response.json or {}).get('exc_type', '')}")
+			return (response.json or {}).get("message")
+
+		return post
+
+	agent, reviewer = session("agent"), session("reviewer")
+
+	def overview(actor=reviewer):
+		return actor(PAGE + "get_overview", {"import_name": import_name})
+
+	def row(index):
+		name = lanes[index]["row"]
+		return next(row for row in overview()["rows"] if row["id"] == name)
+
+	def bindings(item):
+		return [{"id": step["proposal"], "revision": step["revision"], "hash": step["hash"]}
+			for step in item["ki"]["steps"]]
+
+	def request(index, **values):
+		return {"import_name": import_name, "row": lanes[index]["row"], **values}
+
+	assert "ki" not in overview()["import"]
+	agent(BANK + "publish", {"import_name": import_name, "package": package, "lanes": lanes})
+	assert overview()["import"]["ki"]["package"] == package
+	assert not overview(agent)["import"]["ki"]["canAccept"]
+
+	observed = []
+	original = Database.sql
+
+	def checked_sql(db, query, *args, **kwargs):
+		if any(frame.function == "get_overview" for frame in inspect.stack()):
+			statement = str(query)
+			assert "FOR UPDATE" not in statement.upper()
+			assert not re.match(r"\s*(INSERT|UPDATE|DELETE|REPLACE|ALTER|CREATE|DROP|TRUNCATE)\b", statement, re.I)
+			observed.append(statement.split()[0])
+		return original(db, query, *args, **kwargs)
+
+	with patch.object(Database, "sql", checked_sql):
+		assert overview()["import"]["ki"]["counts"]["none"] == 1
+	assert observed, "SQL observer did not see the overview query"
+
+	chain = bindings(row(0))
+	agent(PAGE + "ki_accept", request(0, bindings=chain), status=403)
+	reviewer(CORE + "review", {"binding": chain[1], "approve": True})
+	failed_step = request(0, bindings=chain)
+	batch = {"import_name": import_name, "items": [{"row": lanes[0]["row"], "bindings": chain},
+		{"row": lanes[1]["row"], "bindings": bindings(row(1))}]}
+	with patch.object(bank_action.booking, "manually_reconcile_row", side_effect=frappe.ValidationError("Test failure")):
+		results = reviewer(PAGE + "ki_accept_many", batch)["results"]
+	assert results[0]["status"] == "Approved" and results[1]["status"] == "Skipped"
+	completed_party = row(0)
+	assert completed_party["party"] and completed_party["bankTransaction"]
+	assert [step["status"] for step in completed_party["ki"]["steps"]] == ["Succeeded", "Approved"]
+	assert not completed_party["paymentEntry"]
+	booked = reviewer(PAGE + "ki_accept", failed_step)
+	assert booked["ok"] and booked["results"][-1]["result"]["doctype"] == "Payment Entry"
+	assert reviewer(PAGE + "ki_accept", failed_step)["results"][-1]["result"] == booked["results"][-1]["result"]
+	audit = reviewer(CORE + "audit", {"proposal_id": chain[1]["id"]})
+	assert [event["kind"] for event in audit].count("Approved") == 1
+	assert [event["kind"] for event in audit].count("Succeeded") == 1
+	assert [event["kind"] for event in audit].count("ExecutionFailed") == 1
+
+	rule_row = row(2)
+	rule = {"name": "Synthetische Buchungsregel", "rule_code": bankimport_rules.BUILDER_RULE_CODE, "parameters": {
+		"builder": {"conditions": [{"field": "verwendungszweck", "operator": "contains", "value": "Testumsatz"}]},
+		"action": {"type": "booking", **fixture["journal"]}}}
+	with (patch.object(bankimport_rules, "_load_rules", return_value=[rule]),
+		patch.object(bankimport_rules, "_rule_scope_allows", return_value=True),
+		patch.object(bankimport_rules, "builder_matches_row", return_value=True)):
+		ruled = reviewer(BOOKING + "retry_auto_match", {"docname": import_name, "row_name": rule_row["id"]})
+	assert len(ruled["matched"]) == 1
+	assert row(2)["ki"]["decision"]["category"] == "adjusted_booked"
+	audit = reviewer(CORE + "audit", {"proposal_id": bindings(rule_row)[0]["id"]})
+	detail = json.loads(audit[-1]["detail"])
+	assert detail["source"] == "rule" and detail["auto"]
+	assert audit[-1]["actor"] == "bank-reviewer@hv4.invalid"
+
+	manual = row(3)
+	reviewer(BOOKING + "create_journal_entry_for_row", {
+		"docname": import_name, "row_name": manual["id"], **fixture["journal"]})
+	assert row(3)["ki"]["decision"]["category"] == "adjusted_booked"
+
+	unchanged = bindings(row(4))
+	assert reviewer(PAGE + "ki_request_revision", request(8))["state"] == "running"
+	assert row(8)["ki"]["state"] == "running"
+	agent(BANK + "answer_abstention", request(8, package=package, steps=fixture["abstention_answer"]))
+	assert row(8)["ki"]["status"] == "Pending"
+	assert bindings(row(4)) == unchanged
+	assert overview()["import"]["ki"]["package"] == package
+
+	stale = bindings(row(5))[0]
+	original_fingerprint = bank_action.fingerprint
+
+	def changed_fingerprint(row):
+		value = original_fingerprint(row)
+		return value | {"purpose_hash": "changed"} if row.name == lanes[5]["row"] else value
+
+	with patch.object(bank_action, "fingerprint", changed_fingerprint):
+		assert reviewer(PAGE + "ki_accept", request(5, bindings=[stale]))["status"] == "Stale"
+	assert reviewer(PAGE + "ki_request_revision", request(5, binding=stale))["state"] == "running"
+	updated = agent(CORE + "revise", {"binding": stale, **{key: lanes[5]["steps"][0][key]
+		for key in ("payload", "metadata")}})
+	assert updated["revision"] == stale["revision"] + 1
+	assert bindings(row(4)) == unchanged
+	reviewer(CORE + "review", {"binding": bindings(row(5))[0], "approve": True})
+	next_lanes = [{"row": lane["row"], "note": "Bereits bearbeitet."} if index in (0, 2, 3)
+		else lane for index, lane in enumerate(lanes)]
+	agent(BANK + "publish", {"import_name": import_name, "package": package + "-NEXT", "lanes": next_lanes})
+	assert overview()["import"]["ki"]["package"] == package + "-NEXT"
+	for proposal in (unchanged[0]["id"], updated["id"]):
+		view = reviewer(CORE + "view", {"proposal_id": proposal})
+		assert view["status"] == "Stale" and view["stale_cause"]["cause"] == "superseded"
+	print(json.dumps({"read_queries": len(observed), "party_then_invoice": "passed", "retry": "passed",
+		"manual_booking": "passed", "rule_booking": "passed", "abstention_answer": "passed",
+		"bound_answer": "passed", "superseded": "passed"}))
+
+
+if __name__ == "__main__":
+	parser = argparse.ArgumentParser()
+	parser.add_argument("--site", required=True)
+	parser.add_argument("--auth-file", required=True)
+	parser.add_argument("--fixture-file", required=True)
+	args = parser.parse_args()
+	config = json.loads((Path(args.site) / "site_config.json").read_text())
+	assert config.get("hv_disposable_test_site") and config.get("allow_tests")
+	run(args.site, args.auth_file, args.fixture_file)

@@ -400,7 +400,7 @@ def _booking_invoice_auto_match(*, row, bt, context):
 	context["invoice_match_result"] = match_result
 	if match_result.get("matched"):
 		_set_row_value(row, "payment_entry", match_result.get("payment_entry"))
-		_set_row_payment_document(row, "Payment Entry", match_result.get("payment_entry"))
+		_set_row_payment_document(row, "Payment Entry", match_result.get("payment_entry"), source="rule")
 		_set_row_value(row, "auto_match_message", match_result.get("message"))
 		return {
 			"matched": True,
@@ -440,7 +440,7 @@ def _booking_customer_settlement_auto_match(*, row, bt, context):
 	)
 	if match_result.get("matched"):
 		_set_row_value(row, "payment_entry", match_result.get("payment_entry"))
-		_set_row_payment_document(row, "Payment Entry", match_result.get("payment_entry"))
+		_set_row_payment_document(row, "Payment Entry", match_result.get("payment_entry"), source="rule")
 		_set_row_value(row, "auto_match_message", match_result.get("message"))
 		return {
 			"matched": True,
@@ -487,7 +487,7 @@ def _booking_kreditrate_auto_match(*, row, bt):
 	if kredit_result and kredit_result.get("match_count") == 1:
 		je_name = kredit_result["journal_entry"]
 		_set_row_value(row, "journal_entry", je_name)
-		_set_row_payment_document(row, "Journal Entry", je_name)
+		_set_row_payment_document(row, "Journal Entry", je_name, source="rule")
 		_set_row_value(row, "row_status", "success")
 		if kredit_result.get("created_from_statement"):
 			message = (
@@ -1072,7 +1072,7 @@ def _evaluate_builder_booking_action(*, rule: dict[str, Any], row, context: dict
 		)
 		reconcile_created_voucher_or_rollback(bt, "Journal Entry", je.name, flt(row.get("betrag")))
 		_set_row_value(row, "journal_entry", je.name)
-		_set_row_payment_document(row, "Journal Entry", je.name)
+		_set_row_payment_document(row, "Journal Entry", je.name, source="rule")
 		_set_row_value(row, "row_status", "success")
 		message = f"Builder-Regel: {flt(row.get('betrag')):.2f} EUR gegen {account}"
 		_set_row_value(row, "auto_match_message", message)

@@ -1,0 +1,66 @@
+{
+ "doctype": "DocType",
+ "name": "HV Bank Proposal Request",
+ "module": "HV Proposals",
+ "engine": "InnoDB",
+ "field_order": [
+  "package",
+  "row",
+  "proposal",
+  "revision",
+  "revision_hash",
+  "note",
+  "expires_at",
+  "resolved_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "package",
+   "fieldtype": "Link",
+   "label": "Package",
+   "options": "HV Proposal Package",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "row",
+   "fieldtype": "Data",
+   "label": "Row",
+   "reqd": 1
+  },
+  {
+   "fieldname": "proposal",
+   "fieldtype": "Link",
+   "label": "Proposal",
+   "options": "HV Action Proposal"
+  },
+  {
+   "fieldname": "revision",
+   "fieldtype": "Int",
+   "label": "Revision"
+  },
+  {
+   "fieldname": "revision_hash",
+   "fieldtype": "Data",
+   "label": "Revision Hash"
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note"
+  },
+  {
+   "fieldname": "expires_at",
+   "fieldtype": "Datetime",
+   "label": "Expires At",
+   "reqd": 1
+  },
+  {
+   "fieldname": "resolved_at",
+   "fieldtype": "Datetime",
+   "label": "Resolved At"
+  }
+ ],
+ "autoname": "hash",
+ "permissions": []
+}

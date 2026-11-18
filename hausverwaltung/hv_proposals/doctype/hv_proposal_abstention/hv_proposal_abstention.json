@@ -1,0 +1,26 @@
+{
+ "doctype": "DocType",
+ "name": "HV Proposal Abstention",
+ "module": "HV Proposals",
+ "engine": "InnoDB",
+ "field_order": [
+  "lane_key",
+  "note"
+ ],
+ "fields": [
+  {
+   "fieldname": "lane_key",
+   "fieldtype": "Data",
+   "label": "Lane Key",
+   "reqd": 1
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note",
+   "reqd": 1
+  }
+ ],
+ "istable": 1,
+ "permissions": []
+}

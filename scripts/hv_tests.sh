@@ -142,6 +142,20 @@ proposals_readonly() {
     _ "$site" "$container_auth"
 }
 
+bank_proposals_site() {
+  in_backend bash -c 'cd sites && ../env/bin/python ../apps/hausverwaltung/tests/bank_proposals_bootstrap.py --site "$1"' \
+    _ "$site" | tail -1 >"$tools/bank-proposals-fixture.json" || return
+  in_backend sh -c 'umask 077 && cat >"$1"' _ "$container_auth.bank" <"$tools/bank-proposals-fixture.json" || return
+  in_backend bash -c \
+    'cd sites && ../env/bin/python ../apps/hausverwaltung/tests/bank_proposals_site.py --site "$1" --auth-file "$2" --fixture-file "$2.bank"' \
+    _ "$site" "$container_auth"
+}
+
+bank_proposals_playwright() {
+  python3 "$repo/tests/bank_proposals_playwright.py" "$base_url" "$auth_file" "$tools/bank-proposals-fixture.json" \
+    "$(<"$tools/pw-py")" "$(<"$tools/chromium")"
+}
+
 proposals_playwright() {
   # Der Test wechselt das Theme wie ein Nutzer über den Einstellungsdialog, den erst neuere
   # Frappe-Versionen haben (Produktion 16.55). Ältere Dev-/CI-Images überspringen ihn sichtbar.
@@ -235,6 +249,8 @@ case "$stage" in
     step proposals-bootstrap proposals_bootstrap
     step proposals-http proposals_http
     step proposals-readonly proposals_readonly
+    step bank-proposals-site bank_proposals_site
+    step bank-proposals-playwright bank_proposals_playwright
     step proposals-playwright proposals_playwright
     step node-unit node_unit_tests
     step bankimport-vitest bankimport_vitest

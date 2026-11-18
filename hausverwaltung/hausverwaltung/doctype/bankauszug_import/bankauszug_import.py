@@ -195,6 +195,17 @@ def _recompute_doc_status(docname: str) -> str:
         filters={"parent": docname, "parenttype": "Bankauszug Import"},
         fields=["party_type", "party", "bank_transaction", "payment_entry", "journal_entry", "row_status"],
     )
+    status, offene_buchungen = _import_progress(rows)
+    frappe.db.set_value(
+        "Bankauszug Import",
+        docname,
+        {"status": status, "offene_buchungen": offene_buchungen},
+        update_modified=False,
+    )
+    return status
+
+
+def _import_progress(rows) -> tuple[str, int]:
     actionable_rows = [r for r in rows if not _row_is_skipped(r)]
     skipped = len(rows) - len(actionable_rows)
     total = len(actionable_rows)
@@ -238,13 +249,7 @@ def _recompute_doc_status(docname: str) -> str:
         if skipped:
             status += f" · Übersprungen: {skipped}"
 
-    frappe.db.set_value(
-        "Bankauszug Import",
-        docname,
-        {"status": status, "offene_buchungen": offene_buchungen},
-        update_modified=False,
-    )
-    return status
+    return status, offene_buchungen
 
 
 def _payment_entry_is_cancelled_or_missing(payment_entry_name: str | None) -> bool:
@@ -756,9 +761,15 @@ def _get_row_bank_transaction_name(row: Document) -> Optional[str]:
     return getattr(row, "bank_transaction", None) or getattr(row, "reference", None)
 
 
-def _set_row_payment_document(row: Document, payment_document_type: str, payment_document: str) -> None:
+def _set_row_payment_document(
+    row: Document, payment_document_type: str, payment_document: str, *, source: str = "manual"
+) -> None:
     row.db_set("payment_document_type", payment_document_type)
     row.db_set("payment_document", payment_document)
+    if frappe.conf.get("hv_proposals_synthetic_enabled") is True:
+        from hausverwaltung.proposals.bank_packages import linked_voucher
+
+        linked_voucher(row, payment_document_type, payment_document, source)
 
 
 def _row_set(row: Document, fieldname: str, value: Any) -> None:
@@ -1854,6 +1865,7 @@ def apply_party_to_row_and_relink(
     party_type: Optional[str] = None,
     party: Optional[str] = None,
     iban: Optional[str] = None,
+    skip_auto_create: int = 0,
 ) -> Dict[str, Any]:
     if not frappe.has_permission("Bankauszug Import", "write", doc=docname):
         frappe.throw("Keine Berechtigung zum Bearbeiten dieses Bankauszug Imports.")
@@ -1932,7 +1944,7 @@ def apply_party_to_row_and_relink(
     except Exception:
         pass
 
-    auto_create = _auto_create_transaction_for_ready_row(docname, row.name)
+    auto_create = {} if int(skip_auto_create) else _auto_create_transaction_for_ready_row(docname, row.name)
     _recompute_doc_status(docname)
 
     return {
@@ -3067,7 +3079,7 @@ def _refresh_and_persist_saldo(docname: str) -> None:
         )
 
 
-def _refresh_saldo_fields(doc) -> None:
+def _refresh_saldo_fields(doc, *, log_failure=True) -> None:
     """Berechnet ``saldo_laut_erp`` und ``saldo_differenz`` für das Bankkonto
     zum Stichtag ``saldo_datum``. Wenn keine Vergleichsdaten da sind, no-op.
     """
@@ -3084,10 +3096,11 @@ def _refresh_saldo_fields(doc) -> None:
         if doc.get("saldo_laut_csv") is not None:
             doc.saldo_differenz = flt(doc.saldo_laut_csv) - balance
     except Exception:
-        frappe.log_error(
-            frappe.get_traceback(),
-            f"Bankauszug Import: Saldo-Berechnung fehlgeschlagen ({doc.name})",
-        )
+        if log_failure:
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"Bankauszug Import: Saldo-Berechnung fehlgeschlagen ({doc.name})",
+            )
 
 
 @frappe.whitelist()

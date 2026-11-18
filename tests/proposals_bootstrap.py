@@ -14,6 +14,8 @@ from frappe.utils.password import update_password
 ACCOUNTS = {
 	"agent": ["HV Proposal Agent"],
 	"reviewer": ["HV Proposal Reviewer"],
+	"bank-agent": ["HV Proposal Agent", "Accounts User", "Accounts Manager", "Hausverwalter"],
+	"bank-reviewer": ["HV Proposal Reviewer", "Accounts User", "Accounts Manager", "Hausverwalter"],
 	# Das gesperrte Konto teilt das Agentenpasswort, siehe proposals_http_contracts.py.
 	"blocked": ["HV Proposal Agent"],
 }
@@ -47,7 +49,7 @@ def main():
 		if not (frappe.conf.get("allow_tests") and frappe.conf.get("hv_disposable_test_site")):
 			parser.error("Nur auf einer als Wegwerf-Testsite markierten Site")
 		for account, roles in ACCOUNTS.items():
-			ensure_account(account, roles, auth["agent" if account == "blocked" else account])
+			ensure_account(account, roles, auth["agent" if account == "blocked" else account.removeprefix("bank-")])
 		frappe.db.commit()
 	finally:
 		frappe.destroy()
