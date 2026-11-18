@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import frappe
 
+from hausverwaltung.hausverwaltung.doctype.bankauszug_import import bankauszug_import as bi
 from hausverwaltung.hausverwaltung.page.bankimport_v2 import bankimport_v2 as bv2
 
 
@@ -986,7 +987,7 @@ class TestGetOverviewSync(unittest.TestCase):
 				with patch("frappe.get_doc", return_value=doc) as get_doc, \
 					 patch("frappe.has_permission", return_value=True), \
 					 patch("frappe.db.set_value") as write, \
-					 patch.object(bv2, "_voucher_is_cancelled_or_missing", return_value=True) as cancelled, \
+					 patch.object(bi, "_voucher_is_cancelled_or_missing", return_value=True) as cancelled, \
 					 patch.object(bv2, "_refresh_saldo_fields"), \
 					 patch.object(bv2, "_suggest_invoice_for_row", return_value=None), \
 					 patch.object(bv2.bank_packages, "_latest", return_value=None):
@@ -1064,7 +1065,7 @@ class TestGetOverviewSync(unittest.TestCase):
 		with patch("frappe.get_doc", return_value=doc), \
 			 patch("frappe.has_permission", return_value=True), \
 			 patch.object(bv2, "_refresh_saldo_fields"), \
-			 patch.object(bv2, "_voucher_is_cancelled_or_missing", return_value=False), \
+			 patch.object(bi, "_voucher_is_cancelled_or_missing", return_value=False), \
 			 patch.object(bv2, "_bank_account_iban", return_value="DE-BANK"), \
 			 patch.object(bv2, "_suggest_invoice_for_row", return_value=None):
 			res = bv2.get_overview("IMP-OVERVIEW")
@@ -1129,7 +1130,7 @@ class TestGetOverviewSync(unittest.TestCase):
 		with patch("frappe.get_doc", return_value=doc), \
 			 patch("frappe.has_permission", return_value=True), \
 			 patch.object(bv2, "_refresh_saldo_fields"), \
-			 patch.object(bv2, "_voucher_is_cancelled_or_missing", return_value=False), \
+			 patch.object(bi, "_voucher_is_cancelled_or_missing", return_value=False), \
 			 patch.object(bv2, "_bank_account_iban", return_value="DE-BANK"), \
 			 patch.object(bv2, "_suggest_invoice_for_row", return_value=None):
 			res = bv2.get_overview("IMP-OVERVIEW")

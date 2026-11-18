@@ -197,10 +197,28 @@ def run(site, auth_file, fixture_file):
 	assert expected_contract["plan"][0]["journal_entry"]
 	assert expected_contract["plan"][0]["zinsanteil"] == 60 and expected_contract["plan"][0]["tilgungsanteil"] == 240
 	assert not competing_contract["plan"][0].get("journal_entry")
+	advance = fixture["advance"]
+	args = {key: advance[key] for key in ("import_name", "package", "lanes")}
+	assert advance["account"] != advance["other_account"]
+	agent(BANK + "publish", args, status=417)
+	check = reviewer(PAGE + "get_overview", {"import_name": advance["import_name"]})
+	assert "ki" not in check["import"], "Eine unzulässige Folgeaktion darf kein Paket hinterlassen"
+	advance_lane = advance["lanes"][0]
+	advance_lane["steps"][1]["payload"]["parameters"]["party"] = advance["customer"]
+	agent(BANK + "publish", args)
+	check = reviewer(PAGE + "get_overview", {"import_name": advance["import_name"]})
+	assert advance["account"] in {line["account"] for line in check["rows"][0]["ki"]["postings"]}
+	assert advance["other_account"] not in {line["account"] for line in check["rows"][0]["ki"]["postings"]}
+	booked_advance = reviewer(PAGE + "ki_accept", {"import_name": advance["import_name"], "row": advance_lane["row"],
+		"bindings": bindings(check["rows"][0])})
+	assert booked_advance["ok"]
+	payment = reviewer("/api/resource/Payment%20Entry/" + booked_advance["results"][1]["result"]["name"])
+	assert payment["party"] == advance["customer"]
+	assert payment["paid_from"] == advance["account"]
 	print(json.dumps({"read_queries": len(observed), "party_then_invoice": "passed", "retry": "passed",
 		"manual_booking": "passed", "rule_booking": "passed", "abstention_answer": "passed",
 		"bound_answer": "passed", "superseded": "passed", "additional_bookings": len(matrix["lanes"]),
-		"revised_predecessor": "passed", "row_only_party": "passed", "statement_credit_binding": "passed"}))
+		"revised_predecessor": "passed", "row_only_party": "passed", "statement_credit_binding": "passed", "advance_party_binding": "passed"}))
 
 
 if __name__ == "__main__":

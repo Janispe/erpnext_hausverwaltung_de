@@ -86,6 +86,30 @@ def _matrix(bank, key):
 		"statement_contract": statement_contract.name, "competing_contract": competing_contract.name}
 
 
+def _payment_chain(bank, key, primary):
+	company = bank["company"]
+	alternative = fixtures.seed_bankimport_over_under("ki-other-debtor-" + key, company)
+	primary_account = fixtures._ensure_receivable_account(company)
+	parent = frappe.db.get_value("Account", primary_account, "parent_account")
+	alternative_account = frappe.get_doc({"doctype": "Account", "account_name": f"KI Debitor {key}",
+		"company": company, "parent_account": parent, "account_type": "Receivable"}).insert().name
+	other_customer = frappe.get_doc("Customer", alternative["customer"])
+	other_customer.append("accounts", {"company": company, "account": alternative_account})
+	other_customer.save()
+
+	statement = _statement(bank["bank_account"], "advance-" + key)
+	statement.append("rows", {"buchungstag": "2026-04-04", "betrag": 26.50, "richtung": "Eingang",
+		"auftraggeber": "Synthetische Vorauszahlung", "verwendungszweck": f"Vorauszahlung {key}", "currency": "EUR"})
+	statement.insert()
+	row = statement.rows[0]
+	steps = [_step(statement, row, "assign_party", "Customer zuordnen", {
+		"party_type": "Customer", "party": primary["customer"]}),
+		_step(statement, row, "standalone_payment", "Vorauszahlung buchen", {
+			"party_type": "Customer", "party": other_customer.name})]
+	return {"import_name": statement.name, "package": f"BANK-ADVANCE-{key}", "lanes": [{"row": row.name, "steps": steps}],
+		"customer": primary["customer"], "account": primary_account, "other_account": alternative_account}
+
+
 def seed():
 	bank = fixtures.ensure_bankimport_bank_account()
 	key = uuid4().hex[:10]
@@ -122,9 +146,10 @@ def seed():
 	abstention_answer = [_step(imp, imp.rows[8], "journal_entry", "Nachgereichter Buchungssatz", journal, "niedrig")]
 
 	matrix = _matrix(bank, key)
+	advance = _payment_chain(bank, key, tenancy)
 	frappe.db.commit()
 	return {"import_name": imp.name, "package": f"BANK-{key}", "lanes": lanes, "abstention_answer": abstention_answer,
-		"journal": journal, "matrix": matrix}
+		"journal": journal, "matrix": matrix, "advance": advance}
 
 
 if __name__ == "__main__":

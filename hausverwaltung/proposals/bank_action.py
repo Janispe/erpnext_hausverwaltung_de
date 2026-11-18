@@ -79,6 +79,8 @@ def operation(action, payload, doc):
 		"abschlag": ("plan_row_name",), "transfer": ("other_bank_account",)}.get(spec.kind, ())
 	if any(not params.get(key) for key in required):
 		raise ValueError("Buchungsparameter fehlen.")
+	if spec.kind == "payment" and ("party_type" in params) != ("party" in params):
+		raise ValueError("Partei und Partei-Typ müssen zusammen angegeben werden.")
 	if spec.kind == "party" and params["party_type"] != "Customer":
 		raise ValueError("Die Parteizuordnung erfordert den Customer eines Mietvertrags.")
 	if spec.kind == "kredit" and (
@@ -292,7 +294,10 @@ def preview(action, payload, dependencies, package, own_id=None, user=None, lock
 			if saved["state"] != read_state:
 				raise ValueError("Parteizuordnung hat sich geändert.")
 			baseline = previous["preview"]["before"]["row"]
-		party_type, party = parent_params["party_type"], parent_params["party"]
+		bound_party = parent_params["party_type"], parent_params["party"]
+		if spec.kind == "payment" and params.get("party") and (party_type, party) != bound_party:
+			raise ValueError("Die Partei der Vorauszahlung weicht von der gebundenen Parteizuordnung ab.")
+		party_type, party = bound_party
 		modes.append(ref | {"mode": "real" if parent.status == "Succeeded" else "projected"})
 	if expected_row is not None and baseline != expected_row:
 		raise ValueError("Die Importzeile hat sich geändert.")

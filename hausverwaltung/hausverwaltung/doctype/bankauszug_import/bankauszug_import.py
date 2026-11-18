@@ -257,16 +257,66 @@ def _payment_entry_is_cancelled_or_missing(payment_entry_name: str | None) -> bo
     return _voucher_is_cancelled_or_missing("Payment Entry", payment_entry_name)
 
 
-def _voucher_is_cancelled_or_missing(doctype: str, voucher_name: str | None) -> bool:
+def _voucher_is_cancelled_or_missing(
+    doctype: str, voucher_name: str | None, *, for_update: bool = False
+) -> bool:
     if not voucher_name:
         return False
-    docstatus = frappe.db.get_value(doctype, voucher_name, "docstatus")
+    if for_update:
+        docstatus = frappe.db.get_value(doctype, voucher_name, "docstatus", for_update=True)
+    else:
+        docstatus = frappe.db.get_value(doctype, voucher_name, "docstatus")
     if docstatus is None:
         return True
     try:
         return int(docstatus) == 2
     except Exception:
         return False
+
+
+def _cancelled_single_voucher_links(row, *, for_update=False):
+    """Project the correction for ordinary voucher links, excluding payment splits."""
+    if row.get("customer_payments"):
+        return {}, set()
+
+    refs = {
+        field: (doctype, row.get(field))
+        for field, doctype in (("payment_entry", "Payment Entry"), ("journal_entry", "Journal Entry"))
+        if row.get(field)
+    }
+    if row.get("payment_document_type") in {"Payment Entry", "Journal Entry"} and row.get("payment_document"):
+        refs["payment_document"] = row.get("payment_document_type"), row.get("payment_document")
+
+    stale = {
+        (doctype, name) for doctype, name in sorted(set(refs.values()))
+        if (_voucher_is_cancelled_or_missing(doctype, name, for_update=True) if for_update
+            else _voucher_is_cancelled_or_missing(doctype, name))
+    }
+    if not stale:
+        return {}, stale
+
+    doctype, name = min(stale)
+    updates = {field: None for field, ref in refs.items() if ref in stale}
+    if "payment_document" in updates:
+        updates["payment_document_type"] = None
+    if set(refs.values()) == stale and not row.get("error"):
+        updates["row_status"] = None
+    updates["auto_match_message"] = f"Automatisch zurückgesetzt: {doctype} {name} ist storniert."
+    return updates, stale
+
+
+def _repair_cancelled_single_voucher_links(row, bt=None):
+    updates, stale = _cancelled_single_voucher_links(row, for_update=True)
+    if not stale:
+        return
+    if bt is not None:
+        removed = [entry for entry in bt.get("payment_entries") or []
+            if (entry.payment_document, entry.payment_entry) in stale]
+        for entry in removed:
+            bt.remove_payment_entry(entry)
+        if removed:
+            bt.save(ignore_permissions=True)
+    row.db_set(updates, update_modified=False)
 
 
 def sync_cancelled_voucher_links(
@@ -3173,6 +3223,7 @@ def _row_with_unreconciled_bt(
     row = _get_row_by_name(doc, row_name)
     bt_name = getattr(row, "bank_transaction", None)
     if not bt_name and create_missing_bank_transaction:
+        _repair_cancelled_single_voucher_links(row)
         result = create_bank_transactions(
             docname=docname,
             row_name=row_name,
@@ -3201,6 +3252,8 @@ def _row_with_unreconciled_bt(
     row = _get_row_by_name(doc, row_name)
     if getattr(row, "bank_transaction", None) != bt_name:
         frappe.throw("Die Bankauszug-Zeile wurde parallel geändert. Bitte neu laden.")
+    bt = frappe.get_doc("Bank Transaction", bt_name, for_update=True)
+    _repair_cancelled_single_voucher_links(row, bt)
     if (
         getattr(row, "payment_entry", None)
         or getattr(row, "journal_entry", None)
@@ -3212,7 +3265,6 @@ def _row_with_unreconciled_bt(
             f"({getattr(row, 'payment_entry', None) or getattr(row, 'journal_entry', None) or getattr(row, 'payment_document', None)})."
         )
 
-    bt = frappe.get_doc("Bank Transaction", bt_name, for_update=True)
     if bt.get("payment_entries"):
         frappe.throw(
             "Bank Transaction ist bereits reconciled — bitte vorher die "

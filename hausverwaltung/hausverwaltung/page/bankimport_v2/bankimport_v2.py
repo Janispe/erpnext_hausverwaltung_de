@@ -31,6 +31,7 @@ from frappe.utils.file_manager import save_file
 
 from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import import (
 	_cancel_voucher_for_row,
+	_cancelled_single_voucher_links,
 	_get_doc_for_update_if_exists,
 	_linked_voucher_for_row,
 	_linked_vouchers_for_row,
@@ -321,21 +322,15 @@ def get_overview(import_name: str) -> dict[str, Any]:
 
 
 def _project_cancelled_voucher(row):
-	for doctype, name in _linked_vouchers_for_row(row):
-		if not _voucher_is_cancelled_or_missing(doctype, name):
-			continue
-		if customer_payments(row):
-			for field, value in split_cancellation_values().items():
-				row.set(field, value)
+	if customer_payments(row):
+		if not any(_voucher_is_cancelled_or_missing(doctype, name)
+			for doctype, name in _linked_vouchers_for_row(row)):
 			return
-		field = "payment_entry" if doctype == "Payment Entry" else "journal_entry"
-		row.set(field, None)
-		row.set("payment_document_type", None)
-		row.set("payment_document", None)
-		if not row.get("error"):
-			row.set("row_status", None)
-		row.set("auto_match_message", f"Automatisch zurückgesetzt: {doctype} {name} ist storniert.")
-		break
+		updates = split_cancellation_values()
+	else:
+		updates, _ = _cancelled_single_voucher_links(row)
+	for field, value in updates.items():
+		row.set(field, value)
 
 
 @frappe.whitelist(methods=["POST"])

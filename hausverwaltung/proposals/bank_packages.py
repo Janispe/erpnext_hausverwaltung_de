@@ -120,7 +120,10 @@ def _new_action(package, doc, item, dependencies):
 	row = actions.row_document(doc, payload["row"])
 	meta = _metadata(item["metadata"], row.name)
 	actions.authorize_sources(meta["sources"])
-	operation_preview = actions.preview(action, payload, dependencies, package, lock=True)
+	try:
+		operation_preview = actions.preview(action, payload, dependencies, package, lock=True)
+	except ValueError as error:
+		frappe.throw(str(error))
 	key = domain.digest([package, row.name, action])
 	proposal = core._create_proposal(action, row.name, package, key, domain.digest([payload, dependencies, meta]))
 	body = core._revision(proposal, payload, dependencies, meta,
@@ -229,7 +232,10 @@ def revise(doc, old, payload, dependencies, meta):
 	meta = _metadata(meta, doc.target)
 	actions.authorize_sources(meta["sources"])
 	dependencies = core._json(dependencies, list) if dependencies is not None else old["dependencies"]
-	projection = actions.preview(doc.action, payload, dependencies, doc.package, doc.name, lock=True)
+	try:
+		projection = actions.preview(doc.action, payload, dependencies, doc.package, doc.name, lock=True)
+	except ValueError as error:
+		frappe.throw(str(error))
 	requests = [request for request in _pending_requests(doc.package, doc.target, lock=True)
 		if request.proposal == doc.name and request.revision == doc.current_revision and request.revision_hash == doc.revision_hash]
 	doc.current_revision += 1
