@@ -444,11 +444,14 @@ def _invalidate(doc, cause="dependency_stale"):
 				_invalidate_metadata(child, parent, cause if parent == doc.name else "dependency_stale")
 
 
-def _visible_result(doc):
+def _visible_result(doc, body=None):
 	if not doc.result:
 		return None
 	result = frappe.parse_json(doc.result)
-	if getattr(doc, "action", domain.ACTION) in domain.DOC_ACTIONS and isinstance(result, dict):
+	action = (body or {}).get("action") or getattr(doc, "action", domain.ACTION)
+	if action in registry.BANK_ACTION_NAMES and isinstance(result, dict):
+		return {key: result[key] for key in ("doctype", "id", "name", "by", "at") if key in result}
+	if action in domain.DOC_ACTIONS and isinstance(result, dict):
 		if result.get("id") and not doc_actions.can_read_result(result.get("doctype"), result.get("id")):
 			return {"doctype": result.get("doctype"), "id": None, "docstatus": result.get("docstatus"), "redacted": True}
 	return result
@@ -456,9 +459,6 @@ def _visible_result(doc):
 
 def _response(doc, body, current=None, stale_cause=None):
 	status = "Stale" if stale_cause else doc.status
-	result = frappe.parse_json(doc.result) if doc.result else None
-	if result and body.get("action") in registry.BANK_ACTION_NAMES:
-		result = {key: result[key] for key in ("doctype", "id", "name", "by", "at")}
 	return {"id": doc.name, "revision": doc.current_revision, "hash": doc.revision_hash,
 		"status": status, "approvable": status in {"Pending", "Approved"},
 		"package": doc.package, "dependencies": body["dependencies"],
@@ -468,7 +468,7 @@ def _response(doc, body, current=None, stale_cause=None):
 		"effects": body["preview"].get("effects", []), "limits": body["preview"].get("limits", []),
 		"stale_cause": stale_cause,
 		"conflicts": ["New revision and review required"] if status == "Stale" else [],
-		"result": _visible_result(doc)}
+		"result": _visible_result(doc, body)}
 
 
 def _stale_cause(doc, body, memo=None):

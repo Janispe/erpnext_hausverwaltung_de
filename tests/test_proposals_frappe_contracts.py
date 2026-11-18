@@ -385,6 +385,29 @@ class PackageContracts(unittest.TestCase):
 		with self.assertRaises(self.Denied):
 			self.service.enabled(d.DOC_CREATE_ACTION)
 
+	def test_bank_response_hides_internal_state_from_public_result(self):
+		doc = SimpleNamespace(
+			name="HVP-BANK-1",
+			current_revision=1,
+			revision_hash="a" * 64,
+			status="Succeeded",
+			package="BANK-1",
+			action="hv.bankimport.assign_party/v1",
+			result=json.dumps({
+				"doctype": "Bank Transaction",
+				"id": "BT-1",
+				"name": "BT-1",
+				"by": "rev@hv4.invalid",
+				"at": "2026-11-18",
+				"state": {"bank_transaction": "BT-1", "allocated": 100},
+			}),
+		)
+		body = {"action": doc.action, "dependencies": [], "preview": {}}
+		with patch.object(self.fake, "parse_json", json.loads, create=True):
+			response = self.service._response(doc, body)
+		self.assertEqual(set(response["result"]), {"doctype", "id", "name", "by", "at"})
+		self.assertNotIn("state", response["result"])
+
 	def test_doc_actions_module_has_no_bypass_and_blocks_sensitive_doctypes(self):
 		doc_actions = importlib.import_module("hausverwaltung.proposals.doc_actions")
 		tree = ast.parse((APP / "proposals/doc_actions.py").read_text())
