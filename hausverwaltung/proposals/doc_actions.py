@@ -174,17 +174,24 @@ def _allowed_doctype_or_readable_target(doctype):
 	return meta
 
 
-def _validate_table_rows(df, rows, user, *, parent_doctype, permission_type="read"):
+def _permitted_child_fields(parent_meta, child_meta, user, permission_type="read"):
+	if hasattr(parent_meta, "get_permlevel_access"):
+		levels = set(parent_meta.get_permlevel_access(permission_type=permission_type, user=user))
+		return {df.fieldname for df in child_meta.fields if (df.permlevel or 0) in levels}
+	return set(
+		child_meta.get_permitted_fieldnames(
+			parenttype=parent_meta.name, user=user, permission_type=permission_type
+		)
+	)
+
+
+def _validate_table_rows(parent_meta, df, rows, user, *, permission_type="read"):
 	if not isinstance(rows, list) or len(rows) > MAX_TABLE_ROWS:
 		raise ValueError(f"Table field {df.fieldname} must contain at most {MAX_TABLE_ROWS} rows")
 	child_meta = frappe.get_meta(df.options)
 	if not child_meta or not child_meta.istable or child_meta.is_virtual:
 		_deny()
-	child_permitted = set(
-		child_meta.get_permitted_fieldnames(
-			parenttype=parent_doctype, user=user, permission_type=permission_type
-		)
-	)
+	child_permitted = _permitted_child_fields(parent_meta, child_meta, user, permission_type)
 	for row in rows:
 		if not isinstance(row, dict):
 			raise ValueError(f"Table rows for {df.fieldname} must be objects")
@@ -219,7 +226,7 @@ def _validate_values(meta, values, user, *, doc=None, permission_type="read", ch
 			raise ValueError(f"Field {fieldname} cannot be updated after submit")
 		if df.fieldtype in ("Table", "Table MultiSelect"):
 			_validate_table_rows(
-				df, value, user, parent_doctype=meta.name, permission_type=permission_type
+				meta, df, value, user, permission_type=permission_type
 			)
 		elif df.fieldtype == "Link":
 			_validate_link(df.options, value, user)
@@ -232,15 +239,12 @@ def _validate_values(meta, values, user, *, doc=None, permission_type="read", ch
 			_validate_link(link_doctype, value, user)
 
 
-def _snapshot_field(doc, df, user=None):
+def _snapshot_field(doc, df, user=None, parent_meta=None):
 	raw = doc.get(df.fieldname)
 	if df.fieldtype in ("Table", "Table MultiSelect"):
 		child_meta = frappe.get_meta(df.options)
-		child_permitted = set(
-			child_meta.get_permitted_fieldnames(
-				parenttype=doc.doctype, user=user, permission_type="read"
-			)
-		)
+		parent_meta = parent_meta or frappe.get_meta(doc.doctype)
+		child_permitted = _permitted_child_fields(parent_meta, child_meta, user, "read")
 		editable = [
 			f.fieldname
 			for f in child_meta.fields
@@ -268,11 +272,7 @@ def _check_readable_fields(meta, payload, user, *, doc=None, preview=None):
 			child_meta = frappe.get_meta(df.options)
 			if not child_meta or not child_meta.istable or child_meta.is_virtual:
 				_deny()
-			child_permitted = set(
-				child_meta.get_permitted_fieldnames(
-					parenttype=meta.name, user=user, permission_type="read"
-				)
-			)
+			child_permitted = _permitted_child_fields(meta, child_meta, user, "read")
 			for row in value or []:
 				if not isinstance(row, dict) or any(key not in child_permitted for key in row):
 					_deny()
@@ -400,7 +400,8 @@ def preview(package, action, payload, dependencies, own_id, resolve, *, user=Non
 			raise ValueError("Cancelled documents cannot be updated")
 		_validate_values(meta, payload["values"], user, doc=doc, permission_type="read")
 		baseline_values = {
-			key: _snapshot_field(doc, meta.get_field(key), user=user) for key in sorted(payload["values"])
+			key: _snapshot_field(doc, meta.get_field(key), user=user, parent_meta=meta)
+			for key in sorted(payload["values"])
 		}
 		changes = [
 			{

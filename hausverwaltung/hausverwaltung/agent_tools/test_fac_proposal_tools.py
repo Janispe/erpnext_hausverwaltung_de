@@ -441,7 +441,7 @@ class TestDocActionsSite(unittest.TestCase):
 			{
 				"doctype": "Contact",
 				"first_name": "Erika",
-				"email_id": f"alt-{self.point}@hv4.invalid",
+				"email_ids": [{"email_id": f"alt-{self.point}@hv4.invalid", "is_primary": 1}],
 				"phone_nos": [{"phone": "030-111111"}],
 			}
 		).insert(ignore_permissions=True)
