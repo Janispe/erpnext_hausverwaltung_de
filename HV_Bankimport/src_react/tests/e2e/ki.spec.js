@@ -242,7 +242,24 @@ test("Enter bucht einen sichtbaren Button bei verdeckten Buchungsschritten nicht
 	await page.keyboard.press("Enter");
 	await expect(accept).toHaveText(/Beide übernehmen & buchen/);
 	await expect(page.getByText(/Partei zugeordnet, Buchung fehlgeschlagen/)).toHaveCount(0);
-	await accept.click();
+	await accept.focus();
+	await expect(accept).toBeFocused();
+	await page.keyboard.press("Enter");
+	await expect(page.getByText(/Partei zugeordnet, Buchung fehlgeschlagen/)).toBeVisible();
+});
+
+test("Enter scrollt sichtbare Buchungsschritte mit verdecktem Button nach oben", async ({ page }) => {
+	await page.setViewportSize({ width: 1024, height: 520 });
+	await page.goto(demo + "&row=r2");
+	const steps = suggestion(page).locator(".ki-steps");
+	const accept = suggestion(page).getByRole("button", { name: /Beide übernehmen & buchen/ });
+	await expect(steps).toBeInViewport({ ratio: 1 });
+	await expect(accept).not.toBeInViewport();
+	await page.keyboard.press("Enter");
+	await expect(steps).toBeInViewport({ ratio: 1 });
+	await expect(accept).toBeInViewport({ ratio: 1 });
+	await expect(page.getByText(/Partei zugeordnet, Buchung fehlgeschlagen/)).toHaveCount(0);
+	await page.keyboard.press("Enter");
 	await expect(page.getByText(/Partei zugeordnet, Buchung fehlgeschlagen/)).toBeVisible();
 });
 

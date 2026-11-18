@@ -649,7 +649,7 @@ export function App() {
 			}
 			return;
 		}
-		if (key === "Enter" && (event.target.closest("button:not([data-ki-key='Enter']), a") ||
+		if (key === "Enter" && (event.target.closest("button, a") ||
 			(scope.matches(".tx-card") && !event.target.closest("tr.selected")))) return;
 		if (!["Enter", "r", "Escape"].includes(key)) return;
 		const button = event.currentTarget.querySelector(`[data-ki-key="${key}"]:not(:disabled)`);
@@ -666,12 +666,8 @@ export function App() {
 				const bottom = Math.min(window.innerHeight, body.bottom);
 				const visible = (rect) => rect.height > 0 && rect.top >= top && rect.bottom <= bottom;
 
-				if (!visible(target)) {
+				if (!visible(target) || !visible(action)) {
 					steps.scrollIntoView({ block: "start" });
-					return;
-				}
-				if (!visible(action)) {
-					if (action.bottom - target.top <= bottom - top) button.scrollIntoView({ block: "nearest" });
 					return;
 				}
 			}
