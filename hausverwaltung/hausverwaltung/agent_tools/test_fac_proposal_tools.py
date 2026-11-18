@@ -253,15 +253,21 @@ class TestDocActionsSite(unittest.TestCase):
 			self.supplier_group = frappe.get_doc(
 				{"doctype": "Supplier Group", "supplier_group_name": f"Testgruppe {point}", "is_group": 0}
 			).insert(ignore_permissions=True).name
+		prev_request = getattr(frappe.local, "request", None)
+		prev_manager = getattr(frappe.local, "login_manager", None)
+		prev_sid = frappe.local.session.get("sid")
+		self.addCleanup(lambda: setattr(frappe.local, "request", prev_request))
+		self.addCleanup(lambda: setattr(frappe.local, "login_manager", prev_manager))
+		self.addCleanup(lambda: frappe.local.session.__setitem__("sid", prev_sid))
 		self.enterContext(patch.dict(frappe.conf, {"hv_proposals_enabled": True}))
 
 	def _human_session(self, user):
 		sid = self.point + "_" + user
-		request = SimpleNamespace(cookies={"sid": sid}, headers={})
 		self.frappe.set_user(user)
-		self.enterContext(patch.object(self.frappe.local, "request", request, create=True))
-		self.enterContext(patch.object(self.frappe.local, "login_manager", SimpleNamespace(user=user), create=True))
-		self.enterContext(patch.dict(self.frappe.local.session, {"sid": sid, "user": user}))
+		self.frappe.local.request = SimpleNamespace(cookies={"sid": sid}, headers={})
+		self.frappe.local.login_manager = SimpleNamespace(user=user)
+		self.frappe.local.session["sid"] = sid
+		self.frappe.local.session["user"] = user
 
 	def test_create_approve_execute_and_update_stale_lifecycle(self):
 		from hausverwaltung.hausverwaltung.agent_tools.proposal_tools import (
