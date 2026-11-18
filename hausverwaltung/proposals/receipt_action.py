@@ -8,11 +8,11 @@ from frappe.utils import flt
 from hausverwaltung.hausverwaltung.page.buchen_cockpit import buchen_cockpit as cockpit
 from hausverwaltung.hausverwaltung.services import receipt_pilot as pilot
 
-from . import domain, frappe_service as engine
+from . import domain, frappe_service as engine, registry
 from .frappe_guards import service_scope
 
 ACTION = "hv.cash_receipt.book/v1"
-POLICY = "hv.cash_receipt.accounting-review/v1"
+POLICY = registry.ACTIONS[ACTION].policy
 ACCOUNTING_ROLES = {"Accounts User", "Accounts Manager"}
 BOOKING_TEXT = ("lieferant", "rechnungsname", "remarks", "zahlungsbemerkung")
 ROW_TEXT = ("kostenart", "umlagefaehig", "wohnung")

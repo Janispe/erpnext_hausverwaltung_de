@@ -1259,6 +1259,7 @@ def _create_or_book_rate_from_statement(
 	supplier: Optional[str] = None,
 	reference_text: Optional[str] = None,
 	tolerance_amount: float = 0.01,
+	expected_contract: Optional[str] = None,
 ) -> Optional[dict]:
 	hints = _extract_loan_match_hints(reference_text)
 	if not _loan_hints_are_complete(hints):
@@ -1269,7 +1270,7 @@ def _create_or_book_rate_from_statement(
 		vertragsnummer=hints["vertragsnummer"],
 		supplier=supplier,
 	)
-	if len(contracts) != 1:
+	if len(contracts) != 1 or (expected_contract and contracts[0].name != expected_contract):
 		return None
 
 	target_amount = abs(flt(amount))

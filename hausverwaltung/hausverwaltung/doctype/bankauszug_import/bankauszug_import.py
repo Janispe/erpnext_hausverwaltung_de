@@ -13,6 +13,7 @@ from hausverwaltung.hausverwaltung.utils.document_naming import make_document_na
 from hausverwaltung.hausverwaltung.utils.booking_locks import lock_accounting_scope
 from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
     apply_booking_rules_for_row,
+    booking_rule_active,
     get_party_by_unique_iban,
     match_party_for_row,
     normalize_iban,
@@ -195,6 +196,17 @@ def _recompute_doc_status(docname: str) -> str:
         filters={"parent": docname, "parenttype": "Bankauszug Import"},
         fields=["party_type", "party", "bank_transaction", "payment_entry", "journal_entry", "row_status"],
     )
+    status, offene_buchungen = _import_progress(rows)
+    frappe.db.set_value(
+        "Bankauszug Import",
+        docname,
+        {"status": status, "offene_buchungen": offene_buchungen},
+        update_modified=False,
+    )
+    return status
+
+
+def _import_progress(rows) -> tuple[str, int]:
     actionable_rows = [r for r in rows if not _row_is_skipped(r)]
     skipped = len(rows) - len(actionable_rows)
     total = len(actionable_rows)
@@ -238,29 +250,73 @@ def _recompute_doc_status(docname: str) -> str:
         if skipped:
             status += f" · Übersprungen: {skipped}"
 
-    frappe.db.set_value(
-        "Bankauszug Import",
-        docname,
-        {"status": status, "offene_buchungen": offene_buchungen},
-        update_modified=False,
-    )
-    return status
+    return status, offene_buchungen
 
 
 def _payment_entry_is_cancelled_or_missing(payment_entry_name: str | None) -> bool:
     return _voucher_is_cancelled_or_missing("Payment Entry", payment_entry_name)
 
 
-def _voucher_is_cancelled_or_missing(doctype: str, voucher_name: str | None) -> bool:
+def _voucher_is_cancelled_or_missing(
+    doctype: str, voucher_name: str | None, *, for_update: bool = False
+) -> bool:
     if not voucher_name:
         return False
-    docstatus = frappe.db.get_value(doctype, voucher_name, "docstatus")
+    if for_update:
+        docstatus = frappe.db.get_value(doctype, voucher_name, "docstatus", for_update=True)
+    else:
+        docstatus = frappe.db.get_value(doctype, voucher_name, "docstatus")
     if docstatus is None:
         return True
     try:
         return int(docstatus) == 2
     except Exception:
         return False
+
+
+def _cancelled_single_voucher_links(row, *, for_update=False):
+    """Project the correction for ordinary voucher links, excluding payment splits."""
+    if row.get("customer_payments"):
+        return {}, set()
+
+    refs = {
+        field: (doctype, row.get(field))
+        for field, doctype in (("payment_entry", "Payment Entry"), ("journal_entry", "Journal Entry"))
+        if row.get(field)
+    }
+    if row.get("payment_document_type") in {"Payment Entry", "Journal Entry"} and row.get("payment_document"):
+        refs["payment_document"] = row.get("payment_document_type"), row.get("payment_document")
+
+    stale = {
+        (doctype, name) for doctype, name in sorted(set(refs.values()))
+        if (_voucher_is_cancelled_or_missing(doctype, name, for_update=True) if for_update
+            else _voucher_is_cancelled_or_missing(doctype, name))
+    }
+    if not stale:
+        return {}, stale
+
+    doctype, name = min(stale)
+    updates = {field: None for field, ref in refs.items() if ref in stale}
+    if "payment_document" in updates:
+        updates["payment_document_type"] = None
+    if set(refs.values()) == stale and not row.get("error"):
+        updates["row_status"] = None
+    updates["auto_match_message"] = f"Automatisch zurückgesetzt: {doctype} {name} ist storniert."
+    return updates, stale
+
+
+def _repair_cancelled_single_voucher_links(row, bt=None):
+    updates, stale = _cancelled_single_voucher_links(row, for_update=True)
+    if not stale:
+        return
+    if bt is not None:
+        removed = [entry for entry in bt.get("payment_entries") or []
+            if (entry.payment_document, entry.payment_entry) in stale]
+        for entry in removed:
+            bt.remove_payment_entry(entry)
+        if removed:
+            bt.save(ignore_permissions=True)
+    row.db_set(updates, update_modified=False)
 
 
 def sync_cancelled_voucher_links(
@@ -759,6 +815,11 @@ def _get_row_bank_transaction_name(row: Document) -> Optional[str]:
 def _set_row_payment_document(row: Document, payment_document_type: str, payment_document: str) -> None:
     row.db_set("payment_document_type", payment_document_type)
     row.db_set("payment_document", payment_document)
+    if frappe.conf.get("hv_proposals_synthetic_enabled") is True:
+        from hausverwaltung.proposals.bank_packages import linked_voucher
+
+        source = "rule" if booking_rule_active.get() else "manual"
+        linked_voucher(row, payment_document_type, payment_document, source)
 
 
 def _row_set(row: Document, fieldname: str, value: Any) -> None:
@@ -1854,6 +1915,7 @@ def apply_party_to_row_and_relink(
     party_type: Optional[str] = None,
     party: Optional[str] = None,
     iban: Optional[str] = None,
+    only_row: int = 0,
 ) -> Dict[str, Any]:
     if not frappe.has_permission("Bankauszug Import", "write", doc=docname):
         frappe.throw("Keine Berechtigung zum Bearbeiten dieses Bankauszug Imports.")
@@ -1864,6 +1926,24 @@ def apply_party_to_row_and_relink(
     changed_row = False
     if _party_relink_block_reason(row):
         frappe.throw("Die Partei einer gebuchten oder abgestimmten Zeile kann nicht neu verknüpft werden. Bitte zuerst die Buchung sicher zurücksetzen.")
+
+    if cint(only_row):
+        transaction = _get_row_bank_transaction_name(row)
+        if _row_is_skipped(row) or (transaction and frappe.get_all(
+            "Bankauszug Import Row",
+            filters={"name": ["!=", row.name]},
+            or_filters={"bank_transaction": transaction, "reference": transaction},
+            pluck="name",
+            limit_page_length=1,
+        )):
+            frappe.throw("Diese Banktransaktion ist bereits mit einer anderen Importzeile verknüpft.")
+        if party_type not in SUPPORTED_PARTY_TYPES or not party:
+            frappe.throw("Eine eindeutige Partei ist für die Zeilenzuordnung erforderlich.")
+        _row_set(row, "party_type", party_type)
+        _row_set(row, "party", party)
+        update = _set_bt_party(row, party_type, party)
+        _recompute_doc_status(docname)
+        return {"row": row.name, "row_party_type": party_type, "row_party": party, "relink": update}
 
     # When called from Customer/Supplier auto-link with an IBAN, ensure a
     # Bank Account record exists for the party so the IBAN→party lookup works
@@ -3067,7 +3147,7 @@ def _refresh_and_persist_saldo(docname: str) -> None:
         )
 
 
-def _refresh_saldo_fields(doc) -> None:
+def _refresh_saldo_fields(doc, *, log_failure=True) -> None:
     """Berechnet ``saldo_laut_erp`` und ``saldo_differenz`` für das Bankkonto
     zum Stichtag ``saldo_datum``. Wenn keine Vergleichsdaten da sind, no-op.
     """
@@ -3084,10 +3164,11 @@ def _refresh_saldo_fields(doc) -> None:
         if doc.get("saldo_laut_csv") is not None:
             doc.saldo_differenz = flt(doc.saldo_laut_csv) - balance
     except Exception:
-        frappe.log_error(
-            frappe.get_traceback(),
-            f"Bankauszug Import: Saldo-Berechnung fehlgeschlagen ({doc.name})",
-        )
+        if log_failure:
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"Bankauszug Import: Saldo-Berechnung fehlgeschlagen ({doc.name})",
+            )
 
 
 @frappe.whitelist()
@@ -3142,6 +3223,7 @@ def _row_with_unreconciled_bt(
     row = _get_row_by_name(doc, row_name)
     bt_name = getattr(row, "bank_transaction", None)
     if not bt_name and create_missing_bank_transaction:
+        _repair_cancelled_single_voucher_links(row)
         result = create_bank_transactions(
             docname=docname,
             row_name=row_name,
@@ -3170,6 +3252,8 @@ def _row_with_unreconciled_bt(
     row = _get_row_by_name(doc, row_name)
     if getattr(row, "bank_transaction", None) != bt_name:
         frappe.throw("Die Bankauszug-Zeile wurde parallel geändert. Bitte neu laden.")
+    bt = frappe.get_doc("Bank Transaction", bt_name, for_update=True)
+    _repair_cancelled_single_voucher_links(row, bt)
     if (
         getattr(row, "payment_entry", None)
         or getattr(row, "journal_entry", None)
@@ -3181,7 +3265,6 @@ def _row_with_unreconciled_bt(
             f"({getattr(row, 'payment_entry', None) or getattr(row, 'journal_entry', None) or getattr(row, 'payment_document', None)})."
         )
 
-    bt = frappe.get_doc("Bank Transaction", bt_name, for_update=True)
     if bt.get("payment_entries"):
         frappe.throw(
             "Bank Transaction ist bereits reconciled — bitte vorher die "
@@ -4648,7 +4731,9 @@ def assign_kreditrate_to_bank_row(
 
 
 @frappe.whitelist()
-def book_kreditrate_from_statement_for_row(docname: str, row_name: str) -> Dict[str, Any]:
+def book_kreditrate_from_statement_for_row(
+    docname: str, row_name: str, expected_contract: Optional[str] = None
+) -> Dict[str, Any]:
     """Legt eine Kreditrate aus dem Kontoauszug-Verwendungszweck an und bucht sie.
 
     Für den Fall, dass noch keine Planrate existiert (z.B. Darlehen ohne erfassten
@@ -4660,6 +4745,7 @@ def book_kreditrate_from_statement_for_row(docname: str, row_name: str) -> Dict[
     für eine einzelne, bereits importierte Zeile.
     """
     from hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag import (
+        _create_or_book_rate_from_statement,
         link_bank_transaction_to_kreditvertrag_rate,
     )
 
@@ -4667,13 +4753,15 @@ def book_kreditrate_from_statement_for_row(docname: str, row_name: str) -> Dict[
     if row.get("richtung") != "Ausgang":
         frappe.throw("Kreditraten-Buchung ist nur für Ausgänge möglich.")
 
-    result = link_bank_transaction_to_kreditvertrag_rate(
+    match = _create_or_book_rate_from_statement if expected_contract else link_bank_transaction_to_kreditvertrag_rate
+    result = match(
         bank_account=bt.bank_account,
         posting_date=bt.date,
         amount=row.get("betrag"),
         bank_transaction=bt.name,
         supplier=row.get("party") if row.get("party_type") == "Supplier" else None,
         reference_text=row.get("verwendungszweck"),
+        **({"expected_contract": expected_contract} if expected_contract else {}),
     )
 
     if result and result.get("match_count") == 1:

@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import frappe
 
+from hausverwaltung.hausverwaltung.doctype.bankauszug_import import bankauszug_import as bi
 from hausverwaltung.hausverwaltung.page.bankimport_v2 import bankimport_v2 as bv2
 
 
@@ -70,6 +71,9 @@ class _OverviewRow:
 
 	def get(self, key, default=None):
 		return getattr(self, key, default)
+
+	def set(self, key, value):
+		setattr(self, key, value)
 
 	def as_dict(self):
 		return {
@@ -968,73 +972,59 @@ class TestGetOverviewSync(unittest.TestCase):
 		self.assertEqual(phase, 3)
 		self.assertEqual(bv2._row_status(row, phase), "error")
 
-	def test_get_overview_syncs_cancelled_payment_entry_before_response(self):
+	def test_get_overview_projects_cancelled_links_without_writing_or_locking(self):
+		for doctype, name, field in (
+			("Payment Entry", "PE-CANCELLED", "paymentEntry"),
+			("Journal Entry", "JE-CANCELLED", "journalEntry"),
+		):
+			with self.subTest(doctype=doctype):
+				row = _OverviewRow()
+				row.payment_entry = name if doctype == "Payment Entry" else None
+				row.journal_entry = name if doctype == "Journal Entry" else None
+				row.payment_document_type = doctype
+				row.payment_document = name
+				doc = _OverviewDoc(row)
+				with patch("frappe.get_doc", return_value=doc) as get_doc, \
+					 patch("frappe.has_permission", return_value=True), \
+					 patch("frappe.db.set_value") as write, \
+					 patch.object(bi, "_voucher_is_cancelled_or_missing", return_value=True) as cancelled, \
+					 patch.object(bv2, "_refresh_saldo_fields"), \
+					 patch.object(bv2, "_suggest_invoice_for_row", return_value=None), \
+					 patch.object(bv2.bank_packages, "_latest", return_value=None):
+					result = bv2.get_overview("IMP-OVERVIEW")
+				get_doc.assert_any_call("Bankauszug Import", "IMP-OVERVIEW")
+				self.assertFalse(any(call.kwargs.get("for_update") for call in get_doc.call_args_list))
+				write.assert_not_called()
+				cancelled.assert_called_once_with(doctype, name)
+				out = result["rows"][0]
+				self.assertIsNone(out[field])
+				self.assertIsNone(out["paymentDocument"])
+				self.assertEqual(out["phase"], 3)
+				self.assertEqual(out["rowStatus"], "phase3-open")
+				self.assertNotIn("ki", result["import"])
+				self.assertNotIn("ki", out)
+
+	def test_get_overview_keeps_split_vouchers_after_partial_cancellation(self):
 		row = _OverviewRow()
+		row.customer_payments = [
+			{"payment_entry": "PE-CANCELLED", "customer": "MIETER-1", "amount": 125},
+			{"payment_entry": "PE-ALIVE", "customer": "MIETER-2", "amount": 500},
+		]
 		doc = _OverviewDoc(row)
-
-		def sync_side_effect(import_name=None, payment_entry_name=None):
-			row.payment_entry = None
-			row.payment_document = None
-			row.payment_document_type = None
-			row.row_status = None
-			row.auto_match_message = (
-				"Automatisch zurückgesetzt: Payment Entry PE-CANCELLED ist storniert."
-			)
-			return {"cleared": 1}
-
 		with patch("frappe.get_doc", return_value=doc), \
 			 patch("frappe.has_permission", return_value=True), \
-			 patch.object(bv2, "sync_cancelled_payment_entry_links", side_effect=sync_side_effect) as sync, \
-			 patch.object(bv2, "sync_cancelled_journal_entry_links") as sync_journal, \
-			 patch.object(bv2, "_recompute_doc_status"), \
+			 patch("frappe.db.set_value") as writes, \
+			 patch.object(bv2, "_voucher_is_cancelled_or_missing", side_effect=lambda dt, name: name == "PE-CANCELLED"), \
 			 patch.object(bv2, "_refresh_saldo_fields"), \
-			 patch.object(bv2, "_persist_saldo_fields"), \
-			 patch.object(bv2, "_suggest_invoice_for_row", return_value=None):
-			res = bv2.get_overview("IMP-OVERVIEW")
+			 patch.object(bv2, "_suggest_invoice_for_row", return_value=None), \
+			 patch.object(bv2.bank_packages, "overview", return_value=None):
+			out = bv2.get_overview("IMP-OVERVIEW")["rows"][0]
 
-		sync.assert_called_once_with(import_name="IMP-OVERVIEW")
-		sync_journal.assert_called_once_with(import_name="IMP-OVERVIEW")
-		out = res["rows"][0]
-		self.assertIsNone(out["paymentEntry"])
-		self.assertIsNone(out["paymentDocument"])
+		writes.assert_not_called()
 		self.assertEqual(out["phase"], 3)
-		self.assertEqual(out["rowStatus"], "phase3-open")
-
-	def test_get_overview_syncs_cancelled_journal_entry_before_response(self):
-		row = _OverviewRow()
-		row.payment_entry = None
-		row.payment_document_type = "Journal Entry"
-		row.payment_document = "JE-CANCELLED"
-		row.journal_entry = "JE-CANCELLED"
-		doc = _OverviewDoc(row)
-
-		def sync_side_effect(import_name=None, journal_entry_name=None):
-			row.journal_entry = None
-			row.payment_document = None
-			row.payment_document_type = None
-			row.row_status = None
-			row.auto_match_message = (
-				"Automatisch zurückgesetzt: Journal Entry JE-CANCELLED ist storniert."
-			)
-			return {"cleared": 1}
-
-		with patch("frappe.get_doc", return_value=doc), \
-			 patch("frappe.has_permission", return_value=True), \
-			 patch.object(bv2, "sync_cancelled_payment_entry_links") as sync_payment, \
-			 patch.object(bv2, "sync_cancelled_journal_entry_links", side_effect=sync_side_effect) as sync_journal, \
-			 patch.object(bv2, "_recompute_doc_status"), \
-			 patch.object(bv2, "_refresh_saldo_fields"), \
-			 patch.object(bv2, "_persist_saldo_fields"), \
-			 patch.object(bv2, "_suggest_invoice_for_row", return_value=None):
-			res = bv2.get_overview("IMP-OVERVIEW")
-
-		sync_payment.assert_called_once_with(import_name="IMP-OVERVIEW")
-		sync_journal.assert_called_once_with(import_name="IMP-OVERVIEW")
-		out = res["rows"][0]
-		self.assertIsNone(out["journalEntry"])
+		self.assertEqual(out["rowStatus"], "needs_review")
 		self.assertIsNone(out["paymentDocument"])
-		self.assertEqual(out["phase"], 3)
-		self.assertEqual(out["rowStatus"], "phase3-open")
+		self.assertEqual([entry["payment_entry"] for entry in out["customerPayments"]], ["PE-CANCELLED", "PE-ALIVE"])
 
 	def test_get_overview_returns_outgoing_amounts_as_negative_and_counts_phases(self):
 		incoming = _OverviewRow()
@@ -1074,11 +1064,8 @@ class TestGetOverviewSync(unittest.TestCase):
 
 		with patch("frappe.get_doc", return_value=doc), \
 			 patch("frappe.has_permission", return_value=True), \
-			 patch.object(bv2, "sync_cancelled_payment_entry_links"), \
-			 patch.object(bv2, "sync_cancelled_journal_entry_links"), \
-			 patch.object(bv2, "_recompute_doc_status"), \
 			 patch.object(bv2, "_refresh_saldo_fields"), \
-			 patch.object(bv2, "_persist_saldo_fields"), \
+			 patch.object(bi, "_voucher_is_cancelled_or_missing", return_value=False), \
 			 patch.object(bv2, "_bank_account_iban", return_value="DE-BANK"), \
 			 patch.object(bv2, "_suggest_invoice_for_row", return_value=None):
 			res = bv2.get_overview("IMP-OVERVIEW")
@@ -1103,11 +1090,7 @@ class TestGetOverviewSync(unittest.TestCase):
 
 		with patch("frappe.get_doc", return_value=doc), \
 			 patch("frappe.has_permission", return_value=True), \
-			 patch.object(bv2, "sync_cancelled_payment_entry_links"), \
-			 patch.object(bv2, "sync_cancelled_journal_entry_links"), \
-			 patch.object(bv2, "_recompute_doc_status"), \
 			 patch.object(bv2, "_refresh_saldo_fields"), \
-			 patch.object(bv2, "_persist_saldo_fields"), \
 			 patch.object(bv2, "_suggest_invoice_for_row", side_effect=Exception("matcher down")):
 			res = bv2.get_overview("IMP-OVERVIEW")
 
@@ -1146,11 +1129,8 @@ class TestGetOverviewSync(unittest.TestCase):
 
 		with patch("frappe.get_doc", return_value=doc), \
 			 patch("frappe.has_permission", return_value=True), \
-			 patch.object(bv2, "sync_cancelled_payment_entry_links"), \
-			 patch.object(bv2, "sync_cancelled_journal_entry_links"), \
-			 patch.object(bv2, "_recompute_doc_status"), \
 			 patch.object(bv2, "_refresh_saldo_fields"), \
-			 patch.object(bv2, "_persist_saldo_fields"), \
+			 patch.object(bi, "_voucher_is_cancelled_or_missing", return_value=False), \
 			 patch.object(bv2, "_bank_account_iban", return_value="DE-BANK"), \
 			 patch.object(bv2, "_suggest_invoice_for_row", return_value=None):
 			res = bv2.get_overview("IMP-OVERVIEW")

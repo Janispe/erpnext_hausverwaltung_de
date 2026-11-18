@@ -31,19 +31,22 @@ from frappe.utils.file_manager import save_file
 
 from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import import (
 	_cancel_voucher_for_row,
+	_cancelled_single_voucher_links,
 	_get_doc_for_update_if_exists,
 	_linked_voucher_for_row,
 	_linked_vouchers_for_row,
 	_lock_bank_booking_scope,
 	_other_import_row_references_voucher,
-	_persist_saldo_fields,
-	_recompute_doc_status,
+	_import_progress,
 	_refresh_saldo_fields,
 	parse_csv,
-	sync_cancelled_journal_entry_links,
-	sync_cancelled_payment_entry_links,
+	_voucher_is_cancelled_or_missing,
 )
-from hausverwaltung.hausverwaltung.doctype.bankauszug_import.customer_payment_split import customer_payments
+from hausverwaltung.hausverwaltung.doctype.bankauszug_import.customer_payment_split import (
+	customer_payments,
+	split_cancellation_values,
+)
+from hausverwaltung.proposals import bank_packages
 from hausverwaltung.hausverwaltung.utils.display_titles import get_titles, title_of
 from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
 	BOOKING_RULE_DOCTYPE,
@@ -234,24 +237,11 @@ def get_overview(import_name: str) -> dict[str, Any]:
 	doc = frappe.get_doc("Bankauszug Import", import_name)
 	frappe.has_permission("Bankauszug Import", "read", doc=doc, throw=True)
 
-	# Status + Saldo frisch halten (sonst stale nach nachträglichen Buchungen).
-	try:
-		sync_cancelled_payment_entry_links(import_name=doc.name)
-		sync_cancelled_journal_entry_links(import_name=doc.name)
-	except Exception:
-		frappe.log_error(
-			frappe.get_traceback(),
-			f"Bankimport v2: Storno-Sync fehlgeschlagen ({doc.name})",
-		)
-		frappe.clear_last_message()
-
-	try:
-		_recompute_doc_status(doc.name)
-		_refresh_saldo_fields(doc)
-		_persist_saldo_fields(doc)
-		doc.reload()
-	except Exception:
-		frappe.clear_last_message()
+	# Read a fresh projection without repairing stored links or aggregates.
+	for row in doc.rows:
+		_project_cancelled_voucher(row)
+	status, open_bookings = _import_progress([row.as_dict() for row in doc.rows])
+	_refresh_saldo_fields(doc, log_failure=False)
 
 	rows_out: list[dict] = []
 	counts = {1: 0, 2: 0, 3: 0, 4: 0}
@@ -306,7 +296,7 @@ def get_overview(import_name: str) -> dict[str, Any]:
 			}
 		)
 
-	return {
+	response = {
 		"import": {
 			"name": doc.name,
 			"title": doc.title,
@@ -318,12 +308,50 @@ def get_overview(import_name: str) -> dict[str, Any]:
 			"saldoLautERP": flt(doc.get("saldo_laut_erp")),
 			"saldoDifferenz": flt(doc.get("saldo_differenz")),
 			"saldoStichtag": str(doc.get("saldo_datum")) if doc.get("saldo_datum") else None,
-			"status": doc.status,
-			"offeneBuchungen": doc.get("offene_buchungen"),
+			"status": status,
+			"offeneBuchungen": open_bookings,
 		},
 		"rows": _with_party_labels(rows_out),
 		"phaseCounts": counts,
 	}
+
+	ki = bank_packages.overview(doc, response["rows"])
+	if ki is not None:
+		response["import"]["ki"] = ki
+	return response
+
+
+def _project_cancelled_voucher(row, *, for_update=False):
+	options = {"for_update": True} if for_update else {}
+	if customer_payments(row):
+		if not any(_voucher_is_cancelled_or_missing(doctype, name, **options)
+			for doctype, name in _linked_vouchers_for_row(row)):
+			return
+		updates = split_cancellation_values()
+	else:
+		updates, _ = _cancelled_single_voucher_links(row, **options)
+	for field, value in updates.items():
+		row.set(field, value)
+
+
+@frappe.whitelist(methods=["POST"])
+def ki_accept(import_name, row, bindings):
+	return bank_packages.accept(import_name, row, bindings)
+
+
+@frappe.whitelist(methods=["POST"])
+def ki_accept_many(import_name, items):
+	return bank_packages.accept_many(import_name, items)
+
+
+@frappe.whitelist(methods=["POST"])
+def ki_reject(import_name, row, binding, category, reason):
+	return bank_packages.reject(import_name, row, binding, category, reason)
+
+
+@frappe.whitelist(methods=["POST"])
+def ki_request_revision(import_name, row, binding=None, note=""):
+	return bank_packages.request_revision(import_name, row, binding, note)
 
 
 # Customers are shown by person name (the tenancy is visible elsewhere); other

@@ -11,3 +11,25 @@
 .hv-prop-node-head{display:flex;align-items:center;gap:8px;width:100%;min-width:0}
 .hv-prop-node-glyph{display:inline-flex;align-items:center;justify-content:center;flex:0 0 22px;width:22px;height:22px;border-radius:6px;background:var(--control-bg,#f3f4f5);color:var(--hv-prop-status);font-size:12px;font-weight:700}
 .hv-prop-node-caption{display:flex;flex-direction:column;min-width:0;flex:1}
+
+.hv-prop-confidence, .hv-prop-confidence-bars {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.hv-prop-confidence {
+	gap: 8px;
+	margin-bottom: 6px;
+}
+
+.hv-prop-confidence-bars span {
+	width: 12px;
+	height: 5px;
+	border-radius: 2px;
+	background: var(--border-color);
+}
+
+.hv-prop-confidence-bars.hoch .active { background: var(--green-500); }
+.hv-prop-confidence-bars.mittel .active { background: var(--orange-500); }
+.hv-prop-confidence-bars.niedrig .active { background: var(--red-500); }

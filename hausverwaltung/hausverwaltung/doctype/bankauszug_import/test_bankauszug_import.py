@@ -4366,6 +4366,42 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         self.assertEqual(row.row_status, "success")
         self.assertEqual(row.reference, row.bank_transaction)
 
+    def test_overview_keeps_legacy_link_until_manual_booking_repairs_it(self):
+        doc = self._make_import([self._neutral_row(betrag=38.17, richtung="Ausgang")])
+        row = doc.rows[0]
+        transaction_result = bi.create_bank_transaction_for_row(
+            doc.name, row.name, allow_missing_party=1, skip_auto_match=1,
+        )
+        self.assertFalse(transaction_result["errors"])
+        bank_transaction = transaction_result["created"][0]
+        self.created_docs.append(("Bank Transaction", bank_transaction))
+        missing_voucher = f"HV-MISSING-JE-{self.suffix}"
+        frappe.db.set_value("Bankauszug Import Row", row.name, {
+            "journal_entry": missing_voucher, "payment_document_type": "Journal Entry",
+            "payment_document": missing_voucher, "row_status": "success",
+        })
+        bt = frappe.get_doc("Bank Transaction", bank_transaction)
+        stale = bt.append("payment_entries", {
+            "payment_document": "Journal Entry", "payment_entry": missing_voucher,
+            "allocated_amount": 38.17,
+        })
+        stale.db_insert()
+        bt.db_set({"allocated_amount": 38.17, "unallocated_amount": 0, "status": "Reconciled"})
+
+        overview_row = bv2.get_overview(doc.name)["rows"][0]
+        self.assertEqual(overview_row["phase"], 3)
+        self.assertIsNone(overview_row["paymentDocument"])
+        self.assertEqual(frappe.db.get_value(row.doctype, row.name, "journal_entry"), missing_voucher)
+        self.assertTrue(frappe.db.exists(stale.doctype, stale.name))
+
+        result = bi.create_journal_entry_for_row(
+            doc.name, row.name, account=self.expense_account, cost_center=self.cost_center,
+        )
+        self.created_docs.append(("Journal Entry", result["journal_entry"]))
+        self.assertFalse(frappe.db.exists(stale.doctype, stale.name))
+        self.assertEqual(doc.reload().rows[0].journal_entry, result["journal_entry"])
+        self.assertEqual([entry.payment_entry for entry in bt.reload().payment_entries], [result["journal_entry"]])
+
     def test_real_customer_refund_reconciles_credit_note_and_bank_transaction(self):
         iban = self._valid_test_iban(91)
         customer = self._make_customer("BK Guthaben", iban)
