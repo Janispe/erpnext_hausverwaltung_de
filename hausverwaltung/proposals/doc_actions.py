@@ -177,7 +177,7 @@ def _allowed_doctype_or_readable_target(doctype):
 def _permitted_child_fields(parent_meta, child_meta, user, permission_type="read"):
 	if hasattr(parent_meta, "get_permlevel_access"):
 		levels = set(parent_meta.get_permlevel_access(permission_type=permission_type, user=user))
-		return {df.fieldname for df in child_meta.fields if (df.permlevel or 0) in levels}
+		return {df.fieldname for df in child_meta.fields if int(df.permlevel or 0) in levels}
 	return set(
 		child_meta.get_permitted_fieldnames(
 			parenttype=parent_meta.name, user=user, permission_type=permission_type

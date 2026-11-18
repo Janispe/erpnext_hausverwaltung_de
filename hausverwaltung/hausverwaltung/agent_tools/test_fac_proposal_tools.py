@@ -667,19 +667,20 @@ class TestDocActionsSite(unittest.TestCase):
 		viewer_role = frappe.get_doc(
 			{"doctype": "Role", "role_name": f"DocProp View {self.point}"}
 		).insert(ignore_permissions=True).name
-		frappe.get_doc(
-			{
-				"doctype": "Custom DocPerm",
-				"parent": "Supplier",
-				"parenttype": "DocType",
-				"parentfield": "permissions",
-				"role": viewer_role,
-				"permlevel": 0,
-				"read": 1,
-			}
-		).insert(ignore_permissions=True)
-		frappe.clear_cache(doctype="Supplier")
-		self.addCleanup(frappe.clear_cache, doctype="Supplier")
+		for dt in ("Supplier", "Supplier Group"):
+			frappe.get_doc(
+				{
+					"doctype": "Custom DocPerm",
+					"parent": dt,
+					"parenttype": "DocType",
+					"parentfield": "permissions",
+					"role": viewer_role,
+					"permlevel": 0,
+					"read": 1,
+				}
+			).insert(ignore_permissions=True)
+			frappe.clear_cache(doctype=dt)
+			self.addCleanup(frappe.clear_cache, doctype=dt)
 		viewer_user = f"{self.point}_view@hv4.invalid"
 		frappe.get_doc(
 			{
