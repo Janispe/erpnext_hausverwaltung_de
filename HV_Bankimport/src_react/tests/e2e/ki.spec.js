@@ -302,6 +302,30 @@ for (const { width, height, needsTwoViews } of [
 }
 
 
+test("Enter beginnt nach Verlassen des Panels erneut bei den Buchungsschritten", async ({ page }) => {
+	await page.setViewportSize({ width: 844, height: 390 });
+	await page.goto(demo + "&row=r2");
+	const panel = page.locator(".match-panel-wrap");
+	const steps = suggestion(page).locator(".ki-steps");
+	const accept = suggestion(page).getByRole("button", { name: /Beide übernehmen & buchen/ });
+	await expect(panel).toBeFocused();
+	await page.keyboard.press("Enter");
+	await expect(steps).toBeInViewport({ ratio: 0.98 });
+
+	const bulk = page.locator(".ki-banner").getByRole("button", { name: /Vorschläge übernehmen/ });
+	await bulk.focus();
+	await expect(bulk).toBeFocused();
+	await accept.evaluate((button) => button.scrollIntoView({ block: "center" }));
+	await panel.evaluate((element) => element.focus({ preventScroll: true }));
+	await expect(accept).toBeInViewport({ ratio: 0.98 });
+	await expect(steps).not.toBeInViewport({ ratio: 0.98 });
+
+	await page.keyboard.press("Enter");
+	await expect(steps).toBeInViewport({ ratio: 0.98 });
+	await expect(accept).toHaveText(/Beide übernehmen & buchen/);
+	await expect(page.getByText(/Partei zugeordnet, Buchung fehlgeschlagen/)).toHaveCount(0);
+});
+
 test("fordert bei Kein Vorschlag erneut an und zeigt den laufenden Agenten", async ({ page }) => {
 	await page.goto(demo + "&row=r8");
 	await suggestion(page).getByRole("button", { name: "Erneut anfordern" }).click();

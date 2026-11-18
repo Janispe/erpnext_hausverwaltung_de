@@ -765,7 +765,9 @@ export function App() {
 					onSelect={selectRow} onFocusRow={setSelectedId}
 					filterLabel={tableLabel} showKi={!!meta.ki}
 				/>
-				<div className="match-panel-wrap" ref={panelRef} tabIndex={meta.ki ? -1 : undefined}>
+				<div className="match-panel-wrap" ref={panelRef} tabIndex={meta.ki ? -1 : undefined} onBlur={(event) => {
+					if (!event.currentTarget.contains(event.relatedTarget)) shownSteps.current = null;
+				}}>
 					<MatchPanel
 						key={meta.ki ? selectedId : undefined}
 						kiMeta={meta.ki}
