@@ -201,7 +201,7 @@ e2e_site() {
   bench execute hausverwaltung.cypress_fixtures.prepare_e2e_site
 }
 
-bankimport_playwright_frappe() {
+frappe_playwright() {
   (cd "$repo/HV_Bankimport/src_react" &&
     CI=1 DOCKER_CONTEXT=$context FRAPPE_BASE_URL=$base_url FRAPPE_SITE=$site \
     FRAPPE_BACKEND_CONTAINER=$backend FRAPPE_USER=Administrator FRAPPE_PASSWORD=$admin_password \
@@ -238,9 +238,8 @@ case "$stage" in
     step node-unit node_unit_tests
     step bankimport-vitest bankimport_vitest
     step bankimport-playwright bankimport_playwright_mock
-    step bankimport-playwright-frappe bankimport_playwright_frappe
+    step frappe-playwright frappe_playwright
     error_log
-    # Die Cypress-Specs unter cypress/ werden nach Playwright umgezogen und laufen bis dahin nicht mit.
     ;;
 esac
 

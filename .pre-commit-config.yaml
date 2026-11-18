@@ -61,7 +61,6 @@ repos:
         exclude: |
             (?x)^(
                 hausverwaltung/public/dist/.*|
-                cypress/.*|
                 .*node_modules.*|
                 .*boilerplate.*|
                 hausverwaltung/templates/includes/.*|

@@ -14,9 +14,6 @@ AGENTS.local.md
 .env.local
 .env.*.local
 .claude/
-cypress/screenshots/
-cypress/videos/
-cypress/downloads/
 HV_Bankimport/src_react/test-results/
 HV_Bankimport/src_react/playwright-report/
 # Frappe/bench generated asset bundles
