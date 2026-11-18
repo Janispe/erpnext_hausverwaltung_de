@@ -19,6 +19,7 @@ from functools import partial
 import frappe
 
 from hausverwaltung.hausverwaltung.services import invoice_extraction, mistral_client, receipt_pilot
+from hausverwaltung.proposals import receipt_action
 
 
 def _new_session_id() -> str:
@@ -360,13 +361,15 @@ def get_vorschlag_full(name: str) -> dict:
 			data = json.loads(v.extracted_data)
 		except json.JSONDecodeError:
 			data = {}
+	is_receipt = bool(v.get("receipt_digest"))
 	return {
 		"name": v.name,
 		"file_url": v.file_url,
 		"status": v.status,
 		"original_filename": v.original_filename,
 		"data": data,
-		"receipt": receipt_pilot.review_context(v) if getattr(v, "receipt_digest", None) else None,
+		"receipt": receipt_pilot.review_context(v) if is_receipt else None,
+		"receipt_review": receipt_action.review_state(v) if is_receipt else None,
 	}
 
 
@@ -550,7 +553,7 @@ def on_purchase_invoice_cancel(doc, method=None):
 	"""
 	name = frappe.db.get_value(
 		"Buchungs Vorschlag",
-		{"linked_purchase_invoice": doc.name, "status": "Booked"},
+		{"linked_purchase_invoice": doc.name, "status": "Booked", "receipt_digest": ["is", "not set"]},
 		"name",
 		for_update=True,
 	)
@@ -569,7 +572,7 @@ def on_purchase_invoice_submit(doc, method=None):
 		return
 	name = frappe.db.get_value(
 		"Buchungs Vorschlag",
-		{"linked_purchase_invoice": doc.amended_from},
+		{"linked_purchase_invoice": doc.amended_from, "receipt_digest": ["is", "not set"]},
 		"name",
 		for_update=True,
 	)

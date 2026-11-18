@@ -50,12 +50,18 @@ Eingangsrechnungen.
   **Barauslagen-Angaben ändern** korrigiert die Stapelvorgaben für den
   jeweiligen Bon. Eine leere oder ungeeignete Kontozuordnung bleibt eine
   offene Frage. Der Modellaufruf erhält keine Gegenkonten zur Auswahl.
-- **Prüfen und buchen** öffnet den vorhandenen Eingangsrechnungsdialog.
-  Der Mensch prüft Lieferant, Datum und Kostenarten und bestätigt die Währung
-  EUR sowie den Brutto-Endbetrag am Original. Bei einer Abweichung durch
-  Steuern oder Rundung bricht der Dialog die Buchung ab. Fremdwährungsbelege
-  werden separat erfasst. Der Dialog gleicht auf das bestätigte Konto aus.
-  Eine spätere Erstattung wird separat bearbeitet.
+- **Bon prüfen** öffnet den Eingangsrechnungsdialog in der Inbox. Die Buchhaltung
+  prüft Lieferant, Datum und Kostenarten und bestätigt Währung und Brutto-Endbetrag
+  am Original. **Freigeben und buchen** speichert diese Fassung samt Freigabe in der
+  Vorschlagsengine und bucht anschließend Eingangsrechnung und Ausgleichsjournal.
+  Die Freigabe erfordert eine angemeldete Buchhaltungssitzung mit Buchungsrechten.
+- Änderungen am Bon oder an seinen Buchungsdaten erfordern eine erneute Prüfung
+  und Freigabe. **Buchungsdaten korrigieren** zieht eine offene Freigabe zurück.
+  Scheitert die Buchung, kann die Buchhaltung dieselbe Fassung mit **Buchung
+  fortsetzen** erneut ausführen. Rechnung, Journal und Buchungsergebnis werden
+  gemeinsam gespeichert. Ein erneuter Aufruf liefert die bereits gebuchten Belege.
+- Bei Abweichungen durch Steuern oder Rundung bricht die Buchung ab. Fremdwährungsbelege
+  und spätere Erstattungen werden separat erfasst.
 - Bytegleiche Uploads zeigen auf denselben Vorschlag samt ursprünglichen
   Angaben. Bei einem Analysefehler den vorhandenen Vorschlag reaktivieren.
   Er steht dann wieder für den nächsten Agentenlauf bereit.

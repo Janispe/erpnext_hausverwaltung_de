@@ -207,9 +207,11 @@ def update_context(name: str, context) -> dict:
 	_require_enabled()
 	doc = frappe.get_doc(PROPOSAL, name, for_update=True)
 	doc.check_permission("write")
-	if not doc.receipt_digest or doc.status == "Booked":
+	if not doc.receipt_digest or doc.status == "Booked" or doc.linked_purchase_invoice:
 		frappe.throw("Die Stapelangaben dieses Vorschlags können nicht geändert werden.")
-	doc.db_set("receipt_context", json.dumps(_context(context), ensure_ascii=False))
+	new_context = _context(context)
+	if new_context != _context(doc.receipt_context):
+		doc.db_set("receipt_context", json.dumps(new_context, ensure_ascii=False))
 	return review_context(doc)
 
 

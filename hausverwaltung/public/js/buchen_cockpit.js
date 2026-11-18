@@ -13,6 +13,16 @@ frappe.provide("hausverwaltung.buchen_cockpit");
 
 const HV_COCKPIT_STYLE_ID = "hv-buchen-cockpit-styles";
 const HV_COCKPIT_API = "hausverwaltung.hausverwaltung.page.buchen_cockpit.buchen_cockpit";
+const HV_RECEIPT_ACTION_API = "hausverwaltung.proposals.receipt_action";
+
+hausverwaltung.buchen_cockpit.execute_receipt = async (name, binding) => {
+	const { message } = await frappe.call({ method: `${HV_RECEIPT_ACTION_API}.execute`, args: { name, binding } });
+	if (message.status === "Stale") {
+		frappe.msgprint(__("Die Buchungsdaten haben sich geändert. Bitte den Bon erneut prüfen und freigeben."));
+		return null;
+	}
+	return message.result;
+};
 const HV_BULK_API = "hausverwaltung.hausverwaltung.services.bulk_extraction";
 const HV_DRAFT_KEY_PI = "hv_buchen_cockpit_draft_pi_v1";
 const HV_DRAFT_KEY_SI = "hv_buchen_cockpit_draft_si_v1";
@@ -560,7 +570,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			depends_on: "eval:doc.zahlung_sofort",
 		},
 		...(opts._receipt ? [
-			{ fieldtype: "Currency", fieldname: "beleg_brutto_bestaetigt", label: __("Bestätigter Brutto-Endbetrag (EUR)"), reqd: 1 },
+			{ fieldtype: "Currency", fieldname: "beleg_brutto_bestaetigt", label: __("Bestätigter Brutto-Endbetrag (EUR)"), default: opts.beleg_brutto_bestaetigt, reqd: 1 },
 			{ fieldtype: "Check", fieldname: "beleg_eur_bestaetigt", label: __("Der Originalbeleg ist in EUR ausgestellt"), reqd: 1 },
 		] : []),
 		{ fieldtype: "Section Break", label: __("Positionen") },
@@ -706,7 +716,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		title: __("Ausgabe erfassen"),
 		size: "extra-large",
 		fields,
-		primary_action_label: __("Buchen"),
+		primary_action_label: opts._receipt ? __("Freigeben und buchen") : __("Buchen"),
 		primary_action(values) {
 			if (opts._receipt) {
 				values.zahlungsart = opts.zahlungsart;
@@ -722,15 +732,21 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			}
 			submit_eingangsrechnung(dialog, values);
 		},
-		secondary_action_label: __("Entwurf verwerfen"),
-		secondary_action() {
-			hv_draft_clear(HV_DRAFT_KEY_PI);
-			dialog.clear();
-			frappe.show_alert({ message: __("Entwurf gelöscht."), indicator: "blue" });
-		},
+		...(!opts._receipt ? {
+			secondary_action_label: __("Entwurf verwerfen"),
+			secondary_action() {
+				hv_draft_clear(HV_DRAFT_KEY_PI);
+				dialog.clear();
+				frappe.show_alert({ message: __("Entwurf gelöscht."), indicator: "blue" });
+			},
+		} : {}),
 	});
 
-	hv_attach_autosave(dialog, HV_DRAFT_KEY_PI);
+	if (opts._receipt) {
+		dialog._hv_receipt_review = opts._receipt_review;
+	} else {
+		hv_attach_autosave(dialog, HV_DRAFT_KEY_PI);
+	}
 
 	// Restore defaults from opts (explicit wins over draft)
 	const stored_draft = hv_draft_load(HV_DRAFT_KEY_PI);
@@ -1070,55 +1086,69 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 	}
 
 	dialog.disable_primary_action();
+	const args = {
+		lieferant: values.lieferant,
+		rechnungsdatum: values.rechnungsdatum,
+		wertstellungsdatum: values.wertstellungsdatum,
+		rechnungsname: values.rechnungsname,
+		remarks: values.remarks,
+		zahlungsart: values.zahlungsart,
+		zahlung_sofort: values.zahlung_sofort ? 1 : 0,
+		zahlungskonto: values.zahlungskonto,
+		zahlungsbemerkung: values.zahlungsbemerkung,
+		beleg_brutto_bestaetigt: values.beleg_brutto_bestaetigt,
+		beleg_eur_bestaetigt: values.beleg_eur_bestaetigt,
+		positionen: JSON.stringify(rows),
+		submit_doc: submit_doc ? 1 : 0,
+		attached_file_url: dialog._hv_attached_file || null,
+		vorschlag_name: dialog._hv_vorschlag_name || null,
+	};
+	const review = dialog._hv_receipt_review;
+	const submit = review
+		? frappe.call({
+			method: `${HV_RECEIPT_ACTION_API}.approve`,
+			args: { name: args.vorschlag_name, source: review.source, binding: review.binding, booking: args },
+		}).then(async ({ message }) => {
+			review.binding = message.binding;
+			try {
+				return await hausverwaltung.buchen_cockpit.execute_receipt(args.vorschlag_name, review.binding);
+			} finally {
+				dialog.hide();
+				dialog._hv_after_book();
+			}
+		})
+		: frappe.call({ method: `${HV_COCKPIT_API}.create_purchase_invoice`, args }).then((r) => r.message);
 	hv_after_async(
-		frappe
-			.call({
-				method: `${HV_COCKPIT_API}.create_purchase_invoice`,
-				args: {
-					lieferant: values.lieferant,
-					rechnungsdatum: values.rechnungsdatum,
-					wertstellungsdatum: values.wertstellungsdatum,
-					rechnungsname: values.rechnungsname,
-					remarks: values.remarks,
-					zahlungsart: values.zahlungsart,
-					zahlung_sofort: values.zahlung_sofort ? 1 : 0,
-					zahlungskonto: values.zahlungskonto,
-					zahlungsbemerkung: values.zahlungsbemerkung,
-					beleg_brutto_bestaetigt: values.beleg_brutto_bestaetigt,
-					beleg_eur_bestaetigt: values.beleg_eur_bestaetigt,
-					positionen: JSON.stringify(rows),
-					submit_doc: submit_doc ? 1 : 0,
-					attached_file_url: dialog._hv_attached_file || null,
-					vorschlag_name: dialog._hv_vorschlag_name || null,
-				},
-			})
-			.then((r) => {
-				const name = r && r.message && r.message.name;
-				if (!name) return;
-				const settlement = r.message.settlement_journal_entry;
+		submit.then((result) => {
+			const name = result?.name;
+			if (!name) return;
+			const settlement = result.settlement_journal_entry;
+			if (!review) {
 				hv_draft_clear(HV_DRAFT_KEY_PI);
 				dialog.hide();
-				frappe.show_alert({
-					message: settlement
-						? __("Ausgabe {0} erstellt, gebucht und über {1} ausgeglichen.", [name, settlement])
-						: submit_doc
-							? __("Ausgabe {0} erstellt und gebucht.", [name])
-							: __("Ausgabe {0} als Entwurf gespeichert.", [name]),
-					indicator: "green",
-				});
-				// Wenn der Dialog aus dem Bulk-Wizard heraus geöffnet wurde:
-				// Callback ausführen (Wizard refresht und springt zum nächsten Eintrag),
-				// nicht aufs PI-Formular wegnavigieren.
-				if (typeof dialog._hv_after_book === "function") {
-					try {
-						dialog._hv_after_book(name);
-					} catch (e) {
-						console.error(e);
-					}
-				} else {
-					frappe.set_route("Form", "Purchase Invoice", name);
+			}
+			frappe.show_alert({
+				message: settlement
+					? __("Ausgabe {0} erstellt, gebucht und über {1} ausgeglichen.", [name, settlement])
+					: submit_doc
+						? __("Ausgabe {0} erstellt und gebucht.", [name])
+						: __("Ausgabe {0} als Entwurf gespeichert.", [name]),
+				indicator: "green",
+			});
+			// Wenn der Dialog aus dem Bulk-Wizard heraus geöffnet wurde:
+			// Callback ausführen (Wizard refresht und springt zum nächsten Eintrag),
+			// nicht aufs PI-Formular wegnavigieren.
+			if (review) return;
+			if (typeof dialog._hv_after_book === "function") {
+				try {
+					dialog._hv_after_book(name);
+				} catch (e) {
+					console.error(e);
 				}
-			}),
+			} else {
+				frappe.set_route("Form", "Purchase Invoice", name);
+			}
+		}),
 		() => dialog.enable_primary_action()
 	);
 }

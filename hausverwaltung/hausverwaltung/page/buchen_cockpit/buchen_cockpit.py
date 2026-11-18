@@ -125,6 +125,13 @@ def _require_supplier_creation_permission() -> None:
         )
 
 
+def _require_non_receipt_file(file_url):
+    if file_url and frappe.db.exists(
+        "Buchungs Vorschlag", {"file_url": file_url, "receipt_digest": ["is", "set"]}
+    ):
+        frappe.throw("Barauslagen benötigen die Freigabe in der Buchungs-Inbox.", frappe.PermissionError)
+
+
 def _lock_booking_proposal(vorschlag_name: str) -> dict:
     """Lock a proposal for the enclosing request transaction.
 
@@ -142,12 +149,15 @@ def _lock_booking_proposal(vorschlag_name: str) -> dict:
     proposal = frappe.db.get_value(
         "Buchungs Vorschlag",
         vorschlag_name,
-        ["name", "status", "linked_purchase_invoice"],
+        ["name", "status", "linked_purchase_invoice", "receipt_digest", "file_url"],
         as_dict=True,
         for_update=True,
     )
     if not proposal:
         frappe.throw(f"Buchungsvorschlag '{vorschlag_name}' wurde nicht gefunden.")
+    if proposal.get("receipt_digest"):
+        frappe.throw("Barauslagen benötigen die Freigabe in der Buchungs-Inbox.", frappe.PermissionError)
+    _require_non_receipt_file(proposal.get("file_url"))
 
     linked_invoice = proposal.get("linked_purchase_invoice")
     if proposal.get("status") == "Booked" and linked_invoice:
@@ -1049,7 +1059,7 @@ def _should_settle_purchase_invoice_now(kwargs: dict) -> bool:
     return (kwargs.get("zahlungsstatus") or "") == ZAHLUNGSSTATUS_SOFORT
 
 
-def _purchase_invoice_request_context(kwargs: dict) -> dict[str, Any]:
+def _purchase_invoice_request_context(kwargs: dict, *, receipt=None) -> dict[str, Any]:
     submit = _as_bool(kwargs.get("submit_doc", 1))
     proposal = (kwargs.get("vorschlag_name") or "").strip()
     if proposal and not submit:
@@ -1061,7 +1071,12 @@ def _purchase_invoice_request_context(kwargs: dict) -> dict[str, Any]:
     _require_document_permissions("Purchase Invoice", submit=submit)
     if settle_now:
         _require_document_permissions("Journal Entry", submit=True)
-    idempotent = _lock_booking_proposal(proposal) if proposal else {}
+    if receipt is not None:
+        if proposal != receipt.name or receipt.status != "Ready" or receipt.linked_purchase_invoice:
+            frappe.throw("Der Bon ist nicht zur Buchung bereit.")
+        idempotent = {}
+    else:
+        idempotent = _lock_booking_proposal(proposal) if proposal else {}
     if idempotent:
         return {
             "submit": submit,
@@ -1290,8 +1305,9 @@ def _set_cockpit_purchase_invoice_items(
     cost_centers: dict[int, str],
     cost_center_to_immobilie: dict[str, str] | None,
     default_description: str,
+    explicit_categories: bool = False,
 ) -> None:
-    service_item_code = ensure_default_service_item()
+    service_item_code = "" if explicit_categories else ensure_default_service_item()
     verteilung_cache: dict[str, str] = {}
     wohnung_to_immobilie: dict[str, str | None] = {}
     items = [
@@ -1335,46 +1351,15 @@ def create_purchase_invoice(**kwargs) -> dict:
         positionen: list of dicts with keys
             betrag, konto, kostenstelle, umlagefaehig, kostenart, wohnung (optional)
     """
+    _require_non_receipt_file(kwargs.get("attached_file_url"))
     request = _purchase_invoice_request_context(kwargs)
     if request["idempotent"]:
         return request["idempotent"]
-    attached_file = kwargs.get("attached_file_url")
-    receipt_file = None
-    receipt_total = None
-    if request["proposal"]:
-        proposal = frappe.get_doc("Buchungs Vorschlag", request["proposal"])
-        if proposal.receipt_digest:
-            from hausverwaltung.hausverwaltung.services import receipt_pilot
+    pi = _prepare_cockpit_purchase_invoice(request, kwargs)
+    return _post_cockpit_purchase_invoice(pi, request, kwargs)
 
-            proposal.check_permission("write")
-            context = receipt_pilot.review_context(proposal)
-            if context["fragen"]:
-                frappe.throw("Bitte zuerst die offenen Barauslagen-Angaben in der Buchungs-Inbox klären.")
-            if (
-                not request["settle_now"]
-                or kwargs.get("zahlungsart") != context["zahlungsart"]
-                or kwargs.get("zahlungskonto") != context["zahlungskonto"]
-                or any(row.get("kostenstelle") != context["kostenstelle"] for row in request["rows"])
-            ):
-                frappe.throw("Bitte Zahlungsart, Ausgleichskonto und Kostenstelle mit der Buchungs-Inbox abgleichen.")
-            if not kwargs.get("rechnungsdatum"):
-                frappe.throw("Bitte das Belegdatum erfassen.")
-            receipt_pilot.validate_booking_confirmation(
-                proposal, request["rows"], eur_confirmed=_as_bool(kwargs.get("beleg_eur_bestaetigt")),
-            )
-            receipt_total = flt(kwargs.get("beleg_brutto_bestaetigt"), 2)
-            if not math.isfinite(receipt_total) or receipt_total <= 0:
-                frappe.throw("Bitte den Brutto-Endbetrag auf dem Originalbeleg bestätigen.")
-            try:
-                receipt_file, _content = receipt_pilot.verified_original(proposal, for_update=True)
-            except (OSError, ValueError, frappe.DoesNotExistError):
-                frappe.throw("Der private Originalbeleg fehlt oder wurde verändert. Buchung abgebrochen.")
-            receipt_file.check_permission("read")
-            attached_file = receipt_file.file_url
-            if context["person"] and context["zahlungsquelle"] == "Privat vorgestreckt":
-                note = f"Privat vorgestreckt von {context['person']}"
-                kwargs["zahlungsbemerkung"] = "\n".join(filter(None, (note, kwargs.get("zahlungsbemerkung"))))
 
+def _prepare_cockpit_purchase_invoice(request, kwargs, *, receipt=False):
     booking = _purchase_invoice_booking_context(request["rows"])
 
     posting_date = kwargs.get("rechnungsdatum") or nowdate()
@@ -1387,7 +1372,7 @@ def create_purchase_invoice(**kwargs) -> dict:
         bill_no=bill_no,
         remarks=user_remarks,
     )
-    if receipt_total is not None and company_currency != "EUR":
+    if receipt and company_currency != "EUR":
         frappe.throw("Der Barauslagen-Pilot benötigt eine Company in EUR.")
     _set_cockpit_purchase_invoice_items(
         pi,
@@ -1397,6 +1382,7 @@ def create_purchase_invoice(**kwargs) -> dict:
         cost_centers=booking["cost_centers"],
         cost_center_to_immobilie=booking["cost_center_to_immobilie"],
         default_description=bill_no or "Ausgabe",
+        explicit_categories=receipt,
     )
 
     wertstellungsdatum = kwargs.get("wertstellungsdatum")
@@ -1405,14 +1391,17 @@ def create_purchase_invoice(**kwargs) -> dict:
 
     if _has_field("Purchase Invoice", "hv_eingabequelle"):
         pi.hv_eingabequelle = EINGABEQUELLE_EINGANG
+    return pi
 
+
+def _post_cockpit_purchase_invoice(pi, request, kwargs, *, receipt_file=None, receipt_total=None):
     pi.insert()
 
     if receipt_file:
         _validate_receipt_total(pi, receipt_total)
-        _attach_source_file(pi, attached_file, source=receipt_file)
+        _attach_source_file(pi, receipt_file.file_url, source=receipt_file)
     else:
-        _attach_source_file(pi, attached_file)
+        _attach_source_file(pi, kwargs.get("attached_file_url"))
 
     settlement_journal = None
     if request["submit"]:
@@ -1423,10 +1412,10 @@ def create_purchase_invoice(**kwargs) -> dict:
             settlement_journal = _create_purchase_invoice_settlement_journal(
                 pi,
                 settlement_account=kwargs.get("zahlungskonto"),
-                posting_date=posting_date,
-                wertstellungsdatum=wertstellungsdatum,
+                posting_date=kwargs.get("rechnungsdatum") or pi.posting_date,
+                wertstellungsdatum=kwargs.get("wertstellungsdatum"),
                 zahlungsart=kwargs.get("zahlungsart"),
-                remarks=kwargs.get("zahlungsbemerkung") or user_remarks,
+                remarks=kwargs.get("zahlungsbemerkung") or (kwargs.get("remarks") or "").strip(),
             )
         if request["proposal"]:
             _link_locked_booking_proposal(request["proposal"], pi.name)

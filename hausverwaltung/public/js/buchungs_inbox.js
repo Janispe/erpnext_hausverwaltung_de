@@ -14,6 +14,7 @@ const HV_INBOX_API = "hausverwaltung.hausverwaltung.services.bulk_extraction";
 const HV_INBOX_COCKPIT_API = "hausverwaltung.hausverwaltung.page.buchen_cockpit.buchen_cockpit";
 
 const HV_RECEIPT_API = "hausverwaltung.hausverwaltung.services.receipt_pilot";
+const HV_INBOX_RECEIPT_ACTION_API = "hausverwaltung.proposals.receipt_action";
 
 function hv_receipt_context_fields(defaults = {}) {
 	return [
@@ -618,12 +619,14 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		const data = full && full !== "loading" ? full.data || {} : null;
 
 		const receipt = full?.receipt;
+		const review = full?.receipt_review;
+		const approved = review?.status === "Approved";
 		const can_book = row.status === "Ready" && (!row.is_receipt ||
-			(receipt && !receipt.fragen.length && (!data?.waehrung || data.waehrung === "EUR")));
+			(review && review.status !== "Succeeded" && receipt && !receipt.fragen.length && (!data?.waehrung || data.waehrung === "EUR")));
 		const can_skip = ["Pending", "Processing", "Ready"].includes(row.status);
 		const can_reactivate = ["Skipped", "Error"].includes(row.status);
 		const can_reprocess = row.status !== "Booked";
-		const can_delete = row.status !== "Booked";
+		const can_delete = row.status !== "Booked" && !review?.binding;
 
 		const file_url = row.file_url || (full && full.file_url) || "";
 
@@ -669,7 +672,8 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 					${linked_pi_link ? ` · ${linked_pi_link}` : ""}
 				</div>
 				<div class="actions">
-					<button class="btn-book btn-primary" ${can_book ? "" : "disabled"}>${row.is_receipt ? __("Prüfen und buchen") : __("Buchen")}</button>
+					<button class="btn-book btn-primary" ${can_book ? "" : "disabled"}>${approved ? __("Buchung fortsetzen") : row.is_receipt ? __("Bon prüfen") : __("Buchen")}</button>
+					${approved ? `<button class="btn-reopen">${__("Buchungsdaten korrigieren")}</button>` : ""}
 					${receipt && row.status !== "Booked" ? `<button class="btn-receipt-context">${__("Barauslagen-Angaben ändern")}</button>` : ""}
 					<button class="btn-skip" ${can_skip ? "" : "disabled"}>${__("Überspringen")}</button>
 					<button class="btn-reactivate" ${can_reactivate ? "" : "disabled"}>${__("Reaktivieren")}</button>
@@ -679,6 +683,8 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 			</div>
 			<div class="hv-inbox-split">
 				<div class="hv-inbox-values">
+					${approved ? `<p>${__("Bon freigegeben. Die Buchung kann mit dieser Fassung fortgesetzt werden.")}</p>` : ""}
+					${review?.status === "Stale" ? `<p>${__("Freigabe ungültig. Bitte die geänderten Buchungsdaten erneut prüfen.")}</p>` : ""}
 					${receipt ? hv_render_receipt_context(receipt, data) : ""}
 					${detail_block}
 					${
@@ -714,7 +720,28 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 			});
 			dialog.show();
 		});
-		$detail.find(".btn-book").off("click").on("click", () => _do_book(row));
+		$detail.find(".btn-reopen").on("click", async function () {
+			this.disabled = true;
+			try {
+				await frappe.call({ method: `${HV_INBOX_RECEIPT_ACTION_API}.reopen`, args: { name: row.name, binding: review.binding } });
+				delete state.full_cache[row.name];
+				render_detail();
+			} finally {
+				this.disabled = false;
+			}
+		});
+		$detail.find(".btn-book").off("click").on("click", async function () {
+			if (!approved) return _do_book(row);
+			this.disabled = true;
+			try {
+				const result = await hausverwaltung.buchen_cockpit.execute_receipt(row.name, review.binding);
+				if (result) frappe.show_alert({ message: __("Ausgabe {0} gebucht.", [result.name]), indicator: "green" });
+			} finally {
+				delete state.full_cache[row.name];
+				refresh_list();
+				this.disabled = false;
+			}
+		});
 		$detail.find(".btn-skip").off("click").on("click", () => _do_skip(row));
 		$detail.find(".btn-reactivate").off("click").on("click", () => _do_reactivate(row));
 		$detail.find(".btn-reprocess").off("click").on("click", () => _do_reprocess(row));
@@ -726,6 +753,8 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		const full = state.full_cache[row.name];
 		const data = full.data || {};
 		const receipt = full.receipt;
+		const review = full.receipt_review;
+		const booking = review?.booking;
 		if (receipt?.fragen.length) return;
 
 		// Polling sofort pausieren, sonst kann ein 3-Sek-Tick mid-Dialog
@@ -741,8 +770,9 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 			wertstellungsdatum: data.fields && data.fields.wertstellungsdatum,
 			rechnungsname: data.fields && data.fields.rechnungsname,
 			remarks: data.fields && data.fields.remarks,
+			...booking,
 			positionen: receipt
-				? (data.buchungspositionen?.length ? data.buchungspositionen : [{}])
+				? (booking?.positionen || (data.buchungspositionen?.length ? data.buchungspositionen : [{}]))
 					.map((position) => ({
 						...position,
 						kostenstelle: receipt.kostenstelle,
@@ -754,6 +784,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				: data.positionen || [],
 			...(receipt ? {
 				_receipt: true,
+				_receipt_review: review,
 				_receipt_kostenstelle: receipt.kostenstelle,
 				zahlungsart: receipt.zahlungsart,
 				zahlungskonto: receipt.zahlungskonto,

@@ -4,6 +4,7 @@ import json
 
 ACTION = "hv.synthetic_note.set_label/v1"
 POLICY = "hv.synthetic-review/v1"
+RECEIPT_PACKAGE_PREFIX = "RECEIPT-"
 
 
 def encode(value):
