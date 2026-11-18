@@ -3940,18 +3940,39 @@ class TestBankauszugImportDatabaseIntegration(unittest.TestCase):
         return doc
 
     def _get_cost_center(self):
-        cost_center = frappe.db.get_value("Company", self.company, "cost_center")
-        if cost_center:
-            return cost_center
-        rows = frappe.get_all(
+        # Kostenstellen werden pro Immobilie geführt; die Company-Kostenstelle "Main" ist bewusst
+        # deaktiviert (install._ensure_main_cost_center_disabled). Daher eine eigene aktive anlegen.
+        name = "Bankimport Integrationstest"
+        existing = frappe.get_all(
             "Cost Center",
-            filters={"company": self.company, "is_group": 0},
+            filters={"company": self.company, "cost_center_name": name, "is_group": 0, "disabled": 0},
             pluck="name",
             limit=1,
         )
-        if rows:
-            return rows[0]
-        self.skipTest("Integrationstest benötigt eine Kostenstelle.")
+        if existing:
+            return existing[0]
+        parents = frappe.get_all(
+            "Cost Center",
+            filters={"company": self.company, "is_group": 1},
+            pluck="name",
+            limit=1,
+            order_by="lft asc",
+        )
+        if not parents:
+            self.skipTest("Integrationstest benötigt eine Kostenstellen-Gruppe.")
+        return (
+            frappe.get_doc(
+                {
+                    "doctype": "Cost Center",
+                    "cost_center_name": name,
+                    "company": self.company,
+                    "parent_cost_center": parents[0],
+                    "is_group": 0,
+                }
+            )
+            .insert(ignore_permissions=True)
+            .name
+        )
 
     def _get_or_make_leaf_account(self, *, root_type, account_type=None, fallback_label):
         filters = {"company": self.company, "is_group": 0, "root_type": root_type}

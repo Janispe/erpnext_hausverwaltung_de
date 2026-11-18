@@ -1,4 +1,5 @@
 import base64
+import importlib.util
 import unittest
 from io import BytesIO
 from unittest.mock import patch
@@ -76,6 +77,8 @@ class TestAssetValidation(unittest.TestCase):
 				assets.asset_info(buffer.getvalue())
 
 	def test_upload_is_code_only_write_and_audit_omits_binary(self):
+		if importlib.util.find_spec("frappe_assistant_core") is None:
+			self.skipTest("Benötigt die optionale App frappe_assistant_core.")
 		from hausverwaltung.hausverwaltung.agent_tools import fac_tools
 		from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 			FAC_CODE_TOOL_NAMES,
