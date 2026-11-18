@@ -193,12 +193,14 @@ def readable_record(doc, user):
 			# Scoped list/graph APIs retain visibility and redact separately.
 			_reference(doc.reference_doctype, doc.reference_name, user=user)
 			return True
-		_note(doc.target, user=user, lock=False)
 		if doc.doctype == REVISION:
 			body = frappe.parse_json(doc.body)
 		else:
 			proposal = doc if doc.doctype == PROPOSAL else frappe.get_doc(PROPOSAL, doc.proposal)
 			body = _body(proposal, lock=False)
+		if body["action"] != domain.ACTION:
+			_deny()
+		_note(doc.target, user=user, lock=False)
 		_read_graph(body, user)
 		return True
 	except (frappe.PermissionError, frappe.DoesNotExistError):
@@ -219,6 +221,8 @@ def _load(pid):
 	try:
 		doc = frappe.get_doc(PROPOSAL, pid, for_update=_writing.get())
 	except frappe.DoesNotExistError:
+		_deny()
+	if doc.action != domain.ACTION:
 		_deny()
 	_note(doc.target)
 	body = _body(doc)
@@ -370,10 +374,11 @@ def _checked(doc, body, persist=True):
 	return _response(doc, body, stale_cause=cause)
 
 
-def _revision(doc, operation, dependencies, metadata):
-	preview = _preview(doc.package, operation, dependencies, doc.name)
-	body = {"proposal": doc.name, "revision": doc.current_revision, "action": domain.ACTION,
-		"policy": domain.POLICY, "payload": operation, "dependencies": dependencies, "preview": preview, **metadata}
+def _revision(doc, operation, dependencies, metadata, *, policy=domain.POLICY, preview=None):
+	if preview is None:
+		preview = _preview(doc.package, operation, dependencies, doc.name)
+	body = {"proposal": doc.name, "revision": doc.current_revision, "action": doc.action,
+		"policy": policy, "payload": operation, "dependencies": dependencies, "preview": preview, **metadata}
 	doc.revision_hash = domain.digest(body)
 	frappe.get_doc({"doctype": REVISION, "name": f"{doc.name}-{doc.current_revision}", "target": doc.target,
 		"proposal": doc.name, "number": doc.current_revision, "revision_hash": doc.revision_hash,
@@ -381,10 +386,32 @@ def _revision(doc, operation, dependencies, metadata):
 	return body
 
 
+def _create_proposal(action, target, package, request_id, request_hash):
+	doc = frappe.get_doc({"doctype": PROPOSAL, "target": target, "package": package,
+		"action": action, "current_revision": 1, "status": "Pending", "request_id": request_id,
+		"request_hash": request_hash, "submitter": frappe.session.user})
+	doc.insert()
+	return doc
+
+
+def _approve(doc):
+	doc.status = "Approved"
+	doc.decision_by, doc.decision_at = frappe.session.user, now_datetime()
+	_event(doc, "Approved")
+
+
+def _succeed(doc, result):
+	doc.result = domain.encode(result)
+	doc.status = "Succeeded"
+	_event(doc, "Succeeded", result)
+
+
 @_api
 def submit(key, package, payload, dependencies=None, action=domain.ACTION, package_meta=None, metadata=None):
 	if action != domain.ACTION or not isinstance(key, str) or not 1 <= len(key) <= 120:
 		frappe.throw("Unknown action or invalid request key")
+	if isinstance(package, str) and package.upper().startswith(domain.RECEIPT_PACKAGE_PREFIX):
+		_deny()
 	operation = _payload(payload)
 	meta = domain.metadata(_json(metadata, dict))
 	dependencies = _json(dependencies if dependencies is not None else [], list)
@@ -400,10 +427,7 @@ def submit(key, package, payload, dependencies=None, action=domain.ACTION, packa
 		return _checked(doc, body)
 	if frappe.db.count(PROPOSAL, {"package": package}) >= 128:
 		frappe.throw("Package limit is 128 proposals")
-	doc = frappe.get_doc({"doctype": PROPOSAL, "target": operation["target"], "package": package,
-		"action": action, "current_revision": 1, "status": "Pending", "request_id": request_id,
-		"request_hash": request_hash, "submitter": frappe.session.user})
-	doc.insert()
+	doc = _create_proposal(action, operation["target"], package, request_id, request_hash)
 	body = _revision(doc, operation, dependencies, meta)
 	_event(doc, "Created")
 	return _response(doc, body, body["preview"])
@@ -451,10 +475,12 @@ def review(binding, approve, reason=None):
 	if doc.status != "Pending":
 		frappe.throw("Decision requires pending revision")
 	_fresh(doc, body)
-	doc.status = "Approved" if approve else "Rejected"
-	doc.decision_by, doc.decision_at = frappe.session.user, now_datetime()
-	_event(doc, doc.status, {"reason": reason} if not approve else None)
-	if not approve:
+	if approve:
+		_approve(doc)
+	else:
+		doc.status = "Rejected"
+		doc.decision_by, doc.decision_at = frappe.session.user, now_datetime()
+		_event(doc, "Rejected", {"reason": reason})
 		_invalidate(doc, "dependency_rejected")
 	return _response(doc, body) | {"reject_reason": reason if not approve else None}
 
@@ -488,9 +514,7 @@ def execute(binding):
 	note.save()
 	if _state(note) != fresh["after"]:
 		frappe.throw("Actual result differs; transaction must roll back")
-	doc.result = domain.encode({"doctype": NOTE, "id": note.name, "state": _state(note)})
-	doc.status = "Succeeded"
-	_event(doc, "Succeeded", frappe.parse_json(doc.result))
+	_succeed(doc, {"doctype": NOTE, "id": note.name, "state": _state(note)})
 	return _response(doc, body)
 
 
@@ -498,7 +522,8 @@ def execute(binding):
 def list_proposals():
 	result = []
 	# get_all is limited to fixed internal tables; every returned record is checked.
-	for pid in frappe.get_all(PROPOSAL, pluck="name", order_by="modified desc", limit_page_length=100):
+	for pid in frappe.get_all(PROPOSAL, filters={"action": domain.ACTION}, pluck="name",
+		order_by="modified desc", limit_page_length=100):
 		previous_messages = list(frappe.local.message_log)
 		try:
 			doc, body = _load(pid)
@@ -542,7 +567,8 @@ def _visible(package, user=None):
 	token = _writing.set(False)
 	try:
 		result = []
-		for pid in frappe.get_all(PROPOSAL, filters={"package": package}, pluck="name", limit_page_length=129):
+		for pid in frappe.get_all(PROPOSAL, filters={"package": package, "action": domain.ACTION},
+			pluck="name", limit_page_length=129):
 			messages = list(frappe.local.message_log)
 			try:
 				doc = frappe.get_doc(PROPOSAL, pid)

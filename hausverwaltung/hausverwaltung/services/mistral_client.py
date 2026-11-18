@@ -707,6 +707,7 @@ def complete_vision_json(
 	user_prompt: str,
 	image_bytes: bytes,
 	image_mime: str = "image/png",
+	additional_images: tuple[tuple[bytes, str], ...] = (),
 	model: str | None = None,
 	timeout: int | None = None,
 ) -> dict:
@@ -717,8 +718,11 @@ def complete_vision_json(
 	ensure_configured()
 	resolved_model = (model or "").strip() or _vision_model()
 	resolved_timeout = timeout or _timeout()
-	encoded = base64.b64encode(image_bytes).decode("ascii")
-	data_url = f"data:{image_mime};base64,{encoded}"
+	images = [(image_bytes, image_mime), *additional_images]
+	image_parts = [
+		{"type": "image_url", "image_url": f"data:{mime};base64,{base64.b64encode(content).decode('ascii')}"}
+		for content, mime in images
+	]
 	payload = _post_chat(
 		[
 			{"role": "system", "content": system},
@@ -726,7 +730,7 @@ def complete_vision_json(
 				"role": "user",
 				"content": [
 					{"type": "text", "text": user_prompt},
-					{"type": "image_url", "image_url": data_url},
+					*image_parts,
 				],
 			},
 		],

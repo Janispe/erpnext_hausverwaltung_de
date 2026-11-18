@@ -1,5 +1,26 @@
+import frappe
 from frappe.model.document import Document
 
 
 class BuchungsVorschlag(Document):
-	pass
+	def validate(self):
+		previous = self.get_doc_before_save()
+		if not previous:
+			return
+		if self.receipt_digest != previous.receipt_digest:
+			frappe.throw("Die Prüfsumme eines Bon-Originals ist unveränderlich.")
+		if self.receipt_digest and (
+			self.file_url != previous.file_url
+			or self.linked_purchase_invoice != previous.linked_purchase_invoice
+			or (self.status != previous.status and (
+				{self.status, previous.status} & {"Booked", "Cancelled"} or previous.linked_purchase_invoice
+			))
+		):
+			frappe.throw("Das Original und die Buchungsverknüpfung eines Bons sind unveränderlich.")
+
+	def on_trash(self):
+		if self.receipt_digest:
+			from hausverwaltung.proposals import receipt_action
+
+			if receipt_action._final(self) or receipt_action._proposal(self, lock=True)[0]:
+				frappe.throw("Ein Bon mit Freigabehistorie kann nicht gelöscht werden.")

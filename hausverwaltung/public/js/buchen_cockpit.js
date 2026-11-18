@@ -13,6 +13,20 @@ frappe.provide("hausverwaltung.buchen_cockpit");
 
 const HV_COCKPIT_STYLE_ID = "hv-buchen-cockpit-styles";
 const HV_COCKPIT_API = "hausverwaltung.hausverwaltung.page.buchen_cockpit.buchen_cockpit";
+const HV_RECEIPT_ACTION_API = "hausverwaltung.proposals.receipt_action";
+
+hausverwaltung.buchen_cockpit.execute_receipt = async (name, binding) => {
+	const { message } = await frappe.call({ method: `${HV_RECEIPT_ACTION_API}.execute`, args: { name, binding } });
+	if (message.status === "Stale") {
+		frappe.msgprint(__("Die Buchungsdaten haben sich geändert. Bitte den Bon erneut prüfen und freigeben."));
+		return null;
+	}
+	if (message.status === "Cancelled") {
+		frappe.msgprint(__("Rechnung oder Ausgleich für diesen Bon wurde storniert."));
+		return null;
+	}
+	return message.result;
+};
 const HV_BULK_API = "hausverwaltung.hausverwaltung.services.bulk_extraction";
 const HV_DRAFT_KEY_PI = "hv_buchen_cockpit_draft_pi_v1";
 const HV_DRAFT_KEY_SI = "hv_buchen_cockpit_draft_si_v1";
@@ -424,7 +438,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 	// Date-Defaults aus opts ableiten — wenn aus dem Wizard/Inbox-Flow vorgefüllt,
 	// werden sie als default ins field-Schema gepackt (kein nachträgliches
 	// set_value nötig → kein Datepicker-onChange-Loop).
-	const _default_rechnungsdatum = opts.rechnungsdatum || frappe.datetime.get_today();
+	const _default_rechnungsdatum = opts.rechnungsdatum || (opts._receipt ? "" : frappe.datetime.get_today());
 	const _default_wertstellungsdatum = opts.wertstellungsdatum || "";
 	const _default_zahlungsart = opts.zahlungsart || "Überweisung / Bankimport";
 	const _default_zahlung_sofort =
@@ -490,6 +504,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		{
 			fieldtype: "Select",
 			fieldname: "zahlungsart",
+			read_only: opts._receipt ? 1 : 0,
 			label: __("Zahlungsart"),
 			options: [
 				"Überweisung / Bankimport",
@@ -517,6 +532,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		{
 			fieldtype: "Check",
 			fieldname: "zahlung_sofort",
+			read_only: opts._receipt ? 1 : 0,
 			label: __("Direkt ausgleichen"),
 			default: _default_zahlung_sofort ? 1 : 0,
 			depends_on: "eval:['Barzahlung','Vorschuss/Auslage','Sonstige Verrechnung'].includes(doc.zahlungsart)",
@@ -528,10 +544,11 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			},
 		},
 		{
-			fieldtype: "Link",
+			fieldtype: opts._receipt ? "Data" : "Link",
 			fieldname: "zahlungskonto",
+			read_only: opts._receipt ? 1 : 0,
 			label: __("Zahlungs-/Verrechnungskonto"),
-			options: "Account",
+			options: opts._receipt ? "" : "Account",
 			default: opts.zahlungskonto || "",
 			depends_on: "eval:doc.zahlung_sofort",
 			description: __(
@@ -556,10 +573,16 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			default: opts.zahlungsbemerkung || "",
 			depends_on: "eval:doc.zahlung_sofort",
 		},
+		...(opts._receipt ? [
+			{ fieldtype: "HTML", options: `<a href="${frappe.utils.escape_html(opts._attached_file)}" target="_blank" rel="noopener">${__("Originalbeleg öffnen")} ↗</a>` },
+			{ fieldtype: "Currency", fieldname: "beleg_brutto_bestaetigt", label: __("Bestätigter Brutto-Endbetrag (EUR)"), default: opts.beleg_brutto_bestaetigt, reqd: 1 },
+			{ fieldtype: "Check", fieldname: "beleg_eur_bestaetigt", label: __("Der Originalbeleg ist in EUR ausgestellt"), reqd: 1 },
+		] : []),
 		{ fieldtype: "Section Break", label: __("Positionen") },
 		{
 			fieldtype: "Select",
 			fieldname: "eingabemodus",
+			read_only: opts._receipt ? 1 : 0,
 			label: __("Eingabemodus"),
 			options: ["Kostenart", "Konto"].join("\n"),
 			default: "Kostenart",
@@ -568,7 +591,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 				"Kostenart: Picker zeigt die Stammdaten der gewählten Position-Typ. Konto: direkt das Konto wählen — Kostenart wird automatisch zugeordnet. Pro Zeile wird zusätzlich ausgewählt, ob umlegbar oder nicht."
 			),
 			onchange() {
-				apply_eingabemodus(dialog);
+				apply_eingabemodus(dialog, { clear_existing: !opts._receipt });
 			},
 		},
 		{
@@ -598,8 +621,9 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 					fieldtype: "Select",
 					fieldname: "typ",
 					label: __("Typ"),
-					options: ["umlegbar", "nicht umlegbar"].join("\n"),
-					default: "umlegbar",
+					options: (opts._receipt ? ["", "umlegbar", "nicht umlegbar"] : ["umlegbar", "nicht umlegbar"]).join("\n"),
+					default: opts._receipt ? "" : "umlegbar",
+					reqd: opts._receipt ? 1 : 0,
 					in_list_view: 1,
 					columns: 2,
 					description: __("Bestimmt, welche Stammdaten/Konten im Picker angezeigt werden."),
@@ -614,6 +638,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 				{
 					fieldtype: "Autocomplete",
 					fieldname: "kostenart",
+					reqd: opts._receipt ? 1 : 0,
 					label: __("Kostenart"),
 					options: [],
 					in_list_view: 1,
@@ -655,12 +680,20 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 					fieldtype: "Link",
 					fieldname: "kostenstelle",
 					label: __("Kostenstelle"),
+					read_only: opts._receipt ? 1 : 0,
+					default: opts._receipt_kostenstelle || "",
 					options: "Cost Center",
 					in_list_view: 1,
 					columns: 2,
 					get_query: () => ({
 						query: `${HV_COCKPIT_API}.toplevel_kostenstelle_query`,
 					}),
+				},
+				{
+					fieldtype: "Small Text",
+					fieldname: "beschreibung",
+					label: __("Beschreibung"),
+					hidden: opts._receipt ? 0 : 1,
 				},
 				{
 					fieldtype: "Link",
@@ -688,19 +721,37 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		title: __("Ausgabe erfassen"),
 		size: "extra-large",
 		fields,
-		primary_action_label: __("Buchen"),
+		primary_action_label: opts._receipt ? __("Freigeben und buchen") : __("Buchen"),
 		primary_action(values) {
+			if (opts._receipt) {
+				values.zahlungsart = opts.zahlungsart;
+				values.zahlung_sofort = 1;
+				values.zahlungskonto = opts.zahlungskonto;
+				for (const row of values.positionen || []) {
+					row.kostenstelle = opts._receipt_kostenstelle;
+					row.umlagefaehig = {
+						"nicht umlegbar": "Kostenart nicht umlagefaehig",
+						"umlegbar": "Betriebskostenart",
+					}[row.typ] || "";
+				}
+			}
 			submit_eingangsrechnung(dialog, values);
 		},
-		secondary_action_label: __("Entwurf verwerfen"),
-		secondary_action() {
-			hv_draft_clear(HV_DRAFT_KEY_PI);
-			dialog.clear();
-			frappe.show_alert({ message: __("Entwurf gelöscht."), indicator: "blue" });
-		},
+		...(!opts._receipt ? {
+			secondary_action_label: __("Entwurf verwerfen"),
+			secondary_action() {
+				hv_draft_clear(HV_DRAFT_KEY_PI);
+				dialog.clear();
+				frappe.show_alert({ message: __("Entwurf gelöscht."), indicator: "blue" });
+			},
+		} : {}),
 	});
 
-	hv_attach_autosave(dialog, HV_DRAFT_KEY_PI);
+	if (opts._receipt) {
+		dialog._hv_receipt_review = opts._receipt_review;
+	} else {
+		hv_attach_autosave(dialog, HV_DRAFT_KEY_PI);
+	}
 
 	// Restore defaults from opts (explicit wins over draft)
 	const stored_draft = hv_draft_load(HV_DRAFT_KEY_PI);
@@ -741,7 +792,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		apply_extraction_hints(dialog, opts);
 	}
 
-	apply_eingabemodus(dialog);
+	apply_eingabemodus(dialog, { clear_existing: !opts._receipt });
 
 	// Ein Inbox-Vorschlag wird serverseitig exklusiv gesperrt und atomar mit
 	// einer gebuchten PI verknüpft. Ein Draft hätte keinen eindeutigen
@@ -818,12 +869,8 @@ function apply_extraction_hints(dialog, opts) {
 		const lf = dialog.fields_dict.lieferant;
 		if (lf && lf.$wrapper) {
 			const $btn = $(
-				`<button type="button" class="btn btn-xs btn-secondary hv-quick-create-supplier" style="margin-top: 4px;">
-					+ ${__("Lieferant '{0}' anlegen", [
-						frappe.utils.escape_html(opts._lieferant_neu.supplier_name),
-					])}
-				</button>`
-			);
+				'<button type="button" class="btn btn-xs btn-secondary hv-quick-create-supplier" style="margin-top: 4px;"></button>'
+			).text("+ " + __("Lieferant '{0}' anlegen", [opts._lieferant_neu.supplier_name]));
 			lf.$wrapper.find(".hv-quick-create-supplier").remove();
 			lf.$wrapper.append($btn);
 			$btn.on("click", () => open_supplier_quick_create(dialog, opts._lieferant_neu));
@@ -1044,53 +1091,72 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 	}
 
 	dialog.disable_primary_action();
+	const booking = {
+		lieferant: values.lieferant,
+		rechnungsdatum: values.rechnungsdatum,
+		wertstellungsdatum: values.wertstellungsdatum,
+		rechnungsname: values.rechnungsname,
+		remarks: values.remarks,
+		zahlungsbemerkung: values.zahlungsbemerkung,
+		beleg_brutto_bestaetigt: values.beleg_brutto_bestaetigt,
+		beleg_eur_bestaetigt: values.beleg_eur_bestaetigt,
+		positionen: JSON.stringify(rows),
+	};
+	const args = {
+		...booking,
+		zahlungsart: values.zahlungsart,
+		zahlung_sofort: values.zahlung_sofort ? 1 : 0,
+		zahlungskonto: values.zahlungskonto,
+		submit_doc: submit_doc ? 1 : 0,
+		attached_file_url: dialog._hv_attached_file || null,
+		vorschlag_name: dialog._hv_vorschlag_name || null,
+	};
+	const review = dialog._hv_receipt_review;
+	const submit = review
+		? frappe.call({
+			method: `${HV_RECEIPT_ACTION_API}.approve`,
+			args: { name: args.vorschlag_name, source: review.source, binding: review.binding, booking },
+		}).then(async ({ message }) => {
+			review.binding = message.binding;
+			try {
+				return await hausverwaltung.buchen_cockpit.execute_receipt(args.vorschlag_name, review.binding);
+			} finally {
+				dialog.hide();
+				dialog._hv_after_book();
+			}
+		})
+		: frappe.call({ method: `${HV_COCKPIT_API}.create_purchase_invoice`, args }).then((r) => r.message);
 	hv_after_async(
-		frappe
-			.call({
-				method: `${HV_COCKPIT_API}.create_purchase_invoice`,
-				args: {
-					lieferant: values.lieferant,
-					rechnungsdatum: values.rechnungsdatum,
-					wertstellungsdatum: values.wertstellungsdatum,
-					rechnungsname: values.rechnungsname,
-					remarks: values.remarks,
-					zahlungsart: values.zahlungsart,
-					zahlung_sofort: values.zahlung_sofort ? 1 : 0,
-					zahlungskonto: values.zahlungskonto,
-					zahlungsbemerkung: values.zahlungsbemerkung,
-					positionen: JSON.stringify(rows),
-					submit_doc: submit_doc ? 1 : 0,
-					attached_file_url: dialog._hv_attached_file || null,
-					vorschlag_name: dialog._hv_vorschlag_name || null,
-				},
-			})
-			.then((r) => {
-				const name = r && r.message && r.message.name;
-				if (!name) return;
-				const settlement = r.message.settlement_journal_entry;
+		submit.then((result) => {
+			const name = result?.name;
+			if (!name) return;
+			const settlement = result.settlement_journal_entry;
+			if (!review) {
 				hv_draft_clear(HV_DRAFT_KEY_PI);
 				dialog.hide();
-				frappe.show_alert({
-					message: settlement
-						? __("Ausgabe {0} erstellt, gebucht und über {1} ausgeglichen.", [name, settlement])
-						: submit_doc
-							? __("Ausgabe {0} erstellt und gebucht.", [name])
-							: __("Ausgabe {0} als Entwurf gespeichert.", [name]),
-					indicator: "green",
-				});
-				// Wenn der Dialog aus dem Bulk-Wizard heraus geöffnet wurde:
-				// Callback ausführen (Wizard refresht und springt zum nächsten Eintrag),
-				// nicht aufs PI-Formular wegnavigieren.
-				if (typeof dialog._hv_after_book === "function") {
-					try {
-						dialog._hv_after_book(name);
-					} catch (e) {
-						console.error(e);
-					}
-				} else {
-					frappe.set_route("Form", "Purchase Invoice", name);
+			}
+			frappe.show_alert({
+				message: settlement
+					? __("Ausgabe {0} erstellt, gebucht und über {1} ausgeglichen.", [name, settlement])
+					: submit_doc
+						? __("Ausgabe {0} erstellt und gebucht.", [name])
+						: __("Ausgabe {0} als Entwurf gespeichert.", [name]),
+				indicator: "green",
+			});
+			// Wenn der Dialog aus dem Bulk-Wizard heraus geöffnet wurde:
+			// Callback ausführen (Wizard refresht und springt zum nächsten Eintrag),
+			// nicht aufs PI-Formular wegnavigieren.
+			if (review) return;
+			if (typeof dialog._hv_after_book === "function") {
+				try {
+					dialog._hv_after_book(name);
+				} catch (e) {
+					console.error(e);
 				}
-			}),
+			} else {
+				frappe.set_route("Form", "Purchase Invoice", name);
+			}
+		}),
 		() => dialog.enable_primary_action()
 	);
 }

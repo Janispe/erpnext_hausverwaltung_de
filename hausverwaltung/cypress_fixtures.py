@@ -1173,6 +1173,47 @@ def seed_e2e_purchase_cockpit() -> dict:
 	}
 
 
+def seed_e2e_receipts() -> dict:
+	_check_disposable_site()
+	from base64 import b64encode
+	from io import BytesIO
+	from uuid import uuid4
+
+	from PIL import Image, ImageDraw
+
+	from hausverwaltung.hausverwaltung.test_booking_safeguards import fixture
+
+	company, center, _, _, _ = fixture(compact=True)
+	values = seed_e2e_purchase_cockpit()
+	for key, root, account_type in (("cash", "Asset", "Cash"), ("clearing", "Liability", "")):
+		parent = frappe.db.get_value("Account", {"company": company, "root_type": root, "is_group": 1})
+		values[key] = frappe.get_doc({
+			"doctype": "Account", "account_name": f"{values['tag']} {key}", "company": company,
+			"parent_account": parent, "account_type": account_type, "is_group": 0,
+		}).insert().name
+	image = Image.new("RGB", (144, 80), "white")
+	draw = ImageDraw.Draw(image)
+	draw.text((10, 10), f"TESTBON\nEUR 42.50\n{uuid4().hex[:12]}", fill="black")
+	file = BytesIO()
+	image.save(file, format="PNG")
+	return values | {"costCenter": center, "original": b64encode(file.getvalue()).decode("ascii")}
+
+
+def prepare_e2e_receipt(name: str, supplier: str, category: str) -> None:
+	_check_disposable_site()
+	from hausverwaltung.hausverwaltung.services.receipt_pilot import PROPOSAL, verified_original
+
+	proposal = frappe.get_doc(PROPOSAL, name, for_update=True)
+	if proposal.status != "Pending" or not proposal.receipt_digest:
+		frappe.throw("Die E2E-Fixture erwartet einen neuen Bon.")
+	verified_original(proposal)
+	proposal.db_set({"status": "Ready", "extracted_data": frappe.as_json({
+		"waehrung": "EUR", "belegsumme": 42.5,
+		"fields": {"lieferant": supplier, "rechnungsdatum": "2026-10-04", "rechnungsname": name},
+		"buchungspositionen": [{"betrag": 42.5, "kostenart": category, "umlagefaehig": "Kostenart nicht umlagefaehig"}],
+	})})
+
+
 def _ensure_e2e_rent_income_accounts(company: str) -> None:
 	settings = frappe.get_single("Hausverwaltung Einstellungen")
 	if any(row.company == company for row in settings.income_accounts):

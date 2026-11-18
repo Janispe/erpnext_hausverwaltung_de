@@ -335,6 +335,7 @@ doc_events = {
 		"on_cancel": [
 			"hausverwaltung.hausverwaltung.doctype.versicherungsfall.versicherungsfall.sync_insurance_voucher",
 			"hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag.on_journal_entry_cancel",
+			"hausverwaltung.proposals.receipt_action.on_settlement_cancel",
 			"hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import.on_journal_entry_cancel",
 			"hausverwaltung.hausverwaltung.doctype.zahlungsplan.zahlungsplan.on_historical_journal_entry_cancel",
 		],

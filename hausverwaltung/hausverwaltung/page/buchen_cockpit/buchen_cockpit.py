@@ -125,6 +125,13 @@ def _require_supplier_creation_permission() -> None:
         )
 
 
+def _require_non_receipt_file(file_url):
+    if file_url and frappe.db.exists(
+        "Buchungs Vorschlag", {"file_url": file_url, "receipt_digest": ["is", "set"]}
+    ):
+        frappe.throw("Barauslagen benötigen die Freigabe in der Buchungs-Inbox.", frappe.PermissionError)
+
+
 def _lock_booking_proposal(vorschlag_name: str) -> dict:
     """Lock a proposal for the enclosing request transaction.
 
@@ -142,12 +149,15 @@ def _lock_booking_proposal(vorschlag_name: str) -> dict:
     proposal = frappe.db.get_value(
         "Buchungs Vorschlag",
         vorschlag_name,
-        ["name", "status", "linked_purchase_invoice"],
+        ["name", "status", "linked_purchase_invoice", "receipt_digest", "file_url"],
         as_dict=True,
         for_update=True,
     )
     if not proposal:
         frappe.throw(f"Buchungsvorschlag '{vorschlag_name}' wurde nicht gefunden.")
+    if proposal.get("receipt_digest"):
+        frappe.throw("Barauslagen benötigen die Freigabe in der Buchungs-Inbox.", frappe.PermissionError)
+    _require_non_receipt_file(proposal.get("file_url"))
 
     linked_invoice = proposal.get("linked_purchase_invoice")
     if proposal.get("status") == "Booked" and linked_invoice:
@@ -955,6 +965,14 @@ def _validate_settlement_account(
         )
 
 
+def _settlement_amount(pi) -> float:
+    return (
+        flt(pi.get("outstanding_amount"))
+        or flt(pi.get("rounded_total"))
+        or flt(pi.get("grand_total"))
+    )
+
+
 def _create_purchase_invoice_settlement_journal(
     pi,
     *,
@@ -970,11 +988,7 @@ def _create_purchase_invoice_settlement_journal(
     Hauswart oder ähnliche Konten. Wir verwenden bewusst einen Journal Entry,
     weil diese Konten nicht zwingend ERPNext-Bankkonten sein müssen.
     """
-    amount = (
-        flt(pi.get("outstanding_amount"))
-        or flt(pi.get("rounded_total"))
-        or flt(pi.get("grand_total"))
-    )
+    amount = _settlement_amount(pi)
     if amount <= 0:
         frappe.throw("Die Eingangsrechnung hat keinen offenen Betrag zum Ausgleichen.")
 
@@ -1045,7 +1059,7 @@ def _should_settle_purchase_invoice_now(kwargs: dict) -> bool:
     return (kwargs.get("zahlungsstatus") or "") == ZAHLUNGSSTATUS_SOFORT
 
 
-def _purchase_invoice_request_context(kwargs: dict) -> dict[str, Any]:
+def _purchase_invoice_request_context(kwargs: dict, *, receipt=None) -> dict[str, Any]:
     submit = _as_bool(kwargs.get("submit_doc", 1))
     proposal = (kwargs.get("vorschlag_name") or "").strip()
     if proposal and not submit:
@@ -1057,7 +1071,12 @@ def _purchase_invoice_request_context(kwargs: dict) -> dict[str, Any]:
     _require_document_permissions("Purchase Invoice", submit=submit)
     if settle_now:
         _require_document_permissions("Journal Entry", submit=True)
-    idempotent = _lock_booking_proposal(proposal) if proposal else {}
+    if receipt is not None:
+        if proposal != receipt.name or receipt.status != "Ready" or receipt.linked_purchase_invoice:
+            frappe.throw("Der Bon ist nicht zur Buchung bereit.")
+        idempotent = {}
+    else:
+        idempotent = _lock_booking_proposal(proposal) if proposal else {}
     if idempotent:
         return {
             "submit": submit,
@@ -1286,8 +1305,9 @@ def _set_cockpit_purchase_invoice_items(
     cost_centers: dict[int, str],
     cost_center_to_immobilie: dict[str, str] | None,
     default_description: str,
+    explicit_categories: bool = False,
 ) -> None:
-    service_item_code = ensure_default_service_item()
+    service_item_code = "" if explicit_categories else ensure_default_service_item()
     verteilung_cache: dict[str, str] = {}
     wohnung_to_immobilie: dict[str, str | None] = {}
     items = [
@@ -1331,9 +1351,15 @@ def create_purchase_invoice(**kwargs) -> dict:
         positionen: list of dicts with keys
             betrag, konto, kostenstelle, umlagefaehig, kostenart, wohnung (optional)
     """
+    _require_non_receipt_file(kwargs.get("attached_file_url"))
     request = _purchase_invoice_request_context(kwargs)
     if request["idempotent"]:
         return request["idempotent"]
+    pi = _prepare_cockpit_purchase_invoice(request, kwargs)
+    return _post_cockpit_purchase_invoice(pi, request, kwargs)
+
+
+def _prepare_cockpit_purchase_invoice(request, kwargs, *, receipt=False):
     booking = _purchase_invoice_booking_context(request["rows"])
 
     posting_date = kwargs.get("rechnungsdatum") or nowdate()
@@ -1346,6 +1372,8 @@ def create_purchase_invoice(**kwargs) -> dict:
         bill_no=bill_no,
         remarks=user_remarks,
     )
+    if receipt and company_currency != "EUR":
+        frappe.throw("Der Barauslagen-Pilot benötigt eine Company in EUR.")
     _set_cockpit_purchase_invoice_items(
         pi,
         request["rows"],
@@ -1354,6 +1382,7 @@ def create_purchase_invoice(**kwargs) -> dict:
         cost_centers=booking["cost_centers"],
         cost_center_to_immobilie=booking["cost_center_to_immobilie"],
         default_description=bill_no or "Ausgabe",
+        explicit_categories=receipt,
     )
 
     wertstellungsdatum = kwargs.get("wertstellungsdatum")
@@ -1362,22 +1391,58 @@ def create_purchase_invoice(**kwargs) -> dict:
 
     if _has_field("Purchase Invoice", "hv_eingabequelle"):
         pi.hv_eingabequelle = EINGABEQUELLE_EINGANG
+    return pi
 
+
+def _receipt_invoice_effect(pi):
+    """Fields that determine the reviewed net expense, tax and payable amounts."""
+    return {
+        "company": pi.company, "currency": pi.currency, "credit_to": pi.credit_to,
+        "net_total": pi.net_total, "grand_total": pi.grand_total, "rounded_total": pi.rounded_total,
+        "items": [
+            {key: row.get(key) for key in (
+                "item_code", "expense_account", "cost_center", "wohnung", "rate", "net_amount", "description"
+            )}
+            for row in pi.items
+        ],
+        "taxes": [
+            {key: row.get(key) for key in (
+                "account_head", "cost_center", "charge_type", "category", "add_deduct_tax",
+                "included_in_print_rate", "rate", "tax_amount_after_discount_amount",
+            )}
+            for row in pi.taxes
+        ],
+    }
+
+
+def _check_receipt_invoice_effect(pi, total, expected):
+    _validate_receipt_total(pi, total)
+    if _receipt_invoice_effect(pi) != expected:
+        frappe.throw("ERPNext hat die geprüfte Aufwands- oder Steueraufteilung geändert. Bitte den Bon erneut prüfen.")
+
+
+def _post_cockpit_purchase_invoice(pi, request, kwargs, *, receipt_file=None, receipt_total=None, receipt_effect=None):
     pi.insert()
 
-    _attach_source_file(pi, kwargs.get("attached_file_url"))
+    if receipt_file:
+        _check_receipt_invoice_effect(pi, receipt_total, receipt_effect)
+        _attach_source_file(pi, receipt_file.file_url, source=receipt_file)
+    else:
+        _attach_source_file(pi, kwargs.get("attached_file_url"))
 
     settlement_journal = None
     if request["submit"]:
         pi.submit()
         if request["settle_now"]:
+            if receipt_total is not None:
+                _check_receipt_invoice_effect(pi, receipt_total, receipt_effect)
             settlement_journal = _create_purchase_invoice_settlement_journal(
                 pi,
                 settlement_account=kwargs.get("zahlungskonto"),
-                posting_date=posting_date,
-                wertstellungsdatum=wertstellungsdatum,
+                posting_date=kwargs.get("rechnungsdatum") or pi.posting_date,
+                wertstellungsdatum=kwargs.get("wertstellungsdatum"),
                 zahlungsart=kwargs.get("zahlungsart"),
-                remarks=kwargs.get("zahlungsbemerkung") or user_remarks,
+                remarks=kwargs.get("zahlungsbemerkung") or (kwargs.get("remarks") or "").strip(),
             )
         if request["proposal"]:
             _link_locked_booking_proposal(request["proposal"], pi.name)
@@ -1395,7 +1460,15 @@ def create_purchase_invoice(**kwargs) -> dict:
     }
 
 
-def _attach_source_file(pi, file_url: str | None) -> None:
+def _validate_receipt_total(pi, confirmed_total: float) -> None:
+    if flt(pi.get("grand_total"), 2) != confirmed_total or flt(_settlement_amount(pi), 2) != confirmed_total:
+        frappe.throw(
+            "Rechnungs- oder Ausgleichsbetrag weicht vom bestätigten Bon-Endbetrag ab. "
+            "Bitte Positionen, Steuern und Rundung prüfen."
+        )
+
+
+def _attach_source_file(pi, file_url: str | None, *, source=None) -> None:
     """Hängt das Quell-PDF aus der LLM-Extraktion an die Purchase Invoice an.
 
     Wir legen NICHT die Datei neu auf disk (würde Frappe's File.get_content() +
@@ -1406,17 +1479,18 @@ def _attach_source_file(pi, file_url: str | None) -> None:
     """
     if not file_url:
         return
-    file_name = frappe.db.get_value("File", {"file_url": file_url}, "name")
-    if not file_name:
-        return
-    src = frappe.get_doc("File", file_name)
+    if source is None:
+        file_name = frappe.db.get_value("File", {"file_url": file_url}, "name")
+        if not file_name:
+            return
+        source = frappe.get_doc("File", file_name)
     attach = frappe.get_doc({
         "doctype": "File",
-        "file_name": src.file_name,
-        "file_url": src.file_url,
-        "is_private": src.is_private,
-        "file_size": src.file_size,
-        "content_hash": src.content_hash,
+        "file_name": source.file_name,
+        "file_url": source.file_url,
+        "is_private": source.is_private,
+        "file_size": source.file_size,
+        "content_hash": source.content_hash,
         "folder": "Home/Attachments",
         "attached_to_doctype": "Purchase Invoice",
         "attached_to_name": pi.name,

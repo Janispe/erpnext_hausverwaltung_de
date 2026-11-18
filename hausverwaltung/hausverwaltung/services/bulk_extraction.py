@@ -18,7 +18,8 @@ from functools import partial
 
 import frappe
 
-from hausverwaltung.hausverwaltung.services import invoice_extraction, mistral_client
+from hausverwaltung.hausverwaltung.services import invoice_extraction, mistral_client, receipt_pilot
+from hausverwaltung.proposals import receipt_action
 
 
 def _new_session_id() -> str:
@@ -63,6 +64,8 @@ def bulk_create_vorschlaege(file_urls) -> dict:
 		if not url:
 			continue
 		invoice_extraction.check_invoice_file_permission(url)
+		if frappe.db.exists("Buchungs Vorschlag", {"file_url": url, "receipt_digest": ["is", "set"]}):
+			frappe.throw("Dieser Originalbeleg gehört zum Barauslagen-Pilot.")
 		# Idempotenz: aktiver Vorschlag für diese URL?
 		existing = frappe.get_list(
 			"Buchungs Vorschlag",
@@ -339,7 +342,7 @@ def _summarize_extraction(extracted_json: str) -> dict | None:
 		"lieferant": fields.get("lieferant") or "",
 		"llm_lieferant": data.get("llm_lieferant") or "",
 		"datum": fields.get("rechnungsdatum") or "",
-		"betrag_gesamt": round(betrag_gesamt, 2),
+		"betrag_gesamt": data.get("belegsumme", round(betrag_gesamt, 2)),
 		"position_count": len(positionen),
 		"confidence_avg": conf_avg,
 		"warning_count": len(data.get("warnings") or []),
@@ -358,12 +361,15 @@ def get_vorschlag_full(name: str) -> dict:
 			data = json.loads(v.extracted_data)
 		except json.JSONDecodeError:
 			data = {}
+	is_receipt = bool(v.get("receipt_digest"))
 	return {
 		"name": v.name,
 		"file_url": v.file_url,
 		"status": v.status,
 		"original_filename": v.original_filename,
 		"data": data,
+		"receipt": receipt_pilot.review_context(v) if is_receipt else None,
+		"receipt_review": receipt_action.review_state(v) if is_receipt else None,
 	}
 
 
@@ -376,7 +382,7 @@ def mark_vorschlag_skipped(name: str) -> dict:
 	"""
 	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
 	_require_proposal_permission("write", v)
-	if v.status == "Booked":
+	if v.status in {"Booked", "Cancelled"}:
 		frappe.throw("Bereits gebuchter Vorschlag kann nicht übersprungen werden.")
 	v.status = "Skipped"
 	v.save(ignore_permissions=True)
@@ -395,7 +401,9 @@ def delete_vorschlag(name: str, also_delete_file: int = 0) -> dict:
 	"""
 	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
 	_require_proposal_permission("delete", v)
-	if v.status == "Booked":
+	if v.receipt_digest and receipt_action._final(v):
+		frappe.throw("Bons mit Buchungshistorie bleiben in der Buchungs-Inbox erhalten.")
+	if v.status in {"Booked", "Cancelled"}:
 		frappe.throw(
 			"Bereits gebuchter Vorschlag kann nicht gelöscht werden — bitte zuerst die verknüpfte Eingangsrechnung stornieren."
 		)
@@ -469,7 +477,10 @@ def reprocess_vorschlag(name: str) -> dict:
 	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
 	_require_proposal_permission("write", v)
 	invoice_extraction.check_invoice_file_permission(v.file_url)
-	if v.status == "Booked":
+	is_receipt = bool(getattr(v, "receipt_digest", None))
+	if is_receipt and receipt_action._final(v):
+		frappe.throw("Bons mit Buchungshistorie können nicht neu analysiert werden.")
+	if v.status in {"Booked", "Cancelled"}:
 		frappe.throw(
 			"Bereits gebuchter Vorschlag kann nicht neu analysiert werden — "
 			"bitte zuerst die verknüpfte Eingangsrechnung stornieren."
@@ -477,9 +488,10 @@ def reprocess_vorschlag(name: str) -> dict:
 	v.status = "Pending"
 	v.extracted_data = ""
 	v.error_message = ""
-	v.extraction_job_id = uuid.uuid4().hex
+	v.extraction_job_id = None if is_receipt else uuid.uuid4().hex
 	v.save(ignore_permissions=True)
-	_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
+	if not is_receipt:
+		_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
 	frappe.db.commit()
 	return {"name": v.name, "status": v.status}
 
@@ -496,26 +508,28 @@ def reactivate_vorschlag(name: str) -> dict:
 	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
 	_require_proposal_permission("write", v)
 	invoice_extraction.check_invoice_file_permission(v.file_url)
-	if v.status == "Booked":
+	is_receipt = bool(getattr(v, "receipt_digest", None))
+	if v.status in {"Booked", "Cancelled"}:
 		frappe.throw(
 			"Vorschlag ist bereits als Eingangsrechnung gebucht und kann nicht reaktiviert werden."
 		)
 	if v.status == "Skipped":
 		v.status = "Ready" if v.extracted_data else "Pending"
 		if v.status == "Pending":
-			v.extraction_job_id = uuid.uuid4().hex
+			v.extraction_job_id = None if is_receipt else uuid.uuid4().hex
 		v.save(ignore_permissions=True)
 		# Falls noch nie extrahiert (z.B. Skip vor Worker-Run), Worker neu queuen.
-		if v.status == "Pending":
+		if v.status == "Pending" and not is_receipt:
 			_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
 		frappe.db.commit()
 		return {"name": v.name, "status": v.status}
 	if v.status == "Error":
 		v.status = "Pending"
 		v.error_message = ""
-		v.extraction_job_id = uuid.uuid4().hex
+		v.extraction_job_id = None if is_receipt else uuid.uuid4().hex
 		v.save(ignore_permissions=True)
-		_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
+		if not is_receipt:
+			_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
 		frappe.db.commit()
 		return {"name": v.name, "status": v.status}
 	return {"name": v.name, "status": v.status}
@@ -533,22 +547,16 @@ def link_vorschlag_to_pi(vorschlag_name: str, pi_name: str) -> None:
 
 
 def on_purchase_invoice_cancel(doc, method=None):
-	"""doc_events-Hook für 'Purchase Invoice' on_cancel.
-
-	Setzt einen verknüpften Buchungs Vorschlag zurück auf 'Ready', sodass er
-	wieder im Default-Filter der Inbox auftaucht. linked_purchase_invoice
-	bleibt absichtlich erhalten — ein anschließender Amend-Submit findet den
-	Vorschlag darüber und relink-t ihn auf die neue PI (siehe
-	on_purchase_invoice_submit).
-	"""
-	name = frappe.db.get_value(
+	"""Return ordinary proposals to Ready and retain cancelled receipt history."""
+	proposal = frappe.db.get_value(
 		"Buchungs Vorschlag",
 		{"linked_purchase_invoice": doc.name, "status": "Booked"},
-		"name",
+		["name", "receipt_digest"], as_dict=True,
 		for_update=True,
 	)
-	if name:
-		frappe.db.set_value("Buchungs Vorschlag", name, "status", "Ready")
+	if proposal:
+		status = "Cancelled" if proposal.receipt_digest else "Ready"
+		frappe.db.set_value("Buchungs Vorschlag", proposal.name, "status", status)
 
 
 def on_purchase_invoice_submit(doc, method=None):
@@ -562,7 +570,7 @@ def on_purchase_invoice_submit(doc, method=None):
 		return
 	name = frappe.db.get_value(
 		"Buchungs Vorschlag",
-		{"linked_purchase_invoice": doc.amended_from},
+		{"linked_purchase_invoice": doc.amended_from, "receipt_digest": ["is", "not set"]},
 		"name",
 		for_update=True,
 	)
@@ -602,7 +610,7 @@ def list_vorschlaege(
 	if status:
 		clean = status.strip()
 		if clean.lower() == "open":
-			filters["status"] = ["in", ("Pending", "Processing", "Ready")]
+			filters["status"] = ["in", ("Pending", "Processing", "Ready", "Cancelled")]
 		elif clean.lower() != "alle":
 			filters["status"] = clean
 	if session_id:
@@ -619,7 +627,10 @@ def list_vorschlaege(
 			"status",
 			"linked_purchase_invoice",
 			"extracted_data",
+			"receipt_digest",
+			"error_message",
 			"creation",
+			"modified",
 		],
 		order_by=f"{sort_by} {sort_order}",
 		limit_page_length=int(limit or 200),
@@ -635,6 +646,7 @@ def list_vorschlaege(
 		limit_page_length=50,
 	)
 
+	review_versions = receipt_action.review_versions([r.name for r in rows if r.receipt_digest])
 	out_rows: list[dict] = []
 	for r in rows:
 		summary = _summarize_extraction(r.get("extracted_data") or "")
@@ -646,10 +658,15 @@ def list_vorschlaege(
 			"status": r["status"],
 			"linked_purchase_invoice": r["linked_purchase_invoice"],
 			"creation": str(r["creation"]),
+			"is_receipt": bool(r.receipt_digest),
+			"detail_version": f"{r.modified}/{review_versions.get(r.name, '')}" if r.receipt_digest else None,
+			"error_message": r.error_message,
 			"extracted_summary": summary,
 		})
 	return {
 		"rows": out_rows,
+		"receipt_upload": receipt_pilot.enabled() and frappe.has_permission("Buchungs Vorschlag", "create")
+		and frappe.has_permission("File", "create"),
 		"sessions": [s["session_id"] for s in all_sessions if s.get("session_id")],
 		"count": len(out_rows),
 	}

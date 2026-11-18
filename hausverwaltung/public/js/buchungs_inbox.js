@@ -13,6 +13,92 @@ const HV_INBOX_STYLE_ID = "hv-buchungs-inbox-styles";
 const HV_INBOX_API = "hausverwaltung.hausverwaltung.services.bulk_extraction";
 const HV_INBOX_COCKPIT_API = "hausverwaltung.hausverwaltung.page.buchen_cockpit.buchen_cockpit";
 
+const HV_RECEIPT_API = "hausverwaltung.hausverwaltung.services.receipt_pilot";
+const HV_INBOX_RECEIPT_ACTION_API = "hausverwaltung.proposals.receipt_action";
+
+function hv_receipt_context_fields(defaults = {}) {
+	return [
+		{ fieldname: "kostenstelle", fieldtype: "Link", options: "Cost Center", label: __("Objekt-Kostenstelle"),
+			get_query: () => ({
+				query: "hausverwaltung.hausverwaltung.page.buchen_cockpit.buchen_cockpit.toplevel_kostenstelle_query",
+			}) },
+		{ fieldname: "zahlungsquelle", fieldtype: "Select", options: "\nObjektkasse\nPrivat vorgestreckt",
+			label: __("Zahlungsquelle") },
+		{ fieldname: "zahlungskonto", fieldtype: "Link", options: "Account", label: __("Kassen-/Verrechnungskonto"),
+			get_query: () => ({ filters: { is_group: 0, disabled: 0 } }) },
+		{ fieldname: "person", fieldtype: "Data", label: __("Auslegende Person"),
+			depends_on: "eval:doc.zahlungsquelle === 'Privat vorgestreckt'" },
+	].map((field) => ({ ...field, default: defaults[field.fieldname] || "" }));
+}
+
+function hv_open_receipt_batch(on_uploaded) {
+	const batch_id = crypto.randomUUID();
+	let remaining = [];
+	const dialog = new frappe.ui.Dialog({
+		title: __("Barauslagen-Stapel"),
+		fields: [
+			...hv_receipt_context_fields(),
+			{ fieldtype: "HTML", fieldname: "originals" },
+		],
+		primary_action_label: __("Zur Bonanalyse einreichen"),
+		async primary_action(context) {
+			if (!remaining.length) {
+				frappe.msgprint(__("Bitte bis zu 50 Bonfotos oder PDF-Scans auswählen."));
+				return;
+			}
+			if (remaining.length > 50) {
+				frappe.msgprint(__("Pro Stapel sind bis zu 50 Bons möglich."));
+				return;
+			}
+			dialog.disable_primary_action();
+			input.prop("disabled", true);
+			const failed = [];
+			let successes = 0;
+			for (const file of remaining) {
+				status.text(__("Verarbeite {0}", [file.name]));
+				const form = new FormData();
+				form.append("file", file);
+				form.append("batch_id", batch_id);
+				form.append("context", JSON.stringify(context));
+				try {
+					const response = await fetch(`/api/method/${HV_RECEIPT_API}.upload_receipt`, {
+						method: "POST",
+						headers: { "X-Frappe-CSRF-Token": frappe.csrf_token },
+						body: form,
+					});
+					if (!response.ok || !(await response.json()).message?.name) {
+						throw new Error("Upload fehlgeschlagen");
+					}
+					successes++;
+				} catch {
+					failed.push(file);
+				}
+			}
+			remaining = failed;
+			if (successes) on_uploaded();
+			if (!failed.length) {
+				dialog.hide();
+				frappe.show_alert({ message: __("{0} Bons eingereicht oder bereits vorhanden.", [successes]), indicator: "green" });
+				return;
+			}
+			status.text(__("Bitte erneut versuchen oder die Dateien ersetzen: {0}", [failed.map((file) => file.name).join(", ")]));
+			input.prop("disabled", false);
+			dialog.enable_primary_action();
+		},
+	});
+	const originals = dialog.fields_dict.originals.$wrapper;
+	originals.append(`<label>${__("Originalbelege (JPEG, PNG, PDF, bis zu 50)")}</label>
+		<input class="form-control" type="file" multiple accept="image/jpeg,image/png,application/pdf">
+		<p class="text-muted" role="status"></p>`);
+	const input = originals.find("input");
+	const status = originals.find("[role=status]");
+	input.on("change", () => {
+		remaining = Array.from(input[0].files);
+		status.text(__("{0} Dateien ausgewählt.", [remaining.length]));
+	});
+	dialog.show();
+}
+
 const _hv_inbox_ensure_styles = () => {
 	if (document.getElementById(HV_INBOX_STYLE_ID)) return;
 	const style = document.createElement("style");
@@ -187,6 +273,7 @@ const _STATUS_COLOR = {
 	Processing: "#7b1fa2",
 	Ready: "#1976d2",
 	Booked: "#2e7d32",
+	Cancelled: "#616161",
 	Skipped: "#9e9e9e",
 	Error: "#c62828",
 };
@@ -195,6 +282,7 @@ const _STATUS_LABEL = {
 	Processing: __("läuft"),
 	Ready: __("bereit"),
 	Booked: __("gebucht"),
+	Cancelled: __("storniert"),
 	Skipped: __("übersprungen"),
 	Error: __("Fehler"),
 };
@@ -269,12 +357,13 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				<div class="hv-filter-control">
 					<label>${__("Status")}</label>
 					<select data-filter="status">
-						<option value="open">${__("Offen (Pending/Processing/Ready)")}</option>
+						<option value="open">${__("Offen und stornierte Bons")}</option>
 						<option value="alle">${__("Alle")}</option>
 						<option value="Ready">${__("Ready")}</option>
 						<option value="Pending">${__("Pending")}</option>
 						<option value="Processing">${__("Processing")}</option>
 						<option value="Booked">${__("Booked")}</option>
+						<option value="Cancelled">${__("Storniert")}</option>
 						<option value="Skipped">${__("Skipped")}</option>
 						<option value="Error">${__("Error")}</option>
 					</select>
@@ -296,6 +385,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				</div>
 				<div class="spacer"></div>
 				<button class="btn-refresh" title="${__("Liste neu laden")}">⟳ ${__("Refresh")}</button>
+				<button class="btn-receipts hidden">+ ${__("Barauslagen-Stapel")}</button>
 				<button class="btn-bulk btn-primary">+ ${__("Sammel-Upload")}</button>
 			</div>
 			<div class="hv-inbox-body">
@@ -338,7 +428,8 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		refresh_list();
 	});
 
-	layout.on("click", ".btn-refresh", () => refresh_list());
+	layout.on("click", ".btn-receipts", () => hv_open_receipt_batch(refresh_list));
+	layout.on("click", ".btn-refresh", () => refresh_list(true));
 	layout.on("click", ".btn-bulk", () => {
 		if (
 			hausverwaltung.buchen_cockpit
@@ -354,9 +445,10 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		state.selected_name = name;
 		render_list();
 		render_detail();
+		schedule_poll();
 	});
 
-	const refresh_list = () => {
+	const refresh_list = (force_detail = false) => {
 		const my_seq = ++state.refresh_seq;
 		frappe
 			.call({
@@ -376,16 +468,14 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				if (my_seq !== state.refresh_seq) return;
 				const data = (r && r.message) || { rows: [], sessions: [] };
 				const new_rows = data.rows || [];
+				layout.find(".btn-receipts").toggleClass("hidden", !data.receipt_upload);
 
-				// Cache-Invalidation: wenn sich der Status eines Vorschlags
-				// geändert hat (z.B. Worker fertig: Processing → Ready), den
-				// gecachten full-Eintrag wegwerfen, damit render_detail ihn neu
-				// fetcht. Sonst zeigt das Detail-Pane ewig "Worker noch nicht fertig".
-				const prev_status = {};
-				for (const r0 of state.rows) prev_status[r0.name] = r0.status;
-				for (const r1 of new_rows) {
-					if (prev_status[r1.name] && prev_status[r1.name] !== r1.status) {
-						delete state.full_cache[r1.name];
+				const previous_rows = new Map(state.rows.map((r) => [r.name, r]));
+				for (const row of new_rows) {
+					const previous = previous_rows.get(row.name);
+					if (!previous || previous.status !== row.status || previous.detail_version !== row.detail_version
+						|| (force_detail && row.name === state.selected_name)) {
+						delete state.full_cache[row.name];
 					}
 				}
 
@@ -511,29 +601,36 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 
 		// Volldaten cachen
 		if (!state.full_cache[row.name]) {
-			state.full_cache[row.name] = "loading";
-			frappe
-				.call({
-					method: `${HV_INBOX_API}.get_vorschlag_full`,
-					args: { name: row.name },
-				})
+			const request = frappe.call({
+				method: `${HV_INBOX_API}.get_vorschlag_full`,
+				args: { name: row.name },
+			});
+			state.full_cache[row.name] = request;
+			request
 				.then((r) => {
+					if (state.full_cache[row.name] !== request) return;
 					state.full_cache[row.name] = (r && r.message) || null;
 					if (state.selected_name === row.name) render_detail();
 				})
 				.catch(() => {
-					delete state.full_cache[row.name];
+					if (state.full_cache[row.name] === request) delete state.full_cache[row.name];
 				});
 		}
 
 		const full = state.full_cache[row.name];
-		const data = full && full !== "loading" ? full.data || {} : null;
+		const loading = typeof full?.then === "function";
+		const data = full && !loading ? full.data || {} : null;
 
-		const can_book = row.status === "Ready";
+		const receipt = full?.receipt;
+		const review = full?.receipt_review;
+		const approved = review?.status === "Approved";
+		const closed = ["Booked", "Cancelled"].includes(row.status);
+		const can_book = row.status === "Ready" && (!row.is_receipt ||
+			(review && review.status !== "Succeeded" && receipt && !receipt.fragen.length && (!data?.waehrung || data.waehrung === "EUR")));
 		const can_skip = ["Pending", "Processing", "Ready"].includes(row.status);
 		const can_reactivate = ["Skipped", "Error"].includes(row.status);
-		const can_reprocess = row.status !== "Booked";
-		const can_delete = row.status !== "Booked";
+		const can_reprocess = !closed;
+		const can_delete = !closed && !review?.binding;
 
 		const file_url = row.file_url || (full && full.file_url) || "";
 
@@ -548,18 +645,17 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		// einbauen — sonst startet der Browser einen neuen Download (sichtbarer
 		// Reload-Flicker alle Polling-Ticks). Stattdessen leerer Placeholder
 		// der gleich durch die detached Pane ersetzt wird.
-		const pdf_iframe = keep_pdf
-			? ""
-			: file_url
-				? `<embed src="${frappe.utils.escape_html(file_url)}" type="application/pdf"
-					style="width:100%; height:100%; min-height:60vh; border:0;"
-					title="${__("PDF-Vorschau")}" />
-				   <a href="${frappe.utils.escape_html(file_url)}" target="_blank"
-				      style="display:block; padding:6px 8px; font-size:11px; color:#666;
-				             text-align:center; border-top:1px solid var(--border-color, #e0e0e0);">
-				      ${__("Original-PDF in neuem Tab öffnen")} ↗
-				   </a>`
-				: `<div class="hv-inbox-detail-empty">${__("Keine PDF-Datei verknüpft.")}</div>`;
+		const source_url = frappe.utils.escape_html(file_url);
+		const is_photo = row.is_receipt && /\.(jpg|png)$/i.test(file_url);
+		const original_preview = keep_pdf ? "" : file_url
+			? `${is_photo
+				? `<img src="${source_url}" alt="${__("Originalbeleg")}" style="width:100%; height:auto;">`
+				: `<embed src="${source_url}" type="application/pdf" title="${__("PDF-Vorschau")}"
+					style="width:100%; height:100%; min-height:60vh; border:0;">`}
+				<a href="${source_url}" target="_blank" rel="noopener" style="display:block; padding:6px; text-align:center;">
+					${__("Originalbeleg öffnen")} ↗
+				</a>`
+			: `<div class="hv-inbox-detail-empty">${__("Kein Originalbeleg verknüpft.")}</div>`;
 
 		const linked_pi_link = row.linked_purchase_invoice
 			? `<a href="/app/purchase-invoice/${encodeURIComponent(row.linked_purchase_invoice)}" target="_blank">${frappe.utils.escape_html(row.linked_purchase_invoice)}</a>`
@@ -567,7 +663,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 
 		const detail_block = data
 			? _hv_render_extraction_details(data)
-			: full === "loading"
+			: loading
 			? `<div style="padding:20px; color:#666;"><i class="fa fa-spinner fa-spin"></i> ${__("Lade Detail-Werte...")}</div>`
 			: `<div style="padding:20px; color:#666;">${__("Keine extrahierten Daten — Worker hat noch nicht abgeschlossen.")}</div>`;
 
@@ -580,7 +676,9 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 					${linked_pi_link ? ` · ${linked_pi_link}` : ""}
 				</div>
 				<div class="actions">
-					<button class="btn-book btn-primary" ${can_book ? "" : "disabled"}>${__("Buchen")}</button>
+					<button class="btn-book btn-primary" ${can_book ? "" : "disabled"}>${approved ? __("Buchung fortsetzen") : row.is_receipt ? __("Bon prüfen") : __("Buchen")}</button>
+					${approved ? `<button class="btn-reopen">${__("Buchungsdaten korrigieren")}</button>` : ""}
+					${receipt && !closed ? `<button class="btn-receipt-context">${__("Barauslagen-Angaben ändern")}</button>` : ""}
 					<button class="btn-skip" ${can_skip ? "" : "disabled"}>${__("Überspringen")}</button>
 					<button class="btn-reactivate" ${can_reactivate ? "" : "disabled"}>${__("Reaktivieren")}</button>
 					<button class="btn-reprocess" title="${__("Komplett neu durchs LLM jagen — bisherige Felder werden überschrieben.")}" ${can_reprocess ? "" : "disabled"}>↻ ${__("Neu analysieren")}</button>
@@ -589,6 +687,10 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 			</div>
 			<div class="hv-inbox-split">
 				<div class="hv-inbox-values">
+					${approved ? `<p>${__("Bon freigegeben. Die Buchung kann mit dieser Fassung fortgesetzt werden.")}</p>` : ""}
+					${review?.status === "Stale" ? `<p>${__("Freigabe ungültig. Bitte die geänderten Buchungsdaten erneut prüfen.")}</p>` : ""}
+					${row.status === "Cancelled" ? `<p>${__("Rechnung oder Ausgleich storniert. Die ursprüngliche Buchung bleibt nachvollziehbar.")}</p>` : ""}
+					${receipt ? hv_render_receipt_context(receipt, data) : ""}
 					${detail_block}
 					${
 						row.error_message
@@ -596,7 +698,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 							: ""
 					}
 				</div>
-				<div class="hv-inbox-pdf">${pdf_iframe}</div>
+				<div class="hv-inbox-pdf">${original_preview}</div>
 			</div>
 		`);
 
@@ -609,7 +711,43 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 			state.current_pdf_url = file_url || null;
 		}
 
-		$detail.find(".btn-book").off("click").on("click", () => _do_book(row));
+		$detail.find(".btn-receipt-context").on("click", () => {
+			const dialog = new frappe.ui.Dialog({
+				title: __("Barauslagen-Angaben ändern"),
+				fields: hv_receipt_context_fields(receipt),
+				primary_action_label: __("Speichern"),
+				async primary_action(context) {
+					await frappe.call({ method: `${HV_RECEIPT_API}.update_context`, args: { name: row.name, context } });
+					delete state.full_cache[row.name];
+					dialog.hide();
+					render_detail();
+				},
+			});
+			dialog.show();
+		});
+		$detail.find(".btn-reopen").on("click", async function () {
+			this.disabled = true;
+			try {
+				const { message } = await frappe.call({ method: `${HV_INBOX_RECEIPT_ACTION_API}.reopen`, args: { name: row.name, binding: review.binding } });
+				review.status = message.status;
+				render_detail();
+				_do_book(row);
+			} finally {
+				this.disabled = false;
+			}
+		});
+		$detail.find(".btn-book").off("click").on("click", async function () {
+			if (!approved) return _do_book(row);
+			this.disabled = true;
+			try {
+				const result = await hausverwaltung.buchen_cockpit.execute_receipt(row.name, review.binding);
+				if (result) frappe.show_alert({ message: __("Ausgabe {0} gebucht.", [result.name]), indicator: "green" });
+			} finally {
+				delete state.full_cache[row.name];
+				refresh_list();
+				this.disabled = false;
+			}
+		});
 		$detail.find(".btn-skip").off("click").on("click", () => _do_skip(row));
 		$detail.find(".btn-reactivate").off("click").on("click", () => _do_reactivate(row));
 		$detail.find(".btn-reprocess").off("click").on("click", () => _do_reprocess(row));
@@ -617,9 +755,13 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 	};
 
 	const _do_book = (row) => {
-		if (!state.full_cache[row.name] || state.full_cache[row.name] === "loading") return;
 		const full = state.full_cache[row.name];
+		if (!full || typeof full.then === "function") return;
 		const data = full.data || {};
+		const receipt = full.receipt;
+		const review = full.receipt_review;
+		const booking = review?.booking;
+		if (receipt?.fragen.length) return;
 
 		// Polling sofort pausieren, sonst kann ein 3-Sek-Tick mid-Dialog
 		// den PDF-Embed unter dem Modal neu mounten (-> Browser-Tab-Hang).
@@ -634,7 +776,26 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 			wertstellungsdatum: data.fields && data.fields.wertstellungsdatum,
 			rechnungsname: data.fields && data.fields.rechnungsname,
 			remarks: data.fields && data.fields.remarks,
-			positionen: data.positionen || [],
+			...booking,
+			positionen: receipt
+				? (booking?.positionen || (data.buchungspositionen?.length ? data.buchungspositionen : [{}]))
+					.map((position) => ({
+						...position,
+						kostenstelle: receipt.kostenstelle,
+						typ: {
+							"Betriebskostenart": "umlegbar",
+							"Kostenart nicht umlagefaehig": "nicht umlegbar",
+						}[position.umlagefaehig] || "",
+					}))
+				: data.positionen || [],
+			...(receipt ? {
+				_receipt: true,
+				_receipt_review: review,
+				_receipt_kostenstelle: receipt.kostenstelle,
+				zahlungsart: receipt.zahlungsart,
+				zahlungskonto: receipt.zahlungskonto,
+				zahlung_sofort: true,
+			} : {}),
 			_confidence: data.confidence || {},
 			_warnings: data.warnings || [],
 			_attached_file: full.file_url,
@@ -769,6 +930,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		if (state.poll_paused) return; // kein Polling während ein modaler Dialog offen ist
 		const has_pending = state.rows.some((r) =>
 			["Pending", "Processing"].includes(r.status)
+			|| (r.is_receipt && r.status === "Ready" && r.name === state.selected_name)
 		);
 		if (has_pending) {
 			state.poll_timer = setTimeout(refresh_list, 3000);
@@ -785,6 +947,23 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 
 // _render_extraction_details Helper — Kopie aus buchen_cockpit.js,
 // damit die Inbox unabhängig vom Cockpit-JS geladen werden kann.
+function hv_render_receipt_context(context, data) {
+	const escape = frappe.utils.escape_html;
+	const values = [
+		...(context.immobilie ? [[__("Objekt"), context.immobilie]] : []),
+		[__("Objekt-Kostenstelle"), context.kostenstelle],
+		[__("Zahlungsquelle"), context.zahlungsquelle],
+		[__("Kassen-/Verrechnungskonto"), context.zahlungskonto],
+		[__("Auslegende Person"), context.zahlungsquelle === "Privat vorgestreckt" ? context.person : ""],
+	];
+	if (data?.belegsumme != null) {
+		values.push([__("Brutto-Endbetrag auf dem Bon"), `${data.belegsumme.toFixed(2)} ${data.waehrung || ""}`]);
+	}
+	return `<dl>${values.map(([label, value]) => `<dt>${escape(label)}</dt><dd>${escape(value || "–")}</dd>`).join("")}</dl>
+		${context.fragen.length ? `<strong>${__("Offene Fragen")}</strong>
+			<ul>${context.fragen.map((question) => `<li>${escape(question)}</li>`).join("")}</ul>` : ""}`;
+}
+
 function _hv_render_extraction_details(data) {
 	const fields = data.fields || {};
 	const conf = data.confidence || {};
@@ -841,7 +1020,7 @@ function _hv_render_extraction_details(data) {
 							(p) => `
 						<tr style="border-bottom:1px dashed #eee;">
 							<td style="padding:3px 6px;">${frappe.utils.escape_html(p.beschreibung || "–")}</td>
-							<td style="padding:3px 6px; text-align:right;">${_hv_format_currency(p.betrag || 0)}</td>
+							<td style="padding:3px 6px; text-align:right;">${p.betrag == null ? "–" : _hv_format_currency(p.betrag)}</td>
 							<td style="padding:3px 6px;">${
 								p.kostenart
 									? frappe.utils.escape_html(p.kostenart)

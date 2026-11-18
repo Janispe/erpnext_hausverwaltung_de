@@ -18,8 +18,7 @@
   {
    "fieldname": "target",
    "label": "Target",
-   "fieldtype": "Link",
-   "options": "HV Synthetic Note",
+   "fieldtype": "Data",
    "reqd": 1
   },
   {
@@ -77,6 +76,20 @@
   },
   {
    "role": "HV Proposal Reviewer",
+   "read": 1,
+   "create": 1,
+   "write": 0,
+   "permlevel": 0
+  },
+  {
+   "role": "Accounts User",
+   "read": 1,
+   "create": 1,
+   "write": 0,
+   "permlevel": 0
+  },
+  {
+   "role": "Accounts Manager",
    "read": 1,
    "create": 1,
    "write": 0,
