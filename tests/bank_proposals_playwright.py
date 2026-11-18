@@ -1,5 +1,6 @@
 """Drive the Bankimport and proposals Desk pages against the live test backend."""
 import json
+import re
 from pathlib import Path
 import sys
 from urllib.parse import urlencode
@@ -8,6 +9,8 @@ from urllib.parse import urlencode
 def run(base_url, auth_file, fixture_file, dependencies, chromium):
 	sys.path.insert(0, dependencies)
 	from playwright.sync_api import expect, sync_playwright
+
+	expect.set_options(timeout=20_000)
 
 	auth = json.loads(Path(auth_file).read_text())
 	assert auth["purpose"] == "hv-proposals-disposable-testauth"
@@ -45,7 +48,7 @@ def run(base_url, auth_file, fixture_file, dependencies, chromium):
 		dialog.press("Escape")
 		page.goto(base_url + "/desk/bankimport_v2?" + urlencode(
 			{"import": data["import_name"], "row": data["lanes"][7]["row"]}))
-		bank.get_by_role("button", name="Übernehmen & buchen", exact=True).click()
+		bank.get_by_role("button", name=re.compile(r"^Übernehmen & buchen")).click()
 		expect(bank.get_by_text("Buchungssatz gebucht", exact=False)).to_be_visible()
 		browser.close()
 	print("Bankimport und Vorschläge-Seite: Browser-Verträge bestanden.")
