@@ -42,6 +42,7 @@ test("Anpassen öffnet den Rechnungsmodus mit vorausgewählter Rechnung", async 
 	await expect(page.locator(".match-body .seg-btn.active")).toHaveText("Rechnung");
 	await expect(page.locator(".match-body .invoice-card").filter({ hasText: "SINV-2026-0041" }).getByRole("checkbox")).toBeChecked();
 	await expect(page.locator(".reco-card")).toHaveCount(0);
+	await expect(page.getByText(/Vom KI-Vorschlag vorausgefüllt.*Angepasst gebucht: Beleg/)).toBeVisible();
 });
 
 test("Sammelauswahl startet leer und übernimmt drei hohe Vorschläge", async ({ page }) => {
@@ -84,6 +85,11 @@ test("bei 390 px passen die Beträge aller Zeilen in den Viewport", async ({ pag
 		expect(box.x + box.width).toBeLessThanOrEqual(390);
 	}
 	await expect(suggestion(page)).toBeVisible();
+	const marks = table(page).locator(".ki-party-mark:visible");
+	await expect(marks).toHaveCount(7);
+	await expect(marks).toHaveText(["KI hoch", "KI mittel", "KI hoch", "KI hoch", "KI mittel", "KI niedrig", "KI veraltet"]);
+	await expect(table(page).locator(".ki-party-mark .ki-meter:visible")).toHaveCount(6);
+	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
 });
 
 test("Zeilenlink öffnet auch gebuchte Zeilen, unbekannte IDs behalten die Standardauswahl", async ({ page }) => {
@@ -106,6 +112,7 @@ test("Tastatur wechselt Zeilen und öffnet, schließt und bestätigt Karten", as
 	await expect(suggestion(page).getByText("Was stimmt nicht?")).toBeVisible();
 	await page.keyboard.press("Escape");
 	await expect(suggestion(page).getByText("Was stimmt nicht?")).toBeHidden();
+	await suggestion(page).getByRole("button", { name: /Übernehmen & buchen/ }).scrollIntoViewIfNeeded();
 	await page.keyboard.press("Enter");
 	await expect(page.getByText("Zahlung gebucht · SINV-2026-0041 ausgeglichen")).toBeVisible();
 });
@@ -138,6 +145,7 @@ test("Enter bucht die fokussierte Tabellenzeile auch bei zuvor anderer Auswahl",
 	await expect(rows.first()).toHaveClass(/selected/);
 	await rows.nth(1).focus();
 	await expect(rows.nth(1)).toHaveClass(/selected/);
+	await suggestion(page).getByRole("button", { name: /Beide übernehmen & buchen/ }).scrollIntoViewIfNeeded();
 	await page.keyboard.press("Enter");
 	await expect(page.getByText(/Partei zugeordnet, Buchung fehlgeschlagen/)).toBeVisible();
 	await expect(suggestion(page).getByText("Freigegeben", { exact: true })).toBeVisible();
@@ -154,4 +162,67 @@ test("Anpassen führt nach manueller Parteizuordnung zur passenden vorausgewähl
 	await expect(page.locator(".match-head")).toContainText("Erika Beispiel · Kunde");
 	await expect(page.locator(".match-body .seg-btn.active")).toHaveText("Rechnung");
 	await expect(page.locator(".match-body .invoice-card").filter({ hasText: "SINV-2026-0052" }).getByRole("checkbox")).toBeChecked();
+});
+
+test("kompakte Karte startet geschlossen und Details werden pro Zeile zurückgesetzt", async ({ page }) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto(demo);
+	const card = suggestion(page).locator(".ki-booking-card");
+	const details = suggestion(page).getByRole("button", { name: /^Details/ });
+	await expect(details).toHaveAttribute("aria-expanded", "false");
+	expect((await card.boundingBox()).height).toBeLessThanOrEqual(320);
+	await table(page).locator("tbody tr").nth(1).click();
+	await expect(details).toHaveAttribute("aria-expanded", "true");
+	await expect(suggestion(page).getByText("Buchung (Vorschau)")).toBeVisible();
+	await details.click();
+	await expect(details).toHaveAttribute("aria-expanded", "false");
+	await table(page).locator("tbody tr").first().click();
+	await expect(details).toHaveAttribute("aria-expanded", "false");
+	await table(page).locator("tbody tr").nth(1).click();
+	await expect(details).toHaveAttribute("aria-expanded", "true");
+});
+
+test("bei 1024 px führen Klick, Tastatur und Zeilenlink zum Panel", async ({ page }) => {
+	await page.setViewportSize({ width: 1024, height: 640 });
+	await page.goto(demo + "&row=r3");
+	const panel = page.locator(".match-head");
+	await expect(panel).toContainText("Abschlag Strom");
+	await expect(panel).toBeInViewport();
+	const rows = table(page).locator("tbody tr");
+	await rows.first().click();
+	await expect(panel).toContainText("Miete April");
+	await expect(panel).toBeInViewport();
+	await page.keyboard.press("j");
+	await expect(panel).toContainText("Ueberweisung");
+	await expect(panel).toBeInViewport();
+	await page.keyboard.press("k");
+	await expect(panel).toContainText("Miete April");
+	await expect(panel).toBeInViewport();
+
+	const accept = suggestion(page).getByRole("button", { name: /Übernehmen & buchen/ });
+	await page.evaluate(() => window.scrollTo(0, 0));
+	await expect(accept).not.toBeInViewport();
+	await page.keyboard.press("Enter");
+	await expect(accept).toBeInViewport();
+	await expect(rows.first()).toHaveClass(/selected/);
+	await expect(page.getByText(/Zahlung gebucht.*0041/)).toHaveCount(0);
+	await page.keyboard.press("Enter");
+	await expect(page.getByText(/Zahlung gebucht.*0041/)).toBeVisible();
+});
+
+test("fordert bei Kein Vorschlag erneut an und zeigt den laufenden Agenten", async ({ page }) => {
+	await page.goto(demo + "&row=r8");
+	await suggestion(page).getByRole("button", { name: "Erneut anfordern" }).click();
+	await expect(suggestion(page)).toContainText("Agent prüft diese Zeile …");
+	await expect(table(page).locator(".selected")).toContainText("Agent prüft …");
+	await expect(page.locator(".ki-banner")).toContainText("Startet automatisch nach dem CSV-Import · Selbst zuordnen geht jederzeit");
+});
+
+test("zeigt bei Angepasst gebucht den tatsächlichen Beleg und die Ablehnung", async ({ page }) => {
+	await page.goto(demo + "&ki=states&row=r10");
+	await expect(table(page).locator(".selected")).toContainText("Angepasst gebucht");
+	await expect(table(page).locator(".selected")).toContainText("PE-2026-0063");
+	await expect(suggestion(page).locator("del")).toHaveText("SINV-2026-0041");
+	await expect(suggestion(page)).toContainText("Automatisch abgelehnt mit Grund „Angepasst gebucht: PE-2026-0063“");
+	await expect(page.getByRole("button", { name: "Beleg lösen" })).toBeVisible();
 });

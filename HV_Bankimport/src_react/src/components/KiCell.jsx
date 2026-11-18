@@ -1,16 +1,23 @@
 import React from "react";
 import { Spinner } from "../helpers.jsx";
+import { isAdjustedBooking, isOpenKi } from "../ki.js";
 
 export const KiMark = () => <span className="ki-mark">KI</span>;
 
-export function KiConfidence({ value, showScore = false }) {
+export function KiConfidence({ value }) {
 	if (!value) return null;
 	return (
 		<span className={`ki-confidence ki-${value.level}`}>
 			<span className="ki-meter" aria-hidden="true"><i /><i /><i /></span>
-			<span>{value.level}{showScore && value.score != null ? ` · ${Math.round(value.score * 100)} %` : ""}</span>
+			<span>{value.level}</span>
 		</span>
 	);
+}
+
+export function KiPartyMark({ row }) {
+	if (row.ki?.status === "Stale") return <span className="ki-party-mark ki-danger"><KiMark /> veraltet</span>;
+	if (!isOpenKi(row)) return null;
+	return <span className="ki-party-mark"><KiMark /> <KiConfidence value={row.ki.confidence} /></span>;
 }
 
 export function KiCell({ ki }) {
@@ -46,7 +53,12 @@ export function KiCell({ ki }) {
 				statusClass = "ki-done";
 				break;
 			case "Rejected":
-				title = "Abgelehnt";
+				if (isAdjustedBooking(ki)) {
+					title = "Angepasst gebucht";
+					detail = ki.decision.voucher?.name;
+				} else {
+					title = "Abgelehnt";
+				}
 				break;
 		}
 	}

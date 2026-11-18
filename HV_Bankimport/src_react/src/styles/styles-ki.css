@@ -41,6 +41,7 @@ td.ki-col > .ki-ellipsis, .ki-cell-detail { font-size: 10.5px; margin-top: 2px; 
 .ki-cell-detail .ki-confidence { flex-shrink: 0; }
 .ki-banner a, .ki-section a { color: var(--phase2); }
 .ki-table .party-name, .ki-table .party-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ki-party-mark { display: none; }
 .ki-table tr:focus-visible { outline: 2px solid var(--phase3); outline-offset: -2px; }
 .ki-keys { color: var(--text-muted); border-top: 1px solid var(--border); padding: 8px 12px; font-size: 11px; }
 .ki-keys kbd, .ki-actions kbd {
@@ -50,6 +51,9 @@ td.ki-col > .ki-ellipsis, .ki-cell-detail { font-size: 10.5px; margin-top: 2px; 
   border-radius: 3px;
 }
 .ki-section-head { display: flex; gap: 6px; align-items: center; }
+.ki-booking-card > .ki-section-head { margin-bottom: 8px; }
+.ki-details-toggle { max-width: 100%; white-space: normal; text-align: left; }
+.ki-adjustment { margin: 0; }
 .ki-section-head .pill { margin-left: auto; }
 .ki-steps { list-style: none; padding: 0; margin: 8px 0; }
 .ki-steps li { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 8px; margin-bottom: 8px; }
@@ -98,7 +102,8 @@ button.ki-manual { cursor: pointer; }
 .ki-bulk footer { justify-content: flex-end; }
 .ki-results { padding: 0; list-style: none; }
 .ki-results li { padding: 10px 6px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; gap: 8px; }
-@media (max-width: 759px) {
+@media (width < 760px) {
+  .ki-party-mark { display: flex; align-items: center; gap: 4px; font-size: 10.5px; }
   .ki-table { table-layout: fixed; }
   .ki-table .ki-col, .ki-table .ki-purpose, .ki-table .col-zweck,
   .ki-table .col-dir, .ki-table .col-action,

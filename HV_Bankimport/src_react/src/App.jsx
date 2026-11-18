@@ -383,6 +383,9 @@ export function App() {
 	const [rulesOpen, setRulesOpen] = useState(false);
 	const reloadRef = useRef(null);
 	const linkedRow = useRef(api.importName ? api.linkedRow : "");
+	const scrollToLinkedRow = useRef(false);
+	const previousRowId = useRef(null);
+	const panelRef = useRef(null);
 	const [bulkOpen, setBulkOpen] = useState(false);
 
 	const notify = useCallback((type, msg) => {
@@ -421,6 +424,7 @@ export function App() {
 					linkedRow.current = null;
 					if (target) {
 						if (rowPhase(target) === 4) setFilter("all");
+						scrollToLinkedRow.current = true;
 						setSelectedId(target.id);
 					}
 				}
@@ -487,6 +491,25 @@ export function App() {
 		() => visibleRows.find((r) => r.id === selectedId) || null,
 		[visibleRows, selectedId]
 	);
+
+	const scrollToPanel = () => {
+		if (window.matchMedia("(width < 1100px)").matches) {
+			panelRef.current?.scrollIntoView({ block: "start" });
+		}
+	};
+
+	const currentRowId = selectedRow?.id;
+	const hasKi = !!meta.ki;
+	useEffect(() => {
+		if (hasKi && currentRowId && (previousRowId.current || scrollToLinkedRow.current)) scrollToPanel();
+		if (currentRowId) scrollToLinkedRow.current = false;
+		previousRowId.current = currentRowId;
+	}, [currentRowId, hasKi]);
+
+	const selectRow = (id) => {
+		if (meta.ki && id === currentRowId) scrollToPanel();
+		setSelectedId(id);
+	};
 
 	const phaseTitles = {
 		1: "Parteien zuordnen",
@@ -616,18 +639,28 @@ export function App() {
 					const rows = scope.querySelectorAll("tbody tr");
 					rows[index + (key === "j" ? 1 : -1)]?.focus();
 				} else {
-					scope.focus();
+					scope.focus({ preventScroll: true });
 				}
 			}
 			return;
 		}
-		if (key === "Enter" && (event.target.closest("button, a") ||
+		if (key === "Enter" && (event.target.closest("button:not([data-ki-key='Enter']), a") ||
 			(scope.matches(".tx-card") && !event.target.closest("tr.selected")))) return;
 		if (!["Enter", "r", "Escape"].includes(key)) return;
 		const button = event.currentTarget.querySelector(`[data-ki-key="${key}"]:not(:disabled)`);
-		if (button && !event.repeat) {
+		if (button) {
 			event.preventDefault();
-			event.currentTarget.querySelector(".match-panel-wrap")?.focus();
+			if (event.repeat) return;
+			panelRef.current?.focus({ preventScroll: true });
+			if (key === "Enter") {
+				const action = button.getBoundingClientRect();
+				const body = button.closest(".match-body").getBoundingClientRect();
+				if (!action.height || action.top < Math.max(0, body.top) ||
+					action.bottom > Math.min(window.innerHeight, body.bottom)) {
+					button.scrollIntoView({ block: "center" });
+					return;
+				}
+			}
 			button.click();
 		}
 	};
@@ -703,10 +736,10 @@ export function App() {
 				<TxTable
 					rows={visibleRows}
 					selectedId={selectedId}
-					onSelect={setSelectedId}
+					onSelect={selectRow} onFocusRow={setSelectedId}
 					filterLabel={tableLabel} showKi={!!meta.ki}
 				/>
-				<div className="match-panel-wrap" tabIndex={meta.ki ? -1 : undefined}>
+				<div className="match-panel-wrap" ref={panelRef} tabIndex={meta.ki ? -1 : undefined}>
 					<MatchPanel
 						key={meta.ki ? selectedId : undefined}
 						kiMeta={meta.ki}

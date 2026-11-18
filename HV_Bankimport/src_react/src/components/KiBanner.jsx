@@ -3,14 +3,14 @@ import { fmtDateTime, Spinner } from "../helpers.jsx";
 import { openProposals } from "../api.js";
 import { KiMark } from "./KiCell.jsx";
 
-export function KiPackageLink({ packageName, proposal, notify }) {
+export function KiPackageLink({ packageName, proposal, notify, children = "Im Paket ansehen →" }) {
 	const href = `/app/hv-proposals/${encodeURIComponent(packageName)}`;
 	const query = proposal ? `?vorschlag=${encodeURIComponent(proposal)}` : "";
 	return <a href={href + query} target="_top" onClick={(event) => {
 		if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
 		event.preventDefault();
 		openProposals(packageName, proposal).catch((error) => notify("error", error.message));
-	}}>Im Paket ansehen →</a>;
+	}}>{children}</a>;
 }
 
 export function KiBanner({ meta, openBulk, notify }) {
@@ -18,7 +18,9 @@ export function KiBanner({ meta, openBulk, notify }) {
 	const { counts, confidence } = ki;
 	const open = (counts.Pending || 0) + (counts.Approved || 0);
 	if (ki.running) return <div className="ki-banner"><KiMark /><Spinner size={14} />
-		Agent prüft den Auszug … {ki.progress?.done} von {ki.progress?.total} Zeilen
+		<div><strong>Agent prüft den Auszug … {ki.progress?.done} von {ki.progress?.total} Zeilen</strong>
+			<div className="ki-muted">Startet automatisch nach dem CSV-Import · Selbst zuordnen geht jederzeit</div>
+		</div>
 	</div>;
 	if (!open && !counts.Stale && !counts.none) return <div className="ki-banner ki-muted">
 		<KiMark /> Alle Vorschläge erledigt · {counts.Succeeded || 0} übernommen · {counts.Rejected || 0} abgelehnt

@@ -1,9 +1,9 @@
 import React from "react";
 import { fmtEUR, fmtDate, fmtIban, partyDisplayLabel, partyTypeLabel, rowPhase, StatusPill, Icon } from "../helpers.jsx";
-import { KiCell } from "./KiCell.jsx";
+import { KiCell, KiPartyMark } from "./KiCell.jsx";
 import { DocLink } from "./DocLink.jsx";
 
-function TxRow({ row, selected, onSelect, showKi }) {
+function TxRow({ row, selected, onSelect, onFocusRow, showKi }) {
 	const isOut = Number(row.betrag) < 0;
 	const isDone = rowPhase(row) === 4;
 	const hasParty = !!row.party;
@@ -14,7 +14,7 @@ function TxRow({ row, selected, onSelect, showKi }) {
 			className={`${selected ? "selected" : ""} ${isDone ? "done" : ""}`}
 			tabIndex={showKi ? 0 : undefined}
 			onFocus={showKi ? (event) => {
-				if (event.target === event.currentTarget) onSelect(row.id);
+				if (event.target === event.currentTarget) onFocusRow(row.id);
 			} : undefined}
 			onClick={() => onSelect(row.id)}
 		>
@@ -38,6 +38,7 @@ function TxRow({ row, selected, onSelect, showKi }) {
 						<span className="party-meta">Auftraggeber: {row.auftraggeber}</span>
 					)}
 					{row.iban && <span className="party-meta">{fmtIban(row.iban).slice(0, 17)}…</span>}
+				{showKi && <KiPartyMark row={row} />}
 				</div>
 			</td>
 			<td className="col-zweck">
@@ -50,7 +51,7 @@ function TxRow({ row, selected, onSelect, showKi }) {
 	);
 }
 
-export function TxTable({ rows, selectedId, onSelect, filterLabel, showKi }) {
+export function TxTable({ rows, selectedId, onSelect, onFocusRow, filterLabel, showKi }) {
 	return (
 		<div className="tx-card">
 			<div className="tx-card-head">
@@ -79,7 +80,7 @@ export function TxTable({ rows, selectedId, onSelect, filterLabel, showKi }) {
 					</thead>
 					<tbody>
 						{rows.map((r) => (
-							<TxRow key={r.id} row={r} selected={r.id === selectedId} onSelect={onSelect} showKi={showKi} />
+							<TxRow key={r.id} row={r} selected={r.id === selectedId} onSelect={onSelect} onFocusRow={onFocusRow} showKi={showKi} />
 						))}
 					</tbody>
 				</table>
