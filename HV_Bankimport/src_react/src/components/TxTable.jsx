@@ -13,6 +13,9 @@ function TxRow({ row, selected, onSelect, showKi }) {
 		<tr
 			className={`${selected ? "selected" : ""} ${isDone ? "done" : ""}`}
 			tabIndex={showKi ? 0 : undefined}
+			onFocus={showKi ? (event) => {
+				if (event.target === event.currentTarget) onSelect(row.id);
+			} : undefined}
 			onClick={() => onSelect(row.id)}
 		>
 			<td className="col-date">{fmtDate(row.buchungstag)}</td>

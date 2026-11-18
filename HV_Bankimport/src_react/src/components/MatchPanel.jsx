@@ -267,7 +267,7 @@ function PartyAssign({ docname, row, onActionDone, notify, prefill, autoFocus = 
 			.then((r) => {
 				if (!r) return;
 				notify("success", partyActionMessage(`Partei zugeordnet: ${item.value}.`, r));
-				onActionDone();
+				onActionDone({ party: item.value, partyType });
 			});
 
 	const createNew = () =>
@@ -1442,9 +1442,16 @@ export function MatchPanel({ docname, row, onActionDone, notify, kiMeta }) {
 
 	const openKi = kiMeta && isOpenKi(row);
 	const showManual = !openKi || (manual ?? false);
-	const adjust = (prefill) => {
+	const adjust = (prefill, bookingPrefill) => {
 		setManual(true);
-		setAdjustment({ prefill });
+		setAdjustment({ prefill, bookingPrefill });
+	};
+	const afterPartyAssignment = ({ party, partyType } = {}) => {
+		if (adjustment?.bookingPrefill && party === adjustment.prefill.party && partyType === adjustment.prefill.partyType) {
+			setAdjustment({ prefill: adjustment.bookingPrefill });
+			return onActionDone({ advance: false, ki: true });
+		}
+		return onActionDone();
 	};
 	return (
 		<div className="match-panel">
@@ -1512,7 +1519,7 @@ export function MatchPanel({ docname, row, onActionDone, notify, kiMeta }) {
 				)}
 				{row.rowStatus === "error" && <ErrorView row={row} />}
 				{row.rowStatus !== "error" && phase === 1 && (
-					<PartyAssign key={adjustment ? JSON.stringify(adjustment.prefill) : undefined} prefill={adjustment?.prefill} autoFocus={!kiMeta} docname={docname} row={row} onActionDone={onActionDone} notify={notify} />
+					<PartyAssign key={adjustment ? JSON.stringify(adjustment.prefill) : undefined} prefill={adjustment?.prefill} autoFocus={!kiMeta} docname={docname} row={row} onActionDone={kiMeta ? afterPartyAssignment : onActionDone} notify={notify} />
 				)}
 				{row.rowStatus !== "error" && phase === 3 && !row.customerPayments?.length && <BookingActions prefill={adjustment?.prefill} hideReco={kiMeta && (openKi || row.ki?.status === "Stale")} docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 				{row.rowStatus !== "error" && phase === 4 && <DoneView row={row} />}

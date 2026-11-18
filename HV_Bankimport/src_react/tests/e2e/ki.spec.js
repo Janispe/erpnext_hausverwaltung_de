@@ -18,8 +18,10 @@ test("übernimmt und bucht den Vorschlag, dann springt die Auswahl weiter", asyn
 	await expect(table(page).locator("tbody tr").first()).toContainText("Gebucht");
 });
 
-test("lehnt inline ab und öffnet die manuelle Zuordnung", async ({ page }) => {
+test("hält nach Inline-Ablehnung im KI-Filter dieselbe Zeile und öffnet die manuelle Zuordnung", async ({ page }) => {
 	await page.goto(demo);
+	await page.getByRole("button", { name: /KI Vorschlag 6/ }).click();
+	await table(page).locator("tbody tr").nth(3).click();
 	await suggestion(page).getByRole("button", { name: /Ablehnen …/ }).click();
 	const submit = suggestion(page).getByRole("button", { name: "Ablehnen", exact: true });
 	await expect(submit).toBeDisabled();
@@ -29,6 +31,7 @@ test("lehnt inline ab und öffnet die manuelle Zuordnung", async ({ page }) => {
 	await expect(suggestion(page)).toContainText("Abgelehnt von M. Krüger");
 	await expect(page.getByText("Selbst zuordnen", { exact: true })).toBeVisible();
 	await expect(page.locator(".match-body").getByText("Beleg zuordnen", { exact: true })).toBeVisible();
+	await expect(table(page).locator(".selected")).toContainText("Postbank");
 });
 
 test("Anpassen öffnet den Rechnungsmodus mit vorausgewählter Rechnung", async ({ page }) => {
@@ -121,8 +124,34 @@ test("Teilbuchung kann aus Freigegeben einmal erneut ausgeführt werden", async 
 
 test("Stale-Antwort zeigt den neuen Zustand und erlaubt eine neue Revision", async ({ page }) => {
 	await page.goto(demo + "&row=r6&ki=stale");
+	await page.getByRole("button", { name: /KI Vorschlag 6/ }).click();
 	await suggestion(page).getByRole("button", { name: /Übernehmen & buchen/ }).click();
 	await expect(page.getByText("Vorschlag ist veraltet, nichts gebucht.")).toBeVisible();
 	await suggestion(page).getByRole("button", { name: "Neue Revision anfordern" }).click();
 	await expect(suggestion(page).getByText("Agent prüft diese Zeile …")).toBeVisible();
+	await expect(page.locator(".match-head")).toContainText("Miete Mai");
+});
+
+test("Enter bucht die fokussierte Tabellenzeile auch bei zuvor anderer Auswahl", async ({ page }) => {
+	await page.goto(demo);
+	const rows = table(page).locator("tbody tr");
+	await expect(rows.first()).toHaveClass(/selected/);
+	await rows.nth(1).focus();
+	await expect(rows.nth(1)).toHaveClass(/selected/);
+	await page.keyboard.press("Enter");
+	await expect(page.getByText(/Partei zugeordnet, Buchung fehlgeschlagen/)).toBeVisible();
+	await expect(suggestion(page).getByText("Freigegeben", { exact: true })).toBeVisible();
+	await expect(rows.first()).toContainText("SINV-2026-0041");
+	await expect(rows.first()).not.toContainText("Gebucht");
+});
+
+test("Anpassen führt nach manueller Parteizuordnung zur passenden vorausgewählten Rechnung", async ({ page }) => {
+	await page.goto(demo + "&row=r2");
+	await page.getByRole("button", { name: /KI Vorschlag 6/ }).click();
+	await suggestion(page).getByRole("button", { name: "Anpassen" }).click();
+	await page.getByRole("button", { name: "Erika Beispiel zuordnen" }).click();
+	await expect(table(page).locator(".selected")).toContainText("Erika Beispiel");
+	await expect(page.locator(".match-head")).toContainText("Erika Beispiel · Kunde");
+	await expect(page.locator(".match-body .seg-btn.active")).toHaveText("Rechnung");
+	await expect(page.locator(".match-body .invoice-card").filter({ hasText: "SINV-2026-0052" }).getByRole("checkbox")).toBeChecked();
 });

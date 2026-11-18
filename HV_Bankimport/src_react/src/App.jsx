@@ -341,6 +341,31 @@ function NewImportDialog({ open, onClose, onCreated, notify }) {
 	);
 }
 
+function filterRows(scope, filter, search, hasKi) {
+	let out = scope;
+	if (filter === "open") out = scope.filter((r) => rowPhase(r) < 4);
+	else if (filter === "ki" && hasKi) out = scope.filter(isOpenKi);
+	else if (filter === "problem") out = scope.filter((r) => ["phase3-ambiguous", "error", "needs_review", "phase1-no-party"].includes(r.rowStatus));
+	else if (filter === "noparty") out = scope.filter((r) => !r.party && !r.customerPayments?.length);
+	else if (filter === "nopay") out = scope.filter((r) => !r.paymentEntry && !r.journalEntry && r.rowStatus !== "done");
+	else if (filter === "customer") out = scope.filter((r) => r.partyTyp === "Customer" || r.customerPayments?.length);
+	else if (filter === "supplier") out = scope.filter((r) => r.partyTyp === "Supplier");
+	else if (filter === "eigentuemer") out = scope.filter((r) => r.partyTyp === "Eigentuemer");
+
+	if (search.trim()) {
+		const q = search.toLowerCase();
+		out = out.filter((r) =>
+			(r.verwendungszweck || "").toLowerCase().includes(q) ||
+			(r.auftraggeber || "").toLowerCase().includes(q) ||
+			(r.party || "").toLowerCase().includes(q) ||
+			(r.partyLabel || "").toLowerCase().includes(q) ||
+			(r.customerPayments || []).some((item) => item.customer.toLowerCase().includes(q)) ||
+			(r.iban || "").toLowerCase().includes(q)
+		);
+	}
+	return out;
+}
+
 // ── App ───────────────────────────────────────────────────────────────────--
 export function App() {
 	const [docname, setDocname] = useState(api.importName || "");
@@ -444,30 +469,7 @@ export function App() {
 		}
 	}, [filter, filterCounts.open, filterCounts.all]);
 
-	const visibleRows = useMemo(() => {
-		let out = scope;
-		if (filter === "open") out = scope.filter((r) => rowPhase(r) < 4);
-		else if (filter === "ki" && meta.ki) out = scope.filter(isOpenKi);
-		else if (filter === "problem") out = scope.filter((r) => ["phase3-ambiguous", "error", "needs_review", "phase1-no-party"].includes(r.rowStatus));
-		else if (filter === "noparty") out = scope.filter((r) => !r.party && !r.customerPayments?.length);
-		else if (filter === "nopay") out = scope.filter((r) => !r.paymentEntry && !r.journalEntry && r.rowStatus !== "done");
-		else if (filter === "customer") out = scope.filter((r) => r.partyTyp === "Customer" || r.customerPayments?.length);
-		else if (filter === "supplier") out = scope.filter((r) => r.partyTyp === "Supplier");
-		else if (filter === "eigentuemer") out = scope.filter((r) => r.partyTyp === "Eigentuemer");
-
-		if (search.trim()) {
-			const q = search.toLowerCase();
-			out = out.filter((r) =>
-				(r.verwendungszweck || "").toLowerCase().includes(q) ||
-				(r.auftraggeber || "").toLowerCase().includes(q) ||
-				(r.party || "").toLowerCase().includes(q) ||
-				(r.partyLabel || "").toLowerCase().includes(q) ||
-				(r.customerPayments || []).some((item) => item.customer.toLowerCase().includes(q)) ||
-				(r.iban || "").toLowerCase().includes(q)
-			);
-		}
-		return out;
-	}, [scope, filter, search, meta.ki]);
+	const visibleRows = useMemo(() => filterRows(scope, filter, search, meta.ki), [scope, filter, search, meta.ki]);
 
 	// Auswahl gültig halten: Das Detailpanel darf nur Zeilen bearbeiten, die in
 	// der aktuell gefilterten linken Liste sichtbar sind.
@@ -509,7 +511,14 @@ export function App() {
 		const prevId = selectedId;
 		const data = await reload();
 		if (!advance) {
-			if (data && data.rows && data.rows.some((r) => r.id === prevId)) setSelectedId(prevId);
+			const previous = data?.rows.find((row) => row.id === prevId);
+			if (!previous) return;
+			if (ki && ((phase && phase !== rowPhase(previous)) || !filterRows([previous], filter, search, data.import.ki).length)) {
+				setPhase(rowPhase(previous) === 4 ? 4 : 0);
+				setFilter(rowPhase(previous) === 4 ? "all" : "open");
+				setSearch("");
+			}
+			setSelectedId(prevId);
 			return;
 		}
 		// Nach dem Buchen automatisch zur nächsten offenen Zeile springen.
@@ -526,7 +535,7 @@ export function App() {
 			}
 			if (next) setSelectedId(next.id);
 		}
-	}, [reload, selectedId, visibleRows]);
+	}, [reload, selectedId, visibleRows, phase, filter, search]);
 
 	const runGlobal = useCallback(async (action) => {
 		if (!docname) return;
@@ -612,7 +621,8 @@ export function App() {
 			}
 			return;
 		}
-		if (key === "Enter" && event.target.closest("button, a")) return;
+		if (key === "Enter" && (event.target.closest("button, a") ||
+			(scope.matches(".tx-card") && !event.target.closest("tr.selected")))) return;
 		if (!["Enter", "r", "Escape"].includes(key)) return;
 		const button = event.currentTarget.querySelector(`[data-ki-key="${key}"]:not(:disabled)`);
 		if (button && !event.repeat) {

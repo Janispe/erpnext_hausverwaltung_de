@@ -78,6 +78,7 @@ export function KiSuggestion({ meta, docname, row, onActionDone, notify, onAdjus
 	const next = ki.steps?.find((step) => step.status !== "Succeeded") || ki.steps?.at(-1);
 	const packageLink = <KiPackageLink packageName={meta.package} proposal={next?.proposal} notify={notify} />;
 	const approved = status === "Approved";
+	const bookingPrefill = next?.kind === "party" ? ki.steps.find((step) => step.kind !== "party")?.prefill : undefined;
 	const act = async (action) => {
 		if (busy) return;
 		setBusy(true);
@@ -85,7 +86,7 @@ export function KiSuggestion({ meta, docname, row, onActionDone, notify, onAdjus
 			await action();
 		} catch (error) {
 			notify("error", kiError(error));
-			if (Number(error.status) === 409) await onActionDone({ advance: false });
+			if (Number(error.status) === 409) await onActionDone({ advance: false, ki: true });
 		} finally {
 			setBusy(false);
 		}
@@ -110,11 +111,11 @@ export function KiSuggestion({ meta, docname, row, onActionDone, notify, onAdjus
 	const reject = (category, reason) => act(async () => {
 		await api.kiReject(docname, row.id, kiBindings(ki)[0], category, reason);
 		setRejecting(false);
-		await onActionDone({ advance: false });
+		await onActionDone({ advance: false, ki: true });
 	});
 	const requestRevision = () => act(async () => {
 		await api.kiRequestRevision(docname, row.id, kiBindings(ki)[0]);
-		await onActionDone({ advance: false });
+		await onActionDone({ advance: false, ki: true });
 	});
 
 	return (
@@ -154,7 +155,7 @@ export function KiSuggestion({ meta, docname, row, onActionDone, notify, onAdjus
 							{approved ? "Buchen" : ki.steps.length > 1 ? "Beide übernehmen & buchen" : "Übernehmen & buchen"}
 							{!approved && <kbd>↵</kbd>}
 						</button>}
-						<button className="btn" disabled={busy} onClick={() => onAdjust(next.prefill)}>Anpassen</button>
+						<button className="btn" disabled={busy} onClick={() => onAdjust(next.prefill, bookingPrefill)}>Anpassen</button>
 						{meta.canAccept && !approved && <button className="btn danger" disabled={busy} data-ki-key="r" onClick={() => setRejecting(true)}>Ablehnen …</button>}
 					</div>
 					{!meta.canAccept && <p className="ki-muted">Nur Prüfer können Vorschläge übernehmen.</p>}

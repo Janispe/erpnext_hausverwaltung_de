@@ -227,7 +227,21 @@ export async function searchParties(partyType, txt) {
 
 // Bestehende Party einer Zeile zuordnen (+ Relink aller passenden Zeilen).
 export async function assignParty(name, rowName, partyType, party, iban) {
-	if (!embedded) return { row_party_type: partyType, row_party: party, mock: true };
+	if (!embedded) {
+		if (name === KI_MOCK_IMPORT) {
+			kiMockOverview();
+			const row = kiMock.rows.find((item) => item.id === rowName);
+			if (!row) throw new Error("Importzeile nicht gefunden.");
+			Object.assign(row, { party, partyTyp: partyType, phase: 3, rowStatus: "phase3-open",
+				bankTransaction: row.bankTransaction || `BT-2026-MOCK-${row.id}` });
+			if (["Pending", "Approved"].includes(row.ki.status)) {
+				row.ki.status = "Stale";
+				row.ki.steps.find((step) => step.status !== "Succeeded").status = "Stale";
+				row.ki.staleText = "Die Partei wurde seit dem Vorschlag manuell zugeordnet.";
+			}
+		}
+		return { row_party_type: partyType, row_party: party, mock: true };
+	}
 	return await rpc("assign_party", {
 		docname: name, row_name: rowName, party_type: partyType, party, iban: iban || "",
 	});
@@ -281,7 +295,9 @@ export async function getOpenInvoices(name, rowName) {
 		};
 		if (name === KI_MOCK_IMPORT && rowName === "r2") return {
 			invoiceDoctype: "Sales Invoice", targetAmount: 540,
-			invoices: [{ name: "SINV-2026-0052", outstanding_amount: 540, posting_date: "2026-04-02" }],
+			invoices: kiMock?.rows.find((row) => row.id === rowName)?.party === "Erika Beispiel"
+				? [{ name: "SINV-2026-0052", outstanding_amount: 540, posting_date: "2026-04-02" }]
+				: [],
 		};
 		return { ...MOCK_OPEN_INVOICES, mock: true };
 	}
