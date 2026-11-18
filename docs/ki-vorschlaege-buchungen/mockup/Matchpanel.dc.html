@@ -47,9 +47,14 @@ a{color:#1a4d8c}a:hover{color:#123a6b}
 .chip-radio.on{border-color:var(--text);color:var(--text);background:var(--surface-3)}
 .ki-field{width:100%;box-sizing:border-box;font-family:var(--font-sans);font-size:12.5px;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)}
 .ki-field:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(26,77,140,.18)}
+.ki-more{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;width:100%;min-height:28px;margin-top:8px;cursor:pointer;font-size:12px;font-weight:500;color:var(--text-muted)}
+.ki-more:hover{color:var(--text)}
+.ki-more:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.ki-more .chev{margin-left:auto;color:var(--text-faint)}
+.ki-note{margin:0 0 10px;padding:8px 10px;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);font-size:11.5px;line-height:1.45;color:var(--text-muted)}
 </style>
 </helmet>
-<div class="hv" style="width: 380px; font-family: var(--font-sans); color: var(--text); background: transparent;">
+<div class="hv" style="width: 100%; max-width: 380px; box-sizing: border-box; font-family: var(--font-sans); color: var(--text); background: transparent;">
 <div class="match-panel" style="max-height: none;">
 
 <div class="match-head">
@@ -85,6 +90,13 @@ a{color:#1a4d8c}a:hover{color:#123a6b}
 </li>
 </sc-for>
 </ol>
+<div class="conf-row">
+<span class="label" style="margin: 0;">Sicherheit</span>
+<span class="conf c-{{ k.conf }}" aria-hidden="true"><i></i><i></i><i></i></span>
+<span class="conf-t c-{{ k.conf }}">{{ k.confText }}</span>
+</div>
+<sc-if value="{{ detailsOpen }}" hint-placeholder-val="{{ false }}">
+<div>
 <div class="ki-book">
 <div class="ki-post h"><span>Buchung (Vorschau)</span><span style="text-align: right;">Soll</span><span style="text-align: right;">Haben</span></div>
 <sc-for list="{{ k.postings }}" as="p" hint-placeholder-count="2">
@@ -92,15 +104,13 @@ a{color:#1a4d8c}a:hover{color:#123a6b}
 </sc-for>
 <p class="ki-effect">{{ k.effect }}</p>
 </div>
-<div class="conf-row">
-<span class="label" style="margin: 0;">Sicherheit</span>
-<span class="conf c-{{ k.conf }}" aria-hidden="true"><i></i><i></i><i></i></span>
-<span class="conf-t c-{{ k.conf }}">{{ k.confText }}</span>
-</div>
 <div class="reason">„{{ k.rationale }}“</div>
 <div class="ki-src"><span>Belege:</span>
 <sc-for list="{{ k.sources }}" as="src" hint-placeholder-count="3"><a href="#">{{ src }}</a></sc-for>
 </div>
+</div>
+</sc-if>
+<button type="button" class="ki-more" aria-expanded="{{ detailsOpen }}" onClick="{{ toggleDetails }}"><span>{{ detailsLabel }}</span><span class="chev" aria-hidden="true">{{ detailsChevron }}</span></button>
 </div>
 <div class="ki-actions">
 <button type="button" class="btn primary" onClick="{{ accept }}">{{ k.acceptLabel }} <span class="kbd">↵</span></button>
@@ -163,6 +173,18 @@ a{color:#1a4d8c}a:hover{color:#123a6b}
 </section>
 </sc-if>
 
+<sc-if value="{{ isAdjusted }}" hint-placeholder-val="{{ false }}">
+<section class="match-section" aria-label="Angepasst gebucht, KI-Vorschlag abgelehnt">
+<div class="sec-label"><span class="ki-tag">KI</span> Vorschlag <span class="badge">Rev. {{ k.rev }}</span><span style="margin-left: auto;" class="pill ghost">Abgelehnt</span></div>
+<a href="#" class="assign-row done-row" style="text-decoration: none; color: var(--text);"><span class="lbl">Bank-Tx</span><span class="val">{{ r.bt }}</span><span class="chev" aria-hidden="true">→</span></a>
+<a href="#" class="assign-row done-row" style="text-decoration: none; color: var(--text);"><span class="lbl">{{ k.adjVoucherType }}</span><span class="val">{{ k.adjVoucher }}</span><span class="chev" aria-hidden="true">→</span></a>
+<div class="ref" style="margin-top: 8px; font-size: 12px;">Selbst gebucht: <span class="mono">{{ k.adjSummary }}</span></div>
+<div class="ref" style="margin-top: 2px; font-size: 12px; color: var(--text-faint);">Vorschlag war: <span class="mono" style="text-decoration: line-through;">{{ k.summary }}</span></div>
+<p class="meta" style="margin: 6px 0 0; line-height: 1.5;">Automatisch abgelehnt mit Grund „Angepasst gebucht: {{ k.adjVoucher }}“ · M. Krüger · heute 09:40 · <a href="Vorschlaege-Paket.dc.html">Vorschlag {{ k.id }} →</a></p>
+<div style="margin-top: 10px;"><button type="button" class="btn sm subtle">Beleg lösen …</button></div>
+</section>
+</sc-if>
+
 <sc-if value="{{ isRunning }}" hint-placeholder-val="{{ false }}">
 <section class="match-section" aria-label="KI-Vorschlag in Arbeit">
 <div class="sec-label"><span class="ki-tag">KI</span> Vorschlag</div>
@@ -193,6 +215,9 @@ a{color:#1a4d8c}a:hover{color:#123a6b}
 <sc-if value="{{ showManual }}" hint-placeholder-val="{{ false }}">
 <section class="match-section" aria-label="{{ m.title }}">
 <div class="sec-label">{{ m.title }}</div>
+<sc-if value="{{ adjustHint }}" hint-placeholder-val="{{ false }}">
+<p class="ki-note">Vom KI-Vorschlag vorausgefüllt. Wird hier abweichend gebucht, schließt das den Vorschlag automatisch als „Abgelehnt“ mit dem Grund „Angepasst gebucht: Beleg“. Das geht als Rückmeldung an den Agenten.</p>
+</sc-if>
 <div class="seg" role="group" aria-label="Art der Zuordnung" style="margin-bottom: 12px; flex-wrap: wrap;">
 <sc-for list="{{ m.modes }}" as="md" hint-placeholder-count="4">
 <button type="button" class="seg-btn {{ md.cls }}" aria-pressed="{{ md.on }}">{{ md.label }}</button>
@@ -224,15 +249,15 @@ a{color:#1a4d8c}a:hover{color:#123a6b}
 </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"rowId":{"editor":"enum","options":["r1","r2","r3","r4","r5","r6","r7","r8","r9"],"default":"r1"},"mode":{"editor":"enum","options":["","reject","running","manual"],"default":""},"booked":{"editor":"boolean","default":false},"onAccept":{"editor":null},"$preview":{"width":380,"height":1000}}'>
+<script type="text/x-dc" data-dc-script data-props='{"rowId":{"editor":"enum","options":["r1","r2","r3","r4","r5","r6","r7","r8","r9"],"default":"r1"},"mode":{"editor":"enum","options":["","reject","running","manual","adjusted"],"default":""},"details":{"editor":"enum","options":["","open","closed"],"default":""},"booked":{"editor":"boolean","default":false},"onAccept":{"editor":null},"$preview":{"width":380,"height":1000}}'>
 class Component extends DCLogic {
   constructor(props) {
     super(props);
-    this.state = { mode: null, manualOpen: false };
+    this.state = { mode: null, manualOpen: false, detailsOpen: null };
   }
   componentDidUpdate(prev) {
     if (prev.rowId !== this.props.rowId || prev.booked !== this.props.booked) {
-      if (this.state.mode !== null || this.state.manualOpen) this.setState({ mode: null, manualOpen: false });
+      if (this.state.mode !== null || this.state.manualOpen || this.state.detailsOpen !== null) this.setState({ mode: null, manualOpen: false, detailsOpen: null });
     }
   }
   data() {
@@ -309,7 +334,8 @@ class Component extends DCLogic {
           postings: [{ konto: bank, soll: '720,00', haben: '' }, { konto: 'Erhaltene Anzahlungen · Mustermann', soll: '', haben: '720,00' }],
           effect: 'Zahlung ohne Rechnungsbezug, später mit der Mai-Rechnung verrechenbar.',
           rationale: 'Für Mai gibt es noch keine Rechnung. Möglich ist auch eine doppelte April-Zahlung.',
-          sources: ['Verwendungszweck', 'MV-0182'], voucherType: 'Payment', voucherAfter: 'PE-2026-0061' },
+          sources: ['Verwendungszweck', 'MV-0182'], voucherType: 'Payment', voucherAfter: 'PE-2026-0061',
+          adjVoucherType: 'Payment', adjVoucher: 'PE-2026-0063', adjSummary: 'SINV-2026-0047 · Miete Mai 2026 · 720,00 €' },
         manual: { title: 'Beleg zuordnen', modes: invModes, kind: 'invoices', invoices: [
           { id: 'SINV-2026-0038', amount: '360,00 €', ref: 'Nebenkosten-Nachzahlung 2025', meta: 'fällig 15.03.2026' }] }
       },
@@ -351,8 +377,10 @@ class Component extends DCLogic {
     }
     if (mode === 'running') status = 'Running';
     if (mode === 'reject' && status === 'Pending') status = 'Reject';
-    const confText = { hoch: 'hoch', mittel: 'mittel', niedrig: 'niedrig' }[ki.conf] + (ki.pct ? ' · ' + ki.pct + ' %' : '');
-    ki.confText = confText;
+    if (mode === 'adjusted' && status === 'Pending') status = 'Adjusted';
+    ki.confText = { hoch: 'hoch', mittel: 'mittel', niedrig: 'niedrig' }[ki.conf] || '';
+    const detailsDefault = this.props.details === 'open' ? true : this.props.details === 'closed' ? false : ki.conf !== 'hoch';
+    const detailsOpen = this.state.detailsOpen === null ? detailsDefault : this.state.detailsOpen;
     ki.acceptLabel = ki.steps && ki.steps.length > 1 ? 'Beide übernehmen & buchen' : 'Übernehmen & buchen';
     const manualOpen = this.state.manualOpen || propMode === 'manual';
     const collapsible = status === 'Pending' || status === 'Reject';
@@ -379,8 +407,14 @@ class Component extends DCLogic {
       isDone: status === 'Succeeded',
       isRunning: status === 'Running',
       isNone: status === 'None',
+      isAdjusted: status === 'Adjusted',
+      detailsOpen: detailsOpen,
+      detailsLabel: detailsOpen ? 'Details ausblenden' : 'Details · Buchung, Begründung, Belege',
+      detailsChevron: detailsOpen ? '▴' : '▾',
+      toggleDetails: () => this.setState({ detailsOpen: !detailsOpen }),
+      adjustHint: status === 'Pending' && manualOpen,
       showManualToggle: collapsible,
-      showManual: status !== 'Succeeded' && (!collapsible || manualOpen),
+      showManual: status !== 'Succeeded' && status !== 'Adjusted' && (!collapsible || manualOpen),
       manualOpen: manualOpen,
       chevron: manualOpen ? '▴' : '▾',
       accept: () => { if (this.props.onAccept) this.props.onAccept(id); },

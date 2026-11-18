@@ -169,7 +169,7 @@ a{color:#1a4d8c}a:hover{color:#123a6b}
 
 <div style="display: flex; flex-direction: column; gap: 6px; padding: 14px 16px 0;">
 <h3 class="label" style="margin: 0;">Begründung des Agenten</h3>
-<div style="display: flex; align-items: center; gap: 8px; font-size: 12px;"><span class="ki-tag">KI</span> Sicherheit <span class="conf c-{{ sel.conf }}" aria-hidden="true"><i></i><i></i><i></i></span> <strong class="mono">{{ sel.confText }}</strong></div>
+<div style="display: flex; align-items: center; gap: 8px; font-size: 12px;"><span class="ki-tag">KI</span> Sicherheit <span class="conf c-{{ sel.conf }}" aria-hidden="true"><i></i><i></i><i></i></span> <strong class="mono">{{ sel.conf }}</strong></div>
 <p style="margin: 0; font-size: 12.5px; font-style: italic; color: var(--text-muted); line-height: 1.5;">„{{ sel.rationale }}“</p>
 <ul style="margin: 0; padding-left: 18px; font-size: 12px; color: var(--text-muted);"><sc-for list="{{ sel.sources }}" as="src" hint-placeholder-count="2"><li><a href="#" class="mono">{{ src }}</a></li></sc-for></ul>
 </div>

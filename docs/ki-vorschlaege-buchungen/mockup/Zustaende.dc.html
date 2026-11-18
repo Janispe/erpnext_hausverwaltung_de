@@ -19,51 +19,71 @@ body{margin:0;background:#f7f6f3}
 a{color:#1a4d8c}a:hover{color:#123a6b}
 </style>
 </helmet>
-<div class="hv" style="width: 1680px; height: 2200px; box-sizing: border-box; padding: 40px; background: var(--bg); color: var(--text); font-family: var(--font-sans); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 40px 24px; align-content: start;">
+<div class="hv" style="width: 1680px; height: 3000px; box-sizing: border-box; padding: 40px; background: var(--bg); color: var(--text); font-family: var(--font-sans); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 40px 24px; align-content: start;">
 
 <div style="display: flex; flex-direction: column; gap: 10px;">
-<div><div class="label">1 · Zwei Schritte</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Zeile ohne Partei: Partei, dann Rechnung. Ein Klick führt beide in Reihenfolge aus.</div></div>
+<div><div class="label">1 · Hohe Sicherheit, kompakt</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Standard bei „hoch“: Art, Ziel, Betrag, Sicherheit und Aktionen. Buchung, Begründung und Belege auf Klick.</div></div>
+<dc-import name="Matchpanel" row-id="r1" hint-size="380px,580px"></dc-import>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<div><div class="label">2 · Hohe Sicherheit, Details offen</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Nach Klick auf „Details“. Die Wahl gilt nur für diese Zeile, die nächste Zeile startet wieder nach Sicherheit.</div></div>
+<dc-import name="Matchpanel" row-id="r1" details="open" hint-size="380px,820px"></dc-import>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<div><div class="label">3 · Zwei Schritte, mittel</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Bei mittel und niedrig sind die Details von Anfang an offen. Ein Klick führt Partei und Buchung in Reihenfolge aus.</div></div>
 <dc-import name="Matchpanel" row-id="r2" hint-size="380px,960px"></dc-import>
 </div>
 
 <div style="display: flex; flex-direction: column; gap: 10px;">
-<div><div class="label">2 · Buchungssatz</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Ohne Partei, Gegenkonto aus der eigenen Buchungshistorie. Belege verlinken frühere Buchungen.</div></div>
-<dc-import name="Matchpanel" row-id="r4" hint-size="380px,900px"></dc-import>
+<div><div class="label">4 · Buchungssatz, kompakt</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Ohne Partei, Gegenkonto aus der eigenen Buchungshistorie. Hohe Sicherheit, daher eingeklappt.</div></div>
+<dc-import name="Matchpanel" row-id="r4" hint-size="380px,580px"></dc-import>
 </div>
 
 <div style="display: flex; flex-direction: column; gap: 10px;">
-<div><div class="label">3 · Mittlere Sicherheit</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Kreditrate mit kleiner Abweichung zum Plan. Die Begründung nennt die Abweichung konkret.</div></div>
-<dc-import name="Matchpanel" row-id="r5" hint-size="380px,960px"></dc-import>
+<div><div class="label">5 · Mittlere Sicherheit</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Kreditrate mit kleiner Abweichung zum Plan. Details offen, die Begründung nennt die Abweichung konkret.</div></div>
+<dc-import name="Matchpanel" row-id="r5" hint-size="380px,940px"></dc-import>
 </div>
 
 <div style="display: flex; flex-direction: column; gap: 10px;">
-<div><div class="label">4 · Ablehnen</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Inline statt Dialog. Kategorie plus Pflicht-Begründung gehen als Rückmeldung an den Agenten.</div></div>
+<div><div class="label">6 · Ablehnen</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Inline statt Dialog. Kategorie plus Pflicht-Begründung gehen als Rückmeldung an den Agenten.</div></div>
 <dc-import name="Matchpanel" row-id="r6" mode="reject" hint-size="380px,900px"></dc-import>
 </div>
 
 <div style="display: flex; flex-direction: column; gap: 10px;">
-<div><div class="label">5 · Veraltet</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Buchstand hat sich geändert. Kein Übernehmen, nur neue Revision anfordern; manuell bleibt offen.</div></div>
+<div><div class="label">7 · Anpassen</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Selbst zuordnen ist aufgeklappt und vorausgefüllt. Der Hinweis sagt, was eine abweichende Buchung mit dem Vorschlag macht.</div></div>
+<dc-import name="Matchpanel" row-id="r1" mode="manual" hint-size="380px,860px"></dc-import>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<div><div class="label">8 · Angepasst gebucht</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Nach abweichender Buchung: Vorschlag automatisch „Abgelehnt“, Grund mit Belegnummer. Kein eigener Status im Kern.</div></div>
+<dc-import name="Matchpanel" row-id="r6" mode="adjusted" hint-size="380px,560px"></dc-import>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<div><div class="label">9 · Veraltet</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Buchstand hat sich geändert. Kein Übernehmen, nur „Neue Revision anfordern“. Selbst zuordnen ist offen.</div></div>
 <dc-import name="Matchpanel" row-id="r7" hint-size="380px,900px"></dc-import>
 </div>
 
 <div style="display: flex; flex-direction: column; gap: 10px;">
-<div><div class="label">6 · Gebucht aus Vorschlag</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Belege wie bisher, dazu Herkunft: wer, wann, welche Revision, Link zum Vorschlag.</div></div>
+<div><div class="label">10 · Gebucht aus Vorschlag</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Belege wie bisher, dazu Herkunft: wer, wann, welche Revision, Link zum Vorschlag.</div></div>
 <dc-import name="Matchpanel" row-id="r9" hint-size="380px,560px"></dc-import>
 </div>
 
 <div style="display: flex; flex-direction: column; gap: 10px;">
-<div><div class="label">7 · Agent arbeitet</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Vorschlag noch nicht da. Manuelles Zuordnen ist nicht gesperrt.</div></div>
-<dc-import name="Matchpanel" row-id="r8" mode="running" hint-size="380px,520px"></dc-import>
+<div><div class="label">11 · Agent arbeitet</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Startet automatisch nach dem CSV-Import. Manuelles Zuordnen ist nicht gesperrt.</div></div>
+<dc-import name="Matchpanel" row-id="r8" mode="running" hint-size="380px,560px"></dc-import>
 </div>
 
 <div style="display: flex; flex-direction: column; gap: 10px;">
-<div><div class="label">8 · Kein Vorschlag</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Der Agent enthält sich ausdrücklich und sagt warum. Lieber kein Vorschlag als ein geratener.</div></div>
-<dc-import name="Matchpanel" row-id="r8" hint-size="380px,560px"></dc-import>
+<div><div class="label">12 · Kein Vorschlag</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Der Agent enthält sich und sagt warum. „Erneut anfordern“ startet ihn nur für diese Zeile neu.</div></div>
+<dc-import name="Matchpanel" row-id="r8" hint-size="380px,600px"></dc-import>
 </div>
 
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1680,"height":2200}}'>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1680,"height":3000}}'>
 class Component extends DCLogic {
   renderVals() { return {}; }
 }

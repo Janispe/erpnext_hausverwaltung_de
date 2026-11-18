@@ -1,8 +1,9 @@
 # KI-Buchungsvorschläge: Schnittstelle
 
-Stand 18.11.2026. Abschnitt 1 und 2 sind verbindlich: Die Oberfläche aus Auftrag 1 baut ihre Mock-Daten genau
+Stand 18.11.2026, überarbeitet nach dem Review von Auftrag 1. Abschnitt 1 und 2 sind verbindlich: Die Oberfläche aus Auftrag 1 baut ihre Mock-Daten genau
 so, und das Backend aus Auftrag 2 liefert genau das. Abschnitt 3 bis 6 skizzieren das Backend; Auftrag 2
-präzisiert sie und legt Abweichungen vor dem Bau Janis vor.
+präzisiert sie und legt Abweichungen vor dem Bau Janis vor. Abschnitt 7 skizziert die Regelvorschläge
+(Auftrag 3).
 
 ## 1. Lesen: Erweiterung von `get_overview`
 
@@ -81,10 +82,10 @@ in `steps`; `status` ist dann der zusammengefasste Status (erster nicht ausgefü
 | `state` | `proposal` (es gibt Vorschläge), `running` (Agent arbeitet an der Zeile), `none` (Agent enthält sich) |
 | `status` | Kern-Status `Pending`, `Approved`, `Stale`, `Succeeded`, `Rejected` |
 | `kind` | `party`, `invoice`, `split`, `abschlag`, `kredit`, `payment`, `transfer`, `journal`; bei zwei Schritten der Buchungsschritt. Entspricht den Modus-IDs in `MatchPanel.jsx`. |
-| `confidence.level` | `hoch`, `mittel`, `niedrig`; `score` optional, 0–1 |
+| `confidence.level` | `hoch`, `mittel`, `niedrig`; `score` optional, 0–1. Die Oberfläche zeigt nur die Stufe, nie `score`. |
 | `steps[].prefill` | Werte für „Anpassen“, Schlüssel je Modus wie die heutigen Formulare |
 | `postings` | Vorschau, nur Anzeige. Beträge als Zahl, Formatierung macht die Oberfläche. |
-| `decision` | bei `Approved`/`Rejected`: `{"by": "M. Krüger", "at": "…", "reason": "…", "category": "wrong_document"}` |
+| `decision` | bei `Approved`/`Rejected`: `{"by": "M. Krüger", "at": "…", "reason": "…", "category": "wrong_document"}`. Nach abweichender Buchung (4.6): `"category": "adjusted_booked"`, `"reason": "Angepasst gebucht: PE-2026-0063"` und `"voucher": {"doctype": "Payment Entry", "name": "PE-2026-0063", "summary": "SINV-2026-0047 · Miete Mai 2026 · 720,00 €"}` |
 | `staleText` | bei `Stale`: Ursache als deutscher Satz |
 | `result` | bei `Succeeded`: `{"doctype": "Payment Entry", "name": "PE-2026-0058", "at": "…", "by": "M. Krüger"}` |
 | `note` | bei `state: "none"`: Begründung des Agenten |
@@ -99,11 +100,15 @@ Die Oberfläche ruft über die Bridge kurze Aktionsnamen auf. Auftrag 2 trägt s
 | `ki_accept` | `import_name`, `row`, `bindings: [{id, revision, hash}]` | `{ok, status, results: [{id, ok, status, result?, error?}]}` |
 | `ki_accept_many` | `import_name`, `items: [{row, bindings}]` (≤ 128 Bindungen) | `{results: [{row, ok, status, result?, error?, skipped_reason?}]}` |
 | `ki_reject` | `import_name`, `row`, `binding`, `category`, `reason` (1–1000) | `{ok, status: "Rejected"}` |
-| `ki_request_revision` | `import_name`, `row`, `binding`, `note` | `{ok}` |
+| `ki_request_revision` | `import_name`, `row`, `binding?`, `note` | `{ok, state: "running"}` |
 
 - `bindings` sind genau die Bindungen, die der Benutzer gesehen hat. Der Server prüft Revision und Hash wie
   `review`.
-- `category`: `wrong_party`, `wrong_document`, `wrong_account`, `do_not_book`, `other`.
+- `category`: `wrong_party`, `wrong_document`, `wrong_account`, `do_not_book`, `other`. Die Kategorie
+  `adjusted_booked` setzt nur der Server (4.6), nie die Oberfläche.
+- `ki_request_revision` mit `binding` fordert eine neue Revision eines veralteten Vorschlags an („Neue
+  Revision anfordern“), ohne `binding` einen neuen Vorschlag für eine Zeile mit `state: "none"` („Erneut
+  anfordern“).
 - Ist ein Vorschlag inzwischen veraltet, antwortet der Server mit `status: "Stale"` und `ok: false`, ohne
   Fehler zu werfen (wie im Kern, [../ki-vorschlaege/backend.md](../ki-vorschlaege/backend.md) Abschnitt 1.3).
 - Gleichzeitige Änderung: HTTP 409 wie `ConcurrentRevisionRetry`.
@@ -162,7 +167,16 @@ Schritt aus. Die Frische-Prüfung berücksichtigt die erwartete Änderung durch 
    `lane_key` und `note`. Nur Anzeige, keine Freigabe. Alternative bitte vor dem Bau vorlegen.
 5. **Zuordnung beim Lesen:** `get_overview` sucht das jüngste Paket mit Bezug auf den Import und ordnet
    Vorschläge über `lane.key` den Zeilen zu. Ohne `FOR UPDATE`, ohne Schreiben (Kern-Regel 1.2).
-6. **Manuelles Buchen bei offenem Vorschlag:** offene Entscheidung 2 in [README.md](README.md).
+6. **Manuelles Buchen bei offenem Vorschlag:** Wird eine Zeile über die normalen Bankimport-Aktionen
+   gebucht, während ein Vorschlag `Pending` oder `Approved` ist, setzt der Server ihn auf `Rejected` mit
+   `category = "adjusted_booked"`, `reason = "Angepasst gebucht: <Beleg>"` und dem Beleg in
+   `decision.voucher`. Entscheider ist der buchende Mensch, im Prüfprotokoll mit
+   `{"surface": "bankimport", "auto": true}`. Wo der Haken sitzt (in den Bankimport-Funktionen oder am
+   Beleg), legt Auftrag 2 im Plan vor. Kein neuer Status im Kern.
+7. **Anforderungen:** Der Agent startet später automatisch nach jedem CSV-Import; das gehört zum
+   Agenten-Auftrag. Auftrag 2 speichert nur die Anforderungen aus `ki_request_revision`, damit der Agent sie
+   abholen kann. Solange eine Anforderung offen ist, liefert die Zeile `state: "running"`. Eine Anforderung
+   ohne Antwort verfällt nach 24 Stunden; danach gilt wieder der vorherige Zustand.
 
 ## 5. Backend-Skizze: neue Metadaten und Vorschau-Felder
 
@@ -180,3 +194,33 @@ Schritt aus. Die Frische-Prüfung berücksichtigt die erwartete Änderung durch 
 Für Auftrag 2 ein Bootstrap analog `tests/proposals_bootstrap.py`: ein Bankauszug-Import mit 9 Zeilen wie im
 Canvas (fiktive Namen), ein Paket mit allen Zuständen aus [oberflaeche.md](oberflaeche.md), getrennte Logins
 für Prüfer und Agent. Nur auf einem frischen isolierten Stack, nicht auf 8090.
+
+## 7. Backend-Skizze: Regelvorschläge (Auftrag 3)
+
+Unabhängig vom Vorschlags-Kern und ohne LLM.
+
+- **Mustersuche** nach jedem abgeschlossenen Import über gebuchte Bankimport-Zeilen der letzten 12 Monate.
+  Gruppiert nach Auftraggeber bzw. IBAN und normalisiertem Verwendungszweck. Verglichen wird das Ergebnis:
+  Partei bzw. Gegenkonto, Kostenstelle, Belegart. Deterministisch: gleiche Daten, gleiche Vorschläge.
+- **Schwellen** (Vorschlag, im Plan bestätigen): mindestens 4 Treffer, mindestens 90 % gleich gebucht, keine
+  Überschneidung mit einer bestehenden aktiven Regel. Bedingungen werden so eng gewählt, dass bekannte
+  Ausreißer nicht treffen (z. B. `Betrag = -310,00` statt nur Auftraggeber).
+- **Ablage:** neuer DocType, z. B. `Bankimport Regelvorschlag`, mit Status `Neu`, `Angelegt` oder
+  `Verworfen`, Gruppe (`party`/`booking`), Bedingungen und Aktion im Builder-Format, Trefferstatistik,
+  Monatsverteilung, Beispielzeilen, Abweichungen, Verwerfungsgrund und einem Muster-Schlüssel. Verworfene
+  Muster-Schlüssel werden nicht wieder vorgeschlagen.
+- **Party-Regeln auf Mieter** binden an genau einen Mietvertrag (Invariante aus `AGENTS.md`) und greifen nur,
+  solange er läuft. Das Regelmodell braucht dafür einen Bezug zum Mietvertrag oder eine Gültigkeit; die Form
+  legt Auftrag 3 im Plan vor.
+- **RPC** im Adapter `bankimport_v2.py` und in `RPC_ACTIONS`:
+
+  | Aktion | Parameter | Antwort |
+  |---|---|---|
+  | `list_rule_proposals` | – | `{proposals: [...], open: n, suppressed: m, lastRun: "…"}` |
+  | `accept_rule_proposal` | `name`, `mode` (`review`/`auto`), optional geänderte Felder aus dem Editor | `{ok, rule: {doctype, name, ruleKey}}` |
+  | `reject_rule_proposal` | `name`, `category`, `reason?`, `suppress` | `{ok}` |
+  | `restore_rule_proposal` | `name` | `{ok}` |
+
+  `accept_rule_proposal` legt die Regel über denselben Weg an wie das heutige Speichern im `RuleEditor`.
+  `mode: "auto"` wird abgelehnt, wenn der Vorschlag Abweichungen hat.
+- **Rechte:** wie das Anlegen von Bankimport-Regeln heute.
