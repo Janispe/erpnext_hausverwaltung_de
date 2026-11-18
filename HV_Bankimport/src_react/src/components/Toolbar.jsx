@@ -1,10 +1,12 @@
 import React from "react";
+import { KiMark } from "./KiCell.jsx";
 import { Icon } from "../helpers.jsx";
 
-export function Toolbar({ filter, setFilter, search, setSearch, counts }) {
+export function Toolbar({ filter, setFilter, search, setSearch, counts, showKi }) {
 	const filters = [
 		{ id: "open", lbl: "Offen", cnt: counts.open },
 		{ id: "all", lbl: "Alle", cnt: counts.all },
+		...(showKi ? [{ id: "ki", lbl: <><KiMark /> Vorschlag</>, cnt: counts.ki }] : []),
 		{ id: "problem", lbl: "Problemzeilen", cnt: counts.problem },
 		{ id: "noparty", lbl: "Ohne Partei", cnt: counts.noparty },
 		{ id: "nopay", lbl: "Ohne Zahlung", cnt: counts.nopay },

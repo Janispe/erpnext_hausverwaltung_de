@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>KI-Vorschläge: Paketliste mit Buchungspaketen</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/hausverwaltung/styles.css">
+<link rel="stylesheet" href="ds/hausverwaltung/colors_and_type.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/frappe-theme-shim.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-tokens.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-components.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:#f7f6f3}
+a{color:#1a4d8c}a:hover{color:#123a6b}
+.prow:hover{background:var(--surface-2)}
+.prow.is-new{box-shadow:inset 3px 0 0 var(--text)}
+.seg-Pending{background:oklch(58% 0.14 245)}
+.seg-Approved{background:oklch(76% 0.13 70)}
+.seg-Succeeded{background:oklch(64% 0.13 150)}
+.seg-Stale{background:oklch(50% 0.18 25)}
+.seg-Rejected{background:oklch(84% 0.008 80)}
+</style>
+</helmet>
+<div class="hv" style="min-height: 640px; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 13.5px; line-height: 1.4;">
+
+<header style="display: flex; align-items: center; gap: 16px; min-height: 48px; padding: 6px 20px; box-sizing: border-box; background: var(--surface); border-bottom: 1px solid var(--border); flex-wrap: wrap;">
+<div style="display: flex; align-items: center; gap: 10px;">
+<span aria-hidden="true" style="display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 6px; background: var(--text); color: #ffffff; font-family: var(--font-mono); font-size: 11px; font-weight: 600;">HV</span>
+<span style="font-weight: 600;">Hausverwaltung</span>
+</div>
+<div style="flex: 1 1 240px; max-width: 420px;">
+<input type="search" class="hv-field" aria-label="Suchen" placeholder="Suchen oder Befehl eingeben (Strg + G)" style="width: 100%; box-sizing: border-box; background: var(--surface-2);">
+</div>
+<div style="margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-muted);">
+<span>M. Krüger · Prüfer</span>
+<span aria-hidden="true" style="display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 999px; background: var(--surface-3); color: var(--text); font-size: 11px; font-weight: 600;">MK</span>
+</div>
+</header>
+
+<main style="max-width: 1500px; margin: 0 auto; padding: 20px 24px 40px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px;">
+
+<div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px;">
+<div style="display: flex; flex-direction: column; gap: 4px;">
+<nav aria-label="Brotkrumen" style="font-size: 12px; color: var(--text-muted);"><a href="#">Hausverwaltung</a> / KI-Vorschläge</nav>
+<h1 style="margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.2px;">KI-Vorschläge</h1>
+<p style="margin: 0; font-size: 12px; color: var(--text-muted);">Pakete bündeln, was ein Agent zusammen vorschlägt. Buchungsvorschläge erscheinen zusätzlich direkt im Bankimport.</p>
+</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+<label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted);">Art
+<select class="hv-field">
+<option>Alle Arten</option>
+<option selected>Buchungen</option>
+<option>Verträge</option>
+<option>Briefe</option>
+</select>
+</label>
+<label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted);">Agent
+<select class="hv-field">
+<option>Alle Agenten</option>
+<option>Buchhaltungs-Agent</option>
+<option>Agent Betriebskosten</option>
+</select>
+</label>
+</div>
+</div>
+
+<div role="tablist" aria-label="Paketstatus" class="hv-tabs" style="align-self: flex-start; flex-wrap: wrap;">
+<button type="button" role="tab" aria-selected="false" class="hv-tab">Offen <span class="hv-count num">2</span></button>
+<button type="button" role="tab" aria-selected="false" class="hv-tab">Wartet auf Ausführung <span class="hv-count num">0</span></button>
+<button type="button" role="tab" aria-selected="false" class="hv-tab">Abgeschlossen <span class="hv-count num">1</span></button>
+<button type="button" role="tab" aria-selected="true" class="hv-tab is-active">Alle <span class="hv-count num">3</span></button>
+</div>
+
+<section aria-label="Pakete" style="background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;">
+<div style="overflow-x: auto;">
+<div style="min-width: 1000px;">
+<div aria-hidden="true" style="display: grid; grid-template-columns: minmax(0, 2.2fr) 150px 130px minmax(220px, 1.6fr) 140px 92px; gap: 16px; padding: 9px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border);">
+<span class="label">Paket</span>
+<span class="label">Agent</span>
+<span class="label">Umfang</span>
+<span class="label">Stand</span>
+<span class="label">Nächster Schritt</span>
+<span class="label" style="text-align: right;">Eingang</span>
+</div>
+<sc-for list="{{ rows }}" as="p" hint-placeholder-count="3">
+<div class="prow {{ p.cls }}" style="display: grid; grid-template-columns: minmax(0, 2.2fr) 150px 130px minmax(220px, 1.6fr) 140px 92px; gap: 16px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border);">
+<div style="display: flex; flex-direction: column; gap: 3px; min-width: 0;">
+<span style="font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ p.title }}</span>
+<span style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted);">
+<span class="hv-pill hv-pill-muted">{{ p.kind }}</span>
+<span class="mono" style="font-size: 11.5px;">{{ p.ref }}</span>
+<sc-if value="{{ p.isBooking }}" hint-placeholder-val="{{ false }}"><a href="Main.dc.html">im Bankimport öffnen</a></sc-if>
+</span>
+</div>
+<span style="font-size: 12.5px; color: var(--text-muted);">{{ p.agent }}</span>
+<span class="mono" style="font-size: 12.5px;">{{ p.count }}</span>
+<div style="display: flex; flex-direction: column; gap: 5px; min-width: 0;">
+<div role="img" aria-label="{{ p.legend }}" style="display: flex; gap: 2px; height: 8px; border-radius: 999px; overflow: hidden; background: var(--surface-3);">
+<sc-for list="{{ p.segments }}" as="s" hint-placeholder-count="3"><span class="{{ s.cls }}" style="flex-grow: {{ s.n }}; flex-basis: 0;"></span></sc-for>
+</div>
+<span style="font-size: 11.5px; color: var(--text-muted);">{{ p.legend }}</span>
+</div>
+<div>
+<sc-if value="{{ p.open }}" hint-placeholder-val="{{ true }}">
+<a href="{{ p.href }}" class="hv-btn hv-btn-primary" style="text-decoration: none;">{{ p.next }} →</a>
+</sc-if>
+<sc-if value="{{ p.closed }}" hint-placeholder-val="{{ false }}">
+<span style="font-size: 12.5px; color: var(--text-muted);">{{ p.next }}</span>
+</sc-if>
+</div>
+<span class="mono" style="font-size: 12px; color: var(--text-muted); text-align: right;">{{ p.age }}</span>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 10px 16px; border-top: 1px solid var(--border); background: var(--surface-2); font-size: 11.5px; color: var(--text-muted);">
+<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="seg-Pending" style="width: 10px; height: 10px; border-radius: 3px;"></span>Prüfung offen</span>
+<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="seg-Approved" style="width: 10px; height: 10px; border-radius: 3px;"></span>Freigegeben</span>
+<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="seg-Succeeded" style="width: 10px; height: 10px; border-radius: 3px;"></span>Ausgeführt</span>
+<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="seg-Stale" style="width: 10px; height: 10px; border-radius: 3px;"></span>Veraltet</span>
+<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="seg-Rejected" style="width: 10px; height: 10px; border-radius: 3px;"></span>Abgelehnt</span>
+</div>
+</section>
+
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":640}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const seg = (c) => Object.keys(c).filter((k) => c[k] > 0).map((k) => ({ cls: 'seg-' + k, n: c[k] }));
+    const rows = [
+      { title: 'Kontoauszug April 2026 · Wilhelmshavener (1812)', kind: 'Graph · 8 Importzeilen', ref: 'BAI-1812-2026-04', isBooking: true, agent: 'Buchhaltungs-Agent', count: '9 Vorschläge',
+        c: { Pending: 7, Stale: 1, Succeeded: 1 }, legend: '7 offen · 1 veraltet · 1 ausgeführt', next: '8 prüfen', href: 'Vorschlaege-Paket.dc.html', open: true, age: 'heute 09:12', cls: 'is-new' },
+      { title: 'BK-Abrechnung 2025 · Lindenstraße 14', kind: 'Graph · 12 Mietverträge', ref: 'Betriebskostenabrechnung Immobilie', isBooking: false, agent: 'Agent Betriebskosten', count: '37 Vorschläge',
+        c: { Pending: 26, Approved: 5, Succeeded: 3, Stale: 1, Rejected: 2 }, legend: '26 offen · 5 freigegeben · 3 ausgeführt', next: '27 prüfen', href: '#', open: true, age: 'vor 12 Min.', cls: '' },
+      { title: 'Kontoauszug März 2026 · Wilhelmshavener (1812)', kind: 'Graph · 14 Importzeilen', ref: 'BAI-1812-2026-03', isBooking: true, agent: 'Buchhaltungs-Agent', count: '16 Vorschläge',
+        c: { Succeeded: 13, Rejected: 3 }, legend: '13 ausgeführt · 3 abgelehnt', next: 'Abgeschlossen', href: '#', open: false, age: '02.04.', cls: '' }
+    ];
+    return { rows: rows.map((r) => Object.assign({}, r, { segments: seg(r.c), closed: !r.open })) };
+  }
+}
+</script>
+</body>
+</html>

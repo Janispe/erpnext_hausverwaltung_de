@@ -34,7 +34,7 @@ if (typeof window !== "undefined") {
 		_pending.delete(msg.id);
 		clearTimeout(entry.timer);
 		if (msg.ok) entry.resolve(msg.data);
-		else entry.reject(new Error(msg.error || "RPC-Fehler"));
+		else entry.reject(Object.assign(new Error(msg.error || "RPC-Fehler"), { status: msg.status }));
 	});
 }
 
@@ -63,10 +63,13 @@ export function rpc(action, params = {}) {
 }
 
 // Liest den ?import=<name>-Parameter aus der iframe-URL (von der Host-Page gesetzt).
-export function getImportFromUrl() {
+function getQueryParam(name) {
 	try {
-		return new URLSearchParams(window.location.search).get("import") || "";
+		return new URLSearchParams(window.location.search).get(name) || "";
 	} catch {
 		return "";
 	}
 }
+
+export const getImportFromUrl = () => getQueryParam("import");
+export const getRowFromUrl = () => getQueryParam("row");

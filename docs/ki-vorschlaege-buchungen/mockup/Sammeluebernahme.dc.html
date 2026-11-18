@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>KI-Vorschläge gesammelt übernehmen</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/hausverwaltung/styles.css">
+<link rel="stylesheet" href="ds/hausverwaltung/colors_and_type.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/frappe-theme-shim.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-tokens.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-components.css">
+<link rel="stylesheet" href="ds/hausverwaltung/ui_kits/bankimport/bankimport-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:#f7f6f3}
+a{color:#1a4d8c}a:hover{color:#123a6b}
+.ki-tag{display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:4px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);font-family:var(--font-mono);font-size:9.5px;font-weight:600;letter-spacing:.4px;flex:none}
+.conf{display:inline-flex;gap:2px;flex:none}
+.conf i{display:block;width:10px;height:4px;border-radius:2px;background:var(--surface-3);border:1px solid var(--border-strong)}
+.conf.c-hoch i{background:var(--done);border-color:var(--done)}
+.conf.c-mittel i:nth-child(1),.conf.c-mittel i:nth-child(2){background:var(--warn);border-color:var(--warn)}
+.conf.c-niedrig i:nth-child(1){background:var(--danger);border-color:var(--danger)}
+.conf-t{font-size:11.5px;font-weight:600}
+.conf-t.c-hoch{color:var(--done)}.conf-t.c-mittel{color:var(--warn)}.conf-t.c-niedrig{color:var(--danger)}
+.bk-row{display:grid;grid-template-columns:22px 52px 92px minmax(0,1fr) minmax(0,1.3fr) 98px;gap:10px;align-items:center;padding:9px 16px;border-bottom:1px solid var(--border);font-size:12.5px;cursor:pointer}
+.bk-row:hover{background:var(--surface-2)}
+.bk-row.on{background:var(--phase3-bg)}
+.bk-row input{width:15px;height:15px;margin:0;accent-color:#1a1a17}
+.bk-head{display:grid;grid-template-columns:22px 52px 92px minmax(0,1fr) minmax(0,1.3fr) 98px;gap:10px;padding:8px 16px;background:var(--surface-2);border-bottom:1px solid var(--border)}
+.bk-head span{font-size:10.5px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--text-muted)}
+.trunc{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.skel{background:var(--surface-3);border-radius:4px}
+@media (max-width: 720px){.bk-row,.bk-head{grid-template-columns:22px minmax(0,1fr) 92px}.bk-row .hs,.bk-head .hs{display:none}}
+</style>
+</helmet>
+<div class="hv" style="position: relative; min-height: 900px; background: var(--bg); color: var(--text); font-family: var(--font-sans); overflow: hidden;">
+
+<div aria-hidden="true" style="max-width: 1500px; margin: 0 auto; padding: 22px 24px; display: flex; flex-direction: column; gap: 16px;">
+<div style="display: flex; align-items: center; gap: 12px; padding-bottom: 18px; border-bottom: 1px solid var(--border);"><div class="mark" style="width: 30px; height: 30px; border-radius: 6px; background: var(--text);"></div><div style="font-weight: 600; font-size: 17px;">Bankimport</div></div>
+<div class="skel" style="height: 86px;"></div>
+<div class="skel" style="height: 62px;"></div>
+<div style="display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px;"><div class="skel" style="height: 520px;"></div><div class="skel" style="height: 520px;"></div></div>
+</div>
+
+<div style="position: absolute; inset: 0; background: rgba(26,26,23,.18); backdrop-filter: blur(2px); display: flex; align-items: flex-start; justify-content: center; padding: 72px 16px 24px;">
+<section role="dialog" aria-modal="true" aria-labelledby="bk-title" style="width: 100%; max-width: 780px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-pop); overflow: hidden;">
+
+<div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 18px 14px; border-bottom: 1px solid var(--border); background: var(--surface-2);">
+<div>
+<h2 id="bk-title" style="margin: 0; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px;"><span class="ki-tag">KI</span> Vorschläge übernehmen</h2>
+<div class="meta" style="margin-top: 4px; font-family: var(--font-mono);">Wilhelmshavener (1812) · 01.04.–30.04.2026 · Paket HVP-PKG-0031</div>
+</div>
+<button type="button" class="icon-btn" aria-label="Schließen">✕</button>
+</div>
+
+<sc-if value="{{ notDone }}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 18px;">
+<div class="seg" role="group" aria-label="Auswahl">
+<button type="button" class="seg-btn {{ q.hoch }}" onClick="{{ selHoch }}">Hohe Sicherheit</button>
+<button type="button" class="seg-btn {{ q.alle }}" onClick="{{ selAlle }}">Alle</button>
+<button type="button" class="seg-btn {{ q.keine }}" onClick="{{ selKeine }}">Keine</button>
+</div>
+<div class="meta" style="font-family: var(--font-mono); font-size: 11.5px;">{{ count }} ausgewählt · Eingang {{ sumIn }} · Ausgang {{ sumOut }}</div>
+</div>
+
+<div class="bk-head" aria-hidden="true"><span></span><span>Datum</span><span style="text-align: right;">Betrag</span><span class="hs">Zeile</span><span class="hs">Vorschlag</span><span>Sicherheit</span></div>
+<sc-for list="{{ items }}" as="x" hint-placeholder-count="6">
+<label class="bk-row {{ x.cls }}">
+<input type="checkbox" checked="{{ x.checked }}" onChange="{{ x.toggle }}" aria-label="{{ x.aria }}">
+<span style="font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted);">{{ x.datum }}</span>
+<span style="font-family: var(--font-mono); font-weight: 500; text-align: right; color: {{ x.amountColor }};">{{ x.betrag }}</span>
+<span class="trunc hs" style="font-weight: 500;">{{ x.party }}</span>
+<span class="hs" style="display: flex; flex-direction: column; gap: 1px; min-width: 0;"><span class="trunc" style="font-family: var(--font-mono); font-size: 12px;">{{ x.main }}</span><span class="trunc" style="font-size: 11px; color: var(--text-muted);">{{ x.kind }}</span></span>
+<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="conf c-{{ x.conf }}" aria-hidden="true"><i></i><i></i><i></i></span><span class="conf-t c-{{ x.conf }}">{{ x.conf }}</span></span>
+</label>
+</sc-for>
+
+<div style="padding: 12px 18px; display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+<p style="margin: 0;">Nicht auswählbar: 1 veralteter Vorschlag (18.04., Malerbetrieb Muster) und 1 Zeile ohne Vorschlag.</p>
+<p style="margin: 0;">Jeder Vorschlag wird einzeln für seine Revision freigegeben und danach in Datumsreihenfolge gebucht. Bei zwei Schritten erst Partei, dann Buchung. Bei einem Fehler stoppt der Lauf, bereits Gebuchtes bleibt gebucht.</p>
+</div>
+
+<div style="display: flex; justify-content: flex-end; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--border); background: var(--surface-2);">
+<a href="Main.dc.html" class="btn" style="text-decoration: none;">Abbrechen</a>
+<button type="button" class="btn primary" disabled="{{ none }}" onClick="{{ run }}">{{ runLabel }}</button>
+</div>
+</sc-if>
+
+<sc-if value="{{ isDone }}" hint-placeholder-val="{{ false }}">
+<div style="padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;">
+<div role="status" style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius); background: var(--done-bg); color: var(--done); font-weight: 600; font-size: 13px;">✓ {{ count }} gebucht · 0 übersprungen</div>
+<sc-for list="{{ results }}" as="x" hint-placeholder-count="3">
+<div style="display: grid; grid-template-columns: 52px 92px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12.5px;">
+<span style="font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted);">{{ x.datum }}</span>
+<span style="font-family: var(--font-mono); text-align: right;">{{ x.betrag }}</span>
+<span class="trunc">{{ x.party }} · {{ x.main }}</span>
+<a href="#" style="font-family: var(--font-mono); font-size: 12px;">{{ x.voucher }}</a>
+</div>
+</sc-for>
+</div>
+<div style="display: flex; justify-content: flex-end; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--border); background: var(--surface-2);">
+<button type="button" class="btn" onClick="{{ reset }}">Zurück zur Auswahl</button>
+<a href="Main.dc.html" class="btn primary" style="text-decoration: none;">Schließen</a>
+</div>
+</sc-if>
+
+</section>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { sel: { r1: true, r3: true, r4: true }, done: false, preset: 'hoch' };
+  }
+  base() {
+    return [
+      { id: 'r1', datum: '01.04.', betrag: '+720,00 €', v: 720, party: 'Max Mustermann', main: 'SINV-2026-0041', kind: 'Rechnung zuordnen', conf: 'hoch', voucher: 'PE-2026-0058' },
+      { id: 'r2', datum: '02.04.', betrag: '+540,00 €', v: 540, party: 'Erika Beispiel (neu)', main: 'Partei → SINV-2026-0052', kind: 'Partei und Rechnung · 2 Schritte', conf: 'mittel', voucher: 'PE-2026-0059' },
+      { id: 'r3', datum: '03.04.', betrag: '−89,90 €', v: -89.9, party: 'Stadtwerke Beispielstadt', main: 'ZP-0007 · April', kind: 'Abschlag zuordnen', conf: 'hoch', voucher: 'PE-2026-0060' },
+      { id: 'r4', datum: '07.04.', betrag: '−12,50 €', v: -12.5, party: 'Postbank', main: 'Nebenkosten des Geldverkehrs', kind: 'Buchungssatz', conf: 'hoch', voucher: 'JV-2026-0044' },
+      { id: 'r5', datum: '10.04.', betrag: '−1.240,00 €', v: -1240, party: 'Hausbank Beispiel', main: 'Darlehen 4711 · April', kind: 'Kreditrate zuordnen', conf: 'mittel', voucher: 'JV-2026-0045' },
+      { id: 'r6', datum: '15.04.', betrag: '+720,00 €', v: 720, party: 'Max Mustermann', main: 'Vorauszahlung', kind: 'ohne Rechnung', conf: 'niedrig', voucher: 'PE-2026-0061' }
+    ];
+  }
+  renderVals() {
+    const sel = this.state.sel;
+    const list = this.base();
+    const chosen = list.filter((x) => sel[x.id]);
+    const fmt = (v) => v.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+    const sumIn = chosen.filter((x) => x.v > 0).reduce((a, x) => a + x.v, 0);
+    const sumOut = chosen.filter((x) => x.v < 0).reduce((a, x) => a - x.v, 0);
+    const setPreset = (preset, fn) => () => {
+      const next = {};
+      list.forEach((x) => { if (fn(x)) next[x.id] = true; });
+      this.setState({ sel: next, preset });
+    };
+    const amountColor = (x) => x.v > 0 ? 'var(--eingang)' : 'var(--text)';
+    return {
+      items: list.map((x) => ({
+        ...x,
+        checked: !!sel[x.id],
+        cls: sel[x.id] ? 'on' : '',
+        aria: x.datum + ' ' + x.betrag + ' ' + x.party + ': ' + x.kind + ' ' + x.main + ', Sicherheit ' + x.conf,
+        amountColor: amountColor(x),
+        toggle: () => this.setState({ sel: Object.assign({}, sel, { [x.id]: !sel[x.id] }), preset: '' })
+      })),
+      results: chosen,
+      count: chosen.length,
+      none: chosen.length === 0,
+      runLabel: chosen.length === 1 ? '1 übernehmen und buchen' : chosen.length + ' übernehmen und buchen',
+      sumIn: fmt(sumIn),
+      sumOut: fmt(sumOut),
+      q: { hoch: this.state.preset === 'hoch' ? 'active' : '', alle: this.state.preset === 'alle' ? 'active' : '', keine: this.state.preset === 'keine' ? 'active' : '' },
+      selHoch: setPreset('hoch', (x) => x.conf === 'hoch'),
+      selAlle: setPreset('alle', () => true),
+      selKeine: setPreset('keine', () => false),
+      run: () => this.setState({ done: true }),
+      reset: () => this.setState({ done: false }),
+      notDone: !this.state.done,
+      isDone: this.state.done
+    };
+  }
+}
+</script>
+</body>
+</html>

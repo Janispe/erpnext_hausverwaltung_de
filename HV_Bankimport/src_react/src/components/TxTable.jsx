@@ -1,8 +1,9 @@
 import React from "react";
 import { fmtEUR, fmtDate, fmtIban, partyDisplayLabel, partyTypeLabel, rowPhase, StatusPill, Icon } from "../helpers.jsx";
+import { KiCell } from "./KiCell.jsx";
 import { DocLink } from "./DocLink.jsx";
 
-function TxRow({ row, selected, onSelect }) {
+function TxRow({ row, selected, onSelect, showKi }) {
 	const isOut = Number(row.betrag) < 0;
 	const isDone = rowPhase(row) === 4;
 	const hasParty = !!row.party;
@@ -11,6 +12,7 @@ function TxRow({ row, selected, onSelect }) {
 	return (
 		<tr
 			className={`${selected ? "selected" : ""} ${isDone ? "done" : ""}`}
+			tabIndex={showKi ? 0 : undefined}
 			onClick={() => onSelect(row.id)}
 		>
 			<td className="col-date">{fmtDate(row.buchungstag)}</td>
@@ -38,13 +40,14 @@ function TxRow({ row, selected, onSelect }) {
 			<td className="col-zweck">
 				<span className="verwendung-cell" title={row.verwendungszweck}>{row.verwendungszweck}</span>
 			</td>
+			{showKi && <KiCell ki={row.ki} />}
 			<td className="col-status"><StatusPill row={row} /></td>
 			<td className="col-action"><Icon name="chev" /></td>
 		</tr>
 	);
 }
 
-export function TxTable({ rows, selectedId, onSelect, filterLabel }) {
+export function TxTable({ rows, selectedId, onSelect, filterLabel, showKi }) {
 	return (
 		<div className="tx-card">
 			<div className="tx-card-head">
@@ -58,25 +61,27 @@ export function TxTable({ rows, selectedId, onSelect, filterLabel }) {
 					<div>Wähle einen anderen Filter oder lade einen neuen Auszug.</div>
 				</div>
 			) : (
-				<table className="tx-table">
+				<table className={`tx-table ${showKi ? "ki-table" : ""}`}>
 					<thead>
 						<tr>
 							<th>Buchungstag</th>
 							<th></th>
 							<th style={{ textAlign: "right" }}>Betrag</th>
 							<th>Partei / IBAN</th>
-							<th>Verwendungszweck</th>
+							<th className={showKi ? "ki-purpose" : undefined}>Verwendungszweck</th>
+							{showKi && <th className="ki-col">KI-Vorschlag</th>}
 							<th>Status</th>
 							<th></th>
 						</tr>
 					</thead>
 					<tbody>
 						{rows.map((r) => (
-							<TxRow key={r.id} row={r} selected={r.id === selectedId} onSelect={onSelect} />
+							<TxRow key={r.id} row={r} selected={r.id === selectedId} onSelect={onSelect} showKi={showKi} />
 						))}
 					</tbody>
 				</table>
 			)}
+			{showKi && <div className="ki-keys"><kbd>J</kbd> / <kbd>K</kbd> Nächste / vorherige Zeile · <kbd>↵</kbd> Übernehmen · <kbd>R</kbd> Ablehnen · <kbd>Esc</kbd> Abbrechen</div>}
 		</div>
 	);
 }

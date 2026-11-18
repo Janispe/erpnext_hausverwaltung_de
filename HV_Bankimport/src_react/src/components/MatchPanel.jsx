@@ -12,6 +12,8 @@ import {
 	Spinner,
 } from "../helpers.jsx";
 import { InvoiceDateWarning } from "./InvoiceDateWarning.jsx";
+import { KiSuggestion } from "./KiSuggestion.jsx";
+import { isOpenKi } from "../ki.js";
 import { DocLink } from "./DocLink.jsx";
 import { LinkSearch } from "./LinkSearch.jsx";
 import { CustomerSplitDialog, CustomerPayments } from "./CustomerSplitDialog.jsx";
@@ -253,8 +255,8 @@ function AuditTrail({ row }) {
 	);
 }
 
-function PartyAssign({ docname, row, onActionDone, notify }) {
-	const [partyType, setPartyType] = useState(row.betrag < 0 ? "Supplier" : "Customer");
+function PartyAssign({ docname, row, onActionDone, notify, prefill, autoFocus = true }) {
+	const [partyType, setPartyType] = useState(prefill?.partyType || (row.betrag < 0 ? "Supplier" : "Customer"));
 	const [busy, run] = useAction(notify);
 	const noPartyMode = partyType === "none";
 
@@ -320,11 +322,16 @@ function PartyAssign({ docname, row, onActionDone, notify }) {
 				</>
 			) : (
 				<>
+					{prefill?.party && (prefill.partyType === partyType) && (
+						<button className="btn" disabled={busy} onClick={() => assign({ value: prefill.party })}>
+							{prefill.party} zuordnen
+						</button>
+					)}
 					<LinkSearch
 						placeholder={`${partyOptionLabel(partyType)} suchen…`}
 						fetcher={fetcher}
 						onPick={assign}
-						autoFocus
+						autoFocus={autoFocus}
 						disabled={busy}
 					/>
 					{row.auftraggeber && partyType !== "Eigentuemer" && (
@@ -519,7 +526,7 @@ function ResetRowDialog({ row, mode, busy, onClose, onConfirm }) {
 
 // ───────────────────────── Phase 3: Rechnungen matchen ──────────────────────
 
-export function InvoiceMatch({ docname, row, onActionDone, notify }) {
+export function InvoiceMatch({ docname, row, onActionDone, notify, prefill }) {
 	const [data, setData] = useState(null);
 	const [sel, setSel] = useState({}); // name -> allocated_amount
 	const [dateConfirmations, setDateConfirmations] = useState({});
@@ -538,11 +545,21 @@ export function InvoiceMatch({ docname, row, onActionDone, notify }) {
 		setDateConfirmations({});
 		setAdvance(false);
 		api.getOpenInvoices(docname, row.id)
-			.then((d) => alive && setData(d))
+			.then((d) => {
+				if (!alive) return;
+				setData(d);
+				if (!prefill?.invoices?.length) return;
+				setSel(Object.fromEntries(d.invoices.flatMap((invoice) => {
+					const item = prefill.invoices.find((entry) => entry.name === invoice.name);
+					if (!item || invoice.allocation_blocked_reason) return [];
+					const key = `${invoice.reference_doctype || d.invoiceDoctype || "Sales Invoice"}:${invoice.name}`;
+					return [[key, Math.min(item.allocated, allocatableInvoiceAmount(invoice))]];
+				})));
+			})
 			.catch((e) => alive && notify("error", e.message))
 			.finally(() => alive && setLoading(false));
 		return () => { alive = false; };
-	}, [docname, row.id, notify]);
+	}, [docname, row.id, notify, prefill]);
 
 	const allocated = useMemo(
 		() => Object.values(sel).reduce((s, v) => s + (Number(v) || 0), 0),
@@ -886,7 +903,7 @@ function SplitPaymentMatch({ docname, row, onActionDone, notify }) {
 
 // ───────────────────────── Phase 3: Buchungssatz ────────────────────────────
 
-function JournalEntryForm({ docname, row, onActionDone, notify }) {
+function JournalEntryForm({ docname, row, onActionDone, notify, prefill }) {
 	const [account, setAccount] = useState(null);
 	const [costCenter, setCostCenter] = useState("");
 	const [remarks, setRemarks] = useState(row.verwendungszweck || "");
@@ -902,18 +919,19 @@ function JournalEntryForm({ docname, row, onActionDone, notify }) {
 	);
 
 	useEffect(() => {
-		setAccount(null);
-		setCostCenter("");
+		setAccount(prefill?.account ? { value: prefill.account } : null);
+		setCostCenter(prefill?.costCenter || "");
 		setRemarks(row.verwendungszweck || "");
 		setWertstellungsdatum(row.buchungstag || "");
 		setSplitMode(false);
 		setSplits([
 			{ id: 1, account: null, costCenter: "", amount: Math.abs(Number(row.betrag) || 0).toFixed(2) },
 		]);
-	}, [row.id, row.betrag, row.buchungstag, row.verwendungszweck]);
+	}, [row.id, row.betrag, row.buchungstag, row.verwendungszweck, prefill]);
 
 	useEffect(() => {
 		let alive = true;
+		if (prefill?.costCenter) return;
 		api.getExpectedCostCenter(docname, row.id)
 			.then((d) => {
 				if (alive && d && d.cost_center) {
@@ -923,7 +941,7 @@ function JournalEntryForm({ docname, row, onActionDone, notify }) {
 			})
 			.catch(() => {});
 		return () => { alive = false; };
-	}, [docname, row.id]);
+	}, [docname, row.id, prefill]);
 
 	const targetAmount = Math.abs(Number(row.betrag) || 0);
 	const parseAmount = (value) => {
@@ -1118,7 +1136,7 @@ function InternalTransferPayment({ docname, row, onActionDone, notify }) {
 
 // ───────────────────────── Phase 3: Abschlagsplan ───────────────────────────
 
-function AbschlagMatch({ docname, row, onActionDone, notify }) {
+function AbschlagMatch({ docname, row, onActionDone, notify, prefill }) {
 	const [cands, setCands] = useState(null);
 	const [loading, setLoading] = useState(true);
 	const [busy, run] = useAction(notify);
@@ -1144,7 +1162,7 @@ function AbschlagMatch({ docname, row, onActionDone, notify }) {
 	return (
 		<div>
 			{cands.map((c) => (
-				<div key={c.row_name} className="invoice-card alt">
+				<div key={c.row_name} className={`invoice-card ${prefill?.row_name === c.row_name ? "suggested" : "alt"}`}>
 					<div className="row1">
 						<div>
 							<div className="doc-id">{c.bezeichnung || c.zahlungsplan}</div>
@@ -1168,7 +1186,7 @@ function AbschlagMatch({ docname, row, onActionDone, notify }) {
 
 // ───────────────────────── Phase 3: Kreditrate ──────────────────────────────
 
-function KreditMatch({ docname, row, onActionDone, notify }) {
+function KreditMatch({ docname, row, onActionDone, notify, prefill }) {
 	const [data, setData] = useState(null);
 	const [loading, setLoading] = useState(true);
 	const [busy, run] = useAction(notify);
@@ -1204,7 +1222,7 @@ function KreditMatch({ docname, row, onActionDone, notify }) {
 		<div>
 			{cands.length === 0 && <div className="hint">Keine offene Kreditrate gefunden.</div>}
 			{cands.map((c, i) => (
-				<div key={(c.kreditvertrag || "") + (api.getKreditrateRowName(c) || i)} className="invoice-card alt">
+				<div key={(c.kreditvertrag || "") + (api.getKreditrateRowName(c) || i)} className={`invoice-card ${prefill?.kreditvertrag === c.kreditvertrag && prefill?.rate_name === api.getKreditrateRowName(c) ? "suggested" : "alt"}`}>
 					<div className="row1">
 						<div>
 							<div className="doc-id">{c.kreditvertrag || c.label || "Kreditrate"}</div>
@@ -1274,7 +1292,7 @@ function ErrorView({ row }) {
 
 // ───────────────────────── Phase 3 Container (Modus-Wahl) ────────────────────
 
-function BookingActions({ docname, row, onActionDone, notify }) {
+function BookingActions({ docname, row, onActionDone, notify, prefill, hideReco }) {
 	const isOut = Number(row.betrag) < 0;
 	const hasParty = !!row.party;
 	const modes = useMemo(() => {
@@ -1298,11 +1316,12 @@ function BookingActions({ docname, row, onActionDone, notify }) {
 		() => inferBestMode(row, modes),
 		[row.id, row.autoMatch?.rechnungId, row.verwendungszweck, row.auftraggeber, modes]
 	);
-	const [mode, setMode] = useState(reco.id);
+	const preferred = modes.some((item) => item.id === prefill?.mode) ? prefill.mode : reco.id;
+	const [mode, setMode] = useState(preferred);
 	// Mode-Reset nur bei Zeilenwechsel (row.id) — auf derselben Zeile bleibt
 	// die manuelle User-Auswahl bestehen, selbst wenn sich reco nachträglich
 	// noch ändert.
-	useEffect(() => { setMode(reco.id); }, [row.id]); // eslint-disable-line
+	useEffect(() => { setMode(preferred); }, [row.id, prefill]); // eslint-disable-line
 
 	const recoLabel = modes.find((m) => m.id === reco.id)?.lbl;
 	const onReco = mode === reco.id;
@@ -1312,7 +1331,7 @@ function BookingActions({ docname, row, onActionDone, notify }) {
 			<div className="sec-label">Beleg zuordnen</div>
 
 			{/* Empfehlungs-Karte: erklärt, warum dieser Modus vorgewählt ist */}
-			{reco.reason && (
+			{!hideReco && reco.reason && (
 				<div className={`reco-card ${onReco ? "active" : "muted"}`}>
 					<div className="reco-tag">
 						{onReco ? "Empfohlen" : "Empfehlung war"} · {recoLabel}
@@ -1330,20 +1349,20 @@ function BookingActions({ docname, row, onActionDone, notify }) {
 				{modes.map((m) => (
 					<button
 						key={m.id}
-						className={`seg-btn ${mode === m.id ? "active" : ""} ${m.id === reco.id && reco.reason ? "is-reco" : ""}`}
+						className={`seg-btn ${mode === m.id ? "active" : ""} ${m.id === reco.id && !hideReco && reco.reason ? "is-reco" : ""}`}
 						onClick={() => setMode(m.id)}
 					>
 						{m.lbl}
 					</button>
 				))}
 			</div>
-			{mode === "invoice" && <InvoiceMatch docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
+			{mode === "invoice" && <InvoiceMatch prefill={prefill?.mode === mode ? prefill : undefined} docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 			{mode === "split" && <SplitPaymentMatch docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
-			{mode === "abschlag" && <AbschlagMatch docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
-			{mode === "kredit" && <KreditMatch docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
+			{mode === "abschlag" && <AbschlagMatch prefill={prefill?.mode === mode ? prefill : undefined} docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
+			{mode === "kredit" && <KreditMatch prefill={prefill?.mode === mode ? prefill : undefined} docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 			{mode === "payment" && <StandalonePayment docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 			{mode === "transfer" && <InternalTransferPayment docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
-			{mode === "journal" && <JournalEntryForm docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
+			{mode === "journal" && <JournalEntryForm prefill={prefill?.mode === mode ? prefill : undefined} docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 		</div>
 	);
 }
@@ -1372,11 +1391,13 @@ export function DistinctPaymentConfirmation({ docname, row, onActionDone, notify
 	);
 }
 
-export function MatchPanel({ docname, row, onActionDone, notify }) {
+export function MatchPanel({ docname, row, onActionDone, notify, kiMeta }) {
 	const [splitOpen, setSplitOpen] = useState(false);
 	const [partyDialogOpen, setPartyDialogOpen] = useState(false);
 	const [resetDialogMode, setResetDialogMode] = useState(null);
 	const [resetBusy, runReset] = useAction(notify);
+	const [manual, setManual] = useState(null);
+	const [adjustment, setAdjustment] = useState(null);
 
 	if (!row) {
 		return (
@@ -1419,6 +1440,12 @@ export function MatchPanel({ docname, row, onActionDone, notify }) {
 		});
 	};
 
+	const openKi = kiMeta && isOpenKi(row);
+	const showManual = !openKi || (manual ?? false);
+	const adjust = (prefill) => {
+		setManual(true);
+		setAdjustment({ prefill });
+	};
 	return (
 		<div className="match-panel">
 			<div className="match-head">
@@ -1468,6 +1495,15 @@ export function MatchPanel({ docname, row, onActionDone, notify }) {
 			</div>
 
 			<div className="match-body">
+				{kiMeta && <KiSuggestion meta={kiMeta} docname={docname} row={row} onActionDone={onActionDone}
+					notify={notify} onAdjust={adjust} />}
+				{kiMeta && phase !== 4 && (openKi ? (
+					<button className="ki-manual" aria-expanded={showManual} onClick={() => setManual(!showManual)}>
+						<Icon name={showManual ? "chevDown" : "chev"} size={13} />
+						<strong>Selbst zuordnen</strong><span>{phase === 1 ? "Partei wählen" : "Rechnung · Aufteilen · Abschlag · …"}</span>
+					</button>
+				) : <div className="ki-manual"><strong>Selbst zuordnen</strong></div>)}
+				{showManual && <>
 				{!hasVoucher && row.rowStatus !== "error" && phase !== 4 && (
 					<div className="match-section"><button className="btn" onClick={() => setSplitOpen(true)}><Icon name="plus" /> Mehrere Mieter</button></div>
 				)}
@@ -1476,13 +1512,14 @@ export function MatchPanel({ docname, row, onActionDone, notify }) {
 				)}
 				{row.rowStatus === "error" && <ErrorView row={row} />}
 				{row.rowStatus !== "error" && phase === 1 && (
-					<PartyAssign docname={docname} row={row} onActionDone={onActionDone} notify={notify} />
+					<PartyAssign key={adjustment ? JSON.stringify(adjustment.prefill) : undefined} prefill={adjustment?.prefill} autoFocus={!kiMeta} docname={docname} row={row} onActionDone={onActionDone} notify={notify} />
 				)}
-				{row.rowStatus !== "error" && phase === 3 && !row.customerPayments?.length && <BookingActions docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
+				{row.rowStatus !== "error" && phase === 3 && !row.customerPayments?.length && <BookingActions prefill={adjustment?.prefill} hideReco={kiMeta && (openKi || row.ki?.status === "Stale")} docname={docname} row={row} onActionDone={onActionDone} notify={notify} />}
 				{row.rowStatus !== "error" && phase === 4 && <DoneView row={row} />}
 				{row.rowStatus === "existing" && !row.transactionId && !hasVoucher && (
 					<DistinctPaymentConfirmation key={`${row.id}:${row.bankTransaction}`} docname={docname} row={row} onActionDone={onActionDone} notify={notify} />
 				)}
+				</>}
 			</div>
 			{splitOpen && <CustomerSplitDialog key={row.id} docname={docname} row={row} onClose={() => setSplitOpen(false)} onActionDone={onActionDone} notify={notify} />}
 			{partyDialogOpen && (

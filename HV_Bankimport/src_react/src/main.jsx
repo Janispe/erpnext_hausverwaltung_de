@@ -10,6 +10,7 @@ import "./styles/styles-table.css";
 import "./styles/styles-panel.css";
 // … plus Ergänzungen für die neu hinzugekommenen, verdrahteten Komponenten.
 import "./styles/app-extra.css";
+import "./styles/styles-ki.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
 	<React.StrictMode>
