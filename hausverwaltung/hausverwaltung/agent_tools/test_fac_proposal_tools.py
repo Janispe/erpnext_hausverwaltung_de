@@ -302,6 +302,9 @@ class TestDocActionsSite(unittest.TestCase):
 
 		# Human reviewer approves and executes using real ERPNext Supplier permissions.
 		self._human_session(self.reviewer_user)
+		self.assertEqual(frappe_service._actor(human=True), self.reviewer_user)
+		self.assertTrue(self.frappe.has_permission("Supplier", "create", user=self.reviewer_user))
+		self.assertTrue(self.frappe.has_permission("Supplier Group", "read", doc=self.supplier_group, user=self.reviewer_user))
 		approved = frappe_service.review(binding, True)
 		self.assertEqual(approved["status"], "Approved")
 		executed = frappe_service.execute(binding)
