@@ -174,6 +174,16 @@ def _allowed_doctype_or_readable_target(doctype):
 	return meta
 
 
+def _permitted_fields(meta, user, permission_type="read"):
+	permitted = set(meta.get_permitted_fieldnames(user=user, permission_type=permission_type))
+	if hasattr(meta, "get_permlevel_access"):
+		levels = set(meta.get_permlevel_access(permission_type=permission_type, user=user))
+		for df in getattr(meta, "fields", ()):
+			if df.fieldtype in ("Table", "Table MultiSelect") and int(df.permlevel or 0) in levels:
+				permitted.add(df.fieldname)
+	return permitted
+
+
 def _permitted_child_fields(parent_meta, child_meta, user, permission_type="read"):
 	if hasattr(parent_meta, "get_permlevel_access"):
 		levels = set(parent_meta.get_permlevel_access(permission_type=permission_type, user=user))
@@ -213,7 +223,7 @@ def _validate_table_rows(parent_meta, df, rows, user, *, permission_type="read")
 
 
 def _validate_values(meta, values, user, *, doc=None, permission_type="read", check_state=True):
-	permitted = set(meta.get_permitted_fieldnames(user=user, permission_type=permission_type))
+	permitted = _permitted_fields(meta, user, permission_type=permission_type)
 	for fieldname, value in values.items():
 		if fieldname in BLOCKED_FIELDS:
 			raise ValueError(f"Field {fieldname} cannot be set directly")
@@ -261,7 +271,7 @@ def _snapshot_field(doc, df, user=None, parent_meta=None):
 
 def _check_readable_fields(meta, payload, user, *, doc=None, preview=None):
 	values = payload.get("values") or {}
-	permitted = set(meta.get_permitted_fieldnames(user=user, permission_type="read"))
+	permitted = _permitted_fields(meta, user, permission_type="read")
 	for fieldname, value in values.items():
 		if fieldname not in permitted:
 			_deny()
