@@ -41,7 +41,10 @@ from hausverwaltung.hausverwaltung.doctype.bankauszug_import.bankauszug_import i
 	parse_csv,
 	_voucher_is_cancelled_or_missing,
 )
-from hausverwaltung.hausverwaltung.doctype.bankauszug_import.customer_payment_split import customer_payments
+from hausverwaltung.hausverwaltung.doctype.bankauszug_import.customer_payment_split import (
+	customer_payments,
+	split_cancellation_values,
+)
 from hausverwaltung.proposals import bank_packages
 from hausverwaltung.hausverwaltung.utils.display_titles import get_titles, title_of
 from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
@@ -321,11 +324,14 @@ def _project_cancelled_voucher(row):
 	for doctype, name in _linked_vouchers_for_row(row):
 		if not _voucher_is_cancelled_or_missing(doctype, name):
 			continue
+		if customer_payments(row):
+			for field, value in split_cancellation_values().items():
+				row.set(field, value)
+			return
 		field = "payment_entry" if doctype == "Payment Entry" else "journal_entry"
 		row.set(field, None)
 		row.set("payment_document_type", None)
 		row.set("payment_document", None)
-		row.set("customer_payments", None)
 		if not row.get("error"):
 			row.set("row_status", None)
 		row.set("auto_match_message", f"Automatisch zurückgesetzt: {doctype} {name} ist storniert.")

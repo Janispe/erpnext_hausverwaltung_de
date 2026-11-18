@@ -372,6 +372,17 @@ def reconcile_customer_split(
         raise
 
 
+def split_cancellation_values():
+    return {
+        "payment_entry": None,
+        "journal_entry": None,
+        "payment_document_type": None,
+        "payment_document": None,
+        "row_status": "needs_review",
+        "auto_match_message": "Teilzahlung storniert. Bitte die Zahlungsaufteilung vollständig zurücksetzen und neu zuordnen.",
+    }
+
+
 def sync_cancelled_splits(voucher_name=None, import_name=None, voucher_doctype="Payment Entry"):
     """Keep ownership of every split, even after an external partial cancellation."""
     filters = {"parenttype": "Bankauszug Import", "customer_payments": ["is", "set"]}
@@ -401,14 +412,7 @@ def sync_cancelled_splits(voucher_name=None, import_name=None, voucher_doctype="
         frappe.db.set_value(
             "Bankauszug Import Row",
             row.name,
-            {
-                "payment_entry": None,
-                "journal_entry": None,
-                "payment_document_type": None,
-                "payment_document": None,
-                "row_status": "needs_review",
-                "auto_match_message": "Teilzahlung storniert. Bitte die Zahlungsaufteilung vollständig zurücksetzen und neu zuordnen.",
-            },
+            split_cancellation_values(),
             update_modified=False,
         )
         affected.add(row.parent)

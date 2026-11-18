@@ -1865,7 +1865,7 @@ def apply_party_to_row_and_relink(
     party_type: Optional[str] = None,
     party: Optional[str] = None,
     iban: Optional[str] = None,
-    skip_auto_create: int = 0,
+    only_row: int = 0,
 ) -> Dict[str, Any]:
     if not frappe.has_permission("Bankauszug Import", "write", doc=docname):
         frappe.throw("Keine Berechtigung zum Bearbeiten dieses Bankauszug Imports.")
@@ -1876,6 +1876,24 @@ def apply_party_to_row_and_relink(
     changed_row = False
     if _party_relink_block_reason(row):
         frappe.throw("Die Partei einer gebuchten oder abgestimmten Zeile kann nicht neu verknüpft werden. Bitte zuerst die Buchung sicher zurücksetzen.")
+
+    if cint(only_row):
+        transaction = _get_row_bank_transaction_name(row)
+        if _row_is_skipped(row) or (transaction and frappe.get_all(
+            "Bankauszug Import Row",
+            filters={"name": ["!=", row.name]},
+            or_filters={"bank_transaction": transaction, "reference": transaction},
+            pluck="name",
+            limit_page_length=1,
+        )):
+            frappe.throw("Diese Banktransaktion ist bereits mit einer anderen Importzeile verknüpft.")
+        if party_type not in SUPPORTED_PARTY_TYPES or not party:
+            frappe.throw("Eine eindeutige Partei ist für die Zeilenzuordnung erforderlich.")
+        _row_set(row, "party_type", party_type)
+        _row_set(row, "party", party)
+        update = _set_bt_party(row, party_type, party)
+        _recompute_doc_status(docname)
+        return {"row": row.name, "row_party_type": party_type, "row_party": party, "relink": update}
 
     # When called from Customer/Supplier auto-link with an IBAN, ensure a
     # Bank Account record exists for the party so the IBAN→party lookup works
@@ -1944,7 +1962,7 @@ def apply_party_to_row_and_relink(
     except Exception:
         pass
 
-    auto_create = {} if int(skip_auto_create) else _auto_create_transaction_for_ready_row(docname, row.name)
+    auto_create = _auto_create_transaction_for_ready_row(docname, row.name)
     _recompute_doc_status(docname)
 
     return {
@@ -4661,7 +4679,9 @@ def assign_kreditrate_to_bank_row(
 
 
 @frappe.whitelist()
-def book_kreditrate_from_statement_for_row(docname: str, row_name: str) -> Dict[str, Any]:
+def book_kreditrate_from_statement_for_row(
+    docname: str, row_name: str, expected_contract: Optional[str] = None
+) -> Dict[str, Any]:
     """Legt eine Kreditrate aus dem Kontoauszug-Verwendungszweck an und bucht sie.
 
     Für den Fall, dass noch keine Planrate existiert (z.B. Darlehen ohne erfassten
@@ -4673,6 +4693,7 @@ def book_kreditrate_from_statement_for_row(docname: str, row_name: str) -> Dict[
     für eine einzelne, bereits importierte Zeile.
     """
     from hausverwaltung.hausverwaltung.doctype.kreditvertrag.kreditvertrag import (
+        _create_or_book_rate_from_statement,
         link_bank_transaction_to_kreditvertrag_rate,
     )
 
@@ -4680,13 +4701,15 @@ def book_kreditrate_from_statement_for_row(docname: str, row_name: str) -> Dict[
     if row.get("richtung") != "Ausgang":
         frappe.throw("Kreditraten-Buchung ist nur für Ausgänge möglich.")
 
-    result = link_bank_transaction_to_kreditvertrag_rate(
+    match = _create_or_book_rate_from_statement if expected_contract else link_bank_transaction_to_kreditvertrag_rate
+    result = match(
         bank_account=bt.bank_account,
         posting_date=bt.date,
         amount=row.get("betrag"),
         bank_transaction=bt.name,
         supplier=row.get("party") if row.get("party_type") == "Supplier" else None,
         reference_text=row.get("verwendungszweck"),
+        **({"expected_contract": expected_contract} if expected_contract else {}),
     )
 
     if result and result.get("match_count") == 1:

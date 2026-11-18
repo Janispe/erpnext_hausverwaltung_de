@@ -16,7 +16,7 @@ class Action:
 
 BANK_POLICY = "hv.bankimport.accounting-review/v1"
 BANK_ACTIONS = {
-	"assign_party": ("party", "Partei zuordnen", "apply_party_to_row_and_relink", ("party", "party_type", "iban")),
+	"assign_party": ("party", "Partei zuordnen", "apply_party_to_row_and_relink", ("party", "party_type")),
 	"reconcile_invoices": ("invoice", "Rechnung zuordnen", "manually_reconcile_row", ("invoice_names", "leftover_as_advance")),
 	"reconcile_split": ("split", "Aufteilen", "reconcile_split_row", ("invoice_allocations", "abschlag_rows", "leftover_as_advance")),
 	"assign_abschlag": ("abschlag", "Abschlag zuordnen", "assign_abschlagsplan_row", ("plan_row_name", "plan_name", "remarks")),

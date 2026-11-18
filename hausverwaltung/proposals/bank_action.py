@@ -81,8 +81,10 @@ def operation(action, payload, doc):
 		raise ValueError("Buchungsparameter fehlen.")
 	if spec.kind == "party" and params["party_type"] != "Customer":
 		raise ValueError("Die Parteizuordnung erfordert den Customer eines Mietvertrags.")
-	if spec.kind == "kredit" and not params.get("kreditvertrag"):
-		raise ValueError("Kreditvertrag erforderlich.")
+	if spec.kind == "kredit" and (
+		not params.get("kreditvertrag") or bool(params.get("rate_name")) == bool(params.get("from_statement"))
+	):
+		raise ValueError("Kreditvertrag mit einer Planrate oder Ableitung aus dem Verwendungszweck erforderlich.")
 	if spec.kind == "journal" and bool(params.get("account")) == bool(params.get("splits")):
 		raise ValueError("Gegenkonto oder Aufteilung erforderlich.")
 	if spec.kind == "split" and not (params.get("invoice_allocations") or params.get("abschlag_rows")):
@@ -350,6 +352,16 @@ def fresh(doc, body):
 	return current
 
 
+def _journal_postings(voucher):
+	return sorted((line.account, _amount(line.debit_in_account_currency or 0), _amount(line.credit_in_account_currency or 0))
+		for line in voucher.accounts)
+
+
+def _preview_postings(body):
+	return sorted((line["account"], _amount(line["debit"]), _amount(line["credit"]))
+		for line in body["preview"]["postings"])
+
+
 def execute_approved(doc, body):
 	require_reviewer(body)
 	if doc.status == "Succeeded":
@@ -373,9 +385,9 @@ def execute_approved(doc, body):
 	params = payload["parameters"].copy()
 	method = registry.ACTIONS[action].method
 	if action == PARTY_ACTION:
-		params["skip_auto_create"] = 1
+		params["only_row"] = 1
 	if params.pop("from_statement", False):
-		params.pop("kreditvertrag")
+		params["expected_contract"] = params.pop("kreditvertrag")
 		params.pop("rate_name", None)
 		method = "book_kreditrate_from_statement_for_row"
 	for key in {"invoice_names", "invoice_allocations", "abschlag_rows"} & params.keys():
@@ -395,7 +407,9 @@ def execute_approved(doc, body):
 		row = row_document(import_document(import_name, lock=True), row_name)
 		state = _state(row, lock=True)
 		if action == PARTY_ACTION:
-			if not state["transaction"] or (state["party_type"], state["party"]) != (params["party_type"], params["party"]):
+			expected_party = [params["party_type"], params["party"]]
+			if (not state["transaction"] or [state["party_type"], state["party"]] != expected_party
+				or state["transaction_party"] != expected_party):
 				raise ValueError("Parteizuordnung entspricht nicht dem Vorschlag.")
 			doctype, name = "Bank Transaction", state["transaction"]
 		else:
@@ -403,6 +417,10 @@ def execute_approved(doc, body):
 				raise ValueError("Die Buchung wurde nicht ausgeführt.")
 			doctype, name = state["voucher"]
 			voucher = frappe.get_doc(doctype, name, for_update=True)
+			if registry.ACTIONS[action].kind == "kredit":
+				if (result.get("kreditvertrag") != payload["parameters"]["kreditvertrag"]
+					or doctype != "Journal Entry" or _journal_postings(voucher) != _preview_postings(body)):
+					raise ValueError("Kreditbuchung entspricht nicht der freigegebenen Vorschau.")
 			if not all(frappe.has_permission(doctype, right, doc=voucher, user=user)
 				for right in ("create", "submit") for user in {frappe.session.user, doc.decision_by}):
 				core._deny()

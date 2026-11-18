@@ -34,12 +34,13 @@ def run(site, auth_file, fixture_file):
 		desk = client.get("/desk/hv-proposals").get_data(as_text=True)
 		csrf = re.search(r'frappe\.csrf_token\s*=\s*["\']([^"\']+)', desk).group(1)
 
-		def post(path, data, status=200):
-			response = client.post(path, json=data, headers={"X-Frappe-CSRF-Token": csrf})
+		def post(path, data=None, status=200):
+			response = (client.get(path) if data is None else
+				client.post(path, json=data, headers={"X-Frappe-CSRF-Token": csrf}))
 			assert response.status_code == status, (
 				f"{path.rsplit('.', 1)[-1]}: HTTP {response.status_code}, "
 				f"{(response.json or {}).get('exc_type', '')}")
-			return (response.json or {}).get("message")
+			return (response.json or {}).get("message" if data is not None else "data")
 
 		return post
 
@@ -93,6 +94,10 @@ def run(site, auth_file, fixture_file):
 	assert results[0]["status"] == "Approved" and results[1]["status"] == "Skipped"
 	completed_party = row(0)
 	assert completed_party["party"] and completed_party["bankTransaction"]
+	unrelated = row(6)
+	assert unrelated["iban"] == completed_party["iban"]
+	assert not unrelated["party"] and not unrelated["bankTransaction"]
+	assert unrelated["ki"]["status"] == "Pending"
 	assert [step["status"] for step in completed_party["ki"]["steps"]] == ["Succeeded", "Approved"]
 	assert not completed_party["paymentEntry"]
 	booked = reviewer(PAGE + "ki_accept", failed_step)
@@ -147,8 +152,21 @@ def run(site, auth_file, fixture_file):
 	for proposal in (unchanged[0]["id"], updated["id"]):
 		view = reviewer(CORE + "view", {"proposal_id": proposal})
 		assert view["status"] == "Stale" and view["stale_cause"]["cause"] == "superseded"
+	party_ref, document_ref = bindings(row(6))
+	party_step = lanes[6]["steps"][0]
+	new_party = agent(CORE + "revise", {"binding": party_ref, "payload": party_step["payload"],
+		"metadata": party_step["metadata"]})
+	new_party_ref = {key: new_party[key] for key in ("id", "revision", "hash")}
+	earlier_ref = bindings(row(4))
+	stale_chain = reviewer(PAGE + "ki_accept_many", {"import_name": import_name,
+		"items": [{"row": lanes[4]["row"], "bindings": earlier_ref},
+			{"row": lanes[6]["row"], "bindings": [new_party_ref, document_ref]}]})["results"]
+	assert [item["status"] for item in stale_chain] == ["Succeeded", "Stale"]
+	assert row(4)["journalEntry"]
+	assert row(6)["party"] and row(6)["ki"]["status"] == "Stale" and not row(6)["paymentEntry"]
+
 	matrix = fixture["matrix"]
-	agent(BANK + "publish", matrix)
+	agent(BANK + "publish", {key: matrix[key] for key in ("import_name", "package", "lanes")})
 	matrix_import = matrix["import_name"]
 	for lane in matrix["lanes"]:
 		step = lane["steps"][0]
@@ -174,9 +192,15 @@ def run(site, auth_file, fixture_file):
 		assert voucher["doctype"] == ("Journal Entry" if "kredit" in action else "Payment Entry"), action
 		assert voucher["by"] == "bank-reviewer@hv4.invalid", action
 
+	expected_contract = reviewer("/api/resource/Kreditvertrag/" + matrix["statement_contract"])
+	competing_contract = reviewer("/api/resource/Kreditvertrag/" + matrix["competing_contract"])
+	assert expected_contract["plan"][0]["journal_entry"]
+	assert expected_contract["plan"][0]["zinsanteil"] == 60 and expected_contract["plan"][0]["tilgungsanteil"] == 240
+	assert not competing_contract["plan"][0].get("journal_entry")
 	print(json.dumps({"read_queries": len(observed), "party_then_invoice": "passed", "retry": "passed",
 		"manual_booking": "passed", "rule_booking": "passed", "abstention_answer": "passed",
-		"bound_answer": "passed", "superseded": "passed", "additional_booking_actions": len(matrix["lanes"])}))
+		"bound_answer": "passed", "superseded": "passed", "additional_bookings": len(matrix["lanes"]),
+		"revised_predecessor": "passed", "row_only_party": "passed", "statement_credit_binding": "passed"}))
 
 
 if __name__ == "__main__":

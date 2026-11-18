@@ -52,10 +52,16 @@ def _matrix(bank, key):
 	liabilities = frappe.db.get_value("Account", {"company": company, "root_type": "Liability", "is_group": 1}, "name")
 	principal = frappe.get_doc({"doctype": "Account", "account_name": f"KI Testdarlehen {key}", "company": company,
 		"parent_account": liabilities}).insert().name
-	credit = frappe.get_doc({"doctype": "Kreditvertrag", "bezeichnung": f"Kredit {key}", "company": company,
-		"lieferant": supplier, "bank_account": other_bank, "darlehenskonto": principal, "zinsaufwandskonto": expense,
-		"anfangs_restschuld": 10000, "cost_center": tenancy["cost_center"],
+	loan = {"doctype": "Kreditvertrag", "company": company, "lieferant": supplier,
+		"bank_account": other_bank, "darlehenskonto": principal, "zinsaufwandskonto": expense,
+		"anfangs_restschuld": 10000, "cost_center": tenancy["cost_center"]}
+	credit = frappe.get_doc(loan | {"bezeichnung": f"Kredit {key}",
 		"plan": [{"faelligkeitsdatum": "2026-04-08", "zinsanteil": 50, "tilgungsanteil": 200}]}).insert()
+	statement_contract = frappe.get_doc(loan | {"bezeichnung": f"Kontoauszug-Vertrag {key}",
+		"vertragsnummer": f"AZ{key}"}).insert()
+	competing_contract = frappe.get_doc(loan | {"bezeichnung": f"Anderer Vertrag {key}",
+		"vertragsnummer": f"AB{key}", "plan": [{"faelligkeitsdatum": "2026-04-09",
+			"zinsanteil": 30, "tilgungsanteil": 270}]}).insert()
 	customer = ("Customer", tenancy["customer"])
 	vendor = ("Supplier", supplier)
 	cases = [
@@ -65,16 +71,19 @@ def _matrix(bank, key):
 		("internal_transfer", "Eingang", 37, (None, None), {"other_bank_account": bank_doc.name}),
 		("assign_abschlag", "Ausgang", 50, vendor, {"plan_name": plan.name, "plan_row_name": plan.plan[0].name}),
 		("assign_kreditrate", "Ausgang", 250, vendor, {"kreditvertrag": credit.name, "rate_name": credit.plan[0].name}),
+		("assign_kreditrate", "Ausgang", 300, vendor, {"kreditvertrag": statement_contract.name, "from_statement": True}),
 	]
 	imp = _statement(other_bank, "matrix-" + key)
 	for index, (action, direction, amount, party, _) in enumerate(cases):
+		purpose = f"AZ AZ{key}, IN EUR: Tilgung 240,00 Zinsen 60,00" if index == 5 else f"{action} {key}"
 		imp.append("rows", {"buchungstag": f"2026-04-{index + 4:02d}", "betrag": amount,
-			"richtung": direction, "auftraggeber": f"KI Test {index}", "verwendungszweck": f"{action} {key}",
+			"richtung": direction, "auftraggeber": f"KI Test {index}", "verwendungszweck": purpose,
 			"currency": "EUR", "party_type": party[0], "party": party[1]})
 	imp.insert()
 	lanes = [{"row": row.name, "steps": [_step(imp, row, action, action, params)]}
 		for row, (action, _, _, _, params) in zip(imp.rows, cases)]
-	return {"import_name": imp.name, "package": f"BANK-MATRIX-{key}", "lanes": lanes}
+	return {"import_name": imp.name, "package": f"BANK-MATRIX-{key}", "lanes": lanes,
+		"statement_contract": statement_contract.name, "competing_contract": competing_contract.name}
 
 
 def seed():
@@ -83,12 +92,13 @@ def seed():
 	tenancy = fixtures.seed_bankimport_over_under("ki-" + key, bank["company"])
 	account = fixtures._ensure_income_account(bank["company"])
 	imp = _statement(bank["bank_account"], key)
+	test_iban = fixtures._make_de_iban_from_run_id("bank-proposals-" + key)
 	names = ["Mara Sommer", "Wiesenpark GmbH", "Jonas Lind", "Elif Graf", "Stadtwerke Nord",
 		"Paul Grün", "Nora Berg", "Karl Licht", "Lina Wolf"]
 	for index, name in enumerate(names):
 		imp.append("rows", {"buchungstag": f"2026-04-{index + 3:02d}", "betrag": 100 if index in (0, 6) else 20 + index,
 			"richtung": "Eingang", "auftraggeber": name, "verwendungszweck": f"Testumsatz {key} {index}",
-			"currency": "EUR", "iban": tenancy["iban"] if index in (0, 6) else None})
+			"currency": "EUR", "iban": test_iban if index in (0, 6) else None})
 	imp.insert()
 	bank_action.booking.create_bank_transaction_for_row(imp.name, imp.rows[2].name,
 		allow_missing_party=1, skip_auto_match=1)

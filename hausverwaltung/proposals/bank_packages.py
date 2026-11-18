@@ -260,10 +260,10 @@ def _accept(package, row, bindings):
 	results = []
 	for doc, body in ordered:
 		actions.require_reviewer(body)
-		if any(core._exact(ref)[0].status != "Succeeded" for ref in body["dependencies"]):
+		response = core._checked(doc, body)
+		if response["status"] in OPEN and any(core._exact(ref)[0].status != "Succeeded" for ref in body["dependencies"]):
 			return {"ok": False, "status": doc.status, "results": results + [{"id": doc.name, "ok": False,
 				"status": doc.status, "error": "Die Parteizuordnung muss zuerst ausgeführt werden."}]}
-		response = core._checked(doc, body)
 		if response["status"] == "Pending":
 			core._approve(doc, {"surface": "bankimport"})
 		if doc.status in {"Approved", "Succeeded"}:

@@ -1003,6 +1003,28 @@ class TestGetOverviewSync(unittest.TestCase):
 				self.assertNotIn("ki", result["import"])
 				self.assertNotIn("ki", out)
 
+	def test_get_overview_keeps_split_vouchers_after_partial_cancellation(self):
+		row = _OverviewRow()
+		row.customer_payments = [
+			{"payment_entry": "PE-CANCELLED", "customer": "MIETER-1", "amount": 125},
+			{"payment_entry": "PE-ALIVE", "customer": "MIETER-2", "amount": 500},
+		]
+		doc = _OverviewDoc(row)
+		with patch("frappe.get_doc", return_value=doc), \
+			 patch("frappe.has_permission", return_value=True), \
+			 patch("frappe.db.set_value") as writes, \
+			 patch.object(bv2, "_voucher_is_cancelled_or_missing", side_effect=lambda dt, name: name == "PE-CANCELLED"), \
+			 patch.object(bv2, "_refresh_saldo_fields"), \
+			 patch.object(bv2, "_suggest_invoice_for_row", return_value=None), \
+			 patch.object(bv2.bank_packages, "overview", return_value=None):
+			out = bv2.get_overview("IMP-OVERVIEW")["rows"][0]
+
+		writes.assert_not_called()
+		self.assertEqual(out["phase"], 3)
+		self.assertEqual(out["rowStatus"], "needs_review")
+		self.assertIsNone(out["paymentDocument"])
+		self.assertEqual([entry["payment_entry"] for entry in out["customerPayments"]], ["PE-CANCELLED", "PE-ALIVE"])
+
 	def test_get_overview_returns_outgoing_amounts_as_negative_and_counts_phases(self):
 		incoming = _OverviewRow()
 		incoming.name = "ROW-IN"
