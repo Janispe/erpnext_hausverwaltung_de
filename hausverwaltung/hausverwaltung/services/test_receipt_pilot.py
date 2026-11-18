@@ -75,13 +75,35 @@ class TestReceiptPilot(unittest.TestCase):
 	def test_no_account_is_inferred_even_when_cost_center_is_valid(self):
 		doc = {"receipt_context": {"kostenstelle": "Testobjekt", "zahlungsquelle": "Privat vorgestreckt"}}
 		with (
-			patch.object(frappe.db, "get_value", return_value=frappe._dict(company="HV", disabled=0, is_group=0)),
-			patch.object(frappe, "get_list", return_value=[]),
+			patch.object(frappe.db, "get_value", side_effect=[frappe._dict(company="HV", disabled=0, is_group=0), "Testobjekt"]),
+			patch.object(pilot, "_kostenstelle_zu_haus_map", return_value={"Testobjekt": "Pilot-Haus"}),
+			patch.object(frappe, "has_permission", return_value=True),
 		):
 			result = pilot.review_context(doc)
 		self.assertEqual(result["kostenstelle"], "Testobjekt")
 		self.assertEqual(result["zahlungskonto"], "")
 		self.assertEqual(len(result["fragen"]), 2)
+
+	def test_unmapped_ambiguous_or_child_cost_center_remains_open(self):
+		doc = {"receipt_context": {"kostenstelle": "Kostenstelle", "zahlungsquelle": "Objektkasse", "zahlungskonto": "Kasse"}}
+		for building_map, root_center in (
+			({}, None),
+			(frappe.ValidationError("Mehrere Gebäude"), None),
+			({"Kostenstelle": "Gebäude"}, "Kostenstelle des Hauptgebäudes"),
+		):
+			with (
+				self.subTest(building_map=building_map),
+				patch.object(frappe.db, "get_value", side_effect=[
+					frappe._dict(company="HV", disabled=0, is_group=0), root_center,
+				]),
+				patch.object(pilot, "_kostenstelle_zu_haus_map", side_effect=(
+					building_map if isinstance(building_map, Exception) else None
+				), return_value=building_map),
+			):
+				result = pilot.review_context(doc)
+				self.assertEqual(result["kostenstelle"], "")
+				self.assertEqual(result["zahlungskonto"], "")
+				self.assertTrue(any("Gebäude" in question for question in result["fragen"]))
 
 	def test_repeated_upload_and_retry_stay_with_same_original(self):
 		batch = str(uuid.uuid4())

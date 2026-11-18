@@ -18,7 +18,9 @@ const HV_RECEIPT_API = "hausverwaltung.hausverwaltung.services.receipt_pilot";
 function hv_receipt_context_fields(defaults = {}) {
 	return [
 		{ fieldname: "kostenstelle", fieldtype: "Link", options: "Cost Center", label: __("Objekt-Kostenstelle"),
-			get_query: () => ({ filters: { is_group: 0, disabled: 0 } }) },
+			get_query: () => ({
+				query: "hausverwaltung.hausverwaltung.page.buchen_cockpit.buchen_cockpit.toplevel_kostenstelle_query",
+			}) },
 		{ fieldname: "zahlungsquelle", fieldtype: "Select", options: "\nObjektkasse\nPrivat vorgestreckt",
 			label: __("Zahlungsquelle") },
 		{ fieldname: "zahlungskonto", fieldtype: "Link", options: "Account", label: __("Kassen-/Verrechnungskonto"),

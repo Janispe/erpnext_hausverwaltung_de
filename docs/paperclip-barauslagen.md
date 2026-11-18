@@ -40,7 +40,7 @@ Eingangsrechnungen.
 
 ## Stapel prüfen
 
-- Beim Hochladen die Objekt-Kostenstelle und Zahlungsquelle für alle
+- Beim Hochladen die Kostenstelle des eindeutig zugeordneten Gebäudes und die Zahlungsquelle für alle
   gleichartigen Bons einmal erfassen. Bei Objektkasse das zugehörige
   Kassenkonto auswählen. Für privat vorgestreckte Bons die auslegende Person
   und das bestätigte Verrechnungskonto eintragen. Fehlende Angaben können

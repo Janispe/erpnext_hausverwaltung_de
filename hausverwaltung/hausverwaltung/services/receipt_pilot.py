@@ -14,6 +14,9 @@ from frappe.utils import cint
 from frappe.utils.file_manager import get_files_path
 from PIL import Image
 
+from hausverwaltung.hausverwaltung.scripts.betriebskosten.gl_kosten_pro_haus import (
+	_kostenstelle_zu_haus_map,
+)
 from hausverwaltung.hausverwaltung.services import invoice_extraction, mistral_client
 
 PROPOSAL = "Buchungs Vorschlag"
@@ -72,8 +75,16 @@ def review_context(doc) -> dict:
 	center = frappe.db.get_value(
 		"Cost Center", context["kostenstelle"], ["company", "disabled", "is_group"], as_dict=True,
 	) if context["kostenstelle"] else None
-	if not center or not center.company or center.disabled or center.is_group:
-		questions.append("Welche gültige Objekt-Kostenstelle gehört zu diesem Bon?")
+	building = None
+	if center and center.company and not center.disabled and not center.is_group:
+		try:
+			building = _kostenstelle_zu_haus_map().get(context["kostenstelle"])
+		except frappe.ValidationError:
+			frappe.clear_last_message()
+		if building and frappe.db.get_value("Immobilie", building, "kostenstelle") != context["kostenstelle"]:
+			building = None
+	if not building:
+		questions.append("Welche Kostenstelle ist diesem Gebäude eindeutig zugeordnet?")
 		center = None
 	source = context["zahlungsquelle"]
 	account = context["zahlungskonto"]
@@ -92,17 +103,12 @@ def review_context(doc) -> dict:
 				valid_account = account
 		except frappe.ValidationError:
 			frappe.clear_last_message()
-	properties = []
-	if center and frappe.has_permission("Immobilie", "read"):
-		properties = frappe.get_list(
-			"Immobilie", filters={"kostenstelle": context["kostenstelle"]}, pluck="name", limit_page_length=2,
-		)
 	if not valid_account:
 		questions.append("Welches eindeutige Kassen- bzw. Verrechnungskonto soll verwendet werden?")
 	return {
 		**context,
 		"kostenstelle": context["kostenstelle"] if center else "",
-		"immobilie": properties[0] if len(properties) == 1 else "",
+		"immobilie": building if building and frappe.has_permission("Immobilie", "read", doc=building) else "",
 		"zahlungsart": PAYMENT_TYPES.get(source, ""),
 		"zahlungskonto": valid_account,
 		"fragen": questions,
