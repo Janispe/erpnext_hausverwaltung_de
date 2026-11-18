@@ -140,8 +140,10 @@ def _target(body, permission="read", user=None, lock=None):
 		_deny()
 	if body["action"] == domain.ACTION:
 		return _note(body["payload"]["target"], permission, user=user, lock=lock)
-	return _bank().authorize(body["action"], body["payload"], permission, user=user,
+	result = _bank().authorize(body["action"], body["payload"], permission, user=user,
 		lock=_writing.get() if lock is None else lock)
+	_bank().authorize_preview(body, user=user)
+	return result
 
 
 def _state(doc):
@@ -247,15 +249,11 @@ def _load(pid):
 
 def _exact(binding):
 	doc, body = _load(binding["id"])
-	if doc.action in _bank_action_names() and doc.current_revision != binding["revision"]:
+	if getattr(doc, "action", None) in registry.BANK_ACTION_NAMES and doc.current_revision != binding["revision"]:
 		frappe.throw("Die Revision wurde parallel geändert. Bitte neu laden.", ConcurrentRevisionRetry)
 	if doc.current_revision != binding["revision"] or doc.revision_hash != binding["hash"]:
 		frappe.throw("Revision/hash changed")
 	return doc, body
-
-
-def _bank_action_names():
-	return tuple(key for key, action in registry.ACTIONS.items() if action.surface == "bankimport")
 
 
 def _lock_for(pid):
@@ -341,7 +339,10 @@ def _invalidate_metadata(child, parent, cause="dependency_stale"):
 
 def _invalidate(doc, cause="dependency_stale"):
 	# Package cap bounds scanning; only the affected transitive subgraph is changed.
-	rows = frappe.get_all(PROPOSAL, filters={"package": doc.package}, pluck="name", limit_page_length=129)
+	filters = {"package": doc.package}
+	if doc.action in registry.BANK_ACTION_NAMES:
+		filters["target"] = doc.target
+	rows = frappe.get_all(PROPOSAL, filters=filters, pluck="name", limit_page_length=129)
 	pending, seen = [doc.name], {doc.name}
 	while pending:
 		parent = pending.pop()
@@ -358,6 +359,9 @@ def _invalidate(doc, cause="dependency_stale"):
 
 def _response(doc, body, current=None, stale_cause=None):
 	status = "Stale" if stale_cause else doc.status
+	result = frappe.parse_json(doc.result) if doc.result else None
+	if result and body.get("action") in registry.BANK_ACTION_NAMES:
+		result = {key: result[key] for key in ("doctype", "id", "name", "by", "at")}
 	return {"id": doc.name, "revision": doc.current_revision, "hash": doc.revision_hash,
 		"status": status, "approvable": status in {"Pending", "Approved"},
 		"package": doc.package, "dependencies": body["dependencies"],
@@ -367,7 +371,7 @@ def _response(doc, body, current=None, stale_cause=None):
 		"effects": body["preview"].get("effects", []), "limits": body["preview"].get("limits", []),
 		"stale_cause": stale_cause,
 		"conflicts": ["New revision and review required"] if status == "Stale" else [],
-		"result": frappe.parse_json(doc.result) if doc.result else None}
+		"result": result}
 
 
 def _stale_cause(doc, body, memo=None):
@@ -435,10 +439,10 @@ def _approve(doc, detail=None):
 	_event(doc, "Approved", detail)
 
 
-def _succeed(doc, result):
+def _succeed(doc, result, *, audit_result=None):
 	doc.result = domain.encode(result)
 	doc.status = "Succeeded"
-	_event(doc, "Succeeded", result)
+	_event(doc, "Succeeded", result if audit_result is None else audit_result)
 
 
 @_api
@@ -609,8 +613,9 @@ def _visible(package, user=None):
 	token = _writing.set(False)
 	try:
 		result = []
+		row_limit = 0 if isinstance(package, str) and package.startswith("BANK-") else 129
 		for pid in frappe.get_all(PROPOSAL, filters={"package": package, "action": ["in", registry.PUBLIC_ACTIONS]},
-			pluck="name", limit_page_length=129):
+			pluck="name", limit_page_length=row_limit):
 			messages = list(frappe.local.message_log)
 			try:
 				doc = frappe.get_doc(PROPOSAL, pid)
@@ -670,7 +675,12 @@ def _package_info(package, rows):
 	counts = dict.fromkeys(("Pending", "Approved", "Succeeded", "Stale", "Rejected"), 0)
 	for proposal, body in rows:
 		counts[_checked(proposal, body, persist=False)["status"]] += 1
-	status = "offen" if counts["Pending"] or counts["Stale"] else "wartet auf Ausführung" if counts["Approved"] else "abgeschlossen"
+	status = "abgeschlossen"
+	if not doc.get("superseded_by"):
+		if counts["Pending"] or counts["Stale"]:
+			status = "offen"
+		elif counts["Approved"]:
+			status = "wartet auf Ausführung"
 	# A now-unreadable optional reference must not hide otherwise readable proposals.
 	messages = list(frappe.local.message_log)
 	try:
@@ -681,7 +691,7 @@ def _package_info(package, rows):
 	ids = {d.name for d, _ in rows}
 	return {"package": package, "title": doc.title, "agent": {"name": doc.agent, "label": _user_label(doc.agent)},
 		"reason": doc.reason, "reference": reference, "lane_label": doc.lane_label, "status": status,
-		"counts": counts, "total": len(rows),
+		"counts": counts, "total": len(rows), "superseded": bool(doc.get("superseded_by")),
 		"kind": "booking" if any(registry.ACTIONS[d.action].surface == "bankimport" for d, _ in rows) else None,
 		"has_edges": any(dep["id"] in ids for _, b in rows for dep in b["dependencies"]),
 		"lanes": len({b["lane"]["key"] for _, b in rows if b.get("lane")}),
@@ -710,19 +720,19 @@ def package_graph(package):
 	rows = _visible(package)
 	if not rows: _deny()
 	by_id = {d.name: (d, b) for d, b in rows}
-	nodes, edges, done = [], [], set()
+	nodes, edges, columns = [], [], {}
 	def visit(pid):
-		if pid in done: return
+		if pid in columns: return
 		doc, body = by_id[pid]
 		parents = [dep["id"] for dep in body["dependencies"] if dep["id"] in by_id]
 		for parent in parents: visit(parent)
 		info = _detail(doc, body, neighbors=False)
+		columns[pid] = max((columns[p] + 1 for p in parents), default=0)
 		nodes.append({key: info[key] for key in ("id", "revision", "hash", "status", "title", "summary", "lane", "target", "approvable", "revision_requested")} |
-			{"column": max((next(n["column"] for n in nodes if n["id"] == p) + 1 for p in parents), default=0),
+			{"column": columns[pid],
 			 "executable": info["status"] == "Approved" and all(by_id[p][0].status == "Succeeded" for p in parents)})
 		for parent in parents:
 			edges.append({"from": parent, "to": pid, "satisfied": by_id[parent][0].status == "Succeeded"})
-		done.add(pid)
 	for pid in by_id: visit(pid)
 	return {"package": _package_info(package, rows), "nodes": nodes, "edges": edges}
 

@@ -124,7 +124,7 @@ frappe.provide("hausverwaltung.hv_proposals");
 						.on("click keydown", e => e.stopPropagation());
 				}
 				el("td", row, person(p.agent)); el("td", row, `${p.total} Vorschläge`); this.bar(el("td", row), p);
-				const action = el("td", row), pending = p.counts.Pending + p.counts.Stale;
+				const action = el("td", row), pending = p.superseded ? 0 : p.counts.Pending + p.counts.Stale;
 				if (pending || p.counts.Approved) button(action, pending ? `${pending} prüfen →` : `${p.counts.Approved} ausführen`, e => { e.stopPropagation(); open(); }, true);
 				else el("span", action, "Abgeschlossen");
 				el("td", row, frappe.datetime.prettyDate(p.created)).attr("title", time(p.created));
@@ -282,8 +282,8 @@ frappe.provide("hausverwaltung.hv_proposals");
 			}
 			const actions = el("div",box,"","hv-prop-controls");
 			if (p.status === "Pending" && this.reviewer) { button(actions,`Revision ${p.revision} freigeben`,()=>this.review(p,true),true); button(actions,"Ablehnen …",()=>this.reasonDialog(p,false)).addClass("hv-btn-danger"); el("p",box,"Ablehnen macht alle Nachfolger veraltet."); }
-			else if (p.status === "Stale" && this.reviewer) button(actions,"Neue Revision anfordern",()=>this.reasonDialog(p,true),true);
-			else if (p.status === "Pending" || p.status === "Stale") el("p",box,"Nur Prüfer können freigeben.");
+			else if (p.status === "Stale" && this.reviewer && !this.graph.package.superseded) button(actions,"Neue Revision anfordern",()=>this.reasonDialog(p,true),true);
+			else if (!this.reviewer && ["Pending", "Stale"].includes(p.status)) el("p",box,"Nur Prüfer können freigeben.");
 			if (p.status === "Approved") { button(actions,"Ausführen",()=>this.batchExecute([bind(p)]),true).prop("disabled",!node.executable); el("p",box,"Speichert über die normale Frappe-Validierung."); }
 			el("h4",box,"Verlauf"); const history = el("ol",box).attr("aria-label","Verlauf");
 			const titles = { Created:"Vorschlag eingereicht",Revised:"Neue Revision",Approved:"Freigegeben",Rejected:"Abgelehnt",Stale:"Veraltet",Succeeded:"Ausgeführt",RevisionRequested:"Nachbesserung angefordert",ResultReused:"Ergebnis erneut abgerufen",ExecutionFailed:"Buchung fehlgeschlagen" };

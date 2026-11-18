@@ -38,4 +38,5 @@ def public(action):
 	return spec is not None and spec.surface != "receipt"
 
 
+BANK_ACTION_NAMES = tuple(key for key, action in ACTIONS.items() if action.surface == "bankimport")
 PUBLIC_ACTIONS = tuple(action for action in ACTIONS if public(action))

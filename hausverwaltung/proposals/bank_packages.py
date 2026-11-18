@@ -10,7 +10,7 @@ from .frappe_guards import service_scope
 
 REQUEST = "HV Bank Proposal Request"
 BANK_PREFIX = "BANK-"
-BANK_ACTIONS = tuple(key for key, action in registry.ACTIONS.items() if action.surface == "bankimport")
+BANK_ACTIONS = registry.BANK_ACTION_NAMES
 OPEN = ("Pending", "Approved")
 CATEGORIES = {"wrong_party", "wrong_document", "wrong_account", "do_not_book", "other"}
 EFFECTS = {
@@ -78,6 +78,8 @@ def _pending_requests(package, row=None, lock=False):
 
 
 def record_request(package, row, note, doc=None, ref=None):
+	if frappe.db.get_value(core.PACKAGE, package, "superseded_by", for_update=True):
+		frappe.throw("Das Paket wurde durch einen neuen Lauf ersetzt.")
 	note = domain.text(note or "", "note", 0, 1000)
 	if doc and not note.strip():
 		note = "Neue Revision angefordert."
@@ -112,6 +114,7 @@ def _new_action(package, doc, item, dependencies):
 	payload = actions.operation(action, core._json(item["payload"], dict), doc)
 	row = actions.row_document(doc, payload["row"])
 	meta = _metadata(item["metadata"], row.name)
+	actions.authorize_sources(meta["sources"])
 	operation_preview = actions.preview(action, payload, dependencies, package, lock=True)
 	key = domain.digest([package, row.name, action])
 	proposal = core._create_proposal(action, row.name, package, key, domain.digest([payload, dependencies, meta]))
@@ -129,7 +132,9 @@ def _metadata(value, row):
 
 
 def _lane(package, doc, row, steps):
-	if not 1 <= len(steps) <= 2:
+	if not isinstance(steps, list) or not 1 <= len(steps) <= 2 or any(
+		not isinstance(item, dict) or set(item) != {"action", "payload", "metadata"}
+		or not isinstance(item["payload"], dict) for item in steps):
 		raise ValueError("Eine Zeile benötigt einen oder zwei Schritte.")
 	if len(steps) == 2 and (steps[0]["action"] != actions.PARTY_ACTION or steps[1]["action"] == actions.PARTY_ACTION):
 		raise ValueError("Die Parteizuordnung muss vor der Buchung stehen.")
@@ -154,10 +159,11 @@ def publish(import_name, package, lanes, reason=""):
 	doc = actions.import_document(import_name, "write", lock=True)
 	lanes = core._json(lanes, list)
 	rows = {row.name for row in doc.rows}
-	if (not rows or len(lanes) != len(rows) or {lane["row"] for lane in lanes} != rows):
+	if (not rows or len(lanes) != len(rows) or any(not isinstance(lane, dict) or not isinstance(lane.get("row"), str) for lane in lanes)
+		or {lane["row"] for lane in lanes} != rows):
 		raise ValueError("Ein neuer Lauf muss alle Importzeilen abdecken.")
 	request_hash = domain.digest([import_name, lanes, reason])
-	if frappe.db.exists(core.PACKAGE, package):
+	if frappe.db.get_value(core.PACKAGE, package, "name", for_update=True):
 		existing = frappe.get_doc(core.PACKAGE, package, for_update=True)
 		if existing.agent != agent or existing.get("bank_run_hash") != request_hash:
 			frappe.throw("Paketkennung wird bereits verwendet.")
@@ -177,6 +183,7 @@ def publish(import_name, package, lanes, reason=""):
 			raise ValueError("Eine Zeile braucht Vorschläge oder eine Enthaltung.")
 	pkg.save()
 	if previous:
+		frappe.db.set_value(core.PACKAGE, previous, "superseded_by", package)
 		for proposal in _rows(previous, lock=True):
 			if proposal.status in OPEN:
 				proposal.status, proposal.decision_by, proposal.decision_at = "Stale", None, None
@@ -215,6 +222,7 @@ def revise(doc, old, payload, dependencies, meta):
 	if doc.status == "Succeeded" or doc.target != payload["target"]:
 		frappe.throw("Ausgeführte Vorschläge und Importzeilen sind unveränderlich.")
 	meta = _metadata(meta, doc.target)
+	actions.authorize_sources(meta["sources"])
 	dependencies = core._json(dependencies, list) if dependencies is not None else old["dependencies"]
 	projection = actions.preview(doc.action, payload, dependencies, doc.package, doc.name, lock=True)
 	requests = [request for request in _pending_requests(doc.package, doc.target, lock=True)
@@ -370,6 +378,7 @@ def linked_voucher(row, doctype, name, source):
 			_bookkeeping_event(doc, "Rejected", {"surface": "bankimport", "auto": True, "source": source,
 				"category": "adjusted_booked", "reason": f"Angepasst gebucht: {name}",
 				"voucher": {"doctype": doctype, "name": name, "summary": name}})
+		_resolve_requests(_pending_requests(package, row.name, lock=True))
 
 
 def _step(doc, body, info):

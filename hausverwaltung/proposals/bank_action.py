@@ -213,6 +213,22 @@ def authorize(action, payload, permission="read", user=None, lock=False):
 	return doc, row
 
 
+def authorize_sources(sources, user=None):
+	for source in sources:
+		if source.get("doctype"):
+			_read(source["doctype"], source["name"], user=user)
+
+
+def authorize_preview(body, user=None):
+	preview = body["preview"]
+	authorize_sources(body.get("sources", []), user)
+	authorize_sources(preview["before"]["references"], user)
+	for posting in preview["postings"]:
+		_read("Account", posting["account"], user=user)
+		if posting.get("cost_center"):
+			_read("Cost Center", posting["cost_center"], user=user)
+
+
 def can_accept(user=None):
 	roles = set(frappe.get_roles(user))
 	return core.REVIEWER in roles and core.AGENT not in roles and all(
@@ -383,8 +399,8 @@ def execute_approved(doc, body):
 			if not all(frappe.has_permission(doctype, right, doc=voucher, user=user)
 				for right in ("create", "submit") for user in {frappe.session.user, doc.decision_by}):
 				core._deny()
-		core._succeed(doc, {"doctype": doctype, "name": name, "id": name, "state": state,
-			"by": frappe.session.user, "at": str(now_datetime())})
+		result = {"doctype": doctype, "name": name, "id": name, "by": frappe.session.user, "at": str(now_datetime())}
+		core._succeed(doc, result | {"state": state}, audit_result=result)
 	except (frappe.QueryDeadlockError, core.ConcurrentRevisionRetry):
 		raise
 	except (frappe.ValidationError, frappe.PermissionError, frappe.DoesNotExistError, ValueError):

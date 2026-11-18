@@ -25,6 +25,8 @@ def run(base_url, auth_file, fixture_file, dependencies, chromium):
 		page.goto(base_url + "/desk/hv-proposals")
 		page.get_by_role("combobox", name="Art", exact=True).select_option("booking")
 		page.locator(f'[data-package="{package}"]').click()
+		page.get_by_role("button", name="Liste", exact=True).click()
+		page.get_by_role("row").filter(has_text="Wiesenpark GmbH").click()
 		expect(page.get_by_role("heading", name="Buchung (Vorschau)")).to_be_visible()
 		expect(page.get_by_text("hoch", exact=True)).to_be_visible()
 		detail_link = page.locator('.hv-prop-detail a[href*="bankimport_v2"]').first
@@ -40,7 +42,7 @@ def run(base_url, auth_file, fixture_file, dependencies, chromium):
 		bank.get_by_role("button", name="Vorschläge übernehmen …", exact=False).click()
 		dialog = bank.get_by_role("dialog", name="Vorschläge übernehmen", exact=False)
 		expect(dialog).to_be_visible()
-		dialog.get_by_role("button", name="Abbrechen", exact=False).click()
+		dialog.press("Escape")
 		page.goto(base_url + "/desk/bankimport_v2?" + urlencode(
 			{"import": data["import_name"], "row": data["lanes"][7]["row"]}))
 		bank.get_by_role("button", name="Übernehmen & buchen", exact=True).click()

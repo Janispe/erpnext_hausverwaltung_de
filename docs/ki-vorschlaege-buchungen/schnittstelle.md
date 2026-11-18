@@ -183,6 +183,21 @@ Schritt aus. Die Frische-Prüfung berücksichtigt die erwartete Änderung durch 
    Revision. Nach einer Enthaltung wird ein neuer Vorschlag in derselben Lane angelegt.
    Andere Zeilen und ihre Vorschläge bleiben dabei im aktuellen Paket sichtbar.
 
+### Einreichung und Antworten
+
+Die Agenten-Schnittstelle liegt in `hausverwaltung.proposals.bank_packages`. Sie verlangt die Agentenrolle
+und Schreibrecht auf den Import. `publish(import_name, package, lanes, reason?)` veröffentlicht einen
+vollständigen Lauf atomar. Die Paketkennung beginnt mit `BANK-`. Zu jeder Importzeile wird entweder
+`{row, note}` (Enthaltung) oder `{row, steps: [{action, payload, metadata}]}` eingereicht.
+Bei zwei Schritten steht die Parteizuordnung zuerst. Der Server erzeugt die Revisionsbindung zwischen
+den Schritten. Jeder Payload enthält `import_name`, `row`, `parameters` und den Fingerabdruck
+`{date, amount, direction, iban, purpose_hash}`. `purpose_hash` ist der SHA-256-Wert des vorhandenen
+Verwendungszwecks in der kanonischen JSON-Darstellung des Kerns.
+
+`open_requests(import_name)` liefert aktive Anforderungen des Agenten für das aktuelle Paket.
+Der Agent beantwortet eine ungebundene Anforderung mit `answer_abstention(import_name, package, row, steps)`.
+Eine gebundene Anforderung beantwortet er mit `frappe_service.revise(binding, payload, dependencies?, metadata)`.
+
 ## 5. Backend-Skizze: neue Metadaten und Vorschau-Felder
 
 - **`confidence`** als neues Feld der Revisions-Metadaten (`domain.metadata`):

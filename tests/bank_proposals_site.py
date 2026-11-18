@@ -82,6 +82,9 @@ def run(site, auth_file, fixture_file):
 
 	chain = bindings(row(0))
 	agent(PAGE + "ki_accept", request(0, bindings=chain), status=403)
+	wrong_hash = [chain[0] | {"hash": "0" * 64}, chain[1]]
+	reviewer(PAGE + "ki_accept", request(0, bindings=wrong_hash), status=417)
+	assert row(0)["ki"]["status"] == "Pending"
 	reviewer(CORE + "review", {"binding": chain[1], "approve": True})
 	failed_step = request(0, bindings=chain)
 	batch = {"import_name": import_name, "items": [{"row": lanes[0]["row"], "bindings": chain},

@@ -13,7 +13,8 @@
   "reference_name",
   "lane_label",
   "bank_run_hash",
-  "abstentions"
+  "abstentions",
+  "superseded_by"
  ],
  "fields": [
   {
@@ -76,6 +77,13 @@
    "fieldtype": "Table",
    "label": "Abstentions",
    "options": "HV Proposal Abstention"
+  },
+  {
+   "fieldname": "superseded_by",
+   "fieldtype": "Link",
+   "label": "Superseded By",
+   "options": "HV Proposal Package",
+   "read_only": 1
   }
  ],
  "permissions": [
