@@ -249,6 +249,10 @@ class TestDocActionsSite(unittest.TestCase):
 			user.insert(ignore_permissions=True)
 
 		self.supplier_group = frappe.db.get_value("Supplier Group", {"is_group": 0}, "name")
+		if not self.supplier_group:
+			self.supplier_group = frappe.get_doc(
+				{"doctype": "Supplier Group", "supplier_group_name": f"Testgruppe {point}", "is_group": 0}
+			).insert(ignore_permissions=True).name
 		self.enterContext(patch.dict(frappe.conf, {"hv_proposals_enabled": True}))
 
 	def _human_session(self, user):

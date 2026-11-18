@@ -240,6 +240,13 @@ def _compact_proposal(result):
 	}
 	if compact.get("package") and compact.get("id"):
 		compact["desk_path"] = f"/app/hv-proposals/{compact['package']}?vorschlag={compact['id']}"
+	if "target" not in compact and isinstance(result.get("preview"), dict) and result["preview"].get("doctype"):
+		doctype = result["preview"]["doctype"]
+		target = result["preview"].get("target")
+		compact["target"] = {
+			"doctype": doctype,
+			"name": None if isinstance(target, str) and target.startswith("NEW:") else target,
+		}
 	return compact
 
 
