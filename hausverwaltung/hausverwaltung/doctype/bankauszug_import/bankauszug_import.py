@@ -13,6 +13,7 @@ from hausverwaltung.hausverwaltung.utils.document_naming import make_document_na
 from hausverwaltung.hausverwaltung.utils.booking_locks import lock_accounting_scope
 from hausverwaltung.hausverwaltung.utils.bankimport_rules import (
     apply_booking_rules_for_row,
+    booking_rule_active,
     get_party_by_unique_iban,
     match_party_for_row,
     normalize_iban,
@@ -761,14 +762,13 @@ def _get_row_bank_transaction_name(row: Document) -> Optional[str]:
     return getattr(row, "bank_transaction", None) or getattr(row, "reference", None)
 
 
-def _set_row_payment_document(
-    row: Document, payment_document_type: str, payment_document: str, *, source: str = "manual"
-) -> None:
+def _set_row_payment_document(row: Document, payment_document_type: str, payment_document: str) -> None:
     row.db_set("payment_document_type", payment_document_type)
     row.db_set("payment_document", payment_document)
     if frappe.conf.get("hv_proposals_synthetic_enabled") is True:
         from hausverwaltung.proposals.bank_packages import linked_voucher
 
+        source = "rule" if booking_rule_active.get() else "manual"
         linked_voucher(row, payment_document_type, payment_document, source)
 
 

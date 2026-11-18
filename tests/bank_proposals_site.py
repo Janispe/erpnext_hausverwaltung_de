@@ -19,7 +19,6 @@ def run(site, auth_file, fixture_file):
 	from werkzeug.test import Client
 	from werkzeug.wrappers import Response
 	from hausverwaltung.proposals import bank_action
-	from hausverwaltung.hausverwaltung.utils import bankimport_rules
 
 	auth = json.loads(Path(auth_file).read_text())
 	assert auth["purpose"] == "hv-proposals-disposable-testauth"
@@ -105,13 +104,7 @@ def run(site, auth_file, fixture_file):
 	assert [event["kind"] for event in audit].count("ExecutionFailed") == 1
 
 	rule_row = row(2)
-	rule = {"name": "Synthetische Buchungsregel", "rule_code": bankimport_rules.BUILDER_RULE_CODE, "parameters": {
-		"builder": {"conditions": [{"field": "verwendungszweck", "operator": "contains", "value": "Testumsatz"}]},
-		"action": {"type": "booking", **fixture["journal"]}}}
-	with (patch.object(bankimport_rules, "_load_rules", return_value=[rule]),
-		patch.object(bankimport_rules, "_rule_scope_allows", return_value=True),
-		patch.object(bankimport_rules, "builder_matches_row", return_value=True)):
-		ruled = reviewer(BOOKING + "retry_auto_match", {"docname": import_name, "row_name": rule_row["id"]})
+	ruled = reviewer(BOOKING + "retry_auto_match", {"docname": import_name, "row_name": rule_row["id"]})
 	assert len(ruled["matched"]) == 1
 	assert row(2)["ki"]["decision"]["category"] == "adjusted_booked"
 	audit = reviewer(CORE + "audit", {"proposal_id": bindings(rule_row)[0]["id"]})
@@ -154,9 +147,36 @@ def run(site, auth_file, fixture_file):
 	for proposal in (unchanged[0]["id"], updated["id"]):
 		view = reviewer(CORE + "view", {"proposal_id": proposal})
 		assert view["status"] == "Stale" and view["stale_cause"]["cause"] == "superseded"
+	matrix = fixture["matrix"]
+	agent(BANK + "publish", matrix)
+	matrix_import = matrix["import_name"]
+	for lane in matrix["lanes"]:
+		step = lane["steps"][0]
+		action = step["action"]
+		matrix_row = lane["row"]
+		data = {"import_name": matrix_import, "row": matrix_row}
+		current = reviewer(PAGE + "get_overview", {"import_name": matrix_import})
+		ref = bindings(next(row for row in current["rows"] if row["id"] == matrix_row))[0]
+		agent(CORE + "review", {"binding": ref, "approve": True}, status=403)
+		reviewer(PAGE + "ki_accept", data | {"bindings": [ref | {"hash": "0" * 64}]}, status=417)
+
+		def changed_matrix_fingerprint(row):
+			value = original_fingerprint(row)
+			return value | {"purpose_hash": "changed"} if row.name == matrix_row else value
+
+		with patch.object(bank_action, "fingerprint", changed_matrix_fingerprint):
+			assert reviewer(PAGE + "ki_accept", data | {"bindings": [ref]})["status"] == "Stale", action
+		revised = agent(CORE + "revise", {"binding": ref, "payload": step["payload"], "metadata": step["metadata"]})
+		ref = {key: revised[key] for key in ("id", "revision", "hash")}
+		result = reviewer(PAGE + "ki_accept", data | {"bindings": [ref]})
+		assert result["ok"], action
+		voucher = result["results"][0]["result"]
+		assert voucher["doctype"] == ("Journal Entry" if "kredit" in action else "Payment Entry"), action
+		assert voucher["by"] == "bank-reviewer@hv4.invalid", action
+
 	print(json.dumps({"read_queries": len(observed), "party_then_invoice": "passed", "retry": "passed",
 		"manual_booking": "passed", "rule_booking": "passed", "abstention_answer": "passed",
-		"bound_answer": "passed", "superseded": "passed"}))
+		"bound_answer": "passed", "superseded": "passed", "additional_booking_actions": len(matrix["lanes"])}))
 
 
 if __name__ == "__main__":

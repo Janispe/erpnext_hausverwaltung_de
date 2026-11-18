@@ -13,6 +13,11 @@ BANK_PREFIX = "BANK-"
 BANK_ACTIONS = registry.BANK_ACTION_NAMES
 OPEN = ("Pending", "Approved")
 CATEGORIES = {"wrong_party", "wrong_document", "wrong_account", "do_not_book", "other"}
+STALE_DETAILS = {
+	"dependency_rejected": "Eine zugehörige Parteizuordnung wurde abgelehnt.",
+	"dependency_revised": "Eine zugehörige Parteizuordnung wurde überarbeitet.",
+	"dependency_stale": "Eine zugehörige Parteizuordnung ist veraltet.",
+}
 EFFECTS = {
 	"party": "Die Partei wird zugeordnet und die Banktransaktion angelegt.",
 	"invoice": "Die Zahlung wird gebucht und den ausgewählten Rechnungen zugeordnet.",
@@ -440,12 +445,13 @@ def overview(import_doc, rows):
 				result = {key: result[key] for key in ("doctype", "name", "at", "by")}
 				result["by"] = core._user_label(result["by"])
 			kind = steps[-1]["kind"]
+			cause = next_info.get("stale_cause") or {}
 			row["ki"] = {"state": "proposal", "status": status, "kind": kind,
 				"kindLabel": registry.ACTIONS[ordered[-1][0].action].label, "summary": final["summary"],
 				"confidence": final["confidence"], "steps": steps, "postings": final["postings"],
 				"effect": EFFECTS[kind], "rationale": final["rationale"], "sources": final["sources"],
 				"decision": decision if status in {"Approved", "Rejected"} else None,
-				"staleText": (next_info.get("stale_cause") or {}).get("detail"), "result": result}
+				"staleText": STALE_DETAILS.get(cause.get("cause"), cause.get("detail")), "result": result}
 		elif key in abstentions:
 			counts["none"] += 1
 			row["ki"] = {"state": "none", "note": abstentions[key]}

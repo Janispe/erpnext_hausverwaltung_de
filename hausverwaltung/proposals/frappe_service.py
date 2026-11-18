@@ -217,6 +217,8 @@ def readable_record(doc, user):
 		else:
 			proposal = doc if doc.doctype == PROPOSAL else frappe.get_doc(PROPOSAL, doc.proposal)
 			body = _body(proposal, lock=False)
+		if body["action"] in registry.BANK_ACTION_NAMES:
+			return False  # Only the scoped views expose bank revisions and results.
 		_target(body, user=user, lock=False)
 		_read_graph(body, user)
 		return True

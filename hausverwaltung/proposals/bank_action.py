@@ -26,7 +26,8 @@ def import_document(name, permission="read", user=None, lock=False):
 	for right in {"read", permission}:
 		if not frappe.has_permission(IMPORT, right, doc=doc, user=user):
 			core._deny()
-		if "rows" not in doc.meta.get_permitted_fieldnames(user=user, permission_type=right):
+		level = doc.meta.get_field("rows").permlevel or 0
+		if level and level not in doc.meta.get_permlevel_access(permission_type=right, user=user):
 			core._deny()
 	return doc
 
@@ -240,7 +241,10 @@ def require_reviewer(body):
 	core._actor(human=True)
 	if not can_accept():
 		core._deny()
-	authorize(body["action"], body["payload"], "write")
+	_, row = authorize(body["action"], body["payload"], "write")
+	if not booking._get_row_bank_transaction_name(row):
+		if not all(frappe.has_permission("Bank Transaction", permission) for permission in ("create", "submit")):
+			core._deny()
 
 
 def _postings(bank, parts, amount, incoming, user=None):
@@ -263,7 +267,7 @@ def _postings(bank, parts, amount, incoming, user=None):
 
 
 def preview(action, payload, dependencies, package, own_id=None, user=None, lock=False,
-		dependency_loader=None):
+		expected_row=None):
 	spec = registry.ACTIONS[action]
 	doc, row = authorize(action, payload, user=user, lock=lock)
 	params = payload["parameters"]
@@ -275,7 +279,7 @@ def preview(action, payload, dependencies, package, own_id=None, user=None, lock
 		if spec.kind == "party" or len(dependencies) != 1:
 			raise ValueError("Nur eine Parteizuordnung kann einer Buchung vorausgehen.")
 		ref = domain.binding(dependencies[0])
-		parent, previous = (dependency_loader or core._exact)(ref)
+		parent, previous = core._exact(ref)
 		if (parent.name == own_id or parent.package != package or parent.action != PARTY_ACTION
 			or parent.target != row.name or previous["payload"]["import_name"] != doc.name
 			or parent.status not in {"Pending", "Approved", "Succeeded"}):
@@ -288,9 +292,11 @@ def preview(action, payload, dependencies, package, own_id=None, user=None, lock
 			baseline = previous["preview"]["before"]["row"]
 		party_type, party = parent_params["party_type"], parent_params["party"]
 		modes.append(ref | {"mode": "real" if parent.status == "Succeeded" else "projected"})
+	if expected_row is not None and baseline != expected_row:
+		raise ValueError("Die Importzeile hat sich geändert.")
 	if payload["fingerprint"] != read_state["fingerprint"] or read_state["voucher"] or read_state["customer_payments"] or read_state["transaction_vouchers"]:
 		raise ValueError("Die Importzeile hat sich geändert oder wurde bereits gebucht.")
-	if party:
+	if party and spec.kind not in {"journal", "transfer", "kredit"}:
 		if party_type not in {"Customer", "Supplier"}:
 			raise ValueError("Nur Customer und Supplier werden unterstützt.")
 		_read(party_type, party, user=user)
@@ -334,7 +340,8 @@ def preview(action, payload, dependencies, package, own_id=None, user=None, lock
 
 def fresh(doc, body):
 	try:
-		current = preview(doc.action, body["payload"], body["dependencies"], doc.package, doc.name, lock=core._writing.get())
+		current = preview(doc.action, body["payload"], body["dependencies"], doc.package, doc.name,
+			lock=core._writing.get(), expected_row=body["preview"]["before"]["row"])
 	except frappe.DoesNotExistError as exc:
 		raise ValueError("Buchungsgrundlage fehlt.") from exc
 	for key in ("before", "after", "postings", "projection_version"):
