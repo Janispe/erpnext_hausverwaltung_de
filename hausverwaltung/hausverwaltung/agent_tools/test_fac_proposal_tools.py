@@ -258,10 +258,10 @@ class TestDocActionsSite(unittest.TestCase):
 	def _human_session(self, user):
 		sid = self.point + "_" + user
 		request = SimpleNamespace(cookies={"sid": sid}, headers={})
+		self.frappe.set_user(user)
 		self.enterContext(patch.object(self.frappe.local, "request", request, create=True))
 		self.enterContext(patch.object(self.frappe.local, "login_manager", SimpleNamespace(user=user), create=True))
-		self.enterContext(patch.dict(self.frappe.session, sid=sid))
-		self.frappe.set_user(user)
+		self.enterContext(patch.dict(self.frappe.local.session, {"sid": sid, "user": user}))
 
 	def test_create_approve_execute_and_update_stale_lifecycle(self):
 		from hausverwaltung.hausverwaltung.agent_tools.proposal_tools import (
