@@ -1334,6 +1334,30 @@ def create_purchase_invoice(**kwargs) -> dict:
     request = _purchase_invoice_request_context(kwargs)
     if request["idempotent"]:
         return request["idempotent"]
+    attached_file = kwargs.get("attached_file_url")
+    if request["proposal"]:
+        proposal = frappe.get_doc("Buchungs Vorschlag", request["proposal"])
+        if proposal.receipt_digest:
+            from hausverwaltung.hausverwaltung.services import receipt_pilot
+
+            proposal.check_permission("write")
+            context = receipt_pilot.review_context(proposal)
+            if context["fragen"]:
+                frappe.throw("Bitte zuerst die offenen Barauslagen-Angaben in der Buchungs-Inbox klären.")
+            if (
+                not request["settle_now"]
+                or kwargs.get("zahlungsart") != context["zahlungsart"]
+                or kwargs.get("zahlungskonto") != context["zahlungskonto"]
+                or any(row.get("kostenstelle") != context["kostenstelle"] for row in request["rows"])
+            ):
+                frappe.throw("Bitte Zahlungsart, Ausgleichskonto und Kostenstelle mit der Buchungs-Inbox abgleichen.")
+            if not kwargs.get("rechnungsdatum"):
+                frappe.throw("Bitte das Belegdatum erfassen.")
+            attached_file = proposal.file_url
+            if context["person"] and context["zahlungsquelle"] == "Privat vorgestreckt":
+                note = f"Privat vorgestreckt von {context['person']}"
+                kwargs["zahlungsbemerkung"] = "\n".join(filter(None, (note, kwargs.get("zahlungsbemerkung"))))
+
     booking = _purchase_invoice_booking_context(request["rows"])
 
     posting_date = kwargs.get("rechnungsdatum") or nowdate()
@@ -1365,7 +1389,7 @@ def create_purchase_invoice(**kwargs) -> dict:
 
     pi.insert()
 
-    _attach_source_file(pi, kwargs.get("attached_file_url"))
+    _attach_source_file(pi, attached_file)
 
     settlement_journal = None
     if request["submit"]:

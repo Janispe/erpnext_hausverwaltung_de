@@ -225,21 +225,33 @@ def _read_pdf_text(content: bytes) -> str:
 def _render_pdf_first_page_png(content: bytes) -> bytes:
 	"""Erste PDF-Seite als PNG rendern (für Vision-Fallback)."""
 	try:
-		import pypdfium2 as pdfium
-	except Exception as exc:
+		return _render_pdf_pages_png(content, page_limit=1, require_all=False)[0]
+	except ImportError as exc:
 		raise mistral_client.MistralPermanentError(
 			"pypdfium2 ist nicht installiert. Vision-Fallback nicht möglich."
 		) from exc
-	pdf = pdfium.PdfDocument(content)
-	if len(pdf) == 0:
-		raise mistral_client.MistralPermanentError("PDF enthält keine Seiten.")
-	page = pdf[0]
-	# 200 DPI ist guter Kompromiss zwischen Lesbarkeit und Größe.
-	bitmap = page.render(scale=200 / 72)
-	pil = bitmap.to_pil()
-	buf = io.BytesIO()
-	pil.save(buf, format="PNG")
-	return buf.getvalue()
+
+
+def _render_pdf_pages_png(content: bytes, *, page_limit: int, require_all: bool = True) -> list[bytes]:
+	from contextlib import closing
+
+	import pypdfium2 as pdfium
+
+	with closing(pdfium.PdfDocument(content)) as pdf:
+		if not len(pdf):
+			raise mistral_client.MistralPermanentError("PDF enthält keine Seiten.")
+		if require_all and len(pdf) > page_limit:
+			raise ValueError(f"Der Bon-Scan darf höchstens {page_limit} Seiten enthalten.")
+		images = []
+		for index in range(min(len(pdf), page_limit)):
+			with closing(pdf[index]) as page:
+				# 200 DPI für normale Scans, mit Obergrenze für sehr große Seiten.
+				scale = min(200 / 72, 3000 / max(page.get_size()))
+				with closing(page.render(scale=scale)) as bitmap:
+					buf = io.BytesIO()
+					bitmap.to_pil().save(buf, format="PNG")
+					images.append(buf.getvalue())
+	return images
 
 
 SYSTEM_PROMPT_BASE = (

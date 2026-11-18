@@ -424,7 +424,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 	// Date-Defaults aus opts ableiten — wenn aus dem Wizard/Inbox-Flow vorgefüllt,
 	// werden sie als default ins field-Schema gepackt (kein nachträgliches
 	// set_value nötig → kein Datepicker-onChange-Loop).
-	const _default_rechnungsdatum = opts.rechnungsdatum || frappe.datetime.get_today();
+	const _default_rechnungsdatum = opts.rechnungsdatum || (opts._receipt ? "" : frappe.datetime.get_today());
 	const _default_wertstellungsdatum = opts.wertstellungsdatum || "";
 	const _default_zahlungsart = opts.zahlungsart || "Überweisung / Bankimport";
 	const _default_zahlung_sofort =
@@ -490,6 +490,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		{
 			fieldtype: "Select",
 			fieldname: "zahlungsart",
+			read_only: opts._receipt ? 1 : 0,
 			label: __("Zahlungsart"),
 			options: [
 				"Überweisung / Bankimport",
@@ -517,6 +518,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		{
 			fieldtype: "Check",
 			fieldname: "zahlung_sofort",
+			read_only: opts._receipt ? 1 : 0,
 			label: __("Direkt ausgleichen"),
 			default: _default_zahlung_sofort ? 1 : 0,
 			depends_on: "eval:['Barzahlung','Vorschuss/Auslage','Sonstige Verrechnung'].includes(doc.zahlungsart)",
@@ -528,10 +530,11 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			},
 		},
 		{
-			fieldtype: "Link",
+			fieldtype: opts._receipt ? "Data" : "Link",
 			fieldname: "zahlungskonto",
+			read_only: opts._receipt ? 1 : 0,
 			label: __("Zahlungs-/Verrechnungskonto"),
-			options: "Account",
+			options: opts._receipt ? "" : "Account",
 			default: opts.zahlungskonto || "",
 			depends_on: "eval:doc.zahlung_sofort",
 			description: __(
@@ -560,6 +563,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		{
 			fieldtype: "Select",
 			fieldname: "eingabemodus",
+			read_only: opts._receipt ? 1 : 0,
 			label: __("Eingabemodus"),
 			options: ["Kostenart", "Konto"].join("\n"),
 			default: "Kostenart",
@@ -568,7 +572,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 				"Kostenart: Picker zeigt die Stammdaten der gewählten Position-Typ. Konto: direkt das Konto wählen — Kostenart wird automatisch zugeordnet. Pro Zeile wird zusätzlich ausgewählt, ob umlegbar oder nicht."
 			),
 			onchange() {
-				apply_eingabemodus(dialog);
+				apply_eingabemodus(dialog, { clear_existing: !opts._receipt });
 			},
 		},
 		{
@@ -655,12 +659,20 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 					fieldtype: "Link",
 					fieldname: "kostenstelle",
 					label: __("Kostenstelle"),
+					read_only: opts._receipt ? 1 : 0,
+					default: opts._receipt_kostenstelle || "",
 					options: "Cost Center",
 					in_list_view: 1,
 					columns: 2,
 					get_query: () => ({
 						query: `${HV_COCKPIT_API}.toplevel_kostenstelle_query`,
 					}),
+				},
+				{
+					fieldtype: "Small Text",
+					fieldname: "beschreibung",
+					label: __("Beschreibung"),
+					hidden: opts._receipt ? 0 : 1,
 				},
 				{
 					fieldtype: "Link",
@@ -690,6 +702,17 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		fields,
 		primary_action_label: __("Buchen"),
 		primary_action(values) {
+			if (opts._receipt) {
+				values.zahlungsart = opts.zahlungsart;
+				values.zahlung_sofort = 1;
+				values.zahlungskonto = opts.zahlungskonto;
+				for (const row of values.positionen || []) {
+					row.kostenstelle = opts._receipt_kostenstelle;
+					row.umlagefaehig = row.typ === "nicht umlegbar"
+						? "Kostenart nicht umlagefaehig"
+						: "Betriebskostenart";
+				}
+			}
 			submit_eingangsrechnung(dialog, values);
 		},
 		secondary_action_label: __("Entwurf verwerfen"),
@@ -741,7 +764,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 		apply_extraction_hints(dialog, opts);
 	}
 
-	apply_eingabemodus(dialog);
+	apply_eingabemodus(dialog, { clear_existing: !opts._receipt });
 
 	// Ein Inbox-Vorschlag wird serverseitig exklusiv gesperrt und atomar mit
 	// einer gebuchten PI verknüpft. Ein Draft hätte keinen eindeutigen
@@ -818,12 +841,8 @@ function apply_extraction_hints(dialog, opts) {
 		const lf = dialog.fields_dict.lieferant;
 		if (lf && lf.$wrapper) {
 			const $btn = $(
-				`<button type="button" class="btn btn-xs btn-secondary hv-quick-create-supplier" style="margin-top: 4px;">
-					+ ${__("Lieferant '{0}' anlegen", [
-						frappe.utils.escape_html(opts._lieferant_neu.supplier_name),
-					])}
-				</button>`
-			);
+				'<button type="button" class="btn btn-xs btn-secondary hv-quick-create-supplier" style="margin-top: 4px;"></button>'
+			).text("+ " + __("Lieferant '{0}' anlegen", [opts._lieferant_neu.supplier_name]));
 			lf.$wrapper.find(".hv-quick-create-supplier").remove();
 			lf.$wrapper.append($btn);
 			$btn.on("click", () => open_supplier_quick_create(dialog, opts._lieferant_neu));

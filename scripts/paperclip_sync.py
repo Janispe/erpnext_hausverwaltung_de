@@ -134,10 +134,11 @@ class NoRedirects(urllib.request.HTTPRedirectHandler):
 
 
 class JsonClient:
-	def __init__(self, url: str, authorization: str, service: str):
+	def __init__(self, url: str, authorization: str, service: str, *, timeout: int = 30):
 		self.url = url
 		self.authorization = authorization
 		self.service = service
+		self.timeout = timeout
 		self.opener = urllib.request.build_opener(NoRedirects())
 
 	def request(self, method: str, path: str, *, query=None, data=None) -> tuple[Any, Any]:
@@ -155,7 +156,7 @@ class JsonClient:
 			method=method,
 		)
 		try:
-			with self.opener.open(request, timeout=30) as response:
+			with self.opener.open(request, timeout=self.timeout) as response:
 				return json.load(response), response.headers
 		except urllib.error.HTTPError as error:
 			raise SyncError(

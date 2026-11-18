@@ -16,7 +16,9 @@
   "section_break_extraction",
   "extracted_data",
   "section_break_error",
-  "error_message"
+  "error_message",
+  "receipt_digest",
+  "receipt_context"
  ],
  "fields": [
   {
@@ -36,7 +38,7 @@
   {
    "fieldname": "file_url",
    "fieldtype": "Attach",
-   "label": "PDF-Datei",
+   "label": "Originalbeleg",
    "reqd": 1
   },
   {
@@ -87,6 +89,23 @@
    "fieldname": "error_message",
    "fieldtype": "Small Text",
    "label": "Fehlermeldung",
+   "read_only": 1
+  },
+  {
+   "fieldname": "receipt_digest",
+   "fieldtype": "Data",
+   "label": "Bon-Prüfsumme",
+   "hidden": 1,
+   "no_copy": 1,
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "receipt_context",
+   "fieldtype": "Long Text",
+   "label": "Barauslagen-Kontext",
+   "hidden": 1,
+   "no_copy": 1,
    "read_only": 1
   }
  ],

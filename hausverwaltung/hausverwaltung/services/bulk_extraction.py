@@ -18,7 +18,7 @@ from functools import partial
 
 import frappe
 
-from hausverwaltung.hausverwaltung.services import invoice_extraction, mistral_client
+from hausverwaltung.hausverwaltung.services import invoice_extraction, mistral_client, receipt_pilot
 
 
 def _new_session_id() -> str:
@@ -63,6 +63,8 @@ def bulk_create_vorschlaege(file_urls) -> dict:
 		if not url:
 			continue
 		invoice_extraction.check_invoice_file_permission(url)
+		if frappe.db.exists("Buchungs Vorschlag", {"file_url": url, "receipt_digest": ["is", "set"]}):
+			frappe.throw("Dieser Originalbeleg gehört zum Barauslagen-Pilot.")
 		# Idempotenz: aktiver Vorschlag für diese URL?
 		existing = frappe.get_list(
 			"Buchungs Vorschlag",
@@ -339,7 +341,7 @@ def _summarize_extraction(extracted_json: str) -> dict | None:
 		"lieferant": fields.get("lieferant") or "",
 		"llm_lieferant": data.get("llm_lieferant") or "",
 		"datum": fields.get("rechnungsdatum") or "",
-		"betrag_gesamt": round(betrag_gesamt, 2),
+		"betrag_gesamt": data.get("belegsumme", round(betrag_gesamt, 2)),
 		"position_count": len(positionen),
 		"confidence_avg": conf_avg,
 		"warning_count": len(data.get("warnings") or []),
@@ -364,6 +366,7 @@ def get_vorschlag_full(name: str) -> dict:
 		"status": v.status,
 		"original_filename": v.original_filename,
 		"data": data,
+		"receipt": receipt_pilot.review_context(v) if getattr(v, "receipt_digest", None) else None,
 	}
 
 
@@ -469,6 +472,7 @@ def reprocess_vorschlag(name: str) -> dict:
 	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
 	_require_proposal_permission("write", v)
 	invoice_extraction.check_invoice_file_permission(v.file_url)
+	is_receipt = bool(getattr(v, "receipt_digest", None))
 	if v.status == "Booked":
 		frappe.throw(
 			"Bereits gebuchter Vorschlag kann nicht neu analysiert werden — "
@@ -477,9 +481,10 @@ def reprocess_vorschlag(name: str) -> dict:
 	v.status = "Pending"
 	v.extracted_data = ""
 	v.error_message = ""
-	v.extraction_job_id = uuid.uuid4().hex
+	v.extraction_job_id = None if is_receipt else uuid.uuid4().hex
 	v.save(ignore_permissions=True)
-	_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
+	if not is_receipt:
+		_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
 	frappe.db.commit()
 	return {"name": v.name, "status": v.status}
 
@@ -496,6 +501,7 @@ def reactivate_vorschlag(name: str) -> dict:
 	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
 	_require_proposal_permission("write", v)
 	invoice_extraction.check_invoice_file_permission(v.file_url)
+	is_receipt = bool(getattr(v, "receipt_digest", None))
 	if v.status == "Booked":
 		frappe.throw(
 			"Vorschlag ist bereits als Eingangsrechnung gebucht und kann nicht reaktiviert werden."
@@ -503,19 +509,20 @@ def reactivate_vorschlag(name: str) -> dict:
 	if v.status == "Skipped":
 		v.status = "Ready" if v.extracted_data else "Pending"
 		if v.status == "Pending":
-			v.extraction_job_id = uuid.uuid4().hex
+			v.extraction_job_id = None if is_receipt else uuid.uuid4().hex
 		v.save(ignore_permissions=True)
 		# Falls noch nie extrahiert (z.B. Skip vor Worker-Run), Worker neu queuen.
-		if v.status == "Pending":
+		if v.status == "Pending" and not is_receipt:
 			_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
 		frappe.db.commit()
 		return {"name": v.name, "status": v.status}
 	if v.status == "Error":
 		v.status = "Pending"
 		v.error_message = ""
-		v.extraction_job_id = uuid.uuid4().hex
+		v.extraction_job_id = None if is_receipt else uuid.uuid4().hex
 		v.save(ignore_permissions=True)
-		_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
+		if not is_receipt:
+			_dispatch_vorschlag_worker(v.name, v.extraction_job_id)
 		frappe.db.commit()
 		return {"name": v.name, "status": v.status}
 	return {"name": v.name, "status": v.status}
@@ -619,6 +626,8 @@ def list_vorschlaege(
 			"status",
 			"linked_purchase_invoice",
 			"extracted_data",
+			"receipt_digest",
+			"error_message",
 			"creation",
 		],
 		order_by=f"{sort_by} {sort_order}",
@@ -646,10 +655,14 @@ def list_vorschlaege(
 			"status": r["status"],
 			"linked_purchase_invoice": r["linked_purchase_invoice"],
 			"creation": str(r["creation"]),
+			"is_receipt": bool(r.receipt_digest),
+			"error_message": r.error_message,
 			"extracted_summary": summary,
 		})
 	return {
 		"rows": out_rows,
+		"receipt_upload": receipt_pilot.enabled() and frappe.has_permission("Buchungs Vorschlag", "create")
+		and frappe.has_permission("File", "create"),
 		"sessions": [s["session_id"] for s in all_sessions if s.get("session_id")],
 		"count": len(out_rows),
 	}
