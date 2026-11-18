@@ -1511,6 +1511,9 @@ export function MatchPanel({ docname, row, onActionDone, notify, kiMeta }) {
 					</button>
 				) : <div className="ki-manual"><strong>Selbst zuordnen</strong></div>)}
 				{showManual && <>
+				{adjustment && phase !== 4 && <div className="match-section">
+					<p className="ki-note ki-adjustment">Vom KI-Vorschlag vorausgefüllt. Wird hier abweichend gebucht, schließt das den Vorschlag automatisch als ‚Abgelehnt‘ mit dem Grund ‚Angepasst gebucht: Beleg‘. Das geht als Rückmeldung an den Agenten.</p>
+				</div>}
 				{!hasVoucher && row.rowStatus !== "error" && phase !== 4 && (
 					<div className="match-section"><button className="btn" onClick={() => setSplitOpen(true)}><Icon name="plus" /> Mehrere Mieter</button></div>
 				)}

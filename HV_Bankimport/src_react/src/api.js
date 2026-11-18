@@ -504,10 +504,10 @@ function kiMockOverview() {
 	return structuredClone({ ...kiMock, phaseCounts });
 }
 
-function mockKiRow(importName, rowId) {
+function mockKiRow(importName, rowId, requireReviewer = true) {
 	const overview = kiMockOverview();
 	const row = kiMock.rows.find((item) => item.id === rowId);
-	if (importName !== KI_MOCK_IMPORT || !row || !overview.import.ki.canAccept) {
+	if (importName !== KI_MOCK_IMPORT || !row || (requireReviewer && !overview.import.ki.canAccept)) {
 		throw new Error("Der Vorschlag ist für diese Aktion nicht verfügbar.");
 	}
 	return row;
@@ -607,15 +607,17 @@ export async function kiReject(import_name, row, binding, category, reason) {
 }
 
 export async function kiRequestRevision(import_name, row, binding, note = "") {
-	if (embedded) return rpc("ki_request_revision", { import_name, row, binding, note });
-	const entry = mockKiRow(import_name, row);
-	if (entry.ki.status !== "Stale" || !sameBinding(entry.ki.steps[0], binding)) {
+	if (embedded) return rpc("ki_request_revision", { import_name, row, ...(binding && { binding }), note });
+	const entry = mockKiRow(import_name, row, binding != null);
+	const valid = binding == null ? entry.ki.state === "none"
+		: entry.ki.status === "Stale" && sameBinding(entry.ki.steps[0], binding);
+	if (!valid) {
 		throw new Error("Keine Revision für diese Bindung verfügbar.");
 	}
 	entry.ki = { state: "running" };
 	kiMock.import.ki.running = true;
-	kiMock.import.ki.progress = { done: kiMock.rows.length - 1, total: kiMock.rows.length };
-	return { ok: true };
+	kiMock.import.ki.progress = { done: kiMock.rows.filter((item) => item.ki.state !== "running").length, total: kiMock.rows.length };
+	return { ok: true, state: "running" };
 }
 
 export async function openProposals(packageName, proposal) {

@@ -1,5 +1,8 @@
 export const isOpenKi = (row) => ["Pending", "Approved"].includes(row?.ki?.status);
 
+export const isAdjustedBooking = (ki) =>
+	ki?.status === "Rejected" && ki.decision?.category === "adjusted_booked";
+
 export function kiBindings(ki) {
 	return ki.steps.filter((step) => step.status !== "Succeeded")
 		.map(({ proposal, revision, hash }) => ({ id: proposal, revision, hash }));

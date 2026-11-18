@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import * as api from "../api.js";
 import { App } from "../App.jsx";
 import { createKiMockOverview } from "../data.js";
-import { KiCell } from "./KiCell.jsx";
+import { KiCell, KiConfidence } from "./KiCell.jsx";
 import { KiSuggestion } from "./KiSuggestion.jsx";
 import { KiBulkDialog } from "./KiBulkDialog.jsx";
 
@@ -23,6 +24,7 @@ afterEach(async () => {
 	await act(async () => root.unmount());
 	container.remove();
 	delete HTMLDialogElement.prototype.showModal;
+	vi.restoreAllMocks();
 });
 
 it.each([
@@ -30,6 +32,7 @@ it.each([
 	[undefined, 1, "Erika Beispiel → SINV-2026-0052", "Partei und Rechnung · 2 Schritte", "mittel"],
 	["states", 0, "Freigegeben", "Freigegeben von M. Krüger"],
 	["states", 3, "Abgelehnt", "Abgelehnt von M. Krüger"],
+	["states", 9, "Angepasst gebucht", "Selbst gebucht: SINV-2026-0047"],
 	[undefined, 6, "! Veraltet", "Neue Revision anfordern"],
 	[undefined, 7, "Kein Vorschlag", "Ohne Auftraggeber"],
 	["running", 7, "Agent prüft", "Agent prüft diese Zeile"],
@@ -49,6 +52,38 @@ it.each([
 		expect(cell.querySelector(".ki-confidence").textContent).toContain(confidence);
 		expect(panel.querySelector(".ki-confidence").textContent).toContain(confidence);
 	}
+});
+
+it.each([[undefined, 0, false], [undefined, 1, true], [undefined, 5, true], ["states", 0, false]])(
+	"setzt Details für Variante %s, Zeile %i auf %s zurück",
+	async (variant, index, expanded) => {
+		const { import: meta, rows } = createKiMockOverview(variant);
+		const show = (row) => render(<KiSuggestion meta={meta.ki} row={row} />);
+		const toggle = () => container.querySelector(".ki-details-toggle");
+		await show(rows[index]);
+		expect(toggle().getAttribute("aria-expanded")).toBe(String(expanded));
+		expect(!!container.querySelector(".ki-postings")).toBe(expanded);
+		await act(async () => toggle().click());
+		expect(toggle().getAttribute("aria-expanded")).toBe(String(!expanded));
+		await show(rows[index === 0 ? 1 : 0]);
+		await show(rows[index]);
+		expect(toggle().getAttribute("aria-expanded")).toBe(String(expanded));
+	}
+);
+
+it("zeigt ausschließlich die Sicherheitsstufe, auch wenn ein Score geliefert wird", async () => {
+	await render(<KiConfidence value={{ level: "hoch", score: 0.97 }} />);
+	expect(container.textContent).toBe("hoch");
+});
+
+it("fordert bei Kein Vorschlag eine neue Prüfung ohne Bindung an", async () => {
+	const { import: meta, rows } = createKiMockOverview();
+	const request = vi.spyOn(api, "kiRequestRevision").mockResolvedValue({ ok: true, state: "running" });
+	const reload = vi.fn();
+	await render(<KiSuggestion docname={meta.name} meta={meta.ki} row={rows[7]} onActionDone={reload} />);
+	await click("Erneut anfordern");
+	expect(request.mock.calls).toEqual([[meta.name, rows[7].id]]);
+	expect(reload.mock.calls).toEqual([[{ advance: false, ki: true }]]);
 });
 
 it("benötigt eine Begründung für die Ablehnung und lässt Prüferaktionen ohne Rechte weg", async () => {

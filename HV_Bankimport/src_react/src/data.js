@@ -292,6 +292,17 @@ export function createKiMockOverview(variant) {
 			ki.steps[0].status = status;
 			ki.decision = { ...mockDecision };
 		}
+		const voucher = { doctype: "Payment Entry", name: "PE-2026-0063", summary: "SINV-2026-0047 · Miete Mai 2026 · 720,00 €" };
+		const adjusted = structuredClone(data.rows[0]);
+		Object.assign(adjusted, {
+			id: "r10", buchungstag: "2026-04-29", bankTransaction: "BT-2026-0108",
+			verwendungszweck: "Miete Mai", paymentEntry: voucher.name, phase: 4, rowStatus: "done",
+		});
+		adjusted.ki.status = "Rejected";
+		Object.assign(adjusted.ki.steps[0], { status: "Rejected", proposal: "HVP-0421" });
+		adjusted.ki.decision = { ...mockDecision, category: "adjusted_booked", reason: `Angepasst gebucht: ${voucher.name}`, voucher };
+		data.rows.push(adjusted);
+		data.import.title = data.import.title.replace("9 Buchungen", "10 Buchungen");
 	}
 	if (variant === "running") {
 		data.rows[7].ki = { state: "running" };

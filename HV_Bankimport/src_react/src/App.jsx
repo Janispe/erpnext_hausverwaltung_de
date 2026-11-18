@@ -10,7 +10,7 @@ import { MatchPanel } from "./components/MatchPanel.jsx";
 import { RulePanel } from "./components/RulePanel.jsx";
 import { KiBanner } from "./components/KiBanner.jsx";
 import { KiBulkDialog } from "./components/KiBulkDialog.jsx";
-import { isOpenKi } from "./ki.js";
+import { isOpenKi, kiBindings } from "./ki.js";
 import { DocLink } from "./components/DocLink.jsx";
 
 // ── Toast ───────────────────────────────────────────────────────────────────
@@ -383,6 +383,9 @@ export function App() {
 	const [rulesOpen, setRulesOpen] = useState(false);
 	const reloadRef = useRef(null);
 	const linkedRow = useRef(api.importName ? api.linkedRow : "");
+	const scrollToRow = useRef(null);
+	const panelRef = useRef(null);
+	const shownSteps = useRef(null);
 	const [bulkOpen, setBulkOpen] = useState(false);
 
 	const notify = useCallback((type, msg) => {
@@ -403,6 +406,7 @@ export function App() {
 	}, []);
 
 	const openImport = useCallback((name) => {
+		scrollToRow.current = null;
 		setOverview(null);
 		setSelectedId(null);
 		setPhase(0);
@@ -421,6 +425,7 @@ export function App() {
 					linkedRow.current = null;
 					if (target) {
 						if (rowPhase(target) === 4) setFilter("all");
+						scrollToRow.current = target.id;
 						setSelectedId(target.id);
 					}
 				}
@@ -487,6 +492,30 @@ export function App() {
 		() => visibleRows.find((r) => r.id === selectedId) || null,
 		[visibleRows, selectedId]
 	);
+
+	const scrollToPanel = useCallback(() => {
+		if (window.matchMedia("(max-width: 1100px)").matches) {
+			panelRef.current?.focus({ preventScroll: true });
+			panelRef.current?.scrollIntoView({ block: "start" });
+		}
+	}, []);
+
+	const currentRowId = selectedRow?.id;
+	const hasKi = !!meta.ki;
+	useEffect(() => {
+		if (currentRowId && currentRowId === scrollToRow.current) {
+			scrollToRow.current = null;
+			if (hasKi) scrollToPanel();
+		}
+	}, [currentRowId, hasKi, scrollToPanel]);
+
+	const selectRow = (id) => {
+		if (hasKi) {
+			if (id === currentRowId) scrollToPanel();
+			else scrollToRow.current = id;
+		}
+		setSelectedId(id);
+	};
 
 	const phaseTitles = {
 		1: "Parteien zuordnen",
@@ -611,12 +640,12 @@ export function App() {
 			const target = visibleRows[index + (key === "j" ? 1 : -1)];
 			if (target) {
 				event.preventDefault();
-				setSelectedId(target.id);
+				selectRow(target.id);
 				if (scope.matches(".tx-card")) {
 					const rows = scope.querySelectorAll("tbody tr");
 					rows[index + (key === "j" ? 1 : -1)]?.focus();
 				} else {
-					scope.focus();
+					scope.focus({ preventScroll: true });
 				}
 			}
 			return;
@@ -625,9 +654,39 @@ export function App() {
 			(scope.matches(".tx-card") && !event.target.closest("tr.selected")))) return;
 		if (!["Enter", "r", "Escape"].includes(key)) return;
 		const button = event.currentTarget.querySelector(`[data-ki-key="${key}"]:not(:disabled)`);
-		if (button && !event.repeat) {
+		if (button) {
 			event.preventDefault();
-			event.currentTarget.querySelector(".match-panel-wrap")?.focus();
+			if (event.repeat) return;
+			panelRef.current?.focus({ preventScroll: true });
+			if (key === "Enter") {
+				const action = button.getBoundingClientRect();
+				const steps = button.closest(".ki-booking-card").querySelector(".ki-steps");
+				const target = steps.getBoundingClientRect();
+				const body = button.closest(".match-body").getBoundingClientRect();
+				const top = Math.max(0, body.top);
+				const bottom = Math.min(window.innerHeight, body.bottom);
+				const tolerance = 1;
+				const visible = (rect) => rect.height > 0 && rect.top >= top - tolerance && rect.bottom <= bottom + tolerance;
+				const actionVisible = visible(action);
+
+				if (!visible(target) || !actionVisible) {
+					const availableHeight = Math.min(window.innerHeight, body.height);
+					const needsTwoViews = action.bottom - target.top > availableHeight + 2 * tolerance;
+					const revision = needsTwoViews ? JSON.stringify(kiBindings(selectedRow.ki)) : null;
+					// The steps element is replaced when the user changes rows.
+					const stepsWereShown = shownSteps.current?.steps === steps && shownSteps.current.revision === revision;
+					if (!needsTwoViews || !stepsWereShown) {
+						shownSteps.current = needsTwoViews ? { steps, revision } : null;
+						steps.scrollIntoView({ block: "start" });
+						return;
+					}
+					if (!actionVisible) {
+						button.scrollIntoView({ block: "end" });
+						return;
+					}
+				}
+				shownSteps.current = null;
+			}
 			button.click();
 		}
 	};
@@ -703,10 +762,12 @@ export function App() {
 				<TxTable
 					rows={visibleRows}
 					selectedId={selectedId}
-					onSelect={setSelectedId}
+					onSelect={selectRow} onFocusRow={setSelectedId}
 					filterLabel={tableLabel} showKi={!!meta.ki}
 				/>
-				<div className="match-panel-wrap" tabIndex={meta.ki ? -1 : undefined}>
+				<div className="match-panel-wrap" ref={panelRef} tabIndex={meta.ki ? -1 : undefined} onBlur={(event) => {
+					if (!event.currentTarget.contains(event.relatedTarget)) shownSteps.current = null;
+				}}>
 					<MatchPanel
 						key={meta.ki ? selectedId : undefined}
 						kiMeta={meta.ki}

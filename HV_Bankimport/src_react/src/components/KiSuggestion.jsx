@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useId, useState } from "react";
 import { fmtEUR, fmtDateTime, Spinner } from "../helpers.jsx";
 import * as api from "../api.js";
-import { kiBindings, kiError } from "../ki.js";
+import { isAdjustedBooking, kiBindings, kiError } from "../ki.js";
 import { DocLink } from "./DocLink.jsx";
 import { KiMark, KiConfidence } from "./KiCell.jsx";
 import { KiPackageLink } from "./KiBanner.jsx";
@@ -40,6 +40,8 @@ function Rejection({ busy, onReject, onCancel }) {
 }
 
 function Preview({ ki }) {
+	const [expanded, setExpanded] = useState(ki.confidence?.level !== "hoch");
+	const detailsId = useId();
 	return <>
 		<div className="reco-tag">{ki.kindLabel}</div>
 		<ol className="ki-steps">
@@ -51,6 +53,19 @@ function Preview({ ki }) {
 				<span className="amount">{step.amount != null && fmtEUR(step.amount)}</span>
 			</li>)}
 		</ol>
+		<div className="conf-row">Sicherheit <KiConfidence value={ki.confidence} /></div>
+		<div id={detailsId} hidden={!expanded}>
+			{expanded && <Details ki={ki} />}
+		</div>
+		<button type="button" className="btn subtle sm ki-details-toggle" aria-expanded={expanded} aria-controls={detailsId}
+			onClick={() => setExpanded(!expanded)}>
+			{expanded ? "Details ausblenden ▴" : "Details · Buchung, Begründung, Belege ▾"}
+		</button>
+	</>;
+}
+
+function Details({ ki }) {
+	return <>
 		{ki.postings?.length > 0 && <table className="ki-postings">
 			<caption>Buchung (Vorschau)</caption>
 			<thead><tr><th>Konto</th><th>Soll</th><th>Haben</th></tr></thead>
@@ -61,7 +76,6 @@ function Preview({ ki }) {
 			</tr>)}</tbody>
 		</table>}
 		<p className="ki-muted">{ki.effect}</p>
-		<div className="conf-row">Sicherheit <KiConfidence value={ki.confidence} showScore /></div>
 		<div className="reason">„{ki.rationale}“</div>
 		{ki.sources?.length > 0 && <div className="ki-sources">Belege: {ki.sources.map((source) =>
 			<DocLink key={`${source.doctype}:${source.name}`} doctype={source.doctype} docname={source.name}>{source.label}</DocLink>
@@ -114,7 +128,8 @@ export function KiSuggestion({ meta, docname, row, onActionDone, notify, onAdjus
 		await onActionDone({ advance: false, ki: true });
 	});
 	const requestRevision = () => act(async () => {
-		await api.kiRequestRevision(docname, row.id, kiBindings(ki)[0]);
+		if (ki.state === "none") await api.kiRequestRevision(docname, row.id);
+		else await api.kiRequestRevision(docname, row.id, kiBindings(ki)[0]);
 		await onActionDone({ advance: false, ki: true });
 	});
 
@@ -127,10 +142,17 @@ export function KiSuggestion({ meta, docname, row, onActionDone, notify, onAdjus
 			{ki.state === "none" && <div className="ki-note">
 				<KiMark /> <strong>Kein Vorschlag</strong><p><em>„{ki.note}“</em></p>
 				<div className="ki-muted">{meta.agent} · {fmtDateTime(meta.submittedAt)}</div>
+				<div className="ki-actions"><button className="btn" disabled={busy} onClick={requestRevision}>Erneut anfordern</button></div>
 			</div>}
 			{status === "Rejected" && <div className="ki-note">
 				<KiMark /> <span className="pill ghost">Abgelehnt</span>
-				<p>Abgelehnt von {decision?.by} · {fmtDateTime(decision?.at)}: {decision?.reason}</p>
+				{isAdjustedBooking(ki) ? <>
+					<p>Selbst gebucht: {decision.voucher?.summary}</p>
+					<p>Vorschlag war: <del>{ki.summary}</del></p>
+					<p className="ki-muted">Automatisch abgelehnt mit Grund „{decision.reason}“ · {decision.by} · {fmtDateTime(decision.at)} · {next && (
+						<KiPackageLink packageName={meta.package} proposal={next.proposal} notify={notify}>Vorschlag {next.proposal} →</KiPackageLink>
+					)}</p>
+				</> : <p>Abgelehnt von {decision?.by} · {fmtDateTime(decision?.at)}: {decision?.reason}</p>}
 			</div>}
 			{status === "Succeeded" && <div className="ki-note">
 				<KiMark /> <span className="pill done">Gebucht</span>
@@ -141,14 +163,14 @@ export function KiSuggestion({ meta, docname, row, onActionDone, notify, onAdjus
 				<p><del>{ki.summary}</del></p><p>{ki.staleText}</p>
 				{meta.canAccept && <button className="btn" disabled={busy} onClick={requestRevision}>Neue Revision anfordern</button>}
 			</div>}
-			{(status === "Pending" || approved) && <>
+			{(status === "Pending" || approved) && <div className="ki-booking-card">
 				<div className="sec-label ki-section-head"><KiMark /> Vorschlag <span className="badge">Rev. {next.revision}</span>
 					<span className={`pill ${approved ? "phase3" : "phase2"}`}>{approved ? "Freigegeben" : "Prüfung offen"}</span>
 				</div>
 				{rejecting && !approved && meta.canAccept ? <Rejection busy={busy} onReject={reject} onCancel={() => setRejecting(false)} /> : <>
 					<div className="invoice-card suggested">
 						{approved && <p className="ki-muted">Freigegeben von {decision?.by} am {fmtDateTime(decision?.at)}</p>}
-						<Preview ki={ki} />
+						<Preview key={row.id} ki={ki} />
 					</div>
 					<div className="ki-actions">
 						{meta.canAccept && <button className="btn primary" disabled={busy} data-ki-key={approved ? undefined : "Enter"} onClick={accept}>
@@ -161,7 +183,7 @@ export function KiSuggestion({ meta, docname, row, onActionDone, notify, onAdjus
 					{!meta.canAccept && <p className="ki-muted">Nur Prüfer können Vorschläge übernehmen.</p>}
 					<p className="ki-muted">Freigabe und Buchung werden einzeln für Revision {next.revision} protokolliert. {packageLink}</p>
 				</>}
-			</>}
+			</div>}
 		</section>
 	);
 }
