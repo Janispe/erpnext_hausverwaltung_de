@@ -9,12 +9,13 @@ function seedSales() {
 }
 
 test("Mieterrechnung API speichert Beträge, Artikel, Erlöskonto, Wertstellung und Bemerkung", async ({ desk }) => {
-	const { mietvertrag, kunde, account, item } = seedSales();
+	const { mietvertrag, kunde, account, explicitAccount, item } = seedSales();
+	expect(explicitAccount).not.toBe(account);
 	const legacyRemark = `Erfasst über Buchungs-Cockpit | Mietvertrag: ${mietvertrag} | Referenz: `;
 	const cases = [
-		{ rows: [{ beschreibung: "Renovierungspauschale", betrag: 250, erloeskonto: account }],
+		{ rows: [{ beschreibung: "Renovierungspauschale", betrag: 250 }],
 			remarks: "Renovierungspauschale", inputRemark: legacyRemark, total: 250, itemCode: "Guthaben/Nachzahlungen" },
-		{ rows: [{ beschreibung: "Erste Position", betrag: 12, artikel: item }, { beschreibung: "Zweite Position", betrag: 25 }],
+		{ rows: [{ beschreibung: "Erste Position", betrag: 12, artikel: item, erloeskonto: explicitAccount }, { beschreibung: "Zweite Position", betrag: 25 }],
 			remarks: "Manuell erfasst", inputRemark: "Manuell erfasst", total: 37, itemCode: item },
 		{ rows: [{ betrag: 7, erloeskonto: account }],
 			remarks: "", inputRemark: legacyRemark, total: 7, itemCode: "Guthaben/Nachzahlungen" },
@@ -32,7 +33,7 @@ test("Mieterrechnung API speichert Beträge, Artikel, Erlöskonto, Wertstellung 
 		expect(invoice.mietabrechnung_id || "").toBe("");
 		expect(invoice.items).toHaveLength(rows.length);
 		expect(invoice.items[0]).toMatchObject({ qty: 1, rate: rows[0].betrag, item_code: itemCode });
-		if (rows[0].erloeskonto) expect(invoice.items[0].income_account).toBe(account);
+		expect(invoice.items[0].income_account).toBe(rows[0].erloeskonto ?? account);
 		expect(invoice.grand_total).toBeCloseTo(total, 2);
 	}
 	expect(await call(desk, "frappe.client.get", { doctype: "Item", name: "Guthaben/Nachzahlungen" }))

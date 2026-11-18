@@ -181,6 +181,20 @@ test("Monatsreihenfolge bleibt bei Serverfehler erhalten", async ({ desk }) => {
 
 test("Überholte Antwort nach schnellem Zurückschalten ändert keine Monatsreihenfolge", async ({ desk }) => {
 	const reports = await mount(desk, postingRows);
+	await desk.evaluate(() => {
+		const adapter = window.MK_ADAPTER;
+		const load = adapter.load;
+		adapter.load = async (...args) => {
+			const result = await load.apply(adapter, args);
+			if (args[3].sortByWertstellung) {
+				// Let the awaiting UI consume the result and commit any React update.
+				requestAnimationFrame(() => requestAnimationFrame(() => {
+					document.documentElement.dataset.staleReportProcessed = "true";
+				}));
+			}
+			return result;
+		};
+	});
 	reports.deferReports();
 	await toggleSort(desk);
 	await expect.poll(() => reports.pending.length).toBe(1);
@@ -189,6 +203,7 @@ test("Überholte Antwort nach schnellem Zurückschalten ändert keine Monatsreih
 	await reports.pending[1].resolve();
 	await expect(csvButton(desk)).toBeEnabled();
 	await reports.pending[0].resolve();
+	await expect(desk.locator("html")).toHaveAttribute("data-stale-report-processed", "true");
 	await expectMonths(desk, postingMonths);
 	await expect(table(desk).locator("thead")).not.toContainText("Wertstellung");
 });

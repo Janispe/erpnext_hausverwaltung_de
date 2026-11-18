@@ -26,10 +26,19 @@ export function benchExecute(method, args = [], kwargs = {}) {
 }
 
 export const test = base.extend({
-	desk: async ({ page, baseURL }, use) => {
+	siteProbe: [async ({}, use) => {
+		await use(benchExecute(`${fixtures}.create_e2e_browser_probe`).probe);
+	}, { scope: "worker" }],
+	desk: async ({ page, baseURL, siteProbe }, use) => {
 		if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(baseURL || "")) {
 			throw new Error("The Hausverwaltung E2E tests require an isolated loopback site.");
 		}
+		const verified = await page.request.post(`/api/method/${fixtures}.check_e2e_browser_target`, {
+			data: { probe: siteProbe },
+			maxRedirects: 0,
+		});
+		expect(verified.ok(), "Browser und Bench müssen dieselbe Wegwerf-Testsite verwenden.").toBe(true);
+		expect((await verified.json()).message).toBe(true);
 		const response = await page.request.post("/api/method/login", {
 			form: { usr: "Administrator", pwd: process.env.FRAPPE_PASSWORD || "admin" },
 		});

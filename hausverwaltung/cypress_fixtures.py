@@ -1019,8 +1019,25 @@ def cleanup_test_eur(name: str) -> dict:
 
 
 def _check_disposable_site() -> None:
-	if not frappe.conf.get("hv_disposable_test_site"):
+	if not frappe.get_site_config(cached=False).get("hv_disposable_test_site"):
 		frappe.throw("Diese E2E-Fixture braucht eine Wegwerf-Testsite.", frappe.PermissionError)
+
+
+def create_e2e_browser_probe() -> dict:
+	"""Give Playwright a short-lived probe scoped to this Bench site's cache."""
+	_check_disposable_site()
+	probe = frappe.generate_hash(length=32)
+	frappe.cache.set_value(f"hv_e2e_browser_probe:{probe}", True, expires_in_sec=3600)
+	return {"probe": probe}
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def check_e2e_browser_target(probe: str) -> bool:
+	"""Only a marked site sharing the Bench probe may run the browser suite."""
+	_check_disposable_site()
+	if not re.fullmatch(r"[a-f0-9]{32}", probe) or not frappe.cache.get_value(f"hv_e2e_browser_probe:{probe}"):
+		frappe.throw("Browser und Bench müssen dieselbe Wegwerf-Testsite verwenden.", frappe.PermissionError)
+	return True
 
 
 def seed_e2e_bankauszug() -> dict:
@@ -1093,11 +1110,11 @@ def seed_e2e_lease() -> dict:
 	return {"lease": {"name": lease.name, "kunde": lease.kunde, "wohnung": lease.wohnung}, "leases": leases}
 
 
-def seed_e2e_serienbrief() -> dict:
+def seed_e2e_serienbrief(iteration_doctype: str) -> dict:
 	_check_disposable_site()
-	name = "HV UI Mietvertrag " + frappe.generate_hash(length=8)
+	name = f"HV UI {iteration_doctype} {frappe.generate_hash(length=8)}"
 	template = frappe.get_doc({
-		"doctype": "Serienbrief Vorlage", "title": name, "haupt_verteil_objekt": "Mietvertrag",
+		"doctype": "Serienbrief Vorlage", "title": name, "haupt_verteil_objekt": iteration_doctype,
 		"kategorie": _ensure_serienbrief_category(), "content_type": "Textbaustein (Rich Text)",
 		"content": "<p>E2E Mietvertrag</p>",
 	}).insert()
@@ -1182,6 +1199,7 @@ def _ensure_e2e_rent_income_accounts(company: str) -> None:
 
 def seed_e2e_sales_cockpit() -> dict:
 	from hausverwaltung.hausverwaltung.test_booking_safeguards import fixture
+	from hausverwaltung.hausverwaltung.utils.income_accounts import get_hv_income_accounts
 
 	_check_disposable_site()
 	company, _, _, _, lease = fixture(compact=True)
@@ -1189,5 +1207,13 @@ def seed_e2e_sales_cockpit() -> dict:
 	if not frappe.db.get_value("Company", company, "default_income_account"):
 		frappe.db.set_value("Company", company, "default_income_account", account)
 	_ensure_e2e_rent_income_accounts(company)
+	explicit_account = get_hv_income_accounts(company)["Heizkosten"]
 	item = _ensure_test_item(company, account)
-	return {"company": company, "mietvertrag": lease.name, "kunde": lease.kunde, "account": account, "item": item}
+	return {
+		"company": company,
+		"mietvertrag": lease.name,
+		"kunde": lease.kunde,
+		"account": account,
+		"explicitAccount": explicit_account,
+		"item": item,
+	}
