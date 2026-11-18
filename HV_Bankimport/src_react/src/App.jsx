@@ -383,8 +383,7 @@ export function App() {
 	const [rulesOpen, setRulesOpen] = useState(false);
 	const reloadRef = useRef(null);
 	const linkedRow = useRef(api.importName ? api.linkedRow : "");
-	const scrollToLinkedRow = useRef(false);
-	const previousRowId = useRef(null);
+	const scrollToRow = useRef(null);
 	const panelRef = useRef(null);
 	const [bulkOpen, setBulkOpen] = useState(false);
 
@@ -406,6 +405,7 @@ export function App() {
 	}, []);
 
 	const openImport = useCallback((name) => {
+		scrollToRow.current = null;
 		setOverview(null);
 		setSelectedId(null);
 		setPhase(0);
@@ -424,7 +424,7 @@ export function App() {
 					linkedRow.current = null;
 					if (target) {
 						if (rowPhase(target) === 4) setFilter("all");
-						scrollToLinkedRow.current = true;
+						scrollToRow.current = target.id;
 						setSelectedId(target.id);
 					}
 				}
@@ -492,22 +492,27 @@ export function App() {
 		[visibleRows, selectedId]
 	);
 
-	const scrollToPanel = () => {
+	const scrollToPanel = useCallback(() => {
 		if (window.matchMedia("(width < 1100px)").matches) {
+			panelRef.current?.focus({ preventScroll: true });
 			panelRef.current?.scrollIntoView({ block: "start" });
 		}
-	};
+	}, []);
 
 	const currentRowId = selectedRow?.id;
 	const hasKi = !!meta.ki;
 	useEffect(() => {
-		if (hasKi && currentRowId && (previousRowId.current || scrollToLinkedRow.current)) scrollToPanel();
-		if (currentRowId) scrollToLinkedRow.current = false;
-		previousRowId.current = currentRowId;
-	}, [currentRowId, hasKi]);
+		if (currentRowId && currentRowId === scrollToRow.current) {
+			scrollToRow.current = null;
+			if (hasKi) scrollToPanel();
+		}
+	}, [currentRowId, hasKi, scrollToPanel]);
 
 	const selectRow = (id) => {
-		if (meta.ki && id === currentRowId) scrollToPanel();
+		if (hasKi) {
+			if (id === currentRowId) scrollToPanel();
+			else scrollToRow.current = id;
+		}
 		setSelectedId(id);
 	};
 
@@ -634,7 +639,7 @@ export function App() {
 			const target = visibleRows[index + (key === "j" ? 1 : -1)];
 			if (target) {
 				event.preventDefault();
-				setSelectedId(target.id);
+				selectRow(target.id);
 				if (scope.matches(".tx-card")) {
 					const rows = scope.querySelectorAll("tbody tr");
 					rows[index + (key === "j" ? 1 : -1)]?.focus();
@@ -654,10 +659,19 @@ export function App() {
 			panelRef.current?.focus({ preventScroll: true });
 			if (key === "Enter") {
 				const action = button.getBoundingClientRect();
+				const steps = button.closest(".ki-booking-card").querySelector(".ki-steps");
+				const target = steps.getBoundingClientRect();
 				const body = button.closest(".match-body").getBoundingClientRect();
-				if (!action.height || action.top < Math.max(0, body.top) ||
-					action.bottom > Math.min(window.innerHeight, body.bottom)) {
-					button.scrollIntoView({ block: "center" });
+				const top = Math.max(0, body.top);
+				const bottom = Math.min(window.innerHeight, body.bottom);
+				const visible = (rect) => rect.height > 0 && rect.top >= top && rect.bottom <= bottom;
+
+				if (!visible(target)) {
+					steps.scrollIntoView({ block: "start" });
+					return;
+				}
+				if (!visible(action)) {
+					if (action.bottom - target.top <= bottom - top) button.scrollIntoView({ block: "nearest" });
 					return;
 				}
 			}

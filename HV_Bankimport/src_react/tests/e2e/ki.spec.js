@@ -102,6 +102,7 @@ test("Zeilenlink öffnet auch gebuchte Zeilen, unbekannte IDs behalten die Stand
 });
 
 test("Tastatur wechselt Zeilen und öffnet, schließt und bestätigt Karten", async ({ page }) => {
+	await page.setViewportSize({ width: 1440, height: 1000 });
 	await page.goto(demo);
 	await table(page).locator("tbody tr").first().focus();
 	await page.keyboard.press("j");
@@ -140,6 +141,7 @@ test("Stale-Antwort zeigt den neuen Zustand und erlaubt eine neue Revision", asy
 });
 
 test("Enter bucht die fokussierte Tabellenzeile auch bei zuvor anderer Auswahl", async ({ page }) => {
+	await page.setViewportSize({ width: 1440, height: 1100 });
 	await page.goto(demo);
 	const rows = table(page).locator("tbody tr");
 	await expect(rows.first()).toHaveClass(/selected/);
@@ -208,6 +210,40 @@ test("bei 1024 px führen Klick, Tastatur und Zeilenlink zum Panel", async ({ pa
 	await expect(page.getByText(/Zahlung gebucht.*0041/)).toHaveCount(0);
 	await page.keyboard.press("Enter");
 	await expect(page.getByText(/Zahlung gebucht.*0041/)).toBeVisible();
+});
+
+test("bei 1024 px bleibt die mit Tab fokussierte Tabellenzeile im Bild", async ({ page }) => {
+	await page.setViewportSize({ width: 1024, height: 640 });
+	await page.goto(demo);
+	const rows = table(page).locator("tbody tr");
+	await rows.first().getByRole("link").focus();
+	await page.keyboard.press("Tab");
+	await expect(rows.nth(1)).toBeFocused();
+	await expect(rows.nth(1)).toHaveClass(/selected/);
+	await expect(rows.nth(1)).toBeInViewport();
+	const { y, height } = await rows.nth(1).boundingBox();
+	expect(y).toBeGreaterThanOrEqual(0);
+	expect(y + height).toBeLessThanOrEqual(640);
+	await expect(page.locator(".match-head")).not.toBeInViewport();
+});
+
+test("Enter bucht einen sichtbaren Button bei verdeckten Buchungsschritten nicht", async ({ page }) => {
+	await page.setViewportSize({ width: 1024, height: 340 });
+	await page.goto(demo + "&row=r2");
+	const steps = suggestion(page).locator(".ki-steps");
+	const accept = suggestion(page).getByRole("button", { name: /Beide übernehmen & buchen/ });
+	await accept.scrollIntoViewIfNeeded();
+	await expect(accept).toBeInViewport({ ratio: 1 });
+	await expect(steps).not.toBeInViewport();
+	await page.locator(".match-panel-wrap").evaluate((panel) => panel.focus({ preventScroll: true }));
+	await page.keyboard.press("Enter");
+	await expect(steps).toBeInViewport({ ratio: 1 });
+	await expect(accept).not.toBeInViewport();
+	await page.keyboard.press("Enter");
+	await expect(accept).toHaveText(/Beide übernehmen & buchen/);
+	await expect(page.getByText(/Partei zugeordnet, Buchung fehlgeschlagen/)).toHaveCount(0);
+	await accept.click();
+	await expect(page.getByText(/Partei zugeordnet, Buchung fehlgeschlagen/)).toBeVisible();
 });
 
 test("fordert bei Kein Vorschlag erneut an und zeigt den laufenden Agenten", async ({ page }) => {
