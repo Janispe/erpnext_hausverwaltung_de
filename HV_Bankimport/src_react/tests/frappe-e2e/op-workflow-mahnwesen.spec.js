@@ -257,7 +257,35 @@ function benchExecute(method, { args, kwargs } = {}) {
 }
 
 function benchPython(script) {
-	return benchExecute("__import__('builtins').exec", { args: [script, {}] });
+	// `bench execute "__import__('builtins').exec"` lehnt Frappe inzwischen ab (nur Methoden installierter
+	// Apps). Das Skript läuft deshalb direkt mit dem Bench-Python als Administrator auf der Site.
+	const runner = [
+		"import sys, frappe",
+		`frappe.init(site=${JSON.stringify(FRAPPE_SITE)}, sites_path=".")`,
+		"frappe.connect()",
+		"try:",
+		"    exec(compile(sys.stdin.read(), '<frappe-e2e>', 'exec'), {'__name__': '__frappe_e2e__'})",
+		"finally:",
+		"    frappe.destroy()",
+	].join("\n");
+	const cmd = `cd ${shellQuote(`${FRAPPE_BENCH_DIR}/sites`)} && ../env/bin/python -c ${shellQuote(runner)}`;
+	let out;
+	try {
+		out = execFileSync("docker", ["exec", "-i", FRAPPE_BACKEND_CONTAINER, "sh", "-lc", cmd], {
+			encoding: "utf8",
+			input: script,
+			stdio: ["pipe", "pipe", "pipe"],
+		}).trim();
+	} catch (error) {
+		throw new Error(`${error.message}\n${error.stderr || error.stdout || ""}`);
+	}
+	if (!out) return null;
+	const last = out.split("\n").pop();
+	try {
+		return JSON.parse(last);
+	} catch {
+		return out;
+	}
 }
 
 function seedRealDunning(runId) {

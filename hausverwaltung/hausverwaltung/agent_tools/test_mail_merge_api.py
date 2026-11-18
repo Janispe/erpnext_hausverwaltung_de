@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import importlib.util
 import json
 import time
 import unittest
@@ -72,6 +73,8 @@ class TestMailMergeApi(unittest.TestCase):
 		self.assertEqual(api._merged_values(updated, {"amount": None}, fields), "")
 
 	def test_mcp_accepts_and_forwards_path_overrides(self):
+		if importlib.util.find_spec("frappe_assistant_core") is None:
+			self.skipTest("Benötigt die optionale App frappe_assistant_core.")
 		from hausverwaltung.hausverwaltung.agent_tools import fac_tools, mail_merge_tools
 		tool = fac_tools.Fac_agent_mail_merge_prepare()
 		arguments = {"template": "T", "revision": "r", "recipients": ["MV-1"], "values": {"objekt.bruttomiete": {"path": "objekt.aktuelle_nettokaltmiete"}}, "per_recipient": {"MV-1": {"objekt.bruttomiete": 750}}}

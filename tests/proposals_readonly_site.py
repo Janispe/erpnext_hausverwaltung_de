@@ -73,5 +73,8 @@ if __name__ == '__main__':
 	parser.add_argument('--site',required=True)
 	parser.add_argument('--auth-file',required=True)
 	args=parser.parse_args()
-	if not args.site.startswith('hv4.') or not args.site.endswith('.local'):parser.error('Own synthetic site only')
+	# Own synthetic site: either named hv4.*.local or marked by scripts/hv_tests.sh as disposable.
+	config=Path(args.site)/'site_config.json'
+	marked=config.is_file() and bool(json.loads(config.read_text()).get('hv_disposable_test_site'))
+	if not (args.site.startswith('hv4.') and args.site.endswith('.local')) and not marked:parser.error('Own synthetic site only')
 	print(json.dumps(run(args.site,args.auth_file)))

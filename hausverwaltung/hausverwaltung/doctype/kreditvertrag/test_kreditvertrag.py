@@ -1164,6 +1164,19 @@ class TestKreditvertragIntegration(unittest.TestCase):
 		except Exception:
 			frappe.db.rollback()
 
+	@staticmethod
+	def _supplier_group():
+		"""Blatt-Lieferantengruppe; ohne Setup-Assistent fehlt auch die Wurzel „All Supplier Groups“."""
+		leaf = frappe.db.get_value("Supplier Group", {"is_group": 0}, "name")
+		if leaf:
+			return leaf
+		root = frappe.db.get_value("Supplier Group", {"is_group": 1}, "name") or frappe.get_doc({
+			"doctype": "Supplier Group", "supplier_group_name": "All Supplier Groups", "is_group": 1,
+		}).insert(ignore_permissions=True).name
+		return frappe.get_doc({
+			"doctype": "Supplier Group", "supplier_group_name": "_Test Darlehensgeber", "parent_supplier_group": root,
+		}).insert(ignore_permissions=True).name
+
 	@classmethod
 	def setUpClass(cls):
 		super().setUpClass()
@@ -1194,7 +1207,7 @@ class TestKreditvertragIntegration(unittest.TestCase):
 			cls.supplier = frappe.get_doc({
 				"doctype": "Supplier", "supplier_name": "_Test Loan Supplier " + frappe.generate_hash(length=8),
 				"supplier_type": "Company",
-				"supplier_group": frappe.db.get_value("Supplier Group", {"is_group": 0}, "name") or "All Supplier Groups",
+				"supplier_group": cls._supplier_group(),
 			}).insert(ignore_permissions=True).name
 		if not all([cls.darlehenskonto, cls.zinsaufwandskonto, cls.bank_account, cls.supplier]):
 			raise unittest.SkipTest(

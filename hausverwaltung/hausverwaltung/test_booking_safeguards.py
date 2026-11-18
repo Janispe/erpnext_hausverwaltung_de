@@ -17,11 +17,23 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.abrechnung_erstellen i
 def fixture(*, auto_customer=False, with_contact=False, compact=False):
 	token = frappe.generate_hash(length=10)
 	company = frappe.get_all("Company", pluck="name", limit=1)[0]
+	# Kostenstellen werden pro Immobilie geführt; die Company-Kostenstelle "Main" ist bewusst deaktiviert
+	# (install._ensure_main_cost_center_disabled). Jede Test-Immobilie bekommt deshalb eine eigene.
+	cc_parent = frappe.get_all(
+		"Cost Center", filters={"company": company, "is_group": 1}, pluck="name", limit=1, order_by="lft asc"
+	)[0]
 	cc = (
-		frappe.db.get_value("Company", company, "cost_center")
-		or frappe.get_all("Cost Center", filters={"company": company, "is_group": 0}, pluck="name", limit=1)[
-			0
-		]
+		frappe.get_doc(
+			{
+				"doctype": "Cost Center",
+				"cost_center_name": f"Bugtest {token}",
+				"company": company,
+				"parent_cost_center": cc_parent,
+				"is_group": 0,
+			}
+		)
+		.insert()
+		.name
 	)
 	if not frappe.db.exists(
 		"Account",

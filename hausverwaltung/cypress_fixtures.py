@@ -21,7 +21,7 @@ import re
 from typing import Optional
 
 import frappe
-from frappe.utils import flt
+from frappe.utils import flt, getdate, nowdate
 
 
 def _check_dev_mode() -> None:
@@ -101,6 +101,53 @@ def cleanup_cockpit_complex(test_tag: str) -> dict:
 	return {"test_tag": test_tag, "deleted": deleted}
 
 
+@frappe.whitelist()
+def prepare_e2e_site(company: Optional[str] = None) -> dict:
+	"""Grundvoraussetzungen einer frischen Test-Site für Browsertests.
+
+	Frische Sites ohne Setup-Assistent haben kein Geschäftsjahr für das heutige Datum, und die
+	Company-Standardkostenstelle "Main" ist bewusst deaktiviert. Beides brauchen Buchungen der Tests.
+	"""
+	_check_dev_mode()
+	company = _resolve_company(company)
+	year = getdate(nowdate()).year
+	fiscal_years = [_ensure_fiscal_year(company, y) for y in (year - 1, year, year + 1)]
+	cost_center = _ensure_cost_center(company)
+	frappe.db.commit()
+	return {"company": company, "fiscal_years": fiscal_years, "cost_center": cost_center}
+
+
+def _ensure_fiscal_year(company: str, year: int) -> str:
+	start, end = f"{year}-01-01", f"{year}-12-31"
+	name = frappe.db.get_value("Fiscal Year", {"year_start_date": start, "year_end_date": end}, "name")
+	if not name:
+		return (
+			frappe.get_doc(
+				{
+					"doctype": "Fiscal Year",
+					"year": str(year),
+					"year_start_date": start,
+					"year_end_date": end,
+					"companies": [{"company": company}],
+				}
+			)
+			.insert(ignore_permissions=True)
+			.name
+		)
+	fiscal_year = frappe.get_doc("Fiscal Year", name)
+	changed = False
+	if fiscal_year.get("disabled"):
+		fiscal_year.disabled = 0
+		changed = True
+	# Ein Geschäftsjahr ohne Companies gilt für alle; sonst muss die Test-Company dabei sein.
+	if fiscal_year.companies and company not in {row.company for row in fiscal_year.companies}:
+		fiscal_year.append("companies", {"company": company})
+		changed = True
+	if changed:
+		fiscal_year.save(ignore_permissions=True)
+	return name
+
+
 def _resolve_company(explicit: Optional[str] = None) -> str:
 	if explicit:
 		return explicit
@@ -160,14 +207,36 @@ def _leaf_account(company: str, *, account_type: str | None = None, root_type: s
 
 
 def _ensure_cost_center(company: str) -> str:
-	cost_center = (
-		frappe.db.get_value("Company", company, "cost_center")
-		or _first_value("Cost Center", {"company": company, "is_group": 0, "disabled": 0})
-		or _first_value("Cost Center", {"company": company, "is_group": 0})
-	)
-	if cost_center:
-		return cost_center
-	frappe.throw(f"hausverwaltung.cypress_fixtures: keine Kostenstelle für {company} gefunden.")
+	"""Aktive Buchungskostenstelle für Testdaten, zugleich als Company-Standard.
+
+	Die automatisch angelegte Kostenstelle "Main" ist in der Hausverwaltung bewusst deaktiviert
+	(install._ensure_main_cost_center_disabled). Buchungen ohne Immobilienbezug fallen aber auf die
+	Company-Standardkostenstelle zurück. Auf Test-Sites wird deshalb eine aktive gesetzt.
+	"""
+	active = {"company": company, "is_group": 0, "disabled": 0}
+	default = frappe.db.get_value("Company", company, "cost_center")
+	if default and frappe.db.exists("Cost Center", {"name": default, **active}):
+		return default
+	cost_center = _first_value("Cost Center", active)
+	if not cost_center:
+		parent = _first_value("Cost Center", {"company": company, "is_group": 1}, order_by="lft asc")
+		if not parent:
+			frappe.throw(f"hausverwaltung.cypress_fixtures: keine Kostenstellen-Gruppe für {company} gefunden.")
+		cost_center = (
+			frappe.get_doc(
+				{
+					"doctype": "Cost Center",
+					"cost_center_name": "HV Testdaten",
+					"company": company,
+					"parent_cost_center": parent,
+					"is_group": 0,
+				}
+			)
+			.insert(ignore_permissions=True)
+			.name
+		)
+	frappe.db.set_value("Company", company, "cost_center", cost_center)
+	return cost_center
 
 
 def _ensure_income_account(company: str) -> str:
@@ -317,6 +386,8 @@ def ensure_bankimport_bank_account(company: Optional[str] = None) -> dict:
 	"""
 	_check_dev_mode()
 	company = _resolve_company(company)
+	# Buchungen ohne Partei fallen auf die Company-Standardkostenstelle zurück; sie muss aktiv sein.
+	_ensure_cost_center(company)
 
 	def is_active_account(account: str | None) -> bool:
 		if not account:

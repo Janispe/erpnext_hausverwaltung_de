@@ -251,6 +251,10 @@ class TestLegacyDunningConfirmation(unittest.TestCase):
 		self.assertEqual(service.prepare_legacy_dunning_confirmation(self.doc.name), {"required": False})
 		self.assertFalse(self.cache.values)
 
+	@unittest.skipUnless(
+		hasattr(adapter.Dunning, "validate_overdue_payment_references"),
+		"ERPNext dieser Bench kennt Dunning.validate_overdue_payment_references noch nicht (Produktion: 16.53).",
+	)
 	def test_regular_reference_validator_is_delegated_without_row_filtering(self):
 		doc = object.__new__(adapter.CustomDunning)
 		doc.__dict__.update(doctype="Dunning", name="DUN-1", docstatus=1, _action="submit",
