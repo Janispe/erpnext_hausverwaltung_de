@@ -120,7 +120,8 @@ def _abstention_statement(bank, key, journal):
 	lanes = [{"row": row.name, "note": "Zuordnung unklar."} for row in imp.rows[:3]]
 	last = imp.rows[-1]
 	lanes.append({"row": last.name, "steps": [_step(imp, last, "journal_entry", "Buchungssatz", journal)]})
-	return {"import_name": imp.name, "package": f"BANK-ABSTENTION-{key}", "lanes": lanes}
+	return {"import_name": imp.name, "package": f"BANK-ABSTENTION-{key}", "lanes": lanes,
+		"skipped_answer": [_step(imp, imp.rows[2], "journal_entry", "Nachgereichter Buchungssatz", journal)]}
 
 
 def seed():

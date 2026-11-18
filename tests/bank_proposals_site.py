@@ -1,5 +1,6 @@
 """Authenticated Bankimport contracts on a disposable site's WSGI application."""
 import argparse
+from datetime import date
 import inspect
 import json
 from pathlib import Path
@@ -71,7 +72,7 @@ def run(site, auth_file, fixture_file):
 	original = Database.sql
 
 	def checked_sql(db, query, *args, **kwargs):
-		if any(frame.function == "get_overview" for frame in inspect.stack()):
+		if any(frame.function in {"get_overview", "open_requests"} for frame in inspect.stack()):
 			statement = str(query)
 			assert "FOR UPDATE" not in statement.upper()
 			assert not re.match(r"\s*(INSERT|UPDATE|DELETE|REPLACE|ALTER|CREATE|DROP|TRUNCATE)\b", statement, re.I)
@@ -230,7 +231,7 @@ def run(site, auth_file, fixture_file):
 		return result["import"]["ki"], {row["id"]: row for row in result["rows"]}
 
 	book_abstention(prebooked)
-	agent(BANK + "publish", abstentions)
+	agent(BANK + "publish", {key: abstentions[key] for key in ("import_name", "package", "lanes")})
 	ki, rows = abstention_overview()
 	assert rows[prebooked]["phase"] == 4 and rows[prebooked].get("ki") is None
 	assert ki["counts"]["none"] == 2
@@ -251,7 +252,21 @@ def run(site, auth_file, fixture_file):
 	assert ki["progress"] == {"done": 1, "total": 2}
 	assert rows[remaining]["ki"]["state"] == "running"
 
-	book_abstention(remaining)
+	with patch.object(Database, "sql", checked_sql):
+		pending = agent(BANK + "open_requests", {"import_name": abstention_import})
+	assert [entry["row"] for entry in pending] == [remaining]
+	with patch.object(bank_action.booking, "_bankimport_start_date", return_value=date(2026, 4, 6)):
+		skipped = reviewer(BOOKING + "create_bank_transaction_for_row", {
+			"docname": abstention_import, "row_name": remaining, "allow_missing_party": 1, "skip_auto_match": 1})
+	assert skipped["skipped_before_cutoff"] == 1
+	with patch.object(Database, "sql", checked_sql):
+		assert agent(BANK + "open_requests", {"import_name": abstention_import}) == []
+	agent(BANK + "answer_abstention", {"import_name": abstention_import, "package": abstentions["package"],
+		"row": remaining, "steps": abstentions["skipped_answer"]},
+		status=417, error_message="bereits gebuchte oder abgeschlossene Zeilen")
+	ki, rows = abstention_overview()
+	assert rows[remaining]["phase"] == 4 and rows[remaining]["rowStatus"] == "skipped"
+	assert rows[remaining].get("ki") is None and not ki["running"]
 	assert reviewer(PAGE + "ki_accept", {"import_name": abstention_import, "row": proposed,
 		"bindings": bindings(rows[proposed])})["ok"]
 	ki, rows = abstention_overview()
@@ -263,7 +278,7 @@ def run(site, auth_file, fixture_file):
 		"manual_booking": "passed", "rule_booking": "passed", "abstention_answer": "passed",
 		"bound_answer": "passed", "superseded": "passed", "additional_bookings": len(matrix["lanes"]),
 		"revised_predecessor": "passed", "row_only_party": "passed", "statement_credit_binding": "passed", "advance_party_binding": "passed",
-		"booked_abstentions": "passed"}))
+		"booked_abstentions": "passed", "skipped_abstention_requests": "passed"}))
 
 
 if __name__ == "__main__":

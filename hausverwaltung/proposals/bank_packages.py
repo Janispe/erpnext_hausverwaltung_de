@@ -74,6 +74,13 @@ def _abstentions(package):
 	return {line.lane_key: line.note for line in doc.get("abstentions") or []}
 
 
+def _completed_import_row(row, *, for_update=False):
+	from hausverwaltung.hausverwaltung.page.bankimport_v2.bankimport_v2 import _project_cancelled_voucher, _row_phase
+
+	_project_cancelled_voucher(row, for_update=for_update)
+	return _row_phase(row.as_dict()) == 4
+
+
 def _pending_requests(package, row=None, lock=False):
 	filters = {"package": package, "resolved_at": ["is", "not set"], "expires_at": [">", now_datetime()]}
 	if row is not None:
@@ -107,11 +114,13 @@ def _resolve_requests(requests):
 @core._api
 def open_requests(import_name):
 	_agent()
-	actions.import_document(import_name, "write")
+	doc = actions.import_document(import_name, "write")
 	package = _latest(import_name)
 	if not package or frappe.db.get_value(core.PACKAGE, package, "agent") != frappe.session.user:
 		return []
-	return _pending_requests(package)
+	rows = {row.name: row for row in doc.rows}
+	return [request for request in _pending_requests(package)
+		if request.proposal or (request.row in rows and not _completed_import_row(rows[request.row]))]
 
 
 def _new_action(package, doc, item, dependencies):
@@ -212,6 +221,8 @@ def answer_abstention(import_name, package, row, steps):
 		core._deny()
 	_agent(package)
 	core._lock_package(package)
+	if _completed_import_row(actions.row_document(doc, row), for_update=True):
+		frappe.throw("Für bereits gebuchte oder abgeschlossene Zeilen kann kein Vorschlag erstellt werden.")
 	requests = [request for request in _pending_requests(package, row, lock=True) if not request.proposal]
 	if not requests or row not in _abstentions(package) or _rows(package, row, lock=True):
 		frappe.throw("Für diese Zeile liegt keine offene Anforderung vor.")
@@ -349,10 +360,7 @@ def request_revision(import_name, row, binding=None, note=""):
 	doc, package = _writer(import_name)
 	import_row = actions.row_document(doc, row)
 	if binding is None:
-		from hausverwaltung.hausverwaltung.page.bankimport_v2.bankimport_v2 import _project_cancelled_voucher, _row_phase
-
-		_project_cancelled_voucher(import_row, for_update=True)
-		if _row_phase(import_row.as_dict()) == 4:
+		if _completed_import_row(import_row, for_update=True):
 			frappe.throw("Für bereits gebuchte oder abgeschlossene Zeilen kann kein Vorschlag angefordert werden.")
 		if row not in _abstentions(package) or _rows(package, row, lock=True):
 			frappe.throw("Anforderung nur für Zeilen ohne Vorschlag.")
