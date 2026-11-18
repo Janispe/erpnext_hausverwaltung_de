@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Seitenpanel: alle Zustände des KI-Vorschlags</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/hausverwaltung/styles.css">
+<link rel="stylesheet" href="ds/hausverwaltung/colors_and_type.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/frappe-theme-shim.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-tokens.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-components.css">
+<link rel="stylesheet" href="ds/hausverwaltung/ui_kits/bankimport/bankimport-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:#f7f6f3}
+a{color:#1a4d8c}a:hover{color:#123a6b}
+</style>
+</helmet>
+<div class="hv" style="width: 1680px; height: 2200px; box-sizing: border-box; padding: 40px; background: var(--bg); color: var(--text); font-family: var(--font-sans); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 40px 24px; align-content: start;">
+
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<div><div class="label">1 · Zwei Schritte</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Zeile ohne Partei: Partei, dann Rechnung. Ein Klick führt beide in Reihenfolge aus.</div></div>
+<dc-import name="Matchpanel" row-id="r2" hint-size="380px,960px"></dc-import>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<div><div class="label">2 · Buchungssatz</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Ohne Partei, Gegenkonto aus der eigenen Buchungshistorie. Belege verlinken frühere Buchungen.</div></div>
+<dc-import name="Matchpanel" row-id="r4" hint-size="380px,900px"></dc-import>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<div><div class="label">3 · Mittlere Sicherheit</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Kreditrate mit kleiner Abweichung zum Plan. Die Begründung nennt die Abweichung konkret.</div></div>
+<dc-import name="Matchpanel" row-id="r5" hint-size="380px,960px"></dc-import>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<div><div class="label">4 · Ablehnen</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Inline statt Dialog. Kategorie plus Pflicht-Begründung gehen als Rückmeldung an den Agenten.</div></div>
+<dc-import name="Matchpanel" row-id="r6" mode="reject" hint-size="380px,900px"></dc-import>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<div><div class="label">5 · Veraltet</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Buchstand hat sich geändert. Kein Übernehmen, nur neue Revision anfordern; manuell bleibt offen.</div></div>
+<dc-import name="Matchpanel" row-id="r7" hint-size="380px,900px"></dc-import>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<div><div class="label">6 · Gebucht aus Vorschlag</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Belege wie bisher, dazu Herkunft: wer, wann, welche Revision, Link zum Vorschlag.</div></div>
+<dc-import name="Matchpanel" row-id="r9" hint-size="380px,560px"></dc-import>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<div><div class="label">7 · Agent arbeitet</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Vorschlag noch nicht da. Manuelles Zuordnen ist nicht gesperrt.</div></div>
+<dc-import name="Matchpanel" row-id="r8" mode="running" hint-size="380px,520px"></dc-import>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<div><div class="label">8 · Kein Vorschlag</div><div style="font-size: 12.5px; color: var(--text-muted); margin-top: 3px;">Der Agent enthält sich ausdrücklich und sagt warum. Lieber kein Vorschlag als ein geratener.</div></div>
+<dc-import name="Matchpanel" row-id="r8" hint-size="380px,560px"></dc-import>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1680,"height":2200}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

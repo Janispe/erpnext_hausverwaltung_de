@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Seitenpanel einer Bankzeile mit KI-Vorschlag</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/hausverwaltung/styles.css">
+<link rel="stylesheet" href="ds/hausverwaltung/colors_and_type.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/frappe-theme-shim.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-tokens.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-components.css">
+<link rel="stylesheet" href="ds/hausverwaltung/ui_kits/bankimport/bankimport-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:transparent}
+a{color:#1a4d8c}a:hover{color:#123a6b}
+.ki-tag{display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:4px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);font-family:var(--font-mono);font-size:9.5px;font-weight:600;letter-spacing:.4px;text-transform:none}
+.ki-steps{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+.ki-step{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:8px;align-items:start}
+.ki-step-n{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-family:var(--font-mono);font-size:10.5px;font-weight:600;background:var(--surface);border:1px solid var(--phase3);color:var(--phase3)}
+.ki-step-t{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted)}
+.ki-book{margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
+.ki-post{display:grid;grid-template-columns:minmax(0,1fr) 66px 66px;gap:6px;font-size:11.5px;padding:3px 0;align-items:baseline}
+.ki-post .n{font-family:var(--font-mono);font-variant-numeric:tabular-nums;text-align:right}
+.ki-post.h{color:var(--text-muted);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding-bottom:2px}
+.ki-effect{margin:6px 0 0;font-size:11.5px;color:var(--text-muted);line-height:1.45}
+.conf{display:inline-flex;gap:2px}
+.conf i{display:block;width:12px;height:5px;border-radius:2px;background:var(--surface-3);border:1px solid var(--border-strong)}
+.conf.c-hoch i{background:var(--done);border-color:var(--done)}
+.conf.c-mittel i:nth-child(1),.conf.c-mittel i:nth-child(2){background:var(--warn);border-color:var(--warn)}
+.conf.c-niedrig i:nth-child(1){background:var(--danger);border-color:var(--danger)}
+.conf-t{font-family:var(--font-mono);font-size:11.5px;font-weight:600}
+.conf-t.c-hoch{color:var(--done)}.conf-t.c-mittel{color:var(--warn)}.conf-t.c-niedrig{color:var(--danger)}
+.ki-src{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:6px;font-size:11px;color:var(--text-muted)}
+.ki-src a{font-family:var(--font-mono)}
+.ki-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.ki-actions .btn{height:32px}
+.ki-actions .btn.primary{flex:1 1 auto;justify-content:center}
+.ki-actions .btn.primary .kbd{background:transparent;color:var(--surface);border-color:rgba(255,255,255,.35)}
+.ki-stale{border:1px dashed var(--danger) !important;background:var(--surface) !important}
+.ki-collapse{all:unset;box-sizing:border-box;width:100%;display:flex;align-items:center;gap:8px;cursor:pointer;min-height:28px}
+.ki-collapse:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.chip-radio{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--border);border-radius:999px;font-size:12px;background:var(--surface);color:var(--text-muted);cursor:pointer}
+.chip-radio.on{border-color:var(--text);color:var(--text);background:var(--surface-3)}
+.ki-field{width:100%;box-sizing:border-box;font-family:var(--font-sans);font-size:12.5px;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)}
+.ki-field:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(26,77,140,.18)}
+</style>
+</helmet>
+<div class="hv" style="width: 380px; font-family: var(--font-sans); color: var(--text); background: transparent;">
+<div class="match-panel" style="max-height: none;">
+
+<div class="match-head">
+<div class="row-meta"><span>{{ r.datum }}</span><span>·</span><span>{{ r.richtung }}</span><span>·</span><span>{{ r.bt }}</span></div>
+<div class="amount-big {{ r.dir }}">{{ r.betrag }}</div>
+<sc-if value="{{ r.hasParty }}" hint-placeholder-val="{{ true }}">
+<div class="party-line">{{ r.party }} <span class="meta" style="font-weight: 400;">· {{ r.partyMeta }}</span></div>
+</sc-if>
+<sc-if value="{{ r.noParty }}" hint-placeholder-val="{{ false }}">
+<div class="party-line" style="color: var(--text-muted); font-style: italic; font-weight: 500;">Keine Partei · Auftraggeber: {{ r.auftraggeber }}</div>
+</sc-if>
+<div class="zweck">{{ r.zweck }}</div>
+<div class="iban-line">{{ r.iban }}</div>
+</div>
+
+<div class="match-body">
+
+<sc-if value="{{ isPending }}" hint-placeholder-val="{{ true }}">
+<section class="match-section" aria-label="KI-Vorschlag">
+<div class="sec-label"><span class="ki-tag">KI</span> Vorschlag <span class="badge">Rev. {{ k.rev }}</span><span style="margin-left: auto;" class="pill phase2">Prüfung offen</span></div>
+<div class="invoice-card suggested" style="margin-bottom: 0;">
+<div class="reco-tag">{{ k.kindLabel }}</div>
+<ol class="ki-steps">
+<sc-for list="{{ k.steps }}" as="s" hint-placeholder-count="1">
+<li class="ki-step">
+<span class="ki-step-n" aria-hidden="true">{{ s.n }}</span>
+<div style="min-width: 0;">
+<div class="ki-step-t">{{ s.title }}</div>
+<div class="party" style="margin: 1px 0 1px;">{{ s.target }}</div>
+<div class="ref" style="margin: 0;">{{ s.sub }}</div>
+</div>
+<div class="amount">{{ s.amount }}</div>
+</li>
+</sc-for>
+</ol>
+<div class="ki-book">
+<div class="ki-post h"><span>Buchung (Vorschau)</span><span style="text-align: right;">Soll</span><span style="text-align: right;">Haben</span></div>
+<sc-for list="{{ k.postings }}" as="p" hint-placeholder-count="2">
+<div class="ki-post"><span>{{ p.konto }}</span><span class="n">{{ p.soll }}</span><span class="n">{{ p.haben }}</span></div>
+</sc-for>
+<p class="ki-effect">{{ k.effect }}</p>
+</div>
+<div class="conf-row">
+<span class="label" style="margin: 0;">Sicherheit</span>
+<span class="conf c-{{ k.conf }}" aria-hidden="true"><i></i><i></i><i></i></span>
+<span class="conf-t c-{{ k.conf }}">{{ k.confText }}</span>
+</div>
+<div class="reason">„{{ k.rationale }}“</div>
+<div class="ki-src"><span>Belege:</span>
+<sc-for list="{{ k.sources }}" as="src" hint-placeholder-count="3"><a href="#">{{ src }}</a></sc-for>
+</div>
+</div>
+<div class="ki-actions">
+<button type="button" class="btn primary" onClick="{{ accept }}">{{ k.acceptLabel }} <span class="kbd">↵</span></button>
+<button type="button" class="btn" onClick="{{ toggleManual }}">Anpassen</button>
+<button type="button" class="btn danger" onClick="{{ startReject }}">Ablehnen …</button>
+</div>
+<p class="meta" style="margin: 8px 0 0; line-height: 1.5;">Freigabe und Buchung werden einzeln für Revision {{ k.rev }} protokolliert. <a href="Vorschlaege-Paket.dc.html">Im Paket ansehen →</a></p>
+</section>
+</sc-if>
+
+<sc-if value="{{ isReject }}" hint-placeholder-val="{{ false }}">
+<section class="match-section" aria-label="KI-Vorschlag ablehnen">
+<div class="sec-label"><span class="ki-tag">KI</span> Vorschlag ablehnen</div>
+<div class="invoice-card" style="margin-bottom: 0;">
+<div class="ref" style="margin-bottom: 10px;">{{ k.kindLabel }} · <span class="mono">{{ k.summary }}</span> · Rev. {{ k.rev }}</div>
+<fieldset style="border: 0; margin: 0; padding: 0;">
+<legend class="field-label" style="margin-bottom: 6px;">Was stimmt nicht?</legend>
+<div style="display: flex; flex-wrap: wrap; gap: 6px;">
+<label class="chip-radio"><input type="radio" name="grund-art"> Falsche Partei</label>
+<label class="chip-radio on"><input type="radio" name="grund-art" checked> Falscher Beleg</label>
+<label class="chip-radio"><input type="radio" name="grund-art"> Anderes Konto</label>
+<label class="chip-radio"><input type="radio" name="grund-art"> Nicht buchen</label>
+<label class="chip-radio"><input type="radio" name="grund-art"> Sonstiges</label>
+</div>
+</fieldset>
+<label for="ki-grund" class="field-label" style="display: block; margin: 12px 0 6px;">Begründung (Pflicht)</label>
+<textarea id="ki-grund" class="ki-field" rows="3">Mai-Rechnung kommt mit dem Mietlauf am 25.04. Zahlung dann gegen die Rechnung buchen, nicht als Vorauszahlung.</textarea>
+<p class="meta" style="margin: 6px 0 0;">Geht als Rückmeldung an den Agenten. Die Zeile bleibt offen.</p>
+</div>
+<div class="ki-actions">
+<button type="button" class="btn danger" style="border-color: var(--danger);">Ablehnen</button>
+<button type="button" class="btn subtle" onClick="{{ cancelReject }}">Abbrechen</button>
+</div>
+</section>
+</sc-if>
+
+<sc-if value="{{ isStale }}" hint-placeholder-val="{{ false }}">
+<section class="match-section" aria-label="KI-Vorschlag veraltet">
+<div class="sec-label"><span class="ki-tag">KI</span> Vorschlag <span class="badge">Rev. {{ k.rev }}</span><span style="margin-left: auto;" class="pill danger">Veraltet</span></div>
+<div class="invoice-card ki-stale" style="margin-bottom: 0;">
+<div class="reco-tag" style="color: var(--danger);">{{ k.kindLabel }}</div>
+<div class="party" style="text-decoration: line-through; color: var(--text-muted); font-family: var(--font-mono); font-weight: 500; font-size: 12px;">{{ k.summary }}</div>
+<p style="margin: 6px 0 0; font-size: 12px; line-height: 1.5;">{{ k.staleText }}</p>
+</div>
+<div class="ki-actions">
+<button type="button" class="btn">Neue Revision anfordern</button>
+</div>
+<p class="meta" style="margin: 8px 0 0;">Selbst zuordnen geht weiter wie bisher (unten).</p>
+</section>
+</sc-if>
+
+<sc-if value="{{ isDone }}" hint-placeholder-val="{{ false }}">
+<section class="match-section" aria-label="Aus KI-Vorschlag gebucht">
+<div class="sec-label"><span class="ki-tag">KI</span> Vorschlag <span class="badge">Rev. {{ k.rev }}</span><span style="margin-left: auto;" class="pill done">Gebucht</span></div>
+<a href="#" class="assign-row done-row" style="text-decoration: none; color: var(--text);"><span class="lbl">Bank-Tx</span><span class="val">{{ r.bt }}</span><span class="chev" aria-hidden="true">→</span></a>
+<a href="#" class="assign-row done-row" style="text-decoration: none; color: var(--text);"><span class="lbl">{{ k.voucherType }}</span><span class="val">{{ k.voucher }}</span><span class="chev" aria-hidden="true">→</span></a>
+<div class="ref" style="margin-top: 8px; font-size: 12px;">{{ k.kindLabel }} · <span class="mono">{{ k.summary }}</span></div>
+<p class="meta" style="margin: 6px 0 0; line-height: 1.5;">Freigegeben und gebucht von M. Krüger · {{ k.when }} · <a href="Vorschlaege-Paket.dc.html">Vorschlag {{ k.id }} →</a></p>
+<div style="margin-top: 10px;"><button type="button" class="btn sm subtle">Beleg lösen …</button></div>
+</section>
+</sc-if>
+
+<sc-if value="{{ isRunning }}" hint-placeholder-val="{{ false }}">
+<section class="match-section" aria-label="KI-Vorschlag in Arbeit">
+<div class="sec-label"><span class="ki-tag">KI</span> Vorschlag</div>
+<div style="display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px dashed var(--border-strong); border-radius: var(--radius); background: var(--surface-2); font-size: 12.5px;"><span class="spin" aria-hidden="true"></span> Agent prüft diese Zeile …</div>
+<p class="meta" style="margin: 8px 0 0; line-height: 1.5;">Selbst zuordnen geht jederzeit. Kommt der Vorschlag danach, gilt er als veraltet.</p>
+</section>
+</sc-if>
+
+<sc-if value="{{ isNone }}" hint-placeholder-val="{{ false }}">
+<section class="match-section" aria-label="Kein KI-Vorschlag">
+<div class="sec-label"><span class="ki-tag">KI</span> Kein Vorschlag</div>
+<p style="margin: 0; font-size: 12px; font-style: italic; color: var(--text-muted); line-height: 1.5;">„{{ k.abstain }}“</p>
+<p class="meta" style="margin: 6px 0 10px;">Buchhaltungs-Agent · heute 09:12</p>
+<button type="button" class="btn sm">Erneut anfordern</button>
+</section>
+</sc-if>
+
+<sc-if value="{{ showManualToggle }}" hint-placeholder-val="{{ true }}">
+<section class="match-section">
+<button type="button" class="ki-collapse" aria-expanded="{{ manualOpen }}" onClick="{{ toggleManual }}">
+<span class="sec-label" style="margin: 0;">Selbst zuordnen</span>
+<span class="meta" style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ m.modesText }}</span>
+<span aria-hidden="true" style="color: var(--text-faint);">{{ chevron }}</span>
+</button>
+</section>
+</sc-if>
+
+<sc-if value="{{ showManual }}" hint-placeholder-val="{{ false }}">
+<section class="match-section" aria-label="{{ m.title }}">
+<div class="sec-label">{{ m.title }}</div>
+<div class="seg" role="group" aria-label="Art der Zuordnung" style="margin-bottom: 12px; flex-wrap: wrap;">
+<sc-for list="{{ m.modes }}" as="md" hint-placeholder-count="4">
+<button type="button" class="seg-btn {{ md.cls }}" aria-pressed="{{ md.on }}">{{ md.label }}</button>
+</sc-for>
+</div>
+<sc-if value="{{ m.isInvoices }}" hint-placeholder-val="{{ true }}">
+<sc-for list="{{ m.invoices }}" as="inv" hint-placeholder-count="2">
+<div class="invoice-card alt">
+<div class="row1"><div class="doc-id">{{ inv.id }}</div><div class="amount">{{ inv.amount }}</div></div>
+<div class="ref" style="margin: 0;">{{ inv.ref }}</div>
+<div class="meta-row" style="margin-top: 6px;"><span>{{ inv.meta }}</span></div>
+</div>
+</sc-for>
+</sc-if>
+<sc-if value="{{ m.isParty }}" hint-placeholder-val="{{ false }}">
+<label for="ki-party-suche" class="field-label" style="display: block; margin-bottom: 6px;">Partei suchen</label>
+<input id="ki-party-suche" class="ki-field" type="search" placeholder="Name, IBAN oder Mietvertrag …">
+</sc-if>
+<sc-if value="{{ m.isJournal }}" hint-placeholder-val="{{ false }}">
+<label for="ki-gegenkonto" class="field-label" style="display: block; margin-bottom: 6px;">Gegenkonto</label>
+<input id="ki-gegenkonto" class="ki-field" type="text" value="{{ m.gegenkonto }}">
+<label for="ki-kst" class="field-label" style="display: block; margin: 10px 0 6px;">Kostenstelle</label>
+<input id="ki-kst" class="ki-field" type="text" value="{{ m.kst }}">
+</sc-if>
+</section>
+</sc-if>
+
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"rowId":{"editor":"enum","options":["r1","r2","r3","r4","r5","r6","r7","r8","r9"],"default":"r1"},"mode":{"editor":"enum","options":["","reject","running","manual"],"default":""},"booked":{"editor":"boolean","default":false},"onAccept":{"editor":null},"$preview":{"width":380,"height":1000}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { mode: null, manualOpen: false };
+  }
+  componentDidUpdate(prev) {
+    if (prev.rowId !== this.props.rowId || prev.booked !== this.props.booked) {
+      if (this.state.mode !== null || this.state.manualOpen) this.setState({ mode: null, manualOpen: false });
+    }
+  }
+  data() {
+    const bank = 'Bank Wilhelmshavener (1812)';
+    const invModes = ['Rechnung', 'Vorauszahlung', 'Buchungssatz'];
+    const supModes = ['Rechnung', 'Aufteilen', 'Abschlag', 'Kreditrate', 'Vorauszahlung', 'Buchungssatz'];
+    const noPartyModes = ['Kreditrate', 'Umbuchung', 'Buchungssatz'];
+    return {
+      r1: {
+        datum: '01.04.2026', richtung: 'Eingang', dir: 'in', betrag: '+720,00 €', bt: 'BT-2026-0101',
+        party: 'Max Mustermann', partyMeta: 'Mieter · MV-0182', zweck: 'Miete April Whg 3 OG SINV-2026-0041', iban: 'DE12 5001 0517 0648 4898 90',
+        ki: { status: 'Pending', id: 'HVP-0412', rev: 1, kindLabel: 'Rechnung zuordnen', summary: 'SINV-2026-0041 · 720,00 €', conf: 'hoch', pct: 97,
+          steps: [{ n: '1', title: 'Rechnung', target: 'SINV-2026-0041', sub: 'Miete April 2026 · offen 720,00 €', amount: '720,00 €' }],
+          postings: [{ konto: bank, soll: '720,00', haben: '' }, { konto: 'Forderungen · Max Mustermann', soll: '', haben: '720,00' }],
+          effect: 'Zahlung wird angelegt und gebucht. SINV-2026-0041 ist danach ausgeglichen.',
+          rationale: 'Rechnungsnummer im Verwendungszweck, Betrag exakt, IBAN ist MV-0182 zugeordnet.',
+          sources: ['Verwendungszweck', 'SINV-2026-0041', 'MV-0182'], voucherType: 'Payment', voucherAfter: 'PE-2026-0058' },
+        manual: { title: 'Beleg zuordnen', modes: invModes, kind: 'invoices', invoices: [
+          { id: 'SINV-2026-0041', amount: '720,00 €', ref: 'Miete April 2026 · Whg 3 OG', meta: 'fällig 01.04.2026' },
+          { id: 'SINV-2026-0038', amount: '360,00 €', ref: 'Nebenkosten-Nachzahlung 2025', meta: 'fällig 15.03.2026' }] }
+      },
+      r2: {
+        datum: '02.04.2026', richtung: 'Eingang', dir: 'in', betrag: '+540,00 €', bt: 'noch keine Bank-Tx',
+        party: '', auftraggeber: 'Erika Beispiel', zweck: 'Ueberweisung', iban: 'DE77 1001 0010 0999 8887 77',
+        ki: { status: 'Pending', id: 'HVP-0413 → HVP-0414', rev: 1, kindLabel: 'Partei und Rechnung · 2 Schritte', summary: 'Erika Beispiel → SINV-2026-0052', conf: 'mittel', pct: 74,
+          steps: [
+            { n: '1', title: 'Partei', target: 'Erika Beispiel', sub: 'Mieterin · MV-0191 · Bank-Tx wird angelegt', amount: '' },
+            { n: '2', title: 'Rechnung', target: 'SINV-2026-0052', sub: 'Miete April 2026 · offen 540,00 €', amount: '540,00 €' }],
+          postings: [{ konto: bank, soll: '540,00', haben: '' }, { konto: 'Forderungen · Erika Beispiel', soll: '', haben: '540,00' }],
+          effect: 'Erst Partei zuordnen, dann Zahlung buchen. Schlägt Schritt 1 fehl, wird nichts gebucht.',
+          rationale: 'Name des Auftraggebers entspricht der Mieterin von MV-0191, diese IBAN ist dort noch nicht hinterlegt. Einzige offene Rechnung über 540,00 €.',
+          sources: ['Auftraggeber', 'MV-0191', 'SINV-2026-0052'], voucherType: 'Payment', voucherAfter: 'PE-2026-0059' },
+        manual: { title: 'Partei zuordnen', modes: ['Mieter / Kunde', 'Lieferant', 'Eigentümer'], kind: 'party' }
+      },
+      r3: {
+        datum: '03.04.2026', richtung: 'Ausgang', dir: 'out', betrag: '−89,90 €', bt: 'BT-2026-0102',
+        party: 'Stadtwerke Beispielstadt', partyMeta: 'Lieferant', zweck: 'Abschlag Strom Objekt Hauptstr. 5', iban: 'DE44 5001 0517 5407 3249 31',
+        ki: { status: 'Pending', id: 'HVP-0415', rev: 1, kindLabel: 'Abschlag zuordnen', summary: 'ZP-0007 · April · 89,90 €', conf: 'hoch', pct: 92,
+          steps: [{ n: '1', title: 'Abschlag', target: 'ZP-0007 · Strom Hauptstr. 5', sub: 'Rate April · fällig 01.04.2026', amount: '89,90 €' }],
+          postings: [{ konto: 'Verbindlichkeiten · Stadtwerke', soll: '89,90', haben: '' }, { konto: bank, soll: '', haben: '89,90' }],
+          effect: 'Zahlung wird gegen die April-Rate des Abschlagsplans gebucht.',
+          rationale: 'Betrag und Fälligkeit passen zur April-Rate von ZP-0007, Verwendungszweck nennt das Objekt.',
+          sources: ['ZP-0007', 'Verwendungszweck'], voucherType: 'Payment', voucherAfter: 'PE-2026-0060' },
+        manual: { title: 'Beleg zuordnen', modes: supModes, kind: 'invoices', invoices: [
+          { id: 'ZP-0007 · April', amount: '89,90 €', ref: 'Strom Hauptstr. 5', meta: 'fällig 01.04.2026' }] }
+      },
+      r4: {
+        datum: '07.04.2026', richtung: 'Ausgang', dir: 'out', betrag: '−12,50 €', bt: 'BT-2026-0103',
+        party: '', auftraggeber: 'Postbank', zweck: 'Kontoführungsgebühr', iban: '—',
+        ki: { status: 'Pending', id: 'HVP-0416', rev: 1, kindLabel: 'Buchungssatz', summary: 'Nebenkosten des Geldverkehrs · 12,50 €', conf: 'hoch', pct: 95,
+          steps: [{ n: '1', title: 'Gegenkonto', target: 'Nebenkosten des Geldverkehrs', sub: 'Kostenstelle Hauptstr. 5', amount: '12,50 €' }],
+          postings: [{ konto: 'Nebenkosten des Geldverkehrs', soll: '12,50', haben: '' }, { konto: bank, soll: '', haben: '12,50' }],
+          effect: 'Buchungssatz (Journal Entry) wird angelegt und gebucht.',
+          rationale: 'Dieselbe Gebühr wurde in den letzten 6 Monaten jedes Mal so gebucht.',
+          sources: ['JV-2026-0031', 'JV-2026-0019'], voucherType: 'Buchung', voucherAfter: 'JV-2026-0044' },
+        manual: { title: 'Beleg zuordnen', modes: noPartyModes, kind: 'journal', gegenkonto: '', kst: '' }
+      },
+      r5: {
+        datum: '10.04.2026', richtung: 'Ausgang', dir: 'out', betrag: '−1.240,00 €', bt: 'BT-2026-0104',
+        party: '', auftraggeber: 'Hausbank Beispiel', zweck: 'Annuität Darlehen 4711 April', iban: 'DE02 1203 0000 0000 2020 51',
+        ki: { status: 'Pending', id: 'HVP-0417', rev: 2, kindLabel: 'Kreditrate zuordnen', summary: 'Darlehen 4711 · April · 1.240,00 €', conf: 'mittel', pct: 81,
+          steps: [{ n: '1', title: 'Kreditrate', target: 'Darlehen 4711 · Rate April', sub: 'Zins 412,30 € · Tilgung 827,70 €', amount: '1.240,00 €' }],
+          postings: [{ konto: 'Zinsaufwand Darlehen', soll: '412,30', haben: '' }, { konto: 'Darlehen 4711', soll: '827,70', haben: '' }, { konto: bank, soll: '', haben: '1.240,00' }],
+          effect: 'Rate wird nach Tilgungsplan in Zins und Tilgung aufgeteilt.',
+          rationale: 'Rate entspricht dem Tilgungsplan. Zinsanteil laut Plan 412,70 €, Bank weicht um 0,40 € ab.',
+          sources: ['Darlehen 4711', 'Tilgungsplan 2026'], voucherType: 'Buchung', voucherAfter: 'JV-2026-0045' },
+        manual: { title: 'Beleg zuordnen', modes: noPartyModes, kind: 'journal', gegenkonto: '', kst: '' }
+      },
+      r6: {
+        datum: '15.04.2026', richtung: 'Eingang', dir: 'in', betrag: '+720,00 €', bt: 'BT-2026-0105',
+        party: 'Max Mustermann', partyMeta: 'Mieter · MV-0182', zweck: 'Miete Mai', iban: 'DE12 5001 0517 0648 4898 90',
+        ki: { status: 'Pending', id: 'HVP-0418', rev: 1, kindLabel: 'Vorauszahlung', summary: 'Vorauszahlung Max Mustermann · 720,00 €', conf: 'niedrig', pct: 48,
+          steps: [{ n: '1', title: 'Vorauszahlung', target: 'Max Mustermann', sub: 'ohne Rechnung · Mai noch nicht gestellt', amount: '720,00 €' }],
+          postings: [{ konto: bank, soll: '720,00', haben: '' }, { konto: 'Erhaltene Anzahlungen · Mustermann', soll: '', haben: '720,00' }],
+          effect: 'Zahlung ohne Rechnungsbezug, später mit der Mai-Rechnung verrechenbar.',
+          rationale: 'Für Mai gibt es noch keine Rechnung. Möglich ist auch eine doppelte April-Zahlung.',
+          sources: ['Verwendungszweck', 'MV-0182'], voucherType: 'Payment', voucherAfter: 'PE-2026-0061' },
+        manual: { title: 'Beleg zuordnen', modes: invModes, kind: 'invoices', invoices: [
+          { id: 'SINV-2026-0038', amount: '360,00 €', ref: 'Nebenkosten-Nachzahlung 2025', meta: 'fällig 15.03.2026' }] }
+      },
+      r7: {
+        datum: '18.04.2026', richtung: 'Ausgang', dir: 'out', betrag: '−356,00 €', bt: 'BT-2026-0106',
+        party: 'Malerbetrieb Muster', partyMeta: 'Lieferant', zweck: 'RE 2026-118', iban: 'DE89 3704 0044 0532 0130 00',
+        ki: { status: 'Stale', id: 'HVP-0419', rev: 1, kindLabel: 'Rechnung zuordnen', summary: 'ACC-PINV-2026-0090 · 356,00 €',
+          staleText: 'Die vorgeschlagene Rechnung ACC-PINV-2026-0090 wurde am 17.04. mit PE-2026-0052 ausgeglichen. Der Vorschlag passt nicht mehr zum Buchstand.' },
+        manual: { title: 'Beleg zuordnen', modes: supModes, kind: 'invoices', invoices: [
+          { id: 'ACC-PINV-2026-0094', amount: '356,00 €', ref: 'Rechnung RE 2026-118 · Treppenhaus', meta: 'fällig 30.04.2026' },
+          { id: 'ACC-PINV-2026-0081', amount: '1.120,00 €', ref: 'Rechnung RE 2026-097', meta: 'fällig 15.04.2026' }] }
+      },
+      r8: {
+        datum: '22.04.2026', richtung: 'Eingang', dir: 'in', betrag: '+60,00 €', bt: 'noch keine Bank-Tx',
+        party: '', auftraggeber: '—', zweck: 'Gutschrift', iban: '—',
+        ki: { status: 'None', abstain: 'Gutschrift ohne Absender und ohne Verwendungszweck. Keine belastbare Zuordnung möglich.' },
+        manual: { title: 'Partei zuordnen', modes: ['Mieter / Kunde', 'Lieferant', 'Eigentümer'], kind: 'party' }
+      },
+      r9: {
+        datum: '28.04.2026', richtung: 'Eingang', dir: 'in', betrag: '+720,00 €', bt: 'BT-2026-0107',
+        party: 'Max Mustermann', partyMeta: 'Mieter · MV-0182', zweck: 'Miete Maerz SINV-2026-0033', iban: 'DE12 5001 0517 0648 4898 90',
+        ki: { status: 'Succeeded', id: 'HVP-0401', rev: 1, kindLabel: 'Rechnung zuordnen', summary: 'SINV-2026-0033 · 720,00 €', voucherType: 'Payment', voucher: 'PE-2026-0050', when: '28.04. 09:14' },
+        manual: { title: 'Beleg zuordnen', modes: invModes, kind: 'invoices', invoices: [] }
+      }
+    };
+  }
+  renderVals() {
+    const rows = this.data();
+    const id = this.props.rowId && rows[this.props.rowId] ? this.props.rowId : 'r1';
+    const row = rows[id];
+    const propMode = this.props.mode || '';
+    const mode = this.state.mode || propMode || null;
+    const ki = Object.assign({}, row.ki);
+    let status = ki.status;
+    if (this.props.booked && status === 'Pending') {
+      status = 'Succeeded';
+      ki.voucher = ki.voucherAfter;
+      ki.when = 'heute 09:31';
+    }
+    if (mode === 'running') status = 'Running';
+    if (mode === 'reject' && status === 'Pending') status = 'Reject';
+    const confText = { hoch: 'hoch', mittel: 'mittel', niedrig: 'niedrig' }[ki.conf] + (ki.pct ? ' · ' + ki.pct + ' %' : '');
+    ki.confText = confText;
+    ki.acceptLabel = ki.steps && ki.steps.length > 1 ? 'Beide übernehmen & buchen' : 'Übernehmen & buchen';
+    const manualOpen = this.state.manualOpen || propMode === 'manual';
+    const collapsible = status === 'Pending' || status === 'Reject';
+    const m = row.manual;
+    const activeLabel = { invoices: m.modes[0], party: m.modes[0], journal: 'Buchungssatz' }[m.kind];
+    const mv = {
+      title: m.title,
+      modesText: m.modes.join(' · '),
+      modes: m.modes.map((label) => ({ label, on: label === activeLabel, cls: label === activeLabel ? 'active' : '' })),
+      isInvoices: m.kind === 'invoices' && (m.invoices || []).length > 0,
+      isParty: m.kind === 'party',
+      isJournal: m.kind === 'journal',
+      invoices: m.invoices || [],
+      gegenkonto: status === 'Pending' && manualOpen && ki.steps ? ki.steps[0].target : (m.gegenkonto || ''),
+      kst: status === 'Pending' && manualOpen ? 'Hauptstr. 5' : (m.kst || '')
+    };
+    return {
+      r: Object.assign({}, row, { hasParty: !!row.party, noParty: !row.party }),
+      k: ki,
+      m: mv,
+      isPending: status === 'Pending',
+      isReject: status === 'Reject',
+      isStale: status === 'Stale',
+      isDone: status === 'Succeeded',
+      isRunning: status === 'Running',
+      isNone: status === 'None',
+      showManualToggle: collapsible,
+      showManual: status !== 'Succeeded' && (!collapsible || manualOpen),
+      manualOpen: manualOpen,
+      chevron: manualOpen ? '▴' : '▾',
+      accept: () => { if (this.props.onAccept) this.props.onAccept(id); },
+      startReject: () => this.setState({ mode: 'reject' }),
+      cancelReject: () => this.setState({ mode: null }),
+      toggleManual: () => this.setState({ manualOpen: !this.state.manualOpen })
+    };
+  }
+}
+</script>
+</body>
+</html>

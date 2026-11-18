@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Bankimport mit KI-Vorschlägen</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/hausverwaltung/styles.css">
+<link rel="stylesheet" href="ds/hausverwaltung/colors_and_type.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/frappe-theme-shim.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-tokens.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-components.css">
+<link rel="stylesheet" href="ds/hausverwaltung/ui_kits/bankimport/bankimport-kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:#f7f6f3}
+a{color:#1a4d8c}a:hover{color:#123a6b}
+.ki-tag{display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:4px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);font-family:var(--font-mono);font-size:9.5px;font-weight:600;letter-spacing:.4px;flex:none}
+.conf{display:inline-flex;gap:2px;flex:none}
+.conf i{display:block;width:10px;height:4px;border-radius:2px;background:var(--surface-3);border:1px solid var(--border-strong)}
+.conf.c-hoch i{background:var(--done);border-color:var(--done)}
+.conf.c-mittel i:nth-child(1),.conf.c-mittel i:nth-child(2){background:var(--warn);border-color:var(--warn)}
+.conf.c-niedrig i:nth-child(1){background:var(--danger);border-color:var(--danger)}
+.txh{display:grid;grid-template-columns:62px 10px 96px minmax(130px,1fr) minmax(0,1fr) 196px 104px;gap:10px;align-items:center;padding:9px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)}
+.txh span{font-size:10.5px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--text-muted);white-space:nowrap}
+.txr{all:unset;box-sizing:border-box;width:100%;display:grid;grid-template-columns:62px 10px 96px minmax(130px,1fr) minmax(0,1fr) 196px 104px;gap:10px;align-items:center;padding:7px 14px;min-height:var(--row-height);border-bottom:1px solid var(--border);cursor:pointer;font-size:12.5px;transition:background .08s}
+.txr:hover{background:var(--surface-2)}
+.txr.sel{background:var(--phase3-bg);box-shadow:inset 3px 0 0 var(--text)}
+.txr.done{color:var(--text-muted)}
+.txr:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.cell-trunc{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kic{display:flex;flex-direction:column;gap:3px;min-width:0}
+.kic-1{display:flex;align-items:center;gap:6px;min-width:0;font-family:var(--font-mono);font-size:11.5px;font-weight:500}
+.kic-2{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--text-muted);white-space:nowrap}
+.ki-stat{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);white-space:nowrap}
+.ki-stat b{font-family:var(--font-mono);font-weight:600;color:var(--text)}
+@media (max-width: 1000px){.stat-row{grid-template-columns:repeat(2,minmax(0,1fr))}.phase-stepper{grid-template-columns:1fr 1fr}}
+@media (max-width: 760px){.txh{display:none}.txr{grid-template-columns:62px 10px minmax(0,1fr) 96px}.txr .hide-s{display:none}}
+</style>
+</helmet>
+<div class="hv" style="min-height: 100vh; background: var(--bg); color: var(--text); font-family: var(--font-sans);">
+<div class="shell" style="padding: 22px 24px 60px;">
+
+<header class="topbar" style="flex-wrap: wrap;">
+<div class="brand">
+<div class="mark" aria-hidden="true">HV</div>
+<div>
+<h1>Bankimport</h1>
+<div class="crumb">Hausverwaltung · Wilhelmshavener (1812) · 01.04.–30.04.2026 · 9 Buchungen</div>
+</div>
+</div>
+<div class="actions" style="flex-wrap: wrap;">
+<button type="button" class="btn subtle">Regeln</button>
+<button type="button" class="btn subtle">Import wechseln</button>
+<button type="button" class="btn subtle">Neu laden</button>
+<button type="button" class="btn primary">Neuer Import</button>
+</div>
+</header>
+
+<div class="stat-row">
+<div class="stat-card bank"><div class="label">Bankkonto</div><div class="value">Wilhelmshavener (1812)</div><div class="iban">DE89 1001 0010 0123 4567 89</div></div>
+<div class="stat-card"><div class="label">Saldo lt. Bank</div><div class="value">12.450,32 €</div><div class="sub">per 30.04.2026</div></div>
+<div class="stat-card"><div class="label">Saldo lt. ERP</div><div class="value">{{ saldoErp }}</div><div class="sub">aktueller Buchstand</div></div>
+<div class="stat-card diff has-diff"><div class="label">Differenz</div><div class="value">{{ diff }}</div><div class="sub">noch offen</div></div>
+<div class="stat-card"><div class="label">Zeilen / offen</div><div class="value">{{ openCount }}<span style="color: var(--text-faint); font-size: 14px;"> / 9</span></div><div class="sub">{{ doneCount }} bereits gebucht</div></div>
+</div>
+
+<section aria-label="KI-Vorschläge zu diesem Auszug" style="display: flex; align-items: center; gap: 12px 18px; flex-wrap: wrap; padding: 12px 16px; margin-bottom: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);">
+<div style="display: flex; align-items: center; gap: 10px; flex: 1 1 300px; min-width: 0;">
+<span class="ki-tag">KI</span>
+<div style="min-width: 0;">
+<div style="font-weight: 600; font-size: 13.5px;">{{ pendingCount }} Vorschläge offen <span style="font-weight: 400; color: var(--text-muted);">für {{ openCount }} offene Zeilen</span></div>
+<div class="meta">Buchhaltungs-Agent · heute 09:12 · Paket HVP-PKG-0031</div>
+</div>
+</div>
+<div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
+<span class="ki-stat"><span class="conf c-hoch" aria-hidden="true"><i></i><i></i><i></i></span><b>{{ hochCount }}</b> hoch</span>
+<span class="ki-stat"><span class="conf c-mittel" aria-hidden="true"><i></i><i></i><i></i></span><b>{{ mittelCount }}</b> mittel</span>
+<span class="ki-stat"><span class="conf c-niedrig" aria-hidden="true"><i></i><i></i><i></i></span><b>{{ niedrigCount }}</b> niedrig</span>
+<span class="ki-stat" style="color: var(--danger);"><b style="color: var(--danger);">1</b> veraltet</span>
+<span class="ki-stat"><b>1</b> ohne Vorschlag</span>
+</div>
+<div style="display: flex; gap: 8px; flex-wrap: wrap;">
+<a href="Vorschlaege-Paket.dc.html" class="btn subtle" style="text-decoration: none;">Im Paket ansehen →</a>
+<a href="Sammeluebernahme.dc.html" class="btn" style="text-decoration: none; border-color: var(--text);">Vorschläge übernehmen … <span class="kbd">{{ hochCount }}</span></a>
+</div>
+</section>
+
+<nav class="phase-stepper" aria-label="Phasen">
+<button type="button" class="phase-step all-phases active"><div class="num">∗</div><div class="meta"><div class="title">Alle Phasen</div><div class="desc">Gesamtübersicht</div></div><div class="count">9</div></button>
+<button type="button" class="phase-step"><div class="num">1</div><div class="meta"><div class="title">Parteien zuordnen</div><div class="desc">IBAN → Mieter / Lieferant</div></div><div class="count">2</div></button>
+<button type="button" class="phase-step"><div class="num">3</div><div class="meta"><div class="title">Belege zuordnen</div><div class="desc">Rechnungen matchen</div></div><div class="count">{{ phase3Count }}</div></button>
+<button type="button" class="phase-step"><div class="num">4</div><div class="meta"><div class="title">Gebucht</div><div class="desc">Vollständig verarbeitet</div></div><div class="count">{{ doneCount }}</div></button>
+</nav>
+
+<div class="toolbar">
+<div class="filters">
+<sc-for list="{{ chips }}" as="c" hint-placeholder-count="8">
+<button type="button" class="filter-chip {{ c.cls }}" aria-pressed="{{ c.on }}" onClick="{{ c.pick }}" disabled="{{ c.disabled }}">
+<sc-if value="{{ c.isKi }}" hint-placeholder-val="{{ false }}"><span class="ki-tag">KI</span></sc-if>{{ c.label }}<span class="badge">{{ c.count }}</span>
+</button>
+</sc-for>
+</div>
+<div class="search">
+<span aria-hidden="true" style="display: inline-block; width: 9px; height: 9px; border: 1.5px solid var(--text-muted); border-radius: 50%;"></span>
+<input aria-label="Suchen" placeholder="Verwendungszweck, Auftraggeber, IBAN …">
+</div>
+</div>
+
+<div class="split">
+<div class="tx-card">
+<div class="tx-card-head"><div class="title">{{ filterTitle }}</div><div class="count">{{ shownCount }} Zeilen</div></div>
+<div style="overflow-x: auto;">
+<div style="min-width: 640px;">
+<div class="txh" aria-hidden="true"><span>Datum</span><span></span><span style="text-align: right;">Betrag</span><span>Partei / IBAN</span><span>Verwendungszweck</span><span>KI-Vorschlag</span><span>Status</span></div>
+<sc-for list="{{ rows }}" as="x" hint-placeholder-count="9">
+<button type="button" class="txr {{ x.cls }}" aria-pressed="{{ x.isSel }}" aria-label="{{ x.aria }}" onClick="{{ x.pick }}">
+<span style="font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted);">{{ x.datum }}</span>
+<span class="dir-dot {{ x.dir }}" aria-hidden="true"></span>
+<span class="hide-s" style="font-family: var(--font-mono); font-weight: 500; text-align: right; white-space: nowrap; color: {{ x.amountColor }};">{{ x.betrag }}</span>
+<span style="display: flex; flex-direction: column; gap: 1px; min-width: 0;">
+<span class="cell-trunc" style="font-weight: 500; {{ x.partyStyle }}">{{ x.party }}</span>
+<span class="cell-trunc" style="font-size: 10.5px; color: var(--text-muted); font-family: var(--font-mono);">{{ x.partyMeta }}</span>
+</span>
+<span class="cell-trunc hide-s" style="color: var(--text-muted); font-size: 12px;">{{ x.zweck }}</span>
+<span class="kic hide-s">
+<sc-if value="{{ x.kiPending }}" hint-placeholder-val="{{ true }}">
+<span class="kic-1"><span class="ki-tag">KI</span><span class="cell-trunc">{{ x.kiMain }}</span></span>
+<span class="kic-2"><span class="conf c-{{ x.conf }}" aria-hidden="true"><i></i><i></i><i></i></span>{{ x.kiSub }}</span>
+</sc-if>
+<sc-if value="{{ x.kiStale }}" hint-placeholder-val="{{ false }}">
+<span class="kic-1" style="color: var(--danger);"><span class="ki-tag" style="border-color: var(--danger); color: var(--danger);">KI</span>! Veraltet</span>
+<span class="kic-2">Rechnung schon ausgeglichen</span>
+</sc-if>
+<sc-if value="{{ x.kiNone }}" hint-placeholder-val="{{ false }}">
+<span class="kic-1" style="color: var(--text-faint); font-family: var(--font-sans); font-weight: 400;">Kein Vorschlag</span>
+<span class="kic-2">Agent unsicher</span>
+</sc-if>
+<sc-if value="{{ x.kiDone }}" hint-placeholder-val="{{ false }}">
+<span class="kic-1" style="color: var(--done);">✓ übernommen</span>
+<span class="kic-2" style="font-family: var(--font-mono);">{{ x.kiVoucher }}</span>
+</sc-if>
+</span>
+<span class="hide-s"><span class="pill {{ x.pillCls }}">{{ x.pillText }}</span></span>
+</button>
+</sc-for>
+</div>
+</div>
+<div style="display: flex; gap: 14px; flex-wrap: wrap; padding: 10px 14px; font-size: 11.5px; color: var(--text-muted); background: var(--surface-2);">
+<span><span class="kbd">J</span> <span class="kbd">K</span> Zeile wechseln</span>
+<span><span class="kbd">↵</span> Vorschlag übernehmen</span>
+<span><span class="kbd">R</span> ablehnen</span>
+<span><span class="kbd">Esc</span> abbrechen</span>
+</div>
+</div>
+
+<div class="match-panel-wrap">
+<dc-import name="Matchpanel" row-id="{{ sel }}" booked="{{ selBooked }}" on-accept="{{ accept }}" hint-size="380px,900px"></dc-import>
+</div>
+</div>
+
+<sc-if value="{{ hasToast }}" hint-placeholder-val="{{ false }}">
+<div class="hv-toast success" role="status">{{ toast }}</div>
+</sc-if>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1280}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { sel: 'r1', booked: {}, filter: 'open', toast: '' };
+  }
+  componentWillUnmount() { clearTimeout(this._t); }
+  base() {
+    return [
+      { id: 'r1', datum: '01.04.', dir: 'in', betrag: '+720,00 €', party: 'Max Mustermann', partyMeta: 'DE12 5001 0517 …', zweck: 'Miete April Whg 3 OG SINV-2026-0041', ki: 'Pending', kiMain: 'SINV-2026-0041', kiSub: 'Rechnung · hoch', conf: 'hoch', phase: 3, cust: true, voucher: 'PE-2026-0058', toast: 'Zahlung gebucht · SINV-2026-0041 ausgeglichen' },
+      { id: 'r2', datum: '02.04.', dir: 'in', betrag: '+540,00 €', party: '', partyMeta: 'Auftraggeber: Erika Beispiel', zweck: 'Ueberweisung', ki: 'Pending', kiMain: 'Erika Beispiel → SINV-…0052', kiSub: 'Partei + Rechnung · mittel', conf: 'mittel', phase: 1, cust: true, voucher: 'PE-2026-0059', toast: 'Partei zugeordnet · Zahlung gebucht · SINV-2026-0052 ausgeglichen' },
+      { id: 'r3', datum: '03.04.', dir: 'out', betrag: '−89,90 €', party: 'Stadtwerke Beispielstadt', partyMeta: 'DE44 5001 0517 …', zweck: 'Abschlag Strom Objekt Hauptstr. 5', ki: 'Pending', kiMain: 'ZP-0007 · April', kiSub: 'Abschlag · hoch', conf: 'hoch', phase: 3, sup: true, voucher: 'PE-2026-0060', toast: 'Abschlag gebucht · ZP-0007 April' },
+      { id: 'r4', datum: '07.04.', dir: 'out', betrag: '−12,50 €', party: '', partyMeta: 'Auftraggeber: Postbank', zweck: 'Kontoführungsgebühr', ki: 'Pending', kiMain: 'Nebenkosten Geldverkehr', kiSub: 'Buchungssatz · hoch', conf: 'hoch', phase: 3, voucher: 'JV-2026-0044', toast: 'Buchungssatz gebucht · JV-2026-0044' },
+      { id: 'r5', datum: '10.04.', dir: 'out', betrag: '−1.240,00 €', party: '', partyMeta: 'Auftraggeber: Hausbank Beispiel', zweck: 'Annuität Darlehen 4711 April', ki: 'Pending', kiMain: 'Darlehen 4711 · April', kiSub: 'Kreditrate · mittel', conf: 'mittel', phase: 3, voucher: 'JV-2026-0045', toast: 'Kreditrate gebucht · Darlehen 4711 April' },
+      { id: 'r6', datum: '15.04.', dir: 'in', betrag: '+720,00 €', party: 'Max Mustermann', partyMeta: 'DE12 5001 0517 …', zweck: 'Miete Mai', ki: 'Pending', kiMain: 'Vorauszahlung', kiSub: 'ohne Rechnung · niedrig', conf: 'niedrig', phase: 3, cust: true, voucher: 'PE-2026-0061', toast: 'Vorauszahlung gebucht · Max Mustermann' },
+      { id: 'r7', datum: '18.04.', dir: 'out', betrag: '−356,00 €', party: 'Malerbetrieb Muster', partyMeta: 'DE89 3704 0044 …', zweck: 'RE 2026-118', ki: 'Stale', phase: 3, sup: true },
+      { id: 'r8', datum: '22.04.', dir: 'in', betrag: '+60,00 €', party: '', partyMeta: 'ohne Auftraggeber', zweck: 'Gutschrift', ki: 'None', phase: 1 },
+      { id: 'r9', datum: '28.04.', dir: 'in', betrag: '+720,00 €', party: 'Max Mustermann', partyMeta: 'DE12 5001 0517 …', zweck: 'Miete Maerz SINV-2026-0033', ki: 'Succeeded', phase: 4, cust: true, voucher: 'PE-2026-0050' }
+    ];
+  }
+  renderVals() {
+    const booked = this.state.booked;
+    const all = this.base().map((r) => {
+      const isBooked = !!booked[r.id];
+      const ki = isBooked ? 'Succeeded' : r.ki;
+      const phase = isBooked ? 4 : r.phase;
+      return Object.assign({}, r, { ki, phase });
+    });
+    const open = all.filter((r) => r.phase !== 4);
+    const pending = all.filter((r) => r.ki === 'Pending');
+    const visible = all.filter((r) => this.state.filter === 'all' ? true : this.state.filter === 'ki' ? r.ki === 'Pending' : r.phase !== 4);
+    const pick = (id) => () => this.setState({ sel: id });
+    const rows = visible.map((r) => {
+      const isSel = r.id === this.state.sel;
+      const done = r.phase === 4;
+      return Object.assign({}, r, {
+        isSel,
+        cls: (isSel ? 'sel ' : '') + (done ? 'done' : ''),
+        aria: r.datum + ' ' + r.betrag + ' ' + (r.party || r.partyMeta) + ', ' + (r.ki === 'Pending' ? 'KI-Vorschlag ' + r.kiMain : r.ki === 'Stale' ? 'KI-Vorschlag veraltet' : r.ki === 'Succeeded' ? 'gebucht' : 'kein KI-Vorschlag'),
+        party: r.party || 'Keine Partei',
+        partyStyle: r.party ? '' : 'font-style: italic; color: var(--text-faint);',
+        amountColor: r.dir === 'in' ? 'var(--eingang)' : 'var(--text)',
+        kiPending: r.ki === 'Pending',
+        kiStale: r.ki === 'Stale',
+        kiNone: r.ki === 'None',
+        kiDone: r.ki === 'Succeeded',
+        kiVoucher: r.voucher || '',
+        pillCls: done ? 'done' : r.phase === 1 ? 'phase1' : 'phase3',
+        pillText: done ? 'Gebucht' : r.phase === 1 ? 'Partei offen' : 'Beleg offen',
+        pick: pick(r.id)
+      });
+    });
+    const chipDefs = [
+      { id: 'open', label: 'Offen', count: open.length },
+      { id: 'all', label: 'Alle', count: all.length },
+      { id: 'ki', label: 'Vorschlag', count: pending.length, isKi: true },
+      { id: 'problem', label: 'Problemzeilen', count: 0 },
+      { id: 'noparty', label: 'Ohne Partei', count: all.filter((r) => !r.party && r.phase !== 4).length },
+      { id: 'customer', label: 'Kunde', count: all.filter((r) => r.cust).length },
+      { id: 'supplier', label: 'Lieferant', count: all.filter((r) => r.sup).length },
+      { id: 'eigentuemer', label: 'Eigentümer', count: 0 }
+    ];
+    const active = this.state.filter;
+    const chips = chipDefs.map((c) => ({
+      label: c.label, count: c.count, isKi: !!c.isKi,
+      on: c.id === active, cls: c.id === active ? 'active' : '',
+      disabled: c.count === 0 && c.id !== 'all',
+      pick: () => { if (['open', 'all', 'ki'].indexOf(c.id) >= 0) this.setState({ filter: c.id }); }
+    }));
+    const titles = { open: 'Offene Zeilen', all: 'Alle Zeilen', ki: 'Zeilen mit KI-Vorschlag' };
+    const bookedSum = { r1: 720, r2: 540, r3: -89.9, r4: -12.5, r5: -1240, r6: 720 };
+    let erp = 11900.32;
+    Object.keys(booked).forEach((k) => { erp += bookedSum[k] || 0; });
+    const fmt = (v) => v.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+    const accept = (id) => {
+      const row = this.base().find((r) => r.id === id);
+      const nb = Object.assign({}, this.state.booked, { [id]: true });
+      const order = this.base().map((r) => r.id);
+      const start = order.indexOf(id);
+      const next = order.slice(start + 1).concat(order.slice(0, start)).find((k) => {
+        const r = this.base().find((x) => x.id === k);
+        return r.ki === 'Pending' && !nb[k];
+      });
+      clearTimeout(this._t);
+      this._t = setTimeout(() => this.setState({ toast: '' }), 3500);
+      this.setState({ booked: nb, sel: next || id, toast: row && row.toast ? row.toast : 'Gebucht' });
+    };
+    return {
+      rows,
+      chips,
+      sel: this.state.sel,
+      selBooked: !!booked[this.state.sel],
+      accept,
+      filterTitle: titles[active] || 'Offene Zeilen',
+      shownCount: rows.length,
+      openCount: open.length,
+      doneCount: all.length - open.length,
+      pendingCount: pending.length,
+      phase3Count: all.filter((r) => r.phase === 3).length,
+      hochCount: pending.filter((r) => r.conf === 'hoch').length,
+      mittelCount: pending.filter((r) => r.conf === 'mittel').length,
+      niedrigCount: pending.filter((r) => r.conf === 'niedrig').length,
+      saldoErp: fmt(erp),
+      diff: fmt(12450.32 - erp),
+      hasToast: !!this.state.toast,
+      toast: this.state.toast
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -72,6 +72,12 @@ const RPC_ACTIONS = {
 // Navigations-Aktionen: kein frappe.call, sondern Desk-Navigation. Werden vom
 // iframe wie eine RPC-Aktion aufgerufen, aber hier abgefangen.
 const NAV_ACTIONS = {
+	open_proposals: (p) => {
+		if (!p.package) return;
+		const path = `/app/hv-proposals/${encodeURIComponent(p.package)}`;
+		const query = p.proposal ? `?vorschlag=${encodeURIComponent(p.proposal)}` : "";
+		window.location.assign(path + query);
+	},
 	open_doc: (p) => p.doctype && p.docname && frappe.set_route("Form", p.doctype, p.docname),
 	open_list: (p) => p.doctype && frappe.set_route("List", p.doctype),
 	new_doc: (p) => p.doctype && frappe.new_doc(p.doctype),
@@ -82,16 +88,19 @@ const NAV_ACTIONS = {
 // Deep-Link: route_options.import (oder ?import=) wählt den konkreten Import.
 function consumeImportRoute() {
 	const ro = frappe.route_options || {};
-	let name = ro.import || ro.bankauszug_import || "";
-	if (name) delete frappe.route_options.import;
-	if (!name) name = (frappe.utils.get_query_params() || {}).import || "";
-	return name || "";
+	const query = frappe.utils.get_query_params() || {};
+	const name = ro.import || ro.bankauszug_import || query.import || "";
+	if (ro.import) delete ro.import;
+	return { name, row: query.row || "" };
 }
 
-function buildSrc(importName) {
-	let s = `/assets/hausverwaltung/bankimport_v2/index.html?v=${Date.now()}`;
-	if (importName) s += `&import=${encodeURIComponent(importName)}`;
-	return s;
+function buildSrc({ name, row }) {
+	const params = new URLSearchParams({ v: Date.now() });
+	if (name) {
+		params.set("import", name);
+		if (row) params.set("row", row);
+	}
+	return `/assets/hausverwaltung/bankimport_v2/index.html?${params}`;
 }
 
 let _reload = null;
@@ -134,8 +143,8 @@ frappe.pages["bankimport_v2"].on_page_show = function () {
 	attachListener();
 	attachResize();
 	if (_resize) _resize();
-	const name = consumeImportRoute();
-	if (name && _reload) _reload(name);
+	const route = consumeImportRoute();
+	if (route.name && _reload) _reload(route);
 };
 
 frappe.pages["bankimport_v2"].on_page_load = function (wrapper) {
@@ -154,7 +163,7 @@ frappe.pages["bankimport_v2"].on_page_load = function (wrapper) {
 	).css({ width: "100%", border: "none", display: "block", background: "#f7f6f3" });
 
 	$body.append($frame);
-	_reload = (name) => $frame.attr("src", buildSrc(name));
+	_reload = (route) => $frame.attr("src", buildSrc(route));
 
 	function resize() {
 		const top = $frame[0].getBoundingClientRect().top;
@@ -199,7 +208,7 @@ frappe.pages["bankimport_v2"].on_page_load = function (wrapper) {
 		frappe
 			.call({ method, args: msg.params || {} })
 			.then((r) => reply({ ok: true, data: r.message }))
-			.catch((e) => reply({ ok: false, error: extractError(e) }));
+			.catch((e) => reply({ ok: false, error: extractError(e), status: e?.status }));
 	};
 
 	// Aus einem fehlgeschlagenen frappe.call eine lesbare Meldung ziehen.

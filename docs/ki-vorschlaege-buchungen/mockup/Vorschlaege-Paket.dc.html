@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>KI-Vorschläge: Paket Kontoauszug April</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/hausverwaltung/styles.css">
+<link rel="stylesheet" href="ds/hausverwaltung/colors_and_type.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/frappe-theme-shim.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-tokens.css">
+<link rel="stylesheet" href="ds/hausverwaltung/design-system/hv-components.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:#f7f6f3}
+a{color:#1a4d8c}a:hover{color:#123a6b}
+.pnode{appearance:none;-webkit-appearance:none;color:var(--text);transition:border-color .12s ease,box-shadow .12s ease}
+.pnode:hover{border-color:var(--border-strong) !important}
+.pnode.is-sel{border-color:var(--accent) !important;box-shadow:0 0 0 1px var(--accent),0 6px 18px -6px rgba(0,0,0,.14)}
+.pnode:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.pnode.s-Stale{border-style:dashed !important}
+.pnode .rail{background:oklch(82% 0.008 80)}
+.pnode .glyph{background:oklch(95.5% 0.004 80);color:oklch(45% 0 0)}
+.pill-s{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;line-height:1.7;white-space:nowrap;border:1px solid oklch(82% 0.008 80);background:oklch(95.5% 0.004 80);color:oklch(40% 0 0)}
+.s-Pending .rail{background:oklch(78% 0.07 245)}
+.s-Pending .glyph,.pill-s.s-Pending{background:oklch(96% 0.04 245);color:oklch(45% 0.13 245)}
+.s-Pending .stl{color:oklch(45% 0.13 245)}
+.pill-s.s-Pending{border-color:oklch(78% 0.07 245)}
+.s-Succeeded .rail{background:oklch(78% 0.07 150)}
+.s-Succeeded .glyph,.pill-s.s-Succeeded{background:oklch(96% 0.04 150);color:oklch(45% 0.13 150)}
+.s-Succeeded .stl{color:oklch(45% 0.13 150)}
+.pill-s.s-Succeeded{border-color:oklch(78% 0.07 150)}
+.s-Stale .rail{background:oklch(78% 0.09 25)}
+.s-Stale .glyph,.pill-s.s-Stale{background:oklch(96% 0.04 25);color:oklch(45% 0.16 25)}
+.s-Stale .stl{color:oklch(45% 0.16 25)}
+.pill-s.s-Stale{border-color:oklch(78% 0.09 25)}
+.edge{position:relative;display:block;height:0;border-top:1.5px solid oklch(72% 0.01 60)}
+.edge.e-wait{border-top-style:dashed}
+.edge .arrow{position:absolute;right:-1px;top:-5px;width:0;height:0;border-left:6px solid oklch(72% 0.01 60);border-top:4px solid transparent;border-bottom:4px solid transparent}
+.seg-Pending{background:oklch(58% 0.14 245)}
+.seg-Succeeded{background:oklch(64% 0.13 150)}
+.seg-Stale{background:oklch(50% 0.18 25)}
+.ki-tag{display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:4px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);font-family:var(--font-mono);font-size:9.5px;font-weight:600;letter-spacing:.4px}
+.conf{display:inline-flex;gap:2px}
+.conf i{display:block;width:12px;height:5px;border-radius:2px;background:var(--surface-3);border:1px solid var(--border-strong)}
+.conf.c-hoch i{background:var(--done);border-color:var(--done)}
+.conf.c-mittel i:nth-child(1),.conf.c-mittel i:nth-child(2){background:var(--warn);border-color:var(--warn)}
+.conf.c-niedrig i:nth-child(1){background:var(--danger);border-color:var(--danger)}
+.post{display:grid;grid-template-columns:minmax(0,1fr) 76px 76px;gap:8px;font-size:12px;padding:4px 0;border-bottom:1px solid var(--border)}
+.post .n{font-family:var(--font-mono);text-align:right}
+.chg{display:grid;grid-template-columns:110px minmax(0,1fr) minmax(0,1fr);gap:8px;font-size:12px;padding:5px 0;border-bottom:1px solid var(--border)}
+.hv-btn{font-family:var(--font-sans)}
+</style>
+</helmet>
+<div class="hv" style="min-height: 1180px; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 13.5px; line-height: 1.4;">
+
+<header style="display: flex; align-items: center; gap: 16px; min-height: 48px; padding: 6px 20px; box-sizing: border-box; background: var(--surface); border-bottom: 1px solid var(--border); flex-wrap: wrap;">
+<div style="display: flex; align-items: center; gap: 10px;">
+<span aria-hidden="true" style="display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 6px; background: var(--text); color: #ffffff; font-family: var(--font-mono); font-size: 11px; font-weight: 600;">HV</span>
+<span style="font-weight: 600;">Hausverwaltung</span>
+</div>
+<div style="margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-muted);">
+<span>M. Krüger · Prüfer</span>
+<span aria-hidden="true" style="display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 999px; background: var(--surface-3); color: var(--text); font-size: 11px; font-weight: 600;">MK</span>
+</div>
+</header>
+
+<main style="max-width: 1500px; margin: 0 auto; padding: 16px 24px 40px; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px;">
+
+<nav aria-label="Brotkrumen" style="font-size: 12px; color: var(--text-muted);"><a href="#">Hausverwaltung</a> / <a href="Vorschlaege-Pakete.dc.html">KI-Vorschläge</a> / Kontoauszug April 2026</nav>
+
+<section aria-label="Paket" style="display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;">
+<div style="display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px;">
+<div style="display: flex; flex-direction: column; gap: 4px; min-width: 0;">
+<span class="label">Paket · Graph mit 8 Zeilen</span>
+<h1 style="margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.01em;">Kontoauszug April 2026 · Wilhelmshavener (1812)</h1>
+<span style="font-size: 12.5px; color: var(--text-muted);">Buchhaltungs-Agent · Anlass: Bankauszug Import <span class="mono">BAI-1812-2026-04</span> · Eingang heute 09:12 · 9 Vorschläge in 8 Importzeilen</span>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 8px;">
+<a href="Main.dc.html" class="hv-btn" style="text-decoration: none;">Im Bankimport öffnen →</a>
+<button type="button" class="hv-btn">Offene freigeben …</button>
+<button type="button" class="hv-btn hv-btn-primary" disabled>Freigegebene ausführen (0)</button>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px;">
+<div role="img" aria-label="7 Prüfung offen, 1 veraltet, 1 ausgeführt" style="display: flex; gap: 2px; height: 8px; border-radius: 999px; overflow: hidden;">
+<span class="seg-Pending" style="flex-grow: 7; flex-basis: 0;"></span><span class="seg-Stale" style="flex-grow: 1; flex-basis: 0;"></span><span class="seg-Succeeded" style="flex-grow: 1; flex-basis: 0;"></span>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 11.5px; color: var(--text-muted);">
+<span>▶ 7 Prüfung offen</span><span>! 1 veraltet</span><span>✓ 1 ausgeführt</span>
+<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="edge" style="width: 22px;"></span>Vorgänger ausgeführt</span>
+<span style="display: inline-flex; align-items: center; gap: 6px;"><span class="edge e-wait" style="width: 22px;"></span>wartet auf Vorgänger</span>
+</div>
+</div>
+</section>
+
+<div style="display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start;">
+
+<section aria-label="Graph" style="flex: 999 1 640px; min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;">
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface-2);">
+<span class="label">Importzeilen</span>
+<div class="hv-tabs" role="group" aria-label="Ansicht"><button type="button" class="hv-tab is-active" aria-pressed="true">Graph</button><button type="button" class="hv-tab" aria-pressed="false">Liste</button></div>
+</div>
+<div style="overflow: auto; padding: 18px 20px; background-color: var(--bg); background-image: radial-gradient(var(--border-strong) 1px, transparent 1px); background-size: 18px 18px;">
+<div style="display: flex; flex-direction: column; gap: 12px; width: max-content;">
+<sc-for list="{{ lanes }}" as="l" hint-placeholder-count="8">
+<div style="display: flex; flex-direction: column; gap: 4px;">
+<span style="font-size: 11.5px; color: var(--text-muted);"><strong style="color: var(--text); font-family: var(--font-mono); font-weight: 600;">{{ l.date }}</strong> · <span class="mono">{{ l.amount }}</span> · {{ l.who }}</span>
+<div style="display: flex; align-items: center;">
+<sc-for list="{{ l.cells }}" as="n" hint-placeholder-count="1">
+<sc-if value="{{ n.hasEdge }}" hint-placeholder-val="{{ false }}"><span class="edge e-wait" style="flex: none; width: 32px;"><span class="arrow"></span></span></sc-if>
+<button type="button" class="pnode s-{{ n.status }} {{ n.selCls }}" aria-pressed="{{ n.isSel }}" aria-label="{{ n.aria }}" onClick="{{ n.pick }}" style="position: relative; flex: none; width: 220px; height: 84px; box-sizing: border-box; padding: 0; display: flex; flex-direction: column; text-align: left; font-family: var(--font-sans); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; cursor: pointer;">
+<span class="rail" style="position: absolute; left: 0; top: 0; bottom: 0; width: 4px;"></span>
+<span style="display: flex; align-items: center; gap: 8px; padding: 9px 10px 8px 13px; border-bottom: 1px solid var(--border);">
+<span class="glyph" style="flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 6px; font-size: 11px; font-weight: 700;">{{ n.glyph }}</span>
+<span style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+<span class="ttl" style="font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ n.title }}</span>
+<span style="font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);">{{ n.id }}</span>
+</span>
+</span>
+<span style="display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 7px 10px 0 13px; font-size: 11.5px;">
+<span style="font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ n.change }}</span>
+<span class="stl" style="flex: none; font-size: 10.5px; font-weight: 600;">{{ n.statusLabel }}</span>
+</span>
+</button>
+</sc-for>
+</div>
+</div>
+</sc-for>
+</div>
+</div>
+</section>
+
+<aside aria-label="Vorschlag im Detail" style="flex: 1 1 380px; min-width: 0; max-width: 460px; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;">
+
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--surface-2);">
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+<span class="label">{{ sel.objType }}</span>
+<span class="pill-s s-{{ sel.status }}">{{ sel.glyph }} {{ sel.statusLabel }}</span>
+</div>
+<h2 style="margin: 0; font-size: 15px; font-weight: 600;">{{ sel.headline }}</h2>
+<a href="Main.dc.html" style="font-size: 12.5px;">{{ sel.target }}</a>
+<span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">{{ sel.id }} · Rev. {{ sel.rev }} · {{ sel.hash }} · {{ sel.pos }}</span>
+</div>
+
+<sc-if value="{{ sel.hasNote }}" hint-placeholder-val="{{ false }}">
+<div style="margin: 12px 16px 0; padding: 10px 12px; border-radius: 6px; font-size: 12.5px; line-height: 1.5; {{ sel.noteStyle }}">{{ sel.note }}</div>
+</sc-if>
+
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px 16px 0;">
+<h3 class="label" style="margin: 0;">Änderung</h3>
+<div class="chg" style="color: var(--text-muted); font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px;"><span>Feld</span><span>Bisher</span><span>Neu</span></div>
+<sc-for list="{{ sel.changes }}" as="c" hint-placeholder-count="2">
+<div class="chg"><span style="color: var(--text-muted);">{{ c.f }}</span><span class="mono" style="color: var(--text-muted);">{{ c.a }}</span><span class="mono" style="font-weight: 500;">{{ c.b }}</span></div>
+</sc-for>
+</div>
+
+<sc-if value="{{ sel.hasPostings }}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px 16px 0;">
+<h3 class="label" style="margin: 0;">Buchung (Vorschau)</h3>
+<div class="post" style="color: var(--text-muted); font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px;"><span>Konto</span><span style="text-align: right;">Soll</span><span style="text-align: right;">Haben</span></div>
+<sc-for list="{{ sel.postings }}" as="p" hint-placeholder-count="2">
+<div class="post"><span>{{ p.k }}</span><span class="n">{{ p.s }}</span><span class="n">{{ p.h }}</span></div>
+</sc-for>
+</div>
+</sc-if>
+
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px 16px 0;">
+<h3 class="label" style="margin: 0;">Begründung des Agenten</h3>
+<div style="display: flex; align-items: center; gap: 8px; font-size: 12px;"><span class="ki-tag">KI</span> Sicherheit <span class="conf c-{{ sel.conf }}" aria-hidden="true"><i></i><i></i><i></i></span> <strong class="mono">{{ sel.confText }}</strong></div>
+<p style="margin: 0; font-size: 12.5px; font-style: italic; color: var(--text-muted); line-height: 1.5;">„{{ sel.rationale }}“</p>
+<ul style="margin: 0; padding-left: 18px; font-size: 12px; color: var(--text-muted);"><sc-for list="{{ sel.sources }}" as="src" hint-placeholder-count="2"><li><a href="#" class="mono">{{ src }}</a></li></sc-for></ul>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px 16px 0;">
+<h3 class="label" style="margin: 0;">Im Graph</h3>
+<span style="font-size: 12.5px;">{{ sel.graphText }}</span>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px 16px 0;">
+<h3 class="label" style="margin: 0;">Beim Ausführen</h3>
+<ul style="margin: 0; padding-left: 18px; font-size: 12.5px;"><sc-for list="{{ sel.effects }}" as="fx" hint-placeholder-count="2"><li>{{ fx }}</li></sc-for></ul>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; margin-top: 14px; border-top: 1px solid var(--border); background: var(--surface-2);">
+<sc-if value="{{ sel.isPending }}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; flex-wrap: wrap; gap: 8px;"><button type="button" class="hv-btn hv-btn-primary">Revision {{ sel.rev }} freigeben</button><button type="button" class="hv-btn">Ablehnen …</button></div>
+<span style="font-size: 11.5px; color: var(--text-muted);">Ausgeführt wird über dieselbe Logik wie „Übernehmen &amp; buchen“ im Bankimport.</span>
+</sc-if>
+<sc-if value="{{ sel.isStale }}" hint-placeholder-val="{{ false }}">
+<div><button type="button" class="hv-btn hv-btn-primary">Neue Revision anfordern</button></div>
+</sc-if>
+<sc-if value="{{ sel.isDone }}" hint-placeholder-val="{{ false }}">
+<div><a href="#" class="hv-btn" style="text-decoration: none;">Dokument öffnen →</a></div>
+</sc-if>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px 16px 16px; border-top: 1px solid var(--border);">
+<h3 class="label" style="margin: 0;">Verlauf</h3>
+<sc-for list="{{ sel.history }}" as="h" hint-placeholder-count="2">
+<div style="display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; font-size: 12px;"><span class="mono" style="color: var(--text-muted);">{{ h.t }}</span><span>{{ h.e }}</span></div>
+</sc-for>
+</div>
+
+</aside>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1180}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { sel: 'HVP-0412' };
+  }
+  nodes() {
+    const bank = 'Bank Wilhelmshavener (1812)';
+    const sub = [{ t: 'heute 09:12', e: 'Eingereicht von Buchhaltungs-Agent' }];
+    const base = { rev: 1, status: 'Pending', history: sub };
+    return [
+      Object.assign({}, base, { id: 'HVP-0412', lane: 0, title: 'Rechnung zuordnen', change: '720,00 → SINV-…0041', objType: 'Bankimport-Zeile · Rechnung', headline: 'Max Mustermann → SINV-2026-0041', target: 'BAI-1812-2026-04 · 01.04. · +720,00 €', hash: 'a3f9c2e1', pos: 'Schritt 1 von 1',
+        changes: [{ f: 'Zahlung', a: '—', b: 'Payment (neu)' }, { f: 'SINV-2026-0041', a: 'offen 720,00', b: 'offen 0,00' }],
+        postings: [{ k: bank, s: '720,00', h: '' }, { k: 'Forderungen · Max Mustermann', s: '', h: '720,00' }],
+        conf: 'hoch', confText: 'hoch · 97 %', rationale: 'Rechnungsnummer im Verwendungszweck, Betrag exakt, IBAN ist MV-0182 zugeordnet.', sources: ['Verwendungszweck', 'SINV-2026-0041', 'MV-0182'],
+        graphText: 'Keine Vorgänger, keine Nachfolger.', effects: ['Payment Entry wird angelegt und gebucht', 'Importzeile 01.04. springt auf „Gebucht“'] }),
+      Object.assign({}, base, { id: 'HVP-0413', lane: 1, title: 'Partei zuordnen', change: '→ Erika Beispiel', objType: 'Bankimport-Zeile · Partei', headline: 'Auftraggeber → Erika Beispiel', target: 'BAI-1812-2026-04 · 02.04. · +540,00 €', hash: '7b0d44a9', pos: 'Schritt 1 von 2',
+        changes: [{ f: 'Partei', a: '—', b: 'Erika Beispiel (Customer)' }, { f: 'Bank-Tx', a: '—', b: 'wird angelegt' }],
+        postings: [], conf: 'mittel', confText: 'mittel · 74 %', rationale: 'Name des Auftraggebers entspricht der Mieterin von MV-0191, diese IBAN ist dort noch nicht hinterlegt.', sources: ['Auftraggeber', 'MV-0191'],
+        graphText: 'Nachfolger: HVP-0414 Rechnung zuordnen (Prüfung offen).', effects: ['Partei wird der Importzeile zugeordnet', 'Bank-Transaktion wird angelegt'] }),
+      Object.assign({}, base, { id: 'HVP-0414', lane: 1, title: 'Rechnung zuordnen', change: '540,00 → SINV-…0052', objType: 'Bankimport-Zeile · Rechnung', headline: 'Erika Beispiel → SINV-2026-0052', target: 'BAI-1812-2026-04 · 02.04. · +540,00 €', hash: 'c81e0f37', pos: 'Schritt 2 von 2', edge: true,
+        changes: [{ f: 'Zahlung', a: '—', b: 'Payment (neu)' }, { f: 'SINV-2026-0052', a: 'offen 540,00', b: 'offen 0,00' }],
+        postings: [{ k: bank, s: '540,00', h: '' }, { k: 'Forderungen · Erika Beispiel', s: '', h: '540,00' }],
+        conf: 'mittel', confText: 'mittel · 74 %', rationale: 'Einzige offene Rechnung von Erika Beispiel über 540,00 €.', sources: ['SINV-2026-0052'],
+        graphText: 'Vorgänger: HVP-0413 Partei zuordnen (Prüfung offen). Ausführen erst, wenn der Vorgänger ausgeführt ist. Freigeben geht schon jetzt.', effects: ['Payment Entry wird angelegt und gebucht'] }),
+      Object.assign({}, base, { id: 'HVP-0415', lane: 2, title: 'Abschlag zuordnen', change: '89,90 → ZP-0007 April', objType: 'Bankimport-Zeile · Abschlag', headline: 'Stadtwerke → ZP-0007 April', target: 'BAI-1812-2026-04 · 03.04. · −89,90 €', hash: '19aa5c02', pos: 'Schritt 1 von 1',
+        changes: [{ f: 'ZP-0007 April', a: 'offen 89,90', b: 'bezahlt' }],
+        postings: [{ k: 'Verbindlichkeiten · Stadtwerke', s: '89,90', h: '' }, { k: bank, s: '', h: '89,90' }],
+        conf: 'hoch', confText: 'hoch · 92 %', rationale: 'Betrag und Fälligkeit passen zur April-Rate von ZP-0007.', sources: ['ZP-0007'],
+        graphText: 'Keine Vorgänger, keine Nachfolger.', effects: ['Zahlung gegen Abschlagsplan wird gebucht'] }),
+      Object.assign({}, base, { id: 'HVP-0416', lane: 3, title: 'Buchungssatz', change: '12,50 → Geldverkehr', objType: 'Bankimport-Zeile · Buchungssatz', headline: 'Kontoführungsgebühr → Nebenkosten des Geldverkehrs', target: 'BAI-1812-2026-04 · 07.04. · −12,50 €', hash: '5e2b9d71', pos: 'Schritt 1 von 1',
+        changes: [{ f: 'Gegenkonto', a: '—', b: 'Nebenkosten des Geldverkehrs' }, { f: 'Kostenstelle', a: '—', b: 'Hauptstr. 5' }],
+        postings: [{ k: 'Nebenkosten des Geldverkehrs', s: '12,50', h: '' }, { k: bank, s: '', h: '12,50' }],
+        conf: 'hoch', confText: 'hoch · 95 %', rationale: 'Dieselbe Gebühr wurde in den letzten 6 Monaten jedes Mal so gebucht.', sources: ['JV-2026-0031', 'JV-2026-0019'],
+        graphText: 'Keine Vorgänger, keine Nachfolger.', effects: ['Journal Entry wird angelegt und gebucht'] }),
+      Object.assign({}, base, { id: 'HVP-0417', lane: 4, rev: 2, title: 'Kreditrate zuordnen', change: 'Zins 412,30 · Tilg. 827,70', objType: 'Bankimport-Zeile · Kreditrate', headline: 'Annuität → Darlehen 4711 April', target: 'BAI-1812-2026-04 · 10.04. · −1.240,00 €', hash: 'e04c7a18', pos: 'Schritt 1 von 1',
+        changes: [{ f: 'Kreditrate', a: 'April offen', b: 'April bezahlt' }],
+        postings: [{ k: 'Zinsaufwand Darlehen', s: '412,30', h: '' }, { k: 'Darlehen 4711', s: '827,70', h: '' }, { k: bank, s: '', h: '1.240,00' }],
+        conf: 'mittel', confText: 'mittel · 81 %', rationale: 'Rate entspricht dem Tilgungsplan. Zinsanteil laut Plan 412,70 €, Bank weicht um 0,40 € ab.', sources: ['Darlehen 4711', 'Tilgungsplan 2026'],
+        graphText: 'Keine Vorgänger, keine Nachfolger.', effects: ['Kreditrate wird in Zins und Tilgung gebucht'],
+        history: [{ t: 'heute 09:12', e: 'Eingereicht von Buchhaltungs-Agent (Rev. 1)' }, { t: 'heute 09:14', e: 'Rev. 2: Zinsanteil nach Bankbeleg korrigiert' }] }),
+      Object.assign({}, base, { id: 'HVP-0418', lane: 5, title: 'Vorauszahlung', change: '720,00 ohne Rechnung', objType: 'Bankimport-Zeile · Vorauszahlung', headline: 'Max Mustermann · Vorauszahlung', target: 'BAI-1812-2026-04 · 15.04. · +720,00 €', hash: '2d61f0b8', pos: 'Schritt 1 von 1',
+        changes: [{ f: 'Zahlung', a: '—', b: 'Payment ohne Rechnung' }],
+        postings: [{ k: bank, s: '720,00', h: '' }, { k: 'Erhaltene Anzahlungen · Mustermann', s: '', h: '720,00' }],
+        conf: 'niedrig', confText: 'niedrig · 48 %', rationale: 'Für Mai gibt es noch keine Rechnung. Möglich ist auch eine doppelte April-Zahlung.', sources: ['Verwendungszweck', 'MV-0182'],
+        graphText: 'Keine Vorgänger, keine Nachfolger.', effects: ['Payment Entry ohne Rechnungsbezug wird gebucht'] }),
+      Object.assign({}, base, { id: 'HVP-0419', lane: 6, status: 'Stale', title: 'Rechnung zuordnen', change: '356,00 → PINV-…0090', objType: 'Bankimport-Zeile · Rechnung', headline: 'Malerbetrieb Muster → ACC-PINV-2026-0090', target: 'BAI-1812-2026-04 · 18.04. · −356,00 €', hash: '9f3a6be4', pos: 'Schritt 1 von 1',
+        changes: [{ f: 'ACC-PINV-2026-0090', a: 'offen 356,00', b: 'offen 0,00' }],
+        postings: [{ k: 'Verbindlichkeiten · Malerbetrieb', s: '356,00', h: '' }, { k: bank, s: '', h: '356,00' }],
+        conf: 'hoch', confText: 'hoch · 90 %', rationale: 'Rechnungsnummer des Lieferanten im Verwendungszweck.', sources: ['Verwendungszweck', 'ACC-PINV-2026-0090'],
+        graphText: 'Keine Vorgänger, keine Nachfolger.', effects: ['Payment Entry würde angelegt'],
+        note: 'Veraltet: Die Rechnung ACC-PINV-2026-0090 wurde am 17.04. mit PE-2026-0052 ausgeglichen. Der Buchstand passt nicht mehr zum Vorschlag.', noteStyle: 'background: var(--danger-bg); color: var(--danger);',
+        history: [{ t: 'heute 09:12', e: 'Eingereicht von Buchhaltungs-Agent' }, { t: 'heute 09:20', e: 'Veraltet: Ausgangslage geändert' }] }),
+      Object.assign({}, base, { id: 'HVP-0401', lane: 7, status: 'Succeeded', title: 'Rechnung zuordnen', change: '720,00 → SINV-…0033', objType: 'Bankimport-Zeile · Rechnung', headline: 'Max Mustermann → SINV-2026-0033', target: 'BAI-1812-2026-04 · 28.04. · +720,00 €', hash: '41c08d5a', pos: 'Schritt 1 von 1',
+        changes: [{ f: 'SINV-2026-0033', a: 'offen 720,00', b: 'offen 0,00' }],
+        postings: [{ k: bank, s: '720,00', h: '' }, { k: 'Forderungen · Max Mustermann', s: '', h: '720,00' }],
+        conf: 'hoch', confText: 'hoch · 98 %', rationale: 'Rechnungsnummer im Verwendungszweck, Betrag exakt.', sources: ['SINV-2026-0033'],
+        graphText: 'Keine Vorgänger, keine Nachfolger.', effects: ['PE-2026-0050 angelegt und gebucht'],
+        note: 'Ausgeführt am 28.04. 09:14 im Bankimport: PE-2026-0050.', noteStyle: 'background: var(--done-bg); color: var(--done);',
+        history: [{ t: '28.04. 09:02', e: 'Eingereicht von Buchhaltungs-Agent' }, { t: '28.04. 09:14', e: 'Freigegeben von M. Krüger (im Bankimport)' }, { t: '28.04. 09:14', e: 'Ausgeführt: PE-2026-0050' }] })
+    ];
+  }
+  renderVals() {
+    const lanesMeta = [
+      { date: '01.04.', amount: '+720,00 €', who: 'Max Mustermann' },
+      { date: '02.04.', amount: '+540,00 €', who: 'Auftraggeber Erika Beispiel' },
+      { date: '03.04.', amount: '−89,90 €', who: 'Stadtwerke Beispielstadt' },
+      { date: '07.04.', amount: '−12,50 €', who: 'Postbank' },
+      { date: '10.04.', amount: '−1.240,00 €', who: 'Hausbank Beispiel' },
+      { date: '15.04.', amount: '+720,00 €', who: 'Max Mustermann' },
+      { date: '18.04.', amount: '−356,00 €', who: 'Malerbetrieb Muster' },
+      { date: '28.04.', amount: '+720,00 €', who: 'Max Mustermann' }
+    ];
+    const label = { Pending: 'Prüfung offen', Stale: 'Veraltet', Succeeded: 'Ausgeführt' };
+    const glyph = { Pending: '▶', Stale: '!', Succeeded: '✓' };
+    const nodes = this.nodes().map((n) => Object.assign({}, n, { statusLabel: label[n.status], glyph: glyph[n.status] }));
+    const lanes = lanesMeta.map((l, i) => Object.assign({}, l, {
+      cells: nodes.filter((n) => n.lane === i).map((n) => ({
+        id: n.id, title: n.title, change: n.change, status: n.status, statusLabel: n.statusLabel, glyph: n.glyph,
+        hasEdge: !!n.edge, isSel: n.id === this.state.sel, selCls: n.id === this.state.sel ? 'is-sel' : '',
+        aria: n.id + ' ' + n.title + ', ' + n.statusLabel,
+        pick: () => this.setState({ sel: n.id })
+      }))
+    }));
+    const s = nodes.find((n) => n.id === this.state.sel) || nodes[0];
+    return {
+      lanes,
+      sel: Object.assign({}, s, {
+        hasPostings: (s.postings || []).length > 0,
+        hasNote: !!s.note,
+        isPending: s.status === 'Pending',
+        isStale: s.status === 'Stale',
+        isDone: s.status === 'Succeeded'
+      })
+    };
+  }
+}
+</script>
+</body>
+</html>

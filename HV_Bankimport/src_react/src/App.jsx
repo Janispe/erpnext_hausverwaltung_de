@@ -8,6 +8,9 @@ import { Toolbar } from "./components/Toolbar.jsx";
 import { TxTable } from "./components/TxTable.jsx";
 import { MatchPanel } from "./components/MatchPanel.jsx";
 import { RulePanel } from "./components/RulePanel.jsx";
+import { KiBanner } from "./components/KiBanner.jsx";
+import { KiBulkDialog } from "./components/KiBulkDialog.jsx";
+import { isOpenKi } from "./ki.js";
 import { DocLink } from "./components/DocLink.jsx";
 
 // ── Toast ───────────────────────────────────────────────────────────────────
@@ -338,6 +341,31 @@ function NewImportDialog({ open, onClose, onCreated, notify }) {
 	);
 }
 
+function filterRows(scope, filter, search, hasKi) {
+	let out = scope;
+	if (filter === "open") out = scope.filter((r) => rowPhase(r) < 4);
+	else if (filter === "ki" && hasKi) out = scope.filter(isOpenKi);
+	else if (filter === "problem") out = scope.filter((r) => ["phase3-ambiguous", "error", "needs_review", "phase1-no-party"].includes(r.rowStatus));
+	else if (filter === "noparty") out = scope.filter((r) => !r.party && !r.customerPayments?.length);
+	else if (filter === "nopay") out = scope.filter((r) => !r.paymentEntry && !r.journalEntry && r.rowStatus !== "done");
+	else if (filter === "customer") out = scope.filter((r) => r.partyTyp === "Customer" || r.customerPayments?.length);
+	else if (filter === "supplier") out = scope.filter((r) => r.partyTyp === "Supplier");
+	else if (filter === "eigentuemer") out = scope.filter((r) => r.partyTyp === "Eigentuemer");
+
+	if (search.trim()) {
+		const q = search.toLowerCase();
+		out = out.filter((r) =>
+			(r.verwendungszweck || "").toLowerCase().includes(q) ||
+			(r.auftraggeber || "").toLowerCase().includes(q) ||
+			(r.party || "").toLowerCase().includes(q) ||
+			(r.partyLabel || "").toLowerCase().includes(q) ||
+			(r.customerPayments || []).some((item) => item.customer.toLowerCase().includes(q)) ||
+			(r.iban || "").toLowerCase().includes(q)
+		);
+	}
+	return out;
+}
+
 // ── App ───────────────────────────────────────────────────────────────────--
 export function App() {
 	const [docname, setDocname] = useState(api.importName || "");
@@ -354,6 +382,8 @@ export function App() {
 	const [newImportOpen, setNewImportOpen] = useState(false);
 	const [rulesOpen, setRulesOpen] = useState(false);
 	const reloadRef = useRef(null);
+	const linkedRow = useRef(api.importName ? api.linkedRow : "");
+	const [bulkOpen, setBulkOpen] = useState(false);
 
 	const notify = useCallback((type, msg) => {
 		if (type === "error" && api.isMissingRowError(msg)) {
@@ -386,6 +416,14 @@ export function App() {
 			setLoading(true);
 			try {
 				const data = await api.loadOverview(name);
+				if (linkedRow.current) {
+					const target = data.rows.find((row) => row.id === linkedRow.current);
+					linkedRow.current = null;
+					if (target) {
+						if (rowPhase(target) === 4) setFilter("all");
+						setSelectedId(target.id);
+					}
+				}
 				setOverview(data);
 				setError("");
 				return data;
@@ -415,6 +453,7 @@ export function App() {
 
 	const filterCounts = useMemo(() => ({
 		all: scope.length,
+		ki: scope.filter(isOpenKi).length,
 		open: scope.filter((r) => rowPhase(r) < 4).length,
 		problem: scope.filter((r) => ["phase3-ambiguous", "error", "needs_review", "phase1-no-party"].includes(r.rowStatus)).length,
 		noparty: scope.filter((r) => !r.party && !r.customerPayments?.length).length,
@@ -430,29 +469,7 @@ export function App() {
 		}
 	}, [filter, filterCounts.open, filterCounts.all]);
 
-	const visibleRows = useMemo(() => {
-		let out = scope;
-		if (filter === "open") out = scope.filter((r) => rowPhase(r) < 4);
-		else if (filter === "problem") out = scope.filter((r) => ["phase3-ambiguous", "error", "needs_review", "phase1-no-party"].includes(r.rowStatus));
-		else if (filter === "noparty") out = scope.filter((r) => !r.party && !r.customerPayments?.length);
-		else if (filter === "nopay") out = scope.filter((r) => !r.paymentEntry && !r.journalEntry && r.rowStatus !== "done");
-		else if (filter === "customer") out = scope.filter((r) => r.partyTyp === "Customer" || r.customerPayments?.length);
-		else if (filter === "supplier") out = scope.filter((r) => r.partyTyp === "Supplier");
-		else if (filter === "eigentuemer") out = scope.filter((r) => r.partyTyp === "Eigentuemer");
-
-		if (search.trim()) {
-			const q = search.toLowerCase();
-			out = out.filter((r) =>
-				(r.verwendungszweck || "").toLowerCase().includes(q) ||
-				(r.auftraggeber || "").toLowerCase().includes(q) ||
-				(r.party || "").toLowerCase().includes(q) ||
-				(r.partyLabel || "").toLowerCase().includes(q) ||
-				(r.customerPayments || []).some((item) => item.customer.toLowerCase().includes(q)) ||
-				(r.iban || "").toLowerCase().includes(q)
-			);
-		}
-		return out;
-	}, [scope, filter, search]);
+	const visibleRows = useMemo(() => filterRows(scope, filter, search, meta.ki), [scope, filter, search, meta.ki]);
 
 	// Auswahl gültig halten: Das Detailpanel darf nur Zeilen bearbeiten, die in
 	// der aktuell gefilterten linken Liste sichtbar sind.
@@ -479,6 +496,7 @@ export function App() {
 	const filterNames = {
 		open: "Offen",
 		all: "Alle",
+		ki: "KI Vorschlag",
 		problem: "Problemzeilen",
 		noparty: "Ohne Partei",
 		nopay: "Ohne Zahlung",
@@ -489,20 +507,35 @@ export function App() {
 	const tableLabel = `${phase === 0 ? "" : `${phaseTitles[phase] || `Phase ${phase}`} · `}${filterNames[filter] || "Bankzeilen"}`;
 
 	// Aktion fertig → Overview neu laden, ggf. nächste offene Zeile wählen.
-	const onActionDone = useCallback(async ({ advance = true } = {}) => {
+	const onActionDone = useCallback(async ({ advance = true, ki = false } = {}) => {
 		const prevId = selectedId;
 		const data = await reload();
 		if (!advance) {
-			if (data && data.rows && data.rows.some((r) => r.id === prevId)) setSelectedId(prevId);
+			const previous = data?.rows.find((row) => row.id === prevId);
+			if (!previous) return;
+			if (ki && ((phase && phase !== rowPhase(previous)) || !filterRows([previous], filter, search, data.import.ki).length)) {
+				setPhase(rowPhase(previous) === 4 ? 4 : 0);
+				setFilter(rowPhase(previous) === 4 ? "all" : "open");
+				setSearch("");
+			}
+			setSelectedId(prevId);
 			return;
 		}
 		// Nach dem Buchen automatisch zur nächsten offenen Zeile springen.
 		if (data && data.rows) {
 			const idx = data.rows.findIndex((r) => r.id === prevId);
-			const next = data.rows.slice(idx + 1).find((r) => (r.phase || 3) < 4);
+			const later = data.rows.slice(idx + 1);
+			const next = ki
+				? [...later, ...data.rows.slice(0, idx)].find((row) => rowPhase(row) < 4 && isOpenKi(row))
+				: later.find((r) => (r.phase || 3) < 4);
+			if (ki && next && !visibleRows.some((row) => row.id === next.id)) {
+				setPhase(0);
+				setFilter("open");
+				setSearch("");
+			}
 			if (next) setSelectedId(next.id);
 		}
-	}, [reload, selectedId]);
+	}, [reload, selectedId, visibleRows, phase, filter, search]);
 
 	const runGlobal = useCallback(async (action) => {
 		if (!docname) return;
@@ -568,6 +601,37 @@ export function App() {
 		}
 	}, [busy, docname, meta.title, notify]);
 
+	const onKiKey = (event) => {
+		if (!meta.ki || bulkOpen || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+		const scope = event.target.closest(".tx-card, .match-panel-wrap");
+		if (!scope || event.target.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
+		const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+		if (key === "j" || key === "k") {
+			const index = visibleRows.findIndex((row) => row.id === selectedId);
+			const target = visibleRows[index + (key === "j" ? 1 : -1)];
+			if (target) {
+				event.preventDefault();
+				setSelectedId(target.id);
+				if (scope.matches(".tx-card")) {
+					const rows = scope.querySelectorAll("tbody tr");
+					rows[index + (key === "j" ? 1 : -1)]?.focus();
+				} else {
+					scope.focus();
+				}
+			}
+			return;
+		}
+		if (key === "Enter" && (event.target.closest("button, a") ||
+			(scope.matches(".tx-card") && !event.target.closest("tr.selected")))) return;
+		if (!["Enter", "r", "Escape"].includes(key)) return;
+		const button = event.currentTarget.querySelector(`[data-ki-key="${key}"]:not(:disabled)`);
+		if (button && !event.repeat) {
+			event.preventDefault();
+			event.currentTarget.querySelector(".match-panel-wrap")?.focus();
+			button.click();
+		}
+	};
+
 	// ── Render ──
 	if (!docname) return (
 		<>
@@ -596,7 +660,7 @@ export function App() {
 	if (error) return <div className="app-error"><Icon name="info" /> {error}<button className="btn" style={{ marginLeft: 12 }} onClick={() => reload()}>Erneut</button></div>;
 
 	return (
-		<div className="shell">
+		<div className="shell" onKeyDown={onKiKey}>
 			<TopBar
 				meta={meta}
 				busy={busy || loading}
@@ -606,6 +670,7 @@ export function App() {
 				onOpenRules={() => setRulesOpen(true)}
 			/>
 			<StatRow meta={meta} rowsCount={rows.length} phases={phaseCounts} />
+			{meta.ki && <KiBanner meta={meta} openBulk={() => setBulkOpen(true)} notify={notify} />}
 			<PhaseStepper currentPhase={phase} setPhase={setPhase} phases={phaseCounts} />
 
 			<div className="global-actions">
@@ -632,17 +697,19 @@ export function App() {
 			<Toolbar
 				filter={filter} setFilter={setFilter}
 				search={search} setSearch={setSearch}
-				counts={filterCounts}
+				counts={filterCounts} showKi={!!meta.ki}
 			/>
 			<div className="split">
 				<TxTable
 					rows={visibleRows}
 					selectedId={selectedId}
 					onSelect={setSelectedId}
-					filterLabel={tableLabel}
+					filterLabel={tableLabel} showKi={!!meta.ki}
 				/>
-				<div className="match-panel-wrap">
+				<div className="match-panel-wrap" tabIndex={meta.ki ? -1 : undefined}>
 					<MatchPanel
+						key={meta.ki ? selectedId : undefined}
+						kiMeta={meta.ki}
 						docname={docname}
 						row={selectedRow}
 						onActionDone={onActionDone}
@@ -650,6 +717,9 @@ export function App() {
 					/>
 				</div>
 			</div>
+			{bulkOpen && meta.ki && <KiBulkDialog meta={meta} rows={rows} docname={docname} reload={reload}
+				notify={notify} onClose={() => setBulkOpen(false)} />}
+
 			<NewImportDialog
 				open={newImportOpen}
 				onClose={() => setNewImportOpen(false)}

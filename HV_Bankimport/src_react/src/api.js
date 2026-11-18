@@ -6,9 +6,11 @@
 // (bankimport_v2.js) auf voll qualifizierte, whitelisted Server-Methoden gemappt
 // — fast alle direkt auf die bestehende bankauszug_import.py-API.
 
-import { rpc, isEmbedded, getImportFromUrl } from "./bridge.js";
+import { rpc, isEmbedded, getImportFromUrl, getRowFromUrl } from "./bridge.js";
 import {
 	MOCK_OVERVIEW,
+	KI_MOCK_IMPORT,
+	createKiMockOverview,
 	MOCK_OPEN_INVOICES,
 	MOCK_PARTIES,
 	MOCK_ACCOUNTS,
@@ -18,6 +20,7 @@ import {
 
 export const embedded = isEmbedded();
 export const importName = getImportFromUrl();
+export const linkedRow = getRowFromUrl();
 
 export function docHref(doctype, docname) {
 	const slug = String(doctype || "").trim().toLowerCase().replace(/\s+/g, "-");
@@ -159,7 +162,7 @@ export async function getRuleDoctypeFields(doctype) {
 
 // Komplett-Übersicht: { import, rows, phaseCounts }.
 export async function loadOverview(name) {
-	if (!embedded) return { ...MOCK_OVERVIEW, mock: true };
+	if (!embedded) return name === KI_MOCK_IMPORT ? kiMockOverview() : { ...MOCK_OVERVIEW, mock: true };
 	return await rpc("overview", { import_name: name });
 }
 
@@ -224,7 +227,21 @@ export async function searchParties(partyType, txt) {
 
 // Bestehende Party einer Zeile zuordnen (+ Relink aller passenden Zeilen).
 export async function assignParty(name, rowName, partyType, party, iban) {
-	if (!embedded) return { row_party_type: partyType, row_party: party, mock: true };
+	if (!embedded) {
+		if (name === KI_MOCK_IMPORT) {
+			kiMockOverview();
+			const row = kiMock.rows.find((item) => item.id === rowName);
+			if (!row) throw new Error("Importzeile nicht gefunden.");
+			Object.assign(row, { party, partyTyp: partyType, phase: 3, rowStatus: "phase3-open",
+				bankTransaction: row.bankTransaction || `BT-2026-MOCK-${row.id}` });
+			if (["Pending", "Approved"].includes(row.ki.status)) {
+				row.ki.status = "Stale";
+				row.ki.steps.find((step) => step.status !== "Succeeded").status = "Stale";
+				row.ki.staleText = "Die Partei wurde seit dem Vorschlag manuell zugeordnet.";
+			}
+		}
+		return { row_party_type: partyType, row_party: party, mock: true };
+	}
 	return await rpc("assign_party", {
 		docname: name, row_name: rowName, party_type: partyType, party, iban: iban || "",
 	});
@@ -269,7 +286,21 @@ export async function changeRowParty(name, rowName, {
 // ---- Phase 3: Beleg zuordnen / buchen -------------------------------------
 
 export async function getOpenInvoices(name, rowName) {
-	if (!embedded) return { ...MOCK_OPEN_INVOICES, mock: true };
+	if (!embedded) {
+		if (name === KI_MOCK_IMPORT && rowName === "r7") return {
+			invoiceDoctype: "Purchase Invoice", targetAmount: 356, invoices: [
+				{ name: "ACC-PINV-2026-0094", outstanding_amount: 356, posting_date: "2026-04-16", remarks: "Rechnung RE 2026-118 · Treppenhaus" },
+				{ name: "ACC-PINV-2026-0081", outstanding_amount: 1120, posting_date: "2026-04-05", remarks: "Rechnung RE 2026-097" },
+			],
+		};
+		if (name === KI_MOCK_IMPORT && rowName === "r2") return {
+			invoiceDoctype: "Sales Invoice", targetAmount: 540,
+			invoices: kiMock?.rows.find((row) => row.id === rowName)?.party === "Erika Beispiel"
+				? [{ name: "SINV-2026-0052", outstanding_amount: 540, posting_date: "2026-04-02" }]
+				: [],
+		};
+		return { ...MOCK_OPEN_INVOICES, mock: true };
+	}
 	const r = await rpc("open_invoices", { docname: name, row_name: rowName });
 	return {
 		invoiceDoctype: r.invoice_doctype,
@@ -379,7 +410,9 @@ export async function createJournalEntry(name, rowName, { account, costCenter, r
 // ---- Phase 3: Abschlagsplan (Supplier-Ausgang) ----------------------------
 
 export async function getAbschlagsplanCandidates(name, rowName) {
-	if (!embedded) return { candidates: [], mock: true };
+	if (!embedded) return { candidates: name === KI_MOCK_IMPORT && rowName === "r3" ? [
+		{ row_name: "ZP-0007-APRIL", zahlungsplan: "ZP-0007", faelligkeitsdatum: "2026-04-01", betrag: 89.9 },
+	] : [], mock: true };
 	return await rpc("abschlag_candidates", { docname: name, row_name: rowName });
 }
 
@@ -393,7 +426,9 @@ export async function assignAbschlagsplan(name, rowName, planRowName, remarks) {
 // ---- Phase 3: Kreditrate (Ausgang) ----------------------------------------
 
 export async function getOpenKreditraten(name, rowName) {
-	if (!embedded) return { candidates: [], can_create_from_statement: false, mock: true };
+	if (!embedded) return { candidates: name === KI_MOCK_IMPORT && rowName === "r5" ? [
+		{ row_name: "4711-APRIL", kreditvertrag: "Darlehen 4711", faelligkeitsdatum: "2026-04-10", betrag: 1240 },
+	] : [], can_create_from_statement: false, mock: true };
 	return await rpc("kreditraten", { docname: name, row_name: rowName });
 }
 
@@ -442,4 +477,148 @@ export async function openImportForm(name) {
 export async function newImport() {
 	if (!embedded) return { ok: true, mock: true };
 	return await rpc("new_import", {});
+}
+
+let kiMock;
+const approver = "M. Krüger";
+const mockVouchers = {
+	r1: "PE-2026-0058", r2: "PE-2026-0059", r3: "PE-2026-0060",
+	r4: "JV-2026-0044", r5: "JV-2026-0045", r6: "PE-2026-0061",
+};
+
+function kiMockOverview() {
+	kiMock ??= createKiMockOverview(new URLSearchParams(window.location.search).get("ki"));
+	const counts = { Pending: 0, Approved: 0, Stale: 0, Succeeded: 0, Rejected: 0, none: 0 };
+	const confidence = { hoch: 0, mittel: 0, niedrig: 0 };
+	const phaseCounts = { 1: 0, 3: 0, 4: 0 };
+	for (const row of kiMock.rows) {
+		phaseCounts[row.phase]++;
+		const ki = row.ki;
+		if (ki.state === "none") counts.none++;
+		if (ki.state !== "proposal") continue;
+		counts[ki.status]++;
+		if (["Pending", "Approved"].includes(ki.status)) confidence[ki.confidence.level]++;
+	}
+	kiMock.import.offeneBuchungen = phaseCounts[1] + phaseCounts[3];
+	Object.assign(kiMock.import.ki, { counts, confidence });
+	return structuredClone({ ...kiMock, phaseCounts });
+}
+
+function mockKiRow(importName, rowId) {
+	const overview = kiMockOverview();
+	const row = kiMock.rows.find((item) => item.id === rowId);
+	if (importName !== KI_MOCK_IMPORT || !row || !overview.import.ki.canAccept) {
+		throw new Error("Der Vorschlag ist für diese Aktion nicht verfügbar.");
+	}
+	return row;
+}
+
+function sameBinding(step, binding) {
+	return step.proposal === binding?.id && step.revision === binding.revision && step.hash === binding.hash;
+}
+
+function mockAccept(importName, rowId, bindings) {
+	const row = mockKiRow(importName, rowId);
+	const { ki } = row;
+	if (ki.status === "Stale" || (rowId === "r6" && new URLSearchParams(window.location.search).get("ki") === "stale" && ki.status === "Pending")) {
+		ki.status = "Stale";
+		ki.steps[0].status = "Stale";
+		ki.staleText ||= "Die Ausgangsdaten der Zeile haben sich seit dem Vorschlag geändert.";
+		return { ok: false, status: "Stale", results: [{ id: bindings[0]?.id, ok: false, status: "Stale" }] };
+	}
+	const steps = ki.steps?.filter((step) => step.status !== "Succeeded") || [];
+	if (!["Pending", "Approved"].includes(ki.status) || steps.length !== bindings.length ||
+		!steps.every((step, index) => sameBinding(step, bindings[index]))) {
+		throw Object.assign(new Error("Die Vorschlagsbindung hat sich geändert."), { status: 409 });
+	}
+	const results = [];
+	const decision = { by: approver, at: new Date().toISOString() };
+	for (const step of steps) {
+		if (step.kind === "party") {
+			Object.assign(row, { party: step.prefill.party, partyTyp: step.prefill.partyType,
+				phase: 3, rowStatus: "phase3-open", bankTransaction: "BT-2026-0102" });
+			step.status = "Succeeded";
+			results.push({ id: step.proposal, ok: true, status: "Succeeded" });
+			continue;
+		}
+		if (rowId === "r2" && step.status === "Pending") {
+			step.status = ki.status = "Approved";
+			ki.decision = decision;
+			results.push({ id: step.proposal, ok: false, status: "Approved", error: "Die Buchung konnte vorübergehend nicht erstellt werden." });
+			return { ok: false, status: "Approved", results };
+		}
+		const journal = ["journal", "kredit"].includes(step.kind);
+		const result = { ...decision, doctype: journal ? "Journal Entry" : "Payment Entry",
+			name: mockVouchers[rowId] };
+		row[journal ? "journalEntry" : "paymentEntry"] = result.name;
+		row.phase = 4;
+		row.rowStatus = "done";
+		step.status = "Succeeded";
+		ki.result = result;
+		results.push({ id: step.proposal, ok: true, status: "Succeeded", result });
+	}
+	ki.status = "Succeeded";
+	return { ok: true, status: ki.status, results };
+}
+
+export async function kiAccept(import_name, row, bindings) {
+	return embedded ? rpc("ki_accept", { import_name, row, bindings }) : mockAccept(import_name, row, bindings);
+}
+
+export async function kiAcceptMany(import_name, items) {
+	if (items.reduce((total, item) => total + item.bindings.length, 0) > 128) {
+		throw new Error("Pro Lauf sind höchstens 128 Vorschlagsbindungen erlaubt.");
+	}
+	if (embedded) return rpc("ki_accept_many", { import_name, items });
+	const results = [];
+	let stopped = false;
+	for (const item of [...items].sort((a, b) => {
+		const date = (id) => kiMock?.rows.find((row) => row.id === id)?.buchungstag || "";
+		return date(a.row).localeCompare(date(b.row));
+	})) {
+		if (stopped) {
+			results.push({ row: item.row, ok: false, status: "Skipped", skipped_reason: "Lauf nach einem Fehler gestoppt." });
+			continue;
+		}
+		try {
+			const { ok, status, results: steps } = mockAccept(import_name, item.row, item.bindings);
+			results.push({ row: item.row, ok, status, result: steps.at(-1)?.result,
+				error: steps.at(-1)?.error || (status === "Stale" ? "Vorschlag ist veraltet." : undefined) });
+			stopped = !ok;
+		} catch (error) {
+			results.push({ row: item.row, ok: false, status: "Error", error: error.message });
+			stopped = true;
+		}
+	}
+	return { results };
+}
+
+export async function kiReject(import_name, row, binding, category, reason) {
+	if (embedded) return rpc("ki_reject", { import_name, row, binding, category, reason });
+	const { ki } = mockKiRow(import_name, row);
+	const step = ki.steps?.find((item) => item.status === "Pending");
+	if (ki.status !== "Pending" || !step || !sameBinding(step, binding) || !reason?.trim() || reason.length > 1000) {
+		throw new Error("Ablehnung konnte nicht gespeichert werden.");
+	}
+	ki.status = "Rejected";
+	step.status = "Rejected";
+	ki.decision = { by: approver, at: new Date().toISOString(), reason, category };
+	return { ok: true, status: "Rejected" };
+}
+
+export async function kiRequestRevision(import_name, row, binding, note = "") {
+	if (embedded) return rpc("ki_request_revision", { import_name, row, binding, note });
+	const entry = mockKiRow(import_name, row);
+	if (entry.ki.status !== "Stale" || !sameBinding(entry.ki.steps[0], binding)) {
+		throw new Error("Keine Revision für diese Bindung verfügbar.");
+	}
+	entry.ki = { state: "running" };
+	kiMock.import.ki.running = true;
+	kiMock.import.ki.progress = { done: kiMock.rows.length - 1, total: kiMock.rows.length };
+	return { ok: true };
+}
+
+export async function openProposals(packageName, proposal) {
+	if (!embedded) return { ok: true, mock: true };
+	return rpc("open_proposals", { package: packageName, proposal });
 }
