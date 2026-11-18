@@ -20,9 +20,10 @@ Eingangsrechnungen.
    Vorschlags einschließlich seines Originals.
 4. Für die Freigabe einen persönlichen Desk-Benutzer mit `Accounts User` oder
    `Accounts Manager` und Schreibrecht am Buchungsvorschlag verwenden. Er braucht
-   außerdem die ERPNext-Rechte zum Anlegen und Einreichen von `Purchase Invoice`
-   und `Journal Entry`. Auf einer frischen Dev-Site mit angepassten Rollenrechten
-   diese Berechtigungen ausdrücklich für den Testbenutzer einrichten.
+   außerdem die ERPNext-Rechte zum Lesen des Lieferanten sowie zum Anlegen und
+   Einreichen von `Purchase Invoice` und `Journal Entry`. Auf einer frischen
+   Dev-Site mit angepassten Rollenrechten diese Berechtigungen ausdrücklich für
+   den Testbenutzer einrichten.
 5. In der isolierten Paperclip-Company einen Agenten mit `adapterType: "process"`
    anlegen. Paperclip muss den Checkout auf seinem Host lesen können. Die drei
    Umgebungsvariablen `HV_RECEIPT_PILOT_URL`, `HV_RECEIPT_PILOT_KEY` und

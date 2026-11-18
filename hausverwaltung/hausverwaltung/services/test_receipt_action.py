@@ -91,11 +91,11 @@ class TestReceiptAction(unittest.TestCase):
 			"first_name": "Buchhaltung Test", "send_welcome_email": 0, "user_type": "System User",
 			"roles": [{"role": "Accounts User"}, {"role": role.name}],
 		}).insert()
-		for doctype in ("Purchase Invoice", "Journal Entry"):
+		for doctype, may_book in (("Supplier", 0), ("Purchase Invoice", 1), ("Journal Entry", 1)):
 			frappe.get_doc({
 				"doctype": "Custom DocPerm", "parent": doctype, "parenttype": "DocType",
 				"parentfield": "permissions", "role": role.name, "permlevel": 0,
-				"read": 1, "write": 1, "create": 1, "submit": 1,
+				"read": 1, "write": may_book, "create": may_book, "submit": may_book,
 			}).insert()
 			frappe.clear_cache(doctype=doctype)
 			self.addCleanup(frappe.clear_cache, doctype=doctype)
