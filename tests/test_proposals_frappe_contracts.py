@@ -387,5 +387,58 @@ class PackageContracts(unittest.TestCase):
 			with self.assertRaises(self.Denied):
 				self.service.execute({"id": "HVP-1", "revision": 1, "hash": "a" * 64})
 
+	def test_doc_actions_read_checks_field_and_table_permissions(self):
+		doc_actions = importlib.import_module("hausverwaltung.proposals.doc_actions")
+		child_meta = SimpleNamespace(
+			istable=True,
+			is_virtual=False,
+			fields=[SimpleNamespace(fieldname="phone", fieldtype="Data"), SimpleNamespace(fieldname="secret_col", fieldtype="Data")],
+			get_permitted_fieldnames=lambda parenttype=None, user=None, permission_type="read": (
+				{"phone", "secret_col"} if user == "privileged" else {"phone"}
+			),
+		)
+		parent_meta = SimpleNamespace(
+			name="Contact",
+			module="Contacts",
+			issingle=False,
+			istable=False,
+			is_virtual=False,
+			is_submittable=False,
+			get_field=lambda f: {
+				"first_name": SimpleNamespace(fieldname="first_name", fieldtype="Data"),
+				"secret_note": SimpleNamespace(fieldname="secret_note", fieldtype="Data"),
+				"phone_nos": SimpleNamespace(fieldname="phone_nos", fieldtype="Table", options="Contact Phone"),
+			}.get(f),
+			get_permitted_fieldnames=lambda user=None, permission_type="read": (
+				{"first_name", "secret_note", "phone_nos"} if user == "privileged" else {"first_name", "phone_nos"}
+			),
+		)
+		target_doc = SimpleNamespace(
+			doctype="Contact",
+			name="CON-1",
+			docstatus=0,
+			get=lambda f: [{"phone": "123", "secret_col": "hidden"}] if f == "phone_nos" else None,
+		)
+		self.fake.get_meta = lambda dt: child_meta if dt == "Contact Phone" else parent_meta
+		self.fake.get_doc = lambda *a, **kw: target_doc
+		self.fake.has_permission = lambda *a, **kw: True
+
+		scalar_payload = {"doctype": "Contact", "name": "CON-1", "values": {"secret_note": "neu"}}
+		scalar_preview = {"changes": [{"field": "secret_note", "before": "alt", "after": "neu"}]}
+		self.assertIs(
+			doc_actions.check_read_access(d.DOC_UPDATE_ACTION, scalar_payload, user="privileged", preview=scalar_preview),
+			target_doc,
+		)
+		with self.assertRaises(self.Denied):
+			doc_actions.check_read_access(d.DOC_UPDATE_ACTION, scalar_payload, user="restricted", preview=scalar_preview)
+
+		table_payload = {"doctype": "Contact", "name": "CON-1", "values": {"phone_nos": [{"phone": "456"}]}}
+		self.assertIs(
+			doc_actions.check_read_access(d.DOC_UPDATE_ACTION, table_payload, user="privileged"),
+			target_doc,
+		)
+		with self.assertRaises(self.Denied):
+			doc_actions.check_read_access(d.DOC_UPDATE_ACTION, table_payload, user="restricted")
+
 
 if __name__ == "__main__": unittest.main()

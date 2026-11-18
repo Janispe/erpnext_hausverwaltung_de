@@ -179,11 +179,11 @@ def _body(doc, lock=None):
 	return body
 
 
-def _check_target_read(action, payload, user=None, lock=False):
+def _check_target_read(action, payload, user=None, lock=False, *, preview=None):
 	if action == domain.ACTION:
 		return _note(payload["target"], user=user, lock=lock)
 	if action in domain.DOC_ACTIONS:
-		return doc_actions.check_read_access(action, payload, user=user, lock=lock)
+		return doc_actions.check_read_access(action, payload, user=user, lock=lock, preview=preview)
 	_deny()
 
 
@@ -232,7 +232,9 @@ def _read_graph(body, user, seen=None):
 		parent_action = parent.get("action")
 		if not _is_action_enabled(parent_action):
 			_deny()
-		_check_target_read(parent_action, parent["payload"], user=user, lock=False)
+		_check_target_read(
+			parent_action, parent["payload"], user=user, lock=False, preview=parent.get("preview")
+		)
 		_read_graph(parent, user, seen)
 
 
@@ -258,7 +260,7 @@ def readable_record(doc, user):
 		if action not in SERVICE_ACTIONS:
 			_deny()
 		enabled(action)
-		_check_target_read(action, body["payload"], user=user, lock=False)
+		_check_target_read(action, body["payload"], user=user, lock=False, preview=body.get("preview"))
 		_read_graph(body, user)
 		return True
 	except (frappe.PermissionError, frappe.DoesNotExistError):
@@ -283,7 +285,12 @@ def _load(pid):
 	if doc.action not in SERVICE_ACTIONS or not _is_action_enabled(doc.action):
 		_deny()
 	body = _body(doc)
-	_check_target_read(doc.action, body["payload"], lock=_writing.get() and doc.action == domain.ACTION)
+	_check_target_read(
+		doc.action,
+		body["payload"],
+		lock=_writing.get() and doc.action == domain.ACTION,
+		preview=body.get("preview"),
+	)
 	_read_graph(body, frappe.session.user)
 	return doc, body
 
@@ -431,7 +438,9 @@ def _stale_cause_inner(doc, body, memo):
 			_note(parent.target)
 		else:
 			parent_body = _body(parent)
-			doc_actions.check_read_access(parent_action, parent_body["payload"], lock=False)
+			doc_actions.check_read_access(
+				parent_action, parent_body["payload"], lock=False, preview=parent_body.get("preview")
+			)
 		if parent.current_revision != dep["revision"] or parent.revision_hash != dep["hash"]:
 			return {"cause": "dependency_revised", "proposal": parent.name, "detail": "Bound revision changed"}
 		if parent.status == "Rejected":
@@ -672,7 +681,9 @@ def _visible(package, user=None):
 			try:
 				doc = frappe.get_doc(PROPOSAL, pid)
 				body = _body(doc, lock=False)
-				_check_target_read(doc.action, body["payload"], user=user, lock=False)
+				_check_target_read(
+					doc.action, body["payload"], user=user, lock=False, preview=body.get("preview")
+				)
 				_read_graph(body, user or frappe.session.user)
 			except (frappe.PermissionError, frappe.DoesNotExistError):
 				frappe.local.message_log = messages

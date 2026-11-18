@@ -362,3 +362,148 @@ class TestDocActionsSite(unittest.TestCase):
 				values={"email": "evil@hv4.invalid", "first_name": "Evil"},
 				metadata={"title": "User", "summary": "Blocked"},
 			)
+
+	def test_field_level_read_permissions_protect_revision_preview_tables_and_dependencies(self):
+		from hausverwaltung.hausverwaltung.agent_tools.proposal_tools import submit_doc
+		from hausverwaltung.proposals import frappe_service
+
+		frappe = self.frappe
+		frappe.set_user("Administrator")
+
+		for doc_type, field_name in (("Contact", "email_id"), ("Contact Phone", "phone")):
+			frappe.get_doc(
+				{
+					"doctype": "Property Setter",
+					"doctype_or_field": "DocField",
+					"doc_type": doc_type,
+					"field_name": field_name,
+					"property": "permlevel",
+					"value": "1",
+					"property_type": "Int",
+				}
+			).insert(ignore_permissions=True)
+			frappe.clear_cache(doctype=doc_type)
+			self.addCleanup(frappe.clear_cache, doctype=doc_type)
+
+		agent_perm = frappe.get_doc(
+			{"doctype": "Role", "role_name": f"DocProp Fld Agent {self.point}"}
+		).insert(ignore_permissions=True).name
+		priv_perm = frappe.get_doc(
+			{"doctype": "Role", "role_name": f"DocProp Fld Priv {self.point}"}
+		).insert(ignore_permissions=True).name
+		rest_perm = frappe.get_doc(
+			{"doctype": "Role", "role_name": f"DocProp Fld Rest {self.point}"}
+		).insert(ignore_permissions=True).name
+
+		for role, level, write_flag in (
+			(agent_perm, 0, 0),
+			(agent_perm, 1, 0),
+			(priv_perm, 0, 1),
+			(priv_perm, 1, 1),
+			(rest_perm, 0, 1),
+		):
+			frappe.get_doc(
+				{
+					"doctype": "Custom DocPerm",
+					"parent": "Contact",
+					"parenttype": "DocType",
+					"parentfield": "permissions",
+					"role": role,
+					"permlevel": level,
+					"read": 1,
+					"create": write_flag if level == 0 else 0,
+					"write": write_flag,
+				}
+			).insert(ignore_permissions=True)
+		frappe.clear_cache(doctype="Contact")
+		self.addCleanup(frappe.clear_cache, doctype="Contact")
+
+		priv_user = f"{self.point}_priv@hv4.invalid"
+		rest_user = f"{self.point}_rest@hv4.invalid"
+		for email, roles in (
+			(priv_user, ["HV Proposal Reviewer", priv_perm]),
+			(rest_user, ["HV Proposal Reviewer", rest_perm]),
+		):
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": email,
+					"first_name": self.point,
+					"enabled": 1,
+					"user_type": "System User",
+					"send_welcome_email": 0,
+					"roles": [{"role": r} for r in roles],
+				}
+			).insert(ignore_permissions=True)
+		frappe.get_doc("User", self.agent_user).add_roles(agent_perm)
+
+		contact = frappe.get_doc(
+			{
+				"doctype": "Contact",
+				"first_name": "Erika",
+				"email_id": f"alt-{self.point}@hv4.invalid",
+				"phone_nos": [{"phone": "030-111111"}],
+			}
+		).insert(ignore_permissions=True)
+
+		frappe.set_user(self.agent_user)
+		package = f"fld-{self.point}"
+		scalar_prop = submit_doc(
+			key=f"scalar-{self.point}",
+			package=package,
+			package_meta={"title": f"Feldrechte {self.point}"},
+			operation="update",
+			doctype="Contact",
+			name=contact.name,
+			values={"email_id": f"neu-{self.point}@hv4.invalid"},
+			metadata={"title": "E-Mail ändern", "summary": "permlevel 1"},
+		)
+		dep_prop = submit_doc(
+			key=f"dep-{self.point}",
+			package=package,
+			operation="update",
+			doctype="Contact",
+			name=contact.name,
+			values={"first_name": "Erika-Maria"},
+			dependencies=[{"id": scalar_prop["id"], "revision": scalar_prop["revision"], "hash": scalar_prop["hash"]}],
+			metadata={"title": "Vorname ändern", "summary": "hängt an permlevel 1"},
+		)
+		table_prop = submit_doc(
+			key=f"tbl-{self.point}",
+			package=package,
+			operation="update",
+			doctype="Contact",
+			name=contact.name,
+			values={"phone_nos": [{"phone": "030-222222"}]},
+			metadata={"title": "Telefon ändern", "summary": "Child Table permlevel 1"},
+		)
+
+		# Both reviewers have identical document-level access on Contact.
+		self.assertTrue(frappe.has_permission("Contact", "read", doc=contact, user=priv_user))
+		self.assertTrue(frappe.has_permission("Contact", "read", doc=contact, user=rest_user))
+
+		# Privileged reviewer can inspect all three proposals and their stored revisions.
+		frappe.set_user(priv_user)
+		for pid in (scalar_prop["id"], dep_prop["id"], table_prop["id"]):
+			self.assertEqual(frappe_service.view(pid)["id"], pid)
+			self.assertTrue(frappe.has_permission("HV Action Proposal", "read", doc=frappe.get_doc("HV Action Proposal", pid)))
+			self.assertTrue(frappe.has_permission("HV Proposal Revision", "read", doc=frappe.get_doc("HV Proposal Revision", f"{pid}-1")))
+		self.assertEqual(len(frappe_service.package_graph(package)["nodes"]), 3)
+
+		# Restricted reviewer (lacking permlevel 1) is denied across view, readable_record, list and graph.
+		frappe.set_user(rest_user)
+		for pid in (scalar_prop["id"], dep_prop["id"], table_prop["id"]):
+			with self.assertRaises(frappe.PermissionError):
+				frappe_service.view(pid)
+			self.assertFalse(
+				frappe_service.readable_record(frappe.get_doc("HV Action Proposal", pid), rest_user)
+			)
+			self.assertFalse(
+				frappe_service.readable_record(frappe.get_doc("HV Proposal Revision", f"{pid}-1"), rest_user)
+			)
+		self.assertEqual(
+			{row["id"] for row in frappe_service.list_proposals()} & {scalar_prop["id"], dep_prop["id"], table_prop["id"]},
+			set(),
+		)
+		with self.assertRaises(frappe.PermissionError):
+			frappe_service.package_graph(package)
