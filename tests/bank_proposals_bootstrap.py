@@ -110,6 +110,19 @@ def _payment_chain(bank, key, primary):
 		"customer": primary["customer"], "account": primary_account, "other_account": alternative_account}
 
 
+def _abstention_statement(bank, key, journal):
+	imp = _statement(bank, "abstention-" + key)
+	for index in range(4):
+		imp.append("rows", {"buchungstag": f"2026-04-{index + 3:02d}", "betrag": 30 + index,
+			"richtung": "Eingang", "auftraggeber": "Synthetische Enthaltung",
+			"verwendungszweck": f"Enthaltung {key} {index}", "currency": "EUR"})
+	imp.insert()
+	lanes = [{"row": row.name, "note": "Zuordnung unklar."} for row in imp.rows[:3]]
+	last = imp.rows[-1]
+	lanes.append({"row": last.name, "steps": [_step(imp, last, "journal_entry", "Buchungssatz", journal)]})
+	return {"import_name": imp.name, "package": f"BANK-ABSTENTION-{key}", "lanes": lanes}
+
+
 def seed():
 	bank = fixtures.ensure_bankimport_bank_account()
 	key = uuid4().hex[:10]
@@ -147,9 +160,10 @@ def seed():
 
 	matrix = _matrix(bank, key)
 	advance = _payment_chain(bank, key, tenancy)
+	abstentions = _abstention_statement(bank["bank_account"], key, journal)
 	frappe.db.commit()
 	return {"import_name": imp.name, "package": f"BANK-{key}", "lanes": lanes, "abstention_answer": abstention_answer,
-		"journal": journal, "matrix": matrix, "advance": advance}
+		"journal": journal, "matrix": matrix, "advance": advance, "abstentions": abstentions}
 
 
 if __name__ == "__main__":

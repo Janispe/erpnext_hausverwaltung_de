@@ -18,7 +18,7 @@ def run(site, auth_file, fixture_file):
 	from frappe.database.database import Database
 	from werkzeug.test import Client
 	from werkzeug.wrappers import Response
-	from hausverwaltung.proposals import bank_action
+	from hausverwaltung.proposals import bank_action, bank_packages
 
 	auth = json.loads(Path(auth_file).read_text())
 	assert auth["purpose"] == "hv-proposals-disposable-testauth"
@@ -34,12 +34,14 @@ def run(site, auth_file, fixture_file):
 		desk = client.get("/desk/hv-proposals").get_data(as_text=True)
 		csrf = re.search(r'frappe\.csrf_token\s*=\s*["\']([^"\']+)', desk).group(1)
 
-		def post(path, data=None, status=200):
+		def post(path, data=None, status=200, error_message=None):
 			response = (client.get(path) if data is None else
 				client.post(path, json=data, headers={"X-Frappe-CSRF-Token": csrf}))
 			assert response.status_code == status, (
 				f"{path.rsplit('.', 1)[-1]}: HTTP {response.status_code}, "
 				f"{(response.json or {}).get('exc_type', '')}")
+			if error_message:
+				assert error_message in (response.json or {}).get("_server_messages", "")
 			return (response.json or {}).get("message" if data is not None else "data")
 
 		return post
@@ -215,10 +217,53 @@ def run(site, auth_file, fixture_file):
 	payment = reviewer("/api/resource/Payment%20Entry/" + booked_advance["results"][1]["result"]["name"])
 	assert payment["party"] == advance["customer"]
 	assert payment["paid_from"] == advance["account"]
+	abstentions = fixture["abstentions"]
+	abstention_import = abstentions["import_name"]
+	prebooked, later_booked, remaining, proposed = (lane["row"] for lane in abstentions["lanes"])
+
+	def book_abstention(row_name):
+		return reviewer(BOOKING + "create_journal_entry_for_row", {
+			"docname": abstention_import, "row_name": row_name, **fixture["journal"]})
+
+	def abstention_overview():
+		result = reviewer(PAGE + "get_overview", {"import_name": abstention_import})
+		return result["import"]["ki"], {row["id"]: row for row in result["rows"]}
+
+	book_abstention(prebooked)
+	agent(BANK + "publish", abstentions)
+	ki, rows = abstention_overview()
+	assert rows[prebooked]["phase"] == 4 and rows[prebooked].get("ki") is None
+	assert ki["counts"]["none"] == 2
+	reviewer(PAGE + "ki_request_revision", {"import_name": abstention_import, "row": prebooked},
+		status=417, error_message="bereits gebuchte oder abgeschlossene Zeilen")
+
+	for row_name in (later_booked, remaining):
+		reviewer(PAGE + "ki_request_revision", {"import_name": abstention_import, "row": row_name})
+	ki, rows = abstention_overview()
+	assert ki["progress"] == {"done": 1, "total": 3}
+	assert rows[later_booked]["ki"]["state"] == "running"
+	# Simulate an outstanding request that predates the booking or its hook.
+	with patch.object(bank_packages, "_resolve_requests"):
+		book_abstention(later_booked)
+	ki, rows = abstention_overview()
+	assert rows[later_booked]["phase"] == 4 and rows[later_booked].get("ki") is None
+	assert ki["counts"]["none"] == 1
+	assert ki["progress"] == {"done": 1, "total": 2}
+	assert rows[remaining]["ki"]["state"] == "running"
+
+	book_abstention(remaining)
+	assert reviewer(PAGE + "ki_accept", {"import_name": abstention_import, "row": proposed,
+		"bindings": bindings(rows[proposed])})["ok"]
+	ki, rows = abstention_overview()
+	assert not ki["running"] and "progress" not in ki
+	assert ki["counts"] == {"Pending": 0, "Approved": 0, "Stale": 0, "Succeeded": 1, "Rejected": 0, "none": 0}
+	assert rows[proposed]["phase"] == 4 and rows[proposed]["ki"]["status"] == "Succeeded"
+
 	print(json.dumps({"read_queries": len(observed), "party_then_invoice": "passed", "retry": "passed",
 		"manual_booking": "passed", "rule_booking": "passed", "abstention_answer": "passed",
 		"bound_answer": "passed", "superseded": "passed", "additional_bookings": len(matrix["lanes"]),
-		"revised_predecessor": "passed", "row_only_party": "passed", "statement_credit_binding": "passed", "advance_party_binding": "passed"}))
+		"revised_predecessor": "passed", "row_only_party": "passed", "statement_credit_binding": "passed", "advance_party_binding": "passed",
+		"booked_abstentions": "passed"}))
 
 
 if __name__ == "__main__":

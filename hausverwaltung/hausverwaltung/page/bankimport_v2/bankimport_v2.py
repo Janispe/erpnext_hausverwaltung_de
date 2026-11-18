@@ -321,14 +321,15 @@ def get_overview(import_name: str) -> dict[str, Any]:
 	return response
 
 
-def _project_cancelled_voucher(row):
+def _project_cancelled_voucher(row, *, for_update=False):
+	options = {"for_update": True} if for_update else {}
 	if customer_payments(row):
-		if not any(_voucher_is_cancelled_or_missing(doctype, name)
+		if not any(_voucher_is_cancelled_or_missing(doctype, name, **options)
 			for doctype, name in _linked_vouchers_for_row(row)):
 			return
 		updates = split_cancellation_values()
 	else:
-		updates, _ = _cancelled_single_voucher_links(row)
+		updates, _ = _cancelled_single_voucher_links(row, **options)
 	for field, value in updates.items():
 		row.set(field, value)
 

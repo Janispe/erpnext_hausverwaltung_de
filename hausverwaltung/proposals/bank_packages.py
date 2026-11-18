@@ -347,8 +347,13 @@ def reject(import_name, row, binding, category, reason):
 @core._api
 def request_revision(import_name, row, binding=None, note=""):
 	doc, package = _writer(import_name)
-	actions.row_document(doc, row)
+	import_row = actions.row_document(doc, row)
 	if binding is None:
+		from hausverwaltung.hausverwaltung.page.bankimport_v2.bankimport_v2 import _project_cancelled_voucher, _row_phase
+
+		_project_cancelled_voucher(import_row, for_update=True)
+		if _row_phase(import_row.as_dict()) == 4:
+			frappe.throw("Für bereits gebuchte oder abgeschlossene Zeilen kann kein Vorschlag angefordert werden.")
 		if row not in _abstentions(package) or _rows(package, row, lock=True):
 			frappe.throw("Anforderung nur für Zeilen ohne Vorschlag.")
 		record_request(package, row, note)
@@ -426,9 +431,9 @@ def overview(import_doc, rows):
 	for doc, body in core._visible(package):
 		by_row[doc.target].append((doc, body))
 	abstentions = _abstentions(package)
-	visible_rows = {row["id"] for row in rows}
+	progress_rows = {row["id"] for row in rows if row["phase"] != 4 or row["id"] in by_row}
 	running = {request.row for request in _pending_requests(package)
-		if request.row in visible_rows and (request.row in by_row or request.row in abstentions)}
+		if request.row in progress_rows and (request.row in by_row or request.row in abstentions)}
 	counts = dict.fromkeys(("Pending", "Approved", "Stale", "Succeeded", "Rejected", "none"), 0)
 	confidence = dict.fromkeys(("hoch", "mittel", "niedrig"), 0)
 	for row in rows:
@@ -458,7 +463,7 @@ def overview(import_doc, rows):
 				"effect": EFFECTS[kind], "rationale": final["rationale"], "sources": final["sources"],
 				"decision": decision if status in {"Approved", "Rejected"} else None,
 				"staleText": STALE_DETAILS.get(cause.get("cause"), cause.get("detail")), "result": result}
-		elif key in abstentions:
+		elif key in abstentions and row["phase"] != 4:
 			counts["none"] += 1
 			row["ki"] = {"state": "none", "note": abstentions[key]}
 		else:
@@ -472,5 +477,5 @@ def overview(import_doc, rows):
 	pkg = frappe.get_doc(core.PACKAGE, package)
 	return {"package": package, "agent": core._user_label(pkg.agent), "submittedAt": pkg.creation,
 		"running": bool(running), "counts": counts, "confidence": confidence,
-		"canAccept": actions.can_accept(), **({"progress": {"done": len(visible_rows) - len(running),
-			"total": len(visible_rows)}} if running else {})}
+		"canAccept": actions.can_accept(), **({"progress": {"done": len(progress_rows) - len(running),
+			"total": len(progress_rows)}} if running else {})}
