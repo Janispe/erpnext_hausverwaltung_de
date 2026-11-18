@@ -559,6 +559,10 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			default: opts.zahlungsbemerkung || "",
 			depends_on: "eval:doc.zahlung_sofort",
 		},
+		...(opts._receipt ? [
+			{ fieldtype: "Currency", fieldname: "beleg_brutto_bestaetigt", label: __("Bestätigter Brutto-Endbetrag (EUR)"), reqd: 1 },
+			{ fieldtype: "Check", fieldname: "beleg_eur_bestaetigt", label: __("Der Originalbeleg ist in EUR ausgestellt"), reqd: 1 },
+		] : []),
 		{ fieldtype: "Section Break", label: __("Positionen") },
 		{
 			fieldtype: "Select",
@@ -602,8 +606,9 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 					fieldtype: "Select",
 					fieldname: "typ",
 					label: __("Typ"),
-					options: ["umlegbar", "nicht umlegbar"].join("\n"),
-					default: "umlegbar",
+					options: (opts._receipt ? ["", "umlegbar", "nicht umlegbar"] : ["umlegbar", "nicht umlegbar"]).join("\n"),
+					default: opts._receipt ? "" : "umlegbar",
+					reqd: opts._receipt ? 1 : 0,
 					in_list_view: 1,
 					columns: 2,
 					description: __("Bestimmt, welche Stammdaten/Konten im Picker angezeigt werden."),
@@ -618,6 +623,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 				{
 					fieldtype: "Autocomplete",
 					fieldname: "kostenart",
+					reqd: opts._receipt ? 1 : 0,
 					label: __("Kostenart"),
 					options: [],
 					in_list_view: 1,
@@ -708,9 +714,10 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 				values.zahlungskonto = opts.zahlungskonto;
 				for (const row of values.positionen || []) {
 					row.kostenstelle = opts._receipt_kostenstelle;
-					row.umlagefaehig = row.typ === "nicht umlegbar"
-						? "Kostenart nicht umlagefaehig"
-						: "Betriebskostenart";
+					row.umlagefaehig = {
+						"nicht umlegbar": "Kostenart nicht umlagefaehig",
+						"umlegbar": "Betriebskostenart",
+					}[row.typ] || "";
 				}
 			}
 			submit_eingangsrechnung(dialog, values);
@@ -1077,6 +1084,8 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 					zahlung_sofort: values.zahlung_sofort ? 1 : 0,
 					zahlungskonto: values.zahlungskonto,
 					zahlungsbemerkung: values.zahlungsbemerkung,
+					beleg_brutto_bestaetigt: values.beleg_brutto_bestaetigt,
+					beleg_eur_bestaetigt: values.beleg_eur_bestaetigt,
 					positionen: JSON.stringify(rows),
 					submit_doc: submit_doc ? 1 : 0,
 					attached_file_url: dialog._hv_attached_file || null,

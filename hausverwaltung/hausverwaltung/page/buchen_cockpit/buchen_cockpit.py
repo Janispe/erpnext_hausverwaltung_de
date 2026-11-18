@@ -955,6 +955,14 @@ def _validate_settlement_account(
         )
 
 
+def _settlement_amount(pi) -> float:
+    return (
+        flt(pi.get("outstanding_amount"))
+        or flt(pi.get("rounded_total"))
+        or flt(pi.get("grand_total"))
+    )
+
+
 def _create_purchase_invoice_settlement_journal(
     pi,
     *,
@@ -970,11 +978,7 @@ def _create_purchase_invoice_settlement_journal(
     Hauswart oder ähnliche Konten. Wir verwenden bewusst einen Journal Entry,
     weil diese Konten nicht zwingend ERPNext-Bankkonten sein müssen.
     """
-    amount = (
-        flt(pi.get("outstanding_amount"))
-        or flt(pi.get("rounded_total"))
-        or flt(pi.get("grand_total"))
-    )
+    amount = _settlement_amount(pi)
     if amount <= 0:
         frappe.throw("Die Eingangsrechnung hat keinen offenen Betrag zum Ausgleichen.")
 
@@ -1335,6 +1339,8 @@ def create_purchase_invoice(**kwargs) -> dict:
     if request["idempotent"]:
         return request["idempotent"]
     attached_file = kwargs.get("attached_file_url")
+    receipt_file = None
+    receipt_total = None
     if request["proposal"]:
         proposal = frappe.get_doc("Buchungs Vorschlag", request["proposal"])
         if proposal.receipt_digest:
@@ -1353,7 +1359,18 @@ def create_purchase_invoice(**kwargs) -> dict:
                 frappe.throw("Bitte Zahlungsart, Ausgleichskonto und Kostenstelle mit der Buchungs-Inbox abgleichen.")
             if not kwargs.get("rechnungsdatum"):
                 frappe.throw("Bitte das Belegdatum erfassen.")
-            attached_file = proposal.file_url
+            receipt_pilot.validate_booking_confirmation(
+                proposal, request["rows"], eur_confirmed=_as_bool(kwargs.get("beleg_eur_bestaetigt")),
+            )
+            receipt_total = flt(kwargs.get("beleg_brutto_bestaetigt"), 2)
+            if not math.isfinite(receipt_total) or receipt_total <= 0:
+                frappe.throw("Bitte den Brutto-Endbetrag auf dem Originalbeleg bestätigen.")
+            try:
+                receipt_file, _content = receipt_pilot.verified_original(proposal, for_update=True)
+            except (OSError, ValueError, frappe.DoesNotExistError):
+                frappe.throw("Der private Originalbeleg fehlt oder wurde verändert. Buchung abgebrochen.")
+            receipt_file.check_permission("read")
+            attached_file = receipt_file.file_url
             if context["person"] and context["zahlungsquelle"] == "Privat vorgestreckt":
                 note = f"Privat vorgestreckt von {context['person']}"
                 kwargs["zahlungsbemerkung"] = "\n".join(filter(None, (note, kwargs.get("zahlungsbemerkung"))))
@@ -1370,6 +1387,8 @@ def create_purchase_invoice(**kwargs) -> dict:
         bill_no=bill_no,
         remarks=user_remarks,
     )
+    if receipt_total is not None and company_currency != "EUR":
+        frappe.throw("Der Barauslagen-Pilot benötigt eine Company in EUR.")
     _set_cockpit_purchase_invoice_items(
         pi,
         request["rows"],
@@ -1389,12 +1408,18 @@ def create_purchase_invoice(**kwargs) -> dict:
 
     pi.insert()
 
-    _attach_source_file(pi, attached_file)
+    if receipt_file:
+        _validate_receipt_total(pi, receipt_total)
+        _attach_source_file(pi, attached_file, source=receipt_file)
+    else:
+        _attach_source_file(pi, attached_file)
 
     settlement_journal = None
     if request["submit"]:
         pi.submit()
         if request["settle_now"]:
+            if receipt_total is not None:
+                _validate_receipt_total(pi, receipt_total)
             settlement_journal = _create_purchase_invoice_settlement_journal(
                 pi,
                 settlement_account=kwargs.get("zahlungskonto"),
@@ -1419,7 +1444,15 @@ def create_purchase_invoice(**kwargs) -> dict:
     }
 
 
-def _attach_source_file(pi, file_url: str | None) -> None:
+def _validate_receipt_total(pi, confirmed_total: float) -> None:
+    if flt(pi.get("grand_total"), 2) != confirmed_total or flt(_settlement_amount(pi), 2) != confirmed_total:
+        frappe.throw(
+            "Rechnungs- oder Ausgleichsbetrag weicht vom bestätigten Bon-Endbetrag ab. "
+            "Bitte Positionen, Steuern und Rundung prüfen."
+        )
+
+
+def _attach_source_file(pi, file_url: str | None, *, source=None) -> None:
     """Hängt das Quell-PDF aus der LLM-Extraktion an die Purchase Invoice an.
 
     Wir legen NICHT die Datei neu auf disk (würde Frappe's File.get_content() +
@@ -1430,17 +1463,18 @@ def _attach_source_file(pi, file_url: str | None) -> None:
     """
     if not file_url:
         return
-    file_name = frappe.db.get_value("File", {"file_url": file_url}, "name")
-    if not file_name:
-        return
-    src = frappe.get_doc("File", file_name)
+    if source is None:
+        file_name = frappe.db.get_value("File", {"file_url": file_url}, "name")
+        if not file_name:
+            return
+        source = frappe.get_doc("File", file_name)
     attach = frappe.get_doc({
         "doctype": "File",
-        "file_name": src.file_name,
-        "file_url": src.file_url,
-        "is_private": src.is_private,
-        "file_size": src.file_size,
-        "content_hash": src.content_hash,
+        "file_name": source.file_name,
+        "file_url": source.file_url,
+        "is_private": source.is_private,
+        "file_size": source.file_size,
+        "content_hash": source.content_hash,
         "folder": "Home/Attachments",
         "attached_to_doctype": "Purchase Invoice",
         "attached_to_name": pi.name,

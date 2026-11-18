@@ -225,17 +225,9 @@ def prepare_receipt(name: str) -> dict:
 		raise frappe.PermissionError("Dieser Vorschlag gehört nicht zum Barauslagen-Pilot.")
 	if doc.status != "Pending":
 		return {"name": doc.name, "status": doc.status}
-	original = frappe.db.get_value(
-		"File", {"attached_to_doctype": PROPOSAL, "attached_to_name": doc.name, "file_url": doc.file_url},
-		"file_name",
-	)
 	try:
-		if not original or Path(original).name != original:
-			raise ValueError("Original fehlt")
-		content = (Path(get_files_path(is_private=1)) / original).read_bytes()
-		if hashlib.sha256(content).hexdigest() != doc.receipt_digest:
-			raise ValueError("Original stimmt nicht mit dem Upload überein")
-		data = _extract(content, original.rsplit(".", 1)[-1])
+		original, content = verified_original(doc)
+		data = _extract(content, original.file_name.rsplit(".", 1)[-1])
 	except (ValueError, OSError, RuntimeError, TypeError, ImportError) as exc:
 		# Provider errors can contain recognized text. Keep it out of error logs.
 		doc.db_set({
@@ -246,6 +238,47 @@ def prepare_receipt(name: str) -> dict:
 	else:
 		doc.db_set({"status": "Ready", "error_message": "", "extracted_data": json.dumps(data, ensure_ascii=False)})
 	return {"name": doc.name, "status": doc.status}
+
+
+def verified_original(doc, *, for_update: bool = False):
+	"""Resolve the private proposal attachment and verify its uploaded bytes."""
+	name = frappe.db.get_value(
+		"File",
+		{"attached_to_doctype": PROPOSAL, "attached_to_name": doc.name, "file_url": doc.file_url, "is_private": 1},
+		"name", for_update=for_update,
+	)
+	if not name:
+		raise ValueError("Privater Originalbeleg fehlt.")
+	original = frappe.get_doc("File", name, for_update=for_update)
+	filename = original.file_name
+	if (
+		not filename
+		or Path(filename).name != filename
+		or original.file_url != f"/private/files/{filename}"
+	):
+		raise ValueError("Ungültiger Originalbeleg.")
+	with (Path(get_files_path(is_private=1)) / filename).open("rb") as source:
+		content = source.read(MAX_FILE_BYTES + 1)
+	if len(content) > MAX_FILE_BYTES or hashlib.sha256(content).hexdigest() != doc.receipt_digest:
+		raise ValueError("Originalbeleg stimmt nicht mit dem Upload überein.")
+	return original, content
+
+
+def validate_booking_confirmation(doc, rows: list[dict], *, eur_confirmed: bool) -> None:
+	data = json.loads(doc.extracted_data or "{}")
+	currency = data.get("waehrung")
+	if currency and currency != "EUR":
+		frappe.throw("Fremdwährungsbelege bitte außerhalb des Barauslagen-Piloten erfassen.")
+	if not eur_confirmed:
+		frappe.throw("Bitte bestätigen, dass der Originalbeleg in EUR ausgestellt ist.")
+	for index, row in enumerate(rows, 1):
+		if (
+			not row.get("kostenart")
+			or row.get("umlagefaehig") not in {"Betriebskostenart", "Kostenart nicht umlagefaehig"}
+			or any(row.get(key) for key in ("konto", "betriebskostenart", "kostenart_nicht_ul"))
+		):
+			frappe.throw(f"Bitte in Bonposition {index} eine gültige Kostenart und ihren Typ auswählen.")
+
 
 
 def _amount(value) -> Decimal | None:
@@ -282,7 +315,9 @@ def _extract(content: bytes, extension: str) -> dict:
 	merchant = _text(raw.get("haendler"))
 	date = invoice_extraction._coerce_iso_date(raw.get("datum")) or ""
 	total = _amount(raw.get("gesamtbetrag"))
-	currency = _text(raw.get("waehrung"), 3).upper()
+	currency = _text(raw.get("waehrung")).upper()
+	if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
+		currency = ""
 	supplier = invoice_extraction._exact_supplier_lookup(merchant) if merchant else None
 	warnings = []
 	if not merchant:

@@ -616,7 +616,8 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		const data = full && full !== "loading" ? full.data || {} : null;
 
 		const receipt = full?.receipt;
-		const can_book = row.status === "Ready" && (!row.is_receipt || (receipt && !receipt.fragen.length));
+		const can_book = row.status === "Ready" && (!row.is_receipt ||
+			(receipt && !receipt.fragen.length && (!data?.waehrung || data.waehrung === "EUR")));
 		const can_skip = ["Pending", "Processing", "Ready"].includes(row.status);
 		const can_reactivate = ["Skipped", "Error"].includes(row.status);
 		const can_reprocess = row.status !== "Booked";
@@ -743,7 +744,10 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 					.map((position) => ({
 						...position,
 						kostenstelle: receipt.kostenstelle,
-						typ: position.umlagefaehig === "Kostenart nicht umlagefaehig" ? "nicht umlegbar" : "umlegbar",
+						typ: {
+							"Betriebskostenart": "umlegbar",
+							"Kostenart nicht umlagefaehig": "nicht umlegbar",
+						}[position.umlagefaehig] || "",
 					}))
 				: data.positionen || [],
 			...(receipt ? {

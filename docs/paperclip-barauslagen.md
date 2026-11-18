@@ -51,8 +51,10 @@ Eingangsrechnungen.
   jeweiligen Bon. Eine leere oder ungeeignete Kontozuordnung bleibt eine
   offene Frage. Der Modellaufruf erhält keine Gegenkonten zur Auswahl.
 - **Prüfen und buchen** öffnet den vorhandenen Eingangsrechnungsdialog.
-  Der Mensch prüft Lieferant, Datum, Betrag und Kostenarten und entscheidet
-  über die Buchung. Der Dialog gleicht auf das bestätigte Konto aus.
+  Der Mensch prüft Lieferant, Datum und Kostenarten und bestätigt die Währung
+  EUR sowie den Brutto-Endbetrag am Original. Bei einer Abweichung durch
+  Steuern oder Rundung bricht der Dialog die Buchung ab. Fremdwährungsbelege
+  werden separat erfasst. Der Dialog gleicht auf das bestätigte Konto aus.
   Eine spätere Erstattung wird separat bearbeitet.
 - Bytegleiche Uploads zeigen auf denselben Vorschlag samt ursprünglichen
   Angaben. Bei einem Analysefehler den vorhandenen Vorschlag reaktivieren.

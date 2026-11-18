@@ -105,6 +105,15 @@ class TestReceiptPilot(unittest.TestCase):
 				doc = frappe.get_doc(pilot.PROPOSAL, first["name"])
 				target = Path(pilot.get_files_path(is_private=1)) / doc.file_url.rsplit("/", 1)[-1]
 				self.assertEqual(target.read_bytes(), content)
+				original, received = pilot.verified_original(doc, for_update=True)
+				self.assertTrue(original.is_private)
+				self.assertEqual(received, content)
+				target.write_bytes(b"changed receipt")
+				with self.assertRaisesRegex(ValueError, "stimmt nicht"):
+					pilot.verified_original(doc)
+				target.unlink()
+				with self.assertRaises(FileNotFoundError):
+					pilot.verified_original(doc)
 				self.assertEqual(json.loads(doc.receipt_context)["zahlungsquelle"], "Objektkasse")
 				self.assertEqual(frappe.db.count("File", {"attached_to_doctype": pilot.PROPOSAL, "attached_to_name": doc.name}), 1)
 				self.assertEqual(len(bulk_extraction.get_vorschlag_full(doc.name)["receipt"]["fragen"]), 2)
@@ -112,6 +121,28 @@ class TestReceiptPilot(unittest.TestCase):
 			frappe.db.rollback(save_point="receipt_test")
 			if target:
 				target.unlink(missing_ok=True)
+
+	def test_booking_requires_eur_and_explicit_expense_categories(self):
+		category = {"kostenart": "Material", "umlagefaehig": "Kostenart nicht umlagefaehig"}
+		foreign = SimpleNamespace(extracted_data=json.dumps({"waehrung": "CHF"}))
+		unknown = SimpleNamespace(extracted_data=json.dumps({"waehrung": ""}))
+		with self.assertRaisesRegex(frappe.ValidationError, "Fremdwährungsbelege"):
+			pilot.validate_booking_confirmation(foreign, [category], eur_confirmed=True)
+		with self.assertRaisesRegex(frappe.ValidationError, "in EUR"):
+			pilot.validate_booking_confirmation(unknown, [category], eur_confirmed=False)
+		with self.assertRaisesRegex(frappe.ValidationError, "Kostenart"):
+			pilot.validate_booking_confirmation(
+				unknown, [{"umlagefaehig": "Betriebskostenart"}], eur_confirmed=True,
+			)
+		pilot.validate_booking_confirmation(unknown, [category], eur_confirmed=True)
+
+	def test_reconciles_calculated_total_and_settlement_after_exclusive_item_tax(self):
+		with self.assertRaisesRegex(frappe.ValidationError, "Endbetrag"):
+			# Gross 100.00 passed as rates, but ERPNext added 19.00 exclusive item tax.
+			buchen_cockpit._validate_receipt_total({"net_total": 100, "grand_total": 119}, 100)
+		with self.assertRaisesRegex(frappe.ValidationError, "Endbetrag"):
+			buchen_cockpit._validate_receipt_total({"grand_total": 100, "outstanding_amount": 119}, 100)
+		buchen_cockpit._validate_receipt_total({"grand_total": 100, "outstanding_amount": 100}, 100)
 
 	def test_agent_capability_requires_role_and_booking_checks_ledger_permissions(self):
 		with patch.object(pilot, "enabled", return_value=True), patch.object(frappe, "get_roles", return_value=[]):
