@@ -10,7 +10,7 @@ import { MatchPanel } from "./components/MatchPanel.jsx";
 import { RulePanel } from "./components/RulePanel.jsx";
 import { KiBanner } from "./components/KiBanner.jsx";
 import { KiBulkDialog } from "./components/KiBulkDialog.jsx";
-import { isOpenKi } from "./ki.js";
+import { isOpenKi, kiBindings } from "./ki.js";
 import { DocLink } from "./components/DocLink.jsx";
 
 // ── Toast ───────────────────────────────────────────────────────────────────
@@ -385,6 +385,7 @@ export function App() {
 	const linkedRow = useRef(api.importName ? api.linkedRow : "");
 	const scrollToRow = useRef(null);
 	const panelRef = useRef(null);
+	const shownSteps = useRef(null);
 	const [bulkOpen, setBulkOpen] = useState(false);
 
 	const notify = useCallback((type, msg) => {
@@ -493,7 +494,7 @@ export function App() {
 	);
 
 	const scrollToPanel = useCallback(() => {
-		if (window.matchMedia("(width < 1100px)").matches) {
+		if (window.matchMedia("(max-width: 1100px)").matches) {
 			panelRef.current?.focus({ preventScroll: true });
 			panelRef.current?.scrollIntoView({ block: "start" });
 		}
@@ -664,12 +665,27 @@ export function App() {
 				const body = button.closest(".match-body").getBoundingClientRect();
 				const top = Math.max(0, body.top);
 				const bottom = Math.min(window.innerHeight, body.bottom);
-				const visible = (rect) => rect.height > 0 && rect.top >= top && rect.bottom <= bottom;
+				const tolerance = 1;
+				const visible = (rect) => rect.height > 0 && rect.top >= top - tolerance && rect.bottom <= bottom + tolerance;
+				const actionVisible = visible(action);
 
-				if (!visible(target) || !visible(action)) {
-					steps.scrollIntoView({ block: "start" });
-					return;
+				if (!visible(target) || !actionVisible) {
+					const availableHeight = Math.min(window.innerHeight, body.height);
+					const needsTwoViews = action.bottom - target.top > availableHeight + 2 * tolerance;
+					const revision = needsTwoViews ? JSON.stringify(kiBindings(selectedRow.ki)) : null;
+					// The steps element is replaced when the user changes rows.
+					const stepsWereShown = shownSteps.current?.steps === steps && shownSteps.current.revision === revision;
+					if (!needsTwoViews || !stepsWereShown) {
+						shownSteps.current = needsTwoViews ? { steps, revision } : null;
+						steps.scrollIntoView({ block: "start" });
+						return;
+					}
+					if (!actionVisible) {
+						button.scrollIntoView({ block: "end" });
+						return;
+					}
 				}
+				shownSteps.current = null;
 			}
 			button.click();
 		}

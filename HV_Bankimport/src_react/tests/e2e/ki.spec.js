@@ -212,6 +212,16 @@ test("bei 1024 px führen Klick, Tastatur und Zeilenlink zum Panel", async ({ pa
 	await expect(page.getByText(/Zahlung gebucht.*0041/)).toBeVisible();
 });
 
+test("bei genau 1100 px scrollt ein Zeilenklick zum gestapelten Panel", async ({ page }) => {
+	await page.setViewportSize({ width: 1100, height: 640 });
+	await page.goto(demo);
+	const panel = page.locator(".match-head");
+	await expect(panel).not.toBeInViewport();
+	await table(page).locator("tbody tr").nth(1).click();
+	await expect(panel).toContainText("Ueberweisung");
+	await expect(panel).toBeInViewport();
+});
+
 test("bei 1024 px bleibt die mit Tab fokussierte Tabellenzeile im Bild", async ({ page }) => {
 	await page.setViewportSize({ width: 1024, height: 640 });
 	await page.goto(demo);
@@ -262,6 +272,35 @@ test("Enter scrollt sichtbare Buchungsschritte mit verdecktem Button nach oben",
 	await page.keyboard.press("Enter");
 	await expect(page.getByText(/Partei zugeordnet, Buchung fehlgeschlagen/)).toBeVisible();
 });
+
+for (const { width, height, needsTwoViews } of [
+	{ width: 360, height: 560, needsTwoViews: false },
+	{ width: 844, height: 390, needsTwoViews: true },
+]) {
+	test(`Enter bucht bei ${width}×${height} nach dem Scrollen zum sichtbaren Button`, async ({ page }) => {
+		await page.setViewportSize({ width, height });
+		await page.goto(demo + "&row=r2");
+		const steps = suggestion(page).locator(".ki-steps");
+		const accept = suggestion(page).getByRole("button", { name: /Beide übernehmen & buchen/ });
+		const result = page.getByText(/Partei zugeordnet, Buchung fehlgeschlagen/);
+		await expect(accept).not.toBeInViewport();
+		await expect(page.locator(".match-panel-wrap")).toBeFocused();
+
+		await page.keyboard.press("Enter");
+		await expect(steps).toBeInViewport({ ratio: 0.98 });
+		await expect(result).toHaveCount(0);
+		if (needsTwoViews) {
+			const button = await accept.boundingBox();
+			expect(button.y + button.height).toBeGreaterThan(height + 1);
+			await page.keyboard.press("Enter");
+			await expect(result).toHaveCount(0);
+		}
+		await expect(accept).toBeInViewport({ ratio: 0.98 });
+		await page.keyboard.press("Enter");
+		await expect(result).toBeVisible();
+	});
+}
+
 
 test("fordert bei Kein Vorschlag erneut an und zeigt den laufenden Agenten", async ({ page }) => {
 	await page.goto(demo + "&row=r8");
