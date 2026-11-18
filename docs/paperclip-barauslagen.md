@@ -68,6 +68,10 @@ Eingangsrechnungen.
   gemeinsam gespeichert. Ein erneuter Aufruf liefert die bereits gebuchten Belege.
 - Bei Abweichungen durch Steuern oder Rundung bricht die Buchung ab. Fremdwährungsbelege
   und spätere Erstattungen werden separat erfasst.
+- Die Freigabe bindet auch die von ERPNext ermittelte Netto- und Steueraufteilung.
+  Ändert sich die Aufteilung bei gleichbleibendem Brutto, ist eine neue Freigabe nötig.
+- Stornierte Rechnungen oder Ausgleichsjournale kennzeichnet die Inbox am Bon.
+  Original und bisherige Buchung bleiben für die Nachprüfung verknüpft.
 - Bytegleiche Uploads zeigen auf denselben Vorschlag samt ursprünglichen
   Angaben. Bei einem Analysefehler den vorhandenen Vorschlag reaktivieren.
   Er steht dann wieder für den nächsten Agentenlauf bereit.

@@ -273,6 +273,7 @@ const _STATUS_COLOR = {
 	Processing: "#7b1fa2",
 	Ready: "#1976d2",
 	Booked: "#2e7d32",
+	Cancelled: "#616161",
 	Skipped: "#9e9e9e",
 	Error: "#c62828",
 };
@@ -281,6 +282,7 @@ const _STATUS_LABEL = {
 	Processing: __("läuft"),
 	Ready: __("bereit"),
 	Booked: __("gebucht"),
+	Cancelled: __("storniert"),
 	Skipped: __("übersprungen"),
 	Error: __("Fehler"),
 };
@@ -355,12 +357,13 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				<div class="hv-filter-control">
 					<label>${__("Status")}</label>
 					<select data-filter="status">
-						<option value="open">${__("Offen (Pending/Processing/Ready)")}</option>
+						<option value="open">${__("Offen und stornierte Bons")}</option>
 						<option value="alle">${__("Alle")}</option>
 						<option value="Ready">${__("Ready")}</option>
 						<option value="Pending">${__("Pending")}</option>
 						<option value="Processing">${__("Processing")}</option>
 						<option value="Booked">${__("Booked")}</option>
+						<option value="Cancelled">${__("Storniert")}</option>
 						<option value="Skipped">${__("Skipped")}</option>
 						<option value="Error">${__("Error")}</option>
 					</select>
@@ -426,7 +429,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 	});
 
 	layout.on("click", ".btn-receipts", () => hv_open_receipt_batch(refresh_list));
-	layout.on("click", ".btn-refresh", () => refresh_list());
+	layout.on("click", ".btn-refresh", () => refresh_list(true));
 	layout.on("click", ".btn-bulk", () => {
 		if (
 			hausverwaltung.buchen_cockpit
@@ -442,9 +445,10 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		state.selected_name = name;
 		render_list();
 		render_detail();
+		schedule_poll();
 	});
 
-	const refresh_list = () => {
+	const refresh_list = (force_detail = false) => {
 		const my_seq = ++state.refresh_seq;
 		frappe
 			.call({
@@ -466,15 +470,12 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				const new_rows = data.rows || [];
 				layout.find(".btn-receipts").toggleClass("hidden", !data.receipt_upload);
 
-				// Cache-Invalidation: wenn sich der Status eines Vorschlags
-				// geändert hat (z.B. Worker fertig: Processing → Ready), den
-				// gecachten full-Eintrag wegwerfen, damit render_detail ihn neu
-				// fetcht. Sonst zeigt das Detail-Pane ewig "Worker noch nicht fertig".
-				const prev_status = {};
-				for (const r0 of state.rows) prev_status[r0.name] = r0.status;
-				for (const r1 of new_rows) {
-					if (prev_status[r1.name] && prev_status[r1.name] !== r1.status) {
-						delete state.full_cache[r1.name];
+				const previous_rows = new Map(state.rows.map((r) => [r.name, r]));
+				for (const row of new_rows) {
+					const previous = previous_rows.get(row.name);
+					if (!previous || previous.status !== row.status || previous.detail_version !== row.detail_version
+						|| (force_detail && row.name === state.selected_name)) {
+						delete state.full_cache[row.name];
 					}
 				}
 
@@ -600,33 +601,36 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 
 		// Volldaten cachen
 		if (!state.full_cache[row.name]) {
-			state.full_cache[row.name] = "loading";
-			frappe
-				.call({
-					method: `${HV_INBOX_API}.get_vorschlag_full`,
-					args: { name: row.name },
-				})
+			const request = frappe.call({
+				method: `${HV_INBOX_API}.get_vorschlag_full`,
+				args: { name: row.name },
+			});
+			state.full_cache[row.name] = request;
+			request
 				.then((r) => {
+					if (state.full_cache[row.name] !== request) return;
 					state.full_cache[row.name] = (r && r.message) || null;
 					if (state.selected_name === row.name) render_detail();
 				})
 				.catch(() => {
-					delete state.full_cache[row.name];
+					if (state.full_cache[row.name] === request) delete state.full_cache[row.name];
 				});
 		}
 
 		const full = state.full_cache[row.name];
-		const data = full && full !== "loading" ? full.data || {} : null;
+		const loading = typeof full?.then === "function";
+		const data = full && !loading ? full.data || {} : null;
 
 		const receipt = full?.receipt;
 		const review = full?.receipt_review;
 		const approved = review?.status === "Approved";
+		const closed = ["Booked", "Cancelled"].includes(row.status);
 		const can_book = row.status === "Ready" && (!row.is_receipt ||
 			(review && review.status !== "Succeeded" && receipt && !receipt.fragen.length && (!data?.waehrung || data.waehrung === "EUR")));
 		const can_skip = ["Pending", "Processing", "Ready"].includes(row.status);
 		const can_reactivate = ["Skipped", "Error"].includes(row.status);
-		const can_reprocess = row.status !== "Booked";
-		const can_delete = row.status !== "Booked" && !review?.binding;
+		const can_reprocess = !closed;
+		const can_delete = !closed && !review?.binding;
 
 		const file_url = row.file_url || (full && full.file_url) || "";
 
@@ -659,7 +663,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 
 		const detail_block = data
 			? _hv_render_extraction_details(data)
-			: full === "loading"
+			: loading
 			? `<div style="padding:20px; color:#666;"><i class="fa fa-spinner fa-spin"></i> ${__("Lade Detail-Werte...")}</div>`
 			: `<div style="padding:20px; color:#666;">${__("Keine extrahierten Daten — Worker hat noch nicht abgeschlossen.")}</div>`;
 
@@ -674,7 +678,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				<div class="actions">
 					<button class="btn-book btn-primary" ${can_book ? "" : "disabled"}>${approved ? __("Buchung fortsetzen") : row.is_receipt ? __("Bon prüfen") : __("Buchen")}</button>
 					${approved ? `<button class="btn-reopen">${__("Buchungsdaten korrigieren")}</button>` : ""}
-					${receipt && row.status !== "Booked" ? `<button class="btn-receipt-context">${__("Barauslagen-Angaben ändern")}</button>` : ""}
+					${receipt && !closed ? `<button class="btn-receipt-context">${__("Barauslagen-Angaben ändern")}</button>` : ""}
 					<button class="btn-skip" ${can_skip ? "" : "disabled"}>${__("Überspringen")}</button>
 					<button class="btn-reactivate" ${can_reactivate ? "" : "disabled"}>${__("Reaktivieren")}</button>
 					<button class="btn-reprocess" title="${__("Komplett neu durchs LLM jagen — bisherige Felder werden überschrieben.")}" ${can_reprocess ? "" : "disabled"}>↻ ${__("Neu analysieren")}</button>
@@ -685,6 +689,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				<div class="hv-inbox-values">
 					${approved ? `<p>${__("Bon freigegeben. Die Buchung kann mit dieser Fassung fortgesetzt werden.")}</p>` : ""}
 					${review?.status === "Stale" ? `<p>${__("Freigabe ungültig. Bitte die geänderten Buchungsdaten erneut prüfen.")}</p>` : ""}
+					${row.status === "Cancelled" ? `<p>${__("Rechnung oder Ausgleich storniert. Die ursprüngliche Buchung bleibt nachvollziehbar.")}</p>` : ""}
 					${receipt ? hv_render_receipt_context(receipt, data) : ""}
 					${detail_block}
 					${
@@ -750,8 +755,8 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 	};
 
 	const _do_book = (row) => {
-		if (!state.full_cache[row.name] || state.full_cache[row.name] === "loading") return;
 		const full = state.full_cache[row.name];
+		if (!full || typeof full.then === "function") return;
 		const data = full.data || {};
 		const receipt = full.receipt;
 		const review = full.receipt_review;
@@ -925,6 +930,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		if (state.poll_paused) return; // kein Polling während ein modaler Dialog offen ist
 		const has_pending = state.rows.some((r) =>
 			["Pending", "Processing"].includes(r.status)
+			|| (r.is_receipt && r.status === "Ready" && r.name === state.selected_name)
 		);
 		if (has_pending) {
 			state.poll_timer = setTimeout(refresh_list, 3000);

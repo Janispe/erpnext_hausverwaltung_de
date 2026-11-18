@@ -84,7 +84,7 @@ def _binding(doc):
 
 
 def _final(receipt):
-	return receipt.status == "Booked" or bool(receipt.linked_purchase_invoice)
+	return receipt.status in {"Booked", "Cancelled"} or bool(receipt.linked_purchase_invoice)
 
 
 def review_state(receipt):
@@ -92,6 +92,8 @@ def review_state(receipt):
 	if not pilot.enabled() or not _accountant(frappe.session.user):
 		return None
 	source = _source(receipt)
+	if receipt.status == "Cancelled":
+		return {"source": source, "status": "Cancelled"}
 	doc, body = _proposal(receipt)
 	if not doc:
 		return {"source": source, "status": "Succeeded" if _final(receipt) else "Pending"}
@@ -102,6 +104,31 @@ def review_state(receipt):
 		"source": source, "status": status, "binding": _binding(doc),
 		"booking": body["payload"]["booking"],
 	}
+
+
+def review_versions(receipt_names):
+	"""Version only the receipt rows the Inbox already authorized for reading."""
+	if not receipt_names:
+		return {}
+	return dict(frappe.get_all(engine.PROPOSAL,
+		filters={"action": ACTION, "target": ["in", receipt_names]},
+		fields=["target", "modified"], as_list=True, limit_page_length=0))
+
+
+def on_settlement_cancel(journal, method=None):
+	invoices = {line.reference_name for line in journal.accounts
+		if line.reference_type == "Purchase Invoice" and line.reference_name}
+	for invoice in sorted(invoices):
+		name = frappe.db.get_value(pilot.PROPOSAL, {
+			"linked_purchase_invoice": invoice, "status": "Booked", "receipt_digest": ["is", "set"],
+		}, "name", for_update=True)
+		if not name:
+			continue
+		receipt = frappe.get_doc(pilot.PROPOSAL, name, for_update=True)
+		proposal, _ = _proposal(receipt, lock=True)
+		if (proposal and proposal.status == "Succeeded"
+			and frappe.parse_json(proposal.result)["settlement_journal_entry"] == journal.name):
+			frappe.db.set_value(pilot.PROPOSAL, name, "status", "Cancelled")
 
 
 def _text(values, key):
@@ -170,21 +197,19 @@ def _plan(receipt, booking):
 	request = cockpit._purchase_invoice_request_context(params, receipt=receipt)
 	pilot.validate_booking_confirmation(receipt, request["rows"], eur_confirmed=booking["beleg_eur_bestaetigt"])
 	pi = cockpit._prepare_cockpit_purchase_invoice(request, params, receipt=True)
+	pi.set_missing_values(for_validate=True)
+	pi.set_taxes_and_charges()
+	pi.calculate_taxes_and_totals()
+	cockpit._validate_receipt_total(pi, flt(booking["beleg_brutto_bestaetigt"]))
 	cockpit._validate_settlement_account(
 		params["zahlungskonto"], company=pi.company, payable_account=pi.credit_to,
 		zahlungsart=params["zahlungsart"],
 	)
 	preview = {
-		"source": _source(receipt), "original": original.name, "company": pi.company,
-		"currency": pi.currency, "credit_to": pi.credit_to,
+		"source": _source(receipt), "original": original.name,
+		"invoice": cockpit._receipt_invoice_effect(pi),
 		"settlement_account": params["zahlungskonto"], "payment_type": params["zahlungsart"],
 		"payment_note": params["zahlungsbemerkung"],
-		"items": [
-			{key: line.get(key) for key in (
-				"item_code", "expense_account", "cost_center", "wohnung", "rate", "description"
-			)}
-			for line in pi.items
-		],
 	}
 	return preview, pi, request, params, original
 
@@ -209,6 +234,8 @@ def approve(name, source, booking, binding=None):
 	doc, body = _proposal(receipt, lock=True)
 	if doc and doc.status == "Succeeded":
 		_expect(doc, binding)
+		if receipt.status == "Cancelled":
+			return _response(doc) | {"status": "Cancelled"}
 		return _response(doc)
 	if source != _source(receipt) or _final(receipt):
 		frappe.throw("Der Bon hat sich geändert. Bitte den Originalbeleg und die Buchungsdaten erneut prüfen.")
@@ -267,6 +294,8 @@ def execute(name, binding):
 		frappe.throw("Bitte zuerst die geprüfte Bon-Fassung freigeben.")
 	_expect(doc, binding)
 	if doc.status == "Succeeded":
+		if receipt.status == "Cancelled":
+			return _response(doc) | {"status": "Cancelled"}
 		return _response(doc) | {"result": frappe.parse_json(doc.result)}
 	if doc.status == "Stale":
 		return _response(doc)
@@ -296,6 +325,7 @@ def execute(name, binding):
 			return _response(doc)
 		result = cockpit._post_cockpit_purchase_invoice(
 			pi, request, params, receipt_file=original, receipt_total=flt(booking["beleg_brutto_bestaetigt"]),
+			receipt_effect=preview["invoice"],
 		)
 		engine._succeed(doc, result)
 	return _response(doc) | {"result": result}

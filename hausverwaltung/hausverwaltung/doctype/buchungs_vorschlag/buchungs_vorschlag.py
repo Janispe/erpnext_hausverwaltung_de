@@ -12,7 +12,9 @@ class BuchungsVorschlag(Document):
 		if self.receipt_digest and (
 			self.file_url != previous.file_url
 			or self.linked_purchase_invoice != previous.linked_purchase_invoice
-			or (self.status != previous.status and ("Booked" in (self.status, previous.status) or previous.linked_purchase_invoice))
+			or (self.status != previous.status and (
+				{self.status, previous.status} & {"Booked", "Cancelled"} or previous.linked_purchase_invoice
+			))
 		):
 			frappe.throw("Das Original und die Buchungsverknüpfung eines Bons sind unveränderlich.")
 

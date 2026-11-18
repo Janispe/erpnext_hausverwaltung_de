@@ -21,6 +21,10 @@ hausverwaltung.buchen_cockpit.execute_receipt = async (name, binding) => {
 		frappe.msgprint(__("Die Buchungsdaten haben sich geändert. Bitte den Bon erneut prüfen und freigeben."));
 		return null;
 	}
+	if (message.status === "Cancelled") {
+		frappe.msgprint(__("Rechnung oder Ausgleich für diesen Bon wurde storniert."));
+		return null;
+	}
 	return message.result;
 };
 const HV_BULK_API = "hausverwaltung.hausverwaltung.services.bulk_extraction";

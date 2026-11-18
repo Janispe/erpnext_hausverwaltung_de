@@ -1394,11 +1394,38 @@ def _prepare_cockpit_purchase_invoice(request, kwargs, *, receipt=False):
     return pi
 
 
-def _post_cockpit_purchase_invoice(pi, request, kwargs, *, receipt_file=None, receipt_total=None):
+def _receipt_invoice_effect(pi):
+    """Fields that determine the reviewed net expense, tax and payable amounts."""
+    return {
+        "company": pi.company, "currency": pi.currency, "credit_to": pi.credit_to,
+        "net_total": pi.net_total, "grand_total": pi.grand_total, "rounded_total": pi.rounded_total,
+        "items": [
+            {key: row.get(key) for key in (
+                "item_code", "expense_account", "cost_center", "wohnung", "rate", "net_amount", "description"
+            )}
+            for row in pi.items
+        ],
+        "taxes": [
+            {key: row.get(key) for key in (
+                "account_head", "cost_center", "charge_type", "category", "add_deduct_tax",
+                "included_in_print_rate", "rate", "tax_amount_after_discount_amount",
+            )}
+            for row in pi.taxes
+        ],
+    }
+
+
+def _check_receipt_invoice_effect(pi, total, expected):
+    _validate_receipt_total(pi, total)
+    if _receipt_invoice_effect(pi) != expected:
+        frappe.throw("ERPNext hat die geprüfte Aufwands- oder Steueraufteilung geändert. Bitte den Bon erneut prüfen.")
+
+
+def _post_cockpit_purchase_invoice(pi, request, kwargs, *, receipt_file=None, receipt_total=None, receipt_effect=None):
     pi.insert()
 
     if receipt_file:
-        _validate_receipt_total(pi, receipt_total)
+        _check_receipt_invoice_effect(pi, receipt_total, receipt_effect)
         _attach_source_file(pi, receipt_file.file_url, source=receipt_file)
     else:
         _attach_source_file(pi, kwargs.get("attached_file_url"))
@@ -1408,7 +1435,7 @@ def _post_cockpit_purchase_invoice(pi, request, kwargs, *, receipt_file=None, re
         pi.submit()
         if request["settle_now"]:
             if receipt_total is not None:
-                _validate_receipt_total(pi, receipt_total)
+                _check_receipt_invoice_effect(pi, receipt_total, receipt_effect)
             settlement_journal = _create_purchase_invoice_settlement_journal(
                 pi,
                 settlement_account=kwargs.get("zahlungskonto"),

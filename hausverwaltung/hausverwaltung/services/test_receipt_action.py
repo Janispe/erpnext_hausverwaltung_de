@@ -180,3 +180,48 @@ class TestReceiptAction(unittest.TestCase):
 		self._assert_no_invoice(doc)
 		self.assertEqual(bulk_extraction.get_vorschlag_full(doc.name)["receipt_review"]["status"], "Approved")
 		self.assertEqual(self._assert_result(doc, ref, self.cash), ["Created", "Approved", "Succeeded"])
+
+	def test_inclusive_tax_change_invalidates_approval_even_with_same_gross(self):
+		doc = self._receipt("Objektkasse", self.cash)
+		account = self._account(f"{doc.name} Vorsteuer", "Asset", "Tax")
+		booking = self._booking(doc)
+		prepare = cockpit._prepare_cockpit_purchase_invoice
+		rate = 7
+
+		def prepare_with_tax(*args, **kwargs):
+			pi = prepare(*args, **kwargs)
+			pi.append("taxes", {
+				"account_head": account, "cost_center": self.center, "description": "Vorsteuer",
+				"category": "Total", "add_deduct_tax": "Add", "charge_type": "On Net Total",
+				"included_in_print_rate": 1, "rate": rate,
+			})
+			return pi
+
+		with patch.object(cockpit, "_prepare_cockpit_purchase_invoice", side_effect=prepare_with_tax):
+			first = self._approve(doc, booking)
+			_, reviewed = action._proposal(doc)
+			rate = 19
+			changed, *_ = action._plan(doc, action._booking(booking))
+			self.assertEqual(changed["invoice"]["grand_total"], reviewed["preview"]["invoice"]["grand_total"])
+			self.assertNotEqual(changed["invoice"]["net_total"], reviewed["preview"]["invoice"]["net_total"])
+			self.assertEqual(action.execute(doc.name, first)["status"], "Stale")
+			self._assert_no_invoice(doc)
+			second = self._approve(doc, booking, first)
+			self.assertEqual(self._assert_result(doc, second, self.cash),
+				["Created", "Approved", "Stale", "Revised", "Approved", "Succeeded"])
+
+	def test_cancelled_settlement_and_invoice_keep_history_without_rebooking(self):
+		doc = self._receipt("Objektkasse", self.cash)
+		booking = self._booking(doc)
+		ref = self._approve(doc, booking)
+		result = action.execute(doc.name, ref)["result"]
+		frappe.get_doc("Journal Entry", result["settlement_journal_entry"]).cancel()
+		self.assertEqual(action.execute(doc.name, ref)["status"], "Cancelled")
+		frappe.get_doc("Purchase Invoice", result["name"]).cancel()
+		self.assertEqual(action.execute(doc.name, ref), {"status": "Cancelled", "binding": ref})
+		self.assertEqual(bulk_extraction.get_vorschlag_full(doc.name)["receipt_review"]["status"], "Cancelled")
+		rows = bulk_extraction.list_vorschlaege("open", session_id=doc.session_id)["rows"]
+		self.assertEqual([(row["name"], row["status"]) for row in rows], [(doc.name, "Cancelled")])
+		proposal, _ = action._proposal(doc)
+		self.assertEqual(proposal.status, "Succeeded")
+		self.assertEqual(frappe.parse_json(proposal.result), result)
