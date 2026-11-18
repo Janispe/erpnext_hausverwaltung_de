@@ -221,7 +221,7 @@ frappe.provide("hausverwaltung.hv_proposals");
 			el("p",box,`${p.id} · Revision ${p.revision} · ${p.hash.slice(0,10)} · Zeile ${p.lane?.label || "Wurzel"} · Schritt ${siblings.findIndex(n=>n.id===p.id)+1} von ${siblings.length}`,"hv-prop-muted");
 			if (p.status === "Approved" || p.status === "Rejected") el("p",box,`${person(p.decision_by)} · ${time(p.decision_at)} · gilt nur für Revision ${p.revision}${p.reject_reason ? " · "+p.reject_reason : ""}`);
 			if (p.status === "Stale") { const causes = { baseline_changed:"Das Zieldokument hat sich geändert.",dependency_revised:"Ein Vorgänger wurde überarbeitet.",dependency_rejected:"Ein Vorgänger wurde abgelehnt.",dependency_stale:"Ein Vorgänger ist veraltet." }; el("p",box,causes[p.stale_cause?.cause] || "Die Vorschau ist veraltet."); }
-			if (p.status === "Succeeded") { const event = events.find(e => e.kind === "Succeeded"); el("p",box,`Ausgeführt ${time(event?.creation)}`); link(box,"Dokument öffnen →",p.result.doctype,p.result.id); }
+			if (p.status === "Succeeded") { const event = events.find(e => e.kind === "Succeeded"); el("p",box,`Ausgeführt ${time(event?.creation)}`); if (p.result?.doctype && p.result?.id) link(box,"Dokument öffnen →",p.result.doctype,p.result.id); }
 			el("h4",box,"Änderung"); const table = el("table",box,"","table"), header = el("tr",table); for (const t of ["Feld","Bisher","Neu"]) el("th",header,t);
 			for (const c of p.changes) { const row = el("tr",table); el("td",row,c.label); el("td",row,c.before); const after = el("td",row); if (c.kind === "text" && c.segments) for (const seg of c.segments) el(seg.op === "del" ? "del" : seg.op === "ins" ? "ins" : "span",after,seg.text); else after.text(c.after); }
 			el("h4",box,"Begründung des Agenten"); el("em",box,p.rationale || "Keine Begründung angegeben."); for (const source of p.sources || []) link(el("p",box),source.label,source.doctype,source.name);
@@ -238,7 +238,10 @@ frappe.provide("hausverwaltung.hv_proposals");
 			if (p.status === "Pending" && this.reviewer) { button(actions,`Revision ${p.revision} freigeben`,()=>this.review(p,true),true); button(actions,"Ablehnen …",()=>this.reasonDialog(p,false)).addClass("hv-btn-danger"); el("p",box,"Ablehnen macht alle Nachfolger veraltet."); }
 			else if (p.status === "Stale" && this.reviewer) button(actions,"Neue Revision anfordern",()=>this.reasonDialog(p,true),true);
 			else if (p.status === "Pending" || p.status === "Stale") el("p",box,"Nur Prüfer können freigeben.");
-			if (p.status === "Approved") { button(actions,"Ausführen",()=>this.batchExecute([bind(p)]),true).prop("disabled",!node.executable); el("p",box,"Speichert über die normale Frappe-Validierung."); }
+			if (p.status === "Approved") {
+				if (this.reviewer || p.target?.doctype === "HV Synthetic Note") { button(actions,"Ausführen",()=>this.batchExecute([bind(p)]),true).prop("disabled",!node.executable); el("p",box,"Speichert über die normale Frappe-Validierung."); }
+				else el("p",box,"Nur Prüfer können freigegebene Dokumentvorschläge ausführen.");
+			}
 			el("h4",box,"Verlauf"); const history = el("ol",box).attr("aria-label","Verlauf");
 			const titles = { Created:"Vorschlag eingereicht",Revised:"Neue Revision",Approved:"Freigegeben",Rejected:"Abgelehnt",Stale:"Veraltet",Succeeded:"Ausgeführt",RevisionRequested:"Nachbesserung angefordert",ResultReused:"Ergebnis erneut abgerufen" };
 			for (const e of events) { const d = (e.detail ? JSON.parse(e.detail) : null) || {}; el("li",history,`${titles[e.kind] || "Ereignis"} · ${e.actor_name || frappe.user.full_name(e.actor)} · ${time(e.creation)}${d.note || d.reason ? " · "+(d.note || d.reason) : ""}`); }

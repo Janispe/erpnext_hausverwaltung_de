@@ -5,6 +5,11 @@ import json
 ACTION = "hv.synthetic_note.set_label/v1"
 POLICY = "hv.synthetic-review/v1"
 RECEIPT_PACKAGE_PREFIX = "RECEIPT-"
+DOC_CREATE_ACTION = "hv.doc.create/v1"
+DOC_UPDATE_ACTION = "hv.doc.update/v1"
+DOC_SUBMIT_ACTION = "hv.doc.submit/v1"
+DOC_ACTIONS = (DOC_CREATE_ACTION, DOC_UPDATE_ACTION, DOC_SUBMIT_ACTION)
+DOC_POLICY = "hv.doc-review/v1"
 
 
 def encode(value):
@@ -148,3 +153,45 @@ def package_metadata(value):
 	if bool(result["reference_doctype"]) != bool(result["reference_name"]):
 		raise ValueError("Package reference requires doctype and name")
 	return result
+
+
+def _doc_values(values):
+	if not isinstance(values, dict) or not 1 <= len(values) <= 120:
+		raise ValueError("Document values must contain 1..120 fields")
+	for key in values:
+		text(key, "fieldname", 1, 140)
+	normalized = json.loads(encode(values))
+	if not isinstance(normalized, dict):
+		raise ValueError("Invalid document values")
+	return normalized
+
+
+def doc_payload(action, value):
+	"""Validate and normalize typed payloads for generic ERPNext document proposals."""
+	if action not in DOC_ACTIONS:
+		raise ValueError("Unknown document proposal action")
+	if not isinstance(value, dict):
+		raise ValueError("Invalid document proposal payload")
+	doctype = text(value.get("doctype"), "doctype", 1, 136).strip()
+	if action == DOC_CREATE_ACTION:
+		if set(value) - {"doctype", "values", "submit"}:
+			raise ValueError("Only doctype, values and submit are accepted")
+		submit = value.get("submit", False)
+		if type(submit) is not bool:
+			raise ValueError("submit must be boolean")
+		return {"doctype": doctype, "values": _doc_values(value.get("values")), "submit": submit}
+	name = text(value.get("name"), "name", 1, 140)
+	if action == DOC_UPDATE_ACTION:
+		if set(value) != {"doctype", "name", "values"}:
+			raise ValueError("Only doctype, name and values are accepted")
+		return {"doctype": doctype, "name": name, "values": _doc_values(value.get("values"))}
+	if set(value) != {"doctype", "name"}:
+		raise ValueError("Only doctype and name are accepted")
+	return {"doctype": doctype, "name": name}
+
+
+def doc_target(action, payload):
+	"""Return a 1..140 char target identifier stored on HV Action Proposal."""
+	if action == DOC_CREATE_ACTION:
+		return f"NEW:{payload['doctype']}"[:140]
+	return payload["name"]

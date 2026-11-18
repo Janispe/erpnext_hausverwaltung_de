@@ -93,6 +93,21 @@ FAC_EMAIL_TOOL_NAMES = (
 )
 FAC_EMAIL_WRITE_TOOL_NAMES = ("hv_create_email_draft",)
 
+# Opt-in proposal tools let external agents submit/revise document proposals and inspect
+# packages/reviews; approval and execution remain restricted to human reviewers.
+FAC_PROPOSAL_TOOL_NAMES = (
+	"hv_proposal_submit_doc",
+	"hv_proposal_revise_doc",
+	"hv_proposal_list_packages",
+	"hv_proposal_get_package",
+	"hv_proposal_get",
+	"hv_proposal_audit",
+)
+FAC_PROPOSAL_WRITE_TOOL_NAMES = (
+	"hv_proposal_submit_doc",
+	"hv_proposal_revise_doc",
+)
+
 # Hook imports are resolved by FAC only when its custom_tools plugin is enabled.
 FAC_TOOL_HOOKS = [
 	f"hausverwaltung.hausverwaltung.agent_tools.fac_tools.Fac_{name}"
@@ -105,5 +120,6 @@ FAC_TOOL_HOOKS = [
 		*FAC_INVENTORY_TOOL_NAMES,
 		*FAC_FORM_TOOL_NAMES,
 		*FAC_EMAIL_TOOL_NAMES,
+		*FAC_PROPOSAL_TOOL_NAMES,
 	)
 ]

@@ -11,6 +11,8 @@ from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 	FAC_MAIL_MERGE_TOOL_NAMES,
 	FAC_MAIL_MERGE_WRITE_TOOL_NAMES,
 	FAC_OVERVIEW_TOOL_NAMES,
+	FAC_PROPOSAL_TOOL_NAMES,
+	FAC_PROPOSAL_WRITE_TOOL_NAMES,
 	FAC_REPORT_TOOL_NAMES,
 	FAC_TOOL_NAMES,
 )
@@ -55,6 +57,7 @@ def configure_tools(user: str, extra_tools: tuple[str, ...] = ()):
 		*FAC_INVENTORY_TOOL_NAMES,
 		*FAC_EMAIL_TOOL_NAMES,
 		*FAC_FORM_TOOL_NAMES,
+		*FAC_PROPOSAL_TOOL_NAMES,
 	)
 	if not set(extra_tools) <= set(
 		(
@@ -65,6 +68,7 @@ def configure_tools(user: str, extra_tools: tuple[str, ...] = ()):
 			*FAC_INVENTORY_TOOL_NAMES,
 			*FAC_EMAIL_TOOL_NAMES,
 			*FAC_FORM_TOOL_NAMES,
+			*FAC_PROPOSAL_TOOL_NAMES,
 		)
 	):
 		frappe.throw("Unbekanntes zusaetzliches FAC-Werkzeug.")
@@ -91,7 +95,7 @@ def configure_tools(user: str, extra_tools: tuple[str, ...] = ()):
 		config.enabled = int(name in allowed_custom_tools)
 		config.tool_category = (
 			"write"
-			if name in (*FAC_MAIL_MERGE_WRITE_TOOL_NAMES, *FAC_EMAIL_WRITE_TOOL_NAMES)
+			if name in (*FAC_MAIL_MERGE_WRITE_TOOL_NAMES, *FAC_EMAIL_WRITE_TOOL_NAMES, *FAC_PROPOSAL_WRITE_TOOL_NAMES)
 			else "read_only"
 		)
 		config.category_override = 1
@@ -123,6 +127,7 @@ def enable_external_tools(
 	*,
 	include_prototype: bool = False,
 	include_email_tools: bool = False,
+	include_proposal_tools: bool = False,
 ):
 	"""Enable this app's MCP tools without changing unrelated FAC plugins or core tools."""
 	frappe.only_for("System Manager")
@@ -154,6 +159,15 @@ def enable_external_tools(
 			role.insert()
 		frappe.get_doc("User", user).add_roles("Agent Email Drafts")
 		names = (*names, *FAC_EMAIL_TOOL_NAMES)
+	if include_proposal_tools:
+		if "HV Proposal Reviewer" in set(frappe.get_roles(user)):
+			frappe.throw("Ein Benutzer mit HV Proposal Reviewer darf keine Agent-Vorschlagswerkzeuge erhalten.")
+		if not frappe.db.exists("Role", "HV Proposal Agent"):
+			role = frappe.new_doc("Role")
+			role.role_name = "HV Proposal Agent"
+			role.insert()
+		frappe.get_doc("User", user).add_roles("HV Proposal Agent")
+		names = (*names, *FAC_PROPOSAL_TOOL_NAMES)
 	for name in names:
 		if frappe.db.exists("FAC Tool Configuration", name):
 			config = frappe.get_doc("FAC Tool Configuration", name)
@@ -164,7 +178,7 @@ def enable_external_tools(
 		config.enabled = 1
 		config.tool_category = (
 			"write"
-			if name in (*FAC_MAIL_MERGE_WRITE_TOOL_NAMES, *FAC_EMAIL_WRITE_TOOL_NAMES)
+			if name in (*FAC_MAIL_MERGE_WRITE_TOOL_NAMES, *FAC_EMAIL_WRITE_TOOL_NAMES, *FAC_PROPOSAL_WRITE_TOOL_NAMES)
 			else "read_only"
 		)
 		config.category_override = 1

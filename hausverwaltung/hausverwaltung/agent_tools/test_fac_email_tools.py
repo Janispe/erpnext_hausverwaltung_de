@@ -21,6 +21,7 @@ from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 	FAC_EMAIL_TOOL_NAMES,
 	FAC_EMAIL_WRITE_TOOL_NAMES,
 	FAC_MAIL_MERGE_WRITE_TOOL_NAMES,
+	FAC_PROPOSAL_WRITE_TOOL_NAMES,
 	FAC_TOOL_HOOKS,
 	FAC_TOOL_NAMES,
 )
@@ -385,7 +386,9 @@ class TestExplicitEmailActivation(unittest.TestCase):
 				for name, config in self.configs.items()
 				if getattr(config, "tool_category", None) == "write"
 			},
-			set(FAC_MAIL_MERGE_WRITE_TOOL_NAMES) | set(FAC_EMAIL_WRITE_TOOL_NAMES),
+			set(FAC_MAIL_MERGE_WRITE_TOOL_NAMES)
+			| set(FAC_EMAIL_WRITE_TOOL_NAMES)
+			| set(FAC_PROPOSAL_WRITE_TOOL_NAMES),
 		)
 
 	def test_activation_validates_operator_and_user_before_granting_roles(self):

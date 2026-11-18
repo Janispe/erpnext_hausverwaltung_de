@@ -18,6 +18,8 @@ from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
 	FAC_MAIL_MERGE_TOOL_NAMES,
 	FAC_MAIL_MERGE_WRITE_TOOL_NAMES,
 	FAC_OVERVIEW_TOOL_NAMES,
+	FAC_PROPOSAL_TOOL_NAMES,
+	FAC_PROPOSAL_WRITE_TOOL_NAMES,
 	FAC_TOOL_NAMES,
 )
 
@@ -733,6 +735,74 @@ for _name in FAC_MAIL_MERGE_TOOL_NAMES:
 for _name in FAC_EMAIL_TOOL_NAMES:
 	globals()[f"Fac_{_name}"] = type(
 		f"Fac_{_name}", (EmailTool,), {"tool_name": _name, "__module__": __name__}
+	)
+
+
+class ProposalTool(HausverwaltungReadTool):
+	"""Opt-in document proposal tools; approval and execution stay human-only."""
+
+	mcp_audience = "model"
+
+	def validate_arguments(self, arguments):
+		try:
+			validate(instance=arguments, schema=self.inputSchema)
+		except JSONSchemaValidationError:
+			raise frappe.ValidationError(
+				"Ungültige Vorschlagseingaben; Pflichtfelder, DocType und Feldtypen prüfen."
+			) from None
+
+	def __init__(self):
+		BaseTool.__init__(self)
+		from hausverwaltung.hausverwaltung.agent_tools.proposal_tools import PROPOSAL_TOOLS, input_schema
+
+		definition = PROPOSAL_TOOLS[self.tool_name]
+		self.name = self.tool_name
+		self.description = definition["description"]
+		self.inputSchema = input_schema(self.tool_name)
+		self.source_app = "hausverwaltung"
+		is_write = self.tool_name in FAC_PROPOSAL_WRITE_TOOL_NAMES
+		self.category = "write" if is_write else "read_only"
+		self.requires_permission = definition["doctype"]
+		self.annotations = {
+			"readOnlyHint": not is_write,
+			"destructiveHint": False,
+			"idempotentHint": True,
+			"openWorldHint": False,
+		}
+
+	def check_permission(self):
+		from hausverwaltung.proposals import frappe_service
+
+		if not frappe.db.get_value("FAC Tool Configuration", self.tool_name, "enabled"):
+			frappe.throw(
+				"Dieses Vorschlagswerkzeug ist nicht ausdrücklich freigeschaltet.", frappe.PermissionError
+			)
+		super().check_permission()
+		if frappe.conf.get("hv_proposals_enabled") not in (True, 1):
+			frappe.throw(
+				"Die Vorschlagsengine ist für produktive Dokumentvorschläge nicht aktiviert.",
+				frappe.PermissionError,
+			)
+		roles = set(frappe.get_roles())
+		if frappe_service.AGENT not in roles or frappe_service.REVIEWER in roles:
+			frappe.throw(
+				"Vorschlagswerkzeuge erfordern die Rolle HV Proposal Agent ohne HV Proposal Reviewer.",
+				frappe.PermissionError,
+			)
+
+	def execute(self, arguments):
+		from hausverwaltung.hausverwaltung.agent_tools.proposal_tools import PROPOSAL_FUNCTIONS
+
+		self.check_permission()
+		self.validate_arguments(arguments)
+		result = PROPOSAL_FUNCTIONS[self.name](**arguments)
+		result = fac_output.absolutize_urls(result, _link_base_url())
+		return fac_output.enforce_output_budget(result, self.mcp_model_max_chars)
+
+
+for _name in FAC_PROPOSAL_TOOL_NAMES:
+	globals()[f"Fac_{_name}"] = type(
+		f"Fac_{_name}", (ProposalTool,), {"tool_name": _name, "__module__": __name__}
 	)
 
 

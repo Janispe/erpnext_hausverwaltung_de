@@ -1,0 +1,310 @@
+"""Contract and integration tests for OpenClaw/FAC document proposal tools."""
+
+import importlib.util
+import sys
+import unittest
+import uuid
+from contextlib import ExitStack
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
+from unittest.mock import Mock, patch
+
+try:
+	from jsonschema import ValidationError, validate
+except ImportError:
+	ValidationError = None
+	validate = None
+
+from hausverwaltung.hausverwaltung.agent_tools.fac_contract import (
+	FAC_PROPOSAL_TOOL_NAMES,
+	FAC_PROPOSAL_WRITE_TOOL_NAMES,
+	FAC_TOOL_HOOKS,
+	FAC_TOOL_NAMES,
+)
+from hausverwaltung.hausverwaltung.agent_tools.proposal_tools import PROPOSAL_TOOLS, input_schema
+
+
+def _module(name, **values):
+	module = ModuleType(name)
+	module.__dict__.update(values)
+	return module
+
+
+def _load_source(name, path):
+	spec = importlib.util.spec_from_file_location(name, path)
+	module = importlib.util.module_from_spec(spec)
+	spec.loader.exec_module(module)
+	return module
+
+
+class TestProposalToolContract(unittest.TestCase):
+	def test_proposal_tools_are_hooked_and_never_expose_review_or_execute(self):
+		self.assertEqual(set(PROPOSAL_TOOLS), set(FAC_PROPOSAL_TOOL_NAMES))
+		self.assertEqual(
+			FAC_PROPOSAL_WRITE_TOOL_NAMES, ("hv_proposal_submit_doc", "hv_proposal_revise_doc")
+		)
+		self.assertFalse(set(FAC_PROPOSAL_TOOL_NAMES) & set(FAC_TOOL_NAMES))
+		for name in FAC_PROPOSAL_TOOL_NAMES:
+			self.assertIn(f"hausverwaltung.hausverwaltung.agent_tools.fac_tools.Fac_{name}", FAC_TOOL_HOOKS)
+			self.assertNotIn("review", name)
+			self.assertNotIn("execute", name)
+
+	@unittest.skipUnless(validate, "jsonschema is not installed")
+	def test_submit_schema_validates_strictly_and_blocks_extra_fields(self):
+		schema = input_schema("hv_proposal_submit_doc")
+		valid = {
+			"key": "req-1",
+			"package": "openclaw-pkg-1",
+			"package_meta": {"title": "Testpaket"},
+			"operation": "create",
+			"doctype": "Contact",
+			"values": {"first_name": "Max"},
+			"metadata": {"title": "Kontakt anlegen", "summary": "Max Mustermann"},
+		}
+		validate(valid, schema)
+		for bad in (
+			{**valid, "package": "bad package/slash"},
+			{**valid, "operation": "delete"},
+			{**valid, "extra": True},
+			{key: val for key, val in valid.items() if key != "key"},
+		):
+			with self.assertRaises(ValidationError):
+				validate(bad, schema)
+
+
+class TestProposalToolSetup(unittest.TestCase):
+	def setUp(self):
+		self.stack = ExitStack()
+		self.addCleanup(self.stack.close)
+		self.configs = {}
+		self.roles = set()
+		self.user_roles = set()
+		self.user = SimpleNamespace(add_roles=Mock(side_effect=lambda *r: self.user_roles.update(r)))
+		self.registry = SimpleNamespace(
+			clear_cache=Mock(),
+			get_available_tools=Mock(side_effect=lambda user=None: [
+				{"name": name}
+				for name in (
+					*FAC_TOOL_NAMES,
+					"hv_report_list",
+					"hv_report_requirements",
+					"hv_run_report",
+					"hv_export_view",
+					"hv_export_report",
+					"agent_mail_merge_get_pdf",
+					"agent_mail_merge_upload_asset",
+					"hv_find_fields",
+					"hv_get_form_context",
+					"get_document",
+					*self.configs,
+				)
+			]),
+		)
+		self.manager = SimpleNamespace(enable_plugin=Mock(), disable_plugin=Mock(), get_enabled_plugins=Mock(return_value=[]))
+		self.settings = SimpleNamespace(server_enabled=0, save=Mock())
+
+		def throw(message, exception=ValueError):
+			raise exception(message)
+
+		self.frappe = _module(
+			"frappe",
+			PermissionError=PermissionError,
+			only_for=Mock(),
+			throw=throw,
+			new_doc=self.new_doc,
+			get_doc=self.get_doc,
+			get_single=Mock(return_value=self.settings),
+			get_roles=Mock(side_effect=lambda user=None: list(self.user_roles)),
+			db=SimpleNamespace(exists=Mock(side_effect=self.exists), set_value=Mock(), commit=Mock()),
+		)
+		self.stack.enter_context(
+			patch.dict(
+				sys.modules,
+				{
+					"frappe": self.frappe,
+					"frappe_assistant_core.core.tool_registry": _module(
+						"frappe_assistant_core.core.tool_registry", get_tool_registry=lambda: self.registry
+					),
+					"frappe_assistant_core.utils.plugin_manager": _module(
+						"frappe_assistant_core.utils.plugin_manager", get_plugin_manager=lambda: self.manager
+					),
+					"hausverwaltung.hausverwaltung.services.fac_native_assistant": _module(
+						"hausverwaltung.hausverwaltung.services.fac_native_assistant",
+						NATIVE_READ_TOOLS=("get_document",),
+						NATIVE_WRITE_TOOLS=("create_document",),
+					),
+				},
+			)
+		)
+		self.setup = _load_source(
+			"_hv_proposal_fac_setup", Path(__file__).parents[1] / "services" / "fac_setup.py"
+		)
+
+	def exists(self, doctype, name):
+		if doctype == "User":
+			return name == "openclaw@example.org"
+		if doctype == "Role":
+			return name in self.roles
+		return name in self.configs
+
+	def get_doc(self, doctype, name):
+		return self.user if doctype == "User" else self.configs[name]
+
+	def new_doc(self, doctype):
+		doc = SimpleNamespace()
+		if doctype == "Role":
+			doc.insert = lambda: self.roles.add(doc.role_name)
+		else:
+			doc.save = lambda: self.configs.update({doc.tool_name: doc})
+		return doc
+
+	def test_default_external_activation_excludes_proposal_tools(self):
+		self.setup.enable_external_tools(user="openclaw@example.org")
+		self.assertFalse(set(self.configs) & set(FAC_PROPOSAL_TOOL_NAMES))
+		self.assertEqual(self.user_roles, set())
+
+	def test_opt_in_enables_proposal_tools_and_blocks_reviewer_overlap(self):
+		self.setup.enable_external_tools(user="openclaw@example.org", include_proposal_tools=True)
+		self.assertIn("HV Proposal Agent", self.user_roles)
+		for name in FAC_PROPOSAL_TOOL_NAMES:
+			cfg = self.configs[name]
+			self.assertEqual(cfg.enabled, 1)
+			self.assertEqual(cfg.tool_category, "write" if name in FAC_PROPOSAL_WRITE_TOOL_NAMES else "read_only")
+
+		self.user_roles = {"HV Proposal Reviewer"}
+		with self.assertRaises(ValueError):
+			self.setup.enable_external_tools(user="openclaw@example.org", include_proposal_tools=True)
+
+
+class TestDocActionsSite(unittest.TestCase):
+	"""End-to-end checks on an isolated disposable Frappe site."""
+
+	def setUp(self):
+		try:
+			import frappe
+			from frappe.utils import cint
+		except ImportError:
+			self.skipTest("Requires Frappe environment")
+		if not (cint(frappe.conf.get("allow_tests")) and cint(frappe.conf.get("hv_disposable_test_site"))):
+			self.skipTest("Requires an explicitly enabled disposable ERPNext site")
+		self.frappe = frappe
+		point = "docprop_" + uuid.uuid4().hex[:10]
+		frappe.db.savepoint(point)
+		self.addCleanup(frappe.clear_cache)
+		self.addCleanup(frappe.db.rollback, save_point=point)
+		self.addCleanup(frappe.set_user, frappe.session.user)
+		self.point = point
+
+		for role_name in ("HV Proposal Agent", "HV Proposal Reviewer", "Agent Readonly API"):
+			if not frappe.db.exists("Role", role_name):
+				frappe.get_doc({"doctype": "Role", "role_name": role_name}).insert(ignore_permissions=True)
+
+		self.agent_user = f"{point}_agent@hv4.invalid"
+		self.reviewer_user = f"{point}_rev@hv4.invalid"
+		for email, roles in (
+			(self.agent_user, ["HV Proposal Agent", "Agent Readonly API", "Sales User"]),
+			(self.reviewer_user, ["HV Proposal Reviewer", "Sales User"]),
+		):
+			user = frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": email,
+					"first_name": point,
+					"enabled": 1,
+					"send_welcome_email": 0,
+					"roles": [{"role": r} for r in roles],
+				}
+			)
+			user.insert(ignore_permissions=True)
+
+		self.enterContext(patch.dict(frappe.conf, {"hv_proposals_enabled": True}))
+
+	def _human_session(self, user):
+		sid = self.point + "_" + user
+		request = SimpleNamespace(cookies={"sid": sid}, headers={})
+		self.enterContext(patch.object(self.frappe.local, "request", request, create=True))
+		self.enterContext(patch.object(self.frappe.local, "login_manager", SimpleNamespace(user=user), create=True))
+		self.enterContext(patch.dict(self.frappe.session, sid=sid))
+		self.frappe.set_user(user)
+
+	def test_create_approve_execute_and_update_stale_lifecycle(self):
+		from hausverwaltung.hausverwaltung.agent_tools.proposal_tools import (
+			get_package,
+			get_proposal,
+			submit_doc,
+		)
+		from hausverwaltung.proposals import frappe_service
+
+		self.frappe.set_user(self.agent_user)
+		package = f"pkg-{self.point}"
+		created = submit_doc(
+			key=f"create-{self.point}",
+			package=package,
+			package_meta={"title": f"OpenClaw Test {self.point}", "reason": "Automatisierter Dokumentvorschlag"},
+			operation="create",
+			doctype="Contact",
+			values={"first_name": "Erika", "last_name": f"Muster-{self.point}"},
+			metadata={"title": "Kontakt anlegen", "summary": f"Erika Muster-{self.point}"},
+		)
+		self.assertEqual(created["status"], "Pending")
+		self.assertEqual(created["target"]["doctype"], "Contact")
+		self.assertIsNone(created["target"]["name"])
+		self.assertTrue(any(c["field"] == "first_name" and c["after"] == "Erika" for c in created["changes"]))
+
+		# Agent cannot review or execute productive document actions.
+		binding = {"id": created["id"], "revision": created["revision"], "hash": created["hash"]}
+		with self.assertRaises(self.frappe.PermissionError):
+			frappe_service.review(binding, True)
+		with self.assertRaises(self.frappe.PermissionError):
+			frappe_service.execute(binding)
+
+		# Human reviewer approves and executes using real ERPNext Contact permissions.
+		self._human_session(self.reviewer_user)
+		approved = frappe_service.review(binding, True)
+		self.assertEqual(approved["status"], "Approved")
+		executed = frappe_service.execute(binding)
+		self.assertEqual(executed["status"], "Succeeded")
+		contact_name = executed["result"]["id"]
+		self.assertEqual(self.frappe.db.get_value("Contact", contact_name, "first_name"), "Erika")
+
+		detail = get_proposal(proposal_id=created["id"])
+		self.assertEqual(detail["target"]["name"], contact_name)
+		self.assertEqual(len(get_package(package=package)["nodes"]), 1)
+
+		# Agent proposes an update, external edit happens -> Stale on review.
+		self.frappe.set_user(self.agent_user)
+		update_prop = submit_doc(
+			key=f"upd-{self.point}",
+			package=package,
+			operation="update",
+			doctype="Contact",
+			name=contact_name,
+			values={"first_name": "Erika-Maria"},
+			metadata={"title": "Vorname korrigieren", "summary": "Erika → Erika-Maria"},
+		)
+		self.assertEqual(update_prop["status"], "Pending")
+
+		self._human_session(self.reviewer_user)
+		contact_doc = self.frappe.get_doc("Contact", contact_name)
+		contact_doc.first_name = "Manuell"
+		contact_doc.save()
+
+		stale_review = frappe_service.review(
+			{"id": update_prop["id"], "revision": update_prop["revision"], "hash": update_prop["hash"]}, True
+		)
+		self.assertEqual(stale_review["status"], "Stale")
+
+	def test_blocked_system_doctype_is_rejected(self):
+		from hausverwaltung.hausverwaltung.agent_tools.proposal_tools import submit_doc
+
+		self.frappe.set_user(self.agent_user)
+		with self.assertRaises(self.frappe.PermissionError):
+			submit_doc(
+				key=f"user-{self.point}",
+				package=f"blk-{self.point}",
+				package_meta={"title": "Blocktest"},
+				operation="create",
+				doctype="User",
+				values={"email": "evil@hv4.invalid", "first_name": "Evil"},
+				metadata={"title": "User", "summary": "Blocked"},
+			)

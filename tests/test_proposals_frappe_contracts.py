@@ -106,12 +106,12 @@ class AdapterContracts(unittest.TestCase):
 		self.modules = patch.dict(sys.modules, {"frappe": self.fake, "frappe.utils": utils,
 			"frappe.model": ModuleType("frappe.model"), "frappe.model.document": document})
 		self.modules.start()
-		for name in ("hausverwaltung.proposals.frappe_service", "hausverwaltung.proposals.frappe_guards"):
+		for name in ("hausverwaltung.proposals.frappe_service", "hausverwaltung.proposals.frappe_guards", "hausverwaltung.proposals.doc_actions"):
 			sys.modules.pop(name, None)
 		self.service = importlib.import_module("hausverwaltung.proposals.frappe_service")
 
 	def tearDown(self):
-		for name in ("hausverwaltung.proposals.frappe_service", "hausverwaltung.proposals.frappe_guards"):
+		for name in ("hausverwaltung.proposals.frappe_service", "hausverwaltung.proposals.frappe_guards", "hausverwaltung.proposals.doc_actions"):
 			sys.modules.pop(name, None)
 		self.modules.stop()
 
@@ -337,6 +337,55 @@ class PackageContracts(unittest.TestCase):
 		self.assertEqual(self.fake.flags["has_permission_check_logs"],["existing permission"])
 		with patch.object(self.service,"_visible",return_value=[object()]),patch.object(self.service,"_reference",return_value=None):
 			self.assertTrue(self.service.readable_record(doc,"other-user"))
+
+	def test_doc_payload_validation_and_target_generation(self):
+		created = d.doc_payload(d.DOC_CREATE_ACTION, {"doctype": "Customer", "values": {"customer_name": "Test"}})
+		self.assertEqual(created, {"doctype": "Customer", "values": {"customer_name": "Test"}, "submit": False})
+		self.assertEqual(d.doc_target(d.DOC_CREATE_ACTION, created), "NEW:Customer")
+		updated = d.doc_payload(d.DOC_UPDATE_ACTION, {"doctype": "Customer", "name": "C-1", "values": {"customer_name": "Neu"}})
+		self.assertEqual(d.doc_target(d.DOC_UPDATE_ACTION, updated), "C-1")
+		submitted = d.doc_payload(d.DOC_SUBMIT_ACTION, {"doctype": "Sales Invoice", "name": "SINV-1"})
+		self.assertEqual(d.doc_target(d.DOC_SUBMIT_ACTION, submitted), "SINV-1")
+		for bad_action, bad_payload in (
+			(d.DOC_CREATE_ACTION, {"doctype": "Customer", "values": {}}),
+			(d.DOC_CREATE_ACTION, {"doctype": "Customer", "values": {"a": 1}, "submit": "yes"}),
+			(d.DOC_UPDATE_ACTION, {"doctype": "Customer", "values": {"a": 1}}),
+			(d.DOC_SUBMIT_ACTION, {"doctype": "Sales Invoice", "name": "SINV-1", "values": {"a": 1}}),
+		):
+			with self.assertRaises(ValueError):
+				d.doc_payload(bad_action, bad_payload)
+
+	def test_production_and_synthetic_flags_stay_isolated(self):
+		self.fake.conf = {"hv_proposals_enabled": True}
+		self.assertEqual(self.service._enabled_actions(), list(d.DOC_ACTIONS))
+		with self.assertRaises(self.Denied):
+			self.service.enabled(d.ACTION)
+		self.service.enabled(d.DOC_CREATE_ACTION)
+		self.fake.conf = {"hv_proposals_synthetic_enabled": True}
+		self.assertEqual(self.service._enabled_actions(), [d.ACTION])
+		with self.assertRaises(self.Denied):
+			self.service.enabled(d.DOC_CREATE_ACTION)
+
+	def test_doc_actions_module_has_no_bypass_and_blocks_sensitive_doctypes(self):
+		doc_actions = importlib.import_module("hausverwaltung.proposals.doc_actions")
+		tree = ast.parse((APP / "proposals/doc_actions.py").read_text())
+		for node in ast.walk(tree):
+			if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+				self.assertNotIn(node.func.attr, {"commit", "set_user"})
+				self.assertFalse(any(kw.arg == "ignore_permissions" for kw in node.keywords))
+		for blocked in ("User", "Has Role", "User Permission", "Server Script", "HV Action Proposal", "FAC Tool Configuration"):
+			with self.assertRaises(self.Denied):
+				doc_actions._allowed_doctype(blocked)
+
+	def test_doc_actions_execute_requires_human_session(self):
+		self.fake.conf = {"hv_proposals_enabled": True}
+		self.roles = {"HV Proposal Agent"}
+		self.session.user = "agent-doc"
+		doc = SimpleNamespace(name="HVP-1", current_revision=1, revision_hash="a" * 64, action=d.DOC_CREATE_ACTION, package="pkg", status="Approved", target="NEW:Customer")
+		body = {"action": d.DOC_CREATE_ACTION, "policy": d.DOC_POLICY, "payload": {"doctype": "Customer", "values": {"customer_name": "A"}, "submit": False}, "dependencies": [], "preview": {}}
+		with patch.object(self.service, "_lock_for"), patch.object(self.service, "_exact", return_value=(doc, body)):
+			with self.assertRaises(self.Denied):
+				self.service.execute({"id": "HVP-1", "revision": 1, "hash": "a" * 64})
 
 
 if __name__ == "__main__": unittest.main()
