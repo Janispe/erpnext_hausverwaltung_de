@@ -193,17 +193,47 @@ class TestDocActionsSite(unittest.TestCase):
 		self.addCleanup(frappe.clear_cache)
 		self.addCleanup(frappe.db.rollback, save_point=point)
 		self.addCleanup(frappe.set_user, frappe.session.user)
+		frappe.set_user("Administrator")
 		self.point = point
 
 		for role_name in ("HV Proposal Agent", "HV Proposal Reviewer", "Agent Readonly API"):
 			if not frappe.db.exists("Role", role_name):
 				frappe.get_doc({"doctype": "Role", "role_name": role_name}).insert(ignore_permissions=True)
 
+		agent_perm_role = frappe.get_doc(
+			{"doctype": "Role", "role_name": f"DocProp Agent {point}"}
+		).insert(ignore_permissions=True).name
+		reviewer_perm_role = frappe.get_doc(
+			{"doctype": "Role", "role_name": f"DocProp Rev {point}"}
+		).insert(ignore_permissions=True).name
+
+		for doctype, role, write_flag in (
+			("Supplier", agent_perm_role, 0),
+			("Supplier Group", agent_perm_role, 0),
+			("Supplier", reviewer_perm_role, 1),
+			("Supplier Group", reviewer_perm_role, 0),
+		):
+			frappe.get_doc(
+				{
+					"doctype": "Custom DocPerm",
+					"parent": doctype,
+					"parenttype": "DocType",
+					"parentfield": "permissions",
+					"role": role,
+					"permlevel": 0,
+					"read": 1,
+					"create": write_flag,
+					"write": write_flag,
+				}
+			).insert(ignore_permissions=True)
+			frappe.clear_cache(doctype=doctype)
+			self.addCleanup(frappe.clear_cache, doctype=doctype)
+
 		self.agent_user = f"{point}_agent@hv4.invalid"
 		self.reviewer_user = f"{point}_rev@hv4.invalid"
 		for email, roles in (
-			(self.agent_user, ["HV Proposal Agent", "Agent Readonly API", "Sales User"]),
-			(self.reviewer_user, ["HV Proposal Reviewer", "Sales User"]),
+			(self.agent_user, ["HV Proposal Agent", "Agent Readonly API", agent_perm_role]),
+			(self.reviewer_user, ["HV Proposal Reviewer", reviewer_perm_role]),
 		):
 			user = frappe.get_doc(
 				{
@@ -211,12 +241,14 @@ class TestDocActionsSite(unittest.TestCase):
 					"email": email,
 					"first_name": point,
 					"enabled": 1,
+					"user_type": "System User",
 					"send_welcome_email": 0,
 					"roles": [{"role": r} for r in roles],
 				}
 			)
 			user.insert(ignore_permissions=True)
 
+		self.supplier_group = frappe.db.get_value("Supplier Group", {"is_group": 0}, "name")
 		self.enterContext(patch.dict(frappe.conf, {"hv_proposals_enabled": True}))
 
 	def _human_session(self, user):
@@ -242,14 +274,20 @@ class TestDocActionsSite(unittest.TestCase):
 			package=package,
 			package_meta={"title": f"OpenClaw Test {self.point}", "reason": "Automatisierter Dokumentvorschlag"},
 			operation="create",
-			doctype="Contact",
-			values={"first_name": "Erika", "last_name": f"Muster-{self.point}"},
-			metadata={"title": "Kontakt anlegen", "summary": f"Erika Muster-{self.point}"},
+			doctype="Supplier",
+			values={
+				"supplier_name": f"Muster Lieferant {self.point}",
+				"supplier_type": "Company",
+				"supplier_group": self.supplier_group,
+			},
+			metadata={"title": "Lieferant anlegen", "summary": f"Muster Lieferant {self.point}"},
 		)
 		self.assertEqual(created["status"], "Pending")
-		self.assertEqual(created["target"]["doctype"], "Contact")
+		self.assertEqual(created["target"]["doctype"], "Supplier")
 		self.assertIsNone(created["target"]["name"])
-		self.assertTrue(any(c["field"] == "first_name" and c["after"] == "Erika" for c in created["changes"]))
+		self.assertTrue(
+			any(c["field"] == "supplier_name" and c["after"] == f"Muster Lieferant {self.point}" for c in created["changes"])
+		)
 
 		# Agent cannot review or execute productive document actions.
 		binding = {"id": created["id"], "revision": created["revision"], "hash": created["hash"]}
@@ -258,17 +296,20 @@ class TestDocActionsSite(unittest.TestCase):
 		with self.assertRaises(self.frappe.PermissionError):
 			frappe_service.execute(binding)
 
-		# Human reviewer approves and executes using real ERPNext Contact permissions.
+		# Human reviewer approves and executes using real ERPNext Supplier permissions.
 		self._human_session(self.reviewer_user)
 		approved = frappe_service.review(binding, True)
 		self.assertEqual(approved["status"], "Approved")
 		executed = frappe_service.execute(binding)
 		self.assertEqual(executed["status"], "Succeeded")
-		contact_name = executed["result"]["id"]
-		self.assertEqual(self.frappe.db.get_value("Contact", contact_name, "first_name"), "Erika")
+		supplier_id = executed["result"]["id"]
+		self.assertEqual(
+			self.frappe.db.get_value("Supplier", supplier_id, "supplier_name"),
+			f"Muster Lieferant {self.point}",
+		)
 
 		detail = get_proposal(proposal_id=created["id"])
-		self.assertEqual(detail["target"]["name"], contact_name)
+		self.assertEqual(detail["target"]["name"], supplier_id)
 		self.assertEqual(len(get_package(package=package)["nodes"]), 1)
 
 		# Agent proposes an update, external edit happens -> Stale on review.
@@ -277,17 +318,17 @@ class TestDocActionsSite(unittest.TestCase):
 			key=f"upd-{self.point}",
 			package=package,
 			operation="update",
-			doctype="Contact",
-			name=contact_name,
-			values={"first_name": "Erika-Maria"},
-			metadata={"title": "Vorname korrigieren", "summary": "Erika → Erika-Maria"},
+			doctype="Supplier",
+			name=supplier_id,
+			values={"supplier_name": f"Geaendert {self.point}"},
+			metadata={"title": "Name korrigieren", "summary": "Lieferant umbenennen"},
 		)
 		self.assertEqual(update_prop["status"], "Pending")
 
 		self._human_session(self.reviewer_user)
-		contact_doc = self.frappe.get_doc("Contact", contact_name)
-		contact_doc.first_name = "Manuell"
-		contact_doc.save()
+		supplier_doc = self.frappe.get_doc("Supplier", supplier_id)
+		supplier_doc.supplier_name = f"Manuell {self.point}"
+		supplier_doc.save()
 
 		stale_review = frappe_service.review(
 			{"id": update_prop["id"], "revision": update_prop["revision"], "hash": update_prop["hash"]}, True
