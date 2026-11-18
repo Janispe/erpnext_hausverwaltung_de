@@ -11,7 +11,10 @@
   "reason",
   "reference_doctype",
   "reference_name",
-  "lane_label"
+  "lane_label",
+  "bank_run_hash",
+  "abstentions",
+  "superseded_by"
  ],
  "fields": [
   {
@@ -61,6 +64,26 @@
    "fieldtype": "Data",
    "label": "Lane Label",
    "set_only_once": 1
+  },
+  {
+   "fieldname": "bank_run_hash",
+   "fieldtype": "Data",
+   "label": "Bank Run Hash",
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "abstentions",
+   "fieldtype": "Table",
+   "label": "Abstentions",
+   "options": "HV Proposal Abstention"
+  },
+  {
+   "fieldname": "superseded_by",
+   "fieldtype": "Link",
+   "label": "Superseded By",
+   "options": "HV Proposal Package",
+   "read_only": 1
   }
  ],
  "permissions": [

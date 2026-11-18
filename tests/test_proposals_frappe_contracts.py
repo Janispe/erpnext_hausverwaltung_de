@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 APP = Path(__file__).resolve().parents[1] / "hausverwaltung"
 sys.path.insert(0, str(APP.parent))
-from hausverwaltung.proposals import domain as d
+from hausverwaltung.proposals import domain as d, registry
 
 
 class ProjectionContracts(unittest.TestCase):
@@ -72,6 +72,25 @@ class ProjectionContracts(unittest.TestCase):
 			with self.assertRaises(ValueError): d.payload(value)
 		with self.assertRaises(ValueError): d.binding(self.ref("a") | {"revision": True})
 		self.assertNotEqual(d.digest({"revision": 1}), d.digest({"revision": 2}))
+
+	def test_confidence_is_hash_bound_and_optional_for_existing_revisions(self):
+		meta = {"title": "Buchung", "summary": "Test"}
+		before = d.metadata(meta)
+		self.assertNotIn("confidence", before)
+		after = d.metadata(meta | {"confidence": {"level": "hoch", "score": 0.9}})
+		self.assertNotEqual(d.digest(before), d.digest(after))
+		for invalid in ({"level": "unknown"}, {"level": "hoch", "score": True},
+			{"level": "hoch", "score": float("nan")}, {"level": "hoch", "score": 1.1}):
+			with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+				d.metadata(meta | {"confidence": invalid})
+
+	def test_bank_actions_and_receipt_surface_are_registered(self):
+		self.assertEqual({registry.ACTIONS[key].kind for key in registry.BANK_ACTION_NAMES},
+			{"party", "invoice", "split", "abschlag", "kredit", "payment", "transfer", "journal"})
+		self.assertTrue(registry.public(d.ACTION))
+		self.assertFalse(registry.public("hv.cash_receipt.book/v1"))
+		self.assertNotIn("confirmed_after_contract_end_invoices",
+			registry.ACTIONS["hv.bankimport.reconcile_invoices/v1"].parameters)
 
 
 class AdapterContracts(unittest.TestCase):
@@ -285,7 +304,7 @@ class PackageContracts(unittest.TestCase):
 	def test_execute_ready_topological_skip_and_stop(self):
 		refs={x:{"id":x,"revision":1,"hash":"a"*64} for x in "abc"}
 		docs={x:SimpleNamespace(name=x,target="SYN-"+x,package="g",status="Approved") for x in refs}
-		bodies={x:{"dependencies":[refs["a"]] if x=="b" else []} for x in refs}
+		bodies={x:{"action":d.ACTION,"payload":{"target":"SYN-"+x},"dependencies":[refs["a"]] if x=="b" else []} for x in refs}
 		self.fake.db.savepoint=lambda x:None;self.fake.db.rollback=lambda **kw:None
 		def execute(ref):
 			if ref["id"]=="b": raise ValueError("stop")
@@ -362,7 +381,7 @@ class PackageContracts(unittest.TestCase):
 			self.service.enabled(d.ACTION)
 		self.service.enabled(d.DOC_CREATE_ACTION)
 		self.fake.conf = {"hv_proposals_synthetic_enabled": True}
-		self.assertEqual(self.service._enabled_actions(), [d.ACTION])
+		self.assertEqual(self.service._enabled_actions(), [d.ACTION, *registry.BANK_ACTION_NAMES])
 		with self.assertRaises(self.Denied):
 			self.service.enabled(d.DOC_CREATE_ACTION)
 

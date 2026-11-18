@@ -158,25 +158,45 @@ Schritt aus. Die Frische-Prüfung berücksichtigt die erwartete Änderung durch 
 
 ## 4. Backend-Skizze: Paket und Zeilen
 
-1. **Ein Paket je Import und Agentenlauf**, `package_meta`: Titel „Kontoauszug <Monat Jahr> · <Bankkonto>“,
+1. **Ein Paket je vollständigem Lauf über alle Zeilen eines Imports**, `package_meta`: Titel „Kontoauszug <Monat Jahr> · <Bankkonto>“,
    `reference_doctype = "Bankauszug Import"`, `reference_name`, `lane_label = "Importzeilen"`.
+   Ein vollständiger neuer Lauf ersetzt das jüngste Paket. Dessen offene Vorschläge (`Pending` und `Approved`)
+   werden mit Ursache `superseded` auf `Stale` gesetzt.
 2. **Zeile im Graph** = Importzeile: `lane = {key: row.name, label: "01.04. · +720,00 € · Max Mustermann"}`.
 3. **Verkettung:** Parteivorschlag → Belegvorschlag als Abhängigkeit im Kern. Ausführen des Belegs erst nach
    ausgeführter Partei.
 4. **Enthaltung:** Der Kern kennt keine Enthaltung. Vorschlag: Kindtabelle am `HV Proposal Package` mit
    `lane_key` und `note`. Nur Anzeige, keine Freigabe. Alternative bitte vor dem Bau vorlegen.
-5. **Zuordnung beim Lesen:** `get_overview` sucht das jüngste Paket mit Bezug auf den Import und ordnet
+5. **Zuordnung beim Lesen:** `get_overview` sucht das jüngste vollständige Paket mit Bezug auf den Import und ordnet
    Vorschläge über `lane.key` den Zeilen zu. Ohne `FOR UPDATE`, ohne Schreiben (Kern-Regel 1.2).
 6. **Manuelles Buchen bei offenem Vorschlag:** Wird eine Zeile über die normalen Bankimport-Aktionen
    gebucht, während ein Vorschlag `Pending` oder `Approved` ist, setzt der Server ihn auf `Rejected` mit
    `category = "adjusted_booked"`, `reason = "Angepasst gebucht: <Beleg>"` und dem Beleg in
    `decision.voucher`. Entscheider ist der buchende Mensch, im Prüfprotokoll mit
-   `{"surface": "bankimport", "auto": true}`. Wo der Haken sitzt (in den Bankimport-Funktionen oder am
+   `{"surface": "bankimport", "auto": true, "source": "manual" | "rule"}`. Buchungsregeln schließen offene Vorschläge ebenfalls. Wo der Haken sitzt (in den Bankimport-Funktionen oder am
    Beleg), legt Auftrag 2 im Plan vor. Kein neuer Status im Kern.
 7. **Anforderungen:** Der Agent startet später automatisch nach jedem CSV-Import; das gehört zum
    Agenten-Auftrag. Auftrag 2 speichert nur die Anforderungen aus `ki_request_revision`, damit der Agent sie
    abholen kann. Solange eine Anforderung offen ist, liefert die Zeile `state: "running"`. Eine Anforderung
    ohne Antwort verfällt nach 24 Stunden; danach gilt wieder der vorherige Zustand.
+   Antworten gehören in dasselbe Paket. Bei einer gebundenen Anforderung erhält der Vorschlag eine neue
+   Revision. Nach einer Enthaltung wird ein neuer Vorschlag in derselben Lane angelegt.
+   Andere Zeilen und ihre Vorschläge bleiben dabei im aktuellen Paket sichtbar.
+
+### Einreichung und Antworten
+
+Die Agenten-Schnittstelle liegt in `hausverwaltung.proposals.bank_packages`. Sie verlangt die Agentenrolle
+und Schreibrecht auf den Import. `publish(import_name, package, lanes, reason?)` veröffentlicht einen
+vollständigen Lauf atomar. Die Paketkennung beginnt mit `BANK-`. Zu jeder Importzeile wird entweder
+`{row, note}` (Enthaltung) oder `{row, steps: [{action, payload, metadata}]}` eingereicht.
+Bei zwei Schritten steht die Parteizuordnung zuerst. Der Server erzeugt die Revisionsbindung zwischen
+den Schritten. Jeder Payload enthält `import_name`, `row`, `parameters` und den Fingerabdruck
+`{date, amount, direction, iban, purpose_hash}`. `purpose_hash` ist der SHA-256-Wert des vorhandenen
+Verwendungszwecks in der kanonischen JSON-Darstellung des Kerns.
+
+`open_requests(import_name)` liefert aktive Anforderungen des Agenten für das aktuelle Paket.
+Der Agent beantwortet eine ungebundene Anforderung mit `answer_abstention(import_name, package, row, steps)`.
+Eine gebundene Anforderung beantwortet er mit `frappe_service.revise(binding, payload, dependencies?, metadata)`.
 
 ## 5. Backend-Skizze: neue Metadaten und Vorschau-Felder
 

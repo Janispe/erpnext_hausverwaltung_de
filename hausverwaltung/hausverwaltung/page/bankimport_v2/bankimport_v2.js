@@ -22,6 +22,10 @@ const PG = "hausverwaltung.hausverwaltung.page.bankimport_v2.bankimport_v2.";
 const RPC_ACTIONS = {
 	// Adapter (nur Lesen/Mappen)
 	overview: PG + "get_overview",
+	ki_accept: PG + "ki_accept",
+	ki_accept_many: PG + "ki_accept_many",
+	ki_reject: PG + "ki_reject",
+	ki_request_revision: PG + "ki_request_revision",
 	list_imports: PG + "list_imports",
 	list_bank_accounts: PG + "list_bank_accounts",
 	suggest_bank_account: PG + "suggest_bank_account",

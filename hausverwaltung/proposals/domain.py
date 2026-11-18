@@ -119,11 +119,21 @@ def text(value, name, minimum, maximum):
 
 
 def metadata(value):
-	if not isinstance(value, dict) or set(value) - {"title", "summary", "lane", "rationale", "sources"}:
+	if not isinstance(value, dict) or set(value) - {"title", "summary", "lane", "rationale", "sources", "confidence"}:
 		raise ValueError("Invalid revision metadata")
 	result = {"title": text(value.get("title"), "title", 1, 80),
 		"summary": text(value.get("summary"), "summary", 1, 140),
 		"rationale": text(value.get("rationale", ""), "rationale", 0, 2000), "lane": None, "sources": []}
+	if "confidence" in value:
+		confidence = value["confidence"]
+		if (not isinstance(confidence, dict) or set(confidence) - {"level", "score"}
+			or confidence.get("level") not in ("hoch", "mittel", "niedrig")):
+			raise ValueError("Invalid confidence level")
+		if "score" in confidence:
+			score = confidence["score"]
+			if type(score) not in (int, float) or not 0 <= score <= 1:
+				raise ValueError("Invalid confidence score")
+		result["confidence"] = confidence.copy()
 	lane = value.get("lane")
 	if lane is not None:
 		if not isinstance(lane, dict) or set(lane) != {"key", "label"}:

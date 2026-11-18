@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextvars import ContextVar
 from typing import Any
 
 import frappe
@@ -11,6 +12,8 @@ SUPPORTED_PARTY_TYPES = {"Customer", "Supplier", "Eigentuemer"}
 PARTY_RULE_DOCTYPE = "Bankimport Party Regel"
 BOOKING_RULE_DOCTYPE = "Bankimport Buchungsregel"
 RULE_SCOPE_DOCTYPE = "Bankimport Regel Scope"
+booking_rule_active = ContextVar("hv_bankimport_booking_rule_active", default=False)
+
 BUILDER_RULE_CODE = "result = evaluate_builder_rule(rule=rule, row=row, context=context)"
 
 
@@ -339,15 +342,11 @@ def apply_booking_rules_for_row(doc, row, bt) -> dict[str, Any]:
 	for rule in _load_rules(BOOKING_RULE_DOCTYPE):
 		if not _rule_scope_allows(rule, row=row, bt=bt, enforce_allow=True):
 			continue
-		result = _execute_rule_code(
-			rule,
-			{
-				"doc": doc,
-				"row": row,
-				"bt": bt,
-				"context": context,
-			},
-		)
+		token = booking_rule_active.set(True)
+		try:
+			result = _execute_rule_code(rule, {"doc": doc, "row": row, "bt": bt, "context": context})
+		finally:
+			booking_rule_active.reset(token)
 		if not result:
 			continue
 		if result.get("message"):
