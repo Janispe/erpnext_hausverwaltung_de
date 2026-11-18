@@ -64,7 +64,11 @@ docker exec hausverwaltung_peters-backend-1 \
 docker exec hausverwaltung_peters-backend-1 \
   bench --site frontend run-tests --module hausverwaltung.hausverwaltung.utils.test_mieter_name
 
-# Cypress E2E (vom Host)
+# Isolierter Testlauf auf frischer Site (Stufen quick, python, e2e, all),
+# im Workspace mit allen vier App-Repos; Details in docs/agent-pilot.md:
+./scripts/agent_ci.sh --all
+
+# Cypress E2E (vom Host; wird nach Playwright umgezogen)
 yarn cy:run     # headless
 yarn cy:open    # interaktiv
 ```

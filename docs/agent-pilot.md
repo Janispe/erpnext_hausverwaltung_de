@@ -35,6 +35,27 @@ Der QA-Worker erhält die Preview-URL, die Commit-SHAs aller vier Repos und die 
 
 `stop` lässt die Volumes und die während der Tests angelegten Datensätze bestehen. Für einen neuen isolierten Ausgangsstand eine neue Ticketkennung verwenden. Bei einem zweiten gleichzeitig laufenden Preview einen anderen freien Loopback-Port über `HV_PREVIEW_HTTP_PORT` setzen und je Ticket die zugehörige URL öffnen.
 
+## Tests
+
+Alle Tests laufen über einen Einstieg: `./scripts/agent_ci.sh`. Er baut für jeden Lauf eine frische Site aus den committeten Ständen der vier Repos auf, führt die gewählte Stufe mit `scripts/hv_tests.sh` aus und entfernt Site, Container und Volumes danach wieder.
+
+```bash
+./scripts/agent_ci.sh                # quick: Smoke-Test Mietvertrag, Standard vor jedem Push
+./scripts/agent_ci.sh --python       # alle Python-Tests der App und unter tests/
+./scripts/agent_ci.sh --e2e          # KI-Vorschläge (HTTP, Nur-Lesen, Playwright), Bankimport (Vitest, Playwright), Node-Tests
+./scripts/agent_ci.sh --all          # python und e2e, je auf einer frischen Site
+./scripts/agent_ci.sh --build-image  # CI-Image mit Chrome-Bibliotheken bauen (einmalig und nach ERPNext-Updates)
+```
+
+- Getestet wird der Commit, nicht der Arbeitsbaum. Vorher committen.
+- Bericht und Protokolle je Schritt: `.git/agent-ci/reports/<Zeit>-<Stufe>-<Commit>/summary.txt`, dazu `python-app.junit.xml` und Playwright-Screenshots bei Fehlern.
+- Das CI-Image `hausverwaltung/frappe-chrome:ci` ergänzt das Basisimage aus `compose.dev.yml` (`frappe/erpnext:v16.14.0`) um die Chrome-Bibliotheken; ein anderes Basisimage über `HV_CI_BASE_IMAGE`. Ohne dieses Image nimmt die CI das Basisimage aus `compose.dev.yml`; dann schlagen die PDF-Tests fehl.
+- Für `--e2e` braucht der Rechner Node 20 oder neuer (`HV_TEST_NODE_DIR` oder `~/.local/node/current/bin`), `uv` und Internet für npm und die Playwright-Browser.
+- Parallele Läufe aus verschiedenen Arbeitsordnern brauchen verschiedene Ports über `HV_PREVIEW_HTTP_PORT`.
+- Fehlersuche: `HV_TEST_MODULE=<modul> ./scripts/agent_ci.sh` führt statt des Smoke-Tests ein einzelnes Testmodul aus. Abgefangene Fehler der Site stehen in `error-log.json` im Bericht.
+- Ein Schritt kann „übersprungen“ melden. Derzeit betrifft das Playwright für die KI-Vorschläge: Der Test wechselt das Theme über den Einstellungsdialog neuerer Frappe-Versionen (Produktion 16.55), den das CI-Image mit Frappe 16.16 noch nicht hat. Er läuft wieder mit, sobald Dev und CI ein produktionsnahes Image nutzen.
+- Die alten Cypress-Specs unter `cypress/` laufen nicht mit. Sie werden nach Playwright umgezogen.
+
 ## Aufgaben für den ersten Durchlauf
 
 1. **Entwicklung:** Eine kleine sichtbare Änderung in einem Formular, ausschließlich im zugehörigen Worktree. Im Desk mit einem Demo-Vertrag prüfen und die vier Git-Stände festhalten.

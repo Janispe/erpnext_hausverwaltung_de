@@ -200,9 +200,10 @@ prepare_rootless_ci() {
   setfacl -m "$directory_acl" -- "$cache"
   for app in "${apps[@]}"; do
     checkout=$workspace/$app
-    find "$checkout" -path "$checkout/.git" -prune -o -type d \
+    # Nur eigene Dateien: Was ein früherer Lauf im Container angelegt hat, trägt die Default-ACL schon.
+    find "$checkout" -path "$checkout/.git" -prune -o -type d -user "$worker_uid" \
       -exec setfacl -m "$directory_acl" -- {} +
-    find "$checkout" -path "$checkout/.git" -prune -o -type f \
+    find "$checkout" -path "$checkout/.git" -prune -o -type f -user "$worker_uid" \
       -exec setfacl -m "u:$frappe_host_uid:rwX" -- {} +
   done
 }
@@ -212,11 +213,22 @@ start_preview() {
   "${compose[@]}" config --quiet
   if [[ ${HV_PREVIEW_USE_BASE_IMAGE:-0} == 1 ]]; then
     HV_PREVIEW_IMAGE=$("${compose[@]}" config --format json | jq -er '.services.configurator.build.args.FRAPPE_BASE_IMAGE')
+    # CI bevorzugt das mit ./scripts/agent_ci.sh --build-image gebaute Image mit Chrome-Bibliotheken
+    # für die PDF-Erzeugung, sofern es lokal vorhanden ist.
+    if [[ "$action" == ci && -n ${HV_PREVIEW_CI_IMAGE:-} ]] &&
+       "${docker_cli[@]}" image inspect "$HV_PREVIEW_CI_IMAGE" >/dev/null 2>&1; then
+      HV_PREVIEW_IMAGE=$HV_PREVIEW_CI_IMAGE
+    fi
+    printf 'Image: %s\n' "$HV_PREVIEW_IMAGE"
     export HV_PREVIEW_IMAGE
     if [[ "$action" == ci && "$context" != default ]]; then
       prepare_rootless_ci
     fi
-    "${compose[@]}" up --detach --no-build --pull never
+    if ! "${compose[@]}" up --detach --no-build --pull never; then
+      # Vor dem Aufräumen zeigen, woran der Aufbau gescheitert ist.
+      "${compose[@]}" logs --no-color --tail 80 configurator create-site >&2 || true
+      fail 'Die Vorschau konnte nicht gestartet werden.'
+    fi
   else
     "${compose[@]}" build configurator
     "${compose[@]}" up --detach --no-build
@@ -231,6 +243,17 @@ start_preview() {
 run_tests() {
   "${bench[@]}" set-config --parse allow_tests 1
   "${bench[@]}" run-tests --module "$test_module"
+}
+
+# Führt die Teststufe aus agent_ci.sh (HV_TEST_STAGE) mit dem gemeinsamen Testskript aus.
+run_stage() {
+  local backend url
+  backend=$("${compose[@]}" ps --format '{{.Name}}' backend) && [[ -n "$backend" ]] ||
+    fail 'Der Backend-Container der Vorschau wurde nicht gefunden.'
+  url=$(preview_url)
+  HV_TEST_SITE=$site HV_TEST_BACKEND=$backend HV_TEST_DOCKER_CONTEXT=$context HV_TEST_BASE_URL=$url \
+    HV_TEST_REPORT=${HV_TEST_REPORT:?Berichtsordner fehlt. agent_ci.sh verwenden.} \
+    HV_TEST_ADMIN_PASSWORD=admin "$repo/scripts/hv_tests.sh" "${HV_TEST_STAGE:-quick}"
 }
 
 cleanup_ci_preview() {
@@ -249,7 +272,7 @@ case "$action" in
       fail 'CI benötigt ein frisches Projekt.'
     trap cleanup_ci_preview EXIT
     start_preview
-    run_tests
+    run_stage
     ;;
   status)
     "${compose[@]}" ps --all
