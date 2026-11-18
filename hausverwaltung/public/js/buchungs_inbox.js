@@ -723,9 +723,10 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		$detail.find(".btn-reopen").on("click", async function () {
 			this.disabled = true;
 			try {
-				await frappe.call({ method: `${HV_INBOX_RECEIPT_ACTION_API}.reopen`, args: { name: row.name, binding: review.binding } });
-				delete state.full_cache[row.name];
+				const { message } = await frappe.call({ method: `${HV_INBOX_RECEIPT_ACTION_API}.reopen`, args: { name: row.name, binding: review.binding } });
+				review.status = message.status;
 				render_detail();
+				_do_book(row);
 			} finally {
 				this.disabled = false;
 			}

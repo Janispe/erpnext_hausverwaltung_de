@@ -84,6 +84,27 @@ class TestReceiptAction(unittest.TestCase):
 		state = bulk_extraction.get_vorschlag_full(receipt.name)["receipt_review"]
 		return action.approve(receipt.name, state["source"], booking, binding)["binding"]
 
+	def _login_bookkeeper(self):
+		role = frappe.get_doc({"doctype": "Role", "role_name": "Bon Test " + frappe.generate_hash(length=8)}).insert()
+		user = frappe.get_doc({
+			"doctype": "User", "email": f"{frappe.generate_hash(length=10)}@hv-test.invalid",
+			"first_name": "Buchhaltung Test", "send_welcome_email": 0, "user_type": "System User",
+			"roles": [{"role": "Accounts User"}, {"role": role.name}],
+		}).insert()
+		for doctype in ("Purchase Invoice", "Journal Entry"):
+			frappe.get_doc({
+				"doctype": "Custom DocPerm", "parent": doctype, "parenttype": "DocType",
+				"parentfield": "permissions", "role": role.name, "permlevel": 0,
+				"read": 1, "write": 1, "create": 1, "submit": 1,
+			}).insert()
+			frappe.clear_cache(doctype=doctype)
+			self.addCleanup(frappe.clear_cache, doctype=doctype)
+		sid = frappe.session.sid
+		frappe.set_user(user.name)
+		frappe.session.sid = sid
+		frappe.local.login_manager.user = user.name
+		return user.name
+
 	def _assert_no_invoice(self, receipt):
 		self.assertFalse(frappe.db.exists("Purchase Invoice", {"supplier": self.supplier, "bill_no": receipt.name}))
 
@@ -121,10 +142,12 @@ class TestReceiptAction(unittest.TestCase):
 		with patch.dict(frappe.local.request.headers, Authorization="token fixture"):
 			with self.assertRaises(frappe.PermissionError):
 				action.approve(doc.name, state["source"], booking)
+		bookkeeper = self._login_bookkeeper()
 		ref = self._approve(doc, booking)
 		self.assertEqual(self._approve(doc, booking), ref)
 		self._assert_no_invoice(doc)
 		self.assertEqual(self._assert_result(doc, ref, self.cash), ["Created", "Approved", "Succeeded"])
+		self.assertEqual(frappe.db.get_value(engine.PROPOSAL, ref["id"], "decision_by"), bookkeeper)
 
 	def test_private_expense_requires_fresh_approval_after_data_change(self):
 		doc = self._receipt("Privat vorgestreckt", self.clearing, "A. Test")

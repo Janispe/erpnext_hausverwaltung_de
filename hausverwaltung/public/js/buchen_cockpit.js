@@ -570,6 +570,7 @@ hausverwaltung.buchen_cockpit.open_eingangsrechnung_dialog = (opts = {}) => {
 			depends_on: "eval:doc.zahlung_sofort",
 		},
 		...(opts._receipt ? [
+			{ fieldtype: "HTML", options: `<a href="${frappe.utils.escape_html(opts._attached_file)}" target="_blank" rel="noopener">${__("Originalbeleg öffnen")} ↗</a>` },
 			{ fieldtype: "Currency", fieldname: "beleg_brutto_bestaetigt", label: __("Bestätigter Brutto-Endbetrag (EUR)"), default: opts.beleg_brutto_bestaetigt, reqd: 1 },
 			{ fieldtype: "Check", fieldname: "beleg_eur_bestaetigt", label: __("Der Originalbeleg ist in EUR ausgestellt"), reqd: 1 },
 		] : []),
@@ -1086,19 +1087,22 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 	}
 
 	dialog.disable_primary_action();
-	const args = {
+	const booking = {
 		lieferant: values.lieferant,
 		rechnungsdatum: values.rechnungsdatum,
 		wertstellungsdatum: values.wertstellungsdatum,
 		rechnungsname: values.rechnungsname,
 		remarks: values.remarks,
-		zahlungsart: values.zahlungsart,
-		zahlung_sofort: values.zahlung_sofort ? 1 : 0,
-		zahlungskonto: values.zahlungskonto,
 		zahlungsbemerkung: values.zahlungsbemerkung,
 		beleg_brutto_bestaetigt: values.beleg_brutto_bestaetigt,
 		beleg_eur_bestaetigt: values.beleg_eur_bestaetigt,
 		positionen: JSON.stringify(rows),
+	};
+	const args = {
+		...booking,
+		zahlungsart: values.zahlungsart,
+		zahlung_sofort: values.zahlung_sofort ? 1 : 0,
+		zahlungskonto: values.zahlungskonto,
 		submit_doc: submit_doc ? 1 : 0,
 		attached_file_url: dialog._hv_attached_file || null,
 		vorschlag_name: dialog._hv_vorschlag_name || null,
@@ -1107,7 +1111,7 @@ function submit_eingangsrechnung(dialog, values, submit_doc = true) {
 	const submit = review
 		? frappe.call({
 			method: `${HV_RECEIPT_ACTION_API}.approve`,
-			args: { name: args.vorschlag_name, source: review.source, binding: review.binding, booking: args },
+			args: { name: args.vorschlag_name, source: review.source, binding: review.binding, booking },
 		}).then(async ({ message }) => {
 			review.binding = message.binding;
 			try {
