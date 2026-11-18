@@ -269,6 +269,35 @@ def _snapshot_field(doc, df, user=None, parent_meta=None):
 	return json.loads(domain.encode(_json_safe(raw)))
 
 
+def _table_child_permitted(meta, df, user):
+	if not df or df.fieldtype not in ("Table", "Table MultiSelect"):
+		_deny()
+	child_meta = frappe.get_meta(df.options)
+	if not child_meta or not child_meta.istable or child_meta.is_virtual:
+		_deny()
+	return child_meta, _permitted_child_fields(meta, child_meta, user, "read")
+
+
+def _check_child_columns(meta, df, cols, user):
+	if not cols:
+		return
+	_, child_permitted = _table_child_permitted(meta, df, user)
+	if any(col not in child_permitted for col in cols):
+		_deny()
+
+
+def _snapshot_table_columns(raw):
+	if not isinstance(raw, str) or not raw.lstrip().startswith("["):
+		return set()
+	try:
+		parsed = json.loads(raw)
+	except ValueError:
+		_deny()
+	if not isinstance(parsed, list):
+		return set()
+	return {key for row in parsed if isinstance(row, dict) for key in row}
+
+
 def _check_readable_fields(meta, payload, user, *, doc=None, preview=None):
 	values = payload.get("values") or {}
 	permitted = _permitted_fields(meta, user, permission_type="read")
@@ -279,10 +308,7 @@ def _check_readable_fields(meta, payload, user, *, doc=None, preview=None):
 		if not df:
 			_deny()
 		if df.fieldtype in ("Table", "Table MultiSelect"):
-			child_meta = frappe.get_meta(df.options)
-			if not child_meta or not child_meta.istable or child_meta.is_virtual:
-				_deny()
-			child_permitted = _permitted_child_fields(meta, child_meta, user, "read")
+			child_meta, child_permitted = _table_child_permitted(meta, df, user)
 			for row in value or []:
 				if not isinstance(row, dict) or any(key not in child_permitted for key in row):
 					_deny()
@@ -296,9 +322,27 @@ def _check_readable_fields(meta, payload, user, *, doc=None, preview=None):
 					if any(row.get(k) is not None and k not in child_permitted for k in editable_child):
 						_deny()
 	if isinstance(preview, dict):
+		before = preview.get("before")
+		before_child_fields = before.get("child_fields") if isinstance(before, dict) else None
+		if isinstance(before_child_fields, dict):
+			for fieldname, cols in before_child_fields.items():
+				if fieldname not in permitted or not isinstance(cols, list):
+					_deny()
+				_check_child_columns(meta, meta.get_field(fieldname), cols, user)
 		for change in preview.get("changes") or []:
-			if isinstance(change, dict) and change.get("field") not in permitted:
+			if not isinstance(change, dict):
+				continue
+			fieldname = change.get("field")
+			if fieldname not in permitted:
 				_deny()
+			df = meta.get_field(fieldname)
+			if df and df.fieldtype in ("Table", "Table MultiSelect") and (
+				not isinstance(before_child_fields, dict) or fieldname not in before_child_fields
+			):
+				cols = _snapshot_table_columns(change.get("before")) | _snapshot_table_columns(
+					change.get("after")
+				)
+				_check_child_columns(meta, df, cols, user)
 
 
 def check_read_access(action, payload, user=None, lock=False, *, preview=None):
@@ -413,6 +457,13 @@ def preview(package, action, payload, dependencies, own_id, resolve, *, user=Non
 			key: _snapshot_field(doc, meta.get_field(key), user=user, parent_meta=meta)
 			for key in sorted(payload["values"])
 		}
+		before_child_fields = {}
+		for key, value in baseline_values.items():
+			df = meta.get_field(key)
+			if df and df.fieldtype in ("Table", "Table MultiSelect") and isinstance(value, list):
+				before_child_fields[key] = sorted(
+					{col for row in value if isinstance(row, dict) for col in row}
+				)
 		changes = [
 			{
 				"field": key,
@@ -423,16 +474,19 @@ def preview(package, action, payload, dependencies, own_id, resolve, *, user=Non
 			}
 			for key in sorted(payload["values"])
 		]
+		before_snapshot = {
+			"doctype": meta.name,
+			"name": doc.name,
+			"docstatus": int(doc.docstatus),
+			"modified": str(doc.modified),
+			"values_hash": domain.digest(baseline_values),
+		}
+		if before_child_fields:
+			before_snapshot["child_fields"] = before_child_fields
 		return {
 			"doctype": meta.name,
 			"target": doc.name,
-			"before": {
-				"doctype": meta.name,
-				"name": doc.name,
-				"docstatus": int(doc.docstatus),
-				"modified": str(doc.modified),
-				"values_hash": domain.digest(baseline_values),
-			},
+			"before": before_snapshot,
 			"after": {
 				"doctype": meta.name,
 				"name": doc.name,

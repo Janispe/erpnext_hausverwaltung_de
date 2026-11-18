@@ -440,6 +440,27 @@ class PackageContracts(unittest.TestCase):
 		with self.assertRaises(self.Denied):
 			doc_actions.check_read_access(d.DOC_UPDATE_ACTION, table_payload, user="restricted")
 
+		cleaned_doc = SimpleNamespace(doctype="Contact", name="CON-1", docstatus=0, get=lambda f: [] if f == "phone_nos" else None)
+		self.fake.get_doc = lambda *a, **kw: cleaned_doc
+		cleaned_payload = {"doctype": "Contact", "name": "CON-1", "values": {"phone_nos": [{"phone": "789"}]}}
+		snapshot_preview = {
+			"before": {"child_fields": {"phone_nos": ["phone", "secret_col"]}},
+			"changes": [{"field": "phone_nos", "before": '[{"phone": "123", "secret_col": "hidden"}]', "after": '[{"phone": "789"}]'}],
+		}
+		self.assertIs(
+			doc_actions.check_read_access(d.DOC_UPDATE_ACTION, cleaned_payload, user="privileged", preview=snapshot_preview),
+			cleaned_doc,
+		)
+		with self.assertRaises(self.Denied):
+			doc_actions.check_read_access(d.DOC_UPDATE_ACTION, cleaned_payload, user="restricted", preview=snapshot_preview)
+		with self.assertRaises(self.Denied):
+			doc_actions.check_read_access(
+				d.DOC_UPDATE_ACTION,
+				cleaned_payload,
+				user="restricted",
+				preview={"changes": snapshot_preview["changes"]},
+			)
+
 	def test_doc_actions_preview_formats_full_tables_and_long_strings(self):
 		doc_actions = importlib.import_module("hausverwaltung.proposals.doc_actions")
 		table_a = doc_actions._format_value([{"account": "4000", "amount": 100}, {"account": "4100", "amount": 200}])

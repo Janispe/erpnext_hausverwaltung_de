@@ -238,6 +238,15 @@ def _read_graph(body, user, seen=None):
 		_read_graph(parent, user, seen)
 
 
+def _has_readable_result(action, raw, user):
+	if action not in domain.DOC_ACTIONS or not raw:
+		return True
+	result = frappe.parse_json(raw)
+	if isinstance(result, dict) and result.get("id"):
+		return doc_actions.can_read_result(result.get("doctype"), result.get("id"), user=user)
+	return True
+
+
 def readable_record(doc, user):
 	previous_messages = list(frappe.local.message_log)
 	permission_logs = frappe.flags.get("has_permission_check_logs")
@@ -262,6 +271,13 @@ def readable_record(doc, user):
 		enabled(action)
 		_check_target_read(action, body["payload"], user=user, lock=False, preview=body.get("preview"))
 		_read_graph(body, user)
+		if doc.doctype == PROPOSAL and not _has_readable_result(action, doc.result, user):
+			return False
+		if doc.doctype == AUDIT and (
+			(doc.kind in ("Succeeded", "ResultReused") and not _has_readable_result(action, proposal.result, user))
+			or not _has_readable_result(action, doc.detail, user)
+		):
+			return False
 		return True
 	except (frappe.PermissionError, frappe.DoesNotExistError):
 		frappe.local.message_log = previous_messages

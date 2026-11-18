@@ -508,6 +508,62 @@ class TestDocActionsSite(unittest.TestCase):
 		with self.assertRaises(frappe.PermissionError):
 			frappe_service.package_graph(package)
 
+		# Regression: protected child column present ONLY in the stored before-snapshot
+		# (absent from proposed payload values and later deleted from the live Contact)
+		# must stay blocked across view, readable_record, list, and graph even when Stale.
+		frappe.set_user(self.agent_user)
+		stale_pkg = f"fld-before-{self.point}"
+		before_tbl_prop = submit_doc(
+			key=f"before-tbl-{self.point}",
+			package=stale_pkg,
+			package_meta={"title": f"Vorher-Snapshot {self.point}"},
+			operation="update",
+			doctype="Contact",
+			name=contact.name,
+			values={"phone_nos": [{"is_primary_phone": 0}]},
+			metadata={"title": "Telefonzeile leeren", "summary": "altes Telefon fehlt im Payload"},
+		)
+		self.assertIn(
+			"phone",
+			frappe_service.view(before_tbl_prop["id"])["preview"]["before"]["child_fields"]["phone_nos"],
+		)
+
+		frappe.set_user("Administrator")
+		contact.reload()
+		contact.phone_nos = []
+		contact.save(ignore_permissions=True)
+
+		frappe.set_user(rest_user)
+		with self.assertRaises(frappe.PermissionError):
+			frappe_service.view(before_tbl_prop["id"])
+		self.assertFalse(
+			frappe_service.readable_record(frappe.get_doc("HV Action Proposal", before_tbl_prop["id"]), rest_user)
+		)
+		self.assertFalse(
+			frappe_service.readable_record(frappe.get_doc("HV Proposal Revision", f"{before_tbl_prop['id']}-1"), rest_user)
+		)
+		self.assertNotIn(before_tbl_prop["id"], {row["id"] for row in frappe_service.list_proposals()})
+		with self.assertRaises(frappe.PermissionError):
+			frappe_service.package_graph(stale_pkg)
+
+		self._human_session(priv_user)
+		stale_view = frappe_service.review(
+			{"id": before_tbl_prop["id"], "revision": before_tbl_prop["revision"], "hash": before_tbl_prop["hash"]},
+			True,
+		)
+		self.assertEqual(stale_view["status"], "Stale")
+		self.assertIn("030-111111", stale_view["changes"][0]["before"])
+
+		frappe.set_user(rest_user)
+		with self.assertRaises(frappe.PermissionError):
+			frappe_service.view(before_tbl_prop["id"])
+		self.assertFalse(
+			frappe_service.readable_record(frappe.get_doc("HV Action Proposal", before_tbl_prop["id"]), rest_user)
+		)
+		self.assertFalse(
+			frappe_service.readable_record(frappe.get_doc("HV Proposal Revision", f"{before_tbl_prop['id']}-1"), rest_user)
+		)
+
 	def test_submit_retry_reuses_result_and_manual_submit_marks_stale(self):
 		from hausverwaltung.hausverwaltung.agent_tools.proposal_tools import submit_doc
 		from hausverwaltung.hausverwaltung.test_booking_safeguards import fixture
@@ -717,3 +773,19 @@ class TestDocActionsSite(unittest.TestCase):
 		succeeded_event = next(e for e in events if e["kind"] == "Succeeded")
 		self.assertIsNone(frappe.parse_json(succeeded_event["detail"])["id"])
 		self.assertEqual(frappe_service.view(p2["id"])["id"], p2["id"])
+
+		# Generic record access (frappe.has_permission / Desk resource serialization) must deny
+		# HV Action Proposal and Succeeded HV Proposal Audit so raw result/detail IDs never leak,
+		# while p2 and the package graph remain accessible.
+		p1_doc = frappe.get_doc("HV Action Proposal", p1["id"])
+		succeeded_audit_name = frappe.db.get_value(
+			"HV Proposal Audit", {"proposal": p1["id"], "kind": "Succeeded"}, "name"
+		)
+		succeeded_audit_doc = frappe.get_doc("HV Proposal Audit", succeeded_audit_name)
+		self.assertFalse(frappe_service.readable_record(p1_doc, viewer_user))
+		self.assertFalse(frappe.has_permission("HV Action Proposal", "read", doc=p1_doc, user=viewer_user))
+		self.assertFalse(frappe_service.readable_record(succeeded_audit_doc, viewer_user))
+		self.assertFalse(frappe.has_permission("HV Proposal Audit", "read", doc=succeeded_audit_doc, user=viewer_user))
+		p2_doc = frappe.get_doc("HV Action Proposal", p2["id"])
+		self.assertTrue(frappe_service.readable_record(p2_doc, viewer_user))
+		self.assertTrue(frappe.has_permission("HV Action Proposal", "read", doc=p2_doc, user=viewer_user))
