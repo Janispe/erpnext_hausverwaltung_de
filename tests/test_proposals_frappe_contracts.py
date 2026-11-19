@@ -125,12 +125,12 @@ class AdapterContracts(unittest.TestCase):
 		self.modules = patch.dict(sys.modules, {"frappe": self.fake, "frappe.utils": utils,
 			"frappe.model": ModuleType("frappe.model"), "frappe.model.document": document})
 		self.modules.start()
-		for name in ("hausverwaltung.proposals.frappe_service", "hausverwaltung.proposals.frappe_guards"):
+		for name in ("hausverwaltung.proposals.frappe_service", "hausverwaltung.proposals.frappe_guards", "hausverwaltung.proposals.doc_actions"):
 			sys.modules.pop(name, None)
 		self.service = importlib.import_module("hausverwaltung.proposals.frappe_service")
 
 	def tearDown(self):
-		for name in ("hausverwaltung.proposals.frappe_service", "hausverwaltung.proposals.frappe_guards"):
+		for name in ("hausverwaltung.proposals.frappe_service", "hausverwaltung.proposals.frappe_guards", "hausverwaltung.proposals.doc_actions"):
 			sys.modules.pop(name, None)
 		self.modules.stop()
 
@@ -356,6 +356,164 @@ class PackageContracts(unittest.TestCase):
 		self.assertEqual(self.fake.flags["has_permission_check_logs"],["existing permission"])
 		with patch.object(self.service,"_visible",return_value=[object()]),patch.object(self.service,"_reference",return_value=None):
 			self.assertTrue(self.service.readable_record(doc,"other-user"))
+
+	def test_doc_payload_validation_and_target_generation(self):
+		created = d.doc_payload(d.DOC_CREATE_ACTION, {"doctype": "Customer", "values": {"customer_name": "Test"}})
+		self.assertEqual(created, {"doctype": "Customer", "values": {"customer_name": "Test"}, "submit": False})
+		self.assertEqual(d.doc_target(d.DOC_CREATE_ACTION, created), "NEW:Customer")
+		updated = d.doc_payload(d.DOC_UPDATE_ACTION, {"doctype": "Customer", "name": "C-1", "values": {"customer_name": "Neu"}})
+		self.assertEqual(d.doc_target(d.DOC_UPDATE_ACTION, updated), "C-1")
+		submitted = d.doc_payload(d.DOC_SUBMIT_ACTION, {"doctype": "Sales Invoice", "name": "SINV-1"})
+		self.assertEqual(d.doc_target(d.DOC_SUBMIT_ACTION, submitted), "SINV-1")
+		for bad_action, bad_payload in (
+			(d.DOC_CREATE_ACTION, {"doctype": "Customer", "values": {}}),
+			(d.DOC_CREATE_ACTION, {"doctype": "Customer", "values": {"a": 1}, "submit": "yes"}),
+			(d.DOC_UPDATE_ACTION, {"doctype": "Customer", "values": {"a": 1}}),
+			(d.DOC_SUBMIT_ACTION, {"doctype": "Sales Invoice", "name": "SINV-1", "values": {"a": 1}}),
+		):
+			with self.assertRaises(ValueError):
+				d.doc_payload(bad_action, bad_payload)
+
+	def test_production_and_synthetic_flags_stay_isolated(self):
+		self.fake.conf = {"hv_proposals_enabled": True}
+		self.assertEqual(self.service._enabled_actions(), list(d.DOC_ACTIONS))
+		with self.assertRaises(self.Denied):
+			self.service.enabled(d.ACTION)
+		self.service.enabled(d.DOC_CREATE_ACTION)
+		self.fake.conf = {"hv_proposals_synthetic_enabled": True}
+		self.assertEqual(self.service._enabled_actions(), [d.ACTION, *registry.BANK_ACTION_NAMES])
+		with self.assertRaises(self.Denied):
+			self.service.enabled(d.DOC_CREATE_ACTION)
+
+	def test_bank_response_hides_internal_state_from_public_result(self):
+		doc = SimpleNamespace(
+			name="HVP-BANK-1",
+			current_revision=1,
+			revision_hash="a" * 64,
+			status="Succeeded",
+			package="BANK-1",
+			action="hv.bankimport.assign_party/v1",
+			result=json.dumps({
+				"doctype": "Bank Transaction",
+				"id": "BT-1",
+				"name": "BT-1",
+				"by": "rev@hv4.invalid",
+				"at": "2026-11-18",
+				"state": {"bank_transaction": "BT-1", "allocated": 100},
+			}),
+		)
+		body = {"action": doc.action, "dependencies": [], "preview": {}}
+		with patch.object(self.fake, "parse_json", json.loads, create=True):
+			response = self.service._response(doc, body)
+		self.assertEqual(set(response["result"]), {"doctype", "id", "name", "by", "at"})
+		self.assertNotIn("state", response["result"])
+
+	def test_doc_actions_module_has_no_bypass_and_blocks_sensitive_doctypes(self):
+		doc_actions = importlib.import_module("hausverwaltung.proposals.doc_actions")
+		tree = ast.parse((APP / "proposals/doc_actions.py").read_text())
+		for node in ast.walk(tree):
+			if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+				self.assertNotIn(node.func.attr, {"commit", "set_user"})
+				self.assertFalse(any(kw.arg == "ignore_permissions" for kw in node.keywords))
+		for blocked in ("User", "Has Role", "User Permission", "Server Script", "HV Action Proposal", "FAC Tool Configuration"):
+			with self.assertRaises(self.Denied):
+				doc_actions._allowed_doctype(blocked)
+
+	def test_doc_actions_execute_requires_human_session(self):
+		self.fake.conf = {"hv_proposals_enabled": True}
+		self.roles = {"HV Proposal Agent"}
+		self.session.user = "agent-doc"
+		doc = SimpleNamespace(name="HVP-1", current_revision=1, revision_hash="a" * 64, action=d.DOC_CREATE_ACTION, package="pkg", status="Approved", target="NEW:Customer")
+		body = {"action": d.DOC_CREATE_ACTION, "policy": d.DOC_POLICY, "payload": {"doctype": "Customer", "values": {"customer_name": "A"}, "submit": False}, "dependencies": [], "preview": {}}
+		with patch.object(self.service, "_lock_for"), patch.object(self.service, "_exact", return_value=(doc, body)):
+			with self.assertRaises(self.Denied):
+				self.service.execute({"id": "HVP-1", "revision": 1, "hash": "a" * 64})
+
+	def test_doc_actions_read_checks_field_and_table_permissions(self):
+		doc_actions = importlib.import_module("hausverwaltung.proposals.doc_actions")
+		child_meta = SimpleNamespace(
+			istable=True,
+			is_virtual=False,
+			fields=[SimpleNamespace(fieldname="phone", fieldtype="Data"), SimpleNamespace(fieldname="secret_col", fieldtype="Data")],
+			get_permitted_fieldnames=lambda parenttype=None, user=None, permission_type="read": (
+				{"phone", "secret_col"} if user == "privileged" else {"phone"}
+			),
+		)
+		parent_meta = SimpleNamespace(
+			name="Contact",
+			module="Contacts",
+			issingle=False,
+			istable=False,
+			is_virtual=False,
+			is_submittable=False,
+			get_field=lambda f: {
+				"first_name": SimpleNamespace(fieldname="first_name", fieldtype="Data"),
+				"secret_note": SimpleNamespace(fieldname="secret_note", fieldtype="Data"),
+				"phone_nos": SimpleNamespace(fieldname="phone_nos", fieldtype="Table", options="Contact Phone"),
+			}.get(f),
+			get_permitted_fieldnames=lambda user=None, permission_type="read": (
+				{"first_name", "secret_note", "phone_nos"} if user == "privileged" else {"first_name", "phone_nos"}
+			),
+		)
+		target_doc = SimpleNamespace(
+			doctype="Contact",
+			name="CON-1",
+			docstatus=0,
+			get=lambda f: [{"phone": "123", "secret_col": "hidden"}] if f == "phone_nos" else None,
+		)
+		self.fake.get_meta = lambda dt: child_meta if dt == "Contact Phone" else parent_meta
+		self.fake.get_doc = lambda *a, **kw: target_doc
+		self.fake.has_permission = lambda *a, **kw: True
+
+		scalar_payload = {"doctype": "Contact", "name": "CON-1", "values": {"secret_note": "neu"}}
+		scalar_preview = {"changes": [{"field": "secret_note", "before": "alt", "after": "neu"}]}
+		self.assertIs(
+			doc_actions.check_read_access(d.DOC_UPDATE_ACTION, scalar_payload, user="privileged", preview=scalar_preview),
+			target_doc,
+		)
+		with self.assertRaises(self.Denied):
+			doc_actions.check_read_access(d.DOC_UPDATE_ACTION, scalar_payload, user="restricted", preview=scalar_preview)
+
+		table_payload = {"doctype": "Contact", "name": "CON-1", "values": {"phone_nos": [{"phone": "456"}]}}
+		self.assertIs(
+			doc_actions.check_read_access(d.DOC_UPDATE_ACTION, table_payload, user="privileged"),
+			target_doc,
+		)
+		with self.assertRaises(self.Denied):
+			doc_actions.check_read_access(d.DOC_UPDATE_ACTION, table_payload, user="restricted")
+
+		cleaned_doc = SimpleNamespace(doctype="Contact", name="CON-1", docstatus=0, get=lambda f: [] if f == "phone_nos" else None)
+		self.fake.get_doc = lambda *a, **kw: cleaned_doc
+		cleaned_payload = {"doctype": "Contact", "name": "CON-1", "values": {"phone_nos": [{"phone": "789"}]}}
+		snapshot_preview = {
+			"before": {"child_fields": {"phone_nos": ["phone", "secret_col"]}},
+			"changes": [{"field": "phone_nos", "before": '[{"phone": "123", "secret_col": "hidden"}]', "after": '[{"phone": "789"}]'}],
+		}
+		self.assertIs(
+			doc_actions.check_read_access(d.DOC_UPDATE_ACTION, cleaned_payload, user="privileged", preview=snapshot_preview),
+			cleaned_doc,
+		)
+		with self.assertRaises(self.Denied):
+			doc_actions.check_read_access(d.DOC_UPDATE_ACTION, cleaned_payload, user="restricted", preview=snapshot_preview)
+		with self.assertRaises(self.Denied):
+			doc_actions.check_read_access(
+				d.DOC_UPDATE_ACTION,
+				cleaned_payload,
+				user="restricted",
+				preview={"changes": snapshot_preview["changes"]},
+			)
+
+	def test_doc_actions_preview_formats_full_tables_and_long_strings(self):
+		doc_actions = importlib.import_module("hausverwaltung.proposals.doc_actions")
+		table_a = doc_actions._format_value([{"account": "4000", "amount": 100}, {"account": "4100", "amount": 200}])
+		table_b = doc_actions._format_value([{"account": "4000", "amount": 100}, {"account": "4100", "amount": 999}])
+		self.assertNotEqual(table_a, table_b)
+		self.assertIn("999", table_b)
+		self.assertIn("200", table_a)
+		long_a = "A" * 300 + "TAIL_ONE"
+		long_b = "A" * 300 + "TAIL_TWO"
+		self.assertEqual(doc_actions._format_value(long_a), long_a)
+		self.assertNotEqual(doc_actions._format_value(long_a), doc_actions._format_value(long_b))
 
 
 if __name__ == "__main__": unittest.main()

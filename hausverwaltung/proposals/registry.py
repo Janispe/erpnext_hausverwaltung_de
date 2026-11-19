@@ -28,6 +28,7 @@ BANK_ACTIONS = {
 ACTIONS = {
 	domain.ACTION: Action(domain.POLICY, "synthetic"),
 	"hv.cash_receipt.book/v1": Action("hv.cash_receipt.accounting-review/v1", "receipt"),
+	**{action: Action(domain.DOC_POLICY, "doc") for action in domain.DOC_ACTIONS},
 	**{f"hv.bankimport.{key}/v1": Action(BANK_POLICY, "bankimport", *spec)
 		for key, spec in BANK_ACTIONS.items()},
 }

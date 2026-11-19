@@ -110,6 +110,12 @@ def run(site, auth_file, fixture_file):
 	assert [event["kind"] for event in audit].count("Approved") == 1
 	assert [event["kind"] for event in audit].count("Succeeded") == 1
 	assert [event["kind"] for event in audit].count("ExecutionFailed") == 1
+	assert set(booked["results"][-1]["result"]) == {"doctype", "id", "name", "by", "at"}
+	viewed_bank = reviewer(CORE + "view", {"proposal_id": chain[1]["id"]})
+	retried_bank = reviewer(CORE + "execute", {"binding": chain[1]})
+	for public_result in (viewed_bank["result"], retried_bank["result"]):
+		assert "state" not in public_result
+		assert set(public_result) == {"doctype", "id", "name", "by", "at"}
 
 	rule_row = row(2)
 	ruled = reviewer(BOOKING + "retry_auto_match", {"docname": import_name, "row_name": rule_row["id"]})

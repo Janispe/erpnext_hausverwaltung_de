@@ -11,7 +11,7 @@ from uuid import uuid4
 import frappe
 from frappe.utils import now_datetime
 
-from . import domain, registry
+from . import doc_actions, domain, registry
 from .frappe_guards import service_scope
 
 NOTE = "HV Synthetic Note"
@@ -30,9 +30,26 @@ class ConcurrentRevisionRetry(frappe.ValidationError):
 	http_status_code = 409
 
 
-def enabled():
-	if frappe.conf.get("hv_proposals_synthetic_enabled") is not True:
-		frappe.throw("Synthetic proposal pilot is disabled", frappe.PermissionError)
+def _is_action_enabled(action):
+	spec = registry.ACTIONS.get(action)
+	if not spec or not registry.public(action):
+		return False
+	if spec.surface == "doc":
+		return frappe.conf.get("hv_proposals_enabled") in (True, 1)
+	return frappe.conf.get("hv_proposals_synthetic_enabled") is True
+
+
+def _enabled_actions():
+	return [action for action in registry.PUBLIC_ACTIONS if _is_action_enabled(action)]
+
+
+def enabled(action=None):
+	if action is None:
+		if not _enabled_actions():
+			frappe.throw("Proposal service is disabled", frappe.PermissionError)
+		return
+	if not _is_action_enabled(action):
+		frappe.throw("Proposal action is disabled", frappe.PermissionError)
 
 
 def _deny():
@@ -135,12 +152,23 @@ def _bank():
 	return bank_action
 
 
-def _target(body, permission="read", user=None, lock=None):
-	if not registry.public(body["action"]):
+def _target(body, permission="read", user=None, lock=None, *, for_human=False):
+	action = body.get("action")
+	if not _is_action_enabled(action):
 		_deny()
-	if body["action"] == domain.ACTION:
+	if action == domain.ACTION:
 		return _note(body["payload"]["target"], permission, user=user, lock=lock)
-	result = _bank().authorize(body["action"], body["payload"], permission, user=user,
+	if action in domain.DOC_ACTIONS:
+		if permission == "write":
+			return _check_target_write(action, body["payload"], user=user, for_human=for_human)
+		return doc_actions.check_read_access(
+			action,
+			body["payload"],
+			user=user,
+			lock=bool(lock) if lock is not None else False,
+			preview=body.get("preview"),
+		)
+	result = _bank().authorize(action, body["payload"], permission, user=user,
 		lock=_writing.get() if lock is None else lock)
 	_bank().authorize_preview(body, user=user)
 	return result
@@ -179,6 +207,34 @@ def _body(doc, lock=None):
 	return body
 
 
+def _check_target_write(action, payload, user=None, for_human=False):
+	if action == domain.ACTION:
+		return _note(payload["target"], "write", user=user)
+	if action in domain.DOC_ACTIONS:
+		if for_human:
+			return doc_actions.check_reviewer_write_access(action, payload, user or frappe.session.user)
+		return doc_actions.check_read_access(action, payload, user=user, lock=False)
+	_deny()
+
+
+def _parse_operation(action, value):
+	if action == domain.ACTION:
+		return _payload(value)
+	if action in domain.DOC_ACTIONS:
+		return domain.doc_payload(action, _json(value, dict))
+	frappe.throw("Unknown action or invalid request key")
+
+
+def _action_policy(action):
+	return domain.POLICY if action == domain.ACTION else domain.DOC_POLICY
+
+
+def _target_id(action, operation):
+	if action == domain.ACTION:
+		return operation["target"]
+	return domain.doc_target(action, operation)
+
+
 def _read_graph(body, user, seen=None):
 	seen = set() if seen is None else seen
 	for dep in body["dependencies"]:
@@ -195,6 +251,15 @@ def _read_graph(body, user, seen=None):
 		parent = frappe.parse_json(raw)
 		_target(parent, user=user, lock=False)
 		_read_graph(parent, user, seen)
+
+
+def _has_readable_result(action, raw, user):
+	if action not in domain.DOC_ACTIONS or not raw:
+		return True
+	result = frappe.parse_json(raw)
+	if isinstance(result, dict) and result.get("id"):
+		return doc_actions.can_read_result(result.get("doctype"), result.get("id"), user=user)
+	return True
 
 
 def readable_record(doc, user):
@@ -217,10 +282,18 @@ def readable_record(doc, user):
 		else:
 			proposal = doc if doc.doctype == PROPOSAL else frappe.get_doc(PROPOSAL, doc.proposal)
 			body = _body(proposal, lock=False)
-		if body["action"] in registry.BANK_ACTION_NAMES:
+		action = body.get("action")
+		if action in registry.BANK_ACTION_NAMES:
 			return False  # Only the scoped views expose bank revisions and results.
 		_target(body, user=user, lock=False)
 		_read_graph(body, user)
+		if doc.doctype == PROPOSAL and not _has_readable_result(action, doc.result, user):
+			return False
+		if doc.doctype == AUDIT and (
+			(doc.kind in ("Succeeded", "ResultReused") and not _has_readable_result(action, proposal.result, user))
+			or not _has_readable_result(action, doc.detail, user)
+		):
+			return False
 		return True
 	except (frappe.PermissionError, frappe.DoesNotExistError):
 		frappe.local.message_log = previous_messages
@@ -241,7 +314,7 @@ def _load(pid):
 		doc = frappe.get_doc(PROPOSAL, pid, for_update=_writing.get())
 	except frappe.DoesNotExistError:
 		_deny()
-	if not registry.public(doc.action):
+	if not _is_action_enabled(doc.action):
 		_deny()
 	body = _body(doc)
 	_target(body)
@@ -275,25 +348,37 @@ def _lock_scope(package):
 		_bank().lock_import(import_name)
 
 
-def _preview(package, operation, dependencies, own_id):
+def _make_resolver(package):
 	def resolve(ref):
 		doc, body = _exact(ref)
 		if doc.package != package or doc.status in {"Rejected", "Stale"}:
 			frappe.throw("Dependency unavailable")
 		return {"id": doc.name, "revision": doc.current_revision, "hash": doc.revision_hash,
 			"body": body, "status": doc.status, "result": frappe.parse_json(doc.result) if doc.result else None}
-	nodes = domain.ordered_graph(dependencies, resolve, own_id)
-	targets = {operation["target"]} | {n["body"]["payload"]["target"] for n in nodes}
-	real = {target: _state(_note(target)) for target in sorted(targets)}
-	return domain.project(real, nodes, operation)
+	return resolve
+
+
+def _preview(package, operation, dependencies, own_id, action=domain.ACTION):
+	resolve = _make_resolver(package)
+	if action == domain.ACTION:
+		nodes = domain.ordered_graph(dependencies, resolve, own_id)
+		targets = {operation["target"]} | {n["body"]["payload"]["target"] for n in nodes}
+		real = {target: _state(_note(target)) for target in sorted(targets)}
+		return domain.project(real, nodes, operation)
+	if action in domain.DOC_ACTIONS:
+		return doc_actions.preview(package, action, operation, dependencies, own_id, resolve, lock=_writing.get())
+	raise ValueError("Unknown action")
 
 
 def _fresh(doc, body):
-	action = registry.ACTIONS.get(body["action"])
-	if action is None or body["policy"] != action.policy:
+	action_name = body.get("action")
+	action = registry.ACTIONS.get(action_name)
+	if action is None or not registry.public(action_name) or body["policy"] != action.policy:
 		raise ValueError("Handler/policy changed")
 	if action.surface == "bankimport":
 		return _bank().fresh(doc, body)
+	if action.surface == "doc":
+		return doc_actions.fresh(doc, body, _make_resolver(doc.package), lock=_writing.get())
 	fresh = _preview(doc.package, body["payload"], body["dependencies"], doc.name)
 	if any(fresh[k] != body["preview"][k] for k in ("before", "after", "projection_version")):
 		raise ValueError("Baseline changed; new revision required")
@@ -359,11 +444,21 @@ def _invalidate(doc, cause="dependency_stale"):
 				_invalidate_metadata(child, parent, cause if parent == doc.name else "dependency_stale")
 
 
+def _visible_result(doc, body=None):
+	if not doc.result:
+		return None
+	result = frappe.parse_json(doc.result)
+	action = (body or {}).get("action") or getattr(doc, "action", domain.ACTION)
+	if action in registry.BANK_ACTION_NAMES and isinstance(result, dict):
+		return {key: result[key] for key in ("doctype", "id", "name", "by", "at") if key in result}
+	if action in domain.DOC_ACTIONS and isinstance(result, dict):
+		if result.get("id") and not doc_actions.can_read_result(result.get("doctype"), result.get("id")):
+			return {"doctype": result.get("doctype"), "id": None, "docstatus": result.get("docstatus"), "redacted": True}
+	return result
+
+
 def _response(doc, body, current=None, stale_cause=None):
 	status = "Stale" if stale_cause else doc.status
-	result = frappe.parse_json(doc.result) if doc.result else None
-	if result and body.get("action") in registry.BANK_ACTION_NAMES:
-		result = {key: result[key] for key in ("doctype", "id", "name", "by", "at")}
 	return {"id": doc.name, "revision": doc.current_revision, "hash": doc.revision_hash,
 		"status": status, "approvable": status in {"Pending", "Approved"},
 		"package": doc.package, "dependencies": body["dependencies"],
@@ -373,7 +468,7 @@ def _response(doc, body, current=None, stale_cause=None):
 		"effects": body["preview"].get("effects", []), "limits": body["preview"].get("limits", []),
 		"stale_cause": stale_cause,
 		"conflicts": ["New revision and review required"] if status == "Stale" else [],
-		"result": result}
+		"result": _visible_result(doc, body)}
 
 
 def _stale_cause(doc, body, memo=None):
@@ -389,18 +484,27 @@ def _stale_cause_inner(doc, body, memo):
 		# revision may have NEW private ancestry: do not load/disclose it just
 		# to report that the old binding became stale.
 		parent = frappe.get_doc(PROPOSAL, dep["id"], for_update=_writing.get())
+		parent_action = getattr(parent, "action", domain.ACTION)
+		if not _is_action_enabled(parent_action):
+			_deny()
+		parent_body = None
+		if parent_action == domain.ACTION:
+			_note(parent.target)
+		else:
+			parent_body = _body(parent)
+			_target(parent_body, lock=False)
 		if parent.current_revision != dep["revision"] or parent.revision_hash != dep["hash"]:
 			return {"cause": "dependency_revised", "proposal": parent.name, "detail": "Bound revision changed"}
 		if parent.status == "Rejected":
 			return {"cause": "dependency_rejected", "proposal": parent.name, "detail": "Bound predecessor rejected"}
-		if parent.status == "Stale" or _stale_cause(parent, _body(parent), memo):
+		if parent.status == "Stale" or _stale_cause(parent, parent_body or _body(parent), memo):
 			return {"cause": "dependency_stale", "proposal": parent.name, "detail": "Bound predecessor stale"}
 	if doc.status in {"Succeeded", "Rejected", "Stale"}:
 		return None
 	try:
 		_fresh(doc, body)
 	except ValueError:
-		detail = ("Die Buchungslage hat sich geändert." if body["action"] != domain.ACTION
+		detail = ("Die Buchungslage hat sich geändert." if body["action"] in registry.BANK_ACTION_NAMES
 			else "Preview baseline or projection changed")
 		return {"cause": "baseline_changed", "proposal": None, "detail": detail}
 	return None
@@ -415,9 +519,11 @@ def _checked(doc, body, persist=True):
 	return _response(doc, body, stale_cause=cause)
 
 
-def _revision(doc, operation, dependencies, metadata, *, policy=domain.POLICY, preview=None):
+def _revision(doc, operation, dependencies, metadata, *, policy=None, preview=None):
+	if policy is None:
+		policy = _action_policy(doc.action)
 	if preview is None:
-		preview = _preview(doc.package, operation, dependencies, doc.name)
+		preview = _preview(doc.package, operation, dependencies, doc.name, action=doc.action)
 	body = {"proposal": doc.name, "revision": doc.current_revision, "action": doc.action,
 		"policy": policy, "payload": operation, "dependencies": dependencies, "preview": preview, **metadata}
 	doc.revision_hash = domain.digest(body)
@@ -449,15 +555,17 @@ def _succeed(doc, result, *, audit_result=None):
 
 @_api
 def submit(key, package, payload, dependencies=None, action=domain.ACTION, package_meta=None, metadata=None):
-	if action != domain.ACTION or not isinstance(key, str) or not 1 <= len(key) <= 120:
+	if action not in (domain.ACTION, *domain.DOC_ACTIONS) or not isinstance(key, str) or not 1 <= len(key) <= 120:
 		frappe.throw("Unknown action or invalid request key")
+	enabled(action)
 	if isinstance(package, str) and package.upper().startswith((domain.RECEIPT_PACKAGE_PREFIX, "BANK-")):
 		_deny()
-	operation = _payload(payload)
+	operation = _parse_operation(action, payload)
 	meta = domain.metadata(_json(metadata, dict))
 	dependencies = _json(dependencies if dependencies is not None else [], list)
 	_lock_package(package, create=True, package_meta=package_meta)
-	_note(operation["target"], "write")
+	_check_target_write(action, operation)
+	target_name = _target_id(action, operation)
 	request_id = domain.digest([frappe.session.user, key])
 	request_hash = domain.digest([action, package, operation, dependencies, meta])
 	previous = frappe.db.get_value(PROPOSAL, {"request_id": request_id}, "name")
@@ -468,7 +576,7 @@ def submit(key, package, payload, dependencies=None, action=domain.ACTION, packa
 		return _checked(doc, body)
 	if frappe.db.count(PROPOSAL, {"package": package}) >= 128:
 		frappe.throw("Package limit is 128 proposals")
-	doc = _create_proposal(action, operation["target"], package, request_id, request_hash)
+	doc = _create_proposal(action, target_name, package, request_id, request_hash)
 	body = _revision(doc, operation, dependencies, meta)
 	_event(doc, "Created")
 	return _response(doc, body, body["preview"])
@@ -486,11 +594,12 @@ def revise(binding, payload, dependencies=None, metadata=None):
 	meta = domain.metadata(_json(metadata, dict))
 	_lock_for(ref["id"])
 	doc, old = _exact(ref)
-	if doc.action != domain.ACTION:
+	if doc.action in registry.BANK_ACTION_NAMES:
 		return _bank().revise(doc, old, _json(payload, dict), dependencies, meta)
-	operation = _payload(payload)
-	_note(doc.target, "write")
-	if doc.status == "Succeeded" or operation["target"] != doc.target:
+	operation = _parse_operation(doc.action, payload)
+	_check_target_write(doc.action, operation)
+	if (doc.status == "Succeeded" or _target_id(doc.action, operation) != doc.target
+		or (doc.action in domain.DOC_ACTIONS and operation["doctype"] != old["payload"]["doctype"])):
 		frappe.throw("Executed proposals and primary targets are final")
 	_checked(doc, old)
 	doc.current_revision += 1
@@ -512,9 +621,12 @@ def review(binding, approve, reason=None):
 		reason = domain.text(reason, "reason", 1, 1000)
 	_lock_for(ref["id"])
 	doc, body = _exact(ref)
-	_target(body, "write")
-	if doc.action != domain.ACTION:
-		_bank().require_reviewer(body)
+	if doc.action in domain.DOC_ACTIONS:
+		_check_target_write(doc.action, body["payload"], for_human=True)
+	else:
+		_target(body, "write")
+		if doc.action != domain.ACTION:
+			_bank().require_reviewer(body)
 	checked = _checked(doc, body)
 	if checked["status"] == "Stale":
 		return checked
@@ -536,9 +648,11 @@ def execute(binding):
 	ref = _binding(binding)
 	_lock_for(ref["id"])
 	doc, body = _exact(ref)
-	if doc.action != domain.ACTION:
+	if doc.action in registry.BANK_ACTION_NAMES:
 		return _bank().execute_approved(doc, body)
-	_note(doc.target, "write")
+	if doc.action in domain.DOC_ACTIONS:
+		_actor(human=True)
+	_check_target_write(doc.action, body["payload"], for_human=doc.action in domain.DOC_ACTIONS)
 	if doc.status == "Succeeded":
 		_event(doc, "ResultReused")
 		return _response(doc, body)
@@ -551,26 +665,32 @@ def execute(binding):
 	roles = set(frappe.get_roles(doc.decision_by))
 	if not reviewer or not reviewer.enabled or REVIEWER not in roles or AGENT in roles:
 		_deny()
-	_note(doc.target, "write", user=doc.decision_by)
+	_check_target_write(doc.action, body["payload"], user=doc.decision_by, for_human=doc.action in domain.DOC_ACTIONS)
 	_read_graph(body, doc.decision_by)
 	fresh = _fresh(doc, body)
 	if any(dep["mode"] != "real" for dep in fresh["dependencies"]):
 		frappe.throw("Predecessors must execute individually first")
-	# Normal document save, including normal validation/hooks. No permission flags.
-	note = _note(doc.target, "write")
-	note.label = body["payload"]["label"]
-	note.save()
-	if _state(note) != fresh["after"]:
-		frappe.throw("Actual result differs; transaction must roll back")
-	_succeed(doc, {"doctype": NOTE, "id": note.name, "state": _state(note)})
+	if doc.action == domain.ACTION:
+		# Normal document save, including normal validation/hooks. No permission flags.
+		note = _note(doc.target, "write")
+		note.label = body["payload"]["label"]
+		note.save()
+		if _state(note) != fresh["after"]:
+			frappe.throw("Actual result differs; transaction must roll back")
+		_succeed(doc, {"doctype": NOTE, "id": note.name, "state": _state(note)})
+	else:
+		_succeed(doc, doc_actions.execute(doc, body))
 	return _response(doc, body)
 
 
 @_api
 def list_proposals():
 	result = []
+	actions = _enabled_actions()
+	if not actions:
+		return result
 	# get_all is limited to fixed internal tables; every returned record is checked.
-	for pid in frappe.get_all(PROPOSAL, filters={"action": ["in", registry.PUBLIC_ACTIONS]}, pluck="name",
+	for pid in frappe.get_all(PROPOSAL, filters={"action": ["in", actions]}, pluck="name",
 		order_by="modified desc", limit_page_length=100):
 		previous_messages = list(frappe.local.message_log)
 		try:
@@ -583,6 +703,14 @@ def list_proposals():
 	return result
 
 
+def _visible_audit_detail(doc, event):
+	if getattr(doc, "action", domain.ACTION) in domain.DOC_ACTIONS and event.kind in ("Succeeded", "ResultReused") and event.detail:
+		detail = frappe.parse_json(event.detail)
+		if isinstance(detail, dict) and detail.get("id") and not doc_actions.can_read_result(detail.get("doctype"), detail.get("id")):
+			return domain.encode({"doctype": detail.get("doctype"), "id": None, "docstatus": detail.get("docstatus"), "redacted": True})
+	return event.detail
+
+
 @_api
 def audit(proposal_id):
 	doc, body = _load(proposal_id)
@@ -591,7 +719,7 @@ def audit(proposal_id):
 		fields=["sequence", "kind", "actor", "creation", "number", "revision_hash", "detail"],
 		order_by="sequence", limit_page_length=1000)
 
-	return [dict(e, actor_name=_user_label(e.actor)) for e in events]
+	return [dict(e, detail=_visible_audit_detail(doc, e), actor_name=_user_label(e.actor)) for e in events]
 
 
 def _user_label(user):
@@ -615,8 +743,11 @@ def _visible(package, user=None):
 	token = _writing.set(False)
 	try:
 		result = []
+		actions = _enabled_actions()
+		if not actions:
+			return result
 		row_limit = 0 if isinstance(package, str) and package.startswith("BANK-") else 129
-		for pid in frappe.get_all(PROPOSAL, filters={"package": package, "action": ["in", registry.PUBLIC_ACTIONS]},
+		for pid in frappe.get_all(PROPOSAL, filters={"package": package, "action": ["in", actions]},
 			pluck="name", limit_page_length=row_limit):
 			messages = list(frappe.local.message_log)
 			try:
@@ -642,6 +773,8 @@ def _detail(doc, body, neighbors=True):
 	response = _checked(doc, body, persist=False)
 	if doc.action == domain.ACTION:
 		response["target"] = {"doctype": NOTE, "name": doc.target, "label": _note(doc.target).label}
+	elif doc.action in domain.DOC_ACTIONS:
+		response["target"] = doc_actions.target_info(doc, body, _reference)
 	else:
 		operation = body["payload"]
 		response.update(confidence=body.get("confidence"), postings=body["preview"].get("postings", []))
@@ -746,13 +879,16 @@ def request_revision(binding, note):
 	note = domain.text(note, "note", 1, 1000)
 	_lock_for(ref["id"])
 	doc, body = _exact(ref)
-	_target(body, "write")
-	if doc.action != domain.ACTION:
-		_bank().require_reviewer(body)
+	if doc.action in domain.DOC_ACTIONS:
+		_check_target_write(doc.action, body["payload"], for_human=True)
+	else:
+		_target(body, "write")
+		if doc.action != domain.ACTION:
+			_bank().require_reviewer(body)
 	checked = _checked(doc, body)
 	if checked["status"] not in {"Pending", "Stale"}:
 		frappe.throw("Revision request requires Pending or Stale")
-	if doc.action != domain.ACTION:
+	if doc.action in registry.BANK_ACTION_NAMES:
 		_bank().record_request(doc.package, body["payload"]["row"], note, doc, ref)
 	else:
 		_event(doc, "RevisionRequested", {"note": note})
@@ -821,7 +957,12 @@ def execute_ready(package, bindings):
 		frappe.db.savepoint(savepoint)
 		messages = list(frappe.local.message_log)
 		try:
-			_target(body, "write")
+			action = getattr(doc, "action", domain.ACTION)
+			if action in domain.DOC_ACTIONS:
+				_actor(human=True)
+				doc_actions.check_reviewer_write_access(action, body["payload"], frappe.session.user)
+			else:
+				_target(body, "write")
 			checked = _checked(doc, body)
 			if checked["status"] == "Stale":
 				result.append({"id": pid, "ok": False, "status": "Stale"})
