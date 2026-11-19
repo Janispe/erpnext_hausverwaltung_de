@@ -166,33 +166,47 @@ class AdapterContracts(unittest.TestCase):
 			self.service._actor(human=True)
 
 	def test_administrator_cannot_approve_existing_own_proposal(self):
-		# Bestandsvorschlag aus der Zeit, als Administrator noch einreichen konnte.
+		# Bestandsvorschläge aus der Zeit, als Administrator noch einreichen konnte.
 		from unittest.mock import MagicMock
 
 		self.roles.update({"HV Proposal Agent", "System Manager"})
 		self.session.user = "Administrator"
 		self.fake.local.login_manager.user = "Administrator"
-		authors = {"HVP-OWN": "Administrator", "HVP-FOREIGN": "agent-synthetic"}
-		self.fake.db.exists = lambda doctype, filters: (
-			doctype == self.service.AUDIT and authors.get(filters["proposal"]) == filters["actor"]
-			and set(filters["kind"][1]) == {"Created", "Revised"})
-		ref = {"id": "HVP-OWN", "revision": 1, "hash": "0" * 64}
-		docs = {name: SimpleNamespace(name=name, action=self.service.domain.ACTION, status="Pending")
-			for name in authors}
+		admin, agent = "Administrator", "agent-synthetic"
+		# (Vorschlag, aktuelle Revision, Ereignisse als (Art, Akteur, Revision))
+		cases = {
+			"HVP-OWN": (1, [("Created", admin, 1)]),
+			"HVP-FOREIGN": (1, [("Created", agent, 1)]),
+			"HVP-ADMIN-REVISION": (2, [("Created", agent, 1), ("Revised", admin, 2)]),
+			"HVP-SUPERSEDED": (3, [("Created", agent, 1), ("Revised", admin, 2), ("Revised", agent, 3)]),
+		}
+		audit = [{"proposal": name, "kind": kind, "actor": actor, "number": number, "revision_hash": f"h{number}"}
+			for name, (_, events) in cases.items() for kind, actor, number in events]
+		self.fake.db.exists = lambda doctype, filters: doctype == self.service.AUDIT and any(
+			all(event[key] == value for key, value in filters.items()) for event in audit)
+		docs = {name: SimpleNamespace(name=name, action=self.service.domain.ACTION, status="Pending",
+			current_revision=revision, revision_hash=f"h{revision}") for name, (revision, _) in cases.items()}
 		approve = MagicMock()
 		stubs = {"_binding": lambda binding: binding, "_lock_for": lambda name: None,
 			"_exact": lambda binding: (docs[binding["id"]], {}), "_target": lambda body, right: None,
 			"_checked": lambda doc, body: {"status": "Pending"}, "_fresh": lambda doc, body: None,
 			"_approve": approve, "_event": lambda *a, **kw: None, "_invalidate": lambda *a, **kw: None,
 			"_response": lambda doc, body: {"status": doc.status}}
+
+		def ref(name):
+			return {"id": name, "revision": docs[name].current_revision, "hash": "0" * 64}
+
 		try:
 			with patch.multiple(self.service, **stubs):
-				with self.assertRaises(self.Denied):
-					self.service.review(ref, True)
+				for blocked in ("HVP-OWN", "HVP-ADMIN-REVISION"):
+					with self.assertRaises(self.Denied):
+						self.service.review(ref(blocked), True)
 				approve.assert_not_called()
-				self.assertEqual(self.service.review(ref, False, "passt nicht")["status"], "Rejected")
-				self.service.review(ref | {"id": "HVP-FOREIGN"}, True)
-				approve.assert_called_once_with(docs["HVP-FOREIGN"])
+				self.assertEqual(self.service.review(ref("HVP-OWN"), False, "passt nicht")["status"], "Rejected")
+				for allowed in ("HVP-FOREIGN", "HVP-SUPERSEDED"):
+					self.service.review(ref(allowed), True)
+				self.assertEqual([call.args[0].name for call in approve.call_args_list],
+					["HVP-FOREIGN", "HVP-SUPERSEDED"])
 		finally:
 			del self.session.user
 			self.fake.local.login_manager.user = self.session.user

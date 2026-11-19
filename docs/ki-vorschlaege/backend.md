@@ -14,9 +14,10 @@ Das Sicherheitsmodell aus PR #44 bleibt unverändert:
 - Freigeben darf nur ein Mensch mit `HV Proposal Reviewer` ohne `HV Proposal Agent`, über eine echte Browser-Sitzung.
   Ausnahme: `Administrator` bekommt in Frappe jede Rolle. Für die Engine zählt bei ihm die Agentenrolle nicht
   (`frappe_service.roles_of`). Er darf prüfen und übernehmen, aber nie einreichen oder revidieren:
-  `submit` und `revise` im Kern sowie die Agenten-Schnittstelle der Bankpakete lehnen ihn ab. Vorschläge, die er
-  früher selbst angelegt oder revidiert hat (Prüfprotokoll `Created`/`Revised`), darf er nicht freigeben, nur
-  ablehnen. So kann er keine eigenen Vorschläge freigeben.
+  `submit` und `revise` im Kern sowie die Agenten-Schnittstelle der Bankpakete lehnen ihn ab. Bestandsvorschläge,
+  die er früher eingereicht hat (`Created`) oder deren gebundene Fassung von ihm stammt (`Revised` mit derselben
+  Revision und demselben Hash), darf er nicht freigeben, nur ablehnen. Eine abgelöste eigene Revision sperrt die
+  aktuelle Fassung eines anderen Autors nicht.
 
 **Nicht Teil dieses Auftrags:**
 

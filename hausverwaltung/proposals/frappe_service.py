@@ -76,14 +76,18 @@ def _not_administrator():
 
 
 def _not_own_proposal(doc):
-	"""Administrator gibt keine Vorschläge frei, die er selbst angelegt oder revidiert hat.
+	"""Administrator gibt keine Vorschläge frei, die er eingereicht oder deren gebundene Fassung er verfasst hat.
 
-	Gilt für Bestandsvorschläge aus der Zeit, als Administrator noch einreichen konnte.
+	Gilt für Bestandsvorschläge aus der Zeit, als Administrator noch einreichen konnte. Eine von ihm
+	verfasste, inzwischen abgelöste Revision sperrt die aktuelle Fassung eines anderen Autors nicht.
 	"""
 	user = frappe.session.user
-	if user == "Administrator" and frappe.db.exists(
-		AUDIT, {"proposal": doc.name, "kind": ["in", ["Created", "Revised"]], "actor": user}
-	):
+	if user != "Administrator":
+		return
+	submitted = frappe.db.exists(AUDIT, {"proposal": doc.name, "kind": "Created", "actor": user})
+	authored = frappe.db.exists(AUDIT, {"proposal": doc.name, "kind": "Revised", "actor": user,
+		"number": doc.current_revision, "revision_hash": doc.revision_hash})
+	if submitted or authored:
 		_deny()
 
 
