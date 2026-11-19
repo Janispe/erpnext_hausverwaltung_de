@@ -211,6 +211,37 @@ class AdapterContracts(unittest.TestCase):
 			del self.session.user
 			self.fake.local.login_manager.user = self.session.user
 
+	def test_administrator_executes_only_with_browser_session(self):
+		from unittest.mock import MagicMock
+
+		class Reached(Exception):
+			pass
+
+		self.roles.update({"HV Proposal Agent", "System Manager"})
+		self.session.user = "Administrator"
+		self.fake.local.login_manager.user = "Administrator"
+		ref = {"id": "HVP-1", "revision": 1, "hash": "0" * 64}
+		loaded = MagicMock(side_effect=Reached)
+		try:
+			with patch.multiple(self.service, _binding=loaded, _bindings=loaded):
+				# API-Schlüssel statt Browser-Sitzung: abgewiesen, bevor ein Vorschlag geladen wird.
+				self.request.headers["Authorization"] = "token synthetic:secret"
+				with self.assertRaises(self.Denied):
+					self.service.execute(ref)
+				with self.assertRaises(self.Denied):
+					self.service.execute_ready("PKG", [ref])
+				loaded.assert_not_called()
+				# Mit echter Browser-Sitzung geht es weiter bis zum Laden.
+				self.request.headers.clear()
+				with self.assertRaises(Reached):
+					self.service.execute(ref)
+				with self.assertRaises(Reached):
+					self.service.execute_ready("PKG", [ref])
+		finally:
+			self.request.headers.clear()
+			del self.session.user
+			self.fake.local.login_manager.user = self.session.user
+
 	def test_disabled_guest_disabled_user_and_website_user_block(self):
 		self.fake.conf["hv_proposals_synthetic_enabled"] = False
 		with self.assertRaises(self.Denied): self.service._actor()

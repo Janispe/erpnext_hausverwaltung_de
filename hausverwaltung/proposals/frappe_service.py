@@ -75,6 +75,12 @@ def _not_administrator():
 		_deny()
 
 
+def _human_if_administrator():
+	"""Administrator handelt nur als Mensch: Ausführen nur über eine echte Browser-Sitzung."""
+	if frappe.session.user == "Administrator":
+		_actor(human=True)
+
+
 def _not_own_proposal(doc):
 	"""Administrator gibt keine Vorschläge frei, die er eingereicht oder deren gebundene Fassung er verfasst hat.
 
@@ -683,6 +689,7 @@ def review(binding, approve, reason=None):
 
 @_api
 def execute(binding):
+	_human_if_administrator()
 	ref = _binding(binding)
 	_lock_for(ref["id"])
 	doc, body = _exact(ref)
@@ -972,6 +979,7 @@ def review_many(bindings):
 
 @_api
 def execute_ready(package, bindings):
+	_human_if_administrator()
 	refs = _bindings(bindings)
 	_lock_scope(package)
 	_lock_package(package)

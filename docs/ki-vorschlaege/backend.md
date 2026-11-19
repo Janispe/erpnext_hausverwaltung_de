@@ -17,7 +17,8 @@ Das Sicherheitsmodell aus PR #44 bleibt unverändert:
   `submit` und `revise` im Kern sowie die Agenten-Schnittstelle der Bankpakete lehnen ihn ab. Bestandsvorschläge,
   die er früher eingereicht hat (`Created`) oder deren gebundene Fassung von ihm stammt (`Revised` mit derselben
   Revision und demselben Hash), darf er nicht freigeben, nur ablehnen. Eine abgelöste eigene Revision sperrt die
-  aktuelle Fassung eines anderen Autors nicht.
+  aktuelle Fassung eines anderen Autors nicht. Ausführen (`execute`, `execute_ready`) darf Administrator nur über
+  eine echte Browser-Sitzung, nicht per API-Schlüssel.
 
 **Nicht Teil dieses Auftrags:**
 
