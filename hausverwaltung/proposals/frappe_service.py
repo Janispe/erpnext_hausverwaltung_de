@@ -75,6 +75,18 @@ def _not_administrator():
 		_deny()
 
 
+def _not_own_proposal(doc):
+	"""Administrator gibt keine Vorschläge frei, die er selbst angelegt oder revidiert hat.
+
+	Gilt für Bestandsvorschläge aus der Zeit, als Administrator noch einreichen konnte.
+	"""
+	user = frappe.session.user
+	if user == "Administrator" and frappe.db.exists(
+		AUDIT, {"proposal": doc.name, "kind": ["in", ["Created", "Revised"]], "actor": user}
+	):
+		_deny()
+
+
 def _actor(human=False):
 	enabled()
 	user = frappe.session.user
@@ -655,6 +667,7 @@ def review(binding, approve, reason=None):
 		frappe.throw("Decision requires pending revision")
 	_fresh(doc, body)
 	if approve:
+		_not_own_proposal(doc)
 		_approve(doc)
 	else:
 		doc.status = "Rejected"

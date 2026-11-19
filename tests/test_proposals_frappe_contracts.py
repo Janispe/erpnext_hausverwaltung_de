@@ -165,6 +165,38 @@ class AdapterContracts(unittest.TestCase):
 		with self.assertRaises(self.Denied):
 			self.service._actor(human=True)
 
+	def test_administrator_cannot_approve_existing_own_proposal(self):
+		# Bestandsvorschlag aus der Zeit, als Administrator noch einreichen konnte.
+		from unittest.mock import MagicMock
+
+		self.roles.update({"HV Proposal Agent", "System Manager"})
+		self.session.user = "Administrator"
+		self.fake.local.login_manager.user = "Administrator"
+		authors = {"HVP-OWN": "Administrator", "HVP-FOREIGN": "agent-synthetic"}
+		self.fake.db.exists = lambda doctype, filters: (
+			doctype == self.service.AUDIT and authors.get(filters["proposal"]) == filters["actor"]
+			and set(filters["kind"][1]) == {"Created", "Revised"})
+		ref = {"id": "HVP-OWN", "revision": 1, "hash": "0" * 64}
+		docs = {name: SimpleNamespace(name=name, action=self.service.domain.ACTION, status="Pending")
+			for name in authors}
+		approve = MagicMock()
+		stubs = {"_binding": lambda binding: binding, "_lock_for": lambda name: None,
+			"_exact": lambda binding: (docs[binding["id"]], {}), "_target": lambda body, right: None,
+			"_checked": lambda doc, body: {"status": "Pending"}, "_fresh": lambda doc, body: None,
+			"_approve": approve, "_event": lambda *a, **kw: None, "_invalidate": lambda *a, **kw: None,
+			"_response": lambda doc, body: {"status": doc.status}}
+		try:
+			with patch.multiple(self.service, **stubs):
+				with self.assertRaises(self.Denied):
+					self.service.review(ref, True)
+				approve.assert_not_called()
+				self.assertEqual(self.service.review(ref, False, "passt nicht")["status"], "Rejected")
+				self.service.review(ref | {"id": "HVP-FOREIGN"}, True)
+				approve.assert_called_once_with(docs["HVP-FOREIGN"])
+		finally:
+			del self.session.user
+			self.fake.local.login_manager.user = self.session.user
+
 	def test_disabled_guest_disabled_user_and_website_user_block(self):
 		self.fake.conf["hv_proposals_synthetic_enabled"] = False
 		with self.assertRaises(self.Denied): self.service._actor()
