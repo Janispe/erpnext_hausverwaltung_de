@@ -154,6 +154,11 @@ class AdapterContracts(unittest.TestCase):
 			self.assertIn("HV Proposal Reviewer", self.service.roles_of("Administrator"))
 			self.assertNotIn("HV Proposal Agent", self.service.roles_of("Administrator"))
 			self.assertIn("HV Proposal Agent", self.service.roles_of("reviewer-synthetic"))
+			# Prüfen ja, einreichen nie: sonst könnte Administrator eigene Vorschläge freigeben.
+			with self.assertRaises(self.Denied):
+				self.service.submit("admin-key", "ADMIN-PKG", {"label": "x"})
+			with self.assertRaises(self.Denied):
+				self.service.revise({"id": "HVP-1", "revision": 1, "hash": "0" * 64}, {"label": "x"})
 		finally:
 			del self.session.user
 			self.fake.local.login_manager.user = self.session.user

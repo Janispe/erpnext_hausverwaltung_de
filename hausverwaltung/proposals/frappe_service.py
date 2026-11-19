@@ -69,6 +69,12 @@ def roles_of(user=None):
 	return roles
 
 
+def _not_administrator():
+	"""Administrator prüft und übernimmt, reicht aber nie ein (siehe roles_of)."""
+	if frappe.session.user == "Administrator":
+		_deny()
+
+
 def _actor(human=False):
 	enabled()
 	user = frappe.session.user
@@ -568,6 +574,7 @@ def _succeed(doc, result, *, audit_result=None):
 
 @_api
 def submit(key, package, payload, dependencies=None, action=domain.ACTION, package_meta=None, metadata=None):
+	_not_administrator()
 	if action not in (domain.ACTION, *domain.DOC_ACTIONS) or not isinstance(key, str) or not 1 <= len(key) <= 120:
 		frappe.throw("Unknown action or invalid request key")
 	enabled(action)
@@ -603,6 +610,7 @@ def view(proposal_id):
 
 @_api
 def revise(binding, payload, dependencies=None, metadata=None):
+	_not_administrator()
 	ref = _binding(binding)
 	meta = domain.metadata(_json(metadata, dict))
 	_lock_for(ref["id"])
