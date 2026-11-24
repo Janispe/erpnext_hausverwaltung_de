@@ -93,13 +93,13 @@ def validate_issue(doc, method=None):
 		doc.customer = contract.kunde
 		doc.customer_name = frappe.db.get_value("Customer", contract.kunde, "customer_name")
 
-	from .permissions import can_access_objects, check_conversion, clear_issue_timeline_links
+	from .permissions import bind_communications_to_issue, can_access_objects, check_conversion
 
 	if not can_access_objects(doc, frappe.session.user):
 		frappe.throw(_("Keine Leseberechtigung für die Zuordnung des Wohnungsschadens."), frappe.PermissionError)
 	if previous and not is_damage(previous):
-		check_conversion(doc.name, doc.attachment)
-		clear_issue_timeline_links(doc.name)
+		communications = check_conversion(doc.name, doc.attachment)
+		bind_communications_to_issue(doc.name, communications)
 	elif doc.attachment:
 		from .permissions import check_attachment_url
 

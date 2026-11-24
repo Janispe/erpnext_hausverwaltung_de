@@ -4,6 +4,7 @@ from uuid import uuid4
 from zipfile import ZipFile
 
 import frappe
+from frappe.core.doctype.communication.email import make as make_communication
 from frappe.core.doctype.file.utils import find_file_by_url
 from frappe.desk.form.load import get_communications
 from frappe.email.receive import InboundMail
@@ -110,8 +111,11 @@ class TestWohnungsschaden(IntegrationTestCase):
 
 	def test_unlinked_mail_is_taken_once_with_its_existing_photo(self):
 		mail = self.incoming()
+		reply = self.composer_reply(mail, "Rückfrage vor Zuordnung")
 		file = self.photo(mail)
 		name = take_incoming_email(mail.name)
+		self.assertEqual((reply.reload().reference_doctype, reply.reference_name), ("Issue", name))
+		self.assertEqual(reply.in_reply_to, mail.name)
 		self.assertEqual(take_incoming_email(mail.name), name)
 		mail.reload()
 		self.assertEqual((mail.reference_doctype, mail.reference_name), ("Issue", name))
@@ -224,6 +228,51 @@ class TestWohnungsschaden(IntegrationTestCase):
 		self.assertTrue(has_permission("Contact", doc=self.contact, print_logs=False))
 		contact_mail = get_communications("Contact", self.contact.name)
 		self.assertFalse({mail.name, reply.name}.intersection(item.name for item in contact_mail))
+
+	def composer_reply(self, parent, content):
+		result = make_communication(
+			doctype="Communication",
+			name=parent.name,
+			in_reply_to=parent.name,
+			subject=f"Re: {parent.subject}",
+			content=content,
+			sender=f"service-{self.key}@example.invalid",
+			recipients=self.email,
+			communication_type="Communication",
+			send_email=False,
+		)
+		return frappe.get_doc("Communication", result["name"])
+
+	def test_composer_reply_chain_is_normalized_before_and_after_takeover(self):
+		mail = self.incoming(append_to="Issue")
+		first = self.composer_reply(mail, "Erste Rückfrage")
+		second = self.composer_reply(first, "Zweite Rückfrage")
+		self.assertEqual(first.reference_doctype, "Communication")
+		self.assertEqual(second.reference_name, first.name)
+		self.assertIn(self.contact.name, {link.link_name for link in second.timeline_links})
+		photo = self.photo(second)
+
+		issue_name = take_incoming_email(mail.name)
+		third = self.composer_reply(second, "Dritte Rückfrage")
+		for reply, parent in ((first, mail), (second, first), (third, second)):
+			reply.reload()
+			self.assertEqual((reply.reference_doctype, reply.reference_name), ("Issue", issue_name))
+			self.assertEqual(reply.in_reply_to, parent.name)
+			self.assertFalse(reply.timeline_links)
+
+		message_names = {mail.name, first.name, second.name, third.name}
+		self.assertEqual({item.name for item in get_communications("Issue", issue_name)}, message_names)
+		staff = self.staff(
+			("Issue", "Contact", "Customer", "Communication", "File"), issue_if_owner=True,
+		)
+		frappe.set_user(staff.name)
+		self.assertFalse(has_permission("Issue", doc=issue_name, print_logs=False))
+		self.assertEqual(
+			frappe.get_list("Communication", filters={"name": ("in", sorted(message_names))}, pluck="name"),
+			[],
+		)
+		self.assertFalse(message_names.intersection(item.name for item in get_communications("Contact", self.contact.name)))
+		self.assertIsNone(find_file_by_url(photo.file_url, name=photo.name))
 
 	def test_attachment_lists_follow_owner_only_issue_permission(self):
 		owned_mail = self.incoming(message_key="owned")

@@ -2,6 +2,7 @@ import frappe
 from frappe import _
 from frappe.permissions import has_permission
 from frappe.utils import cint
+from pypika.functions import Coalesce, NullIf
 
 from .issue import is_damage, is_damage_issue, is_damage_staff
 
@@ -78,14 +79,12 @@ def _case_reads(user, issue_name):
 
 
 def protected_issue(doctype, name, *, for_update=False):
-	if not name:
-		return None
-	if doctype == "Communication":
-		ref = frappe.db.get_value(
-			doctype, name, ["reference_doctype", "reference_name"], as_dict=True, for_update=for_update,
-		)
-		if ref:
-			doctype, name = ref.reference_doctype, ref.reference_name
+	visited = set()
+	while doctype == "Communication" and name and name not in visited:
+		visited.add(name)
+		doctype, name = frappe.db.get_value(
+			"Communication", name, ["reference_doctype", "reference_name"], for_update=for_update,
+		) or (None, None)
 	if doctype == "Issue" and is_damage_issue(name, for_update=for_update):
 		return name
 	return None
@@ -171,13 +170,31 @@ def _check_unshared(doctype, names):
 		frappe.throw(_("Bitte vorhandene Dokumentfreigaben für {0} vor der Übernahme entfernen.").format(doctype))
 
 
+def _communication_tree(issue, communication):
+	mails = set()
+	if issue:
+		mails.update(frappe.qb.get_query(
+			"Communication", fields=["name"], filters={"reference_doctype": "Issue", "reference_name": issue},
+			for_update=True,
+		).run(pluck=True))
+	if communication:
+		mails.add(communication)
+
+	frontier = mails.copy()
+	while frontier:
+		replies = frappe.qb.get_query(
+			"Communication",
+			fields=["name"],
+			filters={"reference_doctype": "Communication", "reference_name": ("in", sorted(frontier))},
+			for_update=True,
+		).run(pluck=True)
+		frontier = set(replies) - mails
+		mails.update(frontier)
+	return sorted(mails)
+
+
 def check_conversion(issue=None, attachment=None, communication=None):
-	mails = (
-		frappe.get_all("Communication", filters={"reference_doctype": "Issue", "reference_name": issue}, pluck="name")
-		if issue else []
-	)
-	if communication and communication not in mails:
-		mails.append(communication)
+	mails = _communication_tree(issue, communication)
 
 	if issue:
 		_check_unshared("Issue", [issue])
@@ -206,6 +223,7 @@ def check_conversion(issue=None, attachment=None, communication=None):
 			frappe.throw(_("Bitte öffentliche Anhänge vor der Übernahme privat speichern."))
 		check_attachment_url(file.file_url or "", communication=file.attached_to_doctype == "Communication")
 	_check_unshared("File", [file.name for file in files])
+	return mails
 
 
 class FileMixin:
@@ -241,24 +259,42 @@ class FileMixin:
 		return super().is_downloadable()
 
 
-def clear_issue_timeline_links(issue):
-	communications = frappe.get_all(
-		"Communication", filters={"reference_doctype": "Issue", "reference_name": issue}, pluck="name",
+def bind_communications_to_issue(issue, communications):
+	if not communications:
+		return
+	frappe.db.delete(
+		"Communication Link",
+		{"parenttype": "Communication", "parentfield": "timeline_links", "parent": ("in", communications)},
 	)
-	if communications:
-		frappe.db.delete(
-			"Communication Link",
-			{"parenttype": "Communication", "parentfield": "timeline_links", "parent": ("in", communications)},
-		)
+
+	# Keep the actual reply chain and make the Issue the permission boundary for each message.
+	mail = frappe.qb.DocType("Communication")
+	(
+		frappe.qb.update(mail)
+		.set(mail.in_reply_to, Coalesce(NullIf(mail.in_reply_to, ""), mail.reference_name))
+		.set(mail.reference_owner, frappe.db.get_value("Issue", issue, "owner"))
+		.set(mail.reference_doctype, "Issue")
+		.set(mail.reference_name, issue)
+		.where((mail.reference_doctype == "Communication") & mail.name.isin(communications))
+	).run()
 
 
 def validate_communication(doc, method=None):
 	previous = doc.get_doc_before_save()
-	if previous and protected_issue(previous.reference_doctype, previous.reference_name):
-		if (previous.reference_doctype, previous.reference_name) != (doc.reference_doctype, doc.reference_name):
+	issue = protected_issue(doc.reference_doctype, doc.reference_name, for_update=True)
+	if previous:
+		previous_issue = protected_issue(previous.reference_doctype, previous.reference_name)
+		if previous_issue and previous_issue != issue:
 			frappe.throw(_("Eine Schadensmeldung bleibt mit ihrem Vorgang verknüpft."))
-	if protected_issue(doc.reference_doctype, doc.reference_name, for_update=True):
-		check_conversion(communication=doc.name)
+	if issue:
+		communications = check_conversion(communication=doc.name)
+		bind_communications_to_issue(issue, [name for name in communications if name != doc.name])
+
+		if doc.reference_doctype == "Communication":
+			doc.in_reply_to = doc.in_reply_to or doc.reference_name
+			doc.reference_doctype = "Issue"
+			doc.reference_name = issue
+			doc.reference_owner = frappe.db.get_value("Issue", issue, "owner")
 		# The stock timeline reads this child table without a Communication permission check.
 		doc.set("timeline_links", [])
 
