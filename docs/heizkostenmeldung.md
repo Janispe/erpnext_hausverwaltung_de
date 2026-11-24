@@ -147,3 +147,73 @@ Der DocType-Test benötigt eine initialisierte Frappe-Test-/Entwicklersite mit
 mindestens einer Immobilie. Seine Testdokumente werden zurückgerollt. Die
 Freigabe-/Dateitests isolieren die ERP-Ermittlung; ein separater Testlauf mit
 realer Belegung prüft das Laden und Speichern der Nutzerliste.
+
+## Messdienst-Rücklauf in Heizkostenentwürfe übernehmen
+
+1. In **Heizkostenabrechnung Immobilie** die Immobilie und den Abrechnungszeitraum
+   speichern. Unter **Aktionen → Rücklauf importieren** die neunstellige
+   Messdienst-Liegenschaftsnummer und die Bruttosumme für Heizung und Warmwasser
+   einschließlich Leerstand aus der separaten Abrechnungsübersicht eintragen.
+   Die Fundstelle angeben, etwa „Gesamtabrechnung 2025, Seite 2“. Die
+   Kontrollsumme direkt aus der Übersicht ablesen.
+2. Die DAT-Datei auswählen. Der Upload hängt sie privat an die Abrechnung.
+   Die Vorschau zeigt für jeden Satz Kennung, Messdienstwohnung, Nutzungszeit
+   und Bruttokosten. Ist der Ordnungsbegriff des Auftraggebers exakt die
+   ERP-ID eines Mietvertrags und passt das Nutzungsende, erscheint dieser
+   Vertrag automatisch. Andere Kennungen anhand der Messdienstunterlagen
+   ausdrücklich über **Zuordnen** mit dem Mietvertrag verbinden. Für Leerstand
+   **Leerstand** und die zugehörige Wohnung auswählen. Der ERP-Belegungsstand
+   muss zum Nutzungsende passen. Der Beginn ergibt sich aus dem für die
+   Abrechnung geschnittenen Vertragszeitraum beziehungsweise der Belegungslücke.
+3. Die Zuordnungen, Beträge und Prüfsumme vergleichen und **Freigeben und in
+   Entwürfe übernehmen** wählen. Der Import nutzt vorhandene Mieterentwürfe
+   oder erstellt sie mit den ERP-Vorauszahlungen. Er übernimmt die Bruttokosten
+   ohne Abzug von Vorauszahlungen. Leerstand wird separat im Rücklaufprotokoll
+   aufgeführt. Rechnungen entstehen erst beim späteren Einreichen der
+   Heizkostenabrechnung. Bereits eingereichte Abrechnungen und Mieterzeilen
+   blockieren die Übernahme.
+
+Unter **Messdienst-Rücklauf** stehen die freigegebenen Zeilen und ihre
+Entwurfsbezüge, der Dateibezug mit SHA-256, die Kontrollsumme mit Fundstelle
+sowie Freigabezeit und Benutzer. Pro Entwurf gibt es eine Freigabe. Nachträgliche
+fachliche Berichtigungen erfolgen über die vorhandenen Abrechnungsabläufe.
+
+### Unterstütztes Dateiprofil
+
+[Bved-Standard-Datenaustausch 3.10, dritte Erweiterung, Kapitel 2 und 8 sowie Tabelle K](https://bved.info/wp-content/uploads/2025/12/2025-09-10_bved_datenaustausch_310_dritte-Erweiterung.pdf)
+
+- D-Satz `D03.10`, 1.024 Zeichen je Satz einschließlich abschließendem `D`,
+  ISO-8859-15, CRLF gemäß Spezifikation oder LF. Eine Liegenschaft und ein
+  Messdienstkonto je Datei. Dateigröße bis 5 MiB.
+- Ein Satz je Nutzerzeitraum oder Leerstandszeitraum. Feld 5 enthält die neun
+  Stellen der Messdienst-Liegenschaft und vier Stellen der Messdienstwohnung.
+  Feld 6 enthält den Ordnungsbegriff des Auftraggebers, Feld 7 das Nutzungsende
+  im Format TTMMJJ. Die Messdienstwohnung dient der Konsistenzprüfung der
+  Zuordnungen.
+- Kostenschlüssel **231** (Heizung und Warmwasser) in Feld 17, Währung **EUR**
+  in Feld 22. Übernommen wird ausschließlich **Feld 8**, Stellen 58–67,
+  Bruttokosten in impliziten Cent. Netto in Feld 9, die Vorauszahlungen in
+  Feldern 10–13, Umlageausfallwagnis in Feld 14, Saldo in Feldern 15–16 und
+  die CO₂-Teilbeträge in Feldern 23–28 fließen nicht separat ein.
+- Gesamtkosten über mehrere Kostenarten (Schlüssel 230), Dateien mit
+  Einzelkostenarten und E898 für Einzel-PDFs liegen außerhalb dieses Profils.
+  Die Kompatibilität mit dem tatsächlichen Anbieter muss anhand eines
+  Originalrücklaufs und der zugehörigen Abrechnungsübersicht geprüft werden.
+
+### Synthetisches Beispiel
+
+Die [Beispieldatei](beispiele/DTD310_20261004090000000.DAT) verwendet
+Liegenschaft `123456789` und den Abrechnungszeitraum 01.01.–31.12.2025.
+Für den Test in einer synthetischen Immobilie zwei Verträge mit jeweils eigenem
+Customer in derselben Wohnung anlegen. Die Nutzungskennungen bei Bedarf
+manuell den Vertrags-IDs zuordnen.
+
+| Kennung | Nutzung | Bruttokosten |
+| --- | --- | ---: |
+| TEST-MV-ALT | 01.01.–30.04.2025 | 321,01 EUR |
+| TEST-LEERSTAND | 01.05.–31.05.2025 | 75,07 EUR |
+| TEST-MV-NEU | 01.06.–31.12.2025 | 428,13 EUR |
+
+Kontrollwert der synthetischen Abrechnungsübersicht: **824,21 EUR** für
+Heizung und Warmwasser. Die beiden Mieterentwürfe enthalten zusammen
+749,14 EUR. Die 75,07 EUR Leerstand stehen im Importprotokoll.

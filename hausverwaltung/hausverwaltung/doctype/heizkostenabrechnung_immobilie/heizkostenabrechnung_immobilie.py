@@ -64,6 +64,7 @@ class HeizkostenabrechnungImmobilie(Document):
 		if not self.amended_from:
 			return
 		self.set("mieter_positionen", [])
+		self.ruecklauf_import = None
 		self.status = "Eingang"
 
 	def after_insert(self) -> None:
@@ -82,8 +83,20 @@ class HeizkostenabrechnungImmobilie(Document):
 		self.name = make_document_name(self.doctype)
 
 	def validate(self) -> None:
+		self._validate_ruecklauf_import()
 		if self.von and self.bis and getdate(self.von) > getdate(self.bis):
 			frappe.throw("'Von' muss vor oder gleich 'Bis' liegen.")
+
+	def _validate_ruecklauf_import(self) -> None:
+		previous = self.get_doc_before_save()
+		record = previous.get("ruecklauf_import") if previous else None
+		if (self.get("ruecklauf_import") or None) != (record or None) and not self.flags.hk_ruecklauf_import:
+			frappe.throw("Das Rücklaufprotokoll wird ausschließlich bei der Rücklauffreigabe gesetzt.")
+		if record and (
+			self.immobilie != previous.immobilie or getdate(self.von) != getdate(previous.von)
+			or getdate(self.bis) != getdate(previous.bis)
+		):
+			frappe.throw("Immobilie und Zeitraum eines bestätigten Rücklaufs können nicht geändert werden.")
 
 	def onload(self) -> None:
 		"""Hydriert die Positionen-Tabelle aus den HK-Mieter-Docs (Source of Truth)
@@ -124,6 +137,7 @@ class HeizkostenabrechnungImmobilie(Document):
 		``allow_on_submit=1`` (siehe ``mieter_positionen.kosten_gesamt`` und
 		``mieter_positionen.vorauszahlungen``).
 		"""
+		self._validate_ruecklauf_import()
 		self._validate_unique_period()
 		# Korrektur-Summary für Frontend-Toast initialisieren
 		self.flags._correction_summary = {"unchanged": 0, "replaced": [], "errors": []}

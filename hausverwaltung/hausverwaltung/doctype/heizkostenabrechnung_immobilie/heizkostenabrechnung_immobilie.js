@@ -133,6 +133,9 @@ function _add_buttons(frm) {
 	}
 
 	if (frm.doc.docstatus === 0) {
+		if (!frm.doc.ruecklauf_import && frm.perm[0]?.write) {
+			frm.add_custom_button(__("Rücklauf importieren"), () => _open_hk_return(frm), __("Aktionen"));
+		}
 		frm.add_custom_button(
 			__("Mieter-Drafts erzeugen"),
 			() => _create_drafts(frm),
@@ -213,4 +216,125 @@ function _create_drafts(frm) {
 			});
 		},
 	);
+}
+
+const hk_return_api = "hausverwaltung.hausverwaltung.doctype.heizkostenabrechnung_immobilie.ruecklauf";
+
+function _open_hk_return(frm) {
+	if (frm.is_dirty()) {
+		frappe.msgprint(__("Bitte die Heizkostenabrechnung zuerst speichern."));
+		return;
+	}
+	const setup = new frappe.ui.Dialog({
+		title: __("Messdienst-Rücklauf importieren"),
+		fields: [
+			{ fieldname: "liegenschaft", fieldtype: "Data", label: __("Messdienst-Liegenschaft aus der Abrechnung"), reqd: 1 },
+			{ fieldname: "kontrollsumme", fieldtype: "Data", label: __("Bruttokontrollsumme Heizung und Warmwasser inkl. Leerstand (EUR)"), reqd: 1 },
+			{ fieldname: "kontrollbeleg", fieldtype: "Data", label: __("Quelle der Kontrollsumme in der Abrechnung"), reqd: 1 },
+		],
+		primary_action_label: __("Private D-Datei auswählen"),
+		primary_action(values) {
+			new frappe.ui.FileUploader({
+				doctype: frm.doctype,
+				docname: frm.docname,
+				make_attachments_public: false,
+				allow_toggle_private: false,
+				allow_web_link: false,
+				allow_google_drive: false,
+				allow_take_photo: false,
+				disable_file_browser: true,
+				allow_multiple: false,
+				restrictions: { allowed_file_types: [".dat"], max_file_size: 5 * 1024 * 1024 },
+				on_success(file) {
+					setup.hide();
+					_show_hk_return(frm, { name: frm.docname, datei: file.name, ...values });
+				},
+			});
+		},
+	});
+	setup.show();
+}
+
+async function _show_hk_return(frm, args) {
+	const zuordnungen = {};
+	const dialog = new frappe.ui.Dialog({
+		title: __("Messdienst-Rücklauf prüfen"),
+		size: "extra-large",
+		fields: [{ fieldname: "vorschau", fieldtype: "HTML" }],
+	});
+	const content = dialog.fields_dict.vorschau.$wrapper;
+	const primary = dialog.get_primary_btn();
+	const call = async (action, extra = {}) => (await frappe.call({
+		method: `${hk_return_api}.${action}`,
+		args: { ...args, zuordnungen, ...extra },
+		freeze: true,
+	})).message;
+	const refresh = async () => {
+		primary.hide();
+		const data = await call("vorschau");
+		content.empty();
+		const amounts = __("Summe {0} EUR · davon Leerstand {1} EUR · Kontrollsumme {2} EUR", [
+			data.summe, data.leerstand_summe, data.kontrollsumme,
+		]);
+		$("<p>").text(amounts).appendTo(content);
+		for (const error of data.fehler) $("<p>").addClass("text-danger").text(error).appendTo(content);
+		const table = $("<table>").addClass("table table-sm").appendTo($("<div>").addClass("table-responsive").appendTo(content));
+		const heading = $("<tr>").appendTo($("<thead>").appendTo(table));
+		for (const label of ["Zeile", "Kennung", "Messdienstwohnung", "Von", "Bis", "EUR", "Zuordnung", ""]) {
+			$("<th>").text(__(label)).appendTo(heading);
+		}
+		const body = $("<tbody>").appendTo(table);
+		for (const row of data.zeilen) {
+			const tr = $("<tr>").appendTo(body);
+			const target = row.grund || (row.typ === "Leerstand" ? __("Leerstand · {0}", [row.wohnung]) : row.mietvertrag);
+			for (const value of [row.zeile, row.kennung, row.messdienst_wohnung, row.von, row.bis, row.betrag, target]) {
+				$("<td>").text(value ?? "–").appendTo(tr);
+			}
+			const actions = $("<td>").appendTo(tr);
+			$("<button type='button' class='btn btn-default btn-xs'>").text(__("Zuordnen")).appendTo(actions)
+				.on("click", () => _assign_hk_return_row(row, frm, async (mapping) => {
+					if (mapping) zuordnungen[row.zeile] = mapping;
+					else delete zuordnungen[row.zeile];
+					await refresh();
+				}));
+		}
+		if (data.fehler.length) return;
+		dialog.set_primary_action(__("Freigeben und in Entwürfe übernehmen"), async () => {
+			dialog.disable_primary_action();
+			try {
+				await call("uebernehmen", { freigabe_id: data.freigabe_id });
+				dialog.hide();
+				await frm.reload_doc();
+				frappe.show_alert({ message: __("Rücklauf in die Mieterentwürfe übernommen"), indicator: "green" });
+			} finally {
+				dialog.enable_primary_action();
+			}
+		});
+		primary.show();
+	};
+	await refresh();
+	dialog.show();
+}
+
+function _assign_hk_return_row(row, frm, apply) {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Zeile {0} zuordnen", [row.zeile]),
+		fields: [
+			{ fieldname: "typ", fieldtype: "Select", options: ["Automatisch", "Mietvertrag", "Leerstand"], label: __("Zuordnung"), default: row.manuell && row.typ ? row.typ : "Mietvertrag", reqd: 1 },
+			{ fieldname: "mietvertrag", fieldtype: "Link", options: "Mietvertrag", label: __("Mietvertrag"), default: row.mietvertrag,
+				depends_on: "eval:doc.typ === 'Mietvertrag'", mandatory_depends_on: "eval:doc.typ === 'Mietvertrag'" },
+			{ fieldname: "leerstand", fieldtype: "Link", options: "Wohnung", label: __("Leerstehende Wohnung"),
+				default: row.typ === "Leerstand" ? row.wohnung : undefined,
+				depends_on: "eval:doc.typ === 'Leerstand'", mandatory_depends_on: "eval:doc.typ === 'Leerstand'",
+				get_query: () => ({ filters: { immobilie: frm.doc.immobilie } }) },
+		],
+		primary_action_label: __("Vorschau aktualisieren"),
+		async primary_action(values) {
+			const mapping = values.typ === "Leerstand" ? { leerstand: values.leerstand } :
+				values.typ === "Mietvertrag" ? { mietvertrag: values.mietvertrag } : null;
+			dialog.hide();
+			await apply(mapping);
+		},
+	});
+	dialog.show();
 }
