@@ -222,8 +222,72 @@ const DOCTYPE_METHOD_PREFIX =
 const DISPATCH_BUTTON_LABEL = __("Abrechnungen versenden");
 const BUNDLE_PDF_BUTTON_LABEL = __("Sammel-PDF erzeugen");
 
-const ensure_dispatch_button = (frm) => {
-	if (!frm || frm.is_new()) {
+const READINESS_BUTTON_LABEL = __("Abrechnungsbereitschaft prüfen");
+
+const open_readiness_dialog = async (frm) => {
+	const { name, immobilie, von, bis, stichtag } = frm.doc;
+	const isNew = frm.is_new();
+	if (isNew && !(immobilie && von && bis)) {
+		frappe.msgprint(__("Bitte Immobilie, Von und Bis ausfüllen."));
+		return;
+	}
+	const { message: rows } = await frappe.call({
+		method: DOCTYPE_METHOD_PREFIX + "pruefe_abrechnungsbereitschaft",
+		type: "GET",
+		args: isNew ? { immobilie, von, bis, stichtag: stichtag || bis } : { name },
+		freeze: true,
+	});
+	if (!rows.length) {
+		frappe.msgprint({
+			title: READINESS_BUTTON_LABEL,
+			message: __("Keine Hindernisse bei den geprüften Zählerständen, Umlageschlüsseln und Wohnungseinstellungen."),
+			indicator: "green",
+		});
+		return;
+	}
+	const formatDate = (date) => escape_html(date ? frappe.datetime.str_to_user(date) : "");
+	const formLink = (doctype, name, label) =>
+		`<a href="${escape_html(frappe.utils.get_form_link(doctype, name))}">${escape_html(label)}</a>`;
+	const columns = [__("Kostenart / Wohnung"), __("Zähler"), __("Stichtag"), __("Grund"), __("Korrekturziel")];
+	const body = rows.map((row) => {
+		const assignments = (row.zuordnungen || []).map((assignment) => `
+			<div>
+				${escape_html(assignment.wohnung)}
+				<small class="text-muted">
+					${formLink("Zaehler Zuordnung", assignment.name, __("Zuordnung"))}
+					${formatDate(assignment.von)} – ${assignment.bis ? formatDate(assignment.bis) : __("offen")}
+				</small>
+			</div>`).join("");
+		const meter = [row.zaehlernummer || row.zaehler, row.zaehlerart].filter(Boolean).join(" · ");
+		return `<tr>
+			<td>${assignments || escape_html(row.kostenart || row.wohnung)}</td>
+			<td>${escape_html(meter)}</td>
+			<td>${formatDate(row.stichtag)}</td>
+			<td>${escape_html(row.grund)}</td>
+			<td>${formLink(row.ziel_doctype, row.ziel_name, row.ziel_name)}</td>
+		</tr>`;
+	}).join("");
+	const dialog = new frappe.ui.Dialog({
+		title: READINESS_BUTTON_LABEL,
+		size: "extra-large",
+		fields: [{ fieldname: "worklist", fieldtype: "HTML" }],
+	});
+	dialog.fields_dict.worklist.$wrapper.html(`
+		<div class="table-responsive">
+			<table class="table table-bordered">
+				<thead><tr>${columns.map((label) => `<th scope="col">${escape_html(label)}</th>`).join("")}</tr></thead>
+				<tbody>${body}</tbody>
+			</table>
+		</div>`);
+	dialog.show();
+};
+
+const ensure_action_buttons = (frm) => {
+	frm.remove_custom_button(READINESS_BUTTON_LABEL);
+	if (frm.doc.docstatus === 0) {
+		frm.add_custom_button(READINESS_BUTTON_LABEL, () => open_readiness_dialog(frm));
+	}
+	if (frm.is_new()) {
 		return;
 	}
 	try {
@@ -465,8 +529,8 @@ const load_mieter_abrechnungen = (frm, attempt = 1) => {
 			frm.doc.__unsaved = was_dirty ? 1 : 0;
 			frm.toolbar.refresh();
 			// toolbar.refresh kann Custom Buttons entfernen → danach wieder setzen (auch nach DOM-Update).
-			ensure_dispatch_button(frm);
-			setTimeout(() => ensure_dispatch_button(frm), 0);
+			ensure_action_buttons(frm);
+			setTimeout(() => ensure_action_buttons(frm), 0);
 		}
 	}).catch((err) => {
 		// Erster Versuch schlug fehl? Einmal nach kurzer Pause erneut probieren, bevor wir einen Fehler zeigen.
@@ -524,9 +588,9 @@ frappe.ui.form.on("Betriebskostenabrechnung Immobilie", {
 		set_default_due_date(frm);
 		load_verteilungsbasis(frm);
 		load_mieter_abrechnungen(frm);
-		ensure_dispatch_button(frm);
+		ensure_action_buttons(frm);
 		// Frappe kann nach refresh noch Toolbar/Header neu rendern (Buttons verschwinden sonst).
-		setTimeout(() => ensure_dispatch_button(frm), 0);
+		setTimeout(() => ensure_action_buttons(frm), 0);
 
 		if (frm.is_new()) {
 			frappe.require("/assets/hausverwaltung/js/date_range_presets.js", () => {

@@ -582,3 +582,143 @@ class TestBetriebskostenabrechnungImmobilie(unittest.TestCase):
 
 		parent._cleanup_mieter_abrechnungen.assert_called_once_with(allow_delete=True)
 		self.assertNotIn("ignore_links", parent.flags.__dict__)
+
+
+class TestAbrechnungsbereitschaftIntegration(unittest.TestCase):
+	von = "2026-01-01"
+	bis = "2026-12-31"
+
+	def setUp(self):
+		if not (frappe.conf.get("allow_tests") and frappe.conf.get("hv_disposable_test_site")):
+			self.skipTest("Requires a disposable Rootless CI site")
+		from hausverwaltung.hausverwaltung.test_booking_safeguards import bk_fixture
+
+		original_user = frappe.session.user
+		frappe.set_user("Administrator")
+		self.addCleanup(frappe.set_user, original_user)
+		point = "bk_readiness_" + frappe.generate_hash(length=10)
+		frappe.db.savepoint(point)
+		self.addCleanup(frappe.db.rollback, save_point=point)
+		self.prop, self.flat, _, _ = bk_fixture()
+		self.booking = frappe.get_doc("GL Entry", {"cost_center": self.prop.kostenstelle, "debit": 100})
+		self.art = frappe.get_doc("Betriebskostenart", {"konto": self.booking.account})
+		self.args = {"immobilie": self.prop.name, "von": self.von, "bis": self.bis}
+
+	def _meter(self, von, bis=None):
+		meter = frappe.get_doc({
+			"doctype": "Zaehler",
+			"zaehlerart": "Wasser",
+			"zaehlernummer": frappe.generate_hash(length=12),
+		}).insert()
+		assignment = frappe.get_doc({
+			"doctype": "Zaehler Zuordnung",
+			"zaehler": meter.name,
+			"bezugsobjekt_typ": "Wohnung",
+			"bezugsobjekt": self.flat.name,
+			"von": von,
+			"bis": bis,
+		}).insert()
+		return meter, assignment
+
+	def _snapshot(self):
+		return {
+			doctype: frappe.get_all(doctype, fields=["name", "modified"], order_by="name asc")
+			for doctype in (
+				"Betriebskostenabrechnung Immobilie", "Betriebskostenabrechnung Mieter",
+				"Betriebskostenart", "Zaehler", "Zaehlerstand", "Zaehler Zuordnung", "GL Entry",
+			)
+		}
+
+	def test_reports_all_missing_readings_and_only_effective_booked_cost_types(self):
+		old, old_assignment = self._meter("2025-01-01", "2026-07-01")
+		new, new_assignment = self._meter("2026-07-01")
+		self._meter("2025-01-01", self.von)
+		self._meter("2027-01-01")
+		self.art.db_set("verteilung", "Bewohner")
+		# Move the effective date into the period even though the posting date is outside.
+		frappe.db.set_value("GL Entry", self.booking.name, "posting_date", "2027-01-02")
+		frappe.db.set_value(
+			"Journal Entry", self.booking.voucher_no, "custom_wertstellungsdatum", "2026-05-01"
+		)
+		before = self._snapshot()
+
+		rows = module.pruefe_abrechnungsbereitschaft(**self.args)
+		self.assertEqual(rows, module.pruefe_abrechnungsbereitschaft(**self.args))
+		self.assertEqual(self._snapshot(), before)
+		self.assertEqual(
+			{(row["zaehler"], str(row["stichtag"])) for row in rows if row.get("zaehler")},
+			{(meter.name, edge) for meter in (old, new) for edge in (self.von, self.bis)},
+		)
+		first_assignments = {row["zaehler"]: row["zuordnungen"][0] for row in rows if row.get("zaehler")}
+		self.assertEqual(first_assignments[old.name]["name"], old_assignment.name)
+		self.assertEqual(str(first_assignments[old.name]["bis"]), "2026-07-01")
+		self.assertEqual(first_assignments[new.name]["name"], new_assignment.name)
+		self.assertEqual(str(first_assignments[new.name]["von"]), "2026-07-01")
+		cost_rows = [row for row in rows if row.get("kostenart")]
+		self.assertEqual(len(cost_rows), 1)
+		self.assertEqual(cost_rows[0]["ziel_name"], self.art.name)
+		self.assertEqual(str(cost_rows[0]["stichtag"]), "2026-05-01")
+
+		self.art.db_set("verteilung", "Verbrauch")
+		frappe.db.set_value(
+			"Journal Entry", self.booking.voucher_no, "custom_wertstellungsdatum", "2027-01-01"
+		)
+		self.assertFalse(any(row.get("kostenart") for row in module.pruefe_abrechnungsbereitschaft(**self.args)))
+
+	def test_complete_house_and_saved_draft_use_exact_readings_and_saved_scope(self):
+		from hausverwaltung.hausverwaltung.test_booking_safeguards import bk_head
+
+		meter, _ = self._meter("2025-01-01")
+		meter.append("zählerstand", {"datum": self.von, "zaehlerstand": 0})
+		meter.append("zählerstand", {"datum": self.bis, "zaehlerstand": 11})
+		meter.save()
+		head = bk_head(self.prop)
+		before = self._snapshot()
+		self.assertEqual(module.pruefe_abrechnungsbereitschaft(**self.args), [])
+		self.assertEqual(module.pruefe_abrechnungsbereitschaft(name=head.name, immobilie="fremd"), [])
+		self.assertEqual(self._snapshot(), before)
+
+	def test_direct_call_enforces_company_and_document_permissions(self):
+		from hausverwaltung.hausverwaltung.test_booking_safeguards import bk_head
+
+		head = bk_head(self.prop)
+		token = frappe.generate_hash(length=12)
+		other_company = frappe.get_doc({
+			"doctype": "Company", "name": f"BK Foreign {token}", "company_name": f"BK Foreign {token}",
+			"abbr": token[:5], "default_currency": "EUR", "country": "Germany",
+		})
+		other_company.db_insert()
+		role = frappe.get_doc({"doctype": "Role", "role_name": f"BK Readiness {token}"}).insert()
+		user = frappe.get_doc({
+			"doctype": "User", "email": f"bk-readiness-{token}@example.invalid",
+			"first_name": "BK Readiness", "send_welcome_email": 0, "user_type": "System User",
+			"roles": [{"role": role.name}],
+		}).insert()
+		for doctype in (head.doctype, "Immobilie", "Wohnung", "Company"):
+			frappe.get_doc({
+				"doctype": "Custom DocPerm", "parent": doctype, "parenttype": "DocType",
+				"parentfield": "permissions", "role": role.name, "permlevel": 0,
+				"read": 1, "create": int(doctype == head.doctype),
+			}).insert()
+			frappe.clear_cache(doctype=doctype)
+			self.addCleanup(frappe.clear_cache, doctype=doctype)
+
+		frappe.set_user(user.name)
+		self.assertEqual(module.pruefe_abrechnungsbereitschaft(**self.args), [])
+		self.assertEqual(module.pruefe_abrechnungsbereitschaft(name=head.name), [])
+		frappe.set_user("Administrator")
+		frappe.get_doc({
+			"doctype": "User Permission", "user": user.name, "allow": "Company",
+			"for_value": other_company.name, "apply_to_all_doctypes": 1,
+		}).insert()
+		frappe.set_user(user.name)
+		frappe.get_doc(head.doctype, head.name).check_permission("read")
+		frappe.get_doc("Immobilie", self.prop.name).check_permission("read")
+		for args in (self.args, {"name": head.name}):
+			with self.subTest(args=args), self.assertRaises(frappe.PermissionError):
+				module.pruefe_abrechnungsbereitschaft(**args)
+
+		frappe.set_user("Guest")
+		for args in (self.args, {"name": head.name}):
+			with self.subTest(args=args), self.assertRaises(frappe.PermissionError):
+				module.pruefe_abrechnungsbereitschaft(**args)

@@ -688,6 +688,76 @@ def get_mieter_festbetrag_overview(
     }
 
 
+UNSUPPORTED_DISTRIBUTIONS = {"bewohner", "verbrauch", "formel"}
+
+
+def _iter_period_gl_rows(von, bis, immobilie, company, konto_map, cc_to_haus, gl_has_wohnung):
+    """Yield effective-date bookings with a nonzero amount in the selected scope."""
+    # Optional Immobilie→Kostenstelle einschränken
+    kostenstellen = list(cc_to_haus.keys())
+    if immobilie:
+        kostenstellen = [cc for cc, haus in cc_to_haus.items() if haus == immobilie]
+
+    # GL laden (wie im Haus‑Report), optional mit Dimension "wohnung" falls vorhanden
+    gl_rows = []
+    if kostenstellen:
+        gl_filters = {
+            "account": ("in", list(konto_map.keys())),
+            "cost_center": ("in", kostenstellen),
+            "is_cancelled": 0,
+        }
+        if company:
+            gl_filters["company"] = company
+
+        gl_fields = [
+            "name",
+            "company",
+            "posting_date",
+            "account",
+            "cost_center",
+            "debit",
+            "credit",
+            "voucher_type",
+            "voucher_no",
+        ]
+        if gl_has_wohnung:
+            gl_fields.append("wohnung")
+
+        gl_rows = frappe.get_all(
+            "GL Entry",
+            filters=gl_filters,
+            fields=gl_fields,
+            order_by="posting_date asc",
+        )
+
+    wert_map = _prefetch_wertstellungsdaten(gl_rows)
+
+    for row in gl_rows:
+        effective_date = getdate(_effective_date(row, wert_map))
+        if von <= effective_date <= bis:
+            amount = _to_decimal(row.debit) - _to_decimal(row.credit)
+            if amount.copy_abs() >= MIN_SIGNIFICANT:
+                yield row, effective_date, amount
+
+
+def _get_unsupported_booked_cost_types(von, bis, immobilie, cc_to_haus, companies):
+    """Return each affected cost type with its first effective booking date."""
+    konto_map = _konto_zu_kostenart_map()
+    art_meta = _betriebsarten_map()
+    unsupported = {}
+    for row, effective_date, _ in _iter_period_gl_rows(
+        von, bis, immobilie, None, konto_map, cc_to_haus, False
+    ):
+        if row.company not in companies:
+            frappe.throw("Die Buchung gehört nicht zum freigegebenen Firmenbereich.", frappe.PermissionError)
+        kostenart = konto_map[row.account]
+        verteilung = (art_meta.get(kostenart, {}).get("verteilung") or "").strip()
+        if verteilung.lower() in UNSUPPORTED_DISTRIBUTIONS:
+            first_date = min(effective_date, unsupported.get(kostenart, (None, effective_date))[1])
+            unsupported[kostenart] = (verteilung, first_date)
+    return unsupported
+
+
 @frappe.whitelist()
 def allocate_kosten_auf_wohnungen(
     von: str,
@@ -746,46 +816,10 @@ def allocate_kosten_auf_wohnungen(
                 f"In folgenden Wohnungen ist 'Betriebskostenabrechnung durch Vermieter' zum Stichtag {stichtag} nicht aktiviert: {names}."
             )
 
-    # Optional Immobilie→Kostenstelle einschränken
-    kostenstellen = list(cc_to_haus.keys())
-    if immobilie:
-        kostenstellen = [cc for cc, haus in cc_to_haus.items() if haus == immobilie]
-        if not kostenstellen:
-            kostenstellen = []
-
-    # GL laden (wie im Haus‑Report), optional mit Dimension "wohnung" falls vorhanden
-    gl_rows = []
     gl_has_wohnung = _has_field("GL Entry", "wohnung")
-    if kostenstellen:
-        gl_filters = {
-            "account": ("in", list(konto_map.keys())),
-            "cost_center": ("in", kostenstellen),
-            "is_cancelled": 0,
-        }
-        if company:
-            gl_filters["company"] = company
-
-        gl_fields = [
-            "name",
-            "posting_date",
-            "account",
-            "cost_center",
-            "debit",
-            "credit",
-            "voucher_type",
-            "voucher_no",
-        ]
-        if gl_has_wohnung:
-            gl_fields.append("wohnung")
-
-        gl_rows = frappe.get_all(
-            "GL Entry",
-            filters=gl_filters,
-            fields=gl_fields,
-            order_by="posting_date asc",
-        )
-
-    wert_map = _prefetch_wertstellungsdaten(gl_rows)
+    gl_rows = _iter_period_gl_rows(
+        von_d, bis_d, immobilie, company, konto_map, cc_to_haus, gl_has_wohnung
+    )
 
     # Betriebskostenart‑Metadaten
     art_meta = _betriebsarten_map()
@@ -813,11 +847,7 @@ def allocate_kosten_auf_wohnungen(
 
     # Aggregiere je Haus & Kostenart (außer Einzeln) → Summe, die zu verteilen ist
     # Einzeln wird direkt auf Wohnungssumme gebucht
-    for g in gl_rows:
-        eff = getdate(_effective_date(g, wert_map))
-        if eff < von_d or eff > bis_d:
-            continue
-
+    for g, eff, betrag in gl_rows:
         haus = cc_to_haus.get(g.cost_center)
         if not haus:
             frappe.throw(
@@ -836,10 +866,6 @@ def allocate_kosten_auf_wohnungen(
         meta = art_meta.get(kostenart) or {}
         verteilung = (meta.get("verteilung") or "").strip()
         schluessel = meta.get("schluessel")
-
-        betrag = _to_decimal(g.debit) - _to_decimal(g.credit)
-        if betrag.copy_abs() < MIN_SIGNIFICANT:
-            continue
 
         # Vor der explizit konfigurierten Datumsgrenze darf historischer
         # Festbetrag-Aufwand ohne Wohnungsdimension unberücksichtigt bleiben:
@@ -903,7 +929,7 @@ def allocate_kosten_auf_wohnungen(
                 )
             continue
 
-        if verteilung.lower() in {"bewohner", "verbrauch", "formel"}:
+        if verteilung.lower() in UNSUPPORTED_DISTRIBUTIONS:
             frappe.throw(f"Verteilungsart '{verteilung}' für umlagefähige Kostenart {kostenart} ist noch nicht implementiert.")
 
         # Wohnungen des Hauses cachen
