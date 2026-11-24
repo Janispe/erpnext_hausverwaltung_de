@@ -3,6 +3,7 @@ import json
 import frappe
 from erpnext.support.doctype.issue import issue as erpnext_issue
 from frappe import _
+from frappe.permissions import has_permission
 from frappe.utils import cint
 
 
@@ -59,6 +60,8 @@ def validate_issue(doc, method=None):
 
 	if not is_damage_staff() or doc.via_customer_portal:
 		frappe.throw(_("Wohnungsschäden werden intern in der Hausverwaltung bearbeitet."), frappe.PermissionError)
+	if previous and not has_permission("Issue", ptype="write", doc=previous, print_logs=False):
+		frappe.throw(_("Keine Schreibberechtigung für den bisherigen Vorgang."), frappe.PermissionError)
 
 	if doc.hv_eingang == "Telefon":
 		if not (doc.hv_telefonnotiz or "").strip() or doc.hv_eingangsmail:
@@ -90,12 +93,13 @@ def validate_issue(doc, method=None):
 		doc.customer = contract.kunde
 		doc.customer_name = frappe.db.get_value("Customer", contract.kunde, "customer_name")
 
-	from .permissions import can_access_objects, check_conversion
+	from .permissions import can_access_objects, check_conversion, clear_issue_timeline_links
 
 	if not can_access_objects(doc, frappe.session.user):
 		frappe.throw(_("Keine Leseberechtigung für die Zuordnung des Wohnungsschadens."), frappe.PermissionError)
 	if previous and not is_damage(previous):
 		check_conversion(doc.name, doc.attachment)
+		clear_issue_timeline_links(doc.name)
 	elif doc.attachment:
 		from .permissions import check_attachment_url
 

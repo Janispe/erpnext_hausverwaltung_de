@@ -115,15 +115,17 @@ def has_file_permission(doc, ptype, user=None, **kwargs):
 
 
 def _issue_ref_match(user, doctype, name):
-	condition = issue_match(user)
-	if not condition:
+	user = user or frappe.session.user
+	if user == "Administrator" or not frappe.get_meta("Issue").has_field("hv_wohnungsschaden"):
 		return "1=1"
-	# Retain ordinary references. Filter linked damage references using the same object scope as Issue.
-	if not has_permission("Issue", user=user, print_logs=False):
-		condition = "coalesce(`tabIssue`.`hv_wohnungsschaden`, 0) = 0"
+	# Include native Issue restrictions (such as if-owner) as well as the damage object scope.
+	unreadable = "damage_issue.`hv_wohnungsschaden` = 1"
+	if is_damage_staff(user) and has_permission("Issue", user=user, print_logs=False):
+		readable = frappe.get_list("Issue", fields=["name"], user=user, order_by="name", run=False)
+		unreadable += f" and damage_issue.`name` not in ({readable})"
 	return f"""not exists (
-		select 1 from `tabIssue` where {doctype} = 'Issue' and {name} = `tabIssue`.`name`
-		and not ({condition})
+		select 1 from `tabIssue` as damage_issue where {doctype} = 'Issue' and {name} = damage_issue.`name`
+		and {unreadable}
 	)"""
 
 
@@ -239,6 +241,17 @@ class FileMixin:
 		return super().is_downloadable()
 
 
+def clear_issue_timeline_links(issue):
+	communications = frappe.get_all(
+		"Communication", filters={"reference_doctype": "Issue", "reference_name": issue}, pluck="name",
+	)
+	if communications:
+		frappe.db.delete(
+			"Communication Link",
+			{"parenttype": "Communication", "parentfield": "timeline_links", "parent": ("in", communications)},
+		)
+
+
 def validate_communication(doc, method=None):
 	previous = doc.get_doc_before_save()
 	if previous and protected_issue(previous.reference_doctype, previous.reference_name):
@@ -246,6 +259,8 @@ def validate_communication(doc, method=None):
 			frappe.throw(_("Eine Schadensmeldung bleibt mit ihrem Vorgang verknüpft."))
 	if protected_issue(doc.reference_doctype, doc.reference_name, for_update=True):
 		check_conversion(communication=doc.name)
+		# The stock timeline reads this child table without a Communication permission check.
+		doc.set("timeline_links", [])
 
 
 def validate_share(doc, method=None):

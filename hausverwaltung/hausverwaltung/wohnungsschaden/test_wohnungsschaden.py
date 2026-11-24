@@ -5,8 +5,9 @@ from zipfile import ZipFile
 
 import frappe
 from frappe.core.doctype.file.utils import find_file_by_url
+from frappe.desk.form.load import get_communications
 from frappe.email.receive import InboundMail
-from frappe.permissions import add_permission, has_permission
+from frappe.permissions import add_permission, has_permission, update_permission_property
 from frappe.tests import IntegrationTestCase
 from frappe.www.list import get_list_data
 
@@ -61,20 +62,44 @@ class TestWohnungsschaden(IntegrationTestCase):
 			"hv_telefonnotiz": "Feuchtigkeit neben der Balkontür.",
 		}).insert()
 
-	def incoming(self, append_to="Communication"):
-		account = self.record(
-			"Email Account", "Posteingang", email_id=f"service-{self.key}@example.invalid",
-			append_to=append_to,
-		)
+	def incoming(self, append_to="Communication", message_key="first", reply_to=None):
+		account_name = f"HV67-{self.key}-Posteingang"
+		if frappe.db.exists("Email Account", account_name):
+			account = frappe.get_doc("Email Account", account_name)
+		else:
+			account = self.record(
+				"Email Account", "Posteingang", email_id=f"service-{self.key}@example.invalid",
+				append_to=append_to,
+			)
 		message = EmailMessage()
 		message["From"] = self.email
 		message["To"] = account.email_id
-		message["Subject"] = f"Wasser am Fenster {self.key}"
-		message["Message-ID"] = f"<{self.key}@example.invalid>"
+		message["Subject"] = f"Wasser am Fenster {self.key} {message_key}"
+		message["Message-ID"] = f"<{self.key}.{message_key}@example.invalid>"
+		if reply_to:
+			message["In-Reply-To"] = reply_to.message_id
 		message.set_content("Feuchtigkeit am Fenster im Wohnzimmer")
 		mail = InboundMail(message.as_bytes(), account).process()
 		self.assertEqual(InboundMail(message.as_bytes(), account).process().name, mail.name)
 		return mail
+
+	def staff(self, doctypes, *, issue_write=False, issue_if_owner=False):
+		staff = frappe.get_doc({
+			"doctype": "User",
+			"email": f"bearbeitung-{self.key}@example.invalid",
+			"first_name": "Synthetische Schadenbearbeitung",
+			"user_type": "System User",
+			"send_welcome_email": 0,
+			"roles": [{"role": "System Manager"}],
+		}).insert()
+		for doctype in doctypes:
+			frappe.clear_cache(doctype=doctype)
+			if not has_permission(doctype, user=staff.name, print_logs=False):
+				add_permission(doctype, "System Manager", ptype="read")
+		update_permission_property("Issue", "System Manager", 0, "write", int(issue_write))
+		update_permission_property("Issue", "System Manager", 0, "if_owner", int(issue_if_owner))
+		frappe.clear_cache(doctype="Issue")
+		return staff
 
 	def assign_contract(self, issue, index):
 		issue.hv_wohnung = self.units[index].name
@@ -153,17 +178,10 @@ class TestWohnungsschaden(IntegrationTestCase):
 		self.assign_contract(restricted, 1)
 		allowed_file = self.photo(allowed, suffix="erlaubt")
 		restricted_file = self.photo(restricted, suffix="gesperrt")
-		staff = frappe.get_doc({
-			"doctype": "User",
-			"email": f"bearbeitung-{self.key}@example.invalid",
-			"first_name": "Synthetische Schadenbearbeitung",
-			"user_type": "System User",
-			"send_welcome_email": 0,
-			"roles": [{"role": "System Manager"}, {"role": "Hausverwalter"}],
-		}).insert()
-		for doctype in ("Issue", "Immobilie", "Wohnung", "Mietvertrag"):
-			if not has_permission(doctype, user=staff.name, print_logs=False):
-				add_permission(doctype, "System Manager", ptype="read")
+		staff = self.staff(("Issue", "Immobilie", "Wohnung", "Mietvertrag"), issue_write=True)
+		for issue in (allowed, restricted):
+			# The two Issues have the same owner so only the Wohnung scope distinguishes them.
+			issue.db_set("owner", staff.name)
 		frappe.get_doc({
 			"doctype": "User Permission",
 			"user": staff.name,
@@ -181,6 +199,60 @@ class TestWohnungsschaden(IntegrationTestCase):
 		self.assertEqual(issue_names, [allowed.name])
 		self.assertIsNotNone(find_file_by_url(allowed_file.file_url, name=allowed_file.name))
 		self.assertIsNone(find_file_by_url(restricted_file.file_url, name=restricted_file.name))
+
+		restricted.hv_wohnung = allowed.hv_wohnung
+		restricted.hv_mietvertrag = allowed.hv_mietvertrag
+		self.assertTrue(has_permission("Issue", ptype="write", doc=restricted, print_logs=False))
+		with self.assertRaisesRegex(frappe.PermissionError, "bisherigen Vorgang"):
+			restricted.save()
+		self.assertEqual(frappe.db.get_value("Issue", restricted.name, "hv_wohnung"), self.units[1].name)
+
+	def test_damage_mail_and_later_reply_stay_out_of_contact_timeline(self):
+		mail = self.incoming(append_to="Issue")
+		self.assertIn(self.contact.name, {link.link_name for link in mail.timeline_links})
+		issue_name = take_incoming_email(mail.name)
+		reply = self.incoming(message_key="reply", reply_to=mail)
+		self.assertEqual(reply.reference_name, issue_name)
+		self.assertFalse(mail.reload().timeline_links)
+		self.assertFalse(reply.reload().timeline_links)
+		case_mail = get_communications("Issue", issue_name)
+		self.assertEqual({item.name for item in case_mail}, {mail.name, reply.name})
+
+		staff = self.staff(("Issue", "Contact", "Customer"), issue_if_owner=True)
+		frappe.set_user(staff.name)
+		self.assertFalse(has_permission("Issue", doc=issue_name, print_logs=False))
+		self.assertTrue(has_permission("Contact", doc=self.contact, print_logs=False))
+		contact_mail = get_communications("Contact", self.contact.name)
+		self.assertFalse({mail.name, reply.name}.intersection(item.name for item in contact_mail))
+
+	def test_attachment_lists_follow_owner_only_issue_permission(self):
+		owned_mail = self.incoming(message_key="owned")
+		foreign_mail = self.incoming(message_key="foreign")
+		owned = frappe.get_doc("Issue", take_incoming_email(owned_mail.name))
+		foreign = frappe.get_doc("Issue", take_incoming_email(foreign_mail.name))
+		records = [("Communication", owned_mail.name, foreign_mail.name)]
+		owned_file = self.photo(owned_mail, suffix="erlaubt")
+		foreign_file = self.photo(foreign_mail, suffix="gesperrt")
+		records.append(("File", owned_file.name, foreign_file.name))
+		for doctype, fields in (
+			("Comment", ("reference_doctype", "reference_name")),
+			("Version", ("ref_doctype", "docname")),
+		):
+			names = [
+				self.record(doctype, case.name, **{fields[0]: "Issue", fields[1]: case.name}).name
+				for case in (owned, foreign)
+			]
+			records.append((doctype, *names))
+
+		staff = self.staff(("Issue", "Communication", "File", "Comment", "Version"), issue_if_owner=True)
+		frappe.db.set_value("Issue", owned.name, "owner", staff.name)
+		frappe.set_user(staff.name)
+		self.assertTrue(has_permission("Issue", doc=owned.name, print_logs=False))
+		self.assertFalse(has_permission("Issue", doc=foreign.name, print_logs=False))
+		for doctype, own, other in records:
+			with self.subTest(doctype=doctype):
+				rows = frappe.get_list(doctype, filters={"name": ("in", [own, other])}, pluck="name")
+				self.assertEqual(rows, [own])
 
 	def photo(self, target, is_private=1, suffix=""):
 		return frappe.get_doc({
