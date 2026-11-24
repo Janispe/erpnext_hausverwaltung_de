@@ -50,7 +50,7 @@ def _rows(package, row=None, lock=False):
 
 def _agent(package=None):
 	user = core._actor()
-	roles = set(frappe.get_roles(user))
+	roles = core.roles_of(user)
 	if core.AGENT not in roles or core.REVIEWER in roles:
 		core._deny()
 	if package is not None and frappe.db.get_value(core.PACKAGE, package, "agent", for_update=True) != user:

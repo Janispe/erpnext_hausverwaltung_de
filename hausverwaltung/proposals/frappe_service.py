@@ -56,6 +56,47 @@ def _deny():
 	frappe.throw("Proposal operation unavailable", frappe.PermissionError)
 
 
+def roles_of(user=None):
+	"""Rollen eines Benutzers für die Vorschlags-Engine.
+
+	Frappe gibt Administrator jede Rolle, also auch die Agentenrolle. Administrator ist ein
+	Mensch: Er darf prüfen und übernehmen, handelt aber nie als Agent.
+	"""
+	user = user or frappe.session.user
+	roles = set(frappe.get_roles(user))
+	if user == "Administrator":
+		roles.discard(AGENT)
+	return roles
+
+
+def _not_administrator():
+	"""Administrator prüft und übernimmt, reicht aber nie ein (siehe roles_of)."""
+	if frappe.session.user == "Administrator":
+		_deny()
+
+
+def _human_if_administrator():
+	"""Administrator handelt nur als Mensch: Ausführen nur über eine echte Browser-Sitzung."""
+	if frappe.session.user == "Administrator":
+		_actor(human=True)
+
+
+def _not_own_proposal(doc):
+	"""Administrator gibt keine Vorschläge frei, die er eingereicht oder deren gebundene Fassung er verfasst hat.
+
+	Gilt für Bestandsvorschläge aus der Zeit, als Administrator noch einreichen konnte. Eine von ihm
+	verfasste, inzwischen abgelöste Revision sperrt die aktuelle Fassung eines anderen Autors nicht.
+	"""
+	user = frappe.session.user
+	if user != "Administrator":
+		return
+	submitted = frappe.db.exists(AUDIT, {"proposal": doc.name, "kind": "Created", "actor": user})
+	authored = frappe.db.exists(AUDIT, {"proposal": doc.name, "kind": "Revised", "actor": user,
+		"number": doc.current_revision, "revision_hash": doc.revision_hash})
+	if submitted or authored:
+		_deny()
+
+
 def _actor(human=False):
 	enabled()
 	user = frappe.session.user
@@ -64,7 +105,7 @@ def _actor(human=False):
 	info = frappe.db.get_value("User", user, ["enabled", "user_type"], as_dict=True)
 	if not info or not info.enabled or info.user_type != "System User":
 		_deny()
-	roles = set(frappe.get_roles(user))
+	roles = roles_of(user)
 	if not roles.intersection({AGENT, REVIEWER}):
 		_deny()
 	if human:
@@ -555,6 +596,7 @@ def _succeed(doc, result, *, audit_result=None):
 
 @_api
 def submit(key, package, payload, dependencies=None, action=domain.ACTION, package_meta=None, metadata=None):
+	_not_administrator()
 	if action not in (domain.ACTION, *domain.DOC_ACTIONS) or not isinstance(key, str) or not 1 <= len(key) <= 120:
 		frappe.throw("Unknown action or invalid request key")
 	enabled(action)
@@ -590,6 +632,7 @@ def view(proposal_id):
 
 @_api
 def revise(binding, payload, dependencies=None, metadata=None):
+	_not_administrator()
 	ref = _binding(binding)
 	meta = domain.metadata(_json(metadata, dict))
 	_lock_for(ref["id"])
@@ -634,6 +677,7 @@ def review(binding, approve, reason=None):
 		frappe.throw("Decision requires pending revision")
 	_fresh(doc, body)
 	if approve:
+		_not_own_proposal(doc)
 		_approve(doc)
 	else:
 		doc.status = "Rejected"
@@ -645,6 +689,7 @@ def review(binding, approve, reason=None):
 
 @_api
 def execute(binding):
+	_human_if_administrator()
 	ref = _binding(binding)
 	_lock_for(ref["id"])
 	doc, body = _exact(ref)
@@ -662,7 +707,7 @@ def execute(binding):
 	if doc.status != "Approved":
 		frappe.throw("Exact human approval required")
 	reviewer = frappe.db.get_value("User", doc.decision_by, ["enabled", "user_type"], as_dict=True)
-	roles = set(frappe.get_roles(doc.decision_by))
+	roles = roles_of(doc.decision_by)
 	if not reviewer or not reviewer.enabled or REVIEWER not in roles or AGENT in roles:
 		_deny()
 	_check_target_write(doc.action, body["payload"], user=doc.decision_by, for_human=doc.action in domain.DOC_ACTIONS)
@@ -934,6 +979,7 @@ def review_many(bindings):
 
 @_api
 def execute_ready(package, bindings):
+	_human_if_administrator()
 	refs = _bindings(bindings)
 	_lock_scope(package)
 	_lock_package(package)

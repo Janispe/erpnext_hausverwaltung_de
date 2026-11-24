@@ -144,6 +144,104 @@ class AdapterContracts(unittest.TestCase):
 		self.request.headers.clear();self.request.cookies.clear()
 		with self.assertRaises(self.Denied): self.service._actor(human=True)
 
+	def test_administrator_reviews_but_never_acts_as_agent(self):
+		# Frappe gibt Administrator jede Rolle, auch die Agentenrolle.
+		self.roles.update({"HV Proposal Agent", "System Manager"})
+		self.session.user = "Administrator"
+		self.fake.local.login_manager.user = "Administrator"
+		try:
+			self.assertEqual(self.service._actor(human=True), "Administrator")
+			self.assertIn("HV Proposal Reviewer", self.service.roles_of("Administrator"))
+			self.assertNotIn("HV Proposal Agent", self.service.roles_of("Administrator"))
+			self.assertIn("HV Proposal Agent", self.service.roles_of("reviewer-synthetic"))
+			# Prüfen ja, einreichen nie: sonst könnte Administrator eigene Vorschläge freigeben.
+			with self.assertRaises(self.Denied):
+				self.service.submit("admin-key", "ADMIN-PKG", {"label": "x"})
+			with self.assertRaises(self.Denied):
+				self.service.revise({"id": "HVP-1", "revision": 1, "hash": "0" * 64}, {"label": "x"})
+		finally:
+			del self.session.user
+			self.fake.local.login_manager.user = self.session.user
+		with self.assertRaises(self.Denied):
+			self.service._actor(human=True)
+
+	def test_administrator_cannot_approve_existing_own_proposal(self):
+		# Bestandsvorschläge aus der Zeit, als Administrator noch einreichen konnte.
+		from unittest.mock import MagicMock
+
+		self.roles.update({"HV Proposal Agent", "System Manager"})
+		self.session.user = "Administrator"
+		self.fake.local.login_manager.user = "Administrator"
+		admin, agent = "Administrator", "agent-synthetic"
+		# (Vorschlag, aktuelle Revision, Ereignisse als (Art, Akteur, Revision))
+		cases = {
+			"HVP-OWN": (1, [("Created", admin, 1)]),
+			"HVP-FOREIGN": (1, [("Created", agent, 1)]),
+			"HVP-ADMIN-REVISION": (2, [("Created", agent, 1), ("Revised", admin, 2)]),
+			"HVP-SUPERSEDED": (3, [("Created", agent, 1), ("Revised", admin, 2), ("Revised", agent, 3)]),
+		}
+		audit = [{"proposal": name, "kind": kind, "actor": actor, "number": number, "revision_hash": f"h{number}"}
+			for name, (_, events) in cases.items() for kind, actor, number in events]
+		self.fake.db.exists = lambda doctype, filters: doctype == self.service.AUDIT and any(
+			all(event[key] == value for key, value in filters.items()) for event in audit)
+		docs = {name: SimpleNamespace(name=name, action=self.service.domain.ACTION, status="Pending",
+			current_revision=revision, revision_hash=f"h{revision}") for name, (revision, _) in cases.items()}
+		approve = MagicMock()
+		stubs = {"_binding": lambda binding: binding, "_lock_for": lambda name: None,
+			"_exact": lambda binding: (docs[binding["id"]], {}), "_target": lambda body, right: None,
+			"_checked": lambda doc, body: {"status": "Pending"}, "_fresh": lambda doc, body: None,
+			"_approve": approve, "_event": lambda *a, **kw: None, "_invalidate": lambda *a, **kw: None,
+			"_response": lambda doc, body: {"status": doc.status}}
+
+		def ref(name):
+			return {"id": name, "revision": docs[name].current_revision, "hash": "0" * 64}
+
+		try:
+			with patch.multiple(self.service, **stubs):
+				for blocked in ("HVP-OWN", "HVP-ADMIN-REVISION"):
+					with self.assertRaises(self.Denied):
+						self.service.review(ref(blocked), True)
+				approve.assert_not_called()
+				self.assertEqual(self.service.review(ref("HVP-OWN"), False, "passt nicht")["status"], "Rejected")
+				for allowed in ("HVP-FOREIGN", "HVP-SUPERSEDED"):
+					self.service.review(ref(allowed), True)
+				self.assertEqual([call.args[0].name for call in approve.call_args_list],
+					["HVP-FOREIGN", "HVP-SUPERSEDED"])
+		finally:
+			del self.session.user
+			self.fake.local.login_manager.user = self.session.user
+
+	def test_administrator_executes_only_with_browser_session(self):
+		from unittest.mock import MagicMock
+
+		class Reached(Exception):
+			pass
+
+		self.roles.update({"HV Proposal Agent", "System Manager"})
+		self.session.user = "Administrator"
+		self.fake.local.login_manager.user = "Administrator"
+		ref = {"id": "HVP-1", "revision": 1, "hash": "0" * 64}
+		loaded = MagicMock(side_effect=Reached)
+		try:
+			with patch.multiple(self.service, _binding=loaded, _bindings=loaded):
+				# API-Schlüssel statt Browser-Sitzung: abgewiesen, bevor ein Vorschlag geladen wird.
+				self.request.headers["Authorization"] = "token synthetic:secret"
+				with self.assertRaises(self.Denied):
+					self.service.execute(ref)
+				with self.assertRaises(self.Denied):
+					self.service.execute_ready("PKG", [ref])
+				loaded.assert_not_called()
+				# Mit echter Browser-Sitzung geht es weiter bis zum Laden.
+				self.request.headers.clear()
+				with self.assertRaises(Reached):
+					self.service.execute(ref)
+				with self.assertRaises(Reached):
+					self.service.execute_ready("PKG", [ref])
+		finally:
+			self.request.headers.clear()
+			del self.session.user
+			self.fake.local.login_manager.user = self.session.user
+
 	def test_disabled_guest_disabled_user_and_website_user_block(self):
 		self.fake.conf["hv_proposals_synthetic_enabled"] = False
 		with self.assertRaises(self.Denied): self.service._actor()

@@ -34,7 +34,7 @@ ist oder der Benutzer keine Vorschläge lesen darf. Dann zeigt die Oberfläche n
 - `none` ist die Zahl der Zeilen, für die sich der Agent ausdrücklich enthalten hat (siehe 4.4).
 - `running` und `progress` nur, solange der Agent arbeitet; sonst `running: false`.
 - `canAccept`: Benutzer hat `HV Proposal Reviewer`, nicht `HV Proposal Agent`, und darf `Payment Entry` und
-  `Journal Entry` anlegen und buchen.
+  `Journal Entry` anlegen und buchen. Bei `Administrator` zählt die Agentenrolle nicht, siehe `frappe_service.roles_of`.
 
 ### `rows[].ki`
 

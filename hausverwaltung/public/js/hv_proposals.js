@@ -45,7 +45,9 @@ frappe.provide("hausverwaltung.hv_proposals");
 		constructor(wrapper) {
 			this.page = frappe.ui.make_app_page({ parent: wrapper, title: "KI-Vorschläge", single_column: true });
 			this.root = el("div", this.page.body, "", "hv hv-prop-root").attr({ tabindex: "0", "aria-label": "KI-Vorschläge" });
-			this.reviewer = frappe.user_roles.includes("HV Proposal Reviewer") && !frappe.user_roles.includes("HV Proposal Agent");
+			// Administrator erhält in Frappe alle Rollen; er prüft, handelt aber nie als Agent.
+			this.reviewer = frappe.user_roles.includes("HV Proposal Reviewer")
+				&& (frappe.session.user === "Administrator" || !frappe.user_roles.includes("HV Proposal Agent"));
 			this.generation = 0; this.selection = 0; this.filter = "offen"; this.agent = ""; this.kind = "";
 			this.root.on("keydown", (e) => this.key(e));
 		}

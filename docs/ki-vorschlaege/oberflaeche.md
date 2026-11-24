@@ -141,6 +141,7 @@ Hauptansicht.
 | Abgelehnt | — | — | Begründung steht oben |
 
 - Freigeben, Ablehnen und Sammelfreigabe gibt es nur für `HV Proposal Reviewer` ohne `HV Proposal Agent`.
+  `Administrator` gilt immer als Prüfer, obwohl Frappe ihm auch die Agentenrolle gibt.
   Alle anderen sehen statt der Buttons den Hinweis „Nur Prüfer können freigeben.“
 - Ausführen erfordert eine vorhandene menschliche Freigabe. Wer ausführen darf, regelt das Backend.
 
