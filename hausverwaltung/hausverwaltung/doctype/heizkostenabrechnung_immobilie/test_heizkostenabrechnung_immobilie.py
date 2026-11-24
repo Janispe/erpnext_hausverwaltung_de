@@ -4,6 +4,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from frappe import _dict
+
 from hausverwaltung.hausverwaltung.doctype.heizkostenabrechnung_immobilie import (
 	heizkostenabrechnung_immobilie as module,
 )
@@ -495,7 +497,7 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 				module.HeizkostenabrechnungImmobilie.before_cancel(parent)
 
 	def test_parent_submit_authorizes_internal_child_submit(self):
-		parent = SimpleNamespace(
+		parent = _dict(
 			name="HK-I-1", von="2026-01-01", bis="2026-12-31",
 			_validate_unique_period=MagicMock(),
 			_refresh_period_children=MagicMock(),
@@ -524,7 +526,7 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 			with self.subTest(fieldname=fieldname):
 				child = {"name": "HK-M-1", "mietvertrag": "MV-1", "kosten_gesamt": 850,
 					"von": "2026-01-01", "bis": "2026-12-31", fieldname: value}
-				parent = SimpleNamespace(
+				parent = _dict(
 					von="2026-01-01", bis="2026-12-31",
 					_validate_unique_period=MagicMock(), _refresh_period_children=MagicMock(),
 					_sync_table_to_children=MagicMock(), _get_children=lambda: [child],
@@ -543,7 +545,7 @@ class TestHeizkostenabrechnungImmobilie(unittest.TestCase):
 			name="HK-M-1", heizkostenabrechnung_immobilie="HK-I-1", flags=SimpleNamespace(),
 			von=row["von"], bis=row["bis"], submit=MagicMock(),
 		)
-		parent = SimpleNamespace(
+		parent = _dict(
 			name="HK-I-1", von="2026-01-01", bis="2026-12-31", _validate_unique_period=MagicMock(),
 			_sync_table_to_children=MagicMock(), _period_contracts=lambda: [SimpleNamespace(name="MV-1")],
 			_get_children=lambda status_filter="all": [row],

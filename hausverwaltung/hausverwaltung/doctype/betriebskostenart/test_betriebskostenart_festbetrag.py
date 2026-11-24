@@ -5,6 +5,8 @@ from inspect import unwrap
 from unittest.mock import patch
 import unittest
 
+from frappe import _dict
+
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen import (
 	_is_legacy_dimensionless_festbetrag,
 	_prorated_festbetrag_rows,
@@ -383,20 +385,10 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 
 	def test_allocate_kosten_auf_wohnungen_keeps_qm_and_festbetrag_together(self):
 		gl_rows = [
-			type(
-				"Row",
-				(),
-				{
-					"name": "GLE-1",
-					"posting_date": "2025-01-15",
-					"account": "ACC-QM",
-					"cost_center": "CC-1",
-					"debit": 100,
-					"credit": 0,
-					"voucher_type": "Journal Entry",
-					"voucher_no": "JV-1",
-				},
-			)()
+			_dict(
+				name="GLE-1", posting_date="2025-01-15", account="ACC-QM", cost_center="CC-1",
+				debit=100, credit=0, voucher_type="Journal Entry", voucher_no="JV-1",
+			),
 		]
 
 		def fake_get_all(doctype, **kwargs):
@@ -454,20 +446,10 @@ class TestBetriebskostenartFestbetrag(unittest.TestCase):
 
 	def test_allocate_kosten_auf_wohnungen_uses_schluessel_with_referenced_qm_basis(self):
 		gl_rows = [
-			type(
-				"Row",
-				(),
-				{
-					"name": "GLE-1",
-					"posting_date": "2025-01-15",
-					"account": "ACC-BEW",
-					"cost_center": "CC-1",
-					"debit": 110,
-					"credit": 0,
-					"voucher_type": "Journal Entry",
-					"voucher_no": "JV-1",
-				},
-			)()
+			_dict(
+				name="GLE-1", posting_date="2025-01-15", account="ACC-BEW", cost_center="CC-1",
+				debit=110, credit=0, voucher_type="Journal Entry", voucher_no="JV-1",
+			),
 		]
 
 		def fake_get_all(doctype, **kwargs):
