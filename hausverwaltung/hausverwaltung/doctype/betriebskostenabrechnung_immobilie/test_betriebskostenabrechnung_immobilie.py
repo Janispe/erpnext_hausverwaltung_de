@@ -600,7 +600,7 @@ class TestAbrechnungsbereitschaftIntegration(unittest.TestCase):
 		point = "bk_readiness_" + frappe.generate_hash(length=10)
 		frappe.db.savepoint(point)
 		self.addCleanup(frappe.db.rollback, save_point=point)
-		self.prop, self.flat, _, _ = bk_fixture()
+		self.prop, self.flat, self.contract, _ = bk_fixture()
 		self.booking = frappe.get_doc("GL Entry", {"cost_center": self.prop.kostenstelle, "debit": 100})
 		self.art = frappe.get_doc("Betriebskostenart", {"konto": self.booking.account})
 		self.args = {"immobilie": self.prop.name, "von": self.von, "bis": self.bis}
@@ -722,6 +722,73 @@ class TestAbrechnungsbereitschaftIntegration(unittest.TestCase):
 				self.assertEqual(rows[0]["ziel_doctype"], "Wohnung")
 				self.assertEqual(rows[0]["ziel_name"], self.flat.name)
 				self.assertEqual(str(rows[0]["stichtag"]), self.bis)
+
+	def test_empty_cost_matrix_and_valid_contract_fixed_amount(self):
+		from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen import (
+			allocate_kosten_auf_wohnungen,
+		)
+
+		frappe.db.set_value(
+			"Journal Entry", self.booking.voucher_no, "custom_wertstellungsdatum", "2027-01-01"
+		)
+		self.assertEqual(allocate_kosten_auf_wohnungen(**self.args)["matrix"], {})
+		rows = module.pruefe_abrechnungsbereitschaft(**self.args)
+		self.assertEqual(len(rows), 1)
+		self.assertIn("keine verteilbaren Kosten", rows[0]["grund"])
+		self.assertEqual(rows[0]["ziel_name"], self.prop.name)
+
+		label = "Synthetischer Vertrags-Festbetrag"
+		self.contract.append("festbetraege", {
+			"bezeichnung": label, "betrag": 100, "gueltig_von": self.von, "gueltig_bis": self.bis,
+		})
+		self.contract.save()
+		self.assertEqual(allocate_kosten_auf_wohnungen(**self.args)["matrix"], {self.flat.name: {label: 100}})
+		self.assertEqual(module.pruefe_abrechnungsbereitschaft(**self.args), [])
+
+	def test_mixed_weights_find_the_apartment_that_breaks_the_total(self):
+		from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen import (
+			allocate_kosten_auf_wohnungen,
+		)
+
+		other = frappe.get_doc({
+			"doctype": "Wohnung", "immobilie": self.prop.name,
+			"name__lage_in_der_immobilie": "Negativgewicht", "gebaeudeteil": "VH",
+		}).insert()
+		key = frappe.get_doc({
+			"doctype": "Zustandsschluessel", "name1": "Test " + frappe.generate_hash(length=8),
+			"art": "Gleitkommazahl",
+		}).insert()
+		state = frappe.get_doc("Wohnungszustand", {"wohnung": self.flat.name})
+		state.append("zustand_float", {"zustandsschluessel": key.name, "wert_float": 60}).db_insert()
+		frappe.get_doc({
+			"doctype": "Wohnungszustand", "wohnung": other.name, "ab": self.von,
+			"größe": 50, "betriebskostenabrechnung_durch_vermieter": 1, "wohnung_aktiv_genutzt": 1,
+			"zustand_float": [{"zustandsschluessel": key.name, "wert_float": -10}],
+		}).insert().submit()
+		self.art.db_set({"verteilung": "Schlüssel", "schlüssel": key.name})
+		with self.assertRaisesRegex(frappe.ValidationError, "nicht vollständig"):
+			allocate_kosten_auf_wohnungen(**self.args)
+		rows = module.pruefe_abrechnungsbereitschaft(**self.args)
+		self.assertEqual(len(rows), 1)
+		self.assertIn("Negative Gewichte", rows[0]["grund"])
+		self.assertEqual(rows[0]["ziel_name"], other.name)
+
+	def test_booking_date_requires_read_permission_on_actual_date_source(self):
+		effective_date = "2026-04-23"
+		frappe.db.set_value(
+			"Journal Entry", self.booking.voucher_no, "custom_wertstellungsdatum", effective_date
+		)
+		self.art.db_set("verteilung", "Bewohner")
+		restricted = self._reader("Betriebskostenart")
+		authorized = self._reader("Betriebskostenart", "Journal Entry")
+		frappe.set_user(restricted.name)
+		rows = module.pruefe_abrechnungsbereitschaft(**self.args)
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(rows[0]["kostenart"], self.art.name)
+		self.assertIsNone(rows[0]["stichtag"])
+		self.assertNotIn("datum_quelle", rows[0])
+		frappe.set_user(authorized.name)
+		self.assertEqual(str(module.pruefe_abrechnungsbereitschaft(**self.args)[0]["stichtag"]), effective_date)
 
 	def test_missing_direct_booking_dimension_links_the_voucher(self):
 		self.art.db_set("verteilung", "Einzeln")

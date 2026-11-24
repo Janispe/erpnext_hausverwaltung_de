@@ -992,13 +992,20 @@ def pruefe_abrechnungsbereitschaft(
 		wohnungen=wohnungen,
 		stichtag=stichtag,
 	):
-		for source in (
-			("Betriebskostenart", finding["kostenart"]),
-			(finding["ziel_doctype"], finding["ziel_name"]),
-		):
+		sources = [(finding["ziel_doctype"], finding["ziel_name"])]
+		if finding.get("kostenart"):
+			sources.append(("Betriebskostenart", finding["kostenart"]))
+		for source in sources:
 			if source not in checked_sources:
 				_check_readiness_source_permission(*source)
 				checked_sources.add(source)
+		date_source = finding.pop("datum_quelle", None)
+		if date_source and date_source not in checked_sources:
+			doctype, source_name = date_source
+			if frappe.has_permission(doctype, "read", frappe.get_doc(doctype, source_name)):
+				checked_sources.add(date_source)
+			else:
+				finding["stichtag"] = None
 		rows.append(finding)
 	return rows
 
