@@ -324,17 +324,17 @@ class TestWohnungsschaden(IntegrationTestCase):
 				rows = frappe.get_list(doctype, filters={"name": ("in", [own, other])}, pluck="name")
 				self.assertEqual(rows, [own])
 
-	def photo(self, target, is_private=1, suffix=""):
+	def photo(self, target, is_private=1, suffix="", content=None):
 		return frappe.get_doc({
 			"doctype": "File",
 			"file_name": f"foto-{self.key}{suffix}.png",
-			"content": b"synthetisches Dateimaterial " + (self.key + suffix).encode(),
+			"content": content if content is not None else b"synthetisches Dateimaterial " + (self.key + suffix).encode(),
 			"is_private": is_private,
 			"attached_to_doctype": target.doctype,
 			"attached_to_name": target.name,
 		}).insert()
 
-	def test_ordinary_alias_cannot_make_a_shared_damage_attachment_public(self):
+	def test_ordinary_alias_cannot_move_a_shared_damage_attachment(self):
 		normal = self.normal_issue()
 		alias = self.photo(normal, suffix="-shared")
 		protected = self.photo(self.phone_issue(), suffix="-shared")
@@ -350,12 +350,17 @@ class TestWohnungsschaden(IntegrationTestCase):
 		Path(older_alias.get_full_path()).write_bytes(content)
 		older_alias.db_set("content_hash", protected.content_hash)
 
-		for file, expected_url in ((alias, url), (older_alias, older_url)):
+		public_alias = self.photo(normal, is_private=0, suffix="-public-path", content=content)
+		self.assertNotEqual(public_alias.file_url.rsplit("/", 1)[-1], private_path.name)
+		self.assertEqual(public_alias.content_hash, protected.content_hash)
+		for file in (alias, older_alias, public_alias):
+			expected_url = file.file_url
+			expected_private = file.is_private
 			with self.subTest(file_url=expected_url):
-				file.is_private = 0
+				file.is_private = 1 - expected_private
 				with self.assertRaisesRegex(frappe.ValidationError, "gemeinsam verwendeten Dateien"):
 					file.save()
-				self.assertEqual(file.reload().is_private, 1)
+				self.assertEqual(file.reload().is_private, expected_private)
 				self.assertEqual(file.file_url, expected_url)
 		self.assertEqual(protected.reload().is_private, 1)
 		self.assertEqual(protected.file_url, url)
@@ -366,6 +371,9 @@ class TestWohnungsschaden(IntegrationTestCase):
 		ordinary.is_private = 0
 		ordinary.save()
 		self.assertTrue(ordinary.file_url.startswith("/files/"))
+		ordinary.is_private = 1
+		ordinary.save()
+		self.assertTrue(ordinary.file_url.startswith("/private/files/"))
 
 	def test_public_mail_attachment_prevents_conversion(self):
 		mail = self.incoming()

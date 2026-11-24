@@ -367,6 +367,10 @@ def protocol_export_unconfirmed(name):
 _FAILED_PROTOCOL_TASK_STATES = {"FAILURE", "REVOKED"}
 
 
+def _task_blocks_protocol_release(task):
+	return task is not None and task["status"] not in _FAILED_PROTOCOL_TASK_STATES
+
+
 def _find_protocol_task(config, upload, task_id=None):
 	params = {"task_id": task_id} if task_id else None
 	# API v9 keeps the complete, unpaginated list and the legacy Task fields
@@ -382,7 +386,7 @@ def _find_protocol_task(config, upload, task_id=None):
 
 	matches = [task for task in tasks if task.get("task_file_name") == upload.file_name and task.get("task_id")]
 	for task in matches:
-		if task["status"] not in _FAILED_PROTOCOL_TASK_STATES:
+		if _task_blocks_protocol_release(task):
 			return task
 	return matches[0] if matches else None
 
@@ -398,8 +402,8 @@ def reset_unconfirmed_protocol_export(protocol, file):
 	task_id = frappe.cache.get_value(key).get("task_id")
 	if (
 		_find_protocol_document(config, upload)
-		or (task_id and _find_protocol_task(config, upload, task_id))
-		or _find_protocol_task(config, upload)
+		or (task_id and _task_blocks_protocol_release(_find_protocol_task(config, upload, task_id)))
+		or _task_blocks_protocol_release(_find_protocol_task(config, upload))
 	):
 		frappe.throw(_("Paperless kennt den Upload bereits. Bitte den Status im Abnahmeschritt erneut prüfen."))
 	frappe.cache.delete_value(key)

@@ -136,6 +136,22 @@ class TestWohnungsabnahme(IntegrationTestCase):
 		self.assertTrue(has_controller_permissions(ordinary, "write"))
 		self.assertTrue(ordinary.is_downloadable())
 
+	def test_ordinary_alias_cannot_retarget_private_handover_photo(self):
+		draft = self._photo(self._draft(self.old, "Auszug"))
+		photo = frappe.get_doc("File", draft["rooms"][0]["photos"][0]["name"])
+		url = photo.file_url
+		alias = frappe.get_doc({
+			"doctype": "File", "file_name": "public-alias.png",
+			"content": photo.get_content(encodings=[]), "is_private": 0,
+		}).insert()
+		self.assertEqual(alias.content_hash, photo.content_hash)
+
+		alias.is_private = 1
+		with self.assertRaisesRegex(frappe.ValidationError, "gemeinsam verwendeten Dateien"):
+			alias.save()
+		self.assertEqual(photo.reload().file_url, url)
+		self.assertEqual(alias.reload().is_private, 0)
+
 	def test_two_protocols_conflict_retry_and_paperless(self):
 		out = self._photo(self._draft(self.old, "Auszug"))
 		resumed = abnahme.load(self.old.name, "Auszug")["draft"]
@@ -349,7 +365,14 @@ class TestWohnungsabnahme(IntegrationTestCase):
 			self.assertEqual(frappe.cache.get_value(key), {"task_id": "missing", "task_missing": True})
 			post.assert_not_called()
 
-			get.side_effect = [{"results": []}, [], [], {"results": []}]
+			get.side_effect = [
+				{"results": []}, [],
+				[
+					{"task_file_name": "test.pdf", "task_id": "failed", "status": "FAILURE"},
+					{"task_file_name": "test.pdf", "task_id": "revoked", "status": "REVOKED"},
+				],
+				{"results": []},
+			]
 			paperless.reset_unconfirmed_protocol_export(protocol, file)
 			self.assertIsNone(frappe.cache.get_value(key))
 			paperless._export_protocol(config, protocol.name, None, upload, [], None)
