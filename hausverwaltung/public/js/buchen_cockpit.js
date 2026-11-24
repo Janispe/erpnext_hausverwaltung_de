@@ -1509,7 +1509,7 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 
 	const $structured = dialog.$body.find(".hv-structured-uploaded-list");
 	const $inbox_link = $("<a>", {
-		href: "/app/buchungs-inbox", target: "_blank", rel: "noopener noreferrer",
+		href: "/app/buchungs_inbox", target: "_blank", rel: "noopener noreferrer",
 		class: "btn btn-default btn-sm my-1", text: __("Buchungs-Inbox öffnen"),
 	}).hide().appendTo(dialog.$body.find(".hv-bulk-uploaded-list").parent());
 

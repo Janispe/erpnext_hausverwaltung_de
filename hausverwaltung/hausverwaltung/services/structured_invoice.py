@@ -198,10 +198,14 @@ def _payment_due_date(settlement):
     complex_terms = ("PartialPaymentAmount", "ApplicableTradePaymentDiscountTerms", "ApplicableTradePaymentPenaltyTerms")
     if len(terms) > 1 or any(terms[0].find(f"ram:{field}", NS) is not None for field in complex_terms):
         raise StructuredInvoiceError("Ratenzahlung, Skonto und mehrteilige Zahlungsbedingungen erfordern eine manuelle Prüfung.")
+    description = _text(terms[0], "ram:Description")
+    # XRechnung BR-DE-18 encodes cash discounts in the BT-20 description.
+    if "#SKONTO#" in description.upper():
+        raise StructuredInvoiceError("XRechnungs-Skonto erfordert eine manuelle Prüfung der Zahlungsbedingungen.")
     due = terms[0].find("ram:DueDateDateTime", NS)
     if due is not None:
         return _cii_date(due)
-    if _text(terms[0], "ram:Description"):
+    if description:
         raise StructuredInvoiceError("Zahlungsbedingungen ohne strukturiertes Fälligkeitsdatum erfordern eine manuelle Prüfung.")
     return None
 

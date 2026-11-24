@@ -213,6 +213,15 @@ class TestStructuredInvoiceIntegration(unittest.TestCase):
         with self.assertRaisesRegex(frappe.ValidationError, "Zahlungsbedingungen.*manuelle Prüfung"):
             cockpit.preview_structured_invoice(upload["file_url"])
 
+    def test_bt20_discount_with_due_date_requires_manual_review(self):
+        xml = self._xml().replace(
+            b"Zahlbar innerhalb von 14 Tagen",
+            b"#SKONTO#TAGE=10#PROZENT=2.00#&#10;Zahlbar innerhalb von 14 Tagen",
+        )
+        upload = self._upload(xml, ".xml")
+        with self.assertRaisesRegex(frappe.ValidationError, "XRechnungs-Skonto.*manuelle Prüfung"):
+            cockpit.preview_structured_invoice(upload["file_url"])
+
     def test_formats_totals_and_permissions(self):
         normal = self._upload(make_pdf(), ".pdf")
         self.assertEqual(normal["invoice_format"], "pdf")

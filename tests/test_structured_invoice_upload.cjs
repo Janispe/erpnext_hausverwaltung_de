@@ -5,6 +5,8 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const script = readFileSync(path.join(__dirname, "../hausverwaltung/public/js/buchen_cockpit.js"), "utf8");
+const inboxPage = JSON.parse(readFileSync(path.join(__dirname,
+	"../hausverwaltung/hausverwaltung/page/buchungs_inbox/buchungs_inbox.json"), "utf8"));
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 class Element {
@@ -100,7 +102,7 @@ for (const pdfFirst of [false, true]) {
 		async function queuePdf() {
 			upload.options.primary_action();
 			await flush();
-			assert.equal(parent.children[0].props.href, "/app/buchungs-inbox");
+			assert.equal(parent.children[0].props.href, `/app/${inboxPage.page_name}`);
 			assert.equal(parent.children[0].visible, true);
 			assert.doesNotMatch(pdf.markup, /normal\.pdf/);
 			assert.equal(upload.visible, true);
