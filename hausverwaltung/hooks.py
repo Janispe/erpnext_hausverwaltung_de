@@ -96,6 +96,7 @@ doctype_js = {
 	"Journal Entry": "public/js/journal_entry.js",
 	"Payment Entry": "public/js/payment_entry.js",
 	# Phase 8 Stufe 1a: Prozess-DocType-JS lebt jetzt in process_engine/hooks.py.
+	"Prozess Instanz": "public/js/wohnungsabnahme_prozess.js",
 	"Purchase Invoice": "public/js/purchase_invoice.js",
 	"Sales Invoice": "public/js/sales_invoice.js",
 	"Supplier": "public/js/supplier.js",
@@ -515,5 +516,11 @@ has_permission = {
 	name: "hausverwaltung.proposals.frappe_guards.can_read"
 	for name in ("HV Action Proposal", "HV Proposal Revision", "HV Proposal Audit", "HV Proposal Package")
 }
+
+_abnahme_module = "hausverwaltung.hausverwaltung.doctype.wohnungsabnahme.wohnungsabnahme"
+permission_query_conditions["Wohnungsabnahme"] = f"{_abnahme_module}.no_generic_listing"
+has_permission["Wohnungsabnahme"] = f"{_abnahme_module}.has_permission"
+has_permission["File"] = f"{_abnahme_module}.file_permission"
+doc_events.setdefault("File", {})["before_validate"] = f"{_abnahme_module}.guard_attachment"
 
 before_migrate = ["hausverwaltung.proposals.install.refresh_module_map"]

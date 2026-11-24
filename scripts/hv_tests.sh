@@ -6,6 +6,7 @@
 # und entfernt sie danach wieder.
 #
 #   quick   Smoke-Test Mietvertrag (Standard, auch vor jedem Agenten-Push)
+#           HV_TEST_MODULE und HV_TEST_FRAPPE_SPEC prüfen gezielt auf derselben Site.
 #   python  alle Python-Tests der App und unter tests/
 #   e2e     JavaScript- und Browsertests: KI-Vorschläge, Node, Vitest, Playwright
 #   all     python und e2e
@@ -217,10 +218,12 @@ e2e_site() {
 }
 
 frappe_playwright() {
+  local specs=()
+  [[ -z ${HV_TEST_FRAPPE_SPEC:-} ]] || specs+=("${HV_TEST_FRAPPE_SPEC}")
   (cd "$repo/HV_Bankimport/src_react" &&
     CI=1 DOCKER_CONTEXT=$context FRAPPE_BASE_URL=$base_url FRAPPE_SITE=$site \
     FRAPPE_BACKEND_CONTAINER=$backend FRAPPE_USER=Administrator FRAPPE_PASSWORD=$admin_password \
-    npx playwright test -c playwright.frappe.config.js --output "$report/playwright-frappe")
+    npx playwright test -c playwright.frappe.config.js --output "$report/playwright-frappe" -- "${specs[@]}")
 }
 
 # ---------------------------------------------------------------------------- Ablauf
@@ -234,6 +237,11 @@ case "$stage" in
   quick)
     # HV_TEST_MODULE wählt für Fehlersuche ein anderes einzelnes Testmodul.
     step python-module python_module "${HV_TEST_MODULE:-hausverwaltung.hausverwaltung.doctype.mietvertrag.test_mietvertrag}"
+    if [[ -n ${HV_TEST_FRAPPE_SPEC:-} ]]; then
+      use_node
+      step bankimport-deps bankimport_deps
+      step frappe-playwright frappe_playwright
+    fi
     error_log
     ;;
   python|all)
