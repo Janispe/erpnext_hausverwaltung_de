@@ -219,6 +219,7 @@ after_migrate = [
 
 extend_doctype_class = {
 	"Company": ["hausverwaltung.hausverwaltung.overrides.company.CompanyDepartmentRootMixin"],
+	"File": ["hausverwaltung.hausverwaltung.overrides.file.HeizkostenRuecklaufFileMixin"],
 }
 
 override_doctype_class = {
