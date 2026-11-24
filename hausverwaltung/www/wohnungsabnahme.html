@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="de">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="csrf-token" content="{{ csrf_token | e }}">
+	<title>Wohnungsabnahme</title>
+	<link rel="stylesheet" href="/assets/hausverwaltung/css/wohnungsabnahme.css">
+	<script defer src="/assets/hausverwaltung/js/wohnungsabnahme.js"></script>
+</head>
+<body>
+<main>
+	<a id="back" href="/app">← Zurück zur Hausverwaltung</a>
+	<h1>Wohnungsabnahme <span id="direction"></span></h1>
+	<p id="property"></p>
+	<p id="status" role="status" aria-live="polite">Lade Wohnungsabnahme …</p>
+
+	<form id="handover" hidden>
+		<fieldset id="inputs">
+			<label>Abnahmedatum <input id="appointment" type="date" required></label>
+
+			<section aria-labelledby="rooms-heading">
+				<h2 id="rooms-heading">Räume</h2>
+				<div id="rooms"></div>
+				<button type="button" id="add-room">Raum hinzufügen</button>
+			</section>
+
+			<section aria-labelledby="keys-heading">
+				<h2 id="keys-heading">Schlüssel</h2>
+				<div id="keys"></div>
+				<button type="button" id="add-key">Schlüsselart hinzufügen</button>
+			</section>
+
+			<section aria-labelledby="meters-heading">
+				<h2 id="meters-heading">Zählerstände</h2>
+				<div id="meters"></div>
+			</section>
+		</fieldset>
+
+		<div id="draft-actions">
+			<button type="submit" id="save">Entwurf speichern</button>
+			<button type="button" id="complete" class="primary">Abschließen und PDF erstellen</button>
+		</div>
+	</form>
+	<section id="result" hidden aria-labelledby="result-heading">
+		<h2 id="result-heading">Protokoll</h2>
+		<p><a id="pdf" target="_blank" rel="noopener">Protokoll-PDF öffnen</a></p>
+		<p id="archive" hidden><a id="archive-link" target="_blank" rel="noopener">Archiviertes Protokoll in Paperless öffnen</a></p>
+		<div id="steps"></div>
+	</section>
+</main>
+</body>
+</html>

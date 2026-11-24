@@ -1,5 +1,7 @@
 from email.message import EmailMessage
 from io import BytesIO
+from types import SimpleNamespace
+from unittest.mock import patch
 from uuid import uuid4
 from zipfile import ZipFile
 
@@ -8,9 +10,11 @@ from frappe.core.doctype.communication.email import make as make_communication
 from frappe.core.doctype.file.utils import find_file_by_url
 from frappe.desk.form.load import get_communications
 from frappe.email.receive import InboundMail
-from frappe.permissions import add_permission, has_permission, update_permission_property
+from frappe.permissions import add_permission, has_controller_permissions, has_permission, update_permission_property
 from frappe.tests import IntegrationTestCase
 from frappe.www.list import get_list_data
+
+from hausverwaltung.hausverwaltung.integrations import paperless
 
 from .issue import set_status, take_incoming_email
 from .permissions import zip_files
@@ -203,6 +207,22 @@ class TestWohnungsschaden(IntegrationTestCase):
 		self.assertEqual(issue_names, [allowed.name])
 		self.assertIsNotNone(find_file_by_url(allowed_file.file_url, name=allowed_file.name))
 		self.assertIsNone(find_file_by_url(restricted_file.file_url, name=restricted_file.name))
+		self.assertTrue(has_controller_permissions(allowed_file, "read"))
+		self.assertFalse(has_controller_permissions(restricted_file, "read"))
+		with (
+			patch.object(paperless.PaperlessConfig, "from_conf", return_value=SimpleNamespace(url="https://paperless.example/")),
+			patch.object(paperless, "_post_to_paperless", return_value=(True, 42, None)) as post,
+		):
+			result = paperless.export_attachment_to_paperless(
+				doctype="Issue", docname=allowed.name, file_url=allowed_file.file_url,
+			)
+			self.assertEqual(result["paperless_id"], 42)
+			for issue, file in ((restricted, restricted_file), (allowed, restricted_file)):
+				with self.assertRaises(frappe.PermissionError):
+					paperless.export_attachment_to_paperless(
+						doctype="Issue", docname=issue.name, file_url=file.file_url,
+					)
+			post.assert_called_once()
 
 		restricted.hv_wohnung = allowed.hv_wohnung
 		restricted.hv_mietvertrag = allowed.hv_mietvertrag
