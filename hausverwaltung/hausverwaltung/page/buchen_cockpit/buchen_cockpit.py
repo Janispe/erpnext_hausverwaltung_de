@@ -6,9 +6,11 @@ by creating Purchase Invoice / Sales Invoice directly from the submitted tool di
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from datetime import timedelta
+from decimal import Decimal
 from typing import Any
 
 import frappe
@@ -23,6 +25,7 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen i
 from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import (
     _company_via_wohnung,
 )
+from hausverwaltung.hausverwaltung.services import structured_invoice
 from hausverwaltung.hausverwaltung.utils.buchung import ensure_default_service_item
 from hausverwaltung.hausverwaltung.utils.income_accounts import get_hv_income_accounts
 from hausverwaltung.hausverwaltung.utils.rent_items import (
@@ -443,19 +446,25 @@ def toplevel_kostenstelle_query(doctype, txt, searchfield, start, page_len, filt
     nur auf Gebäude-Ebene möglich sind. Wird im Buchungs-Cockpit und im
     Zahlungsplan-Formular für die Kostenstellen-Auswahl verwendet.
     """
+    if isinstance(filters, str):
+        filters = frappe.parse_json(filters)
+    company = (filters or {}).get("company")
     return frappe.db.sql(
         """
         SELECT DISTINCT i.kostenstelle
         FROM `tabImmobilie` i
+        INNER JOIN `tabCost Center` c ON c.name = i.kostenstelle
         WHERE (i.parent_immobilie IS NULL OR i.parent_immobilie = '')
           AND i.kostenstelle IS NOT NULL
           AND i.kostenstelle != ''
           AND i.kostenstelle LIKE %(txt)s
+          AND (%(company)s IS NULL OR c.company = %(company)s)
         ORDER BY i.kostenstelle
         LIMIT %(start)s, %(page_len)s
         """,
         {
             "txt": f"%{txt or ''}%",
+            "company": company or None,
             "start": int(start or 0),
             "page_len": int(page_len or 20),
         },
@@ -1812,8 +1821,6 @@ def upload_invoice_pdf() -> dict:
     - Sucht zusätzlich Buchungs Vorschläge zu dieser file_url und liefert deren
       Status — das Frontend zeigt darauf basierend einen Duplicate-Dialog.
     """
-    import hashlib
-
     _require_document_permissions("File")
 
     # Frappe's Standard-save_file()-Pipeline hat einen Bug bei Binary-Files:
@@ -1839,12 +1846,18 @@ def upload_invoice_pdf() -> dict:
     filename = getattr(frappe.local, "uploaded_filename", None) or "upload.pdf"
     if not content:
         frappe.throw("Hochgeladene Datei ist leer.")
+    format_error = None
+    try:
+        invoice_format, _ = structured_invoice.detect(content, filename)
+    except structured_invoice.StructuredInvoiceError as exc:
+        invoice_format, format_error = "invalid", f"{exc} {structured_invoice.MANUAL}"
     content_hash = hashlib.sha1(content).hexdigest()
 
     existing_file = frappe.db.get_value(
         "File",
-        {"content_hash": content_hash},
+        {"content_hash": content_hash, "is_private": 1},
         ["name", "file_url", "file_name"],
+        order_by="creation asc, name asc",
         as_dict=True,
     )
     if existing_file:
@@ -1890,7 +1903,7 @@ def upload_invoice_pdf() -> dict:
         file_name = file_doc.file_name
         is_new_file = True
 
-    existing_vorschlag = _lookup_vorschlag_by_file_url(file_url)
+    existing_vorschlag = _lookup_vorschlag_by_file_url(file_url) if invoice_format == "pdf" else None
 
     # `doctype: "File"` ist erforderlich, sonst verwirft Frappes FileUploader.vue:601
     # die Response und ruft on_success mit `null` auf.
@@ -1900,7 +1913,187 @@ def upload_invoice_pdf() -> dict:
         "file_name": file_name,
         "is_new_file": is_new_file,
         "existing_vorschlag": existing_vorschlag,
+        "invoice_format": invoice_format,
+        "format_error": format_error,
     }
+
+
+def _structured_source(file_url):
+    _require_document_permissions("Purchase Invoice")
+    source, content = structured_invoice.read_file(file_url, private=True)
+    _require_non_receipt_file(file_url)
+    try:
+        invoice = structured_invoice.parse(content, source.file_name)
+    except structured_invoice.StructuredInvoiceError as exc:
+        frappe.throw(f"{exc} {structured_invoice.MANUAL}")
+    return source, invoice, hashlib.sha256(content).hexdigest()
+
+
+def _unique_visible_match(doctype, filters):
+    names = frappe.get_list(doctype, filters=filters, pluck="name", limit=2)
+    return names[0] if len(names) == 1 else None
+
+
+@frappe.whitelist()
+def preview_structured_invoice(file_url: str) -> dict:
+    _, invoice, digest = _structured_source(file_url)
+    supplier = None
+    if frappe.has_permission("Supplier", "read"):
+        if invoice["seller_tax_id"]:
+            supplier = _unique_visible_match("Supplier", {"tax_id": invoice["seller_tax_id"]})
+        supplier = supplier or _unique_visible_match("Supplier", {"supplier_name": invoice["seller"]})
+    company = None
+    if frappe.has_permission("Company", "read"):
+        company = _unique_visible_match("Company", {"company_name": invoice["buyer"]})
+    return {**invoice, "digest": digest, "supplier": supplier, "company": company}
+
+
+def _lock_structured_invoice_identity(source, company, supplier, bill_no):
+    # Locking reads see the competing transaction's commit after waiting.
+    frappe.db.get_value("Company", company, "name", for_update=True)
+    locked_file = frappe.db.get_value(
+        "File", {"content_hash": source.content_hash, "is_private": 1}, "name",
+        order_by="creation asc, name asc", for_update=True,
+    )
+    if not locked_file:
+        frappe.throw("Der Originalbeleg wurde inzwischen entfernt.")
+    pi = frappe.qb.DocType("Purchase Invoice")
+    file = frappe.qb.DocType("File")
+    existing = (
+        frappe.qb.from_(pi)
+        .join(file).on(file.attached_to_name == pi.name)
+        .select(pi.name)
+        .where(
+            (file.attached_to_doctype == "Purchase Invoice")
+            & (file.content_hash == source.content_hash)
+            & (pi.docstatus != 2)
+        )
+        .limit(1).for_update().run()
+    )
+    duplicate = existing or frappe.db.get_value(
+        "Purchase Invoice",
+        {"company": company, "supplier": supplier, "bill_no": bill_no, "docstatus": ["!=", 2]},
+        "name",
+        for_update=True,
+    )
+    if duplicate:
+        frappe.throw("Für diesen Originalbeleg oder diese Rechnungsnummer besteht bereits eine Eingangsrechnung.")
+
+
+def _structured_tax_rows(invoice, accounts, company):
+    taxes = [tax for tax in invoice["taxes"] if tax["amount"]]
+    if isinstance(accounts, str):
+        accounts = frappe.parse_json(accounts)
+    if not isinstance(accounts, list) or len(taxes) != len(accounts):
+        frappe.throw("Bitte für jeden Steuerbetrag ein Vorsteuerkonto auswählen.")
+    for tax, account in zip(taxes, accounts):
+        doc = frappe.get_doc("Account", account)
+        doc.check_permission("read")
+        if doc.company != company or doc.is_group or doc.disabled or doc.account_type != "Tax":
+            frappe.throw("Bitte ein aktives Steuerkonto der gewählten Firma auswählen.")
+        yield {
+            "charge_type": "Actual", "category": "Total", "add_deduct_tax": "Add",
+            "account_head": account, "tax_amount": float(tax["amount"]),
+            "description": f"Umsatzsteuer {tax['rate']:g} %",
+        }
+
+
+@frappe.whitelist(methods=["POST"])
+def create_structured_invoice(file_url: str, digest: str, company: str, supplier: str, positionen, tax_accounts) -> dict:
+    source, invoice, current_digest = _structured_source(file_url)
+    if digest != current_digest:
+        frappe.throw("Der Originalbeleg hat sich geändert. Bitte die Vorschau neu öffnen.")
+    frappe.get_doc("Company", company).check_permission("read")
+    frappe.get_doc("Supplier", supplier).check_permission("read")
+    _lock_structured_invoice_identity(source, company, supplier, invoice["number"])
+    selections = _parse_rows(positionen)
+    if len(selections) != len(invoice["lines"]):
+        frappe.throw("Bitte jede Rechnungsposition genau einmal zuordnen.")
+    rows = []
+    object_cost_centers = _kostenstelle_zu_haus_map()
+    cost_type_fields = {
+        "Betriebskostenart": "betriebskostenart",
+        "Kostenart nicht umlagefaehig": "kostenart_nicht_ul",
+    }
+    for selection, line in zip(selections, invoice["lines"]):
+        cost_type = cost_type_fields.get(selection.get("umlagefaehig"))
+        if not cost_type or not selection.get("kostenart") or not selection.get("kostenstelle"):
+            frappe.throw("Bitte Kostenstelle, Umlagefähigkeit und Kostenart je Position auswählen.")
+        frappe.get_doc(selection["umlagefaehig"], selection["kostenart"]).check_permission("read")
+        frappe.get_doc("Cost Center", selection["kostenstelle"]).check_permission("read")
+        if selection["kostenstelle"] not in object_cost_centers:
+            frappe.throw("Bitte eine Kostenstelle wählen, die einer Immobilie zugeordnet ist.")
+        if selection.get("wohnung"):
+            frappe.get_doc("Wohnung", selection["wohnung"]).check_permission("read")
+        rows.append({
+            cost_type: selection["kostenart"],
+            "kostenstelle": selection["kostenstelle"],
+            "wohnung": selection.get("wohnung"),
+            "betrag": line["net"],
+        })
+    booking = _purchase_invoice_booking_context(rows)
+    if booking["company"] != company:
+        frappe.throw("Die Kostenstellen müssen zur gewählten Firma gehören.")
+    pi, currency = _new_cockpit_purchase_invoice(
+        company=company, supplier=supplier, posting_date=invoice["date"],
+        bill_no=invoice["number"], remarks="Importierte E-Rechnung",
+    )
+    if currency != invoice["currency"]:
+        frappe.throw("Die Währung der Firma und die Rechnungswährung stimmen nicht überein.")
+    pi.is_return = int(invoice["is_return"])
+    due_date = invoice["due_date"]
+    if due_date:
+        pi.due_date = due_date
+        pi.ignore_default_payment_terms_template = 1
+        if not pi.is_return:
+            pi.append("payment_schedule", {
+                "due_date": due_date, "invoice_portion": 100,
+                "payment_amount": float(invoice["gross"]), "base_payment_amount": float(invoice["gross"]),
+            })
+    pi.update_stock = 0
+    pi.disable_rounded_total = 1
+    pi.flags.dont_auto_add_taxes = True
+    _set_cockpit_purchase_invoice_items(
+        pi, rows, company=company, company_currency=currency,
+        cost_centers=booking["cost_centers"],
+        cost_center_to_immobilie=booking["cost_center_to_immobilie"],
+        default_description=invoice["number"], explicit_categories=True,
+    )
+    for item, line in zip(pi.items, invoice["lines"]):
+        quantity = f"{line['quantity']:g} {line['unit']}".strip()
+        description = " · ".join(filter(None, (line["name"], line["description"], quantity)))
+        item.description = frappe.utils.escape_html(description)
+        if invoice["is_return"]:
+            item.qty = -1
+            item.rate = -item.rate
+    pi.set("taxes", list(_structured_tax_rows(invoice, tax_accounts, company)))
+    if _has_field("Purchase Invoice", "hv_eingabequelle"):
+        pi.hv_eingabequelle = EINGABEQUELLE_EINGANG
+    pi.insert()
+
+    expected_items = [line["net"] for line in invoice["lines"]]
+    expected_taxes = [tax["amount"] for tax in invoice["taxes"] if tax["amount"]]
+    actual_totals = tuple(Decimal(str(amount)) for amount in (
+        pi.net_total, pi.total_taxes_and_charges or 0, pi.grand_total
+    ))
+    if (
+        [Decimal(str(item.net_amount)) for item in pi.items] != expected_items
+        or [Decimal(str(tax.tax_amount)) for tax in pi.taxes] != expected_taxes
+        or actual_totals != (invoice["net"], invoice["tax"], invoice["gross"])
+        or bool(pi.is_return) != invoice["is_return"]
+    ):
+        frappe.throw("ERPNext hat Rechnungsbeträge, Steuern oder Vorzeichen verändert. Der Entwurf wurde verworfen.")
+    if due_date and (
+        getdate(pi.due_date) != getdate(due_date)
+        or not pi.is_return and (
+            len(pi.payment_schedule) != 1
+            or getdate(pi.payment_schedule[0].due_date) != getdate(due_date)
+            or Decimal(str(pi.payment_schedule[0].payment_amount)) != invoice["gross"]
+        )
+    ):
+        frappe.throw("ERPNext hat die Fälligkeit oder den Zahlungsplan verändert. Der Entwurf wurde verworfen.")
+    _attach_source_file(pi, file_url, source=source)
+    return {"name": pi.name}
 
 
 def _lookup_vorschlag_by_file_url(file_url: str) -> dict | None:
