@@ -22,7 +22,7 @@ Für den Import braucht der Benutzer Zugriff auf den privaten Originalbeleg, die
 4. Wähle **Eingangsrechnung als Entwurf speichern**. Über **Entwurf öffnen** erreichst du den Entwurf mit dem privaten Original. Weitere Dateien bleiben im Upload-Dialog verfügbar. Originalmengen und Einheiten stehen in der Positionsbeschreibung. Die Buchungsposition übernimmt den geprüften CII-Nettozeilenbetrag. Gutschriften werden als Retouren mit negativen Beträgen gespeichert.
 5. Für gewöhnliche PDFs wähle **PDF-Analyse starten** und bei Bedarf **Buchungs-Inbox öffnen**. Rechnerisch fehlerhafte Belege, unbekannte Profile und UBL-XRechnungen zeigen einen Fehler mit einem Hinweis auf **Eingangsrechnung** zur manuellen Erfassung und Ablage des Originals.
 
-Der automatisierte Entwurf ist auf EUR-Belege ohne Kopfzu- und -abschläge, Vorauszahlungen oder eigenen Rundungsbetrag ausgelegt. Gemischte Steuergruppen, Reverse Charge, Ratenzahlungen, Skonto und Zahlungsbedingungen ohne strukturiertes Fälligkeitsdatum gehen zur manuellen Prüfung.
+Der automatisierte Entwurf ist auf EUR-Belege ohne Kopfzu- und -abschläge, Vorauszahlungen oder eigenen Rundungsbetrag ausgelegt. Gemischte Steuergruppen, Reverse Charge, Ratenzahlungen, Skonto und Zahlungsbedingungen, die über das strukturierte Fälligkeitsdatum hinausgehen, gehen zur manuellen Prüfung.
 
 ## Isolierter Test
 

@@ -1,5 +1,6 @@
 from email.message import EmailMessage
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
@@ -332,6 +333,30 @@ class TestWohnungsschaden(IntegrationTestCase):
 			"attached_to_doctype": target.doctype,
 			"attached_to_name": target.name,
 		}).insert()
+
+	def test_ordinary_alias_cannot_make_a_shared_damage_attachment_public(self):
+		normal = self.normal_issue()
+		alias = self.photo(normal, suffix="-shared")
+		protected = self.photo(self.phone_issue(), suffix="-shared")
+		url = protected.file_url
+		self.assertEqual(url, alias.file_url)
+		private_path = Path(protected.get_full_path())
+		public_path = Path(frappe.get_site_path("public", "files", private_path.name))
+		content = private_path.read_bytes()
+
+		alias.is_private = 0
+		with self.assertRaisesRegex(frappe.ValidationError, "gemeinsam verwendeten Dateien"):
+			alias.save()
+		for file in (alias.reload(), protected.reload()):
+			self.assertEqual(file.is_private, 1)
+			self.assertEqual(file.file_url, url)
+		self.assertEqual(private_path.read_bytes(), content)
+		self.assertFalse(public_path.exists())
+
+		ordinary = self.photo(normal, suffix="-ordinary")
+		ordinary.is_private = 0
+		ordinary.save()
+		self.assertTrue(ordinary.file_url.startswith("/files/"))
 
 	def test_public_mail_attachment_prevents_conversion(self):
 		mail = self.incoming()

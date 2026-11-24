@@ -335,17 +335,24 @@ def _find_protocol_document(config, upload):
 	response = _paperless_get(config, "api/documents/", {
 		"original_filename__iexact": upload.file_name, "page_size": 10,
 	})
-	for candidate in response.get("results", []):
+	if not isinstance(response, dict) or not isinstance(response.get("results"), list):
+		frappe.throw(_("Paperless hat keine gültige Dokumentenliste geliefert."))
+	for candidate in response["results"]:
 		document_id = _to_int(candidate.get("id"))
 		if candidate.get("original_file_name") == upload.file_name and document_id:
 			if _protocol_original_matches(config, upload, document_id):
 				return document_id
+	if response.get("next"):
+		frappe.throw(_("Paperless hat keine vollständige Dokumentenliste geliefert."))
 	return None
 
 
 def _protocol_original_matches(config, upload, document_id):
 	metadata = _paperless_get(config, f"api/documents/{document_id}/metadata/")
-	return metadata.get("original_checksum") in {upload.checksum, hashlib.sha256(upload.content).hexdigest()}
+	checksum = metadata.get("original_checksum") if isinstance(metadata, dict) else None
+	if not checksum or not isinstance(checksum, str):
+		frappe.throw(_("Paperless hat keine Prüfsumme des Originaldokuments geliefert."))
+	return checksum in {upload.checksum, hashlib.sha256(upload.content).hexdigest()}
 
 
 def _protocol_key(name):
@@ -354,7 +361,7 @@ def _protocol_key(name):
 
 def protocol_export_unconfirmed(name):
 	pending = frappe.cache.get_value(_protocol_key(name))
-	return pending is not None and not pending.get("task_id")
+	return pending is not None and (not pending.get("task_id") or pending.get("task_missing", False))
 
 
 _FAILED_PROTOCOL_TASK_STATES = {"FAILURE", "REVOKED"}
@@ -388,7 +395,12 @@ def reset_unconfirmed_protocol_export(protocol, file):
 	if not config:
 		frappe.throw(_("Paperless NGX ist nicht konfiguriert."))
 	upload = _attachment_upload(file)
-	if _find_protocol_document(config, upload) or _find_protocol_task(config, upload):
+	task_id = frappe.cache.get_value(key).get("task_id")
+	if (
+		_find_protocol_document(config, upload)
+		or (task_id and _find_protocol_task(config, upload, task_id))
+		or _find_protocol_task(config, upload)
+	):
 		frappe.throw(_("Paperless kennt den Upload bereits. Bitte den Status im Abnahmeschritt erneut prüfen."))
 	frappe.cache.delete_value(key)
 
@@ -439,7 +451,9 @@ def _export_protocol(config, name, doc, upload, tags, title):
 			frappe.cache.delete_value(key)
 			frappe.throw(_("Paperless hat die Verarbeitung beendet. Der Export kann wiederholt werden."))
 
-	if not pending.get("task_id") and not task:
+	if task is None:
+		if pending.get("task_id"):
+			frappe.cache.set_value(key, {**pending, "task_missing": True})
 		frappe.throw(_("Der Upload ist ungeklärt. Bitte in Paperless prüfen und bei Bedarf in der Wohnungsabnahme freigeben."))
 	frappe.throw(_("Der Export ist noch nicht bestätigt. Bitte später erneut prüfen."))
 

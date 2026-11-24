@@ -317,6 +317,45 @@ class TestWohnungsabnahme(IntegrationTestCase):
 			self.assertIsNone(frappe.cache.get_value(key))
 			post.assert_called_once()
 
+	def test_missing_known_task_needs_explicit_release_after_complete_checks(self):
+		protocol = SimpleNamespace(name=frappe.generate_hash(length=12))
+		key = paperless._protocol_key(protocol.name)
+		self.addCleanup(frappe.cache.delete_value, key)
+		file = SimpleNamespace(file_name="test.pdf", get_content=lambda **_: b"synthetic pdf")
+		upload = paperless._attachment_upload(file)
+		config = SimpleNamespace(url="https://paperless.example/")
+		frappe.cache.set_value(key, {"task_id": "missing"})
+		with (
+			patch.object(paperless.PaperlessConfig, "from_conf", return_value=config),
+			patch.object(paperless, "_paperless_get") as get,
+			patch.object(paperless, "_post_to_paperless", return_value=(True, 42, None)) as post,
+		):
+			get.side_effect = [{"results": []}, []]
+			with self.assertRaisesRegex(frappe.ValidationError, "ungeklärt"):
+				paperless._export_protocol(config, protocol.name, None, upload, [], None)
+			self.assertTrue(paperless.protocol_export_unconfirmed(protocol.name))
+
+			get.side_effect = [{"results": [], "next": "/page-2"}]
+			with self.assertRaisesRegex(frappe.ValidationError, "keine vollständige Dokumentenliste"):
+				paperless.reset_unconfirmed_protocol_export(protocol, file)
+			get.side_effect = [{"results": []}, requests.ReadTimeout()]
+			with self.assertRaises(requests.ReadTimeout):
+				paperless.reset_unconfirmed_protocol_export(protocol, file)
+			get.side_effect = [
+				{"results": []}, [], [{"task_file_name": "test.pdf", "task_id": "new", "status": "STARTED"}],
+			]
+			with self.assertRaisesRegex(frappe.ValidationError, "kennt den Upload bereits"):
+				paperless.reset_unconfirmed_protocol_export(protocol, file)
+			self.assertEqual(frappe.cache.get_value(key), {"task_id": "missing", "task_missing": True})
+			post.assert_not_called()
+
+			get.side_effect = [{"results": []}, [], [], {"results": []}]
+			paperless.reset_unconfirmed_protocol_export(protocol, file)
+			self.assertIsNone(frappe.cache.get_value(key))
+			paperless._export_protocol(config, protocol.name, None, upload, [], None)
+			self.assertEqual(upload.paperless_id, 42)
+			post.assert_called_once()
+
 	def test_task_lookup_negotiates_v9_and_prefers_active_uploads(self):
 		upload = paperless.PaperlessUpload(file_name="test.pdf", content=b"pdf", checksum=paperless._checksum(b"pdf"))
 		config = SimpleNamespace(url="https://paperless.example/", token="fake", timeout=5, verify_ssl=True)

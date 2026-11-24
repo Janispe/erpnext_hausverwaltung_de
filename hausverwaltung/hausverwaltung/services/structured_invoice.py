@@ -1,5 +1,6 @@
 """Format detection and optional ALYF v16 adapter for incoming e-invoices."""
 
+import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
@@ -191,7 +192,7 @@ def _cii_date(node):
     return datetime.strptime(date_value, "%Y%m%d").date()
 
 
-def _payment_due_date(settlement):
+def _payment_due_date(settlement, invoice_date):
     terms = settlement.findall("ram:SpecifiedTradePaymentTerms", NS)
     if not terms:
         return None
@@ -203,11 +204,13 @@ def _payment_due_date(settlement):
     if "#SKONTO#" in description.upper():
         raise StructuredInvoiceError("XRechnungs-Skonto erfordert eine manuelle Prüfung der Zahlungsbedingungen.")
     due = terms[0].find("ram:DueDateDateTime", NS)
-    if due is not None:
-        return _cii_date(due)
+    due_date = _cii_date(due) if due is not None else None
     if description:
-        raise StructuredInvoiceError("Zahlungsbedingungen ohne strukturiertes Fälligkeitsdatum erfordern eine manuelle Prüfung.")
-    return None
+        # A standalone payment deadline can be represented by the structured date alone.
+        deadline = re.fullmatch(r"Zahlbar innerhalb von ([0-9]{1,3}) Tagen\.?", description, re.IGNORECASE)
+        if not deadline or due_date is None or (due_date - invoice_date).days != int(deadline[1]):
+            raise StructuredInvoiceError("Zahlungsbedingungen im Freitext erfordern eine manuelle Prüfung.")
+    return due_date
 
 
 def _invoice_data(root):
@@ -232,7 +235,7 @@ def _invoice_data(root):
     if not all((number, seller, buyer)) or len(number) > 140:
         raise StructuredInvoiceError("Rechnungsnummer, Lieferant oder Rechnungsempfänger fehlen oder sind ungültig.")
     date = _cii_date(header.find("ram:IssueDateTime", NS))
-    due_date = _payment_due_date(settlement)
+    due_date = _payment_due_date(settlement, date)
     if due_date and due_date < date:
         raise StructuredInvoiceError("Die Fälligkeit liegt vor dem Rechnungsdatum und erfordert eine manuelle Prüfung.")
     net = _money(totals, "ram:TaxBasisTotalAmount")

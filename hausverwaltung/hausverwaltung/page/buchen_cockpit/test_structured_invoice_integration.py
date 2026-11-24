@@ -222,6 +222,16 @@ class TestStructuredInvoiceIntegration(unittest.TestCase):
         with self.assertRaisesRegex(frappe.ValidationError, "XRechnungs-Skonto.*manuelle Prüfung"):
             cockpit.preview_structured_invoice(upload["file_url"])
 
+    def test_factur_x_free_text_discount_with_due_date_requires_manual_review(self):
+        xml = (
+            self._xml()
+            .replace(b"urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0", b"urn:cen.eu:en16931:2017")
+            .replace(b"Zahlbar innerhalb von 14 Tagen", b"2 % Skonto bei Zahlung innerhalb von 10 Tagen")
+        )
+        upload = self._upload(make_pdf(xml), ".pdf")
+        with self.assertRaisesRegex(frappe.ValidationError, "Zahlungsbedingungen im Freitext.*manuelle Prüfung"):
+            cockpit.preview_structured_invoice(upload["file_url"])
+
     def test_formats_totals_and_permissions(self):
         normal = self._upload(make_pdf(), ".pdf")
         self.assertEqual(normal["invoice_format"], "pdf")
