@@ -1,7 +1,7 @@
 import json
 from io import BytesIO
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import frappe
 import requests
@@ -212,8 +212,9 @@ class TestWohnungsabnahme(IntegrationTestCase):
 			patch.object(paperless, "_find_protocol_document", return_value=None),
 			patch.object(paperless, "_post_to_paperless", return_value=(True, None, "test-task")) as post,
 			patch.object(paperless, "_paperless_get", side_effect=[
-				[{"task_id": "test-task", "status": "STARTED"}],
-				[{"task_id": "test-task", "status": "SUCCESS", "related_document": "42"}],
+				[{"task_id": "test-task", "task_file_name": "test.pdf", "status": "STARTED"}],
+				[{"task_id": "test-task", "task_file_name": "test.pdf", "status": "SUCCESS", "related_document": "42"}],
+				{"original_checksum": upload.checksum},
 			]),
 		):
 			with self.assertRaisesRegex(frappe.ValidationError, "noch nicht bestätigt"):
@@ -230,7 +231,6 @@ class TestWohnungsabnahme(IntegrationTestCase):
 			{"original_checksum": upload.checksum},
 		]):
 			self.assertEqual(paperless._find_protocol_document(None, upload), 42)
-
 
 	def test_export_rejects_references_outside_the_selected_protocol(self):
 		out = self._photo(self._draft(self.old, "Auszug"))
@@ -290,3 +290,45 @@ class TestWohnungsabnahme(IntegrationTestCase):
 			paperless.reset_unconfirmed_protocol_export(protocol, attachment)
 			self.assertIsNone(frappe.cache.get_value(key))
 			post.assert_called_once()
+
+	def test_task_lookup_negotiates_v9_and_prefers_active_uploads(self):
+		upload = paperless.PaperlessUpload(file_name="test.pdf", content=b"pdf", checksum=paperless._checksum(b"pdf"))
+		config = SimpleNamespace(url="https://paperless.example/", token="fake", timeout=5, verify_ssl=True)
+		response = Mock()
+		response.json.side_effect = [
+			[
+				{"task_id": "aborted", "task_file_name": "test.pdf", "status": "REVOKED"},
+				{"task_id": "active", "task_file_name": "test.pdf", "status": "PENDING"},
+			],
+			{"count": 2, "results": [{"task_id": "active", "input_data": {"filename": "test.pdf"}, "status": "pending"}]},
+		]
+		with patch.object(paperless.requests, "get", return_value=response) as get:
+			self.assertEqual(paperless._find_protocol_task(config, upload)["task_id"], "active")
+			self.assertEqual(get.call_args.kwargs["headers"]["Accept"], "application/json; version=9")
+			with self.assertRaisesRegex(frappe.ValidationError, "keine vollständige Task-Liste"):
+				paperless._find_protocol_task(config, upload)
+
+	def test_failed_or_revoked_upload_allows_retry(self):
+		for status in ("FAILURE", "REVOKED"):
+			with self.subTest(status=status):
+				upload = paperless.PaperlessUpload(
+					file_name="test.pdf", content=b"pdf", checksum=paperless._checksum(b"pdf"),
+				)
+				name = frappe.generate_hash(length=12)
+				key = paperless._protocol_key(name)
+				self.addCleanup(frappe.cache.delete_value, key)
+				with (
+					patch.object(paperless, "_find_protocol_document", return_value=None),
+					patch.object(paperless, "_post_to_paperless", side_effect=[
+						(True, None, "terminated-task"), (True, 42, None),
+					]) as post,
+					patch.object(paperless, "_paperless_get", return_value=[
+						{"task_id": "terminated-task", "task_file_name": "test.pdf", "status": status},
+					]),
+				):
+					with self.assertRaisesRegex(frappe.ValidationError, "Export kann wiederholt werden"):
+						paperless._export_protocol(None, name, None, upload, [], None)
+					self.assertIsNone(frappe.cache.get_value(key))
+					paperless._export_protocol(None, name, None, upload, [], None)
+					self.assertEqual(upload.paperless_id, 42)
+					self.assertEqual(post.call_count, 2)

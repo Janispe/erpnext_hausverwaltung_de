@@ -305,10 +305,13 @@ def _attachment_upload(file):
 	return PaperlessUpload(_sanitize_filename(file.file_name), content, _checksum(content))
 
 
-def _paperless_get(config, endpoint, params=None):
+def _paperless_get(config, endpoint, params=None, *, api_version=None):
+	headers = {"Authorization": f"Token {config.token}"}
+	if api_version is not None:
+		headers["Accept"] = f"application/json; version={api_version}"
 	response = requests.get(
 		urljoin(config.url.rstrip("/") + "/", endpoint),
-		headers={"Authorization": f"Token {config.token}"},
+		headers=headers,
 		params=params,
 		timeout=config.timeout,
 		verify=config.verify_ssl,
@@ -322,17 +325,17 @@ def _find_protocol_document(config, upload):
 	response = _paperless_get(config, "api/documents/", {
 		"original_filename__iexact": upload.file_name, "page_size": 10,
 	})
-	checksums = {upload.checksum, hashlib.sha256(upload.content).hexdigest()}
 	for candidate in response.get("results", []):
 		document_id = _to_int(candidate.get("id"))
-		if not document_id:
-			continue
-		if candidate.get("original_file_name") != upload.file_name:
-			continue
-		metadata = _paperless_get(config, f"api/documents/{document_id}/metadata/")
-		if metadata.get("original_checksum") in checksums:
-			return document_id
+		if candidate.get("original_file_name") == upload.file_name and document_id:
+			if _protocol_original_matches(config, upload, document_id):
+				return document_id
 	return None
+
+
+def _protocol_original_matches(config, upload, document_id):
+	metadata = _paperless_get(config, f"api/documents/{document_id}/metadata/")
+	return metadata.get("original_checksum") in {upload.checksum, hashlib.sha256(upload.content).hexdigest()}
 
 
 def _protocol_key(name):
@@ -344,16 +347,27 @@ def protocol_export_unconfirmed(name):
 	return pending is not None and not pending.get("task_id")
 
 
+_FAILED_PROTOCOL_TASK_STATES = {"FAILURE", "REVOKED"}
+
+
 def _find_protocol_task(config, upload, task_id=None):
-	params = {"task_id": task_id} if task_id else {"task_file_name": upload.file_name}
-	response = _paperless_get(config, "api/tasks/", params)
-	tasks = response if isinstance(response, list) else response.get("results", [])
+	params = {"task_id": task_id} if task_id else None
+	# API v9 keeps the complete, unpaginated list and the legacy Task fields
+	# on Paperless 2 and 3. An unexpected response cannot prove absence.
+	tasks = _paperless_get(config, "api/tasks/", params, api_version=9)
+	if not isinstance(tasks, list) or any(
+		not isinstance(task, dict) or "task_file_name" not in task or not isinstance(task.get("status"), str)
+		for task in tasks
+	):
+		frappe.throw(_("Paperless hat keine vollständige Task-Liste in API v9 geliefert."))
 	if task_id:
 		return next((task for task in tasks if task.get("task_id") == task_id), None)
 
 	matches = [task for task in tasks if task.get("task_file_name") == upload.file_name and task.get("task_id")]
-	# Prefer a still active or successful task over an earlier failure.
-	return next((task for task in matches if task.get("status") != "FAILURE"), matches[0] if matches else None)
+	for task in matches:
+		if task["status"] not in _FAILED_PROTOCOL_TASK_STATES:
+			return task
+	return matches[0] if matches else None
 
 
 def reset_unconfirmed_protocol_export(protocol, file):
@@ -406,13 +420,14 @@ def _export_protocol(config, name, doc, upload, tags, title):
 	if task:
 		upload.task_id = task["task_id"]
 		frappe.cache.set_value(key, {"task_id": upload.task_id})
-		if task.get("status") == "SUCCESS":
-			upload.paperless_id = _to_int(task.get("related_document"))
-			if upload.paperless_id:
+		if task["status"] == "SUCCESS":
+			document_id = _to_int(task.get("related_document"))
+			if document_id and _protocol_original_matches(config, upload, document_id):
+				upload.paperless_id = document_id
 				return
-		if task.get("status") == "FAILURE":
+		if task["status"] in _FAILED_PROTOCOL_TASK_STATES:
 			frappe.cache.delete_value(key)
-			frappe.throw(_("Paperless hat die Verarbeitung abgebrochen. Der Export kann wiederholt werden."))
+			frappe.throw(_("Paperless hat die Verarbeitung beendet. Der Export kann wiederholt werden."))
 
 	if not pending.get("task_id") and not task:
 		frappe.throw(_("Der Upload ist ungeklärt. Bitte in Paperless prüfen und bei Bedarf in der Wohnungsabnahme freigeben."))
