@@ -1,5 +1,6 @@
 import hashlib
 import json
+from contextlib import contextmanager
 from decimal import Decimal
 from io import BytesIO
 from typing import Callable, Dict, List, Optional, Set
@@ -854,6 +855,34 @@ def get_mieter_abrechnungen(name: str) -> List[Dict[str, object]]:
 	return result
 
 
+@contextmanager
+def _redact_readiness_configuration_errors():
+	"""Keep resolver diagnostics out of responses to scoped document readers."""
+	had_flag = "mute_messages" in frappe.flags
+	previous = frappe.flags.get("mute_messages")
+	frappe.flags.mute_messages = True
+	try:
+		yield
+		return
+	except frappe.ValidationError:
+		pass
+	finally:
+		if had_flag:
+			frappe.flags.mute_messages = previous
+		else:
+			frappe.flags.pop("mute_messages", None)
+	try:
+		frappe.throw(_("Die Immobilien- oder Firmenzuordnung ist widersprüchlich. Bitte lassen Sie die Stammdaten prüfen."))
+	except frappe.ValidationError as error:
+		# The context manager is still unwinding the internal exception.
+		raise error from None
+
+
+def _check_readiness_source_permission(doctype, name):
+	if not frappe.has_permission(doctype, "read", frappe.get_doc(doctype, name)):
+		frappe.throw(_("Für die Arbeitsliste fehlen Leserechte an zugehörigen Stammdaten."), frappe.PermissionError)
+
+
 @frappe.whitelist(methods=["GET"])
 def pruefe_abrechnungsbereitschaft(
 	name: str | None = None,
@@ -868,7 +897,7 @@ def pruefe_abrechnungsbereitschaft(
 	)
 	from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen import (
 		_bk_abrechnung_aktiv_am,
-		_get_unsupported_booked_cost_types,
+		_get_booked_cost_findings,
 		_wohnungen_in_haus,
 	)
 	from hausverwaltung.hausverwaltung.scripts.generate_mietrechnungen import _company_via_immobilie
@@ -886,31 +915,39 @@ def pruefe_abrechnungsbereitschaft(
 	if not (immobilie and von and bis):
 		frappe.throw(_("Bitte Immobilie, Von und Bis ausfüllen."))
 
-	frappe.get_doc("Immobilie", immobilie).check_permission("read")
+	property_doc = frappe.get_doc("Immobilie", immobilie)
+	property_doc.check_permission("read")
+	immobilie = property_doc.name
 	period_start, period_end = getdate(von), getdate(bis)
 	if period_end < period_start:
 		frappe.throw(_("Bis darf nicht vor Von liegen."))
 	stichtag = cstr(getdate(stichtag or bis))
 
-	roots, cc_to_haus = _immobilien_hierarchy_maps()
-	root = roots[immobilie]
+	with _redact_readiness_configuration_errors():
+		roots, cc_to_haus = _immobilien_hierarchy_maps()
+		root = roots[immobilie]
+		wohnungen = _wohnungen_in_haus(immobilie=root)
 	nodes = sorted(node for node, node_root in roots.items() if node_root == root)
 	for node in nodes:
 		if node != immobilie:
-			frappe.get_doc("Immobilie", node).check_permission("read")
+			_check_readiness_source_permission("Immobilie", node)
 
-	companies = {_company_via_immobilie(node) for node in nodes} - {None}
+	with _redact_readiness_configuration_errors():
+		companies = {_company_via_immobilie(node) for node in nodes} - {None}
 	if not companies:
 		frappe.throw(_("Für die Immobilie konnte keine Firma ermittelt werden."))
 	for company in sorted(companies):
-		frappe.get_doc("Company", company).check_permission("read")
-
-	wohnungen = _wohnungen_in_haus(immobilie=root)
+		_check_readiness_source_permission("Company", company)
 	for wohnung in wohnungen:
-		frappe.get_doc("Wohnung", wohnung).check_permission("read")
+		_check_readiness_source_permission("Wohnung", wohnung)
 
 	rows = []
 	for zaehler, zuordnungen, start, end in _iter_zaehler_periodenstaende(immobilie, period_start, period_end):
+		if start is not None and end is not None:
+			continue
+		_check_readiness_source_permission("Zaehler", zaehler["name"])
+		for zuordnung in zuordnungen:
+			_check_readiness_source_permission("Zaehler Zuordnung", zuordnung["name"])
 		for datum, stand, grund in (
 			(period_start, start, _("Anfangsstand fehlt.")),
 			(period_end, end, _("Endstand fehlt.")),
@@ -946,17 +983,23 @@ def pruefe_abrechnungsbereitschaft(
 				"ziel_name": wohnung,
 			})
 
-	unsupported = _get_unsupported_booked_cost_types(
-		period_start, period_end, root, cc_to_haus, companies
-	)
-	for kostenart, (verteilung, datum) in sorted(unsupported.items()):
-		rows.append({
-			"kostenart": kostenart,
-			"stichtag": datum,
-			"grund": _("Der Umlageschlüssel {0} ist noch nicht implementiert.").format(verteilung),
-			"ziel_doctype": "Betriebskostenart",
-			"ziel_name": kostenart,
-		})
+	checked_sources = set()
+	for finding in _get_booked_cost_findings(
+		period_start, period_end, root,
+		cc_to_haus=cc_to_haus,
+		immobilie_roots=roots,
+		companies=companies,
+		wohnungen=wohnungen,
+		stichtag=stichtag,
+	):
+		for source in (
+			("Betriebskostenart", finding["kostenart"]),
+			(finding["ziel_doctype"], finding["ziel_name"]),
+		):
+			if source not in checked_sources:
+				_check_readiness_source_permission(*source)
+				checked_sources.add(source)
+		rows.append(finding)
 	return rows
 
 

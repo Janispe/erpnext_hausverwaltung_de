@@ -260,7 +260,7 @@ const open_readiness_dialog = async (frm) => {
 			</div>`).join("");
 		const meter = [row.zaehlernummer || row.zaehler, row.zaehlerart].filter(Boolean).join(" · ");
 		return `<tr>
-			<td>${assignments || escape_html(row.kostenart || row.wohnung)}</td>
+			<td>${assignments || escape_html([row.kostenart, row.wohnung].filter(Boolean).join(" · "))}</td>
 			<td>${escape_html(meter)}</td>
 			<td>${formatDate(row.stichtag)}</td>
 			<td>${escape_html(row.grund)}</td>

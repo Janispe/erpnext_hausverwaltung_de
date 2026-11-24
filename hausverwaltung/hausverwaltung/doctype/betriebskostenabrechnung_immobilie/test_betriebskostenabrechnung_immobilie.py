@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, call, patch
 
+import traceback
 import unittest
 from decimal import Decimal
 
@@ -678,6 +679,95 @@ class TestAbrechnungsbereitschaftIntegration(unittest.TestCase):
 		self.assertEqual(module.pruefe_abrechnungsbereitschaft(name=head.name, immobilie="fremd"), [])
 		self.assertEqual(self._snapshot(), before)
 
+	def _reader(self, *source_doctypes):
+		token = frappe.generate_hash(length=12)
+		head_type = "Betriebskostenabrechnung Immobilie"
+		role = frappe.get_doc({"doctype": "Role", "role_name": f"BK Readiness {token}"}).insert()
+		user = frappe.get_doc({
+			"doctype": "User", "email": f"bk-readiness-{token}@example.invalid",
+			"first_name": "BK Readiness", "send_welcome_email": 0, "user_type": "System User",
+			"roles": [{"role": role.name}],
+		}).insert()
+		for doctype in (head_type, "Immobilie", "Wohnung", "Company", *source_doctypes):
+			frappe.get_doc({
+				"doctype": "Custom DocPerm", "parent": doctype, "parenttype": "DocType",
+				"parentfield": "permissions", "role": role.name, "permlevel": 0,
+				"read": 1, "create": int(doctype == head_type),
+			}).insert()
+			frappe.clear_cache(doctype=doctype)
+			self.addCleanup(frappe.clear_cache, doctype=doctype)
+
+		return user
+
+	def test_booked_costs_with_zero_weight_use_the_same_basis_as_allocation(self):
+		from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen import (
+			allocate_kosten_auf_wohnungen,
+		)
+
+		state = frappe.db.get_value("Wohnungszustand", {"wohnung": self.flat.name}, "name")
+		frappe.db.set_value("Wohnungszustand", state, "größe", 0)
+		key = frappe.get_doc({
+			"doctype": "Zustandsschluessel", "name1": "Test " + frappe.generate_hash(length=8),
+			"art": "Gleitkommazahl", "referenzquelle": "Wohnungszustand-Feld", "wohnungszustand_feld": "größe",
+		}).insert()
+		self.art.db_set("schlüssel", key.name)
+		for distribution in ("qm", "Schlüssel"):
+			with self.subTest(distribution=distribution):
+				self.art.db_set("verteilung", distribution)
+				with self.assertRaisesRegex(frappe.ValidationError, "keine Gewichte"):
+					allocate_kosten_auf_wohnungen(**self.args)
+				rows = module.pruefe_abrechnungsbereitschaft(**self.args)
+				self.assertEqual(len(rows), 1)
+				self.assertEqual(rows[0]["kostenart"], self.art.name)
+				self.assertEqual(rows[0]["ziel_doctype"], "Wohnung")
+				self.assertEqual(rows[0]["ziel_name"], self.flat.name)
+				self.assertEqual(str(rows[0]["stichtag"]), self.bis)
+
+	def test_missing_direct_booking_dimension_links_the_voucher(self):
+		self.art.db_set("verteilung", "Einzeln")
+		rows = module.pruefe_abrechnungsbereitschaft(**self.args)
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(rows[0]["kostenart"], self.art.name)
+		self.assertEqual(rows[0]["ziel_doctype"], self.booking.voucher_type)
+		self.assertEqual(rows[0]["ziel_name"], self.booking.voucher_no)
+
+	def test_worklist_does_not_expose_restricted_source_documents(self):
+		self._meter(self.von)
+		self.art.db_set("verteilung", "Bewohner")
+		sources = {"Zaehler", "Zaehler Zuordnung", "Betriebskostenart"}
+		for omitted in sorted(sources):
+			with self.subTest(omitted=omitted):
+				frappe.set_user("Administrator")
+				user = self._reader(*sorted(sources - {omitted}))
+				frappe.set_user(user.name)
+				with self.assertRaisesRegex(frappe.PermissionError, "zugehörigen Stammdaten"):
+					module.pruefe_abrechnungsbereitschaft(**self.args)
+		frappe.set_user("Administrator")
+		user = self._reader(*sorted(sources))
+		frappe.set_user(user.name)
+		self.assertEqual(len(module.pruefe_abrechnungsbereitschaft(**self.args)), 3)
+
+	def test_foreign_hierarchy_conflict_does_not_disclose_its_documents(self):
+		from hausverwaltung.hausverwaltung.test_booking_safeguards import fixture
+
+		_, _, foreign, _, _ = fixture(compact=True)
+		user = self._reader()
+		frappe.get_doc({
+			"doctype": "User Permission", "user": user.name, "allow": "Immobilie",
+			"for_value": self.prop.name, "apply_to_all_doctypes": 1,
+		}).insert()
+		# A legacy duplicate cost center outside the authorized scope must fail closed.
+		frappe.db.set_value("Immobilie", foreign.name, "kostenstelle", self.prop.kostenstelle)
+		frappe.set_user(user.name)
+		self.assertFalse(frappe.has_permission("Immobilie", "read", frappe.get_doc("Immobilie", foreign.name)))
+		message_count = len(getattr(frappe.local, "message_log", None) or [])
+		with self.assertRaisesRegex(frappe.ValidationError, "zuordnung ist widersprüchlich") as error:
+			module.pruefe_abrechnungsbereitschaft(**self.args)
+		formatted = "".join(traceback.format_exception(error.exception))
+		for unauthorized in (foreign.name, self.prop.kostenstelle):
+			self.assertNotIn(unauthorized, formatted)
+			self.assertNotIn(unauthorized, str(frappe.local.message_log[message_count:]))
+
 	def test_direct_call_enforces_company_and_document_permissions(self):
 		from hausverwaltung.hausverwaltung.test_booking_safeguards import bk_head
 
@@ -688,20 +778,7 @@ class TestAbrechnungsbereitschaftIntegration(unittest.TestCase):
 			"abbr": token[:5], "default_currency": "EUR", "country": "Germany",
 		})
 		other_company.db_insert()
-		role = frappe.get_doc({"doctype": "Role", "role_name": f"BK Readiness {token}"}).insert()
-		user = frappe.get_doc({
-			"doctype": "User", "email": f"bk-readiness-{token}@example.invalid",
-			"first_name": "BK Readiness", "send_welcome_email": 0, "user_type": "System User",
-			"roles": [{"role": role.name}],
-		}).insert()
-		for doctype in (head.doctype, "Immobilie", "Wohnung", "Company"):
-			frappe.get_doc({
-				"doctype": "Custom DocPerm", "parent": doctype, "parenttype": "DocType",
-				"parentfield": "permissions", "role": role.name, "permlevel": 0,
-				"read": 1, "create": int(doctype == head.doctype),
-			}).insert()
-			frappe.clear_cache(doctype=doctype)
-			self.addCleanup(frappe.clear_cache, doctype=doctype)
+		user = self._reader()
 
 		frappe.set_user(user.name)
 		self.assertEqual(module.pruefe_abrechnungsbereitschaft(**self.args), [])
