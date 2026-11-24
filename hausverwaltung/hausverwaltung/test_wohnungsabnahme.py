@@ -118,7 +118,7 @@ class TestWohnungsabnahme(IntegrationTestCase):
 		photo = frappe.get_doc("File", draft["rooms"][0]["photos"][0]["name"])
 		controller = type(photo).__mro__
 		self.assertLess(controller.index(HeizkostenRuecklaufFileMixin), controller.index(FileMixin))
-		self.assertEqual(frappe.get_hooks("has_permission")["File"], [
+		self.assertEqual(frappe.get_hooks("has_permission", app_name="hausverwaltung")["File"], [
 			"hausverwaltung.hausverwaltung.wohnungsschaden.permissions.has_file_permission",
 			f"{abnahme.__name__}.file_permission",
 		])
