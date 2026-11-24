@@ -208,3 +208,14 @@ function load_mietvertraege(frm) {
 		});
 	});
 }
+
+frappe.ui.form.on('Wohnung', {
+	refresh(frm) {
+		const staff = frappe.session.user === 'Administrator'
+			|| frappe.user.has_role(['Hausverwalter', 'System Manager']);
+		if (frm.is_new() || !staff || !frappe.model.can_read('Issue')) return;
+		frm.add_custom_button(__('Wohnungsschäden'), () => {
+			frappe.set_route('List', 'Issue', { status: ['!=', ''], hv_wohnungsschaden: 1, hv_wohnung: frm.doc.name });
+		});
+	},
+});

@@ -18,9 +18,12 @@ from urllib.parse import urljoin
 import frappe
 import requests
 from frappe import _
+from frappe.core.doctype.file.utils import find_file_by_url
 from frappe.utils import get_datetime, now_datetime, strip_html
 from frappe.utils.file_manager import get_file, save_file
 from frappe.utils.password import get_decrypted_password
+
+from hausverwaltung.hausverwaltung.wohnungsschaden.permissions import protected_issue
 
 LOGGER_TITLE = "Paperless NGX Export"
 LOG_DOCTYPE = "Paperless Export Log"
@@ -113,6 +116,8 @@ def trigger_manual_paperless_export(communication: str) -> str:
 	except Exception:
 		frappe.throw(_("Kommunikation konnte nicht geladen werden."))
 
+	if protected_issue("Communication", doc.name):
+		doc.check_permission("read")
 	if not _is_incoming_email(doc):
 		frappe.throw(_("Nur eingehende E-Mails können exportiert werden."))
 
@@ -132,6 +137,9 @@ def get_paperless_link(communication: str) -> dict:
 	result: dict[str, str | None] = {"link": None, "status": None, "last_error": None}
 	if not communication:
 		return result
+
+	if protected_issue("Communication", communication):
+		frappe.get_doc("Communication", communication).check_permission("read")
 
 	# Prefer the dedicated link file that is attached during export.
 	file_rows = frappe.get_all(
@@ -225,6 +233,14 @@ def export_attachment_to_paperless(
 		frappe.throw(_("Datei-URL fehlt."))
 
 	doc = frappe.get_doc(doctype, docname)
+	if protected_issue(doctype, docname):
+		doc.check_permission("read")
+	attachment_targets = frappe.get_all(
+		"File", filters={"file_url": file_url}, fields=["attached_to_doctype", "attached_to_name"],
+	)
+	if any(protected_issue(file.attached_to_doctype, file.attached_to_name) for file in attachment_targets):
+		if not find_file_by_url(file_url):
+			raise frappe.PermissionError
 	file_name, content = get_file(file_url)
 	file_name = _sanitize_filename(file_name or os.path.basename(file_url) or f"{docname}.bin")
 	content_bytes = _ensure_bytes(content)
@@ -680,7 +696,7 @@ def _attach_paperless_link_file(communication_name: str, link: str) -> None:
 				"file_url": link,
 				"attached_to_doctype": "Communication",
 				"attached_to_name": communication_name,
-				"is_private": 0,
+				"is_private": 1,
 			}
 		)
 		doc.insert(ignore_permissions=True, ignore_if_duplicate=True)
@@ -1033,7 +1049,7 @@ def _attach_eml_if_missing(doc) -> None:
 			content,
 			"Communication",
 			doc.name,
-			is_private=0,
+			is_private=1,
 			df=None,
 		)
 	except Exception:
