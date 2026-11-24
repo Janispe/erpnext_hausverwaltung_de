@@ -249,12 +249,19 @@ class FileMixin:
 		return super().validate()
 
 	def handle_is_private_changed(self):
-		# Frappe moves the content and updates every File sharing this URL.
+		# Frappe moves the path and updates every File with the same content hash.
 		if not cint(self.is_private) and (self.file_url or "").startswith("/private/files/"):
-			attachments = frappe.qb.get_query(
-				"File", filters={"file_url": self.file_url},
-				fields=["attached_to_doctype", "attached_to_name"], for_update=True,
-			).run(as_dict=True)
+			file = frappe.qb.DocType("File")
+			shared_content = file.file_url == self.file_url
+			if self.content_hash:
+				shared_content |= file.content_hash == self.content_hash
+			attachments = (
+				frappe.qb.from_(file)
+				.select(file.attached_to_doctype, file.attached_to_name)
+				.where(shared_content)
+				.for_update()
+				.run(as_dict=True)
+			)
 			if any(protected_issue(row.attached_to_doctype, row.attached_to_name, for_update=True) for row in attachments):
 				frappe.throw(_("Schadensanhänge müssen auch bei gemeinsam verwendeten Dateien privat bleiben."))
 		return super().handle_is_private_changed()

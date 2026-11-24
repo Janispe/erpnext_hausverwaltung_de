@@ -344,12 +344,21 @@ class TestWohnungsschaden(IntegrationTestCase):
 		public_path = Path(frappe.get_site_path("public", "files", private_path.name))
 		content = private_path.read_bytes()
 
-		alias.is_private = 0
-		with self.assertRaisesRegex(frappe.ValidationError, "gemeinsam verwendeten Dateien"):
-			alias.save()
-		for file in (alias.reload(), protected.reload()):
-			self.assertEqual(file.is_private, 1)
-			self.assertEqual(file.file_url, url)
+		older_alias = self.photo(normal, suffix="-older-path")
+		older_url = older_alias.file_url
+		self.assertNotEqual(older_url, url)
+		Path(older_alias.get_full_path()).write_bytes(content)
+		older_alias.db_set("content_hash", protected.content_hash)
+
+		for file, expected_url in ((alias, url), (older_alias, older_url)):
+			with self.subTest(file_url=expected_url):
+				file.is_private = 0
+				with self.assertRaisesRegex(frappe.ValidationError, "gemeinsam verwendeten Dateien"):
+					file.save()
+				self.assertEqual(file.reload().is_private, 1)
+				self.assertEqual(file.file_url, expected_url)
+		self.assertEqual(protected.reload().is_private, 1)
+		self.assertEqual(protected.file_url, url)
 		self.assertEqual(private_path.read_bytes(), content)
 		self.assertFalse(public_path.exists())
 
