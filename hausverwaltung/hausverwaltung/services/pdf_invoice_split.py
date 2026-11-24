@@ -447,6 +447,9 @@ def split_invoice_pdf(
 		frappe.throw(f"Die hochgeladene Datei konnte nicht geladen werden: {exc}")
 	if isinstance(content, str):
 		content = content.encode("latin-1", errors="replace")
+	from hausverwaltung.hausverwaltung.services.structured_invoice import require_ordinary_pdf
+
+	require_ordinary_pdf(content, source_filename)
 	if not content.startswith(b"%PDF"):
 		frappe.throw("Die hochgeladene Datei ist kein gueltiges PDF.")
 

@@ -562,17 +562,20 @@ def extract_from_file_url(file_url: str) -> dict:
 		raise mistral_client.MistralPermanentError("file_url fehlt.")
 
 	check_invoice_file_permission(file_url)
-	mistral_client.ensure_configured()
-
 	# 1. File laden.
 	try:
-		_filename, content = get_file(file_url)
+		filename, content = get_file(file_url)
 	except Exception as exc:
 		raise mistral_client.MistralPermanentError(
 			f"Datei konnte nicht geladen werden: {exc}"
 		) from exc
 	if isinstance(content, str):
 		content = content.encode("utf-8", errors="replace")
+
+	from hausverwaltung.hausverwaltung.services.structured_invoice import require_ordinary_pdf
+
+	require_ordinary_pdf(content, filename)
+	mistral_client.ensure_configured()
 
 	# 2. Text extrahieren — bei force_vision skippen.
 	force_vision = mistral_client.is_force_vision_enabled()
