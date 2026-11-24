@@ -76,16 +76,19 @@ class TestRuecklauf(unittest.TestCase):
 
 		# Use one actual contract identifier in field 6 to exercise auto-matching.
 		self.assertLessEqual(len(self.first.name), 20)
-		content = CONTENT[:31] + self.first.name.encode("iso-8859-15").ljust(20) + CONTENT[51:]
+		self.content = CONTENT[:31] + self.first.name.encode("iso-8859-15").ljust(20) + CONTENT[51:]
+		self.args = dict(name=self.head.name, datei=self.attach(self.content), liegenschaft="123456789",
+			kontrollsumme="824,21", kontrollbeleg="Synthetische Gesamtabrechnung, Seite 1",
+			zuordnungen={"2": {"leerstand": self.flat.name}, "3": {"mietvertrag": self.second.name}})
+
+	def attach(self, content):
 		file = frappe.get_doc({
 			"doctype": "File", "file_name": frappe.generate_hash(length=10) + "-" + EXAMPLE,
 			"content": content, "is_private": 1,
 			"attached_to_doctype": self.head.doctype, "attached_to_name": self.head.name,
 		}).insert()
 		self.addCleanup(lambda: Path(file.get_full_path()).unlink(missing_ok=True))
-		self.args = dict(name=self.head.name, datei=file.name, liegenschaft="123456789",
-			kontrollsumme="824,21", kontrollbeleg="Synthetische Gesamtabrechnung, Seite 1",
-			zuordnungen={"2": {"leerstand": self.flat.name}, "3": {"mietvertrag": self.second.name}})
+		return file.name
 
 	def confirm(self, **changes):
 		args = self.args | changes
@@ -156,10 +159,13 @@ class TestRuecklauf(unittest.TestCase):
 			ruecklauf.uebernehmen(**(self.args | {"kontrollbeleg": "Andere Fundstelle"}), freigabe_id=data["freigabe_id"])
 		self.assertFalse(self.head._get_children())
 
-	def test_changed_occupancy_blocks_submit_before_any_invoice(self):
-		self.confirm()
+	def test_changed_occupancy_blocks_booking_until_corrected_return_is_approved(self):
+		initial = ruecklauf.vorschau(**self.args)
+		ruecklauf.uebernehmen(**self.args, freigabe_id=initial["freigabe_id"])
 		self.head.reload()
 		ruecklauf.validate_imported_usage(self.head)
+		replay = ruecklauf.vorschau(**self.args, ersetzt_freigabe=initial["freigabe_id"])
+		self.assertIn("bereits freigegeben", " ".join(replay["fehler"]))
 		self.first.bis = "2025-05-15"
 		self.first.save()
 		with self.assertRaisesRegex(frappe.ValidationError, "Belegungsstand weicht"):
@@ -167,6 +173,51 @@ class TestRuecklauf(unittest.TestCase):
 		for contract in (self.first, self.second):
 			self.assertFalse(frappe.db.exists("Sales Invoice", {"customer": contract.kunde}))
 		self.assertEqual(frappe.db.get_value(self.head.doctype, self.head.name, "docstatus"), 0)
+
+		corrected = self.content[:51] + b"1505250000033211" + self.content[67:]
+		offset = 1025 + 57
+		corrected = corrected[:offset] + b"0000006397" + corrected[offset + 10:]
+		new_file = self.attach(corrected)
+		with self.assertRaisesRegex(frappe.ValidationError, "Freigabestand"):
+			ruecklauf.vorschau(**(self.args | {"datei": new_file}))
+		self.assertEqual(self.confirm(datei=new_file, ersetzt_freigabe=initial["freigabe_id"]), {"wiederholung": False})
+		self.assertEqual(ruecklauf.uebernehmen(**self.args, freigabe_id=initial["freigabe_id"]), {"wiederholung": True})
+		self.head.reload()
+		ruecklauf.validate_imported_usage(self.head)
+		audit = json.loads(self.head.ruecklauf_import)
+		self.assertEqual(self.head.ruecklauf_datei, new_file)
+		self.assertEqual(audit["zeilen"][1]["von"], "2025-05-16")
+		self.assertEqual(audit["zeilen"][0]["betrag"], "332.11")
+		self.assertEqual(audit["historie"][0]["zeilen"][0]["betrag"], "321.01")
+		self.assertEqual(audit["historie"][0]["datei"], self.args["datei"])
+		children = self.head._get_children()
+		self.assertEqual(len(children), 2)
+		first = next(child for child in children if child.mietvertrag == self.first.name)
+		self.assertEqual(Decimal(str(first.kosten_gesamt)), Decimal("332.11"))
+		with self.assertRaisesRegex(frappe.ValidationError, "kann nicht entfernt werden"):
+			frappe.delete_doc("File", self.args["datei"])
+
+	def test_replacement_removes_only_previously_imported_obsolete_draft(self):
+		self.confirm()
+		audit = json.loads(self.head.reload().ruecklauf_import)
+		old_draft = audit["zeilen"][2]["entwurf"]
+		self.second.von = "2026-01-01"
+		self.second.save()
+		lines = self.content.splitlines()
+		corrected = lines[0] + b"\n" + lines[1][:51] + b"3112250000050320" + lines[1][67:] + b"\n"
+		args = self.args | {
+			"datei": self.attach(corrected), "ersetzt_freigabe": audit["freigabe_id"],
+			"zuordnungen": {"2": {"leerstand": self.flat.name}},
+		}
+		data = ruecklauf.vorschau(**args)
+		self.assertEqual(data["fehler"], [])
+		self.assertEqual(data["entfallende_entwuerfe"], [old_draft])
+		self.assertTrue(frappe.db.exists(ruecklauf.TENANT, old_draft))
+		ruecklauf.uebernehmen(**args, freigabe_id=data["freigabe_id"])
+		self.head.reload()
+		ruecklauf.validate_imported_usage(self.head)
+		self.assertFalse(frappe.db.exists(ruecklauf.TENANT, old_draft))
+		self.assertEqual([child.mietvertrag for child in self.head._get_children()], [self.first.name])
 
 	def test_approved_source_cannot_be_removed_or_made_public(self):
 

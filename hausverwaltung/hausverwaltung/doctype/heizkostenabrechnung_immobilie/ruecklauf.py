@@ -200,7 +200,7 @@ def validate_imported_usage(parent):
 	if any(now["grund"] or any(old.get(field) != now[field] for field in fields)
 		for old, now in zip(approved, current)
 	) or set(contracts) != {row["mietvertrag"] for row in current if row["mietvertrag"]}:
-		frappe.throw("Der Belegungsstand weicht vom freigegebenen Messdienst-Rücklauf ab. Bitte Nutzungszeiträume und Rücklauf erneut prüfen.")
+		frappe.throw("Der Belegungsstand weicht vom freigegebenen Messdienst-Rücklauf ab. Bitte Nutzungszeiträume klären und einen korrigierten Rücklauf freigeben.")
 
 
 def _children(parent, *, lock):
@@ -213,7 +213,33 @@ def _children(parent, *, lock):
 	)
 
 
-def _preview(parent, datei, liegenschaft, kontrollsumme, kontrollbeleg, zuordnungen, *, lock):
+def _draft_changes(parent, children, contracts, previous):
+	previous_drafts = {row.get("entwurf") for row in previous.get("zeilen", []) if row.get("entwurf")}
+	obsolete = []
+	invalid = len({child.mietvertrag for child in children}) != len(children)
+	for child in children:
+		same_scope = (
+			child.immobilie == parent.immobilie
+			and getdate(child.von) == getdate(parent.von) and getdate(child.bis) == getdate(parent.bis)
+		)
+		contract = contracts.get(child.mietvertrag)
+		if same_scope and contract and child.customer == contract.kunde and child.wohnung == contract.wohnung:
+			continue
+		if same_scope and child.name in previous_drafts:
+			obsolete.append(child.name)
+		else:
+			invalid = True
+	return obsolete, invalid
+
+
+def _previous_approval(parent, replaced):
+	previous = json.loads(parent.ruecklauf_import) if parent.ruecklauf_import else {}
+	_require(previous.get("freigabe_id") == (replaced or None),
+		"Der Freigabestand hat sich geändert. Bitte den Entwurf neu laden und den Rücklauf erneut prüfen.")
+	return previous
+
+
+def _preview(parent, datei, liegenschaft, kontrollsumme, kontrollbeleg, zuordnungen, previous, *, lock):
 	_require(parent.immobilie and parent.von and parent.bis, "Bitte zuerst Immobilie und Abrechnungszeitraum speichern.")
 	_require(re.fullmatch(r"-?[0-9]{1,14}(?:[.,][0-9]{1,2})?", str(kontrollsumme if kontrollsumme is not None else "")),
 		"Bitte die unabhängige Bruttokontrollsumme in Euro mit höchstens zwei Nachkommastellen eingeben.")
@@ -237,17 +263,19 @@ def _preview(parent, datei, liegenschaft, kontrollsumme, kontrollbeleg, zuordnun
 		errors.append("Für mindestens einen Mietvertrag im Abrechnungszeitraum fehlt ein eindeutig zugeordneter D-Satz.")
 	if any(child.docstatus != 0 or child.sales_invoice or child.credit_note for child in children):
 		errors.append("Mindestens eine Mieterabrechnung ist bereits eingereicht oder enthält einen Buchungsverweis.")
-	if len({child.mietvertrag for child in children}) != len(children) or any(
-		not (contract := contracts.get(child.mietvertrag)) or child.customer != contract.kunde
-		or child.wohnung != contract.wohnung or child.immobilie != parent.immobilie
-		or getdate(child.von) != getdate(parent.von) or getdate(child.bis) != getdate(parent.bis)
-		for child in children
-	):
+	obsolete, invalid = _draft_changes(parent, children, contracts, previous)
+	if invalid:
 		errors.append("Vorhandene Mieterentwürfe enthalten doppelte oder abweichende Stammdaten.")
-	data = dict(format=FORMAT, datei=datei, sha256=sha256(content).hexdigest(),
+	file_hash = sha256(content).hexdigest()
+	comparable = ("zeile", "von", "bis", "typ", "mietvertrag", "customer", "wohnung")
+	if previous.get("sha256") == file_hash and [
+		tuple(row.get(field) for field in comparable) for row in previous["zeilen"]
+	] == [tuple(row[field] for field in comparable) for row in rows]:
+		errors.append("Dieser Rücklauf ist für diese Nutzungszeiträume bereits freigegeben.")
+	data = dict(format=FORMAT, datei=datei, sha256=file_hash,
 		liegenschaft=liegenschaft, kontrollbeleg=kontrollbeleg, kontrollsumme=_euros(control),
 		summe=_euros(total), leerstand_summe=_euros(sum(row["cents"] for row in rows if row["typ"] == "Leerstand")),
-		zeilen=rows, fehler=errors)
+		zeilen=rows, fehler=errors, ersetzt_freigabe=previous.get("freigabe_id"), entfallende_entwuerfe=obsolete)
 	data["freigabe_id"] = _digest([parent.name, parent.modified, frappe.session.user, data, children])
 	return data
 
@@ -261,22 +289,23 @@ def _get_parent(name, *, lock=False):
 
 
 @frappe.whitelist(methods=["POST"])
-def vorschau(name, datei, liegenschaft, kontrollsumme, kontrollbeleg, zuordnungen=None):
+def vorschau(name, datei, liegenschaft, kontrollsumme, kontrollbeleg, zuordnungen=None, ersetzt_freigabe=None):
 	parent = _get_parent(name)
-	_require(not parent.ruecklauf_import, "Dieser Entwurf hat bereits einen bestätigten Rücklauf.")
-	return _preview(parent, datei, liegenschaft, kontrollsumme, kontrollbeleg, zuordnungen, lock=False)
+	previous = _previous_approval(parent, ersetzt_freigabe)
+	return _preview(parent, datei, liegenschaft, kontrollsumme, kontrollbeleg, zuordnungen, previous, lock=False)
 
 
 @frappe.whitelist(methods=["POST"])
-def uebernehmen(name, datei, liegenschaft, kontrollsumme, kontrollbeleg, freigabe_id, zuordnungen=None):
+def uebernehmen(name, datei, liegenschaft, kontrollsumme, kontrollbeleg, freigabe_id, zuordnungen=None, ersetzt_freigabe=None):
 	# Match the lock order used by the existing draft creation and submission.
 	lock_accounting_scope()
 	_lock_hk_property(frappe.db.get_value(HEAD, name, "immobilie"))
 	parent = _get_parent(name, lock=True)
 	if parent.ruecklauf_import:
 		previous = json.loads(parent.ruecklauf_import)
-		_require(previous["freigabe_id"] == freigabe_id, "Dieser Entwurf hat bereits einen bestätigten Rücklauf.")
-		return {"wiederholung": True}
+		if any(audit["freigabe_id"] == freigabe_id for audit in (previous, *previous.get("historie", []))):
+			return {"wiederholung": True}
+	previous = _previous_approval(parent, ersetzt_freigabe)
 
 	others = frappe.db.sql(
 		"""SELECT name FROM `tabHeizkostenabrechnung Immobilie`
@@ -286,13 +315,19 @@ def uebernehmen(name, datei, liegenschaft, kontrollsumme, kontrollbeleg, freigab
 		{"imm": parent.immobilie, "name": parent.name, "von": parent.von, "bis": parent.bis},
 	)
 	_require(not others, "Für einen überschneidenden Zeitraum besteht bereits ein bestätigter Rücklauf oder eine eingereichte Abrechnung.")
-	data = _preview(parent, datei, liegenschaft, kontrollsumme, kontrollbeleg, zuordnungen, lock=True)
+	data = _preview(parent, datei, liegenschaft, kontrollsumme, kontrollbeleg, zuordnungen, previous, lock=True)
 	_require(not data["fehler"], " ".join(data["fehler"]))
 	_require(data["freigabe_id"] == freigabe_id, "Datei, Zuordnungen oder Entwurfsstand haben sich geändert. Bitte die Vorschau erneut prüfen.")
 
 	point = "hk_ruecklauf_" + frappe.generate_hash(length=10)
 	frappe.db.savepoint(point)
 	try:
+		for obsolete in data["entfallende_entwuerfe"]:
+			child = _get_owned_mieter_document(parent, obsolete)
+			frappe.db.delete("Heizkostenabrechnung Position", {
+				"parent": parent.name, "parenttype": HEAD, "heizkostenabrechnung_mieter": child.name,
+			})
+			child.delete(ignore_permissions=True)
 		_create_mieter_drafts_for_parent(parent)
 		by_contract = {row["mietvertrag"]: row for row in data["zeilen"] if row["mietvertrag"]}
 		for entry in _children(parent, lock=True):
@@ -306,6 +341,8 @@ def uebernehmen(name, datei, liegenschaft, kontrollsumme, kontrollbeleg, freigab
 		_require(not by_contract, "Mindestens ein erforderlicher Mieterentwurf fehlt.")
 		parent._hydrate_positions_from_children()
 		data.update(freigegeben_von=frappe.session.user, freigegeben_am=frappe.utils.now())
+		if previous:
+			data["historie"] = [*previous.pop("historie", []), previous]
 		parent.ruecklauf_datei = datei
 		parent.ruecklauf_import = json.dumps(data, ensure_ascii=False, indent=2)
 		parent.flags.hk_ruecklauf_import = True

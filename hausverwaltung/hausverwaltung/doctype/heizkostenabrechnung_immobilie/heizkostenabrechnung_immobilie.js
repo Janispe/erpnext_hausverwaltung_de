@@ -133,8 +133,9 @@ function _add_buttons(frm) {
 	}
 
 	if (frm.doc.docstatus === 0) {
-		if (!frm.doc.ruecklauf_import && frm.perm[0]?.write) {
-			frm.add_custom_button(__("Rücklauf importieren"), () => _open_hk_return(frm), __("Aktionen"));
+		if (frm.perm[0]?.write) {
+			const label = frm.doc.ruecklauf_import ? __("Korrigierten Rücklauf importieren") : __("Rücklauf importieren");
+			frm.add_custom_button(label, () => _open_hk_return(frm), __("Aktionen"));
 		}
 		frm.add_custom_button(
 			__("Mieter-Drafts erzeugen"),
@@ -225,8 +226,9 @@ function _open_hk_return(frm) {
 		frappe.msgprint(__("Bitte die Heizkostenabrechnung zuerst speichern."));
 		return;
 	}
+	const previous = frm.doc.ruecklauf_import ? JSON.parse(frm.doc.ruecklauf_import) : null;
 	const setup = new frappe.ui.Dialog({
-		title: __("Messdienst-Rücklauf importieren"),
+		title: previous ? __("Korrigierten Rücklauf importieren") : __("Messdienst-Rücklauf importieren"),
 		fields: [
 			{ fieldname: "liegenschaft", fieldtype: "Data", label: __("Messdienst-Liegenschaft aus der Abrechnung"), reqd: 1 },
 			{ fieldname: "kontrollsumme", fieldtype: "Data", label: __("Bruttokontrollsumme Heizung und Warmwasser inkl. Leerstand (EUR)"), reqd: 1 },
@@ -247,7 +249,9 @@ function _open_hk_return(frm) {
 				restrictions: { allowed_file_types: [".dat"], max_file_size: 5 * 1024 * 1024 },
 				on_success(file) {
 					setup.hide();
-					_show_hk_return(frm, { name: frm.docname, datei: file.name, ...values });
+					_show_hk_return(frm, {
+						name: frm.docname, datei: file.name, ersetzt_freigabe: previous?.freigabe_id, ...values,
+					});
 				},
 			});
 		},
@@ -277,6 +281,14 @@ async function _show_hk_return(frm, args) {
 			data.summe, data.leerstand_summe, data.kontrollsumme,
 		]);
 		$("<p>").text(amounts).appendTo(content);
+		if (data.ersetzt_freigabe) {
+			$("<p>").text(__("Die neue Freigabe ersetzt die bisherigen Kosten. Die alte Freigabe und ihre Datei bleiben im Prüfprotokoll erhalten.")).appendTo(content);
+		}
+		if (data.entfallende_entwuerfe.length) {
+			$("<p>").text(__("Entwürfe, die im korrigierten Rücklauf entfallen: {0}", [
+				data.entfallende_entwuerfe.join(", "),
+			])).appendTo(content);
+		}
 		for (const error of data.fehler) $("<p>").addClass("text-danger").text(error).appendTo(content);
 		const table = $("<table>").addClass("table table-sm").appendTo($("<div>").addClass("table-responsive").appendTo(content));
 		const heading = $("<tr>").appendTo($("<thead>").appendTo(table));

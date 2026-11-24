@@ -179,9 +179,17 @@ realer Belegung prüft das Laden und Speichern der Nutzerliste.
 Unter **Messdienst-Rücklauf** stehen die freigegebenen Zeilen und ihre
 Entwurfsbezüge, der Dateibezug mit SHA-256, die Kontrollsumme mit Fundstelle
 sowie Freigabezeit und Benutzer. Die verwendete private D-Datei ist dort
-verlinkt und gegen Entfernen und Veröffentlichung geschützt. Pro Entwurf gibt
-es eine Freigabe. Nachträgliche
-fachliche Berichtigungen erfolgen über die vorhandenen Abrechnungsabläufe.
+verlinkt und gegen Entfernen und Veröffentlichung geschützt. Pro Entwurf gilt
+die jeweils letzte Freigabe.
+
+Weicht die aktuelle Belegung von einer bestätigten Freigabe ab, blockiert
+das Einreichen vor der ersten Buchung. Nach Klärung der Vertragszeiten im
+Entwurf unter **Aktionen → Korrigierten Rücklauf importieren** die neue Datei
+mit ihrem Kontrollbeleg prüfen und ausdrücklich freigeben. Die Vorschau
+nennt bisherige Mieterentwürfe, die durch die Korrektur entfallen. Die
+vorherigen Freigaben mit Beträgen, Zuordnungen und privaten Originaldateien
+bleiben im Prüfprotokoll erhalten. Für bereits eingereichte Abrechnungen
+gilt der vorhandene Korrekturablauf.
 
 ### Unterstütztes Dateiprofil
 

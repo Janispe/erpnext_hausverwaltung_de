@@ -1,13 +1,25 @@
-"""Keep the source file of an approved heating settlement attached and private."""
+"""Keep approved heating settlement source files attached and private."""
+
+import json
 
 import frappe
+
+HEAD = "Heizkostenabrechnung Immobilie"
+
+
+def _is_approved_source(name, protocol):
+	if not protocol:
+		return False
+	approved = json.loads(protocol)
+	return any(audit["datei"] == name for audit in (approved, *approved.get("historie", [])))
 
 
 class HeizkostenRuecklaufFileMixin:
 	def on_trash(self):
 		# Run before File.on_trash schedules deletion of the physical file.
-		if self.attached_to_doctype == "Heizkostenabrechnung Immobilie" and self.attached_to_name:
-			if frappe.db.get_value(self.attached_to_doctype, self.attached_to_name, "ruecklauf_datei", for_update=True) == self.name:
+		if self.attached_to_doctype == HEAD and self.attached_to_name:
+			protocol = frappe.db.get_value(HEAD, self.attached_to_name, "ruecklauf_import", for_update=True)
+			if _is_approved_source(self.name, protocol):
 				frappe.throw("Die freigegebene D-Datei gehört zum Prüfprotokoll und kann nicht entfernt werden.")
 		return super().on_trash()
 
@@ -17,14 +29,14 @@ class HeizkostenRuecklaufFileMixin:
 			self.get(field) != previous.get(field)
 			for field in ("is_private", "file_url", "attached_to_doctype", "attached_to_name", "content_hash")
 		):
-			# Frappe can share the same physical upload between several File records.
-			# Changing visibility on an alias also moves the source of the approved import.
-			approved = frappe.db.sql(
-				"""SELECT head.name FROM `tabFile` AS source
-				JOIN `tabHeizkostenabrechnung Immobilie` AS head ON head.ruecklauf_datei = source.name
-				WHERE source.file_url = %s FOR UPDATE""",
-				(previous.file_url,),
+			# Frappe can share the physical upload between several File records.
+			# Changing visibility on an alias also moves the content of the approved import.
+			attached = frappe.db.sql(
+				"""SELECT attachment.name, head.ruecklauf_import FROM `tabFile` AS attachment
+				JOIN `tabHeizkostenabrechnung Immobilie` AS head ON head.name = attachment.attached_to_name
+				WHERE attachment.file_url = %s AND attachment.attached_to_doctype = %s FOR UPDATE""",
+				(previous.file_url, HEAD),
 			)
-			if approved:
+			if any(_is_approved_source(name, protocol) for name, protocol in attached):
 				frappe.throw("Die freigegebene D-Datei gehört zum Prüfprotokoll und kann nicht geändert werden.")
 		return super().validate()
