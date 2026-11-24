@@ -169,6 +169,10 @@ def _company_via_wohnung(
             "immobilie",
             for_update=for_update,
         )
+    return _company_via_immobilie(immobilie, for_update=for_update)
+
+
+def _company_via_immobilie(immobilie: str | None, *, for_update: bool = False) -> str | None:
     origin_immobilie = immobilie
     sources: list[tuple[str, str, str]] = []
     visited: set[str] = set()
