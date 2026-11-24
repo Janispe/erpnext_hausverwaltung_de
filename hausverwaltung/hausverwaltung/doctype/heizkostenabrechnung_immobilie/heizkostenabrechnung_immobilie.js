@@ -291,6 +291,7 @@ async function _show_hk_return(frm, args) {
 				$("<td>").text(value ?? "–").appendTo(tr);
 			}
 			const actions = $("<td>").appendTo(tr);
+			if (row.automatisch && !row.manuell) continue;
 			$("<button type='button' class='btn btn-default btn-xs'>").text(__("Zuordnen")).appendTo(actions)
 				.on("click", () => _assign_hk_return_row(row, frm, async (mapping) => {
 					if (mapping) zuordnungen[row.zeile] = mapping;

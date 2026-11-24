@@ -65,6 +65,7 @@ class HeizkostenabrechnungImmobilie(Document):
 			return
 		self.set("mieter_positionen", [])
 		self.ruecklauf_import = None
+		self.ruecklauf_datei = None
 		self.status = "Eingang"
 
 	def after_insert(self) -> None:
@@ -90,7 +91,10 @@ class HeizkostenabrechnungImmobilie(Document):
 	def _validate_ruecklauf_import(self) -> None:
 		previous = self.get_doc_before_save()
 		record = previous.get("ruecklauf_import") if previous else None
-		if (self.get("ruecklauf_import") or None) != (record or None) and not self.flags.hk_ruecklauf_import:
+		if not self.flags.hk_ruecklauf_import and any(
+			(self.get(field) or None) != (previous.get(field) or None if previous else None)
+			for field in ("ruecklauf_import", "ruecklauf_datei")
+		):
 			frappe.throw("Das Rücklaufprotokoll wird ausschließlich bei der Rücklauffreigabe gesetzt.")
 		if record and (
 			self.immobilie != previous.immobilie or getdate(self.von) != getdate(previous.von)
@@ -372,6 +376,10 @@ class HeizkostenabrechnungImmobilie(Document):
 		"""
 		# Serialize separate heads before any tenant invoice can be created.
 		self._validate_unique_period()
+		if self.get("ruecklauf_import"):
+			from .ruecklauf import validate_imported_usage
+
+			validate_imported_usage(self)
 		# Insbesondere das Belegdatum noch einmal in die Mieter-Drafts übernehmen,
 		# falls der Parent direkt ohne vorheriges separates Speichern submittet wird.
 		self._refresh_period_children()

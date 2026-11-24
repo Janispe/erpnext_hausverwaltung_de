@@ -145,7 +145,13 @@ def _map_rows(parent, rows, contracts, overrides, *, lock):
 			and all(isinstance(value, str) and value for value in manual.values()) and len(manual) <= 1,
 			"Pro Zeile ist genau ein manuelles Zuordnungsziel möglich.")
 		until = _date(row["bis"])
-		row.update(von=None, mietvertrag=None, wohnung=None, typ=None, grund=None, manuell=bool(manual))
+		automatic = contracts.get(row["kennung"])
+		recognized = automatic is not None and automatic.bis == until and bool(automatic.kunde)
+		row.update(von=None, mietvertrag=None, wohnung=None, customer=None, typ=None, grund=None,
+			manuell=bool(manual), automatisch=recognized)
+		if recognized and manual and manual != {"mietvertrag": automatic.name}:
+			row["grund"] = "Die manuelle Zuordnung widerspricht dem eindeutig erkannten Mietvertrag."
+			continue
 		if unit := manual.get("leerstand"):
 			property_name = frappe.db.get_value("Wohnung", unit, "immobilie", for_update=lock)
 			since = _vacancy(until, by_unit[unit], start, end) if property_name == parent.immobilie else None
@@ -158,7 +164,8 @@ def _map_rows(parent, rows, contracts, overrides, *, lock):
 			if not contract or contract.bis != until or not contract.kunde:
 				row["grund"] = "Kein eindeutiger Mietvertrag dieser Immobilie mit passendem Nutzungsende und eigenem Customer."
 				continue
-			row.update(von=contract.von.isoformat(), wohnung=contract.wohnung, typ="Mietvertrag", mietvertrag=contract.name)
+			row.update(von=contract.von.isoformat(), wohnung=contract.wohnung, typ="Mietvertrag",
+				mietvertrag=contract.name, customer=contract.kunde)
 			by_contract[contract.name].append(row)
 		by_external_unit[row["messdienst_wohnung"]].append(row)
 		by_local_unit[row["wohnung"]].append(row)
@@ -176,6 +183,24 @@ def _map_rows(parent, rows, contracts, overrides, *, lock):
 			for first, second in zip(sorted_rows, sorted_rows[1:]):
 				if first["bis"] >= second["von"]:
 					first["grund"] = second["grund"] = "Die Nutzungszeiträume überschneiden sich."
+
+
+def validate_imported_usage(parent):
+	approved = json.loads(parent.ruecklauf_import)["zeilen"]
+	current = [row.copy() for row in approved]
+	overrides = {
+		str(row["zeile"]): (
+			{"leerstand": row["wohnung"]} if row["typ"] == "Leerstand" else {"mietvertrag": row["mietvertrag"]}
+		)
+		for row in approved if row["manuell"]
+	}
+	contracts = _occupancy(parent, lock=True)
+	_map_rows(parent, current, contracts, overrides, lock=True)
+	fields = ("von", "bis", "wohnung", "mietvertrag", "customer", "typ")
+	if any(now["grund"] or any(old.get(field) != now[field] for field in fields)
+		for old, now in zip(approved, current)
+	) or set(contracts) != {row["mietvertrag"] for row in current if row["mietvertrag"]}:
+		frappe.throw("Der Belegungsstand weicht vom freigegebenen Messdienst-Rücklauf ab. Bitte Nutzungszeiträume und Rücklauf erneut prüfen.")
 
 
 def _children(parent, *, lock):
@@ -281,6 +306,7 @@ def uebernehmen(name, datei, liegenschaft, kontrollsumme, kontrollbeleg, freigab
 		_require(not by_contract, "Mindestens ein erforderlicher Mieterentwurf fehlt.")
 		parent._hydrate_positions_from_children()
 		data.update(freigegeben_von=frappe.session.user, freigegeben_am=frappe.utils.now())
+		parent.ruecklauf_datei = datei
 		parent.ruecklauf_import = json.dumps(data, ensure_ascii=False, indent=2)
 		parent.flags.hk_ruecklauf_import = True
 		parent.save()

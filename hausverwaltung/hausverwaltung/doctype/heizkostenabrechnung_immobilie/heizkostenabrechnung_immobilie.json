@@ -30,6 +30,7 @@
   "summe_differenz",
   "amended_from",
   "ruecklauf_section",
+  "ruecklauf_datei",
   "ruecklauf_import"
  ],
  "fields": [
@@ -198,6 +199,15 @@
    "fieldname": "ruecklauf_section",
    "fieldtype": "Section Break",
    "label": "Messdienst-Rücklauf"
+  },
+  {
+   "fieldname": "ruecklauf_datei",
+   "fieldtype": "Link",
+   "label": "Freigegebene D-Datei",
+   "no_copy": 1,
+   "options": "File",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "ruecklauf_import",

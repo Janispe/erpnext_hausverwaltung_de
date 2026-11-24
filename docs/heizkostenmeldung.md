@@ -160,7 +160,8 @@ realer Belegung prüft das Laden und Speichern der Nutzerliste.
    Die Vorschau zeigt für jeden Satz Kennung, Messdienstwohnung, Nutzungszeit
    und Bruttokosten. Ist der Ordnungsbegriff des Auftraggebers exakt die
    ERP-ID eines Mietvertrags und passt das Nutzungsende, erscheint dieser
-   Vertrag automatisch. Andere Kennungen anhand der Messdienstunterlagen
+   Vertrag automatisch und ist in der Vorschau fest zugeordnet. Andere
+   Kennungen anhand der Messdienstunterlagen
    ausdrücklich über **Zuordnen** mit dem Mietvertrag verbinden. Für Leerstand
    **Leerstand** und die zugehörige Wohnung auswählen. Der ERP-Belegungsstand
    muss zum Nutzungsende passen. Der Beginn ergibt sich aus dem für die
@@ -171,11 +172,15 @@ realer Belegung prüft das Laden und Speichern der Nutzerliste.
    ohne Abzug von Vorauszahlungen. Leerstand wird separat im Rücklaufprotokoll
    aufgeführt. Rechnungen entstehen erst beim späteren Einreichen der
    Heizkostenabrechnung. Bereits eingereichte Abrechnungen und Mieterzeilen
-   blockieren die Übernahme.
+   blockieren die Übernahme. Beim Einreichen werden die bestätigten
+   Miet- und Leerstandszeiten erneut gegen den aktuellen Belegungsstand
+   geprüft.
 
 Unter **Messdienst-Rücklauf** stehen die freigegebenen Zeilen und ihre
 Entwurfsbezüge, der Dateibezug mit SHA-256, die Kontrollsumme mit Fundstelle
-sowie Freigabezeit und Benutzer. Pro Entwurf gibt es eine Freigabe. Nachträgliche
+sowie Freigabezeit und Benutzer. Die verwendete private D-Datei ist dort
+verlinkt und gegen Entfernen und Veröffentlichung geschützt. Pro Entwurf gibt
+es eine Freigabe. Nachträgliche
 fachliche Berichtigungen erfolgen über die vorhandenen Abrechnungsabläufe.
 
 ### Unterstütztes Dateiprofil

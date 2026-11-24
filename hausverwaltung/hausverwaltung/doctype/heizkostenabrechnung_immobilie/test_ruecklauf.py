@@ -32,6 +32,25 @@ class TestDSatz(unittest.TestCase):
 				ruecklauf._parse(content, "123456789", date(2025, 1, 1), date(2025, 12, 31))
 
 
+	def test_two_recognized_contracts_cannot_be_swapped(self):
+		start, end = date(2025, 1, 1), date(2025, 12, 31)
+		head = frappe._dict(von=start, bis=end)
+		contracts = {
+			name: frappe._dict(name=name, wohnung=unit, von=start, bis=end, kunde=customer)
+			for name, unit, customer in (("MV-1", "WHG-1", "DEB-1"), ("MV-2", "WHG-2", "DEB-2"))
+		}
+		rows = [
+			dict(zeile=number, kennung=f"MV-{number}", messdienst_wohnung=f"123456789000{number}", bis=end.isoformat())
+			for number in (1, 2)
+		]
+		swapped = {"1": {"mietvertrag": "MV-2"}, "2": {"mietvertrag": "MV-1"}}
+		ruecklauf._map_rows(head, rows, contracts, swapped, lock=False)
+		self.assertTrue(all(row["automatisch"] and row["mietvertrag"] is None for row in rows))
+		self.assertTrue(all("widerspricht" in row["grund"] for row in rows))
+		ruecklauf._map_rows(head, rows, contracts, {}, lock=False)
+		self.assertEqual([row["mietvertrag"] for row in rows], ["MV-1", "MV-2"])
+
+
 class TestRuecklauf(unittest.TestCase):
 	def setUp(self):
 		if not (cint(frappe.conf.get("allow_tests")) and cint(frappe.conf.get("hv_disposable_test_site"))):
@@ -136,6 +155,32 @@ class TestRuecklauf(unittest.TestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "erneut prüfen"):
 			ruecklauf.uebernehmen(**(self.args | {"kontrollbeleg": "Andere Fundstelle"}), freigabe_id=data["freigabe_id"])
 		self.assertFalse(self.head._get_children())
+
+	def test_changed_occupancy_blocks_submit_before_any_invoice(self):
+		self.confirm()
+		self.head.reload()
+		ruecklauf.validate_imported_usage(self.head)
+		self.first.bis = "2025-05-15"
+		self.first.save()
+		with self.assertRaisesRegex(frappe.ValidationError, "Belegungsstand weicht"):
+			self.head.submit()
+		for contract in (self.first, self.second):
+			self.assertFalse(frappe.db.exists("Sales Invoice", {"customer": contract.kunde}))
+		self.assertEqual(frappe.db.get_value(self.head.doctype, self.head.name, "docstatus"), 0)
+
+	def test_approved_source_cannot_be_removed_or_made_public(self):
+
+		self.confirm()
+		file = frappe.get_doc("File", self.args["datei"])
+		original = Path(file.get_full_path()).read_bytes()
+		with self.assertRaisesRegex(frappe.ValidationError, "kann nicht entfernt werden"):
+			frappe.delete_doc("File", file.name)
+		self.assertTrue(frappe.db.exists("File", file.name))
+		self.assertEqual(Path(file.get_full_path()).read_bytes(), original)
+		file.is_private = 0
+		with self.assertRaisesRegex(frappe.ValidationError, "kann nicht geändert werden"):
+			file.save()
+		self.assertEqual(frappe.db.get_value("File", file.name, "is_private"), 1)
 
 	def test_public_and_foreign_attachments_are_rejected(self):
 		file = self.args["datei"]
