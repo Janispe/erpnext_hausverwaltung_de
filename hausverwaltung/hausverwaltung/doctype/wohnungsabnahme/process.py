@@ -123,15 +123,39 @@ def select_protocol(name: str, prozess: str):
 	return {"name": process.name, "file": detail.file_url}
 
 
-def lock_protocol_for_export(process_name, file_url):
+def lock_protocol_for_export(process_name, file):
 	process = frappe.get_doc(PROCESS, process_name, for_update=True)
 	if not _writable(process):
 		frappe.throw(_("Der Mieterwechsel ist nicht bearbeitbar."), frappe.PermissionError)
-	name = frappe.db.get_value(DOCTYPE, {"protokoll": file_url}, "name", for_update=True)
-	doc = frappe.get_doc(DOCTYPE, name, for_update=True)
+	doc = frappe.get_doc(DOCTYPE, file.attached_to_name, for_update=True)
 	doc.check_permission("read")
+	if file.attached_to_doctype != DOCTYPE or not file.is_private or file.file_url != doc.protokoll:
+		frappe.throw(_("Nur das fertige Protokoll kann im Mieterwechsel archiviert werden."), frappe.PermissionError)
 	task = _matching_task(process, _check_target(doc), doc.richtung)
 	detail = _locked_detail(process, task) if task else None
-	if not detail or detail.file_url != file_url:
+	if not detail or detail.file_url != file.file_url:
 		frappe.throw(_("Das Protokoll wurde für diesen Mieterwechsel nicht ausgewählt."), frappe.PermissionError)
 	return doc
+
+
+@frappe.whitelist(methods=["POST"])
+def release_unconfirmed_export(name: str, prozess: str, paperless_checked: bool):
+	from hausverwaltung.hausverwaltung.integrations.paperless import reset_unconfirmed_protocol_export
+
+	frappe.only_for("System Manager")
+	if not paperless_checked:
+		frappe.throw(_("Bitte zuerst in Paperless prüfen, ob das Protokoll oder ein Upload vorhanden ist."))
+	doc = frappe.get_doc(DOCTYPE, name)
+	doc.check_permission("read")
+	file_name = frappe.db.get_value("File", {
+		"attached_to_doctype": DOCTYPE, "attached_to_name": doc.name,
+		"file_url": doc.protokoll, "is_private": 1,
+	}, "name") if doc.protokoll else None
+	if not file_name:
+		frappe.throw(_("Das fertige Protokoll wurde nicht gefunden."))
+	file = frappe.get_doc("File", file_name)
+	protocol = lock_protocol_for_export(prozess, file)
+	if protocol.paperless_link:
+		frappe.throw(_("Das Protokoll ist bereits archiviert."))
+	reset_unconfirmed_protocol_export(protocol, file)
+	return {"name": prozess}

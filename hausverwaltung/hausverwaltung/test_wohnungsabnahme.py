@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import frappe
+import requests
 from frappe.tests import IntegrationTestCase
 from PIL import Image
 from process_engine.process_engine.processes import ProcessEngine
@@ -38,13 +39,41 @@ def _fixtures():
 	return flat, old, new, meter
 
 
+def _process_fixture(flat, old, new):
+	if not frappe.db.exists("Prozess Typ", "mieterwechsel"):
+		frappe.get_doc({
+			"doctype": "Prozess Typ", "name1": "mieterwechsel", "label": "Mieterwechsel",
+		}).insert()
+	doc = frappe.get_doc({
+		"doctype": process.PROCESS, "name": "TEST-MW-" + frappe.generate_hash(length=10),
+		"prozess_typ": "mieterwechsel", "status": "Entwurf", "orchestrator_backend": "local",
+		"payload_json": json.dumps({
+			"wohnung": flat.name, "alter_mietvertrag": old.name, "neuer_mietvertrag": new.name,
+		}),
+		"aufgaben": [{
+			"aufgabe": "Abnahmeprotokoll", "step_key": "abnahmeprotokoll", "task_type": "paperless_export",
+			"pflicht": 1, "status": "Offen",
+		}],
+	})
+	# The public app need not install a Mieterwechsel version. Supply the
+	# same runtime task as the real definition, without the private plugins.
+	doc.set_user_and_timestamp()
+	doc.db_insert()
+	for row in doc.aufgaben:
+		row.db_insert()
+	return doc
+
+
 def seed_mobile_test():
 	from hausverwaltung.cypress_fixtures import _check_disposable_site
 
 	_check_disposable_site()
 	flat, old, new, meter = _fixtures()
 	assert old.kunde != new.kunde
-	return {"wohnung": flat.name, "old": old.name, "new": new.name, "meter": meter.name, "day": DAY}
+	return {
+		"wohnung": flat.name, "old": old.name, "new": new.name, "meter": meter.name, "day": DAY,
+		"prozess": _process_fixture(flat, old, new).name,
+	}
 
 
 class TestWohnungsabnahme(IntegrationTestCase):
@@ -81,30 +110,6 @@ class TestWohnungsabnahme(IntegrationTestCase):
 	def _reading_rows(self):
 		return frappe.get_all("Zaehlerstand", filters={"parent": self.meter.name, "datum": DAY}, pluck="zaehlerstand")
 
-	def _process(self):
-		if not frappe.db.exists("Prozess Typ", "mieterwechsel"):
-			frappe.get_doc({
-				"doctype": "Prozess Typ", "name1": "mieterwechsel", "label": "Mieterwechsel",
-			}).insert()
-		doc = frappe.get_doc({
-			"doctype": process.PROCESS, "name": "TEST-MW-" + frappe.generate_hash(length=10),
-			"prozess_typ": "mieterwechsel", "status": "Entwurf", "orchestrator_backend": "local",
-			"payload_json": json.dumps({
-				"wohnung": self.flat.name, "alter_mietvertrag": self.old.name, "neuer_mietvertrag": self.new.name,
-			}),
-			"aufgaben": [{
-				"aufgabe": "Abnahmeprotokoll", "step_key": "abnahmeprotokoll", "task_type": "paperless_export",
-				"pflicht": 1, "status": "Offen",
-			}],
-		})
-		# The public app need not install a Mieterwechsel version. Supply the
-		# same runtime task as the real definition, without the private plugins.
-		doc.set_user_and_timestamp()
-		doc.db_insert()
-		for row in doc.aufgaben:
-			row.db_insert()
-		return doc
-
 	def test_two_protocols_conflict_retry_and_paperless(self):
 		out = self._photo(self._draft(self.old, "Auszug"))
 		resumed = abnahme.load(self.old.name, "Auszug")["draft"]
@@ -138,7 +143,7 @@ class TestWohnungsabnahme(IntegrationTestCase):
 			self.assertTrue(file.is_private)
 			self.assertTrue(file.get_content(encodings=[]).startswith(b"%PDF"))
 
-		change = self._process()
+		change = _process_fixture(self.flat, self.old, self.new)
 		self.assertEqual({step["name"] for step in abnahme.load(self.old.name, "Auszug")["steps"]}, {change.name})
 		self.assertEqual(process.process_contracts(change.name), {"Einzug": self.new.name, "Auszug": self.old.name})
 		engine = ProcessEngine.for_instance(change)
@@ -201,7 +206,7 @@ class TestWohnungsabnahme(IntegrationTestCase):
 	def test_pending_archive_is_retried_without_reupload(self):
 		upload = paperless.PaperlessUpload(file_name="test.pdf", content=b"pdf", checksum=paperless._checksum(b"pdf"))
 		name = frappe.generate_hash(length=12)
-		key = f"hv:wohnungsabnahme:paperless:{name}:{upload.checksum}"
+		key = paperless._protocol_key(name)
 		self.addCleanup(frappe.cache.delete_value, key)
 		with (
 			patch.object(paperless, "_find_protocol_document", return_value=None),
@@ -225,3 +230,63 @@ class TestWohnungsabnahme(IntegrationTestCase):
 			{"original_checksum": upload.checksum},
 		]):
 			self.assertEqual(paperless._find_protocol_document(None, upload), 42)
+
+
+	def test_export_rejects_references_outside_the_selected_protocol(self):
+		out = self._photo(self._draft(self.old, "Auszug"))
+		photo = out["rooms"][0]["photos"][0]
+		change = _process_fixture(self.flat, self.old, self.new)
+		engine = ProcessEngine.for_instance(change)
+		task = change.aufgaben[0].name
+		ref = engine.get_task_detail(change.name, task)
+		with patch.object(paperless, "_post_to_paperless") as post:
+			for reference in (photo["name"], photo["url"]):
+				frappe.db.set_value(process.DETAIL, ref["name"], "file_url", reference)
+				with self.assertRaises(frappe.PermissionError):
+					engine.export_file_task_to_paperless(change.name, task)
+			post.assert_not_called()
+
+	def test_connect_timeout_can_retry_the_upload(self):
+		upload = paperless.PaperlessUpload(file_name="test.pdf", content=b"pdf", checksum=paperless._checksum(b"pdf"))
+		name = frappe.generate_hash(length=12)
+		key = paperless._protocol_key(name)
+		self.addCleanup(frappe.cache.delete_value, key)
+		with (
+			patch.object(paperless, "_find_protocol_document", return_value=None),
+			patch.object(paperless, "_post_to_paperless", side_effect=[
+				requests.ConnectTimeout(), (True, 42, None),
+			]) as post,
+		):
+			with self.assertRaisesRegex(frappe.ValidationError, "nicht aufgebaut"):
+				paperless._export_protocol(None, name, None, upload, [], None)
+			self.assertIsNone(frappe.cache.get_value(key))
+			paperless._export_protocol(None, name, None, upload, [], None)
+			self.assertEqual(upload.paperless_id, 42)
+			self.assertEqual(post.call_count, 2)
+
+	def test_ambiguous_upload_is_reconciled_before_manual_release(self):
+		protocol = SimpleNamespace(name=frappe.generate_hash(length=12))
+		key = paperless._protocol_key(protocol.name)
+		self.addCleanup(frappe.cache.delete_value, key)
+		content = b"synthetic pdf"
+		attachment = SimpleNamespace(file_name="test.pdf", get_content=lambda **_: content)
+		upload = paperless._attachment_upload(attachment)
+		config = SimpleNamespace(url="https://paperless.example/")
+		with (
+			patch.object(paperless.PaperlessConfig, "from_conf", return_value=config),
+			patch.object(paperless, "_find_protocol_document", return_value=None),
+			patch.object(paperless, "_post_to_paperless", side_effect=requests.ReadTimeout) as post,
+			patch.object(paperless, "_paperless_get", side_effect=[
+				[], [{"task_file_name": "test.pdf", "task_id": "recovered", "status": "STARTED"}], [],
+			]),
+		):
+			with self.assertRaisesRegex(frappe.ValidationError, "nicht bestätigt"):
+				paperless._export_protocol(config, protocol.name, None, upload, [], None)
+			self.assertTrue(paperless.protocol_export_unconfirmed(protocol.name))
+			with self.assertRaisesRegex(frappe.ValidationError, "ungeklärt"):
+				paperless._export_protocol(config, protocol.name, None, upload, [], None)
+			with self.assertRaisesRegex(frappe.ValidationError, "kennt den Upload bereits"):
+				paperless.reset_unconfirmed_protocol_export(protocol, attachment)
+			paperless.reset_unconfirmed_protocol_export(protocol, attachment)
+			self.assertIsNone(frappe.cache.get_value(key))
+			post.assert_called_once()

@@ -183,17 +183,11 @@ def get_paperless_link(communication: str) -> dict:
 	return result
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def export_attachment_to_paperless_whitelisted(
 	doctype: str, docname: str, file_url: str, title: str | None = None, tag_names_json: str | None = None
 ) -> dict:
 	"""Export only attachments belonging to a document the caller can edit."""
-	doc = frappe.get_doc(doctype, docname)
-	doc.check_permission("write")
-	if not frappe.db.exists("File", {
-		"attached_to_doctype": doctype, "attached_to_name": docname, "file_url": file_url,
-	}):
-		frappe.throw(_("Die Datei gehört nicht zu diesem Dokument."), frappe.PermissionError)
 	tag_names: list[str] = []
 	if tag_names_json:
 		try:
@@ -227,13 +221,13 @@ def export_attachment_to_paperless(
 		frappe.throw(_("Datei-URL fehlt."))
 
 	doc = frappe.get_doc(doctype, docname)
+	doc.check_permission("write")
+	file = _export_file(doc, file_url)
 	protocol = None
-	if frappe.db.exists("File", {"file_url": file_url, "attached_to_doctype": "Wohnungsabnahme"}):
-		if doctype != "Prozess Instanz" or not frappe.db.exists("Wohnungsabnahme", {"protokoll": file_url}):
-			frappe.throw(_("Nur das fertige Protokoll kann im Mieterwechsel archiviert werden."), frappe.PermissionError)
+	if file.attached_to_doctype == "Wohnungsabnahme":
 		from hausverwaltung.hausverwaltung.doctype.wohnungsabnahme.process import lock_protocol_for_export
 
-		protocol = lock_protocol_for_export(docname, file_url)
+		protocol = lock_protocol_for_export(doc.name, file)
 		if protocol.paperless_link:
 			return {"ok": True, "link": protocol.paperless_link}
 
@@ -241,10 +235,8 @@ def export_attachment_to_paperless(
 	if not config:
 		frappe.throw(_("Paperless NGX ist nicht konfiguriert."))
 
-	file_name, content = get_file(file_url)
-	file_name = _sanitize_filename(file_name or os.path.basename(file_url) or f"{docname}.bin")
-	content_bytes = _ensure_bytes(content)
-	checksum = _checksum(content_bytes)
+	upload = _attachment_upload(file)
+	file_name, content_bytes = upload.file_name, upload.content
 
 	extra_tag_ids = _ensure_tag_ids(config, tag_names or [])
 	placeholder_doc = frappe._dict(
@@ -253,7 +245,6 @@ def export_attachment_to_paperless(
 		creation=getattr(doc, "creation", None) or now_datetime(),
 		communication_date=getattr(doc, "modified", None) or now_datetime(),
 	)
-	upload = PaperlessUpload(file_name=file_name, content=content_bytes, checksum=checksum)
 	if protocol:
 		_export_protocol(config, protocol.name, placeholder_doc, upload, extra_tag_ids, title)
 	else:
@@ -278,6 +269,40 @@ def export_attachment_to_paperless(
 		"link": link,
 		"file_name": file_name,
 	}
+
+
+def _export_file(doc, file_url):
+	# The workflow stores the canonical File URL. Resolve it once and read
+	# only that authorized record, including when multiple Files share a blob.
+	rows = frappe.get_all(
+		"File", filters={"file_url": file_url, "is_folder": 0},
+		fields=["name", "file_url", "attached_to_doctype", "attached_to_name"],
+		order_by="name asc",
+	)
+	rows = [row for row in rows if row.file_url == file_url]
+	protocols = [row for row in rows if row.attached_to_doctype == "Wohnungsabnahme"]
+	if protocols and doc.doctype == "Prozess Instanz" and len(protocols) == 1:
+		return frappe.get_doc("File", protocols[0].name)
+	for row in rows if not protocols else []:
+		if row.attached_to_doctype == doc.doctype and row.attached_to_name == doc.name:
+			file = frappe.get_doc("File", row.name)
+			if file.is_downloadable():
+				return file
+		if doc.doctype == "Prozess Instanz" and row.attached_to_doctype == "Prozess Aufgabe Datei":
+			if frappe.db.exists("Prozess Aufgabe Datei", {
+				"name": row.attached_to_name, "prozess_doctype": doc.doctype,
+				"prozess_name": doc.name, "file_url": file_url,
+				"aufgabe_row_name": ("in", [task.name for task in doc.aufgaben]),
+			}):
+				file = frappe.get_doc("File", row.name)
+				if file.is_downloadable():
+					return file
+	frappe.throw(_("Die Datei gehört nicht zu diesem Dokument oder ist nicht zugänglich."), frappe.PermissionError)
+
+
+def _attachment_upload(file):
+	content = file.get_content(encodings=[])
+	return PaperlessUpload(_sanitize_filename(file.file_name), content, _checksum(content))
 
 
 def _paperless_get(config, endpoint, params=None):
@@ -310,10 +335,44 @@ def _find_protocol_document(config, upload):
 	return None
 
 
+def _protocol_key(name):
+	return f"hv:wohnungsabnahme:paperless:{name}"
+
+
+def protocol_export_unconfirmed(name):
+	pending = frappe.cache.get_value(_protocol_key(name))
+	return pending is not None and not pending.get("task_id")
+
+
+def _find_protocol_task(config, upload, task_id=None):
+	params = {"task_id": task_id} if task_id else {"task_file_name": upload.file_name}
+	response = _paperless_get(config, "api/tasks/", params)
+	tasks = response if isinstance(response, list) else response.get("results", [])
+	if task_id:
+		return next((task for task in tasks if task.get("task_id") == task_id), None)
+
+	matches = [task for task in tasks if task.get("task_file_name") == upload.file_name and task.get("task_id")]
+	# Prefer a still active or successful task over an earlier failure.
+	return next((task for task in matches if task.get("status") != "FAILURE"), matches[0] if matches else None)
+
+
+def reset_unconfirmed_protocol_export(protocol, file):
+	key = _protocol_key(protocol.name)
+	if not protocol_export_unconfirmed(protocol.name):
+		frappe.throw(_("Für dieses Protokoll ist kein ungeklärter Upload vorhanden."))
+	config = PaperlessConfig.from_conf()
+	if not config:
+		frappe.throw(_("Paperless NGX ist nicht konfiguriert."))
+	upload = _attachment_upload(file)
+	if _find_protocol_document(config, upload) or _find_protocol_task(config, upload):
+		frappe.throw(_("Paperless kennt den Upload bereits. Bitte den Status im Abnahmeschritt erneut prüfen."))
+	frappe.cache.delete_value(key)
+
+
 def _export_protocol(config, name, doc, upload, tags, title):
 	# The caller holds the protocol lock. Acknowledgement lives outside
 	# the SQL transaction because the remote upload cannot be rolled back.
-	key = f"hv:wohnungsabnahme:paperless:{name}:{upload.checksum}"
+	key = _protocol_key(name)
 	upload.paperless_id = _find_protocol_document(config, upload)
 	if upload.paperless_id:
 		return
@@ -326,6 +385,9 @@ def _export_protocol(config, name, doc, upload, tags, title):
 				config, doc, file_name=upload.file_name, file_content=upload.content,
 				extra_tag_ids=tags or None, title=title or upload.file_name, raise_on_error=True,
 			)
+		except requests.ConnectTimeout:
+			frappe.cache.delete_value(key)
+			frappe.throw(_("Die Verbindung zu Paperless konnte nicht aufgebaut werden. Bitte erneut exportieren."))
 		except requests.HTTPError as error:
 			if error.response is not None and 400 <= error.response.status_code < 500 and error.response.status_code != 408:
 				frappe.cache.delete_value(key)
@@ -340,21 +402,20 @@ def _export_protocol(config, name, doc, upload, tags, title):
 		pending = {"task_id": upload.task_id}
 		frappe.cache.set_value(key, pending)
 
-	upload.task_id = pending["task_id"]
-	if upload.task_id:
-		response = _paperless_get(config, "api/tasks/", {"task_id": upload.task_id})
-		tasks = response if isinstance(response, list) else response.get("results", [])
-		for task in tasks:
-			if task.get("task_id") != upload.task_id:
-				continue
-			if task.get("status") == "SUCCESS":
-				upload.paperless_id = _to_int(task.get("related_document"))
-				if upload.paperless_id:
-					return
-			if task.get("status") == "FAILURE":
-				frappe.cache.delete_value(key)
-				frappe.throw(_("Paperless hat die Verarbeitung abgebrochen. Der Export kann wiederholt werden."))
+	task = _find_protocol_task(config, upload, pending.get("task_id"))
+	if task:
+		upload.task_id = task["task_id"]
+		frappe.cache.set_value(key, {"task_id": upload.task_id})
+		if task.get("status") == "SUCCESS":
+			upload.paperless_id = _to_int(task.get("related_document"))
+			if upload.paperless_id:
+				return
+		if task.get("status") == "FAILURE":
+			frappe.cache.delete_value(key)
+			frappe.throw(_("Paperless hat die Verarbeitung abgebrochen. Der Export kann wiederholt werden."))
 
+	if not pending.get("task_id") and not task:
+		frappe.throw(_("Der Upload ist ungeklärt. Bitte in Paperless prüfen und bei Bedarf in der Wohnungsabnahme freigeben."))
 	frappe.throw(_("Der Export ist noch nicht bestätigt. Bitte später erneut prüfen."))
 
 

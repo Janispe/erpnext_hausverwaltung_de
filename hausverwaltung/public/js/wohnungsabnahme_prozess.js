@@ -3,6 +3,7 @@ frappe.ui.form.on("Prozess Instanz", {
 		if (frm.is_new() || frm.doc.prozess_typ !== "mieterwechsel") return;
 		if (!frappe.model.can_read("Wohnungsabnahme")) return;
 		frappe.call({
+			type: "GET",
 			method: "hausverwaltung.hausverwaltung.doctype.wohnungsabnahme.process.process_contracts",
 			args: { prozess: frm.doc.name },
 		}).then(({ message }) => {

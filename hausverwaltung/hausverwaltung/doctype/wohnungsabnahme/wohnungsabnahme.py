@@ -107,6 +107,8 @@ def _private_file(name, doc):
 
 
 def _view(doc):
+	from hausverwaltung.hausverwaltung.integrations.paperless import protocol_export_unconfirmed
+
 	content = _content(doc)
 	for room in content["rooms"]:
 		room["photos"] = [
@@ -119,6 +121,7 @@ def _view(doc):
 		"protokoll": doc.protokoll,
 		"klaerfall": doc.klaerfall,
 		"paperless_link": doc.paperless_link,
+		"export_unconfirmed": bool(doc.protokoll and not doc.paperless_link and protocol_export_unconfirmed(doc.name)),
 		**content,
 	}
 
@@ -144,6 +147,7 @@ def load(mietvertrag: str, richtung: str, prozess: str | None = None):
 		"editable": contract.docstatus != 2 and contract.has_permission("write")
 		and frappe.has_permission(DOCTYPE, "write", doc=doc),
 		"draft": _view(doc) if doc else None,
+		"can_release_export": frappe.session.user == "Administrator" or "System Manager" in frappe.get_roles(),
 		"steps": available_steps(contract, richtung, prozess),
 	}
 

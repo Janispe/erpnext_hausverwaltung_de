@@ -199,6 +199,19 @@
 				await call("process.select_protocol", { name: state.name, prozess: process.name });
 				window.location.assign(link.href);
 			}));
+			if (process.editable && state.export_unconfirmed && initial.can_release_export) {
+				button(row, "Ungeklärten Paperless-Export freigeben", () => {
+					const filename = decodeURIComponent(new URL(state.protokoll, window.location.origin).pathname.split("/").at(-1));
+					if (!window.confirm("Prüfen Sie in Paperless, ob „" + filename +
+						"“ bereits archiviert wurde oder als Upload vorliegt. Einen erneuten Export freigeben?")) return;
+					run(async () => {
+						await call("process.release_unconfirmed_export", {
+							name: state.name, prozess: process.name, paperless_checked: true,
+						});
+						window.location.assign(link.href);
+					});
+				});
+			}
 		}
 	}
 
