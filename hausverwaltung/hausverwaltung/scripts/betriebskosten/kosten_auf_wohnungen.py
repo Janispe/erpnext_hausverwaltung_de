@@ -510,12 +510,16 @@ def _prorated_festbetrag_rows(
                 "mietvertrag": mietvertrag_name,
                 "kostenart": kostenart,
                 "betrag": betrag,
+                "wirksam_von": max(getdate(von), getdate(row.get("gueltig_von"))),
+                "wirksam_bis": min(getdate(bis), getdate(row.get("gueltig_bis"))),
             }
         )
     return result
 
 
-def _festbetrag_map(immobilie: str, von: str, bis: str) -> Dict[str, Dict[str, Decimal]]:
+def _festbetrag_map(
+    immobilie: str, von: str, bis: str, sources: list[dict] | None = None,
+) -> Dict[str, Dict[str, Decimal]]:
     result: Dict[str, Dict[str, Decimal]] = defaultdict(lambda: defaultdict(lambda: Decimal("0")))
     for row in _prorated_festbetrag_rows(immobilie=immobilie, von=von, bis=bis):
         wohnung = row.get("wohnung")
@@ -523,6 +527,8 @@ def _festbetrag_map(immobilie: str, von: str, bis: str) -> Dict[str, Dict[str, D
         if not (wohnung and kostenart):
             continue
         result[wohnung][kostenart] += _to_decimal(row.get("betrag"))
+        if sources is not None:
+            sources.append(row)
     return result
 
 
@@ -696,6 +702,20 @@ def allocate_kosten_auf_wohnungen(
     company: Optional[str] = None,
     stichtag: Optional[str] = None,
 ) -> dict:
+    """Allokiert Betriebskosten auf Wohnungen je Betriebskostenart."""
+    return _allocate_kosten_auf_wohnungen(von, bis, immobilie, company, stichtag)
+
+
+def _allocate_kosten_auf_wohnungen(
+    von: str,
+    bis: str,
+    immobilie: Optional[str],
+    company: Optional[str] = None,
+    stichtag: Optional[str] = None,
+    *,
+    sources: list[dict] | None = None,
+    historical_comparison: bool = False,
+) -> dict:
     """Allokiert Betriebskosten auf Wohnungen je Betriebskostenart.
 
     - Filtert GL Entries auf Konten der Betriebskostenarten und Kostenstellen der Immobilien.
@@ -733,7 +753,9 @@ def allocate_kosten_auf_wohnungen(
     # Vorab-Validierung: Wenn für ein konkretes Haus (Immobilie) abgerechnet werden soll,
     # muss in allen Wohnungen dieses Hauses im Zustand zum Stichtag die Option
     # "Betriebskostenabrechnung durch Vermieter" aktiviert sein.
-    if immobilie:
+    # Die Freigabe aller Wohnungen ist eine Vorbedingung für die Erstellung
+    # einer Abrechnung. Die historische Prüfansicht erstellt keine Abrechnung.
+    if immobilie and not historical_comparison:
         whg_list_for_check = _wohnungen_in_haus(immobilie=immobilie)
         not_enabled: List[str] = []
         for w in whg_list_for_check:
@@ -756,7 +778,7 @@ def allocate_kosten_auf_wohnungen(
     # GL laden (wie im Haus‑Report), optional mit Dimension "wohnung" falls vorhanden
     gl_rows = []
     gl_has_wohnung = _has_field("GL Entry", "wohnung")
-    if kostenstellen:
+    if kostenstellen and konto_map:
         gl_filters = {
             "account": ("in", list(konto_map.keys())),
             "cost_center": ("in", kostenstellen),
@@ -808,7 +830,6 @@ def allocate_kosten_auf_wohnungen(
 
     # Vorbereitung: Wohnungen je Haus
     whg_cache: Dict[str, List[str]] = {}
-    festbetrag_cache: Dict[str, Dict[str, Dict[str, Decimal]]] = {}
     wohnung_immobilie_cache: Dict[str, Optional[str]] = {}
 
     # Aggregiere je Haus & Kostenart (außer Einzeln) → Summe, die zu verteilen ist
@@ -872,7 +893,18 @@ def allocate_kosten_auf_wohnungen(
         basis = (haus, kostenart)
         gl_expected_by_basis[basis] += betrag
 
-        if verteilung.lower() in {"einzeln", "festbetrag"}:
+        direct = verteilung.lower() in {"einzeln", "festbetrag"}
+        if sources is not None:
+            sources.append({
+                "kostenart": kostenart,
+                "art": "wohnung" if direct else "haus",
+                "doctype": g.get("voucher_type"),
+                "beleg": g.get("voucher_no"),
+                "wohnung": g.get("wohnung") if direct else None,
+                "wirksam_von": eff,
+                "betrag": betrag,
+            })
+        if direct:
             if not gl_has_wohnung:
                 frappe.throw(
                     f"Verteilungsart '{verteilung}' erfordert Accounting Dimension 'wohnung' auf GL Entry."
@@ -976,10 +1008,13 @@ def allocate_kosten_auf_wohnungen(
             continue
         if haus not in whg_cache:
             whg_cache[haus] = _wohnungen_in_haus(immobilie=haus)
-        if haus not in festbetrag_cache:
-            festbetrag_cache[haus] = _festbetrag_map(haus, cstr(von), cstr(bis))
+        fixed_sources = []
+        if sources is None:
+            festbetraege = _festbetrag_map(haus, cstr(von), cstr(bis))
+        else:
+            festbetraege = _festbetrag_map(haus, cstr(von), cstr(bis), fixed_sources)
         for wohnung in whg_cache.get(haus, []):
-            for kostenart, amount in (festbetrag_cache.get(haus, {}).get(wohnung) or {}).items():
+            for kostenart, amount in festbetraege.get(wohnung, {}).items():
                 meta = art_meta.get(kostenart) or {}
                 verteilung = (meta.get("verteilung") or "").strip()
                 # Freie Bezeichnungen besitzen absichtlich keine Kostenart-
@@ -991,6 +1026,19 @@ def allocate_kosten_auf_wohnungen(
                 manual_amount = _to_decimal(amount)
                 matrix[wohnung][kostenart] += manual_amount
                 manual_matrix[wohnung][kostenart] += manual_amount
+        if sources is not None:
+            for row in fixed_sources:
+                if row["kostenart"] in manual_matrix.get(row["wohnung"], {}):
+                    sources.append({
+                        "kostenart": row["kostenart"],
+                        "art": "vertrag",
+                        "doctype": "Mietvertrag",
+                        "beleg": row["mietvertrag"],
+                        "wohnung": row["wohnung"],
+                        "wirksam_von": row["wirksam_von"],
+                        "wirksam_bis": row["wirksam_bis"],
+                        "betrag": row["betrag"],
+                    })
 
     # GL-Anteile werden je Root-Haus/Kostenart separat und summenerhaltend
     # gerundet. Andernfalls könnte eine globale Restverteilung einen Cent von
