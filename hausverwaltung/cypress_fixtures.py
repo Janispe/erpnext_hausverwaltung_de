@@ -1054,13 +1054,14 @@ def seed_e2e_bankauszug() -> dict:
 	return {"name": doc.name}
 
 
-def seed_e2e_betriebskostenabrechnung() -> dict:
+def seed_e2e_betriebskostenabrechnung(submit: bool = True) -> dict:
 	from hausverwaltung.hausverwaltung.test_booking_safeguards import bk_fixture, bk_head
 
 	_check_disposable_site()
 	immobilie, _, _, _ = bk_fixture()
 	head = bk_head(immobilie)
-	head.submit()
+	if submit:
+		head.submit()
 	return {"name": head.name}
 
 
