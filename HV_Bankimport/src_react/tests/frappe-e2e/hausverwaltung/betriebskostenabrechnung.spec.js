@@ -15,7 +15,7 @@ test("Betriebskostenabrechnung öffnet neu und zeigt für gebuchte Abrechnungen 
 });
 
 test("Abrechnungsentwurf öffnet Bereitschaftsprüfung und Vorjahresvergleich", async ({ desk }) => {
-	const { name } = benchExecute(`${fixtures}.seed_e2e_betriebskostenabrechnung`, [], { submit: false });
+	const { name } = benchExecute(`${fixtures}.seed_e2e_betriebskostenabrechnung`, [], { submit: 0 });
 	await openForm(desk, doctype, name);
 	const form = visiblePage(desk);
 	const readiness = form.getByRole("button", { name: "Abrechnungsbereitschaft prüfen", exact: true });
@@ -25,7 +25,7 @@ test("Abrechnungsentwurf öffnet Bereitschaftsprüfung und Vorjahresvergleich", 
 
 	await readiness.click();
 	await expect(dialog(desk).locator(".modal-title")).toHaveText("Abrechnungsbereitschaft prüfen");
-	await desk.keyboard.press("Escape");
+	await dialog(desk).locator(".btn-modal-close").click();
 	await expect(dialog(desk)).toHaveCount(0);
 
 	await comparison.click();
