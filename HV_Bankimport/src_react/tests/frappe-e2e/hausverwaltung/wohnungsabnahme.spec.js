@@ -10,8 +10,8 @@ test("Wohnungsabnahme mobil erfassen, fortsetzen und als privates PDF öffnen", 
 	const { old, new: incoming, prozess, day } = benchExecute(fixture);
 	await openForm(desk, "Prozess Instanz", prozess);
 	await visiblePage(desk).getByRole("button", { name: "Wohnungsabnahme" }).click();
-	await expect(visiblePage(desk).getByText("Auszug", { exact: true })).toBeVisible();
-	await visiblePage(desk).getByText("Einzug", { exact: true }).click();
+	await expect(desk.locator(".dropdown-item:visible").filter({ hasText: /^Auszug$/ })).toBeVisible();
+	await desk.locator(".dropdown-item:visible").filter({ hasText: /^Einzug$/ }).click();
 	await desk.waitForURL("**/wohnungsabnahme?*");
 	await expect(desk.getByRole("heading", { name: "Wohnungsabnahme · Einzug" })).toBeVisible();
 	await expect(desk.getByText("Mietvertrag " + incoming, { exact: false })).toBeVisible();
@@ -19,7 +19,7 @@ test("Wohnungsabnahme mobil erfassen, fortsetzen und als privates PDF öffnen", 
 	await desk.waitForFunction(() => window.frappe?.csrf_token && window.frappe?.set_route);
 	await openForm(desk, "Mietvertrag", old);
 	await visiblePage(desk).getByRole("button", { name: "Wohnungsabnahme" }).click();
-	await visiblePage(desk).getByText("Auszug", { exact: true }).click();
+	await desk.locator(".dropdown-item:visible").filter({ hasText: /^Auszug$/ }).click();
 	await desk.waitForURL("**/wohnungsabnahme?*");
 	await desk.setViewportSize({ width: 390, height: 844 });
 	await expect(desk.getByRole("heading", { name: "Wohnungsabnahme · Auszug" })).toBeVisible();
