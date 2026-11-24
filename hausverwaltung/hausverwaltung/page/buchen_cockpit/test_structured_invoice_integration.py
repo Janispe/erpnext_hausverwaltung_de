@@ -1,13 +1,15 @@
 """Exercise the cockpit endpoints against real ERPNext and optional ALYF."""
 
 import unittest
+from copy import deepcopy
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 from xml.sax.saxutils import escape
 
 import frappe
-from frappe.utils import cint, getdate, nowdate
+from frappe.utils import add_days, cint, getdate, nowdate
+from lxml import etree
 from pypdf import PdfWriter
 from pypdf.generic import ArrayObject, NameObject
 
@@ -19,15 +21,17 @@ CII_XML = Path(__file__).with_name("test_fixtures").joinpath("cii.xml").read_byt
 UBL_XML = b'<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"/>'
 
 
-def make_pdf(xml=None):
+def make_pdf(xml=None, *, af_only=False):
     writer = PdfWriter()
     writer.add_blank_page(width=200, height=200)
     if xml is not None:
-        attachment = writer.add_attachment("factur-x.xml", xml)
-        attachment.associated_file_relationship = NameObject("/Alternative")
-        writer.root_object[NameObject("/AF")] = ArrayObject([
-            writer.root_object["/Names"]["/EmbeddedFiles"]["/Names"][1],
-        ])
+        writer.add_attachment("factur-x.xml", xml)
+        catalog = writer.root_object
+        file_spec = catalog["/Names"]["/EmbeddedFiles"]["/Names"][1]
+        file_spec.get_object()[NameObject("/AFRelationship")] = NameObject("/Alternative")
+        catalog[NameObject("/AF")] = ArrayObject([file_spec])
+        if af_only:
+            del catalog["/Names"]
     output = BytesIO()
     writer.write(output)
     return output.getvalue()
@@ -39,6 +43,7 @@ class TestStructuredInvoiceDetection(unittest.TestCase):
         self.assertEqual(structured_invoice.detect(UBL_XML, "ubl.xml"), ("ubl", UBL_XML))
         self.assertEqual(structured_invoice.detect(CII_XML, "cii.xml"), ("cii", CII_XML))
         self.assertEqual(structured_invoice.detect(make_pdf(CII_XML), "factur-x.pdf"), ("cii", CII_XML))
+        self.assertEqual(structured_invoice.detect(make_pdf(CII_XML, af_only=True), "af-only.pdf"), ("cii", CII_XML))
         with self.assertRaisesRegex(structured_invoice.StructuredInvoiceError, "fehlerhaft"):
             structured_invoice.detect(make_pdf(b"<broken"), "factur-x.pdf")
         with self.assertRaisesRegex(structured_invoice.StructuredInvoiceError, "installiert"):
@@ -100,6 +105,7 @@ class TestStructuredInvoiceIntegration(unittest.TestCase):
             .replace(b"HV-TEST-LIEFERANT", escape(self.supplier_name).encode())
             .replace(b"HV-TEST-FIRMA", escape(self.company_name).encode())
             .replace(b"20261124", getdate(nowdate()).strftime("%Y%m%d").encode())
+            .replace(b"20261208", getdate(add_days(nowdate(), 14)).strftime("%Y%m%d").encode())
             .replace(b"<ram:TypeCode>380", b"<ram:TypeCode>381" if credit else b"<ram:TypeCode>380")
         )
 
@@ -119,6 +125,7 @@ class TestStructuredInvoiceIntegration(unittest.TestCase):
         self.assertEqual(preview["company"], self.company)
         self.assertEqual(preview["supplier"], self.supplier)
         self.assertEqual(preview["lines"][0]["name"], "Fensterreinigung")
+        self.assertEqual(preview["due_date"], add_days(nowdate(), 14))
         self.assertFalse(frappe.db.exists("Purchase Invoice", {"bill_no": preview["number"]}))
         args = {
             "file_url": file_url, "digest": preview["digest"], "company": self.company,
@@ -136,6 +143,10 @@ class TestStructuredInvoiceIntegration(unittest.TestCase):
         self.assertEqual((draft.docstatus, bool(draft.is_return)), (0, expected < 0))
         sign = 1 if expected > 0 else -1
         self.assertEqual((draft.net_total, draft.total_taxes_and_charges, draft.grand_total), (100 * sign, 19 * sign, expected))
+        due_date = getdate(add_days(nowdate(), 14))
+        self.assertEqual(draft.due_date, due_date)
+        if expected > 0:
+            self.assertEqual([(row.due_date, row.payment_amount) for row in draft.payment_schedule], [(due_date, expected)])
         self.assertEqual(draft.items[0].hv_kostenart, self.expense_type)
         self.assertEqual(draft.items[0].cost_center, self.cost_center)
         self.assertEqual(draft.items[0].wohnung, self.apartment)
@@ -167,6 +178,40 @@ class TestStructuredInvoiceIntegration(unittest.TestCase):
         preview, args = self._prepare(credit)
         self.assertEqual(preview["gross"], -119)
         self._assert_draft(args, -119)
+
+    def test_mixed_taxes_require_manual_line_allocation(self):
+        ns = structured_invoice.NS
+        root = etree.fromstring(self._xml())
+        trade = root.find("rsm:SupplyChainTradeTransaction", ns)
+        line = deepcopy(trade.find("ram:IncludedSupplyChainTradeLineItem", ns))
+        line.find(".//ram:LineID", ns).text = "2"
+        line.find(".//ram:CategoryCode", ns).text = "E"
+        line.find(".//ram:RateApplicablePercent", ns).text = "0"
+        trade.insert(1, line)
+        settlement = trade.find("ram:ApplicableHeaderTradeSettlement", ns)
+        taxable = settlement.find("ram:ApplicableTradeTax", ns)
+        exempt = deepcopy(taxable)
+        exempt.find("ram:CalculatedAmount", ns).text = "0.00"
+        exempt.find("ram:RateApplicablePercent", ns).text = "0"
+        exempt.find("ram:CategoryCode", ns).text = "E"
+        taxable.addnext(exempt)
+        totals = settlement.find("ram:SpecifiedTradeSettlementHeaderMonetarySummation", ns)
+        for name in ("LineTotalAmount", "TaxBasisTotalAmount"):
+            totals.find(f"ram:{name}", ns).text = "200.00"
+        for name in ("GrandTotalAmount", "DuePayableAmount"):
+            totals.find(f"ram:{name}", ns).text = "219.00"
+        upload = self._upload(etree.tostring(root), ".xml")
+        with self.assertRaisesRegex(frappe.ValidationError, "Steuergruppen.*manuelle Zuordnung je Position"):
+            cockpit.preview_structured_invoice(upload["file_url"])
+
+    def test_installments_require_manual_review(self):
+        xml = self._xml().replace(
+            b"</ram:SpecifiedTradePaymentTerms>",
+            b"<ram:PartialPaymentAmount>59.50</ram:PartialPaymentAmount></ram:SpecifiedTradePaymentTerms>",
+        )
+        upload = self._upload(xml, ".xml")
+        with self.assertRaisesRegex(frappe.ValidationError, "Zahlungsbedingungen.*manuelle Prüfung"):
+            cockpit.preview_structured_invoice(upload["file_url"])
 
     def test_formats_totals_and_permissions(self):
         normal = self._upload(make_pdf(), ".pdf")

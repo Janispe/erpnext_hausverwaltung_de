@@ -1950,13 +1950,13 @@ def preview_structured_invoice(file_url: str) -> dict:
 
 def _lock_structured_invoice_identity(source, company, supplier, bill_no):
     # Locking reads see the competing transaction's commit after waiting.
+    frappe.db.get_value("Company", company, "name", for_update=True)
     locked_file = frappe.db.get_value(
         "File", {"content_hash": source.content_hash, "is_private": 1}, "name",
         order_by="creation asc, name asc", for_update=True,
     )
     if not locked_file:
         frappe.throw("Der Originalbeleg wurde inzwischen entfernt.")
-    frappe.db.get_value("Company", company, "name", for_update=True)
     pi = frappe.qb.DocType("Purchase Invoice")
     file = frappe.qb.DocType("File")
     existing = (
@@ -2041,6 +2041,15 @@ def create_structured_invoice(file_url: str, digest: str, company: str, supplier
     if currency != invoice["currency"]:
         frappe.throw("Die Währung der Firma und die Rechnungswährung stimmen nicht überein.")
     pi.is_return = int(invoice["is_return"])
+    due_date = invoice["due_date"]
+    if due_date:
+        pi.due_date = due_date
+        pi.ignore_default_payment_terms_template = 1
+        if not pi.is_return:
+            pi.append("payment_schedule", {
+                "due_date": due_date, "invoice_portion": 100,
+                "payment_amount": float(invoice["gross"]), "base_payment_amount": float(invoice["gross"]),
+            })
     pi.update_stock = 0
     pi.disable_rounded_total = 1
     pi.flags.dont_auto_add_taxes = True
@@ -2074,6 +2083,15 @@ def create_structured_invoice(file_url: str, digest: str, company: str, supplier
         or bool(pi.is_return) != invoice["is_return"]
     ):
         frappe.throw("ERPNext hat Rechnungsbeträge, Steuern oder Vorzeichen verändert. Der Entwurf wurde verworfen.")
+    if due_date and (
+        getdate(pi.due_date) != getdate(due_date)
+        or not pi.is_return and (
+            len(pi.payment_schedule) != 1
+            or getdate(pi.payment_schedule[0].due_date) != getdate(due_date)
+            or Decimal(str(pi.payment_schedule[0].payment_amount)) != invoice["gross"]
+        )
+    ):
+        frappe.throw("ERPNext hat die Fälligkeit oder den Zahlungsplan verändert. Der Entwurf wurde verworfen.")
     _attach_source_file(pi, file_url, source=source)
     return {"name": pi.name}
 

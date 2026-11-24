@@ -17,12 +17,12 @@ Für den Import braucht der Benutzer Zugriff auf den privaten Originalbeleg, die
 ## Bedienung
 
 1. Öffne den Datei-Upload im Buchen-Cockpit und lade eine CII-XML oder ein ZUGFeRD-/Factur-X-PDF hoch.
-2. Öffne den Beleg über **E-Rechnung prüfen**. Vergleiche Rechnungsnummer, Datum, Lieferant und Empfänger, Originalpositionen und Steuersummen mit dem Originalbeleg. Bestätige den ERPNext-Lieferanten und die Firma.
+2. Öffne den Beleg über **E-Rechnung prüfen**. Vergleiche Rechnungsnummer, Rechnungsdatum, gegebenenfalls Fälligkeit, Lieferant und Empfänger, Originalpositionen und Steuersummen mit dem Originalbeleg. Bestätige den ERPNext-Lieferanten und die Firma.
 3. Wähle je Position die Objekt-Kostenstelle, die Umlagefähigkeit und die Kostenart. Gib bei Einzelverteilung eine Wohnung an. Ordne jeden ausgewiesenen Steuerbetrag dem passenden Vorsteuerkonto zu.
-4. Wähle **Eingangsrechnung als Entwurf speichern**. Der Entwurf wird mit dem privaten Original geöffnet. Originalmengen und Einheiten stehen in der Positionsbeschreibung. Die Buchungsposition übernimmt den geprüften CII-Nettozeilenbetrag. Gutschriften werden als Retouren mit negativen Beträgen gespeichert.
-5. Für gewöhnliche PDFs wähle **PDF-Analyse starten**. Rechnerisch fehlerhafte Belege, unbekannte Profile und UBL-XRechnungen zeigen einen Fehler mit einem Hinweis auf **Eingangsrechnung** zur manuellen Erfassung und Ablage des Originals.
+4. Wähle **Eingangsrechnung als Entwurf speichern**. Über **Entwurf öffnen** erreichst du den Entwurf mit dem privaten Original. Weitere Dateien bleiben im Upload-Dialog verfügbar. Originalmengen und Einheiten stehen in der Positionsbeschreibung. Die Buchungsposition übernimmt den geprüften CII-Nettozeilenbetrag. Gutschriften werden als Retouren mit negativen Beträgen gespeichert.
+5. Für gewöhnliche PDFs wähle **PDF-Analyse starten** und bei Bedarf **Buchungs-Inbox öffnen**. Rechnerisch fehlerhafte Belege, unbekannte Profile und UBL-XRechnungen zeigen einen Fehler mit einem Hinweis auf **Eingangsrechnung** zur manuellen Erfassung und Ablage des Originals.
 
-Der automatisierte Entwurf ist auf EUR-Belege ohne Kopfzu- und -abschläge, Vorauszahlungen oder eigenen Rundungsbetrag ausgelegt. Steuerfälle mit zusätzlichem Buchungsbedarf, etwa Reverse Charge, gehen ebenfalls in die manuelle Erfassung.
+Der automatisierte Entwurf ist auf EUR-Belege ohne Kopfzu- und -abschläge, Vorauszahlungen oder eigenen Rundungsbetrag ausgelegt. Gemischte Steuergruppen, Reverse Charge, Ratenzahlungen, Skonto und Zahlungsbedingungen ohne strukturiertes Fälligkeitsdatum gehen zur manuellen Prüfung.
 
 ## Isolierter Test
 

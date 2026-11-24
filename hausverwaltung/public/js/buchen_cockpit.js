@@ -1490,20 +1490,12 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 					.then((r) => {
 						const res = (r && r.message) || {};
 						if (!res.session_id) return;
-						dialog.hide();
-						// KEINE Session-Filterung — sonst verschwinden alle anderen
-						// Vorschläge bis zum manuellen Filter-Wechsel. Die neuen
-						// landen mit Status=Pending und sind automatisch im
-						// Default-"open"-Filter sichtbar.
-						const route = frappe.get_route() || [];
-						if (
-							route[0] === "buchungs_inbox"
-							&& hausverwaltung.buchungs_inbox
-							&& typeof hausverwaltung.buchungs_inbox._refresh === "function"
-						) {
-							hausverwaltung.buchungs_inbox._refresh();
-						} else {
-							frappe.set_route("buchungs_inbox");
+						const queued = new Set(urls);
+						dialog._hv_uploaded_urls = dialog._hv_uploaded_urls.filter((url) => !queued.has(url));
+						render_list();
+						$inbox_link.show();
+						if (frappe.get_route()?.[0] === "buchungs_inbox") {
+							hausverwaltung.buchungs_inbox?._refresh?.();
 						}
 					}),
 				() => dialog.enable_primary_action()
@@ -1514,6 +1506,12 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 	dialog._hv_pending_splits = 0;
 	dialog.show();
 	const structured_files = new Map();
+
+	const $structured = dialog.$body.find(".hv-structured-uploaded-list");
+	const $inbox_link = $("<a>", {
+		href: "/app/buchungs-inbox", target: "_blank", rel: "noopener noreferrer",
+		class: "btn btn-default btn-sm my-1", text: __("Buchungs-Inbox öffnen"),
+	}).hide().appendTo(dialog.$body.find(".hv-bulk-uploaded-list").parent());
 
 	// Frappe FileUploader inline einhängen — Multiple aktiv.
 	const $target = dialog.$body.find(".hv-bulk-uploader-target");
@@ -1554,18 +1552,19 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 			if (file_doc.invoice_format && file_doc.invoice_format !== "pdf") {
 				if (!structured_files.has(file_doc.file_url)) {
 					structured_files.set(file_doc.file_url, file_doc);
-					$("<button>", {
+					const $button = $("<button>", {
 						type: "button", class: "btn btn-default btn-sm my-1",
 						text: file_doc.invoice_format === "cii"
 							? __("E-Rechnung prüfen · {0}", [file_doc.file_name])
 							: __("Importhinweis · {0}", [file_doc.file_name]),
-					}).on("click", () => {
-						if (file_doc.purchase_invoice) {
-							frappe.set_route("Form", "Purchase Invoice", file_doc.purchase_invoice);
-						} else {
-							open_structured_invoice_preview(file_doc, dialog);
-						}
-					}).appendTo(dialog.$body.find(".hv-structured-uploaded-list"));
+					}).appendTo($structured);
+					$button.on("click", () => open_structured_invoice_preview(file_doc, (name) => {
+						$button.replaceWith($("<a>", {
+							href: `/app/purchase-invoice/${encodeURIComponent(name)}`,
+							target: "_blank", rel: "noopener noreferrer", class: "btn btn-default btn-sm my-1",
+							text: __("Entwurf öffnen · {0}", [name]),
+						}));
+					}));
 				}
 			} else if (dialog.get_value("auto_split")) {
 				split_and_queue_uploaded_pdf(file_doc, dialog, render_list);
@@ -1576,7 +1575,7 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 	});
 };
 
-function open_structured_invoice_preview(file_doc, parent_dialog) {
+function open_structured_invoice_preview(file_doc, on_saved) {
 	const file_url = file_doc.file_url;
 	const escape = (value) => frappe.utils.escape_html(String(value ?? ""));
 	const original = `<p><a href="${escape(encodeURI(file_url))}" target="_blank" rel="noopener noreferrer">${__("Privaten Originalbeleg öffnen")}</a></p>`;
@@ -1597,7 +1596,9 @@ function open_structured_invoice_preview(file_doc, parent_dialog) {
 		const incoming_tax = invoice.taxes.filter((tax) => Number(tax.amount) !== 0);
 		const fields = [
 			{ fieldtype: "HTML", options: `
-				<p><strong>${escape(invoice.profile)} · ${escape(invoice.number)}</strong> · ${escape(invoice.date)}</p>
+				<p><strong>${escape(invoice.profile)} · ${escape(invoice.number)}</strong><br>
+				${__("Rechnungsdatum")} ${escape(invoice.date)}
+				${invoice.due_date ? ` · ${__("Fällig am")} ${escape(invoice.due_date)}` : ""}</p>
 				<p>${__("Lieferant")} <strong>${escape(invoice.seller)}</strong><br>
 				${__("Rechnungsempfänger")} <strong>${escape(invoice.buyer)}</strong></p>
 				<p>${invoice.is_return ? `<strong>${__("Gutschrift")}</strong> · ` : ""}
@@ -1662,9 +1663,7 @@ function open_structured_invoice_preview(file_doc, parent_dialog) {
 					freeze: true,
 				}).then(({ message }) => {
 					dialog.hide();
-					parent_dialog.hide();
-					file_doc.purchase_invoice = message.name;
-					frappe.set_route("Form", "Purchase Invoice", message.name);
+					on_saved(message.name);
 				}), () => dialog.enable_primary_action());
 			},
 		});

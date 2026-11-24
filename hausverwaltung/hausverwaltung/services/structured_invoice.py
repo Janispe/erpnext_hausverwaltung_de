@@ -48,6 +48,18 @@ def _xml_format(root):
     return "unsupported"
 
 
+def _add_invoice_candidate(candidates, name, xml):
+    known = PurePath(name.lower()).name in INVOICE_XML_NAMES
+    try:
+        root = _xml_root(xml)
+    except StructuredInvoiceError:
+        if known:
+            raise
+        return
+    if (known or _xml_format(root) != "unsupported") and xml not in candidates:
+        candidates.append(xml)
+
+
 def _embedded_invoice(content):
     try:
         reader = PdfReader(BytesIO(content))
@@ -56,31 +68,25 @@ def _embedded_invoice(content):
         return None
     candidates = []
     try:
-        attachments = list(reader.attachment_list)
-        # PDF/A-3 can reference the file via /AF independently of the name tree.
-        from pypdf.generic import EmbeddedFile
-
         catalog = reader.root_object
-        for ref in catalog.get("/AF") or []:
+        attachments = reader.attachments
+        for name in attachments:
+            if name.lower().endswith(".xml"):
+                for xml in attachments[name]:
+                    _add_invoice_candidate(candidates, name, xml)
+        # PDF/A-3 can reference the file via /AF independently of the name tree.
+        associated = catalog.get("/AF")
+        for ref in associated.get_object() if associated else ():
             spec = ref.get_object()
             name = spec.get("/UF") or spec.get("/F")
-            if name and spec.get("/EF"):
-                attachments.append(EmbeddedFile(str(name), spec))
-        for attachment in attachments:
-            name = (attachment.alternative_name or attachment.name).lower()
-            if not name.endswith(".xml"):
+            if not name or not name.lower().endswith(".xml"):
                 continue
-            known = PurePath(name).name in INVOICE_XML_NAMES
-            try:
-                xml = attachment.content
-                root = _xml_root(xml)
-            except StructuredInvoiceError:
-                if known:
-                    raise
-                continue
-            if known or _xml_format(root) != "unsupported":
-                if xml not in candidates:
-                    candidates.append(xml)
+            embedded = spec.get("/EF")
+            if embedded:
+                streams = embedded.get_object()
+                stream = streams.get("/UF") or streams.get("/F")
+                if stream:
+                    _add_invoice_candidate(candidates, name, stream.get_object().get_data())
     except StructuredInvoiceError:
         raise
     except Exception as exc:
@@ -178,6 +184,28 @@ def _profile_and_validation(root):
     return profile, get_validation_errors
 
 
+def _cii_date(node):
+    date_value = _text(node, "udt:DateTimeString[@format='102']")
+    if len(date_value) != 8:
+        raise StructuredInvoiceError("Ein Rechnungs- oder Fälligkeitsdatum fehlt oder ist ungültig.")
+    return datetime.strptime(date_value, "%Y%m%d").date()
+
+
+def _payment_due_date(settlement):
+    terms = settlement.findall("ram:SpecifiedTradePaymentTerms", NS)
+    if not terms:
+        return None
+    complex_terms = ("PartialPaymentAmount", "ApplicableTradePaymentDiscountTerms", "ApplicableTradePaymentPenaltyTerms")
+    if len(terms) > 1 or any(terms[0].find(f"ram:{field}", NS) is not None for field in complex_terms):
+        raise StructuredInvoiceError("Ratenzahlung, Skonto und mehrteilige Zahlungsbedingungen erfordern eine manuelle Prüfung.")
+    due = terms[0].find("ram:DueDateDateTime", NS)
+    if due is not None:
+        return _cii_date(due)
+    if _text(terms[0], "ram:Description"):
+        raise StructuredInvoiceError("Zahlungsbedingungen ohne strukturiertes Fälligkeitsdatum erfordern eine manuelle Prüfung.")
+    return None
+
+
 def _invoice_data(root):
     header = root.find("rsm:ExchangedDocument", NS)
     trade = root.find("rsm:SupplyChainTradeTransaction", NS)
@@ -199,10 +227,10 @@ def _invoice_data(root):
     buyer = _text(agreement, "ram:BuyerTradeParty/ram:Name")
     if not all((number, seller, buyer)) or len(number) > 140:
         raise StructuredInvoiceError("Rechnungsnummer, Lieferant oder Rechnungsempfänger fehlen oder sind ungültig.")
-    date_value = _text(header, "ram:IssueDateTime/udt:DateTimeString[@format='102']")
-    if len(date_value) != 8:
-        raise StructuredInvoiceError("Das Rechnungsdatum muss im CII-Format JJJJMMTT vorliegen.")
-    date = datetime.strptime(date_value, "%Y%m%d").date()
+    date = _cii_date(header.find("ram:IssueDateTime", NS))
+    due_date = _payment_due_date(settlement)
+    if due_date and due_date < date:
+        raise StructuredInvoiceError("Die Fälligkeit liegt vor dem Rechnungsdatum und erfordert eine manuelle Prüfung.")
     net = _money(totals, "ram:TaxBasisTotalAmount")
     gross = _money(totals, "ram:GrandTotalAmount")
     total_tax = _money(totals, "ram:TaxTotalAmount[@currencyID='EUR']")
@@ -245,6 +273,11 @@ def _invoice_data(root):
         or _money(totals, "ram:DuePayableAmount") != gross
     ):
         raise StructuredInvoiceError("Summenfehler: Positionen, Netto, Steuer und Brutto stimmen nicht überein.")
+    if len(taxes) != 1 or any(
+        (line["tax_category"], line["tax_rate"]) != (taxes[0]["category"], taxes[0]["rate"])
+        for line in lines
+    ):
+        raise StructuredInvoiceError("Mehrere oder uneinheitliche Steuergruppen erfordern eine manuelle Zuordnung je Position.")
     if is_return and (
         multiplier * net >= 0 or multiplier * gross >= 0
         or any(line["net"] > 0 for line in lines) or any(tax["amount"] > 0 for tax in taxes)
@@ -253,6 +286,7 @@ def _invoice_data(root):
 
     return {
         "number": number, "date": date.isoformat(), "currency": currency,
+        "due_date": due_date.isoformat() if due_date else None,
         "seller": seller, "buyer": buyer, "is_return": is_return,
         "seller_tax_id": _text(agreement, "ram:SellerTradeParty/ram:SpecifiedTaxRegistration/ram:ID[@schemeID='VA']"),
         "lines": lines, "taxes": taxes, "net": multiplier * net,
