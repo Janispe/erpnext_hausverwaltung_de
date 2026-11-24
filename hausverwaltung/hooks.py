@@ -93,6 +93,7 @@ doctype_js = {
 	"Customer": "public/js/customer.js",
 	"Dunning": "public/js/dunning.js",
 	"Immobilie": "hausverwaltung/doctype/immobilie/immobilie.js",
+	"Issue": "public/js/issue.js",
 	"Journal Entry": "public/js/journal_entry.js",
 	"Payment Entry": "public/js/payment_entry.js",
 	# Phase 8 Stufe 1a: Prozess-DocType-JS lebt jetzt in process_engine/hooks.py.
@@ -101,6 +102,7 @@ doctype_js = {
 	"Supplier": "public/js/supplier.js",
 }
 doctype_list_js = {
+	"Issue": "public/js/issue_list.js",
 	"Sales Invoice": "public/js/sales_invoice_list.js",
 	"Mietvertrag": "hausverwaltung/doctype/mietvertrag/mietvertrag_list.js",
 	"Hausverwaltung Problem": "hausverwaltung/doctype/hausverwaltung_problem/hausverwaltung_problem_list.js",
@@ -137,10 +139,12 @@ doctype_tree_js = {
 
 # before_install = "hausverwaltung.install.before_install"
 after_install = [
+	"hausverwaltung.hausverwaltung.wohnungsschaden.setup.sync_fields",
 	"hausverwaltung.install.after_install",
 	"hausverwaltung.hausverwaltung.utils.document_naming.seed_document_series",
 ]
 after_migrate = [
+	"hausverwaltung.hausverwaltung.wohnungsschaden.setup.sync_fields",
 	"hausverwaltung.install.sync_hausverwalter_permissions",
 	"hausverwaltung.install.ensure_desk_custom_permissions",
 	"hausverwaltung.install.ensure_hausverwalter_extra_permissions",
@@ -218,6 +222,9 @@ after_migrate = [
 # Override standard doctype classes
 
 extend_doctype_class = {
+	"Issue": ["hausverwaltung.hausverwaltung.wohnungsschaden.issue.IssueMixin"],
+	"File": ["hausverwaltung.hausverwaltung.wohnungsschaden.permissions.FileMixin"],
+	"Web Form": ["hausverwaltung.hausverwaltung.wohnungsschaden.permissions.WebFormMixin"],
 	"Company": ["hausverwaltung.hausverwaltung.overrides.company.CompanyDepartmentRootMixin"],
 }
 
@@ -243,7 +250,15 @@ doc_events = {
 		"on_update": "hausverwaltung.hausverwaltung.utils.bank_account_naming.rename_bank_account_after_save",
 	},
 	"Communication": {
-		"after_insert": "hausverwaltung.hausverwaltung.integrations.paperless.enqueue_paperless_export"
+		"after_insert": "hausverwaltung.hausverwaltung.integrations.paperless.enqueue_paperless_export",
+		"validate": "hausverwaltung.hausverwaltung.wohnungsschaden.permissions.validate_communication",
+	},
+	"DocShare": {
+		"validate": "hausverwaltung.hausverwaltung.wohnungsschaden.permissions.validate_share",
+	},
+	"Issue": {
+		"validate": "hausverwaltung.hausverwaltung.wohnungsschaden.issue.validate_issue",
+		"on_trash": "hausverwaltung.hausverwaltung.wohnungsschaden.issue.check_issue_delete",
 	},
 	"Contact": {
 		"on_update": "hausverwaltung.hausverwaltung.doctype.mietvertrag.mietvertrag.sync_names_for_contact",
@@ -417,6 +432,10 @@ scheduler_events = {
 # }
 #
 override_whitelisted_methods = {
+	"erpnext.support.doctype.issue.issue.set_status": "hausverwaltung.hausverwaltung.wohnungsschaden.issue.set_status",
+	"erpnext.support.doctype.issue.issue.set_multiple_status": "hausverwaltung.hausverwaltung.wohnungsschaden.issue.set_multiple_status",
+	"frappe.core.api.file.zip_files": "hausverwaltung.hausverwaltung.wohnungsschaden.permissions.zip_files",
+	"frappe.core.doctype.file.file.zip_files": "hausverwaltung.hausverwaltung.wohnungsschaden.permissions.zip_files",
 	"frappe.www.printview.get_html_and_style": "hausverwaltung.hausverwaltung.overrides.printview.get_html_and_style",
 	"frappe.utils.print_format.download_pdf": "hausverwaltung.hausverwaltung.overrides.print_format.download_pdf",
 	"erpnext.accounts.doctype.payment_entry.payment_entry.get_payment_entry": "hausverwaltung.hausverwaltung.doctype.dunning.get_payment_entry_guarded",
@@ -514,6 +533,24 @@ permission_query_conditions = {
 has_permission = {
 	name: "hausverwaltung.proposals.frappe_guards.can_read"
 	for name in ("HV Action Proposal", "HV Proposal Revision", "HV Proposal Audit", "HV Proposal Package")
+}
+
+permission_query_conditions.update({
+	"Version": "hausverwaltung.hausverwaltung.wohnungsschaden.permissions.version_match",
+	"Comment": "hausverwaltung.hausverwaltung.wohnungsschaden.permissions.comment_match",
+	"Issue": "hausverwaltung.hausverwaltung.wohnungsschaden.permissions.issue_match",
+	"Communication": "hausverwaltung.hausverwaltung.wohnungsschaden.permissions.communication_match",
+	"File": "hausverwaltung.hausverwaltung.wohnungsschaden.permissions.file_match",
+})
+has_permission.update({
+	"Version": "hausverwaltung.hausverwaltung.wohnungsschaden.permissions.has_timeline_permission",
+	"Comment": "hausverwaltung.hausverwaltung.wohnungsschaden.permissions.has_timeline_permission",
+	"Issue": "hausverwaltung.hausverwaltung.wohnungsschaden.permissions.has_issue_permission",
+	"Communication": "hausverwaltung.hausverwaltung.wohnungsschaden.permissions.has_communication_permission",
+	"File": "hausverwaltung.hausverwaltung.wohnungsschaden.permissions.has_file_permission",
+})
+has_website_permission = {
+	"Issue": "hausverwaltung.hausverwaltung.wohnungsschaden.permissions.has_website_permission",
 }
 
 before_migrate = ["hausverwaltung.proposals.install.refresh_module_map"]

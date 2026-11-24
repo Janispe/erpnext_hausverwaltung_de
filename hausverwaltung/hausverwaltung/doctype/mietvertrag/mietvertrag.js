@@ -1054,3 +1054,14 @@ function highlight_current_staffel_row(frm, tableFieldname) {
 		}
 	});
 }
+
+frappe.ui.form.on('Mietvertrag', {
+	refresh(frm) {
+		const staff = frappe.session.user === 'Administrator'
+			|| frappe.user.has_role(['Hausverwalter', 'System Manager']);
+		if (frm.is_new() || !staff || !frappe.model.can_read('Issue')) return;
+		frm.add_custom_button(__('Wohnungsschäden'), () => {
+			frappe.set_route('List', 'Issue', { status: ['!=', ''], hv_wohnungsschaden: 1, hv_mietvertrag: frm.doc.name });
+		});
+	},
+});
