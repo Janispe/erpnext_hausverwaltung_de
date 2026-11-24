@@ -7,6 +7,7 @@ import frappe
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen import (
     allocate_kosten_auf_wohnungen,
 )
+from hausverwaltung.hausverwaltung.scripts.betriebskosten.rounding import ROUNDING_METHOD_TENANT_ONLY
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.vorjahresvergleich import (
     get_vorjahresvergleich,
 )
@@ -135,7 +136,12 @@ class TestVorjahresvergleich(unittest.TestCase):
             get_vorjahresvergleich("BK-Abrechnung-A")
         frappe.set_user("Administrator")
         has_permission = frappe.has_permission
-        for target in (("Immobilie", "BK-Haus-B"), ("Purchase Invoice", "BK-Beleg-Vorjahr")):
+        for target in (
+            ("Immobilie", "BK-Haus-B"),
+            ("Purchase Invoice", "BK-Beleg-Vorjahr"),
+            ("GL Entry", "BK-GL-Rechnung"),
+            ("GL Entry", "BK-GL-Vorjahr"),
+        ):
             with self.subTest(target=target):
                 def check(doctype, *args, **kwargs):
                     doc = kwargs.get("doc")
@@ -148,6 +154,35 @@ class TestVorjahresvergleich(unittest.TestCase):
                     with self.assertRaises(frappe.PermissionError) as denied:
                         get_vorjahresvergleich(name)
                 self.assertNotIn(target[1], str(denied.exception))
+
+    def test_subcent_contract_amount_uses_head_precision_before_comparison(self):
+        for year, amount, end in ((2023, 0.04, "07-09"), (2024, 0.01, "06-30")):
+            self._insert(
+                "Betriebskosten Festbetrag", f"BK-Teilcent-{year}", parent="BK-Vertrag-A",
+                parenttype="Mietvertrag", parentfield="festbetraege",
+                bezeichnung="BK-Teilcent", betrag=amount,
+                gueltig_von=f"{year}-06-30", gueltig_bis=f"{year}-{end}",
+            )
+
+        head = frappe.get_doc("Betriebskostenabrechnung Immobilie", "BK-Abrechnung-A")
+        with patch(
+            "hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen.get_bk_rounding_method",
+            return_value=ROUNDING_METHOD_TENANT_ONLY,
+        ):
+            report = get_vorjahresvergleich(head.name)
+            row = next(row for row in report["kostenarten"] if row["kostenart"] == "BK-Teilcent")
+            prior = allocate_kosten_auf_wohnungen(**report["vorjahr"], immobilie=head.immobilie)
+            self.assertEqual(prior["matrix"]["BK-Wohnung-A"]["BK-Teilcent"], 0.004)
+            for period in ("aktuell", "vorjahr"):
+                head.update(report[period])
+                head._populate_summary()
+                expected = next(cost.betrag for cost in head.kosten_pro_art if cost.bezeichnung == "BK-Teilcent")
+                self.assertEqual(row[period]["betrag"], expected)
+
+        self.assertEqual(row["vorjahr"]["betrag"], 0)
+        self.assertEqual(len(row["vorjahr"]["belege"]), 1)
+        self.assertEqual(row["differenz"], 0.01)
+        self.assertIsNone(row["prozent"])
 
     def test_misbooked_foreign_apartment_never_appears_in_error(self):
         frappe.db.set_value("GL Entry", "BK-GL-Wohnung", "wohnung", "BK-Wohnung-B")

@@ -14,6 +14,7 @@ from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen i
     _allocate_kosten_auf_wohnungen,
     _quantize_money,
     _wohnungen_in_haus,
+    summiere_kostenarten,
 )
 from hausverwaltung.hausverwaltung.utils.bk_sort import sort_key
 
@@ -39,10 +40,10 @@ def _cost_basis(immobilie, period, *, historical=False):
     allocation = _allocate_kosten_auf_wohnungen(
         **period, immobilie=immobilie, sources=sources, historical_comparison=historical,
     )
-    totals = defaultdict(Decimal)
-    for arts in allocation["matrix"].values():
-        for art, amount in arts.items():
-            totals[art] += Decimal(str(amount))
+    totals = {
+        art: Decimal(str(amount))
+        for art, amount in summiere_kostenarten(allocation["matrix"]).items()
+    }
     return totals, sources
 
 
@@ -93,7 +94,11 @@ def _read_cost_bases(immobilie, current, previous):
         _require_readable(properties | apartments)
         current_totals, current_sources = _cost_basis(root, current)
         previous_totals, previous_sources = _cost_basis(root, previous, historical=True)
-        _require_readable({(row["doctype"], row["beleg"]) for row in current_sources + previous_sources})
+        sources = current_sources + previous_sources
+        _require_readable(
+            {(row["doctype"], row["beleg"]) for row in sources}
+            | {("GL Entry", row["gl_entry"]) for row in sources if "gl_entry" in row}
+        )
         return root, current_totals, current_sources, previous_totals, previous_sources
     except (frappe.ValidationError, frappe.DoesNotExistError, KeyError):
         del frappe.local.message_log[message_count:]

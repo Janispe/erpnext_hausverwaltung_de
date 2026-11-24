@@ -108,6 +108,15 @@ def _quantize_money(value: Decimal) -> Decimal:
     return value.quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
 
+def summiere_kostenarten(matrix: dict) -> dict[str, float]:
+    """Summiert die Wohnungsmatrix auf die Centpräzision des Abrechnungskopfs."""
+    totals = defaultdict(float)
+    for arts in matrix.values():
+        for art, amount in (arts or {}).items():
+            totals[art] += float(amount or 0)
+    return {art: round(amount, 2) for art, amount in totals.items()}
+
+
 def _overlap_days(start_a: str | date, end_a: str | date, start_b: str | date, end_b: str | date) -> int:
     start = max(getdate(start_a), getdate(start_b))
     end = min(getdate(end_a), getdate(end_b))
@@ -900,6 +909,7 @@ def _allocate_kosten_auf_wohnungen(
                 "art": "wohnung" if direct else "haus",
                 "doctype": g.get("voucher_type"),
                 "beleg": g.get("voucher_no"),
+                "gl_entry": g.get("name"),
                 "wohnung": g.get("wohnung") if direct else None,
                 "wirksam_von": eff,
                 "betrag": betrag,
