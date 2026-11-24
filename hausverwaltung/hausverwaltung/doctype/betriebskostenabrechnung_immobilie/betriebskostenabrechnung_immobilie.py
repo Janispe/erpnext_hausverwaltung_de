@@ -705,22 +705,17 @@ class BetriebskostenabrechnungImmobilie(Document):
 		# Kosten pro Art über Allocation ermitteln
 		from hausverwaltung.hausverwaltung.scripts.betriebskosten.kosten_auf_wohnungen import (
 			allocate_kosten_auf_wohnungen,
+			summiere_kostenarten,
 		)
 		alloc = allocate_kosten_auf_wohnungen(von=cstr(self.von), bis=cstr(self.bis), immobilie=self.immobilie, stichtag=cstr(self.stichtag or self.bis))
-		matrix = alloc.get("matrix") or {}
-		# Summe je Art aggregieren
-		per_art = {}
-		for whg, arts in matrix.items():
-			for art, betrag in (arts or {}).items():
-				per_art[art] = per_art.get(art, 0.0) + float(betrag or 0)
+		per_art = summiere_kostenarten(alloc.get("matrix") or {})
 		# Tabelle setzen — gruppierte Reihenfolge (Wasser, Heizung, …) statt
 		# rein alphabetisch, damit Mieter-Abrechnungen lesbarer werden.
 		from hausverwaltung.hausverwaltung.utils.bk_sort import sort_key
 
 		self.set("kosten_pro_art", [])
 		total_costs = 0.0
-		for art, betrag in sorted(per_art.items(), key=lambda item: sort_key(item[0])):
-			amount = round(float(betrag or 0), 2)
+		for art, amount in sorted(per_art.items(), key=lambda item: sort_key(item[0])):
 			total_costs += amount
 			values = {"betrag": amount}
 			if frappe.db.exists("Betriebskostenart", art):
