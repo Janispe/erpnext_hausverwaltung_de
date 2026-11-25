@@ -3,6 +3,7 @@ from urllib.parse import urlencode
 
 import frappe
 from frappe import _
+from frappe.model.base_document import BaseDocument
 from frappe.model.document import Document
 from frappe.utils import nowdate
 
@@ -185,6 +186,15 @@ class Wohnung(Document):
 		if not self.name:
 			return []
 		return _get_mietvertraege_fuer_wohnung(self.name)
+
+	def extend(self, key, value):
+		# Frappe 16 fills computed tables through extend. Its lazy append would
+		# re-enter the descriptor while that table is already being computed.
+		if key == "mietvertraege_alle":
+			for row in value:
+				BaseDocument.append(self, key, row)
+			return
+		return super().extend(key, value)
 
 	def before_submit(self):
 		"""Ensure a Wohnungszustand exists before allowing submission."""
