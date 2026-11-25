@@ -245,3 +245,125 @@ entscheidet über die Kontierung in ERPNext.
    ausführen. Der Live-Test dokumentiert den vom Anbieter gelieferten
    Code und seine Tool-Aufrufe. Die übrigen Tests prüfen den Vertrag
    mit kontrollierten Provider-Antworten.
+
+### Codex CLI mit nativem Code Mode testen
+
+Der zweite PTC-Pilot verwendet die native JavaScript-Runtime der Codex CLI.
+Die CLI spricht Standard-MCP über stdio. `ptc_mcp_stdio.py` stellt den
+Transport bereit. `receipt_ptc_mcp.py` bindet ihn an denselben ERPNext-Katalog
+und Auftragsdispatcher wie der Claude-Pilot. Der Start über den
+Paperclip-CLI-Legacy-Adapter benötigt keine Änderung in Paperclip selbst.
+Der Pilot prüft den Kontierungsvergleich eines vorbereiteten Bonschritts.
+Bildinventar, Ausschnitt und Einreichung gehören weiterhin zum regulären
+Barauslagen-Prozess.
+
+#### Unabhängiger Test auf dem Start-Host
+
+Geprüft auf Linux x86_64 mit Python 3.12.3, lokaler Codex CLI **0.166.0**,
+bestehender ChatGPT-Anmeldung und Modell **gpt-6.2-sol**. Der Worker-Befehl
+`codex` zeigte zunächst auf 0.164.0. Die 0.166.0 wurde für den Test separat
+aus dem offiziellen Paket `@openai/codex@0.166.0` unter `/tmp` installiert.
+Verwende im Adapter den absoluten Pfad des tatsächlich geprüften Binaries.
+Der MCP-Prozess läuft auf demselben Host und benötigt hier nur Python.
+
+```bash
+/path/to/codex --version
+/path/to/codex login status
+python3 scripts/verify_codex_ptc.py --codex /path/to/codex --model gpt-6.2-sol
+```
+
+Der Test startet in einem leeren Verzeichnis mit `--ignore-user-config`,
+`--ignore-rules`, `--ephemeral`, `--sandbox read-only` und `-a never`.
+Er aktiviert `--enable code_mode --enable code_mode_only --enable
+code_mode_only_strict_3p_tools` und gibt nur dem synthetischen MCP-Server
+seine drei Werkzeuge frei. Die Schalter sind in 0.166.0 als in Entwicklung
+gekennzeichnet. Ohne die gezielte MCP-Freigabe wurde der Tool-Aufruf trotz
+aktivem Code Mode mit „MCP tool call requires approval, but approval
+policy is never“ abgebrochen.
+
+Der lokale Rollout-Trace muss eine vom Modell geschriebene JavaScript-Zelle
+mit drei verschachtelten Aufrufen des synthetischen Messdaten-Katalogs nachweisen. Der Test vergleicht
+Zell-ID und Werkzeugaufrufe, prüft zwei Rohdatenmarker in der Runtime und
+ihre Abwesenheit in den Modellanfragen. Die einzige fachliche Ausgabe an
+das Modell muss das bestätigte aggregierte Ergebnis sein. Der Test legt
+die interne Spur temporär ab und gibt nur den synthetischen Kurzbeleg
+aus. Die übliche CLI-JSONL-Ausgabe enthält selbst die vollständigen
+MCP-Ereignisse. Verwende sie ausschließlich mit synthetischen Daten und
+veröffentliche keine Rohtraces.
+[Codex MCP](https://developers.openai.com/codex/mcp)
+[Codex Rollout Trace 0.166.0](https://raw.githubusercontent.com/openai/codex/rust-v0.166.0/codex-rs/rollout-trace/README.md)
+
+#### ERPNext-Pilot über den zugewiesenen Paperclip-Run
+
+1. Auf einer Rootless-Wegwerf-Site mit migrierter App, `hv_disposable_test_site=1`,
+   `hv_receipt_pilot=1` und `hv_receipt_batch=1` arbeiten. Der Adapter-Host
+   braucht Zugriff auf die HTTP-API der Wegwerf-Site. Die CI-Site in diesem
+   Workspace war am Host unter `http://127.0.0.1:8285` erreichbar und hieß
+   im ERPNext-Container `frontend`. Der ERPNext-Backend-Container muss die
+   Paperclip-API über seine eigene Netzroute erreichen. Loopback im Container
+   ist der Container selbst. Die im Backend wirksame
+   `hv_receipt_paperclip_url` und die Agenten-UUID
+   `hv_receipt_paperclip_agent` auf die isolierte Company abstimmen.
+2. Die Demo-Daten der Testsite verwenden und über den bestehenden ERPNext-Weg
+   synthetische Eingangsrechnungen buchen. Mindestens ein Beleg soll denselben
+   Lieferanten und dieselbe Kostenstelle haben. Ein anderer soll einer
+   anderen Kostenstelle oder einem anderen Lieferanten zugeordnet sein.
+   Dann einen privaten synthetischen Upload mit passender Kostenstelle und
+   Notiz einreichen. Auf die bestätigte Paperclip-Issue-Zuordnung warten.
+   Den Pilotlauf erst nach der folgenden Vorbereitung starten oder dasselbe
+   Issue erneut starten:
+
+   ```bash
+   bench --site frontend execute hausverwaltung.cypress_fixtures.prepare_e2e_receipt_ptc \
+     --args '["SYNTHETISCHE-UPLOAD-UUID"]'
+   ```
+
+   Den Platzhalter durch die Upload-UUID ersetzen. Das Fixture setzt
+   ausschließlich auf einer Wegwerf-Site einen noch unbearbeiteten,
+   bereits verknüpften Upload auf Bonschritt 1. Die tatsächliche Routine
+   liefert die Issue-Zuordnung weiterhin selbst.
+3. Dem CLI-Legacy-Adapter die drei getesteten Code-Mode-Schalter und
+   `-a never` mitgeben. Die in Schritt 1 genannte Pilot-Site wird über
+   `HV_RECEIPT_PILOT_URL` gebunden. Für den MCP-Prozess
+   `HV_RECEIPT_PTC_STEP=1` und `HV_RECEIPT_PTC_MERCHANT` mit dem exakten
+   Namen des synthetischen Lieferanten setzen. `HV_RECEIPT_PILOT_KEY` und
+   `HV_RECEIPT_PILOT_SECRET` kommen aus der geschützten Agentenkonfiguration
+   eines API-Benutzers in der Rolle `Paperclip Bonanalyse`.
+   `PAPERCLIP_API_KEY` muss der kurzlebige Run-JWT des tatsächlich
+   laufenden zugewiesenen Issues sein. Ein Board-Schlüssel oder der
+   eigene Terminal-Login kann diesen Run-Bezug nicht herstellen.
+4. Nur diesen MCP-Server im isolierten Lauf registrieren. Die
+   TOML-Einstellungen entsprechen einzelnen `-c key=value`-Overrides
+   bei `--ignore-user-config`. Verwende absolute Pfade auf dem Adapter-Host.
+
+   ```toml
+   [mcp_servers.receipt_ptc]
+   command = "/usr/bin/python3"
+   args = ["/checkout/hausverwaltung/scripts/receipt_ptc_mcp.py"]
+   required = true
+   enabled_tools = ["lookup_supplier", "list_booked_receipts", "list_allowed_accounts", "verify_shortlist"]
+   default_tools_approval_mode = "approve"
+   env_vars = [
+     "HV_RECEIPT_PILOT_URL", "HV_RECEIPT_PILOT_KEY", "HV_RECEIPT_PILOT_SECRET",
+     "HV_RECEIPT_PTC_STEP", "HV_RECEIPT_PTC_MERCHANT", "PAPERCLIP_API_KEY"
+   ]
+   ```
+
+5. Den Agenten anweisen, eine native JavaScript-Zelle zu schreiben.
+   Darin soll er den Lieferanten ermitteln, bei einem Treffer die
+   Vergleichsbelege abrufen, zulässige Konten schneiden und
+   `verify_shortlist` mit höchstens drei belegten Konten aufrufen. Nur
+   dessen geprüftes Ergebnis mit `text(...)` ausgeben. Für die Abnahme
+   `CODEX_ROLLOUT_TRACE_ROOT` in ein privates temporäres Verzeichnis auf
+   dem Adapter-Host setzen und die Zellspur gegen alle Inferenzanfragen
+   prüfen. Für den Fall eines unbekannten synthetischen Lieferanten einen zweiten
+   Upload mit eigenem Paperclip-Issue verwenden. Dabei soll der historische Abruf ausbleiben.
+6. Im ERPNext-Auftrag die gespeicherte Kurzliste und ihre passenden
+   Belegreferenzen prüfen. Ein fremder oder beendeter Paperclip-Run
+   muss bei der Initialisierung des Fachkatalogs scheitern. Der
+   CLI-Pilot stellt keine Buchungswerkzeuge bereit und reicht keinen
+   vollständigen Bon ein. Die stdio-Schnittstelle enthält keine
+   Attestation, ob ein MCP-Aufruf aus Code Mode stammt. Für diesen Pilot
+   belegt das die native Spur nach dem Lauf. Die CLI kann bei einer
+   abweichenden Modellantwort Werkzeugdaten ausgeben. Daher nur
+   synthetische Daten verwenden.

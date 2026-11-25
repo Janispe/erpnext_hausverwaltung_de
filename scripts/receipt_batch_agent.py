@@ -43,23 +43,21 @@ def analyze(vision, model, task, images):
 	return json.loads(result["choices"][0]["message"]["content"])
 
 
-def compare_accounts(erp, headers, step, receipt, ptc):
-	erp.request("POST", f"{EVIDENCE_API}.start", headers=headers, data={
-		"step": step, "merchant": receipt.get("haendler"),
-	})
-
+def evidence_rpc(erp, headers, step):
 	def rpc(method, params):
 		return erp.request("POST", f"{EVIDENCE_API}.tools", headers=headers, data={
 			"step": step, "method": method, "params": params,
 		})[0]["message"]
 
-	catalogue = rpc("tools/list", {})["tools"]
+	return rpc
+
+
+def checked_evidence_calls(rpc):
 	called = set()
-	verified = None
 	match = None
 
-	def dispatch(name, arguments):
-		nonlocal verified, match
+	def call(name, arguments):
+		nonlocal match
 		if name == "verify_shortlist" and (
 			not {"lookup_supplier", "list_allowed_accounts"} <= called
 			or (match and "list_booked_receipts" not in called)
@@ -69,6 +67,23 @@ def compare_accounts(erp, headers, step, receipt, ptc):
 		called.add(name)
 		if name == "lookup_supplier":
 			match = result["match"]
+		return result
+
+	return call
+
+
+def compare_accounts(erp, headers, step, receipt, ptc):
+	erp.request("POST", f"{EVIDENCE_API}.start", headers=headers, data={
+		"step": step, "merchant": receipt.get("haendler"),
+	})
+	rpc = evidence_rpc(erp, headers, step)
+	catalogue = rpc("tools/list", {})["tools"]
+	call = checked_evidence_calls(rpc)
+	verified = None
+
+	def dispatch(name, arguments):
+		nonlocal verified
+		result = call(name, arguments)
 		if name == "verify_shortlist":
 			verified = result
 			return result["verified_json"]

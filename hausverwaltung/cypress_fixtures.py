@@ -1214,6 +1214,25 @@ def bind_e2e_receipt_issue(upload: str, issue_id: str) -> None:
 
 
 
+def prepare_e2e_receipt_ptc(upload: str) -> None:
+	"""Stage one synthetic accounting comparison on an already linked pilot issue."""
+	_check_disposable_site()
+	from uuid import UUID
+
+	from hausverwaltung.hausverwaltung.services import receipt_batch
+
+	job = frappe.get_doc(receipt_batch.JOB, str(UUID(upload)), for_update=True)
+	if job.proposal or not job.issue_id or job.results or job.status not in {"Dispatched", "Running"}:
+		frappe.throw("Der synthetische Pilot braucht einen zugeordneten, noch unbearbeiteten Upload.")
+	job.db_set({
+		"status": "Running",
+		"inventory": '[{"regions":[[1,0,0,1000,1000]],"question":""}]',
+		"total_receipts": 1,
+	})
+	frappe.db.commit()
+
+
+
 def prepare_e2e_receipt(name: str, supplier: str, category: str) -> None:
 	_check_disposable_site()
 	from hausverwaltung.hausverwaltung.services.receipt_pilot import PROPOSAL, verified_original
