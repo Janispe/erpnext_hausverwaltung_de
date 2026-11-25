@@ -13,7 +13,7 @@ class TestReceiptPtcMcp(unittest.TestCase):
 	def test_codex_metadata_is_kept_out_of_the_business_dispatch(self):
 		erp = Mock()
 		erp.request.side_effect = [
-			({"message": True}, {}),
+			({"message": {"attempt": "attempt"}}, {}),
 			({"message": {"tools": [{"name": name} for name in ("lookup_supplier", "list_allowed_accounts",
 				"list_booked_receipts", "verify_shortlist")]}}, {}),
 			({"message": {"structuredContent": {"match": {"name": "Synthetic"}}}}, {}),
@@ -44,4 +44,5 @@ class TestReceiptPtcMcp(unittest.TestCase):
 		self.assertTrue(replies[7]["isError"])
 		self.assertEqual(erp.request.call_count, 6)
 		self.assertTrue(all(call.kwargs["data"]["step"] == 2 for call in erp.request.call_args_list))
+		self.assertTrue(all(call.kwargs["data"]["attempt"] == "attempt" for call in erp.request.call_args_list[1:]))
 		self.assertNotIn("_meta", str(erp.request.call_args_list))

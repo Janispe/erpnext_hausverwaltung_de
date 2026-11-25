@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import uuid
 
 import frappe
 
@@ -38,34 +39,33 @@ def context_digest(doc):
 def _case(step):
 	from hausverwaltung.hausverwaltung.services import receipt_batch as batch
 
-	job, _ = batch._agent_job()
+	job, scope = batch._agent_job()
 	if not job or job.status != "Running":
 		raise frappe.PermissionError("Kein laufender Bon-Auftrag für den Kontierungsvergleich.")
 	upload_doc, proposal = batch._active_target(job)
 	cases, results = batch._queue_state(job)
 	if not upload_doc or type(step) is not int or not cases or step != len(results) + 1:
 		raise frappe.PermissionError("Dieser Vergleich gehört nicht zum aktuellen Bon.")
-	return job, proposal or upload_doc
+	return job, proposal or upload_doc, scope["run_id"]
 
 
 @frappe.whitelist(methods=["POST"])
 def start(step, merchant=None):
-	job, doc = _case(step)
-	merchant = pilot._text(merchant)
-	if job.evidence_step == step and merchant != (job.evidence_merchant or ""):
-		frappe.throw("Der erfasste Händler hat sich während des Vergleichs geändert.")
-	job.db_set({"evidence_step": step, "evidence_merchant": merchant, "evidence_result": "",
-		"evidence_context_digest": context_digest(doc)})
-	return True
+	job, doc, run_id = _case(step)
+	attempt = uuid.uuid4().hex
+	job.db_set({"evidence_step": step, "evidence_merchant": pilot._text(merchant), "evidence_result": "",
+		"evidence_context_digest": context_digest(doc), "evidence_attempt": attempt, "evidence_run_id": run_id})
+	return {"attempt": attempt}
 
 
 @frappe.whitelist(methods=["POST"])
-def tools(step, method, params):
+def tools(step, method, params, attempt):
 	"""MCP catalogue and dispatcher bound to the verified receipt step."""
 	from hausverwaltung.hausverwaltung.services.receipt_batch import _json
 
-	job, doc = _case(step)
-	if job.evidence_step != step or job.evidence_context_digest != context_digest(doc) or not isinstance(params, dict):
+	job, doc, run_id = _case(step)
+	if (job.evidence_step != step or not attempt or job.evidence_attempt != attempt or job.evidence_run_id != run_id
+		or job.evidence_context_digest != context_digest(doc) or not isinstance(params, dict)):
 		raise frappe.PermissionError("Kein gültiger Kontierungsvergleich.")
 	access = _access(job, doc)
 	result = accounting_evidence.dispatch(access, job.evidence_merchant or "", method, params)
@@ -74,3 +74,35 @@ def tools(step, method, params):
 		job.db_set("evidence_result", serialized)
 		return {"structuredContent": {"verified_json": serialized, "digest": digest(serialized)}}
 	return result
+
+
+def clear():
+	return {"evidence_step": 0, "evidence_merchant": "", "evidence_result": "", "evidence_context_digest": "",
+		"evidence_attempt": "", "evidence_run_id": ""}
+
+
+def _may_read(doctype, name):
+	return frappe.db.exists(doctype, name) and frappe.has_permission(doctype, "read", doc=name)
+
+
+def readable_comparison(comparison):
+	"""Render evidence using the viewer's current rights, independent of its author."""
+	if not comparison:
+		return None
+	candidates = []
+	hidden = False
+	for candidate in comparison["candidates"]:
+		if not _may_read("Account", candidate["account"]):
+			hidden = True
+			continue
+		sources = [source for source in candidate["sources"]
+			if _may_read("Purchase Invoice", source["receipt"])]
+		hidden |= len(sources) != len(candidate["sources"])
+		if sources:
+			candidates.append(candidate | {"sources": sources})
+	questions = ["Ein Teil der Vergleichsquellen ist für Sie nicht lesbar."] if hidden else comparison["questions"]
+	return {"candidates": candidates, "questions": questions}
+
+
+def cost_center(doc):
+	return pilot._context(doc.receipt_context)["kostenstelle"]

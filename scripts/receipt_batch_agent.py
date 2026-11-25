@@ -5,9 +5,16 @@ import io
 import json
 import os
 
+from paperclip_sync import SyncError
 from programmatic_tools import ProgrammaticError, run_programmatic
 
 EVIDENCE_API = "/api/method/hausverwaltung.hausverwaltung.services.receipt_evidence"
+
+
+class EvidenceComparisonError(ProgrammaticError):
+	def __init__(self, attempt):
+		super().__init__("The evidence comparison failed.")
+		self.attempt = attempt
 
 
 def crop_pages(pages, regions):
@@ -43,10 +50,10 @@ def analyze(vision, model, task, images):
 	return json.loads(result["choices"][0]["message"]["content"])
 
 
-def evidence_rpc(erp, headers, step):
+def evidence_rpc(erp, headers, step, attempt):
 	def rpc(method, params):
 		return erp.request("POST", f"{EVIDENCE_API}.tools", headers=headers, data={
-			"step": step, "method": method, "params": params,
+			"step": step, "method": method, "params": params, "attempt": attempt,
 		})[0]["message"]
 
 	return rpc
@@ -73,10 +80,16 @@ def checked_evidence_calls(rpc):
 
 
 def compare_accounts(erp, headers, step, receipt, ptc):
-	erp.request("POST", f"{EVIDENCE_API}.start", headers=headers, data={
+	attempt = erp.request("POST", f"{EVIDENCE_API}.start", headers=headers, data={
 		"step": step, "merchant": receipt.get("haendler"),
-	})
-	rpc = evidence_rpc(erp, headers, step)
+	})[0]["message"]["attempt"]
+	try:
+		return _compare_accounts(evidence_rpc(erp, headers, step, attempt), receipt, ptc, attempt)
+	except (SyncError, ProgrammaticError, ValueError, OSError, KeyError, IndexError, TypeError) as exc:
+		raise EvidenceComparisonError(attempt) from exc
+
+
+def _compare_accounts(rpc, receipt, ptc, attempt):
 	catalogue = rpc("tools/list", {})["tools"]
 	call = checked_evidence_calls(rpc)
 	verified = None
@@ -114,7 +127,7 @@ def compare_accounts(erp, headers, step, receipt, ptc):
 	)
 	if verified is None or stdout != verified["verified_json"]:
 		raise ProgrammaticError("Verified result mismatch.")
-	return verified["digest"]
+	return {"evidence_digest": verified["digest"], "evidence_attempt": attempt}
 
 
 def analyze_step(erp, headers, task, vision, model, ptc):
@@ -126,5 +139,5 @@ def analyze_step(erp, headers, task, vision, model, ptc):
 	print(f"Analyseschritt {task['step']}: {len(images)} PNG-Bildteile an Vision.", flush=True)
 	payload["result"] = analyze(vision, model, task, images)
 	if task["step"]:
-		payload["evidence_digest"] = compare_accounts(erp, headers, task["step"], payload["result"], ptc)
+		payload.update(compare_accounts(erp, headers, task["step"], payload["result"], ptc))
 	return payload

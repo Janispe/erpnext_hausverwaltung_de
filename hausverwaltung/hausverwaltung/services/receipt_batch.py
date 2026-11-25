@@ -362,7 +362,6 @@ def _save_analysis(job, doc, case, proposal, raw, crops, comparison):
 				question = "Der neue Zuschnitt überlappt einen anderen Bon. Bitte Aufteilung oder Zusammenlegung klären."
 				break
 	data = pilot._normalize_analysis(raw, {})
-	data["account_comparison"] = comparison
 	data["fields"]["lieferant"] = (comparison.get("supplier") or {}).get("name", "")
 	question = question or pilot._text(raw.get("frage"), 500)
 	crop_bytes, extension = _attachment_bytes(crops)
@@ -388,7 +387,12 @@ def _save_analysis(job, doc, case, proposal, raw, crops, comparison):
 		"status": "Ready", "receipt_analysis": job.name, "file_url": attachment.file_url,
 		"extracted_data": _json(data), "error_message": "",
 	})
-	return {"proposal": proposal.name, "data": data}
+	# Only the internal job owns accounting references. The proposal is a
+	# normal readable DocType and must never contain another user's evidence.
+	return {
+		"proposal": proposal.name, "data": data, "comparison": comparison,
+		"comparison_cost_center": receipt_evidence.cost_center(proposal),
+	}
 
 
 def _agent_job():
@@ -465,12 +469,14 @@ def next_step():
 	except (RuntimeError, ValueError, OSError) as exc:
 		_step_error(job, exc)
 		return scope | {"status": job.status}
+	if job.evidence_run_id and job.evidence_run_id != scope["run_id"]:
+		job.db_set(receipt_evidence.clear())
 	job.db_set({"status": "Running", "error_message": ""})
 	return scope | {"status": job.status, "task": task}
 
 
 @frappe.whitelist(methods=["POST"])
-def submit_step(step, result=None, crops=None, failed=False, evidence_digest=None):
+def submit_step(step, result=None, crops=None, failed=False, evidence_digest=None, evidence_attempt=None):
 	job, scope = _agent_job()
 	if not job:
 		raise frappe.PermissionError("Für diesen Lauf ist kein Auftrag hinterlegt.")
@@ -486,9 +492,20 @@ def submit_step(step, result=None, crops=None, failed=False, evidence_digest=Non
 		frappe.throw("Dieser Analyseschritt gehört nicht zum aktuellen Stand.")
 	if step < expected:
 		return scope | {"status": job.status}
+	if job.status != "Running":
+		raise frappe.PermissionError("Dieser Analyseschritt läuft nicht mehr.")
 	if failed is True:
-		job.db_set({"status": "AnalysisError", "error_message": "Bildanalyse oder Kontierungsvergleich fehlgeschlagen. Paperclip-Auftrag fortsetzen."})
+		if (evidence_attempt or job.evidence_attempt) and (
+			not evidence_attempt or job.evidence_attempt != evidence_attempt or job.evidence_run_id != scope["run_id"]
+		):
+			raise frappe.PermissionError("Der Analyselauf ist veraltet.")
+		job.db_set(receipt_evidence.clear() | {
+			"status": "AnalysisError",
+			"error_message": "Bildanalyse oder Kontierungsvergleich fehlgeschlagen. Paperclip-Auftrag fortsetzen.",
+		})
 		return scope | {"status": job.status}
+	if step and (not evidence_attempt or job.evidence_attempt != evidence_attempt or job.evidence_run_id != scope["run_id"]):
+		raise frappe.PermissionError("Der Kontierungsversuch ist veraltet.")
 	frappe.db.savepoint("receipt_analysis_step")
 	try:
 		pages = _pages(upload_doc)
@@ -506,11 +523,11 @@ def submit_step(step, result=None, crops=None, failed=False, evidence_digest=Non
 				or (job.evidence_merchant or "") != pilot._text(result.get("haendler"))):
 				raise ValueError("Der geprüfte Kontierungsvergleich fehlt oder ist veraltet.")
 			results.append(_save_analysis(job, upload_doc, case, proposal, result, verified, comparison))
-			job.db_set({"evidence_step": 0, "evidence_merchant": "", "evidence_result": "", "evidence_context_digest": ""})
+			job.db_set(receipt_evidence.clear())
 			job.db_set({"results": _json(results), "processed_receipts": len(results)})
 		status = "Running"
 		if len(results) == len(cases):
-			questions = any(result["data"]["warnings"] or result["data"]["account_comparison"]["questions"] for result in results)
+			questions = any(result["data"]["warnings"] or result.get("comparison", {}).get("questions") for result in results)
 			if not questions:
 				questions = bool(pilot.review_context(proposal or upload_doc)["fragen"])
 			status = "Questions" if questions else "Done"
@@ -576,16 +593,26 @@ def inbox_detail(proposal):
 	upload_doc.check_permission("read")
 	current_job = frappe.get_doc(JOB, proposal.receipt_analysis)
 	revisions = []
+	current_comparison = None
+	comparison_stale = False
+	current_center = receipt_evidence.cost_center(proposal)
 	jobs = frappe.get_all(JOB, filters={"upload": upload_doc.name, "proposal": proposal.name},
 		fields=["results"], order_by="creation desc")
 	jobs.append(frappe.get_doc(JOB, upload_doc.name))
 	for job in jobs:
 		for result in json.loads(job.results or "[]"):
 			if result["proposal"] == proposal.name:
-				revisions.append(result["data"])
+				snapshot = result["data"]
+				comparison = receipt_evidence.readable_comparison(result.get("comparison"))
+				stale = comparison is not None and result.get("comparison_cost_center") != current_center
+				revisions.append(snapshot | {"account_comparison": comparison, "comparison_stale": stale})
+				if snapshot["analysis"]["job"] == current_job.name:
+					comparison_stale = stale
+					current_comparison = None if stale else comparison
 	return {
 		"original": upload_doc.file_url, "note": upload_doc.note, "job": _progress(current_job),
 		"revisions": revisions, "source": proposal.receipt_analysis,
+		"account_comparison": current_comparison, "comparison_stale": comparison_stale,
 	}
 
 

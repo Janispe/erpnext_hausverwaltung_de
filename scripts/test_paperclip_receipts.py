@@ -33,7 +33,7 @@ class TestPaperclipReceipts(unittest.TestCase):
 			({"choices": [{"message": {"content": '{"bons":[],"leere_seiten":[1]}'}}]}, {}),
 			({"choices": [{"message": {"content": '{"gesamtbetrag":24.1}'}}]}, {}),
 		]
-		with patch("receipt_batch_agent.compare_accounts", return_value="verified-digest"):
+		with patch("receipt_batch_agent.compare_accounts", return_value={"evidence_digest": "verified-digest", "evidence_attempt": "attempt"}):
 			self.assertEqual(run_batch(erp, paperclip, "synthetic-run-token", "configured-agent", vision, "vision", None), 0)
 		initial = vision.request.call_args_list[0].kwargs["data"]["messages"][1]["content"]
 		self.assertIn("Synthetischer Fall", initial[0]["text"])

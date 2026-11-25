@@ -53,7 +53,7 @@ function hv_receipt_paperclip(job) {
 		target="_blank" rel="noopener noreferrer">${__("Paperclip öffnen")} ↗</a>`;
 }
 
-function hv_receipt_comparison(comparison) {
+function hv_receipt_comparison(comparison, historical = false) {
 	if (!comparison) return "";
 	const escape = frappe.utils.escape_html;
 	const accounts = comparison.candidates.map((account) => `<li>
@@ -61,7 +61,7 @@ function hv_receipt_comparison(comparison) {
 		<ul>${account.sources.map((source) => `<li>
 			<a href="/app/purchase-invoice/${encodeURIComponent(source.receipt)}" target="_blank" rel="noopener">
 				${escape(source.receipt)}</a> · ${escape(source.date)}
-			${source.same_object ? ` · ${__("Dasselbe Objekt")}` : ""}
+			${source.same_object ? ` · ${historical ? __("Damals dasselbe Objekt") : __("Dasselbe Objekt")}` : ""}
 		</li>`).join("")}</ul></li>`).join("");
 	const questions = comparison.questions.map((question) => `<li>${escape(question)}</li>`).join("");
 	return `<h5>${__("Kontierungsvergleich")}</h5><ul>${accounts}${questions}</ul>`;
@@ -80,7 +80,7 @@ function hv_receipt_history(batch) {
 			<p><a href="${escape(analysis.crop_url)}" target="_blank" rel="noopener">${__("Ausschnitt öffnen")} ↗</a>
 			· ${escape(coordinates)}</p>
 			${analysis.revision_note ? `<p>${escape(analysis.revision_note)}</p>` : ""}
-			${hv_receipt_comparison(data.account_comparison)}${_hv_render_extraction_details(data)}</details>`;
+			${hv_receipt_comparison(data.account_comparison, index > 0 || data.comparison_stale)}${_hv_render_extraction_details(data)}</details>`;
 	}).join("");
 	return `<p>${hv_receipt_progress(batch.job)} · ${hv_receipt_paperclip(batch.job)}
 		· <a href="${escape(batch.original)}" target="_blank" rel="noopener">${__("Upload-Original öffnen")} ↗</a></p>
@@ -781,7 +781,10 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 					${review?.status === "Stale" ? `<p>${__("Freigabe ungültig. Bitte die geänderten Buchungsdaten erneut prüfen.")}</p>` : ""}
 					${row.status === "Cancelled" ? `<p>${__("Rechnung oder Ausgleich storniert. Die ursprüngliche Buchung bleibt nachvollziehbar.")}</p>` : ""}
 					${batch ? hv_receipt_history(batch) : ""}
-					${hv_receipt_comparison(data?.account_comparison)}
+					${batch?.comparison_stale ? `<p class="text-muted">${__(
+						"Kontierungsvergleich veraltet. Überarbeiten lassen, um die aktuelle Kostenstelle zu prüfen."
+					)}</p>` : ""}
+					${hv_receipt_comparison(batch?.account_comparison)}
 					${receipt ? hv_render_receipt_context(receipt, data) : ""}
 					${detail_block}
 					${

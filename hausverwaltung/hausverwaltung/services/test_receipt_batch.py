@@ -10,10 +10,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import frappe
+from frappe.client import get as read_doc
 from frappe.tests import IntegrationTestCase
 from PIL import Image, ImageDraw
 
 from hausverwaltung.hausverwaltung.agent_tools import accounting_evidence
+from hausverwaltung.hausverwaltung.services import bulk_extraction
 from hausverwaltung.hausverwaltung.services import receipt_batch as batch
 from hausverwaltung.hausverwaltung.services import receipt_evidence
 from hausverwaltung.proposals import receipt_action
@@ -50,11 +52,11 @@ class TestReceiptBatch(IntegrationTestCase):
 			pages[0].save(stream, format="PNG")
 		return stream.getvalue()
 
-	def upload(self, content, request_id=None, note="Synthetisch vorgestreckt", is_pdf=False):
+	def upload(self, content, request_id=None, note="Synthetisch vorgestreckt", is_pdf=False, context=None):
 		filename = "test.pdf" if is_pdf else "test.png"
 		upload = SimpleNamespace(stream=io.BytesIO(content), filename=filename)
 		with patch.object(frappe.local, "request", SimpleNamespace(files={"file": upload}), create=True):
-			return batch.upload(request_id or str(uuid.uuid4()), note=note)["name"]
+			return batch.upload(request_id or str(uuid.uuid4()), note=note, context=context)["name"]
 
 	def raw_analysis(self, amount):
 		return {
@@ -67,7 +69,7 @@ class TestReceiptBatch(IntegrationTestCase):
 		scope = {"issue_id": str(uuid.uuid4()), "run_id": str(uuid.uuid4())}
 		return patch.object(batch, "_agent_job", side_effect=lambda: (frappe.get_doc(batch.JOB, name), scope))
 
-	def submit(self, task, raw, forged=False):
+	def submit(self, task, raw, forged=False, shortlist=None):
 		if task["step"] == 0:
 			return batch.submit_step(0, result=raw)
 		crops = []
@@ -81,18 +83,19 @@ class TestReceiptBatch(IntegrationTestCase):
 				crop.convert("RGB").save(payload, format="PNG")
 				crops.append(base64.b64encode(payload.getvalue()).decode("ascii"))
 		step = task["step"]
-		receipt_evidence.start(step, raw.get("haendler"))
+		attempt = receipt_evidence.start(step, raw.get("haendler"))["attempt"]
 		checked = receipt_evidence.tools(step, "tools/call", {
-			"name": "verify_shortlist", "arguments": {"shortlist": []},
-		})["structuredContent"]
+			"name": "verify_shortlist", "arguments": {"shortlist": shortlist or []},
+		}, attempt)["structuredContent"]
+		payload = {"result": raw, "crops": crops, "evidence_digest": checked["digest"], "evidence_attempt": attempt}
 		if forged:
-			return batch.submit_step(step, result=raw, crops=crops, evidence_digest=checked["digest"])
+			return batch.submit_step(step, **payload)
 
 		def show_failure(_job, exc):
 			raise AssertionError("Valid receipt step failed") from exc
 
 		with patch.object(batch, "_step_error", side_effect=show_failure):
-			return batch.submit_step(step, result=raw, crops=crops, evidence_digest=checked["digest"])
+			return batch.submit_step(step, **payload)
 
 	def test_photo_retry_resume_and_revision_preserve_other_receipts(self):
 		raw = self.fixture()
@@ -244,6 +247,77 @@ class TestReceiptBatch(IntegrationTestCase):
 		self.assertFalse(accounting_evidence.prior_receipts(
 			accounting_evidence.AccountingAccess("Administrator", None, None), merchant,
 		)["positions"])
+
+		upload = self.upload(self.fixture(), context={"kostenstelle": center})
+		inventory = {"bons": [{"ausschnitte": [[1, 0, 0, 1000, 1000]]}], "leere_seiten": []}
+		with self.scope(upload):
+			self.submit(batch.next_step()["task"], inventory)
+			self.submit(batch.next_step()["task"], self.raw_analysis(18) | {"haendler": merchant},
+				shortlist=[{"account": account, "positions": [f"correct-{suffix}"]}])
+		record = json.loads(frappe.get_doc(batch.JOB, upload).results)[0]
+		proposal = record["proposal"]
+		self.assertNotIn(correct, read_doc(batch.pilot.PROPOSAL, proposal).extracted_data)
+		detail = bulk_extraction.get_vorschlag_full(proposal)["receipt_batch"]
+		self.assertEqual(detail["account_comparison"]["candidates"][0]["sources"][0]["receipt"], correct)
+		self.assertFalse(detail["comparison_stale"])
+
+		role = frappe.get_doc({"doctype": "Role", "role_name": f"Bon Leser {suffix}"}).insert()
+		for doctype in (batch.pilot.PROPOSAL, batch.UPLOAD, "Account"):
+			frappe.get_doc({
+				"doctype": "Custom DocPerm", "parent": doctype, "role": role.name, "permlevel": 0, "read": 1,
+			}).insert()
+			frappe.clear_cache(doctype=doctype)
+			self.addCleanup(frappe.clear_cache, doctype=doctype)
+		reader = frappe.get_doc({
+			"doctype": "User", "email": f"{suffix}@bon-test.invalid", "first_name": "Bon Leser",
+			"send_welcome_email": 0, "user_type": "System User", "roles": [{"role": role.name}],
+		}).insert()
+		try:
+			frappe.set_user(reader.name)
+			self.assertTrue(frappe.has_permission("Account", "read", doc=account))
+			self.assertFalse(frappe.has_permission("Purchase Invoice", "read", doc=correct))
+			restricted = bulk_extraction.get_vorschlag_full(proposal)
+			self.assertNotIn(correct, json.dumps(restricted, default=str))
+			self.assertEqual(restricted["receipt_batch"]["account_comparison"]["candidates"], [])
+			self.assertNotIn(correct, read_doc(batch.pilot.PROPOSAL, proposal).extracted_data)
+			with self.assertRaises(frappe.PermissionError):
+				read_doc(batch.JOB, upload)
+		finally:
+			frappe.set_user("Administrator")
+
+		batch.pilot.update_context(proposal, {"kostenstelle": "Andere Kostenstelle"})
+		history = bulk_extraction.get_vorschlag_full(proposal)["receipt_batch"]
+		self.assertTrue(history["comparison_stale"])
+		self.assertIsNone(history["account_comparison"])
+		self.assertEqual(history["revisions"][0]["account_comparison"]["candidates"][0]["sources"][0]["receipt"], correct)
+		self.assertTrue(history["revisions"][0]["comparison_stale"])
+		new_job = batch.revise(proposal, str(uuid.uuid4()), history["source"], "Neue Kostenstelle abgleichen")
+		self.assertNotEqual(new_job["name"], upload)
+
+	def test_evidence_retry_replaces_ocr_merchant_and_rejects_old_attempt(self):
+		upload = self.upload(self.fixture())
+		inventory = {"bons": [{"ausschnitte": [[1, 0, 0, 1000, 1000]]}], "leere_seiten": []}
+		with self.scope(upload):
+			self.submit(batch.next_step()["task"], inventory)
+			batch.next_step()
+			old = receipt_evidence.start(1, "Händler zuerst unsicher")["attempt"]
+			self.assertEqual(batch.submit_step(1, failed=True, evidence_attempt=old)["status"], "AnalysisError")
+		with self.scope(upload):
+			batch.next_step()
+			current = receipt_evidence.start(1, "Korrigierter Händler")["attempt"]
+			self.assertNotEqual(old, current)
+			with self.assertRaises(frappe.PermissionError):
+				receipt_evidence.tools(1, "tools/list", {}, old)
+			with self.assertRaises(frappe.PermissionError):
+				batch.submit_step(1, evidence_attempt=old)
+			with self.assertRaises(frappe.PermissionError):
+				batch.submit_step(1, failed=True, evidence_attempt=old)
+			self.assertEqual(frappe.get_doc(batch.JOB, upload).evidence_merchant, "Korrigierter Händler")
+			self.assertEqual(frappe.get_doc(batch.JOB, upload).status, "Running")
+			task = batch.next_step()["task"]
+			result = self.submit(task, self.raw_analysis(18) | {"haendler": "Korrigierter Händler"})
+			self.assertEqual(result["status"], "Questions")
+
 
 	def test_issue_links_from_confirmed_assignment_only(self):
 		issue = str(uuid.uuid4())

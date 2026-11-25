@@ -11,8 +11,10 @@ from receipt_batch_agent import EVIDENCE_API, checked_evidence_calls, evidence_r
 
 
 def dispatcher(erp, headers, step, merchant):
-	erp.request("POST", f"{EVIDENCE_API}.start", headers=headers, data={"step": step, "merchant": merchant})
-	rpc = evidence_rpc(erp, headers, step)
+	attempt = erp.request("POST", f"{EVIDENCE_API}.start", headers=headers, data={
+		"step": step, "merchant": merchant,
+	})[0]["message"]["attempt"]
+	rpc = evidence_rpc(erp, headers, step, attempt)
 	catalogue = rpc("tools/list", {})["tools"]
 	names = {tool["name"] for tool in catalogue}
 	call = checked_evidence_calls(rpc)

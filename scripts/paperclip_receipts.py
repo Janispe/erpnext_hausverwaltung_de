@@ -7,7 +7,7 @@ import time
 
 from paperclip_sync import JsonClient, SyncError, base_url
 from programmatic_tools import ClaudeMessages, ProgrammaticError
-from receipt_batch_agent import analyze_step
+from receipt_batch_agent import EvidenceComparisonError, analyze_step
 
 API = "/api/method/hausverwaltung.hausverwaltung.services.receipt_pilot"
 BATCH_API = "/api/method/hausverwaltung.hausverwaltung.services.receipt_batch"
@@ -47,6 +47,8 @@ def run_batch(erp, paperclip, run_token, agent_id, vision, model, ptc):
 			except (SyncError, ProgrammaticError, ValueError, OSError, KeyError, IndexError, TypeError, ImportError) as error:
 				print(f"Analyseschritt fehlgeschlagen ({type(error).__name__}).", flush=True)
 				payload = {"step": task["step"], "failed": True}
+				if isinstance(error, EvidenceComparisonError):
+					payload["evidence_attempt"] = error.attempt
 			state = erp.request("POST", f"{BATCH_API}.submit_step", headers=headers, data=payload)[0]["message"]["status"]
 			if state == "Running":
 				continue

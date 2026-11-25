@@ -21,7 +21,9 @@
   "evidence_step",
   "evidence_merchant",
   "evidence_result",
-  "evidence_context_digest"
+  "evidence_context_digest",
+  "evidence_attempt",
+  "evidence_run_id"
  ],
  "fields": [
   {
@@ -115,6 +117,16 @@
    "fieldname": "evidence_context_digest",
    "fieldtype": "Data",
    "label": "Kontierungsvergleich: Kontext-Prüfsumme"
+  },
+  {
+   "fieldname": "evidence_attempt",
+   "fieldtype": "Data",
+   "label": "Vergleichsversuch"
+  },
+  {
+   "fieldname": "evidence_run_id",
+   "fieldtype": "Data",
+   "label": "Paperclip-Lauf des Vergleichs"
   }
  ],
  "permissions": [],
