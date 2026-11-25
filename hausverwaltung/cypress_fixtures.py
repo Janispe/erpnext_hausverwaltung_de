@@ -1200,6 +1200,20 @@ def seed_e2e_receipts() -> dict:
 	return values | {"costCenter": center, "original": b64encode(file.getvalue()).decode("ascii")}
 
 
+def bind_e2e_receipt_issue(upload: str, issue_id: str) -> None:
+	_check_disposable_site()
+	from uuid import UUID
+
+	from hausverwaltung.hausverwaltung.services import receipt_batch
+
+	frappe.db.set_value(receipt_batch.JOB, str(UUID(upload)), {
+		"issue_id": str(UUID(issue_id)),
+		"status": "Dispatched",
+	})
+	frappe.db.commit()
+
+
+
 def prepare_e2e_receipt(name: str, supplier: str, category: str) -> None:
 	_check_disposable_site()
 	from hausverwaltung.hausverwaltung.services.receipt_pilot import PROPOSAL, verified_original

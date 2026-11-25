@@ -18,7 +18,9 @@
   "section_break_error",
   "error_message",
   "receipt_digest",
-  "receipt_context"
+  "receipt_context",
+  "receipt_upload",
+  "receipt_analysis"
  ],
  "fields": [
   {
@@ -107,6 +109,23 @@
    "hidden": 1,
    "no_copy": 1,
    "read_only": 1
+  },
+  {
+   "fieldname": "receipt_upload",
+   "fieldtype": "Link",
+   "label": "Bon-Upload",
+   "options": "HV Bon Upload",
+   "read_only": 1,
+   "hidden": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "receipt_analysis",
+   "fieldtype": "Data",
+   "label": "Analyseauftrag",
+   "read_only": 1,
+   "hidden": 1,
+   "no_copy": 1
   }
  ],
  "index_web_pages_for_search": 1,

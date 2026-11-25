@@ -18,7 +18,7 @@ from functools import partial
 
 import frappe
 
-from hausverwaltung.hausverwaltung.services import invoice_extraction, mistral_client, receipt_pilot
+from hausverwaltung.hausverwaltung.services import invoice_extraction, mistral_client, receipt_batch, receipt_pilot
 from hausverwaltung.proposals import receipt_action
 
 
@@ -370,6 +370,7 @@ def get_vorschlag_full(name: str) -> dict:
 		"data": data,
 		"receipt": receipt_pilot.review_context(v) if is_receipt else None,
 		"receipt_review": receipt_action.review_state(v) if is_receipt else None,
+		"receipt_batch": receipt_batch.inbox_detail(v) if getattr(v, "receipt_upload", None) else None,
 	}
 
 
@@ -382,6 +383,8 @@ def mark_vorschlag_skipped(name: str) -> dict:
 	"""
 	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
 	_require_proposal_permission("write", v)
+	if getattr(v, "receipt_upload", None):
+		frappe.throw("Bitte die Analyse eines Bon-Uploads über ihren Paperclip-Auftrag fortsetzen oder überarbeiten.")
 	if v.status in {"Booked", "Cancelled"}:
 		frappe.throw("Bereits gebuchter Vorschlag kann nicht übersprungen werden.")
 	v.status = "Skipped"
@@ -407,6 +410,8 @@ def delete_vorschlag(name: str, also_delete_file: int = 0) -> dict:
 		frappe.throw(
 			"Bereits gebuchter Vorschlag kann nicht gelöscht werden — bitte zuerst die verknüpfte Eingangsrechnung stornieren."
 		)
+	if getattr(v, "receipt_upload", None):
+		frappe.throw("Bons mit Analysehistorie können nicht gelöscht werden.")
 	file_url = v.file_url
 	files = []
 	if file_url:
@@ -476,6 +481,8 @@ def reprocess_vorschlag(name: str) -> dict:
 	"""
 	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
 	_require_proposal_permission("write", v)
+	if getattr(v, "receipt_upload", None):
+		frappe.throw("Bitte die Analyse eines Bon-Uploads über ihren Paperclip-Auftrag fortsetzen oder überarbeiten.")
 	invoice_extraction.check_invoice_file_permission(v.file_url)
 	is_receipt = bool(getattr(v, "receipt_digest", None))
 	if is_receipt and receipt_action._final(v):
@@ -507,6 +514,8 @@ def reactivate_vorschlag(name: str) -> dict:
 	"""
 	v = frappe.get_doc("Buchungs Vorschlag", name, for_update=True)
 	_require_proposal_permission("write", v)
+	if getattr(v, "receipt_upload", None):
+		frappe.throw("Bitte die Analyse eines Bon-Uploads über ihren Paperclip-Auftrag fortsetzen oder überarbeiten.")
 	invoice_extraction.check_invoice_file_permission(v.file_url)
 	is_receipt = bool(getattr(v, "receipt_digest", None))
 	if v.status in {"Booked", "Cancelled"}:
@@ -628,6 +637,7 @@ def list_vorschlaege(
 			"linked_purchase_invoice",
 			"extracted_data",
 			"receipt_digest",
+			"receipt_upload",
 			"error_message",
 			"creation",
 			"modified",
@@ -659,12 +669,15 @@ def list_vorschlaege(
 			"linked_purchase_invoice": r["linked_purchase_invoice"],
 			"creation": str(r["creation"]),
 			"is_receipt": bool(r.receipt_digest),
+			"is_receipt_batch": bool(r.receipt_upload),
 			"detail_version": f"{r.modified}/{review_versions.get(r.name, '')}" if r.receipt_digest else None,
 			"error_message": r.error_message,
 			"extracted_summary": summary,
 		})
 	return {
 		"rows": out_rows,
+		"receipt_batch": receipt_batch.enabled() and frappe.has_permission(receipt_batch.UPLOAD, "read"),
+		"receipt_batches": receipt_batch.list_uploads(),
 		"receipt_upload": receipt_pilot.enabled() and frappe.has_permission("Buchungs Vorschlag", "create")
 		and frappe.has_permission("File", "create"),
 		"sessions": [s["session_id"] for s in all_sessions if s.get("session_id")],

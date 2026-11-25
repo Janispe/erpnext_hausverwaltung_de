@@ -75,3 +75,173 @@ Eingangsrechnungen.
 - Bytegleiche Uploads zeigen auf denselben Vorschlag samt ursprünglichen
   Angaben. Bei einem Analysefehler den vorhandenen Vorschlag reaktivieren.
   Er steht dann wieder für den nächsten Agentenlauf bereit.
+
+## Mehrere Bons in einem Upload (Pilot #85)
+
+Auf einer **isolierten synthetischen Site** nach `bench migrate` zusätzlich
+`bench --site TESTSITE set-config --parse hv_receipt_batch 1` setzen. Beide
+Pilot-Schalter müssen aktiv sein. Der Original-Upload bleibt bytegenau privat.
+Ein Foto oder PDF ist ein eigener Auftrag, auch wenn mehrere Dateien
+gleichzeitig ausgewählt werden. Je Datei sind 10 MB und fünf PDF-Seiten
+möglich. Die Analyse unterstützt bis zu 20 Bons und bis zu zehn Ausschnitte je
+Bon. Koordinaten liegen bei 0 bis 1000 je Bildachse, gemessen vom linken oberen
+Rand der EXIF-korrigierten Fotoseite bzw. der gerenderten PDF-Seite.
+
+### Paperclip und Vision einrichten
+
+1. In der Testsite einen separaten API-Benutzer mit der Rolle
+   `Paperclip Bonanalyse` einrichten. Die Rolle erhält keine DocType-, File-,
+   Lese-, Buchhaltungs- oder FAC-Rechte. Die bestehende Einzelbon-Rolle
+   `Paperclip Barauslagen` ist für den älteren Agenten bestimmt.
+2. In der **bestehenden isolierten Paperclip-Company** einen festen
+   Mitarbeiter **Barauslagen** aus dem getesteten Checkout als Prozessagenten
+   konfigurieren. In seinen Laufzeiteinstellungen
+   `runtimeConfig.heartbeat.maxConcurrentRuns = 1` setzen. Der Mitarbeiter
+   bearbeitet die getrennten Stapel-Aufträge seriell. Paperclip muss lokale,
+   kurzlebige Run-JWTs injizieren. In die geschützte Agentenkonfiguration
+   `HV_RECEIPT_PILOT_URL`, `HV_RECEIPT_PILOT_KEY` und
+   `HV_RECEIPT_PILOT_SECRET` eintragen. Für die neue Betriebsart
+   `HV_RECEIPT_MODE=batch` setzen. Zusätzlich in der Prozesslaufzeit
+   `HV_RECEIPT_VISION_URL` (OpenAI-kompatible Basisadresse einschließlich
+   `/v1`), `HV_RECEIPT_VISION_MODEL` und bei einem authentifizierten
+   Modellendpunkt `HV_RECEIPT_VISION_KEY` setzen. Für den getrennten PTC-Aufruf
+   an Claude Messages `HV_PTC_CLAUDE_KEY` und `HV_PTC_CLAUDE_MODEL` mit
+   PTC-fähiger Modell-ID setzen. Optional ersetzt `HV_PTC_CLAUDE_URL` die
+   Standard-Basisadresse `https://api.anthropic.com`. Der gewählte Python-Interpreter
+   benötigt Pillow (zum Beispiel in einer eigenen virtuellen Umgebung mit
+   `python -m pip install Pillow`). Beispiel für den Prozess:
+
+   ```json
+   {
+     "command": "/usr/bin/python3",
+     "args": ["/checkout/hausverwaltung/scripts/paperclip_receipts.py"],
+     "cwd": "/checkout/hausverwaltung",
+     "timeoutSec": 2400
+   }
+   ```
+
+3. Eine aktive Routine für diesen Agenten mit `concurrencyPolicy: "always_enqueue"`
+   und einem signierten `app_webhook`-Trigger anlegen. Die Routine braucht
+   keine Vorlage für Falldaten und keinen Heartbeat-Timer. Die angesprochene
+   Version muss bei erfolgreicher Webhook-Zustellung eine Run-Antwort mit
+   `status: "issue_created"` und `linkedIssueId` liefern. In der geschützten
+   Frappe-Site-Konfiguration eintragen:
+
+   | Einstellung | Wert |
+   | --- | --- |
+   | `hv_receipt_paperclip_url` | Paperclip-Basisadresse, aus dem ERPNext-Backend erreichbar |
+   | `hv_receipt_paperclip_agent` | UUID des Mitarbeiters Barauslagen |
+   | `hv_receipt_paperclip_web_url` | Browser-Basisadresse für die Buchhaltung, ohne Zugangsdaten |
+   | `hv_receipt_paperclip_company_prefix` | Issue-Präfix der isolierten Company, z. B. `HVT` |
+   | `hv_receipt_webhook_url` | Vollständige URL des öffentlichen Routine-Triggers |
+   | `hv_receipt_webhook_secret` | HMAC-Schlüssel aus Paperclip |
+
+   Die Webhook-Payload enthält Upload- und Auftrags-ID. ERPNext verifiziert
+   den Run-JWT gegen Paperclip und liest den Issue-Bezug des verifizierten
+   Runs, bevor es den zugehörigen Auftrag bearbeitet. Pro Upload und Revision
+   entsteht ein eigener Ausführungskontext. Ein Modellaufruf erhält Seiten
+   oder Ausschnitte als PNG-Bildteile und die Notiz als Textdaten. Der
+   Paperclip-Prozess ruft das Modell direkt auf und erzeugt die Ausschnitte
+   mit Pillow in seiner eigenen Laufzeit. Er sendet die PNG-Dateien
+   gemeinsam mit dem Vorschlag. ERPNext prüft PNG-Typ, Größe, Seitenbezug,
+   Koordinaten und Pixel gegen das private Original. Die konfigurierte
+   Vision-Modell-ID muss multimodale JSON-Antworten unterstützen.
+   [Paperclip-Routine](https://docs.paperclip.ing/reference/api/routines/)
+   [Paperclip-Prozessadapter](https://docs.paperclip.ing/reference/adapters/process/)
+4. ERPNext-Scheduler aktivieren und Web- und Worker-Prozesse nach der
+   Konfigurationsänderung neu laden. Bei einem Zustellfehler wiederholt die
+   Outbox den Versand mit derselben Ereignis-ID und Signatur. Ist ein
+   Paperclip-Auftrag bereits zugeordnet und der Lauf unterbrochen, das
+   zugehörige Issue in Paperclip fortsetzen. ERPNext setzt anhand der
+   gespeicherten Bons fort. Die Anzeige markiert ausbleibenden Fortschritt
+   nach fünf Minuten als unterbrochen.
+
+### Bedienung und Abnahme
+
+- **Barauslagen-Stapel** in der Buchungs-Inbox öffnen, Foto oder PDF auswählen,
+  optional Notiz und vorhandene Barauslagen-Angaben erfassen. Unter
+  **Bon-Uploads** erscheinen Empfang, Zustellung, Zahl der bearbeiteten Bons
+  und Abschlussstatus. Die Bildvorschau am Bon zeigt seinen privaten
+  Ausschnitt bzw. ein PDF aller zugehörigen Ausschnitte. Der Original-Link
+  verweist auf den gesamten Upload.
+- Bei Unschärfe, Anschnitt, Überlappung oder unklarer Gruppierung erscheint
+  eine Rückfrage. **Überarbeiten lassen** sendet eine Rückfrage für den
+  ausgewählten Bon. Bisherige und neue Fassung bleiben mit Ausschnitt,
+  Seitenkoordinaten und erkanntem Betrag prüfbar. Bei vermuteter Aufteilung
+  oder Zusammenlegung erscheint eine Klärfrage. Die Revision kann nur den
+  ausgewählten Bon ersetzen. Eine neue Fassung erfordert eine neue
+  menschliche Buchungsfreigabe.
+- Ausschließlich synthetisches Material verwenden. Ein Foto mit drei gut
+  unterscheidbaren Beträgen und ein dreiseitiges PDF mit einem Bon über
+  zwei Seiten sowie einem zweiten Bon auf Seite drei einreichen. Als
+  Bildnachweis erfundene Händler und Beträge ausschließlich im Bild
+  platzieren und die erkannten Werte sowie Seitenzuordnung protokollieren.
+  Je einen unlesbaren oder überlappenden Bon hinzufügen und den Klärfall
+  prüfen. Die Buchungs-Inbox muss bis zum vollständigen Abschluss
+  Einzelvorschläge und Fortschritt zeigen.
+- Den Webhook bei einem Upload vorübergehend unerreichbar machen und
+  anschließend mit unverändertem Trigger fortsetzen. Eine akzeptierte
+  Zustellung mit derselben Ereignis-ID erneut senden. Bei zwei überlappenden
+  Uploads zwei verschiedene Issue-UUIDs prüfen. Einen Lauf nach dem ersten
+  Vorschlag unterbrechen und im selben Issue fortsetzen. Ein Versuch mit
+  einem Run-JWT eines fremden Issues darf keine Daten des Uploads erhalten.
+- Einen einzelnen Bon überarbeiten. Danach die alte Freigabefassung, die
+  übrigen Bons und beide privaten Ausschnitte prüfen. Einen Lauf der älteren
+  Revision nach der neueren Rückfrage fortsetzen und die Ablehnung der
+  veralteten Analyse prüfen. Erst **Freigeben und buchen** darf die
+  Eingangsrechnung und das Ausgleichsjournal anlegen.
+
+Die deterministischen ERPNext-Regressionstests stehen in
+`hausverwaltung.hausverwaltung.services.test_receipt_batch`. Sie verwenden
+synthetische Bilddateien und kontrollierte Antworten für Fehler und
+Wiederholungen. Der Nachweis der tatsächlichen Modellerkennung erfolgt im
+isolierten Pilot mit der oben beschriebenen Bildprobe.
+
+
+### Kontierungsvergleich und PTC prüfen
+
+`scripts/programmatic_tools.py` ist eine eigenständige Bibliothek. Sie nimmt
+einen Prompt, einen freigegebenen Werkzeugkatalog im MCP-Schemaformat, einen
+authentifizierten Dispatcher und einen Modelladapter entgegen. Sie kennt
+keine ERPNext- oder Paperclip-IDs. Der Claude-Adapter registriert die Tools
+als Client-Tools mit `allowed_callers` und nutzt den dokumentierten
+Code-Execution-Container. Der Dispatcher lehnt direkte Aufrufe ab. Er
+liefert die Zwischenlisten als Code-Tool-Ergebnisse an genau diesen
+Container. Der Modellcode darf als einzige Ausgabe die vom jeweiligen
+Prüfwerkzeug bestätigte Kurzliste ausgeben.
+[Claude Programmatic Tool Calling](https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling)
+
+Für Barauslagen stellt `receipt_evidence.py` einen an den aktuellen Bon
+gebundenen `tools/list`- und `tools/call`-Dispatcher bereit. Er verwendet
+die FAC-Routing-Metadaten für Code und prüft jeden Aufruf mit der
+ERPNext-Rolle und dem Paperclip-Run. Claude registriert die erhaltenen
+Schemas einzeln. Der eingebaute Claude-MCP-Connector ist für diesen
+PTC-Ablauf ungeeignet.
+
+Der Code sucht den aus dem Bon gelesenen Händler. Bei einem eindeutigen
+Stammdatentreffer kann er frühere gebuchte Rechnungspositionen desselben
+Lieferanten in der ermittelten ERPNext-Company vergleichen. Er ermittelt
+zulässige Sachkonten und priorisiert passende Positionen desselben Objekts,
+wenn es über die Kostenstelle eindeutig zugeordnet ist. Die Inbox zeigt
+höchstens drei belegte Kontenvorschläge mit Quellen. Fehlt eine eindeutige
+Zuordnung oder ein Beleg, steht die Frage am Bon. Die Sachbearbeitung
+entscheidet über die Kontierung in ERPNext.
+
+1. Ausschließlich auf der synthetischen Pilotkonfiguration vorübergehend
+   `HV_RECEIPT_PTC_SYNTHETIC_TRACE=1` setzen. Das Protokoll zeigt dann
+   den tatsächlich vom Modell erzeugten Python-Code, seine Prüfsumme,
+   die Folge der Code-Tool-Aufrufe, ihre Antwortgrößen und die bestätigte
+   Schlussausgabegröße. Es zeigt keine Werkzeug-Zwischenlisten.
+2. Gebuchte synthetische Vergleichspositionen desselben Lieferanten in
+   der Test-Company und mindestens einen Gegenbeleg eines anderen
+   Lieferanten anlegen. Mindestens eine passende Position muss auf
+   dasselbe Objekt kontiert sein. Ein zweiter Fall verwendet einen
+   Händler ohne eindeutige Zuordnung. In beiden Läufen auf den
+   bedingten Abruf und die Quellen der Kurzliste achten.
+3. Ohne Paperclip dieselbe Ausführungsschicht gegen den unabhängigen
+   Messdaten-Katalog prüfen. Hierfür in einer geschützten Shell
+   `HV_PTC_CLAUDE_KEY` und `HV_PTC_CLAUDE_MODEL` bereitstellen und
+   `python3 -m unittest discover -s scripts -p test_programmatic_tools.py -v`
+   ausführen. Der Live-Test dokumentiert den vom Anbieter gelieferten
+   Code und seine Tool-Aufrufe. Die übrigen Tests prüfen den Vertrag
+   mit kontrollierten Provider-Antworten.

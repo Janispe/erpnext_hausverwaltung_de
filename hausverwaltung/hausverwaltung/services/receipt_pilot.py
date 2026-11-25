@@ -66,7 +66,7 @@ def _context(raw) -> dict:
 	return result
 
 
-def review_context(doc) -> dict:
+def review_context(doc, *, user=None) -> dict:
 	"""Resolve only explicitly supplied master data and keep ambiguity visible."""
 	from hausverwaltung.hausverwaltung.page.buchen_cockpit import buchen_cockpit
 
@@ -108,7 +108,7 @@ def review_context(doc) -> dict:
 	return {
 		**context,
 		"kostenstelle": context["kostenstelle"] if center else "",
-		"immobilie": building if building and frappe.has_permission("Immobilie", "read", doc=building) else "",
+		"immobilie": building if building and frappe.has_permission("Immobilie", "read", doc=building, user=user) else "",
 		"zahlungsart": PAYMENT_TYPES.get(source, ""),
 		"zahlungskonto": valid_account,
 		"fragen": questions,
@@ -219,7 +219,7 @@ def update_context(name: str, context) -> dict:
 def pending_receipts() -> list[str]:
 	_require_agent()
 	return frappe.get_all(
-		PROPOSAL, filters={"receipt_digest": ["is", "set"], "status": "Pending"},
+		PROPOSAL, filters={"receipt_digest": ["is", "set"], "receipt_upload": ["is", "not set"], "status": "Pending"},
 		pluck="name", order_by="creation asc", limit_page_length=50,
 	)
 
@@ -229,8 +229,8 @@ def prepare_receipt(name: str) -> dict:
 	"""Agent capability for one queued receipt. No arbitrary file access or writes."""
 	_require_agent()
 	doc = frappe.get_doc(PROPOSAL, name, for_update=True)
-	if not doc.receipt_digest:
-		raise frappe.PermissionError("Dieser Vorschlag gehört nicht zum Barauslagen-Pilot.")
+	if not doc.receipt_digest or doc.get("receipt_upload"):
+		raise frappe.PermissionError("Dieser Vorschlag gehört nicht zur bisherigen Bon-Warteschlange.")
 	if doc.status != "Pending":
 		return {"name": doc.name, "status": doc.status}
 	try:
@@ -250,6 +250,10 @@ def prepare_receipt(name: str) -> dict:
 
 def verified_original(doc, *, for_update: bool = False):
 	"""Resolve the private proposal attachment and verify its uploaded bytes."""
+	if doc.get("receipt_upload"):
+		from hausverwaltung.hausverwaltung.services import receipt_batch
+
+		return receipt_batch.verified_crop(doc, for_update=for_update)
 	name = frappe.db.get_value(
 		"File",
 		{"attached_to_doctype": PROPOSAL, "attached_to_name": doc.name, "file_url": doc.file_url, "is_private": 1},
@@ -306,9 +310,7 @@ def _extract(content: bytes, extension: str) -> dict:
 		)]
 	else:
 		images = [(content, "image/jpeg" if extension == "jpg" else "image/png")]
-	# Number the options so duplicate display names cannot resolve to the wrong type.
-	categories = invoice_extraction._load_kostenarten_for_prompt()
-	catalog = {str(index): category for index, category in enumerate(categories, 1)}
+	catalog = _category_catalog()
 	image, mime = images[0]
 	raw = mistral_client.complete_vision_json(
 		system=SYSTEM_PROMPT,
@@ -318,6 +320,16 @@ def _extract(content: bytes, extension: str) -> dict:
 		additional_images=tuple(images[1:]),
 		timeout=60,
 	)
+	return _normalize_analysis(raw, catalog)
+
+
+def _category_catalog():
+	# Number the options so duplicate display names cannot resolve to the wrong type.
+	categories = invoice_extraction._load_kostenarten_for_prompt()
+	return {str(index): category for index, category in enumerate(categories, 1)}
+
+
+def _normalize_analysis(raw, catalog):
 	if not isinstance(raw, dict):
 		raise ValueError("Vision-Antwort ist kein Objekt")
 	merchant = _text(raw.get("haendler"))

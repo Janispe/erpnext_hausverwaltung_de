@@ -141,7 +141,7 @@ class JsonClient:
 		self.timeout = timeout
 		self.opener = urllib.request.build_opener(NoRedirects())
 
-	def request(self, method: str, path: str, *, query=None, data=None) -> tuple[Any, Any]:
+	def request(self, method: str, path: str, *, query=None, data=None, headers=None) -> tuple[Any, Any]:
 		url = self.url + path
 		if query:
 			url += "?" + urllib.parse.urlencode(query)
@@ -149,9 +149,10 @@ class JsonClient:
 			url,
 			data=json.dumps(data, ensure_ascii=False).encode() if data is not None else None,
 			headers={
-				"Authorization": self.authorization,
+				**({"Authorization": self.authorization} if self.authorization else {}),
 				"Accept": "application/json",
 				"Content-Type": "application/json",
+				**(headers or {}),
 			},
 			method=method,
 		)

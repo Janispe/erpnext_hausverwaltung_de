@@ -227,6 +227,7 @@ extend_doctype_class = {
 	"File": [
 		"hausverwaltung.hausverwaltung.wohnungsschaden.permissions.FileMixin",
 		"hausverwaltung.hausverwaltung.overrides.file.HeizkostenRuecklaufFileMixin",
+		"hausverwaltung.hausverwaltung.services.receipt_batch.ReceiptFileMixin",
 	],
 	"Web Form": ["hausverwaltung.hausverwaltung.wohnungsschaden.permissions.WebFormMixin"],
 	"Company": ["hausverwaltung.hausverwaltung.overrides.company.CompanyDepartmentRootMixin"],
@@ -397,6 +398,7 @@ scheduler_events = {
 		"hausverwaltung.hausverwaltung.integrations.paperless.retry_failed_exports"
 	],
 	"cron": {
+		"* * * * *": ["hausverwaltung.hausverwaltung.services.receipt_batch.deliver_jobs"],
 		"*/5 * * * *": [
 			"hausverwaltung.hausverwaltung.agent_tools.email_api.sync_stalwart_email_drafts",
 		],

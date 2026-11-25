@@ -31,13 +31,71 @@ function hv_receipt_context_fields(defaults = {}) {
 	].map((field) => ({ ...field, default: defaults[field.fieldname] || "" }));
 }
 
-function hv_open_receipt_batch(on_uploaded) {
+const HV_RECEIPT_BATCH_API = "hausverwaltung.hausverwaltung.services.receipt_batch";
+const HV_RECEIPT_DONE = new Set(["Done", "Questions"]);
+
+function hv_receipt_progress(job) {
+	const labels = {
+		Queued: __("Wartet auf Zustellung"), DeliveryError: __("Zustellfehler"),
+		Dispatched: __("In Paperclip eingereiht"), Running: __("Analyse läuft"), Interrupted: __("Analyse unterbrochen"),
+		AnalysisError: __("Technischer Analysefehler"), Done: __("Fertig"), Questions: __("Fertig mit Rückfragen"),
+	};
+	const progress = job.total ? __(" · {0} von {1} bearbeitet", [job.processed, job.total]) : "";
+	return frappe.utils.escape_html((labels[job.status] || job.status) + progress);
+}
+
+function hv_receipt_paperclip(job) {
+	if (!job.issue_url) {
+		const label = job.issue_id ? __("Paperclip-Link nicht eingerichtet") : __("Paperclip-Verknüpfung ausstehend");
+		return `<span class="text-muted">${label}</span>`;
+	}
+	return `<a class="btn btn-default btn-xs" href="${frappe.utils.escape_html(job.issue_url)}"
+		target="_blank" rel="noopener noreferrer">${__("Paperclip öffnen")} ↗</a>`;
+}
+
+function hv_receipt_comparison(comparison) {
+	if (!comparison) return "";
+	const escape = frappe.utils.escape_html;
+	const accounts = comparison.candidates.map((account) => `<li>
+		${escape(account.account)} · ${escape(account.category || account.label)}
+		<ul>${account.sources.map((source) => `<li>
+			<a href="/app/purchase-invoice/${encodeURIComponent(source.receipt)}" target="_blank" rel="noopener">
+				${escape(source.receipt)}</a> · ${escape(source.date)}
+			${source.same_object ? ` · ${__("Dasselbe Objekt")}` : ""}
+		</li>`).join("")}</ul></li>`).join("");
+	const questions = comparison.questions.map((question) => `<li>${escape(question)}</li>`).join("");
+	return `<h5>${__("Kontierungsvergleich")}</h5><ul>${accounts}${questions}</ul>`;
+}
+
+function hv_receipt_history(batch) {
+	const escape = frappe.utils.escape_html;
+	const history = batch.revisions.map((data, index) => {
+		const analysis = data.analysis;
+		const coordinates = analysis.regions.map(([page, ...bounds]) =>
+			__("Seite {0} ({1})", [page, bounds.join(", ")])
+		).join(" · ");
+		const summary = index === 0 ? __("Letzte gespeicherte Fassung") : __("Frühere Fassung");
+		return `<details><summary>${summary} · ${escape(data.belegsumme == null ? "" : String(data.belegsumme))}
+			${escape(data.waehrung || "")}</summary>
+			<p><a href="${escape(analysis.crop_url)}" target="_blank" rel="noopener">${__("Ausschnitt öffnen")} ↗</a>
+			· ${escape(coordinates)}</p>
+			${analysis.revision_note ? `<p>${escape(analysis.revision_note)}</p>` : ""}
+			${hv_receipt_comparison(data.account_comparison)}${_hv_render_extraction_details(data)}</details>`;
+	}).join("");
+	return `<p>${hv_receipt_progress(batch.job)} · ${hv_receipt_paperclip(batch.job)}
+		· <a href="${escape(batch.original)}" target="_blank" rel="noopener">${__("Upload-Original öffnen")} ↗</a></p>
+		${batch.note ? `<p>${escape(batch.note)}</p>` : ""}${history}`;
+}
+
+function hv_open_receipt_batch(on_uploaded, multi) {
 	const batch_id = crypto.randomUUID();
 	let remaining = [];
+	let request_ids = new Map();
 	const dialog = new frappe.ui.Dialog({
 		title: __("Barauslagen-Stapel"),
 		fields: [
 			...hv_receipt_context_fields(),
+			...(multi ? [{ fieldtype: "Small Text", fieldname: "note", label: __("Notiz zum Upload") }] : []),
 			{ fieldtype: "HTML", fieldname: "originals" },
 		],
 		primary_action_label: __("Zur Bonanalyse einreichen"),
@@ -58,10 +116,17 @@ function hv_open_receipt_batch(on_uploaded) {
 				status.text(__("Verarbeite {0}", [file.name]));
 				const form = new FormData();
 				form.append("file", file);
-				form.append("batch_id", batch_id);
-				form.append("context", JSON.stringify(context));
+				const { note, ...payment_context } = context;
+				if (multi) {
+					form.append("request_id", request_ids.get(file));
+					form.append("note", note || "");
+				} else {
+					form.append("batch_id", batch_id);
+				}
+				form.append("context", JSON.stringify(payment_context));
 				try {
-					const response = await fetch(`/api/method/${HV_RECEIPT_API}.upload_receipt`, {
+					const method = multi ? `${HV_RECEIPT_BATCH_API}.upload` : `${HV_RECEIPT_API}.upload_receipt`;
+					const response = await fetch(`/api/method/${method}`, {
 						method: "POST",
 						headers: { "X-Frappe-CSRF-Token": frappe.csrf_token },
 						body: form,
@@ -78,7 +143,7 @@ function hv_open_receipt_batch(on_uploaded) {
 			if (successes) on_uploaded();
 			if (!failed.length) {
 				dialog.hide();
-				frappe.show_alert({ message: __("{0} Bons eingereicht oder bereits vorhanden.", [successes]), indicator: "green" });
+				frappe.show_alert({ message: __("{0} Dateien eingereicht oder bereits vorhanden.", [successes]), indicator: "green" });
 				return;
 			}
 			status.text(__("Bitte erneut versuchen oder die Dateien ersetzen: {0}", [failed.map((file) => file.name).join(", ")]));
@@ -94,6 +159,7 @@ function hv_open_receipt_batch(on_uploaded) {
 	const status = originals.find("[role=status]");
 	input.on("change", () => {
 		remaining = Array.from(input[0].files);
+		request_ids = new Map(remaining.map((file) => [file, crypto.randomUUID()]));
 		status.text(__("{0} Dateien ausgewählt.", [remaining.length]));
 	});
 	dialog.show();
@@ -388,6 +454,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				<button class="btn-receipts hidden">+ ${__("Barauslagen-Stapel")}</button>
 				<button class="btn-bulk btn-primary">+ ${__("Sammel-Upload")}</button>
 			</div>
+			<details class="hv-receipt-batch-list hidden" style="padding: 8px; max-height: 22vh; overflow: auto;"><summary></summary><div></div></details>
 			<div class="hv-inbox-body">
 				<div class="hv-inbox-list">
 					<div class="hv-inbox-list-empty">${__("Lade...")}</div>
@@ -428,7 +495,10 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		refresh_list();
 	});
 
-	layout.on("click", ".btn-receipts", () => hv_open_receipt_batch(refresh_list));
+	layout.on("click", ".btn-receipts", () => hv_open_receipt_batch(() => {
+		layout.find(".hv-receipt-batch-list").prop("open", true);
+		refresh_list();
+	}, state.receipt_batch_enabled));
 	layout.on("click", ".btn-refresh", () => refresh_list(true));
 	layout.on("click", ".btn-bulk", () => {
 		if (
@@ -469,11 +539,28 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				const data = (r && r.message) || { rows: [], sessions: [] };
 				const new_rows = data.rows || [];
 				layout.find(".btn-receipts").toggleClass("hidden", !data.receipt_upload);
+				state.receipt_batch_enabled = data.receipt_batch;
+				state.receipt_batches = data.receipt_batches || [];
+				const batches = layout.find(".hv-receipt-batch-list");
+				const escape = frappe.utils.escape_html;
+				batches.toggleClass("hidden", !state.receipt_batches.length);
+				batches.children("summary").text(__("Bon-Uploads ({0})", [state.receipt_batches.length]));
+				batches.children("div").html(state.receipt_batches.map((upload) => `<p>
+					<a href="${escape(upload.file_url)}" target="_blank" rel="noopener">${escape(upload.original_filename)} ↗</a>
+					${upload.jobs.map((job) => `<br>${job.proposal ? escape(job.proposal) + " · " : ""}
+						${hv_receipt_progress(job)} · ${hv_receipt_paperclip(job)} ${escape(job.error || "")}`).join("")}
+				</p>`).join(""));
 
+				const progress = new Map(state.receipt_batches.flatMap((upload) =>
+					upload.jobs.map((job) => [job.name, hv_receipt_progress(job)])
+				));
 				const previous_rows = new Map(state.rows.map((r) => [r.name, r]));
 				for (const row of new_rows) {
 					const previous = previous_rows.get(row.name);
 					if (!previous || previous.status !== row.status || previous.detail_version !== row.detail_version
+						|| (row.is_receipt_batch && state.full_cache[row.name]?.receipt_batch &&
+							progress.get(state.full_cache[row.name].receipt_batch.job.name)
+								!== hv_receipt_progress(state.full_cache[row.name].receipt_batch.job))
 						|| (force_detail && row.name === state.selected_name)) {
 						delete state.full_cache[row.name];
 					}
@@ -625,12 +712,14 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 		const review = full?.receipt_review;
 		const approved = review?.status === "Approved";
 		const closed = ["Booked", "Cancelled"].includes(row.status);
-		const can_book = row.status === "Ready" && (!row.is_receipt ||
+		const batch = full?.receipt_batch;
+		const can_book = row.status === "Ready" && (!row.is_receipt_batch ||
+			(batch && HV_RECEIPT_DONE.has(batch.job.status) && !data?.analysis?.question)) && (!row.is_receipt ||
 			(review && review.status !== "Succeeded" && receipt && !receipt.fragen.length && (!data?.waehrung || data.waehrung === "EUR")));
-		const can_skip = ["Pending", "Processing", "Ready"].includes(row.status);
-		const can_reactivate = ["Skipped", "Error"].includes(row.status);
-		const can_reprocess = !closed;
-		const can_delete = !closed && !review?.binding;
+		const can_skip = !row.is_receipt_batch && ["Pending", "Processing", "Ready"].includes(row.status);
+		const can_reactivate = !row.is_receipt_batch && ["Skipped", "Error"].includes(row.status);
+		const can_reprocess = !closed && !row.is_receipt_batch;
+		const can_delete = !closed && !review?.binding && !row.is_receipt_batch;
 
 		const file_url = row.file_url || (full && full.file_url) || "";
 
@@ -653,7 +742,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				: `<embed src="${source_url}" type="application/pdf" title="${__("PDF-Vorschau")}"
 					style="width:100%; height:100%; min-height:60vh; border:0;">`}
 				<a href="${source_url}" target="_blank" rel="noopener" style="display:block; padding:6px; text-align:center;">
-					${__("Originalbeleg öffnen")} ↗
+					${row.is_receipt_batch ? __("Ausschnitt öffnen") : __("Originalbeleg öffnen")} ↗
 				</a>`
 			: `<div class="hv-inbox-detail-empty">${__("Kein Originalbeleg verknüpft.")}</div>`;
 
@@ -678,6 +767,7 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 				<div class="actions">
 					<button class="btn-book btn-primary" ${can_book ? "" : "disabled"}>${approved ? __("Buchung fortsetzen") : row.is_receipt ? __("Bon prüfen") : __("Buchen")}</button>
 					${approved ? `<button class="btn-reopen">${__("Buchungsdaten korrigieren")}</button>` : ""}
+					${batch && !closed ? `<button class="btn-receipt-revise">${__("Überarbeiten lassen")}</button>` : ""}
 					${receipt && !closed ? `<button class="btn-receipt-context">${__("Barauslagen-Angaben ändern")}</button>` : ""}
 					<button class="btn-skip" ${can_skip ? "" : "disabled"}>${__("Überspringen")}</button>
 					<button class="btn-reactivate" ${can_reactivate ? "" : "disabled"}>${__("Reaktivieren")}</button>
@@ -690,6 +780,8 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 					${approved ? `<p>${__("Bon freigegeben. Die Buchung kann mit dieser Fassung fortgesetzt werden.")}</p>` : ""}
 					${review?.status === "Stale" ? `<p>${__("Freigabe ungültig. Bitte die geänderten Buchungsdaten erneut prüfen.")}</p>` : ""}
 					${row.status === "Cancelled" ? `<p>${__("Rechnung oder Ausgleich storniert. Die ursprüngliche Buchung bleibt nachvollziehbar.")}</p>` : ""}
+					${batch ? hv_receipt_history(batch) : ""}
+					${hv_receipt_comparison(data?.account_comparison)}
 					${receipt ? hv_render_receipt_context(receipt, data) : ""}
 					${detail_block}
 					${
@@ -711,6 +803,26 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 			state.current_pdf_url = file_url || null;
 		}
 
+		$detail.find(".btn-receipt-revise").on("click", () => {
+			const request_id = crypto.randomUUID();
+			const dialog = new frappe.ui.Dialog({
+				title: __("Bon überarbeiten lassen"),
+				fields: [{ fieldtype: "Small Text", fieldname: "note", label: __("Rückfrage") }],
+				primary_action_label: __("Überarbeiten lassen"),
+				async primary_action({ note }) {
+					dialog.disable_primary_action();
+					try {
+						await frappe.call({ method: `${HV_RECEIPT_BATCH_API}.revise`,
+							args: { name: row.name, request_id, source: batch.source, note } });
+						dialog.hide();
+						refresh_list(true);
+					} finally {
+						dialog.enable_primary_action();
+					}
+				},
+			});
+			dialog.show();
+		});
 		$detail.find(".btn-receipt-context").on("click", () => {
 			const dialog = new frappe.ui.Dialog({
 				title: __("Barauslagen-Angaben ändern"),
@@ -932,7 +1044,9 @@ hausverwaltung.buchungs_inbox.mount = ($container, options) => {
 			["Pending", "Processing"].includes(r.status)
 			|| (r.is_receipt && r.status === "Ready" && r.name === state.selected_name)
 		);
-		if (has_pending) {
+		const batch_pending = state.receipt_batches?.some((upload) => upload.jobs.some((job) =>
+			!HV_RECEIPT_DONE.has(job.status) && job.status !== "Superseded"));
+		if (has_pending || batch_pending) {
 			state.poll_timer = setTimeout(refresh_list, 3000);
 		}
 	};

@@ -1,0 +1,124 @@
+{
+ "doctype": "DocType",
+ "name": "HV Bon Auftrag",
+ "module": "Hausverwaltung",
+ "autoname": "Prompt",
+ "engine": "InnoDB",
+ "field_order": [
+  "upload",
+  "proposal",
+  "previous_job",
+  "note",
+  "status",
+  "issue_id",
+  "attempts",
+  "retry_at",
+  "error_message",
+  "inventory",
+  "results",
+  "total_receipts",
+  "processed_receipts",
+  "evidence_step",
+  "evidence_merchant",
+  "evidence_result",
+  "evidence_context_digest"
+ ],
+ "fields": [
+  {
+   "fieldname": "upload",
+   "fieldtype": "Link",
+   "label": "Upload",
+   "options": "HV Bon Upload",
+   "search_index": 1
+  },
+  {
+   "fieldname": "proposal",
+   "fieldtype": "Link",
+   "label": "Bon",
+   "options": "Buchungs Vorschlag",
+   "search_index": 1
+  },
+  {
+   "fieldname": "previous_job",
+   "fieldtype": "Link",
+   "label": "Vorherige Analyse",
+   "options": "HV Bon Auftrag"
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Rückfrage"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Data",
+   "label": "Status",
+   "search_index": 1
+  },
+  {
+   "fieldname": "issue_id",
+   "fieldtype": "Data",
+   "label": "Paperclip-Auftrag",
+   "unique": 1
+  },
+  {
+   "fieldname": "attempts",
+   "fieldtype": "Int",
+   "label": "Zustellversuche"
+  },
+  {
+   "fieldname": "retry_at",
+   "fieldtype": "Datetime",
+   "label": "Nächster Versuch"
+  },
+  {
+   "fieldname": "error_message",
+   "fieldtype": "Small Text",
+   "label": "Fehler"
+  },
+  {
+   "fieldname": "inventory",
+   "fieldtype": "Long Text",
+   "label": "Erkannte Bons"
+  },
+  {
+   "fieldname": "results",
+   "fieldtype": "Long Text",
+   "label": "Analysefassungen"
+  },
+  {
+   "fieldname": "total_receipts",
+   "fieldtype": "Int",
+   "label": "Erkannte Bons"
+  },
+  {
+   "fieldname": "processed_receipts",
+   "fieldtype": "Int",
+   "label": "Bearbeitete Bons"
+  },
+  {
+   "fieldname": "evidence_step",
+   "fieldtype": "Int",
+   "label": "Kontierungsvergleich: Bonnummer"
+  },
+  {
+   "fieldname": "evidence_merchant",
+   "fieldtype": "Data",
+   "label": "Kontierungsvergleich: Händler"
+  },
+  {
+   "fieldname": "evidence_result",
+   "fieldtype": "Long Text",
+   "label": "Kontierungsvergleich: geprüfte Kurzliste"
+  },
+  {
+   "fieldname": "evidence_context_digest",
+   "fieldtype": "Data",
+   "label": "Kontierungsvergleich: Kontext-Prüfsumme"
+  }
+ ],
+ "permissions": [],
+ "allow_rename": 0,
+ "sort_field": "creation",
+ "sort_order": "DESC"
+}

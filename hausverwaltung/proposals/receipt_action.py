@@ -6,6 +6,7 @@ import frappe
 from frappe.utils import flt
 
 from hausverwaltung.hausverwaltung.page.buchen_cockpit import buchen_cockpit as cockpit
+from hausverwaltung.hausverwaltung.services import receipt_batch
 from hausverwaltung.hausverwaltung.services import receipt_pilot as pilot
 
 from . import domain, frappe_service as engine, registry
@@ -24,7 +25,7 @@ def _accountant(user):
 	return (
 		info and info.enabled and info.user_type == "System User"
 		and (user == "Administrator" or (
-			bool(roles & ACCOUNTING_ROLES) and not roles & {pilot.AGENT_ROLE, engine.AGENT}
+			bool(roles & ACCOUNTING_ROLES) and not roles & {pilot.AGENT_ROLE, receipt_batch.AGENT_ROLE, engine.AGENT}
 		))
 	)
 
@@ -177,6 +178,7 @@ def _booking(values):
 
 def _plan(receipt, booking):
 	"""Resolve the booking inputs without inserting or submitting an ERPNext voucher."""
+	receipt_batch.require_bookable(receipt)
 	context = pilot.review_context(receipt)
 	if context["fragen"]:
 		frappe.throw("Bitte zuerst die offenen Barauslagen-Angaben in der Buchungs-Inbox klären.")

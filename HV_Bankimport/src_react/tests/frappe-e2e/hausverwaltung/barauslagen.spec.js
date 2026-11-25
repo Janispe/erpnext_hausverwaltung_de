@@ -117,3 +117,47 @@ test("Inbox aktualisiert Bon-Angaben und Freigabe aus einer zweiten Buchhaltungs
 		await secondSession.close();
 	}
 });
+
+test("Bon-Uploads verlinken zwei getrennte Paperclip-Aufträge im neuen Tab", async ({ desk }) => {
+	const batch = "hausverwaltung.hausverwaltung.services.receipt_batch";
+	const seed = benchExecute(`${fixtures}.seed_e2e_receipts`);
+	const csrf = await desk.evaluate(() => frappe.csrf_token);
+	const uploads = await Promise.all(["erst", "zweiter"].map(async (label) => {
+		const filename = `mehrbons-${label}-${randomUUID()}.png`;
+		const response = await desk.request.post(`/api/method/${batch}.upload`, {
+			headers: { "X-Frappe-CSRF-Token": csrf },
+			multipart: {
+				request_id: randomUUID(), note: `Synthetischer Stapel ${label}`,
+				file: { name: filename, mimeType: "image/png", buffer: Buffer.from(seed.original, "base64") },
+			},
+		});
+		expect(response.ok(), await response.text()).toBe(true);
+		const { message } = await response.json();
+		return { filename, name: message.name, issueId: randomUUID() };
+	}));
+	await desk.evaluate(() => frappe.set_route("buchungs_inbox"));
+	const uploadList = desk.locator(".hv-receipt-batch-list");
+	await uploadList.locator("summary").click();
+	for (const upload of uploads) {
+		const row = uploadList.locator("p").filter({ hasText: upload.filename });
+		await expect(row.getByText("Paperclip-Verknüpfung ausstehend")).toBeVisible();
+		benchExecute(`${fixtures}.bind_e2e_receipt_issue`, [upload.name, upload.issueId]);
+	}
+	await desk.locator(".btn-refresh").click();
+	for (const upload of uploads) {
+		const expectedUrl = `https://paperclip.invalid/HVTEST/issues/${upload.issueId}`;
+		const row = uploadList.locator("p").filter({ hasText: upload.filename });
+		const link = row.getByRole("link", { name: "Paperclip öffnen" });
+		await expect(link).toHaveAttribute("href", expectedUrl);
+		await expect(link).toHaveAttribute("target", "_blank");
+	}
+	const secondUrl = `https://paperclip.invalid/HVTEST/issues/${uploads[1].issueId}`;
+	await desk.context().route(secondUrl, (route) => route.fulfill({
+		status: 200, contentType: "text/html; charset=utf-8", body: "<h1>Synthetisches zweites Gespräch</h1>",
+	}));
+	const popup = desk.waitForEvent("popup");
+	await uploadList.locator("p").filter({ hasText: uploads[1].filename }).getByRole("link", { name: "Paperclip öffnen" }).click();
+	const conversation = await popup;
+	await expect(conversation).toHaveURL(secondUrl);
+	await expect(conversation.getByRole("heading", { name: "Synthetisches zweites Gespräch" })).toBeVisible();
+});

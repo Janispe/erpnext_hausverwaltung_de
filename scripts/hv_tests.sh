@@ -204,6 +204,9 @@ e2e_site() {
   # Die Vorschlagsfunktion ist nur auf ausdrücklich freigeschalteten synthetischen Sites aktiv.
   bench set-config --parse hv_proposals_synthetic_enabled True || return
   bench set-config --parse hv_receipt_pilot 1 || return
+  bench set-config --parse hv_receipt_batch 1 || return
+  bench set-config hv_receipt_paperclip_web_url https://paperclip.invalid || return
+  bench set-config hv_receipt_paperclip_company_prefix HVTEST || return
   # Web-Worker halten site_config.json bis zu 60 s im Speicher (frappe.config, site_cache).
   # Gunicorn (PID 1 im Backend) lädt seine Worker neu, damit alle Requests die Schalter sehen.
   in_backend sh -c 'kill -HUP 1' || return
