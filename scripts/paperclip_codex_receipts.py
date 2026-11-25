@@ -61,6 +61,13 @@ def main():
 	if "resume" in args or "--dangerously-bypass-approvals-and-sandbox" in args:
 		print("Für Bon-Aufträge ist ein frischer, eingeschränkter Codex-Lauf erforderlich.", file=sys.stderr)
 		return 1
+	if not os.environ.get("PAPERCLIP_API_KEY"):
+		# Paperclip tests the adapter before it can issue a run token. The
+		# probe uses a fresh read-only CLI session with no receipt tools.
+		return subprocess.call([
+			binary, "-a", "never", "exec", "--ignore-user-config", "--ignore-rules",
+			"--ephemeral", "--sandbox", "read-only", "-c", 'web_search="disabled"', *args[1:],
+		])
 	with subprocess.Popen(
 		[binary, "-a", "never", "exec", *cli_options(), *args[1:]],
 		stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",

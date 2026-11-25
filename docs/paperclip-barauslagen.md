@@ -155,6 +155,74 @@ Startbefehl nur technische Laufereignisse, keine Modell- oder
 Werkzeug-Rohausgaben. Lösche den privaten Trace nach der Auswertung.
 [Paperclip Codex-Adapter](https://docs.paperclip.ing/reference/adapters/codex/)
 
+### Produktionsvorbereitung und Abnahme
+
+1. Lege zunächst eine isolierte ERPNext-Site und eine eigene Paperclip-Company
+   an. Diese Kombination ist für die Vorbereitung festgelegt:
+   Frappe **16.16.0**, ERPNext **16.14.0**, Paperclip **2026.1117.0** mit
+   Node **24.22.3** und der Codex CLI **0.166.0**. Konfiguriere in Paperclip
+   explizit `codex_local`, `runner: legacy` und `engine: cli`. Prüfe den
+   Adapter in Paperclip und aktiviere den Mitarbeiter erst auf der
+   isolierten Site. Gleiche
+   die Renderer zwischen ERPNext und Worker ab (Pillow **13.0.0** und
+   pypdfium2 **5.15.2** für diese Kombination). Nutze ein eigenes Worker-
+   Verzeichnis, eine dedizierte Codex-Anmeldung und ein privates Paperclip.
+2. Richte einen dedizierten ERPNext-Systembenutzer mit der Rolle
+   `Paperclip Bonanalyse` ein. Er braucht keine zusätzlichen DocType-,
+   File-, Buchhaltungs-, Freigabe- oder generischen FAC-Rollen.
+   `HV_RECEIPT_PILOT_KEY` und `HV_RECEIPT_PILOT_SECRET` sind die
+   ERPNext-API-Zugänge im Paperclip Secret Store.
+   `HV_RECEIPT_PILOT_URL` ist die ERPNext-Basisadresse des Workers.
+   `HV_RECEIPT_CODEX_BINARY` verweist auf die geprüfte CLI.
+   Paperclip verwaltet das serverseitige Signaturgeheimnis für Run-JWTs
+   und injiziert `PAPERCLIP_API_KEY`, `PAPERCLIP_API_URL` und
+   `PAPERCLIP_AGENT_ID` in den gestarteten Run. Verwende dafür keine
+   dauerhaften Board-Zugangsdaten. Lege das separate Signaturgeheimnis
+   des Routine-Webhooks in der geschützten Frappe-Site-Konfiguration
+   unter `hv_receipt_webhook_secret` ab.
+3. Richte die Sachbearbeitung mit `Accounts User` oder `Accounts Manager`
+   und dem regulären Zugriff auf ihre Uploads, Vorschläge, Lieferanten,
+   Kostenstellen und Konten ein. Uploads benötigen Anlegen-Rechte auf
+   `File` und `Buchungs Vorschlag` sowie Leserecht auf `HV Bon Upload`.
+   Freigabe und Buchung benötigen die für die Buchungs-Inbox vorgesehenen
+   Rechte auf Vorschlag, Eingangsrechnung und Journal. Originale und
+   Ausschnitte sind private Frappe-Dateien. Die Original-URL erbt das
+   Leserecht vom Upload, die Ausschnitt-URL vom Vorschlag. Das gilt auch
+   für alte Dateieinträge und Abrufe mit `fid`, unabhängig vom Dateieigentümer.
+4. App migrieren und die Routine, Agenten-UUID und Site-Adressen gemäß
+   Abschnitt unten setzen. Prüfe in beide Richtungen die Erreichbarkeit
+   ohne Zugangsdaten auszugeben. Auf der isolierten Site
+   `hv_receipt_pilot`, `hv_receipt_batch` und `hv_receipt_codex`
+   mit `bench --site TESTSITE set-config --parse KEY 1` setzen.
+   Anschließend Web-, Scheduler- und Queue-Konfiguration neu laden.
+   Auf Produktion alle drei Schalter ausgeschaltet und die Routine
+   deaktiviert lassen.
+5. Lade auf der Testsite ein synthetisches Foto mit drei Bons und ein PDF
+   mit einem fortlaufenden Bon hoch, jeweils mit Notiz. Prüfe unterschiedliche
+   Issue-IDs, höchstens einen aktiven Run, exakte Endbeträge, den Sollinhalt
+   der privaten Zuschnitte und sichtbare Vorschläge samt Gesprächslink.
+   Lege für den Kontierungsvergleich passende und fremde synthetische
+   Vergleichsbuchungen an. Werte den privaten nativen Trace wie oben aus.
+   Revidiere einen Bon und vergleiche die übrigen Vorschläge und die
+   gespeicherten früheren Fassungen. Erzwinge einen Analysefehler nach
+   Öffnen eines Schritts, prüfe `blocked` samt Blockiergrund und setze
+   dasselbe Issue fort. Teste als Analysebenutzer nach dem Lauf den
+   Direktdownload beider Dateitypen, auch mit alter File-ID. Prüfe
+   separat als berechtigte Sachbearbeitung den erfolgreichen Download.
+   Überprüfe, dass die Vorschläge keinem automatisch angelegten
+   `Purchase Invoice` oder `Journal Entry` zugeordnet sind.
+6. Zum Abschalten zuerst den Routine-Trigger deaktivieren, aktive
+   Paperclip-Läufe auslaufen lassen oder abbrechen und die drei ERPNext-
+   Schalter auf `0` setzen. Leere die Warteschlange erst nach fachlicher
+   Entscheidung über offene Aufträge. Ziehe bei dauerhafter Abschaltung
+   den API-Zugang des Analysebenutzers zurück und entferne die
+   Worker-Secrets und das Webhook-Geheimnis. Bestehende Vorschläge,
+   Originale, Ausschnitte und Revisionen bleiben erhalten. Allein
+   `hv_receipt_codex` auf `0` zu setzen gibt den früheren
+   Prozesspfad wieder frei, solange beide anderen Schalter an sind.
+   Schalte deshalb den Stapel-Pilot zusätzlich aus, wenn die Verarbeitung
+   vollständig ruhen soll.
+
 ### Gemeinsame Routine und früherer Prozesspilot
 
 Für die Webhook-Einrichtung gelten unten Punkt 3 und 4. Punkt 2 beschreibt
