@@ -1397,7 +1397,7 @@ function submit_mieterrechnung(dialog, values, submit_doc = true) {
 
 hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 	const dialog = new frappe.ui.Dialog({
-		title: __("Sammel-PDF-Upload"),
+		title: __("Rechnungsdateien hochladen"),
 		size: "large",
 		fields: [
 			{
@@ -1406,7 +1406,7 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 				options: `
 					<p style="margin-bottom: 14px;">
 						${__(
-							"Lade hier einzelne Eingangsrechnungen oder eine große Sammel-PDF hoch. Sie werden im Hintergrund analysiert; danach führt dich ein Wizard durch jeden Vorschlag."
+							"Lade PDFs für die Buchungs-Inbox oder strukturierte E-Rechnungen (CII-XML, ZUGFeRD/Factur-X) zur Prüfung hoch."
 						)}
 					</p>
 				`,
@@ -1458,10 +1458,10 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 			{
 				fieldtype: "HTML",
 				fieldname: "list",
-				options: `<div class="hv-bulk-uploaded-list" style="margin-top: 10px; font-size: 13px;"></div>`,
+				options: `<div class="hv-structured-uploaded-list"></div><div class="hv-bulk-uploaded-list" style="margin-top: 10px; font-size: 13px;"></div>`,
 			},
 		],
-		primary_action_label: __("Analysieren starten"),
+		primary_action_label: __("PDF-Analyse starten"),
 		primary_action() {
 			if (dialog._hv_pending_splits) {
 				frappe.show_alert({
@@ -1490,20 +1490,12 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 					.then((r) => {
 						const res = (r && r.message) || {};
 						if (!res.session_id) return;
-						dialog.hide();
-						// KEINE Session-Filterung — sonst verschwinden alle anderen
-						// Vorschläge bis zum manuellen Filter-Wechsel. Die neuen
-						// landen mit Status=Pending und sind automatisch im
-						// Default-"open"-Filter sichtbar.
-						const route = frappe.get_route() || [];
-						if (
-							route[0] === "buchungs_inbox"
-							&& hausverwaltung.buchungs_inbox
-							&& typeof hausverwaltung.buchungs_inbox._refresh === "function"
-						) {
-							hausverwaltung.buchungs_inbox._refresh();
-						} else {
-							frappe.set_route("buchungs_inbox");
+						const queued = new Set(urls);
+						dialog._hv_uploaded_urls = dialog._hv_uploaded_urls.filter((url) => !queued.has(url));
+						render_list();
+						$inbox_link.show();
+						if (frappe.get_route()?.[0] === "buchungs_inbox") {
+							hausverwaltung.buchungs_inbox?._refresh?.();
 						}
 					}),
 				() => dialog.enable_primary_action()
@@ -1513,6 +1505,13 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 	dialog._hv_uploaded_urls = [];
 	dialog._hv_pending_splits = 0;
 	dialog.show();
+	const structured_files = new Map();
+
+	const $structured = dialog.$body.find(".hv-structured-uploaded-list");
+	const $inbox_link = $("<a>", {
+		href: "/app/buchungs_inbox", target: "_blank", rel: "noopener noreferrer",
+		class: "btn btn-default btn-sm my-1", text: __("Buchungs-Inbox öffnen"),
+	}).hide().appendTo(dialog.$body.find(".hv-bulk-uploaded-list").parent());
 
 	// Frappe FileUploader inline einhängen — Multiple aktiv.
 	const $target = dialog.$body.find(".hv-bulk-uploader-target");
@@ -1528,7 +1527,7 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 		if (!urls.length) {
 			$list.html(
 				`${pending_html}<div style="color: var(--text-muted, #666);">${__(
-					"Noch keine Einzelrechnung bereit."
+					"Noch kein PDF für die Analyse bereit."
 				)}</div>`
 			);
 			return;
@@ -1549,7 +1548,25 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 		method: `${HV_COCKPIT_API}.upload_invoice_pdf`,
 		allow_multiple: 1,
 		on_success(file_doc) {
-			if (dialog.get_value("auto_split")) {
+			if (!file_doc || !file_doc.file_url) return;
+			if (file_doc.invoice_format && file_doc.invoice_format !== "pdf") {
+				if (!structured_files.has(file_doc.file_url)) {
+					structured_files.set(file_doc.file_url, file_doc);
+					const $button = $("<button>", {
+						type: "button", class: "btn btn-default btn-sm my-1",
+						text: file_doc.invoice_format === "cii"
+							? __("E-Rechnung prüfen · {0}", [file_doc.file_name])
+							: __("Importhinweis · {0}", [file_doc.file_name]),
+					}).appendTo($structured);
+					$button.on("click", () => open_structured_invoice_preview(file_doc, (name) => {
+						$button.replaceWith($("<a>", {
+							href: `/app/purchase-invoice/${encodeURIComponent(name)}`,
+							target: "_blank", rel: "noopener noreferrer", class: "btn btn-default btn-sm my-1",
+							text: __("Entwurf öffnen · {0}", [name]),
+						}));
+					}));
+				}
+			} else if (dialog.get_value("auto_split")) {
 				split_and_queue_uploaded_pdf(file_doc, dialog, render_list);
 			} else {
 				handle_uploaded_file(file_doc, dialog, render_list);
@@ -1557,6 +1574,104 @@ hausverwaltung.buchen_cockpit.open_bulk_upload_dialog = () => {
 		},
 	});
 };
+
+function open_structured_invoice_preview(file_doc, on_saved) {
+	const file_url = file_doc.file_url;
+	const escape = (value) => frappe.utils.escape_html(String(value ?? ""));
+	const original = `<p><a href="${escape(encodeURI(file_url))}" target="_blank" rel="noopener noreferrer">${__("Privaten Originalbeleg öffnen")}</a></p>`;
+	if (file_doc.format_error) {
+		frappe.msgprint({
+			title: __("Datei manuell erfassen"),
+			message: `<p>${escape(file_doc.format_error)}</p>${original}`,
+			indicator: "orange",
+		});
+		return;
+	}
+	frappe.call({
+		method: `${HV_COCKPIT_API}.preview_structured_invoice`,
+		args: { file_url },
+		freeze: true,
+	}).then(({ message: invoice }) => {
+		const amount = (value) => `${escape(value)} ${escape(invoice.currency)}`;
+		const incoming_tax = invoice.taxes.filter((tax) => Number(tax.amount) !== 0);
+		const fields = [
+			{ fieldtype: "HTML", options: `
+				<p><strong>${escape(invoice.profile)} · ${escape(invoice.number)}</strong><br>
+				${__("Rechnungsdatum")} ${escape(invoice.date)}
+				${invoice.due_date ? ` · ${__("Fällig am")} ${escape(invoice.due_date)}` : ""}</p>
+				<p>${__("Lieferant")} <strong>${escape(invoice.seller)}</strong><br>
+				${__("Rechnungsempfänger")} <strong>${escape(invoice.buyer)}</strong></p>
+				<p>${invoice.is_return ? `<strong>${__("Gutschrift")}</strong> · ` : ""}
+				${__("Netto")} ${amount(invoice.net)} · ${__("Steuer")} ${amount(invoice.tax)} ·
+				<strong>${__("Brutto")} ${amount(invoice.gross)}</strong></p>
+				<ul>${invoice.taxes.map((tax) => `<li>${escape(tax.rate)} % (${escape(tax.category)}) ·
+					${__("Bemessungsgrundlage")} ${amount(tax.basis)} · ${__("Steuer")} ${amount(tax.amount)}
+					${tax.exemption ? ` · ${escape(tax.exemption)}` : ""}</li>`).join("")}</ul>
+				${original}
+				${invoice.warnings.length ? `<details><summary>${__("Validierungshinweise")}</summary>
+					<ul>${invoice.warnings.map((warning) => `<li>${escape(warning)}</li>`).join("")}</ul></details>` : ""}
+			` },
+			{ fieldtype: "Link", fieldname: "supplier", label: __("Lieferant in ERPNext"), options: "Supplier", default: invoice.supplier, reqd: 1 },
+			{ fieldtype: "Link", fieldname: "company", label: __("Firma in ERPNext"), options: "Company", default: invoice.company, reqd: 1 },
+		];
+		const position_fields = (line, index) => [
+			{ fieldtype: "Section Break" },
+			{ fieldtype: "HTML", options: `<p><strong>${index + 1}. ${escape(line.name)}</strong><br>
+				${line.description ? `${escape(line.description)}<br>` : ""}
+				${escape(line.quantity)} ${escape(line.unit)} · ${__("Netto")} ${amount(line.net)} · ${escape(line.tax_rate)} %</p>` },
+			{ fieldtype: "Link", fieldname: `kostenstelle_${index}`, label: __("Objekt-Kostenstelle"), options: "Cost Center", reqd: 1,
+				get_query: () => ({ query: `${HV_COCKPIT_API}.toplevel_kostenstelle_query`, filters: { company: dialog.get_value("company") } }) },
+			{ fieldtype: "Link", fieldname: `wohnung_${index}`, label: __("Wohnung"), options: "Wohnung" },
+			{ fieldtype: "Column Break" },
+			{ fieldtype: "Select", fieldname: `typ_${index}`, label: __("Umlagefähigkeit"), options: ["", __("Umlegbar"), __("Nicht umlegbar")], reqd: 1 },
+			{ fieldtype: "Link", fieldname: `umlegbar_${index}`, label: __("Betriebskostenart"), options: "Betriebskostenart",
+				depends_on: `eval:doc.typ_${index} === ${JSON.stringify(__("Umlegbar"))}` },
+			{ fieldtype: "Link", fieldname: `nicht_umlegbar_${index}`, label: __("Nicht umlagefähige Kostenart"), options: "Kostenart nicht umlagefaehig",
+				depends_on: `eval:doc.typ_${index} === ${JSON.stringify(__("Nicht umlegbar"))}` },
+		];
+		fields.push(...invoice.lines.flatMap(position_fields));
+		if (incoming_tax.length) fields.push({ fieldtype: "Section Break", label: __("Vorsteuer") });
+		incoming_tax.forEach((tax, index) => fields.push({
+			fieldtype: "Link", fieldname: `tax_${index}`, label: `${__("Steuerkonto")} · ${tax.rate} % (${tax.amount} ${invoice.currency})`,
+			options: "Account", reqd: 1,
+			get_query: () => ({ filters: { company: dialog.get_value("company"), is_group: 0, disabled: 0, account_type: "Tax" } }),
+		}));
+
+		const dialog = new frappe.ui.Dialog({
+			title: __("E-Rechnung prüfen"),
+			size: "large",
+			fields,
+			primary_action_label: __("Eingangsrechnung als Entwurf speichern"),
+			primary_action(values) {
+				const positionen = invoice.lines.map((_, index) => {
+					const allocatable = values[`typ_${index}`] === __("Umlegbar");
+					return {
+						umlagefaehig: allocatable ? "Betriebskostenart" : "Kostenart nicht umlagefaehig",
+						kostenart: values[`${allocatable ? "umlegbar" : "nicht_umlegbar"}_${index}`],
+						kostenstelle: values[`kostenstelle_${index}`],
+						wohnung: values[`wohnung_${index}`],
+					};
+				});
+				dialog.disable_primary_action();
+				hv_after_async(frappe.call({
+					method: `${HV_COCKPIT_API}.create_structured_invoice`,
+					args: {
+						file_url, digest: invoice.digest, company: values.company, supplier: values.supplier,
+						positionen: JSON.stringify(positionen),
+						tax_accounts: JSON.stringify(incoming_tax.map((_, index) => values[`tax_${index}`])),
+					},
+					freeze: true,
+				}).then(({ message }) => {
+					dialog.hide();
+					on_saved(message.name);
+				}), () => dialog.enable_primary_action());
+			},
+		});
+		dialog.show();
+	}).catch(() => {
+		// Frappe shows the server's validation error. The upload stays selectable.
+	});
+}
 
 function split_and_queue_uploaded_pdf(file_doc, parent_dialog, render_list_fn) {
 	if (!file_doc || !file_doc.file_url) return;
@@ -1991,11 +2106,11 @@ hausverwaltung.buchen_cockpit.mount = ($container) => {
 				</div>
 				<div class="hv-cockpit-tile" data-action="bulk">
 					<div class="hv-cockpit-tile-title">
-						<i class="fa fa-files-o"></i> ${__("PDF-Upload")}
+						<i class="fa fa-files-o"></i> ${__("Rechnungsdateien hochladen")}
 					</div>
 					<div class="hv-cockpit-tile-desc">
 						${__(
-							"Eine oder mehrere PDFs hochladen — landen in der Buchungs-Inbox mit LLM-Vorschlägen für Lieferant, Positionen und Kostenarten."
+							"PDFs für die Buchungs-Inbox oder E-Rechnungen als geprüften Entwurf importieren."
 						)}
 					</div>
 				</div>

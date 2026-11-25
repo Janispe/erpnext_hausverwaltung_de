@@ -221,15 +221,84 @@ const DOCTYPE_METHOD_PREFIX =
 	"hausverwaltung.hausverwaltung.doctype.betriebskostenabrechnung_immobilie.betriebskostenabrechnung_immobilie.";
 const DISPATCH_BUTTON_LABEL = __("Abrechnungen versenden");
 const BUNDLE_PDF_BUTTON_LABEL = __("Sammel-PDF erzeugen");
+const COST_COMPARISON_BUTTON_LABEL = __("Vorjahresvergleich");
 
-const ensure_dispatch_button = (frm) => {
-	if (!frm || frm.is_new()) {
+const READINESS_BUTTON_LABEL = __("Abrechnungsbereitschaft prüfen");
+
+const open_readiness_dialog = async (frm) => {
+	const { name, immobilie, von, bis, stichtag } = frm.doc;
+	const isNew = frm.is_new();
+	if (isNew && !(immobilie && von && bis)) {
+		frappe.msgprint(__("Bitte Immobilie, Von und Bis ausfüllen."));
+		return;
+	}
+	const { message: rows } = await frappe.call({
+		method: DOCTYPE_METHOD_PREFIX + "pruefe_abrechnungsbereitschaft",
+		type: "GET",
+		args: isNew ? { immobilie, von, bis, stichtag: stichtag || bis } : { name },
+		freeze: true,
+	});
+	if (!rows.length) {
+		frappe.msgprint({
+			title: READINESS_BUTTON_LABEL,
+			message: __("Keine Hindernisse bei den geprüften Zählerständen, Umlageschlüsseln und Wohnungseinstellungen."),
+			indicator: "green",
+		});
+		return;
+	}
+	const formatDate = (date) => escape_html(date ? frappe.datetime.str_to_user(date) : "");
+	const formLink = (doctype, name, label) =>
+		`<a href="${escape_html(frappe.utils.get_form_link(doctype, name))}">${escape_html(label)}</a>`;
+	const columns = [__("Kostenart / Wohnung"), __("Zähler"), __("Stichtag"), __("Grund"), __("Korrekturziel")];
+	const body = rows.map((row) => {
+		const assignments = (row.zuordnungen || []).map((assignment) => `
+			<div>
+				${escape_html(assignment.wohnung)}
+				<small class="text-muted">
+					${formLink("Zaehler Zuordnung", assignment.name, __("Zuordnung"))}
+					${formatDate(assignment.von)} – ${assignment.bis ? formatDate(assignment.bis) : __("offen")}
+				</small>
+			</div>`).join("");
+		const meter = [row.zaehlernummer || row.zaehler, row.zaehlerart].filter(Boolean).join(" · ");
+		return `<tr>
+			<td>${assignments || escape_html([row.kostenart, row.wohnung].filter(Boolean).join(" · "))}</td>
+			<td>${escape_html(meter)}</td>
+			<td>${formatDate(row.stichtag)}</td>
+			<td>${escape_html(row.grund)}</td>
+			<td>${formLink(row.ziel_doctype, row.ziel_name, row.ziel_name)}</td>
+		</tr>`;
+	}).join("");
+	const dialog = new frappe.ui.Dialog({
+		title: READINESS_BUTTON_LABEL,
+		size: "extra-large",
+		fields: [{ fieldname: "worklist", fieldtype: "HTML" }],
+	});
+	dialog.fields_dict.worklist.$wrapper.html(`
+		<div class="table-responsive">
+			<table class="table table-bordered">
+				<thead><tr>${columns.map((label) => `<th scope="col">${escape_html(label)}</th>`).join("")}</tr></thead>
+				<tbody>${body}</tbody>
+			</table>
+		</div>`);
+	dialog.show();
+};
+
+const ensure_action_buttons = (frm) => {
+	if (!frm) {
+		return;
+	}
+	frm.remove_custom_button(READINESS_BUTTON_LABEL);
+	if (frm.doc.docstatus === 0) {
+		frm.add_custom_button(READINESS_BUTTON_LABEL, () => open_readiness_dialog(frm));
+	}
+	if (frm.is_new()) {
 		return;
 	}
 	try {
 		if (frm.remove_custom_button) {
 			frm.remove_custom_button(DISPATCH_BUTTON_LABEL);
 			frm.remove_custom_button(BUNDLE_PDF_BUTTON_LABEL);
+			frm.remove_custom_button(COST_COMPARISON_BUTTON_LABEL);
 		}
 	} catch {
 		// ignore
@@ -240,7 +309,101 @@ const ensure_dispatch_button = (frm) => {
 	if (frm.doc.docstatus !== 2) {
 		frm.add_custom_button(BUNDLE_PDF_BUTTON_LABEL, () => open_bundle_pdf_progress_dialog(frm));
 	}
+	frm.add_custom_button(COST_COMPARISON_BUTTON_LABEL, () => open_cost_comparison(frm));
 };
+
+const comparison_date = (value) => escape_html(frappe.datetime.str_to_user(value));
+const signed_money = (value) => escape_html((value > 0 ? "+" : "") + fmt_money(value));
+const comparison_amount = (period) =>
+	period ? escape_html(fmt_money(period.betrag)) : escape_html(__("Keine Quellen"));
+
+const render_cost_evidence = (period, label) => {
+	const heading = `<h6>${escape_html(label)}</h6>`;
+	if (!period) {
+		return `${heading}<p class="text-muted">${escape_html(__("Keine Quellen"))}</p>`;
+	}
+	const kinds = {
+		haus: __("Hausbuchung"),
+		wohnung: __("Wohnungsbuchung"),
+		vertrag: __("Vertragsfestbetrag"),
+	};
+	const rows = period.belege.map((source) => {
+		const url = `/app/${frappe.router.slug(source.doctype)}/${encodeURIComponent(source.beleg)}`;
+		const date = comparison_date(source.wirksam_von);
+		return `<tr>
+			<td>${escape_html(kinds[source.art])}</td>
+			<td>${escape_html(__(source.doctype))} <a href="${escape_html(url)}" target="_blank" rel="noopener noreferrer">${escape_html(source.beleg)}</a></td>
+			<td>${escape_html(source.wohnung || "—")}</td>
+			<td>${date}${source.wirksam_bis ? " – " + comparison_date(source.wirksam_bis) : ""}</td>
+			<td class="text-right">${signed_money(source.betrag)}</td>
+		</tr>`;
+	}).join("");
+	const rounding = period.rundung
+		? `<tr><td colspan="4">${escape_html(__("Rundungsdifferenz"))}</td><td class="text-right">${signed_money(period.rundung)}</td></tr>`
+		: "";
+	return `${heading}<div class="table-responsive"><table class="table table-sm">
+		<thead><tr>
+			<th>${escape_html(__("Zuordnung"))}</th><th>${escape_html(__("Beleg"))}</th>
+			<th>${escape_html(__("Wohnung"))}</th><th>${escape_html(__("Wirksam"))}</th>
+			<th class="text-right">${escape_html(__("Betrag"))}</th>
+		</tr></thead>
+		<tbody>${rows}${rounding}</tbody>
+		<tfoot><tr><th colspan="4">${escape_html(__("Summe"))}</th><th class="text-right">${comparison_amount(period)}</th></tr></tfoot>
+	</table></div>`;
+};
+
+const open_cost_comparison = (frm) => frappe.call({
+	method: "hausverwaltung.hausverwaltung.scripts.betriebskosten.vorjahresvergleich.get_vorjahresvergleich",
+	args: { name: frm.doc.name },
+	type: "GET",
+	freeze: true,
+}).then(({ message }) => {
+	const currentLabel = __("Abrechnungszeitraum");
+	const priorLabel = __("Vergleichszeitraum (ein Kalenderjahr zurück)");
+	const periodText = ({ von, bis, stichtag }) =>
+		`${comparison_date(von)} – ${comparison_date(bis)} (${escape_html(__("Stichtag"))} ${comparison_date(stichtag)})`;
+	const rows = message.kostenarten.map((row) => {
+		const difference = row.differenz === null ? "—" : signed_money(row.differenz);
+		const percent = row.prozent === null
+			? "—"
+			: `${row.prozent > 0 ? "+" : ""}${escape_html(format_number(row.prozent, null, 2))} %`;
+		return `<tr>
+			<th scope="row">${escape_html(row.kostenart)}</th>
+			<td class="text-right">${comparison_amount(row.aktuell)}</td>
+			<td class="text-right">${comparison_amount(row.vorjahr)}</td>
+			<td class="text-right">${difference}</td><td class="text-right">${percent}</td>
+		</tr><tr><td colspan="5">
+			<details><summary>${escape_html(__("Belege für {0}", [row.kostenart]))}</summary>
+				${render_cost_evidence(row.aktuell, currentLabel)}
+				${render_cost_evidence(row.vorjahr, __("Vergleichszeitraum"))}
+			</details>
+		</td></tr>`;
+	}).join("");
+	const dialog = new frappe.ui.Dialog({
+		title: __("Vorjahresvergleich"),
+		size: "extra-large",
+		fields: [{ fieldtype: "HTML", fieldname: "vergleich" }],
+	});
+	const table = rows
+		? `<div class="table-responsive"><table class="table table-sm">
+			<thead><tr>
+				<th>${escape_html(__("Kostenart"))}</th>
+				<th class="text-right">${escape_html(__("Aktuelle Kosten"))}</th>
+				<th class="text-right">${escape_html(__("Vorjahreswert"))}</th>
+				<th class="text-right">${escape_html(__("Differenz"))}</th>
+				<th class="text-right">${escape_html(__("Differenz in %"))}</th>
+			</tr></thead>
+			<tbody>${rows}</tbody></table></div>`
+		: `<p class="text-muted">${escape_html(__("Für beide Zeiträume fehlen Quellen."))}</p>`;
+	dialog.fields_dict.vergleich.$wrapper.html(`
+		<p><strong>${escape_html(__("Immobilie"))}</strong> ${escape_html(message.immobilie)}<br>
+			<strong>${escape_html(currentLabel)}</strong> ${periodText(message.aktuell)}<br>
+			<strong>${escape_html(priorLabel)}</strong> ${periodText(message.vorjahr)}
+		</p>
+		${table}
+	`);
+	dialog.show();
+});
 
 const render_bundle_pdf_progress = (dialog, progress = {}) => {
 	const status = progress.status || "queued";
@@ -465,8 +628,8 @@ const load_mieter_abrechnungen = (frm, attempt = 1) => {
 			frm.doc.__unsaved = was_dirty ? 1 : 0;
 			frm.toolbar.refresh();
 			// toolbar.refresh kann Custom Buttons entfernen → danach wieder setzen (auch nach DOM-Update).
-			ensure_dispatch_button(frm);
-			setTimeout(() => ensure_dispatch_button(frm), 0);
+			ensure_action_buttons(frm);
+			setTimeout(() => ensure_action_buttons(frm), 0);
 		}
 	}).catch((err) => {
 		// Erster Versuch schlug fehl? Einmal nach kurzer Pause erneut probieren, bevor wir einen Fehler zeigen.
@@ -524,9 +687,9 @@ frappe.ui.form.on("Betriebskostenabrechnung Immobilie", {
 		set_default_due_date(frm);
 		load_verteilungsbasis(frm);
 		load_mieter_abrechnungen(frm);
-		ensure_dispatch_button(frm);
+		ensure_action_buttons(frm);
 		// Frappe kann nach refresh noch Toolbar/Header neu rendern (Buttons verschwinden sonst).
-		setTimeout(() => ensure_dispatch_button(frm), 0);
+		setTimeout(() => ensure_action_buttons(frm), 0);
 
 		if (frm.is_new()) {
 			frappe.require("/assets/hausverwaltung/js/date_range_presets.js", () => {

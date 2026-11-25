@@ -64,6 +64,8 @@ class HeizkostenabrechnungImmobilie(Document):
 		if not self.amended_from:
 			return
 		self.set("mieter_positionen", [])
+		self.ruecklauf_import = None
+		self.ruecklauf_datei = None
 		self.status = "Eingang"
 
 	def after_insert(self) -> None:
@@ -82,8 +84,23 @@ class HeizkostenabrechnungImmobilie(Document):
 		self.name = make_document_name(self.doctype)
 
 	def validate(self) -> None:
+		self._validate_ruecklauf_import()
 		if self.von and self.bis and getdate(self.von) > getdate(self.bis):
 			frappe.throw("'Von' muss vor oder gleich 'Bis' liegen.")
+
+	def _validate_ruecklauf_import(self) -> None:
+		previous = self.get_doc_before_save()
+		record = previous.get("ruecklauf_import") if previous else None
+		if not self.flags.hk_ruecklauf_import and any(
+			(self.get(field) or None) != (previous.get(field) or None if previous else None)
+			for field in ("ruecklauf_import", "ruecklauf_datei")
+		):
+			frappe.throw("Das Rücklaufprotokoll wird ausschließlich bei der Rücklauffreigabe gesetzt.")
+		if record and (
+			self.immobilie != previous.immobilie or getdate(self.von) != getdate(previous.von)
+			or getdate(self.bis) != getdate(previous.bis)
+		):
+			frappe.throw("Immobilie und Zeitraum eines bestätigten Rücklaufs können nicht geändert werden.")
 
 	def onload(self) -> None:
 		"""Hydriert die Positionen-Tabelle aus den HK-Mieter-Docs (Source of Truth)
@@ -124,6 +141,7 @@ class HeizkostenabrechnungImmobilie(Document):
 		``allow_on_submit=1`` (siehe ``mieter_positionen.kosten_gesamt`` und
 		``mieter_positionen.vorauszahlungen``).
 		"""
+		self._validate_ruecklauf_import()
 		self._validate_unique_period()
 		# Korrektur-Summary für Frontend-Toast initialisieren
 		self.flags._correction_summary = {"unchanged": 0, "replaced": [], "errors": []}
@@ -358,6 +376,10 @@ class HeizkostenabrechnungImmobilie(Document):
 		"""
 		# Serialize separate heads before any tenant invoice can be created.
 		self._validate_unique_period()
+		if self.get("ruecklauf_import"):
+			from .ruecklauf import validate_imported_usage
+
+			validate_imported_usage(self)
 		# Insbesondere das Belegdatum noch einmal in die Mieter-Drafts übernehmen,
 		# falls der Parent direkt ohne vorheriges separates Speichern submittet wird.
 		self._refresh_period_children()

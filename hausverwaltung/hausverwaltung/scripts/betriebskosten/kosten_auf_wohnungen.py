@@ -34,6 +34,7 @@ from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
 import frappe
+from frappe import _
 from frappe.utils import cstr, getdate
 
 from hausverwaltung.hausverwaltung.scripts.betriebskosten.rounding import (
@@ -106,6 +107,15 @@ def _to_decimal(value: Any) -> Decimal:
 
 def _quantize_money(value: Decimal) -> Decimal:
     return value.quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+
+
+def summiere_kostenarten(matrix: dict) -> dict[str, float]:
+    """Summiert die Wohnungsmatrix auf die Centpräzision des Abrechnungskopfs."""
+    totals = defaultdict(float)
+    for arts in matrix.values():
+        for art, amount in (arts or {}).items():
+            totals[art] += float(amount or 0)
+    return {art: round(amount, 2) for art, amount in totals.items()}
 
 
 def _overlap_days(start_a: str | date, end_a: str | date, start_b: str | date, end_b: str | date) -> int:
@@ -311,6 +321,10 @@ def _wohnungen_in_haus(
     return result
 
 
+def _allocation_difference(expected: Decimal, allocated: Decimal) -> Decimal:
+    return (_quantize_money(expected) - _quantize_money(allocated)).copy_abs()
+
+
 def _validate_gl_allocation_totals(
     expected_by_basis: Dict[Tuple[str, str], Decimal],
     allocation_matrix_by_basis: Dict[
@@ -324,9 +338,7 @@ def _validate_gl_allocation_totals(
             allocation_matrix_by_basis.get((haus, kostenart), {}).values(),
             Decimal("0"),
         )
-        difference = (
-            _quantize_money(expected) - _quantize_money(allocated)
-        ).copy_abs()
+        difference = _allocation_difference(expected, allocated)
         if difference != Decimal("0.00"):
             frappe.throw(
                 f"GL-Kosten für Haus '{haus}', Kostenart '{kostenart}' wurden "
@@ -510,12 +522,16 @@ def _prorated_festbetrag_rows(
                 "mietvertrag": mietvertrag_name,
                 "kostenart": kostenart,
                 "betrag": betrag,
+                "wirksam_von": max(getdate(von), getdate(row.get("gueltig_von"))),
+                "wirksam_bis": min(getdate(bis), getdate(row.get("gueltig_bis"))),
             }
         )
     return result
 
 
-def _festbetrag_map(immobilie: str, von: str, bis: str) -> Dict[str, Dict[str, Decimal]]:
+def _festbetrag_map(
+    immobilie: str, von: str, bis: str, sources: list[dict] | None = None,
+) -> Dict[str, Dict[str, Decimal]]:
     result: Dict[str, Dict[str, Decimal]] = defaultdict(lambda: defaultdict(lambda: Decimal("0")))
     for row in _prorated_festbetrag_rows(immobilie=immobilie, von=von, bis=bis):
         wohnung = row.get("wohnung")
@@ -523,7 +539,22 @@ def _festbetrag_map(immobilie: str, von: str, bis: str) -> Dict[str, Dict[str, D
         if not (wohnung and kostenart):
             continue
         result[wohnung][kostenart] += _to_decimal(row.get("betrag"))
+        if sources is not None:
+            sources.append(row)
     return result
+
+
+def _iter_manual_costs(wohnungen, festbetraege, art_meta):
+    for wohnung in wohnungen:
+        for kostenart, amount in (festbetraege.get(wohnung) or {}).items():
+            meta = art_meta.get(kostenart) or {}
+            kind = (meta.get("verteilung") or "").strip().lower()
+            # Freie Bezeichnungen haben keine Kostenart-Metadaten.
+            if meta and kind != "festbetrag":
+                continue
+            amount = _to_decimal(amount)
+            if amount.copy_abs() >= MIN_SIGNIFICANT:
+                yield wohnung, kostenart, amount
 
 
 @frappe.whitelist()
@@ -688,6 +719,193 @@ def get_mieter_festbetrag_overview(
     }
 
 
+UNSUPPORTED_DISTRIBUTIONS = {"bewohner", "verbrauch", "formel"}
+WEIGHTED_DISTRIBUTIONS = {"qm", "schlüssel", "schluessel"}
+DIRECT_DISTRIBUTIONS = {"einzeln", "festbetrag"}
+
+
+def _distribution_weights(wohnungen, stichtag, kind, schluessel):
+    if kind == "qm":
+        weights = {w: _to_decimal(_flaeche_qm(w, stichtag)) for w in wohnungen}
+    else:
+        weights = {w: _to_decimal(_schluesselwert(w, stichtag, schluessel)) for w in wohnungen}
+    return weights, sum(weights.values(), Decimal("0"))
+
+
+def _positive_distribution_shares(amount, weights, total_weight):
+    for wohnung, weight in weights.items():
+        if weight > 0:
+            yield wohnung, amount * (weight / total_weight)
+
+
+def _iter_period_gl_rows(von, bis, immobilie, company, konto_map, cc_to_haus, gl_has_wohnung):
+    """Yield effective-date bookings with a nonzero amount in the selected scope."""
+    # Optional Immobilie→Kostenstelle einschränken
+    kostenstellen = list(cc_to_haus.keys())
+    if immobilie:
+        kostenstellen = [cc for cc, haus in cc_to_haus.items() if haus == immobilie]
+
+    # GL laden (wie im Haus‑Report), optional mit Dimension "wohnung" falls vorhanden
+    gl_rows = []
+    if kostenstellen and konto_map:
+        gl_filters = {
+            "account": ("in", list(konto_map.keys())),
+            "cost_center": ("in", kostenstellen),
+            "is_cancelled": 0,
+        }
+        if company:
+            gl_filters["company"] = company
+
+        gl_fields = [
+            "name",
+            "company",
+            "posting_date",
+            "account",
+            "cost_center",
+            "debit",
+            "credit",
+            "voucher_type",
+            "voucher_no",
+        ]
+        if gl_has_wohnung:
+            gl_fields.append("wohnung")
+
+        gl_rows = frappe.get_all(
+            "GL Entry",
+            filters=gl_filters,
+            fields=gl_fields,
+            order_by="posting_date asc",
+        )
+
+    wert_map = _prefetch_wertstellungsdaten(gl_rows)
+
+    for row in gl_rows:
+        effective_date = getdate(_effective_date(row, wert_map))
+        if von <= effective_date <= bis:
+            amount = _to_decimal(row.debit) - _to_decimal(row.credit)
+            if amount.copy_abs() >= MIN_SIGNIFICANT:
+                voucher = (row.get("voucher_type"), row.get("voucher_no"))
+                date_source = voucher if wert_map.get(voucher) else ("GL Entry", row.name)
+                yield row, effective_date, amount, date_source
+
+
+def _get_booked_cost_findings(
+    von, bis, immobilie, *, cc_to_haus, immobilie_roots, companies, wohnungen, stichtag
+):
+    """Collect distribution blockers for the cost types with effective bookings."""
+    konto_map = _konto_zu_kostenart_map()
+    art_meta = _betriebsarten_map()
+    gl_has_wohnung = _has_field("GL Entry", "wohnung")
+    cutoff = _get_festbetrag_dimension_cutoff()
+    booked_dates = {}
+    booked_amounts = defaultdict(list)
+    has_direct_costs = False
+    direct_findings = set()
+    wohnung_roots = {}
+    for row, effective_date, amount, date_source in _iter_period_gl_rows(
+        von, bis, immobilie, None, konto_map, cc_to_haus, gl_has_wohnung
+    ):
+        if row.company not in companies:
+            frappe.throw(_("Die Buchung gehört nicht zum freigegebenen Firmenbereich."), frappe.PermissionError)
+        kostenart = konto_map[row.account]
+        meta = art_meta.get(kostenart) or {}
+        kind = (meta.get("verteilung") or "").strip().lower()
+        if kind not in DIRECT_DISTRIBUTIONS:
+            dated_source = (effective_date, date_source)
+            booked_dates[kostenart] = min(dated_source, booked_dates.get(kostenart, dated_source))
+            booked_amounts[kostenart].append(amount)
+            continue
+
+        wohnung = cstr(row.get("wohnung")).strip()
+        if kind == "festbetrag" and not wohnung and _is_legacy_dimensionless_festbetrag(effective_date, cutoff):
+            continue
+        if not gl_has_wohnung:
+            grund = _("Die Buchhaltungsdimension Wohnung fehlt.")
+        elif not wohnung:
+            grund = _("Die Buchung enthält keine Wohnungsdimension.")
+        else:
+            if wohnung not in wohnung_roots:
+                primary = cstr(frappe.db.get_value("Wohnung", wohnung, "immobilie")).strip()
+                wohnung_roots[wohnung] = immobilie_roots.get(primary)
+            if wohnung_roots[wohnung] == immobilie:
+                has_direct_costs = True
+                continue
+            grund = _("Die Wohnungsdimension der Buchung gehört nicht zur Immobilie.")
+
+        voucher_types = {"Purchase Invoice", "Sales Invoice", "Payment Entry", "Journal Entry"}
+        if row.voucher_type in voucher_types and row.voucher_no:
+            target = (row.voucher_type, row.voucher_no)
+        else:
+            target = ("GL Entry", row.name)
+        direct_findings.add((kostenart, effective_date, grund, target, date_source))
+
+    if not (booked_dates or direct_findings or has_direct_costs):
+        festbetraege = _festbetrag_map(immobilie, cstr(von), cstr(bis))
+        if not any(_iter_manual_costs(wohnungen, festbetraege, art_meta)):
+            yield {
+                "stichtag": stichtag,
+                "grund": _(
+                    "Für den Zeitraum gibt es keine verteilbaren Kosten. "
+                    "Bitte Kostenbuchungen und Vertrags-Festbeträge prüfen."
+                ),
+                "ziel_doctype": "Immobilie",
+                "ziel_name": immobilie,
+            }
+
+    for kostenart, datum, grund, (doctype, name), date_source in sorted(direct_findings):
+        yield {
+            "kostenart": kostenart,
+            "stichtag": datum,
+            "datum_quelle": date_source,
+            "grund": grund,
+            "ziel_doctype": doctype,
+            "ziel_name": name,
+        }
+
+    for kostenart, (datum, date_source) in sorted(booked_dates.items()):
+        meta = art_meta.get(kostenart) or {}
+        verteilung = (meta.get("verteilung") or "").strip()
+        kind = verteilung.lower()
+        schluessel = meta.get("schluessel")
+        finding = {
+            "kostenart": kostenart,
+            "stichtag": stichtag,
+            "ziel_doctype": "Betriebskostenart",
+            "ziel_name": kostenart,
+        }
+        if kind in UNSUPPORTED_DISTRIBUTIONS:
+            finding.update(stichtag=datum, datum_quelle=date_source)
+            finding["grund"] = _("Der Umlageschlüssel {0} ist noch nicht implementiert.").format(verteilung)
+        elif not wohnungen:
+            finding["grund"] = _("Der Immobilie sind keine Wohnungen zugeordnet.")
+            finding.update(ziel_doctype="Immobilie", ziel_name=immobilie)
+        elif kind not in WEIGHTED_DISTRIBUTIONS:
+            finding["grund"] = _("Die Verteilungsart {0} ist unbekannt.").format(verteilung or "—")
+        elif kind != "qm" and not schluessel:
+            finding["grund"] = _("Für diese Kostenart fehlt die Schlüssel-Definition.")
+        else:
+            weights, total_weight = _distribution_weights(wohnungen, stichtag, kind, schluessel)
+            if total_weight <= 0:
+                basis = _("Wohnfläche") if kind == "qm" else _("Zustandsschlüssel")
+                grund = _("Das Gesamtgewicht für {0} ist am Stichtag nicht positiv.").format(basis)
+                for wohnung in wohnungen:
+                    yield dict(finding, wohnung=wohnung, grund=grund, ziel_doctype="Wohnung", ziel_name=wohnung)
+            else:
+                negative_wohnungen = [wohnung for wohnung, weight in weights.items() if weight < 0]
+                if negative_wohnungen:
+                    amounts = booked_amounts[kostenart]
+                    allocated = defaultdict(Decimal)
+                    for amount in amounts:
+                        for wohnung, share in _positive_distribution_shares(amount, weights, total_weight):
+                            allocated[wohnung] += share
+                    if _allocation_difference(sum(amounts, Decimal("0")), sum(allocated.values(), Decimal("0"))):
+                        grund = _("Negative Gewichte führen zu einer falschen Verteilungssumme.")
+                        for wohnung in negative_wohnungen:
+                            yield dict(finding, wohnung=wohnung, grund=grund, ziel_doctype="Wohnung", ziel_name=wohnung)
+            continue
+        yield finding
+
+
 @frappe.whitelist()
 def allocate_kosten_auf_wohnungen(
     von: str,
@@ -695,6 +913,20 @@ def allocate_kosten_auf_wohnungen(
     immobilie: Optional[str] = None,
     company: Optional[str] = None,
     stichtag: Optional[str] = None,
+) -> dict:
+    """Allokiert Betriebskosten auf Wohnungen je Betriebskostenart."""
+    return _allocate_kosten_auf_wohnungen(von, bis, immobilie, company, stichtag)
+
+
+def _allocate_kosten_auf_wohnungen(
+    von: str,
+    bis: str,
+    immobilie: Optional[str],
+    company: Optional[str] = None,
+    stichtag: Optional[str] = None,
+    *,
+    sources: list[dict] | None = None,
+    historical_comparison: bool = False,
 ) -> dict:
     """Allokiert Betriebskosten auf Wohnungen je Betriebskostenart.
 
@@ -733,7 +965,9 @@ def allocate_kosten_auf_wohnungen(
     # Vorab-Validierung: Wenn für ein konkretes Haus (Immobilie) abgerechnet werden soll,
     # muss in allen Wohnungen dieses Hauses im Zustand zum Stichtag die Option
     # "Betriebskostenabrechnung durch Vermieter" aktiviert sein.
-    if immobilie:
+    # Die Freigabe aller Wohnungen ist eine Vorbedingung für die Erstellung
+    # einer Abrechnung. Die historische Prüfansicht erstellt keine Abrechnung.
+    if immobilie and not historical_comparison:
         whg_list_for_check = _wohnungen_in_haus(immobilie=immobilie)
         not_enabled: List[str] = []
         for w in whg_list_for_check:
@@ -746,46 +980,10 @@ def allocate_kosten_auf_wohnungen(
                 f"In folgenden Wohnungen ist 'Betriebskostenabrechnung durch Vermieter' zum Stichtag {stichtag} nicht aktiviert: {names}."
             )
 
-    # Optional Immobilie→Kostenstelle einschränken
-    kostenstellen = list(cc_to_haus.keys())
-    if immobilie:
-        kostenstellen = [cc for cc, haus in cc_to_haus.items() if haus == immobilie]
-        if not kostenstellen:
-            kostenstellen = []
-
-    # GL laden (wie im Haus‑Report), optional mit Dimension "wohnung" falls vorhanden
-    gl_rows = []
     gl_has_wohnung = _has_field("GL Entry", "wohnung")
-    if kostenstellen:
-        gl_filters = {
-            "account": ("in", list(konto_map.keys())),
-            "cost_center": ("in", kostenstellen),
-            "is_cancelled": 0,
-        }
-        if company:
-            gl_filters["company"] = company
-
-        gl_fields = [
-            "name",
-            "posting_date",
-            "account",
-            "cost_center",
-            "debit",
-            "credit",
-            "voucher_type",
-            "voucher_no",
-        ]
-        if gl_has_wohnung:
-            gl_fields.append("wohnung")
-
-        gl_rows = frappe.get_all(
-            "GL Entry",
-            filters=gl_filters,
-            fields=gl_fields,
-            order_by="posting_date asc",
-        )
-
-    wert_map = _prefetch_wertstellungsdaten(gl_rows)
+    gl_rows = _iter_period_gl_rows(
+        von_d, bis_d, immobilie, company, konto_map, cc_to_haus, gl_has_wohnung
+    )
 
     # Betriebskostenart‑Metadaten
     art_meta = _betriebsarten_map()
@@ -808,16 +1006,11 @@ def allocate_kosten_auf_wohnungen(
 
     # Vorbereitung: Wohnungen je Haus
     whg_cache: Dict[str, List[str]] = {}
-    festbetrag_cache: Dict[str, Dict[str, Dict[str, Decimal]]] = {}
     wohnung_immobilie_cache: Dict[str, Optional[str]] = {}
 
     # Aggregiere je Haus & Kostenart (außer Einzeln) → Summe, die zu verteilen ist
     # Einzeln wird direkt auf Wohnungssumme gebucht
-    for g in gl_rows:
-        eff = getdate(_effective_date(g, wert_map))
-        if eff < von_d or eff > bis_d:
-            continue
-
+    for g, eff, betrag, _date_source in gl_rows:
         haus = cc_to_haus.get(g.cost_center)
         if not haus:
             frappe.throw(
@@ -836,10 +1029,6 @@ def allocate_kosten_auf_wohnungen(
         meta = art_meta.get(kostenart) or {}
         verteilung = (meta.get("verteilung") or "").strip()
         schluessel = meta.get("schluessel")
-
-        betrag = _to_decimal(g.debit) - _to_decimal(g.credit)
-        if betrag.copy_abs() < MIN_SIGNIFICANT:
-            continue
 
         # Vor der explizit konfigurierten Datumsgrenze darf historischer
         # Festbetrag-Aufwand ohne Wohnungsdimension unberücksichtigt bleiben:
@@ -872,7 +1061,19 @@ def allocate_kosten_auf_wohnungen(
         basis = (haus, kostenart)
         gl_expected_by_basis[basis] += betrag
 
-        if verteilung.lower() in {"einzeln", "festbetrag"}:
+        direct = verteilung.lower() in DIRECT_DISTRIBUTIONS
+        if sources is not None:
+            sources.append({
+                "kostenart": kostenart,
+                "art": "wohnung" if direct else "haus",
+                "doctype": g.get("voucher_type"),
+                "beleg": g.get("voucher_no"),
+                "gl_entry": g.get("name"),
+                "wohnung": g.get("wohnung") if direct else None,
+                "wirksam_von": eff,
+                "betrag": betrag,
+            })
+        if direct:
             if not gl_has_wohnung:
                 frappe.throw(
                     f"Verteilungsart '{verteilung}' erfordert Accounting Dimension 'wohnung' auf GL Entry."
@@ -903,7 +1104,7 @@ def allocate_kosten_auf_wohnungen(
                 )
             continue
 
-        if verteilung.lower() in {"bewohner", "verbrauch", "formel"}:
+        if verteilung.lower() in UNSUPPORTED_DISTRIBUTIONS:
             frappe.throw(f"Verteilungsart '{verteilung}' für umlagefähige Kostenart {kostenart} ist noch nicht implementiert.")
 
         # Wohnungen des Hauses cachen
@@ -918,21 +1119,13 @@ def allocate_kosten_auf_wohnungen(
                 "Kostenverteilung abgebrochen."
             )
 
-        # Gewichte je Wohnung bestimmen
-        weights: Dict[str, Decimal] = {}
-        if verteilung.lower() == "qm":
-            for w in whg_list:
-                weights[w] = _to_decimal(_flaeche_qm(w, cstr(stichtag)))
-        elif verteilung.lower() == "schlüssel" or verteilung.lower() == "schluessel":
-            if not schluessel:
-                frappe.throw(f"Umlagefähige Kostenart {kostenart} hat keine Schlüssel‑Definition.")
-            for w in whg_list:
-                weights[w] = _to_decimal(_schluesselwert(w, cstr(stichtag), schluessel))
-        else:
-            # Unbekannt → Fehler
+        kind = verteilung.lower()
+        if kind not in WEIGHTED_DISTRIBUTIONS:
             frappe.throw(f"Unbekannte Verteilungsart '{verteilung}' für umlagefähige Kostenart {kostenart}.")
+        if kind != "qm" and not schluessel:
+            frappe.throw(f"Umlagefähige Kostenart {kostenart} hat keine Schlüssel‑Definition.")
 
-        total_weight = sum((v for v in weights.values() if v is not None), Decimal("0"))
+        weights, total_weight = _distribution_weights(whg_list, cstr(stichtag), kind, schluessel)
         if total_weight <= Decimal("0"):
             # Datenproblem: alle Wohnungen haben am Stichtag 0 Gewicht. Statt
             # heimlich 1/N zu verteilen, klar machen was zu pruefen ist.
@@ -951,10 +1144,7 @@ def allocate_kosten_auf_wohnungen(
                 "Bitte Wohnungs-Stammdaten und Stichtag prüfen."
             )
 
-        for w, wgt in weights.items():
-            if (wgt or Decimal("0")) <= Decimal("0"):
-                continue
-            anteil = betrag * (wgt / total_weight)
+        for w, anteil in _positive_distribution_shares(betrag, weights, total_weight):
             matrix[w][kostenart] += anteil
             gl_matrix_by_basis[basis][w] += anteil
 
@@ -976,21 +1166,27 @@ def allocate_kosten_auf_wohnungen(
             continue
         if haus not in whg_cache:
             whg_cache[haus] = _wohnungen_in_haus(immobilie=haus)
-        if haus not in festbetrag_cache:
-            festbetrag_cache[haus] = _festbetrag_map(haus, cstr(von), cstr(bis))
-        for wohnung in whg_cache.get(haus, []):
-            for kostenart, amount in (festbetrag_cache.get(haus, {}).get(wohnung) or {}).items():
-                meta = art_meta.get(kostenart) or {}
-                verteilung = (meta.get("verteilung") or "").strip()
-                # Freie Bezeichnungen besitzen absichtlich keine Kostenart-
-                # Metadaten und werden direkt als Zusatzposten übernommen.
-                if meta and verteilung.lower() != "festbetrag":
-                    continue
-                if _to_decimal(amount).copy_abs() < MIN_SIGNIFICANT:
-                    continue
-                manual_amount = _to_decimal(amount)
-                matrix[wohnung][kostenart] += manual_amount
-                manual_matrix[wohnung][kostenart] += manual_amount
+        fixed_sources = []
+        if sources is None:
+            festbetraege = _festbetrag_map(haus, cstr(von), cstr(bis))
+        else:
+            festbetraege = _festbetrag_map(haus, cstr(von), cstr(bis), fixed_sources)
+        for wohnung, kostenart, amount in _iter_manual_costs(whg_cache[haus], festbetraege, art_meta):
+            matrix[wohnung][kostenart] += amount
+            manual_matrix[wohnung][kostenart] += amount
+        if sources is not None:
+            for row in fixed_sources:
+                if row["kostenart"] in manual_matrix.get(row["wohnung"], {}):
+                    sources.append({
+                        "kostenart": row["kostenart"],
+                        "art": "vertrag",
+                        "doctype": "Mietvertrag",
+                        "beleg": row["mietvertrag"],
+                        "wohnung": row["wohnung"],
+                        "wirksam_von": row["wirksam_von"],
+                        "wirksam_bis": row["wirksam_bis"],
+                        "betrag": row["betrag"],
+                    })
 
     # GL-Anteile werden je Root-Haus/Kostenart separat und summenerhaltend
     # gerundet. Andernfalls könnte eine globale Restverteilung einen Cent von

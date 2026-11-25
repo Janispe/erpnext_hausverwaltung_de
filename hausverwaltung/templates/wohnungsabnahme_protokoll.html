@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<style>
+	body { font: 11pt sans-serif; color: #172a32; overflow-wrap: break-word; }
+	h1 { font-size: 20pt; }
+	h2 { margin-top: 1.3em; border-bottom: 1px solid #92a3a8; }
+	h3 { margin-bottom: .4em; }
+	p { margin: .35em 0; white-space: pre-wrap; }
+	table { width: 100%; border-collapse: collapse; }
+	th, td { padding: .35em; text-align: left; border-bottom: 1px solid #ccd5d7; }
+	img { margin: .5em .5em .5em 0; max-width: 220px; max-height: 180px; }
+</style>
+</head>
+<body>
+<h1>Wohnungsabnahme · {{ doc.richtung | e }}</h1>
+<p>Wohnung {{ wohnung | e }} ({{ doc.wohnung | e }})</p>
+<p>Mietvertrag {{ doc.mietvertrag | e }}</p>
+<p>Abnahmedatum {{ frappe.format_date(doc.termin) | e }} · {{ doc.name | e }}</p>
+<h2>Räume</h2>
+{% for room in content.rooms %}
+	<h3>{{ room.label | e }}</h3>
+	<p>Zustand: {{ room.condition | e }}</p>
+	{% if room.defects %}<p>Mängel: {{ room.defects | e }}</p>{% endif %}
+	{% for image in room.images %}<img src="data:image/png;base64,{{ image | e }}" alt="Raumfoto">{% endfor %}
+{% endfor %}
+<h2>{{ "Ausgegebene Schlüssel" if doc.richtung == "Einzug" else "Zurückgegebene Schlüssel" }}</h2>
+{% if content["keys"] %}
+<table><thead><tr><th>Art</th><th>Anzahl</th></tr></thead><tbody>
+{% for key in content["keys"] %}<tr><td>{{ key.label | e }}</td><td>{{ key.count }}</td></tr>{% endfor %}
+</tbody></table>
+{% else %}<p>Keine erfasst.</p>{% endif %}
+<h2>Zählerstände</h2>
+{% if content.meters %}
+<table><thead><tr><th>Gerät</th><th>Ablesedatum</th><th>Wert</th></tr></thead><tbody>
+{% for reading in content.meters %}
+<tr><td>{{ reading.device.zaehlerart | e }} {{ reading.device.zaehlernummer | e }}</td>
+<td>{{ frappe.format_date(reading.date) | e }}</td><td>{{ reading.value | e }}</td></tr>
+{% endfor %}
+</tbody></table>
+{% else %}<p>Keine erfasst.</p>{% endif %}
+</body>
+</html>

@@ -28,7 +28,10 @@
   "column_break_summen",
   "summe_vorauszahlungen",
   "summe_differenz",
-  "amended_from"
+  "amended_from",
+  "ruecklauf_section",
+  "ruecklauf_datei",
+  "ruecklauf_import"
  ],
  "fields": [
   {
@@ -190,6 +193,29 @@
    "hidden": 1,
    "label": "Nullkosten ausdrücklich bestätigt",
    "no_copy": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "ruecklauf_section",
+   "fieldtype": "Section Break",
+   "label": "Messdienst-Rücklauf"
+  },
+  {
+   "fieldname": "ruecklauf_datei",
+   "fieldtype": "Link",
+   "label": "Freigegebene D-Datei",
+   "no_copy": 1,
+   "options": "File",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "ruecklauf_import",
+   "fieldtype": "Code",
+   "label": "Bestätigter Rücklauf",
+   "no_copy": 1,
+   "options": "JSON",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,

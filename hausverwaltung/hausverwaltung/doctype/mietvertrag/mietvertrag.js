@@ -55,6 +55,14 @@ frappe.ui.form.on("Mietvertrag", {
 
 		add_paperless_button(frm);
 		add_mieterkonto_button_from_mietvertrag(frm);
+		if (!frm.is_new() && frm.doc.wohnung && frappe.model.can_read("Wohnungsabnahme")) {
+			for (const richtung of ["Einzug", "Auszug"]) {
+				frm.add_custom_button(__(richtung), () => {
+					const query = new URLSearchParams({ mietvertrag: frm.doc.name, richtung });
+					window.location.assign("/wohnungsabnahme?" + query);
+				}, __("Wohnungsabnahme"));
+			}
+		}
 		frm.add_custom_button(__("Teilmonat festlegen"), () => {
 			open_part_month_rent_dialog(frm);
 		});
@@ -1054,3 +1062,14 @@ function highlight_current_staffel_row(frm, tableFieldname) {
 		}
 	});
 }
+
+frappe.ui.form.on('Mietvertrag', {
+	refresh(frm) {
+		const staff = frappe.session.user === 'Administrator'
+			|| frappe.user.has_role(['Hausverwalter', 'System Manager']);
+		if (frm.is_new() || !staff || !frappe.model.can_read('Issue')) return;
+		frm.add_custom_button(__('Wohnungsschäden'), () => {
+			frappe.set_route('List', 'Issue', { status: ['!=', ''], hv_wohnungsschaden: 1, hv_mietvertrag: frm.doc.name });
+		});
+	},
+});

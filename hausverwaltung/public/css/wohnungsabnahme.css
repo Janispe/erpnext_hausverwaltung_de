@@ -1,0 +1,55 @@
+:root {
+	color-scheme: light;
+	font: 100%/1.5 system-ui, sans-serif;
+	color: #172c33;
+	background: #edf3f2;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 47rem; padding: 1.25rem clamp(1rem, 4vw, 2.5rem) 3rem; margin: auto; }
+h1 { margin: .75rem 0 .25rem; font-size: clamp(1.55rem, 5vw, 2.4rem); line-height: 1.15; }
+h1 span { color: #0b6a64; }
+h2 { margin: 0 0 1rem; font-size: 1.25rem; }
+h3 { margin: 0 0 .5rem; font-size: 1.05rem; overflow-wrap: anywhere; }
+a { color: #065d57; text-underline-offset: .17em; }
+p { overflow-wrap: anywhere; }
+section { background: #fff; border: 1px solid #cbdad8; border-radius: .8rem; padding: 1rem; margin: 1rem 0; }
+fieldset { min-inline-size: 0; border: 0; margin: 0; padding: 0; }
+label { display: block; font-weight: 600; margin-block: .35rem .7rem; }
+input, textarea, button { font: inherit; border-radius: .45rem; }
+input, textarea {
+	display: block;
+	margin-top: .25rem;
+	padding: .55rem;
+	width: 100%;
+	min-width: 0;
+	min-height: 2.75rem;
+	color: #172c33;
+	border: 1px solid #819992;
+	background: #fff;
+}
+input[type="date"] { appearance: none; }
+textarea { resize: vertical; }
+button {
+	padding: .55rem .9rem;
+	min-height: 2.75rem;
+	border: 1px solid #346b63;
+	background: #fff;
+	color: #0d534d;
+	font-weight: 650;
+	cursor: pointer;
+}
+button.primary { background: #095e56; color: white; }
+button:disabled { opacity: .65; cursor: default; }
+:focus-visible { outline: 3px solid #2a70af; outline-offset: 3px; }
+.entry { padding: .9rem 0; border-top: 1px solid #dbe6e4; }
+.photos { display: flex; gap: .75rem; flex-wrap: wrap; }
+.photos figure { margin: 0 0 .65rem; }
+.photos img { display: block; width: 6rem; height: 5rem; object-fit: cover; margin-bottom: .25rem; border-radius: .4rem; }
+.photos button { padding-inline: .55rem; font-size: .9rem; }
+#property { margin-top: .5rem; }
+#status { white-space: pre-wrap; min-height: 1.5rem; }
+#status.error { padding: .75rem; background: #fce9e5; color: #85271e; border-radius: .45rem; }
+#draft-actions, .step { display: flex; gap: .65rem; flex-wrap: wrap; align-items: center; }
+.step { margin: .75rem 0; overflow-wrap: anywhere; }
+#draft-actions[hidden] { display: none; }

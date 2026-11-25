@@ -22,6 +22,8 @@ from frappe.utils import get_datetime, now_datetime, strip_html
 from frappe.utils.file_manager import get_file, save_file
 from frappe.utils.password import get_decrypted_password
 
+from hausverwaltung.hausverwaltung.wohnungsschaden.permissions import protected_issue
+
 LOGGER_TITLE = "Paperless NGX Export"
 LOG_DOCTYPE = "Paperless Export Log"
 PAPERLESS_TAG_EMAIL_SLUG = "email"
@@ -113,6 +115,8 @@ def trigger_manual_paperless_export(communication: str) -> str:
 	except Exception:
 		frappe.throw(_("Kommunikation konnte nicht geladen werden."))
 
+	if protected_issue("Communication", doc.name):
+		doc.check_permission("read")
 	if not _is_incoming_email(doc):
 		frappe.throw(_("Nur eingehende E-Mails können exportiert werden."))
 
@@ -132,6 +136,9 @@ def get_paperless_link(communication: str) -> dict:
 	result: dict[str, str | None] = {"link": None, "status": None, "last_error": None}
 	if not communication:
 		return result
+
+	if protected_issue("Communication", communication):
+		frappe.get_doc("Communication", communication).check_permission("read")
 
 	# Prefer the dedicated link file that is attached during export.
 	file_rows = frappe.get_all(
@@ -183,11 +190,11 @@ def get_paperless_link(communication: str) -> dict:
 	return result
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def export_attachment_to_paperless_whitelisted(
 	doctype: str, docname: str, file_url: str, title: str | None = None, tag_names_json: str | None = None
 ) -> dict:
-	"""Whitelisted wrapper for generic attachment export."""
+	"""Export an authorized attachment of the given document."""
 	tag_names: list[str] = []
 	if tag_names_json:
 		try:
@@ -215,60 +222,244 @@ def export_attachment_to_paperless(
 	tag_names: list[str] | None = None,
 ) -> dict:
 	"""Export a file attachment to Paperless and return IDs/links."""
-	config = PaperlessConfig.from_conf()
-	if not config:
-		frappe.throw(_("Paperless NGX ist nicht konfiguriert."))
-
 	if not doctype or not docname:
 		frappe.throw(_("Doctype und Docname sind erforderlich."))
 	if not file_url:
 		frappe.throw(_("Datei-URL fehlt."))
 
 	doc = frappe.get_doc(doctype, docname)
-	file_name, content = get_file(file_url)
-	file_name = _sanitize_filename(file_name or os.path.basename(file_url) or f"{docname}.bin")
-	content_bytes = _ensure_bytes(content)
-	checksum = _checksum(content_bytes)
+	doc.check_permission("read" if protected_issue(doctype, docname) else "write")
+	file = _export_file(doc, file_url)
+	protocol = None
+	if file.attached_to_doctype == "Wohnungsabnahme":
+		from hausverwaltung.hausverwaltung.doctype.wohnungsabnahme.process import lock_protocol_for_export
+
+		protocol = lock_protocol_for_export(doc.name, file)
+		if protocol.paperless_link:
+			return {"ok": True, "link": protocol.paperless_link}
+
+	config = PaperlessConfig.from_conf()
+	if not config:
+		frappe.throw(_("Paperless NGX ist nicht konfiguriert."))
+
+	upload = _attachment_upload(file)
+	file_name, content_bytes = upload.file_name, upload.content
 
 	extra_tag_ids = _ensure_tag_ids(config, tag_names or [])
 	placeholder_doc = frappe._dict(
-		{
-			"name": doc.name,
-			"subject": title or f"{doctype} {docname}",
-			"creation": getattr(doc, "creation", None) or now_datetime(),
-			"communication_date": getattr(doc, "modified", None) or now_datetime(),
-		}
+		name=doc.name,
+		subject=title or f"{doctype} {docname}",
+		creation=getattr(doc, "creation", None) or now_datetime(),
+		communication_date=getattr(doc, "modified", None) or now_datetime(),
 	)
-
-	ok, paperless_id, task_id = _post_to_paperless(
-		config,
-		placeholder_doc,
-		file_name=file_name,
-		file_content=content_bytes,
-		extra_tag_ids=extra_tag_ids or None,
-		title=title or file_name,
-	)
-	if not ok:
-		frappe.throw(_("Export nach Paperless fehlgeschlagen."))
-
-	if not paperless_id:
-		upload = PaperlessUpload(file_name=file_name, content=content_bytes, checksum=checksum)
-		upload.task_id = task_id
-		resolved = _resolve_paperless_ids(config, [upload], now_datetime())
-		if not resolved or not upload.paperless_id:
-			frappe.throw(_("Paperless-Dokument-ID konnte nicht aufgeloest werden."))
-		paperless_id = upload.paperless_id
+	if protocol:
+		_export_protocol(config, protocol.name, placeholder_doc, upload, extra_tag_ids, title)
+	else:
+		ok, upload.paperless_id, upload.task_id = _post_to_paperless(
+			config, placeholder_doc, file_name=file_name, file_content=content_bytes,
+			extra_tag_ids=extra_tag_ids or None, title=title or file_name,
+		)
+		if not ok:
+			frappe.throw(_("Export nach Paperless fehlgeschlagen."))
+		if not upload.paperless_id and not _resolve_paperless_ids(config, [upload], now_datetime()):
+			frappe.throw(_("Paperless-Dokument-ID konnte nicht aufgelöst werden."))
 
 	conf = getattr(frappe, "conf", {}) or {}
 	base_url = conf.get("paperless_ngx_public_url") or conf.get("paperless_ngx_url") or config.url
-	link = _paperless_doc_link(base_url, paperless_id)
+	link = _paperless_doc_link(base_url, upload.paperless_id)
+	if protocol:
+		protocol.db_set("paperless_link", link, update_modified=False)
 	return {
 		"ok": True,
-		"paperless_id": paperless_id,
-		"task_id": task_id,
+		"paperless_id": upload.paperless_id,
+		"task_id": upload.task_id,
 		"link": link,
 		"file_name": file_name,
 	}
+
+
+def _export_file(doc, file_url):
+	# The workflow stores the canonical File URL. Resolve it once and read
+	# only that authorized record, including when multiple Files share a blob.
+	rows = frappe.get_all(
+		"File", filters={"file_url": file_url, "is_folder": 0},
+		fields=["name", "file_url", "attached_to_doctype", "attached_to_name"],
+		order_by="name asc",
+	)
+	rows = [row for row in rows if row.file_url == file_url]
+	protocols = [row for row in rows if row.attached_to_doctype == "Wohnungsabnahme"]
+	if protocols and doc.doctype == "Prozess Instanz" and len(protocols) == 1:
+		return frappe.get_doc("File", protocols[0].name)
+	if protocols:
+		rows = []
+	damage_attachments = [row for row in rows if protected_issue(row.attached_to_doctype, row.attached_to_name)]
+	for row in damage_attachments or rows:
+		if row.attached_to_doctype == doc.doctype and row.attached_to_name == doc.name:
+			file = frappe.get_doc("File", row.name)
+			if file.is_downloadable():
+				return file
+		if doc.doctype == "Prozess Instanz" and row.attached_to_doctype == "Prozess Aufgabe Datei":
+			if frappe.db.exists("Prozess Aufgabe Datei", {
+				"name": row.attached_to_name, "prozess_doctype": doc.doctype,
+				"prozess_name": doc.name, "file_url": file_url,
+				"aufgabe_row_name": ("in", [task.name for task in doc.aufgaben]),
+			}):
+				file = frappe.get_doc("File", row.name)
+				if file.is_downloadable():
+					return file
+	frappe.throw(_("Die Datei gehört nicht zu diesem Dokument oder ist nicht zugänglich."), frappe.PermissionError)
+
+
+def _attachment_upload(file):
+	content = file.get_content(encodings=[])
+	return PaperlessUpload(_sanitize_filename(file.file_name), content, _checksum(content))
+
+
+def _paperless_get(config, endpoint, params=None, *, api_version=None):
+	headers = {"Authorization": f"Token {config.token}"}
+	if api_version is not None:
+		headers["Accept"] = f"application/json; version={api_version}"
+	response = requests.get(
+		urljoin(config.url.rstrip("/") + "/", endpoint),
+		headers=headers,
+		params=params,
+		timeout=config.timeout,
+		verify=config.verify_ssl,
+	)
+	response.raise_for_status()
+	return response.json()
+
+
+def _find_protocol_document(config, upload):
+	"""Confirm a match against the original PDF, including Paperless v2 and v3."""
+	response = _paperless_get(config, "api/documents/", {
+		"original_filename__iexact": upload.file_name, "page_size": 10,
+	})
+	if not isinstance(response, dict) or not isinstance(response.get("results"), list):
+		frappe.throw(_("Paperless hat keine gültige Dokumentenliste geliefert."))
+	for candidate in response["results"]:
+		document_id = _to_int(candidate.get("id"))
+		if candidate.get("original_file_name") == upload.file_name and document_id:
+			if _protocol_original_matches(config, upload, document_id):
+				return document_id
+	if response.get("next"):
+		frappe.throw(_("Paperless hat keine vollständige Dokumentenliste geliefert."))
+	return None
+
+
+def _protocol_original_matches(config, upload, document_id):
+	metadata = _paperless_get(config, f"api/documents/{document_id}/metadata/")
+	checksum = metadata.get("original_checksum") if isinstance(metadata, dict) else None
+	if not checksum or not isinstance(checksum, str):
+		frappe.throw(_("Paperless hat keine Prüfsumme des Originaldokuments geliefert."))
+	return checksum in {upload.checksum, hashlib.sha256(upload.content).hexdigest()}
+
+
+def _protocol_key(name):
+	return f"hv:wohnungsabnahme:paperless:{name}"
+
+
+def protocol_export_unconfirmed(name):
+	pending = frappe.cache.get_value(_protocol_key(name))
+	return pending is not None and (not pending.get("task_id") or pending.get("task_missing", False))
+
+
+_FAILED_PROTOCOL_TASK_STATES = {"FAILURE", "REVOKED"}
+
+
+def _task_blocks_protocol_release(task):
+	return task is not None and task["status"] not in _FAILED_PROTOCOL_TASK_STATES
+
+
+def _find_protocol_task(config, upload, task_id=None):
+	params = {"task_id": task_id} if task_id else None
+	# API v9 keeps the complete, unpaginated list and the legacy Task fields
+	# on Paperless 2 and 3. An unexpected response cannot prove absence.
+	tasks = _paperless_get(config, "api/tasks/", params, api_version=9)
+	if not isinstance(tasks, list) or any(
+		not isinstance(task, dict) or "task_file_name" not in task or not isinstance(task.get("status"), str)
+		for task in tasks
+	):
+		frappe.throw(_("Paperless hat keine vollständige Task-Liste in API v9 geliefert."))
+	if task_id:
+		return next((task for task in tasks if task.get("task_id") == task_id), None)
+
+	matches = [task for task in tasks if task.get("task_file_name") == upload.file_name and task.get("task_id")]
+	for task in matches:
+		if _task_blocks_protocol_release(task):
+			return task
+	return matches[0] if matches else None
+
+
+def reset_unconfirmed_protocol_export(protocol, file):
+	key = _protocol_key(protocol.name)
+	if not protocol_export_unconfirmed(protocol.name):
+		frappe.throw(_("Für dieses Protokoll ist kein ungeklärter Upload vorhanden."))
+	config = PaperlessConfig.from_conf()
+	if not config:
+		frappe.throw(_("Paperless NGX ist nicht konfiguriert."))
+	upload = _attachment_upload(file)
+	task_id = frappe.cache.get_value(key).get("task_id")
+	if (
+		_find_protocol_document(config, upload)
+		or (task_id and _task_blocks_protocol_release(_find_protocol_task(config, upload, task_id)))
+		or _task_blocks_protocol_release(_find_protocol_task(config, upload))
+	):
+		frappe.throw(_("Paperless kennt den Upload bereits. Bitte den Status im Abnahmeschritt erneut prüfen."))
+	frappe.cache.delete_value(key)
+
+
+def _export_protocol(config, name, doc, upload, tags, title):
+	# The caller holds the protocol lock. Acknowledgement lives outside
+	# the SQL transaction because the remote upload cannot be rolled back.
+	key = _protocol_key(name)
+	upload.paperless_id = _find_protocol_document(config, upload)
+	if upload.paperless_id:
+		return
+
+	pending = frappe.cache.get_value(key)
+	if pending is None:
+		frappe.cache.set_value(key, {"task_id": None})
+		try:
+			ok, upload.paperless_id, upload.task_id = _post_to_paperless(
+				config, doc, file_name=upload.file_name, file_content=upload.content,
+				extra_tag_ids=tags or None, title=title or upload.file_name, raise_on_error=True,
+			)
+		except requests.ConnectTimeout:
+			frappe.cache.delete_value(key)
+			frappe.throw(_("Die Verbindung zu Paperless konnte nicht aufgebaut werden. Bitte erneut exportieren."))
+		except requests.HTTPError as error:
+			if error.response is not None and 400 <= error.response.status_code < 500 and error.response.status_code != 408:
+				frappe.cache.delete_value(key)
+			frappe.throw(_("Paperless hat den Upload nicht bestätigt."))
+		except requests.RequestException:
+			frappe.throw(_("Paperless hat den Upload nicht bestätigt."))
+		if not ok:
+			frappe.cache.delete_value(key)
+			frappe.throw(_("Export nach Paperless fehlgeschlagen."))
+		if upload.paperless_id:
+			return
+		pending = {"task_id": upload.task_id}
+		frappe.cache.set_value(key, pending)
+
+	task = _find_protocol_task(config, upload, pending.get("task_id"))
+	if task:
+		upload.task_id = task["task_id"]
+		frappe.cache.set_value(key, {"task_id": upload.task_id})
+		if task["status"] == "SUCCESS":
+			document_id = _to_int(task.get("related_document"))
+			if document_id and _protocol_original_matches(config, upload, document_id):
+				upload.paperless_id = document_id
+				return
+		if task["status"] in _FAILED_PROTOCOL_TASK_STATES:
+			frappe.cache.delete_value(key)
+			frappe.throw(_("Paperless hat die Verarbeitung beendet. Der Export kann wiederholt werden."))
+
+	if task is None:
+		if pending.get("task_id"):
+			frappe.cache.set_value(key, {**pending, "task_missing": True})
+		frappe.throw(_("Der Upload ist ungeklärt. Bitte in Paperless prüfen und bei Bedarf in der Wohnungsabnahme freigeben."))
+	frappe.throw(_("Der Export ist noch nicht bestätigt. Bitte später erneut prüfen."))
 
 
 def export_communication(communication_name: str) -> None:
@@ -467,6 +658,7 @@ def _post_to_paperless(
 	extra_tag_ids: list[int] | None = None,
 	title: str | None = None,
 	custom_fields: dict[int | str, str | int | list | None] | None = None,
+	raise_on_error: bool = False,
 ) -> tuple[bool, int | None, str | None]:
 	"""Send a single file to Paperless NGX. Returns success, the Paperless document ID (if available) and the task ID."""
 	url = urljoin(config.url + "/", "api/documents/post_document/")
@@ -503,6 +695,8 @@ def _post_to_paperless(
 			task_id = None
 		return True, paperless_id, task_id
 	except Exception as exc:
+		if raise_on_error:
+			raise
 		extra = ""
 		if isinstance(exc, requests.HTTPError) and exc.response is not None:
 			try:
@@ -680,7 +874,7 @@ def _attach_paperless_link_file(communication_name: str, link: str) -> None:
 				"file_url": link,
 				"attached_to_doctype": "Communication",
 				"attached_to_name": communication_name,
-				"is_private": 0,
+				"is_private": 1,
 			}
 		)
 		doc.insert(ignore_permissions=True, ignore_if_duplicate=True)
@@ -1033,7 +1227,7 @@ def _attach_eml_if_missing(doc) -> None:
 			content,
 			"Communication",
 			doc.name,
-			is_private=0,
+			is_private=1,
 			df=None,
 		)
 	except Exception:

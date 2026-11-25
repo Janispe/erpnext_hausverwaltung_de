@@ -1,0 +1,102 @@
+{
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "module": "Hausverwaltung",
+ "name": "Wohnungsabnahme",
+ "autoname": "hash",
+ "field_order": [
+  "mietvertrag",
+  "wohnung",
+  "richtung",
+  "termin",
+  "inhalt",
+  "stand",
+  "klaerfall",
+  "protokoll",
+  "paperless_link"
+ ],
+ "fields": [
+  {
+   "fieldname": "mietvertrag",
+   "label": "Mietvertrag",
+   "fieldtype": "Link",
+   "read_only": 1,
+   "options": "Mietvertrag",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "wohnung",
+   "label": "Wohnung",
+   "fieldtype": "Link",
+   "read_only": 1,
+   "options": "Wohnung",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "richtung",
+   "label": "Richtung",
+   "fieldtype": "Select",
+   "read_only": 1,
+   "options": "Einzug\nAuszug",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "termin",
+   "label": "Abnahmedatum",
+   "fieldtype": "Date",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "inhalt",
+   "label": "Erfassung",
+   "fieldtype": "Code",
+   "read_only": 1,
+   "options": "JSON"
+  },
+  {
+   "fieldname": "stand",
+   "label": "Speicherstand",
+   "fieldtype": "Int",
+   "read_only": 1,
+   "default": "0"
+  },
+  {
+   "fieldname": "klaerfall",
+   "label": "Klärfall",
+   "fieldtype": "Small Text",
+   "read_only": 1
+  },
+  {
+   "fieldname": "protokoll",
+   "label": "Protokoll-PDF",
+   "fieldtype": "Attach",
+   "read_only": 1
+  },
+  {
+   "fieldname": "paperless_link",
+   "label": "Paperless-Link",
+   "fieldtype": "Small Text",
+   "read_only": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "create": 1,
+   "write": 1
+  },
+  {
+   "role": "Hausverwalter",
+   "read": 1,
+   "create": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}

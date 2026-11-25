@@ -4,6 +4,20 @@ frappe.ui.form.on('Communication', {
 			return;
 		}
 
+		if (frappe.session.user === 'Administrator' || frappe.user.has_role(['Hausverwalter', 'System Manager'])) {
+			frm.add_custom_button(__('Als Wohnungsschaden bearbeiten'), async () => {
+				const { message } = await frappe.call({
+					method: 'hausverwaltung.hausverwaltung.wohnungsschaden.issue.take_incoming_email',
+					args: { communication: frm.doc.name },
+					freeze: true,
+				});
+				if (message) {
+					await frm.reload_doc();
+					frappe.set_route('Form', 'Issue', message);
+				}
+			});
+		}
+
 		// Paperless-Integration ist noch nicht final — nur System Manager sehen
 		// die Buttons. Hausverwalter (und alle anderen) bekommen sie nicht angezeigt.
 		const roles = (frappe.user_roles || []);
