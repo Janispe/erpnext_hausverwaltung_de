@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 from PIL import Image
 
-from paperclip_codex_receipts import public_event
+from paperclip_codex_receipts import command_for, public_event
 from receipt_codex_mcp import ReceiptJob
 
 TOOLS = ["lookup_supplier", "list_booked_receipts", "list_allowed_accounts", "verify_shortlist"]
@@ -86,6 +86,28 @@ class TestReceiptCodexMcp(unittest.TestCase):
 		self.assertEqual(public_event('{"type":"turn.completed","usage":{"input_tokens":3}}'),
 			{"type": "turn.completed", "usage": {"input_tokens": 3}})
 		self.assertNotIn("SYNTHETIC_RAW_TEXT", str(public_event('{"type":"error","message":"SYNTHETIC_RAW_TEXT"}')))
+
+	def test_native_adapter_exec_uses_receipt_tools_with_global_overrides(self):
+		prefix = ["-c", 'shell_environment_policy.inherit="none"']
+		args = prefix + ["exec", "--json", "--skip-git-repo-check",
+			"resume", "01999b8a-2d3d-7cc0-81b9-cbaefc1eab94", "-"]
+		command, filtered = command_for("/test/codex", args, assigned=True)
+		self.assertTrue(filtered)
+		self.assertEqual(command[:6], ["/test/codex", "-a", "never", *prefix, "exec"])
+		self.assertIn("code_mode", command)
+		self.assertNotIn("resume", command)
+		self.assertEqual(command.count("--skip-git-repo-check"), 1)
+		self.assertEqual(command[-1], "-")
+
+	def test_native_hello_probe_does_not_load_the_receipt_catalogue(self):
+		args = ["exec", "--ephemeral", "-c", "project_doc_max_bytes=0",
+			"-c", "features.remote_plugin=false", "-"]
+		command, filtered = command_for("/test/codex", args, assigned=False)
+		self.assertFalse(filtered)
+		self.assertEqual(command.count("--ephemeral"), 1)
+		self.assertFalse(any("mcp_servers.barauslagen" in arg for arg in command))
+		with self.assertRaises(ValueError):
+			command_for("/test/codex", ["exec", "-"], assigned=False)
 
 
 if __name__ == "__main__":

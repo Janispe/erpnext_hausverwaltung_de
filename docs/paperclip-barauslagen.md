@@ -113,7 +113,7 @@ die Agent-Konfiguration (Pfade anpassen):
   "runner": "legacy",
   "adapterConfig": {
     "engine": "cli",
-    "command": "/checkout/hausverwaltung/scripts/paperclip_codex_receipts.py",
+    "command": "/checkout/hausverwaltung/scripts/codex",
     "cwd": "/isolated/worker",
     "model": "gpt-6.2-sol",
     "instructionsFilePath": "/checkout/hausverwaltung/docs/paperclip-barauslagen-codex-agent.md",
@@ -128,6 +128,11 @@ die Agent-Konfiguration (Pfade anpassen):
   }
 }
 ```
+
+Der Startbefehl heißt `codex`, damit Paperclip den Hello-Test ausführt.
+Das Skript braucht Python mit den genannten Bildbibliotheken im `PATH`
+der Agentenlaufzeit. Die eigentliche Codex CLI steht unter dem absoluten
+Pfad in `HV_RECEIPT_CODEX_BINARY`.
 
 Hinterlege zusätzlich `HV_RECEIPT_PILOT_KEY` und `HV_RECEIPT_PILOT_SECRET`
 im Paperclip Secret Store. Lege diese Zugangsdaten für einen eigenen
@@ -165,7 +170,9 @@ Werkzeug-Rohausgaben. Lösche den privaten Trace nach der Auswertung.
    Adapter in Paperclip und aktiviere den Mitarbeiter erst auf der
    isolierten Site. Gleiche
    die Renderer zwischen ERPNext und Worker ab (Pillow **13.0.0** und
-   pypdfium2 **5.15.2** für diese Kombination). Nutze ein eigenes Worker-
+   pypdfium2 **5.15.2** für diese Kombination). Das neuere Release mit
+   Frappe **16.55.2** und ERPNext **16.53.0** verwendet pypdfium2
+   **5.14.0**. Nutze ein eigenes Worker-
    Verzeichnis, eine dedizierte Codex-Anmeldung und ein privates Paperclip.
 2. Richte einen dedizierten ERPNext-Systembenutzer mit der Rolle
    `Paperclip Bonanalyse` ein. Er braucht keine zusätzlichen DocType-,

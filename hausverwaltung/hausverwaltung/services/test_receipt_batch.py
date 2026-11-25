@@ -27,7 +27,7 @@ class TestReceiptBatch(IntegrationTestCase):
 		super().setUp()
 		frappe.set_user("Administrator")
 		self.flags = {
-			"hv_receipt_pilot": 1, "hv_receipt_batch": 1,
+			"hv_receipt_pilot": 1, "hv_receipt_batch": 1, "hv_receipt_codex": 0,
 			"hv_receipt_webhook_url": "https://paperclip.invalid/fire",
 			"hv_receipt_webhook_secret": "synthetic-webhook-key",
 		}
@@ -56,7 +56,8 @@ class TestReceiptBatch(IntegrationTestCase):
 	def upload(self, content, request_id=None, note="Synthetisch vorgestreckt", is_pdf=False, context=None):
 		filename = "test.pdf" if is_pdf else "test.png"
 		upload = SimpleNamespace(stream=io.BytesIO(content), filename=filename)
-		with patch.object(frappe.local, "request", SimpleNamespace(files={"file": upload}), create=True):
+		request = SimpleNamespace(files={"file": upload}, host="qa.example.invalid", headers={})
+		with patch.object(frappe.local, "request", request, create=True):
 			return batch.upload(request_id or str(uuid.uuid4()), note=note, context=context)["name"]
 
 	def raw_analysis(self, amount):
@@ -235,7 +236,7 @@ class TestReceiptBatch(IntegrationTestCase):
 		first, second = json.loads(frappe.get_doc(batch.JOB, name).results)
 		proposal = frappe.get_doc(batch.pilot.PROPOSAL, first["proposal"])
 		_, generated = batch.verified_crop(proposal)
-		self.assertEqual(len(batch.invoice_extraction._render_pdf_pages_png(generated, page_limit=2)), 2)
+		self.assertEqual(len(batch.render_pages(generated, "pdf", 2)), 2)
 		self.assertIn("unlesbar", second["data"]["analysis"]["question"])
 		with self.assertRaises(frappe.ValidationError):
 			batch.require_bookable(frappe.get_doc(batch.pilot.PROPOSAL, second["proposal"]))

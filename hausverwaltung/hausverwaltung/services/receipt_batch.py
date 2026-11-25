@@ -221,7 +221,7 @@ def _run_scope(token):
 
 def _pages(upload_doc):
 	attachment, content = private_attachment(upload_doc, upload_doc.file_url, upload_doc.receipt_digest)
-	return render_pages(content, attachment.get_extension().lstrip("."), pilot.MAX_PDF_PAGES)
+	return render_pages(content, Path(attachment.file_name).suffix.lstrip("."), pilot.MAX_PDF_PAGES)
 
 
 def private_attachment(parent, url, digest, *, for_update=False):
@@ -493,7 +493,7 @@ def _next_step(*, codex=False):
 		if codex:
 			attachment, content = private_attachment(upload_doc, upload_doc.file_url, upload_doc.receipt_digest)
 			task.pop("pages")
-			task["original"] = {"extension": attachment.get_extension().lstrip("."), "content": _base64(content)}
+			task["original"] = {"extension": Path(attachment.file_name).suffix.lstrip("."), "content": _base64(content)}
 			task["page_limit"] = pilot.MAX_PDF_PAGES
 	except (RuntimeError, ValueError, OSError) as exc:
 		_step_error(job, exc)
@@ -726,7 +726,7 @@ def _receipt_file_permission(doc, ptype, user=None):
 	parents = _receipt_file_parents(doc.file_url)
 	if parents:
 		return bool(doc.is_private and ptype in {"read", "select"} and any(
-			frappe.has_permission(doctype, "read", doc=name, user=user, print_logs=False)
+			frappe.has_permission(doctype, "read", doc=name, user=user)
 			for doctype, name in parents
 		))
 
