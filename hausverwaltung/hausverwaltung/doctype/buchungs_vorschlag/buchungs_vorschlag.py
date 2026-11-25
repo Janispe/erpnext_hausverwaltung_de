@@ -7,6 +7,13 @@ class BuchungsVorschlag(Document):
 		previous = self.get_doc_before_save()
 		if not previous:
 			return
+		if self.receipt_upload != previous.receipt_upload or (
+			self.receipt_upload and any(
+				self.get(field) != previous.get(field)
+				for field in ("receipt_analysis", "extracted_data", "status", "receipt_context")
+			)
+		):
+			frappe.throw("Bon-Analysen können nur über die Buchungs-Inbox geändert werden.")
 		if self.receipt_digest != previous.receipt_digest:
 			frappe.throw("Die Prüfsumme eines Bon-Originals ist unveränderlich.")
 		if self.receipt_digest and (
@@ -19,6 +26,8 @@ class BuchungsVorschlag(Document):
 			frappe.throw("Das Original und die Buchungsverknüpfung eines Bons sind unveränderlich.")
 
 	def on_trash(self):
+		if self.receipt_upload:
+			frappe.throw("Bons mit Analysehistorie können nicht gelöscht werden.")
 		if self.receipt_digest:
 			from hausverwaltung.proposals import receipt_action
 

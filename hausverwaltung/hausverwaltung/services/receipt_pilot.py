@@ -66,7 +66,7 @@ def _context(raw) -> dict:
 	return result
 
 
-def review_context(doc) -> dict:
+def review_context(doc, *, user=None) -> dict:
 	"""Resolve only explicitly supplied master data and keep ambiguity visible."""
 	from hausverwaltung.hausverwaltung.page.buchen_cockpit import buchen_cockpit
 
@@ -108,7 +108,7 @@ def review_context(doc) -> dict:
 	return {
 		**context,
 		"kostenstelle": context["kostenstelle"] if center else "",
-		"immobilie": building if building and frappe.has_permission("Immobilie", "read", doc=building) else "",
+		"immobilie": building if building and frappe.has_permission("Immobilie", "read", doc=building, user=user) else "",
 		"zahlungsart": PAYMENT_TYPES.get(source, ""),
 		"zahlungskonto": valid_account,
 		"fragen": questions,
@@ -219,7 +219,7 @@ def update_context(name: str, context) -> dict:
 def pending_receipts() -> list[str]:
 	_require_agent()
 	return frappe.get_all(
-		PROPOSAL, filters={"receipt_digest": ["is", "set"], "status": "Pending"},
+		PROPOSAL, filters={"receipt_digest": ["is", "set"], "receipt_upload": ["is", "not set"], "status": "Pending"},
 		pluck="name", order_by="creation asc", limit_page_length=50,
 	)
 
@@ -229,8 +229,8 @@ def prepare_receipt(name: str) -> dict:
 	"""Agent capability for one queued receipt. No arbitrary file access or writes."""
 	_require_agent()
 	doc = frappe.get_doc(PROPOSAL, name, for_update=True)
-	if not doc.receipt_digest:
-		raise frappe.PermissionError("Dieser Vorschlag gehört nicht zum Barauslagen-Pilot.")
+	if not doc.receipt_digest or doc.get("receipt_upload"):
+		raise frappe.PermissionError("Dieser Vorschlag gehört nicht zur bisherigen Bon-Warteschlange.")
 	if doc.status != "Pending":
 		return {"name": doc.name, "status": doc.status}
 	try:
@@ -250,6 +250,10 @@ def prepare_receipt(name: str) -> dict:
 
 def verified_original(doc, *, for_update: bool = False):
 	"""Resolve the private proposal attachment and verify its uploaded bytes."""
+	if doc.get("receipt_upload"):
+		from hausverwaltung.hausverwaltung.services import receipt_batch
+
+		return receipt_batch.verified_crop(doc, for_update=for_update)
 	name = frappe.db.get_value(
 		"File",
 		{"attached_to_doctype": PROPOSAL, "attached_to_name": doc.name, "file_url": doc.file_url, "is_private": 1},
@@ -306,9 +310,7 @@ def _extract(content: bytes, extension: str) -> dict:
 		)]
 	else:
 		images = [(content, "image/jpeg" if extension == "jpg" else "image/png")]
-	# Number the options so duplicate display names cannot resolve to the wrong type.
-	categories = invoice_extraction._load_kostenarten_for_prompt()
-	catalog = {str(index): category for index, category in enumerate(categories, 1)}
+	catalog = _category_catalog()
 	image, mime = images[0]
 	raw = mistral_client.complete_vision_json(
 		system=SYSTEM_PROMPT,
@@ -318,6 +320,16 @@ def _extract(content: bytes, extension: str) -> dict:
 		additional_images=tuple(images[1:]),
 		timeout=60,
 	)
+	return _normalize_analysis(raw, catalog)
+
+
+def _category_catalog():
+	# Number the options so duplicate display names cannot resolve to the wrong type.
+	categories = invoice_extraction._load_kostenarten_for_prompt()
+	return {str(index): category for index, category in enumerate(categories, 1)}
+
+
+def _normalize_analysis(raw, catalog, *, manual_accounting=False):
 	if not isinstance(raw, dict):
 		raise ValueError("Vision-Antwort ist kein Objekt")
 	merchant = _text(raw.get("haendler"))
@@ -326,11 +338,11 @@ def _extract(content: bytes, extension: str) -> dict:
 	currency = _text(raw.get("waehrung")).upper()
 	if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
 		currency = ""
-	supplier = invoice_extraction._exact_supplier_lookup(merchant) if merchant else None
+	supplier = invoice_extraction._exact_supplier_lookup(merchant) if merchant and not manual_accounting else None
 	warnings = []
 	if not merchant:
 		warnings.append("Welcher Händler steht auf dem Bon?")
-	elif not supplier:
+	elif not supplier and not manual_accounting:
 		warnings.append("Bitte den Händler einem Lieferanten zuordnen.")
 	if not date:
 		warnings.append("Welches Datum steht auf dem Bon?")
@@ -358,7 +370,7 @@ def _extract(content: bytes, extension: str) -> dict:
 	)
 	if not balanced:
 		warnings.append("Einzelpositionen fehlen oder ergeben nicht den Endbetrag. Bitte den Bon abgleichen.")
-	if lines and any(not line["kostenart"] for line in lines):
+	if not manual_accounting and lines and any(not line["kostenart"] for line in lines):
 		warnings.append("Bitte offene Kostenarten zuordnen.")
 	# The manual booking dialog accepts positive positions. Preserve the receipt
 	# lines in the inbox and leave adjustments to the reviewer.
@@ -372,7 +384,7 @@ def _extract(content: bytes, extension: str) -> dict:
 		"belegsumme": float(total) if total is not None else None,
 		"waehrung": currency,
 		"llm_lieferant": merchant,
-		"lieferant_neu": {"supplier_name": merchant} if merchant and not supplier else None,
+		"lieferant_neu": {"supplier_name": merchant} if merchant and not supplier and not manual_accounting else None,
 		"warnings": warnings,
 		"used_vision": True,
 	}
