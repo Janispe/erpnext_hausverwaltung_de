@@ -503,6 +503,7 @@ fixtures = [
 
 # Optional application presentation; mail_merge itself stays domain-neutral.
 mail_merge_print_profile = "hausverwaltung.hausverwaltung.services.mail_merge_extensions.print_profile"
+mail_merge_recipient_scope = "hausverwaltung.hausverwaltung.services.mail_merge_recipients.recipient_scope"
 mail_merge_transform_html = "hausverwaltung.hausverwaltung.services.mail_merge_brand.apply_print_saving_brand_assets"
 
 # Proposal JSON can expose bound dependencies: generic listing is disabled and
