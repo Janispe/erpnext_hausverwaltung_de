@@ -329,7 +329,7 @@ def _category_catalog():
 	return {str(index): category for index, category in enumerate(categories, 1)}
 
 
-def _normalize_analysis(raw, catalog):
+def _normalize_analysis(raw, catalog, *, manual_accounting=False):
 	if not isinstance(raw, dict):
 		raise ValueError("Vision-Antwort ist kein Objekt")
 	merchant = _text(raw.get("haendler"))
@@ -338,11 +338,11 @@ def _normalize_analysis(raw, catalog):
 	currency = _text(raw.get("waehrung")).upper()
 	if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
 		currency = ""
-	supplier = invoice_extraction._exact_supplier_lookup(merchant) if merchant else None
+	supplier = invoice_extraction._exact_supplier_lookup(merchant) if merchant and not manual_accounting else None
 	warnings = []
 	if not merchant:
 		warnings.append("Welcher Händler steht auf dem Bon?")
-	elif not supplier:
+	elif not supplier and not manual_accounting:
 		warnings.append("Bitte den Händler einem Lieferanten zuordnen.")
 	if not date:
 		warnings.append("Welches Datum steht auf dem Bon?")
@@ -370,7 +370,7 @@ def _normalize_analysis(raw, catalog):
 	)
 	if not balanced:
 		warnings.append("Einzelpositionen fehlen oder ergeben nicht den Endbetrag. Bitte den Bon abgleichen.")
-	if lines and any(not line["kostenart"] for line in lines):
+	if not manual_accounting and lines and any(not line["kostenart"] for line in lines):
 		warnings.append("Bitte offene Kostenarten zuordnen.")
 	# The manual booking dialog accepts positive positions. Preserve the receipt
 	# lines in the inbox and leave adjustments to the reviewer.
@@ -384,7 +384,7 @@ def _normalize_analysis(raw, catalog):
 		"belegsumme": float(total) if total is not None else None,
 		"waehrung": currency,
 		"llm_lieferant": merchant,
-		"lieferant_neu": {"supplier_name": merchant} if merchant and not supplier else None,
+		"lieferant_neu": {"supplier_name": merchant} if merchant and not supplier and not manual_accounting else None,
 		"warnings": warnings,
 		"used_vision": True,
 	}

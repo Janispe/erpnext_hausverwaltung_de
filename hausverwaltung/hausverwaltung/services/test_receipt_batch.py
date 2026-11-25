@@ -214,7 +214,7 @@ class TestReceiptBatch(IntegrationTestCase):
 			row.db_insert()
 			return row.name
 
-		supplier_id = insert("Supplier", merchant, supplier_name=merchant, disabled=0)
+		supplier_id = insert("Supplier", f"Interne Lieferanten-ID {suffix}", supplier_name=merchant, disabled=0)
 		other_supplier = insert("Supplier", f"Fremd {suffix}", supplier_name=f"Fremd {suffix}", disabled=0)
 		account = insert("Account", f"Bon Aufwand {suffix}", account_name=f"Bon Aufwand {suffix}", company=company,
 			account_currency=currency, root_type="Expense", is_group=0, disabled=0)
@@ -250,14 +250,24 @@ class TestReceiptBatch(IntegrationTestCase):
 
 		upload = self.upload(self.fixture(), context={"kostenstelle": center})
 		inventory = {"bons": [{"ausschnitte": [[1, 0, 0, 1000, 1000]]}], "leere_seiten": []}
-		with self.scope(upload):
+		with (
+			self.scope(upload),
+			patch.object(receipt_evidence, "_access", return_value=access),
+			patch.object(batch.pilot, "review_context", return_value={"fragen": []}),
+		):
 			self.submit(batch.next_step()["task"], inventory)
-			self.submit(batch.next_step()["task"], self.raw_analysis(18) | {"haendler": merchant},
+			completed = self.submit(batch.next_step()["task"], self.raw_analysis(18) | {"haendler": merchant},
 				shortlist=[{"account": account, "positions": [f"correct-{suffix}"]}])
+			self.assertEqual(completed["status"], "Done")
 		record = json.loads(frappe.get_doc(batch.JOB, upload).results)[0]
 		proposal = record["proposal"]
-		self.assertNotIn(correct, read_doc(batch.pilot.PROPOSAL, proposal).extracted_data)
-		detail = bulk_extraction.get_vorschlag_full(proposal)["receipt_batch"]
+		stored = read_doc(batch.pilot.PROPOSAL, proposal).extracted_data
+		self.assertNotIn(correct, stored)
+		self.assertNotIn(supplier_id, stored)
+		full = bulk_extraction.get_vorschlag_full(proposal)
+		self.assertEqual(full["data"]["fields"]["lieferant"], supplier_id)
+		detail = full["receipt_batch"]
+		self.assertEqual(detail["revisions"][0]["fields"]["lieferant"], supplier_id)
 		self.assertEqual(detail["account_comparison"]["candidates"][0]["sources"][0]["receipt"], correct)
 		self.assertFalse(detail["comparison_stale"])
 
@@ -276,10 +286,14 @@ class TestReceiptBatch(IntegrationTestCase):
 			frappe.set_user(reader.name)
 			self.assertTrue(frappe.has_permission("Account", "read", doc=account))
 			self.assertFalse(frappe.has_permission("Purchase Invoice", "read", doc=correct))
+			self.assertFalse(frappe.has_permission("Supplier", "read", doc=supplier_id))
 			restricted = bulk_extraction.get_vorschlag_full(proposal)
 			self.assertNotIn(correct, json.dumps(restricted, default=str))
+			self.assertNotIn(supplier_id, json.dumps(restricted, default=str))
+			self.assertEqual(restricted["data"]["llm_lieferant"], merchant)
 			self.assertEqual(restricted["receipt_batch"]["account_comparison"]["candidates"], [])
 			self.assertNotIn(correct, read_doc(batch.pilot.PROPOSAL, proposal).extracted_data)
+			self.assertNotIn(supplier_id, read_doc(batch.pilot.PROPOSAL, proposal).extracted_data)
 			with self.assertRaises(frappe.PermissionError):
 				read_doc(batch.JOB, upload)
 		finally:

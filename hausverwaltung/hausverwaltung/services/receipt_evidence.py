@@ -89,8 +89,10 @@ def readable_comparison(comparison):
 	"""Render evidence using the viewer's current rights, independent of its author."""
 	if not comparison:
 		return None
+	supplier = comparison.get("supplier")
+	supplier_readable = bool(supplier and _may_read("Supplier", supplier["name"]))
+	hidden = bool(supplier and not supplier_readable)
 	candidates = []
-	hidden = False
 	for candidate in comparison["candidates"]:
 		if not _may_read("Account", candidate["account"]):
 			hidden = True
@@ -101,7 +103,10 @@ def readable_comparison(comparison):
 		if sources:
 			candidates.append(candidate | {"sources": sources})
 	questions = ["Ein Teil der Vergleichsquellen ist für Sie nicht lesbar."] if hidden else comparison["questions"]
-	return {"candidates": candidates, "questions": questions}
+	return {
+		"candidates": candidates, "questions": questions,
+		"supplier": supplier if supplier_readable else None,
+	}
 
 
 def cost_center(doc):

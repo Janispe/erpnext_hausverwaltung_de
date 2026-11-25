@@ -361,8 +361,7 @@ def _save_analysis(job, doc, case, proposal, raw, crops, comparison):
 			if any(_overlap(a, b) for a in regions for b in sibling.get("regions", [])):
 				question = "Der neue Zuschnitt überlappt einen anderen Bon. Bitte Aufteilung oder Zusammenlegung klären."
 				break
-	data = pilot._normalize_analysis(raw, {})
-	data["fields"]["lieferant"] = (comparison.get("supplier") or {}).get("name", "")
+	data = pilot._normalize_analysis(raw, {}, manual_accounting=True)
 	question = question or pilot._text(raw.get("frage"), 500)
 	crop_bytes, extension = _attachment_bytes(crops)
 	if len(crop_bytes) > MAX_CROP_BYTES:
@@ -594,6 +593,7 @@ def inbox_detail(proposal):
 	current_job = frappe.get_doc(JOB, proposal.receipt_analysis)
 	revisions = []
 	current_comparison = None
+	current_analysis = None
 	comparison_stale = False
 	current_center = receipt_evidence.cost_center(proposal)
 	jobs = frappe.get_all(JOB, filters={"upload": upload_doc.name, "proposal": proposal.name},
@@ -603,16 +603,24 @@ def inbox_detail(proposal):
 		for result in json.loads(job.results or "[]"):
 			if result["proposal"] == proposal.name:
 				snapshot = result["data"]
-				comparison = receipt_evidence.readable_comparison(result.get("comparison"))
+				stored_comparison = result.get("comparison") or {}
+				comparison = receipt_evidence.readable_comparison(stored_comparison)
+				supplier = (comparison or {}).get("supplier") or {}
+				merchant = snapshot.get("llm_lieferant")
+				visible = snapshot | {
+					"fields": snapshot["fields"] | {"lieferant": supplier.get("name", "")},
+					"lieferant_neu": {"supplier_name": merchant} if merchant and not stored_comparison.get("supplier") else None,
+				}
 				stale = comparison is not None and result.get("comparison_cost_center") != current_center
-				revisions.append(snapshot | {"account_comparison": comparison, "comparison_stale": stale})
+				revisions.append(visible | {"account_comparison": comparison, "comparison_stale": stale})
 				if snapshot["analysis"]["job"] == current_job.name:
 					comparison_stale = stale
 					current_comparison = None if stale else comparison
+					current_analysis = visible
 	return {
 		"original": upload_doc.file_url, "note": upload_doc.note, "job": _progress(current_job),
 		"revisions": revisions, "source": proposal.receipt_analysis,
-		"account_comparison": current_comparison, "comparison_stale": comparison_stale,
+		"account_comparison": current_comparison, "comparison_stale": comparison_stale, "current_analysis": current_analysis,
 	}
 
 

@@ -362,6 +362,9 @@ def get_vorschlag_full(name: str) -> dict:
 		except json.JSONDecodeError:
 			data = {}
 	is_receipt = bool(v.get("receipt_digest"))
+	batch_detail = receipt_batch.inbox_detail(v) if getattr(v, "receipt_upload", None) else None
+	if batch_detail and (projected := batch_detail.pop("current_analysis")):
+		data = projected
 	return {
 		"name": v.name,
 		"file_url": v.file_url,
@@ -370,7 +373,7 @@ def get_vorschlag_full(name: str) -> dict:
 		"data": data,
 		"receipt": receipt_pilot.review_context(v) if is_receipt else None,
 		"receipt_review": receipt_action.review_state(v) if is_receipt else None,
-		"receipt_batch": receipt_batch.inbox_detail(v) if getattr(v, "receipt_upload", None) else None,
+		"receipt_batch": batch_detail,
 	}
 
 
