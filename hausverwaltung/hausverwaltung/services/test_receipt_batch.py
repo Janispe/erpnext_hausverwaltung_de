@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import frappe
 from frappe.client import get as read_doc
+from frappe.core.doctype.file.utils import find_file_by_url
 from frappe.tests import IntegrationTestCase
 from PIL import Image, ImageDraw
 
@@ -170,6 +171,49 @@ class TestReceiptBatch(IntegrationTestCase):
 			stored = frappe.get_doc(batch.pilot.PROPOSAL, other_receipt["proposal"])
 			self.assertEqual(json.loads(stored.extracted_data), other_receipt["data"])
 		self.assertFalse(proposal.linked_purchase_invoice)
+
+	def test_private_file_download_ignores_old_analysis_user_ownership(self):
+		name = self.upload(self.fixture())
+		upload = frappe.get_doc(batch.UPLOAD, name)
+		with self.scope(name):
+			self.submit(batch.next_step()["task"], {
+				"bons": [{"ausschnitte": [[1, 0, 0, 1000, 1000]]}], "leere_seiten": [],
+			})
+			self.submit(batch.next_step()["task"], self.raw_analysis(15.50))
+		proposal = frappe.get_doc(batch.pilot.PROPOSAL, {"receipt_upload": name})
+		original = find_file_by_url(upload.file_url)
+		crop = find_file_by_url(proposal.file_url)
+		self.assertEqual(frappe.db.count("File", {"file_url": upload.file_url}), 1)
+		duplicate = original.create_attachment_copy(proposal.doctype, proposal.name, ignore_permissions=True)
+		user = f"receipt-analysis-{uuid.uuid4().hex}@example.invalid"
+		frappe.get_doc({"doctype": "User", "email": user, "first_name": "Analyse", "send_welcome_email": 0}).insert()
+		for file in (original, duplicate, crop):
+			file.db_set("owner", user)
+		frappe.set_user(user)
+		try:
+			for file in (original, duplicate, crop):
+				self.assertIsNone(find_file_by_url(file.file_url))
+				self.assertIsNone(find_file_by_url(file.file_url, name=file.name))
+				self.assertFalse(frappe.has_permission("File", "read", doc=file.name))
+		finally:
+			frappe.set_user("Administrator")
+		self.assertTrue(find_file_by_url(upload.file_url))
+		self.assertTrue(find_file_by_url(proposal.file_url))
+
+	def test_codex_next_step_receives_only_assigned_original(self):
+		content = self.fixture(is_pdf=True)
+		name = self.upload(content, is_pdf=True)
+		with self.scope(name):
+			with self.assertRaises(frappe.PermissionError):
+				batch.codex_next_step()
+			with patch.dict(frappe.conf, {"hv_receipt_codex": 1}):
+				task = batch.codex_next_step()["task"]
+				self.assertEqual(task["step"], 0)
+				self.assertEqual(task["original"]["extension"], "pdf")
+				self.assertEqual(base64.b64decode(task["original"]["content"]), content)
+				self.assertNotIn("pages", task)
+				with self.assertRaises(frappe.PermissionError):
+					batch.next_step()
 
 	def test_pdf_pages_and_overlaps_are_checked(self):
 		name = self.upload(self.fixture(is_pdf=True), is_pdf=True)

@@ -565,6 +565,7 @@ has_permission["Wohnungsabnahme"] = f"{_abnahme_module}.has_permission"
 has_permission["File"] = [
 	"hausverwaltung.hausverwaltung.wohnungsschaden.permissions.has_file_permission",
 	f"{_abnahme_module}.file_permission",
+	"hausverwaltung.hausverwaltung.services.receipt_batch.file_permission",
 ]
 doc_events.setdefault("File", {})["before_validate"] = f"{_abnahme_module}.guard_attachment"
 

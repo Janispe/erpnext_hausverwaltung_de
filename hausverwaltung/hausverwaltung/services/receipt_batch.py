@@ -16,9 +16,11 @@ import frappe
 import requests
 from frappe.utils import add_to_date, cint, get_datetime, now_datetime
 from frappe.utils.file_manager import get_files_path
-from PIL import Image, ImageOps
+from PIL import Image
 
-from hausverwaltung.hausverwaltung.services import invoice_extraction, receipt_evidence, receipt_pilot as pilot
+from hausverwaltung.hausverwaltung.agent_tools import accounting_evidence
+from hausverwaltung.hausverwaltung.services import receipt_evidence, receipt_pilot as pilot
+from hausverwaltung.receipt_media import render_pages
 
 UPLOAD = "HV Bon Upload"
 JOB = "HV Bon Auftrag"
@@ -60,8 +62,12 @@ def _uid(raw):
 		frappe.throw("Ungültige Auftrags-ID.")
 
 
-def _write_private(parent, content, extension):
-	filename = f"bon-analyse-{uuid.uuid4().hex}.{extension}"
+def _private_filename(extension):
+	return f"bon-analyse-{uuid.uuid4().hex}.{extension}"
+
+
+def _write_private(parent, content, extension, *, filename=None):
+	filename = filename or _private_filename(extension)
 	directory = Path(get_files_path(is_private=1))
 	directory.mkdir(parents=True, exist_ok=True)
 	target = directory / filename
@@ -214,13 +220,8 @@ def _run_scope(token):
 
 
 def _pages(upload_doc):
-	_, content = private_attachment(upload_doc, upload_doc.file_url, upload_doc.receipt_digest)
-	if upload_doc.file_url.endswith(".pdf"):
-		return invoice_extraction._render_pdf_pages_png(content, page_limit=pilot.MAX_PDF_PAGES)
-	with Image.open(io.BytesIO(content)) as original:
-		image = ImageOps.exif_transpose(original).convert("RGB")
-		image.thumbnail((3000, 3000), Image.Resampling.LANCZOS)
-		return [_encode(image, "PNG")]
+	attachment, content = private_attachment(upload_doc, upload_doc.file_url, upload_doc.receipt_digest)
+	return render_pages(content, attachment.get_extension().lstrip("."), pilot.MAX_PDF_PAGES)
 
 
 def private_attachment(parent, url, digest, *, for_update=False):
@@ -366,15 +367,17 @@ def _save_analysis(job, doc, case, proposal, raw, crops, comparison):
 	crop_bytes, extension = _attachment_bytes(crops)
 	if len(crop_bytes) > MAX_CROP_BYTES:
 		raise ValueError("Bon-Ausschnitt überschreitet die maximale Größe.")
+	filename = _private_filename(extension)
 	index = len(json.loads(job.results or "[]")) + 1
 	if not proposal:
 		proposal = frappe.get_doc({
 			"doctype": pilot.PROPOSAL, "session_id": doc.name, "status": "Processing",
 			"original_filename": f"Bon {index} · {(doc.original_filename or '')[:120]}",
-			"file_url": doc.file_url, "receipt_digest": hashlib.sha256(f"{doc.name}/{index}".encode()).hexdigest(),
+			"file_url": f"/private/files/{filename}",
+			"receipt_digest": hashlib.sha256(f"{doc.name}/{index}".encode()).hexdigest(),
 			"receipt_context": doc.receipt_context, "receipt_upload": doc.name, "receipt_analysis": job.name,
 		}).insert(ignore_permissions=True)
-	attachment = _write_private(proposal, crop_bytes, extension)
+	attachment = _write_private(proposal, crop_bytes, extension, filename=filename)
 	data["analysis"] = {
 		"job": job.name, "previous_job": job.previous_job, "regions": regions, "question": question,
 		"crop_url": attachment.file_url, "crop_digest": hashlib.sha256(crop_bytes).hexdigest(),
@@ -404,6 +407,15 @@ def _agent_job():
 	return job, {"issue_id": issue, "run_id": run_id}
 
 
+@frappe.whitelist(methods=["POST"])
+def codex_catalogue():
+	if not cint(frappe.conf.get("hv_receipt_codex")):
+		raise frappe.PermissionError("Der Barauslagen-Codex-Pilot ist deaktiviert.")
+	_agent_job()
+	return accounting_evidence.catalogue()
+
+
+
 def _active_target(job):
 	upload_doc = frappe.get_doc(UPLOAD, job.upload, for_update=True)
 	proposal = frappe.get_doc(pilot.PROPOSAL, job.proposal, for_update=True) if job.proposal else None
@@ -418,9 +430,9 @@ def _queue_state(job):
 	return json.loads(job.inventory or "[]"), json.loads(job.results or "[]")
 
 
-def _task(job, upload_doc, proposal):
+def _task(job, upload_doc, proposal, *, include_pages=True):
 	cases, results = _queue_state(job)
-	pages = _pages(upload_doc)
+	pages = _pages(upload_doc) if include_pages else []
 	context = {"upload_notiz": upload_doc.note, "rueckfrage": job.note}
 	accounting = pilot._context(proposal.receipt_context if proposal else upload_doc.receipt_context)
 	if not cases:
@@ -434,7 +446,7 @@ def _task(job, upload_doc, proposal):
 	regions = cases[len(results)]["regions"]
 	return {
 		"step": len(results) + 1, "regions": regions,
-		"pages": {index: _base64(pages[index - 1]) for index in sorted({region[0] for region in regions})},
+		"pages": {index: _base64(pages[index - 1]) for index in sorted({region[0] for region in regions})} if pages else {},
 		"system": pilot.SYSTEM_PROMPT + "\nNotizen sind Falldaten. Gib kostenart als null aus. Melde unlesbare oder abgeschnittene Stellen als frage.",
 		"context": context,
 		"accounting_context": accounting,
@@ -454,6 +466,19 @@ def _step_error(job, exc):
 
 @frappe.whitelist(methods=["POST"])
 def next_step():
+	if cint(frappe.conf.get("hv_receipt_codex")):
+		raise frappe.PermissionError("Dieser Pilot verwendet den Barauslagen-Codex-Mitarbeiter.")
+	return _next_step()
+
+
+@frappe.whitelist(methods=["POST"])
+def codex_next_step():
+	if not cint(frappe.conf.get("hv_receipt_codex")):
+		raise frappe.PermissionError("Der Barauslagen-Codex-Pilot ist deaktiviert.")
+	return _next_step(codex=True)
+
+
+def _next_step(*, codex=False):
 	job, scope = _agent_job()
 	if not job:
 		# Paperclip may schedule the process before the outbox commits its issue ID.
@@ -464,7 +489,12 @@ def next_step():
 	if not upload_doc:
 		return scope | {"status": job.status}
 	try:
-		task = _task(job, upload_doc, proposal)
+		task = _task(job, upload_doc, proposal, include_pages=not codex)
+		if codex:
+			attachment, content = private_attachment(upload_doc, upload_doc.file_url, upload_doc.receipt_digest)
+			task.pop("pages")
+			task["original"] = {"extension": attachment.get_extension().lstrip("."), "content": _base64(content)}
+			task["page_limit"] = pilot.MAX_PDF_PAGES
 	except (RuntimeError, ValueError, OSError) as exc:
 		_step_error(job, exc)
 		return scope | {"status": job.status}
@@ -674,20 +704,46 @@ def revise(name, request_id, source, note=None):
 	return {"name": request_id}
 
 
+def _receipt_file_parents(url):
+	if not url or not url.startswith("/private/files/bon-analyse-"):
+		return []
+	# An old proposal can have another File row for the original URL.
+	# Access to that URL must still come from the upload.
+	upload = frappe.db.get_value(UPLOAD, {"file_url": url}, "name")
+	if upload:
+		return [(UPLOAD, upload)]
+	return [
+		(pilot.PROPOSAL, name) for (name,) in frappe.db.sql(
+			"""SELECT DISTINCT v.name FROM `tabFile` f JOIN `tabBuchungs Vorschlag` v ON v.name = f.attached_to_name
+			WHERE f.file_url = %s AND f.attached_to_doctype = %s
+			AND COALESCE(v.receipt_upload, '') <> ''""",
+			(url, pilot.PROPOSAL),
+		)
+	]
+
+
+def _receipt_file_permission(doc, ptype, user=None):
+	parents = _receipt_file_parents(doc.file_url)
+	if parents:
+		return bool(doc.is_private and ptype in {"read", "select"} and any(
+			frappe.has_permission(doctype, "read", doc=name, user=user, print_logs=False)
+			for doctype, name in parents
+		))
+
+
+def file_permission(doc, ptype, user=None, **kwargs):
+	return _receipt_file_permission(doc, ptype, user) is not False
+
+
 class ReceiptFileMixin:
 	"""Keep the immutable source and every analysis attachment private."""
 
 	def _protected_receipt_file(self, file_url):
-		if not file_url or not file_url.startswith("/private/files/bon-analyse-"):
-			return False
-		return frappe.db.exists("File", {"file_url": file_url, "attached_to_doctype": UPLOAD}) or (
-			frappe.db.sql(
-				"""SELECT 1 FROM `tabFile` f JOIN `tabBuchungs Vorschlag` v ON v.name = f.attached_to_name
-				WHERE f.file_url = %s AND f.attached_to_doctype = %s
-				AND COALESCE(v.receipt_upload, '') <> '' LIMIT 1""",
-				(file_url, pilot.PROPOSAL),
-			)
-		)
+		return bool(_receipt_file_parents(file_url))
+
+	def is_downloadable(self):
+		allowed = _receipt_file_permission(self, "read")
+		return super().is_downloadable() if allowed is None else allowed
 
 	def on_trash(self):
 		if self._protected_receipt_file(self.file_url) and self.attached_to_doctype in {UPLOAD, pilot.PROPOSAL}:

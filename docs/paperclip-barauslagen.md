@@ -87,7 +87,80 @@ möglich. Die Analyse unterstützt bis zu 20 Bons und bis zu zehn Ausschnitte je
 Bon. Koordinaten liegen bei 0 bis 1000 je Bildachse, gemessen vom linken oberen
 Rand der EXIF-korrigierten Fotoseite bzw. der gerenderten PDF-Seite.
 
-### Paperclip und Vision einrichten
+### Paperclip-Mitarbeiter Barauslagen mit Codex
+
+Für den vollständigen Codex-Ablauf zusätzlich
+`bench --site TESTSITE set-config --parse hv_receipt_codex 1` setzen.
+Alle drei Schalter sind standardmäßig aus. Die Rolle `Paperclip Bonanalyse`,
+die signierte Routine und die Site-Konfiguration für den Webhook bleiben wie
+unten beschrieben. Die Routine muss diesem einen Agenten zugewiesen sein.
+Setze für ihn `runtimeConfig.heartbeat.enabled = false` für den periodischen
+Timer und `runtimeConfig.heartbeat.maxConcurrentRuns = 1`. Die Routine weckt
+ihn je Upload oder Revision.
+
+Verwende einen absoluten Pfad zur Codex CLI **0.166.0**. Der CLI-Prozess
+benötigt eine auf dem Testhost eingerichtete Codex-Anmeldung und ein
+bildfähiges Modell wie `gpt-6.2-sol`. Der Worker benötigt Python mit
+Pillow und pypdfium2. Erzwinge bei Testsite und Worker kompatible Versionen
+von Pillow und pypdfium2, weil die Pixel des Zuschnitts überprüft werden.
+Das App-Verzeichnis muss für die Worker-Laufzeit lesbar sein. Beispiel für
+die Agent-Konfiguration (Pfade anpassen):
+
+```json
+{
+  "name": "Barauslagen",
+  "adapterType": "codex_local",
+  "runner": "legacy",
+  "adapterConfig": {
+    "engine": "cli",
+    "command": "/checkout/hausverwaltung/scripts/paperclip_codex_receipts.py",
+    "cwd": "/isolated/worker",
+    "model": "gpt-6.2-sol",
+    "instructionsFilePath": "/checkout/hausverwaltung/docs/paperclip-barauslagen-codex-agent.md",
+    "timeoutSec": 2400,
+    "env": {
+      "HV_RECEIPT_CODEX_BINARY": "/opt/codex-0.166.0/bin/codex",
+      "HV_RECEIPT_PILOT_URL": "http://isolierte-erpnext-site"
+    }
+  },
+  "runtimeConfig": {
+    "heartbeat": { "enabled": false, "maxConcurrentRuns": 1 }
+  }
+}
+```
+
+Hinterlege zusätzlich `HV_RECEIPT_PILOT_KEY` und `HV_RECEIPT_PILOT_SECRET`
+im Paperclip Secret Store. Lege diese Zugangsdaten für einen eigenen
+API-Benutzer mit ausschließlich der Rolle `Paperclip Bonanalyse` an.
+Der Startbefehl konfiguriert den MCP-Server für den zugewiesenen Run und
+startet genau eine Codex CLI. Paperclip behält Issue, Zuweisung, Verlauf und
+Status. ERPNext bindet die bytegenaue Originaldatei, Vorschlagsschritte
+und FAC-Leseoperationen an den von Paperclip validierten Run. Der Worker
+rendert das Original und schneidet mit Pillow lokal zu. Abgeschlossene
+Vorschläge, geprüfte Quellen und Rückfragen stehen in der Buchungs-Inbox.
+Bei `blocked` den technischen Fehler beheben und in Paperclip dasselbe
+Issue fortsetzen. ERPNext setzt beim ersten ausstehenden Bon fort.
+
+Für einen synthetischen Inferenzlauf `CODEX_ROLLOUT_TRACE_ROOT` vorübergehend
+auf ein privates Verzeichnis setzen. Vergleiche die Zell-ID der
+`tool_call_started`-Ereignisse mit `code_cell_started` und
+`code_cell_ended`. Prüfe alle Inferenzanfragen auf Rohdatenmarker und
+fremde Quellen sowie jede geprüfte Kurzliste auf die erwarteten Konten und
+passenden Kostenstellen. Der Trace kann Originalbilder und MCP-Rohdaten
+enthalten. Die Modellanfragen enthalten nur Zellenausgaben und den übrigen
+Gesprächskontext. Die MCP-Schnittstelle attestiert den Zellaufruf nicht,
+und Modellcode kann Daten über seine Ausgabe offenlegen. Der Nachweis
+gilt für die geprüften synthetischen Läufe. Paperclip erhält vom
+Startbefehl nur technische Laufereignisse, keine Modell- oder
+Werkzeug-Rohausgaben. Lösche den privaten Trace nach der Auswertung.
+[Paperclip Codex-Adapter](https://docs.paperclip.ing/reference/adapters/codex/)
+
+### Gemeinsame Routine und früherer Prozesspilot
+
+Für die Webhook-Einrichtung gelten unten Punkt 3 und 4. Punkt 2 beschreibt
+die historische Vision-/Claude-Variante für Sites mit deaktiviertem
+`hv_receipt_codex`.
+
 
 1. In der Testsite einen separaten API-Benutzer mit der Rolle
    `Paperclip Bonanalyse` einrichten. Die Rolle erhält keine DocType-, File-,
@@ -246,7 +319,7 @@ entscheidet über die Kontierung in ERPNext.
    Code und seine Tool-Aufrufe. Die übrigen Tests prüfen den Vertrag
    mit kontrollierten Provider-Antworten.
 
-### Codex CLI mit nativem Code Mode testen
+### Vorbereiteter Bonschritt aus dem früheren Codex-Pilot
 
 Der zweite PTC-Pilot verwendet die native JavaScript-Runtime der Codex CLI.
 Die CLI spricht Standard-MCP über stdio. `ptc_mcp_stdio.py` stellt den

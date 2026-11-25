@@ -19,6 +19,19 @@ DISPOSITIONS = {
 }
 
 
+def report_batch_status(paperclip, scope, agent_id, state):
+	status, comment = DISPOSITIONS[state]
+	payload = {"status": status, "comment": comment}
+	if state == "AnalysisError":
+		payload["unblockDescriptor"] = {
+			"owner": {"agentId": agent_id},
+			"action": "Analysefehler beheben und dieses Issue erneut starten.",
+		}
+	paperclip.request("PATCH", f"/api/issues/{scope['issue_id']}", data=payload,
+		headers={"X-Paperclip-Run-Id": scope["run_id"]})
+	return comment
+
+
 def run_batch(erp, paperclip, run_token, agent_id, vision, model, ptc):
 	# The only issue ID comes from ERPNext's verified assignment. The model
 	# sees the case data and pixels, with no credentials or executable tools.
@@ -54,9 +67,7 @@ def run_batch(erp, paperclip, run_token, agent_id, vision, model, ptc):
 				continue
 		if state not in DISPOSITIONS:
 			raise SyncError("ERPNext: Unerwarteter Analysezustand.")
-		status, comment = DISPOSITIONS[state]
-		paperclip.request("PATCH", issue_path, data={"status": status, "comment": comment}, headers=run_headers)
-		print(comment, flush=True)
+		print(report_batch_status(paperclip, result, agent_id, state), flush=True)
 		return int(state == "AnalysisError")
 	raise SyncError("Barauslagen-Auftrag konnte innerhalb dieses Laufs nicht abgeschlossen werden.")
 

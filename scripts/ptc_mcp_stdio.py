@@ -42,15 +42,16 @@ def serve(dispatch, *, name, incoming=None, outgoing=None):
 				reply["result"] = dispatch(method, params)
 			elif ready and method == "tools/call":
 				try:
-					result = dispatch(method, params)["structuredContent"]
+					result = dispatch(method, params)
+					structured = result["structuredContent"]
 				except (RuntimeError, ValueError, TypeError, KeyError, OSError):
 					reply["result"] = {"isError": True, "content": [{
 						"type": "text", "text": "Der Werkzeugaufruf wurde abgelehnt.",
 					}]}
 				else:
 					reply["result"] = {
-						"structuredContent": result,
-						"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
+						"structuredContent": structured,
+						"content": result.get("content", [{"type": "text", "text": json.dumps(structured, ensure_ascii=False)}]),
 					}
 			else:
 				reply["error"] = {"code": -32601, "message": "Method not available"}
